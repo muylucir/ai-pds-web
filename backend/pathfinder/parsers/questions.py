@@ -77,3 +77,26 @@ def _parse(name: str, markdown: str) -> QuestionFile:
     preamble = "\n".join(preamble_lines).strip() or None
     return QuestionFile(name=name, preamble=preamble, questions=questions,
                         parse_ok=True, raw_markdown=None)
+
+def serialize_answers(markdown: str, answers: dict[int, str]) -> str:
+    present = {q.number for q in _parse("_", markdown).questions}
+    missing = set(answers) - present
+    if missing:
+        raise KeyError(f"question numbers not in file: {sorted(missing)}")
+
+    lines = markdown.splitlines(keepends=True)
+    current_q: int | None = None
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        qm = _Q_HEADER.match(stripped) or _Q_HEADER.match(line.rstrip("\n"))
+        if qm:
+            current_q = int(qm.group(1))
+            out.append(line)
+            continue
+        if current_q in answers and stripped.startswith("[Answer]:"):
+            newline = "\n" if line.endswith("\n") else ""
+            out.append(f"[Answer]: {answers[current_q]}{newline}")
+            continue
+        out.append(line)
+    return "".join(out)
