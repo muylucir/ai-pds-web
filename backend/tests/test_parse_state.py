@@ -26,3 +26,29 @@ def test_pending_and_note_split():
     assert ws.note == "Completed 2026-07-04"
     env = next(s for s in st.stages if s.name == "Envision")
     assert env.status == "in_progress"  # matches Current Stage, not yet completed
+
+def test_in_progress_single_on_substring_collision():
+    md = (
+        "# AI-PLC State Tracking\n"
+        "- **Project Type**: Greenfield\n"
+        "- **Current Stage**: Discovery Mode Selection\n"
+        "## Stage Progress\n"
+        "- [ ] Discovery Mode Selection\n"
+        "- [ ] Discovery Mode Selection Extended Review\n"
+    )
+    st = parse_state_file(md)
+    in_prog = [s.name for s in st.stages if s.status == "in_progress"]
+    assert in_prog == ["Discovery Mode Selection"]  # exactly one, the exact match
+
+def test_in_progress_longest_match_when_no_exact():
+    md = (
+        "# AI-PLC State Tracking\n"
+        "- **Project Type**: Greenfield\n"
+        "- **Current Stage**: Discovery Mode Selection Extended Review Phase\n"
+        "## Stage Progress\n"
+        "- [ ] Discovery\n"
+        "- [ ] Discovery Mode Selection Extended Review\n"
+    )
+    st = parse_state_file(md)
+    in_prog = [s.name for s in st.stages if s.status == "in_progress"]
+    assert in_prog == ["Discovery Mode Selection Extended Review"]  # longest/most-specific, only one

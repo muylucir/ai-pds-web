@@ -27,7 +27,20 @@ def parse_state_file(markdown: str) -> ProjectState:
             name = parts[0].strip()
             note = parts[1].strip() if len(parts) > 1 else None
             status = "completed" if checked else "pending"
-            if not checked and current_stage and (name in current_stage or current_stage in name):
-                status = "in_progress"
             stages.append(StageState(name=name, status=status, note=note))
+
+    if current_stage:
+        pending = [s for s in stages if s.status == "pending"]
+        exact = [s for s in pending if s.name == current_stage]
+        if exact:
+            exact[0].status = "in_progress"
+        else:
+            partial = [
+                s for s in pending
+                if s.name in current_stage or current_stage in s.name
+            ]
+            if partial:
+                best = max(partial, key=lambda s: len(s.name))
+                best.status = "in_progress"
+
     return ProjectState(project_type=project_type, current_stage=current_stage, stages=stages)
