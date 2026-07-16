@@ -608,7 +608,7 @@ git commit -m "feat: write-back answers into question files"
 
 **Interfaces:**
 - Consumes: `ProjectState`, `StageState` from Task 1.
-- Produces: `parse_state_file(markdown: str) -> ProjectState`. Reads `**Project Type**:` and `**Current Stage**:` fields. Parses each `- [x]`/`- [ ]` checklist line under the stage section into a `StageState`: `- [x]` → `completed`, `- [ ]` → `pending`. The stage whose name equals the `Current Stage` value (or contains it) is marked `in_progress` unless already `completed`. Stage `name` is the text up to the first `—`/`-` delimiter; the remainder becomes `note`.
+- Produces: `parse_state_file(markdown: str) -> ProjectState`. Reads `**Project Type**:` and `**Current Stage**:` fields. Parses each `- [x]`/`- [ ]` checklist line under the stage section into a `StageState`: `- [x]` → `completed`, `- [ ]` → `pending`. Marks **at most one** pending stage `in_progress`: a stage whose name exactly equals `Current Stage`, else the longest pending stage name that substring-matches `Current Stage` (in either direction). Completed stages are never marked `in_progress`. Stage `name` is the text up to the first `—`/`-` delimiter; the remainder becomes `note`.
 
 - [ ] **Step 1: Copy fixture**
 
@@ -647,6 +647,32 @@ def test_pending_and_note_split():
     assert ws.note == "Completed 2026-07-04"
     env = next(s for s in st.stages if s.name == "Envision")
     assert env.status == "in_progress"  # matches Current Stage, not yet completed
+
+def test_in_progress_single_on_substring_collision():
+    md = (
+        "# AI-PLC State Tracking\n"
+        "- **Project Type**: Greenfield\n"
+        "- **Current Stage**: Discovery Mode Selection\n"
+        "## Stage Progress\n"
+        "- [ ] Discovery Mode Selection\n"
+        "- [ ] Discovery Mode Selection Extended Review\n"
+    )
+    st = parse_state_file(md)
+    in_prog = [s.name for s in st.stages if s.status == "in_progress"]
+    assert in_prog == ["Discovery Mode Selection"]  # exactly one — the exact match
+
+def test_in_progress_longest_match_when_no_exact():
+    md = (
+        "# AI-PLC State Tracking\n"
+        "- **Project Type**: Greenfield\n"
+        "- **Current Stage**: Discovery Mode Selection Extended Review Phase\n"
+        "## Stage Progress\n"
+        "- [ ] Discovery\n"
+        "- [ ] Discovery Mode Selection Extended Review\n"
+    )
+    st = parse_state_file(md)
+    in_prog = [s.name for s in st.stages if s.status == "in_progress"]
+    assert in_prog == ["Discovery Mode Selection Extended Review"]  # longest/most-specific, only one
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -686,16 +712,35 @@ def parse_state_file(markdown: str) -> ProjectState:
             name = parts[0].strip()
             note = parts[1].strip() if len(parts) > 1 else None
             status = "completed" if checked else "pending"
-            if not checked and current_stage and (name in current_stage or current_stage in name):
-                status = "in_progress"
             stages.append(StageState(name=name, status=status, note=note))
+
+    # Resolve at most ONE in_progress stage. Exact name match wins; otherwise
+    # the longest substring-matching pending name (most specific). A plain
+    # `name in current_stage` test marks EVERY overlapping pending stage active
+    # (AI-PLC stage names overlap heavily: "Discovery", "Discovery Mode
+    # Selection", "Discovery Document"), so the dashboard would show several
+    # stages "in progress" at once. Completed stages are never selected.
+    if current_stage:
+        pending = [s for s in stages if s.status == "pending"]
+        exact = [s for s in pending if s.name == current_stage]
+        if exact:
+            exact[0].status = "in_progress"
+        else:
+            partial = [
+                s for s in pending
+                if s.name in current_stage or current_stage in s.name
+            ]
+            if partial:
+                best = max(partial, key=lambda s: len(s.name))
+                best.status = "in_progress"
+
     return ProjectState(project_type=project_type, current_stage=current_stage, stages=stages)
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_parse_state.py -v`
-Expected: PASS (2 tests)
+Expected: PASS (4 tests — 2 base + 2 in_progress collision/longest-match regressions)
 
 - [ ] **Step 6: Commit**
 
