@@ -88,15 +88,18 @@ def serialize_answers(markdown: str, answers: dict[int, str]) -> str:
     current_q: int | None = None
     out: list[str] = []
     for line in lines:
+        # Match on the same basis _parse uses (the raw line minus its line
+        # ending) so header detection can't diverge between the two passes.
+        qm = _Q_HEADER.match(line.rstrip("\r\n"))
         stripped = line.strip()
-        qm = _Q_HEADER.match(stripped) or _Q_HEADER.match(line.rstrip("\n"))
         if qm:
             current_q = int(qm.group(1))
             out.append(line)
             continue
         if current_q in answers and stripped.startswith("[Answer]:"):
-            newline = "\n" if line.endswith("\n") else ""
-            out.append(f"[Answer]: {answers[current_q]}{newline}")
+            m_end = re.search(r"(\r\n|\r|\n)$", line)
+            ending = m_end.group(1) if m_end else ""
+            out.append(f"[Answer]: {answers[current_q]}{ending}")
             continue
         out.append(line)
     return "".join(out)
