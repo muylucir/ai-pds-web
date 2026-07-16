@@ -5,11 +5,18 @@ from pathfinder.models import AuditEntry
 from pathfinder.parsers.redaction import redact_credentials
 
 _ENTRY = re.compile(r"^##\s+Entry\s+(\d+):", re.MULTILINE)
-_FIELD_PATS = {
-    "timestamp": re.compile(r"\*\*Timestamp\*\*:\s*(.*)"),
-    "user_input": re.compile(r"\*\*User Input\*\*:\s*(.*)"),
-    "ai_response": re.compile(r"\*\*AI Response\*\*:\s*(.*)"),
-    "context": re.compile(r"\*\*Context\*\*:\s*(.*)"),
+
+# Matches any of the four field markers, in whatever order they appear in the
+# block. Some pilot logs squash an entire entry onto one physical line (using
+# literal "\n" text rather than real newlines), so field values must be
+# extracted marker-to-next-marker rather than end-of-line.
+_MARKER = re.compile(r"\*\*(Timestamp|User Input|AI Response|Context)\*\*:\s*")
+
+_KEY_MAP = {
+    "Timestamp": "timestamp",
+    "User Input": "user_input",
+    "AI Response": "ai_response",
+    "Context": "context",
 }
 
 def _strip_quotes(s: str) -> str:
@@ -25,15 +32,22 @@ def parse_audit_file(markdown: str) -> list[AuditEntry]:
         start = m.end()
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(markdown)
         block = markdown[start:end]
+
+        marker_matches = list(_MARKER.finditer(block))
         fields: dict[str, str] = {}
-        for key, pat in _FIELD_PATS.items():
-            fm = pat.search(block)
-            fields[key] = _strip_quotes(fm.group(1)) if fm else ""
+        for i, mm in enumerate(marker_matches):
+            key = _KEY_MAP[mm.group(1)]
+            value_start = mm.end()
+            value_end = marker_matches[i + 1].start() if i + 1 < len(marker_matches) else len(block)
+            value = _strip_quotes(block[value_start:value_end])
+            # First occurrence of a marker wins, matching prior behavior.
+            fields.setdefault(key, value)
+
         entries.append(AuditEntry(
             index=int(m.group(1)),
-            timestamp=fields["timestamp"],
-            user_input=redact_credentials(fields["user_input"]),
-            ai_response=redact_credentials(fields["ai_response"]),
-            context=fields["context"] or None,
+            timestamp=fields.get("timestamp", ""),
+            user_input=redact_credentials(fields.get("user_input", "")),
+            ai_response=redact_credentials(fields.get("ai_response", "")),
+            context=redact_credentials(fields.get("context", "")) or None,
         ))
     return entries
