@@ -38,6 +38,7 @@ DynamoDB (서울): 프로젝트 메타데이터, 세션 상태
 
 - **프로젝트 생성 = MicroVM 기동.** aiplc-rules + Claude Code + 하네스를 구운 MicroVM 이미지(Firecracker 스냅샷)에서 시작하므로 기동이 빠르다. 유휴 시 suspend(`autoResumeEnabled: true`), 사용자가 돌아오면 resume — Claude Code 세션과 워크스페이스가 그대로 유지된다.
 - **Bedrock 인증은 MicroVM 실행 롤(IAM)로** 처리한다 (`CLAUDE_CODE_USE_BEDROCK`). 장기 API 키가 어디에도 존재하지 않아, audit.md 크리덴셜 레다크션 룰 준수가 구조적으로 보장된다.
+- **Claude Code 모델은 Sonnet 5로 고정**한다 — MicroVM 이미지에 `ANTHROPIC_MODEL`을 Sonnet 5의 Bedrock cross-region inference profile(예: `global.anthropic.claude-sonnet-5`)로 설정. 정확한 프로파일 ID는 구현 시 `aws bedrock list-inference-profiles`로 확인한다(pilot1에서 모델 ID 불일치로 ValidationException을 겪은 전례 반영). 프로토타입이 사용하는 LLM 모델은 별개로, 방법론 룰(llm-model-configuration.md)에 따라 사용자에게 묻는다.
 - 스택: Next.js 프론트엔드 + FastAPI 백엔드 + DynamoDB.
 
 ## 2. 핵심 프로토콜 — "파일이 곧 계약"
