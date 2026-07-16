@@ -488,7 +488,7 @@ git commit -m "test: pin question parser raw-markdown fallback"
 
 **Interfaces:**
 - Consumes: `parse_question_file`.
-- Produces: `serialize_answers(markdown: str, answers: dict[int, str]) -> str` — takes the original question-file markdown and a map of `{question_number: answer_string}`, and returns the markdown with each matching `[Answer]:` line rewritten to `[Answer]: <value>`. Preserves every other byte (headers, options, blank lines). Question numbers absent from `answers` are left unchanged. Raises `KeyError` if `answers` references a question number not present in the file.
+- Produces: `serialize_answers(markdown: str, answers: dict[int, str]) -> str` — takes the original question-file markdown and a map of `{question_number: answer_string}`, and returns the markdown with each matching `[Answer]:` line rewritten to `[Answer]: <value>`. Preserves every other byte (headers, options, blank lines, and each line's original ending including CRLF). Question numbers absent from `answers` are left unchanged. Raises `KeyError` if `answers` references a question number not present in the file.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -520,6 +520,23 @@ def test_unknown_question_number_raises():
         assert False, "expected KeyError"
     except KeyError:
         pass
+
+def test_preserves_exact_bytes_of_untargeted_lines():
+    # Rewriting Q1 to a NEW value must change only Q1's [Answer] line, byte-for-byte
+    # everywhere else. (Whole-file == won't hold: the fixture's line is `[Answer]:A`
+    # with no space, and serialize normalizes to `[Answer]: A`.)
+    md = (FIX / "strategy-questions.md").read_text(encoding="utf-8")
+    out = serialize_answers(md, {1: "B"})
+    orig_lines, new_lines = md.splitlines(keepends=True), out.splitlines(keepends=True)
+    assert len(orig_lines) == len(new_lines)
+    diffs = [i for i, (a, b) in enumerate(zip(orig_lines, new_lines)) if a != b]
+    assert len(diffs) == 1  # exactly one line changed — Q1's answer line
+
+def test_preserves_crlf_line_endings():
+    md = "## Question 1\nPick one\nA) x\nX) Other\n[Answer]: A\n".replace("\n", "\r\n")
+    out = serialize_answers(md, {1: "B"})
+    assert "[Answer]: B\r\n" in out
+    assert "[Answer]: B\n" not in out.replace("\r\n", "")  # no bare-LF degradation
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -531,6 +548,7 @@ Expected: FAIL with `ImportError: cannot import name 'serialize_answers'`
 
 ```python
 # append to backend/pathfinder/parsers/questions.py
+# (`import re` is already at the top of the module)
 
 def serialize_answers(markdown: str, answers: dict[int, str]) -> str:
     present = {q.number for q in _parse("_", markdown).questions}
@@ -542,24 +560,35 @@ def serialize_answers(markdown: str, answers: dict[int, str]) -> str:
     current_q: int | None = None
     out: list[str] = []
     for line in lines:
-        stripped = line.strip()
-        qm = _Q_HEADER.match(stripped) or _Q_HEADER.match(line.rstrip("\n"))
+        # Match headers on the same basis _parse uses (raw line, minus the line
+        # ending) so the KeyError precondition and the rewrite loop cannot diverge
+        # on indented headers.
+        qm = _Q_HEADER.match(line.rstrip("\r\n"))
         if qm:
             current_q = int(qm.group(1))
             out.append(line)
             continue
-        if current_q in answers and stripped.startswith("[Answer]:"):
-            newline = "\n" if line.endswith("\n") else ""
-            out.append(f"[Answer]: {answers[current_q]}{newline}")
+        if current_q in answers and line.strip().startswith("[Answer]:"):
+            # Preserve the ORIGINAL line ending exactly (\r\n / \r / \n / none at
+            # EOF). Assuming "\n" silently drops \r on CRLF files, corrupting the
+            # file the agent reads back — violates the preserve-every-byte rule.
+            m_end = re.search(r"(\r\n|\r|\n)$", line)
+            ending = m_end.group(1) if m_end else ""
+            out.append(f"[Answer]: {answers[current_q]}{ending}")
             continue
         out.append(line)
     return "".join(out)
 ```
 
+Note: only the *other* bytes are preserved — the rewritten answer line is
+normalized to `[Answer]: <value>` (a single space after the colon), which may
+differ from an original `[Answer]:A`. Tests must assert byte-equality on every
+line *except* the rewritten one, not whole-file equality.
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_serialize_answers.py -v`
-Expected: PASS (3 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 5: Commit**
 
