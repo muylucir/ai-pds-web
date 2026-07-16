@@ -34,3 +34,14 @@ def test_multiselect_and_letter_answers_captured():
     answers = {q.number: q.answer for q in qf.questions}
     assert answers[11] == "C"
     assert answers[12] == "A,B"
+
+def test_unparseable_file_falls_back_to_raw():
+    qf = parse_question_file("weird.md", "This has no questions at all.\nJust prose.")
+    assert qf.parse_ok is False
+    assert qf.questions == []
+    assert qf.raw_markdown == "This has no questions at all.\nJust prose."
+
+def test_empty_file_falls_back():
+    qf = parse_question_file("empty.md", "")
+    assert qf.parse_ok is False
+    assert qf.raw_markdown == ""
