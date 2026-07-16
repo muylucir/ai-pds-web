@@ -760,7 +760,7 @@ git commit -m "feat: parse aiplc-state.md into stage timeline"
 
 **Interfaces:**
 - Consumes: `AuditEntry` from Task 1, `redact_credentials` from Task 2.
-- Produces: `parse_audit_file(markdown: str) -> list[AuditEntry]`. Splits on `## Entry N:` headers. Extracts `**Timestamp**:`, `**User Input**:`, `**AI Response**:`, `**Context**:` fields (values may be quoted; strip surrounding quotes). Runs `redact_credentials` over user_input and ai_response. Preserves order.
+- Produces: `parse_audit_file(markdown: str) -> list[AuditEntry]`. Splits on `## Entry N:` headers. Within each entry block, extracts `**Timestamp**:`, `**User Input**:`, `**AI Response**:`, `**Context**:` field values **marker-to-next-marker** (NOT end-of-line — some pilot logs squash an entire entry onto one physical line using literal `\n` text, so an end-of-line regex would bleed one field's value into the next). Strips surrounding quotes. Runs `redact_credentials` over user_input, ai_response, AND context (context redaction is defense-in-depth beyond the strict requirement). Preserves order.
 
 - [ ] **Step 1: Copy fixture**
 
@@ -796,6 +796,55 @@ def test_redacts_credentials_in_entries():
     e = parse_audit_file(md)[0]
     assert "AKIA" not in e.user_input
     assert "[CREDENTIAL REDACTED]" in e.user_input
+
+def test_redacts_credentials_in_ai_response():
+    md = (
+        "## Entry 1: Test\n"
+        "**Timestamp**: 2026-07-04T00:00:00Z\n"
+        "**User Input**: hello\n"
+        "**AI Response**: token is AKIAIOSFODNN7EXAMPLE right\n"
+        "**Context**: test\n"
+    )
+    e = parse_audit_file(md)[0]
+    assert "AKIA" not in e.ai_response
+    assert "[CREDENTIAL REDACTED]" in e.ai_response
+
+def test_redacts_credentials_in_context():
+    md = (
+        "## Entry 1: Test\n"
+        "**Timestamp**: 2026-07-04T00:00:00Z\n"
+        "**User Input**: hi\n"
+        "**AI Response**: ok\n"
+        "**Context**: leaked sk-abc123def456ghi789 here\n"
+    )
+    e = parse_audit_file(md)[0]
+    assert "[CREDENTIAL REDACTED]" in e.context
+
+def test_squashed_single_line_entry_splits_fields():
+    # A whole entry on one physical line (literal \n as text) must still split
+    # at markers — ai_response must NOT absorb the Context value.
+    md = (
+        "## Entry 1: Squashed\n"
+        '**Timestamp**: 2026-07-04T00:00:00Z **User Input**: "big blob with \\n escapes and more" '
+        "**AI Response**: the real answer **Context**: Some Context Label\n"
+    )
+    e = parse_audit_file(md)[0]
+    assert e.ai_response == "the real answer"
+    assert e.context == "Some Context Label"
+    assert "big blob" in e.user_input
+
+def test_no_unredacted_credentials_anywhere_in_real_fixture():
+    entries = parse_audit_file((FIX / "audit.md").read_text(encoding="utf-8"))
+    for e in entries:
+        for field in (e.user_input, e.ai_response, e.context or ""):
+            for marker in ("AKIA", "sk-", "bedrock-api-key-", "goog_"):
+                assert marker not in field, f"unredacted {marker} in entry {e.index}"
+        # AWS_BEARER_TOKEN appears as a bare env-var NAME in prose (Entry 21) with
+        # no =value, which is correctly left alone — check only the secret-bearing
+        # assignment form.
+        import re as _re
+        for field in (e.user_input, e.ai_response, e.context or ""):
+            assert not _re.search(r"AWS_BEARER_TOKEN[A-Z_]*=\S", field)
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -813,11 +862,18 @@ from pathfinder.models import AuditEntry
 from pathfinder.parsers.redaction import redact_credentials
 
 _ENTRY = re.compile(r"^##\s+Entry\s+(\d+):", re.MULTILINE)
-_FIELD_PATS = {
-    "timestamp": re.compile(r"\*\*Timestamp\*\*:\s*(.*)"),
-    "user_input": re.compile(r"\*\*User Input\*\*:\s*(.*)"),
-    "ai_response": re.compile(r"\*\*AI Response\*\*:\s*(.*)"),
-    "context": re.compile(r"\*\*Context\*\*:\s*(.*)"),
+
+# Matches any of the four field markers, in whatever order they appear in the
+# block. Some pilot logs squash an entire entry onto one physical line (using
+# literal "\n" text rather than real newlines), so field values must be
+# extracted marker-to-next-marker rather than end-of-line.
+_MARKER = re.compile(r"\*\*(Timestamp|User Input|AI Response|Context)\*\*:\s*")
+
+_KEY_MAP = {
+    "Timestamp": "timestamp",
+    "User Input": "user_input",
+    "AI Response": "ai_response",
+    "Context": "context",
 }
 
 def _strip_quotes(s: str) -> str:
@@ -833,16 +889,23 @@ def parse_audit_file(markdown: str) -> list[AuditEntry]:
         start = m.end()
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(markdown)
         block = markdown[start:end]
+
+        marker_matches = list(_MARKER.finditer(block))
         fields: dict[str, str] = {}
-        for key, pat in _FIELD_PATS.items():
-            fm = pat.search(block)
-            fields[key] = _strip_quotes(fm.group(1)) if fm else ""
+        for i, mm in enumerate(marker_matches):
+            key = _KEY_MAP[mm.group(1)]
+            value_start = mm.end()
+            value_end = marker_matches[i + 1].start() if i + 1 < len(marker_matches) else len(block)
+            value = _strip_quotes(block[value_start:value_end])
+            # First occurrence of a marker wins, matching prior behavior.
+            fields.setdefault(key, value)
+
         entries.append(AuditEntry(
             index=int(m.group(1)),
-            timestamp=fields["timestamp"],
-            user_input=redact_credentials(fields["user_input"]),
-            ai_response=redact_credentials(fields["ai_response"]),
-            context=fields["context"] or None,
+            timestamp=fields.get("timestamp", ""),
+            user_input=redact_credentials(fields.get("user_input", "")),
+            ai_response=redact_credentials(fields.get("ai_response", "")),
+            context=redact_credentials(fields.get("context", "")) or None,
         ))
     return entries
 ```
@@ -850,7 +913,7 @@ def parse_audit_file(markdown: str) -> list[AuditEntry]:
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_parse_audit.py -v`
-Expected: PASS (2 tests)
+Expected: PASS (6 tests)
 
 - [ ] **Step 6: Commit**
 
