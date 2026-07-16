@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Literal, Optional
+from typing import Literal
 from pydantic import BaseModel
 
 class QuestionOption(BaseModel):
@@ -10,26 +10,26 @@ class QuestionOption(BaseModel):
 
 class Question(BaseModel):
     number: int
-    category: Optional[str] = None
+    category: str | None = None
     text: str
     options: list[QuestionOption]
-    answer: Optional[str] = None
+    answer: str | None = None
 
 class QuestionFile(BaseModel):
     name: str
-    preamble: Optional[str] = None
+    preamble: str | None = None
     questions: list[Question]
     parse_ok: bool
-    raw_markdown: Optional[str] = None
+    raw_markdown: str | None = None
 
 class StageState(BaseModel):
     name: str
     status: Literal["pending", "in_progress", "completed"]
-    note: Optional[str] = None
+    note: str | None = None
 
 class ProjectState(BaseModel):
-    project_type: Optional[str] = None
-    current_stage: Optional[str] = None
+    project_type: str | None = None
+    current_stage: str | None = None
     stages: list[StageState]
 
 class AuditEntry(BaseModel):
@@ -37,4 +37,4 @@ class AuditEntry(BaseModel):
     timestamp: str
     user_input: str
     ai_response: str
-    context: Optional[str] = None
+    context: str | None = None
