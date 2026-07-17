@@ -30,3 +30,9 @@ def test_put_unknown_question_400():
     r = client.put("/projects/ans2/questions/aiplc-docs/strategy-questions.md",
                    json={"answers": {"99": "A"}})
     assert r.status_code == 400
+
+def test_put_non_numeric_key_400():
+    _seed("ans3")
+    r = client.put("/projects/ans3/questions/aiplc-docs/strategy-questions.md",
+                   json={"answers": {"abc": "A"}})
+    assert r.status_code == 400

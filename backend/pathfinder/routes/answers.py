@@ -1,6 +1,7 @@
 # backend/pathfinder/routes/answers.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from pathfinder.models import QuestionFile
 from pathfinder.routes.deps import get_workspace
 
 router = APIRouter()
@@ -8,9 +9,12 @@ router = APIRouter()
 class AnswersBody(BaseModel):
     answers: dict[str, str]
 
-@router.put("/projects/{pid}/questions/{name:path}")
+@router.put("/projects/{pid}/questions/{name:path}", response_model=QuestionFile)
 async def put_answers(pid: str, name: str, body: AnswersBody):
-    answers = {int(k): v for k, v in body.answers.items()}
+    try:
+        answers = {int(k): v for k, v in body.answers.items()}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="question numbers must be integers")
     try:
         return await get_workspace(pid).put_answers(name, answers)
     except FileNotFoundError:
