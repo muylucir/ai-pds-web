@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-slate-50 text-slate-800;
+}
+
+/* Stage-timeline connector line (ported from files/ui/01-dashboard.html <style>). */
+.stage-line::before {
+  content: "";
+  position: absolute;
+  left: 19px;
+  top: 40px;
+  bottom: -8px;
+  width: 2px;
+  background: #e5e7eb;
+}
+.stage-line:last-child::before {
+  display: none;
+}
+
+/* Rendered-document typography (ported from files/ui/03-document-review.html). */
+.doc-content h1 { font-weight: 700; font-size: 1.25rem; margin: 1.25rem 0 0.5rem; }
+.doc-content h2 { font-weight: 700; font-size: 1.1rem; margin: 1.25rem 0 0.5rem; }
+.doc-content h3 { font-weight: 700; font-size: 1.05rem; margin: 1.5rem 0 0.5rem; }
+.doc-content p { margin: 0.5rem 0; line-height: 1.7; }
+.doc-content ul { list-style: disc; margin: 0.5rem 0; padding-left: 1.25rem; }
+.doc-content table { border-collapse: collapse; margin: 0.75rem 0; font-size: 0.85rem; }
+.doc-content th, .doc-content td { border: 1px solid #e2e8f0; padding: 0.4rem 0.6rem; }
