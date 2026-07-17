@@ -7,6 +7,7 @@ router = APIRouter()
 
 class CreateProject(BaseModel):
     project_id: str
+    name: str | None = None
 
 @router.post("/projects")
 async def create_project(body: CreateProject):
@@ -16,5 +17,17 @@ async def create_project(body: CreateProject):
     except KeyError:
         pass
     sandbox = await app_module.make_sandbox(body.project_id)
-    app_module.registry.create(body.project_id, sandbox)
-    return {"project_id": body.project_id}
+    app_module.registry.create(body.project_id, sandbox, name=body.name)
+    return {"project_id": body.project_id, "name": body.name}
+
+@router.get("/projects")
+async def list_projects():
+    # Minimal, in-memory listing only — no created-at/ownership/rich metadata.
+    # Durable project metadata (DynamoDB) is a later MicroVM/prod concern, not
+    # this backend-completion plan.
+    return {
+        "projects": [
+            {"project_id": pid, "name": app_module.registry.get_name(pid)}
+            for pid in app_module.registry.list_ids()
+        ]
+    }
