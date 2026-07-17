@@ -12,12 +12,15 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // A 404 document is treated as an empty document, not an error.
+  // A 404 document is treated as an empty document, not an error; any other
+  // error must still surface (not be coalesced into the empty-doc state).
   const doc = useAsync(
     () => getDocument(projectId).catch((e) => (e instanceof ApiError && e.status === 404 ? "" : Promise.reject(e))),
     [projectId],
   );
   const audit = useAsync(() => getAudit(projectId), [projectId]);
+
+  const docLoadError = doc.error !== null;
 
   async function sendTurn(text: string) {
     setBusy(true);
@@ -42,7 +45,13 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
         {busy && <p className="text-sm text-slate-400 mb-4">AI가 요청을 처리하고 있습니다…</p>}
 
         <div className="grid lg:grid-cols-3 gap-6">
-          <DocumentPanel markdown={doc.data ?? ""} />
+          {docLoadError ? (
+            <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-6">
+              <p className="text-sm text-rose-600">문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
+            </div>
+          ) : (
+            <DocumentPanel markdown={doc.data ?? ""} />
+          )}
           <VerificationSummary entries={audit.data ?? []} />
         </div>
       </main>

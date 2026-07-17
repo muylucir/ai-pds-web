@@ -1333,15 +1333,21 @@ import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
 import { strategyQuestions } from "@/test/fixtures/strategyQuestions";
 import { unparsedQuestions } from "@/test/fixtures/unparsedQuestions";
+import { clarificationQuestions } from "@/test/fixtures/clarificationQuestions";
 import QuestionsPage from "./page";
 
 // next/navigation is not wired in the test renderer; stub the hooks the page uses.
+// `mockSearch` is mutated per-test to simulate the `?file=` param a client-side
+// nav (e.g. the ClarificationBanner's next/link) would set without remounting
+// the page — exactly the scenario the key={active} fix guards against.
+let mockSearch = new URLSearchParams("");
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(""),
+  useSearchParams: () => mockSearch,
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }));
 
 const STRAT = "aiplc-docs/discovery/product-strategy/strategy-questions.md";
+const CLAR = "aiplc-docs/discovery/envision/prfaq-clarification-questions.md";
 
 const params = Promise.resolve({ projectId: "pilot1" });
 
@@ -1405,6 +1411,94 @@ describe("Questions page", () => {
     });
     expect(await screen.findByText(/표준 형식으로 파싱하지 못했습니다/)).toBeInTheDocument();
   });
+
+  // Regression for the stale-state bug: the ClarificationBanner links via
+  // next/link (client-side nav) which changes `?file=` WITHOUT remounting the
+  // page. Before the fix, QuestionForm's answers map — seeded once via a lazy
+  // useState initializer — survived the file switch, so the clarification
+  // file's form showed the PREVIOUS file's selected options. The fix has two
+  // parts: (1) `key={active}` on <QuestionForm>/<RawMarkdownFallback> forces
+  // a remount (and thus a re-seed) whenever the active file changes; (2) the
+  // page tags each `getQuestionFile` result with the `active` path it was
+  // fetched for and only renders once the loaded data's path matches the
+  // CURRENT `active` — because `useAsync` keeps the previous file's `data`
+  // around while the new fetch for the new `active` is still in flight, and
+  // without this guard the fresh-keyed remount would seed itself from that
+  // stale, previous-file data for one render.
+  it("re-seeds QuestionForm from the clarification file's own answers after a client-side file switch (stale-state regression)", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/questions`, () =>
+        HttpResponse.json({ questions: [STRAT, CLAR] }),
+      ),
+      http.get(`${API_BASE_URL}/projects/pilot1/questions/${STRAT}`, () => HttpResponse.json(strategyQuestions)),
+      http.get(`${API_BASE_URL}/projects/pilot1/questions/${CLAR}`, () => HttpResponse.json(clarificationQuestions)),
+    );
+
+    // Start with no ?file= param → defaults to the first non-clarification
+    // file (STRAT), whose Q1 answer is "A".
+    mockSearch = new URLSearchParams("");
+    let rerender!: ReturnType<typeof render>["rerender"];
+    await act(async () => {
+      ({ rerender } = render(<QuestionsPage params={params} />));
+    });
+
+    await screen.findByText(/Q1\. 이 제품을 시장/);
+    expect(
+      screen.getByRole("radio", { checked: true, name: /사내 특화 전문 도구/ }),
+    ).toBeInTheDocument();
+
+    // Simulate the ClarificationBanner's client-side navigation: the search
+    // param changes to the clarification file, but the page component itself
+    // is NOT unmounted (this is what next/link + the App Router do — no full
+    // remount on a same-route search-param change). We mutate the mocked
+    // useSearchParams() return value and re-render the SAME element tree.
+    mockSearch = new URLSearchParams(`file=${encodeURIComponent(CLAR)}`);
+    await act(async () => {
+      rerender(<QuestionsPage params={params} />);
+    });
+
+    // The clarification file's own question must be shown, seeded from ITS
+    // OWN answer ("C" = "아직 정하지 않음 — 파일럿 운영 중 데이터로 결정") —
+    // not a leftover "A" answer carried over from strategy-questions.md's Q1.
+    await screen.findByText(/응답 시간 목표\(SLA\)는 어떻게/);
+    expect(
+      screen.getByRole("radio", { checked: true, name: /아직 정하지 않음/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("radio", { checked: true, name: /30초 이내 응답 목표는 그대로 유지/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a generic load-error state when listing question files fails (non-404)", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/questions`, () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+    await act(async () => {
+      render(<QuestionsPage params={params} />);
+    });
+    expect(
+      await screen.findByText(/질문 목록을 불러오지 못했습니다. 백엔드 연결을 확인하세요\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/아직 답변할 질문이 없습니다/)).not.toBeInTheDocument();
+  });
+
+  it("shows a generic load-error state when a non-404 error occurs loading the active question file", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/questions`, () => HttpResponse.json({ questions: [STRAT] })),
+      http.get(`${API_BASE_URL}/projects/pilot1/questions/${STRAT}`, () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+    await act(async () => {
+      render(<QuestionsPage params={params} />);
+    });
+    expect(
+      await screen.findByText(/질문을 불러오지 못했습니다. 백엔드 연결을 확인하세요\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/질문 파일을 찾을 수 없습니다\./)).not.toBeInTheDocument();
+  });
 });
 ```
 
@@ -1450,10 +1544,21 @@ export default function QuestionsPage({ params }: { params: Promise<{ projectId:
     list.find((p) => !isClarification(p)) ??
     list[0];
 
+  // useAsync only resets `loading`/`error` when deps change — it keeps the
+  // previous `data` around until the new fetch resolves. Tag each result with
+  // the `active` path it was fetched for so we can tell a fresh (current
+  // file's) result apart from a stale one still in flight for a PREVIOUS
+  // `active` (e.g. right after switching files via `?file=`). Rendering the
+  // stale data would key-remount QuestionForm against the WRONG file's
+  // answers, seeding it with the previous file's answer map.
   const file = useAsync(
-    () => (active ? getQuestionFile(projectId, active) : Promise.resolve(null)),
+    () =>
+      active
+        ? getQuestionFile(projectId, active).then((data) => ({ path: active, data }))
+        : Promise.resolve(null),
     [projectId, active],
   );
+  const loadedFile = file.data && file.data.path === active ? file.data.data : null;
 
   async function submitAnswers(answers: Record<string, string>) {
     if (!active) return;
@@ -1487,6 +1592,7 @@ export default function QuestionsPage({ params }: { params: Promise<{ projectId:
   }
 
   const notFound = file.error instanceof ApiError && file.error.status === 404;
+  const fileLoadError = file.error && !notFound;
 
   return (
     <>
@@ -1516,17 +1622,23 @@ export default function QuestionsPage({ params }: { params: Promise<{ projectId:
         )}
 
         {files.loading && <p className="text-sm text-slate-400">불러오는 중…</p>}
+        {files.error && (
+          <p className="text-sm text-rose-600">질문 목록을 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
+        )}
         {notFound && <p className="text-sm text-rose-600">질문 파일을 찾을 수 없습니다.</p>}
+        {fileLoadError && (
+          <p className="text-sm text-rose-600">질문을 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
+        )}
         {submitError && <p className="text-sm text-rose-600 mb-4">{submitError}</p>}
-        {!files.loading && list.length === 0 && (
+        {!files.loading && !files.error && list.length === 0 && (
           <p className="text-sm text-slate-400">아직 답변할 질문이 없습니다.</p>
         )}
 
-        {file.data && file.data.parse_ok && (
-          <QuestionForm file={file.data} onSubmit={submitAnswers} submitting={submitting} />
+        {loadedFile && loadedFile.parse_ok && (
+          <QuestionForm key={active} file={loadedFile} onSubmit={submitAnswers} submitting={submitting} />
         )}
-        {file.data && !file.data.parse_ok && (
-          <RawMarkdownFallback file={file.data} onSubmit={submitFreeText} submitting={submitting} />
+        {loadedFile && !loadedFile.parse_ok && (
+          <RawMarkdownFallback key={active} file={loadedFile} onSubmit={submitFreeText} submitting={submitting} />
         )}
       </main>
     </>
@@ -1534,10 +1646,25 @@ export default function QuestionsPage({ params }: { params: Promise<{ projectId:
 }
 ```
 
+**Note (cross-cutting review fix, applied after initial implementation):** the
+original version had no `key` on `<QuestionForm>`/`<RawMarkdownFallback>` and
+rendered `file.data` directly. Because `QuestionForm` seeds its answers map
+once via a lazy `useState` initializer and the `ClarificationBanner` links via
+`next/link` (a client-side nav that changes `?file=` WITHOUT remounting the
+page), switching to the clarification file kept the previous file's answers
+map — showing wrong pre-selected options and PUTting a stale answers map to
+the clarification file. The fix adds `key={active}` to force a remount per
+file, plus the `loadedFile`/path-tagging guard above (`useAsync` keeps stale
+`data` around while a new fetch is in flight, so `key={active}` alone would
+remount into stale data for one render — the guard prevents that). Also added:
+`files.error` and non-404 `file.error` now render generic Korean load-error
+states instead of the misleading empty/blank states (mirrors the dashboard
+page's error-fallback pattern).
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run "app/projects/[projectId]/questions/page.test.tsx" && npx tsc --noEmit`
-Expected: PASS (4 tests); `tsc` clean.
+Expected: PASS (7 tests); `tsc` clean.
 
 - [ ] **Step 5: Commit**
 
@@ -1897,6 +2024,26 @@ describe("Review page", () => {
     await userEvent.click(screen.getByRole("button", { name: /수정 요청 제출/ }));
     await waitFor(() => expect(body).toEqual({ text: "FAQ에 다국어 지원 추가" }));
   });
+
+  // Regression: a non-404 getDocument error was previously swallowed into
+  // `doc.data ?? ""`, rendering the empty-document state and hiding the
+  // failure. A 500 must surface as a distinct Korean load-error message, not
+  // the "아직 작성된 문서가 없습니다." empty state.
+  it("shows a generic load-error state when getDocument fails with a non-404 error", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/document`, () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
+    );
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    expect(
+      await screen.findByText(/문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/아직 작성된 문서가 없습니다/)).not.toBeInTheDocument();
+  });
 });
 ```
 
@@ -1923,12 +2070,15 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // A 404 document is treated as an empty document, not an error.
+  // A 404 document is treated as an empty document, not an error; any other
+  // error must still surface (not be coalesced into the empty-doc state).
   const doc = useAsync(
     () => getDocument(projectId).catch((e) => (e instanceof ApiError && e.status === 404 ? "" : Promise.reject(e))),
     [projectId],
   );
   const audit = useAsync(() => getAudit(projectId), [projectId]);
+
+  const docLoadError = doc.error !== null;
 
   async function sendTurn(text: string) {
     setBusy(true);
@@ -1953,7 +2103,13 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
         {busy && <p className="text-sm text-slate-400 mb-4">AI가 요청을 처리하고 있습니다…</p>}
 
         <div className="grid lg:grid-cols-3 gap-6">
-          <DocumentPanel markdown={doc.data ?? ""} />
+          {docLoadError ? (
+            <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-6">
+              <p className="text-sm text-rose-600">문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
+            </div>
+          ) : (
+            <DocumentPanel markdown={doc.data ?? ""} />
+          )}
           <VerificationSummary entries={audit.data ?? []} />
         </div>
       </main>
@@ -1962,10 +2118,18 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
 }
 ```
 
+**Note (cross-cutting review fix, applied after initial implementation):** the
+original version coalesced ANY `getDocument` error (not just 404) into
+`doc.data ?? ""`, so a backend outage rendered the empty-document state and
+hid the failure. The fix keeps the 404→"" coalescing but tracks `doc.error`
+separately (`docLoadError`) and, when set, renders a generic Korean
+load-error panel in place of `<DocumentPanel>` instead of the empty state
+(mirrors the dashboard page's error-fallback pattern).
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npx vitest run "app/projects/[projectId]/review/page.test.tsx" && npx tsc --noEmit`
-Expected: PASS (3 tests); `tsc` clean.
+Expected: PASS (4 tests); `tsc` clean.
 
 - [ ] **Step 5: Commit**
 
@@ -2006,7 +2170,7 @@ test("answer a question and submit", async ({ page }) => {
 - [ ] **Step 2: Run the full unit suite**
 
 Run: `cd frontend && npm run test`
-Expected: PASS — every Vitest test from Plan A (Tasks 1–7) and Plan B (Tasks 1–7). Plan B adds: stageProgress ×4, dashboard ×7, dashboard page ×2, questions components ×8, questions page ×4, review components ×5, review page ×3 = 33 new tests. `e2e/` excluded.
+Expected: PASS — every Vitest test from Plan A (Tasks 1–7) and Plan B (Tasks 1–7). Plan B adds: stageProgress ×4, dashboard ×7, dashboard page ×2, questions components ×8, questions page ×7 (incl. the stale-state-on-file-switch and load-error regressions), review components ×5, review page ×4 (incl. the non-404-load-error regression) = 37 new tests (64 total). `e2e/` excluded.
 
 - [ ] **Step 3: Type-check and build**
 
@@ -2038,6 +2202,8 @@ git commit -m "test(frontend): INTEGRATION wizard e2e; full Discovery slice gree
 **Placeholder scan:** No TBD/TODO. The `strategyQuestions` fixture uses a generated tail for Q3–13 but is explicitly annotated that all 13 must be present with `is_other` on the final option and pilot `[Answer]` values; the assertions only depend on Q1/Q2 + counts, so it is not a hidden placeholder. All component/page code shown in full.
 
 **Constraint checks:** No methodology logic — stage names/notes/questions/categories/contradiction copy all come from backend payloads; `stageProgress.ts` only counts. Korean chrome copy ported verbatim from mockups. `parse_ok=false` → raw-markdown fallback; 404/400/409 → typed `ApiError` + Korean states. Approve/revise use sync `postMessage` (Plan A decision) then refetch. `react-markdown` renders without `dangerouslySetInnerHTML` (XSS-safe).
+
+**Cross-cutting fixes (applied post-implementation, whole-branch review):** (1) Task 5's questions page keyed `<QuestionForm>`/`<RawMarkdownFallback>` by `active` and tagged `useAsync` results with the path they were fetched for — without this, a client-side `?file=` switch (e.g. via the `ClarificationBanner`'s `next/link`) kept the previous file's answers map (QuestionForm seeds it once via a lazy `useState` initializer) and could PUT stale answers to the wrong file. (2) Task 5 and Task 7 now mirror the dashboard page's non-404-error fallback: `files.error`/non-404 `file.error` on the questions page, and non-404 `doc.error` on the review page, render a generic Korean load-error message instead of a misleading empty/blank state. Both fixes have regression tests in their respective `page.test.tsx` files (see updated Task 5 / Task 7 test blocks above).
 
 **Depends on:** Plan A merged (scaffold, client, types, SSE helper, `useAsync`, `AppHeader`, MSW harness) + backend Phase 1 + API Completion merged before running against a real backend / e2e. Unit tests mock the API.
 

@@ -31,10 +31,21 @@ export default function QuestionsPage({ params }: { params: Promise<{ projectId:
     list.find((p) => !isClarification(p)) ??
     list[0];
 
+  // useAsync only resets `loading`/`error` when deps change — it keeps the
+  // previous `data` around until the new fetch resolves. Tag each result with
+  // the `active` path it was fetched for so we can tell a fresh (current
+  // file's) result apart from a stale one still in flight for a PREVIOUS
+  // `active` (e.g. right after switching files via `?file=`). Rendering the
+  // stale data would key-remount QuestionForm against the WRONG file's
+  // answers, seeding it with the previous file's answer map.
   const file = useAsync(
-    () => (active ? getQuestionFile(projectId, active) : Promise.resolve(null)),
+    () =>
+      active
+        ? getQuestionFile(projectId, active).then((data) => ({ path: active, data }))
+        : Promise.resolve(null),
     [projectId, active],
   );
+  const loadedFile = file.data && file.data.path === active ? file.data.data : null;
 
   async function submitAnswers(answers: Record<string, string>) {
     if (!active) return;
@@ -68,6 +79,7 @@ export default function QuestionsPage({ params }: { params: Promise<{ projectId:
   }
 
   const notFound = file.error instanceof ApiError && file.error.status === 404;
+  const fileLoadError = file.error && !notFound;
 
   return (
     <>
@@ -97,17 +109,23 @@ export default function QuestionsPage({ params }: { params: Promise<{ projectId:
         )}
 
         {files.loading && <p className="text-sm text-slate-400">불러오는 중…</p>}
+        {files.error && (
+          <p className="text-sm text-rose-600">질문 목록을 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
+        )}
         {notFound && <p className="text-sm text-rose-600">질문 파일을 찾을 수 없습니다.</p>}
+        {fileLoadError && (
+          <p className="text-sm text-rose-600">질문을 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
+        )}
         {submitError && <p className="text-sm text-rose-600 mb-4">{submitError}</p>}
-        {!files.loading && list.length === 0 && (
+        {!files.loading && !files.error && list.length === 0 && (
           <p className="text-sm text-slate-400">아직 답변할 질문이 없습니다.</p>
         )}
 
-        {file.data && file.data.parse_ok && (
-          <QuestionForm file={file.data} onSubmit={submitAnswers} submitting={submitting} />
+        {loadedFile && loadedFile.parse_ok && (
+          <QuestionForm key={active} file={loadedFile} onSubmit={submitAnswers} submitting={submitting} />
         )}
-        {file.data && !file.data.parse_ok && (
-          <RawMarkdownFallback file={file.data} onSubmit={submitFreeText} submitting={submitting} />
+        {loadedFile && !loadedFile.parse_ok && (
+          <RawMarkdownFallback key={active} file={loadedFile} onSubmit={submitFreeText} submitting={submitting} />
         )}
       </main>
     </>

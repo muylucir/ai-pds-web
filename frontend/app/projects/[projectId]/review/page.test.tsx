@@ -62,4 +62,24 @@ describe("Review page", () => {
     await userEvent.click(screen.getByRole("button", { name: /수정 요청 제출/ }));
     await waitFor(() => expect(body).toEqual({ text: "FAQ에 다국어 지원 추가" }));
   });
+
+  // Regression: a non-404 getDocument error was previously swallowed into
+  // `doc.data ?? ""`, rendering the empty-document state and hiding the
+  // failure. A 500 must surface as a distinct Korean load-error message, not
+  // the "아직 작성된 문서가 없습니다." empty state.
+  it("shows a generic load-error state when getDocument fails with a non-404 error", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/document`, () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
+    );
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    expect(
+      await screen.findByText(/문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/아직 작성된 문서가 없습니다/)).not.toBeInTheDocument();
+  });
 });
