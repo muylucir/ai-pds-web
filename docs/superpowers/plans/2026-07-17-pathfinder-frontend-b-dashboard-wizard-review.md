@@ -1326,7 +1326,7 @@ git commit -m "feat(frontend): question wizard components + react-markdown fallb
 ```tsx
 // frontend/app/projects/[projectId]/questions/page.test.tsx
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -1351,7 +1351,13 @@ describe("Questions page", () => {
       http.get(`${API_BASE_URL}/projects/pilot1/questions`, () => HttpResponse.json({ questions: [STRAT] })),
       http.get(`${API_BASE_URL}/projects/pilot1/questions/${STRAT}`, () => HttpResponse.json(strategyQuestions)),
     );
-    render(<QuestionsPage params={params} />);
+    // `use(params)` suspends on the first render because the test's plain
+    // Promise.resolve(...) params (unlike Next's internally-tracked params
+    // thenable) isn't pre-marked as settled. Wrapping the initial render in
+    // act() lets that Suspense retry flush before we start querying/waiting.
+    await act(async () => {
+      render(<QuestionsPage params={params} />);
+    });
     expect(await screen.findByText(/Q1\. 이 제품을 시장/)).toBeInTheDocument();
   });
 
@@ -1365,7 +1371,9 @@ describe("Questions page", () => {
         return HttpResponse.json(strategyQuestions);
       }),
     );
-    render(<QuestionsPage params={params} />);
+    await act(async () => {
+      render(<QuestionsPage params={params} />);
+    });
     await screen.findByText(/Q1\. 이 제품을 시장/);
     await userEvent.click(screen.getByRole("button", { name: /답변 제출/ }));
     await waitFor(() => expect(putBody).toBeTruthy());
@@ -1380,7 +1388,9 @@ describe("Questions page", () => {
       ),
       http.get(`${API_BASE_URL}/projects/pilot1/questions/${STRAT}`, () => HttpResponse.json(strategyQuestions)),
     );
-    render(<QuestionsPage params={params} />);
+    await act(async () => {
+      render(<QuestionsPage params={params} />);
+    });
     expect(await screen.findByText(/모순이 감지되어 게이트가 보류/)).toBeInTheDocument();
   });
 
@@ -1390,7 +1400,9 @@ describe("Questions page", () => {
       http.get(`${API_BASE_URL}/projects/pilot1/questions`, () => HttpResponse.json({ questions: [FREE] })),
       http.get(`${API_BASE_URL}/projects/pilot1/questions/${FREE}`, () => HttpResponse.json(unparsedQuestions)),
     );
-    render(<QuestionsPage params={params} />);
+    await act(async () => {
+      render(<QuestionsPage params={params} />);
+    });
     expect(await screen.findByText(/표준 형식으로 파싱하지 못했습니다/)).toBeInTheDocument();
   });
 });
