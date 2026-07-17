@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 import pathfinder.app as app_module
 from pathfinder.sandbox.local import LocalSandbox
 from pathfinder.sandbox.base import AgentEvent
+from pathfinder.parsers.state import parse_state_file
 
 FIX = Path(__file__).parent / "fixtures"
 client = TestClient(app_module.app)
@@ -26,7 +27,7 @@ def _state_md(completed_count):
         lines.append(f"- [{mark}] {name}")
     return "\n".join(lines) + "\n"
 
-def test_replay_advances_state_like_pilot1():
+def test_replay_advances_state_like_pilot1(monkeypatch):
     # Agent script: each user message advances the workspace by one completed stage.
     counter = {"n": 1}
     def script(text, sb):
@@ -44,7 +45,7 @@ def test_replay_advances_state_like_pilot1():
         sb._resolve("aiplc-docs").mkdir(parents=True, exist_ok=True)
         sb._resolve("aiplc-docs/aiplc-state.md").write_text(_state_md(1), encoding="utf-8")
         return sb
-    app_module.make_sandbox = make
+    monkeypatch.setattr(app_module, "make_sandbox", make)
 
     client.post("/projects", json={"project_id": "replay"})
     # advance through all remaining stages
@@ -55,3 +56,10 @@ def test_replay_advances_state_like_pilot1():
     names = [s["name"] for s in state["stages"]]
     assert names == STAGES
     assert all(s["status"] == "completed" for s in state["stages"])
+
+def test_stages_match_real_pilot1_fixture():
+    # Guard against STAGES drifting from the real pilot1 artifact — the §7
+    # reproducibility guarantee is meant to track the actual fixture, not a copy.
+    md = (FIX / "aiplc-state.md").read_text(encoding="utf-8")
+    real_names = [s.name for s in parse_state_file(md).stages]
+    assert real_names == STAGES
