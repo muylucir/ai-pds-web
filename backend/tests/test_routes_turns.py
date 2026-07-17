@@ -37,3 +37,24 @@ def test_sse_stream_emits_frames(monkeypatch):
     assert "working" in body
     assert "ok" in body
     assert '"kind":"done"' in body.replace(" ", "")
+
+def test_message_redacts_credentials_in_event_text(monkeypatch):
+    def script(text, sb):
+        return [AgentEvent(kind="message", text="key AKIAIOSFODNN7EXAMPLE here"),
+                AgentEvent(kind="done")]
+    _install_scripted(monkeypatch, "turnred1", script)
+    r = client.post("/projects/turnred1/message", json={"text": "go"})
+    assert r.status_code == 200
+    joined = " ".join(e.get("text") or "" for e in r.json()["events"])
+    assert "AKIA" not in joined
+    assert "[CREDENTIAL REDACTED]" in joined
+
+def test_sse_redacts_credentials_in_event_text(monkeypatch):
+    def script(text, sb):
+        return [AgentEvent(kind="message", text="key AKIAIOSFODNN7EXAMPLE here"),
+                AgentEvent(kind="done")]
+    _install_scripted(monkeypatch, "turnred2", script)
+    with client.stream("GET", "/projects/turnred2/events", params={"text": "go"}) as resp:
+        body = "".join(chunk for chunk in resp.iter_text())
+    assert "AKIA" not in body
+    assert "[CREDENTIAL REDACTED]" in body

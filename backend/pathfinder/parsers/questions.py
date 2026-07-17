@@ -1,7 +1,10 @@
 # backend/pathfinder/parsers/questions.py
 from __future__ import annotations
+import logging
 import re
 from pathfinder.models import Question, QuestionOption, QuestionFile
+
+logger = logging.getLogger(__name__)
 
 _Q_HEADER = re.compile(r"^#{2,3}\s+Question\s+(\d+)\s*$", re.MULTILINE)
 _CAT_HEADER = re.compile(r"^##\s+(?!Question\b)(.+?)\s*$", re.MULTILINE)
@@ -13,6 +16,7 @@ def parse_question_file(name: str, markdown: str) -> QuestionFile:
     try:
         return _parse(name, markdown)
     except Exception:
+        logger.warning("parse_question_file falling back to raw markdown for %s", name, exc_info=True)
         return QuestionFile(name=name, preamble=None, questions=[],
                             parse_ok=False, raw_markdown=markdown)
 
