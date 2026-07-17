@@ -1073,6 +1073,24 @@ async def test_list_files_glob(tmp_path: Path):
     await sb.write_file("aiplc-docs/b-questions.md", "y")
     found = sorted(await sb.list_files("aiplc-docs/*-questions.md"))
     assert found == ["aiplc-docs/a-questions.md", "aiplc-docs/b-questions.md"]
+
+async def test_list_files_rejects_traversal_glob(tmp_path: Path):
+    sb = LocalSandbox(root=tmp_path)
+    await sb.start()
+    with pytest.raises(ValueError):
+        await sb.list_files("../*")
+
+async def test_read_file_rejects_traversal(tmp_path: Path):
+    sb = LocalSandbox(root=tmp_path)
+    await sb.start()
+    with pytest.raises(ValueError):
+        await sb.read_file("../secret.md")
+
+async def test_rejects_absolute_path(tmp_path: Path):
+    sb = LocalSandbox(root=tmp_path)
+    await sb.start()
+    with pytest.raises(ValueError):
+        await sb.write_file("/etc/evil.md", "x")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1116,8 +1134,19 @@ class LocalSandbox(Sandbox):
         p.write_text(content, encoding="utf-8")
 
     async def list_files(self, glob: str) -> list[str]:
+        # Same traversal guard as _resolve: a client glob like "../*" would
+        # otherwise enumerate files OUTSIDE root (filename disclosure). `*` and
+        # other wildcards are literal, non-`..` path segments, so legitimate
+        # patterns like "aiplc-docs/*-questions.md" still pass.
+        if glob.startswith("/") or ".." in Path(glob).parts:
+            raise ValueError(f"unsafe glob: {glob}")
         return [str(p.relative_to(self.root)) for p in self.root.glob(glob) if p.is_file()]
 
+    # Deliberate: this is an async-generator function (uses `yield`), even though
+    # the Sandbox ABC declares send_message as a plain method returning
+    # AsyncIterator. Calling an async-gen function returns an AsyncIterator
+    # synchronously (no await needed), so `async for event in
+    # sandbox.send_message(text)` works. Do not "fix" this to a plain async def.
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
         for event in self._script(text, self):
             yield event
@@ -1129,7 +1158,7 @@ class LocalSandbox(Sandbox):
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_local_sandbox.py -v`
-Expected: PASS (5 tests)
+Expected: PASS (8 tests)
 
 - [ ] **Step 5: Commit**
 
