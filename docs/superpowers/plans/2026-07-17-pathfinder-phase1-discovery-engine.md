@@ -1337,13 +1337,15 @@ git commit -m "feat: Workspace facade and in-memory project registry"
 **Files:**
 - Create: `backend/pathfinder/app.py`
 - Create: `backend/pathfinder/routes/__init__.py`
+- Create: `backend/pathfinder/routes/deps.py` (shared `get_workspace(pid)` helper — used by artifacts.py here and by answers.py/turns.py in Tasks 12–13, so the "get workspace or 404" logic lives in one place instead of being duplicated three times)
 - Create: `backend/pathfinder/routes/projects.py`
 - Create: `backend/pathfinder/routes/artifacts.py`
+- Create: `backend/tests/conftest.py` (autouse fixture that ensures a usable event loop before each test; pytest-asyncio auto mode leaves the loop unset after async tests, which breaks the sync seed helpers' `asyncio.run`/loop access on some orderings)
 - Test: `backend/tests/test_routes_artifacts.py`
 
 **Interfaces:**
 - Consumes: `ProjectRegistry`, `Workspace`, `LocalSandbox`.
-- Produces: FastAPI app with a module-level `registry = ProjectRegistry()` and a `make_sandbox` hook (defaults to a `LocalSandbox` in a temp dir; overridden in later MicroVM plan). Routes:
+- Produces: FastAPI app with a module-level `registry = ProjectRegistry()` and a `make_sandbox` hook (defaults to a `LocalSandbox` in a temp dir; overridden in later MicroVM plan). A shared `routes/deps.py::get_workspace(pid) -> Workspace` raises `HTTPException(404)` on unknown project; all read/write/turn routes use it. Routes:
   - `POST /projects` body `{project_id: str}` → creates workspace, returns `{project_id}`. 409 if exists.
   - `GET /projects/{pid}/state` → `ProjectState` JSON. 404 if project unknown.
   - `GET /projects/{pid}/audit` → `list[AuditEntry]`.
@@ -1371,7 +1373,9 @@ def _create_and_seed(pid):
             (FIX / "aiplc-state.md").read_text(encoding="utf-8"))
         await ws.sandbox.write_file("aiplc-docs/strategy-questions.md",
             (FIX / "strategy-questions.md").read_text(encoding="utf-8"))
-    asyncio.get_event_loop().run_until_complete(seed())
+    # asyncio.run — NOT get_event_loop().run_until_complete (deprecated on 3.11
+    # and conflicts with pytest-asyncio's managed loop; see conftest.py note).
+    asyncio.run(seed())
 
 def test_create_project_conflict():
     client.post("/projects", json={"project_id": "dup"})
@@ -1454,36 +1458,64 @@ async def create_project(body: CreateProject):
 ```
 
 ```python
-# backend/pathfinder/routes/artifacts.py
-from fastapi import APIRouter, HTTPException
+# backend/pathfinder/routes/deps.py
+# Shared "get workspace or 404" helper — used by artifacts.py, answers.py,
+# and turns.py so the logic isn't duplicated three times.
+from fastapi import HTTPException
 from pathfinder import app as app_module
+from pathfinder.workspace import Workspace
 
-router = APIRouter()
-
-def _ws(pid: str):
+def get_workspace(pid: str) -> Workspace:
     try:
         return app_module.registry.get(pid)
     except KeyError:
         raise HTTPException(status_code=404, detail="unknown project")
+```
+
+```python
+# backend/pathfinder/routes/artifacts.py
+from fastapi import APIRouter, HTTPException
+from pathfinder.routes.deps import get_workspace
+
+router = APIRouter()
 
 @router.get("/projects/{pid}/state")
 async def get_state(pid: str):
-    return await _ws(pid).get_state()
+    return await get_workspace(pid).get_state()
 
 @router.get("/projects/{pid}/audit")
 async def get_audit(pid: str):
-    return await _ws(pid).get_audit()
+    return await get_workspace(pid).get_audit()
 
 @router.get("/projects/{pid}/document")
 async def get_document(pid: str):
-    return {"markdown": await _ws(pid).get_document()}
+    return {"markdown": await get_workspace(pid).get_document()}
 
 @router.get("/projects/{pid}/questions/{name:path}")
 async def get_questions(pid: str, name: str):
     try:
-        return await _ws(pid).get_questions(name)
+        return await get_workspace(pid).get_questions(name)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="question file not found")
+```
+
+```python
+# backend/tests/conftest.py
+import asyncio
+import pytest
+
+@pytest.fixture(autouse=True)
+def _ensure_event_loop():
+    # pytest-asyncio auto mode calls set_event_loop(None) during async-test
+    # teardown, leaving the thread with no loop; a later sync seed helper's
+    # asyncio.run / loop access then raises RuntimeError depending on test
+    # order. Ensure a usable loop before every test so standalone and
+    # full-suite runs behave identically.
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    yield
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1526,7 +1558,9 @@ client = TestClient(app)
 def _seed(pid):
     client.post("/projects", json={"project_id": pid})
     ws = registry.get(pid)
-    asyncio.get_event_loop().run_until_complete(
+    # Use asyncio.run (not get_event_loop().run_until_complete) — the latter is
+    # deprecated on 3.11 and conflicts with pytest-asyncio's managed loop.
+    asyncio.run(
         ws.sandbox.write_file("aiplc-docs/strategy-questions.md",
             (FIX / "strategy-questions.md").read_text(encoding="utf-8")))
 
@@ -1557,24 +1591,18 @@ Expected: FAIL with `ModuleNotFoundError`
 # backend/pathfinder/routes/answers.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from pathfinder import app as app_module
+from pathfinder.routes.deps import get_workspace
 
 router = APIRouter()
 
 class AnswersBody(BaseModel):
     answers: dict[str, str]
 
-def _ws(pid: str):
-    try:
-        return app_module.registry.get(pid)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="unknown project")
-
 @router.put("/projects/{pid}/questions/{name:path}")
 async def put_answers(pid: str, name: str, body: AnswersBody):
     answers = {int(k): v for k, v in body.answers.items()}
     try:
-        return await _ws(pid).put_answers(name, answers)
+        return await get_workspace(pid).put_answers(name, answers)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="question file not found")
     except KeyError as e:
@@ -1667,10 +1695,10 @@ Expected: FAIL with `ModuleNotFoundError`
 
 ```python
 # backend/pathfinder/routes/turns.py
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
-from pathfinder import app as app_module
+from pathfinder.routes.deps import get_workspace
 from pathfinder.sandbox.base import TurnResult
 
 router = APIRouter()
@@ -1678,21 +1706,15 @@ router = APIRouter()
 class MessageBody(BaseModel):
     text: str
 
-def _ws(pid: str):
-    try:
-        return app_module.registry.get(pid)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="unknown project")
-
 @router.post("/projects/{pid}/message")
 async def post_message(pid: str, body: MessageBody):
-    ws = _ws(pid)
+    ws = get_workspace(pid)
     events = [e async for e in ws.sandbox.send_message(body.text)]
     return TurnResult(events=events)
 
 @router.get("/projects/{pid}/events")
 async def stream_events(pid: str, text: str):
-    ws = _ws(pid)
+    ws = get_workspace(pid)
     async def gen():
         async for event in ws.sandbox.send_message(text):
             yield {"data": event.model_dump_json()}
@@ -1731,7 +1753,7 @@ git commit -m "feat: turn relay and SSE event stream"
 
 ```python
 # backend/tests/test_golden_path_replay.py
-import asyncio, tempfile
+import tempfile
 from pathlib import Path
 from fastapi.testclient import TestClient
 import pathfinder.app as app_module
@@ -1762,7 +1784,6 @@ def test_replay_advances_state_like_pilot1():
     # Agent script: each user message advances the workspace by one completed stage.
     counter = {"n": 1}
     def script(text, sb):
-        asyncio.get_event_loop()  # ensure loop exists
         counter["n"] += 1
         # write synchronously via the sandbox's resolve (LocalSandbox is on disk)
         p = sb._resolve("aiplc-docs/aiplc-state.md")
