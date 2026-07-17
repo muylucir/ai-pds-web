@@ -23,3 +23,6 @@ app.include_router(artifacts.router)
 
 from pathfinder.routes import answers  # noqa: E402
 app.include_router(answers.router)
+
+from pathfinder.routes import turns  # noqa: E402
+app.include_router(turns.router)
