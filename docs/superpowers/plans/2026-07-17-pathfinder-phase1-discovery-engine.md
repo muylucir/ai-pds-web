@@ -1578,6 +1578,13 @@ def test_put_unknown_question_400():
     r = client.put("/projects/ans2/questions/aiplc-docs/strategy-questions.md",
                    json={"answers": {"99": "A"}})
     assert r.status_code == 400
+
+def test_put_non_numeric_key_400():
+    # A non-numeric answer key must yield a clean 400, not an unhandled 500.
+    _seed("ans3")
+    r = client.put("/projects/ans3/questions/aiplc-docs/strategy-questions.md",
+                   json={"answers": {"abc": "A"}})
+    assert r.status_code == 400
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1591,6 +1598,7 @@ Expected: FAIL with `ModuleNotFoundError`
 # backend/pathfinder/routes/answers.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from pathfinder.models import QuestionFile
 from pathfinder.routes.deps import get_workspace
 
 router = APIRouter()
@@ -1598,9 +1606,14 @@ router = APIRouter()
 class AnswersBody(BaseModel):
     answers: dict[str, str]
 
-@router.put("/projects/{pid}/questions/{name:path}")
+@router.put("/projects/{pid}/questions/{name:path}", response_model=QuestionFile)
 async def put_answers(pid: str, name: str, body: AnswersBody):
-    answers = {int(k): v for k, v in body.answers.items()}
+    # Guard int() BEFORE touching the workspace so a non-numeric key yields a
+    # clean 400, not an unhandled 500 on this public write endpoint.
+    try:
+        answers = {int(k): v for k, v in body.answers.items()}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="question numbers must be integers")
     try:
         return await get_workspace(pid).put_answers(name, answers)
     except FileNotFoundError:
@@ -1618,7 +1631,7 @@ app.include_router(answers.router)
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_routes_answers.py -v`
-Expected: PASS (2 tests)
+Expected: PASS (3 tests)
 
 - [ ] **Step 5: Commit**
 
