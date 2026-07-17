@@ -38,16 +38,12 @@ class MicroVMSandbox(Sandbox):
         self._harness: HarnessLike | None = None
         self._boot_lock = asyncio.Lock()
         self._turn_active = False
-        self.input_holder: str | None = None
 
     async def start(self) -> None:
         # Lazy: do NOT boot here. A project can exist with no live MicroVM until
         # first needed. "Not yet booted" == self._handle is None.
         self._handle = None
         self._harness = None
-
-    def set_input_holder(self, holder: str | None) -> None:
-        self.input_holder = holder
 
     async def _ensure_ready(self) -> HarnessLike:
         async with self._boot_lock:

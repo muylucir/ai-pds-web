@@ -13,6 +13,17 @@ class TurnResult(BaseModel):
     events: list[AgentEvent]
 
 class Sandbox(ABC):
+    # Soft "current input holder" hint (design §4): advisory metadata about who
+    # holds the input turn in a facilitated session. Concrete no-op default so
+    # every implementation (LocalSandbox, MicroVMSandbox) is polymorphically
+    # safe — a route may read/set it off any Sandbox without AttributeError.
+    # NOT enforcement and NOT turn serialization (that is send_message's busy
+    # signal); purely advisory.
+    input_holder: str | None = None
+
+    def set_input_holder(self, holder: str | None) -> None:
+        self.input_holder = holder
+
     @abstractmethod
     async def start(self) -> None: ...
     @abstractmethod
