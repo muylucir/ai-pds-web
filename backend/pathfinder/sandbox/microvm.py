@@ -1,10 +1,14 @@
 # backend/pathfinder/sandbox/microvm.py
 from __future__ import annotations
 import asyncio
+import fnmatch
+from pathlib import PurePosixPath
 from typing import AsyncIterator, Callable, Protocol
 from pathfinder.sandbox.base import Sandbox, AgentEvent
 from pathfinder.sandbox.pathsafe import reject_unsafe
 from pathfinder.sandbox.microvm_control import MicroVMController, BootSpec, VMHandle
+from pathfinder.sandbox.s3store import S3StoreLike
+
 
 class HarnessLike(Protocol):
     def send_message(self, text: str) -> AsyncIterator[AgentEvent]: ...
@@ -13,14 +17,34 @@ class HarnessLike(Protocol):
     async def list_files(self, glob: str) -> list[str]: ...
     async def heartbeat(self) -> bool: ...
 
-class MicroVMSandbox(Sandbox):
-    """Real sandbox: boots a Claude Code MicroVM (with aiplc-rules baked into
-    the image) and relays turns over the harness. Implements the Sandbox ABC
-    exactly, so it drops into make_sandbox with zero route changes.
 
-    Part 1 scope: file ops lazily boot the VM and use the live harness. Part 2
-    reroutes not-booted file ops to S3 and syncs after each turn. No
-    methodology/resume logic lives here — session-continuity is the rule's job.
+def _glob_prefix(glob: str) -> str:
+    """The leading static (wildcard-free) directory portion of a glob, used as
+    the S3 list prefix. e.g. 'aiplc-docs/**/*-questions.md' -> 'aiplc-docs/',
+    'aiplc-docs/audit.md' -> 'aiplc-docs/audit.md', '*.md' -> ''."""
+    parts = PurePosixPath(glob).parts
+    static: list[str] = []
+    for part in parts:
+        if any(ch in part for ch in "*?["):
+            break
+        static.append(part)
+    prefix = "/".join(static)
+    if not static:                       # glob starts with a wildcard, e.g. '*.md'
+        return ""
+    if len(static) == len(parts):        # no wildcard at all: a literal path key
+        return prefix
+    return prefix + "/"                   # static leading dirs before a wildcard
+
+
+class MicroVMSandbox(Sandbox):
+    """Real sandbox: boots a Claude Code MicroVM (aiplc-rules baked into the
+    image) for turns, and uses a durable S3 store as the source of truth for
+    all file-as-contract ops. File ops NEVER boot the VM (true laziness): a
+    project's aiplc-docs is read/written against S3 with no live MicroVM. The
+    VM boots only for send_message (a turn). After each turn the workspace is
+    synced VM -> S3 (Task 4); on resume/recovery S3-newer files are pushed
+    S3 -> VM (Tasks 5/6). No methodology/resume logic lives here — the
+    session-continuity rule resumes itself by reading aiplc-state.md.
     """
 
     def __init__(
@@ -29,21 +53,39 @@ class MicroVMSandbox(Sandbox):
         controller: MicroVMController,
         spec: BootSpec,
         harness_factory: Callable[[VMHandle], HarnessLike],
+        s3: S3StoreLike,
     ):
         self.project_id = project_id
         self._controller = controller
         self._spec = spec
         self._harness_factory = harness_factory
+        self._s3 = s3
         self._handle: VMHandle | None = None
         self._harness: HarnessLike | None = None
         self._boot_lock = asyncio.Lock()
         self._turn_active = False
 
     async def start(self) -> None:
-        # Lazy: do NOT boot here. A project can exist with no live MicroVM until
-        # first needed. "Not yet booted" == self._handle is None.
+        # Lazy: do NOT boot. "Not yet booted" == self._handle is None.
         self._handle = None
         self._harness = None
+
+    # ---- file-as-contract ops: ALWAYS durable S3, never boot ----
+
+    async def read_file(self, rel_path: str) -> str:
+        reject_unsafe(rel_path)
+        return await self._s3.get(rel_path)
+
+    async def write_file(self, rel_path: str, content: str) -> None:
+        reject_unsafe(rel_path)
+        await self._s3.put(rel_path, content)
+
+    async def list_files(self, glob: str) -> list[str]:
+        reject_unsafe(glob)
+        keys = await self._s3.list(_glob_prefix(glob))
+        return sorted(k for k in keys if fnmatch.fnmatch(k, glob))
+
+    # ---- turn relay: boots the VM (Task 4 adds post-turn sync) ----
 
     async def _ensure_ready(self) -> HarnessLike:
         async with self._boot_lock:
@@ -56,24 +98,7 @@ class MicroVMSandbox(Sandbox):
             assert self._harness is not None
             return self._harness
 
-    async def read_file(self, rel_path: str) -> str:
-        reject_unsafe(rel_path)
-        harness = await self._ensure_ready()
-        return await harness.read_file(rel_path)
-
-    async def write_file(self, rel_path: str, content: str) -> None:
-        reject_unsafe(rel_path)
-        harness = await self._ensure_ready()
-        await harness.write_file(rel_path, content)
-
-    async def list_files(self, glob: str) -> list[str]:
-        reject_unsafe(glob)
-        harness = await self._ensure_ready()
-        return await harness.list_files(glob)
-
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
-        # Single Claude Code session per project: serialize turns. A concurrent
-        # turn gets a clear soft busy signal (no hard queue).
         if self._turn_active:
             yield AgentEvent(kind="error", text="turn already in progress")
             return
@@ -82,7 +107,7 @@ class MicroVMSandbox(Sandbox):
             harness = await self._ensure_ready()
             async for event in harness.send_message(text):
                 yield event
-            # Part 2 hook: after the terminal event, sync workspace -> S3 here.
+            # Part 2 hook (Task 4): after the terminal event, sync workspace -> S3.
         finally:
             self._turn_active = False
 

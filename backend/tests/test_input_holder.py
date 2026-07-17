@@ -1,6 +1,5 @@
 # backend/tests/test_input_holder.py
 from pathlib import Path
-import pytest
 from pathfinder.sandbox.local import LocalSandbox
 from pathfinder.sandbox.microvm import MicroVMSandbox
 from pathfinder.sandbox.microvm_control import BootSpec, FakeMicroVMController
@@ -26,11 +25,6 @@ async def test_local_sandbox_inherits_input_holder_default(tmp_path: Path):
     sb.set_input_holder("facilitator-1")
     assert sb.input_holder == "facilitator-1"
 
-@pytest.mark.skip(
-    reason="gated behind Task 3 (brief Step 2 note): MicroVMSandbox.__init__ "
-    "does not yet accept s3= (that constructor change lands with Task 3's "
-    "not-booted-ops S3 reroute). Re-enable once Task 3 lands."
-)
 async def test_microvm_sandbox_still_supports_input_holder():
     sb = _microvm()
     await sb.start()
