@@ -67,3 +67,36 @@ async def test_sync_to_s3_rejects_unsafe_key():
     with pytest.raises(ValueError):
         await sb._sync_workspace_to_s3(harness)
     assert s3.blobs == {}                              # never synced
+
+async def test_expiry_midsession_recovers_with_full_restore():
+    sb, ctrl, harness, s3 = _sandbox()
+    await sb.start()
+    # A turn produced durable state (synced to S3 by Task 4).
+    _ = [e async for e in sb.send_message("boot")]
+    await sb.write_file("aiplc-docs/aiplc-state.md", "stage: Solution Analysis")
+    await sb.write_file("aiplc-docs/audit.md", "40 entries")
+    first_vm = sb._handle.vm_id
+    # The VM expires (8h cap) or crashes.
+    ctrl.simulate_expiry(sb._handle)
+    # Next turn: transparent recovery — fresh boot + full restore from S3.
+    _ = [e async for e in sb.send_message("계속 진행")]
+    assert ctrl.boot_calls == 2                     # a NEW VM was booted
+    assert sb._handle.vm_id != first_vm             # genuinely fresh, not the dead one
+    # The fresh VM's FS was fully restored from durable S3:
+    assert harness.files["aiplc-docs/aiplc-state.md"] == "stage: Solution Analysis"
+    assert harness.files["aiplc-docs/audit.md"] == "40 entries"
+
+async def test_recovery_restores_state_file_for_the_rule_to_resume():
+    # The backend restores aiplc-state.md verbatim; the session-continuity RULE
+    # (running in the fresh VM) reads it and resumes. Backend does NOT parse it.
+    sb, ctrl, harness, s3 = _sandbox()
+    await sb.start()
+    await sb.write_file("aiplc-docs/aiplc-state.md", "stage: Envision\nnext: PR/FAQ")
+    _ = [e async for e in sb.send_message("boot")]  # boot -> restore pushes state in
+    assert harness.files["aiplc-docs/aiplc-state.md"] == "stage: Envision\nnext: PR/FAQ"
+
+def test_backend_has_no_methodology_resume_logic():
+    # Lock the "no resume logic in the backend" invariant: the sandbox exposes
+    # no state-machine/resume entry points — recovery is a blind file copy.
+    for forbidden in ("resume_from_state", "parse_state", "advance_stage", "_continue_session"):
+        assert not hasattr(MicroVMSandbox, forbidden)
