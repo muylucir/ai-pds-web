@@ -839,6 +839,95 @@ async def test_only_sync_subtrees_are_pushed():
 Run: `cd backend && python -m pytest tests/test_microvm_persistence.py -v -k "sync or after"`
 Expected: FAIL — `KeyError: 'aiplc-docs/aiplc-state.md'` in `s3.blobs` (nothing synced yet).
 
+**Known latent bug this task's tests will ALSO surface — fix it in the same
+pass (do not defer): `FakeHarness.list_files` (`backend/tests/fakes/in_memory_harness.py`,
+introduced in the Part-1 plan) matches globs via plain `fnmatch.fnmatch(path, glob)`.
+`fnmatch` treats `'**'` as requiring at least one literal `/` after it, so
+`fnmatch.fnmatch('aiplc-docs/audit.md', 'aiplc-docs/**/*')` is `False` — a
+**top-level** file under a `**`-globbed directory is silently NOT matched; only
+files nested two-or-more segments deep match. The production harness this fake
+stands in for is backed by a real filesystem (`pathlib.Path.glob`), whose `'**'`
+already matches zero-or-more segments — i.e. it DOES match top-level files
+(`Path.glob('aiplc-docs/**/*')` returns `aiplc-docs/audit.md`). So the fake
+diverges from the thing it fakes, specifically for `_SYNC_GLOBS =
+("aiplc-docs/**/*", "prototype/**/*")` — exactly this task's sync globs — and
+exactly the shape of every fixture this task's own tests use
+(`aiplc-docs/aiplc-state.md`, `aiplc-docs/audit.md`, `prototype/app.py`, all one
+segment deep). Left unfixed, `test_turn_syncs_agent_written_files_to_s3`,
+`test_route_read_after_turn_sees_synced_state`, and
+`test_only_sync_subtrees_are_pushed` all fail at Step 4 with the sync
+implemented correctly but enumerating `[]` — and, more importantly, real
+top-level files like `aiplc-docs/aiplc-state.md` would never sync to S3 in
+production, silently breaking Task 5/6 recovery for exactly the file the whole
+session-continuity resume depends on.
+
+Fix `backend/tests/fakes/in_memory_harness.py` to give `'**'` `pathlib.Path.glob`
+semantics (matches zero-or-more path segments, so it matches both a top-level
+and a nested file) while leaving plain (non-`'**'`) globs — e.g.
+`'aiplc-docs/*-questions.md'` — on unchanged `fnmatch.fnmatch` behavior (the
+existing `sandbox_contract.assert_list_glob_returns_relative_posix` test locks
+that a single-level glob still excludes `audit.md`; do not regress it):
+
+```python
+# backend/tests/fakes/in_memory_harness.py
+from __future__ import annotations
+import fnmatch
+from typing import AsyncIterator
+from pathfinder.sandbox.base import AgentEvent
+
+def _matches_glob(path: str, glob: str) -> bool:
+    """fnmatch-based glob matching that treats '**' with pathlib.Path.glob
+    semantics: '**' matches ZERO or more path segments, so 'dir/**/*' matches
+    both a direct child ('dir/audit.md') and a nested file
+    ('dir/sub/audit.md'). Plain fnmatch.fnmatch requires '**' to consume at
+    least one literal '/', so it silently misses top-level files under a
+    '**'-globbed directory — a real bug this fixes (the production harness is
+    backed by a real filesystem and pathlib.Path.glob, whose '**' already
+    matches top-level files; this in-memory fake must match the same globs
+    the same way). Globs without '**' fall back to plain fnmatch, unchanged,
+    so existing single-level glob behavior (e.g. 'aiplc-docs/*-questions.md')
+    is preserved exactly."""
+    if "**" not in glob:
+        return fnmatch.fnmatch(path, glob)
+    prefix, _, suffix = glob.partition("**")
+    suffix = suffix.lstrip("/") or "*"
+    return path.startswith(prefix) and fnmatch.fnmatch(path[len(prefix):], suffix)
+
+class FakeHarness:
+    """In-memory object with the HarnessClient method surface, for
+    MicroVMSandbox unit tests (no HTTP). `events_for` maps a message text to a
+    canned event list; the default is an echo turn ending in `done`."""
+
+    def __init__(self, events_for=None):
+        self.files: dict[str, str] = {}
+        self._events_for = events_for or (
+            lambda text: [
+                AgentEvent(kind="message", text=f"echo: {text}"),
+                AgentEvent(kind="done"),
+            ]
+        )
+
+    async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
+        for ev in self._events_for(text):
+            yield ev
+
+    async def read_file(self, rel_path: str) -> str:
+        if rel_path not in self.files:
+            raise FileNotFoundError(rel_path)
+        return self.files[rel_path]
+
+    async def write_file(self, rel_path: str, content: str) -> None:
+        self.files[rel_path] = content
+
+    async def list_files(self, glob: str) -> list[str]:
+        return sorted(p for p in self.files if _matches_glob(p, glob))
+
+    async def heartbeat(self) -> bool:
+        return True
+```
+
+Run `cd backend && .venv/bin/python -m pytest tests/test_microvm_persistence.py tests/test_sandbox_contract.py tests/test_microvm_sandbox.py tests/test_input_holder.py tests/test_harness_client.py -v` after this fix + Step 3's implementation below — all must pass, including the pre-existing single-level-glob contract assertion. This fake is shared by Tasks 3, 4, 5, and 6 (imported in `test_microvm_persistence.py`, `test_sandbox_contract.py`, `test_microvm_sandbox.py`, `test_input_holder.py`, and the not-yet-written `test_microvm_recovery.py`) — fixing it here (Task 4, where the `'**'` sync globs first exercise it against top-level fixtures) benefits all of them; do not reintroduce a plain-`fnmatch` version later.**
+
 - [ ] **Step 3: Implement the post-turn sync**
 
 In `backend/pathfinder/sandbox/microvm.py`, add the sync globs and method, and call it in `send_message`:
@@ -876,13 +965,13 @@ In `backend/pathfinder/sandbox/microvm.py`, add the sync globs and method, and c
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd backend && python -m pytest tests/test_microvm_persistence.py -v`
-Expected: PASS (all persistence cases, incl. Task 3's). The contract test's `assert_send_message_ordered_and_terminates` still passes — the sync happens after the last yielded event, so the event stream shape is unchanged.
+Expected: PASS (all persistence cases, incl. Task 3's). The contract test's `assert_send_message_ordered_and_terminates` still passes — the sync happens after the last yielded event, so the event stream shape is unchanged. Also re-run the full suite (`cd backend && python -m pytest -v`) to confirm the `FakeHarness.list_files` fix above did not regress any other consumer (`test_sandbox_contract.py`, `test_microvm_sandbox.py`, `test_input_holder.py`) — expect the full baseline count plus this task's 3 new tests, 0 failed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/pathfinder/sandbox/microvm.py backend/tests/test_microvm_persistence.py
-git commit -m "feat: sync aiplc-docs + prototype source to S3 after every turn"
+git add backend/pathfinder/sandbox/microvm.py backend/tests/test_microvm_persistence.py backend/tests/fakes/in_memory_harness.py
+git commit -m "fix: FakeHarness.list_files matches pathlib ** semantics so post-turn sync captures top-level files"
 ```
 
 ---

@@ -87,6 +87,18 @@ class MicroVMSandbox(Sandbox):
 
     # ---- turn relay: boots the VM (Task 4 adds post-turn sync) ----
 
+    _SYNC_GLOBS = ("aiplc-docs/**/*", "prototype/**/*")
+
+    async def _sync_workspace_to_s3(self, harness: HarnessLike) -> None:
+        """Pull the turn's output out of the VM FS into durable S3. Only the
+        methodology output + prototype source subtrees (never the whole FS).
+        Raw bytes are stored (source-of-truth); see the redaction-at-rest
+        Open Question."""
+        for glob in self._SYNC_GLOBS:
+            for key in await harness.list_files(glob):
+                content = await harness.read_file(key)
+                await self._s3.put(key, content)
+
     async def _ensure_ready(self) -> HarnessLike:
         async with self._boot_lock:
             if self._handle is None:
@@ -107,7 +119,10 @@ class MicroVMSandbox(Sandbox):
             harness = await self._ensure_ready()
             async for event in harness.send_message(text):
                 yield event
-            # Part 2 hook (Task 4): after the terminal event, sync workspace -> S3.
+            # Durable persistence: after the turn's terminal event, sync the
+            # workspace out of the VM into S3 so expiry/crash loses nothing and
+            # the next route read sees current data.
+            await self._sync_workspace_to_s3(harness)
         finally:
             self._turn_active = False
 
