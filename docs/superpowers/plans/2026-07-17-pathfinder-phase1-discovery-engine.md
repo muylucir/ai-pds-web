@@ -1227,6 +1227,23 @@ async def test_registry_create_and_get(tmp_path):
     sb = LocalSandbox(root=tmp_path); await sb.start()
     ws = reg.create("p1", sb)
     assert reg.get("p1") is ws
+
+async def test_list_question_files_finds_top_level_and_nested(tmp_path):
+    # list_question_files must find question files BOTH directly under aiplc-docs/
+    # (pilot1: discovery-mode-selection-questions.md) and nested several levels
+    # (pilot1: discovery/product-strategy/strategy-questions.md), and exclude
+    # non-question files. Locks in the `**` glob behavior verified on 3.11.
+    sb = LocalSandbox(root=tmp_path)
+    await sb.start()
+    await sb.write_file("aiplc-docs/discovery-mode-selection-questions.md", "x")
+    await sb.write_file("aiplc-docs/discovery/product-strategy/strategy-questions.md", "y")
+    await sb.write_file("aiplc-docs/audit.md", "z")  # must NOT be listed
+    ws = Workspace(sb)
+    found = sorted(await ws.list_question_files())
+    assert found == [
+        "aiplc-docs/discovery-mode-selection-questions.md",
+        "aiplc-docs/discovery/product-strategy/strategy-questions.md",
+    ]
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1302,9 +1319,9 @@ class ProjectRegistry:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_workspace.py -v`
-Expected: PASS (4 tests)
+Expected: PASS (5 tests)
 
-Note: `LocalSandbox.list_files` uses `Path.glob`, which does not expand `**` across directories the same way as shell globs for files at the root; `test_workspace` seeds files directly under `aiplc-docs/` so `list_question_files`'s `**` pattern still matches via `Path.glob`'s recursive support. If `list_files` returns empty for nested seeds, adjust `LocalSandbox.list_files` to use `Path.rglob` when the glob contains `**`.
+Note (verified on Python 3.11.14): `Path.glob("aiplc-docs/**/*-questions.md")` matches BOTH files directly under `aiplc-docs/` AND nested files — CPython's `**` means "zero or more directories". So `list_question_files` works for the real pilot1 layout (top-level `discovery-mode-selection-questions.md` and nested `discovery/product-strategy/strategy-questions.md`) with no `rglob` workaround. `test_list_question_files_finds_top_level_and_nested` locks this in; if a future Python changes `**` semantics, that test catches it.
 
 - [ ] **Step 5: Commit**
 
