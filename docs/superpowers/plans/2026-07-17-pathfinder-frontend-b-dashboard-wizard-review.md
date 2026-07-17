@@ -1834,7 +1834,7 @@ git commit -m "feat(frontend): document-review components (panel, approval gate,
 ```tsx
 // frontend/app/projects/[projectId]/review/page.test.tsx
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -1855,7 +1855,13 @@ function mockDocAndAudit() {
 describe("Review page", () => {
   it("renders the document and the approval gate", async () => {
     mockDocAndAudit();
-    render(<ReviewPage params={params} />);
+    // `use(params)` suspends on the first render because the test's plain
+    // Promise.resolve(...) params (unlike Next's internally-tracked params
+    // thenable) isn't pre-marked as settled. Wrapping the initial render in
+    // act() lets that Suspense retry flush before we start querying/waiting.
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
     expect(await screen.findByText("Press Release")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /승인하고 다음 단계로/ })).toBeInTheDocument();
   });
