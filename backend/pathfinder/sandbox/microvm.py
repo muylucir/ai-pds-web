@@ -99,16 +99,43 @@ class MicroVMSandbox(Sandbox):
                 content = await harness.read_file(key)
                 await self._s3.put(key, content)
 
+    _RESTORE_PREFIXES = ("aiplc-docs/", "prototype/")
+
+    async def _restore_workspace_from_s3(self, harness: HarnessLike) -> None:
+        """Copy the durable workspace (S3 = source of truth) into the VM FS.
+        Used to reconcile after resume (re-push writes that landed in S3 while
+        suspended) AND to fully restore a freshly-booted VM after expiry/crash.
+        S3 unconditionally wins; the push is idempotent. No methodology/resume
+        logic here — we only copy files; the session-continuity rule reads
+        aiplc-state.md and resumes itself once the VM is running."""
+        for prefix in self._RESTORE_PREFIXES:
+            for key in await self._s3.list(prefix):
+                await harness.write_file(key, await self._s3.get(key))
+
+    async def _boot_and_restore(self) -> HarnessLike:
+        self._handle = await self._controller.boot(self.project_id, self._spec)
+        self._harness = self._harness_factory(self._handle)   # mint-on-boot (JWE)
+        await self._restore_workspace_from_s3(self._harness)
+        return self._harness
+
     async def _ensure_ready(self) -> HarnessLike:
         async with self._boot_lock:
             if self._handle is None:
-                self._handle = await self._controller.boot(self.project_id, self._spec)
-                self._harness = self._harness_factory(self._handle)
-            elif self._handle.status == "suspended":
+                return await self._boot_and_restore()
+            # Finding A (a): refresh the LIVE status before trusting the cache.
+            current = await self._controller.status(self._handle)
+            if current == "ready":
+                assert self._harness is not None
+                return self._harness
+            if current == "suspended":
                 self._handle = await self._controller.resume(self._handle)
-                self._harness = self._harness_factory(self._handle)
-            assert self._harness is not None
-            return self._harness
+                self._harness = self._harness_factory(self._handle)   # mint-on-resume (JWE)
+                await self._restore_workspace_from_s3(self._harness)  # (c) reconcile
+                return self._harness
+            # "expired"/"stopped": the VM (and its FS) are gone — reboot fresh
+            # and fully restore from S3 (Task 6's recovery scenario).
+            self._handle = None
+            return await self._boot_and_restore()
 
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
         if self._turn_active:

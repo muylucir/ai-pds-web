@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Literal
 
-VMStatus = Literal["booting", "ready", "suspended", "stopped"]
+VMStatus = Literal["booting", "ready", "suspended", "stopped", "expired"]
 
 @dataclass
 class BootSpec:
@@ -97,3 +97,14 @@ class FakeMicroVMController(MicroVMController):
 
     async def status(self, handle: VMHandle) -> VMStatus:
         return self._status.get(handle.vm_id, "stopped")
+
+    def simulate_auto_suspend(self, handle: VMHandle) -> None:
+        """Emulate AWS auto-suspend after max_idle_seconds: the control plane
+        now reports 'suspended' while the caller's cached VMHandle still says
+        'ready'. This is the exact stale-handle condition Finding A targets."""
+        self._status[handle.vm_id] = "suspended"
+
+    def simulate_expiry(self, handle: VMHandle) -> None:
+        """Emulate MicroVM expiry (max 8h) / crash: control plane reports
+        'expired'; the VM and its filesystem are gone."""
+        self._status[handle.vm_id] = "expired"
