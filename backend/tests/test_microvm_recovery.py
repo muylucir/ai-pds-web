@@ -2,7 +2,6 @@
 import pytest
 from pathfinder.sandbox.microvm import MicroVMSandbox
 from pathfinder.sandbox.microvm_control import BootSpec, FakeMicroVMController
-from pathfinder.sandbox.base import AgentEvent
 from fakes.in_memory_harness import FakeHarness
 from fakes.in_memory_s3 import FakeS3Store
 
@@ -46,3 +45,25 @@ async def test_ready_vm_is_reused_without_resume_or_reboot():
     _ = [e async for e in sb.send_message("two")]      # still ready between turns
     assert ctrl.boot_calls == 1
     assert ctrl.resume_calls == 0
+
+async def test_restore_from_s3_rejects_unsafe_key():
+    # A ".."-bearing key under the restore prefix (however it got into S3)
+    # must never reach harness.write_file — reject_unsafe guards every path
+    # at the last boundary before it becomes a live-VM filesystem path.
+    sb, ctrl, harness, s3 = _sandbox()
+    await sb.start()
+    s3.blobs["aiplc-docs/../escape.md"] = "payload"   # unsafe key, sneaked into S3
+    with pytest.raises(ValueError):
+        await sb._restore_workspace_from_s3(harness)
+    assert harness.files == {}                         # never written
+
+async def test_sync_to_s3_rejects_unsafe_key():
+    # A ".."-bearing key listed from the VM FS (however it got written there)
+    # must never reach S3 — this is exactly the vector by which an unsafe key
+    # could land in S3 in the first place, so the sync direction is guarded too.
+    sb, ctrl, harness, s3 = _sandbox()
+    await sb.start()
+    harness.files["aiplc-docs/../escape.md"] = "payload"  # unsafe key, in VM FS
+    with pytest.raises(ValueError):
+        await sb._sync_workspace_to_s3(harness)
+    assert s3.blobs == {}                              # never synced

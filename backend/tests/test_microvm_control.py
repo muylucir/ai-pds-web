@@ -44,8 +44,6 @@ async def test_fake_controller_suspend_resume_stop():
     assert await ctrl.status(handle) == "stopped"
 
 # backend/tests/test_microvm_control.py
-from pathfinder.sandbox.microvm_control import VMHandle
-
 async def test_simulate_auto_suspend_reports_suspended():
     ctrl = FakeMicroVMController(base_url="http://fake-vm")
     handle = await ctrl.boot("p1", BootSpec())

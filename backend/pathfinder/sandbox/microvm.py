@@ -96,6 +96,7 @@ class MicroVMSandbox(Sandbox):
         Open Question."""
         for glob in self._SYNC_GLOBS:
             for key in await harness.list_files(glob):
+                reject_unsafe(key)
                 content = await harness.read_file(key)
                 await self._s3.put(key, content)
 
@@ -110,6 +111,7 @@ class MicroVMSandbox(Sandbox):
         aiplc-state.md and resumes itself once the VM is running."""
         for prefix in self._RESTORE_PREFIXES:
             for key in await self._s3.list(prefix):
+                reject_unsafe(key)
                 await harness.write_file(key, await self._s3.get(key))
 
     async def _boot_and_restore(self) -> HarnessLike:
