@@ -1,5 +1,5 @@
 # backend/tests/test_routes_turns.py
-import asyncio, tempfile
+import tempfile
 from pathlib import Path
 from fastapi.testclient import TestClient
 import pathfinder.app as app_module
@@ -35,4 +35,5 @@ def test_sse_stream_emits_frames():
     with client.stream("GET", "/projects/turn2/events", params={"text": "go"}) as r:
         body = "".join(chunk for chunk in r.iter_text())
     assert "working" in body
+    assert "ok" in body
     assert '"kind":"done"' in body.replace(" ", "")
