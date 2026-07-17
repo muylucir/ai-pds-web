@@ -50,11 +50,24 @@ class Workspace:
 class ProjectRegistry:
     def __init__(self):
         self._projects: dict[str, Workspace] = {}
+        self._names: dict[str, str | None] = {}
 
-    def create(self, project_id: str, sandbox: Sandbox) -> Workspace:
+    def create(self, project_id: str, sandbox: Sandbox, name: str | None = None) -> Workspace:
         ws = Workspace(sandbox)
         self._projects[project_id] = ws
+        self._names[project_id] = name
         return ws
 
     def get(self, project_id: str) -> Workspace:
         return self._projects[project_id]
+
+    def list_ids(self) -> list[str]:
+        # dict preserves insertion order in Python 3.7+; this mirrors that
+        # order rather than sorting, so newest-created projects are easy to
+        # find at the tail — no requirement in the spec calls for sorting.
+        return list(self._projects.keys())
+
+    def get_name(self, project_id: str) -> str | None:
+        if project_id not in self._projects:
+            raise KeyError(project_id)
+        return self._names[project_id]

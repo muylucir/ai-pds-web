@@ -51,3 +51,41 @@ async def test_list_question_files_finds_top_level_and_nested(tmp_path):
         "aiplc-docs/discovery-mode-selection-questions.md",
         "aiplc-docs/discovery/product-strategy/strategy-questions.md",
     ]
+
+
+def test_registry_list_ids_preserves_insertion_order(tmp_path):
+    reg = ProjectRegistry()
+    for pid in ("p1", "p2", "p3"):
+        sb = LocalSandbox(root=tmp_path / pid)
+        import asyncio
+        asyncio.run(sb.start())
+        reg.create(pid, sb)
+    assert reg.list_ids() == ["p1", "p2", "p3"]
+
+
+def test_registry_create_without_name_defaults_to_none(tmp_path):
+    # Backward-compat: existing Phase 1 call sites pass no `name` at all.
+    reg = ProjectRegistry()
+    sb = LocalSandbox(root=tmp_path)
+    import asyncio
+    asyncio.run(sb.start())
+    reg.create("p-noname", sb)
+    assert reg.get_name("p-noname") is None
+
+
+def test_registry_create_with_name_stores_it(tmp_path):
+    reg = ProjectRegistry()
+    sb = LocalSandbox(root=tmp_path)
+    import asyncio
+    asyncio.run(sb.start())
+    reg.create("p-named", sb, name="기획전 AI 어시스턴트")
+    assert reg.get_name("p-named") == "기획전 AI 어시스턴트"
+
+
+def test_registry_get_name_unknown_project_raises_keyerror():
+    reg = ProjectRegistry()
+    try:
+        reg.get_name("nope")
+        assert False, "expected KeyError"
+    except KeyError:
+        pass
