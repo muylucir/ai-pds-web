@@ -15,6 +15,27 @@ import {
   postMessage,
 } from "./client";
 
+describe("Content-Type header behavior", () => {
+  it("omits Content-Type on bodyless GET but sets it on POST", async () => {
+    let getCT: string | null = "unset";
+    let postCT: string | null = "unset";
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/state`, ({ request }) => {
+        getCT = request.headers.get("content-type");
+        return HttpResponse.json({ project_type: null, current_stage: null, stages: [] });
+      }),
+      http.post(`${API_BASE_URL}/projects`, ({ request }) => {
+        postCT = request.headers.get("content-type");
+        return HttpResponse.json({ project_id: "p1", name: null });
+      }),
+    );
+    await getState("p1");
+    await createProject("p1");
+    expect(getCT).toBeNull();
+    expect(postCT).toContain("application/json");
+  });
+});
+
 describe("api client request shaping + response typing", () => {
   it("createProject POSTs {project_id,name} and returns the summary", async () => {
     let seenBody: unknown;

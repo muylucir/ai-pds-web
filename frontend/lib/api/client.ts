@@ -36,13 +36,17 @@ function authHeaders(): Record<string, string> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    ...authHeaders(),
+    ...((init?.headers as Record<string, string>) ?? {}),
+  };
+  // Only set Content-Type when there's a body — avoids a needless CORS preflight on GETs.
+  if (init?.body !== undefined && headers["Content-Type"] === undefined) {
+    headers["Content-Type"] = "application/json";
+  }
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-      ...(init?.headers ?? {}),
-    },
+    headers,
   });
   if (!res.ok) {
     let detail = res.statusText;
