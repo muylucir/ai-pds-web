@@ -692,14 +692,14 @@ git commit -m "feat(frontend): dashboard components (timeline, artifacts, activi
 **Interfaces:**
 - Consumes: `getState`, `listArtifacts`, `getAudit`, `listQuestionFiles`, `useAsync`, `AppHeader`, and the Task 2 components.
 - Produces the Dashboard route. Loads all four resources; "대기 중인 질문" is derived as the number of question files present (a proxy — the frontend has no methodology count, so it renders "question files awaiting answers" from `listQuestionFiles`). Renders the project header (project id/name from the route + state), `ProgressCards`, `StageTimeline`, `ArtifactsPanel`, `ActivityFeed`. 404 on unknown project → Korean "프로젝트를 찾을 수 없습니다." error state.
-- Next.js 15 note: `params` is a `Promise` in App-Router pages; the page is a client component that unwraps it with React's `use()`.
+- Next.js 15 note: `params` is a `Promise` in App-Router pages; the page is a client component that unwraps it with React's `use()`. In real Next.js, the `params` prop is an internally-tracked thenable (pre-marked settled), so `use()` reads it synchronously and never suspends. In the test below, `params` is a plain `Promise.resolve(...)`, which genuinely suspends on first render — under this repo's React 19 / `@testing-library/react` 16 / Vitest 3 / jsdom 25 versions, `findByText`/`waitFor`'s internal act-environment toggling never lets that pending Suspense retry flush (confirmed via isolated repro), so the initial `render(...)` call must be wrapped in `await act(async () => { render(...) })` to let the suspended `use(params)` resolve before querying.
 
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
 // frontend/app/projects/[projectId]/dashboard/page.test.tsx
 import { describe, it, expect } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
@@ -726,7 +726,13 @@ const params = Promise.resolve({ projectId: "pilot1" });
 describe("Dashboard page", () => {
   it("renders stage timeline, artifacts, and activity from the API", async () => {
     mockAll("pilot1");
-    render(<DashboardPage params={params} />);
+    // `use(params)` suspends on the first render because the test's plain
+    // Promise.resolve(...) params (unlike Next's internally-tracked params
+    // thenable) isn't pre-marked as settled. Wrapping the initial render in
+    // act() lets that Suspense retry flush before we start querying/waiting.
+    await act(async () => {
+      render(<DashboardPage params={params} />);
+    });
     expect(await screen.findByText("Product Strategy")).toBeInTheDocument();
     expect(screen.getByText("discovery-document.md")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("Entry 34")).toBeInTheDocument());
@@ -738,7 +744,9 @@ describe("Dashboard page", () => {
         HttpResponse.json({ detail: "unknown project" }, { status: 404 }),
       ),
     );
-    render(<DashboardPage params={Promise.resolve({ projectId: "ghost" })} />);
+    await act(async () => {
+      render(<DashboardPage params={Promise.resolve({ projectId: "ghost" })} />);
+    });
     expect(await screen.findByText(/프로젝트를 찾을 수 없습니다/)).toBeInTheDocument();
   });
 });
