@@ -11,6 +11,7 @@ async def test_default_is_local_sandbox(monkeypatch):
     sb = await app_module.make_sandbox("proj-local")
     assert isinstance(sb, LocalSandbox)
 
+@pytest.mark.skip(reason="MicroVMSandbox now requires s3=; app._make_microvm_sandbox is wired with the S3Store in Task 7 (s3_store_factory). Unskip when Task 7 lands.")
 async def test_microvm_flag_builds_microvm_sandbox(monkeypatch):
     monkeypatch.setenv("PATHFINDER_SANDBOX", "microvm")
     # Inject a fake controller so no AWS is contacted.

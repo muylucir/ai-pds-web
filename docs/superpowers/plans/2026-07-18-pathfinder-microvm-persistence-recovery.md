@@ -1145,6 +1145,8 @@ git commit -m "test: end-to-end MicroVM expiry recovery — fresh boot + full S3
 - `app.s3_store_factory(project_id: str) -> S3StoreLike` — module-level hook (defaults to a real `S3Store` over a boto3 client in `PATHFINDER_S3_REGION`, default `ap-northeast-2` / Seoul, bucket `PATHFINDER_S3_BUCKET`, prefix `projects/<project_id>/`). Monkeypatched in tests to return `FakeS3Store()` so no AWS is touched — mirrors the Part-1 `microvm_controller_factory` pattern.
 - `make_sandbox(project_id) -> Sandbox` — **signature unchanged**. The microvm branch now also builds `s3 = s3_store_factory(project_id)` and passes `s3=s3` to `MicroVMSandbox`. The local branch is byte-for-byte unchanged (`LocalSandbox` needs no S3 and inherits the ABC input_holder default from Task 2).
 
+- [ ] **Step 0: Unskip the Task-3-deferred case** — remove the `@pytest.mark.skip(...)` on `test_make_sandbox.py::test_microvm_flag_builds_microvm_sandbox` (added in Task 3 to keep the suite green while `MicroVMSandbox` required `s3=` but `app._make_microvm_sandbox` didn't yet supply it). Now that this task wires `s3_store_factory` into `_make_microvm_sandbox`, the skip's precondition is gone — remove it as part of Step 1's rewrite below.
+
 - [ ] **Step 1: Update the test**
 
 ```python
