@@ -1669,30 +1669,31 @@ from pathfinder.sandbox.base import AgentEvent
 
 client = TestClient(app_module.app)
 
-def _install_scripted(pid, script):
+def _install_scripted(monkeypatch, pid, script):
     async def make(project_id):
         sb = LocalSandbox(root=Path(tempfile.mkdtemp()), script=script)
         await sb.start()
         return sb
-    app_module.make_sandbox = make
+    # monkeypatch auto-restores make_sandbox at teardown (no leak into other tests).
+    monkeypatch.setattr(app_module, "make_sandbox", make)
     client.post("/projects", json={"project_id": pid})
 
-def test_message_returns_events():
+def test_message_returns_events(monkeypatch):
     def script(text, sb):
         return [AgentEvent(kind="message", text=f"got {text}"), AgentEvent(kind="done")]
-    _install_scripted("turn1", script)
+    _install_scripted(monkeypatch, "turn1", script)
     r = client.post("/projects/turn1/message", json={"text": "승인"})
     assert r.status_code == 200
     kinds = [e["kind"] for e in r.json()["events"]]
     assert kinds == ["message", "done"]
     assert "승인" in r.json()["events"][0]["text"]
 
-def test_sse_stream_emits_frames():
+def test_sse_stream_emits_frames(monkeypatch):
     def script(text, sb):
         return [AgentEvent(kind="status", text="working"),
                 AgentEvent(kind="message", text="ok"),
                 AgentEvent(kind="done")]
-    _install_scripted("turn2", script)
+    _install_scripted(monkeypatch, "turn2", script)
     with client.stream("GET", "/projects/turn2/events", params={"text": "go"}) as r:
         body = "".join(chunk for chunk in r.iter_text())
     assert "working" in body          # first (status) frame
@@ -1773,6 +1774,7 @@ from fastapi.testclient import TestClient
 import pathfinder.app as app_module
 from pathfinder.sandbox.local import LocalSandbox
 from pathfinder.sandbox.base import AgentEvent
+from pathfinder.parsers.state import parse_state_file
 
 FIX = Path(__file__).parent / "fixtures"
 client = TestClient(app_module.app)
@@ -1794,7 +1796,7 @@ def _state_md(completed_count):
         lines.append(f"- [{mark}] {name}")
     return "\n".join(lines) + "\n"
 
-def test_replay_advances_state_like_pilot1():
+def test_replay_advances_state_like_pilot1(monkeypatch):
     # Agent script: each user message advances the workspace by one completed stage.
     counter = {"n": 1}
     def script(text, sb):
@@ -1812,7 +1814,9 @@ def test_replay_advances_state_like_pilot1():
         sb._resolve("aiplc-docs").mkdir(parents=True, exist_ok=True)
         sb._resolve("aiplc-docs/aiplc-state.md").write_text(_state_md(1), encoding="utf-8")
         return sb
-    app_module.make_sandbox = make
+    # monkeypatch auto-restores make_sandbox at teardown, so this fake factory
+    # doesn't leak into other tests (this file collects alphabetically first).
+    monkeypatch.setattr(app_module, "make_sandbox", make)
 
     client.post("/projects", json={"project_id": "replay"})
     # advance through all remaining stages
@@ -1823,17 +1827,24 @@ def test_replay_advances_state_like_pilot1():
     names = [s["name"] for s in state["stages"]]
     assert names == STAGES
     assert all(s["status"] == "completed" for s in state["stages"])
+
+def test_stages_match_real_pilot1_fixture():
+    # Guard against STAGES drifting from the real pilot1 artifact — the §7
+    # reproducibility guarantee is meant to track the actual fixture, not a copy.
+    md = (FIX / "aiplc-state.md").read_text(encoding="utf-8")
+    real_names = [s.name for s in parse_state_file(md).stages]
+    assert real_names == STAGES
 ```
 
 - [ ] **Step 2: Run the test**
 
 Run: `cd backend && python -m pytest tests/test_golden_path_replay.py -v`
-Expected: PASS (1 test)
+Expected: PASS (2 tests — the replay, plus the STAGES-matches-real-fixture guard)
 
 - [ ] **Step 3: Run the full suite**
 
 Run: `cd backend && python -m pytest -v`
-Expected: PASS (all tests from Tasks 1–14)
+Expected: PASS (all tests from Tasks 1–14 — 52 total)
 
 - [ ] **Step 4: Commit**
 
