@@ -1699,6 +1699,27 @@ def test_sse_stream_emits_frames(monkeypatch):
     assert "working" in body          # first (status) frame
     assert "ok" in body               # middle (message) frame
     assert '"kind":"done"' in body.replace(" ", "")  # final frame
+
+def test_message_redacts_credentials_in_event_text(monkeypatch):
+    def script(text, sb):
+        return [AgentEvent(kind="message", text="key AKIAIOSFODNN7EXAMPLE here"),
+                AgentEvent(kind="done")]
+    _install_scripted(monkeypatch, "turnred1", script)
+    r = client.post("/projects/turnred1/message", json={"text": "go"})
+    assert r.status_code == 200
+    joined = " ".join(e.get("text") or "" for e in r.json()["events"])
+    assert "AKIA" not in joined
+    assert "[CREDENTIAL REDACTED]" in joined
+
+def test_sse_redacts_credentials_in_event_text(monkeypatch):
+    def script(text, sb):
+        return [AgentEvent(kind="message", text="key AKIAIOSFODNN7EXAMPLE here"),
+                AgentEvent(kind="done")]
+    _install_scripted(monkeypatch, "turnred2", script)
+    with client.stream("GET", "/projects/turnred2/events", params={"text": "go"}) as resp:
+        body = "".join(chunk for chunk in resp.iter_text())
+    assert "AKIA" not in body
+    assert "[CREDENTIAL REDACTED]" in body
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1713,18 +1734,28 @@ Expected: FAIL with `ModuleNotFoundError`
 from fastapi import APIRouter
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from pathfinder.parsers.redaction import redact_credentials
 from pathfinder.routes.deps import get_workspace
-from pathfinder.sandbox.base import TurnResult
+from pathfinder.sandbox.base import AgentEvent, TurnResult
 
 router = APIRouter()
 
 class MessageBody(BaseModel):
     text: str
 
+def _redacted(event: AgentEvent) -> AgentEvent:
+    # Redact credential-bearing agent output at the surface seam. Only `text`
+    # is agent-authored; `path`/`kind` are structural. A real MicroVM agent
+    # can echo secrets over these routes, so redaction must live HERE, not
+    # only in the audit parser.
+    if event.text is None:
+        return event
+    return event.model_copy(update={"text": redact_credentials(event.text)})
+
 @router.post("/projects/{pid}/message")
 async def post_message(pid: str, body: MessageBody):
     ws = get_workspace(pid)
-    events = [e async for e in ws.sandbox.send_message(body.text)]
+    events = [_redacted(e) async for e in ws.sandbox.send_message(body.text)]
     return TurnResult(events=events)
 
 @router.get("/projects/{pid}/events")
@@ -1732,7 +1763,7 @@ async def stream_events(pid: str, text: str):
     ws = get_workspace(pid)
     async def gen():
         async for event in ws.sandbox.send_message(text):
-            yield {"data": event.model_dump_json()}
+            yield {"data": _redacted(event).model_dump_json()}
     return EventSourceResponse(gen())
 ```
 
@@ -1745,7 +1776,7 @@ app.include_router(turns.router)
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_routes_turns.py -v`
-Expected: PASS (2 tests)
+Expected: PASS (4 tests — message, SSE, + credential redaction at both routes)
 
 - [ ] **Step 5: Commit**
 
