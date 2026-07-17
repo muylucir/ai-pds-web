@@ -26,3 +26,6 @@ app.include_router(answers.router)
 
 from pathfinder.routes import turns  # noqa: E402
 app.include_router(turns.router)
+
+from pathfinder.routes import discovery  # noqa: E402
+app.include_router(discovery.router)
