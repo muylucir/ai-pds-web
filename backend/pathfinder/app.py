@@ -20,3 +20,6 @@ app = FastAPI(title="Pathfinder")
 from pathfinder.routes import projects, artifacts  # noqa: E402
 app.include_router(projects.router)
 app.include_router(artifacts.router)
+
+from pathfinder.routes import answers  # noqa: E402
+app.include_router(answers.router)
