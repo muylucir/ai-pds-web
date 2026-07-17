@@ -47,6 +47,15 @@ class Workspace:
     async def list_question_files(self) -> list[str]:
         return await self.sandbox.list_files("aiplc-docs/**/*-questions.md")
 
+    async def list_artifacts(self) -> list[str]:
+        # "Artifact" = every file under aiplc-docs/: the dashboard's 산출물 panel
+        # and Phase 1's file-as-contract model both treat the whole aiplc-docs/
+        # subtree as project output, not just *.md. Glob mirrors
+        # list_question_files's use of sandbox.list_files (same traversal guard,
+        # no new IO path). sandbox.list_files already filters to files (not
+        # directories), so `**/*` matched directories are excluded automatically.
+        return await self.sandbox.list_files("aiplc-docs/**/*")
+
 class ProjectRegistry:
     def __init__(self):
         self._projects: dict[str, Workspace] = {}
