@@ -1660,7 +1660,7 @@ git commit -m "feat: answer write-back route"
 
 ```python
 # backend/tests/test_routes_turns.py
-import asyncio, tempfile
+import tempfile
 from pathlib import Path
 from fastapi.testclient import TestClient
 import pathfinder.app as app_module
@@ -1695,8 +1695,9 @@ def test_sse_stream_emits_frames():
     _install_scripted("turn2", script)
     with client.stream("GET", "/projects/turn2/events", params={"text": "go"}) as r:
         body = "".join(chunk for chunk in r.iter_text())
-    assert "working" in body
-    assert '"kind":"done"' in body.replace(" ", "")
+    assert "working" in body          # first (status) frame
+    assert "ok" in body               # middle (message) frame
+    assert '"kind":"done"' in body.replace(" ", "")  # final frame
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
