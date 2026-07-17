@@ -31,6 +31,8 @@ class LocalSandbox(Sandbox):
         p.write_text(content, encoding="utf-8")
 
     async def list_files(self, glob: str) -> list[str]:
+        if glob.startswith("/") or ".." in Path(glob).parts:
+            raise ValueError(f"unsafe glob: {glob}")
         return [str(p.relative_to(self.root)) for p in self.root.glob(glob) if p.is_file()]
 
     # Deliberate: this is an async-generator function (uses `yield`), even though the

@@ -43,3 +43,21 @@ async def test_list_files_glob(tmp_path: Path):
     await sb.write_file("aiplc-docs/b-questions.md", "y")
     found = sorted(await sb.list_files("aiplc-docs/*-questions.md"))
     assert found == ["aiplc-docs/a-questions.md", "aiplc-docs/b-questions.md"]
+
+async def test_list_files_rejects_traversal_glob(tmp_path):
+    sb = LocalSandbox(root=tmp_path)
+    await sb.start()
+    with pytest.raises(ValueError):
+        await sb.list_files("../*")
+
+async def test_read_file_rejects_traversal(tmp_path):
+    sb = LocalSandbox(root=tmp_path)
+    await sb.start()
+    with pytest.raises(ValueError):
+        await sb.read_file("../secret.md")
+
+async def test_rejects_absolute_path(tmp_path):
+    sb = LocalSandbox(root=tmp_path)
+    await sb.start()
+    with pytest.raises(ValueError):
+        await sb.write_file("/etc/evil.md", "x")
