@@ -35,3 +35,19 @@ async def test_registry_create_and_get(tmp_path):
     sb = LocalSandbox(root=tmp_path); await sb.start()
     ws = reg.create("p1", sb)
     assert reg.get("p1") is ws
+
+async def test_list_question_files_finds_top_level_and_nested(tmp_path):
+    sb = LocalSandbox(root=tmp_path)
+    await sb.start()
+    # top-level (pilot1: discovery-mode-selection-questions.md sits directly under aiplc-docs/)
+    await sb.write_file("aiplc-docs/discovery-mode-selection-questions.md", "x")
+    # nested (pilot1: discovery/product-strategy/strategy-questions.md)
+    await sb.write_file("aiplc-docs/discovery/product-strategy/strategy-questions.md", "y")
+    # a non-question file that must NOT be listed
+    await sb.write_file("aiplc-docs/audit.md", "z")
+    ws = Workspace(sb)
+    found = sorted(await ws.list_question_files())
+    assert found == [
+        "aiplc-docs/discovery-mode-selection-questions.md",
+        "aiplc-docs/discovery/product-strategy/strategy-questions.md",
+    ]
