@@ -4,7 +4,7 @@
 
 **Goal:** Implement the real `MicroVMSandbox` compute path — boot an AWS Lambda MicroVM running Claude Code headless with `aiplc-rules` injected, relay a serialized agent turn back over SSE, and forward workspace file ops — behind the existing `Sandbox` ABC so it drops into `make_sandbox` with zero route/parser changes, verified against a shared contract test both sandboxes pass.
 
-**Architecture:** Three injectable seams keep the whole thing unit-testable without AWS: (1) a **`HarnessClient`** — the HTTP client for the MicroVM's harness endpoint (`POST /message` → SSE, `GET/PUT /files/*`, `GET /health`), tested against a fake ASGI harness; (2) a **`MicroVMController`** ABC abstracting boot/resume/suspend/stop of the Lambda MicroVM, with a `FakeMicroVMController` for tests and a `LambdaMicroVMController` whose real AWS calls are pinned in the integration task; (3) **`MicroVMSandbox`**, which implements the `Sandbox` ABC exactly, lazily boots on first use, serializes turns to one at a time, upholds the same path-safety guarantee as `LocalSandbox`, and relays events unchanged. A shared `sandbox_contract` test module runs the same assertions against both `LocalSandbox` and `MicroVMSandbox`.
+**Architecture:** Three injectable seams keep the whole thing unit-testable without AWS: (1) a **`HarnessClient`** — the HTTP client for the MicroVM's harness endpoint (`POST /message` → SSE, `GET/PUT /files/*`, `GET /health`), tested against a fake ASGI harness; (2) a **`MicroVMController`** ABC abstracting boot/resume/suspend/stop of the MicroVM, with a `FakeMicroVMController` for tests and a `LambdaMicroVMController` (backed by the **AWS Lambda MicroVMs** service — `run-microvm`/`suspend-microvm`/`resume-microvm`, Firecracker snapshots, GA 2026-06-22) whose real AWS calls are pinned in the integration task; (3) **`MicroVMSandbox`**, which implements the `Sandbox` ABC exactly, lazily boots on first use, serializes turns to one at a time, upholds the same path-safety guarantee as `LocalSandbox`, and relays events unchanged. A shared `sandbox_contract` test module runs the same assertions against both `LocalSandbox` and `MicroVMSandbox`.
 
 **Tech Stack:** Python 3.11 (`str | None`), FastAPI/Starlette, Pydantic v2, `httpx` (already a dependency; used for the harness client and, via `ASGITransport`, the fake harness in tests), `sse-starlette` (already present), pytest + pytest-asyncio (auto mode). **No new dependencies in this plan.** boto3/moto arrive in Part 2.
 
@@ -24,8 +24,8 @@ Binding project-wide rules. Every task implicitly includes these.
 - **The `Sandbox` ABC (`backend/pathfinder/sandbox/base.py`) is the fixed boundary.** `MicroVMSandbox` implements it exactly — `async start()`, `async read_file(rel_path: str) -> str`, `async write_file(rel_path: str, content: str) -> None`, `async list_files(glob: str) -> list[str]`, `send_message(text: str) -> AsyncIterator[AgentEvent]` (an async-generator function, matching `LocalSandbox`), `async stop()`. Routes and parsers do NOT change.
 - **No path may escape the workspace root.** Reject any `rel_path`/glob that starts with `/` or contains a `..` segment, for **any** path `MicroVMSandbox` forwards to the harness — the same guarantee `LocalSandbox._resolve` gives (`backend/pathfinder/sandbox/local.py:17-20`). Rejection raises `ValueError`.
 - **Never log, persist, or echo credential-shaped strings.** The `POST /message` and `GET /events` routes already redact agent output via `redact_credentials` at the surface seam (`backend/pathfinder/routes/turns.py`); `MicroVMSandbox` must not defeat that (it relays `AgentEvent` objects unchanged and adds no new logging of `event.text`). Auth uses the MicroVM IAM execution role (`CLAUDE_CODE_USE_BEDROCK`) — **no long-lived API keys** exist anywhere in the boot env.
-- **Claude Code model is pinned to Sonnet 5** via `ANTHROPIC_MODEL` = the Bedrock cross-region inference profile id. **Do NOT hardcode a guessed id** — the exact id is resolved at impl time via `aws bedrock list-inference-profiles` (Task 6). `BootSpec.anthropic_model` stays `str | None` and empty until verified.
-- **MicroVMs run in `ap-northeast-1` (Tokyo).** Seoul is unsupported as of 2026-07. Durable storage (S3) is Seoul — Part 2. The cross-region data-governance disclosure is documented in Part 2 and referenced in Task 6.
+- **Claude Code model is pinned to Sonnet 5** via `ANTHROPIC_MODEL` = the Bedrock cross-region inference profile id. **Confirmed 2026-07-17** via `aws bedrock list-inference-profiles --region ap-northeast-1`: the id is `global.anthropic.claude-sonnet-5` (status `ACTIVE`, routed through ap-northeast-1). Still re-verify at deploy time (Task 7) rather than hardcoding — `BootSpec.anthropic_model` stays `str | None`, injected from env, so a profile-id change is a config edit, not a code change.
+- **MicroVMs run in `ap-northeast-1` (Tokyo).** Confirmed 2026-07-17: `aws lambda-microvms list-microvm-images` returns 200 in `ap-northeast-1` but `403 AccessDeniedException ("Unable to determine service/operation name")` in `ap-northeast-2` (Seoul) — i.e. the AWS Lambda MicroVMs service is not present in Seoul, matching the spec. Durable storage (S3) is Seoul — Part 2. The cross-region data-governance disclosure is documented in Part 2 and referenced in Task 7.
 - **No methodology logic in the backend.** `MicroVMSandbox` boots Claude Code + injects `aiplc-rules` and relays turns; it contains no stage lists, no question wording, and (critically) **no session-continuity/resume logic** — resuming from `aiplc-state.md` is the rule's job, handled in Part 2 by simply booting + restoring and letting the agent read the file itself.
 - **Python 3.11**, `str | None` unions, `from __future__ import annotations` at the top of every module (matches the existing codebase).
 - **Concurrency:** single Claude Code session per project; turns are serialized (one at a time). A turn in progress makes a concurrent `send_message` yield a clear soft "busy" signal. This is a soft hint + server-side serialization, **not** a hard multi-session queue.
@@ -461,7 +461,7 @@ git commit -m "feat: HarnessClient for the MicroVM harness protocol"
 
 **Interfaces:**
 - Produces:
-  - `BootSpec` (dataclass): `region: str = "ap-northeast-1"`, `snapshot_id: str | None = None`, `exec_role_arn: str | None = None`, `anthropic_model: str | None = None`, `max_idle_seconds: int = 300`, `auto_resume: bool = True`; method `env() -> dict[str, str]` returning the MicroVM env — always `{"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": region}`, plus `"ANTHROPIC_MODEL": anthropic_model` **only if set**. Contains no key material (IAM role auth).
+  - `BootSpec` (dataclass): `region: str = "ap-northeast-1"`, `image_id: str | None = None` (the `arn:aws:lambda:...:microvm-image:...` passed as `--image-identifier`), `exec_role_arn: str | None = None` (`--execution-role-arn`), `anthropic_model: str | None = None`, `max_idle_seconds: int = 300`, `suspended_duration_seconds: int = 1800`, `auto_resume: bool = True`; method `env() -> dict[str, str]` returning the MicroVM env — always `{"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": region}`, plus `"ANTHROPIC_MODEL": anthropic_model` **only if set**; method `idle_policy() -> dict` returning `{"maxIdleDurationSeconds": max_idle_seconds, "suspendedDurationSeconds": suspended_duration_seconds, "autoResumeEnabled": auto_resume}` (the exact shape the `run-microvm --idle-policy` API expects). Contains no key material (IAM role auth).
   - `VMHandle` (dataclass): `vm_id: str`, `base_url: str`, `status: VMStatus`.
   - `VMStatus = Literal["booting", "ready", "suspended", "stopped"]`.
   - `MicroVMController` (ABC): `async boot(project_id: str, spec: BootSpec) -> VMHandle`, `async resume(handle: VMHandle) -> VMHandle`, `async suspend(handle: VMHandle) -> None`, `async stop(handle: VMHandle) -> None`, `async status(handle: VMHandle) -> VMStatus`.
@@ -479,14 +479,21 @@ def test_bootspec_env_has_bedrock_flag_and_region():
     assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
     assert env["AWS_REGION"] == "ap-northeast-1"
 
-def test_bootspec_omits_model_until_resolved():
-    # anthropic_model stays None until verified via `aws bedrock list-inference-profiles`
+def test_bootspec_omits_model_until_injected():
+    # anthropic_model comes from env at deploy; confirmed id is
+    # "global.anthropic.claude-sonnet-5" (ap-northeast-1, ACTIVE 2026-07-17).
     assert "ANTHROPIC_MODEL" not in BootSpec().env()
-    assert "ANTHROPIC_MODEL" in BootSpec(anthropic_model="apac.anthropic.claude-sonnet-5-vX").env()
+    assert BootSpec(anthropic_model="global.anthropic.claude-sonnet-5").env()["ANTHROPIC_MODEL"] \
+        == "global.anthropic.claude-sonnet-5"
+
+def test_bootspec_idle_policy_matches_run_microvm_api():
+    # Exact shape run-microvm --idle-policy expects (Lambda MicroVMs API).
+    p = BootSpec(max_idle_seconds=300, suspended_duration_seconds=1800, auto_resume=True).idle_policy()
+    assert p == {"maxIdleDurationSeconds": 300, "suspendedDurationSeconds": 1800, "autoResumeEnabled": True}
 
 def test_bootspec_env_has_no_credential_material():
     # IAM-role auth only — no static keys of any shape may appear in the env.
-    env = BootSpec(anthropic_model="apac.anthropic.claude-sonnet-5-vX").env()
+    env = BootSpec(anthropic_model="global.anthropic.claude-sonnet-5").env()
     joined = " ".join(f"{k}={v}" for k, v in env.items())
     for marker in ("AKIA", "sk-", "bedrock-api-key-", "AWS_BEARER_TOKEN", "AWS_SECRET"):
         assert marker not in joined
@@ -529,16 +536,20 @@ VMStatus = Literal["booting", "ready", "suspended", "stopped"]
 class BootSpec:
     """Everything needed to boot a Claude Code MicroVM (spec §1, §6).
 
+    Backed by the AWS Lambda MicroVMs API: `image_id` -> --image-identifier,
+    `exec_role_arn` -> --execution-role-arn, idle_policy() -> --idle-policy.
     Auth is via the MicroVM IAM execution role (CLAUDE_CODE_USE_BEDROCK); there
     are NO long-lived keys. `anthropic_model` pins Claude Code to Sonnet 5 via
-    the Bedrock cross-region inference profile id — left None until resolved via
-    `aws bedrock list-inference-profiles` (Task 6); do NOT hardcode a guess.
+    the Bedrock inference-profile id (confirmed "global.anthropic.claude-sonnet-5"
+    in ap-northeast-1 on 2026-07-17); injected from env, re-verified in Task 7,
+    never hardcoded here.
     """
     region: str = "ap-northeast-1"
-    snapshot_id: str | None = None
+    image_id: str | None = None
     exec_role_arn: str | None = None
     anthropic_model: str | None = None
     max_idle_seconds: int = 300
+    suspended_duration_seconds: int = 1800
     auto_resume: bool = True
 
     def env(self) -> dict[str, str]:
@@ -549,6 +560,14 @@ class BootSpec:
         if self.anthropic_model:
             env["ANTHROPIC_MODEL"] = self.anthropic_model
         return env
+
+    def idle_policy(self) -> dict:
+        # Exact shape run-microvm --idle-policy expects.
+        return {
+            "maxIdleDurationSeconds": self.max_idle_seconds,
+            "suspendedDurationSeconds": self.suspended_duration_seconds,
+            "autoResumeEnabled": self.auto_resume,
+        }
 
 @dataclass
 class VMHandle:
@@ -609,7 +628,7 @@ class FakeMicroVMController(MicroVMController):
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && python -m pytest tests/test_microvm_control.py -v`
-Expected: PASS (5 tests)
+Expected: PASS (6 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -958,32 +977,40 @@ from __future__ import annotations
 from pathfinder.sandbox.microvm_control import MicroVMController, BootSpec, VMHandle, VMStatus
 
 class LambdaMicroVMController(MicroVMController):
-    """AWS Lambda MicroVM control-plane binding (ap-northeast-1).
+    """AWS Lambda MicroVMs control-plane binding (ap-northeast-1).
 
-    The exact boot/resume/suspend API (snapshot id, maxIdleDurationSeconds,
-    autoResumeEnabled, IAM exec role wiring) is resolved and completed in Task 7
-    against real AWS — it cannot be verified in CI without credentials. Until
-    then these raise NotImplementedError; unit tests inject FakeMicroVMController
-    via app.microvm_controller_factory instead.
+    Maps onto the confirmed Lambda MicroVMs API (GA 2026-06-22):
+      boot    -> lambda-microvms run-microvm --image-identifier <spec.image_id>
+                 --execution-role-arn <spec.exec_role_arn> --idle-policy <spec.idle_policy()>
+                 ; response gives microvmId + endpoint (the harness base_url)
+      resume  -> lambda-microvms resume-microvm --microvm-identifier <id>
+      suspend -> lambda-microvms suspend-microvm --microvm-identifier <id>
+      stop    -> lambda-microvms terminate-microvm --microvm-identifier <id>
+      status  -> lambda-microvms get-microvm --microvm-identifier <id> (RUNNING/SUSPENDED/...)
+    The concrete calls (via aioboto3/boto3-in-executor) + JWE auth-token wiring
+    for the harness endpoint are completed and verified in Task 7 against real
+    AWS — they cannot run in CI without credentials. Until then these raise
+    NotImplementedError; unit tests inject FakeMicroVMController via
+    app.microvm_controller_factory instead.
     """
 
     def __init__(self, region: str = "ap-northeast-1"):
         self.region = region
 
     async def boot(self, project_id: str, spec: BootSpec) -> VMHandle:
-        raise NotImplementedError("Task 7: bind to the real Lambda MicroVM boot API")
+        raise NotImplementedError("Task 7: bind to lambda-microvms run-microvm")
 
     async def resume(self, handle: VMHandle) -> VMHandle:
-        raise NotImplementedError("Task 7: bind to the real Lambda MicroVM resume API")
+        raise NotImplementedError("Task 7: bind to lambda-microvms resume-microvm")
 
     async def suspend(self, handle: VMHandle) -> None:
-        raise NotImplementedError("Task 7: bind to the real Lambda MicroVM suspend API")
+        raise NotImplementedError("Task 7: bind to lambda-microvms suspend-microvm")
 
     async def stop(self, handle: VMHandle) -> None:
-        raise NotImplementedError("Task 7: bind to the real Lambda MicroVM stop API")
+        raise NotImplementedError("Task 7: bind to lambda-microvms terminate-microvm")
 
     async def status(self, handle: VMHandle) -> VMStatus:
-        raise NotImplementedError("Task 7: bind to the real Lambda MicroVM status API")
+        raise NotImplementedError("Task 7: bind to lambda-microvms get-microvm")
 ```
 
 - [ ] **Step 4: Modify `make_sandbox`**
@@ -1015,9 +1042,10 @@ def microvm_controller_factory(project_id: str) -> MicroVMController:
 def _boot_spec() -> BootSpec:
     return BootSpec(
         region=os.environ.get("PATHFINDER_VM_REGION", "ap-northeast-1"),
-        snapshot_id=os.environ.get("PATHFINDER_VM_SNAPSHOT") or None,
-        exec_role_arn=os.environ.get("PATHFINDER_VM_ROLE_ARN") or None,
-        anthropic_model=os.environ.get("ANTHROPIC_MODEL") or None,  # resolved in Task 7
+        image_id=os.environ.get("PATHFINDER_VM_IMAGE_ID") or None,     # --image-identifier
+        exec_role_arn=os.environ.get("PATHFINDER_VM_ROLE_ARN") or None,  # --execution-role-arn
+        # Confirmed "global.anthropic.claude-sonnet-5" (ap-northeast-1); re-verified in Task 7.
+        anthropic_model=os.environ.get("ANTHROPIC_MODEL") or None,
     )
 
 async def _make_microvm_sandbox(project_id: str) -> Sandbox:
@@ -1087,7 +1115,7 @@ git commit -m "feat: env-gated make_sandbox swap to MicroVMSandbox (routes uncha
 **Interfaces:**
 - Consumes: `LambdaMicroVMController`, `BootSpec`, `HarnessClient`, `MicroVMSandbox`.
 
-- [ ] **Step 1: Resolve the Sonnet-5 Bedrock inference-profile id (do NOT hardcode a guess)**
+- [ ] **Step 1: Re-verify the Sonnet-5 Bedrock inference-profile id (confirmed, but re-check at deploy)**
 
 Run:
 ```bash
@@ -1095,24 +1123,33 @@ aws bedrock list-inference-profiles --region ap-northeast-1 \
   --query "inferenceProfileSummaries[?contains(inferenceProfileId, 'sonnet-5')].[inferenceProfileId,status]" \
   --output table
 ```
-Expected observation: at least one `ACTIVE` cross-region profile whose id contains `sonnet-5` (e.g. an `apac.anthropic.claude-sonnet-5-*` form — **use the exact id printed**, do not assume). Export it:
+Expected observation (confirmed 2026-07-17): a row `global.anthropic.claude-sonnet-5 | ACTIVE`. **Use the exact id printed** — it is `global.anthropic.claude-sonnet-5` today; re-checking guards against a future rename. Export it:
 ```bash
-export ANTHROPIC_MODEL="<exact id from the command above>"
+export ANTHROPIC_MODEL="global.anthropic.claude-sonnet-5"
 ```
-If no Sonnet-5 profile is listed in `ap-northeast-1`, STOP and escalate — the model pin cannot be satisfied and this is a blocking open question (see Open Questions).
+If the profile is not `ACTIVE` in `ap-northeast-1`, STOP and escalate (the model pin cannot be satisfied). Note: also confirm the MicroVM execution role's IAM policy allows `bedrock:InvokeModel*` on `arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5` AND on the `inference-profile/global.anthropic.claude-sonnet-5` resource — a `global.*` profile fans out across regions, so scope the policy to the profile ARN plus the model in each routed region, not a single-region model ARN (this is the exact shape that caused pilot1's `ValidationException`).
 
-- [ ] **Step 2: Confirm MicroVM control-plane API and complete `LambdaMicroVMController`**
+- [ ] **Step 2: Complete `LambdaMicroVMController` against the confirmed Lambda MicroVMs API**
 
-Using the confirmed Lambda MicroVM / Firecracker-snapshot API for `ap-northeast-1`, fill in `LambdaMicroVMController.boot/resume/suspend/stop/status` so `boot`:
-- launches from the pre-baked snapshot (Claude Code + `aiplc-rules` + harness already installed),
-- attaches the IAM **execution role** (`BootSpec.exec_role_arn`) — NO static keys,
-- injects `BootSpec.env()` (`CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION`, `ANTHROPIC_MODEL`),
-- sets `maxIdleDurationSeconds=BootSpec.max_idle_seconds` and `autoResumeEnabled=BootSpec.auto_resume`,
-- returns a `VMHandle` whose `base_url` is the harness HTTPS endpoint.
-
-Verify the harness is reachable:
+The control plane is the **AWS Lambda MicroVMs** service (GA 2026-06-22). Fill in the controller so `boot` issues:
 ```bash
-curl -fsS "$VM_BASE_URL/health"
+aws lambda-microvms run-microvm --region ap-northeast-1 \
+  --image-identifier "$PATHFINDER_VM_IMAGE_ID" \
+  --execution-role-arn "$PATHFINDER_VM_ROLE_ARN" \
+  --idle-policy '{"maxIdleDurationSeconds":300,"suspendedDurationSeconds":1800,"autoResumeEnabled":true}'
+```
+- the pre-baked `--image-identifier` snapshot already contains Claude Code + `aiplc-rules` + harness; the boot env (`CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION`, `ANTHROPIC_MODEL`) is baked into the image or passed per the image's env mechanism,
+- `--execution-role-arn` attaches the IAM role — NO static keys,
+- `--idle-policy` comes verbatim from `BootSpec.idle_policy()`,
+- the response gives `microvmId` (→ `VMHandle.vm_id`) and `endpoint` (→ `VMHandle.base_url`).
+
+Map the remaining methods to `resume-microvm` / `suspend-microvm` / `terminate-microvm` / `get-microvm` (see the controller docstring). The harness endpoint uses Lambda MicroVMs' service-provided JWE auth: mint a token via `CreateMicrovmAuthToken` (short expiry, e.g. 30 min) and have `harness_factory` attach it as the `HarnessClient`'s auth header — this is the one prod wiring detail beyond the CLI calls.
+
+Obtain an auth token and verify the harness is reachable:
+```bash
+export VM_BASE_URL="<endpoint from run-microvm>"
+# (attach the JWE token from CreateMicrovmAuthToken as the Authorization header)
+curl -fsS -H "Authorization: Bearer $VM_JWE_TOKEN" "$VM_BASE_URL/health"
 ```
 Expected: HTTP 200 with a JSON body indicating the Claude Code process is alive.
 
@@ -1155,7 +1192,7 @@ Paste the observed `ANTHROPIC_MODEL` id, `/health` result, rules listing, and tu
 - S3 sync after every turn → **deferred to Part 2** (explicit hook comment in `send_message`; needs `S3Store`).
 - Recovery on expiry/failure + restore-from-S3 + methodology self-resume (no custom resume logic) → **deferred to Part 2** (Part 1 has no durable store; the "no resume logic" constraint is honored by containing none here).
 - AUTH: Bedrock via IAM exec role (`CLAUDE_CODE_USE_BEDROCK`), no long-lived keys → Task 4 (`BootSpec.env`, `test_bootspec_env_has_no_credential_material`) + Task 7 (role attach).
-- Sonnet-5 pin via `ANTHROPIC_MODEL` = Bedrock inference profile, verified not hardcoded → Task 4 (`anthropic_model` stays `None`) + Task 7 Step 1 (`aws bedrock list-inference-profiles`).
+- Sonnet-5 pin via `ANTHROPIC_MODEL` = Bedrock inference profile, injected not hardcoded → Task 4 (`anthropic_model` from env; confirmed `global.anthropic.claude-sonnet-5`, ap-northeast-1, ACTIVE) + Task 7 Step 1 (re-verify + IAM policy scope note).
 - Region `ap-northeast-1` → Task 4 default + Task 7; S3-in-Seoul + cross-region disclosure → Part 2 (noted in Scope).
 - Contract-test module both sandboxes run → Task 2 (module) + Task 5 (`MicroVMSandbox` run of the identical helpers).
 - Harness protocol client tested against a fake HTTP server → Task 3.
@@ -1170,9 +1207,15 @@ Paste the observed `ANTHROPIC_MODEL` id, `/health` result, rules listing, and tu
 
 **Scope sizing:** 7 tasks (6 unit + 1 integration), comparable to Phase 1's density, all inside the single "compute relay" boundary. The larger durable-persistence/recovery surface is split out to Part 2 (named above), each part independently testable.
 
-## Open Questions (surfaced, not resolved in this plan)
+## Open Questions
 
-1. **Exact Lambda MicroVM control-plane API.** The spec says "Lambda MicroVM (Firecracker snapshot)" with `maxIdleDurationSeconds`/`autoResumeEnabled`, but the precise AWS API/SDK surface for boot/suspend/resume in `ap-northeast-1` is not pinned. The plan abstracts it behind `MicroVMController` and resolves the real calls in Task 7 — but if the intended service is actually Bedrock AgentCore, Firecracker-on-EC2, or a bespoke harness, the `LambdaMicroVMController` binding (only) changes; the sandbox/tests do not.
-2. **Sonnet-5 availability in `ap-northeast-1`.** Task 7 Step 1 will confirm a Sonnet-5 cross-region inference profile exists in Tokyo. If none is `ACTIVE` there, the model pin is blocked (fallback: a different APAC profile, or accept a different region for compute — a governance decision).
-3. **Suspend/resume vs. durable state (a Part 2 boundary risk).** Snapshot resume restores the VM's own filesystem, but writes that landed in S3 while suspended (e.g. `[Answer]` write-backs during early Discovery) would be stale on resume. Part 2 must add a reconcile step (re-push S3-newer files into the resumed VM). Flagging here because it shapes the `_ensure_ready` resume path defined in Task 5.
-4. **Busy-signal vs. wait.** Part 1 implements the soft busy **signal** (concurrent turn gets an immediate `error` event). The design permits "wait" as an alternative; if product wants the waiting behavior, it is a localized change to `send_message` (await the lock) — noted so it is a conscious choice, not an oversight.
+**RESOLVED 2026-07-17 (verified against live AWS):**
+
+- **~~Exact MicroVM control-plane API~~ — RESOLVED.** The service is **AWS Lambda MicroVMs** (Firecracker, GA 2026-06-22), confirmed present in `ap-northeast-1` (`list-microvm-images` returns 200) and **absent in `ap-northeast-2`/Seoul** (403 `AccessDeniedException`, matching the spec's "Seoul unsupported"). API surface: `run-microvm` (→ `microvmId` + `endpoint`), `suspend-microvm`, `resume-microvm`, `terminate-microvm`, `get-microvm`; `--idle-policy` with `maxIdleDurationSeconds`/`suspendedDurationSeconds`/`autoResumeEnabled`; `--execution-role-arn` for IAM auth; `CreateMicrovmAuthToken` for JWE endpoint auth. Baked into Task 4 (`BootSpec.idle_policy()`, `image_id`, `exec_role_arn`) and Task 7. The `MicroVMController` seam still isolates this, so a future service swap changes only `LambdaMicroVMController`.
+- **~~Sonnet-5 availability in `ap-northeast-1`~~ — RESOLVED.** `global.anthropic.claude-sonnet-5` is `ACTIVE` and routed through `ap-northeast-1` (verified via `list-inference-profiles`). It is a `global.*` profile (fans out across all regions), so the IAM policy note in Task 7 Step 1 applies. No blocker.
+
+**STILL OPEN (decisions needed, not code blockers for Part 1):**
+
+1. **Harness JWE auth wiring.** The Lambda MicroVMs endpoint requires a service-provided JWE token (`CreateMicrovmAuthToken`, short expiry). Part 1's `HarnessClient` takes an injected `httpx.AsyncClient`, so this is an auth-header/refresh concern in `harness_factory` (Task 6/7), not a client-shape change — but token **refresh** across a long suspend/resume needs a decision (mint-per-boot vs. refresh-on-401). Recommend mint-per-boot in Part 1, revisit in Part 2's resume path.
+2. **Suspend/resume vs. durable state (a Part 2 boundary risk).** Snapshot resume restores the VM's own filesystem, but writes that landed in S3 while suspended (e.g. `[Answer]` write-backs during early Discovery) would be stale on resume. Part 2 must add a reconcile step (re-push S3-newer files into the resumed VM). Flagging here because it shapes the `_ensure_ready` resume path defined in Task 5.
+3. **Busy-signal vs. wait.** Part 1 implements the soft busy **signal** (concurrent turn gets an immediate `error` event). The design permits "wait" as an alternative; if product wants the waiting behavior, it is a localized change to `send_message` (await the lock) — noted so it is a conscious choice, not an oversight.
