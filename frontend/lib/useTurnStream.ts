@@ -25,10 +25,49 @@ export interface AiItem {
   streaming: boolean;
   error: string | null;
 }
-export type ChatItem = UserItem | AiItem;
+// C2: structured timeline cards, materialized from file_changed paths seen
+// during a completed turn. Pure filename-suffix mapping (see
+// deriveCardsFromPaths below) — never content sniffing, never a gate/approval
+// inference (see the plan header's "PROMINENT DEVIATION" note).
+export interface QuestionsCardItem {
+  id: string;
+  role: "card";
+  card: "questions";
+  path: string;
+}
+export interface ArtifactCardItem {
+  id: string;
+  role: "card";
+  card: "artifact";
+  path: string;
+}
+export type CardItem = QuestionsCardItem | ArtifactCardItem;
+export type ChatItem = UserItem | AiItem | CardItem;
 
 let counter = 0;
 const nextId = () => `item-${counter++}`;
+
+// Pure filename mapping (zero methodology — same class of check as Plan B's
+// established `isClarification` endsWith check in questions/page.tsx): a
+// `-questions.md` path materializes a QuestionsCardItem (QuestionCardSlot
+// decides AT RENDER TIME, by data shape, whether it's answered/clarification/
+// unparsed); a `discovery-document.md` path materializes an ArtifactCardItem.
+// One card per UNIQUE path per turn — a turn that touches the same file twice
+// still yields a single card. Order follows first-seen order within the turn.
+function deriveCardsFromPaths(paths: string[]): CardItem[] {
+  const seen = new Set<string>();
+  const cards: CardItem[] = [];
+  for (const path of paths) {
+    if (seen.has(path)) continue;
+    seen.add(path);
+    if (path.endsWith("-questions.md")) {
+      cards.push({ id: nextId(), role: "card", card: "questions", path });
+    } else if (path.endsWith("discovery-document.md")) {
+      cards.push({ id: nextId(), role: "card", card: "artifact", path });
+    }
+  }
+  return cards;
+}
 
 export interface TurnStream {
   items: ChatItem[];
@@ -39,7 +78,8 @@ export interface TurnStream {
 // Drives one live agent turn at a time over the EXISTING GET /events SSE
 // (Plan A's streamEvents). status/file_changed frames become the AI bubble's
 // "추론 과정" trace; message frames accumulate into its text; an error-KIND
-// frame sets its error; done/transport-close finish the turn.
+// frame sets its error; done/transport-close finish the turn AND (C2) derive
+// zero or more structured cards from the turn's file_changed paths.
 export function useTurnStream(projectId: string, initial: ChatItem[] = []): TurnStream {
   const [items, setItems] = useState<ChatItem[]>(initial);
   const [streaming, setStreaming] = useState(false);
@@ -57,6 +97,10 @@ export function useTurnStream(projectId: string, initial: ChatItem[] = []): Turn
       if (trimmed === "" || stopRef.current) return;
 
       const aiId = nextId();
+      // Local accumulator for THIS turn's file_changed paths — read at onDone
+      // to derive cards, independent of React's async state batching.
+      const turnPaths: string[] = [];
+
       setItems((prev) => [
         ...prev,
         { id: nextId(), role: "user", text: trimmed },
@@ -71,6 +115,7 @@ export function useTurnStream(projectId: string, initial: ChatItem[] = []): Turn
 
       stopRef.current = streamEvents(projectId, trimmed, {
         onEvent: (ev: AgentEvent) => {
+          if (ev.kind === "file_changed" && ev.path) turnPaths.push(ev.path);
           patchAi(aiId, (it) => {
             if (ev.kind === "message") return { ...it, text: it.text + (ev.text ?? "") };
             if (ev.kind === "status" || ev.kind === "file_changed")
@@ -82,6 +127,8 @@ export function useTurnStream(projectId: string, initial: ChatItem[] = []): Turn
         },
         onDone: () => {
           patchAi(aiId, (it) => ({ ...it, streaming: false }));
+          const derived = deriveCardsFromPaths(turnPaths);
+          if (derived.length > 0) setItems((prev) => [...prev, ...derived]);
           finish();
         },
         onError: () => {

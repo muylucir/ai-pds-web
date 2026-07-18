@@ -71,6 +71,7 @@ Rationale: card components stay presentational and prop-driven (unit-tested agai
 - Modify: `frontend/lib/useTurnStream.ts`
 - Modify: `frontend/test/fixtures/agentEventStreams.ts` (add `questionsTurn`, `documentTurn`)
 - Modify: `frontend/lib/useTurnStream.test.tsx` (add a new `describe` block)
+- Modify (interim guard): `frontend/components/canvas/ChatTimeline.tsx` — widening `ChatItem` to include `CardItem` makes C1's `role==="user" ? UserMessage : AiMessage` ternary type-unsound (the else-branch narrows to `AiItem | CardItem`, not assignable to `AiMessage`'s `item: AiItem` prop). Task 1 adds a minimal type-safe narrowing guard so `tsc --noEmit` stays clean; **Task 5 replaces this guard with real card routing** (see Task 5's note below).
 
 **Interfaces:**
 - `ChatItem` union grows: `export type ChatItem = UserItem | AiItem | CardItem;` where `CardItem = QuestionsCardItem | ArtifactCardItem`:
@@ -331,15 +332,35 @@ export function useTurnStream(projectId: string, initial: ChatItem[] = []): Turn
 }
 ```
 
+- [ ] **Step 3b: Interim type-safe guard in `ChatTimeline.tsx`**
+
+Widening `ChatItem` (Step 3 above) to `UserItem | AiItem | CardItem` breaks `tsc --noEmit`: C1's `ChatTimeline.tsx` map body only narrows `role==="user"` vs. else, so the else-branch (now `AiItem | CardItem`) is no longer assignable to `AiMessage`'s `item: AiItem` prop. Real card rendering (`QuestionCardSlot`/`ArtifactCard` dispatch) is Task 5's job and needs Task 5's own props (`projectId`/`onChoose`/`onOpenArtifact`/`busy`) — out of scope here. Task 1 instead adds a minimal narrowing guard so the type error doesn't leak past this task's own green gate:
+
+```tsx
+// frontend/components/canvas/ChatTimeline.tsx — change only the map body:
+          items.map((item) =>
+            item.role === "user" ? (
+              <UserMessage key={item.id} text={item.text} />
+            ) : item.role === "ai" ? (
+              <AiMessage key={item.id} item={item} />
+            ) : (
+              // role==="card" items are rendered in C2 Task 5 (QuestionCardSlot/ArtifactCard); interim guard keeps C1 rendering type-safe
+              null
+            ),
+          )
+```
+
+Everything else in `ChatTimeline.tsx` stays byte-identical. Existing `ChatTimeline.test.tsx` cases (user/ai items only) are unaffected and must stay green.
+
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd frontend && npx vitest run lib/useTurnStream.test.tsx && npx tsc --noEmit`
-Expected: PASS (9 tests: the 5 pre-existing C1 tests + 4 new C2 tests); `tsc` clean.
+Run: `cd frontend && npx vitest run lib/useTurnStream.test.tsx components/canvas/ChatTimeline.test.tsx && npx tsc --noEmit`
+Expected: PASS (11 tests: the 5 pre-existing C1 `useTurnStream` tests + 4 new C2 `useTurnStream` tests + 2 pre-existing `ChatTimeline` tests); `tsc` clean.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/lib/useTurnStream.ts frontend/lib/useTurnStream.test.tsx frontend/test/fixtures/agentEventStreams.ts
+git add frontend/lib/useTurnStream.ts frontend/lib/useTurnStream.test.tsx frontend/test/fixtures/agentEventStreams.ts frontend/components/canvas/ChatTimeline.tsx
 git commit -m "feat(frontend): materialize structured timeline cards from file_changed paths"
 ```
 
@@ -1234,6 +1255,8 @@ git commit -m "feat(frontend): Living-Document view + switchable document/previe
 ---
 
 ### Task 5: Page + `ChatTimeline` wiring
+
+> **Note:** Task 1 already touched `ChatTimeline.tsx` with an interim type-safe guard (`role==="card"` → `null`) so `tsc --noEmit` would stay clean once `ChatItem` was widened. This task's full replacement of `ChatTimeline.tsx` REPLACES that interim guard with real card routing (`QuestionCardSlot`/`ArtifactCard` dispatch below) — expect the diff against Task 1's version to be larger than a fresh-file diff would suggest.
 
 **Files:**
 - Modify: `frontend/components/canvas/ChatTimeline.tsx`

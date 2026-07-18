@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useTurnStream, type AiItem } from "./useTurnStream";
-import { normalTurn, errorTurn } from "@/test/fixtures/agentEventStreams";
+import { normalTurn, errorTurn, questionsTurn, documentTurn } from "@/test/fixtures/agentEventStreams";
 import type { AgentEvent } from "@/lib/api/types";
 
 // Minimal fake EventSource (mirrors lib/api/sse.test.ts): records URL, lets the
@@ -96,5 +96,61 @@ describe("useTurnStream", () => {
     unmount();
 
     expect(es.closed).toBe(true);
+  });
+});
+
+const cards = (items: ReturnType<typeof useTurnStream>["items"]) =>
+  items.filter((i) => i.role === "card");
+
+describe("useTurnStream — structured timeline cards (C2)", () => {
+  it("appends a QuestionsCardItem when a turn's file_changed path ends in -questions.md", () => {
+    const { result } = renderHook(() => useTurnStream("pilot1"));
+    act(() => result.current.send("Product Strategy 질문 만들어줘"));
+    const es = FakeEventSource.last!;
+    for (const frame of questionsTurn) act(() => es.emit(frame));
+
+    const found = cards(result.current.items);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      role: "card",
+      card: "questions",
+      path: "aiplc-docs/discovery/product-strategy/strategy-questions.md",
+    });
+  });
+
+  it("appends an ArtifactCardItem when a turn's file_changed path ends in discovery-document.md", () => {
+    const { result } = renderHook(() => useTurnStream("pilot1"));
+    act(() => result.current.send("문서 갱신해줘"));
+    const es = FakeEventSource.last!;
+    for (const frame of documentTurn) act(() => es.emit(frame));
+
+    const found = cards(result.current.items);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      role: "card",
+      card: "artifact",
+      path: "aiplc-docs/discovery/discovery-document.md",
+    });
+  });
+
+  it("dedupes multiple file_changed events for the same path into a single card", () => {
+    const { result } = renderHook(() => useTurnStream("pilot1"));
+    act(() => result.current.send("go"));
+    const es = FakeEventSource.last!;
+    const repeated = [
+      { kind: "file_changed" as const, text: null, path: "aiplc-docs/discovery/discovery-document.md" },
+      { kind: "file_changed" as const, text: null, path: "aiplc-docs/discovery/discovery-document.md" },
+      { kind: "done" as const, text: null, path: null },
+    ];
+    for (const frame of repeated) act(() => es.emit(frame));
+    expect(cards(result.current.items)).toHaveLength(1);
+  });
+
+  it("does not append a card for file_changed paths matching neither suffix (e.g. prototype source files)", () => {
+    const { result } = renderHook(() => useTurnStream("pilot1"));
+    act(() => result.current.send("필터 추가"));
+    const es = FakeEventSource.last!;
+    for (const frame of normalTurn) act(() => es.emit(frame)); // normalTurn's path is prototype/src/components/FilterBar.tsx
+    expect(cards(result.current.items)).toHaveLength(0);
   });
 });

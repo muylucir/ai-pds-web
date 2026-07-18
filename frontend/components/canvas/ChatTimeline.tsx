@@ -18,8 +18,11 @@ export function ChatTimeline({ items }: { items: ChatItem[] }) {
           items.map((item) =>
             item.role === "user" ? (
               <UserMessage key={item.id} text={item.text} />
-            ) : (
+            ) : item.role === "ai" ? (
               <AiMessage key={item.id} item={item} />
+            ) : (
+              // role==="card" items are rendered in C2 Task 5 (QuestionCardSlot/ArtifactCard); interim guard keeps C1 rendering type-safe
+              null
             ),
           )
         )}
