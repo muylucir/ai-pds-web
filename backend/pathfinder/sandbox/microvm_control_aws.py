@@ -17,15 +17,24 @@ _STATUS_MAP: dict[str, VMStatus] = {
 
 def _map_status(raw: str) -> VMStatus:
     """get-microvm status string -> our VMStatus. Unknown -> 'stopped' (the
-    conservative reboot-worthy state). Exact enum strings are drill-confirmed;
-    this table is the design mapping (see Open Questions).
+    conservative reboot-worthy state).
 
-    Note: the real lambda-microvms (2025-09-09) MicrovmState enum is
+    The real lambda-microvms (2025-09-09) service model's MicrovmState enum
+    (confirmed straight from the service-2.json shape, not a drill) is
     PENDING/RUNNING/SUSPENDING/SUSPENDED/TERMINATING/TERMINATED -- it has
-    neither STARTING nor EXPIRED. Both are kept in this table (mapping to
-    "booting" and "expired" respectively) since this is a pure function with
-    no service-model binding; SUSPENDING/TERMINATING intermediate states fall
-    through to the "stopped" default, same as any other unrecognized string."""
+    neither STARTING nor EXPIRED. Both are kept in this table anyway as
+    harmless forward-compat entries (mapping to "booting" and "expired"
+    respectively): _map_status is a pure string->string function with no
+    service-model binding, so an entry AWS never actually emits costs nothing
+    and only helps if a future API revision introduces it.
+
+    SUSPENDING and TERMINATING -- states the real enum DOES emit -- are not
+    yet in this table and so fall through to the "stopped" default. This is
+    the conservative reboot path and is data-safe (workspace state persists
+    in S3 via S3Store, restored on next boot), but it does forfeit the
+    resume-without-reboot fast path for a MicroVM that is merely mid-suspend.
+    Whether SUSPENDING should instead map to "booting" (or a new status) is
+    an open drill item for Task 6+, not resolved here."""
     return _STATUS_MAP.get(raw, "stopped")
 
 
@@ -114,6 +123,10 @@ def mint_harness_token(vm_id: str, region: str = "ap-northeast-1", client=None,
     CreateMicrovmAuthTokenResponse.authToken is a map (TokenParts), not a bare
     string -- per the service docs: "Use the value at key 'X-aws-proxy-auth'
     as the header value when connecting to the MicroVM endpoint."""
+    # This is a sync, blocking boto3 call (this function is itself sync, not
+    # async, unlike LambdaMicroVMController's methods) -- Task 5's async
+    # caller (app.py's harness_factory) must wrap this call in
+    # asyncio.to_thread, the same pattern used throughout this module.
     c = client if client is not None else boto3.client("lambda-microvms", region_name=region)
     resp = c.create_microvm_auth_token(
         microvmIdentifier=vm_id,

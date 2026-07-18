@@ -42,6 +42,19 @@ def test_map_status_table():
     assert _map_status("WAT") == "stopped"
 
 
+def test_boto3_floor_ships_lambda_microvms_model():
+    """Executable floor check for the pyproject.toml boto3 pin. Confirmed by
+    binary search that botocore==1.43.34 lacks the lambda-microvms service
+    model entirely (boto3.client(...) raises UnknownServiceError) while
+    1.43.35 has it -- this is the exact first version, not a guess. This test
+    fails loudly (UnknownServiceError, not silently) in any environment whose
+    resolved boto3/botocore predates that floor, catching a `>=` pin that
+    resolves to a too-old install before the Stubber tests below even run."""
+    assert "lambda-microvms" in boto3.session.Session().get_available_services()
+    client = boto3.client("lambda-microvms", region_name=REGION)
+    assert client.meta.service_model.service_id == "Lambda Microvms"
+
+
 ROLE_ARN = "arn:aws:iam::123456789012:role/microvm-exec-role"
 
 

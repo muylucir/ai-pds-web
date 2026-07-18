@@ -15,7 +15,7 @@
 - **Model pin:** `ANTHROPIC_MODEL=global.anthropic.claude-sonnet-5` (Bedrock inference profile, confirmed ACTIVE `ap-northeast-1` 2026-07-17). Injected from env, never hardcoded. Re-verified in the preflight drill.
 - **IAM shape (pilot1-validated):** execution role gets `bedrock:InvokeModel` + `bedrock:InvokeModelWithResponseStream` on BOTH `arn:aws:bedrock:*:<acct>:inference-profile/global.anthropic.claude-sonnet-5` AND `arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5*` (a `global.*` profile fans out across regions — a single-region model ARN caused pilot1's `ValidationException`). Execution role gets NO S3 (preserves the security boundary: the VM cannot reach durable storage).
 - **Harness endpoint auth:** header **`X-aws-proxy-auth: <token>`** (NOT `Authorization: Bearer` — the old Part-1 Task-7 text guessed wrong). Default proxy port **8080** (harness listens there); override per-request with `X-aws-proxy-port`. Tokens from `CreateMicrovmAuthToken`, max TTL 60 min → we mint 30 min, `allowedPorts=[{"port":8080}]`.
-- **`boto3` floor bump — REQUIRED.** The `lambda-microvms` service model must be present in the installed botocore (it is NOT in the repo's current `boto3>=1.34` pin → `boto3.client("lambda-microvms")` raises `UnknownServiceError`, verified 2026-07-18). Task 4 bumps `backend/pyproject.toml` to `boto3>=1.40` (the first floor whose bundled botocore ships the GA `lambda-microvms` model). Exact minimum version is an Open Question confirmed by the preflight `get_available_services()` check.
+- **`boto3` floor bump — REQUIRED.** The `lambda-microvms` service model must be present in the installed botocore (it is NOT in the repo's current `boto3>=1.34` pin → `boto3.client("lambda-microvms")` raises `UnknownServiceError`, verified 2026-07-18). Task 4 bumps `backend/pyproject.toml` to `boto3>=1.43.35` — CONFIRMED (not merely floor-sufficient-in-the-dev-venv) via binary search across PyPI wheels in a clean python3.11 venv: `1.43.34`'s botocore lacks the `lambda-microvms` model directory entirely, `1.43.35`'s has it, and `boto3.client("lambda-microvms", ...)` constructs cleanly at exactly that pin with no other version pinned. (The plan originally stated `>=1.40`, based on the already-upgraded dev venv having 1.43.50 installed; a reviewer caught that a clean-environment resolution to `1.40.0` would still hit `UnknownServiceError`, since 1.40.0 predates the model by several minor versions — corrected here.) `test_boto3_floor_ships_lambda_microvms_model` in Task 4's test file makes this an executable regression check, not just a doc claim.
 - **No moto for MicroVMs.** `lambda-microvms` has no moto support; the CI-testable seam is botocore `Stubber` (real client, stubbed HTTP). `S3Store` keeps its existing moto coverage.
 - **Auth is IAM-role only.** Bedrock via the MicroVM execution role (`CLAUDE_CODE_USE_BEDROCK=1`); no long-lived keys anywhere. `X-aws-proxy-auth` tokens are short-lived, minted per handle transition (mint-on-resume).
 - **Redaction-at-rest is already implemented** (`_sync_workspace_to_s3` redacts `aiplc-docs/audit.md`). Part-2's old "empirical grep decides" step is now a VERIFICATION drill: expect NO credential markers in S3-at-rest `audit.md`.
@@ -1298,10 +1298,17 @@ Fill the five `NotImplementedError` methods with a boto3 `lambda-microvms` clien
 
 - [ ] **Step 1: Bump the boto3 floor (the `lambda-microvms` model must exist)**
 
-Edit `backend/pyproject.toml` line 5:
+Edit `backend/pyproject.toml` line 5 (post-fix: the floor is `1.43.35`, not `1.40` — see below):
 
 ```toml
-dependencies = ["fastapi>=0.110", "pydantic>=2.6", "sse-starlette>=2.0", "httpx>=0.27", "boto3>=1.40"]
+# boto3 floor = 1.43.35, the confirmed first version whose bundled botocore
+# ships the lambda-microvms 2025-09-09 service model (binary-searched via
+# `pip download`+`unzip -l` across 1.40.0..1.43.50 in a clean python3.11 venv,
+# then verified boto3.client("lambda-microvms", ...) constructs at exactly
+# boto3==1.43.35/botocore==1.43.35 without UnknownServiceError; 1.43.34 lacks
+# the model dir entirely). >=1.40 alone is insufficient and would resolve to
+# an UnknownServiceError in a clean environment.
+dependencies = ["fastapi>=0.110", "pydantic>=2.6", "sse-starlette>=2.0", "httpx>=0.27", "boto3>=1.43.35"]
 ```
 
 Then install and confirm the service model is present:
@@ -1311,6 +1318,8 @@ cd backend && pip install -e '.[dev]'
 python -c "import boto3; print('lambda-microvms' in boto3.session.Session().get_available_services())"
 ```
 Expected: `True`. If `False`, the installed botocore predates the GA `lambda-microvms` model — raise the floor until it prints `True` and record the exact version (this closes the boto3-floor Open Question). Do NOT proceed to Step 3 until this prints `True`, or the Stubber tests cannot construct the client.
+
+> **Post-implementation correction (reviewer-flagged Important defect).** The plan originally pinned `boto3>=1.40` based on the installed dev venv (which happened to already have 1.43.50). A reviewer caught that `>=1.40` is a floor that a CLEAN environment could resolve down to `1.40.0` — and 1.40.0's bundled botocore does NOT ship the `lambda-microvms` model, so a fresh install at the plan's stated floor would hit `UnknownServiceError`, not the Stubber tests. Root-caused by binary search (`pip download botocore==<v> --no-deps` + `unzip -l ... | grep lambda-microvms` across the 1.40.0–1.43.50 range in an isolated venv): the model directory first appears at **botocore/boto3 1.43.35** (1.43.34 lacks it entirely). The floor was corrected to `boto3>=1.43.35` and an executable regression test (`test_boto3_floor_ships_lambda_microvms_model`, asserting `boto3.client("lambda-microvms", ...)` constructs and the model is in `get_available_services()`) was added so a future accidental floor-loosening fails CI immediately instead of only failing in a fresh/clean install.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -1464,8 +1473,24 @@ _STATUS_MAP: dict[str, VMStatus] = {
 
 def _map_status(raw: str) -> VMStatus:
     """get-microvm status string -> our VMStatus. Unknown -> 'stopped' (the
-    conservative reboot-worthy state). Exact enum strings are drill-confirmed;
-    this table is the design mapping (see Open Questions)."""
+    conservative reboot-worthy state).
+
+    The real lambda-microvms (2025-09-09) service model's MicrovmState enum
+    (confirmed straight from the service-2.json shape, not a drill) is
+    PENDING/RUNNING/SUSPENDING/SUSPENDED/TERMINATING/TERMINATED -- it has
+    neither STARTING nor EXPIRED. Both are kept in this table anyway as
+    harmless forward-compat entries (mapping to "booting" and "expired"
+    respectively): _map_status is a pure string->string function with no
+    service-model binding, so an entry AWS never actually emits costs nothing
+    and only helps if a future API revision introduces it.
+
+    SUSPENDING and TERMINATING -- states the real enum DOES emit -- are not
+    yet in this table and so fall through to the "stopped" default. This is
+    the conservative reboot path and is data-safe (workspace state persists
+    in S3 via S3Store, restored on next boot), but it does forfeit the
+    resume-without-reboot fast path for a MicroVM that is merely mid-suspend.
+    Whether SUSPENDING should instead map to "booting" (or a new status) is
+    an open drill item for Task 6+, not resolved here."""
     return _STATUS_MAP.get(raw, "stopped")
 
 
@@ -1540,6 +1565,10 @@ def mint_harness_token(vm_id: str, region: str = "ap-northeast-1", client=None,
     """Mint a short-lived JWE via CreateMicrovmAuthToken and return it as the
     harness auth header. Called per handle transition (mint-on-resume) by
     app.py's harness_factory. Max TTL is 60 min; we use 30."""
+    # This is a sync, blocking boto3 call (this function is itself sync, not
+    # async, unlike LambdaMicroVMController's methods) -- Task 5's async
+    # caller (app.py's harness_factory) must wrap this call in
+    # asyncio.to_thread, the same pattern used throughout this module.
     c = client if client is not None else boto3.client("lambda-microvms", region_name=region)
     resp = c.create_microvm_auth_token(
         microvmIdentifier=vm_id,
@@ -1552,9 +1581,11 @@ def mint_harness_token(vm_id: str, region: str = "ap-northeast-1", client=None,
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd backend && python -m pytest tests/test_microvm_control_aws.py -v`
-Expected: PASS — all 7 tests green.
+Expected: PASS — all 7 tests green (8 after the post-implementation floor-check test below is added).
 
-> **Note on Stubber operation/param names.** botocore's `Stubber` validates against the *real* `lambda-microvms` service model (installed in Step 1). If a param name differs from this plan's guess (e.g. `microvmIdentifier` vs `microvmId`, or `get_microvm` response shape `{"microvm":{"status":...}}` vs top-level `{"status":...}`), the Stubber raises `ParamValidationError` at test-authoring time — treat that as the model telling you the truth and adjust BOTH the test and the implementation to the real names. This is the intended CI-testable seam; the drill (Task 6+) confirms runtime behavior.
+> **Note on Stubber operation/param names.** botocore's `Stubber` validates against the *real* `lambda-microvms` service model (installed in Step 1). If a param name differs from this plan's guess (e.g. `microvmIdentifier` vs `microvmId`, or `get_microvm` response shape `{"microvm":{"status":...}}` vs top-level `{"status":...}`), the Stubber raises `ParamValidationError` at test-authoring time — treat that as the model telling you the truth and adjust BOTH the test and the implementation to the real names. This is the intended CI-testable seam; the drill (Task 6+) confirms runtime behavior. (In practice this DID happen: `get_microvm`/`run_microvm` responses are flat with a `state` field not a nested `{"microvm":{"status":...}}`; `ResumeMicrovmResponse` has zero members so `resume()` must poll `get_microvm` for the post-resume endpoint; and `CreateMicrovmAuthTokenResponse.authToken` is a map, not the bare string `resp["token"]` shown above — see `aws-task-4-report.md` for the corrected code actually committed.)
+
+> **Post-implementation addition: executable boto3-floor regression test.** A reviewer flagged that pinning a `>=` floor without an executable check lets a future dependency change silently regress below the version that actually ships the `lambda-microvms` model (see the Step 1 correction above). `test_microvm_control_aws.py` gained an 8th test, `test_boto3_floor_ships_lambda_microvms_model`, asserting `"lambda-microvms" in boto3.session.Session().get_available_services()` and that `boto3.client("lambda-microvms", region_name=REGION)` constructs — this turns the floor claim into something CI fails on, not just a comment.
 
 - [ ] **Step 6: Run the full backend suite (no regression)**
 
@@ -2292,7 +2323,7 @@ Expected: `OK: no drill collected`; commit succeeds.
 ## Open Questions (confirmed/closed by drills, not code blockers)
 
 1. **Exact `get-microvm` status enum strings.** The design maps PENDING/STARTING→"booting", RUNNING→"ready", SUSPENDED→"suspended", TERMINATED/EXPIRED→"expired", unknown→"stopped" (`_map_status`, Task 4). The real strings are captured by `30-recovery-drill.sh` (`out/30-terminated-status.txt`) and `40-reconcile-drill.sh` (`out/40-suspended-status.txt`). If they differ (e.g. `STOPPED` vs `TERMINATED`), extend `_STATUS_MAP` — the `else→"stopped"` default keeps unknown states reboot-worthy, so a wrong guess degrades to a safe reboot, never a stuck handle.
-2. **`boto3` minimum version for the `lambda-microvms` model.** Verified 2026-07-18 that the repo's installed botocore (1.34.162) does NOT ship the model (`get_available_services()` omits `lambda-microvms`). Task 4 pins `boto3>=1.40`; the preflight (`00-preflight.sh` step 2) asserts the model is present. Confirm the exact first-shipping version and tighten the floor if `1.40` proves insufficient.
+2. **`boto3` minimum version for the `lambda-microvms` model — CLOSED.** Verified 2026-07-18 that the repo's installed botocore (1.34.162) does NOT ship the model (`get_available_services()` omits `lambda-microvms`). Task 4 originally pinned `boto3>=1.40` based on the dev venv's already-upgraded state, but that floor was insufficient: a reviewer flagged that a clean environment resolving to `1.40.0` exactly would still hit `UnknownServiceError`. Binary-searched (via `pip download`+`unzip -l` in an isolated python3.11 venv, no other packages pinned) across the 1.40.0–1.43.50 range: the `lambda-microvms` model directory is absent through `1.43.34` and present starting at **`1.43.35`** — confirmed by constructing `boto3.client("lambda-microvms", region_name="ap-northeast-1")` at exactly `boto3==1.43.35`/`botocore==1.43.35` with no error. Floor corrected to `boto3>=1.43.35`; `test_boto3_floor_ships_lambda_microvms_model` (new in Task 4) makes this an executable CI check in addition to the preflight (`00-preflight.sh` step 2) runtime assertion.
 3. **stream-json schema fixture-vs-reality.** `harness/tests/fixtures/basic_turn.jsonl` and `multi_block_turn.jsonl` are recorded-SHAPE samples; `translate()` (Task 2, returns `list[AgentEvent]` so multi-block assistant messages translate every block) is asserted against them. `10-smoke-turn.sh` captures a REAL stream (`out/10-turn.sse`); if the real assistant/tool_use/result shape — including whether/how blocks are bundled together — differs from the fixtures, update BOTH the fixtures and `translate()`. This is the honestly-flagged seam.
 4. **Managed base image exact ARN/version.** The plan uses `arn:aws:lambda:ap-northeast-1:aws:microvm-image:al2023-1`. `00-preflight.sh` step 3 (`list-managed-microvm-images`) confirms the exact ARN + latest minor; correct `BASE_IMAGE_ARN` in the stack if it differs.
 5. **Does the endpoint serve 8080 by default for our harness, or need `X-aws-proxy-port`?** Default proxy port is 8080 and our harness listens there, so the header should be unnecessary. `50-glob-parity.sh` / `10-smoke-turn.sh` reach the harness via the endpoint with only `X-aws-proxy-auth`; if a request 502s, add `-H "X-aws-proxy-port: 8080"` and record which was needed.
@@ -2336,4 +2367,4 @@ Expected: `OK: no drill collected`; commit succeeds.
 
 **4. Scope-guard audit.** No task edits routes, parsers, the `Sandbox` ABC, `LocalSandbox`, or `MicroVMSandbox`. `HarnessClient` change is additive (optional param; `FakeHarness`/contract untouched). `app.py` change is confined to `_make_microvm_sandbox` + two new module-level helpers. Backend suite re-run after Tasks 4 and 5 (Step 6 / Step 5). Frontend untouched (123 stays green — not imported by any task). `harness/` and `infra/` are new top-level dirs, each with its own manifest and README line in File Structure.
 
-**5. CI-runnable unit-test count promised.** Task 1 = 3 (header seam), Task 2 = 8 (`translate` ×5 + `ClaudeDriver.run` ×3), Task 3 = 16 (app ×12 + hooks ×4 — originally 9 (app ×5 + hooks ×4); reviewer-mandated hardening after live-reproducing 3 Important defects added 7 more `test_app.py` cases: 2 double-star-glob, 1 binary-read, 3 path-confinement, 1 legit-nested-still-works), Task 4 = 7 (control-aws Stubber), Task 5 = 3 (`harness_factory` wiring) → **37 new CI-runnable unit tests**, all no-AWS (botocore `Stubber` + a stub `claude` executable). All 7 Phase-B drill scripts are INTEGRATION and are NEVER pytest-collected.
+**5. CI-runnable unit-test count promised.** Task 1 = 3 (header seam), Task 2 = 8 (`translate` ×5 + `ClaudeDriver.run` ×3), Task 3 = 16 (app ×12 + hooks ×4 — originally 9 (app ×5 + hooks ×4); reviewer-mandated hardening after live-reproducing 3 Important defects added 7 more `test_app.py` cases: 2 double-star-glob, 1 binary-read, 3 path-confinement, 1 legit-nested-still-works), Task 4 = 8 (control-aws Stubber ×7 — originally 7, reviewer-mandated fix added `test_boto3_floor_ships_lambda_microvms_model` as an executable floor check), Task 5 = 3 (`harness_factory` wiring) → **38 new CI-runnable unit tests**, all no-AWS (botocore `Stubber` + a stub `claude` executable). All 7 Phase-B drill scripts are INTEGRATION and are NEVER pytest-collected.
