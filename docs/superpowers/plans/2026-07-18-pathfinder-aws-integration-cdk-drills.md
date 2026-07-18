@@ -28,7 +28,7 @@
 ## File Structure
 
 **New — `harness/` (production code, runs inside the MicroVM):**
-- `harness/claude_driver.py` — subprocess driver. Pure `translate(obj: dict, workspace: str) -> AgentEvent | None` maps one Claude Code `--output-format stream-json` object to an `AgentEvent`; `ClaudeDriver.run(text, *, continue_session)` spawns `claude -p … --output-format stream-json --verbose --dangerously-skip-permissions [--continue]` (cwd=workspace) and yields `AgentEvent`s (nonzero exit / parse failure → `error`).
+- `harness/claude_driver.py` — subprocess driver. Pure `translate(obj: dict, workspace: str) -> list[AgentEvent]` maps one Claude Code `--output-format stream-json` object to zero or more `AgentEvent`s IN BLOCK ORDER (a real assistant message can carry several content blocks together — text + tool_use, or parallel tool_use — every block is translated, not just the first); a `Write`/`Edit`/`MultiEdit` `file_path` that would resolve outside `workspace` (e.g. via a `..` segment) is rejected — no `file_changed`, no path echo, emits `status` instead. `ClaudeDriver.run(text, *, continue_session)` spawns `claude -p … --output-format stream-json --verbose --dangerously-skip-permissions [--continue]` (cwd=workspace), drains stderr concurrently (never surfaced verbatim — only a bounded `"claude exited N"` on failure), and yields `AgentEvent`s (nonzero exit / parse failure → `error`); on generator abandonment (early `.aclose()`/cancellation) a `try/finally` kills and reaps the subprocess so no orphan `claude` process survives the call.
 - `harness/app.py` — Starlette server on 8080. `build_app(driver, workspace)`: POST `/message` (SSE of `AgentEvent` JSON, `--continue` after the first turn), GET/PUT `/files/{path}`, GET `/files?glob=`, GET `/health`. Speaks the identical protocol as `backend/tests/fakes/harness_app.py`.
 - `harness/hooks.py` — Starlette server on 9000 for the image lifecycle. `build_hooks_app(version_check, rules_present, health_check)`: GET `/ready` (200 once HTTP up AND `claude --version` succeeds → platform snapshots), GET `/validate` (200 when `/health` ok AND rules files present after resume — a cheap re-check, NOT a paid Sonnet turn; tradeoff documented).
 - `harness/serve.py` — entrypoint: `asyncio.gather` two `uvicorn.Server`s (app:8080, hooks:9000). This is the container CMD.
@@ -232,26 +232,34 @@ git commit -m "feat(harness): optional per-request headers on HarnessClient (X-a
 
 ### Task 2: Harness `claude_driver` — stream-json → AgentEvent
 
-`harness/claude_driver.py` is the in-VM subprocess driver. A pure `translate()` function maps one Claude Code `--output-format stream-json` object to an `AgentEvent` (unit-testable against RECORDED fixtures — the fixture-vs-reality seam a drill later validates), and `ClaudeDriver.run()` spawns the CLI and yields events. `AgentEvent` shape must match `backend/pathfinder/sandbox/base.py` exactly: `kind ∈ {message,file_changed,status,done,error}`, `text`, `path`. The harness re-declares a local `AgentEvent` (it cannot import the backend package) as a Pydantic model with the identical fields.
+`harness/claude_driver.py` is the in-VM subprocess driver. A pure `translate()` function maps one Claude Code `--output-format stream-json` object to a LIST of `AgentEvent`s — zero, one, or several, in block order (real assistant messages carry multiple content blocks together; a first-match-return design silently drops the rest) — unit-testable against RECORDED fixtures (the fixture-vs-reality seam a drill later validates). `ClaudeDriver.run()` spawns the CLI and yields events, draining stderr concurrently so the child never deadlocks on a full pipe, and killing/reaping the subprocess on early generator abandonment. `AgentEvent` shape must match `backend/pathfinder/sandbox/base.py` exactly: `kind ∈ {message,file_changed,status,done,error}`, `text`, `path`. The harness re-declares a local `AgentEvent` (it cannot import the backend package) as a Pydantic model with the identical fields.
+
+> **Reviewer-mandated hardening (folded in before this task's first implementation, since Task 3 consumes this module and a signature change is cheapest before any caller exists):**
+> 1. **Path-escape guard.** `PurePosixPath.relative_to` does not normalize `..` segments — relativizing `/workspace/../etc/passwd` against `/workspace` yields the syntactically-relative-but-escaping `"../etc/passwd"`, which a naive implementation forwards straight into `file_changed.path`. `_rel()` now rejects any relativized result containing a `..` segment or still starting with `/`, returning `None`; the caller (`translate()`) turns a `None` into `AgentEvent(kind="status", text="file outside workspace ignored")` — no path echo, ever, for output outside the workspace.
+> 2. **Multi-block translation.** `translate()`'s signature changes to `translate(obj: dict, workspace: str) -> list[AgentEvent]` (dropping the `| None` single-event return) so every content block in an assistant message is translated, not just the first that matches. `ClaudeDriver.run()` changes its inner loop to `for ev in translate(...): yield ev`.
+> 3. **stderr deadlock.** `stderr=PIPE` is drained by a concurrent background task for the lifetime of the subprocess (discarded, capped-read loop) — otherwise a child that fills the OS pipe buffer on stderr blocks there and never produces the stdout stream-json the driver is reading. Only the bounded, credential-free `"claude exited N"` string (built from the exit code alone) ever reaches an `AgentEvent`; raw stderr bytes are never echoed.
+> 4. **Subprocess cleanup on abandonment.** The subprocess-handling body of `run()` is wrapped in `try/finally`; the `finally` kills (`proc.kill()`) and reaps (`await proc.wait()`) the child if it's still running, and cancels the stderr-drain task — covering normal completion, an unparseable-line early return, AND the generator being closed/cancelled mid-turn by a caller that stops consuming early.
+> 5. **`/workspace` CI dependency.** The test constant `WS = "/workspace"` stays (plan-mandated, matches the real MicroVM mount) — but `harness/tests/conftest.py` gains an autouse fixture that `os.makedirs("/workspace", exist_ok=True)`s before every test (skipping cleanly, not erroring, if permission is denied), so the suite doesn't require a pre-provisioned `/workspace` outside the MicroVM image.
 
 **Files:**
 - Create: `harness/pyproject.toml`, `harness/__init__.py` (empty), `harness/claude_driver.py`
-- Create: `harness/tests/conftest.py`, `harness/tests/fixtures/basic_turn.jsonl`
+- Create: `harness/tests/conftest.py`, `harness/tests/fixtures/basic_turn.jsonl`, `harness/tests/fixtures/multi_block_turn.jsonl`
 - Test: `harness/tests/test_driver.py`
 
 **Interfaces:**
 - Consumes: nothing from the backend (separate package). Claude Code CLI stream-json line schema (assistant/tool_use/result objects).
 - Produces:
   - `AgentEvent(BaseModel)` with `kind: Literal["message","file_changed","status","done","error"]`, `text: str | None = None`, `path: str | None = None`.
-  - `translate(obj: dict, workspace: str) -> AgentEvent | None` — pure; `None` for objects that produce no event (e.g. `system`/`user` framing).
+  - `translate(obj: dict, workspace: str) -> list[AgentEvent]` — pure; `[]` for objects that produce no event (e.g. `system`/`user` framing); a single assistant `message` object can yield MULTIPLE events (one per content block, in order).
   - `class ClaudeDriver:` `__init__(self, workspace: str, claude_bin: str = "claude")`; `async def run(self, text: str, *, continue_session: bool) -> AsyncIterator[AgentEvent]`.
 
 **Mapping (spec §1), asserted in tests:**
-- `{"type":"assistant","message":{"content":[{"type":"text","text":T}]}}` → `AgentEvent(kind="message", text=T)`.
-- assistant content `{"type":"tool_use","name":N,"input":{"file_path":P,...}}` where `N ∈ {Write,Edit,MultiEdit}` → `AgentEvent(kind="file_changed", path=<P made workspace-relative>)`.
+- `{"type":"assistant","message":{"content":[{"type":"text","text":T}]}}` → `[AgentEvent(kind="message", text=T)]`.
+- assistant content `{"type":"tool_use","name":N,"input":{"file_path":P,...}}` where `N ∈ {Write,Edit,MultiEdit}` and `P` resolves INSIDE `workspace` → `AgentEvent(kind="file_changed", path=<P made workspace-relative>)`; where `P` would resolve OUTSIDE `workspace` (e.g. a `..` segment, or an absolute path elsewhere) → `AgentEvent(kind="status", text="file outside workspace ignored")` (no path echo).
 - any other `tool_use` (name `N`) → `AgentEvent(kind="status", text=N)`.
-- `{"type":"result",...}` → `AgentEvent(kind="done")`.
-- objects that carry neither text nor a recognized tool → `None`.
+- a `content` list with multiple blocks (text + tool_use, or several tool_use in parallel) → one `AgentEvent` per block, IN ORDER, all in the same returned list.
+- `{"type":"result",...}` → `[AgentEvent(kind="done")]`.
+- objects that carry neither text nor a recognized tool → `[]`.
 
 - [ ] **Step 1: Write the fixture + conftest**
 
@@ -265,6 +273,15 @@ Create `harness/tests/fixtures/basic_turn.jsonl` (one JSON object per line — a
 {"type":"result","subtype":"success","is_error":false,"result":"ok"}
 ```
 
+Create `harness/tests/fixtures/multi_block_turn.jsonl` (recorded-shape sample where a single assistant message carries multiple content blocks together — the shape a first-match-return `translate()` would truncate):
+
+```json
+{"type":"system","subtype":"init","session_id":"s2"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"작성 중"},{"type":"tool_use","name":"Write","input":{"file_path":"/workspace/aiplc-docs/notes.md","content":"y"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}},{"type":"tool_use","name":"Bash","input":{"command":"pwd"}}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"ok"}
+```
+
 Create `harness/tests/conftest.py`:
 
 ```python
@@ -275,24 +292,65 @@ from pathlib import Path
 import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
+WORKSPACE = "/workspace"
+
+
+@pytest.fixture(autouse=True)
+def _ensure_workspace_dir():
+    """`ClaudeDriver.run()` spawns the subprocess with cwd=workspace, and the
+    test suite hardcodes WS = "/workspace" (the real MicroVM mount path,
+    plan-mandated — kept as-is). Outside the MicroVM image this directory
+    doesn't exist by default (e.g. a bare CI runner), which would otherwise
+    fail every `run()` test with FileNotFoundError before the test body even
+    starts. Create it so `cwd=` is valid; skip cleanly (rather than error) if
+    we can't (e.g. read-only root)."""
+    try:
+        os.makedirs(WORKSPACE, exist_ok=True)
+    except PermissionError as exc:
+        pytest.skip(f"cannot create {WORKSPACE}: {exc}")
 
 
 @pytest.fixture
 def stub_claude(tmp_path):
     """Write an executable `claude` that ignores its args and prints the named
-    jsonl fixture line-by-line, then exits per `exit_code`. Returns a builder."""
-    def _make(fixture: str = "basic_turn.jsonl", exit_code: int = 0) -> str:
+    jsonl fixture line-by-line, then exits per `exit_code`. Optionally writes
+    `stderr_bytes` of filler to stderr first (to exercise stderr-pipe
+    draining without deadlock). Returns a builder."""
+    def _make(fixture: str = "basic_turn.jsonl", exit_code: int = 0, stderr_bytes: int = 0) -> str:
         payload = (FIXTURES / fixture).read_text() if fixture else ""
         script = tmp_path / "claude"
         script.write_text(textwrap.dedent(f"""\
             #!/usr/bin/env python3
             import sys
+            if {stderr_bytes}:
+                sys.stderr.write("E" * {stderr_bytes})
+                sys.stderr.flush()
             sys.stdout.write({payload!r})
             sys.exit({exit_code})
         """))
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
         return str(script)
     return _make
+
+
+@pytest.fixture
+def hanging_stub_claude(tmp_path):
+    """Write an executable `claude` that emits one stream-json line, then
+    blocks indefinitely (simulating a long-running turn) instead of exiting.
+    Lets a test abandon the driver mid-turn and assert the subprocess is
+    actually killed and reaped, not left running."""
+    script = tmp_path / "claude"
+    script.write_text(textwrap.dedent("""\
+        #!/usr/bin/env python3
+        import sys, time
+        sys.stdout.write('{"type":"assistant","message":{"content":[{"type":"text","text":"first"}]}}\\n')
+        sys.stdout.flush()
+        time.sleep(60)
+        sys.stdout.write('{"type":"result","subtype":"success"}\\n')
+        sys.exit(0)
+    """))
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -300,6 +358,7 @@ def stub_claude(tmp_path):
 Create `harness/tests/test_driver.py`:
 
 ```python
+import asyncio
 import pytest
 from claude_driver import AgentEvent, translate, ClaudeDriver
 
@@ -308,30 +367,72 @@ WS = "/workspace"
 
 def test_translate_assistant_text_to_message():
     obj = {"type": "assistant", "message": {"content": [{"type": "text", "text": "hi"}]}}
-    ev = translate(obj, WS)
-    assert ev == AgentEvent(kind="message", text="hi")
+    assert translate(obj, WS) == [AgentEvent(kind="message", text="hi")]
 
 
 def test_translate_write_tool_to_file_changed_relative():
     obj = {"type": "assistant", "message": {"content": [
         {"type": "tool_use", "name": "Write",
          "input": {"file_path": "/workspace/aiplc-docs/audit.md", "content": "x"}}]}}
-    ev = translate(obj, WS)
-    assert ev == AgentEvent(kind="file_changed", path="aiplc-docs/audit.md")
+    assert translate(obj, WS) == [AgentEvent(kind="file_changed", path="aiplc-docs/audit.md")]
 
 
 def test_translate_other_tool_to_status_with_name():
     obj = {"type": "assistant", "message": {"content": [
         {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}}
-    assert translate(obj, WS) == AgentEvent(kind="status", text="Bash")
+    assert translate(obj, WS) == [AgentEvent(kind="status", text="Bash")]
 
 
 def test_translate_result_to_done():
-    assert translate({"type": "result", "subtype": "success"}, WS) == AgentEvent(kind="done")
+    assert translate({"type": "result", "subtype": "success"}, WS) == [AgentEvent(kind="done")]
 
 
 def test_translate_system_framing_is_none():
-    assert translate({"type": "system", "subtype": "init"}, WS) is None
+    assert translate({"type": "system", "subtype": "init"}, WS) == []
+
+
+def test_translate_write_tool_absolute_traversal_escapes_workspace():
+    # /workspace/../etc/passwd: PurePosixPath.relative_to doesn't normalize,
+    # so a naive relativize would yield "../etc/passwd" — an escape. Must be
+    # rejected: no file_changed, no path echo.
+    obj = {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Write",
+         "input": {"file_path": "/workspace/../etc/passwd", "content": "x"}}]}}
+    events = translate(obj, WS)
+    assert events == [AgentEvent(kind="status", text="file outside workspace ignored")]
+    assert events[0].path is None
+
+
+def test_translate_write_tool_embedded_dotdot_escapes_workspace():
+    obj = {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Write",
+         "input": {"file_path": "/workspace/aiplc-docs/../../etc/passwd", "content": "x"}}]}}
+    events = translate(obj, WS)
+    assert events == [AgentEvent(kind="status", text="file outside workspace ignored")]
+    assert events[0].path is None
+
+
+def test_translate_text_and_tool_use_in_one_message_both_emitted():
+    obj = {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "작성 중"},
+        {"type": "tool_use", "name": "Write",
+         "input": {"file_path": "/workspace/aiplc-docs/notes.md", "content": "y"}}]}}
+    events = translate(obj, WS)
+    assert events == [
+        AgentEvent(kind="message", text="작성 중"),
+        AgentEvent(kind="file_changed", path="aiplc-docs/notes.md"),
+    ]
+
+
+def test_translate_parallel_tool_use_blocks_both_emitted():
+    obj = {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
+        {"type": "tool_use", "name": "Bash", "input": {"command": "pwd"}}]}}
+    events = translate(obj, WS)
+    assert events == [
+        AgentEvent(kind="status", text="Bash"),
+        AgentEvent(kind="status", text="Bash"),
+    ]
 
 
 async def test_run_yields_events_ending_in_done(stub_claude):
@@ -339,6 +440,13 @@ async def test_run_yields_events_ending_in_done(stub_claude):
     events = [e async for e in driver.run("go", continue_session=False)]
     assert [e.kind for e in events] == ["message", "file_changed", "status", "done"]
     assert events[1].path == "aiplc-docs/audit.md"
+
+
+async def test_run_translates_all_blocks_of_multi_block_fixture(stub_claude):
+    driver = ClaudeDriver(workspace=WS, claude_bin=stub_claude("multi_block_turn.jsonl"))
+    events = [e async for e in driver.run("go", continue_session=False)]
+    assert [e.kind for e in events] == ["message", "file_changed", "status", "status", "done"]
+    assert events[1].path == "aiplc-docs/notes.md"
 
 
 async def test_run_nonzero_exit_yields_error(stub_claude):
@@ -362,6 +470,60 @@ async def test_run_passes_continue_flag(stub_claude, monkeypatch):
     assert "--continue" in captured["argv"]
     _ = [e async for e in driver.run("go", continue_session=False)]
     assert "--continue" not in captured["argv"]
+
+
+async def test_run_large_stderr_does_not_deadlock(stub_claude):
+    # >64KB (a typical OS pipe buffer size) written to stderr before any
+    # stdout: if stderr isn't drained concurrently, the child blocks on the
+    # stderr write syscall and stdout (and therefore run()) never completes.
+    driver = ClaudeDriver(
+        workspace=WS,
+        claude_bin=stub_claude("basic_turn.jsonl", stderr_bytes=70_000),
+    )
+    events = await asyncio.wait_for(
+        _collect(driver.run("go", continue_session=False)), timeout=10
+    )
+    assert [e.kind for e in events] == ["message", "file_changed", "status", "done"]
+    # None of the discarded stderr filler leaks into any event's text.
+    assert all(e.text is None or "E" * 100 not in e.text for e in events)
+
+
+async def _collect(aiter):
+    return [e async for e in aiter]
+
+
+async def test_run_abandoned_generator_kills_and_reaps_subprocess(
+    hanging_stub_claude, monkeypatch
+):
+    # Reliable technique: intercept asyncio.create_subprocess_exec to capture
+    # the real asyncio.subprocess.Process the driver spawns, so the test can
+    # assert on it directly rather than guessing at OS-level process
+    # liveness. The stub script prints one line then sleeps for 60s instead
+    # of exiting -- if run()'s cleanup didn't kill it, awaiting proc.wait()
+    # here would hang for the full 60s (caught by the outer wait_for).
+    captured = {}
+    orig_create = asyncio.create_subprocess_exec
+
+    async def spy_create(*args, **kwargs):
+        proc = await orig_create(*args, **kwargs)
+        captured["proc"] = proc
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spy_create)
+
+    driver = ClaudeDriver(workspace=WS, claude_bin=hanging_stub_claude)
+    gen = driver.run("go", continue_session=False)
+    first = await gen.__anext__()
+    assert first.kind == "message"
+
+    await gen.aclose()
+
+    proc = captured["proc"]
+    # If cleanup killed+reaped it, this returns immediately with a non-None
+    # (killed) returncode instead of hanging until the stub's 60s sleep ends.
+    await asyncio.wait_for(proc.wait(), timeout=5)
+    assert proc.returncode is not None
+    assert proc.returncode != 0
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -394,6 +556,7 @@ Create `harness/__init__.py` (empty). Create `harness/claude_driver.py`:
 # harness/claude_driver.py  (runs INSIDE the MicroVM)
 from __future__ import annotations
 import asyncio
+import contextlib
 import json
 from pathlib import PurePosixPath
 from typing import AsyncIterator, Literal
@@ -408,35 +571,73 @@ class AgentEvent(BaseModel):
     path: str | None = None
 
 _FILE_TOOLS = {"Write", "Edit", "MultiEdit"}
+_STDERR_CHUNK = 65536
 
 
-def _rel(path: str, workspace: str) -> str:
-    """Make a tool's file_path workspace-relative; leave already-relative paths."""
+def _rel(path: str, workspace: str) -> str | None:
+    """Make a tool's file_path workspace-relative; leave already-relative
+    paths untouched. Returns None if the result would escape the workspace.
+
+    `PurePosixPath.relative_to` does NOT normalize `..` segments: relativizing
+    "/workspace/../etc/passwd" against "/workspace" yields "../etc/passwd" —
+    syntactically "relative" but still an escape once a caller joins it back
+    onto the workspace root. Any relativized result containing a `..`
+    segment, or that is still absolute, is therefore rejected as an escape
+    (None) rather than forwarded as a path.
+    """
     ws = PurePosixPath(workspace)
     p = PurePosixPath(path)
     try:
-        return str(p.relative_to(ws))
+        rel = p.relative_to(ws)
     except ValueError:
-        return path.lstrip("/")
+        rel = PurePosixPath(path.lstrip("/"))
+    rel_str = str(rel)
+    if ".." in rel.parts or rel_str.startswith("/"):
+        return None
+    return rel_str
 
 
-def translate(obj: dict, workspace: str) -> AgentEvent | None:
-    """Map one Claude Code stream-json object to an AgentEvent, or None."""
+def translate(obj: dict, workspace: str) -> list[AgentEvent]:
+    """Map one Claude Code stream-json object to zero or more AgentEvents,
+    in block order. Real assistant messages can carry several content
+    blocks together (e.g. text + tool_use, or multiple parallel tool_use
+    blocks) — every block must be translated, not just the first."""
     typ = obj.get("type")
     if typ == "result":
-        return AgentEvent(kind="done")
+        return [AgentEvent(kind="done")]
+    events: list[AgentEvent] = []
     if typ == "assistant":
         for block in obj.get("message", {}).get("content", []):
             btype = block.get("type")
             if btype == "text":
-                return AgentEvent(kind="message", text=block.get("text"))
-            if btype == "tool_use":
+                events.append(AgentEvent(kind="message", text=block.get("text")))
+            elif btype == "tool_use":
                 name = block.get("name", "")
                 if name in _FILE_TOOLS:
                     fp = block.get("input", {}).get("file_path", "")
-                    return AgentEvent(kind="file_changed", path=_rel(fp, workspace))
-                return AgentEvent(kind="status", text=name)
-    return None
+                    rel = _rel(fp, workspace)
+                    if rel is None:
+                        events.append(AgentEvent(
+                            kind="status", text="file outside workspace ignored"))
+                    else:
+                        events.append(AgentEvent(kind="file_changed", path=rel))
+                else:
+                    events.append(AgentEvent(kind="status", text=name))
+    return events
+
+
+async def _drain_stderr(stream: asyncio.StreamReader) -> None:
+    """Continuously read and discard the child's stderr. If nobody reads a
+    subprocess's stderr pipe, the OS pipe buffer fills and the child blocks
+    on its next stderr write — which, for a CLI that writes stderr before or
+    interleaved with stdout, silently deadlocks stdout production too. We
+    intentionally never surface this content in an AgentEvent: the only
+    thing that reaches the event stream is a bounded, credential-free
+    "claude exited N" message built from the exit code alone."""
+    while True:
+        chunk = await stream.read(_STDERR_CHUNK)
+        if not chunk:
+            return
 
 
 class ClaudeDriver:
@@ -463,40 +664,58 @@ class ClaudeDriver:
             stderr=asyncio.subprocess.PIPE,
         )
         assert proc.stdout is not None
-        saw_done = False
-        async for raw in proc.stdout:
-            line = raw.decode("utf-8", "replace").strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                yield AgentEvent(kind="error", text="unparseable stream-json line")
+        assert proc.stderr is not None
+        # Drain stderr concurrently so the child never blocks on a full pipe
+        # buffer (see _drain_stderr docstring). Its content is discarded —
+        # only the exit code, never raw stderr bytes, reaches an AgentEvent.
+        stderr_task = asyncio.ensure_future(_drain_stderr(proc.stderr))
+        try:
+            saw_done = False
+            async for raw in proc.stdout:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    yield AgentEvent(kind="error", text="unparseable stream-json line")
+                    return
+                for ev in translate(obj, self._workspace):
+                    if ev.kind == "done":
+                        saw_done = True
+                    yield ev
+            rc = await proc.wait()
+            if rc != 0:
+                yield AgentEvent(kind="error", text=f"claude exited {rc}")
+            elif not saw_done:
+                yield AgentEvent(kind="done")
+        finally:
+            # Reached on normal completion, on an unparseable-line early
+            # return, AND on the generator being closed/cancelled mid-turn
+            # (e.g. a caller stops iterating after the first event). In the
+            # latter case the subprocess would otherwise keep running
+            # unsupervised; kill it and reap it so no orphan `claude`
+            # process survives the driver call.
+            if proc.returncode is None:
+                proc.kill()
                 await proc.wait()
-                return
-            ev = translate(obj, self._workspace)
-            if ev is not None:
-                if ev.kind == "done":
-                    saw_done = True
-                yield ev
-        rc = await proc.wait()
-        if rc != 0:
-            yield AgentEvent(kind="error", text=f"claude exited {rc}")
-        elif not saw_done:
-            yield AgentEvent(kind="done")
+            stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stderr_task
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd harness && python -m pytest tests/test_driver.py -v`
-Expected: PASS — all 7 tests green.
+Expected: PASS — all 15 tests green (5 original translate cases + 2 escape-guard cases + 2 multi-block cases + 6 `ClaudeDriver.run()` cases, including the stderr-deadlock and abandoned-generator-cleanup regression tests added per reviewer directive).
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add harness/pyproject.toml harness/__init__.py harness/claude_driver.py \
-        harness/tests/conftest.py harness/tests/test_driver.py harness/tests/fixtures/basic_turn.jsonl
-git commit -m "feat(harness): claude_driver stream-json -> AgentEvent translation + subprocess run"
+        harness/tests/conftest.py harness/tests/test_driver.py \
+        harness/tests/fixtures/basic_turn.jsonl harness/tests/fixtures/multi_block_turn.jsonl
+git commit -m "fix(harness): path-escape guard, multi-block translate, subprocess hygiene, CI workspace fixture"
 ```
 
 ---
@@ -510,7 +729,7 @@ The in-VM HTTP surface. `app.py` must speak the EXACT protocol `HarnessClient` c
 - Test: `harness/tests/test_app.py`, `harness/tests/test_hooks.py`
 
 **Interfaces:**
-- Consumes: `AgentEvent`, `ClaudeDriver` (Task 2). A "driver" here is any object with `run(text, *, continue_session) -> AsyncIterator[AgentEvent]` (tests inject a fake).
+- Consumes: `AgentEvent`, `ClaudeDriver` (Task 2). A "driver" here is any object with `run(text, *, continue_session) -> AsyncIterator[AgentEvent]` (tests inject a fake). Note: Task 2's `translate(obj, workspace) -> list[AgentEvent]` (not a single `AgentEvent | None` — reviewer-mandated fix, folded in before this task started) is an internal-to-`ClaudeDriver.run()` implementation detail; `app.py` only ever consumes `run()`'s already-flattened `AsyncIterator[AgentEvent]` and never calls `translate()` directly, so this signature change does not affect `build_app`'s contract with the fake/real driver.
 - Produces:
   - `build_app(driver, workspace: str) -> Starlette` — routes `/message`(POST), `/files`(GET list), `/files/{path:path}`(GET/PUT), `/health`(GET). Tracks a `_turn_seen` flag to pass `continue_session`.
   - `build_hooks_app(*, version_check: Callable[[], bool], rules_present: Callable[[], bool], health_check: Callable[[], bool]) -> Starlette` — `/ready`(GET), `/validate`(GET).
@@ -1678,6 +1897,8 @@ fi
 echo "PASS: smoke turn (record out/10-turn.sse + rules listing in the PR)"
 ```
 
+> **Multi-block real-stream capture (reviewer's fixture-vs-reality directive, folded into Task 2's hardening).** `translate()`'s unit tests are asserted against RECORDED-SHAPE fixtures (`basic_turn.jsonl`, `multi_block_turn.jsonl`) that assume real Claude Code stream-json assistant messages can bundle multiple content blocks in one object (text + tool_use together, or several parallel tool_use blocks) — a shape a first-match-return `translate()` would have silently truncated. `out/10-turn.sse` from THIS drill is the authoritative check that this assumption holds against the real CLI: inspect it for any single `"type":"assistant"` line whose `message.content` array has length > 1, and confirm every block in that array produced a corresponding SSE event (not just the first). If the real stream never bundles blocks this way, `multi_block_turn.jsonl` remains a defensive-but-unexercised-in-production fixture; if it does but in a different combination/order than recorded, update `multi_block_turn.jsonl` (and `translate()` if the shape itself differs) to match — same "update BOTH the fixture and `translate()`" discipline as Open Question 3.
+
 - [ ] **Step 4: Write `20-s3-roundtrip.sh` (no-boot laziness proof)**
 
 ```bash
@@ -1854,7 +2075,7 @@ Expected: `OK: no drill collected`; commit succeeds.
 
 1. **Exact `get-microvm` status enum strings.** The design maps PENDING/STARTING→"booting", RUNNING→"ready", SUSPENDED→"suspended", TERMINATED/EXPIRED→"expired", unknown→"stopped" (`_map_status`, Task 4). The real strings are captured by `30-recovery-drill.sh` (`out/30-terminated-status.txt`) and `40-reconcile-drill.sh` (`out/40-suspended-status.txt`). If they differ (e.g. `STOPPED` vs `TERMINATED`), extend `_STATUS_MAP` — the `else→"stopped"` default keeps unknown states reboot-worthy, so a wrong guess degrades to a safe reboot, never a stuck handle.
 2. **`boto3` minimum version for the `lambda-microvms` model.** Verified 2026-07-18 that the repo's installed botocore (1.34.162) does NOT ship the model (`get_available_services()` omits `lambda-microvms`). Task 4 pins `boto3>=1.40`; the preflight (`00-preflight.sh` step 2) asserts the model is present. Confirm the exact first-shipping version and tighten the floor if `1.40` proves insufficient.
-3. **stream-json schema fixture-vs-reality.** `harness/tests/fixtures/basic_turn.jsonl` is a recorded-SHAPE sample; `translate()` (Task 2) is asserted against it. `10-smoke-turn.sh` captures a REAL stream (`out/10-turn.sse`); if the real assistant/tool_use/result shape differs from the fixture, update BOTH the fixture and `translate()`. This is the honestly-flagged seam.
+3. **stream-json schema fixture-vs-reality.** `harness/tests/fixtures/basic_turn.jsonl` and `multi_block_turn.jsonl` are recorded-SHAPE samples; `translate()` (Task 2, returns `list[AgentEvent]` so multi-block assistant messages translate every block) is asserted against them. `10-smoke-turn.sh` captures a REAL stream (`out/10-turn.sse`); if the real assistant/tool_use/result shape — including whether/how blocks are bundled together — differs from the fixtures, update BOTH the fixtures and `translate()`. This is the honestly-flagged seam.
 4. **Managed base image exact ARN/version.** The plan uses `arn:aws:lambda:ap-northeast-1:aws:microvm-image:al2023-1`. `00-preflight.sh` step 3 (`list-managed-microvm-images`) confirms the exact ARN + latest minor; correct `BASE_IMAGE_ARN` in the stack if it differs.
 5. **Does the endpoint serve 8080 by default for our harness, or need `X-aws-proxy-port`?** Default proxy port is 8080 and our harness listens there, so the header should be unnecessary. `50-glob-parity.sh` / `10-smoke-turn.sh` reach the harness via the endpoint with only `X-aws-proxy-auth`; if a request 502s, add `-H "X-aws-proxy-port: 8080"` and record which was needed.
 6. **`CfnMicrovmImage` L1 property casing.** Best-effort against the 2026-06-22 schema; `cdk synth` (Task 6 Step 6) is authoring-time truth — correct any unknown-property error to the installed `aws-cdk-lib` generated type names.
