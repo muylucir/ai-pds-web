@@ -5,7 +5,9 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
 import { projectState } from "@/test/fixtures/projectState";
-import { normalTurn } from "@/test/fixtures/agentEventStreams";
+import { normalTurn, questionsTurn, documentTurn } from "@/test/fixtures/agentEventStreams";
+import { strategyQuestions } from "@/test/fixtures/strategyQuestions";
+import { discoveryDocument } from "@/test/fixtures/discoveryDocument";
 import type { AgentEvent } from "@/lib/api/types";
 import CanvasPage from "./page";
 
@@ -88,5 +90,67 @@ describe("Canvas page", () => {
       render(<CanvasPage params={Promise.resolve({ projectId: "ghost" })} />);
     });
     expect(await screen.findByText(/프로젝트를 찾을 수 없습니다/)).toBeInTheDocument();
+  });
+});
+
+describe("Canvas page — C2 structured cards + switchable panel", () => {
+  it("materializes a questions card after a turn touches a *-questions.md file, and it renders via QuestionCardSlot", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/state`, () => HttpResponse.json(projectState)),
+      http.get(
+        `${API_BASE_URL}/projects/pilot1/questions/aiplc-docs/discovery/product-strategy/strategy-questions.md`,
+        () => HttpResponse.json(strategyQuestions),
+      ),
+    );
+    await act(async () => {
+      render(<CanvasPage params={params} />);
+    });
+    await screen.findByText("Product Strategy");
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("채팅 메시지 입력"), "질문 만들어줘");
+    await user.click(screen.getByRole("button", { name: "전송" }));
+    const es = FakeEventSource.last!;
+    for (const frame of questionsTurn) await act(async () => es.emit(frame));
+
+    expect(await screen.findByText(/13개 답변 완료/)).toBeInTheDocument();
+  });
+
+  it("clicking an artifact card switches the right panel to the 문서 tab and loads the document", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/state`, () => HttpResponse.json(projectState)),
+      http.get(`${API_BASE_URL}/projects/pilot1/document`, () => HttpResponse.json({ markdown: discoveryDocument })),
+    );
+    await act(async () => {
+      render(<CanvasPage params={params} />);
+    });
+    await screen.findByText("Product Strategy");
+    expect(screen.getByText("프로토타입 빌드 대기 중")).toBeInTheDocument(); // default tab is preview
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("채팅 메시지 입력"), "문서 갱신해줘");
+    await user.click(screen.getByRole("button", { name: "전송" }));
+    const es = FakeEventSource.last!;
+    for (const frame of documentTurn) await act(async () => es.emit(frame));
+
+    await user.click(screen.getByRole("button", { name: /우측 패널에서 열기/ }));
+    expect(await screen.findByText("Press Release")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "문서" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("approving from the Document tab sends '승인' as the next turn's text", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/state`, () => HttpResponse.json(projectState)),
+      http.get(`${API_BASE_URL}/projects/pilot1/document`, () => HttpResponse.json({ markdown: discoveryDocument })),
+    );
+    await act(async () => {
+      render(<CanvasPage params={params} />);
+    });
+    await screen.findByText("Product Strategy");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "문서" }));
+    await screen.findByText("Press Release");
+    await user.click(screen.getByRole("button", { name: "✓ 이 문서 승인" }));
+    expect(FakeEventSource.last!.url).toContain(`text=${encodeURIComponent("승인")}`);
   });
 });

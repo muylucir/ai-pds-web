@@ -1,10 +1,10 @@
 "use client";
-import { use } from "react";
+import { use, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { CanvasSidebar } from "@/components/canvas/CanvasSidebar";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
 import { ChatInput } from "@/components/canvas/ChatInput";
-import { PreviewPanel } from "@/components/canvas/PreviewPanel";
+import { CanvasRightPanel } from "@/components/canvas/CanvasRightPanel";
 import { getState, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useTurnStream } from "@/lib/useTurnStream";
@@ -13,6 +13,9 @@ export default function CanvasPage({ params }: { params: Promise<{ projectId: st
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
   const { items, streaming, send } = useTurnStream(projectId);
+  // Default "preview" matches C1's original always-preview behavior — a fresh
+  // session looks identical to C1 until a card/approval action switches it.
+  const [panelTab, setPanelTab] = useState<"document" | "preview">("preview");
 
   const notFound = state.error instanceof ApiError && state.error.status === 404;
   const loadError = state.error && !notFound;
@@ -37,11 +40,24 @@ export default function CanvasPage({ params }: { params: Promise<{ projectId: st
         )}
 
         <main className="flex-1 flex flex-col min-w-0 bg-slate-50">
-          <ChatTimeline items={items} />
+          <ChatTimeline
+            items={items}
+            projectId={projectId}
+            onChoose={send}
+            onOpenArtifact={() => setPanelTab("document")}
+            busy={streaming}
+          />
           <ChatInput onSend={send} disabled={streaming} />
         </main>
 
-        <PreviewPanel projectId={projectId} />
+        <CanvasRightPanel
+          projectId={projectId}
+          tab={panelTab}
+          onTabChange={setPanelTab}
+          onApprove={() => send("승인")}
+          onRevise={(text) => send(text)}
+          busy={streaming}
+        />
       </div>
     </div>
   );
