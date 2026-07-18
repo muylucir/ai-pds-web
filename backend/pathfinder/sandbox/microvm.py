@@ -156,11 +156,16 @@ class MicroVMSandbox(Sandbox):
         try:
             harness = await self._ensure_ready()
             async for event in harness.send_message(text):
+                if event.kind in ("done", "error"):
+                    # I1: sync BEFORE yielding the terminal event, not after.
+                    # A client reacting to `done` (e.g. re-reading a route
+                    # file) must never race the sync and see pre-sync
+                    # (stale) S3 -- so durable persistence must be complete
+                    # by the time the terminal event reaches the caller. A
+                    # sync failure here surfaces before `done` is delivered;
+                    # that is the intended fail-closed behavior.
+                    await self._sync_workspace_to_s3(harness)
                 yield event
-            # Durable persistence: after the turn's terminal event, sync the
-            # workspace out of the VM into S3 so expiry/crash loses nothing and
-            # the next route read sees current data.
-            await self._sync_workspace_to_s3(harness)
         finally:
             self._turn_active = False
 

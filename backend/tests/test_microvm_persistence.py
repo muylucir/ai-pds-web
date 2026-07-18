@@ -118,3 +118,21 @@ async def test_list_files_double_star_glob_matches_top_level_questions_file():
     found = sorted(await sb.list_files("aiplc-docs/**/*-questions.md"))
     assert found == ["aiplc-docs/sub/nested-questions.md", "aiplc-docs/top-questions.md"]
     assert ctrl.boot_calls == 0
+
+async def test_sync_completes_before_terminal_event_is_yielded():
+    # I1: send_message's post-turn S3 sync must complete BEFORE the terminal
+    # ("done"/"error") event is yielded to the caller, not after. A route/SSE
+    # client reacting to `done` (e.g. re-reading a file) must never race the
+    # sync and observe pre-sync (stale) S3 state.
+    sb, _, harness, s3 = _sandbox_with_agent_writes({
+        "aiplc-docs/aiplc-state.md": "stage: mid-turn",
+    })
+    await sb.start()
+    saw_done = False
+    async for event in sb.send_message("go"):
+        if event.kind == "done":
+            saw_done = True
+            # At the moment `done` is observed, S3 must already reflect the
+            # turn's writes -- i.e. sync ran BEFORE this yield, not after.
+            assert await sb.read_file("aiplc-docs/aiplc-state.md") == "stage: mid-turn"
+    assert saw_done
