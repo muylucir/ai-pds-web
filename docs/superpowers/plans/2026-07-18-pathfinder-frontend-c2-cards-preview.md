@@ -383,7 +383,7 @@ git commit -m "feat(frontend): materialize structured timeline cards from file_c
 ```tsx
 // frontend/components/canvas/QuestionSummaryCard.test.tsx
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QuestionSummaryCard } from "./QuestionSummaryCard";
 import { strategyQuestions } from "@/test/fixtures/strategyQuestions";
@@ -407,10 +407,17 @@ describe("QuestionSummaryCard", () => {
     const user = userEvent.setup();
     render(<QuestionSummaryCard file={strategyQuestions} />);
     await user.click(screen.getByRole("button", { name: "펼치기" }));
-    expect(
-      screen.getByText("Q1. 이 제품을 시장(조직 내)에서 어떻게 포지셔닝하시겠습니까?"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("답변: A")).toBeInTheDocument();
+    const q1Text = screen.getByText(
+      "Q1. 이 제품을 시장(조직 내)에서 어떻게 포지셔닝하시겠습니까?",
+    );
+    expect(q1Text).toBeInTheDocument();
+    // Q1's own list item shows its answer.
+    const q1Item = q1Text.closest("li")!;
+    expect(within(q1Item).getByText("답변: A")).toBeInTheDocument();
+    // 11 of the fixture's 13 questions are answered "A" (only Q11: "C",
+    // Q12: "A,B" differ) — assert the true count instead of an unscoped
+    // getByText, which is ambiguous across this fixture's repeated answers.
+    expect(screen.getAllByText("답변: A")).toHaveLength(11);
   });
 });
 ```
