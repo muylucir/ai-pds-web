@@ -29,7 +29,8 @@
 
 **New — `harness/` (production code, runs inside the MicroVM):**
 - `harness/claude_driver.py` — subprocess driver. Pure `translate(obj: dict, workspace: str) -> list[AgentEvent]` maps one Claude Code `--output-format stream-json` object to zero or more `AgentEvent`s IN BLOCK ORDER (a real assistant message can carry several content blocks together — text + tool_use, or parallel tool_use — every block is translated, not just the first); a `Write`/`Edit`/`MultiEdit` `file_path` that would resolve outside `workspace` (e.g. via a `..` segment) is rejected — no `file_changed`, no path echo, emits `status` instead. `ClaudeDriver.run(text, *, continue_session)` spawns `claude -p … --output-format stream-json --verbose --dangerously-skip-permissions [--continue]` (cwd=workspace), drains stderr concurrently (never surfaced verbatim — only a bounded `"claude exited N"` on failure), and yields `AgentEvent`s (nonzero exit / parse failure → `error`); on generator abandonment (early `.aclose()`/cancellation) a `try/finally` kills and reaps the subprocess so no orphan `claude` process survives the call.
-- `harness/app.py` — Starlette server on 8080. `build_app(driver, workspace)`: POST `/message` (SSE of `AgentEvent` JSON, `--continue` after the first turn), GET/PUT `/files/{path}`, GET `/files?glob=`, GET `/health`. Speaks the identical protocol as `backend/tests/fakes/harness_app.py`.
+- `harness/app.py` — Starlette server on 8080. `build_app(driver, workspace)`: POST `/message` (SSE of `AgentEvent` JSON, `--continue` after the first turn), GET/PUT `/files/{path}` (workspace-confined via `resolve()` + `is_relative_to()`, 400 on escape; binary-safe read via `errors="replace"`), GET `/files?glob=` (matched via `harness/globmatch.matches_glob`, not raw `fnmatch`), GET `/health`. Speaks the identical protocol as `backend/tests/fakes/harness_app.py`.
+- `harness/globmatch.py` — `matches_glob(path, glob) -> bool`, vendored verbatim from `backend/pathfinder/sandbox/globmatch.py` (kept in sync by hand — the harness is a standalone deployable, no cross-package import). Gives `**` `pathlib.Path.glob` semantics (zero-or-more segments, so top-level files under a `**`-globbed dir match too), unlike plain `fnmatch.fnmatch`.
 - `harness/hooks.py` — Starlette server on 9000 for the image lifecycle. `build_hooks_app(version_check, rules_present, health_check)`: GET `/ready` (200 once HTTP up AND `claude --version` succeeds → platform snapshots), GET `/validate` (200 when `/health` ok AND rules files present after resume — a cheap re-check, NOT a paid Sonnet turn; tradeoff documented).
 - `harness/serve.py` — entrypoint: `asyncio.gather` two `uvicorn.Server`s (app:8080, hooks:9000). This is the container CMD.
 - `harness/Dockerfile` — layers Node + Claude Code CLI + python deps over the al2023 base (base supplied at build via `BaseImageArn`), copies `harness/` code + `files/aiplc-rules/` → `/workspace/aiplc-rules`, `EXPOSE 8080 9000`, `CMD ["python","-m","serve"]`.
@@ -38,7 +39,7 @@
 - `harness/tests/conftest.py` — a `stub_claude` fixture: writes an executable `claude` script that echoes recorded stream-json fixtures, returns its path for `claude_bin`.
 - `harness/tests/fixtures/*.jsonl` — RECORDED Claude Code stream-json samples (assistant text, Write tool_use, Bash tool_use, result). The fixture-vs-reality seam; a drill captures a REAL sample to validate them.
 - `harness/tests/test_driver.py` — `translate()` mapping table + `ClaudeDriver.run()` against the stub `claude`.
-- `harness/tests/test_app.py` — `/message` SSE, `/files` GET/PUT/list, `/health`, `--continue` toggling; injected fake driver.
+- `harness/tests/test_app.py` — `/message` SSE, `/files` GET/PUT/list, `/health`, `--continue` toggling; injected fake driver. Also covers the reviewer-mandated hardening: `**`-glob top-level+nested matching, binary-file read (no crash, replacement chars), and path-confinement rejection (`..` read/write, leading-`/` write) — 12 tests total (5 original + 7 added).
 - `harness/tests/test_hooks.py` — `/ready` and `/validate` truth tables with injected checks.
 
 **New — `infra/` (TypeScript CDK app, `ap-northeast-1`):**
@@ -725,7 +726,7 @@ git commit -m "fix(harness): path-escape guard, multi-block translate, subproces
 The in-VM HTTP surface. `app.py` must speak the EXACT protocol `HarnessClient` consumes and `backend/tests/fakes/harness_app.py` fakes: POST `/message` → SSE of `AgentEvent` JSON with a terminal `done`/`error`; GET/PUT `/files/{path}` (workspace-relative, 404 on missing read); GET `/files?glob=`; GET `/health`. It owns turn continuity: the first turn calls the driver with `continue_session=False`, every later turn `True`. `hooks.py` serves the image lifecycle on 9000. `serve.py` runs both.
 
 **Files:**
-- Create: `harness/app.py`, `harness/hooks.py`, `harness/serve.py`, `harness/requirements.txt`
+- Create: `harness/app.py`, `harness/hooks.py`, `harness/serve.py`, `harness/requirements.txt`, `harness/globmatch.py`
 - Test: `harness/tests/test_app.py`, `harness/tests/test_hooks.py`
 
 **Interfaces:**
@@ -734,6 +735,14 @@ The in-VM HTTP surface. `app.py` must speak the EXACT protocol `HarnessClient` c
   - `build_app(driver, workspace: str) -> Starlette` — routes `/message`(POST), `/files`(GET list), `/files/{path:path}`(GET/PUT), `/health`(GET). Tracks a `_turn_seen` flag to pass `continue_session`.
   - `build_hooks_app(*, version_check: Callable[[], bool], rules_present: Callable[[], bool], health_check: Callable[[], bool]) -> Starlette` — `/ready`(GET), `/validate`(GET).
   - `serve.py`: `async def main()` running both `uvicorn.Server`s via `asyncio.gather`.
+  - `harness/globmatch.py`: `matches_glob(path: str, glob: str) -> bool` — vendored verbatim from `backend/pathfinder/sandbox/globmatch.py` (kept in sync by hand; the harness is a standalone deployable with no cross-package import to the backend). `list_files` uses this, not plain `fnmatch.fnmatch`, so `**` matches zero-or-more segments (top-level AND nested), matching `pathlib.Path.glob` semantics and the backend's `matches_glob` expectations that `MicroVMSandbox._SYNC_GLOBS` (`"aiplc-docs/**/*"`, `"prototype/**/*"`) relies on.
+
+> **Reviewer-mandated hardening (post-implementation fix, folded in as a follow-up commit after this task's first pass shipped with 3 live-reproduced Important defects):**
+> 1. **Glob `**` semantics.** The original Step-3 code used plain `fnmatch.fnmatch(rel, glob)` in `list_files`, and the original note below claimed "`fnmatch` treats `*` as matching `/` too, so `aiplc-docs/**/*` ... behave[s]" — **this claim was factually wrong**. Plain `fnmatch.fnmatch` requires `**` to consume at least one literal `/` to match, so a top-level file directly under a `**`-globbed directory (e.g. `aiplc-docs/audit.md` under glob `aiplc-docs/**/*`, or `prototype/index.html` under `prototype/**/*`) was silently DROPPED from `/files?glob=` results — exactly the files `MicroVMSandbox._SYNC_GLOBS` needs post-turn. Fixed by vendoring `backend/pathfinder/sandbox/globmatch.matches_glob` into `harness/globmatch.py` (see Produces, above) and using it in `list_files` instead of raw `fnmatch`.
+> 2. **Binary read crash.** `get_file` did `p.read_text("utf-8")`, which raises an uncaught `UnicodeDecodeError` on any binary file under the synced subtrees (prototype assets are not guaranteed to be text), aborting the entire post-turn sync loop on one bad file. Fixed: `p.read_bytes().decode("utf-8", errors="replace")` returned as `PlainTextResponse` — a deliberately lossy but crash-free decode (U+FFFD replacement chars), acceptable because the backend's S3 store treats file content as `str` end-to-end anyway. True binary-safe serving of prototype assets is a known gap, deferred to a Task-7 drill item.
+> 3. **Path-safety was a comment, not code.** The original `_resolve()` had a comment claiming confinement ("Trust the caller for path-safety ... still confine under workspace") that the code did not implement — `ws / rel` with no resolve/containment check. A direct caller (curl, or any of the Phase-B drill scripts, which talk to the harness over HTTP directly and never pass through `MicroVMSandbox.reject_unsafe`) could escape the workspace three ways: `..`-relative read, `..`-relative write, and a leading-`/` write (pathlib treats an absolute right-hand operand to `/` as a full replacement of the left side, discarding the workspace prefix entirely). The port-9000/8080 proxy token authenticates WHO is calling, not WHAT path they send, so this was a real gap, not defense-in-depth theater. Fixed: `resolved = (ws / rel).resolve(); if not resolved.is_relative_to(ws.resolve()): return 400` — applied to both `get_file` and `put_file`. The trust-model comment is rewritten to state the true layering: `MicroVMSandbox.reject_unsafe` rejects unsafe paths for the normal backend-mediated flow; this workspace-confinement check is defense-in-depth for any direct caller that bypasses it.
+>
+> Corrected code for Steps 1, 3, and the glob-semantics note follow below (superseding the original blocks in this section — the blocks are left in place above for historical TDD-step narration, but `app.py`/`tests/test_app.py` as actually shipped match the corrected versions, not the original ones).
 
 - [ ] **Step 1: Write the failing test for the app**
 
@@ -887,12 +896,207 @@ def build_app(driver, workspace: str) -> Starlette:
     ])
 ```
 
-> **Note — glob semantics vs the fake.** The fake uses flat `fnmatch` over an in-memory dict; the real app walks the workspace tree and `fnmatch`-matches POSIX-relative keys. `fnmatch` treats `*` as matching `/` too, so `aiplc-docs/**/*` and `aiplc-docs/*-questions.md` both behave. Drill `50-glob-parity.sh` proves this matches `backend/.../globmatch.matches_glob` expectations on real nested + top-level files (the honest fixture-vs-reality check for globbing).
+> **Note — glob semantics vs the fake (CORRECTED — the original claim below was wrong; see the reviewer-mandated hardening block above).** The fake uses flat `fnmatch` over an in-memory dict; the real app walks the workspace tree. ~~`fnmatch` treats `*` as matching `/` too, so `aiplc-docs/**/*` and `aiplc-docs/*-questions.md` both behave.~~ **This is false**: plain `fnmatch.fnmatch` requires `**` to consume at least one literal `/`, so it silently drops top-level files directly under a `**`-globbed directory (`aiplc-docs/audit.md` under `aiplc-docs/**/*`, `prototype/index.html` under `prototype/**/*`) — a real bug relative to `pathlib.Path.glob`, whose `**` already matches zero-or-more segments including top-level. The corrected `app.py` (below) uses `harness/globmatch.matches_glob` — vendored from `backend/pathfinder/sandbox/globmatch.py` — instead of raw `fnmatch`, so `**` semantics match `pathlib.Path.glob` and the backend's own `matches_glob`. Drill `50-glob-parity.sh` proves this matches `backend/.../globmatch.matches_glob` expectations on real nested + top-level files (the honest fixture-vs-reality check for globbing) — this drill is now also the regression check for the bug described here.
+
+Create `harness/globmatch.py` (vendored from `backend/pathfinder/sandbox/globmatch.py` — keep in sync by hand, no cross-package import from a standalone deployable):
+
+```python
+# harness/globmatch.py
+# vendored from backend/pathfinder/sandbox/globmatch.py — keep in sync.
+# The harness is a standalone deployable (runs inside the MicroVM, no access
+# to the backend package), so this module is copied rather than imported.
+from __future__ import annotations
+import fnmatch
+
+
+def matches_glob(path: str, glob: str) -> bool:
+    """fnmatch-based glob matching that implements pathlib.Path.glob '**'
+    semantics (single '**' supported): '**' matches ZERO or more path
+    segments, so 'dir/**/*' matches both a direct child ('dir/audit.md') and
+    a nested file ('dir/sub/audit.md'). Plain fnmatch.fnmatch requires '**'
+    to consume at least one literal '/', so it silently misses top-level
+    files under a '**'-globbed directory -- a real bug relative to
+    pathlib.Path.glob, whose '**' already matches top-level files. Globs
+    without '**' fall back to plain fnmatch, unchanged, so single-level glob
+    behavior (e.g. 'aiplc-docs/*-questions.md') is preserved exactly.
+    """
+    if "**" not in glob:
+        return fnmatch.fnmatch(path, glob)
+    prefix, _, suffix = glob.partition("**")
+    suffix = suffix.lstrip("/") or "*"
+    return path.startswith(prefix) and fnmatch.fnmatch(path[len(prefix):], suffix)
+```
+
+Corrected `harness/app.py` (supersedes the Step-3 block above — glob-matcher swap + binary-safe read + real path confinement):
+
+```python
+# harness/app.py  (port 8080 inside the MicroVM)
+from __future__ import annotations
+import json
+from pathlib import Path
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.routing import Route
+from sse_starlette.sse import EventSourceResponse
+
+from globmatch import matches_glob
+
+
+def build_app(driver, workspace: str) -> Starlette:
+    ws = Path(workspace).resolve()
+    state = {"turn_seen": False}
+
+    async def message(request):
+        body = await request.json()
+        text = body["text"]
+        continue_session = state["turn_seen"]
+        state["turn_seen"] = True
+
+        async def gen():
+            async for ev in driver.run(text, continue_session=continue_session):
+                yield {"data": ev.model_dump_json()}
+        return EventSourceResponse(gen())
+
+    def _resolve(rel: str) -> Path | None:
+        # MicroVMSandbox.reject_unsafe() rejects unsafe paths (absolute /
+        # ".." segments) before a request ever leaves the backend, so in
+        # the normal flow this never sees an escaping path. But drill
+        # scripts and any other direct caller talk to the harness straight
+        # over HTTP, bypassing that check entirely -- the proxy token in
+        # front of this port authenticates WHO is calling, not WHAT path
+        # they send. So this is defense-in-depth, not the only guard:
+        # resolve `..`/symlinks and confirm the result is still under the
+        # workspace root before touching the filesystem.
+        resolved = (ws / rel).resolve()
+        if not resolved.is_relative_to(ws):
+            return None
+        return resolved
+
+    async def get_file(request):
+        rel = request.path_params["path"]
+        p = _resolve(rel)
+        if p is None:
+            return PlainTextResponse("unsafe path", status_code=400)
+        if not p.is_file():
+            return PlainTextResponse("not found", status_code=404)
+        # Synced subtrees (aiplc-docs/**, prototype/**) can contain binary
+        # prototype assets (images, fonts, etc.), not just text docs. A
+        # strict UTF-8 decode raises UnicodeDecodeError on those and would
+        # abort the whole post-turn sync loop for one bad file. Since the
+        # backend's S3 store treats file content as `str` end-to-end, the
+        # minimal protocol-compatible fix is a lossy decode (U+FFFD
+        # replacement chars) rather than returning raw bytes. This is a
+        # known lossy tradeoff for binary content; a real fix (binary-safe
+        # storage/serving of prototype assets) is a Task-7 drill item.
+        return PlainTextResponse(p.read_bytes().decode("utf-8", errors="replace"))
+
+    async def put_file(request):
+        rel = request.path_params["path"]
+        p = _resolve(rel)
+        if p is None:
+            return PlainTextResponse("unsafe path", status_code=400)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(await request.body())
+        return Response(status_code=204)
+
+    async def list_files(request):
+        glob = request.query_params.get("glob", "*")
+        out = []
+        for f in ws.rglob("*"):
+            if f.is_file():
+                rel = f.relative_to(ws).as_posix()
+                if matches_glob(rel, glob):
+                    out.append(rel)
+        return JSONResponse(sorted(out))
+
+    async def health(request):
+        return JSONResponse({"ok": True})
+
+    return Starlette(routes=[
+        Route("/message", message, methods=["POST"]),
+        Route("/files", list_files, methods=["GET"]),
+        Route("/files/{path:path}", get_file, methods=["GET"]),
+        Route("/files/{path:path}", put_file, methods=["PUT"]),
+        Route("/health", health, methods=["GET"]),
+    ])
+```
+
+Corrected/added tests appended to `harness/tests/test_app.py` (supersedes the "all 5 tests green" expectation below — the shipped file has 12 tests):
+
+```python
+async def test_files_list_double_star_glob_includes_top_level_and_nested(tmp_path):
+    drv = FakeDriver(str(tmp_path))
+    async with _client(build_app(drv, str(tmp_path))) as http:
+        await http.put("/files/aiplc-docs/audit.md", content=b"top")
+        await http.put("/files/aiplc-docs/sub/nested.md", content=b"nested")
+        r = await http.get("/files", params={"glob": "aiplc-docs/**/*"})
+    assert r.json() == ["aiplc-docs/audit.md", "aiplc-docs/sub/nested.md"]
+
+
+async def test_files_list_double_star_glob_catches_top_level_index_html(tmp_path):
+    drv = FakeDriver(str(tmp_path))
+    async with _client(build_app(drv, str(tmp_path))) as http:
+        await http.put("/files/prototype/index.html", content=b"<html></html>")
+        r = await http.get("/files", params={"glob": "prototype/**/*"})
+    assert r.json() == ["prototype/index.html"]
+
+
+async def test_get_file_binary_content_no_crash_replacement_chars(tmp_path):
+    drv = FakeDriver(str(tmp_path))
+    p = Path(tmp_path) / "aiplc-docs" / "bin.dat"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b"\xff\xfe\x00binary\x80")
+    async with _client(build_app(drv, str(tmp_path))) as http:
+        r = await http.get("/files/aiplc-docs/bin.dat")
+    assert r.status_code == 200
+    assert "�" in r.text
+
+
+async def test_get_file_path_traversal_rejected(tmp_path):
+    # httpx normalizes literal "../" dot-segments client-side before the
+    # request goes out (RFC 3986), so a raw client (curl, or the drill
+    # scripts, which talk to the harness directly and bypass
+    # MicroVMSandbox's reject_unsafe) is simulated with percent-encoded
+    # dots, which travel over the wire untouched and land in
+    # request.path_params["path"] as a literal "..".
+    drv = FakeDriver(str(tmp_path))
+    async with _client(build_app(drv, str(tmp_path))) as http:
+        r = await http.get("/files/%2e%2e/etc/hostname")
+    assert r.status_code == 400
+
+
+async def test_put_file_path_traversal_rejected(tmp_path):
+    drv = FakeDriver(str(tmp_path))
+    async with _client(build_app(drv, str(tmp_path))) as http:
+        r = await http.put("/files/a/%2e%2e/%2e%2e/tmp/x", content=b"pwn")
+    assert r.status_code == 400
+
+
+async def test_put_file_leading_slash_rejected(tmp_path):
+    # A leading "/" in the {path:path} match (e.g. "//etc/cron.d/x") makes
+    # `ws / rel` discard the workspace prefix entirely (pathlib treats an
+    # absolute right-hand operand as a full replacement), landing outside
+    # the workspace. Confinement must catch this too, not just "..".
+    drv = FakeDriver(str(tmp_path))
+    async with _client(build_app(drv, str(tmp_path))) as http:
+        r = await http.put("/files//etc/cron.d/pwn", content=b"pwn")
+    assert r.status_code == 400
+
+
+async def test_files_legit_nested_path_still_works(tmp_path):
+    drv = FakeDriver(str(tmp_path))
+    async with _client(build_app(drv, str(tmp_path))) as http:
+        put_resp = await http.put("/files/aiplc-docs/sub/deep/a.md", content=b"deep")
+        assert put_resp.status_code in (200, 204)
+        got = await http.get("/files/aiplc-docs/sub/deep/a.md")
+    assert got.status_code == 200 and got.text == "deep"
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd harness && python -m pytest tests/test_app.py -v`
-Expected: PASS — all 5 tests green.
+Expected (ORIGINAL first pass): PASS — all 5 tests green.
+Expected (CORRECTED, after reviewer-mandated hardening): PASS — all 12 tests green (5 original + 7 added: 2 double-star-glob, 1 binary-read, 3 path-confinement, 1 legit-nested-still-works).
 
 - [ ] **Step 5: Write the failing test for hooks**
 
@@ -1049,7 +1253,8 @@ pydantic>=2.6
 - [ ] **Step 8: Run all harness tests to verify they pass**
 
 Run: `cd harness && python -m pytest -v`
-Expected: PASS — `test_driver.py`, `test_app.py`, `test_hooks.py` all green (16 tests).
+Expected (ORIGINAL first pass): PASS — `test_driver.py`, `test_app.py`, `test_hooks.py` all green (15 driver + 5 app + 4 hooks = 24 tests; the original prose here said "16 tests", stale relative to Task 2's actual landed driver-test count of 15 after its own review-fix commit — not a Task 3 defect).
+Expected (CORRECTED, after reviewer-mandated hardening — see the hardening block above): PASS — 15 driver + 12 app + 4 hooks = **31 tests**.
 
 - [ ] **Step 9: Commit**
 
@@ -1058,6 +1263,19 @@ git add harness/app.py harness/hooks.py harness/serve.py harness/requirements.tx
         harness/tests/test_app.py harness/tests/test_hooks.py
 git commit -m "feat(harness): Starlette /message+/files+/health app, /ready+/validate hooks, dual-server entrypoint"
 ```
+
+- [ ] **Step 10: Fix reviewer-mandated hardening (follow-up commit)**
+
+The reviewer live-reproduced 3 Important defects in the Step-9 commit: (1) `**` glob semantics wrong (see the "Note — glob semantics" correction above — plain `fnmatch` drops top-level files under a `**`-globbed dir), (2) binary file read crashes with an uncaught `UnicodeDecodeError`, (3) `_resolve()`'s path-safety comment was aspirational, not real — three live path-escape vectors (`..` read, `..` write, leading-`/` write) via direct HTTP, bypassing `MicroVMSandbox.reject_unsafe` entirely (drill scripts and any direct caller never go through that check — the proxy token gates WHO calls, not WHAT path they send).
+
+Fix (see corrected `harness/app.py` + new `harness/globmatch.py` + 7 added tests, all reproduced above): vendor `matches_glob` into `harness/globmatch.py` and use it in `list_files`; `get_file` reads bytes and decodes `errors="replace"`; `_resolve()` does `(ws / rel).resolve()` + `is_relative_to(ws.resolve())`, returning `None` (→ HTTP 400) on escape, applied to both `get_file` and `put_file`.
+
+```bash
+git add harness/app.py harness/globmatch.py harness/tests/test_app.py
+git commit -m "fix(harness): pathlib ** glob semantics, binary-safe reads, real path confinement"
+```
+
+Run: `cd harness && python -m pytest -v` — expect 31 passed. Run `cd backend && python -m pytest -q` — expect 139 passed (unchanged; this task never touches backend).
 
 ---
 
@@ -2118,4 +2336,4 @@ Expected: `OK: no drill collected`; commit succeeds.
 
 **4. Scope-guard audit.** No task edits routes, parsers, the `Sandbox` ABC, `LocalSandbox`, or `MicroVMSandbox`. `HarnessClient` change is additive (optional param; `FakeHarness`/contract untouched). `app.py` change is confined to `_make_microvm_sandbox` + two new module-level helpers. Backend suite re-run after Tasks 4 and 5 (Step 6 / Step 5). Frontend untouched (123 stays green — not imported by any task). `harness/` and `infra/` are new top-level dirs, each with its own manifest and README line in File Structure.
 
-**5. CI-runnable unit-test count promised.** Task 1 = 3 (header seam), Task 2 = 8 (`translate` ×5 + `ClaudeDriver.run` ×3), Task 3 = 9 (app ×5 + hooks ×4), Task 4 = 7 (control-aws Stubber), Task 5 = 3 (`harness_factory` wiring) → **30 new CI-runnable unit tests**, all no-AWS (botocore `Stubber` + a stub `claude` executable). All 7 Phase-B drill scripts are INTEGRATION and are NEVER pytest-collected.
+**5. CI-runnable unit-test count promised.** Task 1 = 3 (header seam), Task 2 = 8 (`translate` ×5 + `ClaudeDriver.run` ×3), Task 3 = 16 (app ×12 + hooks ×4 — originally 9 (app ×5 + hooks ×4); reviewer-mandated hardening after live-reproducing 3 Important defects added 7 more `test_app.py` cases: 2 double-star-glob, 1 binary-read, 3 path-confinement, 1 legit-nested-still-works), Task 4 = 7 (control-aws Stubber), Task 5 = 3 (`harness_factory` wiring) → **37 new CI-runnable unit tests**, all no-AWS (botocore `Stubber` + a stub `claude` executable). All 7 Phase-B drill scripts are INTEGRATION and are NEVER pytest-collected.
