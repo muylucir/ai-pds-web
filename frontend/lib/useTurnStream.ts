@@ -1,0 +1,104 @@
+// frontend/lib/useTurnStream.ts
+"use client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { streamEvents } from "@/lib/api/sse";
+import type { AgentEvent } from "@/lib/api/types";
+
+// UI VIEW-STATE (not a backend contract): how streamed AgentEvent frames are
+// projected into the chat timeline. Backend contract types stay in
+// lib/api/types.ts.
+export interface TraceEntry {
+  kind: "status" | "file_changed";
+  text: string | null;
+  path: string | null;
+}
+export interface UserItem {
+  id: string;
+  role: "user";
+  text: string;
+}
+export interface AiItem {
+  id: string;
+  role: "ai";
+  text: string;
+  trace: TraceEntry[];
+  streaming: boolean;
+  error: string | null;
+}
+export type ChatItem = UserItem | AiItem;
+
+let counter = 0;
+const nextId = () => `item-${counter++}`;
+
+export interface TurnStream {
+  items: ChatItem[];
+  streaming: boolean;
+  send: (text: string) => void;
+}
+
+// Drives one live agent turn at a time over the EXISTING GET /events SSE
+// (Plan A's streamEvents). status/file_changed frames become the AI bubble's
+// "추론 과정" trace; message frames accumulate into its text; an error-KIND
+// frame sets its error; done/transport-close finish the turn.
+export function useTurnStream(projectId: string, initial: ChatItem[] = []): TurnStream {
+  const [items, setItems] = useState<ChatItem[]>(initial);
+  const [streaming, setStreaming] = useState(false);
+  const stopRef = useRef<null | (() => void)>(null);
+
+  const patchAi = useCallback((aiId: string, fn: (it: AiItem) => AiItem) => {
+    setItems((prev) => prev.map((it) => (it.id === aiId && it.role === "ai" ? fn(it) : it)));
+  }, []);
+
+  const send = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      // Guard on the live-stream ref (not the `streaming` state) so a stale
+      // closure can't slip a concurrent send past a not-yet-flushed setState.
+      if (trimmed === "" || stopRef.current) return;
+
+      const aiId = nextId();
+      setItems((prev) => [
+        ...prev,
+        { id: nextId(), role: "user", text: trimmed },
+        { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
+      ]);
+      setStreaming(true);
+
+      const finish = () => {
+        setStreaming(false);
+        stopRef.current = null;
+      };
+
+      stopRef.current = streamEvents(projectId, trimmed, {
+        onEvent: (ev: AgentEvent) => {
+          patchAi(aiId, (it) => {
+            if (ev.kind === "message") return { ...it, text: it.text + (ev.text ?? "") };
+            if (ev.kind === "status" || ev.kind === "file_changed")
+              return { ...it, trace: [...it.trace, { kind: ev.kind, text: ev.text, path: ev.path }] };
+            if (ev.kind === "error")
+              return { ...it, error: ev.text ?? "턴 처리 중 오류가 발생했습니다." };
+            return it; // "done" is handled by onDone
+          });
+        },
+        onDone: () => {
+          patchAi(aiId, (it) => ({ ...it, streaming: false }));
+          finish();
+        },
+        onError: () => {
+          patchAi(aiId, (it) => ({
+            ...it,
+            streaming: false,
+            error: it.error ?? "연결이 끊어졌습니다. 다시 시도해 주세요.",
+          }));
+          finish();
+        },
+      });
+    },
+    [projectId, patchAi],
+  );
+
+  // Close the stream if the component unmounts mid-turn.
+  useEffect(() => () => stopRef.current?.(), []);
+
+  return { items, streaming, send };
+}
