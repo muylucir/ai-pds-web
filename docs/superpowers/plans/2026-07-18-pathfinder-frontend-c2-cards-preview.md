@@ -836,8 +836,8 @@ git commit -m "feat(frontend): artifact card + question-card data container"
 
 **Interfaces:**
 - **`PreviewPanel.tsx` refactor** (minimal, preserves the existing `PreviewPanel.test.tsx` byte-for-byte): the current body (header + iframe-or-placeholder) is extracted into `export function PreviewPanelBody({ projectId, prototypeId }: { projectId: string; prototypeId?: string | null })` — same JSX, no `<aside>` wrapper. `PreviewPanel({ projectId, prototypeId })` becomes a thin wrapper: the same `<aside className="hidden xl:flex w-[420px] ...">` C1 had, now containing `<PreviewPanelBody .../>`. Net rendered output for `PreviewPanel` is byte-identical to C1, so its existing test needs zero changes. `CanvasRightPanel` (below) uses `PreviewPanelBody` directly so the Preview tab doesn't nest a second `<aside>` inside `CanvasRightPanel`'s own.
-- `DocumentView({ projectId, onApprove, onRevise, busy }: { projectId: string; onApprove: () => void; onRevise: (text: string) => void; busy: boolean })` — self-contained content (no `<aside>`; it lives inside `CanvasRightPanel`'s). Header row ported verbatim from mockup 04's right-panel header: 📕 + `"discovery-document.md"` + a `"Living"` badge + a decorative `".md"` button (matches the existing, also-decorative `.md 내보내기` button in `components/review/DocumentPanel.tsx` — no `onClick`, no export backend exists). Body: `useAsync(() => getDocument(projectId), [projectId])` (Plan A) → `MarkdownView` (Plan B, read-only reuse) when markdown is loaded; `loading` (and no data yet) → `"불러오는 중…"`; a `404` `ApiError` → `"문서가 아직 없습니다."` (not an error state — an empty-artifact state, matching `review/page.tsx`'s existing 404-tolerant pattern); any other error → `"문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요."`. Footer row ported verbatim from the mockup: `"✏️ 수정 요청"` toggles an inline textarea (`aria-label="수정 요청 사항"`) with `"취소"` / `"수정 요청 제출"` buttons — submitting calls `onRevise(text)`, clears the textarea, and closes it; `"✓ 이 문서 승인"` calls `onApprove()` directly. Both footer buttons `disabled={busy}`; the submit button also disabled on empty text.
-- `CanvasRightPanel({ projectId, tab, onTabChange, onApprove, onRevise, busy }: { projectId: string; tab: "document" | "preview"; onTabChange: (tab: "document" | "preview") => void; onApprove: () => void; onRevise: (text: string) => void; busy: boolean })` — the right `<aside>` (C1's `hidden xl:flex w-[420px] shrink-0 bg-white border-l border-slate-200 flex-col` geometry, unchanged), `aria-label="아티팩트 패널"`. A `role="tablist" aria-label="아티팩트 패널 탭"` row with two `role="tab"` buttons — `"문서"` (`tab==="document"`) and `"프리뷰"` (`tab==="preview"`) — each `aria-selected` matching `tab`, `onClick` calling `onTabChange(...)` with the clicked value. Below: `tab==="document"` renders `<DocumentView projectId={projectId} onApprove={onApprove} onRevise={onRevise} busy={busy} />`; `tab==="preview"` renders `<PreviewPanelBody projectId={projectId} />`. **No part tabs** — the mockup's disabled "Part 2/3/4 🔒" row is NOT ported (conscious simplification: the backend document is one markdown blob with no part segmentation — see Global Constraints).
+- `DocumentView({ projectId, onApprove, onRevise, busy }: { projectId: string; onApprove: () => void; onRevise: (text: string) => void; busy: boolean })` — self-contained content (no `<aside>`; it lives inside `CanvasRightPanel`'s). Header row ported verbatim from mockup 04's right-panel header: 📕 + `"discovery-document.md"` + a `"Living"` badge + a decorative `".md"` button (matches the existing, also-decorative `.md 내보내기` button in `components/review/DocumentPanel.tsx` — no `onClick`, no export backend exists). Body: `useAsync(() => getDocument(projectId), [projectId])` (Plan A) → `MarkdownView` (Plan B, read-only reuse) when markdown is loaded; `loading` (and no data yet) → `"불러오는 중…"`; a `404` `ApiError` → `"문서가 아직 없습니다."` (kept for defensiveness / other backends — not an error state, an empty-artifact state, matching `review/page.tsx`'s existing 404-tolerant pattern); any other error → `"문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요."`. **Backend 200-empty semantics:** the real backend's `Workspace.get_document()` (`backend/pathfinder/workspace.py`) swallows a missing-file `FileNotFoundError` and returns `{"markdown": ""}` with a `200` — it never actually 404s in practice. So a successful load with `markdown.trim() === ""` is itself the "no document yet" state and must be handled as its own branch → `"아직 작성된 문서가 없습니다."` (mirrors `components/review/DocumentPanel.tsx`'s `markdown.trim() === ""` check), rendered instead of (not in addition to) the footer action row — there is nothing to approve or revise for a document that doesn't exist yet. Footer row ported verbatim from the mockup, rendered only when the document is non-empty: `"✏️ 수정 요청"` toggles an inline textarea (`aria-label="수정 요청 사항"`) with `"취소"` / `"수정 요청 제출"` buttons — `"취소"` clears the typed text (an abandoned draft must not resurface the next time the textarea is opened) and closes the textarea; submitting calls `onRevise(text)`, clears the textarea, and closes it; `"✓ 이 문서 승인"` calls `onApprove()` directly. Both footer buttons `disabled={busy}`; the submit button also disabled on empty text.
+- `CanvasRightPanel({ projectId, tab, onTabChange, onApprove, onRevise, busy }: { projectId: string; tab: "document" | "preview"; onTabChange: (tab: "document" | "preview") => void; onApprove: () => void; onRevise: (text: string) => void; busy: boolean })` — the right `<aside>` (C1's `hidden xl:flex w-[420px] shrink-0 bg-white border-l border-slate-200 flex-col` geometry, unchanged), `aria-label="아티팩트 패널"`. A `role="tablist" aria-label="아티팩트 패널 탭"` row with two `type="button" role="tab"` buttons — `"문서"` (`tab==="document"`) and `"프리뷰"` (`tab==="preview"`) — each `aria-selected` matching `tab`, `onClick` calling `onTabChange(...)` with the clicked value. Below: `tab==="document"` renders `<DocumentView projectId={projectId} onApprove={onApprove} onRevise={onRevise} busy={busy} />`; `tab==="preview"` renders `<PreviewPanelBody projectId={projectId} />`. **No part tabs** — the mockup's disabled "Part 2/3/4 🔒" row is NOT ported (conscious simplification: the backend document is one markdown blob with no part segmentation — see Global Constraints).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -863,6 +863,17 @@ describe("DocumentView", () => {
     expect(screen.getByText("discovery-document.md")).toBeInTheDocument();
     expect(screen.getByText("Living")).toBeInTheDocument();
     expect(await screen.findByText("Press Release")).toBeInTheDocument();
+  });
+
+  it('shows "아직 작성된 문서가 없습니다." on a 200 with empty markdown (real backend never 404s)', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/document`, () => HttpResponse.json({ markdown: "" })),
+    );
+    await act(async () => {
+      render(<DocumentView projectId="pilot1" onApprove={vi.fn()} onRevise={vi.fn()} busy={false} />);
+    });
+    expect(await screen.findByText("아직 작성된 문서가 없습니다.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "✓ 이 문서 승인" })).not.toBeInTheDocument();
   });
 
   it('shows "문서가 아직 없습니다." on a 404 (no document yet)', async () => {
@@ -1091,6 +1102,13 @@ export function DocumentView({
 
   const notFound = error instanceof ApiError && error.status === 404;
   const loadError = error !== null && !notFound;
+  // The real backend's Workspace.get_document() swallows a missing-file
+  // FileNotFoundError and returns {"markdown": ""} with a 200 — it never
+  // 404s (see backend/pathfinder/workspace.py). So an empty string after a
+  // successful load is itself the "no document yet" state, distinct from
+  // the 404 branch above (kept for defensiveness / other backends). Mirrors
+  // components/review/DocumentPanel.tsx's markdown.trim() === "" check.
+  const empty = !loading && error === null && (markdown ?? "").trim() === "";
 
   function submitRevision() {
     const trimmed = text.trim();
@@ -1122,58 +1140,68 @@ export function DocumentView({
         {loadError && (
           <p className="text-rose-600">문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
         )}
+        {empty && <p className="text-slate-400">아직 작성된 문서가 없습니다.</p>}
         {markdown && <MarkdownView markdown={markdown} />}
       </div>
 
-      <div className="p-3 border-t border-slate-100 shrink-0 space-y-2">
-        {revising && (
-          <div className="space-y-2">
-            <textarea
-              aria-label="수정 요청 사항"
-              rows={3}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="예: FAQ에 다국어 지원 계획 항목을 추가해줘."
-              className="w-full text-sm rounded-lg border border-slate-200 p-3 focus:outline-none focus:ring-2 focus:ring-violet-400"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setRevising(false)}
-                className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                disabled={busy || text.trim() === ""}
-                onClick={submitRevision}
-                className="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white font-medium hover:bg-violet-700 disabled:opacity-50"
-              >
-                수정 요청 제출
-              </button>
+      {/* No document yet (empty markdown) -> nothing to approve or revise;
+          the action row is hidden rather than rendered-but-disabled. */}
+      {!empty && (
+        <div className="p-3 border-t border-slate-100 shrink-0 space-y-2">
+          {revising && (
+            <div className="space-y-2">
+              <textarea
+                aria-label="수정 요청 사항"
+                rows={3}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="예: FAQ에 다국어 지원 계획 항목을 추가해줘."
+                className="w-full text-sm rounded-lg border border-slate-200 p-3 focus:outline-none focus:ring-2 focus:ring-violet-400"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Abandoned draft should not resurface next time the
+                    // textarea is opened.
+                    setText("");
+                    setRevising(false);
+                  }}
+                  className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || text.trim() === ""}
+                  onClick={submitRevision}
+                  className="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white font-medium hover:bg-violet-700 disabled:opacity-50"
+                >
+                  수정 요청 제출
+                </button>
+              </div>
             </div>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setRevising((v) => !v)}
+              className="flex-1 py-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium disabled:opacity-50"
+            >
+              ✏️ 수정 요청
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onApprove}
+              className="flex-1 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold disabled:opacity-50"
+            >
+              ✓ 이 문서 승인
+            </button>
           </div>
-        )}
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => setRevising((v) => !v)}
-            className="flex-1 py-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium disabled:opacity-50"
-          >
-            ✏️ 수정 요청
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onApprove}
-            className="flex-1 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold disabled:opacity-50"
-          >
-            ✓ 이 문서 승인
-          </button>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -1221,6 +1249,7 @@ export function CanvasRightPanel({
           return (
             <button
               key={t.key}
+              type="button"
               role="tab"
               aria-selected={active}
               onClick={() => onTabChange(t.key)}
@@ -1248,7 +1277,9 @@ export function CanvasRightPanel({
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd frontend && npx vitest run components/canvas/DocumentView.test.tsx components/canvas/CanvasRightPanel.test.tsx components/canvas/PreviewPanel.test.tsx && npx tsc --noEmit`
-Expected: PASS (DocumentView ×5, CanvasRightPanel ×3, PreviewPanel ×2 unchanged = 10 tests); `tsc` clean.
+Expected: PASS (DocumentView ×6 — including the 200-empty-markdown case below, CanvasRightPanel ×3, PreviewPanel ×2 unchanged = 11 tests); `tsc` clean.
+
+> **Post-review fix note:** a reviewer caught, after this task's first landing, that the real backend's `Workspace.get_document()` never 404s — a missing document is a `200` with `{"markdown": ""}` (see `backend/pathfinder/workspace.py`). The original `DocumentView` had no branch for a successful-but-empty load, so that path fell through to a blank content pane (violating the "no blank panes" constraint) with the approve/revise row still rendered for a document that doesn't exist. The test and implementation blocks above already include the fix: an `empty` state (`"아직 작성된 문서가 없습니다."`, mirroring `DocumentPanel.tsx`) that hides the footer action row entirely, plus a `취소` handler that clears the draft text and a `type="button"` on the tab buttons.
 
 - [ ] **Step 5: Commit**
 

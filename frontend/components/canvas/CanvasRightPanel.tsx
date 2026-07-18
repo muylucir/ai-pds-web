@@ -38,6 +38,7 @@ export function CanvasRightPanel({
           return (
             <button
               key={t.key}
+              type="button"
               role="tab"
               aria-selected={active}
               onClick={() => onTabChange(t.key)}

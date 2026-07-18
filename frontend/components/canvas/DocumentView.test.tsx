@@ -20,6 +20,17 @@ describe("DocumentView", () => {
     expect(await screen.findByText("Press Release")).toBeInTheDocument();
   });
 
+  it('shows "아직 작성된 문서가 없습니다." on a 200 with empty markdown (real backend never 404s)', async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/document`, () => HttpResponse.json({ markdown: "" })),
+    );
+    await act(async () => {
+      render(<DocumentView projectId="pilot1" onApprove={vi.fn()} onRevise={vi.fn()} busy={false} />);
+    });
+    expect(await screen.findByText("아직 작성된 문서가 없습니다.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "✓ 이 문서 승인" })).not.toBeInTheDocument();
+  });
+
   it('shows "문서가 아직 없습니다." on a 404 (no document yet)', async () => {
     server.use(
       http.get(`${API_BASE_URL}/projects/pilot1/document`, () =>
