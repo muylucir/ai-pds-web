@@ -85,4 +85,16 @@ describe("useTurnStream", () => {
     expect(ai(result.current.items)[0].error).toMatch(/연결/);
     expect(result.current.streaming).toBe(false);
   });
+
+  it("closes the stream if the component unmounts mid-turn", () => {
+    const { result, unmount } = renderHook(() => useTurnStream("pilot1"));
+    act(() => result.current.send("go"));
+    const es = FakeEventSource.last!;
+    act(() => es.emit({ kind: "status", text: "진행 중…", path: null })); // stream still live, not done/error
+    expect(es.closed).toBe(false);
+
+    unmount();
+
+    expect(es.closed).toBe(true);
+  });
 });
