@@ -1,5 +1,4 @@
 import inspect
-import pytest
 import pathfinder.app as app_module
 from pathfinder.sandbox.local import LocalSandbox
 from pathfinder.sandbox.microvm import MicroVMSandbox

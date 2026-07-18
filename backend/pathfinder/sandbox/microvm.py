@@ -2,7 +2,7 @@
 from __future__ import annotations
 import asyncio
 from pathlib import PurePosixPath
-from typing import AsyncIterator, Callable, Protocol
+from typing import Awaitable, AsyncIterator, Callable, Protocol
 from pathfinder.sandbox.base import Sandbox, AgentEvent
 from pathfinder.sandbox.globmatch import matches_glob
 from pathfinder.sandbox.pathsafe import reject_unsafe
@@ -54,6 +54,7 @@ class MicroVMSandbox(Sandbox):
         spec: BootSpec,
         harness_factory: Callable[[VMHandle], HarnessLike],
         s3: S3StoreLike,
+        on_stop: Callable[[], Awaitable[None]] | None = None,
     ):
         self.project_id = project_id
         self._controller = controller
@@ -64,6 +65,11 @@ class MicroVMSandbox(Sandbox):
         self._harness: HarnessLike | None = None
         self._boot_lock = asyncio.Lock()
         self._turn_active = False
+        # I2: optional caller-owned cleanup hook (e.g. app.py's shared
+        # httpx.AsyncClient captured in the harness_factory closure). Kept
+        # generic (Awaitable[None] callback) so this module stays free of any
+        # httpx coupling -- the sandbox doesn't know or care what it closes.
+        self._on_stop = on_stop
 
     async def start(self) -> None:
         # Lazy: do NOT boot. "Not yet booted" == self._handle is None.
@@ -170,7 +176,17 @@ class MicroVMSandbox(Sandbox):
             self._turn_active = False
 
     async def stop(self) -> None:
-        if self._handle is not None:
-            await self._controller.stop(self._handle)
-        self._handle = None
-        self._harness = None
+        # I2: on_stop (e.g. app.py's shared_http.aclose) is a caller-owned
+        # resource this sandbox doesn't understand, so it runs after the
+        # sandbox's own stop logic -- but inside `finally`, so a failure in
+        # controller.stop() can never leak the caller's resource (a locally-
+        # owned client leaking is worse than the two steps running out of
+        # their "natural" order on the error path).
+        try:
+            if self._handle is not None:
+                await self._controller.stop(self._handle)
+        finally:
+            self._handle = None
+            self._harness = None
+            if self._on_stop is not None:
+                await self._on_stop()

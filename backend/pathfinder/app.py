@@ -22,7 +22,9 @@ def microvm_controller_factory(project_id: str) -> MicroVMController:
     return LambdaMicroVMController(region=os.environ.get("PATHFINDER_VM_REGION", "ap-northeast-1"))
 
 # Monkeypatchable in tests to inject a FakeS3Store (no AWS). Durable store is
-# Seoul (ap-northeast-2); see the cross-region governance note below.
+# Seoul (ap-northeast-2) while MicroVMs run in Tokyo (ap-northeast-1), because
+# Lambda MicroVMs is not available in Seoul. This cross-border processing
+# must be disclosed to the customer at workshop start.
 def s3_store_factory(project_id: str) -> S3StoreLike:
     region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
@@ -52,6 +54,7 @@ async def _make_microvm_sandbox(project_id: str) -> Sandbox:
         spec=_boot_spec(),
         harness_factory=harness_factory,
         s3=s3,
+        on_stop=shared_http.aclose,  # close the shared client this closure owns
     )
     await sb.start()
     return sb

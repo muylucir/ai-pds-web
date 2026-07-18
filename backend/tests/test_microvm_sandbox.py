@@ -75,3 +75,37 @@ async def test_stop_resets_to_not_booted():
     await sb.stop()
     assert ctrl.stop_calls == 1
     assert sb._handle is None
+
+async def test_stop_awaits_on_stop_callback():
+    # I2: MicroVMSandbox.stop() must await an injected on_stop callback so
+    # callers (app.py) can close resources they own (e.g. a shared
+    # httpx.AsyncClient captured in the harness_factory closure) without
+    # coupling the sandbox itself to httpx.
+    harness = FakeHarness()
+    ctrl = FakeMicroVMController(base_url="http://fake-vm")
+    called = False
+    async def _on_stop():
+        nonlocal called
+        called = True
+    sb = MicroVMSandbox(
+        project_id="p1",
+        controller=ctrl,
+        spec=BootSpec(),
+        harness_factory=lambda handle: harness,
+        s3=FakeS3Store(),
+        on_stop=_on_stop,
+    )
+    await sb.start()
+    _ = [e async for e in sb.send_message("go")]   # boot, so stop() has a handle to stop
+    await sb.stop()
+    assert called
+    assert ctrl.stop_calls == 1
+
+async def test_stop_without_on_stop_callback_still_works():
+    # Default None must not break existing constructions/tests.
+    sb, ctrl, _ = _sandbox()
+    await sb.start()
+    _ = [e async for e in sb.send_message("go")]
+    await sb.stop()
+    assert ctrl.stop_calls == 1
+    assert sb._handle is None
