@@ -6,6 +6,7 @@ from pathlib import Path
 import boto3
 import httpx
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pathfinder.workspace import ProjectRegistry
 from pathfinder.sandbox.local import LocalSandbox
 from pathfinder.sandbox.base import Sandbox
@@ -71,6 +72,23 @@ async def make_sandbox(project_id: str) -> Sandbox:
     return await _make_local_sandbox(project_id)
 
 app = FastAPI(title="Pathfinder")
+
+# CORS: the frontend (:3000 in dev, Playwright e2e) calls this API (:8000)
+# from a real browser and needs the preflight/simple-request headers.
+# allow_credentials is intentionally NOT enabled -- no cookies are used, the
+# auth token goes in a header, so we don't need the credentialed-CORS dance.
+_cors_origins = [
+    o.strip()
+    for o in os.environ.get("PATHFINDER_CORS_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
 
 from pathfinder.routes import projects, artifacts  # noqa: E402
 app.include_router(projects.router)
