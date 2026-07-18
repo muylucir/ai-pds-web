@@ -55,6 +55,37 @@ describe("DocumentView", () => {
     expect(await screen.findByText(/문서를 불러오지 못했습니다/)).toBeInTheDocument();
   });
 
+  // Important-1 (whole-branch review fix): the approve/revise footer must not
+  // render over an error state — a 404 or 500 means there is no loaded
+  // document to approve, so the buttons must be absent, not just unusable.
+  it("does not render the approve/revise footer on a 404 (no document yet)", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/document`, () =>
+        HttpResponse.json({ detail: "none" }, { status: 404 }),
+      ),
+    );
+    await act(async () => {
+      render(<DocumentView projectId="pilot1" onApprove={vi.fn()} onRevise={vi.fn()} busy={false} />);
+    });
+    await screen.findByText("문서가 아직 없습니다.");
+    expect(screen.queryByRole("button", { name: "✓ 이 문서 승인" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "✏️ 수정 요청" })).not.toBeInTheDocument();
+  });
+
+  it("does not render the approve/revise footer on a non-404 error (e.g. 500)", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/document`, () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+    await act(async () => {
+      render(<DocumentView projectId="pilot1" onApprove={vi.fn()} onRevise={vi.fn()} busy={false} />);
+    });
+    await screen.findByText(/문서를 불러오지 못했습니다/);
+    expect(screen.queryByRole("button", { name: "✓ 이 문서 승인" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "✏️ 수정 요청" })).not.toBeInTheDocument();
+  });
+
   it("clicking 이 문서 승인 calls onApprove", async () => {
     server.use(
       http.get(`${API_BASE_URL}/projects/pilot1/document`, () => HttpResponse.json({ markdown: discoveryDocument })),

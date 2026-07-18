@@ -33,10 +33,15 @@ export function QuestionSummaryCard({ file }: { file: QuestionFile }) {
         </div>
         <button
           type="button"
+          aria-expanded={expanded}
           className="text-[11px] text-slate-400 hover:text-violet-600 shrink-0"
           onClick={() => setExpanded((v) => !v)}
         >
-          펼치기
+          {/* Mockup 04 only shows this widget collapsed ("펼치기"); the 접기
+              label for the expanded state is our own a11y extension, not
+              ported copy — it keeps the toggle's accessible name in sync
+              with aria-expanded instead of leaving a stale "펼치기" label. */}
+          {expanded ? "접기" : "펼치기"}
         </button>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">

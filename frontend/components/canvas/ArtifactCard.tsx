@@ -19,6 +19,11 @@ export function ArtifactCard({ path, onOpen }: { path: string; onOpen: () => voi
       </span>
       <span className="flex-1 min-w-0">
         <span className="block font-medium text-sm">discovery-document.md — Part 1: Envision</span>
+        {/* Deliberate deviation from the mockup (whole-branch review Minor-5):
+            the mockup's sub-line is a content summary of the document, but
+            deriving a summary from file content would be methodology logic
+            (forbidden — see Global Constraints). We render the raw path
+            instead, which is data we already have with no content sniffing. */}
         <span className="block text-[11px] text-slate-400 mt-0.5">{path}</span>
       </span>
       <span className="text-xs text-violet-600 shrink-0">패널에서 열기 →</span>

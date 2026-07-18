@@ -16,7 +16,15 @@ export function ClarificationCard({
   busy: boolean;
 }) {
   return (
-    <div role="alert" className="rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3.5">
+    // role="region" (not "alert"): an assertive live region wrapping
+    // interactive option buttons is an anti-pattern — it can interrupt
+    // screen-reader users mid-task and doesn't relate the buttons to their
+    // heading the way a labelled region does (whole-branch review Minor-4).
+    <div
+      role="region"
+      aria-label="명확화 질문"
+      className="rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3.5"
+    >
       <div className="flex items-center gap-2">
         <span aria-hidden="true">⚠️</span>
         <p className="text-sm font-bold text-amber-900">답변 간 모순 감지 — 게이트 보류</p>

@@ -1664,6 +1664,8 @@ test("an artifact card opens the right panel's 문서 tab with the Living Docume
 Run: `cd frontend && npm run test`
 Expected: PASS — every Plan A + Plan B + C1 test (90 baseline), PLUS this plan's: useTurnStream card derivation ×4, QuestionSummaryCard ×2, ClarificationCard ×3, ArtifactCard ×1, QuestionCardSlot ×4, DocumentView ×5, CanvasRightPanel ×3, ChatTimeline ×3 new (including the typing-hint case), canvas page ×3 new = **28 new tests** → **118 total**. `e2e/` excluded from vitest.
 
+> **Post-whole-branch-review update:** the actual landed count is **119**, not 118 (one extra `useTurnStream` case beyond this section's original tally). The whole-branch review's fixes (see "Whole-branch review fixes" below) then added 4 more RED→GREEN tests (2 `DocumentView`, 1 `QuestionSummaryCard`, 1 `ClarificationCard`), bringing the final count to **123**.
+
 - [ ] **Step 3: Type-check and build**
 
 Run: `cd frontend && npx tsc --noEmit && npm run build`
@@ -1710,8 +1712,18 @@ git commit -m "test(frontend): full C2 suite green; artifact→document-tab INTE
 
 **Testing strategy realized:** `useTurnStream`'s card derivation is unit-tested with the SAME fake-`EventSource`-on-`globalThis` technique as C1 (Task 1). Presentational cards (`QuestionSummaryCard`, `ClarificationCard`, `ArtifactCard`) are unit-tested directly against fixtures, matching C1's `AiMessage`/`ChatInput` pattern. The one data-fetching container (`QuestionCardSlot`) and the two `useAsync`-backed views (`DocumentView`, `CanvasRightPanel`) are tested with per-test MSW `server.use(...)` overrides and `onUnhandledRequest:"error"` (inherited harness config — unchanged). The page test extends C1's existing SSE-driven page test with 3 new cases reusing the same `FakeEventSource` class already defined in that file. Playwright `canvas.spec.ts` gains one new INTEGRATION case, still excluded from `vitest run` via the untouched `vitest.config.ts` exclude list.
 
-**Scope sized appropriately:** 6 tasks, comparable to C1's 6-task shape. Card/presentation logic (T1–T3) is front-loaded before the panel/wiring logic (T4–T5) that consumes it, matching a dependency-respecting build order. T6 closes with the full-suite count reconciliation (90 baseline + 27 new = 117) and the one additional INTEGRATION e2e step.
+**Scope sized appropriately:** 6 tasks, comparable to C1's 6-task shape. Card/presentation logic (T1–T3) is front-loaded before the panel/wiring logic (T4–T5) that consumes it, matching a dependency-respecting build order. T6 closes with the full-suite count reconciliation — actual landed count is 90 baseline + 29 new = **119** (not the originally-estimated 90 + 27 = 117; see Task 6 Step 2's post-review update) — plus the one additional INTEGRATION e2e step. The whole-branch review's fixes below add 4 more (119 → 123).
 
 **Depends on:** Plan C1 merged (canvas shell, `useTurnStream`, `streamEvents` consumer, presentational chat components, `PreviewPanel`, `previewUrl` seam) which itself depends on Plan A + Plan B merged. Unit tests mock `GET /state`/`GET /questions/{name}`/`GET /document` (MSW) and the SSE stream (fake `EventSource`), exactly as C1 established. Does not depend on MicroVM Part 2 — same backend-contract-only dependency C1 already documented.
 
 **Blocker for full mockup-04 fidelity:** the structured approval-gate card and part-tabbed document view remain blocked on future backend plans (a structured gate/build-status signal; a part-segmented document contract), both freshly listed above rather than silently dropped. The prototype `<iframe>` and any build-specific status remain blocked on the same future "prototype build backend" plan C1 already named — unchanged by this plan.
+
+---
+
+## Whole-branch review fixes
+
+Applied after a whole-branch review of this plan's landed code (baseline HEAD `2866f0a`, 119/119 vitest, `tsc` clean). One commit; TDD per behavioral fix.
+
+- **Important-1** — `DocumentView`'s approve/revise footer was gated on `!empty`, but `empty` is `false` during loading and on 404/500 errors too, so the 「✓ 이 문서 승인」/「✏️ 수정 요청」 buttons rendered over a document that failed to load. Fixed by gating the footer on `markdown` itself (`{markdown && (...)}`) and tightening the content render to `{!empty && markdown && <MarkdownView .../>}` so a whitespace-only markdown value can't double-render alongside the empty-state message.
+- **Minor-2** — `QuestionSummaryCard`'s 펼치기 toggle had no `aria-expanded`. Added `aria-expanded={expanded}` and flip the label to 「접기」 when open (the mockup only depicts the collapsed 펼치기 state, so 접기 is this project's own a11y extension, not ported copy).
+- **Minor-4** — `ClarificationCard` wrapped its interactive option buttons in `role="alert"`, an assertive live region — an anti-pattern for a container holding buttons. Changed to `role="region"` with `aria-label="명확화 질문"`; visual output unchanged.

@@ -35,4 +35,16 @@ describe("QuestionSummaryCard", () => {
     // getByText, which is ambiguous across this fixture's repeated answers.
     expect(screen.getAllByText("답변: A")).toHaveLength(11);
   });
+
+  // Minor-2 (whole-branch review fix): the toggle must announce its state via
+  // aria-expanded, and flip its label to 접기 when open (mockup only shows the
+  // collapsed 펼치기 state, so the 접기 label is our own extension for a11y).
+  it("toggle button reports aria-expanded and flips its label on click", async () => {
+    const user = userEvent.setup();
+    render(<QuestionSummaryCard file={strategyQuestions} />);
+    const toggle = screen.getByRole("button", { name: "펼치기" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(screen.getByRole("button", { name: "접기" })).toHaveAttribute("aria-expanded", "true");
+  });
 });

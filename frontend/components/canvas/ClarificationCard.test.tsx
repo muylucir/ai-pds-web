@@ -35,4 +35,13 @@ describe("ClarificationCard", () => {
     render(<ClarificationCard file={unanswered} onChoose={vi.fn()} busy={true} />);
     expect(screen.getByRole("button", { name: /아직 정하지 않음/ })).toBeDisabled();
   });
+
+  // Minor-4 (whole-branch review fix): an assertive role="alert" wrapping
+  // interactive buttons is an anti-pattern (screen readers may interrupt to
+  // announce it, then focus is elsewhere) — use role="region" with a label.
+  it("uses role=region with a Korean label instead of role=alert", () => {
+    render(<ClarificationCard file={unanswered} onChoose={vi.fn()} busy={false} />);
+    expect(screen.getByRole("region", { name: "명확화 질문" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

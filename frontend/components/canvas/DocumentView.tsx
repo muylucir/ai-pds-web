@@ -67,12 +67,21 @@ export function DocumentView({
           <p className="text-rose-600">문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
         )}
         {empty && <p className="text-slate-400">아직 작성된 문서가 없습니다.</p>}
-        {markdown && <MarkdownView markdown={markdown} />}
+        {/* !empty guards against a whitespace-only markdown value double-
+            rendering alongside the "아직 작성된 문서가 없습니다." empty state
+            above — `empty` already covers markdown.trim() === "" (see its
+            definition), so a truthy-but-blank markdown string can't slip
+            through and render an empty MarkdownView next to that message. */}
+        {!empty && markdown && <MarkdownView markdown={markdown} />}
       </div>
 
-      {/* No document yet (empty markdown) -> nothing to approve or revise;
-          the action row is hidden rather than rendered-but-disabled. */}
-      {!empty && (
+      {/* Gate the footer on actual loaded content, not just "not empty" —
+          `empty` is false while loading and on 404/500 error states too, so
+          gating on `!empty` alone let the approve/revise buttons render over
+          a document that failed to load (whole-branch review Important-1).
+          Only a truthy, non-blank `markdown` means there is something to
+          approve or revise. */}
+      {markdown && (
         <div className="p-3 border-t border-slate-100 shrink-0 space-y-2">
           {revising && (
             <div className="space-y-2">
