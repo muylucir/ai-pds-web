@@ -17,3 +17,12 @@ describe("AppHeader", () => {
     expect(screen.getByRole("link", { name: "대시보드" })).not.toHaveAttribute("aria-current");
   });
 });
+
+describe("AppHeader canvas tab", () => {
+  it("links the 빌드 캔버스 tab into the project's canvas route", () => {
+    render(<AppHeader activeTab="canvas" projectId="pilot1" />);
+    const link = screen.getByRole("link", { name: "빌드 캔버스" });
+    expect(link).toHaveAttribute("href", "/projects/pilot1/canvas");
+    expect(link).toHaveAttribute("aria-current", "page");
+  });
+});
