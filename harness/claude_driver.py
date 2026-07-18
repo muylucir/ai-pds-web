@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from pathlib import PurePosixPath
 from typing import AsyncIterator, Literal
 from pydantic import BaseModel
+
+_log = logging.getLogger("harness.driver")
 
 # Mirror of backend/pathfinder/sandbox/base.py AgentEvent. The harness is a
 # separate deployable and cannot import the backend package; these fields MUST
@@ -17,6 +20,7 @@ class AgentEvent(BaseModel):
 
 _FILE_TOOLS = {"Write", "Edit", "MultiEdit"}
 _STDERR_CHUNK = 65536
+_STDERR_TAIL = 4096  # bytes of stderr retained for diagnostics on nonzero exit
 
 
 def _rel(path: str, workspace: str) -> str | None:
@@ -71,18 +75,20 @@ def translate(obj: dict, workspace: str) -> list[AgentEvent]:
     return events
 
 
-async def _drain_stderr(stream: asyncio.StreamReader) -> None:
-    """Continuously read and discard the child's stderr. If nobody reads a
-    subprocess's stderr pipe, the OS pipe buffer fills and the child blocks
-    on its next stderr write — which, for a CLI that writes stderr before or
-    interleaved with stdout, silently deadlocks stdout production too. We
-    intentionally never surface this content in an AgentEvent: the only
-    thing that reaches the event stream is a bounded, credential-free
-    "claude exited N" message built from the exit code alone."""
+async def _drain_stderr(stream: asyncio.StreamReader, tail: bytearray) -> None:
+    """Continuously read the child's stderr so the OS pipe buffer never fills
+    (an unread stderr pipe deadlocks stdout production too). We keep only a
+    bounded TAIL (last _STDERR_TAIL bytes) for server-side diagnostics on a
+    non-zero exit — it is logged to the harness logger (→ CloudWatch), NEVER
+    surfaced in an AgentEvent to the user: the event stream still only ever
+    carries the credential-free "claude exited N" built from the exit code."""
     while True:
         chunk = await stream.read(_STDERR_CHUNK)
         if not chunk:
             return
+        tail.extend(chunk)
+        if len(tail) > _STDERR_TAIL:
+            del tail[:-_STDERR_TAIL]
 
 
 class ClaudeDriver:
@@ -111,9 +117,11 @@ class ClaudeDriver:
         assert proc.stdout is not None
         assert proc.stderr is not None
         # Drain stderr concurrently so the child never blocks on a full pipe
-        # buffer (see _drain_stderr docstring). Its content is discarded —
-        # only the exit code, never raw stderr bytes, reaches an AgentEvent.
-        stderr_task = asyncio.ensure_future(_drain_stderr(proc.stderr))
+        # buffer (see _drain_stderr docstring). A bounded tail is kept for
+        # server-side diagnostics; only the exit code, never raw stderr bytes,
+        # reaches an AgentEvent.
+        stderr_tail = bytearray()
+        stderr_task = asyncio.ensure_future(_drain_stderr(proc.stderr, stderr_tail))
         try:
             saw_done = False
             async for raw in proc.stdout:
@@ -131,6 +139,10 @@ class ClaudeDriver:
                     yield ev
             rc = await proc.wait()
             if rc != 0:
+                # Log the stderr tail server-side (→ CloudWatch) so a failed
+                # turn is debuggable; the user-facing event stays exit-code-only.
+                _log.error("claude exited %s; stderr tail: %s", rc,
+                           stderr_tail.decode("utf-8", "replace").strip())
                 yield AgentEvent(kind="error", text=f"claude exited {rc}")
             elif not saw_done:
                 yield AgentEvent(kind="done")

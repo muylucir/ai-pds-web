@@ -10,9 +10,15 @@
 # 200 in alternation). The Lambda MicroVMs lifecycle doc says the same:
 # "Run hooks in a separate thread / event loop from your application server."
 from __future__ import annotations
+import logging
 import threading
 import httpx
 import uvicorn
+
+# Surface our own diagnostics (harness.driver / harness.hooks) to stdout so
+# they reach CloudWatch — e.g. the claude stderr tail on a failed turn.
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 from app import build_app
 from hooks import build_hooks_app, default_rules_present
 from claude_driver import ClaudeDriver

@@ -29,7 +29,8 @@ def stub_claude(tmp_path):
     jsonl fixture line-by-line, then exits per `exit_code`. Optionally writes
     `stderr_bytes` of filler to stderr first (to exercise stderr-pipe
     draining without deadlock). Returns a builder."""
-    def _make(fixture: str = "basic_turn.jsonl", exit_code: int = 0, stderr_bytes: int = 0) -> str:
+    def _make(fixture: str = "basic_turn.jsonl", exit_code: int = 0, stderr_bytes: int = 0,
+              stderr_text: str = "") -> str:
         payload = (FIXTURES / fixture).read_text() if fixture else ""
         script = tmp_path / "claude"
         script.write_text(textwrap.dedent(f"""\
@@ -37,7 +38,9 @@ def stub_claude(tmp_path):
             import sys
             if {stderr_bytes}:
                 sys.stderr.write("E" * {stderr_bytes})
-                sys.stderr.flush()
+            if {stderr_text!r}:
+                sys.stderr.write({stderr_text!r})
+            sys.stderr.flush()
             sys.stdout.write({payload!r})
             sys.exit({exit_code})
         """))

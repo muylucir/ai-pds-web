@@ -67,6 +67,16 @@ class LambdaMicroVMController(MicroVMController):
             self._client = boto3.client("lambda-microvms", region_name=self.region)
         return self._client
 
+    @staticmethod
+    def _endpoint_url(endpoint: str) -> str:
+        # run/get-microvm return a bare host (e.g. "<id>.lambda-microvm.<region>.on.aws")
+        # with no scheme; HarnessClient builds "{base_url}/message" and httpx
+        # requires a scheme. The proxy is TLS-terminated, so default to https.
+        # (Confirmed against a real boot: GET https://<endpoint>/health -> 200.)
+        if endpoint.startswith(("http://", "https://")):
+            return endpoint
+        return f"https://{endpoint}"
+
     async def _get_microvm(self, vm_id: str) -> dict:
         return await asyncio.to_thread(self.client.get_microvm, microvmIdentifier=vm_id)
 
@@ -89,7 +99,7 @@ class LambdaMicroVMController(MicroVMController):
             idlePolicy=spec.idle_policy(),
         )
         vm_id = resp["microvmId"]
-        base_url = resp["endpoint"]
+        base_url = self._endpoint_url(resp["endpoint"])
         await self._poll_until_running(vm_id)
         return VMHandle(vm_id=vm_id, base_url=base_url, status="ready")
 
@@ -100,7 +110,8 @@ class LambdaMicroVMController(MicroVMController):
         # ResumeMicrovmResponse has no members -- the new endpoint is only
         # available from the subsequent get_microvm poll.
         final = await self._poll_until_running(handle.vm_id)
-        base_url = final.get("endpoint", handle.base_url)
+        ep = final.get("endpoint")
+        base_url = self._endpoint_url(ep) if ep else handle.base_url
         return VMHandle(vm_id=handle.vm_id, base_url=base_url, status="ready")
 
     async def suspend(self, handle: VMHandle) -> None:

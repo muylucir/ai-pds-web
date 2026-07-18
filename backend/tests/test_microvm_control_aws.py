@@ -63,25 +63,37 @@ async def test_boot_sends_spec_params_and_polls_until_running():
     stub = Stubber(client)
     spec = BootSpec(image_id="img-arn", exec_role_arn=ROLE_ARN,
                     anthropic_model="global.anthropic.claude-sonnet-5")
+    # The REAL run/get-microvm return a BARE host with no scheme (confirmed
+    # against a live boot: "<id>.lambda-microvm.<region>.on.aws"). The
+    # controller must prepend https:// so HarnessClient's "{base_url}/message"
+    # is a usable URL.
+    bare = "vm-1.lambda-microvm.ap-northeast-1.on.aws"
     stub.add_response(
         "run_microvm",
-        _vm_resp("PENDING"),
+        _vm_resp("PENDING", endpoint=bare),
         {"imageIdentifier": "img-arn", "executionRoleArn": ROLE_ARN,
          "idlePolicy": {"maxIdleDurationSeconds": 300,
                         "suspendedDurationSeconds": 1800,
                         "autoResumeEnabled": True}},
     )
-    stub.add_response("get_microvm", _vm_resp("PENDING"),
+    stub.add_response("get_microvm", _vm_resp("PENDING", endpoint=bare),
                       {"microvmIdentifier": "vm-1"})
-    stub.add_response("get_microvm", _vm_resp("RUNNING"),
+    stub.add_response("get_microvm", _vm_resp("RUNNING", endpoint=bare),
                       {"microvmIdentifier": "vm-1"})
     ctrl = LambdaMicroVMController(region=REGION, client=client, poll_interval_seconds=0)
     with stub:
         handle = await ctrl.boot("proj-1", spec)
     assert handle.vm_id == "vm-1"
-    assert handle.base_url == "https://vm-1.microvm.aws"
+    assert handle.base_url == f"https://{bare}"  # scheme prepended
     assert handle.status == "ready"
     stub.assert_no_pending_responses()
+
+
+def test_endpoint_url_prepends_https_only_when_missing():
+    f = LambdaMicroVMController._endpoint_url
+    assert f("x.lambda-microvm.ap-northeast-1.on.aws") == "https://x.lambda-microvm.ap-northeast-1.on.aws"
+    assert f("https://already.example") == "https://already.example"
+    assert f("http://plain.example") == "http://plain.example"
 
 
 async def test_boot_times_out_raises_runtimeerror():

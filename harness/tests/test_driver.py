@@ -128,6 +128,23 @@ async def test_run_large_stderr_does_not_deadlock(stub_claude):
     assert all(e.text is None or "E" * 100 not in e.text for e in events)
 
 
+async def test_run_logs_stderr_tail_on_nonzero_exit_but_not_in_event(stub_claude, caplog):
+    # A failed turn must be debuggable: the stderr tail is logged server-side,
+    # but the user-facing event stays exit-code-only (no raw stderr leak).
+    import logging
+    driver = ClaudeDriver(
+        workspace=WS,
+        claude_bin=stub_claude("basic_turn.jsonl", exit_code=3, stderr_bytes=0,
+                               stderr_text="ANTHROPIC_AUTH boom: creds bad"),
+    )
+    with caplog.at_level(logging.ERROR, logger="harness.driver"):
+        events = await _collect(driver.run("go", continue_session=False))
+    assert events[-1].kind == "error"
+    assert events[-1].text == "claude exited 3"
+    assert "ANTHROPIC_AUTH boom" not in (events[-1].text or "")  # not in the event
+    assert "ANTHROPIC_AUTH boom" in caplog.text                   # but IS in the log
+
+
 async def _collect(aiter):
     return [e async for e in aiter]
 
