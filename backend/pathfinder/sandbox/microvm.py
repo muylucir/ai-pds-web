@@ -8,6 +8,7 @@ from pathfinder.sandbox.globmatch import matches_glob
 from pathfinder.sandbox.pathsafe import reject_unsafe
 from pathfinder.sandbox.microvm_control import MicroVMController, BootSpec, VMHandle
 from pathfinder.sandbox.s3store import S3StoreLike
+from pathfinder.parsers.redaction import redact_credentials
 
 
 class HarnessLike(Protocol):
@@ -108,6 +109,19 @@ class MicroVMSandbox(Sandbox):
                 # would look like a successful sync while quietly losing data.
                 reject_unsafe(key)
                 content = await harness.read_file(key)
+                # redaction-at-rest: audit content is stored redacted in
+                # durable S3; app-side reads redact anyway (parsers/audit.py,
+                # routes/turns.py), so this removes exposure to direct S3
+                # readers. Only audit.md -- other docs and prototype/** source
+                # are stored raw (source-code fidelity; broader redaction-at-
+                # rest remains a future security-review item). Known
+                # consequence: _restore_workspace_from_s3 reconciles S3->VM on
+                # every turn, so the redacted audit.md is pushed back into the
+                # VM after the first sync, replacing the agent's raw version.
+                # Accepted defense-in-depth -- session continuity reads
+                # aiplc-state.md, not audit.md.
+                if key == "aiplc-docs/audit.md":
+                    content = redact_credentials(content)
                 await self._s3.put(key, content)
 
     _RESTORE_PREFIXES = ("aiplc-docs/", "prototype/")

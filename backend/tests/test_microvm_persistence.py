@@ -106,6 +106,33 @@ async def test_only_sync_subtrees_are_pushed():
     assert "aiplc-docs/audit.md" in s3.blobs
     assert "node_modules/pkg/index.js" not in s3.blobs
 
+async def test_audit_md_is_redacted_at_rest_on_sync():
+    # security decision: redact-on-sync -- audit.md's raw content must never
+    # land in durable S3, even though every app-side read path already
+    # redacts (parsers/audit.py, routes/turns.py). This closes the exposure
+    # to a direct S3 reader.
+    raw = "Setup notes.\nkey sk-abc123def456ghi789 was used.\nEnd of entry."
+    sb, _, _, s3 = _sandbox_with_agent_writes({
+        "aiplc-docs/audit.md": raw,
+    })
+    await sb.start()
+    _ = [e async for e in sb.send_message("go")]
+    synced = await sb.read_file("aiplc-docs/audit.md")
+    assert "sk-abc123def456ghi789" not in synced
+    assert "[CREDENTIAL REDACTED]" in synced
+    assert "Setup notes." in synced and "End of entry." in synced
+
+async def test_only_audit_md_is_redacted_other_docs_stay_raw():
+    # Locks the only-audit scope: a non-audit doc with the same
+    # credential-shaped string is synced RAW (unchanged).
+    raw = "Discovery notes.\nkey sk-abc123def456ghi789 was used."
+    sb, _, _, s3 = _sandbox_with_agent_writes({
+        "aiplc-docs/discovery.md": raw,
+    })
+    await sb.start()
+    _ = [e async for e in sb.send_message("go")]
+    assert s3.blobs["aiplc-docs/discovery.md"] == raw
+
 async def test_list_files_double_star_glob_matches_top_level_questions_file():
     # C2: production list_files must match pathlib.Path.glob '**' semantics
     # (zero-or-more segments), not plain fnmatch.fnmatch. list_question_files
