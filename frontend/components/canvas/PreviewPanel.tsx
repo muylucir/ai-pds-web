@@ -1,10 +1,12 @@
 import { previewUrl } from "@/lib/api/preview";
 
-// Right pane. The preview URL comes ONLY from the previewUrl seam (Task 1),
-// which returns null until the Phase 2/3 prototype build backend exists —
-// so today this renders the documented "프로토타입 빌드 대기 중" placeholder.
-// When the build backend lands the same panel renders a live <iframe>.
-export function PreviewPanel({
+// Inner content (no <aside> wrapper) — reused by CanvasRightPanel's Preview
+// tab so the switchable right panel doesn't nest two <aside> elements. The
+// preview URL comes ONLY from the previewUrl seam (C1 Task 1), which returns
+// null until the Phase 2/3 prototype build backend exists — so today this
+// renders the documented "프로토타입 빌드 대기 중" placeholder. When the build
+// backend lands the same body renders a live <iframe>, no other change.
+export function PreviewPanelBody({
   projectId,
   prototypeId,
 }: {
@@ -13,10 +15,7 @@ export function PreviewPanel({
 }) {
   const url = previewUrl(projectId, prototypeId);
   return (
-    <aside
-      className="hidden xl:flex w-[420px] shrink-0 bg-white border-l border-slate-200 flex-col"
-      aria-label="프로토타입 프리뷰 패널"
-    >
+    <>
       <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 shrink-0">
         <span aria-hidden="true">🖥️</span>
         <p className="font-bold text-sm">프로토타입 프리뷰</p>
@@ -35,6 +34,27 @@ export function PreviewPanel({
           </p>
         </div>
       )}
+    </>
+  );
+}
+
+// C1's original aside-wrapped shape — kept for backward compatibility (its
+// test is unchanged). C2's canvas page (Task 5) renders CanvasRightPanel
+// instead of this directly; CanvasRightPanel nests PreviewPanelBody inside
+// its own single <aside>.
+export function PreviewPanel({
+  projectId,
+  prototypeId,
+}: {
+  projectId: string;
+  prototypeId?: string | null;
+}) {
+  return (
+    <aside
+      className="hidden xl:flex w-[420px] shrink-0 bg-white border-l border-slate-200 flex-col"
+      aria-label="프로토타입 프리뷰 패널"
+    >
+      <PreviewPanelBody projectId={projectId} prototypeId={prototypeId} />
     </aside>
   );
 }
