@@ -33,8 +33,19 @@ async def assert_send_message_ordered_and_terminates(sb: Sandbox) -> None:
     # exactly one terminal event, and it is last
     assert all(e.kind not in ("done", "error") for e in events[:-1])
 
+async def assert_double_star_glob_matches_top_level_and_nested(sb: Sandbox) -> None:
+    # C2: pathlib.Path.glob '**' semantics -- '**' matches ZERO or more path
+    # segments, so 'subtree/**/*' must match BOTH a top-level file directly
+    # under the subtree AND a nested file further down. A plain
+    # fnmatch.fnmatch('**') implementation silently drops the top-level file.
+    await sb.write_file("glob-subtree/top.md", "top")
+    await sb.write_file("glob-subtree/nested/deep.md", "deep")
+    found = sorted(await sb.list_files("glob-subtree/**/*"))
+    assert found == ["glob-subtree/nested/deep.md", "glob-subtree/top.md"]
+
 async def run_sandbox_contract(sb: Sandbox) -> None:
     await assert_read_write_roundtrip(sb)
     await assert_rejects_unsafe_paths(sb)
     await assert_list_glob_returns_relative_posix(sb)
+    await assert_double_star_glob_matches_top_level_and_nested(sb)
     await assert_send_message_ordered_and_terminates(sb)

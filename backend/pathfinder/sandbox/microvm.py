@@ -1,10 +1,10 @@
 # backend/pathfinder/sandbox/microvm.py
 from __future__ import annotations
 import asyncio
-import fnmatch
 from pathlib import PurePosixPath
 from typing import AsyncIterator, Callable, Protocol
 from pathfinder.sandbox.base import Sandbox, AgentEvent
+from pathfinder.sandbox.globmatch import matches_glob
 from pathfinder.sandbox.pathsafe import reject_unsafe
 from pathfinder.sandbox.microvm_control import MicroVMController, BootSpec, VMHandle
 from pathfinder.sandbox.s3store import S3StoreLike
@@ -83,7 +83,7 @@ class MicroVMSandbox(Sandbox):
     async def list_files(self, glob: str) -> list[str]:
         reject_unsafe(glob)
         keys = await self._s3.list(_glob_prefix(glob))
-        return sorted(k for k in keys if fnmatch.fnmatch(k, glob))
+        return sorted(k for k in keys if matches_glob(k, glob))
 
     # ---- turn relay: boots the VM (Task 4 adds post-turn sync) ----
 
@@ -96,6 +96,10 @@ class MicroVMSandbox(Sandbox):
         Open Question."""
         for glob in self._SYNC_GLOBS:
             for key in await harness.list_files(glob):
+                # Fail-closed by design: an unsafe key aborts the whole sync
+                # loudly (raises) rather than being silently skipped. Do not
+                # "fix" this into a silent skip -- a silently-dropped key
+                # would look like a successful sync while quietly losing data.
                 reject_unsafe(key)
                 content = await harness.read_file(key)
                 await self._s3.put(key, content)
@@ -128,6 +132,11 @@ class MicroVMSandbox(Sandbox):
             current = await self._controller.status(self._handle)
             if current == "ready":
                 assert self._harness is not None
+                # C1: reconcile even on warm reuse -- a route may have written
+                # straight to S3 (e.g. a facilitator's answer) while this VM
+                # sat idle-but-ready; S3 unconditionally wins and the push is
+                # idempotent, so every turn starts from "VM view == S3".
+                await self._restore_workspace_from_s3(self._harness)
                 return self._harness
             if current == "suspended":
                 self._handle = await self._controller.resume(self._handle)

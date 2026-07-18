@@ -1,26 +1,8 @@
 # backend/tests/fakes/in_memory_harness.py
 from __future__ import annotations
-import fnmatch
 from typing import AsyncIterator
 from pathfinder.sandbox.base import AgentEvent
-
-def _matches_glob(path: str, glob: str) -> bool:
-    """fnmatch-based glob matching that treats '**' with pathlib.Path.glob
-    semantics: '**' matches ZERO or more path segments, so 'dir/**/*' matches
-    both a direct child ('dir/audit.md') and a nested file
-    ('dir/sub/audit.md'). Plain fnmatch.fnmatch requires '**' to consume at
-    least one literal '/', so it silently misses top-level files under a
-    '**'-globbed directory — a real bug this fixes (the production harness is
-    backed by a real filesystem and pathlib.Path.glob, whose '**' already
-    matches top-level files; this in-memory fake must match the same globs
-    the same way). Globs without '**' fall back to plain fnmatch, unchanged,
-    so existing single-level glob behavior (e.g. 'aiplc-docs/*-questions.md')
-    is preserved exactly."""
-    if "**" not in glob:
-        return fnmatch.fnmatch(path, glob)
-    prefix, _, suffix = glob.partition("**")
-    suffix = suffix.lstrip("/") or "*"
-    return path.startswith(prefix) and fnmatch.fnmatch(path[len(prefix):], suffix)
+from pathfinder.sandbox.globmatch import matches_glob as _matches_glob
 
 class FakeHarness:
     """In-memory object with the HarnessClient method surface, for

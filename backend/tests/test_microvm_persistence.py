@@ -105,3 +105,16 @@ async def test_only_sync_subtrees_are_pushed():
     _ = [e async for e in sb.send_message("go")]
     assert "aiplc-docs/audit.md" in s3.blobs
     assert "node_modules/pkg/index.js" not in s3.blobs
+
+async def test_list_files_double_star_glob_matches_top_level_questions_file():
+    # C2: production list_files must match pathlib.Path.glob '**' semantics
+    # (zero-or-more segments), not plain fnmatch.fnmatch. list_question_files
+    # uses exactly this glob shape ("aiplc-docs/**/*-questions.md") and a
+    # plain-fnmatch implementation silently drops a top-level questions file.
+    sb, ctrl, _, _ = _sandbox()
+    await sb.start()
+    await sb.write_file("aiplc-docs/top-questions.md", "top")
+    await sb.write_file("aiplc-docs/sub/nested-questions.md", "nested")
+    found = sorted(await sb.list_files("aiplc-docs/**/*-questions.md"))
+    assert found == ["aiplc-docs/sub/nested-questions.md", "aiplc-docs/top-questions.md"]
+    assert ctrl.boot_calls == 0

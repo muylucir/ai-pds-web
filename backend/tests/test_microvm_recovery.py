@@ -100,3 +100,18 @@ def test_backend_has_no_methodology_resume_logic():
     # no state-machine/resume entry points — recovery is a blind file copy.
     for forbidden in ("resume_from_state", "parse_state", "advance_stage", "_continue_session"):
         assert not hasattr(MicroVMSandbox, forbidden)
+
+async def test_warm_ready_vm_reconciles_from_s3_before_each_turn():
+    # C1: a VM that stays "ready" between turns (no auto-suspend) must still
+    # get S3's writes pushed in before the next turn -- otherwise the agent
+    # reads a stale VM-local file when a facilitator route wrote an answer
+    # straight to S3 while the VM stayed warm.
+    sb, ctrl, harness, s3 = _sandbox()
+    await sb.start()
+    _ = [e async for e in sb.send_message("boot")]       # boots; VM stays ready
+    assert ctrl.boot_calls == 1
+    await sb.write_file("aiplc-docs/answer.md", "[Answer]: B")  # S3 only, VM stale
+    assert "aiplc-docs/answer.md" not in harness.files   # confirm VM is stale
+    _ = [e async for e in sb.send_message("continue")]   # warm reuse; must reconcile
+    assert harness.files["aiplc-docs/answer.md"] == "[Answer]: B"
+    assert ctrl.resume_calls == 0 and ctrl.boot_calls == 1  # reconcile != resume/reboot
