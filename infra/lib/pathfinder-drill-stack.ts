@@ -1,0 +1,107 @@
+import * as cdk from 'aws-cdk-lib';
+import { Construct } from 'constructs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3assets from 'aws-cdk-lib/aws-s3-assets';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import * as path from 'path';
+
+const REGION = 'ap-northeast-1';
+const MODEL = 'global.anthropic.claude-sonnet-5';
+const BASE_IMAGE_ARN = `arn:aws:lambda:${REGION}:aws:microvm-image:al2023-1`;
+
+export class PathfinderDrillStack extends cdk.Stack {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+    const account = cdk.Stack.of(this).account;
+
+    // Artifacts bucket — drill scope: destroyed with the stack.
+    const bucket = new s3.Bucket(this, 'Artifacts', {
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+    });
+
+    // Harness code asset (infra/build/harness produced by package-harness.sh:
+    // Dockerfile at root). aws_s3_assets zips it into an S3 object.
+    const harnessAsset = new s3assets.Asset(this, 'HarnessCode', {
+      path: path.join(__dirname, '..', 'build', 'harness'),
+    });
+
+    // Build role: read the code artifact + write build logs. Confused-deputy
+    // guard: only the MicroVM image-build service in THIS account may assume it.
+    const buildRole = new iam.Role(this, 'BuildRole', {
+      assumedBy: new iam.ServicePrincipal('microvms.lambda.amazonaws.com', {
+        conditions: { StringEquals: { 'aws:SourceAccount': account } },
+      }),
+    });
+    harnessAsset.grantRead(buildRole);
+    buildRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents'],
+      resources: [`arn:aws:logs:${REGION}:${account}:log-group:/pathfinder/microvm/*`],
+    }));
+
+    // Execution role: assumed by the RUNNING VM. Bedrock invoke ONLY, NO S3 —
+    // preserving the security boundary (the VM cannot reach durable storage).
+    // pilot1-validated shape: inference-profile ARN + foundation-model wildcard.
+    const execRole = new iam.Role(this, 'ExecutionRole', {
+      assumedBy: new iam.ServicePrincipal('microvms.lambda.amazonaws.com', {
+        conditions: { StringEquals: { 'aws:SourceAccount': account } },
+      }),
+    });
+    execRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+      resources: [
+        `arn:aws:bedrock:*:${account}:inference-profile/${MODEL}`,
+        `arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5*`,
+      ],
+    }));
+
+    const logGroup = new logs.LogGroup(this, 'MicrovmLogs', {
+      logGroupName: '/pathfinder/microvm/harness',
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      retention: logs.RetentionDays.ONE_WEEK,
+    });
+
+    // The MicroVM image (L1 CfnMicrovmImage; L2 does not exist yet). Hooks are
+    // served by harness/hooks.py on port 9000: /ready gates the build snapshot,
+    // /validate gates resume-from-snapshot. Env is baked = BootSpec.env().
+    const image = new lambda.CfnMicrovmImage(this, 'HarnessImage', {
+      name: 'pathfinder-harness',
+      description: 'Pathfinder drill harness: Claude Code driver + aiplc-rules, Bedrock-backed.',
+      baseImageArn: BASE_IMAGE_ARN,
+      baseImageVersion: 'latest',
+      buildRoleArn: buildRole.roleArn,
+      codeArtifact: { uri: harnessAsset.s3ObjectUrl },
+      environmentVariables: [
+        { key: 'CLAUDE_CODE_USE_BEDROCK', value: '1' },
+        { key: 'AWS_REGION', value: REGION },
+        { key: 'ANTHROPIC_MODEL', value: MODEL },
+      ],
+      additionalOsCapabilities: [],
+      egressNetworkConnectors: [],
+      cpuConfigurations: [{ architecture: 'ARM_64' }],
+      resources: [{ minimumMemoryInMiB: 2048 }],
+      hooks: {
+        port: 9000,
+        microvmImageHooks: {
+          ready: '/ready',
+          readyTimeoutInSeconds: 300,
+          validate: '/validate',
+          validateTimeoutInSeconds: 60,
+        },
+      },
+      logging: { cloudWatch: { logGroup: logGroup.logGroupName } },
+    });
+    // Runtime hooks (run/resume/suspend/terminate) are fast-notification and
+    // OPTIONAL; skipped for now (YAGNI) — our lifecycle is driven by the
+    // controller polling get-microvm, not by in-VM runtime-hook callbacks.
+
+    new cdk.CfnOutput(this, 'ImageArn', { value: image.attrImageArn });
+    new cdk.CfnOutput(this, 'ExecutionRoleArn', { value: execRole.roleArn });
+    new cdk.CfnOutput(this, 'ArtifactsBucketName', { value: bucket.bucketName });
+    new cdk.CfnOutput(this, 'Region', { value: REGION });
+  }
+}
