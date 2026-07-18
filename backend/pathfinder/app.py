@@ -37,6 +37,21 @@ def s3_store_factory(project_id: str) -> S3StoreLike:
 def _harness_token_provider(vm_id: str, region: str) -> dict[str, str] | None:
     if vm_id.startswith("fake-"):   # FakeMicroVMController handles: never mint.
         return None
+    # NOTE: mint_harness_token is a sync, blocking boto3 call (its own
+    # docstring says so) made directly on the asyncio event loop here --
+    # harness_factory (this function's only caller) is sync by design (see
+    # microvm.py's HarnessLike-returning Callable[[VMHandle], HarnessLike]),
+    # so there is no `await`/asyncio.to_thread wrapping at this call site.
+    # Accepted as a documented limitation for now under the workshop's
+    # few-concurrent-tenants model (same class of deferral as the
+    # SUSPENDING->"stopped" drill item in microvm_control_aws.py's
+    # _map_status docstring) -- one blocking CreateMicrovmAuthToken call per
+    # handle transition (boot/resume/reboot), not per request, so it is rare
+    # and short-lived, but it does stall the event loop for its duration. A
+    # real fix needs an async `harness_factory`, which ripples into
+    # `_ensure_ready`/`_boot_and_restore` (microvm.py) and every test's inline
+    # `harness_factory=lambda handle: harness` -- out of scope here; see the
+    # plan doc's Open Questions (Task 5 area) for the resolution path.
     return mint_harness_token(vm_id, region)
 
 
