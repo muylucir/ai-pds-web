@@ -1,6 +1,6 @@
 // frontend/components/canvas/ChatInput.test.tsx
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChatInput } from "./ChatInput";
 
@@ -23,5 +23,25 @@ describe("ChatInput", () => {
     await user.type(screen.getByLabelText("채팅 메시지 입력"), "안녕");
     await user.click(screen.getByRole("button", { name: "전송" }));
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("does not send on the IME composition-commit Enter (Korean input)", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    render(<ChatInput onSend={onSend} disabled={false} />);
+    const box = screen.getByLabelText("채팅 메시지 입력");
+    await user.type(box, "안녕");
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true, keyCode: 229 });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("sends on a plain (non-IME) Enter keydown", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    render(<ChatInput onSend={onSend} disabled={false} />);
+    const box = screen.getByLabelText("채팅 메시지 입력");
+    await user.type(box, "안녕");
+    fireEvent.keyDown(box, { key: "Enter", isComposing: false });
+    expect(onSend).toHaveBeenCalledWith("안녕");
   });
 });

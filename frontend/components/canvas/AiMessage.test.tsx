@@ -34,4 +34,10 @@ describe("AiMessage", () => {
     render(<AiMessage item={{ ...base, error: "빌드에 실패했습니다" }} />);
     expect(screen.getByText(/빌드에 실패했습니다/)).toBeInTheDocument();
   });
+
+  it("announces the accumulating answer text via an aria-live region", () => {
+    render(<AiMessage item={{ ...base, text: "필터를 추가했습니다." }} />);
+    const textEl = screen.getByText("필터를 추가했습니다.");
+    expect(textEl.closest('[aria-live="polite"]')).not.toBeNull();
+  });
 });

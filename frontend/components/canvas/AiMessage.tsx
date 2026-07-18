@@ -12,11 +12,9 @@ export function AiMessage({ item }: { item: AiItem }) {
         AI
       </span>
       <div className="max-w-[85%] min-w-0">
-        <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-md px-4 py-3 text-sm leading-relaxed">
+        <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-md px-4 py-3 text-sm leading-relaxed" aria-live="polite">
           {item.streaming && item.text === "" ? (
-            <p className="text-slate-400" aria-live="polite">
-              AI가 작성 중…
-            </p>
+            <p className="text-slate-400">AI가 작성 중…</p>
           ) : (
             <p className="whitespace-pre-wrap">{item.text}</p>
           )}

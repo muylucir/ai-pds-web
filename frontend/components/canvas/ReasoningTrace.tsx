@@ -1,9 +1,10 @@
 // frontend/components/canvas/ReasoningTrace.tsx
 import type { TraceEntry } from "@/lib/useTurnStream";
 
-// Collapsible "추론 과정" (mockup 04's reasoning idiom). Also serves as the
-// build-log surface: status frames are progress lines, file_changed frames are
-// touched paths — all arriving over the existing /events SSE.
+// Collapsible "추론 과정" (a plan-defined label; mockup 04 has no
+// reasoning-trace collapsible). Also serves as the build-log surface: status
+// frames are progress lines, file_changed frames are touched paths — all
+// arriving over the existing /events SSE.
 export function ReasoningTrace({ entries }: { entries: TraceEntry[] }) {
   if (entries.length === 0) return null;
   return (

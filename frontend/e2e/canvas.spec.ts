@@ -10,7 +10,10 @@ test("send a chat message and see a streamed AI reply", async ({ page }) => {
   await page.getByLabel("채팅 메시지 입력").fill("프로토타입에 대해 알려줘");
   await page.getByRole("button", { name: "전송" }).click();
   // The user bubble appears; the AI bubble streams in (the backend relays the
-  // agent turn over GET /events). We assert an AI avatar bubble materializes.
-  await expect(page.getByText("프로토타입에 대해 알려줘")).toBeVisible();
-  await expect(page.locator("text=AI").first()).toBeVisible();
+  // agent turn over GET /events). We scope assertions to the chat timeline so
+  // this doesn't false-positive against the AppHeader's "AI" logo chip, which
+  // is visible before any turn.
+  const timeline = page.getByLabel("대화 타임라인");
+  await expect(timeline.getByText("프로토타입에 대해 알려줘")).toBeVisible();
+  await expect(timeline.locator("text=AI").first()).toBeVisible({ timeout: 30_000 });
 });
