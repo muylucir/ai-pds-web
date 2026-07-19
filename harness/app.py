@@ -33,15 +33,31 @@ def build_app(driver, workspace: str) -> Starlette:
 
     async def answers(request):
         body = await request.json()
+        # Extract required keys BEFORE building the response: EventSourceResponse
+        # flushes a 200 + headers as soon as it starts, so a KeyError raised
+        # inside `gen()` (i.e. after streaming has begun) surfaces to the
+        # client as a "successful" response with zero events -- an invisible
+        # failure. Validate up front and return a normal 400 instead.
+        try:
+            interrupt_id = body["interrupt_id"]
+            answers_map = body["answers"]
+            session = body["session"]
+        except KeyError as exc:
+            return PlainTextResponse(f"missing key: {exc.args[0]}", status_code=400)
+        gen_src = driver.run_answers(interrupt_id, answers_map, session)
+
         async def gen():
-            async for ev in driver.run_answers(
-                    body["interrupt_id"], body["answers"], body["session"]):
+            async for ev in gen_src:
                 yield {"data": ev.model_dump_json()}
         return EventSourceResponse(gen())
 
     async def pending(request):
         body = await request.json()
-        return JSONResponse({"pending": await driver.pending(body["session"])})
+        try:
+            session = body["session"]
+        except KeyError as exc:
+            return PlainTextResponse(f"missing key: {exc.args[0]}", status_code=400)
+        return JSONResponse({"pending": await driver.pending(session)})
 
     def _resolve(rel: str) -> Path | None:
         # MicroVMSandbox.reject_unsafe() rejects unsafe paths (absolute /

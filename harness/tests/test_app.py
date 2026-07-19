@@ -195,6 +195,23 @@ async def test_pending_endpoint_returns_payload(tmp_path):
     assert r.json()["pending"].startswith('{"interrupt_id"')
 
 
+async def test_answers_missing_keys_returns_400_not_dead_stream():
+    drv = ScriptedStrandsDriver()
+    app = build_app(drv, "/tmp")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/answers", json={"answers": {"1": "A"}})
+    assert r.status_code == 400
+    assert drv.answer_calls == []
+
+
+async def test_pending_missing_session_returns_400():
+    drv = ScriptedStrandsDriver()
+    app = build_app(drv, "/tmp")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/pending", json={})
+    assert r.status_code == 400
+
+
 async def test_message_without_session_keeps_legacy_claude_path(tmp_path):
     """Rollback safety: a body with no `session` must still drive the old
     run(text, continue_session=...) surface (claude_driver)."""
