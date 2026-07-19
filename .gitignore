@@ -1,0 +1,10 @@
+# Local environment / secrets (contain account IDs, ARNs, per-env config)
+.env
+.env.*
+!.env.example
+
+# Reference material (gitignored working set)
+files/
+
+# SDD scratch (progress ledger, briefs, review packages)
+.superpowers/
