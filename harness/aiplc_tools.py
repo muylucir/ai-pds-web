@@ -11,7 +11,8 @@ from events import AgentEvent
 # QuestionForm renders unchanged (mirror of backend models.QuestionFile).
 QUESTIONS_SCHEMA_HINT = (
     "ask_questions의 questions_file 인자는 반드시 다음 JSON 형태여야 한다: "
-    '{"name": str, "preamble": str|null, "questions": [{"number": int, '
+    '{"name": str, "preamble": str|null, "parse_ok": true, "raw_markdown": null, '
+    '"questions": [{"number": int, '
     '"category": str|null, "text": str, "answer": null, "options": '
     '[{"letter": "A".."F"|"X", "text": str, "is_other": bool, "recommended": bool}]}]}'
 )
@@ -58,6 +59,8 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None]) -> list:
             status: "pending" | "in_progress" | "completed".
             summary: 한 줄 요약.
         """
+        if status not in ("pending", "in_progress", "completed"):
+            return f"invalid status '{status}' — use pending|in_progress|completed"
         emit(AgentEvent(kind="stage", payload=json.dumps(
             {"stage": stage, "status": status, "summary": summary}, ensure_ascii=False)))
         return f"stage recorded: {stage} ({status})"

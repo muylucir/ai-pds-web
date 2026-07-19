@@ -19,12 +19,19 @@ class FakeResult:
         self.interrupts = interrupts
 
 
+class FakeInterruptState:
+    def __init__(self, activated=False, interrupts=None):
+        self.activated = activated
+        self.interrupts = interrupts or {}
+
+
 class FakeAgent:
     """Duck-typed strands Agent: stream_async yields scripted event dicts.
     The last event carries {"result": FakeResult}."""
-    def __init__(self, script):
+    def __init__(self, script, interrupt_state=None):
         self._script = script
         self.calls = []
+        self._interrupt_state = interrupt_state
 
     async def stream_async(self, prompt):
         self.calls.append(prompt)
@@ -119,6 +126,65 @@ async def test_pending_returns_none_on_construction_failure():
         raise RuntimeError("s3 session manager unreachable")
     drv = StrandsDriver(workspace="/workspace", agent_factory=boom_factory)
     assert await drv.pending(SESSION) is None
+
+
+@pytest.mark.asyncio
+async def test_free_text_while_interrupt_pending_reminds_without_calling_model():
+    """B1: a plain-string prompt sent while the agent's _interrupt_state is
+    activated must NOT hit strands' _InterruptState.resume (which raises
+    TypeError for a non-interruptResponse prompt) -- the driver must
+    short-circuit before ever calling stream_async."""
+    payload = {"name": "pain-point-questions", "questions": []}
+    interrupt = FakeInterrupt("i-9", {"questions_payload": payload})
+    state = FakeInterruptState(activated=True, interrupts={"i-9": interrupt})
+    agent = FakeAgent([{"result": FakeResult("end_turn")}], interrupt_state=state)
+
+    def factory(session, emit):
+        return agent
+    drv = StrandsDriver(workspace="/workspace", agent_factory=factory)
+
+    evs = await collect(drv.run("hi", SESSION))
+
+    assert agent.calls == []  # model never invoked
+    kinds = [e.kind for e in evs]
+    assert kinds == ["message", "questions", "done"]
+    q = next(e for e in evs if e.kind == "questions")
+    assert json.loads(q.payload)["interrupt_id"] == "i-9"
+
+
+@pytest.mark.asyncio
+async def test_run_answers_proceeds_normally_even_with_activated_interrupt_state():
+    """The B1 guard only applies to plain-string prompts; run_answers's list
+    prompt must stream through to the model as before."""
+    state = FakeInterruptState(activated=True, interrupts={})
+    agent = FakeAgent([{"data": "반영"}, {"result": FakeResult("end_turn")}],
+                      interrupt_state=state)
+
+    def factory(session, emit):
+        return agent
+    drv = StrandsDriver(workspace="/workspace", agent_factory=factory)
+
+    evs = await collect(drv.run_answers("i-9", {"1": "A"}, SESSION))
+
+    assert agent.calls == [[{"interruptResponse": {"interruptId": "i-9", "response": {"1": "A"}}}]]
+    assert evs[-1].kind == "done"
+
+
+@pytest.mark.asyncio
+async def test_status_events_deduped_on_repeated_current_tool_use():
+    """B2: the SDK emits current_tool_use once per ContentBlockDelta, so a
+    large tool input yields many identical frames -- only the NAME CHANGES
+    should produce a status event."""
+    drv = make_driver([
+        {"current_tool_use": {"name": "ask_questions"}},
+        {"current_tool_use": {"name": "ask_questions"}},
+        {"current_tool_use": {"name": "ask_questions"}},
+        {"current_tool_use": {"name": "file_write"}},
+        {"result": FakeResult("end_turn")},
+    ])
+    evs = await collect(drv.run("hi", SESSION))
+    status_events = [e for e in evs if e.kind == "status"]
+    assert [e.text for e in status_events] == ["ask_questions", "file_write"]
 
 
 @pytest.mark.asyncio

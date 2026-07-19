@@ -33,6 +33,19 @@ def test_report_stage_emits_stage_event_and_acks(tmp_path):
         "stage": "Envision", "status": "in_progress", "summary": "PR/FAQ 작성 중"}
     assert "Envision" in out
 
+def test_report_stage_rejects_invalid_status_without_emitting(tmp_path):
+    emitted: list[AgentEvent] = []
+    tools = build_tools(str(tmp_path), emitted.append)
+    report_stage = _tool_by_name(tools, "report_stage")
+    out = report_stage(stage="Envision", status="bogus", summary="x")
+    assert emitted == []  # no stage event emitted for an invalid status
+    assert "invalid status" in out
+    assert "bogus" in out
+
+def test_questions_schema_hint_includes_parse_ok_and_raw_markdown():
+    assert '"parse_ok": true' in QUESTIONS_SCHEMA_HINT
+    assert '"raw_markdown": null' in QUESTIONS_SCHEMA_HINT
+
 def test_submit_document_emits_document_event(tmp_path):
     emitted = []
     tools = build_tools(str(tmp_path), emitted.append)

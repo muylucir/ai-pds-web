@@ -118,7 +118,26 @@ class StrandsDriver:
             _log.exception("strands agent construction failed")
             yield AgentEvent(kind="error", text="agent turn failed")
             return
+        # B1: strands' _InterruptState.resume raises TypeError when resumed
+        # with anything other than an interruptResponse prompt. A plain-text
+        # message sent while a question is still pending would otherwise hit
+        # that TypeError and surface as an opaque "agent turn failed" -- so
+        # short-circuit here: never call the model, just re-remind the user
+        # of the pending question(s). run_answers (list prompt) is unaffected.
+        if isinstance(prompt, str):
+            state = getattr(agent, "_interrupt_state", None)
+            if state is not None and getattr(state, "activated", False):
+                yield AgentEvent(
+                    kind="message",
+                    text="진행 중인 질문에 먼저 답변해 주세요 — 우측 패널의 질문 폼을 이용하세요.",
+                )
+                q_ev = _questions_event_from_interrupts(list(state.interrupts.values()))
+                if q_ev is not None:
+                    yield q_ev
+                yield AgentEvent(kind="done")
+                return
         result = None
+        last_status: str | None = None
         try:
             async for ev in agent.stream_async(prompt):
                 # Drain tool-emitted structured events first (stage/document/
@@ -128,8 +147,13 @@ class StrandsDriver:
                 if "data" in ev:
                     yield AgentEvent(kind="message", text=ev["data"])
                 elif "current_tool_use" in ev:
+                    # B2: the SDK emits current_tool_use once per
+                    # ContentBlockDelta, so a large tool input yields dozens
+                    # of identical frames -- dedupe on the tool name so the
+                    # UI only sees a status change, not spam.
                     name = (ev["current_tool_use"] or {}).get("name")
-                    if name:
+                    if name and name != last_status:
+                        last_status = name
                         yield AgentEvent(kind="status", text=name)
                 if "result" in ev:
                     result = ev["result"]
