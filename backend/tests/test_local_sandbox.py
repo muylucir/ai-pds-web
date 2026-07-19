@@ -1,5 +1,7 @@
 # backend/tests/test_local_sandbox.py
+import json
 import pytest
+import tempfile
 from pathlib import Path
 from pathfinder.sandbox.local import LocalSandbox
 from pathfinder.sandbox.base import AgentEvent
@@ -19,12 +21,34 @@ async def test_path_escape_rejected(tmp_path: Path):
     with pytest.raises(ValueError):
         await sb.write_file("../evil.md", "x")
 
-async def test_default_script_echoes(tmp_path: Path):
-    sb = LocalSandbox(root=tmp_path)
+async def test_default_script_first_turn_emits_stage_and_questions():
+    sb = LocalSandbox(root=Path(tempfile.mkdtemp()))
     await sb.start()
-    events = await _collect(sb.send_message("승인"))
-    assert events[0].kind == "message" and "승인" in events[0].text
-    assert events[-1].kind == "done"
+    evs = [e async for e in sb.send_message("시작")]
+    kinds = [e.kind for e in evs]
+    assert "stage" in kinds and "questions" in kinds and kinds[-1] == "done"
+    q = next(e for e in evs if e.kind == "questions")
+    body = json.loads(q.payload)
+    assert body["interrupt_id"] == "local-i-1"
+    assert len(body["questions"]["questions"]) == 2
+    # questions pending until answered
+    assert await sb.pending() == q.payload
+
+async def test_answers_complete_stage_and_emit_document():
+    sb = LocalSandbox(root=Path(tempfile.mkdtemp()))
+    await sb.start()
+    [e async for e in sb.send_message("시작")]
+    evs = [e async for e in sb.send_answers({"1": "A", "2": "B"})]
+    kinds = [e.kind for e in evs]
+    assert "message" in kinds and "stage" in kinds and "document" in kinds
+    assert kinds[-1] == "done"
+    assert await sb.pending() is None
+
+async def test_answers_without_pending_errors():
+    sb = LocalSandbox(root=Path(tempfile.mkdtemp()))
+    await sb.start()
+    evs = [e async for e in sb.send_answers({"1": "A"})]
+    assert evs[0].kind == "error"
 
 async def test_custom_script_can_write_files_and_emit(tmp_path: Path):
     def script(text, sb):
