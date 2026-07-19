@@ -117,3 +117,11 @@ export async function postMessage(pid: string, text: string): Promise<TurnResult
     body: JSON.stringify({ text }),
   });
 }
+
+// GET /projects/{pid}/pending → { pending: string | null }. The raw JSON
+// string (Task 9's QuestionsPayload shape) is returned as-is — callers parse
+// it with the same safeParse fallback used for streamed "questions" events.
+export async function getPending(pid: string): Promise<string | null> {
+  const r = await request<{ pending: string | null }>(`/projects/${encodeURIComponent(pid)}/pending`);
+  return r.pending;
+}

@@ -54,7 +54,7 @@ describe("api types mirror the backend models", () => {
       ai_response: "Starting…",
       context: "Session start",
     };
-    const ev: AgentEvent = { kind: "done", text: null, path: null };
+    const ev: AgentEvent = { kind: "done", text: null, path: null, payload: null };
     const tr: TurnResult = { events: [ev] };
     const p: ProjectSummary = { project_id: "pilot1", name: "기획전 AI 어시스턴트" };
     expect(e.user_input).toContain("ai-plc");

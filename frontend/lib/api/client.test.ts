@@ -13,6 +13,7 @@ import {
   putAnswers,
   listArtifacts,
   postMessage,
+  getPending,
 } from "./client";
 
 describe("Content-Type header behavior", () => {
@@ -175,5 +176,19 @@ describe("api client request shaping + response typing", () => {
     const tr = await postMessage("p1", "승인");
     expect(seenBody).toEqual({ text: "승인" });
     expect(tr.events.map((e) => e.kind)).toEqual(["message", "done"]);
+  });
+
+  it("getPending unwraps {pending} to the raw JSON string (or null)", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/pending`, () =>
+        HttpResponse.json({ pending: '{"interrupt_id":"i-1","questions":{}}' }),
+      ),
+    );
+    expect(await getPending("p1")).toBe('{"interrupt_id":"i-1","questions":{}}');
+
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p2/pending`, () => HttpResponse.json({ pending: null })),
+    );
+    expect(await getPending("p2")).toBeNull();
   });
 });

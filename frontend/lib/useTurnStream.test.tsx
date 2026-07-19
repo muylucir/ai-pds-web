@@ -90,7 +90,7 @@ describe("useTurnStream", () => {
     const { result, unmount } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("go"));
     const es = FakeEventSource.last!;
-    act(() => es.emit({ kind: "status", text: "진행 중…", path: null })); // stream still live, not done/error
+    act(() => es.emit({ kind: "status", text: "진행 중…", path: null, payload: null })); // stream still live, not done/error
     expect(es.closed).toBe(false);
 
     unmount();
@@ -138,9 +138,9 @@ describe("useTurnStream — structured timeline cards (C2)", () => {
     act(() => result.current.send("go"));
     const es = FakeEventSource.last!;
     const repeated = [
-      { kind: "file_changed" as const, text: null, path: "aiplc-docs/discovery/discovery-document.md" },
-      { kind: "file_changed" as const, text: null, path: "aiplc-docs/discovery/discovery-document.md" },
-      { kind: "done" as const, text: null, path: null },
+      { kind: "file_changed" as const, text: null, path: "aiplc-docs/discovery/discovery-document.md", payload: null },
+      { kind: "file_changed" as const, text: null, path: "aiplc-docs/discovery/discovery-document.md", payload: null },
+      { kind: "done" as const, text: null, path: null, payload: null },
     ];
     for (const frame of repeated) act(() => es.emit(frame));
     expect(cards(result.current.items)).toHaveLength(1);

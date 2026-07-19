@@ -1,7 +1,7 @@
 // frontend/lib/api/sse.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { API_BASE_URL } from "./client";
-import { streamEvents } from "./sse";
+import { streamEvents, streamAnswers } from "./sse";
 
 // Minimal fake EventSource: records the URL, lets the test push data/error.
 class FakeEventSource {
@@ -51,6 +51,33 @@ describe("streamEvents", () => {
 
   it("unsubscribe closes the stream", () => {
     const stop = streamEvents("p1", "go", { onEvent: () => {}, onDone: () => {} });
+    stop();
+    expect(FakeEventSource.last!.closed).toBe(true);
+  });
+});
+
+describe("streamAnswers", () => {
+  it("opens the answers/stream URL with encoded JSON", () => {
+    streamAnswers("p1", { "1": "A" }, { onEvent: () => {}, onDone: () => {} });
+    const url = FakeEventSource.last!.url;
+    expect(url).toContain("/projects/p1/answers/stream?answers=");
+    expect(decodeURIComponent(url)).toContain('{"1":"A"}');
+  });
+
+  it("dispatches each frame and finishes on a done event", () => {
+    const onEvent = vi.fn();
+    const onDone = vi.fn();
+    streamAnswers("p1", { "1": "A" }, { onEvent, onDone });
+    const es = FakeEventSource.last!;
+    es.emit({ kind: "message", text: "ok", path: null, payload: null });
+    es.emit({ kind: "done", text: null, path: null, payload: null });
+    expect(onEvent).toHaveBeenCalledTimes(2);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(es.closed).toBe(true);
+  });
+
+  it("unsubscribe closes the stream", () => {
+    const stop = streamAnswers("p1", { "1": "A" }, { onEvent: () => {}, onDone: () => {} });
     stop();
     expect(FakeEventSource.last!.closed).toBe(true);
   });

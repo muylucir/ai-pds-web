@@ -51,16 +51,44 @@ export interface AuditEntry {
   context: string | null;
 }
 
-export type AgentEventKind = "message" | "file_changed" | "status" | "done" | "error";
+export type AgentEventKind =
+  | "message"
+  | "questions"
+  | "stage"
+  | "document"
+  | "file_changed"
+  | "status"
+  | "done"
+  | "error";
 
 export interface AgentEvent {
   kind: AgentEventKind;
   text: string | null;
   path: string | null;
+  payload: string | null;
 }
 
 export interface TurnResult {
   events: AgentEvent[];
+}
+
+// Structured payload shapes carried as a JSON string in AgentEvent.payload for
+// the "questions" / "stage" / "document" kinds (Task 1's AgentEvent extension).
+export interface QuestionsPayload {
+  interrupt_id: string;
+  questions: QuestionFile;
+}
+
+export interface StagePayload {
+  stage: string;
+  status: StageStatus;
+  summary: string;
+}
+
+export interface DocumentPayload {
+  path: string;
+  version: string;
+  summary: string;
 }
 
 // GET /projects → { projects: ProjectSummary[] }; POST /projects → ProjectSummary.
