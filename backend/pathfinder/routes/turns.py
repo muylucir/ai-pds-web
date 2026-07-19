@@ -1,5 +1,6 @@
 # backend/pathfinder/routes/turns.py
-from fastapi import APIRouter
+import json
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from pathfinder.parsers.redaction import redact_credentials
@@ -12,14 +13,16 @@ class MessageBody(BaseModel):
     text: str
 
 def _redacted(event: AgentEvent) -> AgentEvent:
-    """Return a copy of event with credential-bearing text redacted.
+    """Return a copy of event with credential-bearing content redacted.
 
-    Only `text` needs redacting; `path`/`kind` are structural, not
-    agent-authored content.
+    text AND payload are agent-authored content; kind/path stay structural.
     """
-    if event.text is None:
-        return event
-    return event.model_copy(update={"text": redact_credentials(event.text)})
+    updates = {}
+    if event.text is not None:
+        updates["text"] = redact_credentials(event.text)
+    if event.payload is not None:
+        updates["payload"] = redact_credentials(event.payload)
+    return event.model_copy(update=updates) if updates else event
 
 @router.post("/projects/{pid}/message")
 async def post_message(pid: str, body: MessageBody):
@@ -34,3 +37,24 @@ async def stream_events(pid: str, text: str):
         async for event in ws.sandbox.send_message(text):
             yield {"data": _redacted(event).model_dump_json()}
     return EventSourceResponse(gen())
+
+@router.get("/projects/{pid}/answers/stream")
+async def stream_answers(pid: str, answers: str):
+    ws = get_workspace(pid)
+    try:
+        parsed = json.loads(answers)
+        assert isinstance(parsed, dict)
+    except (json.JSONDecodeError, AssertionError):
+        raise HTTPException(status_code=400, detail="answers must be a JSON object")
+    async def gen():
+        async for event in ws.sandbox.send_answers(parsed):
+            yield {"data": _redacted(event).model_dump_json()}
+    return EventSourceResponse(gen())
+
+@router.get("/projects/{pid}/pending")
+async def get_pending(pid: str):
+    ws = get_workspace(pid)
+    payload = await ws.sandbox.pending()
+    if payload is not None:
+        payload = redact_credentials(payload)
+    return {"pending": payload}
