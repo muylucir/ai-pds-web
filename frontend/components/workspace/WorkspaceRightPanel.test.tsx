@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { WorkspaceRightPanel } from "./WorkspaceRightPanel";
+import { WorkspaceRightPanel, deriveMode } from "./WorkspaceRightPanel";
 
 const QP = { interrupt_id: "i-1", questions: {
   name: "q", preamble: null, parse_ok: true, raw_markdown: null,
@@ -31,5 +31,31 @@ describe("WorkspaceRightPanel mode switching", () => {
     render(<WorkspaceRightPanel projectId="p1" pendingQuestions={null} stages={[]}
       changedPaths={["aiplc-docs/audit.md"]} onSubmitAnswers={vi.fn()} busy={false} />);
     expect(screen.getByText("aiplc-docs/audit.md")).toBeInTheDocument();
+  });
+});
+
+describe("deriveMode — latest-status-by-stage-name (regression)", () => {
+  // useWorkspaceStream's `stages` is an append-only raw event log (a stage's
+  // later "completed" event is a SEPARATE array entry, not an overwrite of
+  // the earlier "in_progress" one). deriveMode must look at each stage's
+  // LATEST event, not just whether an in_progress event for it ever
+  // occurred — otherwise once Prototype & Validation has been in_progress
+  // even once, the panel is stuck on "preview" forever, even after that
+  // stage completes and a later, unrelated stage becomes in_progress.
+  it("does not get stuck on preview after the prototype stage completes and a later stage starts", () => {
+    const mode = deriveMode(null, [
+      { stage: "Prototype & Validation", status: "in_progress", summary: "" },
+      { stage: "Prototype & Validation", status: "completed", summary: "" },
+      { stage: "Go-to-Market", status: "in_progress", summary: "" },
+    ]);
+    expect(mode).toBe("artifacts");
+  });
+
+  it("still shows preview while the prototype stage's LATEST status is in_progress", () => {
+    const mode = deriveMode(null, [
+      { stage: "Prototype & Validation", status: "in_progress", summary: "1차" },
+      { stage: "Prototype & Validation", status: "in_progress", summary: "2차" },
+    ]);
+    expect(mode).toBe("preview");
   });
 });

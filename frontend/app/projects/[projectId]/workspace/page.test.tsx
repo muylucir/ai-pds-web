@@ -85,6 +85,38 @@ describe("Workspace page", () => {
     expect(submitAnswers).toHaveBeenCalledTimes(1);
   });
 
+  it("marks the bottom-sheet dialog as aria-modal and moves focus into it on open", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ pendingQuestions: QP });
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    await screen.findByLabelText("스테이지 진행 상황");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /답변 대기 중인 질문/ }));
+
+    const dialog = screen.getByRole("dialog", { name: "질문 답변 시트" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(dialog).toHaveFocus();
+  });
+
+  it("closes the bottom-sheet on Escape", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ pendingQuestions: QP });
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    await screen.findByLabelText("스테이지 진행 상황");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /답변 대기 중인 질문/ }));
+    expect(screen.getByRole("dialog", { name: "질문 답변 시트" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "질문 답변 시트" })).not.toBeInTheDocument();
+  });
+
   it("does not show the pending-questions badge when there is nothing pending", async () => {
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
     mockWorkspaceStream();

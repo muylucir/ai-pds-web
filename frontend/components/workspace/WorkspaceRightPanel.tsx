@@ -15,9 +15,21 @@ export type Mode = "questions" | "preview" | "artifacts";
 // user is blocked on it); otherwise, if the prototype stage is the one
 // currently in_progress, show the live preview; otherwise fall back to the
 // running list of touched artifacts.
+//
+// `stages` (useWorkspaceStream's accumulated "stage" events) is an
+// APPEND-ONLY log — a stage's later "completed" event is a separate array
+// entry, not an overwrite of its earlier "in_progress" one. Filtering the
+// raw array for status==="in_progress" would therefore stay stuck on any
+// stage that was EVER in_progress, even long after it completed. Reduce to
+// each stage's LATEST event first (same latest-wins-by-name idea as
+// StageSidebar's mergeStages) so only the CURRENT snapshot is considered.
 export function deriveMode(pending: QuestionsPayload | null, stages: StagePayload[]): Mode {
   if (pending) return "questions";
-  const active = stages.filter((s) => s.status === "in_progress").map((s) => s.stage);
+  const latestByName = new Map<string, StagePayload>();
+  for (const ev of stages) latestByName.set(ev.stage, ev);
+  const active = [...latestByName.values()]
+    .filter((s) => s.status === "in_progress")
+    .map((s) => s.stage);
   if (active.some((s) => PROTOTYPE_STAGES.some((p) => s.includes(p)))) return "preview";
   return "artifacts";
 }

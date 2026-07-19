@@ -1,5 +1,5 @@
 "use client";
-import { use, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { StageSidebar } from "@/components/workspace/StageSidebar";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
@@ -23,11 +23,27 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const { items, streaming, send, submitAnswers, pendingQuestions, stages, changedPaths } =
     useWorkspaceStream(projectId);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   function submitAnswersFromSheet(answers: Record<string, string>) {
     submitAnswers(answers);
     setSheetOpen(false);
   }
+
+  // Minimal accessibility for the mobile bottom-sheet: move focus into the
+  // dialog when it opens (so screen-reader/keyboard users land inside it,
+  // not on the badge button that's now behind an overlay), and close on
+  // Escape (the standard dismiss gesture for a modal). Full focus-trap +
+  // focus-restore-to-trigger is a deliberate follow-up, not done here.
+  useEffect(() => {
+    if (!sheetOpen) return;
+    sheetRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSheetOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [sheetOpen]);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -68,12 +84,15 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
       {sheetOpen && pendingQuestions && (
         <div
           className="lg:hidden fixed inset-0 z-30 bg-slate-900/40 flex flex-col justify-end"
-          role="dialog"
-          aria-label="질문 답변 시트"
           onClick={() => setSheetOpen(false)}
         >
           <div
-            className="bg-white rounded-t-2xl max-h-[85vh] overflow-y-auto p-6"
+            ref={sheetRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="질문 답변 시트"
+            tabIndex={-1}
+            className="bg-white rounded-t-2xl max-h-[85vh] overflow-y-auto p-6 focus:outline-none"
             onClick={(e) => e.stopPropagation()}
           >
             <button
