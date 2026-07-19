@@ -12,6 +12,19 @@ from pathfinder.sandbox.s3store import S3StoreLike
 from pathfinder.parsers.redaction import redact_credentials
 
 
+def _interrupt_id_from(payload: str | None) -> str | None:
+    """Parse the interrupt id out of a questions payload. The payload crosses
+    the backend<->harness wire; a malformed one must degrade (None) rather
+    than blow up the stream mid-turn."""
+    if not payload:
+        return None
+    try:
+        value = json.loads(payload).get("interrupt_id")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return value if isinstance(value, str) else None
+
+
 class HarnessLike(Protocol):
     def send_message(self, text: str) -> AsyncIterator[AgentEvent]: ...
     def send_answers(self, interrupt_id: str, answers: dict[str, str]) -> AsyncIterator[AgentEvent]: ...
@@ -183,10 +196,15 @@ class MicroVMSandbox(Sandbox):
         try:
             harness = await self._ensure_ready()
             async for event in harness.send_message(text):
-                if event.kind == "questions" and event.payload:
+                if event.kind == "questions":
                     # The sandbox owns the interrupt id: routes/frontend send
-                    # only answers; we resume the interrupt they belong to.
-                    self._pending_interrupt_id = json.loads(event.payload)["interrupt_id"]
+                    # only answers; we resume the interrupt they belong to. A
+                    # malformed/contract-drifted payload must not blow up the
+                    # stream mid-turn -- we just don't arm resume for it (the
+                    # questions event is still yielded downstream as-is).
+                    got = _interrupt_id_from(event.payload)
+                    if got:
+                        self._pending_interrupt_id = got
                 if event.kind in ("done", "error"):
                     # I1: sync BEFORE yielding the terminal event, not after.
                     # A client reacting to `done` (e.g. re-reading a route
@@ -212,9 +230,12 @@ class MicroVMSandbox(Sandbox):
             harness = await self._ensure_ready()
             interrupt_id, self._pending_interrupt_id = self._pending_interrupt_id, None
             async for event in harness.send_answers(interrupt_id, answers):
-                if event.kind == "questions" and event.payload:
-                    # A resumed turn can raise the NEXT question set.
-                    self._pending_interrupt_id = json.loads(event.payload)["interrupt_id"]
+                if event.kind == "questions":
+                    # A resumed turn can raise the NEXT question set. Same
+                    # degrade-not-raise handling as send_message above.
+                    got = _interrupt_id_from(event.payload)
+                    if got:
+                        self._pending_interrupt_id = got
                 if event.kind in ("done", "error"):
                     await self._sync_workspace_to_s3(harness)
                 yield event
@@ -227,8 +248,11 @@ class MicroVMSandbox(Sandbox):
         if self._harness is None:
             return None
         payload = await self._harness.pending()
-        if payload:
-            self._pending_interrupt_id = json.loads(payload)["interrupt_id"]
+        # Only re-arm when the payload parses; still return the payload
+        # as-is either way (the caller/UI's own fallback handles it).
+        got = _interrupt_id_from(payload)
+        if got:
+            self._pending_interrupt_id = got
         return payload
 
     async def stop(self) -> None:

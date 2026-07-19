@@ -173,3 +173,28 @@ async def test_pending_queries_live_harness():
     await sb.start()
     [e async for e in sb.send_message("부팅 유발")]
     assert await sb.pending() == Q_PAYLOAD
+
+# ---- malformed/contract-drifted payload must degrade, not raise (hardening) ----
+
+async def test_send_message_with_malformed_questions_payload_does_not_raise():
+    harness = FakeHarness(events_for=lambda t: [
+        AgentEvent(kind="questions", payload="not-json{"), AgentEvent(kind="done")])
+    sb = _sandbox(harness)
+    await sb.start()
+    evs = [e async for e in sb.send_message("시작")]
+    assert evs[-1].kind == "done"          # stream completes, no exception
+    assert sb._pending_interrupt_id is None  # not armed on unparseable payload
+    # a following send_answers has nothing to resume:
+    follow = [e async for e in sb.send_answers({"1": "A"})]
+    assert follow[0].kind == "error"
+    assert "no pending questions" in follow[0].text
+
+async def test_pending_with_malformed_payload_returns_it_without_raising():
+    harness = FakeHarness(events_for=lambda t: [AgentEvent(kind="done")],
+                          pending_payload="not-json{")
+    sb = _sandbox(harness)
+    await sb.start()
+    [e async for e in sb.send_message("부팅 유발")]
+    result = await sb.pending()
+    assert result == "not-json{"           # returned as-is, no exception
+    assert sb._pending_interrupt_id is None  # not armed
