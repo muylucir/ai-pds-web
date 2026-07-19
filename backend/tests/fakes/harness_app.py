@@ -47,6 +47,9 @@ def build_fake_harness_app(
         return EventSourceResponse(gen())
 
     async def pending(request):
+        body = await request.json()
+        if capture is not None:
+            capture["pending_body"] = body
         return JSONResponse({"pending": pending_payload})
 
     async def get_file(request):

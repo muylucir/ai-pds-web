@@ -70,16 +70,23 @@ async def test_send_message_includes_session_in_body():
     assert seen["message_body"]["session"] == SESSION
 
 async def test_send_answers_streams_events():
-    app = build_fake_harness_app(scripted_events=[
+    seen = {}
+    app = build_fake_harness_app(capture=seen, scripted_events=[
         {"kind": "message", "text": "반영", "path": None, "payload": None},
         {"kind": "done", "text": None, "path": None, "payload": None}])
     async with _client(app) as http:
         hc = HarnessClient(base_url="http://vm", http=http, session=SESSION)
         evs = [e async for e in hc.send_answers("i-1", {"1": "A"})]
     assert [e.kind for e in evs] == ["message", "done"]
+    assert seen["answers_body"] == {
+        "interrupt_id": "i-1", "answers": {"1": "A"}, "session": SESSION,
+    }
 
 async def test_pending_round_trip():
-    app = build_fake_harness_app(pending_payload='{"interrupt_id":"i-1","questions":{}}')
+    seen = {}
+    app = build_fake_harness_app(
+        capture=seen, pending_payload='{"interrupt_id":"i-1","questions":{}}')
     async with _client(app) as http:
         hc = HarnessClient(base_url="http://vm", http=http, session=SESSION)
         assert (await hc.pending()).startswith('{"interrupt_id"')
+    assert seen["pending_body"] == {"session": SESSION}
