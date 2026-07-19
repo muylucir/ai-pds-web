@@ -3,6 +3,8 @@ import pytest
 from pathfinder.sandbox.harness import HarnessClient
 from fakes.harness_app import build_fake_harness_app
 
+SESSION = {"session_id": "p1", "bucket": "b", "region": "ap-northeast-1", "prefix": "sessions"}
+
 def _client(app):
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://vm")
 
@@ -58,3 +60,26 @@ async def test_heartbeat_true_on_healthy():
     async with _client(app) as http:
         hc = HarnessClient(base_url="http://vm", http=http)
         assert await hc.heartbeat() is True
+
+async def test_send_message_includes_session_in_body():
+    seen = {}
+    app = build_fake_harness_app(capture=seen)
+    async with _client(app) as http:
+        hc = HarnessClient(base_url="http://vm", http=http, session=SESSION)
+        [e async for e in hc.send_message("hi")]
+    assert seen["message_body"]["session"] == SESSION
+
+async def test_send_answers_streams_events():
+    app = build_fake_harness_app(scripted_events=[
+        {"kind": "message", "text": "반영", "path": None, "payload": None},
+        {"kind": "done", "text": None, "path": None, "payload": None}])
+    async with _client(app) as http:
+        hc = HarnessClient(base_url="http://vm", http=http, session=SESSION)
+        evs = [e async for e in hc.send_answers("i-1", {"1": "A"})]
+    assert [e.kind for e in evs] == ["message", "done"]
+
+async def test_pending_round_trip():
+    app = build_fake_harness_app(pending_payload='{"interrupt_id":"i-1","questions":{}}')
+    async with _client(app) as http:
+        hc = HarnessClient(base_url="http://vm", http=http, session=SESSION)
+        assert (await hc.pending()).startswith('{"interrupt_id"')

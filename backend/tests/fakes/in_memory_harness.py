@@ -9,7 +9,7 @@ class FakeHarness:
     MicroVMSandbox unit tests (no HTTP). `events_for` maps a message text to a
     canned event list; the default is an echo turn ending in `done`."""
 
-    def __init__(self, events_for=None):
+    def __init__(self, events_for=None, answers_events=None, pending_payload=None):
         self.files: dict[str, str] = {}
         self._events_for = events_for or (
             lambda text: [
@@ -17,10 +17,22 @@ class FakeHarness:
                 AgentEvent(kind="done"),
             ]
         )
+        self._answers_events = answers_events or (lambda i, a: [
+            AgentEvent(kind="message", text="answers ok"), AgentEvent(kind="done")])
+        self.pending_payload = pending_payload
+        self.answer_calls: list[tuple[str, dict]] = []
 
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
         for ev in self._events_for(text):
             yield ev
+
+    async def send_answers(self, interrupt_id, answers) -> AsyncIterator[AgentEvent]:
+        self.answer_calls.append((interrupt_id, answers))
+        for ev in self._answers_events(interrupt_id, answers):
+            yield ev
+
+    async def pending(self) -> str | None:
+        return self.pending_payload
 
     async def read_file(self, rel_path: str) -> str:
         if rel_path not in self.files:
