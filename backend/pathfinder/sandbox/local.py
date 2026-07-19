@@ -17,6 +17,8 @@ def _default_script(text: str, sb: "LocalSandbox") -> list[AgentEvent]:
 _DEMO_QUESTIONS = {
     "name": "pain-point-questions",
     "preamble": "데모 시나리오입니다 — 실제 방법론 질문은 microvm 모드에서 생성됩니다.",
+    "parse_ok": True,
+    "raw_markdown": None,
     "questions": [
         {"number": 1, "category": "고객", "text": "주요 사용자는 누구인가요?", "answer": None,
          "options": [

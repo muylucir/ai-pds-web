@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 from pathfinder.sandbox.local import LocalSandbox
 from pathfinder.sandbox.base import AgentEvent
+from pathfinder.models import QuestionFile
 
 async def _collect(aiter):
     return [e async for e in aiter]
@@ -33,6 +34,8 @@ async def test_default_script_first_turn_emits_stage_and_questions():
     assert len(body["questions"]["questions"]) == 2
     # questions pending until answered
     assert await sb.pending() == q.payload
+    # must round-trip through the real QuestionFile model (parse_ok required)
+    QuestionFile.model_validate(body["questions"])
 
 async def test_answers_complete_stage_and_emit_document():
     sb = LocalSandbox(root=Path(tempfile.mkdtemp()))
@@ -49,6 +52,27 @@ async def test_answers_without_pending_errors():
     await sb.start()
     evs = [e async for e in sb.send_answers({"1": "A"})]
     assert evs[0].kind == "error"
+
+async def test_custom_script_questions_event_arms_pending_and_answers(tmp_path: Path):
+    payload = json.dumps({"interrupt_id": "custom-i-1", "questions": {
+        "name": "custom", "preamble": None, "parse_ok": True, "raw_markdown": None,
+        "questions": [{"number": 1, "category": None, "text": "q?", "answer": None,
+                       "options": [{"letter": "A", "text": "yes", "is_other": False,
+                                    "recommended": True}]}]}}, ensure_ascii=False)
+
+    def script(text, sb):
+        return [AgentEvent(kind="questions", payload=payload), AgentEvent(kind="done")]
+
+    sb = LocalSandbox(root=tmp_path, script=script)
+    await sb.start()
+    await _collect(sb.send_message("go"))
+    assert await sb.pending() == payload
+
+    evs = await _collect(sb.send_answers({"1": "A"}))
+    kinds = [e.kind for e in evs]
+    assert "error" not in kinds
+    assert kinds[-1] == "done"
+    assert await sb.pending() is None
 
 async def test_custom_script_can_write_files_and_emit(tmp_path: Path):
     def script(text, sb):
