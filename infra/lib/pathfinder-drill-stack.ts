@@ -51,8 +51,10 @@ export class PathfinderDrillStack extends cdk.Stack {
       resources: [`arn:aws:logs:${REGION}:${account}:log-group:/pathfinder/microvm/*`],
     }));
 
-    // Execution role: assumed by the RUNNING VM. Bedrock invoke ONLY, NO S3 —
-    // preserving the security boundary (the VM cannot reach durable storage).
+    // Execution role: assumed by the RUNNING VM. Bedrock invoke + S3 access
+    // SCOPED TO THE SESSION-STATE PREFIX ONLY (S3SessionManager persistence,
+    // spec §2). The artifacts prefix (projects/*) stays unreachable from the
+    // VM — the durable-workspace boundary is preserved.
     // pilot1-validated shape: inference-profile ARN + foundation-model wildcard.
     const execRole = new iam.Role(this, 'ExecutionRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com', {
@@ -68,6 +70,15 @@ export class PathfinderDrillStack extends cdk.Stack {
         `arn:aws:bedrock:*:${account}:inference-profile/${MODEL}`,
         `arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5*`,
       ],
+    }));
+    execRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
+      resources: [`${bucket.bucketArn}/sessions/*`],
+    }));
+    execRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['s3:ListBucket'],
+      resources: [bucket.bucketArn],
+      conditions: { StringLike: { 's3:prefix': 'sessions/*' } },
     }));
 
     const logGroup = new logs.LogGroup(this, 'MicrovmLogs', {
@@ -95,6 +106,7 @@ export class PathfinderDrillStack extends cdk.Stack {
         // automatically (rejected as a baked env var at deploy time). BootSpec.env()
         // still sets it for the LOCAL/non-MicroVM path; here the VM inherits it.
         { key: 'ANTHROPIC_MODEL', value: MODEL },
+        { key: 'PATHFINDER_DRIVER', value: 'strands' },
       ],
       additionalOsCapabilities: [],
       egressNetworkConnectors: [],
