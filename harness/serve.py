@@ -11,6 +11,7 @@
 # "Run hooks in a separate thread / event loop from your application server."
 from __future__ import annotations
 import logging
+import os
 import threading
 import httpx
 import uvicorn
@@ -20,10 +21,19 @@ import uvicorn
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 from app import build_app
-from hooks import build_hooks_app, default_rules_present
-from claude_driver import ClaudeDriver
+from hooks import build_hooks_app, default_rules_present, claude_cli_diagnostic, strands_diagnostic
 
 WORKSPACE = "/workspace"
+
+
+def make_driver(workspace: str = WORKSPACE):
+    """PATHFINDER_DRIVER=claude keeps the legacy subprocess driver (rollback);
+    default is the Strands in-process agent."""
+    if os.environ.get("PATHFINDER_DRIVER") == "claude":
+        from claude_driver import ClaudeDriver
+        return ClaudeDriver(workspace=workspace)
+    from strands_driver import StrandsDriver
+    return StrandsDriver(workspace=workspace)
 
 
 def _health_check() -> bool:
@@ -38,11 +48,13 @@ def _serve(app, port: int) -> None:
 
 
 def main() -> None:
-    driver = ClaudeDriver(workspace=WORKSPACE)
+    driver = make_driver()
     app = build_app(driver, WORKSPACE)
     hooks = build_hooks_app(
         rules_present=default_rules_present,
         health_check=_health_check,
+        cli_diagnostic=claude_cli_diagnostic
+            if os.environ.get("PATHFINDER_DRIVER") == "claude" else strands_diagnostic,
     )
     # App server in a daemon thread; hooks server owns the main thread. Two
     # threads => two independent event loops => the hooks' blocking health

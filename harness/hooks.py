@@ -31,6 +31,16 @@ def claude_cli_diagnostic() -> str:
         return f"claude --version raised {type(exc).__name__}: {exc}"
 
 
+def strands_diagnostic() -> str:
+    """Diagnostic only, never a build gate (same policy as claude_cli_diagnostic:
+    the first image build 503-looped on a CLI gate; we only log)."""
+    try:
+        import strands  # noqa: F401
+        return f"strands import ok ({getattr(strands, '__version__', '?')})"
+    except Exception as exc:  # noqa: BLE001 — diagnostic only
+        return f"strands import failed {type(exc).__name__}: {exc}"
+
+
 def default_rules_present() -> bool:
     core = Path(WORKSPACE) / "aiplc-rules" / "aws-aiplc-rules" / "core-workflow.md"
     return core.is_file()

@@ -136,3 +136,80 @@ async def test_files_legit_nested_path_still_works(tmp_path):
         assert put_resp.status_code in (200, 204)
         got = await http.get("/files/aiplc-docs/sub/deep/a.md")
     assert got.status_code == 200 and got.text == "deep"
+
+
+class ScriptedStrandsDriver:
+    """StrandsDriver method surface, no strands import."""
+    def __init__(self):
+        from events import AgentEvent
+        self.answer_calls = []
+        self._pending = '{"interrupt_id":"i-1","questions":{"name":"q","questions":[]}}'
+
+    def run(self, text, session):
+        from events import AgentEvent
+        async def gen():
+            yield AgentEvent(kind="message", text=f"seen:{session['session_id']}:{text}")
+            yield AgentEvent(kind="done")
+        return gen()
+
+    def run_answers(self, interrupt_id, answers, session):
+        from events import AgentEvent
+        self.answer_calls.append((interrupt_id, answers, session["session_id"]))
+        async def gen():
+            yield AgentEvent(kind="message", text="반영 완료")
+            yield AgentEvent(kind="done")
+        return gen()
+
+    async def pending(self, session):
+        return self._pending
+
+
+SESSION = {"session_id": "p1", "bucket": "b", "region": "ap-northeast-1", "prefix": "sessions"}
+
+
+async def test_message_with_session_routes_to_strands_run(tmp_path):
+    drv = ScriptedStrandsDriver()
+    app = build_app(drv, str(tmp_path))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        async with c.stream("POST", "/message", json={"text": "hi", "session": SESSION}) as r:
+            lines = [l async for l in r.aiter_lines() if l.startswith("data:")]
+    assert "seen:p1:hi" in lines[0]
+
+
+async def test_answers_endpoint_streams_resume(tmp_path):
+    drv = ScriptedStrandsDriver()
+    app = build_app(drv, str(tmp_path))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        async with c.stream("POST", "/answers", json={
+                "interrupt_id": "i-1", "answers": {"1": "A"}, "session": SESSION}) as r:
+            lines = [l async for l in r.aiter_lines() if l.startswith("data:")]
+    assert drv.answer_calls == [("i-1", {"1": "A"}, "p1")]
+    assert "반영 완료" in lines[0]
+
+
+async def test_pending_endpoint_returns_payload(tmp_path):
+    drv = ScriptedStrandsDriver()
+    app = build_app(drv, str(tmp_path))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/pending", json={"session": SESSION})
+    assert r.json()["pending"].startswith('{"interrupt_id"')
+
+
+async def test_message_without_session_keeps_legacy_claude_path(tmp_path):
+    """Rollback safety: a body with no `session` must still drive the old
+    run(text, continue_session=...) surface (claude_driver)."""
+    calls = []
+    class LegacyDriver:
+        def run(self, text, *, continue_session):
+            from events import AgentEvent
+            calls.append(continue_session)
+            async def gen():
+                yield AgentEvent(kind="done")
+            return gen()
+    app = build_app(LegacyDriver(), str(tmp_path))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        async with c.stream("POST", "/message", json={"text": "hi"}) as r:
+            [l async for l in r.aiter_lines()]
+        async with c.stream("POST", "/message", json={"text": "again"}) as r:
+            [l async for l in r.aiter_lines()]
+    assert calls == [False, True]

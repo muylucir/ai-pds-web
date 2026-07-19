@@ -53,6 +53,11 @@ async def test_validate_503_when_rules_missing():
         assert (await http.post(VALIDATE)).status_code == 503
 
 
+def test_strands_diagnostic_never_raises():
+    from hooks import strands_diagnostic
+    assert isinstance(strands_diagnostic(), str)
+
+
 async def test_bare_paths_404_platform_uses_namespaced():
     # Guard the exact bug that broke the first real build: the platform never
     # calls bare /ready or GET; those must not resolve.

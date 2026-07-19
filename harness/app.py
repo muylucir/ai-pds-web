@@ -17,13 +17,31 @@ def build_app(driver, workspace: str) -> Starlette:
     async def message(request):
         body = await request.json()
         text = body["text"]
-        continue_session = state["turn_seen"]
-        state["turn_seen"] = True
+        session = body.get("session")
+        if session is not None:
+            gen_src = driver.run(text, session)
+        else:
+            # Legacy path (claude_driver rollback): per-process continue flag.
+            continue_session = state["turn_seen"]
+            state["turn_seen"] = True
+            gen_src = driver.run(text, continue_session=continue_session)
 
         async def gen():
-            async for ev in driver.run(text, continue_session=continue_session):
+            async for ev in gen_src:
                 yield {"data": ev.model_dump_json()}
         return EventSourceResponse(gen())
+
+    async def answers(request):
+        body = await request.json()
+        async def gen():
+            async for ev in driver.run_answers(
+                    body["interrupt_id"], body["answers"], body["session"]):
+                yield {"data": ev.model_dump_json()}
+        return EventSourceResponse(gen())
+
+    async def pending(request):
+        body = await request.json()
+        return JSONResponse({"pending": await driver.pending(body["session"])})
 
     def _resolve(rel: str) -> Path | None:
         # MicroVMSandbox.reject_unsafe() rejects unsafe paths (absolute /
@@ -82,6 +100,8 @@ def build_app(driver, workspace: str) -> Starlette:
 
     return Starlette(routes=[
         Route("/message", message, methods=["POST"]),
+        Route("/answers", answers, methods=["POST"]),
+        Route("/pending", pending, methods=["POST"]),
         Route("/files", list_files, methods=["GET"]),
         Route("/files/{path:path}", get_file, methods=["GET"]),
         Route("/files/{path:path}", put_file, methods=["PUT"]),
