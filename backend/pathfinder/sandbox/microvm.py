@@ -189,6 +189,12 @@ class MicroVMSandbox(Sandbox):
         finally:
             self._turn_active = False
 
+    async def send_answers(self, answers: dict[str, str]) -> AsyncIterator[AgentEvent]:
+        yield AgentEvent(kind="error", text="not implemented")
+
+    async def pending(self) -> str | None:
+        return None
+
     async def stop(self) -> None:
         # I2: on_stop (e.g. app.py's shared_http.aclose) is a caller-owned
         # resource this sandbox doesn't understand, so it runs after the

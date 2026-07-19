@@ -5,18 +5,11 @@ import contextlib
 import json
 import logging
 from pathlib import PurePosixPath
-from typing import AsyncIterator, Literal
-from pydantic import BaseModel
+from typing import AsyncIterator
+
+from events import AgentEvent
 
 _log = logging.getLogger("harness.driver")
-
-# Mirror of backend/pathfinder/sandbox/base.py AgentEvent. The harness is a
-# separate deployable and cannot import the backend package; these fields MUST
-# stay identical to the backend model (kind/text/path) or the SSE contract breaks.
-class AgentEvent(BaseModel):
-    kind: Literal["message", "file_changed", "status", "done", "error"]
-    text: str | None = None
-    path: str | None = None
 
 _FILE_TOOLS = {"Write", "Edit", "MultiEdit"}
 _STDERR_CHUNK = 65536

@@ -5,9 +5,13 @@ from typing import AsyncIterator, Literal
 from pydantic import BaseModel
 
 class AgentEvent(BaseModel):
-    kind: Literal["message", "file_changed", "status", "done", "error"]
+    kind: Literal["message", "questions", "stage", "document",
+                  "file_changed", "status", "done", "error"]
     text: str | None = None
     path: str | None = None
+    # Structured payload (JSON string) for questions/stage/document — the
+    # event IS the UI contract (spec §4); files stay as records only.
+    payload: str | None = None
 
 class TurnResult(BaseModel):
     events: list[AgentEvent]
@@ -34,5 +38,9 @@ class Sandbox(ABC):
     async def list_files(self, glob: str) -> list[str]: ...
     @abstractmethod
     def send_message(self, text: str) -> AsyncIterator[AgentEvent]: ...
+    @abstractmethod
+    def send_answers(self, answers: dict[str, str]) -> AsyncIterator[AgentEvent]: ...
+    @abstractmethod
+    async def pending(self) -> str | None: ...
     @abstractmethod
     async def stop(self) -> None: ...

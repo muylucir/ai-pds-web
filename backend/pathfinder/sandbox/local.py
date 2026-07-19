@@ -43,5 +43,11 @@ class LocalSandbox(Sandbox):
         for event in self._script(text, self):
             yield event
 
+    async def send_answers(self, answers: dict[str, str]) -> AsyncIterator[AgentEvent]:
+        yield AgentEvent(kind="done")
+
+    async def pending(self) -> str | None:
+        return None
+
     async def stop(self) -> None:
         pass
