@@ -3,8 +3,10 @@ import Link from "next/link";
 export type HeaderTab = "dashboard" | "questions" | "review" | "canvas" | "projects";
 
 // Ported from the shared <header> in files/ui/01–03. `projectId` is optional so
-// the project-list screen (no project chosen yet) can render the header with
-// disabled/href-less per-project tabs. When a project is selected the tabs link
+// the project-list screen (no project chosen yet) can render the header. When no
+// project is selected the per-project tabs render DISABLED (non-clickable, not
+// links) — they require a project, so a live link there would navigate to a
+// dead `#/…` route and appear broken. Once a project is selected the tabs link
 // into that project's routes.
 export function AppHeader({
   activeTab,
@@ -16,6 +18,18 @@ export function AppHeader({
   const tab = (key: HeaderTab, label: string, href: string) => {
     const active = key === activeTab;
     const base = "px-3 py-2 rounded-lg text-sm";
+    // Per-project tab with no project selected: disabled, not a link.
+    if (!projectId) {
+      return (
+        <span
+          className={`${base} text-slate-300 cursor-not-allowed select-none`}
+          aria-disabled="true"
+          title="프로젝트를 먼저 선택하세요"
+        >
+          {label}
+        </span>
+      );
+    }
     const cls = active
       ? `${base} bg-violet-50 text-violet-700 font-medium`
       : `${base} hover:bg-slate-100 text-slate-600`;
@@ -26,7 +40,7 @@ export function AppHeader({
     );
   };
 
-  const base = projectId ? `/projects/${projectId}` : "#";
+  const base = `/projects/${projectId}`;
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
