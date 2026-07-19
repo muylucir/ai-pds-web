@@ -1,6 +1,7 @@
 # backend/pathfinder/sandbox/microvm.py
 from __future__ import annotations
 import asyncio
+import json
 from pathlib import PurePosixPath
 from typing import Awaitable, AsyncIterator, Callable, Protocol
 from pathfinder.sandbox.base import Sandbox, AgentEvent
@@ -13,6 +14,8 @@ from pathfinder.parsers.redaction import redact_credentials
 
 class HarnessLike(Protocol):
     def send_message(self, text: str) -> AsyncIterator[AgentEvent]: ...
+    def send_answers(self, interrupt_id: str, answers: dict[str, str]) -> AsyncIterator[AgentEvent]: ...
+    async def pending(self) -> str | None: ...
     async def read_file(self, rel_path: str) -> str: ...
     async def write_file(self, rel_path: str, content: str) -> None: ...
     async def list_files(self, glob: str) -> list[str]: ...
@@ -66,6 +69,10 @@ class MicroVMSandbox(Sandbox):
         self._harness: HarnessLike | None = None
         self._boot_lock = asyncio.Lock()
         self._turn_active = False
+        # The sandbox owns the interrupt id: routes/frontend never see it.
+        # send_message/send_answers observe `questions` events and stash the
+        # payload's interrupt_id here; send_answers resumes from this value.
+        self._pending_interrupt_id: str | None = None
         # I2: optional caller-owned cleanup hook (e.g. app.py's shared
         # httpx.AsyncClient captured in the harness_factory closure). Kept
         # generic (Awaitable[None] callback) so this module stays free of any
@@ -176,6 +183,10 @@ class MicroVMSandbox(Sandbox):
         try:
             harness = await self._ensure_ready()
             async for event in harness.send_message(text):
+                if event.kind == "questions" and event.payload:
+                    # The sandbox owns the interrupt id: routes/frontend send
+                    # only answers; we resume the interrupt they belong to.
+                    self._pending_interrupt_id = json.loads(event.payload)["interrupt_id"]
                 if event.kind in ("done", "error"):
                     # I1: sync BEFORE yielding the terminal event, not after.
                     # A client reacting to `done` (e.g. re-reading a route
@@ -190,10 +201,35 @@ class MicroVMSandbox(Sandbox):
             self._turn_active = False
 
     async def send_answers(self, answers: dict[str, str]) -> AsyncIterator[AgentEvent]:
-        yield AgentEvent(kind="error", text="not implemented")
+        if self._turn_active:
+            yield AgentEvent(kind="error", text="turn already in progress")
+            return
+        if self._pending_interrupt_id is None:
+            yield AgentEvent(kind="error", text="no pending questions")
+            return
+        self._turn_active = True
+        try:
+            harness = await self._ensure_ready()
+            interrupt_id, self._pending_interrupt_id = self._pending_interrupt_id, None
+            async for event in harness.send_answers(interrupt_id, answers):
+                if event.kind == "questions" and event.payload:
+                    # A resumed turn can raise the NEXT question set.
+                    self._pending_interrupt_id = json.loads(event.payload)["interrupt_id"]
+                if event.kind in ("done", "error"):
+                    await self._sync_workspace_to_s3(harness)
+                yield event
+        finally:
+            self._turn_active = False
 
     async def pending(self) -> str | None:
-        return None
+        # File-ops principle applies: never boot a VM just to ask. A live
+        # harness exists only after a turn has booted one.
+        if self._harness is None:
+            return None
+        payload = await self._harness.pending()
+        if payload:
+            self._pending_interrupt_id = json.loads(payload)["interrupt_id"]
+        return payload
 
     async def stop(self) -> None:
         # I2: on_stop (e.g. app.py's shared_http.aclose) is a caller-owned

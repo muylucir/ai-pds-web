@@ -55,12 +55,16 @@ def _harness_token_provider(vm_id: str, region: str) -> dict[str, str] | None:
     return mint_harness_token(vm_id, region)
 
 
-def _build_harness_for_test(handle: VMHandle, shared_http: httpx.AsyncClient, region: str) -> HarnessClient:
+def _build_harness_for_test(
+    handle: VMHandle, shared_http: httpx.AsyncClient, region: str,
+    session: dict | None = None,
+) -> HarnessClient:
     """Extracted so the header-minting wiring is unit-testable without booting."""
     return HarnessClient(
         base_url=handle.base_url,
         http=shared_http,
         headers=_harness_token_provider(handle.vm_id, region),
+        session=session,
     )
 
 
@@ -78,12 +82,21 @@ async def _make_microvm_sandbox(project_id: str) -> Sandbox:
     s3 = s3_store_factory(project_id)
     region = os.environ.get("PATHFINDER_VM_REGION", "ap-northeast-1")
     shared_http = httpx.AsyncClient(timeout=None)  # streaming SSE: no read timeout
+    # Session descriptor the harness needs to resume conversation state across
+    # /message, /answers, and /pending (Task 4's HTTP contract). The durable
+    # store's bucket/region (Seoul), not the VM's own region (Tokyo).
+    session = {
+        "session_id": project_id,
+        "bucket": os.environ.get("PATHFINDER_S3_BUCKET", ""),
+        "region": os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2"),
+        "prefix": "sessions",
+    }
     def harness_factory(handle: VMHandle) -> HarnessClient:
         # mint-on-resume (Part-2 Task 5): a fresh CreateMicrovmAuthToken JWE is
         # minted on every boot/resume/reboot and attached per HarnessClient.
         # The shared AsyncClient is reused (headers live on the HarnessClient,
         # not the client), so on_stop=shared_http.aclose stays correct.
-        return _build_harness_for_test(handle, shared_http, region)
+        return _build_harness_for_test(handle, shared_http, region, session=session)
     sb = MicroVMSandbox(
         project_id=project_id,
         controller=controller,
