@@ -63,3 +63,48 @@ def test_stages_match_real_pilot1_fixture():
     md = (FIX / "aiplc-state.md").read_text(encoding="utf-8")
     real_names = [s.name for s in parse_state_file(md).stages]
     assert real_names == STAGES
+
+def test_replay_via_answers_stream_advances_stages(monkeypatch):
+    """Spec §7: the pilot1 stage sequence driven through the EVENT contract —
+    each send_answers round completes one stage via a stage event."""
+    import json as _json
+    round_n = {"i": 0}
+
+    def script(text, sb):
+        payload = _json.dumps({"interrupt_id": f"i-{round_n['i']}",
+                               "questions": {"name": "q", "preamble": None,
+                                             "parse_ok": True, "raw_markdown": None,
+                                             "questions": []}})
+        return [AgentEvent(kind="questions", payload=payload), AgentEvent(kind="done")]
+
+    async def make(project_id):
+        sb = LocalSandbox(root=Path(tempfile.mkdtemp()), script=script)
+
+        async def send_answers(answers):
+            i = round_n["i"] = round_n["i"] + 1
+            stage = STAGES[min(i, len(STAGES) - 1)]
+            yield AgentEvent(kind="stage", payload=_json.dumps(
+                {"stage": stage, "status": "completed", "summary": ""}))
+            nxt = _json.dumps({"interrupt_id": f"i-{i}", "questions":
+                               {"name": "q", "preamble": None, "parse_ok": True,
+                                "raw_markdown": None, "questions": []}})
+            yield AgentEvent(kind="questions", payload=nxt)
+            yield AgentEvent(kind="done")
+        sb.send_answers = send_answers  # scripted structured rounds
+        await sb.start()
+        return sb
+    monkeypatch.setattr(app_module, "make_sandbox", make)
+
+    client.post("/projects", json={"project_id": "replay-ev"})
+    with client.stream("GET", "/projects/replay-ev/events", params={"text": "시작"}) as r:
+        list(r.iter_lines())
+    completed = []
+    for _ in range(len(STAGES) - 1):
+        with client.stream("GET", "/projects/replay-ev/answers/stream",
+                           params={"answers": _json.dumps({"1": "A"})}) as r:
+            for line in r.iter_lines():
+                if line.startswith("data:"):
+                    ev = _json.loads(line[5:].strip())
+                    if ev["kind"] == "stage":
+                        completed.append(_json.loads(ev["payload"])["stage"])
+    assert completed == STAGES[1:]
