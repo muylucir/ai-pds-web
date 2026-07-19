@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-export type HeaderTab = "dashboard" | "questions" | "review" | "canvas" | "projects";
+export type HeaderTab = "dashboard" | "workspace" | "review" | "projects";
 
 // Ported from the shared <header> in files/ui/01–03. `projectId` is optional so
 // the project-list screen (no project chosen yet) can render the header. When no
@@ -53,9 +53,8 @@ export function AppHeader({
           </Link>
           <nav className="hidden md:flex items-center gap-1" aria-label="주요 메뉴">
             {tab("dashboard", "대시보드", `${base}/dashboard`)}
-            {tab("questions", "질문 답변", `${base}/questions`)}
+            {tab("workspace", "워크스페이스", `${base}/workspace`)}
             {tab("review", "문서 리뷰", `${base}/review`)}
-            {tab("canvas", "빌드 캔버스", `${base}/canvas`)}
           </nav>
         </div>
         <div className="flex items-center gap-3">

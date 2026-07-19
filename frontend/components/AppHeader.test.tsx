@@ -9,10 +9,16 @@ describe("AppHeader without a selected project", () => {
     // The per-project tabs require a project, so with none selected they must
     // not be clickable links (a live link would navigate to a dead #/… route
     // and appear broken). They render as disabled spans instead.
-    for (const label of ["대시보드", "질문 답변", "문서 리뷰", "빌드 캔버스"]) {
+    for (const label of ["대시보드", "워크스페이스", "문서 리뷰"]) {
       expect(screen.queryByRole("link", { name: label })).toBeNull();
       expect(screen.getByText(label)).toHaveAttribute("aria-disabled", "true");
     }
+  });
+
+  it("no longer shows the retired 질문 답변 / 빌드 캔버스 tabs", () => {
+    render(<AppHeader activeTab="projects" />);
+    expect(screen.queryByText("질문 답변")).not.toBeInTheDocument();
+    expect(screen.queryByText("빌드 캔버스")).not.toBeInTheDocument();
   });
 });
 
@@ -22,8 +28,8 @@ describe("AppHeader with a selected project", () => {
     expect(screen.getByRole("link", { name: "대시보드" })).toHaveAttribute(
       "href", "/projects/pilot1/dashboard",
     );
-    expect(screen.getByRole("link", { name: "질문 답변" })).toHaveAttribute(
-      "href", "/projects/pilot1/questions",
+    expect(screen.getByRole("link", { name: "워크스페이스" })).toHaveAttribute(
+      "href", "/projects/pilot1/workspace",
     );
     expect(screen.getByRole("link", { name: "문서 리뷰" })).toHaveAttribute(
       "href", "/projects/pilot1/review",
@@ -31,15 +37,14 @@ describe("AppHeader with a selected project", () => {
   });
 
   it("marks the active tab with aria-current", () => {
-    render(<AppHeader activeTab="questions" projectId="pilot1" />);
-    expect(screen.getByRole("link", { name: "질문 답변" })).toHaveAttribute("aria-current", "page");
+    render(<AppHeader activeTab="workspace" projectId="pilot1" />);
+    expect(screen.getByRole("link", { name: "워크스페이스" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "대시보드" })).not.toHaveAttribute("aria-current");
   });
 
-  it("links the 빌드 캔버스 tab into the project's canvas route", () => {
-    render(<AppHeader activeTab="canvas" projectId="pilot1" />);
-    const link = screen.getByRole("link", { name: "빌드 캔버스" });
-    expect(link).toHaveAttribute("href", "/projects/pilot1/canvas");
-    expect(link).toHaveAttribute("aria-current", "page");
+  it("no longer shows the retired 질문 답변 / 빌드 캔버스 tabs", () => {
+    render(<AppHeader activeTab="workspace" projectId="pilot1" />);
+    expect(screen.queryByRole("link", { name: "질문 답변" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "빌드 캔버스" })).not.toBeInTheDocument();
   });
 });
