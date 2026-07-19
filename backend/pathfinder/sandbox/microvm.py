@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import logging
 from pathlib import PurePosixPath
 from typing import Awaitable, AsyncIterator, Callable, Protocol
 from pathfinder.sandbox.base import Sandbox, AgentEvent
@@ -10,6 +11,8 @@ from pathfinder.sandbox.pathsafe import reject_unsafe
 from pathfinder.sandbox.microvm_control import MicroVMController, BootSpec, VMHandle
 from pathfinder.sandbox.s3store import S3StoreLike
 from pathfinder.parsers.redaction import redact_credentials
+
+_log = logging.getLogger(__name__)
 
 
 def _interrupt_id_from(payload: str | None) -> str | None:
@@ -243,13 +246,21 @@ class MicroVMSandbox(Sandbox):
             self._turn_active = False
 
     async def pending(self) -> str | None:
-        # File-ops principle applies: never boot a VM just to ask. A live
-        # harness exists only after a turn has booted one.
-        if self._harness is None:
+        # Laziness preserved for never-booted sandboxes: no handle -> nothing
+        # can pend (registry does not survive backend restarts; that recovery
+        # is out of scope by design). With a handle, go through _ensure_ready
+        # so a dead/suspended VM is rebooted and its S3 session (interrupt
+        # state included) restored before we ask — this IS the spec §6
+        # recovery path. Any transport/boot failure degrades to None (the UI
+        # treats None as "no pending questions"), never a 500.
+        if self._handle is None:
             return None
-        payload = await self._harness.pending()
-        # Only re-arm when the payload parses; still return the payload
-        # as-is either way (the caller/UI's own fallback handles it).
+        try:
+            harness = await self._ensure_ready()
+            payload = await harness.pending()
+        except Exception:
+            _log.exception("pending probe failed")
+            return None
         got = _interrupt_id_from(payload)
         if got:
             self._pending_interrupt_id = got

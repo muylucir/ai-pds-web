@@ -43,8 +43,9 @@ async def stream_answers(pid: str, answers: str):
     ws = get_workspace(pid)
     try:
         parsed = json.loads(answers)
-        assert isinstance(parsed, dict)
-    except (json.JSONDecodeError, AssertionError):
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="answers must be a JSON object")
+    if not isinstance(parsed, dict):
         raise HTTPException(status_code=400, detail="answers must be a JSON object")
     async def gen():
         async for event in ws.sandbox.send_answers(parsed):

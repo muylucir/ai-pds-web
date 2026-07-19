@@ -112,4 +112,18 @@ describe("useWorkspaceStream", () => {
     await act(async () => {}); // flush the mount effect
     expect(result.current.pendingQuestions?.interrupt_id).toBe("i-1");
   });
+
+  it("mounts without an unhandled rejection when GET /pending errors (degrades to null)", async () => {
+    vi.mocked(client.getPending).mockRejectedValue(new Error("network down"));
+    const onUnhandledRejection = vi.fn();
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    try {
+      const { result } = renderHook(() => useWorkspaceStream("p1"));
+      await act(async () => {}); // flush the mount effect
+      expect(result.current.pendingQuestions).toBeNull();
+      expect(onUnhandledRejection).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    }
+  });
 });

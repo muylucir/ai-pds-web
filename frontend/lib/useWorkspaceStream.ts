@@ -172,11 +172,13 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   // GET /pending — same payload shape/parsing as a live "questions" event.
   useEffect(() => {
     let cancelled = false;
-    getPending(projectId).then((pending) => {
-      if (cancelled) return;
-      const parsed = safeParse<QuestionsPayload>(pending);
-      if (parsed) setPendingQuestions(parsed);
-    });
+    getPending(projectId)
+      .then((pending) => {
+        if (cancelled) return;
+        const parsed = safeParse<QuestionsPayload>(pending);
+        if (parsed) setPendingQuestions(parsed);
+      })
+      .catch(() => {}); // degraded, not broken: pendingQuestions stays null
     return () => {
       cancelled = true;
     };

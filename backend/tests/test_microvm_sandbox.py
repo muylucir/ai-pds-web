@@ -162,9 +162,12 @@ async def test_send_answers_syncs_workspace_on_done():
     assert "aiplc-docs/audit.md" in sb._s3.blobs  # post-turn sync ran
 
 async def test_pending_returns_none_when_no_live_vm():
+    # Never-booted sandbox: laziness is preserved -- pending() must not boot
+    # a VM just to ask.
     sb = _sandbox(FakeHarness(pending_payload=Q_PAYLOAD))
     await sb.start()
-    assert await sb.pending() is None  # never boots just to ask
+    assert await sb.pending() is None
+    assert sb._controller.boot_calls == 0
 
 async def test_pending_queries_live_harness():
     harness = FakeHarness(events_for=lambda t: [AgentEvent(kind="done")],
@@ -173,6 +176,36 @@ async def test_pending_queries_live_harness():
     await sb.start()
     [e async for e in sb.send_message("부팅 유발")]
     assert await sb.pending() == Q_PAYLOAD
+
+async def test_pending_reboots_dead_vm_and_returns_restored_payload():
+    # Spec §6 recovery path: VM died -> pending() must reboot a fresh VM
+    # (restoring the S3 session, interrupt state included) rather than
+    # calling the stale harness directly, and it must arm the interrupt id
+    # from the restored payload.
+    harness = FakeHarness(events_for=lambda t: [AgentEvent(kind="done")],
+                          pending_payload=Q_PAYLOAD)
+    ctrl = FakeMicroVMController(base_url="http://fake")
+    sb = MicroVMSandbox(project_id="p1", controller=ctrl, spec=BootSpec(),
+                        harness_factory=lambda h: harness, s3=FakeS3Store())
+    await sb.start()
+    [e async for e in sb.send_message("boot")]      # boots; harness is live
+    assert ctrl.boot_calls == 1
+    ctrl.simulate_expiry(sb._handle)                  # VM dies
+    result = await sb.pending()
+    assert ctrl.boot_calls == 2                        # rebooted
+    assert result == Q_PAYLOAD
+    assert sb._pending_interrupt_id == "i-7"           # armed from restored payload
+
+async def test_pending_degrades_to_none_when_harness_pending_raises():
+    class RaisingHarness(FakeHarness):
+        async def pending(self) -> str | None:
+            import httpx
+            raise httpx.ConnectError("dead")
+    harness = RaisingHarness(events_for=lambda t: [AgentEvent(kind="done")])
+    sb = _sandbox(harness)
+    await sb.start()
+    [e async for e in sb.send_message("boot")]
+    assert await sb.pending() is None   # degrades, never raises
 
 # ---- malformed/contract-drifted payload must degrade, not raise (hardening) ----
 

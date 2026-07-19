@@ -97,4 +97,11 @@ async def test_harness_factory_closure_attaches_header_for_real_and_none_for_fak
     real_hc = sb._harness_factory(real_handle)
     assert real_hc._headers == {"X-aws-proxy-auth": "tok-vm-real-1"}
 
+    # A2: the shared client must have a finite CONNECT timeout (a dead VM
+    # endpoint must not hang forever) while the READ timeout stays None
+    # (streaming SSE).
+    timeout = real_hc._http.timeout
+    assert timeout.connect == 5.0
+    assert timeout.read is None
+
     await sb.stop()

@@ -81,7 +81,10 @@ async def _make_microvm_sandbox(project_id: str) -> Sandbox:
     controller = microvm_controller_factory(project_id)
     s3 = s3_store_factory(project_id)
     region = os.environ.get("PATHFINDER_VM_REGION", "ap-northeast-1")
-    shared_http = httpx.AsyncClient(timeout=None)  # streaming SSE: no read timeout
+    # streaming SSE: no read timeout, but CONNECT must still time out -- a
+    # dead VM endpoint (expired/terminated, DNS/network gone) must not hang
+    # the request forever.
+    shared_http = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=5.0))
     # Session descriptor the harness needs to resume conversation state across
     # /message, /answers, and /pending (Task 4's HTTP contract). The durable
     # store's bucket/region (Seoul), not the VM's own region (Tokyo).
