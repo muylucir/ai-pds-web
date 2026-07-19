@@ -106,7 +106,18 @@ class StrandsDriver:
         return self._agents[sid], self._queues[sid]
 
     async def _stream(self, prompt, session: dict) -> AsyncIterator[AgentEvent]:
-        agent, queue = self._agent_for(session)
+        # Agent construction (BedrockModel init, _system_prompt's rules-file
+        # reads, S3SessionManager setup, etc.) can fail before there's any
+        # `queue` to drain — guard it in its own try/except so a raw
+        # exception (missing env var, missing rules file, bad bucket/region)
+        # never escapes `run`/`run_answers` as anything other than the
+        # sanitized error contract every other failure path already honors.
+        try:
+            agent, queue = self._agent_for(session)
+        except Exception:
+            _log.exception("strands agent construction failed")
+            yield AgentEvent(kind="error", text="agent turn failed")
+            return
         result = None
         try:
             async for ev in agent.stream_async(prompt):
@@ -148,10 +159,18 @@ class StrandsDriver:
     async def pending(self, session: dict) -> str | None:
         """Pending interrupt after restore. No public accessor exists in the
         SDK (verified v1.48); _interrupt_state is the documented-in-source
-        session-persisted field."""
-        agent, _ = self._agent_for(session)
-        state = getattr(agent, "_interrupt_state", None)
-        if state is None or not getattr(state, "activated", False):
+        session-persisted field.
+
+        A failed probe (e.g. agent construction blows up the same way it can
+        in `_stream`) must not 500 the caller with internals — log server-side
+        and report "no pending questions visible" (None) rather than raise."""
+        try:
+            agent, _ = self._agent_for(session)
+            state = getattr(agent, "_interrupt_state", None)
+            if state is None or not getattr(state, "activated", False):
+                return None
+            ev = _questions_event_from_interrupts(list(state.interrupts.values()))
+            return ev.payload if ev else None
+        except Exception:
+            _log.exception("strands pending-interrupt probe failed")
             return None
-        ev = _questions_event_from_interrupts(list(state.interrupts.values()))
-        return ev.payload if ev else None

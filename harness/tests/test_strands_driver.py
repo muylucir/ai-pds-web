@@ -97,6 +97,31 @@ async def test_stream_error_yields_error_event():
 
 
 @pytest.mark.asyncio
+async def test_agent_construction_failure_yields_only_generic_error_event():
+    """Agent construction (BedrockModel init, missing env var, missing rules
+    file, bad S3SessionManager args, etc.) can fail before any stream_async
+    call happens at all. That must not escape run()/run_answers() as a raw
+    exception — it must degrade to the same sanitized error contract as an
+    in-stream failure."""
+    def boom_factory(session, emit):
+        raise KeyError("ANTHROPIC_MODEL")
+    drv = StrandsDriver(workspace="/workspace", agent_factory=boom_factory)
+    evs = await collect(drv.run("hi", SESSION))
+    assert [e.kind for e in evs] == ["error"]
+    assert "ANTHROPIC_MODEL" not in (evs[-1].text or "")  # no raw internals to the user
+
+@pytest.mark.asyncio
+async def test_pending_returns_none_on_construction_failure():
+    """pending() probes agent state after a restore; if that probe itself
+    blows up (same construction failure modes as run()), it must report
+    "no pending questions visible" (None) rather than raise/500."""
+    def boom_factory(session, emit):
+        raise RuntimeError("s3 session manager unreachable")
+    drv = StrandsDriver(workspace="/workspace", agent_factory=boom_factory)
+    assert await drv.pending(SESSION) is None
+
+
+@pytest.mark.asyncio
 async def test_emit_from_worker_thread_lands_in_deque():
     """Integration smoke test (Task 2 review recommendation): drive a REAL
     Task-2 tool (report_stage) through asyncio.to_thread — exactly how strands
