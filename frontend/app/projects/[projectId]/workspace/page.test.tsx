@@ -126,4 +126,30 @@ describe("Workspace page", () => {
     await screen.findByLabelText("스테이지 진행 상황");
     expect(screen.queryByRole("button", { name: /답변 대기 중인 질문/ })).not.toBeInTheDocument();
   });
+
+  it("shows a document-update banner linking to the review route when lastDocument is set", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({
+      lastDocument: { path: "aiplc-docs/discovery/discovery-document.md", version: "v2", summary: "" },
+    });
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    await screen.findByLabelText("스테이지 진행 상황");
+
+    const banner = screen.getByRole("status");
+    expect(within(banner).getByText(/v2/)).toBeInTheDocument();
+    const link = within(banner).getByRole("link", { name: /문서 리뷰/ });
+    expect(link).toHaveAttribute("href", "/projects/p1/review");
+  });
+
+  it("does not show the document-update banner when lastDocument is null", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream();
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    await screen.findByLabelText("스테이지 진행 상황");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
 });

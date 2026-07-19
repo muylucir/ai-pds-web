@@ -4,9 +4,33 @@ import type {
   ProjectState,
   AuditEntry,
   AgentEvent,
+  AgentEventKind,
   TurnResult,
   ProjectSummary,
 } from "./types";
+
+// Mirror guard (E1): AgentEventKind must cover EXACTLY the same 8 kinds as
+// backend/pathfinder/sandbox/base.py's AgentEvent.kind Literal (and its
+// harness/events.py mirror; see backend's
+// test_backend_and_harness_agent_event_kinds_match) -- a drift here would
+// silently break the SSE contract.
+//
+// This Record literal enforces EXHAUSTIVENESS IN BOTH DIRECTIONS at compile
+// time (`tsc --noEmit`, part of the final gate): TS's excess-property check
+// on an object literal assigned to `Record<AgentEventKind, true>` rejects a
+// key that ISN'T in the union, and rejects a Record missing a key that IS in
+// the union ("Property '...' is missing"). So renaming/adding/removing a
+// kind in AgentEventKind without updating this map is a type error.
+const AGENT_EVENT_KIND_EXHAUSTIVENESS: Record<AgentEventKind, true> = {
+  message: true,
+  questions: true,
+  stage: true,
+  document: true,
+  file_changed: true,
+  status: true,
+  done: true,
+  error: true,
+};
 
 describe("api types mirror the backend models", () => {
   it("QuestionFile carries snake_case parse_ok / raw_markdown and option is_other", () => {
@@ -44,6 +68,14 @@ describe("api types mirror the backend models", () => {
       ],
     };
     expect(st.stages.map((s) => s.status)).toEqual(["completed", "in_progress", "pending"]);
+  });
+
+  it("AgentEventKind covers exactly the 8 backend/harness kinds", () => {
+    // Runtime witness of the compile-time exhaustiveness map above -- keeps
+    // this file self-contained even if the `Record` trick above is refactored.
+    expect(Object.keys(AGENT_EVENT_KIND_EXHAUSTIVENESS).sort()).toEqual(
+      ["message", "questions", "stage", "document", "file_changed", "status", "done", "error"].sort(),
+    );
   });
 
   it("AuditEntry / AgentEvent / TurnResult / ProjectSummary shapes", () => {

@@ -1,5 +1,6 @@
 "use client";
 import { use, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import { StageSidebar } from "@/components/workspace/StageSidebar";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
@@ -20,10 +21,15 @@ import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
-  const { items, streaming, send, submitAnswers, pendingQuestions, stages, changedPaths } =
+  const { items, streaming, send, submitAnswers, pendingQuestions, stages, lastDocument, changedPaths } =
     useWorkspaceStream(projectId);
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
+  // Dismissible document-update notice (spec §5): track which version the
+  // user has already dismissed so a LATER update (new version) re-shows the
+  // banner even if an earlier one was dismissed.
+  const [dismissedDocVersion, setDismissedDocVersion] = useState<string | null>(null);
+  const showDocBanner = lastDocument != null && lastDocument.version !== dismissedDocVersion;
 
   function submitAnswersFromSheet(answers: Record<string, string>) {
     submitAnswers(answers);
@@ -52,6 +58,30 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
         <StageSidebar state={state.data} events={stages} />
 
         <main className="relative flex flex-col min-w-0 bg-slate-50">
+          {showDocBanner && lastDocument && (
+            <div
+              role="status"
+              className="m-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 flex items-center justify-between gap-3 text-sm"
+            >
+              <span className="text-violet-900">
+                문서가 갱신되었습니다 (v{lastDocument.version}){" "}
+                <Link
+                  href={`/projects/${projectId}/review`}
+                  className="font-medium text-violet-700 underline hover:text-violet-900"
+                >
+                  문서 리뷰
+                </Link>
+              </span>
+              <button
+                type="button"
+                aria-label="닫기"
+                onClick={() => setDismissedDocVersion(lastDocument.version)}
+                className="shrink-0 text-violet-400 hover:text-violet-600"
+              >
+                ✕
+              </button>
+            </div>
+          )}
           {pendingQuestions && (
             <button
               type="button"

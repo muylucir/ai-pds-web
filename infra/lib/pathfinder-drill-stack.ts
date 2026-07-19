@@ -95,7 +95,7 @@ export class PathfinderDrillStack extends cdk.Stack {
     // confirmed at deploy-time CFN validation. Env is baked = BootSpec.env().
     const image = new lambda.CfnMicrovmImage(this, 'HarnessImage', {
       name: 'pathfinder-harness',
-      description: 'Pathfinder drill harness: Claude Code driver + aiplc-rules, Bedrock-backed.',
+      description: 'Pathfinder drill harness: Strands agent driver + aiplc-rules, Bedrock-backed.',
       baseImageArn: BASE_IMAGE_ARN,
       baseImageVersion: '1', // major version of the al2023-1 managed base; the service rejects 'latest' (expects a single major number, confirmed at deploy time)
       buildRoleArn: buildRole.roleArn,

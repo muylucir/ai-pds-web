@@ -7,11 +7,21 @@
 2. **스모크 턴**: microvm 모드 백엔드 기동(README B-2, PATHFINDER_S3_BUCKET는 CDK
    Artifacts 버킷) → 캔버스 아님 **워크스페이스**에서 "AI-PLC를 시작해줘" 전송 →
    welcome message 스트림 + report_stage 이벤트로 좌측 사이드바 갱신 확인.
+   시작 전에 `PATHFINDER_S3_REGION`이 CDK Artifacts 버킷의 실제 리전(도쿄,
+   ap-northeast-1)과 일치하는지 확인할 것 — 리전이 어긋나면 S3SessionManager가
+   301 리다이렉트 또는 SigV4 서명 실패로 죽는다(버킷 리전과 클라이언트 리전
+   불일치는 조용히 실패하지 않고 바로 이 형태로 터진다).
 3. **질문 왕복**: 우측 패널 질문 폼 → 답변 제출 → 다음 스테이지 진행 확인.
    S3 콘솔에서 `sessions/p*/` 오브젝트 생성 확인.
 4. **컨텍스트 복구 리허설 (핵심)**: 질문 대기 상태에서 콘솔로 MicroVM terminate →
-   같은 프로젝트에서 새 메시지/새로고침 → `GET /pending`이 같은 질문을 복원하고,
-   답변 제출이 정상 재개되는지 확인. (S3SessionManager interrupt 복원 검증)
+   같은 프로젝트에서 **페이지 새로고침만으로도** (채팅 메시지를 먼저 보낼 필요
+   없이) `GET /pending`이 새 VM을 부팅하고 S3 세션(interrupt 상태 포함)을 복원한
+   뒤 같은 질문을 반환하는지 확인 — 질문 폼이 곧바로 다시 나타나야 한다. 답변
+   제출도 정상 재개되는지 확인. (S3SessionManager interrupt 복원 검증; 최종
+   리뷰에서 pending()이 죽은 VM에도 재부팅 없이 직접 질의해 500을 내던 버그를
+   고쳤다 — 이 시나리오가 바로 그 회귀 테스트다.)
+   범위 밖: 백엔드 프로세스 자체가 재시작된 경우(인메모리 sandbox 레지스트리
+   소실)는 이 복구 경로로 커버되지 않는다 — 의도된 설계 범위 제한이다.
 5. **IAM 경계 확인**: VM 롤 자격으로 `aws s3 cp s3://<bucket>/projects/... -` 시도
    → AccessDenied (sessions/*만 허용) 확인.
 6. **롤백 리허설 (선택)**: `PATHFINDER_DRIVER=claude`만으로는 되돌아가지 않는다 —
