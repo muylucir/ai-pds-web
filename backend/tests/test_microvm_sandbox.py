@@ -231,3 +231,13 @@ async def test_pending_with_malformed_payload_returns_it_without_raising():
     result = await sb.pending()
     assert result == "not-json{"           # returned as-is, no exception
     assert sb._pending_interrupt_id is None  # not armed
+
+# ---- uploads/ prefix joins the sync/restore set (Task 2) ----
+
+async def test_uploads_prefix_restored_to_vm():
+    harness = FakeHarness(events_for=lambda t: [AgentEvent(kind="done")])
+    sb = _sandbox(harness)
+    await sb.start()
+    sb._s3.blobs["uploads/의견.md"] = "# 의견"
+    [e async for e in sb.send_message("읽어줘")]
+    assert harness.files.get("uploads/의견.md") == "# 의견"  # S3 → VM 복원

@@ -117,7 +117,7 @@ class MicroVMSandbox(Sandbox):
 
     # ---- turn relay: boots the VM (Task 4 adds post-turn sync) ----
 
-    _SYNC_GLOBS = ("aiplc-docs/**/*", "prototype/**/*")
+    _SYNC_GLOBS = ("aiplc-docs/**/*", "prototype/**/*", "uploads/**/*")
 
     async def _sync_workspace_to_s3(self, harness: HarnessLike) -> None:
         """Pull the turn's output out of the VM FS into durable S3. Only the
@@ -147,7 +147,7 @@ class MicroVMSandbox(Sandbox):
                     content = redact_credentials(content)
                 await self._s3.put(key, content)
 
-    _RESTORE_PREFIXES = ("aiplc-docs/", "prototype/")
+    _RESTORE_PREFIXES = ("aiplc-docs/", "prototype/", "uploads/")
 
     async def _restore_workspace_from_s3(self, harness: HarnessLike) -> None:
         """Copy the durable workspace (S3 = source of truth) into the VM FS.

@@ -171,3 +171,6 @@ app.include_router(discovery.router)
 
 from pathfinder.routes import history  # noqa: E402
 app.include_router(history.router)
+
+from pathfinder.routes import uploads  # noqa: E402
+app.include_router(uploads.router)
