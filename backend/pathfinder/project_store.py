@@ -35,6 +35,9 @@ async def restore_projects(root: S3StoreLike) -> list[tuple[str, str | None]]:
             continue
         try:
             d = json.loads(body)
+            if not isinstance(d, dict):
+                _log.warning("corrupt manifest skipped: %s", key)
+                continue
             pid = d.get("project_id") or _MANIFEST.match(key).group(1)  # type: ignore[union-attr]
             out.append((pid, d.get("name")))
         except (json.JSONDecodeError, TypeError):

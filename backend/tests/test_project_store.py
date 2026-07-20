@@ -19,6 +19,7 @@ async def test_restore_reads_manifests_and_skips_garbage():
     root.blobs["pa/project.json"] = json.dumps({"project_id": "pa", "name": "A"})
     root.blobs["pb/project.json"] = json.dumps({"project_id": "pb", "name": None})
     root.blobs["pc/project.json"] = "{{{ not json"           # 손상 → 건너뜀
+    root.blobs["pd/project.json"] = "[1,2,3]"                # JSON but not dict → 건너뜀
     root.blobs["pa/aiplc-docs/audit.md"] = "# not a manifest"  # 매니페스트 아님 → 무시
     restored = dict(await restore_projects(root))
     assert restored == {"pa": "A", "pb": None}
