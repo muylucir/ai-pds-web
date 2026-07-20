@@ -14,6 +14,7 @@ import {
   listArtifacts,
   postMessage,
   getPending,
+  getHistory,
 } from "./client";
 
 describe("Content-Type header behavior", () => {
@@ -190,5 +191,14 @@ describe("api client request shaping + response typing", () => {
       http.get(`${API_BASE_URL}/projects/p2/pending`, () => HttpResponse.json({ pending: null })),
     );
     expect(await getPending("p2")).toBeNull();
+  });
+
+  it("getHistory GETs /history and returns items", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/history`, () =>
+        HttpResponse.json({ items: [{ role: "user", text: "hi", card: null, name: null }] }),
+      ),
+    );
+    expect(await getHistory("p1")).toEqual([{ role: "user", text: "hi", card: null, name: null }]);
   });
 });

@@ -6,6 +6,7 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
 import { ChatTimeline } from "./ChatTimeline";
+import type { ChatTimelineItem } from "./ChatTimeline";
 import type { ChatItem } from "@/lib/useTurnStream";
 import { strategyQuestions } from "@/test/fixtures/strategyQuestions";
 
@@ -61,5 +62,22 @@ describe("ChatTimeline", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: /우측 패널에서 열기/ }));
     expect(onOpenArtifact).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders a history-card item (from useWorkspaceStream) as a static summary, naming the questions file", () => {
+    const items: ChatTimelineItem[] = [{ id: "h1", role: "history-card", name: "mode-selection" }];
+    render(
+      <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />,
+    );
+    expect(screen.getByText(/질문지 제시됨/)).toBeInTheDocument();
+    expect(screen.getByText(/mode-selection/)).toBeInTheDocument();
+  });
+
+  it("renders a history-card item with no name without the trailing dash", () => {
+    const items: ChatTimelineItem[] = [{ id: "h2", role: "history-card", name: null }];
+    render(
+      <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />,
+    );
+    expect(screen.getByText("📋 질문지 제시됨")).toBeInTheDocument();
   });
 });

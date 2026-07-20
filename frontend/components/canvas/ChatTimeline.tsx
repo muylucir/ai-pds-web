@@ -1,9 +1,20 @@
 // frontend/components/canvas/ChatTimeline.tsx
-import type { ChatItem } from "@/lib/useTurnStream";
+import type { ChatItem as CanvasChatItem } from "@/lib/useTurnStream";
+import type { ChatItem as WorkspaceChatItem } from "@/lib/useWorkspaceStream";
 import { UserMessage } from "./UserMessage";
 import { AiMessage } from "./AiMessage";
 import { QuestionCardSlot } from "./QuestionCardSlot";
 import { ArtifactCard } from "./ArtifactCard";
+
+// The canvas-era page (useTurnStream) and the Task 11 workspace page
+// (useWorkspaceStream) both render through this ONE component, each with its
+// own ChatItem union — they share "user"/"ai" but diverge on the card shape
+// ("card" with a path vs. "history-card" with a name). Rather than forcing
+// one hook's type onto the other, the prop is declared as the union of BOTH,
+// and each branch below discriminates on `role` (a plain string switch, not
+// an `in` shape-check) so TS narrows correctly regardless of which hook
+// produced the item.
+export type ChatTimelineItem = CanvasChatItem | WorkspaceChatItem;
 
 export function ChatTimeline({
   items,
@@ -12,7 +23,7 @@ export function ChatTimeline({
   onOpenArtifact,
   busy,
 }: {
-  items: ChatItem[];
+  items: ChatTimelineItem[];
   projectId: string;
   onChoose: (text: string) => void;
   onOpenArtifact: () => void;
@@ -32,6 +43,18 @@ export function ChatTimeline({
           items.map((item) => {
             if (item.role === "user") return <UserMessage key={item.id} text={item.text} />;
             if (item.role === "ai") return <AiMessage key={item.id} item={item} />;
+            if (item.role === "history-card") {
+              // A questions file presented in a PAST turn (Task 5's history
+              // restore) — a static summary marker, never the live
+              // interactive QuestionCardSlot form (mockup 04's ml-11 idiom).
+              return (
+                <div key={item.id} className="ml-11 max-w-[85%]">
+                  <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs text-violet-700">
+                    📋 질문지 제시됨{item.name ? ` — ${item.name}` : ""}
+                  </div>
+                </div>
+              );
+            }
             // role === "card" — inline widget, indented under the AI avatar
             // column (mockup 04's ml-11 idiom for its submitted/artifact cards).
             return (

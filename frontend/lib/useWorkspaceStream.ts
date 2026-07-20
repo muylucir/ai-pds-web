@@ -2,8 +2,8 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { streamEvents, streamAnswers } from "@/lib/api/sse";
-import { getPending } from "@/lib/api/client";
-import type { AgentEvent, QuestionsPayload, StagePayload, DocumentPayload } from "@/lib/api/types";
+import { getPending, getHistory } from "@/lib/api/client";
+import type { AgentEvent, HistoryItem, QuestionsPayload, StagePayload, DocumentPayload } from "@/lib/api/types";
 import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
 
 // This is a NEW hook cloned+extended from useTurnStream for the Task 11
@@ -12,9 +12,19 @@ import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
 // useTurnStream, this hook has no CardItem derivation: cards were a
 // file-contract workaround for the old flow, and the workspace consumes the
 // new structured events (questions/stage/document) directly instead — so this
-// hook's own ChatItem union is user/ai only, no CardItem.
+// hook's own ChatItem union is user/ai plus a HISTORY-ONLY card marker (below)
+// restored from GET /history, never re-derived from live file_changed paths.
 export type { UserItem, AiItem } from "@/lib/useTurnStream";
-export type ChatItem = UserItem | AiItem;
+// A questions file presented in a PAST turn (Task 5's history restore) —
+// deliberately NOT the same shape as useTurnStream's QuestionsCardItem: this
+// is a static summary marker (role "history-card"), never rendered as the
+// live interactive QuestionCardSlot form.
+export interface HistoryCardItem {
+  id: string;
+  role: "history-card";
+  name: string | null;
+}
+export type ChatItem = UserItem | AiItem | HistoryCardItem;
 
 let counter = 0;
 const nextId = () => `wf-item-${counter++}`;
@@ -40,6 +50,13 @@ export interface WorkspaceStream {
   stages: StagePayload[];
   lastDocument: DocumentPayload | null;
   changedPaths: string[];
+  historyLoading: boolean;
+}
+
+function historyItemToChatItem(it: HistoryItem): ChatItem {
+  if (it.role === "card") return { id: nextId(), role: "history-card", name: it.name };
+  if (it.role === "user") return { id: nextId(), role: "user", text: it.text ?? "" };
+  return { id: nextId(), role: "ai", text: it.text ?? "", trace: [], streaming: false, error: null };
 }
 
 export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []): WorkspaceStream {
@@ -49,6 +66,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   const [stages, setStages] = useState<StagePayload[]>([]);
   const [lastDocument, setLastDocument] = useState<DocumentPayload | null>(null);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const stopRef = useRef<null | (() => void)>(null);
 
   const patchAi = useCallback((aiId: string, fn: (it: AiItem) => AiItem) => {
@@ -184,6 +202,26 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     };
   }, [projectId]);
 
+  // Restore the chat timeline itself (Task 5) from GET /history — a SEPARATE
+  // mount effect from the /pending restore above: independent endpoints,
+  // independent failure domains. Degrades to an empty timeline (not a thrown
+  // error) on failure, same fallback posture as /pending.
+  useEffect(() => {
+    let cancelled = false;
+    getHistory(projectId)
+      .then((h) => {
+        if (cancelled) return;
+        setItems(h.map(historyItemToChatItem));
+      })
+      .catch(() => {}) // degraded, not broken: items stays at its initial value
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
   // Close the stream if the component unmounts mid-turn.
   useEffect(() => () => stopRef.current?.(), []);
 
@@ -196,5 +234,6 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     stages,
     lastDocument,
     changedPaths,
+    historyLoading,
   };
 }

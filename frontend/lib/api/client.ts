@@ -1,6 +1,7 @@
 import { getAuthToken } from "@/lib/auth";
 import type {
   AuditEntry,
+  HistoryItem,
   ProjectState,
   ProjectSummary,
   QuestionFile,
@@ -124,4 +125,12 @@ export async function postMessage(pid: string, text: string): Promise<TurnResult
 export async function getPending(pid: string): Promise<string | null> {
   const r = await request<{ pending: string | null }>(`/projects/${encodeURIComponent(pid)}/pending`);
   return r.pending;
+}
+
+// GET /projects/{pid}/history → { items: HistoryItem[] } (Task 1) — restores
+// the chat timeline (user/ai messages + questions-card markers) on workspace
+// mount.
+export async function getHistory(pid: string): Promise<HistoryItem[]> {
+  const r = await request<{ items: HistoryItem[] }>(`/projects/${encodeURIComponent(pid)}/history`);
+  return r.items;
 }

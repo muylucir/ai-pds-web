@@ -39,6 +39,7 @@ function mockWorkspaceStream(overrides: Partial<workspaceStream.WorkspaceStream>
     stages: [],
     lastDocument: null,
     changedPaths: [],
+    historyLoading: false,
     ...overrides,
   });
 }

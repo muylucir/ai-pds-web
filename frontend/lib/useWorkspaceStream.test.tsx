@@ -10,6 +10,7 @@ vi.mock("@/lib/api/sse");
 vi.mock("@/lib/api/client", async (orig) => ({
   ...(await orig()),
   getPending: vi.fn().mockResolvedValue(null),
+  getHistory: vi.fn().mockResolvedValue([]),
 }));
 
 const QUESTIONS_PAYLOAD = JSON.stringify({
@@ -42,7 +43,7 @@ function drive(events: AgentEvent[], impl: "streamEvents" | "streamAnswers") {
 describe("useWorkspaceStream", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("questions event fills pendingQuestions; stage event appends stages", () => {
+  it("questions event fills pendingQuestions; stage event appends stages", async () => {
     drive(
       [
         { kind: "message", text: "준비", path: null, payload: null },
@@ -58,12 +59,13 @@ describe("useWorkspaceStream", () => {
       "streamEvents",
     );
     const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {}); // flush the mount-time history/pending effects first
     act(() => result.current.send("시작"));
     expect(result.current.pendingQuestions?.interrupt_id).toBe("i-1");
     expect(result.current.stages).toEqual([{ stage: "Envision", status: "in_progress", summary: "" }]);
   });
 
-  it("submitAnswers streams via streamAnswers and clears pendingQuestions", () => {
+  it("submitAnswers streams via streamAnswers and clears pendingQuestions", async () => {
     drive(
       [
         { kind: "questions", text: null, path: null, payload: QUESTIONS_PAYLOAD },
@@ -72,6 +74,7 @@ describe("useWorkspaceStream", () => {
       "streamEvents",
     );
     const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {}); // flush the mount-time history/pending effects first
     act(() => result.current.send("시작"));
     drive(
       [
@@ -91,7 +94,7 @@ describe("useWorkspaceStream", () => {
     expect(result.current.lastDocument?.version).toBe("v1");
   });
 
-  it("malformed payload does not crash the stream (fallback: chat keeps going)", () => {
+  it("malformed payload does not crash the stream (fallback: chat keeps going)", async () => {
     drive(
       [
         { kind: "questions", text: null, path: null, payload: "not-json{" },
@@ -101,6 +104,7 @@ describe("useWorkspaceStream", () => {
       "streamEvents",
     );
     const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {}); // flush the mount-time history/pending effects first
     act(() => result.current.send("시작"));
     expect(result.current.pendingQuestions).toBeNull();
     expect(result.current.items.some((i) => i.role === "ai" && i.text.includes("계속"))).toBe(true);
@@ -125,5 +129,26 @@ describe("useWorkspaceStream", () => {
     } finally {
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
     }
+  });
+
+  it("loads history into items on mount", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([
+      { role: "user", text: "시작", card: null, name: null },
+      { role: "ai", text: "환영", card: null, name: null },
+      { role: "card", text: null, card: "questions", name: "mode-selection" },
+    ]);
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    expect(result.current.historyLoading).toBe(true);
+    await act(async () => {});
+    expect(result.current.historyLoading).toBe(false);
+    expect(result.current.items.map((i) => i.role)).toEqual(["user", "ai", "history-card"]);
+  });
+
+  it("history load failure degrades to empty chat", async () => {
+    vi.mocked(client.getHistory).mockRejectedValue(new Error("boom"));
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    expect(result.current.historyLoading).toBe(false);
+    expect(result.current.items).toEqual([]);
   });
 });
