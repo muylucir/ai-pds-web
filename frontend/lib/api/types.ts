@@ -19,6 +19,9 @@ export interface Question {
   text: string;
   options: QuestionOption[];
   answer: string | null;
+  // Optional — file-parsed questions (raw_markdown fallback path) lack this
+  // field entirely; treat missing/undefined as false (single-select radios).
+  multi_select?: boolean;
 }
 
 export interface QuestionFile {

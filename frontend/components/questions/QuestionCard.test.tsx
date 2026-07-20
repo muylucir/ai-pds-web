@@ -1,10 +1,23 @@
 import { describe, it, expect, vi } from "vitest";
 import { useState } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QuestionCard } from "./QuestionCard";
 import { strategyQuestions } from "@/test/fixtures/strategyQuestions";
 import type { Question } from "@/lib/api/types";
+
+const MULTI_Q: Question = {
+  number: 1,
+  category: null,
+  text: "페인포인트 유형은?",
+  answer: null,
+  multi_select: true,
+  options: [
+    { letter: "A", text: "속도", is_other: false, recommended: false },
+    { letter: "B", text: "비용", is_other: false, recommended: false },
+    { letter: "C", text: "품질", is_other: false, recommended: false },
+  ],
+};
 
 const q1 = strategyQuestions.questions[0];
 
@@ -51,5 +64,28 @@ describe("QuestionCard", () => {
     // With the stateful harness, value accumulates, so the last onChange carries
     // the full string.
     expect(spy).toHaveBeenLastCalledWith("커스텀");
+  });
+
+  it("renders checkboxes for multi_select and joins letters with comma", () => {
+    let value = "";
+    const onChange = (v: string) => { value = v; };
+    const { rerender } = render(<QuestionCard question={MULTI_Q} value={value} onChange={onChange} />);
+    expect(screen.getAllByRole("checkbox")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("checkbox", { name: /속도/ }));
+    rerender(<QuestionCard question={MULTI_Q} value={value} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: /품질/ }));
+    expect(value).toBe("A,C");
+  });
+
+  it("unchecking removes the letter", () => {
+    let value = "A,C";
+    render(<QuestionCard question={MULTI_Q} value={value} onChange={(v) => { value = v; }} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: /속도/ }));
+    expect(value).toBe("C");
+  });
+
+  it("single-select questions still render radios", () => {
+    render(<QuestionCard question={{ ...MULTI_Q, multi_select: false }} value="" onChange={() => {}} />);
+    expect(screen.getAllByRole("radio").length).toBeGreaterThan(0);
   });
 });

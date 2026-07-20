@@ -11,8 +11,34 @@ export function QuestionCard({
   onChange: (next: string) => void;
 }) {
   const name = `q${question.number}`;
+  const multi = question.multi_select === true;
+
   // The selected non-Other letter, or "" when the Other free-text is in use.
+  // (Single-select only — see multiSelected/multiOtherActive below for multi.)
   const selectedLetter = question.options.some((o) => o.letter === value && !o.is_other) ? value : "";
+
+  // --- multi-select ---
+  // Value contract stays a plain string (QuestionForm's answers dict/submit
+  // path is unchanged): letters joined with "," in alphabetical order, e.g.
+  // "A,C". The Other(X) option's free-text value is unprefixed raw text —
+  // identical to the single-select convention above — which means a
+  // comma-joined multi value and an Other free-text value can only be told
+  // apart by checking whether every comma-split token is a known non-Other
+  // letter. Consequently Other CANNOT be combined with other picks in multi
+  // mode (there's no "A,X:<text>" form in scope): checking a letter clears
+  // any active Other free text, and using Other clears any checked letters.
+  // Other is therefore a sole selection in multi mode, same as single mode.
+  const nonOtherLetters = question.options.filter((o) => !o.is_other).map((o) => o.letter);
+  const isLetterList = (v: string) => v.split(",").filter(Boolean).every((t) => nonOtherLetters.includes(t));
+  const multiSelected = new Set(multi && isLetterList(value) ? value.split(",").filter(Boolean) : []);
+  const multiOtherActive = multi && value !== "" && !isLetterList(value);
+
+  function toggleLetter(letter: string) {
+    const next = new Set(multiSelected);
+    if (next.has(letter)) next.delete(letter);
+    else next.add(letter);
+    onChange([...next].sort().join(","));
+  }
 
   return (
     <fieldset className="bg-white rounded-xl border-2 border-violet-300 shadow-sm shadow-violet-100 overflow-hidden">
@@ -29,14 +55,14 @@ export function QuestionCard({
       <div className="p-6 space-y-3">
         {question.options.map((opt) => {
           if (opt.is_other) {
-            const otherActive = selectedLetter === "";
+            const otherActive = multi ? multiOtherActive : selectedLetter === "";
             return (
               <label key={opt.letter} className="block cursor-pointer">
                 <input
-                  type="radio"
+                  type={multi ? "checkbox" : "radio"}
                   name={name}
                   className="sr-only peer"
-                  checked={otherActive && value !== ""}
+                  checked={multi ? otherActive : otherActive && value !== ""}
                   onChange={() => onChange("")}
                 />
                 <div className="flex gap-3 rounded-xl border-2 border-dashed border-slate-200 p-4 hover:border-violet-200">
@@ -58,16 +84,16 @@ export function QuestionCard({
               </label>
             );
           }
-          const checked = selectedLetter === opt.letter;
+          const checked = multi ? multiSelected.has(opt.letter) : selectedLetter === opt.letter;
           return (
             <label key={opt.letter} className="block cursor-pointer">
               <input
-                type="radio"
+                type={multi ? "checkbox" : "radio"}
                 name={name}
                 value={opt.letter}
                 className="sr-only peer"
                 checked={checked}
-                onChange={() => onChange(opt.letter)}
+                onChange={() => (multi ? toggleLetter(opt.letter) : onChange(opt.letter))}
               />
               <div
                 className={`flex gap-3 rounded-xl border-2 p-4 hover:border-violet-200 ${

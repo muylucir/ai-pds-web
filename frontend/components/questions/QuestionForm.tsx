@@ -2,6 +2,7 @@
 import { useState } from "react";
 import type { QuestionFile } from "@/lib/api/types";
 import { answeredCount } from "@/lib/stageProgress";
+import { Markdown } from "@/components/Markdown";
 import { QuestionCard } from "./QuestionCard";
 
 export function QuestionForm({
@@ -45,7 +46,9 @@ export function QuestionForm({
       {file.preamble && (
         <div className="flex gap-3 bg-sky-50 border border-sky-200 rounded-xl p-4 text-sm">
           <span className="text-lg" aria-hidden="true">💡</span>
-          <p className="text-sky-800">{file.preamble}</p>
+          <div className="text-sky-800">
+            <Markdown text={file.preamble} />
+          </div>
         </div>
       )}
 
