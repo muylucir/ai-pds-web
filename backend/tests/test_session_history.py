@@ -35,7 +35,7 @@ def test_transform_ask_questions_becomes_card_and_answer_message():
     items = transform_messages(RAW)
     assert HistoryItem(role="card", card="questions", name="discovery-mode-selection") in items
     answers = [i for i in items if i.role == "user" and i.text and i.text.startswith("답변 제출")]
-    assert answers and '"1": "A"' in answers[0].text
+    assert answers and answers[0].text == "답변 제출 — 1: A"
 
 def test_transform_skips_reasoning_and_other_tool_blocks():
     items = transform_messages(RAW)
@@ -61,3 +61,32 @@ async def test_list_history_reads_sorted_and_tolerates_empty():
     items = await list_history(s3, "p1")
     assert [i.text for i in items] == ["두번째", "열번째"]  # 숫자 정렬 (문자열 정렬이면 10<2)
     assert await list_history(FakeS3Store(), "없는세션") == []
+
+
+def test_answer_summary_is_human_readable_not_raw_json():
+    raw = [
+        _msg("assistant", [
+            {"toolUse": {"toolUseId": "tu-a", "name": "ask_questions",
+                         "input": {"questions_file": {"name": "q", "questions": []}}}}], 0),
+        _msg("user", [
+            {"toolResult": {"toolUseId": "tu-a", "status": "success",
+                            "content": [{"text": '사용자 답변: {"1": "A", "2": "B,C"}'}]}}], 1),
+    ]
+    items = transform_messages(raw)
+    answer = next(i for i in items if i.role == "user")
+    # raw JSON braces가 아니라 "1: A · 2: B,C" 형태
+    assert answer.text == "답변 제출 — 1: A · 2: B,C"
+
+
+def test_answer_summary_falls_back_to_raw_when_not_json():
+    raw = [
+        _msg("assistant", [
+            {"toolUse": {"toolUseId": "tu-a", "name": "ask_questions",
+                         "input": {"questions_file": {"name": "q", "questions": []}}}}], 0),
+        _msg("user", [
+            {"toolResult": {"toolUseId": "tu-a", "status": "success",
+                            "content": [{"text": "사용자 답변: 자유 서술 응답"}]}}], 1),
+    ]
+    items = transform_messages(raw)
+    answer = next(i for i in items if i.role == "user")
+    assert answer.text == "답변 제출: 자유 서술 응답"

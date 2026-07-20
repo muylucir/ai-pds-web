@@ -61,7 +61,9 @@ export function QuestionForm({
         />
       ))}
 
-      <div className="sticky bottom-0 bg-white/90 backdrop-blur border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3 shadow-lg shadow-slate-200/50">
+      {/* 제출 바: 반투명+blur는 스크롤 시 뒤 질문 텍스트가 비쳐 "깨진" 것처럼
+          보인다(우측 패널처럼 좁은 스크롤 컨테이너에서 특히) — 불투명 흰색. */}
+      <div className="sticky bottom-0 bg-white border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3 shadow-lg shadow-slate-200/50">
         <div className="text-xs text-slate-500 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true" />
           모든 답변은 audit.md에 원문 그대로 기록됩니다

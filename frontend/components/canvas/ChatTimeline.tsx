@@ -32,19 +32,22 @@ export function ChatTimeline({
   busy: boolean;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
 
   // Smart autoscroll: only snap to the bottom when the user is already
   // (roughly) there — someone scrolled up to re-read earlier turns must not
-  // get yanked back down every time a new streaming chunk lands. jsdom does
-  // NOT implement Element.scrollIntoView (it's `undefined` on the
-  // prototype), so this component's own unit tests would crash on every
-  // items change without the existence guard below.
+  // get yanked back down every time a new streaming chunk lands.
+  //
+  // Deliberately NOT scrollIntoView(): that API scrolls EVERY scrollable
+  // ancestor (html included), and during initial history hydration it can
+  // scroll the document itself by a transient overflow — leaving the page
+  // stuck shifted up (header off-screen, body background showing at the
+  // bottom) once layout settles back to 100vh. Setting scrollTop touches
+  // only this container, so the page can never move.
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (nearBottom) bottomRef.current?.scrollIntoView?.({ block: "end" });
+    if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [items]);
 
   return (
@@ -94,7 +97,6 @@ export function ChatTimeline({
             <span className="italic">&quot;이전 단계로 돌아가고 싶어&quot;</span>
           </p>
         )}
-        <div ref={bottomRef} />
       </div>
     </div>
   );

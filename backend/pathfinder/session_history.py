@@ -44,10 +44,23 @@ def transform_messages(raw: list[dict]) -> list[HistoryItem]:
                 tr = block["toolResult"]
                 if tr.get("toolUseId") in ask_ids:
                     inner = "".join(c.get("text", "") for c in tr.get("content", []))
-                    # 도구 결과 원문("사용자 답변: {...}")에서 답변부만 살린 요약
+                    # 도구 결과 원문("사용자 답변: {...}")에서 답변부만 살린 요약.
+                    # 답변이 JSON 객체면 사람이 읽을 "번호: 값 · ..." 형태로 —
+                    # raw JSON을 사용자 말풍선에 그대로 노출하지 않는다.
                     answer = inner.replace("사용자 답변: ", "", 1)
+                    try:
+                        parsed = json.loads(answer)
+                        if isinstance(parsed, dict) and parsed:
+                            pretty = " · ".join(
+                                f"{k}: {v}" for k, v in sorted(
+                                    parsed.items(), key=lambda kv: str(kv[0])))
+                            summary = f"답변 제출 — {pretty}"
+                        else:
+                            summary = f"답변 제출: {answer}"
+                    except (json.JSONDecodeError, TypeError):
+                        summary = f"답변 제출: {answer}"
                     items.append(HistoryItem(
-                        role="user", text=redact_credentials(f"답변 제출: {answer}")))
+                        role="user", text=redact_credentials(summary)))
             # reasoningContent 및 기타 블록은 생략
         if texts:
             joined = redact_credentials("\n".join(texts))
