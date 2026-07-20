@@ -4,25 +4,29 @@ import Link from "next/link";
 import { readArtifact, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { Markdown } from "@/components/Markdown";
-import type { DocumentPayload } from "@/lib/api/types";
 
-// The workspace's 4th column (spec addendum: 4-pane grid). Renders the most
-// recently generated/updated document INLINE so the user reads it without
-// leaving the workspace for the review route. Content is fetched from the
-// stream's `lastDocument` (path + version); the version is part of the fetch
-// key so a later document update re-reads the file automatically.
+// The workspace's 4th column. Renders the document the CONVERSATION is
+// currently about (activeDoc — submit_document 이벤트뿐 아니라 doc성
+// file_changed도 추적, ui-bug2 싱크 수정) inline so the user reads it
+// without leaving the workspace.
+//
+// turnSeq: 턴이 끝날 때마다 증가하는 시퀀스. 문서 이벤트가 도착한 시점에는
+// VM→S3 동기화 전이라 읽기가 비거나 404일 수 있으므로, 턴 종료 시점에
+// 다시 읽는다 (fetch 키에 포함).
 //
 // Hidden below `lg` — the same responsive posture as StageSidebar and
 // WorkspaceRightPanel; on narrow screens the review route is the fallback.
 export function WorkspaceDocPanel({
   projectId,
-  lastDocument,
+  activeDoc,
+  turnSeq,
 }: {
   projectId: string;
-  lastDocument: DocumentPayload | null;
+  activeDoc: { path: string; version: string | null } | null;
+  turnSeq: number;
 }) {
-  const path = lastDocument?.path ?? null;
-  const version = lastDocument?.version ?? null;
+  const path = activeDoc?.path ?? null;
+  const version = activeDoc?.version ?? null;
   // 404 is treated as an empty doc (the file may lag the event by a beat),
   // mirroring the review page; any other error surfaces as a load-error note.
   const content = useAsync(
@@ -32,8 +36,8 @@ export function WorkspaceDocPanel({
         : readArtifact(projectId, path).catch((e) =>
             e instanceof ApiError && e.status === 404 ? "" : Promise.reject(e),
           ),
-    // version in the key: a new version of the same path re-reads the file.
-    [projectId, path, version],
+    // turnSeq in the key: 턴 종료마다 재읽기 (턴 중 동기화 지연 보정).
+    [projectId, path, turnSeq],
   );
 
   const name = path ? path.slice(path.lastIndexOf("/") + 1) : null;

@@ -51,6 +51,27 @@ export interface WorkspaceStream {
   lastDocument: DocumentPayload | null;
   changedPaths: string[];
   historyLoading: boolean;
+  // 문서 패널이 따라가야 할 "지금 대화 중인 문서" — submit_document뿐 아니라
+  // doc성 file_changed(아래 isDocPath)도 최신-승리로 추적한다. version은
+  // submit_document에서 온 경우에만 채워진다 (ui-bug2 싱크 수정).
+  activeDoc: { path: string; version: string | null } | null;
+  // 턴이 끝날 때마다 증가 — 패널이 이 키로 문서를 다시 읽는다. 턴 도중
+  // 도착한 document 이벤트 시점에는 VM→S3 동기화 전이라 읽기가 빈 내용/404가
+  // 될 수 있고, 그대로 두면 재읽기가 영영 없다 (ui-bug2의 "비어 있음" 수정).
+  turnSeq: number;
+}
+
+// 문서 패널이 따라갈 가치가 있는 산출물 경로인가 — aiplc-docs/ 아래 .md 중
+// 기록성 파일(audit/state)은 제외.
+function isDocPath(path: string): boolean {
+  return (
+    path.startsWith("aiplc-docs/") &&
+    path.endsWith(".md") &&
+    !path.endsWith("/audit.md") &&
+    path !== "aiplc-docs/audit.md" &&
+    !path.endsWith("/aiplc-state.md") &&
+    path !== "aiplc-docs/aiplc-state.md"
+  );
 }
 
 function historyItemToChatItem(it: HistoryItem): ChatItem {
@@ -76,6 +97,8 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   const [lastDocument, setLastDocument] = useState<DocumentPayload | null>(null);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [activeDoc, setActiveDoc] = useState<{ path: string; version: string | null } | null>(null);
+  const [turnSeq, setTurnSeq] = useState(0);
   const stopRef = useRef<null | (() => void)>(null);
   // Set the instant a live turn (send/submitAnswers) starts. GET /history can
   // still be in flight when that happens — history strictly precedes the live
@@ -97,6 +120,10 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     (aiId: string, ev: AgentEvent) => {
       if (ev.kind === "file_changed" && ev.path) {
         setChangedPaths((prev) => (prev.includes(ev.path as string) ? prev : [...prev, ev.path as string]));
+        // 에이전트는 대부분의 문서를 submit_document 없이 file_write로만
+        // 만든다(실측: prfaq.md 등) — doc성 쓰기도 활성 문서로 추적해야
+        // 패널이 대화를 따라간다 (ui-bug2).
+        if (isDocPath(ev.path)) setActiveDoc({ path: ev.path, version: null });
       }
       if (ev.kind === "questions") {
         const parsed = safeParse<QuestionsPayload>(ev.payload);
@@ -110,7 +137,10 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       }
       if (ev.kind === "document") {
         const parsed = safeParse<DocumentPayload>(ev.payload);
-        if (parsed) setLastDocument(parsed);
+        if (parsed) {
+          setLastDocument(parsed);
+          setActiveDoc({ path: parsed.path, version: parsed.version });
+        }
         return;
       }
       patchAi(aiId, (it) => {
@@ -146,6 +176,10 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         finished = true;
         setStreaming(false);
         stopRef.current = null;
+        // 턴 종료 신호 — 문서 패널이 이 시퀀스로 재읽기한다. 턴 중간의
+        // document/file_changed 시점에는 VM→S3 동기화 전이라 S3 읽기가
+        // 빈 값일 수 있다; 동기화는 턴 완료 후 끝나므로 여기서 올린다.
+        setTurnSeq((n) => n + 1);
       };
       const stop = opener({
         onEvent: (ev) => applyEvent(aiId, ev),
@@ -258,5 +292,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     lastDocument,
     changedPaths,
     historyLoading,
+    activeDoc,
+    turnSeq,
   };
 }

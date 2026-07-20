@@ -27,7 +27,7 @@ import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
-  const { items, streaming, send, submitAnswers, pendingQuestions, stages, lastDocument, changedPaths, historyLoading } =
+  const { items, streaming, send, submitAnswers, pendingQuestions, stages, lastDocument, changedPaths, historyLoading, activeDoc, turnSeq } =
     useWorkspaceStream(projectId);
   // Show the Path A/B welcome starter only once history has finished loading
   // (avoids a flash of the welcome card before restored history arrives) AND
@@ -89,7 +89,11 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   }, [sheetOpen]);
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    // relative: 심층 방어 — 후손의 absolute 요소(sr-only 등)가 static 조상
+    // 체인을 타고 문서 루트 기준으로 배치되면 <html>에 유령 오버플로가 생겨
+    // 포커스 이동만으로 헤더가 말려 올라간다(ui-bug.png). 루트를 포지셔닝
+    // 컨텍스트로 만들어 이 클래스의 버그를 페이지 차원에서 차단한다.
+    <div className="relative h-screen flex flex-col overflow-hidden">
       <AppHeader activeTab="workspace" projectId={projectId} />
       <div className="flex-1 grid min-h-0 grid-cols-1 lg:grid-cols-[1fr_3.5fr_3.5fr_4fr]">
         <StageSidebar state={state.data} events={stages} />
@@ -162,7 +166,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           busy={streaming}
         />
 
-        <WorkspaceDocPanel projectId={projectId} lastDocument={lastDocument} />
+        <WorkspaceDocPanel projectId={projectId} activeDoc={activeDoc} turnSeq={turnSeq} />
       </div>
 
       {sheetOpen && pendingQuestions && (

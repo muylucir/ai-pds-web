@@ -46,11 +46,26 @@ function mockWorkspaceStream(overrides: Partial<workspaceStream.WorkspaceStream>
     lastDocument: null,
     changedPaths: [],
     historyLoading: false,
+    activeDoc: null,
+    turnSeq: 0,
     ...overrides,
   });
 }
 
 describe("Workspace page", () => {
+  it("루트 컨테이너가 relative — absolute 후손의 유령 오버플로를 페이지 안에 가둔다 (헤더 고정 회귀)", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ historyLoading: true });
+    let container: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<WorkspacePage params={params} />));
+    });
+    const root = container!.querySelector("div.h-screen");
+    expect(root).not.toBeNull();
+    expect(root!.className).toContain("relative");
+    expect(root!.className).toContain("overflow-hidden");
+  });
+
   it("renders the three-pane grid: stage sidebar, chat, context panel", async () => {
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
     // historyLoading: true keeps the welcome card from covering the

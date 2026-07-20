@@ -41,7 +41,11 @@ export function QuestionCard({
   }
 
   return (
-    <fieldset className="bg-white rounded-xl border-2 border-violet-300 shadow-sm shadow-violet-100 overflow-hidden">
+    // relative 필수: sr-only <legend>(absolute)를 이 fieldset 안에 가둔다.
+    // static이면 legend가 문서 루트 기준으로 배치되어 <html>에 유령
+    // 오버플로를 만들고, 라벨 클릭(=input.focus())마다 문서가 스크롤되며
+    // 헤더가 말려 올라간다(ui-bug.png). 라벨의 relative와 세트.
+    <fieldset className="relative bg-white rounded-xl border-2 border-violet-300 shadow-sm shadow-violet-100 overflow-hidden">
       <legend className="sr-only">질문 {question.number}</legend>
       <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
         <span className="w-7 h-7 rounded-full bg-violet-600 text-white flex items-center justify-center text-xs font-bold" aria-hidden="true">
@@ -57,7 +61,11 @@ export function QuestionCard({
           if (opt.is_other) {
             const otherActive = multi ? multiOtherActive : selectedLetter === "";
             return (
-              <label key={opt.letter} className="block cursor-pointer">
+              // relative 필수: sr-only 인풋은 absolute라, 부모가 static이면
+              // 문서 루트 기준 좌표(질문지 전체 높이)로 배치되어 <html>에
+              // 유령 오버플로를 만든다 → 라벨 클릭(=input.focus())마다 문서가
+              // 그 좌표로 스크롤되며 헤더가 말려 올라감(ui-bug.png 회귀).
+              <label key={opt.letter} className="relative block cursor-pointer">
                 <input
                   type={multi ? "checkbox" : "radio"}
                   name={name}
@@ -86,7 +94,8 @@ export function QuestionCard({
           }
           const checked = multi ? multiSelected.has(opt.letter) : selectedLetter === opt.letter;
           return (
-            <label key={opt.letter} className="block cursor-pointer">
+            // relative: 위 Other 라벨과 동일한 이유 (sr-only absolute 인풋 가둠)
+            <label key={opt.letter} className="relative block cursor-pointer">
               <input
                 type={multi ? "checkbox" : "radio"}
                 name={name}

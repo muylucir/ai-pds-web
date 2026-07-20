@@ -89,3 +89,35 @@ describe("QuestionCard", () => {
     expect(screen.getAllByRole("radio").length).toBeGreaterThan(0);
   });
 });
+
+describe("QuestionCard — sr-only 인풋의 포지셔닝 컨텍스트 (스크롤 말림 회귀)", () => {
+  // 회귀: sr-only(absolute) 인풋의 부모 label이 static이면 인풋 좌표가 문서
+  // 루트 기준이 되어, 긴 질문지에서 <html>에 유령 오버플로를 만든다. 라벨
+  // 클릭(=input.focus())마다 브라우저가 문서를 그 좌표로 스크롤해 헤더가
+  // 말려 올라갔다(ui-bug.png). 모든 sr-only 인풋의 offsetParent가 자기
+  // label(=relative) 안에 갇혀 있어야 한다.
+  it("모든 옵션 인풋의 label이 relative 포지셔닝 컨텍스트를 만든다", () => {
+    render(
+      <Harness question={{ ...q1, multi_select: false }} initial="" spy={vi.fn()} />,
+    );
+    const inputs = document.querySelectorAll("input.sr-only");
+    expect(inputs.length).toBeGreaterThan(0);
+    for (const input of inputs) {
+      const label = input.closest("label");
+      expect(label).not.toBeNull();
+      expect(label!.className).toContain("relative");
+    }
+  });
+
+  it("fieldset도 relative — sr-only legend를 카드 안에 가둔다", () => {
+    // 실측(Playwright): 라벨 relative만으로는 html 오버플로 1886→1547px,
+    // fieldset relative까지 적용해야 0. legend.sr-only(absolute)가 남은
+    // 기여자였다.
+    render(
+      <Harness question={{ ...q1, multi_select: false }} initial="" spy={vi.fn()} />,
+    );
+    const fieldset = document.querySelector("fieldset");
+    expect(fieldset).not.toBeNull();
+    expect(fieldset!.className).toContain("relative");
+  });
+});

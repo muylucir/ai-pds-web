@@ -214,3 +214,77 @@ it("restores tool traces onto AI history items", async () => {
     ]);
   }
 });
+
+describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug2)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("doc성 file_changed가 activeDoc을 갱신한다 (submit_document 없이도)", async () => {
+    drive(
+      [
+        { kind: "file_changed", text: null, path: "aiplc-docs/discovery/envision/prfaq.md", payload: null },
+        { kind: "done", text: null, path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("PR/FAQ 작성해줘"));
+    expect(result.current.activeDoc).toEqual({
+      path: "aiplc-docs/discovery/envision/prfaq.md",
+      version: null,
+    });
+  });
+
+  it("audit.md/aiplc-state.md 쓰기는 activeDoc을 바꾸지 않는다", async () => {
+    drive(
+      [
+        { kind: "file_changed", text: null, path: "aiplc-docs/audit.md", payload: null },
+        { kind: "file_changed", text: null, path: "aiplc-docs/aiplc-state.md", payload: null },
+        { kind: "done", text: null, path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행"));
+    expect(result.current.activeDoc).toBeNull();
+  });
+
+  it("document 이벤트(submit_document)는 version과 함께 activeDoc을 갱신하고, 이후 doc성 file_changed가 최신-승리한다", async () => {
+    drive(
+      [
+        {
+          kind: "document", text: null, path: null,
+          payload: JSON.stringify({ path: "aiplc-docs/discovery/discovery-document.md", version: "v1", summary: "" }),
+        },
+        { kind: "file_changed", text: null, path: "aiplc-docs/discovery/envision/prfaq.md", payload: null },
+        { kind: "done", text: null, path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("문서 갱신"));
+    // 마지막에 쓴 문서(prfaq)가 활성 — 대화가 지금 다루는 문서를 따른다.
+    expect(result.current.activeDoc).toEqual({
+      path: "aiplc-docs/discovery/envision/prfaq.md",
+      version: null,
+    });
+  });
+
+  it("턴이 끝날 때마다 turnSeq가 증가한다 (에러 종료 포함)", async () => {
+    drive([{ kind: "done", text: null, path: null, payload: null }], "streamEvents");
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    expect(result.current.turnSeq).toBe(0);
+    act(() => result.current.send("첫 턴"));
+    expect(result.current.turnSeq).toBe(1);
+    // 에러로 끝나는 턴도 재읽기 신호를 줘야 한다 (부분 산출물 동기화 가능).
+    vi.mocked(sse.streamEvents).mockImplementation((_pid: any, _arg: any, handlers: any) => {
+      handlers.onError?.(new Error("boom"));
+      return () => {};
+    });
+    act(() => result.current.send("둘째 턴"));
+    expect(result.current.turnSeq).toBe(2);
+  });
+});
