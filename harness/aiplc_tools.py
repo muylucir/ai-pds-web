@@ -92,7 +92,9 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None]) -> list:
 
     @tool
     def file_write(path: str, content: str) -> str:
-        """워크스페이스 파일을 쓴다 (aiplc-docs/ 산출물 등).
+        """워크스페이스 파일 전체를 덮어쓴다 — content가 파일의 유일한 내용이 된다.
+        기존 내용에 덧붙이려면(특히 audit.md 엔트리 추가) 반드시 file_append를
+        사용할 것. 부분 내용으로 file_write를 호출하면 이전 내용이 전부 유실된다.
 
         Args:
             path: 워크스페이스 상대 경로.
@@ -104,4 +106,20 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None]) -> list:
         emit(AgentEvent(kind="file_changed", path=path))
         return f"written: {path}"
 
-    return [ask_questions, report_stage, submit_document, file_read, file_write]
+    @tool
+    def file_append(path: str, content: str) -> str:
+        """워크스페이스 파일 끝에 content를 덧붙인다 — 기존 내용은 보존된다.
+        audit.md 엔트리 추가 등 누적 기록에 사용. 파일이 없으면 새로 만든다.
+
+        Args:
+            path: 워크스페이스 상대 경로.
+            content: 덧붙일 내용.
+        """
+        p = _confine(workspace, path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(content)
+        emit(AgentEvent(kind="file_changed", path=path))
+        return f"appended: {path}"
+
+    return [ask_questions, report_stage, submit_document, file_read, file_write, file_append]

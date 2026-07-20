@@ -142,3 +142,74 @@ describe("Review page", () => {
     expect(screen.queryByRole("button", { name: /승인하고 다음 단계로/ })).not.toBeInTheDocument();
   });
 });
+
+describe("Review page — width, download, status badge", () => {
+  it("uses the widened layout instead of max-w-7xl", async () => {
+    mockTreeAndAudit();
+    let container: HTMLElement;
+    await act(async () => {
+      ({ container } = render(<ReviewPage params={params} />));
+    });
+    const main = container!.querySelector("main");
+    expect(main?.className).not.toContain("max-w-7xl");
+    expect(main?.className).toContain("max-w-[1720px]");
+  });
+
+  it("downloads the selected document as .md via a Blob link", async () => {
+    mockTreeAndAudit();
+    // jsdom은 URL.createObjectURL을 구현하지 않음 — stub으로 주입
+    const createSpy = vi.fn().mockReturnValue("blob:mock");
+    const revokeSpy = vi.fn();
+    (URL as unknown as { createObjectURL: unknown }).createObjectURL = createSpy;
+    (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = revokeSpy;
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    await screen.findByRole("button", { name: /discovery-document\.md/ });
+    const dl = await screen.findByRole("button", { name: /\.md 다운로드/ });
+    await userEvent.click(dl);
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const blob = createSpy.mock.calls[0][0] as Blob;
+    expect(blob.type).toContain("text/markdown");
+    expect(clickSpy).toHaveBeenCalled();
+    expect(revokeSpy).toHaveBeenCalledWith("blob:mock");
+    delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+    delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+    clickSpy.mockRestore();
+  });
+
+  it("shows a document status badge from aiplc-state and explains the gate actions", async () => {
+    mockTreeAndAudit();
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/state`, () =>
+        HttpResponse.json({
+          project_type: "Greenfield", current_stage: "Discovery Document",
+          stages: [{ name: "Discovery Document", status: "in_progress", note: null }],
+        })),
+    );
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    expect(await screen.findByText("초안 검토 중")).toBeInTheDocument();
+    // 승인/수정이 각각 무엇을 하는지 안내 문구가 게이트에 있어야 한다
+    const gate = screen.getByRole("alert");
+    expect(gate.textContent).toMatch(/승인.*Discovery 단계를 완료/);
+    expect(gate.textContent).toMatch(/수정 요청.*AI가 문서를 고쳐/);
+  });
+
+  it("shows the approved badge when the stage is completed", async () => {
+    mockTreeAndAudit();
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/state`, () =>
+        HttpResponse.json({
+          project_type: "Greenfield", current_stage: "Discovery Document",
+          stages: [{ name: "Discovery Document", status: "completed", note: null }],
+        })),
+    );
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    expect(await screen.findByText("승인 완료")).toBeInTheDocument();
+  });
+});

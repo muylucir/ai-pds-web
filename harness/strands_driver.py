@@ -25,7 +25,10 @@ _CONTACT_ADDENDUM = f"""
   전달 자체는 도구로만 한다. {QUESTIONS_SCHEMA_HINT}
 - 스테이지를 시작/완료할 때마다 report_stage 도구를 호출한다.
 - discovery-document를 생성/갱신할 때마다 submit_document 도구를 호출한다.
-- 파일 접근은 file_read / file_write 도구만 사용한다 (경로는 워크스페이스 상대).
+- 파일 접근은 file_read / file_write / file_append 도구만 사용한다 (경로는 워크스페이스 상대).
+- file_write는 파일 **전체를 덮어쓴다**. audit.md에 엔트리를 추가할 때는 반드시
+  file_append를 사용한다 — 새 엔트리만 담아 file_write를 호출하면 기존 감사
+  기록이 전부 유실된다.
 """
 
 

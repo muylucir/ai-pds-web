@@ -6,8 +6,20 @@ import { DocumentPanel } from "@/components/review/DocumentPanel";
 import { ApprovalGate } from "@/components/review/ApprovalGate";
 import { VerificationSummary } from "@/components/review/VerificationSummary";
 import { Markdown } from "@/components/Markdown";
-import { listArtifacts, readArtifact, getAudit, postMessage, ApiError } from "@/lib/api/client";
+import { listArtifacts, readArtifact, getAudit, getState, postMessage, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
+
+// 클라이언트 Blob 다운로드 — 백엔드 왕복 없이 현재 로드된 마크다운을 저장한다.
+function downloadMarkdown(path: string, content: string) {
+  const name = path.slice(path.lastIndexOf("/") + 1) || "document.md";
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function ReviewPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
@@ -17,6 +29,10 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
 
   const tree = useAsync(() => listArtifacts(projectId), [projectId]);
   const audit = useAsync(() => getAudit(projectId), [projectId]);
+  // Discovery Document 스테이지 상태 → 게이트 배지(초안 검토 중 / 승인 완료).
+  // state 로드 실패는 배지 미표시로 강등(게이트 동작 자체는 영향 없음).
+  const state = useAsync(() => getState(projectId).catch(() => null), [projectId]);
+  const docStage = state.data?.stages.find((s) => s.name === "Discovery Document");
 
   // Default selection: once the artifact tree loads, select
   // discovery-document.md if present. Guarded by `selected === null` so a
@@ -60,10 +76,15 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   return (
     <>
       <AppHeader activeTab="review" projectId={projectId} />
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="max-w-[1720px] mx-auto px-6 py-8">
         {isDiscoveryDocument && !contentLoadError && (
           <>
-            <ApprovalGate onApprove={() => sendTurn("승인")} onRevise={(t) => sendTurn(t)} busy={busy} />
+            <ApprovalGate
+              onApprove={() => sendTurn("승인")}
+              onRevise={(t) => sendTurn(t)}
+              busy={busy}
+              stageStatus={docStage?.status ?? null}
+            />
             {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
             {busy && <p className="text-sm text-slate-400 mb-4">AI가 요청을 처리하고 있습니다…</p>}
           </>
@@ -78,19 +99,33 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
             <div className="bg-white rounded-xl border border-slate-200 p-6">
               <p className="text-sm text-rose-600">문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
             </div>
-          ) : isDiscoveryDocument ? (
-            <div className="grid lg:grid-cols-3 gap-6">
-              <DocumentPanel markdown={content.data ?? ""} />
-              <VerificationSummary entries={audit.data ?? []} />
-            </div>
           ) : selected === null ? (
             <div className="bg-white rounded-xl border border-slate-200 p-6">
               <p className="text-sm text-slate-400">좌측에서 문서를 선택하세요.</p>
             </div>
           ) : (
-            <article className="bg-white rounded-xl border border-slate-200 p-6">
-              <Markdown text={content.data ?? ""} />
-            </article>
+            <div>
+              <div className="flex justify-end mb-3">
+                <button
+                  type="button"
+                  onClick={() => downloadMarkdown(selected, content.data ?? "")}
+                  disabled={content.loading}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  ⬇ .md 다운로드
+                </button>
+              </div>
+              {isDiscoveryDocument ? (
+                <div className="grid lg:grid-cols-3 gap-6">
+                  <DocumentPanel markdown={content.data ?? ""} />
+                  <VerificationSummary entries={audit.data ?? []} />
+                </div>
+              ) : (
+                <article className="bg-white rounded-xl border border-slate-200 p-6">
+                  <Markdown text={content.data ?? ""} />
+                </article>
+              )}
+            </div>
           )}
         </div>
       </main>

@@ -5,13 +5,23 @@ export function ApprovalGate({
   onApprove,
   onRevise,
   busy,
+  stageStatus = null,
 }: {
   onApprove: () => void;
   onRevise: (text: string) => void;
   busy: boolean;
+  // aiplc-state의 Discovery Document 스테이지 상태 — 배지 표시용.
+  // null이면(state 미로드/스테이지 없음) 배지를 숨긴다.
+  stageStatus?: "pending" | "in_progress" | "completed" | null;
 }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
+  const badge =
+    stageStatus === "completed"
+      ? { label: "승인 완료", cls: "bg-emerald-400/20 border-emerald-200/50 text-emerald-50" }
+      : stageStatus !== null
+        ? { label: "초안 검토 중", cls: "bg-amber-400/20 border-amber-200/50 text-amber-50" }
+        : null;
 
   return (
     <>
@@ -22,10 +32,20 @@ export function ApprovalGate({
         <div className="flex gap-4">
           <span className="text-3xl shrink-0" aria-hidden="true">🚦</span>
           <div>
-            <h1 className="text-lg font-bold">승인 게이트</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold">승인 게이트</h1>
+              {badge && (
+                <span className={`text-xs px-2.5 py-0.5 rounded-full border ${badge.cls}`}>
+                  {badge.label}
+                </span>
+              )}
+            </div>
             <p className="text-violet-100 text-sm mt-1">
-              AI가 Discovery Document를 작성했습니다. 검토 후 승인해야 다음 단계로 진행됩니다.
-              승인·수정요청은 모두 감사 로그에 기록됩니다.
+              AI가 작성한 Discovery Document의 최종 확정 단계입니다.{" "}
+              <b className="text-white">승인</b>하면 이 문서로 Discovery 단계를 완료하고 개발
+              핸드오프 준비로 넘어갑니다. <b className="text-white">수정 요청</b>은 자연어로
+              전달되어 AI가 문서를 고쳐 다시 이 게이트로 돌아옵니다. 두 행동 모두 감사
+              로그에 기록됩니다.
             </p>
           </div>
         </div>

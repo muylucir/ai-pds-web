@@ -91,3 +91,29 @@ def test_file_read_confined(tmp_path):
     assert fr(path="aiplc-rules/r.md") == "rule"
     with pytest.raises(ValueError):
         fr(path="/etc/passwd")
+
+
+def test_file_append_appends_and_creates(tmp_path):
+    emitted = []
+    tools = build_tools(str(tmp_path), emitted.append)
+    fa = _tool_by_name(tools, "file_append")
+    # 파일이 없으면 생성(=write)
+    fa(path="aiplc-docs/audit.md", content="## Entry 1\n")
+    assert (tmp_path / "aiplc-docs" / "audit.md").read_text() == "## Entry 1\n"
+    # 있으면 뒤에 덧붙임 — 기존 내용 보존
+    fa(path="aiplc-docs/audit.md", content="## Entry 2\n")
+    assert (tmp_path / "aiplc-docs" / "audit.md").read_text() == "## Entry 1\n## Entry 2\n"
+    assert [e.kind for e in emitted] == ["file_changed", "file_changed"]
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        fa(path="../etc/passwd", content="x")
+
+
+def test_file_write_docstring_warns_full_overwrite(tmp_path):
+    # audit 유실 회귀 가드: 도구 설명 자체가 모델에게 의미를 전달하므로
+    # file_write 설명에 "전체를 덮어쓴다" 경고와 audit→file_append 유도가 있어야 한다.
+    tools = build_tools(str(tmp_path), lambda e: None)
+    fw = _tool_by_name(tools, "file_write")
+    desc = fw.tool_spec["description"]
+    assert "덮어쓴다" in desc or "덮어쓰" in desc
+    assert "file_append" in desc
