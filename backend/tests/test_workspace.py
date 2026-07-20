@@ -33,7 +33,8 @@ async def test_missing_document_returns_empty(tmp_path):
 async def test_registry_create_and_get(tmp_path):
     reg = ProjectRegistry()
     sb = LocalSandbox(root=tmp_path); await sb.start()
-    ws = reg.create("p1", sb)
+    reg.register("p1")
+    ws = reg.attach("p1", sb)
     assert reg.get("p1") is ws
 
 async def test_list_question_files_finds_top_level_and_nested(tmp_path):
@@ -59,7 +60,8 @@ def test_registry_list_ids_preserves_insertion_order(tmp_path):
         sb = LocalSandbox(root=tmp_path / pid)
         import asyncio
         asyncio.run(sb.start())
-        reg.create(pid, sb)
+        reg.register(pid)
+        reg.attach(pid, sb)
     assert reg.list_ids() == ["p1", "p2", "p3"]
 
 
@@ -69,7 +71,8 @@ def test_registry_create_without_name_defaults_to_none(tmp_path):
     sb = LocalSandbox(root=tmp_path)
     import asyncio
     asyncio.run(sb.start())
-    reg.create("p-noname", sb)
+    reg.register("p-noname")
+    reg.attach("p-noname", sb)
     assert reg.get_name("p-noname") is None
 
 
@@ -78,7 +81,8 @@ def test_registry_create_with_name_stores_it(tmp_path):
     sb = LocalSandbox(root=tmp_path)
     import asyncio
     asyncio.run(sb.start())
-    reg.create("p-named", sb, name="기획전 AI 어시스턴트")
+    reg.register("p-named", name="기획전 AI 어시스턴트")
+    reg.attach("p-named", sb)
     assert reg.get_name("p-named") == "기획전 AI 어시스턴트"
 
 

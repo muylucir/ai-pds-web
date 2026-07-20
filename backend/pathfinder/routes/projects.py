@@ -11,13 +11,11 @@ class CreateProject(BaseModel):
 
 @router.post("/projects")
 async def create_project(body: CreateProject):
-    try:
-        app_module.registry.get(body.project_id)
+    if app_module.registry.is_registered(body.project_id):
         raise HTTPException(status_code=409, detail="project exists")
-    except KeyError:
-        pass
     sandbox = await app_module.make_sandbox(body.project_id)
-    app_module.registry.create(body.project_id, sandbox, name=body.name)
+    app_module.registry.register(body.project_id, body.name)
+    app_module.registry.attach(body.project_id, sandbox)
     return {"project_id": body.project_id, "name": body.name}
 
 @router.get("/projects")

@@ -57,26 +57,44 @@ class Workspace:
         return await self.sandbox.list_files("aiplc-docs/**/*")
 
 class ProjectRegistry:
-    def __init__(self):
-        self._projects: dict[str, Workspace] = {}
-        self._names: dict[str, str | None] = {}
+    """'아는 프로젝트'(_names)와 '살아있는 워크스페이스'(_workspaces)를 분리.
 
-    def create(self, project_id: str, sandbox: Sandbox, name: str | None = None) -> Workspace:
-        ws = Workspace(sandbox)
-        self._projects[project_id] = ws
+    S3 매니페스트에서 복원된 프로젝트는 register만 된 상태(목록에는 보이지만
+    sandbox 없음)로 시작하고, 첫 요청 시 deps.ensure_workspace가 attach한다."""
+
+    def __init__(self):
+        self._names: dict[str, str | None] = {}
+        self._workspaces: dict[str, Workspace] = {}
+
+    def register(self, project_id: str, name: str | None = None) -> None:
         self._names[project_id] = name
+
+    def attach(self, project_id: str, sandbox: Sandbox) -> Workspace:
+        if project_id not in self._names:
+            raise KeyError(project_id)  # 등록 없이 연결 금지 — 호출 순서 버그를 조기 검출
+        ws = Workspace(sandbox)
+        self._workspaces[project_id] = ws
         return ws
 
     def get(self, project_id: str) -> Workspace:
-        return self._projects[project_id]
+        return self._workspaces[project_id]
+
+    def is_registered(self, project_id: str) -> bool:
+        return project_id in self._names
+
+    def has_workspace(self, project_id: str) -> bool:
+        return project_id in self._workspaces
+
+    def remove(self, project_id: str) -> Workspace | None:
+        """등록·워크스페이스 모두 제거. 있던 Workspace를 반환(없으면 None). 멱등."""
+        self._names.pop(project_id, None)
+        return self._workspaces.pop(project_id, None)
 
     def list_ids(self) -> list[str]:
-        # dict preserves insertion order in Python 3.7+; this mirrors that
-        # order rather than sorting, so newest-created projects are easy to
-        # find at the tail — no requirement in the spec calls for sorting.
-        return list(self._projects.keys())
+        # dict는 삽입 순서를 보존 — 등록(생성/복원) 순서 그대로 노출
+        return list(self._names.keys())
 
     def get_name(self, project_id: str) -> str | None:
-        if project_id not in self._projects:
+        if project_id not in self._names:
             raise KeyError(project_id)
         return self._names[project_id]
