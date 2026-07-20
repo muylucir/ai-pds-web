@@ -40,8 +40,18 @@ class AuditEntry(BaseModel):
     ai_response: str
     context: str | None = None
 
+class HistoryTraceEntry(BaseModel):
+    """라이브 AgentEvent의 status/file_changed에 대응하는 복원용 트레이스 —
+    프론트 AiMessage의 "추론 과정" 아코디언이 소비하는 최소 shape."""
+    kind: Literal["status", "file_changed"]
+    text: str | None = None
+    path: str | None = None
+
+
 class HistoryItem(BaseModel):
     role: Literal["user", "ai", "card"]
     text: str | None = None
     card: Literal["questions"] | None = None
     name: str | None = None
+    # role=="ai"일 때 그 턴의 도구 실행 트레이스(없으면 빈 리스트)
+    trace: list[HistoryTraceEntry] = []

@@ -133,9 +133,9 @@ describe("useWorkspaceStream", () => {
 
   it("loads history into items on mount", async () => {
     vi.mocked(client.getHistory).mockResolvedValue([
-      { role: "user", text: "시작", card: null, name: null },
-      { role: "ai", text: "환영", card: null, name: null },
-      { role: "card", text: null, card: "questions", name: "mode-selection" },
+      { role: "user", text: "시작", card: null, name: null , trace: [] },
+      { role: "ai", text: "환영", card: null, name: null , trace: [] },
+      { role: "card", text: null, card: "questions", name: "mode-selection" , trace: [] },
     ]);
     const { result } = renderHook(() => useWorkspaceStream("p1"));
     expect(result.current.historyLoading).toBe(true);
@@ -166,7 +166,7 @@ describe("useWorkspaceStream", () => {
     expect(result.current.items).toHaveLength(2); // live user + ai bubble, history still in flight
 
     await act(async () => {
-      resolveHistory([{ role: "user", text: "시작", card: null, name: null }]);
+      resolveHistory([{ role: "user", text: "시작", card: null, name: null , trace: [] }]);
     });
     expect(result.current.historyLoading).toBe(false);
     // History strictly precedes the live turn chronologically — prepended, not replacing it.
@@ -195,4 +195,22 @@ describe("useWorkspaceStream", () => {
     expect(result.current.historyLoading).toBe(false);
     expect(result.current.items).toHaveLength(2);
   });
+});
+
+it("restores tool traces onto AI history items", async () => {
+  vi.mocked(client.getHistory).mockResolvedValue([
+    { role: "ai", text: "작업", card: null, name: null,
+      trace: [{ kind: "status", text: "file_read", path: null },
+              { kind: "file_changed", text: null, path: "aiplc-docs/audit.md" }] },
+  ]);
+  const { result } = renderHook(() => useWorkspaceStream("p1"));
+  await act(async () => {});
+  const ai = result.current.items[0];
+  expect(ai.role).toBe("ai");
+  if (ai.role === "ai") {
+    expect(ai.trace).toEqual([
+      { kind: "status", text: "file_read", path: null },
+      { kind: "file_changed", text: null, path: "aiplc-docs/audit.md" },
+    ]);
+  }
 });

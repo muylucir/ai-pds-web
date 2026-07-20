@@ -56,7 +56,16 @@ export interface WorkspaceStream {
 function historyItemToChatItem(it: HistoryItem): ChatItem {
   if (it.role === "card") return { id: nextId(), role: "history-card", name: it.name };
   if (it.role === "user") return { id: nextId(), role: "user", text: it.text ?? "" };
-  return { id: nextId(), role: "ai", text: it.text ?? "", trace: [], streaming: false, error: null };
+  return {
+    id: nextId(),
+    role: "ai",
+    text: it.text ?? "",
+    // 복원된 도구 트레이스 — 라이브 턴의 status/file_changed 이벤트와 같은
+    // shape이라 AiMessage의 "추론 과정" 아코디언이 그대로 렌더한다.
+    trace: (it.trace ?? []).map((t) => ({ kind: t.kind, text: t.text, path: t.path })),
+    streaming: false,
+    error: null,
+  };
 }
 
 export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []): WorkspaceStream {

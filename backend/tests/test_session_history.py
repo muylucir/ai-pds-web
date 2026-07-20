@@ -29,7 +29,8 @@ RAW = [
 def test_transform_user_and_assistant_text():
     items = transform_messages(RAW)
     assert items[0] == HistoryItem(role="user", text="AI-PLC를 시작해줘")
-    assert HistoryItem(role="ai", text="환영합니다.") in items
+    ai = next(i for i in items if i.role == "ai" and i.text == "환영합니다.")
+    assert ai is not None  # trace 유무와 무관하게 텍스트 아이템 존재
 
 def test_transform_ask_questions_becomes_card_and_answer_message():
     items = transform_messages(RAW)
@@ -90,3 +91,55 @@ def test_answer_summary_falls_back_to_raw_when_not_json():
     items = transform_messages(raw)
     answer = next(i for i in items if i.role == "user")
     assert answer.text == "답변 제출: 자유 서술 응답"
+
+
+def test_ai_items_carry_tool_trace():
+    raw = [
+        _msg("assistant", [
+            {"text": "작업 중입니다."},
+            {"toolUse": {"toolUseId": "t1", "name": "file_read",
+                         "input": {"path": "aiplc-rules/x.md"}}},
+            {"toolUse": {"toolUseId": "t2", "name": "report_stage",
+                         "input": {"stage": "Envision", "status": "in_progress", "summary": ""}}},
+            {"toolUse": {"toolUseId": "t3", "name": "file_write",
+                         "input": {"path": "aiplc-docs/audit.md", "content": "x"}}},
+        ], 0),
+    ]
+    items = transform_messages(raw)
+    ai = next(i for i in items if i.role == "ai")
+    assert [t.model_dump() for t in ai.trace] == [
+        {"kind": "status", "text": "file_read", "path": None},
+        {"kind": "status", "text": "report_stage", "path": None},
+        {"kind": "file_changed", "text": None, "path": "aiplc-docs/audit.md"},
+    ]
+
+
+def test_trace_only_assistant_message_still_yields_ai_item():
+    # 텍스트 블록 없이 도구만 부른 어시스턴트 메시지 — 라이브에서는 트레이스가
+    # 붙은 빈 말풍선으로 보였던 턴. 트레이스를 잃지 않도록 text "" AI 아이템 생성.
+    raw = [
+        _msg("assistant", [
+            {"toolUse": {"toolUseId": "t1", "name": "file_append",
+                         "input": {"path": "aiplc-docs/audit.md", "content": "e"}}},
+        ], 0),
+    ]
+    items = transform_messages(raw)
+    ai = next(i for i in items if i.role == "ai")
+    assert ai.text == ""
+    assert [t.model_dump() for t in ai.trace] == [
+        {"kind": "file_changed", "text": None, "path": "aiplc-docs/audit.md"}]
+
+
+def test_ask_questions_not_duplicated_in_trace():
+    raw = [
+        _msg("assistant", [
+            {"text": "질문 드립니다."},
+            {"toolUse": {"toolUseId": "ta", "name": "ask_questions",
+                         "input": {"questions_file": {"name": "q"}}}},
+        ], 0),
+    ]
+    items = transform_messages(raw)
+    ai = next(i for i in items if i.role == "ai")
+    # ask_questions는 카드로 표현되므로 트레이스에는 넣지 않는다
+    assert not ai.trace
+    assert any(i.role == "card" for i in items)

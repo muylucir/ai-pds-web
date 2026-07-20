@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from pathfinder.models import HistoryItem
+from pathfinder.models import HistoryItem, HistoryTraceEntry
 from pathfinder.parsers.redaction import redact_credentials
 from pathfinder.sandbox.s3store import S3StoreLike
 
@@ -32,6 +32,7 @@ def transform_messages(raw: list[dict]) -> list[HistoryItem]:
         role = msg.get("role")
         texts: list[str] = []
         cards: list[HistoryItem] = []
+        trace: list[HistoryTraceEntry] = []
         for block in msg.get("content", []):
             if "text" in block:
                 texts.append(block["text"])
@@ -40,6 +41,16 @@ def transform_messages(raw: list[dict]) -> list[HistoryItem]:
                 if tu.get("name") == "ask_questions":
                     name = (tu.get("input", {}).get("questions_file") or {}).get("name")
                     cards.append(HistoryItem(role="card", card="questions", name=name))
+                elif tu.get("name") in ("file_write", "file_append"):
+                    # 라이브 file_changed 이벤트와 동일한 표현 — 경로만 노출
+                    trace.append(HistoryTraceEntry(
+                        kind="file_changed",
+                        path=str(tu.get("input", {}).get("path", ""))))
+                else:
+                    # file_read/report_stage/submit_document 등 — 라이브의
+                    # status 이벤트(도구 이름)와 동일한 표현
+                    trace.append(HistoryTraceEntry(
+                        kind="status", text=tu.get("name", "")))
             elif "toolResult" in block:
                 tr = block["toolResult"]
                 if tr.get("toolUseId") in ask_ids:
@@ -61,11 +72,16 @@ def transform_messages(raw: list[dict]) -> list[HistoryItem]:
                         summary = f"답변 제출: {answer}"
                     items.append(HistoryItem(
                         role="user", text=redact_credentials(summary)))
-            # reasoningContent 및 기타 블록은 생략
-        if texts:
-            joined = redact_credentials("\n".join(texts))
-            items.append(HistoryItem(role="ai" if role == "assistant" else "user",
-                                     text=joined))
+            # reasoningContent 및 기타 블록은 생략 (실 세션의 reasoning text는
+            # 비어 있고 signature만 있음 — 복원할 내용 자체가 없다)
+        if texts or (role == "assistant" and trace):
+            # 텍스트 없이 도구만 부른 어시스턴트 턴도 라이브에서는 트레이스가
+            # 붙은 (빈) 말풍선이었다 — 트레이스를 잃지 않도록 빈 텍스트로 생성.
+            joined = redact_credentials("\n".join(texts)) if texts else ""
+            items.append(HistoryItem(
+                role="ai" if role == "assistant" else "user",
+                text=joined,
+                trace=trace if role == "assistant" else []))
         items.extend(cards)
     return items
 

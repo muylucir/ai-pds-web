@@ -104,9 +104,16 @@ export interface ProjectSummary {
 // the chat timeline on workspace mount — a "card" role item marks a
 // previously-presented questions file (by `name`), never re-rendered as the
 // live interactive form.
+export interface HistoryTraceEntry {
+  kind: "status" | "file_changed";
+  text: string | null;
+  path: string | null;
+}
+
 export interface HistoryItem {
   role: "user" | "ai" | "card";
   text: string | null;
   card: "questions" | null;
   name: string | null;
+  trace: HistoryTraceEntry[];
 }

@@ -23,7 +23,7 @@ def test_history_returns_items_from_session_store(monkeypatch):
         {"message": {"role": "user", "content": [{"text": "안녕"}]}, "message_id": 0})
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: s3)
     body = client.get("/projects/h1/history").json()
-    assert body == {"items": [{"role": "user", "text": "안녕", "card": None, "name": None}]}
+    assert body == {"items": [{"role": "user", "text": "안녕", "card": None, "name": None, "trace": []}]}
 
 def test_history_empty_when_no_session(monkeypatch):
     _local_project(monkeypatch, "h2")
