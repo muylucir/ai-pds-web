@@ -44,4 +44,20 @@ describe("ChatInput", () => {
     fireEvent.keyDown(box, { key: "Enter", isComposing: false });
     expect(onSend).toHaveBeenCalledWith("안녕");
   });
+
+  it("does not render a clip button when onAttach is not given", () => {
+    render(<ChatInput onSend={vi.fn()} disabled={false} />);
+    expect(screen.queryByRole("button", { name: "파일 첨부" })).not.toBeInTheDocument();
+  });
+
+  it("selecting a file via the hidden file input calls onAttach and resets the input", async () => {
+    const onAttach = vi.fn();
+    const { container } = render(<ChatInput onSend={vi.fn()} disabled={false} onAttach={onAttach} />);
+    const file = new File(["hello"], "note.md", { type: "text/markdown" });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).toBeInTheDocument();
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(onAttach).toHaveBeenCalledWith(file);
+    expect(input.value).toBe("");
+  });
 });

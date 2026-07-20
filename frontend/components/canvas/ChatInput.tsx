@@ -1,15 +1,18 @@
 // frontend/components/canvas/ChatInput.tsx
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export function ChatInput({
   onSend,
   disabled,
+  onAttach,
 }: {
   onSend: (text: string) => void;
   disabled: boolean;
+  onAttach?: (file: File) => void;
 }) {
   const [text, setText] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
 
   function submit() {
     const trimmed = text.trim();
@@ -22,6 +25,30 @@ export function ChatInput({
     <div className="shrink-0 border-t border-slate-200 bg-white px-4 md:px-8 py-3">
       <div className="max-w-2xl mx-auto">
         <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white focus-within:ring-2 focus-within:ring-violet-400 px-4 py-2.5">
+          {onAttach && (
+            <>
+              <button
+                type="button"
+                aria-label="파일 첨부"
+                disabled={disabled}
+                onClick={() => fileRef.current?.click()}
+                className="shrink-0 text-slate-400 hover:text-violet-600 disabled:opacity-50"
+              >
+                📎
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                hidden
+                accept=".md,.txt,.csv,.xlsx,.pdf"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) onAttach(f);
+                  e.target.value = ""; // allow re-selecting the same file
+                }}
+              />
+            </>
+          )}
           <textarea
             rows={1}
             value={text}

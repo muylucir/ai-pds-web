@@ -7,8 +7,9 @@ import { ChatTimeline } from "@/components/canvas/ChatTimeline";
 import { ChatInput } from "@/components/canvas/ChatInput";
 import { WorkspaceRightPanel } from "@/components/workspace/WorkspaceRightPanel";
 import { WelcomeCard } from "@/components/workspace/WelcomeCard";
+import { AttachmentChips } from "@/components/workspace/AttachmentChips";
 import { QuestionForm } from "@/components/questions/QuestionForm";
-import { getState } from "@/lib/api/client";
+import { getState, uploadFile } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 
@@ -37,10 +38,35 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // banner even if an earlier one was dismissed.
   const [dismissedDocVersion, setDismissedDocVersion] = useState<string | null>(null);
   const showDocBanner = lastDocument != null && lastDocument.version !== dismissedDocVersion;
+  // File-attachment state (Task 8): uploaded paths waiting to be mentioned in
+  // the NEXT outgoing message, and any upload-failure notice to surface.
+  const [attachments, setAttachments] = useState<string[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   function submitAnswersFromSheet(answers: Record<string, string>) {
     submitAnswers(answers);
     setSheetOpen(false);
+  }
+
+  async function handleAttach(file: File) {
+    setUploadError(null);
+    try {
+      const r = await uploadFile(projectId, file);
+      setAttachments((prev) => [...prev, r.path]);
+    } catch {
+      setUploadError("업로드에 실패했습니다. 지원 형식(md/txt/csv/xlsx/pdf)·5MB 이하인지 확인하세요.");
+    }
+  }
+
+  // Prepends a "[첨부 파일: ...]" mention line per pending attachment ahead of
+  // the user's typed text, then clears the chip tray — attachments are a
+  // one-shot mention on the NEXT message, not a standing context.
+  function sendWithAttachments(text: string) {
+    const mentions = attachments.map(
+      (p) => `[첨부 파일: ${p} — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 file_read로 읽으세요.]`,
+    );
+    send(mentions.length ? `${mentions.join("\n")}\n\n${text}` : text);
+    setAttachments([]);
   }
 
   // Minimal accessibility for the mobile bottom-sheet: move focus into the
@@ -111,7 +137,16 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               busy={streaming}
             />
           )}
-          <ChatInput onSend={send} disabled={streaming} />
+          {uploadError && (
+            <p role="alert" className="px-4 md:px-8 pb-1 text-xs text-red-600">
+              {uploadError}
+            </p>
+          )}
+          <AttachmentChips
+            paths={attachments}
+            onRemove={(p) => setAttachments((prev) => prev.filter((x) => x !== p))}
+          />
+          <ChatInput onSend={sendWithAttachments} onAttach={handleAttach} disabled={streaming} />
         </main>
 
         <WorkspaceRightPanel

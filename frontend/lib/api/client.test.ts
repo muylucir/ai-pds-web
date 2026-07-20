@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -15,6 +16,7 @@ import {
   postMessage,
   getPending,
   getHistory,
+  uploadFile,
 } from "./client";
 
 describe("Content-Type header behavior", () => {
@@ -200,5 +202,27 @@ describe("api client request shaping + response typing", () => {
       ),
     );
     expect(await getHistory("p1")).toEqual([{ role: "user", text: "hi", card: null, name: null }]);
+  });
+
+  it("uploadFile POSTs multipart and returns the stored path", async () => {
+    let form: FormData | undefined;
+    server.use(
+      http.post(`${API_BASE_URL}/projects/p1/uploads`, async ({ request }) => {
+        form = await request.formData();
+        return HttpResponse.json({ path: "uploads/a.md", chars: 3, truncated: false });
+      }),
+    );
+    const r = await uploadFile("p1", new File(["abc"], "a.md", { type: "text/markdown" }));
+    expect((form!.get("file") as File).name).toBe("a.md");
+    expect(r.path).toBe("uploads/a.md");
+  });
+
+  it("uploadFile maps a non-OK response to ApiError", async () => {
+    server.use(
+      http.post(`${API_BASE_URL}/projects/p1/uploads`, () =>
+        HttpResponse.text("file too large", { status: 413 }),
+      ),
+    );
+    await expect(uploadFile("p1", new File(["abc"], "a.md"))).rejects.toMatchObject({ status: 413 });
   });
 });

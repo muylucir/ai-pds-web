@@ -1,12 +1,18 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, act, within } from "@testing-library/react";
+import { render, screen, act, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
 import { projectState } from "@/test/fixtures/projectState";
 import * as workspaceStream from "@/lib/useWorkspaceStream";
+import * as client from "@/lib/api/client";
 import WorkspacePage from "./page";
+
+vi.mock("@/lib/api/client", async (orig) => ({
+  ...(await orig<typeof import("@/lib/api/client")>()),
+  uploadFile: vi.fn(),
+}));
 
 const QP = {
   interrupt_id: "i-1",
@@ -174,5 +180,103 @@ describe("Workspace page", () => {
     });
     await screen.findByLabelText("스테이지 진행 상황");
     expect(screen.queryByText(/어떻게 시작할까요/)).toBeNull();
+  });
+
+  describe("file attachments", () => {
+    it("uploads a file via the clip button, shows a chip, and prepends the attachment mention to the next message", async () => {
+      server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+      const send = vi.fn();
+      mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false, send });
+      vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", chars: 10, truncated: false });
+
+      const { container } = render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("스테이지 진행 상황");
+
+      const file = new File(["내용"], "의견.md", { type: "text/markdown" });
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const user = userEvent.setup();
+      await act(async () => {
+        fireEvent.change(fileInput, { target: { files: [file] } });
+      });
+
+      expect(client.uploadFile).toHaveBeenCalledWith("p1", file);
+      expect(await screen.findByText("의견.md")).toBeInTheDocument();
+
+      const box = screen.getByLabelText("채팅 메시지 입력");
+      await user.type(box, "이 파일 기반으로 진행해줘");
+      await user.click(screen.getByRole("button", { name: "전송" }));
+
+      expect(send).toHaveBeenCalledWith(
+        "[첨부 파일: uploads/의견.md — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 file_read로 읽으세요.]\n\n이 파일 기반으로 진행해줘",
+      );
+      expect(screen.queryByText("의견.md")).not.toBeInTheDocument();
+    });
+
+    it("removes a chip when its remove button is clicked, without sending an upload", async () => {
+      server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+      const send = vi.fn();
+      mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false, send });
+      vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", chars: 10, truncated: false });
+
+      const { container } = render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("스테이지 진행 상황");
+
+      const file = new File(["내용"], "의견.md", { type: "text/markdown" });
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(fileInput, { target: { files: [file] } });
+      });
+      await screen.findByText("의견.md");
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: /제거/ }));
+      expect(screen.queryByText("의견.md")).not.toBeInTheDocument();
+
+      await user.type(screen.getByLabelText("채팅 메시지 입력"), "안녕");
+      await user.click(screen.getByRole("button", { name: "전송" }));
+      expect(send).toHaveBeenCalledWith("안녕");
+    });
+
+    it("shows an error message when upload fails and does not add a chip", async () => {
+      server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+      mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false });
+      vi.mocked(client.uploadFile).mockRejectedValue(new Error("nope"));
+
+      const { container } = render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("스테이지 진행 상황");
+
+      const file = new File(["x".repeat(6_000_000)], "big.md");
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(fileInput, { target: { files: [file] } });
+      });
+
+      expect(await screen.findByText(/업로드에 실패했습니다/)).toBeInTheDocument();
+      expect(screen.queryByText("big.md")).not.toBeInTheDocument();
+    });
+
+    it("does not prepend an attachment mention to the WelcomeCard starter message", async () => {
+      server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+      const send = vi.fn();
+      mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false, send });
+      vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", chars: 10, truncated: false });
+
+      const { container } = render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("스테이지 진행 상황");
+
+      const file = new File(["내용"], "의견.md", { type: "text/markdown" });
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(fileInput, { target: { files: [file] } });
+      });
+      await screen.findByText("의견.md");
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: /Path A/ }));
+
+      expect(send).toHaveBeenCalledWith(
+        "AI-PLC를 시작해줘. Path A(고객 페인 포인트에서 시작)로 진행하고 싶어.",
+      );
+    });
   });
 });
