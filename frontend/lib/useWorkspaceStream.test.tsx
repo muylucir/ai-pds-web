@@ -4,7 +4,7 @@ import { renderHook, act } from "@testing-library/react";
 import { useWorkspaceStream } from "./useWorkspaceStream";
 import * as sse from "@/lib/api/sse";
 import * as client from "@/lib/api/client";
-import type { AgentEvent } from "@/lib/api/types";
+import type { AgentEvent, HistoryItem } from "@/lib/api/types";
 
 vi.mock("@/lib/api/sse");
 vi.mock("@/lib/api/client", async (orig) => ({
@@ -150,5 +150,49 @@ describe("useWorkspaceStream", () => {
     await act(async () => {});
     expect(result.current.historyLoading).toBe(false);
     expect(result.current.items).toEqual([]);
+  });
+
+  it("a live turn started while GET /history is still pending is not wiped when history resolves", async () => {
+    let resolveHistory!: (items: HistoryItem[]) => void;
+    vi.mocked(client.getHistory).mockReturnValue(
+      new Promise((resolve) => {
+        resolveHistory = resolve;
+      }),
+    );
+    drive([{ kind: "done", text: null, path: null, payload: null }], "streamEvents");
+
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    act(() => result.current.send("hi"));
+    expect(result.current.items).toHaveLength(2); // live user + ai bubble, history still in flight
+
+    await act(async () => {
+      resolveHistory([{ role: "user", text: "시작", card: null, name: null }]);
+    });
+    expect(result.current.historyLoading).toBe(false);
+    // History strictly precedes the live turn chronologically — prepended, not replacing it.
+    expect(result.current.items).toHaveLength(3);
+    expect(result.current.items.map((i) => i.role)).toEqual(["user", "user", "ai"]);
+    expect(result.current.items[0]).toMatchObject({ role: "user", text: "시작" });
+    expect(result.current.items[1]).toMatchObject({ role: "user", text: "hi" });
+  });
+
+  it("a live turn started while GET /history is pending survives an EMPTY history resolution", async () => {
+    let resolveHistory!: (items: HistoryItem[]) => void;
+    vi.mocked(client.getHistory).mockReturnValue(
+      new Promise((resolve) => {
+        resolveHistory = resolve;
+      }),
+    );
+    drive([{ kind: "done", text: null, path: null, payload: null }], "streamEvents");
+
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    act(() => result.current.send("hi"));
+    expect(result.current.items).toHaveLength(2);
+
+    await act(async () => {
+      resolveHistory([]);
+    });
+    expect(result.current.historyLoading).toBe(false);
+    expect(result.current.items).toHaveLength(2);
   });
 });

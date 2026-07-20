@@ -68,6 +68,13 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const stopRef = useRef<null | (() => void)>(null);
+  // Set the instant a live turn (send/submitAnswers) starts. GET /history can
+  // still be in flight when that happens — history strictly precedes the live
+  // turn chronologically, so the history effect below must PREPEND its
+  // restored items to whatever's already in `items` instead of replacing the
+  // array outright, or a slow /history response would silently wipe the turn
+  // the user just started.
+  const liveTurnStartedRef = useRef(false);
 
   const patchAi = useCallback((aiId: string, fn: (it: AiItem) => AiItem) => {
     setItems((prev) => prev.map((it) => (it.id === aiId && it.role === "ai" ? fn(it) : it)));
@@ -159,6 +166,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       // closure can't slip a concurrent send past a not-yet-flushed setState.
       if (trimmed === "" || stopRef.current) return;
 
+      liveTurnStartedRef.current = true;
       const aiId = nextId();
       setItems((prev) => [
         ...prev,
@@ -173,6 +181,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   const submitAnswers = useCallback(
     (answers: Record<string, string>) => {
       if (stopRef.current) return;
+      liveTurnStartedRef.current = true;
       setPendingQuestions(null);
 
       const aiId = nextId();
@@ -211,7 +220,12 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     getHistory(projectId)
       .then((h) => {
         if (cancelled) return;
-        setItems(h.map(historyItemToChatItem));
+        setItems((prev) => {
+          const restored = h.map(historyItemToChatItem);
+          // A live turn may have started while history was in flight — history
+          // strictly precedes it chronologically, so prepend rather than replace.
+          return liveTurnStartedRef.current ? [...restored, ...prev] : restored;
+        });
       })
       .catch(() => {}) // degraded, not broken: items stays at its initial value
       .finally(() => {
