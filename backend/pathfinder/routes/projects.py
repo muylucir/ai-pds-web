@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from pathfinder import app as app_module
-from pathfinder.project_store import write_manifest
+from pathfinder.project_store import write_manifest, delete_project_data
 
 _log = logging.getLogger(__name__)
 
@@ -45,3 +45,24 @@ async def list_projects():
             for pid in app_module.registry.list_ids()
         ]
     }
+
+@router.delete("/projects/{pid}")
+async def delete_project(pid: str):
+    """전부 삭제(스펙 결정): VM stop(베스트에포트) → S3 세션+산출물 삭제
+    (실패 시 500, 멱등 재시도) → 레지스트리 제거."""
+    if not app_module.registry.is_registered(pid):
+        raise HTTPException(status_code=404, detail="unknown project")
+    if app_module.registry.has_workspace(pid):
+        try:
+            await app_module.registry.get(pid).sandbox.stop()
+        except Exception:
+            _log.exception("sandbox stop failed for %s during delete (continuing)", pid)
+    if app_module.durable_projects_enabled():
+        try:
+            await delete_project_data(app_module.session_s3_factory(),
+                                      app_module.projects_root_s3_factory(), pid)
+        except Exception:
+            _log.exception("S3 delete failed for %s", pid)
+            raise HTTPException(status_code=500, detail="project delete failed")
+    app_module.registry.remove(pid)
+    return {"deleted": True}
