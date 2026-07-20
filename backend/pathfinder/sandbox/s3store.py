@@ -9,6 +9,7 @@ class S3StoreLike(Protocol):
     async def get(self, key: str) -> str: ...
     async def put(self, key: str, content: str) -> None: ...
     async def list(self, prefix: str) -> list[str]: ...
+    async def delete_prefix(self, prefix: str) -> int: ...
 
 
 class S3Store:
@@ -60,3 +61,23 @@ class S3Store:
             return sorted(keys)
 
         return await asyncio.to_thread(_list)
+
+    async def delete_prefix(self, prefix: str) -> int:
+        """네임스페이스 내 상대 prefix 이하 오브젝트 전량 삭제(1000개 배치).
+
+        프로젝트 삭제 경로 전용 — list 후 delete_objects라 원자적이진 않지만
+        삭제는 멱등이므로 부분 실패 시 재호출로 수렴한다."""
+        def _delete() -> int:
+            full = self._full_key(prefix)
+            paginator = self._client.get_paginator("list_objects_v2")
+            keys = [obj["Key"]
+                    for page in paginator.paginate(Bucket=self._bucket, Prefix=full)
+                    for obj in page.get("Contents", [])]
+            for i in range(0, len(keys), 1000):  # S3 delete_objects 상한
+                self._client.delete_objects(
+                    Bucket=self._bucket,
+                    Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]],
+                            "Quiet": True})
+            return len(keys)
+
+        return await asyncio.to_thread(_delete)

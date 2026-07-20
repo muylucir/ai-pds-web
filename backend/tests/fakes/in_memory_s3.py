@@ -20,3 +20,9 @@ class FakeS3Store:
 
     async def list(self, prefix: str) -> list[str]:
         return sorted(k for k in self.blobs if k.startswith(prefix))
+
+    async def delete_prefix(self, prefix: str) -> int:
+        doomed = [k for k in self.blobs if k.startswith(prefix)]
+        for k in doomed:
+            del self.blobs[k]
+        return len(doomed)
