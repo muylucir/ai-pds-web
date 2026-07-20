@@ -5,7 +5,14 @@ import tempfile
 from pathlib import Path
 import boto3
 import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+# backend/.env (gitignored, optional) feeds the PATHFINDER_*/ANTHROPIC_MODEL
+# settings read via os.environ below. Real environment variables win over the
+# file (override=False) so shell exports / container env keep working as
+# before, and a missing file is a silent no-op (local mode needs no config).
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from fastapi.middleware.cors import CORSMiddleware
 from pathfinder.workspace import ProjectRegistry
 from pathfinder.sandbox.local import LocalSandbox

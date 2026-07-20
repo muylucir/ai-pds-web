@@ -118,7 +118,9 @@ Region              → ap-northeast-1
 
 ### B-2. microvm 모드로 백엔드 기동
 
-배포가 출력한 실제 값으로 채운다:
+`backend/.env`(gitignored)에 넣어두면 기동 시 자동 로드된다 — `backend/.env.example`을
+복사해 CDK 출력값으로 채우면 된다. 실 환경변수가 파일보다 우선하므로, 아래처럼
+셸 export로 넘기는 방식도 그대로 동작한다. 배포가 출력한 실제 값으로 채운다:
 
 ```bash
 cd backend
