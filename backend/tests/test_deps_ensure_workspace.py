@@ -59,3 +59,29 @@ async def test_boot_failure_503_keeps_registration(monkeypatch):
     assert e.value.status_code == 503
     assert app_module.registry.is_registered("ew-fail")   # 다음 요청이 재시도
     assert not app_module.registry.has_workspace("ew-fail")
+
+
+@pytest.mark.asyncio
+async def test_delete_during_boot_races_404_and_stops_sandbox(monkeypatch):
+    """DELETE /projects/{pid}가 부팅 대기 중 끼어드는 경우: make_sandbox는
+    성공하지만 그 사이 registry.remove가 실행되어 attach 시점엔 미등록 상태.
+    이 경우 방금 띄운 sandbox는 새는(leak) 대신 stop되어야 하고, 응답은
+    '프로젝트가 부팅 중 삭제됨' → 404여야 한다(라우트의 평소 미등록 시맨틱과 동일)."""
+    pid = "ew-race-del"
+    app_module.registry.register(pid)
+    stopped = {"n": 0}
+
+    class _FakeSandbox:
+        async def stop(self):
+            stopped["n"] += 1
+
+    async def _boot_then_delete(pid):
+        app_module.registry.remove(pid)  # 동시 DELETE 시뮬레이션
+        return _FakeSandbox()
+
+    monkeypatch.setattr(app_module, "make_sandbox", _boot_then_delete)
+    with pytest.raises(HTTPException) as e:
+        await ensure_workspace(pid)
+    assert e.value.status_code == 404
+    assert stopped["n"] == 1
+    assert not app_module.registry.has_workspace(pid)

@@ -31,4 +31,14 @@ async def ensure_workspace(pid: str) -> Workspace:
         except Exception:
             _log.exception("lazy sandbox boot failed for %s", pid)
             raise HTTPException(status_code=503, detail="project workspace unavailable")
-        return app_module.registry.attach(pid, sandbox)
+        try:
+            return app_module.registry.attach(pid, sandbox)
+        except KeyError:
+            # 부팅 대기 중 DELETE /projects/{pid}가 끼어든 경우: 프로젝트는 이미
+            # 미등록 상태다. 방금 띄운 sandbox가 새지 않도록 best-effort로 정지하고
+            # 평소 미등록-프로젝트 시맨틱과 동일하게 404를 낸다.
+            try:
+                await sandbox.stop()
+            except Exception:
+                _log.exception("failed to stop sandbox for deleted-during-boot project %s", pid)
+            raise HTTPException(status_code=404, detail="unknown project")
