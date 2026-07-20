@@ -1,5 +1,10 @@
 from pathfinder.models import Question, QuestionOption, QuestionFile
 
+def test_question_multi_select_defaults_false():
+    q = Question(number=1, text="누구?", options=[])
+    assert q.multi_select is False
+    assert Question(number=1, text="누구?", options=[], multi_select=True).multi_select
+
 def test_question_file_roundtrips_multiselect_answer():
     q = Question(
         number=12, category="Success Metrics", text="핵심 KPI는?",

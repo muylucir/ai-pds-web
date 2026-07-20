@@ -12,9 +12,12 @@ from events import AgentEvent
 QUESTIONS_SCHEMA_HINT = (
     "ask_questions의 questions_file 인자는 반드시 다음 JSON 형태여야 한다: "
     '{"name": str, "preamble": str|null, "parse_ok": true, "raw_markdown": null, '
-    '"questions": [{"number": int, '
-    '"category": str|null, "text": str, "answer": null, "options": '
-    '[{"letter": "A".."F"|"X", "text": str, "is_other": bool, "recommended": bool}]}]}'
+    '"questions": [{"number": int, "category": str|null, "text": str, "answer": null, '
+    '"multi_select": bool, "options": [{"letter": "A".."F"|"X", "text": str, '
+    '"is_other": bool, "recommended": bool}]}]}. '
+    "multi_select 규칙: 여러 개를 골라도 자연스러운 질문(대상 고객군, 페인포인트 유형 등)은 "
+    "true, 배타적 선택(Path/모드 선택 등)은 false(기본). "
+    "multi_select 질문의 답변은 'A,C'처럼 콤마로 조인되어 돌아온다."
 )
 
 

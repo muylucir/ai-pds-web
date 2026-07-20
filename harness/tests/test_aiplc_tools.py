@@ -46,6 +46,10 @@ def test_questions_schema_hint_includes_parse_ok_and_raw_markdown():
     assert '"parse_ok": true' in QUESTIONS_SCHEMA_HINT
     assert '"raw_markdown": null' in QUESTIONS_SCHEMA_HINT
 
+def test_schema_hint_mentions_multi_select():
+    assert "multi_select" in QUESTIONS_SCHEMA_HINT
+    assert "false" in QUESTIONS_SCHEMA_HINT  # 기본값 안내
+
 def test_submit_document_emits_document_event(tmp_path):
     emitted = []
     tools = build_tools(str(tmp_path), emitted.append)

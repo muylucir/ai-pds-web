@@ -14,6 +14,7 @@ class Question(BaseModel):
     text: str
     options: list[QuestionOption]
     answer: str | None = None
+    multi_select: bool = False
 
 class QuestionFile(BaseModel):
     name: str
