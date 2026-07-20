@@ -33,3 +33,11 @@ def test_history_empty_when_no_session(monkeypatch):
 def test_history_unknown_project_404(monkeypatch):
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: FakeS3Store())
     assert client.get("/projects/ghost/history").status_code == 404
+
+def test_history_degrades_when_factory_raises(monkeypatch):
+    _local_project(monkeypatch, "h3")
+    def boom():
+        raise RuntimeError("aws profile broken")
+    monkeypatch.setattr(app_module, "session_s3_factory", boom)
+    r = client.get("/projects/h3/history")
+    assert r.status_code == 200 and r.json() == {"items": []}
