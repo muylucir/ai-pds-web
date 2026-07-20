@@ -5,6 +5,7 @@
 Sandbox 메서드가 아니라 이 모듈이 직접 읽는다. VM은 절대 부팅하지 않는다.
 """
 from __future__ import annotations
+import asyncio
 import json
 import logging
 import re
@@ -14,6 +15,27 @@ from pathfinder.sandbox.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
 _MSG_KEY = re.compile(r"message_(\d+)\.json$")
+
+
+def _questions_file_name(tool_input: object) -> str | None:
+    """ask_questions 인자의 questions_file에서 name을 뽑는다.
+
+    Strands/LLM이 이 인자를 dict로 넘길 때도, 직렬화된 JSON '문자열'로 넘길
+    때도 있다(실 세션에서 둘 다 관측됨). 문자열이면 JSON으로 파싱해 dict로
+    정규화하고, dict가 아니거나 파싱이 실패하면 name=None으로 강등한다 —
+    이 한 블록의 형태 이상이 transform_messages 전체를 죽여 히스토리를 통째로
+    []로 만들면 안 된다(fallback 원칙)."""
+    qf: object = None
+    if isinstance(tool_input, dict):
+        qf = tool_input.get("questions_file")
+    if isinstance(qf, str):
+        try:
+            qf = json.loads(qf)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if isinstance(qf, dict):
+        return qf.get("name")
+    return None
 
 
 def transform_messages(raw: list[dict]) -> list[HistoryItem]:
@@ -39,7 +61,7 @@ def transform_messages(raw: list[dict]) -> list[HistoryItem]:
             elif "toolUse" in block:
                 tu = block["toolUse"]
                 if tu.get("name") == "ask_questions":
-                    name = (tu.get("input", {}).get("questions_file") or {}).get("name")
+                    name = _questions_file_name(tu.get("input"))
                     cards.append(HistoryItem(role="card", card="questions", name=name))
                 elif tu.get("name") in ("file_write", "file_append"):
                     # 라이브 file_changed 이벤트와 동일한 표현 — 경로만 노출
@@ -97,9 +119,12 @@ async def list_history(s3: S3StoreLike, session_id: str) -> list[HistoryItem]:
             match = _MSG_KEY.search(k)
             if match:
                 numbered.append((int(match.group(1)), k))
-        raw = []
-        for _, key in sorted(numbered):
-            raw.append(json.loads(await s3.get(key)))
+        # 병렬 GET — 순차(개수 × S3 왕복 ≈ 80개면 ~5초)로 읽으면 /history가
+        # 화면 로딩을 수 초씩 막는다. gather는 입력 순서대로 결과를 돌려주므로
+        # message_id 정렬은 그대로 유지된다.
+        bodies = await asyncio.gather(
+            *(s3.get(key) for _, key in sorted(numbered)))
+        raw = [json.loads(b) for b in bodies]
         return transform_messages(raw)
     except Exception:
         _log.exception("history read failed for %s", session_id)

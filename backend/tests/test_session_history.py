@@ -53,6 +53,39 @@ def test_transform_redacts_credentials():
     assert "AKIAIOSFODNN7EXAMPLE" not in transform_messages(raw)[0].text
 
 @pytest.mark.asyncio
+async def test_list_history_fetches_messages_concurrently():
+    # 성능 회귀 가드: 81개 메시지를 순차로 읽으면 (개수 × S3 왕복)초가 걸려
+    # /history가 ~5초씩 걸렸다. get()들이 실제로 "겹쳐서" 실행되는지 —
+    # 최대 동시 in-flight 수가 1을 넘는지 — 를 직접 검증한다.
+    import asyncio
+    from tests.fakes.in_memory_s3 import FakeS3Store
+
+    class SlowFakeS3(FakeS3Store):
+        def __init__(self):
+            super().__init__()
+            self.in_flight = 0
+            self.max_in_flight = 0
+
+        async def get(self, key: str) -> str:
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+            await asyncio.sleep(0.01)  # S3 왕복 흉내 — 겹침이 없으면 순차 대기
+            self.in_flight -= 1
+            return await super().get(key)
+
+    s3 = SlowFakeS3()
+    base = "session_p1/agents/agent_default/messages"
+    for n in range(10):
+        s3.blobs[f"{base}/message_{n}.json"] = json.dumps(
+            _msg("user", [{"text": f"m{n}"}], n))
+    items = await list_history(s3, "p1")
+    # 순서는 여전히 message_id 순이어야 하고,
+    assert [i.text for i in items] == [f"m{n}" for n in range(10)]
+    # 읽기는 병렬이어야 한다 (순차라면 max_in_flight == 1).
+    assert s3.max_in_flight > 1
+
+
+@pytest.mark.asyncio
 async def test_list_history_reads_sorted_and_tolerates_empty():
     from tests.fakes.in_memory_s3 import FakeS3Store
     s3 = FakeS3Store()
@@ -62,6 +95,43 @@ async def test_list_history_reads_sorted_and_tolerates_empty():
     items = await list_history(s3, "p1")
     assert [i.text for i in items] == ["두번째", "열번째"]  # 숫자 정렬 (문자열 정렬이면 10<2)
     assert await list_history(FakeS3Store(), "없는세션") == []
+
+
+def test_transform_tolerates_questions_file_as_json_string():
+    # 실 세션 회귀: Strands/LLM이 ask_questions 인자의 questions_file을 dict가
+    # 아니라 직렬화된 JSON '문자열'로 넘기는 경우가 섞여 있다. dict로 가정한
+    # .get("name") 호출이 AttributeError를 던지면 transform_messages 전체가
+    # 죽어 list_history가 히스토리를 통째로 []로 강등했다(채팅 전체 미로딩).
+    qf_str = json.dumps({"name": "envision-pain-point-gathering-questions",
+                         "parse_ok": True, "preamble": "QA 팀", "questions": []},
+                        ensure_ascii=False)
+    raw = [
+        _msg("assistant", [
+            {"text": "질문 드립니다."},
+            {"toolUse": {"toolUseId": "tu-s", "name": "ask_questions",
+                         "input": {"questions_file": qf_str}}}], 0),
+        _msg("user", [
+            {"toolResult": {"toolUseId": "tu-s", "status": "success",
+                            "content": [{"text": '사용자 답변: {"1": "A"}'}]}}], 1),
+    ]
+    items = transform_messages(raw)
+    # 카드가 파싱된 name으로 생성되고, 답변 말풍선도 정상 매칭되어야 한다.
+    assert HistoryItem(role="card", card="questions",
+                       name="envision-pain-point-gathering-questions") in items
+    answers = [i for i in items if i.role == "user" and (i.text or "").startswith("답변 제출")]
+    assert answers and answers[0].text == "답변 제출 — 1: A"
+
+
+def test_transform_tolerates_unparseable_questions_file_string():
+    # questions_file 문자열이 JSON이 아니어도(파싱 실패) 죽지 않고 name=None
+    # 카드로 강등되어야 한다 — 여전히 전체 변환은 계속된다.
+    raw = [
+        _msg("assistant", [
+            {"toolUse": {"toolUseId": "tu-x", "name": "ask_questions",
+                         "input": {"questions_file": "not-json-just-text"}}}], 0),
+    ]
+    items = transform_messages(raw)
+    assert HistoryItem(role="card", card="questions", name=None) in items
 
 
 def test_answer_summary_is_human_readable_not_raw_json():
