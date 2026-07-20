@@ -29,6 +29,15 @@ _CONTACT_ADDENDUM = f"""
 - file_write는 파일 **전체를 덮어쓴다**. audit.md에 엔트리를 추가할 때는 반드시
   file_append를 사용한다 — 새 엔트리만 담아 file_write를 호출하면 기존 감사
   기록이 전부 유실된다.
+
+## 대화 진행 (사용자 화면에 반드시 노출)
+- 도구만 호출하고 끝내지 말 것. **모든 턴에서 사용자에게 보일 대화 텍스트를 함께
+  작성한다** — 도구를 호출하기 전에는 지금 무엇을 왜 하는지 한두 문장으로 알리고,
+  턴을 마칠 때는 무엇을 했고 다음에 무엇을 요청/기대하는지 요약한다. 채팅 말풍선은
+  이 텍스트로 채워진다. 텍스트 없이 도구 호출만 있는 턴은 사용자에게 빈 말풍선으로
+  보이므로 금지한다.
+- ask_questions로 질문을 전달하는 턴에서도, 질문 폼을 띄우기 전에 왜 이 질문이
+  필요한지 한 문장으로 먼저 설명한다.
 """
 
 
@@ -64,7 +73,28 @@ def _default_agent_factory(workspace: str):
     def factory(session: dict, emit: Callable[[AgentEvent], None]):
         from strands import Agent
         from strands.models import BedrockModel
-        model = BedrockModel(model_id=os.environ["ANTHROPIC_MODEL"])
+        # Opus 4.8 via the Bedrock Converse API (strands BedrockModel).
+        # - max_tokens → Converse `maxTokens` (inference config). test3 failed
+        #   because this was UNSET: the model hit its default output cap mid-
+        #   thinking and stopped with stop_reason=max_tokens. 64000 is a safe,
+        #   universally-accepted high ceiling (model max is 128K) that leaves
+        #   ample room for adaptive-high thinking + tool calls + the answer.
+        # - additional_request_fields → Converse `additionalModelRequestFields`.
+        #   For the Claude 4.6+ family (incl. Opus 4.8) reasoning is configured
+        #   with `thinking:{type:adaptive}` + `output_config.effort`, NOT the
+        #   legacy `reasoning_config`/`budget_tokens` (which 400s on 4.7+).
+        #   Verified against AWS's Converse adaptive-thinking reference.
+        #   Sampling params (temperature/top_p) are left unset — strands omits
+        #   them from inferenceConfig, and Claude thinking rejects non-default
+        #   sampling anyway.
+        model = BedrockModel(
+            model_id=os.environ["ANTHROPIC_MODEL"],
+            max_tokens=64000,
+            additional_request_fields={
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "high"},
+            },
+        )
         return Agent(
             model=model,
             system_prompt=_system_prompt(workspace),

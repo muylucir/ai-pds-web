@@ -8,7 +8,13 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as path from 'path';
 
 const REGION = 'ap-northeast-1';
-const MODEL = 'global.anthropic.claude-sonnet-5';
+// Opus 4.8 via the global system-defined inference profile (verified ACTIVE in
+// ap-northeast-1). The `global.` prefix is intentional — it matches the profile
+// ID list-inference-profiles returns, same shape as the prior Sonnet profile.
+const MODEL = 'global.anthropic.claude-opus-4-8';
+// Foundation-model ARN wildcard the profile routes to (drop the `global.` — the
+// underlying model ARN is `anthropic.claude-opus-4-8*`).
+const MODEL_FAMILY = 'anthropic.claude-opus-4-8';
 const BASE_IMAGE_ARN = `arn:aws:lambda:${REGION}:aws:microvm-image:al2023-1`;
 
 export class PathfinderDrillStack extends cdk.Stack {
@@ -68,7 +74,7 @@ export class PathfinderDrillStack extends cdk.Stack {
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
       resources: [
         `arn:aws:bedrock:*:${account}:inference-profile/${MODEL}`,
-        `arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5*`,
+        `arn:aws:bedrock:*::foundation-model/${MODEL_FAMILY}*`,
       ],
     }));
     execRole.addToPolicy(new iam.PolicyStatement({
