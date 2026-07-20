@@ -1,6 +1,7 @@
 # backend/pathfinder/routes/artifacts.py
 from fastapi import APIRouter, HTTPException
 from pathfinder.routes.deps import get_workspace
+from pathfinder.parsers.redaction import redact_credentials
 
 router = APIRouter()
 
@@ -22,3 +23,16 @@ async def get_questions(pid: str, name: str):
         return await get_workspace(pid).get_questions(name)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="question file not found")
+
+@router.get("/projects/{pid}/files/{path:path}")
+async def read_artifact(pid: str, path: str):
+    # Review-screen-only general-purpose file viewer — outputs (aiplc-docs/)
+    # only. uploads/ and other input paths are not artifacts, so they are not
+    # exposed here (403).
+    if not path.startswith("aiplc-docs/"):
+        raise HTTPException(status_code=403, detail="artifacts only")
+    try:
+        content = await get_workspace(pid).sandbox.read_file(path)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="not found")
+    return {"content": redact_credentials(content)}

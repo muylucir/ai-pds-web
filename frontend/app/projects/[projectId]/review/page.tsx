@@ -1,33 +1,54 @@
 "use client";
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
+import { DocTree } from "@/components/review/DocTree";
 import { DocumentPanel } from "@/components/review/DocumentPanel";
 import { ApprovalGate } from "@/components/review/ApprovalGate";
 import { VerificationSummary } from "@/components/review/VerificationSummary";
-import { getDocument, getAudit, postMessage, ApiError } from "@/lib/api/client";
+import { Markdown } from "@/components/Markdown";
+import { listArtifacts, readArtifact, getAudit, postMessage, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 
 export default function ReviewPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
 
-  // A 404 document is treated as an empty document, not an error; any other
-  // error must still surface (not be coalesced into the empty-doc state).
-  const doc = useAsync(
-    () => getDocument(projectId).catch((e) => (e instanceof ApiError && e.status === 404 ? "" : Promise.reject(e))),
-    [projectId],
-  );
+  const tree = useAsync(() => listArtifacts(projectId), [projectId]);
   const audit = useAsync(() => getAudit(projectId), [projectId]);
 
-  const docLoadError = doc.error !== null;
+  // Default selection: once the artifact tree loads, select
+  // discovery-document.md if present. Guarded by `selected === null` so a
+  // later tree reload (e.g. after an approval turn) never clobbers the
+  // user's own choice.
+  useEffect(() => {
+    if (selected !== null || !tree.data) return;
+    const doc = tree.data.find((p) => p.endsWith("discovery-document.md"));
+    if (doc) setSelected(doc);
+  }, [tree.data, selected]);
+
+  // A 404 file is treated as an empty document, not an error; any other
+  // error must still surface (not be coalesced into the empty-doc state).
+  const content = useAsync(
+    () =>
+      selected === null
+        ? Promise.resolve("")
+        : readArtifact(projectId, selected).catch((e) =>
+            e instanceof ApiError && e.status === 404 ? "" : Promise.reject(e),
+          ),
+    [projectId, selected],
+  );
+
+  const contentLoadError = selected !== null && content.error !== null;
+  const isDiscoveryDocument = selected?.endsWith("discovery-document.md") ?? false;
 
   async function sendTurn(text: string) {
     setBusy(true);
     setActionError(null);
     try {
       await postMessage(projectId, text);
-      doc.reload();
+      content.reload();
       audit.reload();
     } catch {
       setActionError("요청 처리에 실패했습니다. 다시 시도해 주세요.");
@@ -40,19 +61,37 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
     <>
       <AppHeader activeTab="review" projectId={projectId} />
       <main className="max-w-7xl mx-auto px-6 py-8">
-        <ApprovalGate onApprove={() => sendTurn("승인")} onRevise={(t) => sendTurn(t)} busy={busy} />
-        {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
-        {busy && <p className="text-sm text-slate-400 mb-4">AI가 요청을 처리하고 있습니다…</p>}
+        {isDiscoveryDocument && (
+          <>
+            <ApprovalGate onApprove={() => sendTurn("승인")} onRevise={(t) => sendTurn(t)} busy={busy} />
+            {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
+            {busy && <p className="text-sm text-slate-400 mb-4">AI가 요청을 처리하고 있습니다…</p>}
+          </>
+        )}
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          {docLoadError ? (
-            <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-6">
+        <div className="grid lg:grid-cols-[240px_1fr] gap-6">
+          <aside className="bg-white rounded-xl border border-slate-200 p-4">
+            <DocTree paths={tree.data ?? []} selected={selected} onSelect={setSelected} />
+          </aside>
+
+          {contentLoadError ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
               <p className="text-sm text-rose-600">문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
             </div>
+          ) : isDiscoveryDocument ? (
+            <div className="grid lg:grid-cols-3 gap-6">
+              <DocumentPanel markdown={content.data ?? ""} />
+              <VerificationSummary entries={audit.data ?? []} />
+            </div>
+          ) : selected === null ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <p className="text-sm text-slate-400">좌측에서 문서를 선택하세요.</p>
+            </div>
           ) : (
-            <DocumentPanel markdown={doc.data ?? ""} />
+            <article className="bg-white rounded-xl border border-slate-200 p-6">
+              <Markdown text={content.data ?? ""} />
+            </article>
           )}
-          <VerificationSummary entries={audit.data ?? []} />
         </div>
       </main>
     </>

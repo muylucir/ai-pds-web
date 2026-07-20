@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import type { QuestionFile } from "@/lib/api/types";
-import { MarkdownView } from "@/components/review/MarkdownView";
+import { Markdown } from "@/components/Markdown";
 
 export function RawMarkdownFallback({
   file,
@@ -26,7 +26,7 @@ export function RawMarkdownFallback({
         <p className="text-amber-800 mt-1">아래 원본 내용을 확인하고 자유롭게 답변을 작성해 주세요.</p>
       </div>
       <div className="bg-white rounded-xl border border-slate-200 p-6">
-        <MarkdownView markdown={file.raw_markdown ?? ""} />
+        <Markdown text={file.raw_markdown ?? ""} />
       </div>
       <div className="bg-white rounded-xl border border-slate-200 p-5">
         <label htmlFor="freeform" className="block text-sm font-medium mb-2">

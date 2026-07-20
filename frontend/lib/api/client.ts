@@ -112,6 +112,16 @@ export async function listArtifacts(pid: string): Promise<string[]> {
   return r.artifacts;
 }
 
+// GET /projects/{pid}/files/{path} → { content } — general-purpose reader for
+// the review page's document tree. Backend only allows aiplc-docs/ paths
+// (403 otherwise); this is a display-only viewer, not a generic file API.
+export async function readArtifact(pid: string, path: string): Promise<string> {
+  const r = await request<{ content: string }>(
+    `/projects/${encodeURIComponent(pid)}/files/${encodePath(path)}`,
+  );
+  return r.content;
+}
+
 export async function postMessage(pid: string, text: string): Promise<TurnResult> {
   return request<TurnResult>(`/projects/${encodeURIComponent(pid)}/message`, {
     method: "POST",

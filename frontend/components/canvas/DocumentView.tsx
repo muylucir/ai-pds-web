@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { getDocument, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
-import { MarkdownView } from "@/components/review/MarkdownView";
+import { Markdown } from "@/components/Markdown";
 
 // Living-Document view for the right panel's "문서" tab. No part tabs (the
 // mockup's Part 1/2/3/4 row is NOT ported — GET /document returns one
@@ -71,8 +71,8 @@ export function DocumentView({
             rendering alongside the "아직 작성된 문서가 없습니다." empty state
             above — `empty` already covers markdown.trim() === "" (see its
             definition), so a truthy-but-blank markdown string can't slip
-            through and render an empty MarkdownView next to that message. */}
-        {!empty && markdown && <MarkdownView markdown={markdown} />}
+            through and render an empty Markdown next to that message. */}
+        {!empty && markdown && <Markdown text={markdown} />}
       </div>
 
       {/* Gate the footer on actual loaded content, not just "not empty" —

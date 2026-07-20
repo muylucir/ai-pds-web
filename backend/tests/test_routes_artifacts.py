@@ -36,3 +36,17 @@ def test_get_questions_route():
 
 def test_unknown_project_404():
     assert client.get("/projects/nope/state").status_code == 404
+
+def test_read_artifact_returns_content_and_guards_prefix():
+    _create_and_seed("proj-files")
+    ws = registry.get("proj-files")
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(
+        ws.sandbox.write_file("aiplc-docs/discovery/prfaq.md", "# PR/FAQ\n\nContent."))
+
+    r = client.get("/projects/proj-files/files/aiplc-docs/discovery/prfaq.md")
+    assert r.status_code == 200
+    assert r.json()["content"].startswith("# PR")
+
+    assert client.get("/projects/proj-files/files/uploads/x.md").status_code == 403
+    assert client.get("/projects/proj-files/files/aiplc-docs/none.md").status_code == 404

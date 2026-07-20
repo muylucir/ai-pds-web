@@ -13,6 +13,7 @@ import {
   getQuestionFile,
   putAnswers,
   listArtifacts,
+  readArtifact,
   postMessage,
   getPending,
   getHistory,
@@ -113,6 +114,25 @@ describe("api client request shaping + response typing", () => {
     );
     expect(await listQuestionFiles("p1")).toEqual(["aiplc-docs/a-questions.md"]);
     expect(await listArtifacts("p1")).toEqual(["aiplc-docs/audit.md"]);
+  });
+
+  it("readArtifact encodes a slash-bearing path but keeps separators and unwraps {content}", async () => {
+    const path = "aiplc-docs/discovery/discovery-document.md";
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/files/${path}`, () =>
+        HttpResponse.json({ content: "# Doc" }),
+      ),
+    );
+    expect(await readArtifact("p1", path)).toBe("# Doc");
+  });
+
+  it("readArtifact maps 403 to ApiError(403)", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/files/uploads/x.md`, () =>
+        HttpResponse.json({ detail: "artifacts only" }, { status: 403 }),
+      ),
+    );
+    await expect(readArtifact("p1", "uploads/x.md")).rejects.toMatchObject({ status: 403 });
   });
 
   it("getQuestionFile encodes a slash-bearing name path but keeps separators", async () => {

@@ -1,4 +1,4 @@
-import { MarkdownView } from "./MarkdownView";
+import { Markdown } from "@/components/Markdown";
 
 export function DocumentPanel({ markdown }: { markdown: string }) {
   return (
@@ -16,7 +16,7 @@ export function DocumentPanel({ markdown }: { markdown: string }) {
         {markdown.trim() === "" ? (
           <p className="text-slate-400">아직 작성된 문서가 없습니다.</p>
         ) : (
-          <MarkdownView markdown={markdown} />
+          <Markdown text={markdown} />
         )}
       </div>
     </article>
