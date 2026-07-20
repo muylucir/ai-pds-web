@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from pathfinder.parsers.redaction import redact_credentials
-from pathfinder.routes.deps import get_workspace
+from pathfinder.routes.deps import ensure_workspace
 from pathfinder.sandbox.base import AgentEvent, TurnResult
 
 router = APIRouter()
@@ -26,13 +26,13 @@ def _redacted(event: AgentEvent) -> AgentEvent:
 
 @router.post("/projects/{pid}/message")
 async def post_message(pid: str, body: MessageBody):
-    ws = get_workspace(pid)
+    ws = await ensure_workspace(pid)
     events = [_redacted(e) async for e in ws.sandbox.send_message(body.text)]
     return TurnResult(events=events)
 
 @router.get("/projects/{pid}/events")
 async def stream_events(pid: str, text: str):
-    ws = get_workspace(pid)
+    ws = await ensure_workspace(pid)
     async def gen():
         async for event in ws.sandbox.send_message(text):
             yield {"data": _redacted(event).model_dump_json()}
@@ -40,7 +40,7 @@ async def stream_events(pid: str, text: str):
 
 @router.get("/projects/{pid}/answers/stream")
 async def stream_answers(pid: str, answers: str):
-    ws = get_workspace(pid)
+    ws = await ensure_workspace(pid)
     try:
         parsed = json.loads(answers)
     except json.JSONDecodeError:
@@ -54,7 +54,7 @@ async def stream_answers(pid: str, answers: str):
 
 @router.get("/projects/{pid}/pending")
 async def get_pending(pid: str):
-    ws = get_workspace(pid)
+    ws = await ensure_workspace(pid)
     payload = await ws.sandbox.pending()
     if payload is not None:
         payload = redact_credentials(payload)

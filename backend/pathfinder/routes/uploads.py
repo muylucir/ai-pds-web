@@ -1,13 +1,13 @@
 # backend/pathfinder/routes/uploads.py
 from fastapi import APIRouter, HTTPException, Request, UploadFile
-from pathfinder.routes.deps import get_workspace
+from pathfinder.routes.deps import ensure_workspace
 from pathfinder.parsers.uploads import convert, safe_name, MAX_UPLOAD_BYTES
 
 router = APIRouter()
 
 @router.post("/projects/{pid}/uploads")
 async def upload_file(pid: str, file: UploadFile, request: Request):
-    ws = get_workspace(pid)
+    ws = await ensure_workspace(pid)
     # Cheap pre-check: reject oversized uploads before reading the body.
     # Content-Length is client-controlled (not a security boundary — the
     # post-read check below remains authoritative) but stops honest large
