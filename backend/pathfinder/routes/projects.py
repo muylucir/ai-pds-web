@@ -1,7 +1,11 @@
 # backend/pathfinder/routes/projects.py
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from pathfinder import app as app_module
+from pathfinder.project_store import write_manifest
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -14,6 +18,18 @@ async def create_project(body: CreateProject):
     if app_module.registry.is_registered(body.project_id):
         raise HTTPException(status_code=409, detail="project exists")
     sandbox = await app_module.make_sandbox(body.project_id)
+    if app_module.durable_projects_enabled():
+        try:
+            await write_manifest(app_module.projects_root_s3_factory(),
+                                 body.project_id, body.name)
+        except Exception:
+            # 스펙 결정: 재시작하면 사라질 프로젝트를 조용히 만들지 않는다.
+            _log.exception("manifest write failed for %s", body.project_id)
+            try:
+                await sandbox.stop()
+            except Exception:
+                _log.exception("sandbox cleanup after manifest failure failed")
+            raise HTTPException(status_code=500, detail="project persistence failed")
     app_module.registry.register(body.project_id, body.name)
     app_module.registry.attach(body.project_id, sandbox)
     return {"project_id": body.project_id, "name": body.name}
