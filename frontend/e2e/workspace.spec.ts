@@ -54,7 +54,11 @@ test("웰컴 카드 시작 -> 데모 질문 응답 -> Envision 완료 + 문서 �
   await expect(page.getByText("어떻게 시작할까요?")).toHaveCount(0);
 
   const timeline = page.getByLabel("대화 타임라인");
-  await expect(timeline.getByText(/Path A/)).toBeVisible();
+  // Two elements match /Path A/ here: the user bubble (the literal starter
+  // text) AND LocalSandbox's first AI message, which echoes the input
+  // verbatim ("'<text>' 요청을 받았습니다...") — `.first()` disambiguates the
+  // strict-mode locator instead of asserting on a specific role.
+  await expect(timeline.getByText(/Path A/).first()).toBeVisible();
   // The chat scroller itself (ChatTimeline.tsx's `chat-scroll overflow-y-auto`
   // container) is now mounted — confirm it independently of the right panel.
   await expect(page.locator(".chat-scroll.overflow-y-auto")).toBeVisible();
