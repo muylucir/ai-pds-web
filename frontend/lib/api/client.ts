@@ -74,6 +74,12 @@ export async function listProjects(): Promise<ProjectSummary[]> {
   return r.projects;
 }
 
+export async function deleteProject(projectId: string): Promise<void> {
+  await request<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function getState(pid: string): Promise<ProjectState> {
   return request<ProjectState>(`/projects/${encodeURIComponent(pid)}/state`);
 }

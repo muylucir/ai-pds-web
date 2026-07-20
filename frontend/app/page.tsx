@@ -24,7 +24,7 @@ export default function Home() {
             프로젝트 목록을 불러오지 못했습니다. 백엔드 연결을 확인하세요.
           </p>
         )}
-        {data && <ProjectList projects={data} />}
+        {data && <ProjectList projects={data} onDeleted={reload} />}
       </main>
     </>
   );
