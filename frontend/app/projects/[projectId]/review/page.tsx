@@ -61,7 +61,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
     <>
       <AppHeader activeTab="review" projectId={projectId} />
       <main className="max-w-7xl mx-auto px-6 py-8">
-        {isDiscoveryDocument && (
+        {isDiscoveryDocument && !contentLoadError && (
           <>
             <ApprovalGate onApprove={() => sendTurn("승인")} onRevise={(t) => sendTurn(t)} busy={busy} />
             {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}

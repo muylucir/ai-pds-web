@@ -118,4 +118,27 @@ describe("Review page", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/아직 작성된 문서가 없습니다/)).not.toBeInTheDocument();
   });
+
+  // Regression: the gate previously rendered whenever discovery-document.md
+  // was selected, even if its content failed to load — letting a user
+  // approve a document they can never actually see. The gate must stay
+  // hidden while the load-error panel is showing.
+  it("hides the approval gate when the discovery document's content fails to load", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () =>
+        HttpResponse.json({ artifacts: [DISCOVERY_PATH] }),
+      ),
+      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
+    );
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    expect(
+      await screen.findByText(/문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /승인하고 다음 단계로/ })).not.toBeInTheDocument();
+  });
 });

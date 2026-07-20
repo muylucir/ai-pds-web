@@ -4,9 +4,9 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-export function Markdown({ text }: { text: string }) {
+export function Markdown({ text, className }: { text: string; className?: string }) {
   return (
-    <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs">
+    <div className={"prose prose-sm prose-slate max-w-none [&_table]:text-xs " + (className ?? "")}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

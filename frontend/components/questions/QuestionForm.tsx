@@ -47,7 +47,7 @@ export function QuestionForm({
         <div className="flex gap-3 bg-sky-50 border border-sky-200 rounded-xl p-4 text-sm">
           <span className="text-lg" aria-hidden="true">💡</span>
           <div className="text-sky-800">
-            <Markdown text={file.preamble} />
+            <Markdown text={file.preamble} className="prose-p:text-sky-800 prose-li:text-sky-800 prose-strong:text-sky-900" />
           </div>
         </div>
       )}
