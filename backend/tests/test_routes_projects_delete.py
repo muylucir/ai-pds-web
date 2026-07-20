@@ -87,3 +87,31 @@ def test_delete_registered_but_unbooted_project(monkeypatch):
     r = client.delete("/projects/del-4")
     assert r.status_code == 200
     assert not app_module.registry.is_registered("del-4")
+
+
+def test_delete_stops_sandbox_attached_by_concurrent_boot_during_s3_await(monkeypatch):
+    """역방향 레이스: DELETE가 복원-미부팅(sandbox 없음) 프로젝트에 대해 실행되어
+    stop 블록을 건너뛴 뒤, S3 삭제 await 도중 동시 ensure_workspace가 부팅을
+    마치고 registry.attach로 살아있는 워크스페이스를 붙인다. 마지막
+    registry.remove(pid)가 반환하는 그 워크스페이스를 stop하지 않으면 방금 띄운
+    MicroVM이 새어나간다(leak)."""
+    pid = "del-race"
+    sb2 = _FakeSandbox()
+
+    class _RaceSessionsStore(FakeS3Store):
+        async def delete_prefix(self, prefix):
+            # 아직 등록 상태(is_registered)인 동안 동시 부팅이 attach하는 순간을 흉내낸다.
+            app_module.registry.attach(pid, sb2)
+            return await super().delete_prefix(prefix)
+
+    sessions, root = _RaceSessionsStore(), FakeS3Store()
+    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
+    monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
+    app_module.registry.register(pid)
+    root.blobs[f"{pid}/project.json"] = "{}"
+
+    r = client.delete(f"/projects/{pid}")
+    assert r.status_code == 200
+    assert sb2.stopped == 1
+    assert not app_module.registry.is_registered(pid)

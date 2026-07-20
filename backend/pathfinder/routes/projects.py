@@ -52,9 +52,11 @@ async def delete_project(pid: str):
     (실패 시 500, 멱등 재시도) → 레지스트리 제거."""
     if not app_module.registry.is_registered(pid):
         raise HTTPException(status_code=404, detail="unknown project")
+    already_stopped = None
     if app_module.registry.has_workspace(pid):
+        already_stopped = app_module.registry.get(pid)
         try:
-            await app_module.registry.get(pid).sandbox.stop()
+            await already_stopped.sandbox.stop()
         except Exception:
             _log.exception("sandbox stop failed for %s during delete (continuing)", pid)
     if app_module.durable_projects_enabled():
@@ -64,5 +66,15 @@ async def delete_project(pid: str):
         except Exception:
             _log.exception("S3 delete failed for %s", pid)
             raise HTTPException(status_code=500, detail="project delete failed")
-    app_module.registry.remove(pid)
+    removed = app_module.registry.remove(pid)
+    # 역방향 레이스 대비: has_workspace가 False라 위 stop 블록을 건너뛰었더라도,
+    # S3 삭제 await 도중 동시 ensure_workspace가 부팅을 마치고 attach했을 수
+    # 있다. 마지막 remove가 반환한 워크스페이스가 그 정리 지점이 된다 — 이미
+    # 위에서 stop한 것과 동일 객체면(레이스가 없었던 정상 경로) 중복 stop을
+    # 피하고, 다른 객체면(늦게 attach된 워크스페이스) stop해 VM이 새지 않게 한다.
+    if removed is not None and removed is not already_stopped:
+        try:
+            await removed.sandbox.stop()
+        except Exception:
+            _log.exception("sandbox stop failed for %s during final registry removal (continuing)", pid)
     return {"deleted": True}
