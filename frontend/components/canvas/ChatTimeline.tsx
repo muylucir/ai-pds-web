@@ -1,4 +1,6 @@
 // frontend/components/canvas/ChatTimeline.tsx
+"use client";
+import { useEffect, useRef } from "react";
 import type { ChatItem as CanvasChatItem } from "@/lib/useTurnStream";
 import type { ChatItem as WorkspaceChatItem } from "@/lib/useWorkspaceStream";
 import { UserMessage } from "./UserMessage";
@@ -29,9 +31,26 @@ export function ChatTimeline({
   onOpenArtifact: () => void;
   busy: boolean;
 }) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Smart autoscroll: only snap to the bottom when the user is already
+  // (roughly) there — someone scrolled up to re-read earlier turns must not
+  // get yanked back down every time a new streaming chunk lands. jsdom does
+  // NOT implement Element.scrollIntoView (it's `undefined` on the
+  // prototype), so this component's own unit tests would crash on every
+  // items change without the existence guard below.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (nearBottom) bottomRef.current?.scrollIntoView?.({ block: "end" });
+  }, [items]);
+
   return (
     <div
-      className="chat-scroll flex-1 overflow-y-auto px-4 md:px-8 py-6"
+      ref={scrollerRef}
+      className="chat-scroll flex-1 min-h-0 overflow-y-auto px-4 md:px-8 py-6"
       aria-label="대화 타임라인"
     >
       <div className="max-w-2xl mx-auto space-y-5">
@@ -75,6 +94,7 @@ export function ChatTimeline({
             <span className="italic">&quot;이전 단계로 돌아가고 싶어&quot;</span>
           </p>
         )}
+        <div ref={bottomRef} />
       </div>
     </div>
   );

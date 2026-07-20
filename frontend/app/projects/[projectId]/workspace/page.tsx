@@ -6,6 +6,7 @@ import { StageSidebar } from "@/components/workspace/StageSidebar";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
 import { ChatInput } from "@/components/canvas/ChatInput";
 import { WorkspaceRightPanel } from "@/components/workspace/WorkspaceRightPanel";
+import { WelcomeCard } from "@/components/workspace/WelcomeCard";
 import { QuestionForm } from "@/components/questions/QuestionForm";
 import { getState } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
@@ -21,8 +22,14 @@ import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
-  const { items, streaming, send, submitAnswers, pendingQuestions, stages, lastDocument, changedPaths } =
+  const { items, streaming, send, submitAnswers, pendingQuestions, stages, lastDocument, changedPaths, historyLoading } =
     useWorkspaceStream(projectId);
+  // Show the Path A/B welcome starter only once history has finished loading
+  // (avoids a flash of the welcome card before restored history arrives) AND
+  // the timeline is genuinely empty — a pending interrupt or an in-flight
+  // turn means the conversation has already started, so the welcome card
+  // must not reappear over it.
+  const showWelcome = !historyLoading && items.length === 0 && !pendingQuestions && !streaming;
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
   // Dismissible document-update notice (spec §5): track which version the
@@ -57,7 +64,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
       <div className="flex-1 grid min-h-0 grid-cols-1 lg:grid-cols-[1fr_4.5fr_4.5fr]">
         <StageSidebar state={state.data} events={stages} />
 
-        <main className="relative flex flex-col min-w-0 bg-slate-50">
+        <main className="relative flex flex-col min-w-0 min-h-0 bg-slate-50">
           {showDocBanner && lastDocument && (
             <div
               role="status"
@@ -91,13 +98,19 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               답변 대기 중인 질문 →
             </button>
           )}
-          <ChatTimeline
-            items={items}
-            projectId={projectId}
-            onChoose={send}
-            onOpenArtifact={() => {}}
-            busy={streaming}
-          />
+          {showWelcome ? (
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <WelcomeCard onStart={send} />
+            </div>
+          ) : (
+            <ChatTimeline
+              items={items}
+              projectId={projectId}
+              onChoose={send}
+              onOpenArtifact={() => {}}
+              busy={streaming}
+            />
+          )}
           <ChatInput onSend={send} disabled={streaming} />
         </main>
 

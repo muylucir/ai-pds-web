@@ -47,7 +47,10 @@ function mockWorkspaceStream(overrides: Partial<workspaceStream.WorkspaceStream>
 describe("Workspace page", () => {
   it("renders the three-pane grid: stage sidebar, chat, context panel", async () => {
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
-    mockWorkspaceStream();
+    // historyLoading: true keeps the welcome card from covering the
+    // ChatTimeline empty state — this test is about the grid layout, not the
+    // welcome card (which has its own dedicated tests below).
+    mockWorkspaceStream({ historyLoading: true });
     // use(params) suspends on first render (plain Promise.resolve params); the
     // act-wrap lets that Suspense retry flush before we query (existing
     // canvas/dashboard page test pattern).
@@ -152,5 +155,24 @@ describe("Workspace page", () => {
     });
     await screen.findByLabelText("스테이지 진행 상황");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("shows the welcome card only when history is empty and loaded", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false });
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    expect(await screen.findByText(/어떻게 시작할까요/)).toBeInTheDocument();
+  });
+
+  it("hides the welcome card while history is loading or items exist", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ items: [], historyLoading: true, pendingQuestions: null, streaming: false });
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    await screen.findByLabelText("스테이지 진행 상황");
+    expect(screen.queryByText(/어떻게 시작할까요/)).toBeNull();
   });
 });

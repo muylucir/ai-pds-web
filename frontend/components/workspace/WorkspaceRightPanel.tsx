@@ -53,10 +53,10 @@ export function WorkspaceRightPanel({
   return (
     <aside
       aria-label="컨텍스트 패널"
-      className="hidden lg:flex flex-col min-w-0 bg-white border-l border-slate-200 overflow-y-auto"
+      className="hidden lg:flex flex-col min-w-0 min-h-0 bg-white border-l border-slate-200"
     >
       {mode === "questions" && pendingQuestions && (
-        <div className="p-6">
+        <div className="flex-1 min-h-0 overflow-y-auto p-6">
           <QuestionForm file={pendingQuestions.questions} onSubmit={onSubmitAnswers} submitting={busy} />
         </div>
       )}
@@ -66,7 +66,7 @@ export function WorkspaceRightPanel({
         </div>
       )}
       {mode === "artifacts" && (
-        <div className="p-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">최근 산출물</p>
           {changedPaths.length === 0 ? (
             <p className="text-sm text-slate-400">아직 변경된 파일이 없습니다.</p>

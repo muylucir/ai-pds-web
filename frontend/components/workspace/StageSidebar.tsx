@@ -83,7 +83,7 @@ export function StageSidebar({
   const { completed, total } = stageCounts(merged);
   return (
     <aside
-      className="hidden lg:flex flex-col bg-white border-r border-slate-200"
+      className="hidden lg:flex flex-col min-h-0 bg-white border-r border-slate-200"
       aria-label="스테이지 진행 상황"
     >
       <div className="px-4 py-3 border-b border-slate-100">
