@@ -213,3 +213,43 @@ describe("Review page — width, download, status badge", () => {
     expect(await screen.findByText("승인 완료")).toBeInTheDocument();
   });
 });
+
+describe("Review page — document list auto-refresh", () => {
+  const FAQ_PATH = "aiplc-docs/discovery/faq.md";
+
+  it("polls the artifact list and shows a newly-created document without a manual reload", async () => {
+    // Tree starts with only the discovery document; a background turn (from the
+    // workspace) later creates faq.md. The poll must surface it.
+    let artifacts = [DISCOVERY_PATH];
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () =>
+        HttpResponse.json({ artifacts }),
+      ),
+      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+        HttpResponse.json({ content: discoveryDocument }),
+      ),
+      http.get(`${API_BASE_URL}/projects/pilot1/files/${FAQ_PATH}`, () =>
+        HttpResponse.json({ content: "# FAQ" }),
+      ),
+      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
+    );
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    // faq.md is not in the tree yet.
+    expect(await screen.findByRole("button", { name: /discovery-document\.md/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /faq\.md/ })).not.toBeInTheDocument();
+
+    // Backend creates it; the 5s poll picks it up.
+    artifacts = [DISCOVERY_PATH, FAQ_PATH];
+    expect(
+      await screen.findByRole("button", { name: /faq\.md/ }, { timeout: 8000 }),
+    ).toBeInTheDocument();
+    // The user's current selection (discovery-document.md) is preserved across
+    // the reload — the poll must not clobber it.
+    expect(screen.getByRole("button", { name: /discovery-document\.md/ })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  }, 12000); // > the 5s poll interval + render/settle margin
+});

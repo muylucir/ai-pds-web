@@ -64,6 +64,10 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
     setActionError(null);
     try {
       await postMessage(projectId, text);
+      // tree too — a revision turn may CREATE a new document (e.g. a fresh
+      // FAQ/PR file), which must appear in the tree, not just refresh the
+      // currently-open file's content.
+      tree.reload();
       content.reload();
       audit.reload();
     } catch {
@@ -72,6 +76,20 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
       setBusy(false);
     }
   }
+
+  // Auto-refresh the artifact list (spec: new documents should appear without
+  // a manual reload). This route has no SSE stream — documents can be created
+  // from the workspace chat or an async turn — so a gentle poll is the only
+  // cross-route signal available. `tree.reload()` preserves the user's current
+  // selection (the default-selection effect is guarded on `selected === null`),
+  // and DocTree doesn't gate on `tree.loading`, so a reload never flashes the
+  // pane empty. Paused while a turn is in flight — sendTurn reloads the tree
+  // itself on completion, so polling during `busy` would only add races.
+  useEffect(() => {
+    if (busy) return;
+    const id = setInterval(() => tree.reload(), 5000);
+    return () => clearInterval(id);
+  }, [busy, tree.reload]);
 
   return (
     <>

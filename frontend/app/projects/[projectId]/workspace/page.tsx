@@ -6,6 +6,7 @@ import { StageSidebar } from "@/components/workspace/StageSidebar";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
 import { ChatInput } from "@/components/canvas/ChatInput";
 import { WorkspaceRightPanel } from "@/components/workspace/WorkspaceRightPanel";
+import { WorkspaceDocPanel } from "@/components/workspace/WorkspaceDocPanel";
 import { WelcomeCard } from "@/components/workspace/WelcomeCard";
 import { AttachmentChips } from "@/components/workspace/AttachmentChips";
 import { QuestionForm } from "@/components/questions/QuestionForm";
@@ -13,13 +14,16 @@ import { getState, uploadFile } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 
-// The 3-pane workspace screen (Task 11) that replaces the separate
-// questions/canvas tabs — grid ratio 1:4.5:4.5 (좌 스테이지 : 중앙 채팅 : 우
-// 컨텍스트) per the approved spec. Below the `lg` breakpoint the side/right
-// panels are hidden (WorkspaceRightPanel/StageSidebar are `hidden lg:flex`
-// internally); a pending-questions badge over the chat opens a bottom-sheet
-// that reuses the SAME QuestionForm widget the right panel would otherwise
-// show for that mode (mode priority: questions > preview > artifacts).
+// The 4-pane workspace screen — grid ratio 1:3.5:3.5:4 (좌 스테이지 : 채팅 :
+// 컨텍스트 : 생성 문서). The 4th column (WorkspaceDocPanel) renders the latest
+// generated document INLINE so the user reviews it without leaving the
+// workspace for the review route; the chat + question panel narrow to make
+// room. Below the `lg` breakpoint every side panel is hidden
+// (StageSidebar/WorkspaceRightPanel/WorkspaceDocPanel are `hidden lg:flex`
+// internally), leaving a single-column chat; a pending-questions badge over
+// the chat opens a bottom-sheet that reuses the SAME QuestionForm widget the
+// right panel would otherwise show (mode priority: questions > preview >
+// artifacts), and the document-update banner links out to the review route.
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
@@ -87,7 +91,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       <AppHeader activeTab="workspace" projectId={projectId} />
-      <div className="flex-1 grid min-h-0 grid-cols-1 lg:grid-cols-[1fr_4.5fr_4.5fr]">
+      <div className="flex-1 grid min-h-0 grid-cols-1 lg:grid-cols-[1fr_3.5fr_3.5fr_4fr]">
         <StageSidebar state={state.data} events={stages} />
 
         <main className="relative flex flex-col min-w-0 min-h-0 bg-slate-50">
@@ -157,6 +161,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           onSubmitAnswers={submitAnswers}
           busy={streaming}
         />
+
+        <WorkspaceDocPanel projectId={projectId} lastDocument={lastDocument} />
       </div>
 
       {sheetOpen && pendingQuestions && (

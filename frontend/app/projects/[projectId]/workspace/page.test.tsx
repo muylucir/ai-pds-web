@@ -138,7 +138,13 @@ describe("Workspace page", () => {
   });
 
   it("shows a document-update banner linking to the review route when lastDocument is set", async () => {
-    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)),
+      // The inline doc panel (4th column) reads lastDocument.path on mount.
+      http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/discovery/discovery-document.md`, () =>
+        HttpResponse.json({ content: "# 문서\n\n본문" }),
+      ),
+    );
     mockWorkspaceStream({
       lastDocument: { path: "aiplc-docs/discovery/discovery-document.md", version: "v2", summary: "" },
     });
