@@ -40,4 +40,9 @@ describe("AiMessage", () => {
     const textEl = screen.getByText("필터를 추가했습니다.");
     expect(textEl.closest('[aria-live="polite"]')).not.toBeNull();
   });
+
+  it("renders markdown in the AI bubble", () => {
+    render(<AiMessage item={{ id: "1", role: "ai", text: "**중요**", trace: [], streaming: false, error: null }} />);
+    expect(screen.getByText("중요").tagName).toBe("STRONG");
+  });
 });

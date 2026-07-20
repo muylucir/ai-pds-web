@@ -1,5 +1,6 @@
 // frontend/components/canvas/AiMessage.tsx
 import type { AiItem } from "@/lib/useTurnStream";
+import { Markdown } from "@/components/Markdown";
 import { ReasoningTrace } from "./ReasoningTrace";
 
 export function AiMessage({ item }: { item: AiItem }) {
@@ -16,7 +17,7 @@ export function AiMessage({ item }: { item: AiItem }) {
           {item.streaming && item.text === "" ? (
             <p className="text-slate-400">AI가 작성 중…</p>
           ) : (
-            <p className="whitespace-pre-wrap">{item.text}</p>
+            <Markdown text={item.text} />
           )}
           {item.error && <p className="mt-2 text-rose-600">{item.error}</p>}
         </div>
