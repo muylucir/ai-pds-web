@@ -50,3 +50,25 @@ def test_upload_rejects_big_and_unsupported(monkeypatch):
 def test_upload_unknown_project_404():
     assert client.post("/projects/ghost/uploads",
                        files={"file": ("a.md", io.BytesIO(b"x"), "text/markdown")}).status_code == 404
+
+def test_upload_corrupt_xlsx_415_not_500(monkeypatch):
+    # Reviewer-flagged gap: a valid extension with garbage bytes must 415, not
+    # 500 (openpyxl's zipfile.BadZipFile must never leak past convert()).
+    _local_project(monkeypatch, "u4")
+    r = client.post("/projects/u4/uploads",
+                    files={"file": ("bad.xlsx", io.BytesIO(b"not a real xlsx"),
+                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+    assert r.status_code == 415
+
+def test_upload_spoofed_content_length_rejected_before_body_read(monkeypatch):
+    # Reviewer-flagged gap: a Content-Length far beyond the 5MB cap should be
+    # rejected from the header alone, before the body is spooled/read. This
+    # exercises the pre-check branch directly (TestClient/httpx honors an
+    # explicit Content-Length override even though the body is small) --
+    # the post-read len(data) check (test_upload_rejects_big_and_unsupported)
+    # remains the authoritative fallback for a truthful Content-Length.
+    _local_project(monkeypatch, "u5")
+    r = client.post("/projects/u5/uploads",
+                    files={"file": ("a.txt", io.BytesIO(b"x"), "text/plain")},
+                    headers={"Content-Length": str(6 * 1024 * 1024)})
+    assert r.status_code == 413

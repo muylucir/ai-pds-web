@@ -48,9 +48,19 @@ def convert(filename: str, data: bytes) -> tuple[str, bool]:
     if ext not in ALLOWED:
         raise ValueError(f"unsupported extension: {ext or '(none)'}")
     if ext == ".xlsx":
-        content = _xlsx_to_markdown(data)
+        try:
+            content = _xlsx_to_markdown(data)
+        except Exception as e:
+            # A valid extension with corrupt/non-xlsx bytes (zipfile.BadZipFile,
+            # KeyError from openpyxl, etc.) must not surface as a raw 500 — the
+            # route's existing ValueError->415 handler is the intended path for
+            # any "we can't make sense of this upload" outcome.
+            raise ValueError(f"cannot parse {ext} file: corrupted or invalid") from e
     elif ext == ".pdf":
-        content = _pdf_to_text(data)
+        try:
+            content = _pdf_to_text(data)
+        except Exception as e:
+            raise ValueError(f"cannot parse {ext} file: corrupted or invalid") from e
     else:  # .md .txt .csv — 텍스트 그대로 (lossy 디코드)
         content = data.decode("utf-8", errors="replace")
     if len(content) > MAX_CHARS:

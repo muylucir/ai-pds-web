@@ -33,6 +33,18 @@ def test_unsupported_extension_raises():
     with pytest.raises(ValueError):
         convert("virus.exe", b"MZ")
 
+def test_corrupt_xlsx_raises_value_error_not_bad_zip_file():
+    # A valid extension with bytes that aren't a real xlsx (zip) must degrade
+    # to ValueError (route maps this to 415), not leak openpyxl's
+    # zipfile.BadZipFile as an uncaught 500.
+    with pytest.raises(ValueError):
+        convert("bad.xlsx", b"not a real xlsx")
+
+def test_corrupt_pdf_raises_value_error_not_pdf_stream_error():
+    # Same guarantee for pypdf.errors.PdfStreamError on garbage bytes.
+    with pytest.raises(ValueError):
+        convert("bad.pdf", b"not a real pdf")
+
 def test_safe_name_slug_and_collision():
     assert safe_name("고객 의견/2026.xlsx", set()) == "고객-의견-2026.md"
     assert safe_name("a.md", {"a.md"}) == "a-2.md"
