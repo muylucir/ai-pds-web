@@ -39,6 +39,14 @@ def s3_store_factory(project_id: str) -> S3StoreLike:
     client = boto3.client("s3", region_name=region)
     return S3Store(bucket=bucket, prefix=f"projects/{project_id}/", client=client)
 
+# Monkeypatchable in tests. Reads the strands session objects (sessions/ prefix)
+# that S3SessionManager writes from inside the VM; the backend only READS them.
+def session_s3_factory() -> S3StoreLike:
+    region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
+    client = boto3.client("s3", region_name=region)
+    return S3Store(bucket=bucket, prefix="sessions/", client=client)
+
 # Monkeypatchable in tests so unit tests never call AWS. Returns the auth header
 # dict for a HarnessClient, or None to attach no auth (local/fake controllers).
 def _harness_token_provider(vm_id: str, region: str) -> dict[str, str] | None:
@@ -160,3 +168,6 @@ app.include_router(turns.router)
 
 from pathfinder.routes import discovery  # noqa: E402
 app.include_router(discovery.router)
+
+from pathfinder.routes import history  # noqa: E402
+app.include_router(history.router)

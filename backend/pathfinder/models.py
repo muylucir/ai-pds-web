@@ -38,3 +38,9 @@ class AuditEntry(BaseModel):
     user_input: str
     ai_response: str
     context: str | None = None
+
+class HistoryItem(BaseModel):
+    role: Literal["user", "ai", "card"]
+    text: str | None = None
+    card: Literal["questions"] | None = None
+    name: str | None = None
