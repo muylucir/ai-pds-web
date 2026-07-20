@@ -56,6 +56,43 @@ async def test_delete_prefix_batches_over_1000():
 
 
 @pytest.mark.asyncio
+async def test_delete_prefix_raises_on_delete_objects_errors():
+    """delete_objects 응답의 Errors 배열을 감지하고 RuntimeError를 내야 함."""
+    class _StubS3ClientWithErrors(_StubS3Client):
+        def delete_objects(self, Bucket, Delete):
+            batch = [o["Key"] for o in Delete["Objects"]]
+            assert len(batch) <= 1000
+            self.delete_calls.append(len(batch))
+            # 첫 배치에서 첫 번째 키만 에러 반환 (InternalError)
+            if len(self.delete_calls) == 1:
+                return {
+                    "Errors": [
+                        {
+                            "Key": batch[0],
+                            "Code": "InternalError",
+                            "Message": "We encountered an internal error. Please try again.",
+                        }
+                    ]
+                }
+            # 이후 배치는 정상 삭제
+            for k in batch:
+                self.objects.pop(k, None)
+            return {}
+
+    keys = [f"projects/p1/f{i:04}" for i in range(10)]
+    stub = _StubS3ClientWithErrors(keys)
+    store = S3Store(bucket="b", prefix="projects/", client=stub)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await store.delete_prefix("p1/")
+
+    error_msg = str(exc_info.value)
+    assert "delete_prefix:" in error_msg
+    assert "1/10" in error_msg  # 1 failed out of 10
+    assert "InternalError" in error_msg
+
+
+@pytest.mark.asyncio
 async def test_fake_store_delete_prefix_matches_contract():
     fake = FakeS3Store()
     fake.blobs["session_a/m1"] = "x"

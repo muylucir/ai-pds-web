@@ -73,11 +73,17 @@ class S3Store:
             keys = [obj["Key"]
                     for page in paginator.paginate(Bucket=self._bucket, Prefix=full)
                     for obj in page.get("Contents", [])]
+            errors: list[dict] = []
             for i in range(0, len(keys), 1000):  # S3 delete_objects 상한
-                self._client.delete_objects(
+                resp = self._client.delete_objects(
                     Bucket=self._bucket,
                     Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]],
                             "Quiet": True})
+                errors.extend(resp.get("Errors", []))
+            if errors:
+                raise RuntimeError(
+                    f"delete_prefix: {len(errors)}/{len(keys)} objects failed "
+                    f"(first: {errors[0].get('Key')}: {errors[0].get('Code')})")
             return len(keys)
 
         return await asyncio.to_thread(_delete)
