@@ -45,7 +45,7 @@ export function QuestionCard({
   // a letter/letter-list NOR a "letter: note" form is free text; thereafter
   // only explicit user actions (picking an option vs. using Other) flip it.
   const [otherActive, setOtherActive] = useState(
-    () => value !== "" && !isLetterList(value) && splitLetterNote(value, nonOtherLetters) === null,
+    () => value !== "" && !isLetterList(value) && letterNote === null,
   );
 
   // With Other mode explicit, letter selection is only meaningful when NOT in

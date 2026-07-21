@@ -257,4 +257,17 @@ describe("QuestionCard — 보기 부연 설명 (letter + note)", () => {
     await user.type(screen.getByLabelText(/보기 B 부연 설명/), "A안과 병합");
     expect(spy).toHaveBeenLastCalledWith("B: A안과 병합");
   });
+
+  it("multi-select에서 'B: ...' 모양의 Other 자유텍스트가 보기로 오인되지 않는다", () => {
+    // multi에는 부연(letter: note) 규약이 없다 — 자기 질문의 letter로 시작하는
+    // 자유텍스트("B: 회의 후 결정")도 통째로 Other 텍스트로 복원되어야 한다.
+    // (회귀: otherActive 시드가 !multi 게이트 없이 splitLetterNote를 호출해
+    // 이 값을 letter+note로 오인 → Other 텍스트박스가 비고, Other 클릭 시
+    // 저장값이 ""로 유실됐다.)
+    const MULTI_WITH_OTHER = { ...MULTI_Q, options: [...MULTI_Q.options, { letter: "X", text: "Other", is_other: true, recommended: false }] };
+    render(<QuestionCard question={MULTI_WITH_OTHER} value="B: 회의 후 결정하겠습니다" onChange={vi.fn()} />);
+    expect(screen.getByLabelText(/기타 답변 직접 입력/)).toHaveValue("B: 회의 후 결정하겠습니다");
+    const checkboxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(checkboxes.filter((c) => c.value === "B").every((c) => !c.checked)).toBe(true);
+  });
 });
