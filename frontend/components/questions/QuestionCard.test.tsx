@@ -175,3 +175,99 @@ describe("QuestionCard — sr-only 인풋의 포지셔닝 컨텍스트 (스크�
     expect(fieldset!.className).toContain("relative");
   });
 });
+
+describe("QuestionCard — 보기 부연 설명 (letter + note)", () => {
+  // 스펙(2026-07-21-option-annotation-design.md): 일반 보기를 고르면 그 보기
+  // 아래 '부연 설명 (선택)' 입력란이 펼쳐지고, 입력하면 "B: <설명>" 단일
+  // 문자열로 제출된다. Kiro/Claude Code의 "[Answer]: letter + 설명" 경험을
+  // 파일 편집 없는 Pathfinder 폼에 재현하는 값 계약.
+
+  it("보기를 선택하면 부연 설명 입력란이 그 보기 아래 펼쳐진다", async () => {
+    const user = userEvent.setup();
+    render(<Harness question={{ ...q1, multi_select: false }} initial="" spy={vi.fn()} />);
+    // 선택 전에는 부연 입력란 없음
+    expect(screen.queryByLabelText(/보기 B 부연 설명/)).toBeNull();
+    await user.click(screen.getByText(/플랫폼\(Platform\)/));
+    expect(screen.getByLabelText(/보기 B 부연 설명/)).toBeInTheDocument();
+    // 다른(미선택) 보기에는 입력란이 없음
+    expect(screen.queryByLabelText(/보기 A 부연 설명/)).toBeNull();
+  });
+
+  it("부연을 입력하면 'B: <설명>' 형태로 제출된다", async () => {
+    const user = userEvent.setup();
+    const spy = vi.fn();
+    render(<Harness question={{ ...q1, multi_select: false }} initial="" spy={spy} />);
+    await user.click(screen.getByText(/플랫폼\(Platform\)/));
+    await user.type(screen.getByLabelText(/보기 B 부연 설명/), "헤드라인을 X로 수정");
+    expect(spy).toHaveBeenLastCalledWith("B: 헤드라인을 X로 수정");
+  });
+
+  it("부연을 전부 지우면 letter만 남는다", async () => {
+    const user = userEvent.setup();
+    const spy = vi.fn();
+    render(<Harness question={{ ...q1, multi_select: false }} initial="B: 임시" spy={spy} />);
+    await user.clear(screen.getByLabelText(/보기 B 부연 설명/));
+    expect(spy).toHaveBeenLastCalledWith("B");
+  });
+
+  it("보기를 바꾸면 이전 부연이 초기화된다", async () => {
+    const user = userEvent.setup();
+    const spy = vi.fn();
+    render(<Harness question={{ ...q1, multi_select: false }} initial="B: 수정 필요" spy={spy} />);
+    await user.click(screen.getByText(/Niche Specialist/));
+    expect(spy).toHaveBeenLastCalledWith("A");           // 부연 없이 letter만
+    expect(screen.getByLabelText(/보기 A 부연 설명/)).toHaveValue("");
+  });
+
+  it("저장된 'B: 설명' 값 복원 시 보기 B 선택 + 부연이 채워진다", () => {
+    render(<Harness question={{ ...q1, multi_select: false }} initial="B: 헤드라인 수정" spy={vi.fn()} />);
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    const radioB = radios.find((r) => r.value === "B")!;
+    expect(radioB.checked).toBe(true);
+    expect(screen.getByLabelText(/보기 B 부연 설명/)).toHaveValue("헤드라인 수정");
+    // Other 텍스트박스는 비어 있어야 함(자유텍스트로 오인 금지)
+    expect(screen.getByLabelText(/기타 답변 직접 입력/)).toHaveValue("");
+  });
+
+  it("'Broker: ...' 같은 값(첫 토큰이 letter가 아님)은 Other 자유텍스트로 복원된다", () => {
+    render(<Harness question={{ ...q1, multi_select: false }} initial="Broker: 중개 모델" spy={vi.fn()} />);
+    expect(screen.getByLabelText(/기타 답변 직접 입력/)).toHaveValue("Broker: 중개 모델");
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.filter((r) => r.value === "A" || r.value === "B").every((r) => !r.checked)).toBe(true);
+  });
+
+  it("multi-select에는 부연 입력란이 없다", () => {
+    render(<QuestionCard question={MULTI_Q} value="A" onChange={vi.fn()} />);
+    expect(screen.queryByLabelText(/부연 설명/)).toBeNull();
+  });
+
+  it("부연 입력란도 라디오 label 안에 중첩되지 않는다 (포커스/첫 글자 유실 회귀 가드)", async () => {
+    const user = userEvent.setup();
+    render(<Harness question={{ ...q1, multi_select: false }} initial="" spy={vi.fn()} />);
+    await user.click(screen.getByText(/플랫폼\(Platform\)/));
+    const note = screen.getByLabelText(/보기 B 부연 설명/);
+    expect(note.closest("label")).toBeNull();
+  });
+
+  it("부연 첫 글자가 옵션 letter여도 유실되지 않는다 (값 공간 충돌 회귀 가드)", async () => {
+    const user = userEvent.setup();
+    const spy = vi.fn();
+    render(<Harness question={{ ...q1, multi_select: false }} initial="" spy={spy} />);
+    await user.click(screen.getByText(/플랫폼\(Platform\)/));
+    await user.type(screen.getByLabelText(/보기 B 부연 설명/), "A안과 병합");
+    expect(spy).toHaveBeenLastCalledWith("B: A안과 병합");
+  });
+
+  it("multi-select에서 'B: ...' 모양의 Other 자유텍스트가 보기로 오인되지 않는다", () => {
+    // multi에는 부연(letter: note) 규약이 없다 — 자기 질문의 letter로 시작하는
+    // 자유텍스트("B: 회의 후 결정")도 통째로 Other 텍스트로 복원되어야 한다.
+    // (회귀: otherActive 시드가 !multi 게이트 없이 splitLetterNote를 호출해
+    // 이 값을 letter+note로 오인 → Other 텍스트박스가 비고, Other 클릭 시
+    // 저장값이 ""로 유실됐다.)
+    const MULTI_WITH_OTHER = { ...MULTI_Q, options: [...MULTI_Q.options, { letter: "X", text: "Other", is_other: true, recommended: false }] };
+    render(<QuestionCard question={MULTI_WITH_OTHER} value="B: 회의 후 결정하겠습니다" onChange={vi.fn()} />);
+    expect(screen.getByLabelText(/기타 답변 직접 입력/)).toHaveValue("B: 회의 후 결정하겠습니다");
+    const checkboxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(checkboxes.filter((c) => c.value === "B").every((c) => !c.checked)).toBe(true);
+  });
+});

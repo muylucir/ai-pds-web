@@ -82,3 +82,10 @@ def test_report_stage_rejects_invalid_status(tmp_path):
 def test_schema_hint_mentions_parse_ok_and_multi_select():
     assert "parse_ok" in QUESTIONS_SCHEMA_HINT
     assert "multi_select" in QUESTIONS_SCHEMA_HINT
+
+
+def test_schema_hint_mentions_letter_note_answer_form():
+    # 스펙(option-annotation): 일반 보기 답변은 "B" 또는 "B: 부연설명" 형태로
+    # 돌아온다 — 에이전트가 부연을 놓치지 않도록 힌트에 명시되어야 한다.
+    assert "부연" in QUESTIONS_SCHEMA_HINT
+    assert "'B: " in QUESTIONS_SCHEMA_HINT or '"B: ' in QUESTIONS_SCHEMA_HINT
