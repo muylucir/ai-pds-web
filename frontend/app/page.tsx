@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { CreateProjectForm } from "@/components/CreateProjectForm";
 import { ProjectList } from "@/components/ProjectList";
@@ -6,7 +7,8 @@ import { listProjects } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 
 export default function Home() {
-  const { data, error, loading, reload } = useAsync(listProjects, []);
+  const [page, setPage] = useState(1);
+  const { data, error, loading, reload } = useAsync(() => listProjects(page), [page]);
   return (
     <>
       <AppHeader activeTab="projects" />
@@ -24,7 +26,17 @@ export default function Home() {
             프로젝트 목록을 불러오지 못했습니다. 백엔드 연결을 확인하세요.
           </p>
         )}
-        {data && <ProjectList projects={data} onDeleted={reload} />}
+        {data && (
+          <ProjectList
+            data={data}
+            onDeleted={() => {
+              // 삭제로 현재 페이지가 비면 이전 페이지로 (page 상태 변경이 곧 리로드)
+              if (data.projects.length === 1 && page > 1) setPage(page - 1);
+              else reload();
+            }}
+            onPageChange={setPage}
+          />
+        )}
       </main>
     </>
   );

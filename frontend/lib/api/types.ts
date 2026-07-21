@@ -94,10 +94,25 @@ export interface DocumentPayload {
   summary: string;
 }
 
-// GET /projects → { projects: ProjectSummary[] }; POST /projects → ProjectSummary.
+// GET /projects?page&size → ProjectPage; POST /projects → ProjectSummary.
+export interface ProjectProgress {
+  current_stage: string | null;
+  completed: number;
+  total: number;
+}
+
 export interface ProjectSummary {
   project_id: string;
   name: string | null;
+  // 목록 응답에만 실림(fail-soft: 상태 파일이 없거나 읽기 실패면 null).
+  progress?: ProjectProgress | null;
+}
+
+export interface ProjectPage {
+  projects: ProjectSummary[];
+  total: number;
+  page: number;
+  size: number;
 }
 
 // GET /projects/{pid}/history → { items: HistoryItem[] } (Task 1). Restores

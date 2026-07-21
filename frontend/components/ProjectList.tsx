@@ -1,22 +1,28 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import type { ProjectSummary } from "@/lib/api/types";
+import type { ProjectPage, ProjectProgress, ProjectSummary } from "@/lib/api/types";
 import { deleteProject } from "@/lib/api/client";
 
+function progressLabel(p: ProjectProgress | null | undefined): string {
+  if (!p) return "—";
+  const count = `(${p.completed}/${p.total})`;
+  return p.current_stage ? `${p.current_stage} ${count}` : count;
+}
+
 export function ProjectList({
-  projects,
+  data,
   onDeleted,
+  onPageChange,
 }: {
-  projects: ProjectSummary[];
+  data: ProjectPage;
   onDeleted: () => void;
+  onPageChange: (page: number) => void;
 }) {
-  // 삭제 확인 다이얼로그 대상 (null = 닫힘)
   const [target, setTarget] = useState<ProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Escape로 닫기 — 워크스페이스 bottom-sheet와 동일한 최소 접근성 패턴
   useEffect(() => {
     if (!target) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -41,45 +47,88 @@ export function ProjectList({
     }
   }
 
-  if (projects.length === 0) {
+  if (data.total === 0) {
     return (
       <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-sm text-slate-500">
         아직 생성된 프로젝트가 없습니다. 새 프로젝트를 만들어 워크숍 세션을 시작하세요.
       </div>
     );
   }
+
+  const totalPages = Math.max(1, Math.ceil(data.total / data.size));
+
   return (
     <>
-      <ul className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {projects.map((p) => (
-          <li key={p.project_id} className="relative">
-            <Link
-              href={`/projects/${p.project_id}/dashboard`}
-              className="block bg-white rounded-xl border border-slate-200 p-5 hover:border-violet-300 hover:shadow-sm transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <span className="w-8 h-8 rounded-lg bg-violet-100 text-violet-700 flex items-center justify-center text-sm font-bold">
-                  🟣
-                </span>
-                <p className="font-bold truncate pr-8">{p.name ?? p.project_id}</p>
-              </div>
-              <p className="text-xs text-slate-400 mt-2">ID: {p.project_id}</p>
-            </Link>
-            {/* Link 밖(li 안) absolute 배치 — 카드 내비게이션과 클릭 충돌 방지 */}
-            <button
-              type="button"
-              aria-label={`${p.name ?? p.project_id} 프로젝트 삭제`}
-              onClick={() => {
-                setError(null);
-                setTarget(p);
-              }}
-              className="absolute top-3 right-3 w-8 h-8 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center"
-            >
-              🗑
-            </button>
-          </li>
-        ))}
-      </ul>
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
+              <th scope="col" className="px-4 py-3 font-medium">프로젝트 ID</th>
+              <th scope="col" className="px-4 py-3 font-medium">프로젝트명</th>
+              <th scope="col" className="px-4 py-3 font-medium">진행상황</th>
+              <th scope="col" className="px-4 py-3 w-12">
+                <span className="sr-only">삭제</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.projects.map((p) => (
+              // relative + 이름 링크의 after:inset-0 스트레치드 링크 — 행 어디를
+              // 클릭해도 대시보드로 이동하되, 삭제 버튼은 z-10으로 위에 띄운다.
+              <tr key={p.project_id} className="relative border-b border-slate-100 last:border-0 hover:bg-violet-50/40">
+                <td className="px-4 py-3 font-mono text-xs text-slate-500">{p.project_id}</td>
+                <td className="px-4 py-3 font-medium">
+                  <Link
+                    href={`/projects/${p.project_id}/dashboard`}
+                    className="text-slate-900 hover:text-violet-700 after:absolute after:inset-0 after:content-['']"
+                  >
+                    {p.name ?? p.project_id}
+                  </Link>
+                </td>
+                <td className="px-4 py-3 text-slate-600">{progressLabel(p.progress)}</td>
+                <td className="px-4 py-3 text-right">
+                  <button
+                    type="button"
+                    aria-label={`${p.name ?? p.project_id} 프로젝트 삭제`}
+                    onClick={() => {
+                      setError(null);
+                      setTarget(p);
+                    }}
+                    className="relative z-10 w-8 h-8 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 inline-flex items-center justify-center"
+                  >
+                    🗑
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between mt-4 text-sm text-slate-500">
+        <span>총 {data.total}건</span>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            aria-label="이전 페이지"
+            disabled={data.page <= 1}
+            onClick={() => onPageChange(data.page - 1)}
+            className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none"
+          >
+            ‹ 이전
+          </button>
+          <span>{data.page} / {totalPages}</span>
+          <button
+            type="button"
+            aria-label="다음 페이지"
+            disabled={data.page >= totalPages}
+            onClick={() => onPageChange(data.page + 1)}
+            className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none"
+          >
+            다음 ›
+          </button>
+        </div>
+      </div>
 
       {target && (
         <div

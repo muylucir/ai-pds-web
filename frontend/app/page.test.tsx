@@ -15,17 +15,25 @@ describe("Project list screen", () => {
             { project_id: "pilot1", name: "기획전 AI 어시스턴트" },
             { project_id: "bare", name: null },
           ],
+          total: 2,
+          page: 1,
+          size: 10,
         }),
       ),
     );
     render(<Home />);
     expect(await screen.findByText("기획전 AI 어시스턴트")).toBeInTheDocument();
-    // Name-less project falls back to showing its id as the title.
-    expect(screen.getByText("bare")).toBeInTheDocument();
+    // Name-less project falls back to showing its id as the link text.
+    expect(screen.getByRole("link", { name: "bare" })).toHaveAttribute(
+      "href", "/projects/bare/dashboard");
   });
 
   it("renders the empty state when there are no projects", async () => {
-    server.use(http.get(`${API_BASE_URL}/projects`, () => HttpResponse.json({ projects: [] })));
+    server.use(
+      http.get(`${API_BASE_URL}/projects`, () =>
+        HttpResponse.json({ projects: [], total: 0, page: 1, size: 10 }),
+      ),
+    );
     render(<Home />);
     expect(
       await screen.findByText(/아직 생성된 프로젝트가 없습니다/),
