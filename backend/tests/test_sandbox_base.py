@@ -38,13 +38,16 @@ def _extract_kind_literal(text: str) -> set[str]:
 
 def test_backend_and_harness_agent_event_kinds_match():
     # Mirror guard (E1): harness/events.py's AgentEvent.kind Literal MUST list
-    # exactly the same kinds as backend/pathfinder/sandbox/base.py's -- a
-    # drift here would silently break the SSE contract between the harness
-    # (inside the MicroVM) and the backend.
+    # exactly the same kinds as backend/pathfinder/models.py's (the source of
+    # truth after the AgentEvent/TurnResult move; sandbox/base.py now just
+    # re-exports) -- a drift here would silently break the SSE contract
+    # between the harness (inside the MicroVM) and the backend.
     repo_root = Path(__file__).resolve().parents[2]
-    backend_src = (repo_root / "backend" / "pathfinder" / "sandbox" / "base.py").read_text()
+    backend_src = (repo_root / "backend" / "pathfinder" / "models.py").read_text()
     harness_src = (repo_root / "harness" / "events.py").read_text()
-    backend_kinds = _extract_kind_literal(backend_src)
+    # models.py has other `kind: Literal[...]` fields (e.g. HistoryTraceEntry)
+    # above AgentEvent -- anchor on the class so we extract the right one.
+    backend_kinds = _extract_kind_literal(backend_src[backend_src.index("class AgentEvent"):])
     harness_kinds = _extract_kind_literal(harness_src)
     assert backend_kinds == harness_kinds
     assert len(backend_kinds) == 8

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from pathfinder.parsers.redaction import redact_credentials
 from pathfinder.routes.deps import ensure_workspace
-from pathfinder.sandbox.base import AgentEvent, TurnResult
+from pathfinder.models import AgentEvent, TurnResult
 
 router = APIRouter()
 

@@ -1,20 +1,8 @@
 # backend/pathfinder/sandbox/base.py
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Literal
-from pydantic import BaseModel
-
-class AgentEvent(BaseModel):
-    kind: Literal["message", "questions", "stage", "document",
-                  "file_changed", "status", "done", "error"]
-    text: str | None = None
-    path: str | None = None
-    # Structured payload (JSON string) for questions/stage/document — the
-    # event IS the UI contract (spec §4); files stay as records only.
-    payload: str | None = None
-
-class TurnResult(BaseModel):
-    events: list[AgentEvent]
+from typing import AsyncIterator
+from pathfinder.models import AgentEvent, TurnResult  # re-export (파일은 Task 6에서 삭제)
 
 class Sandbox(ABC):
     # Soft "current input holder" hint (design §4): advisory metadata about who
