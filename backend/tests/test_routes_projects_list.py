@@ -35,7 +35,6 @@ def test_list_projects_is_empty_capable():
 
 
 # ---- 페이지네이션 + progress (2026-07-21-project-list-table spec) ----
-import pytest
 from pathfinder import app as app_module
 from fakes.in_memory_s3 import FakeS3Store
 
