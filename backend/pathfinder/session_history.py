@@ -11,7 +11,7 @@ import logging
 import re
 from pathfinder.models import HistoryItem, HistoryTraceEntry
 from pathfinder.parsers.redaction import redact_credentials
-from pathfinder.sandbox.s3store import S3StoreLike
+from pathfinder.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
 _MSG_KEY = re.compile(r"message_(\d+)\.json$")

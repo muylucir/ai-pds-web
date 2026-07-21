@@ -1,14 +1,9 @@
+"""Transitional re-export shim: the real module was promoted to
+pathfinder.pathsafe (microvm-removal refactor, Task 1). This shim exists only
+so not-yet-migrated modules still under pathfinder/sandbox/ (deleted wholesale
+in a later task) keep importing without being touched ahead of that deletion.
+"""
 from __future__ import annotations
-from pathlib import PurePosixPath
+from pathfinder.pathsafe import reject_unsafe
 
-def reject_unsafe(path: str) -> None:
-    """Raise ValueError if `path` could escape the workspace root.
-
-    Identical guarantee to LocalSandbox._resolve (local.py): reject any path
-    that is absolute (leading "/") or contains a ".." path segment. Wildcards
-    ("*", "**", "?") are ordinary, non-".." segments and pass, so legitimate
-    globs like "aiplc-docs/*-questions.md" are accepted. Used by MicroVMSandbox
-    before it forwards any path/glob to the harness.
-    """
-    if path.startswith("/") or ".." in PurePosixPath(path).parts:
-        raise ValueError(f"unsafe path: {path}")
+__all__ = ["reject_unsafe"]

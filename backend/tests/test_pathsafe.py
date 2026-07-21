@@ -1,5 +1,5 @@
 import pytest
-from pathfinder.sandbox.pathsafe import reject_unsafe
+from pathfinder.pathsafe import reject_unsafe
 
 def test_accepts_normal_relative_paths():
     for ok in ("aiplc-docs/audit.md", "aiplc-docs/discovery/x.md", "a-questions.md",
