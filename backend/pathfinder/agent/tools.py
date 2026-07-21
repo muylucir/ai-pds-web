@@ -15,7 +15,9 @@ QUESTIONS_SCHEMA_HINT = (
     '"is_other": bool, "recommended": bool}]}]}. '
     "multi_select 규칙: 여러 개를 골라도 자연스러운 질문(대상 고객군, 페인포인트 유형 등)은 "
     "true, 배타적 선택(Path/모드 선택 등)은 false(기본). "
-    "multi_select 질문의 답변은 'A,C'처럼 콤마로 조인되어 돌아온다."
+    "multi_select 질문의 답변은 'A,C'처럼 콤마로 조인되어 돌아온다. "
+    "일반 보기(single-select) 답변은 'B' 또는 'B: 부연설명' 형태로 돌아온다 — "
+    "': ' 뒤 부연은 사용자가 그 보기를 고르며 덧붙인 요청/조건이므로 반드시 읽고 반영한다."
 )
 
 
