@@ -1,35 +1,105 @@
 # backend/tests/test_routes_turns.py
 import json
-import tempfile
-from pathlib import Path
 from fastapi.testclient import TestClient
 import pathfinder.app as app_module
-from pathfinder.sandbox.local import LocalSandbox
-from pathfinder.sandbox.base import AgentEvent
+from pathfinder.workspace import Workspace
+from pathfinder.models import AgentEvent
 
 client = TestClient(app_module.app)
 
+# Demo questions payload — a structured-demo shape so the answers/pending route
+# tests can arm a pending interrupt with no AWS.
+_DEMO_QUESTIONS = {
+    "name": "pain-point-questions",
+    "preamble": "데모 시나리오입니다.",
+    "parse_ok": True,
+    "raw_markdown": None,
+    "questions": [
+        {"number": 1, "category": "고객", "text": "주요 사용자는?", "answer": None,
+         "options": [{"letter": "A", "text": "PM", "is_other": False, "recommended": True}]},
+    ],
+}
+
+
+def _structured_first_turn(text):
+    payload = json.dumps({"interrupt_id": "local-i-1", "questions": _DEMO_QUESTIONS},
+                         ensure_ascii=False)
+    return [
+        AgentEvent(kind="message", text=f"'{text}' 요청을 받았습니다."),
+        AgentEvent(kind="stage", payload=json.dumps(
+            {"stage": "Envision", "status": "in_progress", "summary": "질문 생성"},
+            ensure_ascii=False)),
+        AgentEvent(kind="questions", payload=payload),
+        AgentEvent(kind="done"),
+    ]
+
+
+class ScriptRunner:
+    """send_message/send_answers/pending만 필요한 라우트 테스트용 러너.
+
+    script 미지정 시 구조화 데모 흐름을 흉내낸다: send_message가
+    questions 이벤트로 pending을 무장하고, send_answers가 document+done을 낸다."""
+    def __init__(self, script=None):
+        self._script = script or _structured_first_turn
+        self.input_holder = None
+        self._pending_payload = None
+
+    async def send_message(self, text):
+        for e in self._script(text):
+            if e.kind == "questions":
+                self._pending_payload = e.payload
+            yield e
+
+    async def send_answers(self, answers):
+        if self._pending_payload is None:
+            yield AgentEvent(kind="error", text="no pending questions")
+            return
+        self._pending_payload = None
+        summary = ", ".join(f"{k}={v}" for k, v in sorted(answers.items()))
+        for e in [
+            AgentEvent(kind="message", text=f"답변({summary})을 반영했습니다."),
+            AgentEvent(kind="stage", payload=json.dumps(
+                {"stage": "Envision", "status": "completed", "summary": "답변 반영"},
+                ensure_ascii=False)),
+            AgentEvent(kind="document", payload=json.dumps(
+                {"path": "aiplc-docs/discovery/discovery-document.md",
+                 "version": "v1", "summary": "초안 생성"}, ensure_ascii=False)),
+            AgentEvent(kind="done"),
+        ]:
+            yield e
+
+    async def pending(self):
+        return self._pending_payload
+
+    async def stop(self):
+        pass
+
+
 def _install_scripted(monkeypatch, pid, script):
+    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
+
     async def make(project_id):
-        sb = LocalSandbox(root=Path(tempfile.mkdtemp()), script=script)
-        await sb.start()
-        return sb
-    monkeypatch.setattr(app_module, "make_sandbox", make)
+        return Workspace(ScriptRunner(script))
+
+    monkeypatch.setattr(app_module, "make_workspace", make)
     client.post("/projects", json={"project_id": pid})
+
 
 def _install_default(monkeypatch, pid):
-    """Install a LocalSandbox with its default structured-demo script (no
-    custom script override), so send_message arms a pending interrupt that
-    send_answers/pending can then be exercised against."""
+    """Install a ScriptRunner with its default structured-demo script, so
+    send_message arms a pending interrupt that send_answers/pending can then
+    be exercised against."""
+    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+
     async def make(project_id):
-        sb = LocalSandbox(root=Path(tempfile.mkdtemp()))
-        await sb.start()
-        return sb
-    monkeypatch.setattr(app_module, "make_sandbox", make)
+        return Workspace(ScriptRunner())
+
+    monkeypatch.setattr(app_module, "make_workspace", make)
     client.post("/projects", json={"project_id": pid})
 
+
 def test_message_returns_events(monkeypatch):
-    def script(text, sb):
+    def script(text):
         return [AgentEvent(kind="message", text=f"got {text}"), AgentEvent(kind="done")]
     _install_scripted(monkeypatch, "turn1", script)
     r = client.post("/projects/turn1/message", json={"text": "승인"})
@@ -39,7 +109,7 @@ def test_message_returns_events(monkeypatch):
     assert "승인" in r.json()["events"][0]["text"]
 
 def test_sse_stream_emits_frames(monkeypatch):
-    def script(text, sb):
+    def script(text):
         return [AgentEvent(kind="status", text="working"),
                 AgentEvent(kind="message", text="ok"),
                 AgentEvent(kind="done")]
@@ -51,7 +121,7 @@ def test_sse_stream_emits_frames(monkeypatch):
     assert '"kind":"done"' in body.replace(" ", "")
 
 def test_message_redacts_credentials_in_event_text(monkeypatch):
-    def script(text, sb):
+    def script(text):
         return [AgentEvent(kind="message", text="key AKIAIOSFODNN7EXAMPLE here"),
                 AgentEvent(kind="done")]
     _install_scripted(monkeypatch, "turnred1", script)
@@ -62,7 +132,7 @@ def test_message_redacts_credentials_in_event_text(monkeypatch):
     assert "[CREDENTIAL REDACTED]" in joined
 
 def test_sse_redacts_credentials_in_event_text(monkeypatch):
-    def script(text, sb):
+    def script(text):
         return [AgentEvent(kind="message", text="key AKIAIOSFODNN7EXAMPLE here"),
                 AgentEvent(kind="done")]
     _install_scripted(monkeypatch, "turnred2", script)
@@ -109,7 +179,7 @@ def test_payload_is_redacted(monkeypatch):
     route seam, same as text."""
     leak = json.dumps({"interrupt_id": "i", "questions": {
         "note": "key AKIAIOSFODNN7EXAMPLE here"}})
-    def script(text, sb):
+    def script(text):
         return [AgentEvent(kind="questions", payload=leak), AgentEvent(kind="done")]
     _install_scripted(monkeypatch, "turnredpayload", script)
     with client.stream("GET", "/projects/turnredpayload/events", params={"text": "hi"}) as r:

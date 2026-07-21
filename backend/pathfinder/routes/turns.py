@@ -27,14 +27,14 @@ def _redacted(event: AgentEvent) -> AgentEvent:
 @router.post("/projects/{pid}/message")
 async def post_message(pid: str, body: MessageBody):
     ws = await ensure_workspace(pid)
-    events = [_redacted(e) async for e in ws.sandbox.send_message(body.text)]
+    events = [_redacted(e) async for e in ws.runner.send_message(body.text)]
     return TurnResult(events=events)
 
 @router.get("/projects/{pid}/events")
 async def stream_events(pid: str, text: str):
     ws = await ensure_workspace(pid)
     async def gen():
-        async for event in ws.sandbox.send_message(text):
+        async for event in ws.runner.send_message(text):
             yield {"data": _redacted(event).model_dump_json()}
     return EventSourceResponse(gen())
 
@@ -48,14 +48,14 @@ async def stream_answers(pid: str, answers: str):
     if not isinstance(parsed, dict):
         raise HTTPException(status_code=400, detail="answers must be a JSON object")
     async def gen():
-        async for event in ws.sandbox.send_answers(parsed):
+        async for event in ws.runner.send_answers(parsed):
             yield {"data": _redacted(event).model_dump_json()}
     return EventSourceResponse(gen())
 
 @router.get("/projects/{pid}/pending")
 async def get_pending(pid: str):
     ws = await ensure_workspace(pid)
-    payload = await ws.sandbox.pending()
+    payload = await ws.runner.pending()
     if payload is not None:
         payload = redact_credentials(payload)
     return {"pending": payload}

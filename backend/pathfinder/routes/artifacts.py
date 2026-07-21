@@ -33,7 +33,7 @@ async def read_artifact(pid: str, path: str):
         raise HTTPException(status_code=403, detail="artifacts only")
     try:
         ws = await ensure_workspace(pid)
-        content = await ws.sandbox.read_file(path)
+        content = await ws.runner.read_file(path)
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="not found")
     return {"content": redact_credentials(content)}

@@ -6,7 +6,6 @@ import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 import boto3
-import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
@@ -16,41 +15,35 @@ from fastapi import FastAPI
 # before, and a missing file is a silent no-op (local mode needs no config).
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from fastapi.middleware.cors import CORSMiddleware
-from pathfinder.workspace import ProjectRegistry
-from pathfinder.sandbox.local import LocalSandbox
-from pathfinder.sandbox.base import Sandbox
-from pathfinder.sandbox.harness import HarnessClient
-from pathfinder.sandbox.microvm import MicroVMSandbox
-from pathfinder.sandbox.microvm_control import BootSpec, MicroVMController, VMHandle
-from pathfinder.sandbox.microvm_control_aws import LambdaMicroVMController, mint_harness_token
-from pathfinder.sandbox.s3store import S3Store, S3StoreLike
+from pathfinder.workspace import ProjectRegistry, Workspace
+from pathfinder.runner import AgentRunner
+from pathfinder.agent.driver import StrandsDriver
+from pathfinder.s3store import S3Store, S3StoreLike
 from pathfinder.project_store import restore_projects
 
 _log = logging.getLogger(__name__)
 
 registry = ProjectRegistry()
 
-# Monkeypatchable in tests to inject a FakeMicroVMController (no AWS).
-def microvm_controller_factory(project_id: str) -> MicroVMController:
-    return LambdaMicroVMController(region=os.environ.get("PATHFINDER_VM_REGION", "ap-northeast-1"))
 
-# Monkeypatchable in tests to inject a FakeS3Store (no AWS). Durable store is
-# Seoul (ap-northeast-2) while MicroVMs run in Tokyo (ap-northeast-1), because
-# Lambda MicroVMs is not available in Seoul. This cross-border processing
-# must be disclosed to the customer at workshop start.
+# Monkeypatchable in tests to inject a FakeS3Store (no AWS). Durable store keeps
+# the project's aiplc-docs/prototype/uploads subtree (S3 = source of truth); the
+# in-process AgentRunner restores it to a local workspace at the start of a turn.
 def s3_store_factory(project_id: str) -> S3StoreLike:
     region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
     client = boto3.client("s3", region_name=region)
     return S3Store(bucket=bucket, prefix=f"projects/{project_id}/", client=client)
 
+
 # Monkeypatchable in tests. Reads the strands session objects (sessions/ prefix)
-# that S3SessionManager writes from inside the VM; the backend only READS them.
+# that S3SessionManager writes; the backend only READS them for history.
 def session_s3_factory() -> S3StoreLike:
     region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
     client = boto3.client("s3", region_name=region)
     return S3Store(bucket=bucket, prefix="sessions/", client=client)
+
 
 # 매니페스트/삭제용 — projects/ 전체를 보는 root 스토어. 테스트에서 monkeypatch.
 def projects_root_s3_factory() -> S3StoreLike:
@@ -64,101 +57,45 @@ def durable_projects_enabled() -> bool:
     """버킷 미설정(로컬/테스트)이면 목록 영속화 전체를 생략한다."""
     return bool(os.environ.get("PATHFINDER_S3_BUCKET"))
 
-# Monkeypatchable in tests so unit tests never call AWS. Returns the auth header
-# dict for a HarnessClient, or None to attach no auth (local/fake controllers).
-def _harness_token_provider(vm_id: str, region: str) -> dict[str, str] | None:
-    if vm_id.startswith("fake-"):   # FakeMicroVMController handles: never mint.
-        return None
-    # NOTE: mint_harness_token is a sync, blocking boto3 call (its own
-    # docstring says so) made directly on the asyncio event loop here --
-    # harness_factory (this function's only caller) is sync by design (see
-    # microvm.py's HarnessLike-returning Callable[[VMHandle], HarnessLike]),
-    # so there is no `await`/asyncio.to_thread wrapping at this call site.
-    # Accepted as a documented limitation for now under the workshop's
-    # few-concurrent-tenants model (same class of deferral as the
-    # SUSPENDING->"stopped" drill item in microvm_control_aws.py's
-    # _map_status docstring) -- one blocking CreateMicrovmAuthToken call per
-    # handle transition (boot/resume/reboot), not per request, so it is rare
-    # and short-lived, but it does stall the event loop for its duration. A
-    # real fix needs an async `harness_factory`, which ripples into
-    # `_ensure_ready`/`_boot_and_restore` (microvm.py) and every test's inline
-    # `harness_factory=lambda handle: harness` -- out of scope here; see the
-    # plan doc's Open Questions (Task 5 area) for the resolution path.
-    return mint_harness_token(vm_id, region)
+
+def _rules_dir() -> str:
+    default = str(Path(__file__).resolve().parent.parent.parent / "files" / "aiplc-rules")
+    return os.environ.get("PATHFINDER_RULES_DIR", default)
 
 
-def _build_harness_for_test(
-    handle: VMHandle, shared_http: httpx.AsyncClient, region: str,
-    session: dict | None = None,
-) -> HarnessClient:
-    """Extracted so the header-minting wiring is unit-testable without booting."""
-    return HarnessClient(
-        base_url=handle.base_url,
-        http=shared_http,
-        headers=_harness_token_provider(handle.vm_id, region),
-        session=session,
-    )
+def _workspaces_dir() -> Path:
+    root = os.environ.get("PATHFINDER_WORKSPACES_DIR")
+    return Path(root) if root else Path(tempfile.gettempdir()) / "pathfinder-workspaces"
 
 
-def _boot_spec() -> BootSpec:
-    return BootSpec(
-        region=os.environ.get("PATHFINDER_VM_REGION", "ap-northeast-1"),
-        image_id=os.environ.get("PATHFINDER_VM_IMAGE_ID") or None,     # --image-identifier
-        exec_role_arn=os.environ.get("PATHFINDER_VM_ROLE_ARN") or None,  # --execution-role-arn
-        # Confirmed "global.anthropic.claude-sonnet-5" (ap-northeast-1); re-verified in Task 7.
-        anthropic_model=os.environ.get("ANTHROPIC_MODEL") or None,
-    )
+# Monkeypatchable in tests: StrandsDriver를 fake agent_factory로 갈아끼운다.
+def driver_factory(project_id: str, local_root: Path) -> StrandsDriver:
+    return StrandsDriver(workspace=str(local_root), rules_dir=_rules_dir())
 
-async def _make_microvm_sandbox(project_id: str) -> Sandbox:
-    controller = microvm_controller_factory(project_id)
+
+async def make_workspace(project_id: str) -> Workspace:
     s3 = s3_store_factory(project_id)
-    region = os.environ.get("PATHFINDER_VM_REGION", "ap-northeast-1")
-    # streaming SSE: no read timeout, but CONNECT must still time out -- a
-    # dead VM endpoint (expired/terminated, DNS/network gone) must not hang
-    # the request forever.
-    shared_http = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=5.0))
-    # Session descriptor the harness needs to resume conversation state across
-    # /message, /answers, and /pending (Task 4's HTTP contract). The durable
-    # store's bucket/region (Seoul), not the VM's own region (Tokyo).
+    local_root = _workspaces_dir() / project_id
+    # Session descriptor the in-process driver's S3SessionManager needs to
+    # resume conversation state across /message, /answers, and /pending. The
+    # durable store's bucket/region, keyed by project_id.
     session = {
         "session_id": project_id,
         "bucket": os.environ.get("PATHFINDER_S3_BUCKET", ""),
         "region": os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2"),
         "prefix": "sessions",
     }
-    def harness_factory(handle: VMHandle) -> HarnessClient:
-        # mint-on-resume (Part-2 Task 5): a fresh CreateMicrovmAuthToken JWE is
-        # minted on every boot/resume/reboot and attached per HarnessClient.
-        # The shared AsyncClient is reused (headers live on the HarnessClient,
-        # not the client), so on_stop=shared_http.aclose stays correct.
-        return _build_harness_for_test(handle, shared_http, region, session=session)
-    sb = MicroVMSandbox(
-        project_id=project_id,
-        controller=controller,
-        spec=_boot_spec(),
-        harness_factory=harness_factory,
-        s3=s3,
-        on_stop=shared_http.aclose,  # close the shared client this closure owns
-    )
-    await sb.start()
-    return sb
+    driver = driver_factory(project_id, local_root)
+    runner = AgentRunner(project_id=project_id, driver=driver, s3=s3,
+                         local_root=local_root, session=session)
+    return Workspace(runner)
 
-async def _make_local_sandbox(project_id: str) -> Sandbox:
-    root = Path(tempfile.mkdtemp(prefix=f"pf-{project_id}-"))
-    sb = LocalSandbox(root=root)
-    await sb.start()
-    return sb
-
-async def make_sandbox(project_id: str) -> Sandbox:
-    if os.environ.get("PATHFINDER_SANDBOX") == "microvm":
-        return await _make_microvm_sandbox(project_id)
-    return await _make_local_sandbox(project_id)
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    # 기동 시 S3 매니페스트에서 프로젝트 '목록'만 복원한다. sandbox는 첫
-    # 요청에서 lazy 부팅(deps.ensure_workspace) — 기동을 빠르게 유지하고
-    # 안 쓰는 프로젝트의 VM을 띄우지 않는다. 복원 실패는 기동을 막지 않는다.
+    # 기동 시 S3 매니페스트에서 프로젝트 '목록'만 복원한다. 워크스페이스는 첫
+    # 요청에서 lazy 초기화(deps.ensure_workspace) — 기동을 빠르게 유지한다.
+    # 복원 실패는 기동을 막지 않는다.
     if durable_projects_enabled():
         try:
             for pid, name in await restore_projects(projects_root_s3_factory()):

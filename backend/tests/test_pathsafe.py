@@ -16,6 +16,6 @@ def test_rejects_parent_traversal_segment():
             reject_unsafe(bad)
 
 def test_dotdot_only_as_whole_segment():
-    # A literal ".." substring inside a filename is NOT a traversal (matches
-    # LocalSandbox: it checks Path(path).parts, so "..foo" is a safe name).
+    # A literal ".." substring inside a filename is NOT a traversal
+    # (reject_unsafe checks Path(path).parts, so "..foo" is a safe name).
     reject_unsafe("aiplc-docs/..foo.md")  # must not raise

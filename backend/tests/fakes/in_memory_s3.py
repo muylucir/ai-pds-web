@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 class FakeS3Store:
-    """In-memory S3StoreLike for MicroVMSandbox unit tests (no boto3, no AWS).
+    """In-memory S3StoreLike for runner/route unit tests (no boto3, no AWS).
 
     Same contract as S3Store: text in/out, get() raises FileNotFoundError on a
     missing key, list(prefix) returns sorted workspace-relative keys.

@@ -1,4 +1,4 @@
-# backend/pathfinder/runner.py — 턴 오케스트레이션(구 MicroVMSandbox 승계, VM 없음).
+# backend/pathfinder/runner.py — 턴 오케스트레이션(in-process 에이전트, VM 없음).
 from __future__ import annotations
 import asyncio
 import json

@@ -1,19 +1,17 @@
 import json
 from fastapi.testclient import TestClient
 import pathfinder.app as app_module
+from pathfinder.workspace import Workspace
 from tests.fakes.in_memory_s3 import FakeS3Store
+from tests.fakes.fake_runner import FakeRunner
 
 client = TestClient(app_module.app)
 
 def _local_project(monkeypatch, pid):
-    import tempfile
-    from pathlib import Path
-    from pathfinder.sandbox.local import LocalSandbox
+    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
     async def make(project_id):
-        sb = LocalSandbox(root=Path(tempfile.mkdtemp()))
-        await sb.start()
-        return sb
-    monkeypatch.setattr(app_module, "make_sandbox", make)
+        return Workspace(FakeRunner())
+    monkeypatch.setattr(app_module, "make_workspace", make)
     client.post("/projects", json={"project_id": pid})
 
 def test_history_returns_items_from_session_store(monkeypatch):

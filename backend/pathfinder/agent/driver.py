@@ -1,4 +1,4 @@
-# pathfinder/agent/driver.py — Strands agent loop, now IN-PROCESS (no MicroVM).
+# pathfinder/agent/driver.py — Strands agent loop, running IN-PROCESS (no VM).
 # Replaces claude_driver's subprocess+stream-json with an in-process agent.
 # Conversation context persists to S3 via S3SessionManager (spec §2): the
 # process can die and a new one resumes the same session_id, pending

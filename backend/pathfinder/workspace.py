@@ -59,7 +59,7 @@ class ProjectRegistry:
     """'아는 프로젝트'(_names)와 '살아있는 워크스페이스'(_workspaces)를 분리.
 
     S3 매니페스트에서 복원된 프로젝트는 register만 된 상태(목록에는 보이지만
-    sandbox 없음)로 시작하고, 첫 요청 시 deps.ensure_workspace가 attach한다."""
+    워크스페이스 없음)로 시작하고, 첫 요청 시 deps.ensure_workspace가 attach한다."""
 
     def __init__(self):
         self._names: dict[str, str | None] = {}
@@ -68,12 +68,11 @@ class ProjectRegistry:
     def register(self, project_id: str, name: str | None = None) -> None:
         self._names[project_id] = name
 
-    def attach(self, project_id: str, sandbox: Sandbox) -> Workspace:
+    def attach(self, project_id: str, workspace: Workspace) -> Workspace:
         if project_id not in self._names:
             raise KeyError(project_id)  # 등록 없이 연결 금지 — 호출 순서 버그를 조기 검출
-        ws = Workspace(sandbox)
-        self._workspaces[project_id] = ws
-        return ws
+        self._workspaces[project_id] = workspace
+        return workspace
 
     def get(self, project_id: str) -> Workspace:
         return self._workspaces[project_id]
