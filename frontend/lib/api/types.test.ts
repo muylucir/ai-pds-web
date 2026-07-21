@@ -10,10 +10,8 @@ import type {
 } from "./types";
 
 // Mirror guard (E1): AgentEventKind must cover EXACTLY the same 8 kinds as
-// backend/pathfinder/sandbox/base.py's AgentEvent.kind Literal (and its
-// harness/events.py mirror; see backend's
-// test_backend_and_harness_agent_event_kinds_match) -- a drift here would
-// silently break the SSE contract.
+// backend/pathfinder/models.py's AgentEvent.kind Literal -- a drift here
+// would silently break the SSE contract.
 //
 // This Record literal enforces EXHAUSTIVENESS IN BOTH DIRECTIONS at compile
 // time (`tsc --noEmit`, part of the final gate): TS's excess-property check

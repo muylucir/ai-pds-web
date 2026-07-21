@@ -32,10 +32,11 @@ def build_tools(workspace: str, rules_dir: str,
                 emit: Callable[[AgentEvent], None]) -> list:
     """워크스페이스 + 룰 디렉토리 + 이벤트 싱크에 바인딩된 6개 도구.
 
-    file_read는 'aiplc-rules/' 프리픽스면 rules_dir(읽기 전용)로, 그 외는
-    workspace로 라우팅한다 — 구조상 VM 이미지에 구워졌던 /workspace/aiplc-rules를
-    대체한다. file_write/file_append는 항상 workspace만 대상으로 한다(룰은 데이터,
-    산출물 아님 — 쓰기 금지)."""
+    file_read는 aiplc-rules/ 프리픽스면 rules_dir(읽기 전용)에서 읽고, 프리픽스는
+    rules_dir 루트 기준으로 벗겨서 해석한다(rules_dir 자체가 aiplc-rules 루트이므로
+    프리픽스를 그대로 붙이면 이중 중첩된다). 그 외는 workspace로 라우팅한다 —
+    구조상 VM 이미지에 구워졌던 /workspace/aiplc-rules를 대체한다. file_write/
+    file_append는 항상 workspace만 대상으로 한다(룰은 데이터, 산출물 아님 — 쓰기 금지)."""
 
     @tool(context=True)
     def ask_questions(questions_file: dict, tool_context: Any) -> str:
@@ -83,10 +84,12 @@ def build_tools(workspace: str, rules_dir: str,
 
         Args:
             path: 상대 경로. 'aiplc-rules/'로 시작하면 읽기 전용 룰 디렉토리에서,
-                  그 외에는 프로젝트 워크스페이스에서 읽는다.
+                  그 외에는 프로젝트 워크스페이스에서 읽는다. aiplc-rules/ 프리픽스는
+                  rules_dir 루트 기준으로 벗겨서 해석한다(rules_dir 자체가 aiplc-rules
+                  루트이므로 프리픽스를 그대로 붙이면 이중 중첩된다).
         """
         if path.startswith("aiplc-rules/"):
-            return _confine(rules_dir, path).read_text(encoding="utf-8")
+            return _confine(rules_dir, path[len("aiplc-rules/"):]).read_text(encoding="utf-8")
         return _confine(workspace, path).read_text(encoding="utf-8")
 
     @tool

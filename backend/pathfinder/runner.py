@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import AsyncIterator
 
 from pathfinder.models import AgentEvent
@@ -158,7 +158,6 @@ class AgentRunner:
 def _glob_prefix(glob: str) -> str:
     """글롭의 선행 정적(와일드카드 없는) 디렉토리 부분 = S3 list prefix.
     'aiplc-docs/**/*-q.md' -> 'aiplc-docs/', 'aiplc-docs/audit.md' -> 그 자체."""
-    from pathlib import PurePosixPath
     parts = PurePosixPath(glob).parts
     static: list[str] = []
     for part in parts:

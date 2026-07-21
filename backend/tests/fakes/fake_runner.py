@@ -1,6 +1,7 @@
 # backend/tests/fakes/fake_runner.py
 from __future__ import annotations
 from pathfinder.globmatch import matches_glob
+from pathfinder.pathsafe import reject_unsafe
 from fakes.in_memory_s3 import FakeS3Store
 
 
@@ -15,12 +16,15 @@ class FakeRunner:
         self.input_holder = None
 
     async def read_file(self, rel: str) -> str:
+        reject_unsafe(rel)
         return await self._s3.get(rel)
 
     async def write_file(self, rel: str, content: str) -> None:
+        reject_unsafe(rel)
         await self._s3.put(rel, content)
 
     async def list_files(self, glob: str) -> list[str]:
+        reject_unsafe(glob)
         keys = await self._s3.list("")
         return sorted(k for k in keys if matches_glob(k, glob))
 

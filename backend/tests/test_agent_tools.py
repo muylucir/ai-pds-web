@@ -19,12 +19,32 @@ def _tools(workspace, rules_dir):
 
 
 def test_file_read_routes_aiplc_rules_prefix_to_rules_dir(tmp_path):
+    # rules_dir IS the aiplc-rules root (mirrors the real on-disk layout at
+    # <repo>/files/aiplc-rules, which directly contains aws-aiplc-rules/ and
+    # aws-aiplc-rule-details/) -- not a parent directory containing an
+    # "aiplc-rules/" subdir. The agent always calls file_read with the
+    # "aiplc-rules/"-prefixed path per core-workflow.md; that prefix must be
+    # stripped before joining onto rules_dir, or the lookup double-nests.
     ws = tmp_path / "ws"; ws.mkdir()
-    rules = tmp_path / "rules"; (rules / "aiplc-rules").mkdir(parents=True)
-    (rules / "aiplc-rules" / "core-workflow.md").write_text("RULE BODY", encoding="utf-8")
+    rules = tmp_path / "rules"; (rules / "aws-aiplc-rules").mkdir(parents=True)
+    (rules / "aws-aiplc-rules" / "core-workflow.md").write_text("RULE BODY", encoding="utf-8")
     tools, _ = _tools(ws, rules)
-    out = tools["file_read"](path="aiplc-rules/core-workflow.md")
+    out = tools["file_read"](path="aiplc-rules/aws-aiplc-rules/core-workflow.md")
     assert "RULE BODY" in out
+
+
+def test_file_read_reaches_real_rules_layout():
+    # Integration-style pin against the REAL on-disk rules directory so a
+    # regression in the aiplc-rules/ prefix-stripping can't hide behind a
+    # fixture that encodes the wrong layout (as the unit test above once did).
+    import pathlib
+    repo_rules = pathlib.Path(__file__).resolve().parents[2] / "files" / "aiplc-rules"
+    if not (repo_rules / "aws-aiplc-rules" / "core-workflow.md").is_file():
+        pytest.skip("real aiplc-rules not present")
+    tools, _ = _tools(repo_rules / "does-not-matter-ws", repo_rules)
+    # exactly the prefixed path core-workflow tells the agent to read for a rule detail:
+    out = tools["file_read"](path="aiplc-rules/aws-aiplc-rules/core-workflow.md")
+    assert len(out) > 0
 
 
 def test_file_read_routes_non_rules_path_to_workspace(tmp_path):
