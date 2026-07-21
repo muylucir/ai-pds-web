@@ -1,6 +1,5 @@
 # backend/pathfinder/workspace.py
 from __future__ import annotations
-from pathfinder.sandbox.base import Sandbox
 from pathfinder.models import QuestionFile, ProjectState, AuditEntry
 from pathfinder.parsers.questions import parse_question_file, serialize_answers
 from pathfinder.parsers.state import parse_state_file
@@ -11,50 +10,50 @@ _STATE_PATH = "aiplc-docs/aiplc-state.md"
 _AUDIT_PATH = "aiplc-docs/audit.md"
 
 class Workspace:
-    def __init__(self, sandbox: Sandbox):
-        self.sandbox = sandbox
+    def __init__(self, runner):
+        self.runner = runner
 
     async def get_questions(self, name: str) -> QuestionFile:
-        md = await self.sandbox.read_file(name)
+        md = await self.runner.read_file(name)
         return parse_question_file(name.split("/")[-1], md)
 
     async def put_answers(self, name: str, answers: dict[int, str]) -> QuestionFile:
-        md = await self.sandbox.read_file(name)
+        md = await self.runner.read_file(name)
         new_md = serialize_answers(md, answers)
-        await self.sandbox.write_file(name, new_md)
+        await self.runner.write_file(name, new_md)
         return parse_question_file(name.split("/")[-1], new_md)
 
     async def get_state(self) -> ProjectState:
         try:
-            md = await self.sandbox.read_file(_STATE_PATH)
+            md = await self.runner.read_file(_STATE_PATH)
         except FileNotFoundError:
             return ProjectState(stages=[])
         return parse_state_file(md)
 
     async def get_audit(self) -> list[AuditEntry]:
         try:
-            md = await self.sandbox.read_file(_AUDIT_PATH)
+            md = await self.runner.read_file(_AUDIT_PATH)
         except FileNotFoundError:
             return []
         return parse_audit_file(md)
 
     async def get_document(self) -> str:
         try:
-            return await self.sandbox.read_file(_DOC_PATH)
+            return await self.runner.read_file(_DOC_PATH)
         except FileNotFoundError:
             return ""
 
     async def list_question_files(self) -> list[str]:
-        return await self.sandbox.list_files("aiplc-docs/**/*-questions.md")
+        return await self.runner.list_files("aiplc-docs/**/*-questions.md")
 
     async def list_artifacts(self) -> list[str]:
         # "Artifact" = every file under aiplc-docs/: the dashboard's 산출물 panel
         # and Phase 1's file-as-contract model both treat the whole aiplc-docs/
         # subtree as project output, not just *.md. Glob mirrors
-        # list_question_files's use of sandbox.list_files (same traversal guard,
-        # no new IO path). sandbox.list_files already filters to files (not
+        # list_question_files's use of runner.list_files (same traversal guard,
+        # no new IO path). runner.list_files already filters to files (not
         # directories), so `**/*` matched directories are excluded automatically.
-        return await self.sandbox.list_files("aiplc-docs/**/*")
+        return await self.runner.list_files("aiplc-docs/**/*")
 
 class ProjectRegistry:
     """'아는 프로젝트'(_names)와 '살아있는 워크스페이스'(_workspaces)를 분리.
