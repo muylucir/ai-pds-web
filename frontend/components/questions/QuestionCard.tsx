@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import type { Question } from "@/lib/api/types";
 
 export function QuestionCard({
@@ -13,31 +14,44 @@ export function QuestionCard({
   const name = `q${question.number}`;
   const multi = question.multi_select === true;
 
-  // The selected non-Other letter, or "" when the Other free-text is in use.
-  // (Single-select only — see multiSelected/multiOtherActive below for multi.)
-  const selectedLetter = question.options.some((o) => o.letter === value && !o.is_other) ? value : "";
-
-  // --- multi-select ---
   // Value contract stays a plain string (QuestionForm's answers dict/submit
-  // path is unchanged): letters joined with "," in alphabetical order, e.g.
-  // "A,C". The Other(X) option's free-text value is unprefixed raw text —
-  // identical to the single-select convention above — which means a
-  // comma-joined multi value and an Other free-text value can only be told
-  // apart by checking whether every comma-split token is a known non-Other
-  // letter. Consequently Other CANNOT be combined with other picks in multi
-  // mode (there's no "A,X:<text>" form in scope): checking a letter clears
-  // any active Other free text, and using Other clears any checked letters.
-  // Other is therefore a sole selection in multi mode, same as single mode.
+  // path is unchanged): a single letter or (multi) comma-joined letters like
+  // "A,C" for option picks, or raw free text for the Other option.
   const nonOtherLetters = question.options.filter((o) => !o.is_other).map((o) => o.letter);
-  const isLetterList = (v: string) => v.split(",").filter(Boolean).every((t) => nonOtherLetters.includes(t));
-  const multiSelected = new Set(multi && isLetterList(value) ? value.split(",").filter(Boolean) : []);
-  const multiOtherActive = multi && value !== "" && !isLetterList(value);
+  const isLetterList = (v: string) => v !== "" && v.split(",").filter(Boolean).every((t) => nonOtherLetters.includes(t));
+
+  // Free-text ("Other") mode is tracked EXPLICITLY, not inferred by comparing
+  // `value` against option letters. Inferring it broke free text whose first
+  // character happened to equal an option letter: typing "A" made value==="A",
+  // which read as "option A selected", flipped out of Other mode, and blanked
+  // the textarea — the first char was lost and option A rendered as checked.
+  // Seeded from the incoming value's shape (a restored answer that isn't a
+  // known letter/letter-list is free text); thereafter only explicit user
+  // actions (picking an option vs. using Other) flip it.
+  const [otherActive, setOtherActive] = useState(() => value !== "" && !isLetterList(value));
+
+  // With Other mode explicit, letter selection is only meaningful when NOT in
+  // Other mode. Single-select: the picked letter, or "" in Other mode.
+  const selectedLetter = !otherActive && !multi && nonOtherLetters.includes(value) ? value : "";
+  // Multi-select: the checked letters, or empty while Other free text is in use.
+  const multiSelected = new Set(!otherActive && multi && isLetterList(value) ? value.split(",").filter(Boolean) : []);
+
+  function selectLetter(letter: string) {
+    setOtherActive(false);
+    onChange(letter);
+  }
 
   function toggleLetter(letter: string) {
+    setOtherActive(false);
     const next = new Set(multiSelected);
     if (next.has(letter)) next.delete(letter);
     else next.add(letter);
     onChange([...next].sort().join(","));
+  }
+
+  function activateOther() {
+    setOtherActive(true);
+    onChange("");
   }
 
   return (
@@ -59,37 +73,44 @@ export function QuestionCard({
       <div className="p-6 space-y-3">
         {question.options.map((opt) => {
           if (opt.is_other) {
-            const otherActive = multi ? multiOtherActive : selectedLetter === "";
+            // 중요: textarea를 라디오/체크박스의 <label> 안에 중첩하지 않는다.
+            // 중첩하면 Other 영역 클릭 시 포커스가 textarea가 아니라 sr-only
+            // 라디오로 가고, textarea 첫 키 입력이 label→control 활성화로
+            // 가로채진다. label에는 선택 트리거(라디오 + 배지/제목)만 두고,
+            // textarea는 label 밖 형제로 배치한다. textarea 포커스 시 Other
+            // 모드를 활성화해 "클릭 → 바로 타이핑"이 그대로 동작하게 한다.
             return (
-              // relative 필수: sr-only 인풋은 absolute라, 부모가 static이면
-              // 문서 루트 기준 좌표(질문지 전체 높이)로 배치되어 <html>에
-              // 유령 오버플로를 만든다 → 라벨 클릭(=input.focus())마다 문서가
-              // 그 좌표로 스크롤되며 헤더가 말려 올라감(ui-bug.png 회귀).
-              <label key={opt.letter} className="relative block cursor-pointer">
-                <input
-                  type={multi ? "checkbox" : "radio"}
-                  name={name}
-                  className="sr-only peer"
-                  checked={multi ? otherActive : otherActive && value !== ""}
-                  onChange={() => onChange("")}
-                />
-                <div className="flex gap-3 rounded-xl border-2 border-dashed border-slate-200 p-4 hover:border-violet-200">
+              <div
+                key={opt.letter}
+                className="rounded-xl border-2 border-dashed border-slate-200 p-4 hover:border-violet-200"
+              >
+                {/* relative 필수: sr-only 인풋은 absolute라, 부모가 static이면
+                    문서 루트 기준 좌표로 배치돼 <html>에 유령 오버플로를 만든다
+                    → 라벨 클릭(=input.focus())마다 문서가 스크롤되며 헤더가 말려
+                    올라감(ui-bug.png 회귀). */}
+                <label className="relative flex gap-3 cursor-pointer">
+                  <input
+                    type={multi ? "checkbox" : "radio"}
+                    name={name}
+                    className="sr-only peer"
+                    checked={otherActive}
+                    onChange={activateOther}
+                  />
                   <span className="shrink-0 w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-sm font-bold text-slate-500">
                     {opt.letter}
                   </span>
-                  <div className="flex-1">
-                    <p className="font-medium">Other — 직접 입력</p>
-                    <textarea
-                      aria-label="기타 답변 직접 입력"
-                      rows={2}
-                      value={otherActive ? value : ""}
-                      onChange={(e) => onChange(e.target.value)}
-                      placeholder="위 선택지에 없다면 직접 설명해 주세요…"
-                      className="mt-2 w-full text-sm rounded-lg border border-slate-200 p-3 focus:outline-none focus:ring-2 focus:ring-violet-400"
-                    />
-                  </div>
-                </div>
-              </label>
+                  <p className="font-medium">Other — 직접 입력</p>
+                </label>
+                <textarea
+                  aria-label="기타 답변 직접 입력"
+                  rows={2}
+                  value={otherActive ? value : ""}
+                  onFocus={() => setOtherActive(true)}
+                  onChange={(e) => { setOtherActive(true); onChange(e.target.value); }}
+                  placeholder="위 선택지에 없다면 직접 설명해 주세요…"
+                  className="mt-2 ml-10 w-[calc(100%-2.5rem)] text-sm rounded-lg border border-slate-200 p-3 focus:outline-none focus:ring-2 focus:ring-violet-400"
+                />
+              </div>
             );
           }
           const checked = multi ? multiSelected.has(opt.letter) : selectedLetter === opt.letter;
@@ -102,7 +123,7 @@ export function QuestionCard({
                 value={opt.letter}
                 className="sr-only peer"
                 checked={checked}
-                onChange={() => (multi ? toggleLetter(opt.letter) : onChange(opt.letter))}
+                onChange={() => (multi ? toggleLetter(opt.letter) : selectLetter(opt.letter))}
               />
               <div
                 className={`flex gap-3 rounded-xl border-2 p-4 hover:border-violet-200 ${

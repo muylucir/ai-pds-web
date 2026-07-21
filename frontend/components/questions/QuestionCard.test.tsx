@@ -88,6 +88,60 @@ describe("QuestionCard", () => {
     render(<QuestionCard question={{ ...MULTI_Q, multi_select: false }} value="" onChange={() => {}} />);
     expect(screen.getAllByRole("radio").length).toBeGreaterThan(0);
   });
+
+  // Regression: the Other free-text <textarea> must NOT be nested inside the
+  // Other option's radio/checkbox <label>. When it was, clicking the Other
+  // area focused the (sr-only) radio instead of the textarea, and the first
+  // keystroke (e.g. Shift+A) was swallowed by the label→control activation and
+  // leaked into the radio group — the user's "typing selects option A / first
+  // char lost" bug. Verified in real Chromium (label-nested textarea drops the
+  // first character); the structural guarantee that prevents it is: the
+  // textarea has no ancestor <label>.
+  it("Other 텍스트 입력창은 라디오 label 안에 중첩되지 않는다 (첫 글자 유실/라디오 오선택 회귀)", () => {
+    render(<Harness question={{ ...q1, multi_select: false }} initial="" spy={vi.fn()} />);
+    const textarea = screen.getByLabelText(/기타 답변 직접 입력/);
+    expect(textarea.closest("label")).toBeNull();
+  });
+
+  it("Other 옵션의 라디오/체크박스도 textarea를 label 자식으로 두지 않는다", () => {
+    // multi 모드에서도 동일 구조 보장.
+    render(<QuestionCard question={{ ...MULTI_Q, multi_select: true, options: [...MULTI_Q.options, { letter: "X", text: "Other", is_other: true, recommended: false }] }} value="" onChange={vi.fn()} />);
+    const textarea = screen.getByLabelText(/기타 답변 직접 입력/);
+    expect(textarea.closest("label")).toBeNull();
+  });
+
+  // Regression (root cause): the Other free-text value shares its string space
+  // with option letters (A/B/X…). When the user typed a single letter that
+  // happened to match an option — e.g. the first char "A" of "Apple" — the
+  // component mistook value==="A" for "option A is selected", flipped out of
+  // Other mode, and blanked the textarea (the first char was lost, and option
+  // A rendered as checked). Free-text mode must be tracked explicitly, not
+  // inferred by comparing the value against option letters.
+  it("Other 자유입력이 옵션 letter와 겹치는 한 글자여도 보기로 오인되지 않는다", async () => {
+    const user = userEvent.setup();
+    const spy = vi.fn();
+    render(<Harness question={{ ...q1, multi_select: false }} initial="" spy={spy} />);
+    const textarea = screen.getByLabelText(/기타 답변 직접 입력/);
+    await user.click(textarea);
+    await user.type(textarea, "A");
+    // The single "A" must land in the textarea as free text, NOT select option A.
+    expect(spy).toHaveBeenLastCalledWith("A");
+    expect(textarea).toHaveValue("A");
+    // No radio should be checked (A is free text, not the option).
+    const optionA = screen.getAllByRole("radio")[0] as HTMLInputElement;
+    expect(optionA.checked).toBe(false);
+  });
+
+  it("한 글자 입력 뒤 이어 타이핑해도 첫 글자가 유실되지 않는다", async () => {
+    const user = userEvent.setup();
+    const spy = vi.fn();
+    render(<Harness question={{ ...q1, multi_select: false }} initial="" spy={spy} />);
+    const textarea = screen.getByLabelText(/기타 답변 직접 입력/);
+    await user.click(textarea);
+    await user.type(textarea, "Apple");
+    expect(spy).toHaveBeenLastCalledWith("Apple");
+    expect(textarea).toHaveValue("Apple");
+  });
 });
 
 describe("QuestionCard — sr-only 인풋의 포지셔닝 컨텍스트 (스크롤 말림 회귀)", () => {
