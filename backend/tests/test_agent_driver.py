@@ -126,3 +126,36 @@ async def test_status_events_deduped_on_repeated_current_tool_use():
     evs = await _collect(drv.run("go", SESSION))
     status = [e.text for e in evs if e.kind == "status"]
     assert status == ["file_write", "file_read"]
+
+
+async def test_agent_cached_per_session_id():
+    drv = make_driver([{"result": FakeResult("end_turn")}])
+    await _collect(drv.run("a", SESSION))
+    first = drv._agents["p1"]
+    await _collect(drv.run("b", SESSION))
+    assert drv._agents["p1"] is first
+
+
+async def test_run_answers_proceeds_normally_even_with_activated_interrupt_state():
+    state = FakeInterruptState(activated=True, interrupts={})
+    agent = FakeAgent([{"data": "반영"}, {"result": FakeResult("end_turn")}],
+                      interrupt_state=state)
+    def factory(session, emit):
+        return agent
+    drv = StrandsDriver(workspace="/tmp/ws", rules_dir="/tmp/rules", agent_factory=factory)
+    evs = await _collect(drv.run_answers("i-9", {"1": "A"}, SESSION))
+    assert agent.calls == [[{"interruptResponse": {"interruptId": "i-9", "response": {"1": "A"}}}]]
+    assert evs[-1].kind == "done"
+
+
+async def test_emit_from_worker_thread_lands_in_deque():
+    import asyncio
+    from collections import deque
+    from pathfinder.agent.tools import build_tools
+    d = deque()
+    tools = build_tools("/tmp/ws", "/tmp/rules", d.append)
+    report_stage = next(t for t in tools if getattr(t, "tool_name", None) == "report_stage")
+    await asyncio.to_thread(report_stage, stage="Envision", status="in_progress", summary="s")
+    assert len(d) == 1
+    ev = d.popleft()
+    assert ev.kind == "stage"
