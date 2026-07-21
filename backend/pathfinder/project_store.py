@@ -9,7 +9,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
-from pathfinder.sandbox.s3store import S3StoreLike
+from pathfinder.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
 _MANIFEST = re.compile(r"^([^/]+)/project\.json$")

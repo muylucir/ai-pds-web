@@ -55,3 +55,15 @@ class HistoryItem(BaseModel):
     name: str | None = None
     # role=="ai"일 때 그 턴의 도구 실행 트레이스(없으면 빈 리스트)
     trace: list[HistoryTraceEntry] = []
+
+class AgentEvent(BaseModel):
+    kind: Literal["message", "questions", "stage", "document",
+                  "file_changed", "status", "done", "error"]
+    text: str | None = None
+    path: str | None = None
+    # Structured payload (JSON string) for questions/stage/document — the
+    # event IS the UI contract; files stay as records only.
+    payload: str | None = None
+
+class TurnResult(BaseModel):
+    events: list[AgentEvent]

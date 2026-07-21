@@ -1,10 +1,10 @@
 import boto3
 import pytest
 from moto import mock_aws
-from pathfinder.sandbox.s3store import S3Store
+from pathfinder.s3store import S3Store
 from fakes.in_memory_s3 import FakeS3Store
 
-# ---- FakeS3Store (the in-memory double used by MicroVMSandbox tests) ----
+# ---- FakeS3Store (the in-memory double used by runner/route tests) ----
 
 async def test_fake_put_get_roundtrip():
     s3 = FakeS3Store()

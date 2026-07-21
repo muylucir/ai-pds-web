@@ -15,7 +15,7 @@ class S3StoreLike(Protocol):
 class S3Store:
     """Durable blob store over S3 (Seoul, ap-northeast-2). Thin: text in/out,
     workspace-relative keys namespaced under `prefix`. Path-safety and key
-    composition are the caller's (MicroVMSandbox) job. boto3 is synchronous, so
+    composition are the caller's (AgentRunner) job. boto3 is synchronous, so
     each call is wrapped in asyncio.to_thread to keep the async surface without
     an async AWS SDK. Auth is the host IAM role — no keys are held here.
     """

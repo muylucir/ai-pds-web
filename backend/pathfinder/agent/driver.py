@@ -1,7 +1,8 @@
-# harness/strands_driver.py — Strands agent loop INSIDE the MicroVM.
+# pathfinder/agent/driver.py — Strands agent loop, running IN-PROCESS (no VM).
 # Replaces claude_driver's subprocess+stream-json with an in-process agent.
-# Conversation context persists to S3 via S3SessionManager (spec §2): the VM
-# can die and a new one resumes the same session_id, pending interrupt included.
+# Conversation context persists to S3 via S3SessionManager (spec §2): the
+# process can die and a new one resumes the same session_id, pending
+# interrupt included.
 from __future__ import annotations
 import collections
 import json
@@ -10,13 +11,13 @@ import os
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
-from events import AgentEvent
-from aiplc_tools import build_tools, QUESTIONS_SCHEMA_HINT
+from pathfinder.models import AgentEvent
+from pathfinder.agent.tools import build_tools, QUESTIONS_SCHEMA_HINT
 
-_log = logging.getLogger("harness.strands")
+_log = logging.getLogger("pathfinder.agent")
 
-_RULES_DIR = "aiplc-rules/aws-aiplc-rules"
-_COMMON_DIR = "aiplc-rules/aws-aiplc-rule-details/common"
+_RULES_SUBDIR = "aws-aiplc-rules"
+_COMMON_SUBDIR = "aws-aiplc-rule-details/common"
 
 _CONTACT_ADDENDUM = f"""
 ## Pathfinder 통합 규약 (UI 접점 — 반드시 준수)
@@ -41,13 +42,13 @@ _CONTACT_ADDENDUM = f"""
 """
 
 
-def _system_prompt(workspace: str) -> str:
-    """core-workflow + common rules verbatim (rules stay data — spec §1),
-    then the integration addendum. Stage-detail rules are NOT inlined; the
-    core workflow instructs the agent to file_read them on demand."""
-    ws = Path(workspace)
-    parts = [(ws / _RULES_DIR / "core-workflow.md").read_text(encoding="utf-8")]
-    common = ws / _COMMON_DIR
+def _system_prompt(rules_dir: str) -> str:
+    """core-workflow + common 룰 원문(룰은 데이터), 그 뒤 통합 규약 addendum.
+    스테이지 상세 룰은 인라인하지 않는다 — core 워크플로가 file_read로 온디맨드
+    로드하도록 지시한다."""
+    rd = Path(rules_dir)
+    parts = [(rd / _RULES_SUBDIR / "core-workflow.md").read_text(encoding="utf-8")]
+    common = rd / _COMMON_SUBDIR
     if common.is_dir():
         for f in sorted(common.glob("*.md")):
             parts.append(f"\n\n---\n# RULE DETAIL: common/{f.name}\n" + f.read_text(encoding="utf-8"))
@@ -55,7 +56,7 @@ def _system_prompt(workspace: str) -> str:
     return "".join(parts)
 
 
-def _session_manager(session: dict):
+def _session_manager(session: dict, workspace: str):
     if session.get("bucket"):
         from strands.session import S3SessionManager
         return S3SessionManager(
@@ -63,13 +64,13 @@ def _session_manager(session: dict):
             prefix=session.get("prefix", "sessions"),
             region_name=session.get("region") or None)
     # Local/test fallback: file sessions under the workspace (survives within
-    # the VM only — fine for tests and the local drill).
+    # the process only — fine for tests and the local drill).
     from strands.session import FileSessionManager
     return FileSessionManager(session_id=session["session_id"],
-                              storage_dir="/workspace/.sessions")
+                              storage_dir=str(Path(workspace) / ".sessions"))
 
 
-def _default_agent_factory(workspace: str):
+def _default_agent_factory(workspace: str, rules_dir: str):
     def factory(session: dict, emit: Callable[[AgentEvent], None]):
         from strands import Agent
         from strands.models import BedrockModel
@@ -97,9 +98,9 @@ def _default_agent_factory(workspace: str):
         )
         return Agent(
             model=model,
-            system_prompt=_system_prompt(workspace),
-            tools=build_tools(workspace, emit),
-            session_manager=_session_manager(session),
+            system_prompt=_system_prompt(rules_dir),
+            tools=build_tools(workspace, rules_dir, emit),
+            session_manager=_session_manager(session, workspace),
             callback_handler=None,   # we consume stream_async, not callbacks
         )
     return factory
@@ -116,10 +117,11 @@ def _questions_event_from_interrupts(interrupts) -> AgentEvent | None:
 
 
 class StrandsDriver:
-    def __init__(self, workspace: str,
+    def __init__(self, workspace: str, rules_dir: str,
                  agent_factory: Callable[[dict, Callable], Any] | None = None):
         self._workspace = workspace
-        self._factory = agent_factory or _default_agent_factory(workspace)
+        self._rules_dir = rules_dir
+        self._factory = agent_factory or _default_agent_factory(workspace, rules_dir)
         self._agents: dict[str, Any] = {}
         self._queues: dict[str, collections.deque] = {}
 

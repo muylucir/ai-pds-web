@@ -1,4 +1,4 @@
-# backend/pathfinder/sandbox/globmatch.py
+# backend/pathfinder/globmatch.py
 from __future__ import annotations
 import fnmatch
 

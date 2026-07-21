@@ -23,8 +23,8 @@ async def upload_file(pid: str, file: UploadFile, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=415, detail=str(e))
     existing = set(
-        p.removeprefix("uploads/") for p in await ws.sandbox.list_files("uploads/*"))
+        p.removeprefix("uploads/") for p in await ws.runner.list_files("uploads/*"))
     name = safe_name(file.filename or "upload", existing)
     path = f"uploads/{name}"
-    await ws.sandbox.write_file(path, content)
+    await ws.runner.write_file(path, content)
     return {"path": path, "chars": len(content), "truncated": truncated}

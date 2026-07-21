@@ -1,6 +1,7 @@
 import json
 from fastapi.testclient import TestClient
 from pathfinder import app as app_module
+from pathfinder.workspace import Workspace
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 client = TestClient(app_module.app)
@@ -29,16 +30,16 @@ def test_create_fails_500_when_manifest_write_fails(monkeypatch):
 
     stopped = {"n": 0}
 
-    class _FakeSandbox:
+    class _FakeRunner:
         async def stop(self):
             stopped["n"] += 1
 
-    async def _fake_make_sandbox(pid):
-        return _FakeSandbox()
+    async def _fake_make_workspace(pid):
+        return Workspace(_FakeRunner())
 
     monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: _ExplodingStore())
-    monkeypatch.setattr(app_module, "make_sandbox", _fake_make_sandbox)
+    monkeypatch.setattr(app_module, "make_workspace", _fake_make_workspace)
     r = client.post("/projects", json={"project_id": "persist-3"})
     assert r.status_code == 500
     assert stopped["n"] == 1                                # 베스트에포트 정리

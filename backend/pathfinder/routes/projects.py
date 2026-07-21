@@ -17,7 +17,7 @@ class CreateProject(BaseModel):
 async def create_project(body: CreateProject):
     if app_module.registry.is_registered(body.project_id):
         raise HTTPException(status_code=409, detail="project exists")
-    sandbox = await app_module.make_sandbox(body.project_id)
+    workspace = await app_module.make_workspace(body.project_id)
     if app_module.durable_projects_enabled():
         try:
             await write_manifest(app_module.projects_root_s3_factory(),
@@ -26,18 +26,18 @@ async def create_project(body: CreateProject):
             # 스펙 결정: 재시작하면 사라질 프로젝트를 조용히 만들지 않는다.
             _log.exception("manifest write failed for %s", body.project_id)
             try:
-                await sandbox.stop()
+                await workspace.runner.stop()
             except Exception:
-                _log.exception("sandbox cleanup after manifest failure failed")
+                _log.exception("workspace cleanup after manifest failure failed")
             raise HTTPException(status_code=500, detail="project persistence failed")
     app_module.registry.register(body.project_id, body.name)
-    app_module.registry.attach(body.project_id, sandbox)
+    app_module.registry.attach(body.project_id, workspace)
     return {"project_id": body.project_id, "name": body.name}
 
 @router.get("/projects")
 async def list_projects():
     # Minimal, in-memory listing only — no created-at/ownership/rich metadata.
-    # Durable project metadata (DynamoDB) is a later MicroVM/prod concern, not
+    # Durable project metadata (DynamoDB) is a later prod concern, not
     # this backend-completion plan.
     return {
         "projects": [
@@ -56,9 +56,9 @@ async def delete_project(pid: str):
     if app_module.registry.has_workspace(pid):
         already_stopped = app_module.registry.get(pid)
         try:
-            await already_stopped.sandbox.stop()
+            await already_stopped.runner.stop()
         except Exception:
-            _log.exception("sandbox stop failed for %s during delete (continuing)", pid)
+            _log.exception("runner stop failed for %s during delete (continuing)", pid)
     if app_module.durable_projects_enabled():
         try:
             await delete_project_data(app_module.session_s3_factory(),
@@ -74,7 +74,7 @@ async def delete_project(pid: str):
     # 피하고, 다른 객체면(늦게 attach된 워크스페이스) stop해 VM이 새지 않게 한다.
     if removed is not None and removed is not already_stopped:
         try:
-            await removed.sandbox.stop()
+            await removed.runner.stop()
         except Exception:
-            _log.exception("sandbox stop failed for %s during final registry removal (continuing)", pid)
+            _log.exception("runner stop failed for %s during final registry removal (continuing)", pid)
     return {"deleted": True}

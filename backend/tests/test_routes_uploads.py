@@ -2,18 +2,16 @@ import asyncio
 import io
 from fastapi.testclient import TestClient
 import pathfinder.app as app_module
+from pathfinder.workspace import Workspace
+from fakes.fake_runner import FakeRunner
 
 client = TestClient(app_module.app)
 
 def _local_project(monkeypatch, pid):
-    import tempfile
-    from pathlib import Path
-    from pathfinder.sandbox.local import LocalSandbox
+    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
     async def make(project_id):
-        sb = LocalSandbox(root=Path(tempfile.mkdtemp()))
-        await sb.start()
-        return sb
-    monkeypatch.setattr(app_module, "make_sandbox", make)
+        return Workspace(FakeRunner())
+    monkeypatch.setattr(app_module, "make_workspace", make)
     client.post("/projects", json={"project_id": pid})
 
 def test_upload_md_saved_to_uploads_prefix(monkeypatch):
@@ -23,13 +21,11 @@ def test_upload_md_saved_to_uploads_prefix(monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["path"] == "uploads/의견.md" and body["truncated"] is False
-    # 저장 확인: 같은 sandbox의 read_file 경유 (files API가 없으므로 questions 경로 재사용 불가 →
-    # workspace registry로 직접). asyncio.get_event_loop().run_until_complete는 이 파일이 이미
-    # 쓰고 있는 관례(test_routes_artifacts.py의 _create_and_seed)와 동일 — conftest의
-    # _ensure_event_loop 오토유즈 픽스처가 루프를 보장한다.
+    # 저장 확인: 같은 runner의 read_file 경유 (files API가 없으므로 workspace registry로 직접).
+    # conftest의 _ensure_event_loop 오토유즈 픽스처가 루프를 보장한다.
     ws = app_module.registry.get("u1")
     assert asyncio.get_event_loop().run_until_complete(
-        ws.sandbox.read_file("uploads/의견.md")) == "# 의견"
+        ws.runner.read_file("uploads/의견.md")) == "# 의견"
 
 def test_upload_collision_gets_suffix(monkeypatch):
     _local_project(monkeypatch, "u2")
