@@ -77,14 +77,27 @@ describe("api client request shaping + response typing", () => {
     await expect(createProject("dup")).rejects.toBeInstanceOf(ApiError);
   });
 
-  it("listProjects unwraps {projects:[...]}", async () => {
+  it("listProjects requests ?page&size and returns the full page", async () => {
+    let seenUrl: string | undefined;
     server.use(
-      http.get(`${API_BASE_URL}/projects`, () =>
-        HttpResponse.json({ projects: [{ project_id: "a", name: "A" }, { project_id: "b", name: null }] }),
-      ),
+      http.get(`${API_BASE_URL}/projects`, ({ request }) => {
+        seenUrl = request.url;
+        return HttpResponse.json({
+          projects: [{ project_id: "a", name: "A" }, { project_id: "b", name: null }],
+          total: 2,
+          page: 2,
+          size: 5,
+        });
+      }),
     );
-    const r = await listProjects();
-    expect(r.map((p) => p.project_id)).toEqual(["a", "b"]);
+    const r = await listProjects(2, 5);
+    expect(seenUrl).toBe(`${API_BASE_URL}/projects?page=2&size=5`);
+    expect(r).toEqual({
+      projects: [{ project_id: "a", name: "A" }, { project_id: "b", name: null }],
+      total: 2,
+      page: 2,
+      size: 5,
+    });
   });
 
   it("getState returns ProjectState", async () => {

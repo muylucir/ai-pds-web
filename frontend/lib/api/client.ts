@@ -2,6 +2,7 @@ import { getAuthToken } from "@/lib/auth";
 import type {
   AuditEntry,
   HistoryItem,
+  ProjectPage,
   ProjectState,
   ProjectSummary,
   QuestionFile,
@@ -69,9 +70,8 @@ export async function createProject(projectId: string, name?: string): Promise<P
   return request<ProjectSummary>("/projects", { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function listProjects(): Promise<ProjectSummary[]> {
-  const r = await request<{ projects: ProjectSummary[] }>("/projects");
-  return r.projects;
+export async function listProjects(page = 1, size = 10): Promise<ProjectPage> {
+  return request<ProjectPage>(`/projects?page=${page}&size=${size}`);
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
