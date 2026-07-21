@@ -6,7 +6,7 @@ from pathfinder.models import AgentEvent
 from fakes.in_memory_s3 import FakeS3Store
 
 Q_PAYLOAD = json.dumps({"interrupt_id": "i-7", "questions": {"name": "q", "questions": []}})
-SESSION = {"session_id": "p1", "bucket": "", "region": "ap-northeast-1", "prefix": "sessions"}
+SESSION = {"session_id": "p1", "bucket": "", "region": "ap-northeast-2", "prefix": "sessions"}
 
 
 class FakeDriver:

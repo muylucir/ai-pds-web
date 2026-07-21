@@ -40,7 +40,7 @@ def make_driver(script, interrupt_state=None):
                          agent_factory=factory)
 
 
-SESSION = {"session_id": "p1", "bucket": "", "region": "ap-northeast-1", "prefix": "sessions"}
+SESSION = {"session_id": "p1", "bucket": "", "region": "ap-northeast-2", "prefix": "sessions"}
 
 
 async def _collect(aiter):

@@ -3,7 +3,6 @@ import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
 
-const REGION = 'ap-northeast-1';
 const MODEL = 'global.anthropic.claude-opus-4-8';
 const MODEL_FAMILY = 'anthropic.claude-opus-4-8';
 
@@ -46,6 +45,7 @@ export class PathfinderDrillStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'ArtifactsBucketName', { value: bucket.bucketName });
     new cdk.CfnOutput(this, 'BackendRoleArn', { value: backendRole.roleArn });
-    new cdk.CfnOutput(this, 'Region', { value: REGION });
+    // 스택이 실제로 배포되는 리전(bin/app.ts의 env.region으로 결정).
+    new cdk.CfnOutput(this, 'Region', { value: this.region });
   }
 }

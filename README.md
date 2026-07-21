@@ -6,7 +6,7 @@ AI-PLC Discovery 워크숍을 위한 대화형 캔버스. Strands 에이전트�
 ```
 frontend/  Next.js 15 (App Router) — 대시보드 · 질문 위저드 · 문서 리뷰 · 대화형 캔버스
 backend/   FastAPI — 파서 · 인프로세스 Strands 에이전트 · SSE 턴 릴레이 · S3 영속화
-infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 (도쿄)
+infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 (서울, 리전 파라미터화)
 ```
 
 ---
@@ -15,7 +15,7 @@ infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 (도쿄)
 
 - **Python 3.11** (백엔드 venv는 3.11로 생성 — 3.9로는 안 됨)
 - **Node.js 20+** (프론트엔드; 검증 환경은 22)
-- 도쿄(`ap-northeast-1`) 자격증명(호스트 롤/프로필) + Bedrock 접근 — 백엔드가 직접 Bedrock을 호출한다
+- 서울(`ap-northeast-2`, 기본) 자격증명(호스트 롤/프로필) + Bedrock 접근 — 백엔드가 직접 Bedrock을 호출한다
 
 ---
 
@@ -51,16 +51,20 @@ deploy` 출력(CfnOutputs)에서 가져온다 — 인프라 배포는 최초 1�
 ```bash
 cd infra
 npm install
-npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-1   # 계정·리전 최초 1회
+npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2   # 계정·리전 최초 1회 (기본 서울)
 npx cdk deploy --require-approval never
 ```
+
+> 기본 배포 리전은 **서울(`ap-northeast-2`)**. 다른 리전에 배포하려면
+> `CDK_DEPLOY_REGION=<region> npx cdk deploy`로 오버라이드한다(Bedrock 프로파일은
+> 글로벌, IAM ARN은 리전 와일드카드라 리전만 바꾸면 그대로 동작).
 
 배포가 끝나면 CfnOutputs를 출력한다 — 다음 단계 env로 쓴다:
 
 ```
 ArtifactsBucketName → PATHFINDER_S3_BUCKET
 BackendRoleArn      → 백엔드 프로세스가 이 롤(또는 동등한 정책)로 실행돼야 함
-Region              → ap-northeast-1
+Region              → AWS_REGION / PATHFINDER_S3_REGION (기본 ap-northeast-2)
 ```
 
 > ⚠️ 배포 리소스(S3 버킷 · IAM 롤)는 **비용이 발생**한다(스토리지 + 턴마다 Bedrock 호출).
@@ -111,7 +115,7 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `PATHFINDER_CORS_ORIGINS` | `http://localhost:3000` | 콤마 구분 허용 origin |
-| `PATHFINDER_S3_REGION` | `ap-northeast-2` | 영속 스토리지 리전 (드릴은 도쿄로 오버라이드) |
+| `PATHFINDER_S3_REGION` | `ap-northeast-2` | 영속 스토리지 리전(서울). **버킷이 만들어진 리전과 반드시 일치**시킬 것 |
 | `PATHFINDER_S3_BUCKET` | — | 아티팩트 버킷 (CDK 출력) |
 | `ANTHROPIC_MODEL` | — | Bedrock 추론 프로파일 id |
 | `PATHFINDER_RULES_DIR` | `<repo>/files/aiplc-rules` | aiplc 룰 디렉토리(읽기 전용) |
@@ -149,7 +153,8 @@ cd frontend && npm run test:e2e
 - **인증은 아직 플레이스홀더**다(spec상 이후 단계). 라우트에 인증 없음, 프론트 `getAuthToken()`은
   `undefined` 반환. SSO/토큰 도입 시 `EventSource`가 커스텀 헤더를 못 보내므로 SSE 인증 전략
   (token-in-query 또는 cookie)을 함께 정해야 한다.
-- **리전**: 드릴은 전 리소스 도쿄 통일(합성 데이터). 실 워크숍 전에 프로덕션 리전(고객 문서
-  국내 보관을 위한 서울 영속화 + 크로스보더 처리 공지 vs 도쿄 통일)을 재결정한다.
+- **리전**: 전 리소스 서울(`ap-northeast-2`) 통일이 기본. 도쿄가 필요했던 이유는 Lambda
+  MicroVMs가 도쿄에만 있어서였는데, 에이전트가 인프로세스로 바뀌며 그 제약이 사라졌다.
+  다른 리전이 필요하면 `CDK_DEPLOY_REGION`(인프라)과 `AWS_REGION`/`PATHFINDER_S3_REGION`
+  (백엔드)으로 지정한다 — 세 값이 같은 리전을 가리켜야 한다.
 - 진행/결정 기록은 `.superpowers/sdd/progress.md`(git-ignored)와 `docs/superpowers/plans/` 참고.
-```
