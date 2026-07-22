@@ -1,6 +1,7 @@
 # backend/tests/test_routes_artifacts.py
 import asyncio
 from pathlib import Path
+from urllib.parse import quote
 from fastapi.testclient import TestClient
 import pathfinder.app as app_module
 from pathfinder.app import app, registry
@@ -102,3 +103,28 @@ def test_archive_404_when_no_artifacts(monkeypatch):
 
 def test_archive_404_unknown_project():
     assert client.get("/projects/zip-ghost/artifacts/archive").status_code == 404
+
+
+def test_archive_korean_pid_does_not_500(monkeypatch):
+    pid = "한글프로젝트"
+    _seeded_project(monkeypatch, pid, {
+        "aiplc-docs/audit.md": "# Audit",
+    })
+    r = client.get(f"/projects/{quote(pid)}/artifacts/archive")
+    assert r.status_code == 200
+    cd = r.headers["content-disposition"]
+    assert "filename*=UTF-8''" in cd          # RFC 5987 form carries the real name
+    assert 'filename="artifacts-artifacts.zip"' in cd  # ASCII fallback (no ASCII-safe chars in pid)
+
+
+def test_archive_quote_and_crlf_in_pid_yields_safe_header():
+    # A pid containing '"'/CR/LF can't survive HTTP routing as a raw path
+    # segment (TestClient/httpx reject or mangle CRLF in URLs before this
+    # even reaches the route), so we unit-test the header builder directly
+    # rather than going through client.get(...).
+    from pathfinder.routes.artifacts import _content_disposition
+    pid = 'we"ird\r\npid'
+    cd = _content_disposition(pid)
+    assert "\r" not in cd and "\n" not in cd
+    fallback = cd.split('filename="')[1].split('"')[0]
+    assert '"' not in fallback
