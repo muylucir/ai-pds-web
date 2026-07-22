@@ -82,3 +82,30 @@ def test_roundtrip_with_real_fixture():
     assert target.status == "in_progress"
     # 나머지 완료 스테이지들은 그대로
     assert sum(1 for s in state.stages if s.status == "completed") >= 5
+
+
+def test_stage_name_with_regex_metacharacters_is_safe():
+    md = upsert_stage(None, "Prototype & Validation", "in_progress")
+    md = upsert_stage(md, r"Weird\1", "in_progress")
+    state = parse_state_file(md)
+    assert state.current_stage == r"Weird\1"
+    assert any(s.name == r"Weird\1" for s in state.stages)
+
+
+def test_exact_stage_match_preferred_over_prefix_overlap():
+    existing = """# AI-PLC State
+- **Current Stage**: Prototype
+
+## Stage Progress
+- [ ] Prototype
+- [ ] Prototype & Validation
+"""
+    md = upsert_stage(existing, "Prototype & Validation", "completed")
+    state = parse_state_file(md)
+    assert next(s for s in state.stages if s.name == "Prototype & Validation").status == "completed"
+    # "Prototype"는 completed로 잘못 마킹되면 안 된다(구버전 버그: 첫 느슨한 매치를
+    # 잡아 채크박스를 [x]로 바꿔버림). Current Stage가 여전히 "Prototype"이라
+    # parse_state_file의 오버레이가 이를 in_progress로 승격시키는 것은 별개의,
+    # 의도된 동작(완료되지 않은 stage는 completed로 이동하지 않는다) — 여기서
+    # 검증할 것은 체크박스 오매칭 여부이므로 completed가 아님만 확인한다.
+    assert next(s for s in state.stages if s.name == "Prototype").status != "completed"

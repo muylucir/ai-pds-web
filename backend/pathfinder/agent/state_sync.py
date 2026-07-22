@@ -23,10 +23,22 @@ def _mark(status: str) -> str:
     return "x" if status == "completed" else " "
 
 
+def _stage_base(line_name: str) -> str:
+    """체크라인 이름에서 노트 접미사(' — note' 또는 ' - note')를 제거한
+    기본 이름을 반환한다. parse_state_file의 _SPLIT과 동일한 관용."""
+    return line_name.split(" — ")[0].split(" - ")[0].strip()
+
+
 def _names_match(line_name: str, stage: str) -> bool:
-    """파서(parse_state_file)의 current-stage 매칭 관용과 동일: 정확 일치
-    또는 부분 포함('Envision' ↔ 'Envision (Path A)')."""
-    base = line_name.split(" — ")[0].split(" - ")[0].strip()
+    """완화된 부분 포함 매칭(예: 'Envision' ↔ 'Envision (Path A)').
+
+    주의: 이 함수 하나만으로는 파서(parse_state_file)의 선택 규칙과
+    정확히 대응하지 않는다 — 파서는 정확 일치를 먼저 시도하고, 없을 때만
+    부분 포함 중 가장 긴 이름으로 폴백한다. 그 정확-일치-우선 로직은
+    upsert_stage의 2단계 탐색(먼저 _stage_base 정확 일치, 없으면 이 함수로
+    폴백)이 담당하며, 이 함수 자체는 폴백 단계의 부분 포함 판정만 한다.
+    """
+    base = _stage_base(line_name)
     return base == stage or stage in base or base in stage
 
 
@@ -35,6 +47,9 @@ def upsert_stage(markdown: str | None, stage: str, status: str) -> str:
 
     - markdown=None(파일 없음): 최소 골격 생성.
     - 기존 체크리스트에서 이름이 맞는 줄의 체크박스를 갱신(노트는 보존).
+      매칭은 2단계: (1) 기본 이름 정확 일치를 우선하고, (2) 없을 때만
+      부분 포함 매칭 중 기본 이름이 가장 긴 줄로 폴백한다 — parse_state_file의
+      정확-일치-우선/최장-부분-일치 폴백 규칙과 동일한 우선순위.
     - 줄이 없으면 ## Stage Progress 블록 끝에 추가.
     - Current Stage는 in_progress/pending일 때만 stage로 갱신(completed는 유지).
     """
@@ -45,7 +60,7 @@ def upsert_stage(markdown: str | None, stage: str, status: str) -> str:
     out: list[str] = []
     in_progress_block = False
     block_end = -1          # ## Stage Progress 블록의 마지막 체크라인 인덱스(out 기준)
-    matched = False
+    candidates: list[tuple[int, str]] = []  # (out 인덱스, 체크라인 본문) — 블록 내 전체 체크라인
     for line in lines:
         if _PROGRESS_HEADER.match(line):
             in_progress_block = True
@@ -56,14 +71,27 @@ def upsert_stage(markdown: str | None, stage: str, status: str) -> str:
             m = _CHECK_LINE.match(line.strip())
             if m:
                 block_end = len(out) + 1
-                if not matched and _names_match(m.group(2), stage):
-                    matched = True
-                    body = m.group(2)
-                    out.append(f"- [{_mark(status)}] {body}")
-                    continue
+                candidates.append((len(out), m.group(2)))
+                out.append(line)
+                continue
             elif line.startswith("## "):
                 in_progress_block = False
         out.append(line)
+
+    # 2단계 선택: 먼저 기본 이름 정확 일치, 없으면 부분 포함 중 최장 기본 이름.
+    target_idx: int | None = None
+    target_body: str | None = None
+    exact = [(idx, body) for idx, body in candidates if _stage_base(body) == stage]
+    if exact:
+        target_idx, target_body = exact[0]
+    else:
+        partial = [(idx, body) for idx, body in candidates if _names_match(body, stage)]
+        if partial:
+            target_idx, target_body = max(partial, key=lambda pair: len(_stage_base(pair[1])))
+
+    matched = target_idx is not None
+    if matched:
+        out[target_idx] = f"- [{_mark(status)}] {target_body}"
 
     if not matched:
         if block_end == -1:
@@ -91,5 +119,5 @@ def upsert_stage(markdown: str | None, stage: str, status: str) -> str:
         text += "\n"
 
     if status != "completed":
-        text = _CURRENT.sub(rf"\g<1>{stage}", text, count=1)
+        text = _CURRENT.sub(lambda m: m.group(1) + stage, text, count=1)
     return text
