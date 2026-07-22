@@ -29,6 +29,16 @@ def _create_and_seed(monkeypatch, pid):
             (FIX / "strategy-questions.md").read_text(encoding="utf-8"))
     asyncio.get_event_loop().run_until_complete(seed())
 
+def _seeded_project(monkeypatch, pid, files):
+    _install(monkeypatch)
+    assert client.post("/projects", json={"project_id": pid}).status_code == 200
+    ws = registry.get(pid)
+    async def seed():
+        for path, content in files.items():
+            await ws.runner.write_file(path, content)
+    asyncio.get_event_loop().run_until_complete(seed())
+
+
 def test_create_project_conflict(monkeypatch):
     _install(monkeypatch)
     client.post("/projects", json={"project_id": "dup"})
@@ -62,3 +72,33 @@ def test_read_artifact_returns_content_and_guards_prefix(monkeypatch):
 
     assert client.get("/projects/proj-files/files/uploads/x.md").status_code == 403
     assert client.get("/projects/proj-files/files/aiplc-docs/none.md").status_code == 404
+
+
+import io
+import zipfile
+
+
+def test_archive_returns_zip_of_artifacts(monkeypatch):
+    pid = "zip1"
+    _seeded_project(monkeypatch, pid, {
+        "aiplc-docs/discovery/discovery-document.md": "# Doc",
+        "aiplc-docs/audit.md": "# Audit",
+        "uploads/raw.md": "NOT INCLUDED",          # 산출물 아님
+    })
+    r = client.get(f"/projects/{pid}/artifacts/archive")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    assert f'filename="{pid}-artifacts.zip"' in r.headers["content-disposition"]
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    assert sorted(zf.namelist()) == ["aiplc-docs/audit.md", "aiplc-docs/discovery/discovery-document.md"]
+    assert zf.read("aiplc-docs/discovery/discovery-document.md").decode() == "# Doc"
+
+
+def test_archive_404_when_no_artifacts(monkeypatch):
+    pid = "zip-empty"
+    _seeded_project(monkeypatch, pid, {})
+    assert client.get(f"/projects/{pid}/artifacts/archive").status_code == 404
+
+
+def test_archive_404_unknown_project():
+    assert client.get("/projects/zip-ghost/artifacts/archive").status_code == 404

@@ -6,7 +6,15 @@ import { DocumentPanel } from "@/components/review/DocumentPanel";
 import { ApprovalGate } from "@/components/review/ApprovalGate";
 import { VerificationSummary } from "@/components/review/VerificationSummary";
 import { Markdown } from "@/components/Markdown";
-import { listArtifacts, readArtifact, getAudit, getState, postMessage, ApiError } from "@/lib/api/client";
+import {
+  listArtifacts,
+  readArtifact,
+  getAudit,
+  getState,
+  postMessage,
+  downloadArtifactsArchive,
+  ApiError,
+} from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 
 // 클라이언트 Blob 다운로드 — 백엔드 왕복 없이 현재 로드된 마크다운을 저장한다.
@@ -17,6 +25,18 @@ function downloadMarkdown(path: string, content: string) {
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// 산출물 전체(aiplc-docs/**) zip 다운로드 — 백엔드 왕복 필요(개별 .md와 달리
+// 서버가 아카이브를 구성한다).
+async function downloadZip(projectId: string) {
+  const blob = await downloadArtifactsArchive(projectId);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${projectId}-artifacts.zip`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -124,6 +144,13 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
           ) : (
             <div>
               <div className="flex justify-end mb-3">
+                <button
+                  type="button"
+                  onClick={() => downloadZip(projectId).catch(() => setActionError("압축 다운로드에 실패했습니다."))}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 mr-2"
+                >
+                  ⬇ 전체 다운로드 (.zip)
+                </button>
                 <button
                   type="button"
                   onClick={() => downloadMarkdown(selected, content.data ?? "")}

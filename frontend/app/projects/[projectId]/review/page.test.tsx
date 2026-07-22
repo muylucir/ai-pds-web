@@ -179,6 +179,35 @@ describe("Review page — width, download, status badge", () => {
     clickSpy.mockRestore();
   });
 
+  it("downloads all artifacts as a zip via a Blob link", async () => {
+    mockTreeAndAudit();
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/artifacts/archive`, () =>
+        HttpResponse.arrayBuffer(new ArrayBuffer(4), {
+          headers: { "Content-Type": "application/zip" },
+        }),
+      ),
+    );
+    // jsdom은 URL.createObjectURL을 구현하지 않음 — stub으로 주입
+    const createSpy = vi.fn().mockReturnValue("blob:mock-zip");
+    const revokeSpy = vi.fn();
+    (URL as unknown as { createObjectURL: unknown }).createObjectURL = createSpy;
+    (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = revokeSpy;
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    await screen.findByRole("button", { name: /discovery-document\.md/ });
+    const dl = await screen.findByRole("button", { name: /전체 다운로드 \(\.zip\)/ });
+    await userEvent.click(dl);
+    await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+    expect(clickSpy).toHaveBeenCalled();
+    expect(revokeSpy).toHaveBeenCalledWith("blob:mock-zip");
+    delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+    delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+    clickSpy.mockRestore();
+  });
+
   it("shows a document status badge from aiplc-state and explains the gate actions", async () => {
     mockTreeAndAudit();
     server.use(
