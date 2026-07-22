@@ -1,7 +1,8 @@
 // frontend/components/workspace/WorkspaceDocPanel.tsx
 "use client";
 import Link from "next/link";
-import { readArtifact, ApiError } from "@/lib/api/client";
+import { useEffect, useState } from "react";
+import { listArtifacts, readArtifact, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { Markdown } from "@/components/Markdown";
 
@@ -25,8 +26,19 @@ export function WorkspaceDocPanel({
   activeDoc: { path: string; version: string | null } | null;
   turnSeq: number;
 }) {
-  const path = activeDoc?.path ?? null;
+  // 드롭다운 선택 상태. null = activeDoc 따름. activeDoc이 바뀌면(새 문서
+  // 이벤트) 수동 선택을 리셋해 대화를 따라간다 — 스펙의 우선순위.
+  const [manualPath, setManualPath] = useState<string | null>(null);
+  useEffect(() => {
+    setManualPath(null);
+  }, [activeDoc?.path]);
+  const path = manualPath ?? activeDoc?.path ?? null;
   const version = activeDoc?.version ?? null;
+
+  // 산출물 목록 — 턴 종료(turnSeq)마다 재조회해 새 문서를 반영.
+  const artifacts = useAsync(() => listArtifacts(projectId), [projectId, turnSeq]);
+  const options = artifacts.data ?? (path ? [path] : []);
+
   // 404 is treated as an empty doc (the file may lag the event by a beat),
   // mirroring the review page; any other error surfaces as a load-error note.
   const content = useAsync(
@@ -40,7 +52,6 @@ export function WorkspaceDocPanel({
     [projectId, path, turnSeq],
   );
 
-  const name = path ? path.slice(path.lastIndexOf("/") + 1) : null;
   const loadError = path !== null && content.error !== null;
   // Version strings from the backend may already carry a "v" prefix (e.g.
   // "v2") or not (e.g. "2"); normalize to a single leading "v".
@@ -52,10 +63,23 @@ export function WorkspaceDocPanel({
       className="hidden lg:flex flex-col min-w-0 min-h-0 bg-white border-l border-slate-200"
     >
       <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide truncate">
-          {name ? `📄 ${name}` : "생성된 문서"}
-        </p>
-        {versionLabel && (
+        {options.length > 0 ? (
+          <select
+            aria-label="문서 선택"
+            value={path ?? ""}
+            onChange={(e) => setManualPath(e.target.value)}
+            className="min-w-0 flex-1 text-xs font-bold text-slate-600 bg-transparent border border-slate-200 rounded-lg px-2 py-1.5 truncate focus:outline-none focus:ring-2 focus:ring-violet-300"
+          >
+            {options.map((p) => (
+              <option key={p} value={p}>
+                {p.slice(p.lastIndexOf("/") + 1)}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide truncate">생성된 문서</p>
+        )}
+        {versionLabel && manualPath === null && (
           <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-violet-50 text-violet-600">
             {versionLabel}
           </span>

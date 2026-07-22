@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, act, waitFor } from "@testing-library/react";
+import { render, screen, act, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
@@ -122,5 +123,56 @@ describe("WorkspaceDocPanel", () => {
       render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} turnSeq={0} />);
     });
     expect(await screen.findByText(/문서를 불러오지 못했습니다/)).toBeInTheDocument();
+  });
+});
+
+describe("WorkspaceDocPanel — 문서 드롭다운", () => {
+  it("산출물 목록이 드롭다운 옵션으로 뜬다", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () =>
+        HttpResponse.json({ artifacts: ["aiplc-docs/a.md", "aiplc-docs/discovery/b.md"] })),
+      http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/a.md`, () =>
+        HttpResponse.json({ content: "# A" })),
+    );
+    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: "v1" }} turnSeq={0} />);
+    const select = await screen.findByLabelText("문서 선택");
+    const options = within(select).getAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["a.md", "b.md"]);
+    expect((select as HTMLSelectElement).value).toBe("aiplc-docs/a.md");
+  });
+
+  it("드롭다운으로 다른 문서를 고르면 그 문서를 로드한다", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () =>
+        HttpResponse.json({ artifacts: ["aiplc-docs/a.md", "aiplc-docs/b.md"] })),
+      http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/a.md`, () =>
+        HttpResponse.json({ content: "# A" })),
+      http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/b.md`, () =>
+        HttpResponse.json({ content: "# B-내용" })),
+    );
+    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} turnSeq={0} />);
+    const select = await screen.findByLabelText("문서 선택");
+    await userEvent.setup().selectOptions(select, "aiplc-docs/b.md");
+    expect(await screen.findByText("B-내용")).toBeInTheDocument();
+  });
+
+  it("새 activeDoc 이벤트가 오면 자동으로 그 문서로 전환한다", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () =>
+        HttpResponse.json({ artifacts: ["aiplc-docs/a.md", "aiplc-docs/b.md"] })),
+      http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/a.md`, () =>
+        HttpResponse.json({ content: "# A" })),
+      http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/b.md`, () =>
+        HttpResponse.json({ content: "# B-내용" })),
+    );
+    const { rerender } = render(
+      <WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} turnSeq={0} />);
+    const select = await screen.findByLabelText("문서 선택");
+    // 사용자가 수동 선택해 두어도…
+    await userEvent.setup().selectOptions(select, "aiplc-docs/a.md");
+    // …새 문서 이벤트(activeDoc 변경)는 그 문서로 전환한다
+    rerender(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/b.md", version: "v2" }} turnSeq={1} />);
+    expect(await screen.findByText("B-내용")).toBeInTheDocument();
+    expect((screen.getByLabelText("문서 선택") as HTMLSelectElement).value).toBe("aiplc-docs/b.md");
   });
 });
