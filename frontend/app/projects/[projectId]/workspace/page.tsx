@@ -46,8 +46,13 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // the NEXT outgoing message, and any upload-failure notice to surface.
   const [attachments, setAttachments] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // Bumped right before every send/submitAnswers call site — ChatTimeline
+  // watches this to force an unconditional scroll-to-bottom on send, even if
+  // the user had scrolled up and stick-to-bottom was off.
+  const [stickSignal, setStickSignal] = useState(0);
 
   function submitAnswersFromSheet(answers: Record<string, string>) {
+    setStickSignal((n) => n + 1);
     submitAnswers(answers);
     setSheetOpen(false);
   }
@@ -66,11 +71,26 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // the user's typed text, then clears the chip tray — attachments are a
   // one-shot mention on the NEXT message, not a standing context.
   function sendWithAttachments(text: string) {
+    setStickSignal((n) => n + 1);
     const mentions = attachments.map(
       (p) => `[첨부 파일: ${p} — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 file_read로 읽으세요.]`,
     );
     send(mentions.length ? `${mentions.join("\n")}\n\n${text}` : text);
     setAttachments([]);
+  }
+
+  // Every other place `send`/`submitAnswers` is invoked (starter buttons,
+  // in-chat answer choices, the right-panel question form) also counts as
+  // "the user sent a message" for stick-to-bottom purposes — wrap rather
+  // than pass the raw hook function straight into a prop.
+  function sendAndStick(text: string) {
+    setStickSignal((n) => n + 1);
+    send(text);
+  }
+
+  function submitAnswersAndStick(answers: Record<string, string>) {
+    setStickSignal((n) => n + 1);
+    submitAnswers(answers);
   }
 
   // Minimal accessibility for the mobile bottom-sheet: move focus into the
@@ -134,15 +154,16 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           )}
           {showWelcome ? (
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <WelcomeCard onStart={send} />
+              <WelcomeCard onStart={sendAndStick} />
             </div>
           ) : (
             <ChatTimeline
               items={items}
               projectId={projectId}
-              onChoose={send}
+              onChoose={sendAndStick}
               onOpenArtifact={() => {}}
               busy={streaming}
+              stickSignal={stickSignal}
             />
           )}
           {uploadError && (
@@ -162,7 +183,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           pendingQuestions={pendingQuestions}
           stages={stages}
           changedPaths={changedPaths}
-          onSubmitAnswers={submitAnswers}
+          onSubmitAnswers={submitAnswersAndStick}
           busy={streaming}
         />
 
