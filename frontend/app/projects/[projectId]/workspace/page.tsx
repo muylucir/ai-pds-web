@@ -52,19 +52,26 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const [stickSignal, setStickSignal] = useState(0);
   // Revise-request draft (Task 5): the review screen's "수정 요청" link routes
   // here with ?draft=<text> instead of opening an inline form (invisible once
-  // scrolled, and unable to render follow-up questions). Read once on mount
-  // via window.location — Next 15's useSearchParams() would require a
-  // Suspense boundary in this already-"use client" page, and nothing else in
-  // this codebase mocks next/navigation's router/search-params hooks for
-  // tests, so parsing the URL directly avoids both concerns. Once read, strip
-  // ?draft= from the URL so a refresh doesn't re-prefill the input.
-  const [draft] = useState<string | undefined>(() =>
-    typeof window === "undefined"
-      ? undefined
-      : (new URLSearchParams(window.location.search).get("draft") ?? undefined),
-  );
+  // scrolled, and unable to render follow-up questions). Next 15's
+  // useSearchParams() would require a Suspense boundary in this already-
+  // "use client" page, and nothing else in this codebase mocks
+  // next/navigation's router/search-params hooks for tests, so we parse the
+  // URL directly — but only inside a mount effect, never during the
+  // useState initializer/render. Reading window.location during render would
+  // make server HTML (no draft) and the client's first render (prefilled
+  // textarea) diverge, which React 19 flags as a hydration mismatch. Applying
+  // the draft post-mount means the FIRST paint always matches SSR (empty),
+  // and the draft arrives a tick later; ChatInput is remounted (key={draft})
+  // so its initialText+focus-on-mount contract still fires once the draft is
+  // known. Once read, strip ?draft= from the URL so a refresh doesn't
+  // re-prefill the input.
+  const [draft, setDraft] = useState<string | undefined>(undefined);
   useEffect(() => {
-    if (draft) window.history.replaceState(null, "", `/projects/${projectId}/workspace`);
+    const d = new URLSearchParams(window.location.search).get("draft");
+    if (d) {
+      setDraft(d);
+      window.history.replaceState(null, "", `/projects/${projectId}/workspace`);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -193,6 +200,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             onRemove={(p) => setAttachments((prev) => prev.filter((x) => x !== p))}
           />
           <ChatInput
+            key={draft ?? "no-draft"}
             onSend={sendWithAttachments}
             onAttach={handleAttach}
             disabled={streaming}

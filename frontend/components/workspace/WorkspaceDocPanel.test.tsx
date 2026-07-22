@@ -190,14 +190,23 @@ describe("WorkspaceDocPanel — 문서 드롭다운", () => {
   });
 
   it("artifacts가 빈 배열로 응답해도 열려 있는 문서는 드롭다운에 남는다", async () => {
+    let artifactsFetched = false;
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () =>
-        HttpResponse.json({ artifacts: [] })),
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () => {
+        artifactsFetched = true;
+        return HttpResponse.json({ artifacts: [] });
+      }),
       http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/a.md`, () =>
         HttpResponse.json({ content: "# A" })),
     );
     render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} turnSeq={0} />);
-    const select = await screen.findByLabelText("문서 선택");
-    expect((select as HTMLSelectElement).value).toBe("aiplc-docs/a.md");
+    await screen.findByLabelText("문서 선택");
+    // artifacts 응답([])이 반영된 뒤에도 select가 남아 있고 현재 문서가 유지되는지
+    // 를 검증해야 진짜 회귀 가드가 된다 — fetch가 끝나기 전 단언하면 union 로직이
+    // 사라져도 통과하는 가짜 가드가 된다.
+    await waitFor(() => expect(artifactsFetched).toBe(true));
+    const select = screen.getByLabelText("문서 선택") as HTMLSelectElement;
+    expect(select.value).toBe("aiplc-docs/a.md");
+    expect(await screen.findByText("A")).toBeInTheDocument();
   });
 });
