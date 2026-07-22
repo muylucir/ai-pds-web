@@ -79,21 +79,17 @@ describe("Review page", () => {
     await waitFor(() => expect(body).toEqual({ text: "승인" }));
   });
 
-  it("submitting a revision POSTs the natural-language text to /message", async () => {
+  it("수정 요청 링크는 워크스페이스 채팅으로 이동하며 문서명이 담긴 초안을 ?draft=로 전달한다", async () => {
     mockTreeAndAudit();
-    let body: any;
-    server.use(
-      http.post(`${API_BASE_URL}/projects/pilot1/message`, async ({ request }) => {
-        body = await request.json();
-        return HttpResponse.json({ events: [{ kind: "done", text: null, path: null }] });
-      }),
-    );
-    render(<ReviewPage params={params} />);
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
     await screen.findByText("Press Release");
-    await userEvent.click(screen.getByRole("button", { name: /수정 요청/ }));
-    await userEvent.type(screen.getByLabelText(/수정 요청 사항/), "FAQ에 다국어 지원 추가");
-    await userEvent.click(screen.getByRole("button", { name: /수정 요청 제출/ }));
-    await waitFor(() => expect(body).toEqual({ text: "FAQ에 다국어 지원 추가" }));
+    const link = screen.getByRole("link", { name: /수정 요청/ });
+    expect(link).toHaveAttribute(
+      "href",
+      `/projects/pilot1/workspace?draft=${encodeURIComponent("discovery-document.md 수정 요청: ")}`,
+    );
   });
 
   // Regression: a non-404 readArtifact error was previously swallowed into
@@ -179,6 +175,35 @@ describe("Review page — width, download, status badge", () => {
     clickSpy.mockRestore();
   });
 
+  it("downloads all artifacts as a zip via a Blob link", async () => {
+    mockTreeAndAudit();
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/artifacts/archive`, () =>
+        HttpResponse.arrayBuffer(new ArrayBuffer(4), {
+          headers: { "Content-Type": "application/zip" },
+        }),
+      ),
+    );
+    // jsdom은 URL.createObjectURL을 구현하지 않음 — stub으로 주입
+    const createSpy = vi.fn().mockReturnValue("blob:mock-zip");
+    const revokeSpy = vi.fn();
+    (URL as unknown as { createObjectURL: unknown }).createObjectURL = createSpy;
+    (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = revokeSpy;
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    await screen.findByRole("button", { name: /discovery-document\.md/ });
+    const dl = await screen.findByRole("button", { name: /전체 다운로드 \(\.zip\)/ });
+    await userEvent.click(dl);
+    await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1));
+    expect(clickSpy).toHaveBeenCalled();
+    expect(revokeSpy).toHaveBeenCalledWith("blob:mock-zip");
+    delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+    delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+    clickSpy.mockRestore();
+  });
+
   it("shows a document status badge from aiplc-state and explains the gate actions", async () => {
     mockTreeAndAudit();
     server.use(
@@ -195,7 +220,7 @@ describe("Review page — width, download, status badge", () => {
     // 승인/수정이 각각 무엇을 하는지 안내 문구가 게이트에 있어야 한다
     const gate = screen.getByRole("alert");
     expect(gate.textContent).toMatch(/승인.*Discovery 단계를 완료/);
-    expect(gate.textContent).toMatch(/수정 요청.*AI가 문서를 고쳐/);
+    expect(gate.textContent).toMatch(/수정 요청.*워크스페이스 채팅으로 이동/);
   });
 
   it("shows the approved badge when the stage is completed", async () => {

@@ -2,10 +2,14 @@
 # 코드가 UI 계약을 강제하고, 룰(markdown)이 내용을 채운다.
 from __future__ import annotations
 import json
+import logging
 from pathlib import Path
 from typing import Any, Callable
 from strands import tool
 from pathfinder.models import AgentEvent
+from pathfinder.agent.state_sync import upsert_stage
+
+_log = logging.getLogger("pathfinder.agent")
 
 QUESTIONS_SCHEMA_HINT = (
     "ask_questions의 questions_file 인자는 반드시 다음 JSON 형태여야 한다: "
@@ -54,7 +58,7 @@ def build_tools(workspace: str, rules_dir: str,
 
     @tool
     def report_stage(stage: str, status: str, summary: str = "") -> str:
-        """Discovery 스테이지 전이를 선언한다.
+        """Discovery 스테이지 전이를 선언한다. aiplc-state.md도 자동 갱신된다.
 
         Args:
             stage: 스테이지 이름 (예: "Envision").
@@ -65,6 +69,17 @@ def build_tools(workspace: str, rules_dir: str,
             return f"invalid status '{status}' — use pending|in_progress|completed"
         emit(AgentEvent(kind="stage", payload=json.dumps(
             {"stage": stage, "status": status, "summary": summary}, ensure_ascii=False)))
+        # 상태 파일 보장(코드 강제): 대시보드/목록/게이트가 읽는
+        # aiplc-docs/aiplc-state.md를 이 시점에 기계적으로 upsert한다.
+        # 실패는 이벤트/반환을 막지 않는다(fail-soft) — 화면 이벤트가 우선.
+        try:
+            p = _confine(workspace, "aiplc-docs/aiplc-state.md")
+            existing = p.read_text(encoding="utf-8") if p.is_file() else None
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(upsert_stage(existing, stage, status), encoding="utf-8")
+            emit(AgentEvent(kind="file_changed", path="aiplc-docs/aiplc-state.md"))
+        except Exception:
+            _log.exception("aiplc-state.md upsert failed (stage=%s)", stage)
         return f"stage recorded: {stage} ({status})"
 
     @tool

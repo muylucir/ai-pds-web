@@ -1,18 +1,28 @@
 // frontend/components/canvas/ChatInput.tsx
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export function ChatInput({
   onSend,
   disabled,
   onAttach,
+  initialText,
 }: {
   onSend: (text: string) => void;
   disabled: boolean;
   onAttach?: (file: File) => void;
+  // 마운트 시 1회 프리필 + 포커스(예: 리뷰 화면의 수정 요청 링크에서 넘어온 초안).
+  initialText?: string;
 }) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (initialText) inputRef.current?.focus();
+    // 마운트 시 1회만 — initialText 변경 추적은 불필요(워크스페이스가 마운트 시 전달).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function submit() {
     const trimmed = text.trim();
@@ -50,6 +60,7 @@ export function ChatInput({
             </>
           )}
           <textarea
+            ref={inputRef}
             rows={1}
             value={text}
             onChange={(e) => setText(e.target.value)}

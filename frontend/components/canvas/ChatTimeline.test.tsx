@@ -1,6 +1,6 @@
 // frontend/components/canvas/ChatTimeline.test.tsx  (full replacement)
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -12,6 +12,27 @@ import { strategyQuestions } from "@/test/fixtures/strategyQuestions";
 
 const STRAT = "aiplc-docs/discovery/product-strategy/strategy-questions.md";
 const DOC = "aiplc-docs/discovery/discovery-document.md";
+
+// Shared render helper for the stick-to-bottom suite below: a thin wrapper
+// over ChatTimeline with sensible defaults so each test only varies `items`
+// and `stickSignal`.
+function Harness({ items, stickSignal }: { items: ChatTimelineItem[]; stickSignal?: number }) {
+  return (
+    <ChatTimeline
+      items={items}
+      projectId="pilot1"
+      onChoose={vi.fn()}
+      onOpenArtifact={vi.fn()}
+      busy={false}
+      stickSignal={stickSignal}
+    />
+  );
+}
+
+let msgCounter = 0;
+function msg(text: string): ChatItem {
+  return { id: `m-${msgCounter++}`, role: "user", text };
+}
 
 describe("ChatTimeline", () => {
   it("renders user and AI bubbles in order", () => {
@@ -79,5 +100,44 @@ describe("ChatTimeline", () => {
       <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />,
     );
     expect(screen.getByText("📋 질문지 제시됨")).toBeInTheDocument();
+  });
+});
+
+describe("ChatTimeline — stick-to-bottom", () => {
+  function scroller(): HTMLElement {
+    return screen.getByLabelText("대화 타임라인");
+  }
+  function fakeScrollGeometry(el: HTMLElement, { height = 400, content = 1000 }) {
+    Object.defineProperty(el, "clientHeight", { value: height, configurable: true });
+    Object.defineProperty(el, "scrollHeight", { value: content, configurable: true });
+  }
+
+  it("items가 추가되면 바닥으로 스크롤한다 (기본 stick)", () => {
+    const { rerender } = render(<Harness items={[msg("1")]} stickSignal={0} />);
+    const el = scroller();
+    fakeScrollGeometry(el, {});
+    rerender(<Harness items={[msg("1"), msg("2")]} stickSignal={0} />);
+    expect(el.scrollTop).toBe(el.scrollHeight);
+  });
+
+  it("사용자가 위로 스크롤하면 자동 스크롤이 멈춘다", () => {
+    const { rerender } = render(<Harness items={[msg("1")]} stickSignal={0} />);
+    const el = scroller();
+    fakeScrollGeometry(el, {});
+    // 사용자가 위로: scrollTop을 바닥에서 멀리 두고 scroll 이벤트 발생
+    el.scrollTop = 100;
+    fireEvent.scroll(el);
+    rerender(<Harness items={[msg("1"), msg("2")]} stickSignal={0} />);
+    expect(el.scrollTop).toBe(100); // 위치 보존 — 끌려 내려가지 않음
+  });
+
+  it("stickSignal이 증가하면(메시지 전송) 무조건 바닥으로 복귀한다", () => {
+    const { rerender } = render(<Harness items={[msg("1")]} stickSignal={0} />);
+    const el = scroller();
+    fakeScrollGeometry(el, {});
+    el.scrollTop = 100;
+    fireEvent.scroll(el);
+    rerender(<Harness items={[msg("1"), msg("2")]} stickSignal={1} />);
+    expect(el.scrollTop).toBe(el.scrollHeight);
   });
 });

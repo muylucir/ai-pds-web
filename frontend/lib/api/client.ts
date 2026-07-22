@@ -156,6 +156,17 @@ export async function getHistory(pid: string): Promise<HistoryItem[]> {
 // shared `request()` helper: FormData needs the browser to set its own
 // multipart Content-Type (with boundary) — setting it manually would break
 // the request.
+// GET /projects/{pid}/artifacts/archive → zip bytes of the whole aiplc-docs/
+// tree. Bypasses the JSON `request()` helper (like uploadFile) since the
+// response body is binary, not JSON.
+export async function downloadArtifactsArchive(pid: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(pid)}/artifacts/archive`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  return res.blob();
+}
+
 export async function uploadFile(
   pid: string,
   file: File,

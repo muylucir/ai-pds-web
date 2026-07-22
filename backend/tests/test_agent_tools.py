@@ -89,3 +89,30 @@ def test_schema_hint_mentions_letter_note_answer_form():
     # 돌아온다 — 에이전트가 부연을 놓치지 않도록 힌트에 명시되어야 한다.
     assert "부연" in QUESTIONS_SCHEMA_HINT
     assert "'B: " in QUESTIONS_SCHEMA_HINT or '"B: ' in QUESTIONS_SCHEMA_HINT
+
+
+def test_report_stage_writes_state_file(tmp_path):
+    from pathfinder.parsers.state import parse_state_file
+    ws = tmp_path / "ws"; ws.mkdir()
+    tools, _ = _tools(ws, tmp_path / "rules")
+    tools["report_stage"](stage="Envision", status="in_progress", summary="시작")
+    state_file = ws / "aiplc-docs" / "aiplc-state.md"
+    assert state_file.is_file()
+    state = parse_state_file(state_file.read_text(encoding="utf-8"))
+    assert state.current_stage == "Envision"
+    tools["report_stage"](stage="Envision", status="completed", summary="끝")
+    state = parse_state_file(state_file.read_text(encoding="utf-8"))
+    assert state.stages[0].status == "completed"
+
+
+def test_report_stage_survives_state_write_failure(tmp_path, monkeypatch):
+    # fail-soft: 상태 파일 upsert가 터져도 이벤트/반환은 정상.
+    ws = tmp_path / "ws"; ws.mkdir()
+    emitted = []
+    from pathfinder.agent import tools as tools_mod
+    monkeypatch.setattr(tools_mod, "upsert_stage",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    tools = {t.tool_name: t for t in tools_mod.build_tools(str(ws), str(tmp_path / "rules"), emitted.append)}
+    out = tools["report_stage"](stage="Envision", status="in_progress")
+    assert "stage recorded" in out
+    assert emitted and emitted[0].kind == "stage"

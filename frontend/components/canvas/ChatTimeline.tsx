@@ -24,19 +24,38 @@ export function ChatTimeline({
   onChoose,
   onOpenArtifact,
   busy,
+  stickSignal,
 }: {
   items: ChatTimelineItem[];
   projectId: string;
   onChoose: (text: string) => void;
   onOpenArtifact: () => void;
   busy: boolean;
+  stickSignal?: number;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
+  // stick-to-bottom: 기본 켜짐. 사용자가 위로 스크롤하면 꺼지고, 바닥 근처로
+  // 돌아오거나 메시지를 보내면(stickSignal 증가) 다시 켜진다. 스트리밍으로
+  // 긴 응답이 자라도 stick이 켜져 있는 한 계속 바닥을 따라간다 — 기존
+  // "바닥 120px 이내일 때만" 정책은 긴 응답에서 따라가기가 끊기는 원인이었다.
+  const stickRef = useRef(true);
 
-  // Smart autoscroll: only snap to the bottom when the user is already
-  // (roughly) there — someone scrolled up to re-read earlier turns must not
-  // get yanked back down every time a new streaming chunk lands.
-  //
+  function onScroll() {
+    const el = scrollerRef.current;
+    if (!el) return;
+    // 프로그램적 스크롤(scrollTop=scrollHeight 직후)도 이 핸들러를 타지만,
+    // 그 경우 바닥 판정이 참이라 stick이 유지된다. 사용자가 위로 올렸을 때만
+    // 바닥에서 멀어져 stick이 꺼진다.
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  }
+
+  useEffect(() => {
+    // 메시지 전송 = 무조건 바닥 복귀 (사용자 요청의 직접 해결).
+    stickRef.current = true;
+    const el = scrollerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [stickSignal]);
+
   // Deliberately NOT scrollIntoView(): that API scrolls EVERY scrollable
   // ancestor (html included), and during initial history hydration it can
   // scroll the document itself by a transient overflow — leaving the page
@@ -45,14 +64,14 @@ export function ChatTimeline({
   // only this container, so the page can never move.
   useEffect(() => {
     const el = scrollerRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (nearBottom) el.scrollTop = el.scrollHeight;
+    if (!el || !stickRef.current) return;
+    el.scrollTop = el.scrollHeight;
   }, [items]);
 
   return (
     <div
       ref={scrollerRef}
+      onScroll={onScroll}
       className="chat-scroll flex-1 min-h-0 overflow-y-auto px-4 md:px-8 py-6"
       aria-label="대화 타임라인"
     >

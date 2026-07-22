@@ -6,7 +6,15 @@ import { DocumentPanel } from "@/components/review/DocumentPanel";
 import { ApprovalGate } from "@/components/review/ApprovalGate";
 import { VerificationSummary } from "@/components/review/VerificationSummary";
 import { Markdown } from "@/components/Markdown";
-import { listArtifacts, readArtifact, getAudit, getState, postMessage, ApiError } from "@/lib/api/client";
+import {
+  listArtifacts,
+  readArtifact,
+  getAudit,
+  getState,
+  postMessage,
+  downloadArtifactsArchive,
+  ApiError,
+} from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 
 // 클라이언트 Blob 다운로드 — 백엔드 왕복 없이 현재 로드된 마크다운을 저장한다.
@@ -17,6 +25,18 @@ function downloadMarkdown(path: string, content: string) {
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// 산출물 전체(aiplc-docs/**) zip 다운로드 — 백엔드 왕복 필요(개별 .md와 달리
+// 서버가 아카이브를 구성한다).
+async function downloadZip(projectId: string) {
+  const blob = await downloadArtifactsArchive(projectId);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${projectId}-artifacts.zip`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -59,6 +79,10 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const contentLoadError = selected !== null && content.error !== null;
   const isDiscoveryDocument = selected?.endsWith("discovery-document.md") ?? false;
 
+  // 수정 요청 링크의 목적지 — 워크스페이스 채팅으로 이동하며 문서명이 포함된 초안을 ?draft=로 전달한다.
+  const docName = selected ? selected.slice(selected.lastIndexOf("/") + 1) : "discovery-document.md";
+  const reviseHref = `/projects/${projectId}/workspace?draft=${encodeURIComponent(`${docName} 수정 요청: `)}`;
+
   async function sendTurn(text: string) {
     setBusy(true);
     setActionError(null);
@@ -99,9 +123,9 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
           <>
             <ApprovalGate
               onApprove={() => sendTurn("승인")}
-              onRevise={(t) => sendTurn(t)}
               busy={busy}
               stageStatus={docStage?.status ?? null}
+              reviseHref={reviseHref}
             />
             {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
             {busy && <p className="text-sm text-slate-400 mb-4">AI가 요청을 처리하고 있습니다…</p>}
@@ -124,6 +148,13 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
           ) : (
             <div>
               <div className="flex justify-end mb-3">
+                <button
+                  type="button"
+                  onClick={() => downloadZip(projectId).catch(() => setActionError("압축 다운로드에 실패했습니다."))}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 mr-2"
+                >
+                  ⬇ 전체 다운로드 (.zip)
+                </button>
                 <button
                   type="button"
                   onClick={() => downloadMarkdown(selected, content.data ?? "")}

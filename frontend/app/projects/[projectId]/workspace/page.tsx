@@ -46,8 +46,37 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // the NEXT outgoing message, and any upload-failure notice to surface.
   const [attachments, setAttachments] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // Bumped right before every send/submitAnswers call site — ChatTimeline
+  // watches this to force an unconditional scroll-to-bottom on send, even if
+  // the user had scrolled up and stick-to-bottom was off.
+  const [stickSignal, setStickSignal] = useState(0);
+  // Revise-request draft (Task 5): the review screen's "수정 요청" link routes
+  // here with ?draft=<text> instead of opening an inline form (invisible once
+  // scrolled, and unable to render follow-up questions). Next 15's
+  // useSearchParams() would require a Suspense boundary in this already-
+  // "use client" page, and nothing else in this codebase mocks
+  // next/navigation's router/search-params hooks for tests, so we parse the
+  // URL directly — but only inside a mount effect, never during the
+  // useState initializer/render. Reading window.location during render would
+  // make server HTML (no draft) and the client's first render (prefilled
+  // textarea) diverge, which React 19 flags as a hydration mismatch. Applying
+  // the draft post-mount means the FIRST paint always matches SSR (empty),
+  // and the draft arrives a tick later; ChatInput is remounted (key={draft})
+  // so its initialText+focus-on-mount contract still fires once the draft is
+  // known. Once read, strip ?draft= from the URL so a refresh doesn't
+  // re-prefill the input.
+  const [draft, setDraft] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    const d = new URLSearchParams(window.location.search).get("draft");
+    if (d) {
+      setDraft(d);
+      window.history.replaceState(null, "", `/projects/${projectId}/workspace`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function submitAnswersFromSheet(answers: Record<string, string>) {
+    setStickSignal((n) => n + 1);
     submitAnswers(answers);
     setSheetOpen(false);
   }
@@ -66,11 +95,26 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // the user's typed text, then clears the chip tray — attachments are a
   // one-shot mention on the NEXT message, not a standing context.
   function sendWithAttachments(text: string) {
+    setStickSignal((n) => n + 1);
     const mentions = attachments.map(
       (p) => `[첨부 파일: ${p} — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 file_read로 읽으세요.]`,
     );
     send(mentions.length ? `${mentions.join("\n")}\n\n${text}` : text);
     setAttachments([]);
+  }
+
+  // Every other place `send`/`submitAnswers` is invoked (starter buttons,
+  // in-chat answer choices, the right-panel question form) also counts as
+  // "the user sent a message" for stick-to-bottom purposes — wrap rather
+  // than pass the raw hook function straight into a prop.
+  function sendAndStick(text: string) {
+    setStickSignal((n) => n + 1);
+    send(text);
+  }
+
+  function submitAnswersAndStick(answers: Record<string, string>) {
+    setStickSignal((n) => n + 1);
+    submitAnswers(answers);
   }
 
   // Minimal accessibility for the mobile bottom-sheet: move focus into the
@@ -134,15 +178,16 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           )}
           {showWelcome ? (
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <WelcomeCard onStart={send} />
+              <WelcomeCard onStart={sendAndStick} />
             </div>
           ) : (
             <ChatTimeline
               items={items}
               projectId={projectId}
-              onChoose={send}
+              onChoose={sendAndStick}
               onOpenArtifact={() => {}}
               busy={streaming}
+              stickSignal={stickSignal}
             />
           )}
           {uploadError && (
@@ -154,7 +199,13 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             paths={attachments}
             onRemove={(p) => setAttachments((prev) => prev.filter((x) => x !== p))}
           />
-          <ChatInput onSend={sendWithAttachments} onAttach={handleAttach} disabled={streaming} />
+          <ChatInput
+            key={draft ?? "no-draft"}
+            onSend={sendWithAttachments}
+            onAttach={handleAttach}
+            disabled={streaming}
+            initialText={draft}
+          />
         </main>
 
         <WorkspaceRightPanel
@@ -162,7 +213,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           pendingQuestions={pendingQuestions}
           stages={stages}
           changedPaths={changedPaths}
-          onSubmitAnswers={submitAnswers}
+          onSubmitAnswers={submitAnswersAndStick}
           busy={streaming}
         />
 

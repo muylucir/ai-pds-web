@@ -60,4 +60,16 @@ describe("ChatInput", () => {
     expect(onAttach).toHaveBeenCalledWith(file);
     expect(input.value).toBe("");
   });
+
+  it("initialText가 있으면 프리필 + 포커스된다", () => {
+    render(<ChatInput onSend={vi.fn()} disabled={false} initialText="doc.md 수정 요청: " />);
+    const input = screen.getByLabelText("채팅 메시지 입력");
+    expect(input).toHaveValue("doc.md 수정 요청: ");
+    expect(input).toHaveFocus();
+  });
+
+  it("initialText가 없으면 기존과 동일 (빈 입력, 포커스 강제 없음)", () => {
+    render(<ChatInput onSend={vi.fn()} disabled={false} />);
+    expect(screen.getByLabelText("채팅 메시지 입력")).toHaveValue("");
+  });
 });
