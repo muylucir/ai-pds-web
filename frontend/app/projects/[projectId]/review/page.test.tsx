@@ -79,21 +79,17 @@ describe("Review page", () => {
     await waitFor(() => expect(body).toEqual({ text: "승인" }));
   });
 
-  it("submitting a revision POSTs the natural-language text to /message", async () => {
+  it("수정 요청 링크는 워크스페이스 채팅으로 이동하며 문서명이 담긴 초안을 ?draft=로 전달한다", async () => {
     mockTreeAndAudit();
-    let body: any;
-    server.use(
-      http.post(`${API_BASE_URL}/projects/pilot1/message`, async ({ request }) => {
-        body = await request.json();
-        return HttpResponse.json({ events: [{ kind: "done", text: null, path: null }] });
-      }),
-    );
-    render(<ReviewPage params={params} />);
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
     await screen.findByText("Press Release");
-    await userEvent.click(screen.getByRole("button", { name: /수정 요청/ }));
-    await userEvent.type(screen.getByLabelText(/수정 요청 사항/), "FAQ에 다국어 지원 추가");
-    await userEvent.click(screen.getByRole("button", { name: /수정 요청 제출/ }));
-    await waitFor(() => expect(body).toEqual({ text: "FAQ에 다국어 지원 추가" }));
+    const link = screen.getByRole("link", { name: /수정 요청/ });
+    expect(link).toHaveAttribute(
+      "href",
+      `/projects/pilot1/workspace?draft=${encodeURIComponent("discovery-document.md 수정 요청: ")}`,
+    );
   });
 
   // Regression: a non-404 readArtifact error was previously swallowed into
@@ -224,7 +220,7 @@ describe("Review page — width, download, status badge", () => {
     // 승인/수정이 각각 무엇을 하는지 안내 문구가 게이트에 있어야 한다
     const gate = screen.getByRole("alert");
     expect(gate.textContent).toMatch(/승인.*Discovery 단계를 완료/);
-    expect(gate.textContent).toMatch(/수정 요청.*AI가 문서를 고쳐/);
+    expect(gate.textContent).toMatch(/수정 요청.*워크스페이스 채팅으로 이동/);
   });
 
   it("shows the approved badge when the stage is completed", async () => {

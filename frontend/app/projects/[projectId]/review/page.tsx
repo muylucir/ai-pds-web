@@ -79,6 +79,10 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const contentLoadError = selected !== null && content.error !== null;
   const isDiscoveryDocument = selected?.endsWith("discovery-document.md") ?? false;
 
+  // 수정 요청 링크의 목적지 — 워크스페이스 채팅으로 이동하며 문서명이 포함된 초안을 ?draft=로 전달한다.
+  const docName = selected ? selected.slice(selected.lastIndexOf("/") + 1) : "discovery-document.md";
+  const reviseHref = `/projects/${projectId}/workspace?draft=${encodeURIComponent(`${docName} 수정 요청: `)}`;
+
   async function sendTurn(text: string) {
     setBusy(true);
     setActionError(null);
@@ -119,9 +123,9 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
           <>
             <ApprovalGate
               onApprove={() => sendTurn("승인")}
-              onRevise={(t) => sendTurn(t)}
               busy={busy}
               stageStatus={docStage?.status ?? null}
+              reviseHref={reviseHref}
             />
             {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
             {busy && <p className="text-sm text-slate-400 mb-4">AI가 요청을 처리하고 있습니다…</p>}

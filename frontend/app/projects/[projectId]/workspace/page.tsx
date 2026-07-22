@@ -50,6 +50,23 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // watches this to force an unconditional scroll-to-bottom on send, even if
   // the user had scrolled up and stick-to-bottom was off.
   const [stickSignal, setStickSignal] = useState(0);
+  // Revise-request draft (Task 5): the review screen's "수정 요청" link routes
+  // here with ?draft=<text> instead of opening an inline form (invisible once
+  // scrolled, and unable to render follow-up questions). Read once on mount
+  // via window.location — Next 15's useSearchParams() would require a
+  // Suspense boundary in this already-"use client" page, and nothing else in
+  // this codebase mocks next/navigation's router/search-params hooks for
+  // tests, so parsing the URL directly avoids both concerns. Once read, strip
+  // ?draft= from the URL so a refresh doesn't re-prefill the input.
+  const [draft] = useState<string | undefined>(() =>
+    typeof window === "undefined"
+      ? undefined
+      : (new URLSearchParams(window.location.search).get("draft") ?? undefined),
+  );
+  useEffect(() => {
+    if (draft) window.history.replaceState(null, "", `/projects/${projectId}/workspace`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function submitAnswersFromSheet(answers: Record<string, string>) {
     setStickSignal((n) => n + 1);
@@ -175,7 +192,12 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             paths={attachments}
             onRemove={(p) => setAttachments((prev) => prev.filter((x) => x !== p))}
           />
-          <ChatInput onSend={sendWithAttachments} onAttach={handleAttach} disabled={streaming} />
+          <ChatInput
+            onSend={sendWithAttachments}
+            onAttach={handleAttach}
+            disabled={streaming}
+            initialText={draft}
+          />
         </main>
 
         <WorkspaceRightPanel
