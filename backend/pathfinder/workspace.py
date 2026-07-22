@@ -64,9 +64,14 @@ class ProjectRegistry:
     def __init__(self):
         self._names: dict[str, str | None] = {}
         self._workspaces: dict[str, Workspace] = {}
+        # 생성 시각(ISO 문자열) — 목록 정렬 기준. 매니페스트에서 복원되거나
+        # 생성 라우트가 전달한다. 구 매니페스트에는 없을 수 있어 None 허용.
+        self._created_at: dict[str, str | None] = {}
 
-    def register(self, project_id: str, name: str | None = None) -> None:
+    def register(self, project_id: str, name: str | None = None,
+                 created_at: str | None = None) -> None:
         self._names[project_id] = name
+        self._created_at[project_id] = created_at
 
     def attach(self, project_id: str, workspace: Workspace) -> Workspace:
         if project_id not in self._names:
@@ -86,13 +91,19 @@ class ProjectRegistry:
     def remove(self, project_id: str) -> Workspace | None:
         """등록·워크스페이스 모두 제거. 있던 Workspace를 반환(없으면 None). 멱등."""
         self._names.pop(project_id, None)
+        self._created_at.pop(project_id, None)
         return self._workspaces.pop(project_id, None)
 
     def list_ids(self) -> list[str]:
-        # dict는 삽입 순서를 보존 — 등록(생성/복원) 순서 그대로 노출
-        return list(self._names.keys())
+        # 생성일 오름차순(오래된 것 먼저). created_at이 없는 구 매니페스트
+        # 프로젝트는 맨 앞 — ISO 문자열은 사전순 == 시간순이라 str 비교로 충분.
+        return sorted(self._names.keys(),
+                      key=lambda pid: self._created_at.get(pid) or "")
 
     def get_name(self, project_id: str) -> str | None:
         if project_id not in self._names:
             raise KeyError(project_id)
         return self._names[project_id]
+
+    def get_created_at(self, project_id: str) -> str | None:
+        return self._created_at.get(project_id)

@@ -1,6 +1,7 @@
 # backend/pathfinder/routes/projects.py
 import asyncio
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from pathfinder import app as app_module
@@ -42,10 +43,13 @@ async def create_project(body: CreateProject):
     if app_module.registry.is_registered(body.project_id):
         raise HTTPException(status_code=409, detail="project exists")
     workspace = await app_module.make_workspace(body.project_id)
+    # 매니페스트와 레지스트리가 같은 created_at을 갖도록 여기서 확정 —
+    # 목록 정렬(생성일 오름차순) 기준이 재시작 전후로 달라지지 않는다.
+    created_at = datetime.now(timezone.utc).isoformat()
     if app_module.durable_projects_enabled():
         try:
             await write_manifest(app_module.projects_root_s3_factory(),
-                                 body.project_id, body.name)
+                                 body.project_id, body.name, created_at=created_at)
         except Exception:
             # 스펙 결정: 재시작하면 사라질 프로젝트를 조용히 만들지 않는다.
             _log.exception("manifest write failed for %s", body.project_id)
@@ -54,7 +58,7 @@ async def create_project(body: CreateProject):
             except Exception:
                 _log.exception("workspace cleanup after manifest failure failed")
             raise HTTPException(status_code=500, detail="project persistence failed")
-    app_module.registry.register(body.project_id, body.name)
+    app_module.registry.register(body.project_id, body.name, created_at=created_at)
     app_module.registry.attach(body.project_id, workspace)
     return {"project_id": body.project_id, "name": body.name}
 
@@ -68,7 +72,8 @@ async def list_projects(page: int = Query(1, ge=1), size: int = Query(10, ge=1, 
     progresses = await asyncio.gather(*(_progress(pid) for pid in page_ids))
     return {
         "projects": [
-            {"project_id": pid, "name": app_module.registry.get_name(pid), "progress": prog}
+            {"project_id": pid, "name": app_module.registry.get_name(pid),
+             "created_at": app_module.registry.get_created_at(pid), "progress": prog}
             for pid, prog in zip(page_ids, progresses)
         ],
         "total": total,

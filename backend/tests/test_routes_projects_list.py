@@ -131,3 +131,33 @@ def test_listing_does_not_initialize_workspaces(monkeypatch):
     _register("pg-lazy")
     client.get("/projects", params={"size": 50})
     assert not app_module.registry.has_workspace("pg-lazy")
+
+
+# ---- created_at 오름차순 정렬 (2026-07-22) ----
+
+def test_list_sorted_by_created_at_ascending():
+    # 등록 순서를 뒤섞어도 created_at 오름차순(오래된 것 먼저)으로 나온다.
+    app_module.registry.register("sort-c", None, created_at="2026-07-22T03:00:00+00:00")
+    app_module.registry.register("sort-a", None, created_at="2026-07-22T01:00:00+00:00")
+    app_module.registry.register("sort-b", None, created_at="2026-07-22T02:00:00+00:00")
+    r = client.get("/projects", params={"size": 50})
+    ids = [p["project_id"] for p in r.json()["projects"] if p["project_id"].startswith("sort-")]
+    assert ids == ["sort-a", "sort-b", "sort-c"]
+
+
+def test_list_includes_created_at_field():
+    app_module.registry.register("sort-ts", None, created_at="2026-07-22T05:00:00+00:00")
+    r = client.get("/projects", params={"size": 50})
+    row = next(p for p in r.json()["projects"] if p["project_id"] == "sort-ts")
+    assert row["created_at"] == "2026-07-22T05:00:00+00:00"
+
+
+def test_missing_created_at_sorts_first_and_is_null():
+    # 구 매니페스트(created_at 없음) 호환: None은 맨 앞 + 응답에 null.
+    app_module.registry.register("sort-old", None)  # created_at 미지정
+    app_module.registry.register("sort-new", None, created_at="2026-07-22T09:00:00+00:00")
+    r = client.get("/projects", params={"size": 50})
+    rows = [p["project_id"] for p in r.json()["projects"] if p["project_id"].startswith("sort-")]
+    assert rows.index("sort-old") < rows.index("sort-new")
+    old = next(p for p in r.json()["projects"] if p["project_id"] == "sort-old")
+    assert old["created_at"] is None

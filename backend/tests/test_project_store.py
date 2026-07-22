@@ -16,13 +16,16 @@ async def test_write_manifest_puts_expected_key_and_shape():
 @pytest.mark.asyncio
 async def test_restore_reads_manifests_and_skips_garbage():
     root = FakeS3Store()
-    root.blobs["pa/project.json"] = json.dumps({"project_id": "pa", "name": "A"})
+    root.blobs["pa/project.json"] = json.dumps(
+        {"project_id": "pa", "name": "A", "created_at": "2026-07-22T01:00:00+00:00"})
     root.blobs["pb/project.json"] = json.dumps({"project_id": "pb", "name": None})
     root.blobs["pc/project.json"] = "{{{ not json"           # 손상 → 건너뜀
     root.blobs["pd/project.json"] = "[1,2,3]"                # JSON but not dict → 건너뜀
     root.blobs["pa/aiplc-docs/audit.md"] = "# not a manifest"  # 매니페스트 아님 → 무시
-    restored = dict(await restore_projects(root))
-    assert restored == {"pa": "A", "pb": None}
+    restored = {pid: (name, created_at)
+                for pid, name, created_at in await restore_projects(root)}
+    # created_at은 매니페스트에서 승계, 없으면(구 매니페스트) None.
+    assert restored == {"pa": ("A", "2026-07-22T01:00:00+00:00"), "pb": (None, None)}
 
 
 @pytest.mark.asyncio
