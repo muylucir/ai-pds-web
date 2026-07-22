@@ -148,14 +148,20 @@ async def test_run_answers_proceeds_normally_even_with_activated_interrupt_state
     assert evs[-1].kind == "done"
 
 
-async def test_emit_from_worker_thread_lands_in_deque():
+async def test_emit_from_worker_thread_lands_in_deque(tmp_path):
     import asyncio
     from collections import deque
     from pathfinder.agent.tools import build_tools
     d = deque()
-    tools = build_tools("/tmp/ws", "/tmp/rules", d.append)
+    tools = build_tools(str(tmp_path / "ws"), str(tmp_path / "rules"), d.append)
     report_stage = next(t for t in tools if getattr(t, "tool_name", None) == "report_stage")
     await asyncio.to_thread(report_stage, stage="Envision", status="in_progress", summary="s")
-    assert len(d) == 1
+    # report_stage now also upserts aiplc-state.md and emits a second
+    # file_changed event for it (Task 1: state_sync) — both must land in
+    # the deque via the same emit callback from the worker thread.
+    assert len(d) == 2
     ev = d.popleft()
     assert ev.kind == "stage"
+    ev2 = d.popleft()
+    assert ev2.kind == "file_changed"
+    assert ev2.path == "aiplc-docs/aiplc-state.md"
