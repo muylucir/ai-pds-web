@@ -83,6 +83,22 @@ export function WorkspaceDocPanel({
         ) : (
           <p className="text-xs font-bold text-slate-400 uppercase tracking-wide truncate">생성된 문서</p>
         )}
+        {path !== null && (
+          <button
+            type="button"
+            aria-label="문서 새로고침"
+            disabled={content.loading}
+            onClick={() => {
+              // 현재 문서와 산출물 목록을 함께 재조회 — 문서만 갱신하면 방금
+              // 생성된 다른 문서가 드롭다운에 반영되지 않는다.
+              content.reload();
+              artifacts.reload();
+            }}
+            className="shrink-0 w-7 h-7 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 disabled:opacity-40 flex items-center justify-center"
+          >
+            ↻
+          </button>
+        )}
         {versionLabel && manualPath === null && (
           <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-violet-50 text-violet-600">
             {versionLabel}

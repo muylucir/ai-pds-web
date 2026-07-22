@@ -210,3 +210,46 @@ describe("WorkspaceDocPanel — 문서 드롭다운", () => {
     expect(await screen.findByText("A")).toBeInTheDocument();
   });
 });
+
+describe("WorkspaceDocPanel — 문서 새로고침 버튼", () => {
+  it("클릭하면 현재 문서와 산출물 목록을 다시 가져온다", async () => {
+    let docFetches = 0;
+    let listFetches = 0;
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () => {
+        listFetches++;
+        return HttpResponse.json({ artifacts: ["aiplc-docs/a.md"] });
+      }),
+      http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/a.md`, () => {
+        docFetches++;
+        return HttpResponse.json({ content: `# 갱신${docFetches}` });
+      }),
+    );
+    await act(async () => {
+      render(
+        <WorkspaceDocPanel
+          projectId="p1"
+          activeDoc={{ path: "aiplc-docs/a.md", version: null }}
+          turnSeq={0}
+        />,
+      );
+    });
+    expect(await screen.findByText("갱신1")).toBeInTheDocument();
+    const before = { doc: docFetches, list: listFetches };
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "문서 새로고침" }));
+
+    await waitFor(() => {
+      expect(docFetches).toBe(before.doc + 1);
+      expect(listFetches).toBe(before.list + 1);
+    });
+    expect(await screen.findByText(`갱신${before.doc + 1}`)).toBeInTheDocument();
+  });
+
+  it("문서가 없는 빈 상태에서는 새로고침 버튼이 없다", async () => {
+    await act(async () => {
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={null} turnSeq={0} />);
+    });
+    expect(screen.queryByRole("button", { name: "문서 새로고침" })).not.toBeInTheDocument();
+  });
+});
