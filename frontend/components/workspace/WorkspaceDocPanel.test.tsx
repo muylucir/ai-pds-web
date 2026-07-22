@@ -175,4 +175,29 @@ describe("WorkspaceDocPanel — 문서 드롭다운", () => {
     expect(await screen.findByText("B-내용")).toBeInTheDocument();
     expect((screen.getByLabelText("문서 선택") as HTMLSelectElement).value).toBe("aiplc-docs/b.md");
   });
+
+  it("artifacts 목록에 없는 activeDoc(턴 중 새 문서)도 선택지에 추가되어 선택 상태가 맞는다", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () =>
+        HttpResponse.json({ artifacts: ["aiplc-docs/old.md"] })),
+      http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/new.md`, () =>
+        HttpResponse.json({ content: "# NEW" })),
+    );
+    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/new.md", version: null }} turnSeq={0} />);
+    const select = await screen.findByLabelText("문서 선택");
+    await waitFor(() => expect((select as HTMLSelectElement).value).toBe("aiplc-docs/new.md"));
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toContain("new.md");
+  });
+
+  it("artifacts가 빈 배열로 응답해도 열려 있는 문서는 드롭다운에 남는다", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () =>
+        HttpResponse.json({ artifacts: [] })),
+      http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/a.md`, () =>
+        HttpResponse.json({ content: "# A" })),
+    );
+    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} turnSeq={0} />);
+    const select = await screen.findByLabelText("문서 선택");
+    expect((select as HTMLSelectElement).value).toBe("aiplc-docs/a.md");
+  });
 });

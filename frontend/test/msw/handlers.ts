@@ -11,4 +11,5 @@ export const handlers = [
     const body = (await request.json()) as { project_id: string; name?: string };
     return HttpResponse.json({ project_id: body.project_id, name: body.name ?? null });
   }),
+  http.get(`${API_BASE_URL}/projects/:pid/artifacts`, () => HttpResponse.json({ artifacts: [] })),
 ];

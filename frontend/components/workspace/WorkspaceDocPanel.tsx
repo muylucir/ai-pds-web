@@ -35,9 +35,13 @@ export function WorkspaceDocPanel({
   const path = manualPath ?? activeDoc?.path ?? null;
   const version = activeDoc?.version ?? null;
 
-  // 산출물 목록 — 턴 종료(turnSeq)마다 재조회해 새 문서를 반영.
+  // 산출물 목록 — 턴 종료(turnSeq)마다 재조회해 새 문서를 반영. 목록이 아직
+  // path를 포함하지 않을 수 있으므로(턴 중 file_changed가 turnSeq보다 먼저
+  // 도착) 현재 path를 항상 union — 드롭다운/본문 미스매치 및 "목록이 비어
+  // 있으면 select 자체가 숨겨지는" 문제를 함께 해결한다.
   const artifacts = useAsync(() => listArtifacts(projectId), [projectId, turnSeq]);
-  const options = artifacts.data ?? (path ? [path] : []);
+  const listed = artifacts.data ?? [];
+  const options = path && !listed.includes(path) ? [...listed, path] : listed;
 
   // 404 is treated as an empty doc (the file may lag the event by a beat),
   // mirroring the review page; any other error surfaces as a load-error note.
