@@ -2,6 +2,7 @@ import * as assert from 'node:assert';
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { PathfinderDrillStack } from '../lib/pathfinder-drill-stack';
+import { PathfinderHostingStack } from '../lib/pathfinder-hosting-stack';
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 
@@ -53,3 +54,44 @@ function testDrillUnchanged() {
 }
 
 testDrillUnchanged();
+
+function makeHosting() {
+  const app = new cdk.App();
+  const drill = new PathfinderDrillStack(app, 'Drill2', { env: ENV });
+  const stack = new PathfinderHostingStack(app, 'Hosting', {
+    env: ENV,
+    artifactsBucket: drill.artifactsBucket,
+    cfPrefixListId: 'pl-test0000',   // 주입 → fromLookup 우회(크리덴셜 불필요)
+  });
+  return Template.fromStack(stack);
+}
+
+function testNetworkAndSecret() {
+  const t = makeHosting();
+  // 80 인그레스가 프리픽스 리스트 소스만 사용, CIDR 오픈 없음.
+  t.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
+    IpProtocol: 'tcp', FromPort: 80, ToPort: 80, SourcePrefixListId: 'pl-test0000',
+  });
+  // 22(SSH) 인그레스 전무.
+  const ingresses = t.findResources('AWS::EC2::SecurityGroupIngress');
+  for (const [, r] of Object.entries(ingresses)) {
+    assert.notStrictEqual((r as any).Properties.FromPort, 22, 'no SSH ingress allowed');
+  }
+  // 0.0.0.0/0 인그레스 없음(별도 인라인 ingress도 없어야).
+  const sgs = t.findResources('AWS::EC2::SecurityGroup');
+  for (const [, r] of Object.entries(sgs)) {
+    const inline = (r as any).Properties.SecurityGroupIngress ?? [];
+    for (const rule of inline) {
+      assert.notStrictEqual(rule.CidrIp, '0.0.0.0/0', 'no open CIDR ingress');
+    }
+  }
+  // NAT 게이트웨이 0.
+  t.resourceCountIs('AWS::EC2::NatGateway', 0);
+  // 비밀 헤더 시크릿 존재(구두점 제외 생성).
+  t.hasResourceProperties('AWS::SecretsManager::Secret', {
+    GenerateSecretString: Match.objectLike({ ExcludePunctuation: true }),
+  });
+  console.log('OK  hosting: SG prefix-list only, no SSH, secret present');
+}
+
+testNetworkAndSecret();
