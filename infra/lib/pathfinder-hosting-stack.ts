@@ -84,6 +84,7 @@ export class PathfinderHostingStack extends cdk.Stack {
         '**/node_modules', '**/.venv', '**/.next', '**/cdk.out',
         '**/__pycache__', '**/*.egg-info', '**/test-results',
         '**/playwright-report', 'files/*.png',
+        '**/.env', '**/.env.*',
       ],
     });
     asset.grantRead(role);

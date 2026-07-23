@@ -46,6 +46,7 @@ cat > /etc/nginx/conf.d/pathfinder.conf <<NGINX
 server {
   listen 80 default_server;
   server_name _;
+  client_max_body_size 6m;
 
   # CloudFront가 붙인 비밀 헤더 불일치(직접 스캔·타인 배포)는 무조건 차단.
   if (\\$http_x_origin_verify != "\${SECRET}") { return 403; }
@@ -68,7 +69,9 @@ server {
 }
 NGINX
 # AL2023 기본 conf의 default_server와 충돌 방지 — 기본 server 블록 제거.
-sed -i '/server {/,/^    }/d' /etc/nginx/nginx.conf || true
+# 앵커(^    server {)로 실제(들여쓰기된, 주석 아닌) 블록만 매칭 — 주석 처리된
+# TLS 예시 블록(#    server {)은 매칭하지 않으므로 파일 끝까지 삭제되는 사고 없음.
+sed -i '/^    server {/,/^    }/d' /etc/nginx/nginx.conf
 
 # --- systemd 유닛 ---
 cat > /etc/systemd/system/pathfinder-backend.service <<UNIT

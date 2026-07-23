@@ -46,5 +46,13 @@ assert.match(s, /uvicorn pathfinder\.app:app --host 127\.0\.0\.1 --port 8000/, '
 assert.match(s, /next start -H 127\.0\.0\.1 -p 3000/, 'next start cmd');
 // 9) 시크릿 하드코딩되지 않음 (실제 값은 부팅 시점에만 존재)
 assert.ok(!s.includes('AbCdEf-value'), 'secret value never inlined');
+// 10) 업로드 5MB 기능이 nginx 기본 1m 바디 제한에 막히지 않도록 여유치 설정.
+assert.ok(s.includes('client_max_body_size 6m;'), 'nginx must allow up to 6m request bodies (5MB upload feature)');
+// 11) AL2023 기본 nginx.conf의 server 블록 제거용 sed는 반드시 앵커링되어야 함.
+//     비앵커 형태(`/server {/`)는 주석 처리된 TLS 예시 블록(`#    server {`)에도
+//     매칭되어 range-delete가 EOF까지 이어지며 http{} 를 닫는 `}` 를 삭제,
+//     nginx.conf 를 손상시킨다(nginx -t 실패 → 부트스트랩 전체 중단).
+assert.ok(!s.includes("sed -i '/server {/"), 'must not use the unanchored sed that corrupts nginx.conf');
+assert.ok(s.includes("sed -i '/^    server {/"), 'must use the anchored sed that only matches the real (uncommented) stock server block');
 
 console.log('OK  user-data: all required elements present (incl. nginx-var vs secret-var escaping)');
