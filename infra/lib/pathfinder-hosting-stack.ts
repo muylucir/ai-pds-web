@@ -3,6 +3,11 @@ import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as assets from 'aws-cdk-lib/aws-s3-assets';
+import * as path from 'path';
+import { backendPolicyStatements, MODEL } from './backend-permissions';
+import { renderUserData } from './user-data';
 
 export interface HostingStackProps extends cdk.StackProps {
   artifactsBucket: s3.IBucket;
@@ -53,9 +58,80 @@ export class PathfinderHostingStack extends cdk.Stack {
       },
     });
 
-    // 다음 태스크(EC2/CloudFront)에서 사용.
-    void vpc;
-    void sg;
-    void headerSecret;
+    const account = cdk.Stack.of(this).account;
+    const region = cdk.Stack.of(this).region;
+
+    // --- 인스턴스 롤: 백엔드 공통 권한 + 시크릿 읽기 + SSM 접속 ---
+    const role = new iam.Role(this, 'InstanceRole', {
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+      ],
+      description: 'Pathfinder EC2: Bedrock + artifacts S3 + read header secret.',
+    });
+    for (const stmt of backendPolicyStatements(props.artifactsBucket, account)) {
+      role.addToPolicy(stmt);
+    }
+    headerSecret.grantRead(role);
+
+    // --- 앱 코드 에셋(리포 zip) ---
+    const asset = new assets.Asset(this, 'AppAsset', {
+      path: path.join(__dirname, '..', '..'), // 리포 루트
+      exclude: [
+        '.git', 'infra', 'docs',
+        '**/node_modules', '**/.venv', '**/.next', '**/cdk.out',
+        '**/__pycache__', '**/*.egg-info', '**/test-results',
+        '**/playwright-report', 'files/*.png',
+      ],
+    });
+    asset.grantRead(role);
+
+    // --- user-data ---
+    const userData = ec2.UserData.custom(
+      renderUserData({
+        region,
+        bucketName: props.artifactsBucket.bucketName,
+        model: MODEL,
+        secretArn: headerSecret.secretArn,
+        assetS3Uri: asset.s3ObjectUrl, // s3://bucket/key
+      }),
+    );
+
+    // --- 인스턴스 (AL2023 arm64/Graviton, IMDSv2 강제) ---
+    const instance = new ec2.Instance(this, 'Instance', {
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MEDIUM),
+      machineImage: ec2.MachineImage.latestAmazonLinux2023({
+        cpuType: ec2.AmazonLinuxCpuType.ARM_64,
+      }),
+      securityGroup: sg,
+      role,
+      userData,
+      requireImdsv2: true,
+      userDataCausesReplacement: true, // 에셋(코드) 변경 시 깨끗한 재부트스트랩
+      blockDevices: [{
+        deviceName: '/dev/xvda',
+        volume: ec2.BlockDeviceVolume.ebs(20, { encrypted: true }),
+      }],
+    });
+
+    // --- 고정 EIP (재배포에도 CloudFront 오리진 도메인 불변) ---
+    const eip = new ec2.CfnEIP(this, 'Eip', { domain: 'vpc' });
+    new ec2.CfnEIPAssociation(this, 'EipAssoc', {
+      allocationId: eip.attrAllocationId,
+      instanceId: instance.instanceId,
+    });
+
+    // EIP IP -> 퍼블릭 DNS 이름 (CloudFront 오리진은 도메인만 허용; IP 불가).
+    //   ec2-<a-b-c-d>.<region>.compute.amazonaws.com  (us-east-1은 compute-1)
+    const computeDomain =
+      region === 'us-east-1' ? 'compute-1.amazonaws.com' : `${region}.compute.amazonaws.com`;
+    const originDnsName =
+      `ec2-${cdk.Fn.join('-', cdk.Fn.split('.', eip.attrPublicIp))}.${computeDomain}`;
+
+    // Task 5(CloudFront)에서 사용.
+    void instance;
+    void originDnsName;
   }
 }

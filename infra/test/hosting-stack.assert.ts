@@ -95,3 +95,36 @@ function testNetworkAndSecret() {
 }
 
 testNetworkAndSecret();
+
+function testComputeAndRole() {
+  const t = makeHosting();
+  // arm64 인스턴스 1대, IMDSv2 강제(HttpTokens required).
+  t.hasResourceProperties('AWS::EC2::Instance', {
+    InstanceType: 't4g.medium',
+  });
+  t.hasResourceProperties('AWS::EC2::LaunchTemplate', {
+    LaunchTemplateData: Match.objectLike({
+      MetadataOptions: Match.objectLike({ HttpTokens: 'required' }),
+    }),
+  });
+  // EIP 존재 + 연결.
+  t.resourceCountIs('AWS::EC2::EIP', 1);
+  t.resourceCountIs('AWS::EC2::EIPAssociation', 1);
+  // 인스턴스 롤: Bedrock + 시크릿 읽기 + SSM 관리형 정책.
+  t.hasResourceProperties('AWS::IAM::Role', {
+    ManagedPolicyArns: Match.arrayWith([
+      Match.objectLike({
+        'Fn::Join': Match.arrayWith([
+          Match.arrayWith([Match.stringLikeRegexp('AmazonSSMManagedInstanceCore')]),
+        ]),
+      }),
+    ]),
+  });
+  const policies = t.findResources('AWS::IAM::Policy');
+  const allActions = JSON.stringify(policies);
+  assert.match(allActions, /secretsmanager:GetSecretValue/, 'instance role reads header secret');
+  assert.match(allActions, /bedrock:InvokeModel/, 'instance role invokes bedrock');
+  console.log('OK  hosting: EC2 arm64 + EIP + instance role (bedrock/secret/ssm)');
+}
+
+testComputeAndRole();
