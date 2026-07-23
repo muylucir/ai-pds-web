@@ -5,7 +5,8 @@
   "bin": { "app": "bin/app.ts" },
   "scripts": {
     "synth": "cdk synth",
-    "deploy": "cdk deploy"
+    "deploy": "cdk deploy",
+    "test": "ts-node test/user-data.assert.ts && ts-node test/hosting-stack.assert.ts"
   },
   "devDependencies": {
     "aws-cdk": "^2.150.0",
