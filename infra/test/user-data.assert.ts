@@ -18,6 +18,17 @@ assert.match(s, /aws secretsmanager get-secret-value --secret-id arn:aws:secrets
 // 4) nginx 헤더 검증 (403)
 assert.match(s, /\$http_x_origin_verify/, 'nginx must check X-Origin-Verify');
 assert.match(s, /return 403/, 'nginx must 403 on mismatch');
+// 4b) 이스케이핑 고정: nginx 런타임 변수는 백슬래시 정확히 1개만 남아야 부팅 시
+//     bash가 heredoc에서 하나를 소비하고 nginx에 리터럴 $var를 남긴다.
+//     단순 s.includes('\\$foo')는 백슬래시 2개짜리 회귀도 그대로 통과한다
+//     ('\\\\$foo'가 '\\$foo'를 부분 문자열로 포함하기 때문) — 그래서 부정
+//     lookbehind로 "바로 앞에 백슬래시가 없는 백슬래시"만 매치하도록 고정한다.
+assert.match(s, /(?<!\\)\\\$http_x_origin_verify\b/, 'nginx var must keep exactly ONE backslash (not 0, not 2+) so bash leaves a literal $ for nginx');
+assert.match(s, /(?<!\\)\\\$host\b/, 'nginx var \\$host must keep exactly ONE backslash');
+assert.match(s, /(?<!\\)\\\$proxy_add_x_forwarded_for\b/, 'nginx var \\$proxy_add_x_forwarded_for must keep exactly ONE backslash');
+// 4c) 대조: 시크릿 변수는 백슬래시 없이 남아야 부팅 시 bash가 실제 값으로 치환한다.
+assert.ok(s.includes('"${SECRET}"'), 'secret var must be unescaped so bash expands it');
+assert.ok(!s.includes('\\${SECRET}'), 'secret var must NOT be backslash-escaped');
 // 5) nginx 라우팅
 assert.match(s, /proxy_pass http:\/\/127\.0\.0\.1:8000\//, 'api -> backend');
 assert.match(s, /proxy_pass http:\/\/127\.0\.0\.1:3000/, 'root -> frontend');
@@ -36,4 +47,4 @@ assert.match(s, /next start -H 127\.0\.0\.1 -p 3000/, 'next start cmd');
 // 9) 시크릿 하드코딩되지 않음 (실제 값은 부팅 시점에만 존재)
 assert.ok(!s.includes('AbCdEf-value'), 'secret value never inlined');
 
-console.log('OK  user-data: all required elements present');
+console.log('OK  user-data: all required elements present (incl. nginx-var vs secret-var escaping)');
