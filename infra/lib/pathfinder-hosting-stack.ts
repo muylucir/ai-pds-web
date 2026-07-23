@@ -5,6 +5,8 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as assets from 'aws-cdk-lib/aws-s3-assets';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as path from 'path';
 import { backendPolicyStatements, MODEL } from './backend-permissions';
 import { renderUserData } from './user-data';
@@ -130,8 +132,41 @@ export class PathfinderHostingStack extends cdk.Stack {
     const originDnsName =
       `ec2-${cdk.Fn.join('-', cdk.Fn.split('.', eip.attrPublicIp))}.${computeDomain}`;
 
-    // Task 5(CloudFront)에서 사용.
-    void instance;
-    void originDnsName;
+    // 비밀 헤더 값: CFN dynamic reference({{resolve:secretsmanager:...}})로 주입.
+    // 배포 시 CloudFormation이 해석 → 템플릿에는 평문이 남지 않음.
+    const origin = new origins.HttpOrigin(originDnsName, {
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+      httpPort: 80,
+      readTimeout: cdk.Duration.seconds(60), // SSE(백엔드 ping 15s) 여유
+      keepaliveTimeout: cdk.Duration.seconds(60),
+      customHeaders: {
+        'X-Origin-Verify': headerSecret.secretValue.unsafeUnwrap(),
+      },
+    });
+
+    const distribution = new cloudfront.Distribution(this, 'Distribution', {
+      comment: 'Pathfinder — CloudFront in front of EC2 (header-authenticated origin).',
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
+      defaultBehavior: {
+        origin,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+      },
+      additionalBehaviors: {
+        '/_next/static/*': {
+          origin,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED, // 해시 파일명 → 불변
+        },
+      },
+    });
+
+    new cdk.CfnOutput(this, 'DistributionDomain', {
+      value: `https://${distribution.distributionDomainName}`,
+    });
+    new cdk.CfnOutput(this, 'InstanceId', { value: instance.instanceId });
+    new cdk.CfnOutput(this, 'EipAddress', { value: eip.attrPublicIp });
   }
 }

@@ -128,3 +128,33 @@ function testComputeAndRole() {
 }
 
 testComputeAndRole();
+
+function testCloudFront() {
+  const t = makeHosting();
+  t.hasResourceProperties('AWS::CloudFront::Distribution', {
+    DistributionConfig: Match.objectLike({
+      Origins: Match.arrayWith([
+        Match.objectLike({
+          CustomOriginConfig: Match.objectLike({ OriginProtocolPolicy: 'http-only' }),
+          OriginCustomHeaders: Match.arrayWith([
+            Match.objectLike({ HeaderName: 'X-Origin-Verify' }),
+          ]),
+        }),
+      ]),
+      DefaultCacheBehavior: Match.objectLike({
+        ViewerProtocolPolicy: 'redirect-to-https',
+      }),
+    }),
+  });
+  // /_next/static/* 캐시 비헤이비어 존재.
+  const dists = t.findResources('AWS::CloudFront::Distribution');
+  const cfg = Object.values(dists)[0] as any;
+  const behaviors = cfg.Properties.DistributionConfig.CacheBehaviors ?? [];
+  assert.ok(
+    behaviors.some((b: any) => b.PathPattern === '/_next/static/*'),
+    'static cache behavior present',
+  );
+  console.log('OK  hosting: CloudFront http-only origin + X-Origin-Verify header + https redirect');
+}
+
+testCloudFront();
