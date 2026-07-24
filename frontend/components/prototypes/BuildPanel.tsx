@@ -85,8 +85,11 @@ export function BuildPanel({
           </div>
         </header>
 
+        {/* 채팅 1/3, 우측(질문·파일 변경) 2/3. basis+min-w-0으로 비율을 고정한다
+            — aside가 고정 폭이면 넓어진 드로어의 여유 폭이 전부 채팅으로 갔다.
+            좁은 화면(md 미만)에서는 세로로 쌓이므로 비율은 적용되지 않는다. */}
         <div className="flex-1 min-h-0 flex flex-col md:flex-row">
-          <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex-1 md:flex-none md:basis-1/3 md:min-w-0 min-h-0 flex flex-col">
             <ChatTimeline
               items={items}
               projectId={projectId}
@@ -97,7 +100,7 @@ export function BuildPanel({
             <ChatInput onSend={send} disabled={streaming} />
           </div>
 
-          <aside className="w-full md:w-80 shrink-0 border-t md:border-t-0 md:border-l border-slate-200 flex flex-col min-h-0 overflow-y-auto">
+          <aside className="w-full md:basis-2/3 md:min-w-0 shrink-0 border-t md:border-t-0 md:border-l border-slate-200 flex flex-col min-h-0 overflow-y-auto">
             {pendingQuestions && (
               <div className="p-4 border-b border-slate-200">
                 <QuestionForm
