@@ -208,6 +208,7 @@ class SdkDriver:
         self._turn_active = True
         self._interrupted = False
         self._last_status: str | None = None
+        next_msg: asyncio.Future | None = None
         try:
             client = await self._ensure_client()
             await client.query(text)
@@ -220,6 +221,7 @@ class SdkDriver:
             agen = client.receive_response().__aiter__()
             next_msg = asyncio.ensure_future(agen.__anext__())
             while True:
+                assert next_msg is not None  # loop invariant (narrows Optional)
                 done, _ = await asyncio.wait({next_msg}, timeout=0.05)
                 for ev in self.drain_queue():
                     yield ev
@@ -234,6 +236,21 @@ class SdkDriver:
                         yield AgentEvent(kind="status", text="interrupted")
                     yield ev
                 next_msg = asyncio.ensure_future(agen.__anext__())
+        except asyncio.CancelledError:
+            # interrupt() cancels the pending-question future; that
+            # cancellation surfaces here via next_msg.result(). It is OUR
+            # deliberate interrupt, not the consumer cancelling us -- so the
+            # stream must still end with a proper terminal event (the UI
+            # otherwise shows a dead connection for a user-initiated stop).
+            # A genuine external cancellation (consumer task cancelled) has
+            # _interrupted unset and must propagate untouched.
+            if not self._interrupted:
+                raise
+            for ev in self.drain_queue():
+                yield ev
+            yield AgentEvent(kind="status", text="interrupted")
+            yield AgentEvent(kind="done")
+            return
         except Exception:
             _log.exception("sdk turn failed")
             for ev in self.drain_queue():
@@ -242,6 +259,12 @@ class SdkDriver:
             return
         finally:
             self._turn_active = False
+            # The consumer may abandon this generator mid-stream (SSE client
+            # disconnect -> aclose() -> GeneratorExit): without this cancel
+            # the in-flight __anext__ future outlives the generator and
+            # asyncio logs "Task was destroyed but it is pending!".
+            if next_msg is not None and not next_msg.done():
+                next_msg.cancel()
         for ev in self.drain_queue():
             yield ev
 

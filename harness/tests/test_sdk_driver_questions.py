@@ -102,3 +102,109 @@ async def test_interrupt_clears_pending_question(tmp_path):
         await turn
     except (asyncio.CancelledError, Exception):
         pass
+
+
+@pytest.mark.asyncio
+async def test_interrupt_during_question_yields_terminal_events(tmp_path):
+    """A user-initiated interrupt while a question is pending must still end
+    the stream with status:"interrupted" + done — NOT let CancelledError
+    escape run() (the UI would show a dead connection for a deliberate
+    stop). Final-review finding I3."""
+    holder = {}
+    client = QuestionScriptClient(lambda: holder["d"])
+    d = SdkDriver(str(tmp_path), client_factory=lambda: client)
+    holder["d"] = d
+
+    events = []
+
+    async def consume():
+        async for ev in d.run("build"):
+            events.append(ev)
+
+    turn = asyncio.create_task(consume())
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if d._pending_payload is not None:
+            break
+    assert d._pending_payload is not None
+
+    await d.interrupt()
+    await turn  # must complete cleanly — no CancelledError escapes
+
+    kinds = [e.kind for e in events]
+    assert kinds[-1] == "done"
+    assert ("status", "interrupted") in [(e.kind, e.text) for e in events]
+    assert d._turn_active is False
+
+
+@pytest.mark.asyncio
+async def test_external_cancel_still_propagates(tmp_path):
+    """A genuine consumer-side cancellation (not our interrupt) must
+    propagate as CancelledError — only interrupt-triggered cancellation is
+    converted to terminal events."""
+    holder = {}
+    client = QuestionScriptClient(lambda: holder["d"])
+    d = SdkDriver(str(tmp_path), client_factory=lambda: client)
+    holder["d"] = d
+
+    async def consume():
+        return [ev async for ev in d.run("build")]
+
+    turn = asyncio.create_task(consume())
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if d._pending_payload is not None:
+            break
+    turn.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await turn
+    assert d._turn_active is False
+
+
+@pytest.mark.asyncio
+async def test_abandoned_generator_cancels_pending_receive(tmp_path):
+    """SSE client disconnect (generator aclose) must cancel the in-flight
+    __anext__ future — otherwise asyncio reports a destroyed pending task.
+    Final-review finding I2."""
+    from tests.fake_sdk import AssistantMessage, TextBlock
+
+    class SlowClient(FakeSdkClient):
+        def __init__(self):
+            super().__init__()
+            self.inflight = None
+
+        async def receive_response(self):
+            yield AssistantMessage(content=[TextBlock(text="one")])
+            fut = asyncio.get_running_loop().create_future()
+            self.inflight = fut
+            await fut  # hangs until cancelled
+            yield ResultMessage()
+
+    client = SlowClient()
+    d = SdkDriver(str(tmp_path), client_factory=lambda: client)
+    events = []
+
+    async def consume():
+        async for ev in d.run("go"):
+            events.append(ev)
+
+    turn = asyncio.create_task(consume())
+    # Wait until run() is blocked in its poll loop with a pending __anext__
+    # that has entered receive_response and is hanging on the future.
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if client.inflight is not None:
+            break
+    assert client.inflight is not None
+    assert events and events[0].kind == "message"
+
+    # Abandon the consumer (SSE client disconnect) — external cancellation.
+    turn.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await turn
+    await asyncio.sleep(0.1)
+    # The hanging receive_response future must have been cancelled through
+    # the teardown chain (finally -> next_msg.cancel() -> agen unwinds) --
+    # a leaked pending task logs "Task was destroyed but it is pending!".
+    assert client.inflight.cancelled()
+    assert d._turn_active is False

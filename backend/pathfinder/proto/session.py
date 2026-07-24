@@ -140,20 +140,33 @@ class PrototypeSession:
         spec_md = await self._s3.get(spec_key)  # FileNotFoundError propagates (-> route 404)
 
         self._handle = await self._controller.boot(self.project_id, self._spec)
-        headers = await self._mint_headers(self._handle.vm_id)
-        self._harness = self._harness_factory(self._handle.base_url, headers)
+        # Everything after a successful boot must stop the VM on failure:
+        # the route drops this session object on a start() error, so a booted
+        # VM would otherwise leak unreferenced (billing) until the next
+        # backend restart's orphan sweep.
+        try:
+            headers = await self._mint_headers(self._handle.vm_id)
+            self._harness = self._harness_factory(self._handle.base_url, headers)
 
-        await self._harness.write_file(spec_key, spec_md)
+            await self._harness.write_file(spec_key, spec_md)
 
-        rule_path = self._rules_dir / _RULE_REL
-        rule_body = rule_path.read_text(encoding="utf-8")
-        await self._harness.write_file(_RULE_PUSH_PATH, rule_body)
+            rule_path = self._rules_dir / _RULE_REL
+            rule_body = rule_path.read_text(encoding="utf-8")
+            await self._harness.write_file(_RULE_PUSH_PATH, rule_body)
 
-        bundle_prefix = self._bundle_prefix()
-        for key in await self._s3.list(bundle_prefix):
-            rel = key[len(bundle_prefix):]
-            content = await self._s3.get(key)
-            await self._harness.write_file(f"{_PROTOTYPE_PREFIX}{rel}", content)
+            bundle_prefix = self._bundle_prefix()
+            for key in await self._s3.list(bundle_prefix):
+                rel = key[len(bundle_prefix):]
+                content = await self._s3.get(key)
+                await self._harness.write_file(f"{_PROTOTYPE_PREFIX}{rel}", content)
+        except BaseException:
+            self.status = "failed"
+            try:
+                await self._controller.stop(self._handle)
+            except Exception:
+                _log.exception("failed to stop VM after start() failure: %s/%s",
+                               self.project_id, self.slug)
+            raise
 
         self.status = "ready"
         self._arm_idle_timer()
@@ -234,10 +247,21 @@ class PrototypeSession:
                                self.project_id, self.slug)
                 sync_ok = False
 
+        stop_ok = True
         if self._handle is not None:
-            await self._controller.stop(self._handle)
+            try:
+                await self._controller.stop(self._handle)
+            except Exception:
+                # A failed stop must not wedge the session: the route deletes
+                # the registry entry only when close() returns, and a raise
+                # here would leave a "live" session that 409s every restart
+                # attempt. The orphan sweep on backend restart is the backstop
+                # for the unstopped VM.
+                _log.exception("VM stop failed on close: %s/%s",
+                               self.project_id, self.slug)
+                stop_ok = False
 
-        self.status = "closed" if sync_ok else "failed"
+        self.status = "closed" if (sync_ok and stop_ok) else "failed"
 
     # ---- first turn's auto-spoken prompt (spec §4's five directives) ----
 

@@ -376,3 +376,56 @@ def test_first_prompt_covers_five_directives(tmp_path):
     assert "basePath" in prompt or "상대 경로" in prompt
     assert "Bedrock" in prompt
     assert "하드코딩" in prompt
+
+
+async def test_start_stops_vm_when_post_boot_push_fails(tmp_path):
+    """boot() succeeded but a later push step raised: the VM must be stopped
+    before the exception propagates — the route drops the session object on
+    a start() failure, so an unstopped VM would leak unreferenced (billing)
+    until the next restart's orphan sweep. Final-review finding I1."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    controller = FakeMicroVMController(base_url="http://fake")
+
+    class BoomHarness:
+        async def write_file(self, path, content):
+            raise RuntimeError("push failed")
+
+    rules_dir = _make_rules_dir(tmp_path)
+
+    session = PrototypeSession(
+        PROJECT_ID, SLUG, s3, controller, BootSpec(image_id="fake-img"),
+        lambda base_url, headers: BoomHarness(), rules_dir=rules_dir)
+
+    with pytest.raises(RuntimeError):
+        await session.start()
+
+    assert controller.boot_calls == 1
+    assert controller.stop_calls == 1  # VM not leaked
+    assert session.status == "failed"
+
+
+async def test_close_survives_vm_stop_failure(tmp_path):
+    """controller.stop() raising must not propagate out of close() — the
+    route's registry cleanup runs after close() returns; a raise would wedge
+    the session (409 on every future start). Final-review finding M1."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+
+    class StopBoom(FakeMicroVMController):
+        async def stop(self, handle):
+            raise RuntimeError("stop failed")
+
+    controller = StopBoom(base_url="http://fake")
+    rules_dir = _make_rules_dir(tmp_path)
+
+    harness = FakeHarness()
+    session = PrototypeSession(
+        PROJECT_ID, SLUG, s3, controller, BootSpec(image_id="fake-img"),
+        lambda base_url, headers: harness, rules_dir=rules_dir)
+    await session.start()
+
+    await session.close()  # must NOT raise
+    assert session.status == "failed"
+    # Idempotency preserved even after a failed stop.
+    await session.close()
