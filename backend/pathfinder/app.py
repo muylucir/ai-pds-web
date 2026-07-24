@@ -1,11 +1,13 @@
 # backend/pathfinder/app.py
 from __future__ import annotations
+import asyncio
 import logging
 import os
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 import boto3
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
@@ -73,6 +75,102 @@ def driver_factory(project_id: str, local_root: Path) -> StrandsDriver:
     return StrandsDriver(workspace=str(local_root), rules_dir=_rules_dir())
 
 
+# ---- prototype build/hosting wiring (routes/prototypes.py) ----
+
+# 살아있는 빌드 세션 레지스트리 — (pid, slug) → PrototypeSession. 인메모리:
+# 백엔드 재시작 시 소멸(스펙 §6 — 기동 시 고아 VM 정리로 뒷정리).
+proto_sessions: dict = {}
+
+_proto_host_singleton = None
+
+
+def proto_host():
+    """ProtoHost 싱글턴 (monkeypatchable in tests). 루트는
+    PATHFINDER_PROTO_ROOT(기본 ~/pathfinder-protos)."""
+    global _proto_host_singleton
+    if _proto_host_singleton is None:
+        from pathfinder.proto.host import ProtoHost
+        root = Path(os.environ.get("PATHFINDER_PROTO_ROOT",
+                                   "~/pathfinder-protos")).expanduser()
+        _proto_host_singleton = ProtoHost(
+            s3=_proto_bundle_s3_factory, root=root)
+    return _proto_host_singleton
+
+
+def _proto_bundle_s3_factory(project_id: str):
+    # ProtoHost가 프로젝트별 번들을 읽을 때 쓰는 프로젝트-프리픽스 스토어.
+    return s3_store_factory(project_id)
+
+
+# 공유 httpx 클라이언트 — 하네스 SSE는 read 타임아웃 없음(무기한 스트림),
+# connect만 5초 (과거 microvm app.py와 동일한 셰이프).
+_proto_http: httpx.AsyncClient | None = None
+
+
+def _proto_http_client() -> httpx.AsyncClient:
+    global _proto_http
+    if _proto_http is None:
+        _proto_http = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=5.0))
+    return _proto_http
+
+
+def proto_session_factory(project_id: str, slug: str):
+    """PrototypeSession 조립 (monkeypatchable in tests). VM은 Tokyo 고정
+    기본값; 이미지/롤은 VmStack 배포 산출물을 env로 주입받는다."""
+    from pathfinder.proto.harness_client import HarnessClient
+    from pathfinder.proto.session import PrototypeSession
+    from pathfinder.proto.vm import BootSpec, LambdaMicroVMController, mint_harness_token
+
+    vm_region = os.environ.get("PATHFINDER_VM_REGION", "ap-northeast-1")
+    image_id = os.environ.get("PATHFINDER_VM_IMAGE_ID")
+    role_arn = os.environ.get("PATHFINDER_VM_ROLE_ARN")
+    spec = BootSpec(region=vm_region, image_id=image_id, exec_role_arn=role_arn,
+                    anthropic_model=os.environ.get("ANTHROPIC_MODEL"))
+
+    # fake-* 이미지(테스트/로컬)는 토큰 민팅 불가/불필요 — 과거
+    # _harness_token_provider의 fake 분기와 동일한 규칙을 팩토리에서 결정.
+    minter = None
+    if image_id and not image_id.startswith("fake-"):
+        minter = lambda vm_id: mint_harness_token(vm_id, vm_region)  # noqa: E731
+
+    def harness_factory(base_url: str, headers: dict):
+        return HarnessClient(base_url, _proto_http_client(), headers=headers or None)
+
+    return PrototypeSession(
+        project_id=project_id, slug=slug,
+        s3=s3_store_factory(project_id),
+        controller=LambdaMicroVMController(region=vm_region),
+        spec=spec, harness_factory=harness_factory,
+        rules_dir=Path(_rules_dir()),
+        token_minter=minter,
+    )
+
+
+async def _cleanup_orphan_vms() -> None:
+    """기동 시 고아 VM 정리 — best effort, 실패해도 기동은 계속(로그만).
+    VM 태깅 API가 없으므로 imageArn == PATHFINDER_VM_IMAGE_ID 필터로 우리
+    이미지의 RUNNING VM만 terminate한다."""
+    image_id = os.environ.get("PATHFINDER_VM_IMAGE_ID")
+    if not image_id or image_id.startswith("fake-"):
+        return
+    region = os.environ.get("PATHFINDER_VM_REGION", "ap-northeast-1")
+    try:
+        def _sweep() -> int:
+            client = boto3.client("lambda-microvms", region_name=region)
+            stopped = 0
+            paginator_resp = client.list_microvms()
+            for vm in paginator_resp.get("microvms", []):
+                if vm.get("imageArn") == image_id and vm.get("state") == "RUNNING":
+                    client.terminate_microvm(microvmIdentifier=vm["microvmId"])
+                    stopped += 1
+            return stopped
+        stopped = await asyncio.to_thread(_sweep)
+        if stopped:
+            _log.info("terminated %d orphan prototype VM(s)", stopped)
+    except Exception:
+        _log.exception("orphan VM cleanup failed; continuing startup")
+
+
 async def make_workspace(project_id: str) -> Workspace:
     s3 = s3_store_factory(project_id)
     local_root = _workspaces_dir() / project_id
@@ -102,6 +200,8 @@ async def _lifespan(_app: FastAPI):
                 registry.register(pid, name, created_at=created_at)
         except Exception:
             _log.exception("project-list restore failed; starting with empty registry")
+    # 재시작으로 소멸한 인메모리 세션이 남긴 고아 VM 정리 (best effort).
+    await _cleanup_orphan_vms()
     yield
 
 
@@ -142,3 +242,6 @@ app.include_router(history.router)
 
 from pathfinder.routes import uploads  # noqa: E402
 app.include_router(uploads.router)
+
+from pathfinder.routes import prototypes  # noqa: E402
+app.include_router(prototypes.router)

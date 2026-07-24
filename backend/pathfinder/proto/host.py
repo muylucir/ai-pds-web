@@ -82,12 +82,19 @@ class ProtoHost:
     assumptions; a restart loses the running subprocess anyway).
     """
 
-    def __init__(self, s3: S3StoreLike, root: Path,
+    def __init__(self, s3, root: Path,
                  port_range: range = range(4001, 4051)):
+        # `s3` is either a project-prefixed S3StoreLike (single-project use,
+        # as in tests) or a factory `(pid) -> S3StoreLike` — the app-level
+        # singleton serves every project, so it hands us the factory and we
+        # resolve the per-project store at download time.
         self._s3 = s3
         self._root = Path(root)
         self._port_range = port_range
         self._registry: dict[tuple[str, str], _HostEntry] = {}
+
+    def _store(self, pid: str) -> S3StoreLike:
+        return self._s3(pid) if callable(self._s3) else self._s3  # type: ignore[return-value]
 
     # ---- internals ----
 
@@ -135,9 +142,11 @@ class ProtoHost:
                 return False
             await asyncio.sleep(0.2)
 
-    async def _download_bundle(self, slug: str, target_dir: Path, log_path: Path) -> None:
+    async def _download_bundle(self, pid: str, slug: str, target_dir: Path,
+                               log_path: Path) -> None:
+        s3 = self._store(pid)
         bundle_prefix = f"prototypes/{slug}/bundle/"
-        keys = await self._s3.list(bundle_prefix)
+        keys = await s3.list(bundle_prefix)
         if not keys:
             raise FileNotFoundError(bundle_prefix)
         for key in keys:
@@ -145,7 +154,7 @@ class ProtoHost:
             if not _is_safe_rel(rel):
                 self._append_log(log_path, f"skip unsafe bundle key: {key!r}")
                 continue
-            content = await self._s3.get(key)
+            content = await s3.get(key)
             dest = target_dir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(content, encoding="utf-8")
@@ -167,7 +176,7 @@ class ProtoHost:
         # Empty-bundle / missing-slug -> FileNotFoundError propagates (route
         # layer maps this to 404). Raised before any registry entry exists,
         # so status() for this (pid, slug) still reports None afterward.
-        await self._download_bundle(slug, target_dir, log_path)
+        await self._download_bundle(pid, slug, target_dir, log_path)
 
         entry = _HostEntry(dir=target_dir, log_path=log_path, state="installing")
         self._registry[(pid, slug)] = entry
