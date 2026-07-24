@@ -2,7 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import { backendPolicyStatements } from './backend-permissions';
+import { backendPolicyStatements, microvmControlStatements } from './backend-permissions';
 
 export class PathfinderDrillStack extends cdk.Stack {
   public readonly artifactsBucket: s3.Bucket;
@@ -28,6 +28,11 @@ export class PathfinderDrillStack extends cdk.Stack {
       description: 'Pathfinder backend: Bedrock invoke + artifacts/session S3 access.',
     });
     for (const stmt of backendPolicyStatements(bucket, account)) {
+      backendRole.addToPolicy(stmt);
+    }
+    // Tokyo MicroVM 제어(PathfinderVmStack의 이미지/execRole 대상) — 백엔드가
+    // run/get/terminate/list-microvm + create-microvm-auth-token을 호출한다.
+    for (const stmt of microvmControlStatements(account)) {
       backendRole.addToPolicy(stmt);
     }
 

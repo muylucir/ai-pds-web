@@ -8,7 +8,7 @@ import * as assets from 'aws-cdk-lib/aws-s3-assets';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as path from 'path';
-import { backendPolicyStatements, MODEL } from './backend-permissions';
+import { backendPolicyStatements, microvmControlStatements, MODEL } from './backend-permissions';
 import { renderUserData } from './user-data';
 
 export interface HostingStackProps extends cdk.StackProps {
@@ -72,6 +72,10 @@ export class PathfinderHostingStack extends cdk.Stack {
       description: 'Pathfinder EC2: Bedrock + artifacts S3 + read header secret.',
     });
     for (const stmt of backendPolicyStatements(props.artifactsBucket, account)) {
+      role.addToPolicy(stmt);
+    }
+    // Tokyo MicroVM 제어 — 인스턴스가 프로토타입 세션의 VM을 run/get/terminate.
+    for (const stmt of microvmControlStatements(account)) {
       role.addToPolicy(stmt);
     }
     headerSecret.grantRead(role);

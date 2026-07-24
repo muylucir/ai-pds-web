@@ -6,7 +6,7 @@
   "scripts": {
     "synth": "cdk synth",
     "deploy": "cdk deploy",
-    "test": "ts-node test/user-data.assert.ts && ts-node test/hosting-stack.assert.ts"
+    "test": "ts-node test/user-data.assert.ts && ts-node test/hosting-stack.assert.ts && ts-node test/vm-stack.assert.ts"
   },
   "devDependencies": {
     "aws-cdk": "^2.150.0",
