@@ -10,7 +10,7 @@ import { PathfinderHostingStack } from '../lib/pathfinder-hosting-stack';
 const ENV = { account: '123456789012', region: 'ap-northeast-1' };
 
 // infra/build/harness is gitignored — package-harness.sh (which needs the
-// gitignored files/aiplc-rules/ tree) produces it on a real dev/drill
+// gitignored rule/aiplc-rules/ tree) produces it on a real dev/drill
 // machine. In CI there's no such tree, so s3assets.Asset would fail synth.
 // Stub the minimal dir here so PathfinderVmStack can synth without it; a
 // bare Dockerfile file is enough content for the Asset construct.

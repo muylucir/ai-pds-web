@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage harness/ + files/aiplc-rules/ into infra/build/harness/ with the
+# Stage harness/ + rule/aiplc-rules/ into infra/build/harness/ with the
 # Dockerfile at the root, so the CDK aws_s3_assets.Asset zips exactly what
 # MicrovmImage's CodeArtifact expects (Dockerfile at zip root).
 set -euo pipefail
@@ -15,14 +15,14 @@ cp "$REPO/harness/Dockerfile" "$BUILD/Dockerfile"
 cp "$REPO/harness/requirements.txt" "$BUILD/requirements.txt"
 cp "$REPO/harness/"*.py "$BUILD/"
 
-# rules baked into the image (repo files/ is gitignored reference material —
-# the drill machine MUST have files/aiplc-rules/ present, else this fails).
-if [ ! -f "$REPO/files/aiplc-rules/aws-aiplc-rules/core-workflow.md" ]; then
-  echo "ERROR: files/aiplc-rules/ missing (gitignored reference material). Populate it on the drill machine." >&2
+# Rules baked into the image. rule/aiplc-rules/ is tracked in the repo, so a
+# plain checkout has it; the guard below catches a partial/damaged tree.
+if [ ! -f "$REPO/rule/aiplc-rules/aws-aiplc-rules/core-workflow.md" ]; then
+  echo "ERROR: rule/aiplc-rules/ missing — expected it in the repo checkout." >&2
   exit 1
 fi
 mkdir -p "$BUILD/aiplc-rules"
-cp -R "$REPO/files/aiplc-rules/." "$BUILD/aiplc-rules/"
+cp -R "$REPO/rule/aiplc-rules/." "$BUILD/aiplc-rules/"
 
 echo "EXPECTED: $BUILD contains Dockerfile, *.py, aiplc-rules/"
 ls -1 "$BUILD"

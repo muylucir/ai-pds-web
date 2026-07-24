@@ -61,7 +61,7 @@ def durable_projects_enabled() -> bool:
 
 
 def _rules_dir() -> str:
-    default = str(Path(__file__).resolve().parent.parent.parent / "files" / "aiplc-rules")
+    default = str(Path(__file__).resolve().parent.parent.parent / "rule" / "aiplc-rules")
     return os.environ.get("PATHFINDER_RULES_DIR", default)
 
 

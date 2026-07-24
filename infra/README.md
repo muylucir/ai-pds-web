@@ -63,15 +63,17 @@ MicroVM 안의 Claude Agent SDK가 대화형으로 앱을 빌드하게 한다(�
 여전히 서울 `PathfinderDrillStack`의 버킷을 쓴다(파일은 백엔드가 HTTP로 중개,
 VM은 S3에 직접 접근하지 않음).
 
-1. **하네스 코드 스테이징** — `harness/`와 `files/aiplc-rules/`를 CDK 에셋이
+1. **하네스 코드 스테이징** — `harness/`와 `rule/aiplc-rules/`를 CDK 에셋이
    기대하는 모양(`Dockerfile`이 zip 루트)으로 `infra/build/harness/`에 복사:
    ```bash
    cd infra
    ./package-harness.sh
    ```
-   `files/aiplc-rules/`는 gitignored 참고 자료라 **드릴 머신에 미리 채워둬야
-   한다**(`files/aiplc-rules/aws-aiplc-rules/core-workflow.md`가 없으면
-   `package-harness.sh`가 즉시 에러로 종료).
+   `rule/aiplc-rules/`는 리포에 포함되어 있어 체크아웃만 하면 준비된다(과거
+   `files/aiplc-rules/`는 gitignored여서 머신마다 수동 배치가 필요했다).
+   트리가 손상·누락된 경우
+   `rule/aiplc-rules/aws-aiplc-rules/core-workflow.md` 부재를 감지해
+   `package-harness.sh`가 즉시 에러로 종료한다.
 2. **배포** — 리전 파라미터는 무시하고 항상 도쿄:
    ```bash
    npx cdk deploy PathfinderVmStack --require-approval never
@@ -96,7 +98,7 @@ VM은 S3에 직접 접근하지 않음).
 배포된 이미지는 그대로**다 — `CfnMicrovmImage`는 코드 아티팩트의 S3 URL로
 빌드 시점에 스냅샷된다. 하네스 코드를 바꿨다면 반드시 위 1~2단계
 (`package-harness.sh` → `cdk deploy PathfinderVmStack`)를 다시 실행해야 다음
-세션 시작부터 새 코드가 반영된다. `files/aiplc-rules/`만 바꾼 경우도 동일 —
+세션 시작부터 새 코드가 반영된다. `rule/aiplc-rules/`만 바꾼 경우도 동일 —
 룰은 이미지에 baked이므로 재배포 없이는 반영되지 않는다(`PrototypeSession`이
 세션 시작마다 룰 파일을 VM에 push하기도 하므로, 그 경로로는 이미지 재배포 없이
 룰 갱신이 가능하다 — 다만 baked 기본값 자체를 바꾸려면 재배포가 필요).

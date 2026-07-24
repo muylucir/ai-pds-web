@@ -125,7 +125,7 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `PATHFINDER_S3_REGION` | `ap-northeast-2` | 영속 스토리지 리전(서울). **버킷이 만들어진 리전과 반드시 일치**시킬 것 |
 | `PATHFINDER_S3_BUCKET` | — | 아티팩트 버킷 (CDK 출력) |
 | `ANTHROPIC_MODEL` | — | Bedrock 추론 프로파일 id |
-| `PATHFINDER_RULES_DIR` | `<repo>/files/aiplc-rules` | aiplc 룰 디렉토리(읽기 전용) |
+| `PATHFINDER_RULES_DIR` | `<repo>/rule/aiplc-rules` | aiplc 룰 디렉토리(읽기 전용) |
 | `PATHFINDER_WORKSPACES_DIR` | 시스템 tmp 하위 | 프로젝트별 로컬 워크스페이스 루트 |
 | `PATHFINDER_VM_REGION` | `ap-northeast-1` | 프로토타입 하네스 MicroVM 리전(도쿄 고정) |
 | `PATHFINDER_VM_IMAGE_ID` | — | `PathfinderVmStack` 출력 `ImageArn` |
