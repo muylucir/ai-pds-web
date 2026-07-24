@@ -16,7 +16,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
-from starlette.responses import PlainTextResponse, Response, StreamingResponse
+from starlette.responses import (PlainTextResponse, RedirectResponse, Response,
+                                 StreamingResponse)
 
 from pathfinder.models import AgentEvent
 from pathfinder.parsers.redaction import redact_credentials
@@ -284,13 +285,27 @@ def _rewritten_location(value: str, pid: str, slug: str) -> str:
     return f"{out}?{query}" if query else out
 
 
-# Both shapes are registered: without the second route, a request for
-# `/proto/{pid}/{slug}` (no trailing slash) misses the `{path:path}` pattern and
-# Starlette answers with an ABSOLUTE 307 to its own origin — the browser then
-# leaves the public host for localhost:8000 and hangs.
+# The slash-less form gets its own route so Starlette never emits its default
+# ABSOLUTE 307 (which named this server's own origin and walked the browser off
+# the public host onto localhost:8000, where it hung).
+#
+# It answers with a RELATIVE redirect that adds the trailing slash rather than
+# serving the index in place: prototype HTML references assets relatively
+# (href="styles.css"), and at ".../{slug}" (no slash) the browser resolves
+# those against ".../{pid}/" — dropping the slug and 502ing every asset. Adding
+# the slash makes the document's base ".../{slug}/", so relative refs land
+# inside the prototype. Non-GET/HEAD methods are proxied through unchanged, so
+# a form POST to the bare path still works.
 @router.api_route("/proto/{pid}/{slug}",
                   methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy_prototype_root(pid: str, slug: str, request: Request):
+    if request.method in ("GET", "HEAD"):
+        target = f"{request.url.path}/"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        # 307 (not 308): keep it non-cacheable so a stale browser cache can't
+        # pin this path shape if the routing ever changes.
+        return RedirectResponse(target, status_code=307)
     return await proxy_prototype(pid, slug, "", request)
 
 

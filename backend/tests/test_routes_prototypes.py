@@ -443,17 +443,37 @@ def test_session_start_503_when_role_arn_unset(proto_env, monkeypatch):
     assert "PATHFINDER_VM_ROLE_ARN" in resp.json()["detail"]
 
 
-def test_proxy_root_without_trailing_slash_is_served_not_redirected(
+def test_proxy_root_redirects_relatively_to_add_trailing_slash(
         proto_env, echo_server):
-    """`/proto/{pid}/{slug}` (no trailing slash) must be proxied directly.
-    Without a route for that shape Starlette answers with an ABSOLUTE 307 to
-    its own origin, so a browser on the public host gets sent to
-    localhost:8000 and hangs."""
+    """`/proto/{pid}/{slug}` must redirect to the slash form with a RELATIVE
+    Location. Starlette's default is an ABSOLUTE 307 naming this server's own
+    origin, which sends a browser on the public host to localhost:8000 (hang).
+    The slash also matters for content: prototype HTML uses relative asset
+    refs, which at the slash-less URL resolve one level too high (slug lost)."""
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
     resp = client.get(f"/proto/{PID}/{SLUG}", follow_redirects=False)
+    assert resp.status_code == 307
+    location = resp.headers["location"]
+    assert location == f"/proto/{PID}/{SLUG}/"
+    assert "://" not in location  # never absolute — must stay on the public host
+
+
+def test_proxy_root_redirect_preserves_query(proto_env, echo_server):
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(
+        state="running", port=echo_server, log_tail="")
+    resp = client.get(f"/proto/{PID}/{SLUG}?a=1&b=2", follow_redirects=False)
+    assert resp.headers["location"] == f"/proto/{PID}/{SLUG}/?a=1&b=2"
+
+
+def test_proxy_relative_asset_under_slug_prefix_is_served(proto_env, echo_server):
+    """The asset path a browser derives from the slash form
+    (.../{slug}/styles.css) must reach the prototype — these were the 502s."""
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(
+        state="running", port=echo_server, log_tail="")
+    resp = client.get(f"/proto/{PID}/{SLUG}/styles.css")
     assert resp.status_code == 200
-    assert resp.text == "echo:/"
+    assert resp.text == "echo:/styles.css"
 
 
 def test_proxy_rewrites_upstream_absolute_redirect(proto_env):

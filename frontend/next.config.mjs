@@ -13,5 +13,13 @@ const nextConfig = {
   // passes the backend's hop-by-hop `Connection: keep-alive` header through and
   // appends `close`, which is illegal over HTTP/2 and breaks SSE in the browser
   // (ERR_HTTP2_PROTOCOL_ERROR). The route handler re-streams with clean headers.
+  //
+  // Keep trailing slashes intact. By default Next 308-redirects "/a/b/" to
+  // "/a/b", which silently breaks proxied prototype previews: their HTML uses
+  // RELATIVE asset refs (href="styles.css"), so serving the directory index at
+  // the slash-less URL makes the browser resolve assets one level too high
+  // (/api/proto/{pid}/styles.css — slug lost → 502). The prototype's own
+  // server is what should decide about trailing slashes, not this proxy.
+  skipTrailingSlashRedirect: true,
 };
 export default nextConfig;

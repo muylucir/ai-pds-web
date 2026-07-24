@@ -40,7 +40,13 @@ function filterHeaders(src: Headers): Headers {
 
 async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   const search = req.nextUrl.search;
-  const url = `${BACKEND}/${path.map(encodeURIComponent).join("/")}${search}`;
+  // Next's catch-all `path[]` has no empty final segment, so a request for
+  // ".../demo/" would be forwarded as ".../demo" — the backend then redirects
+  // back to the slash form and the browser loops. Carry the trailing slash
+  // over from the incoming URL. (It is load-bearing: proxied prototypes use
+  // relative asset refs that resolve against the directory form.)
+  const trailingSlash = req.nextUrl.pathname.endsWith("/") ? "/" : "";
+  const url = `${BACKEND}/${path.map(encodeURIComponent).join("/")}${trailingSlash}${search}`;
 
   const init: RequestInit & { duplex?: "half" } = {
     method: req.method,
