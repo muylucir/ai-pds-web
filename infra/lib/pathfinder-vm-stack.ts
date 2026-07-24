@@ -68,8 +68,14 @@ export class PathfinderVmStack extends cdk.Stack {
       ],
     }));
 
+    // 로그 그룹·이미지 이름은 'prototype' 네임스페이스를 쓴다: Tokyo에 남아
+    // 있는 이전(7/18) PathfinderDrillStack이 `/pathfinder/microvm/harness`
+    // 로그 그룹과 `pathfinder-harness` 이미지를 아직 소유하고 있어서, 같은
+    // 이름을 쓰면 "already exists"로 change set 검증에서 배포가 막힌다.
+    // 그 스택은 현재 서비스 중인 데이터 버킷도 소유하므로 삭제하지 않고
+    // 이름만 분리한다(리소스 충돌 없이 병존).
     const logGroup = new logs.LogGroup(this, 'MicrovmLogs', {
-      logGroupName: '/pathfinder/microvm/harness',
+      logGroupName: '/pathfinder/microvm/prototype',
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       retention: logs.RetentionDays.ONE_WEEK,
     });
@@ -81,7 +87,7 @@ export class PathfinderVmStack extends cdk.Stack {
     // (the platform calls the fixed paths when enabled), NOT the path strings —
     // confirmed at deploy-time CFN validation. Env is baked = BootSpec.env().
     const image = new lambda.CfnMicrovmImage(this, 'HarnessImage', {
-      name: 'pathfinder-harness',
+      name: 'pathfinder-prototype-harness',
       description: 'Pathfinder prototype harness: Claude Code driver, Bedrock-backed.',
       baseImageArn: BASE_IMAGE_ARN,
       baseImageVersion: '1', // major version of the al2023-1 managed base; the service rejects 'latest' (expects a single major number, confirmed at deploy time)

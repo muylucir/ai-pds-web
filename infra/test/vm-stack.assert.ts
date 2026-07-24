@@ -33,7 +33,10 @@ function makeVmStack() {
 function testImage() {
   const t = makeVmStack();
   t.hasResourceProperties('AWS::Lambda::MicrovmImage', {
-    Name: 'pathfinder-harness',
+    // 'prototype' 네임스페이스: Tokyo에 남은 이전 drill 스택이
+    // 'pathfinder-harness' 이미지와 /pathfinder/microvm/harness 로그 그룹을
+    // 아직 소유하므로, 같은 이름이면 "already exists"로 배포가 막힌다.
+    Name: 'pathfinder-prototype-harness',
     BaseImageVersion: '1',
     CpuConfigurations: Match.arrayWith([
       Match.objectLike({ Architecture: 'ARM_64' }),
