@@ -9,7 +9,7 @@ describe("AppHeader without a selected project", () => {
     // The per-project tabs require a project, so with none selected they must
     // not be clickable links (a live link would navigate to a dead #/… route
     // and appear broken). They render as disabled spans instead.
-    for (const label of ["대시보드", "워크스페이스", "문서 리뷰"]) {
+    for (const label of ["대시보드", "워크스페이스", "문서 리뷰", "프로토타입"]) {
       expect(screen.queryByRole("link", { name: label })).toBeNull();
       expect(screen.getByText(label)).toHaveAttribute("aria-disabled", "true");
     }
@@ -33,6 +33,9 @@ describe("AppHeader with a selected project", () => {
     );
     expect(screen.getByRole("link", { name: "문서 리뷰" })).toHaveAttribute(
       "href", "/projects/pilot1/review",
+    );
+    expect(screen.getByRole("link", { name: "프로토타입" })).toHaveAttribute(
+      "href", "/projects/pilot1/prototypes",
     );
   });
 
