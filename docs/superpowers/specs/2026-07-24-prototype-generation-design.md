@@ -1,7 +1,9 @@
 # 프로토타입 생성 — MicroVM Claude Code 빌드 + EC2 호스팅 설계
 
 날짜: 2026-07-24
-상태: 설계 확정 (사용자 승인)
+상태: 설계 확정 (사용자 승인). 같은 날 드라이버 레이어 개정 승인 — CLI 직접
+구동(`claude -p` + stream-json 파싱) 대신 **Claude Agent SDK(Python)** 사용,
+및 그에 따른 1차 스코프 확장(턴 중단·구조화 질문·훅 기반 파일 추적).
 
 ## 1. 배경과 목표
 
@@ -13,13 +15,26 @@ Pathfinder 안에서 프로토타입을 빌드·호스팅·검증한다.**
 
 사용자 결정 사항:
 
-- **빌드는 Tokyo Lambda MicroVM 안의 Claude Code CLI** — 격리된 빌드 환경.
+- **빌드는 Tokyo Lambda MicroVM 안의 Claude Code** — 격리된 빌드 환경.
   이전 Pathfinder의 하네스 패턴(git 히스토리 `510fc66^`의 `harness/`)을 부활.
-- **인증은 Bedrock** (`CLAUDE_CODE_USE_BEDROCK=1`) — VM 실행 롤에 Bedrock 권한.
-  Anthropic API 키 불필요. (aws-samples의 managed-agents 웹훅 패턴은 org API 키
-  필요 + 인프라 과다로 배제 — 접근 B로 검토 후 기각.)
-- **대화형 UX** — 캔버스처럼 채팅으로 진행. Claude Code stream-json →
-  AgentEvent → SSE 중계.
+- **에이전트 구동은 Claude Agent SDK(Python)** — CLI 바이너리 직접 구동
+  (`claude -p --continue` + stream-json 파싱, 과거 `claude_driver.py`) 방식과
+  비교 후 SDK 채택. 판단 기준은 제어력·확장성(사용자 확인): 턴 중단
+  (`client.interrupt()`), 구조화 질문(내장 `AskUserQuestion` 가로채기),
+  in-process 훅(`PreToolUse`/`PostToolUse`)이 CLI `-p` 모드에서는 전부
+  불가하거나 우회가 필요. 부수 이점: SDK wheel이 네이티브 Claude Code
+  바이너리를 번들(2026-07 기준 공식 문서 확인)하므로 npm 글로벌 설치가
+  사라지고 버전 핀이 requirements.txt 한 곳으로 모이며, stream-json 파싱·
+  stderr drain·`--continue` 상태 관리 같은 저수준 코드를 SDK가 흡수.
+  리스크는 SDK 버전 churn(0.2.x) — 정확 버전 핀(`==`)으로 관리(CLI 방식도
+  버전 핀은 어차피 필요하므로 상쇄).
+- **인증은 Bedrock** (`CLAUDE_CODE_USE_BEDROCK=1`) — SDK 공식 지원 경로.
+  VM 실행 롤에 Bedrock 권한. Anthropic API 키 불필요. (aws-samples의
+  managed-agents 웹훅 패턴은 org API 키 필요 + 인프라 과다로 검토 후 기각.)
+- **대화형 UX** — 캔버스처럼 채팅으로 진행. SDK 메시지 객체 →
+  AgentEvent → SSE 중계. 여기에 **구조화 질문 위저드**(Discovery 캔버스의
+  질문 폼 UX 재사용)와 **턴 중단 버튼**을 1차 스코프에 포함(사용자 확인 —
+  초기 "순수 채팅" 결정을 SDK 채택으로 개정).
 - **UI는 별도 "프로토타입" 탭** — Discovery 캔버스와 분리.
 - **결과물은 둘 다**: 코드 번들은 S3에 영속화 + 라이브 프리뷰 URL 제공.
 - **호스팅은 Pathfinder EC2에서** — MicroVM은 빌드에만 쓰고 호스팅에는 쓰지
@@ -39,7 +54,7 @@ Pathfinder 안에서 프로토타입을 빌드·호스팅·검증한다.**
 백엔드 FastAPI (EC2, 서울)
    ├─ PrototypeSession ──HTTP──▶ MicroVM (Tokyo, lambda-microvms)
    │     · VM 부팅/종료             ├─ harness 서버 (8080 app + 9000 hooks)
-   │     · 파일 push/pull           └─ claude -p --continue (stream-json,
+   │     · 파일 push/pull           └─ ClaudeSDKClient (claude-agent-sdk,
    │     · S3 sync (백엔드 중개)         CLAUDE_CODE_USE_BEDROCK=1)
    └─ ProtoHost ──▶ EC2 로컬 서브프로세스 (port 4001+)
          · S3 번들 다운로드 → npm install/build/start
@@ -59,23 +74,45 @@ Pathfinder 안에서 프로토타입을 빌드·호스팅·검증한다.**
 | `pathfinder/proto/vm.py` | `LambdaMicroVMController` 부활(boot/stop/status + 하네스 토큰 민팅). suspend/resume 메서드는 부활하지 않음 |
 | `pathfinder/proto/session.py` | `PrototypeSession` — 프로토타입 1개의 빌드 세션. VM 부팅 → PROTOTYPE-*.md·룰 push → 하네스 턴 중계 → 유휴 타이머(30분) → 종료 시 S3 sync + VM stop |
 | `pathfinder/proto/host.py` | `ProtoHost` — S3 번들 다운로드 → `npm install`/빌드/기동(포트 4001+ 순차 스캔) → 서브프로세스 start/stop/status/log tail |
-| `pathfinder/routes/prototypes.py` | REST + SSE: 세션 시작/종료, 메시지 스트림, 호스팅 start/stop/status, `/proto/{pid}/{slug}/{path:path}` 스트리밍 리버스 프록시(httpx) |
+| `pathfinder/routes/prototypes.py` | REST + SSE: 세션 시작/종료/중단, 메시지·답변 스트림, 호스팅 start/stop/status, `/proto/{pid}/{slug}/{path:path}` 스트리밍 리버스 프록시(httpx) |
 
 ### 하네스 (부활, `harness/` 디렉토리)
 
-git 히스토리에서 부활하되 축소:
+git 히스토리에서 서버 골격은 부활, 드라이버는 신규 작성:
 
 - `serve.py` — 앱 서버(8080) + hooks 서버(9000) 이중 스레드(블로킹 헬스체크
-  때문에 필수 — 과거 주석 참조)
-- `app.py` — 턴 HTTP API (message/pending/files)
-- `claude_driver.py` — `claude -p <text> --output-format stream-json
-  --dangerously-skip-permissions` (+2턴부터 `--continue`) 구동, stream-json →
-  AgentEvent 번역
-- `hooks.py` — `/ready`·`/health`
-- Dockerfile — Claude Code CLI 설치, `CLAUDE_CODE_USE_BEDROCK=1`,
-  Node.js(프로토타입 빌드용) 포함
+  때문에 필수 — 과거 주석 참조). 부활
+- `app.py` — 턴 HTTP API (message/answers/pending/files). 부활 + `/interrupt`
+  라우트 추가
+- `sdk_driver.py` — **신규**(과거 `claude_driver.py`를 부활하지 않고 대체).
+  빌드 세션당 `ClaudeSDKClient` 1개 유지 — 클라이언트 인스턴스가 멀티턴
+  컨텍스트를 유지하므로 `--continue` 프로세스 상태 플래그 불필요. 옵션:
+  `permission_mode="bypassPermissions"`, `cwd="/workspace"`,
+  `env={"CLAUDE_CODE_USE_BEDROCK": "1", ...}`, `AskUserQuestion` allowed.
+  이벤트 번역은 타입 객체 매핑: `TextBlock`→`message`,
+  `ToolUseBlock`→`status`(도구명, 기존 dedupe 패턴), `ResultMessage`→`done`.
+  파일 변경 감지는 stream-json tool_use 파싱 대신 PostToolUse 훅(아래)이
+  담당. 테스트 주입점으로 client factory를 받는다(현 StrandsDriver의
+  `agent_factory` 패턴과 동일 — fake SDK client로 AWS 없이 검증)
+- **SDK 훅** (`sdk_driver.py` 내):
+  - `PostToolUse`(matcher `Write|Edit|MultiEdit`) → `file_changed` 이벤트
+    방출. 워크스페이스 경로 이스케이프 가드(과거 `_rel`의 `..` 거부 로직)를
+    훅 안으로 이식
+  - `PreToolUse` 거부(가드레일)는 1차 제외 — VM 격리 + 최소 권한 롤로 충분.
+    확장 포인트로만 기록
+- `hooks.py` — `/ready`·`/health`. 부활. `claude_cli_diagnostic`은 SDK
+  import + 번들 바이너리 실행 확인으로 교체(기존 방침대로 로그만, 빌드
+  게이트 아님 — 과거 /ready 503-루프 학습 사항). 번들 바이너리의
+  al2023/아키텍처 호환은 이미지 첫 빌드에서 이 진단으로 확인
+- Dockerfile — `pip install`로 harness 의존성 + `claude-agent-sdk`
+  (정확 버전 핀 `==`, CLI 바이너리 번들). `npm install -g
+  @anthropic-ai/claude-code` 불필요. Node.js/npm은 프로토타입 빌드용으로
+  유지. **non-root `harness` 유저 유지 필수** — SDK도 동일 바이너리를
+  스폰하므로 root에서 `bypassPermissions` 거부(과거 6d21e1f 학습 사항)가
+  그대로 적용
 
-**부활하지 않는 것**: `strands_driver.py`, `aiplc_tools.py`(이 VM의 에이전트는
+**부활하지 않는 것**: `claude_driver.py`(stream-json 파싱·stderr drain —
+SDK가 흡수), `strands_driver.py`, `aiplc_tools.py`(이 VM의 에이전트는
 Claude Code 자체 — 내장 bash/file 도구 사용), suspend/resume 제어.
 
 ### 프론트엔드
@@ -86,6 +123,10 @@ Claude Code 자체 — 내장 bash/file 도구 사용), suspend/resume 제어.
   존재) → `실행중`(호스팅 활성) / `실패`
 - `components/prototypes/` — 빌드 채팅 패널(캔버스 컴포넌트 변형), 상태 카드,
   프리뷰 링크·호스팅 로그 뷰어
+- 채팅 패널 추가 요소: **중단 버튼**(턴 진행 중 노출 → 세션 중단 API),
+  **질문 폼**(`questions` 이벤트 수신 시 Discovery 캔버스의 질문 위저드
+  컴포넌트 재사용 — 동일 payload 계약), 파일 변경 목록(`file_changed`
+  이벤트 누적)
 
 ### 인프라 (CDK)
 
@@ -113,10 +154,31 @@ Claude Code 자체 — 내장 bash/file 도구 사용), suspend/resume 제어.
 
 ### 대화 턴
 
-- 사용자 메시지 → `claude --continue` 턴 → stream-json을 AgentEvent
-  (`text`/`tool`/`error`)로 번역 → SSE 중계
-- Claude Code의 질문은 자유 텍스트로 나옴(Discovery의 구조화된 인터럽트와
-  다름 — 이 탭은 질문 위저드 없이 순수 채팅)
+- 사용자 메시지 → `ClaudeSDKClient.query()` → 메시지 객체를 AgentEvent
+  (`message`/`status`/`file_changed`/`done`/`error`)로 번역 → SSE 중계
+- 파일 변경은 PostToolUse 훅에서 `file_changed`로 방출(경로 가드 포함)
+
+### 구조화 질문 (AskUserQuestion 가로채기)
+
+- 에이전트가 `AskUserQuestion` 도구를 호출하면 SDK 도구 콜백에서 가로챈다.
+  **하네스가** 도구 입력(질문·선택지 스키마)을 기존 `questions` AgentEvent
+  계약(interrupt_id + questions_payload)으로 번역해 방출 → 프론트 질문
+  위저드는 무수정 재사용. 답변 역방향도 하네스가 answers 맵 → 도구 결과
+  형태로 번역
+- **Strands 인터럽트와의 차이**: 턴이 끝나지 않고 도구 콜백이 pending
+  future로 **열린 채 대기**한다. 백엔드는 SSE 스트림을 유지하고, 사용자가
+  기존 answers 경로로 답하면 future를 resolve → 같은 턴이 이어서 진행
+- 질문 대기 중 유휴 30분 도달 시 VM stop으로 질문 소멸 — 데모 규모에서
+  수용, 재시작은 새 세션 복구(기존 에러 모델과 동일)
+
+### 턴 중단 (사용자 중단 버튼)
+
+- 프론트 중단 버튼 → 백엔드 `POST .../session/interrupt` → 하네스
+  `POST /interrupt` → `client.interrupt()`
+- SDK 주의사항 반영: interrupt 후 버퍼에 남은 메시지(`ResultMessage
+  subtype="error_during_execution"` 포함)를 **드레인 완료 후** 다음 턴 허용.
+  드레인 중 이벤트는 그대로 SSE로 흘리고 마지막에 `status: "interrupted"` +
+  `done`. 중복 interrupt 요청은 멱등 처리
 
 ### 세션 종료 (사용자 "완료" 버튼 또는 유휴 30분)
 
@@ -135,15 +197,16 @@ Claude Code 자체 — 내장 bash/file 도구 사용), suspend/resume 제어.
 
 ### 재빌드/수정
 
-빌드 완료 후 세션을 다시 시작하면 S3 번들을 VM에 복원하고 **새 Claude Code
-세션**(`--continue` 없음)으로 시작 — 수정 요청을 첫 발화에 포함.
+빌드 완료 후 세션을 다시 시작하면 S3 번들을 VM에 복원하고 **새
+`ClaudeSDKClient`**(이전 세션 resume 없음)로 시작 — 수정 요청을 첫 발화에
+포함.
 
 ## 5. 보안
 
 - **VM 실행 롤**: Bedrock invoke + CloudWatch 로그만. S3 접근 없음(파일은
   백엔드가 중개) — 생성 코드가 VM 안에서 뭘 하든 계정 리소스에 접근 불가
-- **하네스 인증**: 민팅 토큰(과거 패턴). CLI 에러 시 stderr tail은 서버 로그만
-  — SSE로 자격증명 노출 방지
+- **하네스 인증**: 민팅 토큰(과거 패턴). 에이전트 에러 상세는 서버 로그만
+  — SSE에는 sanitize된 `error` 이벤트만(자격증명 노출 방지, 기존 계약 동일)
 - **프로토타입 프로세스의 인스턴스 롤 공유(명시적 트레이드오프)**: EC2에서
   도는 프로토타입은 IMDS로 인스턴스 롤 자격증명을 얻을 수 있다. Bedrock
   호출은 이 경로로 동작(추가 인프라 불필요). 대신 인스턴스 롤의 다른
@@ -158,8 +221,10 @@ Claude Code 자체 — 내장 bash/file 도구 사용), suspend/resume 제어.
 | 상황 | 처리 |
 |---|---|
 | VM 부팅 실패/타임아웃(90초) | 세션 시작 API 502 + 사유. 카드 "시작 실패 — 재시도" |
-| 턴 중 claude CLI 비정상 종료 | exit code 기반 `error` 이벤트(stderr는 로그만). 세션 유지, 재시도 가능 |
+| 턴 중 SDK/에이전트 프로세스 에러 | sanitize된 `error` 이벤트(상세는 로그만). 세션 유지, 재시도 가능 |
 | 턴 중 VM 죽음/네트워크 단절 | SSE `error` 후 세션 `failed`. 재시작 = 새 VM + S3 복원 |
+| 사용자 중단 | `client.interrupt()` → 버퍼 드레인 → `status: "interrupted"` + `done`. 세션 유지 |
+| 질문 대기 중 유휴 만료 | pending future 소멸 + S3 sync + VM stop (질문은 유실 — 수용) |
 | 유휴 30분 | S3 sync → VM stop → 카드 `built` 복귀. 진행 중 턴은 타이머 리셋 |
 | 백엔드 재시작 | 인메모리 세션 소멸. 기동 시 계정 내 pathfinder 태그 VM 조회·stop(고아 정리). 호스팅 프로세스도 소멸 — 수동 재기동 |
 | npm install/빌드 실패 | 로그 tail을 상태 API로 노출, 카드 "빌드 실패 — 로그 보기". 빌드 세션 재개로 수정 유도 |
@@ -172,9 +237,11 @@ Claude Code 자체 — 내장 bash/file 도구 사용), suspend/resume 제어.
   fake 하네스(httpx.ASGITransport)로 `PrototypeSession`, 더미 npm 프로젝트
   fixture로 `ProtoHost`(start/stop/log/포트 스캔), 로컬 임시 HTTP 서버로
   프록시 스트리밍
-- **하네스 단위**: stream-json fixture → AgentEvent 번역, fake claude
-  바이너리(과거 테스트 부활)
-- **프론트 단위**: 카드 상태 전이, 채팅 패널 SSE 렌더(기존 캔버스 패턴)
+- **하네스 단위**: fake SDK client 주입(client factory seam)으로 메시지 객체
+  → AgentEvent 번역, interrupt 후 버퍼 드레인, AskUserQuestion 콜백 →
+  questions 이벤트 → answers resolve 왕복, PostToolUse 경로 가드
+- **프론트 단위**: 카드 상태 전이, 채팅 패널 SSE 렌더(기존 캔버스 패턴),
+  질문 위저드 재사용 렌더, 중단 버튼 상태
 - **인프라**: drill 스택에 MicroVM 이미지·롤·Bedrock 정책 assertion 복원
 - **e2e**: 실 VM·실 Bedrock 필요 — Playwright 제외, 수동 체크리스트 문서화
   (기존 방침 동일)
@@ -182,6 +249,8 @@ Claude Code 자체 — 내장 bash/file 도구 사용), suspend/resume 제어.
 ## 8. 스코프 제외
 
 - 프로토타입별 추가 인증·HTTPS 서브도메인 (경로 프록시로 충분)
+- `PreToolUse` 가드레일 훅(도구 호출 조건부 거부) — VM 격리 + 최소 권한
+  롤로 충분. SDK 채택으로 열리는 확장 포인트로만 기록
 - VM suspend/resume (세션 단위 부팅·정리로 충분)
 - 호스팅 프로세스의 systemd 상시화·자동 TTL (수동 종료)
 - Node.js 외 런타임(파이썬 백엔드 프로토타입 등)은 1차 스코프 제외 —
