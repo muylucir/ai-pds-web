@@ -157,19 +157,29 @@ class SdkDriver:
         loop = asyncio.get_running_loop()
         self._pending_question = loop.create_future()
         self._queue.append(AgentEvent(kind="questions", payload=payload))
-        answers = await self._pending_question  # stays open until /answers
-        # "number -> letter/text" (our contract) → "question text -> label"
-        # (SDK contract).
-        sdk_answers = {}
-        for k, v in answers.items():
-            try:
-                q = sdk_questions[int(k) - 1]
-            except (ValueError, IndexError):
-                continue
-            sdk_answers[q.get("question", "")] = self._answer_to_sdk(
-                v, q.get("options", []))
-        self._pending_payload = None
-        self._pending_question = None
+        try:
+            answers = await self._pending_question  # stays open until /answers
+        except asyncio.CancelledError:
+            # interrupt() cancels this future and clears pending state
+            # itself, but guard defensively in case cancellation reached
+            # us some other way (e.g. task cancellation from outside).
+            self._pending_payload = None
+            self._pending_question = None
+            raise
+        try:
+            # "number -> letter/text" (our contract) → "question text ->
+            # label" (SDK contract).
+            sdk_answers = {}
+            for k, v in answers.items():
+                try:
+                    q = sdk_questions[int(k) - 1]
+                except (ValueError, IndexError):
+                    continue
+                sdk_answers[q.get("question", "")] = self._answer_to_sdk(
+                    v, q.get("options", []))
+        finally:
+            self._pending_payload = None
+            self._pending_question = None
         return PermissionResultAllow(updated_input={
             "questions": sdk_questions,
             "answers": sdk_answers,
@@ -239,6 +249,18 @@ class SdkDriver:
         if self._client is None or not self._turn_active:
             return  # idempotent no-op
         self._interrupted = True
+        # A pending question cannot survive an interrupt: _on_can_use_tool's
+        # await is abandoned along with the rest of this turn, so leaving
+        # _pending_payload set would make pending() report a question that
+        # can never be answered, and a later submit_answers() would resolve
+        # a future nobody is listening on anymore (returns True but nothing
+        # continues). Clear it before touching the client, so our state is
+        # consistent even if client.interrupt() raises.
+        if self._pending_question is not None and not self._pending_question.done():
+            self._pending_question.cancel()
+        self._pending_payload = None
+        self._pending_question = None
+        self._pending_iid = None
         await self._client.interrupt()
 
     async def submit_answers(self, interrupt_id: str,
