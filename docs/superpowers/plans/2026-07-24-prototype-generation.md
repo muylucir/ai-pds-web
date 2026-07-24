@@ -28,7 +28,7 @@ harness/                                  # 부활 + SDK 드라이버 (Task 1-3)
   serve.py            # 8080 app + 9000 hooks 이중 스레드 (510fc66^에서 부활·축소)
   app.py              # 턴 HTTP API + /interrupt (510fc66^에서 부활·확장)
   sdk_driver.py       # 신규 — ClaudeSDKClient 래핑
-  hooks.py            # /ready·/health (부활, 진단 교체)
+  hooks.py            # POST /aws/lambda-microvms/runtime/v1/{ready,validate} (부활, 진단 교체)
   events.py           # AgentEvent (backend models.py와 동일 셰이프, VM 안 단독 사용)
   globmatch.py        # 510fc66^에서 부활 (files API glob)
   pathsafe.py         # 경로 이스케이프 가드 (backend/pathfinder/pathsafe.py 복사)
@@ -247,7 +247,7 @@ def build_app(driver, workspace: str) -> Starlette:
 
 - [ ] **Step 5: hooks.py·serve.py 부활**
 
-`git show '510fc66^':harness/hooks.py` 기반 `harness/hooks.py`: `strands_diagnostic` 삭제, `claude_cli_diagnostic`을 SDK 진단으로 교체(로그만, 게이트 아님 — 원본의 503-루프 학습 주석 유지):
+`git show '510fc66^':harness/hooks.py` 기반 `harness/hooks.py`: **hooks 라우트는 네임스페이스드 POST 고정** — `POST /aws/lambda-microvms/runtime/v1/ready`·`/validate` (플랫폼이 이 고정 경로를 호출; bare `GET /ready`로 바꾸면 404 — 과거 실배포 확인, 원본의 `_PREFIX` 상수 유지). `strands_diagnostic` 삭제, `claude_cli_diagnostic`을 SDK 진단으로 교체(로그만, 게이트 아님 — 원본의 503-루프 학습 주석 유지):
 
 ```python
 def sdk_diagnostic() -> str:
@@ -670,8 +670,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `harness/tests/test_sdk_driver_questions.py`
 
 **Interfaces:**
-- Produces: questions AgentEvent — `payload=json.dumps({"interrupt_id": "<uuid>", "questions": {"stage": "prototype", "questions": [{"number": 1, "question": ..., "header": ..., "options": [...], "multi_select": bool, "answer": null}, ...]}})` — 프론트 `QuestionsPayload{interrupt_id, questions: QuestionFile}` 계약(types.ts:80-83) 충족
-- Produces: `submit_answers(interrupt_id, answers)` — answers는 `{"<question number>": "<label>"}`(기존 계약). SDK 응답 셰이프로 번역: `PermissionResultAllow(updated_input={"questions": <원본>, "answers": {"<question text>": "<label>"}})` (공식 문서의 응답 계약)
+- Produces: questions AgentEvent — payload는 프론트 `QuestionsPayload{interrupt_id, questions: QuestionFile}` 계약(types.ts). **QuestionFile 셰이프로 번역 필수**(프론트 QuestionForm이 무수정으로 렌더하려면): SDK 질문 `{question, header, options: [{label, description}], multiSelect}` → `Question{number: i, category: header, text: question, options: [{letter: "A"|"B".., text: f"{label} — {description}", is_other: false, recommended: false}], answer: null, multi_select}`. 파일 전체는 `QuestionFile{name: "prototype-questions", preamble: null, questions: [...], parse_ok: true, raw_markdown: null}`
+- Produces: `submit_answers(interrupt_id, answers)` — answers는 기존 계약 `{"<question number>": "<letter|letter,letter|letter: note|자유텍스트>"}` (QuestionForm.tsx 제출 형식). **역번역**: letter → 해당 옵션의 SDK `label`, `"A,C"` → label 리스트, `"A: note"` → `f"{label}: note"`, 매칭 안 되는 값은 자유 텍스트로 그대로. SDK 응답: `PermissionResultAllow(updated_input={"questions": <SDK 원본>, "answers": {"<question text>": <번역값>}})`
 - Consumes: SDK `can_use_tool` 콜백 — AskUserQuestion input은 `{"questions": [{"question", "header", "options": [{"label", "description"}], "multiSelect"}]}`
 
 - [ ] **Step 1: 실패하는 테스트 작성**
@@ -722,18 +722,31 @@ async def test_question_roundtrip(tmp_path):
             break
     payload = json.loads(d._pending_payload)
     iid = payload["interrupt_id"]
-    q = payload["questions"]["questions"][0]
-    assert q["question"] == "Which DB?"
-    assert [o["label"] for o in q["options"]] == ["Postgres", "DynamoDB"]
+    qf = payload["questions"]          # QuestionFile shape (frontend contract)
+    assert qf["parse_ok"] is True
+    q = qf["questions"][0]
+    assert q["number"] == 1 and q["text"] == "Which DB?"
+    assert [o["letter"] for o in q["options"]] == ["A", "B"]
+    assert q["options"][0]["text"].startswith("Postgres")
 
-    ok = await d.submit_answers(iid, {"1": "Postgres"})
+    ok = await d.submit_answers(iid, {"1": "A"})   # letter, QuestionForm contract
     assert ok
     events = await turn
     kinds = [e.kind for e in events]
     assert "questions" in kinds and kinds[-1] == "done"
     ui = client.answer_result.updated_input
-    assert ui["answers"] == {"Which DB?": "Postgres"}
+    assert ui["answers"] == {"Which DB?": "Postgres"}   # letter → SDK label
+    assert ui["questions"] == ASK_INPUT["questions"]     # SDK originals passed through
     assert d._pending_payload is None
+
+@pytest.mark.asyncio
+async def test_answer_translation_variants(tmp_path):
+    d = SdkDriver(str(tmp_path), client_factory=lambda: FakeSdkClient())
+    opts = [{"label": "Postgres", "description": "r"},
+            {"label": "DynamoDB", "description": "n"}]
+    assert d._answer_to_sdk("A,B", opts) == "Postgres, DynamoDB"
+    assert d._answer_to_sdk("A: use v16", opts) == "Postgres: use v16"
+    assert d._answer_to_sdk("just use sqlite", opts) == "just use sqlite"
 
 @pytest.mark.asyncio
 async def test_answers_wrong_interrupt_id_rejected(tmp_path):
@@ -751,42 +764,76 @@ Expected: FAIL — question roundtrip이 pending 없이 즉시 종료
 `sdk_driver.py`의 `_on_can_use_tool` 교체 + `submit_answers`/`pending` 구현:
 
 ```python
+_LETTERS = "ABCDEFGHIJ"
+
+
+def _to_question_file(sdk_questions: list[dict]) -> dict:
+    """SDK AskUserQuestion input → frontend QuestionFile shape (types.ts),
+    so QuestionForm renders it unmodified. Letters index the SDK options."""
+    questions = []
+    for i, q in enumerate(sdk_questions, start=1):
+        options = [{"letter": _LETTERS[j],
+                    "text": f"{o.get('label', '')} — {o.get('description', '')}".rstrip(" —"),
+                    "is_other": False, "recommended": False}
+                   for j, o in enumerate(q.get("options", []))]
+        questions.append({
+            "number": i, "category": q.get("header") or None,
+            "text": q.get("question", ""), "options": options,
+            "answer": None, "multi_select": bool(q.get("multiSelect")),
+        })
+    return {"name": "prototype-questions", "preamble": None,
+            "questions": questions, "parse_ok": True, "raw_markdown": None}
+```
+
+```python
+    def _answer_to_sdk(self, value: str, sdk_options: list[dict]) -> str:
+        """QuestionForm answer value → SDK label(s). Accepted forms:
+        "A" | "A,C" | "A: note" | free text (unmatched passes through)."""
+        def label(letter: str) -> str | None:
+            idx = _LETTERS.find(letter.strip())
+            if 0 <= idx < len(sdk_options):
+                return sdk_options[idx].get("label", "")
+            return None
+        if ":" in value:
+            head, _, note = value.partition(":")
+            l = label(head)
+            if l is not None:
+                return f"{l}:{note}"
+        parts = [label(p) for p in value.split(",")]
+        if parts and all(p is not None for p in parts):
+            return ", ".join(parts)
+        return value  # free text (Other)
+
     async def _on_can_use_tool(self, tool_name, input_data, context):
         from claude_agent_sdk.types import PermissionResultAllow
         if tool_name != "AskUserQuestion":
             return PermissionResultAllow(updated_input=input_data)
         import json as _json, uuid
         iid = uuid.uuid4().hex
-        questions = []
-        for i, q in enumerate(input_data.get("questions", []), start=1):
-            questions.append({
-                "number": i,
-                "question": q.get("question", ""),
-                "header": q.get("header", ""),
-                "options": q.get("options", []),
-                "multi_select": bool(q.get("multiSelect")),
-                "answer": None,
-            })
-        payload = _json.dumps({"interrupt_id": iid,
-                               "questions": {"stage": "prototype",
-                                             "questions": questions}},
+        sdk_questions = input_data.get("questions", [])
+        qfile = _to_question_file(sdk_questions)
+        payload = _json.dumps({"interrupt_id": iid, "questions": qfile},
                               ensure_ascii=False)
         self._pending_payload = payload
         self._pending_iid = iid
-        self._pending_input = input_data
         loop = asyncio.get_running_loop()
         self._pending_question = loop.create_future()
         self._queue.append(AgentEvent(kind="questions", payload=payload))
         answers = await self._pending_question  # stays open until /answers
-        # Map "number -> label" (our contract) to "question text -> label"
+        # "number -> letter/text" (our contract) → "question text -> label"
         # (SDK contract).
-        by_number = {str(q["number"]): q["question"] for q in questions}
-        sdk_answers = {by_number[k]: v for k, v in answers.items()
-                       if k in by_number}
+        sdk_answers = {}
+        for k, v in answers.items():
+            try:
+                q = sdk_questions[int(k) - 1]
+            except (ValueError, IndexError):
+                continue
+            sdk_answers[q.get("question", "")] = self._answer_to_sdk(
+                v, q.get("options", []))
         self._pending_payload = None
         self._pending_question = None
         return PermissionResultAllow(updated_input={
-            "questions": input_data.get("questions", []),
+            "questions": sdk_questions,
             "answers": sdk_answers,
         })
 
@@ -910,17 +957,25 @@ git show 'ef63be4^':backend/pathfinder/sandbox/harness.py > /tmp/h.py
 
 - [ ] **Step 2: 실패하는 테스트 작성**
 
-`backend/tests/test_proto_vm.py` — `ef63be4^:backend/tests/test_microvm_control_aws.py`의 fake boto3 client 패턴을 이식(부활 파일에서 boot/stop/status/mint 시나리오만 유지, resume/suspend 시나리오 폐기):
+`backend/tests/test_proto_vm.py` — **`git show '910b483^':backend/tests/test_microvm_control_aws.py`**(테스트는 sandbox 삭제 한 커밋 뒤까지 존재)의 **botocore Stubber 패턴** 이식(hand-rolled fake가 아니라 실 boto3 client + `botocore.stub.Stubber`; boot/stop/status/mint 시나리오만 유지, resume/suspend 시나리오 폐기):
 
 ```python
-# 핵심 시나리오 (원본 테스트 부활·축소):
-# - boot: run_microvm 응답의 microvmId/endpoint → poll get_microvm RUNNING → VMHandle
-# - boot 폴링 타임아웃 → TimeoutError
-# - stop: terminate_microvm 호출 확인
-# - mint_harness_token: create_microvm_auth_token 응답 map에서 X-aws-proxy-auth 추출
+# 핵심 시나리오 (원본 테스트 부활·축소). 원본의 요점:
+# - _vm_resp(): GetMicrovmResponse는 FLAT — microvmId, state, endpoint,
+#   imageArn, imageVersion, maximumDurationInSeconds, startedAt(tz-aware) 필수
+# - boot: run_microvm(imageIdentifier/executionRoleArn/idlePolicy) 응답의
+#   microvmId + bare-host endpoint("vm-1.lambda-microvm....on.aws") →
+#   https:// 프리펜드 확인 → poll get_microvm RUNNING (poll_interval=0)
+# - boot 타임아웃(boot_timeout_seconds=0) → RuntimeError
+# - stop: terminate_microvm(microvmIdentifier=...) 스텁 확인
+# - mint_harness_token: create_microvm_auth_token 스텁
+#   {"authToken": {"X-aws-proxy-auth": "jwe-abc"}} + expected params
+#   {microvmIdentifier, expirationInMinutes: 30, allowedPorts: [{"port": 8080}]}
+# - boto3 floor: pyproject의 boto3>=1.43.35가 lambda-microvms 모델 포함
+#   (원본 test_boto3_floor 유지)
 ```
 
-`backend/tests/test_proto_harness_client.py` — httpx.MockTransport로 `/answers` 204/409 분기, `/interrupt` POST, `/message` SSE 소비(기존 `ef63be4^:backend/tests/test_harness_client.py` 패턴 이식).
+`backend/tests/test_proto_harness_client.py` — httpx.MockTransport로 `/answers` 204/409 분기, `/interrupt` POST, `/message` SSE 소비(기존 `910b483^:backend/tests/test_harness_client.py` 패턴 이식).
 
 - [ ] **Step 3: 실패 확인 → 구현 마무리 → 통과 확인**
 
@@ -959,7 +1014,10 @@ class PrototypeSession:
     status: Literal["starting", "ready", "building", "waiting_input", "failed", "closed"]
     async def start(self) -> None            # boot→push(PROTOTYPE-*.md, prototype-building.md, 재빌드시 bundle 복원)→첫 턴은 라우트가 발화
     async def send_message(self, text) -> AsyncIterator[AgentEvent]   # 턴 중계 + 타이머 리셋
-    async def send_answers(self, interrupt_id, answers) -> bool
+    async def send_answers(self, answers) -> bool   # interrupt_id는 세션이 소유:
+        # questions 이벤트 통과 시 payload에서 capture(_pending_interrupt_id,
+        # 기존 AgentRunner runner.py:99-116 패턴), 제출 시 소비해 HarnessClient
+        # send_answers(interrupt_id, answers)로 전달. pending 없으면 False
     async def interrupt(self) -> None
     async def close(self) -> None            # pull prototype/** → S3 bundle/ 업로드(node_modules·.next 제외) → VM stop
     def first_prompt(self) -> str            # 스펙 §4의 첫 턴 자동 발화 텍스트
@@ -1092,13 +1150,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   - `GET  /projects/{pid}/prototypes` → `[{"slug", "spec_path", "state": "none|building|built|running|failed", "port"}]` (스펙 md 목록은 S3 `aiplc-docs/discovery/prototypes/` list + 세션/호스트/번들 존재로 상태 합성)
   - `POST /projects/{pid}/prototypes/{slug}/session` → 202 (VM 부팅 시작; 실패 시 502+사유). 부팅 완료 후 첫 턴은 `session.first_prompt()`로 자동 발화되어 아래 events 스트림으로 흐름
   - `GET  /projects/{pid}/prototypes/{slug}/events?text=` → SSE (turns.py:33-39 패턴 + `_redacted` 재사용)
-  - `GET  /projects/{pid}/prototypes/{slug}/answers/stream?interrupt_id=&answers=` → 204/409 (SSE 아님 — 이벤트는 열린 events 스트림으로)
+  - `POST /projects/{pid}/prototypes/{slug}/answers` body `{"answers": {...}}` → 204/409 (SSE 아님 — 이벤트는 열린 events 스트림으로 흐름. **interrupt_id는 클라이언트가 보내지 않는다** — 기존 워크스페이스 패턴과 동일하게 서버가 소유: PrototypeSession이 questions 이벤트 통과 시 payload에서 capture, answers 제출 시 소비)
   - `POST /projects/{pid}/prototypes/{slug}/interrupt` → 202
   - `DELETE /projects/{pid}/prototypes/{slug}/session` → close(S3 sync + VM stop)
   - `POST /projects/{pid}/prototypes/{slug}/host` / `DELETE .../host` / `GET .../host` (start/stop/status+log_tail)
   - `ALL  /proto/{pid}/{slug}/{path:path}` → `http://127.0.0.1:{port}/{path}` httpx 스트리밍 프록시 (미기동 502 + 안내 텍스트)
 - Consumes: Task 5·6의 클래스, `ensure_workspace`(deps.py:13), `redact_credentials`(turns.py:15-25 `_redacted`), app.py의 `s3_store_factory`
-- app.py 추가 env: `PATHFINDER_VM_REGION`(기본 `ap-northeast-1`), `PATHFINDER_VM_IMAGE_ID`, `PATHFINDER_VM_ROLE_ARN`, `PATHFINDER_PROTO_ROOT`(기본 `~/pathfinder-protos`). lifespan에서 기동 시 lambda-microvms `list_microvms` 태그 필터 고아 stop(실패해도 기동은 계속 — 로그만)
+- app.py 추가 env: `PATHFINDER_VM_REGION`(기본 `ap-northeast-1`), `PATHFINDER_VM_IMAGE_ID`, `PATHFINDER_VM_ROLE_ARN`, `PATHFINDER_PROTO_ROOT`(기본 `~/pathfinder-protos`). lifespan에서 기동 시 고아 VM 정리: **VM 태깅 API는 존재하지 않으므로**(과거 코드에도 태깅 없음 — 히스토리 확인) `list_microvms` 결과를 `imageArn == PATHFINDER_VM_IMAGE_ID` 필터로 우리 이미지의 VM만 terminate(실패해도 기동은 계속 — 로그만)
 - 테스트: 기존 fakes 패턴 — `app.py`의 factory monkeypatch로 FakeController/fake harness/in-memory S3 주입. 프록시는 로컬 임시 HTTP 서버 대상 스트리밍 검증
 
 - [ ] **Step 1: 실패하는 테스트 → Step 2: 구현 → Step 3: 통과 → Step 4: 커밋**
@@ -1142,7 +1200,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: 각 `.test.ts(x)` (기존 Vitest+MSW 패턴 — `lib/api/client.test.ts` 참조)
 
 **Interfaces:**
-- Produces: `listPrototypes(pid): Promise<PrototypeInfo[]>`, `startSession(pid, slug)`, `closeSession(pid, slug)`, `interruptSession(pid, slug)`, `streamPrototypeEvents(pid, slug, text, handlers): () => void`(sse.ts openStream 재사용), `submitPrototypeAnswers(pid, slug, interruptId, answers): Promise<boolean>`, `startHost/stopHost/getHost`
+- Produces: `listPrototypes(pid): Promise<PrototypeInfo[]>`, `startSession(pid, slug)`, `closeSession(pid, slug)`, `interruptSession(pid, slug)`, `streamPrototypeEvents(pid, slug, text, handlers): () => void`(sse.ts openStream 재사용), `submitPrototypeAnswers(pid, slug, answers): Promise<boolean>`(interrupt_id 없음 — 서버 소유, useWorkspaceStream.submitAnswers와 동일 패턴), `startHost/stopHost/getHost`
 - Produces: `PrototypeCard({info, onBuild, onOpenPreview, onStartHost, onStopHost, busy})` — 상태 전이 `none→building→built→running/failed` 별 액션 버튼·프리뷰 링크(`/api/proto/{pid}/{slug}/`)·로그 보기
 - Consumes: Task 7 API 계약, `API_BASE_URL`(client.ts:13), `AgentEvent`(types.ts)
 
@@ -1161,13 +1219,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `frontend/components/prototypes/BuildPanel.tsx`, `frontend/app/projects/[projectId]/prototypes/page.tsx`
-- Modify: 프로젝트 탭 네비게이션(기존 canvas/dashboard/workspace 링크가 있는 컴포넌트에 "프로토타입" 추가 — `AppHeader.tsx` 또는 프로젝트 레이아웃에서 기존 탭 렌더 위치 확인 후 동일 패턴)
+- Modify: `frontend/components/AppHeader.tsx` — `HeaderTab` 유니언에 `"prototypes"` 추가 + 탭 링크(대시보드·워크스페이스·문서 리뷰와 동일 `<Link>` 패턴, 라벨 "프로토타입" → `${base}/prototypes`)
 - Test: 각 `.test.tsx`
 
 **Interfaces:**
-- Produces: `BuildPanel({projectId, slug})` — 채팅 타임라인(기존 `useTurnStream` 변형: `streamPrototypeEvents` 사용), 중단 버튼(턴 활성 중 노출 → `interruptSession`), questions 이벤트 수신 시 `QuestionForm`(components/questions/QuestionForm.tsx — `file: QuestionFile, onSubmit(answers), submitting` props 그대로) 렌더 → `submitPrototypeAnswers`, `file_changed` 누적 목록, "완료" 버튼 → `closeSession`
+- Produces: `BuildPanel({projectId, slug})` — 채팅 타임라인. 스트림 훅은 **`useWorkspaceStream`을 모델로 한 `usePrototypeStream` 신규**(useTurnStream은 retired canvas용 — 워크스페이스의 현행 패턴은 useWorkspaceStream이며 그 `applyEvent` 분기·`safeParse` fail-closed·`pendingQuestions` 상태를 이식하되 stage/document/history 분기는 제외). 중단 버튼(턴 활성 중 노출 → `interruptSession`), questions 이벤트 수신 시 `QuestionForm`(components/questions/QuestionForm.tsx — `file: QuestionFile, onSubmit(answers), submitting` props 그대로) 렌더 → `submitPrototypeAnswers(pid, slug, answers)`, `file_changed` 누적 목록, "완료" 버튼 → `closeSession`. 채팅 렌더는 `ChatTimeline`/`AiMessage`/`ChatInput` 기존 컴포넌트 재사용(AiItem/UserItem 타입은 useTurnStream이 export)
 - Consumes: Task 8 클라이언트, `QuestionsPayload`(types.ts:80-83) 파싱은 `useWorkspaceStream.ts:128-131`의 `safeParse` 패턴
-- 페이지: `listArtifacts` 또는 `listPrototypes`로 카드 그리드 + 카드 클릭 시 BuildPanel 열림
+- 페이지: `listPrototypes`(Task 7 신규 API — PROTOTYPE-*.md 스펙 뷰는 기존 `readArtifact`가 `aiplc-docs/` 하위만 허용하므로 그대로 사용 가능: 스펙 경로가 `aiplc-docs/discovery/prototypes/...`)로 카드 그리드 + 카드 클릭 시 BuildPanel 열림
 
 - [ ] Step 1 실패 테스트(BuildPanel: 이벤트 렌더·questions→QuestionForm·중단 버튼 노출 조건·answers 제출, page: 카드 목록) → Step 2 구현 → Step 3 `npm test -- --run` + `npm run build` PASS → Step 4 커밋
 
@@ -1231,4 +1289,5 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 - **스펙 커버리지**: §2 아키텍처(T4·5·7), §3 백엔드(T4-7)/하네스(T1-3)/프론트(T8-9)/인프라(T10), §4 데이터 흐름 전부(세션 시작 T5·7, 대화 턴 T2, 질문 T3·9, 중단 T2·3·7·9, 종료 T5, 호스팅 T6·7, 재빌드 T5), §5 보안(T10 롤 축소·T7 프록시 헤더 스트립·T2 sanitize), §6 에러 표(T5 타이머·T7 502·T6 로그 tail), §7 테스트(각 태스크 TDD), §8 스코프 제외 준수.
 - **모호성 해소 기록**: (1) harness `/answers`는 스트림이 아닌 204 — SDK 모델에서 이벤트는 열린 /message 스트림으로 흐름(스펙 §4 "열린 채 대기"의 구현 귀결). (2) MicroVM CDK 리소스는 서울 drill 스택이 아닌 **별도 Tokyo 스택** — 크로스 리전 L1 배포 불가 제약의 귀결(스펙 §3 "drill 스택 부활"을 리전 정합하게 조정). (3) 첫 턴 자동 발화는 세션 시작 API가 아니라 첫 events 연결에서 `first_prompt()` 발화 — SSE로 즉시 스트림을 받기 위함.
-- **타입 일관성**: driver 프로토콜(run/submit_answers/interrupt/pending)이 T1 fake → T2·3 구현 → T4 HarnessClient → T7 라우트까지 동일 시그니처. `QuestionsPayload{interrupt_id, questions: QuestionFile}` T3 생산 ↔ T9 소비 일치.
+- **타입 일관성**: driver 프로토콜(run/submit_answers/interrupt/pending)이 T1 fake → T2·3 구현 → T4 HarnessClient → T7 라우트까지 동일 시그니처. `QuestionsPayload{interrupt_id, questions: QuestionFile}` T3 생산 ↔ T9 소비 일치. interrupt_id 소유 체인: 프론트(없음) → 백엔드 라우트(없음) → PrototypeSession(capture/소비) → HarnessClient·harness /answers(명시 전달) → SdkDriver(_pending_iid 검증).
+- **탐사 보고 반영 사항** (계획 초판 대비 수정): (1) questions payload를 SDK 셰이프가 아닌 프론트 `QuestionFile{letter 옵션}` 셰이프로 번역 + letter→label 역번역(`_answer_to_sdk`) — QuestionForm 무수정 재사용의 실제 전제. (2) answers 제출에 interrupt_id 미포함(서버 소유 — 기존 워크스페이스 패턴). (3) 고아 VM 정리는 태그가 아닌 imageArn 필터(태깅 API 부재). (4) hooks는 네임스페이스드 POST 경로 고정. (5) VM 테스트는 botocore Stubber 패턴, ref `910b483^`. (6) 탭은 `AppHeader.HeaderTab` 확장. (7) 스트림 훅은 useWorkspaceStream 모델(useTurnStream은 retired). (8) EC2 호스트에 Node.js 20 이미 설치(user-data.ts:20) — ProtoHost 전제 충족, systemd/백엔드는 root로 구동되므로 ProtoHost 서브프로세스 권한 문제 없음.
