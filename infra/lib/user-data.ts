@@ -4,6 +4,12 @@ export interface UserDataOptions {
   model: string;
   secretArn: string;
   assetS3Uri: string;
+  /** 프로토타입 빌드 VM 리전(Tokyo 고정) — VmStack이 배포된 리전. */
+  vmRegion?: string;
+  /** VmStack의 ImageArn 출력. 미설정이면 프로토타입 빌드는 502로 실패한다. */
+  vmImageId?: string;
+  /** VmStack의 ExecutionRoleArn 출력. */
+  vmRoleArn?: string;
 }
 
 // EC2 부트스트랩 스크립트. 순수 문자열 생성(부수효과 없음) — 단위 테스트 가능.
@@ -11,6 +17,12 @@ export interface UserDataOptions {
 // 시크릿 조회 → nginx conf → systemd 기동. 헤더 불일치는 nginx가 403.
 export function renderUserData(opts: UserDataOptions): string {
   const { region, bucketName, model, secretArn, assetS3Uri } = opts;
+  // 프로토타입 빌드용 VM 설정. 미주입 시 빈 문자열로 렌더되어 백엔드가
+  // "설정 없음"으로 인식하고 세션 시작을 명확히 거부한다(과거에는 None이
+  // boto3 ParamValidationError로 터져 즉시 502가 났다).
+  const vmRegion = opts.vmRegion ?? 'ap-northeast-1';
+  const vmImageId = opts.vmImageId ?? '';
+  const vmRoleArn = opts.vmRoleArn ?? '';
   const APP = '/opt/pathfinder';
   return `#!/bin/bash
 set -euxo pipefail
@@ -85,6 +97,10 @@ Environment=AWS_DEFAULT_REGION=${region}
 Environment=PATHFINDER_S3_REGION=${region}
 Environment=PATHFINDER_S3_BUCKET=${bucketName}
 Environment=ANTHROPIC_MODEL=${model}
+Environment=PATHFINDER_VM_REGION=${vmRegion}
+Environment=PATHFINDER_VM_IMAGE_ID=${vmImageId}
+Environment=PATHFINDER_VM_ROLE_ARN=${vmRoleArn}
+Environment=PATHFINDER_PROTO_ROOT=${APP}/protos
 ExecStart=${APP}/backend/.venv/bin/uvicorn pathfinder.app:app --host 127.0.0.1 --port 8000
 Restart=always
 [Install]

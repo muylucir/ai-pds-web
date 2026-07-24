@@ -94,6 +94,10 @@ class FakeProtoHost:
 def proto_env(monkeypatch):
     """Registered project + fake S3/session/host wiring."""
     monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    # The session route refuses to start when no VM image is configured (a
+    # real deploy footgun that used to surface as an instant 502) — these
+    # tests inject a fake session factory, so satisfy the config guard.
+    monkeypatch.setenv("PATHFINDER_VM_IMAGE_ID", "fake-img")
     fake_s3 = FakeS3Store()
 
     async def fake_make_workspace(pid):
@@ -372,3 +376,47 @@ def test_proxy_502_when_not_running(proto_env):
     resp = client.get(f"/proto/{PID}/{SLUG}/index.html")
     assert resp.status_code == 502
     assert "start hosting first" in resp.text
+
+
+def test_session_start_503_when_vm_image_unset(proto_env, monkeypatch):
+    """Missing VM config must say so plainly (503), not fail deep inside boto3
+    and surface as an opaque 502 the instant the user clicks 빌드 시작 —
+    the exact symptom seen on the deployed EC2, whose systemd unit didn't
+    carry PATHFINDER_VM_IMAGE_ID."""
+    monkeypatch.delenv("PATHFINDER_VM_IMAGE_ID", raising=False)
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    assert resp.status_code == 503
+    assert "PATHFINDER_VM_IMAGE_ID" in resp.json()["detail"]
+
+
+def test_failed_session_does_not_wedge_prototype(proto_env, monkeypatch):
+    """A failed session must neither block a restart (409) nor be served as a
+    live stream (404): that combination wedged the prototype permanently —
+    POST said 'already active' while GET said 'no active session'."""
+    dead = FakePrototypeSession()
+    dead.status = "failed"
+    app_module.proto_sessions[(PID, SLUG)] = dead
+
+    # A live stream must not be served off a dead session.
+    assert client.get(f"/projects/{PID}/prototypes/{SLUG}/events",
+                      params={"text": "hi"}).status_code == 404
+
+    # ...and a restart must be allowed, replacing the corpse.
+    fresh = FakePrototypeSession()
+    _install_session_factory(monkeypatch, fresh)
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    assert resp.status_code == 202
+    assert app_module.proto_sessions[(PID, SLUG)] is fresh
+    assert fresh.started
+
+
+def test_closed_session_also_allows_restart(proto_env, monkeypatch):
+    """Same eviction path for a cleanly closed session."""
+    done = FakePrototypeSession()
+    done.status = "closed"
+    app_module.proto_sessions[(PID, SLUG)] = done
+    fresh = FakePrototypeSession()
+    _install_session_factory(monkeypatch, fresh)
+    assert client.post(
+        f"/projects/{PID}/prototypes/{SLUG}/session").status_code == 202
+    assert app_module.proto_sessions[(PID, SLUG)] is fresh

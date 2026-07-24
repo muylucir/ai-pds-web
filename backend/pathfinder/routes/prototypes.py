@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 import httpx
@@ -52,17 +53,25 @@ def _require_registered(pid: str) -> None:
         raise HTTPException(status_code=404, detail="unknown project")
 
 
+#: A session in one of these terminal states is dead: it must NOT block a new
+#: start (409) and must NOT be served as an active stream (404). Keeping
+#: "failed" out of this set wedged the prototype permanently — POST said
+#: "already active" while GET said "no active session", so the user could
+#: neither restart nor stream.
+_DEAD_STATUSES = ("closed", "failed")
+
+
 def _live_session(pid: str, slug: str):
     import pathfinder.app as app_module
     session = app_module.proto_sessions.get((pid, slug))
-    if session is None or session.status in ("closed",):
+    if session is None or session.status in _DEAD_STATUSES:
         return None
     return session
 
 
 def _require_session(pid: str, slug: str):
     session = _live_session(pid, slug)
-    if session is None or session.status == "failed":
+    if session is None:
         raise HTTPException(status_code=404, detail="no active build session")
     return session
 
@@ -114,6 +123,21 @@ async def start_session(pid: str, slug: str):
     _require_registered(pid)
     if _live_session(pid, slug) is not None:
         raise HTTPException(status_code=409, detail="build session already active")
+    # Evict any dead (closed/failed) session so a retry starts clean instead of
+    # tripping over the corpse of the previous attempt.
+    app_module.proto_sessions.pop((pid, slug), None)
+
+    # Misconfiguration is not a bad gateway: without an image id the boot call
+    # fails instantly deep inside boto3 (ParamValidationError), which used to
+    # surface as an opaque 502 the moment the user clicked 빌드 시작. Say so
+    # plainly instead.
+    if not os.environ.get("PATHFINDER_VM_IMAGE_ID"):
+        raise HTTPException(
+            status_code=503,
+            detail="prototype build is not configured on this server "
+                   "(PATHFINDER_VM_IMAGE_ID unset — deploy PathfinderVmStack "
+                   "and inject its outputs)")
+
     session = app_module.proto_session_factory(pid, slug)
     try:
         await session.start()

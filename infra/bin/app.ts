@@ -17,9 +17,17 @@ const drill = new PathfinderDrillStack(app, 'PathfinderDrillStack', { env });
 // 호스팅 스택은 CloudFront origin-facing 프리픽스 리스트를 배포 리전에서
 // 자동 조회한다(fromLookup) — synth/deploy 시 크리덴셜 필요, 결과는
 // cdk.context.json에 캐시된다(커밋 대상).
+// 프로토타입 빌드 VM 설정은 VmStack(Tokyo) 배포 후 그 출력값을 여기로
+// 주입한다 — 크로스-리전이라 CDK 참조로는 연결되지 않는다:
+//   npx cdk deploy PathfinderHostingStack \
+//     -c vmImageId=<VmStack ImageArn> -c vmRoleArn=<VmStack ExecutionRoleArn>
+// 미주입 시 프로토타입 빌드만 비활성(명확한 503), 나머지 앱은 정상.
 new PathfinderHostingStack(app, 'PathfinderHostingStack', {
   env,
   artifactsBucket: drill.artifactsBucket,
+  vmImageId: app.node.tryGetContext('vmImageId'),
+  vmRoleArn: app.node.tryGetContext('vmRoleArn'),
+  vmRegion: app.node.tryGetContext('vmRegion') ?? 'ap-northeast-1',
 });
 
 // MicroVM 리소스는 Lambda MicroVMs 서비스가 존재하는 Tokyo에 고정 배포 —

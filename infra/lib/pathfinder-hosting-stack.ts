@@ -16,6 +16,13 @@ export interface HostingStackProps extends cdk.StackProps {
   // 테스트 주입용. 미지정 시 배포 리전의 CloudFront origin-facing 프리픽스
   // 리스트를 fromLookup으로 자동 조회한다.
   cfPrefixListId?: string;
+  // 프로토타입 빌드 VM(VmStack) 설정 — 백엔드 systemd env로 전달된다.
+  // 크로스-리전 스택이라 CDK 참조로 자동 연결되지 않으므로, 배포자가
+  // VmStack 출력값을 컨텍스트/파라미터로 주입한다(미주입 시 프로토타입
+  // 빌드 기능만 비활성, 나머지 앱은 정상 동작).
+  vmImageId?: string;
+  vmRoleArn?: string;
+  vmRegion?: string;
 }
 
 export class PathfinderHostingStack extends cdk.Stack {
@@ -101,6 +108,9 @@ export class PathfinderHostingStack extends cdk.Stack {
         model: MODEL,
         secretArn: headerSecret.secretArn,
         assetS3Uri: asset.s3ObjectUrl, // s3://bucket/key
+        vmRegion: props.vmRegion,
+        vmImageId: props.vmImageId,
+        vmRoleArn: props.vmRoleArn,
       }),
     );
 
