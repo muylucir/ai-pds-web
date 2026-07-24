@@ -1,0 +1,114 @@
+// frontend/components/prototypes/PrototypeCard.tsx — one prototype's status +
+// action buttons, following ArtifactCard's visual idiom (rounded-xl border,
+// icon tile, violet primary / slate neutral) with StageTimeline's badge
+// pattern (rounded-full pill, per-status color, pulsing while active).
+//
+// State machine mirrors Task 7's list_prototypes contract exactly:
+//   none -> building -> built -> running
+//                          \-------> failed
+"use client";
+import type { PrototypeInfo, PrototypeState } from "@/lib/api/prototypes";
+
+const PRIMARY_BTN =
+  "px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium disabled:opacity-50 disabled:hover:bg-violet-600";
+const SECONDARY_BTN =
+  "px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-sm font-medium text-slate-700 disabled:opacity-50 disabled:hover:bg-transparent";
+
+const BADGE: Record<PrototypeState, { label: string; cls: string }> = {
+  none: { label: "스펙만 있음", cls: "bg-slate-100 text-slate-500" },
+  building: { label: "빌드 중", cls: "bg-violet-100 text-violet-700 animate-pulse" },
+  built: { label: "빌드 완료", cls: "bg-emerald-50 text-emerald-700" },
+  running: { label: "실행 중", cls: "bg-sky-50 text-sky-700" },
+  failed: { label: "실패", cls: "bg-rose-50 text-rose-700" },
+};
+
+export function PrototypeCard({
+  info,
+  onBuild,
+  onOpenPreview,
+  onStartHost,
+  onStopHost,
+  onShowLogs,
+  busy,
+}: {
+  info: PrototypeInfo;
+  onBuild: () => void;
+  onOpenPreview?: () => void;
+  onStartHost: () => void;
+  onStopHost: () => void;
+  onShowLogs?: () => void;
+  busy: boolean;
+}) {
+  const badge = BADGE[info.state];
+  const badgeLabel =
+    info.state === "running" && info.port != null ? `${badge.label} :${info.port}` : badge.label;
+
+  return (
+    <div className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-center gap-3">
+      <span
+        className="w-10 h-10 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center text-lg shrink-0"
+        aria-hidden="true"
+      >
+        🧪
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-medium text-sm truncate">{info.slug}</span>
+          <span className={`text-[11px] px-2 py-0.5 rounded-full shrink-0 ${badge.cls}`}>{badgeLabel}</span>
+        </div>
+        <span className="block text-[11px] text-slate-400 mt-0.5 truncate">{info.spec_path}</span>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {info.state === "none" && (
+          <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onBuild}>
+            빌드 시작
+          </button>
+        )}
+        {info.state === "building" && (
+          <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onBuild}>
+            세션 열기
+          </button>
+        )}
+        {info.state === "built" && (
+          <>
+            <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onStartHost}>
+              호스팅 시작
+            </button>
+            <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onBuild}>
+              다시 빌드
+            </button>
+          </>
+        )}
+        {info.state === "running" && (
+          <>
+            {onOpenPreview && (
+              <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onOpenPreview}>
+                프리뷰 열기
+              </button>
+            )}
+            <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onStopHost}>
+              호스팅 중지
+            </button>
+            {onShowLogs && (
+              <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onShowLogs}>
+                로그
+              </button>
+            )}
+          </>
+        )}
+        {info.state === "failed" && (
+          <>
+            <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onBuild}>
+              다시 빌드
+            </button>
+            {onShowLogs && (
+              <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onShowLogs}>
+                로그
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
