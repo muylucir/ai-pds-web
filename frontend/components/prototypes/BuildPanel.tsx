@@ -58,7 +58,10 @@ export function BuildPanel({
 
   return (
     <div className="fixed inset-0 z-40 bg-slate-900/40 flex items-stretch justify-end">
-      <div className="w-full max-w-3xl h-full bg-white flex flex-col min-h-0 shadow-2xl">
+      {/* 드로어 폭: 빌드 로그·질문 폼·파일 변경 목록을 함께 읽어야 해서
+          기존 3xl(48rem)의 두 배인 7xl(80rem)까지 넓힌다. 좁은 화면에서는
+          w-full이 그대로 뷰포트를 채운다. */}
+      <div className="w-full max-w-7xl h-full bg-white flex flex-col min-h-0 shadow-2xl">
         <header className="shrink-0 border-b border-slate-200 px-4 md:px-6 py-3 flex items-center justify-between gap-3">
           <h1 className="font-bold text-lg truncate">{slug}</h1>
           <div className="flex items-center gap-2 shrink-0">
