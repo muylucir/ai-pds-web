@@ -15,6 +15,7 @@
 // This is a dev/demo convenience; production should sit behind a real reverse
 // proxy (and carry auth) instead of routing API traffic through Next.
 import { NextRequest } from "next/server";
+import { rewriteLocation } from "@/lib/api/rewriteLocation";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -54,9 +55,16 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   const res = await fetch(url, init);
   // Re-stream the (possibly SSE) body with clean headers only. Response(body)
   // uses the platform's own framing, so no forbidden HTTP/2 headers leak.
+  const headers = filterHeaders(res.headers);
+  // The backend names its own origin in redirects (e.g. Starlette's absolute
+  // 307 for a missing trailing slash). Passed through verbatim, that walks the
+  // browser off the public host onto localhost:8000, which it cannot reach —
+  // it just hangs. Re-anchor any self-referential redirect under /api.
+  const location = headers.get("location");
+  if (location) headers.set("location", rewriteLocation(location, BACKEND));
   return new Response(res.body, {
     status: res.status,
-    headers: filterHeaders(res.headers),
+    headers,
   });
 }
 

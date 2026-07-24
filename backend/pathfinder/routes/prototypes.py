@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from urllib.parse import quote, urlsplit
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -255,6 +256,44 @@ _STRIP_REQUEST_HEADERS = {"host", "x-origin-verify", "connection",
 _STRIP_RESPONSE_HEADERS = {"transfer-encoding", "connection", "keep-alive"}
 
 
+def _rewritten_location(value: str, pid: str, slug: str) -> str:
+    """Rewrite an upstream redirect target into a proxy-relative path.
+
+    The prototype process only knows its own origin (127.0.0.1:<port>), so a
+    redirect it issues — or one Starlette issues for a missing trailing slash
+    — would send the browser straight at an internal address it cannot reach
+    ("localhost:8000/proto/..." and then a hang). Reduce any absolute URL that
+    points at the upstream to its path, and express every path under this
+    prototype's proxy prefix. An off-site absolute redirect is left alone.
+    """
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc:
+        # Only rewrite self-references; a redirect to a genuinely external
+        # host must survive untouched.
+        if parsed.hostname not in ("127.0.0.1", "localhost"):
+            return value
+        path, query = parsed.path, parsed.query
+    else:
+        path, query = parsed.path, parsed.query
+    prefix = f"/proto/{quote(pid)}/{quote(slug)}"
+    if not path.startswith("/"):
+        # Relative target: the browser resolves it against the current URL,
+        # which is already inside the prefix — leave it as-is.
+        return value
+    out = f"{prefix}{path}"
+    return f"{out}?{query}" if query else out
+
+
+# Both shapes are registered: without the second route, a request for
+# `/proto/{pid}/{slug}` (no trailing slash) misses the `{path:path}` pattern and
+# Starlette answers with an ABSOLUTE 307 to its own origin — the browser then
+# leaves the public host for localhost:8000 and hangs.
+@router.api_route("/proto/{pid}/{slug}",
+                  methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
+async def proxy_prototype_root(pid: str, slug: str, request: Request):
+    return await proxy_prototype(pid, slug, "", request)
+
+
 @router.api_route("/proto/{pid}/{slug}/{path:path}",
                   methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
@@ -285,6 +324,12 @@ async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
 
     resp_headers = {k: v for k, v in upstream.headers.items()
                     if k.lower() not in _STRIP_RESPONSE_HEADERS}
+    # A prototype that redirects (SPA route normalization, auth bounce, its own
+    # trailing-slash handling) names its own internal origin — rewrite it so the
+    # browser stays on the public proxy path.
+    if "location" in resp_headers:
+        resp_headers["location"] = _rewritten_location(
+            resp_headers["location"], pid, slug)
     return StreamingResponse(upstream.aiter_raw(),
                              status_code=upstream.status_code,
                              headers=resp_headers,

@@ -441,3 +441,37 @@ def test_session_start_503_when_role_arn_unset(proto_env, monkeypatch):
     resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
     assert resp.status_code == 503
     assert "PATHFINDER_VM_ROLE_ARN" in resp.json()["detail"]
+
+
+def test_proxy_root_without_trailing_slash_is_served_not_redirected(
+        proto_env, echo_server):
+    """`/proto/{pid}/{slug}` (no trailing slash) must be proxied directly.
+    Without a route for that shape Starlette answers with an ABSOLUTE 307 to
+    its own origin, so a browser on the public host gets sent to
+    localhost:8000 and hangs."""
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(
+        state="running", port=echo_server, log_tail="")
+    resp = client.get(f"/proto/{PID}/{SLUG}", follow_redirects=False)
+    assert resp.status_code == 200
+    assert resp.text == "echo:/"
+
+
+def test_proxy_rewrites_upstream_absolute_redirect(proto_env):
+    """A prototype redirecting to its own internal origin must be rewritten to
+    the public proxy path — otherwise the browser chases 127.0.0.1:<port>."""
+    from pathfinder.routes.prototypes import _rewritten_location
+    got = _rewritten_location(
+        "http://127.0.0.1:4001/login?next=/dash", PID, SLUG)
+    assert got == f"/proto/{PID}/{SLUG}/login?next=/dash"
+
+
+def test_proxy_rewrites_upstream_relative_root_redirect(proto_env):
+    from pathfinder.routes.prototypes import _rewritten_location
+    assert _rewritten_location("/dashboard", PID, SLUG) == \
+        f"/proto/{PID}/{SLUG}/dashboard"
+
+
+def test_proxy_leaves_external_redirect_alone(proto_env):
+    from pathfinder.routes.prototypes import _rewritten_location
+    ext = "https://accounts.google.com/o/oauth2/auth?x=1"
+    assert _rewritten_location(ext, PID, SLUG) == ext
