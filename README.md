@@ -3,10 +3,17 @@
 AI-PLC Discovery 워크숍을 위한 대화형 캔버스. Strands 에이전트가 백엔드 프로세스 안에서
 직접(in-process) Discovery 방법론을 구동하고, 프론트엔드가 그 턴을 실시간(SSE)으로 렌더한다.
 
+Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론트 **"프로토타입" 탭**에서
+바로 실물로 이어진다: 세션을 시작하면 Tokyo MicroVM 안의 Claude Agent SDK가 그 스펙을 읽고
+대화형으로 앱을 빌드하며(진행 중 질문은 기존 질문 위저드로 왕복, 중단 버튼 지원), 완료된
+번들은 S3에 저장되고 Pathfinder EC2가 로컬 프로세스로 호스팅해 `/api/proto/{projectId}/{slug}/`
+경로 프록시로 라이브 프리뷰를 제공한다. 자세한 배포 절차는 `infra/README.md`, 수동 e2e
+검증은 `docs/superpowers/checklists/2026-07-24-prototype-generation-e2e.md` 참고.
+
 ```
-frontend/  Next.js 15 (App Router) — 대시보드 · 질문 위저드 · 문서 리뷰 · 대화형 캔버스
-backend/   FastAPI — 파서 · 인프로세스 Strands 에이전트 · SSE 턴 릴레이 · S3 영속화
-infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 (서울, 리전 파라미터화)
+frontend/  Next.js 15 (App Router) — 대시보드 · 질문 위저드 · 문서 리뷰 · 대화형 캔버스 · 프로토타입 탭
+backend/   FastAPI — 파서 · 인프로세스 Strands 에이전트 · SSE 턴 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅
+infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 (서울, 리전 파라미터화) + MicroVM 이미지/롤 (Tokyo 고정)
 ```
 
 ---
@@ -120,6 +127,10 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `ANTHROPIC_MODEL` | — | Bedrock 추론 프로파일 id |
 | `PATHFINDER_RULES_DIR` | `<repo>/files/aiplc-rules` | aiplc 룰 디렉토리(읽기 전용) |
 | `PATHFINDER_WORKSPACES_DIR` | 시스템 tmp 하위 | 프로젝트별 로컬 워크스페이스 루트 |
+| `PATHFINDER_VM_REGION` | `ap-northeast-1` | 프로토타입 하네스 MicroVM 리전(도쿄 고정) |
+| `PATHFINDER_VM_IMAGE_ID` | — | `PathfinderVmStack` 출력 `ImageArn` |
+| `PATHFINDER_VM_ROLE_ARN` | — | `PathfinderVmStack` 출력 `ExecutionRoleArn` |
+| `PATHFINDER_PROTO_ROOT` | `~/pathfinder-protos` | 빌드된 프로토타입을 EC2 로컬 호스팅할 루트 |
 
 **프론트엔드**
 
@@ -153,8 +164,10 @@ cd frontend && npm run test:e2e
 - **인증은 아직 플레이스홀더**다(spec상 이후 단계). 라우트에 인증 없음, 프론트 `getAuthToken()`은
   `undefined` 반환. SSO/토큰 도입 시 `EventSource`가 커스텀 헤더를 못 보내므로 SSE 인증 전략
   (token-in-query 또는 cookie)을 함께 정해야 한다.
-- **리전**: 전 리소스 서울(`ap-northeast-2`) 통일이 기본. 도쿄가 필요했던 이유는 Lambda
-  MicroVMs가 도쿄에만 있어서였는데, 에이전트가 인프로세스로 바뀌며 그 제약이 사라졌다.
-  다른 리전이 필요하면 `CDK_DEPLOY_REGION`(인프라)과 `AWS_REGION`/`PATHFINDER_S3_REGION`
-  (백엔드)으로 지정한다 — 세 값이 같은 리전을 가리켜야 한다.
+- **리전**: 핵심 리소스(S3, 백엔드, Discovery 에이전트)는 서울(`ap-northeast-2`) 통일이
+  기본. 다른 리전이 필요하면 `CDK_DEPLOY_REGION`(인프라)과 `AWS_REGION`/`PATHFINDER_S3_REGION`
+  (백엔드)으로 지정한다 — 세 값이 같은 리전을 가리켜야 한다. 단, **프로토타입 생성 기능의
+  MicroVM만 예외** — Lambda MicroVMs 서비스가 도쿄(`ap-northeast-1`)에만 있어서
+  `PathfinderVmStack`은 위 리전 파라미터와 무관하게 항상 도쿄에 배포된다(`infra/README.md`
+  "PathfinderVmStack 배포 절차" 참고).
 - 진행/결정 기록은 `.superpowers/sdd/progress.md`(git-ignored)와 `docs/superpowers/plans/` 참고.
