@@ -97,7 +97,9 @@ def proto_env(monkeypatch):
     # The session route refuses to start when no VM image is configured (a
     # real deploy footgun that used to surface as an instant 502) — these
     # tests inject a fake session factory, so satisfy the config guard.
-    monkeypatch.setenv("PATHFINDER_VM_IMAGE_ID", "fake-img")
+    monkeypatch.setenv("PATHFINDER_VM_IMAGE_ID",
+                       "arn:aws:lambda:ap-northeast-1:1:microvm-image:fake")
+    monkeypatch.setenv("PATHFINDER_VM_ROLE_ARN", "arn:aws:iam::1:role/fake")
     fake_s3 = FakeS3Store()
 
     async def fake_make_workspace(pid):
@@ -420,3 +422,22 @@ def test_closed_session_also_allows_restart(proto_env, monkeypatch):
     assert client.post(
         f"/projects/{PID}/prototypes/{SLUG}/session").status_code == 202
     assert app_module.proto_sessions[(PID, SLUG)] is fresh
+
+
+def test_session_start_503_when_role_arn_malformed(proto_env, monkeypatch):
+    """A truncated/mangled ARN (e.g. a lost 'arn:' prefix from a hand-edited
+    .env) must name the offending variable, not surface as an opaque 502 from
+    deep inside botocore's ValidationException."""
+    monkeypatch.setenv("PATHFINDER_VM_ROLE_ARN",
+                       "aws:iam::939105814298:role/SomeRole")  # missing 'arn:'
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert "PATHFINDER_VM_ROLE_ARN" in detail and "valid ARN" in detail
+
+
+def test_session_start_503_when_role_arn_unset(proto_env, monkeypatch):
+    monkeypatch.delenv("PATHFINDER_VM_ROLE_ARN", raising=False)
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    assert resp.status_code == 503
+    assert "PATHFINDER_VM_ROLE_ARN" in resp.json()["detail"]

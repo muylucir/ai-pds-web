@@ -127,16 +127,24 @@ async def start_session(pid: str, slug: str):
     # tripping over the corpse of the previous attempt.
     app_module.proto_sessions.pop((pid, slug), None)
 
-    # Misconfiguration is not a bad gateway: without an image id the boot call
-    # fails instantly deep inside boto3 (ParamValidationError), which used to
-    # surface as an opaque 502 the moment the user clicked 빌드 시작. Say so
-    # plainly instead.
-    if not os.environ.get("PATHFINDER_VM_IMAGE_ID"):
-        raise HTTPException(
-            status_code=503,
-            detail="prototype build is not configured on this server "
-                   "(PATHFINDER_VM_IMAGE_ID unset — deploy PathfinderVmStack "
-                   "and inject its outputs)")
+    # Misconfiguration is not a bad gateway: a missing or malformed ARN fails
+    # deep inside boto3 (ParamValidationError / ValidationException), which
+    # surfaces as an opaque 502 the moment the user clicks 빌드 시작 and sends
+    # them log-diving. Check the shape up front and name the bad variable.
+    for var, prefix in (("PATHFINDER_VM_IMAGE_ID", "arn:aws:lambda:"),
+                        ("PATHFINDER_VM_ROLE_ARN", "arn:aws:iam:")):
+        value = os.environ.get(var, "")
+        if not value:
+            raise HTTPException(
+                status_code=503,
+                detail=f"prototype build is not configured on this server "
+                       f"({var} unset — deploy PathfinderVmStack and inject "
+                       f"its outputs)")
+        if not value.startswith(prefix):
+            raise HTTPException(
+                status_code=503,
+                detail=f"prototype build is misconfigured: {var} is not a "
+                       f"valid ARN (expected it to start with {prefix!r})")
 
     session = app_module.proto_session_factory(pid, slug)
     try:
