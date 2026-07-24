@@ -10,6 +10,25 @@ from events import AgentEvent
 _log = logging.getLogger("harness.sdk_driver")
 
 _FILE_TOOLS = {"Write", "Edit", "MultiEdit"}
+_LETTERS = "ABCDEFGHIJ"
+
+
+def _to_question_file(sdk_questions: list[dict]) -> dict:
+    """SDK AskUserQuestion input → frontend QuestionFile shape (types.ts),
+    so QuestionForm renders it unmodified. Letters index the SDK options."""
+    questions = []
+    for i, q in enumerate(sdk_questions, start=1):
+        options = [{"letter": _LETTERS[j],
+                    "text": f"{o.get('label', '')} — {o.get('description', '')}".rstrip(" —"),
+                    "is_other": False, "recommended": False}
+                   for j, o in enumerate(q.get("options", []))]
+        questions.append({
+            "number": i, "category": q.get("header") or None,
+            "text": q.get("question", ""), "options": options,
+            "answer": None, "multi_select": bool(q.get("multiSelect")),
+        })
+    return {"name": "prototype-questions", "preamble": None,
+            "questions": questions, "parse_ok": True, "raw_markdown": None}
 
 
 def _rel(path: str, workspace: str) -> str | None:
@@ -75,9 +94,11 @@ class SdkDriver:
         self._queue: list[AgentEvent] = []
         self._turn_active = False
         self._interrupted = False
-        # Task 3 fills these in (question wait state):
+        # Question wait state (Task 3): set while an AskUserQuestion tool
+        # call is blocked awaiting /answers.
         self._pending_question: asyncio.Future | None = None
         self._pending_payload: str | None = None
+        self._pending_iid: str | None = None
 
     def drain_queue(self) -> list[AgentEvent]:
         out = []
@@ -103,12 +124,56 @@ class SdkDriver:
                 self._queue.append(AgentEvent(kind="file_changed", path=rel))
         return {}
 
+    def _answer_to_sdk(self, value: str, sdk_options: list[dict]) -> str:
+        """QuestionForm answer value → SDK label(s). Accepted forms:
+        "A" | "A,C" | "A: note" | free text (unmatched passes through)."""
+        def label(letter: str) -> str | None:
+            idx = _LETTERS.find(letter.strip())
+            if 0 <= idx < len(sdk_options):
+                return sdk_options[idx].get("label", "")
+            return None
+        if ":" in value:
+            head, _, note = value.partition(":")
+            l = label(head)
+            if l is not None:
+                return f"{l}:{note}"
+        parts = [label(p) for p in value.split(",")]
+        if parts and all(p is not None for p in parts):
+            return ", ".join(parts)
+        return value  # free text (Other)
+
     async def _on_can_use_tool(self, tool_name, input_data, context):
-        # Task 3 replaces this with the AskUserQuestion interception; until
-        # then allow everything (bypassPermissions already auto-approves
-        # normal tools; this only sees AskUserQuestion-class calls).
         from claude_agent_sdk.types import PermissionResultAllow
-        return PermissionResultAllow(updated_input=input_data)
+        if tool_name != "AskUserQuestion":
+            return PermissionResultAllow(updated_input=input_data)
+        import json as _json, uuid
+        iid = uuid.uuid4().hex
+        sdk_questions = input_data.get("questions", [])
+        qfile = _to_question_file(sdk_questions)
+        payload = _json.dumps({"interrupt_id": iid, "questions": qfile},
+                              ensure_ascii=False)
+        self._pending_payload = payload
+        self._pending_iid = iid
+        loop = asyncio.get_running_loop()
+        self._pending_question = loop.create_future()
+        self._queue.append(AgentEvent(kind="questions", payload=payload))
+        answers = await self._pending_question  # stays open until /answers
+        # "number -> letter/text" (our contract) → "question text -> label"
+        # (SDK contract).
+        sdk_answers = {}
+        for k, v in answers.items():
+            try:
+                q = sdk_questions[int(k) - 1]
+            except (ValueError, IndexError):
+                continue
+            sdk_answers[q.get("question", "")] = self._answer_to_sdk(
+                v, q.get("options", []))
+        self._pending_payload = None
+        self._pending_question = None
+        return PermissionResultAllow(updated_input={
+            "questions": sdk_questions,
+            "answers": sdk_answers,
+        })
 
     def _translate(self, msg) -> list[AgentEvent]:
         events: list[AgentEvent] = []
@@ -136,13 +201,29 @@ class SdkDriver:
         try:
             client = await self._ensure_client()
             await client.query(text)
-            async for msg in client.receive_response():
+            # Race the next message against the hook/tool-callback queue:
+            # while an AskUserQuestion is pending, receive_response() yields
+            # nothing at all, so a plain `async for` would never let a
+            # queued `questions` event reach the SSE stream. Poll the queue
+            # on a short timeout instead of blocking indefinitely on the
+            # next message.
+            agen = client.receive_response().__aiter__()
+            next_msg = asyncio.ensure_future(agen.__anext__())
+            while True:
+                done, _ = await asyncio.wait({next_msg}, timeout=0.05)
                 for ev in self.drain_queue():
                     yield ev
+                if not done:
+                    continue
+                try:
+                    msg = next_msg.result()
+                except StopAsyncIteration:
+                    break
                 for ev in self._translate(msg):
                     if ev.kind == "done" and self._interrupted:
                         yield AgentEvent(kind="status", text="interrupted")
                     yield ev
+                next_msg = asyncio.ensure_future(agen.__anext__())
         except Exception:
             _log.exception("sdk turn failed")
             for ev in self.drain_queue():
@@ -162,7 +243,12 @@ class SdkDriver:
 
     async def submit_answers(self, interrupt_id: str,
                              answers: dict[str, str]) -> bool:
-        return False  # Task 3
+        if (self._pending_question is None
+                or getattr(self, "_pending_iid", None) != interrupt_id
+                or self._pending_question.done()):
+            return False
+        self._pending_question.set_result(answers)
+        return True
 
     async def pending(self) -> str | None:
         return self._pending_payload
