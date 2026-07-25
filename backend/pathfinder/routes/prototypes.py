@@ -1,13 +1,12 @@
 # backend/pathfinder/routes/prototypes.py — prototype build sessions + hosting.
 #
-# REST + SSE for the prototype tab: session lifecycle against the Tokyo
-# MicroVM (PrototypeSession), local hosting (ProtoHost), and a streaming
+# REST + SSE for the prototype tab: session lifecycle against an in-process
+# build agent (PrototypeSession), local hosting (ProtoHost), and a streaming
 # reverse proxy that exposes a hosted prototype under the existing
 # /api -> :8000 nginx/CloudFront routing (no hosting-stack changes).
 from __future__ import annotations
 
 import logging
-import os
 import re
 from urllib.parse import quote, urlsplit
 
@@ -114,7 +113,9 @@ async def list_prototypes(pid: str):
 
         out.append({"slug": slug, "spec_path": spec_path,
                     "state": state, "port": port})
-    return out
+    # Capacity travels with the list so a card can explain a 429 before the
+    # user clicks (the cap is new -- MicroVM builds had no ceiling).
+    return {"prototypes": out, **app_module.build_semaphore.snapshot()}
 
 
 # ---- build session lifecycle ----
@@ -129,33 +130,23 @@ async def start_session(pid: str, slug: str):
     # tripping over the corpse of the previous attempt.
     app_module.proto_sessions.pop((pid, slug), None)
 
-    # Misconfiguration is not a bad gateway: a missing or malformed ARN fails
-    # deep inside boto3 (ParamValidationError / ValidationException), which
-    # surfaces as an opaque 502 the moment the user clicks 빌드 시작 and sends
-    # them log-diving. Check the shape up front and name the bad variable.
-    for var, prefix in (("PATHFINDER_VM_IMAGE_ID", "arn:aws:lambda:"),
-                        ("PATHFINDER_VM_ROLE_ARN", "arn:aws:iam:")):
-        value = os.environ.get(var, "")
-        if not value:
-            raise HTTPException(
-                status_code=503,
-                detail=f"prototype build is not configured on this server "
-                       f"({var} unset — deploy PathfinderVmStack and inject "
-                       f"its outputs)")
-        if not value.startswith(prefix):
-            raise HTTPException(
-                status_code=503,
-                detail=f"prototype build is misconfigured: {var} is not a "
-                       f"valid ARN (expected it to start with {prefix!r})")
+    # In-process builds share one box: each session holds a claude subprocess
+    # that may spawn a peak-2GB `next build`. Refuse rather than queue, and
+    # name the situation -- a bare 429 reads as a bug to an attendee.
+    if not app_module.build_semaphore.try_acquire():
+        raise HTTPException(
+            status_code=429,
+            detail="다른 팀이 프로토타입을 빌드하고 있습니다 — 잠시 후 다시 시도해 주세요")
 
     session = app_module.proto_session_factory(pid, slug)
     try:
         await session.start()
     except FileNotFoundError:
+        app_module.build_semaphore.release()
         raise HTTPException(status_code=404, detail="prototype spec not found")
     except Exception:
-        # Boot/push failures carry AWS details -- log them server-side only,
-        # surface a sanitized reason (spec §5: 자격증명 노출 방지).
+        # A failed start must not burn a slot permanently.
+        app_module.build_semaphore.release()
         _log.exception("prototype session start failed: %s/%s", pid, slug)
         raise HTTPException(status_code=502, detail="session start failed")
     app_module.proto_sessions[(pid, slug)] = session
@@ -219,6 +210,12 @@ async def close_session(pid: str, slug: str):
 async def start_host(pid: str, slug: str):
     import pathfinder.app as app_module
     _require_registered(pid)
+    # Hosting serves the build directory IN PLACE now, so starting it under a
+    # live build session would race the agent writing into that same tree.
+    if _live_session(pid, slug) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="빌드 세션이 진행 중입니다 — 세션을 먼저 종료해 주세요")
     try:
         info = await app_module.proto_host().start(pid, slug)
     except FileNotFoundError:
