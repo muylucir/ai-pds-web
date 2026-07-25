@@ -53,6 +53,40 @@ def projects_root_s3_factory() -> S3StoreLike:
     return S3Store(bucket=bucket, prefix="projects/", client=client)
 
 
+# ---- 인증 (routes/*, auth/deps.py) ----
+
+_jwks_singleton = None
+
+
+def cognito_config() -> dict | None:
+    """Cognito 설정. 미설정이면 None = 인증 바이패스.
+
+    durable_projects_enabled()와 같은 규율이다: 필수 env가 없으면 그 기능 전체를
+    생략하고 로컬/테스트가 아무 설정 없이 돌게 한다. 풀 id와 client id가 둘 다
+    있어야 설정으로 본다 — 반쯤 설정된 상태로 인증을 켜면 client_id 검증을 할 수
+    없어 모든 요청이 실패한다. EC2 systemd 유닛은 항상 둘 다 심으므로
+    프로덕션에서 바이패스가 켜질 수 없다.
+    """
+    pool = os.environ.get("PATHFINDER_COGNITO_USER_POOL_ID", "").strip()
+    client = os.environ.get("PATHFINDER_COGNITO_CLIENT_ID", "").strip()
+    if not pool or not client:
+        return None
+    region = (os.environ.get("PATHFINDER_COGNITO_REGION", "").strip()
+              or os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2"))
+    return {"region": region, "user_pool_id": pool, "client_id": client}
+
+
+def jwks_cache():
+    """JWKS 캐시 싱글턴 (monkeypatchable in tests)."""
+    global _jwks_singleton
+    if _jwks_singleton is None:
+        from pathfinder.auth.verifier import JwksCache
+        cfg = cognito_config() or {}
+        _jwks_singleton = JwksCache(region=cfg.get("region", "ap-northeast-2"),
+                                    user_pool_id=cfg.get("user_pool_id", ""))
+    return _jwks_singleton
+
+
 def durable_projects_enabled() -> bool:
     """버킷 미설정(로컬/테스트)이면 목록 영속화 전체를 생략한다."""
     return bool(os.environ.get("PATHFINDER_S3_BUCKET"))
