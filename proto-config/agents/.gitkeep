@@ -1,0 +1,4 @@
+# 서브에이전트 정의를 여기 둔다: agents/<name>.md
+# 대안: PrototypeBuilder의 ClaudeAgentOptions에 agents={...}(AgentDefinition)로
+# 코드에 직접 정의할 수도 있다 — 파일 없이 레포에서 버전 관리된다.
+# (1차 스코프에서는 비어 있음.)

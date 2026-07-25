@@ -6,6 +6,7 @@ import { server } from "@/test/msw/server";
 import { API_BASE_URL, ApiError } from "./client";
 import {
   listPrototypes,
+  prototypeArchiveUrl,
   startSession,
   closeSession,
   interruptSession,
@@ -18,15 +19,42 @@ import {
 } from "./prototypes";
 
 describe("listPrototypes", () => {
-  it("GETs /prototypes and returns the list as-is", async () => {
-    const body = [
+  it("GETs /prototypes and unwraps {prototypes, active_builds, max_builds}", async () => {
+    const prototypes = [
       { slug: "todo-app", spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md", state: "built", port: null },
       { slug: "chat-widget", spec_path: "aiplc-docs/discovery/prototypes/chat-widget/PROTOTYPE-chat-widget.md", state: "running", port: 4021 },
     ];
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(body)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () =>
+        HttpResponse.json({ prototypes, active_builds: 0, max_builds: 2 }),
+      ),
     );
-    expect(await listPrototypes("p1")).toEqual(body);
+    expect(await listPrototypes("p1")).toEqual({ prototypes, active_builds: 0, max_builds: 2 });
+  });
+
+  it("unwraps the prototypes array and reports build capacity", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () =>
+        HttpResponse.json({
+          prototypes: [{ slug: "demo", spec_path: "s.md", state: "built", port: null }],
+          active_builds: 1,
+          max_builds: 2,
+        }),
+      ),
+    );
+    const result = await listPrototypes("p1");
+    expect(result.prototypes.map((p) => p.slug)).toEqual(["demo"]);
+    expect(result.active_builds).toBe(1);
+    expect(result.max_builds).toBe(2);
+  });
+});
+
+describe("prototypeArchiveUrl", () => {
+  it("builds an absolute archive URL with encoded segments", () => {
+    const url = prototypeArchiveUrl("proj 1", "한글-앱");
+    expect(url).toContain("/projects/proj%201/prototypes/");
+    expect(url).toContain(encodeURIComponent("한글-앱"));
+    expect(url).toMatch(/\/archive$/);
   });
 });
 

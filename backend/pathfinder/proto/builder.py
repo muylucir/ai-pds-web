@@ -1,13 +1,30 @@
-# harness/sdk_driver.py  (runs INSIDE the MicroVM)
+# backend/pathfinder/proto/builder.py — the prototype build agent, running
+# IN-PROCESS in the backend (was harness/sdk_driver.py inside a Tokyo MicroVM).
+#
+# One build session = one connected ClaudeSDKClient. Hook/tool callbacks run on
+# the SDK's tasks while run() drains on the caller's loop -- both on the SAME
+# event loop, so a plain list handoff is safe.
+#
+# Three things differ from the VM-era driver:
+#   1. CLAUDE_CONFIG_DIR is always injected. The bundled binary is ordinary
+#      Claude Code and reads ~/.claude when this is unset -- harmless in the
+#      VM (empty home) but on the workshop EC2 that is the operator's personal
+#      skills/agents/CLAUDE.md, which would leak into every workshop build and
+#      make results depend on host config.
+#   2. session_store + resume make the transcript durable, so a session can be
+#      resumed days later or after a backend redeploy.
+#   3. disconnect() exists. Stopping the VM used to reclaim the process; now
+#      the idle timer must do it explicitly.
 from __future__ import annotations
+
 import asyncio
 import logging
 from pathlib import PurePosixPath
 from typing import Any, AsyncIterator, Callable
 
-from events import AgentEvent
+from pathfinder.models import AgentEvent
 
-_log = logging.getLogger("harness.sdk_driver")
+_log = logging.getLogger(__name__)
 
 _FILE_TOOLS = {"Write", "Edit", "MultiEdit"}
 _LETTERS = "ABCDEFGHIJ"
@@ -59,43 +76,67 @@ def _rel(path: str, workspace: str) -> str | None:
     return rel_str
 
 
-def _default_client_factory(workspace: str, driver: "SdkDriver") -> Callable[[], Any]:
+def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
     def make():
-        from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
         from claude_agent_sdk.types import HookMatcher
+
+        env = {
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            # Swap the config HOME rather than disabling settings entirely
+            # (setting_sources=[]): this keeps a place to put OUR skills and
+            # subagents later, and keeps the local transcript copy under a
+            # Pathfinder-owned path instead of the operator's home.
+            "CLAUDE_CONFIG_DIR": builder._config_dir,
+        }
+        if builder._anthropic_model:
+            env["ANTHROPIC_MODEL"] = builder._anthropic_model
         options = ClaudeAgentOptions(
             permission_mode="bypassPermissions",
-            cwd=workspace,
-            env={"CLAUDE_CODE_USE_BEDROCK": "1"},
-            can_use_tool=driver._on_can_use_tool,
+            cwd=builder._workspace,
+            env=env,
+            # "user" now means OUR config dir, so this is safe -- and it is
+            # what `skills` needs open to discover anything.
+            setting_sources=["user", "project"],
+            # Enable every skill discovered under CLAUDE_CONFIG_DIR (the repo's
+            # proto-config/skills/, shipped to /opt/pathfinder/proto-config).
+            # "all" rather than an explicit name list so adding a skill is one
+            # committed file with no code change. Safe precisely BECAUSE the
+            # config dir is ours: with the default ~/.claude this would enable
+            # whatever the host user happens to have installed.
+            # Note this makes the SDK pass `--allowedTools Skill`; under
+            # bypassPermissions that is not expected to restrict Bash/Write,
+            # but the e2e checklist verifies a real build turn still works.
+            skills="all",
+            session_id=builder._session_id,
+            resume=builder._session_id if builder._resume else None,
+            session_store=builder._session_store,
+            can_use_tool=builder._on_can_use_tool,
             hooks={"PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
-                                               hooks=[driver._on_post_tool_use])]},
+                                               hooks=[builder._on_post_tool_use])]},
         )
         return ClaudeSDKClient(options=options)
     return make
 
 
-class SdkDriver:
-    """One build session = one connected ClaudeSDKClient (multi-turn context
-    lives in the client; no --continue flag to manage). Hook/tool callbacks
-    run on the SDK's tasks while run() drains on the caller's loop — both on
-    the SAME event loop, so a plain list handoff is safe."""
-
-    def __init__(self, workspace: str,
+class PrototypeBuilder:
+    def __init__(self, workspace: str, config_dir: str, session_id: str,
+                 resume: bool, session_store: Any = None,
+                 anthropic_model: str | None = None,
                  client_factory: Callable[[], Any] | None = None):
         self._workspace = workspace
-        self._factory = client_factory or _default_client_factory(workspace, self)
+        self._config_dir = config_dir
+        self._session_id = session_id
+        self._resume = resume
+        self._session_store = session_store
+        self._anthropic_model = anthropic_model
+        self._factory = client_factory or _default_client_factory(self)
         self._client: Any = None
-        # A plain list, not collections.deque: tests assert `d._queue == []`
-        # after draining, and deque only compares equal to another deque
-        # (never to a list literal) — `collections.deque() == []` is False.
-        # popleft()'s O(1) vs list.pop(0)'s O(n) doesn't matter at this
-        # queue's per-turn size (a handful of tool-use events).
+        # A plain list, not collections.deque: tests assert `_queue == []`
+        # after draining, and deque never compares equal to a list literal.
         self._queue: list[AgentEvent] = []
         self._turn_active = False
         self._interrupted = False
-        # Question wait state (Task 3): set while an AskUserQuestion tool
-        # call is blocked awaiting /answers.
         self._pending_question: asyncio.Future | None = None
         self._pending_payload: str | None = None
         self._pending_iid: str | None = None
@@ -297,3 +338,14 @@ class SdkDriver:
 
     async def pending(self) -> str | None:
         return self._pending_payload
+
+    async def disconnect(self) -> None:
+        """Tear down the claude subprocess. Idempotent -- close() and the idle
+        timer can both reach here."""
+        client, self._client = self._client, None
+        if client is None:
+            return
+        try:
+            await client.disconnect()
+        except Exception:
+            _log.exception("builder disconnect failed")

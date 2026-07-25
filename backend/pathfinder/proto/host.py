@@ -1,24 +1,23 @@
 # backend/pathfinder/proto/host.py — ProtoHost: EC2-local prototype hosting.
 #
-# Downloads a built prototype bundle from S3 (Task 5's PrototypeSession
-# uploads it to `prototypes/{slug}/bundle/**`) into a local directory, then
-# runs its npm lifecycle (install -> build? -> start) as a real subprocess on
-# this host, scanning a free local port for it to listen on. Independent of
-# the MicroVM/harness side entirely -- this is the "run the finished thing
-# on the backend box" half of the feature (Task 7's routes call it).
+# Task 5's PrototypeSession (the in-process builder) writes the prototype
+# straight into `{root}/{pid}/{slug}/` on this same box, so hosting no longer
+# downloads a bundle from S3 -- it just runs the npm lifecycle (install ->
+# build? -> start) as a real subprocess against that existing directory,
+# scanning a free local port for it to listen on. Independent of the
+# MicroVM/harness side entirely -- this is the "run the finished thing on the
+# backend box" half of the feature (Task 7's routes call it).
 from __future__ import annotations
 
 import asyncio
 import json
 import os
-import shutil
+import signal
 import socket
 import time
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Literal
-
-from pathfinder.s3store import S3StoreLike
 
 HostState = Literal["installing", "building", "running", "failed", "stopped"]
 
@@ -40,32 +39,6 @@ class _HostEntry:
     proc: "asyncio.subprocess.Process | None" = None
 
 
-def _is_safe_rel(rel: str) -> bool:
-    """Reject absolute paths and any `..` segment -- a malicious/corrupt S3
-    bundle key must never be able to write outside `root/{pid}/{slug}/`."""
-    if not rel or rel.startswith("/"):
-        return False
-    return ".." not in PurePosixPath(rel).parts
-
-
-def _scan_port(port_range: range) -> int:
-    """First port in `port_range` that a bind succeeds on. Best-effort: the
-    port is released immediately after the probe, so a concurrent bind
-    between scan and subprocess spawn is possible (accepted per spec) --
-    start()'s port-listen poll catches that as a failed start."""
-    for port in port_range:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(("127.0.0.1", port))
-            return port
-        except OSError:
-            continue
-        finally:
-            sock.close()
-    raise RuntimeError(f"no free port in {port_range}")
-
-
 def _tail_text(path: Path, lines: int) -> str:
     if not path.exists():
         return ""
@@ -82,26 +55,20 @@ class ProtoHost:
     assumptions; a restart loses the running subprocess anyway).
     """
 
-    def __init__(self, s3, root: Path,
-                 port_range: range = range(4001, 4051)):
-        # `s3` is either a project-prefixed S3StoreLike (single-project use,
-        # as in tests) or a factory `(pid) -> S3StoreLike` — the app-level
-        # singleton serves every project, so it hands us the factory and we
-        # resolve the per-project store at download time.
-        self._s3 = s3
+    def __init__(self, root: Path, port_range: range = range(4001, 4051)):
+        # No `s3`: the build directory IS the served tree now (the builder
+        # writes straight into it), so hosting no longer round-trips a bundle
+        # through S3 -- which also means binary assets stop being mangled by
+        # the text-only store.
         self._root = Path(root)
         self._port_range = port_range
         self._registry: dict[tuple[str, str], _HostEntry] = {}
-
-    def _store(self, pid: str) -> S3StoreLike:
-        return self._s3(pid) if callable(self._s3) else self._s3  # type: ignore[return-value]
+        # Ports handed out but whose subprocess may not be listening yet. The
+        # scanner's bind probe releases its socket before the spawn, so two
+        # concurrent starts could otherwise pick the same port.
+        self._reserved: set[int] = set()
 
     # ---- internals ----
-
-    @staticmethod
-    def _append_log(log_path: Path, message: str) -> None:
-        with open(log_path, "a", encoding="utf-8") as fh:
-            fh.write(message + "\n")
 
     @staticmethod
     def _info(entry: _HostEntry) -> HostInfo:
@@ -142,41 +109,36 @@ class ProtoHost:
                 return False
             await asyncio.sleep(0.2)
 
-    async def _download_bundle(self, pid: str, slug: str, target_dir: Path,
-                               log_path: Path) -> None:
-        s3 = self._store(pid)
-        bundle_prefix = f"prototypes/{slug}/bundle/"
-        keys = await s3.list(bundle_prefix)
-        if not keys:
-            raise FileNotFoundError(bundle_prefix)
-        for key in keys:
-            rel = key[len(bundle_prefix):]
-            if not _is_safe_rel(rel):
-                self._append_log(log_path, f"skip unsafe bundle key: {key!r}")
+    def _scan_port(self) -> int:
+        for port in self._port_range:
+            if port in self._reserved:
                 continue
-            content = await s3.get(key)
-            dest = target_dir / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(content, encoding="utf-8")
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind(("127.0.0.1", port))
+                self._reserved.add(port)
+                return port
+            except OSError:
+                continue
+            finally:
+                sock.close()
+        raise RuntimeError(f"no free port in {self._port_range}")
 
     # ---- public interface ----
 
-    async def start(self, pid: str, slug: str) -> HostInfo:
+    async def start(self, pid: str, slug: str, cwd: Path | None = None) -> HostInfo:
         # If this (pid, slug) is already running/started, tear down its
-        # previous process before wiping the directory out from under it.
+        # previous process first.
         await self.stop(pid, slug)
 
-        target_dir = self._root / pid / slug
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
-        target_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = Path(cwd) if cwd is not None else self._root / pid / slug
+        # NOT rmtree + re-download: the builder writes into this very
+        # directory, so wiping it would delete a live build.
+        if not target_dir.is_dir():
+            raise FileNotFoundError(str(target_dir))
         log_path = target_dir / ".proto-host.log"
         log_path.touch()
-
-        # Empty-bundle / missing-slug -> FileNotFoundError propagates (route
-        # layer maps this to 404). Raised before any registry entry exists,
-        # so status() for this (pid, slug) still reports None afterward.
-        await self._download_bundle(pid, slug, target_dir, log_path)
 
         entry = _HostEntry(dir=target_dir, log_path=log_path, state="installing")
         self._registry[(pid, slug)] = entry
@@ -196,7 +158,7 @@ class ProtoHost:
                 entry.state = "failed"
                 return self._info(entry)
 
-        port = _scan_port(self._port_range)
+        port = self._scan_port()
         start_args = ["run", "start"] if "start" in scripts else ["run", "dev"]
         env = {**os.environ, "PORT": str(port)}
 
@@ -205,12 +167,26 @@ class ProtoHost:
             proc = await asyncio.create_subprocess_exec(
                 "npm", *start_args, cwd=str(target_dir), env=env,
                 stdout=log_fh, stderr=log_fh,
+                # Own process group: stop() can then signal the whole tree,
+                # and a hard backend death leaves a pid file for sweep_orphans
+                # instead of an untracked child.
+                start_new_session=True,
             )
+        except Exception:
+            # The spawn itself failed (e.g. npm missing from PATH, EMFILE) --
+            # entry.port never gets assigned on this path, so stop() (whose
+            # release is gated on entry.port is not None) could never reclaim
+            # it. Release the reservation here, immediately, instead of
+            # leaving it held for the lifetime of this ProtoHost.
+            self._reserved.discard(port)
+            entry.state = "failed"
+            raise
         finally:
             log_fh.close()
 
         entry.port = port
         entry.proc = proc
+        (target_dir / ".proto-host.pid").write_text(str(proc.pid), encoding="utf-8")
 
         if not await self._wait_for_port(proc, port, timeout=60.0):
             entry.state = "failed"
@@ -225,14 +201,50 @@ class ProtoHost:
             return  # unknown (pid, slug) -- idempotent no-op
         proc = entry.proc
         if proc is not None and proc.returncode is None:
-            proc.terminate()
+            # npm spawns the real server as a child, so signal the GROUP --
+            # terminating npm alone orphans the listener and leaks the port.
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                proc.terminate()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
             except asyncio.TimeoutError:
-                proc.kill()
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    proc.kill()
                 await proc.wait()
+        if entry.port is not None:
+            self._reserved.discard(entry.port)
+        (entry.dir / ".proto-host.pid").unlink(missing_ok=True)
         entry.proc = None
         entry.state = "stopped"
+
+    def sweep_orphans(self) -> int:
+        """Kill hosting processes left over from a previous backend run and
+        clean up their pid files. Replaces the orphan-VM sweep that went away
+        with the VM layer: an in-process build's children are OUR children, so
+        a hard backend death leaves them holding CPU and ports.
+
+        Best effort -- a pid that no longer exists (or was recycled onto
+        something we don't own) only costs a stale file."""
+        swept = 0
+        if not self._root.is_dir():
+            return 0
+        for pid_file in self._root.glob("*/*/.proto-host.pid"):
+            try:
+                target = int(pid_file.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                pid_file.unlink(missing_ok=True)
+                continue
+            try:
+                os.killpg(os.getpgid(target), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass  # already gone, or not ours to signal
+            pid_file.unlink(missing_ok=True)
+            swept += 1
+        return swept
 
     def status(self, pid: str, slug: str) -> HostInfo | None:
         entry = self._registry.get((pid, slug))

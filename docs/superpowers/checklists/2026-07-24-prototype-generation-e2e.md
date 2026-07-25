@@ -1,85 +1,115 @@
 # 프로토타입 생성 기능 — 수동 E2E 체크리스트
 
-Discovery 스펙(`PROTOTYPE-{slug}.md`) → Tokyo MicroVM(Claude Agent SDK 하네스) 빌드 →
-S3 번들 영속화 → Pathfinder EC2 로컬 호스팅 → 경로 프록시 프리뷰 전체 경로를 실 AWS
-자원으로 검증한다. 실 VM·실 Bedrock·실 EC2가 필요해 CI에는 없다(단위 테스트는
-`backend/tests/test_proto_*.py`, `harness/tests/`, `infra/test/vm-stack.assert.ts`가
-fake/Stubber로 커버). 설계는
-`docs/superpowers/specs/2026-07-24-prototype-generation-design.md`, 구현 계획은
-`docs/superpowers/plans/2026-07-24-prototype-generation.md` 참고.
+Discovery 스펙(`PROTOTYPE-{slug}.md`) → **백엔드 프로세스 안의 빌드 에이전트**(Claude
+Agent SDK) → 같은 빌드 디렉토리를 in-place 호스팅 → 경로 프록시 프리뷰 전체 경로를 실
+AWS 자원으로 검증한다. 실 Bedrock·실 EC2·실 서브프로세스가 필요해 CI에는 없다(단위
+테스트는 `backend/tests/test_proto_*.py`와 `infra/test/`가 fake/Stubber로 커버).
 
-전제: `infra/README.md`의 "PathfinderVmStack 배포 절차"를 먼저 훑을 것. 아래 (a)는 그
-요약이다.
+설계는 `docs/superpowers/specs/2026-07-25-prototype-builder-inprocess-design.md`(흡수)와
+`docs/superpowers/specs/2026-07-24-prototype-generation-design.md`(원 설계) 참고.
+
+> **2026-07-25 개정**: MicroVM 계층이 제거되면서 (a) VmStack 배포, (b) 이미지 arch 진단,
+> (c) VM env 주입, (d) microvm IAM 검증, (i) 고아 VM 정리, (j) auto-suspend 사이클
+> 절차는 **수행 불가**가 되어 삭제됐다. 그 자리를 아래 (a)–(d)와 (i)–(m)이 대체한다.
+
+전제: `infra/README.md`를 먼저 훑을 것. 배포는 `npx cdk deploy` 한 번으로 끝난다
+(크로스리전 컨텍스트 주입 없음).
 
 ---
 
-## (a) VmStack 배포 → 이미지 빌드 확인
+## (a) 배포 인스턴스에서 번들 바이너리 기동
 
-- [ ] `files/aiplc-rules/`가 드릴 머신에 채워져 있다(gitignored 참고 자료 —
-      `files/aiplc-rules/aws-aiplc-rules/core-workflow.md` 존재 확인).
-- [ ] 하네스 코드를 스테이징한다:
+빌드 에이전트는 SDK wheel이 번들한 Claude Code 바이너리를 서브프로세스로 띄운다.
+플랫폼 불일치는 워크숍 중 "session start failed" 502로만 보이므로 먼저 확인한다.
+
+- [ ] SSM으로 접속: `aws ssm start-session --target <InstanceId>`
+- [ ] 아키텍처가 x86_64인지 확인: `uname -m` → `x86_64`
+- [ ] 번들 바이너리가 뜨는지 확인:
       ```bash
-      cd infra
-      ./package-harness.sh
+      cd /opt/pathfinder/backend
+      .venv/bin/python -c "import claude_agent_sdk, pathlib, subprocess; \
+        p=pathlib.Path(claude_agent_sdk.__file__).parent/'_bundled'/'claude'; \
+        print(subprocess.run([str(p),'--version'],capture_output=True,text=True).stdout)"
       ```
-      (`files/aiplc-rules/` 누락 시 이 스크립트가 즉시 에러로 종료한다 — 정상 동작.)
-- [ ] VmStack을 배포한다. **`CDK_DEPLOY_REGION`을 설정했든 안 했든 무관** — 이
-      스택은 항상 Tokyo(`ap-northeast-1`)에 배포된다(`bin/app.ts` 하드코딩):
-      ```bash
-      npx cdk deploy PathfinderVmStack --require-approval never
-      ```
-- [ ] 출력된 CfnOutputs(`ImageArn`, `ExecutionRoleArn`, `Region`)를 기록해둔다 — (c)에서 씀.
-- [ ] CloudWatch 로그 그룹 `/pathfinder/microvm/harness`에서 이미지 빌드 로그를 연다.
-      `ready hook: health=True | ...` 라인이 나오면 빌드 스냅샷 성공(빌드 자체는 수 분
-      걸릴 수 있음). `health=False`가 반복되면 하네스 앱(`serve.py`, 포트 8080/9000)이
-      기동하지 못한 것 — Dockerfile/`requirements.txt` 문제부터 확인.
+      → `2.x.x (Claude Code)` 출력. 여기서 실패하면 이후 항목은 전부 무의미하다.
+- [ ] 인스턴스 사양 확인: `nproc` → 8, `free -g` total ≈ 31, `df -h /` → 100G
 
-## (b) sdk_diagnostic 로그 확인 (번들 바이너리 arch/import OK)
+## (b) config 격리 — 호스트 개인 설정이 빌드에 섞이지 않는지
 
-- [ ] 같은 로그 라인의 `|` 뒤쪽이 `sdk_diagnostic()`의 출력이다(`harness/hooks.py`).
-      정상: `sdk <version>; PATH claude=absent (bundled binary is used)` 형태 —
-      `claude_agent_sdk`가 import되고, 번들 CLI 바이너리는 SDK가 직접 스폰하므로
-      `PATH`에는 없는 게 정상(경고 아님).
-      비정상: `claude_agent_sdk import failed <ExceptionType>: ...` — ARM_64 이미지에
-      x86 wheel이 섞였거나 `requirements.txt`의 `claude-agent-sdk==` 핀이 이 아키텍처용
-      바이너리를 못 받은 경우. 이 로그는 **빌드 게이트가 아니라 진단 전용**이므로
-      (`sdk_diagnostic` 자체가 실패해도 `/ready`는 서버 헬스만으로 200을 줄 수 있음)
-      빌드가 성공해도 반드시 이 라인을 직접 확인해야 한다.
+`PATHFINDER_PROTO_CONFIG_DIR`를 비우면 번들 바이너리가 백엔드 실행 유저의 `~/.claude`를
+읽는다. 워크숍 결과가 호스트 설정에 의존하게 되므로 **격리를 실물로 확인**한다.
 
-## (c) 백엔드 env 주입
+- [ ] systemd env에 값이 들어있는지: `systemctl show pathfinder-backend -p Environment`
+      출력에 `PATHFINDER_PROTO_CONFIG_DIR=/opt/pathfinder/proto-config`가 있다
+      (앱 트리 안 — 유저 홈이 아니다).
+- [ ] 빌드 턴 진행 중 `ps -eo pid,args | grep "[c]laude"`로 뜬 프로세스의 환경을
+      확인: `sudo tr '\0' '\n' < /proc/<pid>/environ | grep CLAUDE_CONFIG_DIR` →
+      그 격리 경로를 가리킨다.
+- [ ] **음성 테스트**(개인 설정이 새지 않는지): 서비스 유저의 홈
+      (`getent passwd pathfinder | cut -d: -f6`) 아래
+      `.claude/skills/zzz-probe/SKILL.md`를 심고 빌드 턴에서 "사용 가능한 스킬을
+      나열해줘"라고 물었을 때 그 스킬이 **보이지 않는다**. 보이면 격리 실패.
+- [ ] **양성 테스트**(우리 디렉토리가 실제로 읽히는지): 같은 SKILL.md를
+      `/opt/pathfinder/proto-config/skills/zzz-probe/SKILL.md`에 심고
+      (**`proto-config/.claude/skills/`가 아니다** — `CLAUDE_CONFIG_DIR`가 곧
+      `.claude` 역할이므로 그 아래 `.claude`를 또 만들면 SDK가 무시한다) 같은
+      질문에 그 스킬이 **보인다**. 빌더가 `skills="all"`이므로 코드 변경 없이
+      켜져야 한다. 두 테스트가 다 통과해야 격리가 증명된다 — 음성만 통과하면
+      "경로를 아예 잘못 줘서 아무것도 안 읽히는" 상태와 구별되지 않는다.
+      확인 후 프로브 스킬은 지운다.
+- [ ] **`skills="all"`의 부작용 확인**: 이 옵션은 SDK가 CLI에
+      `--allowedTools Skill`을 붙이게 만든다(확인된 동작). `bypassPermissions`
+      아래서 Bash/Write/Edit를 제한하지 않을 것으로 보지만 **검증되지 않았다** —
+      빌드 턴에서 에이전트가 실제로 파일을 쓰고 셸을 돌리는지 확인한다. 막히면
+      `builder.py`의 `skills="all"`을 제거하거나 명시적 이름 리스트로 바꾼다.
+- [ ] transcript 로컬 사본이 우리 경로에 쌓이는지:
+      `ls /opt/pathfinder/proto-config/projects/` → 빌드 후 디렉토리가 생긴다.
 
-- [ ] `backend/.env`(또는 실 프로세스 환경)에 4개 변수를 채운다(`backend/.env.example`
-      참고):
-      ```
-      PATHFINDER_VM_REGION=ap-northeast-1
-      PATHFINDER_VM_IMAGE_ID=<(a)의 ImageArn 출력>
-      PATHFINDER_VM_ROLE_ARN=<(a)의 ExecutionRoleArn 출력>
-      PATHFINDER_PROTO_ROOT=~/pathfinder-protos   # 기본값, 필요 시만 변경
-      ```
-- [ ] 백엔드를 (재)기동해 값이 반영됐는지 확인 — 미설정 상태로 세션을 시작하면
-      `POST .../session`이 502(부팅 실패)를 낸다(`vm.py`의 `run_microvm`이
-      `image_id=None`으로 호출되어 실패).
+## (b-2) 서비스가 non-root로 도는지 — 이게 깨지면 빌드가 전부 실패한다
 
-## (d) microvm control IAM 액션 실배포 검증 (doc-verified only)
+Claude Code는 euid==0에서 `bypassPermissions`를 거부한다(6d21e1f 실측). 그런데
+`--version`은 root에서도 성공하므로 **부팅·헬스체크는 모두 정상으로 보이고 첫 빌드
+턴에서야 502로 드러난다.** 따라서 반드시 별도로 확인한다.
 
-- [ ] 백엔드가 실행되는 롤(드릴 백엔드 롤 또는 호스팅 EC2 인스턴스 롤 — 둘 다
-      `infra/lib/backend-permissions.ts`의 `microvmControlStatements`를 이미 포함)
-      자격증명으로 `list_microvms`가 AccessDenied 없이 응답하는지 확인:
-      ```bash
-      aws lambda-microvms list-microvms --region ap-northeast-1
-      ```
-      IAM 액션 네임스페이스는 `lambda-microvms:`가 아니라 `lambda:`임에 유의
-      (`backend-permissions.ts` 주석 — boto3/CLI 서비스명과 IAM 액션 프리픽스가 다르다).
-      **이 항목은 doc-verified만 요구** — 별도 스택 재배포 없이, 이미 배포된 드릴/호스팅
-      스택의 롤이 이 정책을 갖고 있음을 위 CLI 콜 1회로 확인하면 충분하다.
+- [ ] `systemctl show pathfinder-backend -p User` → `User=pathfinder` (root 아님)
+- [ ] `ps -o user= -p $(systemctl show -p MainPID --value pathfinder-backend)`
+      → `pathfinder`
+- [ ] 앱 트리 소유권: `stat -c '%U %G' /opt/pathfinder /opt/pathfinder/protos
+      /opt/pathfinder/proto-config` → 셋 다 `pathfinder pathfinder`
+- [ ] 빌드 턴 중 `claude` 프로세스도 non-root:
+      `ps -eo user,args | grep "[c]laude"` → `pathfinder`
+- [ ] **실제 빌드 턴이 성공한다** — 위 네 항목이 통과해도 이것만이 최종 증거다
+      (root 문제는 턴에서만 드러나므로).
 
+## (c) 프로세스 자원 실측
+
+스펙 §4의 메모리 예산(claude 1건당 310–577MB)이 이 인스턴스에서도 맞는지 기록한다.
+
+- [ ] 빌드 1건 진행 중: `ps -eo rss,args | grep "[c]laude"` — RSS 합계를 기록
+- [ ] `next build` 피크 시점의 `free -m` 값을 기록
+- [ ] 세션을 닫고(또는 유휴 만료 후) `ps -eo args | grep -c "[c]laude"` → 0.
+      남아 있으면 `disconnect()`가 프로세스를 회수하지 못한 것이다.
+
+## (d) 동시 빌드 상한 (429)
+
+- [ ] 서로 다른 프로토타입 2개의 빌드 세션을 동시에 시작 → 둘 다 202
+- [ ] `GET /projects/{pid}/prototypes` 응답의 `active_builds`가 2, `max_builds`가 2
+- [ ] 3번째 프로토타입의 세션 시작 → **429**, `detail`이 한국어 안내
+      ("다른 팀이 프로토타입을 빌드하고 있습니다 …")
+- [ ] 프로토타입 탭에 상한 도달 안내 배너가 보인다
+- [ ] **이미 열린 세션의 대화 턴은 막히지 않는다** — 상한에 걸린 상태에서 진행 중인
+      세션에 메시지를 보내 정상 응답을 확인(상한은 세션 시작만 게이트한다)
+- [ ] 세션 하나를 종료 → `active_builds`가 1로 줄고 3번째 시작이 202
+
+---
 ## (e) 프로토타입 탭 — 빌드 세션 전체 왕복
 
 - [ ] 프론트 프로젝트의 "프로토타입" 탭(`/projects/{projectId}/prototypes`)을 연다.
       Discovery에서 나온 `PROTOTYPE-{slug}.md` 스펙이 카드로 보이는지 확인
       (`상태: 스펙만 있음`).
-- [ ] "빌드 시작" 클릭 → `POST /session` 202 확인(VM 부팅 폴링 상한 90초 — 이 안에
-      끝나야 함). 빌드 패널이 열리고 **첫 턴이 자동으로 스트리밍**되는지 확인
+- [ ] "빌드 시작" 클릭 → `POST /session` 202 확인(VM 부팅이 없어졌으므로 거의 즉시 —
+      claude 서브프로세스 기동 시간만 걸린다). 빌드 패널이 열리고 **첫 턴이 자동으로
+      스트리밍**되는지 확인
       (`events?text=__first__` → 서버가 `first_prompt()`로 치환).
 - [ ] 첫 턴 스트림 중 메시지/상태/파일 변경 이벤트가 채팅에 실시간으로 렌더되는지
       확인. 우측 "파일 변경 목록"이 `file_changed` 이벤트마다 누적되는지 확인.
@@ -101,20 +131,18 @@ fake/Stubber로 커버). 설계는
       (`session.py`의 `_EXCLUDED_SEGMENTS`). 카드 상태가 "빌드 완료"로 바뀌었는지도
       확인.
 
-## (f) 재빌드 — 번들 복원 확인
+## (f) 재빌드 — 빌드 디렉토리 연속성 확인
 
-- [ ] "빌드 완료" 카드에서 "다시 빌드" 클릭 → 새 세션 시작(이번엔 새 VM +
-      **이전 번들을 그 VM에 복원**) → 빌드 패널이 열리되 이번엔 **자동 첫 턴이
-      발화되지 않아야** 함(재시작이 아니라 신규 세션이므로 `autoStart=true`로
-      다시 열리는 게 맞음 — 실제로는 "다시 빌드"도 `handleBuild`를 그대로 타므로
-      `startSession`이 202를 반환하면 `autoStart=true`가 된다. 즉 이 경로에서는
-      **첫 턴이 다시 발화**되고, 그 첫 턴에서 에이전트가 기존 `/workspace/prototype/`
-      내용을 그대로 보고 이어서 작업한다 — 발화 자체가 재트리거되는 것과 번들
-      내용이 복원되는 것은 별개임에 유의).
-- [ ] 첫 턴에서 에이전트가 이전에 만든 파일들을 인지하고 있는지(예: "기존
-      README/코드를 확인했다"는 취지의 응답이나, 실제로 새 코드를 처음부터 다시
-      만들지 않는지)로 번들 복원을 간접 확인. 확실한 확인은 VM에 직접 파일 목록을
-      물어보게 하거나, 완료 후 S3 번들 diff가 "추가 변경만" 반영됐는지 보는 것.
+번들을 VM에 복원하는 단계는 없어졌다. 빌드 디렉토리가 로컬에 상주하므로 "다시 빌드"는
+그 디렉토리를 그대로 이어받는다. transcript까지 이어지는지는 (i)에서 별도로 본다.
+
+- [ ] "빌드 완료" 카드에서 "다시 빌드" 클릭 → 새 세션 시작 → 빌드 패널이 열리고
+      `autoStart=true`이므로 **첫 턴이 다시 발화**된다("다시 빌드"도 `handleBuild`를
+      그대로 타고, `startSession`이 202면 `autoStart=true`가 된다).
+- [ ] 그 첫 턴에서 에이전트가 이전에 만든 파일을 인지하는지 확인(예: "기존 README/코드를
+      확인했다"는 취지의 응답, 또는 새 코드를 처음부터 다시 만들지 않는 것).
+- [ ] 확실한 확인: SSM에서 `ls <PATHFINDER_PROTO_ROOT>/<pid>/<slug>/prototype/` 이
+      이전 빌드 산출물을 그대로 담고 있다(세션 종료가 디렉토리를 지우지 않는다).
 
 ## (g) 호스팅 — start → 프리뷰 → 프록시 하위 동작 → 로그 tail → stop
 
@@ -141,8 +169,12 @@ fake/Stubber로 커버). 설계는
 
 - [ ] 빌드 세션을 열어둔 채(카드가 "빌드 중") 아무 턴도 보내지 않고 30분(또는
       로컬 검증 시 `PrototypeSession(idle_seconds=...)`을 임시로 짧게 바꿔 재현)
-      대기 → 세션이 자동으로 `close()`되어(S3 번들 sync + VM stop) 카드가 "빌드
-      완료"로 복귀하는지 확인.
+      대기 → 세션이 자동으로 `close()`되어(빌더 `disconnect()` + 빌드 슬롯 반납) 카드가
+      "빌드 완료"로 복귀하는지 확인. **유휴 만료는 이제 맥락을 버리지 않는다** —
+      transcript는 S3에 남고 재개 시 이어붙는다((i) 참고).
+- [ ] 만료 후 `ps -eo args | grep -c "[c]laude"`가 줄어드는지 확인 — 이 타이머의 목적이
+      VM 비용 절감에서 **로컬 메모리 회수**로 바뀌었기 때문이다.
+- [ ] 만료 후 `GET /projects/{pid}/prototypes`의 `active_builds`가 감소한다.
       참고: `idle_seconds`는 env로 노출되어 있지 않다(코드 기본값 1800초) — 짧게
       테스트하려면 `backend/pathfinder/app.py`의 `proto_session_factory`가
       `PrototypeSession(...)`을 만드는 지점(`backend/pathfinder/proto/session.py`의
@@ -152,57 +184,72 @@ fake/Stubber로 커버). 설계는
       pending future가 소멸하고 세션이 닫히는지(질문 자체는 유실 — 스펙상 수용된
       동작).
 
-## (i) 백엔드 재시작 → 고아 VM 정리 로그
+## (i) 맥락 재개 — 이 작업의 핵심 검증
 
-- [ ] 빌드 세션이 살아있는(VM이 RUNNING인) 상태에서 백엔드 프로세스를 재시작한다.
-- [ ] 기동 로그에서 `terminated %d orphan prototype VM(s)`(`app.py`의
-      `_cleanup_orphan_vms`) 라인이 찍히는지 확인. `PATHFINDER_VM_IMAGE_ID`가
-      설정 안 됐거나 `fake-`로 시작하면 이 정리는 스킵된다(정상 — 로컬/테스트용
-      가드).
-- [ ] `aws lambda-microvms list-microvms --region ap-northeast-1`로, 재시작 전
-      떠 있던 VM(`imageArn`이 `PATHFINDER_VM_IMAGE_ID`와 일치하고 `RUNNING`이던 것)이
-      실제로 terminate됐는지 확인. 이 정리는 **태그가 아니라 imageArn 필터**를
-      쓴다(MicroVM에 태깅 API가 없음 — `_cleanup_orphan_vms` 주석).
-- [ ] 재시작으로 소멸한 인메모리 `proto_sessions` 레지스트리 때문에 프론트
-      카드가 일시적으로 "빌드 중"이 아니라 다른 상태로 보일 수 있음(인메모리
-      상태 소실은 알려진 설계 범위 — §6 에러 표 "백엔드 재시작" 행) — 새로고침
-      후 실제 S3/호스팅 상태 기준으로 정상 표시되는지 확인.
+VM 시절에는 세션이 닫히면 대화 맥락이 사라졌다. 이제 transcript가 S3로 미러링되고
+`resume`으로 이어붙는다. **이 항목이 통과하지 않으면 이 변경의 목적이 달성되지 않은 것**이다.
 
-## (j) 플랫폼 auto-suspend/auto-resume 사이클
+- [ ] 프로토타입을 빌드해 화면이 나오는 상태까지 진행한다(버튼·색 등 눈에 보이는 요소 포함).
+- [ ] 세션을 종료한다("빌드 완료").
+- [ ] S3에 transcript가 쌓였는지 확인:
+      `aws s3 ls s3://<BUCKET>/projects/<pid>/prototypes/<slug>/transcript/ --recursive`
+      → `<session-uuid>/main/00000001.jsonl` 형태의 오브젝트가 1개 이상
+- [ ] `prototypes/<slug>/session.json`에 UUID 형태의 `session_id`가 저장돼 있다.
+- [ ] **백엔드를 재시작한다**: `sudo systemctl restart pathfinder-backend`
+- [ ] 세션을 다시 시작하고 스펙을 언급하지 않은 채 요청한다 —
+      예: "방금 만든 화면에서 버튼 색만 바꿔줘".
+      에이전트가 **스펙을 다시 읽지 않고** 이전 구현을 참조해 수정하면 통과.
+      스펙부터 다시 읽거나 "어떤 화면인가요?"라고 되물으면 resume이 동작하지 않은 것이다.
+- [ ] 재개 후 첫 턴이 끝난 뒤 transcript 오브젝트 수가 **늘어났고**(줄지 않았고)
+      기존 `00000001.jsonl`이 덮어써지지 않았는지 확인한다(초기 구현의 회귀 지점).
 
-- [ ] `BootSpec.idle_policy()`가 보내는 `maxIdleDurationSeconds=300`(5분) 동안
-      VM에 아무 요청도 안 가면, AWS 플랫폼이 자체적으로 VM을 SUSPENDED로 전환하는지
-      `get-microvm`으로 확인:
-      ```bash
-      aws lambda-microvms get-microvm --microvm-identifier <id> --region ap-northeast-1
-      ```
-      (이 컨트롤러에는 `suspend()`/`resume()` 메서드가 없다 — 순전히 플랫폼이
-      idle-policy에 따라 자동으로 하는 동작이다.)
-- [ ] SUSPENDED 상태에서 그 VM의 엔드포인트로 다시 요청을 보내면(`autoResumeEnabled:
-      True`) 플랫폼이 투명하게 재기동해 정상 응답하는지 확인 — 백엔드/하네스 코드
-      변경 없이 이 사이클이 끝단(엔드포인트 안정성)에서 그대로 동작해야 한다.
-- [ ] `suspendedDurationSeconds=1800`(30분)을 넘기면 VM이 TERMINATED로 전환되는지도
-      확인(선택 — 대기 시간이 길다).
+## (j) in-place 호스팅 — npm install이 한 번만
 
-## (k) 409-reopen 시 빈 채팅 (알려진 제약)
+- [ ] 빌드 완료 직후 "호스팅 시작" → 로그 tail에 `npm install`이 **다시 돌지 않는다**
+      (빌드 중 이미 설치됨). 설치가 다시 돌면 in-place가 아니라 재다운로드 경로다.
+- [ ] 빌드 세션이 **살아있는 동안** 호스팅 시작 → **409** + 한국어 안내
+      (진행 중인 빌드를 지우지 않기 위한 가드)
+- [ ] 호스팅 중 빌드 디렉토리가 그대로인지: SSM에서
+      `ls <PATHFINDER_PROTO_ROOT>/<pid>/<slug>/` → `node_modules`와 소스가 함께 있다
 
-- [ ] 빌드 세션이 살아있는 카드에서 패널을 닫고(또는 닫지 않고) 다시 "세션
-      열기"를 클릭한다 → `POST /session`이 409(이미 활성 세션)를 반환 → 프론트가
-      이를 흡수하고(`autoStart=false`) 같은 세션의 패널을 새로 연다.
-- [ ] **알려진 제약을 확인**: 이때 채팅 타임라인(`items`)이 **비어서 시작**하는지
-      확인 — `usePrototypeStream`은 마운트마다 항상 빈 배열로 시작하고, Task 7
-      라우트에는 프로토타입 세션의 히스토리 복원 엔드포인트가 없다. 즉 서버 쪽
-      세션 상태(`status`, VM 핸들 등)는 유지되지만 **과거 턴의 텍스트/트레이스는
-      프론트에 재생되지 않는다** — 새로고침/재오픈 전 대화가 전부 사라진 것처럼
-      보이는 게 정상(회귀 아님).
-- [ ] 재오픈 시점에 마침 질문이 대기 중이었던 경우도 확인: 서버는
-      `_pending_interrupt_id`를 세션 객체에 들고 있지만, 재오픈한 패널은 그 상태를
-      가져올 방법이 없다(질문 위저드 mount 트리거는 오직 열린 이벤트 스트림의
-      `questions` 프레임뿐). 따라서 **질문 위저드도 다시 뜨지 않는다** — 사용자는
-      빈 채팅에 새 메시지를 입력하게 되는데, 이 경우 서버가 미해결 질문을 안은 채
-      새 턴을 받아들이는지/에러를 내는지 실제로 관찰해 기록한다(현재 구현상
-      `send_message`는 대기 중 질문 유무를 검사하지 않음 — 하네스/SDK 쪽의
-      실제 동작이 문서화되지 않은 부분이므로 이번 e2e에서 처음 확인).
+## (k) 바이너리 에셋 무손실
+
+- [ ] 이미지(png/jpg)나 폰트를 포함한 프로토타입을 빌드한다.
+- [ ] 프리뷰에서 그 이미지가 정상 렌더된다(깨진 이미지 아이콘이 아니다).
+- [ ] `.../archive` zip을 내려 이미지 파일을 열어본다 — 원본과 동일하게 열린다
+      (U+FFFD 손상이면 이미지 뷰어가 거부한다).
+
+## (l) 아티팩트 zip — 개발팀 인계
+
+- [ ] 카드의 "다운로드" 클릭 → zip 다운로드, 파일명에 slug가 들어간다
+      (한글 slug도 저장 실패 없이 받아진다)
+- [ ] zip 안에 `README`와 `package.json`이 있다.
+- [ ] zip 안에 `node_modules/`, `.next/`, `.git/`, `.proto-host.log`, `.proto-host.pid`가
+      **없다**.
+- [ ] zip 안에 `survey/`(익명 응답자 원문)와 `transcript/`(빌드 대화)가 **없다** —
+      외부 개발팀에 넘기는 파일이므로 이 항목은 프라이버시 요구사항이다.
+- [ ] 번들이 아직 없는 프로토타입의 `.../archive` → 404
+
+## (m) 고아 호스팅 프로세스 정리 (구 고아 VM 스윕의 대체물)
+
+빌드/호스팅 자식 프로세스는 이제 백엔드의 자식이다. 백엔드가 강제 종료되면 남는다.
+
+- [ ] 호스팅을 시작한 뒤 백엔드를 강제 종료: `sudo kill -9 $(systemctl show -p MainPID
+      --value pathfinder-backend)`
+- [ ] `ps -eo args | grep "[n]pm run"`으로 자식이 살아있는 것을 확인(정상 — 이게 문제 상황)
+- [ ] 백엔드를 재기동: `sudo systemctl start pathfinder-backend`
+- [ ] 로그에 `swept N orphan prototype hosting process(es)`가 찍힌다:
+      `journalctl -u pathfinder-backend -n 100 | grep orphan`
+- [ ] 그 포트가 해제됐다: `ss -ltnp | grep 400` → 해당 포트 없음
+- [ ] `.proto-host.pid` 파일이 정리됐다
+
+## (n) 업로드 키 — 동시 업로드가 서로를 덮지 않는지
+
+- [ ] 같은 파일명(예: `요구사항.md`)을 두 번 업로드 → 반환 경로가 서로 다른
+      `uploads/{uuid8}/...` 이고 **두 파일 모두** 문서 패널에서 열린다
+- [ ] `요구사항.pdf`와 `요구사항.xlsx`를 각각 업로드 → 키에 원본 확장자가 남아
+      어느 쪽이 어느 원본인지 구분된다
+- [ ] 첨부 칩에는 uuid 디렉토리가 노출되지 않고 원본 파일명만 보인다
 
 ## 검증 설문 (2026-07-25 추가)
 

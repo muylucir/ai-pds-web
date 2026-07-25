@@ -1,0 +1,3 @@
+# 프로토타입 빌드 에이전트용 스킬을 여기 둔다: skills/<name>/SKILL.md
+# PrototypeBuilder가 skills="all"로 열려 있으므로 여기 놓은 스킬은 자동 활성화된다.
+# (1차 스코프에서는 비어 있음 — 무엇을 넣을지는 별도 판단.)

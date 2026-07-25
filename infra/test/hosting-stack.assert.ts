@@ -98,14 +98,23 @@ testNetworkAndSecret();
 
 function testComputeAndRole() {
   const t = makeHosting();
-  // arm64 인스턴스 1대, IMDSv2 강제(HttpTokens required).
+  // x86_64 인스턴스 1대, IMDSv2 강제(HttpTokens required). Graviton은 쓰지
+  // 않는다 — SDK 번들 바이너리가 x86-64 ELF이고, 프로토타입이 설치하는
+  // 네이티브 npm 모듈도 x86_64 prebuilt를 받는다.
   t.hasResourceProperties('AWS::EC2::Instance', {
-    InstanceType: 't4g.medium',
+    InstanceType: 'm7i.2xlarge',
   });
   t.hasResourceProperties('AWS::EC2::LaunchTemplate', {
     LaunchTemplateData: Match.objectLike({
       MetadataOptions: Match.objectLike({ HttpTokens: 'required' }),
     }),
+  });
+  // 빌드가 이 박스로 들어오면서 프로토타입당 node_modules가 상주한다 — 20GB로는
+  // 부족하다.
+  t.hasResourceProperties('AWS::EC2::Instance', {
+    BlockDeviceMappings: Match.arrayWith([
+      Match.objectLike({ Ebs: Match.objectLike({ VolumeSize: 100 }) }),
+    ]),
   });
   // EIP 존재 + 연결.
   t.resourceCountIs('AWS::EC2::EIP', 1);
@@ -124,7 +133,11 @@ function testComputeAndRole() {
   const allActions = JSON.stringify(policies);
   assert.match(allActions, /secretsmanager:GetSecretValue/, 'instance role reads header secret');
   assert.match(allActions, /bedrock:InvokeModel/, 'instance role invokes bedrock');
-  console.log('OK  hosting: EC2 arm64 + EIP + instance role (bedrock/secret/ssm)');
+  // lambda-microvms 제어 권한은 VM 계층과 함께 사라졌다.
+  if (allActions.includes('lambda-microvms')) {
+    throw new Error('hosting: instance role still carries lambda-microvms permissions');
+  }
+  console.log('OK  hosting: EC2 x86_64 + 100GB EBS + EIP + instance role (bedrock/secret/ssm, no microvm)');
 }
 
 testComputeAndRole();

@@ -99,6 +99,49 @@ describe("PrototypeCard", () => {
     expect(screen.queryByRole("button", { name: "호스팅 시작" })).not.toBeInTheDocument();
   });
 
+  it("offers a download link once a bundle exists", () => {
+    render(
+      <PrototypeCard
+        info={info({ state: "built" })}
+        onBuild={() => {}}
+        onStartHost={() => {}}
+        onStopHost={() => {}}
+        archiveUrl="/api/projects/p1/prototypes/demo/archive"
+        busy={false}
+      />,
+    );
+    const link = screen.getByRole("link", { name: "다운로드" });
+    expect(link).toHaveAttribute("href", "/api/projects/p1/prototypes/demo/archive");
+  });
+
+  it("offers download while running too", () => {
+    render(
+      <PrototypeCard
+        info={info({ state: "running", port: 4001 })}
+        onBuild={() => {}}
+        onStartHost={() => {}}
+        onStopHost={() => {}}
+        archiveUrl="/api/x"
+        busy={false}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "다운로드" })).toBeInTheDocument();
+  });
+
+  it("hides download when there is nothing built yet", () => {
+    render(
+      <PrototypeCard
+        info={info({ state: "none" })}
+        onBuild={() => {}}
+        onStartHost={() => {}}
+        onStopHost={() => {}}
+        archiveUrl="/api/x"
+        busy={false}
+      />,
+    );
+    expect(screen.queryByRole("link", { name: "다운로드" })).toBeNull();
+  });
+
   it("busy disables every visible action button", () => {
     render(
       <PrototypeCard

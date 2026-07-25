@@ -8,3 +8,9 @@ files/
 
 # SDD scratch (progress ledger, briefs, review packages)
 .superpowers/
+
+# 빌드 에이전트 config 루트의 런타임 산출물 (씨앗 skills//agents/는 추적)
+proto-config/projects/
+proto-config/.credentials.json
+proto-config/.claude.json
+proto-config/settings.local.json

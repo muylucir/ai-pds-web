@@ -1,6 +1,7 @@
 # backend/tests/test_proto_host.py
 from __future__ import annotations
 
+import asyncio
 import socket
 from pathlib import Path
 
@@ -9,18 +10,20 @@ import pytest
 
 from pathfinder.proto.host import ProtoHost
 
-from fakes.in_memory_s3 import FakeS3Store
-
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "proto_npm_stub"
 SLUG = "todo-app"
 PID = "proj-1"
 
 
-async def _seed_bundle(s3: FakeS3Store, slug: str = SLUG, fixture_dir: Path = FIXTURE_DIR) -> None:
-    prefix = f"prototypes/{slug}/bundle/"
+def _seed_build_dir(root: Path, pid: str = PID, slug: str = SLUG,
+                    fixture_dir: Path = FIXTURE_DIR) -> Path:
+    target = root / pid / slug
+    target.mkdir(parents=True, exist_ok=True)
     for path in fixture_dir.iterdir():
         if path.is_file():
-            await s3.put(f"{prefix}{path.name}", path.read_text(encoding="utf-8"))
+            (target / path.name).write_text(path.read_text(encoding="utf-8"),
+                                            encoding="utf-8")
+    return target
 
 
 @pytest.fixture
@@ -29,9 +32,8 @@ def root(tmp_path):
 
 
 async def test_start_reaches_running_and_serves_http(root):
-    s3 = FakeS3Store()
-    await _seed_bundle(s3)
-    host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
+    _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
 
     info = await host.start(PID, SLUG)
 
@@ -56,9 +58,8 @@ async def test_port_scan_skips_occupied_port(root):
     occupied.bind(("127.0.0.1", 4001))
     occupied.listen(1)
     try:
-        s3 = FakeS3Store()
-        await _seed_bundle(s3)
-        host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
+        _seed_build_dir(root)
+        host = ProtoHost(root=root, port_range=range(4001, 4010))
 
         info = await host.start(PID, SLUG)
         try:
@@ -72,9 +73,8 @@ async def test_port_scan_skips_occupied_port(root):
 
 
 async def test_stop_terminates_process(root):
-    s3 = FakeS3Store()
-    await _seed_bundle(s3)
-    host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
+    _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
 
     info = await host.start(PID, SLUG)
     assert info.state == "running"
@@ -94,8 +94,7 @@ async def test_stop_terminates_process(root):
 
 
 async def test_stop_is_idempotent_for_unknown_slug(root):
-    s3 = FakeS3Store()
-    host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
     await host.stop(PID, "never-started")  # must not raise
 
 
@@ -106,9 +105,8 @@ async def test_broken_package_json_fails_with_npm_error_in_log(root, tmp_path):
         '{"name": "broken", scripts: {"start": "node server.js"', encoding="utf-8"
     )
 
-    s3 = FakeS3Store()
-    await _seed_bundle(s3, slug="broken-app", fixture_dir=broken_dir)
-    host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
+    _seed_build_dir(root, slug="broken-app", fixture_dir=broken_dir)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
 
     info = await host.start(PID, "broken-app")
 
@@ -117,39 +115,17 @@ async def test_broken_package_json_fails_with_npm_error_in_log(root, tmp_path):
 
 
 async def test_status_of_unknown_slug_returns_none(root):
-    s3 = FakeS3Store()
-    host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
     assert host.status(PID, "never-heard-of-it") is None
 
 
 async def test_start_raises_file_not_found_for_empty_bundle(root):
-    s3 = FakeS3Store()  # nothing seeded under prototypes/{slug}/bundle/
-    host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
+    host = ProtoHost(root=root, port_range=range(4001, 4010))  # nothing seeded
 
     with pytest.raises(FileNotFoundError):
         await host.start(PID, "no-such-slug")
 
     assert host.status(PID, "no-such-slug") is None
-
-
-async def test_unsafe_bundle_keys_are_skipped(root):
-    s3 = FakeS3Store()
-    prefix = f"prototypes/{SLUG}/bundle/"
-    # Legit files from the fixture...
-    await _seed_bundle(s3)
-    # ...plus unsafe keys that must be skipped rather than escaping target_dir.
-    await s3.put(f"{prefix}../escape.txt", "should not land outside target dir")
-    await s3.put(f"{prefix}nested/../../escape2.txt", "should not land outside target dir")
-
-    host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
-    info = await host.start(PID, SLUG)
-    try:
-        assert info.state == "running"
-        assert not (root / "escape.txt").exists()
-        assert not (root / "escape2.txt").exists()
-        assert not (root.parent / "escape.txt").exists()
-    finally:
-        await host.stop(PID, SLUG)
 
 
 async def test_build_script_failure_marks_failed(root, tmp_path):
@@ -163,9 +139,8 @@ async def test_build_script_failure_marks_failed(root, tmp_path):
         (FIXTURE_DIR / "server.js").read_text(encoding="utf-8"), encoding="utf-8"
     )
 
-    s3 = FakeS3Store()
-    await _seed_bundle(s3, slug="build-fail-app", fixture_dir=build_fail_dir)
-    host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
+    _seed_build_dir(root, slug="build-fail-app", fixture_dir=build_fail_dir)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
 
     info = await host.start(PID, "build-fail-app")
 
@@ -183,9 +158,8 @@ async def test_no_start_script_falls_back_to_dev(root, tmp_path):
         (FIXTURE_DIR / "server.js").read_text(encoding="utf-8"), encoding="utf-8"
     )
 
-    s3 = FakeS3Store()
-    await _seed_bundle(s3, slug="dev-app", fixture_dir=dev_dir)
-    host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
+    _seed_build_dir(root, slug="dev-app", fixture_dir=dev_dir)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
 
     info = await host.start(PID, "dev-app")
     try:
@@ -198,9 +172,8 @@ async def test_no_start_script_falls_back_to_dev(root, tmp_path):
 
 
 async def test_log_tail_returns_last_n_lines(root):
-    s3 = FakeS3Store()
-    await _seed_bundle(s3)
-    host = ProtoHost(s3=s3, root=root, port_range=range(4001, 4010))
+    _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
 
     info = await host.start(PID, SLUG)
     try:
@@ -208,5 +181,108 @@ async def test_log_tail_returns_last_n_lines(root):
         tail = host.log_tail(PID, SLUG, lines=5)
         assert isinstance(tail, str)
         assert len(tail.splitlines()) <= 5
+    finally:
+        await host.stop(PID, SLUG)
+
+
+# ---- in-place hosting (post-MicroVM): the build directory IS the served tree ----
+
+async def test_start_serves_an_existing_directory_without_wiping_it(root):
+    """The regression this replaces: start() used to rmtree the target and
+    re-download from S3. With the builder writing into that same directory,
+    that would delete a live build."""
+    target = _seed_build_dir(root)
+    marker = target / "AGENT_WORK_IN_PROGRESS.txt"
+    marker.write_text("do not delete me", encoding="utf-8")
+
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    info = await host.start(PID, SLUG)
+    try:
+        assert info.state == "running"
+        assert marker.read_text(encoding="utf-8") == "do not delete me"
+    finally:
+        await host.stop(PID, SLUG)
+
+
+async def test_start_404s_when_the_directory_does_not_exist(root):
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    with pytest.raises(FileNotFoundError):
+        await host.start(PID, "never-built")
+
+
+async def test_port_reservation_prevents_two_hosts_picking_one_port(root):
+    """The old scanner closed its probe socket before spawning, so two
+    concurrent starts could pick the same port. Reservations are recorded in
+    the registry and skipped by later scans."""
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    for slug in ("a", "b"):
+        _seed_build_dir(root, slug=slug)
+    try:
+        first = await host.start(PID, "a")
+        second = await host.start(PID, "b")
+        assert first.port != second.port
+    finally:
+        await host.stop(PID, "a")
+        await host.stop(PID, "b")
+
+
+async def test_start_writes_a_pid_file_and_removes_it_on_stop(root):
+    target = _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    await host.start(PID, SLUG)
+    pid_file = target / ".proto-host.pid"
+    assert pid_file.is_file()
+    assert pid_file.read_text(encoding="utf-8").strip().isdigit()
+
+    await host.stop(PID, SLUG)
+    assert not pid_file.exists()
+
+
+def test_sweep_orphans_removes_stale_pid_files(root):
+    """Backend restart leaves the previous run's children behind -- this is the
+    replacement for the orphan-VM sweep that went away with the VM layer. A pid
+    that no longer exists just has its file cleaned up."""
+    target = _seed_build_dir(root)
+    (target / ".proto-host.pid").write_text("99999999", encoding="utf-8")
+
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    swept = host.sweep_orphans()
+
+    assert swept == 1
+    assert not (target / ".proto-host.pid").exists()
+
+
+async def test_reserved_port_is_released_when_the_start_spawn_raises(root, monkeypatch):
+    """Regression: if the final `npm start` spawn itself raises (npm missing
+    from PATH, EMFILE, ...) rather than exiting nonzero, entry.port never gets
+    assigned -- so stop()'s `if entry.port is not None` release could never
+    fire, and the port stayed reserved for the ProtoHost's whole lifetime."""
+    _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    real_exec = asyncio.create_subprocess_exec
+
+    async def boom(program, *args, **kwargs):
+        if program == "npm" and "env" in kwargs:
+            # Only the final start-spawn passes `env=` (the install/build
+            # calls via _run_npm do not) -- fail exactly that call.
+            raise OSError("simulated spawn failure")
+        return await real_exec(program, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", boom)
+
+    with pytest.raises(OSError):
+        await host.start(PID, SLUG)
+
+    assert host._reserved == set()
+
+    # The port must be obtainable again by a subsequent start(), not
+    # permanently walled off.
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", real_exec)
+    info = await host.start(PID, SLUG)
+    try:
+        assert info.state == "running"
+        assert info.port in range(4001, 4010)
     finally:
         await host.stop(PID, SLUG)

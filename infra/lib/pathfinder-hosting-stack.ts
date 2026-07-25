@@ -8,7 +8,7 @@ import * as assets from 'aws-cdk-lib/aws-s3-assets';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as path from 'path';
-import { backendPolicyStatements, microvmControlStatements, MODEL } from './backend-permissions';
+import { backendPolicyStatements, MODEL } from './backend-permissions';
 import { renderUserData } from './user-data';
 
 export interface HostingStackProps extends cdk.StackProps {
@@ -16,13 +16,6 @@ export interface HostingStackProps extends cdk.StackProps {
   // 테스트 주입용. 미지정 시 배포 리전의 CloudFront origin-facing 프리픽스
   // 리스트를 fromLookup으로 자동 조회한다.
   cfPrefixListId?: string;
-  // 프로토타입 빌드 VM(VmStack) 설정 — 백엔드 systemd env로 전달된다.
-  // 크로스-리전 스택이라 CDK 참조로 자동 연결되지 않으므로, 배포자가
-  // VmStack 출력값을 컨텍스트/파라미터로 주입한다(미주입 시 프로토타입
-  // 빌드 기능만 비활성, 나머지 앱은 정상 동작).
-  vmImageId?: string;
-  vmRoleArn?: string;
-  vmRegion?: string;
 }
 
 export class PathfinderHostingStack extends cdk.Stack {
@@ -81,10 +74,6 @@ export class PathfinderHostingStack extends cdk.Stack {
     for (const stmt of backendPolicyStatements(props.artifactsBucket, account)) {
       role.addToPolicy(stmt);
     }
-    // Tokyo MicroVM 제어 — 인스턴스가 프로토타입 세션의 VM을 run/get/terminate.
-    for (const stmt of microvmControlStatements(account)) {
-      role.addToPolicy(stmt);
-    }
     headerSecret.grantRead(role);
 
     // --- 앱 코드 에셋(리포 zip) ---
@@ -108,20 +97,18 @@ export class PathfinderHostingStack extends cdk.Stack {
         model: MODEL,
         secretArn: headerSecret.secretArn,
         assetS3Uri: asset.s3ObjectUrl, // s3://bucket/key
-        vmRegion: props.vmRegion,
-        vmImageId: props.vmImageId,
-        vmRoleArn: props.vmRoleArn,
       }),
     );
 
-    // --- 인스턴스 (AL2023 arm64/Graviton, IMDSv2 강제) ---
+    // --- 인스턴스 (AL2023 x86_64, IMDSv2 강제) ---
     const instance = new ec2.Instance(this, 'Instance', {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MEDIUM),
-      machineImage: ec2.MachineImage.latestAmazonLinux2023({
-        cpuType: ec2.AmazonLinuxCpuType.ARM_64,
-      }),
+      // 프로토타입 빌드가 이 박스로 들어왔다: 세션마다 claude 서브프로세스
+      // (~300-500MB)가 상주하고 next build가 피크 2GB를 쓴다. Graviton은 쓰지
+      // 않는다(SDK 번들 바이너리가 x86-64).
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.M7I, ec2.InstanceSize.XLARGE2),
+      machineImage: ec2.MachineImage.latestAmazonLinux2023(),
       securityGroup: sg,
       role,
       userData,
@@ -129,7 +116,8 @@ export class PathfinderHostingStack extends cdk.Stack {
       userDataCausesReplacement: true, // 에셋(코드) 변경 시 깨끗한 재부트스트랩
       blockDevices: [{
         deviceName: '/dev/xvda',
-        volume: ec2.BlockDeviceVolume.ebs(20, { encrypted: true }),
+        // 프로토타입당 node_modules가 상주한다(실측 ~23MB/건이지만 여유를 둔다).
+        volume: ec2.BlockDeviceVolume.ebs(100, { encrypted: true }),
       }],
     });
 

@@ -327,12 +327,22 @@ ClaudeAgentOptions(
 소유 경로에 쌓여 프로젝트 삭제 시 함께 지울 수 있고, (c) 나중에 우리가 원하는
 스킬/서브에이전트를 넣을 자리가 남는다.
 
+**이 디렉토리가 곧 `.claude`다 — 그 아래 `.claude/`를 또 만들지 않는다.**
+`sessions.py:140-141`이 `CLAUDE_CONFIG_DIR`가 설정되면 그 경로를 그대로 config
+루트로 쓰고(`override / "projects"`), 미설정일 때만 `~/.claude`를 붙인다. 즉 이
+변수는 `.claude` 디렉토리를 **대체**한다(이름만 다른 같은 역할).
+`.credentials.json`·`.claude.json`도 이 디렉토리 **직속**에서 찾는다
+(`session_resume.py:335,362`). 안에 `.claude/`를 만들면 SDK는 그것을 보지 않는다.
+
 ```
-PATHFINDER_PROTO_CONFIG_DIR/     (기본 ~/pathfinder-proto-config)
+PATHFINDER_PROTO_CONFIG_DIR/     (= ~/.claude 와 동급. CDK 배포 시
+                                    /opt/pathfinder/proto-config, 로컬 기본
+                                    ~/pathfinder-proto-config)
   settings.json        ← 필요 시
-  skills/              ← 프로토타입 빌드용 스킬 (1차 스코프에서는 비움)
-  agents/              ← 서브에이전트 정의 (또는 코드로 agents= 사용)
-  projects/            ← transcript 로컬 사본 (S3SessionStore가 미러링)
+  skills/<name>/SKILL.md   ← 프로토타입 빌드용 스킬 (1차 스코프에서는 비움)
+  agents/<name>.md     ← 서브에이전트 정의 (또는 코드로 agents= 사용)
+  projects/            ← transcript 로컬 사본 (SDK가 자동 생성)
+  .credentials.json    ← SDK가 필요 시 여기서 읽는다 (Bedrock 경로에선 불필요)
 ```
 
 `setting_sources`를 `["user", "project"]`로 두는 이유: 여기서 "user"는 이제 우리
@@ -341,11 +351,24 @@ PATHFINDER_PROTO_CONFIG_DIR/     (기본 ~/pathfinder-proto-config)
 미설정 시 이 값을 기본으로 넣는다). "project"는 cwd(빌드 디렉토리)의 `.claude/`이므로 에이전트가
 스스로 만든 설정도 살아난다.
 
-**확장 지점**: Skill은 `skills=[...] | "all"`(`types.py:1999` — 이것만 설정하면
-`allowed_tools`·`setting_sources`를 SDK가 자동 처리), 서브에이전트는
-`agents={name: AgentDefinition(...)}`(`types.py:1981`, 파일 없이 코드로 정의).
-**1차 스코프에서는 둘 다 켜지 않고 자리만 확보한다** — 무엇이 프로토타입 빌드에
-유용한지는 별도 판단 사항.
+**Skill은 `skills="all"`로 켜져 있다**(2026-07-25 개정 — 최초 설계는 "자리만
+확보"였으나 사용자 결정으로 활성화). 스킬 파일은 레포의 `proto-config/skills/`에
+커밋하고, CDK 에셋 zip이 레포 루트를 `/opt/pathfinder/`로 전개하므로 별도 복사
+단계 없이 `/opt/pathfinder/proto-config/skills/`가 된다. **스킬 추가가 커밋 하나로
+끝나고 코드 변경이 필요 없다**는 것이 `"all"`을 고른 이유다.
+
+`"all"`이 안전한 이유는 config 디렉토리가 **우리 것**이기 때문이다 — 기본
+`~/.claude`였다면 호스트에 우연히 설치된 것까지 전부 켜졌을 것이다. 대가는
+"여기 파일을 넣는 순간 켜진다"는 점이므로, 실험용 스킬은 커밋하지 않는다.
+
+부작용 하나: `skills="all"`은 SDK가 CLI에 `--allowedTools Skill`을 붙이게 만든다
+(확인된 동작). `allowed_tools`를 우리가 절대 채우지 않는 이유가 이것 —
+채우면 그 리스트가 에이전트의 Bash/Write를 좁힐 수 있다. `bypassPermissions`
+아래서 제한이 없을 것으로 보지만 미검증이라 e2e 체크리스트 (b)에 확인 항목을 둔다.
+
+서브에이전트는 `agents={name: AgentDefinition(...)}`(`types.py:1981`)로 **파일 없이
+코드에** 정의할 수도 있다 — 1차 스코프에서는 정의하지 않고 `proto-config/agents/`
+자리만 둔다.
 
 주의: `skills`는 컨텍스트 필터이지 샌드박스가 아니다(`types.py:2013`). 목록에서
 숨겨도 파일은 디스크에 남고 Read/Bash로 접근 가능하다. `bypassPermissions`로 도는

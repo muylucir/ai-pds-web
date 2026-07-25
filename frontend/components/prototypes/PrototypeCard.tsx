@@ -30,6 +30,7 @@ export function PrototypeCard({
   onStopHost,
   onShowLogs,
   onOpenSurvey,
+  archiveUrl,
   busy,
 }: {
   info: PrototypeInfo;
@@ -39,6 +40,7 @@ export function PrototypeCard({
   onStopHost: () => void;
   onShowLogs?: () => void;
   onOpenSurvey?: () => void;
+  archiveUrl?: string;
   busy: boolean;
 }) {
   const badge = BADGE[info.state];
@@ -79,6 +81,7 @@ export function PrototypeCard({
             <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onBuild}>
               다시 빌드
             </button>
+            {archiveUrl && <ArchiveLink href={archiveUrl} />}
           </>
         )}
         {info.state === "running" && (
@@ -96,6 +99,7 @@ export function PrototypeCard({
                 로그
               </button>
             )}
+            {archiveUrl && <ArchiveLink href={archiveUrl} />}
           </>
         )}
         {info.state === "failed" && (
@@ -120,5 +124,16 @@ export function PrototypeCard({
         )}
       </div>
     </div>
+  );
+}
+
+/** An <a>, not a button: the dev-team handoff is a plain file download, so
+ *  the browser handles Content-Disposition and the filename (same shape as
+ *  the survey CSV link). */
+function ArchiveLink({ href }: { href: string }) {
+  return (
+    <a href={href} className={SECONDARY_BTN}>
+      다운로드
+    </a>
   );
 }

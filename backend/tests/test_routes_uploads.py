@@ -1,11 +1,14 @@
 import asyncio
 import io
+import re
 from fastapi.testclient import TestClient
 import pathfinder.app as app_module
 from pathfinder.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 
 client = TestClient(app_module.app)
+
+_KEY_RE = re.compile(r"^uploads/[0-9a-f]{8}/(.+)$")
 
 def _local_project(monkeypatch, pid):
     monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
@@ -14,25 +17,37 @@ def _local_project(monkeypatch, pid):
     monkeypatch.setattr(app_module, "make_workspace", make)
     client.post("/projects", json={"project_id": pid})
 
-def test_upload_md_saved_to_uploads_prefix(monkeypatch):
+def test_upload_md_saved_under_a_uuid_directory(monkeypatch):
     _local_project(monkeypatch, "u1")
     r = client.post("/projects/u1/uploads",
                     files={"file": ("의견.md", io.BytesIO("# 의견".encode()), "text/markdown")})
     assert r.status_code == 200
     body = r.json()
-    assert body["path"] == "uploads/의견.md" and body["truncated"] is False
+    m = _KEY_RE.match(body["path"])
+    assert m and m.group(1) == "의견.md.md"
+    assert body["truncated"] is False
     # 저장 확인: 같은 runner의 read_file 경유 (files API가 없으므로 workspace registry로 직접).
     # conftest의 _ensure_event_loop 오토유즈 픽스처가 루프를 보장한다.
     ws = app_module.registry.get("u1")
     assert asyncio.get_event_loop().run_until_complete(
-        ws.runner.read_file("uploads/의견.md")) == "# 의견"
+        ws.runner.read_file(body["path"])) == "# 의견"
 
-def test_upload_collision_gets_suffix(monkeypatch):
+def test_same_name_uploads_do_not_overwrite(monkeypatch):
+    """The regression: the old list-then-write path let two uploads of one
+    name land on the same key, and the later write silently deleted the
+    earlier file."""
     _local_project(monkeypatch, "u2")
+    paths = []
     for _ in range(2):
         r = client.post("/projects/u2/uploads",
                         files={"file": ("a.md", io.BytesIO(b"x"), "text/markdown")})
-    assert r.json()["path"] == "uploads/a-2.md"
+        paths.append(r.json()["path"])
+    assert paths[0] != paths[1]
+
+    ws = app_module.registry.get("u2")
+    loop = asyncio.get_event_loop()
+    for p in paths:
+        assert loop.run_until_complete(ws.runner.read_file(p)) == "x"
 
 def test_upload_rejects_big_and_unsupported(monkeypatch):
     _local_project(monkeypatch, "u3")

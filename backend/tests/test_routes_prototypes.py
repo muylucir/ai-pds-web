@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import pathfinder.app as app_module
 from pathfinder.models import AgentEvent
 from pathfinder.proto.host import HostInfo
+from pathfinder.proto.limits import BuildSemaphore
 from pathfinder.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
@@ -69,7 +70,7 @@ class FakeProtoHost:
         self.start_exc = None
         self.stopped: list[tuple[str, str]] = []
 
-    async def start(self, pid, slug):
+    async def start(self, pid, slug, cwd=None):
         if self.start_exc is not None:
             raise self.start_exc
         info = self.infos.get((pid, slug))
@@ -91,15 +92,11 @@ class FakeProtoHost:
 
 
 @pytest.fixture()
-def proto_env(monkeypatch):
+def proto_env(monkeypatch, tmp_path):
     """Registered project + fake S3/session/host wiring."""
     monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
-    # The session route refuses to start when no VM image is configured (a
-    # real deploy footgun that used to surface as an instant 502) — these
-    # tests inject a fake session factory, so satisfy the config guard.
-    monkeypatch.setenv("PATHFINDER_VM_IMAGE_ID",
-                       "arn:aws:lambda:ap-northeast-1:1:microvm-image:fake")
-    monkeypatch.setenv("PATHFINDER_VM_ROLE_ARN", "arn:aws:iam::1:role/fake")
+    # VM env vars are gone -- the session route's config guard now checks a
+    # build slot, not an image ARN.
     fake_s3 = FakeS3Store()
 
     async def fake_make_workspace(pid):
@@ -107,9 +104,16 @@ def proto_env(monkeypatch):
 
     monkeypatch.setattr(app_module, "make_workspace", fake_make_workspace)
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: fake_s3)
+    # list_prototypes' "built" signal reads the local build dir straight off
+    # disk (app_module._proto_root() / pid / slug) -- point it at tmp_path so
+    # tests never touch the real ~/pathfinder-protos, matching
+    # test_routes_prototypes_archive.py's fixture.
+    monkeypatch.setattr(app_module, "_proto_root", lambda: tmp_path)
 
     fake_host = FakeProtoHost()
     monkeypatch.setattr(app_module, "proto_host", lambda: fake_host)
+    monkeypatch.setattr(app_module, "build_semaphore",
+                        BuildSemaphore(max_concurrent=2))
 
     sessions_backup = dict(app_module.proto_sessions)
     app_module.proto_sessions.clear()
@@ -117,7 +121,7 @@ def proto_env(monkeypatch):
     resp = client.post("/projects", json={"project_id": PID})
     assert resp.status_code in (200, 201, 409)
 
-    yield {"s3": fake_s3, "host": fake_host}
+    yield {"s3": fake_s3, "host": fake_host, "root": tmp_path}
 
     app_module.proto_sessions.clear()
     app_module.proto_sessions.update(sessions_backup)
@@ -147,15 +151,80 @@ def test_list_unknown_project_404(proto_env):
 def test_list_state_none(proto_env):
     _seed_spec(proto_env["s3"])
     body = client.get(f"/projects/{PID}/prototypes").json()
-    assert body == [{"slug": SLUG, "spec_path": SPEC_KEY,
-                     "state": "none", "port": None}]
+    assert body["prototypes"] == [{"slug": SLUG, "spec_path": SPEC_KEY,
+                                   "state": "none", "port": None}]
 
 
 def test_list_state_built(proto_env):
     _seed_spec(proto_env["s3"])
     proto_env["s3"].blobs[f"prototypes/{SLUG}/bundle/package.json"] = "{}"
     body = client.get(f"/projects/{PID}/prototypes").json()
-    assert body[0]["state"] == "built"
+    assert body["prototypes"][0]["state"] == "built"
+
+
+def test_list_state_built_from_local_build_dir_with_nothing_in_s3(proto_env):
+    """The regression this guards: the in-process builder writes straight into
+    the LOCAL build dir (prototype/ subtree) and hosting serves it in place --
+    nothing writes the S3 prototypes/{slug}/bundle/ prefix anymore (that was
+    the deleted MicroVM's job). Against the old bundle-only check this card
+    would incorrectly come back "none", hiding hosting/download for a
+    perfectly finished prototype."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["state"] == "built"
+
+
+def test_list_state_not_built_when_only_the_spec_file_exists(proto_env):
+    """PrototypeSession.start() seeds the build dir with the spec .md file
+    before the agent does anything -- a directory containing only that (the
+    mirror-image bug) means a session merely STARTED, not that anything was
+    BUILT. Must not be reported as built."""
+    _seed_spec(proto_env["s3"])
+    spec_dir = (proto_env["root"] / PID / SLUG /
+               "aiplc-docs" / "discovery" / "prototypes" / SLUG)
+    spec_dir.mkdir(parents=True)
+    (spec_dir / f"PROTOTYPE-{SLUG}.md").write_text("# spec", encoding="utf-8")
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["state"] == "none"
+
+
+def test_list_state_building_wins_over_built(proto_env, monkeypatch):
+    """A live session still wins as building, even with real build output
+    already on disk from a prior successful run (e.g. a rebuild in
+    progress)."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+    session = FakePrototypeSession()
+    session.status = "building"
+    app_module.proto_sessions[(PID, SLUG)] = session
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["state"] == "building"
+
+
+def test_list_state_running_wins_over_built(proto_env):
+    """A running host still wins as running over a merely-built prototype."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="running", port=4007,
+                                                    log_tail="")
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["state"] == "running"
+    assert body["prototypes"][0]["port"] == 4007
 
 
 def test_list_state_building(proto_env, monkeypatch):
@@ -164,7 +233,7 @@ def test_list_state_building(proto_env, monkeypatch):
     session.status = "building"
     app_module.proto_sessions[(PID, SLUG)] = session
     body = client.get(f"/projects/{PID}/prototypes").json()
-    assert body[0]["state"] == "building"
+    assert body["prototypes"][0]["state"] == "building"
 
 
 def test_list_state_running_with_port(proto_env):
@@ -172,8 +241,16 @@ def test_list_state_running_with_port(proto_env):
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="running", port=4007,
                                                     log_tail="")
     body = client.get(f"/projects/{PID}/prototypes").json()
-    assert body[0]["state"] == "running"
-    assert body[0]["port"] == 4007
+    assert body["prototypes"][0]["state"] == "running"
+    assert body["prototypes"][0]["port"] == 4007
+
+
+def test_list_reports_build_capacity(proto_env):
+    _seed_spec(proto_env["s3"])
+    body = client.get(f"/projects/{PID}/prototypes").json()
+    assert body["active_builds"] == 0
+    assert body["max_builds"] == 2
+    assert [p["slug"] for p in body["prototypes"]] == [SLUG]
 
 
 # ---- session lifecycle ----
@@ -211,6 +288,37 @@ def test_session_start_boot_failure_502_sanitized(proto_env, monkeypatch):
     assert resp.status_code == 502
     assert "AKIA" not in resp.text
     assert resp.json()["detail"] == "session start failed"
+
+
+def test_session_start_429_when_the_cap_is_reached(proto_env, monkeypatch):
+    """Third concurrent build is refused, not queued -- and the message has to
+    say why, since a bare 429 reads as a bug to a workshop attendee."""
+    monkeypatch.setattr(app_module, "build_semaphore",
+                        BuildSemaphore(max_concurrent=1))
+    _seed_spec(proto_env["s3"])
+    _install_session_factory(monkeypatch, FakePrototypeSession())
+
+    first = client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    assert first.status_code == 202
+
+    proto_env["s3"].blobs[
+        "aiplc-docs/discovery/prototypes/other/PROTOTYPE-other.md"] = "# other"
+    second = client.post(f"/projects/{PID}/prototypes/other/session")
+    assert second.status_code == 429
+    assert "빌드" in second.json()["detail"]
+
+
+def test_session_start_releases_the_slot_when_start_fails(proto_env, monkeypatch):
+    """A failed start must not burn a slot permanently -- otherwise two bad
+    attempts wedge the whole backend at cap 2."""
+    sem = BuildSemaphore(max_concurrent=1)
+    monkeypatch.setattr(app_module, "build_semaphore", sem)
+    _seed_spec(proto_env["s3"])
+    _install_session_factory(
+        monkeypatch, FakePrototypeSession(start_exc=RuntimeError("boom")))
+
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/session").status_code == 502
+    assert sem.snapshot()["active_builds"] == 0
 
 
 def test_events_no_session_404(proto_env):
@@ -320,6 +428,19 @@ def test_host_start_failed_502_with_log(proto_env):
     assert "npm ERR!" in resp.json()["detail"]
 
 
+def test_host_start_409_while_a_build_session_is_live(proto_env, monkeypatch):
+    """Hosting used to wipe and re-download the directory; now it serves the
+    build directory in place, so starting it under a live build must be
+    refused rather than racing the agent."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+    assert resp.status_code == 409
+
+
 def test_host_status_and_stop(proto_env):
     assert client.get(
         f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 404
@@ -380,17 +501,6 @@ def test_proxy_502_when_not_running(proto_env):
     assert "start hosting first" in resp.text
 
 
-def test_session_start_503_when_vm_image_unset(proto_env, monkeypatch):
-    """Missing VM config must say so plainly (503), not fail deep inside boto3
-    and surface as an opaque 502 the instant the user clicks 빌드 시작 —
-    the exact symptom seen on the deployed EC2, whose systemd unit didn't
-    carry PATHFINDER_VM_IMAGE_ID."""
-    monkeypatch.delenv("PATHFINDER_VM_IMAGE_ID", raising=False)
-    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
-    assert resp.status_code == 503
-    assert "PATHFINDER_VM_IMAGE_ID" in resp.json()["detail"]
-
-
 def test_failed_session_does_not_wedge_prototype(proto_env, monkeypatch):
     """A failed session must neither block a restart (409) nor be served as a
     live stream (404): that combination wedged the prototype permanently —
@@ -422,25 +532,6 @@ def test_closed_session_also_allows_restart(proto_env, monkeypatch):
     assert client.post(
         f"/projects/{PID}/prototypes/{SLUG}/session").status_code == 202
     assert app_module.proto_sessions[(PID, SLUG)] is fresh
-
-
-def test_session_start_503_when_role_arn_malformed(proto_env, monkeypatch):
-    """A truncated/mangled ARN (e.g. a lost 'arn:' prefix from a hand-edited
-    .env) must name the offending variable, not surface as an opaque 502 from
-    deep inside botocore's ValidationException."""
-    monkeypatch.setenv("PATHFINDER_VM_ROLE_ARN",
-                       "aws:iam::939105814298:role/SomeRole")  # missing 'arn:'
-    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
-    assert resp.status_code == 503
-    detail = resp.json()["detail"]
-    assert "PATHFINDER_VM_ROLE_ARN" in detail and "valid ARN" in detail
-
-
-def test_session_start_503_when_role_arn_unset(proto_env, monkeypatch):
-    monkeypatch.delenv("PATHFINDER_VM_ROLE_ARN", raising=False)
-    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
-    assert resp.status_code == 503
-    assert "PATHFINDER_VM_ROLE_ARN" in resp.json()["detail"]
 
 
 def test_proxy_root_redirects_relatively_to_add_trailing_slash(

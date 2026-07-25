@@ -9,6 +9,7 @@ import { BuildPanel } from "@/components/prototypes/BuildPanel";
 import { SurveyPanel } from "@/components/prototypes/SurveyPanel";
 import {
   listPrototypes,
+  prototypeArchiveUrl,
   startSession,
   startHost,
   stopHost,
@@ -109,13 +110,21 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
 
         {list.loading && <p className="text-sm text-slate-400">불러오는 중…</p>}
         {list.error && <p className="text-sm text-rose-600">목록을 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>}
-        {list.data && list.data.length === 0 && (
+
+        {list.data && list.data.active_builds >= list.data.max_builds && (
+          <p className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            동시 빌드 상한({list.data.max_builds}건)에 도달했습니다 — 진행 중인 빌드가
+            끝나면 새 빌드를 시작할 수 있습니다.
+          </p>
+        )}
+
+        {list.data && list.data.prototypes.length === 0 && (
           <p className="text-sm text-slate-400">아직 프로토타입 스펙이 없습니다.</p>
         )}
 
-        {list.data && list.data.length > 0 && (
+        {list.data && list.data.prototypes.length > 0 && (
           <div className="grid gap-3">
-            {list.data.map((info) => (
+            {list.data.prototypes.map((info) => (
               <PrototypeCard
                 key={info.slug}
                 info={info}
@@ -128,6 +137,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 onOpenSurvey={() =>
                   setSurveySlug((cur) => (cur === info.slug ? null : info.slug))
                 }
+                archiveUrl={prototypeArchiveUrl(projectId, info.slug)}
               />
             ))}
           </div>

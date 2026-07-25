@@ -58,6 +58,11 @@ class AgentRunner:
         reject_unsafe(rel_path)
         await self._s3.put(rel_path, content)
 
+    async def write_file_if_absent(self, rel_path: str, content: str) -> bool:
+        """Upload path only: never silently replace an existing key."""
+        reject_unsafe(rel_path)
+        return await self._s3.put_if_absent(rel_path, content)
+
     async def list_files(self, glob: str) -> list[str]:
         reject_unsafe(glob)
         keys = await self._s3.list(_glob_prefix(glob))

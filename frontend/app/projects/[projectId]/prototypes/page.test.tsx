@@ -31,12 +31,19 @@ const PROTOTYPES = [
   { slug: "chat-widget", spec_path: "aiplc-docs/discovery/prototypes/chat-widget/PROTOTYPE-chat-widget.md", state: "running", port: 4021 },
 ];
 
+// GET /prototypes now answers {prototypes, active_builds, max_builds}
+// (Task 7) rather than a bare array; this wraps the fixture so each test
+// site doesn't have to restate the capacity fields.
+function listing(prototypes = PROTOTYPES, activeBuilds = 0, maxBuilds = 2) {
+  return { prototypes, active_builds: activeBuilds, max_builds: maxBuilds };
+}
+
 const params = Promise.resolve({ projectId: "p1" });
 
 describe("Prototypes page", () => {
   it("renders cards from the prototype list", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(PROTOTYPES)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
     );
     mockStream();
     await act(async () => {
@@ -49,7 +56,7 @@ describe("Prototypes page", () => {
 
   it("shows an empty state when there are no prototype specs", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json([])),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing([]))),
     );
     mockStream();
     await act(async () => {
@@ -60,7 +67,7 @@ describe("Prototypes page", () => {
 
   it("onBuild with a fresh 202 session opens BuildPanel with autoStart (fires the first-build turn)", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(PROTOTYPES)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
       http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/session`, () =>
         HttpResponse.json({ status: "starting" }, { status: 202 }),
       ),
@@ -81,7 +88,7 @@ describe("Prototypes page", () => {
 
   it("onBuild against an already-live session (409) opens BuildPanel WITHOUT autoStart", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(PROTOTYPES)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
       http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/session`, () =>
         HttpResponse.json({ detail: "build session already active" }, { status: 409 }),
       ),
@@ -102,7 +109,7 @@ describe("Prototypes page", () => {
 
   it("onShowLogs fetches host status and renders log_tail in a <pre>", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(PROTOTYPES)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
       http.get(`${API_BASE_URL}/projects/p1/prototypes/chat-widget/host`, () =>
         HttpResponse.json({ state: "running", port: 4021, log_tail: "listening on 4021" }),
       ),
@@ -118,13 +125,54 @@ describe("Prototypes page", () => {
 
     expect(await screen.findByText("listening on 4021")).toBeInTheDocument();
   });
+
+  it("warns when the concurrent-build cap is reached", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(PROTOTYPES, 2, 2))),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    expect(await screen.findByText(/동시 빌드 상한\(2건\)에 도달했습니다/)).toBeInTheDocument();
+  });
+
+  it("does not show the cap warning when builds are below the limit", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(PROTOTYPES, 0, 2))),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    await screen.findByText("todo-app");
+    expect(screen.queryByText(/동시 빌드 상한/)).not.toBeInTheDocument();
+  });
+
+  it("wires each card's download link to prototypeArchiveUrl", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () =>
+        HttpResponse.json(
+          listing([
+            { slug: "todo-app", spec_path: "s.md", state: "built", port: null },
+          ]),
+        ),
+      ),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    const link = await screen.findByRole("link", { name: "다운로드" });
+    expect(link).toHaveAttribute("href", `${API_BASE_URL}/projects/p1/prototypes/todo-app/archive`);
+  });
 });
 
 describe("survey panel reachability", () => {
   it("stays hidden until the card's 설문 button is clicked", async () => {
     mockStream();
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(PROTOTYPES)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
       http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/survey`,
         () => new HttpResponse(null, { status: 404 })),
     );
@@ -148,7 +196,7 @@ describe("survey panel reachability", () => {
     const startBuild = vi.fn();
     mockStream({ startBuild });
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(PROTOTYPES)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
       http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/survey`,
         () => new HttpResponse(null, { status: 404 })),
     );
@@ -164,7 +212,7 @@ describe("survey panel reachability", () => {
   it("toggles the panel closed on a second click", async () => {
     mockStream();
     server.use(
-      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(PROTOTYPES)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
       http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/survey`,
         () => new HttpResponse(null, { status: 404 })),
     );
