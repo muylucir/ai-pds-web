@@ -2,6 +2,9 @@ import * as assert from 'node:assert';
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { PathfinderAuthStack } from '../lib/pathfinder-auth-stack';
+import {
+  GROUP_ADMIN, GROUP_PM, SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
+} from '../lib/auth-client-config';
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 
@@ -84,19 +87,89 @@ assert.ok(
 );
 
 // --- 시딩: 계정 2개 × 단계 3개 = 커스텀 리소스 6개. ---
-const customResources = t.findResources('Custom::AWS');
-assert.strictEqual(
-  Object.keys(customResources).length, 6,
-  `expected 6 seed custom resources, got ${Object.keys(customResources).length}`,
-);
-const bodies = JSON.stringify(customResources);
-for (const email of ['admin@pathfinder.local', 'pm@pathfinder.local']) {
-  assert.ok(bodies.includes(email), `seed user ${email} must be created`);
+// AwsCustomResource가 만드는 각 Custom::AWS의 Create/Update 필드는 SDK 호출을
+// 기술하는 JSON을 Fn::Join으로 조립한 값이다(UserPoolId 부분만 { Ref: ... }).
+// 문자열을 이어붙인 뒤 파싱하면 실제 service/action/parameters를 얻을 수
+// 있다 — 이걸 파싱해야 "어떤 리소스가 어떤 계정·그룹과 쌍을 이루는지"를
+// 검증할 수 있다. 전부를 JSON.stringify해 하나의 문자열로 뭉친 뒤
+// includes()로 찾으면, admin/pm의 그룹이 서로 바뀌어도, Permanent가
+// 빠져도, SUPPRESS가 한쪽에만 있어도 통과해버린다 — 그래서 리소스별로
+// 파싱해서 확인한다.
+function parseSdkCall(field: any): { action: string; parameters: any } | undefined {
+  if (!field) return undefined;
+  const parts = field['Fn::Join'][1];
+  const joined = parts.map((p: any) => (typeof p === 'string' ? p : '')).join('');
+  return JSON.parse(joined);
 }
-assert.ok(bodies.includes('PathFinder2026!@'), 'seed password must be set');
-assert.ok(bodies.includes('adminSetUserPassword'), 'password must be made permanent');
-assert.ok(bodies.includes('adminAddUserToGroup'), 'seed users must be grouped');
-assert.ok(bodies.includes('SUPPRESS'), 'invite emails must be suppressed');
+
+const customResources = t.findResources('Custom::AWS');
+const resourceList = Object.values(customResources);
+assert.strictEqual(
+  resourceList.length, 6,
+  `expected 6 seed custom resources, got ${resourceList.length}`,
+);
+
+const calls = resourceList.map((r: any) => ({
+  create: parseSdkCall(r.Properties.Create),
+  update: parseSdkCall(r.Properties.Update),
+}));
+
+function assertSeeding(email: string, group: string) {
+  // 1) adminCreateUser: 이 계정의 Username으로, 초대 메일 억제, 이메일 검증됨.
+  const createCalls = calls
+    .map((c) => c.create)
+    .filter((c) => c?.action === 'adminCreateUser' && c?.parameters.Username === email);
+  assert.strictEqual(
+    createCalls.length, 1,
+    `expected exactly 1 adminCreateUser for ${email}, got ${createCalls.length}`,
+  );
+  assert.strictEqual(
+    createCalls[0]!.parameters.MessageAction, 'SUPPRESS',
+    `${email}: invite email must be suppressed`,
+  );
+  const emailVerified = createCalls[0]!.parameters.UserAttributes.find(
+    (a: any) => a.Name === 'email_verified',
+  );
+  assert.strictEqual(
+    emailVerified?.Value, 'true',
+    `${email}: email_verified must be true`,
+  );
+
+  // 2) adminSetUserPassword: 이 계정의 Username으로, 시드 비밀번호, Permanent — 아니면
+  // FORCE_CHANGE_PASSWORD 상태로 남아 강제 비밀번호 변경을 요구한다.
+  const passwordCalls = calls
+    .map((c) => c.create)
+    .filter((c) => c?.action === 'adminSetUserPassword' && c?.parameters.Username === email);
+  assert.strictEqual(
+    passwordCalls.length, 1,
+    `expected exactly 1 adminSetUserPassword for ${email}, got ${passwordCalls.length}`,
+  );
+  assert.strictEqual(
+    passwordCalls[0]!.parameters.Password, SEED_PASSWORD,
+    `${email}: seed password must be set`,
+  );
+  assert.strictEqual(
+    passwordCalls[0]!.parameters.Permanent, true,
+    `${email}: password must be made permanent (no forced change)`,
+  );
+
+  // 3) adminAddUserToGroup: 이 계정의 Username이 정확히 이 그룹과 쌍을 이뤄야
+  // 한다 — 역할의 유일한 출처이므로 admin/pm이 뒤바뀌면 그대로 권한 사고다.
+  const groupCalls = calls
+    .map((c) => c.create)
+    .filter((c) => c?.action === 'adminAddUserToGroup' && c?.parameters.Username === email);
+  assert.strictEqual(
+    groupCalls.length, 1,
+    `expected exactly 1 adminAddUserToGroup for ${email}, got ${groupCalls.length}`,
+  );
+  assert.strictEqual(
+    groupCalls[0]!.parameters.GroupName, group,
+    `${email}: must be added to group '${group}', got '${groupCalls[0]!.parameters.GroupName}'`,
+  );
+}
+
+assertSeeding(SEED_ADMIN_EMAIL, GROUP_ADMIN);
+assertSeeding(SEED_PM_EMAIL, GROUP_PM);
 
 // --- 출력: 백엔드/프론트 env로 쓰인다. ---
 const outputs = t.findOutputs('*');
@@ -114,4 +187,4 @@ assert.ok(
   `hostedUiDomain must be the full auth domain, got ${stack.hostedUiDomain}`,
 );
 
-console.log('OK  auth stack: no-self-signup + alias username + groups + managed login v2 + code-only client + 6 seed resources');
+console.log('OK  auth stack: no-self-signup + alias username + groups + managed login v2 + code-only client + per-account seed pairing (create/suppress, permanent password, correct group)');
