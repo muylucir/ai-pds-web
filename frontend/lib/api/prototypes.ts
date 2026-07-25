@@ -63,8 +63,23 @@ function sessionPath(pid: string, slug: string, suffix = ""): string {
   return `/projects/${encodeURIComponent(pid)}/prototypes/${encodeURIComponent(slug)}${suffix}`;
 }
 
-export async function listPrototypes(pid: string): Promise<PrototypeInfo[]> {
-  return request<PrototypeInfo[]>(`/projects/${encodeURIComponent(pid)}/prototypes`);
+export interface PrototypeListing {
+  prototypes: PrototypeInfo[];
+  /** Concurrent builds in flight backend-wide, and the cap. New with
+   *  in-process builds: MicroVM builds had no ceiling, so a card needs to be
+   *  able to explain a 429 before the user clicks. */
+  active_builds: number;
+  max_builds: number;
+}
+
+export async function listPrototypes(pid: string): Promise<PrototypeListing> {
+  return request<PrototypeListing>(`/projects/${encodeURIComponent(pid)}/prototypes`);
+}
+
+/** Plain URL, not a Blob fetch: the browser handles Content-Disposition and
+ *  the filename, matching how surveyCsvUrl is consumed via <a href>. */
+export function prototypeArchiveUrl(pid: string, slug: string): string {
+  return `${API_BASE_URL}${sessionPath(pid, slug, "/archive")}`;
 }
 
 export async function startSession(pid: string, slug: string): Promise<{ status: string }> {
