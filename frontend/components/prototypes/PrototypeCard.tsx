@@ -29,6 +29,7 @@ export function PrototypeCard({
   onStartHost,
   onStopHost,
   onShowLogs,
+  onOpenSurvey,
   busy,
 }: {
   info: PrototypeInfo;
@@ -37,6 +38,7 @@ export function PrototypeCard({
   onStartHost: () => void;
   onStopHost: () => void;
   onShowLogs?: () => void;
+  onOpenSurvey?: () => void;
   busy: boolean;
 }) {
   const badge = BADGE[info.state];
@@ -107,6 +109,14 @@ export function PrototypeCard({
               </button>
             )}
           </>
+        )}
+        {/* 설문은 빌드 상태와 무관하게 항상 열 수 있다: 스펙만 있는 단계에서
+            문항을 미리 만들 수도 있고, 호스팅이 끝난 뒤 응답을 집계할 수도
+            있다. 빌드 드로어와 별개의 상태로 열리므로 서로 가리지 않는다. */}
+        {onOpenSurvey && (
+          <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onOpenSurvey}>
+            설문
+          </button>
         )}
       </div>
     </div>

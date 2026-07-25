@@ -119,3 +119,61 @@ describe("Prototypes page", () => {
     expect(await screen.findByText("listening on 4021")).toBeInTheDocument();
   });
 });
+
+describe("survey panel reachability", () => {
+  it("stays hidden until the card's 설문 button is clicked", async () => {
+    mockStream();
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(PROTOTYPES)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/survey`,
+        () => new HttpResponse(null, { status: 404 })),
+    );
+    render(<PrototypesPage params={params} />);
+
+    // Before any click there is no survey panel at all.
+    expect(await screen.findByText("todo-app")).toBeInTheDocument();
+    expect(screen.queryByText("검증 설문")).not.toBeInTheDocument();
+
+    const surveyButtons = screen.getAllByRole("button", { name: "설문" });
+    await userEvent.click(surveyButtons[0]);
+
+    // The panel is now rendered in the page body — NOT behind the build
+    // drawer, which is a full-screen fixed overlay. Regression guard: the
+    // panel used to share the drawer's openSlug condition, so it only ever
+    // rendered underneath the drawer and was unreachable.
+    expect(await screen.findByText("검증 설문")).toBeInTheDocument();
+  });
+
+  it("does not open the build drawer when 설문 is clicked", async () => {
+    const startBuild = vi.fn();
+    mockStream({ startBuild });
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(PROTOTYPES)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/survey`,
+        () => new HttpResponse(null, { status: 404 })),
+    );
+    render(<PrototypesPage params={params} />);
+
+    await userEvent.click((await screen.findAllByRole("button", { name: "설문" }))[0]);
+    await screen.findByText("검증 설문");
+    // No build session was started, and the drawer's own controls are absent.
+    expect(startBuild).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /완료/ })).not.toBeInTheDocument();
+  });
+
+  it("toggles the panel closed on a second click", async () => {
+    mockStream();
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(PROTOTYPES)),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/survey`,
+        () => new HttpResponse(null, { status: 404 })),
+    );
+    render(<PrototypesPage params={params} />);
+
+    const btn = (await screen.findAllByRole("button", { name: "설문" }))[0];
+    await userEvent.click(btn);
+    expect(await screen.findByText("검증 설문")).toBeInTheDocument();
+    await userEvent.click(btn);
+    expect(screen.queryByText("검증 설문")).not.toBeInTheDocument();
+  });
+});

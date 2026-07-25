@@ -29,6 +29,11 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   const [openSlug, setOpenSlug] = useState<string | null>(null);
   const [openAutoStart, setOpenAutoStart] = useState(false);
   const [busySlug, setBusySlug] = useState<string | null>(null);
+  // Which card's survey panel is open. Deliberately SEPARATE from openSlug:
+  // the build drawer is a full-screen `fixed inset-0` overlay, so sharing the
+  // condition meant the survey panel only ever rendered underneath it — i.e.
+  // it was unreachable.
+  const [surveySlug, setSurveySlug] = useState<string | null>(null);
   const [logsSlug, setLogsSlug] = useState<string | null>(null);
   const [logsText, setLogsText] = useState<string | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
@@ -120,12 +125,19 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 onStopHost={() => handleStopHost(info.slug)}
                 onOpenPreview={info.state === "running" ? () => handleOpenPreview(info.slug) : undefined}
                 onShowLogs={() => handleShowLogs(info.slug)}
+                onOpenSurvey={() =>
+                  setSurveySlug((cur) => (cur === info.slug ? null : info.slug))
+                }
               />
             ))}
           </div>
         )}
 
-        {openSlug && <SurveyPanel projectId={projectId} slug={openSlug} />}
+        {surveySlug && (
+          <div className="mt-8 border-t border-slate-200 pt-6">
+            <SurveyPanel projectId={projectId} slug={surveySlug} />
+          </div>
+        )}
       </main>
 
       {openSlug && (
