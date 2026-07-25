@@ -134,3 +134,21 @@ def test_rollup_failure_does_not_fail_the_response(env, monkeypatch):
     keys = [k for k in env["project_s3"].blobs
             if k.startswith(responses_prefix(SLUG))]
     assert len(keys) == 1
+
+
+def test_post_rejects_oversized_body_before_parsing(env):
+    """The authoritative byte cap runs after Starlette buffers and parses the
+    body, so an anonymous caller could make us parse megabytes before the
+    400. A Content-Length short-circuit (same pattern as routes/uploads.py)
+    rejects it up front."""
+    huge = "가" * 200_000  # ~600KB utf-8, far over MAX_BODY_BYTES
+    resp = client.post(f"/survey/{TOKEN}", json={"answers": {"q3": huge}})
+    assert resp.status_code == 413
+    assert resp.json()["detail"] == "response too large"
+
+
+def test_post_still_accepts_a_normal_sized_body(env):
+    """The pre-check must not reject legitimate submissions."""
+    resp = client.post(f"/survey/{TOKEN}",
+                       json={"answers": {"q1": 4, "q2": "A", "q3": "좋았습니다"}})
+    assert resp.status_code == 204

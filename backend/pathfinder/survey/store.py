@@ -50,6 +50,26 @@ def questionnaire_md_key(slug: str) -> str:
     return f"aiplc-docs/discovery/prototypes/{slug}/validation-questionnaire.md"
 
 
+#: Leading characters a spreadsheet treats as the start of a formula.
+_FORMULA_LEADERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value):
+    """Neutralize spreadsheet formulas in respondent-authored text.
+
+    Answer text comes from anonymous respondents, and the CSV's whole purpose
+    is to be opened in Excel/Sheets by the PM (the rule's Step 6 handoff).
+    RFC-4180 quoting — which csv.writer already does — does NOT stop a cell
+    starting with `=`/`+`/`-`/`@` from being evaluated as a formula there
+    (CWE-1236), so one malicious answer could exfiltrate data or chain
+    commands on the PM's machine. Prefixing with an apostrophe makes the
+    spreadsheet treat it as literal text; the raw answer is unchanged in S3.
+    """
+    if isinstance(value, str) and value.startswith(_FORMULA_LEADERS):
+        return "'" + value
+    return value
+
+
 def _to_markdown(qn: Questionnaire) -> str:
     lines = [f"# {qn.title}", "", f"**검증 가설**: {qn.hypothesis}", ""]
     for i, q in enumerate(qn.questions, start=1):
@@ -187,5 +207,6 @@ class SurveyStore:
                         [q.text for q in qn.questions])
         for r in sorted(responses, key=lambda x: x.submitted_at):
             writer.writerow([r.response_id, r.submitted_at] +
-                            [r.answers.get(q.id, "") for q in qn.questions])
+                            [_csv_safe(r.answers.get(q.id, ""))
+                             for q in qn.questions])
         return buf.getvalue()

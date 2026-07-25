@@ -134,3 +134,38 @@ async def test_dashboard_read_is_constant_s3_calls():
     project_s3.get = counting_get
     await store.get_rollup(NOW)
     assert gets == [rollup_key(SLUG)]     # no per-response gets
+
+
+async def test_responses_csv_neutralizes_spreadsheet_formulas(tmp_path):
+    """Respondent text is CSV-quoted but must ALSO be formula-neutralized:
+    the CSV exists to be opened in Excel/Sheets by the PM, where a cell
+    starting with = + - @ is evaluated (CWE-1236). One malicious anonymous
+    answer would otherwise run a formula on the PM's machine."""
+    store, project_s3, _ = await _seeded(0)
+    payloads = ['=cmd|" /C calc"!A0', "+1+1", "-2+3", "@SUM(A1:A9)", "\tTAB",
+                '=HYPERLINK("http://evil","click")']
+    for i, payload in enumerate(payloads):
+        await store.append_response(SurveyResponse(
+            response_id=f"f{i}", submitted_at=f"2026-07-25T00:00:{i:02d}Z",
+            answers={"q1": 4, "q2": payload}))
+
+    import csv as _csv
+    import io
+    rows = list(_csv.reader(io.StringIO(await store.responses_csv())))
+    answers = [row[-1] for row in rows[1:]]
+    assert len(answers) == len(payloads)
+    for cell, original in zip(answers, payloads):
+        assert cell == "'" + original          # apostrophe-prefixed
+        assert not cell.startswith(("=", "+", "-", "@", "\t", "\r"))
+
+
+async def test_responses_csv_leaves_ordinary_text_untouched(tmp_path):
+    """The guard must not mangle normal answers — only formula leaders."""
+    store, _, _ = await _seeded(0)
+    await store.append_response(SurveyResponse(
+        response_id="ok", submitted_at="2026-07-25T00:00:00Z",
+        answers={"q1": 5, "q2": "요약이 정확했습니다 (2-3배 빠름)"}))
+    import csv as _csv
+    import io
+    rows = list(_csv.reader(io.StringIO(await store.responses_csv())))
+    assert rows[1][-1] == "요약이 정확했습니다 (2-3배 빠름)"

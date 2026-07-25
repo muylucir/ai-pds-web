@@ -12,7 +12,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from starlette.responses import Response
 
@@ -99,8 +99,24 @@ def _validate_answers(qn: Questionnaire, answers: dict) -> dict:
     return clean
 
 
+def _reject_oversized_body(request: Request) -> None:
+    """Cheap pre-parse guard on the one unauthenticated write path.
+
+    The byte cap in _validate_answers is authoritative, but it only runs
+    after Starlette has buffered and json-parsed the whole body — so an
+    anonymous caller could make us parse megabytes before the 400. Same
+    Content-Length short-circuit routes/uploads.py already uses: it is
+    client-controlled and therefore not a security boundary, just a way to
+    stop honest oversized bodies from being parsed at all.
+    """
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > MAX_BODY_BYTES * 2:
+        raise HTTPException(status_code=413, detail="response too large")
+
+
 @router.post("/survey/{token}", status_code=204)
-async def public_submit_survey(token: str, body: AnswersBody):
+async def public_submit_survey(token: str, body: AnswersBody, request: Request):
+    _reject_oversized_body(request)
     store, qn = await _resolve(token)
     if await store.response_count() >= MAX_RESPONSES:
         raise HTTPException(status_code=429,
