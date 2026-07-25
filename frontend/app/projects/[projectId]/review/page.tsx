@@ -1,5 +1,6 @@
 "use client";
 import { use, useEffect, useState } from "react";
+import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import { DocTree } from "@/components/review/DocTree";
 import { DocumentPanel } from "@/components/review/DocumentPanel";
@@ -10,12 +11,12 @@ import {
   listArtifacts,
   readArtifact,
   getAudit,
-  getState,
   postMessage,
   downloadArtifactsArchive,
   ApiError,
 } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
+import { deriveApprovalState } from "@/lib/approvalState";
 
 // 클라이언트 Blob 다운로드 — 백엔드 왕복 없이 현재 로드된 마크다운을 저장한다.
 function downloadMarkdown(path: string, content: string) {
@@ -49,10 +50,10 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
 
   const tree = useAsync(() => listArtifacts(projectId), [projectId]);
   const audit = useAsync(() => getAudit(projectId), [projectId]);
-  // Discovery Document 스테이지 상태 → 게이트 배지(초안 검토 중 / 승인 완료).
-  // state 로드 실패는 배지 미표시로 강등(게이트 동작 자체는 영향 없음).
-  const state = useAsync(() => getState(projectId).catch(() => null), [projectId]);
-  const docStage = state.data?.stages.find((s) => s.name === "Discovery Document");
+  // 승인 여부는 감사 로그에서 도출한다 — aiplc-state.md에는 "Discovery
+  // Document" 스테이지가 없다(룰도 에이전트도 그런 스테이지를 쓰지 않아 예전
+  // 조회는 항상 undefined였다). 승인 후 문서가 바뀌면 다시 미승인으로 돌아간다.
+  const approval = deriveApprovalState(audit.data ?? []);
 
   // Default selection: once the artifact tree loads, select
   // discovery-document.md if present. Guarded by `selected === null` so a
@@ -119,17 +120,36 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
     <>
       <AppHeader activeTab="review" projectId={projectId} />
       <main className="max-w-[1720px] mx-auto px-6 py-8">
-        {isDiscoveryDocument && !contentLoadError && (
+        {isDiscoveryDocument && !contentLoadError && !approval.approved && (
           <>
             <ApprovalGate
               onApprove={() => sendTurn("승인")}
               busy={busy}
-              stageStatus={docStage?.status ?? null}
               reviseHref={reviseHref}
             />
             {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
             {busy && <p className="text-sm text-slate-400 mb-4">AI가 요청을 처리하고 있습니다…</p>}
           </>
+        )}
+
+        {/* 승인이 끝나면 게이트를 걷어내되, 상태와 되돌아갈 길은 남긴다:
+            수정 요청을 하면 승인이 무효화되고 게이트가 다시 나타난다. */}
+        {isDiscoveryDocument && !contentLoadError && approval.approved && (
+          <div
+            role="status"
+            className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          >
+            <p className="text-sm text-emerald-800">
+              <span className="font-bold">✓ 승인 완료</span> — 이 문서로 Discovery 단계가
+              확정되었습니다. 수정하면 다시 승인이 필요합니다.
+            </p>
+            <Link
+              href={reviseHref}
+              className="shrink-0 px-4 py-2 rounded-lg border border-emerald-300 bg-white text-emerald-800 text-sm font-medium hover:bg-emerald-100"
+            >
+              ✏️ 수정 요청
+            </Link>
+          </div>
         )}
 
         <div className="grid lg:grid-cols-[240px_1fr] gap-6">

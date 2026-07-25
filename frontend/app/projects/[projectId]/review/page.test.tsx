@@ -223,19 +223,60 @@ describe("Review page — width, download, status badge", () => {
     expect(gate.textContent).toMatch(/수정 요청.*워크스페이스 채팅으로 이동/);
   });
 
-  it("shows the approved badge when the stage is completed", async () => {
-    mockTreeAndAudit();
+  it("hides the gate and shows a completion banner once approved", async () => {
+    // Approval state comes from the AUDIT LOG, not aiplc-state: nothing in the
+    // rules or the agent ever writes a "Discovery Document" stage, so the old
+    // stage lookup was always undefined and the gate never went away.
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/state`, () =>
-        HttpResponse.json({
-          project_type: "Greenfield", current_stage: "Discovery Document",
-          stages: [{ name: "Discovery Document", status: "completed", note: null }],
-        })),
+      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () =>
+        HttpResponse.json({ artifacts: [DISCOVERY_PATH, AUDIT_PATH] })),
+      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+        HttpResponse.json({ content: discoveryDocument })),
+      http.get(`${API_BASE_URL}/projects/pilot1/files/${AUDIT_PATH}`, () =>
+        HttpResponse.json({ content: AUDIT_CONTENT })),
+      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () =>
+        HttpResponse.json([
+          { index: 1, timestamp: "2026-07-25T00:00:01Z", user_input: "시작",
+            ai_response: "Discovery 시작", context: "Session Start" },
+          { index: 2, timestamp: "2026-07-25T00:00:02Z", user_input: "승인",
+            ai_response: "승인 완료 — Discovery 단계를 종료합니다.", context: "최종 승인" },
+        ])),
     );
     await act(async () => {
       render(<ReviewPage params={params} />);
     });
-    expect(await screen.findByText("승인 완료")).toBeInTheDocument();
+    // Scoped to the banner's role: "승인 완료" also appears in the audit
+    // panel, so a bare text query is ambiguous.
+    const banner = await screen.findByRole("status");
+    expect(banner).toHaveTextContent("승인 완료");
+    expect(banner).toHaveTextContent("수정하면 다시 승인이 필요합니다");
+    // The gate itself is gone — no further approval is pending.
+    expect(screen.queryByRole("button", { name: /승인하고 다음 단계로/ })).not.toBeInTheDocument();
+    // ...but a way back in remains.
+    expect(screen.getAllByRole("link", { name: /수정 요청/ }).length).toBeGreaterThan(0);
+  });
+
+  it("keeps the gate visible when a revision followed the approval", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () =>
+        HttpResponse.json({ artifacts: [DISCOVERY_PATH, AUDIT_PATH] })),
+      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+        HttpResponse.json({ content: discoveryDocument })),
+      http.get(`${API_BASE_URL}/projects/pilot1/files/${AUDIT_PATH}`, () =>
+        HttpResponse.json({ content: AUDIT_CONTENT })),
+      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () =>
+        HttpResponse.json([
+          { index: 2, timestamp: "2026-07-25T00:00:02Z", user_input: "승인",
+            ai_response: "승인 완료", context: "최종 승인" },
+          { index: 3, timestamp: "2026-07-25T00:00:03Z",
+            user_input: "discovery-document.md 수정 요청: 3장 보강",
+            ai_response: "문서를 수정했습니다", context: "수정 요청" },
+        ])),
+    );
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    expect(await screen.findByRole("button", { name: /승인하고 다음 단계로/ })).toBeInTheDocument();
   });
 });
 

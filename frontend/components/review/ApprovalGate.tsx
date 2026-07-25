@@ -4,23 +4,18 @@ import Link from "next/link";
 export function ApprovalGate({
   onApprove,
   busy,
-  stageStatus = null,
   reviseHref,
 }: {
   onApprove: () => void;
   busy: boolean;
-  // aiplc-state의 Discovery Document 스테이지 상태 — 배지 표시용.
-  // null이면(state 미로드/스테이지 없음) 배지를 숨긴다.
-  stageStatus?: "pending" | "in_progress" | "completed" | null;
   // 수정 요청 링크의 목적지 — 워크스페이스 채팅으로 이동하며 초안 텍스트를 ?draft=로 전달한다.
   reviseHref: string;
 }) {
-  const badge =
-    stageStatus === "completed"
-      ? { label: "승인 완료", cls: "bg-emerald-400/20 border-emerald-200/50 text-emerald-50" }
-      : stageStatus !== null
-        ? { label: "초안 검토 중", cls: "bg-amber-400/20 border-amber-200/50 text-amber-50" }
-        : null;
+  // 이 게이트는 미승인 상태에서만 렌더된다(승인되면 페이지가 완료 배너로
+  // 대체한다). 그래서 상태 배지는 항상 "초안 검토 중" 하나뿐이다 — 예전
+  // stageStatus prop은 존재하지 않는 "Discovery Document" 스테이지를 읽어
+  // 늘 null이었다.
+  const badge = { label: "초안 검토 중", cls: "bg-amber-400/20 border-amber-200/50 text-amber-50" };
 
   return (
     <div
@@ -32,11 +27,9 @@ export function ApprovalGate({
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-bold">승인 게이트</h1>
-            {badge && (
-              <span className={`text-xs px-2.5 py-0.5 rounded-full border ${badge.cls}`}>
-                {badge.label}
-              </span>
-            )}
+            <span className={`text-xs px-2.5 py-0.5 rounded-full border ${badge.cls}`}>
+              {badge.label}
+            </span>
           </div>
           <p className="text-violet-100 text-sm mt-1">
             AI가 작성한 Discovery Document의 최종 확정 단계입니다.{" "}
