@@ -281,7 +281,7 @@ GET /projects/{pid}/prototypes/{slug}/archive  →  {slug}-prototype.zip
 | 파일명 헤더 | `artifacts.py:14-22`의 `_content_disposition` 재사용 — 한글 slug의 latin-1 헤더 에러를 이미 해결해 둔 코드 |
 | 버퍼링 | `io.BytesIO`. `node_modules` 제외 후 수 MB이므로 기존 zip과 동일 방식 |
 | 상태 조건 | 번들이 없으면 404. 빌드 진행 중에도 허용(그 시점 스냅샷) |
-| UI | 프로토타입 카드의 액션 영역에 "다운로드" 버튼 — `built`/`running` 상태에서 노출. `SurveyPanel`(`prototypes/page.tsx:128`)과 레이아웃이 겹치지 않도록 카드 안에 둔다 |
+| UI | `PrototypeCard`의 액션 영역에 "다운로드" 버튼 — `설문` 버튼과 같은 패턴(옵셔널 `onDownload?` 콜백 prop + `SECONDARY_BTN`). 번들이 있을 때(`built`/`running`)만 노출하므로 상태 분기 안에 둔다(`설문`은 상태 무관이라 분기 밖에 있다) |
 
 첫 턴 발화가 README 작성을 지시하므로(`session.py:277-278`) README와
 `package.json`이 반드시 포함된다.
@@ -478,7 +478,7 @@ uploads/{uuid8}/요구사항.pdf.md
 | **§10 삭제 범위** | 충돌 없음. Survey는 `bin/app.ts`·`user-data.ts`를 건드리지 않았다. 단 `app.py`에 survey 배선 33줄이 `_cleanup_orphan_vms` 바로 위에 추가됐으므로 삭제 시 그 블록을 건드리지 않도록 주의 |
 | **§4 자원 예산** | 무영향. `questionnaire_agent_factory`(`app.py`)는 Strands `Agent` 1회 호출(max_tokens=8000, 도구 없음)이라 프로세스를 띄우지 않는다 |
 | **§8 config 격리** | 무영향. Survey builder는 Strands 경로이고 Claude Code 바이너리와 무관하다 |
-| **프론트 레이아웃** | `SurveyPanel`이 프로토타입 탭에 붙었다(`prototypes/page.tsx:128`, `openSlug`로 열림). 다운로드 버튼은 카드 액션 영역에 두어 겹치지 않게 한다 |
+| **프론트 레이아웃** | `SurveyPanel`이 프로토타입 탭에 붙었고, `95a2876`이 그것을 `openSlug`(빌드 드로어와 공유 → 드로어 밑에 깔려 도달 불가)에서 카드별 `설문` 버튼 + 독립 `surveySlug` 상태로 고쳤다. **§7의 다운로드 버튼은 그 패턴을 그대로 따른다** — `PrototypeCard`에 옵셔널 콜백 prop을 추가하고 `SECONDARY_BTN`을 쓴다. 단 `설문`은 상태 분기 밖(스펙만 있어도 열림)이고 다운로드는 번들이 필요하므로 분기 안이다 |
 
 ## 14. 스코프 제외
 
