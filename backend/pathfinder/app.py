@@ -59,18 +59,30 @@ _jwks_singleton = None
 
 
 def cognito_config() -> dict | None:
-    """Cognito 설정. 미설정이면 None = 인증 바이패스.
+    """Cognito 설정. 둘 다 미설정이면 None = 인증 바이패스.
 
-    durable_projects_enabled()와 같은 규율이다: 필수 env가 없으면 그 기능 전체를
-    생략하고 로컬/테스트가 아무 설정 없이 돌게 한다. 풀 id와 client id가 둘 다
-    있어야 설정으로 본다 — 반쯤 설정된 상태로 인증을 켜면 client_id 검증을 할 수
-    없어 모든 요청이 실패한다. EC2 systemd 유닛은 항상 둘 다 심으므로
-    프로덕션에서 바이패스가 켜질 수 없다.
+    durable_projects_enabled()와 같은 규율이다: 필수 env가 전혀 없으면 그 기능
+    전체를 생략하고 로컬/테스트가 아무 설정 없이 돌게 한다.
+
+    하지만 풀 id와 client id 중 **하나만** 있는 상태는 "미설정"이 아니라 배포
+    사고다. 예전에는 이 경우도 None(바이패스)으로 취급했는데, 그러면 인증이
+    꺼진 채 모든 요청이 조용히 가상 admin(LOCAL_PRINCIPAL)으로 통과한다 —
+    크래시도, 경고도, 흔적도 없다. 그래서 반쯤 설정된 상태는 예외로 즉시
+    터뜨린다(fail-closed): 이 요청들은 500이 되지만, 아무도 모르게 관리자
+    권한이 새는 것보다는 눈에 보이는 실패가 낫다. cognito_config()는 매 요청
+    호출되므로(require_user), 배포 스크립트가 두 변수 중 하나를 지우는 순간
+    재시작 없이도 즉시 이 예외가 뜬다.
     """
     pool = os.environ.get("PATHFINDER_COGNITO_USER_POOL_ID", "").strip()
     client = os.environ.get("PATHFINDER_COGNITO_CLIENT_ID", "").strip()
-    if not pool or not client:
+    if not pool and not client:
         return None
+    if not pool or not client:
+        raise RuntimeError(
+            "PATHFINDER_COGNITO_USER_POOL_ID and PATHFINDER_COGNITO_CLIENT_ID "
+            "must both be set or both be unset — exactly one is set, which "
+            "would otherwise silently bypass authentication as admin for "
+            "every request")
     region = (os.environ.get("PATHFINDER_COGNITO_REGION", "").strip()
               or os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2"))
     return {"region": region, "user_pool_id": pool, "client_id": client}

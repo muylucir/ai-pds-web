@@ -112,6 +112,15 @@ def test_pm_passes_require_user_but_is_403_on_require_admin(with_auth):
     assert r.status_code == 403
 
 
+def test_unauthenticated_request_to_admin_route_is_401_not_403(with_auth):
+    # require_admin은 require_user를 통해 먼저 인증을 요구한다 — 헤더가 없는
+    # 요청은 권한 부족(403)이 아니라 인증 자체가 안 된 것(401)이어야 한다.
+    # Task 7이 34개 라우트 전체에서 이 순서에 의존한다.
+    client = TestClient(_probe_app())
+    r = client.get("/admin-only")
+    assert r.status_code == 401
+
+
 def test_bearer_scheme_is_case_insensitive(with_auth):
     with_auth["principals"]["tok-admin"] = Principal(
         username="admin@pathfinder.local", sub="s-1", role="admin")
@@ -128,11 +137,56 @@ def test_empty_user_pool_id_counts_as_unset(monkeypatch):
 
 
 def test_config_requires_both_pool_and_client(monkeypatch):
-    # 풀만 있고 클라이언트가 없으면 client_id 검증을 할 수 없다. 반쯤 설정된
-    # 상태로 인증을 켜면 모든 요청이 500이 되므로, 설정으로 보지 않는다.
+    # 풀만 있고 클라이언트가 없는 반쯤 설정된 상태는 "미설정"이 아니라 배포
+    # 사고다 — None(바이패스)으로 취급하면 모든 요청이 조용히 가상 admin으로
+    # 통과한다. 그래서 예외로 즉시 터뜨린다(fail-closed): 500이 되더라도
+    # 보이는 실패가 조용한 권한 유출보다 낫다.
     monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", POOL)
     monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", "")
+    with pytest.raises(RuntimeError, match="PATHFINDER_COGNITO_USER_POOL_ID"
+                       ".*PATHFINDER_COGNITO_CLIENT_ID"):
+        app_module.cognito_config()
+
+
+def test_config_requires_both_client_and_pool(monkeypatch):
+    # 대칭 케이스: client만 있고 풀이 없어도 같은 배포 사고이므로 같이 터진다.
+    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", "")
+    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", CLIENT_ID)
+    with pytest.raises(RuntimeError, match="PATHFINDER_COGNITO_USER_POOL_ID"
+                       ".*PATHFINDER_COGNITO_CLIENT_ID"):
+        app_module.cognito_config()
+
+
+def test_both_unset_still_bypasses(monkeypatch):
+    # 둘 다 아예 설정되지 않은 것(로컬 개발의 기본 상태)은 여전히 바이패스다 —
+    # 반쯤 설정된 상태와 혼동하면 안 된다.
+    monkeypatch.delenv("PATHFINDER_COGNITO_USER_POOL_ID", raising=False)
+    monkeypatch.delenv("PATHFINDER_COGNITO_CLIENT_ID", raising=False)
     assert app_module.cognito_config() is None
+
+
+def test_both_empty_strings_still_bypasses(monkeypatch):
+    # 둘 다 빈 문자열인 것도 "미설정"과 동치다(둘 다 없음 vs 둘 다 있음 —
+    # 하나만 있는 경우와 구분되는 정상 바이패스 경로).
+    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", "")
+    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", "")
+    assert app_module.cognito_config() is None
+
+
+async def test_require_user_raises_on_half_configured_env(monkeypatch):
+    # 이 테스트가 보안 속성을 실제로 고정한다: 반쯤 설정된 환경에서
+    # require_user는 Principal을 반환해서는 안 된다(특히 LOCAL_PRINCIPAL을
+    # 반환해서는 안 된다) — 예외가 그대로 올라와야 한다. cognito_config()가
+    # 반쯤 설정된 경우에 None을 반환하도록 되돌리면 이 테스트가 실패해야 한다.
+    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", POOL)
+    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", "")
+
+    from starlette.requests import Request as StarletteRequest
+
+    scope = {"type": "http", "headers": [], "method": "GET", "path": "/any"}
+    request = StarletteRequest(scope)
+    with pytest.raises(RuntimeError):
+        await require_user(request)
 
 
 def test_config_is_read_when_both_present(monkeypatch):
