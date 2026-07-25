@@ -5,7 +5,9 @@ requires-python = ">=3.11"
 # boto3 floor 1.43.35 — Bedrock Converse + S3 + PutObject IfNoneMatch(조건부 쓰기).
 # claude-agent-sdk는 정확 버전 핀(==): 0.2.x는 churn이 잦고, wheel이 Claude Code
 # 네이티브 바이너리를 번들하므로 버전이 곧 실행 엔진 버전이다.
-dependencies = ["fastapi>=0.110", "pydantic>=2.6", "sse-starlette>=2.0", "httpx>=0.27", "boto3>=1.43.35", "uvicorn>=0.30", "python-dotenv>=1.0", "openpyxl>=3.1", "pypdf>=4.0", "python-multipart>=0.0.9", "strands-agents>=1.48,<2", "claude-agent-sdk==0.2.126"]
+# PyJWT[crypto]: Cognito access 토큰의 RS256 서명 검증. 암호 코드를 직접 쓰지
+# 않는다 — JWKS→공개키 변환과 서명 검증은 라이브러리에 맡긴다.
+dependencies = ["fastapi>=0.110", "pydantic>=2.6", "sse-starlette>=2.0", "httpx>=0.27", "boto3>=1.43.35", "uvicorn>=0.30", "python-dotenv>=1.0", "openpyxl>=3.1", "pypdf>=4.0", "python-multipart>=0.0.9", "strands-agents>=1.48,<2", "claude-agent-sdk==0.2.126", "PyJWT[crypto]>=2.8"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "moto[s3]>=5.0"]
