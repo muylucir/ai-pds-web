@@ -172,6 +172,15 @@ class ProtoHost:
                 # instead of an untracked child.
                 start_new_session=True,
             )
+        except Exception:
+            # The spawn itself failed (e.g. npm missing from PATH, EMFILE) --
+            # entry.port never gets assigned on this path, so stop() (whose
+            # release is gated on entry.port is not None) could never reclaim
+            # it. Release the reservation here, immediately, instead of
+            # leaving it held for the lifetime of this ProtoHost.
+            self._reserved.discard(port)
+            entry.state = "failed"
+            raise
         finally:
             log_fh.close()
 

@@ -1,6 +1,7 @@
 # backend/tests/test_proto_host.py
 from __future__ import annotations
 
+import asyncio
 import socket
 from pathlib import Path
 
@@ -250,3 +251,38 @@ def test_sweep_orphans_removes_stale_pid_files(root):
 
     assert swept == 1
     assert not (target / ".proto-host.pid").exists()
+
+
+async def test_reserved_port_is_released_when_the_start_spawn_raises(root, monkeypatch):
+    """Regression: if the final `npm start` spawn itself raises (npm missing
+    from PATH, EMFILE, ...) rather than exiting nonzero, entry.port never gets
+    assigned -- so stop()'s `if entry.port is not None` release could never
+    fire, and the port stayed reserved for the ProtoHost's whole lifetime."""
+    _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    real_exec = asyncio.create_subprocess_exec
+
+    async def boom(program, *args, **kwargs):
+        if program == "npm" and "env" in kwargs:
+            # Only the final start-spawn passes `env=` (the install/build
+            # calls via _run_npm do not) -- fail exactly that call.
+            raise OSError("simulated spawn failure")
+        return await real_exec(program, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", boom)
+
+    with pytest.raises(OSError):
+        await host.start(PID, SLUG)
+
+    assert host._reserved == set()
+
+    # The port must be obtainable again by a subsequent start(), not
+    # permanently walled off.
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", real_exec)
+    info = await host.start(PID, SLUG)
+    try:
+        assert info.state == "running"
+        assert info.port in range(4001, 4010)
+    finally:
+        await host.stop(PID, SLUG)
