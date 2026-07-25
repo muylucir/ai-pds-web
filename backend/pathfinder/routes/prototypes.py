@@ -1,9 +1,12 @@
 # backend/pathfinder/routes/prototypes.py — prototype build sessions + hosting.
 #
 # REST + SSE for the prototype tab: session lifecycle against an in-process
-# build agent (PrototypeSession), local hosting (ProtoHost), and a streaming
-# reverse proxy that exposes a hosted prototype under the existing
-# /api -> :8000 nginx/CloudFront routing (no hosting-stack changes).
+# build agent (PrototypeSession) and local hosting (ProtoHost) -- start/stop a
+# build, stream its events, and start/stop/status the local server that serves
+# the built output. The public-facing piece that actually exposes a hosted
+# prototype to survey respondents -- the streaming reverse proxy under
+# /proto/{pid}/{slug} -- lives in proto_public.py, split out because it must
+# stay unauthenticated while every route in this file requires a login.
 from __future__ import annotations
 
 import io
@@ -13,7 +16,7 @@ import zipfile
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.responses import Response
