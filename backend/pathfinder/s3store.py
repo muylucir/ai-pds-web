@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 class S3StoreLike(Protocol):
     async def get(self, key: str) -> str: ...
     async def put(self, key: str, content: str) -> None: ...
+    async def put_if_absent(self, key: str, content: str) -> bool: ...
     async def list(self, prefix: str) -> list[str]: ...
     async def delete_prefix(self, prefix: str) -> int: ...
     # Binary-safe pair, used only by the prototype bundle backup/restore and
@@ -54,6 +55,24 @@ class S3Store:
             )
 
         await asyncio.to_thread(_put)
+
+    async def put_if_absent(self, key: str, content: str) -> bool:
+        """Conditional write (S3 IfNoneMatch). Returns False if the key
+        already exists instead of replacing it. Used by the upload path as a
+        backstop behind its uuid keys -- a silent overwrite there costs a
+        user's file."""
+        def _put() -> bool:
+            try:
+                self._client.put_object(
+                    Bucket=self._bucket, Key=self._full_key(key),
+                    Body=content.encode("utf-8"), IfNoneMatch="*")
+            except ClientError as e:
+                if e.response["Error"]["Code"] in ("PreconditionFailed", "412"):
+                    return False
+                raise
+            return True
+
+        return await asyncio.to_thread(_put)
 
     async def get_bytes(self, key: str) -> bytes:
         def _get() -> bytes:

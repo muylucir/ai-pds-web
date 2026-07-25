@@ -1,7 +1,7 @@
 # backend/pathfinder/routes/uploads.py
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from pathfinder.routes.deps import ensure_workspace
-from pathfinder.parsers.uploads import convert, safe_name, MAX_UPLOAD_BYTES
+from pathfinder.parsers.uploads import convert, upload_key, MAX_UPLOAD_BYTES
 
 router = APIRouter()
 
@@ -22,9 +22,11 @@ async def upload_file(pid: str, file: UploadFile, request: Request):
         content, truncated = convert(file.filename or "", data)
     except ValueError as e:
         raise HTTPException(status_code=415, detail=str(e))
-    existing = set(
-        p.removeprefix("uploads/") for p in await ws.runner.list_files("uploads/*"))
-    name = safe_name(file.filename or "upload", existing)
-    path = f"uploads/{name}"
-    await ws.runner.write_file(path, content)
+    # No list-then-name step: the key carries a fresh uuid, so there is no
+    # window for two concurrent uploads to agree on one key.
+    path = upload_key(file.filename or "upload")
+    if not await ws.runner.write_file_if_absent(path, content):
+        # Impossible in practice (fresh uuid per upload) -- surfaced as a
+        # retryable conflict rather than a silent overwrite.
+        raise HTTPException(status_code=409, detail="upload key already exists")
     return {"path": path, "chars": len(content), "truncated": truncated}

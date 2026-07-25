@@ -50,3 +50,12 @@ async def test_bytes_and_text_share_one_namespace(client):
     store = _store(client)
     await store.put_bytes("prototypes/x/bundle/a.bin", b"\x00\x01")
     assert await store.list("prototypes/x/bundle/") == ["prototypes/x/bundle/a.bin"]
+
+
+async def test_put_if_absent_refuses_to_overwrite(client):
+    """Defence in depth behind the uuid key: even an impossible collision must
+    fail loudly rather than silently replace someone's upload."""
+    store = _store(client)
+    assert await store.put_if_absent("uploads/abc12345/a.md", "first") is True
+    assert await store.put_if_absent("uploads/abc12345/a.md", "second") is False
+    assert await store.get("uploads/abc12345/a.md") == "first"

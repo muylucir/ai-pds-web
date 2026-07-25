@@ -23,6 +23,12 @@ class FakeS3Store:
     async def put(self, key: str, content: str) -> None:
         await self.put_bytes(key, content.encode("utf-8"))
 
+    async def put_if_absent(self, key: str, content: str) -> bool:
+        if key in self._raw:
+            return False
+        await self.put(key, content)
+        return True
+
     async def get_bytes(self, key: str) -> bytes:
         if key not in self._raw:
             raise FileNotFoundError(key)

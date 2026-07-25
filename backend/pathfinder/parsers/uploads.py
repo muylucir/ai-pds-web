@@ -8,6 +8,8 @@ xlsx는 VM 안 에이전트가 직접 못 읽으므로(텍스트 도구뿐) 업�
 from __future__ import annotations
 import io
 import re
+import uuid
+from pathlib import PurePosixPath
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_CHARS = 50_000
@@ -69,17 +71,22 @@ def convert(filename: str, data: bytes) -> tuple[str, bool]:
     return content, False
 
 
-def safe_name(filename: str, existing: set[str]) -> str:
-    """원본 이름을 워크스페이스 안전 슬러그로. 한글 유지, 경로·특수문자 제거,
-    확장자는 항상 .md(변환 결과물이므로). 충돌 시 -2, -3… 접미사."""
-    stem = filename
-    dot = stem.rfind(".")
-    if dot > 0:
-        stem = stem[:dot]
-    stem = re.sub(r"[^\w가-힣-]+", "-", stem).strip("-") or "upload"
-    candidate = f"{stem}.md"
-    n = 2
-    while candidate in existing:
-        candidate = f"{stem}-{n}.md"
-        n += 1
-    return candidate
+def upload_key(filename: str) -> str:
+    """`uploads/{uuid8}/{원본명}.{원본확장자}.md`.
+
+    The uuid directory is what makes this safe: it is unique per upload, so
+    there is no read-then-write window to lose a race in, and no collision
+    check to get subtly wrong. (The previous scheme listed existing keys, then
+    computed a `-2` suffix, then wrote -- two concurrent uploads of the same
+    name both saw "free" and the later write silently deleted the earlier
+    file.)
+
+    The original name AND extension are preserved, because the stored content
+    is a CONVERSION of them: `요구사항.pdf` and `요구사항.xlsx` used to both
+    become `요구사항.md`, leaving no way to tell which was which. The trailing
+    `.md` stays -- the body really is markdown, and the frontend, the agent
+    and the rules all expect `.md`.
+    """
+    name = PurePosixPath(filename or "").name          # drop any path parts
+    stem = re.sub(r"[^\w가-힣.-]+", "-", name).strip("-.") or "upload"
+    return f"uploads/{uuid.uuid4().hex[:8]}/{stem}.md"
