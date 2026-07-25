@@ -191,3 +191,89 @@ async def test_input_holder_settable(tmp_path):
     assert r.input_holder is None
     r.set_input_holder("facilitator-1")
     assert r.input_holder == "facilitator-1"
+
+
+# ---- sync must survive a consumer that walks away (real-world SSE disconnect) ----
+
+async def test_sync_runs_when_the_consumer_abandons_the_stream(tmp_path):
+    """The bug this pins: sync used to run only on the line that yields
+    done/error. send_message is a GENERATOR, so a consumer that stops
+    iterating -- an SSE client disconnecting, a proxy timeout, the user
+    navigating away -- never reached it. The agent's document existed only in
+    the volatile local workspace, so the doc panel showed an empty file and
+    the next refresh dropped it from the list entirely."""
+    root = tmp_path / "ws"
+    d = FakeDriver(
+        events=[AgentEvent(kind="document", payload='{"path":"aiplc-docs/discovery/discovery-document.md","version":"v1"}'),
+                AgentEvent(kind="done")],
+        files_written={"aiplc-docs/discovery/discovery-document.md": "# 실제 내용"},
+        workspace=root)
+    r = _runner(tmp_path, driver=d)
+
+    agen = r.send_message("문서 만들어줘")
+    async for ev in agen:
+        if ev.kind == "document":
+            await agen.aclose()      # consumer leaves right after the event
+            break
+
+    assert r._s3.blobs["aiplc-docs/discovery/discovery-document.md"] == "# 실제 내용"
+
+
+async def test_sync_runs_when_the_driver_raises_mid_turn(tmp_path):
+    """A driver that blows up past the point where files were written must not
+    strand them either -- the turn is lost, but the work is not."""
+    root = tmp_path / "ws"
+
+    class Boom(FakeDriver):
+        async def _emit(self, evs):
+            (Path(self._workspace) / "aiplc-docs").mkdir(parents=True, exist_ok=True)
+            (Path(self._workspace) / "aiplc-docs" / "aiplc-state.md").write_text(
+                "stage: mid", encoding="utf-8")
+            yield AgentEvent(kind="message", text="작업 중")
+            raise RuntimeError("driver exploded")
+
+    r = _runner(tmp_path, driver=Boom(workspace=root))
+
+    with pytest.raises(RuntimeError):
+        await _collect(r.send_message("go"))
+
+    assert r._s3.blobs["aiplc-docs/aiplc-state.md"] == "stage: mid"
+
+
+async def test_sync_runs_once_per_turn_not_once_per_terminal_event(tmp_path):
+    """Guard against the obvious over-correction: syncing in `finally` AND on
+    the done event would upload every file twice per turn."""
+    root = tmp_path / "ws"
+    d = FakeDriver(files_written={"aiplc-docs/aiplc-state.md": "s"}, workspace=root)
+    r = _runner(tmp_path, driver=d)
+    calls = 0
+    original = r._sync_workspace_to_s3
+
+    async def counted():
+        nonlocal calls
+        calls += 1
+        await original()
+
+    r._sync_workspace_to_s3 = counted  # type: ignore[method-assign]
+    await _collect(r.send_message("go"))
+    assert calls == 1
+
+
+async def test_answers_turn_also_syncs_when_abandoned(tmp_path):
+    """send_answers has the same generator shape and the same bug."""
+    root = tmp_path / "ws"
+    d = FakeDriver(
+        answers_events=[AgentEvent(kind="document", payload='{"path":"aiplc-docs/discovery/discovery-document.md","version":"v2"}'),
+                        AgentEvent(kind="done")],
+        files_written={"aiplc-docs/discovery/discovery-document.md": "# 답변 반영"},
+        workspace=root)
+    r = _runner(tmp_path, driver=d)
+    r._pending_interrupt_id = "i-7"
+
+    agen = r.send_answers({"1": "A"})
+    async for ev in agen:
+        if ev.kind == "document":
+            await agen.aclose()
+            break
+
+    assert r._s3.blobs["aiplc-docs/discovery/discovery-document.md"] == "# 답변 반영"

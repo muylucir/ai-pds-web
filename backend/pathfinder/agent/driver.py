@@ -27,6 +27,9 @@ _CONTACT_ADDENDUM = f"""
 - 스테이지를 시작/완료할 때마다 report_stage 도구를 호출한다. 이 도구가
   aiplc-state.md를 자동 갱신하므로 상태 파일을 file_write로 직접 만들 필요 없다.
 - discovery-document를 생성/갱신할 때마다 submit_document 도구를 호출한다.
+  **순서가 중요하다: 반드시 file_write로 파일을 저장한 뒤에 submit_document를
+  호출한다.** 파일이 없거나 비어 있으면 도구가 선언을 거부하고 그 이유를
+  돌려준다 — 그 경우 file_write부터 다시 하라는 뜻이다.
 - 파일 접근은 file_read / file_write / file_append 도구만 사용한다 (경로는 워크스페이스 상대).
 - file_write는 파일 **전체를 덮어쓴다**. audit.md에 엔트리를 추가할 때는 반드시
   file_append를 사용한다 — 새 엔트리만 담아 file_write를 호출하면 기존 감사

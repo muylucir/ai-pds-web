@@ -84,13 +84,30 @@ def build_tools(workspace: str, rules_dir: str,
 
     @tool
     def submit_document(path: str, version: str, summary: str = "") -> str:
-        """리뷰 대상 문서가 준비/갱신되었음을 선언한다.
+        """리뷰 대상 문서가 준비/갱신되었음을 선언한다. **먼저 file_write로 파일을
+        쓴 뒤** 호출해야 한다 — 파일이 없거나 비어 있으면 선언이 거부된다.
 
         Args:
             path: 워크스페이스 상대 경로.
             version: 버전 라벨 (예: "v2").
             summary: 변경 요약.
         """
+        # 이 이벤트가 UI의 "문서가 준비됐다"는 유일한 근거다(채팅 카드 + 문서
+        # 패널의 activeDoc). 파일 존재를 확인하지 않으면 file_write 없이 이
+        # 도구만 호출한 턴이 "생성됐습니다"로 보이고, 정작 문서 패널은 빈
+        # 화면을, 새로고침 후에는 목록에서 사라진 문서를 보여준다. 도구가
+        # 거짓을 선언할 수 없게 여기서 막는다 — 반환 문자열은 에이전트가 읽고
+        # 스스로 고칠 수 있도록 무엇을 해야 하는지 알려준다.
+        try:
+            p = _confine(workspace, path)
+        except ValueError as exc:
+            return f"거부됨 — {exc}. 워크스페이스 상대 경로만 제출할 수 있다."
+        if not p.is_file():
+            return (f"거부됨 — '{path}' 파일이 없다. file_write로 문서를 먼저 "
+                    f"저장한 뒤 submit_document를 다시 호출할 것.")
+        if not p.read_text(encoding="utf-8", errors="replace").strip():
+            return (f"거부됨 — '{path}'가 비어 있다. file_write로 내용을 채운 뒤 "
+                    f"submit_document를 다시 호출할 것.")
         emit(AgentEvent(kind="document", payload=json.dumps(
             {"path": path, "version": version, "summary": summary}, ensure_ascii=False)))
         return f"document submitted: {path} {version}"
