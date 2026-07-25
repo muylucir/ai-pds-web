@@ -94,6 +94,14 @@ class PrototypeSession:
         self._pending_interrupt_id: str | None = None
         self._idle_handle: asyncio.TimerHandle | None = None
         self._closed = False
+        # A mid-turn raise releases the slot immediately in send_message's
+        # except below (nothing else would -- the caller sees the exception
+        # and abandons the session without ever calling close()). This flag
+        # is the guard against a LATER close() or idle-timeout releasing the
+        # same slot a second time, which would wrongly free a slot some
+        # OTHER session is holding (BuildSemaphore.release() clamps at 0, so
+        # it can't detect an over-release itself).
+        self._slot_released = False
 
     # ---- path/key helpers ----
 
@@ -176,6 +184,13 @@ class PrototypeSession:
                 yield event
         except Exception:
             self.status = "failed"
+            # The caller (routes/prototypes.py) sees this exception propagate
+            # out of the SSE generator and never gets a session to close --
+            # the retry path evicts the dict entry outright. Without
+            # releasing here, the slot is gone until process restart.
+            if not self._slot_released:
+                self._slot_released = True
+                self._semaphore.release()
             raise
 
     async def send_answers(self, answers: dict[str, str]) -> bool:
@@ -217,7 +232,13 @@ class PrototypeSession:
                 ok = False
             self._builder = None
 
-        self._semaphore.release()
+        # A prior mid-turn failure in send_message already released this
+        # session's slot -- releasing again would free a slot that belongs to
+        # some OTHER session (the semaphore's clamp-at-zero only guards
+        # against going negative, not against crediting the wrong holder).
+        if not self._slot_released:
+            self._slot_released = True
+            self._semaphore.release()
         self.status = "closed" if ok else "failed"
 
     # ---- first turn's auto-spoken prompt ----

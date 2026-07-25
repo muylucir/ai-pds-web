@@ -207,6 +207,89 @@ async def test_send_answers_false_when_nothing_pending(tmp_path):
     assert builder.answer_calls == []
 
 
+# ---- mid-turn failure: the slot must not be burned permanently ----
+
+class RaisingBuilder(FakeBuilder):
+    """A builder whose run() dies mid-stream -- e.g. the claude subprocess
+    died or hit a transport error. Yields whatever was scripted first, then
+    raises instead of completing normally."""
+
+    async def run(self, text: str):
+        self.queries.append(text)
+        for ev in self._script:
+            yield ev
+        raise RuntimeError("claude subprocess died")
+
+
+async def test_send_message_mid_turn_raise_releases_the_slot(tmp_path):
+    """Regression: nothing else releases on this path -- the route's retry
+    logic just pops the dict entry, discarding the session object outright.
+    Without a release inside send_message's except, the slot is gone until
+    process restart."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = RaisingBuilder()
+    sem = BuildSemaphore(max_concurrent=1)
+    assert sem.try_acquire() is True          # route acquires before start()
+    session = _session(s3, tmp_path, builder, semaphore=sem)
+    await session.start()
+
+    builder.script([AgentEvent(kind="message", text="building...")])
+    with pytest.raises(RuntimeError):
+        [ev async for ev in session.send_message("go")]
+
+    assert session.status == "failed"
+    assert sem.snapshot()["active_builds"] == 0   # slot returned, not wedged
+
+
+async def test_send_message_mid_turn_raise_then_close_releases_only_once(tmp_path):
+    """The route never gets a chance to call close() on this exact session
+    (it evicts it from the dict), but if something DID call close() after a
+    mid-turn failure -- or the idle timer fires first -- it must not release
+    a slot a second time. A second release would wrongly free a slot held by
+    some OTHER session, which is worse than the original bug."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = RaisingBuilder()
+    sem = BuildSemaphore(max_concurrent=2)
+    assert sem.try_acquire() is True   # this session's slot
+    assert sem.try_acquire() is True   # another team's slot -- must survive
+    session = _session(s3, tmp_path, builder, semaphore=sem)
+    await session.start()
+
+    builder.script([])
+    with pytest.raises(RuntimeError):
+        [ev async for ev in session.send_message("go")]
+
+    await session.close()
+
+    assert sem.snapshot()["active_builds"] == 1   # only the other holder's slot remains
+
+
+async def test_idle_timer_after_mid_turn_raise_releases_only_once(tmp_path):
+    """The idle timer re-arms on every send_message and still fires after a
+    failed turn; it must honor the same already-released guard as close()."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = RaisingBuilder()
+    sem = BuildSemaphore(max_concurrent=2)
+    assert sem.try_acquire() is True   # this session's slot
+    assert sem.try_acquire() is True   # another team's slot -- must survive
+    session = _session(s3, tmp_path, builder, semaphore=sem, idle_seconds=0.05)
+    await session.start()
+
+    builder.script([])
+    with pytest.raises(RuntimeError):
+        [ev async for ev in session.send_message("go")]
+
+    assert sem.snapshot()["active_builds"] == 1   # already released by the raise
+
+    await asyncio.sleep(0.2)   # let the idle timer fire close()
+
+    assert session.status == "closed"
+    assert sem.snapshot()["active_builds"] == 1   # still just the other holder's slot
+
+
 # ---- close(): disconnect + semaphore release, NOT a context wipe ----
 
 async def test_close_disconnects_and_releases_the_slot(tmp_path):
