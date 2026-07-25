@@ -95,7 +95,7 @@ cross-origin이 되어 인증이 성립하지 않는다. 그래서 로컬은 §6
 | 설정 | 값 | 이유 |
 |---|---|---|
 | `selfSignUpEnabled` | `false` | CFN `AllowAdminCreateUserOnly: true`. self-signup 차단의 실체이고 Hosted UI에 가입 링크가 렌더되지 않는다 |
-| `signInAliases` | `{ email: true }` | 사용자명 = 이메일 |
+| `signInAliases` | `{ username: true, email: true }` | → `AliasAttributes: [email]`. 이메일로 로그인하되 `Username`은 **호출자가 지정**한다. `{ email: true }`만 두면 Cognito가 username을 UUID로 자동 생성해 시딩·관리 API가 비결정적이 된다(§5.2) |
 | `passwordPolicy` | 8자+, 대/소/숫자/기호 | `PathFinder2026!@`가 통과하는 최소 정책 |
 | `mfa` | `OFF` | 워크숍 환경 |
 | `accountRecovery` | `NONE` | 이 앱은 메일을 전혀 보내지 않으므로(§1 결정) 자가 재설정 코드를 전달할 경로가 없다. 재설정은 관리 페이지에서 관리자가 한다 |
@@ -158,18 +158,26 @@ CloudFront 도메인은 배포마다 바뀌지 않으므로(distribution을 지�
 `infra/lib/seed-users.ts`에 헬퍼 `seedUser(scope, {userPool, username, group, password})`.
 AuthStack에서 두 번 호출한다. 각 호출은 `AwsCustomResource` 3개를 순서대로 엮는다:
 
-1. **`AdminCreateUser`** — `MessageAction: SUPPRESS`(메일 발송 없음),
-   `email_verified: true`. 재배포 시 `UsernameExistsException`은
-   `ignoreErrorCodesMatching`으로 무시한다.
+1. **`AdminCreateUser`** — `Username: <이메일>`, `MessageAction: SUPPRESS`(메일 발송 없음),
+   `UserAttributes: [{email}, {email_verified: "true"}]`. 재배포 시
+   `UsernameExistsException`은 `ignoreErrorCodesMatching`으로 무시한다.
 2. **`AdminSetUserPassword`** — `Password: 'PathFinder2026!@'`, `Permanent: true`.
    상태가 `CONFIRMED`가 되어 **첫 로그인에서 비밀번호 변경을 요구하지 않는다.**
    `onUpdate`에도 걸어 재배포마다 비밀번호를 다시 확정한다 — 누가 바꿔놨어도 배포하면
    알려진 값으로 돌아온다(데모 환경에서 원하는 성질).
 3. **`AdminAddUserToGroup`** — `admin` 또는 `pm`.
 
+2·3단계는 1단계 응답을 참조하지 **않고** 같은 이메일 상수를 `Username`으로 직접 넘긴다.
+§3.1이 username을 호출자 지정으로 두는 이유가 이것이다 — 1단계가 재배포 시
+`UsernameExistsException`으로 무시되어 응답 필드가 비어도 2·3단계가 깨지지 않는다
+(`AwsCustomResource`에는 조건 분기가 없으므로 단계 간 값 전달에 의존하면 취약해진다).
+
+각 단계는 `AwsCustomResource`의 `physicalResourceId`를 이메일+단계명으로 고정해
+재배포 시 교체가 아닌 갱신으로 처리된다.
+
 계정: `admin@pathfinder.local`(그룹 admin), `pm@pathfinder.local`(그룹 pm).
-`signInAliases: email`이라 사용자명이 이메일 형식이어야 하고, 실제로 메일을 보내지
-않으므로 `.local`이 오히려 시드 계정임을 드러낸다. 상수 2개만 바꾸면 다른 주소로 바뀐다.
+실제로 메일을 보내지 않으므로 `.local`이 오히려 시드 계정임을 드러낸다. 상수 2개만
+바꾸면 다른 주소로 바뀐다.
 
 ### 4.1 명시적 트레이드오프 — 시드 비밀번호는 템플릿에 평문으로 남는다
 
@@ -195,8 +203,20 @@ backend/pathfinder/routes/
 ```
 
 **`verifier.py`** — JWKS를 `httpx`로 받아 `kid`→키로 캐시하고, RS256 서명·`iss`·
-`aud`(=client_id)·`exp`·`token_use=="access"`를 검증해 `Principal(username, email, role)`
-을 낸다. `kid` 미스일 때만 JWKS를 재조회한다(키 로테이션 대응). 검증 실패는 401.
+`exp`·`token_use=="access"`·`client_id`를 검증해 `Principal(username, sub, role)`을 낸다.
+`kid` 미스일 때만 JWKS를 재조회한다(키 로테이션 대응). 검증 실패는 401.
+
+⚠️ **access 토큰은 `aud`가 아니라 `client_id`로 앱 클라이언트를 식별한다**
+([Verifying JSON web tokens](https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-tokens-verifying-a-jwt.html):
+"The `aud` claim in an ID token and the `client_id` claim in an access token must match
+the app client ID"). 따라서 PyJWT는 `options={"verify_aud": False}`로 호출하고
+`client_id`를 코드에서 직접 비교한다. `audience=`로 넘기면 검증이 실패한다.
+
+⚠️ **access 토큰에는 `email`이 없다** — 기본 payload는 `sub`·`cognito:groups`·`iss`·
+`client_id`·`token_use`·`scope`·`exp`·`username`이다
+([Understanding the access token](https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-using-the-access-token.html)).
+그래서 `Principal`은 email을 담지 않는다. 화면에 표시할 이메일은 프론트가 **id 토큰**
+(`pf_id` 쿠키)에서 읽는다(§6.2 `/api/auth/me`).
 
 서명 검증은 직접 구현하지 않고 **`PyJWT[crypto]`** 를 의존성에 추가한다 — 암호 코드를
 직접 쓰는 것은 이 프로젝트에서 가장 피하고 싶은 일이다. (venv에 이미 PyJWT 2.13.0 +
@@ -210,16 +230,30 @@ cryptography 49.0.0이 전이 의존성으로 들어와 있으나, 전이 의존
 | 라우트 | 동작 |
 |---|---|
 | `GET /admin/users` | `ListUsers` — 이메일·상태·활성여부·생성일 + 사용자별 `AdminListGroupsForUser` |
-| `POST /admin/users` | 초대: `AdminCreateUser`(SUPPRESS) → `AdminSetUserPassword(Permanent=false)` → `AdminAddUserToGroup`. 임시 비밀번호는 **백엔드가 생성**해 응답 본문에 **1회만** 반환하고 어디에도 저장하지 않는다 |
+| `POST /admin/users` | 초대: `AdminCreateUser`(SUPPRESS, 이메일은 `UserAttributes`) → `AdminSetUserPassword(Permanent=false)` → `AdminAddUserToGroup`. 임시 비밀번호는 **백엔드가 생성**해 응답 본문에 **1회만** 반환하고 어디에도 저장하지 않는다 |
 | `POST /admin/users/{u}/reset-password` | 새 임시 비밀번호 생성 → 동일 방식, 1회 반환 |
 | `PUT /admin/users/{u}/role` | 그룹 교체(제거 후 추가) |
 | `POST /admin/users/{u}/disable` · `/enable` | `AdminDisableUser` / `AdminEnableUser` |
 | `DELETE /admin/users/{u}` | `AdminDeleteUser` |
 
-`{u}`는 Cognito `Username`(= sub UUID 또는 이메일)이다. `signInAliases: email`인 풀은
-`AdminCreateUser`에 넘긴 이메일이 그대로 `Username`이 되므로 두 값이 같다. 라우트는
-`GET /admin/users`가 반환한 `username` 값을 그대로 되돌려받는 것을 전제한다 — 프론트가
-이메일을 임의로 조립해 넘기지 않는다.
+`{u}`는 Cognito `Username`이다. §3.1의 풀 설정
+(`signInAliases: { username: true, email: true }` → `AliasAttributes: [email]`)에서는
+**호출자가 `Username`을 지정**하므로, 초대 API는 이메일을 `Username`으로 넘기고 동시에
+`UserAttributes`의 `email`로도 넘긴다(alias 등록에 필요). 결과적으로 username == email이다.
+
+이 설정을 택한 이유는 §4의 시딩 결정성 때문이다 — `UsernameAttributes: [email]`(username
+사인인 미포함)이면 Cognito가 username을 UUID로 자동 생성하고
+([admin-create-user](https://docs.aws.amazon.com/cli/latest/reference/cognito-idp/admin-create-user.html):
+"Amazon Cognito automatically generates a username value"), 그 값을 CDK 커스텀 리소스가
+재배포마다 안정적으로 알 수 없다.
+
+- `GET /admin/users`는 `username`과 `email`을 **둘 다** 반환한다. 화면은 email을
+  보여주고 액션은 username을 보낸다 — 두 값이 지금은 같더라도 화면이 그 등식에
+  의존하지 않게 한다.
+- 프론트는 username을 조립하지 않는다 — 목록이 준 값을 그대로 되돌려보낸다.
+- **`email_verified: true`가 필수다** — alias 사인인은 검증된 이메일에만 동작한다.
+- 이메일은 풀 안에서 유일해야 한다(alias 제약). 중복 초대는 Cognito가
+  `AliasExistsException`으로 거부하고, 라우트는 409로 변환한다.
 
 **임시 비밀번호 생성** — `secrets.choice`로 각 문자군(대/소/숫자/기호) 최소 1개를
 보장한 16자.
@@ -268,7 +302,7 @@ systemd 유닛은 항상 이 env를 심으므로 프로덕션에서 바이패스
 | 변수 | 설명 |
 |---|---|
 | `PATHFINDER_COGNITO_USER_POOL_ID` | 미지정 시 인증 바이패스(로컬/테스트) |
-| `PATHFINDER_COGNITO_CLIENT_ID` | JWT `aud` 검증용 |
+| `PATHFINDER_COGNITO_CLIENT_ID` | access 토큰 `client_id` 클레임 검증용 (§5.1 — `aud` 아님) |
 | `PATHFINDER_COGNITO_REGION` | 기본 `PATHFINDER_S3_REGION`과 동일 |
 
 ## 6. 프론트엔드
@@ -292,7 +326,7 @@ systemd 유닛은 항상 이 env를 심으므로 프로덕션에서 바이패스
 | `login/route.ts` | PKCE verifier + state 생성 → httpOnly 쿠키 → Hosted UI 302 |
 | `callback/route.ts` | state 검증 → `/oauth2/token` 교환 → 쿠키 3개 세팅 → `next`로 302 |
 | `logout/route.ts` | 쿠키 삭제 → Cognito `/logout` 302 |
-| `me/route.ts` | 쿠키에서 email·role 추출 — 클라이언트가 사용자 표시용으로 부르는 유일한 경로 |
+| `me/route.ts` | `pf_id`(id 토큰)에서 email, `pf_access`에서 `cognito:groups` → role 추출. 클라이언트가 사용자 표시용으로 부르는 유일한 경로. email이 access 토큰에 없기 때문에 id 토큰이 필요하다(§5.1) |
 
 쿠키 속성: `httpOnly`, `secure`(프로덕션), `sameSite: "lax"`, `path: "/"`.
 `sameSite: lax`인 이유 — Hosted UI에서 돌아오는 top-level 리다이렉트에 쿠키가 실려야
@@ -348,13 +382,14 @@ systemd 유닛은 항상 이 env를 심으므로 프로덕션에서 바이패스
 | pm이 `/admin/*` API 호출 | 백엔드 403 → 프론트 "권한이 없습니다" |
 | JWKS 조회 실패 | 401 + 서버 로그 `exception` (fail-closed) |
 | state 불일치 | `/login?error=state_mismatch` |
+| 중복 이메일 초대 | `AliasExistsException`/`UsernameExistsException` → 409 "이미 등록된 이메일입니다" |
 | Cognito API 실패 | 502 + 원 오류 코드는 로그에만 (사용자에게 내부 세부사항 노출 안 함) |
 | 초대 부분 실패 | 방금 만든 사용자 삭제 후 500 (§5.2) |
 
 ## 8. 테스트
 
 **백엔드** (Cognito는 botocore Stubber, JWT는 테스트용 RSA 키로 서명)
-- `verifier.py`: 유효 토큰 / 만료 / 잘못된 `aud` / `kid` 미스 후 재조회 / `token_use=="id"` 거부
+- `verifier.py`: 유효 토큰 / 만료 / 잘못된 `client_id` / 잘못된 `iss` / `kid` 미스 후 재조회 / `token_use=="id"` 거부 / `cognito:groups`에 admin·pm이 없을 때 거부
 - `deps.py`: 바이패스 모드, pm이 `require_admin`에서 403
 - 관리 라우트 7개 각각의 정상 경로
 - 마지막 관리자 보호 3케이스(자기 강등 · 자기 삭제 · 유일 admin 비활성)
@@ -369,6 +404,7 @@ systemd 유닛은 항상 이 env를 심으므로 프로덕션에서 바이패스
 
 **인프라** (`cdk synth` 후 템플릿 단정 — 기존 `test/*.assert.ts` 패턴)
 - `AllowAdminCreateUserOnly: true`
+- `AliasAttributes: ['email']` (그리고 `UsernameAttributes` 부재 — §3.1)
 - 그룹 2개(admin/pm)와 precedence
 - `ManagedLoginVersion: 2` + 브랜딩 리소스
 - 시드 커스텀 리소스 6개(계정 2 × 단계 3)
