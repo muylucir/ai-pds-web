@@ -96,8 +96,18 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             cwd=builder._workspace,
             env=env,
             # "user" now means OUR config dir, so this is safe -- and it is
-            # what `skills=[...]` needs open when we eventually enable one.
+            # what `skills` needs open to discover anything.
             setting_sources=["user", "project"],
+            # Enable every skill discovered under CLAUDE_CONFIG_DIR (the repo's
+            # proto-config/skills/, shipped to /opt/pathfinder/proto-config).
+            # "all" rather than an explicit name list so adding a skill is one
+            # committed file with no code change. Safe precisely BECAUSE the
+            # config dir is ours: with the default ~/.claude this would enable
+            # whatever the host user happens to have installed.
+            # Note this makes the SDK pass `--allowedTools Skill`; under
+            # bypassPermissions that is not expected to restrict Bash/Write,
+            # but the e2e checklist verifies a real build turn still works.
+            skills="all",
             session_id=builder._session_id,
             resume=builder._session_id if builder._resume else None,
             session_store=builder._session_store,

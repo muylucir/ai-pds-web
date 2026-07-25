@@ -52,11 +52,16 @@ AWS 자원으로 검증한다. 실 Bedrock·실 EC2·실 서브프로세스가 �
 - [ ] **양성 테스트**(우리 디렉토리가 실제로 읽히는지): 같은 SKILL.md를
       `/opt/pathfinder/proto-config/skills/zzz-probe/SKILL.md`에 심고
       (**`proto-config/.claude/skills/`가 아니다** — `CLAUDE_CONFIG_DIR`가 곧
-      `.claude` 역할이므로 그 아래 `.claude`를 또 만들면 SDK가 무시한다),
-      `PrototypeBuilder`의 `skills=["zzz-probe"]`를 임시로 켠 뒤 같은 질문에
-      그 스킬이 **보인다**. 두 테스트가 다 통과해야 격리가 증명된다 — 음성만
-      통과하면 "경로를 아예 잘못 줘서 아무것도 안 읽히는" 상태와 구별되지 않는다.
-      확인 후 임시 변경은 되돌린다(1차 스코프는 스킬 비활성).
+      `.claude` 역할이므로 그 아래 `.claude`를 또 만들면 SDK가 무시한다) 같은
+      질문에 그 스킬이 **보인다**. 빌더가 `skills="all"`이므로 코드 변경 없이
+      켜져야 한다. 두 테스트가 다 통과해야 격리가 증명된다 — 음성만 통과하면
+      "경로를 아예 잘못 줘서 아무것도 안 읽히는" 상태와 구별되지 않는다.
+      확인 후 프로브 스킬은 지운다.
+- [ ] **`skills="all"`의 부작용 확인**: 이 옵션은 SDK가 CLI에
+      `--allowedTools Skill`을 붙이게 만든다(확인된 동작). `bypassPermissions`
+      아래서 Bash/Write/Edit를 제한하지 않을 것으로 보지만 **검증되지 않았다** —
+      빌드 턴에서 에이전트가 실제로 파일을 쓰고 셸을 돌리는지 확인한다. 막히면
+      `builder.py`의 `skills="all"`을 제거하거나 명시적 이름 리스트로 바꾼다.
 - [ ] transcript 로컬 사본이 우리 경로에 쌓이는지:
       `ls /opt/pathfinder/proto-config/projects/` → 빌드 후 디렉토리가 생긴다.
 
