@@ -297,3 +297,110 @@ async def test_clear_resets_cooldown_and_negative_cache():
     with pytest.raises(TokenError):
         await _verify(_bogus_token("retry-me"), cache=cache)  # fetch 3
     assert len(calls) == 3, f"clear() must allow a fresh refetch, got {calls}"
+
+
+# --- fetch 시도 자체의 실패(네트워크 단절, Cognito 장애, 파싱 실패)에 대한
+# 쿨다운. 위의 "재조회했지만 kid가 없음" 쿨다운(30s)과는 별개다 — _fetch()가
+# 예외를 던지면 그 분기에 도달하지 못하므로, 그 경로가 별도로 폭주하지 않도록
+# 짧은(5s) 쿨다운을 둔다.
+
+async def test_repeated_fetch_exceptions_within_short_window_cause_one_fetch():
+    calls: list[str] = []
+    clock = _FakeClock()
+
+    def boom(url: str) -> dict:
+        calls.append(url)
+        raise RuntimeError("network down")
+
+    cache = JwksCache(region=REGION, user_pool_id=POOL, http_get=boom, now=clock)
+    for i in range(5):
+        with pytest.raises(TokenError):
+            await _verify(_bogus_token(f"kid-{i}"), cache=cache)
+    assert len(calls) == 1, (
+        f"expected exactly one fetch attempt across the outage, got {calls}")
+
+
+async def test_repeated_empty_jwks_response_within_short_window_cause_one_fetch():
+    calls: list[str] = []
+    clock = _FakeClock()
+
+    def empty_response(url: str) -> dict:
+        calls.append(url)
+        return {"keys": []}
+
+    cache = JwksCache(region=REGION, user_pool_id=POOL, http_get=empty_response,
+                      now=clock)
+    for i in range(5):
+        with pytest.raises(TokenError):
+            await _verify(_bogus_token(f"kid-{i}"), cache=cache)
+    assert len(calls) == 1, (
+        f"expected exactly one fetch attempt across the outage, got {calls}")
+
+
+async def test_recovery_after_fetch_failure_does_not_poison_negative_cache():
+    calls: list[str] = []
+    clock = _FakeClock()
+    healthy = {"value": False}
+
+    def flaky(url: str) -> dict:
+        calls.append(url)
+        if not healthy["value"]:
+            raise RuntimeError("network down")
+        return _jwks()
+
+    cache = JwksCache(region=REGION, user_pool_id=POOL, http_get=flaky, now=clock)
+
+    with pytest.raises(TokenError):
+        await _verify(_bogus_token("during-outage"), cache=cache)  # fetch 1, fails
+    assert len(calls) == 1
+
+    clock.advance(5.0)  # 실패 쿨다운(5s) 만료
+    healthy["value"] = True
+    principal = await _verify(_token(), cache=cache)  # fetch 2: 복구, 정상 kid
+    assert principal.role == "admin"
+    assert len(calls) == 2
+
+    # 장애 중에 시도됐던 kid는 실제로 JWKS 응답 안에서 찾아본 적이 없다 —
+    # 그러니 네거티브 캐시에 들어가 있으면 안 된다. 재시도하면 (이미 실패로
+    # 확정된 kid가 아니므로) 그 나름의 재조회를 다시 받아야 한다.
+    with pytest.raises(TokenError):
+        await _verify(_bogus_token("during-outage"), cache=cache)  # fetch 3
+    assert len(calls) == 3, (
+        f"kid attempted during the outage must not be negative-cached, got {calls}")
+
+
+async def test_successful_fetch_clears_failure_state_for_next_unknown_kid():
+    # 실패 쿨다운은 "재조회했지만 kid 없음" 쿨다운(30s)과 별개의 상태를 쓴다.
+    # 복구(성공한 fetch) 직후 곧바로 다른 미확인 kid를 물으면, 그 요청은 실패
+    # 타임스탬프가 아니라 30s 쿨다운(아직 시작되지 않음)의 지배를 받아야 하므로
+    # 정상적으로 재조회를 받는다 — 시간을 더 흘리지 않고 바로 확인한다.
+    calls: list[str] = []
+    clock = _FakeClock()
+    healthy = {"value": False}
+
+    def flaky(url: str) -> dict:
+        calls.append(url)
+        if not healthy["value"]:
+            raise RuntimeError("network down")
+        return _jwks()
+
+    cache = JwksCache(region=REGION, user_pool_id=POOL, http_get=flaky, now=clock)
+
+    with pytest.raises(TokenError):
+        await _verify(_bogus_token("outage-kid"), cache=cache)  # fetch 1, fails
+    assert len(calls) == 1
+
+    clock.advance(5.0)  # 실패 쿨다운(5s) 만료
+    healthy["value"] = True
+    await _verify(_token(), cache=cache)  # fetch 2: 복구
+    assert len(calls) == 2
+
+    # 시간을 전혀 흘리지 않고(복구 fetch와 같은 순간) 완전히 새로운 미확인
+    # kid를 묻는다. 실패 타임스탬프가 성공 시 초기화되지 않았거나, 성공/실패를
+    # 구분하지 않고 "최근 fetch 시각"으로 억제하는 버그가 있었다면 여기서
+    # 잘못 억제됐을 것이다.
+    with pytest.raises(TokenError):
+        await _verify(_bogus_token("brand-new-kid"), cache=cache)  # fetch 3
+    assert len(calls) == 3, (
+        f"a fresh unknown kid must get its own fetch right after recovery, "
+        f"got {calls}")

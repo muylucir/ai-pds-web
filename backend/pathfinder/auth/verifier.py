@@ -35,6 +35,14 @@ _GROUPS_CLAIM = "cognito:groups"
 _REFETCH_COOLDOWN_SECONDS = 30.0
 _MAX_NEGATIVE_CACHE = 256
 
+# fetch 자체가 실패하는 경우(네트워크 단절, Cognito 장애, 응답 파싱 실패)는
+# 위 쿨다운과 별개다 — _fetch()가 예외를 던져 위의 "성공했지만 kid가 없음"
+# 분기에 도달하지 못하므로 별도 타이머가 필요하다. 이 창은 훨씬 짧게 잡는다:
+# 장애는 보통 일시적이고, Cognito가 회복되면 정상 사용자가 곧바로 다시 시도할
+# 수 있어야 한다. 그래도 지속 공격 상황에서 요청당 재시도를 자릿수 단위로
+# 줄여준다.
+_FETCH_FAILURE_COOLDOWN_SECONDS = 5.0
+
 
 class TokenError(Exception):
     """토큰이 신뢰할 수 없다. 라우트 계층이 401로 번역한다."""
@@ -54,9 +62,10 @@ class JwksCache:
     조회는 kid 미스에서만 재시도한다(키 로테이션 대응). 매 요청 재조회는 Cognito를
     때리고 지연을 만들며, 반대로 영구 캐시는 로테이션 후 모든 토큰을 거부한다.
 
-    두 가지 방어가 더 있다(둘 다 미인증 호출자가 임의의 kid로 재조회를 유발하는
-    것을 막는다): kid 미스가 실제로 "못 찾음"으로 끝난 뒤의 쿨다운, 그리고 이미
-    없다고 확인된 kid의 네거티브 캐시.
+    세 가지 방어가 더 있다(모두 미인증 호출자가 임의의 kid로 재조회를 유발하는
+    것을 막는다): kid 미스가 실제로 "못 찾음"으로 끝난 뒤의 쿨다운, 이미 없다고
+    확인된 kid의 네거티브 캐시, 그리고 fetch 시도 자체가 실패했을 때의 별도
+    (더 짧은) 쿨다운.
     """
 
     def __init__(self, region: str, user_pool_id: str,
@@ -76,22 +85,31 @@ class JwksCache:
         # 않는다. 무한히 자라지 않도록 cap에 닿으면 통째로 비운다(그 자체가
         # 무한 성장 공격 표면이 되지 않도록).
         self._known_bad_kids: set[str] = set()
+        # fetch 시도 자체가 실패한(예외 또는 파싱 결과 키 없음) 마지막 시각.
+        # 위 _last_negative_fetch_at과 별개다 — 이건 kid를 판별하지도 못한
+        # 상태이므로 네거티브 캐시에는 아무것도 넣지 않는다.
+        self._last_fetch_failure_at: float | None = None
 
     def clear(self) -> None:
         self._keys = {}
         self._last_negative_fetch_at = None
         self._known_bad_kids.clear()
+        self._last_fetch_failure_at = None
 
     async def _fetch(self) -> None:
         # 동기 http_get을 스레드로 밀어 이벤트 루프를 막지 않는다.
         try:
             payload = await asyncio.to_thread(self._http_get, self._url)
         except Exception as exc:  # 네트워크·HTTP·JSON 무엇이든
+            self._last_fetch_failure_at = self._now()
             raise TokenError(f"jwks fetch failed: {exc}") from exc
         keys = {k["kid"]: k for k in payload.get("keys", []) if "kid" in k}
         if not keys:
+            self._last_fetch_failure_at = self._now()
             raise TokenError("jwks response contained no usable keys")
         self._keys = keys
+        # 성공했다 — 이전 장애가 있었더라도 즉시 회복된다.
+        self._last_fetch_failure_at = None
 
     async def key_for(self, kid: str) -> dict:
         if kid in self._keys:
@@ -123,6 +141,20 @@ class JwksCache:
                     "suppressing jwks refetch within cooldown for kid: %r", kid)
                 raise TokenError(
                     f"unknown signing key (refetch suppressed): {kid}")
+
+            if (self._last_fetch_failure_at is not None
+                    and self._now() - self._last_fetch_failure_at
+                    < _FETCH_FAILURE_COOLDOWN_SECONDS):
+                # 직전 fetch 시도 자체가 실패했다(네트워크 단절, Cognito 장애,
+                # 응답 파싱 실패 등) — kid를 판별하지 못했으므로 네거티브
+                # 캐시에는 아무것도 넣지 않는다. 이 창은 짧게(5초) 두어, 장애가
+                # 걷히면 정상 사용자가 곧바로 회복되게 한다. 그래도 지속되는
+                # 미확인-kid 폭주에서는 요청당 재시도를 자릿수 단위로 줄인다.
+                _log.debug(
+                    "suppressing jwks refetch after recent fetch failure "
+                    "for kid: %r", kid)
+                raise TokenError(
+                    f"jwks fetch recently failed, retry suppressed: {kid}")
 
             await self._fetch()
 
