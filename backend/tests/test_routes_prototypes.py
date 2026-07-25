@@ -92,7 +92,7 @@ class FakeProtoHost:
 
 
 @pytest.fixture()
-def proto_env(monkeypatch):
+def proto_env(monkeypatch, tmp_path):
     """Registered project + fake S3/session/host wiring."""
     monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
     # VM env vars are gone -- the session route's config guard now checks a
@@ -104,6 +104,11 @@ def proto_env(monkeypatch):
 
     monkeypatch.setattr(app_module, "make_workspace", fake_make_workspace)
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: fake_s3)
+    # list_prototypes' "built" signal reads the local build dir straight off
+    # disk (app_module._proto_root() / pid / slug) -- point it at tmp_path so
+    # tests never touch the real ~/pathfinder-protos, matching
+    # test_routes_prototypes_archive.py's fixture.
+    monkeypatch.setattr(app_module, "_proto_root", lambda: tmp_path)
 
     fake_host = FakeProtoHost()
     monkeypatch.setattr(app_module, "proto_host", lambda: fake_host)
@@ -116,7 +121,7 @@ def proto_env(monkeypatch):
     resp = client.post("/projects", json={"project_id": PID})
     assert resp.status_code in (200, 201, 409)
 
-    yield {"s3": fake_s3, "host": fake_host}
+    yield {"s3": fake_s3, "host": fake_host, "root": tmp_path}
 
     app_module.proto_sessions.clear()
     app_module.proto_sessions.update(sessions_backup)
@@ -155,6 +160,71 @@ def test_list_state_built(proto_env):
     proto_env["s3"].blobs[f"prototypes/{SLUG}/bundle/package.json"] = "{}"
     body = client.get(f"/projects/{PID}/prototypes").json()
     assert body["prototypes"][0]["state"] == "built"
+
+
+def test_list_state_built_from_local_build_dir_with_nothing_in_s3(proto_env):
+    """The regression this guards: the in-process builder writes straight into
+    the LOCAL build dir (prototype/ subtree) and hosting serves it in place --
+    nothing writes the S3 prototypes/{slug}/bundle/ prefix anymore (that was
+    the deleted MicroVM's job). Against the old bundle-only check this card
+    would incorrectly come back "none", hiding hosting/download for a
+    perfectly finished prototype."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["state"] == "built"
+
+
+def test_list_state_not_built_when_only_the_spec_file_exists(proto_env):
+    """PrototypeSession.start() seeds the build dir with the spec .md file
+    before the agent does anything -- a directory containing only that (the
+    mirror-image bug) means a session merely STARTED, not that anything was
+    BUILT. Must not be reported as built."""
+    _seed_spec(proto_env["s3"])
+    spec_dir = (proto_env["root"] / PID / SLUG /
+               "aiplc-docs" / "discovery" / "prototypes" / SLUG)
+    spec_dir.mkdir(parents=True)
+    (spec_dir / f"PROTOTYPE-{SLUG}.md").write_text("# spec", encoding="utf-8")
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["state"] == "none"
+
+
+def test_list_state_building_wins_over_built(proto_env, monkeypatch):
+    """A live session still wins as building, even with real build output
+    already on disk from a prior successful run (e.g. a rebuild in
+    progress)."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+    session = FakePrototypeSession()
+    session.status = "building"
+    app_module.proto_sessions[(PID, SLUG)] = session
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["state"] == "building"
+
+
+def test_list_state_running_wins_over_built(proto_env):
+    """A running host still wins as running over a merely-built prototype."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="running", port=4007,
+                                                    log_tail="")
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["state"] == "running"
+    assert body["prototypes"][0]["port"] == 4007
 
 
 def test_list_state_building(proto_env, monkeypatch):

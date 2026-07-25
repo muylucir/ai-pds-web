@@ -82,6 +82,25 @@ def _require_session(pid: str, slug: str):
 
 # ---- listing ----
 
+def _local_build_exists(pid: str, slug: str) -> bool:
+    """A finished build lives under prototype/ inside the LOCAL build
+    directory now -- the in-process builder writes straight there and ProtoHost
+    serves it in place (no more VM -> S3 bundle sync). We deliberately check
+    prototype/, not just the build dir's own existence: PrototypeSession.start()
+    seeds the build dir with the spec .md file (and possibly .proto-host.log/
+    .pid from a prior hosting attempt) before the agent does anything, so a
+    build dir that exists but has no prototype/ subtree just means a session
+    STARTED, not that anything was BUILT. Only checking the immediate children
+    of prototype/ (not a full recursive scan) keeps this cheap on every list
+    call even once node_modules/.next show up in there."""
+    import pathfinder.app as app_module
+    proto_dir = app_module._proto_root() / pid / slug / "prototype"
+    try:
+        return proto_dir.is_dir() and any(proto_dir.iterdir())
+    except OSError:
+        return False
+
+
 @router.get("/projects/{pid}/prototypes")
 async def list_prototypes(pid: str):
     import pathfinder.app as app_module
@@ -102,14 +121,20 @@ async def list_prototypes(pid: str):
 
         session = app_module.proto_sessions.get((pid, slug))
         host_info = host.status(pid, slug)
-        bundle_exists = bool(await s3.list(f"prototypes/{slug}/bundle/"))
+        # The local build dir is the primary signal now -- hosting serves it
+        # in place and nothing writes the S3 bundle/ prefix anymore (that was
+        # the deleted MicroVM's job). Keep the S3 check too as a fallback: a
+        # redeployed box could in principle have only a bundle backup and no
+        # local dir.
+        built = (_local_build_exists(pid, slug)
+                 or bool(await s3.list(f"prototypes/{slug}/bundle/")))
 
         if session is not None and session.status in _LIVE_STATUSES:
             state = "building"
         elif host_info is not None and host_info.state == "running":
             state = "running"
             port = host_info.port
-        elif bundle_exists:
+        elif built:
             state = "built"
         elif session is not None and session.status == "failed":
             state = "failed"
