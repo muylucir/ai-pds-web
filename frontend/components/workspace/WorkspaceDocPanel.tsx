@@ -43,18 +43,24 @@ export function WorkspaceDocPanel({
   const listed = artifacts.data ?? [];
   const options = path && !listed.includes(path) ? [...listed, path] : listed;
 
-  // 404 is treated as an empty doc (the file may lag the event by a beat),
-  // mirroring the review page; any other error surfaces as a load-error note.
+  // 404 → "아직 동기화 안 됨"으로 구분해서 들고 있는다. 턴 중에는 정상(이벤트가
+  // 동기화보다 먼저 도착) 이지만, 턴이 끝난 뒤에도 404라면 그 문서는 S3에 없다 —
+  // 예전에는 이걸 빈 문서로 렌더해서 "생성됐다는데 내용이 없다"로 보였다.
+  const MISSING = Symbol.for("doc-missing");
   const content = useAsync(
     () =>
       path === null
         ? Promise.resolve("")
         : readArtifact(projectId, path).catch((e) =>
-            e instanceof ApiError && e.status === 404 ? "" : Promise.reject(e),
+            e instanceof ApiError && e.status === 404
+              ? (MISSING as unknown as string)
+              : Promise.reject(e),
           ),
     // turnSeq in the key: 턴 종료마다 재읽기 (턴 중 동기화 지연 보정).
     [projectId, path, turnSeq],
   );
+  const missing = content.data === (MISSING as unknown as string);
+  const text = missing ? "" : (content.data ?? "");
 
   const loadError = path !== null && content.error !== null;
   // Version strings from the backend may already carry a "v" prefix (e.g.
@@ -114,10 +120,18 @@ export function WorkspaceDocPanel({
           <p className="text-rose-600">문서를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.</p>
         ) : content.loading ? (
           <p className="text-slate-400">문서를 불러오는 중…</p>
-        ) : (content.data ?? "").trim() === "" ? (
+        ) : missing ? (
+          // 저장 자체가 안 된 상태 — "비어 있음"과 구분해서 알린다. 이걸 빈
+          // 문서로 뭉개면 사용자는 문서가 만들어졌다고 믿고, 새로고침하면
+          // 목록에서 사라진 이유를 알 수 없다.
+          <p className="text-amber-700">
+            아직 저장되지 않은 문서입니다. 턴이 끝나면 저장됩니다 — 턴이 끝난 뒤에도
+            이 메시지가 남으면 ↻로 다시 불러오거나 해당 작업을 다시 요청해 주세요.
+          </p>
+        ) : text.trim() === "" ? (
           <p className="text-slate-400">문서 내용이 아직 비어 있습니다.</p>
         ) : (
-          <Markdown text={content.data ?? ""} />
+          <Markdown text={text} />
         )}
       </div>
       {path !== null && (

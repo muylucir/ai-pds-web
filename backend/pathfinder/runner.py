@@ -99,6 +99,22 @@ class AgentRunner:
                     content = redact_credentials(content)
                 await self._s3.put(key, content)
 
+    async def _sync_abandoned_turn(self) -> None:
+        """Best-effort sync for a turn that never produced a terminal event.
+
+        Deliberately swallows errors, unlike the fail-closed sync on the
+        done/error path. This runs inside `finally`, where the turn is already
+        being torn down for one of two reasons: the consumer walked away (an
+        exception here would surface during generator cleanup, at a caller that
+        is no longer listening) or the driver raised (an exception here would
+        REPLACE that root-cause traceback with an S3 error). Neither is worth
+        losing; the log entry is.
+        """
+        try:
+            await self._sync_workspace_to_s3()
+        except Exception:
+            _log.exception("post-turn workspace sync failed: %s", self.project_id)
+
     # ---- turn relay ----
 
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
@@ -106,6 +122,7 @@ class AgentRunner:
             yield AgentEvent(kind="error", text="turn already in progress")
             return
         self._turn_active = True
+        synced = False
         try:
             self._local_root.mkdir(parents=True, exist_ok=True)
             await self._restore_workspace_from_s3()
@@ -115,10 +132,24 @@ class AgentRunner:
                     if got:
                         self._pending_interrupt_id = got
                 if event.kind in ("done", "error"):
+                    # Sync BEFORE yielding the terminal event: a client that
+                    # reads a doc the moment it sees `done` must not race the
+                    # upload (fail-closed — a sync error surfaces instead of
+                    # the terminal event).
                     await self._sync_workspace_to_s3()
+                    synced = True
                 yield event
         finally:
             self._turn_active = False
+            # Backstop for every path that never reached the terminal event:
+            # an SSE client disconnecting, a proxy timeout, the user navigating
+            # away (GeneratorExit here), or the driver raising mid-turn. Without
+            # this, files the agent already wrote stayed in the VOLATILE local
+            # workspace only -- the doc panel showed an empty document and the
+            # next refresh dropped it from the list, because S3 (the source of
+            # truth for both) never received it.
+            if not synced:
+                await self._sync_abandoned_turn()
 
     async def send_answers(self, answers: dict[str, str]) -> AsyncIterator[AgentEvent]:
         if self._turn_active:
@@ -128,6 +159,7 @@ class AgentRunner:
             yield AgentEvent(kind="error", text="no pending questions")
             return
         self._turn_active = True
+        synced = False
         try:
             self._local_root.mkdir(parents=True, exist_ok=True)
             await self._restore_workspace_from_s3()
@@ -139,9 +171,12 @@ class AgentRunner:
                         self._pending_interrupt_id = got
                 if event.kind in ("done", "error"):
                     await self._sync_workspace_to_s3()
+                    synced = True
                 yield event
         finally:
             self._turn_active = False
+            if not synced:
+                await self._sync_abandoned_turn()  # see send_message's note
 
     async def pending(self) -> str | None:
         try:

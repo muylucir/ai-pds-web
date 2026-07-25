@@ -100,7 +100,11 @@ describe("WorkspaceDocPanel", () => {
     await waitFor(() => expect(hits).toBe(2));
   });
 
-  it("treats a 404 as an empty document rather than a load error", async () => {
+  it("says a 404 document is not saved yet, distinctly from an empty one", async () => {
+    // Previously a 404 rendered as "문서 내용이 아직 비어 있습니다", which is what
+    // made the sync bug invisible: the chat said the document was created, the
+    // panel showed it as merely empty, and only a refresh revealed it had never
+    // reached S3. A missing document and an empty document are different states.
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/files/${DOC.path}`, () =>
         HttpResponse.json({ detail: "not found" }, { status: 404 }),
@@ -109,8 +113,23 @@ describe("WorkspaceDocPanel", () => {
     await act(async () => {
       render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} turnSeq={0} />);
     });
-    expect(await screen.findByText(/문서 내용이 아직 비어 있습니다/)).toBeInTheDocument();
+    expect(await screen.findByText(/아직 저장되지 않은 문서입니다/)).toBeInTheDocument();
+    expect(screen.queryByText(/문서 내용이 아직 비어 있습니다/)).not.toBeInTheDocument();
+    // Still not a hard load error — a 404 mid-turn is expected.
     expect(screen.queryByText(/불러오지 못했습니다/)).not.toBeInTheDocument();
+  });
+
+  it("still shows the empty-document note when the file exists but is blank", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/files/${DOC.path}`, () =>
+        HttpResponse.json({ content: "   " }),
+      ),
+    );
+    await act(async () => {
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} turnSeq={0} />);
+    });
+    expect(await screen.findByText(/문서 내용이 아직 비어 있습니다/)).toBeInTheDocument();
+    expect(screen.queryByText(/아직 저장되지 않은 문서입니다/)).not.toBeInTheDocument();
   });
 
   it("surfaces a load error on a non-404 failure", async () => {
