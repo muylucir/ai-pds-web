@@ -279,33 +279,49 @@ app.add_middleware(
     allow_credentials=False,
 )
 
+# ---- 라우터 등록 ----
+#
+# 인증은 라우트 본문이 아니라 여기서 붙인다: 라우터 단위 dependencies로 걸면
+# 라우트 함수를 하나도 건드리지 않고 전부 보호된다. 인증이 설정되지 않은
+# 로컬/테스트에서는 require_user가 전부 통과시킨다(auth/deps.py).
+from pathfinder.auth.deps import require_user  # noqa: E402
+from fastapi import Depends  # noqa: E402
+
+_AUTH = [Depends(require_user)]
+
 from pathfinder.routes import projects, artifacts  # noqa: E402
-app.include_router(projects.router)
-app.include_router(artifacts.router)
+app.include_router(projects.router, dependencies=_AUTH)
+app.include_router(artifacts.router, dependencies=_AUTH)
 
 from pathfinder.routes import answers  # noqa: E402
-app.include_router(answers.router)
+app.include_router(answers.router, dependencies=_AUTH)
 
 from pathfinder.routes import turns  # noqa: E402
-app.include_router(turns.router)
+app.include_router(turns.router, dependencies=_AUTH)
 
 from pathfinder.routes import discovery  # noqa: E402
-app.include_router(discovery.router)
+app.include_router(discovery.router, dependencies=_AUTH)
 
 from pathfinder.routes import history  # noqa: E402
-app.include_router(history.router)
+app.include_router(history.router, dependencies=_AUTH)
 
 from pathfinder.routes import uploads  # noqa: E402
-app.include_router(uploads.router)
+app.include_router(uploads.router, dependencies=_AUTH)
 
 from pathfinder.routes import prototypes  # noqa: E402
-app.include_router(prototypes.router)
+app.include_router(prototypes.router, dependencies=_AUTH)
+
+from pathfinder.routes import surveys  # noqa: E402
+app.include_router(surveys.router, dependencies=_AUTH)
+
+# ---- 공개(무인증) 라우터 — 정확히 둘 ----
+#
+# 여기에 라우터를 추가하는 것은 인터넷에 공개하는 것과 같다. 두 경로 모두 계정이
+# 없는 최종 사용자를 위한 것이다: 설문 링크를 받아 응답하고(surveys_public),
+# 평가 대상 프로토타입을 실제로 써본다(proto_public).
+# tests/test_auth_route_coverage.py가 이 목록을 강제한다.
+from pathfinder.routes import surveys_public  # noqa: E402
+app.include_router(surveys_public.router)
 
 from pathfinder.routes import proto_public  # noqa: E402
 app.include_router(proto_public.router)
-
-from pathfinder.routes import surveys  # noqa: E402
-app.include_router(surveys.router)
-
-from pathfinder.routes import surveys_public  # noqa: E402
-app.include_router(surveys_public.router)
