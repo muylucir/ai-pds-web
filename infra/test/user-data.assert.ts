@@ -57,26 +57,13 @@ assert.ok(s.includes("sed -i '/^    server {/"), 'must use the anchored sed that
 
 console.log('OK  user-data: all required elements present (incl. nginx-var vs secret-var escaping)');
 
-// 9) 프로토타입 빌드 VM env — 이 4개가 systemd 유닛에서 빠져 있었던 것이
-//    배포 환경에서 "빌드 시작 → 즉시 502"의 원인이었다(백엔드가
-//    image_id=None으로 run_microvm을 호출 → boto3 ParamValidationError).
-//    주입 시/미주입 시 모두 렌더링을 고정한다.
-const withVm = renderUserData({
-  region: 'ap-northeast-2',
-  bucketName: 'b',
-  model: 'm',
-  secretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:h-Ab',
-  assetS3Uri: 's3://a/x.zip',
-  vmRegion: 'ap-northeast-1',
-  vmImageId: 'arn:aws:lambda:ap-northeast-1:123456789012:microvm-image:pathfinder-harness',
-  vmRoleArn: 'arn:aws:iam::123456789012:role/VmExec',
-});
-assert.match(withVm, /Environment=PATHFINDER_VM_REGION=ap-northeast-1/, 'VM region env');
-assert.match(withVm, /Environment=PATHFINDER_VM_IMAGE_ID=arn:aws:lambda:ap-northeast-1:[^\n]*microvm-image:pathfinder-harness/, 'VM image env');
-assert.match(withVm, /Environment=PATHFINDER_VM_ROLE_ARN=arn:aws:iam::[^\n]*role\/VmExec/, 'VM exec role env');
-assert.match(withVm, /Environment=PATHFINDER_PROTO_ROOT=\/opt\/pathfinder\/protos/, 'proto host root env');
-// 미주입 시에도 유닛은 유효해야 한다(빈 값 → 백엔드가 503으로 명확히 거부).
-assert.match(s, /Environment=PATHFINDER_VM_IMAGE_ID=$/m, 'unset VM image renders empty, not "undefined"');
-assert.match(s, /Environment=PATHFINDER_VM_REGION=ap-northeast-1/, 'VM region defaults to Tokyo');
+// 9) 프로토타입 빌드: 동시 빌드 상한 + 빌드 에이전트 전용 CLAUDE_CONFIG_DIR env.
+//    VM 시절의 PATHFINDER_VM_* 3종은 완전히 사라졌다(인프라에서 VM 계층 삭제).
+assert.match(s, /Environment=PATHFINDER_PROTO_ROOT=\/opt\/pathfinder\/protos/, 'proto host root env');
+assert.match(s, /Environment=PATHFINDER_PROTO_MAX_CONCURRENT=2/, 'proto build concurrency cap env');
+assert.match(s, /Environment=PATHFINDER_PROTO_CONFIG_DIR=\/home\/ec2-user\/pathfinder-proto-config/, 'proto build CLAUDE_CONFIG_DIR env');
+assert.ok(!s.includes('PATHFINDER_VM_REGION'), 'PATHFINDER_VM_REGION must be gone');
+assert.ok(!s.includes('PATHFINDER_VM_IMAGE_ID'), 'PATHFINDER_VM_IMAGE_ID must be gone');
+assert.ok(!s.includes('PATHFINDER_VM_ROLE_ARN'), 'PATHFINDER_VM_ROLE_ARN must be gone');
 
-console.log('OK  user-data: prototype VM env vars rendered (set + unset cases)');
+console.log('OK  user-data: prototype build env vars rendered, VM env vars gone');
