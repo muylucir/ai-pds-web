@@ -570,19 +570,19 @@ def test_proxy_relative_asset_under_slug_prefix_is_served(proto_env, echo_server
 def test_proxy_rewrites_upstream_absolute_redirect(proto_env):
     """A prototype redirecting to its own internal origin must be rewritten to
     the public proxy path — otherwise the browser chases 127.0.0.1:<port>."""
-    from pathfinder.routes.prototypes import _rewritten_location
+    from pathfinder.routes.proto_public import _rewritten_location
     got = _rewritten_location(
         "http://127.0.0.1:4001/login?next=/dash", PID, SLUG)
     assert got == f"/proto/{PID}/{SLUG}/login?next=/dash"
 
 
 def test_proxy_rewrites_upstream_relative_root_redirect(proto_env):
-    from pathfinder.routes.prototypes import _rewritten_location
+    from pathfinder.routes.proto_public import _rewritten_location
     assert _rewritten_location("/dashboard", PID, SLUG) == \
         f"/proto/{PID}/{SLUG}/dashboard"
 
 
 def test_proxy_leaves_external_redirect_alone(proto_env):
-    from pathfinder.routes.prototypes import _rewritten_location
+    from pathfinder.routes.proto_public import _rewritten_location
     ext = "https://accounts.google.com/o/oauth2/auth?x=1"
     assert _rewritten_location(ext, PID, SLUG) == ext

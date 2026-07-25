@@ -301,6 +301,9 @@ app.include_router(uploads.router)
 from pathfinder.routes import prototypes  # noqa: E402
 app.include_router(prototypes.router)
 
+from pathfinder.routes import proto_public  # noqa: E402
+app.include_router(proto_public.router)
+
 from pathfinder.routes import surveys  # noqa: E402
 app.include_router(surveys.router)
 
