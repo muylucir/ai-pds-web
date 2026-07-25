@@ -102,6 +102,20 @@ async def close_survey(pid: str, slug: str):
     return Response(status_code=204)
 
 
+@router.post("/projects/{pid}/prototypes/{slug}/survey/synthesize")
+async def synthesize_results(pid: str, slug: str):
+    """Write the aggregate into the rule's validation-results.md so the PM's
+    Discovery flow (and the later product-strategy stage, which reads that
+    exact path) picks it up."""
+    _require_registered(pid)
+    store = _store(pid, slug)
+    try:
+        key, count = await store.synthesize_results()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="no survey")
+    return {"path": key, "response_count": count}
+
+
 @router.get("/projects/{pid}/prototypes/{slug}/survey/responses.csv")
 async def export_csv(pid: str, slug: str):
     _require_registered(pid)

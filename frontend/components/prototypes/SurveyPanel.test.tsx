@@ -77,3 +77,46 @@ describe("SurveyPanel", () => {
     expect(screen.getByRole("button", { name: /질문 생성/ })).toBeEnabled();
   });
 });
+
+describe("SurveyPanel — 결과 취합", () => {
+  it("synthesizes and reports the path it wrote", async () => {
+    vi.spyOn(api, "getSurvey").mockResolvedValue(OPEN_VIEW);
+    const synth = vi.spyOn(api, "synthesizeSurvey").mockResolvedValue({
+      path: "aiplc-docs/discovery/prototype/validation-results.md",
+      response_count: 7,
+    });
+    render(<SurveyPanel projectId={PID} slug={SLUG} />);
+    await userEvent.click(await screen.findByRole("button", { name: /결과 취합/ }));
+
+    await waitFor(() => expect(synth).toHaveBeenCalledWith(PID, SLUG));
+    // The PM needs to know WHERE it landed — the rule's own path, so the
+    // Discovery flow picks it up.
+    expect(await screen.findByText(/validation-results\.md/)).toBeInTheDocument();
+    expect(screen.getByText(/7건/)).toBeInTheDocument();
+  });
+
+  it("offers 취합 while the survey is still open (interim aggregate)", async () => {
+    vi.spyOn(api, "getSurvey").mockResolvedValue(OPEN_VIEW);
+    render(<SurveyPanel projectId={PID} slug={SLUG} />);
+    expect(await screen.findByRole("button", { name: /결과 취합/ })).toBeEnabled();
+  });
+
+  it("offers 취합 after the survey is closed", async () => {
+    vi.spyOn(api, "getSurvey").mockResolvedValue({
+      ...OPEN_VIEW,
+      questionnaire: { ...OPEN_VIEW.questionnaire, status: "closed",
+                       closed_at: "2026-07-26T00:00:00Z" },
+    });
+    render(<SurveyPanel projectId={PID} slug={SLUG} />);
+    expect(await screen.findByRole("button", { name: /결과 취합/ })).toBeEnabled();
+  });
+
+  it("surfaces a synthesis failure without wedging the button", async () => {
+    vi.spyOn(api, "getSurvey").mockResolvedValue(OPEN_VIEW);
+    vi.spyOn(api, "synthesizeSurvey").mockRejectedValue(new Error("boom"));
+    render(<SurveyPanel projectId={PID} slug={SLUG} />);
+    await userEvent.click(await screen.findByRole("button", { name: /결과 취합/ }));
+    expect(await screen.findByText(/취합에 실패/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /결과 취합/ })).toBeEnabled();
+  });
+});

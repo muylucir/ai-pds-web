@@ -50,6 +50,13 @@ def questionnaire_md_key(slug: str) -> str:
     return f"aiplc-docs/discovery/prototypes/{slug}/validation-questionnaire.md"
 
 
+#: Where the rule expects validation synthesis to live
+#: (prototype-validation.md Step 6), and where the later product-strategy
+#: stage looks for it. Singular "prototype/", NOT the per-slug
+#: "prototypes/{slug}/" tree the questionnaire copy uses.
+RESULTS_MD_KEY = "aiplc-docs/discovery/prototype/validation-results.md"
+
+
 #: Leading characters a spreadsheet treats as the start of a formula.
 _FORMULA_LEADERS = ("=", "+", "-", "@", "\t", "\r")
 
@@ -68,6 +75,105 @@ def _csv_safe(value):
     if isinstance(value, str) and value.startswith(_FORMULA_LEADERS):
         return "'" + value
     return value
+
+
+def _results_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
+                      now: str) -> str:
+    """Render the survey aggregate under prototype-validation.md's Step 6
+    headings. Sections the rule expects the PM to judge (theme analysis, pain
+    point mapping, build decision) are emitted as empty templates rather than
+    machine guesses."""
+    lines = [
+        "# Validation Results",
+        "",
+        f"- **프로토타입**: {qn.slug}",
+        f"- **설문**: {qn.title}",
+        f"- **검증 가설**: {qn.hypothesis}",
+        f"- **응답 수**: {rollup.count}",
+        f"- **설문 상태**: {'마감' if qn.status == 'closed' else '진행 중'}",
+        f"- **취합 시각**: {now}",
+        "",
+        "> 이 파일은 Pathfinder 설문 집계로 생성되었다. 아래 '정량 집계'와",
+        "> '자유 응답 전문'은 수집된 데이터이며, 테마 분석·pain point 매핑·",
+        "> 빌드 결정은 PM이 판단해 채운다(prototype-validation.md Step 6).",
+        "",
+        "## Feedback Sources",
+        "",
+        "| Source | Type | Users | Feedback Items |",
+        "|---|---|---|---|",
+        f"| Pathfinder 검증 설문 | Survey | {rollup.count} | {rollup.count} |",
+        "",
+        "## 정량 집계",
+        "",
+    ]
+
+    for idx, q in enumerate(qn.questions, start=1):
+        stat = rollup.per_question.get(q.id)
+        if stat is None:
+            continue
+        lines.append(f"### Q{idx}. {q.text}")
+        lines.append("")
+        if stat.type == "scale":
+            lines.append(f"평균 **{stat.mean}** / 5 (응답 {stat.n}건)")
+            lines.append("")
+            lines.append("| 점수 | 응답 수 |")
+            lines.append("|---|---|")
+            for score in ("5", "4", "3", "2", "1"):
+                lines.append(f"| {score} | {stat.distribution.get(score, 0)} |")
+        elif stat.type == "choice":
+            lines.append(f"응답 {stat.n}건")
+            lines.append("")
+            lines.append("| 선택지 | 응답 수 | 비율 |")
+            lines.append("|---|---|---|")
+            for opt, n in stat.counts.items():
+                pct = f"{round(n / stat.n * 100)}%" if stat.n else "-"
+                lines.append(f"| {opt} | {n} | {pct} |")
+        else:
+            lines.append(f"자유 응답 {stat.n}건 — 전문은 아래 '자유 응답 전문' 참조")
+        lines.append("")
+
+    text_questions = [q for q in qn.questions if q.type == "text"]
+    if text_questions:
+        lines.append("## 자유 응답 전문")
+        lines.append("")
+        for idx, q in enumerate(qn.questions, start=1):
+            if q.type != "text":
+                continue
+            lines.append(f"### Q{idx}. {q.text}")
+            lines.append("")
+            # Every answer, not the rollup's 20-sample cap: this file is the
+            # PM's synthesis input, so truncating it would hide evidence.
+            answers = [str(r.answers[q.id]).strip() for r in
+                       sorted(responses, key=lambda x: x.submitted_at)
+                       if isinstance(r.answers.get(q.id), str)
+                       and str(r.answers[q.id]).strip()]
+            if not answers:
+                lines.append("(응답 없음)")
+            else:
+                lines.extend(f"- {a}" for a in answers)
+            lines.append("")
+
+    lines.extend([
+        "## Theme Analysis",
+        "",
+        "| Theme | Frequency | Severity | Representative Quote |",
+        "|---|---|---|---|",
+        "| (PM이 위 자유 응답에서 도출) | | | |",
+        "",
+        "## Pain Point Mapping",
+        "",
+        "| Original Pain Point | Validated? | Evidence |",
+        "|---|---|---|",
+        "| (Envision의 pain point를 옮겨 판정) | | |",
+        "",
+        "## Build Decision",
+        "",
+        "- [ ] Proceed — 검증됨, 다음 단계로",
+        "- [ ] Iterate — 부분 검증, 프로토타입 수정 후 재검증",
+        "- [ ] Pivot — 접근 재고 (Envision으로 복귀)",
+        "",
+    ])
+    return "\n".join(lines)
 
 
 def _to_markdown(qn: Questionnaire) -> str:
@@ -210,3 +316,23 @@ class SurveyStore:
                             [_csv_safe(r.answers.get(q.id, ""))
                              for q in qn.questions])
         return buf.getvalue()
+
+    # ---- synthesis into the rule's validation-results.md ----
+
+    async def synthesize_results(self, now: str | None = None) -> tuple[str, int]:
+        """Render the aggregate as the rule's validation-results.md and store
+        it. Returns (key, response_count).
+
+        Deliberately mechanical: it lays out counts, means and every free-text
+        answer under the rule's headings so the PM has the evidence in one
+        place. It does NOT invent theme analysis or pain-point verdicts — those
+        are the PM's judgment calls in prototype-validation.md Step 6, and a
+        machine-written guess there would be indistinguishable from a real
+        finding. Placeholder rows are left for the PM to fill.
+        """
+        qn = await self.load_questionnaire()
+        responses = await self.load_responses()
+        rollup = build_rollup(qn.questions, responses, self._now(now))
+        md = _results_markdown(qn, responses, rollup, self._now(now))
+        await self._s3.put(RESULTS_MD_KEY, md)
+        return RESULTS_MD_KEY, rollup.count

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import pytest
 from fastapi.testclient import TestClient
@@ -132,3 +133,56 @@ def test_csv_export(env):
 
 def test_unknown_project_404(env):
     assert client.post("/projects/nope/prototypes/x/survey").status_code == 404
+
+
+def test_synthesize_writes_rule_expected_results_path(env):
+    """The aggregate must land at the path the rule defines (Step 6) and the
+    later product-strategy stage reads — not the per-slug questionnaire tree."""
+    _create(env)
+    store = app_module.survey_store_factory(PID, SLUG)
+    asyncio.run(store.append_response(SurveyResponse(
+        response_id="r1", submitted_at="2026-07-25T00:00:01Z",
+        answers={"q1": 5, "q2": "속도가 인상적입니다"})))
+    asyncio.run(store.append_response(SurveyResponse(
+        response_id="r2", submitted_at="2026-07-25T00:00:02Z",
+        answers={"q1": 3, "q2": "정확도가 아쉽다"})))
+
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/survey/synthesize")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["path"] == "aiplc-docs/discovery/prototype/validation-results.md"
+    assert body["response_count"] == 2
+
+    md = env["project_s3"].blobs[body["path"]]
+    assert "# Validation Results" in md
+    assert f"**응답 수**: 2" in md
+    # Quantitative aggregate present
+    assert "평균 **4.0** / 5" in md
+    # EVERY free-text answer verbatim (not the rollup's 20-sample cap)
+    assert "속도가 인상적입니다" in md and "정확도가 아쉽다" in md
+    # Judgment sections left for the PM, not machine-guessed
+    assert "## Theme Analysis" in md and "## Pain Point Mapping" in md
+    assert "## Build Decision" in md
+
+
+def test_synthesize_404_without_survey(env):
+    assert client.post(
+        f"/projects/{PID}/prototypes/{SLUG}/survey/synthesize").status_code == 404
+
+
+def test_synthesize_is_rerunnable_and_reflects_new_responses(env):
+    """Re-running after more responses land must overwrite with fresh numbers."""
+    _create(env)
+    store = app_module.survey_store_factory(PID, SLUG)
+    asyncio.run(store.append_response(SurveyResponse(
+        response_id="a", submitted_at="2026-07-25T00:00:01Z", answers={"q1": 1})))
+    first = client.post(f"/projects/{PID}/prototypes/{SLUG}/survey/synthesize").json()
+    assert first["response_count"] == 1
+
+    asyncio.run(store.append_response(SurveyResponse(
+        response_id="b", submitted_at="2026-07-25T00:00:02Z", answers={"q1": 5})))
+    second = client.post(f"/projects/{PID}/prototypes/{SLUG}/survey/synthesize").json()
+    assert second["response_count"] == 2
+    md = env["project_s3"].blobs[second["path"]]
+    assert "**응답 수**: 2" in md
+    assert "평균 **3.0** / 5" in md

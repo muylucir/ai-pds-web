@@ -4,7 +4,7 @@ import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "./client";
 import {
   createSurvey, getSurvey, closeSurvey, surveyCsvUrl,
-  getPublicSurvey, submitPublicSurvey, SurveyClosedError,
+  getPublicSurvey, submitPublicSurvey, SurveyClosedError, synthesizeSurvey,
 } from "./surveys";
 
 const PID = "p1";
@@ -80,5 +80,26 @@ describe("surveys api", () => {
       () => new HttpResponse(null, { status: 410 })));
     await expect(submitPublicSurvey("tok", { q1: 4 }))
       .rejects.toBeInstanceOf(SurveyClosedError);
+  });
+});
+
+describe("synthesizeSurvey", () => {
+  it("posts to the synthesize route and returns the written path", async () => {
+    server.use(http.post(
+      `${API_BASE_URL}/projects/${PID}/prototypes/${SLUG}/survey/synthesize`,
+      () => HttpResponse.json({
+        path: "aiplc-docs/discovery/prototype/validation-results.md",
+        response_count: 4,
+      })));
+    const out = await synthesizeSurvey(PID, SLUG);
+    expect(out.path).toBe("aiplc-docs/discovery/prototype/validation-results.md");
+    expect(out.response_count).toBe(4);
+  });
+
+  it("rejects when there is no survey", async () => {
+    server.use(http.post(
+      `${API_BASE_URL}/projects/${PID}/prototypes/${SLUG}/survey/synthesize`,
+      () => new HttpResponse(null, { status: 404 })));
+    await expect(synthesizeSurvey(PID, SLUG)).rejects.toBeTruthy();
   });
 });

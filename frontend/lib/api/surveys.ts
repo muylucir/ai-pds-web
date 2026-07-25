@@ -89,6 +89,21 @@ export function surveyCsvUrl(pid: string, slug: string): string {
   return `${API_BASE_URL}${base(pid, slug)}/responses.csv`;
 }
 
+export interface SynthesisResult {
+  path: string;
+  response_count: number;
+}
+
+/** Write the aggregate into the rule's validation-results.md so the PM's
+ *  Discovery flow picks it up. Re-runnable: it overwrites with fresh numbers. */
+export async function synthesizeSurvey(
+  pid: string, slug: string,
+): Promise<SynthesisResult> {
+  return (await apiFetch<SynthesisResult>(`${base(pid, slug)}/synthesize`, {
+    method: "POST",
+  }))!;
+}
+
 export async function getPublicSurvey(token: string): Promise<PublicSurvey> {
   try {
     return (await apiFetch<PublicSurvey>(`/survey/${encodeURIComponent(token)}`))!;

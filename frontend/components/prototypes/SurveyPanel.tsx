@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import {
-  closeSurvey, createSurvey, getSurvey, surveyCsvUrl,
-  type SurveyView,
+  closeSurvey, createSurvey, getSurvey, surveyCsvUrl, synthesizeSurvey,
+  type SurveyView, type SynthesisResult,
 } from "@/lib/api/surveys";
 import { SurveyDashboard } from "./SurveyDashboard";
 
@@ -12,6 +12,7 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [synthesized, setSynthesized] = useState<SynthesisResult | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -34,6 +35,18 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
       await reload();
     } catch {
       setError("질문 생성에 실패했습니다. 다시 시도해 주세요.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSynthesize() {
+    setBusy(true);
+    setError(null);
+    try {
+      setSynthesized(await synthesizeSurvey(projectId, slug));
+    } catch {
+      setError("결과 취합에 실패했습니다.");
     } finally {
       setBusy(false);
     }
@@ -120,6 +133,21 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
                 </button>
               </div>
             )}
+
+            {/* 취합은 열린 설문에서도 가능하다: 중간 집계를 문서로 확인한 뒤
+                응답을 더 받는 흐름이 실제로 흔하다. 재실행하면 최신 수치로
+                덮어쓴다. */}
+            <div className="flex flex-wrap gap-2 items-center pt-1">
+              <button type="button" onClick={() => void handleSynthesize()} disabled={busy}
+                      className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-medium disabled:opacity-50">
+                {busy ? "취합 중…" : "결과 취합"}
+              </button>
+              {synthesized && (
+                <span className="text-xs text-slate-500 break-all">
+                  {synthesized.response_count}건을 <code>{synthesized.path}</code>에 저장했습니다.
+                </span>
+              )}
+            </div>
           </div>
           <SurveyDashboard questions={qn.questions} rollup={view!.rollup} />
         </>
