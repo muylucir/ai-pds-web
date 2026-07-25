@@ -1,6 +1,6 @@
 import * as assert from 'node:assert';
 import {
-  CALLBACK_PATH, LOCAL_APP_URL, LOGOUT_PATH, OAUTH_SCOPES,
+  CALLBACK_PATH, GROUP_ADMIN, GROUP_PM, LOCAL_APP_URL, LOGOUT_PATH, OAUTH_SCOPES,
   SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
   callbackUrls, logoutUrls,
 } from '../lib/auth-client-config';
@@ -10,6 +10,12 @@ import {
 assert.strictEqual(SEED_PASSWORD, 'PathFinder2026!@');
 assert.strictEqual(SEED_ADMIN_EMAIL, 'admin@pathfinder.local');
 assert.strictEqual(SEED_PM_EMAIL, 'pm@pathfinder.local');
+
+// Task 3이 이 값으로 Cognito 그룹을 만들고 Task 4의 토큰 검증이 같은 문자열을
+// cognito:groups 클레임과 맞춘다 — 오타는 배포까지 통과한 뒤 런타임 권한
+// 오류로만 드러나므로 상수 자체를 단정한다.
+assert.strictEqual(GROUP_ADMIN, 'admin');
+assert.strictEqual(GROUP_PM, 'pm');
 
 // 콜백 URL은 와일드카드가 불가하고 전수 일치만 허용된다 — 경로가 프론트
 // route handler 경로와 정확히 같아야 한다.
@@ -40,4 +46,4 @@ assert.deepStrictEqual(
 );
 
 assert.deepStrictEqual(OAUTH_SCOPES, ['openid', 'email', 'profile']);
-console.log('OK  auth-client-config: seed constants + callback/logout URL derivation');
+console.log('OK  auth-client-config: seed constants + group constants + callback/logout URL derivation');
