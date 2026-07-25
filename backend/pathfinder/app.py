@@ -146,6 +146,39 @@ def proto_session_factory(project_id: str, slug: str):
     )
 
 
+# ---- validation survey wiring (routes/surveys.py) ----
+
+
+def surveys_root_s3_factory() -> S3StoreLike:
+    """Bucket-root store: the token index must be readable before we know
+    which project a token belongs to."""
+    region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
+    client = boto3.client("s3", region_name=region)
+    return S3Store(bucket=bucket, prefix="", client=client)
+
+
+def survey_store_factory(project_id: str, slug: str):
+    from pathfinder.survey.store import SurveyStore
+    return SurveyStore(s3_store_factory(project_id), surveys_root_s3_factory(),
+                       slug=slug, project_id=project_id)
+
+
+def questionnaire_agent_factory():
+    """A one-shot `async (prompt) -> str` callable. Deliberately NOT
+    StrandsDriver: that bakes in the AIPLC rules prompt, workspace tools and a
+    session manager, none of which belong in a stateless generation call."""
+    async def call(prompt: str) -> str:
+        from strands import Agent
+        from strands.models import BedrockModel
+        model = BedrockModel(model_id=os.environ["ANTHROPIC_MODEL"],
+                             max_tokens=8000)
+        agent = Agent(model=model, tools=[], callback_handler=None)
+        result = await agent.invoke_async(prompt)
+        return str(result)
+    return call
+
+
 async def _cleanup_orphan_vms() -> None:
     """기동 시 고아 VM 정리 — best effort, 실패해도 기동은 계속(로그만).
     VM 태깅 API가 없으므로 imageArn == PATHFINDER_VM_IMAGE_ID 필터로 우리
@@ -245,3 +278,6 @@ app.include_router(uploads.router)
 
 from pathfinder.routes import prototypes  # noqa: E402
 app.include_router(prototypes.router)
+
+from pathfinder.routes import surveys  # noqa: E402
+app.include_router(surveys.router)
