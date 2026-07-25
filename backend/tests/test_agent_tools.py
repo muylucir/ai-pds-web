@@ -116,3 +116,65 @@ def test_report_stage_survives_state_write_failure(tmp_path, monkeypatch):
     out = tools["report_stage"](stage="Envision", status="in_progress")
     assert "stage recorded" in out
     assert emitted and emitted[0].kind == "stage"
+
+
+# ---- submit_document must not declare a document that isn't on disk ----
+
+def _ws_and_tools(tmp_path):
+    ws = tmp_path / "ws"; ws.mkdir()
+    rules = tmp_path / "rules"; rules.mkdir()
+    tools, emitted = _tools(ws, rules)
+    return ws, tools, emitted
+
+
+def test_submit_document_emits_when_the_file_exists(tmp_path):
+    ws, tools, emitted = _ws_and_tools(tmp_path)
+    doc = ws / "aiplc-docs" / "discovery" / "discovery-document.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("# 내용", encoding="utf-8")
+
+    result = tools["submit_document"]("aiplc-docs/discovery/discovery-document.md", "v1", "요약")
+
+    assert "submitted" in result
+    docs = [e for e in emitted if e.kind == "document"]
+    assert len(docs) == 1
+
+
+def test_submit_document_refuses_a_path_that_was_never_written(tmp_path):
+    """The decoupling that made a real bug invisible: this tool only emitted an
+    event, so an agent that called it without a preceding file_write produced a
+    chat message saying the document was created, a dropdown entry for it, and
+    no document. The event is the UI's source of truth for "a document is
+    ready", so it must not fire for a file that does not exist."""
+    ws, tools, emitted = _ws_and_tools(tmp_path)
+
+    result = tools["submit_document"]("aiplc-docs/discovery/discovery-document.md", "v1")
+
+    assert "document" not in [e.kind for e in emitted]
+    assert "file_write" in result  # tells the agent what to do instead
+
+
+def test_submit_document_refuses_an_empty_file(tmp_path):
+    """A zero-byte or whitespace-only file is the same failure wearing a
+    different hat -- the panel would render "문서 내용이 아직 비어 있습니다"
+    while the chat claimed success."""
+    ws, tools, emitted = _ws_and_tools(tmp_path)
+    doc = ws / "aiplc-docs" / "empty.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("   \n", encoding="utf-8")
+
+    result = tools["submit_document"]("aiplc-docs/empty.md", "v1")
+
+    assert "document" not in [e.kind for e in emitted]
+    assert "비어" in result or "empty" in result.lower()
+
+
+def test_submit_document_rejects_a_path_escaping_the_workspace(tmp_path):
+    ws, tools, emitted = _ws_and_tools(tmp_path)
+    outside = tmp_path / "secret.md"
+    outside.write_text("nope", encoding="utf-8")
+
+    result = tools["submit_document"]("../secret.md", "v1")
+
+    assert "document" not in [e.kind for e in emitted]
+    assert "escape" in result.lower() or "경로" in result
