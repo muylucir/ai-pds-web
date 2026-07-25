@@ -78,6 +78,44 @@ async def test_sessions_do_not_bleed_across_session_ids():
     assert await store.load(other) is None
 
 
+async def test_resume_by_a_separate_store_instance_preserves_earlier_batches():
+    """A resume always constructs a NEW S3SessionStore (PrototypeBuilder makes
+    one per session) -- if its counter started at 0 instead of being seeded
+    from S3, its first append would reuse the original instance's key names
+    and silently overwrite the earliest batches. Two instances, same session,
+    must accumulate rather than clobber."""
+    s3 = FakeS3Store()
+    original = S3SessionStore(s3, slug=SLUG)
+    await original.append(KEY, [{"type": "user", "uuid": "u1"}])
+    await original.append(KEY, [{"type": "assistant", "uuid": "a1"}])
+
+    resumed = S3SessionStore(s3, slug=SLUG)  # e.g. after a backend redeploy
+    await resumed.append(KEY, [{"type": "user", "uuid": "u2"}])
+
+    assert [e["uuid"] for e in await resumed.load(KEY)] == ["u1", "a1", "u2"]
+
+
+async def test_resume_seeding_is_scoped_per_session_prefix_not_instance_wide():
+    """The seeded counter must be tracked per session prefix (main vs. a
+    subagent subpath), not as one instance-wide integer -- otherwise writing
+    to a fresh subpath after resuming the main transcript would seed from (or
+    collide with) the main transcript's unrelated sequence numbers."""
+    s3 = FakeS3Store()
+    sub = {**KEY, "subpath": "subagents/agent-7"}
+
+    original = S3SessionStore(s3, slug=SLUG)
+    await original.append(KEY, [{"type": "user", "uuid": "u1"}])
+    await original.append(KEY, [{"type": "assistant", "uuid": "a1"}])
+    await original.append(sub, [{"type": "user", "uuid": "s1"}])
+
+    resumed = S3SessionStore(s3, slug=SLUG)
+    await resumed.append(KEY, [{"type": "user", "uuid": "u2"}])
+    await resumed.append(sub, [{"type": "user", "uuid": "s2"}])
+
+    assert [e["uuid"] for e in await resumed.load(KEY)] == ["u1", "a1", "u2"]
+    assert [e["uuid"] for e in await resumed.load(sub)] == ["s1", "s2"]
+
+
 async def test_round_trip_over_the_real_S3Store_shape():
     """FakeS3Store could drift from S3Store's contract (key namespacing,
     sorted list, FileNotFoundError). Run the same round trip against a real
