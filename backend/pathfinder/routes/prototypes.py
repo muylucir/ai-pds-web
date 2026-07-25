@@ -6,8 +6,11 @@
 # /api -> :8000 nginx/CloudFront routing (no hosting-stack changes).
 from __future__ import annotations
 
+import io
 import logging
 import re
+import zipfile
+from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -202,6 +205,82 @@ async def close_session(pid: str, slug: str):
     await session.close()
     del app_module.proto_sessions[(pid, slug)]
     return Response(status_code=204)
+
+
+# ---- handoff archive ----
+
+# Never shipped to the dev team: build artifacts (reproducible, huge), our own
+# host bookkeeping, and -- from the S3 fallback -- the survey and transcript
+# subtrees, which share the prototypes/{slug}/ prefix with the bundle but are
+# anonymous respondents' words and build chatter respectively.
+_ARCHIVE_EXCLUDED_DIRS = {"node_modules", ".next", ".git"}
+_ARCHIVE_EXCLUDED_FILES = {".proto-host.log", ".proto-host.pid"}
+
+
+def _archive_excluded(rel: str) -> bool:
+    parts = PurePosixPath(rel).parts
+    if any(p in _ARCHIVE_EXCLUDED_DIRS for p in parts):
+        return True
+    return parts[-1] in _ARCHIVE_EXCLUDED_FILES if parts else True
+
+
+def _archive_filename_header(slug: str) -> str:
+    """RFC 6266/5987. A Korean slug raw-interpolated into a latin-1 header
+    raises UnicodeEncodeError (500) -- same fix as artifacts.py."""
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", slug).strip("-") or "prototype"
+    utf8 = quote(f"{slug}-prototype.zip", safe="")
+    return (f'attachment; filename="{safe}-prototype.zip"; '
+            f"filename*=UTF-8''{utf8}")
+
+
+async def _archive_entries(pid: str, slug: str) -> list[tuple[str, bytes]]:
+    """Prefer the local build directory -- it is the authoritative copy the
+    agent wrote and hosting serves. The S3 bundle is the fallback for a box
+    whose disk was wiped by a redeploy."""
+    import pathfinder.app as app_module
+
+    build_dir = app_module._proto_root() / pid / slug
+    if build_dir.is_dir():
+        entries = []
+        for path in sorted(build_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(build_dir).as_posix()
+            if _archive_excluded(rel):
+                continue
+            entries.append((rel, path.read_bytes()))
+        if entries:
+            return entries
+
+    s3 = app_module.s3_store_factory(pid)
+    bundle_prefix = f"prototypes/{slug}/bundle/"
+    entries = []
+    for key in await s3.list(bundle_prefix):
+        rel = key[len(bundle_prefix):]
+        if _archive_excluded(rel):
+            continue
+        entries.append((rel, await s3.get_bytes(key)))
+    return entries
+
+
+@router.get("/projects/{pid}/prototypes/{slug}/archive")
+async def download_prototype_archive(pid: str, slug: str):
+    """The dev-team handoff: prototype source as a zip. Binary-safe (bytes
+    straight into the zip), so images and fonts survive."""
+    _require_registered(pid)
+    entries = await _archive_entries(pid, slug)
+    if not entries:
+        raise HTTPException(status_code=404, detail="prototype bundle not found")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel, content in entries:
+            zf.writestr(rel, content)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": _archive_filename_header(slug)},
+    )
 
 
 # ---- hosting ----

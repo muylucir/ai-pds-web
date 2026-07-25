@@ -10,6 +10,11 @@ class S3StoreLike(Protocol):
     async def put(self, key: str, content: str) -> None: ...
     async def list(self, prefix: str) -> list[str]: ...
     async def delete_prefix(self, prefix: str) -> int: ...
+    # Binary-safe pair, used only by the prototype bundle backup/restore and
+    # the handoff zip. The text methods above decode as UTF-8, which mangles
+    # images and fonts (U+FFFD) -- fine for markdown, wrong for a bundle.
+    async def get_bytes(self, key: str) -> bytes: ...
+    async def put_bytes(self, key: str, content: bytes) -> None: ...
 
 
 class S3Store:
@@ -47,6 +52,25 @@ class S3Store:
                 Key=self._full_key(key),
                 Body=content.encode("utf-8"),
             )
+
+        await asyncio.to_thread(_put)
+
+    async def get_bytes(self, key: str) -> bytes:
+        def _get() -> bytes:
+            try:
+                resp = self._client.get_object(Bucket=self._bucket, Key=self._full_key(key))
+            except ClientError as e:
+                if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+                    raise FileNotFoundError(key) from e
+                raise
+            return resp["Body"].read()
+
+        return await asyncio.to_thread(_get)
+
+    async def put_bytes(self, key: str, content: bytes) -> None:
+        def _put() -> None:
+            self._client.put_object(Bucket=self._bucket,
+                                    Key=self._full_key(key), Body=content)
 
         await asyncio.to_thread(_put)
 
