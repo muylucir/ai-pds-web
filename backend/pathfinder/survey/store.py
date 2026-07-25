@@ -9,10 +9,15 @@
 #   surveys/by-token/{token}.json                 {"project_id":..., "slug":...}
 from __future__ import annotations
 
+import asyncio
+import csv
+import io
 import json
 import logging
+from datetime import datetime, timezone
 
-from pathfinder.survey.models import Questionnaire
+from pathfinder.survey.models import Questionnaire, Rollup, SurveyResponse
+from pathfinder.survey.rollup import build_rollup
 
 _log = logging.getLogger(__name__)
 
@@ -98,8 +103,89 @@ class SurveyStore:
         qn = await self.load_questionnaire()
         if qn.status == "closed":
             return qn  # idempotent: never bump closed_at
-        from datetime import datetime, timezone
         stamp = now or datetime.now(timezone.utc).isoformat()
         closed = qn.model_copy(update={"status": "closed", "closed_at": stamp})
         await self._s3.put(questionnaire_key(self.slug), closed.model_dump_json())
         return closed
+
+    # ---- responses (source of truth) ----
+
+    async def append_response(self, resp: SurveyResponse) -> None:
+        key = f"{responses_prefix(self.slug)}{resp.response_id}.json"
+        await self._s3.put(key, resp.model_dump_json())
+
+    async def response_count(self) -> int:
+        return len(await self._s3.list(responses_prefix(self.slug)))
+
+    async def load_responses(self) -> list[SurveyResponse]:
+        keys = await self._s3.list(responses_prefix(self.slug))
+        # Parallel, never sequential: measured 61ms per object round-trip, so a
+        # sequential rebuild of 500 responses would take ~30s (spec §2).
+        raw = await asyncio.gather(*[self._s3.get(k) for k in keys])
+        return [SurveyResponse.model_validate_json(r) for r in raw]
+
+    # ---- rollup (cache) ----
+
+    @staticmethod
+    def _now(now: str | None) -> str:
+        return now or datetime.now(timezone.utc).isoformat()
+
+    async def refresh_rollup(self, now: str | None = None) -> Rollup:
+        qn = await self.load_questionnaire()
+        responses = await self.load_responses()
+        ru = build_rollup(qn.questions, responses, self._now(now))
+        await self._s3.put(rollup_key(self.slug), ru.model_dump_json())
+        return ru
+
+    async def get_rollup(self, now: str | None = None) -> Rollup:
+        count = await self.response_count()
+        try:
+            cached = Rollup.model_validate_json(
+                await self._s3.get(rollup_key(self.slug)))
+        except (FileNotFoundError, ValueError):
+            cached = None
+        if cached is not None and cached.count == count:
+            return cached
+        # Absent, unparseable, or stale (a rollup write can fail after the
+        # response PUT succeeded -- the response is still committed). Rebuild
+        # from the source of truth rather than report wrong numbers.
+        return await self.refresh_rollup(now)
+
+    # ---- archive on regeneration ----
+
+    async def archive_current(self) -> None:
+        """Move the closed survey's definition, responses and rollup under
+        archive/{closed_at}/. Reusing responses/ across surveys would mix
+        answers to OLD questions into the new survey's aggregate and CSV --
+        silently wrong numbers."""
+        qn = await self.load_questionnaire()
+        if qn.status != "closed" or not qn.closed_at:
+            raise ValueError("only a closed survey can be archived")
+        dest = archive_prefix(self.slug, qn.closed_at)
+
+        await self._s3.put(f"{dest}questionnaire.json", qn.model_dump_json())
+        for key in await self._s3.list(responses_prefix(self.slug)):
+            body = await self._s3.get(key)
+            name = key.rsplit("/", 1)[-1]
+            await self._s3.put(f"{dest}responses/{name}", body)
+        try:
+            await self._s3.put(f"{dest}rollup.json",
+                               await self._s3.get(rollup_key(self.slug)))
+        except FileNotFoundError:
+            pass  # never aggregated; nothing to preserve
+        await self._s3.delete_prefix(responses_prefix(self.slug))
+        await self._s3.delete_prefix(rollup_key(self.slug))
+
+    # ---- export ----
+
+    async def responses_csv(self) -> str:
+        qn = await self.load_questionnaire()
+        responses = await self.load_responses()
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["response_id", "submitted_at"] +
+                        [q.text for q in qn.questions])
+        for r in sorted(responses, key=lambda x: x.submitted_at):
+            writer.writerow([r.response_id, r.submitted_at] +
+                            [r.answers.get(q.id, "") for q in qn.questions])
+        return buf.getvalue()
