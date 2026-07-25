@@ -10,6 +10,12 @@ Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론�
 경로 프록시로 라이브 프리뷰를 제공한다. 자세한 배포 절차는 `infra/README.md`, 수동 e2e
 검증은 `docs/superpowers/checklists/2026-07-24-prototype-generation-e2e.md` 참고.
 
+프로토타입을 사용자에게 검증할 때는 같은 탭에서 **검증 설문**을 만들 수 있다.
+프로토타입 명세의 검증 가설·기능 목록에서 문항을 생성하고(`validation-questionnaire.md`),
+인증이 필요 없는 토큰 링크(`/survey/{token}`)를 공유해 익명 응답을 받고, 집계를
+대시보드로 확인한 뒤 CSV로 내보내 Discovery의 검증 종합 단계에 넣는다. 응답은 S3에
+저장되며(응답 1건 = 객체 1개), 대시보드는 `rollup.json` 캐시를 읽는다.
+
 ```
 frontend/  Next.js 15 (App Router) — 대시보드 · 질문 위저드 · 문서 리뷰 · 대화형 캔버스 · 프로토타입 탭
 backend/   FastAPI — 파서 · 인프로세스 Strands 에이전트 · SSE 턴 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅
