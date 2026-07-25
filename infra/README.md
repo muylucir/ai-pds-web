@@ -11,6 +11,11 @@
   한다. 프로토타입 빌드(Claude Agent SDK 에이전트)는 이 백엔드 프로세스
   안에서 직접 돌아간다 — 별도 VM/MicroVM 계층 없음.
 
+> **PathfinderVmStack은 제거됐다** (2026-07-25). 프로토타입 빌드는 백엔드
+> 프로세스 안에서 돌고, 도쿄 MicroVM·이미지 빌드·토큰 민팅이 모두 사라졌다.
+> 이전에 배포한 적이 있다면 한 번 정리한다:
+> `npx cdk destroy PathfinderVmStack --region ap-northeast-1`
+
 ## 리전 (파라미터)
 기본 서울(`ap-northeast-2`). 다른 리전은 `CDK_DEPLOY_REGION`으로 오버라이드:
 ```bash
