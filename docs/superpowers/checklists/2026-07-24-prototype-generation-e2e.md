@@ -45,9 +45,20 @@ AWS 자원으로 검증한다. 실 Bedrock·실 EC2·실 서브프로세스가 �
 - [ ] 빌드 턴 진행 중 `ps -eo pid,args | grep "[c]laude"`로 뜬 프로세스의 환경을
       확인: `sudo tr '\0' '\n' < /proc/<pid>/environ | grep CLAUDE_CONFIG_DIR` →
       그 격리 경로를 가리킨다.
-- [ ] **음성 테스트**: 서비스 유저의 홈(`getent passwd pathfinder | cut -d: -f6`)
-      아래 `.claude/skills/zzz-probe/SKILL.md`를 심고 빌드 턴에서 "사용 가능한
-      스킬을 나열해줘"라고 물었을 때 그 스킬이 **보이지 않는다**. 보이면 격리 실패.
+- [ ] **음성 테스트**(개인 설정이 새지 않는지): 서비스 유저의 홈
+      (`getent passwd pathfinder | cut -d: -f6`) 아래
+      `.claude/skills/zzz-probe/SKILL.md`를 심고 빌드 턴에서 "사용 가능한 스킬을
+      나열해줘"라고 물었을 때 그 스킬이 **보이지 않는다**. 보이면 격리 실패.
+- [ ] **양성 테스트**(우리 디렉토리가 실제로 읽히는지): 같은 SKILL.md를
+      `/opt/pathfinder/proto-config/skills/zzz-probe/SKILL.md`에 심고
+      (**`proto-config/.claude/skills/`가 아니다** — `CLAUDE_CONFIG_DIR`가 곧
+      `.claude` 역할이므로 그 아래 `.claude`를 또 만들면 SDK가 무시한다),
+      `PrototypeBuilder`의 `skills=["zzz-probe"]`를 임시로 켠 뒤 같은 질문에
+      그 스킬이 **보인다**. 두 테스트가 다 통과해야 격리가 증명된다 — 음성만
+      통과하면 "경로를 아예 잘못 줘서 아무것도 안 읽히는" 상태와 구별되지 않는다.
+      확인 후 임시 변경은 되돌린다(1차 스코프는 스킬 비활성).
+- [ ] transcript 로컬 사본이 우리 경로에 쌓이는지:
+      `ls /opt/pathfinder/proto-config/projects/` → 빌드 후 디렉토리가 생긴다.
 
 ## (b-2) 서비스가 non-root로 도는지 — 이게 깨지면 빌드가 전부 실패한다
 

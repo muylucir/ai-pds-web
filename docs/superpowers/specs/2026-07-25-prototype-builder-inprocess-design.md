@@ -327,12 +327,22 @@ ClaudeAgentOptions(
 소유 경로에 쌓여 프로젝트 삭제 시 함께 지울 수 있고, (c) 나중에 우리가 원하는
 스킬/서브에이전트를 넣을 자리가 남는다.
 
+**이 디렉토리가 곧 `.claude`다 — 그 아래 `.claude/`를 또 만들지 않는다.**
+`sessions.py:140-141`이 `CLAUDE_CONFIG_DIR`가 설정되면 그 경로를 그대로 config
+루트로 쓰고(`override / "projects"`), 미설정일 때만 `~/.claude`를 붙인다. 즉 이
+변수는 `.claude` 디렉토리를 **대체**한다(이름만 다른 같은 역할).
+`.credentials.json`·`.claude.json`도 이 디렉토리 **직속**에서 찾는다
+(`session_resume.py:335,362`). 안에 `.claude/`를 만들면 SDK는 그것을 보지 않는다.
+
 ```
-PATHFINDER_PROTO_CONFIG_DIR/     (기본 ~/pathfinder-proto-config)
+PATHFINDER_PROTO_CONFIG_DIR/     (= ~/.claude 와 동급. CDK 배포 시
+                                    /opt/pathfinder/proto-config, 로컬 기본
+                                    ~/pathfinder-proto-config)
   settings.json        ← 필요 시
-  skills/              ← 프로토타입 빌드용 스킬 (1차 스코프에서는 비움)
-  agents/              ← 서브에이전트 정의 (또는 코드로 agents= 사용)
-  projects/            ← transcript 로컬 사본 (S3SessionStore가 미러링)
+  skills/<name>/SKILL.md   ← 프로토타입 빌드용 스킬 (1차 스코프에서는 비움)
+  agents/<name>.md     ← 서브에이전트 정의 (또는 코드로 agents= 사용)
+  projects/            ← transcript 로컬 사본 (SDK가 자동 생성)
+  .credentials.json    ← SDK가 필요 시 여기서 읽는다 (Bedrock 경로에선 불필요)
 ```
 
 `setting_sources`를 `["user", "project"]`로 두는 이유: 여기서 "user"는 이제 우리
