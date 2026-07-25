@@ -135,14 +135,24 @@ async def test_token_without_known_group_is_rejected():
 
 async def test_missing_groups_claim_is_rejected():
     # 클레임 자체가 없는 경우(빈 배열과 구분). _token()은 항상 groups를 넣으므로
-    # 여기서만 직접 서명한다.
+    # 여기서만 직접 서명한다. 메시지까지 확인한다 — "클레임이 없음"과 "클레임이
+    # 있지만 리스트가 아님"을 나중에 다시 합쳐도 이 테스트가 알아채도록.
     now = int(time.time())
     token = jwt.encode(
         {"sub": "s-1", "iss": ISS, "client_id": CLIENT_ID, "token_use": "access",
          "iat": now, "exp": now + 3600, "username": "u@x.io"},
         _private_key, algorithm="RS256", headers={"kid": KID})
-    with pytest.raises(TokenError):
+    with pytest.raises(TokenError, match="no cognito:groups"):
         await _verify(token)
+
+
+async def test_non_list_groups_claim_is_rejected_with_distinct_message():
+    # 클레임이 존재하지만 리스트가 아닌 경우(위의 "클레임 자체가 없음"과는 다른
+    # 경로). 운영 로그 분류가 두 경우를 구분할 수 있으려면 메시지도 달라야
+    # 한다 — 그래서 "없음"이 아니라 "리스트가 아님"이라는 문구를 확인한다.
+    with pytest.raises(TokenError, match="not a list") as exc_info:
+        await _verify(_token(**{"cognito:groups": "admin"}))  # 문자열, 리스트 아님
+    assert "no cognito:groups" not in str(exc_info.value)
 
 
 async def test_garbage_token_is_rejected():
@@ -370,10 +380,14 @@ async def test_recovery_after_fetch_failure_does_not_poison_negative_cache():
 
 
 async def test_successful_fetch_clears_failure_state_for_next_unknown_kid():
-    # 실패 쿨다운은 "재조회했지만 kid 없음" 쿨다운(30s)과 별개의 상태를 쓴다.
-    # 복구(성공한 fetch) 직후 곧바로 다른 미확인 kid를 물으면, 그 요청은 실패
-    # 타임스탬프가 아니라 30s 쿨다운(아직 시작되지 않음)의 지배를 받아야 하므로
-    # 정상적으로 재조회를 받는다 — 시간을 더 흘리지 않고 바로 확인한다.
+    # 성공한 fetch는 실패 쿨다운 타임스탬프를 리셋해야 한다. 이 속성은 흐른
+    # 시간만으로는(블랙박스로는) 근본적으로 증명할 수 없다는 점에 주의한다 —
+    # 복구가 공개 API(key_for)를 통해 성공하려면 이미 "원래 실패 시각으로부터
+    # 5초 이상 경과"했어야 하고, 그 뒤 어떤 시점에 그 "원래 실패 시각"을
+    # 기준으로 다시 확인해도 단조 시계이므로 역시 5초를 넘겨 있을 수밖에
+    # 없다 — 리셋 여부와 무관하게 억제되지 않는다(수학적으로 구분 불가능:
+    # now() - t0 >= 5.0 이었다면 이후의 now'() - t0 도 항상 >= 5.0). 그래서
+    # 리셋이 실제로 일어났는지는 내부 상태를 직접 확인해서 증명한다.
     calls: list[str] = []
     clock = _FakeClock()
     healthy = {"value": False}
@@ -389,16 +403,19 @@ async def test_successful_fetch_clears_failure_state_for_next_unknown_kid():
     with pytest.raises(TokenError):
         await _verify(_bogus_token("outage-kid"), cache=cache)  # fetch 1, fails
     assert len(calls) == 1
+    assert cache._last_fetch_failure_at == 0.0
 
-    clock.advance(5.0)  # 실패 쿨다운(5s) 만료
+    clock.advance(5.0)  # 실패 쿨다운(5s) 만료 — 복구 fetch 자체가 억제되지 않게
     healthy["value"] = True
     await _verify(_token(), cache=cache)  # fetch 2: 복구
     assert len(calls) == 2
 
-    # 시간을 전혀 흘리지 않고(복구 fetch와 같은 순간) 완전히 새로운 미확인
-    # kid를 묻는다. 실패 타임스탬프가 성공 시 초기화되지 않았거나, 성공/실패를
-    # 구분하지 않고 "최근 fetch 시각"으로 억제하는 버그가 있었다면 여기서
-    # 잘못 억제됐을 것이다.
+    assert cache._last_fetch_failure_at is None, (
+        "a successful fetch must reset the failure-cooldown timestamp, "
+        f"got {cache._last_fetch_failure_at!r}")
+
+    # 리셋됐다면 새 미확인 kid는 시간을 더 흘리지 않고도 자기 몫의 재조회를
+    # 받는다(30s 쿨다운은 아직 시작되지 않았으므로).
     with pytest.raises(TokenError):
         await _verify(_bogus_token("brand-new-kid"), cache=cache)  # fetch 3
     assert len(calls) == 3, (

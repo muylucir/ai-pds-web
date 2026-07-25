@@ -158,15 +158,22 @@ class JwksCache:
 
             await self._fetch()
 
-        key = self._keys.get(kid)
-        if key is None:
-            # 재조회해도 못 찾았다 — 이 시각부터 쿨다운을 시작하고, kid 자체도
-            # 네거티브 캐시에 넣어 재조회 없이 즉시 거부할 수 있게 한다.
-            self._last_negative_fetch_at = self._now()
-            if len(self._known_bad_kids) >= _MAX_NEGATIVE_CACHE:
-                self._known_bad_kids.clear()
-            self._known_bad_kids.add(kid)
-            raise TokenError(f"unknown signing key: {kid}")
+            key = self._keys.get(kid)
+            if key is None:
+                # 재조회해도 못 찾았다 — 이 시각부터 쿨다운을 시작하고, kid
+                # 자체도 네거티브 캐시에 넣어 재조회 없이 즉시 거부할 수 있게
+                # 한다. 이 기록은 락 안에서 한다 — _fetch() 이후 락 밖에서
+                # 하면 지금은 그 사이에 await가 없어 안전하지만, 그건 우연에
+                # 기댄 것이다. 나중에 누군가 락 해제와 이 기록 사이에 await를
+                # 하나 추가하면(비동기 로그 sink, 메트릭 호출 등) 동시에 들어온
+                # 두 개의 미확인-kid 조회 사이에 조용히 경쟁 상태가 생긴다 —
+                # 구조적으로 막아 둔다.
+                self._last_negative_fetch_at = self._now()
+                if len(self._known_bad_kids) >= _MAX_NEGATIVE_CACHE:
+                    self._known_bad_kids.clear()
+                self._known_bad_kids.add(kid)
+                raise TokenError(f"unknown signing key: {kid}")
+
         return key
 
 
