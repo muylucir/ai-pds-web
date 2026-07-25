@@ -36,7 +36,7 @@ truth, 로컬은 휘발)을 재사용한다.
   동일 방침).
 - **배포 대상은 기존 워크숍 EC2** — `PathfinderHostingStack`이 배포하는 단일
   인스턴스. 프로토타입 전용 인스턴스를 신설하지 않는다. 대신 그 인스턴스를
-  m7g.xlarge / EBS 100GB로 상향한다.
+  **m7i.2xlarge(x86_64) / EBS 100GB**로 상향한다. Graviton(arm64)은 쓰지 않는다.
 - **동시 빌드 상한 2건**(환경변수 조정) — 초과 시 429 안내.
 - **업로드 경로 개편을 같은 스펙에 포함** — 동시 사용 시 조용한 덮어쓰기가 실재.
 - **S3 바이너리 안전 경로 추가** — 번들 백업/복원에서 이미지·폰트가 깨지는 문제.
@@ -152,19 +152,24 @@ POST /projects/{pid}/prototypes/{slug}/session
 
 | 항목 | 현재 | 변경 후 |
 |---|---|---|
-| 인스턴스 타입 | t4g.medium (2 vCPU / 4GB) | **m7g.xlarge (4 vCPU / 16GB)** |
+| 인스턴스 타입 | t4g.medium (2 vCPU / 4GB) | **m7i.2xlarge (8 vCPU / 32GB)** |
 | EBS | 20GB | **100GB** |
-| 아키텍처 | arm64 (Graviton) | **arm64 유지** |
+| 아키텍처 | arm64 (Graviton) | **x86_64** |
 
-### arm64 검증
+### 아키텍처 전환 (arm64 → x86_64)
 
-`claude-agent-sdk==0.2.126`은 `manylinux_2_17_aarch64` wheel을 배포한다(84.2MB —
-확인 완료). pip이 플랫폼에 맞는 wheel을 자동 선택하므로 `pyproject.toml`에 조건부
-처리가 필요 없고 Graviton을 버릴 이유도 없다.
+사용자 결정으로 Graviton을 쓰지 않는다. 부수 효과로 아키텍처 리스크가 사라진다:
 
-단 **검증은 실제 arm64 인스턴스에서 해야 한다**: 개발 박스(x86_64)에서 통과한
-것이 arm64에서 통과한다는 보장이 아니고, 프로토타입이 설치하는 네이티브 npm
-모듈(sharp, esbuild 등)도 같다. e2e 체크리스트에 arm64 확인 항목을 추가한다.
+- SDK 번들 바이너리가 x86-64 ELF이고(`_bundled/claude` — `file`로 확인), 이
+  개발 환경에서 이미 검증된 바이너리와 동일한 아키텍처가 된다. arm64였다면
+  `manylinux_2_17_aarch64` wheel(84.2MB, 배포 확인됨)로 동작하되 실기 검증이
+  별도로 필요했다.
+- 프로토타입이 설치하는 네이티브 npm 모듈(sharp, esbuild 등)도 x86_64 prebuilt를
+  받으므로 소스 빌드 폴백 위험이 줄어든다.
+
+CDK 변경은 두 줄이다: `instanceType` → `M7I`/`XLARGE2`, `machineImage`의
+`cpuType: ARM_64` 제거(AL2023 기본이 x86_64). `user-data.ts`는 `dnf` 패키지명만
+쓰고 아키텍처 분기가 없어 **무변경**이다.
 
 ### 프로세스 모델
 
@@ -184,10 +189,10 @@ uvicorn (백엔드)
 프로세스가 갈리고 `cwd`가 갈리므로 팀 간 파일 간섭이 없고, 빌드 CPU가 백엔드
 이벤트 루프를 막지 않는다(stdout을 읽기만 함).
 
-### 메모리 예산 (16GB, 동시 2건 피크)
+### 메모리 예산 (32GB, 동시 2건 피크)
 
-`claude` 프로세스 RSS는 실측 310–577MB (개발 박스 x86_64 기준 — 아키텍처가 달라도
-자릿수는 유사할 것으로 보되, arm64 실측을 e2e에서 확인한다).
+`claude` 프로세스 RSS는 실측 310–577MB (개발 박스 x86_64 기준 — 배포 대상도
+x86_64이므로 같은 아키텍처의 실측치다).
 
 | 항목 | 메모리 |
 |---|---|
@@ -195,7 +200,12 @@ uvicorn (백엔드)
 | `claude` × 2 | 0.6–1.2G |
 | `next build` × 2 (에이전트의 자식) | 2–4G |
 | `npm run start` × 2 (호스팅 상주) | 0.4–1G |
-| **합계** | **4–7.2G** — 16G에 여유 |
+| **합계** | **4–7.2G** — 32G에 큰 여유 |
+
+8 vCPU / 32GB는 동시 2건을 훨씬 넘어설 여유가 있다. 그래도 기본 상한은 2로 두고
+(`PATHFINDER_PROTO_MAX_CONCURRENT`) 워크숍 운영 중 실측을 보며 올린다 — 병목이
+메모리가 아니라 `next build`가 vCPU를 나눠 쓰는 쪽이라, 값을 정하는 근거는 실제
+빌드 체감 속도여야 한다.
 
 ### 동시 상한
 
@@ -283,7 +293,7 @@ GET /projects/{pid}/prototypes/{slug}/archive  →  {slug}-prototype.zip
 | 항목 | 확인 결과 |
 |---|---|
 | 실행 엔진 | Claude Agent SDK는 **Claude Code 바이너리를 감싼 래퍼**다. `_bundled/claude`를 서브프로세스로 띄운다 |
-| 백엔드 venv | 현재 SDK 없음 → **신규 의존성** `claude-agent-sdk==0.2.126` (`pyproject.toml`). arm64 wheel 84.2MB |
+| 백엔드 venv | 현재 SDK 없음 → **신규 의존성** `claude-agent-sdk==0.2.126` (`pyproject.toml`). x86_64 wheel의 번들 바이너리는 273MB |
 | 바이너리 해석 순서 | 번들 우선(`subprocess_cli.py:153`) → PATH 폴백(`:159`). 버전 핀이 requirements 한 곳으로 모인다 |
 
 "claude code를 걷어냈다"는 것은 **운영 방식**(npm 글로벌 설치, `claude -p` 직접
@@ -387,7 +397,8 @@ uploads/{uuid8}/요구사항.pdf.md
 
 ## 10. 인프라 변경
 
-- `pathfinder-hosting-stack.ts`: `instanceType` → m7g.xlarge, EBS 20→100GB
+- `pathfinder-hosting-stack.ts`: `instanceType` → m7i.2xlarge(`M7I`/`XLARGE2`),
+  `machineImage`의 `cpuType: ARM_64` 제거(x86_64 기본), EBS 20→100GB
 - `microvmControlStatements` 호출 제거(`:85-87`) + `backend-permissions.ts`에서 함수
   삭제
 - `HostingStackProps`의 `vmImageId`/`vmRoleArn`/`vmRegion` 삭제,
@@ -451,9 +462,10 @@ uploads/{uuid8}/요구사항.pdf.md
   `microvmControlStatements` 부재 확인.
 - **프론트**: 다운로드 버튼 상태별 노출, 카드 대기 표시. API 계약 무변경이므로 기존
   테스트는 영향 없음.
-- **e2e**: 수동 체크리스트 갱신 — VM 절차 삭제, **arm64 실기 검증 항목 추가**
-  (SDK 번들 바이너리 기동, 프로토타입 네이티브 npm 모듈 설치, `claude` 프로세스
-  RSS 실측), 맥락 재개 시나리오(세션 닫고 재시작 후 이전 결정 참조) 추가.
+- **e2e**: 수동 체크리스트 갱신 — VM 절차 삭제, **실기 검증 항목 추가**(SDK 번들
+  바이너리 기동, 프로토타입 네이티브 npm 모듈 설치, `claude` 프로세스 RSS 실측 및
+  동시 2건 피크 관측), 맥락 재개 시나리오(세션 닫고 백엔드 재시작 후 이전 결정을
+  에이전트가 참조하는지) 추가.
 
 ## 13. 직전 커밋(validation survey) 영향 분석
 
