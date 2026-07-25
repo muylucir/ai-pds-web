@@ -115,3 +115,22 @@ async def test_responses_csv_quotes_embedded_commas_and_quotes():
     import csv as _csv, io
     rows = list(_csv.reader(io.StringIO(csv_text)))
     assert rows[1][-1] == 'a,b and "quoted"'   # survives a round-trip
+
+
+async def test_dashboard_read_is_constant_s3_calls():
+    """The dashboard must not scale its S3 calls with response count: one
+    rollup get + one list, regardless of size (spec §2 measured individual
+    parallel gets at 2.61s for 500 responses)."""
+    store, project_s3, _ = await _seeded(40)
+    await store.refresh_rollup(NOW)
+
+    gets: list[str] = []
+    original_get = project_s3.get
+
+    async def counting_get(key):
+        gets.append(key)
+        return await original_get(key)
+
+    project_s3.get = counting_get
+    await store.get_rollup(NOW)
+    assert gets == [rollup_key(SLUG)]     # no per-response gets

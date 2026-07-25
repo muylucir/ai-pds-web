@@ -281,3 +281,6 @@ app.include_router(prototypes.router)
 
 from pathfinder.routes import surveys  # noqa: E402
 app.include_router(surveys.router)
+
+from pathfinder.routes import surveys_public  # noqa: E402
+app.include_router(surveys_public.router)
