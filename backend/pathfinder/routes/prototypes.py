@@ -5,8 +5,9 @@
 # build, stream its events, and start/stop/status the local server that serves
 # the built output. The public-facing piece that actually exposes a hosted
 # prototype to survey respondents -- the streaming reverse proxy under
-# /proto/{pid}/{slug} -- lives in proto_public.py, split out because it must
-# stay unauthenticated while every route in this file requires a login.
+# /proto/{pid}/{slug} -- lives in proto_public.py, split out so this file's
+# routes can be gated behind a login requirement wholesale while that one
+# stays open (the gating itself lands in a later task, not here).
 from __future__ import annotations
 
 import io

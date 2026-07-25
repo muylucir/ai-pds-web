@@ -90,6 +90,7 @@ async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
     import pathfinder.app as app_module
     info = app_module.proto_host().status(pid, slug)
     if info is None or info.state != "running" or info.port is None:
+        _log.debug("proto proxy 502: not running (%s/%s)", pid, slug)
         return PlainTextResponse(
             "prototype not running — start hosting first", status_code=502)
 
@@ -105,6 +106,7 @@ async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
         upstream = await client.send(req, stream=True)
     except httpx.HTTPError:
         await client.aclose()
+        _log.debug("proto proxy 502: upstream not responding (%s/%s)", pid, slug)
         return PlainTextResponse(
             "prototype not responding — check hosting logs", status_code=502)
 
