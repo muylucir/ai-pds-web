@@ -40,13 +40,30 @@ AWS 자원으로 검증한다. 실 Bedrock·실 EC2·실 서브프로세스가 �
 읽는다. 워크숍 결과가 호스트 설정에 의존하게 되므로 **격리를 실물로 확인**한다.
 
 - [ ] systemd env에 값이 들어있는지: `systemctl show pathfinder-backend -p Environment`
-      출력에 `PATHFINDER_PROTO_CONFIG_DIR=`가 있고 `~/.claude`가 아닌 경로다.
+      출력에 `PATHFINDER_PROTO_CONFIG_DIR=/opt/pathfinder/proto-config`가 있다
+      (앱 트리 안 — 유저 홈이 아니다).
 - [ ] 빌드 턴 진행 중 `ps -eo pid,args | grep "[c]laude"`로 뜬 프로세스의 환경을
-      확인: `tr '\0' '\n' < /proc/<pid>/environ | grep CLAUDE_CONFIG_DIR` →
+      확인: `sudo tr '\0' '\n' < /proc/<pid>/environ | grep CLAUDE_CONFIG_DIR` →
       그 격리 경로를 가리킨다.
-- [ ] **음성 테스트**: 백엔드 실행 유저의 `~/.claude/skills/`에 아무 스킬 하나를 두고
-      (예: `~/.claude/skills/zzz-probe/SKILL.md`) 빌드 턴에서 "사용 가능한 스킬을
-      나열해줘"라고 물었을 때 그 스킬이 **보이지 않는다**. 보이면 격리 실패.
+- [ ] **음성 테스트**: 서비스 유저의 홈(`getent passwd pathfinder | cut -d: -f6`)
+      아래 `.claude/skills/zzz-probe/SKILL.md`를 심고 빌드 턴에서 "사용 가능한
+      스킬을 나열해줘"라고 물었을 때 그 스킬이 **보이지 않는다**. 보이면 격리 실패.
+
+## (b-2) 서비스가 non-root로 도는지 — 이게 깨지면 빌드가 전부 실패한다
+
+Claude Code는 euid==0에서 `bypassPermissions`를 거부한다(6d21e1f 실측). 그런데
+`--version`은 root에서도 성공하므로 **부팅·헬스체크는 모두 정상으로 보이고 첫 빌드
+턴에서야 502로 드러난다.** 따라서 반드시 별도로 확인한다.
+
+- [ ] `systemctl show pathfinder-backend -p User` → `User=pathfinder` (root 아님)
+- [ ] `ps -o user= -p $(systemctl show -p MainPID --value pathfinder-backend)`
+      → `pathfinder`
+- [ ] 앱 트리 소유권: `stat -c '%U %G' /opt/pathfinder /opt/pathfinder/protos
+      /opt/pathfinder/proto-config` → 셋 다 `pathfinder pathfinder`
+- [ ] 빌드 턴 중 `claude` 프로세스도 non-root:
+      `ps -eo user,args | grep "[c]laude"` → `pathfinder`
+- [ ] **실제 빌드 턴이 성공한다** — 위 네 항목이 통과해도 이것만이 최종 증거다
+      (root 문제는 턴에서만 드러나므로).
 
 ## (c) 프로세스 자원 실측
 

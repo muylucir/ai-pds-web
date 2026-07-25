@@ -137,7 +137,7 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `PATHFINDER_RULES_DIR` | `<repo>/rule/aiplc-rules` | aiplc 룰 디렉토리(읽기 전용) |
 | `PATHFINDER_WORKSPACES_DIR` | 시스템 tmp 하위 | 프로젝트별 로컬 워크스페이스 루트 |
 | `PATHFINDER_PROTO_MAX_CONCURRENT` | `2` | 동시 프로토타입 빌드 상한(전역). 초과 시 세션 시작이 429 |
-| `PATHFINDER_PROTO_CONFIG_DIR` | `~/pathfinder-proto-config` | 빌드 에이전트 전용 `CLAUDE_CONFIG_DIR`. 미지정 시 호스트 유저의 `~/.claude`(개인 skills/agents)가 빌드에 섞인다 |
+| `PATHFINDER_PROTO_CONFIG_DIR` | `~/pathfinder-proto-config` | 빌드 에이전트 전용 `CLAUDE_CONFIG_DIR`. 미지정 시 호스트 유저의 `~/.claude`(개인 skills/agents)가 빌드에 섞인다. CDK 배포 시엔 `/opt/pathfinder/proto-config`(앱 트리 안)로 주입된다 |
 | `PATHFINDER_PROTO_ROOT` | `~/pathfinder-protos` | 프로토타입 빌드 + 호스팅 공용 루트 (EC2 로컬) |
 
 **프론트엔드**
