@@ -6,6 +6,7 @@ import { use, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { PrototypeCard } from "@/components/prototypes/PrototypeCard";
 import { BuildPanel } from "@/components/prototypes/BuildPanel";
+import { SurveyPanel } from "@/components/prototypes/SurveyPanel";
 import {
   listPrototypes,
   startSession,
@@ -123,6 +124,8 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
             ))}
           </div>
         )}
+
+        {openSlug && <SurveyPanel projectId={projectId} slug={openSlug} />}
       </main>
 
       {openSlug && (
