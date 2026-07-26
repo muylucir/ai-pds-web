@@ -190,3 +190,49 @@ console.log('OK  user-data: services run as non-root pathfinder user, app tree o
 
   console.log('OK  user-data: cognito env for backend + frontend, secret fetched at boot');
 }
+
+// 12) 프록시 응답 헤더 버퍼 — 로그인 성공 시 502가 나던 원인.
+//
+// 실측: Cognito 콜백이 access/id/refresh JWT 세 개를 Set-Cookie로 내보내는데
+// 그 헤더 총량이 nginx 기본 버퍼를 넘어
+// "upstream sent too big header while reading response header from upstream"
+// 으로 502가 났다. `proxy_buffering off`(SSE 때문에 필수)일 때 nginx는 응답
+// 헤더를 proxy_buffer_size 하나에만 담으므로, 그 값을 키워야 한다
+// (proxy_buffers는 버퍼링이 꺼져 있으면 헤더에 쓰이지 않는다).
+assert.match(s, /proxy_buffering off/,
+  'SSE needs proxy_buffering off (immediate flush)');
+const bufSize = s.match(/proxy_buffer_size\s+(\d+)([kKmM])/);
+assert.ok(bufSize,
+  'proxy_buffer_size must be set — with proxy_buffering off it is the ONLY buffer for response headers, and three JWT cookies overflow the 4k default (502)');
+const kb = Number(bufSize![1]) * (/[mM]/.test(bufSize![2]) ? 1024 : 1);
+assert.ok(kb >= 16,
+  `proxy_buffer_size must be >= 16k to fit three JWT Set-Cookie headers, got ${bufSize![0]}`);
+// proxy_buffer_size만 키우면 nginx가 설정을 거부한다(실측):
+// "proxy_busy_buffers_size must be less than the size of all proxy_buffers
+//  minus one buffer" — busy 기본값이 buffer_size의 2배로 따라 올라가며 기본
+// proxy_buffers(8x4k)와의 제약을 깨기 때문이다. 세 값이 함께 정의되고 제약을
+// 만족해야 nginx가 부팅한다(설정 거부 = 서비스 전체 down).
+const bufs = s.match(/proxy_buffers\s+(\d+)\s+(\d+)([kKmM])/);
+const busy = s.match(/proxy_busy_buffers_size\s+(\d+)([kKmM])/);
+assert.ok(bufs, 'proxy_buffers must be set alongside proxy_buffer_size (nginx refuses the config otherwise)');
+assert.ok(busy, 'proxy_busy_buffers_size must be set explicitly — its default follows proxy_buffer_size and breaks the constraint');
+const toKb = (n: string, unit: string) => Number(n) * (/[mM]/.test(unit) ? 1024 : 1);
+const bufsTotalKb = Number(bufs![1]) * toKb(bufs![2], bufs![3]);
+const oneBufKb = toKb(bufs![2], bufs![3]);
+const busyKb = toKb(busy![1], busy![2]);
+assert.ok(busyKb < bufsTotalKb - oneBufKb,
+  `nginx constraint violated: proxy_busy_buffers_size (${busyKb}k) must be < all proxy_buffers minus one (${bufsTotalKb - oneBufKb}k) — nginx would refuse to start`);
+assert.ok(oneBufKb >= kb,
+  `each proxy_buffer (${oneBufKb}k) should be at least proxy_buffer_size (${kb}k)`);
+console.log('OK  user-data: proxy buffer trio sized for JWT Set-Cookie headers and nginx constraints');
+
+// 13) 요청 헤더 버퍼 — 로그인 후 모든 요청이 JWT 쿠키 세 개를 싣는다.
+// 응답 쪽(12)과 짝이다: 기본값 8k로는 Cookie 헤더가 넘쳐 400
+// "Request Header Or Cookie Too Large"가 난다.
+const cliBuf = s.match(/large_client_header_buffers\s+(\d+)\s+(\d+)([kKmM])/);
+assert.ok(cliBuf,
+  'large_client_header_buffers must be set — three JWT cookies overflow the 8k default on every authenticated request');
+const cliKb = Number(cliBuf![2]) * (/[mM]/.test(cliBuf![3]) ? 1024 : 1);
+assert.ok(cliKb >= 16,
+  `large_client_header_buffers size must be >= 16k, got ${cliBuf![0]}`);
+console.log('OK  user-data: large_client_header_buffers fits JWT cookies on requests');

@@ -95,6 +95,10 @@ server {
   listen 80 default_server;
   server_name _;
   client_max_body_size 6m;
+  # 로그인 후 모든 요청이 access/id/refresh JWT 쿠키 세 개를 실어 보낸다.
+  # 기본값(4k/8k)으로는 그 Cookie 헤더가 넘쳐 400(Request Header Or Cookie Too
+  # Large)이 난다 — 응답 쪽 proxy_buffer_size와 짝이다.
+  large_client_header_buffers 4 32k;
 
   # CloudFront가 붙인 비밀 헤더 불일치(직접 스캔·타인 배포)는 무조건 차단.
   if (\\$http_x_origin_verify != "\${SECRET}") { return 403; }
@@ -110,6 +114,20 @@ server {
     proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
     proxy_buffering off;          # SSE 즉시 전달 (browser -> nginx -> Next -> FastAPI)
+    # 응답 헤더 버퍼. proxy_buffering이 꺼져 있어도 nginx는 응답 **헤더**를 이
+    # 버퍼 하나에 담는다. 기본값(페이지 크기, 보통 4k)으로는 로그인 콜백이
+    # 내보내는 access/id/refresh JWT 세 개의 Set-Cookie가 넘쳐
+    # "upstream sent too big header"로 502가 난다(실측: 로그인 시 502).
+    #
+    # ⚠️ proxy_buffer_size만 키우면 nginx가 설정을 거부한다(실측):
+    #   "proxy_busy_buffers_size must be less than the size of all
+    #    proxy_buffers minus one buffer"
+    # busy_buffers 기본값이 buffer_size의 2배로 따라 올라가면서 기본
+    # proxy_buffers(8x4k=32k)와의 제약을 깨기 때문이다. 세 값을 함께 올려
+    # 제약(busy < buffers 총합 - 1개)을 만족시킨다: 64k < 8*32k - 32k.
+    proxy_buffer_size 32k;
+    proxy_buffers 8 32k;
+    proxy_busy_buffers_size 64k;
     proxy_read_timeout 3600s;
   }
 }
