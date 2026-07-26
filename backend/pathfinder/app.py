@@ -314,7 +314,7 @@ app.include_router(prototypes.router, dependencies=_AUTH)
 from pathfinder.routes import surveys  # noqa: E402
 app.include_router(surveys.router, dependencies=_AUTH)
 
-# ---- 공개(무인증) 라우터 — 정확히 둘 ----
+# ---- 공개(무인증) 라우터 — 정확히 둘 (라우터 2개, 경로는 3개 — 아래 참고) ----
 #
 # 여기에 라우터를 추가하는 것은 인터넷에 공개하는 것과 같다. 두 경로 모두 계정이
 # 없는 최종 사용자를 위한 것이다: 설문 링크를 받아 응답하고(surveys_public),

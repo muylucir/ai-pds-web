@@ -81,3 +81,30 @@ def test_public_paths_really_have_no_auth_dependency():
                          if r.path in PUBLIC_PATHS and _has_auth_dependency(r)]
     assert wrongly_protected == [], (
         f"이 경로는 공개여야 한다(계정 없는 사용자가 쓴다): {wrongly_protected}")
+
+
+def test_route_enumeration_has_not_silently_collapsed():
+    # 이 테스트가 지키는 것은 라우트 "개수" 자체가 아니라 _app_routes()가
+    # 여전히 라우터들을 보고 있다는 사실이다. _app_routes()는 FastAPI 내부
+    # (_IncludedRouter, effective_candidates())에 의존한다 — 향후 FastAPI가
+    # app.routes의 구성 방식을 바꾸면서 _IncludedRouter가 아예 없어지거나
+    # 이름이 바뀌면 속성 접근이 즉시 예외를 내므로 안전하다. 하지만 일부
+    # 라우터만 조용히 다른 모양으로 바뀌어 effective_candidates()가 그
+    # 라우터들을 빠뜨리는 경우, _app_routes()는 예외 없이 "축소된" 목록을
+    # 반환한다. 그러면 test_every_route_is_either_authenticated_or_explicitly_public은
+    # 자신이 보지 못하는 라우트를 검사할 수 없으므로 무보호 라우트가 있어도
+    # 그냥 통과해버린다 — 가디언이 통과하는 것 자체가 "안전하다"는 잘못된
+    # 증거가 된다. 그래서 라우트 개수가 그럴듯한 범위인지를 별도로 확인한다.
+    #
+    # 현재 실제 개수는 37(2026-07). 바닥값 30은 통상적인 라우트 추가/삭제로
+    # 흔들리지 않을 만큼 37보다 충분히 낮게 잡았고, 그러면서도 부분 누락이
+    # 생기면(예: 라우터 하나가 통째로 안 보이면 3~9개씩 사라진다) 반드시
+    # 걸릴 만큼 0보다는 충분히 높다.
+    count = len(_app_routes())
+    assert count >= 30, (
+        f"_app_routes()가 {count}개 라우트만 봤다(기대: 37개 안팎, 최소 30). "
+        "라우트를 대량으로 지운 게 아니라면, FastAPI 업그레이드 등으로 "
+        "_app_routes()의 _IncludedRouter/effective_candidates() 순회가 일부 "
+        "라우터를 조용히 못 보게 된 것일 수 있다 — 그러면 나머지 커버리지 "
+        "테스트들이 보이지 않는 라우트에 대해 공허하게(vacuously) 통과한다. "
+        "_app_routes()의 순회 로직을 먼저 확인할 것.")
