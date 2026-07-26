@@ -418,3 +418,86 @@ def test_first_prompt_no_longer_names_the_vm_absolute_path(tmp_path):
     """The VM's /workspace/ mount is gone; cwd is the build directory."""
     session = _session(FakeS3Store(), tmp_path, FakeBuilder())
     assert "/workspace/" not in session.first_prompt()
+
+
+def test_first_prompt_asks_for_a_plan_before_any_building(tmp_path):
+    """The first turn must stop after planning and put the plan up for review
+    via AskUserQuestion, instead of reading the spec and building straight
+    through. Without an explicit stop the agent treats the plan as a preamble
+    and keeps going, so there is nothing left to approve."""
+    prompt = _session(FakeS3Store(), tmp_path, FakeBuilder()).first_prompt()
+
+    plan_at = prompt.find("계획")
+    build_at = prompt.find("빌드")
+    assert plan_at != -1, "no planning instruction at all"
+    # The planning instruction has to come before the build instruction, or the
+    # agent reads "build it" first and plans as an afterthought.
+    assert plan_at < build_at, prompt
+
+    # The stop must be explicit and tied to the approval tool.
+    assert "AskUserQuestion" in prompt
+    assert "승인" in prompt or "실행할지" in prompt
+
+
+def test_first_prompt_forbids_writing_files_before_approval(tmp_path):
+    """`bypassPermissions` auto-approves Write/Edit -- nothing outside the
+    prompt can stop the agent from scaffolding the whole prototype while it
+    'plans'. The no-write-yet rule has to be stated in the prompt itself."""
+    prompt = _session(FakeS3Store(), tmp_path, FakeBuilder()).first_prompt()
+    assert "Write" in prompt or "파일을 만들지" in prompt or "생성하지" in prompt
+
+
+# ---- first_prompt() on a RESUMED session ----
+
+async def _started(tmp_path, *, saved_session_id=None):
+    """A session that has been through start(), optionally resuming a saved id."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    if saved_session_id is not None:
+        s3.blobs[SESSION_KEY] = json.dumps({"session_id": saved_session_id})
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    return session
+
+
+async def test_a_resumed_session_asks_what_to_do_instead_of_replanning(tmp_path):
+    """Reopening a session (backend redeploy, or a closed/failed session) re-fires
+    the __first__ sentinel, so first_prompt() goes out AGAIN -- but now the agent
+    has the full prior transcript. Re-sending "plan it, don't build yet" tells a
+    half-finished build to go back to square one. Ask what to continue with."""
+    session = await _started(tmp_path,
+                             saved_session_id="99999999-8888-7777-6666-555555555555")
+    assert session._test_resume_calls == [True]  # sanity: this IS the resume path
+
+    prompt = session.first_prompt()
+
+    # It must NOT re-issue the from-scratch planning order.
+    assert "이번 턴에서는 계획만 세우고" not in prompt
+    # It must ask, and wait, rather than pick up building on its own.
+    assert "AskUserQuestion" in prompt
+    assert "이어서" in prompt or "이전" in prompt
+
+
+async def test_a_resumed_session_does_not_start_building_on_its_own(tmp_path):
+    """The complaint that started this: every resume just started building."""
+    session = await _started(tmp_path,
+                             saved_session_id="99999999-8888-7777-6666-555555555555")
+    prompt = session.first_prompt()
+    # No bare build order anywhere in the resume prompt.
+    assert "빌드해줘" not in prompt
+    assert "빌드를 시작해줘" not in prompt
+
+
+async def test_a_fresh_session_still_gets_the_planning_prompt(tmp_path):
+    """The resume branch must not swallow the first-build behaviour."""
+    session = await _started(tmp_path)
+    assert session._test_resume_calls == [False]
+    prompt = session.first_prompt()
+    assert "이번 턴에서는 계획만 세우고" in prompt
+
+
+def test_first_prompt_before_start_assumes_a_fresh_build(tmp_path):
+    """first_prompt() is reachable without start() (tests, and any future caller);
+    default to the safer planning prompt rather than raising."""
+    prompt = _session(FakeS3Store(), tmp_path, FakeBuilder()).first_prompt()
+    assert "이번 턴에서는 계획만 세우고" in prompt

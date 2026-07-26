@@ -91,6 +91,11 @@ class PrototypeSession:
         self.status: SessionStatus = "starting"
         self._builder: BuilderLike | None = None
         self._session_id: str | None = None
+        # Whether start() restored a prior transcript. first_prompt() branches
+        # on this: a resumed agent already has its plan and its half-built
+        # files in context, so re-sending the from-scratch planning order
+        # would send it back to square one.
+        self._resumed = False
         self._pending_interrupt_id: str | None = None
         self._idle_handle: asyncio.TimerHandle | None = None
         self._closed = False
@@ -149,6 +154,7 @@ class PrototypeSession:
         spec_md = await self._s3.get(self._spec_key())  # FileNotFoundError -> route 404
 
         self._session_id, resume = await self._resolve_session_id()
+        self._resumed = resume
 
         # The agent reads the spec with its own file tools from cwd, so it has
         # to exist on local disk (the VM era pushed it over HTTP instead).
@@ -244,20 +250,66 @@ class PrototypeSession:
     # ---- first turn's auto-spoken prompt ----
 
     def first_prompt(self) -> str:
+        """The auto-spoken opening turn. Two shapes, chosen by `_resumed`.
+
+        Both end the same way -- AskUserQuestion, then wait -- because that
+        tool is the ONE whose permission callback we intercept, so asking is
+        also what suspends the turn and surfaces the choice to the UI
+        (builder._on_can_use_tool -> `questions` SSE event). And the wording
+        is the only brake there is: the builder runs under
+        `bypassPermissions`, so Write/Edit are auto-approved and nothing
+        outside this text can stop an agent that decides to just start.
+
+        Fresh -> plan it, don't build yet.
+        Resumed -> the transcript and the half-built files are already in
+        context; ask what to continue with instead of re-planning.
+        """
+        if self._resumed:
+            return self._resume_prompt()
+        return self._plan_prompt()
+
+    def _plan_prompt(self) -> str:
         spec_key = self._spec_key()
         proxy_path = f"/api/proto/{self.project_id}/{self.slug}/"
         return (
-            f"`{spec_key}` 파일을 읽고, 그 내용에 따라 프로토타입을 빌드해줘.\n\n"
-            "지침:\n"
-            f"1. 먼저 `{spec_key}`를 읽고 요구사항을 정확히 파악한 뒤 빌드를 시작해줘.\n"
-            "2. 진행 중 불확실하거나 결정이 필요한 사항이 있으면 마음대로 넘기지 말고, "
-            "AskUserQuestion으로 나에게 먼저 물어봐줘.\n"
-            "3. 완성물은 반드시 작업 디렉토리 아래 `prototype/`에 두고, 빌드 방법과 "
+            f"`{spec_key}` 파일을 읽고, 프로토타입 구현 계획을 세워줘.\n"
+            "**이번 턴에서는 계획만 세우고 빌드는 시작하지 마.**\n\n"
+            "진행 방식:\n"
+            f"1. 먼저 `{spec_key}`를 읽고 요구사항을 정확히 파악해줘.\n"
+            "2. 그다음 구현 계획을 제시해줘. 기술 스택, 만들 화면/기능 목록, "
+            "파일 구조, 작업 순서를 포함하고, 스펙에서 애매했던 부분과 네가 임의로 "
+            "가정한 내용도 함께 밝혀줘.\n"
+            "3. 계획을 제시한 뒤 **반드시 AskUserQuestion으로 이 계획대로 실행할지, "
+            "수정할 부분이 있는지 물어보고 내 답을 기다려줘.** 승인 없이 다음 단계로 "
+            "넘어가면 안 돼.\n"
+            "4. 계획 단계에서는 파일을 만들거나 수정하지 마(Write/Edit 금지). "
+            "스펙을 읽는 것 외에는 아무것도 건드리지 말고, 계획은 메시지 본문으로만 "
+            "보여줘.\n"
+            "5. 내가 승인한 뒤에 빌드를 시작해줘. 빌드 중에도 불확실하거나 결정이 "
+            "필요한 사항이 있으면 마음대로 넘기지 말고 AskUserQuestion으로 먼저 "
+            "물어봐줘.\n\n"
+            "빌드 단계에서 지킬 것(승인 후 적용):\n"
+            "- 완성물은 반드시 작업 디렉토리 아래 `prototype/`에 두고, 빌드 방법과 "
             "실행 방법을 설명하는 README를 함께 작성해줘.\n"
-            f"4. 이 프로토타입은 경로 프록시(예: `{proxy_path}`) 하위 경로에서 서빙돼. "
+            f"- 이 프로토타입은 경로 프록시(예: `{proxy_path}`) 하위 경로에서 서빙돼. "
             "basePath와 상대 경로를 사용해서, 어떤 하위 경로에 배치되어도 정상 동작하도록 "
             "구현해줘(절대 경로 하드코딩 금지).\n"
-            "5. 코드에서 LLM 호출이 필요하면 Amazon Bedrock을 기본 자격증명 체인(인스턴스/"
+            "- 코드에서 LLM 호출이 필요하면 Amazon Bedrock을 기본 자격증명 체인(인스턴스/"
             "실행 롤)으로 사용해줘. API 키를 코드에 하드코딩하지 말고, 리전과 모델 ID는 "
             "환경변수로 받도록 구현해줘.\n"
+        )
+
+    def _resume_prompt(self) -> str:
+        """Deliberately short. The agent already has the prior transcript and
+        whatever it built, so restating the spec or the build rules would only
+        compete with what it can already see. All this turn has to do is stop
+        it from picking a direction on its own."""
+        return (
+            "이전 빌드 세션을 이어서 진행한다.\n"
+            "**아직 아무것도 빌드하거나 수정하지 마.**\n\n"
+            "1. 지금까지 진행한 내용과 남은 작업을 짧게 정리해줘.\n"
+            "2. 그다음 **AskUserQuestion으로 이번에 무엇을 진행할지 물어보고 내 답을 "
+            "기다려줘.** 남은 작업을 이어서 할지, 다른 것을 먼저 할지 내가 고를 수 "
+            "있게 선택지를 제시해줘.\n"
+            "3. 내가 고른 뒤에 작업을 시작해줘.\n"
         )

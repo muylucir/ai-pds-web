@@ -121,7 +121,10 @@ async def test_disconnect_without_a_turn_is_a_noop(tmp_path):
 # ---- the real SDK options (these tests use the DEFAULT client factory, not a
 # fake, because the wiring itself is what must be pinned) ----
 
-def _real_options(**kw):
+_SID = "11111111-2222-3333-4444-555555555555"
+
+
+def _real_options(resume=False, **kw):
     """Capture the ClaudeAgentOptions the default factory hands the SDK."""
     import claude_agent_sdk
     import pathfinder.proto.builder as bmod
@@ -136,7 +139,7 @@ def _real_options(**kw):
     try:
         builder = bmod.PrototypeBuilder(
             workspace="/tmp/ws", config_dir="/opt/pathfinder/proto-config",
-            session_id="11111111-2222-3333-4444-555555555555", resume=False, **kw)
+            session_id=_SID, resume=resume, **kw)
         builder._factory()
     finally:
         claude_agent_sdk.ClaudeSDKClient = original
@@ -175,3 +178,111 @@ def test_file_checkpointing_stays_off_so_session_store_is_legal():
     """The SDK raises ValueError when session_store is combined with
     enable_file_checkpointing -- that would break durable transcripts."""
     assert _real_options().enable_file_checkpointing is False
+
+
+# ---- resume vs. session_id (the flag pair the CLI validates) ----
+
+def test_fresh_session_pins_the_id_we_chose():
+    """A first build must land on OUR session id, because that id is what
+    session.py persisted and what the next resume will look up."""
+    options = _real_options(resume=False)
+    assert options.session_id == _SID
+    assert options.resume is None
+
+
+def test_resume_does_not_also_pass_session_id():
+    """`--session-id` together with `--resume` is rejected outright by the CLI
+    ("can only be used with --continue or --resume if --fork-session is also
+    specified"), so every resumed build died at connect(). `--resume` alone
+    already keeps the same session id, so passing both buys nothing."""
+    options = _real_options(resume=True)
+    assert options.resume == _SID
+    assert options.session_id is None
+
+
+def test_bypass_permissions_is_the_default():
+    """Workshop builds are unattended: nothing is watching to approve a Write,
+    so anything short of bypassPermissions stalls the turn forever."""
+    assert _real_options().permission_mode == "bypassPermissions"
+
+
+def test_permission_mode_is_overridable_for_a_stricter_run():
+    assert _real_options(
+        permission_mode="acceptEdits").permission_mode == "acceptEdits"
+
+
+def test_an_unknown_permission_mode_is_rejected_at_construction():
+    """A typo ("bypassPermission") would otherwise reach the CLI as an unknown
+    --permission-mode and fail at connect() -- the same class of late,
+    opaque failure as the --session-id/--resume clash. Fail loudly instead."""
+    import pytest
+    from pathfinder.proto.builder import PrototypeBuilder
+
+    with pytest.raises(ValueError, match="bypassPermission"):
+        PrototypeBuilder(workspace="/tmp/ws", config_dir="/tmp/cfg",
+                         session_id=_SID, resume=False,
+                         permission_mode="bypassPermission")
+
+
+def test_ask_user_question_still_reaches_our_callback_under_bypass():
+    """The SDK warns that bypassPermissions shadows can_use_tool entirely. That
+    is true for ordinary tools (Bash/Write never reach us) but NOT for
+    AskUserQuestion, which is the one tool our callback exists to intercept --
+    verified against the real CLI. So the warning is a false positive for this
+    wiring, and the questions flow depends on us keeping the callback set."""
+    assert _real_options().can_use_tool is not None
+
+
+async def test_connecting_mutes_the_shadowed_callback_warning(tmp_path):
+    """The false-positive warning fires on every connect(); left alone it
+    trains operators to ignore backend warnings. Muted for this one category
+    only -- a different SDK warning must still get through.
+
+    The warning is raised here explicitly rather than awaited from a fake
+    client: only the REAL SDK's connect() emits it, so a fake-based assertion
+    would pass whether or not the filter was installed (it did, until this
+    test was rewritten). What is under test is that _ensure_client() installs
+    a filter which swallows that category and nothing else.
+    """
+    import warnings
+
+    from claude_agent_sdk import CanUseToolShadowedWarning
+    from fakes.fake_sdk import FakeSdkClient
+
+    b = _builder(tmp_path, FakeSdkClient())
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await b._ensure_client()  # installs the filter
+        # Stand in for what the real SDK emits inside connect().
+        warnings.warn("can_use_tool will not be invoked: ...",
+                      CanUseToolShadowedWarning)
+        warnings.warn("an unrelated SDK warning", UserWarning)
+    messages = [str(w.message) for w in caught]
+    assert not [m for m in messages if "can_use_tool will not be invoked" in m]
+    assert "an unrelated SDK warning" in messages
+
+
+def test_the_cli_accepts_the_flags_we_build_for_a_resume():
+    """Pin the pair against the real CLI arg builder rather than only against
+    our own field choices -- the constraint being satisfied lives in the CLI,
+    not in this repo."""
+    from claude_agent_sdk._internal.transport.subprocess_cli import (
+        SubprocessCLITransport)
+
+    async def _empty():  # pragma: no cover - never iterated
+        return
+        yield
+
+    for resume in (False, True):
+        transport = SubprocessCLITransport(
+            prompt=_empty(), options=_real_options(resume=resume))
+        # _build_command() refuses to run before connect() resolves the binary;
+        # we only want the argv it would build, not a subprocess.
+        transport._cli_path = "/usr/bin/claude"
+        flags = transport._build_command()
+        session_id_flags = [f for f in flags if f.startswith("--session-id")]
+        resume_flags = [f for f in flags if f.startswith("--resume")]
+        # Exactly one of the two, never both, and never --fork-session (which
+        # would strand the transcript under a NEW id the store never sees).
+        assert len(session_id_flags) + len(resume_flags) == 1, flags
+        assert "--fork-session" not in flags

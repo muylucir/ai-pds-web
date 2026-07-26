@@ -29,6 +29,10 @@ _log = logging.getLogger(__name__)
 _FILE_TOOLS = {"Write", "Edit", "MultiEdit"}
 _LETTERS = "ABCDEFGHIJ"
 
+# A workshop build runs unattended -- there is no operator to approve a Write,
+# so any mode that can prompt stalls the turn until the idle timer kills it.
+DEFAULT_PERMISSION_MODE = "bypassPermissions"
+
 
 def _to_question_file(sdk_questions: list[dict]) -> dict:
     """SDK AskUserQuestion input → frontend QuestionFile shape (types.ts),
@@ -76,6 +80,25 @@ def _rel(path: str, workspace: str) -> str | None:
     return rel_str
 
 
+def _validate_permission_mode(mode: str) -> str:
+    """Reject an unknown mode here rather than letting it reach the CLI.
+
+    An unrecognized --permission-mode kills the subprocess during connect(),
+    which run() reports as a generic "agent turn failed" -- the exact
+    late-and-opaque failure mode the --session-id/--resume clash produced.
+    The valid set is read off the SDK's own Literal so it cannot drift.
+    """
+    from typing import get_args
+
+    from claude_agent_sdk.types import PermissionMode
+
+    valid = get_args(PermissionMode)
+    if mode not in valid:
+        raise ValueError(
+            f"unknown permission_mode {mode!r}; expected one of {', '.join(valid)}")
+    return mode
+
+
 def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
     def make():
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -92,7 +115,7 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
         if builder._anthropic_model:
             env["ANTHROPIC_MODEL"] = builder._anthropic_model
         options = ClaudeAgentOptions(
-            permission_mode="bypassPermissions",
+            permission_mode=builder._permission_mode,
             cwd=builder._workspace,
             env=env,
             # "user" now means OUR config dir, so this is safe -- and it is
@@ -108,9 +131,23 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # bypassPermissions that is not expected to restrict Bash/Write,
             # but the e2e checklist verifies a real build turn still works.
             skills="all",
-            session_id=builder._session_id,
+            # Exactly one of the two, never both: the CLI rejects
+            # `--session-id` alongside `--resume` unless `--fork-session` is
+            # also passed ("--session-id can only be used with --continue or
+            # --resume if --fork-session is also specified"), which killed
+            # every resumed build at connect(). Forking is not the fix either
+            # -- it would continue under a NEW id, orphaning the transcript
+            # that session.py persisted. `--resume=<id>` alone already keeps
+            # the session on that same id, which is all session_id bought us.
+            session_id=None if builder._resume else builder._session_id,
             resume=builder._session_id if builder._resume else None,
             session_store=builder._session_store,
+            # Kept even under bypassPermissions, which the SDK warns shadows
+            # this callback entirely. The warning overstates our case: probed
+            # against the real CLI, Bash/Write do skip the callback, but
+            # AskUserQuestion still reaches it -- and that is the only tool we
+            # intercept (it is how a question becomes an SSE `questions` event).
+            # Dropping the callback to silence the warning would break that.
             can_use_tool=builder._on_can_use_tool,
             hooks={"PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
                                                hooks=[builder._on_post_tool_use])]},
@@ -119,10 +156,28 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
     return make
 
 
+def _suppress_shadowed_callback_warning() -> None:
+    """Mute CanUseToolShadowedWarning -- for THIS wiring it is a false positive.
+
+    See the can_use_tool comment above: the callback exists only for
+    AskUserQuestion, which still reaches it under bypassPermissions. The
+    warning fires on every connect() and would otherwise train operators to
+    ignore backend warnings. Scoped to this one category, never a blanket
+    filter, so a genuinely new SDK warning still surfaces.
+    """
+    import warnings
+    try:
+        from claude_agent_sdk import CanUseToolShadowedWarning
+    except ImportError:  # older/newer SDK without the category -- nothing to mute
+        return
+    warnings.filterwarnings("ignore", category=CanUseToolShadowedWarning)
+
+
 class PrototypeBuilder:
     def __init__(self, workspace: str, config_dir: str, session_id: str,
                  resume: bool, session_store: Any = None,
                  anthropic_model: str | None = None,
+                 permission_mode: str = DEFAULT_PERMISSION_MODE,
                  client_factory: Callable[[], Any] | None = None):
         self._workspace = workspace
         self._config_dir = config_dir
@@ -130,6 +185,7 @@ class PrototypeBuilder:
         self._resume = resume
         self._session_store = session_store
         self._anthropic_model = anthropic_model
+        self._permission_mode = _validate_permission_mode(permission_mode)
         self._factory = client_factory or _default_client_factory(self)
         self._client: Any = None
         # A plain list, not collections.deque: tests assert `_queue == []`
@@ -149,6 +205,7 @@ class PrototypeBuilder:
 
     async def _ensure_client(self):
         if self._client is None:
+            _suppress_shadowed_callback_warning()
             self._client = self._factory()
             await self._client.connect()
         return self._client

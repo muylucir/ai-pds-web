@@ -156,6 +156,14 @@ def _proto_config_dir() -> Path:
                                "~/pathfinder-proto-config")).expanduser()
 
 
+def _proto_permission_mode() -> str:
+    """빌드는 무인으로 돌아간다 — 승인해 줄 사람이 없으므로 bypassPermissions가
+    기본값이다. 더 조이려면 환경변수로 덮어쓴다(잘못된 값은 즉시 ValueError)."""
+    from pathfinder.proto.builder import DEFAULT_PERMISSION_MODE
+    return os.environ.get("PATHFINDER_PROTO_PERMISSION_MODE",
+                          DEFAULT_PERMISSION_MODE)
+
+
 # 전역 동시 빌드 상한 (monkeypatchable in tests).
 from pathfinder.proto.limits import BuildSemaphore  # noqa: E402
 
@@ -193,6 +201,7 @@ def proto_session_factory(project_id: str, slug: str):
             resume=resume,
             session_store=store,
             anthropic_model=os.environ.get("ANTHROPIC_MODEL"),
+            permission_mode=_proto_permission_mode(),
         )
 
     return PrototypeSession(
