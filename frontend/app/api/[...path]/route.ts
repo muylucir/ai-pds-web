@@ -72,6 +72,13 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
     if (req.method !== "GET" && req.method !== "HEAD") {
       init.body = req.body;
       init.duplex = "half"; // required by undici when streaming a request body
+      // DELETE is in isRetryableWithRefresh's allowlist (it usually carries no
+      // body), but a DELETE that DOES carry one lands here too. If it 401s and
+      // a refresh is attempted, the retry's send() reuses this same,
+      // now-disturbed req.body stream — fetch() throws, the outer catch
+      // swallows it, and the original 401 passes through untouched. Correct
+      // outcome, just arrived at by accident rather than by design; noting it
+      // so it isn't mistaken for a bug later.
     }
     return fetch(url, init);
   };
