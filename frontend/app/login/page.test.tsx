@@ -2,14 +2,19 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import LoginPage from "./page";
 
-// useSearchParams를 쓰는 화면이라 next/navigation을 목한다.
-const searchParams = { value: new URLSearchParams() };
+// useSearchParams를 쓰는 화면이라 next/navigation을 목한다. suspend는 파라미터가
+// 아직 안 풀린 상태(빌드 시 프리렌더)를 재현하기 위한 스위치다.
+const searchParams = { value: new URLSearchParams(), suspend: false };
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => searchParams.value,
+  useSearchParams: () => {
+    if (searchParams.suspend) throw new Promise<void>(() => {});
+    return searchParams.value;
+  },
 }));
 
 function withParams(query: string) {
   searchParams.value = new URLSearchParams(query);
+  searchParams.suspend = false;
 }
 
 describe("/login", () => {
@@ -56,6 +61,18 @@ describe("/login", () => {
   it("shows no alert when there is no error", () => {
     withParams("");
     render(<LoginPage />);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("renders the login card while search params are still unresolved", () => {
+    // Next 15는 /login을 빌드 시 프리렌더한다. useSearchParams()가 그 시점에
+    // suspend하면 Suspense 경계가 없는 한 빌드가 깨진다("should be wrapped in a
+    // suspense boundary"). 경계 안쪽만 suspend하고 로그인 버튼은 서버 HTML에
+    // 남아야 — JS가 죽어도 로그인은 눌릴 수 있어야 한다.
+    searchParams.suspend = true;
+    render(<LoginPage />);
+    expect(screen.getByRole("link", { name: /로그인/ }))
+      .toHaveAttribute("href", "/api/auth/login");
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
