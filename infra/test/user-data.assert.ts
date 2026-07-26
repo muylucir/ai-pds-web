@@ -7,6 +7,10 @@ const s = renderUserData({
   model: 'global.anthropic.claude-opus-4-8',
   secretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:hdr-AbCdEf',
   assetS3Uri: 's3://asset-bucket/abc123.zip',
+  userPoolId: 'ap-northeast-2_TESTPOOL',
+  userPoolClientId: 'client-test',
+  hostedUiDomain: 'pathfinder-test.auth.ap-northeast-2.amazoncognito.com',
+  appUrl: 'https://example.cloudfront.net',
 });
 
 // 1) 안전 옵션·로그
@@ -92,3 +96,41 @@ assert.match(s, /runuser -u pathfinder -- env NEXT_PUBLIC_API_BASE_URL=\/api HOM
 assert.match(backendUnit, /^Environment=HOME=\/opt\/pathfinder$/m, 'backend unit needs a writable HOME');
 
 console.log('OK  user-data: services run as non-root pathfinder user, app tree owned by it');
+
+// --- 인증 배선 (Cognito) ---
+{
+  const script = renderUserData({
+    region: 'ap-northeast-2',
+    bucketName: 'bucket-x',
+    model: 'model-x',
+    secretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:abc',
+    assetS3Uri: 's3://b/k.zip',
+    userPoolId: 'ap-northeast-2_POOL',
+    userPoolClientId: 'client-abc',
+    hostedUiDomain: 'pathfinder-x.auth.ap-northeast-2.amazoncognito.com',
+    appUrl: 'https://d123.cloudfront.net',
+  });
+
+  // 백엔드: 이 두 값이 있어야 인증이 켜진다(없으면 바이패스 = 무인증 공개).
+  assert.ok(script.includes('PATHFINDER_COGNITO_USER_POOL_ID=ap-northeast-2_POOL'),
+    'backend must receive the user pool id — without it auth is bypassed');
+  assert.ok(script.includes('PATHFINDER_COGNITO_CLIENT_ID=client-abc'),
+    'backend must receive the client id');
+
+  // 프론트: Hosted UI 도메인·클라이언트·앱 URL.
+  assert.ok(script.includes('COGNITO_HOSTED_UI_DOMAIN=pathfinder-x.auth.ap-northeast-2.amazoncognito.com'));
+  assert.ok(script.includes('COGNITO_CLIENT_ID=client-abc'));
+  assert.ok(script.includes('APP_BASE_URL=https://d123.cloudfront.net'));
+
+  // 클라이언트 시크릿은 부팅 시 Cognito에서 조회한다 — 템플릿에 평문으로 남기지 않는다.
+  assert.ok(script.includes('describe-user-pool-client'),
+    'client secret must be fetched at boot, not baked into the template');
+  assert.ok(!script.includes('COGNITO_CLIENT_SECRET=secret'),
+    'a literal client secret must never appear in user-data');
+
+  // NEXT_PUBLIC_ 접두어가 붙으면 시크릿이 클라이언트 번들로 나간다.
+  assert.ok(!script.includes('NEXT_PUBLIC_COGNITO'),
+    'Cognito env must never be NEXT_PUBLIC_ (it would be inlined into the browser bundle)');
+
+  console.log('OK  user-data: cognito env for backend + frontend, secret fetched at boot');
+}

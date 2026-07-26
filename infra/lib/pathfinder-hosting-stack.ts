@@ -7,15 +7,25 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as assets from 'aws-cdk-lib/aws-s3-assets';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import * as path from 'path';
 import { backendPolicyStatements, MODEL } from './backend-permissions';
 import { renderUserData } from './user-data';
+import {
+  LOCAL_APP_URL, OAUTH_SCOPES, callbackUrls, logoutUrls,
+} from './auth-client-config';
 
 export interface HostingStackProps extends cdk.StackProps {
   artifactsBucket: s3.IBucket;
   // 테스트 주입용. 미지정 시 배포 리전의 CloudFront origin-facing 프리픽스
   // 리스트를 fromLookup으로 자동 조회한다.
   cfPrefixListId?: string;
+  // 인증. AuthStack이 만든 풀/클라이언트를 받아 (1) EC2에 env로 심고
+  // (2) CloudFront 도메인을 콜백 URL로 등록한다.
+  userPool: cognito.IUserPool;
+  userPoolClient: cognito.IUserPoolClient;
+  hostedUiDomain: string;
 }
 
 export class PathfinderHostingStack extends cdk.Stack {
@@ -75,6 +85,12 @@ export class PathfinderHostingStack extends cdk.Stack {
       role.addToPolicy(stmt);
     }
     headerSecret.grantRead(role);
+    // 부팅 시 클라이언트 시크릿을 Cognito에서 직접 읽는다(§3.4) — 템플릿에
+    // 평문으로 남기지 않기 위한 선택이고, 그 대가가 이 권한이다.
+    role.addToPolicy(new iam.PolicyStatement({
+      actions: ['cognito-idp:DescribeUserPoolClient'],
+      resources: [props.userPool.userPoolArn],
+    }));
 
     // --- 앱 코드 에셋(리포 zip) ---
     const asset = new assets.Asset(this, 'AppAsset', {
@@ -90,6 +106,14 @@ export class PathfinderHostingStack extends cdk.Stack {
     asset.grantRead(role);
 
     // --- user-data ---
+    // CloudFront 도메인은 아래에서 만들어지지만 user-data는 지금 필요하다.
+    // Lazy.string으로 합성 마지막에 해석시켜 순환을 끊는다 — CFN 템플릿에서는
+    // Fn::GetAtt 참조로 떨어진다.
+    let distributionDomain: string | undefined;
+    const appUrlToken = cdk.Lazy.string({
+      produce: () => `https://${distributionDomain ?? ''}`,
+    });
+
     const userData = ec2.UserData.custom(
       renderUserData({
         region,
@@ -97,6 +121,10 @@ export class PathfinderHostingStack extends cdk.Stack {
         model: MODEL,
         secretArn: headerSecret.secretArn,
         assetS3Uri: asset.s3ObjectUrl, // s3://bucket/key
+        userPoolId: props.userPool.userPoolId,
+        userPoolClientId: props.userPoolClient.userPoolClientId,
+        hostedUiDomain: props.hostedUiDomain,
+        appUrl: appUrlToken,
       }),
     );
 
@@ -165,6 +193,53 @@ export class PathfinderHostingStack extends cdk.Stack {
         },
       },
     });
+    distributionDomain = distribution.distributionDomainName;
+
+    // --- 콜백 URL 주입: 순환 의존 해소 ---
+    //
+    // Cognito는 콜백 URL의 전수 일치만 허용하고(와일드카드 불가), 실제 URL은
+    // 이 스택이 만드는 CloudFront 도메인에 달려 있다. AuthStack이 그 도메인을
+    // 알려면 이 스택을 참조해야 하고, 이 스택은 이미 AuthStack을 참조하므로
+    // 순환이다. 배포 마지막에 클라이언트를 갱신해 끊는다.
+    //
+    // ⚠️ UpdateUserPoolClient는 PUT 시맨틱이다 — 지정하지 않은 필드를 지운다.
+    // 따라서 콜백만 보내는 것이 아니라 클라이언트 설정 전체를 다시 쓴다.
+    // 값의 출처는 auth-client-config.ts 하나뿐이라 AuthStack과 어긋나지 않는다.
+    const appUrls = [LOCAL_APP_URL, `https://${distribution.distributionDomainName}`];
+
+    // onCreate와 onUpdate가 같은 호출이어야 한다: onUpdate를 생략하면 재배포 시
+    // 갱신되지 않아 도메인이 바뀌어도 콜백이 낡은 채로 남는다. 파라미터를 지역
+    // 상수로 뽑아 두 곳이 어긋날 여지를 없앤다.
+    const updateClientCall = {
+      service: 'CognitoIdentityServiceProvider',
+      action: 'updateUserPoolClient',
+      parameters: {
+        UserPoolId: props.userPool.userPoolId,
+        ClientId: props.userPoolClient.userPoolClientId,
+        CallbackURLs: callbackUrls(appUrls),
+        LogoutURLs: logoutUrls(appUrls),
+        // PUT 시맨틱이라 아래 필드를 빼면 그 설정이 지워진다 —
+        // AuthStack의 클라이언트 정의와 같은 값이어야 한다.
+        AllowedOAuthFlows: ['code'],
+        AllowedOAuthFlowsUserPoolClient: true,
+        AllowedOAuthScopes: OAUTH_SCOPES,
+        SupportedIdentityProviders: ['COGNITO'],
+        PreventUserExistenceErrors: 'ENABLED',
+        EnableTokenRevocation: true,
+      },
+      physicalResourceId: cr.PhysicalResourceId.of('pathfinder-callback-urls'),
+    };
+
+    const clientUpdate = new cr.AwsCustomResource(this, 'RegisterCallbackUrls', {
+      onCreate: updateClientCall,
+      onUpdate: updateClientCall,
+      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
+        resources: [props.userPool.userPoolArn],
+      }),
+      installLatestAwsSdk: false,
+    });
+    // distribution이 만들어진 뒤에 호출돼야 도메인이 확정된다.
+    clientUpdate.node.addDependency(distribution);
 
     new cdk.CfnOutput(this, 'DistributionDomain', {
       value: `https://${distribution.distributionDomainName}`,

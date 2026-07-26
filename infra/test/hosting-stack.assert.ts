@@ -3,6 +3,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { PathfinderDrillStack } from '../lib/pathfinder-drill-stack';
 import { PathfinderHostingStack } from '../lib/pathfinder-hosting-stack';
+import { PathfinderAuthStack } from '../lib/pathfinder-auth-stack';
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 
@@ -58,10 +59,14 @@ testDrillUnchanged();
 function makeHosting() {
   const app = new cdk.App();
   const drill = new PathfinderDrillStack(app, 'Drill2', { env: ENV });
+  const auth = new PathfinderAuthStack(app, 'Auth2', { env: ENV });
   const stack = new PathfinderHostingStack(app, 'Hosting', {
     env: ENV,
     artifactsBucket: drill.artifactsBucket,
     cfPrefixListId: 'pl-test0000',   // 주입 → fromLookup 우회(크리덴셜 불필요)
+    userPool: auth.userPool,
+    userPoolClient: auth.userPoolClient,
+    hostedUiDomain: auth.hostedUiDomain,
   });
   return Template.fromStack(stack);
 }
@@ -171,3 +176,41 @@ function testCloudFront() {
 }
 
 testCloudFront();
+
+// --- 콜백 URL 주입 (순환 의존 해소) ---
+{
+  const app = new cdk.App();
+  const drill = new PathfinderDrillStack(app, 'Drill3', { env: ENV });
+  const auth = new PathfinderAuthStack(app, 'Auth3', { env: ENV });
+  const hosting = new PathfinderHostingStack(app, 'Hosting3', {
+    env: ENV,
+    artifactsBucket: drill.artifactsBucket,
+    cfPrefixListId: 'pl-1234',
+    userPool: auth.userPool,
+    userPoolClient: auth.userPoolClient,
+    hostedUiDomain: auth.hostedUiDomain,
+  });
+  const t = Template.fromStack(hosting);
+  const bodies = JSON.stringify(t.findResources('Custom::AWS'));
+
+  // CloudFront 도메인을 콜백 URL에 등록하는 커스텀 리소스.
+  assert.ok(bodies.includes('updateUserPoolClient'),
+    'hosting must register the CloudFront callback URL with the app client');
+  // PUT 시맨틱이므로 전체 설정을 다시 써야 한다 — 콜백만 보내면 나머지가 지워진다.
+  assert.ok(bodies.includes('AllowedOAuthFlows'),
+    'UpdateUserPoolClient has PUT semantics — the full client config must be resent');
+  assert.ok(bodies.includes('LogoutURLs'), 'logout URLs must be resent too');
+  // localhost 콜백도 유지돼야 로컬 개발이 깨지지 않는다.
+  assert.ok(bodies.includes('http://localhost:3000/api/auth/callback'),
+    'the localhost callback must survive the update');
+
+  // 인스턴스 롤이 클라이언트 시크릿을 읽을 수 있어야 한다(부팅 시 조회).
+  t.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({ Action: 'cognito-idp:DescribeUserPoolClient' }),
+      ]),
+    },
+  });
+  console.log('OK  hosting stack: callback URL injection + full client config resend + secret read permission');
+}
