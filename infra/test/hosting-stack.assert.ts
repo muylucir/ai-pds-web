@@ -301,3 +301,65 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   });
   console.log('OK  hosting stack: callback URL injection + full client config resend (incl. token validity/refresh flow) + onUpdate present + secret read permission');
 }
+
+// --- 비ASCII 문자가 리소스 속성에 새지 않는지 ---
+// 실측 배포 실패: EC2가 SecurityGroup의 GroupDescription에서 비ASCII를 거부한다
+// ("Character sets beyond ASCII are not supported"). 한국어 주석 습관이 그대로
+// description/comment 문자열에 들어가 em dash(—)가 섞였다. 합성은 통과하고
+// CloudFormation이 API를 호출하는 시점에 죽는다.
+//
+// Cognito 그룹 설명(한국어)은 실제로 배포에 성공하므로 전면 금지는 과하다 —
+// ASCII를 강제하는 서비스의 속성만 검사한다. 주석은 대상이 아니다(템플릿에
+// 나가지 않는다).
+{
+  const app = new cdk.App();
+  const drill = new PathfinderDrillStack(app, 'Drill4', { env: ENV });
+  const auth = new PathfinderAuthStack(app, 'Auth4', { env: ENV });
+  const hosting = new PathfinderHostingStack(app, 'Hosting4', {
+    env: ENV,
+    artifactsBucket: drill.artifactsBucket,
+    userPool: auth.userPool,
+    userPoolClient: auth.userPoolClient,
+    hostedUiDomain: auth.hostedUiDomain,
+  });
+  const t = Template.fromStack(hosting);
+
+  const nonAscii = /[^\x00-\x7F]/;
+
+  // EC2 SecurityGroup: GroupDescription + 인바운드/아웃바운드 규칙 설명.
+  for (const [id, sg] of Object.entries(t.findResources('AWS::EC2::SecurityGroup'))) {
+    const p: any = (sg as any).Properties ?? {};
+    for (const field of ['GroupDescription', 'GroupName']) {
+      const v = p[field];
+      if (typeof v === 'string') {
+        assert.ok(!nonAscii.test(v),
+          `${id}.${field} must be ASCII-only (EC2 rejects non-ASCII): ${JSON.stringify(v)}`);
+      }
+    }
+    for (const key of ['SecurityGroupIngress', 'SecurityGroupEgress']) {
+      for (const rule of (p[key] ?? []) as any[]) {
+        if (typeof rule?.Description === 'string') {
+          assert.ok(!nonAscii.test(rule.Description),
+            `${id}.${key}[].Description must be ASCII-only: ${JSON.stringify(rule.Description)}`);
+        }
+      }
+    }
+  }
+  // 별도 리소스로 떨어지는 규칙도 같은 제약을 받는다.
+  for (const type of ['AWS::EC2::SecurityGroupIngress', 'AWS::EC2::SecurityGroupEgress']) {
+    for (const [id, r] of Object.entries(t.findResources(type))) {
+      const d = ((r as any).Properties ?? {}).Description;
+      if (typeof d === 'string') {
+        assert.ok(!nonAscii.test(d), `${id}.Description must be ASCII-only: ${JSON.stringify(d)}`);
+      }
+    }
+  }
+  // CloudFront Comment — 콘솔 표시용이고 ASCII 안전이 확인되지 않았다.
+  for (const [id, d] of Object.entries(t.findResources('AWS::CloudFront::Distribution'))) {
+    const c = ((d as any).Properties ?? {}).DistributionConfig?.Comment;
+    if (typeof c === 'string') {
+      assert.ok(!nonAscii.test(c), `${id} Comment must be ASCII-only: ${JSON.stringify(c)}`);
+    }
+  }
+  console.log('OK  hosting: ASCII-only SG descriptions + CloudFront comment (EC2 rejects non-ASCII)');
+}

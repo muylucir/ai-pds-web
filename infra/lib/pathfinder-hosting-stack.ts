@@ -54,7 +54,9 @@ export class PathfinderHostingStack extends cdk.Stack {
     const sg = new ec2.SecurityGroup(this, 'InstanceSg', {
       vpc,
       allowAllOutbound: true, // 패키지 설치 · Bedrock · S3
-      description: 'Pathfinder EC2 — inbound 80 from CloudFront prefix list only.',
+      // ASCII만: EC2는 GroupDescription의 비ASCII를 거부한다("Character sets
+      // beyond ASCII are not supported"). em dash 하나로 스택이 롤백된다(실측).
+      description: 'Pathfinder EC2: inbound 80 from CloudFront prefix list only.',
     });
     sg.addIngressRule(
       ec2.Peer.prefixList(cfPrefixListId),
@@ -178,7 +180,9 @@ export class PathfinderHostingStack extends cdk.Stack {
     });
 
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
-      comment: 'Pathfinder — CloudFront in front of EC2 (header-authenticated origin).',
+      // 위 SG와 같은 이유로 ASCII만 쓴다(CloudFront는 비ASCII를 받아줄 수도
+      // 있으나, 콘솔 표시용 문자열에 굳이 그 위험을 남기지 않는다).
+      comment: 'Pathfinder: CloudFront in front of EC2 (header-authenticated origin).',
       priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
       defaultBehavior: {
         origin,
