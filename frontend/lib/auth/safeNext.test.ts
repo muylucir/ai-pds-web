@@ -63,4 +63,52 @@ describe("safeNext", () => {
   it("rejects any path containing a backslash, even if same-origin after resolution", () => {
     expect(safeNext("/ok/pa\\th", REQUEST_URL)).toBe("/");
   });
+
+  // 실제 취약점(2차 발견): raw가 우리 자신의 origin을 절대 URL로 명시하면
+  // origin 비교는 통과하지만, pathname 자체가 "//"로 시작할 수 있다
+  // ("https://app.example.com//evil.example" -> pathname "//evil.example").
+  // 그 문자열을 반환하면 함수의 후조건(반환값은 다시 resolve해도 항상
+  // 우리 origin)이 깨진다 — 나중에 이 값을 또 new URL(value, url)에 넣는
+  // 호출자가 생기면 오프사이트로 튄다.
+  it("rejects a same-origin absolute URL whose path itself starts with //", () => {
+    expect(safeNext("https://app.example.com//evil.example", REQUEST_URL)).toBe("/");
+  });
+
+  it("rejects a same-origin absolute URL with a bare // path", () => {
+    expect(safeNext("https://app.example.com//", REQUEST_URL)).toBe("/");
+  });
+
+  it("preserves a legitimate deep link with query and hash (regression)", () => {
+    expect(safeNext("/projects/p1/dashboard?tab=x#frag", REQUEST_URL))
+      .toBe("/projects/p1/dashboard?tab=x#frag");
+  });
+
+  // 후조건 자체를 테스트한다: 모든 입력에 대해, safeNext의 반환값을 다시
+  // resolve했을 때 항상 우리 자신의 origin으로 떨어져야 한다. 이 하나의
+  // 불변식이 지켜지면, 앞으로 나올 새로운 인코딩 트릭도 개별 케이스를
+  // 추가하기 전에 이 테스트가 잡아낸다.
+  it("always returns a value that re-resolves to our own origin (postcondition)", () => {
+    const ourOrigin = new URL(REQUEST_URL).origin;
+    const candidates = [
+      "/ok/path",
+      "/projects/p1/dashboard?tab=x#frag",
+      "",
+      undefined,
+      null,
+      "//evil.example",
+      "https://evil.example/x",
+      "javascript:alert(1)",
+      "/\\evil.example",
+      "/\\/evil.example",
+      "/\\tevil",
+      "/ok/pa\\th",
+      "https://app.example.com//evil.example",
+      "https://app.example.com//",
+    ];
+    for (const c of candidates) {
+      const out = safeNext(c, REQUEST_URL);
+      const reresolved = new URL(out, REQUEST_URL);
+      expect(reresolved.origin).toBe(ourOrigin);
+    }
+  });
 });
