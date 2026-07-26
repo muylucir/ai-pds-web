@@ -2,7 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import {
-  ACCESS_TOKEN_VALIDITY_MINUTES, GROUP_ADMIN, GROUP_PM, ID_TOKEN_VALIDITY_MINUTES,
+  ACCESS_TOKEN_VALIDITY_MINUTES, CLIENT_NAME, GROUP_ADMIN, GROUP_PM, ID_TOKEN_VALIDITY_MINUTES,
   LOCAL_APP_URL, OAUTH_SCOPES, REFRESH_TOKEN_VALIDITY_MINUTES,
   SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
   callbackUrls, logoutUrls,
@@ -96,7 +96,7 @@ export class PathfinderAuthStack extends cdk.Stack {
     // 시크릿을 안전히 보관할 수 있고, 두면 client_id만 훔친 코드 가로채기가 막힌다.
     // 콜백은 localhost만 — 실제 CloudFront 도메인은 HostingStack이 덧붙인다(§3.5).
     this.userPoolClient = this.userPool.addClient('WebClient', {
-      userPoolClientName: 'pathfinder-web',
+      userPoolClientName: CLIENT_NAME,
       generateSecret: true,
       authFlows: { userSrp: false, userPassword: false },
       oAuth: {

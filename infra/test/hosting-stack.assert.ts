@@ -259,6 +259,38 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   assert.ok(params.LogoutURLs.includes('http://localhost:3000/login'),
     'the localhost logout URL must survive the update');
 
+  // --- 드리프트 감지: AuthStack의 client 속성 하나하나를 손으로 대조하는 건
+  // 반복 가능한 방어가 아니다(리뷰어가 CDK 소스를 읽어야 ClientName 누락을
+  // 찾을 수 있었다). 그래서 실제로 AuthStack을 합성해 그 client 리소스가
+  // 갖는 CFN 속성 키 전부를 가져오고, 재전송 parameters가 그 키를 다 갖고
+  // 있는지 기계적으로 대조한다 — 다음에 addClient()에 필드가 추가되고
+  // 재전송이 안 고쳐지면, 이 단정이 그 필드 이름을 대며 즉시 실패한다.
+  const authTemplate = Template.fromStack(auth);
+  const authClients = authTemplate.findResources('AWS::Cognito::UserPoolClient');
+  const authClientProps = (Object.values(authClients)[0] as any).Properties;
+
+  // 정당하게 다른 필드들:
+  //  - CallbackURLs/LogoutURLs: 재전송이 CloudFront 도메인을 의도적으로
+  //    덧붙이므로 AuthStack의 localhost-only 값과 다른 게 정상이다(위에서
+  //    이미 localhost 콜백 생존을 따로 확인했다).
+  //  - UserPoolId/ClientId: 이 리소스를 "어떤 클라이언트"로 지정하는
+  //    주소값이라 설정이 아니다 — AuthStack 쪽 UserPoolId는 { Ref: ... }
+  //    토큰이고 재전송 쪽은 실제 문자열이라 형태부터 다르다.
+  //  - GenerateSecret: CreateUserPoolClient에만 있는 필드다(시크릿 유무는
+  //    생성 후 못 바꾼다) — UpdateUserPoolClient 요청 문법에 이 필드가
+  //    없으므로 여기 보내면 오히려 API가 거부한다.
+  const legitimatelyDifferent = new Set([
+    'CallbackURLs', 'LogoutURLs', 'UserPoolId', 'ClientId', 'GenerateSecret',
+  ]);
+  for (const key of Object.keys(authClientProps)) {
+    if (legitimatelyDifferent.has(key)) continue;
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(params, key),
+      `AuthStack's client sets '${key}' but the UpdateUserPoolClient resend does not — ` +
+      `PUT semantics will reset it to a Cognito default on the next deploy`,
+    );
+  }
+
   // 인스턴스 롤이 클라이언트 시크릿을 읽을 수 있어야 한다(부팅 시 조회).
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {

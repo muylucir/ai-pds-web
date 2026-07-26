@@ -22,6 +22,11 @@ export const LOGOUT_PATH = '/login';
 export const LOCAL_APP_URL = 'http://localhost:3000';
 export const OAUTH_SCOPES = ['openid', 'email', 'profile'];
 
+// 앱 클라이언트 이름. 콘솔에 뜨는 이름이라 값 자체는 사소하지만, 다른 PUT
+// 필드들과 같은 이유로 여기 둔다 — AuthStack만 알고 HostingStack의 재전송이
+// 모르면 재배포마다 Cognito가 만든 기본 이름으로 조용히 바뀐다.
+export const CLIENT_NAME = 'pathfinder-web';
+
 // 토큰 유효기간 (분 단위). AuthStack의 client 정의와 HostingStack의
 // UpdateUserPoolClient 재전송이 반드시 같은 값을 써야 한다 — PUT 시맨틱이라
 // 어긋나면 재배포 때마다 유효기간이 조용히 리셋된다. AuthStack은 이 값을

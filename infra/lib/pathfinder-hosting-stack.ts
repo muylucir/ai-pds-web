@@ -13,7 +13,7 @@ import * as path from 'path';
 import { backendPolicyStatements, MODEL } from './backend-permissions';
 import { renderUserData } from './user-data';
 import {
-  ACCESS_TOKEN_VALIDITY_MINUTES, EXPLICIT_AUTH_FLOWS, ID_TOKEN_VALIDITY_MINUTES,
+  ACCESS_TOKEN_VALIDITY_MINUTES, CLIENT_NAME, EXPLICIT_AUTH_FLOWS, ID_TOKEN_VALIDITY_MINUTES,
   LOCAL_APP_URL, OAUTH_SCOPES, REFRESH_TOKEN_VALIDITY_MINUTES,
   callbackUrls, logoutUrls,
 } from './auth-client-config';
@@ -222,6 +222,7 @@ export class PathfinderHostingStack extends cdk.Stack {
       parameters: {
         UserPoolId: props.userPool.userPoolId,
         ClientId: props.userPoolClient.userPoolClientId,
+        ClientName: CLIENT_NAME,
         CallbackURLs: callbackUrls(appUrls),
         LogoutURLs: logoutUrls(appUrls),
         // PUT 시맨틱이라 아래 필드를 빼면 그 설정이 지워진다 —
