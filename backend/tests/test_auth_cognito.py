@@ -143,14 +143,76 @@ def test_list_users_degrades_a_row_when_its_group_lookup_fails(admin):
 def test_create_user_suppresses_email_and_marks_it_verified(admin):
     a, stub = admin
     # email_verified=true는 선택이 아니다 — alias(email) 사인인의 조건이다.
+    # Username은 이메일이 아니라 로컬파트다: 이 풀은 AliasAttributes=[email]이고
+    # Cognito는 그 경우 이메일 형식 Username을 거부한다("Username cannot be of
+    # email format, since user pool is configured for email alias").
     stub.add_response(
         "admin_create_user",
-        {"User": _user("new@x.io", "new@x.io", status="FORCE_CHANGE_PASSWORD")},
-        {"UserPoolId": POOL, "Username": "new@x.io", "MessageAction": "SUPPRESS",
+        {"User": _user("new", "new@x.io", status="FORCE_CHANGE_PASSWORD")},
+        {"UserPoolId": POOL, "Username": "new", "MessageAction": "SUPPRESS",
          "UserAttributes": [{"Name": "email", "Value": "new@x.io"},
                             {"Name": "email_verified", "Value": "true"}]},
     )
-    assert a.create_user("new@x.io") == "new@x.io"
+    assert a.create_user("new@x.io") == "new"
+
+
+def test_create_user_never_sends_an_email_shaped_username(admin):
+    """실측 배포 실패의 회귀 가드. Cognito가 거부하는 조건은 '@가 있는 Username'
+    하나이므로, 로컬파트 규칙이 아니라 그 불변식을 직접 단정한다."""
+    a, stub = admin
+    stub.add_response(
+        "admin_create_user",
+        {"User": _user("kim.lee", "kim.lee@corp.example.com")},
+        {"UserPoolId": POOL, "Username": "kim.lee", "MessageAction": "SUPPRESS",
+         "UserAttributes": [{"Name": "email", "Value": "kim.lee@corp.example.com"},
+                            {"Name": "email_verified", "Value": "true"}]},
+    )
+    username = a.create_user("kim.lee@corp.example.com")
+    assert "@" not in username
+
+
+def test_create_user_lowercases_and_trims_the_local_part(admin):
+    # 풀은 signInCaseSensitive=false지만 Username 문자열 자체는 그대로 저장된다.
+    # 대소문자가 섞이면 /admin/users 목록과 자기 자신 비교가 어수선해진다.
+    a, stub = admin
+    stub.add_response(
+        "admin_create_user",
+        {"User": _user("mixed", "Mixed@X.IO")},
+        # email 속성도 trim된다 — 공백이 남으면 alias 사인인이 그 공백까지
+        # 요구해 사용자가 로그인할 수 없다.
+        {"UserPoolId": POOL, "Username": "mixed", "MessageAction": "SUPPRESS",
+         "UserAttributes": [{"Name": "email", "Value": "Mixed@X.IO"},
+                            {"Name": "email_verified", "Value": "true"}]},
+    )
+    assert a.create_user("  Mixed@X.IO  ") == "mixed"
+
+
+def test_create_user_strips_characters_cognito_rejects(admin):
+    # Cognito Username은 제한된 문자만 받는다. 로컬파트에 그 밖의 문자가 있으면
+    # (예: 태그 주소 "a+tag@x.io") 그대로 넘기면 InvalidParameterException이 난다.
+    a, stub = admin
+    stub.add_response(
+        "admin_create_user",
+        {"User": _user("a-tag", "a+tag@x.io")},
+        {"UserPoolId": POOL, "Username": "a-tag", "MessageAction": "SUPPRESS",
+         "UserAttributes": [{"Name": "email", "Value": "a+tag@x.io"},
+                            {"Name": "email_verified", "Value": "true"}]},
+    )
+    assert a.create_user("a+tag@x.io") == "a-tag"
+
+
+def test_create_user_returns_the_username_cognito_reports(admin):
+    # 응답의 Username이 우리가 보낸 것과 다르면(풀 설정 변경 등) 그쪽을 신뢰한다 —
+    # 이후 set_temp_password/set_group이 그 값으로 호출되어야 한다.
+    a, stub = admin
+    stub.add_response(
+        "admin_create_user",
+        {"User": _user("server-side-id", "x@y.io")},
+        {"UserPoolId": POOL, "Username": "x", "MessageAction": "SUPPRESS",
+         "UserAttributes": [{"Name": "email", "Value": "x@y.io"},
+                            {"Name": "email_verified", "Value": "true"}]},
+    )
+    assert a.create_user("x@y.io") == "server-side-id"
 
 
 def test_duplicate_email_raises_cognito_error_with_code(admin):

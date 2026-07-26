@@ -5,10 +5,12 @@
 # Stubber로 독립 검증된다.
 #
 # 이 풀은 AliasAttributes(email)이므로 Username을 호출자가 정한다 — 우리는
-# 이메일을 그대로 Username으로 쓴다. 그래서 모든 Admin* 호출이 이메일로 결정적이다.
+# 이메일의 로컬파트를 Username으로 쓴다(username_for_email 참조). 그래서 모든
+# Admin* 호출이 이메일로부터 결정적이다.
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 from dataclasses import dataclass
 
@@ -23,6 +25,35 @@ _PAGE = 60
 
 # 우리가 관리하는 역할 그룹. 이 밖의 그룹은 건드리지 않는다.
 _ROLE_GROUPS = (ROLE_ADMIN, ROLE_PM)
+
+# Cognito Username이 받아주지 않는 문자를 '-'로 치환한다. Username에 허용되는
+# 문자는 제한적이라(예: 태그 주소의 '+') 로컬파트를 그대로 넘기면
+# InvalidParameterException이 난다.
+_USERNAME_UNSAFE = re.compile(r"[^a-z0-9._-]+")
+
+
+def username_for_email(email: str) -> str:
+    """이메일 → Cognito Username(로컬파트).
+
+    이 풀은 AliasAttributes=[email]이다. Cognito는 그 설정에서 **이메일 형식
+    Username을 거부한다** ("Username cannot be of email format, since user pool
+    is configured for email alias") — 이메일이 alias로 예약되어 있어 username과
+    충돌하기 때문이다. 실측: 이 규칙을 몰라 시드 계정 생성이 스택 롤백을 냈다.
+
+    그래서 '@' 앞부분만 Username으로 쓴다. 사용자는 어느 쪽이든 이메일로
+    로그인한다(email alias가 그 일을 한다).
+
+    ⚠️ 로컬파트가 같고 도메인만 다른 두 계정(kim@a.com / kim@b.com)은 같은
+    Username으로 충돌한다 — 두 번째 초대가 UsernameExistsException으로 실패한다.
+    워크숍 규모(단일 도메인)에서 감수한 트레이드오프다. 다중 도메인을 받아야
+    하면 도메인까지 포함한 규칙으로 바꿔야 하고, 그때는 infra/lib/seed-users.ts의
+    동일 규칙도 함께 고쳐야 한다(두 곳이 어긋나면 시드가 비결정적이 된다).
+    """
+    local = email.strip().lower().split("@", 1)[0]
+    safe = _USERNAME_UNSAFE.sub("-", local).strip("-")
+    if not safe:
+        raise ValueError(f"이메일에서 쓸 수 있는 Username을 만들 수 없다: {email!r}")
+    return safe
 
 # 임시 비밀번호 문자군. 풀 정책(8자+ 대/소/숫자/기호)을 만족시키기 위해 각 군에서
 # 최소 1자를 보장한다. 혼동하기 쉬운 문자(0/O, 1/l/I)는 제외했다 — 임시 비밀번호는
@@ -168,15 +199,23 @@ class CognitoAdmin:
         MessageAction=SUPPRESS: 이 앱은 메일을 보내지 않는다(초대는 관리 페이지가
         임시 비밀번호를 화면에 1회 보여준다).
         email_verified=true: 선택이 아니라 alias(email) 사인인의 조건이다.
+
+        Username은 이메일이 아니라 로컬파트다 — username_for_email 참조.
+        사용자는 어느 쪽이든 이메일로 로그인한다(email alias).
         """
+        username = username_for_email(email)
+        # email 속성도 trim한다 — 앞뒤 공백이 남으면 alias 사인인이 그 공백까지
+        # 요구하게 되어 사용자가 로그인할 수 없다.
         resp = self._call(
             "admin_create_user",
-            Username=email,
+            Username=username,
             MessageAction="SUPPRESS",
-            UserAttributes=[{"Name": "email", "Value": email},
+            UserAttributes=[{"Name": "email", "Value": email.strip()},
                             {"Name": "email_verified", "Value": "true"}],
         )
-        return resp.get("User", {}).get("Username", email)
+        # 응답의 Username을 신뢰한다 — 풀 설정이 바뀌어 Cognito가 다른 값을
+        # 배정하면 이후 set_temp_password/set_group이 그 값으로 가야 한다.
+        return resp.get("User", {}).get("Username", username)
 
     def set_temp_password(self, username: str, password: str) -> None:
         """임시 비밀번호. Permanent=False라 첫 로그인에서 사용자가 직접 바꾼다."""

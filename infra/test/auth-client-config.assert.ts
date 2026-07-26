@@ -1,5 +1,6 @@
 import * as assert from 'node:assert';
 import {
+  usernameForEmail,
   CALLBACK_PATH, GROUP_ADMIN, GROUP_PM, LOCAL_APP_URL, LOGOUT_PATH, OAUTH_SCOPES,
   SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
   callbackUrls, logoutUrls,
@@ -47,3 +48,23 @@ assert.deepStrictEqual(
 
 assert.deepStrictEqual(OAUTH_SCOPES, ['openid', 'email', 'profile']);
 console.log('OK  auth-client-config: seed constants + group constants + callback/logout URL derivation');
+
+// --- usernameForEmail: Cognito가 email-alias 풀에서 이메일 형식 Username을
+// 거부한다("Username cannot be of email format, since user pool is configured
+// for email alias"). 실측: 이 규칙을 몰라 시드 계정 생성이 스택 롤백을 냈다.
+// backend/pathfinder/auth/cognito.py의 username_for_email과 같은 규칙이어야
+// 한다 — 어긋나면 초대 계정과 시드 계정의 Username 규칙이 갈린다.
+assert.strictEqual(usernameForEmail('admin@pathfinder.local'), 'admin');
+assert.strictEqual(usernameForEmail('pm@pathfinder.local'), 'pm');
+// 시드 상수에 실제로 적용했을 때의 값 — 이게 배포되는 Username이다.
+assert.strictEqual(usernameForEmail(SEED_ADMIN_EMAIL), 'admin');
+assert.strictEqual(usernameForEmail(SEED_PM_EMAIL), 'pm');
+// 불변식: 결과에 '@'가 절대 없어야 한다(Cognito가 거부하는 유일한 조건).
+for (const email of [SEED_ADMIN_EMAIL, SEED_PM_EMAIL, 'a+tag@x.io', 'Mixed@X.IO']) {
+  assert.ok(!usernameForEmail(email).includes('@'),
+    `usernameForEmail(${email}) must not be email-shaped`);
+}
+// 대소문자·공백 정규화, Cognito가 안 받는 문자 치환.
+assert.strictEqual(usernameForEmail('  Mixed@X.IO  '), 'mixed');
+assert.strictEqual(usernameForEmail('a+tag@x.io'), 'a-tag');
+console.log('OK  usernameForEmail: local-part rule, no email-shaped username, normalization');

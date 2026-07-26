@@ -1,6 +1,7 @@
 import { Construct } from 'constructs';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as cr from 'aws-cdk-lib/custom-resources';
+import { usernameForEmail } from './auth-client-config';
 
 export interface SeedUserProps {
   userPool: cognito.IUserPool;
@@ -17,6 +18,10 @@ export interface SeedUserProps {
 // 필요하고, 그건 커스텀 리소스로만 호출할 수 있다.
 export function seedUser(scope: Construct, id: string, props: SeedUserProps): void {
   const { userPool, email, group, password } = props;
+  // Username은 이메일이 아니라 로컬파트다 — 이 풀은 AliasAttributes=[email]이고
+  // Cognito는 그 경우 이메일 형식 Username을 거부한다(실측: 스택 롤백).
+  // 규칙의 근거와 백엔드와의 동기화 요구는 usernameForEmail 주석 참조.
+  const username = usernameForEmail(email);
   const policy = cr.AwsCustomResourcePolicy.fromSdkCalls({
     resources: [userPool.userPoolArn],
   });
@@ -31,7 +36,7 @@ export function seedUser(scope: Construct, id: string, props: SeedUserProps): vo
       action: 'adminCreateUser',
       parameters: {
         UserPoolId: userPool.userPoolId,
-        Username: email,
+        Username: username,
         MessageAction: 'SUPPRESS',
         UserAttributes: [
           { Name: 'email', Value: email },
@@ -49,7 +54,7 @@ export function seedUser(scope: Construct, id: string, props: SeedUserProps): vo
   // 2) 비밀번호를 확정(Permanent)한다 → 상태가 CONFIRMED가 되어 첫 로그인에서
   // 변경을 요구하지 않는다. onUpdate에도 걸어 재배포마다 알려진 값으로 되돌린다.
   //
-  // Username에 1단계의 응답이 아니라 같은 email 상수를 쓴다: 1단계가
+  // Username에 1단계의 응답이 아니라 위에서 유도한 같은 값을 쓴다: 1단계가
   // UsernameExistsException으로 무시되면 응답 필드가 비어 getResponseField가
   // 깨진다. 풀이 AliasAttributes(호출자 지정 username)라서 이렇게 할 수 있다.
   const setPassword = new cr.AwsCustomResource(scope, `${id}Password`, {
@@ -58,7 +63,7 @@ export function seedUser(scope: Construct, id: string, props: SeedUserProps): vo
       action: 'adminSetUserPassword',
       parameters: {
         UserPoolId: userPool.userPoolId,
-        Username: email,
+        Username: username,
         Password: password,
         Permanent: true,
       },
@@ -69,7 +74,7 @@ export function seedUser(scope: Construct, id: string, props: SeedUserProps): vo
       action: 'adminSetUserPassword',
       parameters: {
         UserPoolId: userPool.userPoolId,
-        Username: email,
+        Username: username,
         Password: password,
         Permanent: true,
       },
@@ -87,7 +92,7 @@ export function seedUser(scope: Construct, id: string, props: SeedUserProps): vo
       action: 'adminAddUserToGroup',
       parameters: {
         UserPoolId: userPool.userPoolId,
-        Username: email,
+        Username: username,
         GroupName: group,
       },
       physicalResourceId: cr.PhysicalResourceId.of(`${email}-group-${group}`),
@@ -97,7 +102,7 @@ export function seedUser(scope: Construct, id: string, props: SeedUserProps): vo
       action: 'adminAddUserToGroup',
       parameters: {
         UserPoolId: userPool.userPoolId,
-        Username: email,
+        Username: username,
         GroupName: group,
       },
       physicalResourceId: cr.PhysicalResourceId.of(`${email}-group-${group}`),

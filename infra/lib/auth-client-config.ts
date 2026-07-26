@@ -58,3 +58,33 @@ export function callbackUrls(appUrls: string[]): string[] {
 export function logoutUrls(appUrls: string[]): string[] {
   return unique(appUrls.map((u) => join(u, LOGOUT_PATH)));
 }
+
+/**
+ * 이메일 → Cognito Username(로컬파트).
+ *
+ * 이 풀은 AliasAttributes=[email]이다. Cognito는 그 설정에서 **이메일 형식
+ * Username을 거부한다** — "Username cannot be of email format, since user pool
+ * is configured for email alias". 이메일이 alias로 예약되어 있어 username과
+ * 충돌하기 때문이다. 실측: 이 규칙을 몰라 시드 계정 생성이 스택 롤백을 냈다.
+ *
+ * 그래서 '@' 앞부분만 Username으로 쓴다. 사용자는 어느 쪽이든 이메일로
+ * 로그인한다(email alias가 그 일을 한다). UUID 자동 생성
+ * (UsernameAttributes)을 쓰지 않는 이유는 README의 "username == 이메일" 절과
+ * 같다 — 재배포마다 값을 알 수 없어 시딩이 비결정적이 된다.
+ *
+ * ⚠️ **backend/pathfinder/auth/cognito.py의 username_for_email과 같은 규칙이어야
+ * 한다.** 어긋나면 시드 계정과 초대 계정의 Username 규칙이 갈리고, 재배포 시
+ * 시드가 기존 사용자를 못 찾아 중복 계정을 만든다.
+ *
+ * ⚠️ 로컬파트가 같고 도메인만 다른 두 계정(kim@a.com / kim@b.com)은 같은
+ * Username으로 충돌한다 — 워크숍 규모(단일 도메인)에서 감수한 트레이드오프다.
+ */
+export function usernameForEmail(email: string): string {
+  const local = email.trim().toLowerCase().split('@')[0];
+  // Cognito Username에 허용되는 문자는 제한적이다(예: 태그 주소의 '+'는 불가).
+  const safe = local.replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!safe) {
+    throw new Error(`cannot derive a Cognito username from email: ${email}`);
+  }
+  return safe;
+}

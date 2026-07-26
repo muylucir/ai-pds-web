@@ -4,6 +4,7 @@ import { Template, Match } from 'aws-cdk-lib/assertions';
 import { PathfinderAuthStack } from '../lib/pathfinder-auth-stack';
 import {
   GROUP_ADMIN, GROUP_PM, SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
+  usernameForEmail,
 } from '../lib/auth-client-config';
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
@@ -131,10 +132,15 @@ const calls = resourceList.map((r: any) => ({
 }));
 
 function assertSeeding(email: string, group: string) {
+  // Username은 이메일이 아니라 로컬파트다 — Cognito가 email-alias 풀에서 이메일
+  // 형식 Username을 거부한다(실측: 스택 롤백). 세 호출이 모두 같은 값을 써야
+  // 비밀번호/그룹이 방금 만든 계정에 적용된다.
+  const username = usernameForEmail(email);
+
   // 1) adminCreateUser: 이 계정의 Username으로, 초대 메일 억제, 이메일 검증됨.
   const createCalls = calls
     .map((c) => c.create)
-    .filter((c) => c?.action === 'adminCreateUser' && c?.parameters.Username === email);
+    .filter((c) => c?.action === 'adminCreateUser' && c?.parameters.Username === username);
   assert.strictEqual(
     createCalls.length, 1,
     `expected exactly 1 adminCreateUser for ${email}, got ${createCalls.length}`,
@@ -150,12 +156,21 @@ function assertSeeding(email: string, group: string) {
     emailVerified?.Value, 'true',
     `${email}: email_verified must be true`,
   );
+  // Username은 이메일이 아니지만 email 속성은 원문 이메일이어야 한다 — 그게
+  // alias 사인인의 대상이다. 이걸 로컬파트로 바꾸면 로그인이 불가능해진다.
+  const emailAttr = createCalls[0]!.parameters.UserAttributes.find(
+    (a: any) => a.Name === 'email',
+  );
+  assert.strictEqual(
+    emailAttr?.Value, email,
+    `${email}: the email attribute must keep the full address (alias sign-in target)`,
+  );
 
   // 2) adminSetUserPassword: 이 계정의 Username으로, 시드 비밀번호, Permanent — 아니면
   // FORCE_CHANGE_PASSWORD 상태로 남아 강제 비밀번호 변경을 요구한다.
   const passwordCalls = calls
     .map((c) => c.create)
-    .filter((c) => c?.action === 'adminSetUserPassword' && c?.parameters.Username === email);
+    .filter((c) => c?.action === 'adminSetUserPassword' && c?.parameters.Username === username);
   assert.strictEqual(
     passwordCalls.length, 1,
     `expected exactly 1 adminSetUserPassword for ${email}, got ${passwordCalls.length}`,
@@ -173,7 +188,7 @@ function assertSeeding(email: string, group: string) {
   // 한다 — 역할의 유일한 출처이므로 admin/pm이 뒤바뀌면 그대로 권한 사고다.
   const groupCalls = calls
     .map((c) => c.create)
-    .filter((c) => c?.action === 'adminAddUserToGroup' && c?.parameters.Username === email);
+    .filter((c) => c?.action === 'adminAddUserToGroup' && c?.parameters.Username === username);
   assert.strictEqual(
     groupCalls.length, 1,
     `expected exactly 1 adminAddUserToGroup for ${email}, got ${groupCalls.length}`,
@@ -186,6 +201,21 @@ function assertSeeding(email: string, group: string) {
 
 assertSeeding(SEED_ADMIN_EMAIL, GROUP_ADMIN);
 assertSeeding(SEED_PM_EMAIL, GROUP_PM);
+
+// 전역 불변식: 어떤 Admin* 호출에도 이메일 형식 Username이 없어야 한다. Cognito가
+// 거부하는 조건은 그것 하나이므로, 규칙(로컬파트)이 아니라 이 불변식을 직접
+// 단정한다 — 규칙이 나중에 바뀌어도 배포 실패는 막힌다.
+for (const c of calls) {
+  for (const call of [c.create, c.update]) {
+    const u = call?.parameters?.Username;
+    if (typeof u === 'string') {
+      assert.ok(
+        !u.includes('@'),
+        `Cognito rejects email-shaped usernames in an email-alias pool; got '${u}' in ${call?.action}`,
+      );
+    }
+  }
+}
 
 // --- 출력: 백엔드/프론트 env로 쓰인다. ---
 const outputs = t.findOutputs('*');
