@@ -62,8 +62,7 @@ Where `{use-case-slug}` is the kebab-case version of the use case name.
 
 ### LLM Configuration
 - **Provider**: {Bedrock/Anthropic/OpenAI/Gemini/Other or "Not specified"}
-- **Model**: {Specific model or "Claude 3.5 Sonnet (default)"}
-- **Temperature**: {0.0-1.0 or "Default (0.7)"}
+- **Model**: {Specific model or "Claude sonnet 5 (default)"}
 - **Max Tokens**: {Number or "Default (4096)"}
 
 ### Conversation Style

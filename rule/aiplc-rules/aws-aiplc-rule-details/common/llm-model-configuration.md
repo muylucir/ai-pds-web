@@ -8,12 +8,12 @@ Reference guide for correct LLM model IDs and API credential configuration acros
 ### Correct Model ID
 **ALWAYS use the cross-region inference profile for Claude Sonnet 4:**
 ```
-us.anthropic.claude-sonnet-4-20250514-v1:0
+global.anthropic.claude-sonnet-5
 ```
 
 **DO NOT use the direct model ID** (will fail with on-demand throughput error):
 ```
-❌ anthropic.claude-sonnet-4-20250514-v1:0  (WRONG - causes ValidationException)
+❌ anthropic.claude-sonnet-5  (WRONG - causes ValidationException)
 ```
 
 ### API Credentials
@@ -46,9 +46,8 @@ bearer_token = os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
 
 # Use cross-region inference profile
 model = BedrockModel(
-    model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+    model_id="global.anthropic.claude-sonnet-5",
     region_name="us-west-2",
-    temperature=0.7,
     max_tokens=2048,
 )
 ```
@@ -57,11 +56,11 @@ model = BedrockModel(
 
 **Error: "This model version has reached the end of its life"**
 - Cause: Using deprecated model version (e.g., claude-3-5-sonnet-20241022-v2:0)
-- Solution: Use Claude Sonnet 4: `us.anthropic.claude-sonnet-4-20250514-v1:0`
+- Solution: Use Claude Sonnet 4: `global.anthropic.claude-sonnet-5`
 
 **Error: "Invocation of model ID ... with on-demand throughput isn't supported"**
 - Cause: Using direct model ID instead of inference profile
-- Solution: Add `us.` prefix: `us.anthropic.claude-sonnet-4-20250514-v1:0`
+- Solution: Add `global.` prefix: `global.anthropic.claude-sonnet-5`
 
 **Error: "ResourceNotFoundException" or "Access denied"**
 - Cause: Model access not enabled in Bedrock console

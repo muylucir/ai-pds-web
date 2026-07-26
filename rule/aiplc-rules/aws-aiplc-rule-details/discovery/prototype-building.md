@@ -117,7 +117,7 @@ Record selection.
 
 **IMPORTANT: Set correct model based on provider:**
 - **AWS Bedrock**: Use `global.anthropic.claude-sonnet-5` (cross-region inference profile)
-- **Anthropic**: Use `claude-sonnet-4-20250514`
+- **Anthropic**: Use `claude-sonnet-5`
 - **OpenAI**: Use `gpt-5-mini` or `gpt-5.1`
 - **Google Gemini**: Use `gemini-3-pro-preview` or `gemini-2.5-pro`
 
