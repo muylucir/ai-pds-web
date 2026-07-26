@@ -19,7 +19,9 @@ export function decodeJwtPayload(token: string): Claims | null {
   try {
     const json = Buffer.from(parts[1], "base64url").toString("utf8");
     const parsed = JSON.parse(json);
-    return typeof parsed === "object" && parsed !== null ? parsed : null;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed
+      : null;
   } catch {
     // 미들웨어가 이걸 부른다 — 예외가 나면 모든 페이지가 500이 된다.
     return null;

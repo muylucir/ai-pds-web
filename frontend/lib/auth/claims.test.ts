@@ -25,7 +25,16 @@ describe("decodeJwtPayload", () => {
 
   it("handles base64url payloads that need padding", () => {
     const c = decodeJwtPayload(fakeJwt({ a: "x".repeat(5) }));
-    expect(c).not.toBeNull();
+    // 값 자체를 확인한다 — not.toBeNull()만으로는 잘리거나 잘못 디코딩된
+    // 결과도 통과해버린다.
+    expect(c).toMatchObject({ a: "xxxxx" });
+  });
+
+  it("returns null for a bare JSON array payload", () => {
+    // 배열도 typeof는 "object"다 — Claims는 객체 계약이므로 배열은 거부한다.
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const arrayJwt = `${b64({ alg: "RS256" })}.${b64([1, 2, 3])}.sig`;
+    expect(decodeJwtPayload(arrayJwt)).toBeNull();
   });
 });
 
