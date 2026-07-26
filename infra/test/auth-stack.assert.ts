@@ -68,6 +68,22 @@ t.hasResourceProperties('AWS::Cognito::UserPoolDomain', {
 t.hasResourceProperties('AWS::Cognito::ManagedLoginBranding', {
   UseCognitoProvidedValues: true,
 });
+// ClientId는 CDK 타입에서 옵셔널이지만 Cognito API에는 필수다 — 브랜딩 스타일은
+// 앱 클라이언트 단위로 연결된다. 빠뜨리면 합성/유닛 테스트는 통과하고 실배포가
+// "Value null at 'clientId' failed to satisfy constraint"로 죽는다(실측:
+// PathfinderAuthStack ROLLBACK). 실제 클라이언트를 가리키는지까지 확인한다.
+const brandings = t.findResources('AWS::Cognito::ManagedLoginBranding');
+const brandingProps = Object.values(brandings)[0].Properties;
+assert.ok(
+  brandingProps.ClientId !== undefined,
+  'ManagedLoginBranding.ClientId must be set — Cognito rejects null even though CDK types it optional',
+);
+const clientLogicalIds = Object.keys(t.findResources('AWS::Cognito::UserPoolClient'));
+assert.deepStrictEqual(
+  brandingProps.ClientId,
+  { Ref: clientLogicalIds[0] },
+  'ManagedLoginBranding.ClientId must reference the web app client',
+);
 
 // --- 앱 클라이언트: authorization code grant만, 시크릿 있음. ---
 t.hasResourceProperties('AWS::Cognito::UserPoolClient', {

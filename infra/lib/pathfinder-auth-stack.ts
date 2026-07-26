@@ -83,14 +83,6 @@ export class PathfinderAuthStack extends cdk.Stack {
     });
     this.hostedUiDomain = `${domainPrefix}.auth.${region}.amazoncognito.com`;
 
-    // v2는 브랜딩 스타일 레코드가 있어야 정상 렌더된다(콘솔이 자동으로 하는 일).
-    // 없으면 로그인 페이지가 깨진 채로 뜬다.
-    const branding = new cognito.CfnManagedLoginBranding(this, 'Branding', {
-      userPoolId: this.userPool.userPoolId,
-      useCognitoProvidedValues: true,
-    });
-    branding.node.addDependency(domain);
-
     // --- 앱 클라이언트 ---
     // confidential(시크릿 있음): 코드 교환이 서버사이드(Next route handler)라
     // 시크릿을 안전히 보관할 수 있고, 두면 client_id만 훔친 코드 가로채기가 막힌다.
@@ -114,6 +106,22 @@ export class PathfinderAuthStack extends cdk.Stack {
       preventUserExistenceErrors: true,
       enableTokenRevocation: true,
     });
+
+    // v2는 브랜딩 스타일 레코드가 있어야 정상 렌더된다(콘솔이 자동으로 하는 일).
+    // 없으면 로그인 페이지가 깨진 채로 뜬다.
+    //
+    // clientId는 CDK 타입에서 옵셔널이지만 Cognito API에는 필수다 — 브랜딩
+    // 스타일은 user pool이 아니라 앱 클라이언트 단위로 연결된다. 넘기지 않으면
+    // 합성과 유닛 테스트는 통과하고 실배포가 "Value null at 'clientId' failed to
+    // satisfy constraint"로 죽는다(실측: PathfinderAuthStack ROLLBACK).
+    // 그래서 이 블록은 반드시 클라이언트 생성 뒤에 온다.
+    const branding = new cognito.CfnManagedLoginBranding(this, 'Branding', {
+      userPoolId: this.userPool.userPoolId,
+      clientId: this.userPoolClient.userPoolClientId,
+      useCognitoProvidedValues: true,
+    });
+    // 도메인이 먼저 있어야 브랜딩을 붙일 대상(managed login)이 존재한다.
+    branding.node.addDependency(domain);
 
     // --- 시드 계정: cdk deploy 한 번으로 로그인 가능해야 한다 ---
     seedUser(this, 'SeedAdmin', {
