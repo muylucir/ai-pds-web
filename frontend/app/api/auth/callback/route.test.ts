@@ -84,6 +84,21 @@ describe("GET /api/auth/callback", () => {
     expect(f).not.toHaveBeenCalled();
   });
 
+  it("clears the round-trip cookies even on a state mismatch", async () => {
+    // 실패 경로에서도 pf_pkce/pf_state/pf_next를 지운다 — 성공 경로에서만
+    // 지우면 실패한 시도의 PKCE 자재가 다음 로그인까지 브라우저에 남는다.
+    mockTokenEndpoint();
+    const { GET } = await import("./route");
+    const res = await GET(request(
+      "https://app.example.com/api/auth/callback?code=c1&state=attacker",
+      { pf_pkce: "v", pf_state: "ours", pf_next: "/somewhere" },
+    ) as never);
+    const joined = res.headers.getSetCookie().join("\n");
+    expect(joined).toMatch(/pf_pkce=;|pf_pkce=""/);
+    expect(joined).toMatch(/pf_state=;|pf_state=""/);
+    expect(joined).toMatch(/pf_next=;|pf_next=""/);
+  });
+
   it("rejects a missing verifier cookie", async () => {
     const f = mockTokenEndpoint();
     const { GET } = await import("./route");

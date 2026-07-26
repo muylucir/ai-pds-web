@@ -4,6 +4,7 @@
 // 도달하지 않는다 — httpOnly 쿠키에만 담긴다.
 import { NextRequest, NextResponse } from "next/server";
 import { cognitoEnv } from "@/lib/auth/cognitoUrls";
+import { safeNext } from "@/lib/auth/safeNext";
 import { exchangeCode } from "@/lib/auth/tokenExchange";
 import {
   ACCESS_COOKIE, ID_COOKIE, NEXT_COOKIE, REFRESH_COOKIE, STATE_COOKIE,
@@ -18,15 +19,18 @@ const REFRESH_MAX_AGE = 30 * 24 * 60 * 60; // 풀 클라이언트의 refresh 유
 // NextResponse.redirect는 절대 URL만 받는다(상대 경로는 "URL is malformed"로
 // 던진다 — 확인됨). req.url을 기준으로 조립하면 프록시 뒤에서도 현재 호스트를
 // 그대로 쓴다.
+//
+// 실패 경로도 왕복용 쿠키(pf_pkce/pf_state/pf_next)를 지운다 — 성공 경로에서만
+// 지우면 실패한 시도의 PKCE 자재가 브라우저에 남아 다음 로그인이 덮어쓸 때까지
+// 방치된다.
 function toLogin(req: NextRequest, reason: string): NextResponse {
   const url = new URL("/login", req.url);
   url.searchParams.set("error", reason);
-  return NextResponse.redirect(url, 302);
-}
-
-function safeNext(raw: string | undefined): string {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
-  return raw;
+  const res = NextResponse.redirect(url, 302);
+  for (const name of [VERIFIER_COOKIE, STATE_COOKIE, NEXT_COOKIE]) {
+    res.cookies.set(name, "", clearedCookieOptions());
+  }
+  return res;
 }
 
 export async function GET(request: NextRequest) {
@@ -53,13 +57,17 @@ export async function GET(request: NextRequest) {
   let tokens;
   try {
     tokens = await exchangeCode(cognitoEnv(), code, verifier);
-  } catch {
-    // 사유는 서버 로그에만 — 사용자에게는 일반화된 오류를 보여준다.
-    console.error("authorization code exchange failed");
+  } catch (err) {
+    // 상세 사유는 서버 로그에만 — 사용자에게는 일반화된 오류를 보여준다.
+    // TokenExchangeError의 message는 세 가지 실패 형태(HTTP 오류·비JSON
+    // 응답·토큰 누락) 중 어떤 것이었는지 담고 있으므로, 이걸 버리면 디버깅에
+    // 아무 정보도 남지 않는다.
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`authorization code exchange failed: ${reason}`);
     return toLogin(req, "exchange_failed");
   }
 
-  const next = safeNext(req.cookies.get(NEXT_COOKIE)?.value);
+  const next = safeNext(req.cookies.get(NEXT_COOKIE)?.value, req.url);
   const res = NextResponse.redirect(new URL(next, req.url), 302);
 
   // access/id는 토큰 자체의 수명(expires_in), refresh는 30일.

@@ -6,18 +6,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeUrl, cognitoEnv } from "@/lib/auth/cognitoUrls";
 import { challengeFor, randomUrlSafe } from "@/lib/auth/pkce";
+import { safeNext } from "@/lib/auth/safeNext";
 import {
   NEXT_COOKIE, STATE_COOKIE, VERIFIER_COOKIE, transientCookieOptions,
 } from "@/lib/auth/cookies";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-// 로그인 후 돌아갈 경로. 우리 사이트 내부만 허용한다(open redirect 방어).
-function safeNext(raw: string | null): string {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
-  return raw;
-}
 
 export async function GET(req: NextRequest) {
   const env = cognitoEnv();
@@ -31,7 +26,8 @@ export async function GET(req: NextRequest) {
     authorizeUrl(env, await challengeFor(verifier), state));
   res.cookies.set(VERIFIER_COOKIE, verifier, transientCookieOptions());
   res.cookies.set(STATE_COOKIE, state, transientCookieOptions());
-  res.cookies.set(NEXT_COOKIE, safeNext(req.nextUrl.searchParams.get("next")),
+  res.cookies.set(NEXT_COOKIE,
+                  safeNext(req.nextUrl.searchParams.get("next"), req.url),
                   transientCookieOptions());
   return res;
 }
