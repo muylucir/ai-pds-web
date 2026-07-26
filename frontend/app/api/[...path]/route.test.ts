@@ -108,6 +108,7 @@ describe("GET/POST/DELETE /api/[...path]", () => {
     const req = new NextRequest("https://app.example.com/api/projects", { method: "GET" });
     const res = await GET(req, ctx(["projects"]));
 
+    expect(vi.mocked(refreshTokens)).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const retryHeaders = sentHeaders(fetchMock.mock.calls[1]);
     expect(retryHeaders.get("authorization")).toBe("Bearer new-access");
@@ -141,6 +142,11 @@ describe("GET/POST/DELETE /api/[...path]", () => {
     const res = await GET(req, ctx(["projects"]));
 
     expect(res.status).toBe(401);
+    // 리프레시를 "시도했다가 실패"와 "시도조차 안 했다"는 결과만 보면 구분이
+    // 안 된다 — 둘 다 fetch 1회, 401, Set-Cookie 없음으로 보인다. 실제로
+    // refreshTokens가 불렸는지를 직접 확인해야 "재시도 자체가 조용히
+    // 꺼졌다"는 회귀를 잡을 수 있다.
+    expect(vi.mocked(refreshTokens)).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1); // refresh itself failed — no retry fetch
     expect(res.headers.getSetCookie()).toHaveLength(0);
     errSpy.mockRestore();
