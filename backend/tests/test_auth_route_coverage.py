@@ -59,6 +59,13 @@ def _has_auth_dependency(route: Any) -> bool:
                for d in route.dependant.dependencies)
 
 
+def _has_admin_dependency(route: Any) -> bool:
+    """이 라우트의 의존성 트리에 require_admin이 있는가."""
+    from pathfinder.auth.deps import require_admin
+    return any(getattr(d, "call", None) is require_admin
+               for d in route.dependant.dependencies)
+
+
 def test_every_route_is_either_authenticated_or_explicitly_public():
     unprotected = [r.path for r in _app_routes()
                    if not _has_auth_dependency(r) and r.path not in PUBLIC_PATHS]
@@ -108,3 +115,16 @@ def test_route_enumeration_has_not_silently_collapsed():
         "라우터를 조용히 못 보게 된 것일 수 있다 — 그러면 나머지 커버리지 "
         "테스트들이 보이지 않는 라우트에 대해 공허하게(vacuously) 통과한다. "
         "_app_routes()의 순회 로직을 먼저 확인할 것.")
+
+
+def test_admin_routes_require_admin_not_just_user():
+    # /admin/* 은 인증(require_user)만으로는 부족하다 — pm도 인증된 사용자이므로
+    # require_user만 붙으면 pm이 사용자 관리 API에 도달한다. require_admin이
+    # 실제로 걸려 있는지를 확인해 이 라우터가 require_admin 대신 require_user로
+    # 잘못 등록되는 회귀를 잡는다.
+    admin_routes = [r for r in _app_routes() if r.path.startswith("/admin")]
+    assert admin_routes, "admin_users 라우터가 보이지 않는다"
+    not_admin = [r.path for r in admin_routes if not _has_admin_dependency(r)]
+    assert not_admin == [], (
+        f"이 /admin 라우트들에 require_admin이 없다(require_user만으로는 pm도 "
+        f"통과한다): {not_admin}")

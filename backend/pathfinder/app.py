@@ -99,6 +99,22 @@ def jwks_cache():
     return _jwks_singleton
 
 
+def cognito_admin():
+    """CognitoAdmin 팩토리 (monkeypatchable in tests).
+
+    싱글턴으로 두지 않는 이유: boto3 클라이언트는 스레드 세이프하지만, 테스트가
+    요청마다 가짜로 갈아끼울 수 있어야 하고 생성 비용은 무시할 만하다.
+    """
+    from pathfinder.auth.cognito import CognitoAdmin
+    cfg = cognito_config()
+    if cfg is None:
+        raise RuntimeError(
+            "user management requires PATHFINDER_COGNITO_USER_POOL_ID / "
+            "PATHFINDER_COGNITO_CLIENT_ID")
+    client = boto3.client("cognito-idp", region_name=cfg["region"])
+    return CognitoAdmin(client, cfg["user_pool_id"])
+
+
 def durable_projects_enabled() -> bool:
     """버킷 미설정(로컬/테스트)이면 목록 영속화 전체를 생략한다."""
     return bool(os.environ.get("PATHFINDER_S3_BUCKET"))
@@ -313,6 +329,9 @@ app.include_router(prototypes.router, dependencies=_AUTH)
 
 from pathfinder.routes import surveys  # noqa: E402
 app.include_router(surveys.router, dependencies=_AUTH)
+
+from pathfinder.routes import admin_users  # noqa: E402
+app.include_router(admin_users.router, dependencies=_AUTH)
 
 # ---- 공개(무인증) 라우터 — 정확히 둘 (라우터 2개, 경로는 3개 — 아래 참고) ----
 #
