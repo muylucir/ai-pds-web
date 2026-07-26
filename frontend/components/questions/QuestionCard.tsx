@@ -25,10 +25,28 @@ export function QuestionCard({
   const name = `q${question.number}`;
   const multi = question.multi_select === true;
 
+  // Defence in depth: at most ONE Other option, the last one. The backend
+  // normalizes this at the ask_questions boundary, but this component also
+  // renders interrupts restored from earlier sessions (GET /pending after a
+  // refresh), which predate that normalization. Two is_other options share
+  // this card's single `otherActive` state, so both render as "Other — 직접
+  // 입력" (the real option's text vanishing) and selecting one silently
+  // overwrites the other (ui-bug: question.png). Demote all but the last and
+  // give the demoted ones a usable label.
+  const options = (() => {
+    const lastOther = question.options.map((o) => o.is_other).lastIndexOf(true);
+    if (lastOther === -1) return question.options;
+    return question.options.map((o, i) =>
+      o.is_other && i !== lastOther
+        ? { ...o, is_other: false, text: o.text.trim() || `보기 ${o.letter}` }
+        : o,
+    );
+  })();
+
   // Value contract stays a plain string (QuestionForm's answers dict/submit
   // path is unchanged): a single letter or (multi) comma-joined letters like
   // "A,C" for option picks, or raw free text for the Other option.
-  const nonOtherLetters = question.options.filter((o) => !o.is_other).map((o) => o.letter);
+  const nonOtherLetters = options.filter((o) => !o.is_other).map((o) => o.letter);
   const isLetterList = (v: string) => v !== "" && v.split(",").filter(Boolean).every((t) => nonOtherLetters.includes(t));
 
   // single-select에서 "B: 부연" 형태를 분해 (multi에는 부연 없음 — 스펙의
@@ -93,7 +111,7 @@ export function QuestionCard({
         </div>
       </div>
       <div className="p-6 space-y-3">
-        {question.options.map((opt) => {
+        {options.map((opt) => {
           if (opt.is_other) {
             // 중요: textarea를 라디오/체크박스의 <label> 안에 중첩하지 않는다.
             // 중첩하면 Other 영역 클릭 시 포커스가 textarea가 아니라 sr-only

@@ -271,3 +271,31 @@ describe("QuestionCard — 보기 부연 설명 (letter + note)", () => {
     expect(checkboxes.filter((c) => c.value === "B").every((c) => !c.checked)).toBe(true);
   });
 });
+
+describe("중복 Other 방어 (regression)", () => {
+  // 백엔드가 ask_questions 경계에서 정규화하지만, 이 컴포넌트는 그 이전
+  // 세션에 저장된 interrupt를 새로고침으로 복원할 때도 쓰인다. is_other가 둘
+  // 이상이면 두 라디오가 같은 otherActive 상태를 공유해 선택이 서로를 덮어쓰고,
+  // 실질 보기의 텍스트가 "Other — 직접 입력"으로 덮여 사라진다(question.png).
+  const dupOther = {
+    number: 1, category: null, text: "다음 단계로 무엇을 할까요?", answer: null,
+    multi_select: false,
+    options: [
+      { letter: "B", text: "이 사양서 그대로 핸드오프", is_other: true, recommended: false },
+      { letter: "X", text: "Other — 직접 입력", is_other: true, recommended: false },
+    ],
+  };
+
+  it("renders only one Other input and keeps the real option's text", () => {
+    render(<QuestionCard question={dupOther} value="" onChange={vi.fn()} />);
+    expect(screen.getAllByText(/Other — 직접 입력/)).toHaveLength(1);
+    expect(screen.getByText("이 사양서 그대로 핸드오프")).toBeInTheDocument();
+  });
+
+  it("lets the demoted option be selected as a normal choice", () => {
+    const onChange = vi.fn();
+    render(<QuestionCard question={dupOther} value="" onChange={onChange} />);
+    fireEvent.click(screen.getByText("이 사양서 그대로 핸드오프"));
+    expect(onChange).toHaveBeenCalledWith("B");
+  });
+});

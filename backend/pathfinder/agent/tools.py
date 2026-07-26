@@ -8,6 +8,7 @@ from typing import Any, Callable
 from strands import tool
 from pathfinder.models import AgentEvent
 from pathfinder.agent.state_sync import upsert_stage
+from pathfinder.agent.questions_payload import normalize_questions_payload
 
 _log = logging.getLogger("pathfinder.agent")
 
@@ -17,6 +18,11 @@ QUESTIONS_SCHEMA_HINT = (
     '"questions": [{"number": int, "category": str|null, "text": str, "answer": null, '
     '"multi_select": bool, "options": [{"letter": "A".."F"|"X", "text": str, '
     '"is_other": bool, "recommended": bool}]}]}. '
+    "options 규칙(반드시 지킬 것): 실질 보기는 A부터 순서대로 letter를 매기고 "
+    "is_other=false로 둔다. 자유 입력 보기는 **정확히 하나**, 목록 맨 끝에 "
+    'letter="X" + is_other=true로 둔다. 실질 보기에 is_other=true를 주면 그 보기의 '
+    "텍스트가 화면에서 사라지므로 절대 금지한다. 한글은 이스케이프하지 말고 "
+    "그대로 넣는다. questions_file은 JSON 문자열이 아니라 객체로 넘긴다. "
     "multi_select 규칙: 여러 개를 골라도 자연스러운 질문(대상 고객군, 페인포인트 유형 등)은 "
     "true, 배타적 선택(Path/모드 선택 등)은 false(기본). "
     "multi_select 질문의 답변은 'A,C'처럼 콤마로 조인되어 돌아온다. "
@@ -45,15 +51,27 @@ def build_tools(workspace: str, rules_dir: str,
     file_append는 항상 workspace만 대상으로 한다(룰은 데이터, 산출물 아님 — 쓰기 금지)."""
 
     @tool(context=True)
-    def ask_questions(questions_file: dict, tool_context: Any) -> str:
+    def ask_questions(questions_file: Any, tool_context: Any) -> str:
         """사용자에게 객관식 질문 세트를 제시하고 답변을 기다린다. 질문은
         반드시 이 도구로만 전달한다(파일로만 남기지 말 것).
 
         Args:
             questions_file: 질문 파일 페이로드(dict) — name/preamble/questions.
         """
+        # 모델 페이로드를 UI 계약으로 정규화한다. 프롬프트 규약만으로는 못 막는
+        # 위반이 실재했다(is_other 중복 → "Other — 직접 입력" 두 개가 렌더되고
+        # 같은 상태를 공유해 선택이 깨짐). 고칠 수 있는 건 조용히 교정하고,
+        # 질문이 성립하지 않으면 이유를 문자열로 돌려준다 — 예외를 그대로
+        # 올리면 턴 전체가 죽어 사용자에게 빈 말풍선만 남는다.
+        try:
+            payload = normalize_questions_payload(questions_file)
+        except ValueError as e:
+            _log.warning("ask_questions payload rejected: %s", e)
+            return (f"질문 폼을 만들 수 없다: {e}\n"
+                    f"{QUESTIONS_SCHEMA_HINT}\n"
+                    "위 형식에 맞춰 ask_questions를 다시 호출해라.")
         answers = tool_context.interrupt(
-            "ask_questions", reason={"questions_payload": questions_file})
+            "ask_questions", reason={"questions_payload": payload})
         return f"사용자 답변: {json.dumps(answers, ensure_ascii=False)}"
 
     @tool
