@@ -276,12 +276,43 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Pathfinder", lifespan=_lifespan)
+def _docs_openapi_url() -> str | None:
+    """스키마/문서 UI(/openapi.json, /docs, /redoc)의 활성화 여부.
+
+    이 라우트들은 FastAPI가 자체 등록한다 — app.include_router(...,
+    dependencies=_AUTH)를 거치지 않으므로 아래 인증 배선과 무관하게 익명
+    200을 반환한다. 인증이 설정된 배포에서는 그게 이 앱의 전체 라우트
+    표·파라미터·스키마를 익명 방문자에게 넘기는 것과 같으므로 끈다
+    (openapi_url=None이면 /docs·/redoc도 함께 꺼진다 — 둘 다 openapi_url을
+    전제로 등록되기 때문). 로컬 개발(인증 미설정)에서는 유용하니 켜 둔다.
+
+    별도 함수로 뽑은 이유: FastAPI(...)의 openapi_url 인자는 임포트 시점에
+    딱 한 번 평가되므로, 이 로직 자체를 테스트에서 monkeypatch(cognito_config)
+    만으로 검증하려면 app 생성과 분리된 순수 함수여야 한다 — module 전체를
+    importlib.reload()하면 registry 등 다른 모듈 전역 싱글턴이 새로 만들어져
+    이미 그 객체를 참조 중인 다른 테스트 파일들이 깨진다(실측: 대량 KeyError).
+    """
+    return None if cognito_config() else "/openapi.json"
+
+
+# cognito_config()는 매 요청 호출과 같은 순수 env 읽기이므로 임포트 시점
+# 호출도 안전하다(반쯤 설정된 상태면 여기서 바로 RuntimeError로 죄는 게
+# 오히려 첫 요청까지 기다리는 것보다 낫다).
+app = FastAPI(title="Pathfinder", lifespan=_lifespan,
+             openapi_url=_docs_openapi_url())
 
 # CORS: the frontend (:3000 in dev, Playwright e2e) calls this API (:8000)
 # from a real browser and needs the preflight/simple-request headers.
-# allow_credentials is intentionally NOT enabled -- no cookies are used, the
-# auth token goes in a header, so we don't need the credentialed-CORS dance.
+# allow_credentials=True: frontend/lib/auth.ts's CREDENTIALS constant sends
+# `credentials: "include"` on every client call (the same-origin /api proxy
+# needs the browser to send its httpOnly session cookie so it can translate
+# that into Authorization: Bearer -- see app/api/[...path]/route.ts). Without
+# this the browser silently drops every cross-origin response in the
+# README's documented default setup (:3000 -> :8000). This is safe only
+# because allow_origins below is an explicit allowlist, never "*" --
+# Starlette's CORSMiddleware refuses to combine allow_credentials with a
+# wildcard origin's shortcut path anyway (it falls back to echoing the
+# specific Origin), but keep the allowlist explicit regardless.
 _cors_origins = [
     o.strip()
     for o in os.environ.get("PATHFINDER_CORS_ORIGINS", "http://localhost:3000").split(",")
@@ -292,7 +323,7 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
 )
 
 # ---- 라우터 등록 ----

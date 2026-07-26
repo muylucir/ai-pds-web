@@ -1,4 +1,4 @@
-// Same-origin API proxy to the backend (dev/demo).
+// Same-origin API proxy to the backend.
 //
 // The browser is remote (behind the frontend proxy) and cannot reach the
 // backend's localhost:8000 directly, so the client calls same-origin /api/*
@@ -12,8 +12,13 @@
 // headers reach the HTTP/2 downstream. The streamed body (Response(res.body))
 // preserves SSE chunk-by-chunk delivery.
 //
-// This is a dev/demo convenience; production should sit behind a real reverse
-// proxy (and carry auth) instead of routing API traffic through Next.
+// This is NOT a dev-only convenience — it IS the production auth path. This
+// is the one place that reads the httpOnly session cookie and translates it
+// into Authorization: Bearer before the request reaches the backend (see
+// withBearer() below); nginx routes /api/* here for exactly that reason
+// (infra/lib/user-data.ts). A FastAPI backend has zero /auth/* routes, so
+// nginx pointing /api/* straight at :8000 instead of here would make login
+// entirely non-functional.
 import { NextRequest } from "next/server";
 import { rewriteLocation } from "@/lib/api/rewriteLocation";
 import { cookies } from "next/headers";
@@ -139,6 +144,24 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   return proxy(req, path);
 }
 export async function PUT(req: NextRequest, ctx: Ctx) {
+  const { path } = await ctx.params;
+  return proxy(req, path);
+}
+// PATCH and OPTIONS: needed because Finding 1's routing fix means ALL /api/*
+// traffic now transits this route handler, including /api/proto/{pid}/{slug}
+// (backend/pathfinder/routes/proto_public.py's proxy_prototype), which
+// forwards arbitrary methods to a hosted prototype's own server. Before that
+// fix, nginx sent /api/ straight to FastAPI and these methods reached it
+// directly; without exporting them here, Next would itself answer with a
+// blanket 405/auto-generated 204 before the request ever reaches proxy() —
+// silently narrowing what a previewed prototype can do. (HEAD needs no
+// explicit export: Next auto-implements it by calling the GET handler above,
+// which already proxies correctly since it reads the real req.method.)
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const { path } = await ctx.params;
+  return proxy(req, path);
+}
+export async function OPTIONS(req: NextRequest, ctx: Ctx) {
   const { path } = await ctx.params;
   return proxy(req, path);
 }

@@ -28,6 +28,11 @@ export function renderUserData(opts: UserDataOptions): string {
   const SVC = 'pathfinder';
   return `#!/bin/bash
 set -euxo pipefail
+# 644(디폴트)면 pathfinder 서비스 유저(=bypassPermissions로 도는 프로토타입
+# 빌드 에이전트가 쓰는 그 계정)가 이 로그를 읽을 수 있다 — set +x로 감싼
+# 시크릿 대입도 못 미더워 파일 자체를 root 전용으로 잠근다.
+touch /var/log/pathfinder-bootstrap.log
+chmod 600 /var/log/pathfinder-bootstrap.log
 exec > >(tee -a /var/log/pathfinder-bootstrap.log) 2>&1
 
 # --- 패키지 (AL2023: awscli2는 기본 탑재). shadow-utils = useradd. ---
@@ -62,9 +67,15 @@ runuser -u ${SVC} -- ${APP}/backend/.venv/bin/pip install -e ${APP}/backend
 # CFN 템플릿에 평문으로 남기지 않기 위해 Cognito에서 직접 읽는다. Secrets Manager
 # 사본을 두지 않는 이유: 시크릿은 Cognito가 만들었으므로 사본을 만들려면 값을
 # CFN 경유로 옮겨야 하고, 그러면 템플릿에 남는다.
+# set +x로 감싸는 이유: -x(xtrace)는 명령과 그 결과인 대입문을 둘 다 그대로
+# /var/log/pathfinder-bootstrap.log(644)에 남긴다 — 그 로그는 프로토타입 빌드
+# 에이전트를 bypassPermissions로 돌리는 같은 서비스 유저가 읽을 수 있으므로,
+# 켜둔 채로는 시크릿이 모델이 생성한 코드에 노출된다.
+set +x
 COGNITO_SECRET=$(aws cognito-idp describe-user-pool-client \\
   --user-pool-id ${userPoolId} --client-id ${userPoolClientId} \\
   --query 'UserPoolClient.ClientSecret' --output text --region ${region})
+set -x
 
 # --- 프론트: 빌드 (same-origin /api) ---
 cd ${APP}/frontend
@@ -72,7 +83,11 @@ runuser -u ${SVC} -- env NEXT_PUBLIC_API_BASE_URL=/api HOME=${APP} npm ci
 runuser -u ${SVC} -- env NEXT_PUBLIC_API_BASE_URL=/api HOME=${APP} npm run build
 
 # --- 비밀 헤더 값 (부팅 시 조회, 하드코딩 안 함) ---
+# 위 COGNITO_SECRET과 같은 이유로 xtrace를 끈다 — 이 값도 부트스트랩 로그에
+# 그대로 남으면 같은 서비스 유저(=빌드 에이전트)가 읽을 수 있다.
+set +x
 SECRET=$(aws secretsmanager get-secret-value --secret-id ${secretArn} --query SecretString --output text --region ${region})
+set -x
 
 # --- nginx: 헤더 검증 + 라우팅 ---
 cat > /etc/nginx/conf.d/pathfinder.conf <<NGINX
@@ -84,20 +99,18 @@ server {
   # CloudFront가 붙인 비밀 헤더 불일치(직접 스캔·타인 배포)는 무조건 차단.
   if (\\$http_x_origin_verify != "\${SECRET}") { return 403; }
 
-  location /api/ {
-    proxy_pass http://127.0.0.1:8000/;
-    proxy_http_version 1.1;
-    proxy_set_header Host \\$host;
-    proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_buffering off;          # SSE 즉시 전달
-    proxy_read_timeout 3600s;
-  }
+  # /api/*도 여기로 온다 — Next의 app/api/[...path]/route.ts가 same-origin
+  # 프록시로서 서버사이드에서 FastAPI(:8000)로 넘긴다(쿠키를 Bearer로 번역하는
+  # 지점이기도 하다). FastAPI를 nginx가 직접 가리키면 그 번역이 일어나지
+  # 않아 로그인·모든 API 호출이 깨진다 — /api/ 전용 location을 두지 않는다.
   location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
     proxy_set_header Host \\$host;
+    proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
+    proxy_buffering off;          # SSE 즉시 전달 (browser -> nginx -> Next -> FastAPI)
+    proxy_read_timeout 3600s;
   }
 }
 NGINX

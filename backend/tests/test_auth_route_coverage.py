@@ -19,8 +19,10 @@ from __future__ import annotations
 from typing import Any
 
 import fastapi.routing as fastapi_routing
+from fastapi.testclient import TestClient
 from starlette.routing import Route
 
+import pathfinder.app as app_module
 from pathfinder.app import app
 
 # 무인증으로 열려 있어야 하는 경로 — 정확히 이 셋이다.
@@ -41,6 +43,14 @@ def _app_routes() -> list[Any]:
     include_router로 붙은 _IncludedRouter(이 앱의 라우트 전부). 후자는
     effective_candidates()로 펼쳐야 라우터 단위 dependencies가 반영된
     개별 라우트(.path, .dependant)를 얻는다.
+
+    이 함수가 빌트인 문서 라우트를 걸러내는 것은 더 이상 "어쩔 수 없이
+    빠진 구멍"이 아니라 기록된 결정이다: app.py는 cognito_config()가
+    설정되어 있으면 openapi_url=None으로 FastAPI를 만들어 이 라우트들을
+    아예 등록하지 않는다(그러면 이 필터는 공집합에 대해 no-op이 된다).
+    인증이 미설정인 로컬 개발에서는 여전히 라우트가 존재하고 의도적으로
+    무인증이다 — 그 결정 자체는 아래 test_docs_openapi_url_is_*와
+    test_docs_*_on_the_real_app_*이 검증한다.
     """
     builtin = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
     routes: list[Any] = []
@@ -128,3 +138,49 @@ def test_admin_routes_require_admin_not_just_user():
     assert not_admin == [], (
         f"이 /admin 라우트들에 require_admin이 없다(require_user만으로는 pm도 "
         f"통과한다): {not_admin}")
+
+
+def test_docs_openapi_url_is_none_when_auth_is_configured(monkeypatch):
+    # Finding 3: /openapi.json·/docs·/redoc은 FastAPI가 스스로 등록하므로
+    # include_router(..., dependencies=_AUTH)를 절대 거치지 않는다 — 인증이
+    # 켜진 배포에서 그대로 두면 계정 없는 방문자에게 전체 라우트 표·파라미터
+    # 스키마를 통째로 내주는 것과 같다. app.py는 이 결정을 app_module._docs_
+    # openapi_url()로 뽑아 뒀다 — pathfinder.app 전체를 importlib.reload()하면
+    # registry 등 다른 모듈 전역 싱글턴이 새로 생겨, 이미 그 객체를 참조해 둔
+    # 다른 테스트 파일들(test_routes_answers.py 등)이 KeyError로 깨진다
+    # (실측). 그래서 그 함수만 monkeypatch로 env를 갈아끼워 직접 검증한다.
+    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", "ap-northeast-2_TEST123")
+    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", "client-abc")
+    assert app_module._docs_openapi_url() is None
+
+
+def test_docs_openapi_url_is_set_when_auth_is_not_configured(monkeypatch):
+    # 반대 방향: 로컬 개발(인증 미설정)에서는 문서 UI가 여전히 켜져 있어야
+    # 한다 — 이건 사고가 아니라 기록된 선택이다(Finding 3 리뷰 참고).
+    monkeypatch.delenv("PATHFINDER_COGNITO_USER_POOL_ID", raising=False)
+    monkeypatch.delenv("PATHFINDER_COGNITO_CLIENT_ID", raising=False)
+    assert app_module._docs_openapi_url() == "/openapi.json"
+
+
+def test_docs_are_absent_on_the_real_app_when_openapi_url_is_none():
+    # Finding 3, end-to-end: build a FastAPI app the same way app.py does
+    # (openapi_url=None) and confirm the three doc routes actually 404 rather
+    # than just asserting the config value in isolation. A fresh app avoids
+    # touching pathfinder.app's module-level singletons (registry etc.) that
+    # other test files hold direct references to.
+    from fastapi import FastAPI
+    probe = FastAPI(title="probe", openapi_url=None)
+    client = TestClient(probe)
+    for path in ("/openapi.json", "/docs", "/redoc"):
+        assert client.get(path).status_code == 404, (
+            f"{path} must not answer anonymously when auth is configured")
+
+
+def test_docs_exist_on_the_real_app_when_openapi_url_is_set():
+    # Mirror of the above for the unauthenticated (local dev) case.
+    from fastapi import FastAPI
+    probe = FastAPI(title="probe", openapi_url="/openapi.json")
+    client = TestClient(probe)
+    for path in ("/openapi.json", "/docs", "/redoc"):
+        assert client.get(path).status_code == 200, (
+            f"{path} must stay available in local dev (auth not configured)")

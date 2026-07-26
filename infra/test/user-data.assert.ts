@@ -33,10 +33,61 @@ assert.match(s, /(?<!\\)\\\$proxy_add_x_forwarded_for\b/, 'nginx var \\$proxy_ad
 // 4c) 대조: 시크릿 변수는 백슬래시 없이 남아야 부팅 시 bash가 실제 값으로 치환한다.
 assert.ok(s.includes('"${SECRET}"'), 'secret var must be unescaped so bash expands it');
 assert.ok(!s.includes('\\${SECRET}'), 'secret var must NOT be backslash-escaped');
-// 5) nginx 라우팅
-assert.match(s, /proxy_pass http:\/\/127\.0\.0\.1:8000\//, 'api -> backend');
-assert.match(s, /proxy_pass http:\/\/127\.0\.0\.1:3000/, 'root -> frontend');
-assert.match(s, /proxy_buffering off/, 'SSE: buffering off');
+// 4d) 로그 파일 권한: pathfinder 서비스 유저(=bypassPermissions로 도는
+//     프로토타입 빌드 에이전트가 쓰는 그 계정)가 부트스트랩 로그를 읽으면 안
+//     된다 — 644(기본값)면 읽힌다.
+assert.match(s, /chmod 600 \/var\/log\/pathfinder-bootstrap\.log/, 'bootstrap log must be root-only (600), not world/group-readable');
+// 4e) xtrace(-x)는 두 시크릿 조회(Cognito client secret, X-Origin-Verify
+//     header secret) 둘 다에서 꺼져 있어야 한다 — 켜져 있으면 명령과 그
+//     결과 대입이 로그(사양상 pathfinder 유저가 읽는 그 로그)에 그대로
+//     남는다. "set +x ... COGNITO_SECRET=... set -x"처럼 대입이 그 사이에
+//     있는지 직접 확인한다(단순히 어딘가에 set +x가 있다는 것만으로는
+//     부족하다 — 순서가 어긋나면 트레이스가 여전히 켜진 채로 대입이 실행된다).
+for (const [name, pattern] of [
+  ['COGNITO_SECRET', /COGNITO_SECRET=\$\(aws cognito-idp describe-user-pool-client/],
+  ['SECRET (X-Origin-Verify)', /\nSECRET=\$\(aws secretsmanager get-secret-value/],
+] as const) {
+  const m = pattern.exec(s);
+  assert.ok(m, `${name} assignment must exist`);
+  const before = s.slice(0, m.index);
+  const lastSetPlusX = before.lastIndexOf('set +x');
+  const lastSetMinusX = before.lastIndexOf('set -x');
+  assert.ok(lastSetPlusX !== -1 && lastSetPlusX > lastSetMinusX,
+    `${name} assignment must be preceded by 'set +x' (with no intervening 'set -x') so xtrace never echoes it into the bootstrap log`);
+  const after = s.slice(m.index);
+  assert.match(after, /^\s*(?:.*\n){0,4}set -x/, `${name} assignment must be followed by 'set -x' to re-enable tracing afterward`);
+}
+// 5) nginx 라우팅 — /api/*는 FastAPI가 아니라 Next로 간다. Next의
+//    app/api/[...path]/route.ts가 same-origin 프록시로서 쿠키를 Bearer로
+//    번역해 서버사이드에서 FastAPI로 넘긴다; nginx가 /api/를 FastAPI로 직접
+//    보내면 그 번역이 일어나지 않아 로그인/모든 API 호출이 깨진다(Bearer 없이
+//    도달 -> 401, /api/auth/* 자체는 FastAPI에 없으므로 404).
+assert.ok(!/proxy_pass http:\/\/127\.0\.0\.1:8000/.test(s),
+  'FastAPI must not be reachable directly through nginx — every request goes through Next first');
+{
+  const nginxStart = s.indexOf('cat > /etc/nginx/conf.d/pathfinder.conf');
+  const nginxEnd = s.indexOf('\nNGINX\n', nginxStart); // closing heredoc marker, not the opening "<<NGINX"
+  const nginxBlock = s.slice(nginxStart, nginxEnd);
+  // 정확히 하나의 location — /api/ 전용 location이 없다(있으면 FastAPI로 새는
+  // 경로가 부활한다는 뜻).
+  assert.strictEqual((nginxBlock.match(/location /g) ?? []).length, 1,
+    'nginx must have exactly ONE location block — no separate /api/ block routing to FastAPI');
+  assert.match(nginxBlock, /location \/ \{/, 'the single location must be the catch-all "/"');
+  assert.match(nginxBlock, /proxy_pass http:\/\/127\.0\.0\.1:3000/, '/ -> frontend (which itself proxies /api to FastAPI)');
+  // SSE 스트리밍 지시자는 이제 유일한 location에 있어야 한다 — browser ->
+  // nginx -> Next -> FastAPI 경로 전체가 이 location을 지나간다.
+  assert.match(nginxBlock, /proxy_buffering off/, 'SSE: buffering off must be present on the location that now carries /api traffic');
+  assert.match(nginxBlock, /proxy_read_timeout 3600s/, 'SSE: long read timeout must be present on that same location');
+  // 이 설계가 요구하는 방향으로 이 이음매를 못박는다: /api/auth/*(로그인·콜백·
+  // /auth/me — 백엔드에는 이 라우트가 전혀 없다)는 반드시 프론트(Next)가
+  // 받아야 한다. location이 하나뿐이고 그게 "/"이자 :3000으로 가므로, 이는
+  // "/api/auth/도 그 하나의 location에 매칭된다"는 것을 직접 확인하는 것과
+  // 같다 — nginx가 최長 접두어 매칭이므로 별도의 /api/ 블록이 없는 한 항상 참이다.
+  const singleLocationCoversApiAuth = nginxBlock.includes('location / {')
+    && !/location \/api\/? \{/.test(nginxBlock);
+  assert.ok(singleLocationCoversApiAuth,
+    '/api/auth/ specifically must be served by the frontend (:3000) — no /api/ location may exist to intercept it before it reaches Next');
+}
 // 6) 프론트 빌드 env (same-origin API)
 assert.match(s, /NEXT_PUBLIC_API_BASE_URL=\/api/, 'front build uses /api');
 // 7) 백엔드 env
