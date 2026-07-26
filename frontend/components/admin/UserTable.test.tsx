@@ -88,6 +88,37 @@ describe("UserTable", () => {
     expect(await screen.findByText("New!23456789abc")).toBeInTheDocument();
   });
 
+  it("removes the reset password from the document once the panel is closed", async () => {
+    server.use(http.post(
+      `${API_BASE_URL}/admin/users/pm@pathfinder.local/reset-password`, () =>
+        HttpResponse.json({ username: "pm@pathfinder.local",
+                            temp_password: "New!23456789abc" })));
+    render(<UserTable users={USERS} currentEmail="admin@pathfinder.local"
+                      onChanged={() => {}} />);
+    await userEvent.click(
+      within(row("pm@pathfinder.local")).getByRole("button", { name: /비밀번호 재설정/ }));
+    expect(await screen.findByText("New!23456789abc")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /확인/ }));
+    expect(screen.queryByText("New!23456789abc")).not.toBeInTheDocument();
+  });
+
+  it("reloads the table after a reset, without dropping the revealed password", async () => {
+    // 재설정은 서버 쪽 상태(FORCE_CHANGE_PASSWORD)를 바꾼다 — 목록을 갱신하지
+    // 않으면 상태 컬럼이 거짓말을 하게 된다. 단, 갱신이 비밀번호 패널을 먼저
+    // 걷어가면 안 된다 — 관리자가 읽기 전에 사라지면 유일한 열람 기회를 잃는다.
+    const onChanged = vi.fn();
+    server.use(http.post(
+      `${API_BASE_URL}/admin/users/pm@pathfinder.local/reset-password`, () =>
+        HttpResponse.json({ username: "pm@pathfinder.local",
+                            temp_password: "New!23456789abc" })));
+    render(<UserTable users={USERS} currentEmail="admin@pathfinder.local"
+                      onChanged={onChanged} />);
+    await userEvent.click(
+      within(row("pm@pathfinder.local")).getByRole("button", { name: /비밀번호 재설정/ }));
+    expect(await screen.findByText("New!23456789abc")).toBeInTheDocument();
+    expect(onChanged).toHaveBeenCalled();
+  });
+
   it("disables an enabled user", async () => {
     const onChanged = vi.fn();
     server.use(http.post(

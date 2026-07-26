@@ -48,7 +48,11 @@ export function UserTable({
     setError(null);
     try {
       const { temp_password } = await resetPassword(user.username);
+      // 비밀번호를 먼저 화면에 올린 뒤 목록을 갱신한다 — 순서를 바꾸면 재로딩이
+      // 이 패널을 관리자가 읽기 전에 걷어갈 위험이 있다. 서버는 이미
+      // FORCE_CHANGE_PASSWORD로 전환했으므로 상태 컬럼도 갱신해야 한다.
       setRevealed({ email: user.email, password: temp_password });
+      onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "재설정에 실패했습니다.");
     } finally {
