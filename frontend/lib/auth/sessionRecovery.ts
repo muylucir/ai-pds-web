@@ -15,6 +15,10 @@ function defaultNavigate(url: string): void {
   window.location.assign(url);
 }
 
+// 동시성 노트: 여러 SSE 훅이 같은 순간에 끊기면 각자 이 함수를 독립적으로
+// 호출해 각자 navigate를 부를 수 있다 — 인플라이트 가드를 두지 않는다.
+// window.location.assign(같은 URL)로 수렴하는 한 무해하다: history.pushState처럼
+// 쌓이는 게 아니라 같은 목적지로의 페이지 이동이 중복될 뿐이다.
 export async function redirectIfSessionExpired(
   navigate: (url: string) => void = defaultNavigate,
   currentPath?: string,

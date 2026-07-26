@@ -1,9 +1,17 @@
 // frontend/lib/useTurnStream.test.tsx
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useTurnStream, type AiItem } from "./useTurnStream";
 import { normalTurn, errorTurn, questionsTurn, documentTurn } from "@/test/fixtures/agentEventStreams";
+import * as sessionRecovery from "@/lib/auth/sessionRecovery";
 import type { AgentEvent } from "@/lib/api/types";
+
+// onError의 세션 확인 호출을 검증하기 위한 모킹 — 실제 fetch/navigate 부작용은
+// sessionRecovery.test.ts가 별도로 검증하므로, 여기서는 훅이 그 함수를 올바른
+// 인자로 "불렀는가"만 확인한다.
+vi.mock("@/lib/auth/sessionRecovery", () => ({
+  redirectIfSessionExpired: vi.fn(),
+}));
 
 // Minimal fake EventSource (mirrors lib/api/sse.test.ts): records URL, lets the
 // test push frames / trigger a transport error.
@@ -30,6 +38,7 @@ class FakeEventSource {
 
 beforeEach(() => {
   (globalThis as any).EventSource = FakeEventSource;
+  vi.clearAllMocks();
 });
 afterEach(() => {
   delete (globalThis as any).EventSource;
@@ -84,6 +93,19 @@ describe("useTurnStream", () => {
     act(() => FakeEventSource.last!.fail());
     expect(ai(result.current.items)[0].error).toMatch(/연결/);
     expect(result.current.streaming).toBe(false);
+  });
+
+  // onError의 유일한 실제 배선 지점 — 이 콜이 지워지거나 인자가 바뀌면 사용자는
+  // 만료된 세션에서도 로그인으로 보내지지 않는다. navigate는 undefined로 넘겨
+  // (기본 전체 페이지 이동을 쓰게) 두고, currentPath는 현재 pathname이어야 한다.
+  it("checks the session on a transport error (the sole wiring point for redirectIfSessionExpired)", () => {
+    const { result } = renderHook(() => useTurnStream("pilot1"));
+    act(() => result.current.send("go"));
+    act(() => FakeEventSource.last!.fail());
+    expect(sessionRecovery.redirectIfSessionExpired).toHaveBeenCalledWith(
+      undefined,
+      window.location.pathname,
+    );
   });
 
   it("closes the stream if the component unmounts mid-turn", () => {

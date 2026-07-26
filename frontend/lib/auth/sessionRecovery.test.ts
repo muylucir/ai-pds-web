@@ -62,6 +62,30 @@ describe("redirectIfSessionExpired", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  // 401 + 본문 파싱 성공이라도, authenticated가 정확히 false가 아니면
+  // 만료로 단정하지 않는다 — `=== false`를 `!== true`로 뒤집는 식의 미래
+  // 리팩터가 조용히 과잉 축출을 되살리지 못하게 이 경계를 직접 고정한다.
+  it("does not navigate on a 401 body with authenticated:true — status alone is not the verdict", async () => {
+    mockMe({ authenticated: true }, 401);
+    const navigate = vi.fn();
+    await expect(redirectIfSessionExpired(navigate)).resolves.toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate on a 401 body missing the authenticated key", async () => {
+    mockMe({}, 401);
+    const navigate = vi.fn();
+    await expect(redirectIfSessionExpired(navigate)).resolves.toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate on a 401 body with authenticated as a non-boolean string", async () => {
+    mockMe({ authenticated: "false" }, 401);
+    const navigate = vi.fn();
+    await expect(redirectIfSessionExpired(navigate)).resolves.toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("preserves the current path so login can return there", async () => {
     mockMe({ authenticated: false }, 401);
     const navigate = vi.fn();

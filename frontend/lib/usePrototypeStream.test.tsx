@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { usePrototypeStream } from "./usePrototypeStream";
 import * as prototypesApi from "@/lib/api/prototypes";
+import * as sessionRecovery from "@/lib/auth/sessionRecovery";
 import type { AgentEvent } from "@/lib/api/types";
 
 vi.mock("@/lib/api/prototypes", async (orig) => ({
@@ -10,6 +11,13 @@ vi.mock("@/lib/api/prototypes", async (orig) => ({
   streamPrototypeEvents: vi.fn(),
   submitPrototypeAnswers: vi.fn(),
   interruptSession: vi.fn(),
+}));
+
+// onError의 세션 확인 호출을 검증하기 위한 모킹 — 실제 fetch/navigate 부작용은
+// sessionRecovery.test.ts가 별도로 검증하므로, 여기서는 훅이 그 함수를 올바른
+// 인자로 "불렀는가"만 확인한다.
+vi.mock("@/lib/auth/sessionRecovery", () => ({
+  redirectIfSessionExpired: vi.fn(),
 }));
 
 const QUESTIONS_PAYLOAD = JSON.stringify({
@@ -190,5 +198,23 @@ describe("usePrototypeStream", () => {
     act(() => result.current.send("go"));
     expect(result.current.streaming).toBe(false);
     expect(result.current.pendingQuestions).toBeNull();
+  });
+
+  // onError의 유일한 실제 배선 지점 — 이 콜이 지워지거나 인자가 바뀌면 사용자는
+  // 만료된 세션에서도 로그인으로 보내지지 않는다. navigate는 undefined로 넘겨
+  // (기본 전체 페이지 이동을 쓰게) 두고, currentPath는 현재 pathname이어야 한다.
+  it("checks the session on a transport error (the sole wiring point for redirectIfSessionExpired)", () => {
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        handlers.onError();
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.send("go"));
+    expect(sessionRecovery.redirectIfSessionExpired).toHaveBeenCalledWith(
+      undefined,
+      window.location.pathname,
+    );
   });
 });
