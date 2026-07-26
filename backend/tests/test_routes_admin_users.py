@@ -45,8 +45,13 @@ class FakeCognito:
         return sum(1 for u in self.users.values() if u.role == "admin")
 
     def groups_of(self, username: str):
+        # 실제 CognitoAdmin.groups_of는 존재하지 않는 사용자에 대해
+        # UserNotFoundException을 낸다 — 여기서 []를 반환하는 관대한 흉내를
+        # 내면 가드가 404를 내야 할 경로가 조용히 통과(마스킹)될 수 있다.
         u = self.users.get(username)
-        return [u.role] if u and u.role else []
+        if u is None:
+            raise CognitoError("UserNotFoundException", f"{username} not found")
+        return [u.role] if u.role else []
 
     def create_user(self, email: str) -> str:
         self.calls.append(("create_user", email))
@@ -194,6 +199,16 @@ def test_reset_password_on_unknown_user_is_404(env, client):
     assert r.status_code == 404
 
 
+def test_reset_password_rejected_by_pool_policy_is_500_not_502(env, client):
+    # 우리가 서버에서 생성한 임시 비밀번호가 풀 정책을 만족시키지 못했다면
+    # 그건 Cognito가 아니라 우리 쪽 버그다 — 502(업스트림 장애)가 아니라
+    # 500이어야 한다.
+    env.fail_on["set_temp_password"] = CognitoError("InvalidPasswordException", "weak")
+    r = client.post(f"/admin/users/{PM_EMAIL}/reset-password")
+    assert r.status_code == 500
+    assert "InvalidPasswordException" not in r.text
+
+
 # ---- 역할 변경 ----
 
 def test_role_change_replaces_the_group(env, client):
@@ -210,12 +225,22 @@ def test_cannot_demote_yourself(env, client):
     assert "set_group" not in [c[0] for c in env.calls]
 
 
+def test_cannot_demote_yourself_by_a_case_variant_of_your_own_username(env, client):
+    # Cognito는 Username을 대소문자 구분 없이 해석한다(이 풀은 email이
+    # Username이다) — 대문자로 바꾼 변형도 같은 계정을 가리켜야 하고, 그
+    # 계정을 강등할 수 있어서는 안 된다.
+    r = client.put(f"/admin/users/{ADMIN_EMAIL.upper()}/role", json={"role": "pm"})
+    assert r.status_code == 400
+    assert "set_group" not in [c[0] for c in env.calls]
+
+
 def test_cannot_demote_the_last_admin(env, client):
     # 요청자가 아닌 다른 계정이지만 유일한 admin인 경우.
     env.users.pop(ADMIN_EMAIL)
     env.add("other-admin@x.io", role="admin")
     r = client.put("/admin/users/other-admin@x.io/role", json={"role": "pm"})
     assert r.status_code == 400
+    assert "set_group" not in [c[0] for c in env.calls]
 
 
 def test_can_demote_an_admin_when_another_admin_remains(env, client):
@@ -242,10 +267,17 @@ def test_cannot_disable_yourself(env, client):
     assert "set_enabled" not in [c[0] for c in env.calls]
 
 
+def test_cannot_disable_yourself_by_a_case_variant_of_your_own_username(env, client):
+    r = client.post(f"/admin/users/{ADMIN_EMAIL.upper()}/disable")
+    assert r.status_code == 400
+    assert "set_enabled" not in [c[0] for c in env.calls]
+
+
 def test_cannot_disable_the_last_admin(env, client):
     env.users.pop(ADMIN_EMAIL)
     env.add("other-admin@x.io", role="admin")
     assert client.post("/admin/users/other-admin@x.io/disable").status_code == 400
+    assert "set_enabled" not in [c[0] for c in env.calls]
 
 
 def test_enable_is_never_blocked(env, client):
@@ -269,12 +301,21 @@ def test_cannot_delete_yourself(env, client):
     r = client.delete(f"/admin/users/{ADMIN_EMAIL}")
     assert r.status_code == 400
     assert ADMIN_EMAIL in env.users
+    assert "delete_user" not in [c[0] for c in env.calls]
+
+
+def test_cannot_delete_yourself_by_a_case_variant_of_your_own_username(env, client):
+    r = client.delete(f"/admin/users/{ADMIN_EMAIL.upper()}")
+    assert r.status_code == 400
+    assert ADMIN_EMAIL in env.users
+    assert "delete_user" not in [c[0] for c in env.calls]
 
 
 def test_cannot_delete_the_last_admin(env, client):
     env.users.pop(ADMIN_EMAIL)
     env.add("other-admin@x.io", role="admin")
     assert client.delete("/admin/users/other-admin@x.io").status_code == 400
+    assert "delete_user" not in [c[0] for c in env.calls]
 
 
 def test_delete_unknown_user_is_404(env, client):

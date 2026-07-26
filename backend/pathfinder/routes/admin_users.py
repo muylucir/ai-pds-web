@@ -27,12 +27,16 @@ _log = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 # Cognito 오류 코드 → HTTP 상태. 목록에 없는 코드는 502(업스트림 장애)로 본다.
+# InvalidPasswordException은 예외다: 502(업스트림 장애)가 아니라 500이다 —
+# 우리가 서버에서 생성한 임시 비밀번호가 풀 정책을 만족시키지 못했다는
+# 뜻이므로, 원인이 Cognito가 아니라 이쪽(generate_temp_password)에 있다.
 _ERROR_STATUS = {
     "UsernameExistsException": 409,
     "AliasExistsException": 409,
     "UserNotFoundException": 404,
     "ResourceNotFoundException": 404,
     "InvalidParameterException": 400,
+    "InvalidPasswordException": 500,
     "NotAuthorizedException": 403,
     "TooManyRequestsException": 429,
 }
@@ -43,6 +47,7 @@ _ERROR_DETAIL = {
     400: "요청이 올바르지 않습니다.",
     403: "권한이 없습니다.",
     429: "요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
+    500: "사용자 관리 요청 처리 중 오류가 발생했습니다.",
 }
 
 
@@ -80,8 +85,16 @@ def _guard_privilege_removal(cognito, username: str, me: Principal,
       - 유일한 admin — 그 계정이 사라지면 아무도 사용자 관리를 할 수 없다.
 
     활성화(권한을 넓히는 방향)에는 적용하지 않는다.
+
+    자기 자신 비교는 casefold()로 한다 — Cognito는 Username을 대소문자
+    구분 없이 해석하므로(이 풀은 email을 Username으로 쓴다) 대소문자만 다른
+    변형이 같은 계정을 가리킬 수 있다. lower()가 아니라 casefold()를 쓰는
+    이유는 이메일이 임의의 유니코드를 포함할 수 있고, casefold()가 대소문자
+    구분 없는 비교의 올바른 선택이기 때문이다. 이 정규화는 비교에만 쓴다 —
+    Cognito로 넘기는 username은 호출자가 준 그대로다(Cognito가 자체적으로
+    해석하고, 저장된 속성은 원래 대소문자를 유지한다).
     """
-    if username == me.username:
+    if username.casefold() == me.username.casefold():
         raise HTTPException(
             status_code=400,
             detail=f"자신의 계정은 {what}할 수 없습니다. 다른 관리자에게 요청하세요.")
