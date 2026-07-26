@@ -12,9 +12,18 @@
 //
 // 상대 Location은 브라우저가 현재 오리진 기준으로 해석하므로 CloudFront ·
 // 리버스 프록시 · 로컬 dev 모두에서 맞는다. RFC 7231부터 Location에 절대 URL
-// 요구가 사라져 상대값이 정식이며, 프록시 뒤 배포에서는 이게 유일하게 옳은
-// 형태다. 외부(Cognito Hosted UI)로 나가는 리다이렉트는 절대 URL이어야 하므로
-// 이 헬퍼를 쓰지 않는다 — 그건 cognitoUrls.ts가 APP_BASE_URL로 조립한다.
+// 요구가 사라져 상대값이 정식이다. 배포 환경에서 실제로 확인했다:
+// `location: /login?error=access_denied`가 그대로 나가고 브라우저가 CloudFront
+// 오리진으로 해석한다.
+//
+// ⚠️ **미들웨어에서는 쓸 수 없다.** 미들웨어는 Edge 런타임에서 돌고, 그 런타임이
+// 응답의 location 헤더를 내부적으로 new URL()로 파싱하기 때문에 상대값이면
+// `TypeError: Invalid URL`로 500이 난다(실측). 미들웨어는 Host 헤더로 절대
+// URL을 조립한다 — middleware.ts의 selfUrl 참조. 이 헬퍼를 쓰는 route
+// handler는 모두 `runtime = "nodejs"`이며 그 파싱을 타지 않는다.
+//
+// 외부(Cognito Hosted UI)로 나가는 리다이렉트는 절대 URL이어야 하므로 이
+// 헬퍼를 쓰지 않는다 — 그건 cognitoUrls.ts가 APP_BASE_URL로 조립한다.
 import { NextResponse } from "next/server";
 
 /**
