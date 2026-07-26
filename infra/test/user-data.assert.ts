@@ -118,8 +118,13 @@ console.log('OK  user-data: services run as non-root pathfinder user, app tree o
     'backend must receive the client id');
 
   // 프론트: Hosted UI 도메인·클라이언트·앱 URL.
+  // 'COGNITO_CLIENT_ID=client-abc'만 찾으면 백엔드의
+  // 'PATHFINDER_COGNITO_CLIENT_ID=client-abc' 줄도 부분 문자열로 매치되어
+  // 프론트 줄이 삭제돼도 통과해버린다 — 'Environment=' 접두어까지 포함해
+  // 프론트 systemd 줄만 매치하도록 고정한다.
   assert.ok(script.includes('COGNITO_HOSTED_UI_DOMAIN=pathfinder-x.auth.ap-northeast-2.amazoncognito.com'));
-  assert.ok(script.includes('COGNITO_CLIENT_ID=client-abc'));
+  assert.ok(script.includes('Environment=COGNITO_CLIENT_ID=client-abc'),
+    'frontend unit must set COGNITO_CLIENT_ID (must not match the backend PATHFINDER_COGNITO_CLIENT_ID line)');
   assert.ok(script.includes('APP_BASE_URL=https://d123.cloudfront.net'));
 
   // 클라이언트 시크릿은 부팅 시 Cognito에서 조회한다 — 템플릿에 평문으로 남기지 않는다.

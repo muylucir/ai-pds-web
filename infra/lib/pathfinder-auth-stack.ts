@@ -2,7 +2,8 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import {
-  GROUP_ADMIN, GROUP_PM, LOCAL_APP_URL, OAUTH_SCOPES,
+  ACCESS_TOKEN_VALIDITY_MINUTES, GROUP_ADMIN, GROUP_PM, ID_TOKEN_VALIDITY_MINUTES,
+  LOCAL_APP_URL, OAUTH_SCOPES, REFRESH_TOKEN_VALIDITY_MINUTES,
   SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
   callbackUrls, logoutUrls,
 } from './auth-client-config';
@@ -104,9 +105,12 @@ export class PathfinderAuthStack extends cdk.Stack {
         callbackUrls: callbackUrls([LOCAL_APP_URL]),
         logoutUrls: logoutUrls([LOCAL_APP_URL]),
       },
-      accessTokenValidity: cdk.Duration.hours(1),
-      idTokenValidity: cdk.Duration.hours(1),
-      refreshTokenValidity: cdk.Duration.days(30),
+      // 값의 출처는 auth-client-config.ts 하나뿐이다 — HostingStack의
+      // UpdateUserPoolClient 재전송(PUT 시맨틱)이 같은 값을 다시 써야
+      // 재배포 때마다 유효기간이 리셋되지 않는다.
+      accessTokenValidity: cdk.Duration.minutes(ACCESS_TOKEN_VALIDITY_MINUTES),
+      idTokenValidity: cdk.Duration.minutes(ID_TOKEN_VALIDITY_MINUTES),
+      refreshTokenValidity: cdk.Duration.minutes(REFRESH_TOKEN_VALIDITY_MINUTES),
       preventUserExistenceErrors: true,
       enableTokenRevocation: true,
     });

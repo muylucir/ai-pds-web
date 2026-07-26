@@ -155,6 +155,8 @@ Environment=HOME=${APP}
 # 클라이언트 번들에 인라인되어 시크릿이 브라우저로 나간다.
 Environment=COGNITO_HOSTED_UI_DOMAIN=${hostedUiDomain}
 Environment=COGNITO_CLIENT_ID=${userPoolClientId}
+# 인용 없이 그대로 확장한다 — Cognito 클라이언트 시크릿은 [A-Za-z0-9_+]{24,64}
+# 알파벳만 쓰므로(공백·따옴표·$ 등 셸 메타문자 없음) 이 heredoc 확장이 안전하다.
 Environment=COGNITO_CLIENT_SECRET=\${COGNITO_SECRET}
 Environment=APP_BASE_URL=${appUrl}
 ExecStart=/usr/bin/npx next start -H 127.0.0.1 -p 3000

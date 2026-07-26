@@ -13,7 +13,9 @@ import * as path from 'path';
 import { backendPolicyStatements, MODEL } from './backend-permissions';
 import { renderUserData } from './user-data';
 import {
-  LOCAL_APP_URL, OAUTH_SCOPES, callbackUrls, logoutUrls,
+  ACCESS_TOKEN_VALIDITY_MINUTES, EXPLICIT_AUTH_FLOWS, ID_TOKEN_VALIDITY_MINUTES,
+  LOCAL_APP_URL, OAUTH_SCOPES, REFRESH_TOKEN_VALIDITY_MINUTES,
+  callbackUrls, logoutUrls,
 } from './auth-client-config';
 
 export interface HostingStackProps extends cdk.StackProps {
@@ -205,6 +207,10 @@ export class PathfinderHostingStack extends cdk.Stack {
     // ⚠️ UpdateUserPoolClient는 PUT 시맨틱이다 — 지정하지 않은 필드를 지운다.
     // 따라서 콜백만 보내는 것이 아니라 클라이언트 설정 전체를 다시 쓴다.
     // 값의 출처는 auth-client-config.ts 하나뿐이라 AuthStack과 어긋나지 않는다.
+    // 🔒 의무: AuthStack의 client 정의(addClient 호출)에 필드를 추가하거나
+    // 바꿀 때마다 이 아래 parameters도 반드시 같이 고쳐야 한다 — 하나라도
+    // 빠뜨리면 그 필드는 다음 배포에서 조용히 기본값으로 리셋된다(예: 토큰
+    // 유효기간, ALLOW_REFRESH_TOKEN_AUTH — 실제로 한 번 빠졌던 필드들이다).
     const appUrls = [LOCAL_APP_URL, `https://${distribution.distributionDomainName}`];
 
     // onCreate와 onUpdate가 같은 호출이어야 한다: onUpdate를 생략하면 재배포 시
@@ -226,6 +232,17 @@ export class PathfinderHostingStack extends cdk.Stack {
         SupportedIdentityProviders: ['COGNITO'],
         PreventUserExistenceErrors: 'ENABLED',
         EnableTokenRevocation: true,
+        // 토큰 유효기간 + 리프레시 인증 플로우. 처음 구현에서 빠졌던 필드들 —
+        // 빠지면 재배포마다 1h/1h/30d가 Cognito 기본값으로 리셋되고
+        // ALLOW_REFRESH_TOKEN_AUTH가 사라져 /api 프록시의 401 리프레시가
+        // 조용히 끊긴다. 상수 출처는 AuthStack과 동일하게 auth-client-config.ts.
+        AccessTokenValidity: ACCESS_TOKEN_VALIDITY_MINUTES,
+        IdTokenValidity: ID_TOKEN_VALIDITY_MINUTES,
+        RefreshTokenValidity: REFRESH_TOKEN_VALIDITY_MINUTES,
+        TokenValidityUnits: {
+          AccessToken: 'minutes', IdToken: 'minutes', RefreshToken: 'minutes',
+        },
+        ExplicitAuthFlows: EXPLICIT_AUTH_FLOWS,
       },
       physicalResourceId: cr.PhysicalResourceId.of('pathfinder-callback-urls'),
     };

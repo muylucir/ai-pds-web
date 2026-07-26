@@ -177,6 +177,19 @@ function testCloudFront() {
 
 testCloudFront();
 
+// Custom::AWS의 Create/Update 필드는 SDK 호출을 기술하는 JSON을 Fn::Join으로
+// 조립한 값이다(참조 부분만 { Ref: ... } / { Fn::GetAtt: ... } 등) — 문자열
+// 조각을 이어붙이고 참조는 자리표시자로 바꿔 JSON.parse하면 실제
+// service/action/parameters를 얻는다. 이래야 "필드가 다 있는지"뿐 아니라
+// "값이 맞는지"(예: AllowedOAuthFlows가 정확히 ['code']인지, ['implicit']이
+// 섞여 있진 않은지)까지 검증할 수 있다 — 문자열 포함 검사(bodies.includes(...))는
+// 값이 달라도 필드 이름만 있으면 통과해버린다.
+function parseSdkPayload(field: any): { service: string; action: string; parameters: any } {
+  const parts = field['Fn::Join'][1];
+  const joined = parts.map((p: any) => (typeof p === 'string' ? p : '__REF__')).join('');
+  return JSON.parse(joined);
+}
+
 // --- 콜백 URL 주입 (순환 의존 해소) ---
 {
   const app = new cdk.App();
@@ -191,18 +204,60 @@ testCloudFront();
     hostedUiDomain: auth.hostedUiDomain,
   });
   const t = Template.fromStack(hosting);
-  const bodies = JSON.stringify(t.findResources('Custom::AWS'));
+  const customResources = t.findResources('Custom::AWS');
+  const resourceList = Object.values(customResources);
+  const target = resourceList.find((r: any) => {
+    try {
+      return parseSdkPayload(r.Properties.Create).action === 'updateUserPoolClient';
+    } catch {
+      return false;
+    }
+  }) as any;
+  assert.ok(target, 'hosting must register the CloudFront callback URL with the app client');
 
-  // CloudFront 도메인을 콜백 URL에 등록하는 커스텀 리소스.
-  assert.ok(bodies.includes('updateUserPoolClient'),
-    'hosting must register the CloudFront callback URL with the app client');
-  // PUT 시맨틱이므로 전체 설정을 다시 써야 한다 — 콜백만 보내면 나머지가 지워진다.
-  assert.ok(bodies.includes('AllowedOAuthFlows'),
-    'UpdateUserPoolClient has PUT semantics — the full client config must be resent');
-  assert.ok(bodies.includes('LogoutURLs'), 'logout URLs must be resent too');
+  // onCreate와 onUpdate가 둘 다 있어야 한다 — Update가 없으면 재배포 시 콜백이
+  // 갱신되지 않아 도메인이 바뀌어도 낡은 채로 남는다. 두 objects가 같은
+  // 참조(updateClientCall 하나를 공유)이므로 Create만 있어도 Create 쪽 문자열
+  // 검사는 전부 통과해버린다 — 그래서 Update 필드의 '존재' 자체를 별도로 확인한다.
+  assert.ok(target.Properties.Update, 'onUpdate must be set — otherwise a redeploy never refreshes stale callbacks');
+
+  const createPayload = parseSdkPayload(target.Properties.Create);
+  const updatePayload = parseSdkPayload(target.Properties.Update);
+  assert.strictEqual(updatePayload.action, 'updateUserPoolClient', 'onUpdate must call the same SDK action as onCreate');
+
+  const params = createPayload.parameters;
+
+  // PUT 시맨틱이므로 전체 설정을 다시 써야 한다 — 필드가 있는지뿐 아니라 값도
+  // 확인한다. ['implicit']이 섞여 들어가도 'AllowedOAuthFlows' 존재 여부만
+  // 보는 검사로는 못 잡는다.
+  assert.deepStrictEqual(params.AllowedOAuthFlows, ['code'],
+    'UpdateUserPoolClient has PUT semantics — must resend the exact flow, not merely "a" flow');
+  assert.strictEqual(params.AllowedOAuthFlowsUserPoolClient, true);
+  assert.deepStrictEqual(
+    [...params.AllowedOAuthScopes].sort(), ['email', 'openid', 'profile'],
+    'OAuth scopes must be resent',
+  );
+  assert.deepStrictEqual(params.SupportedIdentityProviders, ['COGNITO']);
+  assert.strictEqual(params.PreventUserExistenceErrors, 'ENABLED');
+  assert.strictEqual(params.EnableTokenRevocation, true);
+  // 토큰 유효기간 + 리프레시 인증 플로우 — 처음 구현에서 빠졌던 필드들.
+  // AuthStack의 클라이언트 정의(1h/1h/30d, ALLOW_REFRESH_TOKEN_AUTH)와
+  // 정확히 같은 값이어야 한다: 하나라도 빠지면 재배포마다 그 필드가
+  // Cognito 기본값으로 조용히 리셋된다.
+  assert.strictEqual(params.AccessTokenValidity, 60);
+  assert.strictEqual(params.IdTokenValidity, 60);
+  assert.strictEqual(params.RefreshTokenValidity, 60 * 24 * 30);
+  assert.deepStrictEqual(params.TokenValidityUnits, {
+    AccessToken: 'minutes', IdToken: 'minutes', RefreshToken: 'minutes',
+  });
+  assert.deepStrictEqual(params.ExplicitAuthFlows, ['ALLOW_REFRESH_TOKEN_AUTH'],
+    'the /api proxy 401-refresh path depends on this grant — dropping it silently breaks session renewal on redeploy');
+
   // localhost 콜백도 유지돼야 로컬 개발이 깨지지 않는다.
-  assert.ok(bodies.includes('http://localhost:3000/api/auth/callback'),
+  assert.ok(params.CallbackURLs.includes('http://localhost:3000/api/auth/callback'),
     'the localhost callback must survive the update');
+  assert.ok(params.LogoutURLs.includes('http://localhost:3000/login'),
+    'the localhost logout URL must survive the update');
 
   // 인스턴스 롤이 클라이언트 시크릿을 읽을 수 있어야 한다(부팅 시 조회).
   t.hasResourceProperties('AWS::IAM::Policy', {
@@ -212,5 +267,5 @@ testCloudFront();
       ]),
     },
   });
-  console.log('OK  hosting stack: callback URL injection + full client config resend + secret read permission');
+  console.log('OK  hosting stack: callback URL injection + full client config resend (incl. token validity/refresh flow) + onUpdate present + secret read permission');
 }
