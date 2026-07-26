@@ -14,3 +14,8 @@ proto-config/projects/
 proto-config/.credentials.json
 proto-config/.claude.json
 proto-config/settings.local.json
+proto-type/
+docs/
+infra/
+**/tests/
+**/.pytest_cache/
