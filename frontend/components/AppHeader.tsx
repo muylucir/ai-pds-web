@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { UserMenu } from "./UserMenu";
+
 export type HeaderTab = "dashboard" | "workspace" | "review" | "prototypes" | "projects";
 
 // Ported from the shared <header> in files/ui/01–03. `projectId` is optional so
@@ -62,12 +64,7 @@ export function AppHeader({
           <span className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Bedrock 연결됨
           </span>
-          <button
-            className="w-9 h-9 rounded-full bg-violet-100 text-violet-700 font-bold text-sm"
-            aria-label="사용자 메뉴"
-          >
-            김PM
-          </button>
+          <UserMenu />
         </div>
       </div>
     </header>

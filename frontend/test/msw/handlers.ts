@@ -12,4 +12,8 @@ export const handlers = [
     return HttpResponse.json({ project_id: body.project_id, name: body.name ?? null });
   }),
   http.get(`${API_BASE_URL}/projects/:pid/artifacts`, () => HttpResponse.json({ artifacts: [] })),
+  // UserMenu가 모든 화면에서 부른다 — 기본은 "미인증"으로 두어 화면 테스트가
+  // 사용자 메뉴를 신경쓰지 않게 한다.
+  http.get("*/api/auth/me", () => HttpResponse.json({ authenticated: false },
+                                                    { status: 401 })),
 ];
