@@ -9,7 +9,8 @@ import re
 
 import boto3
 import pytest
-from botocore.stub import ANY, Stubber
+from botocore.exceptions import EndpointConnectionError
+from botocore.stub import Stubber
 
 from pathfinder.auth.cognito import (CognitoAdmin, CognitoError, ManagedUser,
                                      generate_temp_password)
@@ -24,6 +25,11 @@ def admin():
     stub = Stubber(client)
     stub.activate()
     yield CognitoAdmin(client, POOL), stub
+    # 큐에 남은 응답이 있다는 것은 테스트가 기대한 호출이 실제로는 일어나지
+    # 않았다는 뜻이다 — Stubber는 파라미터가 맞은 호출만 검증하고, 호출 자체가
+    # 없었던 경우는 검사하지 않으므로 이 확인을 빠뜨리면 no-op으로 퇴화한
+    # 메서드도 테스트가 초록불을 낸다.
+    stub.assert_no_pending_responses()
     stub.deactivate()
 
 
@@ -109,6 +115,27 @@ def test_missing_email_attribute_falls_back_to_username(admin):
     stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "pm"}]},
                       {"UserPoolId": POOL, "Username": "legacy-user"})
     assert a.list_users()[0].email == "legacy-user"
+
+
+def test_list_users_degrades_a_row_when_its_group_lookup_fails(admin):
+    # 스냅샷 이후 삭제되거나 429를 받은 사용자 한 명 때문에 전체 목록이
+    # 무너지면 안 된다 — 그 행만 role=None으로 낮추고 나머지는 계속 보여준다.
+    a, stub = admin
+    stub.add_response(
+        "list_users",
+        {"Users": [_user("a@x.io", "a@x.io"), _user("b@x.io", "b@x.io")]},
+        {"UserPoolId": POOL, "Limit": 60},
+    )
+    stub.add_client_error(
+        "admin_list_groups_for_user", service_error_code="UserNotFoundException",
+        expected_params={"UserPoolId": POOL, "Username": "a@x.io"},
+    )
+    stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "pm"}]},
+                      {"UserPoolId": POOL, "Username": "b@x.io"})
+    users = a.list_users()
+    assert [u.email for u in users] == ["a@x.io", "b@x.io"]
+    assert users[0].role is None
+    assert users[1].role == "pm"
 
 
 # ---- 생성 ----
@@ -250,3 +277,21 @@ def test_groups_of_returns_names(admin):
                       {"Groups": [{"GroupName": "admin"}, {"GroupName": "pm"}]},
                       {"UserPoolId": POOL, "Username": "u@x.io"})
     assert a.groups_of("u@x.io") == ["admin", "pm"]
+
+
+# ---- 전송 계층 실패 (Cognito가 거부한 것이 아니라 요청이 도달조차 못한 경우) ----
+
+def test_transport_failure_is_wrapped_as_cognito_error(admin):
+    # EndpointConnectionError 등 BotoCoreError는 ClientError가 아니라서 원래
+    # _call의 except 절을 그냥 통과해버린다 — 라우트가 한 번도 본 적 없는
+    # 예외 타입으로 그대로 새 나가면 처리되지 않은 500이 된다. Stubber는
+    # ClientError만 만들 수 있으므로 클라이언트 메서드를 직접 갈아 끼운다.
+    a, stub = admin
+
+    def _boom(**kwargs):
+        raise EndpointConnectionError(endpoint_url="https://example.com")
+
+    a._c.admin_delete_user = _boom
+    with pytest.raises(CognitoError) as exc:
+        a.delete_user("u@x.io")
+    assert exc.value.code == "EndpointConnectionError"

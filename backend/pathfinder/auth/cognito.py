@@ -12,7 +12,7 @@ import logging
 import secrets
 from dataclasses import dataclass
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from pathfinder.auth.models import ROLE_ADMIN, ROLE_PM, Role
 
@@ -83,6 +83,13 @@ class CognitoAdmin:
             err = exc.response.get("Error", {})
             code = err.get("Code", "Unknown")
             raise CognitoError(code, err.get("Message", str(exc))) from exc
+        except BotoCoreError as exc:
+            # ClientError는 Cognito가 응답한 거부(코드가 있다). 이건 그 이전
+            # 단계의 실패 — 네트워크 단절, 자격증명 누락, 파라미터 형식 오류 등
+            # — 로 코드가 없으므로 예외 클래스 이름을 코드로 쓴다. 라우트가
+            # "Cognito가 거부했다"와 "요청이 Cognito에 도달하지도 못했다"를
+            # 구분할 수 있어야 한다.
+            raise CognitoError(type(exc).__name__, str(exc)) from exc
 
     @staticmethod
     def _email_of(raw: dict) -> str:
@@ -118,10 +125,19 @@ class CognitoAdmin:
             for raw in resp.get("Users", []):
                 username = raw.get("Username", "")
                 created = raw.get("UserCreateDate")
+                # 한 사용자의 그룹 조회가 실패해도(스냅샷 이후 삭제, 429 등)
+                # 목록 전체를 무너뜨리지 않는다 — 그 행만 role=None으로 낮춰
+                # 계속한다. role=None이 이미 "반쯤 만들어진 계정"을 표시하는
+                # 값이므로 같은 표현을 재사용한다.
+                try:
+                    role = self._role_of(self.groups_of(username))
+                except CognitoError as exc:
+                    _log.debug("groups_of failed for %s: %s", username, exc.code)
+                    role = None
                 users.append(ManagedUser(
                     username=username,
                     email=self._email_of(raw),
-                    role=self._role_of(self.groups_of(username)),
+                    role=role,
                     status=raw.get("UserStatus", ""),
                     enabled=bool(raw.get("Enabled", True)),
                     created_at=created.isoformat() if created else "",
