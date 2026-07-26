@@ -119,6 +119,27 @@ describe("UserTable", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
+  it("reveals the password before calling onChanged, so a reload cannot outrun the reveal", async () => {
+    // 두 문장(setRevealed, onChanged)이 같은 동기 블록 안에 있어 DOM이나 실제
+    // 비동기 재조회로는 순서를 구분할 수 없다 — React가 같은 틱의 상태 갱신을
+    // 배치 처리하고, 실제 reload도 항상 두 문장이 끝난 뒤에야(await 이후) 도착한다.
+    // 대신 onChanged 자체가 던지게 만들어 순서를 드러낸다: setRevealed가 먼저
+    // 실행됐다면 그 뒤에 던진 예외는 이미 반영된 비밀번호를 지우지 못한다. 순서가
+    // 뒤집히면 onChanged가 먼저 던져 setRevealed 줄까지 도달하지 못하고, 비밀번호는
+    // 끝내 화면에 오르지 않는다.
+    const onChanged = vi.fn(() => { throw new Error("boom"); });
+    server.use(http.post(
+      `${API_BASE_URL}/admin/users/pm@pathfinder.local/reset-password`, () =>
+        HttpResponse.json({ username: "pm@pathfinder.local",
+                            temp_password: "New!23456789abc" })));
+    render(<UserTable users={USERS} currentEmail="admin@pathfinder.local"
+                      onChanged={onChanged} />);
+    await userEvent.click(
+      within(row("pm@pathfinder.local")).getByRole("button", { name: /비밀번호 재설정/ }));
+    expect(onChanged).toHaveBeenCalled();
+    expect(await screen.findByText("New!23456789abc")).toBeInTheDocument();
+  });
+
   it("disables an enabled user", async () => {
     const onChanged = vi.fn();
     server.use(http.post(
