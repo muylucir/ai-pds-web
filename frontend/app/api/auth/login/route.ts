@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeUrl, cognitoEnv } from "@/lib/auth/cognitoUrls";
 import { challengeFor, randomUrlSafe } from "@/lib/auth/pkce";
 import { safeNext } from "@/lib/auth/safeNext";
+import { redirectToLogin } from "@/lib/auth/redirectTo";
 import {
   NEXT_COOKIE, STATE_COOKIE, VERIFIER_COOKIE, transientCookieOptions,
 } from "@/lib/auth/cookies";
@@ -18,7 +19,10 @@ export async function GET(req: NextRequest) {
   const env = cognitoEnv();
   if (!env.domain || !env.clientId) {
     // 인증이 설정되지 않은 배포 — 로그인 화면이 안내 문구를 보여준다.
-    return NextResponse.redirect(new URL("/login?error=not_configured", req.url));
+    // 상대 Location — req.url은 프록시 뒤에서 내부 주소를 샌다
+    // (lib/auth/redirectTo.ts). Hosted UI로 나가는 authorizeUrl은 외부
+    // 절대 URL이어야 하므로 그대로 둔다.
+    return redirectToLogin("not_configured");
   }
   const verifier = randomUrlSafe();
   const state = randomUrlSafe(16);

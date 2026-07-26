@@ -43,7 +43,7 @@ describe("GET /api/auth/callback", () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.get("location"))
-      .toBe("https://app.example.com/projects/p1/dashboard");
+      .toBe("/projects/p1/dashboard");
 
     const setCookies = res.headers.getSetCookie();
     const joined = setCookies.join("\n");
@@ -67,7 +67,7 @@ describe("GET /api/auth/callback", () => {
       "https://app.example.com/api/auth/callback?code=c1&state=s1",
       { pf_pkce: "v", pf_state: "s1" },
     ) as never);
-    expect(res.headers.get("location")).toBe("https://app.example.com/");
+    expect(res.headers.get("location")).toBe("/");
   });
 
   it("rejects a state mismatch without calling the token endpoint", async () => {
@@ -80,7 +80,7 @@ describe("GET /api/auth/callback", () => {
     ) as never);
     expect(res.status).toBe(302);
     expect(res.headers.get("location"))
-      .toBe("https://app.example.com/login?error=state_mismatch");
+      .toBe("/login?error=state_mismatch");
     expect(f).not.toHaveBeenCalled();
   });
 
@@ -107,7 +107,7 @@ describe("GET /api/auth/callback", () => {
       { pf_state: "s1" },
     ) as never);
     expect(res.headers.get("location"))
-      .toBe("https://app.example.com/login?error=state_mismatch");
+      .toBe("/login?error=state_mismatch");
     expect(f).not.toHaveBeenCalled();
   });
 
@@ -118,7 +118,7 @@ describe("GET /api/auth/callback", () => {
       "https://app.example.com/api/auth/callback?error=access_denied",
     ) as never);
     expect(res.headers.get("location"))
-      .toBe("https://app.example.com/login?error=access_denied");
+      .toBe("/login?error=access_denied");
     expect(f).not.toHaveBeenCalled();
   });
 
@@ -131,7 +131,7 @@ describe("GET /api/auth/callback", () => {
       { pf_pkce: "v", pf_state: "s1" },
     ) as never);
     expect(res.headers.get("location"))
-      .toBe("https://app.example.com/login?error=exchange_failed");
+      .toBe("/login?error=exchange_failed");
   });
 
   it("refuses an off-site next path", async () => {
@@ -142,7 +142,7 @@ describe("GET /api/auth/callback", () => {
       "https://app.example.com/api/auth/callback?code=c1&state=s1",
       { pf_pkce: "v", pf_state: "s1", pf_next: "https://evil.example/steal" },
     ) as never);
-    expect(res.headers.get("location")).toBe("https://app.example.com/");
+    expect(res.headers.get("location")).toBe("/");
   });
 
   it("refuses a protocol-relative next path", async () => {
@@ -152,6 +152,56 @@ describe("GET /api/auth/callback", () => {
       "https://app.example.com/api/auth/callback?code=c1&state=s1",
       { pf_pkce: "v", pf_state: "s1", pf_next: "//evil.example/steal" },
     ) as never);
-    expect(res.headers.get("location")).toBe("https://app.example.com/");
+    expect(res.headers.get("location")).toBe("/");
+  });
+});
+
+describe("GET /api/auth/callback — Location은 오리진을 새지 않는다", () => {
+  // 실측 배포 버그: CloudFront 뒤에서 Location이 https://localhost:3000/...로
+  // 나왔다. Next 15는 req.url을 Host 헤더가 아니라 서버 자체 origin으로
+  // 조립하므로 new URL(next, req.url)은 프록시 뒤에서 내부 주소를 샌다.
+  // 상대 Location이면 브라우저가 현재 오리진(CloudFront)으로 해석한다.
+  it("redirects relatively after a successful exchange", async () => {
+    mockTokenEndpoint();
+    const { GET } = await import("./route");
+    const res = await GET(request(
+      // 프록시 뒤 상황 재현: 내부 주소로 들어온 요청.
+      "http://localhost:3000/api/auth/callback?code=c1&state=s1",
+      { pf_pkce: "v", pf_state: "s1", pf_next: "/projects/p1/dashboard" },
+    ) as never);
+    const location = res.headers.get("location")!;
+    expect(location).toBe("/projects/p1/dashboard");
+    expect(location).not.toContain("localhost");
+    expect(location).not.toMatch(/^https?:\/\//);
+  });
+
+  it("redirects relatively on failure too", async () => {
+    mockTokenEndpoint();
+    const { GET } = await import("./route");
+    const res = await GET(request(
+      "http://localhost:3000/api/auth/callback?code=c1&state=attacker",
+      { pf_pkce: "v", pf_state: "ours" },
+    ) as never);
+    const location = res.headers.get("location")!;
+    expect(location).toBe("/login?error=state_mismatch");
+    expect(location).not.toContain("localhost");
+  });
+
+  it("still refuses an off-site next cookie (open redirect)", async () => {
+    // 상대 Location으로 바꾸면서 safeNext 방어가 느슨해지지 않았는지 —
+    // "//evil.example"은 상대값처럼 보이지만 브라우저는 오프사이트로 읽는다.
+    const { GET } = await import("./route");
+    for (const evil of ["https://evil.example/x", "//evil.example", "/\\evil.example"]) {
+      // 반복마다 mock을 새로 세운다 — 한 번만 세우면 두 번째 교환이 실패해
+      // exchange_failed로 떨어지고, 방어가 동작한 것처럼 오해하게 된다.
+      mockTokenEndpoint();
+      const res = await GET(request(
+        "https://app.example.com/api/auth/callback?code=c1&state=s1",
+        { pf_pkce: "v", pf_state: "s1", pf_next: evil },
+      ) as never);
+      const location = res.headers.get("location")!;
+      expect(location, `next=${evil}`).toBe("/");
+      expect(location).not.toContain("evil.example");
+    }
   });
 });

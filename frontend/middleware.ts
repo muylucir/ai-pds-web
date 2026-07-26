@@ -8,17 +8,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_COOKIE } from "@/lib/auth/cookies";
 import { gateDecision } from "@/lib/auth/gate";
+import { redirectTo } from "@/lib/auth/redirectTo";
 
 export function middleware(req: NextRequest) {
   const decision = gateDecision(req.nextUrl.pathname,
                                 req.cookies.get(ACCESS_COOKIE)?.value);
   if (decision.kind === "allow") return NextResponse.next();
-  if (decision.kind === "home") {
-    return NextResponse.redirect(new URL("/", req.url));
-  }
-  const login = new URL("/login", req.url);
-  login.searchParams.set("next", decision.next);
-  return NextResponse.redirect(login);
+  // Location은 상대 경로여야 한다 — 이유는 lib/auth/redirectTo.ts 참조
+  // (프록시/CloudFront 뒤에서 req.url이 내부 주소를 새게 만든다).
+  if (decision.kind === "home") return redirectTo("/");
+  return redirectTo(`/login?next=${encodeURIComponent(decision.next)}`);
 }
 
 export const config = {

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cognitoEnv } from "@/lib/auth/cognitoUrls";
 import { safeNext } from "@/lib/auth/safeNext";
+import { redirectTo, redirectToLogin } from "@/lib/auth/redirectTo";
 import { exchangeCode } from "@/lib/auth/tokenExchange";
 import {
   ACCESS_COOKIE, ID_COOKIE, NEXT_COOKIE, REFRESH_COOKIE, STATE_COOKIE,
@@ -16,17 +17,14 @@ export const runtime = "nodejs";
 
 const REFRESH_MAX_AGE = 30 * 24 * 60 * 60; // 풀 클라이언트의 refresh 유효기간과 일치
 
-// NextResponse.redirect는 절대 URL만 받는다(상대 경로는 "URL is malformed"로
-// 던진다 — 확인됨). req.url을 기준으로 조립하면 프록시 뒤에서도 현재 호스트를
-// 그대로 쓴다.
+// Location은 상대 경로다 — req.url로 절대 URL을 조립하면 프록시/CloudFront
+// 뒤에서 내부 주소가 샌다(실측 버그, 이유는 lib/auth/redirectTo.ts 참조).
 //
 // 실패 경로도 왕복용 쿠키(pf_pkce/pf_state/pf_next)를 지운다 — 성공 경로에서만
 // 지우면 실패한 시도의 PKCE 자재가 브라우저에 남아 다음 로그인이 덮어쓸 때까지
 // 방치된다.
-function toLogin(req: NextRequest, reason: string): NextResponse {
-  const url = new URL("/login", req.url);
-  url.searchParams.set("error", reason);
-  const res = NextResponse.redirect(url, 302);
+function toLogin(reason: string): NextResponse {
+  const res = redirectToLogin(reason, 302);
   for (const name of [VERIFIER_COOKIE, STATE_COOKIE, NEXT_COOKIE]) {
     res.cookies.set(name, "", clearedCookieOptions());
   }
@@ -41,7 +39,7 @@ export async function GET(request: NextRequest) {
 
   // Hosted UI가 사용자 취소·설정 오류를 error로 알려준다.
   const hostedUiError = params.get("error");
-  if (hostedUiError) return toLogin(req, hostedUiError);
+  if (hostedUiError) return toLogin(hostedUiError);
 
   const code = params.get("code");
   const state = params.get("state");
@@ -51,7 +49,7 @@ export async function GET(request: NextRequest) {
   // CSRF 방어: 공격자가 유도한 콜백은 우리가 심은 state와 맞지 않는다.
   // verifier가 없으면(쿠키 만료·다른 브라우저) 교환 자체가 불가능하다.
   if (!code || !state || !expectedState || state !== expectedState || !verifier) {
-    return toLogin(req, "state_mismatch");
+    return toLogin("state_mismatch");
   }
 
   let tokens;
@@ -64,11 +62,12 @@ export async function GET(request: NextRequest) {
     // 아무 정보도 남지 않는다.
     const reason = err instanceof Error ? err.message : String(err);
     console.error(`authorization code exchange failed: ${reason}`);
-    return toLogin(req, "exchange_failed");
+    return toLogin("exchange_failed");
   }
 
   const next = safeNext(req.cookies.get(NEXT_COOKIE)?.value, req.url);
-  const res = NextResponse.redirect(new URL(next, req.url), 302);
+  // safeNext가 이미 same-origin 상대 경로를 보장한다(오픈 리다이렉트 방어).
+  const res = redirectTo(next, 302);
 
   // access/id는 토큰 자체의 수명(expires_in), refresh는 30일.
   const session = sessionCookieOptions(tokens.expires_in);

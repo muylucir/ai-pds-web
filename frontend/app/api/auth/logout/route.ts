@@ -4,6 +4,7 @@
 // 때문에 다음 로그인이 비밀번호를 묻지 않고 곧바로 통과한다(공용 PC 문제).
 import { NextRequest, NextResponse } from "next/server";
 import { cognitoEnv, logoutUrl } from "@/lib/auth/cognitoUrls";
+import { redirectToLogin } from "@/lib/auth/redirectTo";
 import {
   ACCESS_COOKIE, ID_COOKIE, REFRESH_COOKIE, clearedCookieOptions,
 } from "@/lib/auth/cookies";
@@ -18,10 +19,14 @@ function clearAll(res: NextResponse): NextResponse {
   return res;
 }
 
-export async function GET(req: NextRequest) {
+// req는 쓰지 않는다(리다이렉트가 상대 경로가 되어 req.url이 필요 없어졌다).
+// 시그니처는 Next의 route handler 계약이므로 이름만 밑줄로 표시하고 남긴다.
+export async function GET(_req: NextRequest) {
   const env = cognitoEnv();
   if (!env.domain || !env.clientId) {
-    return clearAll(NextResponse.redirect(new URL("/login", req.url)));
+    // 상대 Location(lib/auth/redirectTo.ts). Hosted UI logoutUrl은 외부
+    // 절대 URL이어야 하므로 아래는 그대로 둔다.
+    return clearAll(redirectToLogin());
   }
   return clearAll(NextResponse.redirect(logoutUrl(env)));
 }
