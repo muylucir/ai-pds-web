@@ -19,16 +19,38 @@ export async function redirectIfSessionExpired(
   navigate: (url: string) => void = defaultNavigate,
   currentPath?: string,
 ): Promise<boolean> {
-  let alive: boolean;
+  let res: Response;
   try {
-    const res = await fetch("/api/auth/me", { credentials: "include" });
-    alive = res.ok;
+    res = await fetch("/api/auth/me", { credentials: "include" });
   } catch {
     // 확인 자체가 실패했다 — 백엔드가 잠깐 죽은 것뿐일 수 있으므로 사용자를
     // 작업 중인 화면에서 쫓아내지 않는다.
     return false;
   }
-  if (alive) return false;
+  if (res.ok) return false; // 200 — 세션이 살아 있다.
+
+  // 401만 "세션 없음"의 신뢰할 수 있는 신호로 본다 — 이 엔드포인트
+  // (app/api/auth/me/route.ts)가 실제로 내는 실패 상태는 401뿐이다. 5xx는
+  // 백엔드가 잠깐 죽었을 뿐 세션과 무관할 수 있으므로 만료로 단정하지
+  // 않는다 — 그러지 않으면 배포/재시작 중인 백엔드가 정상 세션의 사용자를
+  // 작업 중인 화면에서 쫓아내는 꼴이 된다.
+  if (res.status !== 401) return false;
+
+  // 상태코드 하나만으로 단정하지 않고 본문의 authenticated:false로
+  // 재확인한다. 본문이 깨져 있으면(파싱 실패) "판정 불가"이지 "만료
+  // 확정"이 아니다 — 파싱 실패를 authenticated:false로 잘못 읽으면
+  // 판정 불가 상황도 이동시켜 버린다.
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return false;
+  }
+  const expired =
+    typeof body === "object" && body !== null &&
+    (body as { authenticated?: unknown }).authenticated === false;
+  if (!expired) return false;
+
   const next = currentPath
     ? `/login?next=${encodeURIComponent(currentPath)}`
     : "/login";
