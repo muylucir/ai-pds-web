@@ -20,9 +20,9 @@ Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론�
 저장되며(응답 1건 = 객체 1개), 대시보드는 `rollup.json` 캐시를 읽는다.
 
 ```
-frontend/  Next.js 15 (App Router) — 대시보드 · 질문 위저드 · 문서 리뷰 · 대화형 캔버스 · 프로토타입 탭
-backend/   FastAPI — 파서 · 인프로세스 Strands 에이전트 · SSE 턴 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅
-infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 (서울, 리전 파라미터화)
+frontend/  Next.js 15 (App Router) — 대시보드 · 질문 위저드 · 문서 리뷰 · 대화형 캔버스 · 프로토타입 탭 · 로그인/사용자 관리
+backend/   FastAPI — 파서 · 인프로세스 Strands 에이전트 · SSE 턴 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅 · JWT 검증
+infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 + Cognito(Hosted UI v2) + EC2/CloudFront (서울, 리전 파라미터화)
 ```
 
 ---
@@ -68,7 +68,7 @@ deploy` 출력(CfnOutputs)에서 가져온다 — 인프라 배포는 최초 1�
 cd infra
 npm install
 npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2   # 계정·리전 최초 1회 (기본 서울)
-npx cdk deploy --require-approval never
+npx cdk deploy --all --require-approval never
 ```
 
 > 기본 배포 리전은 **서울(`ap-northeast-2`)**. 다른 리전에 배포하려면
@@ -81,10 +81,28 @@ npx cdk deploy --require-approval never
 ArtifactsBucketName → PATHFINDER_S3_BUCKET
 BackendRoleArn      → 백엔드 프로세스가 이 롤(또는 동등한 정책)로 실행돼야 함
 Region              → AWS_REGION / PATHFINDER_S3_REGION (기본 ap-northeast-2)
+UserPoolId          → PATHFINDER_COGNITO_USER_POOL_ID
+UserPoolClientId    → PATHFINDER_COGNITO_CLIENT_ID / COGNITO_CLIENT_ID
+HostedUiDomain      → COGNITO_HOSTED_UI_DOMAIN
+DistributionDomain  → APP_BASE_URL (그리고 브라우저로 접속할 주소)
 ```
 
-> ⚠️ 배포 리소스(S3 버킷 · IAM 롤)는 **비용이 발생**한다(스토리지 + 턴마다 Bedrock 호출).
-> 다 쓰면 `npx cdk destroy`로 내린다.
+배포가 끝나면 `DistributionDomain`으로 접속해 아래 시드 계정으로 로그인한다:
+
+| 계정 | 역할 | 비밀번호 |
+|---|---|---|
+| `admin@pathfinder.local` | 관리자 (사용자 관리 가능) | `PathFinder2026!@` |
+| `pm@pathfinder.local` | PM | `PathFinder2026!@` |
+
+> ⚠️ **이 비밀번호는 데모/워크숍용이다.** CDK 소스의 상수이므로 CloudFormation
+> 템플릿과 스택 이벤트에 평문으로 남고, 계정에 CFN 읽기 권한이 있는 사람은 누구나
+> 볼 수 있다. 재배포하면 이 값으로 되돌아간다. 실제 운영에 쓰려면
+> `infra/lib/auth-client-config.ts`의 `SEED_PASSWORD`를 교체하고, 시드 계정 대신
+> `/admin/users`에서 초대한 계정을 쓴다.
+
+> ⚠️ 배포 리소스(S3 버킷 · IAM 롤 · Cognito · EC2/CloudFront)는 **비용이 발생**한다
+> (스토리지 + 턴마다 Bedrock 호출 + EC2 상시 가동). 다 쓰면 `npx cdk destroy --all`로
+> 내린다.
 
 **터미널 1 — 백엔드:**
 ```bash
@@ -139,6 +157,9 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `PATHFINDER_PROTO_MAX_CONCURRENT` | `2` | 동시 프로토타입 빌드 상한(전역). 초과 시 세션 시작이 429 |
 | `PATHFINDER_PROTO_CONFIG_DIR` | `~/pathfinder-proto-config` | 빌드 에이전트 전용 `CLAUDE_CONFIG_DIR`. 미지정 시 호스트 유저의 `~/.claude`(개인 skills/agents)가 빌드에 섞인다. CDK 배포 시엔 레포의 `proto-config/`가 그대로 `/opt/pathfinder/proto-config`가 된다 — 빌드 에이전트에 미리 넣어둘 스킬은 `proto-config/skills/<name>/SKILL.md`에 커밋하면 자동 활성화(`skills="all"`). 자세한 내용은 `proto-config/README.md` |
 | `PATHFINDER_PROTO_ROOT` | `~/pathfinder-protos` | 프로토타입 빌드 + 호스팅 공용 루트 (EC2 로컬) |
+| `PATHFINDER_COGNITO_USER_POOL_ID` | — | Cognito 풀 id. **비우면 인증 전체 바이패스**(로컬/테스트 기본) |
+| `PATHFINDER_COGNITO_CLIENT_ID` | — | 앱 클라이언트 id. access 토큰의 `client_id` 클레임 검증용 |
+| `PATHFINDER_COGNITO_REGION` | `PATHFINDER_S3_REGION` | 풀이 있는 리전 |
 
 **프론트엔드**
 
@@ -146,6 +167,10 @@ NEXT_PUBLIC_API_BASE_URL=/api
 |---|---|---|
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | API base. 원격 프록시 뒤면 `/api` |
 | `PATHFINDER_BACKEND_URL` | `http://localhost:8000` | `/api` route handler가 프록시할 백엔드 (server-side) |
+| `COGNITO_HOSTED_UI_DOMAIN` | — | Hosted UI 도메인 (server-side only) |
+| `COGNITO_CLIENT_ID` | — | 앱 클라이언트 id (server-side only) |
+| `COGNITO_CLIENT_SECRET` | — | 토큰 교환용 시크릿. **`NEXT_PUBLIC_` 금지** |
+| `APP_BASE_URL` | `http://localhost:3000` | 콜백 URL 조립용 |
 
 ---
 
@@ -158,8 +183,8 @@ cd backend && .venv/bin/python -m pytest -q
 # 프론트엔드 유닛 (Vitest + MSW; e2e는 제외)
 cd frontend && npm test
 
-# 인프라 합성 (배포 없이 템플릿 검증)
-cd infra && npx cdk synth
+# 인프라 합성 + 템플릿 단정 (배포 없이 검증)
+cd infra && npm test
 
 # 프론트엔드 e2e (실 백엔드 + 실 Bedrock 자격증명 필요 — INTEGRATION)
 cd frontend && npm run test:e2e
@@ -169,9 +194,26 @@ cd frontend && npm run test:e2e
 
 ## 참고
 
-- **인증은 아직 플레이스홀더**다(spec상 이후 단계). 라우트에 인증 없음, 프론트 `getAuthToken()`은
-  `undefined` 반환. SSO/토큰 도입 시 `EventSource`가 커스텀 헤더를 못 보내므로 SSE 인증 전략
-  (token-in-query 또는 cookie)을 함께 정해야 한다.
+- **인증은 Amazon Cognito(Hosted UI v2)** 다. 역할은 `admin`과 `pm` 둘이며 Cognito
+  그룹 멤버십이 역할의 유일한 출처다. **self-signup은 차단**되어 있어 신규 계정은
+  `/admin/users`에서 관리자가 초대해야 생긴다(초대하면 임시 비밀번호가 화면에 1회
+  표시된다 — 이 앱은 메일을 보내지 않는다).
+
+  세션은 **httpOnly 쿠키**에 담기고 same-origin `/api` 프록시가 그것을
+  `Authorization: Bearer`로 번역한다. `EventSource`는 커스텀 헤더를 못 보내지만
+  쿠키는 자동 전송되므로 SSE도 이 경로로 인증된다.
+
+  **무인증으로 열려 있는 경로는 둘뿐이다**: `/survey/{token}`(익명 설문)과
+  `/proto/{pid}/{slug}/*`(프로토타입 프리뷰). 둘 다 계정이 없는 최종 사용자를
+  위한 것이며, `backend/tests/test_auth_route_coverage.py`가 이 경계를 강제한다.
+
+  **로컬 개발**은 `PATHFINDER_COGNITO_USER_POOL_ID`와 `PATHFINDER_COGNITO_CLIENT_ID`를
+  둘 다 비워두면 인증이 전체 바이패스되어 지금까지와 똑같이 돈다. 둘 다 채우면
+  인증이 켜진다. **하나만 채운 상태는 배포 사고로 간주**해 모든 요청에서
+  `RuntimeError`를 던진다(fail-closed) — 반쯤 설정된 상태가 조용히 전원을 관리자로
+  통과시키는 것보다는 눈에 보이는 실패가 낫다는 판단이다. 로컬에서 인증을 켜고
+  검증하려면 `NEXT_PUBLIC_API_BASE_URL=/api`로 띄워야 한다(쿠키는 same-origin에서만
+  프록시를 타고 번역된다).
 - **리전**: 모든 리소스(S3, 백엔드, Discovery 에이전트, 프로토타입 빌드/호스팅)는
   서울(`ap-northeast-2`) 통일이 기본. 다른 리전이 필요하면 `CDK_DEPLOY_REGION`(인프라)과
   `AWS_REGION`/`PATHFINDER_S3_REGION`(백엔드)으로 지정한다 — 세 값이 같은 리전을 가리켜야
