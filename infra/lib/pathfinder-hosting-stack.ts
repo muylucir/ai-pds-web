@@ -89,10 +89,34 @@ export class PathfinderHostingStack extends cdk.Stack {
       role.addToPolicy(stmt);
     }
     headerSecret.grantRead(role);
-    // 부팅 시 클라이언트 시크릿을 Cognito에서 직접 읽는다(§3.4) — 템플릿에
-    // 평문으로 남기지 않기 위한 선택이고, 그 대가가 이 권한이다.
+    // Cognito 권한 두 묶음.
+    //
+    // 1) DescribeUserPoolClient — 부팅 시 클라이언트 시크릿을 Cognito에서 직접
+    //    읽는다(§3.4). 템플릿에 평문으로 남기지 않기 위한 선택이고, 그 대가가
+    //    이 권한이다.
+    //
+    // 2) Admin* / ListUsers* — /admin/users(사용자 초대·역할 변경·비밀번호
+    //    재설정·비활성화·삭제)가 쓴다. 실측 배포 버그: 이 묶음이 없어서 로그인은
+    //    되는데 /admin/users만 502였고, 백엔드 로그에만
+    //    "cognito call failed (AccessDeniedException)"이 남았다.
+    //    목록은 backend/pathfinder/auth/cognito.py의 _call() 호출과 1:1이어야
+    //    한다 — 하나라도 빠지면 그 기능만 502가 되고 화면에서는 원인이 보이지
+    //    않는다. cognito-idp:*로 뭉개지 않는다(최소 권한). 두 곳이 어긋나지
+    //    않도록 test/hosting-stack.assert.ts가 목록을 고정한다.
     role.addToPolicy(new iam.PolicyStatement({
-      actions: ['cognito-idp:DescribeUserPoolClient'],
+      actions: [
+        'cognito-idp:DescribeUserPoolClient',
+        'cognito-idp:ListUsers',
+        'cognito-idp:ListUsersInGroup',
+        'cognito-idp:AdminCreateUser',
+        'cognito-idp:AdminDeleteUser',
+        'cognito-idp:AdminDisableUser',
+        'cognito-idp:AdminEnableUser',
+        'cognito-idp:AdminSetUserPassword',
+        'cognito-idp:AdminAddUserToGroup',
+        'cognito-idp:AdminRemoveUserFromGroup',
+        'cognito-idp:AdminListGroupsForUser',
+      ],
       resources: [props.userPool.userPoolArn],
     }));
 

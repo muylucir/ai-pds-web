@@ -292,10 +292,14 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   }
 
   // 인스턴스 롤이 클라이언트 시크릿을 읽을 수 있어야 한다(부팅 시 조회).
+  // 액션은 /admin/users용 Admin* 권한과 같은 문에 배열로 들어 있다 —
+  // 전체 목록 고정은 아래 "instance role has every Cognito Admin action"에서.
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
       Statement: Match.arrayWith([
-        Match.objectLike({ Action: 'cognito-idp:DescribeUserPoolClient' }),
+        Match.objectLike({
+          Action: Match.arrayWith(['cognito-idp:DescribeUserPoolClient']),
+        }),
       ]),
     },
   });
@@ -362,4 +366,60 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
     }
   }
   console.log('OK  hosting: ASCII-only SG descriptions + CloudFront comment (EC2 rejects non-ASCII)');
+}
+
+// --- /admin/users가 쓰는 Cognito Admin API 권한 ---
+// 실측 배포 버그: 로그인은 되는데 /admin/users가 502였다. 백엔드 로그:
+// "cognito call failed (AccessDeniedException) -> 502". 인스턴스 롤에는 부팅
+// 시 시크릿을 읽는 DescribeUserPoolClient 하나만 있었고, 사용자 관리 API
+// 권한이 전혀 없었다.
+//
+// backend/pathfinder/auth/cognito.py가 실제로 호출하는 액션 전체를 고정한다 —
+// 하나라도 빠지면 그 기능만 502가 되고, 화면에서는 원인이 보이지 않는다.
+{
+  const app = new cdk.App();
+  const drill = new PathfinderDrillStack(app, 'Drill5', { env: ENV });
+  const auth = new PathfinderAuthStack(app, 'Auth5', { env: ENV });
+  const hosting = new PathfinderHostingStack(app, 'Hosting5', {
+    env: ENV,
+    artifactsBucket: drill.artifactsBucket,
+    userPool: auth.userPool,
+    userPoolClient: auth.userPoolClient,
+    hostedUiDomain: auth.hostedUiDomain,
+  });
+  const t = Template.fromStack(hosting);
+
+  // cognito.py의 _call() 호출 전수(10개) + 부팅용 DescribeUserPoolClient.
+  const required = [
+    'cognito-idp:AdminAddUserToGroup',
+    'cognito-idp:AdminCreateUser',
+    'cognito-idp:AdminDeleteUser',
+    'cognito-idp:AdminDisableUser',
+    'cognito-idp:AdminEnableUser',
+    'cognito-idp:AdminListGroupsForUser',
+    'cognito-idp:AdminRemoveUserFromGroup',
+    'cognito-idp:AdminSetUserPassword',
+    'cognito-idp:DescribeUserPoolClient',
+    'cognito-idp:ListUsers',
+    'cognito-idp:ListUsersInGroup',
+  ];
+
+  // 인스턴스 롤에 붙은 모든 정책 문에서 cognito-idp 액션을 모은다.
+  const granted = new Set<string>();
+  for (const policy of Object.values(t.findResources('AWS::IAM::Policy'))) {
+    for (const stmt of ((policy as any).Properties?.PolicyDocument?.Statement ?? [])) {
+      const actions = Array.isArray(stmt.Action) ? stmt.Action : [stmt.Action];
+      for (const a of actions) {
+        if (typeof a === 'string' && a.startsWith('cognito-idp:')) granted.add(a);
+      }
+    }
+  }
+  for (const action of required) {
+    assert.ok(granted.has(action),
+      `instance role must allow ${action} — /admin/users 502s with AccessDeniedException without it`);
+  }
+  // 와일드카드로 뭉개지 않았는지: 필요한 것만 준다(최소 권한).
+  assert.ok(!granted.has('cognito-idp:*'),
+    'do not grant cognito-idp:* — list the actions the backend actually calls');
+  console.log('OK  hosting: instance role has every Cognito Admin action /admin/users calls');
 }
