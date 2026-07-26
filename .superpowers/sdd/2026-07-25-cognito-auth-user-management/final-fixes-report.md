@@ -37,18 +37,37 @@ http://127.0.0.1:8000/;`(끝에 슬래시)로 `/api/` 접두어를 **벗겨서**
 ### 부수 발견 — `frontend/app/api/[...path]/route.ts`
 
 `GET`/`POST`/`PUT`/`DELETE`만 export하고 있었는데, `proto_public.py`의 두
-라우트는 `PATCH`/`HEAD`/`OPTIONS`도 받는다(호스팅된 프로토타입 자체 서버로
-임의 메서드를 전달하는 프록시라서). Finding 1 이전에는 nginx가 `/api/`를
-FastAPI로 직접 보냈으므로 이 메서드들이 문제없이 도달했지만, 지금은 전부 Next를
-거치므로 export가 없으면 Next가 자체적으로 405/자동 204로 응답해버려 조용히
-기능이 좁아진다. `PATCH`·`OPTIONS`를 추가로 export했다(`HEAD`는 Next가 `GET`
-핸들러로 자동 구현하므로 별도 export 불필요 — `proxy()`가 이미 `req.method`를
-그대로 읽어 전달하니 자동 구현으로 충분하다).
+라우트는 `methods=["GET","POST","PUT","DELETE","PATCH","HEAD","OPTIONS"]`로
+7개 전부를 받는다(호스팅된 프로토타입 자체 서버로 임의 메서드를 전달하는
+프록시라서). Finding 1 이전에는 nginx가 `/api/`를 FastAPI로 직접 보냈으므로
+이 메서드들이 문제없이 도달했지만, 지금은 전부 Next를 거치므로 export가
+없으면 Next가 자체적으로 405(또는 맨 OPTIONS면 자동 생성 204)로 응답해버려
+조용히 기능이 좁아진다.
+
+리뷰에서 지적받아 반영: 처음엔 `PATCH`·`OPTIONS`만 명시적으로 export하고
+`HEAD`는 Next가 `GET` 핸들러로 암묵적으로 자동 구현하는 데 맡겼는데, 다음
+사람이 나머지 메서드를 볼 때 7개 중 몇 개가 실제 export인지 한눈에 안
+보이는 문제가 있었다. `HEAD`도 명시적으로 export해 7개 전부가 named export로
+드러나게 했다. `HEAD`가 요청 본문을 붙이지 않는다는 보장은 `proxy()`의
+`req.method !== "GET" && req.method !== "HEAD"` 가드가 (어떤 export로
+호출됐는지가 아니라) 런타임 `req.method`를 직접 보고 처리하므로 세 export
+전부에 그대로 적용됨을 확인했다. `route.test.ts`에 7개 메서드 전부가
+export되어 있고 실제로 같은 메서드로 백엔드에 전달되는지 확인하는 회귀
+테스트(`it.each`)를 추가했다 — 다음 사람이 조용히 좁히면 즉시 실패한다.
 
 같은 파일의 헤더 주석 — "이 `/api` 프록시는 dev/데모 편의이며, 프로덕션은 …
 대체한다" — 이 finding 1이 지목한 대로 정반대였다. Next의 이 라우트가 바로
 쿠키→Bearer 번역이 일어나는 지점이자 프로덕션 인증 경로 자체라는 내용으로
 다시 썼다.
+
+### nginx location 구조 선택
+
+`/api/`와 `/`를 별도 location으로 유지하고 둘 다 `:3000`을 가리키는 안도
+검토했지만, 두 location이 완전히 같은 upstream·같은 지시자를 향한다면 굳이
+나눌 이유가 없고 나뉘어 있으면 두 블록이 시간이 지나며 어긋날 위험만
+생긴다. 그래서 `location / {}` 하나로 합쳤다 — SSE 지시자(`proxy_buffering
+off`, `proxy_read_timeout 3600s`)가 있어야 할 위치를 "여기 하나뿐"으로
+고정하는 효과도 있다.
 
 ### 테스트 — `infra/test/user-data.assert.ts`
 
@@ -200,7 +219,8 @@ Access-Control-Allow-Credentials: true
 
 - `cd infra && npx tsc --noEmit && npm test` — clean, 5개 assert 파일 전부 OK.
 - `cd backend && .venv/bin/python -m pytest -q` — **536 passed**.
-- `cd frontend && npx vitest run && npx tsc --noEmit` — **516 passed**, tsc clean.
+- `cd frontend && npx vitest run && npx tsc --noEmit` — **523 passed**(원래
+  516 + 7개 메서드 회귀 테스트), tsc clean.
 
 ## 우려 사항
 
