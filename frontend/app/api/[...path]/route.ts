@@ -16,6 +16,12 @@
 // proxy (and carry auth) instead of routing API traffic through Next.
 import { NextRequest } from "next/server";
 import { rewriteLocation } from "@/lib/api/rewriteLocation";
+import { cookies } from "next/headers";
+import { ACCESS_COOKIE, REFRESH_COOKIE, sessionCookieOptions } from "@/lib/auth/cookies";
+import { ID_COOKIE } from "@/lib/auth/cookies";
+import { isRetryableWithRefresh, withBearer } from "@/lib/api/proxyAuth";
+import { cognitoEnv } from "@/lib/auth/cognitoUrls";
+import { refreshTokens } from "@/lib/auth/tokenExchange";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,6 +34,9 @@ const HOP_BY_HOP = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
   "te", "trailer", "transfer-encoding", "upgrade", "content-length",
   "content-encoding", "host",
+  // 세션 쿠키는 이 경계에서 멈춘다: withBearer()가 Authorization으로 번역하고
+  // 백엔드는 쿠키를 모른다.
+  "cookie",
 ]);
 
 function filterHeaders(src: Headers): Headers {
@@ -48,17 +57,45 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   const trailingSlash = req.nextUrl.pathname.endsWith("/") ? "/" : "";
   const url = `${BACKEND}/${path.map(encodeURIComponent).join("/")}${trailingSlash}${search}`;
 
-  const init: RequestInit & { duplex?: "half" } = {
-    method: req.method,
-    headers: filterHeaders(req.headers),
-    redirect: "manual",
+  const jar = await cookies();
+  const access = jar.get(ACCESS_COOKIE)?.value;
+  const refresh = jar.get(REFRESH_COOKIE)?.value;
+
+  const send = async (token: string | undefined): Promise<Response> => {
+    const init: RequestInit & { duplex?: "half" } = {
+      method: req.method,
+      // 쿠키를 Bearer로 번역한다. EventSource는 커스텀 헤더를 못 보내지만
+      // same-origin 쿠키는 자동으로 보내므로, SSE가 이 경로를 타면 인증된다.
+      headers: withBearer(filterHeaders(req.headers), token),
+      redirect: "manual",
+    };
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      init.body = req.body;
+      init.duplex = "half"; // required by undici when streaming a request body
+    }
+    return fetch(url, init);
   };
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    init.body = req.body;
-    init.duplex = "half"; // required by undici when streaming a request body
+
+  let res = await send(access);
+  let refreshedCookies: { access: string; id: string; expiresIn: number } | null = null;
+
+  // access 토큰 만료: 리프레시 후 한 번 재시도한다. 본문이 스트림인 메서드는
+  // 재생할 수 없으므로 제외한다(isRetryableWithRefresh) — 그런 요청은 401이
+  // 그대로 흘러 프론트가 /login으로 보낸다.
+  if (isRetryableWithRefresh(res.status, req.method, Boolean(refresh))) {
+    try {
+      const tokens = await refreshTokens(cognitoEnv(), refresh as string);
+      refreshedCookies = {
+        access: tokens.access_token, id: tokens.id_token,
+        expiresIn: tokens.expires_in,
+      };
+      res = await send(tokens.access_token);
+    } catch {
+      // 리프레시 토큰이 만료·폐기됐다 — 원래의 401을 그대로 흘린다.
+      console.error("token refresh failed; passing 401 through");
+    }
   }
 
-  const res = await fetch(url, init);
   // Re-stream the (possibly SSE) body with clean headers only. Response(body)
   // uses the platform's own framing, so no forbidden HTTP/2 headers leak.
   const headers = filterHeaders(res.headers);
@@ -68,10 +105,20 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   // it just hangs. Re-anchor any self-referential redirect under /api.
   const location = headers.get("location");
   if (location) headers.set("location", rewriteLocation(location, BACKEND));
-  return new Response(res.body, {
-    status: res.status,
-    headers,
-  });
+
+  const out = new Response(res.body, { status: res.status, headers });
+  // 갱신된 토큰을 브라우저 쿠키에 반영한다 — 하지 않으면 매 요청이 만료된
+  // 토큰으로 시작해 리프레시를 반복한다.
+  if (refreshedCookies) {
+    const opts = sessionCookieOptions(refreshedCookies.expiresIn);
+    const attrs = `Path=${opts.path}; Max-Age=${opts.maxAge}; HttpOnly; SameSite=Lax`
+      + (opts.secure ? "; Secure" : "");
+    out.headers.append("set-cookie",
+      `${ACCESS_COOKIE}=${refreshedCookies.access}; ${attrs}`);
+    out.headers.append("set-cookie",
+      `${ID_COOKIE}=${refreshedCookies.id}; ${attrs}`);
+  }
+  return out;
 }
 
 type Ctx = { params: Promise<{ path: string[] }> };
