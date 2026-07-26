@@ -5,10 +5,10 @@
 // bodies aren't used by this contract" per its own comment) — but several
 // endpoints here DO answer 204 (close session, submit answers, stop host).
 // That helper isn't exported, so this file carries its own small fetch
-// wrapper that mirrors client.ts's shape (auth header, Content-Type-only-
+// wrapper that mirrors client.ts's shape (credentials, Content-Type-only-
 // with-a-body, ApiError-on-!ok) plus the one extra rule client.ts doesn't
 // need: a 204 resolves to `undefined` instead of calling res.json().
-import { getAuthToken } from "@/lib/auth";
+import { CREDENTIALS } from "@/lib/auth";
 import { API_BASE_URL, ApiError } from "./client";
 import type { StreamHandlers } from "./sse";
 import type { AgentEvent } from "./types";
@@ -31,20 +31,14 @@ export interface HostStatus {
   log_tail: string;
 }
 
-function authHeaders(): Record<string, string> {
-  const token = getAuthToken();
-  return token ? { "X-Project-Token": token } : {};
-}
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
-    ...authHeaders(),
     ...((init?.headers as Record<string, string>) ?? {}),
   };
   if (init?.body !== undefined && headers["Content-Type"] === undefined) {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+  const res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers, credentials: CREDENTIALS });
   if (!res.ok) {
     let detail = res.statusText;
     try {

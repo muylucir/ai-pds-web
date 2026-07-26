@@ -2,16 +2,18 @@
 // a copy (client.ts's own request() is unexported and assumes a JSON body,
 // which 204 responses don't have).
 import { API_BASE_URL, ApiError } from "./client";
-import { getAuthToken } from "@/lib/auth";
+import { CREDENTIALS } from "@/lib/auth";
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T | null> {
-  const token = getAuthToken();
   const headers: Record<string, string> = {
     ...(init?.body ? { "Content-Type": "application/json" } : {}),
-    ...(token ? { "X-Project-Token": token } : {}),
     ...((init?.headers as Record<string, string>) ?? {}),
   };
-  const res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers,
+    credentials: CREDENTIALS,
+  });
   if (!res.ok) {
     let detail = res.statusText;
     try {

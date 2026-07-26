@@ -1,4 +1,4 @@
-import { getAuthToken } from "@/lib/auth";
+import { CREDENTIALS } from "@/lib/auth";
 import type {
   AuditEntry,
   HistoryItem,
@@ -32,14 +32,8 @@ function encodePath(name: string): string {
   return name.split("/").map(encodeURIComponent).join("/");
 }
 
-function authHeaders(): Record<string, string> {
-  const token = getAuthToken();
-  return token ? { "X-Project-Token": token } : {};
-}
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
-    ...authHeaders(),
     ...((init?.headers as Record<string, string>) ?? {}),
   };
   // Only set Content-Type when there's a body — avoids a needless CORS preflight on GETs.
@@ -49,6 +43,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers,
+    credentials: CREDENTIALS,
   });
   if (!res.ok) {
     let detail = res.statusText;
@@ -161,7 +156,7 @@ export async function getHistory(pid: string): Promise<HistoryItem[]> {
 // response body is binary, not JSON.
 export async function downloadArtifactsArchive(pid: string): Promise<Blob> {
   const res = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(pid)}/artifacts/archive`, {
-    headers: authHeaders(),
+    credentials: CREDENTIALS,
   });
   if (!res.ok) throw new ApiError(res.status, res.statusText);
   return res.blob();
@@ -175,7 +170,7 @@ export async function uploadFile(
   form.append("file", file);
   const res = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(pid)}/uploads`, {
     method: "POST",
-    headers: authHeaders(),
+    credentials: CREDENTIALS,
     body: form,
   });
   if (!res.ok) {
