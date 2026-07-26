@@ -16,6 +16,16 @@ export type Mode = "questions" | "preview" | "artifacts";
 // currently in_progress, show the live preview; otherwise fall back to the
 // running list of touched artifacts.
 //
+// `streaming` guards the questions→preview handoff. submitAnswers clears
+// pendingQuestions the INSTANT the user submits, so during the prototype
+// stage the panel would drop straight to "preview" mid-turn and then snap
+// back to "questions" when the next question arrived — the panel visibly
+// flipping to the prototype viewer on its own between answers (ui-bug:
+// question2.png). A turn in flight means the agent is mid-thought and the
+// next interrupt may be another question, so hold the current fallback
+// instead of committing to the preview. Optional so existing call sites
+// (and the settled case) keep the plain priority order.
+//
 // `stages` (useWorkspaceStream's accumulated "stage" events) is an
 // APPEND-ONLY log — a stage's later "completed" event is a separate array
 // entry, not an overwrite of its earlier "in_progress" one. Filtering the
@@ -23,8 +33,13 @@ export type Mode = "questions" | "preview" | "artifacts";
 // stage that was EVER in_progress, even long after it completed. Reduce to
 // each stage's LATEST event first (same latest-wins-by-name idea as
 // StageSidebar's mergeStages) so only the CURRENT snapshot is considered.
-export function deriveMode(pending: QuestionsPayload | null, stages: StagePayload[]): Mode {
+export function deriveMode(
+  pending: QuestionsPayload | null,
+  stages: StagePayload[],
+  streaming = false,
+): Mode {
   if (pending) return "questions";
+  if (streaming) return "artifacts";
   const latestByName = new Map<string, StagePayload>();
   for (const ev of stages) latestByName.set(ev.stage, ev);
   const active = [...latestByName.values()]
@@ -49,7 +64,7 @@ export function WorkspaceRightPanel({
   onSubmitAnswers: (answers: Record<string, string>) => void;
   busy: boolean;
 }) {
-  const mode = deriveMode(pendingQuestions, stages);
+  const mode = deriveMode(pendingQuestions, stages, busy);
   return (
     <aside
       aria-label="컨텍스트 패널"
