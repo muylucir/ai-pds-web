@@ -64,5 +64,7 @@ describe("/login", () => {
     withParams("error=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E");
     render(<LoginPage />);
     expect(document.body.innerHTML).not.toContain("onerror");
+    // 그냥 아무것도 안 그려서 통과하는 게 아니라, 일반 문구로 대체되는지 확인한다.
+    expect(screen.getByRole("alert")).toHaveTextContent(/로그인에 실패했습니다/);
   });
 });

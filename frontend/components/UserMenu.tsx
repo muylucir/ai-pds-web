@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Me {
   authenticated: boolean;
@@ -16,6 +16,7 @@ const ROLE_LABEL: Record<string, string> = { admin: "관리자", pm: "PM" };
 export function UserMenu() {
   const [me, setMe] = useState<Me | null>(null);
   const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -26,13 +27,35 @@ export function UserMenu() {
     return () => { alive = false; };
   }, []);
 
+  // 열려 있는 동안에만 리스너를 붙인다 — 닫혀 있을 때 document에 리스너가
+  // 남아있지 않게 한다. mousedown을 쓰는 이유: click을 쓰면 메뉴를 여는 그
+  // 클릭이 버블링되어 document까지 올라가 같은 클릭에 바로 닫힐 위험이 있다.
+  // ref로 메뉴 내부 클릭(토글 버튼·항목)은 "바깥 클릭"에서 제외한다.
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
   // 인증 전(로그인 화면)에는 아무것도 그리지 않는다.
   if (!me?.authenticated || !me.email) return null;
 
   const initial = me.email.charAt(0).toUpperCase();
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -47,7 +70,7 @@ export function UserMenu() {
           <div className="px-3 py-2">
             <p className="truncate text-sm font-medium">{me.email}</p>
             <p className="text-xs text-slate-500">
-              {me.role ? ROLE_LABEL[me.role] : "역할 없음"}
+              {ROLE_LABEL[me.role ?? ""] ?? "역할 없음"}
             </p>
           </div>
           {me.role === "admin" && (
