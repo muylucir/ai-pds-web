@@ -48,46 +48,88 @@ cd ../frontend
 npm install
 ```
 
-인프라(`infra/`)는 S3 버킷 + 백엔드 실행 롤을 배포할 때만 필요하다 — 아래 "실행 방법" 절 참고.
+인프라(`infra/`)는 AWS에 배포할 때 필요하다 — 아래 "CDK로 배포하기" 절 참고. 로컬
+개발만 할 거면 S3 버킷을 만드는 `PathfinderDrillStack`만 배포하면 된다.
 
 ---
 
-## 실행 방법
+## CDK로 배포하기 (전체 스택)
 
-프론트(:3000) → 백엔드(:8000) → 백엔드 프로세스 안에서 직접 도는 Strands 에이전트가
-Bedrock을 호출해 응답한다. 백엔드 CORS가 `http://localhost:3000`을 기본 허용하고, 프론트는
-기본 `http://localhost:8000`을 호출한다.
+한 번의 `cdk deploy --all`로 접속 가능한 앱이 뜬다 — 인프라만 만드는 게 아니라 EC2가
+리포를 받아 백엔드·프론트를 빌드·기동하고 CloudFront가 그 앞에 붙는다. 로컬 개발만 할
+거라면 이 절을 건너뛰고 아래 "로컬 개발 실행"으로 가도 된다(단 S3 버킷은 필요하므로
+`PathfinderDrillStack`만 배포한다).
 
-에이전트가 Bedrock을 호출하므로 AWS 자격증명(호스트 롤/프로필 — 인스턴스 프로파일이든 로컬
-`~/.aws/credentials`든, S3 접근과 동일한 자격증명 체인)과 `PATHFINDER_S3_BUCKET`,
-`ANTHROPIC_MODEL`이 필요하다. `backend/.env.example`을 `backend/.env`(gitignored)로 복사해
-값을 채우면 기동 시 자동 로드된다(실 환경변수가 파일보다 우선). 값은 `cd infra && npx cdk
-deploy` 출력(CfnOutputs)에서 가져온다 — 인프라 배포는 최초 1회만 필요하다:
+### 스택 구성
+
+| 스택 | 만드는 것 |
+|---|---|
+| `PathfinderDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
+| `PathfinderAuthStack` | Cognito User Pool + Hosted UI v2 + 역할 그룹(`admin`/`pm`) + 시드 계정 2개 |
+| `PathfinderHostingStack` | VPC + EC2(AL2023 x86_64, m7i.2xlarge, EBS 100GB 암호화) + CloudFront |
+
+세 스택은 서로 의존하므로 **`--all`로 함께 배포**한다(`app.ts`가 버킷·User Pool 참조를
+호스팅 스택에 넘긴다). 배포 순서는 CDK가 정한다.
+
+### 0. 사전 준비
+
+- AWS 자격증명(프로파일 또는 인스턴스 롤) — 관리자급 권한이 필요하다(IAM 롤·Cognito·VPC 생성)
+- **Bedrock 모델 액세스 활성화** — 배포 리전 콘솔에서 사용할 Claude 모델을 켜 둔다.
+  이걸 빼먹으면 배포는 성공하고 첫 대화 턴에서 `AccessDeniedException`이 난다.
+- Node.js 20+
+
+### 1. 의존성 설치 + 부트스트랩
 
 ```bash
 cd infra
-npm install
-npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2   # 계정·리전 최초 1회 (기본 서울)
+npm ci
+npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2   # 계정·리전 조합당 최초 1회
+```
+
+### 2. 배포 전 검증 (선택, 권장)
+
+```bash
+npm test                              # user-data 순수함수 + 스택 어서션 (크리덴셜 불필요)
+npx cdk diff --all                    # 기존 배포와의 차이
+```
+
+### 3. 배포
+
+```bash
 npx cdk deploy --all --require-approval never
 ```
 
-> 기본 배포 리전은 **서울(`ap-northeast-2`)**. 다른 리전에 배포하려면
-> `CDK_DEPLOY_REGION=<region> npx cdk deploy`로 오버라이드한다(Bedrock 프로파일은
-> 글로벌, IAM ARN은 리전 와일드카드라 리전만 바꾸면 그대로 동작).
+`--require-approval never`가 필요한 이유: 세 스택 모두 IAM/보안 그룹을 만들어 매번
+승인 프롬프트가 뜬다. 무인 배포가 아니면 이 플래그를 빼고 직접 확인해도 된다.
 
-배포가 끝나면 CfnOutputs를 출력한다 — 다음 단계 env로 쓴다:
+**소요 시간은 15~20분**이다. CloudFront 배포와 EC2 첫 부팅 빌드(백엔드 venv + 프론트
+`next build`)가 대부분을 차지한다. `cdk deploy`가 끝난 직후에도 EC2 빌드가 진행 중일 수
+있어 **CloudFront가 몇 분간 502를 반환하는 것은 정상**이다.
+
+> ⚠️ **배포되는 것은 커밋된 코드가 아니라 현재 워킹 트리다.** 호스팅 스택은 리포
+> 루트를 zip 에셋으로 올린다(`.git`, `infra`, `docs`, `node_modules`, `.venv`,
+> `.next`, `.env*` 제외 — `lib/pathfinder-hosting-stack.ts`). 미커밋 변경도 그대로
+> 배포되므로, 배포 전 `git status`로 의도한 상태인지 확인한다.
+
+### 4. 출력값 확인
 
 ```
-ArtifactsBucketName → PATHFINDER_S3_BUCKET
-BackendRoleArn      → 백엔드 프로세스가 이 롤(또는 동등한 정책)로 실행돼야 함
-Region              → AWS_REGION / PATHFINDER_S3_REGION (기본 ap-northeast-2)
-UserPoolId          → PATHFINDER_COGNITO_USER_POOL_ID
-UserPoolClientId    → PATHFINDER_COGNITO_CLIENT_ID / COGNITO_CLIENT_ID
-HostedUiDomain      → COGNITO_HOSTED_UI_DOMAIN
-DistributionDomain  → APP_BASE_URL (그리고 브라우저로 접속할 주소)
+PathfinderHostingStack.DistributionDomain → 접속 URL (https://dxxxx.cloudfront.net)
+PathfinderHostingStack.InstanceId         → aws ssm start-session --target <id>
+PathfinderDrillStack.ArtifactsBucketName  → PATHFINDER_S3_BUCKET
+PathfinderDrillStack.BackendRoleArn       → 백엔드가 이 롤(또는 동등 정책)로 실행돼야 함
+PathfinderDrillStack.Region               → AWS_REGION / PATHFINDER_S3_REGION
+PathfinderAuthStack.UserPoolId            → PATHFINDER_COGNITO_USER_POOL_ID
+PathfinderAuthStack.UserPoolClientId      → PATHFINDER_COGNITO_CLIENT_ID / COGNITO_CLIENT_ID
+PathfinderAuthStack.HostedUiDomain        → COGNITO_HOSTED_UI_DOMAIN
 ```
 
-배포가 끝나면 `DistributionDomain`으로 접속해 아래 시드 계정으로 로그인한다:
+EC2 배포에서는 user-data가 이 값들을 자동으로 백엔드/프론트 env에 넣는다 — 손으로
+설정할 필요가 없다. 위 매핑은 **로컬 개발에서 같은 인프라를 쓸 때** 참고한다.
+
+### 5. 접속
+
+`DistributionDomain`으로 접속해 시드 계정으로 로그인한다:
 
 | 계정 | 역할 | 비밀번호 |
 |---|---|---|
@@ -100,9 +142,68 @@ DistributionDomain  → APP_BASE_URL (그리고 브라우저로 접속할 주소
 > `infra/lib/auth-client-config.ts`의 `SEED_PASSWORD`를 교체하고, 시드 계정 대신
 > `/admin/users`에서 초대한 계정을 쓴다.
 
-> ⚠️ 배포 리소스(S3 버킷 · IAM 롤 · Cognito · EC2/CloudFront)는 **비용이 발생**한다
-> (스토리지 + 턴마다 Bedrock 호출 + EC2 상시 가동). 다 쓰면 `npx cdk destroy --all`로
-> 내린다.
+### 리전 변경
+
+기본은 **서울(`ap-northeast-2`)**. 다른 리전은 환경변수로 오버라이드한다:
+
+```bash
+CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all --require-approval never
+```
+
+코드 수정은 필요 없다 — Bedrock 추론 프로파일은 글로벌이고, IAM ARN은 리전
+와일드카드이며, CloudFront 프리픽스 리스트는 `PrefixList.fromLookup`이 배포 리전에서
+자동 조회한다(조회 결과는 `infra/cdk.context.json`에 캐시되며 커밋 대상이다).
+
+### 코드만 다시 배포하기
+
+앱 코드를 고친 뒤 인프라는 그대로 두고 재배포할 때:
+
+```bash
+cd infra && npx cdk deploy PathfinderHostingStack --require-approval never
+```
+
+에셋 해시가 바뀌면 user-data가 갱신되고 EC2가 교체된다. 급한 수정이라면 SSM으로 들어가
+직접 갱신하는 게 빠르다: `aws ssm start-session --target <InstanceId>`.
+
+### 트러블슈팅
+
+| 증상 | 원인 / 대처 |
+|---|---|
+| 배포 직후 CloudFront 502 | EC2 첫 빌드가 진행 중(5~10분). SSM으로 `sudo tail -f /var/log/cloud-init-output.log` |
+| 첫 대화 턴에서 `AccessDeniedException` | 배포 리전에 Bedrock 모델 액세스 미활성화 |
+| 로그인 후 `redirect_mismatch` | 호스팅 스택의 콜백 URL 등록(`UpdateUserPoolClient`)이 실패. `cdk deploy PathfinderHostingStack` 재실행 |
+| `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 최초 1회만 필요하며 결과가 `cdk.context.json`에 캐시된다 |
+| SSH 접속 불가 | 의도된 설계다. SSH 포트가 없고 SSM만 열려 있다 |
+
+### 삭제
+
+```bash
+cd infra && npx cdk destroy --all
+```
+
+> ⚠️ 배포 리소스(S3 · IAM · Cognito · EC2/CloudFront)는 **비용이 발생**한다
+> (스토리지 + 턴마다 Bedrock 호출 + EC2 상시 가동). 워크숍이 끝나면 내린다.
+>
+> ⚠️ User Pool은 `RemovalPolicy.DESTROY`이므로 **사용자 계정이 전원 함께 사라진다.**
+> S3 아티팩트 버킷에 남기고 싶은 산출물이 있으면 먼저 내려받는다.
+
+스택 내부 설계(콜백 URL 순환 의존, 클라이언트 시크릿 조회, 오리진 보호 등)는
+`infra/README.md`에 자세히 있다.
+
+---
+
+## 로컬 개발 실행
+
+프론트(:3000) → 백엔드(:8000) → 백엔드 프로세스 안에서 직접 도는 Strands 에이전트가
+Bedrock을 호출해 응답한다. 백엔드 CORS가 `http://localhost:3000`을 기본 허용하고, 프론트는
+기본 `http://localhost:8000`을 호출한다.
+
+에이전트가 Bedrock을 호출하므로 AWS 자격증명(호스트 롤/프로필 — 인스턴스 프로파일이든 로컬
+`~/.aws/credentials`든, S3 접근과 동일한 자격증명 체인)과 `PATHFINDER_S3_BUCKET`,
+`ANTHROPIC_MODEL`이 필요하다. `backend/.env.example`을 `backend/.env`(gitignored)로 복사해
+값을 채우면 기동 시 자동 로드된다(실 환경변수가 파일보다 우선). 값은 위 CDK 배포의
+CfnOutputs에서 가져온다 — 로컬 개발만 할 거면 버킷·롤만 있으면 되므로
+`npx cdk deploy PathfinderDrillStack`으로 충분하다.
 
 **터미널 1 — 백엔드:**
 ```bash
