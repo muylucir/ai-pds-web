@@ -147,25 +147,36 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   const { path } = await ctx.params;
   return proxy(req, path);
 }
-// PATCH and OPTIONS: needed because Finding 1's routing fix means ALL /api/*
+export async function DELETE(req: NextRequest, ctx: Ctx) {
+  const { path } = await ctx.params;
+  return proxy(req, path);
+}
+// PATCH/HEAD/OPTIONS: needed because Finding 1's routing fix means ALL /api/*
 // traffic now transits this route handler, including /api/proto/{pid}/{slug}
 // (backend/pathfinder/routes/proto_public.py's proxy_prototype), which
-// forwards arbitrary methods to a hosted prototype's own server. Before that
-// fix, nginx sent /api/ straight to FastAPI and these methods reached it
-// directly; without exporting them here, Next would itself answer with a
-// blanket 405/auto-generated 204 before the request ever reaches proxy() —
-// silently narrowing what a previewed prototype can do. (HEAD needs no
-// explicit export: Next auto-implements it by calling the GET handler above,
-// which already proxies correctly since it reads the real req.method.)
+// forwards arbitrary methods to a hosted prototype's own server — that route
+// declares methods=["GET","POST","PUT","DELETE","PATCH","HEAD","OPTIONS"].
+// Before Finding 1, nginx sent /api/ straight to FastAPI and these methods
+// reached it directly; without exporting them here, Next would itself answer
+// with a blanket 405 (or an auto-generated 204 for a bare OPTIONS) before the
+// request ever reaches proxy() — silently narrowing what a previewed
+// prototype can do. Next *can* auto-implement HEAD by calling GET, but an
+// explicit export keeps all seven methods visible/testable as real exports
+// rather than relying on that implicit behavior.
+//
+// HEAD must not carry a request body — proxy()'s existing
+// `req.method !== "GET" && req.method !== "HEAD"` guard on init.body already
+// covers this for any of these three exports, since it inspects req.method
+// at runtime rather than which named handler was invoked.
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { path } = await ctx.params;
   return proxy(req, path);
 }
-export async function OPTIONS(req: NextRequest, ctx: Ctx) {
+export async function HEAD(req: NextRequest, ctx: Ctx) {
   const { path } = await ctx.params;
   return proxy(req, path);
 }
-export async function DELETE(req: NextRequest, ctx: Ctx) {
+export async function OPTIONS(req: NextRequest, ctx: Ctx) {
   const { path } = await ctx.params;
   return proxy(req, path);
 }

@@ -209,3 +209,33 @@ describe("GET/POST/DELETE /api/[...path]", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 });
+
+// Finding 1's routing fix merges nginx's /api/ and / locations onto Next, so
+// EVERY method that used to reach FastAPI directly now transits this route
+// handler — including PATCH/HEAD/OPTIONS, which backend/pathfinder/routes/
+// proto_public.py's proxy_prototype route accepts for hosted prototype
+// previews. If any of the seven aren't exported as named handlers, Next
+// itself answers with a 405 (or an auto-generated 204 for a bare OPTIONS)
+// before proxy() ever runs — silently narrowing what a previewed prototype
+// can do. This test pins all seven so that regression can't creep back in.
+describe("all seven methods proto_public.py accepts are exported and proxy through", () => {
+  it.each(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] as const)(
+    "%s is exported and forwards the same method to the backend",
+    async (method) => {
+      vi.mocked(cookies).mockResolvedValue(makeJar({}) as never);
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(null, { status: 200 }));
+
+      const route = await import("./route");
+      const handler = route[method];
+      expect(handler, `expected route.ts to export ${method}`).toBeTypeOf("function");
+
+      const req = new NextRequest("https://app.example.com/api/proto/p1/demo/", { method });
+      await handler(req, ctx(["proto", "p1", "demo", ""]));
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const sentInit = fetchMock.mock.calls[0][1] as RequestInit;
+      expect(sentInit.method).toBe(method);
+    },
+  );
+});
