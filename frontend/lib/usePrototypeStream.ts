@@ -2,6 +2,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { streamPrototypeEvents, submitPrototypeAnswers, interruptSession } from "@/lib/api/prototypes";
+import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import type { AgentEvent } from "@/lib/api/types";
 import type { QuestionsPayload } from "@/lib/api/types";
 import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
@@ -121,6 +122,9 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
           finish();
         },
         onError: () => {
+          // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
+          // 세션을 확인해 만료면 로그인으로 보낸다. 살아 있으면 아래 메시지가 맞다.
+          void redirectIfSessionExpired(undefined, window.location.pathname);
           patchAi(aiId, (it) => ({
             ...it,
             streaming: false,
