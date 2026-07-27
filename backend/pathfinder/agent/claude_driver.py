@@ -503,10 +503,29 @@ class ClaudeDriver:
              with `wait(timeout=0)` -- measured: each subsequent buffered message
              becomes available after exactly one such turn.
 
-        Hence `_sweep()` below loops until the receive genuinely has nothing
+        Hence `sweep()` below loops until the receive genuinely has nothing
         ready, and is called BOTH before the queue drain AND again after it (a
         `yield` inside the drain loop gives the re-armed receive its turn, so a
         message can legitimately arrive mid-drain).
+
+        Sweeping is not sufficient on its own, though, because sweeping is
+        exactly what ARMS a receiver: `wait(timeout=0)` registers `next_msg` as
+        an anyio `waiting_receiver`, and a message sent while it is parked is
+        handed straight to it, bypassing the buffer. So any suspension between
+        the last sweep and the `finally`'s cancel is an unswept window. The one
+        that mattered was `yield done`: the consumer (runner.py:134-140) awaits
+        a real S3 workspace sync BEFORE coming back for the next event -- tens
+        to hundreds of ms, and the CLI hands over its next message right into
+        it. Verified: `waiting_receivers 1->0, buffer 0->0` on the send, then
+        the item gone after the cancel, at every sync duration tried.
+
+        `retire()` closes that class of window by construction rather than by
+        timing: cancel the receive BEFORE suspending, because anyio skips a
+        receiver with a pending cancellation and buffers the item instead
+        (memory.py:223-231) -- so a fresh `receive_response()` iterator still
+        finds it. Every exit path either sweeps-then-retires or is provably
+        safe: `StopAsyncIteration` holds its result in the future (cancel is a
+        no-op), and the exception path is already terminal.
 
         Why this matters at all, rather than being a theoretical race: the CLI
         writes the `{"type":"assistant"}` message (the model's "why I'm asking"
@@ -518,6 +537,12 @@ class ClaudeDriver:
         itself before asking. Losing those messages means a bare question card
         with no explanation. builder.py never hit any of this because it never
         returns on `asked`.
+
+        One ordering rule, separate from the invariant: the terminal event is
+        always LAST. `frontend/lib/api/sse.ts:29` closes the EventSource on the
+        `done` frame, so anything after it never reaches `onEvent` -- a `stage`
+        or `document` emitted by a tool during the same ready burst would be
+        silently dropped and the sidebar/document panel would go stale.
         """
         next_msg: asyncio.Future = asyncio.ensure_future(agen.__anext__())
         ended = False
@@ -529,9 +554,21 @@ class ClaudeDriver:
             The `wait(timeout=0)` is load-bearing, not defensive: a freshly
             re-armed `ensure_future` is never `done()` on its creation tick, so
             without giving it a turn this would stop after one message and the
-            rest would be destroyed by the `finally`."""
+            rest would be destroyed by the `finally`.
+
+            The terminal `done` that _translate makes from a ResultMessage is
+            NOT yielded here -- it only sets `ended`, so the single exit below
+            can place it after the queue (see the ordering rule)."""
             nonlocal next_msg, ended
             while True:
+                if ended:
+                    # The terminal path sweeps once more, and `next_msg` still
+                    # holds the already-consumed ResultMessage (it is not
+                    # re-armed after `ended`). Without this guard that message
+                    # would be handed to _translate a SECOND time -- harmless
+                    # for the stock translation, which yields only `done`, but
+                    # it double-runs whatever side effects a message carries.
+                    return
                 if not next_msg.done():
                     await asyncio.wait({next_msg}, timeout=0)
                     if not next_msg.done():
@@ -542,11 +579,23 @@ class ClaudeDriver:
                     ended = True
                     return
                 for ev in self._translate(msg):
+                    if ev.kind == "done":
+                        ended = True
+                        continue
                     yield ev
+                if ended:
+                    return
                 next_msg = asyncio.ensure_future(agen.__anext__())
 
+        def retire() -> None:
+            """Un-park the receive before suspending, so a message that arrives
+            while we are away gets BUFFERED (recoverable by the next iterator)
+            instead of handed to a receiver we are about to cancel."""
+            if not next_msg.done():
+                next_msg.cancel()
+
         try:
-            while not ended:
+            while True:
                 await asyncio.wait({next_msg}, timeout=_POLL_SECONDS)
                 async for ev in sweep():
                     yield ev
@@ -554,28 +603,33 @@ class ClaudeDriver:
                 for ev in self.drain_queue():
                     yield ev
                     asked = asked or ev.kind == "questions"
-                if asked and not ended:
-                    # Sweep again before returning: each `yield` in the drain
-                    # loop above hands control to the scheduler, which is
-                    # exactly the window the re-armed receive needs to be
-                    # handed another message. Per the invariant we do not
-                    # reason about whether that happened -- we just look.
-                    async for ev in sweep():
-                        yield ev
-                    yield AgentEvent(kind="done")
-                    return
+                if not (asked or ended):
+                    continue
+                # Single exit for both terminal cases (question raised, or the
+                # turn ended). Sweep once more: each `yield` in the drain loop
+                # above hands control to the scheduler, which is exactly the
+                # window the re-armed receive needs to be handed another
+                # message. Per the invariant we do not reason about whether
+                # that happened -- we just look.
+                async for ev in sweep():
+                    yield ev
+                # Anything a tool queued (stage/document/file_changed) must
+                # precede the terminal event -- see the ordering rule.
+                for ev in self.drain_queue():
+                    yield ev
+                # Retire BEFORE the terminal yield: the consumer suspends there
+                # for a full S3 sync, and a message arriving meanwhile must be
+                # buffered rather than handed to a receiver we then cancel.
+                retire()
+                yield AgentEvent(kind="done")
+                return
         finally:
             # The consumer may abandon this generator mid-stream (SSE client
-            # disconnect -> aclose() -> GeneratorExit), and the `asked` return
-            # above always leaves one receive in flight: without this cancel the
-            # __anext__ future outlives the generator and asyncio logs "Task was
-            # destroyed but it is pending!". The cancel is also what DESTROYS an
-            # already-handed message, which is why every path out of the loop
-            # sweeps first (see the invariant).
-            if not next_msg.done():
-                next_msg.cancel()
-        for ev in self.drain_queue():
-            yield ev
+            # disconnect -> aclose() -> GeneratorExit), which reaches here with
+            # a possibly-parked receive. `retire()` above covers the deliberate
+            # exit; this covers abandonment, and keeps asyncio from logging
+            # "Task was destroyed but it is pending!".
+            retire()
 
     # ---- the single-turn slot ----
     #

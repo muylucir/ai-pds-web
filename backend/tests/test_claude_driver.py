@@ -5,6 +5,7 @@
 # receive_response()가 아무것도 내지 않는다. 그 콜백이 questions 이벤트를 만드는
 # 유일한 경로이므로, 대본에 AskUserQuestion ToolUseBlock을 넣는 가짜로는 이
 # 파일의 어떤 질문 테스트도 실제 경로를 타지 못한다(자세한 근거는 그 모듈 참고).
+import asyncio
 import json
 
 import pytest
@@ -40,7 +41,7 @@ def _driver(tmp_path, scripted, s3=None):
 
     def factory(session):
         captured["session"] = session
-        client = sdk_client_for(scripted, d._on_can_use_tool)
+        client = sdk_client_for(scripted, d._on_can_use_tool, driver=d)
         captured["client"] = client
         return client
 
@@ -118,15 +119,104 @@ async def test_a_message_arriving_during_the_queue_drain_survives(tmp_path):
     # 큐를 비우는 루프의 각 yield가 스케줄러에 제어를 넘기고, 그것이 재장전된
     # 수신이 메시지를 건네받는 창이다. 즉 questions가 큐에 들어간 뒤에도
     # 메시지가 정당하게 도착할 수 있으므로, 나가기 전에 한 번 더 훑어야 한다.
-    d, _, _ = _driver(tmp_path, {"questions": True,
-                                 "during_drain": "드레인 중 도착"})
+    d, _, cap = _driver(tmp_path, {"questions": True,
+                                   "during_drain": "드레인 중 도착"})
     events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
     kinds = [e.kind for e in events]
     texts = [e.text for e in events if e.kind == "message"]
+    # 창을 실제로 맞췄는지 먼저 단정한다. _DURING_DRAIN_TURNS의 유효 구간은
+    # [2,3]으로 좁고 _pump의 await 횟수가 바뀌면 조용히 공허해진다 — 그때
+    # "순서가 맞다"만 보면 통과해버린다. 가짜가 드라이버 상태를 직접 관찰해
+    # 기록한 값을 본다.
+    assert cap["client"].drain_window_hit, (
+        "during_drain 메시지가 의도한 창(질문이 큐에서 빠져나가 yield되는 중)에 "
+        "도착하지 않았다 — _DURING_DRAIN_TURNS를 다시 맞춰야 한다")
     assert "드레인 중 도착" in texts, kinds
     # 이 메시지는 questions 뒤에 온다 — 큐를 비우는 중에 도착했으므로 나가기 전
     # 마지막 훑기만이 건질 수 있다. 순서 자체가 그 훑기가 동작했다는 증거다.
     assert kinds.index("questions") < kinds.index("message", 1), kinds
+    assert kinds[-1] == "done"
+
+
+@pytest.mark.asyncio
+async def test_a_message_arriving_during_the_post_done_sync_is_not_destroyed(tmp_path):
+    # 마지막 훑기는 next_msg에 스케줄러 턴을 주면서 끝난다 — 그것이 곧 anyio
+    # waiting_receiver로 등록하는 행위다. 그 상태로 `yield done`에 매달리면
+    # runner.py:134-140이 실제 S3 동기화(수십~수백 ms)를 await하는 동안 CLI가
+    # 보낸 다음 메시지가 버퍼를 건너뛰고 그 수신자에게 직접 건네지고, 소비자가
+    # 돌아온 뒤 finally의 cancel이 그것을 파괴한다.
+    #
+    # 해법은 타이밍이 아니라 구조다: 매달리기 전에 수신을 은퇴시키면 anyio가
+    # 취소 예정 수신자를 건너뛰고 버퍼에 넣으므로(memory.py:223-231) 다음
+    # 이터레이터가 건진다.
+    d, _, cap = _driver(tmp_path, {"questions": True})
+    events = []
+    async for ev in d.run("hi", {"session_id": "s-1"}):
+        events.append(ev)
+        if ev.kind == "done":
+            # 프로덕션이 하는 일: 종결 이벤트를 보고 S3 동기화를 await한다.
+            await asyncio.sleep(0.02)
+            cap["client"].deliver_late("동기화 중 도착")
+            await asyncio.sleep(0.02)
+    assert [e.kind for e in events] == ["message", "questions", "done"]
+
+    # 답변 턴의 새 이터레이터가 그 메시지를 그대로 이어받아야 한다.
+    iid = json.loads(next(e.payload for e in events if e.kind == "questions"))[
+        "interrupt_id"]
+    later = [ev async for ev in d.run_answers(iid, {"1": "A"},
+                                              {"session_id": "s-1"})]
+    assert "동기화 중 도착" in [e.text for e in later if e.kind == "message"], \
+        [(e.kind, e.text) for e in later]
+
+
+@pytest.mark.asyncio
+async def test_a_question_turn_yields_exactly_one_terminal_event(tmp_path):
+    # 마지막 훑기가 ResultMessage를 소비하면 _translate이 done을 만들고, 그 뒤
+    # 종결 yield가 두 번째 done을 낸다. 그러면 runner.py:134가 워크스페이스
+    # 전체를 S3로 두 번 올리고, POST /message(turns.py:29-31) 클라이언트는
+    # 종결 이벤트를 두 개 받는다.
+    d, _, _ = _driver(tmp_path, {"questions": True,
+                                 "result_with_question": True})
+    kinds = [e.kind async for e in d.run("hi", {"session_id": "s-1"})]
+    assert kinds.count("done") == 1, kinds
+    assert kinds[-1] == "done"
+
+
+@pytest.mark.asyncio
+async def test_the_final_message_of_a_turn_is_translated_only_once(tmp_path):
+    # 종결 경로는 한 번 더 훑는데, `ended` 이후 next_msg는 이미 소비한
+    # ResultMessage를 그대로 들고 있다(재장전하지 않으므로). 가드가 없으면 그
+    # 메시지가 _translate에 두 번 들어가 메시지가 실어 온 부수효과가 두 번 돈다.
+    d, _, _ = _driver(tmp_path, {"text": ["본문"]})
+    seen: list[str] = []
+    original = d._translate
+
+    def counting(msg):
+        seen.append(type(msg).__name__)
+        return original(msg)
+
+    d._translate = counting  # type: ignore[method-assign]
+    kinds = [e.kind async for e in d.run("hi", {"session_id": "s-1"})]
+    assert kinds[-1] == "done"
+    assert seen.count("ResultMessage") == 1, seen
+
+
+@pytest.mark.asyncio
+async def test_queued_tool_events_are_emitted_before_the_terminal_event(tmp_path):
+    # sse.ts:29가 done 프레임에서 EventSource를 close하므로 done 뒤의 프레임은
+    # onEvent에 닿지 않는다 — stage는 조용히 사라지고(useWorkspaceStream.ts:
+    # 134-137이 stages에 넣지 못한다), document면 문서 패널이 낡은 채로 남는다.
+    # 한 패스에서 여러 메시지를 몰아 훑는 이번 라운드의 동작이 정확히 그 상황을
+    # 일상적으로 만든다.
+    d, _, cap = _driver(tmp_path, {"questions": True,
+                                   "during_drain": "드레인 중 도착",
+                                   "stage_during_terminal_sweep": True})
+    kinds = [e.kind async for e in d.run("hi", {"session_id": "s-1"})]
+    assert cap["client"].drain_window_hit, "의도한 창에 도달하지 못했다"
+    # 종결 훑기가 yield하는 동안 도구가 emit한 이벤트 — 그 패스의 중간 드레인은
+    # 이미 지나갔으므로 종결 경로의 드레인만이 이것을 내보낼 수 있다.
+    assert "stage" in kinds, kinds
+    assert kinds.index("stage") < kinds.index("done"), kinds
     assert kinds[-1] == "done"
 
 

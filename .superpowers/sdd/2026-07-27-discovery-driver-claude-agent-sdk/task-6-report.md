@@ -643,3 +643,170 @@ $ cd backend && .venv/bin/python -m pytest -q
    latency inside `_save_pending_quietly` — which does **not** apply when
    `session_id` is empty, since that save is skipped entirely. The fix removes
    the dependence on that accident either way.
+
+---
+
+# Fix round 3 — the `yield done` window, double `done`, and terminal-event ordering
+
+All three reproduced before changing code, on a real anyio memory-object stream
+driving the real driver. A fourth defect — introduced by this round's own fix —
+was found while trying to isolate the third; it is fixed and covered too.
+
+## CRITICAL — `yield done` was an unswept window holding a parked receiver
+
+**Confirmed, and worse than "sometimes": it lost the message at every timing
+tried, including `s3_sync=0`.** Instrumenting the stream state on the send makes
+the mechanism unambiguous:
+
+```
+waiting_receivers 1->0, buffer 0->0     <- handed straight to the parked receiver
+answers turn=[('done', None)]           -> LOST
+```
+
+The post-drain sweep returns *because* it just gave `next_msg` its scheduler
+turn — which is what registers it as an anyio `waiting_receiver`. `_pump` then
+suspends on `yield done` with that receiver parked; the consumer
+(runner.py:134-140) awaits a real S3 workspace sync before returning; the CLI's
+next message is handed to the parked receiver, bypassing the buffer; the
+`finally` cancels it and the message is gone — not in the buffer for
+`_continue_after_answers`'s fresh iterator either.
+
+**Fix** (the reviewer's, verified independently here): `retire()` — cancel the
+receive *before* suspending. anyio skips a receiver with a pending cancellation
+and buffers the item instead (`memory.py:223-231`, read to confirm). After:
+
+```
+waiting_receivers 1->0, buffer 0->1     <- buffered
+answers turn=[('message','post-done prose'), ('done', None)] -> RECOVERED
+```
+
+at `s3_sync` = 0, 20, 50, 200 ms. The `finally` still calls `retire()`, which is
+what closes the generator-abandoned exit by construction rather than by luck.
+
+The docstring's false claim ("every path out of the loop sweeps first") is
+replaced with the accurate statement: sweeping is what *arms* a receiver, so any
+suspension between the last sweep and the cancel is a window, and the fix is
+structural.
+
+## IMPORTANT — double `done`
+
+**Confirmed:** `['message', 'done', 'questions']` — the sweep translated a
+ResultMessage into `done`, and the terminal yield added a second.
+
+**Fix.** `sweep()` no longer yields the `done` that `_translate` produces; it
+only sets `ended`. There is now a single exit that emits exactly one terminal
+event, so the two cases (question raised / turn ended) cannot both contribute
+one. That also removes the need for the reviewer's `if not ended:` guard — the
+terminal event has one and only one origin.
+
+## IMPORTANT — queue events pushed past `done`
+
+**Confirmed:** `['message', 'done', 'stage']`. Since `sse.ts:29` closes the
+EventSource on `done`, that `stage` never reaches `onEvent`, so
+`useWorkspaceStream.ts:134-137` never appends it to the stage sidebar; a dropped
+`document` would leave `setLastDocument`/`setActiveDoc` stale.
+
+**Fix.** The terminal path drains the queue *before* the terminal event. Now
+`['message', 'stage', 'done']`.
+
+Isolating this one took real work, and it is where I nearly repeated a past
+mistake. Instrumenting the pre-terminal drain showed it firing **zero** times
+across the whole suite and my first two probes — the same evidence that led me
+to wrongly delete the post-drain sweep in round 2. So this time I did not trust
+it, and probed for reachability directly: with the terminal sweep yielding a
+message (the `during_drain` shape) and a tool emitting during that yield, the
+event is emitted correctly with the drain and **dropped entirely without it**.
+Reachable and load-bearing. The lesson from round 2 held: absence of firing
+under one scenario is not unreachability.
+
+## Fourth defect, introduced by this round's own fix — the last message was
+## translated twice
+
+Found while probing the above. After `ended`, `next_msg` still holds the
+consumed ResultMessage (it is deliberately not re-armed), so the terminal
+sweep handed that same message to `_translate` a second time. Harmless for the
+stock translation, which only yields `done` — but visible the moment a message
+carries a side effect, which is exactly how I found it: a duplicated `stage`,
+`['message','stage','stage','done']`. Guarded with an early `return` in
+`sweep()` when `ended`. Covered by
+`test_the_final_message_of_a_turn_is_translated_only_once`, which counts
+`_translate` calls rather than asserting on output, so it catches the side-effect
+class rather than one instance of it.
+
+## `_DURING_DRAIN_TURNS` re-verification, and its removal
+
+The reviewer flagged that the band was narrow [2,3] and would silently
+re-vacuate if `_pump`'s await count changed — which this round changes. It did:
+re-measuring after the restructure gave a band of exactly **{5}**, a single
+value. The `drain_window_hit` self-check added this round caught that
+immediately (the test failed loudly rather than passing vacuously), which is
+what it was for.
+
+Rather than re-tune a one-wide constant, the fake now finds the window by
+**observing driver state** — the question is pending and no longer on the queue,
+i.e. the driver is mid-drain — with a 50-turn bound only as a hang guard. The
+constant is gone, so there is nothing left to re-tune. The test still asserts
+`drain_window_hit` first, so an unreachable window fails loudly.
+
+The fake also moved from a list to a **real anyio memory-object stream**, because
+the entire bug class lives in anyio's delivery semantics (parked-receiver handoff
+vs. buffering) and a list-based fake cannot exhibit either — it literally cannot
+distinguish a correct driver from one that loses messages.
+
+## Revert-verification (each fix, independently)
+
+| Reverted | Failing test |
+|---|---|
+| `retire()` before the terminal yield | `test_a_message_arriving_during_the_post_done_sync_is_not_destroyed` |
+| `sweep()` yields its own `done` again | `test_a_question_turn_yields_exactly_one_terminal_event` |
+| pre-terminal queue drain removed | `test_queued_tool_events_are_emitted_before_the_terminal_event` |
+| `ended` guard in `sweep()` removed | `test_the_final_message_of_a_turn_is_translated_only_once` |
+
+Each fails alone for its own fix; all restored -> 30 passed.
+
+## Commands and output
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_claude_driver.py tests/test_claude_driver_contract.py -q
+30 passed in 0.34s
+```
+(was 26; +4)
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_agent_driver.py tests/test_strands_driver_contract.py tests/test_proto_builder.py -q
+34 passed in 0.25s
+```
+
+```
+$ cd backend && .venv/bin/python -m pytest -q
+606 passed, 1 warning in 12.21s
+```
+602 -> 606, exactly the four new tests. Protected files show zero diff; no
+"Task was destroyed" / "never awaited" warnings. Busy-wait re-checked: a question
+turn costs 3.1 ms CPU.
+
+## Concerns after this round
+
+1. **`_pump` has now produced a defect in three consecutive rounds, including
+   one in this round's own fix.** Each was a different suspension point in the
+   same class. The invariant is now enforced structurally rather than by
+   reasoning about interleavings (`retire()` before suspending; a single terminal
+   exit; queue before terminal), which is the strongest available without an
+   integration test — but I would not treat any future edit here as safe on the
+   strength of a green suite. The exit enumeration is written into the docstring
+   so the next editor starts from the list rather than rediscovering it.
+2. **"It never fires under instrumentation" is not evidence of unreachability.**
+   That reasoning cost round 2 a real bug and nearly cost this round the
+   ordering fix. Both times, probing for reachability directly (construct the
+   interleaving; check whether removing the code changes behaviour) gave the
+   right answer. Recorded here because it is the single most useful lesson from
+   this task.
+3. **First round's Concern 2 still stands** and is now the last unverified
+   assumption: the resume path depends on `Query`'s anyio buffer ownership. This
+   round makes the dependence more precise — correctness now rests on
+   *buffered-not-handed*, which `retire()` secures — but it is still SDK-internal
+   and only the live-CLI round trip in Task 9's checklist can close it.
+4. **Deferred, unchanged from round 2:** `disconnect()` leaves the S3 pending
+   record, so `pending()` still advertises an unanswerable question after
+   teardown (one `await clear_pending` fixes it, once Task 8 wires
+   `disconnect()`).
