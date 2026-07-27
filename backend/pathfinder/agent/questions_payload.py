@@ -133,3 +133,35 @@ def normalize_questions_payload(payload: Any) -> dict:
         "raw_markdown": None,
         "questions": questions,
     }
+
+
+# SDK AskUserQuestion의 input을 프론트 QuestionFile 형태로 옮긴다. letter는 SDK
+# 옵션 순서를 그대로 인덱싱한다 — 답변을 SDK 라벨로 되번역할 때(_answer_to_sdk)
+# 그 인덱스가 키이므로 순서가 어긋나면 다른 보기를 고른 것이 된다.
+#
+# builder._to_question_file에서 옮겨온 것이다. 두 경로가 한 함수로 수렴하면
+# is_other 중복 교정(normalize_questions_payload)이 프로토타입 빌드에도 적용된다.
+def question_file_from_sdk(sdk_questions: list[dict], *, name: str) -> dict:
+    questions = []
+    for i, q in enumerate(sdk_questions, start=1):
+        raw_options = q.get("options") or []
+        options = []
+        for j, o in enumerate(raw_options):
+            label = str(o.get("label") or "")
+            desc = str(o.get("description") or "")
+            text = f"{label} — {desc}".rstrip(" —") if desc else label
+            options.append({
+                "letter": _LETTERS[j] if j < len(_LETTERS) else f"Z{j}",
+                "text": text, "is_other": False, "recommended": False,
+            })
+        questions.append({
+            "number": i,
+            "category": q.get("header") or None,
+            "text": str(q.get("question") or ""),
+            "answer": None,
+            "multi_select": bool(q.get("multiSelect")),
+            "options": options,
+        })
+    # 정규화가 최종 계약을 강제한다 — 옵션 없는 질문은 여기서 ValueError.
+    return normalize_questions_payload(
+        {"name": name, "preamble": None, "questions": questions})

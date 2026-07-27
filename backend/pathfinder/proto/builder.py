@@ -22,6 +22,7 @@ import logging
 from pathlib import PurePosixPath
 from typing import Any, AsyncIterator, Callable
 
+from pathfinder.agent.questions_payload import question_file_from_sdk
 from pathfinder.models import AgentEvent
 
 _log = logging.getLogger(__name__)
@@ -32,24 +33,6 @@ _LETTERS = "ABCDEFGHIJ"
 # A workshop build runs unattended -- there is no operator to approve a Write,
 # so any mode that can prompt stalls the turn until the idle timer kills it.
 DEFAULT_PERMISSION_MODE = "bypassPermissions"
-
-
-def _to_question_file(sdk_questions: list[dict]) -> dict:
-    """SDK AskUserQuestion input → frontend QuestionFile shape (types.ts),
-    so QuestionForm renders it unmodified. Letters index the SDK options."""
-    questions = []
-    for i, q in enumerate(sdk_questions, start=1):
-        options = [{"letter": _LETTERS[j],
-                    "text": f"{o.get('label', '')} — {o.get('description', '')}".rstrip(" —"),
-                    "is_other": False, "recommended": False}
-                   for j, o in enumerate(q.get("options", []))]
-        questions.append({
-            "number": i, "category": q.get("header") or None,
-            "text": q.get("question", ""), "options": options,
-            "answer": None, "multi_select": bool(q.get("multiSelect")),
-        })
-    return {"name": "prototype-questions", "preamble": None,
-            "questions": questions, "parse_ok": True, "raw_markdown": None}
 
 
 def _rel(path: str, workspace: str) -> str | None:
@@ -247,7 +230,7 @@ class PrototypeBuilder:
         import json as _json, uuid
         iid = uuid.uuid4().hex
         sdk_questions = input_data.get("questions", [])
-        qfile = _to_question_file(sdk_questions)
+        qfile = question_file_from_sdk(sdk_questions, name="prototype-questions")
         payload = _json.dumps({"interrupt_id": iid, "questions": qfile},
                               ensure_ascii=False)
         self._pending_payload = payload
