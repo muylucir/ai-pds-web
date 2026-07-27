@@ -408,13 +408,68 @@ async def test_the_error_path_does_not_strand_queued_events_either(tmp_path):
     for i in (1, 2, 3):
         d._emit(AgentEvent(kind="file_changed", path=f"doc{i}.md"))
 
+    # 세 가지를 각각 단정한다. _queue 내용만 보면 공허해진다 — relay 호출을 아예
+    # 지워도 "이탈"이 일어나지 않아 루프가 끝까지 돌고, pop이 없었으니 _queue
+    # 단정이 자동으로 참이 된다(실측: 두 뮤테이션 모두 37 passed).
+    seen = []
     agen = runner.send_message("hi").__aiter__()
     async for ev in agen:
+        seen.append((ev.kind, ev.path))
         if ev.kind == "file_changed":
             break                      # 실패 경로의 relay 중간에 이탈
     await agen.aclose()
     await _reconnect_gap()
+
+    # (1) relay가 실제로 돌았다 — 소비자가 첫 항목을 받았다. 이것이 없으면
+    #     "이탈이 일어났다"는 전제 자체가 무너지고 아래 단정들이 무의미해진다.
+    assert seen[-1] == ("file_changed", "doc1.md"), seen
+    # (2) batch pop이 아니다 — 나머지는 소유된 채로 남아 있다.
     assert [e.path for e in d._queue] == ["doc1.md", "doc2.md", "doc3.md"]
+    # (3) error는 큐 뒤에 온다. sse.ts:29는 done뿐 아니라 error에서도
+    #     EventSource를 close하므로, error가 먼저 나가면 뒤따르는 stage/document
+    #     프레임은 클라이언트에 닿지 못하고 조용히 사라진다.
+    assert "error" not in [k for k, _ in seen], seen
+
+    # 이탈하지 않는 소비자로 한 번 더 — 순서를 끝까지 본다.
+    d2, ws2, _ = _driver(tmp_path / "second", {"text": ["ok"]})
+    d2._client_factory = lambda session: _QueryFails([])  # type: ignore[assignment]
+    runner2 = AgentRunner(project_id="p1", driver=d2, s3=d2._s3, local_root=ws2,
+                          session={"session_id": "s-1"})
+    for i in (1, 2, 3):
+        d2._emit(AgentEvent(kind="file_changed", path=f"doc{i}.md"))
+    kinds = [ev.kind async for ev in runner2.send_message("hi")]
+    assert kinds == ["file_changed"] * 3 + ["error"], kinds
+
+
+@pytest.mark.asyncio
+async def test_the_answers_error_path_relays_the_queue_before_the_error(tmp_path):
+    # _continue_after_answers의 실패 경로도 같은 모양이다(_stream 쪽과 형제).
+    # 여기도 sse.ts:29가 error에서 스트림을 닫으므로 큐가 먼저 나가야 한다.
+    # 별도 테스트인 이유: 위 테스트는 query() 실패라 _stream 쪽만 태우고,
+    # 형제 경로에 같은 뮤테이션을 걸면 살아남았다.
+    d, runner, cap = _runner(tmp_path, {"questions": True,
+                                        "turn_continues_after_answer": True})
+    ev = [e async for e in runner.send_message("hi")]
+    assert any(e.kind == "questions" for e in ev)
+    # 답변 턴에 들어가는 시점에 소유된 도구 이벤트들.
+    for i in (1, 2, 3):
+        d._emit(AgentEvent(kind="file_changed", path=f"doc{i}.md"))
+
+    # 큐를 건드리지 않은 채로 예외를 내야 이 분기를 태운다. reader.error는 안 된다
+    # — 그건 relay가 두 큐를 소진한 뒤에 올라오므로 큐가 이미 비어 있고, 실제로
+    # 그렇게 쓴 첫 버전은 _pump의 relay로 통과해 뮤테이션이 살아남았다.
+    # translate_into_outbox()는 매 패스에서 relay보다 먼저 돌므로 여기서 터지면
+    # 큐가 그대로 남은 상태로 실패 경로에 들어간다(망가진 메시지 shape).
+    def _boom(msg):
+        raise RuntimeError("bad message shape")
+
+    d._translate = _boom  # type: ignore[method-assign]
+    cap["client"].deliver_late("아무 메시지")
+
+    got = [(e.kind, e.path) async for e in runner.send_answers({"1": "A"})]
+    kinds = [k for k, _ in got]
+    assert kinds == ["file_changed"] * 3 + ["error"], got
+    assert d._queue == []
 
 
 @pytest.mark.asyncio

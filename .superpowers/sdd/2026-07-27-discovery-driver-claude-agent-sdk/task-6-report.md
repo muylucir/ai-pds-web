@@ -1281,3 +1281,98 @@ retrieved" output anywhere (grep count 0). Probe files removed.
 4. **Unchanged deferral:** `disconnect()` leaves the S3 pending record, so
    `pending()` still advertises an unanswerable question after teardown (one
    `await clear_pending`, once Task 8 wires `disconnect()`).
+
+---
+
+# Fix round 6 — the error-path test was pinning the wrong half
+
+## The finding, confirmed
+
+`test_the_error_path_does_not_strand_queued_events_either` asserted only the
+final `_queue` contents. Both mutants the reviewer named pass on the committed
+code, reproduced here before changing anything:
+
+| Mutant | Result before |
+|---|---|
+| `_relay_queue()` call deleted from `_stream`'s error path | **37 passed** |
+| `yield error` moved ABOVE the relay | **37 passed** |
+
+**Diagnosis.** The test's loop was `async for ... if ev.kind == "file_changed":
+break`. Delete the relay and no `file_changed` frame is ever produced, so the
+`break` never fires, the generator runs to completion, and the `_queue`
+assertion is *trivially* true because nothing was popped. The test pinned
+"don't batch-pop" and nothing else — not "do relay", not the ordering. Exactly
+the silent-window-loss mode of rounds 2-4, one level up: the assertion was on
+the end state instead of on what the consumer received.
+
+The ordering half matters beyond the test, as the reviewer notes: `sse.ts:29`
+closes the EventSource on `error` as well as `done`, so queued
+`stage`/`document` frames emitted after it never reach `onEvent`.
+
+## Fix
+
+Three separate assertions, plus a second consumer that does not abandon:
+
+1. **the relay ran** — `seen[-1] == ("file_changed", "doc1.md")`, i.e. the
+   consumer really received an item, which is also what makes "it abandoned
+   mid-sequence" a true premise rather than an assumption;
+2. **not a batch pop** — the remainder is still owned;
+3. **`error` comes last** — asserted directly with a non-abandoning consumer:
+   `kinds == ["file_changed"] * 3 + ["error"]`.
+
+Both mutants now fail:
+
+```
+### MUTANT A: relay call deleted   -> FAILED test_the_error_path_... (1 failed, 36 passed)
+### MUTANT B: yield error above    -> FAILED test_the_error_path_... (1 failed, 36 passed)
+```
+
+## A sibling path the same mutation still survived
+
+While verifying, I ran the identical swap on `_continue_after_answers`'s error
+path — the sibling of the one under review — and it **survived (37 passed)**.
+Nothing covered it, so I did not leave it: a second test now does, and this is
+worth recording because my first attempt at it was itself vacuous.
+
+That first version forced the failure with `reader.error`, and it passed *with
+the relay deleted*. Traced it: `raise reader.error` fires only **after**
+`relay()` has drained both queues to exhaustion, so by then the queue is empty
+and the events the test observed had come out of `_pump`'s relay, never the
+error path. The honest reachable shape is a failure that happens with the queue
+**untouched**: `translate_into_outbox()` runs before `relay()` on every pass, so
+a message whose shape breaks `_translate` raises there. With that,
+`['file_changed'] x3 + ['error']`, and both sibling mutants (swap and delete)
+fail.
+
+Terminal-event property re-checked on both error shapes: exactly one, last (2/2).
+
+## Commands and output
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_claude_driver.py tests/test_claude_driver_contract.py -q
+38 passed in 0.38s
+```
+(was 37; +1 — the sibling error-path test)
+
+```
+$ cd backend && .venv/bin/python -m pytest -q
+614 passed, 1 warning in 12.55s
+```
+613 → 614. `git diff HEAD` touches **only** `tests/test_claude_driver.py` — no
+driver change this round, since both defects were in the test. Protected files
+untouched; no "Task was destroyed" / "never awaited" / "never retrieved" output
+(grep count 0). Probes removed.
+
+## Concerns after this round
+
+1. **Both defects this round were in a test, not the driver** — the code was
+   already correct and the mutants lost nothing permanently (items stay owned in
+   `_queue`). What was broken was the evidence. Worth noting that the failure
+   mode has now migrated from the driver to the tests guarding it, and that my
+   own first fix for the sibling path reproduced it a third time; asserting on
+   what the consumer *received* rather than on driver end state is what
+   distinguishes the versions that hold.
+2. Carried by the coordinator to Task 8, not fixed here: `disconnect()` leaves
+   an owned, unanswerable `questions` in `_queue` as well as the S3 pending
+   record, so the edit that adds `await clear_pending` must also clear
+   `self._queue`. Unreachable today.
