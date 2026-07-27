@@ -50,6 +50,37 @@ def _driver(tmp_path, scripted, s3=None):
     return d, ws, captured
 
 
+def _runner(tmp_path, scripted, s3=None):
+    """The driver behind the REAL runner.AgentRunner.
+
+    The abandonment tests below go through it rather than calling the driver
+    directly, because `runner.py:144-152` is what actually abandons this
+    generator in production (SSE disconnect, proxy timeout, navigation) and it
+    wraps the driver in one more generator layer — which is exactly what
+    `GeneratorExit` has to propagate through. A driver-only test would not
+    exercise that layer.
+    """
+    from pathfinder.runner import AgentRunner
+
+    s3 = s3 or FakeS3Store()
+    d, ws, cap = _driver(tmp_path, scripted, s3=s3)
+    runner = AgentRunner(project_id="p1", driver=d, s3=s3, local_root=ws,
+                         session={"session_id": "s-1"})
+    return d, runner, cap
+
+
+async def _reconnect_gap() -> None:
+    """The event-loop ticks a real reconnect takes.
+
+    `aclose()` runs only the OUTERMOST generator's `finally` synchronously, so
+    `GeneratorExit` needs a few ticks to reach the driver's nested generators
+    (round 1's IMPORTANT 3 measured the same thing). A browser reconnect is a
+    network round trip, so this is not an artificial delay.
+    """
+    for _ in range(4):
+        await asyncio.sleep(0)
+
+
 @pytest.mark.asyncio
 async def test_places_the_rules_before_the_first_turn(tmp_path):
     # 룰이 없으면 에이전트가 워크플로우를 모르는 채로 돈다.
@@ -293,6 +324,135 @@ async def test_a_message_arriving_as_the_turn_is_abandoned_survives(tmp_path):
     assert "중단 직전 도착" in texts, [(e.kind, e.text) for e in later]
     assert "중단 이후 도착" in texts, [(e.kind, e.text) for e in later]
     assert [e.kind for e in later][-1] == "done"
+
+
+@pytest.mark.asyncio
+async def test_messages_not_yet_yielded_survive_abandonment(tmp_path):
+    # 라운드 4가 만든 회귀. 소유권을 anyio 버퍼에서 드라이버로 옮긴 것은 맞지만,
+    # inbox 전체를 로컬 리스트로 batch pop한 뒤 yield했기 때문에 아직 yield하지
+    # 않은 나머지가 제너레이터 프레임에 살았고 GeneratorExit이 그것을 파괴했다.
+    # 즉 _pump이 스스로 선언한 불변식("생성기가 끝날 때 inbox에 남은 것은 다음
+    # pump이 relay한다")을 batch pop이 거짓으로 만들었다.
+    #
+    # 실제 runner.AgentRunner를 통과시킨다 — runner.py:144-152가 이 경로를
+    # 일상적으로 타고, 제너레이터가 한 겹 더 있는 것이 실제 모양이다.
+    d, runner, cap = _runner(tmp_path, {"questions": True,
+                                        "preface_texts": ["문장 1", "문장 2",
+                                                          "문장 3"]})
+    seen = []
+    agen = runner.send_message("hi").__aiter__()
+    async for ev in agen:
+        seen.append(ev.text)
+        break                      # 첫 프레임 직후 SSE가 끊긴다
+    await agen.aclose()
+    assert seen == ["문장 1"]
+    # 나머지는 사라지지 않고 소유된 채로 남아 있어야 한다.
+    assert [e.text for e in d._reader.outbox] == ["문장 1", "문장 2", "문장 3"]
+
+    await _reconnect_gap()
+    await runner.pending()         # 재접속: GET /pending이 질문을 준다
+    later = [ev async for ev in runner.send_answers({"1": "A"})]
+    relayed = [e.text for e in later if e.kind == "message"]
+    for text in ("문장 2", "문장 3"):
+        assert text in relayed, [(e.kind, e.text) for e in later]
+    assert [e.kind for e in later][-1] == "done"
+
+
+@pytest.mark.asyncio
+async def test_queued_tool_events_not_yet_yielded_survive_abandonment(tmp_path):
+    # 같은 batch-pop 형태가 drain_queue()에도 있었다(이쪽은 라운드 4 이전부터).
+    # 한 yield 동안 도구가 세 개를 emit하고 소비자가 첫 개 뒤에 사라지면 두 개가
+    # 죽었다. 두 루프가 같은 형태이므로 같은 규칙(배달 후에 pop)으로 함께 고친다.
+    d, runner, cap = _runner(tmp_path, {"questions": True})
+    seen = []
+    agen = runner.send_message("hi").__aiter__()
+    async for ev in agen:
+        seen.append((ev.kind, ev.path))
+        if ev.kind == "questions":
+            # 한 버스트에 세 개 — MultiEdit 한 번, 또는 report_stage 연속 호출.
+            for i in (1, 2, 3):
+                d._emit(AgentEvent(kind="file_changed", path=f"doc{i}.md"))
+        if ev.kind == "file_changed":
+            break                  # yield 시퀀스 중간에 이탈
+    await agen.aclose()
+    assert ("file_changed", "doc1.md") in seen
+    assert [e.path for e in d._queue] == ["doc1.md", "doc2.md", "doc3.md"]
+
+    await _reconnect_gap()
+    await runner.pending()
+    later = [ev async for ev in runner.send_answers({"1": "A"})]
+    paths = [e.path for e in later if e.kind == "file_changed"]
+    for i in (2, 3):
+        assert f"doc{i}.md" in paths, [(e.kind, e.path) for e in later]
+    assert [e.kind for e in later][-1] == "done"
+
+
+@pytest.mark.asyncio
+async def test_the_error_path_does_not_strand_queued_events_either(tmp_path):
+    # 실패 경로도 같은 batch-pop 형태였다. 도달 모양: 앞선 턴이 relay 중간에
+    # 버려져 _queue에 항목이 소유된 채 남고(라운드 5의 수정으로 이제 가능하다),
+    # 다음 턴이 query()에서 죽는다 — 그 항목들을 relay할 _pump이 아직 없으므로
+    # 실패 경로의 드레인이 유일한 출구다. 여기서 batch pop하면 소비자가 중간에
+    # 사라진 순간 나머지가 죽는다(실측: doc2/doc3 소멸).
+    from pathfinder.runner import AgentRunner
+    from tests.fakes.fake_sdk import FakeSdkClient
+
+    class _QueryFails(FakeSdkClient):
+        async def query(self, text):
+            raise RuntimeError("transport died")
+
+    d, ws, _ = _driver(tmp_path, {"text": ["ok"]})
+    d._client_factory = lambda session: _QueryFails([])  # type: ignore[assignment]
+    runner = AgentRunner(project_id="p1", driver=d, s3=d._s3, local_root=ws,
+                         session={"session_id": "s-1"})
+    for i in (1, 2, 3):
+        d._emit(AgentEvent(kind="file_changed", path=f"doc{i}.md"))
+
+    agen = runner.send_message("hi").__aiter__()
+    async for ev in agen:
+        if ev.kind == "file_changed":
+            break                      # 실패 경로의 relay 중간에 이탈
+    await agen.aclose()
+    await _reconnect_gap()
+    assert [e.path for e in d._queue] == ["doc1.md", "doc2.md", "doc3.md"]
+
+
+@pytest.mark.asyncio
+async def test_an_already_answered_question_card_is_not_re_shown(tmp_path):
+    # 배달 후 pop의 대가: 이탈 시점에 배달 중이던 항목은 소유된 채로 남아 다시
+    # 나간다(at-least-once). questions는 그게 문제가 된다 — 이미 답한 카드가
+    # 다시 뜨고, 거기에 답하면 future가 없으니 "no pending questions"로 거절된다.
+    # 그 라운드의 questions 이벤트는 이 호출이 실어 온 답변이 존재 목적이므로
+    # 이행된 것이고, 유실이 아니다.
+    d, runner, cap = _runner(tmp_path, {"questions": True,
+                                        "turn_continues_after_answer": True,
+                                        "preface_texts": ["문장 1"]})
+    agen = runner.send_message("hi").__aiter__()
+    async for _ in agen:
+        break                      # questions가 아직 배달되지 않은 상태로 이탈
+    await agen.aclose()
+    await _reconnect_gap()
+    assert any(e.kind == "questions" for e in d._queue)   # 소유된 채로 남았다
+
+    await runner.pending()
+    got = []
+
+    async def answers():
+        async for ev in runner.send_answers({"1": "A"}):
+            got.append((ev.kind, ev.text))
+
+    task = asyncio.ensure_future(answers())
+    for _ in range(8):
+        await asyncio.sleep(0)
+    cap["client"].finish_turn()
+    await asyncio.wait_for(task, 3)
+
+    kinds = [k for k, _ in got]
+    assert "questions" not in kinds, got     # 답한 카드를 다시 띄우지 않는다
+    assert runner._pending_interrupt_id is None
+    assert kinds[-1] == "done"
+    # 그러면서도 그 턴의 본문은 여전히 나온다.
+    assert "문장 1" in [t for _, t in got], got
 
 
 @pytest.mark.asyncio

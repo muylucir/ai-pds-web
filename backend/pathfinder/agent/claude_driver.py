@@ -136,8 +136,9 @@ class _MessageReader:
     iterator and never stops reading; `_pump` only ever consumes from
     `inbox`, a plain list on the driver. Then:
 
-      - The pump owns no cancellable receive, so no suspension of the pump can
-        destroy a message. There is no window to enumerate.
+      - The pump owns no cancellable RECEIVE, so no suspension of the pump can
+        destroy a message in flight from the SDK. There is no window to
+        enumerate.
       - Unread messages live in OUR inbox, not in anyio's buffer, so they
         survive the consumer abandoning the generator (SSE disconnect, proxy
         timeout, navigation — runner.py:144-152 takes that path routinely) and
@@ -150,6 +151,12 @@ class _MessageReader:
     `asyncio.Event`, which carries no payload — cancelling it cannot lose
     anything. That is the whole structural difference.
 
+    NOTE what this does NOT buy on its own, because assuming otherwise was the
+    round-4 regression: moving ownership here protects a message only while it
+    is IN `inbox`/`outbox`. An event copied out into a local list before being
+    yielded is back to living in a frame `GeneratorExit` destroys. `_pump`'s
+    invariant 2 states the ownership rule that closes that half.
+
     The reader is cancelled only when the turn it belongs to is being
     REPLACED (`_retire_reader`) or the subprocess is going away
     (`disconnect`); never while the turn may still continue.
@@ -158,6 +165,12 @@ class _MessageReader:
     def __init__(self, agen) -> None:
         self._agen = agen
         self.inbox: list = []
+        # Translated events not yet delivered to the consumer. This is their
+        # DURABLE HOME -- see `_relay`'s ownership rule. It lives on the reader
+        # so its lifetime is exactly the turn's: `_retire_reader` disposing of
+        # the reader disposes of the undelivered events of the turn nobody will
+        # relay, and a new turn starts with an empty one.
+        self.outbox: list[AgentEvent] = []
         self.ended = False
         self.error: BaseException | None = None
         # Woken on every append so the pump reacts immediately instead of
@@ -205,6 +218,17 @@ class _MessageReader:
             await asyncio.wait_for(self.wake.wait(), timeout)
         except TimeoutError:  # asyncio.TimeoutError is TimeoutError on 3.11
             pass
+
+
+def _iid_of(event: AgentEvent) -> str | None:
+    """The interrupt_id inside a `questions` event's payload, or None."""
+    if not event.payload:
+        return None
+    try:
+        value = json.loads(event.payload).get("interrupt_id")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return value if isinstance(value, str) else None
 
 
 def _rel(path: str, workspace: str) -> str | None:
@@ -425,11 +449,28 @@ class ClaudeDriver:
         submit_document push stage/document events through here."""
         self._queue.append(event)
 
-    def drain_queue(self) -> list[AgentEvent]:
-        out = []
+    # There is deliberately NO `drain_queue()` here, though builder.py:183 has
+    # one and this file otherwise mirrors it. A batch pop is precisely the
+    # defect round 5 fixed: it moves events out of the queue that owns them and
+    # into the caller's frame, which `GeneratorExit` destroys, so every one not
+    # yet yielded is lost. Every consumer of `_queue` on this driver goes
+    # through `_relay_queue` instead. Re-adding a batch drain would reintroduce
+    # the bug at whatever call site used it.
+
+    async def _relay_queue(self) -> AsyncIterator[AgentEvent]:
+        """Yield queued tool/hook events, popping each only after delivery.
+
+        Same ownership rule as `_pump`'s `relay` (read that one for the full
+        argument): an event stays at the head of `self._queue` across the
+        `yield`, so a consumer that walks away mid-sequence leaves the remainder
+        owned rather than stranded in a dead generator's frame. Used by the
+        error paths, which yield whatever a tool queued before the failure.
+        """
         while self._queue:
-            out.append(self._queue.pop(0))
-        return out
+            ev = self._queue[0]
+            yield ev
+            if self._queue and self._queue[0] is ev:
+                self._queue.pop(0)
 
     async def _ensure_client(self, session: dict):
         if self._client is None:
@@ -639,53 +680,85 @@ class ClaudeDriver:
            dropped and the sidebar/document panel would go stale. Hence the
            terminal harvest below drains BOTH sources to exhaustion before
            `done`.
-        2. No message the SDK has handed us is dropped. Now true by
-           construction rather than by placement of sweeps: every message is
-           popped from `inbox` exactly once (so double translation, and
-           double-running whatever side effect a message carries, is also
-           impossible), and whatever is still in `inbox` when this generator
-           ends -- deliberately or by abandonment -- is relayed by the next
-           pump over the same reader.
+        2. No event this driver has produced is dropped. Both invariants rest on
+           ONE ownership rule, and it is checkable by reading rather than by
+           reasoning about interleavings:
+
+               An event is in exactly one place that outlives this generator,
+               and it leaves that place only AFTER the consumer has received it.
+
+           The places are `reader.outbox` (translated messages) and
+           `self._queue` (tool/hook events). `_relay` below is the only code
+           that yields, and it is the only code that removes an item -- popping
+           after the `yield` returns, never before. So an item is either
+           already delivered or still owned; `GeneratorExit` at any yield leaves
+           the remainder owned, and the next pump over the same reader relays
+           it.
+
+           This is the rule the previous round got wrong. It moved message
+           ownership out of anyio's buffer and into the driver (which is what
+           fixed the abandoned-receive class), but then batch-popped the whole
+           inbox into a LOCAL LIST before yielding any of it -- so the
+           not-yet-yielded remainder lived in this generator's frame, which
+           `GeneratorExit` destroys. Reproduced through the real AgentRunner: a
+           3-message burst, consumer abandons after the first, 2 lost. The batch
+           pop is exactly what made this invariant false, so no batch pop.
         """
         asked = False
         ended = False
 
-        def harvest() -> list[AgentEvent]:
-            """Translate every message the reader has already collected.
+        def translate_into_outbox() -> None:
+            """Move messages inbox -> outbox, translating. Never yields.
 
-            Synchronous on purpose: no `await`/`yield` between popping a message
-            and translating it, so there is no interleaving to reason about.
+            Wholly synchronous, so a message is never in neither place: it
+            leaves `inbox` and enters `outbox` with no suspension in between.
+            `outbox` lives on the reader, so anything still there when this
+            generator dies belongs to the next pump over the same reader.
             """
             nonlocal ended
-            out: list[AgentEvent] = []
             while reader.inbox and not ended:
                 for ev in self._translate(reader.inbox.pop(0)):
                     if ev.kind == "done":
                         ended = True   # terminal event comes from the exit below
                         continue
-                    out.append(ev)
-            return out
+                    reader.outbox.append(ev)
+
+        async def relay():
+            """Yield from both owned queues, popping only after delivery.
+
+            `queue[0]` then `pop(0)` -- not `pop(0)` then `yield` -- is the whole
+            fix. If the consumer abandons us at the `yield`, the event is still
+            at the head of its owned queue.
+            """
+            nonlocal asked
+            for queue in (reader.outbox, self._queue):
+                while queue:
+                    ev = queue[0]
+                    yield ev
+                    # Reached only if the consumer came back for the next item,
+                    # i.e. it really received this one.
+                    if queue and queue[0] is ev:
+                        queue.pop(0)
+                    asked = asked or ev.kind == "questions"
 
         while True:
             # The only cancellable wait in this function, and it waits on an
             # Event -- which carries no payload, so a cancellation here cannot
             # lose anything.
             await reader.settle(_POLL_SECONDS)
-            for ev in harvest():
+            translate_into_outbox()
+            async for ev in relay():
                 yield ev
-            for ev in self.drain_queue():
-                yield ev
-                asked = asked or ev.kind == "questions"
             if reader.ended and not reader.inbox:
                 ended = True
             if asked or ended:
                 break
         if reader.error is not None:
             # Surfaced on the caller's stack so `_stream` can degrade it to the
-            # contract's "agent turn failed" -- messages already harvested above
-            # have been relayed first.
+            # contract's "agent turn failed" -- messages already relayed above
+            # have reached the consumer first.
             raise reader.error
-        # Terminal harvest. Every `yield` above handed control to the scheduler,
+        # Terminal relay. Every `yield` above handed control to the scheduler,
         # which is exactly when the reader can append another message and a tool
         # callback can queue another event -- so drain both to exhaustion before
         # the terminal event, or an event that arrived during those yields would
@@ -694,10 +767,10 @@ class ClaudeDriver:
         # finished: after `asked` the CLI is blocked on the permission response,
         # and after `ended` the iterator is done.
         while True:
-            events = harvest() + self.drain_queue()
-            if not events:
+            translate_into_outbox()
+            if not (reader.outbox or self._queue):
                 break
-            for ev in events:
+            async for ev in relay():
                 yield ev
         yield AgentEvent(kind="done")
 
@@ -753,7 +826,7 @@ class ClaudeDriver:
                 yield ev
         except Exception:
             _log.exception("claude sdk turn failed")
-            for ev in self.drain_queue():
+            async for ev in self._relay_queue():
                 yield ev
             yield AgentEvent(kind="error", text="agent turn failed")
             return
@@ -792,7 +865,7 @@ class ClaudeDriver:
                 yield ev
         except Exception:
             _log.exception("claude sdk answer turn failed")
-            for ev in self.drain_queue():
+            async for ev in self._relay_queue():
                 yield ev
             yield AgentEvent(kind="error", text="agent turn failed")
             return
@@ -941,6 +1014,17 @@ class ClaudeDriver:
                     return
                 fut.set_result(answers)
                 await self._clear_pending_quietly()
+                # Drop any `questions` event for THIS round that is still owned
+                # and undelivered. It exists when the question turn was abandoned
+                # before the card reached the browser (the user then got it from
+                # GET /pending instead), and relaying it now would re-show a card
+                # the user has just answered -- and answering it a second time is
+                # refused with "no pending questions", since the future is gone.
+                # The answers this call carries are that event's whole purpose,
+                # so it has been fulfilled, not lost.
+                self._queue[:] = [ev for ev in self._queue
+                                  if not (ev.kind == "questions"
+                                          and _iid_of(ev) == interrupt_id)]
                 async for ev in self._continue_after_answers():
                     yield ev
                 return

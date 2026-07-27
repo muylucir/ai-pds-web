@@ -1095,3 +1095,189 @@ the long-lived reader task is cleaned up at loop close. A question turn costs
 5. **Deferred, unchanged from rounds 2-3:** `disconnect()` leaves the S3 pending
    record, so `pending()` still advertises an unanswerable question after
    teardown (one `await clear_pending` fixes it, once Task 8 wires it).
+
+---
+
+# Fix round 5 — the ownership rule, and the batch pop that broke it
+
+## The finding is correct, and it is mine
+
+Reproduced end-to-end through the real `runner.AgentRunner` before changing
+anything, in both loops:
+
+```
+=== HARVEST batch-pop (regression)
+  consumer saw: ['문장 1']
+  LOST MESSAGES: ['문장 2', '문장 3']
+=== DRAIN_QUEUE batch-pop (pre-existing, same shape)
+  consumer saw: [('message', None), ('file_changed', 'doc1.md')]
+  LOST QUEUE EVENTS: ['doc2.md', 'doc3.md']
+```
+
+**Diagnosis.** Round 4 moved message ownership out of anyio's buffer and into
+the driver, which is what killed the abandoned-receive class. But `harvest()`
+then popped the whole inbox into a **local list** before yielding any of it, so
+the not-yet-yielded remainder lived in the generator's frame — and
+`GeneratorExit` destroys frames. The reviewer's framing is exactly right: I
+moved the items from a place with the wrong owner to a place with *no* owner.
+
+And it directly contradicted the invariant I had written one round earlier
+("whatever is still in `inbox` when this generator ends is relayed by the next
+pump"). The batch pop is what made that false. I have fixed the claim as well as
+the code: `_MessageReader`'s docstring now carries an explicit NOTE that moving
+ownership onto the reader protects an event **only while it is in
+`inbox`/`outbox`**, and that copying it into a local list puts it back in a
+frame `GeneratorExit` destroys.
+
+## The rule, stated so it can be checked by reading
+
+`_pump`'s invariant 2 is now one sentence a future editor can check without
+reasoning about interleavings:
+
+> An event is in exactly one place that outlives this generator, and it leaves
+> that place only AFTER the consumer has received it.
+
+Enforced by three things, each independently revert-verified:
+
+1. **`reader.outbox`** — translated-but-undelivered events live on the *reader*,
+   not in the pump's frame. Its lifetime is exactly the turn's, so
+   `_retire_reader` disposes of a dead turn's undelivered events and a new turn
+   starts empty.
+2. **`translate_into_outbox()`** is wholly synchronous, so a message is never in
+   neither place: it leaves `inbox` and enters `outbox` with no suspension
+   between.
+3. **`relay()` pops after the `yield` resumes**, not before — `queue[0]`, yield,
+   then `pop(0)`. Reaching the line after the `yield` *is* the proof the consumer
+   received the item.
+
+**Yes, I unified the two loops.** They were the same shape and, per the
+coordinator's note, two half-fixes of one bug is how this got to round five.
+`relay()` iterates `(reader.outbox, self._queue)` with identical semantics, and
+the error paths use a shared `_relay_queue()` helper. `drain_queue()` is
+**deleted** — it had no remaining caller on this driver, and leaving a method
+whose shape *is* the bug is an invitation to reintroduce it at the next call
+site. A comment marks the deliberate divergence from `builder.py:183`.
+
+## Why pop-after-delivery rather than pop-before
+
+Probed, because it is the one real trade-off:
+
+```
+A pop-BEFORE-yield: delivered ['a'] still owned ['c']
+A  -> 'b' produced but never received; recoverable? False
+B pop-AFTER-resume: delivered ['a'] still owned ['b', 'c']
+B  -> every unreceived item recoverable? True
+```
+
+A consumer can be cancelled at its `__anext__` await *after* the generator
+produced the value — the same shape as anyio's parked receiver. So
+pop-before-yield loses the in-flight item, and at-least-once is the only safe
+choice. The cost is that the item being delivered at the moment of abandonment
+may be delivered twice.
+
+**One consequence of that needed its own fix, and it was user-visible.** A
+re-delivered `questions` event re-shows a card the user has already answered,
+and answering it again is refused (`no pending questions`) because the future is
+gone:
+
+```
+answers turn: [('message', None), ('questions', 'c6a1f89b…'), ('done', None)]
+answering the re-shown card -> [('error', 'no pending questions')]
+```
+
+`run_answers` now drops any still-owned `questions` event for the round it is
+answering. That is not a loss: the answers this call carries are that event's
+entire purpose, so it has been *fulfilled*. Verified the fix does not truncate
+the turn — the post-answer prose still arrives, and the terminal event is still
+exactly one.
+
+Duplicates of `message`/`stage`/`file_changed` are left alone deliberately: the
+frontend appends them (`useWorkspaceStream.ts:134-148`), so at worst a line
+repeats in the transcript, which is strictly better than losing the model's
+prose. Flagged as a concern rather than papered over.
+
+## Revert-verification — each new test against its own fix
+
+| Reverted | Failing test(s) |
+|---|---|
+| `relay()` batch-pops into a local list (the exact round-4 regression) | all three of `..._messages_not_yet_yielded_...`, `..._queued_tool_events_not_yet_yielded_...`, `..._already_answered_question_card_...` |
+| pop **before** the yield instead of after | same three |
+| `outbox` a local list instead of on the reader | `..._messages_not_yet_yielded_...`, `..._already_answered_question_card_...` |
+| stale-`questions` filter removed | `..._already_answered_question_card_is_not_re_shown` (alone) |
+| error paths use `drain_queue()` batch pop again | `test_the_error_path_does_not_strand_queued_events_either` (alone) |
+
+All restored → 37 passed. Verified by running each, not asserted.
+
+The error-path mutant **initially survived** — nothing covered it. Rather than
+commit unfalsifiable polish I probed for reachability by construction and found
+the shape that reaches it: a previous turn abandoned mid-relay leaves items
+owned in `_queue` (now possible *because* of this round's fix), then the next
+turn fails at `query()`, before any `_pump` exists to relay them. Batch pop
+strands `doc2`/`doc3` there; `_relay_queue` does not. Now covered.
+
+New tests go through the **real `AgentRunner`**, per the reviewer: that is the
+component that abandons the generator in production, and it adds the extra
+generator layer `GeneratorExit` must propagate through. They also wait out
+`_reconnect_gap()` — `aclose()` runs only the outermost generator's `finally`
+synchronously (round 1's IMPORTANT 3 measured the same), and a browser reconnect
+is a network round trip, so this is honest rather than an artificial delay.
+
+## Terminal-event property re-verified
+
+16/16 paths yield exactly one terminal event, last — the 15 from round 4 plus a
+new one for this round's shape (abandoned question turn → reconnect → answers
+turn relays the leftovers):
+
+```
+ALL PATHS EXACTLY ONE TERMINAL EVENT, LAST: True (16/16)
+```
+
+## Commands and output
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_claude_driver.py tests/test_claude_driver_contract.py -q
+37 passed in 0.36s
+```
+(was 33; +4)
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_agent_driver.py tests/test_strands_driver_contract.py tests/test_proto_builder.py -q
+34 passed in 0.25s
+```
+
+```
+$ cd backend && .venv/bin/python -m pytest -q
+613 passed, 1 warning in 12.47s
+```
+609 → 613, exactly the four new tests. `git diff HEAD` shows zero changes to
+`driver.py`, `strands_tools.py`, `proto/builder.py`, `runner.py`,
+`driver_contract.py`. No "Task was destroyed" / "never awaited" / "never
+retrieved" output anywhere (grep count 0). Probe files removed.
+
+## Concerns after this round
+
+1. **Event delivery is now explicitly at-least-once at the abandonment
+   boundary.** The item in flight when the consumer disappears is re-delivered
+   on the next turn. This is a deliberate trade — probe A shows at-most-once
+   loses that item outright — and `questions` is special-cased because a
+   duplicate there is user-visible and unanswerable. `message`, `stage`,
+   `document` and `file_changed` can therefore repeat once after an SSE drop.
+   The frontend appends rather than replaces, so the visible effect is a
+   repeated transcript line or stage entry, never a wrong state; and losing the
+   model's prose would be worse. If a duplicate turns out to matter for
+   `document` (it calls `setLastDocument`/`setActiveDoc`), the fix is an event
+   id and consumer-side dedupe, which is a frontend change and out of scope
+   here.
+2. **`drain_queue()` is gone from this driver** while `builder.py` keeps its
+   own. That is an intentional divergence from the reference implementation,
+   marked with a comment, on the grounds that the batch-pop shape is the defect.
+   `builder.py` is a protected file and has the same latent issue at its four
+   call sites; I did not touch it, but whoever revisits the two drivers should
+   know it is there.
+3. **Round 4's Concern 1 stands, narrowed.** The remaining obligation for a
+   future editor is two rules, both now written where they are enforced: call
+   `_retire_reader()` only where a turn is replaced or torn down, and never move
+   an event out of `outbox`/`_queue` before the consumer has received it.
+4. **Unchanged deferral:** `disconnect()` leaves the S3 pending record, so
+   `pending()` still advertises an unanswerable question after teardown (one
+   `await clear_pending`, once Task 8 wires `disconnect()`).
