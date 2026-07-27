@@ -79,7 +79,66 @@ Frontend ◀── SSE ── AgentRunner ◀── AgentEvent ── driver_fac
 `run_answers(interrupt_id, answers, session)`, `pending(session)`.
 `runner.py`가 이것만 쓰고(`:129,167,183`), `AgentEvent`(kind: message ·
 questions · stage · document · file_changed · status · done · error)도 불변이므로
-**프론트엔드 변경이 없다.**
+**`runner.py`와 라우트는 변경이 없다.**
+
+### 계약은 두 층이다 — 타입은 안전하고 값은 아니다
+
+두 SDK의 원시 출력은 전혀 다르다:
+
+| | Strands | Claude Agent SDK |
+|---|---|---|
+| 스트림 단위 | dict (`{"data":...}`, `{"current_tool_use":...}`) | 객체 (`AssistantMessage`, `ResultMessage`) |
+| 텍스트 | `ev["data"]` | `block.text` (TextBlock) |
+| 도구 호출 | `ev["current_tool_use"]["name"]` | `block.name` (ToolUseBlock) |
+| 종료 | `ev["result"]` | `ResultMessage` |
+
+**타입 차이는 드라이버가 흡수한다.** `driver.py:186-196`이 dict를,
+`builder.py:286-300`의 `_translate()`가 객체를 각각 `AgentEvent`로 번역한다.
+프로토타입 빌드가 이미 Claude Agent SDK로 같은 질문 위저드를 구동하는 것이
+실증이다.
+
+**그러나 `AgentEvent.text`에 담기는 값(도구 이름)은 SDK마다 다르고, 프론트가 그
+문자열을 키로 쓴다.** 그래서 프론트엔드 변경이 필요하다 — 2곳:
+
+1. **`AiMessage.tsx:9-16` `ACTIVITY_LABELS`** — 도구명 → 한글 활동 문구 매핑.
+   Strands 이름(`file_write`, `ask_questions`, …)만 있어서 Claude SDK 이름
+   (`Write`, `AskUserQuestion`, …)이 오면 폴백(`:19`)이 발동해 사용자에게
+   `Write 실행 중…` 같은 영어 도구명이 노출된다. 크래시는 아니지만 UX가 조용히
+   나빠진다.
+2. **`workspace/page.tsx:100`** — 첨부 파일 안내 프롬프트에
+   `"필요 시 file_read로 읽으세요"`가 하드코딩. 모델에게 가는 지시문이므로 Claude
+   SDK에서는 존재하지 않는 도구를 지목한다.
+
+**해법(선택 B): 프론트 매핑에 새 이름을 추가하고 기존 키는 남긴다.**
+
+```ts
+const ACTIVITY_LABELS = {
+  // Claude Agent SDK 내장 도구
+  AskUserQuestion: "질문을 준비하고 있어요…",
+  Write: "문서를 작성하고 있어요…",
+  Edit: "문서를 작성하고 있어요…",
+  MultiEdit: "문서를 작성하고 있어요…",
+  Read: "자료를 확인하고 있어요…",
+  Glob: "자료를 찾고 있어요…",
+  // 양쪽 드라이버 공통 커스텀 도구
+  report_stage: "진행 상황을 기록하고 있어요…",
+  submit_document: "문서를 제출하고 있어요…",
+  // Strands 드라이버 (env 폴백 기간 동안 유지)
+  ask_questions: "질문을 준비하고 있어요…",
+  file_write: "문서를 작성하고 있어요…",
+  file_append: "문서를 작성하고 있어요…",
+  file_read: "자료를 확인하고 있어요…",
+};
+```
+
+첨부 안내 문구는 도구 이름을 언급하지 않는 표현으로 바꾼다(예: "필요 시 이
+파일을 읽어보세요") — 두 드라이버 모두에서 맞고, 도구 이름 변경에 다시 깨지지
+않는다.
+
+**대안(A: 드라이버가 도구 이름을 정규화)은 채택하지 않는다.** `Write`→
+`file_write`로 매핑하면 `AgentEvent.text`가 실제 호출된 도구와 달라진다 — 로그와
+화면이 어긋나 디버깅을 어렵게 만든다. env 토글로 두 드라이버가 공존하는 기간에는
+각자 자기 어휘를 쓰는 것이 정직하다.
 
 전환은 `PATHFINDER_DISCOVERY_DRIVER=claude|strands`, 기본 `claude`. 워크숍 중
 문제가 나면 env 하나로 되돌린다 — 다섯 번의 배포 사고를 겪은 만큼 탈출로를 둔다.
@@ -284,6 +343,10 @@ S3 put이 실패하면 턴을 죽이지 않고 로그만 남기고 진행한다.
   (스킬 누출 방지)
 - **env 토글** — `strands`면 `StrandsDriver`, 기본이면 `ClaudeDriver`
 - **정규화 통합** — `is_other` 중복 교정이 양쪽 경로에서 동작
+- **활동 라벨 (프론트)** — Claude SDK 도구명(`Write`/`Read`/`Edit`/
+  `AskUserQuestion`/`Glob`)과 Strands 도구명 양쪽이 한글 라벨로 매핑되고,
+  **영어 도구명이 사용자에게 노출되지 않는다**. `AiMessage.test.tsx`에 이미
+  `file_read`/`ask_questions` 케이스가 있으니 새 이름을 나란히 고정한다.
 
 ### 유닛 테스트로는 부족한 것
 
@@ -302,7 +365,10 @@ S3 put이 실패하면 턴을 죽이지 않고 로그만 남기고 진행한다.
 2. **`driver_contract.py`** — 기존 `StrandsDriver`에 **먼저** 걸어 계약을 확정.
    동작하는 기존 코드로 계약을 못박으면 3번에서 그 테스트가 그대로 스펙이 된다
 3. **`ClaudeDriver` + `discovery-config/` + 도구 정리**
-4. **env 토글 배선 + 인프라(user-data env 주입) + 문서**
+4. **프론트 활동 라벨 확장** — `ACTIVITY_LABELS`에 Claude SDK 도구명 추가,
+   첨부 안내 문구에서 `file_read` 언급 제거. 3번과 독립이므로 **먼저 해도 된다**
+   (기존 키를 남기니 Strands 드라이버에 무해하다)
+5. **env 토글 배선 + 인프라(user-data env 주입) + 문서**
 
 ## 인프라
 
