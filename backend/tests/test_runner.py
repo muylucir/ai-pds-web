@@ -186,6 +186,49 @@ async def test_stop_removes_local_root(tmp_path):
     assert not r._local_root.exists()
 
 
+# ---- stop() wiring to the driver's optional disconnect() (Task 8) ----
+
+async def test_stop_calls_disconnect_when_the_driver_has_one(tmp_path):
+    # ClaudeDriver holds a claude subprocess -- without this call, every
+    # deleted project leaks it for the life of the backend.
+    class WithDisconnect(FakeDriver):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.disconnect_calls = 0
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+
+    driver = WithDisconnect(workspace=tmp_path / "ws")
+    r = _runner(tmp_path, driver=driver)
+    await r.stop()
+    assert driver.disconnect_calls == 1
+
+
+async def test_stop_tolerates_a_driver_with_no_disconnect(tmp_path):
+    # StrandsDriver has no subprocess to tear down and no disconnect() method
+    # at all -- stop() must not crash project deletion over that (FakeDriver,
+    # like StrandsDriver, has no disconnect).
+    driver = FakeDriver(workspace=tmp_path / "ws")
+    assert not hasattr(driver, "disconnect")
+    r = _runner(tmp_path, driver=driver)
+    await r.stop()  # must not raise
+    assert not r._local_root.exists()
+
+
+async def test_stop_tolerates_disconnect_raising(tmp_path):
+    # Best-effort, like the rest of stop()'s neighbors in projects.py: a
+    # broken teardown must not block the local-root cleanup or the delete.
+    class BoomOnDisconnect(FakeDriver):
+        async def disconnect(self):
+            raise RuntimeError("subprocess already dead")
+
+    driver = BoomOnDisconnect(workspace=tmp_path / "ws")
+    r = _runner(tmp_path, driver=driver)
+    await r.stop()  # must not raise
+    assert not r._local_root.exists()
+
+
 async def test_input_holder_settable(tmp_path):
     r = _runner(tmp_path)
     assert r.input_holder is None

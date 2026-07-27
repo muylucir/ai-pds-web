@@ -1063,10 +1063,27 @@ class ClaudeDriver:
         abandoned along with the subprocess, so leaving _pending_payload set
         would make pending() advertise a question that can never be answered
         (builder.interrupt() clears the same state for the same reason).
+
+        Two more places the same dead question hides, both carry-forward from
+        Task 6 and both real once this method is actually wired (Task 8):
+
+        - The S3 mirror (`save_pending`). `pending()` checks the in-memory
+          `_pending_payload` FIRST but falls back to `load_pending(self._s3)`
+          when that is None -- so clearing only the in-memory copy just moves
+          the dead question onto the other path; it does not remove it.
+        - `self._queue` may still hold an unpopped `questions` AgentEvent for
+          this exact question, if the turn that raised it was abandoned
+          before the event was delivered (`_pump`'s ownership rule leaves it
+          at the head of the queue for the next turn to relay -- see `_pump`'s
+          docstring). With the subprocess gone, "the next turn" is a brand new
+          one that has nothing to do with that question, so relaying it would
+          hand the user a card for a question no future will ever resolve.
         """
         if self._pending_question is not None and not self._pending_question.done():
             self._pending_question.cancel()
         self._clear_pending_state()
+        await self._clear_pending_quietly()
+        self._queue[:] = [ev for ev in self._queue if ev.kind != "questions"]
         # The subprocess is going away, so there is no turn left for the reader
         # to collect and nothing that could relay what it holds.
         self._retire_reader()

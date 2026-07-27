@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathfinder.workspace import ProjectRegistry, Workspace
 from pathfinder.runner import AgentRunner
 from pathfinder.agent.driver import StrandsDriver
+from pathfinder.agent.claude_driver import ClaudeDriver
 from pathfinder.s3store import S3Store, S3StoreLike
 from pathfinder.project_store import restore_projects
 
@@ -130,9 +131,32 @@ def _workspaces_dir() -> Path:
     return Path(root) if root else Path(tempfile.gettempdir()) / "pathfinder-workspaces"
 
 
-# Monkeypatchable in tests: StrandsDriver를 fake agent_factory로 갈아끼운다.
-def driver_factory(project_id: str, local_root: Path) -> StrandsDriver:
-    return StrandsDriver(workspace=str(local_root), rules_dir=_rules_dir())
+def _discovery_config_dir() -> Path:
+    return Path(os.environ.get("PATHFINDER_DISCOVERY_CONFIG_DIR",
+                               "~/pathfinder-discovery-config")).expanduser()
+
+
+# Discovery 드라이버 선택. 기본은 Claude Agent SDK — AI-PLC 룰이 전제한 실행
+# 환경이다. `strands`로 되돌릴 수 있게 둔 것은 워크숍 중 문제가 났을 때의
+# 탈출로다(EC2 교체 없이 env + restart). 워크숍이 끝나면 StrandsDriver와
+# strands-agents 의존성을 삭제한다.
+#
+# Monkeypatchable in tests: 이 함수 자체를 fake agent_factory로 갈아끼운다.
+def driver_factory(project_id: str, local_root: Path):
+    choice = os.environ.get("PATHFINDER_DISCOVERY_DRIVER", "claude")
+    if choice == "strands":
+        return StrandsDriver(workspace=str(local_root), rules_dir=_rules_dir())
+    if choice != "claude":
+        # 오타가 조용히 기본값으로 떨어지면 어느 드라이버가 도는지 알 수 없다.
+        raise ValueError(
+            f"unknown PATHFINDER_DISCOVERY_DRIVER {choice!r}; expected 'claude' or 'strands'")
+    return ClaudeDriver(
+        workspace=str(local_root),
+        rules_dir=_rules_dir(),
+        config_dir=str(_discovery_config_dir()),
+        s3=s3_store_factory(project_id),
+        anthropic_model=os.environ.get("ANTHROPIC_MODEL"),
+    )
 
 
 # ---- prototype build/hosting wiring (routes/prototypes.py) ----

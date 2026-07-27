@@ -810,6 +810,51 @@ async def test_disconnect_tears_down_the_subprocess_and_clears_pending(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_disconnect_clears_the_s3_pending_record_too(tmp_path):
+    # Task 8 carry-forward defect: disconnect() only cleared the in-memory
+    # _pending_payload. pending() checks that FIRST but falls back to the S3
+    # record (load_pending) when it's None -- so leaving the S3 record behind
+    # made pending() advertise the dead question anyway, just via the other
+    # path. The subprocess is gone with disconnect(), so no future will ever
+    # resolve it.
+    d, _, cap = _driver(tmp_path, {"questions": True})
+    [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert await d.pending({"session_id": "s-1"}) is not None  # sanity: live
+
+    await d.disconnect()
+
+    assert await d.pending({"session_id": "s-1"}) is None
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_turn_after_disconnect_does_not_re_yield_a_dead_question(
+        tmp_path):
+    # Task 8 carry-forward defect: if a turn was abandoned before its
+    # `questions` event was delivered, that event sits UNPOPPED at the head of
+    # self._queue (by design -- see `_pump`'s ownership rule). disconnect()
+    # tore down the subprocess and future but never dropped it, so the next
+    # turn's _pump still relayed it -- a card for a question nobody can ever
+    # answer (its future died with the subprocess).
+    d, _, cap = _driver(tmp_path, {"questions": True})
+    agen = d.run("hi", {"session_id": "s-1"}).__aiter__()
+    assert (await agen.__anext__()).kind == "message"
+    assert (await agen.__anext__()).kind == "questions"
+    await agen.aclose()  # abandoned before the questions event is popped
+    assert any(e.kind == "questions" for e in d._queue)  # sanity: still owned
+
+    await d.disconnect()
+    assert not any(e.kind == "questions" for e in d._queue)  # dead card dropped
+
+    # A fresh turn (new subprocess, no question in its own script) must not
+    # surface the old one either.
+    d._client_factory = lambda session: sdk_client_for(
+        {"text": ["ok"]}, d._on_can_use_tool)
+    kinds = [e.kind async for e in d.run("new message", {"session_id": "s-1"})]
+    assert "questions" not in kinds, kinds
+    assert kinds == ["message", "done"], kinds
+
+
+@pytest.mark.asyncio
 async def test_uses_the_discovery_config_dir_not_the_prototype_one(tmp_path):
     # 공유하면 Discovery가 shadcn-design 스킬을 켠 채로 돈다.
     d, _, captured = _driver(tmp_path, {"text": ["ok"]})
