@@ -100,6 +100,37 @@ async def test_the_prose_before_a_question_is_not_lost(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_every_message_buffered_before_a_question_survives(tmp_path):
+    # 위 테스트가 커버하는 건 "버퍼에 1개"뿐이고, 그래서 1라운드에서 완료로
+    # 보였다. 실제로는 재장전한 ensure_future가 생성 tick에 절대 done()이 아니라
+    # `while next_msg.done()` 루프가 한 번밖에 못 돌아 2개 이상이면 나머지가
+    # finally의 cancel에 파괴됐다. 실측: 실제 CLI의 메시지 간 간격은 3-4ms로
+    # 드라이버의 50ms 폴 안이라 한 패스에 여러 개가 들어오는 건 일상이다.
+    texts = ["첫 문장", "둘째 문장", "셋째 문장"]
+    d, _, _ = _driver(tmp_path, {"questions": True, "preface_texts": texts})
+    events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert [e.text for e in events if e.kind == "message"] == texts
+    assert [e.kind for e in events][-2:] == ["questions", "done"]
+
+
+@pytest.mark.asyncio
+async def test_a_message_arriving_during_the_queue_drain_survives(tmp_path):
+    # 큐를 비우는 루프의 각 yield가 스케줄러에 제어를 넘기고, 그것이 재장전된
+    # 수신이 메시지를 건네받는 창이다. 즉 questions가 큐에 들어간 뒤에도
+    # 메시지가 정당하게 도착할 수 있으므로, 나가기 전에 한 번 더 훑어야 한다.
+    d, _, _ = _driver(tmp_path, {"questions": True,
+                                 "during_drain": "드레인 중 도착"})
+    events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+    kinds = [e.kind for e in events]
+    texts = [e.text for e in events if e.kind == "message"]
+    assert "드레인 중 도착" in texts, kinds
+    # 이 메시지는 questions 뒤에 온다 — 큐를 비우는 중에 도착했으므로 나가기 전
+    # 마지막 훑기만이 건질 수 있다. 순서 자체가 그 훑기가 동작했다는 증거다.
+    assert kinds.index("questions") < kinds.index("message", 1), kinds
+    assert kinds[-1] == "done"
+
+
+@pytest.mark.asyncio
 async def test_answers_reach_the_sdk_as_the_tool_result(tmp_path):
     # 정상 왕복(같은 프로세스): 대기 중인 future를 풀어 답변이 AskUserQuestion의
     # 도구 결과로 모델에 간다. 번호→글자 답변이 SDK 라벨로 되번역돼야 모델이

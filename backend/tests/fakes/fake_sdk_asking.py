@@ -103,25 +103,44 @@ class AskingSdkClient(FakeSdkClient):
     assert on the answers the driver injected as `updated_input` rather than
     just on the event stream.
 
-    `preface` reproduces the ordering the real CLI actually produces: the
-    `{"type":"assistant"}` message (the model's "why I'm asking" prose plus the
-    AskUserQuestion tool_use) and the `control_request` are written back to back
-    in ONE read-loop pass (query.py:250-322), with no model latency between
-    them. With `preface` set, the message is delivered into the buffer and the
-    callback is spawned in the SAME tick — no `await` in between — so a driver
-    that returns on the queued `questions` event without first consuming the
-    already-delivered message loses that prose permanently. Without `preface`
-    the callback is spawned before anything is yielded, which is why the
-    original question scripts never had a message in flight and never caught it.
+    Three knobs reproduce the message/question interleavings the real CLI
+    produces. All of them exist because the driver must never discard a message
+    the SDK already handed it, and each interleaving destroys it differently:
+
+    `preface` — one or more `{"type":"assistant"}` messages (the model's "why
+    I'm asking" prose plus the AskUserQuestion tool_use) delivered back to back
+    with the `control_request` in ONE read-loop pass (query.py:250-322), no model
+    latency between them. Pass a str for one message or a list for several.
+    SEVERAL is the case that matters most: a driver whose sweep re-arms the
+    receive with `ensure_future` (never synchronously `done()` on its creation
+    tick) consumes only the FIRST and destroys the rest. Real inter-message gaps
+    were measured at 3-4ms — far inside the driver's 50ms poll — so multiple
+    messages in one pass is routine, not hypothetical.
+
+    `during_drain` — a message delivered AFTER the question is already queued,
+    timed to land while the driver is yielding its queued events. Each `yield`
+    hands control to the scheduler, which is precisely the window the re-armed
+    receive needs, so this message is legitimately deliverable and must not be
+    dropped on the way out.
+
+    Without any of them the callback is spawned before anything is yielded,
+    which is why the original question scripts never had a message in flight
+    and never caught any of this.
     """
 
     def __init__(self, can_use_tool, *, sdk_questions=None, tail=None,
-                 preface=None):
+                 preface=None, during_drain=None):
         super().__init__(tail if tail is not None else [ResultMessage()])
         self._can_use_tool = can_use_tool
         self._sdk_questions = (DEFAULT_SDK_QUESTIONS if sdk_questions is None
                                else sdk_questions)
-        self._preface = preface
+        if preface is None:
+            self._preface: list[str] = []
+        elif isinstance(preface, str):
+            self._preface = [preface]
+        else:
+            self._preface = list(preface)
+        self._during_drain = during_drain
         self._ask_task: asyncio.Task | None = None
         self.permission_results: list = []
         _LIVE.append(self)
@@ -130,17 +149,45 @@ class AskingSdkClient(FakeSdkClient):
         if self._ask_task is not None and not self._ask_task.done():
             self._ask_task.cancel()
 
+    # Scheduler turns to wait before delivering the `during_drain` message.
+    # Established by a turn-by-turn trace of this fake against the real driver:
+    #
+    #   fake: yielded <preface>
+    #   fake: turn 1      <- driver yields `questions` here (drain has begun)
+    #   fake: turn 2      <- deliver here: past the pre-drain sweep, so only a
+    #                        POST-drain sweep can still recover this message
+    #
+    # Delivering any earlier is consumed by the pre-drain sweep, which is a
+    # different window and leaves the post-drain sweep unexercised (verified:
+    # at turn 1 the test passes even with the post-drain sweep removed).
+    _DURING_DRAIN_TURNS = 2
+
+    async def _deliver_during_drain(self) -> None:
+        """Park until the driver is past its pre-drain sweep and inside the
+        queue-drain loop (see _DURING_DRAIN_TURNS)."""
+        for _ in range(self._DURING_DRAIN_TURNS):
+            await asyncio.sleep(0)
+
     async def receive_response(self):
         if self._ask_task is None:
             # One handler per AskUserQuestion tool call, spawned once — a
             # second receive_response() over the same turn must not re-ask.
             # Spawned BEFORE the preface is yielded, with no await in between,
-            # so the assistant message and the permission request land in the
+            # so the assistant messages and the permission request land in the
             # same tick exactly as the CLI's read loop delivers them.
             self._ask_task = asyncio.ensure_future(self._can_use_tool(
                 "AskUserQuestion", {"questions": self._sdk_questions}, None))
-            if self._preface is not None:
-                yield AssistantMessage(content=[TextBlock(text=self._preface)])
+            for text in self._preface:
+                yield AssistantMessage(content=[TextBlock(text=text)])
+            if self._during_drain is not None:
+                # Must NOT be yielded inline: the driver's pre-drain sweep
+                # would consume it in the same pass and the mid-drain window
+                # would never be exercised. Instead park here until the driver
+                # is one scheduler turn in — i.e. suspended on a `yield` inside
+                # its queue-drain loop — and only then deliver.
+                await self._deliver_during_drain()
+                yield AssistantMessage(
+                    content=[TextBlock(text=self._during_drain)])
         while not self._ask_task.done():
             # Deliberately NOT `await self._ask_task`: the point is that this
             # generator produces no messages while the permission request is
@@ -207,6 +254,12 @@ def sdk_client_for(scripted: dict, can_use_tool):
         # `preface` on by default: the real CLI always emits the model's
         # explanation immediately before the question (driver.py's
         # _CONTACT_ADDENDUM:44-45 mandates it), so the default script must too.
-        return AskingSdkClient(can_use_tool, tail=script_from(scripted),
-                               preface=PREFACE_TEXT)
+        # `preface_texts`/`during_drain` let a driver-specific test script the
+        # harder interleavings (several messages in one read-loop pass; a
+        # message landing while the driver drains its queue) without changing
+        # what the shared contract script does.
+        return AskingSdkClient(
+            can_use_tool, tail=script_from(scripted),
+            preface=scripted.get("preface_texts") or PREFACE_TEXT,
+            during_drain=scripted.get("during_drain"))
     return FakeSdkClient(script_from(scripted))

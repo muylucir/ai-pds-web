@@ -479,36 +479,63 @@ class ClaudeDriver:
         docstring. The suspended can_use_tool callback is left parked on its
         future for `run_answers` to resolve.
 
-        That divergence is also why every exit path must first consume any SDK
-        message that has ALREADY been delivered. `asyncio.wait` reports
-        `done=∅` on timeout, but `next_msg` can resolve during that very tick,
-        and returning without reading it DESTROYS the message: anyio's
-        `send_nowait` hands an item straight to a parked receiver instead of
-        buffering it (anyio/streams/memory.py:210-217), so cancelling that
-        receiver in the `finally` below drops the item -- it is not left in the
-        buffer for the fresh iterator `_continue_after_answers` opens.
-        Measured: the assistant message vanished at gap=0, survived at
-        gap>=0.001.
+        THE INVARIANT, and it is the whole reason this function is shaped the
+        way it is:
 
-        This is the COMMON case, not a rare race. The CLI writes the
-        `{"type":"assistant"}` message (the model's "why I'm asking" prose plus
-        the AskUserQuestion tool_use) and the `control_request` back to back in
-        one read-loop pass (claude_agent_sdk/_internal/query.py:250-322) with
-        no model latency in between -- and driver.py's _CONTACT_ADDENDUM:44-45
-        *requires* the model to explain itself before asking. Losing it means a
-        bare question card with no explanation, every single time. builder.py
-        never hit this because it never returns on `asked`.
+            No message the SDK has already handed us is ever discarded.
+
+        State it as an invariant and enforce it mechanically, because reasoning
+        about which interleavings are *possible* has been wrong twice here. Why
+        it is easy to get wrong: the `finally` below cancels the in-flight
+        receive, and anyio's `send_nowait` hands an item straight to a parked
+        receiver instead of buffering it (anyio/streams/memory.py:210-217). So a
+        message already handed to that receiver is NOT waiting in the buffer for
+        the fresh iterator `_continue_after_answers` opens -- cancelling loses
+        it permanently. Two ways that bit us:
+
+          1. `asyncio.wait` reports `done=∅` on timeout, yet `next_msg` can
+             resolve during that same tick. Returning without reading it lost
+             the message.
+          2. A re-armed `ensure_future` is NEVER synchronously `done()` on the
+             tick it is created, so a `while next_msg.done()` loop can only ever
+             consume ONE message per pass. With two or more buffered, the extras
+             were lost. Fixed by giving the re-armed receive its scheduler turn
+             with `wait(timeout=0)` -- measured: each subsequent buffered message
+             becomes available after exactly one such turn.
+
+        Hence `_sweep()` below loops until the receive genuinely has nothing
+        ready, and is called BOTH before the queue drain AND again after it (a
+        `yield` inside the drain loop gives the re-armed receive its turn, so a
+        message can legitimately arrive mid-drain).
+
+        Why this matters at all, rather than being a theoretical race: the CLI
+        writes the `{"type":"assistant"}` message (the model's "why I'm asking"
+        prose plus the AskUserQuestion tool_use) and the `control_request` back
+        to back in one read-loop pass (claude_agent_sdk/_internal/query.py:
+        250-322) with no model latency in between, and inter-message gaps were
+        measured at 3-4ms against the real CLI -- far inside `_POLL_SECONDS`.
+        driver.py's _CONTACT_ADDENDUM:44-45 also *requires* the model to explain
+        itself before asking. Losing those messages means a bare question card
+        with no explanation. builder.py never hit any of this because it never
+        returns on `asked`.
         """
         next_msg: asyncio.Future = asyncio.ensure_future(agen.__anext__())
         ended = False
 
-        async def ready_events():
-            """Translate every message already delivered, re-arming the
-            receive each time. Runs on every loop pass BEFORE the queue is
-            drained, so an already-delivered message is never discarded by the
-            cancel in the `finally` (see docstring)."""
+        async def sweep():
+            """Yield events for every message the SDK has already handed us,
+            until the receive genuinely has nothing ready.
+
+            The `wait(timeout=0)` is load-bearing, not defensive: a freshly
+            re-armed `ensure_future` is never `done()` on its creation tick, so
+            without giving it a turn this would stop after one message and the
+            rest would be destroyed by the `finally`."""
             nonlocal next_msg, ended
-            while next_msg.done():
+            while True:
+                if not next_msg.done():
+                    await asyncio.wait({next_msg}, timeout=0)
+                    if not next_msg.done():
+                        return
                 try:
                     msg = next_msg.result()
                 except StopAsyncIteration:
@@ -521,28 +548,30 @@ class ClaudeDriver:
         try:
             while not ended:
                 await asyncio.wait({next_msg}, timeout=_POLL_SECONDS)
-                async for ev in ready_events():
+                async for ev in sweep():
                     yield ev
                 asked = False
                 for ev in self.drain_queue():
                     yield ev
                     asked = asked or ev.kind == "questions"
                 if asked and not ended:
-                    # ready_events() above already drained everything delivered
-                    # before the callback queued this question, which is the
-                    # ordering that matters: the CLI cannot send more messages
-                    # until we answer the permission request, so nothing new
-                    # can arrive between there and here.
+                    # Sweep again before returning: each `yield` in the drain
+                    # loop above hands control to the scheduler, which is
+                    # exactly the window the re-armed receive needs to be
+                    # handed another message. Per the invariant we do not
+                    # reason about whether that happened -- we just look.
+                    async for ev in sweep():
+                        yield ev
                     yield AgentEvent(kind="done")
                     return
         finally:
-            # Two jobs. (1) The consumer may abandon this generator mid-stream
-            # (SSE client disconnect -> aclose() -> GeneratorExit), and the
-            # `asked` return above always leaves one receive in flight: without
-            # this cancel the __anext__ future outlives the generator and
-            # asyncio logs "Task was destroyed but it is pending!". (2) The
-            # cancel DISCARDS whatever that receive was handed, which is why
-            # ready_events() must run on every exit path first.
+            # The consumer may abandon this generator mid-stream (SSE client
+            # disconnect -> aclose() -> GeneratorExit), and the `asked` return
+            # above always leaves one receive in flight: without this cancel the
+            # __anext__ future outlives the generator and asyncio logs "Task was
+            # destroyed but it is pending!". The cancel is also what DESTROYS an
+            # already-handed message, which is why every path out of the loop
+            # sweeps first (see the invariant).
             if not next_msg.done():
                 next_msg.cancel()
         for ev in self.drain_queue():

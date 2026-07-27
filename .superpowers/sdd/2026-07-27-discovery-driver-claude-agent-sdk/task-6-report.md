@@ -500,3 +500,146 @@ ordering) is the mutant that matters.
    they will not be found. Worth a word at deploy time.
 4. **`disconnect()` is unwired**, so the subprocess leak is still live until
    Task 8 calls it from `runner.stop()`.
+
+---
+
+# Fix round 2 — two residuals on the CRITICAL
+
+Both reproduced before changing anything, with a faithful `Query` replica
+(anyio memory stream + a read loop that writes N assistant messages and then
+dispatches the `control_request`).
+
+## Residual 1 — `sweep()` drained one message per pass, not all
+
+**Confirmed.** Probed the mechanism directly first:
+
+```
+done() immediately after ensure_future: False
+re-armed done() synchronously (this is the `while` bug): False
+  became done after 1 sleep(0)
+```
+
+A freshly created `ensure_future` is never synchronously `done()`, so
+`while next_msg.done()` could not iterate twice. End to end, with N messages
+delivered before the question in one read-loop pass:
+
+```
+n=1: got ['prose-1']              -> OK
+n=2: got ['prose-1']              -> LOST {'prose-2'}
+n=3: got ['prose-1']              -> LOST {'prose-2','prose-3'}
+```
+
+The extras die by the same `send_nowait`-to-a-parked-receiver mechanism as the
+original bug: the `finally`'s cancel destroys them, and they are not in the
+buffer for the fresh iterator. Also reproduced the reviewer's point that this is
+routine, not hypothetical — at `gap=0.003` (real CLI inter-message gaps measured
+at 3-4 ms, far inside the 50 ms poll) all N messages arrive in a single pass.
+
+**Fix.** `sweep()` now gives the re-armed receive its scheduler turn with
+`await asyncio.wait({next_msg}, timeout=0)` and keeps going until the receive
+genuinely has nothing ready. Measured: each subsequent buffered message becomes
+available after exactly one such turn. After the fix, n=1/2/3 all `OK`.
+
+## Residual 2 — the dropped "second sweep" was reachable
+
+**Confirmed, and my round-1 reasoning was wrong.** I had instrumented it and
+concluded it never fires; the instrumentation was the problem, not the
+conclusion's subject. The reviewer is right that each `yield` in the queue-drain
+loop hands control to the scheduler, which is exactly the window the re-armed
+receive needs.
+
+Getting a test to actually hit that window took a turn-by-turn trace of the fake
+against the real driver, because my first two attempts delivered the message too
+early and were silently caught by the *pre*-drain sweep — the test passed with
+the post-drain sweep removed, i.e. it was vacuous:
+
+```
+fake: yielded <preface>
+fake: turn 1      <- driver yields `questions` here (drain has begun)
+fake: turn 2      <- deliver here; only a POST-drain sweep can recover it
+```
+
+That constant is now named (`_DURING_DRAIN_TURNS`) and the trace is recorded in
+the comment beside it, so the next person does not have to rediscover it.
+
+**Fix.** Restored the sweep after the queue drain. Verified end to end: the
+message is recovered, and it arrives *after* `questions` — the ordering is itself
+the evidence that the post-drain sweep did the work, which is what the test now
+asserts.
+
+## The comment, per the reviewer's instruction
+
+`_pump`'s docstring now leads with the invariant stated as an invariant —
+**"No message the SDK has already handed us is ever discarded"** — followed by
+the two concrete ways it was violated, and an explicit note that it is stated
+this way *because reasoning about which interleavings are possible has been wrong
+twice here*. The `asked` branch comment no longer claims anything is impossible;
+it says we do not reason about whether a message arrived, we just look. The
+false "nothing new can arrive between there and here" assertion is gone.
+
+## Fake extension
+
+`fake_sdk_asking.py` only (`fake_sdk.py` untouched, per the builder constraint):
+
+- `preface` accepts a str **or a list**, for several messages in one read-loop
+  pass.
+- new `during_drain`, delivered from inside the generator after
+  `_DURING_DRAIN_TURNS` scheduler turns.
+- both reachable from the scripted dict via `preface_texts` / `during_drain`, so
+  the shared contract script is unchanged.
+
+## Revert-verification of each new test
+
+| Reverted | Result |
+|---|---|
+| `sweep()`'s `wait(timeout=0)` removed (Residual 1) | `test_every_message_buffered_before_a_question_survives` **and** `test_a_message_arriving_during_the_queue_drain_survives` fail |
+| post-drain `sweep()` removed (Residual 2) | `test_a_message_arriving_during_the_queue_drain_survives` fails (alone) |
+| both restored | 26 passed |
+
+Each new test therefore fails for its own fix, and the drain test additionally
+depends on the first — which is correct, since recovering a mid-drain message
+requires both sweeping after the drain and sweeping to exhaustion.
+
+## Commands and output
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_claude_driver.py tests/test_claude_driver_contract.py -q
+26 passed in 0.28s
+```
+(was 24; +2)
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_agent_driver.py tests/test_strands_driver_contract.py tests/test_proto_builder.py -q
+34 passed in 0.23s
+```
+
+```
+$ cd backend && .venv/bin/python -m pytest -q
+602 passed, 1 warning in 12.29s
+```
+600 -> 602, exactly the two new tests. Protected files show zero diff; no
+"Task was destroyed but it is pending!" noise.
+
+## Concerns after this round
+
+1. **This function has now been wrong twice about interleavings, and both times
+   the tests looked complete.** The invariant is stated and enforced by looking
+   rather than reasoning, and the sweep is exhaustive on every exit path, which
+   is the strongest form available without a real-CLI integration test. But
+   `_pump` is the highest-risk code in this file and I would treat any future
+   edit to it as requiring a fresh turn-by-turn trace, not just a green suite.
+2. **First round's Concern 2 still stands** — the resume path relies on
+   `Query`'s anyio buffer ownership, an SDK internal. This round sharpens why it
+   matters (the whole bug class exists because `send_nowait` bypasses that
+   buffer for a parked receiver). The reviewer's live-CLI round trip is
+   reassuring, and Task 9 should keep it in the deploy checklist.
+3. **Deferred, from the reviewer, not fixed here (noted so it is not lost):**
+   `disconnect()` clears only in-memory pending state, so the S3 record survives
+   and `pending()` still advertises an unanswerable question after teardown.
+   Fixing it means an `await clear_pending` in `disconnect()`; I left it because
+   the coordinator scoped it out, but it is a real user-visible defect once
+   Task 8 wires `disconnect()` into `runner.stop()`.
+4. **Also deferred:** in production this whole bug class was partly masked by S3
+   latency inside `_save_pending_quietly` — which does **not** apply when
+   `session_id` is empty, since that save is skipped entirely. The fix removes
+   the dependence on that accident either way.
