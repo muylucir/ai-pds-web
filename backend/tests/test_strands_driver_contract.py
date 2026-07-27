@@ -49,7 +49,27 @@ class _FakeStrandsAgent:
             yield {"data": text}
         for name in self._scripted.get("tools", []):
             yield {"current_tool_use": {"name": name}}
-        if self._scripted.get("questions"):
+        if self._scripted.get("echo_answers"):
+            # StrandsDriver.run_answers (driver.py:216-220) builds exactly
+            # this prompt shape from (interrupt_id, answers) — a one-element
+            # list containing an "interruptResponse" dict with
+            # "interruptId"/"response" keys. Reading it back here and
+            # echoing it as a message is how the contract observes that
+            # run_answers actually forwarded the caller's values instead of
+            # dropping them.
+            resp = prompt[0]["interruptResponse"]
+            import json
+            yield {"data": json.dumps({
+                "interrupt_id": resp["interruptId"],
+                "answers": resp["response"],
+            })}
+            yield {"result": _FakeResult("end_turn")}
+        elif self._scripted.get("followup_questions"):
+            itr = _FakeInterrupt("i-followup", {
+                "questions_payload": {"name": "q2", "questions": []},
+            })
+            yield {"result": _FakeResult("interrupt", [itr])}
+        elif self._scripted.get("questions"):
             itr = _FakeInterrupt("i-strands", {
                 "questions_payload": {"name": "q", "questions": []},
             })
