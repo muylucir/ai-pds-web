@@ -4,6 +4,8 @@
 #
 # sdk_questions(SDK 원형)를 함께 저장하는 이유: 답변을 SDK 라벨로 되번역할 때
 # 필요하고(builder._answer_to_sdk), 재시작 후에는 인메모리 사본이 없다.
+import json
+
 import pytest
 
 from pathfinder.agent.pending_store import (
@@ -91,3 +93,40 @@ async def test_hangul_survives_the_round_trip():
     await save_pending(s3, interrupt_id="i-1", questions=QUESTIONS,
                        sdk_questions=SDK_QUESTIONS, session_id="s-1")
     assert "누구?" in s3.blobs[PENDING_KEY]
+
+
+@pytest.mark.asyncio
+async def test_load_degrades_to_none_when_sdk_questions_has_the_wrong_type():
+    # sdk_questions가 리스트가 아니면 Task 6의 답변 되번역(builder._answer_to_sdk)이
+    # 인덱싱 도중 터진다 — 필드가 "있기만" 하면 통과시키면 여기서 죽는다.
+    s3 = FakeS3Store()
+    s3.blobs[PENDING_KEY] = json.dumps({
+        "interrupt_id": "i-1", "questions": QUESTIONS,
+        "sdk_questions": "not-a-list", "session_id": "s-1",
+    })
+    assert await load_pending(s3) is None
+
+
+@pytest.mark.asyncio
+async def test_load_degrades_to_none_when_questions_has_the_wrong_type():
+    # questions가 dict가 아니면 GET /pending이 폼을 렌더링하다가 죽는다 —
+    # 존재 검사만으론 이 드리프트를 못 잡는다.
+    s3 = FakeS3Store()
+    s3.blobs[PENDING_KEY] = json.dumps({
+        "interrupt_id": "i-1", "questions": ["not", "a", "dict"],
+        "sdk_questions": SDK_QUESTIONS, "session_id": "s-1",
+    })
+    assert await load_pending(s3) is None
+
+
+@pytest.mark.asyncio
+async def test_load_degrades_to_none_when_interrupt_id_is_empty():
+    # 빈 interrupt_id는 답변 제출 시 어떤 인터럽트를 재개할지 알 수 없게
+    # 만든다 — "필드가 있다"는 검사를 통과하지만 실질적으로 값이 없는 것과
+    # 같다.
+    s3 = FakeS3Store()
+    s3.blobs[PENDING_KEY] = json.dumps({
+        "interrupt_id": "", "questions": QUESTIONS,
+        "sdk_questions": SDK_QUESTIONS, "session_id": "s-1",
+    })
+    assert await load_pending(s3) is None

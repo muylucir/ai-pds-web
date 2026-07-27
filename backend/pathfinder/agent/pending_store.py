@@ -18,7 +18,20 @@ _log = logging.getLogger("pathfinder.agent")
 
 PENDING_KEY = "pending/questions.json"
 
-_REQUIRED = ("interrupt_id", "questions", "sdk_questions", "session_id")
+
+def _is_valid(data: dict) -> bool:
+    """필드 존재만으론 부족하다 — 타입이 틀리면(예: sdk_questions가 문자열)
+    Task 6의 답변 되번역 경로에서 나중에 터진다. questions/sdk_questions는
+    자체 구조까지 검증하진 않는다(그 정도는 파서/빌더의 책임); 여기선 답변
+    되번역과 세션 조회가 곧바로 깨지는 최상위 타입만 막는다."""
+    interrupt_id = data.get("interrupt_id")
+    session_id = data.get("session_id")
+    return (
+        isinstance(interrupt_id, str) and interrupt_id != "" and
+        isinstance(data.get("questions"), dict) and
+        isinstance(data.get("sdk_questions"), list) and
+        isinstance(session_id, str) and session_id != ""
+    )
 
 
 async def save_pending(s3: S3StoreLike, *, interrupt_id: str, questions: dict,
@@ -45,8 +58,8 @@ async def load_pending(s3: S3StoreLike) -> dict | None:
     except json.JSONDecodeError:
         _log.warning("pending payload is not valid JSON — ignoring")
         return None
-    if not isinstance(data, dict) or any(k not in data for k in _REQUIRED):
-        _log.warning("pending payload missing required fields — ignoring")
+    if not isinstance(data, dict) or not _is_valid(data):
+        _log.warning("pending payload missing or malformed required fields — ignoring")
         return None
     return data
 
