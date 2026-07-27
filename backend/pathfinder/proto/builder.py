@@ -224,13 +224,26 @@ class PrototypeBuilder:
         return value  # free text (Other)
 
     async def _on_can_use_tool(self, tool_name, input_data, context):
-        from claude_agent_sdk.types import PermissionResultAllow
+        from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
         if tool_name != "AskUserQuestion":
             return PermissionResultAllow(updated_input=input_data)
         import json as _json, uuid
-        iid = uuid.uuid4().hex
         sdk_questions = input_data.get("questions", [])
-        qfile = question_file_from_sdk(sdk_questions, name="prototype-questions")
+        # question_file_from_sdk raises ValueError on unusable input (e.g. a
+        # question with zero options) -- mirror ask_questions in tools.py:
+        # deny with a message the model can read and retry from, instead of
+        # letting the exception escape. Unlike ask_questions (which returns a
+        # tool-result string), the can_use_tool contract only speaks
+        # PermissionResult -- PermissionResultDeny is the SDK-native way to
+        # hand the model an explanation and no other shape is invented here.
+        try:
+            qfile = question_file_from_sdk(sdk_questions, name="prototype-questions")
+        except ValueError as e:
+            _log.warning("AskUserQuestion payload rejected: %s", e)
+            return PermissionResultDeny(
+                message=f"질문을 만들 수 없다: {e}\n"
+                        "각 질문에 옵션을 최소 1개 넣어 AskUserQuestion을 다시 호출해라.")
+        iid = uuid.uuid4().hex
         payload = _json.dumps({"interrupt_id": iid, "questions": qfile},
                               ensure_ascii=False)
         self._pending_payload = payload

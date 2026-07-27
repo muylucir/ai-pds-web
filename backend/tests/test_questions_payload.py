@@ -117,7 +117,7 @@ def test_defaults_the_optional_flags():
     assert q["parse_ok"] is True if "parse_ok" in q else True
 
 
-def test_sets_the_file_level_contract_fields():
+def test_normalize_sets_the_file_level_contract_fields():
     # 프론트 QuestionsPayload 계약: parse_ok=True + raw_markdown=None이어야
     # RawMarkdownFallback이 아니라 폼으로 렌더된다.
     payload = normalize_questions_payload(_q([{"letter": "A", "text": "진행"}]))
@@ -209,7 +209,7 @@ def test_carries_header_as_category_and_multiselect():
     assert q["multi_select"] is True
 
 
-def test_sets_the_file_level_contract_fields():
+def test_sdk_sets_the_file_level_contract_fields():
     f = question_file_from_sdk(SDK_Q, name="next-step")
     assert f["name"] == "next-step"
     assert f["parse_ok"] is True
@@ -227,3 +227,22 @@ def test_rejects_a_question_with_no_options():
     # SDK가 옵션 없는 질문을 보내면 폼에 고를 게 없다.
     with pytest.raises(ValueError):
         question_file_from_sdk([{"question": "q", "options": []}], name="n")
+
+
+def test_an_option_literally_labeled_other_is_not_reclassified():
+    """리뷰 finding 1: normalize_questions_payload의 _looks_like_other 휴리스틱
+    (텍스트가 "other"로 시작하면 Other로 간주)은 마크다운/Discovery 경로처럼
+    모델이 자유형 dict를 직접 만드는 경로에서만 필요하다. SDK 경로는 모델이
+    이미 명시적 options를 구조화해서 주므로, "Other database"처럼 실제 옵션
+    라벨이 우연히 "other"로 시작해도 그대로 살아 있어야 한다 — 강등되면
+    프론트가 라벨을 하드코딩된 "Other — 직접 입력"으로 덮어쓰고,
+    _answer_to_sdk는 모델이 정의한 옵션이 아니라 사용자가 입력한 원문
+    텍스트를 SDK로 돌려주게 된다."""
+    sdk_q = [{"question": "어떤 DB를 쓸까?", "options": [
+        {"label": "Other database", "description": "specify your own"},
+        {"label": "Postgres", "description": "relational"},
+    ]}]
+    f = question_file_from_sdk(sdk_q, name="n")
+    opts = f["questions"][0]["options"]
+    assert opts[0]["is_other"] is False
+    assert opts[0]["text"] == "Other database — specify your own"
