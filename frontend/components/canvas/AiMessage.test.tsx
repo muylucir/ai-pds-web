@@ -134,6 +134,10 @@ describe("Claude Agent SDK 도구명 라벨 (regression)", () => {
     ["MultiEdit", /문서를 작성하고 있어요/],
     ["Read", /자료를 확인하고 있어요/],
     ["Glob", /자료를 찾고 있어요/],
+    // CLI 기본 도구 (tools=None이므로 사용 가능; envision.md의 URL 분석 모드 B/C와 workspace 탐색 필요)
+    ["Grep", /자료를 찾고 있어요/],
+    ["WebFetch", /정보를 수집하고 있어요/],
+    ["Bash", /작업을 진행하고 있어요/],
   ];
 
   for (const [tool, label] of CASES) {
