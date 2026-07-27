@@ -228,7 +228,7 @@ describe("Workspace page", () => {
       await user.click(screen.getByRole("button", { name: "전송" }));
 
       expect(send).toHaveBeenCalledWith(
-        "[첨부 파일: uploads/의견.md — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 file_read로 읽으세요.]\n\n이 파일 기반으로 진행해줘",
+        "[첨부 파일: uploads/의견.md — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 이 파일을 읽어보세요.]\n\n이 파일 기반으로 진행해줘",
       );
       expect(screen.queryByText("의견.md")).not.toBeInTheDocument();
     });

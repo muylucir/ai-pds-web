@@ -97,7 +97,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   function sendWithAttachments(text: string) {
     setStickSignal((n) => n + 1);
     const mentions = attachments.map(
-      (p) => `[첨부 파일: ${p} — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 file_read로 읽으세요.]`,
+      (p) => `[첨부 파일: ${p} — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 이 파일을 읽어보세요.]`,
     );
     send(mentions.length ? `${mentions.join("\n")}\n\n${text}` : text);
     setAttachments([]);
