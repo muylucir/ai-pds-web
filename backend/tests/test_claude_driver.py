@@ -12,6 +12,7 @@ import pytest
 
 from pathfinder.agent.claude_driver import ClaudeDriver
 from pathfinder.agent.pending_store import PENDING_KEY, save_pending
+from pathfinder.models import AgentEvent
 from tests.fakes.fake_sdk_asking import (
     PREFACE_TEXT, cancel_pending_callbacks, sdk_client_for,
 )
@@ -41,7 +42,7 @@ def _driver(tmp_path, scripted, s3=None):
 
     def factory(session):
         captured["session"] = session
-        client = sdk_client_for(scripted, d._on_can_use_tool, driver=d)
+        client = sdk_client_for(scripted, d._on_can_use_tool)
         captured["client"] = client
         return client
 
@@ -89,10 +90,10 @@ async def test_the_prose_before_a_question_is_not_lost(tmp_path):
     # 없다. 그리고 driver.py의 _CONTACT_ADDENDUM:44-45는 질문 전에 설명을
     # 요구한다. 그래서 이건 드문 레이스가 아니라 매번 일어나는 정상 경로다.
     #
-    # asyncio.wait는 타임아웃에 done=∅을 주지만 같은 tick에 메시지가 도착할 수
-    # 있고, 읽지 않고 return하면 finally의 cancel이 그 메시지를 버린다 —
-    # anyio의 send_nowait는 파킹된 수신자에게 버퍼를 거치지 않고 직접 건네므로
-    # (memory.py:210-217) 새 이터레이터에도 남아 있지 않다. 영구 유실이다.
+    # 유실되면 사용자는 설명 없는 질문 카드만 본다. 예전 구조에서는 메시지 수신이
+    # 취소 가능한 future였고 anyio의 send_nowait는 파킹된 수신자에게 버퍼를 거치지
+    # 않고 직접 건네므로(memory.py:220-231), 그 future를 취소하는 순간 메시지가
+    # 영구 소멸했다. 지금은 별도 리더 태스크가 수신을 소유한다.
     d, _, _ = _driver(tmp_path, {"questions": True})
     events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
     kinds = [e.kind for e in events]
@@ -102,11 +103,10 @@ async def test_the_prose_before_a_question_is_not_lost(tmp_path):
 
 @pytest.mark.asyncio
 async def test_every_message_buffered_before_a_question_survives(tmp_path):
-    # 위 테스트가 커버하는 건 "버퍼에 1개"뿐이고, 그래서 1라운드에서 완료로
-    # 보였다. 실제로는 재장전한 ensure_future가 생성 tick에 절대 done()이 아니라
-    # `while next_msg.done()` 루프가 한 번밖에 못 돌아 2개 이상이면 나머지가
-    # finally의 cancel에 파괴됐다. 실측: 실제 CLI의 메시지 간 간격은 3-4ms로
-    # 드라이버의 50ms 폴 안이라 한 패스에 여러 개가 들어오는 건 일상이다.
+    # 위 테스트가 커버하는 건 "1개"뿐이고, 그래서 1라운드에서 완료로 보였다.
+    # 한 번에 한 개만 소비하고 나머지를 버리는 구조라면 여기서 깨진다. 실측:
+    # 실제 CLI의 메시지 간 간격은 3-4ms로 드라이버의 50ms 폴 안이라 한 패스에
+    # 여러 개가 들어오는 건 일상이다.
     texts = ["첫 문장", "둘째 문장", "셋째 문장"]
     d, _, _ = _driver(tmp_path, {"questions": True, "preface_texts": texts})
     events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
@@ -115,40 +115,41 @@ async def test_every_message_buffered_before_a_question_survives(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_message_arriving_during_the_queue_drain_survives(tmp_path):
-    # 큐를 비우는 루프의 각 yield가 스케줄러에 제어를 넘기고, 그것이 재장전된
-    # 수신이 메시지를 건네받는 창이다. 즉 questions가 큐에 들어간 뒤에도
-    # 메시지가 정당하게 도착할 수 있으므로, 나가기 전에 한 번 더 훑어야 한다.
-    d, _, cap = _driver(tmp_path, {"questions": True,
-                                   "during_drain": "드레인 중 도착"})
-    events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+async def test_a_message_arriving_while_the_question_is_yielded_survives(tmp_path):
+    # questions를 yield한 지점에서 드라이버는 정확히 그 yield에 매달려 있다 —
+    # 위치를 추측하지 않고 소비자 쪽에서 관찰한다. 이전 라운드의 가짜는 드라이버
+    # 상태를 폴링하는 술어로 이 창을 찾았는데, 그 술어는 양방향 오탐이 있었다
+    # (_on_can_use_tool의 S3 저장 중에도 True, 드레인이 끝난 뒤에도 True) —
+    # 그래서 테스트가 공허해져도 "창을 맞췄다"고 보고할 수 있었다.
+    #
+    # 프로덕션에서 이 창은 SSE 프레임 하나를 쓰는 시간이다(runner.py는 프레임마다
+    # await한다). 그 사이 CLI가 보낸 메시지는 유실되면 안 된다.
+    d, _, cap = _driver(tmp_path, {"questions": True})
+    events = []
+    async for ev in d.run("hi", {"session_id": "s-1"}):
+        events.append(ev)
+        if ev.kind == "questions":
+            cap["client"].deliver_late("질문 yield 중 도착")
+            await asyncio.sleep(0)
     kinds = [e.kind for e in events]
     texts = [e.text for e in events if e.kind == "message"]
-    # 창을 실제로 맞췄는지 먼저 단정한다. _DURING_DRAIN_TURNS의 유효 구간은
-    # [2,3]으로 좁고 _pump의 await 횟수가 바뀌면 조용히 공허해진다 — 그때
-    # "순서가 맞다"만 보면 통과해버린다. 가짜가 드라이버 상태를 직접 관찰해
-    # 기록한 값을 본다.
-    assert cap["client"].drain_window_hit, (
-        "during_drain 메시지가 의도한 창(질문이 큐에서 빠져나가 yield되는 중)에 "
-        "도착하지 않았다 — _DURING_DRAIN_TURNS를 다시 맞춰야 한다")
-    assert "드레인 중 도착" in texts, kinds
-    # 이 메시지는 questions 뒤에 온다 — 큐를 비우는 중에 도착했으므로 나가기 전
-    # 마지막 훑기만이 건질 수 있다. 순서 자체가 그 훑기가 동작했다는 증거다.
+    assert "질문 yield 중 도착" in texts, kinds
+    # questions 뒤에 온다 — 그 시점 이후에 건네졌으므로 종결 전 마지막 수확만이
+    # 건질 수 있다. 순서 자체가 그 수확이 동작했다는 증거다.
     assert kinds.index("questions") < kinds.index("message", 1), kinds
     assert kinds[-1] == "done"
+    assert kinds.count("done") == 1, kinds
 
 
 @pytest.mark.asyncio
 async def test_a_message_arriving_during_the_post_done_sync_is_not_destroyed(tmp_path):
-    # 마지막 훑기는 next_msg에 스케줄러 턴을 주면서 끝난다 — 그것이 곧 anyio
-    # waiting_receiver로 등록하는 행위다. 그 상태로 `yield done`에 매달리면
-    # runner.py:134-140이 실제 S3 동기화(수십~수백 ms)를 await하는 동안 CLI가
-    # 보낸 다음 메시지가 버퍼를 건너뛰고 그 수신자에게 직접 건네지고, 소비자가
-    # 돌아온 뒤 finally의 cancel이 그것을 파괴한다.
+    # `yield done`에 매달려 있는 동안 runner.py:134-140은 실제 S3 동기화
+    # (수십~수백 ms)를 await한다. 그 사이 CLI가 보낸 메시지는 예전 구조에서
+    # 파킹된 수신자에게 직접 건네졌고, 소비자가 돌아온 뒤 취소에 파괴됐다.
     #
-    # 해법은 타이밍이 아니라 구조다: 매달리기 전에 수신을 은퇴시키면 anyio가
-    # 취소 예정 수신자를 건너뛰고 버퍼에 넣으므로(memory.py:223-231) 다음
-    # 이터레이터가 건진다.
+    # 해법은 타이밍이 아니라 구조다: 메시지 수신을 별도 리더 태스크가 소유하므로
+    # _pump가 어디서 몇 초를 매달려 있든 도착한 메시지는 리더의 inbox에 쌓이고,
+    # 같은 리더를 이어받는 답변 턴이 그것을 relay한다.
     d, _, cap = _driver(tmp_path, {"questions": True})
     events = []
     async for ev in d.run("hi", {"session_id": "s-1"}):
@@ -184,9 +185,10 @@ async def test_a_question_turn_yields_exactly_one_terminal_event(tmp_path):
 
 @pytest.mark.asyncio
 async def test_the_final_message_of_a_turn_is_translated_only_once(tmp_path):
-    # 종결 경로는 한 번 더 훑는데, `ended` 이후 next_msg는 이미 소비한
-    # ResultMessage를 그대로 들고 있다(재장전하지 않으므로). 가드가 없으면 그
-    # 메시지가 _translate에 두 번 들어가 메시지가 실어 온 부수효과가 두 번 돈다.
+    # 종결 경로는 두 소스를 소진할 때까지 반복 수확한다. 한 메시지가 inbox에서
+    # 정확히 한 번만 pop되지 않으면 _translate에 두 번 들어가고, 메시지가 실어 온
+    # 부수효과(stage/document/file_changed)가 두 번 돈다. 출력이 아니라 _translate
+    # 호출 횟수를 세는 이유가 그것이다 — 부수효과 클래스 전체를 잡는다.
     d, _, _ = _driver(tmp_path, {"text": ["본문"]})
     seen: list[str] = []
     original = d._translate
@@ -206,18 +208,138 @@ async def test_queued_tool_events_are_emitted_before_the_terminal_event(tmp_path
     # sse.ts:29가 done 프레임에서 EventSource를 close하므로 done 뒤의 프레임은
     # onEvent에 닿지 않는다 — stage는 조용히 사라지고(useWorkspaceStream.ts:
     # 134-137이 stages에 넣지 못한다), document면 문서 패널이 낡은 채로 남는다.
-    # 한 패스에서 여러 메시지를 몰아 훑는 이번 라운드의 동작이 정확히 그 상황을
-    # 일상적으로 만든다.
-    d, _, cap = _driver(tmp_path, {"questions": True,
-                                   "during_drain": "드레인 중 도착",
-                                   "stage_during_terminal_sweep": True})
-    kinds = [e.kind async for e in d.run("hi", {"session_id": "s-1"})]
-    assert cap["client"].drain_window_hit, "의도한 창에 도달하지 못했다"
-    # 종결 훑기가 yield하는 동안 도구가 emit한 이벤트 — 그 패스의 중간 드레인은
-    # 이미 지나갔으므로 종결 경로의 드레인만이 이것을 내보낼 수 있다.
+    #
+    # 도구는 SDK 자기 태스크에서 돌기 때문에 드라이버가 yield에 매달린 어느
+    # 순간에도 emit할 수 있다. 여기서는 종결 수확이 메시지를 yield하는 그 순간에
+    # emit한다 — 그 패스의 중간 드레인은 이미 지나갔으므로 종결 경로가 큐를
+    # 소진할 때까지 반복하지 않으면 이 이벤트는 done 뒤로 밀리거나 사라진다.
+    d, _, cap = _driver(tmp_path, {"questions": True})
+    kinds = []
+    async for ev in d.run("hi", {"session_id": "s-1"}):
+        kinds.append(ev.kind)
+        if ev.kind == "questions":
+            cap["client"].deliver_late("종결 수확이 실어 낼 메시지")
+            await asyncio.sleep(0)
+        elif ev.kind == "message" and len(kinds) > 1:
+            # 드라이버는 지금 종결 수확의 yield에 매달려 있다.
+            d._emit(AgentEvent(kind="stage", payload='{"name": "stage-1"}'))
     assert "stage" in kinds, kinds
     assert kinds.index("stage") < kinds.index("done"), kinds
     assert kinds[-1] == "done"
+    assert kinds.count("done") == 1, kinds
+
+
+@pytest.mark.asyncio
+async def test_a_message_arriving_while_a_queued_tool_event_is_yielded_survives(
+        tmp_path):
+    # 라운드 3의 순서 수정이 만든 창: 질문과 같은 버스트에 도구 이벤트가 들어오면
+    # (Write/Edit → file_changed, report_stage → stage — Discovery 턴의 정상
+    # 모양이다) 드라이버는 종결 직전 드레인 안에서 yield하게 된다. 예전 구조에서는
+    # 바로 앞의 훑기가 수신을 파킹해 둔 상태였으므로, 그 yield 동안 도착한 메시지가
+    # 곧 취소될 수신자에게 건네져 영구 유실됐다 — SSE 프레임 하나 쓰는 시간
+    # (sleep(0))만으로 재현됐고 S3 지연은 필요하지도 않았다.
+    #
+    # 이제 메시지 수신은 취소 가능한 future가 아니라 별도 리더 태스크가 소유하므로
+    # _pump의 어떤 중단도 메시지를 파괴할 수 없다. 그 성질을 여기서 고정한다.
+    d, _, cap = _driver(tmp_path, {"questions": True})
+    events = []
+    async for ev in d.run("hi", {"session_id": "s-1"}):
+        events.append(ev)
+        if ev.kind == "questions":
+            d._emit(AgentEvent(kind="file_changed", path="doc.md"))
+        elif ev.kind == "file_changed":
+            cap["client"].deliver_late("중단 직전 도착")
+            await asyncio.sleep(0)
+    kinds = [e.kind for e in events]
+    assert "file_changed" in kinds, kinds
+    assert kinds.index("file_changed") < kinds.index("done"), kinds
+    assert kinds[-1] == "done"
+    # 이 턴에서 나가든 답변 턴에서 나가든 유실되지만 않으면 된다 — 유실이 곧
+    # 설명 없는 질문 카드다.
+    iid = json.loads(next(e.payload for e in events if e.kind == "questions"))[
+        "interrupt_id"]
+    later = [ev async for ev in d.run_answers(iid, {"1": "A"},
+                                              {"session_id": "s-1"})]
+    texts = [e.text for e in list(events) + later if e.kind == "message"]
+    assert "중단 직전 도착" in texts, [(e.kind, e.text) for e in events + later]
+
+
+@pytest.mark.asyncio
+async def test_a_message_arriving_as_the_turn_is_abandoned_survives(tmp_path):
+    # runner.py:144-152는 이 경로를 일상적으로 탄다(SSE 끊김, 프록시 타임아웃,
+    # 사용자 이탈). 예전 구조에서는 취소가 중단 시점에 걸리므로 마지막 장전 이후
+    # 도착한 것은 이미 future에 들어와 있고 그대로 죽었다 — finally의 retire()는
+    # 이미 건네진 것을 되돌릴 수 없다. 사용자가 재접속하면 GET /pending이 살아 있는
+    # 질문을 주고, run_answers는 그 설명 없는 질문 카드만 보게 된다.
+    d, _, cap = _driver(tmp_path, {"questions": True})
+    events = []
+    agen = d.run("hi", {"session_id": "s-1"}).__aiter__()
+    async for ev in agen:
+        events.append(ev)
+        if ev.kind == "questions":
+            cap["client"].deliver_late("중단 직전 도착")
+            await asyncio.sleep(0)      # 리더가 실제로 받아 들이게 한다
+            break
+    await agen.aclose()                 # 소비자가 사라진다
+    # 소비자가 없는 동안에도 CLI는 계속 보낸다.
+    cap["client"].deliver_late("중단 이후 도착")
+    await asyncio.sleep(0)
+
+    iid = json.loads(next(e.payload for e in events if e.kind == "questions"))[
+        "interrupt_id"]
+    later = [ev async for ev in d.run_answers(iid, {"1": "A"},
+                                              {"session_id": "s-1"})]
+    texts = [e.text for e in later if e.kind == "message"]
+    assert "중단 직전 도착" in texts, [(e.kind, e.text) for e in later]
+    assert "중단 이후 도착" in texts, [(e.kind, e.text) for e in later]
+    assert [e.kind for e in later][-1] == "done"
+
+
+@pytest.mark.asyncio
+async def test_a_new_turn_does_not_lose_messages_to_the_previous_reader(tmp_path):
+    # 리더가 턴을 넘어 살아남는다는 것은 새 턴이 시작될 때 반드시 걷어내야 한다는
+    # 뜻이다. 재현 경로: 질문 턴 → 답변 턴을 중간에 버림(SSE 끊김) → future는
+    # 이미 풀렸으므로 사용자의 새 메시지가 query()까지 간다. 그 시점에 옛 리더가
+    # 아직 살아 있으면 두 리더가 같은 anyio 스트림에서 경쟁하고, anyio는 먼저
+    # 파킹된 수신자(=옛 리더)에게 아이템을 건넨다 — 아무도 relay하지 않는 inbox다.
+    #
+    # 실측(걷어내지 않을 때): 새 턴은 문장 하나만 받고 ResultMessage까지 도둑맞아
+    # 영원히 끝나지 않는다 — runner.py의 루프와 SSE 클라이언트가 함께 매달린다.
+    d, _, cap = _driver(tmp_path, {"questions": True,
+                                   "turn_continues_after_answer": True})
+    ev1 = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+    iid = json.loads(next(e.payload for e in ev1 if e.kind == "questions"))[
+        "interrupt_id"]
+    reader1 = d._reader
+
+    # 답변 턴을 relay 중간에 버린다.
+    agen = d.run_answers(iid, {"1": "A"}, {"session_id": "s-1"}).__aiter__()
+    cap["client"].deliver_late("답변 턴 첫 문장")
+    async for _ in agen:
+        break
+    await agen.aclose()
+    assert not reader1.task.done()          # 옛 리더가 살아 있다
+    assert d._pending_question is None or d._pending_question.done()
+
+    # 새 턴. 메시지는 query()가 나간 뒤에 도착시킨다 — 그래야 이 턴의 것이다.
+    got = []
+
+    async def turn2():
+        async for ev in d.run("새 메시지", {"session_id": "s-1"}):
+            got.append((ev.kind, ev.text))
+
+    task = asyncio.ensure_future(turn2())
+    for _ in range(4):
+        await asyncio.sleep(0)
+    cap["client"].deliver_late("새 턴 문장 1")
+    cap["client"].deliver_late("새 턴 문장 2")
+    cap["client"].finish_turn()
+    await asyncio.wait_for(task, 3)         # 걷어내지 않으면 여기서 매달린다
+
+    texts = [t for k, t in got if k == "message"]
+    assert texts == ["새 턴 문장 1", "새 턴 문장 2"], got
+    assert got[-1][0] == "done", got
+    assert reader1.inbox == []              # 훔쳐간 것이 없다
 
 
 @pytest.mark.asyncio

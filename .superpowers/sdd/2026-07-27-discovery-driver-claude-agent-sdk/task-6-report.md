@@ -810,3 +810,288 @@ turn costs 3.1 ms CPU.
    record, so `pending()` still advertises an unanswerable question after
    teardown (one `await clear_pending` fixes it, once Task 8 wires
    `disconnect()`).
+
+---
+
+# Fix round 4 — the class eliminated, not the fourth window patched
+
+All three findings were reproduced against HEAD (`c6def54`) before any code
+changed, with the reviewer's exact numbers. Then I **restructured** rather than
+adding a fourth `retire()`, because two probes showed the current shape has no
+correct version.
+
+## The two probes that decided the approach
+
+Both on a real anyio memory-object stream, both reproducible.
+
+**1. `retire()`-then-re-arm is impossible, not merely untested.** The reviewer
+flagged the structural fix as "retire before every suspension and re-arm after"
+and noted cancel-then-re-arm was untested here. It does not work at all —
+cancelling `agen.__anext__()` **closes the async generator**:
+
+```
+armed:                         (1, 0)
+after retire+send:             (0, 1)      <- buffered, as round 3 found
+RE-ARM RESULT: StopAsyncIteration — the cancel CLOSED the generator
+fresh iterator got:            m1          <- only a NEW iterator can read it
+```
+
+So every suspension in `_pump` needs a *fresh iterator* afterwards, and a fresh
+iterator cannot be created without knowing the old one is finished. There is no
+safe suspension protocol for a peek future. That is why each round closed one
+window and left or opened another: the queue drain, the second sweep, `yield
+done`, the pre-terminal drain, the abandoned exit — five instances of one
+unfixable shape.
+
+**2. A reader task nobody cancels loses nothing**, including after the consumer
+walks away:
+
+```
+reader parked:                    (1, 0)
+inbox after the consumer left:    ['m1', 'm2']
+inbox later:                      ['m1', 'm2', 'm3']
+```
+
+That is the lever the peek future never had. So: **`_MessageReader`** — a task
+that owns the turn's `receive_response()` iterator, never stops reading, and
+appends to a plain inbox on the driver. `_pump` consumes only from `inbox`.
+
+**Why this eliminates the class rather than patching a window.** The bug class
+is "a message handed to a receiver that is later cancelled". After the change
+`_pump` owns **no cancellable receive at all**, so no suspension of `_pump` —
+`yield`, `await`, or the `GeneratorExit` of an abandoned generator — can destroy
+a message. There is no window list to keep correct. Three defects collapse into
+properties:
+
+| Old failure mode | Now |
+|---|---|
+| message destroyed at some suspension | pump has nothing cancellable to destroy |
+| unread messages lost on abandonment | they are in OUR inbox, relayed by the answers turn |
+| last message translated twice | popped exactly once; double side effects unrepresentable |
+
+The one cancellable await left is `settle()`, which waits on an `asyncio.Event`.
+An Event carries no payload, so cancelling it cannot lose anything.
+
+The two properties the brief required stay verified: **exactly one terminal
+event, last, on all 15 paths** (table below), and **queue events precede the
+terminal event** (its own test, revert-verified).
+
+## CRITICAL — `retire()` one line too late
+
+**Reproduced exactly as reported**, with nothing but `await asyncio.sleep(0)` on
+the consumer:
+
+```
+TRACE: ['queued file_changed', ('(parked,buffered) before->after send', (1, 0), (0, 0))]
+TURN KINDS:   ['message', 'questions', 'file_changed', 'done']
+ANSWERS TURN: [('done', None)]
+MESSAGE SURVIVED ANYWHERE: False
+```
+
+I did **not** apply the verified one-line fix (`retire()` above the drain).
+It is correct for this instance, but it is the fourth placement of the same
+band-aid and probe 1 shows a fifth window is always available. After the
+restructure:
+
+```
+TURN KINDS:   ['message', 'questions', 'file_changed', 'message', 'done']
+MESSAGE SURVIVED ANYWHERE: True
+```
+
+The queued `file_changed` still precedes `done`, and the message now comes out
+in the same turn instead of merely surviving into the next one.
+
+**Tests:** `test_a_message_arriving_while_a_queued_tool_event_is_yielded_survives`
+(the reviewer's exact trigger: a tool event queued in the same burst as the
+question) and `test_a_message_arriving_while_the_question_is_yielded_survives`.
+
+## IMPORTANT — the abandoned exit
+
+**Reproduced**; the report's "closed by construction" claim was indeed false —
+`retire()` cannot un-hand a delivery that already happened:
+
+```
+STATS before->after send: (1, 0) -> (0, 0)
+ABANDONED-SURVIVED: False
+```
+
+Fixed by the same restructure, with no extra code: the reader is deliberately
+**not** cancelled when a question parks the turn, so it keeps collecting through
+the disconnect. After:
+
+```
+ABANDONED KINDS: ['message', 'questions'] -> [('message', '중단 직전 도착'), ('done', None)]
+ABANDONED-SURVIVED: True
+```
+
+**Test:** `test_a_message_arriving_as_the_turn_is_abandoned_survives` — asserts
+both a message delivered *at* abandonment and one delivered *after* the consumer
+is gone are relayed by the answers turn, and that the turn still terminates.
+
+## IMPORTANT — the window-finding predicate
+
+**Reproduced** the reviewer's slow-S3 result exactly:
+
+```
+SLOW-S3 KINDS: ['message', 'message', 'questions', 'done']   <- landed PRE-drain
+SLOW-S3 drain_window_hit: True                               <- reports a hit anyway
+```
+
+I found a **third** false positive while confirming it: the predicate is still
+True after the whole turn has ended (`predicate AFTER the whole turn: True`),
+and its firing was never really an observation — it depended on the old
+`sweep()`'s incidental `asyncio.wait(timeout=0)` giving the fake a scheduler
+turn. Sampling it per frame:
+
+```
+predicate sampled at each yield: [('message', False), ('questions', True), ('done', True)]
+drain_window_hit: False          <- with a non-awaiting consumer
+drain_window_hit: True           <- same driver, consumer does sleep(0)
+```
+
+So the fragility had not been removed in round 3, only moved from a constant
+into a predicate that was hostage to await counts in *two* functions.
+
+**Fix: deleted the predicate and the `during_drain`/`_DURING_DRAIN_MAX_TURNS`/
+`drain_window_hit` machinery.** Mid-turn delivery is now driven from the
+**consumer**, inside the test's own `async for`, where the driver is provably
+suspended at that exact `yield` — nothing is inferred and nothing can go
+vacuous. The fake no longer needs a `driver` back-reference at all.
+
+**The reviewer predicted this would expose tests relying on the false positive,
+and it did.** Both `during_drain` tests failed the moment the predicate went
+away, including `test_queued_tool_events_are_emitted_before_the_terminal_event`
+— the one measured to be vacuous. Both were rewritten against consumer-driven
+delivery and both are revert-verified below.
+
+## A fourth defect, found by my own mutation run
+
+Mutating away `_retire_reader()` in `_stream` left all 32 tests green, so I
+probed reachability by construction rather than trusting either result. It is
+load-bearing, and the failure is worse than a lost message:
+
+```
+### WITH the fix
+reader1 cancelled by turn 2's query(): True
+turn 2 events: [('message','새 턴 문장 1'), ('message','새 턴 문장 2'), ('done', None)]
+
+### WITHOUT it
+reader1 cancelled by turn 2's query(): False
+turn 2 events: [('message','새 턴 문장 2'), ('<HUNG>', None)]
+reader1 inbox (what it STOLE from turn 2): ['AssistantMessage', 'ResultMessage']
+```
+
+Path: question turn → answers turn abandoned mid-relay → the future is resolved,
+so a new user message reaches `query()`. Two readers then compete on one anyio
+stream, and anyio hands each item to the **first** parked receiver
+(`waiting_receivers` is an OrderedDict popped `last=False`) — the stale one. It
+steals the turn's `ResultMessage`, so the turn **never terminates**, which hangs
+`runner.py`'s loop and the SSE client — the failure the brief calls worse than a
+double `done`.
+
+**Test:** `test_a_new_turn_does_not_lose_messages_to_the_previous_reader`. Its
+first draft passed for the wrong reason (answering delivered the `ResultMessage`
+instantly, so the reader was already finished); the fake gained
+`turn_continues_after_answer` to model the real case where the model keeps
+working for seconds after an answer.
+
+Two more mutants I ran that were *correctly* green, both now documented:
+`settle()`'s second post-`clear()` re-check was dead code (there is no `await`
+between the two checks) — removed, with the ordering argument written down; and
+reader-error propagation is already covered by the contract's `raise` script.
+
+## Revert-verification — every new/changed test, each against its own fix
+
+| Reverted | Failing test(s) |
+|---|---|
+| reader not carried across the question (the old shape's defining property) | `..._post_done_sync_is_not_destroyed`, `..._as_the_turn_is_abandoned_survives`, `test_answers_reach_the_sdk_as_the_tool_result` |
+| terminal harvest → single pass (round 3's ordering shape) | `test_queued_tool_events_are_emitted_before_the_terminal_event` |
+| terminal harvest removed entirely (round 3's CRITICAL shape) | `..._while_the_question_is_yielded_survives`, `..._while_a_queued_tool_event_is_yielded_survives`, `test_queued_tool_events_...` |
+| `_retire_reader()` removed from `_stream` | `test_a_new_turn_does_not_lose_messages_to_the_previous_reader` |
+| `sweep`/harvest yields its own `done` again | `test_a_question_turn_yields_exactly_one_terminal_event` |
+| inbox never popped (message consumed twice) | hangs the suite (detected; `..._translated_only_once` never completes) |
+| reader errors swallowed instead of raised | `test_claude_driver_satisfies_the_same_contract` |
+
+Verified by running each, not asserted. All restored → 33 passed.
+
+## Exactly one terminal event — re-verified on 15 paths
+
+```
+OK  1 text turn                     n=1 ['message', 'done']
+OK  2 question turn                 n=1 ['message', 'questions', 'done']
+OK  3 sdk raises                    n=1 ['error']
+OK  4 rules missing                 n=1 ['error']
+OK  5 concurrent rejected           n=1 ['error']
+OK  6 answer-first short-circuit    n=1 ['message', 'questions', 'done']
+OK  7 live answers                  n=1 ['done']
+OK  8 stale iid (live)              n=1 ['error']
+OK  9 restart answers               n=1 ['message', 'done']
+OK 10 no pending                    n=1 ['error']
+OK 11 stale iid (restart)           n=1 ['error']
+OK 12 followup during answers       n=1 ['questions', 'done']
+OK 13 stream closed mid-turn        n=1 ['done']
+OK 14 answers with no reader        n=1 ['error']
+OK 15 s3 save broken                n=1 ['message', 'questions', 'done']
+
+ALL PATHS EXACTLY ONE TERMINAL EVENT, LAST: True (15/15)
+```
+
+Paths 13/14 are new with the restructure. 14 is a defensive branch (`_reader is
+None` on the live-future path) reported as a turn failure rather than a silent
+empty turn, since the user's answers have nowhere to go.
+
+## Commands and output
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_claude_driver.py tests/test_claude_driver_contract.py -q
+33 passed in 0.36s
+```
+(was 30; +3 net — 4 added, 1 replaced by a consumer-driven equivalent)
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_agent_driver.py tests/test_strands_driver_contract.py tests/test_proto_builder.py -q
+34 passed in 0.24s
+```
+
+```
+$ cd backend && .venv/bin/python -m pytest -q
+609 passed, 1 warning in 12.63s
+```
+606 → 609. `git diff HEAD` shows zero changes to `driver.py`, `strands_tools.py`,
+`proto/builder.py`, `runner.py`, `driver_contract.py`. No "Task was destroyed" /
+"never awaited" / "never retrieved" output anywhere in the suite (grep count 0);
+the long-lived reader task is cleaned up at loop close. A question turn costs
+2.8 ms CPU (was 3.1).
+
+## Concerns after this round
+
+1. **The peek-future shape is gone, and with it the window enumeration** — the
+   defect class of rounds 1-3 is now unrepresentable rather than guarded. What
+   replaces it is a much smaller obligation: `_retire_reader()` must be called
+   exactly where a turn is *replaced* or torn down (two call sites, `_stream`
+   and `disconnect`) and nowhere else. My own mutation run found the one
+   untested call site, so both are now covered — but this is the property a
+   future editor must not break, and it is stated in `_retire_reader`'s
+   docstring for that reason.
+2. **`_MessageReader` outlives the `run()` generator by design.** That is what
+   fixes the abandoned exit, and it means a parked question keeps one task and
+   one inbox alive per driver until the question is answered, a new turn starts,
+   or `disconnect()` runs. Bounded (one reader per driver, replaced not
+   accumulated) and verified not to leak into loop close, but it is a real
+   lifetime change from "everything dies with the generator", and the leak is
+   now closed by `disconnect()` — which is still **unwired** until Task 8.
+3. **The `Query`-anyio-buffer dependence from round 1's Concern 2 is gone.**
+   Correctness no longer rests on any claim about where the SDK buffers unread
+   messages, because the driver holds them itself. The remaining SDK-internal
+   assumption is far weaker: that `receive_response()` can be iterated once to
+   completion per turn, which is its documented contract. The live-CLI round
+   trip in Task 9's checklist is still worth doing, but it is no longer
+   load-bearing for this bug class.
+4. **"Instrumentation shows zero calls" cost this task two rounds, and my own
+   mutation run reproduced the trap in miniature** (a surviving mutant that
+   looked like dead code but was a hang waiting to happen). Both times the
+   answer came from constructing the interleaving and diffing behaviour with and
+   without the code — not from observing whether it fired.
+5. **Deferred, unchanged from rounds 2-3:** `disconnect()` leaves the S3 pending
+   record, so `pending()` still advertises an unanswerable question after
+   teardown (one `await clear_pending` fixes it, once Task 8 wires it).

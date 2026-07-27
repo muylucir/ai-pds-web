@@ -36,9 +36,17 @@
 #
 #   `_pump` below therefore stops on a queued `questions` event, leaving the
 #   SDK's can_use_tool callback suspended on its future, and `run_answers`
-#   resolves that future and drains the REST of the same turn through a FRESH
-#   `receive_response()` iterator over the same client (never a second
-#   `query()`). See `_continue_after_answers` for why a fresh iterator is safe.
+#   resolves that future and relays the REST of the same turn (never a second
+#   `query()`).
+#
+#   What makes that round trip safe is `_MessageReader`: a task that owns the
+#   turn's `receive_response()` iterator, keeps reading across the whole
+#   question round trip, and collects into a plain inbox on the driver. So the
+#   messages the CLI sends while the question is on screen -- or while the SSE
+#   client is disconnected -- are held by US, not by anyio, and the answers turn
+#   relays them. Read `_MessageReader`'s docstring before editing anything in
+#   this area: the alternative shape (peek future + cancel) is unfixable, and it
+#   cost three review rounds one lost-message defect each.
 #
 # The other genuinely new piece is pending-question persistence across a
 # backend restart (see _on_can_use_tool/pending/_resume_with_answers) --
@@ -87,6 +95,116 @@ _MCP_SERVER_NAME = "pathfinder"
 # two drivers must be indistinguishable.
 _ANSWER_FIRST = ("진행 중인 질문에 먼저 답변해 주세요 — 우측 패널의 질문 폼을 "
                  "이용하세요.")
+
+
+class _MessageReader:
+    """Owns ONE `receive_response()` iterator and drains it into an inbox.
+
+    This class exists to make a whole bug class unrepresentable, so its
+    rationale is worth stating in full.
+
+    `_pump` has to race two sources: the SDK's next message, and the
+    hook/tool-callback queue (while an AskUserQuestion is parked the CLI is
+    blocked on the permission response and `receive_response()` yields nothing
+    at all, so a plain `async for` would never let the queued `questions` event
+    reach the SSE stream). The obvious way to race them is a *peek future* over
+    `agen.__anext__()`, polled on a short timeout — which is what this driver
+    did for three review rounds, and it lost messages in every one of them.
+
+    Why the peek future cannot be made safe, probed on a real anyio
+    memory-object stream (the SDK owns exactly such a stream —
+    claude_agent_sdk/_internal/query.py:121):
+
+      - `send_nowait` hands an item DIRECTLY to a parked receiver and does not
+        buffer it (anyio/streams/memory.py:220-231). So the item's only copy
+        lives in that receiver.
+      - Cancelling the peek future therefore DESTROYS the item; it is not left
+        in the buffer for a later iterator. Measured: `(parked, buffered)`
+        goes `(1, 0) -> (0, 0)` on the send, and a fresh iterator then times
+        out.
+      - Every `await` and every `yield` between arming the peek and cancelling
+        it is a window where that can happen. Each round closed one window and
+        left (or opened) another: the queue drain, the second sweep, `yield
+        done`, the pre-terminal drain, the abandoned exit.
+      - "Cancel before suspending, re-arm afterwards" cannot fix it either:
+        cancelling `agen.__anext__()` CLOSES the async generator. Probed —
+        re-arming the same iterator after a cancel raises StopAsyncIteration,
+        and the item is only recoverable through a brand-new iterator. So the
+        peek future has no safe suspension protocol at all.
+
+    The fix is to stop racing the message at all. A dedicated task owns the
+    iterator and never stops reading; `_pump` only ever consumes from
+    `inbox`, a plain list on the driver. Then:
+
+      - The pump owns no cancellable receive, so no suspension of the pump can
+        destroy a message. There is no window to enumerate.
+      - Unread messages live in OUR inbox, not in anyio's buffer, so they
+        survive the consumer abandoning the generator (SSE disconnect, proxy
+        timeout, navigation — runner.py:144-152 takes that path routinely) and
+        are picked up by the answers turn. Probed: a reader nobody cancels
+        receives every item sent after the consumer walked away.
+      - Each message is popped exactly once, so double translation (and any
+        side effect a message carries) is impossible by construction.
+
+    The only cancellable wait left is `settle()`'s, and it waits on an
+    `asyncio.Event`, which carries no payload — cancelling it cannot lose
+    anything. That is the whole structural difference.
+
+    The reader is cancelled only when the turn it belongs to is being
+    REPLACED (`_retire_reader`) or the subprocess is going away
+    (`disconnect`); never while the turn may still continue.
+    """
+
+    def __init__(self, agen) -> None:
+        self._agen = agen
+        self.inbox: list = []
+        self.ended = False
+        self.error: BaseException | None = None
+        # Woken on every append so the pump reacts immediately instead of
+        # waiting out its poll interval; sticky, cleared by settle().
+        self.wake = asyncio.Event()
+        self.task: asyncio.Task = asyncio.ensure_future(self._drain())
+
+    async def _drain(self) -> None:
+        try:
+            async for msg in self._agen:
+                self.inbox.append(msg)
+                self.wake.set()
+        except asyncio.CancelledError:
+            # Deliberate teardown (see _retire_reader/disconnect) -- must not
+            # be recorded as a turn failure.
+            raise
+        except Exception as e:
+            # Captured rather than left on the task, so nothing logs
+            # "Task exception was never retrieved" and `_pump` can raise it on
+            # the caller's stack, where `_stream` degrades it to the contract's
+            # "agent turn failed".
+            self.error = e
+        finally:
+            self.ended = True
+            self.wake.set()
+
+    async def settle(self, timeout: float) -> None:
+        """Wait for something new, or `timeout`.
+
+        The ONE cancellable await `_pump` owns. It waits on an Event, which
+        carries no item, so a cancellation here cannot destroy a message --
+        unlike awaiting the message future itself.
+
+        No lock and no re-check after `clear()`: one event loop, and `_drain`
+        appends to `inbox` BEFORE it sets the event, so the only ordering that
+        could lose a wakeup (clear -> append -> set) cannot happen without an
+        await between the check and the clear, and there is none. A stale
+        wakeup is harmless anyway -- `_pump` just harvests an empty inbox and
+        loops.
+        """
+        if self.inbox or self.ended:
+            return
+        self.wake.clear()
+        try:
+            await asyncio.wait_for(self.wake.wait(), timeout)
+        except TimeoutError:  # asyncio.TimeoutError is TimeoutError on 3.11
+            pass
 
 
 def _rel(path: str, workspace: str) -> str | None:
@@ -294,6 +412,11 @@ class ClaudeDriver:
         self._pending_iid: str | None = None
         self._last_status: str | None = None
         self._current_session_id: str | None = None
+        # The task draining the current turn's receive_response(). Outlives the
+        # `run()` generator on purpose when a question parks the turn -- that is
+        # what keeps the rest of the turn's messages for `run_answers`. See
+        # _MessageReader.
+        self._reader: _MessageReader | None = None
 
     # ---- plumbing ----
 
@@ -464,172 +587,119 @@ class ClaudeDriver:
             events.append(AgentEvent(kind="done"))
         return events
 
-    async def _pump(self, agen) -> AsyncIterator[AgentEvent]:
-        """Drain one turn's SDK messages, racing them against the callback queue.
+    def _retire_reader(self) -> None:
+        """Drop the reader owning the PREVIOUS turn's iterator.
 
-        Race the next message against the hook/tool-callback queue: while an
-        AskUserQuestion is pending, receive_response() yields nothing at all,
-        so a plain `async for` would never let a queued `questions` event reach
-        the SSE stream. Poll the queue on a short timeout instead of blocking
-        indefinitely on the next message.
-
-        Where this DIVERGES from builder.py's loop: a queued `questions` event
-        ends the turn here (`questions` then `done`, then return), because
-        Discovery answers arrive on a separate stream -- see the module
-        docstring. The suspended can_use_tool callback is left parked on its
-        future for `run_answers` to resolve.
-
-        THE INVARIANT, and it is the whole reason this function is shaped the
-        way it is:
-
-            No message the SDK has already handed us is ever discarded.
-
-        State it as an invariant and enforce it mechanically, because reasoning
-        about which interleavings are *possible* has been wrong twice here. Why
-        it is easy to get wrong: the `finally` below cancels the in-flight
-        receive, and anyio's `send_nowait` hands an item straight to a parked
-        receiver instead of buffering it (anyio/streams/memory.py:210-217). So a
-        message already handed to that receiver is NOT waiting in the buffer for
-        the fresh iterator `_continue_after_answers` opens -- cancelling loses
-        it permanently. Two ways that bit us:
-
-          1. `asyncio.wait` reports `done=∅` on timeout, yet `next_msg` can
-             resolve during that same tick. Returning without reading it lost
-             the message.
-          2. A re-armed `ensure_future` is NEVER synchronously `done()` on the
-             tick it is created, so a `while next_msg.done()` loop can only ever
-             consume ONE message per pass. With two or more buffered, the extras
-             were lost. Fixed by giving the re-armed receive its scheduler turn
-             with `wait(timeout=0)` -- measured: each subsequent buffered message
-             becomes available after exactly one such turn.
-
-        Hence `sweep()` below loops until the receive genuinely has nothing
-        ready, and is called BOTH before the queue drain AND again after it (a
-        `yield` inside the drain loop gives the re-armed receive its turn, so a
-        message can legitimately arrive mid-drain).
-
-        Sweeping is not sufficient on its own, though, because sweeping is
-        exactly what ARMS a receiver: `wait(timeout=0)` registers `next_msg` as
-        an anyio `waiting_receiver`, and a message sent while it is parked is
-        handed straight to it, bypassing the buffer. So any suspension between
-        the last sweep and the `finally`'s cancel is an unswept window. The one
-        that mattered was `yield done`: the consumer (runner.py:134-140) awaits
-        a real S3 workspace sync BEFORE coming back for the next event -- tens
-        to hundreds of ms, and the CLI hands over its next message right into
-        it. Verified: `waiting_receivers 1->0, buffer 0->0` on the send, then
-        the item gone after the cancel, at every sync duration tried.
-
-        `retire()` closes that class of window by construction rather than by
-        timing: cancel the receive BEFORE suspending, because anyio skips a
-        receiver with a pending cancellation and buffers the item instead
-        (memory.py:223-231) -- so a fresh `receive_response()` iterator still
-        finds it. Every exit path either sweeps-then-retires or is provably
-        safe: `StopAsyncIteration` holds its result in the future (cancel is a
-        no-op), and the exception path is already terminal.
-
-        Why this matters at all, rather than being a theoretical race: the CLI
-        writes the `{"type":"assistant"}` message (the model's "why I'm asking"
-        prose plus the AskUserQuestion tool_use) and the `control_request` back
-        to back in one read-loop pass (claude_agent_sdk/_internal/query.py:
-        250-322) with no model latency in between, and inter-message gaps were
-        measured at 3-4ms against the real CLI -- far inside `_POLL_SECONDS`.
-        driver.py's _CONTACT_ADDENDUM:44-45 also *requires* the model to explain
-        itself before asking. Losing those messages means a bare question card
-        with no explanation. builder.py never hit any of this because it never
-        returns on `asked`.
-
-        One ordering rule, separate from the invariant: the terminal event is
-        always LAST. `frontend/lib/api/sse.ts:29` closes the EventSource on the
-        `done` frame, so anything after it never reaches `onEvent` -- a `stage`
-        or `document` emitted by a tool during the same ready burst would be
-        silently dropped and the sidebar/document panel would go stale.
+        Called only where the old turn is being replaced (a new `query()`) or
+        the subprocess is going away (`disconnect`) -- never while the turn it
+        belongs to may still continue, because cancelling the reader is the one
+        remaining way to lose a message that was handed to it. When a question
+        is parked the reader is deliberately left running: it is what collects
+        the rest of the turn for `run_answers` to relay.
         """
-        next_msg: asyncio.Future = asyncio.ensure_future(agen.__anext__())
+        reader, self._reader = self._reader, None
+        if reader is not None and not reader.task.done():
+            reader.task.cancel()
+
+    async def _pump(self, reader: "_MessageReader") -> AsyncIterator[AgentEvent]:
+        """Relay one turn: the reader's messages, raced against the callback queue.
+
+        Two sources feed a turn, and only one of them can be awaited. The
+        hook/tool-callback queue (`self._queue`) is filled synchronously by
+        callbacks running on the SDK's own tasks and has nothing to await, so it
+        is POLLED on `_POLL_SECONDS`. That poll is not an optimization: while an
+        AskUserQuestion is parked the CLI is blocked on the permission response
+        and the message stream yields nothing at all, so a driver that only
+        awaited messages would never let the queued `questions` event reach the
+        SSE stream (this is builder.py's hard-won detail, carried across).
+
+        Messages come from `reader.inbox`, never from an awaited receive. That
+        is THE structural property of this function, and the reason it no longer
+        needs to reason about interleavings: `_pump` owns no cancellable
+        receive, so no suspension of `_pump` -- not a `yield`, not an `await`,
+        not the `GeneratorExit` of an abandoned generator -- can destroy a
+        message. See `_MessageReader` for the full argument, including why the
+        peek-future shape it replaces had no safe suspension protocol and cost
+        three review rounds one lost-message defect each.
+
+        Where this DIVERGES from builder.py: a queued `questions` event ends the
+        turn (`questions`, then `done`, then return), because Discovery answers
+        arrive on a separate stream -- see the module docstring. The suspended
+        can_use_tool callback is left parked on its future, and the READER IS
+        LEFT RUNNING, for `run_answers` to relay through `_continue_after_answers`.
+
+        Two invariants this function owns, both verified by tests:
+
+        1. Exactly one terminal event, always LAST. `_translate`'s `done` (from
+           a ResultMessage) is never yielded; it only sets `ended`, so the
+           terminal event has a single origin and cannot be doubled.
+           `frontend/lib/api/sse.ts:29` closes the EventSource on `done`, so
+           anything after it never reaches `onEvent` -- a `stage`/`document`
+           emitted by a tool during the same ready burst would be silently
+           dropped and the sidebar/document panel would go stale. Hence the
+           terminal harvest below drains BOTH sources to exhaustion before
+           `done`.
+        2. No message the SDK has handed us is dropped. Now true by
+           construction rather than by placement of sweeps: every message is
+           popped from `inbox` exactly once (so double translation, and
+           double-running whatever side effect a message carries, is also
+           impossible), and whatever is still in `inbox` when this generator
+           ends -- deliberately or by abandonment -- is relayed by the next
+           pump over the same reader.
+        """
+        asked = False
         ended = False
 
-        async def sweep():
-            """Yield events for every message the SDK has already handed us,
-            until the receive genuinely has nothing ready.
+        def harvest() -> list[AgentEvent]:
+            """Translate every message the reader has already collected.
 
-            The `wait(timeout=0)` is load-bearing, not defensive: a freshly
-            re-armed `ensure_future` is never `done()` on its creation tick, so
-            without giving it a turn this would stop after one message and the
-            rest would be destroyed by the `finally`.
-
-            The terminal `done` that _translate makes from a ResultMessage is
-            NOT yielded here -- it only sets `ended`, so the single exit below
-            can place it after the queue (see the ordering rule)."""
-            nonlocal next_msg, ended
-            while True:
-                if ended:
-                    # The terminal path sweeps once more, and `next_msg` still
-                    # holds the already-consumed ResultMessage (it is not
-                    # re-armed after `ended`). Without this guard that message
-                    # would be handed to _translate a SECOND time -- harmless
-                    # for the stock translation, which yields only `done`, but
-                    # it double-runs whatever side effects a message carries.
-                    return
-                if not next_msg.done():
-                    await asyncio.wait({next_msg}, timeout=0)
-                    if not next_msg.done():
-                        return
-                try:
-                    msg = next_msg.result()
-                except StopAsyncIteration:
-                    ended = True
-                    return
-                for ev in self._translate(msg):
+            Synchronous on purpose: no `await`/`yield` between popping a message
+            and translating it, so there is no interleaving to reason about.
+            """
+            nonlocal ended
+            out: list[AgentEvent] = []
+            while reader.inbox and not ended:
+                for ev in self._translate(reader.inbox.pop(0)):
                     if ev.kind == "done":
-                        ended = True
+                        ended = True   # terminal event comes from the exit below
                         continue
-                    yield ev
-                if ended:
-                    return
-                next_msg = asyncio.ensure_future(agen.__anext__())
+                    out.append(ev)
+            return out
 
-        def retire() -> None:
-            """Un-park the receive before suspending, so a message that arrives
-            while we are away gets BUFFERED (recoverable by the next iterator)
-            instead of handed to a receiver we are about to cancel."""
-            if not next_msg.done():
-                next_msg.cancel()
-
-        try:
-            while True:
-                await asyncio.wait({next_msg}, timeout=_POLL_SECONDS)
-                async for ev in sweep():
-                    yield ev
-                asked = False
-                for ev in self.drain_queue():
-                    yield ev
-                    asked = asked or ev.kind == "questions"
-                if not (asked or ended):
-                    continue
-                # Single exit for both terminal cases (question raised, or the
-                # turn ended). Sweep once more: each `yield` in the drain loop
-                # above hands control to the scheduler, which is exactly the
-                # window the re-armed receive needs to be handed another
-                # message. Per the invariant we do not reason about whether
-                # that happened -- we just look.
-                async for ev in sweep():
-                    yield ev
-                # Anything a tool queued (stage/document/file_changed) must
-                # precede the terminal event -- see the ordering rule.
-                for ev in self.drain_queue():
-                    yield ev
-                # Retire BEFORE the terminal yield: the consumer suspends there
-                # for a full S3 sync, and a message arriving meanwhile must be
-                # buffered rather than handed to a receiver we then cancel.
-                retire()
-                yield AgentEvent(kind="done")
-                return
-        finally:
-            # The consumer may abandon this generator mid-stream (SSE client
-            # disconnect -> aclose() -> GeneratorExit), which reaches here with
-            # a possibly-parked receive. `retire()` above covers the deliberate
-            # exit; this covers abandonment, and keeps asyncio from logging
-            # "Task was destroyed but it is pending!".
-            retire()
+        while True:
+            # The only cancellable wait in this function, and it waits on an
+            # Event -- which carries no payload, so a cancellation here cannot
+            # lose anything.
+            await reader.settle(_POLL_SECONDS)
+            for ev in harvest():
+                yield ev
+            for ev in self.drain_queue():
+                yield ev
+                asked = asked or ev.kind == "questions"
+            if reader.ended and not reader.inbox:
+                ended = True
+            if asked or ended:
+                break
+        if reader.error is not None:
+            # Surfaced on the caller's stack so `_stream` can degrade it to the
+            # contract's "agent turn failed" -- messages already harvested above
+            # have been relayed first.
+            raise reader.error
+        # Terminal harvest. Every `yield` above handed control to the scheduler,
+        # which is exactly when the reader can append another message and a tool
+        # callback can queue another event -- so drain both to exhaustion before
+        # the terminal event, or an event that arrived during those yields would
+        # land after `done` (invariant 1) or wait for the next turn (invariant 2,
+        # correct but needlessly late). Terminates because both sources are now
+        # finished: after `asked` the CLI is blocked on the permission response,
+        # and after `ended` the iterator is done.
+        while True:
+            events = harvest() + self.drain_queue()
+            if not events:
+                break
+            for ev in events:
+                yield ev
+        yield AgentEvent(kind="done")
 
     # ---- the single-turn slot ----
     #
@@ -673,8 +743,13 @@ class ClaudeDriver:
             connect_session = dict(session)
             connect_session["resume"] = resume
             client = await self._ensure_client(connect_session)
+            # A new `query()` starts a new turn, so anything the previous turn's
+            # reader was still holding belongs to a turn nobody will relay --
+            # this is the only place it is safe to drop it.
+            self._retire_reader()
             await client.query(text)
-            async for ev in self._pump(client.receive_response().__aiter__()):
+            self._reader = _MessageReader(client.receive_response().__aiter__())
+            async for ev in self._pump(self._reader):
                 yield ev
         except Exception:
             _log.exception("claude sdk turn failed")
@@ -684,23 +759,36 @@ class ClaudeDriver:
             return
 
     async def _continue_after_answers(self) -> AsyncIterator[AgentEvent]:
-        """Drain the REST of a turn that `_pump` parked on a question.
+        """Relay the REST of a turn that `_pump` parked on a question.
 
         No `query()` here -- the turn is still mid-flight; the CLI was only
-        waiting for the permission response that resolving the future
-        produces. A FRESH `receive_response()` iterator is what picks the turn
-        back up: it reads the same buffered anyio message stream the abandoned
-        iterator was reading (claude_agent_sdk/_internal/query.py owns that
-        stream, not the generator), so no message is lost, and it terminates
-        on this turn's ResultMessage the way the original would have.
+        waiting for the permission response that resolving the future produces.
+
+        And no new iterator either: the SAME `_MessageReader` from the question
+        turn is still reading, which is what makes this safe. It never stopped,
+        so messages the CLI sent while the question was on screen -- or while
+        the SSE consumer was away, or after it abandoned the `run()` generator
+        entirely (runner.py:144-152) -- are sitting in `reader.inbox` waiting to
+        be relayed. This is precisely what the old shape got wrong: it opened a
+        FRESH iterator and depended on anyio having buffered those messages,
+        which it had not, because `send_nowait` hands an item straight to a
+        parked receiver (see _MessageReader).
 
         Assumes the caller already holds the turn slot.
         """
         if self._client is None:  # defensive: no client, nothing to resume
             yield AgentEvent(kind="error", text="agent turn failed")
             return
+        reader = self._reader
+        if reader is None:
+            # No reader means no turn in flight for this future to belong to.
+            # Reported as a turn failure rather than a silent empty turn, since
+            # the answers the user submitted have nowhere to go.
+            _log.warning("answers resolved with no reader for the turn")
+            yield AgentEvent(kind="error", text="agent turn failed")
+            return
         try:
-            async for ev in self._pump(self._client.receive_response().__aiter__()):
+            async for ev in self._pump(reader):
                 yield ev
         except Exception:
             _log.exception("claude sdk answer turn failed")
@@ -895,6 +983,9 @@ class ClaudeDriver:
         if self._pending_question is not None and not self._pending_question.done():
             self._pending_question.cancel()
         self._clear_pending_state()
+        # The subprocess is going away, so there is no turn left for the reader
+        # to collect and nothing that could relay what it holds.
+        self._retire_reader()
         client, self._client = self._client, None
         if client is None:
             return

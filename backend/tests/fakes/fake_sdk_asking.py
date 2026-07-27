@@ -39,7 +39,6 @@ import json
 
 import anyio
 
-from pathfinder.models import AgentEvent
 from tests.fakes.fake_sdk import (
     AssistantMessage, FakeSdkClient, ResultMessage, TextBlock, ToolUseBlock,
 )
@@ -106,35 +105,31 @@ class AskingSdkClient(FakeSdkClient):
     assert on the answers the driver injected as `updated_input` rather than
     just on the event stream.
 
-    Three knobs reproduce the message/question interleavings the real CLI
-    produces. All of them exist because the driver must never discard a message
-    the SDK already handed it, and each interleaving destroys it differently:
-
     `preface` — one or more `{"type":"assistant"}` messages (the model's "why
     I'm asking" prose plus the AskUserQuestion tool_use) delivered back to back
     with the `control_request` in ONE read-loop pass (query.py:250-322), no model
     latency between them. Pass a str for one message or a list for several.
-    SEVERAL is the case that matters most: a driver whose sweep re-arms the
-    receive with `ensure_future` (never synchronously `done()` on its creation
-    tick) consumes only the FIRST and destroys the rest. Real inter-message gaps
-    were measured at 3-4ms — far inside the driver's 50ms poll — so multiple
-    messages in one pass is routine, not hypothetical.
+    SEVERAL is the case that matters most: a driver that consumes one message
+    per poll pass and then discards its in-flight receive keeps only the FIRST.
+    Real inter-message gaps were measured at 3-4ms — far inside the driver's 50ms
+    poll — so multiple messages in one pass is routine, not hypothetical.
 
-    `during_drain` — a message delivered AFTER the question is already queued,
-    timed to land while the driver is yielding its queued events. Each `yield`
-    hands control to the scheduler, which is precisely the window the re-armed
-    receive needs, so this message is legitimately deliverable and must not be
-    dropped on the way out.
+    Without it the callback is spawned before anything is yielded, which is why
+    the original question scripts never had a message in flight and never caught
+    any of this.
 
-    Without any of them the callback is spawned before anything is yielded,
-    which is why the original question scripts never had a message in flight
-    and never caught any of this.
+    For a message that must arrive at some LATER, precisely chosen instant, the
+    test calls `deliver_late()` from inside its own `async for` — at that point
+    the driver is provably suspended at that exact `yield`, so no window-guessing
+    is involved. A previous version of this fake tried to find such windows by
+    polling driver state, and that predicate had false positives in both
+    directions (it was True during `_on_can_use_tool`'s S3 save and True after
+    the drain had finished), so a test could go vacuous while still reporting a
+    hit. See test_claude_driver.py's mid-turn delivery tests.
     """
 
     def __init__(self, can_use_tool, *, sdk_questions=None, tail=None,
-                 preface=None, during_drain=None, driver=None,
-                 result_with_question=False,
-                 stage_during_terminal_sweep=False):
+                 preface=None, result_with_question=False):
         super().__init__(tail if tail is not None else [ResultMessage()])
         self._can_use_tool = can_use_tool
         self._sdk_questions = (DEFAULT_SDK_QUESTIONS if sdk_questions is None
@@ -145,59 +140,16 @@ class AskingSdkClient(FakeSdkClient):
             self._preface = [preface]
         else:
             self._preface = list(preface)
-        self._during_drain = during_drain
         self._result_with_question = result_with_question
-        self._stage_during_terminal_sweep = stage_during_terminal_sweep
         self._send = None
         self._recv = None
-        # Only for observing that the `during_drain` window was really hit --
-        # never to influence what this fake delivers.
-        self._driver = driver
         self._ask_task: asyncio.Task | None = None
         self.permission_results: list = []
-        self.drain_window_hit = False
         _LIVE.append(self)
 
     def cancel_pending(self) -> None:
         if self._ask_task is not None and not self._ask_task.done():
             self._ask_task.cancel()
-
-    # Upper bound on scheduler turns spent looking for the mid-drain window.
-    # Only a safety valve so a driver change can never hang this fake -- the
-    # window is found by OBSERVATION, not by counting (see _deliver_during_drain).
-    _DURING_DRAIN_MAX_TURNS = 50
-
-    def _in_drain_window(self) -> bool:
-        """Is the driver right now yielding its queued events?
-
-        Observed, not counted, because a turn count is hostage to how many times
-        `_pump` awaits per pass: an earlier version of this fake hardcoded 2,
-        which was correct then, and this round's `_pump` changes moved the usable
-        band to exactly {5}. A single-value band silently re-vacuates on the next
-        edit, so the window is identified by driver STATE instead:
-
-          - the callback has queued its question, so `_pending_payload` is set;
-          - the driver has already taken that question off `_queue` to yield it.
-
-        Both true == the driver is mid-drain, which is precisely the window whose
-        message only a POST-drain sweep can recover.
-        """
-        driver = self._driver
-        if driver is None:
-            return True                     # not observable; deliver immediately
-        return (driver._pending_payload is not None
-                and not any(ev.kind == "questions" for ev in driver._queue))
-
-    async def _deliver_during_drain(self) -> None:
-        """Park until the driver is inside its queue-drain loop."""
-        for _ in range(self._DURING_DRAIN_MAX_TURNS):
-            if self._in_drain_window():
-                self.drain_window_hit = True
-                return
-            await asyncio.sleep(0)
-        # Left False on purpose: the covering test asserts on it, so a driver
-        # change that makes this window unreachable fails loudly rather than
-        # letting the test pass on the strength of the order alone.
 
     def _stream(self):
         """Lazily create the anyio memory-object stream messages travel on.
@@ -221,9 +173,20 @@ class AskingSdkClient(FakeSdkClient):
         """Hand over one more assistant message right now.
 
         For modelling what the CLI does while the consumer is away — e.g.
-        suspended on `yield done` awaiting an S3 workspace sync."""
+        suspended on `yield done` awaiting an S3 workspace sync, or gone
+        entirely after an SSE disconnect. Called from a test's own `async for`
+        body, so the driver's position is known exactly rather than guessed."""
         self._stream().send_nowait(
             AssistantMessage(content=[TextBlock(text=text)]))
+
+    def finish_turn(self) -> None:
+        """End the turn from the CLI side, without a permission answer.
+
+        Models the turn running to completion while the consumer is away, which
+        is what lets a test check that a message delivered mid-abandonment is
+        relayed by the answers turn AND that the answers turn still terminates.
+        """
+        self._stream().send_nowait(ResultMessage())
 
     def stream_stats(self) -> tuple[int, int]:
         """(parked receivers, buffered items) — lets a test assert on WHERE a
@@ -232,8 +195,15 @@ class AskingSdkClient(FakeSdkClient):
         state = self._recv._state
         return len(state.waiting_receivers), len(state.buffer)
 
-    async def _produce(self) -> None:
-        """The CLI's read loop, on its own task as the real one is.
+    def _produce(self) -> None:
+        """The CLI's read loop: everything the question burst carries, at once.
+
+        Synchronous, and called before the first receive parks, because that is
+        what the real read loop does — the assistant message(s) and the
+        `control_request` go out in one pass (query.py:250-322) with no model
+        latency in between. Anything that has to arrive LATER is delivered by the
+        test through `deliver_late()`, from a point where the driver's position
+        is known rather than guessed.
 
         Note there is no "yield nothing while the question is pending" special
         case: that behaviour falls out for free, because while the CLI is blocked
@@ -245,26 +215,9 @@ class AskingSdkClient(FakeSdkClient):
             send.send_nowait(AssistantMessage(content=[TextBlock(text=text)]))
         if self._result_with_question:
             # The turn's ResultMessage in the SAME burst as the question, so the
-            # driver's final sweep translates it into a terminal event -- the
-            # shape that produced a duplicate `done`.
+            # driver's terminal harvest translates it -- the shape that produced
+            # a duplicate `done`.
             send.send_nowait(ResultMessage())
-        if self._during_drain is not None:
-            # Must NOT be sent in the burst above: the driver's pre-drain sweep
-            # would consume it in the same pass and the mid-drain window would
-            # never be exercised. Park until the driver is inside its queue-drain
-            # loop, then deliver.
-            await self._deliver_during_drain()
-            send.send_nowait(
-                AssistantMessage(content=[TextBlock(text=self._during_drain)]))
-            if self._stage_during_terminal_sweep and self._driver is not None:
-                # A tool's emit landing while the driver's TERMINAL sweep is
-                # yielding the message just above. The mid-loop queue drain has
-                # already run for this pass, so only the drain on the terminal
-                # path can still get this event out -- and it has to come out
-                # BEFORE `done`, or sse.ts:29 has already closed the stream.
-                await asyncio.sleep(0)
-                self._driver._emit(AgentEvent(
-                    kind="stage", payload='{"name": "stage-1"}'))
 
     def _on_permission_result(self, task: asyncio.Future) -> None:
         """Permission granted -> the CLI resumes the turn and finishes it."""
@@ -285,7 +238,7 @@ class AskingSdkClient(FakeSdkClient):
             self._ask_task = asyncio.ensure_future(self._can_use_tool(
                 "AskUserQuestion", {"questions": self._sdk_questions}, None))
             self._ask_task.add_done_callback(self._on_permission_result)
-            asyncio.ensure_future(self._produce())
+            self._produce()
         # Awaiting the stream directly is what parks an anyio receiver — the
         # behaviour under test. A second receive_response() over the same turn
         # picks up wherever this one left off, exactly as the SDK's does.
@@ -332,13 +285,11 @@ class EchoAnswersSdkClient(FakeSdkClient):
         yield ResultMessage()
 
 
-def sdk_client_for(scripted: dict, can_use_tool, driver=None):
+def sdk_client_for(scripted: dict, can_use_tool):
     """The full six-key scripted vocabulary → one fake SDK client.
 
     `can_use_tool` is the driver's own `_on_can_use_tool`, wired in at exactly
     the place the real factory wires it (`ClaudeAgentOptions(can_use_tool=)`).
-    `driver` is optional and used ONLY so the `during_drain` script can observe
-    that it hit the intended window (see _DURING_DRAIN_TURNS).
     """
     if scripted.get("raise"):
         return RaisingSdkClient()
@@ -351,15 +302,18 @@ def sdk_client_for(scripted: dict, can_use_tool, driver=None):
         # `preface` on by default: the real CLI always emits the model's
         # explanation immediately before the question (driver.py's
         # _CONTACT_ADDENDUM:44-45 mandates it), so the default script must too.
-        # `preface_texts`/`during_drain` let a driver-specific test script the
-        # harder interleavings (several messages in one read-loop pass; a
-        # message landing while the driver drains its queue) without changing
-        # what the shared contract script does.
+        # `preface_texts` lets a driver-specific test put several messages in one
+        # read-loop pass without changing what the shared contract script does.
+        # `turn_continues_after_answer`: answering sends NOTHING, modelling the
+        # normal case where the model keeps working for seconds after the answer
+        # before the CLI emits the turn's ResultMessage. The test then supplies
+        # the rest itself with deliver_late()/finish_turn(). Without this the
+        # tail's ResultMessage lands the instant the answer does, which ends the
+        # turn far earlier than any real one.
+        tail = [] if scripted.get("turn_continues_after_answer") \
+            else script_from(scripted)
         return AskingSdkClient(
-            can_use_tool, tail=script_from(scripted),
+            can_use_tool, tail=tail,
             preface=scripted.get("preface_texts") or PREFACE_TEXT,
-            during_drain=scripted.get("during_drain"), driver=driver,
-            result_with_question=bool(scripted.get("result_with_question")),
-            stage_during_terminal_sweep=bool(
-                scripted.get("stage_during_terminal_sweep")))
+            result_with_question=bool(scripted.get("result_with_question")))
     return FakeSdkClient(script_from(scripted))
