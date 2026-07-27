@@ -271,3 +271,232 @@ end state for several tests).
    model and is correct for the restart case (a fresh process resumes on its
    first turn). Task 8's `driver_factory` should be aware that `app.py:255`'s
    session dict has no `resume` key today.
+
+---
+
+# Fix round 1 — five spec findings from review
+
+All five were reproduced independently before any code changed, with throwaway
+probes (not committed). Each fix is verified by re-running the same probe plus a
+new committed test.
+
+## CRITICAL — `_pump` permanently lost the assistant message before a question
+
+**Confirmed.** Built a faithful `Query` replica (anyio memory stream + a read
+loop that writes the assistant message and dispatches the `control_request`
+`gap` seconds later) and drove the real driver through it:
+
+```
+gap=0:     [('questions', None), ('done', None)]                       -> PROSE LOST: True
+gap=0.001: [('message', '왜 묻는지 설명'), ('questions', ...), ('done', ...)] -> False
+gap=0.06:  [('message', '왜 묻는지 설명'), ('questions', ...), ('done', ...)] -> False
+```
+
+Mechanism, as reported: `asyncio.wait` returns `done=∅` on timeout, but
+`next_msg` can resolve in that same tick. The old loop drained the queue, saw
+`asked`, and returned without ever calling `next_msg.result()`; the `finally`
+then cancelled it. anyio's `send_nowait` hands an item **directly to a parked
+receiver without buffering it** (`anyio/streams/memory.py:210-217`), so the
+message is destroyed — it is not waiting in the buffer for the fresh iterator
+`_continue_after_answers` opens. And it is the common case, not an edge: the CLI
+writes the assistant message and the `control_request` in one read-loop pass
+(`query.py:250-322`) with no model latency between them, and
+`driver.py:_CONTACT_ADDENDUM:44-45` *mandates* the model explain itself first.
+`builder.py` never hit it because it never returns on `asked`.
+
+**Fix.** `_pump` now runs a `ready_events()` sweep on every loop pass, *before*
+draining the callback queue: it consumes every already-delivered message and
+re-arms the receive, so nothing the cancel could discard is ever left unread.
+Loop termination moved to an `ended` flag set by the sweep on
+`StopAsyncIteration`.
+
+I did **not** keep the belt-and-braces second sweep I first wrote after the
+`asked` check: instrumenting it showed it never fires (the CLI cannot send more
+messages until the permission request is answered, so nothing can arrive between
+the first sweep and the return). Removed it rather than commit unreachable code,
+and the comment now states that reasoning.
+
+**Test:** `test_the_prose_before_a_question_is_not_lost`. The fake needed a new
+`preface` mode — the reviewer's diagnosis of why nothing caught this was exactly
+right: `AskingSdkClient` spawned the callback *before* yielding anything, so its
+question turns never had a message in flight. `preface` now spawns the callback
+and yields the assistant message with **no await in between**, reproducing the
+CLI's single-pass delivery. It is on by default for the `questions` script,
+because real turns always have the prose.
+
+Probe after the fix: `PROSE LOST: False` at all three gaps.
+
+## IMPORTANT 1 — restart answers turn ran with no `CLAUDE.md`
+
+**Confirmed:** `CLAUDE.md after run_answers: False`. `place_rules` was only in
+`run()`. **Fix:** extracted `_place_rules()` and call it unconditionally at the
+top of `run_answers` too. This is the one path where the workspace is
+*guaranteed* cold — no-future means a redeploy, and `runner.py:36` restores only
+`aiplc-docs/`, `prototype/`, `uploads/`, never the rules. Idempotent and cheap,
+so unconditional rather than branch-dependent.
+**Test:** `test_places_the_rules_on_the_restart_answers_path_too` (asserts the
+workspace starts cold, then that `CLAUDE.md` exists after).
+
+## IMPORTANT 2 — restart path had no stale-`interrupt_id` guard
+
+**Confirmed**, reproducing the reviewer's exact scenario: seeded `i-CURRENT` /
+"NEW question", submitted `i-STALE-FROM-OLD-TAB` → prompt sent was
+`- NEW question → 진행` and `pending record destroyed: True`.
+
+**Fix:** `_resume_with_answers` now compares `data["interrupt_id"]` against the
+caller's and returns the contract string `"no pending questions"` on mismatch,
+matching the live path. After the fix:
+
+```
+stale submit -> [('error', 'no pending questions')]
+client ever built: False          # the model is never called
+real pending record survived: True
+pending() still serves the live form: True
+correct id -> ['message', 'done'] # prompt: - NEW question → 진행
+```
+
+**Test:** `test_a_stale_interrupt_id_is_refused_on_the_restart_path_too`.
+
+## IMPORTANT 3 — `_turn_active` outlived an abandoned generator
+
+**Confirmed:** `_turn_active` still `True` immediately after `await
+agen.aclose()`, cleared only after 2 bare `await asyncio.sleep(0)`, and the
+user's retry came back `[('error', 'turn already in progress')]`.
+
+Root cause: `aclose()` runs only the **outermost** generator's `finally`
+synchronously (probed: nested-generator `finally` needs 2 extra ticks for
+`GeneratorExit` to propagate). The flag was released in `_stream`, which is
+nested inside `run`. `runner.py:144-152` takes the abandon path routinely and
+clears its own `_turn_active` synchronously, so the two disagreed.
+
+**Fix:** turn-slot ownership moved to `run`/`run_answers` — the two contract
+entry points, always the outermost generator — via `_acquire_turn()` /
+`_release_turn(token)`. The token means a rejected caller cannot release the
+slot the live turn holds. After: `_turn_active` is `False` immediately after
+`aclose()`, and the retry succeeds.
+
+One behaviour change this forced, and I judged it the correct order: the
+concurrency guard now precedes the pending-question short-circuit in `run()`. A
+test caught the conflict. If a turn is genuinely still streaming,
+`"turn already in progress"` is the accurate report; re-surfacing the question
+would invite the user to answer a form whose turn someone else is still
+consuming. A question parked by a turn that already *returned* leaves the slot
+free, so that case still reaches the short-circuit.
+**Tests:** `test_an_abandoned_turn_frees_the_slot_immediately`,
+`test_a_concurrent_turn_is_still_rejected`.
+
+## IMPORTANT 4 — `echo_answers` covered `interrupt_id` but not `answers`
+
+**Confirmed** by mutation: hardcoding `"answers": {"1": "A"}` left all tests
+green, because the contract only ever passes that one value.
+
+This is a test gap, not a driver defect, so the driver is unchanged. Two changes
+instead:
+
+- The contract adapter's seeded `interrupt_id` had to become `"i-42"` (the value
+  the contract passes), because the driver now validates the round on *both*
+  paths — the old `"seeded-not-the-callers-id"` trick would now be legitimately
+  refused. So the adapter can no longer prove echo honesty, and the docstring
+  says so and points at the test that does.
+- New `test_the_answer_record_echoes_the_received_values_not_stored_ones` uses
+  values that differ from the stored script in every respect: two questions, and
+  answers `{"2": "B", "1": "A"}` — different keys, different values, different
+  order from the contract's `{"1": "A"}`. It asserts the record echoes exactly
+  what was submitted, and that the human-readable lines translate against the
+  stored questions (`둘째 질문 → 라`, `첫 질문 → 가`).
+
+## MINOR 1 — non-UUID `session_id` (fixed here, not deferred)
+
+**Confirmed against the bundled binary:**
+`claude --session-id=pilot1 -p hi` → `Error: Invalid session ID. Must be a valid
+UUID.`
+
+I fixed this in the driver rather than deferring to Task 8, for two reasons.
+First, the constraint belongs to the SDK boundary this file owns — `app.py`'s
+session dict is a *descriptor*, and `_default_client_factory` is the only place
+that knows the CLI's UUID requirement. Second, `_validate_permission_mode`
+already establishes exactly this precedent in this file: reject/normalize at the
+boundary rather than let an invalid value reach the CLI and surface as an opaque
+`"agent turn failed"`.
+
+New `_sdk_session_id(session) -> (str, bool)`, carrying over
+`proto/session.py:124-138`'s judgment. One deliberate difference: the derived id
+is `uuid5(NAMESPACE_URL, "pathfinder:<raw>")`, not `uuid4`, because it must be
+**stable across restarts** or `--resume` could never find the transcript. An
+already-valid UUID passes through untouched; a missing id returns
+`resume=False`, since there is nothing to resume.
+**Tests:** three — stable derivation, pass-through, and missing-id.
+
+Task 8 still needs to know `app.py:255` passes a non-UUID and has no `resume`
+key (carried in the concerns below).
+
+## MINOR 2 — no `disconnect()`
+
+Added `ClaudeDriver.disconnect()`, mirroring `builder.py:395-404`: idempotent,
+swallows-and-logs teardown errors, and additionally cancels a parked question
+future and clears pending state (a question cannot survive the subprocess, and
+leaving `_pending_payload` set would make `pending()` advertise an unanswerable
+question — the same reasoning as `builder.interrupt()`). **Not wired** — that is
+Task 8's, since `runner.py` is off-limits here.
+**Test:** `test_disconnect_tears_down_the_subprocess_and_clears_pending`.
+
+## MINOR 3 — inaccurate comments
+
+Both fixed alongside their bugs: `_pump`'s `finally` comment now states that the
+cancel *discards* whatever the receive was handed (which is why `ready_events()`
+must run first), and `run_answers`'s docstring now leads with "Two paths, and
+BOTH validate `interrupt_id`".
+
+## Commands and output
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_claude_driver.py tests/test_claude_driver_contract.py -q
+24 passed in 0.29s
+```
+(was 14; +10 tests)
+
+```
+$ cd backend && .venv/bin/python -m pytest tests/test_agent_driver.py tests/test_strands_driver_contract.py tests/test_proto_builder.py -q
+34 passed in 0.24s
+```
+
+```
+$ cd backend && .venv/bin/python -m pytest -q
+600 passed, 1 warning in 12.50s
+```
+590 → 600, exactly the 10 new tests. `git diff HEAD` confirms zero changes to
+`driver.py`, `strands_tools.py`, `proto/builder.py`, `runner.py`,
+`driver_contract.py`.
+
+## Mutation re-run
+
+| # | Mutation | Result |
+|---|---|---|
+| N1 | **The `answers`-hardcoding mutant that survived review** | `test_the_answer_record_echoes_...` fails ✓ |
+| N2d | Restore the ORIGINAL `_pump` ordering (drain queue before reading `next_msg`) | `test_the_prose_before_a_question_is_not_lost` fails ✓ |
+| N3 | `_place_rules` removed from `run_answers` | `test_places_the_rules_on_the_restart_answers_path_too` fails ✓ |
+
+Also re-verified the earlier round's M1–M8 still hold. Two variants I tried
+(`if done_set:` guarding the sweep) are semantically equivalent to the fix, not
+defects — the probe passes either way, which is why N2d (the true original
+ordering) is the mutant that matters.
+
+## Concerns after this round
+
+1. **Concern 2 from the first round stands unchanged** — `_continue_after_answers`
+   relies on `Query`'s anyio buffer owning unread messages. This round makes the
+   reliance *narrower* and better understood (the Critical was precisely the case
+   where the buffer does NOT own the message, because `send_nowait` bypasses it
+   for a parked receiver), but it is still SDK-internal. A real question round
+   trip against the live CLI remains the only way to close this.
+2. **The concurrency-guard reordering in `run()`** is a small behaviour change
+   the review did not ask for; it fell out of IMPORTANT 3 and a test caught it.
+   Reasoning is in the code and above — flagging it explicitly in case the
+   preferred precedence is the other way.
+3. **`_sdk_session_id` changes which transcript a project resumes** for any
+   project whose id is not already a UUID: `project_id` no longer *is* the
+   session id. Nothing has shipped, so there is no transcript to orphan, but if
+   any environment already has Discovery transcripts keyed by raw project id
+   they will not be found. Worth a word at deploy time.
+4. **`disconnect()` is unwired**, so the subprocess leak is still live until
+   Task 8 calls it from `runner.stop()`.

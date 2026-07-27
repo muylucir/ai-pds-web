@@ -18,8 +18,9 @@ from tests.driver_contract import assert_driver_contract
 from tests.fakes.fake_sdk_asking import cancel_pending_callbacks, sdk_client_for
 from tests.fakes.in_memory_s3 import FakeS3Store
 
-# 계약이 run_answers에 넘기는 값(driver_contract.py:128,154). 재시작 경로가
-# 되번역할 질문이 S3에 있어야 하므로 그 레코드를 심을 때 함께 쓴다.
+# 계약이 run_answers에 넘기는 interrupt_id(driver_contract.py:128,154).
+_CONTRACT_IID = "i-42"
+# 재시작 경로가 되번역할 질문. S3에 심는 레코드에 함께 쓴다.
 _SEEDED_SDK_QUESTIONS = [{"question": "다음 단계는?",
                           "options": [{"label": "진행"}, {"label": "종료"}]}]
 
@@ -42,11 +43,16 @@ def _seed_restart_pending(s3: FakeS3Store) -> None:
 
     이벤트 루프가 이미 도는 중이라(pytest-asyncio) save_pending을 await 없이
     부를 수 없으므로 FakeS3Store의 동기 텍스트 뷰에 같은 shape을 직접 쓴다.
-    interrupt_id는 계약이 넘길 "i-42"와 일부러 다르게 둔다 — 드라이버가 자기가
-    받은 값이 아니라 저장된 값을 되돌려 보내면 계약의 echo 검사가 잡아낸다.
+
+    interrupt_id는 계약이 넘기는 값("i-42", driver_contract.py:128,154)과 같아야
+    한다 — 드라이버가 이제 두 경로 모두에서 라운드를 검증하므로 다른 값을 심으면
+    정당하게 거부된다. 그래서 echo의 정직성(받은 값 vs 저장된 값)은 여기서
+    증명할 수 없고, 값이 서로 다른 전용 테스트가
+    test_claude_driver.py::test_the_answer_record_echoes_the_received_values가
+    담당한다.
     """
     s3.blobs[PENDING_KEY] = json.dumps({
-        "interrupt_id": "seeded-not-the-callers-id",
+        "interrupt_id": _CONTRACT_IID,
         "questions": {"name": "q", "questions": []},
         "sdk_questions": _SEEDED_SDK_QUESTIONS,
         "session_id": "s-1",

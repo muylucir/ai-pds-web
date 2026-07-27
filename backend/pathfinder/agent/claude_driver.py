@@ -135,6 +135,44 @@ def _validate_permission_mode(mode: str) -> str:
     return mode
 
 
+def _sdk_session_id(session: dict) -> tuple[str, bool]:
+    """(session_id, resume) for ClaudeAgentOptions -- a UUID, always.
+
+    The CLI rejects a non-UUID outright: probed against the bundled binary,
+    `claude --session-id=pilot1 -p hi` prints "Error: Invalid session ID. Must
+    be a valid UUID." and exits 1. That kills the subprocess during connect(),
+    which run() can only report as a generic "agent turn failed" -- i.e. every
+    turn of the workshop dies opaquely.
+
+    And Discovery's session id is NOT a UUID today: app.py:255 sets
+    `session_id = project_id`, which is free-form user input (routes/
+    projects.py's CreateProject does not validate it), so a project named
+    "pilot1" is a 100% failure. proto/session.py:124-138 already solved this
+    for the builder -- mint a UUID and treat a non-UUID value as "start
+    fresh" -- so the same judgment is carried over here rather than trusting
+    the caller.
+
+    Deriving the UUID from the project id (uuid5) rather than uuid4 keeps it
+    STABLE across restarts, which is what makes `--resume` able to find the
+    transcript at all; a fresh random id every process would silently start a
+    new conversation each redeploy. A value that is already a UUID is passed
+    through untouched, so a caller that does the right thing is not overridden.
+    """
+    import uuid
+
+    raw = session.get("session_id") or ""
+    resume = bool(session.get("resume"))
+    try:
+        return str(uuid.UUID(str(raw))), resume
+    except (ValueError, AttributeError, TypeError):
+        pass
+    if not raw:
+        # Nothing to derive from: a random id is still better than a value the
+        # CLI will reject, but there is no transcript to resume.
+        return str(uuid.uuid4()), False
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"pathfinder:{raw}")), resume
+
+
 def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
     def make(session: dict):
         from claude_agent_sdk import (
@@ -156,8 +194,7 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
         }
         if driver._anthropic_model:
             env["ANTHROPIC_MODEL"] = driver._anthropic_model
-        session_id = session.get("session_id")
-        resume = bool(session.get("resume"))
+        session_id, resume = _sdk_session_id(session)
         # Task 5 left create_sdk_mcp_server to the caller so build_tools could
         # keep a plain `-> list[SdkMcpTool]` contract. allowed_tools' entries
         # MUST be spelled "mcp__<server key>__<tool name>" -- the SDK builds
@@ -251,6 +288,7 @@ class ClaudeDriver:
         # queue is never long enough for deque's O(1) popleft to matter.
         self._queue: list[AgentEvent] = []
         self._turn_active = False
+        self._turn_token: object | None = None
         self._pending_question: asyncio.Future | None = None
         self._pending_payload: str | None = None
         self._pending_iid: str | None = None
@@ -440,44 +478,112 @@ class ClaudeDriver:
         Discovery answers arrive on a separate stream -- see the module
         docstring. The suspended can_use_tool callback is left parked on its
         future for `run_answers` to resolve.
+
+        That divergence is also why every exit path must first consume any SDK
+        message that has ALREADY been delivered. `asyncio.wait` reports
+        `done=∅` on timeout, but `next_msg` can resolve during that very tick,
+        and returning without reading it DESTROYS the message: anyio's
+        `send_nowait` hands an item straight to a parked receiver instead of
+        buffering it (anyio/streams/memory.py:210-217), so cancelling that
+        receiver in the `finally` below drops the item -- it is not left in the
+        buffer for the fresh iterator `_continue_after_answers` opens.
+        Measured: the assistant message vanished at gap=0, survived at
+        gap>=0.001.
+
+        This is the COMMON case, not a rare race. The CLI writes the
+        `{"type":"assistant"}` message (the model's "why I'm asking" prose plus
+        the AskUserQuestion tool_use) and the `control_request` back to back in
+        one read-loop pass (claude_agent_sdk/_internal/query.py:250-322) with
+        no model latency in between -- and driver.py's _CONTACT_ADDENDUM:44-45
+        *requires* the model to explain itself before asking. Losing it means a
+        bare question card with no explanation, every single time. builder.py
+        never hit this because it never returns on `asked`.
         """
         next_msg: asyncio.Future = asyncio.ensure_future(agen.__anext__())
+        ended = False
+
+        async def ready_events():
+            """Translate every message already delivered, re-arming the
+            receive each time. Runs on every loop pass BEFORE the queue is
+            drained, so an already-delivered message is never discarded by the
+            cancel in the `finally` (see docstring)."""
+            nonlocal next_msg, ended
+            while next_msg.done():
+                try:
+                    msg = next_msg.result()
+                except StopAsyncIteration:
+                    ended = True
+                    return
+                for ev in self._translate(msg):
+                    yield ev
+                next_msg = asyncio.ensure_future(agen.__anext__())
+
         try:
-            while True:
-                done, _ = await asyncio.wait({next_msg}, timeout=_POLL_SECONDS)
+            while not ended:
+                await asyncio.wait({next_msg}, timeout=_POLL_SECONDS)
+                async for ev in ready_events():
+                    yield ev
                 asked = False
                 for ev in self.drain_queue():
                     yield ev
                     asked = asked or ev.kind == "questions"
-                if asked:
+                if asked and not ended:
+                    # ready_events() above already drained everything delivered
+                    # before the callback queued this question, which is the
+                    # ordering that matters: the CLI cannot send more messages
+                    # until we answer the permission request, so nothing new
+                    # can arrive between there and here.
                     yield AgentEvent(kind="done")
                     return
-                if not done:
-                    continue
-                try:
-                    msg = next_msg.result()
-                except StopAsyncIteration:
-                    break
-                for ev in self._translate(msg):
-                    yield ev
-                next_msg = asyncio.ensure_future(agen.__anext__())
         finally:
-            # The consumer may abandon this generator mid-stream (SSE client
-            # disconnect -> aclose() -> GeneratorExit), and the `asked` return
-            # above always leaves one in flight: without this cancel the
-            # __anext__ future outlives the generator and asyncio logs "Task
-            # was destroyed but it is pending!".
+            # Two jobs. (1) The consumer may abandon this generator mid-stream
+            # (SSE client disconnect -> aclose() -> GeneratorExit), and the
+            # `asked` return above always leaves one receive in flight: without
+            # this cancel the __anext__ future outlives the generator and
+            # asyncio logs "Task was destroyed but it is pending!". (2) The
+            # cancel DISCARDS whatever that receive was handed, which is why
+            # ready_events() must run on every exit path first.
             if not next_msg.done():
                 next_msg.cancel()
         for ev in self.drain_queue():
             yield ev
 
+    # ---- the single-turn slot ----
+    #
+    # Ownership lives in `run`/`run_answers` -- the two contract entry points,
+    # which are always the OUTERMOST generator -- and nowhere else. That is not
+    # stylistic: `aclose()` runs only the outermost generator's `finally`
+    # synchronously, and a `finally` on a nested generator (`_stream` inside
+    # `run`) needs GeneratorExit to propagate down, which takes extra event-loop
+    # ticks. Measured: with the flag released in `_stream`, `_turn_active` was
+    # still True immediately after `await agen.aclose()` and only cleared after
+    # two bare `await asyncio.sleep(0)`.
+    #
+    # Why that mattered: runner.py:144-152 routinely abandons this generator
+    # (SSE disconnect, proxy timeout, user navigating away) and clears its own
+    # `_turn_active` synchronously in the same `finally`. So a browser that
+    # reconnects on the very next tick passed runner's guard and was then
+    # rejected by ours with "turn already in progress" -- the user's retry
+    # bounced off a turn that no longer existed.
+
+    def _acquire_turn(self) -> object | None:
+        """Claim the turn slot; None if one is already running. The token
+        identifies THIS turn so a rejected caller cannot release the slot the
+        live turn is holding."""
+        if self._turn_active:
+            return None
+        self._turn_active = True
+        self._turn_token = object()
+        return self._turn_token
+
+    def _release_turn(self, token: object) -> None:
+        if self._turn_token is token:
+            self._turn_active = False
+            self._turn_token = None
+
     async def _stream(self, text: str, session: dict,
                       resume: bool = False) -> AsyncIterator[AgentEvent]:
-        if self._turn_active:
-            yield AgentEvent(kind="error", text="turn already in progress")
-            return
-        self._turn_active = True
+        """Assumes the caller already holds the turn slot (see above)."""
         self._last_status = None
         self._current_session_id = session.get("session_id")
         try:
@@ -493,8 +599,6 @@ class ClaudeDriver:
                 yield ev
             yield AgentEvent(kind="error", text="agent turn failed")
             return
-        finally:
-            self._turn_active = False
 
     async def _continue_after_answers(self) -> AsyncIterator[AgentEvent]:
         """Drain the REST of a turn that `_pump` parked on a question.
@@ -506,14 +610,12 @@ class ClaudeDriver:
         iterator was reading (claude_agent_sdk/_internal/query.py owns that
         stream, not the generator), so no message is lost, and it terminates
         on this turn's ResultMessage the way the original would have.
+
+        Assumes the caller already holds the turn slot.
         """
-        if self._turn_active:
-            yield AgentEvent(kind="error", text="turn already in progress")
-            return
         if self._client is None:  # defensive: no client, nothing to resume
             yield AgentEvent(kind="error", text="agent turn failed")
             return
-        self._turn_active = True
         try:
             async for ev in self._pump(self._client.receive_response().__aiter__()):
                 yield ev
@@ -523,8 +625,6 @@ class ClaudeDriver:
                 yield ev
             yield AgentEvent(kind="error", text="agent turn failed")
             return
-        finally:
-            self._turn_active = False
 
     async def _resume_with_answers(self, interrupt_id: str,
                                    answers: dict[str, str],
@@ -532,9 +632,24 @@ class ClaudeDriver:
         """The backend restarted: no future to resolve, so resume the session
         and deliver the answers as an ordinary text turn. The model already
         has the question's context in the transcript, so all this prompt has
-        to do is say which option was chosen."""
+        to do is say which option was chosen.
+
+        Assumes the caller already holds the turn slot.
+        """
         data = await load_pending(self._s3)
         if data is None:
+            yield AgentEvent(kind="error", text="no pending questions")
+            return
+        # Same guard as the live path, for the same reason -- an old browser
+        # tab answering a superseded round. Without it the stored questions
+        # were translated against the CALLER's answers regardless of which
+        # round they belonged to, so a stale tab silently answered the current
+        # question with the wrong round's answers AND deleted the real pending
+        # record on the way out (reproduced: seeded "i-CURRENT"/"NEW question",
+        # submitted "i-STALE" -> prompt said `- NEW question → 진행`, record
+        # gone). Refuse and leave the record intact so the live form still works.
+        if data.get("interrupt_id") != interrupt_id:
+            _log.warning("answers for a superseded question round — refused")
             yield AgentEvent(kind="error", text="no pending questions")
             return
         sdk_questions = data.get("sdk_questions") or []
@@ -567,59 +682,102 @@ class ClaudeDriver:
 
     # ---- driver contract (same three methods as StrandsDriver) ----
 
-    async def run(self, text: str, session: dict) -> AsyncIterator[AgentEvent]:
-        """Contract: runner.py:129 calls this."""
-        # Rule placement happens every turn -- the workspace is volatile
-        # (runner reconstructs it from S3 each turn) and without the rules in
-        # place the agent runs with no workflow to follow, which shows up as
-        # an empty conversation rather than an error.
+    def _place_rules(self) -> bool:
+        """Rule placement happens every turn -- the workspace is volatile
+        (runner reconstructs it from S3 each turn, and runner.py:36 restores
+        only aiplc-docs/, prototype/, uploads/ -- never the rules) and without
+        them the agent runs with no workflow to follow, which shows up as an
+        empty conversation rather than an error. False means the turn must be
+        abandoned."""
         try:
             place_rules(self._workspace, self._rules_dir)
+            return True
         except Exception:
             _log.exception("rule placement failed")
+            return False
+
+    async def run(self, text: str, session: dict) -> AsyncIterator[AgentEvent]:
+        """Contract: runner.py:129 calls this."""
+        if not self._place_rules():
             yield AgentEvent(kind="error", text="agent turn failed")
             return
-        # Mirrors StrandsDriver's B1 short-circuit (driver.py:166-177) for the
-        # same class of failure, with a Claude-SDK-specific cause: while a
-        # question is parked, the CLI is blocked waiting for the permission
-        # response, so `query()` would be accepted and then never answered --
-        # the turn would poll to nowhere until the client gave up. Re-surface
-        # the pending question instead of calling the model.
-        fut = self._pending_question
-        if fut is not None and not fut.done():
-            yield AgentEvent(kind="message", text=_ANSWER_FIRST)
-            if self._pending_payload is not None:
-                yield AgentEvent(kind="questions", payload=self._pending_payload)
-            yield AgentEvent(kind="done")
+        # The concurrency guard comes BEFORE the pending-question short-circuit
+        # below: if a turn is genuinely still streaming, "turn already in
+        # progress" is the accurate report, and re-surfacing the question
+        # instead would tell the caller to answer a form while the turn it
+        # belongs to is still being consumed by someone else. A question parked
+        # by a turn that already RETURNED leaves the slot free (run() releases
+        # it on the way out), so that case still reaches the short-circuit.
+        token = self._acquire_turn()
+        if token is None:
+            yield AgentEvent(kind="error", text="turn already in progress")
             return
-        async for ev in self._stream(text, session):
-            yield ev
+        try:
+            # Mirrors StrandsDriver's B1 short-circuit (driver.py:166-177) for
+            # the same class of failure, with a Claude-SDK-specific cause:
+            # while a question is parked, the CLI is blocked waiting for the
+            # permission response, so `query()` would be accepted and then
+            # never answered -- the turn would poll to nowhere until the client
+            # gave up. Re-surface the pending question instead of calling the
+            # model.
+            fut = self._pending_question
+            if fut is not None and not fut.done():
+                yield AgentEvent(kind="message", text=_ANSWER_FIRST)
+                if self._pending_payload is not None:
+                    yield AgentEvent(kind="questions",
+                                     payload=self._pending_payload)
+                yield AgentEvent(kind="done")
+                return
+            async for ev in self._stream(text, session):
+                yield ev
+        finally:
+            self._release_turn(token)
 
     async def run_answers(self, interrupt_id: str, answers: dict[str, str],
                           session: dict) -> AsyncIterator[AgentEvent]:
         """Contract: runner.py:167 calls this.
 
-        Two paths. A waiting future means a normal round trip: resolve it, and
-        the answers reach the model as the AskUserQuestion tool result. No
-        future means the backend restarted, so resume the session and deliver
-        the answers as a text turn instead.
+        Two paths, and BOTH validate `interrupt_id` against the round they are
+        about to answer -- a mismatch is an old tab answering a superseded
+        question, and is refused with the contract's "no pending questions".
+
+        A waiting future means a normal round trip: resolve it, and the answers
+        reach the model as the AskUserQuestion tool result. No future means the
+        backend restarted, so resume the session and deliver the answers as a
+        text turn instead.
         """
-        fut = self._pending_question
-        if fut is not None and not fut.done():
-            if self._pending_iid != interrupt_id:
-                # A stale form (e.g. an old tab) answering a superseded round.
-                # Resolving the live future with it would feed the model
-                # answers to a different question; the resume path is no
-                # better, since `query()` while the CLI is blocked hangs.
-                yield AgentEvent(kind="error", text="no pending questions")
-                return
-            fut.set_result(answers)
-            await self._clear_pending_quietly()
-            async for ev in self._continue_after_answers():
-                yield ev
+        # The rules go down on this path too, and this is the ONE path where
+        # the workspace is guaranteed cold: no-future means a redeploy, so the
+        # agent's first post-restart action would otherwise run with no
+        # CLAUDE.md at all. Cheap and idempotent, so it is unconditional
+        # rather than branch-dependent.
+        if not self._place_rules():
+            yield AgentEvent(kind="error", text="agent turn failed")
             return
-        async for ev in self._resume_with_answers(interrupt_id, answers, session):
-            yield ev
+        token = self._acquire_turn()
+        if token is None:
+            yield AgentEvent(kind="error", text="turn already in progress")
+            return
+        try:
+            fut = self._pending_question
+            if fut is not None and not fut.done():
+                if self._pending_iid != interrupt_id:
+                    # Resolving the live future with a superseded round's
+                    # answers would feed the model answers to a different
+                    # question; falling through to the resume path is no
+                    # better, since `query()` while the CLI is blocked hangs.
+                    yield AgentEvent(kind="error", text="no pending questions")
+                    return
+                fut.set_result(answers)
+                await self._clear_pending_quietly()
+                async for ev in self._continue_after_answers():
+                    yield ev
+                return
+            async for ev in self._resume_with_answers(interrupt_id, answers,
+                                                      session):
+                yield ev
+        finally:
+            self._release_turn(token)
 
     async def pending(self, session: dict) -> str | None:
         """Contract: runner.py:183 calls this. In-memory first, then S3 --
@@ -632,3 +790,32 @@ class ClaudeDriver:
         return json.dumps({"interrupt_id": data["interrupt_id"],
                            "questions": data["questions"]},
                           ensure_ascii=False)
+
+    # ---- lifecycle (beyond the three-method contract) ----
+
+    async def disconnect(self) -> None:
+        """Tear down the claude subprocess. Idempotent.
+
+        NOT part of the driver contract and NOT yet called by anything --
+        runner.stop() only rmtree's the local workspace, so today every deleted
+        project leaks a ~300-500MB `claude` process for the life of the
+        backend. builder.py:395-404 has the same method and proto/session.py
+        calls it on close/idle-timeout; providing it here lets Task 8 wire
+        runner.stop() to it without touching this file (runner.py is off-limits
+        in this task).
+
+        A pending question cannot survive the teardown -- its future is
+        abandoned along with the subprocess, so leaving _pending_payload set
+        would make pending() advertise a question that can never be answered
+        (builder.interrupt() clears the same state for the same reason).
+        """
+        if self._pending_question is not None and not self._pending_question.done():
+            self._pending_question.cancel()
+        self._clear_pending_state()
+        client, self._client = self._client, None
+        if client is None:
+            return
+        try:
+            await client.disconnect()
+        except Exception:
+            _log.exception("claude driver disconnect failed")

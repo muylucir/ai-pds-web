@@ -64,6 +64,9 @@ DEFAULT_SDK_QUESTIONS = [{
                 {"label": "종료", "description": "핸드오프"}],
 }]
 
+# The model's "why I'm asking" prose that precedes a question in real turns.
+PREFACE_TEXT = "이 질문이 왜 필요한지 먼저 설명합니다."
+
 # A DIFFERENT question for the follow-up-during-an-answers-turn script, so a
 # driver that somehow replayed the first question would not look correct.
 FOLLOWUP_SDK_QUESTIONS = [{
@@ -99,13 +102,26 @@ class AskingSdkClient(FakeSdkClient):
     `permission_results` records what the callback returned, so a test can
     assert on the answers the driver injected as `updated_input` rather than
     just on the event stream.
+
+    `preface` reproduces the ordering the real CLI actually produces: the
+    `{"type":"assistant"}` message (the model's "why I'm asking" prose plus the
+    AskUserQuestion tool_use) and the `control_request` are written back to back
+    in ONE read-loop pass (query.py:250-322), with no model latency between
+    them. With `preface` set, the message is delivered into the buffer and the
+    callback is spawned in the SAME tick — no `await` in between — so a driver
+    that returns on the queued `questions` event without first consuming the
+    already-delivered message loses that prose permanently. Without `preface`
+    the callback is spawned before anything is yielded, which is why the
+    original question scripts never had a message in flight and never caught it.
     """
 
-    def __init__(self, can_use_tool, *, sdk_questions=None, tail=None):
+    def __init__(self, can_use_tool, *, sdk_questions=None, tail=None,
+                 preface=None):
         super().__init__(tail if tail is not None else [ResultMessage()])
         self._can_use_tool = can_use_tool
         self._sdk_questions = (DEFAULT_SDK_QUESTIONS if sdk_questions is None
                                else sdk_questions)
+        self._preface = preface
         self._ask_task: asyncio.Task | None = None
         self.permission_results: list = []
         _LIVE.append(self)
@@ -118,8 +134,13 @@ class AskingSdkClient(FakeSdkClient):
         if self._ask_task is None:
             # One handler per AskUserQuestion tool call, spawned once — a
             # second receive_response() over the same turn must not re-ask.
+            # Spawned BEFORE the preface is yielded, with no await in between,
+            # so the assistant message and the permission request land in the
+            # same tick exactly as the CLI's read loop delivers them.
             self._ask_task = asyncio.ensure_future(self._can_use_tool(
                 "AskUserQuestion", {"questions": self._sdk_questions}, None))
+            if self._preface is not None:
+                yield AssistantMessage(content=[TextBlock(text=self._preface)])
         while not self._ask_task.done():
             # Deliberately NOT `await self._ask_task`: the point is that this
             # generator produces no messages while the permission request is
@@ -183,5 +204,9 @@ def sdk_client_for(scripted: dict, can_use_tool):
         return AskingSdkClient(can_use_tool,
                                sdk_questions=FOLLOWUP_SDK_QUESTIONS)
     if scripted.get("questions"):
-        return AskingSdkClient(can_use_tool, tail=script_from(scripted))
+        # `preface` on by default: the real CLI always emits the model's
+        # explanation immediately before the question (driver.py's
+        # _CONTACT_ADDENDUM:44-45 mandates it), so the default script must too.
+        return AskingSdkClient(can_use_tool, tail=script_from(scripted),
+                               preface=PREFACE_TEXT)
     return FakeSdkClient(script_from(scripted))
