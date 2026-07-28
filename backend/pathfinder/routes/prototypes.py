@@ -349,9 +349,16 @@ async def start_host(pid: str, slug: str):
     # ABOVE the served tree. That dir exists as soon as a session starts (it
     # holds the spec .md), so the host's own is_dir() guard passes and the miss
     # only surfaces as `npm error ENOENT ... package.json` -> 502.
+    # `public_base_path`, NOT `proxy_prefix`: basePath is baked into asset URLs
+    # that the BROWSER resolves, and the browser's path carries the `/api` mount
+    # that Next's route handler strips before this app sees it. Imported rather
+    # than re-formatted here -- two spellings of a build-time constant is the
+    # same class of bug as the cwd/prototype mismatch above.
+    from pathfinder.routes.proto_public import public_base_path
     try:
         info = await app_module.proto_host().start(
-            pid, slug, cwd=_prototype_dir(pid, slug))
+            pid, slug, cwd=_prototype_dir(pid, slug),
+            base_path=public_base_path(pid, slug))
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="prototype bundle not found")
     if info.state == "failed":

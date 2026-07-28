@@ -31,6 +31,83 @@ def root(tmp_path):
     return tmp_path / "proto-host-root"
 
 
+def _seed_env_probe_dir(root: Path, base_path: str,
+                        pid: str = PID, slug: str = SLUG) -> Path:
+    """A stub whose `build` script records the basePath env vars it was given,
+    and whose `start` serves that recording. Lets a test assert what the BUILD
+    step saw -- the only moment that matters, since Next.js bakes basePath into
+    the output at build time."""
+    target = root / pid / slug
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "package.json").write_text(
+        '{"name": "probe", "scripts": {'
+        '"build": "node build.js", "start": "node server.js"}}',
+        encoding="utf-8")
+    (target / "build.js").write_text(
+        "const fs = require('fs');\n"
+        "fs.writeFileSync('built.txt', JSON.stringify({\n"
+        "  NEXT_PUBLIC_BASE_PATH: process.env.NEXT_PUBLIC_BASE_PATH ?? null,\n"
+        "  PROTO_BASE_PATH: process.env.PROTO_BASE_PATH ?? null,\n"
+        "}));\n",
+        encoding="utf-8")
+    (target / "server.js").write_text(
+        "const fs = require('fs');\n"
+        "const http = require('http');\n"
+        "const body = fs.readFileSync('built.txt', 'utf-8');\n"
+        "http.createServer((_, res) => {\n"
+        "  res.writeHead(200, {'Content-Type': 'application/json'});\n"
+        "  res.end(body);\n"
+        "}).listen(process.env.PORT);\n",
+        encoding="utf-8")
+    return target
+
+
+async def test_build_receives_the_base_path_env(root):
+    """The build step must be told the public prefix.
+
+    Next.js bakes `basePath` into its output at BUILD time, so injecting the
+    prefix only at start (as PORT is) would be too late -- the asset URLs are
+    already fixed. Before this, ProtoHost injected PORT and nothing else, which
+    is why a hosted prototype's assets resolved against the CloudFront root
+    (/_next/static/... -> 404) instead of /proto/{pid}/{slug}/_next/....
+    """
+    _seed_env_probe_dir(root, base_path=f"/proto/{PID}/{SLUG}")
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    info = await host.start(PID, SLUG, base_path=f"/proto/{PID}/{SLUG}")
+
+    try:
+        assert info.state == "running", info.log_tail
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"http://127.0.0.1:{info.port}/")
+        assert resp.json() == {
+            "NEXT_PUBLIC_BASE_PATH": f"/proto/{PID}/{SLUG}",
+            "PROTO_BASE_PATH": f"/proto/{PID}/{SLUG}",
+        }
+    finally:
+        await host.stop(PID, SLUG)
+
+
+async def test_build_env_absent_when_no_base_path_given(root):
+    """`base_path` stays optional: a caller that does not pass one (tests, a
+    non-proxied prototype) must not get empty-string env vars, which a
+    next.config.js reading `process.env.NEXT_PUBLIC_BASE_PATH ?? ''` cannot
+    distinguish from an intentional root deployment."""
+    _seed_env_probe_dir(root, base_path="")
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    info = await host.start(PID, SLUG)
+
+    try:
+        assert info.state == "running", info.log_tail
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"http://127.0.0.1:{info.port}/")
+        assert resp.json() == {"NEXT_PUBLIC_BASE_PATH": None,
+                               "PROTO_BASE_PATH": None}
+    finally:
+        await host.stop(PID, SLUG)
+
+
 async def test_start_reaches_running_and_serves_http(root):
     _seed_build_dir(root)
     host = ProtoHost(root=root, port_range=range(4001, 4010))

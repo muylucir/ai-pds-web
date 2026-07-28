@@ -88,11 +88,13 @@ class ProtoHost:
         except (OSError, json.JSONDecodeError):
             return {}
 
-    async def _run_npm(self, args: list[str], cwd: Path, log_path: Path) -> int:
+    async def _run_npm(self, args: list[str], cwd: Path, log_path: Path,
+                       env: dict[str, str] | None = None) -> int:
         log_fh = open(log_path, "ab")
         try:
             proc = await asyncio.create_subprocess_exec(
                 "npm", *args, cwd=str(cwd), stdout=log_fh, stderr=log_fh,
+                env=env,
             )
             return await proc.wait()
         finally:
@@ -133,7 +135,19 @@ class ProtoHost:
 
     # ---- public interface ----
 
-    async def start(self, pid: str, slug: str, cwd: Path | None = None) -> HostInfo:
+    async def start(self, pid: str, slug: str, cwd: Path | None = None,
+                    base_path: str | None = None) -> HostInfo:
+        """Run the npm lifecycle for one prototype and return its HostInfo.
+
+        `base_path` is the public prefix the reverse proxy serves this prototype
+        under (`/proto/{pid}/{slug}`). It is exported to BOTH the build and the
+        start step, because Next.js bakes `basePath` into its output at build
+        time -- injecting it only at start, the way PORT is, would come too late
+        and leave the asset URLs pointing at the CloudFront root. Left unset,
+        the env vars are absent rather than empty, so a config reading
+        `process.env.NEXT_PUBLIC_BASE_PATH ?? ''` can still tell "no prefix"
+        from "prefix I forgot to pass".
+        """
         # If this (pid, slug) is already running/started, tear down its
         # previous process first.
         await self.stop(pid, slug)
@@ -149,7 +163,16 @@ class ProtoHost:
         entry = _HostEntry(dir=target_dir, log_path=log_path, state="installing")
         self._registry[(pid, slug)] = entry
 
-        rc = await self._run_npm(["install"], target_dir, log_path)
+        # Two names for the same value: NEXT_PUBLIC_* is what a Next.js config
+        # reads (and the only form inlined into client bundles), PROTO_BASE_PATH
+        # is the framework-neutral alias for a Vite/CRA prototype.
+        base_env: dict[str, str] = {}
+        if base_path:
+            base_env = {"NEXT_PUBLIC_BASE_PATH": base_path,
+                        "PROTO_BASE_PATH": base_path}
+
+        rc = await self._run_npm(["install"], target_dir, log_path,
+                                 env={**os.environ, **base_env})
         if rc != 0:
             entry.state = "failed"
             return self._info(entry)
@@ -159,14 +182,18 @@ class ProtoHost:
 
         if "build" in scripts:
             entry.state = "building"
-            rc = await self._run_npm(["run", "build"], target_dir, log_path)
+            rc = await self._run_npm(["run", "build"], target_dir, log_path,
+                                     env={**os.environ, **base_env})
             if rc != 0:
                 entry.state = "failed"
                 return self._info(entry)
 
         port = self._scan_port()
         start_args = ["run", "start"] if "start" in scripts else ["run", "dev"]
-        env = {**os.environ, "PORT": str(port)}
+        # `next start` re-reads next.config.js, so the prefix has to be present
+        # here too -- otherwise the server would route at "/" while the built
+        # assets expect the prefix.
+        env = {**os.environ, **base_env, "PORT": str(port)}
 
         log_fh = open(log_path, "ab")
         try:

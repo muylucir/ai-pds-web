@@ -32,6 +32,40 @@ _STRIP_REQUEST_HEADERS = {"host", "x-origin-verify", "connection",
 _STRIP_RESPONSE_HEADERS = {"transfer-encoding", "connection", "keep-alive"}
 
 
+def proxy_prefix(pid: str, slug: str) -> str:
+    """The path prefix as THIS APP sees it — what the proxy routes on.
+
+    Exported because it is also what the proxy forwards upstream (intact, so an
+    app built with Next.js `basePath` matches it). For the value to bake into a
+    build, use `public_base_path` instead: in production the browser's path
+    carries an extra mount that never reaches here.
+    """
+    return f"/proto/{quote(pid)}/{quote(slug)}"
+
+
+#: Where this API is mounted from the BROWSER's point of view. In production
+#: nginx sends everything to Next, whose app/api/[...path]/route.ts strips
+#: `/api` before forwarding to FastAPI — so a path this app sees as
+#: `/proto/...` was `/api/proto/...` in the browser. Configurable because local
+#: dev talks to :8000 directly with no mount at all (set it to "").
+_PUBLIC_PREFIX_ENV = "PATHFINDER_PUBLIC_PATH_PREFIX"
+_PUBLIC_PREFIX_DEFAULT = "/api"
+
+
+def public_base_path(pid: str, slug: str) -> str:
+    """The prototype's prefix as the BROWSER sees it — the build input.
+
+    Next.js bakes `basePath` into asset URLs at build time, and those URLs are
+    resolved by the browser, so this must include the `/api` mount that
+    `proxy_prefix` deliberately omits. Getting this wrong is not a redirect
+    that self-corrects: assets 404 against the CloudFront root and the page
+    renders unstyled and inert.
+    """
+    import os
+    mount = os.environ.get(_PUBLIC_PREFIX_ENV, _PUBLIC_PREFIX_DEFAULT).rstrip("/")
+    return f"{mount}{proxy_prefix(pid, slug)}"
+
+
 def _rewritten_location(value: str, pid: str, slug: str) -> str:
     """Rewrite an upstream redirect target into a proxy-relative path.
 
@@ -51,12 +85,22 @@ def _rewritten_location(value: str, pid: str, slug: str) -> str:
         path, query = parsed.path, parsed.query
     else:
         path, query = parsed.path, parsed.query
-    prefix = f"/proto/{quote(pid)}/{quote(slug)}"
+    # The BROWSER-side prefix: this Location header is for the browser, and an
+    # app built with basePath emits that same value in its own redirects.
+    prefix = public_base_path(pid, slug)
     if not path.startswith("/"):
         # Relative target: the browser resolves it against the current URL,
         # which is already inside the prefix — leave it as-is.
         return value
-    out = f"{prefix}{path}"
+    # A prototype built with `basePath` emits redirects that ALREADY carry the
+    # prefix; prepending it again would send the browser to
+    # /api/proto/{pid}/{slug}/api/proto/{pid}/{slug}/... Match on a path-segment
+    # boundary, not a bare startswith: "/api/proto/{pid}/{slug}-other" is a
+    # DIFFERENT prototype and still needs the prefix.
+    if path == prefix or path.startswith(f"{prefix}/"):
+        out = path
+    else:
+        out = f"{prefix}{path}"
     return f"{out}?{query}" if query else out
 
 
@@ -94,7 +138,19 @@ async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
         return PlainTextResponse(
             "prototype not running — start hosting first", status_code=502)
 
-    url = f"http://127.0.0.1:{info.port}/{path}"
+    # Forward under the BROWSER-side prefix rather than stripping to "/". The
+    # prototype is built with Next.js `basePath` = public_base_path, and
+    # basePath changes URL generation AND request matching together, so the app
+    # both emits and expects that prefix. Note this app never receives the
+    # browser's `/api` mount (Next's route handler strips it), so forwarding
+    # requires putting it back -- hence public_base_path, not proxy_prefix.
+    #
+    # Stripping left two broken halves: built without basePath the app's asset
+    # URLs resolved against the CloudFront root (/_next/static/... -> 404);
+    # built with it, every stripped request 404'd inside the app. (assetPrefix
+    # alone would fix only /_next/ URLs, leaving public/ files and
+    # client-router hrefs pointing at the root.)
+    url = f"http://127.0.0.1:{info.port}{public_base_path(pid, slug)}/{path}"
     client = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=5.0))
     headers = {k: v for k, v in request.headers.items()
                if k.lower() not in _STRIP_REQUEST_HEADERS}

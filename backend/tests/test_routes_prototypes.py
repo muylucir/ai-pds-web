@@ -74,9 +74,14 @@ class FakeProtoHost:
         # but the build output lives one level down in prototype/ -- dropping
         # cwd here is what let that mismatch ship (npm ENOENT on package.json).
         self.start_cwds: list[object] = []
+        # The public proxy prefix the build must be told about -- Next.js bakes
+        # basePath in at build time, so a missing value here is a 404 on every
+        # asset, not a recoverable runtime detail.
+        self.start_base_paths: list[object] = []
 
-    async def start(self, pid, slug, cwd=None):
+    async def start(self, pid, slug, cwd=None, base_path=None):
         self.start_cwds.append(cwd)
+        self.start_base_paths.append(base_path)
         if self.start_exc is not None:
             raise self.start_exc
         info = self.infos.get((pid, slug))
@@ -514,6 +519,44 @@ def test_host_start_targets_the_prototype_subtree_not_the_build_dir(proto_env):
     assert proto_env["host"].start_cwds == [proto_dir]
 
 
+def test_host_start_base_path_is_the_browser_visible_prefix(proto_env, monkeypatch):
+    """basePath is a BROWSER-side value, and in production the browser's path
+    carries an `/api` mount that the backend never sees.
+
+    The chain: browser requests /api/proto/{pid}/{slug}/... -> nginx -> Next's
+    app/api/[...path]/route.ts, which strips `/api` before forwarding to
+    FastAPI, so this app only ever observes /proto/{pid}/{slug}/....  Baking the
+    backend-side prefix into the build would emit asset URLs at
+    /proto/.../_next/static/... -- which CloudFront 404s, the very symptom this
+    work is fixing.
+
+    The mount is configuration, not a constant: PATHFINDER_PUBLIC_PATH_PREFIX
+    carries it, defaulting to "/api" to match the deployed nginx/Next wiring.
+    """
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 200
+
+    assert proto_env["host"].start_base_paths == [f"/api/proto/{PID}/{SLUG}"]
+
+
+def test_host_start_base_path_honours_an_empty_public_prefix(proto_env, monkeypatch):
+    """Local dev calls the backend directly (no /api mount), so the override
+    must be able to clear the prefix entirely rather than only replace it."""
+    monkeypatch.setenv("PATHFINDER_PUBLIC_PATH_PREFIX", "")
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 200
+
+    assert proto_env["host"].start_base_paths == [f"/proto/{PID}/{SLUG}"]
+
+
 def test_host_start_no_bundle_404(proto_env):
     proto_env["host"].start_exc = FileNotFoundError("bundle")
     assert client.post(
@@ -582,17 +625,67 @@ def echo_server():
     thread.join(timeout=5)
 
 
-def test_proxy_streams_upstream_response(proto_env, echo_server):
+def test_proxy_forwards_the_prefix_intact(proto_env, echo_server):
+    """The proxy must forward /proto/{pid}/{slug}/... UNCHANGED, not strip the
+    prefix.
+
+    This is what lets the prototype build with Next.js `basePath` set to that
+    same prefix. basePath changes URL generation AND request matching together,
+    so an app built with it expects to receive the prefixed path. Stripping it
+    (the old behaviour) left two broken halves: without basePath the app's own
+    asset URLs pointed at the CloudFront root (/_next/static/... -> 404), and
+    with basePath the app 404'd every stripped request itself.
+
+    Forwarding intact also covers what `assetPrefix` alone cannot: files served
+    straight out of public/ (<img src="/logo.png">) and client-side router
+    hrefs, neither of which assetPrefix rewrites.
+    """
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
+    from pathfinder.routes.proto_public import public_base_path
     resp = client.get(f"/proto/{PID}/{SLUG}/some/page",
                       params={"q": "1"},
                       headers={"X-Origin-Verify": "secret-value"})
     assert resp.status_code == 200
-    assert resp.text == "echo:/some/page?q=1"
+    assert resp.text == f"echo:{public_base_path(PID, SLUG)}/some/page?q=1"
     # The CloudFront shared secret must not reach the prototype process.
     forwarded = _EchoHandler.seen_headers[0]
     assert not any(k.lower() == "x-origin-verify" for k in forwarded)
+
+
+def test_proxy_forwards_the_same_prefix_the_build_was_given(proto_env, echo_server):
+    """The two halves must agree: whatever prefix is baked into the build
+    (`public_base_path`) is what the app matches on, so that is what the proxy
+    has to forward.
+
+    They are NOT the same string as the one this app routes on -- the browser's
+    path carries an `/api` mount that Next strips before FastAPI sees it. So the
+    proxy has to put the full browser-side prefix BACK before forwarding, or the
+    app (built with basePath=/api/proto/...) 404s a request for /proto/....
+    Pinning the pairing, not the literals, is the point: this is exactly the
+    kind of two-places-derive-it-separately gap that produced the original
+    404s."""
+    from pathfinder.routes.proto_public import public_base_path
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(
+        state="running", port=echo_server, log_tail="")
+
+    resp = client.get(f"/proto/{PID}/{SLUG}/_next/static/chunks/main.js")
+
+    assert resp.status_code == 200
+    assert resp.text == \
+        f"echo:{public_base_path(PID, SLUG)}/_next/static/chunks/main.js"
+
+
+def test_proxy_forwards_a_public_dir_asset_under_the_prefix(proto_env, echo_server):
+    """Covers what `assetPrefix` alone would have missed: a file served straight
+    out of public/ (<img src="/logo.png">) carries the basePath too, so it also
+    has to arrive prefixed."""
+    from pathfinder.routes.proto_public import public_base_path
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(
+        state="running", port=echo_server, log_tail="")
+    resp = client.get(f"/proto/{PID}/{SLUG}/logo.png")
+    assert resp.status_code == 200
+    assert resp.text == f"echo:{public_base_path(PID, SLUG)}/logo.png"
 
 
 def test_proxy_502_when_not_running(proto_env):
@@ -662,24 +755,64 @@ def test_proxy_relative_asset_under_slug_prefix_is_served(proto_env, echo_server
     (.../{slug}/styles.css) must reach the prototype — these were the 502s."""
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
+    from pathfinder.routes.proto_public import public_base_path
     resp = client.get(f"/proto/{PID}/{SLUG}/styles.css")
     assert resp.status_code == 200
-    assert resp.text == "echo:/styles.css"
+    assert resp.text == f"echo:{public_base_path(PID, SLUG)}/styles.css"
 
 
 def test_proxy_rewrites_upstream_absolute_redirect(proto_env):
     """A prototype redirecting to its own internal origin must be rewritten to
     the public proxy path — otherwise the browser chases 127.0.0.1:<port>."""
-    from pathfinder.routes.proto_public import _rewritten_location
+    from pathfinder.routes.proto_public import (_rewritten_location,
+                                                public_base_path)
     got = _rewritten_location(
         "http://127.0.0.1:4001/login?next=/dash", PID, SLUG)
-    assert got == f"/proto/{PID}/{SLUG}/login?next=/dash"
+    # Browser-side prefix (includes the `/api` mount) -- a Location header is
+    # resolved by the browser, not by this app.
+    assert got == f"{public_base_path(PID, SLUG)}/login?next=/dash"
 
 
 def test_proxy_rewrites_upstream_relative_root_redirect(proto_env):
-    from pathfinder.routes.proto_public import _rewritten_location
+    from pathfinder.routes.proto_public import (_rewritten_location,
+                                                public_base_path)
     assert _rewritten_location("/dashboard", PID, SLUG) == \
-        f"/proto/{PID}/{SLUG}/dashboard"
+        f"{public_base_path(PID, SLUG)}/dashboard"
+
+
+def test_proxy_does_not_double_prefix_an_already_prefixed_redirect(proto_env):
+    """New hazard introduced by forwarding the prefix intact: an app built with
+    `basePath` emits redirects that ALREADY carry the prefix. Prepending it
+    again would send the browser to /proto/{pid}/{slug}/proto/{pid}/{slug}/...
+
+    Covers both shapes a prototype can produce -- a bare path and an absolute
+    URL naming its own internal origin."""
+    from pathfinder.routes.proto_public import (_rewritten_location,
+                                                public_base_path)
+    # The app was built with basePath = public_base_path, so THAT is the prefix
+    # its own redirects carry -- including the `/api` mount this app never sees
+    # on inbound requests.
+    prefix = public_base_path(PID, SLUG)
+
+    assert _rewritten_location(f"{prefix}/dashboard", PID, SLUG) == \
+        f"{prefix}/dashboard"
+    assert _rewritten_location(
+        f"http://127.0.0.1:4001{prefix}/login?next=/dash", PID, SLUG) == \
+        f"{prefix}/login?next=/dash"
+    # The prefix itself, with and without a trailing slash.
+    assert _rewritten_location(prefix, PID, SLUG) == prefix
+    assert _rewritten_location(f"{prefix}/", PID, SLUG) == f"{prefix}/"
+
+
+def test_proxy_prefixes_a_sibling_path_that_merely_shares_a_leading_segment(proto_env):
+    """The double-prefix guard must match on a path SEGMENT boundary, not a
+    string prefix: /proto/{pid}/{slug}-other belongs to a different prototype
+    and still needs the prefix prepended (a plain startswith would skip it)."""
+    from pathfinder.routes.proto_public import (_rewritten_location,
+                                                public_base_path)
+    prefix = public_base_path(PID, SLUG)
+    assert _rewritten_location(f"{prefix}-other/page", PID, SLUG) == \
+        f"{prefix}{prefix}-other/page"
 
 
 def test_proxy_leaves_external_redirect_alone(proto_env):
