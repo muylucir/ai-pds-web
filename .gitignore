@@ -15,6 +15,5 @@ proto-config/.credentials.json
 proto-config/.claude.json
 proto-config/settings.local.json
 proto-type/
-**/tests/
 **/.pytest_cache/
 .worktrees/
