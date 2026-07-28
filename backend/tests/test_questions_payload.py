@@ -117,7 +117,7 @@ def test_defaults_the_optional_flags():
     assert q["parse_ok"] is True if "parse_ok" in q else True
 
 
-def test_sets_the_file_level_contract_fields():
+def test_normalize_sets_the_file_level_contract_fields():
     # 프론트 QuestionsPayload 계약: parse_ok=True + raw_markdown=None이어야
     # RawMarkdownFallback이 아니라 폼으로 렌더된다.
     payload = normalize_questions_payload(_q([{"letter": "A", "text": "진행"}]))
@@ -168,3 +168,81 @@ def test_keeps_hangul_literal_rather_than_escaped():
         {"letter": "A", "text": "승인 — 다음 단계로 진행"},
     ]))
     assert payload["questions"][0]["options"][0]["text"] == "승인 — 다음 단계로 진행"
+
+
+# ---- SDK AskUserQuestion input → QuestionFile ----
+# builder._to_question_file과 Discovery의 정규화가 같은 일을 하던 것을 합친다.
+# 합치면 is_other 중복 교정(2026-07-26 버그)이 프로토타입 빌더에도 적용된다.
+from pathfinder.agent.questions_payload import question_file_from_sdk
+
+SDK_Q = [{"question": "다음 단계는?", "header": "Next",
+          "multiSelect": False,
+          "options": [{"label": "진행", "description": "다음 스테이지로"},
+                      {"label": "종료", "description": "핸드오프"}]}]
+
+
+def test_maps_sdk_options_to_letters_in_order():
+    f = question_file_from_sdk(SDK_Q, name="next-step")
+    opts = f["questions"][0]["options"]
+    assert [o["letter"] for o in opts] == ["A", "B"]
+    # letter 인덱스가 SDK 옵션 순서와 1:1이어야 답변 되번역이 맞는다.
+    assert opts[0]["text"].startswith("진행")
+
+
+def test_joins_label_and_description():
+    f = question_file_from_sdk(SDK_Q, name="n")
+    assert f["questions"][0]["options"][0]["text"] == "진행 — 다음 스테이지로"
+
+
+def test_drops_the_dash_when_description_is_empty():
+    f = question_file_from_sdk([{"question": "q", "options": [{"label": "진행"}]}],
+                               name="n")
+    assert f["questions"][0]["options"][0]["text"] == "진행"
+
+
+def test_carries_header_as_category_and_multiselect():
+    f = question_file_from_sdk(
+        [{"question": "q", "header": "Audience", "multiSelect": True,
+          "options": [{"label": "A"}, {"label": "B"}]}], name="n")
+    q = f["questions"][0]
+    assert q["category"] == "Audience"
+    assert q["multi_select"] is True
+
+
+def test_sdk_sets_the_file_level_contract_fields():
+    f = question_file_from_sdk(SDK_Q, name="next-step")
+    assert f["name"] == "next-step"
+    assert f["parse_ok"] is True
+    assert f["raw_markdown"] is None
+
+
+def test_result_passes_the_normalizer_unchanged():
+    # 두 경로가 한 계약으로 수렴하는지 — SDK 입력을 변환한 결과가 정규화를
+    # 통과해도 그대로여야 한다(옵션이 강등되거나 letter가 바뀌지 않는다).
+    f = question_file_from_sdk(SDK_Q, name="n")
+    assert normalize_questions_payload(f) == f
+
+
+def test_rejects_a_question_with_no_options():
+    # SDK가 옵션 없는 질문을 보내면 폼에 고를 게 없다.
+    with pytest.raises(ValueError):
+        question_file_from_sdk([{"question": "q", "options": []}], name="n")
+
+
+def test_an_option_literally_labeled_other_is_not_reclassified():
+    """리뷰 finding 1: normalize_questions_payload의 _looks_like_other 휴리스틱
+    (텍스트가 "other"로 시작하면 Other로 간주)은 마크다운/Discovery 경로처럼
+    모델이 자유형 dict를 직접 만드는 경로에서만 필요하다. SDK 경로는 모델이
+    이미 명시적 options를 구조화해서 주므로, "Other database"처럼 실제 옵션
+    라벨이 우연히 "other"로 시작해도 그대로 살아 있어야 한다 — 강등되면
+    프론트가 라벨을 하드코딩된 "Other — 직접 입력"으로 덮어쓰고,
+    _answer_to_sdk는 모델이 정의한 옵션이 아니라 사용자가 입력한 원문
+    텍스트를 SDK로 돌려주게 된다."""
+    sdk_q = [{"question": "어떤 DB를 쓸까?", "options": [
+        {"label": "Other database", "description": "specify your own"},
+        {"label": "Postgres", "description": "relational"},
+    ]}]
+    f = question_file_from_sdk(sdk_q, name="n")
+    opts = f["questions"][0]["options"]
+    assert opts[0]["is_other"] is False
+    assert opts[0]["text"] == "Other database — specify your own"

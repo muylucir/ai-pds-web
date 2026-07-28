@@ -236,3 +236,18 @@ const cliKb = Number(cliBuf![2]) * (/[mM]/.test(cliBuf![3]) ? 1024 : 1);
 assert.ok(cliKb >= 16,
   `large_client_header_buffers size must be >= 16k, got ${cliBuf![0]}`);
 console.log('OK  user-data: large_client_header_buffers fits JWT cookies on requests');
+
+// 14) Discovery 드라이버 env — 미주입 시 config dir이 호스트 유저의 ~/.claude로
+// 떨어져 개인 skills/agents가 워크숍 결과에 섞인다(proto-config와 같은 이유).
+assert.match(s, /PATHFINDER_DISCOVERY_CONFIG_DIR=/,
+  'backend must get PATHFINDER_DISCOVERY_CONFIG_DIR — otherwise the host user\'s ~/.claude leaks into Discovery');
+assert.match(s, /\/opt\/pathfinder\/discovery-config/,
+  'discovery config dir must point at the shipped asset path');
+// proto와 discovery의 config dir이 서로 다른 경로여야 한다 — 공유하면
+// Discovery가 shadcn-design 스킬을 켠 채로 돈다(skills="all").
+const protoCfg = s.match(/PATHFINDER_PROTO_CONFIG_DIR=([^\s\\]+)/);
+const discCfg = s.match(/PATHFINDER_DISCOVERY_CONFIG_DIR=([^\s\\]+)/);
+assert.ok(protoCfg && discCfg, 'both config dirs must be set');
+assert.notStrictEqual(protoCfg![1], discCfg![1],
+  'proto and discovery CLAUDE_CONFIG_DIRs must not be the same path');
+console.log('OK  user-data: discovery config dir set and distinct from proto');

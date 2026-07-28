@@ -122,3 +122,50 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
     expect(screen.getByText("custom_tool 실행 중…")).toBeInTheDocument();
   });
 });
+
+describe("Claude Agent SDK 도구명 라벨 (regression)", () => {
+  // 드라이버가 바뀌면 status 이벤트의 도구 이름이 SDK 내장 이름으로 온다.
+  // 매핑에 없으면 폴백이 발동해 사용자에게 "Write 실행 중…" 같은 영어 도구명이
+  // 노출된다 — 크래시는 아니지만 UX가 조용히 나빠진다.
+  const CASES: Array<[string, RegExp]> = [
+    ["AskUserQuestion", /질문을 준비하고 있어요/],
+    ["Write", /문서를 작성하고 있어요/],
+    ["Edit", /문서를 작성하고 있어요/],
+    ["MultiEdit", /문서를 작성하고 있어요/],
+    ["Read", /자료를 확인하고 있어요/],
+    ["Glob", /자료를 찾고 있어요/],
+    // CLI 기본 도구 (tools=None이므로 사용 가능; envision.md의 URL 분석 모드 B/C와 workspace 탐색 필요)
+    ["Grep", /자료를 찾고 있어요/],
+    ["WebFetch", /정보를 수집하고 있어요/],
+    ["Bash", /작업을 진행하고 있어요/],
+  ];
+
+  for (const [tool, label] of CASES) {
+    it(`maps ${tool} to a Korean activity label`, () => {
+      render(
+        <AiMessage
+          item={{
+            id: "a1", role: "ai", text: "", streaming: true, error: null,
+            trace: [{ kind: "status", text: tool, path: null }],
+          }}
+        />,
+      );
+      expect(screen.getByText(label)).toBeInTheDocument();
+      // 영어 도구명이 그대로 보이면 안 된다.
+      expect(screen.queryByText(new RegExp(`${tool} 실행 중`))).toBeNull();
+    });
+  }
+
+  it("keeps the Strands tool names working during the env-toggle period", () => {
+    // 두 드라이버가 공존하는 기간에는 양쪽 다 올바른 라벨이 나와야 한다.
+    render(
+      <AiMessage
+        item={{
+          id: "a1", role: "ai", text: "", streaming: true, error: null,
+          trace: [{ kind: "status", text: "file_write", path: null }],
+        }}
+      />,
+    );
+    expect(screen.getByText(/문서를 작성하고 있어요/)).toBeInTheDocument();
+  });
+});

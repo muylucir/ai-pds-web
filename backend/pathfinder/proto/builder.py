@@ -22,6 +22,7 @@ import logging
 from pathlib import PurePosixPath
 from typing import Any, AsyncIterator, Callable
 
+from pathfinder.agent.questions_payload import question_file_from_sdk
 from pathfinder.models import AgentEvent
 
 _log = logging.getLogger(__name__)
@@ -32,24 +33,6 @@ _LETTERS = "ABCDEFGHIJ"
 # A workshop build runs unattended -- there is no operator to approve a Write,
 # so any mode that can prompt stalls the turn until the idle timer kills it.
 DEFAULT_PERMISSION_MODE = "bypassPermissions"
-
-
-def _to_question_file(sdk_questions: list[dict]) -> dict:
-    """SDK AskUserQuestion input → frontend QuestionFile shape (types.ts),
-    so QuestionForm renders it unmodified. Letters index the SDK options."""
-    questions = []
-    for i, q in enumerate(sdk_questions, start=1):
-        options = [{"letter": _LETTERS[j],
-                    "text": f"{o.get('label', '')} — {o.get('description', '')}".rstrip(" —"),
-                    "is_other": False, "recommended": False}
-                   for j, o in enumerate(q.get("options", []))]
-        questions.append({
-            "number": i, "category": q.get("header") or None,
-            "text": q.get("question", ""), "options": options,
-            "answer": None, "multi_select": bool(q.get("multiSelect")),
-        })
-    return {"name": "prototype-questions", "preamble": None,
-            "questions": questions, "parse_ok": True, "raw_markdown": None}
 
 
 def _rel(path: str, workspace: str) -> str | None:
@@ -241,13 +224,26 @@ class PrototypeBuilder:
         return value  # free text (Other)
 
     async def _on_can_use_tool(self, tool_name, input_data, context):
-        from claude_agent_sdk.types import PermissionResultAllow
+        from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
         if tool_name != "AskUserQuestion":
             return PermissionResultAllow(updated_input=input_data)
         import json as _json, uuid
-        iid = uuid.uuid4().hex
         sdk_questions = input_data.get("questions", [])
-        qfile = _to_question_file(sdk_questions)
+        # question_file_from_sdk raises ValueError on unusable input (e.g. a
+        # question with zero options) -- mirror ask_questions in tools.py:
+        # deny with a message the model can read and retry from, instead of
+        # letting the exception escape. Unlike ask_questions (which returns a
+        # tool-result string), the can_use_tool contract only speaks
+        # PermissionResult -- PermissionResultDeny is the SDK-native way to
+        # hand the model an explanation and no other shape is invented here.
+        try:
+            qfile = question_file_from_sdk(sdk_questions, name="prototype-questions")
+        except ValueError as e:
+            _log.warning("AskUserQuestion payload rejected: %s", e)
+            return PermissionResultDeny(
+                message=f"질문을 만들 수 없다: {e}\n"
+                        "각 질문에 옵션을 최소 1개 넣어 AskUserQuestion을 다시 호출해라.")
+        iid = uuid.uuid4().hex
         payload = _json.dumps({"interrupt_id": iid, "questions": qfile},
                               ensure_ascii=False)
         self._pending_payload = payload

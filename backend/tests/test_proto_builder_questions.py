@@ -80,6 +80,24 @@ async def test_question_roundtrip(tmp_path):
     assert b._pending_payload is None
 
 
+async def test_zero_option_question_is_denied_not_raised(tmp_path):
+    """리뷰 finding 2: question_file_from_sdk는 옵션 없는 질문에 ValueError를
+    던진다(정규화 계약). 옛 _to_question_file은 절대 그러지 않았으므로
+    _on_can_use_tool에는 그 예외를 감쌀 코드가 없었다 -- bypassPermissions
+    아래에서 무인으로 도는 프로토타입 빌드가 처리 경로 없이 죽는 걸 막는다.
+    ask_questions(tools.py)가 ValueError를 잡아 모델이 읽을 문자열을 돌려주는
+    것과 대응되도록, can_use_tool 콜백은 PermissionResultDeny로 거부하고
+    모델이 재시도할 수 있는 메시지를 message에 담는다."""
+    from claude_agent_sdk.types import PermissionResultDeny
+
+    b = _builder(tmp_path, FakeSdkClient())
+    bad_input = {"questions": [{"question": "q", "options": []}]}
+    result = await b._on_can_use_tool("AskUserQuestion", bad_input, None)
+    assert isinstance(result, PermissionResultDeny)
+    assert result.message
+    assert b._pending_payload is None
+
+
 async def test_answer_translation_variants(tmp_path):
     b = _builder(tmp_path, FakeSdkClient())
     opts = [{"label": "Postgres", "description": "r"},

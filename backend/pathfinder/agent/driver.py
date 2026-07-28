@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
 from pathfinder.models import AgentEvent
-from pathfinder.agent.tools import build_tools, QUESTIONS_SCHEMA_HINT
+from pathfinder.agent.strands_tools import build_tools, QUESTIONS_SCHEMA_HINT
 
 _log = logging.getLogger("pathfinder.agent")
 

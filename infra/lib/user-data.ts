@@ -53,6 +53,10 @@ rm -f /tmp/app.zip
 # 한 경로 아래로 모아 백업·정리·권한을 한 번에 다루고, 서비스 유저의 홈
 # 디렉토리 위치 변경에 의존하지 않게 한다.
 mkdir -p ${APP}/protos ${APP}/proto-config ${APP}/workspaces
+# Discovery 에이전트 전용 CLAUDE_CONFIG_DIR — proto-config와 같은 이유로 앱
+# 트리 안에 두고, 반드시 다른 경로다(공유하면 skills="all" 때문에 Discovery가
+# 프로토타입 빌드용 shadcn-design 스킬을 켠 채로 돈다).
+mkdir -p ${APP}/discovery-config
 
 # --- 소유권: 에셋 전개는 root가 했으므로 서비스 유저에게 넘긴다 ---
 # 백엔드는 venv 실행, 프론트는 .next 읽기, 빌드 에이전트는 protos/ 쓰기가 필요하다.
@@ -160,6 +164,10 @@ Environment=PATHFINDER_WORKSPACES_DIR=${APP}/workspaces
 # 앱 트리 안에 두어 소유권·백업·정리를 APP 한 경로로 통일한다.
 Environment=PATHFINDER_PROTO_MAX_CONCURRENT=2
 Environment=PATHFINDER_PROTO_CONFIG_DIR=${APP}/proto-config
+# Discovery 드라이버(기본 claude, PATHFINDER_DISCOVERY_DRIVER로 strands 되돌림
+# 가능) 전용 CLAUDE_CONFIG_DIR. proto-config와 반드시 다른 경로 — 공유하면
+# Discovery가 프로토타입 빌드용 shadcn-design 스킬을 켠 채로 돈다.
+Environment=PATHFINDER_DISCOVERY_CONFIG_DIR=${APP}/discovery-config
 # 인증: 이 두 값이 비면 백엔드가 모든 요청을 통과시킨다(로컬 개발용 바이패스).
 # 배포에서는 반드시 채워져야 한다.
 Environment=PATHFINDER_COGNITO_USER_POOL_ID=${userPoolId}

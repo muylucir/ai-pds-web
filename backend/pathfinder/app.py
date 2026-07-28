@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathfinder.workspace import ProjectRegistry, Workspace
 from pathfinder.runner import AgentRunner
 from pathfinder.agent.driver import StrandsDriver
+from pathfinder.agent.claude_driver import ClaudeDriver
 from pathfinder.s3store import S3Store, S3StoreLike
 from pathfinder.project_store import restore_projects
 
@@ -130,9 +131,53 @@ def _workspaces_dir() -> Path:
     return Path(root) if root else Path(tempfile.gettempdir()) / "pathfinder-workspaces"
 
 
-# Monkeypatchable in tests: StrandsDriver를 fake agent_factory로 갈아끼운다.
-def driver_factory(project_id: str, local_root: Path) -> StrandsDriver:
-    return StrandsDriver(workspace=str(local_root), rules_dir=_rules_dir())
+def _discovery_config_dir() -> Path:
+    return Path(os.environ.get("PATHFINDER_DISCOVERY_CONFIG_DIR",
+                               "~/pathfinder-discovery-config")).expanduser()
+
+
+_DISCOVERY_DRIVERS = ("claude", "strands")
+
+
+def _discovery_driver_choice() -> str:
+    """PATHFINDER_DISCOVERY_DRIVER 값을 읽고 검증한다.
+
+    오타가 조용히 기본값으로 떨어지면 어느 드라이버가 도는지 알 수 없으므로,
+    알 수 없는 값은 ValueError로 죈다. 두 곳에서 부른다 — 하나로 합치지 않은
+    이유는 두 실패 시점이 서로 다른 방어선이기 때문이다:
+    - `_lifespan`(기동 시점): 배포 스크립트/로드밸런서의 헬스체크(GET / 또는
+      /openapi.json)는 이 값과 무관하게 200을 낼 수 있는 라우트들이다. 거기서
+      막지 않으면 오퍼레이터는 배포가 정상이라고 표시하고, 실패는 첫 워크숍
+      참가자가 프로젝트를 열 때(driver_factory 호출)서야 드러난다 — 다섯 번의
+      배포 사고를 겪은 이 프로젝트가 정확히 피하려는 그 모양이다.
+    - `driver_factory`(요청 시점): 기동 검증이 있더라도 두 번째 방어선으로
+      남긴다 — 예를 들어 프로세스 기동 후 환경이 바뀌는 경로가 생기더라도
+      여기서도 죈다.
+    """
+    choice = os.environ.get("PATHFINDER_DISCOVERY_DRIVER", "claude")
+    if choice not in _DISCOVERY_DRIVERS:
+        raise ValueError(
+            f"unknown PATHFINDER_DISCOVERY_DRIVER {choice!r}; expected 'claude' or 'strands'")
+    return choice
+
+
+# Discovery 드라이버 선택. 기본은 Claude Agent SDK — AI-PLC 룰이 전제한 실행
+# 환경이다. `strands`로 되돌릴 수 있게 둔 것은 워크숍 중 문제가 났을 때의
+# 탈출로다(EC2 교체 없이 env + restart). 워크숍이 끝나면 StrandsDriver와
+# strands-agents 의존성을 삭제한다.
+#
+# Monkeypatchable in tests: 이 함수 자체를 fake agent_factory로 갈아끼운다.
+def driver_factory(project_id: str, local_root: Path):
+    choice = _discovery_driver_choice()
+    if choice == "strands":
+        return StrandsDriver(workspace=str(local_root), rules_dir=_rules_dir())
+    return ClaudeDriver(
+        workspace=str(local_root),
+        rules_dir=_rules_dir(),
+        config_dir=str(_discovery_config_dir()),
+        s3=s3_store_factory(project_id),
+        anthropic_model=os.environ.get("ANTHROPIC_MODEL"),
+    )
 
 
 # ---- prototype build/hosting wiring (routes/prototypes.py) ----
@@ -265,6 +310,12 @@ async def make_workspace(project_id: str) -> Workspace:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    # 기동 검증: PATHFINDER_DISCOVERY_DRIVER 오타는 여기서 죈다(의도적으로
+    # try/except로 감싸지 않는다 — uvicorn이 기동을 실패시켜야 배포 스크립트/
+    # 로드밸런서 헬스체크가 "정상"으로 잘못 판정하지 않는다). driver_factory
+    # 안의 같은 검증은 두 번째 방어선으로 남긴다(_discovery_driver_choice
+    # 참고).
+    _discovery_driver_choice()
     # 기동 시 S3 매니페스트에서 프로젝트 '목록'만 복원한다. 워크스페이스는 첫
     # 요청에서 lazy 초기화(deps.ensure_workspace) — 기동을 빠르게 유지한다.
     # 복원 실패는 기동을 막지 않는다.

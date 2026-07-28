@@ -32,12 +32,20 @@ def _looks_like_other(letter: str, text: str) -> bool:
     return letter == _OTHER_LETTER or text.strip().lower().startswith("other")
 
 
-def _normalize_options(raw_options: list[Any]) -> list[dict]:
+def _normalize_options(raw_options: list[Any], *, guess_other: bool = True) -> list[dict]:
     """letter 보정 → Other 판정 → Other 1개로 축약.
 
     Other를 마지막 하나만 남기는 이유: 관례상 Other는 목록 끝이고, 앞쪽에
     is_other=True로 온 것은 모델이 실질 선택지를 잘못 표시한 경우다(실측 사고의
     B가 그랬다). 강등된 옵션은 텍스트를 살려 되돌린다.
+
+    guess_other=False는 SDK AskUserQuestion 경로(question_file_from_sdk)용이다
+    — 그 경로는 모델이 이미 구조화된 options를 주므로 프로즈에서 Other를
+    추측할 이유가 없다("Other database"처럼 실제 옵션 라벨이 "other"로
+    시작하면 _looks_like_other가 오판해 진짜 옵션의 텍스트를 지워버린다).
+    마크다운/Discovery 경로(normalize_questions_payload의 기본값)는 계속
+    휴리스틱을 쓴다 — 모델이 dict를 직접 만들고 실측 사고가 그 경로에서
+    있었기 때문이다.
     """
     opts: list[dict] = []
     used: set[str] = set()
@@ -51,12 +59,16 @@ def _normalize_options(raw_options: list[Any]) -> list[dict]:
         if not letter or letter in used:
             letter = next((c for c in _LETTERS if c not in used), None) or f"Z{i}"
         used.add(letter)
+        # 모델의 is_other는 참고만 하고, 판정은 마크다운 경로와 같은 규칙으로
+        # 다시 한다 — X를 False로 보내 자유 입력창이 사라진 경우도 여기서
+        # 잡힌다. guess_other=False면 텍스트/letter 추측을 끄고 모델이 준
+        # is_other만 믿는다.
+        is_other = bool(raw.get("is_other")) or (
+            guess_other and _looks_like_other(letter, text))
         opts.append({
             "letter": letter,
             "text": text,
-            # 모델의 is_other는 참고만 하고, 판정은 마크다운 경로와 같은 규칙으로
-            # 다시 한다 — X를 False로 보내 자유 입력창이 사라진 경우도 여기서 잡힌다.
-            "is_other": bool(raw.get("is_other")) or _looks_like_other(letter, text),
+            "is_other": is_other,
             "recommended": bool(raw.get("recommended")),
         })
 
@@ -65,17 +77,18 @@ def _normalize_options(raw_options: list[Any]) -> list[dict]:
         opts[i]["is_other"] = False
         # is_other로 온 옵션은 텍스트가 비어 있을 수 있다(UI가 문구를 넣어주므로
         # 모델이 생략). 강등하면 고를 수 없는 빈 보기가 되므로 라벨을 채운다.
-        if not opts[i]["text"] or _looks_like_other(opts[i]["letter"], opts[i]["text"]):
+        if not opts[i]["text"] or (
+                guess_other and _looks_like_other(opts[i]["letter"], opts[i]["text"])):
             opts[i]["text"] = f"보기 {opts[i]['letter']}"
     if others:
         opts[others[-1]]["text"] = opts[others[-1]]["text"] or _OTHER_TEXT
     return opts
 
 
-def _normalize_question(raw: Any, number: int) -> dict:
+def _normalize_question(raw: Any, number: int, *, guess_other: bool = True) -> dict:
     if not isinstance(raw, dict):
         raise ValueError(f"질문 {number}이 객체가 아니다: {type(raw).__name__}")
-    options = _normalize_options(raw.get("options") or [])
+    options = _normalize_options(raw.get("options") or [], guess_other=guess_other)
     # Other 하나만 있는 질문은 객관식이 아니다 — 자유 입력이면 채팅으로 충분하고,
     # 폼으로 띄우면 사용자는 선택지 없는 빈 카드를 본다.
     if not [o for o in options if not o["is_other"]]:
@@ -99,12 +112,19 @@ def _normalize_question(raw: Any, number: int) -> dict:
     }
 
 
-def normalize_questions_payload(payload: Any) -> dict:
+def normalize_questions_payload(payload: Any, *, guess_other: bool = True) -> dict:
     """모델이 만든 questions_file을 프론트 QuestionsPayload 계약으로 맞춘다.
 
     고칠 수 있는 위반은 조용히 교정하고, 질문이 성립하지 않으면 ValueError를
     던진다(도구가 그 메시지를 모델에게 돌려줘 다시 만들게 한다).
-    """
+
+    guess_other: 텍스트가 "other"로 시작하면 Other로 간주하는 휴리스틱을 켤지
+    여부. 기본 True는 마크다운/Discovery 경로(ask_questions)용 — 모델이 만든
+    dict를 그대로 신뢰할 수 없어 생긴 방침이다. question_file_from_sdk는
+    False로 호출한다: SDK가 이미 명시적 options를 주므로 프로즈 추측이
+    필요 없고, 오히려 "Other database"처럼 진짜 옵션의 라벨을 오판해
+    지워버린다. is_other 중복 축약(마지막 하나만 Other로 남기는 로직)은
+    두 경로 모두에서 그대로 적용된다 — 이것을 끄는 것은 아니다."""
     # 모델이 dict 대신 JSON 문자열을 넘기는 경우가 실제로 있다(실측: "질문 폼
     # 전송 형식에 오류가 있어 다시 보내겠습니다"). 파싱되면 받아준다 — 재전송
     # 왕복은 사용자에게 빈 대기로 보인다.
@@ -121,7 +141,8 @@ def normalize_questions_payload(payload: Any) -> dict:
     if not isinstance(raw_questions, list) or not raw_questions:
         raise ValueError("questions_file.questions가 비어 있다 — 최소 1개의 질문이 필요하다")
 
-    questions = [_normalize_question(q, i + 1) for i, q in enumerate(raw_questions)]
+    questions = [_normalize_question(q, i + 1, guess_other=guess_other)
+                 for i, q in enumerate(raw_questions)]
 
     preamble = payload.get("preamble")
     return {
@@ -133,3 +154,39 @@ def normalize_questions_payload(payload: Any) -> dict:
         "raw_markdown": None,
         "questions": questions,
     }
+
+
+# SDK AskUserQuestion의 input을 프론트 QuestionFile 형태로 옮긴다. letter는 SDK
+# 옵션 순서를 그대로 인덱싱한다 — 답변을 SDK 라벨로 되번역할 때(_answer_to_sdk)
+# 그 인덱스가 키이므로 순서가 어긋나면 다른 보기를 고른 것이 된다.
+#
+# builder._to_question_file에서 옮겨온 것이다. 두 경로가 한 함수로 수렴하면
+# is_other 중복 교정(normalize_questions_payload)이 프로토타입 빌드에도 적용된다.
+def question_file_from_sdk(sdk_questions: list[dict], *, name: str) -> dict:
+    questions = []
+    for i, q in enumerate(sdk_questions, start=1):
+        raw_options = q.get("options") or []
+        options = []
+        for j, o in enumerate(raw_options):
+            label = str(o.get("label") or "")
+            desc = str(o.get("description") or "")
+            text = f"{label} — {desc}".rstrip(" —") if desc else label
+            options.append({
+                "letter": _LETTERS[j] if j < len(_LETTERS) else f"Z{j}",
+                "text": text, "is_other": False, "recommended": False,
+            })
+        questions.append({
+            "number": i,
+            "category": q.get("header") or None,
+            "text": str(q.get("question") or ""),
+            "answer": None,
+            "multi_select": bool(q.get("multiSelect")),
+            "options": options,
+        })
+    # 정규화가 최종 계약을 강제한다 — 옵션 없는 질문은 여기서 ValueError.
+    # guess_other=False: SDK 옵션은 이미 구조화되어 있으니 텍스트로 Other를
+    # 추측하지 않는다("Other database" 같은 실제 옵션 라벨이 오판되는 것을
+    # 막는다). is_other 중복 축약은 그대로 적용된다.
+    return normalize_questions_payload(
+        {"name": name, "preamble": None, "questions": questions},
+        guess_other=False)

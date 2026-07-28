@@ -21,7 +21,7 @@ Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론�
 
 ```
 frontend/  Next.js 15 (App Router) — 대시보드 · 질문 위저드 · 문서 리뷰 · 대화형 캔버스 · 프로토타입 탭 · 로그인/사용자 관리
-backend/   FastAPI — 파서 · 인프로세스 Strands 에이전트 · SSE 턴 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅 · JWT 검증
+backend/   FastAPI — 파서 · 인프로세스 Discovery 에이전트(Claude Agent SDK) · SSE 턴 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅 · JWT 검증
 infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 + Cognito(Hosted UI v2) + EC2/CloudFront (서울, 리전 파라미터화)
 ```
 
@@ -256,6 +256,8 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `ANTHROPIC_MODEL` | — | Bedrock 추론 프로파일 id |
 | `PATHFINDER_RULES_DIR` | `<repo>/rule/aiplc-rules` | aiplc 룰 디렉토리(읽기 전용) |
 | `PATHFINDER_WORKSPACES_DIR` | 시스템 tmp 하위 | 프로젝트별 로컬 워크스페이스 루트 |
+| `PATHFINDER_DISCOVERY_DRIVER` | `claude` | Discovery 드라이버. `strands`로 구 드라이버 폴백. 그 외 값은 기동 시 ValueError |
+| `PATHFINDER_DISCOVERY_CONFIG_DIR` | `~/pathfinder-discovery-config` | Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR`. proto용과 달라야 한다 — 자세한 내용은 `discovery-config/README.md` |
 | `PATHFINDER_PROTO_MAX_CONCURRENT` | `2` | 동시 프로토타입 빌드 상한(전역). 초과 시 세션 시작이 429 |
 | `PATHFINDER_PROTO_CONFIG_DIR` | `~/pathfinder-proto-config` | 빌드 에이전트 전용 `CLAUDE_CONFIG_DIR`. 미지정 시 호스트 유저의 `~/.claude`(개인 skills/agents)가 빌드에 섞인다. CDK 배포 시엔 레포의 `proto-config/`가 그대로 `/opt/pathfinder/proto-config`가 된다 — 빌드 에이전트에 미리 넣어둘 스킬은 `proto-config/skills/<name>/SKILL.md`에 커밋하면 자동 활성화(`skills="all"`). 자세한 내용은 `proto-config/README.md` |
 | `PATHFINDER_PROTO_ROOT` | `~/pathfinder-protos` | 프로토타입 빌드 + 호스팅 공용 루트 (EC2 로컬) |
