@@ -69,8 +69,14 @@ class FakeProtoHost:
         self.infos: dict[tuple[str, str], HostInfo] = {}
         self.start_exc = None
         self.stopped: list[tuple[str, str]] = []
+        # Recorded so a test can assert WHICH directory hosting was pointed at.
+        # The real ProtoHost defaults to {root}/{pid}/{slug} when cwd is None,
+        # but the build output lives one level down in prototype/ -- dropping
+        # cwd here is what let that mismatch ship (npm ENOENT on package.json).
+        self.start_cwds: list[object] = []
 
     async def start(self, pid, slug, cwd=None):
+        self.start_cwds.append(cwd)
         if self.start_exc is not None:
             raise self.start_exc
         info = self.infos.get((pid, slug))
@@ -177,6 +183,79 @@ def test_list_state_built_from_local_build_dir_with_nothing_in_s3(proto_env):
     body = client.get(f"/projects/{PID}/prototypes").json()
 
     assert body["prototypes"][0]["state"] == "built"
+
+
+def test_list_state_built_after_a_finished_build_session_goes_ready(proto_env, monkeypatch):
+    """The regression this guards: a FINISHED build must read as "built", not
+    "building".
+
+    PrototypeSession sets status="ready" on the turn's `done` event -- "ready"
+    means ready for ANOTHER turn (the session stays open so the user can ask
+    for changes), not still working. But "ready" was in the set that made this
+    route report "building", and that branch is an `if` ahead of the `built`
+    check, so the card stayed 빌드 중 forever: nothing removes the session from
+    proto_sessions on completion (only a retry or an explicit DELETE does), so
+    a reload re-derived the same wrong answer. 빌드 완료/실행 were unreachable.
+    """
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    # The agent finished and wrote its output; the session is idle-but-open.
+    session.status = "ready"
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["state"] == "built"
+
+
+def test_list_state_building_only_while_the_session_is_actually_working(proto_env, monkeypatch):
+    """Complement to the test above: the statuses that DO mean work in flight
+    must still report "building" even once output exists on disk -- otherwise
+    the fix would flip the card to 빌드 완료 mid-build and let the user start
+    hosting against a tree the agent is still writing into (which
+    start_host's own 409 guard then has to catch)."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+
+    for status in ("starting", "building", "waiting_input"):
+        session.status = status
+        body = client.get(f"/projects/{PID}/prototypes").json()
+        assert body["prototypes"][0]["state"] == "building", status
+
+
+def test_a_ready_session_still_blocks_a_second_start_and_serves_its_stream(proto_env, monkeypatch):
+    """Guards the coupling the fix must NOT break. `_LIVE_STATUSES` fed both
+    this route's display state and -- via a separate `_DEAD_STATUSES` check --
+    the 409/404 liveness questions. A "ready" session is still a LIVE session:
+    POST must refuse a second one (409) and the events stream must serve it,
+    even though the card now reads "built".
+
+    The comment at _DEAD_STATUSES records why this matters: taking a status out
+    of the wrong set once wedged prototypes permanently -- POST said "already
+    active" while GET said "no active session", so the user could neither
+    restart nor stream."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    session.status = "ready"
+
+    assert client.post(
+        f"/projects/{PID}/prototypes/{SLUG}/session").status_code == 409
+    # A live session must still be streamable (404 would mean "no session").
+    with client.stream(
+            "GET",
+            f"/projects/{PID}/prototypes/{SLUG}/events?text=hi") as resp:
+        assert resp.status_code == 200
 
 
 def test_list_state_not_built_when_only_the_spec_file_exists(proto_env):
@@ -412,6 +491,27 @@ def test_host_start_ok(proto_env):
     assert resp.status_code == 200
     body = resp.json()
     assert body["state"] == "running" and body["port"] == 4001
+
+
+def test_host_start_targets_the_prototype_subtree_not_the_build_dir(proto_env):
+    """The regression this guards: hosting must be pointed at the SAME
+    directory `_local_build_exists` calls built -- {root}/{pid}/{slug}/prototype
+    -- not the build dir above it.
+
+    The build dir holds the spec .md that PrototypeSession.start() seeds (plus
+    .proto-host.log/.pid from a prior attempt), so ProtoHost's own
+    `target_dir.is_dir()` guard passes there and the failure surfaces later as
+    `npm error ENOENT ... /{slug}/package.json` -> state=failed -> HTTP 502.
+    A 404 ("not built") would at least have been honest; the card meanwhile
+    showed 실행 because the list check looked in the right place."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 200
+
+    assert proto_env["host"].start_cwds == [proto_dir]
 
 
 def test_host_start_no_bundle_404(proto_env):

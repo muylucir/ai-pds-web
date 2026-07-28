@@ -14,7 +14,7 @@ import io
 import logging
 import re
 import zipfile
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
@@ -37,8 +37,20 @@ _SPEC_RE = re.compile(r"^aiplc-docs/discovery/prototypes/([^/]+)/PROTOTYPE-\1\.m
 # SSE-relayed turn (spec §4: 첫 턴 자동 발화).
 _FIRST_TURN_SENTINEL = "__first__"
 
-# Statuses that count as "a live session exists" for 409/list purposes.
-_LIVE_STATUSES = {"starting", "ready", "building", "waiting_input"}
+#: Statuses that mean the agent has work in flight, for the LIST's display
+#: state only. Deliberately excludes "ready": PrototypeSession sets that on the
+#: turn's `done` event, and it means ready for ANOTHER turn -- the session stays
+#: open so the user can ask for changes -- not still building. Including it
+#: pinned the card at 빌드 중 forever, because the "building" branch sits ahead
+#: of the `built` check and nothing evicts a finished session from
+#: proto_sessions (only a retry or an explicit DELETE does), so every reload
+#: re-derived the same answer and 빌드 완료/실행 were unreachable.
+#:
+#: NOT the same question as "is a session live" -- a "ready" session IS live and
+#: must still block a second start (409) and serve its event stream. That is
+#: `_live_session`/`_DEAD_STATUSES` below, kept separate precisely because one
+#: set answering both questions is what let this ship.
+_WORKING_STATUSES = {"starting", "building", "waiting_input"}
 
 
 def _redacted(event: AgentEvent) -> AgentEvent:
@@ -83,6 +95,19 @@ def _require_session(pid: str, slug: str):
 
 # ---- listing ----
 
+def _prototype_dir(pid: str, slug: str) -> Path:
+    """The served tree: {proto_root}/{pid}/{slug}/prototype.
+
+    One function for both readers -- `_local_build_exists` (is it built?) and
+    `start_host` (what do we run?). They used to spell this path separately and
+    drifted: hosting ran the build dir one level up, where the only file is the
+    spec .md, so `npm` died with ENOENT on package.json and the route turned
+    that into a 502 while the card said 빌드 완료.
+    """
+    import pathfinder.app as app_module
+    return app_module._proto_root() / pid / slug / "prototype"
+
+
 def _local_build_exists(pid: str, slug: str) -> bool:
     """A finished build lives under prototype/ inside the LOCAL build
     directory now -- the in-process builder writes straight there and ProtoHost
@@ -94,8 +119,7 @@ def _local_build_exists(pid: str, slug: str) -> bool:
     STARTED, not that anything was BUILT. Only checking the immediate children
     of prototype/ (not a full recursive scan) keeps this cheap on every list
     call even once node_modules/.next show up in there."""
-    import pathfinder.app as app_module
-    proto_dir = app_module._proto_root() / pid / slug / "prototype"
+    proto_dir = _prototype_dir(pid, slug)
     try:
         return proto_dir.is_dir() and any(proto_dir.iterdir())
     except OSError:
@@ -130,7 +154,7 @@ async def list_prototypes(pid: str):
         built = (_local_build_exists(pid, slug)
                  or bool(await s3.list(f"prototypes/{slug}/bundle/")))
 
-        if session is not None and session.status in _LIVE_STATUSES:
+        if session is not None and session.status in _WORKING_STATUSES:
             state = "building"
         elif host_info is not None and host_info.state == "running":
             state = "running"
@@ -321,8 +345,13 @@ async def start_host(pid: str, slug: str):
         raise HTTPException(
             status_code=409,
             detail="빌드 세션이 진행 중입니다 — 세션을 먼저 종료해 주세요")
+    # Pass cwd explicitly: ProtoHost's default is {root}/{pid}/{slug}, one level
+    # ABOVE the served tree. That dir exists as soon as a session starts (it
+    # holds the spec .md), so the host's own is_dir() guard passes and the miss
+    # only surfaces as `npm error ENOENT ... package.json` -> 502.
     try:
-        info = await app_module.proto_host().start(pid, slug)
+        info = await app_module.proto_host().start(
+            pid, slug, cwd=_prototype_dir(pid, slug))
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="prototype bundle not found")
     if info.state == "failed":
