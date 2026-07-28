@@ -59,9 +59,9 @@ export function BuildPanel({
   return (
     <div className="fixed inset-0 z-40 bg-slate-900/40 flex items-stretch justify-end">
       {/* 드로어 폭: 빌드 로그·질문 폼·파일 변경 목록을 함께 읽어야 해서
-          기존 3xl(48rem)의 두 배인 7xl(80rem)까지 넓힌다. 좁은 화면에서는
-          w-full이 그대로 뷰포트를 채운다. */}
-      <div className="w-full max-w-7xl h-full bg-white flex flex-col min-h-0 shadow-2xl">
+          7xl(80rem)에서 1720px까지 넓힌다. 리뷰 화면(review/page.tsx)이 쓰는
+          것과 같은 폭이다. 좁은 화면에서는 w-full이 그대로 뷰포트를 채운다. */}
+      <div className="w-full max-w-[1720px] h-full bg-white flex flex-col min-h-0 shadow-2xl">
         <header className="shrink-0 border-b border-slate-200 px-4 md:px-6 py-3 flex items-center justify-between gap-3">
           <h1 className="font-bold text-lg truncate">{slug}</h1>
           <div className="flex items-center gap-2 shrink-0">
@@ -85,11 +85,13 @@ export function BuildPanel({
           </div>
         </header>
 
-        {/* 채팅 1/3, 우측(질문·파일 변경) 2/3. basis+min-w-0으로 비율을 고정한다
-            — aside가 고정 폭이면 넓어진 드로어의 여유 폭이 전부 채팅으로 갔다.
-            좁은 화면(md 미만)에서는 세로로 쌓이므로 비율은 적용되지 않는다. */}
+        {/* 채팅과 우측(질문·파일 변경)을 1:1로 나눈다. 종전 1/3:2/3에서는 빌드
+            로그가 좁아 코드 블록과 도구 출력이 계속 줄바꿈됐다 — 질문 폼과 같은
+            폭을 줘서 둘을 나란히 읽을 수 있게 한다. basis+min-w-0으로 비율을
+            고정한다: aside가 고정 폭이면 넓어진 드로어의 여유 폭이 전부 채팅으로
+            간다. 좁은 화면(md 미만)에서는 세로로 쌓이므로 비율은 적용되지 않는다. */}
         <div className="flex-1 min-h-0 flex flex-col md:flex-row">
-          <div className="flex-1 md:flex-none md:basis-1/3 md:min-w-0 min-h-0 flex flex-col">
+          <div className="flex-1 md:flex-none md:basis-1/2 md:min-w-0 min-h-0 flex flex-col">
             <ChatTimeline
               items={items}
               projectId={projectId}
