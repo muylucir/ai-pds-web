@@ -501,3 +501,45 @@ def test_first_prompt_before_start_assumes_a_fresh_build(tmp_path):
     default to the safer planning prompt rather than raising."""
     prompt = _session(FakeS3Store(), tmp_path, FakeBuilder()).first_prompt()
     assert "이번 턴에서는 계획만 세우고" in prompt
+
+
+# ---- purge_session_state ----
+
+async def test_purge_session_state_removes_session_transcript_and_bundle():
+    """Everything under prototypes/{slug}/ that this module owns. The bundle/
+    prefix is legacy (the deleted MicroVM wrote it) but old projects still
+    carry one, so purge has to cover it."""
+    from pathfinder.proto.session import purge_session_state
+    s3 = FakeS3Store()
+    s3.blobs[f"prototypes/{SLUG}/session.json"] = '{"session_id": "x"}'
+    s3.blobs[f"prototypes/{SLUG}/transcript/00000001.jsonl"] = "{}"
+    s3.blobs[f"prototypes/{SLUG}/bundle/package.json"] = "{}"
+    # Must survive: a different prototype's state.
+    s3.blobs["prototypes/other/session.json"] = '{"session_id": "y"}'
+
+    await purge_session_state(s3, SLUG)
+
+    assert [k for k in s3.blobs if k.startswith(f"prototypes/{SLUG}/")] == []
+    assert "prototypes/other/session.json" in s3.blobs
+
+
+async def test_purge_session_state_leaves_the_spec_alone():
+    """The spec lives under aiplc-docs/, not prototypes/{slug}/ — but assert it
+    explicitly: deleting it would remove the card from the list entirely
+    (routes/prototypes.py scans specs to build the list), turning a reset into
+    a disappearance."""
+    from pathfinder.proto.session import purge_session_state
+    s3 = FakeS3Store()
+    spec = f"aiplc-docs/discovery/prototypes/{SLUG}/PROTOTYPE-{SLUG}.md"
+    s3.blobs[spec] = "# PROTOTYPE"
+
+    await purge_session_state(s3, SLUG)
+
+    assert s3.blobs[spec] == "# PROTOTYPE"
+
+
+async def test_purge_session_state_is_idempotent():
+    from pathfinder.proto.session import purge_session_state
+    s3 = FakeS3Store()
+    await purge_session_state(s3, SLUG)
+    await purge_session_state(s3, SLUG)

@@ -313,3 +313,23 @@ class PrototypeSession:
             "있게 선택지를 제시해줘.\n"
             "3. 내가 고른 뒤에 작업을 시작해줘.\n"
         )
+
+
+async def purge_session_state(s3, slug: str) -> None:
+    """Delete the S3 state this module owns for one prototype: the durable
+    session id, the build transcript, and the legacy bundle/ backup.
+
+    A module function, not a method: once a build finishes the session is
+    evicted from `proto_sessions` (the normal resting state), so anything
+    hanging off an instance could not reach the very prototypes that most need
+    resetting.
+
+    Scoped to `prototypes/{slug}/` and therefore never touches the spec, which
+    lives under aiplc-docs/ -- deleting that would remove the card from the
+    list instead of resetting it. Idempotent: absent keys are a no-op.
+
+    Callers MUST run SurveyStore.purge() BEFORE this: the survey tree lives
+    under this same prefix, and reclaiming its token indexes requires reading
+    the questionnaires that this call would delete.
+    """
+    await s3.delete_prefix(f"prototypes/{slug}/")
