@@ -302,6 +302,53 @@ class SurveyStore:
         await self._s3.delete_prefix(responses_prefix(self.slug))
         await self._s3.delete_prefix(rollup_key(self.slug))
 
+    async def purge(self) -> None:
+        """Delete this prototype's entire survey: the per-slug tree, the
+        questionnaire markdown copy, and EVERY token index that ever pointed
+        here.
+
+        Token order is load-bearing. `surveys/by-token/` is root-scoped (a
+        one-way token -> prototype index with no reverse lookup), so the only
+        way to learn this prototype's tokens is to read them back out of the
+        questionnaires. Deleting the tree first would strand those indexes
+        permanently -- a live /survey/{token} link resolving to a survey that
+        no longer exists.
+
+        `archive_current` does not remove the index when it files a survey
+        away, so a prototype whose survey was regenerated N times has N of
+        them; collect from the archive as well as the live questionnaire.
+
+        Idempotent and non-raising: a prototype that never had a survey is the
+        common case, and a partially-purged one must converge on a retry.
+        """
+        for token in await self._collect_tokens():
+            await self._root.delete_prefix(f"{TOKEN_INDEX_PREFIX}{token}.json")
+        await self._s3.delete_prefix(survey_prefix(self.slug))
+        # Outside the survey/ tree: the viewer copy under aiplc-docs/.
+        # RESULTS_MD_KEY is deliberately NOT touched -- it has no slug in it
+        # and is shared across prototypes.
+        await self._s3.delete_prefix(questionnaire_md_key(self.slug))
+
+    async def _collect_tokens(self) -> set[str]:
+        """Every token this prototype has issued, live and archived."""
+        keys = [questionnaire_key(self.slug)]
+        keys += [k for k in await self._s3.list(f"{survey_prefix(self.slug)}archive/")
+                 if k.endswith("/questionnaire.json")]
+        tokens: set[str] = set()
+        for key in keys:
+            try:
+                raw = await self._s3.get(key)
+            except FileNotFoundError:
+                continue  # no survey, or an archive entry without a definition
+            try:
+                token = json.loads(raw).get("token")
+            except json.JSONDecodeError:
+                _log.warning("unparseable questionnaire, token not reclaimed: %s", key)
+                continue
+            if token:
+                tokens.add(token)
+        return tokens
+
     # ---- export ----
 
     async def responses_csv(self) -> str:
