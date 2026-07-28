@@ -363,3 +363,48 @@ async def test_reserved_port_is_released_when_the_start_spawn_raises(root, monke
         assert info.port in range(4001, 4010)
     finally:
         await host.stop(PID, SLUG)
+
+
+# ---- purge ----
+
+async def test_purge_removes_the_build_tree(root):
+    _seed_build_dir(root)
+    (root / PID / SLUG / "prototype").mkdir(parents=True)
+    (root / PID / SLUG / "prototype" / "package.json").write_text("{}",
+                                                                 encoding="utf-8")
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    await host.purge(PID, SLUG)
+
+    assert not (root / PID / SLUG).exists()
+
+
+async def test_purge_leaves_other_prototypes_alone(root):
+    _seed_build_dir(root, slug="keep-me")
+    _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    await host.purge(PID, SLUG)
+
+    assert not (root / PID / SLUG).exists()
+    assert (root / PID / "keep-me").is_dir()
+
+
+async def test_purge_stops_a_running_process_first(root):
+    """Deleting the tree out from under a live `npm start` would leave an
+    orphan process holding the port. purge stops it first."""
+    _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    info = await host.start(PID, SLUG)
+    assert info.state == "running", info.log_tail
+
+    await host.purge(PID, SLUG)
+
+    assert host.status(PID, SLUG) is None
+    assert not (root / PID / SLUG).exists()
+
+
+async def test_purge_is_idempotent(root):
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    await host.purge(PID, SLUG)
+    await host.purge(PID, SLUG)

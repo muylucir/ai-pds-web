@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import signal
 import socket
 import time
@@ -253,6 +254,24 @@ class ProtoHost:
         (entry.dir / ".proto-host.pid").unlink(missing_ok=True)
         entry.proc = None
         entry.state = "stopped"
+
+    async def purge(self, pid: str, slug: str) -> None:
+        """Stop this prototype and delete its local build tree.
+
+        `stop` first, deliberately: removing the directory under a live
+        `npm start` would orphan the process, which keeps holding its port (the
+        registry entry is what `stop` needs to signal the process group).
+
+        Idempotent -- a tree that was never built, or was already purged, is a
+        no-op. `shutil.rmtree` runs in a thread: it is synchronous and a
+        node_modules tree is large enough to stall the event loop.
+        """
+        await self.stop(pid, slug)
+        self._registry.pop((pid, slug), None)
+        target = self._root / pid / slug
+        if not target.is_dir():
+            return
+        await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
 
     def sweep_orphans(self) -> int:
         """Kill hosting processes left over from a previous backend run and
