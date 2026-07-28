@@ -72,7 +72,17 @@ AI-PLC 워크플로우(스테이지 전이·report_stage·질문 규약) 없이 
 
 ## 3. 첫 턴 (Workspace Detection)
 
+> **두 번째 턴부터가 진짜 관문이다.** 최종 리뷰가 잡은 C1이 정확히 여기였다:
+> 같은 프로젝트의 session id는 project id에서 uuid5로 파생돼 *안정적*이고,
+> CLI의 transcript는 프로세스보다 오래 살아남는다. 그래서 예전 코드는 백엔드
+> 재시작 뒤 **모든 평범한 턴**이 `--session-id ... is already in use`로
+> connect()에서 죽었고(실측: exit 1), 스스로 낫지도 않았다. 지금은
+> `claude_driver.py`의 `_transcript_exists`가 CLI의 transcript 파일을 직접 보고
+> `--session-id`/`--resume`을 고른다. §9가 그 왕복을 따로 검증한다.
+
 - [ ] 채팅에 AI 텍스트가 뜬다(빈 말풍선이 아님)
+- [ ] **같은 프로젝트에서 두 번째, 세 번째 메시지도 정상 응답한다**(한 턴만
+      보고 넘어가지 말 것 — C1은 첫 턴이 아니라 두 번째 턴부터 드러났다)
 - [ ] 활동 라인에 **한글** 문구가 뜬다 — "자료를 확인하고 있어요…" 등.
       영어 도구명이 그대로 보이면(`Read 실행 중…` 형태) Task 7의 라벨 매핑이
       누락된 것이다. `frontend/components/canvas/AiMessage.tsx`의
@@ -138,6 +148,11 @@ Task 8에서 `AgentRunner.stop()`이 드라이버의 `disconnect()`를 호출하
       **죽은 질문 카드가 뜨지 않는다**(옛 프로젝트가 남긴 미답변 질문이
       새 프로젝트의 첫 턴에 다시 나타나면 `disconnect()`의 큐/S3 정리가
       깨진 것이다 — Task 8이 고친 정확히 그 회귀)
+- [ ] **그 새 프로젝트에서 턴이 실제로 성공한다**(응답이 오고 `agent turn
+      failed`가 아니다). 이것이 C1의 두 번째 방아쇠이고 재시작이 전혀 필요 없다:
+      삭제된 프로젝트의 transcript는 남아 있는데 같은 project_id는 같은 uuid5
+      session id를 파생하므로, 수정 전에는 여기서 `--session-id ... already in
+      use`로 죽었다. 두 번째 메시지까지 보낼 것
 
 ## 8. 기동 env 가드 — 오타는 트래픽을 받기 전에 죽어야 한다 (핵심 미확인 항목 #4)
 
@@ -164,29 +179,56 @@ Exiting.")까지 실측됐다(Task 8 report). 여기서는 **실제 배포된 �
       `systemctl is-active pathfinder-backend` → `active`,
       `GET /projects`가 정상 응답
 
-## 9. `uuid5` 세션 id — 재시작 후 `--resume`이 실제로 이어지는지 (핵심 미확인 항목 #5)
+## 9. 세션 id + `--resume` 판단 — 재시작 후 턴이 살아 있고 맥락도 잇는지 (핵심 미확인 항목 #5)
 
 Discovery의 project id는 자유 형식 문자열이지만 CLI의 `--session-id`는 UUID를
 요구한다(`claude --session-id=pilot1 -p hi` → `Error: Invalid session ID.`).
 `claude_driver.py`의 `_sdk_session_id`가 `uuid5(NAMESPACE_URL,
-"pathfinder:<project_id>")`로 파생하는데, **재시작 전후로 같은 project_id가
-같은 UUID로 파생되는지**(우연이 아니라 결정적으로)가 `--resume`이 옛
-transcript를 찾을 수 있는지의 전제다. uuid5는 결정적이라는 것이 표준
-라이브러리의 계약이므로 이 자체는 유닛 테스트로도 증명됐지만, **CLI가 그
-UUID로 진짜 옛 transcript를 찾아 이어가는지**는 실제 바이너리로만 확인된다.
+"pathfinder:<project_id>")`로 파생해 재시작 전후로 같은 UUID를 만든다.
+
+**최종 리뷰(C1)가 밝힌 것: 그 안정성만으로는 오히려 100% 실패한다.** 두 플래그의
+실패 조건이 서로의 여집합이고(번들 2.1.220 실측), 둘 다 connect()에서
+서브프로세스를 죽여 `agent turn failed`로만 보인다:
+
+| 상황 | 결과 |
+| --- | --- |
+| `--session-id=<id>`, transcript **있음** | exit 1 `Session ID ... is already in use.` |
+| `--resume=<id>`, transcript **없음** | exit 1 `No conversation found with session ID: ...` |
+
+그래서 `resume=True`를 무조건 주는 것도 답이 아니다. 지금 코드는
+`_transcript_exists`로 **CLI 자신의 transcript 파일**
+(`$PATHFINDER_DISCOVERY_CONFIG_DIR/projects/<인코딩된 cwd>/<uuid>.jsonl`,
+cwd의 `[A-Za-z0-9-]` 이외 문자는 전부 `-`)이 있는지 보고 고른다 — 그 파일의
+존재가 CLI의 "already in use" 판정과 정확히 같다는 것도 실측했다(그 `.jsonl`을
+치우자 방금 거절당한 `--session-id`가 다시 성공했다).
 
 - [ ] project id가 UUID가 **아닌**(예: 사람이 붙인 이름) 프로젝트를 만들고
       몇 턴 대화해 맥락을 쌓는다(예: 특정 산업/제품명을 언급)
+- [ ] SSM에서 transcript가 실제로 그 자리에 생겼는지 본다:
+      `ls /opt/pathfinder/discovery-config/projects/*/` → `<uuid>.jsonl` 하나
+      (§1에서 "없거나 빈 디렉터리"였던 그 경로다 — 첫 턴 뒤에는 있어야 한다)
 - [ ] SSM으로 `sudo systemctl restart pathfinder-backend`
 - [ ] 같은 프로젝트로 돌아가 이전 대화를 언급하지 않은 채 이어서 질문한다
       (예: "방금 얘기한 내용 기준으로 다음 단계 진행해줘")
+- [ ] **턴이 애초에 성공한다** — `agent turn failed`가 아니다. 이것이 C1의
+      1차 증거다(수정 전에는 재시작 후 모든 평범한 턴이 여기서 죽었고, 영구히
+      낫지 않았다)
 - [ ] 에이전트가 **이전 대화 맥락을 참조**하며 응답하면 통과 — 처음부터
       다시 묻거나 맥락을 잃은 것처럼 반응하면 `--resume`이 옛 transcript를
       못 찾은 것(orphan)이다
-- [ ] SSM에서 근거 확인: 같은 project_id로 두 번째 재시작을 해도 매번 같은
-      UUID가 파생되는지는 코드 보장이지만, 실제로 세션 파일이 이어지는지는
-      `journalctl -u pathfinder-backend`에서 `--resume` 관련 에러(예:
-      "session not found")가 없는지로 교차 확인한다
+- [ ] **재시작을 한 번 더** 하고 같은 확인을 반복한다(2회차에도 같아야
+      "한 번 우연히 통과"가 아니다)
+- [ ] `journalctl -u pathfinder-backend | grep -i "resume\|session"` →
+      `already in use` / `No conversation found` 가 **없다**. 정상 동작 시에는
+      드라이버가 판단 결과를 남긴다(`resume=True for session <uuid> ...
+      transcript found`) — 이 줄이 그 판단의 직접 증거다
+- [ ] **transcript가 사라진 경우도 안전한지**(인스턴스 교체·`/opt` 초기화가
+      만드는 상태): 질문이 떠 있는 프로젝트에서
+      `sudo mv /opt/pathfinder/discovery-config/projects /tmp/proj-backup` 후
+      `restart` → 답변을 제출한다 → **`agent turn failed`가 아니라 정상 진행**
+      (맥락은 잃을 수 있다. 여기서 보는 것은 `--resume`이 없는 transcript를
+      찾다 죽지 않는다는 것이다). 확인 후
+      `sudo mv /tmp/proj-backup /opt/pathfinder/discovery-config/projects`로 원복
 
 ## 10. 도구명 활동 라벨 — WebFetch 포함 전수 확인 (핵심 미확인 항목 #6)
 
@@ -222,6 +264,12 @@ UUID로 진짜 옛 transcript를 찾아 이어가는지**는 실제 바이너리
 - [ ] 다시 `sudo systemctl set-environment PATHFINDER_DISCOVERY_DRIVER=claude`
       (또는 `unset-environment`로 기본값 복귀) 후 `restart` → 정상 동작
       확인(§3~§4 재확인)
+- [ ] **claude로 돌아온 뒤 "이미 transcript가 있는 프로젝트"에서 두 턴 이상
+      돌린다.** 이 왕복이 C1을 정면으로 태우는 경로다: strands로 갔다 오는
+      동안 claude의 transcript는 디스크에 그대로 남아 있고, 돌아온 프로세스는
+      같은 uuid5 id를 다시 파생한다 — 수정 전이라면 여기서 모든 턴이
+      `agent turn failed`였다. 응답이 오고 맥락이 이어지면 통과
+- [ ] `journalctl -u pathfinder-backend | grep -i "already in use"` → 없음
 
 ## 12. 프로토타입 빌드 회귀
 

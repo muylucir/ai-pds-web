@@ -53,6 +53,7 @@ async def assert_driver_contract(make_driver) -> None:
     await _assert_questions_carry_an_interrupt_id(make_driver)
     await _assert_failure_is_sanitized(make_driver)
     await _assert_pending_is_none_when_nothing_pends(make_driver)
+    await _assert_pending_returns_the_open_round(make_driver)
     await _assert_run_answers_is_exercised(make_driver)
 
 
@@ -104,6 +105,39 @@ async def _assert_failure_is_sanitized(make_driver) -> None:
 async def _assert_pending_is_none_when_nothing_pends(make_driver) -> None:
     driver, session = make_driver({"text": ["ok"]})
     assert await driver.pending(session) is None
+
+
+async def _assert_pending_returns_the_open_round(make_driver) -> None:
+    # 위 검사는 "안 뜬 질문은 None"만 본다. 그 반대 방향 — 질문이 떠 있으면
+    # pending()이 그 라운드를 실제로 돌려준다 — 이 없으면 pending()을 통째로
+    # None으로 만드는 회귀가 계약을 다 통과한다. 그런데 그건 새로고침 후
+    # 답변(GET /pending → POST /answers)을 깨뜨린다:
+    #
+    #   runner.pending()은 payload에서 interrupt_id를 뽑아
+    #   _pending_interrupt_id에 심고(runner.py:183-189), send_answers는 그 값이
+    #   None이면 드라이버를 아예 부르지 않고 "no pending questions"로 거절한다
+    #   (runner.py:158-160). 즉 pending()이 None이면 새로고침한 사용자는 답변을
+    #   제출할 방법이 없다.
+    #
+    # 그래서 이 계약은 payload의 *모양*이 아니라 runner.py가 실제로 뽑아내는 그
+    # 값(interrupt_id)만 요구한다 — 두 드라이버의 저장 방식은 서로 다르다
+    # (ClaudeDriver는 인메모리 _pending_payload + S3 미러, StrandsDriver는
+    # agent._interrupt_state). 어느 쪽이든 "직전 질문 라운드를 식별할 수 있어야
+    # 한다"는 것은 동일하게 참이고, 실측으로 양쪽 모두 정직하게 만족한다.
+    import json
+    driver, session = make_driver({"questions": True})
+    events = await _collect(driver.run("hi", session))
+    q = [e for e in events if e.kind == "questions"]
+    assert q, f"questions 이벤트가 없다: {[e.kind for e in events]}"
+    raised = json.loads(q[0].payload or "{}").get("interrupt_id")
+
+    payload = await driver.pending(session)
+    assert payload is not None, (
+        "질문이 떠 있는데 pending()이 None이다 — 새로고침 후 답변 제출이 "
+        "runner.py:158-160에서 거절된다")
+    got = json.loads(payload).get("interrupt_id")
+    assert got == raised, (
+        f"pending()이 방금 뜬 질문 라운드를 가리키지 않는다: {got!r} != {raised!r}")
 
 
 async def _assert_run_answers_is_exercised(make_driver) -> None:

@@ -59,7 +59,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from pathlib import PurePosixPath
+import re
+from pathlib import Path, PurePosixPath
 from typing import Any, AsyncIterator, Callable
 
 from pathfinder.agent.pending_store import clear_pending, load_pending, save_pending
@@ -286,7 +287,7 @@ def _sdk_session_id(session: dict) -> tuple[str, bool]:
     which run() can only report as a generic "agent turn failed" -- i.e. every
     turn of the workshop dies opaquely.
 
-    And Discovery's session id is NOT a UUID today: app.py:255 sets
+    And Discovery's session id is NOT a UUID today: app.py:299-304 sets
     `session_id = project_id`, which is free-form user input (routes/
     projects.py's CreateProject does not validate it), so a project named
     "pilot1" is a 100% failure. proto/session.py:124-138 already solved this
@@ -299,6 +300,13 @@ def _sdk_session_id(session: dict) -> tuple[str, bool]:
     transcript at all; a fresh random id every process would silently start a
     new conversation each redeploy. A value that is already a UUID is passed
     through untouched, so a caller that does the right thing is not overridden.
+
+    The `resume` flag this returns is the CALLER's request, not the decision.
+    Stability alone is what makes `--session-id` collide (see
+    `_transcript_exists`), so `_ensure_client` overrides this flag from the
+    transcript on disk; `_resume_with_answers` still passes resume=True to
+    express intent, and a caller asking to resume a session that has no
+    transcript must not be taken at its word either.
     """
     import uuid
 
@@ -313,6 +321,76 @@ def _sdk_session_id(session: dict) -> tuple[str, bool]:
         # CLI will reject, but there is no transcript to resume.
         return str(uuid.uuid4()), False
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"pathfinder:{raw}")), resume
+
+
+def _transcript_path(config_dir: str, workspace: str, session_id: str) -> Path:
+    """Where the CLI keeps this (cwd, session_id) pair's transcript.
+
+    `<config_dir>/projects/<encoded cwd>/<session_id>.jsonl`, where the
+    encoding replaces every character outside [A-Za-z0-9-] with "-". Both the
+    layout and the encoding are measured against the bundled binary (2.1.220),
+    not guessed -- eight cwds were probed, including spaces, dots, "+", "=",
+    underscores and Hangul, and `re.sub(r"[^A-Za-z0-9-]", "-", cwd)` reproduced
+    every directory name the CLI created. The cwd is resolved first because the
+    CLI encodes the REAL path: with cwd a symlink to /tmp/c1probe/realws the
+    transcript landed under `-tmp-c1probe-realws`, not under the link name.
+
+    Note the encoding is lossy (Hangul project ids all collapse to runs of
+    "-"), so two different workspaces could in principle share a directory.
+    That is the CLI's own namespace and this function's job is only to look in
+    the same place it does; a collision would make this probe say "resume" for
+    a session the CLI can also resume, which is consistent either way. The
+    session id itself is per-project (uuid5 of the project id), so the FILE
+    within that directory is still distinct.
+    """
+    try:
+        cwd = str(Path(workspace).resolve())
+    except OSError:  # pragma: no cover -- unresolvable cwd; use it verbatim
+        cwd = workspace
+    return (Path(config_dir) / "projects"
+            / re.sub(r"[^A-Za-z0-9-]", "-", cwd) / f"{session_id}.jsonl")
+
+
+def _transcript_exists(config_dir: str, workspace: str, session_id: str) -> bool:
+    """Whether the CLI already has a conversation under this id and cwd.
+
+    This is THE decision `--session-id` vs `--resume` turns on, and it is not a
+    heuristic: the CLI's "already in use" check IS this file's existence.
+    Probed against 2.1.220 -- after `claude --session-id=<id>` succeeded once,
+    a second run with the same id in the same cwd exits 1 with "Session ID
+    <id> is already in use."; moving that one .jsonl aside made the SAME id
+    succeed again. And the two errors are exact complements, so neither flag is
+    safe unconditionally:
+
+        --session-id=<id> with a transcript   -> exit 1 "already in use"
+        --resume=<id>     with no transcript  -> exit 1 "No conversation found"
+
+    Either one kills the subprocess inside connect(), which run() can only
+    report as "agent turn failed" -- permanently, since the transcript file is
+    durable, and a poisoned client cache used to make it permanent per project
+    as well (see _ensure_client). The failure needs no restart to trigger:
+    disconnect() on DELETE /projects/acme followed by re-creating `acme` in the
+    same process hits it on the second turn.
+
+    A filesystem probe rather than a flag we carry ourselves, because the CLI's
+    own state is the only thing that can answer it. Anything we persisted
+    separately (S3, a driver attribute) would be a second source of truth that
+    drifts the moment the config dir is recycled, the instance is replaced, or
+    a deploy wipes /opt/pathfinder -- and the drift is silent in both
+    directions. proto/session.py:124-138 makes the same "resume only if the
+    saved id is real" call for the builder; the difference is only WHERE the
+    evidence lives (it owns its S3 record, we read the CLI's disk).
+
+    Racy in principle (the file could appear between this check and connect),
+    but the writer is the CLI subprocess we are about to start, and this
+    driver is single-turn (`_acquire_turn`), so nothing else in the process is
+    starting a session for this workspace concurrently.
+    """
+    try:
+        return _transcript_path(config_dir, workspace, session_id).is_file()
+    except OSError:  # pragma: no cover -- an unreadable config dir
+        _log.exception("transcript probe failed — starting a fresh session")
+        return False
 
 
 def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
@@ -368,6 +446,13 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # id, orphaning the transcript under the old one. `--resume=<id>`
             # alone already keeps the session on that same id, which is all
             # session_id bought us.
+            #
+            # WHICH one is not a property of the call site: both flags exit 1
+            # when they disagree with the transcript on disk (`--session-id` on
+            # an existing one, `--resume` on a missing one). The caller has
+            # already settled it -- `ClaudeDriver._resolve_resume` probes the
+            # CLI's own transcript file and puts the answer in `session`
+            # ("resume"), so this factory only spells the choice out.
             session_id=None if resume else session_id,
             resume=session_id if resume else None,
             # Kept even under bypassPermissions, which the SDK warns shadows
@@ -472,11 +557,68 @@ class ClaudeDriver:
             if self._queue and self._queue[0] is ev:
                 self._queue.pop(0)
 
+    def _resolve_resume(self, session: dict) -> dict:
+        """Decide `--session-id` vs `--resume` from the transcript on disk.
+
+        The caller's `resume` flag states INTENT (only
+        `_resume_with_answers` sets it) and cannot be trusted in either
+        direction, because the CLI's two failure modes are exact complements
+        and both kill connect(): `--session-id` on an id that already has a
+        transcript exits 1 ("already in use"), and `--resume` on an id that has
+        none exits 1 ("No conversation found"). See `_transcript_exists`, where
+        both are measured against the bundled binary.
+
+        So the truth is the file, and the flag is overridden by it -- upward as
+        well as downward. Upward is the case C1 was: the DEFAULT path
+        (`run()` -> `_stream(resume=False)`) is what breaks after a restart,
+        because the id is stable by design and the transcript outlives the
+        process. Downward matters on the answers path, where a redeploy that
+        also recycled the config dir would otherwise resume a session the CLI
+        cannot find.
+
+        Returns a COPY -- `session` belongs to app.py (one dict per project,
+        shared by every turn), so mutating it would make one turn's resume
+        decision leak into the next.
+        """
+        session_id, requested = _sdk_session_id(session)
+        resume = _transcript_exists(self._config_dir, self._workspace,
+                                    session_id)
+        if resume != requested:
+            # Worth a line in the log: on the answers path this is the
+            # difference between continuing the conversation the question came
+            # from and starting a blank one, and after a restart it is the
+            # difference between a working turn and a dead project.
+            _log.info("resume=%s for session %s (caller asked %s) — "
+                      "transcript %s", resume, session_id, requested,
+                      "found" if resume else "absent")
+        out = dict(session)
+        out["resume"] = resume
+        return out
+
     async def _ensure_client(self, session: dict):
         if self._client is None:
             _suppress_shadowed_callback_warning()
-            self._client = self._client_factory(session)
-            await self._client.connect()
+            client = self._client_factory(session)
+            try:
+                await client.connect()
+            except BaseException:
+                # Do NOT cache a client that never connected. It used to be
+                # assigned before this await, so one failed connect poisoned
+                # the driver for the life of the process: every later turn
+                # returned the same broken object and died in
+                # receive_response() with "CLIConnectionError: Not connected"
+                # (probed: 3 consecutive turns, `_client` non-None each time).
+                # That is what turned C1 from one bad turn into a dead project,
+                # and it would do the same for any transient connect failure
+                # (a Bedrock throttle at startup, a config dir not yet
+                # mounted). Leaving the cache empty makes the next turn build a
+                # fresh client and re-probe the transcript.
+                #
+                # BaseException, not Exception: a cancelled connect (SSE
+                # disconnect mid-turn) leaves an equally unusable client.
+                self._client = None
+                raise
+            self._client = client
         return self._client
 
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
@@ -813,8 +955,14 @@ class ClaudeDriver:
         self._last_status = None
         self._current_session_id = session.get("session_id")
         try:
-            connect_session = dict(session)
-            connect_session["resume"] = resume
+            # `resume` is only what the CALLER wants; `_resolve_resume` decides
+            # from the CLI's transcript, because both flags are fatal when they
+            # disagree with the disk. Building the dict here (rather than
+            # inside _ensure_client) keeps the client factory's contract
+            # unchanged: it still receives a session dict with `resume`
+            # already settled.
+            connect_session = self._resolve_resume(dict(session,
+                                                       resume=resume))
             client = await self._ensure_client(connect_session)
             # A new `query()` starts a new turn, so anything the previous turn's
             # reader was still holding belongs to a turn nobody will relay --
@@ -877,6 +1025,14 @@ class ClaudeDriver:
         and deliver the answers as an ordinary text turn. The model already
         has the question's context in the transcript, so all this prompt has
         to do is say which option was chosen.
+
+        `resume=True` below is a REQUEST, not a guarantee: `_resolve_resume`
+        overrules it when the transcript is gone (a replaced instance, a
+        recycled config dir), because `--resume` on a missing session exits 1
+        and would turn the user's answer into "agent turn failed". The answers
+        then land in a fresh session -- the model loses the question's context,
+        which is why the prompt restates the question and the chosen label
+        rather than relying on the transcript.
 
         Assumes the caller already holds the turn slot.
         """

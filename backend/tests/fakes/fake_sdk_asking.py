@@ -23,15 +23,36 @@
 #      That empty window is exactly what proto/builder.py's queue-polling loop
 #      was written for: a plain `async for` never lets the queued `questions`
 #      event reach the stream.
-#   2. The callback OUTLIVES the message iterator. Abandoning
-#      `receive_response()` (which ClaudeDriver does when it ends the turn on
-#      a question) does not cancel the parked callback, and messages buffered
-#      meanwhile are not lost — the buffer belongs to Query's anyio memory
-#      stream, not to the generator. That is what makes ClaudeDriver's
-#      "end the turn, resolve the future later, re-enter with a FRESH
-#      receive_response()" round trip legal. A fake that cancelled the
-#      callback along with the iterator would make the working design look
-#      broken.
+#   2. The callback OUTLIVES the message iterator. Ending the turn on a
+#      question (which ClaudeDriver does) does not cancel the parked callback,
+#      so the CLI can still deliver the rest of the turn afterwards. A fake
+#      that cancelled the callback along with the iterator would make the
+#      working design look broken.
+#
+#      READ THIS BEFORE CHANGING ANYTHING HERE. An earlier version of this
+#      comment said the round trip works because the driver re-enters with a
+#      FRESH `receive_response()` and anyio has BUFFERED what arrived
+#      meanwhile. That model is FALSE, and believing it produced a
+#      lost-message defect in three consecutive review rounds:
+#
+#        - `send_nowait` hands an item DIRECTLY to a parked receiver and does
+#          NOT buffer it (anyio/streams/memory.py:220-231). While the driver is
+#          parked on a receive, the item's only copy is in that receiver.
+#        - Cancelling that receive therefore DESTROYS the item; a later
+#          iterator finds nothing. Measured: `(parked, buffered)` goes
+#          `(1, 0) -> (0, 0)` on the send, and a fresh iterator then times out.
+#        - Re-arming is not a workaround either: cancelling `agen.__anext__()`
+#          CLOSES the async generator, so the same iterator raises
+#          StopAsyncIteration afterwards.
+#
+#      What the shipped driver actually does is never abandon the iterator at
+#      all: `_MessageReader` opens exactly ONE `receive_response()` per turn
+#      (claude_driver.py:824), keeps reading across the whole question round
+#      trip, and collects into a plain list the DRIVER owns; the answers turn
+#      reuses that same reader (`_continue_after_answers`) rather than opening
+#      a second iterator. Buffering is ours, not anyio's — which is why this
+#      fake models delivery on a REAL anyio stream (see `_stream`): only that
+#      can tell a correct driver from one that loses messages.
 from __future__ import annotations
 
 import asyncio
@@ -261,6 +282,72 @@ class RaisingSdkClient(FakeSdkClient):
     async def receive_response(self):
         raise RuntimeError("boom")
         yield  # pragma: no cover — makes this an async generator
+
+
+class SessionIdCheckingSdkClient(FakeSdkClient):
+    """Enforces the CLI's `--session-id` / `--resume` rules inside connect().
+
+    `FakeSdkClient.connect()` is a no-op, which is exactly why the whole
+    session-id defect class was invisible to 624 green tests: the ONE thing the
+    real CLI does here — refuse the flag combination — was the one thing no fake
+    modelled. A fake that cannot reject a duplicate session id cannot prove a
+    driver got this right.
+
+    Both rules are measured against the bundled binary (2.1.220), and they are
+    exact complements, so a driver that hardcodes EITHER flag fails one of them:
+
+        --session-id=<id>, transcript exists  -> exit 1, "Session ID <id> is
+                                                 already in use."
+        --resume=<id>,     transcript absent  -> exit 1, "No conversation found
+                                                 with session ID: <id>"
+
+    The truth this checks against is a REAL FILE on disk, at the same path the
+    CLI uses (`<config_dir>/projects/<encoded cwd>/<id>.jsonl`, every character
+    outside [A-Za-z0-9-] replaced by "-"), because that file's existence IS the
+    CLI's check: probed by moving one .jsonl aside, after which the same
+    `--session-id` that had just been refused succeeded again. Modelling it as a
+    filesystem fact rather than an in-fake flag is what makes the driver's own
+    probe (`_transcript_exists`) genuinely tested instead of mirrored.
+
+    A successful connect CREATES the transcript, so a second client for the same
+    (cwd, id) — a restart, or a project deleted and re-created — is in the state
+    the CLI would really be in. The error is the SDK's own ProcessError, the
+    type the real failure arrives as (measured end-to-end: connect() raises
+    ProcessError, not a CLI string).
+    """
+
+    def __init__(self, session: dict, config_dir: str, workspace: str,
+                 script=None):
+        super().__init__(script if script is not None else [ResultMessage()])
+        self._session = session
+        self._config_dir = config_dir
+        self._workspace = workspace
+
+    def _transcript(self):
+        # Imported from the driver on purpose: the fake must look where the
+        # DRIVER thinks the CLI looks, so a wrong path in the driver shows up
+        # as a failing test rather than as two consistent mistakes. The path
+        # builder itself is pinned to the real CLI by its own unit tests.
+        from pathfinder.agent.claude_driver import _sdk_session_id, _transcript_path
+        session_id, _ = _sdk_session_id(self._session)
+        return _transcript_path(self._config_dir, self._workspace, session_id)
+
+    async def connect(self):
+        from claude_agent_sdk._errors import ProcessError
+        path = self._transcript()
+        resume = bool(self._session.get("resume"))
+        if resume and not path.is_file():
+            raise ProcessError("Command failed with exit code 1", exit_code=1,
+                               stderr=f"No conversation found with session ID: {path.stem}")
+        if not resume and path.is_file():
+            raise ProcessError("Command failed with exit code 1", exit_code=1,
+                               stderr=f"Session ID {path.stem} is already in use.")
+        # A real session leaves its transcript behind, and it OUTLIVES the
+        # process — which is what makes the collision permanent rather than
+        # self-healing.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n", encoding="utf-8")
+        await super().connect()
 
 
 class EchoAnswersSdkClient(FakeSdkClient):

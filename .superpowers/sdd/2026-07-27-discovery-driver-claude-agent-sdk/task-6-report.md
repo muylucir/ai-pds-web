@@ -1376,3 +1376,333 @@ untouched; no "Task was destroyed" / "never awaited" / "never retrieved" output
    an owned, unanswerable `questions` in `_queue` as well as the S3 pending
    record, so the edit that adds `await clear_pending` must also clear
    `self._queue`. Unreachable today.
+
+---
+
+# FINAL FIX WAVE (post whole-branch review)
+
+Single wave before merge, on `feat/claude-agent-driver` @ `174299f` (20 commits).
+Four findings: C1 (critical), I3, I2, I4. All four reproduced against the **real
+bundled CLI (2.1.220) and the real SDK** before any code changed — three
+vacuous tests earlier in this task were caught by exactly that habit, and it
+paid off again here: it overturned part of the framing of I2 (see §I2).
+
+Baseline at HEAD: **624 passed**. After: **632 passed** (+8). Frontend 562,
+infra all assertions — both unaffected. Protected files (`agent/driver.py`,
+`agent/strands_tools.py`, `proto/builder.py`, `proto/session.py`) byte-identical.
+
+## C1 (Critical) — `session_id` reused across processes; the CLI rejects it
+
+### Reproduction
+
+The CLI's two failure modes are exact **complements**, and both kill the
+subprocess inside `connect()`, which `run()` can only report as the contract's
+generic `"agent turn failed"`:
+
+```
+$ claude --session-id=b9897e36-1111-4222-8333-444455556666 -p "say OK"    # 1st
+OK                                                                    exit 0
+$ claude --session-id=b9897e36-1111-4222-8333-444455556666 -p "say OK again"
+Error: Session ID b9897e36-1111-4222-8333-444455556666 is already in use.
+                                                                      exit 1
+$ claude --resume=aaaaaaaa-1111-4222-8333-444455556666 -p hi
+No conversation found with session ID: aaaaaaaa-1111-4222-8333-444455556666
+                                                                      exit 1
+```
+
+So neither flag is safe unconditionally — which is why `resume=True`
+unconditionally is not the fix either, exactly as the brief said.
+
+Through the real SDK (`ClaudeAgentOptions` + `ClaudeSDKClient`), one process per
+invocation = one backend restart:
+
+```
+attempt 1 (fresh session-id):  connect OK  -> ['SystemMessage','AssistantMessage','ResultMessage']
+attempt 2 (SAME id, new proc): Error: Session ID dddddddd-... is already in use.
+                               connect RAISED claude_agent_sdk._errors.ProcessError
+attempt 3 (resume=True):       connect OK  -> ['SystemMessage','AssistantMessage','ResultMessage']
+```
+
+**The decisive probe** — what predicate does the CLI actually use? Its "already
+in use" check *is* the existence of one file,
+`<config_dir>/projects/<encoded cwd>/<session-id>.jsonl`:
+
+```
+transcript exists: YES
+$ mv .../-tmp-c1probe-ws/b9897e36-....jsonl /tmp/saved.jsonl
+after move, exists: NO
+$ claude --session-id=b9897e36-... -p "say REVIVED"
+REVIVED                                                               exit 0
+```
+
+The same id that had just been refused succeeded once that file was gone. Two
+further properties, both measured, because the fix depends on them:
+
+- **cwd-scoped.** The same id in a different cwd succeeded (`P2`, exit 0), and
+  `--resume` from a cwd with no transcript for that id fails ("No conversation
+  found") even though the id exists under another cwd.
+- **Directory-name encoding** is `re.sub(r"[^A-Za-z0-9-]", "-", cwd)`, verified
+  against all 9 directories the real CLI created (spaces, dots, `+`, `=`,
+  underscores, mixed case, Hangul). The cwd is **resolved** first: with cwd a
+  symlink to `/tmp/c1probe/realws`, the CLI wrote to `-tmp-c1probe-realws`, not
+  the link name. Also probed: `connect()` alone does **not** create the
+  transcript (empty after connect *and* after disconnect) — only a real turn
+  does, which is what makes the probe meaningful.
+
+### Fix
+
+`_transcript_path()` / `_transcript_exists()` (new, `claude_driver.py`) read the
+CLI's own transcript, and `_resolve_resume()` overrides the caller's `resume`
+flag from it — **in both directions**, which is the whole point:
+
+- upward: `run()` → `_stream(resume=False)` is the default and is what broke
+  after a restart, because the uuid5 id is stable by design while the transcript
+  outlives the process;
+- downward: `_resume_with_answers` asks for `resume=True`, but a redeploy that
+  recycled the config dir has no transcript, and `--resume` would exit 1.
+
+This follows `proto/session.py:124-138`'s shape ("resume only if the saved id is
+real") rather than inventing a new one; the difference is only *where* the
+evidence lives — the builder owns an S3 record, we read the CLI's disk. A
+filesystem probe rather than state we persist ourselves, because anything we
+carried separately would be a second source of truth that drifts silently when
+the config dir is recycled or the instance replaced. `session` is copied, never
+mutated (app.py holds one dict per project, shared across turns).
+
+### Verification, end to end through the real driver + real SDK + real CLI
+
+Free-form project id `acme` (not a UUID), one process per line:
+
+```
+PROCESS 1 (fresh):            [('message','P1'), ('done','')]   transcript: bde34f1e-...jsonl
+PROCESS 2 (restart):          [('message','P2'), ('done','')]   transcript: bde34f1e-...jsonl  (same)
+PROCESS 3 (restart again):    [('message','P3'), ('done','')]   transcript: bde34f1e-...jsonl  (same)
+```
+
+Before the fix, processes 2 and 3 were `[('error','agent turn failed')]`
+permanently. And the resume genuinely carries **context**, which is what
+checklist §9 actually cares about:
+
+```
+process 1: "Remember this codeword: ORANGE-KANGAROO-77."  -> "Acknowledged — ORANGE-KANGAROO-77."
+process 2 (restart): "What was the codeword I gave you?"  -> "ORANGE-KANGAROO-77."
+```
+
+Second trigger, no restart (checklist §7's last item — `disconnect()` on
+`DELETE /projects/acme`, then re-create `acme` in the same process):
+
+```
+turn 1: ['message','done']    turn 2: ['message','done']    turn 3: ['message','done']
+```
+
+Turn 2 was `agent turn failed` before.
+
+### Making a test able to fail — the fake had to learn to say no
+
+`FakeSdkClient.connect()` is a no-op, which is precisely why this defect was
+invisible to 624 green tests: the one thing the real CLI does here is *refuse*,
+and no fake modelled it. New `SessionIdCheckingSdkClient` enforces both rules
+inside `connect()`, keyed on a **real file on disk** at the same path the CLI
+uses, and a successful connect *creates* it (so a restart or a delete/re-create
+lands in the state the CLI would really be in). It raises the SDK's own
+`ProcessError`, the type the real failure arrives as. It imports
+`_transcript_path` from the driver on purpose: the fake must look where the
+*driver* thinks the CLI looks, so a wrong path shows up as a failing test rather
+than as two consistent mistakes — the path builder itself is pinned to the real
+CLI by `test_the_transcript_path_matches_the_cli_layout`.
+
+Revert-verification (each mutant applied to the shipped code, whole driver suite
+run):
+
+| mutant | result |
+| --- | --- |
+| `resume = requested` (pre-fix: trust the caller) | **3 fail** incl. restart + delete/re-create |
+| `resume = True` unconditionally (the wrong fix the brief named) | **4 fail** |
+| `SessionIdCheckingSdkClient.connect()` made a no-op (i.e. the old fake) | **3 fail** — the fake's rejection is load-bearing |
+
+One existing test, `test_resumes_with_the_answer_as_text_when_the_future_is_gone`,
+asserted `resume is True` while seeding **no** transcript — i.e. it pinned the
+behaviour the CLI disproves. It now seeds the transcript (the real post-restart
+state) and keeps its original assertion, with the opposite direction covered by
+a new sibling test.
+
+## I3 (Important) — a failed `connect()` poisoned the cached client forever
+
+### Reproduction
+
+`_client` was assigned *before* `await connect()`, so the broken object stayed
+cached. Three consecutive turns through the real driver:
+
+```
+turn 1: ['error']  _client=FailingClient  clients_made=1
+turn 2: ['error']  _client=FailingClient  clients_made=1
+turn 3: ['error']  _client=FailingClient  clients_made=1
+```
+
+The factory ran **once** — every later turn reused the dead client
+(`CLIConnectionError: Not connected`). This is the amplifier that turned C1 from
+one bad turn into a dead project.
+
+### Fix + verification
+
+Assign only after a successful `connect()`; clear the cache on the failure path
+and re-raise. `BaseException`, not `Exception`, because a *cancelled* connect
+(SSE disconnect mid-turn) leaves an equally unusable client. Also probed on the
+real SDK: `disconnect()` after a failed `connect()` neither hangs nor raises
+(the SDK's own `connect` already calls `disconnect()` on failure), so nothing is
+leaked by dropping the reference.
+
+`test_a_failed_connect_does_not_poison_the_client_cache` asserts the next turn
+gets a **fresh** client and succeeds. Reverting to the exact pre-fix two lines
+fails exactly that test (1 failed, 46 passed).
+
+## I2 (Important) — the contract never proved `pending()` returns a payload
+
+### Reproduction, and a correction to the finding
+
+Reproduced as stated — after a question turn:
+
+```
+CLAUDE:  questions iid = abe9de68...   pending() -> abe9de68...
+STRANDS: questions iid = i-strands     pending() -> None
+```
+
+And the reviewer's mutant claim is confirmed: with the contract at HEAD, zeroing
+`ClaudeDriver.pending()` kept **both** contract tests green (`2 passed`).
+
+**But the two drivers do not genuinely diverge.** I probed the *real*
+`StrandsDriver.pending()` against the real `strands.interrupt._InterruptState`,
+populated the way the real SDK populates it (`event_loop.py:806-808` — set
+`context`, then `activate()`):
+
+```
+before any interrupt:              pending() -> None
+after real-SDK-shaped activate():  pending() -> {"interrupt_id": "i-strands", ...}
+```
+
+The `None` was an artifact of the contract's **fake agent**, which set
+`_interrupt_state = None` and never activated it — not of the driver.
+`StrandsDriver.pending()` reads exactly that field (`driver.py:231-235`).
+
+### Fix — the split, and why it falls this way
+
+Because the divergence isn't real, the honest move is a **shared contract
+assertion** plus a driver-specific test, and *no* weakening:
+
+1. **`driver_contract.py`: `_assert_pending_returns_the_open_round`** (new,
+   6th check; the existing five are untouched). It asserts only what `runner.py`
+   genuinely requires — that after a question turn `pending()` returns a payload
+   whose `interrupt_id` is the round just raised. Nothing about *where* the
+   drivers keep it (Claude: in-memory + S3 mirror; Strands:
+   `agent._interrupt_state`), so it is honestly satisfiable by both, and it is
+   the precise precondition for `runner.pending()` → `_pending_interrupt_id` →
+   `send_answers` (`runner.py:158-160,183-189`).
+2. **`test_strands_driver_contract.py`**: the fake agent now uses the real
+   `_InterruptState` and populates it in the real SDK's order. This asserts
+   nothing false — it makes the fake *less* of a lie. `driver.py` itself is
+   untouched.
+3. **`test_claude_driver.py`: `test_a_refresh_mid_question_can_still_submit_the_answer`**
+   drives the whole refresh-then-answer flow through the real `AgentRunner`
+   (`GET /pending` → `POST /answers`), which is the Claude-specific consequence
+   the shared contract deliberately stops short of.
+
+Revert-verification:
+
+| mutant | result |
+| --- | --- |
+| `ClaudeDriver.pending()` → always `None` | **8 fail**, incl. the contract and the new refresh test (was: all green) |
+| `StrandsDriver.pending()` → always `None` | **contract fails** — the new check is live for both, not just Claude |
+
+## I4 (Important) — a stale docstring documenting a disproven model
+
+Not cosmetic: this exact belief caused a lost-message defect in three
+consecutive rounds. Both sites now describe the shipped design.
+
+- **`fakes/fake_sdk_asking.py:26-34`** said the round trip works because the
+  driver re-enters with a FRESH `receive_response()` and anyio has BUFFERED what
+  arrived meanwhile. Replaced with what round 4 established, and *why* the old
+  model is false (`send_nowait` hands an item straight to a parked receiver and
+  does not buffer it; cancelling `agen.__anext__()` closes the generator), plus
+  what the code actually does: one iterator per turn at `claude_driver.py:824`,
+  reused across the question round trip by `_continue_after_answers`.
+- **`test_claude_driver.py:195`** said "the answers turn's **new iterator**"
+  picks the message up. Corrected to the same-reader handoff, with the trap
+  recorded inline so the next reader meets the disproof, not the belief.
+- Also corrected while in the area: the `session_id=`/`resume=` comment in
+  `_default_client_factory` (which flag is chosen is no longer a property of the
+  call site) and `_resume_with_answers`'s docstring (`resume=True` is a request
+  that `_resolve_resume` can overrule).
+
+## Checklist updates
+
+`docs/superpowers/checklists/2026-07-27-discovery-driver-e2e.md` — §3, §9, §11
+as flagged, plus §7:
+
+- **§3** — added the second/third turn. C1 did not show on turn 1, so a
+  one-turn check would have passed a dead build.
+- **§9** — rewritten. It was built entirely on "is uuid5 deterministic", which
+  was the *cause* of the collision, not the safeguard. Now carries the two
+  complementary CLI errors, the transcript path to inspect on the instance, "the
+  turn succeeds at all" as the primary evidence, a second restart, the
+  `journalctl` lines to grep (including the driver's own `resume=... transcript
+  found` decision line), and a **transcript-absent** case (`mv` the `projects/`
+  dir) covering the instance-replaced / `/opt`-wiped state.
+- **§11** — the toggle round-trip is the sharpest C1 trigger available in
+  deployment: strands → claude leaves the transcript on disk while the returning
+  process re-derives the same uuid5 id. Added two-turn verification plus the
+  `already in use` grep.
+- **§7** — the delete/re-create item verified only that no dead question card
+  appeared; added that the turn must actually **succeed** (this is C1's
+  restart-free trigger).
+
+## Commands
+
+```
+$ cd backend && .venv/bin/python -m pytest -q
+632 passed, 1 warning in 12.71s          # baseline at HEAD was 624
+
+$ .venv/bin/python -m pytest tests/test_claude_driver.py \
+      tests/test_claude_driver_contract.py tests/test_strands_driver_contract.py -q
+48 passed
+
+$ .venv/bin/python -m pytest tests/test_agent_driver.py \
+      tests/test_strands_driver_contract.py tests/test_agent_tools.py \
+      tests/test_runner.py tests/test_parse_questions.py -q
+47 passed                                # Strands rollback path intact
+
+$ git diff --stat HEAD -- pathfinder/agent/driver.py pathfinder/agent/strands_tools.py \
+      pathfinder/proto/builder.py pathfinder/proto/session.py
+(empty — protected files untouched)
+
+$ cd frontend && npm test
+Test Files 76 passed (76)   Tests 562 passed (562)
+
+$ cd infra && npm test
+OK  (all assertions)
+```
+
+Terminal-event invariant re-verified after the change, including the two new
+paths (connect fails once / twice) — **16/16 paths yield exactly one terminal
+event, and it is last**; none yield zero. Probe files removed.
+
+## Concerns
+
+1. **The transcript-path encoding is a private CLI detail.** It is measured, not
+   guessed (9 real directories, symlink resolution, connect-vs-turn timing), and
+   a wrong answer degrades to a turn failure rather than data loss — but a
+   future CLI could change the layout, and nothing would warn us offline. The
+   deploy checklist (§9) now inspects that exact path on the instance, which is
+   the cheapest early warning available. A CLI-native "does this session exist"
+   query would be strictly better if one ever ships.
+2. **The encoding is lossy** (`[^A-Za-z0-9-]` → `-`), so two workspaces could in
+   principle share a transcript directory. Harmless here: the file within it is
+   the per-project uuid5, and it is the CLI's own namespace — we only look where
+   it looks.
+3. **`_transcript_exists` is racy in principle.** Benign in this topology: the
+   only writer is the subprocess we are about to spawn, and the driver is
+   single-turn (`_acquire_turn`).
+4. **I2's framing changed under probing** — the drivers were reported as
+   genuinely divergent; they are not, and the `None` came from the contract's
+   own fake. I fixed the fake rather than encoding a false divergence into the
+   contract. Worth flagging because it means the shared contract got *stronger*
+   for both drivers, and `agent/driver.py` still needed no change.

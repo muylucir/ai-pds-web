@@ -192,7 +192,14 @@ async def test_a_message_arriving_during_the_post_done_sync_is_not_destroyed(tmp
             await asyncio.sleep(0.02)
     assert [e.kind for e in events] == ["message", "questions", "done"]
 
-    # 답변 턴의 새 이터레이터가 그 메시지를 그대로 이어받아야 한다.
+    # 답변 턴이 그 메시지를 그대로 이어받아야 한다 — 새 이터레이터를 여는 것이
+    # *아니라*, 질문 턴의 그 리더를 그대로 이어받아서다(_continue_after_answers).
+    # 이 구분이 이 파일에서 가장 값비싼 교훈이다: "새 receive_response()를 열면
+    # anyio가 버퍼해둔 것을 읽을 수 있다"는 모델은 라운드 4가 반증했고
+    # (send_nowait은 파킹된 수신자에게 직접 건네고 버퍼하지 않는다 — 취소하면
+    # 아이템이 파괴된다), 그 믿음이 세 라운드 연속으로 메시지 유실 결함을
+    # 만들었다. 지금 코드는 턴당 이터레이터를 하나만 열고(claude_driver.py:824)
+    # 질문 왕복 내내 그것을 유지한다.
     iid = json.loads(next(e.payload for e in events if e.kind == "questions"))[
         "interrupt_id"]
     later = [ev async for ev in d.run_answers(iid, {"1": "A"},
@@ -636,11 +643,24 @@ async def test_resumes_with_the_answer_as_text_when_the_future_is_gone(tmp_path)
                                                    {"label": "종료"}]}],
                        session_id="s-1")
     d, _, captured = _driver(tmp_path, {"text": ["ok"]}, s3=s3)
+    # 재시작 후에도 이 프로젝트의 트랜스크립트는 디스크에 남아 있다 — 그것이 이
+    # 경로가 이어받을 대상이다. 그 파일을 CLI가 쓰는 자리에 놓아 재시작 직후의
+    # 실제 상태를 만든다.
+    from pathfinder.agent.claude_driver import _sdk_session_id, _transcript_path
+    sid, _ = _sdk_session_id({"session_id": "s-1"})
+    t = _transcript_path(d._config_dir, d._workspace, sid)
+    t.parent.mkdir(parents=True, exist_ok=True)
+    t.write_text("{}\n", encoding="utf-8")
+
     [ev async for ev in d.run_answers("i-1", {"1": "A"}, {"session_id": "s-1"})]
     sent = " ".join(captured["client"].queries)
     assert "다음 단계는?" in sent
     assert "진행" in sent
     # resume 경로여야 --session-id/--resume 충돌 없이 트랜스크립트를 잇는다.
+    # (resume=True를 *무조건* 넣는 것이 답이 아니라는 점이 C1의 절반이다:
+    #  트랜스크립트가 없을 때의 --resume은 "No conversation found"로 exit 1이다.
+    #  그 반대 방향은
+    #  test_the_restart_answers_path_does_not_resume_a_missing_transcript가 잡는다.)
     assert captured["session"]["resume"] is True
 
 
@@ -905,3 +925,277 @@ def test_a_missing_session_id_does_not_claim_to_resume():
     sid, resume = _sdk_session_id({"resume": True})
     uuid.UUID(sid)
     assert resume is False       # 이어받을 트랜스크립트가 없다
+
+
+# ---- C1: 같은 session id를 두 프로세스가 쓰면 CLI가 거절한다 ----
+#
+# 실측(번들 바이너리 2.1.220):
+#   claude --session-id=<이미 쓴 uuid> -p hi  -> exit 1, "Session ID ... is
+#                                                already in use."
+#   claude --resume=<없는 uuid>        -p hi  -> exit 1, "No conversation found"
+# 두 에러는 서로의 여집합이므로 어느 플래그도 무조건 쓸 수 없다. 판단 근거는
+# 디스크의 트랜스크립트 파일 하나이고(그 파일을 옮기자 방금 거절당한
+# --session-id가 다시 성공했다), 그래서 드라이버는 그 파일을 직접 본다.
+#
+# 아래 테스트들이 SessionIdCheckingSdkClient를 쓰는 이유: FakeSdkClient.connect()
+# 는 no-op이라 이 결함 전체가 624개 그린 테스트에 안 보였다. 중복 session id를
+# 거절할 수 없는 가짜는 아무것도 증명하지 못한다.
+
+
+def _checking_driver(tmp_path, script=None, config_dir=None, workspace=None):
+    """SessionIdCheckingSdkClient를 물린 드라이버 + 그 팩토리가 만든 클라이언트 목록.
+
+    config_dir/workspace를 인자로 받는 이유: 재시작은 "새 드라이버 인스턴스,
+    같은 config dir + 같은 워크스페이스"이므로 두 드라이버가 같은 디스크 상태를
+    봐야 한다.
+    """
+    from tests.fakes.fake_sdk_asking import SessionIdCheckingSdkClient
+
+    rules = tmp_path / "rules" / "aws-aiplc-rules"
+    if not rules.exists():
+        rules.mkdir(parents=True)
+        (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
+    ws = workspace or (tmp_path / "ws")
+    ws.mkdir(parents=True, exist_ok=True)
+    cfg = config_dir or (tmp_path / "cfg")
+    cfg.mkdir(parents=True, exist_ok=True)
+
+    made: list = []
+    d = ClaudeDriver(workspace=str(ws), rules_dir=str(tmp_path / "rules"),
+                     config_dir=str(cfg), s3=FakeS3Store(),
+                     client_factory=lambda session: None)
+
+    def factory(session):
+        c = SessionIdCheckingSdkClient(session, str(cfg), str(ws),
+                                       script=script)
+        made.append(c)
+        return c
+
+    d._client_factory = factory  # type: ignore[assignment]
+    return d, made, cfg, ws
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_turn_survives_a_backend_restart(tmp_path):
+    # C1 그 자체. 프로세스 1이 턴을 돌리고 트랜스크립트를 남긴다. 백엔드가
+    # 재시작하면(= 새 드라이버 인스턴스, 같은 config dir/워크스페이스) 평범한
+    # 메시지 턴은 resume=False 기본값으로 들어오는데, session id는 project id에서
+    # uuid5로 파생돼 *안정적*이므로 --session-id가 그 트랜스크립트와 충돌한다.
+    # 실측: 프로세스 2/3의 모든 턴이 "agent turn failed"로 죽고, 트랜스크립트
+    # 파일이 영구적이라 스스로 낫지도 않는다.
+    session = {"session_id": "acme"}          # 자유 형식 project id (uuid 아님)
+    d1, made1, cfg, ws = _checking_driver(tmp_path)
+    first = [e.kind async for e in d1.run("hi", session)]
+    assert first == ["done"], first
+    assert made1[0].connected
+
+    # 재시작: 같은 프로젝트, 같은 디스크, 새 드라이버.
+    d2, made2, _, _ = _checking_driver(tmp_path, config_dir=cfg, workspace=ws)
+    second = [e.kind async for e in d2.run("다시 안녕", session)]
+    assert second == ["done"], second        # 예전엔 ["error"]
+    # 그리고 이어받았다는 근거: --resume 쪽으로 붙었다.
+    assert made2[0]._session["resume"] is True
+    # 세 번째 프로세스도 같다(한 번 우연히 통과하는 게 아님).
+    d3, made3, _, _ = _checking_driver(tmp_path, config_dir=cfg, workspace=ws)
+    assert [e.kind async for e in d3.run("또", session)] == ["done"]
+    assert made3[0]._session["resume"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_and_recreated_project_still_gets_a_working_turn(tmp_path):
+    # C1의 두 번째 방아쇠 — 재시작이 전혀 필요 없다. 체크리스트 §7의 마지막
+    # 항목이 정확히 이 경로다: DELETE /projects/acme -> runner.stop() ->
+    # disconnect(), 그리고 같은 process에서 같은 project_id로 다시 만든다.
+    # 실측(수정 전): 턴 1 정상, 턴 2 "agent turn failed".
+    session = {"session_id": "acme"}
+    d1, _, cfg, ws = _checking_driver(tmp_path)
+    assert [e.kind async for e in d1.run("hi", session)] == ["done"]
+    await d1.disconnect()                     # 프로젝트 삭제
+
+    d2, made2, _, _ = _checking_driver(tmp_path, config_dir=cfg, workspace=ws)
+    assert [e.kind async for e in d2.run("다시", session)] == ["done"]
+    assert made2[0]._session["resume"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_restart_answers_path_does_not_resume_a_missing_transcript(tmp_path):
+    # 반대 방향. _resume_with_answers는 resume=True를 요청하지만, 트랜스크립트가
+    # 없으면(재배포가 config dir까지 재활용한 경우 — 인스턴스 교체, /opt 초기화)
+    # --resume은 "No conversation found"로 exit 1이다. 호출자의 의도를 그대로
+    # 믿으면 재시작 후 첫 답변이 죽는다.
+    s3 = FakeS3Store()
+    await save_pending(s3, interrupt_id="i-1",
+                       questions={"name": "q", "questions": []},
+                       sdk_questions=[{"question": "다음 단계는?",
+                                       "options": [{"label": "진행"}]}],
+                       session_id="acme")
+    d, made, cfg, ws = _checking_driver(tmp_path)
+    d._s3 = s3
+    events = [e.kind async for e in d.run_answers("i-1", {"1": "A"},
+                                                  {"session_id": "acme"})]
+    assert events[-1] == "done", events
+    assert "error" not in events, events
+    # 트랜스크립트가 없었으므로 fresh로 내려갔어야 한다.
+    assert made[0]._session["resume"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_answers_path_resumes_when_the_transcript_is_there(tmp_path):
+    # 그리고 트랜스크립트가 있으면 반드시 이어받아야 한다 — 안 그러면 재시작 후
+    # 답변이 맥락 없는 새 대화로 들어가고(§6이 검증하는 모델 이해가 무의미해진다),
+    # --session-id 충돌로 죽는다.
+    session = {"session_id": "acme"}
+    d1, _, cfg, ws = _checking_driver(tmp_path)
+    assert [e.kind async for e in d1.run("hi", session)] == ["done"]
+
+    s3 = FakeS3Store()
+    await save_pending(s3, interrupt_id="i-1",
+                       questions={"name": "q", "questions": []},
+                       sdk_questions=[{"question": "다음 단계는?",
+                                       "options": [{"label": "진행"}]}],
+                       session_id="acme")
+    d2, made2, _, _ = _checking_driver(tmp_path, config_dir=cfg, workspace=ws)
+    d2._s3 = s3
+    events = [e.kind async for e in d2.run_answers("i-1", {"1": "A"}, session)]
+    assert events[-1] == "done", events
+    assert made2[0]._session["resume"] is True
+
+
+def test_the_transcript_path_matches_the_cli_layout(tmp_path):
+    # 경로 규칙은 추측이 아니라 실측이다(번들 2.1.220). 여덟 개 cwd를 넣어
+    # 확인했고 CLI가 만든 디렉터리명은 전부
+    # re.sub(r"[^A-Za-z0-9-]", "-", cwd)와 일치했다:
+    #   /tmp/pf-probe/acme_1.2-x -> -tmp-pf-probe-acme-1-2-x
+    #   /tmp/pf-e2/Acme Corp     -> -tmp-pf-e2-Acme-Corp
+    #   /tmp/pf-k/한글프로젝트     -> -tmp-pf-k-------
+    from pathfinder.agent.claude_driver import _transcript_path
+
+    p = _transcript_path("/opt/pathfinder/discovery-config",
+                         "/tmp/pathfinder-workspaces/acme_1.2-x",
+                         "bde34f1e-bdb0-5f78-8ca2-07822c3609a0")
+    assert p.parent.name == "-tmp-pathfinder-workspaces-acme-1-2-x"
+    assert p.name == "bde34f1e-bdb0-5f78-8ca2-07822c3609a0.jsonl"
+    assert p.parent.parent.name == "projects"
+
+    # 한글 project id도 CLI와 같은 자리를 봐야 한다(Discovery의 project id는
+    # 자유 입력이므로 흔한 경우다). 아래는 실제 CLI가 만든 디렉터리명 그대로다 —
+    # `/tmp/pf-k/한글프로젝트`(6자) -> `-tmp-pf-k-------`. 인코딩이 비가역이라
+    # 한글은 전부 "-"로 접힌다.
+    k = _transcript_path("/cfg", "/tmp/pf-k/한글프로젝트",
+                         "aaaaaaaa-1111-4222-8333-444455556666")
+    assert k.parent.name == "-tmp-pf-k-------"
+
+    # cwd가 심볼릭 링크면 CLI는 실제 경로로 인코딩한다(실측: 링크명이 아니라
+    # 대상 경로 디렉터리에 트랜스크립트가 생겼다).
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    assert _transcript_path("/cfg", str(link), "x").parent.name == \
+        _transcript_path("/cfg", str(real), "x").parent.name
+
+
+def test_the_transcript_probe_reads_the_file_the_cli_writes(tmp_path):
+    # _transcript_exists가 "그 파일이 있느냐"만 보는지. CLI의 "already in use"
+    # 검사가 정확히 이것이다 — 파일을 옮기자 같은 --session-id가 다시 성공했다.
+    from pathfinder.agent.claude_driver import (
+        _transcript_exists, _transcript_path,
+    )
+
+    cfg = tmp_path / "cfg"
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    sid = "bde34f1e-bdb0-5f78-8ca2-07822c3609a0"
+    assert _transcript_exists(str(cfg), str(ws), sid) is False
+    p = _transcript_path(str(cfg), str(ws), sid)
+    p.parent.mkdir(parents=True)
+    p.write_text("{}\n", encoding="utf-8")
+    assert _transcript_exists(str(cfg), str(ws), sid) is True
+    # 다른 세션 id는 영향받지 않는다.
+    assert _transcript_exists(str(cfg), str(ws),
+                              "cccccccc-1111-4222-8333-444455556666") is False
+    # 디렉터리는 파일이 아니다 — is_file()이어야 하는 이유.
+    p.unlink()
+    p.mkdir()
+    assert _transcript_exists(str(cfg), str(ws), sid) is False
+
+
+# ---- I3: 실패한 connect()가 캐시를 영구히 오염시키면 안 된다 ----
+
+
+@pytest.mark.asyncio
+async def test_a_failed_connect_does_not_poison_the_client_cache(tmp_path):
+    # 실측(수정 전): _client가 connect() await *앞에서* 대입되므로 한 번 실패하면
+    # 캐시에 깨진 클라이언트가 남고, 이후 세 턴이 전부 "agent turn failed"
+    # (CLIConnectionError: Not connected), 팩토리는 딱 한 번만 호출됐다. 이것이
+    # C1을 "한 번의 실패"에서 "죽은 프로젝트"로 증폭시킨 장치다.
+    from tests.fakes.fake_sdk import FakeSdkClient
+
+    class _FailsOnce(FakeSdkClient):
+        fail = True
+
+        async def connect(self):
+            if type(self).fail:
+                raise RuntimeError("connect boom")
+            await super().connect()
+
+    made: list = []
+    rules = tmp_path / "rules" / "aws-aiplc-rules"
+    rules.mkdir(parents=True)
+    (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    d = ClaudeDriver(workspace=str(ws), rules_dir=str(tmp_path / "rules"),
+                     config_dir=str(tmp_path / "cfg"), s3=FakeS3Store(),
+                     client_factory=lambda s: None)
+
+    def factory(session):
+        c = _FailsOnce([__import__("tests.fakes.fake_sdk", fromlist=["x"])
+                        .ResultMessage()])
+        made.append(c)
+        return c
+
+    d._client_factory = factory  # type: ignore[assignment]
+
+    first = [e.kind async for e in d.run("hi", {"session_id": "acme"})]
+    assert first == ["error"]
+    # 캐시가 비어 있어야 다음 턴이 새 클라이언트를 만든다.
+    assert d._client is None
+
+    _FailsOnce.fail = False
+    second = [e.kind async for e in d.run("다시", {"session_id": "acme"})]
+    assert second == ["done"], second        # 예전엔 ["error"]
+    assert len(made) == 2, made              # 새 클라이언트를 진짜로 만들었다
+    assert made[1].connected
+
+
+# ---- I2: pending()이 "새로고침 후 답변"을 실제로 가능하게 하는지 ----
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_mid_question_can_still_submit_the_answer(tmp_path):
+    # 공유 계약(driver_contract.py)은 "질문이 떠 있으면 pending()이 그 라운드를
+    # 돌려준다"까지만 요구한다 — 두 드라이버가 그 값을 서로 다른 곳에 보관하기
+    # 때문이다. 여기서는 ClaudeDriver 쪽에서 그 값이 *무엇을 가능하게 하는지*를
+    # 실제 AgentRunner로 끝까지 태운다: GET /pending -> POST /answers.
+    #
+    # 실패 모양: pending()이 None이면 runner._pending_interrupt_id가 심어지지
+    # 않고, send_answers가 드라이버를 부르지도 않은 채 "no pending questions"로
+    # 거절한다(runner.py:158-160). 즉 질문 도중 새로고침한 사용자는 답변할 방법이
+    # 영구히 없다 — 40개 테스트가 전부 그린인 채로.
+    d, runner, cap = _runner(tmp_path, {"questions": True})
+    first = [ev.kind async for ev in runner.send_message("hi")]
+    assert "questions" in first and first[-1] == "done", first
+
+    # 새로고침: 새 SSE 연결 전에 프론트가 GET /pending을 부른다.
+    runner._pending_interrupt_id = None      # 새 페이지 로드 = 인메모리 상태 없음
+    payload = await runner.pending()
+    assert payload is not None, "새로고침 시 질문 폼을 복원할 수 없다"
+    assert runner._pending_interrupt_id is not None, \
+        "pending()이 라운드를 심지 않아 send_answers가 거절할 것이다"
+
+    later = [ev async for ev in runner.send_answers({"1": "A"})]
+    kinds = [e.kind for e in later]
+    assert kinds[-1] == "done", kinds
+    assert not any(e.kind == "error" and e.text == "no pending questions"
+                   for e in later), [(e.kind, e.text) for e in later]
