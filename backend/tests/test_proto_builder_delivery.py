@@ -560,3 +560,208 @@ async def test_disconnect_drops_a_question_card_and_a_later_turn_does_not_show_i
     kinds = [e.kind for e in [ev async for ev in b.run("again")]]
     assert "questions" not in kinds, kinds
     assert kinds == ["message", "done"], kinds
+
+
+# ---- review round 2: the head-mutating producer, and the answered card ----
+
+async def test_a_head_mutation_during_a_suspended_relay_does_not_eat_the_next_event(
+        tmp_path):
+    """The `queue[0] is ev` guard in `_relay_queue` is LOAD-BEARING.
+
+    An earlier docstring claimed it was merely defensive because producers "only
+    ever append". This diff itself introduced a head-MUTATING producer:
+    `_drop_dead_question_cards()` rewrites the list in place, and `interrupt()`
+    calls it from a separate `POST /interrupt` request while the turn's generator
+    is parked mid-delivery.
+
+    The window, reproduced here exactly: the card is delivered and the relay
+    suspends with it still at `queue[0]`; the agent's last `Write` queues
+    `realwork.js` BEHIND it; the user hits stop; the drop removes the head and
+    shifts `realwork.js` into slot 0. The guard sees `queue[0] is not ev`, pops
+    nothing, and `realwork.js` is delivered. With an unconditional `pop(0)` it is
+    destroyed outright -- and the rest of the suite stays green, which is exactly
+    why this test exists.
+    """
+    holder = {}
+    b = _builder(tmp_path, QuestionThenHang(lambda: holder["b"]))
+    holder["b"] = b
+
+    received = []
+    agen = b.run("go").__aiter__()
+    while True:                        # pull until the card is delivered
+        ev = await agen.__anext__()
+        received.append(ev)
+        if ev.kind == "questions":
+            break
+    # Premise: the relay is suspended with the card still owned at the head.
+    assert [e.kind for e in b._queue] == ["questions"]
+
+    # Real work lands behind the card while we are parked here.
+    await _queue_writes(b, "realwork.js")
+    assert [e.kind for e in b._queue] == ["questions", "file_changed"]
+
+    # The stop arrives on its own request and MUTATES THE HEAD.
+    await b.interrupt()
+    assert [e.path for e in b._queue] == ["prototype/realwork.js"], \
+        "premise: the drop must have shifted realwork.js into slot 0"
+
+    async for ev in agen:
+        received.append(ev)
+
+    # The assertion that matters: what the consumer actually received.
+    paths = [e.path for e in received if e.kind == "file_changed"]
+    assert "prototype/realwork.js" in paths, [
+        (e.kind, e.path or e.text) for e in received]
+    assert [e.kind for e in received][-1] == "done"
+
+
+class DetachedQuestionClient(FakeSdkClient):
+    """Faithful to the SDK on the one point this test turns on: `can_use_tool`
+    runs on a DETACHED task (claude_agent_sdk/_internal/query.py:231
+    `spawn_detached`), NOT on the generator relaying the turn.
+
+    That is what makes the stale-card window real: the consumer can abandon
+    `run()` while the pending future stays alive, so a later `submit_answers`
+    still succeeds and the turn genuinely continues.
+    """
+
+    def __init__(self, builder_ref):
+        super().__init__()
+        self.builder_ref = builder_ref
+        self.turns = 0
+
+    async def receive_response(self):
+        self.turns += 1
+        if self.turns == 1:
+            b = self.builder_ref()
+            asyncio.ensure_future(
+                b._on_can_use_tool("AskUserQuestion", ASK_INPUT, None))
+            for _ in range(200):        # let the callback queue its card
+                await asyncio.sleep(0.01)
+                if b._pending_payload is not None:
+                    break
+            await asyncio.sleep(3600)   # CLI blocked on the permission response
+        else:
+            yield AssistantMessage(content=[TextBlock(text="turn2 reply")])
+            yield ResultMessage()
+        return
+        yield  # pragma: no cover
+
+
+async def test_a_successfully_answered_question_card_is_not_re_shown(tmp_path):
+    """The third drop point (claude_driver.py:1181-1183 has it; this file did not).
+
+    A regression this ownership change introduced: on `main` the batch pop had
+    already destroyed the event, so the next turn was clean. Now the card is
+    correctly left owned when the stream dies mid-delivery -- but answering it
+    successfully has to retire it, or the next turn re-shows a question the user
+    already answered, and answering that returns False -> 409
+    (routes/prototypes.py:212) -> "답변을 제출하지 못했습니다".
+    """
+    import json
+
+    holder = {}
+    b = _builder(tmp_path, DetachedQuestionClient(lambda: holder["b"]))
+    holder["b"] = b
+
+    # Turn 1: the card is delivered, then the SSE stream dies AT that yield.
+    agen = b.run("go").__aiter__()
+    turn1 = []
+    while True:
+        ev = await agen.__anext__()
+        turn1.append(ev)
+        if ev.kind == "questions":
+            break
+    await agen.aclose()
+    assert [e.kind for e in turn1] == ["questions"]         # premise
+    assert any(e.kind == "questions" for e in b._queue)     # premise: owned
+
+    # The future is still live (detached task), so the answer really lands.
+    iid = json.loads(b._pending_payload)["interrupt_id"]
+    assert await b.submit_answers(iid, {"1": "A"}) is True
+
+    # Turn 2 must not re-show it.
+    turn2 = [ev async for ev in b.run("again")]
+    kinds = [e.kind for e in turn2]
+    assert "questions" not in kinds, kinds
+    assert kinds[-1] == "done", kinds
+
+
+async def test_answering_one_round_does_not_retire_a_different_rounds_card(
+        tmp_path):
+    """The drop is keyed by interrupt id, not by kind.
+
+    `_drop_dead_question_cards` is unconditional because its callers kill the
+    whole turn; this one must not be. A card for a DIFFERENT round that is still
+    owned is still answerable, and dropping it would be the original
+    message-loss defect wearing a different hat.
+    """
+    import json
+
+    holder = {}
+    b = _builder(tmp_path, DetachedQuestionClient(lambda: holder["b"]))
+    holder["b"] = b
+
+    agen = b.run("go").__aiter__()
+    while True:
+        ev = await agen.__anext__()
+        if ev.kind == "questions":
+            break
+    await agen.aclose()
+
+    # A second, unrelated round's card also sitting owned in the queue.
+    other = AgentEvent(kind="questions",
+                       payload=json.dumps({"interrupt_id": "i-OTHER",
+                                           "questions": {"name": "other"}}))
+    b._queue.append(other)
+
+    iid = json.loads(b._pending_payload)["interrupt_id"]
+    assert await b.submit_answers(iid, {"1": "A"}) is True
+
+    remaining = [_iid(e) for e in b._queue if e.kind == "questions"]
+    assert remaining == ["i-OTHER"], remaining
+
+
+async def test_answering_a_LIVE_turn_does_not_retire_its_undelivered_card(
+        tmp_path):
+    """The `_turn_active` guard on `_drop_answered_question_card`.
+
+    This is where the port had to DIVERGE from claude_driver rather than copy it,
+    and copying it verbatim broke `test_question_roundtrip` (which was right).
+    Discovery's `_pump` terminates on a `questions` event, so its drop can never
+    race a live generator. builder.py keeps ONE stream open across the answer
+    round trip, so the normal case is a live `run()` that has not relayed the card
+    yet -- answers can arrive that fast.
+
+    Dropping unconditionally there retires the card out from under the live
+    generator and the user never sees the question at all (measured: the consumer
+    received `['done']` and the question silently vanished). Asserted on what the
+    consumer received, which is the only place the difference shows.
+    """
+    import json
+
+    holder = {}
+    b = _builder(tmp_path, QuestionThenHang(lambda: holder["b"]))
+    holder["b"] = b
+
+    async def consume():
+        return [ev async for ev in b.run("build")]
+
+    turn = asyncio.create_task(consume())
+    await _await_pending(b)
+    # Premise: a LIVE turn, and the card has NOT reached the consumer yet.
+    assert b._turn_active is True
+    assert [e.kind for e in b._queue] == ["questions"]
+
+    assert await b.submit_answers(
+        json.loads(b._pending_payload)["interrupt_id"], {"1": "A"}) is True
+    events = await turn
+
+    kinds = [e.kind for e in events]
+    assert "questions" in kinds, kinds     # the user must still SEE the question
+    assert kinds[-1] == "done", kinds
+
+
+def _iid(event):
+    import json
+    return json.loads(event.payload)["interrupt_id"]

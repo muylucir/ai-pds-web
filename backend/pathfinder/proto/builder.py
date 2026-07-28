@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import PurePosixPath
 from typing import Any, AsyncIterator, Callable
@@ -33,6 +34,26 @@ _LETTERS = "ABCDEFGHIJ"
 # A workshop build runs unattended -- there is no operator to approve a Write,
 # so any mode that can prompt stalls the turn until the idle timer kills it.
 DEFAULT_PERMISSION_MODE = "bypassPermissions"
+
+
+def _interrupt_id_of(event: AgentEvent) -> str | None:
+    """The interrupt_id inside a `questions` event's payload, or None.
+
+    Same shape and same fail-soft posture as proto/session.py's
+    `_interrupt_id_from` and claude_driver's `_iid_of`: a malformed or
+    contract-drifted payload degrades to None rather than raising, because the
+    only caller is `_drop_answered_question_card` and a parse failure there must
+    not blow up an otherwise valid `submit_answers`. Returning None simply keeps
+    the event (the conservative direction -- a re-shown card is recoverable, a
+    dropped one is the message loss this whole change is about).
+    """
+    if not event.payload:
+        return None
+    try:
+        value = json.loads(event.payload).get("interrupt_id")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return value if isinstance(value, str) else None
 
 
 def _rel(path: str, workspace: str) -> str | None:
@@ -210,22 +231,45 @@ class PrototypeBuilder:
         So a consumer abandoned at any `yield` leaves the remainder still owned
         by `self._queue`, and the next turn's poll loop relays it.
 
-        The identity re-check before popping is DEFENSIVE, and honestly so: the
-        `yield` hands control to the scheduler, and the callbacks run on the
-        SDK's own tasks -- but they only ever APPEND, so today the head cannot
-        change under us and `pop(0)` would be equivalent. Instrumented across the
-        whole suite, the guard never fires, and mutating it away breaks no test.
-        It stays because it makes the pop correct under any future producer that
-        does touch the head (a dedupe, a priority bump), and because it is the
-        shape claude_driver._relay_queue settled on. No test pins it; claiming
-        otherwise would be the kind of green-but-vacuous assertion this file's
-        header warns about.
+        The identity re-check before popping is LOAD-BEARING -- not defensive,
+        which is what an earlier draft of this docstring wrongly claimed on the
+        grounds that producers "only ever append". They do not: this very class
+        has a head-MUTATING producer, and it is reachable precisely while this
+        generator is suspended at its `yield`.
+
+        `_drop_dead_question_cards()` rewrites the list in place
+        (`self._queue[:] = [...]`), and `interrupt()` calls it from a SEPARATE
+        request (`POST /interrupt`) while the turn's generator is parked
+        mid-delivery. Reproduced: the agent asks a question, the card is
+        delivered and this generator suspends with it still at `queue[0]`; the
+        agent's last `Write` queues `file_changed: realwork.js` BEHIND it; the
+        user hits stop; the drop removes the head and shifts `realwork.js` into
+        slot 0. `queue[0] is ev` then fails, nothing is popped, and `realwork.js`
+        is delivered on the next pass. Mutated to an unconditional `pop(0)`, it
+        is destroyed outright -- the exact defect class this change exists to
+        eliminate -- and the whole suite still passes, which is why
+        `test_a_head_mutation_during_a_suspended_relay_does_not_eat_the_next_event`
+        exists to pin it.
 
         Accepts at-least-once delivery at the abandonment boundary -- a consumer
         cancelled at its `__anext__` await AFTER this generator produced the
         value leaves the event un-popped, so the next turn relays it again.
         That is the deliberate trade the Discovery driver made and it holds here
         too: see the duplicate-safety note on `_on_post_tool_use`.
+
+        SCOPE -- the ownership story in this file is ASYMMETRIC, deliberately so,
+        and a reader should not generalize from this method. The QUEUE side (hook
+        and can_use_tool events, everything routed through here) honors the rule.
+        The MESSAGE side does NOT: `_translate()` returns a plain list that `run`
+        yields one item at a time, so an `AssistantMessage` carrying several
+        blocks still loses its un-yielded remainder when the consumer walks away
+        (reproduced; byte-identical before and after this change, i.e.
+        pre-existing rather than introduced here). Closing that half needs the
+        durable-inbox structure `claude_driver._MessageReader` was built for -- a
+        task that owns `receive_response()` and drains into a list on the driver,
+        so no suspension of the relaying generator can destroy an in-flight
+        message. It is not reachable by another `_relay_queue`-shaped fix, which
+        is why it was left for its own change.
         """
         while self._queue:
             ev = self._queue[0]
@@ -432,6 +476,20 @@ class PrototypeBuilder:
                     # The SDK's receive_response() returns right after the
                     # ResultMessage, so re-arming would only buy a
                     # StopAsyncIteration on an already-finished iterator.
+                    #
+                    # What this `break` gives up, since the original re-armed
+                    # `__anext__()` specifically to drive that generator to its
+                    # `return`: `agen` is left SUSPENDED rather than finalized,
+                    # so its cleanup runs at GC / loop `shutdown_asyncgens()`
+                    # instead of here. Measured and accepted -- no
+                    # "async generator ignored GeneratorExit", no "Task was
+                    # destroyed but it is pending", no leaked tasks -- because
+                    # the object that actually owns the subprocess and the anyio
+                    # streams is the CLIENT, and `disconnect()` closes the query
+                    # independently of this iterator. Driving the generator one
+                    # more step to reach its `return` would mean awaiting a
+                    # message that never comes, which is the stall this poll loop
+                    # exists to avoid.
                     break
                 next_msg = asyncio.ensure_future(agen.__anext__())
         except asyncio.CancelledError:
@@ -532,11 +590,12 @@ class PrototypeBuilder:
     def _drop_dead_question_cards(self) -> None:
         """Drop any `questions` event still OWNED by `self._queue`.
 
-        A consequence of the delivery-then-pop ownership rule, and the one place
-        it needs a counterweight. If a turn was abandoned while its `questions`
-        event was being delivered, that event correctly stays at the head of the
-        queue for the next turn to relay -- which is what stops the loss. But
-        once the question's future has been cancelled (interrupt) or its
+        A consequence of the delivery-then-pop ownership rule, and one of the two
+        places it needs a counterweight (the other is `_drop_answered_question_card`
+        below -- same idea, different trigger). If a turn was abandoned while its
+        `questions` event was being delivered, that event correctly stays at the
+        head of the queue for the next turn to relay -- which is what stops the
+        loss. But once the question's future has been cancelled (interrupt) or its
         subprocess torn down (disconnect), no `submit_answers` can ever resolve
         it: relaying it later hands the user a card that looks live, and
         answering it gets a 409 from routes/prototypes.py because the session's
@@ -546,8 +605,65 @@ class PrototypeBuilder:
         never merely because a consumer walked away. Mirrors the same two lines
         in claude_driver.disconnect (claude_driver.py:1242), which is where this
         hole was found on the Discovery side.
+
+        Unconditional on kind (not keyed by interrupt id) because both callers
+        are killing the subprocess or the whole turn: every question the builder
+        is holding becomes unanswerable at once, not just one round's.
         """
         self._queue[:] = [ev for ev in self._queue if ev.kind != "questions"]
+
+    def _drop_answered_question_card(self, interrupt_id: str) -> None:
+        """Drop the owned `questions` event for the round just ANSWERED, but only
+        when no live turn is left to deliver it.
+
+        The third drop point, ported from claude_driver.py:1181-1183 (its
+        `run_answers`). Without it, a successfully answered question can be
+        re-shown -- a regression this ownership change introduced, since the old
+        batch pop had already destroyed the event.
+
+        Reproduced end-to-end: turn 1 delivers the card and the SSE stream dies at
+        that very `yield`, leaving it owned (correct -- that is the fix). The
+        pending future is NOT dead, because `can_use_tool` runs on a detached SDK
+        task (claude_agent_sdk/_internal/query.py:231 `spawn_detached`), not on
+        the abandoned generator -- so the user answering from the still-open tab
+        reaches `submit_answers`, it returns True, and the turn genuinely
+        continues. But the queue still owned the card, so the next turn relayed
+        it: a question the user already answered, and answering it again returns
+        False -> 409 (routes/prototypes.py:212) -> "답변을 제출하지 못했습니다".
+
+        THE `_turn_active` GUARD IS NOT OPTIONAL, and this is where the port had
+        to diverge from the reference rather than copy it. Discovery's `_pump`
+        TERMINATES on a `questions` event (module docstring: yield questions, then
+        done, then return), so by the time its `run_answers` drops the card there
+        is provably no generator left that could deliver it. builder.py is the
+        opposite: it keeps ONE stream open across the whole answer round trip, so
+        the common case is a LIVE `run()` still parked in its poll loop that has
+        not relayed the card yet -- answers can arrive that fast, and
+        test_question_roundtrip drives exactly that. Dropping unconditionally
+        there retires the card out from under the live generator and the user never
+        sees the question at all (measured: consumer received `['done']`, the
+        question silently vanished). Caught by that pre-existing test, which was
+        the authority.
+
+        So: `_turn_active` False means the turn that owned this card is gone and
+        nothing will ever relay it -> retire it. True means a live generator will
+        deliver it on its next pass -> leave it alone; it is not stale yet, and
+        the SSE stream the user is watching is where it belongs.
+
+        Keyed by interrupt id, unlike `_drop_dead_question_cards`: only THIS round
+        has been fulfilled. A different round's card still owned here is still
+        answerable and must survive -- dropping it would be the original
+        message-loss defect wearing a different hat.
+
+        Not a loss: the answers this call carries are that event's entire purpose,
+        so it has been fulfilled rather than discarded.
+        """
+        if self._turn_active:
+            return
+        self._queue[:] = [
+            ev for ev in self._queue
+            if not (ev.kind == "questions"
+                    and _interrupt_id_of(ev) == interrupt_id)]
 
     async def submit_answers(self, interrupt_id: str,
                              answers: dict[str, str]) -> bool:
@@ -555,6 +671,9 @@ class PrototypeBuilder:
                 or getattr(self, "_pending_iid", None) != interrupt_id
                 or self._pending_question.done()):
             return False
+        # Before resolving: this round's card is now fulfilled, so it must not be
+        # relayed to the user again. See `_drop_answered_question_card`.
+        self._drop_answered_question_card(interrupt_id)
         self._pending_question.set_result(answers)
         return True
 
