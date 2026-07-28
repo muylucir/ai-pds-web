@@ -840,9 +840,10 @@ async def test_a_DELIVERED_card_is_retired_even_though_the_turn_is_still_active(
 async def test_the_identity_guard_also_protects_the_answers_drop_path(tmp_path):
     """`_drop_answered_question_card` is the SECOND head-mutating producer.
 
-    Round 3 added it, and it runs from `POST /answers` -- so the out-of-band
-    queue-rewrite window the identity guard exists for is now reachable on the
-    ordinary answer path, not only on a stop. Same shape as the interrupt test:
+    Round 2 (`eeda393`) added it -- round 3 only changed its discriminator -- and
+    it runs from `POST /answers`, so the out-of-band queue-rewrite window the
+    identity guard exists for is reachable on the ordinary answer path, not only
+    on a stop. Same shape as the interrupt test:
     delivered card at `queue[0]`, real work queued behind it, the drop removes
     the head and shifts that work into slot 0 while the relay is parked.
     """
@@ -882,6 +883,49 @@ async def test_the_identity_guard_also_protects_the_answers_drop_path(tmp_path):
     paths = [e.path for e in received if e.kind == "file_changed"]
     assert "prototype/realwork.js" in paths, [
         (e.kind, e.path or e.text) for e in received]
+
+
+def test_the_two_facts_that_keep_the_mirror_window_unreachable(tmp_path):
+    """Guards the reasoning in `_relay_queue`'s MIRROR WINDOW comment.
+
+    The optimistic delivery mark has a real failure case: if the consumer is
+    cancelled at its `__anext__` in the same tick the generator produced the
+    value, asyncio discards the value while the event stays marked -- and a later
+    answer then destroys a card the user never saw, with no re-fetch to recover
+    it. Verified through the real `PrototypeSession`.
+
+    It is unreachable from the UI only because of two facts, and the comment says
+    both must stay true. This test is what makes "must stay true" enforceable
+    instead of aspirational: adding a pending endpoint to the prototype path, or a
+    second source for `pendingQuestions`, is a KNOWN TRIGGER and should fail here
+    first rather than silently arming the window.
+
+    Deliberately asserts on the ROUTE TABLE and the hook source text, because
+    those are the two things whose change would arm it -- there is no runtime
+    behavior to observe on a path that cannot currently be driven.
+    """
+    from pathlib import Path
+
+    # Fact 1: no `pending` route on the prototype path. Discovery has one
+    # (routes/turns.py) -- this router deliberately does not.
+    from pathfinder.routes import prototypes as proto_routes
+
+    proto_paths = [r.path for r in proto_routes.router.routes]
+    assert not [p for p in proto_paths if "pending" in p], proto_paths
+
+    # Fact 2: usePrototypeStream populates pendingQuestions ONLY from the SSE
+    # `questions` event. Every other touch must be a CLEAR (set to null), never a
+    # populate from some other source.
+    hook = (Path(__file__).resolve().parents[2]
+            / "frontend" / "lib" / "usePrototypeStream.ts")
+    if not hook.exists():                       # backend-only checkout
+        import pytest
+        pytest.skip("frontend not present in this checkout")
+    populating = [
+        line.strip() for line in hook.read_text(encoding="utf-8").splitlines()
+        if "setPendingQuestions(" in line and "setPendingQuestions(null)" not in line
+    ]
+    assert populating == ["if (parsed) setPendingQuestions(parsed);"], populating
 
 
 def _iid(event):

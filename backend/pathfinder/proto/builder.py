@@ -42,15 +42,36 @@ DEFAULT_PERMISSION_MODE = "bypassPermissions"
 #
 # A private attribute rather than an AgentEvent field on purpose: `kind` and the
 # event shape ARE the frontend contract (models.py), and this is purely internal
-# bookkeeping that must never reach the browser. `object.__setattr__` because
-# pydantic BaseModel validates ordinary attribute assignment; verified that
-# `model_dump_json()` is byte-identical with the mark set, so
-# routes/prototypes.py's `_redacted(event).model_dump_json()` is unaffected.
+# bookkeeping that must never reach the browser. Measured: `model_dump_json()` is
+# byte-identical with the mark set, so routes/prototypes.py's
+# `_redacted(event).model_dump_json()` is unaffected.
 #
-# The mark lives on the object `self._queue` holds, which is the same object
-# `_drop_answered_question_card` inspects. `_redacted()` takes a `model_copy` for
-# the wire and that copy does NOT carry the mark -- harmless precisely because
-# the copy is never put back on the queue: it is serialized and discarded.
+# `object.__setattr__` is a DEFENSIVE choice, not a required one, and the reason
+# matters because it is easy to get backwards. Plain `ev._pf_delivered = True`
+# also works: pydantic's `_setattr_handler` (pydantic/main.py:1066-1074) routes any
+# non-field name that fails `is_valid_field_name` -- i.e. any LEADING-UNDERSCORE
+# name -- straight to `_object_setattr`. What pydantic rejects is a
+# non-underscore unknown name (`ev.pf_delivered = True` ->
+# ValueError: "AgentEvent" object has no field "pf_delivered"). So the underscore
+# prefix is what makes assignment legal here; `object.__setattr__` only makes that
+# independent of pydantic's dunder routing. CONSEQUENCE IF YOU RENAME THIS: a name
+# without the leading underscore must become a real model field or the assignment
+# raises -- and `object.__setattr__` would silently bypass exactly the check that
+# tells you so, while `__pydantic_extra__`/`model_dump` behavior diverges.
+#
+# The mark lives in the event's `__dict__`, so it PROPAGATES THROUGH COPIES:
+# measured, `_redacted()` returns a distinct object that DOES carry the mark
+# (`model_copy` copies `__dict__` wholesale), as do `model_copy(deep=True)`,
+# `model_copy(update=...)`, pickle, and nesting in `TurnResult`. Only
+# `model_validate(model_dump())` drops it, since the mark is not a field.
+#
+# That propagation is harmless TODAY for one specific reason -- not because copies
+# are unmarked: the redacted copy is serialized and discarded, never re-queued, and
+# `_drop_answered_question_card` only ever inspects objects in `self._queue`. IF
+# ANYONE ADDS A RE-QUEUE OR RETRY BUFFER that puts a `_redacted` copy (or any other
+# copy) back on the queue, that assumption breaks: an event marked by a
+# SERIALIZATION step rather than by a `yield` would become eligible for the
+# answered-card drop. Audit this if you add such a path.
 _DELIVERED_ATTR = "_pf_delivered"
 
 
@@ -270,8 +291,10 @@ class PrototypeBuilder:
           - `_drop_dead_question_cards()`, from `interrupt()` (`POST /interrupt`)
             and from `disconnect()` (idle timer / `DELETE /session`).
           - `_drop_answered_question_card()`, from `submit_answers()`
-            (`POST /answers`) -- the round-3 addition, which makes this window
-            reachable on the ordinary answer path too, not just on a stop.
+            (`POST /answers`) -- added in round 2 (`eeda393`, which both defines it
+            and calls it); round 3 only replaced its discriminator. Either way it
+            makes this window reachable on the ordinary answer path too, not just
+            on a stop.
 
         Reproduced for the interrupt case: the agent asks a question, the card is
         delivered and this generator suspends with it still at `queue[0]`; the
@@ -324,12 +347,41 @@ class PrototypeBuilder:
             #
             # That makes this marker deliberately optimistic: it means "handed to
             # the consumer", which is one step weaker than the pop's "consumer
-            # provably came back for more". Weaker is the correct direction here,
-            # because the two consequences are not symmetric -- a card wrongly
-            # believed delivered is at worst re-fetched via the session's own
-            # state, while a card wrongly believed undelivered is the 409 this
-            # is fixing. It never gates a POP, so it cannot cause event loss:
-            # the pop still requires the round trip to complete.
+            # provably came back for more". It never gates a POP, so it cannot
+            # cause event loss through the relay itself: the pop still requires
+            # the round trip to complete.
+            #
+            # THE MIRROR WINDOW, stated honestly because an earlier draft of this
+            # comment claimed a recovery that does not exist on this path. If the
+            # consumer is cancelled at its `__anext__` in the same tick the
+            # generator produced the value, asyncio DISCARDS that value while the
+            # event stays marked. Escalated through the real `PrototypeSession`:
+            # the value passed `send_message` (so `_pending_interrupt_id` was
+            # captured) but `gen()` never serialized it, the browser never saw the
+            # card, and a later `send_answers` returns True and leaves
+            # `_queue == []` -- destroying a card the user never saw. There is NO
+            # re-fetch that recovers it; the build simply stops asking.
+            #
+            # It is not reachable from the real UI today, and these are the two
+            # facts that make it unreachable -- both must stay true:
+            #   1. the prototype path exposes NO `GET /pending` route
+            #      (routes/prototypes.py; Discovery's turns.py:55 has one, this
+            #      does not), so nothing can re-surface a card out of band; and
+            #   2. `usePrototypeStream.ts:71-74` populates `pendingQuestions`
+            #      ONLY from the SSE `questions` event, so a card the browser
+            #      never received produces no form and no `POST /answers`.
+            # Adding a pending endpoint to this path, or another source for
+            # `pendingQuestions`, is therefore a KNOWN TRIGGER for this window and
+            # must come with a fix here.
+            #
+            # Why it is not simply closed: the generator cannot tell the two cases
+            # apart. Probed -- when a produced value is dropped by cancellation the
+            # generator receives NO signal whatsoever; its only signal is being
+            # resumed, which is precisely the pop site, and marking there is what
+            # round 3 measured to be too late (the pop site is never reached in the
+            # window this marker exists for). So the choice is which way to be
+            # wrong, and this direction is preferred because case 1/2 above make it
+            # unreachable while the opposite direction is the 409 users actually hit.
             #
             # Marked on the EVENT, not in an id()-keyed side table: `id()` is
             # reused after GC, so a later unrelated event could inherit a stale
