@@ -351,16 +351,32 @@ class PrototypeBuilder:
             # cause event loss through the relay itself: the pop still requires
             # the round trip to complete.
             #
-            # THE MIRROR WINDOW, stated honestly because an earlier draft of this
-            # comment claimed a recovery that does not exist on this path. If the
-            # consumer is cancelled at its `__anext__` in the same tick the
-            # generator produced the value, asyncio DISCARDS that value while the
-            # event stays marked. Escalated through the real `PrototypeSession`:
-            # the value passed `send_message` (so `_pending_interrupt_id` was
-            # captured) but `gen()` never serialized it, the browser never saw the
-            # card, and a later `send_answers` returns True and leaves
-            # `_queue == []` -- destroying a card the user never saw. There is NO
-            # re-fetch that recovers it; the build simply stops asking.
+            # THE MIRROR WINDOW. The mark can say "seen" for an event the browser
+            # never rendered, and the SEND SIDE is how that happens in production:
+            #
+            #   `gen()` (routes/prototypes.py) DOES receive the event and DOES
+            #   serialize it -- `_redacted(event).model_dump_json()` -- and then
+            #   `sse_starlette._stream_response` awaits `send(...)` with that
+            #   chunk (sse/py:364). If the client is gone, THAT await is where the
+            #   task dies, after the mark and after the frame was built but before
+            #   it reached the wire.
+            #
+            # Measured through the real `PrototypeSession`: wire frames `[]`, card
+            # marked delivered, `_pending_interrupt_id` captured, then
+            # `send_answers -> True` and `_queue == []` -- a card the user never
+            # saw, destroyed. There is NO re-fetch that recovers it; the build
+            # simply stops asking.
+            #
+            # NOT the trigger, though two earlier drafts of this comment said so:
+            # "the consumer is cancelled at its `__anext__` and asyncio discards
+            # the produced value." Under a plain `async for` -- which is exactly
+            # what `_stream_response:360` uses -- the mark, the iid capture and
+            # `model_dump_json()` all run in the SAME event-loop step, so no
+            # suspension separates them. Swept 90 real-time cancellation offsets
+            # plus 400 plain trials: that state occurred ZERO times. It is
+            # reachable only by wrapping `__anext__` in a task and abandoning its
+            # result -- which `run()` does for `next_msg`, but the SSE layer does
+            # not.
             #
             # It is not reachable from the real UI today, and these are the two
             # facts that make it unreachable -- both must stay true:
@@ -374,14 +390,21 @@ class PrototypeBuilder:
             # `pendingQuestions`, is therefore a KNOWN TRIGGER for this window and
             # must come with a fix here.
             #
-            # Why it is not simply closed: the generator cannot tell the two cases
-            # apart. Probed -- when a produced value is dropped by cancellation the
-            # generator receives NO signal whatsoever; its only signal is being
-            # resumed, which is precisely the pop site, and marking there is what
-            # round 3 measured to be too late (the pop site is never reached in the
-            # window this marker exists for). So the choice is which way to be
-            # wrong, and this direction is preferred because case 1/2 above make it
-            # unreachable while the opposite direction is the 409 users actually hit.
+            # Why it is not simply closed: the network write happens in a different
+            # coroutine entirely. This event travels a chain of async generators
+            # (`_relay_queue` -> `run` -> `PrototypeSession.send_message` ->
+            # `gen`), each of which suspends independently, and only the SSE layer
+            # driving that chain ever calls `send(...)`. Nothing reports the result
+            # back down the chain -- verified: at the moment `send()` runs, this
+            # generator is not on the stack at all. This generator's only signal
+            # succeeded is being resumed for the next item -- which is precisely the
+            # pop site, and round 3 measured that as too late, since in the window
+            # this marker exists for the pop site is never reached at all. A true
+            # "acknowledged" mark would need the ASGI send result plumbed back into
+            # the builder, which is a different design, not a tightening of this one.
+            # So the choice is only which way to be wrong, and this direction is
+            # preferred because facts 1/2 above make it unreachable from the UI while
+            # the opposite direction is the 409 users actually hit.
             #
             # Marked on the EVENT, not in an id()-keyed side table: `id()` is
             # reused after GC, so a later unrelated event could inherit a stale
@@ -777,10 +800,27 @@ class PrototypeBuilder:
         pop site: in this very window the pop site is never reached (measured),
         because the generator never resumes.
 
-        Still keyed by interrupt id, unlike `_drop_dead_question_cards`: only THIS
-        round has been fulfilled. A different round's card still owned here is
-        still answerable and must survive -- dropping it would be the original
-        message-loss defect wearing a different hat.
+        Still keyed by interrupt id, unlike `_drop_dead_question_cards` -- but the
+        honest reason is DEFENSIVENESS, not preserving something answerable, and an
+        earlier draft of this docstring claimed the latter. Measured:
+
+          - The keying only changes an outcome when TWO *delivered* `questions`
+            cards are owned simultaneously; otherwise `_was_delivered` alone
+            already decides every case.
+          - And a second round makes the first permanently unanswerable anyway,
+            because `_on_can_use_tool` overwrites the single `_pending_iid` slot:
+            with rounds A then B live, `submit_answers(iid_A)` returns False
+            (measured). So the card the keying preserves can now only produce a
+            409 -- it is not a card the user can act on.
+
+        It is kept regardless, for two reasons worth stating rather than dressing
+        up: dropping another round's event is a strictly wider blast radius than
+        keeping it, and `_pending_iid` being a single slot is not a property this
+        method should depend on -- if the builder ever tracks concurrent rounds,
+        unkeyed dropping silently becomes the message-loss defect wearing a
+        different hat. `test_answering_one_round_does_not_retire_a_different_rounds_card`
+        pins the keying with BOTH cards marked delivered, which is the only shape
+        in which the keying is load-bearing.
 
         Not a loss: the answers this call carries are that event's entire purpose,
         so a delivered card has been fulfilled rather than discarded.

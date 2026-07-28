@@ -692,11 +692,26 @@ async def test_answering_one_round_does_not_retire_a_different_rounds_card(
     """The drop is keyed by interrupt id, not by kind.
 
     `_drop_dead_question_cards` is unconditional because its callers kill the
-    whole turn; this one must not be. A card for a DIFFERENT round that is still
-    owned is still answerable, and dropping it would be the original
-    message-loss defect wearing a different hat.
+    whole turn; this one must not be.
+
+    THE `other` CARD IS MARKED DELIVERED, and that is the whole point of the
+    setup. An earlier version left it unmarked, which made this test vacuous:
+    round 3's `_was_delivered(ev)` predicate saved it on its own, so mutating the
+    keying condition away left the suite green (measured: 656 passed). Keying is
+    load-bearing in exactly ONE shape -- two DELIVERED question cards owned at
+    once -- so that is the shape this test has to build.
+
+    On what the keying buys, stated as measured rather than as hoped: the
+    surviving card is NOT answerable, because `_on_can_use_tool` overwrites the
+    single `_pending_iid` slot and a later round makes an earlier one return False
+    from `submit_answers`. The keying is defensiveness -- keeping another round's
+    event is a strictly narrower blast radius than dropping it, and this method
+    should not silently depend on `_pending_iid` being single-slot. See
+    `_drop_answered_question_card`'s docstring.
     """
     import json
+
+    from pathfinder.proto.builder import _mark_delivered, _was_delivered
 
     holder = {}
     b = _builder(tmp_path, DetachedQuestionClient(lambda: holder["b"]))
@@ -709,13 +724,19 @@ async def test_answering_one_round_does_not_retire_a_different_rounds_card(
             break
     await agen.aclose()
 
-    # A second, unrelated round's card also sitting owned in the queue.
+    # A second, unrelated round's card also sitting owned in the queue -- and
+    # DELIVERED, so `_was_delivered` cannot be what spares it.
     other = AgentEvent(kind="questions",
                        payload=json.dumps({"interrupt_id": "i-OTHER",
                                            "questions": {"name": "other"}}))
+    _mark_delivered(other)
     b._queue.append(other)
 
     iid = json.loads(b._pending_payload)["interrupt_id"]
+    # Premises: both cards are delivered, so only the id keying separates them.
+    assert all(_was_delivered(e) for e in b._queue if e.kind == "questions")
+    assert iid != "i-OTHER"
+
     assert await b.submit_answers(iid, {"1": "A"}) is True
 
     remaining = [_iid(e) for e in b._queue if e.kind == "questions"]
@@ -914,18 +935,47 @@ def test_the_two_facts_that_keep_the_mirror_window_unreachable(tmp_path):
     assert not [p for p in proto_paths if "pending" in p], proto_paths
 
     # Fact 2: usePrototypeStream populates pendingQuestions ONLY from the SSE
-    # `questions` event. Every other touch must be a CLEAR (set to null), never a
-    # populate from some other source.
+    # `questions` event. Every other mention must be a CLEAR (set to null).
+    #
+    # Counts REFERENCES to the setter rather than matching a source line, because
+    # the line-matching version was brittle in both directions (measured): a
+    # behavior-identical brace reflow failed it, while a genuine second populate
+    # written as `.then(setPendingQuestions)` -- the setter passed as a callback,
+    # so the literal `setPendingQuestions(` never appears -- passed it.
+    #
+    # Every reference is counted, then the known-good ones are subtracted:
+    #   - the `useState` declaration,
+    #   - `setPendingQuestions(null)` clears (any number; they cannot arm this),
+    #   - exactly ONE populate, inside the `questions` branch.
+    # Anything left over is an unaccounted-for use, including a bare callback
+    # reference. That makes the check robust to formatting while still catching
+    # the aliased/callback form.
     hook = (Path(__file__).resolve().parents[2]
             / "frontend" / "lib" / "usePrototypeStream.ts")
     if not hook.exists():                       # backend-only checkout
         import pytest
         pytest.skip("frontend not present in this checkout")
-    populating = [
-        line.strip() for line in hook.read_text(encoding="utf-8").splitlines()
-        if "setPendingQuestions(" in line and "setPendingQuestions(null)" not in line
-    ]
-    assert populating == ["if (parsed) setPendingQuestions(parsed);"], populating
+    text = hook.read_text(encoding="utf-8")
+
+    total = text.count("setPendingQuestions")
+    declarations = text.count("] = useState<QuestionsPayload | null>")
+    clears = text.count("setPendingQuestions(null)")
+    populates = text.count("setPendingQuestions(parsed)")
+
+    assert declarations == 1, f"expected one useState declaration, got {declarations}"
+    assert populates == 1, (
+        f"expected exactly ONE populate of pendingQuestions, found {populates} -- "
+        "a second populate source arms the mirror window; see _relay_queue")
+    unaccounted = total - declarations - clears - populates
+    assert unaccounted == 0, (
+        f"{unaccounted} unaccounted-for reference(s) to setPendingQuestions. A "
+        "reference that is neither the declaration, a null-clear, nor the single "
+        "`questions`-branch populate (e.g. `.then(setPendingQuestions)`) is a new "
+        "populate source and arms the mirror window; see _relay_queue's comment.")
+    # The one populate really is inside the SSE `questions` branch.
+    assert 'if (ev.kind === "questions")' in text
+    questions_branch = text.split('if (ev.kind === "questions")', 1)[1][:300]
+    assert "setPendingQuestions(parsed)" in questions_branch
 
 
 def _iid(event):
