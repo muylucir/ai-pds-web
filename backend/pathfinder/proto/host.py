@@ -55,7 +55,13 @@ class ProtoHost:
     assumptions; a restart loses the running subprocess anyway).
     """
 
-    def __init__(self, root: Path, port_range: range = range(4001, 4051)):
+    # 4000-7999. Both ends matter: 3000 is the frontend dev server and 8000 is
+    # this backend, so the range deliberately stops short of 8000 rather than
+    # extending to a round number. Wide (4000 ports) even though
+    # PATHFINDER_PROTO_MAX_CONCURRENT caps live builds at 2 -- `_scan_port`
+    # probes sequentially and skips anything already bound, so leftovers from a
+    # previous process cost a few probes, not a wedged start.
+    def __init__(self, root: Path, port_range: range = range(4000, 8000)):
         # No `s3`: the build directory IS the served tree now (the builder
         # writes straight into it), so hosting no longer round-trips a bundle
         # through S3 -- which also means binary assets stop being mangled by
