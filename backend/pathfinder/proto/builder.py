@@ -180,11 +180,59 @@ class PrototypeBuilder:
         self._pending_payload: str | None = None
         self._pending_iid: str | None = None
 
-    def drain_queue(self) -> list[AgentEvent]:
-        out = []
+    # There is deliberately NO `drain_queue()` batch pop here anymore. A batch
+    # pop moves events out of the queue that OWNS them and into the caller's
+    # frame, which `GeneratorExit` destroys -- so every one not yet yielded is
+    # lost when the consumer walks away mid-sequence (SSE disconnect, proxy
+    # timeout, navigation; routes/prototypes.py's EventSourceResponse takes
+    # that path routinely). Reproduced on this file before the fix: three
+    # `file_changed` events queued by one MultiEdit burst, consumer takes the
+    # first and disconnects -> `_queue == []` and the other two reached no
+    # consumer, this turn or any later one. Its Discovery-side twin was deleted
+    # for the same reason (claude_driver.py:537) -- a method whose SHAPE is the
+    # bug invites reintroduction at the next call site, so every consumer of
+    # `_queue` goes through `_relay_queue` instead.
+
+    async def _relay_queue(self) -> AsyncIterator[AgentEvent]:
+        """Yield queued hook/callback events, popping each only AFTER delivery.
+
+        The ownership rule, copied verbatim in effect from
+        claude_driver._relay_queue / `_pump`'s `relay` closure (read those for
+        the full argument -- it survived five review rounds there):
+
+            An event lives in exactly one place that outlives this generator,
+            and it leaves that place only after the consumer has actually
+            received it.
+
+        `queue[0]` -> `yield` -> `pop(0)`, never `pop(0)` -> `yield`, is the
+        whole fix. Reaching the line after the `yield` IS the proof of
+        delivery: it only runs when the consumer came back for the next item.
+        So a consumer abandoned at any `yield` leaves the remainder still owned
+        by `self._queue`, and the next turn's poll loop relays it.
+
+        The identity re-check before popping is DEFENSIVE, and honestly so: the
+        `yield` hands control to the scheduler, and the callbacks run on the
+        SDK's own tasks -- but they only ever APPEND, so today the head cannot
+        change under us and `pop(0)` would be equivalent. Instrumented across the
+        whole suite, the guard never fires, and mutating it away breaks no test.
+        It stays because it makes the pop correct under any future producer that
+        does touch the head (a dedupe, a priority bump), and because it is the
+        shape claude_driver._relay_queue settled on. No test pins it; claiming
+        otherwise would be the kind of green-but-vacuous assertion this file's
+        header warns about.
+
+        Accepts at-least-once delivery at the abandonment boundary -- a consumer
+        cancelled at its `__anext__` await AFTER this generator produced the
+        value leaves the event un-popped, so the next turn relays it again.
+        That is the deliberate trade the Discovery driver made and it holds here
+        too: see the duplicate-safety note on `_on_post_tool_use`.
+        """
         while self._queue:
-            out.append(self._queue.pop(0))
-        return out
+            ev = self._queue[0]
+            yield ev
+            # Reached only if the consumer came back for the next item.
+            if self._queue and self._queue[0] is ev:
+                self._queue.pop(0)
 
     async def _ensure_client(self):
         if self._client is None:
@@ -193,6 +241,40 @@ class PrototypeBuilder:
             await self._client.connect()
         return self._client
 
+    # DUPLICATE-DELIVERY SAFETY for the prototype path, checked against these
+    # consumers rather than inherited from the Discovery ruling.
+    #
+    # `_relay_queue` pops only after delivery, so the one item in flight when a
+    # consumer is cancelled at its `__anext__` is re-sent on the next turn:
+    # at-least-once, never at-most-once (the alternative loses it outright,
+    # which is the defect). What a duplicate does to the prototype tab, per kind:
+    #
+    #   file_changed -> usePrototypeStream.ts:68-70 dedupes by path
+    #                   (`prev.includes(path) ? prev : [...prev, path]`), so
+    #                   `changedPaths` is idempotent. The trace entry (line 85-87)
+    #                   does append a second row -- cosmetic, in a collapsed
+    #                   "추론 과정" accordion, and it accurately reports that the
+    #                   file was written.
+    #   status       -> trace-only, same append-only cosmetic story.
+    #   message      -> NOT queued here; messages come from `_translate`, never
+    #                   through this queue, so text cannot be doubled by it.
+    #   questions    -> the ONE kind a duplicate would harm: a re-shown card
+    #                   whose future is gone answers with a 409
+    #                   (routes/prototypes.py:212). Handled structurally instead
+    #                   of by luck -- `_drop_dead_question_cards` removes it at
+    #                   exactly the two points its answerer dies (interrupt,
+    #                   disconnect). A card whose future is still LIVE is
+    #                   correctly re-shown: it is still answerable.
+    #   stage/document -> never produced on this path at all. The prototype
+    #                   builder has no report_stage/submit_document tools (those
+    #                   are Discovery's, agent/tools.py), and
+    #                   usePrototypeStream has no stage/document branch. So the
+    #                   brief's "document panel and artifact list" concern maps
+    #                   here to `changedPaths` only, which is dedupe-safe.
+    #
+    # Conclusion: the Discovery ruling does transfer, but for a reason that had
+    # to be re-checked -- this tab's reducers are dedupe-by-path or append-only
+    # cosmetic, and the one non-idempotent kind is dropped at its death points.
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
         name = input_data.get("tool_name", "")
         if name in _FILE_TOOLS:
@@ -303,6 +385,9 @@ class PrototypeBuilder:
         self._interrupted = False
         self._last_status: str | None = None
         next_msg: asyncio.Future | None = None
+        # The turn's ONE terminal event, held rather than yielded the moment
+        # `_translate` produces it -- see the terminal harvest after the loop.
+        terminal: AgentEvent | None = None
         try:
             client = await self._ensure_client()
             await client.query(text)
@@ -317,7 +402,13 @@ class PrototypeBuilder:
             while True:
                 assert next_msg is not None  # loop invariant (narrows Optional)
                 done, _ = await asyncio.wait({next_msg}, timeout=0.05)
-                for ev in self.drain_queue():
+                # CALL SITE 1 -- the normal turn's per-poll relay. This is the
+                # one that runs thousands of times a build and the one the
+                # reproduction hit: a MultiEdit burst queues three
+                # `file_changed` events, the SSE client disconnects after the
+                # first, and the batch pop took the other two down with the
+                # frame. `_relay_queue` leaves them owned instead.
+                async for ev in self._relay_queue():
                     yield ev
                 if not done:
                     continue
@@ -326,9 +417,22 @@ class PrototypeBuilder:
                 except StopAsyncIteration:
                     break
                 for ev in self._translate(msg):
-                    if ev.kind == "done" and self._interrupted:
-                        yield AgentEvent(kind="status", text="interrupted")
+                    if ev.kind == "done":
+                        # HELD, not yielded here. `done` used to go out the
+                        # moment the ResultMessage was translated, which put it
+                        # AHEAD of the post-loop queue relay (old call site 4)
+                        # -- and sse.ts:29 closes the EventSource on `done`, so
+                        # every event that relay yielded afterwards was dropped
+                        # client-side. The terminal harvest below drains the
+                        # queue first and emits this last.
+                        terminal = ev
+                        continue
                     yield ev
+                if terminal is not None:
+                    # The SDK's receive_response() returns right after the
+                    # ResultMessage, so re-arming would only buy a
+                    # StopAsyncIteration on an already-finished iterator.
+                    break
                 next_msg = asyncio.ensure_future(agen.__anext__())
         except asyncio.CancelledError:
             # interrupt() cancels the pending-question future; that
@@ -340,14 +444,23 @@ class PrototypeBuilder:
             # _interrupted unset and must propagate untouched.
             if not self._interrupted:
                 raise
-            for ev in self.drain_queue():
+            # CALL SITE 2 -- the interrupt path. Relayed BEFORE the terminal
+            # pair for the same sse.ts:29 reason as everywhere else: whatever
+            # the agent wrote just before the user hit stop is real work, and
+            # anything emitted after `done` never reaches onEvent.
+            async for ev in self._relay_queue():
                 yield ev
             yield AgentEvent(kind="status", text="interrupted")
             yield AgentEvent(kind="done")
             return
         except Exception:
             _log.exception("sdk turn failed")
-            for ev in self.drain_queue():
+            # CALL SITE 3 -- the error path. Order matters here specifically:
+            # sse.ts:29 closes the EventSource on `error` as well as on `done`,
+            # so a queue relayed after the terminal event is silently dropped
+            # client-side and the artifact list ends the turn disagreeing with
+            # what the agent actually wrote.
+            async for ev in self._relay_queue():
                 yield ev
             yield AgentEvent(kind="error", text="agent turn failed")
             return
@@ -359,8 +472,43 @@ class PrototypeBuilder:
             # asyncio logs "Task was destroyed but it is pending!".
             if next_msg is not None and not next_msg.done():
                 next_msg.cancel()
-        for ev in self.drain_queue():
-            yield ev
+        # CALL SITE 4 -- the terminal exit, reached only on a NORMAL loop exit
+        # (both `except` arms return, so this is the success path only).
+        #
+        # What actually changed here vs. the old shape: the old code yielded
+        # `done` EAGERLY, the moment `_translate` produced it, and then drained
+        # the queue below -- i.e. after the terminal event. sse.ts:29 /
+        # prototypes.ts:164 close the EventSource on `done`, so those events were
+        # written by the backend and dropped by the client. Holding `terminal`
+        # and emitting it last is that fix.
+        #
+        # HONEST NOTE on the drain below: it is DEFENSIVE, not load-bearing, and
+        # measured to be so -- instrumented across the whole suite, this line is
+        # reached 13 times and `self._queue` is empty every single time. That is
+        # structural rather than lucky: the loop's own relay (call site 1) runs
+        # at the top of every pass and drains the queue to exhaustion, and
+        # between that last drain and the `break` there is no suspension point
+        # for a hook to append through (`_translate` is synchronous, and a
+        # ResultMessage translates to the terminal event alone, so no `yield`
+        # intervenes). Mutating this drain to run AFTER the terminal event
+        # therefore changes no observable behavior. It stays because it costs
+        # nothing and it keeps the invariant true under future edits that DO add
+        # a suspension there -- but no test pins its ordering, because no test
+        # honestly can.
+        while self._queue:
+            async for ev in self._relay_queue():
+                yield ev
+        if self._interrupted:
+            # Moved here from inside `_translate`'s loop along with `done`, so
+            # the interrupt marker stays immediately before the terminal event
+            # rather than being emitted at translate time and separated from it
+            # by the harvest above.
+            yield AgentEvent(kind="status", text="interrupted")
+        # Exactly one terminal event, always LAST. `terminal` is None only when
+        # the message stream ended with no ResultMessage at all; that yielded
+        # ZERO terminal events before this change, which hangs the SSE client
+        # forever (sse.ts only closes on done/error/transport failure).
+        yield terminal if terminal is not None else AgentEvent(kind="done")
 
     async def interrupt(self) -> None:
         if self._client is None or not self._turn_active:
@@ -378,7 +526,28 @@ class PrototypeBuilder:
         self._pending_payload = None
         self._pending_question = None
         self._pending_iid = None
+        self._drop_dead_question_cards()
         await self._client.interrupt()
+
+    def _drop_dead_question_cards(self) -> None:
+        """Drop any `questions` event still OWNED by `self._queue`.
+
+        A consequence of the delivery-then-pop ownership rule, and the one place
+        it needs a counterweight. If a turn was abandoned while its `questions`
+        event was being delivered, that event correctly stays at the head of the
+        queue for the next turn to relay -- which is what stops the loss. But
+        once the question's future has been cancelled (interrupt) or its
+        subprocess torn down (disconnect), no `submit_answers` can ever resolve
+        it: relaying it later hands the user a card that looks live, and
+        answering it gets a 409 from routes/prototypes.py because the session's
+        `_pending_interrupt_id` no longer matches.
+
+        So it is dropped exactly where the thing that could ANSWER it dies --
+        never merely because a consumer walked away. Mirrors the same two lines
+        in claude_driver.disconnect (claude_driver.py:1242), which is where this
+        hole was found on the Discovery side.
+        """
+        self._queue[:] = [ev for ev in self._queue if ev.kind != "questions"]
 
     async def submit_answers(self, interrupt_id: str,
                              answers: dict[str, str]) -> bool:
@@ -394,7 +563,20 @@ class PrototypeBuilder:
 
     async def disconnect(self) -> None:
         """Tear down the claude subprocess. Idempotent -- close() and the idle
-        timer can both reach here."""
+        timer can both reach here.
+
+        Also clears the pending question and drops any `questions` event still
+        owned by the queue: the future that would resolve it dies with the
+        subprocess, so a later turn relaying that card would be advertising a
+        question nothing can answer. Same reasoning as interrupt() above --
+        see `_drop_dead_question_cards`.
+        """
+        if self._pending_question is not None and not self._pending_question.done():
+            self._pending_question.cancel()
+        self._pending_payload = None
+        self._pending_question = None
+        self._pending_iid = None
+        self._drop_dead_question_cards()
         client, self._client = self._client, None
         if client is None:
             return

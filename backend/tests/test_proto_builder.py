@@ -85,7 +85,10 @@ async def test_post_tool_hook_emits_file_changed(tmp_path):
         {"tool_name": "Write",
          "tool_input": {"file_path": f"{tmp_path}/prototype/app.js"}},
         "toolu_1", None)
-    assert b.drain_queue() == [
+    # Asserts on the queue itself rather than the deleted drain_queue(): the
+    # hook's behavior under test is unchanged, only the batch-pop accessor is
+    # gone (it WAS the message-loss defect -- see _relay_queue).
+    assert b._queue == [
         AgentEvent(kind="file_changed", path="prototype/app.js")]
 
 
@@ -94,7 +97,7 @@ async def test_post_tool_hook_rejects_escape(tmp_path):
     await b._on_post_tool_use(
         {"tool_name": "Write", "tool_input": {"file_path": "/etc/passwd"}},
         "toolu_1", None)
-    events = b.drain_queue()
+    events = b._queue
     assert [e.kind for e in events] == ["status"]
     assert "outside workspace" in events[0].text
 
