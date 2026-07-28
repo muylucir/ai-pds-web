@@ -36,6 +36,32 @@ _LETTERS = "ABCDEFGHIJ"
 DEFAULT_PERMISSION_MODE = "bypassPermissions"
 
 
+# Marks an AgentEvent as having been handed to the consumer. Set at the `yield`
+# in `_relay_queue` (see the comment there for why not after it) and read only by
+# `_drop_answered_question_card`.
+#
+# A private attribute rather than an AgentEvent field on purpose: `kind` and the
+# event shape ARE the frontend contract (models.py), and this is purely internal
+# bookkeeping that must never reach the browser. `object.__setattr__` because
+# pydantic BaseModel validates ordinary attribute assignment; verified that
+# `model_dump_json()` is byte-identical with the mark set, so
+# routes/prototypes.py's `_redacted(event).model_dump_json()` is unaffected.
+#
+# The mark lives on the object `self._queue` holds, which is the same object
+# `_drop_answered_question_card` inspects. `_redacted()` takes a `model_copy` for
+# the wire and that copy does NOT carry the mark -- harmless precisely because
+# the copy is never put back on the queue: it is serialized and discarded.
+_DELIVERED_ATTR = "_pf_delivered"
+
+
+def _mark_delivered(event: AgentEvent) -> None:
+    object.__setattr__(event, _DELIVERED_ATTR, True)
+
+
+def _was_delivered(event: AgentEvent) -> bool:
+    return getattr(event, _DELIVERED_ATTR, False) is True
+
+
 def _interrupt_id_of(event: AgentEvent) -> str | None:
     """The interrupt_id inside a `questions` event's payload, or None.
 
@@ -237,10 +263,17 @@ class PrototypeBuilder:
         has a head-MUTATING producer, and it is reachable precisely while this
         generator is suspended at its `yield`.
 
-        `_drop_dead_question_cards()` rewrites the list in place
-        (`self._queue[:] = [...]`), and `interrupt()` calls it from a SEPARATE
-        request (`POST /interrupt`) while the turn's generator is parked
-        mid-delivery. Reproduced: the agent asks a question, the card is
+        There are TWO such producers, both rewriting the list in place
+        (`self._queue[:] = [...]`), and both invoked from a SEPARATE HTTP request
+        that can land while this generator is parked mid-delivery:
+
+          - `_drop_dead_question_cards()`, from `interrupt()` (`POST /interrupt`)
+            and from `disconnect()` (idle timer / `DELETE /session`).
+          - `_drop_answered_question_card()`, from `submit_answers()`
+            (`POST /answers`) -- the round-3 addition, which makes this window
+            reachable on the ordinary answer path too, not just on a stop.
+
+        Reproduced for the interrupt case: the agent asks a question, the card is
         delivered and this generator suspends with it still at `queue[0]`; the
         agent's last `Write` queues `file_changed: realwork.js` BEHIND it; the
         user hits stop; the drop removes the head and shifts `realwork.js` into
@@ -250,6 +283,11 @@ class PrototypeBuilder:
         eliminate -- and the whole suite still passes, which is why
         `test_a_head_mutation_during_a_suspended_relay_does_not_eat_the_next_event`
         exists to pin it.
+
+        So the guard is not merely load-bearing for one caller: it is what makes
+        EVERY out-of-band queue rewrite safe to perform while a relay is
+        suspended, and it is the reason those two methods can filter the queue at
+        all without auditing what the parked generator happens to be holding.
 
         Accepts at-least-once delivery at the abandonment boundary -- a consumer
         cancelled at its `__anext__` await AFTER this generator produced the
@@ -273,6 +311,33 @@ class PrototypeBuilder:
         """
         while self._queue:
             ev = self._queue[0]
+            # HANDED OUT, recorded BEFORE the yield rather than after it.
+            #
+            # `_drop_answered_question_card` needs to know whether the consumer
+            # has already seen this event, and the pop site below cannot tell it:
+            # in the exact window that matters the pop site is NEVER REACHED.
+            # Measured -- the card is yielded, sse_starlette hands the frame to
+            # the client and then awaits the network write, the client is gone so
+            # that await is where the task dies, and this generator stays
+            # suspended at the `yield` forever. So "delivered" has to be recorded
+            # on the near side of the suspension.
+            #
+            # That makes this marker deliberately optimistic: it means "handed to
+            # the consumer", which is one step weaker than the pop's "consumer
+            # provably came back for more". Weaker is the correct direction here,
+            # because the two consequences are not symmetric -- a card wrongly
+            # believed delivered is at worst re-fetched via the session's own
+            # state, while a card wrongly believed undelivered is the 409 this
+            # is fixing. It never gates a POP, so it cannot cause event loss:
+            # the pop still requires the round trip to complete.
+            #
+            # Marked on the EVENT, not in an id()-keyed side table: `id()` is
+            # reused after GC, so a later unrelated event could inherit a stale
+            # "delivered" mark. `_mark_delivered` uses a private attribute rather
+            # than an AgentEvent field, so the wire contract (models.py, and the
+            # fixed `kind` set) is untouched and nothing new is serialized to the
+            # browser.
+            _mark_delivered(ev)
             yield ev
             # Reached only if the consumer came back for the next item.
             if self._queue and self._queue[0] is ev:
@@ -483,13 +548,23 @@ class PrototypeBuilder:
                     # so its cleanup runs at GC / loop `shutdown_asyncgens()`
                     # instead of here. Measured and accepted -- no
                     # "async generator ignored GeneratorExit", no "Task was
-                    # destroyed but it is pending", no leaked tasks -- because
-                    # the object that actually owns the subprocess and the anyio
-                    # streams is the CLIENT, and `disconnect()` closes the query
-                    # independently of this iterator. Driving the generator one
-                    # more step to reach its `return` would mean awaiting a
-                    # message that never comes, which is the stall this poll loop
-                    # exists to avoid.
+                    # destroyed but it is pending", no leaked tasks over 25 turns
+                    # under asyncio debug mode -- because the object that actually
+                    # owns the subprocess and the anyio streams is the CLIENT, and
+                    # `disconnect()` closes the query independently of this
+                    # iterator.
+                    #
+                    # To be precise about the cost, since an earlier draft of this
+                    # comment got it backwards and contradicted the two lines
+                    # above: re-arming would NOT hang. `receive_response()`
+                    # returns immediately after the ResultMessage, so the next
+                    # `__anext__()` raises StopAsyncIteration promptly (measured)
+                    # -- which is exactly what those two lines say, and it would
+                    # also finalize the generator. What the `break` buys is
+                    # therefore not stall-avoidance but simplicity: it skips one
+                    # more scheduler round trip and an exception whose only
+                    # purpose is to re-derive a fact we already know, at the cost
+                    # of deferring a cleanup that owns nothing.
                     break
                 next_msg = asyncio.ensure_future(agen.__anext__())
         except asyncio.CancelledError:
@@ -613,57 +688,56 @@ class PrototypeBuilder:
         self._queue[:] = [ev for ev in self._queue if ev.kind != "questions"]
 
     def _drop_answered_question_card(self, interrupt_id: str) -> None:
-        """Drop the owned `questions` event for the round just ANSWERED, but only
-        when no live turn is left to deliver it.
+        """Retire the owned `questions` event for the round just ANSWERED --
+        but only if the consumer has ALREADY SEEN it.
 
         The third drop point, ported from claude_driver.py:1181-1183 (its
         `run_answers`). Without it, a successfully answered question can be
-        re-shown -- a regression this ownership change introduced, since the old
+        re-shown: a regression this ownership change introduced, since the old
         batch pop had already destroyed the event.
 
-        Reproduced end-to-end: turn 1 delivers the card and the SSE stream dies at
-        that very `yield`, leaving it owned (correct -- that is the fix). The
-        pending future is NOT dead, because `can_use_tool` runs on a detached SDK
-        task (claude_agent_sdk/_internal/query.py:231 `spawn_detached`), not on
-        the abandoned generator -- so the user answering from the still-open tab
-        reaches `submit_answers`, it returns True, and the turn genuinely
-        continues. But the queue still owned the card, so the next turn relayed
-        it: a question the user already answered, and answering it again returns
-        False -> 409 (routes/prototypes.py:212) -> "답변을 제출하지 못했습니다".
+        Reproduced end-to-end through the real `PrototypeSession`: the card is
+        delivered and appears on screen; sse_starlette then awaits the network
+        write, the client is gone, and the task dies THERE -- leaving `gen()`,
+        `send_message`, `run` and `_relay_queue` all suspended at their yields
+        with the card still owned. The pending future survives, because
+        `can_use_tool` runs on a detached SDK task
+        (claude_agent_sdk/_internal/query.py:231 `spawn_detached`), not on the
+        abandoned generator. So the user answers from the still-open tab,
+        `submit_answers` returns True -- and the next turn relayed the card again:
+        a question already answered, whose re-answer returns False -> 409
+        (routes/prototypes.py:212) -> "답변을 제출하지 못했습니다".
 
-        THE `_turn_active` GUARD IS NOT OPTIONAL, and this is where the port had
-        to diverge from the reference rather than copy it. Discovery's `_pump`
-        TERMINATES on a `questions` event (module docstring: yield questions, then
-        done, then return), so by the time its `run_answers` drops the card there
-        is provably no generator left that could deliver it. builder.py is the
-        opposite: it keeps ONE stream open across the whole answer round trip, so
-        the common case is a LIVE `run()` still parked in its poll loop that has
-        not relayed the card yet -- answers can arrive that fast, and
-        test_question_roundtrip drives exactly that. Dropping unconditionally
-        there retires the card out from under the live generator and the user never
-        sees the question at all (measured: consumer received `['done']`, the
-        question silently vanished). Caught by that pre-existing test, which was
-        the authority.
+        WHY THE DISCRIMINATOR IS DELIVERY AND NOT TURN LIVENESS. Round 2 used
+        `_turn_active`, and it is simply the wrong signal: BOTH cases have it
+        True at answer time.
 
-        So: `_turn_active` False means the turn that owned this card is gone and
-        nothing will ever relay it -> retire it. True means a live generator will
-        deliver it on its next pass -> leave it alone; it is not stale yet, and
-        the SSE stream the user is watching is where it belongs.
+          - live `run()` that has NOT yet relayed the card -- must NOT drop, or
+            the card is retired out from under the live generator and the user
+            never sees the question at all (measured: consumer got `['done']`;
+            caught by the pre-existing test_question_roundtrip, which was right).
+          - card already delivered, stream then died before the next `__anext__`
+            -- MUST drop, or it is re-shown and 409s.
 
-        Keyed by interrupt id, unlike `_drop_dead_question_cards`: only THIS round
-        has been fulfilled. A different round's card still owned here is still
-        answerable and must survive -- dropping it would be the original
+        `_turn_active` cannot separate those; "has the consumer seen it" can, and
+        that is exactly what `_mark_delivered` records at the `yield` in
+        `_relay_queue`. Note the mark has to be set BEFORE the yield, not at the
+        pop site: in this very window the pop site is never reached (measured),
+        because the generator never resumes.
+
+        Still keyed by interrupt id, unlike `_drop_dead_question_cards`: only THIS
+        round has been fulfilled. A different round's card still owned here is
+        still answerable and must survive -- dropping it would be the original
         message-loss defect wearing a different hat.
 
         Not a loss: the answers this call carries are that event's entire purpose,
-        so it has been fulfilled rather than discarded.
+        so a delivered card has been fulfilled rather than discarded.
         """
-        if self._turn_active:
-            return
         self._queue[:] = [
             ev for ev in self._queue
             if not (ev.kind == "questions"
-                    and _interrupt_id_of(ev) == interrupt_id)]
+                    and _interrupt_id_of(ev) == interrupt_id
+                    and _was_delivered(ev))]
 
     async def submit_answers(self, interrupt_id: str,
                              answers: dict[str, str]) -> bool:

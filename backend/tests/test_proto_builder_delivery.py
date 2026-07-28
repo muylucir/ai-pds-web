@@ -762,6 +762,128 @@ async def test_answering_a_LIVE_turn_does_not_retire_its_undelivered_card(
     assert kinds[-1] == "done", kinds
 
 
+async def test_a_DELIVERED_card_is_retired_even_though_the_turn_is_still_active(
+        tmp_path):
+    """Round 3: the discriminator is DELIVERY, not turn liveness.
+
+    Round 2 used `_turn_active`, which cannot separate the two cases -- BOTH have
+    it True at answer time:
+
+      - live `run()` that has not relayed the card yet -> must NOT drop
+        (test_answering_a_LIVE_turn_does_not_retire_its_undelivered_card, and
+        the pre-existing test_question_roundtrip).
+      - card already DELIVERED, stream then died before the next `__anext__`
+        -> must drop, or it is re-shown and 409s.
+
+    This is the second case, and it needs no exotic timing: sse_starlette hands
+    the frame to the client and then awaits the network write; if the client is
+    gone the task dies at that await, leaving this generator suspended at the
+    `yield` with the card delivered but never popped. Note `_turn_active` is
+    still True here -- that is the whole point.
+
+    Asserted on what TURN 2's consumer receives, which is where the difference
+    actually shows; asserting on builder end state is what let `_turn_active`
+    look correct.
+    """
+    import json
+
+    holder = {}
+    b = _builder(tmp_path, DetachedQuestionClient(lambda: holder["b"]))
+    holder["b"] = b
+
+    delivered_to_client = []
+    stalled = asyncio.Event()
+
+    async def sse_like():
+        """routes/prototypes.py's gen() + sse_starlette's write loop."""
+        async for ev in b.run("go"):
+            delivered_to_client.append(ev)
+            if ev.kind == "questions":
+                await stalled.wait()          # network write never completes
+
+    task = asyncio.ensure_future(sse_like())
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        if delivered_to_client:
+            break
+    assert [e.kind for e in delivered_to_client] == ["questions"]   # premise: SEEN
+    task.cancel()                                                  # client gone
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    # Premises that make this the case round 2 got wrong.
+    assert b._turn_active is True, "premise: turn liveness cannot discriminate"
+    assert any(e.kind == "questions" for e in b._queue), "premise: still owned"
+
+    assert await b.submit_answers(
+        json.loads(b._pending_payload)["interrupt_id"], {"1": "A"}) is True
+    assert not any(e.kind == "questions" for e in b._queue)
+
+    # The generator is abandoned; let it finalize so a retry is admitted, exactly
+    # as a reconnecting browser does.
+    import gc
+    del task
+    gc.collect()
+    for _ in range(20):
+        await asyncio.sleep(0.02)
+        if not b._turn_active:
+            break
+
+    turn2 = [ev async for ev in b.run("again")]
+    kinds = [e.kind for e in turn2]
+    assert "questions" not in kinds, kinds      # no already-answered card
+    assert kinds[-1] == "done", kinds
+
+
+async def test_the_identity_guard_also_protects_the_answers_drop_path(tmp_path):
+    """`_drop_answered_question_card` is the SECOND head-mutating producer.
+
+    Round 3 added it, and it runs from `POST /answers` -- so the out-of-band
+    queue-rewrite window the identity guard exists for is now reachable on the
+    ordinary answer path, not only on a stop. Same shape as the interrupt test:
+    delivered card at `queue[0]`, real work queued behind it, the drop removes
+    the head and shifts that work into slot 0 while the relay is parked.
+    """
+    import json
+
+    holder = {}
+    b = _builder(tmp_path, DetachedQuestionClient(lambda: holder["b"]))
+    holder["b"] = b
+
+    received = []
+    agen = b.run("go").__aiter__()
+    while True:
+        ev = await agen.__anext__()
+        received.append(ev)
+        if ev.kind == "questions":
+            break
+    await _queue_writes(b, "realwork.js")
+    assert [e.kind for e in b._queue] == ["questions", "file_changed"]
+
+    # POST /answers lands while the relay is suspended -> rewrites the queue.
+    assert await b.submit_answers(
+        json.loads(b._pending_payload)["interrupt_id"], {"1": "A"}) is True
+    assert [e.path for e in b._queue] == ["prototype/realwork.js"], \
+        "premise: the drop must have shifted realwork.js into slot 0"
+
+    nxt = asyncio.ensure_future(agen.__anext__())
+    await asyncio.sleep(0.3)
+    if nxt.done():
+        received.append(nxt.result())
+    else:
+        nxt.cancel()
+        try:
+            await nxt
+        except asyncio.CancelledError:
+            pass
+
+    paths = [e.path for e in received if e.kind == "file_changed"]
+    assert "prototype/realwork.js" in paths, [
+        (e.kind, e.path or e.text) for e in received]
+
+
 def _iid(event):
     import json
     return json.loads(event.payload)["interrupt_id"]
