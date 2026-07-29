@@ -60,12 +60,23 @@ class FakePrototypeSession:
         self.interrupts += 1
 
     async def close(self):
+        # Mirrors the real PrototypeSession.close() contract: it releases the
+        # build slot it was started under. The route (reset and close_session
+        # alike) relies on close() itself to free the slot rather than
+        # releasing it a second time, so the fake has to hold up its end.
         self.closed = True
         self.status = "closed"
+        app_module.build_semaphore.release()
 
 
 class FakeProtoHost:
-    def __init__(self):
+    def __init__(self, root=None):
+        # Real ProtoHost.purge() deletes {root}/{pid}/{slug} off disk and
+        # raises if anything survives -- the reset route's own idempotency
+        # and "S3-before-local" tests need that actually happening, not just
+        # bookkeeping, so the fake is handed the same tmp_path the fixture
+        # points app_module._proto_root() at.
+        self._root = root
         self.infos: dict[tuple[str, str], HostInfo] = {}
         self.start_exc = None
         self.stopped: list[tuple[str, str]] = []
@@ -78,6 +89,7 @@ class FakeProtoHost:
         # basePath in at build time, so a missing value here is a 404 on every
         # asset, not a recoverable runtime detail.
         self.start_base_paths: list[object] = []
+        self.purged: list[tuple[str, str]] = []
 
     async def start(self, pid, slug, cwd=None, base_path=None):
         self.start_cwds.append(cwd)
@@ -93,6 +105,13 @@ class FakeProtoHost:
     async def stop(self, pid, slug):
         self.stopped.append((pid, slug))
         self.infos.pop((pid, slug), None)
+
+    async def purge(self, pid, slug):
+        self.purged.append((pid, slug))
+        self.infos.pop((pid, slug), None)
+        if self._root is not None:
+            import shutil
+            shutil.rmtree(self._root / pid / slug, ignore_errors=True)
 
     def status(self, pid, slug):
         return self.infos.get((pid, slug))
@@ -115,13 +134,18 @@ def proto_env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(app_module, "make_workspace", fake_make_workspace)
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: fake_s3)
+    # SurveyStore.purge() (exercised by the reset route) also reads/writes the
+    # bucket-root token index via surveys_root_s3_factory(); left unpatched it
+    # falls through to a real boto3 client with PATHFINDER_S3_BUCKET="" and
+    # blows up on bucket-name validation before it ever reaches the fake.
+    monkeypatch.setattr(app_module, "surveys_root_s3_factory", lambda: fake_s3)
     # list_prototypes' "built" signal reads the local build dir straight off
     # disk (app_module._proto_root() / pid / slug) -- point it at tmp_path so
     # tests never touch the real ~/pathfinder-protos, matching
     # test_routes_prototypes_archive.py's fixture.
     monkeypatch.setattr(app_module, "_proto_root", lambda: tmp_path)
 
-    fake_host = FakeProtoHost()
+    fake_host = FakeProtoHost(root=tmp_path)
     monkeypatch.setattr(app_module, "proto_host", lambda: fake_host)
     monkeypatch.setattr(app_module, "build_semaphore",
                         BuildSemaphore(max_concurrent=2))
@@ -487,6 +511,126 @@ def test_close_session_204_removes_registry(proto_env):
 def test_close_session_404_when_absent(proto_env):
     assert client.delete(
         f"/projects/{PID}/prototypes/{SLUG}/session").status_code == 404
+
+
+# ---- reset ----
+
+def _seed_everything(proto_env, monkeypatch):
+    """All seven places one prototype leaves state, plus a sibling prototype
+    and the shared results doc that must both survive."""
+    s3 = proto_env["s3"]
+    _seed_spec(s3)
+    s3.blobs[f"prototypes/{SLUG}/session.json"] = '{"session_id": "x"}'
+    s3.blobs[f"prototypes/{SLUG}/transcript/00000001.jsonl"] = "{}"
+    s3.blobs[f"prototypes/{SLUG}/bundle/package.json"] = "{}"
+    s3.blobs[f"prototypes/{SLUG}/survey/questionnaire.json"] = json.dumps(
+        {"slug": SLUG, "project_id": PID, "token": "tok-1", "status": "open",
+         "closed_at": None, "questions": []})
+    s3.blobs[f"prototypes/{SLUG}/survey/responses/r1.json"] = "{}"
+    s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/validation-questionnaire.md"] = "# q"
+    s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] = "# shared"
+    s3.blobs["prototypes/other/session.json"] = '{"session_id": "y"}'
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+
+
+def test_reset_clears_everything_but_keeps_the_spec(proto_env, monkeypatch):
+    _seed_everything(proto_env, monkeypatch)
+    s3 = proto_env["s3"]
+
+    assert client.delete(
+        f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+    assert [k for k in s3.blobs if k.startswith(f"prototypes/{SLUG}/")] == []
+    assert f"aiplc-docs/discovery/prototypes/{SLUG}/validation-questionnaire.md" \
+        not in s3.blobs
+    assert not (proto_env["root"] / PID / SLUG).exists()
+    # Survivors: the spec (or the card disappears), the shared results doc
+    # (no slug in its key), and any other prototype.
+    assert s3.blobs[SPEC_KEY] == "# PROTOTYPE demo"
+    assert s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] == "# shared"
+    assert s3.blobs["prototypes/other/session.json"] == '{"session_id": "y"}'
+
+
+def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
+    """The point of keeping the spec: the card comes back as a fresh, buildable
+    prototype rather than vanishing."""
+    _seed_everything(proto_env, monkeypatch)
+
+    client.delete(f"/projects/{PID}/prototypes/{SLUG}")
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+    assert body["prototypes"] == [{"slug": SLUG, "spec_path": SPEC_KEY,
+                                   "state": "none", "port": None,
+                                   "response_count": 0}]
+
+
+def test_reset_closes_a_live_session_and_frees_its_build_slot(proto_env, monkeypatch):
+    """A live session is cleaned up rather than refused -- 'reset' should not
+    make the user close things first. close() releases the build semaphore, so
+    the slot must come back too."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    assert app_module.build_semaphore.snapshot()["active_builds"] == 1
+
+    assert client.delete(
+        f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+    assert session.closed
+    assert (PID, SLUG) not in app_module.proto_sessions
+    assert app_module.build_semaphore.snapshot()["active_builds"] == 0
+
+
+def test_reset_stops_hosting(proto_env, monkeypatch):
+    _seed_everything(proto_env, monkeypatch)
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(
+        state="running", port=4001, log_tail="")
+
+    assert client.delete(
+        f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+    assert (PID, SLUG) in proto_env["host"].purged
+
+
+def test_reset_without_a_session_succeeds(proto_env, monkeypatch):
+    """Unlike DELETE .../session (404 when absent), a missing session is the
+    NORMAL case here -- a finished build has already been evicted."""
+    _seed_spec(proto_env["s3"])
+
+    assert client.delete(
+        f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+
+def test_reset_is_idempotent(proto_env, monkeypatch):
+    _seed_everything(proto_env, monkeypatch)
+
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+
+def test_reset_502_when_a_purge_fails_and_keeps_local_state(proto_env, monkeypatch):
+    """S3 before local, so a failure leaves the card reading 'built' -- the
+    incomplete reset stays visible. Wiping local first would flip the card to
+    'none' and tell the user it finished while S3 still held the survey."""
+    _seed_everything(proto_env, monkeypatch)
+
+    async def boom(self):
+        raise RuntimeError("s3 down")
+
+    monkeypatch.setattr(
+        "pathfinder.survey.store.SurveyStore.purge", boom, raising=True)
+
+    resp = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
+
+    assert resp.status_code == 502
+    assert (proto_env["root"] / PID / SLUG).is_dir()
+
+
+def test_reset_unknown_project_404(proto_env):
+    assert client.delete("/projects/nope/prototypes/demo").status_code == 404
 
 
 # ---- hosting ----

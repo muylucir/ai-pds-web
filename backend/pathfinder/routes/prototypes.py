@@ -24,6 +24,7 @@ from starlette.responses import Response
 
 from pathfinder.models import AgentEvent
 from pathfinder.parsers.redaction import redact_credentials
+from pathfinder.proto.session import purge_session_state
 
 _log = logging.getLogger(__name__)
 
@@ -254,6 +255,76 @@ async def close_session(pid: str, slug: str):
         raise HTTPException(status_code=404, detail="no build session")
     await session.close()
     del app_module.proto_sessions[(pid, slug)]
+    return Response(status_code=204)
+
+
+@router.delete("/projects/{pid}/prototypes/{slug}", status_code=204)
+async def reset_prototype(pid: str, slug: str):
+    """Wipe everything this prototype has accumulated EXCEPT its spec.
+
+    Keeping the spec is what makes this a reset rather than a deletion: the
+    list is built by scanning specs, so the card comes back as a fresh
+    buildable prototype instead of disappearing.
+
+    Live session and hosting are cleaned up rather than refused -- the point of
+    one button is that the user does not have to close things first. Unlike
+    `close_session`, a missing session is the normal case (a finished build has
+    already been evicted), so absence is not a 404.
+
+    Order matters twice over. SurveyStore.purge() runs FIRST because reclaiming
+    its token indexes means reading questionnaires that the session purge would
+    delete (they share the prototypes/{slug}/ prefix). And all S3 work precedes
+    the local tree -- not just sequentially, but conditionally: the local purge
+    is IRREVERSIBLE and is the one thing keeping the card at "built" (visibly
+    incomplete) rather than "none" (looks finished). So it only runs once every
+    durable S3 step above has actually succeeded. Running it regardless of
+    those outcomes would wipe the one signal a failed reset needs to keep
+    showing, while S3 may still hold the survey or session state the button
+    promised to clear.
+
+    The S3-scoped purges (survey, session-state) are NOT gated on each other --
+    both are idempotent and independent, so a failure in one must not skip the
+    other; collecting failures instead of raising on the first is what lets a
+    single retry converge even after a partial failure. The local purge is the
+    sole exception: skipping it costs nothing (it is untouched, so a retry
+    picks it up once the S3 side is clean), and running it anyway would be the
+    one mistake this route cannot recover from.
+    """
+    import pathfinder.app as app_module
+    _require_registered(pid)
+
+    failures: list[str] = []
+
+    session = app_module.proto_sessions.pop((pid, slug), None)
+    if session is not None:
+        try:
+            await session.close()
+        except Exception:
+            _log.exception("reset: session close failed: %s/%s", pid, slug)
+            failures.append("session")
+
+    for label, work in (
+            ("survey", app_module.survey_store_factory(pid, slug).purge()),
+            ("session-state", purge_session_state(
+                app_module.s3_store_factory(pid), slug)),
+    ):
+        try:
+            await work
+        except Exception:
+            _log.exception("reset: %s purge failed: %s/%s", label, pid, slug)
+            failures.append(label)
+
+    if not failures:
+        try:
+            await app_module.proto_host().purge(pid, slug)
+        except Exception:
+            _log.exception("reset: build-tree purge failed: %s/%s", pid, slug)
+            failures.append("build-tree")
+
+    if failures:
+        raise HTTPException(
+            status_code=502,
+            detail=f"초기화가 완료되지 않았습니다({', '.join(failures)}) — 다시 시도해 주세요")
     return Response(status_code=204)
 
 
