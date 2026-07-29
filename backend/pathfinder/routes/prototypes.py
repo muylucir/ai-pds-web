@@ -25,6 +25,7 @@ from starlette.responses import Response
 from pathfinder.models import AgentEvent
 from pathfinder.parsers.redaction import redact_credentials
 from pathfinder.proto.session import purge_session_state
+from pathfinder.survey.store import responses_prefix
 
 _log = logging.getLogger(__name__)
 
@@ -165,8 +166,13 @@ async def list_prototypes(pid: str):
         elif session is not None and session.status == "failed":
             state = "failed"
 
+        # Rides the list so the reset confirmation can name the number of
+        # answers about to be destroyed without a second round trip.
+        response_count = len(await s3.list(responses_prefix(slug)))
+
         out.append({"slug": slug, "spec_path": spec_path,
-                    "state": state, "port": port})
+                    "state": state, "port": port,
+                    "response_count": response_count})
     # Capacity travels with the list so a card can explain a 429 before the
     # user clicks (the cap is new -- MicroVM builds had no ceiling).
     return {"prototypes": out, **app_module.build_semaphore.snapshot()}

@@ -195,7 +195,8 @@ def test_list_state_none(proto_env):
     _seed_spec(proto_env["s3"])
     body = client.get(f"/projects/{PID}/prototypes").json()
     assert body["prototypes"] == [{"slug": SLUG, "spec_path": SPEC_KEY,
-                                   "state": "none", "port": None}]
+                                   "state": "none", "port": None,
+                                   "response_count": 0}]
 
 
 def test_list_state_built(proto_env):
@@ -367,6 +368,25 @@ def test_list_reports_build_capacity(proto_env):
     assert body["active_builds"] == 0
     assert body["max_builds"] == 2
     assert [p["slug"] for p in body["prototypes"]] == [SLUG]
+
+
+def test_list_reports_survey_response_count(proto_env):
+    """The reset confirmation needs the count at button-press time, so it rides
+    the list rather than costing an extra request."""
+    _seed_spec(proto_env["s3"])
+    for name in ("r1", "r2", "r3"):
+        proto_env["s3"].blobs[
+            f"prototypes/{SLUG}/survey/responses/{name}.json"] = "{}"
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["response_count"] == 3
+
+
+def test_list_reports_zero_responses_when_there_is_no_survey(proto_env):
+    _seed_spec(proto_env["s3"])
+    body = client.get(f"/projects/{PID}/prototypes").json()
+    assert body["prototypes"][0]["response_count"] == 0
 
 
 # ---- session lifecycle ----
