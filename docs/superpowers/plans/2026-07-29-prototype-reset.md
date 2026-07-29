@@ -1036,6 +1036,7 @@ Expected: passed
       "",
       "설계 문서(PROTOTYPE-*.md)는 남으므로 다시 빌드할 수 있습니다.",
     ];
+    // ⚠️ 이 스케치의 window.confirm/alert는 쓰지 말 것 — 아래 정정 참조.
     if (!window.confirm(lines.join("\n"))) return;
 
     setBusySlug(slug);
@@ -1053,6 +1054,48 @@ Expected: passed
 import에 `resetPrototype`을 추가하고, `<PrototypeCard>`에 `onReset={handleReset}`을 넘긴다.
 
 **`list.reload()`가 `finally`에 있는 이유:** 부분 실패(502)에서도 지워진 것은 반영해야 한다. 502 후 카드가 여전히 `built`면 그것이 미완료 신호다.
+
+### 정정 — 위 스케치의 네 가지 결함
+
+**1. `window.confirm`/`window.alert`를 쓰지 않는다.** 이 앱에는 파괴적 동작 확인
+관례가 이미 두 곳에 있다: `components/ProjectList.tsx:133-172`와
+`components/admin/UserTable.tsx:153-181` — `role="dialog" aria-modal="true"`
+오버레이, 되돌릴 수 없음을 독립 문장으로, Escape 취소, 다이얼로그 안의 에러 줄,
+빨간 확인 버튼. `page.tsx:188-213`(같은 파일!)도 로그 모달을 그 형태로 만든다.
+`window.confirm`은 이 계획이 들여온 프론트 전체의 유일한 사례였다.
+
+구체적 퇴행 3가지: 긍정 버튼이 OS 기본 "OK"라 사용자가 누르는 버튼이 파괴적
+행위를 명명하지 않는다; OK가 기본 포커스라 Enter 오타가 실제 응답을 파괴한다;
+502가 다이얼로그와 무관한 두 번째 alert로 떨어진다. **`ProjectList` 패턴을 따르고
+확인 버튼은 "초기화"라고 적는다.**
+
+**2. 목록에 동사가 없고, 경고와 안심의 무게가 뒤집혀 있다.** 불릿이 맨 명사구여서
+삭제된다는 사실이 "초기화합니다"로만 암시된다 — "다음 항목이 삭제됩니다:" 류의
+헤더를 준다. 그리고 안심 문구("다시 빌드할 수 있습니다")가 마지막 줄(최신성 위치)에
+있고 되돌릴 수 없음 경고는 중간 괄호 안에 있다. `ProjectList.tsx:148-150`처럼
+경고에 독립 문장을 주고 상쇄 문구를 뒤에 두지 않는다.
+
+**3. `disabled={busy}`가 빠졌다.** 형제 버튼 전부가 가진 것이 파괴적 버튼에만
+없다. 긴 리셋 중(S3 프리픽스 3개 + `node_modules` rmtree) 다른 버튼은 회색인데
+이것만 살아 있어 재클릭이 동시 DELETE를 만들고, `ProtoHost.purge`의 잔여 검사가
+다른 호출의 rmtree와 경합해 **성공한 리셋에 502**를 반환한다. `SECONDARY_BTN`을
+조합해(`${SECONDARY_BTN} hover:bg-rose-50 text-rose-600`) `disabled:` 상태까지
+가져온다.
+
+**4. 카운트를 클릭 시점에 다시 읽는다.** `list.data`는 마지막 목록 조회값이고 이
+페이지에는 폴링이 없다. 0→N 전이가 위험하다: 페이지 로드 후 응답이 도착하면
+`answers === 0` 분기를 타 **카운트도 경고도 없이** "· 검증 설문"만 보여준다 —
+사용자에게 "잃을 것이 없다"고 단정한 뒤 실제 제출물을 파괴한다. 워크숍에서는 이것이
+정상 시퀀스다(진행자가 링크를 공유하고 응답이 세션 중 실시간으로 도착). 다이얼로그를
+띄우기 전에 `await listPrototypes(projectId)`로 다시 읽는다
+(`SurveyPanel.tsx:17-26`이 같은 point-of-use 갱신을 한다).
+
+**그리고 `handleReset`에 테스트가 필요하다.** 이 스케치의 Step 1은
+`PrototypeCard.test.tsx`만 요구해 핸들러가 무보호로 남았다. 가드를
+`if (!window.confirm(...))` → `if (window.confirm(...))`로 반전시켜도 전체 스위트가
+통과하고 tsc가 클린이다 — 취소를 누른 사용자가 조용히 실제 응답을 잃는다.
+`page.test.tsx`에 4건: 다이얼로그가 카운트와 경고를 담는지, 취소가 DELETE를 보내지
+않는지, 204가 목록을 재조회하는지, 502가 에러를 보여주고도 재조회하는지.
 
 - [ ] **Step 6: Verify the page still builds and tests pass**
 
