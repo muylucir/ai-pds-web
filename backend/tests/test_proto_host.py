@@ -408,3 +408,32 @@ async def test_purge_is_idempotent(root):
     host = ProtoHost(root=root, port_range=range(4001, 4010))
     await host.purge(PID, SLUG)
     await host.purge(PID, SLUG)
+
+
+async def test_purge_raises_when_residue_survives_the_sweep(root):
+    """rmtree(ignore_errors=True) swallows failures instead of raising, so a
+    permission error deep in the tree (e.g. inside node_modules) can leave
+    residue on disk while looking like success. purge() must not return
+    cleanly in that case -- the reset route relies on a raise to know the
+    tree needs a retry, and with S3 state already purged by then, a swallowed
+    failure here would leave the prototype's card claiming "built" forever
+    over a half-deleted tree."""
+    target = _seed_build_dir(root)
+    blocked = target / "node_modules" / "stuck-pkg"
+    blocked.mkdir(parents=True)
+    (blocked / "file.txt").write_text("stuck", encoding="utf-8")
+    # Removing a file needs write+execute on its CONTAINING directory, not on
+    # the file itself -- stripping write from `blocked` makes file.txt (and
+    # therefore `blocked` itself, now non-empty forever) undeletable.
+    blocked.chmod(0o500)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    try:
+        with pytest.raises(RuntimeError):
+            await host.purge(PID, SLUG)
+        # The residue is the whole point of the test: something must survive
+        # for the raise to be meaningful rather than a false alarm.
+        assert target.exists()
+        assert (blocked / "file.txt").exists()
+    finally:
+        blocked.chmod(0o700)

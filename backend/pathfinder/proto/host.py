@@ -265,6 +265,13 @@ class ProtoHost:
         Idempotent -- a tree that was never built, or was already purged, is a
         no-op. `shutil.rmtree` runs in a thread: it is synchronous and a
         node_modules tree is large enough to stall the event loop.
+
+        Raises `RuntimeError` if anything survives the sweep. `ignore_errors`
+        lets rmtree get as far as it can instead of aborting on the first bad
+        file, so it cannot double as a success signal -- the caller (the
+        reset route) needs a raise, not a silently-incomplete no-op, or a
+        permission error deep in node_modules would report success while the
+        tree (and the "built" card) lives on.
         """
         await self.stop(pid, slug)
         self._registry.pop((pid, slug), None)
@@ -272,6 +279,8 @@ class ProtoHost:
         if not target.is_dir():
             return
         await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
+        if target.exists():
+            raise RuntimeError(f"purge left residue: {target}")
 
     def sweep_orphans(self) -> int:
         """Kill hosting processes left over from a previous backend run and
