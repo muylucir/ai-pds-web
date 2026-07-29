@@ -1,0 +1,4 @@
+.worktrees/
+.superpowers/
+files/
+infra/cdk.out/

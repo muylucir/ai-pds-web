@@ -162,7 +162,7 @@ Environment=PATHFINDER_WORKSPACES_DIR=${APP}/workspaces
 # 프로토타입 빌드: 동시 빌드 상한과 빌드 에이전트 전용 CLAUDE_CONFIG_DIR.
 # 후자를 비우면 번들 Claude Code 바이너리가 서비스 유저의 ~/.claude를 읽는다 —
 # 앱 트리 안에 두어 소유권·백업·정리를 APP 한 경로로 통일한다.
-Environment=PATHFINDER_PROTO_MAX_CONCURRENT=2
+Environment=PATHFINDER_PROTO_MAX_CONCURRENT=10
 Environment=PATHFINDER_PROTO_CONFIG_DIR=${APP}/proto-config
 # Discovery 드라이버(기본 claude, PATHFINDER_DISCOVERY_DRIVER로 strands 되돌림
 # 가능) 전용 CLAUDE_CONFIG_DIR. proto-config와 반드시 다른 경로 — 공유하면

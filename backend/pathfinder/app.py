@@ -213,7 +213,7 @@ def _proto_permission_mode() -> str:
 from pathfinder.proto.limits import BuildSemaphore  # noqa: E402
 
 build_semaphore = BuildSemaphore(
-    max_concurrent=int(os.environ.get("PATHFINDER_PROTO_MAX_CONCURRENT", "2")))
+    max_concurrent=int(os.environ.get("PATHFINDER_PROTO_MAX_CONCURRENT", "10")))
 
 
 def proto_host():

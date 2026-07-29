@@ -115,7 +115,7 @@ console.log('OK  user-data: all required elements present (incl. nginx-var vs se
 // 9) 프로토타입 빌드: 동시 빌드 상한 + 빌드 에이전트 전용 CLAUDE_CONFIG_DIR env.
 //    VM 시절의 PATHFINDER_VM_* 3종은 완전히 사라졌다(인프라에서 VM 계층 삭제).
 assert.match(s, /Environment=PATHFINDER_PROTO_ROOT=\/opt\/pathfinder\/protos/, 'proto host root env');
-assert.match(s, /Environment=PATHFINDER_PROTO_MAX_CONCURRENT=2/, 'proto build concurrency cap env');
+assert.match(s, /Environment=PATHFINDER_PROTO_MAX_CONCURRENT=10/, 'proto build concurrency cap env');
 // CLAUDE_CONFIG_DIR lives INSIDE the app tree, not in a user's home: app-owned
 // data stays under one path for backup/cleanup/ownership, and nothing depends on
 // where the service user's home happens to be.

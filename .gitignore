@@ -21,3 +21,4 @@ discovery-config/settings.local.json
 proto-type/
 **/.pytest_cache/
 .worktrees/
+graphify-out/
