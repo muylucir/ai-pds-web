@@ -1,6 +1,37 @@
 # 모든 대화는 한국어로 진행
 # 프로토타입을 생성할때 디자인은 shadcn-design 스킬을 사용
 
+## Bedrock 호출 코드 — 샘플링 파라미터를 보내지 않는다
+
+프로토타입 코드에서 Bedrock Claude를 호출할 때 **`temperature`, `top_p`,
+`top_k`를 보내지 않는다.** Claude Opus 4.7 이후 모델(Opus 4.7·4.8·5, Sonnet 5)은
+이 파라미터들을 제거했고, 보내면 요청 자체가 실패한다 — 이 배포의
+`ap-northeast-2`에서 실측한 에러다:
+
+```
+ValidationException: The model returned the following errors:
+  `temperature` is deprecated for this model.
+```
+
+Converse API의 `inferenceConfig`에는 **`maxTokens`만** 넣는다:
+
+```js
+const inferenceConfig = { maxTokens };   // temperature/topP를 넣지 않는다
+```
+
+**모델별로 분기하지 말고 아예 보내지 않는다.** 모델 ID를 정규식으로 검사해
+특정 모델만 제외하는 우회 코드는 만들지 않는다 — 기본 모델은 환경변수로 바뀌고,
+그때마다 정규식이 새 모델을 놓쳐 같은 에러가 다시 난다(실제로 한 번 겪었다:
+`opus-(4-8|5)`만 잡는 패턴이 `sonnet-5`를 놓쳤다). 출력의 결정성이나 다양성이
+필요하면 프롬프트로 지시한다.
+
+같은 이유로 **`budget_tokens`(extended thinking)도 보내지 않는다** — Opus 4.7
+이후 제거됐다. 추론 깊이가 필요하면 `additionalModelRequestFields`의
+`thinking: {type: "adaptive"}`를 쓴다.
+
+예외: Sonnet 4.6 이하는 `temperature`를 아직 받는다. 그래도 위 규칙을 따른다 —
+어느 모델에서도 동작하는 코드가 목적이다.
+
 ## 프로토타입은 하위 경로에서 서빙된다 — basePath 필수
 
 프로토타입은 루트가 아니라 `/proto/{project_id}/{slug}/` 하위에서 리버스 프록시로
