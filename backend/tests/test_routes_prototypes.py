@@ -63,7 +63,15 @@ class FakePrototypeSession:
         # Mirrors the real PrototypeSession.close() contract: it releases the
         # build slot it was started under. The route (reset and close_session
         # alike) relies on close() itself to free the slot rather than
-        # releasing it a second time, so the fake has to hold up its end.
+        # releasing it a second time, so the fake has to hold up its end --
+        # INCLUDING the guard against a second close(). BuildSemaphore.release()
+        # clamps at zero and cannot detect an over-release, so a second call
+        # would free a slot belonging to some OTHER session. The real
+        # PrototypeSession.close() guards this twice (session.py:221-223,
+        # :245-247); a fake with neither guard is strictly more forgiving than
+        # what it stands in for, on exactly the axis that matters here.
+        if self.closed:
+            return
         self.closed = True
         self.status = "closed"
         app_module.build_semaphore.release()
@@ -516,8 +524,16 @@ def test_close_session_404_when_absent(proto_env):
 # ---- reset ----
 
 def _seed_everything(proto_env, monkeypatch):
-    """All seven places one prototype leaves state, plus a sibling prototype
-    and the shared results doc that must both survive."""
+    """All eight places one prototype leaves state, plus a sibling prototype
+    and the shared results doc that must both survive.
+
+    The eighth -- surveys/by-token/{token}.json -- is the ROOT-scoped token
+    index the ordering constraint exists to protect: it is the one thing
+    SurveyStore.purge() cannot recover once the questionnaire that names its
+    token is gone (Task 1's `_collect_tokens()` learns tokens by reading
+    questionnaires, there is no reverse lookup). Omitting it here would make
+    every reset test pass regardless of whether survey purge actually runs,
+    and did exactly that until this was added."""
     s3 = proto_env["s3"]
     _seed_spec(s3)
     s3.blobs[f"prototypes/{SLUG}/session.json"] = '{"session_id": "x"}'
@@ -527,6 +543,8 @@ def _seed_everything(proto_env, monkeypatch):
         {"slug": SLUG, "project_id": PID, "token": "tok-1", "status": "open",
          "closed_at": None, "questions": []})
     s3.blobs[f"prototypes/{SLUG}/survey/responses/r1.json"] = "{}"
+    s3.blobs["surveys/by-token/tok-1.json"] = json.dumps(
+        {"project_id": PID, "slug": SLUG})
     s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/validation-questionnaire.md"] = "# q"
     s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] = "# shared"
     s3.blobs["prototypes/other/session.json"] = '{"session_id": "y"}'
@@ -545,6 +563,9 @@ def test_reset_clears_everything_but_keeps_the_spec(proto_env, monkeypatch):
     assert [k for k in s3.blobs if k.startswith(f"prototypes/{SLUG}/")] == []
     assert f"aiplc-docs/discovery/prototypes/{SLUG}/validation-questionnaire.md" \
         not in s3.blobs
+    # Root-scoped, so the prototypes/{SLUG}/ filter above cannot see it --
+    # this is the index a failed/misordered purge would strand permanently.
+    assert "surveys/by-token/tok-1.json" not in s3.blobs
     assert not (proto_env["root"] / PID / SLUG).exists()
     # Survivors: the spec (or the card disappears), the shared results doc
     # (no slug in its key), and any other prototype.
@@ -627,6 +648,50 @@ def test_reset_502_when_a_purge_fails_and_keeps_local_state(proto_env, monkeypat
 
     assert resp.status_code == 502
     assert (proto_env["root"] / PID / SLUG).is_dir()
+
+
+def test_reset_502_survey_failure_also_skips_session_state_and_converges_on_retry(
+        proto_env, monkeypatch):
+    """The gate one layer up from the local-tree one: session-state deletes
+    prototypes/{slug}/ wholesale, a SUPERSET of the survey tree survey.purge()
+    reads its tokens from. Running it after a failed survey purge would
+    destroy those questionnaires and strand surveys/by-token/{token}.json
+    permanently -- a retry's _collect_tokens() would find nothing and report
+    204 over a token that still resolves to this prototype (a stale
+    /survey/{token} link becomes a live credential into whatever survey the
+    slug gets next). So session-state must be skipped, not just delayed,
+    whenever survey purge fails -- and the retry must still converge once
+    survey purge is allowed to succeed."""
+    _seed_everything(proto_env, monkeypatch)
+    s3 = proto_env["s3"]
+    from pathfinder.survey.store import SurveyStore
+    real_purge = SurveyStore.purge
+
+    calls = {"n": 0}
+
+    async def fail_once_then_real(self):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("s3 down")
+        await real_purge(self)
+
+    monkeypatch.setattr(
+        "pathfinder.survey.store.SurveyStore.purge", fail_once_then_real,
+        raising=True)
+
+    first = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
+    assert first.status_code == 502
+    # session-state must have been SKIPPED: the questionnaire survey.purge()
+    # needs to reclaim its token is still there, and so is the token index.
+    assert f"prototypes/{SLUG}/survey/questionnaire.json" in s3.blobs
+    assert "surveys/by-token/tok-1.json" in s3.blobs
+    assert (proto_env["root"] / PID / SLUG).is_dir()  # local also skipped
+
+    second = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
+    assert second.status_code == 204
+    assert f"prototypes/{SLUG}/survey/questionnaire.json" not in s3.blobs
+    assert "surveys/by-token/tok-1.json" not in s3.blobs
+    assert not (proto_env["root"] / PID / SLUG).exists()
 
 
 def test_reset_unknown_project_404(proto_env):

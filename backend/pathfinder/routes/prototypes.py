@@ -271,24 +271,36 @@ async def reset_prototype(pid: str, slug: str):
     `close_session`, a missing session is the normal case (a finished build has
     already been evicted), so absence is not a 404.
 
-    Order matters twice over. SurveyStore.purge() runs FIRST because reclaiming
-    its token indexes means reading questionnaires that the session purge would
-    delete (they share the prototypes/{slug}/ prefix). And all S3 work precedes
-    the local tree -- not just sequentially, but conditionally: the local purge
-    is IRREVERSIBLE and is the one thing keeping the card at "built" (visibly
-    incomplete) rather than "none" (looks finished). So it only runs once every
-    durable S3 step above has actually succeeded. Running it regardless of
-    those outcomes would wipe the one signal a failed reset needs to keep
-    showing, while S3 may still hold the survey or session state the button
-    promised to clear.
+    Every gate below protects the same property: no failure path may leave
+    state a retry cannot fix.
 
-    The S3-scoped purges (survey, session-state) are NOT gated on each other --
-    both are idempotent and independent, so a failure in one must not skip the
-    other; collecting failures instead of raising on the first is what lets a
-    single retry converge even after a partial failure. The local purge is the
-    sole exception: skipping it costs nothing (it is untouched, so a retry
-    picks it up once the S3 side is clean), and running it anyway would be the
-    one mistake this route cannot recover from.
+    survey MUST run first AND succeed before session-state runs at all -- not
+    because the two are independent and ordering is merely tidy, but because
+    they are NOT independent. SurveyStore.purge() can only discover this
+    prototype's tokens by READING the questionnaires under
+    prototypes/{slug}/survey/ (that is the only place `surveys/by-token/` --
+    a one-way, root-scoped index -- can be reverse-looked-up from).
+    purge_session_state() deletes prototypes/{slug}/ wholesale, a SUPERSET of
+    that tree. Running session-state after a failed survey purge destroys the
+    very questionnaires the next retry would need to reclaim the token index,
+    stranding it permanently: a later retry's `_collect_tokens()` finds
+    nothing, deletes nothing, and reports success (204) over a token that
+    still resolves to this prototype. A rebuild that reuses the slug then
+    hands that stale token a live credential into the NEW survey -- the exact
+    reversal this whole endpoint exists to prevent, arriving through a side
+    door.
+
+    The local purge is gated the same way, one step further down: it is
+    IRREVERSIBLE and is the one thing keeping the card at "built" (visibly
+    incomplete) rather than "none" (looks finished, even though S3 may still
+    hold the survey or session state the button promised to clear). It only
+    runs once every S3 step above -- survey AND session-state -- has actually
+    succeeded.
+
+    Skipping a later step costs nothing: every purge here is idempotent and,
+    if skipped, simply untouched, so a retry converges. That is also why
+    failures are collected rather than raised on the spot -- a partial
+    failure must still leave a state the next call can finish cleanly.
     """
     import pathfinder.app as app_module
     _require_registered(pid)
@@ -303,16 +315,23 @@ async def reset_prototype(pid: str, slug: str):
             _log.exception("reset: session close failed: %s/%s", pid, slug)
             failures.append("session")
 
-    for label, work in (
-            ("survey", app_module.survey_store_factory(pid, slug).purge()),
-            ("session-state", purge_session_state(
-                app_module.s3_store_factory(pid), slug)),
-    ):
+    try:
+        await app_module.survey_store_factory(pid, slug).purge()
+    except Exception:
+        _log.exception("reset: survey purge failed: %s/%s", pid, slug)
+        failures.append("survey")
+
+    # session-state deletes prototypes/{slug}/ wholesale -- a superset of the
+    # survey tree survey.purge() just read from. Running it after a failed
+    # survey purge would destroy the questionnaires a retry needs to reclaim
+    # the token index, stranding it permanently (see docstring).
+    if not failures:
         try:
-            await work
+            await purge_session_state(
+                app_module.s3_store_factory(pid), slug)
         except Exception:
-            _log.exception("reset: %s purge failed: %s/%s", label, pid, slug)
-            failures.append(label)
+            _log.exception("reset: session-state purge failed: %s/%s", pid, slug)
+            failures.append("session-state")
 
     if not failures:
         try:
