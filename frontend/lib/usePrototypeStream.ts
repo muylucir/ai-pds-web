@@ -49,21 +49,55 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   const [pendingQuestions, setPendingQuestions] = useState<QuestionsPayload | null>(null);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const stopRef = useRef<null | (() => void)>(null);
-  // The AI bubble id for whichever turn currently owns the open SSE stream —
-  // a "questions" event does NOT close it (the harness keeps the turn open
-  // across the answers roundtrip, routes.py's submit_answers docstring), so
-  // submitAnswers needs this to surface a 409 (no pending question to
-  // resolve) on the SAME bubble the question came from.
+  // The AI bubble that events are landing in RIGHT NOW — not the bubble the
+  // turn started with. A "questions" event does NOT close the stream (the
+  // harness parks on its pending-answer future, builder.py's
+  // `await self._pending_question`), so one stream spans the whole build and
+  // this pointer is what keeps that from becoming one endless bubble:
+  // submitAnswers moves it to a fresh bubble after the user's answer, and
+  // every writer below (applyEvent, onDone/onError, the 409 path) targets
+  // whatever it points at instead of a captured id.
   const currentAiIdRef = useRef<string | null>(null);
+  // A tool ran AFTER the current bubble had already said something — so the
+  // next text belongs to a new bubble (see openAiBubble/applyEvent).
+  const splitArmedRef = useRef(false);
+  // Whether the current bubble holds any text yet. Splitting is gated on this
+  // so a tool run before the first word doesn't emit an empty bubble (the
+  // common "status → first message" opening of every turn).
+  const hasTextRef = useRef(false);
 
   const patchAi = useCallback((aiId: string, fn: (it: AiItem) => AiItem) => {
     setItems((prev) => prev.map((it) => (it.id === aiId && it.role === "ai" ? fn(it) : it)));
+  }, []);
+
+  // Seal whatever bubble is current and open a fresh one, optionally with
+  // items (a user bubble) between them. The single place a bubble is born:
+  // turn start, an answers roundtrip, and a mid-turn tool boundary all go
+  // through here, so the ref/flag bookkeeping can't drift between them.
+  const openAiBubble = useCallback((between: ChatItem[] = []): string => {
+    const prevId = currentAiIdRef.current;
+    const aiId = nextId();
+    currentAiIdRef.current = aiId;
+    splitArmedRef.current = false;
+    hasTextRef.current = false;
+    setItems((prev) => [
+      // The sealed bubble stops streaming, which moves the typing dots and the
+      // live activity line (AiMessage.tsx) onto the new one.
+      ...prev.map((it) => (it.id === prevId && it.role === "ai" ? { ...it, streaming: false } : it)),
+      ...between,
+      { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
+    ]);
+    return aiId;
   }, []);
 
   // Shared per-frame projection: folds message text into the AI bubble,
   // status/file_changed into its trace + the changedPaths list, and mirrors
   // "questions" into pendingQuestions WITHOUT touching streaming — the turn
   // stays open on the server until /answers resolves it.
+  //
+  // `aiId` is read from currentAiIdRef at CALL time, not captured when the
+  // turn opened, so frames arriving after a bubble split (a tool boundary or
+  // an answers roundtrip) land in the bubble that split opened.
   const applyEvent = useCallback(
     (aiId: string, ev: AgentEvent) => {
       if (ev.kind === "file_changed" && ev.path) {
@@ -81,7 +115,22 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         // so the form doesn't linger unanswerable.
         setPendingQuestions(null);
       }
-      patchAi(aiId, (it) => {
+      let target = aiId;
+      if (ev.kind === "message") {
+        // Text after a tool run is a new utterance: the harness emits one
+        // "message" per TextBlock (builder.py's _translate), and a build turn
+        // interleaves dozens of them with tool calls. Concatenating the lot
+        // produced the run-on bubble in files/proto.png.
+        if (splitArmedRef.current) target = openAiBubble();
+        if (ev.text) hasTextRef.current = true;
+      } else if (ev.kind === "status" || ev.kind === "file_changed") {
+        // Arm only once the bubble has said something — a tool before the
+        // first word (every turn opens that way) must not split off an empty
+        // bubble. The tool itself is traced on the bubble it interrupted, so
+        // "추론 과정" stays attached to the text it belongs to.
+        if (hasTextRef.current) splitArmedRef.current = true;
+      }
+      patchAi(target, (it) => {
         if (ev.kind === "message") return { ...it, text: it.text + (ev.text ?? "") };
         if (ev.kind === "status" || ev.kind === "file_changed") {
           const trace: TraceEntry = { kind: ev.kind, text: ev.text, path: ev.path };
@@ -91,7 +140,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         return it; // "done" is handled by onDone
       });
     },
-    [patchAi],
+    [patchAi, openAiBubble],
   );
 
   const runTurn = useCallback(
@@ -114,19 +163,44 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         finished = true;
         setStreaming(false);
         stopRef.current = null;
+        // Drop a bubble the turn never filled. submitAnswers opens one eagerly
+        // for the reply, and a turn that ends first (done right after the
+        // answers, or an interrupt) would otherwise leave a blank white box
+        // under the answer. Anything at all in it — text, an error, a tool
+        // trace — is content, so only the truly empty one is pruned.
+        const lastId = currentAiIdRef.current;
+        if (lastId) {
+          setItems((prev) =>
+            prev.filter(
+              (it) =>
+                !(
+                  it.role === "ai" &&
+                  it.id === lastId &&
+                  it.text === "" &&
+                  it.error === null &&
+                  it.trace.length === 0
+                ),
+            ),
+          );
+        }
         currentAiIdRef.current = null;
       };
+      // Every handler resolves the target bubble through the ref (falling back
+      // to the id this turn opened with) rather than closing over `aiId`: an
+      // answers roundtrip repoints it mid-stream, and `done`/`error` must end
+      // the bubble the user is actually watching.
+      const liveId = () => currentAiIdRef.current ?? aiId;
       const stop = opener({
-        onEvent: (ev) => applyEvent(aiId, ev),
+        onEvent: (ev) => applyEvent(liveId(), ev),
         onDone: () => {
-          patchAi(aiId, (it) => ({ ...it, streaming: false }));
+          patchAi(liveId(), (it) => ({ ...it, streaming: false }));
           finish();
         },
         onError: () => {
           // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
           // 세션을 확인해 만료면 로그인으로 보낸다. 살아 있으면 아래 메시지가 맞다.
           void redirectIfSessionExpired(undefined, window.location.pathname);
-          patchAi(aiId, (it) => ({
+          patchAi(liveId(), (it) => ({
             ...it,
             streaming: false,
             error: it.error ?? "연결이 끊어졌습니다. 다시 시도해 주세요.",
@@ -146,10 +220,9 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   // adds ONLY an AI bubble — there is no user-authored text for this turn.
   const startBuild = useCallback(() => {
     if (stopRef.current) return;
-    const aiId = nextId();
-    setItems((prev) => [...prev, { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null }]);
+    const aiId = openAiBubble();
     runTurn((handlers) => streamPrototypeEvents(projectId, slug, "__first__", handlers), aiId);
-  }, [projectId, slug, runTurn]);
+  }, [projectId, slug, runTurn, openAiBubble]);
 
   const send = useCallback(
     (text: string) => {
@@ -157,15 +230,10 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       // Guard on the live-stream ref (not `streaming` state) so a stale
       // closure can't slip a concurrent send past a not-yet-flushed setState.
       if (trimmed === "" || stopRef.current) return;
-      const aiId = nextId();
-      setItems((prev) => [
-        ...prev,
-        { id: nextId(), role: "user", text: trimmed },
-        { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
-      ]);
+      const aiId = openAiBubble([{ id: nextId(), role: "user", text: trimmed }]);
       runTurn((handlers) => streamPrototypeEvents(projectId, slug, trimmed, handlers), aiId);
     },
-    [projectId, slug, runTurn],
+    [projectId, slug, runTurn, openAiBubble],
   );
 
   const submitAnswers = useCallback(
@@ -178,9 +246,12 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         : "답변 제출";
       const ok = await submitPrototypeAnswers(projectId, slug, answers);
       if (ok) {
-        // No AI bubble here, unlike `send`: events keep flowing on the SAME
-        // open stream, so the agent's reply lands on the turn already running.
-        setItems((prev) => [...prev, { id: nextId(), role: "user", text: summary }]);
+        // No new STREAM here, unlike `send` — events keep flowing on the one
+        // already open. But a new BUBBLE, because the reply belongs after the
+        // user's answer: folding it into the pre-question bubble grew a single
+        // bubble for the whole build and printed the agent's post-approval
+        // text above the answer that triggered it (files/proto.png).
+        openAiBubble([{ id: nextId(), role: "user", text: summary }]);
         setPendingQuestions(null);
         return;
       }
@@ -196,7 +267,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         }));
       }
     },
-    [projectId, slug, patchAi, pendingQuestions],
+    [projectId, slug, patchAi, pendingQuestions, openAiBubble],
   );
 
   const interrupt = useCallback(async () => {

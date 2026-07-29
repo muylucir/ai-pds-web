@@ -170,6 +170,128 @@ describe("usePrototypeStream", () => {
     expect(bubbles).toContain("Q1. 누구?\n→ A. PM");
   });
 
+  it("splits the AI bubble at an answers roundtrip — post-answer text lands on a NEW bubble after the user answer", async () => {
+    // The server keeps ONE SSE stream open across the roundtrip, so without a
+    // client-side split every message of a whole build session folds into the
+    // bubble startBuild created — and the answer's user bubble (appended at the
+    // end) reads as if it came AFTER text it actually preceded (files/proto.png).
+    let captured: any = null;
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        captured = handlers;
+        return () => {};
+      },
+    );
+    vi.mocked(prototypesApi.submitPrototypeAnswers).mockResolvedValue(true);
+
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+    act(() => {
+      captured.onEvent({ kind: "message", text: "이 계획대로 진행할까요?", path: null, payload: null });
+      captured.onEvent({ kind: "questions", text: null, path: null, payload: QUESTIONS_PAYLOAD });
+    });
+
+    await act(async () => {
+      await result.current.submitAnswers({ "1": "A" });
+    });
+    act(() => {
+      captured.onEvent({ kind: "message", text: "승인 감사합니다. 빌드를 시작합니다", path: null, payload: null });
+      captured.onEvent({ kind: "done", text: null, path: null, payload: null });
+    });
+
+    expect(result.current.items.map((i) => [i.role, i.text])).toEqual([
+      ["ai", "이 계획대로 진행할까요?"],
+      ["user", "Q1. 누구?\n→ A. PM"],
+      ["ai", "승인 감사합니다. 빌드를 시작합니다"],
+    ]);
+  });
+
+  it("splits the AI bubble at a tool boundary — text after a tool run starts a NEW bubble", () => {
+    // One build turn emits many TextBlocks separated by tool calls
+    // (builder.py's _translate: one "message" event per block). Folding them
+    // all together produced the run-on bubble in files/proto.png
+    // ("…빌드를 시작합니다.작업 목록을 만들고…"), so a tool run between two
+    // texts ends the bubble — the same boundary Claude Code itself renders at.
+    drive([
+      { kind: "message", text: "빌드를 시작합니다", path: null, payload: null },
+      { kind: "status", text: "TodoWrite", path: null, payload: null },
+      { kind: "message", text: "Task #1을 시작합니다", path: null, payload: null },
+      { kind: "done", text: null, path: null, payload: null },
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    expect(result.current.items.map((i) => [i.role, i.text])).toEqual([
+      ["ai", "빌드를 시작합니다"],
+      ["ai", "Task #1을 시작합니다"],
+    ]);
+    // The tool that ended the first bubble is part of ITS trace, and the last
+    // bubble is the one `done` closes.
+    expect(result.current.items[0]).toMatchObject({
+      streaming: false,
+      trace: [{ kind: "status", text: "TodoWrite", path: null }],
+    });
+    expect(result.current.items[1]).toMatchObject({ streaming: false, trace: [] });
+  });
+
+  it("keeps consecutive text blocks with no tool between them in ONE bubble", () => {
+    // A single AssistantMessage can carry several TextBlocks — that is one
+    // utterance, not two, so it must not be split.
+    drive([
+      { kind: "message", text: "먼저 구조를 잡고", path: null, payload: null },
+      { kind: "message", text: " 파일을 만듭니다", path: null, payload: null },
+      { kind: "done", text: null, path: null, payload: null },
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    expect(result.current.items.map((i) => [i.role, i.text])).toEqual([
+      ["ai", "먼저 구조를 잡고 파일을 만듭니다"],
+    ]);
+  });
+
+  it("drops the trailing bubble when the turn ends without ever filling it", async () => {
+    // submitAnswers opens a bubble for the reply, but the build may finish
+    // (or be interrupted) before any text arrives — an empty bubble would
+    // render as a blank white box under the answer.
+    let captured: any = null;
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        captured = handlers;
+        return () => {};
+      },
+    );
+    vi.mocked(prototypesApi.submitPrototypeAnswers).mockResolvedValue(true);
+
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+    act(() => {
+      captured.onEvent({ kind: "message", text: "진행할까요?", path: null, payload: null });
+      captured.onEvent({ kind: "questions", text: null, path: null, payload: QUESTIONS_PAYLOAD });
+    });
+    await act(async () => {
+      await result.current.submitAnswers({ "1": "A" });
+    });
+    // The real client relays the frame and THEN calls onDone (prototypes.ts).
+    act(() => {
+      captured.onEvent({ kind: "done", text: null, path: null, payload: null });
+      captured.onDone();
+    });
+
+    expect(result.current.items.map((i) => i.role)).toEqual(["ai", "user"]);
+  });
+
+  it("keeps an otherwise-empty trailing bubble that carries an error", () => {
+    // The error message is the bubble's whole content — pruning it would
+    // swallow the only report the user gets.
+    drive([{ kind: "error", text: "빌드 실패", path: null, payload: null }]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    expect(result.current.items).toHaveLength(1);
+    expect(result.current.items[0]).toMatchObject({ role: "ai", error: "빌드 실패" });
+  });
+
   it("submitAnswers adds no bubble when the 409 path rejects the submission", async () => {
     // Nothing was accepted server-side, so a bubble claiming otherwise would
     // misrepresent the transcript.
