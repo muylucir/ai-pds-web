@@ -138,6 +138,15 @@ function testComputeAndRole() {
   const allActions = JSON.stringify(policies);
   assert.match(allActions, /secretsmanager:GetSecretValue/, 'instance role reads header secret');
   assert.match(allActions, /bedrock:InvokeModel/, 'instance role invokes bedrock');
+  // Opus 5·Sonnet 5까지 invoke 가능해야 한다. ANTHROPIC_MODEL(기본 Opus 4.8)만
+  // 허용하면 모델을 바꿔보려는 순간 AccessDenied가 나고, 그 실패는 첫 대화 턴에
+  // 가서야 드러난다 — env 한 줄로 전환할 수 있게 권한을 미리 넓혀 둔다.
+  for (const m of ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-8']) {
+    assert.match(allActions, new RegExp(`inference-profile/global\\.anthropic\\.${m}`),
+      `instance role can invoke ${m} inference profile`);
+    assert.match(allActions, new RegExp(`foundation-model/anthropic\\.${m}`),
+      `instance role can invoke ${m} foundation model`);
+  }
   // lambda-microvms 제어 권한은 VM 계층과 함께 사라졌다.
   if (allActions.includes('lambda-microvms')) {
     throw new Error('hosting: instance role still carries lambda-microvms permissions');
