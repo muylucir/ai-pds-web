@@ -9,10 +9,19 @@
 "use client";
 import type { PrototypeInfo, PrototypeState } from "@/lib/api/prototypes";
 
-const PRIMARY_BTN =
-  "px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium disabled:opacity-50 disabled:hover:bg-violet-600";
-const SECONDARY_BTN =
-  "px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-sm font-medium text-slate-700 disabled:opacity-50 disabled:hover:bg-transparent";
+// Colour-free geometry, shared by every button below. Colour classes are
+// each button's OWN set (never composed on top of another button's colour
+// classes): Tailwind emits utility rules in a fixed internal order that
+// ignores className string order, so appending e.g. `text-rose-600` after a
+// constant that already carries `text-slate-700` does NOT override it — the
+// slate rule wins the cascade regardless of which comes later in the string.
+// Composing SECONDARY_BTN + rose overrides was tried and silently rendered
+// as slate; this shape avoids ever having two same-property colour
+// utilities on one element.
+const BTN_BASE = "px-3.5 py-2 rounded-lg text-sm font-medium disabled:opacity-50";
+const PRIMARY_BTN = `${BTN_BASE} bg-violet-600 hover:bg-violet-700 text-white disabled:hover:bg-violet-600`;
+const SECONDARY_BTN = `${BTN_BASE} border border-slate-200 hover:bg-slate-50 text-slate-700 disabled:hover:bg-transparent`;
+const DANGER_BTN = `${BTN_BASE} border border-slate-200 hover:bg-rose-50 text-rose-600 disabled:hover:bg-transparent`;
 
 const BADGE: Record<PrototypeState, { label: string; cls: string }> = {
   none: { label: "스펙만 있음", cls: "bg-slate-100 text-slate-500" },
@@ -124,7 +133,7 @@ export function PrototypeCard({
             aria-label={`${info.slug} 초기화`}
             disabled={busy}
             onClick={() => onReset(info.slug)}
-            className={`${SECONDARY_BTN} hover:bg-rose-50 text-rose-600`}
+            className={DANGER_BTN}
           >
             초기화
           </button>

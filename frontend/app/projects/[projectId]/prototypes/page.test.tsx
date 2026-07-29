@@ -293,15 +293,19 @@ describe("reset confirmation", () => {
     mockStream();
     render(<PrototypesPage params={params} />);
     await screen.findByText("chat-widget");
-    const getsBeforeConfirm = calls.get;
 
     await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
     await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    // Captured AFTER the dialog has appeared, i.e. AFTER handleReset's own
+    // click-time refetch has already landed — so this baseline isolates
+    // confirmReset's OWN list.reload() from the unrelated GET that opening
+    // the dialog triggers. Capturing it any earlier makes the final
+    // assertion pass even if confirmReset's list.reload() is deleted.
+    const getsBeforeConfirm = calls.get;
+
     await userEvent.click(screen.getByRole("button", { name: "초기화" }));
 
     await waitFor(() => expect(deleteCalls).toBe(1));
-    // list.reload() ran: another GET landed beyond the initial load + the
-    // click-time refetch that already happened before this assertion.
     await waitFor(() => expect(calls.get).toBeGreaterThan(getsBeforeConfirm));
     expect(screen.queryByRole("dialog", { name: "프로토타입 초기화 확인" })).not.toBeInTheDocument();
   });
@@ -317,10 +321,14 @@ describe("reset confirmation", () => {
     mockStream();
     render(<PrototypesPage params={params} />);
     await screen.findByText("chat-widget");
-    const getsBeforeConfirm = calls.get;
 
     await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
     await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    // Same reasoning as the 204 case above: captured after the dialog's own
+    // refetch has already happened, so this isolates confirmReset's
+    // `finally`-block reload from the unrelated open-dialog GET.
+    const getsBeforeConfirm = calls.get;
+
     await userEvent.click(screen.getByRole("button", { name: "초기화" }));
 
     expect(await screen.findByText(/초기화가 완료되지 않았습니다/)).toBeInTheDocument();
