@@ -30,6 +30,7 @@ export function PrototypeCard({
   onStopHost,
   onShowLogs,
   onOpenSurvey,
+  onReset,
   archiveUrl,
   busy,
 }: {
@@ -40,6 +41,9 @@ export function PrototypeCard({
   onStopHost: () => void;
   onShowLogs?: () => void;
   onOpenSurvey?: () => void;
+  /** Wipe build + session + survey, keeping the spec. Absent for state "none"
+   *  — there is nothing accumulated to clear. */
+  onReset?: (slug: string) => void;
   archiveUrl?: string;
   busy: boolean;
 }) {
@@ -113,6 +117,15 @@ export function PrototypeCard({
               </button>
             )}
           </>
+        )}
+        {info.state !== "none" && onReset && (
+          <button
+            type="button"
+            onClick={() => onReset(info.slug)}
+            className="px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-rose-50 text-sm font-medium text-rose-600"
+          >
+            초기화
+          </button>
         )}
         {/* 설문은 빌드 상태와 무관하게 항상 열 수 있다: 스펙만 있는 단계에서
             문항을 미리 만들 수도 있고, 호스팅이 끝난 뒤 응답을 집계할 수도

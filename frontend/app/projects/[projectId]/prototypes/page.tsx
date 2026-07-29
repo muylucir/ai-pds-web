@@ -15,6 +15,7 @@ import {
   stopHost,
   getHost,
   prototypePreviewUrl,
+  resetPrototype,
 } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
@@ -81,6 +82,35 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
     }
   }
 
+  async function handleReset(slug: string) {
+    const info = list.data?.prototypes.find((p) => p.slug === slug);
+    const answers = info?.response_count ?? 0;
+    // Name what is destroyed. The survey line only appears when there is
+    // something irreversible to lose, so the routine case stays quiet.
+    const lines = [
+      `'${slug}' 프로토타입을 초기화합니다.`,
+      "",
+      "· 빌드 결과와 실행 중인 서버",
+      "· 빌드 대화 기록",
+      answers > 0
+        ? `· 검증 설문과 응답 ${answers}건 (되돌릴 수 없습니다)`
+        : "· 검증 설문",
+      "",
+      "설계 문서(PROTOTYPE-*.md)는 남으므로 다시 빌드할 수 있습니다.",
+    ];
+    if (!window.confirm(lines.join("\n"))) return;
+
+    setBusySlug(slug);
+    try {
+      await resetPrototype(projectId, slug);
+    } catch {
+      window.alert("초기화가 완료되지 않았습니다. 다시 시도해 주세요.");
+    } finally {
+      setBusySlug(null);
+      list.reload();
+    }
+  }
+
   function handleOpenPreview(slug: string) {
     window.open(prototypePreviewUrl(projectId, slug), "_blank", "noopener,noreferrer");
   }
@@ -137,6 +167,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 onOpenSurvey={() =>
                   setSurveySlug((cur) => (cur === info.slug ? null : info.slug))
                 }
+                onReset={handleReset}
                 archiveUrl={prototypeArchiveUrl(projectId, info.slug)}
               />
             ))}

@@ -157,4 +157,20 @@ describe("PrototypeCard", () => {
     expect(screen.getByRole("button", { name: "호스팅 중지" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "로그" })).toBeDisabled();
   });
+
+  it("offers reset once a prototype has been built", async () => {
+    const user = userEvent.setup();
+    const onReset = vi.fn();
+    render(<PrototypeCard info={info({ state: "built" })} busy={false} {...noop} onReset={onReset} />);
+
+    await user.click(screen.getByRole("button", { name: /초기화/ }));
+
+    expect(onReset).toHaveBeenCalledWith("todo-app");
+  });
+
+  it("does not offer reset for a prototype with nothing to reset", () => {
+    render(<PrototypeCard info={info({ state: "none" })} busy={false} {...noop} onReset={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: /초기화/ })).toBeNull();
+  });
 });
