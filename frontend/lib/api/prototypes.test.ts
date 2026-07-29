@@ -16,13 +16,14 @@ import {
   getHost,
   prototypePreviewUrl,
   streamPrototypeEvents,
+  resetPrototype,
 } from "./prototypes";
 
 describe("listPrototypes", () => {
   it("GETs /prototypes and unwraps {prototypes, active_builds, max_builds}", async () => {
     const prototypes = [
-      { slug: "todo-app", spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md", state: "built", port: null },
-      { slug: "chat-widget", spec_path: "aiplc-docs/discovery/prototypes/chat-widget/PROTOTYPE-chat-widget.md", state: "running", port: 4021 },
+      { slug: "todo-app", spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md", state: "built", port: null, response_count: 0 },
+      { slug: "chat-widget", spec_path: "aiplc-docs/discovery/prototypes/chat-widget/PROTOTYPE-chat-widget.md", state: "running", port: 4021, response_count: 3 },
     ];
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/prototypes`, () =>
@@ -36,7 +37,7 @@ describe("listPrototypes", () => {
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/prototypes`, () =>
         HttpResponse.json({
-          prototypes: [{ slug: "demo", spec_path: "s.md", state: "built", port: null }],
+          prototypes: [{ slug: "demo", spec_path: "s.md", state: "built", port: null, response_count: 0 }],
           active_builds: 1,
           max_builds: 2,
         }),
@@ -178,6 +179,32 @@ describe("startHost / stopHost / getHost", () => {
       ),
     );
     await expect(getHost("p1", "todo-app")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("resetPrototype", () => {
+  it("resetPrototype sends DELETE to the prototype resource", async () => {
+    let seen: string | null = null;
+    server.use(
+      http.delete("*/projects/:pid/prototypes/:slug", ({ request }) => {
+        seen = new URL(request.url).pathname;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    await resetPrototype("proj-1", "todo-app");
+
+    expect(seen).toContain("/projects/proj-1/prototypes/todo-app");
+  });
+
+  it("resetPrototype surfaces a 502 as an ApiError so the UI can retry", async () => {
+    server.use(
+      http.delete("*/projects/:pid/prototypes/:slug", () =>
+        HttpResponse.json({ detail: "초기화가 완료되지 않았습니다" }, { status: 502 }),
+      ),
+    );
+
+    await expect(resetPrototype("proj-1", "todo-app")).rejects.toThrow(ApiError);
   });
 });
 

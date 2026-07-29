@@ -27,8 +27,8 @@ function mockStream(overrides: Partial<prototypeStream.PrototypeStream> = {}) {
 }
 
 const PROTOTYPES = [
-  { slug: "todo-app", spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md", state: "none", port: null },
-  { slug: "chat-widget", spec_path: "aiplc-docs/discovery/prototypes/chat-widget/PROTOTYPE-chat-widget.md", state: "running", port: 4021 },
+  { slug: "todo-app", spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md", state: "none", port: null, response_count: 0 },
+  { slug: "chat-widget", spec_path: "aiplc-docs/discovery/prototypes/chat-widget/PROTOTYPE-chat-widget.md", state: "running", port: 4021, response_count: 3 },
 ];
 
 // GET /prototypes now answers {prototypes, active_builds, max_builds}
@@ -154,7 +154,7 @@ describe("Prototypes page", () => {
       http.get(`${API_BASE_URL}/projects/p1/prototypes`, () =>
         HttpResponse.json(
           listing([
-            { slug: "todo-app", spec_path: "s.md", state: "built", port: null },
+            { slug: "todo-app", spec_path: "s.md", state: "built", port: null, response_count: 0 },
           ]),
         ),
       ),

@@ -20,6 +20,8 @@ export interface PrototypeInfo {
   spec_path: string;
   state: PrototypeState;
   port: number | null;
+  /** Survey answers that a reset would destroy — shown in its confirmation. */
+  response_count: number;
 }
 
 // Mirrors backend/pathfinder/proto/host.py's HostState Literal exactly.
@@ -115,6 +117,13 @@ export async function startHost(pid: string, slug: string): Promise<HostStatus> 
 
 export async function stopHost(pid: string, slug: string): Promise<void> {
   await request<void>(sessionPath(pid, slug, "/host"), { method: "DELETE" });
+}
+
+// Wipes the prototype's build, session, transcript and survey — everything but
+// the spec, so the card returns as a fresh buildable prototype. A 502 means a
+// partial reset; every purge is idempotent, so retrying converges.
+export async function resetPrototype(pid: string, slug: string): Promise<void> {
+  await request<void>(sessionPath(pid, slug), { method: "DELETE" });
 }
 
 // GET /host → 404 when nothing's hosted; that's a normal, expected state for
