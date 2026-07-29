@@ -477,8 +477,14 @@ git commit -m "feat(proto): ProtoHost.purge() — 프로세스 정지 후 로컬
 # ---- reset ----
 
 def _seed_everything(proto_env, monkeypatch):
-    """All seven places one prototype leaves state, plus a sibling prototype
-    and the shared results doc that must both survive."""
+    """All EIGHT places one prototype leaves state, plus a sibling prototype
+    and the shared results doc that must both survive.
+
+    The token index is the eighth and the easiest to forget: it is the only key
+    outside `prototypes/{slug}/`, so the survivor assertions below (which filter
+    on that prefix) cannot see it. Omitting it from this seed is what let the
+    survey/session-state ordering reverse with every reset test still green.
+    """
     s3 = proto_env["s3"]
     _seed_spec(s3)
     s3.blobs[f"prototypes/{SLUG}/session.json"] = '{"session_id": "x"}'
@@ -488,6 +494,10 @@ def _seed_everything(proto_env, monkeypatch):
         {"slug": SLUG, "project_id": PID, "token": "tok-1", "status": "open",
          "closed_at": None, "questions": []})
     s3.blobs[f"prototypes/{SLUG}/survey/responses/r1.json"] = "{}"
+    # Root-scoped, and keyed by the token in the questionnaire above. Only
+    # reachable by reading that questionnaire -- hence the ordering constraint.
+    s3.blobs["surveys/by-token/tok-1.json"] = json.dumps(
+        {"project_id": PID, "slug": SLUG})
     s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/validation-questionnaire.md"] = "# q"
     s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] = "# shared"
     s3.blobs["prototypes/other/session.json"] = '{"session_id": "y"}'
@@ -506,11 +516,43 @@ def test_reset_clears_everything_but_keeps_the_spec(proto_env, monkeypatch):
     assert [k for k in s3.blobs if k.startswith(f"prototypes/{SLUG}/")] == []
     assert f"aiplc-docs/discovery/prototypes/{SLUG}/validation-questionnaire.md" \
         not in s3.blobs
+    # Asserted separately: it is outside the prefix filtered above, and a
+    # survivor here is a live /survey/{token} link pointing at nothing.
+    assert "surveys/by-token/tok-1.json" not in s3.blobs
     assert not (proto_env["root"] / PID / SLUG).exists()
     # Survivors: the spec (or the card disappears), the shared results doc
     # (no slug in its key), and any other prototype.
     assert s3.blobs[SPEC_KEY] == "# PROTOTYPE demo"
     assert s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] == "# shared"
+
+
+def test_reset_skips_later_purges_so_a_retry_can_reclaim_the_token(
+        proto_env, monkeypatch):
+    """The convergence property, in one test.
+
+    session-state deletes the questionnaire that survey purge needs to find its
+    token, so a failed survey purge must STOP the sequence. Otherwise the retry
+    finds no token, deletes no index, and returns 204 over a stranded link."""
+    _seed_everything(proto_env, monkeypatch)
+    s3 = proto_env["s3"]
+    calls = {"n": 0}
+    real_purge = app_module.survey_store_factory(PID, SLUG).purge.__func__
+
+    async def flaky(self):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("s3 down")
+        await real_purge(self)
+
+    monkeypatch.setattr("pathfinder.survey.store.SurveyStore.purge", flaky)
+
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 502
+    # session-state was skipped, so the token is still reclaimable.
+    assert f"prototypes/{SLUG}/survey/questionnaire.json" in s3.blobs
+    assert "surveys/by-token/tok-1.json" in s3.blobs
+
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+    assert "surveys/by-token/tok-1.json" not in s3.blobs
     assert s3.blobs["prototypes/other/session.json"] == '{"session_id": "y"}'
 
 
@@ -638,9 +680,25 @@ async def reset_prototype(pid: str, slug: str):
     user it finished while S3 may still hold the survey. This way a failure
     leaves the card reading "built" and the incomplete reset stays visible.
 
-    Failures are collected, not raised on the spot: S3 has no transaction, so
-    partial deletion is a legitimate state. Every purge is idempotent, so the
-    502 this returns is an invitation to press the button again.
+    Failures are collected rather than raised on the spot -- S3 has no
+    transaction, so partial deletion is a legitimate state and every purge is
+    idempotent, making the 502 an invitation to press the button again. But
+    each step only runs while nothing has failed yet, because the steps are
+    NOT independent:
+
+    - session-state deletes prototypes/{slug}/, which CONTAINS the
+      questionnaires SurveyStore.purge() reads to reclaim its token indexes.
+      Running it after a failed survey purge destroys those questionnaires
+      while the indexes are still live -- the retry then finds no tokens,
+      deletes nothing, and returns 204 over a permanently stranded index. A
+      stale /survey/{token} link keeps resolving, and once the prototype is
+      rebuilt it resolves into the NEW survey as a working credential.
+    - the local tree must not go while S3 still holds data: it is what makes
+      the card read "built", so wiping it early tells the user the reset
+      finished when it did not.
+
+    Skipping a later step costs nothing -- it is untouched and idempotent, so
+    the retry picks it up.
     """
     import pathfinder.app as app_module
     _require_registered(pid)
@@ -655,14 +713,16 @@ async def reset_prototype(pid: str, slug: str):
             _log.exception("reset: session close failed: %s/%s", pid, slug)
             failures.append("session")
 
-    for label, work in (
-            ("survey", app_module.survey_store_factory(pid, slug).purge()),
-            ("session-state", purge_session_state(
+    for label, make_work in (
+            ("survey", lambda: app_module.survey_store_factory(pid, slug).purge()),
+            ("session-state", lambda: purge_session_state(
                 app_module.s3_store_factory(pid), slug)),
-            ("build-tree", app_module.proto_host().purge(pid, slug)),
+            ("build-tree", lambda: app_module.proto_host().purge(pid, slug)),
     ):
+        if failures:
+            break  # see the docstring: later steps destroy earlier steps' inputs
         try:
-            await work
+            await make_work()
         except Exception:
             _log.exception("reset: %s purge failed: %s/%s", label, pid, slug)
             failures.append(label)
@@ -673,6 +733,13 @@ async def reset_prototype(pid: str, slug: str):
             detail=f"초기화가 완료되지 않았습니다({', '.join(failures)}) — 다시 시도해 주세요")
     return Response(status_code=204)
 ```
+
+**이 루프는 첫 초안에서 두 번 틀렸다.** (1) 상태를 무조건 3개 다 돌려 S3 실패
+후에도 로컬을 지웠고, (2) 더 나쁘게는 survey 실패 후 session-state가 돌아 토큰을
+영구히 회수 불가로 만들었다 — 재시도가 204를 반환해 성공으로 보고한다. 원인은
+docstring이 두 S3 purge를 "independent"로 단정한 것인데, `_collect_tokens`가
+session-state가 지우는 트리를 읽어야 하므로 사실이 아니다. 코루틴을 미리 만들면
+건너뛴 것이 "never awaited" 경고를 내므로 lambda로 지연 생성한다.
 
 파일 상단 import부에 추가한다:
 
