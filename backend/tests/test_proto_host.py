@@ -437,3 +437,39 @@ async def test_purge_raises_when_residue_survives_the_sweep(root):
         assert (blocked / "file.txt").exists()
     finally:
         blocked.chmod(0o700)
+
+
+@pytest.mark.parametrize("bad_slug", ["..", ".", "", "a/b", "/etc"])
+async def test_purge_refuses_a_slug_that_is_not_one_path_segment(root, bad_slug):
+    """The one that actually deletes things off disk, so it validates its own
+    input rather than trusting the caller.
+
+    `pathlib` does not normalise: `root / pid / ".."` really is `root`'s
+    parent, so `rmtree` there takes EVERY project's build tree, and `"."`
+    resolves to `root / pid` and takes every sibling prototype of one project.
+    Both were reproducible before the guard (`purge("me", "..")` emptied the
+    whole root) and both answer 204 through the route.
+    """
+    _seed_build_dir(root, pid="victim", slug="theirs")
+    _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    with pytest.raises(ValueError):
+        await host.purge(PID, bad_slug)
+
+    # Nothing was touched -- the raise happens before stop() or rmtree.
+    assert (root / "victim" / "theirs").is_dir()
+    assert (root / PID / SLUG).is_dir()
+
+
+@pytest.mark.parametrize("bad_pid", ["..", ".", "", "a/b"])
+async def test_purge_refuses_an_unsafe_pid_too(root, bad_pid):
+    """`{root}/{pid}/{slug}` has two attacker-supplied segments, and a guard on
+    only the second leaves `root / ".." / slug` reachable."""
+    _seed_build_dir(root, pid="victim", slug="theirs")
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    with pytest.raises(ValueError):
+        await host.purge(bad_pid, SLUG)
+
+    assert (root / "victim" / "theirs").is_dir()

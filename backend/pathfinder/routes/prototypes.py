@@ -17,19 +17,61 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.responses import Response
 
 from pathfinder.models import AgentEvent
 from pathfinder.parsers.redaction import redact_credentials
+from pathfinder.pathsafe import reject_unsafe_segment
 from pathfinder.proto.session import purge_session_state
-from pathfinder.survey.store import responses_prefix
+from pathfinder.survey.store import purgeable_response_count
 
 _log = logging.getLogger(__name__)
 
-router = APIRouter()
+
+def _reject_traversal_params(request: Request) -> None:
+    """Router-wide guard: every {pid}/{slug} in this file must be ONE ordinary
+    path segment.
+
+    Both values are interpolated into filesystem paths (`_prototype_dir`,
+    `ProtoHost.start`/`purge`: `{proto_root}/{pid}/{slug}`) and into S3 key
+    prefixes, and `pathlib` does NOT normalise -- `root / pid / ".."` really
+    resolves to root's parent, and `root / pid / "."` really resolves to
+    `root / pid`. Reset then `rmtree`s it, so an unvalidated slug of ".."
+    deletes EVERY project's build tree and "." deletes every sibling
+    prototype of one project, both answering 204.
+
+    Starlette will not route a literal `..` segment (it normalises dot
+    segments), but the percent-encoded forms `%2e%2e` / `%2E%2E` arrive
+    already decoded in `path_params` and route fine -- verified directly. So
+    the check has to sit here, after decoding, not in a URL-shape assumption.
+
+    A router-level dependency rather than a call inside `reset_prototype`
+    deliberately: reset is only the IRREVERSIBLE consumer, not the only one.
+    `start_host` would `npm install` in the wrong tree, the archive route
+    would zip a sibling, and the session routes key S3 state off the same
+    value. One guard on the router covers every current and future route in
+    this file, and cannot be forgotten by the next one added.
+
+    404, matching how the rest of this file reports an input that names
+    nothing addressable (`_require_registered`, `_require_session`) -- and
+    matching what Starlette already returns for the un-encoded spelling, so
+    the two spellings of the same attack stop looking different from outside.
+    """
+    for name in ("pid", "slug"):
+        value = request.path_params.get(name)
+        if value is None:
+            continue
+        try:
+            reject_unsafe_segment(value)
+        except ValueError:
+            _log.warning("rejected unsafe %s in prototype route: %r", name, value)
+            raise HTTPException(status_code=404, detail=f"invalid {name}")
+
+
+router = APIRouter(dependencies=[Depends(_reject_traversal_params)])
 
 _SPEC_PREFIX = "aiplc-docs/discovery/prototypes/"
 _SPEC_RE = re.compile(r"^aiplc-docs/discovery/prototypes/([^/]+)/PROTOTYPE-\1\.md$")
@@ -168,7 +210,17 @@ async def list_prototypes(pid: str):
 
         # Rides the list so the reset confirmation can name the number of
         # answers about to be destroyed without a second round trip.
-        response_count = len(await s3.list(responses_prefix(slug)))
+        #
+        # Delegated to survey/store.py rather than counted here from
+        # `responses_prefix`: that prefix is the CURRENT round only, but
+        # SurveyStore.purge() deletes the whole survey/ tree including
+        # `archive/{closed_at}/responses/`, where archive_current() files each
+        # previous round's answers. Counting the live prefix reported 0 for a
+        # regenerated survey holding 12 real submissions -- so the dialog showed
+        # no count and no irreversibility warning, then destroyed all 12. The
+        # definition of "a response a reset destroys" belongs to the module that
+        # owns those keys, so the two cannot drift apart again.
+        response_count = await purgeable_response_count(s3, slug)
 
         out.append({"slug": slug, "spec_path": spec_path,
                     "state": state, "port": port,
@@ -280,6 +332,13 @@ async def reset_prototype(pid: str, slug: str):
     Every gate below protects the same property: no failure path may leave
     state a retry cannot fix.
 
+    The session is evicted from `proto_sessions` only AFTER close() succeeds.
+    Evicting first (the original order) made a failed close unretryable: the
+    retry saw no session -- indistinguishable from the normal finished-build
+    case -- and answered 204 while the build slot close() releases stayed held
+    until the process restarted. The entry itself is the only handle a retry has
+    on that slot.
+
     survey MUST run first AND succeed before session-state runs at all -- not
     because the two are independent and ordering is merely tidy, but because
     they are NOT independent. SurveyStore.purge() can only discover this
@@ -313,13 +372,25 @@ async def reset_prototype(pid: str, slug: str):
 
     failures: list[str] = []
 
-    session = app_module.proto_sessions.pop((pid, slug), None)
+    # Read, close, THEN evict -- the eviction is the last step, not the first.
+    # Popping up front made a failed close() unretryable: the session was gone
+    # from the registry, so the retry saw "no session" (the normal case) and
+    # answered 204 while the build slot close() releases stayed held until the
+    # process restarted. With PATHFINDER_PROTO_MAX_CONCURRENT capping a workshop
+    # box at 2, one leaked slot is a real 429 for another team, and this route's
+    # own contract is that no failure path may leave state a retry cannot fix.
+    # Leaving the entry in place also keeps close()'s own idempotence guard
+    # (session.py's `_closed`/`_slot_released`) as the thing that stops a second
+    # attempt from double-releasing.
+    session = app_module.proto_sessions.get((pid, slug))
     if session is not None:
         try:
             await session.close()
         except Exception:
             _log.exception("reset: session close failed: %s/%s", pid, slug)
             failures.append("session")
+        else:
+            del app_module.proto_sessions[(pid, slug)]
 
     try:
         await app_module.survey_store_factory(pid, slug).purge()

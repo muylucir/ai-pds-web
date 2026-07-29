@@ -508,19 +508,34 @@ def test_first_prompt_before_start_assumes_a_fresh_build(tmp_path):
 async def test_purge_session_state_removes_session_transcript_and_bundle():
     """Everything under prototypes/{slug}/ that this module owns. The bundle/
     prefix is legacy (the deleted MicroVM wrote it) but old projects still
-    carry one, so purge has to cover it."""
+    carry one, so purge has to cover it.
+
+    The sibling is deliberately `{SLUG}-2`, a PREFIX-COLLIDING slug, and that
+    choice is the whole isolation guarantee. `delete_prefix` is a string-prefix
+    match, so dropping the trailing slash from `prototypes/{slug}/` also
+    matches `prototypes/{slug}-2/...` -- and `todo-app` / `todo-app-2` is the
+    normal shape of an iterated workshop prototype, not an exotic name. With a
+    non-colliding sibling (`other`) that mutation went unnoticed by 90 tests
+    while it deleted a neighbour's real survey answers, so this test seeds the
+    one thing that cannot be recovered: a submitted response."""
     from pathfinder.proto.session import purge_session_state
     s3 = FakeS3Store()
     s3.blobs[f"prototypes/{SLUG}/session.json"] = '{"session_id": "x"}'
     s3.blobs[f"prototypes/{SLUG}/transcript/00000001.jsonl"] = "{}"
     s3.blobs[f"prototypes/{SLUG}/bundle/package.json"] = "{}"
-    # Must survive: a different prototype's state.
-    s3.blobs["prototypes/other/session.json"] = '{"session_id": "y"}'
+    # Must survive: the NEXT ITERATION of this same prototype, whose slug
+    # shares this one's entire string as a prefix.
+    sibling = f"{SLUG}-2"
+    s3.blobs[f"prototypes/{sibling}/session.json"] = '{"session_id": "y"}'
+    s3.blobs[f"prototypes/{sibling}/survey/responses/r1.json"] = \
+        '{"response_id": "r1", "submitted_at": "2026-01-01T00:00:00Z", "answers": {}}'
 
     await purge_session_state(s3, SLUG)
 
     assert [k for k in s3.blobs if k.startswith(f"prototypes/{SLUG}/")] == []
-    assert "prototypes/other/session.json" in s3.blobs
+    assert f"prototypes/{sibling}/session.json" in s3.blobs
+    # A real respondent's answer, in the prototype next door.
+    assert f"prototypes/{sibling}/survey/responses/r1.json" in s3.blobs
 
 
 async def test_purge_session_state_leaves_the_spec_alone():
@@ -539,6 +554,10 @@ async def test_purge_session_state_leaves_the_spec_alone():
 
 
 async def test_purge_session_state_is_idempotent():
+    """Deleting nothing is success, not a raise: most prototypes have no
+    session state, and the reset route retries after a partial failure — so the
+    second pass, which finds even less, must not turn a converged reset into a
+    502."""
     from pathfinder.proto.session import purge_session_state
     s3 = FakeS3Store()
     await purge_session_state(s3, SLUG)

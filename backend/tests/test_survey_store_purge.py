@@ -7,6 +7,7 @@ import pytest
 
 from fakes.in_memory_s3 import FakeS3Store
 from pathfinder.survey.store import (RESULTS_MD_KEY, SurveyStore,
+                                     purgeable_response_count,
                                      questionnaire_key, questionnaire_md_key,
                                      survey_prefix)
 
@@ -84,3 +85,137 @@ async def test_purge_is_idempotent_on_a_prototype_with_no_survey():
 
     await store.purge()
     await store.purge()  # twice: the second call has even less to find
+
+
+# ---- purgeable_response_count: what the reset dialog warns about ----
+
+async def test_purgeable_response_count_includes_archived_rounds():
+    """The regression this guards: the reset dialog said "0 responses" over a
+    dozen real submissions.
+
+    `archive_current()` MOVES a closed round's answers to
+    archive/{closed_at}/responses/ rather than deleting them, and `purge()`
+    deletes the whole survey/ tree -- archive included. Counting only the live
+    `responses/` prefix therefore reported 0 for a prototype whose survey had
+    been regenerated after a first round (the documented normal flow), and the
+    dialog's count/irreversibility warning both hinge on that number being
+    non-zero: 0 takes neither the `> 0` branch nor the `=== null` branch, so
+    the user was shown a bare "검증 설문" bullet and then lost 12 answers.
+    """
+    store, project_s3, root_s3 = _store()
+    _seed_survey(project_s3, root_s3, "tok-old", closed_at="2026-01-01T00:00:00Z")
+    _seed_survey(project_s3, root_s3, "tok-current")
+    for i in range(12):
+        project_s3.blobs[
+            f"{survey_prefix(SLUG)}archive/2026-01-01T00:00:00Z/responses/a{i}.json"
+        ] = "{}"
+    # The current round has none yet -- exactly the shape that reported 0.
+
+    assert await purgeable_response_count(project_s3, SLUG) == 12
+
+
+async def test_purgeable_response_count_sums_live_and_archived():
+    store, project_s3, root_s3 = _store()
+    _seed_survey(project_s3, root_s3, "tok-current")
+    project_s3.blobs[f"{survey_prefix(SLUG)}responses/r1.json"] = "{}"
+    project_s3.blobs[f"{survey_prefix(SLUG)}responses/r2.json"] = "{}"
+    project_s3.blobs[
+        f"{survey_prefix(SLUG)}archive/2026-01-01T00:00:00Z/responses/a1.json"] = "{}"
+
+    assert await purgeable_response_count(project_s3, SLUG) == 3
+
+
+async def test_purgeable_response_count_counts_only_responses():
+    """The questionnaire, its archived copy and the rollup are all inside the
+    tree purge deletes, but none of them is a respondent's answer -- counting
+    them would inflate the warning and make "응답 3건" mean nothing."""
+    store, project_s3, root_s3 = _store()
+    _seed_survey(project_s3, root_s3, "tok-old", closed_at="2026-01-01T00:00:00Z")
+    _seed_survey(project_s3, root_s3, "tok-current")
+    project_s3.blobs[f"{survey_prefix(SLUG)}rollup.json"] = "{}"
+    project_s3.blobs[
+        f"{survey_prefix(SLUG)}archive/2026-01-01T00:00:00Z/rollup.json"] = "{}"
+
+    assert await purgeable_response_count(project_s3, SLUG) == 0
+
+
+async def test_purgeable_response_count_is_zero_without_a_survey():
+    store, project_s3, root_s3 = _store()
+    assert await purgeable_response_count(project_s3, SLUG) == 0
+
+
+async def test_purge_destroys_exactly_what_purgeable_response_count_reported():
+    """The pairing is the point: the number shown to the user has to be the
+    number that disappears. Asserted together so a change to either side that
+    breaks the correspondence fails here rather than in the dialog."""
+    store, project_s3, root_s3 = _store()
+    _seed_survey(project_s3, root_s3, "tok-old", closed_at="2026-01-01T00:00:00Z")
+    _seed_survey(project_s3, root_s3, "tok-current")
+    project_s3.blobs[f"{survey_prefix(SLUG)}responses/r1.json"] = "{}"
+    project_s3.blobs[
+        f"{survey_prefix(SLUG)}archive/2026-01-01T00:00:00Z/responses/a1.json"] = "{}"
+
+    reported = await purgeable_response_count(project_s3, SLUG)
+    before = [k for k in project_s3.blobs if "/responses/" in k]
+    await store.purge()
+
+    assert reported == len(before) == 2
+    assert [k for k in project_s3.blobs if "/responses/" in k] == []
+
+
+# ---- unreclaimable tokens must raise, not strand the index ----
+
+@pytest.mark.parametrize("body,label", [
+    ("{not json at all", "unparseable"),
+    ("null", "valid JSON but not an object"),
+    ("[]", "a list"),
+])
+async def test_purge_raises_rather_than_stranding_a_token_it_cannot_read(
+        body, label):
+    """The regression this guards: a 204 over a token nothing can ever reclaim.
+
+    Probed both branches before the fix. Unparseable JSON warned and CONTINUED:
+    purge then deleted the questionnaire that named the token while
+    surveys/by-token/{token}.json survived — still resolving to this slug, and
+    with no reverse lookup from the index, unreachable forever. Every retry
+    returned 204 over it. Once the slug is rebuilt that stale token is a live
+    credential into the NEW survey, which is exactly the outcome the route's
+    ordering gate exists to prevent, reached without violating any ordering.
+    (`null` happened to escape as AttributeError and so was collected correctly
+    by accident; both shapes now raise for the same stated reason.)
+
+    A truncated `put` on questionnaire.json is the realistic producer, and
+    `get_rollup` already treats unparseable JSON as an expected state, so this
+    store does not assume well-formed blobs elsewhere either.
+    """
+    store, project_s3, root_s3 = _store()
+    project_s3.blobs[questionnaire_key(SLUG)] = body
+    root_s3.blobs["surveys/by-token/tok-1.json"] = json.dumps(
+        {"project_id": PID, "slug": SLUG})
+    project_s3.blobs[f"{survey_prefix(SLUG)}responses/r1.json"] = "{}"
+
+    with pytest.raises(RuntimeError):
+        await store.purge()
+
+    # Nothing was deleted, so the token is still reclaimable by a fixed retry
+    # (or by hand) — the questionnaire that names it is the only way back.
+    assert questionnaire_key(SLUG) in project_s3.blobs
+    assert "surveys/by-token/tok-1.json" in root_s3.blobs
+
+
+async def test_purge_raises_on_an_unreadable_archived_questionnaire_too():
+    """The archive holds N-1 of the N tokens a regenerated prototype has issued,
+    so an unreadable one there strands a token just as permanently."""
+    store, project_s3, root_s3 = _store()
+    _seed_survey(project_s3, root_s3, "tok-current")
+    project_s3.blobs[
+        f"{survey_prefix(SLUG)}archive/2026-01-01T00:00:00Z/questionnaire.json"
+    ] = "{truncated"
+    root_s3.blobs["surveys/by-token/tok-old.json"] = json.dumps(
+        {"project_id": PID, "slug": SLUG})
+
+    with pytest.raises(RuntimeError):
+        await store.purge()
+
+    assert "surveys/by-token/tok-old.json" in root_s3.blobs
+    assert "surveys/by-token/tok-current.json" in root_s3.blobs

@@ -87,6 +87,15 @@ class FakeProtoHost:
         self._root = root
         self.infos: dict[tuple[str, str], HostInfo] = {}
         self.start_exc = None
+        # Mirrors start_exc for the purge path. Without it the route's
+        # `failures.append("build-tree")` branch was unreachable from any test:
+        # deleting that line left all 60 route tests green, i.e. a partial reset
+        # silently reported as success -- the one outcome the retry-convergence
+        # invariant forbids. The real ProtoHost.purge() raises RuntimeError
+        # whenever residue survives its rmtree (test_proto_host.py pins that),
+        # so a fake that cannot raise is strictly more forgiving than what it
+        # stands in for, on exactly the axis under test.
+        self.purge_exc = None
         self.stopped: list[tuple[str, str]] = []
         # Recorded so a test can assert WHICH directory hosting was pointed at.
         # The real ProtoHost defaults to {root}/{pid}/{slug} when cwd is None,
@@ -116,6 +125,13 @@ class FakeProtoHost:
 
     async def purge(self, pid, slug):
         self.purged.append((pid, slug))
+        if self.purge_exc is not None:
+            # Raise BEFORE deleting, like the real one: it validates its input
+            # and calls stop() first, and its own residue check raises only
+            # when the tree is still there. A fake that wiped the tree and then
+            # raised would let a test assert a survivor that the real code
+            # cannot deliver.
+            raise self.purge_exc
         self.infos.pop((pid, slug), None)
         if self._root is not None:
             import shutil
@@ -135,7 +151,19 @@ def proto_env(monkeypatch, tmp_path):
     monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
     # VM env vars are gone -- the session route's config guard now checks a
     # build slot, not an image ARN.
+    #
+    # TWO fakes, deliberately, matching test_routes_surveys.py. These are
+    # different S3 namespaces in production: s3_store_factory is prefixed
+    # `projects/{pid}/` while surveys_root_s3_factory is bucket-root (prefix
+    # ""), because the token index has to be readable before the project is
+    # known. Pointing both at ONE fake collapsed that distinction and made the
+    # token-index assertions vacuous -- mutating SurveyStore.purge's
+    # `self._root.delete_prefix` to `self._s3.delete_prefix` (i.e. writing the
+    # root-scoped key into the project prefix, which in production leaves the
+    # real index untouched and every /survey/{token} link live) kept all 60
+    # route tests green.
     fake_s3 = FakeS3Store()
+    fake_root_s3 = FakeS3Store()
 
     async def fake_make_workspace(pid):
         return Workspace(FakeRunner(FakeS3Store()))
@@ -146,7 +174,8 @@ def proto_env(monkeypatch, tmp_path):
     # bucket-root token index via surveys_root_s3_factory(); left unpatched it
     # falls through to a real boto3 client with PATHFINDER_S3_BUCKET="" and
     # blows up on bucket-name validation before it ever reaches the fake.
-    monkeypatch.setattr(app_module, "surveys_root_s3_factory", lambda: fake_s3)
+    monkeypatch.setattr(app_module, "surveys_root_s3_factory",
+                        lambda: fake_root_s3)
     # list_prototypes' "built" signal reads the local build dir straight off
     # disk (app_module._proto_root() / pid / slug) -- point it at tmp_path so
     # tests never touch the real ~/pathfinder-protos, matching
@@ -164,7 +193,10 @@ def proto_env(monkeypatch, tmp_path):
     resp = client.post("/projects", json={"project_id": PID})
     assert resp.status_code in (200, 201, 409)
 
-    yield {"s3": fake_s3, "host": fake_host, "root": tmp_path}
+    # "root_s3" is exposed so token-index assertions can name the namespace the
+    # index actually lives in rather than borrowing the project store's.
+    yield {"s3": fake_s3, "root_s3": fake_root_s3, "host": fake_host,
+           "root": tmp_path}
 
     app_module.proto_sessions.clear()
     app_module.proto_sessions.update(sessions_backup)
@@ -389,6 +421,51 @@ def test_list_reports_zero_responses_when_there_is_no_survey(proto_env):
     assert body["prototypes"][0]["response_count"] == 0
 
 
+def test_list_counts_archived_responses_because_a_reset_destroys_them(proto_env):
+    """The regression this guards: the reset dialog claimed "nothing to lose"
+    over a dozen real submissions.
+
+    archive_current() MOVES a closed round's answers to
+    survey/archive/{closed_at}/responses/, and SurveyStore.purge() deletes the
+    whole survey/ tree -- archive included. Counting only the live responses/
+    prefix reported 0 for a prototype whose survey had been regenerated after a
+    first round (the documented normal flow), and 0 takes neither the dialog's
+    rose (`> 0`) branch nor its amber (`=== null`) branch: the user saw a bare
+    "검증 설문" bullet, no count and no irreversibility warning, and then 12
+    answers were destroyed."""
+    _seed_spec(proto_env["s3"])
+    for i in range(12):
+        proto_env["s3"].blobs[
+            f"prototypes/{SLUG}/survey/archive/2026-01-01T00:00:00Z/"
+            f"responses/a{i}.json"] = "{}"
+
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert body["prototypes"][0]["response_count"] == 12
+
+
+def test_list_response_count_matches_what_the_reset_actually_destroys(proto_env):
+    """The number the dialog shows and the number that disappears have to be
+    the same one. Both rounds present -- live and archived -- then reset, and
+    nothing under any responses/ survives."""
+    _seed_spec(proto_env["s3"])
+    s3 = proto_env["s3"]
+    s3.blobs[f"prototypes/{SLUG}/survey/responses/r1.json"] = "{}"
+    s3.blobs[f"prototypes/{SLUG}/survey/archive/2026-01-01T00:00:00Z/"
+             f"responses/a1.json"] = "{}"
+    s3.blobs[f"prototypes/{SLUG}/survey/archive/2026-01-01T00:00:00Z/"
+             f"responses/a2.json"] = "{}"
+
+    reported = client.get(
+        f"/projects/{PID}/prototypes").json()["prototypes"][0]["response_count"]
+    destroyed = len([k for k in s3.blobs if "/responses/" in k])
+
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+    assert reported == destroyed == 3
+    assert [k for k in s3.blobs if "/responses/" in k] == []
+
+
 # ---- session lifecycle ----
 
 def test_session_start_202(proto_env, monkeypatch):
@@ -543,7 +620,7 @@ def test_close_session_404_when_absent(proto_env):
 
 # ---- reset ----
 
-def _seed_everything(proto_env, monkeypatch):
+def _seed_everything(proto_env, monkeypatch=None):
     """All eight places one prototype leaves state, plus a sibling prototype
     and the shared results doc that must both survive.
 
@@ -553,8 +630,13 @@ def _seed_everything(proto_env, monkeypatch):
     token is gone (Task 1's `_collect_tokens()` learns tokens by reading
     questionnaires, there is no reverse lookup). Omitting it here would make
     every reset test pass regardless of whether survey purge actually runs,
-    and did exactly that until this was added."""
+    and did exactly that until this was added.
+
+    It is seeded into `root_s3`, NOT `s3`: `surveys/by-token/` is bucket-root
+    while everything else here is under `projects/{pid}/`. Seeding both from one
+    fake made those assertions vacuous (see the fixture's note)."""
     s3 = proto_env["s3"]
+    root_s3 = proto_env["root_s3"]
     _seed_spec(s3)
     s3.blobs[f"prototypes/{SLUG}/session.json"] = '{"session_id": "x"}'
     s3.blobs[f"prototypes/{SLUG}/transcript/00000001.jsonl"] = "{}"
@@ -563,7 +645,7 @@ def _seed_everything(proto_env, monkeypatch):
         {"slug": SLUG, "project_id": PID, "token": "tok-1", "status": "open",
          "closed_at": None, "questions": []})
     s3.blobs[f"prototypes/{SLUG}/survey/responses/r1.json"] = "{}"
-    s3.blobs["surveys/by-token/tok-1.json"] = json.dumps(
+    root_s3.blobs["surveys/by-token/tok-1.json"] = json.dumps(
         {"project_id": PID, "slug": SLUG})
     s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/validation-questionnaire.md"] = "# q"
     s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] = "# shared"
@@ -583,9 +665,10 @@ def test_reset_clears_everything_but_keeps_the_spec(proto_env, monkeypatch):
     assert [k for k in s3.blobs if k.startswith(f"prototypes/{SLUG}/")] == []
     assert f"aiplc-docs/discovery/prototypes/{SLUG}/validation-questionnaire.md" \
         not in s3.blobs
-    # Root-scoped, so the prototypes/{SLUG}/ filter above cannot see it --
-    # this is the index a failed/misordered purge would strand permanently.
-    assert "surveys/by-token/tok-1.json" not in s3.blobs
+    # Root-scoped -- a DIFFERENT S3 namespace, which is why it is asserted
+    # against root_s3 and not the prefix filter above. This is the index a
+    # failed/misordered purge would strand permanently.
+    assert "surveys/by-token/tok-1.json" not in proto_env["root_s3"].blobs
     assert not (proto_env["root"] / PID / SLUG).exists()
     # Survivors: the spec (or the card disappears), the shared results doc
     # (no slug in its key), and any other prototype.
@@ -704,18 +787,264 @@ def test_reset_502_survey_failure_also_skips_session_state_and_converges_on_retr
     # session-state must have been SKIPPED: the questionnaire survey.purge()
     # needs to reclaim its token is still there, and so is the token index.
     assert f"prototypes/{SLUG}/survey/questionnaire.json" in s3.blobs
-    assert "surveys/by-token/tok-1.json" in s3.blobs
+    assert "surveys/by-token/tok-1.json" in proto_env["root_s3"].blobs
     assert (proto_env["root"] / PID / SLUG).is_dir()  # local also skipped
 
     second = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
     assert second.status_code == 204
     assert f"prototypes/{SLUG}/survey/questionnaire.json" not in s3.blobs
-    assert "surveys/by-token/tok-1.json" not in s3.blobs
+    assert "surveys/by-token/tok-1.json" not in proto_env["root_s3"].blobs
     assert not (proto_env["root"] / PID / SLUG).exists()
 
 
 def test_reset_unknown_project_404(proto_env):
     assert client.delete("/projects/nope/prototypes/demo").status_code == 404
+
+
+# ---- every failure is REPORTED as one (the 502 branches) ----
+#
+# Three of the four `failures.append(...)` lines were dead to the tests:
+# deleting "build-tree", "session" or "session-state" individually left all 60
+# route tests green. Each deletion converts a PARTIAL reset into a reported
+# success -- the single outcome the retry-convergence invariant forbids, since
+# a 204 is exactly what tells the user (and the UI's reload) that nothing more
+# needs doing. The tests below cover one branch each and were each verified to
+# fail with its own append line removed.
+
+def test_reset_502_when_the_build_tree_purge_fails(proto_env):
+    """The `build-tree` branch. The real ProtoHost.purge() raises whenever
+    residue survives its rmtree -- a permission error deep in node_modules is
+    the realistic producer -- and reporting 204 over it would leave a half-
+    deleted tree that the card still calls 빌드 완료, forever, because the user
+    was told the reset finished."""
+    _seed_everything(proto_env)
+    proto_env["host"].purge_exc = RuntimeError("purge left residue")
+
+    resp = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
+
+    assert resp.status_code == 502
+    assert "build-tree" in resp.json()["detail"]
+    # It was attempted, and its failure is what the 502 reports -- not a skip.
+    assert (PID, SLUG) in proto_env["host"].purged
+    assert (proto_env["root"] / PID / SLUG).is_dir()
+
+
+def test_reset_502_when_the_session_close_fails(proto_env, monkeypatch):
+    """The `session` branch. close() releases the build slot, so a swallowed
+    failure here reports success over a slot that stays held until the process
+    restarts -- and with PATHFINDER_PROTO_MAX_CONCURRENT capping a workshop box
+    at 2, that is a real 429 for another team."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+
+    async def boom():
+        raise RuntimeError("builder wedged")
+
+    monkeypatch.setattr(session, "close", boom)
+
+    resp = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
+
+    assert resp.status_code == 502
+    assert "session" in resp.json()["detail"]
+
+
+def test_reset_502_when_the_session_state_purge_fails(proto_env, monkeypatch):
+    """The `session-state` branch. It is the step that deletes the transcript
+    and session.json, so a swallowed failure reports a finished reset over build
+    chatter and a resumable session id that are both still there -- and the next
+    build would resume the very context the reset promised to clear."""
+    _seed_everything(proto_env)
+
+    async def boom(s3, slug):
+        raise RuntimeError("s3 down")
+
+    monkeypatch.setattr("pathfinder.routes.prototypes.purge_session_state", boom)
+
+    resp = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
+
+    assert resp.status_code == 502
+    assert "session-state" in resp.json()["detail"]
+    # Local is gated behind it, so the card stays "built" -- visibly incomplete.
+    assert (proto_env["root"] / PID / SLUG).is_dir()
+
+
+def test_reset_502_when_a_token_cannot_be_reclaimed(proto_env):
+    """End to end for SurveyStore._collect_tokens' raise: an unparseable
+    questionnaire must produce a 502, not a silent 204.
+
+    Continuing past it (the original `except json.JSONDecodeError: continue`)
+    deleted the questionnaire that NAMED the token while
+    surveys/by-token/{token}.json survived, still resolving to this slug -- and
+    with no reverse lookup from the index, every retry then answered 204 over
+    something no code can ever reach again. A rebuild reusing the slug turns
+    that stale token into a live credential into the NEW survey."""
+    _seed_everything(proto_env)
+    proto_env["s3"].blobs[f"prototypes/{SLUG}/survey/questionnaire.json"] = \
+        "{truncated"
+
+    resp = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
+
+    assert resp.status_code == 502
+    assert "survey" in resp.json()["detail"]
+    # Nothing later ran, so the token stays reclaimable rather than stranded.
+    assert f"prototypes/{SLUG}/survey/questionnaire.json" in proto_env["s3"].blobs
+    assert "surveys/by-token/tok-1.json" in proto_env["root_s3"].blobs
+
+
+def test_reset_keeps_the_session_so_a_failed_close_can_be_retried(
+        proto_env, monkeypatch):
+    """The build slot must be reclaimable by pressing the button again.
+
+    The session used to be POPPED before close() was attempted, so a failed
+    close left no session for the retry to find -- it saw the normal "no
+    session" case and answered 204 while the slot close() releases stayed held
+    until the process restarted. Reproduced exactly: first DELETE 502 with the
+    registry entry already gone, retry 204, close() never called a second time,
+    active_builds stuck at 1. That contradicts this route's own docstring."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    assert app_module.build_semaphore.snapshot()["active_builds"] == 1
+
+    closes = {"n": 0}
+    real_close = session.close
+
+    async def fail_once_then_real():
+        closes["n"] += 1
+        if closes["n"] == 1:
+            raise RuntimeError("builder wedged")
+        await real_close()
+
+    monkeypatch.setattr(session, "close", fail_once_then_real)
+
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 502
+    # Still registered: that is the ONLY handle a retry has on the held slot.
+    assert app_module.proto_sessions.get((PID, SLUG)) is session
+    assert app_module.build_semaphore.snapshot()["active_builds"] == 1
+
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+    assert closes["n"] == 2  # the retry actually re-attempted close()
+    assert (PID, SLUG) not in app_module.proto_sessions
+    assert app_module.build_semaphore.snapshot()["active_builds"] == 0
+
+
+# ---- path-traversal guard (router-wide) ----
+
+#: Every spelling that actually ROUTES to a handler carrying a traversing slug.
+#: All are percent-encoded on purpose: Starlette normalises dot segments in the
+#: raw URL, so a LITERAL `..`/`.` never reaches these handlers at all (`..`
+#: 404s at the router, `.` collapses the path onto a different route). The
+#: encoded forms arrive already decoded in `path_params` and route fine --
+#: verified directly: `DELETE /projects/me/prototypes/%2e%2e` reached the
+#: handler with slug == "..". Hence the guard must sit after decoding, which is
+#: also why these variants and not the bare ones are what the guard is tested
+#: against. `%2e` is the "." family (collapses `root/pid/slug` onto
+#: `root/pid` -- every SIBLING prototype); `%252e%252e` is double-encoded and
+#: decoded once to "..". The empty-segment case is unroutable here and is
+#: covered against the primitive in test_proto_host.py instead.
+_TRAVERSAL_SLUGS = ["%2e%2e", "%2E%2E", "%252e%252e", "%2e"]
+
+
+@pytest.mark.parametrize("bad", _TRAVERSAL_SLUGS)
+def test_reset_refuses_a_traversing_slug_and_deletes_nothing(proto_env, bad):
+    """The CRITICAL one: `ProtoHost.purge` computes `{root}/{pid}/{slug}` and
+    rmtree's it, and `pathlib` does NOT normalise -- so slug ".." escapes to
+    the root and wipes EVERY project's build tree while the route answers 204.
+    Reproduced before the guard: purge("me", "..") emptied the whole root.
+
+    The frontend cannot produce this (encodeURIComponent + Next's URL
+    normalisation) and nginx normalises dot segments, but the backend is
+    reachable directly on :8000 (the README dev command binds 0.0.0.0) and an
+    unconfigured deployment treats every request as admin.
+    """
+    _seed_everything(proto_env, monkeypatch=None)
+    victim = proto_env["root"] / "victim-project" / "victim-slug"
+    victim.mkdir(parents=True)
+    (victim / "package.json").write_text("{}", encoding="utf-8")
+
+    resp = client.delete(f"/projects/{PID}/prototypes/{bad}")
+
+    assert resp.status_code == 404
+    # Nothing at all was purged: another project's tree, this project's own
+    # tree, and the S3 state all survive.
+    assert victim.is_dir()
+    assert (proto_env["root"] / PID / SLUG).is_dir()
+    assert f"prototypes/{SLUG}/session.json" in proto_env["s3"].blobs
+    assert "surveys/by-token/tok-1.json" in proto_env["root_s3"].blobs
+
+
+@pytest.mark.parametrize("bad", _TRAVERSAL_SLUGS)
+def test_start_host_refuses_a_traversing_slug(proto_env, bad):
+    """The guard is router-wide, not reset-only: `start_host` hands the same
+    unvalidated value to `_prototype_dir` and would `npm install`/`npm run
+    build` inside a directory the caller chose (`{root}/{pid}/..`)."""
+    _seed_spec(proto_env["s3"])
+
+    assert client.post(
+        f"/projects/{PID}/prototypes/{bad}/host").status_code == 404
+
+    assert proto_env["host"].start_cwds == []
+
+
+@pytest.mark.parametrize("bad", _TRAVERSAL_SLUGS)
+def test_archive_refuses_a_traversing_slug(proto_env, bad):
+    """Reset is the destructive consumer, but not the only affected one -- which
+    is why the guard sits on the router rather than inside reset_prototype.
+
+    `_archive_entries` rglob's `{root}/{pid}/{slug}` and zips every file it
+    finds, so slug ".." walks the whole proto root. Reproduced before the guard:
+    `GET .../prototypes/%2e%2e/archive` returned 200 with a zip containing
+    `victim/vslug/SECRET.txt` -- another project's source, handed to a caller
+    authorised only for this one."""
+    _seed_everything(proto_env)  # so {root}/{PID} exists for ".." to climb out of
+    victim = proto_env["root"] / "victim-project" / "victim-slug"
+    victim.mkdir(parents=True)
+    (victim / "SECRET.txt").write_text("another project's source",
+                                       encoding="utf-8")
+
+    resp = client.get(f"/projects/{PID}/prototypes/{bad}/archive")
+
+    assert resp.status_code == 404
+    assert b"SECRET" not in resp.content
+
+
+def test_reset_refuses_a_traversing_pid_before_attempting_any_purge(proto_env):
+    """`{root}/{pid}/{slug}` has TWO attacker-supplied segments, and a guard on
+    only the slug leaves `root / ".." / slug` reachable.
+
+    The project has to be REGISTERED for this to reach past
+    `_require_registered` -- and it can be: POST /projects validates nothing, so
+    `{"project_id": ".."}` registers fine (verified). Without the router guard
+    this is a 502 rather than a 404: the request gets all the way into
+    `ProtoHost.purge`, whose own `reject_unsafe_segment` is the thing that
+    stops it. That layering is deliberate, and this test pins the OUTER layer
+    -- a 502 would mean the route reported a failed reset of a path it should
+    never have addressed at all."""
+    app_module.registry.register("..")
+    try:
+        resp = client.delete(f"/projects/%2e%2e/prototypes/{SLUG}")
+    finally:
+        app_module.registry.remove("..")
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "invalid pid"
+
+
+def test_an_ordinary_slug_still_passes_the_guard(proto_env):
+    """The guard must not reject the legitimate shapes -- including a
+    non-ASCII slug, which arrives percent-encoded and decoded just like the
+    attacks above, and a name whose ".." is a substring rather than a
+    segment."""
+    for slug in ("todo-app", "한글-앱", "..foo"):
+        proto_env["s3"].blobs[
+            f"aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md"] = "# p"
+        from urllib.parse import quote
+        assert client.delete(
+            f"/projects/{PID}/prototypes/{quote(slug)}").status_code == 204, slug
 
 
 # ---- hosting ----

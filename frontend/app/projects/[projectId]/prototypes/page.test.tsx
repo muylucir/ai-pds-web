@@ -258,6 +258,39 @@ describe("reset confirmation", () => {
     expect(dialog).toHaveTextContent("되돌릴 수 없습니다");
   });
 
+  it("warns that responses may be unrecoverable when the click-time refetch fails", async () => {
+    // The amber `answers === null` branch. It is the ONLY thing that warns the
+    // user when the count could not be established, and it had no test:
+    // changing `answers = null` to `answers = 0` kept all 570 tests green while
+    // the warning silently disappeared — a card with real responses then showed
+    // a bare "검증 설문" bullet, asserting there was nothing to lose.
+    //
+    // The mock has to fail ONLY the refetch, not the initial load: a handler
+    // that always 500s never renders a card to click, and one that always
+    // succeeds never reaches the branch. So the first GET answers normally and
+    // every later one fails.
+    let gets = 0;
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => {
+        gets += 1;
+        if (gets === 1) return HttpResponse.json(listing());
+        return HttpResponse.json({ detail: "s3 down" }, { status: 500 });
+      }),
+    );
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    expect(dialog).toHaveTextContent("현재 응답 수를 확인하지 못했습니다");
+    expect(dialog).toHaveTextContent("되돌릴 수 없이 삭제됩니다");
+    // And NOT the confident wording: the stale list said 3, but a count that
+    // could not be verified must not be presented as if it had been.
+    expect(dialog).not.toHaveTextContent("응답 3건은 되돌릴 수 없습니다");
+  });
+
   it("cancel closes the dialog without calling DELETE", async () => {
     const { handler } = trackedListingHandler();
     let deleteCalls = 0;

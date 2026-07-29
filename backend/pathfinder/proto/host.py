@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from pathfinder.pathsafe import reject_unsafe_segment
+
 HostState = Literal["installing", "building", "running", "failed", "stopped"]
 
 
@@ -272,8 +274,23 @@ class ProtoHost:
         reset route) needs a raise, not a silently-incomplete no-op, or a
         permission error deep in node_modules would report success while the
         tree (and the "built" card) lives on.
+
+        Raises `ValueError` before touching anything if `pid`/`slug` is not one
+        ordinary path segment. The route guards this too (one dependency over
+        every prototype endpoint), and that is the primary defence; this is the
+        dangerous primitive refusing to be the weapon regardless of who calls
+        it. `pathlib` does not normalise, so `self._root / pid / ".."` really
+        is root's parent and `"."` really is `self._root / pid` -- an
+        unvalidated slug turns one prototype's reset into `rmtree` over every
+        project's build tree, or every sibling prototype's.
         """
+        reject_unsafe_segment(pid)
+        reject_unsafe_segment(slug)
         await self.stop(pid, slug)
+        # stop() deliberately KEEPS the registry entry so status() can report
+        # "stopped" (test_proto_host.py's test_stop_terminates_process pins
+        # that). A purged prototype must not exist at all, so evict it here --
+        # otherwise the card would read a state for a tree that is gone.
         self._registry.pop((pid, slug), None)
         target = self._root / pid / slug
         if not target.is_dir():

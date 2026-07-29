@@ -44,6 +44,37 @@ def archive_prefix(slug: str, closed_at: str) -> str:
     return f"{survey_prefix(slug)}archive/{closed_at}/"
 
 
+async def purgeable_response_count(project_s3, slug: str) -> int:
+    """How many submitted answers a `SurveyStore.purge()` would destroy — the
+    number the reset confirmation warns about.
+
+    NOT the same question as `SurveyStore.response_count()`, which counts the
+    CURRENT round only (`responses/`) because that is what the live rollup, the
+    CSV and the MAX_RESPONSES cap are about. `purge()` deletes the whole
+    `survey/` tree, and `archive_current()` MOVES each previous round's answers
+    to `archive/{closed_at}/responses/` rather than deleting them --
+    regenerating a survey after a first round is the documented normal flow. So
+    a prototype with 12 archived answers and none in the current round reported
+    0, and the dialog then rendered neither the count nor the irreversibility
+    warning before destroying all 12.
+
+    Lives in this module, next to the purge whose scope it describes, because "a
+    response a reset destroys" is a fact about the key layout owned here -- the
+    route assembling it from `responses_prefix` is what let the two definitions
+    drift apart. A module function, not a `SurveyStore` method: the LIST route
+    needs this per prototype and building a store per slug would also build a
+    bucket-root boto3 client per slug, which this question does not need (only
+    the project store).
+    """
+    keys = await project_s3.list(survey_prefix(slug))
+    # Any `.../responses/{id}.json`, in the live round or any archived one.
+    # Matched on the whole `/responses/` segment rather than a startswith so a
+    # future sibling prefix (`responses-draft/`) cannot quietly inflate the
+    # count; the trailing-slash exclusion skips the empty directory marker some
+    # S3 console/CLI flows leave behind, which is not an answer.
+    return sum(1 for k in keys if "/responses/" in k and not k.endswith("/"))
+
+
 def questionnaire_md_key(slug: str) -> str:
     # aiplc-docs/ so the existing artifacts viewer can serve it (that route is
     # hard-limited to this subtree).
@@ -318,8 +349,20 @@ class SurveyStore:
         away, so a prototype whose survey was regenerated N times has N of
         them; collect from the archive as well as the live questionnaire.
 
-        Idempotent and non-raising: a prototype that never had a survey is the
-        common case, and a partially-purged one must converge on a retry.
+        Idempotent: a prototype that never had a survey is the common case, and
+        a partially-purged one converges on a retry.
+
+        NOT non-raising, and deliberately so. `RuntimeError` if a questionnaire
+        cannot be read for its token (unparseable, or valid JSON that is not an
+        object -- a truncated `put` produces both). Raising is what makes that
+        case a 502 the user retries and an operator can see; the alternative
+        (skip it and keep going) deletes the questionnaire that NAMED the token
+        while `surveys/by-token/{token}.json` survives, still resolving here --
+        and every subsequent retry then reports 204 over an index no code can
+        ever reach again. Once the slug is rebuilt, that stale token is a live
+        credential into the NEW survey. The route's ordering gate stops on this
+        raise, so the questionnaire stays put and the token stays reclaimable
+        by hand.
         """
         for token in await self._collect_tokens():
             await self._root.delete_prefix(f"{TOKEN_INDEX_PREFIX}{token}.json")
@@ -330,7 +373,21 @@ class SurveyStore:
         await self._s3.delete_prefix(questionnaire_md_key(self.slug))
 
     async def _collect_tokens(self) -> set[str]:
-        """Every token this prototype has issued, live and archived."""
+        """Every token this prototype has issued, live and archived.
+
+        Raises `RuntimeError` on a questionnaire it cannot read a token out of,
+        rather than skipping it. A skip looks harmless -- one warning, purge
+        continues -- but it is the one failure mode that CANNOT be retried:
+        purge goes on to delete the questionnaire, and `surveys/by-token/` is a
+        one-way root-scoped index with no reverse lookup, so the token becomes
+        unreachable forever while still resolving to this slug. `get_rollup`
+        already treats unparseable JSON as an expected state, so a truncated
+        blob is not a can't-happen here.
+
+        A missing key is different and stays a skip: no survey at all is the
+        common case, and an archive entry without a definition has no token to
+        reclaim.
+        """
         keys = [questionnaire_key(self.slug)]
         keys += [k for k in await self._s3.list(f"{survey_prefix(self.slug)}archive/")
                  if k.endswith("/questionnaire.json")]
@@ -341,10 +398,19 @@ class SurveyStore:
             except FileNotFoundError:
                 continue  # no survey, or an archive entry without a definition
             try:
-                token = json.loads(raw).get("token")
-            except json.JSONDecodeError:
-                _log.warning("unparseable questionnaire, token not reclaimed: %s", key)
-                continue
+                data = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"unparseable questionnaire, token not reclaimable: {key}"
+                ) from exc
+            # A valid non-object (`null`, a list, a bare number) used to reach
+            # `.get` and escape as AttributeError -- accidentally the right
+            # OUTCOME (the route collected it) via the wrong mechanism. Made
+            # explicit so purge()'s contract is one thing on both shapes.
+            if not isinstance(data, dict):
+                raise RuntimeError(
+                    f"questionnaire is not an object, token not reclaimable: {key}")
+            token = data.get("token")
             if token:
                 tokens.add(token)
         return tokens
