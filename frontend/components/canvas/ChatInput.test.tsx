@@ -72,4 +72,13 @@ describe("ChatInput", () => {
     render(<ChatInput onSend={vi.fn()} disabled={false} />);
     expect(screen.getByLabelText("채팅 메시지 입력")).toHaveValue("");
   });
+
+  it("shows three lines of input without scrolling", () => {
+    // One row made every multi-line message a peephole: people write
+    // 질문·수정요청 several sentences long here and had to scroll their own
+    // draft to re-read it. The workspace and the prototype build panel share
+    // this component, so this one value covers both screens.
+    render(<ChatInput onSend={vi.fn()} disabled={false} />);
+    expect(screen.getByLabelText("채팅 메시지 입력")).toHaveAttribute("rows", "3");
+  });
 });

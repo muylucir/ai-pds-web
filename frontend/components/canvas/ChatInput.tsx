@@ -61,7 +61,12 @@ export function ChatInput({
           )}
           <textarea
             ref={inputRef}
-            rows={1}
+            // 3줄: 여기 쓰는 글이 대개 한 문장이 아니다(질문·수정요청·되돌아가기).
+            // 1줄이던 동안은 사용자가 자기 초안을 다시 읽으려면 스크롤해야 했다.
+            // 워크스페이스와 프로토타입 빌드 패널이 이 컴포넌트를 공유하므로 이
+            // 값 하나가 두 화면에 함께 적용된다. 감싸는 flex가 items-end라
+            // 첨부·전송 버튼은 계속 아래 줄에 정렬된다.
+            rows={3}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
