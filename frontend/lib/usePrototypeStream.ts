@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { streamPrototypeEvents, submitPrototypeAnswers, interruptSession } from "@/lib/api/prototypes";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
+import { answerSummary } from "@/lib/answerSummary";
 import type { AgentEvent } from "@/lib/api/types";
 import type { QuestionsPayload } from "@/lib/api/types";
 import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
@@ -169,9 +170,17 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
 
   const submitAnswers = useCallback(
     async (answers: Record<string, string>) => {
+      // Read the questions before the submit: the bubble needs their text and
+      // the success path clears them. Only appended once the server accepts —
+      // a bubble on the 409 path would claim a submission that never landed.
+      const summary = pendingQuestions
+        ? answerSummary(pendingQuestions.questions, answers)
+        : "답변 제출";
       const ok = await submitPrototypeAnswers(projectId, slug, answers);
       if (ok) {
-        // Events keep flowing on the SAME open stream — no new stream to open.
+        // No AI bubble here, unlike `send`: events keep flowing on the SAME
+        // open stream, so the agent's reply lands on the turn already running.
+        setItems((prev) => [...prev, { id: nextId(), role: "user", text: summary }]);
         setPendingQuestions(null);
         return;
       }
@@ -187,7 +196,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         }));
       }
     },
-    [projectId, slug, patchAi],
+    [projectId, slug, patchAi, pendingQuestions],
   );
 
   const interrupt = useCallback(async () => {

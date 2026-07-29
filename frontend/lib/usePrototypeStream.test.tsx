@@ -146,6 +146,52 @@ describe("usePrototypeStream", () => {
     expect(vi.mocked(prototypesApi.streamPrototypeEvents)).toHaveBeenCalledTimes(1);
   });
 
+  it("submitAnswers records the answers as a readable user bubble", async () => {
+    // Without this the transcript jumped straight from the question to the
+    // agent's next message, so scrolling back gave no hint what was chosen.
+    // The letter alone ("A") is not enough — the option text is what makes the
+    // bubble legible.
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        handlers.onEvent({ kind: "questions", text: null, path: null, payload: QUESTIONS_PAYLOAD });
+        return () => {};
+      },
+    );
+    vi.mocked(prototypesApi.submitPrototypeAnswers).mockResolvedValue(true);
+
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.send("질문 있어?"));
+
+    await act(async () => {
+      await result.current.submitAnswers({ "1": "A" });
+    });
+
+    const bubbles = result.current.items.filter((i) => i.role === "user").map((i) => i.text);
+    expect(bubbles).toContain("Q1. 누구?\n→ A. PM");
+  });
+
+  it("submitAnswers adds no bubble when the 409 path rejects the submission", async () => {
+    // Nothing was accepted server-side, so a bubble claiming otherwise would
+    // misrepresent the transcript.
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        handlers.onEvent({ kind: "questions", text: null, path: null, payload: QUESTIONS_PAYLOAD });
+        return () => {};
+      },
+    );
+    vi.mocked(prototypesApi.submitPrototypeAnswers).mockResolvedValue(false);
+
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.send("질문 있어?"));
+    const before = result.current.items.filter((i) => i.role === "user").length;
+
+    await act(async () => {
+      await result.current.submitAnswers({ "1": "A" });
+    });
+
+    expect(result.current.items.filter((i) => i.role === "user").length).toBe(before);
+  });
+
   it("submitAnswers false (409) keeps pendingQuestions and surfaces an error on the AI item", async () => {
     vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
       (_pid: any, _slug: any, _text: any, handlers: any) => {

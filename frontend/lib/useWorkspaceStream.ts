@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { streamEvents, streamAnswers } from "@/lib/api/sse";
 import { getPending, getHistory } from "@/lib/api/client";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
+import { answerSummary } from "@/lib/answerSummary";
 import type { AgentEvent, HistoryItem, QuestionsPayload, StagePayload, DocumentPayload } from "@/lib/api/types";
 import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
 
@@ -229,17 +230,23 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     (answers: Record<string, string>) => {
       if (stopRef.current) return;
       liveTurnStartedRef.current = true;
+      // Capture the questions BEFORE clearing them: the bubble needs their
+      // text, and setPendingQuestions(null) is what takes it away. A bare
+      // "답변 제출" left the transcript unreadable on scroll-back.
+      const summary = pendingQuestions
+        ? answerSummary(pendingQuestions.questions, answers)
+        : "답변 제출";
       setPendingQuestions(null);
 
       const aiId = nextId();
       setItems((prev) => [
         ...prev,
-        { id: nextId(), role: "user", text: "답변 제출" },
+        { id: nextId(), role: "user", text: summary },
         { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
       ]);
       runTurn((handlers) => streamAnswers(projectId, answers, handlers), aiId);
     },
-    [projectId, runTurn],
+    [projectId, runTurn, pendingQuestions],
   );
 
   // Restore an in-flight question interrupt (e.g. after a page refresh) from
