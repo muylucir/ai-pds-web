@@ -22,7 +22,8 @@ Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론�
 저장되며(응답 1건 = 객체 1개), 대시보드는 `rollup.json` 캐시를 읽는다.
 
 ```
-frontend/  Next.js 15 (App Router) — 대시보드 · 질문 위저드 · 문서 리뷰 · 대화형 캔버스 · 프로토타입 탭 · 로그인/사용자 관리
+frontend/  Next.js 15 (App Router) — 대시보드 · 워크스페이스 · 문서 리뷰 · 프로토타입 탭 · 로그인/사용자 관리
+           (상단 네비는 이 4개다. `/canvas`·`/questions`는 워크스페이스로 대체된 구 화면이 남아 있는 것)
 backend/   FastAPI — 파서 · 인프로세스 Discovery 에이전트(Claude Agent SDK) · SSE 턴 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅 · JWT 검증
 infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 + Cognito(Hosted UI v2) + EC2/CloudFront (서울, 리전 파라미터화)
 ```
@@ -110,8 +111,11 @@ npx cdk deploy --all --require-approval never
 
 > ⚠️ **배포되는 것은 커밋된 코드가 아니라 현재 워킹 트리다.** 호스팅 스택은 리포
 > 루트를 zip 에셋으로 올린다(`.git`, `infra`, `docs`, `node_modules`, `.venv`,
-> `.next`, `.env*` 제외 — `lib/pathfinder-hosting-stack.ts`). 미커밋 변경도 그대로
-> 배포되므로, 배포 전 `git status`로 의도한 상태인지 확인한다.
+> `.next`, `cdk.out`, `__pycache__`, `*.egg-info`, `test-results`,
+> `playwright-report`, `files/*.png`, `.env*` 제외 —
+> `lib/pathfinder-hosting-stack.ts`). 미커밋 변경도 그대로 배포되므로, 배포 전
+> `git status`로 의도한 상태인지 확인한다. `.gitignore`와는 별개 목록이므로
+> gitignored라고 자동 제외되지는 않는다(예: `proto-type/`은 에셋에 포함된다).
 
 ### 4. 출력값 확인
 
@@ -221,8 +225,8 @@ cd frontend
 npm run dev            # http://localhost:3000
 ```
 
-브라우저에서 `http://localhost:3000` → 프로젝트 생성 → 대시보드/질문/문서/캔버스.
-캔버스에서 메시지를 보내면 실 에이전트가 Bedrock으로 응답한다.
+브라우저에서 `http://localhost:3000` → 프로젝트 생성 → 대시보드 / 워크스페이스 / 문서 리뷰 /
+프로토타입. 워크스페이스에서 메시지를 보내면 실 에이전트가 Bedrock으로 응답한다.
 
 ### 브라우저가 원격(리버스 프록시 뒤)일 때
 
