@@ -415,13 +415,29 @@ Expected: FAIL — `AttributeError: 'ProtoHost' object has no attribute 'purge'`
         Idempotent -- a tree that was never built, or was already purged, is a
         no-op. `shutil.rmtree` runs in a thread: it is synchronous and a
         node_modules tree is large enough to stall the event loop.
+
+        Raises if the tree survives: `ignore_errors=True` lets rmtree get as far
+        as it can rather than aborting on the first bad file, but it also
+        swallows the failure, so the post-check is the only success signal. The
+        route collects that raise into its 502 -- without it a permission error
+        deep in node_modules would report success over a half-reset prototype.
         """
         await self.stop(pid, slug)
+        # stop() deliberately KEEPS the registry entry so status() can report
+        # "stopped" (an existing test pins that). After a reset the prototype
+        # must not exist at all, so evict it here.
+        self._registry.pop((pid, slug), None)
         target = self._root / pid / slug
         if not target.is_dir():
             return
         await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
+        if target.is_dir():
+            raise RuntimeError(f"build tree survived purge: {target}")
 ```
+
+**두 줄이 계획의 첫 초안에서 빠져 있었다.** `_registry.pop`이 없으면 브리프
+자신의 테스트(`test_purge_stops_a_running_process_first`)가 실패하고, 잔여 검사가
+없으면 Task 4의 실패 수집이 무력해진다.
 
 - [ ] **Step 4: Run test to verify it passes**
 
