@@ -151,11 +151,13 @@ describe("PrototypeCard", () => {
         {...noop}
         onOpenPreview={vi.fn()}
         onShowLogs={vi.fn()}
+        onReset={vi.fn()}
       />,
     );
     expect(screen.getByRole("button", { name: "프리뷰 열기" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "호스팅 중지" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "로그" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /초기화/ })).toBeDisabled();
   });
 
   it("offers reset once a prototype has been built", async () => {

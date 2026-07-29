@@ -1,6 +1,6 @@
 // frontend/app/projects/[projectId]/prototypes/page.test.tsx
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -223,5 +223,112 @@ describe("survey panel reachability", () => {
     expect(await screen.findByText("검증 설문")).toBeInTheDocument();
     await userEvent.click(btn);
     expect(screen.queryByText("검증 설문")).not.toBeInTheDocument();
+  });
+});
+
+describe("reset confirmation", () => {
+  // handleReset re-fetches /prototypes at click time (a workshop's survey
+  // answers arrive live while this page sits open, so the list's
+  // response_count can be stale by the time the dialog needs to show it) —
+  // every test here needs the GET handler live for BOTH the initial render
+  // and that click-time refetch, so this counts calls rather than using
+  // `.once` like some of the file's other tests do.
+  function trackedListingHandler(prototypes = PROTOTYPES) {
+    const calls = { get: 0 };
+    return {
+      calls,
+      handler: http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => {
+        calls.get += 1;
+        return HttpResponse.json(listing(prototypes));
+      }),
+    };
+  }
+
+  it("shows the fresh response count and irreversibility wording in the dialog", async () => {
+    const { handler } = trackedListingHandler();
+    server.use(handler);
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    expect(dialog).toHaveTextContent("응답 3건");
+    expect(dialog).toHaveTextContent("되돌릴 수 없습니다");
+  });
+
+  it("cancel closes the dialog without calling DELETE", async () => {
+    const { handler } = trackedListingHandler();
+    let deleteCalls = 0;
+    server.use(
+      handler,
+      http.delete(`${API_BASE_URL}/projects/p1/prototypes/chat-widget`, () => {
+        deleteCalls++;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+    await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    await userEvent.click(screen.getByRole("button", { name: "취소" }));
+
+    expect(screen.queryByRole("dialog", { name: "프로토타입 초기화 확인" })).not.toBeInTheDocument();
+    expect(deleteCalls).toBe(0);
+  });
+
+  it("confirm sends DELETE on 204 and the list re-fetches", async () => {
+    const { handler, calls } = trackedListingHandler();
+    let deleteCalls = 0;
+    server.use(
+      handler,
+      http.delete(`${API_BASE_URL}/projects/p1/prototypes/chat-widget`, () => {
+        deleteCalls++;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+    const getsBeforeConfirm = calls.get;
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+    await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    await userEvent.click(screen.getByRole("button", { name: "초기화" }));
+
+    await waitFor(() => expect(deleteCalls).toBe(1));
+    // list.reload() ran: another GET landed beyond the initial load + the
+    // click-time refetch that already happened before this assertion.
+    await waitFor(() => expect(calls.get).toBeGreaterThan(getsBeforeConfirm));
+    expect(screen.queryByRole("dialog", { name: "프로토타입 초기화 확인" })).not.toBeInTheDocument();
+  });
+
+  it("confirm on a 502 shows the retry error but still re-fetches the list", async () => {
+    const { handler, calls } = trackedListingHandler();
+    server.use(
+      handler,
+      http.delete(`${API_BASE_URL}/projects/p1/prototypes/chat-widget`, () =>
+        HttpResponse.json({ detail: "reset partial" }, { status: 502 }),
+      ),
+    );
+    mockStream();
+    render(<PrototypesPage params={params} />);
+    await screen.findByText("chat-widget");
+    const getsBeforeConfirm = calls.get;
+
+    await userEvent.click(await screen.findByRole("button", { name: "chat-widget 초기화" }));
+    await screen.findByRole("dialog", { name: "프로토타입 초기화 확인" });
+    await userEvent.click(screen.getByRole("button", { name: "초기화" }));
+
+    expect(await screen.findByText(/초기화가 완료되지 않았습니다/)).toBeInTheDocument();
+    // The dialog stays open on failure so retrying is one click away — but
+    // list.reload() must still have run in `finally`, since a 502 means the
+    // purge was only partial and the card needs to reflect whatever WAS
+    // deleted.
+    expect(screen.getByRole("dialog", { name: "프로토타입 초기화 확인" })).toBeInTheDocument();
+    await waitFor(() => expect(calls.get).toBeGreaterThan(getsBeforeConfirm));
   });
 });

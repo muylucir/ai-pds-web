@@ -41,8 +41,8 @@ export function PrototypeCard({
   onStopHost: () => void;
   onShowLogs?: () => void;
   onOpenSurvey?: () => void;
-  /** Wipe build + session + survey, keeping the spec. Absent for state "none"
-   *  — there is nothing accumulated to clear. */
+  /** Wipe build + session + survey, keeping the spec. Rendered only when
+   *  `info.state !== "none"` — there is nothing accumulated to clear. */
   onReset?: (slug: string) => void;
   archiveUrl?: string;
   busy: boolean;
@@ -121,8 +121,10 @@ export function PrototypeCard({
         {info.state !== "none" && onReset && (
           <button
             type="button"
+            aria-label={`${info.slug} 초기화`}
+            disabled={busy}
             onClick={() => onReset(info.slug)}
-            className="px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-rose-50 text-sm font-medium text-rose-600"
+            className={`${SECONDARY_BTN} hover:bg-rose-50 text-rose-600`}
           >
             초기화
           </button>

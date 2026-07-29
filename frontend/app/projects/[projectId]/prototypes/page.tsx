@@ -2,7 +2,7 @@
 // a grid of PrototypeCard (Task 8) driven by GET /prototypes, opening
 // BuildPanel (Task 9) for the build chat + hosting controls per card.
 "use client";
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { PrototypeCard } from "@/components/prototypes/PrototypeCard";
 import { BuildPanel } from "@/components/prototypes/BuildPanel";
@@ -39,6 +39,26 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   const [logsSlug, setLogsSlug] = useState<string | null>(null);
   const [logsText, setLogsText] = useState<string | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
+  // The reset confirmation dialog. `answers` is captured at the moment the
+  // dialog opens (see handleReset) rather than read off `list.data`, which
+  // can be stale — a workshop's survey responses arrive live while this page
+  // sits open, so the count shown here must be re-fetched at click time or a
+  // 0→N transition between page-load and click silently drops the
+  // irreversibility warning. `null` means the refetch itself failed — treated
+  // as "unknown, assume the worst" rather than as zero.
+  const [resetTarget, setResetTarget] = useState<{ slug: string; answers: number | null } | null>(
+    null,
+  );
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!resetTarget) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && busySlug !== resetTarget.slug) setResetTarget(null);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [resetTarget, busySlug]);
 
   async function handleBuild(slug: string) {
     setBusySlug(slug);
@@ -82,30 +102,44 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
     }
   }
 
+  // Opens the confirmation dialog. `list.data`'s response_count can be
+  // stale — a workshop's survey answers arrive live while this page sits
+  // open — so the count the dialog warns about is re-fetched right here,
+  // at click time, the same point-of-use-refresh SurveyPanel.reload uses.
+  // A failed refetch must not block the reset (the destructive action still
+  // has to work), but it also must not silently fall back to a stale/zero
+  // count and understate the risk — so an unknown count renders as its own
+  // explicit warning rather than as "0 응답".
   async function handleReset(slug: string) {
-    const info = list.data?.prototypes.find((p) => p.slug === slug);
-    const answers = info?.response_count ?? 0;
-    // Name what is destroyed. The survey line only appears when there is
-    // something irreversible to lose, so the routine case stays quiet.
-    const lines = [
-      `'${slug}' 프로토타입을 초기화합니다.`,
-      "",
-      "· 빌드 결과와 실행 중인 서버",
-      "· 빌드 대화 기록",
-      answers > 0
-        ? `· 검증 설문과 응답 ${answers}건 (되돌릴 수 없습니다)`
-        : "· 검증 설문",
-      "",
-      "설계 문서(PROTOTYPE-*.md)는 남으므로 다시 빌드할 수 있습니다.",
-    ];
-    if (!window.confirm(lines.join("\n"))) return;
+    setResetError(null);
+    let answers: number | null;
+    try {
+      const fresh = await listPrototypes(projectId);
+      answers = fresh.prototypes.find((p) => p.slug === slug)?.response_count ?? 0;
+    } catch {
+      answers = null;
+    }
+    setResetTarget({ slug, answers });
+  }
 
+  async function confirmReset() {
+    if (!resetTarget) return;
+    const { slug } = resetTarget;
     setBusySlug(slug);
+    setResetError(null);
     try {
       await resetPrototype(projectId, slug);
+      setResetTarget(null);
     } catch {
-      window.alert("초기화가 완료되지 않았습니다. 다시 시도해 주세요.");
+      // A 502 means the purge was only partial — every step is idempotent,
+      // so this is "press it again," not "give up." Shown INSIDE the
+      // dialog (not a disconnected alert) so it sits next to what failed,
+      // and the dialog stays open so retrying is one click away.
+      setResetError("초기화가 완료되지 않았습니다. 다시 시도해 주세요.");
     } finally {
+      // Runs even on failure: a partial reset still deleted things, and the
+      // card must reflect that — if it still reads "빌드 완료" afterwards,
+      // that is the honest signal that the reset didn't finish.
       setBusySlug(null);
       list.reload();
     }
@@ -208,6 +242,70 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 {logsText || "(로그 없음)"}
               </pre>
             )}
+          </div>
+        </div>
+      )}
+
+      {resetTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-6"
+          onClick={() => busySlug !== resetTarget.slug && setResetTarget(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="프로토타입 초기화 확인"
+            className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="font-bold text-lg">
+              &apos;{resetTarget.slug}&apos; 프로토타입 초기화
+            </h2>
+            {/* Reassurance sits right under the title, not at the end — it
+                sets context ("this isn't total") but must not be the last
+                thing read, or it blunts the irreversibility warning below. */}
+            <p className="text-xs text-slate-400 mt-1">
+              설계 문서(PROTOTYPE-*.md)는 남으므로 다시 빌드할 수 있습니다.
+            </p>
+            <p className="text-sm text-slate-600 mt-3">다음 항목이 삭제됩니다:</p>
+            <ul className="text-sm text-slate-600 mt-1 list-disc list-inside space-y-0.5">
+              <li>빌드 결과와 실행 중인 서버</li>
+              <li>빌드 대화 기록</li>
+              <li>검증 설문</li>
+            </ul>
+            {/* Irreversibility gets its OWN sentence, placed last, with
+                nothing after it to soften it — matching ProjectList.tsx's
+                weighting. It only appears when there is something
+                irreversible to lose, so the 0-response case stays quiet. */}
+            {resetTarget.answers !== null && resetTarget.answers > 0 && (
+              <p className="text-sm font-semibold text-rose-600 mt-3">
+                응답 {resetTarget.answers}건은 되돌릴 수 없습니다.
+              </p>
+            )}
+            {resetTarget.answers === null && (
+              <p className="text-sm font-semibold text-amber-700 mt-3">
+                현재 응답 수를 확인하지 못했습니다 — 응답이 있다면 되돌릴 수 없이 삭제됩니다.
+              </p>
+            )}
+            {resetError && <p className="text-sm text-rose-600 mt-3">{resetError}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setResetTarget(null)}
+                disabled={busySlug === resetTarget.slug}
+                className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={confirmReset}
+                disabled={busySlug === resetTarget.slug}
+                className="px-4 py-2 text-sm rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold disabled:opacity-50"
+              >
+                초기화
+              </button>
+            </div>
           </div>
         </div>
       )}
