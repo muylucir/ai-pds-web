@@ -1,7 +1,9 @@
 # Pathfinder
 
-AI-PLC Discovery 워크숍을 위한 대화형 캔버스. Strands 에이전트가 백엔드 프로세스 안에서
-직접(in-process) Discovery 방법론을 구동하고, 프론트엔드가 그 턴을 실시간(SSE)으로 렌더한다.
+AI-PLC Discovery 워크숍을 위한 대화형 캔버스. Claude Agent SDK 기반 에이전트가 백엔드
+프로세스 안에서 직접(in-process) Discovery 방법론을 구동하고, 프론트엔드가 그 턴을
+실시간(SSE)으로 렌더한다. (구 Strands 드라이버는 `PATHFINDER_DISCOVERY_DRIVER=strands`
+폴백으로 남아 있다.)
 
 Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론트 **"프로토타입" 탭**에서
 바로 실물로 이어진다: 세션을 시작하면 백엔드 프로세스 안에서 직접 도는 Claude Agent SDK
@@ -171,7 +173,8 @@ cd infra && npx cdk deploy PathfinderHostingStack --require-approval never
 |---|---|
 | 배포 직후 CloudFront 502 | EC2 첫 빌드가 진행 중(5~10분). SSM으로 `sudo tail -f /var/log/cloud-init-output.log` |
 | 스택이 `ROLLBACK_COMPLETE`라 재배포 거부 | **최초 생성이 실패한 스택은 업데이트가 불가능하다** — 고친 뒤에도 `cdk deploy`가 거부한다. 먼저 내린 다음 다시 배포한다: `npx cdk destroy PathfinderAuthStack` → `npx cdk deploy --all`. `UPDATE_ROLLBACK_COMPLETE`(기존 스택의 업데이트 실패)는 반대로 그냥 재배포하면 된다 |
-| 첫 대화 턴에서 `AccessDeniedException` | 배포 리전에 Bedrock 모델 액세스 미활성화 |
+| 첫 대화 턴에서 `AccessDeniedException` | 배포 리전에 Bedrock 모델 액세스 미활성화. `ANTHROPIC_MODEL`이 IAM 허용 목록 밖이어도 같은 증상 — 아래 "환경 변수 요약"의 허용 값 참고 |
+| `` `temperature` is deprecated for this model `` | Opus 4.7 이후 모델은 샘플링 파라미터를 제거했다 — 아래 "참고"의 Bedrock 항목 |
 | 로그인 후 `redirect_mismatch` | 호스팅 스택의 콜백 URL 등록(`UpdateUserPoolClient`)이 실패. `cdk deploy PathfinderHostingStack` 재실행 |
 | `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 최초 1회만 필요하며 결과가 `cdk.context.json`에 캐시된다 |
 | SSH 접속 불가 | 의도된 설계다. SSH 포트가 없고 SSM만 열려 있다 |
@@ -195,7 +198,7 @@ cd infra && npx cdk destroy --all
 
 ## 로컬 개발 실행
 
-프론트(:3000) → 백엔드(:8000) → 백엔드 프로세스 안에서 직접 도는 Strands 에이전트가
+프론트(:3000) → 백엔드(:8000) → 백엔드 프로세스 안에서 직접 도는 Discovery 에이전트가
 Bedrock을 호출해 응답한다. 백엔드 CORS가 `http://localhost:3000`을 기본 허용하고, 프론트는
 기본 `http://localhost:8000`을 호출한다.
 
@@ -258,7 +261,7 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `PATHFINDER_WORKSPACES_DIR` | 시스템 tmp 하위 | 프로젝트별 로컬 워크스페이스 루트 |
 | `PATHFINDER_DISCOVERY_DRIVER` | `claude` | Discovery 드라이버. `strands`로 구 드라이버 폴백. 그 외 값은 기동 시 ValueError |
 | `PATHFINDER_DISCOVERY_CONFIG_DIR` | `~/pathfinder-discovery-config` | Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR`. proto용과 달라야 한다 — 자세한 내용은 `discovery-config/README.md` |
-| `PATHFINDER_PROTO_MAX_CONCURRENT` | `2` | 동시 프로토타입 빌드 상한(전역). 초과 시 세션 시작이 429 |
+| `PATHFINDER_PROTO_MAX_CONCURRENT` | `10` | 동시 프로토타입 빌드 상한(전역). 초과 시 세션 시작이 429. 1인 1환경 워크숍 전제로 10 |
 | `PATHFINDER_PROTO_CONFIG_DIR` | `~/pathfinder-proto-config` | 빌드 에이전트 전용 `CLAUDE_CONFIG_DIR`. 미지정 시 호스트 유저의 `~/.claude`(개인 skills/agents)가 빌드에 섞인다. CDK 배포 시엔 레포의 `proto-config/`가 그대로 `/opt/pathfinder/proto-config`가 된다 — 빌드 에이전트에 미리 넣어둘 스킬은 `proto-config/skills/<name>/SKILL.md`에 커밋하면 자동 활성화(`skills="all"`). 자세한 내용은 `proto-config/README.md` |
 | `PATHFINDER_PROTO_ROOT` | `~/pathfinder-protos` | 프로토타입 빌드 + 호스팅 공용 루트 (EC2 로컬) |
 | `PATHFINDER_COGNITO_USER_POOL_ID` | — | Cognito 풀 id. **둘 다 비워야** 인증 전체 바이패스(로컬/테스트 기본). 하나만 비우면 모든 요청이 RuntimeError — 아래 "참고" 참조 |
@@ -318,6 +321,20 @@ cd frontend && npm run test:e2e
   통과시키는 것보다는 눈에 보이는 실패가 낫다는 판단이다. 로컬에서 인증을 켜고
   검증하려면 `NEXT_PUBLIC_API_BASE_URL=/api`로 띄워야 한다(쿠키는 same-origin에서만
   프록시를 타고 번역된다).
+- **Bedrock 모델과 샘플링 파라미터**: `ANTHROPIC_MODEL`은 Discovery 에이전트와 프로토타입
+  빌드 에이전트가 공용으로 쓴다. IAM이 invoke를 허용하는 5개(`opus-5`, `opus-4-8`,
+  `opus-4-7`, `sonnet-5`, `sonnet-4-6`) 안에서 env 한 줄로 전환할 수 있다
+  (`infra/lib/backend-permissions.ts`; 목록을 넓히려면 여기와
+  `infra/test/hosting-stack.assert.ts`를 함께 고친다).
+
+  **Claude Opus 4.7 이후 모델(Opus 4.7·4.8·5, Sonnet 5)은 `temperature`/`top_p`/`top_k`와
+  `budget_tokens`를 제거했다** — 보내면 요청 전체가 `ValidationException`으로 실패한다
+  (`` `temperature` is deprecated for this model ``). 백엔드 드라이버는 원래 보내지 않지만,
+  **빌드 에이전트가 생성하는 프로토타입 코드가 이걸 넣으면 런타임에 깨진다.** 그래서
+  `proto-config/CLAUDE.md`에 금지 지침을 두어 에이전트가 처음부터 넣지 않게 한다. 모델 ID를
+  정규식으로 검사해 특정 모델만 제외하는 우회는 만들지 않는다 — 기본 모델이 env로 바뀌면
+  패턴이 새 모델을 놓쳐 같은 에러가 재발한다(실제로 `opus-(4-8|5)` 패턴이 `sonnet-5`를
+  놓쳤다). 추론 깊이가 필요하면 `thinking: {type: "adaptive"}`를 쓴다.
 - **리전**: 모든 리소스(S3, 백엔드, Discovery 에이전트, 프로토타입 빌드/호스팅)는
   서울(`ap-northeast-2`) 통일이 기본. 다른 리전이 필요하면 `CDK_DEPLOY_REGION`(인프라)과
   `AWS_REGION`/`PATHFINDER_S3_REGION`(백엔드)으로 지정한다 — 세 값이 같은 리전을 가리켜야
