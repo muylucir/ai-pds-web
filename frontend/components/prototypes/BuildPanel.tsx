@@ -89,7 +89,9 @@ export function BuildPanel({
             로그가 좁아 코드 블록과 도구 출력이 계속 줄바꿈됐다 — 질문 폼과 같은
             폭을 줘서 둘을 나란히 읽을 수 있게 한다. basis+min-w-0으로 비율을
             고정한다: aside가 고정 폭이면 넓어진 드로어의 여유 폭이 전부 채팅으로
-            간다. 좁은 화면(md 미만)에서는 세로로 쌓이므로 비율은 적용되지 않는다. */}
+            간다. 좁은 화면(md 미만)에서는 세로로 쌓이므로 비율은 적용되지 않는다.
+            **두 basis의 합은 정확히 1이어야 한다** — 둘 다 shrink-0/flex-none이라
+            넘치면 flex가 되돌려주지 않고 그대로 잘린다. 테스트가 이 합을 고정한다. */}
         <div className="flex-1 min-h-0 flex flex-col md:flex-row">
           <div className="flex-1 md:flex-none md:basis-1/2 md:min-w-0 min-h-0 flex flex-col">
             <ChatTimeline
@@ -102,7 +104,12 @@ export function BuildPanel({
             <ChatInput onSend={send} disabled={streaming} />
           </div>
 
-          <aside className="w-full md:basis-2/3 md:min-w-0 shrink-0 border-t md:border-t-0 md:border-l border-slate-200 flex flex-col min-h-0 overflow-y-auto">
+          {/* basis-1/2 — 채팅과 합이 정확히 100%여야 한다. 종전 2/3은 채팅을
+              1/3에서 1/2로 넓힐 때(70783c0) 함께 고치지 않은 잔재였고, 합이
+              7/6이 되어 1720px 드로어에서 287px가 넘쳐 보기 텍스트의 오른쪽이
+              스크롤바도 없이 잘렸다(실측). shrink-0이라 flex가 되돌려주지도
+              않는다. */}
+          <aside className="w-full md:basis-1/2 md:min-w-0 shrink-0 border-t md:border-t-0 md:border-l border-slate-200 flex flex-col min-h-0 overflow-y-auto">
             {pendingQuestions && (
               <div className="p-4 border-b border-slate-200">
                 <QuestionForm

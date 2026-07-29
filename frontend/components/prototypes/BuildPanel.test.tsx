@@ -140,4 +140,31 @@ describe("BuildPanel", () => {
     render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
     expect(screen.getByLabelText("채팅 메시지 입력")).toBeDisabled();
   });
+
+  it("splits the drawer into two halves that do not overflow it", () => {
+    // The regression this guards: the chat was widened from basis-1/3 to
+    // basis-1/2 while the aside kept basis-2/3, so the two panes claimed 7/6 of
+    // the row. Flex does not shrink a `basis` pane that also has min-w-0 back
+    // below its basis here, so the overflow lands on the aside and clips the
+    // right edge of every long option label — the answer text runs off-screen
+    // with no scrollbar to reveal it.
+    mockStream({ pendingQuestions: QP });
+    const { container } = render(
+      <BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />,
+    );
+
+    const row = container.querySelector(".md\\:flex-row");
+    expect(row).not.toBeNull();
+    const panes = Array.from(row!.children) as HTMLElement[];
+    expect(panes).toHaveLength(2);
+
+    // Read the fractions off the classnames rather than asserting a literal
+    // pair, so a future 40/60 split stays legal and only overflow fails.
+    const fractions = panes.map((p) => {
+      const m = p.className.match(/md:basis-(\d+)\/(\d+)/);
+      expect(m, `pane has no md:basis-N/M: ${p.className}`).not.toBeNull();
+      return Number(m![1]) / Number(m![2]);
+    });
+    expect(fractions.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1);
+  });
 });
