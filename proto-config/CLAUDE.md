@@ -49,6 +49,9 @@ const nextConfig = {
   // 프리픽스가 붙은 자산 URL을 그대로 쓰게 한다. basePath만으로도 _next/ 자산은
   // 덮이지만, 명시해 두면 의도가 드러난다.
   assetPrefix: basePath || undefined,
+  // 프록시와 같은 방향으로 정규화한다. 아래 "trailingSlash" 절 참조 —
+  // 빼면 리다이렉트 무한 루프(ERR_TOO_MANY_REDIRECTS)가 난다.
+  trailingSlash: true,
 };
 
 export default nextConfig;
@@ -69,3 +72,47 @@ Next.js가 `basePath`를 자동으로 붙이므로 그대로 둔다. 반면 `fet
 
 **Next.js가 아닌 경우** (Vite, CRA 등): 같은 값을 `PROTO_BASE_PATH`로 받는다.
 Vite는 `base`, CRA는 `PUBLIC_URL`이 대응하는 설정이다.
+
+## trailingSlash: true — 빼면 리다이렉트 무한 루프가 난다
+
+`basePath`와 **같은 비중으로 필수다.** 빠뜨리면 화면이 아예 열리지 않는다:
+
+```
+This page isn't working
+... redirected you too many times.
+ERR_TOO_MANY_REDIRECTS
+```
+
+**원인은 두 정규화가 서로 반대 방향이라는 것이다.** 프록시와 프로토타입이 같은
+URL을 두고 각자 "올바른 형태"로 되돌리려 하면서 서로의 결과를 무효화한다:
+
+| 주체 | 규칙 |
+|---|---|
+| Pathfinder 프록시 | 슬래시 **없음 → 있음** (`/proto/{pid}/{slug}` → `/proto/{pid}/{slug}/`) |
+| Next.js 기본값(`trailingSlash: false`) | 슬래시 **있음 → 없음** |
+
+실측한 순환(프록시 코드로 재현):
+
+```
+브라우저  /api/proto/p1/demo/
+  → 프로토타입이 308 → /api/proto/p1/demo      (Next가 슬래시 제거)
+브라우저  /api/proto/p1/demo
+  → 프록시가 307   → /api/proto/p1/demo/       (프록시가 슬래시 추가)
+  → 무한 반복
+```
+
+**프록시 쪽을 바꿀 수는 없다.** 프록시가 슬래시를 붙이는 이유는 상대 경로 자산
+참조다 — 슬래시 없는 `.../{slug}`에서 브라우저는 `href="styles.css"`를
+`.../{pid}/`(slug가 빠진 경로) 기준으로 풀어 모든 자산이 502가 된다. 슬래시를
+붙여야 문서의 base가 `.../{slug}/`가 되어 상대 참조가 프로토타입 안에 떨어진다.
+
+그래서 **맞추는 쪽은 프로토타입이다.** `trailingSlash: true`를 넣으면 Next도
+프록시와 같은 방향(슬래시 있는 형태)으로 정규화하므로 순환이 생기지 않는다.
+
+`basePath`처럼 빌드 시점에 굳는 설정이므로, 빠뜨린 프로토타입은 **재빌드해야
+고쳐진다** — 배포 후에는 손댈 수 없다.
+
+**Next.js가 아닌 경우:** 같은 성질의 설정을 찾아 슬래시 있는 형태로 맞춘다. 정적
+서버(`serve`, `http-server` 등)는 대개 디렉토리 URL을 그대로 다루므로 별도 설정이
+필요 없지만, SPA 라우터가 자체적으로 URL을 정규화한다면 슬래시를 **제거하지 않도록**
+설정한다.
