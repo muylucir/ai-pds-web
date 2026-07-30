@@ -221,6 +221,103 @@ async def test_a_question_turn_yields_exactly_one_terminal_event(tmp_path):
     assert kinds[-1] == "done"
 
 
+# ---- CLI가 보고한 턴 실패 (ResultMessage.is_error) ----
+#
+# CLI는 턴 실패를 예외로 던지지 않는다. 자기 에러 문구("API Error: The system
+# encountered an unexpected error during processing")를 AssistantMessage에 담아
+# 보내고, ResultMessage에 is_error=True를 실어 보낸다. 드라이버가 그 플래그를
+# 읽지 않으면 실패가 정상 답변으로 렌더된다 — 사용자는 한국어 답변에 영어 에러
+# 문구가 붙은 것을 보고, 에이전트는 같은 단계를 계속 재시도하고, 우리 로그에는
+# 아무것도 남지 않는다(실패를 설명하는 모든 필드가 버려지므로).
+
+def _failing_client(scripted, can_use_tool, *, status=500):
+    """실패로 끝나는 턴: 본문 메시지 뒤에 is_error ResultMessage."""
+    from tests.fakes.fake_sdk import (AssistantMessage, FakeSdkClient,
+                                      ResultMessage, TextBlock)
+    blocks = [TextBlock(text=t) for t in scripted.get("text", [])]
+    msgs = ([AssistantMessage(content=blocks)] if blocks else []) + [
+        ResultMessage(is_error=True, api_error_status=status,
+                      terminal_reason="completed", errors=["boom"]),
+    ]
+    return FakeSdkClient(msgs)
+
+
+def _driver_with_failing_turn(tmp_path, scripted, *, status=500):
+    rules = tmp_path / "rules" / "aws-aiplc-rules"
+    rules.mkdir(parents=True)
+    (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    d = ClaudeDriver(workspace=str(ws), rules_dir=str(tmp_path / "rules"),
+                     config_dir=str(tmp_path / "cfg"), s3=FakeS3Store(),
+                     client_factory=lambda session: None)
+    d._client_factory = lambda session: _failing_client(  # type: ignore[assignment]
+        scripted, d._on_can_use_tool, status=status)
+    return d
+
+
+@pytest.mark.asyncio
+async def test_a_cli_reported_failure_ends_the_turn_with_error_not_done(tmp_path):
+    # 이 결함이 실제로 만든 증상: PR/FAQ 단계가 반복 실패하는데 화면은 정상으로
+    # 보였다. sse.ts:29가 done에서 EventSource를 닫고 useWorkspaceStream.ts:154의
+    # error 분기를 타지 않으므로, 실패가 성공으로 위장된다.
+    d = _driver_with_failing_turn(tmp_path, {"text": ["작성하겠습니다"]})
+    events = [e async for e in d.run("hi", {"session_id": "s-1"})]
+    kinds = [e.kind for e in events]
+    assert kinds[-1] == "error", kinds
+    assert "done" not in kinds, kinds
+
+
+@pytest.mark.asyncio
+async def test_a_failed_turn_still_relays_what_the_agent_produced(tmp_path):
+    # 실패해도 그 전까지 나온 본문은 사용자에게 닿아야 한다 — 에이전트가 어디까지
+    # 갔는지가 재시도 판단의 근거다.
+    d = _driver_with_failing_turn(tmp_path, {"text": ["요구사항을 정리했습니다"]})
+    events = [e async for e in d.run("hi", {"session_id": "s-1"})]
+    assert "요구사항을 정리했습니다" in [e.text for e in events if e.kind == "message"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_turn_yields_exactly_one_terminal_event(tmp_path):
+    # _pump의 불변식 1은 실패 경로에서도 유지된다: 종결 이벤트는 정확히 하나,
+    # 항상 마지막. 종류만 done에서 error로 바뀐다.
+    d = _driver_with_failing_turn(tmp_path, {"text": ["본문"]})
+    kinds = [e.kind async for e in d.run("hi", {"session_id": "s-1"})]
+    assert kinds.count("error") == 1, kinds
+    assert kinds.count("done") == 0, kinds
+
+
+@pytest.mark.asyncio
+async def test_the_failure_text_tells_the_user_to_retry(tmp_path):
+    # 흔한 원인(Bedrock 429/529)은 일시적이라 재시도가 유효하다. HTTP 상태는
+    # 로그로 가고 화면에는 나오지 않는다 — 워크숍 참가자가 할 수 있는 일이 아니다.
+    d = _driver_with_failing_turn(tmp_path, {"text": ["본문"]}, status=429)
+    events = [e async for e in d.run("hi", {"session_id": "s-1"})]
+    text = next(e.text for e in events if e.kind == "error")
+    assert "다시 시도" in text, text
+    assert "429" not in text, text
+
+
+@pytest.mark.asyncio
+async def test_the_api_error_status_is_logged_for_diagnosis(tmp_path, caplog):
+    # 이 값이 버려지던 것이 원인 파악을 막았다. 429/529(일시적)와 500(아님)을
+    # 구분할 유일한 근거다.
+    import logging
+    d = _driver_with_failing_turn(tmp_path, {"text": ["본문"]}, status=529)
+    with caplog.at_level(logging.ERROR):
+        [e async for e in d.run("hi", {"session_id": "s-1"})]
+    assert "529" in caplog.text, caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_successful_turn_is_unaffected(tmp_path):
+    # 회귀 가드: is_error가 없거나 False면 종전대로 done이다.
+    d, _, _ = _driver(tmp_path, {"text": ["본문"]})
+    kinds = [e.kind async for e in d.run("hi", {"session_id": "s-1"})]
+    assert kinds[-1] == "done", kinds
+    assert "error" not in kinds, kinds
+
+
 @pytest.mark.asyncio
 async def test_the_final_message_of_a_turn_is_translated_only_once(tmp_path):
     # 종결 경로는 두 소스를 소진할 때까지 반복 수확한다. 한 메시지가 inbox에서
@@ -231,9 +328,9 @@ async def test_the_final_message_of_a_turn_is_translated_only_once(tmp_path):
     seen: list[str] = []
     original = d._translate
 
-    def counting(msg):
+    def counting(msg, reader=None):
         seen.append(type(msg).__name__)
-        return original(msg)
+        return original(msg, reader)
 
     d._translate = counting  # type: ignore[method-assign]
     kinds = [e.kind async for e in d.run("hi", {"session_id": "s-1"})]

@@ -30,6 +30,14 @@ class AssistantMessage:
 class ResultMessage:
     subtype: str = "success"
     result: str | None = None
+    # 실제 SDK의 ResultMessage가 실패를 알리는 필드들(claude_agent_sdk/types.py).
+    # CLI는 턴 실패를 예외로 던지지 않고 여기에 담아 보낸다 — Bedrock 429/500/529,
+    # 도구 교착, 중단된 스트림 모두 is_error=True로 온다. 기본값이 성공이므로
+    # 기존 대본은 그대로 동작하고, 실패를 재현하는 테스트만 명시적으로 켠다.
+    is_error: bool = False
+    api_error_status: int | None = None
+    terminal_reason: str | None = None
+    errors: list | None = None
 
 
 class FakeSdkClient:

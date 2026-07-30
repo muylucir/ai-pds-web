@@ -80,6 +80,18 @@ _LETTERS = "ABCDEFGHIJ"
 # docstring for why the poll exists at all.
 _POLL_SECONDS = 0.05
 
+# Shown when the CLI reports a failed turn (`ResultMessage.is_error`). Korean
+# and actionable, unlike the internal "agent turn failed" the other error paths
+# use: those are exception paths where the frontend substitutes its own copy,
+# whereas this one is the ordinary end of a turn the user watched happen.
+#
+# Says to retry because the common causes are transient -- a Bedrock 429/529
+# under workshop load succeeds on the next attempt. The diagnostic detail
+# (`api_error_status`) goes to the log, not here: an HTTP status is not
+# something a workshop attendee can act on.
+_TURN_FAILED_TEXT = ("이번 턴이 실패했습니다 — 잠시 후 다시 시도해 주세요. "
+                     "반복되면 관리자에게 알려주세요.")
+
 # Discovery runs with a human in the loop watching the chat, unlike the
 # unattended prototype build -- but AskUserQuestion is still routed through
 # can_use_tool (see _on_can_use_tool below) and every other tool must execute
@@ -174,6 +186,14 @@ class _MessageReader:
         self.outbox: list[AgentEvent] = []
         self.ended = False
         self.error: BaseException | None = None
+        # Set when the CLI's ResultMessage says the turn FAILED (is_error).
+        # Not an exception: the turn ran, produced messages, and ended
+        # cleanly -- it just ended in failure. Kept separate from `error`
+        # (which is a raised exception from the iterator) because the two need
+        # different terminal events: `error` propagates out of `_pump` for
+        # `_stream` to degrade, while this one only changes which terminal
+        # event `_pump` emits. See `_translate`'s ResultMessage branch.
+        self.failed = False
         # Woken on every append so the pump reacts immediately instead of
         # waiting out its poll interval; sticky, cleared by settle().
         self.wake = asyncio.Event()
@@ -754,7 +774,7 @@ class ClaudeDriver:
 
     # ---- message translation + the turn pump ----
 
-    def _translate(self, msg) -> list[AgentEvent]:
+    def _translate(self, msg, reader: "_MessageReader | None" = None) -> list[AgentEvent]:
         events: list[AgentEvent] = []
         tname = type(msg).__name__
         if tname == "AssistantMessage":
@@ -767,6 +787,46 @@ class ClaudeDriver:
                         self._last_status = block.name
                         events.append(AgentEvent(kind="status", text=block.name))
         elif tname == "ResultMessage":
+            # The CLI reports turn failure HERE, not by raising: `is_error`
+            # true means the turn ran but ended in failure (a Bedrock 429/500/
+            # 529, a wedged tool, an aborted stream). Ignoring it is what let
+            # a failed PR/FAQ turn render as a normal answer -- the CLI writes
+            # its own "API Error: ..." prose into an AssistantMessage, which
+            # `message` above relays as ordinary text, and then this branch
+            # said `done`. The frontend closes the stream on `done`
+            # (sse.ts:29) and never takes its error branch, so the user saw
+            # English error prose glued to Korean output and the agent
+            # retrying the same step -- with nothing in our logs at all,
+            # because every field describing the failure was dropped right
+            # here.
+            #
+            # `api_error_status` is the field worth logging: it distinguishes a
+            # transient 429/529 (same request succeeds on retry) from a 500
+            # (does not). Logged rather than shown -- an HTTP status is not
+            # something a workshop attendee can act on.
+            if getattr(msg, "is_error", False):
+                _log.error(
+                    "claude CLI reported a failed turn: api_error_status=%s "
+                    "subtype=%s terminal_reason=%s errors=%s",
+                    getattr(msg, "api_error_status", None),
+                    getattr(msg, "subtype", None),
+                    getattr(msg, "terminal_reason", None),
+                    getattr(msg, "errors", None),
+                )
+                # Recorded on the reader, NOT returned as an `error` event.
+                # `_pump` owns the terminal event and emits exactly one, always
+                # last (its invariant 1); returning a second terminal here
+                # would break that. The flag makes `_pump` emit `error`
+                # instead of `done` after its drain.
+                #
+                # On the READER rather than on `self` because this is per-turn
+                # state: the reader's lifetime IS the turn's, so a failed turn
+                # cannot leak its verdict into the next one. A driver-level
+                # flag would have to be reset by hand on every entry path
+                # (`_stream`, `_continue_after_answers`) and would be wrong the
+                # moment one of them forgot.
+                if reader is not None:
+                    reader.failed = True
             events.append(AgentEvent(kind="done"))
         return events
 
@@ -859,7 +919,7 @@ class ClaudeDriver:
             """
             nonlocal ended
             while reader.inbox and not ended:
-                for ev in self._translate(reader.inbox.pop(0)):
+                for ev in self._translate(reader.inbox.pop(0), reader):
                     if ev.kind == "done":
                         ended = True   # terminal event comes from the exit below
                         continue
@@ -914,7 +974,21 @@ class ClaudeDriver:
                 break
             async for ev in relay():
                 yield ev
-        yield AgentEvent(kind="done")
+        # Still exactly one terminal event, still last -- only its KIND now
+        # depends on whether the CLI reported the turn as failed
+        # (`_translate`'s ResultMessage branch). `error` rather than a raise
+        # because the turn is over and everything it produced has already been
+        # relayed: raising here would send the caller down `_stream`'s except
+        # arm, which relays the queue a second time.
+        #
+        # Deliberately NOT reset here. A failed turn's verdict dies with the
+        # reader, and `_continue_after_answers` pumps the SAME reader -- so if
+        # the question turn already failed, its continuation stays failed
+        # rather than reporting success.
+        if reader.failed:
+            yield AgentEvent(kind="error", text=_TURN_FAILED_TEXT)
+        else:
+            yield AgentEvent(kind="done")
 
     # ---- the single-turn slot ----
     #
