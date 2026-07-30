@@ -10,7 +10,7 @@ import type {
   BuildCompletePayload,
 } from "./types";
 
-// Mirror guard (E1): AgentEventKind must cover EXACTLY the same 8 kinds as
+// Mirror guard (E1): AgentEventKind must cover EXACTLY the same 9 kinds as
 // backend/pathfinder/models.py's AgentEvent.kind Literal -- a drift here
 // would silently break the SSE contract.
 //
