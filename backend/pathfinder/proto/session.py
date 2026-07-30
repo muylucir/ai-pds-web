@@ -40,6 +40,30 @@ SessionStatus = Literal["starting", "ready", "building", "waiting_input",
 PromptKind = Literal["plan", "resume", "handoff"]
 
 
+def has_build_output(build_dir: Path) -> bool:
+    """빌드 디렉토리 아래 `prototype/`에 산출물이 있는가.
+
+    "빌드됐다"의 단일 정의다. 세 곳이 이 질문을 하고, 전부 여기를 거쳐야
+    한다 -- `first_prompt()`(무엇을 지시할지), `build_complete`
+    도구(완료 선언을 받아줄지), 목록 라우트(카드를 built로 보일지). 기준이
+    갈라지면 도구는 완료를 받아들이는데 목록은 built로 보이지 않는(또는 그
+    반대) 상태가 된다.
+
+    `prototype/`을 보고 빌드 디렉토리 자체를 보지 않는 것이 요점이다.
+    `start()`가 에이전트보다 먼저 스펙 .md를 심고, 이전 호스팅 시도가
+    `.proto-host.log`/`.pid`를 남길 수 있어서 -- 빌드 디렉토리가 있다는 건
+    세션이 시작됐다는 뜻일 뿐 무언가 만들어졌다는 뜻이 아니다.
+
+    직속 자식만 확인하고 재귀하지 않는다: node_modules/.next가 생긴 뒤에도
+    매 목록 호출에서 싸게 유지된다.
+    """
+    proto_dir = build_dir / "prototype"
+    try:
+        return proto_dir.is_dir() and any(proto_dir.iterdir())
+    except OSError:
+        return False
+
+
 class BuilderLike(Protocol):
     def run(self, text: str) -> AsyncIterator[AgentEvent]: ...
     async def submit_answers(self, interrupt_id: str,
@@ -512,7 +536,13 @@ class PrototypeSession:
         """Deliberately short. The agent already has the prior transcript and
         whatever it built, so restating the spec or the build rules would only
         compete with what it can already see. All this turn has to do is stop
-        it from picking a direction on its own."""
+        it from picking a direction on its own.
+
+        Unless the build tree is GONE, which the transcript cannot tell it --
+        see `_missing_output_prompt`.
+        """
+        if not has_build_output(self.build_dir()):
+            return self._missing_output_prompt()
         return (
             "이전 빌드 세션을 이어서 진행한다.\n"
             "**아직 아무것도 빌드하거나 수정하지 마.**\n\n"
@@ -523,6 +553,39 @@ class PrototypeSession:
             "3. 내가 고른 뒤에 작업을 시작해줘.\n"
         )
 
+    def _missing_output_prompt(self) -> str:
+        """산출물이 사라진 뒤의 개시 턴 — 찾지 말고 다시 만들라고 말한다.
+
+        재개·개선 프롬프트는 둘 다 에이전트가 만든 코드가 아직 거기 있다고
+        전제한다. 그 전제가 깨지는 경로가 둘 있고, 둘 다 정상 운영이다:
+        프로토타입 리셋(로컬 트리를 rmtree한다)과 호스팅 인스턴스 교체(빌드
+        트리는 EBS에 있고 S3 세션만 살아남는다).
+
+        그때 상태를 알려주지 않으면 에이전트는 트랜스크립트를 믿고 없는 코드를
+        찾아 나선다. 실측: 리셋된 프로토타입에서 작업 디렉토리 → 다른 프로토타입
+        디렉토리 → `/opt/pathfinder/frontend` → 파일시스템 전체로 탐색을 넓히며
+        19초 이상을 태웠고, 성공할 수 없는 탐색이었다 -- 트리는 삭제됐다.
+
+        스펙을 다시 읽히는 것이 요점이다. 트랜스크립트의 기억은 요약이 아니라
+        대화 기록이고, 거기서 코드를 복원할 수는 없다. 스펙은 S3에 살아 있고
+        `start()`가 매번 로컬에 새로 심는다 -- 처음 빌드와 같은 입력이다.
+        """
+        return (
+            "이전 빌드 세션의 기록은 남아 있지만, 작업 디렉토리의 "
+            "`prototype/`에 **산출물이 없다.** 초기화됐거나 빌드 환경이 "
+            "교체된 것이다.\n\n"
+            "**이전 코드를 찾지 마.** 이 환경 어디에도 남아 있지 않다. "
+            f"`{self._spec_key()}`를 다시 읽고 **처음부터 다시 만들면 된다.** "
+            "이전 대화에서 정한 방향과 결정사항은 그대로 활용해줘.\n\n"
+            "**아직 빌드는 시작하지 마.**\n"
+            "1. 스펙을 읽고, 이전 대화에서 합의된 내용을 반영한 구현 계획을 "
+            "짧게 제시해줘.\n"
+            "2. 그다음 **AskUserQuestion으로 이 계획대로 다시 만들지 물어보고 내 "
+            "답을 기다려줘.**\n"
+            "3. 내가 승인한 뒤에 빌드를 시작해줘. 완성물은 작업 디렉토리 아래 "
+            "`prototype/`에 두고, 끝나면 `build_complete`로 완료를 선언해줘.\n"
+        )
+
     def _handoff_prompt(self, handoff: dict) -> str:
         """완료된 빌드를 개선하는 새 세션의 개시 턴.
 
@@ -530,7 +593,14 @@ class PrototypeSession:
         -- 에이전트가 자기 파일 도구로 cwd를 읽는 편이 스냅샷보다 정확하고,
         그게 이미 스펙을 읽는 방식이다. 여기서 할 일은 이전 빌드가 무엇을
         남겼는지 알려주고, 마음대로 손대지 않게 막는 것뿐이다.
+
+        단, 남긴 것이 실제로 없을 수 있다. handoff.json은 S3에 있고 빌드
+        트리는 로컬 디스크에 있어서 -- 인스턴스가 교체되면 요약만 살아남는다.
+        "이미 빌드가 완료됐다"고 말하면서 없는 `prototype/`을 살펴보게 하는
+        것이 정확히 그 탐색을 유발한다(`_missing_output_prompt` 참조).
         """
+        if not has_build_output(self.build_dir()):
+            return self._missing_output_prompt()
         remaining = handoff.get("remaining") or "(따로 기록된 것 없음)"
         return (
             f"이 프로토타입은 이미 한 번 빌드가 완료됐다. 이번 세션은 개선 "

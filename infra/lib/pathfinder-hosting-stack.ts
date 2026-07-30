@@ -129,6 +129,16 @@ export class PathfinderHostingStack extends cdk.Stack {
         '**/__pycache__', '**/*.egg-info', '**/test-results',
         '**/playwright-report', 'files/*.png',
         '**/.env', '**/.env.*',
+        // 로컬 빌드 에이전트의 런타임 산출물 — .gitignore에도 있는 것들이다.
+        // node_modules/.next를 위에서 걸러도 소스는 남아서, 개발 박스에서
+        // 만든 프로토타입이 배포 zip에 실려 새 인스턴스의
+        // /opt/pathfinder/proto-type/에 심긴다. 그러면 그 프로토타입이 아무도
+        // 빌드하지 않았는데 "빌드 완료"로 보인다(has_build_output이 보는 것이
+        // 정확히 이 트리다). 세션 트랜스크립트·큐도 같은 이유로 뺀다.
+        'proto-type', 'protos',
+        'proto-config/projects', 'proto-config/sessions',
+        'discovery-config/projects', 'discovery-config/sessions',
+        '**/.proto-host.log', '**/.proto-host.pid',
       ],
     });
     asset.grantRead(role);

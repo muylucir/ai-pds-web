@@ -25,7 +25,7 @@ from starlette.responses import Response
 from pathfinder.models import AgentEvent
 from pathfinder.parsers.redaction import redact_credentials
 from pathfinder.pathsafe import reject_unsafe_segment
-from pathfinder.proto.session import purge_session_state
+from pathfinder.proto.session import has_build_output, purge_session_state
 from pathfinder.survey.store import purgeable_response_count
 
 _log = logging.getLogger(__name__)
@@ -167,19 +167,14 @@ def _prototype_dir(pid: str, slug: str) -> Path:
 def _local_build_exists(pid: str, slug: str) -> bool:
     """A finished build lives under prototype/ inside the LOCAL build
     directory now -- the in-process builder writes straight there and ProtoHost
-    serves it in place (no more VM -> S3 bundle sync). We deliberately check
-    prototype/, not just the build dir's own existence: PrototypeSession.start()
-    seeds the build dir with the spec .md file (and possibly .proto-host.log/
-    .pid from a prior hosting attempt) before the agent does anything, so a
-    build dir that exists but has no prototype/ subtree just means a session
-    STARTED, not that anything was BUILT. Only checking the immediate children
-    of prototype/ (not a full recursive scan) keeps this cheap on every list
-    call even once node_modules/.next show up in there."""
-    proto_dir = _prototype_dir(pid, slug)
-    try:
-        return proto_dir.is_dir() and any(proto_dir.iterdir())
-    except OSError:
-        return False
+    serves it in place (no more VM -> S3 bundle sync).
+
+    The judgement itself is `proto/session.py`'s `has_build_output` -- the one
+    definition of "is it built?", shared with the build_complete tool and with
+    the opening prompt (which has to tell the agent to REBUILD when the tree is
+    gone rather than go looking for code that no longer exists). This wrapper
+    only adapts the input shape: pid/slug instead of a build dir."""
+    return has_build_output(_prototype_dir(pid, slug).parent)
 
 
 @router.get("/projects/{pid}/prototypes")

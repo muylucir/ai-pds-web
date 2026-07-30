@@ -20,6 +20,7 @@ from typing import Any, Callable
 from claude_agent_sdk import tool
 
 from pathfinder.models import AgentEvent
+from pathfinder.proto.session import has_build_output
 
 _log = logging.getLogger("pathfinder.proto")
 
@@ -55,16 +56,12 @@ def _text_result(text: str) -> dict[str, Any]:
 def _has_output(workspace: str) -> bool:
     """prototype/ 아래에 무엇이든 있는가.
 
-    _local_build_exists(routes/prototypes.py:155-170)와 같은 기준을 쓴다:
-    직속 자식 하나라도 있으면 참, 재귀 스캔은 하지 않는다(node_modules가
-    생긴 뒤에도 싸게 유지된다). 두 곳이 다른 기준을 쓰면 도구는 완료를
-    받아들이는데 목록은 built로 보이지 않는(또는 그 반대) 상태가 된다.
+    판정은 `proto/session.py`의 `has_build_output`에 있다 — "빌드됐다"의 단일
+    정의다. 여기, 목록 라우트, 그리고 개시 프롬프트가 같은 질문을 하고, 기준이
+    갈라지면 도구는 완료를 받아들이는데 목록은 built로 보이지 않는(또는 그
+    반대) 상태가 된다. 이 래퍼는 입력 모양만 맞춘다(workspace 문자열).
     """
-    proto_dir = Path(workspace) / "prototype"
-    try:
-        return proto_dir.is_dir() and any(proto_dir.iterdir())
-    except OSError:
-        return False
+    return has_build_output(Path(workspace))
 
 
 def build_proto_tools(workspace: str,

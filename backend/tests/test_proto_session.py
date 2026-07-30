@@ -745,6 +745,17 @@ async def _started(tmp_path, *, saved_session_id=None):
     return session
 
 
+def _build_output(session) -> None:
+    """`prototype/` 아래에 산출물이 있는 상태를 만든다 — 완료된 빌드의 모양.
+
+    `start()`는 스펙 .md만 심으므로 이것 없이는 빌드 트리가 비어 있고,
+    재개·개선 프롬프트가 "다시 만들어라"로 갈린다(has_build_output).
+    """
+    proto = session.build_dir() / "prototype"
+    proto.mkdir(parents=True, exist_ok=True)
+    (proto / "package.json").write_text("{}", encoding="utf-8")
+
+
 async def test_a_resumed_session_asks_what_to_do_instead_of_replanning(tmp_path):
     """Reopening a session (backend redeploy, or a closed/failed session) re-fires
     the __first__ sentinel, so first_prompt() goes out AGAIN -- but now the agent
@@ -767,10 +778,89 @@ async def test_a_resumed_session_does_not_start_building_on_its_own(tmp_path):
     """The complaint that started this: every resume just started building."""
     session = await _started(tmp_path,
                              saved_session_id="99999999-8888-7777-6666-555555555555")
+    # 산출물이 남아 있는 평범한 재개. 없으면 "다시 만들어라" 분기로 가는데,
+    # 그쪽은 빌드 지시를 담는 것이 목적이라 이 단정의 대상이 아니다.
+    _build_output(session)
     prompt = session.first_prompt()
     # No bare build order anywhere in the resume prompt.
     assert "빌드해줘" not in prompt
     assert "빌드를 시작해줘" not in prompt
+
+
+# ---- 산출물이 사라진 뒤의 재개: 찾지 말고 다시 만든다 ----
+
+async def test_resume_without_local_output_says_rebuild_not_search(tmp_path):
+    """S3 세션은 살아 있는데 로컬 `prototype/`이 없는 상태 — 인스턴스 교체나
+    리셋 뒤에 실제로 일어난다.
+
+    에이전트의 맥락(트랜스크립트)에는 자기가 만든 코드가 있다고 남아 있으므로,
+    상태를 알려주지 않으면 없는 코드를 찾아 파일시스템을 훑는다. 실측: 리셋된
+    프로토타입에서 `/opt/pathfinder/protos/...`부터 `/opt/pathfinder/frontend`,
+    다른 프로토타입 디렉토리까지 뒤지며 19초 이상을 태웠다. 그 탐색은 절대
+    성공할 수 없다 — 트리가 삭제됐기 때문이다. 다시 만들라고 말해야 한다.
+    """
+    session = await _started(tmp_path,
+                             saved_session_id="99999999-8888-7777-6666-555555555555")
+    assert session._test_resume_calls == [True]      # sanity: resume 경로다
+
+    prompt = session.first_prompt()
+
+    # 산출물이 없다는 사실을 프롬프트가 말해야 한다.
+    assert "prototype/" in prompt
+    # 그리고 찾는 게 아니라 다시 만드는 것이 지시여야 한다.
+    assert "처음부터" in prompt or "다시 만들" in prompt
+    # 찾아보라고 시키면 안 된다 — 그게 이 버그의 증상이었다.
+    assert "찾아" not in prompt
+
+
+async def test_resume_with_local_output_keeps_the_continue_prompt(tmp_path):
+    """산출물이 살아 있는 평범한 재개는 기존 문구 그대로여야 한다 — 다시
+    만들라는 지시가 여기로 새면 완성된 빌드를 처음부터 되돌린다."""
+    session = await _started(tmp_path,
+                             saved_session_id="99999999-8888-7777-6666-555555555555")
+    _build_output(session)
+
+    prompt = session.first_prompt()
+
+    assert "이어서" in prompt or "이전" in prompt
+    assert "처음부터" not in prompt and "다시 만들" not in prompt
+
+
+async def test_handoff_without_local_output_says_rebuild_too(tmp_path):
+    """handoff 분기도 같은 구멍이 있다: "이미 빌드가 완료됐다"고 단정하고
+    `prototype/`을 살펴보라고 시키는데, 그 디렉토리가 없을 수 있다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps(
+        {"summary": "할 일 앱을 만들었다", "remaining": "다크 모드"})
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    prompt = session.first_prompt()
+
+    assert "처음부터" in prompt or "다시 만들" in prompt
+    # 없는 것을 살펴보라고 시키면 안 된다.
+    assert "살펴보고 현재 상태를 파악" not in prompt
+
+
+async def test_handoff_with_local_output_keeps_the_improve_prompt(tmp_path):
+    """산출물이 있는 개선 세션은 요약을 싣고 현재 상태를 살펴보게 한다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps(
+        {"summary": "할 일 앱을 만들었다", "remaining": "다크 모드"})
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    _build_output(session)
+    prompt = session.first_prompt()
+
+    assert "할 일 앱을 만들었다" in prompt
+    assert "처음부터" not in prompt and "다시 만들" not in prompt
 
 
 async def test_a_fresh_session_still_gets_the_planning_prompt(tmp_path):
@@ -840,6 +930,9 @@ async def test_the_handoff_prompt_carries_the_summary(tmp_path):
 
     session = _session(s3, tmp_path, FakeBuilder())
     await session.start()
+    # 개선할 산출물이 실제로 있는 상태 — 없으면 요약이 아니라 "다시 만들어라"가
+    # 나가는 것이 맞다(test_handoff_without_local_output_says_rebuild_too).
+    _build_output(session)
     prompt = session.first_prompt()
 
     assert "할 일 앱을 만들었다" in prompt
