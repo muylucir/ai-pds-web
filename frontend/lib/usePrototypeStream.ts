@@ -1,11 +1,16 @@
 // frontend/lib/usePrototypeStream.ts
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { streamPrototypeEvents, submitPrototypeAnswers, interruptSession } from "@/lib/api/prototypes";
+import {
+  streamPrototypeEvents,
+  submitPrototypeAnswers,
+  interruptSession,
+  startSession,
+} from "@/lib/api/prototypes";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
 import type { AgentEvent } from "@/lib/api/types";
-import type { QuestionsPayload } from "@/lib/api/types";
+import type { QuestionsPayload, BuildCompletePayload } from "@/lib/api/types";
 import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
 
 // A NEW hook modeled on useWorkspaceStream (the workspace's CURRENT stream
@@ -36,17 +41,24 @@ export interface PrototypeStream {
   items: ChatItem[];
   streaming: boolean;
   pendingQuestions: QuestionsPayload | null;
+  /** 에이전트가 빌드 완료를 선언했을 때의 요약. 이 값이 있으면 세션은 이미
+   *  닫혔거나 몇 초 안에 닫힌다(백엔드가 유예 타이머로 닫는다). */
+  buildComplete: BuildCompletePayload | null;
   changedPaths: string[];
   startBuild: () => void;
   send: (text: string) => void;
   submitAnswers: (answers: Record<string, string>) => Promise<void>;
   interrupt: () => Promise<void>;
+  /** 완료된 빌드를 개선한다: 새 세션을 열고 개시 턴을 발화한다. 서버가
+   *  `__first__`를 핸드오프 프롬프트로 치환하므로 새 API가 필요 없다. */
+  restartForImprovement: () => Promise<void>;
 }
 
 export function usePrototypeStream(projectId: string, slug: string): PrototypeStream {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [pendingQuestions, setPendingQuestions] = useState<QuestionsPayload | null>(null);
+  const [buildComplete, setBuildComplete] = useState<BuildCompletePayload | null>(null);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const stopRef = useRef<null | (() => void)>(null);
   // The AI bubble that events are landing in RIGHT NOW — not the bubble the
@@ -106,6 +118,14 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       if (ev.kind === "questions") {
         const parsed = safeParse<QuestionsPayload>(ev.payload);
         if (parsed) setPendingQuestions(parsed);
+        return;
+      }
+      if (ev.kind === "build_complete") {
+        // streaming을 건드리지 않는다 — 뒤따르는 `done`이 onDone으로 평소대로
+        // 턴을 닫는다. 백엔드는 이 선언 뒤 유예 타이머로 세션을 닫으므로,
+        // 이 시점부터 send()는 더 이상 유효하지 않다.
+        const parsed = safeParse<BuildCompletePayload>(ev.payload);
+        if (parsed) setBuildComplete(parsed);
         return;
       }
       if (ev.kind === "error") {
@@ -278,6 +298,22 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     // exactly like any other turn end.
   }, [projectId, slug]);
 
+  const restartForImprovement = useCallback(async () => {
+    // 완료 선언으로 세션이 닫혔으므로 새로 열어야 한다. 백엔드의
+    // _resolve_session_id가 handoff.json을 발견해 새 session_id + 요약
+    // 주입으로 분기하고, `__first__` 센티넬이 그 핸드오프 프롬프트로
+    // 치환된다 — 그래서 여기서 프롬프트를 만들지 않는다.
+    //
+    // startSession의 예외를 잡지 않는 것이 의도다. 429(동시 빌드 상한)면
+    // 아래 세 줄이 실행되지 않아 완료 카드가 그대로 남고, 호출자
+    // (BuildPanel.handleRestart)가 상한 메시지를 보여준다. 여기서 삼키면
+    // 카드가 지워진 채 아무 일도 일어나지 않은 화면이 된다.
+    await startSession(projectId, slug);
+    setBuildComplete(null);
+    setChangedPaths([]);
+    startBuild();
+  }, [projectId, slug, startBuild]);
+
   // Close the stream if the component unmounts mid-turn.
   useEffect(() => () => stopRef.current?.(), []);
 
@@ -285,10 +321,12 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     items,
     streaming,
     pendingQuestions,
+    buildComplete,
     changedPaths,
     startBuild,
     send,
     submitAnswers,
     interrupt,
+    restartForImprovement,
   };
 }

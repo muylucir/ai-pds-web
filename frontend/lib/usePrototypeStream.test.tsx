@@ -11,6 +11,7 @@ vi.mock("@/lib/api/prototypes", async (orig) => ({
   streamPrototypeEvents: vi.fn(),
   submitPrototypeAnswers: vi.fn(),
   interruptSession: vi.fn(),
+  startSession: vi.fn(),
 }));
 
 // onError의 세션 확인 호출을 검증하기 위한 모킹 — 실제 fetch/navigate 부작용은
@@ -383,6 +384,105 @@ describe("usePrototypeStream", () => {
     expect(sessionRecovery.redirectIfSessionExpired).toHaveBeenCalledWith(
       undefined,
       window.location.pathname,
+    );
+  });
+});
+
+describe("build_complete", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("a build_complete event lands in buildComplete state with summary and remaining parsed", () => {
+    drive([
+      {
+        kind: "build_complete",
+        text: null,
+        path: null,
+        payload: JSON.stringify({ summary: "할 일 앱", remaining: "다크 모드" }),
+      },
+      { kind: "done", text: null, path: null, payload: null },
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    expect(result.current.buildComplete).toEqual({ summary: "할 일 앱", remaining: "다크 모드" });
+  });
+
+  it("a build_complete event does NOT end streaming — the following done does that", () => {
+    // drive()는 마지막에 onDone()까지 동기로 호출해버려 streaming이 이미
+    // false가 된 뒤라 mid-stream 상태를 관찰할 수 없다. 여기서는 done을
+    // 호출하지 않는 커스텀 mockImplementation으로 그 중간 상태를 붙잡는다.
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        handlers.onEvent({
+          kind: "build_complete",
+          text: null,
+          path: null,
+          payload: JSON.stringify({ summary: "완성", remaining: "" }),
+        });
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    expect(result.current.buildComplete).toEqual({ summary: "완성", remaining: "" });
+    expect(result.current.streaming).toBe(true);
+  });
+
+  it("a malformed build_complete payload leaves buildComplete null and the stream continues", () => {
+    drive([
+      { kind: "build_complete", text: null, path: null, payload: "{not json" },
+      { kind: "message", text: "계속 진행", path: null, payload: null },
+      { kind: "done", text: null, path: null, payload: null },
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    expect(result.current.buildComplete).toBeNull();
+    expect(result.current.items.some((it) => it.role === "ai" && it.text.includes("계속 진행"))).toBe(
+      true,
+    );
+  });
+
+  it("restartForImprovement calls startSession, clears buildComplete, and re-opens the stream with __first__", async () => {
+    // drive()를 쓰면 재시작으로 연 두 번째 스트림도 같은 이벤트 배열을 그대로
+    // 재생해 build_complete가 다시 서고 만다. 여기서는 handlers를 붙잡아두고
+    // 직접 emit해서, 재시작 후 새로 연 스트림이 아직 아무것도 방출하지 않은
+    // 상태를 그대로 관찰한다.
+    let captured: any = null;
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        captured = handlers;
+        return () => {};
+      },
+    );
+    vi.mocked(prototypesApi.startSession).mockResolvedValue({ status: "ok" });
+
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+    act(() => {
+      captured.onEvent({
+        kind: "build_complete",
+        text: null,
+        path: null,
+        payload: JSON.stringify({ summary: "완성", remaining: "" }),
+      });
+      captured.onEvent({ kind: "done", text: null, path: null, payload: null });
+    });
+    expect(result.current.buildComplete).not.toBeNull();
+
+    await act(async () => {
+      await result.current.restartForImprovement();
+    });
+
+    expect(prototypesApi.startSession).toHaveBeenCalledWith("p1", "todo-app");
+    expect(result.current.buildComplete).toBeNull();
+    // 개시 턴이 다시 발화된다 — 서버가 __first__를 핸드오프 프롬프트로 치환한다.
+    expect(vi.mocked(prototypesApi.streamPrototypeEvents)).toHaveBeenLastCalledWith(
+      "p1",
+      "todo-app",
+      "__first__",
+      expect.anything(),
     );
   });
 });
