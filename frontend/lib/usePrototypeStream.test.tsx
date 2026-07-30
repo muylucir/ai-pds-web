@@ -485,4 +485,47 @@ describe("build_complete", () => {
       expect.anything(),
     );
   });
+
+  it("restartForImprovement still opens session B's stream when stream A never reached done (the completion-card race)", async () => {
+    // build_complete는 done보다 먼저 서는 이벤트다(applyEvent 참고) — 그래서
+    // 에이전트가 마무리 텍스트를 더 보내는 0~5초 창 동안 카드는 보이지만
+    // 스트림 A는 아직 열려 있다(onDone 미호출, stopRef가 non-null). 그 창에서
+    // "개선 이어서 하기"를 누르면 startSession이 세션 B를 새로 열지만,
+    // startBuild()의 `if (stopRef.current) return;` 가드가 A를 아직 살아있는
+    // 스트림으로 여겨 B의 __first__ 스트림을 영영 열지 못했다(수정 전 버그) —
+    // B가 빌드 슬롯을 쥔 채 아무도 몰고 가지 않는 좀비 세션이 된다. onDone을
+    // 절대 부르지 않는 mockImplementation으로 그 창을 고정해 재현한다.
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        handlers.onEvent({
+          kind: "build_complete",
+          text: null,
+          path: null,
+          payload: JSON.stringify({ summary: "완성", remaining: "" }),
+        });
+        // onDone()을 절대 호출하지 않는다 — 스트림 A는 열린 채로 남는다.
+        return () => {};
+      },
+    );
+    vi.mocked(prototypesApi.startSession).mockResolvedValue({ status: "ok" });
+
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+    expect(result.current.buildComplete).not.toBeNull();
+    expect(result.current.streaming).toBe(true); // 스트림 A가 아직 열려 있다.
+
+    await act(async () => {
+      await result.current.restartForImprovement();
+    });
+
+    expect(prototypesApi.startSession).toHaveBeenCalledWith("p1", "todo-app");
+    // 세션 B가 실제로 스트림을 연다 — __first__로 두 번째 호출이 있어야 한다.
+    expect(vi.mocked(prototypesApi.streamPrototypeEvents)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(prototypesApi.streamPrototypeEvents)).toHaveBeenLastCalledWith(
+      "p1",
+      "todo-app",
+      "__first__",
+      expect.anything(),
+    );
+  });
 });

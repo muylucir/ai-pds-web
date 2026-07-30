@@ -304,6 +304,28 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     // 주입으로 분기하고, `__first__` 센티넬이 그 핸드오프 프롬프트로
     // 치환된다 — 그래서 여기서 프롬프트를 만들지 않는다.
     //
+    // completion 카드는 build_complete 시점에 뜬다 — 턴의 done보다 먼저다
+    // (applyEvent의 build_complete 분기 참고). 그 사이 0~5초 창(백엔드 유예
+    // 타이머 한도) 동안 에이전트가 마무리 텍스트를 더 보낼 수 있어, 카드가
+    // 보이면서도 스트림 A는 아직 열려 있는(stopRef.current가 non-null,
+    // streaming이 true인) 상태가 실재한다. 이 창에서 사용자가 버튼을 누르면:
+    // startSession이 성공해 백엔드가 "complete" 상태인 A를 버리고 슬롯을 하나
+    // 더 잡아(B) 반환하는데, 뒤이은 startBuild()는 `if (stopRef.current)
+    // return;` 가드에 걸려(A가 done을 보낸 적이 없어 stopRef가 여전히
+    // non-null) B의 __first__ 스트림을 영영 열지 못한다 — B가 빌드 슬롯과
+    // 서브프로세스를 쥔 채 30분 유휴 타임아웃까지 남는 좀비가 된다. 그
+    // 가드는 지우지 않는다(BuildPanel 마운트 이펙트와 send()의 중복 시작
+    // 방지가 여기 걸려 있다) — 대신 A를 여기서 먼저 끝내 가드가 더 이상 B를
+    // 막지 못하게 한다.
+    stopRef.current?.();
+    stopRef.current = null;
+    // streaming도 같이 내린다: 안 그러면 startSession의 네트워크
+    // 라운드트립 동안 화면은 방금 닫아버린 A를 근거로 "스트리밍 중"이라고
+    // 계속 우긴다(헤더의 중단 버튼이 남는 등). startBuild()가 호출되면 곧
+    // 다시 true가 되지만, 그 전까지는 지금 끝난 스트림 상태를 반영하는 게
+    // 맞다 — finish()가 정상 종료 때 하는 정리와 같은 이유다.
+    setStreaming(false);
+    //
     // startSession의 예외를 잡지 않는 것이 의도다. 429(동시 빌드 상한)면
     // 아래 세 줄이 실행되지 않아 완료 카드가 그대로 남고, 호출자
     // (BuildPanel.handleRestart)가 상한 메시지를 보여준다. 여기서 삼키면

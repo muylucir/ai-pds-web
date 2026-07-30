@@ -271,6 +271,40 @@ describe("BuildPanel", () => {
       expect(screen.getByRole("button", { name: "호스팅 시작" })).toBeInTheDocument();
     });
 
+    it("streaming 중에는 카드는 보이지만 세 버튼이 모두 비활성화되고 안내 문구가 보인다", () => {
+      // build_complete는 done보다 먼저 서는 이벤트라, 카드가 뜬 뒤에도
+      // 에이전트가 마무리 텍스트를 보내는 동안 streaming이 true로 남는 창이
+      // 실재한다(usePrototypeStream.restartForImprovement의 주석 참고). 그
+      // 창에서 버튼이 눌리면 아직 열린 스트림과 새 동작이 뒤엉킨다 — 그래서
+      // 카드 자체는 계속 그려 요약을 바로 읽게 하면서도 버튼만 막는다.
+      mockStream({
+        streaming: true,
+        buildComplete: { summary: "완성", remaining: "" },
+      });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      expect(screen.getByText(/완성/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "호스팅 시작" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "개선 이어서 하기" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "닫기" })).toBeDisabled();
+      expect(screen.getByText(/빌드를 마무리하고 있어요/)).toBeInTheDocument();
+    });
+
+    it("streaming이 끝난 뒤에는 세 버튼이 모두 활성화되고 안내 문구가 없다", () => {
+      // 정상 경로(카드가 뜰 때 이미 done까지 지난 경우)를 지키는 가드 —
+      // streaming만 보고 무조건 막으면 평소에도 버튼이 계속 회색으로 보인다.
+      mockStream({
+        streaming: false,
+        buildComplete: { summary: "완성", remaining: "" },
+      });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      expect(screen.getByRole("button", { name: "호스팅 시작" })).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: "개선 이어서 하기" })).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: "닫기" })).not.toBeDisabled();
+      expect(screen.queryByText(/빌드를 마무리하고 있어요/)).not.toBeInTheDocument();
+    });
+
     it("완료 후 닫기는 세션이 이미 닫혀 404여도 패널을 닫는다", async () => {
       const onClose = vi.fn();
       vi.mocked(prototypesApi.closeSession).mockRejectedValueOnce(new ApiError(404, "no build session"));

@@ -193,11 +193,23 @@ export function BuildPanel({
                 {actionError && (
                   <p className="mt-3 text-sm text-rose-600">{actionError}</p>
                 )}
+                {/* build_complete는 done보다 먼저 서므로, 카드가 뜬 뒤에도
+                    에이전트가 마무리 텍스트를 보내는 0~5초 창(백엔드 유예
+                    타이머 한도) 동안 streaming이 true로 남을 수 있다. 그
+                    창에서 개선/호스팅/닫기 중 하나가 눌리면 아직 열려 있는
+                    스트림과 새 동작이 뒤엉킨다(개선 이어서 하기가 세션 B를
+                    새로 여는 동안 세션 A의 스트림이 정리되지 않는 경합이
+                    실제 사례) — 세 버튼 모두 streaming 중엔 막는다. */}
+                {streaming && (
+                  <p className="mt-3 text-xs text-slate-400">
+                    빌드를 마무리하고 있어요 — 잠시 후 버튼을 누를 수 있습니다.
+                  </p>
+                )}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => void handleStartHost()}
-                    disabled={hosting || restarting || closing}
+                    disabled={hosting || restarting || closing || streaming}
                     className="px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-medium"
                   >
                     호스팅 시작
@@ -205,7 +217,7 @@ export function BuildPanel({
                   <button
                     type="button"
                     onClick={() => void handleRestart()}
-                    disabled={hosting || restarting || closing}
+                    disabled={hosting || restarting || closing || streaming}
                     className="px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-sm font-medium text-slate-700"
                   >
                     개선 이어서 하기
@@ -213,7 +225,7 @@ export function BuildPanel({
                   <button
                     type="button"
                     onClick={() => void handleDone()}
-                    disabled={hosting || restarting || closing}
+                    disabled={hosting || restarting || closing || streaming}
                     className="px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-sm font-medium text-slate-700"
                   >
                     닫기
