@@ -253,13 +253,6 @@ class PrototypeSession:
                     if completion is not None:
                         self._completion = completion
                         self.status = "complete"
-                        # 완료 선언 이 순간에 유예로 재무장한다. 이 호출이
-                        # 없으면 이번 턴 맨 앞에서 무장된 기존 유휴 지연
-                        # (수십 분)이 그대로 남아, 뒤따르는 done이 세션을
-                        # 절대 닫지 못한다 -- _arm_idle_timer는 호출될 때만
-                        # 지연을 다시 계산하므로, 상태가 바뀐 지금 다시
-                        # 불러줘야 한다.
-                        self._arm_idle_timer()
                         # 예외를 반드시 삼킨다. 그러지 않으면 아래의
                         # `except Exception`이 잡아 status="failed" + 슬롯
                         # release로 가는데, 그것은 "handoff 실패에도 완료는
@@ -270,6 +263,16 @@ class PrototypeSession:
                         except Exception:
                             _log.exception("handoff write failed: %s/%s",
                                            self.project_id, self.slug)
+                        # 유예로 재무장한다. 인자를 넘기지 않는 것이 요점이다
+                        # -- 지연은 _arm_idle_timer가 self._completion에서
+                        # 파생하므로, 이 호출은 방금 세운 완료 상태를 읽어
+                        # 짧은 유예를 집는다. handoff 쓰기 뒤에 두는 이유:
+                        # 쓰기가 진행 중인 동안 유예 타이머가 먼저 만료돼
+                        # close()가 끼어드는 경쟁을 피한다. 이 호출이 없으면
+                        # send_message 진입 때 무장된 기본 유휴 타이머가
+                        # 그대로 남아 세션이 30분간 닫히지 않는다(실측: 유예
+                        # 테스트 2개 실패).
+                        self._arm_idle_timer()
                 elif event.kind in ("done", "error"):
                     # 완료를 선언한 세션은 ready로 돌아가지 않는다.
                     # build_complete 다음에는 반드시 done이 오므로, 이 가드가
