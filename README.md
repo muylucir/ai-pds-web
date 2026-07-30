@@ -21,6 +21,13 @@ Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론�
 전체 맥락을 지고 가지 않게 한다. 완료 선언 없이 세션이 죽으면(유휴 타임아웃,
 백엔드 재시작) 종전처럼 트랜스크립트를 `resume`한다.
 
+세션 상태(S3)와 빌드 산출물(EC2 로컬 디스크)은 수명이 다르다. **프로토타입
+리셋이나 인스턴스 교체 뒤에는 기록만 남고 `prototype/`이 비어 있을 수 있다** —
+그때 개시 프롬프트는 이어서 하라는 지시 대신 "이전 코드를 찾지 말고 스펙을 다시
+읽어 처음부터 다시 만들라"로 갈린다(`proto/session.py`의 `has_build_output`).
+알려주지 않으면 에이전트가 트랜스크립트를 믿고 삭제된 코드를 파일시스템에서
+찾아 헤맨다.
+
 자세한 배포 절차는 `infra/README.md`, 수동 e2e 검증은
 `docs/superpowers/checklists/2026-07-24-prototype-generation-e2e.md` 참고.
 
@@ -30,9 +37,17 @@ Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론�
 대시보드로 확인한 뒤 CSV로 내보내 Discovery의 검증 종합 단계에 넣는다. 응답은 S3에
 저장되며(응답 1건 = 객체 1개), 대시보드는 `rollup.json` 캐시를 읽는다.
 
+설문 데이터는 대부분 프로젝트 프리픽스 아래(`projects/{pid}/prototypes/{slug}/survey/`)
+있지만, **토큰 인덱스만 버킷 루트의 `surveys/by-token/`에 있다** — 공개 링크는 토큰이
+어느 프로젝트 것인지 알기 전에 이걸 읽어야 하므로 프로젝트 프리픽스 안에 둘 수 없다.
+백엔드 IAM 정책이 이 세 번째 프리픽스를 덮어야 한다
+(`infra/lib/backend-permissions.ts`의 `BACKEND_BUCKET_PREFIXES`). 실제로 빠져 있어서
+설문 생성이 전부 500이었고, 원인은 백엔드 로그의 `AccessDenied`에만 남았다.
+
 ```
 frontend/  Next.js 15 (App Router) — 대시보드 · 워크스페이스 · 문서 리뷰 · 프로토타입 탭 · 로그인/사용자 관리
-           (상단 네비는 이 4개다. `/canvas`·`/questions`는 워크스페이스로 대체된 구 화면이 남아 있는 것)
+           (상단 네비는 이 4개다. `projects/[projectId]/canvas`·`/questions`는
+            워크스페이스로 대체된 구 화면이 남아 있는 것 — 네비에 노출되지 않는다)
 backend/   FastAPI — 파서 · 인프로세스 Discovery 에이전트(Claude Agent SDK) · SSE 턴 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅 · JWT 검증
 infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 + Cognito(Hosted UI v2) + EC2/CloudFront (서울, 리전 파라미터화)
 ```
@@ -76,7 +91,7 @@ npm install
 
 | 스택 | 만드는 것 |
 |---|---|
-| `PathfinderDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
+| `PathfinderDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*` + `surveys/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
 | `PathfinderAuthStack` | Cognito User Pool + Hosted UI v2 + 역할 그룹(`admin`/`pm`) + 시드 계정 2개 |
 | `PathfinderHostingStack` | VPC + EC2(AL2023 x86_64, m7i.2xlarge, EBS 100GB 암호화) + CloudFront |
 
@@ -121,10 +136,13 @@ npx cdk deploy --all --require-approval never
 > ⚠️ **배포되는 것은 커밋된 코드가 아니라 현재 워킹 트리다.** 호스팅 스택은 리포
 > 루트를 zip 에셋으로 올린다(`.git`, `infra`, `docs`, `node_modules`, `.venv`,
 > `.next`, `cdk.out`, `__pycache__`, `*.egg-info`, `test-results`,
-> `playwright-report`, `files/*.png`, `.env*` 제외 —
+> `playwright-report`, `files/*.png`, `.env*`, 그리고 빌드 에이전트의 런타임
+> 산출물(`proto-type/`·`protos/`·`*-config/projects/`) 제외 —
 > `lib/pathfinder-hosting-stack.ts`). 미커밋 변경도 그대로 배포되므로, 배포 전
-> `git status`로 의도한 상태인지 확인한다. `.gitignore`와는 별개 목록이므로
-> gitignored라고 자동 제외되지는 않는다(예: `proto-type/`은 에셋에 포함된다).
+> `git status`로 의도한 상태인지 확인한다. `.gitignore`와는 **별개 목록**이므로
+> gitignored라고 자동 제외되지는 않는다 — 새로 gitignore한 로컬 산출물은 이
+> 목록에도 넣어야 한다. (실제로 `proto-type/`이 빠져 있어서, 개발 박스에서 만든
+> 프로토타입이 배포 zip에 실려 새 인스턴스에서 "빌드 완료"로 보였다.)
 
 ### 4. 출력값 확인
 
@@ -269,7 +287,7 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `PATHFINDER_CORS_ORIGINS` | `http://localhost:3000` | 콤마 구분 허용 origin |
 | `PATHFINDER_S3_REGION` | `ap-northeast-2` | 영속 스토리지 리전(서울). **버킷이 만들어진 리전과 반드시 일치**시킬 것 |
 | `PATHFINDER_S3_BUCKET` | — | 아티팩트 버킷 (CDK 출력) |
-| `ANTHROPIC_MODEL` | — | Bedrock 추론 프로파일 id. IAM이 invoke를 허용하는 값은 `global.anthropic.claude-{opus-5,opus-4-8,opus-4-7,sonnet-5,sonnet-4-6}` (`infra/lib/backend-permissions.ts`) |
+| `ANTHROPIC_MODEL` | — (EC2 배포는 `global.anthropic.claude-opus-4-8`) | Bedrock 추론 프로파일 id. IAM이 invoke를 허용하는 값은 `global.anthropic.claude-{opus-5,opus-4-8,opus-4-7,sonnet-5,sonnet-4-6}`. 기본값은 `infra/lib/backend-permissions.ts`의 `MODEL`이 user-data로 넘긴다 |
 | `PATHFINDER_RULES_DIR` | `<repo>/rule/aiplc-rules` | aiplc 룰 디렉토리(읽기 전용) |
 | `PATHFINDER_WORKSPACES_DIR` | 시스템 tmp 하위 | 프로젝트별 로컬 워크스페이스 루트 |
 | `PATHFINDER_DISCOVERY_DRIVER` | `claude` | Discovery 드라이버. `strands`로 구 드라이버 폴백. 그 외 값은 기동 시 ValueError |

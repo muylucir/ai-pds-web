@@ -32,6 +32,8 @@ const inferenceConfig = { maxTokens };   // temperature/topP를 넣지 않는다
 예외: Sonnet 4.6 이하는 `temperature`를 아직 받는다. 그래도 위 규칙을 따른다 —
 어느 모델에서도 동작하는 코드가 목적이다.
 
+## NextJS는 15 버전을 사용한다.
+
 ## 프로토타입은 하위 경로에서 서빙된다 — basePath 필수
 
 프로토타입은 루트가 아니라 `/proto/{project_id}/{slug}/` 하위에서 리버스 프록시로
