@@ -284,6 +284,19 @@ class PrototypeSession:
                     # 전이라면 종전대로 재시도 가능한 상태로 남는다.
                     if self._completion is None:
                         self.status = "ready"
+                # 생존 신호. 타이머의 의미가 "턴 진입 이후"에서 "마지막
+                # 이벤트 이후"로 바뀌는 지점이다. 종전에는 30분을 넘는 빌드
+                # 턴이 진행 중에 죽고, 질문 카드를 띄운 채 30분이 지나면
+                # 답변 제출이 409가 됐다.
+                #
+                # 완료 유예를 되돌리지 않는다 -- _arm_idle_timer가 지연을
+                # self._completion에서 파생시키므로, 완료 후의 done도 짧은
+                # 유예를 유지한다.
+                #
+                # 비용: TimerHandle.cancel() + call_later 한 쌍이 빌드 한 번에
+                # 수천 번 일어난다. 둘 다 힙 연산 하나짜리라 실질 비용은
+                # 없지만, 이벤트마다 부르는 형태라는 점은 알고 있어야 한다.
+                self._arm_idle_timer()
                 yield event
         except Exception:
             self.status = "failed"

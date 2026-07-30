@@ -528,6 +528,53 @@ async def test_idle_timer_resets_on_send_message(tmp_path):
     assert session.status == "closed"
 
 
+# ---- 유휴 타이머: "턴 진입 이후"가 아니라 "마지막 생존 신호 이후" ----
+
+async def test_a_long_turn_is_not_killed_while_events_still_flow(tmp_path):
+    """종전 타이머는 턴 진입에서만 재무장됐다 — 30분을 넘는 빌드 턴은 진행
+    중에 죽었다. 이벤트가 흐르는 동안은 살아 있어야 한다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+
+    class SlowBuilder(FakeBuilder):
+        async def run(self, text: str):
+            self.queries.append(text)
+            # 유휴 예산(0.1)보다 총 소요가 길지만, 각 간격은 그보다 짧다.
+            for _ in range(4):
+                await asyncio.sleep(0.06)
+                yield AgentEvent(kind="status", text="working")
+            yield AgentEvent(kind="done")
+
+    builder = SlowBuilder()
+    session = _session(s3, tmp_path, builder, idle_seconds=0.1)
+    await session.start()
+
+    events = [ev async for ev in session.send_message("go")]
+
+    assert session.status == "ready"          # 타임아웃으로 닫히지 않았다
+    assert [e.kind for e in events][-1] == "done"
+
+
+async def test_the_idle_budget_restarts_when_a_question_is_relayed(tmp_path):
+    """질문 카드를 띄운 채 사용자가 오래 고민하면 세션이 닫히고, 답변 제출이
+    409가 됐다. 카드가 뜬 순간부터 예산이 새로 시작해야 한다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder, idle_seconds=0.15)
+    await session.start()
+
+    await asyncio.sleep(0.1)      # 예산의 대부분을 소진한 뒤 질문이 온다
+    builder.script([AgentEvent(kind="questions", payload=json.dumps(
+        {"interrupt_id": "iid-1", "questions": {"questions": []}}))])
+    [ev async for ev in session.send_message("go")]
+
+    await asyncio.sleep(0.1)      # 재무장이 없었다면 여기서 이미 닫혔다
+
+    assert session.status == "waiting_input"
+    assert builder.disconnect_calls == 0
+
+
 # ---- 완료 선언 뒤 세션이 스스로 닫힌다 ----
 
 async def test_a_completed_session_closes_itself(tmp_path, monkeypatch):
