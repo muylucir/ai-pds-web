@@ -245,9 +245,17 @@ def build_proto_tools(workspace: str,
 - [ ] **Step 4: 테스트 통과를 확인한다**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/test_proto_tools.py -v`
-Expected: PASS (6 tests)
+Expected: **아직 PASS하지 않는다.** `test_tool_name_constant_matches_the_sdk_spelling`만
+통과하고, 이벤트를 만드는 나머지 5개는 pydantic Literal 검증에서 실패한다:
 
-`kind="build_complete"`는 Task 2가 `models.py`에 추가한다. pydantic Literal 검증 때문에 이 테스트는 **Task 2 없이는 실패한다** — 그래서 다음 스텝에서 함께 처리한다.
+```
+ValidationError: 1 validation error for AgentEvent
+kind
+  Input should be 'message', ..., 'done' or 'error' [type=literal_error, input_value='build_complete']
+```
+
+`kind="build_complete"`가 아직 `models.py`에 없기 때문이다 — 이것이 정확히
+다음 스텝이 고치는 것이다. 이 실패 메시지를 확인한 뒤 Step 5로 넘어간다.
 
 - [ ] **Step 5: `AgentEvent.kind` Literal에 추가한다**
 
@@ -297,7 +305,7 @@ git commit -m "feat(proto): 빌드 완료를 선언하는 build_complete 도구
 - Produces:
   - `AgentEventKind`에 `"build_complete"` 추가
   - `export interface BuildCompletePayload { summary: string; remaining: string }`
-    — Task 5의 `usePrototypeStream`, Task 6의 `BuildPanel`이 쓴다.
+    — Task 8의 `usePrototypeStream`, Task 9의 `BuildPanel`이 쓴다.
 
 `remaining`은 **옵셔널이 아니다.** 백엔드가 항상 채워 보낸다(Task 1의 `args.get("remaining", "")`), 그래서 프론트는 빈 문자열만 다루면 되고 `undefined` 분기가 필요 없다.
 
