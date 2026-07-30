@@ -58,7 +58,11 @@ class HistoryItem(BaseModel):
 
 class AgentEvent(BaseModel):
     kind: Literal["message", "questions", "stage", "document",
-                  "file_changed", "status", "done", "error"]
+                  "file_changed", "status", "done", "error",
+                  # 프로토타입 빌드의 명시적 완료 선언(proto/tools.py). 이
+                  # 이벤트가 세션의 수명을 끝낸다 — proto/session.py가
+                  # 관찰해 status를 "complete"로 바꾼다.
+                  "build_complete"]
     text: str | None = None
     path: str | None = None
     # Structured payload (JSON string) for questions/stage/document — the
