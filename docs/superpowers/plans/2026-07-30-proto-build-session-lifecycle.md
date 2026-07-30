@@ -883,6 +883,14 @@ def _completion_from(payload: str | None) -> dict | None:
                         except Exception:
                             _log.exception("handoff write failed: %s/%s",
                                            self.project_id, self.slug)
+                        # 유예로 재무장한다. 인자를 넘기지 않는 것이 요점이다
+                        # -- 지연은 _arm_idle_timer가 self._completion에서
+                        # 파생하므로, 이 호출은 방금 세운 완료 상태를 읽어
+                        # 짧은 유예를 집는다. 반드시 `self._completion =`
+                        # 뒤에 와야 하고, 이 호출이 없으면 send_message 진입
+                        # 때 무장된 기본 유휴 타이머가 그대로 남아 세션이
+                        # 30분간 닫히지 않는다(실측: 유예 테스트 2개 실패).
+                        self._arm_idle_timer()
                 elif event.kind in ("done", "error"):
                     # 완료를 선언한 세션은 ready로 돌아가지 않는다.
                     # build_complete 다음에는 반드시 done이 오므로, 이 가드가
@@ -1014,6 +1022,12 @@ git commit -m "feat(proto): 완료 선언을 관찰해 세션이 스스로 닫�
 - Produces: 없음 (동작 변경만)
 
 Task 4가 지연을 상태에서 파생시켰기 때문에 이 태스크가 안전하다. 순서가 반대면 이벤트별 재무장이 완료 유예를 30분으로 되돌린다.
+
+**Task 4에서 이미 있는 것**: `build_complete` 분기 안에 `self._arm_idle_timer()`
+호출이 하나 있다(완료 유예를 집기 위해 필요했다 — 그것 없이는 진입 시 무장된
+기본 타이머가 그대로 남는다). 이 태스크가 추가하는 것은 **모든 이벤트에 대한**
+재무장이므로 그 호출의 상위집합이다. 둘 다 인자를 넘기지 않으므로 공존해도
+완료 유예가 되돌아가지 않는다 — 그것이 지연을 상태에서 파생시킨 이유다.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다**
 
