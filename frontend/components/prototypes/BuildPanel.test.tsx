@@ -35,11 +35,13 @@ function mockStream(overrides: Partial<prototypeStream.PrototypeStream> = {}) {
     items: [],
     streaming: false,
     pendingQuestions: null,
+    buildComplete: null,
     changedPaths: [],
     startBuild: vi.fn(),
     send: vi.fn(),
     submitAnswers: vi.fn().mockResolvedValue(undefined),
     interrupt: vi.fn().mockResolvedValue(undefined),
+    restartForImprovement: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   vi.spyOn(prototypeStream, "usePrototypeStream").mockReturnValue(base);
