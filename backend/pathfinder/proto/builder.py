@@ -150,10 +150,26 @@ def _validate_permission_mode(mode: str) -> str:
     return mode
 
 
+def _proto_tools_for(builder: "PrototypeBuilder") -> list:
+    """빌더의 큐에 바인딩된 커스텀 도구.
+
+    emit이 `self._queue.append`인 것이 핵심이다 — `_on_post_tool_use`가
+    `file_changed`를 넣는 것과 같은 경로라, `_relay_queue`의 소유권 규율
+    (배달 후 pop, 중간에 소비자가 떠나도 이벤트가 큐에 남는다)을 그대로
+    받는다. 별도 경로를 만들면 그 보장을 잃는다.
+    """
+    from pathfinder.proto.tools import build_proto_tools
+    return build_proto_tools(builder._workspace, builder._queue.append)
+
+
 def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
     def make():
-        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+        from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient,
+                                      create_sdk_mcp_server)
         from claude_agent_sdk.types import HookMatcher
+
+        from pathfinder.proto.tools import (BUILD_COMPLETE_TOOL,
+                                            PROTO_MCP_SERVER_NAME)
 
         env = {
             "CLAUDE_CODE_USE_BEDROCK": "1",
@@ -182,6 +198,19 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # bypassPermissions that is not expected to restrict Bash/Write,
             # but the e2e checklist verifies a real build turn still works.
             skills="all",
+            # 빌드 완료 선언용 커스텀 도구. Discovery(claude_driver.py:423-439)와
+            # 같은 형태다. allowed_tools의 항목은 반드시
+            # "mcp__<서버 키>__<도구 이름>"이어야 한다 — SDK가 --mcp-config를
+            # 직렬화할 때 그 이름을 만들므로, 다른 표기는 조용히 승인 대기로
+            # 남는다.
+            #
+            # skills="all"과 충돌하지 않는다(실측): SDK의
+            # _apply_skills_defaults는 allowed_tools를 복사한 뒤 "Skill"을
+            # 덧붙이므로(subprocess_cli.py:434-452) shadcn-design 스킬이 그대로
+            # 살아 있다.
+            mcp_servers={PROTO_MCP_SERVER_NAME: create_sdk_mcp_server(
+                name=PROTO_MCP_SERVER_NAME, tools=_proto_tools_for(builder))},
+            allowed_tools=[BUILD_COMPLETE_TOOL],
             # Exactly one of the two, never both: the CLI rejects
             # `--session-id` alongside `--resume` unless `--fork-session` is
             # also passed ("--session-id can only be used with --continue or

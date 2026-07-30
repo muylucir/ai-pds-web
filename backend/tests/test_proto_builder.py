@@ -171,10 +171,16 @@ def test_config_dir_is_always_injected():
 
 
 def test_we_do_not_restrict_the_agents_own_tools():
-    """The build agent needs Bash/Write/Edit. We must never populate
-    allowed_tools ourselves -- the SDK appends "Skill" to it for skills="all",
-    and anything we added would narrow that list."""
-    assert _real_options().allowed_tools == []
+    """The build agent needs Bash/Write/Edit, which stay unrestricted because
+    they never appear here -- the SDK appends "Skill" to whatever we pass for
+    skills="all", so narrowing this list would narrow that too.
+
+    Updated for build_complete's wiring (Task 3): allowed_tools now carries
+    exactly our one custom MCP tool, not the empty list an earlier draft of
+    this test pinned. That is additive, not a restriction -- Bash/Write/Edit
+    are still absent from this list and still unrestricted."""
+    from pathfinder.proto.tools import BUILD_COMPLETE_TOOL
+    assert _real_options().allowed_tools == [BUILD_COMPLETE_TOOL]
 
 
 def test_file_checkpointing_stays_off_so_session_store_is_legal():
@@ -289,3 +295,85 @@ def test_the_cli_accepts_the_flags_we_build_for_a_resume():
         # would strand the transcript under a NEW id the store never sees).
         assert len(session_id_flags) + len(resume_flags) == 1, flags
         assert "--fork-session" not in flags
+
+
+# ---- build_complete MCP 도구 배선 ----
+
+def test_mcp_server_and_allowed_tools_are_wired(tmp_path, monkeypatch):
+    """_default_client_factory가 MCP 서버와 allowed_tools를 실제로 넘기는지.
+
+    client_factory를 주입하는 다른 테스트들은 이 경로를 전혀 타지 않으므로,
+    배선이 빠져도 그 테스트들은 전부 통과한다 — 그래서 옵션을 직접 붙잡는다.
+    """
+    from pathfinder.proto.builder import _default_client_factory
+    from pathfinder.proto.tools import BUILD_COMPLETE_TOOL, PROTO_MCP_SERVER_NAME
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, options=None):
+            captured["options"] = options
+
+    import claude_agent_sdk
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClient)
+
+    b = PrototypeBuilder(
+        workspace=str(tmp_path), config_dir=str(tmp_path / "config"),
+        session_id="11111111-2222-3333-4444-555555555555", resume=False)
+    _default_client_factory(b)()
+
+    options = captured["options"]
+    assert PROTO_MCP_SERVER_NAME in options.mcp_servers
+    assert BUILD_COMPLETE_TOOL in options.allowed_tools
+    # skills="all"이 살아 있어야 한다 — SDK가 allowed_tools를 복사한 뒤
+    # "Skill"을 덧붙이므로(subprocess_cli.py:434-452) 공존한다. shadcn-design
+    # 스킬이 이 값에 달려 있다.
+    assert options.skills == "all"
+
+
+async def test_the_tool_queues_a_build_complete_event(tmp_path):
+    """도구의 emit이 빌더 큐로 가는지 — _on_post_tool_use와 같은 경로여야
+    _relay_queue의 소유권 규율(배달 후 pop)을 받는다."""
+    from pathfinder.proto.builder import _proto_tools_for
+
+    (tmp_path / "prototype").mkdir()
+    (tmp_path / "prototype" / "index.html").write_text("x")
+
+    b = _builder(tmp_path, FakeSdkClient(script=[]))
+    handler = {t.name: t.handler for t in _proto_tools_for(b)}["build_complete"]
+
+    await handler({"summary": "만들었다"})
+
+    assert [e.kind for e in b._queue] == ["build_complete"]
+
+
+async def test_a_queued_completion_is_relayed_before_the_terminal_done(tmp_path):
+    """build_complete가 done보다 먼저 나가는지 — 진짜 run()으로 확인한다.
+
+    proto/session.py의 done 가드와 유예 타이머가 이 순서에 의존한다. 세션
+    테스트는 FakeBuilder가 스크립트 순서대로 내보내므로 이 규율을 검증하지
+    못한다 -- run()이 terminal 이벤트를 held하고 큐를 먼저 비우기 때문에
+    성립하는 것이고(builder.py의 call site 4), 그 규율을 되돌리면 여기가
+    먼저 실패해야 한다.
+
+    sse.ts가 done에서 EventSource를 닫으므로, 순서가 뒤집히면 완료 이벤트가
+    클라이언트에 닿지 않고 완료 카드가 영원히 뜨지 않는다.
+    """
+    from pathfinder.proto.builder import _proto_tools_for
+
+    (tmp_path / "prototype").mkdir()
+    (tmp_path / "prototype" / "index.html").write_text("x")
+
+    client = FakeSdkClient(script=[ResultMessage()])
+    b = _builder(tmp_path, client)
+    # 턴이 시작되기 전에 도구가 호출된 것처럼 큐에 넣는다 — 실제로는
+    # ResultMessage 직전에 호출된다.
+    handler = {t.name: t.handler for t in _proto_tools_for(b)}["build_complete"]
+    await handler({"summary": "만들었다"})
+
+    events = await collect(b)
+
+    kinds = [e.kind for e in events]
+    assert "build_complete" in kinds
+    assert kinds.index("build_complete") < kinds.index("done")
+    assert kinds[-1] == "done"

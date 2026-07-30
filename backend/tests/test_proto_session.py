@@ -503,6 +503,13 @@ def test_first_prompt_before_start_assumes_a_fresh_build(tmp_path):
     assert "이번 턴에서는 계획만 세우고" in prompt
 
 
+async def test_the_plan_prompt_asks_for_an_explicit_completion_declaration(tmp_path):
+    """완료 선언은 도구 호출이지만, 그것을 부르라고 말하는 곳은 프롬프트뿐이다."""
+    session = await _started(tmp_path)
+    prompt = session.first_prompt()
+    assert "build_complete" in prompt
+
+
 # ---- purge_session_state ----
 
 async def test_purge_session_state_removes_session_transcript_and_bundle():

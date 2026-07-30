@@ -297,6 +297,10 @@ class PrototypeSession:
             "- 코드에서 LLM 호출이 필요하면 Amazon Bedrock을 기본 자격증명 체인(인스턴스/"
             "실행 롤)으로 사용해줘. API 키를 코드에 하드코딩하지 말고, 리전과 모델 ID는 "
             "환경변수로 받도록 구현해줘.\n"
+            "- 프로토타입이 완성되면 **`build_complete` 도구로 완료를 선언해줘.** "
+            "무엇을 만들었는지 요약(summary)과, 남은 작업이나 알려진 한계가 있으면 "
+            "remaining에 적어줘. 이 선언 뒤 빌드 세션이 종료되니, 아직 작업이 "
+            "남았으면 선언하지 말고 계속 진행해줘.\n"
         )
 
     def _resume_prompt(self) -> str:
