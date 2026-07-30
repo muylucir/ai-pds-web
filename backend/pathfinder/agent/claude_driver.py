@@ -65,6 +65,7 @@ from typing import Any, AsyncIterator, Callable
 
 from pathfinder.agent.pending_store import clear_pending, load_pending, save_pending
 from pathfinder.agent.questions_payload import question_file_from_sdk
+from pathfinder.agent.session_store import DiscoverySessionStore
 from pathfinder.agent.tools import build_tools
 from pathfinder.agent.workspace_rules import place_rules
 from pathfinder.models import AgentEvent
@@ -475,6 +476,14 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # ("resume"), so this factory only spells the choice out.
             session_id=None if resume else session_id,
             resume=session_id if resume else None,
+            # Mirror every transcript line to S3. Without it the conversation
+            # lives ONLY in the CLI's local .jsonl, so an EC2 replacement or
+            # redeploy loses the whole Discovery history -- and chat restore had
+            # nothing durable to read (session_history was still pointed at
+            # strands' S3 layout, which this driver never writes). Same
+            # mechanism the prototype builder already uses (proto/builder.py's
+            # session_store), different key prefix.
+            session_store=driver._session_store,
             # Kept even under bypassPermissions, which the SDK warns shadows
             # this callback entirely. The warning overstates our case: probed
             # against the real CLI (see builder.py), Bash/Write do skip the
@@ -521,11 +530,18 @@ class ClaudeDriver:
     def __init__(self, workspace: str, rules_dir: str, config_dir: str,
                  s3: S3StoreLike, anthropic_model: str | None = None,
                  permission_mode: str = DEFAULT_PERMISSION_MODE,
-                 client_factory: Callable[[dict], Any] | None = None):
+                 client_factory: Callable[[dict], Any] | None = None,
+                 session_store: Any = None):
         self._workspace = workspace
         self._rules_dir = rules_dir
         self._config_dir = config_dir
         self._s3 = s3
+        # Transcript mirror. Built here rather than per-turn so the sequence
+        # counter it seeds from S3 is reused across turns of one process
+        # (session_store.py's header explains why that seeding exists).
+        # Injectable so a test can pass None and skip S3 entirely.
+        self._session_store: Any = (session_store if session_store is not None
+                                    else DiscoverySessionStore(s3))
         self._anthropic_model = anthropic_model
         self._permission_mode = _validate_permission_mode(permission_mode)
         self._client_factory = client_factory or _default_client_factory(self)

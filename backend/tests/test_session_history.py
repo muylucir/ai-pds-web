@@ -213,3 +213,140 @@ def test_ask_questions_not_duplicated_in_trace():
     # ask_questions는 카드로 표현되므로 트레이스에는 넣지 않는다
     assert not ai.trace
     assert any(i.role == "card" for i in items)
+
+
+# ---- claude 드라이버(CLI 트랜스크립트) 경로 ----
+#
+# Discovery가 StrandsDriver → ClaudeDriver로 바뀌면서 트랜스크립트의 위치와
+# 포맷이 모두 바뀌었는데 이 모듈이 함께 옮겨오지 않았다. 위의 transform_messages는
+# Bedrock Converse 모양(toolUse/toolResult, camelCase)이고, CLI는 Anthropic
+# Messages 모양(block["type"] == "tool_use")이다. 프리픽스도 달라서 히스토리가
+# 항상 빈 목록이었고, list_history의 except → [] 강등이 그것을 조용히 삼켰다.
+from pathfinder.session_history import transform_cli_transcript
+from pathfinder.agent.session_store import DiscoverySessionStore
+from fakes.in_memory_s3 import FakeS3Store
+
+
+def _cli(type_, role=None, content=None, **extra):
+    """CLI 트랜스크립트 한 줄. message가 없는 부기 줄도 만들 수 있다."""
+    d = {"type": type_, **extra}
+    if role is not None:
+        d["message"] = {"role": role, "content": content}
+    return d
+
+
+def test_cli_bookkeeping_lines_are_skipped():
+    # 실측: 실제 트랜스크립트에는 queue-operation/attachment/ai-title/last-prompt
+    # 처럼 message가 없는 줄이 섞여 있다. 대화가 아니므로 복원 대상이 아니다.
+    raw = [
+        _cli("queue-operation", operation="enqueue"),
+        _cli("attachment"),
+        _cli("ai-title"),
+        _cli("user", "user", "시작해줘"),
+        _cli("last-prompt"),
+    ]
+    items = transform_cli_transcript(raw)
+    assert [(i.role, i.text) for i in items] == [("user", "시작해줘")]
+
+
+def test_cli_plain_string_content_is_not_iterated_per_character():
+    # 실측: 첫 user 줄의 content는 리스트가 아니라 평문 문자열이다. 정규화하지
+    # 않으면 블록 루프가 문자열을 문자 단위로 훑어 아무것도 남지 않는다.
+    items = transform_cli_transcript([_cli("user", "user", "Say OK")])
+    assert [(i.role, i.text) for i in items] == [("user", "Say OK")]
+
+
+def test_cli_text_and_tools_match_the_live_representation():
+    # 라이브(claude_driver._translate)와 같은 표현이어야 스크롤백이 방금 본
+    # 화면과 달라 보이지 않는다: text는 말풍선, 파일 도구는 file_changed,
+    # 그 외 도구는 status.
+    raw = [_cli("assistant", "assistant", [
+        {"type": "text", "text": "문서를 씁니다."},
+        {"type": "tool_use", "id": "t1", "name": "Write",
+         "input": {"file_path": "aiplc-docs/audit.md"}},
+        {"type": "tool_use", "id": "t2", "name": "Read",
+         "input": {"file_path": "rules.md"}},
+    ])]
+    ai = next(i for i in transform_cli_transcript(raw) if i.role == "ai")
+    assert ai.text == "문서를 씁니다."
+    assert [t.model_dump() for t in ai.trace] == [
+        {"kind": "file_changed", "text": None, "path": "aiplc-docs/audit.md"},
+        {"kind": "status", "text": "Read", "path": None},
+    ]
+
+
+def test_cli_ask_user_question_becomes_a_card_not_a_trace_row():
+    raw = [_cli("assistant", "assistant", [
+        {"type": "text", "text": "질문 드립니다."},
+        {"type": "tool_use", "id": "ta", "name": "AskUserQuestion",
+         "input": {"questions": []}},
+    ])]
+    items = transform_cli_transcript(raw)
+    ai = next(i for i in items if i.role == "ai")
+    assert not ai.trace, "카드로 표현되므로 트레이스에 중복 노출하지 않는다"
+    assert any(i.role == "card" and i.card == "questions" for i in items)
+
+
+def test_cli_answer_tool_result_becomes_a_readable_user_bubble():
+    # 답변 결과만 골라야 한다 — 실제 트랜스크립트에는 Write/Read의 tool_result가
+    # 섞여 있으므로 AskUserQuestion의 id와 매칭한다.
+    raw = [
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "ta", "name": "AskUserQuestion",
+             "input": {"questions": []}}]),
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "tw", "name": "Write",
+             "input": {"file_path": "x.md"}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "tw",
+             "content": [{"type": "text", "text": "written"}]}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "ta",
+             "content": [{"type": "text",
+                          "text": '사용자 답변: {"1": "A", "2": "B"}'}]}]),
+    ]
+    users = [i for i in transform_cli_transcript(raw) if i.role == "user"]
+    assert len(users) == 1, [i.text for i in users]
+    # raw JSON을 그대로 노출하지 않는다 — Converse 경로와 같은 규칙.
+    assert users[0].text == "답변 제출 — 1: A · 2: B"
+
+
+async def test_list_history_reads_what_the_session_store_wrote():
+    """쓰기와 읽기가 같은 키를 본다는 것 — 이 버그의 핵심이 경로 불일치였다."""
+    s3 = FakeS3Store()
+    store = DiscoverySessionStore(s3)
+    key = {"session_id": "sess-1"}
+    await store.append(key, [
+        {"type": "user", "message": {"role": "user", "content": "시작해줘"}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "네, 시작합니다."}]}},
+    ])
+    # 프로덕션 배선과 같게: claude 트랜스크립트는 project_s3에서 읽는다
+    # (드라이버가 s3_store_factory(pid)로 받은 그 스토어에 쓴다).
+    items = await list_history(None, "sess-1", project_s3=s3)
+    assert [(i.role, i.text) for i in items] == [
+        ("user", "시작해줘"), ("ai", "네, 시작합니다.")]
+
+
+async def test_list_history_still_reads_the_strands_layout():
+    """드라이버를 strands로 되돌렸을 때(또는 교체 전 기존 세션) 여전히 복원된다."""
+    s3 = FakeS3Store()
+    s3.blobs["session_sess-2/agents/agent_default/messages/message_0.json"] = \
+        json.dumps(_msg("user", [{"text": "예전 대화"}], 0))
+    items = await list_history(s3, "sess-2")
+    assert [(i.role, i.text) for i in items] == [("user", "예전 대화")]
+
+
+async def test_append_across_instances_does_not_overwrite_earlier_batches():
+    """resume은 새 store 인스턴스를 만든다. 시퀀스를 0에서 시작하면 첫 append가
+    이전 세션의 초반 배치를 같은 키로 덮어써 히스토리 앞부분이 사라진다."""
+    s3 = FakeS3Store()
+    key = {"session_id": "sess-3"}
+    first = DiscoverySessionStore(s3)
+    await first.append(key, [{"type": "user",
+                              "message": {"role": "user", "content": "첫 턴"}}])
+    second = DiscoverySessionStore(s3)   # resume이 만드는 새 인스턴스
+    await second.append(key, [{"type": "user",
+                               "message": {"role": "user", "content": "두 번째 턴"}}])
+    items = await list_history(None, "sess-3", project_s3=s3)
+    assert [i.text for i in items] == ["첫 턴", "두 번째 턴"]

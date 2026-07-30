@@ -39,3 +39,61 @@ def test_history_degrades_when_factory_raises(monkeypatch):
     monkeypatch.setattr(app_module, "session_s3_factory", boom)
     r = client.get("/projects/h3/history")
     assert r.status_code == 200 and r.json() == {"items": []}
+
+
+# ---- claude 드라이버(현재 기본) 경로가 라우트를 통해 복원되는가 ----
+#
+# 이 버그의 실제 모양이 여기에 있었다: 드라이버는 s3_store_factory(pid)로 받은
+# 스토어(projects/{pid}/)에 쓰는데 라우트는 session_s3_factory()(sessions/)만
+# 읽었다. 프리픽스가 달라 항상 빈 목록이었고 에러도 없었다. 그래서 이 테스트는
+# 단위가 아니라 **라우트를 통해** 왕복해야 의미가 있다.
+
+async def _write_cli_transcript(s3, session_id, entries):
+    from pathfinder.agent.session_store import DiscoverySessionStore
+    await DiscoverySessionStore(s3).append({"session_id": session_id}, entries)
+
+
+def test_history_restores_a_claude_driver_transcript(monkeypatch):
+    import asyncio
+    _local_project(monkeypatch, "h5")
+    project_s3 = FakeS3Store()
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+        _write_cli_transcript(project_s3, "h5", [
+            {"type": "queue-operation", "operation": "enqueue"},   # 부기 줄
+            {"type": "user", "message": {"role": "user", "content": "시작해줘"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "네, 시작합니다."}]}},
+        ]))
+    monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: project_s3)
+    monkeypatch.setattr(app_module, "session_s3_factory", lambda: FakeS3Store())
+    items = client.get("/projects/h5/history").json()["items"]
+    assert [(i["role"], i["text"]) for i in items] == [
+        ("user", "시작해줘"), ("ai", "네, 시작합니다.")]
+
+
+def test_history_still_restores_strands_when_the_claude_path_is_empty(monkeypatch):
+    # 드라이버를 되돌렸거나 교체 전 세션 — 폴백이 살아 있어야 한다.
+    _local_project(monkeypatch, "h6")
+    session_s3 = FakeS3Store()
+    session_s3.blobs["session_h6/agents/agent_default/messages/message_0.json"] = \
+        json.dumps({"message": {"role": "user", "content": [{"text": "예전 대화"}]},
+                    "message_id": 0})
+    monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: FakeS3Store())
+    monkeypatch.setattr(app_module, "session_s3_factory", lambda: session_s3)
+    items = client.get("/projects/h6/history").json()["items"]
+    assert [(i["role"], i["text"]) for i in items] == [("user", "예전 대화")]
+
+
+def test_history_degrades_when_the_project_store_raises(monkeypatch):
+    # 한쪽 스토어 생성 실패가 다른 쪽 복원을 막지 않는다.
+    _local_project(monkeypatch, "h7")
+    def boom(pid):
+        raise RuntimeError("aws profile broken")
+    session_s3 = FakeS3Store()
+    session_s3.blobs["session_h7/agents/agent_default/messages/message_0.json"] = \
+        json.dumps({"message": {"role": "user", "content": [{"text": "폴백"}]},
+                    "message_id": 0})
+    monkeypatch.setattr(app_module, "s3_store_factory", boom)
+    monkeypatch.setattr(app_module, "session_s3_factory", lambda: session_s3)
+    items = client.get("/projects/h7/history").json()["items"]
+    assert [(i["role"], i["text"]) for i in items] == [("user", "폴백")]
