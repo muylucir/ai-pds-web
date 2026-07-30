@@ -246,10 +246,34 @@ class SurveyStore:
         return data["project_id"], data["slug"]
 
     async def save_questionnaire(self, qn: Questionnaire) -> None:
-        await self._s3.put(questionnaire_key(self.slug), qn.model_dump_json())
+        """Persist a new survey: token index first, THEN the definition.
+
+        Write order is load-bearing, and this is the order that fails safely.
+        A questionnaire with no index is the one unrecoverable state: it is
+        `status == "open"`, so `create_survey` refuses to replace it with 409
+        "survey already open" for good -- while the survey it is protecting
+        cannot collect a single answer, because `/survey/{token}` resolves
+        through an index entry that was never written. The prototype loses the
+        feature permanently, and the only exit is deleting the object by hand.
+
+        Reversed, a failure leaves nothing behind and the user's retry simply
+        works. The leftover is an index entry pointing at a questionnaire that
+        does not exist, which `surveys_public._resolve` already treats as an
+        ordinary 404 (the token is unguessable and grants nothing), and which
+        `purge()` reclaims -- it collects tokens from the questionnaires, and
+        the token here is one the caller generated fresh for a save that never
+        completed, so no live survey ever depended on it.
+
+        Observed as a real production failure: the deploy role's S3 policy
+        covered `projects/*` and `sessions/*` but not the root-level
+        `surveys/by-token/`, so this PUT was AccessDenied on every attempt --
+        and the questionnaire written before it turned a fixable permission
+        error into a prototype that could not have a survey at all.
+        """
         await self._root.put(
             f"{TOKEN_INDEX_PREFIX}{qn.token}.json",
             json.dumps({"project_id": qn.project_id, "slug": qn.slug}))
+        await self._s3.put(questionnaire_key(self.slug), qn.model_dump_json())
         await self._s3.put(questionnaire_md_key(self.slug), _to_markdown(qn))
 
     async def load_questionnaire(self) -> Questionnaire:

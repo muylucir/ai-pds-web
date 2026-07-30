@@ -53,6 +53,26 @@ def test_get_unknown_token_404(env):
     assert client.get("/survey/nope").status_code == 404
 
 
+def test_get_token_indexed_without_a_questionnaire_404(env):
+    """An index entry whose questionnaire does not exist must 404, not 500.
+
+    This is the leftover `save_questionnaire` can produce by design: it writes
+    the token index FIRST so that a failure part-way through leaves no
+    unusable-but-unreplaceable survey behind (see that method's docstring).
+    The cost is an index entry pointing at nothing, and it has to be an
+    ordinary "survey not found" -- the token grants access to no data, and a
+    500 here would turn a harmless leftover into a broken public link.
+    """
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(
+        env["root_s3"].put("surveys/by-token/orphan-tok.json",
+                           json.dumps({"project_id": PID, "slug": "gone"})))
+
+    assert client.get("/survey/orphan-tok").status_code == 404
+    assert client.post("/survey/orphan-tok",
+                       json={"answers": {"q1": 3}}).status_code == 404
+
+
 def test_get_closed_survey_410(env):
     _close(env)
     assert client.get(f"/survey/{TOKEN}").status_code == 410

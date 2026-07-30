@@ -7,6 +7,31 @@ import { PathfinderAuthStack } from '../lib/pathfinder-auth-stack';
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 
+// 백엔드가 아티팩트 버킷에서 쓰는 프리픽스 전체. lib/backend-permissions.ts의
+// BACKEND_BUCKET_PREFIXES와 같아야 한다. surveys/*는 프로젝트 프리픽스 밖의
+// 토큰 인덱스(surveys/by-token/) 때문에 필요하다 — 공개 설문 링크가 토큰의
+// 소속 프로젝트를 알기 전에 읽어야 하는 값이다.
+const BUCKET_PREFIXES = ['projects/*', 'sessions/*', 'surveys/*'];
+
+/** 객체 권한(Get/Put/Delete)과 목록 권한(ListBucket)이 BUCKET_PREFIXES를
+ *  빠짐없이 덮는지 확인한다. 액션 존재만 보는 단정은 프리픽스 누락을 놓치고,
+ *  그 누락은 해당 기능만 500으로 만든다. */
+function assertBucketPrefixesCovered(t: Template) {
+  const rendered = JSON.stringify(t.findResources('AWS::IAM::Policy'));
+  for (const prefix of BUCKET_PREFIXES) {
+    // 객체 문의 Resource는 "<bucketArn>/projects/*" 형태로 조립되므로 접두
+    // 슬래시까지 함께 찾는다 — ListBucket 조건의 값("projects/*")과 구분된다.
+    assert.ok(
+      rendered.includes(`/${prefix}`),
+      `s3 object permissions must cover ${prefix} (backend writes there)`,
+    );
+    assert.ok(
+      rendered.includes(`"${prefix}"`),
+      `s3:ListBucket prefix condition must cover ${prefix}`,
+    );
+  }
+}
+
 function testDrillUnchanged() {
   const app = new cdk.App();
   const drill = new PathfinderDrillStack(app, 'Drill', { env: ENV });
@@ -32,7 +57,7 @@ function testDrillUnchanged() {
       ]),
     },
   });
-  // S3 ListBucket 문 + projects/*·sessions/* prefix 조건 존재.
+  // S3 ListBucket 문 + projects/*·sessions/*·surveys/* prefix 조건 존재.
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
       Statement: Match.arrayWith([
@@ -41,17 +66,26 @@ function testDrillUnchanged() {
           Action: 's3:ListBucket',
           Condition: {
             StringLike: {
-              's3:prefix': Match.arrayWith(['projects/*', 'sessions/*']),
+              's3:prefix': Match.arrayWith(['projects/*', 'sessions/*', 'surveys/*']),
             },
           },
         }),
       ]),
     },
   });
+  // 세 프리픽스가 객체 권한과 목록 권한 양쪽에 다 있어야 한다.
+  //
+  // 위의 arrayWith 단정만으로는 부족했다 — 그건 "이 액션이 있다"만 보고
+  // 리소스는 아예 보지 않아서, surveys/*가 객체 문에서 빠진 채로도 통과했다.
+  // 그 누락이 실제 배포에서 설문 생성 500(AccessDenied: PutObject on
+  // surveys/by-token/...)으로 나타났다. 백엔드가 쓰는 프리픽스 하나가 빠지면
+  // 그 기능만 500이 되고 화면에서는 원인이 보이지 않으므로, 여기서
+  // 프리픽스별로 확인한다.
+  assertBucketPrefixesCovered(t);
   // 버킷 1개 노출.
   assert.ok(drill.artifactsBucket, 'artifactsBucket must be exposed');
   t.resourceCountIs('AWS::S3::Bucket', 1);
-  console.log('OK  drill stack: bedrock + s3 object + s3 listBucket(prefix) policy statements + bucket exposed');
+  console.log('OK  drill stack: bedrock + s3 object/list on projects+sessions+surveys + bucket exposed');
 }
 
 testDrillUnchanged();
@@ -138,6 +172,10 @@ function testComputeAndRole() {
   const allActions = JSON.stringify(policies);
   assert.match(allActions, /secretsmanager:GetSecretValue/, 'instance role reads header secret');
   assert.match(allActions, /bedrock:InvokeModel/, 'instance role invokes bedrock');
+  // 인스턴스 롤이 실제로 배포에서 AccessDenied를 낸 롤이다 — 드릴 롤과 같은
+  // 헬퍼를 쓰지만 여기서도 프리픽스를 확인한다. 두 스택 중 한쪽만 검사하면
+  // 호출부가 갈라지는 순간 다시 조용히 놓친다.
+  assertBucketPrefixesCovered(t);
   // Sonnet 4.6부터 Opus 5까지 전부 invoke 가능해야 한다. ANTHROPIC_MODEL(기본
   // Opus 4.8)만 허용하면 모델을 바꿔보려는 순간 AccessDenied가 나고, 그 실패는
   // 첫 대화 턴에 가서야 드러난다 — env 한 줄로 전환할 수 있게 권한을 미리

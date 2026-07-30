@@ -20,6 +20,34 @@ def _store():
     return SurveyStore(project_s3, root_s3, slug=SLUG, project_id=PID), project_s3, root_s3
 
 
+class _PutFailsS3(FakeS3Store):
+    """Root store whose writes always fail -- the shape of the observed
+    AccessDenied on `surveys/by-token/` when the deploy role's S3 policy
+    covered only `projects/*` and `sessions/*`."""
+
+    async def put(self, key: str, content: str) -> None:
+        raise PermissionError(key)
+
+
+async def test_save_leaves_no_questionnaire_when_token_index_write_fails():
+    """The token index must be written BEFORE the questionnaire.
+
+    A questionnaire that exists with no index is the one unrecoverable state:
+    `create_survey` sees `status == "open"` and refuses with 409 for good, so
+    the prototype can never get a survey again -- while the survey it refuses
+    to replace is itself unusable, since `/survey/{token}` cannot resolve a
+    token that was never indexed. Writing the index first means a failure here
+    leaves nothing behind and the user's retry just works.
+    """
+    project_s3, root_s3 = FakeS3Store(), _PutFailsS3()
+    store = SurveyStore(project_s3, root_s3, slug=SLUG, project_id=PID)
+
+    with pytest.raises(PermissionError):
+        await store.save_questionnaire(_qn())
+
+    assert f"prototypes/{SLUG}/survey/questionnaire.json" not in project_s3.blobs
+
+
 async def test_save_writes_questionnaire_token_index_and_md():
     store, project_s3, root_s3 = _store()
     await store.save_questionnaire(_qn())
