@@ -650,6 +650,38 @@ async def test_a_completed_session_releases_its_slot_exactly_once(tmp_path, monk
     assert builder.disconnect_calls == 1
 
 
+async def test_send_message_after_completion_is_refused_without_raising(tmp_path):
+    """routes/prototypes.py의 _DEAD_STATUSES가 오늘은 이 호출 전에 404로
+    막아주지만, 세션 객체 스스로도 완료 후 턴을 거부해야 한다 -- 라우트를
+    우회하는 호출자(테스트, 미래의 다른 진입점)가 있으면 turn relay가 그대로
+    돌아 status를 "building"으로 되돌리고 완료 상태를 짓뭉갤 수 있다.
+
+    raise가 아니라 error 이벤트를 yield해야 한다: send_message 끝의
+    `except Exception`은 mid-turn 실패를 세션 "failed"로 만들고 빌드 슬롯을
+    풀어준다(정상적인 완료를 실패로 재분류하는 것과 같다). 완료된 세션은
+    할 일을 다 마친 정상 종료이므로, 이 가드는 raise가 아니라 평범한 오류
+    턴처럼 error를 돌려주고 상태를 그대로 둬야 한다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    sem = BuildSemaphore(max_concurrent=2)
+    assert sem.try_acquire() is True
+    session = _session(s3, tmp_path, builder, semaphore=sem)
+    await session.start()
+
+    builder.script([_complete_event(), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+    assert session.status == "complete"
+
+    run_calls_before = len(builder.queries)
+    events = [ev async for ev in session.send_message("한 번 더 해줘")]
+
+    assert [e.kind for e in events] == ["error"]
+    assert session.status == "complete"                    # 되돌아가지 않는다
+    assert len(builder.queries) == run_calls_before         # run()이 다시 불리지 않았다
+    assert sem.snapshot()["active_builds"] == 1             # 슬롯을 풀지 않았다
+
+
 # ---- first_prompt(): directives, now without the /workspace path ----
 
 def test_first_prompt_covers_the_build_directives(tmp_path):

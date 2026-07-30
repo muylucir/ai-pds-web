@@ -301,6 +301,36 @@ class PrototypeSession:
 
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
         assert self._builder is not None, "start() must be called before send_message()"
+        # 완료 선언된 세션은 새 턴을 받지 않는다. 오늘은 routes/prototypes.py의
+        # _DEAD_STATUSES가 이 호출 전에 404로 막아주지만, 이 객체가 자기를
+        # 지켜주는 호출자에게 의존해서는 안 된다 -- 라우트 우회(테스트, 미래의
+        # 다른 진입점)가 있으면 아래 turn relay가 그대로 돌아 status를
+        # "building"으로 되돌리고 완료 상태를 짓뭉갠다.
+        #
+        # self.status가 아니라 self._completion으로 가드하는 이유는 이
+        # 모듈의 다른 모든 곳과 같다 -- _completion은 완료 선언이라는 사실
+        # 자체이고 이 필드 외에는 아무도 되돌리지 않는다. status는 여러
+        # 경로(예: 바로 이 메서드의 turn relay)가 다시 쓰는 가변 값이라 같은
+        # 목적의 가드로 쓰면 이 가드 자신이 지키려는 바로 그 대입에 의해
+        # 무력화된다.
+        #
+        # raise가 아니라 yield로 끝내는 이유: 이 메서드 끝의
+        # `except Exception`은 mid-turn 실패를 세션 "failed"로 만들고 빌드
+        # 슬롯을 놓아준다 -- 즉 그 경로는 "이 세션은 더 못 쓴다"는 뜻이다.
+        # 완료된 세션은 정반대다: 할 일을 다 마친 정상 종료이고, 슬롯은 이미
+        # 완료 처리 때 짧은 유예로 회수 절차에 들어가 있다. 여기서 raise하면
+        # 정상 종료를 실패로 재분류하고 슬롯을 이중 해제(또는 남의 슬롯 해제)
+        # 시도로 몰아간다. 그래서 빌더의 error 이벤트와 같은 모양의
+        # 턴-레벨 오류를 yield하고 그냥 반환한다 -- 호출자(SSE 제너레이터)는
+        # 평소 오류 턴과 똑같이 받고, 세션 상태는 "complete"로 그대로 남는다.
+        if self._completion is not None:
+            yield AgentEvent(
+                kind="error",
+                text="이 빌드 세션은 이미 완료되어 더 이상 메시지를 받을 수 "
+                     "없습니다. 개선 작업이 필요하면 '개선 이어서 하기'로 "
+                     "새 세션을 시작해 주세요.",
+            )
+            return
         self._arm_idle_timer()
         self.status = "building"
         try:
