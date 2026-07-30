@@ -7,6 +7,7 @@ import type {
   AgentEventKind,
   TurnResult,
   ProjectSummary,
+  BuildCompletePayload,
 } from "./types";
 
 // Mirror guard (E1): AgentEventKind must cover EXACTLY the same 8 kinds as
@@ -27,6 +28,7 @@ const AGENT_EVENT_KIND_EXHAUSTIVENESS: Record<AgentEventKind, true> = {
   file_changed: true,
   status: true,
   done: true,
+  build_complete: true,
   error: true,
 };
 
@@ -68,11 +70,11 @@ describe("api types mirror the backend models", () => {
     expect(st.stages.map((s) => s.status)).toEqual(["completed", "in_progress", "pending"]);
   });
 
-  it("AgentEventKind covers exactly the 8 backend/harness kinds", () => {
+  it("AgentEventKind covers exactly the 9 backend/harness kinds including build_complete", () => {
     // Runtime witness of the compile-time exhaustiveness map above -- keeps
     // this file self-contained even if the `Record` trick above is refactored.
     expect(Object.keys(AGENT_EVENT_KIND_EXHAUSTIVENESS).sort()).toEqual(
-      ["message", "questions", "stage", "document", "file_changed", "status", "done", "error"].sort(),
+      ["message", "questions", "stage", "document", "file_changed", "status", "done", "build_complete", "error"].sort(),
     );
   });
 
@@ -90,5 +92,11 @@ describe("api types mirror the backend models", () => {
     expect(e.user_input).toContain("ai-plc");
     expect(tr.events[0].kind).toBe("done");
     expect(p.name).toContain("기획전");
+  });
+
+  it("BuildCompletePayload carries summary and remaining", () => {
+    const payload: BuildCompletePayload = { summary: "만들었다", remaining: "" };
+    expect(payload.summary).toBe("만들었다");
+    expect(payload.remaining).toBe("");
   });
 });

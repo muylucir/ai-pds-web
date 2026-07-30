@@ -62,6 +62,8 @@ export type AgentEventKind =
   | "file_changed"
   | "status"
   | "done"
+  // 프로토타입 빌드의 완료 선언. 백엔드 models.py의 Literal과 한 쌍이다.
+  | "build_complete"
   | "error";
 
 export interface AgentEvent {
@@ -80,6 +82,14 @@ export interface TurnResult {
 export interface QuestionsPayload {
   interrupt_id: string;
   questions: QuestionFile;
+}
+
+// build_complete 이벤트의 payload. remaining은 옵셔널이 아니다 — 백엔드가
+// 항상 채워 보내므로(proto/tools.py의 args.get("remaining", "")) 프론트는
+// 빈 문자열만 다루면 되고 undefined 분기가 필요 없다.
+export interface BuildCompletePayload {
+  summary: string;
+  remaining: string;
 }
 
 export interface StagePayload {
