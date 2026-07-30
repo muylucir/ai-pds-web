@@ -5,10 +5,12 @@ import userEvent from "@testing-library/user-event";
 import { BuildPanel } from "./BuildPanel";
 import * as prototypeStream from "@/lib/usePrototypeStream";
 import * as prototypesApi from "@/lib/api/prototypes";
+import { ApiError } from "@/lib/api/client";
 
 vi.mock("@/lib/api/prototypes", async (orig) => ({
   ...(await orig<typeof import("@/lib/api/prototypes")>()),
   closeSession: vi.fn().mockResolvedValue(undefined),
+  startHost: vi.fn().mockResolvedValue({ state: "running", port: 4001, log_tail: "" }),
 }));
 
 const QP = {
@@ -168,5 +170,100 @@ describe("BuildPanel", () => {
       return Number(m![1]) / Number(m![2]);
     });
     expect(fractions.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1);
+  });
+
+  describe("완료 카드", () => {
+    it("완료 선언 후 요약과 남은 작업을 보여준다", () => {
+      mockStream({
+        buildComplete: { summary: "할 일 앱을 만들었다", remaining: "다크 모드" },
+      });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      expect(screen.getByText(/할 일 앱을 만들었다/)).toBeInTheDocument();
+      expect(screen.getByText(/다크 모드/)).toBeInTheDocument();
+    });
+
+    it("남은 작업이 비어 있으면 그 줄을 그리지 않는다", () => {
+      mockStream({ buildComplete: { summary: "완성", remaining: "" } });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      expect(screen.queryByText("남은 작업")).not.toBeInTheDocument();
+    });
+
+    it("완료 전에는 카드를 그리지 않는다", () => {
+      mockStream({ buildComplete: null });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      expect(screen.queryByRole("button", { name: "호스팅 시작" })).not.toBeInTheDocument();
+    });
+
+    it("호스팅 시작이 startHost를 부르고 패널을 닫는다", async () => {
+      const onClose = vi.fn();
+      mockStream({ buildComplete: { summary: "완성", remaining: "" } });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={onClose} />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "호스팅 시작" }));
+
+      expect(vi.mocked(prototypesApi.startHost)).toHaveBeenCalledWith("proj-1", "todo-app");
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it("호스팅이 실패하면 패널을 닫지 않고 오류를 보여준다", async () => {
+      const onClose = vi.fn();
+      vi.mocked(prototypesApi.startHost).mockRejectedValueOnce(new Error("npm error"));
+      mockStream({ buildComplete: { summary: "완성", remaining: "" } });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={onClose} />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "호스팅 시작" }));
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByText(/호스팅을 시작하지 못했습니다/)).toBeInTheDocument();
+    });
+
+    it("개선 이어서 하기가 restartForImprovement를 부른다", async () => {
+      const restart = vi.fn().mockResolvedValue(undefined);
+      mockStream({
+        buildComplete: { summary: "완성", remaining: "" },
+        restartForImprovement: restart,
+      });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "개선 이어서 하기" }));
+
+      expect(restart).toHaveBeenCalled();
+    });
+
+    it("개선 시작이 429면 상한 메시지를 보여주고 카드를 남긴다", async () => {
+      // 동시 빌드 상한에 걸린 경우. 카드를 지우면 사용자는 완료 요약과 다른
+      // 선택지(호스팅)를 모두 잃는다 — 재시도할 수 있게 남긴다.
+      const restart = vi.fn().mockRejectedValueOnce(
+        new ApiError(429, "다른 팀이 프로토타입을 빌드하고 있습니다 — 잠시 후 다시 시도해 주세요"));
+      mockStream({
+        buildComplete: { summary: "완성", remaining: "" },
+        restartForImprovement: restart,
+      });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "개선 이어서 하기" }));
+
+      expect(screen.getByText(/다른 팀이 프로토타입을 빌드하고 있습니다/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "호스팅 시작" })).toBeInTheDocument();
+    });
+
+    it("완료 후 닫기는 세션이 이미 닫혀 404여도 패널을 닫는다", async () => {
+      const onClose = vi.fn();
+      vi.mocked(prototypesApi.closeSession).mockRejectedValueOnce(new ApiError(404, "no build session"));
+      mockStream({ buildComplete: { summary: "완성", remaining: "" } });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={onClose} />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "닫기" }));
+
+      expect(onClose).toHaveBeenCalled();
+    });
   });
 });

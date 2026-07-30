@@ -8,7 +8,8 @@ import { useEffect, useState } from "react";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
 import { ChatInput } from "@/components/canvas/ChatInput";
 import { QuestionForm } from "@/components/questions/QuestionForm";
-import { closeSession } from "@/lib/api/prototypes";
+import { closeSession, startHost } from "@/lib/api/prototypes";
+import { ApiError } from "@/lib/api/client";
 import { usePrototypeStream } from "@/lib/usePrototypeStream";
 
 export function BuildPanel({
@@ -26,10 +27,15 @@ export function BuildPanel({
   // otherwise receive a second "turn already in progress" style conflict).
   autoStart?: boolean;
 }) {
-  const { items, streaming, pendingQuestions, changedPaths, startBuild, send, submitAnswers, interrupt } =
-    usePrototypeStream(projectId, slug);
+  const {
+    items, streaming, pendingQuestions, buildComplete, changedPaths,
+    startBuild, send, submitAnswers, interrupt, restartForImprovement,
+  } = usePrototypeStream(projectId, slug);
   const [closing, setClosing] = useState(false);
   const [submittingAnswers, setSubmittingAnswers] = useState(false);
+  const [hosting, setHosting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     if (autoStart) startBuild();
@@ -51,8 +57,54 @@ export function BuildPanel({
     try {
       await closeSession(projectId, slug);
       onClose();
+    } catch (err) {
+      // 404는 정상 경로다: 완료 선언 뒤 백엔드가 유예 타이머로 세션을 먼저
+      // 닫는다(proto/session.py의 _COMPLETION_GRACE_SECONDS). 이미 없는
+      // 세션을 못 닫았다고 패널을 붙잡아 둘 이유가 없다.
+      if (err instanceof ApiError && err.status === 404) {
+        onClose();
+        return;
+      }
+      throw err;
     } finally {
       setClosing(false);
+    }
+  }
+
+  async function handleStartHost() {
+    setHosting(true);
+    setActionError(null);
+    try {
+      await startHost(projectId, slug);
+      onClose();
+    } catch (err) {
+      // 패널을 닫지 않는다 — 닫으면 사용자는 그리드에서 이유 없이 실패한
+      // 카드를 보게 된다. 여기서 오류를 보여주고 재시도할 수 있게 둔다.
+      setActionError(
+        err instanceof ApiError && err.message
+          ? err.message
+          : "호스팅을 시작하지 못했습니다. 다시 시도해 주세요.");
+    } finally {
+      setHosting(false);
+    }
+  }
+
+  async function handleRestart() {
+    setRestarting(true);
+    setActionError(null);
+    try {
+      await restartForImprovement();
+    } catch (err) {
+      // 429(동시 빌드 상한)가 실제로 도달 가능한 경로다. 카드를 지우지
+      // 않는다 — 지우면 사용자는 완료 요약과 호스팅 선택지를 모두 잃는다.
+      // actionError를 호스팅과 공유한다: 이 카드에 오류 줄은 하나뿐이고, 두
+      // 동작이 동시에 실패할 수는 없다(둘 다 서로를 disabled로 막는다).
+      setActionError(
+        err instanceof ApiError && err.message
+          ? err.message
+          : "개선 세션을 시작하지 못했습니다. 다시 시도해 주세요.");
+    } finally {
+      setRestarting(false);
     }
   }
 
@@ -110,6 +162,53 @@ export function BuildPanel({
               스크롤바도 없이 잘렸다(실측). shrink-0이라 flex가 되돌려주지도
               않는다. */}
           <aside className="w-full md:basis-1/2 md:min-w-0 shrink-0 border-t md:border-t-0 md:border-l border-slate-200 flex flex-col min-h-0 overflow-y-auto">
+            {buildComplete && (
+              <div className="p-4 border-b border-slate-200">
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <p className="text-sm font-bold text-emerald-800">빌드 완료</p>
+                  <p className="mt-2 text-sm text-slate-700 whitespace-pre-wrap">
+                    {buildComplete.summary}
+                  </p>
+                  {buildComplete.remaining && (
+                    <>
+                      <p className="mt-3 text-xs font-bold text-slate-500">남은 작업</p>
+                      <p className="mt-1 text-sm text-slate-600 whitespace-pre-wrap">
+                        {buildComplete.remaining}
+                      </p>
+                    </>
+                  )}
+                </div>
+                {actionError && (
+                  <p className="mt-3 text-sm text-rose-600">{actionError}</p>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleStartHost()}
+                    disabled={hosting || restarting || closing}
+                    className="px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-medium"
+                  >
+                    호스팅 시작
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleRestart()}
+                    disabled={hosting || restarting || closing}
+                    className="px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-sm font-medium text-slate-700"
+                  >
+                    개선 이어서 하기
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDone()}
+                    disabled={hosting || restarting || closing}
+                    className="px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-sm font-medium text-slate-700"
+                  >
+                    닫기
+                  </button>
+                </div>
+              </div>
+            )}
             {pendingQuestions && (
               <div className="p-4 border-b border-slate-200">
                 <QuestionForm
