@@ -145,6 +145,23 @@ describe("BuildPanel", () => {
     expect(screen.getByLabelText("채팅 메시지 입력")).toBeDisabled();
   });
 
+  it("완료 선언 후에는 입력이 막히고 안내 문구가 보인다", () => {
+    // buildComplete가 서면 streaming은 이미 false로 돌아온 뒤다(done이
+    // build_complete 뒤를 잇는다) — 그런데도 세션은 유예 타이머로 곧 닫히므로
+    // 입력을 계속 열어두면 오해를 부르는 404/연결 오류로 이어진다.
+    mockStream({ streaming: false, buildComplete: { summary: "완성", remaining: "" } });
+    render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
+    expect(screen.getByLabelText("채팅 메시지 입력")).toBeDisabled();
+    expect(screen.getByText(/빌드 세션이 종료됐습니다/)).toBeInTheDocument();
+  });
+
+  it("완료 전에는 streaming이 false여도 입력이 열려 있고 안내 문구가 없다", () => {
+    mockStream({ streaming: false, buildComplete: null });
+    render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
+    expect(screen.getByLabelText("채팅 메시지 입력")).not.toBeDisabled();
+    expect(screen.queryByText(/빌드 세션이 종료됐습니다/)).not.toBeInTheDocument();
+  });
+
   it("splits the drawer into two halves that do not overflow it", () => {
     // The regression this guards: the chat was widened from basis-1/3 to
     // basis-1/2 while the aside kept basis-2/3, so the two panes claimed 7/6 of

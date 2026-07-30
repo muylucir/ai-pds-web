@@ -153,7 +153,19 @@ export function BuildPanel({
               onOpenArtifact={() => {}}
               busy={streaming}
             />
-            <ChatInput onSend={send} disabled={streaming} />
+            {/* 완료 선언 뒤에는 이 세션이 곧(유예 5초) 닫히거나 이미 닫혀
+                있다 — 입력을 계속 열어두면 사용자가 보낸 메시지가
+                GET .../events의 404로 이어지고, usePrototypeStream의
+                onError가 "연결이 끊어졌습니다"를 띄운다(실제로는 빌드가
+                끝난 것뿐이다). 입력을 막고, 대신 오른쪽 완료 카드의 버튼을
+                가리킨다. */}
+            {buildComplete !== null && (
+              <p className="shrink-0 px-4 md:px-8 pt-2 text-xs text-slate-400 text-center">
+                빌드 세션이 종료됐습니다. 이어서 작업하려면 완료 카드의
+                &ldquo;개선 이어서 하기&rdquo;를 눌러주세요.
+              </p>
+            )}
+            <ChatInput onSend={send} disabled={streaming || buildComplete !== null} />
           </div>
 
           {/* basis-1/2 — 채팅과 합이 정확히 100%여야 한다. 종전 2/3은 채팅을
