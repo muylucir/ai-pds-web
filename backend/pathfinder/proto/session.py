@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator, Callable, Literal, Protocol
 
@@ -24,6 +25,12 @@ from pathfinder.s3store import S3StoreLike
 _log = logging.getLogger(__name__)
 
 SessionStatus = Literal["starting", "ready", "building", "waiting_input",
+                        # 에이전트가 build_complete로 완료를 선언한 상태.
+                        # "ready"와 다른 이유: ready는 "또 다른 턴을 받을 수
+                        # 있다"이고 complete는 "이 세션은 할 일을 마쳤다"다.
+                        # routes/prototypes.py의 _DEAD_STATUSES가 이 구분에
+                        # 달려 있다.
+                        "complete",
                         "failed", "closed"]
 
 
@@ -53,6 +60,35 @@ def _interrupt_id_from(payload: str | None) -> str | None:
     except (json.JSONDecodeError, AttributeError):
         return None
     return value if isinstance(value, str) else None
+
+
+#: 완료 선언 뒤 세션이 스스로 닫히기까지의 유예. 0이 아닌 이유: terminal
+#: 이벤트가 제너레이터 체인(_relay_queue -> run -> send_message -> gen)을
+#: 빠져나갈 여유가 필요하다.
+_COMPLETION_GRACE_SECONDS = 5
+
+
+def _completion_from(payload: str | None) -> dict | None:
+    """build_complete payload -> {"summary","remaining"} 또는 None.
+
+    _interrupt_id_from과 같은 fail-soft 규율이다 — 깨진 payload는 예외가
+    아니라 None으로 강등된다. 완료 처리가 일어나지 않으면 유휴 타이머가
+    평소대로 정리하므로, 잘못 선언된 완료보다 안전한 방향이다.
+    """
+    if not payload:
+        return None
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    summary = data.get("summary")
+    if not isinstance(summary, str) or not summary:
+        return None
+    remaining = data.get("remaining")
+    return {"summary": summary,
+            "remaining": remaining if isinstance(remaining, str) else ""}
 
 
 def _is_uuid(value: object) -> bool:
@@ -97,6 +133,10 @@ class PrototypeSession:
         # would send it back to square one.
         self._resumed = False
         self._pending_interrupt_id: str | None = None
+        # 완료 선언의 내용({"summary","remaining"}) 또는 None. 두 가지를
+        # 동시에 뜻한다: (1) 이 세션은 할 일을 마쳤다, (2) 유휴 타이머는
+        # 짧은 유예를 써야 한다(_arm_idle_timer 참조).
+        self._completion: dict | None = None
         self._idle_handle: asyncio.TimerHandle | None = None
         self._closed = False
         # A mid-turn raise releases the slot immediately in send_message's
@@ -115,6 +155,9 @@ class PrototypeSession:
 
     def _session_key(self) -> str:
         return f"prototypes/{self.slug}/session.json"
+
+    def _handoff_key(self) -> str:
+        return f"prototypes/{self.slug}/handoff.json"
 
     def build_dir(self) -> Path:
         return self._build_root / self.project_id / self.slug
@@ -140,13 +183,37 @@ class PrototypeSession:
     # ---- idle timer ----
 
     def _arm_idle_timer(self) -> None:
+        """유휴 타이머를 재무장한다. 지연 값은 호출자가 아니라 여기서
+        결정한다 -- 그것이 이 설계에서 가장 틀리기 쉬운 부분이다.
+
+        호출자가 인자로 넘기는 형태였다면, 완료 선언이 짧은 유예로 무장한
+        직후 뒤따르는 done이 기본 30분으로 되돌려 세션이 닫히지 않는다.
+        build_complete 다음에는 **반드시** done이 오므로(run()의 terminal
+        held 규율) 이것은 가능성이 아니라 확정된 동작이다. 지연을 상태에서
+        파생시키면 그 창이 존재하지 않는다.
+        """
+        delay = (_COMPLETION_GRACE_SECONDS if self._completion is not None
+                 else self._idle_seconds)
         if self._idle_handle is not None:
             self._idle_handle.cancel()
         loop = asyncio.get_running_loop()
-        self._idle_handle = loop.call_later(self._idle_seconds, self._on_idle_timeout)
+        self._idle_handle = loop.call_later(delay, self._on_idle_timeout)
 
     def _on_idle_timeout(self) -> None:
         asyncio.create_task(self.close())
+
+    async def _write_handoff(self, completion: dict) -> None:
+        """다음 세션이 읽을 핸드오프. 개선 작업이 전체 트랜스크립트를 지고
+        가지 않아도 되게 하는 유일한 근거다(_resolve_session_id의 세 번째
+        분기).
+
+        completed_at은 진단용이다 -- 어느 분기를 탔는지 로그에서 읽을 수
+        있게 한다.
+        """
+        await self._s3.put(self._handoff_key(), json.dumps({
+            **completion,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }, ensure_ascii=False))
 
     # ---- start ----
 
@@ -181,12 +248,39 @@ class PrototypeSession:
                     if got:
                         self._pending_interrupt_id = got
                         self.status = "waiting_input"
-                elif event.kind == "done":
-                    self.status = "ready"
-                elif event.kind == "error":
-                    # Sanitized turn-level error: session stays usable and
-                    # retryable -- NOT a session failure.
-                    self.status = "ready"
+                elif event.kind == "build_complete":
+                    completion = _completion_from(event.payload)
+                    if completion is not None:
+                        self._completion = completion
+                        self.status = "complete"
+                        # 완료 선언 이 순간에 유예로 재무장한다. 이 호출이
+                        # 없으면 이번 턴 맨 앞에서 무장된 기존 유휴 지연
+                        # (수십 분)이 그대로 남아, 뒤따르는 done이 세션을
+                        # 절대 닫지 못한다 -- _arm_idle_timer는 호출될 때만
+                        # 지연을 다시 계산하므로, 상태가 바뀐 지금 다시
+                        # 불러줘야 한다.
+                        self._arm_idle_timer()
+                        # 예외를 반드시 삼킨다. 그러지 않으면 아래의
+                        # `except Exception`이 잡아 status="failed" + 슬롯
+                        # release로 가는데, 그것은 "handoff 실패에도 완료는
+                        # 진행한다"는 결정과 정반대다. S3 실패가 완성된
+                        # 빌드를 실패로 보이게 만들면 안 된다.
+                        try:
+                            await self._write_handoff(completion)
+                        except Exception:
+                            _log.exception("handoff write failed: %s/%s",
+                                           self.project_id, self.slug)
+                elif event.kind in ("done", "error"):
+                    # 완료를 선언한 세션은 ready로 돌아가지 않는다.
+                    # build_complete 다음에는 반드시 done이 오므로, 이 가드가
+                    # 없으면 status가 되돌아가 _DEAD_STATUSES 기구 전체가
+                    # 무력해진다(호스팅이 다시 409, 개선 세션을 열 수 없다).
+                    #
+                    # error도 같이 묶는 이유: 완료 선언 뒤 error가 온다면
+                    # 그것도 이 세션을 ready로 만들 근거가 아니다. 완료
+                    # 전이라면 종전대로 재시도 가능한 상태로 남는다.
+                    if self._completion is None:
+                        self.status = "ready"
                 yield event
         except Exception:
             self.status = "failed"

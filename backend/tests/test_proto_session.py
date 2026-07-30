@@ -19,6 +19,12 @@ SLUG = "todo-app"
 PROJECT_ID = "proj-1"
 SPEC_KEY = f"aiplc-docs/discovery/prototypes/{SLUG}/PROTOTYPE-{SLUG}.md"
 SESSION_KEY = f"prototypes/{SLUG}/session.json"
+HANDOFF_KEY = f"prototypes/{SLUG}/handoff.json"
+
+
+def _complete_event(summary="할 일 앱", remaining="다크 모드"):
+    return AgentEvent(kind="build_complete", payload=json.dumps(
+        {"summary": summary, "remaining": remaining}, ensure_ascii=False))
 
 
 class FakeBuilder:
@@ -205,6 +211,131 @@ async def test_send_answers_false_when_nothing_pending(tmp_path):
 
     assert await session.send_answers({"1": "A"}) is False
     assert builder.answer_calls == []
+
+
+# ---- 완료 선언: 상태 전이 + handoff 기록 ----
+
+async def test_build_complete_sets_the_complete_status(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([_complete_event(), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    assert session.status == "complete"
+
+
+async def test_the_done_after_a_completion_does_not_revert_to_ready(tmp_path):
+    """build_complete 다음에는 반드시 done이 온다(run()의 terminal held 규율).
+    done 분기가 status를 ready로 되돌리면 _DEAD_STATUSES 기구 전체가
+    무력해진다 — 호스팅이 다시 409가 되고 개선 세션을 열 수 없다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([_complete_event(), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    assert session.status == "complete"      # NOT "ready"
+
+
+async def test_build_complete_writes_the_handoff(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([_complete_event("할 일 앱을 만들었다", "다크 모드"),
+                    AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    saved = json.loads(s3.blobs[HANDOFF_KEY])
+    assert saved["summary"] == "할 일 앱을 만들었다"
+    assert saved["remaining"] == "다크 모드"
+    assert saved["completed_at"]            # ISO 8601 타임스탬프
+
+
+async def test_the_build_complete_event_still_reaches_the_consumer(tmp_path):
+    """관찰이 이벤트를 삼키면 프론트가 완료 카드를 그릴 수 없다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([_complete_event(), AgentEvent(kind="done")])
+    events = [ev async for ev in session.send_message("go")]
+
+    assert [e.kind for e in events] == ["build_complete", "done"]
+
+
+async def test_a_malformed_completion_payload_is_ignored(tmp_path):
+    """_interrupt_id_from과 같은 fail-soft 규율 — 깨진 payload는 예외가 아니라
+    무시로 강등되고, 유휴 타이머가 평소대로 정리한다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([AgentEvent(kind="build_complete", payload="{not json"),
+                    AgentEvent(kind="done")])
+    events = [ev async for ev in session.send_message("go")]
+
+    assert session.status == "ready"        # 완료로 처리되지 않는다
+    assert HANDOFF_KEY not in s3.blobs
+    assert [e.kind for e in events] == ["build_complete", "done"]
+
+
+async def test_a_completion_payload_without_a_summary_is_ignored(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([AgentEvent(kind="build_complete", payload=json.dumps({})),
+                    AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    assert session.status == "ready"
+    assert HANDOFF_KEY not in s3.blobs
+
+
+async def test_a_handoff_write_failure_does_not_fail_the_session(tmp_path):
+    """S3 실패가 완성된 빌드를 실패로 보이게 만들면 안 된다.
+
+    _write_handoff의 예외를 삼키지 않으면 send_message의 except Exception이
+    잡아 status="failed" + 슬롯 release로 간다(session.py:191-200) — "handoff
+    실패에도 완료는 진행한다"는 결정과 정반대다.
+    """
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+
+    async def boom(key, content):
+        if key == HANDOFF_KEY:
+            raise RuntimeError("s3 down")
+        return None
+
+    builder = FakeBuilder()
+    sem = BuildSemaphore(max_concurrent=2)
+    assert sem.try_acquire() is True
+    session = _session(s3, tmp_path, builder, semaphore=sem)
+    await session.start()
+    s3.put = boom   # type: ignore[method-assign]
+
+    builder.script([_complete_event(), AgentEvent(kind="done")])
+    events = [ev async for ev in session.send_message("go")]
+
+    assert session.status == "complete"                  # NOT "failed"
+    assert sem.snapshot()["active_builds"] == 1          # 슬롯을 풀지 않았다
+    assert [e.kind for e in events] == ["build_complete", "done"]
 
 
 # ---- mid-turn failure: the slot must not be burned permanently ----
@@ -395,6 +526,81 @@ async def test_idle_timer_resets_on_send_message(tmp_path):
 
     await asyncio.sleep(0.12)
     assert session.status == "closed"
+
+
+# ---- 완료 선언 뒤 세션이 스스로 닫힌다 ----
+
+async def test_a_completed_session_closes_itself(tmp_path, monkeypatch):
+    """세션 종료는 백엔드가 소유한다 — 프론트가 DELETE /session을 부르는
+    방식과의 차이가 요점이다. 새로고침·탭 닫기에도 슬롯이 회수된다."""
+    import pathfinder.proto.session as session_module
+    monkeypatch.setattr(session_module, "_COMPLETION_GRACE_SECONDS", 0.05)
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    sem = BuildSemaphore(max_concurrent=2)
+    assert sem.try_acquire() is True   # 이 세션의 슬롯
+    assert sem.try_acquire() is True   # 다른 팀의 슬롯 -- 살아남아야 한다
+    session = _session(s3, tmp_path, builder, semaphore=sem)
+    await session.start()
+
+    builder.script([_complete_event(), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    await asyncio.sleep(0.2)
+
+    assert session.status == "closed"
+    assert builder.disconnect_calls == 1
+    assert sem.snapshot()["active_builds"] == 1   # 다른 팀 슬롯만 남는다
+
+
+async def test_the_done_after_a_completion_does_not_extend_the_grace(tmp_path, monkeypatch):
+    """지연 값이 호출자 인자였다면 done이 기본 30분으로 되돌려 세션이 닫히지
+    않는다. build_complete 다음에는 반드시 done이 오므로 이것은 가능성이
+    아니라 확정된 동작이다 — 지연을 상태에서 파생시켜 그 창을 없앤다."""
+    import pathfinder.proto.session as session_module
+    monkeypatch.setattr(session_module, "_COMPLETION_GRACE_SECONDS", 0.05)
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    # 기본 유휴는 사실상 무한 -- 세션이 닫힌다면 그것은 유예 때문이다.
+    session = _session(s3, tmp_path, builder, idle_seconds=3600)
+    await session.start()
+
+    builder.script([_complete_event(), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    await asyncio.sleep(0.2)
+
+    assert session.status == "closed"
+
+
+async def test_a_completed_session_releases_its_slot_exactly_once(tmp_path, monkeypatch):
+    """사용자의 DELETE /session과 유예 종료가 겹쳐도 release는 한 번이다.
+    BuildSemaphore.release()는 0에서 클램프할 뿐 과다 release를 감지하지
+    못하므로, 두 번 풀면 다른 세션의 슬롯을 공짜로 내준다."""
+    import pathfinder.proto.session as session_module
+    monkeypatch.setattr(session_module, "_COMPLETION_GRACE_SECONDS", 0.05)
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    sem = BuildSemaphore(max_concurrent=2)
+    assert sem.try_acquire() is True
+    assert sem.try_acquire() is True
+    session = _session(s3, tmp_path, builder, semaphore=sem)
+    await session.start()
+
+    builder.script([_complete_event(), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    await session.close()          # 사용자가 먼저 닫는다
+    await asyncio.sleep(0.2)       # 그 다음 유예가 만료된다
+
+    assert sem.snapshot()["active_builds"] == 1
+    assert builder.disconnect_calls == 1
 
 
 # ---- first_prompt(): directives, now without the /workspace path ----
