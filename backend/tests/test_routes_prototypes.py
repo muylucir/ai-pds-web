@@ -1377,3 +1377,70 @@ def test_proxy_leaves_external_redirect_alone(proto_env):
     from pathfinder.routes.proto_public import _rewritten_location
     ext = "https://accounts.google.com/o/oauth2/auth?x=1"
     assert _rewritten_location(ext, PID, SLUG) == ext
+
+
+# ---- 완료된 세션은 죽은 세션이다 ----
+
+def test_a_completed_session_does_not_block_hosting(proto_env, monkeypatch):
+    """이 작업의 동기가 된 결함: 빌드가 끝나도 세션이 살아 있으면 [호스팅
+    시작]이 409로 막혔다. 카드는 이미 '빌드 완료 / 호스팅 시작'을 보여준다."""
+    session = FakePrototypeSession()
+    session.status = "complete"
+    app_module.proto_sessions[(PID, SLUG)] = session
+
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "running"
+
+
+def test_a_completed_session_does_not_block_a_new_start(proto_env, monkeypatch):
+    """'개선 이어서 하기'가 필요로 하는 것."""
+    old = FakePrototypeSession()
+    old.status = "complete"
+    app_module.proto_sessions[(PID, SLUG)] = old
+    app_module.s3_store_factory(PID).blobs[SPEC_KEY] = "# spec"
+
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+
+    assert resp.status_code == 202
+
+
+def test_a_completed_session_serves_no_stream(proto_env):
+    """답할 future가 없는 세션에 스트림을 열어주면 안 된다."""
+    session = FakePrototypeSession()
+    session.status = "complete"
+    app_module.proto_sessions[(PID, SLUG)] = session
+
+    resp = client.get(f"/projects/{PID}/prototypes/{SLUG}/events?text=hi")
+
+    assert resp.status_code == 404
+
+
+def test_answers_on_a_completed_session_404(proto_env):
+    session = FakePrototypeSession()
+    session.status = "complete"
+    app_module.proto_sessions[(PID, SLUG)] = session
+
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/answers",
+                       json={"answers": {"1": "A"}})
+
+    assert resp.status_code == 404
+
+
+def test_list_state_built_for_a_completed_session(proto_env, monkeypatch):
+    """complete는 _WORKING_STATUSES에 없으므로 카드가 '빌드 중'에 고정되지
+    않는다."""
+    s3 = app_module.s3_store_factory(PID)
+    s3.blobs[SPEC_KEY] = "# spec"
+    session = FakePrototypeSession()
+    session.status = "complete"
+    app_module.proto_sessions[(PID, SLUG)] = session
+    proto_dir = app_module._proto_root() / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True, exist_ok=True)
+    (proto_dir / "index.html").write_text("x")
+
+    resp = client.get(f"/projects/{PID}/prototypes")
+
+    entry = next(p for p in resp.json()["prototypes"] if p["slug"] == SLUG)
+    assert entry["state"] == "built"

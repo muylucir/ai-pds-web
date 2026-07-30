@@ -119,7 +119,19 @@ def _require_registered(pid: str) -> None:
 #: "failed" out of this set wedged the prototype permanently — POST said
 #: "already active" while GET said "no active session", so the user could
 #: neither restart nor stream.
-_DEAD_STATUSES = ("closed", "failed")
+#:
+#: "complete" belongs here for the same reason and fixes four routes at once:
+#: the agent declared the build finished and stopped touching the build tree,
+#: so POST /host must no longer 409 (the card already says 빌드 완료 —
+#: "ready" is not in _WORKING_STATUSES), POST /session must be allowed so
+#: "개선 이어서 하기" can open a fresh session, and /answers + /interrupt must
+#: 404 because the pending-question future they would resolve is gone.
+#: The session may still be in `proto_sessions` at that moment — it closes
+#: itself a few seconds later via the idle timer (proto/session.py's
+#: _COMPLETION_GRACE_SECONDS) — so this set, not the dict, is what makes it
+#: harmless. ProtoHost.start() does not wipe the build tree (proto/host.py's
+#: "NOT rmtree" note), so hosting inside that grace window is safe.
+_DEAD_STATUSES = ("closed", "failed", "complete")
 
 
 def _live_session(pid: str, slug: str):
