@@ -175,6 +175,32 @@ def question_file_from_sdk(sdk_questions: list[dict], *, name: str) -> dict:
                 "letter": _LETTERS[j] if j < len(_LETTERS) else f"Z{j}",
                 "text": text, "is_other": False, "recommended": False,
             })
+        # 자유 입력 선택지를 붙인다. AskUserQuestion에는 is_other에 해당하는
+        # 필드가 없고 이 경로는 guess_other=False로 정규화하므로, 이걸 붙이지
+        # 않으면 Other가 생길 수 있는 경로가 하나도 없다 — 사용자는 모델이 제시한
+        # 선택지 밖의 일을 시킬 방법이 없어진다(실측: "다시 빌드" 후 무엇을
+        # 진행할지 묻는 질문에 원하는 항목이 없어 아무것도 지시할 수 없었다).
+        #
+        # letter는 X다. A/B/C 흐름에 끼우면 안 되는 이유가 계약에 있다 —
+        # builder._answer_to_sdk가 `sdk_options[_LETTERS.find(letter)]`로 답변을
+        # SDK 라벨로 되번역하므로, 실제 옵션의 letter가 한 칸이라도 밀리면 모든
+        # 답변이 엉뚱한 옵션으로 번역된다. X는 _LETTERS(A-J) 밖이라 그 인덱스
+        # 계산에 관여하지 않고, 매칭되지 않는 값은 자유 텍스트로 그대로
+        # 통과한다(builder.py의 `return value  # free text (Other)`).
+        #
+        # 모델이 "Other" 라벨을 이미 넣었더라도 그대로 하나 더 붙인다. 붙이지
+        # 않는 쪽을 먼저 시도했는데(_looks_like_other로 감지) 더 나빴다: 이 경로는
+        # guess_other=False로 정규화하므로 모델이 넣은 그 옵션의 is_other는 계속
+        # False로 남고, 결과는 **자유 입력창이 하나도 없는** 상태였다(실측). 즉
+        # 감지해서 건너뛰면 고치려던 문제가 그대로 재현된다.
+        #
+        # 중복으로 보이는 옵션이 하나 생기는 것은 감수한다 — 모델의 "Other"는
+        # 평범한 라디오 항목으로, X는 자유 입력창으로 렌더되므로 사용자가 할 수
+        # 있는 일은 줄지 않는다. 정규화의 is_other 축약(앞의 것을 강등)도 X가
+        # 유일한 is_other라 발동하지 않는다.
+        if options:
+            options.append({"letter": _OTHER_LETTER, "text": _OTHER_TEXT,
+                            "is_other": True, "recommended": False})
         questions.append({
             "number": i,
             "category": q.get("header") or None,

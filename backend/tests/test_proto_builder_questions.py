@@ -66,7 +66,11 @@ async def test_question_roundtrip(tmp_path):
     assert qf["parse_ok"] is True
     q = qf["questions"][0]
     assert q["number"] == 1 and q["text"] == "Which DB?"
-    assert [o["letter"] for o in q["options"]] == ["A", "B"]
+    # 실제 옵션만 본다 — 목록 끝에 자유 입력용 X가 붙는다(questions_payload.py의
+    # question_file_from_sdk). 아래의 letter→라벨 되번역 단정이 X가 A/B 인덱스를
+    # 밀지 않는다는 것을 함께 지켜준다.
+    assert [o["letter"] for o in q["options"] if not o["is_other"]] == ["A", "B"]
+    assert q["options"][-1]["is_other"] is True
     assert q["options"][0]["text"].startswith("Postgres")
 
     ok = await b.submit_answers(iid, {"1": "A"})   # letter, QuestionForm contract

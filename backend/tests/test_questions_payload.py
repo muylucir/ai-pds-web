@@ -184,8 +184,11 @@ SDK_Q = [{"question": "다음 단계는?", "header": "Next",
 def test_maps_sdk_options_to_letters_in_order():
     f = question_file_from_sdk(SDK_Q, name="next-step")
     opts = f["questions"][0]["options"]
-    assert [o["letter"] for o in opts] == ["A", "B"]
-    # letter 인덱스가 SDK 옵션 순서와 1:1이어야 답변 되번역이 맞는다.
+    # 실제 옵션만 본다 — 목록 끝에는 자유 입력용 X가 붙는다
+    # (test_sdk_questions_always_get_an_other_option 참조). letter 인덱스가 SDK
+    # 옵션 순서와 1:1이어야 답변 되번역이 맞으므로, X가 그 흐름에 끼어들지
+    # 않는다는 것이 이 단정의 핵심이다.
+    assert [o["letter"] for o in opts if not o["is_other"]] == ["A", "B"]
     assert opts[0]["text"].startswith("진행")
 
 
@@ -227,6 +230,59 @@ def test_rejects_a_question_with_no_options():
     # SDK가 옵션 없는 질문을 보내면 폼에 고를 게 없다.
     with pytest.raises(ValueError):
         question_file_from_sdk([{"question": "q", "options": []}], name="n")
+
+
+def test_sdk_questions_always_get_an_other_option():
+    """SDK 경로에도 자유 입력 선택지가 있어야 한다.
+
+    실측 사고: "다시 빌드"를 누르면 에이전트가 현재 상태를 파악하고 무엇을 할지
+    AskUserQuestion으로 묻는데, 선택지에 없는 일(예: "로그인 화면만 다시")을
+    시킬 방법이 없었다. AskUserQuestion에는 is_other 필드가 아예 없고 이 경로는
+    guess_other=False로 정규화하므로, Other 옵션이 생길 수 있는 경로가 하나도
+    없었다.
+
+    배선의 나머지는 이미 있다 — QuestionCard가 is_other에 자유 입력창을 그리고
+    (QuestionCard.tsx), builder._answer_to_sdk가 옵션 letter에 매칭되지 않는
+    값을 자유 텍스트로 그대로 SDK에 돌려준다(builder.py). 없던 것은 옵션 자체다.
+    """
+    f = question_file_from_sdk(SDK_Q, name="n")
+    opts = f["questions"][0]["options"]
+    others = [o for o in opts if o["is_other"]]
+    assert len(others) == 1, opts
+    assert others[0] is opts[-1], "Other는 목록 끝이어야 한다"
+    assert others[0]["letter"] == "X", opts
+
+
+def test_the_other_option_does_not_shift_real_option_letters():
+    """letter 인덱스는 _answer_to_sdk가 답변을 SDK 라벨로 되번역하는 근거다
+    (sdk_options[_LETTERS.find(letter)]). Other가 A/B/C 흐름에 끼어들면 모든
+    답변이 한 칸씩 밀려 엉뚱한 옵션으로 번역된다 — 그래서 X를 쓴다."""
+    f = question_file_from_sdk(SDK_Q, name="n")
+    opts = f["questions"][0]["options"]
+    real = [o for o in opts if not o["is_other"]]
+    assert [o["letter"] for o in real] == ["A", "B"]
+    assert real[0]["text"].startswith("진행")
+
+
+def test_a_model_supplied_other_still_gets_a_real_free_text_option():
+    """모델이 "Other" 라벨을 직접 넣은 경우.
+
+    그것을 감지해서 우리 X를 건너뛰는 쪽을 먼저 시도했는데 더 나빴다: 이 경로는
+    guess_other=False로 정규화하므로 모델이 넣은 옵션의 is_other는 False로 남고,
+    결과는 자유 입력창이 하나도 없는 상태였다 — 고치려던 문제 그대로다. 그래서
+    항상 붙이고, 자유 입력창이 정확히 하나 있다는 것만 보장한다.
+    """
+    sdk_q = [{"question": "q", "options": [
+        {"label": "진행"},
+        {"label": "Other", "description": "직접 입력"},
+    ]}]
+    f = question_file_from_sdk(sdk_q, name="n")
+    opts = f["questions"][0]["options"]
+    others = [o for o in opts if o["is_other"]]
+    assert len(others) == 1, opts
+    assert others[0]["letter"] == "X", opts
+    # 모델의 "Other"는 평범한 보기로 살아 있다 — 텍스트가 지워지지 않는다.
+    assert opts[1]["text"] == "Other — 직접 입력", opts
 
 
 def test_an_option_literally_labeled_other_is_not_reclassified():
