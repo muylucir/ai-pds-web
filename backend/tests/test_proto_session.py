@@ -763,6 +763,106 @@ async def test_the_plan_prompt_asks_for_an_explicit_completion_declaration(tmp_p
     assert "build_complete" in prompt
 
 
+# ---- 개선 세션: handoff가 있으면 새 session_id + 요약 주입 ----
+
+async def test_a_handoff_starts_a_fresh_session_id(tmp_path):
+    """개선 작업이 전체 트랜스크립트를 지고 가지 않게 한다. 전액 resume은
+    버튼 색 하나 바꾸는 요청에도 빌드 전체 맥락을 싣는다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    old_id = "99999999-8888-7777-6666-555555555555"
+    s3.blobs[SESSION_KEY] = json.dumps({"session_id": old_id})
+    s3.blobs[HANDOFF_KEY] = json.dumps(
+        {"summary": "할 일 앱", "remaining": "다크 모드"})
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+
+    assert session._test_resume_calls == [False]      # resume이 아니다
+    saved = json.loads(s3.blobs[SESSION_KEY])["session_id"]
+    assert saved != old_id                            # 새 id로 갈아탔다
+
+
+async def test_a_handoff_is_deleted_after_it_is_consumed(tmp_path):
+    """한 번 쓴 handoff가 남으면 다음 시작도 개선 프롬프트를 받아, 세션 B의
+    대화를 이어받지 못한다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps({"summary": "할 일 앱", "remaining": ""})
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+
+    assert HANDOFF_KEY not in s3.blobs
+
+
+async def test_the_handoff_prompt_carries_the_summary(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps(
+        {"summary": "할 일 앱을 만들었다", "remaining": "다크 모드가 남았다"})
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    prompt = session.first_prompt()
+
+    assert "할 일 앱을 만들었다" in prompt
+    assert "다크 모드가 남았다" in prompt
+    # 처음부터 계획하라는 지시가 아니다.
+    assert "이번 턴에서는 계획만 세우고" not in prompt
+    # 마음대로 시작하지 말고 물어봐야 한다.
+    assert "AskUserQuestion" in prompt
+
+
+async def test_a_session_that_died_without_declaring_completion_still_resumes(tmp_path):
+    """완료 선언 없이 죽은 세션(유휴 타임아웃, 백엔드 재시작)은 여전히 진짜
+    resume이 맞다. 두 경로는 다른 사건을 표현한다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    # handoff 없음
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+
+    assert session._test_resume_calls == [True]
+    assert "이어서" in session.first_prompt() or "이전" in session.first_prompt()
+
+
+async def test_a_malformed_handoff_falls_back_to_resume(tmp_path):
+    """깨진 handoff가 개선 경로를 막아서는 안 된다 — 전액 resume은 무겁지만
+    정확한 degradation이다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = "{not json"
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+
+    assert session._test_resume_calls == [True]
+
+
+async def test_a_handoff_without_a_saved_session_id_still_plans(tmp_path):
+    """handoff만 있고 session.json이 없는 조합(초기화 중 부분 실패 등)은
+    fresh로 떨어진다 — 이어갈 세션이 애초에 없다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[HANDOFF_KEY] = json.dumps({"summary": "뭔가", "remaining": ""})
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+
+    assert session._test_resume_calls == [False]
+    assert "이번 턴에서는 계획만 세우고" in session.first_prompt()
+
+
 # ---- purge_session_state ----
 
 async def test_purge_session_state_removes_session_transcript_and_bundle():

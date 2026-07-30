@@ -33,6 +33,12 @@ SessionStatus = Literal["starting", "ready", "building", "waiting_input",
                         "complete",
                         "failed", "closed"]
 
+#: first_prompt()가 고르는 세 가지 개시 프롬프트.
+#:   plan    -- 처음부터. 계획만 세우고 빌드하지 않는다.
+#:   resume  -- 완료 선언 없이 죽은 세션을 이어받는다(트랜스크립트 전액).
+#:   handoff -- 완료된 빌드를 개선한다(새 세션 + 요약만).
+PromptKind = Literal["plan", "resume", "handoff"]
+
 
 class BuilderLike(Protocol):
     def run(self, text: str) -> AsyncIterator[AgentEvent]: ...
@@ -127,11 +133,11 @@ class PrototypeSession:
         self.status: SessionStatus = "starting"
         self._builder: BuilderLike | None = None
         self._session_id: str | None = None
-        # Whether start() restored a prior transcript. first_prompt() branches
-        # on this: a resumed agent already has its plan and its half-built
-        # files in context, so re-sending the from-scratch planning order
-        # would send it back to square one.
-        self._resumed = False
+        # first_prompt()가 고를 프롬프트 종류. 종전의 `_resumed` 불리언을
+        # 대체한다 -- 분기가 셋이 되어 불리언으로 표현할 수 없다.
+        self._prompt_kind: PromptKind = "plan"
+        # handoff 분기일 때 프롬프트에 실을 내용({"summary","remaining"}).
+        self._handoff: dict | None = None
         self._pending_interrupt_id: str | None = None
         # 완료 선언의 내용({"summary","remaining"}) 또는 None. 두 가지를
         # 동시에 뜻한다: (1) 이 세션은 할 일을 마쳤다, (2) 유휴 타이머는
@@ -164,21 +170,78 @@ class PrototypeSession:
 
     # ---- durable session id ----
 
-    async def _resolve_session_id(self) -> tuple[str, bool]:
-        """Return (session_id, resume). A saved id means resume; a missing or
-        non-UUID one means start fresh -- the SDK rejects a non-UUID resume
-        value outright, so a legacy/hand-edited value must not wedge the
-        session."""
+    async def _resolve_session_id(self) -> tuple[str, bool, PromptKind]:
+        """(session_id, resume, prompt_kind)를 돌려준다.
+
+        세 분기가 있고, 각각 다른 사건을 표현한다:
+
+          저장 없음          -> 새 id, resume 안 함, "plan"
+          저장 있음, handoff 없음 -> 저장된 id resume, "resume"
+          저장 있음 + handoff    -> 새 id, resume 안 함, "handoff"
+
+        세 번째가 이 설계의 요점이다. 완료된 빌드를 개선할 때 전체
+        트랜스크립트를 지고 가면 버튼 색 하나 바꾸는 요청에도 빌드 전체
+        맥락이 실린다. 요약만 싣고 새로 시작한다.
+
+        두 번째가 남는 이유: 완료 선언 **없이** 죽은 세션(유휴 타임아웃,
+        백엔드 재시작)은 여전히 진짜 resume이 맞다. 그 세션은 할 일을
+        마치지 않았고, 이어받을 맥락이 요약으로 대체될 수 없다.
+
+        비-UUID 저장값은 없는 것으로 취급한다 -- SDK가 non-UUID resume을
+        거부하므로, 레거시/손편집 값이 세션을 영구히 막지 못하게 한다.
+        """
         try:
             saved = json.loads(await self._s3.get(self._session_key()))
         except (FileNotFoundError, json.JSONDecodeError):
             saved = None
-        if isinstance(saved, dict) and _is_uuid(saved.get("session_id")):
-            return saved["session_id"], True
+
+        if not (isinstance(saved, dict) and _is_uuid(saved.get("session_id"))):
+            new_id = str(uuid.uuid4())
+            await self._s3.put(self._session_key(),
+                               json.dumps({"session_id": new_id}))
+            return new_id, False, "plan"
+
+        handoff = await self._read_handoff()
+        if handoff is None:
+            return saved["session_id"], True, "resume"
+
+        # 개선 세션: 새 id로 갈아타고 handoff를 소비한다.
+        #
+        # 순서가 중요하다 -- session.json 쓰기 먼저, handoff 삭제 나중.
+        # 그 사이에서 실패하면 handoff가 남아 다음 시작이 다시 이 분기를
+        # 타는데, session.json에는 이미 새(빈) id가 있으므로 개선
+        # 프롬프트로 새로 시작한다: 같은 결과다. 반대 순서는 handoff를
+        # 지운 뒤 id 쓰기가 실패하면 요약을 잃고 옛 세션을 전액 resume한다.
+        # 손실 있는 방향을 피한다.
+        self._handoff = handoff
         new_id = str(uuid.uuid4())
         await self._s3.put(self._session_key(),
                            json.dumps({"session_id": new_id}))
-        return new_id, False
+        # 단일 키 삭제에 delete_prefix를 쓴다 -- S3StoreLike에 단일 키
+        # delete가 없고, 이것이 확립된 관례다(agent/pending_store.py:69,
+        # survey/store.py:334).
+        await self._s3.delete_prefix(self._handoff_key())
+        return new_id, False, "handoff"
+
+    async def _read_handoff(self) -> dict | None:
+        """handoff.json -> {"summary","remaining"} 또는 None.
+
+        _completion_from과 같은 fail-soft 규율이다. 깨진 handoff가 개선
+        경로를 막아서는 안 된다 -- None으로 강등되면 두 번째 분기(전액
+        resume)로 떨어지고, 그것은 무겁지만 정확한 degradation이다.
+        """
+        try:
+            data = json.loads(await self._s3.get(self._handoff_key()))
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        summary = data.get("summary")
+        if not isinstance(summary, str) or not summary:
+            return None
+        remaining = data.get("remaining")
+        return {"summary": summary,
+                "remaining": remaining if isinstance(remaining, str) else ""}
 
     # ---- idle timer ----
 
@@ -220,8 +283,7 @@ class PrototypeSession:
     async def start(self) -> None:
         spec_md = await self._s3.get(self._spec_key())  # FileNotFoundError -> route 404
 
-        self._session_id, resume = await self._resolve_session_id()
-        self._resumed = resume
+        self._session_id, resume, self._prompt_kind = await self._resolve_session_id()
 
         # The agent reads the spec with its own file tools from cwd, so it has
         # to exist on local disk (the VM era pushed it over HTTP instead).
@@ -360,21 +422,24 @@ class PrototypeSession:
     # ---- first turn's auto-spoken prompt ----
 
     def first_prompt(self) -> str:
-        """The auto-spoken opening turn. Two shapes, chosen by `_resumed`.
+        """자동 발화되는 개시 턴. 세 가지 모양이고 `_prompt_kind`가 고른다.
 
-        Both end the same way -- AskUserQuestion, then wait -- because that
-        tool is the ONE whose permission callback we intercept, so asking is
-        also what suspends the turn and surfaces the choice to the UI
-        (builder._on_can_use_tool -> `questions` SSE event). And the wording
-        is the only brake there is: the builder runs under
-        `bypassPermissions`, so Write/Edit are auto-approved and nothing
-        outside this text can stop an agent that decides to just start.
+        셋 다 같은 방식으로 끝난다 -- AskUserQuestion, 그리고 대기. 그
+        도구만이 permission 콜백을 우리가 가로채는 유일한 도구여서, 질문하는
+        것이 턴을 멈추고 선택지를 UI에 올리는 방법이기도 하다
+        (builder._on_can_use_tool -> `questions` SSE 이벤트). 그리고 이
+        문구가 유일한 브레이크다: 빌더는 bypassPermissions로 돌아 Write/Edit이
+        자동 승인되므로, 그냥 시작해 버리는 에이전트를 이 텍스트 밖에서 막을
+        방법이 없다.
 
-        Fresh -> plan it, don't build yet.
-        Resumed -> the transcript and the half-built files are already in
-        context; ask what to continue with instead of re-planning.
+        plan    -> 계획만 세워라, 아직 빌드하지 마라.
+        resume  -> 트랜스크립트와 반쯤 만든 파일이 이미 맥락에 있다. 다시
+                   계획하지 말고 무엇을 이어갈지 물어라.
+        handoff -> 빌드는 끝났고 맥락은 요약뿐이다. 무엇을 개선할지 물어라.
         """
-        if self._resumed:
+        if self._prompt_kind == "handoff" and self._handoff is not None:
+            return self._handoff_prompt(self._handoff)
+        if self._prompt_kind == "resume":
             return self._resume_prompt()
         return self._plan_prompt()
 
@@ -426,6 +491,30 @@ class PrototypeSession:
             "기다려줘.** 남은 작업을 이어서 할지, 다른 것을 먼저 할지 내가 고를 수 "
             "있게 선택지를 제시해줘.\n"
             "3. 내가 고른 뒤에 작업을 시작해줘.\n"
+        )
+
+    def _handoff_prompt(self, handoff: dict) -> str:
+        """완료된 빌드를 개선하는 새 세션의 개시 턴.
+
+        `_resume_prompt`보다도 짧다. 파일 트리를 넘기지 않는 것이 의도적이다
+        -- 에이전트가 자기 파일 도구로 cwd를 읽는 편이 스냅샷보다 정확하고,
+        그게 이미 스펙을 읽는 방식이다. 여기서 할 일은 이전 빌드가 무엇을
+        남겼는지 알려주고, 마음대로 손대지 않게 막는 것뿐이다.
+        """
+        remaining = handoff.get("remaining") or "(따로 기록된 것 없음)"
+        return (
+            f"이 프로토타입은 이미 한 번 빌드가 완료됐다. 이번 세션은 개선 "
+            f"작업이다.\n\n"
+            f"이전 빌드 요약:\n{handoff['summary']}\n\n"
+            f"남은 작업으로 기록된 것:\n{remaining}\n\n"
+            "**아직 아무것도 수정하지 마.**\n"
+            f"1. 먼저 작업 디렉토리의 `prototype/`을 살펴보고 현재 상태를 파악해줘. "
+            f"필요하면 `{self._spec_key()}`도 다시 읽어줘.\n"
+            "2. 그다음 **AskUserQuestion으로 이번에 무엇을 개선할지 물어보고 내 "
+            "답을 기다려줘.** 위에 기록된 남은 작업을 할지, 다른 것을 할지 내가 "
+            "고를 수 있게 선택지를 제시해줘.\n"
+            "3. 내가 고른 뒤에 작업을 시작해줘. 개선이 끝나면 다시 "
+            "`build_complete`로 완료를 선언해줘.\n"
         )
 
 
