@@ -72,9 +72,9 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
         }}
       />,
     );
-    expect(screen.getByText("질문을 준비하고 있어요…")).toBeInTheDocument();
+    expect(screen.getByText("질문을 준비하고 있어요")).toBeInTheDocument();
     // 마지막 status만 — 이전 활동(file_read)은 라이브 라인에 없음
-    expect(screen.queryByText("자료를 확인하고 있어요…")).not.toBeInTheDocument();
+    expect(screen.queryByText("자료를 확인하고 있어요")).not.toBeInTheDocument();
   });
 
   it("file_changed는 활동 라인 대상이 아니다 — 마지막 status가 유지된다", () => {
@@ -91,7 +91,7 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
         }}
       />,
     );
-    expect(screen.getByText("문서를 작성하고 있어요…")).toBeInTheDocument();
+    expect(screen.getByText("문서를 작성하고 있어요")).toBeInTheDocument();
   });
 
   it("스트리밍이 끝나면 활동 라인이 사라진다", () => {
@@ -105,7 +105,20 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
         }}
       />,
     );
-    expect(screen.queryByText("질문을 준비하고 있어요…")).not.toBeInTheDocument();
+    expect(screen.queryByText("질문을 준비하고 있어요")).not.toBeInTheDocument();
+  });
+
+  it("도구가 아직 하나도 안 돌았어도 진행 표시가 뜬다 — 그 구간이 가장 불안하다", () => {
+    // 종전에는 status trace가 있어야만 활동 라인이 나왔다. 턴 시작 직후
+    // 모델이 생각만 하는 구간(가장 길다)에 아무 표시도 없던 것이 "멈춘 것
+    // 같다"의 주된 원인이었다.
+    render(<AiMessage item={{ ...base, streaming: true, text: "분석을 시작합니다." }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("생각하고 있어요");
+  });
+
+  it("경과 시간을 함께 보여준다 — 3초짜리와 40초짜리를 구분할 근거", () => {
+    render(<AiMessage item={{ ...base, streaming: true, text: "작업 중" }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("0초");
   });
 
   it("알 수 없는 도구명은 폴백 문구로 표시한다", () => {
@@ -119,7 +132,7 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
         }}
       />,
     );
-    expect(screen.getByText("custom_tool 실행 중…")).toBeInTheDocument();
+    expect(screen.getByText("custom_tool 실행 중")).toBeInTheDocument();
   });
 });
 
