@@ -126,8 +126,27 @@ async def load_transcript(s3: S3StoreLike, session_id: str) -> list[dict]:
     The read side of `append`, used by session_history. Ordering comes from the
     zero-padded sequence in the key, so a plain `sorted()` is chronological.
     Failure is the caller's to degrade -- this raises.
+
+    `session_id` is accepted in the caller's terms -- a PROJECT ID -- and
+    translated here, because the two sides of the mirror do not agree on it by
+    default. The writer never sees the project id: the CLI rejects a non-UUID
+    `--session-id` outright, so the driver derives a stable uuid5 from it
+    (`_sdk_session_id`) and mirrors under THAT. A reader that takes the project
+    id literally therefore lists a prefix nothing was ever written to and
+    reports an empty history -- with no error, because `list_history` degrades
+    every failure to `[]`. Measured: transcript present in S3, chat timeline
+    blank. Same shape as the prefix mismatch this module's header describes,
+    one layer further in.
+
+    Translating rather than making the caller do it: the key layout is owned
+    here, and the caller (`session_history.list_history`) already receives a
+    project id from the route. A value that is already a UUID passes through,
+    so a caller that hands over a real session id is not overridden.
     """
-    prefix = _session_prefix({"session_id": session_id})
+    from pathfinder.agent.claude_driver import _sdk_session_id
+
+    resolved, _ = _sdk_session_id({"session_id": session_id})
+    prefix = _session_prefix({"session_id": resolved})
     entries: list[dict] = []
     for k in sorted(await s3.list(prefix)):
         body = await s3.get(k)

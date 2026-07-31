@@ -48,8 +48,18 @@ def test_history_degrades_when_factory_raises(monkeypatch):
 # 읽었다. 프리픽스가 달라 항상 빈 목록이었고 에러도 없었다. 그래서 이 테스트는
 # 단위가 아니라 **라우트를 통해** 왕복해야 의미가 있다.
 
-async def _write_cli_transcript(s3, session_id, entries):
+async def _write_cli_transcript(s3, project_id, entries):
+    """드라이버가 실제로 쓰는 키로 쓴다.
+
+    `project_id`를 그대로 세션 키로 쓰면 안 된다 — 그것이 이 버그의 두 번째
+    겹이었다. CLI는 비-UUID session-id를 거부하므로 드라이버는
+    `_sdk_session_id`로 uuid5를 유도해 그 값으로 미러링한다. 이 헬퍼가 원본
+    project_id로 쓰고 라우트가 같은 값으로 읽으면, 쓰는 키와 읽는 키가 어긋난
+    상태에서도 테스트만 통과한다(실제로 그렇게 통과하고 있었다).
+    """
+    from pathfinder.agent.claude_driver import _sdk_session_id
     from pathfinder.agent.session_store import DiscoverySessionStore
+    session_id, _ = _sdk_session_id({"session_id": project_id})
     await DiscoverySessionStore(s3).append({"session_id": session_id}, entries)
 
 

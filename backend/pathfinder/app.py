@@ -24,6 +24,51 @@ from pathfinder.project_store import restore_projects
 
 _log = logging.getLogger(__name__)
 
+#: 애플리케이션 로그 레벨. 기본 INFO — 진단에 필요한 것 대부분이 그 레벨이다.
+_LOG_LEVEL_ENV = "PATHFINDER_LOG_LEVEL"
+
+#: configure_logging이 자기가 붙인 핸들러를 알아보기 위한 표식. 재호출 시
+#: 핸들러가 쌓여 같은 줄이 여러 번 찍히는 것을 막는다(uvicorn --reload,
+#: TestClient가 lifespan을 두 번 도는 경우).
+_HANDLER_TAG = "pathfinder"
+
+
+def configure_logging() -> None:
+    """루트 로거에 핸들러를 붙인다.
+
+    없으면 애플리케이션 로그가 사실상 사라진다. uvicorn은 자기 로거만
+    설정하고 루트는 건드리지 않으므로, 핸들러 없는 상태에서 INFO는 조용히
+    버려지고 WARNING만 Python의 lastResort로 포맷 없이 새어나온다.
+
+    실측: 워크숍 박스 journald에 `pathfinder` 로거의 산출이 2905줄 중 **0건**
+    이었다. 그 사이 채팅 내역 복원 버그를 쫓고 있었는데, 원인을 가리키는 로그
+    (`_resolve_resume`의 resume 판단, SDK의 "dropping mirror frame" 경고)가
+    전부 이 구멍으로 사라져서 프로덕션에서 재현·계측을 반복해야 했다.
+
+    SDK 로거를 함께 여는 이유가 그 경고다: 트랜스크립트 미러링 실패는
+    `claude_agent_sdk` 쪽 로거로만 보고되므로, 우리 로거만 열면 "프레임이
+    버려졌다"와 "프레임이 오지 않았다"를 여전히 구별할 수 없다.
+
+    uvicorn의 설정을 갈아엎지 않고 루트에만 핸들러를 더한다 — 액세스 로그의
+    모양은 그대로 두는 것이 목적이다.
+    """
+    level = getattr(logging, os.environ.get(_LOG_LEVEL_ENV, "INFO").upper(),
+                    logging.INFO)
+    root = logging.getLogger()
+    if not any(getattr(h, "_pathfinder_tag", None) == _HANDLER_TAG
+               for h in root.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(
+            "%(levelname)s:    %(name)s: %(message)s"))
+        handler._pathfinder_tag = _HANDLER_TAG  # type: ignore[attr-defined]
+        root.addHandler(handler)
+    root.setLevel(min(root.level or level, level) if root.level else level)
+    # 두 로거를 명시적으로 연다. 루트 레벨만으로는 부족하다 — 서드파티가 자기
+    # 로거 레벨을 올려 두면 루트가 열려 있어도 걸러진다.
+    for name in ("pathfinder", "claude_agent_sdk"):
+        logging.getLogger(name).setLevel(level)
+
+
 registry = ProjectRegistry()
 
 
@@ -310,6 +355,9 @@ async def make_workspace(project_id: str) -> Workspace:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    # 가장 먼저. 아래의 모든 것이 실패를 로그로 보고하고, 핸들러가 붙기 전의
+    # 로그는 사라진다(configure_logging 참고 — 실제로 그렇게 잃었다).
+    configure_logging()
     # 기동 검증: PATHFINDER_DISCOVERY_DRIVER 오타는 여기서 죈다(의도적으로
     # try/except로 감싸지 않는다 — uvicorn이 기동을 실패시켜야 배포 스크립트/
     # 로드밸런서 헬스체크가 "정상"으로 잘못 판정하지 않는다). driver_factory

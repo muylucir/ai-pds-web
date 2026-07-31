@@ -311,11 +311,24 @@ def test_cli_answer_tool_result_becomes_a_readable_user_bubble():
     assert users[0].text == "답변 제출 — 1: A · 2: B"
 
 
+def _driver_session_key(project_id: str) -> dict:
+    """드라이버가 미러링에 실제로 쓰는 세션 키.
+
+    project_id를 그대로 쓰면 안 된다 — 그것이 이 버그의 두 번째 겹이었다. CLI가
+    비-UUID session-id를 거부하므로 드라이버는 uuid5를 유도해 그 값으로 쓰고,
+    읽는 쪽이 원본 project_id를 쓰면 아무것도 쓰이지 않은 프리픽스를 뒤진다.
+    양쪽이 같은 실수를 하면 어긋난 상태로도 테스트는 통과한다.
+    """
+    from pathfinder.agent.claude_driver import _sdk_session_id
+    session_id, _ = _sdk_session_id({"session_id": project_id})
+    return {"session_id": session_id}
+
+
 async def test_list_history_reads_what_the_session_store_wrote():
     """쓰기와 읽기가 같은 키를 본다는 것 — 이 버그의 핵심이 경로 불일치였다."""
     s3 = FakeS3Store()
     store = DiscoverySessionStore(s3)
-    key = {"session_id": "sess-1"}
+    key = _driver_session_key("sess-1")
     await store.append(key, [
         {"type": "user", "message": {"role": "user", "content": "시작해줘"}},
         {"type": "assistant", "message": {"role": "assistant", "content": [
@@ -341,7 +354,7 @@ async def test_append_across_instances_does_not_overwrite_earlier_batches():
     """resume은 새 store 인스턴스를 만든다. 시퀀스를 0에서 시작하면 첫 append가
     이전 세션의 초반 배치를 같은 키로 덮어써 히스토리 앞부분이 사라진다."""
     s3 = FakeS3Store()
-    key = {"session_id": "sess-3"}
+    key = _driver_session_key("sess-3")
     first = DiscoverySessionStore(s3)
     await first.append(key, [{"type": "user",
                               "message": {"role": "user", "content": "첫 턴"}}])

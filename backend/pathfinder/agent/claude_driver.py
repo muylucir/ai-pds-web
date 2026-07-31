@@ -484,6 +484,15 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # mechanism the prototype builder already uses (proto/builder.py's
             # session_store), different key prefix.
             session_store=driver._session_store,
+            # `eager`, not the SDK default `batched`. Batched only flushes on a
+            # `result` message or `close()` (query.py), and a Discovery turn
+            # reaches NEITHER: a question ends run() right there with
+            # `questions` -> `done` (see this module's header) and the client
+            # stays cached for the life of the process. Measured on the
+            # workshop box: 47 transcript lines on local disk, 0 objects in S3,
+            # and no error anywhere -- the mirror was working exactly as
+            # documented, just never asked to write.
+            session_store_flush="eager",
             # Kept even under bypassPermissions, which the SDK warns shadows
             # this callback entirely. The warning overstates our case: probed
             # against the real CLI (see builder.py), Bash/Write do skip the
@@ -657,6 +666,28 @@ class ClaudeDriver:
             self._client = client
         return self._client
 
+    async def _flush_transcript_mirror(self) -> None:
+        """Force this turn's mirrored transcript out to S3.
+
+        Reaches into the SDK's batcher (`client._query`) rather than calling a
+        public API, because there isn't one: `flush` is driven by the read loop
+        on `result`/`close()`, and Discovery hits neither (see the call site).
+        Guarded with getattr and a broad except precisely BECAUSE it is a
+        private handle -- an SDK upgrade that moves or renames it must cost the
+        durability of chat history, not the turn the user is watching. When that
+        happens the log line is the signal, and `eager` per-frame flushing is
+        still underneath as the weaker guarantee.
+        """
+        batcher = getattr(getattr(self._client, "_query", None),
+                          "_transcript_mirror_batcher", None)
+        if batcher is None:
+            return
+        try:
+            await batcher.flush()
+        except Exception:
+            _log.exception("transcript mirror flush failed — "
+                           "chat history for this turn may be lost")
+
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
         name = input_data.get("tool_name", "")
         if name in _FILE_TOOLS:
@@ -793,6 +824,19 @@ class ClaudeDriver:
     def _translate(self, msg, reader: "_MessageReader | None" = None) -> list[AgentEvent]:
         events: list[AgentEvent] = []
         tname = type(msg).__name__
+        if tname == "SystemMessage" and getattr(msg, "subtype", "") == "mirror_error":
+            # A transcript batch failed to reach S3. The SDK does NOT retry it
+            # (at-most-once), so this message is the only signal there is -- and
+            # we were dropping it whole. That is what made the empty-history bug
+            # so slow to pin down: with no log either way, "the write failed"
+            # and "the write was never attempted" look identical from outside,
+            # and it turned out to be the second one.
+            #
+            # Logged, not surfaced: durable history is secondary data, and there
+            # is nothing a workshop attendee can do about an S3 error mid-turn.
+            _log.warning("transcript mirror failed (history for this turn may "
+                         "be lost): %s", getattr(msg, "error", "unknown"))
+            return events
         if tname == "AssistantMessage":
             for block in getattr(msg, "content", []):
                 btype = type(block).__name__
@@ -1001,6 +1045,19 @@ class ClaudeDriver:
         # reader, and `_continue_after_answers` pumps the SAME reader -- so if
         # the question turn already failed, its continuation stays failed
         # rather than reporting success.
+        # Push this turn's transcript to S3 before the terminal event, because
+        # for the caller `done` means the turn is over -- the SSE response
+        # closes and nothing else will run on our behalf.
+        #
+        # `session_store_flush="eager"` already schedules a flush per frame, but
+        # those are fire-and-forget: the last frames of a turn can still be
+        # in flight here. And the usual backstops do not apply to Discovery --
+        # the SDK flushes on a `result` message or `close()`, and a question
+        # turn reaches neither (`asked` ends the pump with the CLI still parked,
+        # and the client stays cached). Measured on the workshop box: HTTP
+        # returned 200 at 00:34:31 while the CLI kept writing until 00:35:50,
+        # and S3 had nothing.
+        await self._flush_transcript_mirror()
         if reader.failed:
             yield AgentEvent(kind="error", text=_TURN_FAILED_TEXT)
         else:

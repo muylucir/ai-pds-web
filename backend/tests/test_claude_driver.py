@@ -1296,3 +1296,102 @@ async def test_a_refresh_mid_question_can_still_submit_the_answer(tmp_path):
     assert kinds[-1] == "done", kinds
     assert not any(e.kind == "error" and e.text == "no pending questions"
                    for e in later), [(e.kind, e.text) for e in later]
+
+
+# ---- 트랜스크립트 미러링: 질문에서 파킹된 턴도 S3에 남아야 한다 ----
+
+def _captured_options(tmp_path, monkeypatch, session):
+    """실제 _default_client_factory가 조립한 ClaudeAgentOptions를 붙잡는다.
+
+    이 파일의 다른 테스트는 전부 client_factory를 주입하므로 이 경로를 타지
+    않는다 — 배선이 빠져도 전부 통과한다. 실제로 그렇게 놓쳤다: session_store가
+    붙어 있었는데도 워크스페이스 히스토리가 비어 있었고, 그 조합을 검사하는
+    테스트가 없어서 원인이 프로덕션 로그에서만 드러났다.
+    """
+    from pathfinder.agent.claude_driver import _default_client_factory
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, options=None):
+            captured["options"] = options
+
+    import claude_agent_sdk
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClient)
+
+    driver = ClaudeDriver(workspace=str(tmp_path), rules_dir=str(tmp_path),
+                          config_dir=str(tmp_path / "cfg"), s3=FakeS3Store())
+    _default_client_factory(driver)(session)
+    return captured["options"]
+
+
+def test_transcript_mirroring_does_not_wait_for_the_end_of_a_turn(tmp_path, monkeypatch):
+    """미러링은 `eager`여야 한다 — Discovery의 턴은 `result`에 도달하지 않는다.
+
+    SDK 기본값 `batched`는 `result` 메시지나 `close()`에서만 flush한다
+    (claude_agent_sdk/_internal/query.py). Discovery는 질문이 뜨면 그 자리에서
+    `questions` -> `done`으로 run()을 끝내고(이 모듈 상단 주석) 클라이언트를
+    캐시로 살려두므로 둘 중 어느 것에도 닿지 않는다. 그러면 그 턴의 대화가 SDK
+    메모리에만 남고 프로세스와 함께 사라진다 -- 실측: 로컬 트랜스크립트 47줄,
+    S3 0건.
+    """
+    options = _captured_options(tmp_path, monkeypatch,
+                                {"session_id": "p1", "resume": False})
+    assert options.session_store is not None, "미러링 자체가 꺼져 있다"
+    assert options.session_store_flush == "eager", (
+        "batched면 질문에서 끝나는 턴의 트랜스크립트가 flush되지 않는다")
+
+
+async def test_parking_on_a_question_flushes_the_transcript(tmp_path):
+    """질문으로 턴을 마감할 때 미러 배처를 직접 flush해야 한다.
+
+    `eager`가 프레임마다 백그라운드 flush를 걸지만 그것은 fire-and-forget이다 --
+    턴을 끝내고 SSE 응답이 닫히는 시점에 마지막 프레임이 아직 안 나갔을 수 있다.
+    프로덕션에서 정확히 그 모양이었다: HTTP는 00:34:31에 200으로 끝났는데 CLI는
+    00:35:50까지 계속 썼고, S3에는 아무것도 남지 않았다.
+    """
+    flushed = []
+
+    class FakeBatcher:
+        async def flush(self):
+            flushed.append(True)
+
+    d, _, captured = _driver(tmp_path, {"questions": True})
+
+    kinds = []
+    async for ev in d.run("hi", {"session_id": "p1"}):
+        # 실제 SDK가 배처를 두는 자리와 같은 곳에, 클라이언트가 만들어진 뒤에
+        # 심는다(팩토리가 부르는 가짜에는 _query가 없다).
+        client = captured.get("client")
+        if client is not None and not hasattr(client, "_query"):
+            client._query = type(
+                "Q", (), {"_transcript_mirror_batcher": FakeBatcher()})()
+        kinds.append(ev.kind)
+    assert "questions" in kinds and kinds[-1] == "done", kinds
+    assert flushed, "질문에서 파킹된 턴의 트랜스크립트가 flush되지 않았다"
+
+
+async def test_a_mirror_error_is_logged(tmp_path, caplog):
+    """SDK가 미러링 실패를 알려주면 로그에 남아야 한다.
+
+    실패한 배치는 재시도되지 않는다(at-most-once) — 이 system 메시지가
+    소비자에게 오는 유일한 신호이고, 우리는 그것을 통째로 버리고 있었다. 그래서
+    S3에 트랜스크립트가 없을 때 "쓰기가 실패했다"와 "쓰기가 시도되지 않았다"를
+    구별할 방법이 없었다. 사용자에게는 보이지 않는다: 히스토리 내구성은 보조
+    데이터이고, 진행 중인 턴을 깨뜨릴 이유가 없다.
+    """
+    import logging
+
+    class FakeSystemMessage:
+        subtype = "mirror_error"
+        error = "S3 PutObject denied"
+
+    FakeSystemMessage.__name__ = "SystemMessage"
+
+    d, _, _ = _driver(tmp_path, {})
+    with caplog.at_level(logging.WARNING, logger="pathfinder.agent"):
+        events = d._translate(FakeSystemMessage())
+
+    assert events == [], "미러링 실패를 사용자 이벤트로 만들면 안 된다"
+    assert "mirror" in caplog.text.lower()
+    assert "S3 PutObject denied" in caplog.text
