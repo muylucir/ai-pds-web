@@ -48,6 +48,7 @@ function mockWorkspaceStream(overrides: Partial<workspaceStream.WorkspaceStream>
     historyLoading: false,
     activeDoc: null,
     turnSeq: 0,
+    interrupt: vi.fn(),
     ...overrides,
   });
 }
@@ -182,6 +183,19 @@ describe("Workspace page", () => {
     });
     await screen.findByLabelText("스테이지 진행 상황");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("진행 중이면 중단 버튼이 뜨고 누르면 훅의 interrupt를 부른다", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    const user = userEvent.setup();
+    const interrupt = vi.fn();
+    mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: true, interrupt });
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    await screen.findByLabelText("스테이지 진행 상황");
+    await user.click(screen.getByRole("button", { name: "중단" }));
+    expect(interrupt).toHaveBeenCalledTimes(1);
   });
 
   it("shows the welcome card only when history is empty and loaded", async () => {

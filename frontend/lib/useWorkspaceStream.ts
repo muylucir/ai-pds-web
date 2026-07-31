@@ -2,7 +2,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { streamEvents, streamAnswers } from "@/lib/api/sse";
-import { getPending, getHistory } from "@/lib/api/client";
+import { getPending, getHistory, interruptTurn } from "@/lib/api/client";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
 import type { AgentEvent, HistoryItem, QuestionsPayload, StagePayload, DocumentPayload } from "@/lib/api/types";
@@ -48,6 +48,7 @@ export interface WorkspaceStream {
   streaming: boolean;
   send: (text: string) => void;
   submitAnswers: (answers: Record<string, string>) => void;
+  interrupt: () => Promise<void>;
   pendingQuestions: QuestionsPayload | null;
   stages: StagePayload[];
   lastDocument: DocumentPayload | null;
@@ -147,6 +148,12 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       }
       patchAi(aiId, (it) => {
         if (ev.kind === "message") return { ...it, text: it.text + (ev.text ?? "") };
+        // 중단은 turn의 종결 사유라 trace가 아니라 전용 필드로 간다.
+        // 드라이버가 status로 흘리는 이유는 트랜스크립트에 남기기 위해서다
+        // (claude_driver.interrupt).
+        if (ev.kind === "status" && ev.text === "중단됨") {
+          return { ...it, interrupted: true };
+        }
         if (ev.kind === "status" || ev.kind === "file_changed") {
           const trace: TraceEntry = { kind: ev.kind, text: ev.text, path: ev.path };
           return { ...it, trace: [...it.trace, trace] };
@@ -249,6 +256,16 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     [projectId, runTurn, pendingQuestions],
   );
 
+  const interrupt = useCallback(async () => {
+    // 실패를 삼킨다: 중단은 보조 동작이고, 실패해도 턴은 그대로 돌아 화면이
+    // 막히지 않는다. 사용자는 다시 누를 수 있다.
+    try {
+      await interruptTurn(projectId);
+    } catch {
+      /* 무시 */
+    }
+  }, [projectId]);
+
   // Restore an in-flight question interrupt (e.g. after a page refresh) from
   // GET /pending — same payload shape/parsing as a live "questions" event.
   useEffect(() => {
@@ -298,6 +315,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     streaming,
     send,
     submitAnswers,
+    interrupt,
     pendingQuestions,
     stages,
     lastDocument,

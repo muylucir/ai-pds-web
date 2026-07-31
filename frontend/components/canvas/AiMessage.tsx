@@ -60,6 +60,9 @@ export function AiMessage({ item }: { item: AiItem }) {
           </div>
         )}
         {item.streaming && <ActivityIndicator tool={lastStatus?.text} />}
+        {item.interrupted && (
+          <p className="mt-1.5 text-xs text-slate-400">중단됨</p>
+        )}
         <ReasoningTrace entries={item.trace} />
       </div>
     </div>

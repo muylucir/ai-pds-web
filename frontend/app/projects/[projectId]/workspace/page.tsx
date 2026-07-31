@@ -28,7 +28,7 @@ import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
-  const { items, streaming, send, submitAnswers, pendingQuestions, stages, lastDocument, changedPaths, historyLoading, activeDoc, turnSeq } =
+  const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, changedPaths, historyLoading, activeDoc, turnSeq } =
     useWorkspaceStream(projectId);
   // Show the Path A/B welcome starter only once history has finished loading
   // (avoids a flash of the welcome card before restored history arrives) AND
@@ -210,6 +210,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             onAttach={handleAttach}
             disabled={streaming}
             initialText={draft}
+            onInterrupt={() => void interrupt()}
+            interrupting={streaming}
           />
         </main>
 

@@ -47,6 +47,22 @@ describe("AiMessage", () => {
     render(<AiMessage item={{ id: "1", role: "ai", text: "**중요**", trace: [], streaming: false, error: null }} />);
     expect(screen.getByText("중요").tagName).toBe("STRONG");
   });
+
+  it("중단된 턴은 말풍선 아래에 그 사실을 남긴다", () => {
+    // trace의 한 줄로 넣지 않는다 — trace는 도구 실행 기록이고 중단은 턴의
+    // 종결 사유다. 접혀 있는 "추론 과정" 안에 두면 왜 말이 끊겼는지 보이지 않는다.
+    render(
+      <AiMessage
+        item={{ ...base, streaming: false, text: "분석하다가", interrupted: true }}
+      />,
+    );
+    expect(screen.getByText("중단됨")).toBeInTheDocument();
+  });
+
+  it("정상 종료된 턴에는 중단 표시가 없다", () => {
+    render(<AiMessage item={{ ...base, streaming: false, text: "완료" }} />);
+    expect(screen.queryByText("중단됨")).not.toBeInTheDocument();
+  });
 });
 
 describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문제)", () => {
