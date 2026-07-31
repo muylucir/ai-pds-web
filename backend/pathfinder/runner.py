@@ -178,6 +178,17 @@ class AgentRunner:
             if not synced:
                 await self._sync_abandoned_turn()  # see send_message's note
 
+    async def interrupt(self) -> None:
+        """진행 중인 턴을 끊는다. 드라이버로 위임한다.
+
+        턴 슬롯은 건드리지 않는다 — 돌고 있는 run()이 종결 이벤트를 내며
+        스스로 놓는다. 여기서 함께 놓으면 이중 해제가 된다.
+        """
+        interrupt = getattr(self._driver, "interrupt", None)
+        if interrupt is None:
+            return  # StrandsDriver엔 interrupt()가 없다 — 끊을 서브프로세스가 없으니 no-op(여전히 멱등)
+        await interrupt()
+
     async def pending(self) -> str | None:
         try:
             payload = await self._driver.pending(self._session)

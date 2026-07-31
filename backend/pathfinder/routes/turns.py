@@ -59,3 +59,17 @@ async def get_pending(pid: str):
     if payload is not None:
         payload = redact_credentials(payload)
     return {"pending": payload}
+
+@router.post("/projects/{pid}/interrupt", status_code=202)
+async def interrupt_turn(pid: str):
+    """진행 중인 턴을 중단한다. 프로토타입 쪽
+    (/prototypes/{slug}/interrupt)과 같은 계약이다.
+
+    진행 중인 턴이 없어도 202: 중단은 멱등이고, 사용자가 반응이 없다고 다시
+    누르는 것이 정상 경로다. 202(Accepted)인 이유는 실제 중단이 서브프로세스
+    왕복이라 이 응답 시점에 끝나 있지 않다는 것 — 결과는 SSE 스트림이 종결
+    이벤트로 알린다.
+    """
+    ws = await ensure_workspace(pid)   # 없는 프로젝트는 404
+    await ws.runner.interrupt()
+    return {"status": "interrupting"}

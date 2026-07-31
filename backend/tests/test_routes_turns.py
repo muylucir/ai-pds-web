@@ -43,6 +43,7 @@ class ScriptRunner:
         self._script = script or _structured_first_turn
         self.input_holder = None
         self._pending_payload = None
+        self.interrupts = 0
 
     async def send_message(self, text):
         for e in self._script(text):
@@ -71,6 +72,9 @@ class ScriptRunner:
     async def pending(self):
         return self._pending_payload
 
+    async def interrupt(self):
+        self.interrupts += 1
+
     async def stop(self):
         pass
 
@@ -88,14 +92,20 @@ def _install_scripted(monkeypatch, pid, script):
 def _install_default(monkeypatch, pid):
     """Install a ScriptRunner with its default structured-demo script, so
     send_message arms a pending interrupt that send_answers/pending can then
-    be exercised against."""
+    be exercised against.
+
+    Returns the runner so a test can assert on what the route did to it
+    (the interrupt route has no response body to check).
+    """
     monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    runner = ScriptRunner()
 
     async def make(project_id):
-        return Workspace(ScriptRunner())
+        return Workspace(runner)
 
     monkeypatch.setattr(app_module, "make_workspace", make)
     client.post("/projects", json={"project_id": pid})
+    return runner
 
 
 def test_message_returns_events(monkeypatch):
@@ -187,3 +197,30 @@ def test_payload_is_redacted(monkeypatch):
     body = "".join(lines)
     assert "AKIA" not in body
     assert "[CREDENTIAL REDACTED]" in body
+
+
+# ---- 턴 중단 ----
+
+def test_interrupt_reaches_the_runner(monkeypatch):
+    """라우트가 실제로 러너까지 도달하는가. 202만 돌려주고 아무것도 하지 않는
+    라우트는 화면에서 구별되지 않는다 — 버튼은 눌리고 턴은 계속 돈다."""
+    runner = _install_default(monkeypatch, "int-1")
+    r = client.post("/projects/int-1/interrupt")
+    assert r.status_code == 202
+    assert runner.interrupts == 1
+
+
+def test_interrupt_is_idempotent(monkeypatch):
+    """두 번 눌러도 같다. 사용자가 반응이 없다고 다시 누르는 것이 정상 경로이고,
+    돌고 있는 턴이 없을 때도 에러가 아니다."""
+    runner = _install_default(monkeypatch, "int-2")
+    assert client.post("/projects/int-2/interrupt").status_code == 202
+    assert client.post("/projects/int-2/interrupt").status_code == 202
+    assert runner.interrupts == 2
+
+
+def test_interrupt_on_an_unknown_project_is_404(monkeypatch):
+    """ensure_workspace의 기존 계약 — 없는 프로젝트는 404다. 중단이 멱등인 것과
+    별개다(있는 프로젝트의 없는 턴 ≠ 없는 프로젝트)."""
+    _install_default(monkeypatch, "int-3")
+    assert client.post("/projects/nope/interrupt").status_code == 404
