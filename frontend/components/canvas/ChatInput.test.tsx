@@ -81,4 +81,35 @@ describe("ChatInput", () => {
     render(<ChatInput onSend={vi.fn()} disabled={false} />);
     expect(screen.getByLabelText("채팅 메시지 입력")).toHaveAttribute("rows", "3");
   });
+
+  it("진행 중이면 전송 버튼 자리가 중단 버튼이 된다", async () => {
+    const user = userEvent.setup();
+    const onInterrupt = vi.fn();
+    render(
+      <ChatInput onSend={vi.fn()} disabled={true} interrupting={true} onInterrupt={onInterrupt} />,
+    );
+    // 같은 자리를 쓴다 — 스트리밍 중에는 어차피 비활성이던 버튼이라 레이아웃이
+    // 변하지 않는다.
+    expect(screen.queryByRole("button", { name: "전송" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "중단" }));
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+  });
+
+  it("입력이 막혀 있어도 진행 중이 아니면 중단 버튼을 띄우지 않는다", () => {
+    // 프로토타입 패널은 disabled={streaming || buildComplete !== null}이다
+    // (BuildPanel.tsx). disabled로 판단하면 빌드가 끝난 뒤에도 ■이 떠서
+    // 중단할 턴이 없는데 중단 버튼이 있는 상태가 된다.
+    render(
+      <ChatInput onSend={vi.fn()} disabled={true} interrupting={false} onInterrupt={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: "전송" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "중단" })).not.toBeInTheDocument();
+  });
+
+  it("onInterrupt가 없으면 종전과 같이 동작한다", () => {
+    // 이 컴포넌트를 쓰는 다른 화면이 생겼을 때 중단 버튼이 저절로 나타나지
+    // 않아야 한다.
+    render(<ChatInput onSend={vi.fn()} disabled={true} interrupting={true} />);
+    expect(screen.getByRole("button", { name: "전송" })).toBeInTheDocument();
+  });
 });

@@ -7,12 +7,22 @@ export function ChatInput({
   disabled,
   onAttach,
   initialText,
+  onInterrupt,
+  interrupting,
 }: {
   onSend: (text: string) => void;
   disabled: boolean;
   onAttach?: (file: File) => void;
   // 마운트 시 1회 프리필 + 포커스(예: 리뷰 화면의 수정 요청 링크에서 넘어온 초안).
   initialText?: string;
+  // 진행 중인 턴을 끊는다. 이 두 값은 짝이다 — 핸들러가 없으면 버튼을 띄우지
+  // 않는다(이 컴포넌트를 쓰는 다른 화면에 저절로 생기지 않게).
+  onInterrupt?: () => void;
+  // "중단할 턴이 있는가". `disabled`("입력을 막는가")와 다르다: 프로토타입
+  // 패널은 빌드가 끝난 뒤에도 disabled가 참이므로(BuildPanel.tsx의
+  // `streaming || buildComplete !== null`) 그 값으로 판단하면 중단할 것이
+  // 없는데 ■이 뜬다.
+  interrupting?: boolean;
 }) {
   const [text, setText] = useState(initialText ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -80,15 +90,26 @@ export function ChatInput({
             aria-label="채팅 메시지 입력"
             disabled={disabled}
           />
-          <button
-            type="button"
-            onClick={submit}
-            disabled={disabled || text.trim() === ""}
-            className="shrink-0 w-8 h-8 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white flex items-center justify-center"
-            aria-label="전송"
-          >
-            ↑
-          </button>
+          {interrupting && onInterrupt ? (
+            <button
+              type="button"
+              onClick={onInterrupt}
+              className="shrink-0 w-8 h-8 rounded-lg bg-slate-700 hover:bg-slate-800 text-white flex items-center justify-center"
+              aria-label="중단"
+            >
+              ■
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={submit}
+              disabled={disabled || text.trim() === ""}
+              className="shrink-0 w-8 h-8 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white flex items-center justify-center"
+              aria-label="전송"
+            >
+              ↑
+            </button>
+          )}
         </div>
         <p className="text-[10px] text-slate-400 mt-1.5 text-center">
           모든 입력은 원문 그대로 audit.md에 기록됩니다 · 크리덴셜은 절대 기록되지 않습니다
