@@ -28,6 +28,28 @@ Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론�
 알려주지 않으면 에이전트가 트랜스크립트를 믿고 삭제된 코드를 파일시스템에서
 찾아 헤맨다.
 
+Discovery 대화도 같은 방식으로 S3에 미러링된다(`projects/{pid}/discovery/transcript/`,
+`agent/session_store.py`). CLI는 트랜스크립트를 로컬 디스크에만 두므로 이것이 없으면
+인스턴스 교체와 함께 대화가 사라지고, 워크스페이스를 다시 열었을 때 복원할 것이 없다.
+여기에 두 가지 제약이 붙어 있고 둘 다 실측으로 확인된 것이다:
+
+- **flush 시점** — SDK 기본값 `batched`는 `result` 메시지나 `close()`에서만 쓴다.
+  Discovery는 질문이 뜨면 그 자리에서 턴을 끝내고(`questions` → `done`) 클라이언트를
+  프로세스 수명 내내 캐시하므로 둘 중 어느 것에도 닿지 않는다. 그래서
+  `session_store_flush="eager"`로 두고, 턴을 마감하기 직전 배처를 직접 flush한다
+  (`claude_driver._flush_transcript_mirror`).
+- **세션 키** — CLI가 비-UUID `--session-id`를 거부하므로 드라이버는 project_id에서
+  uuid5를 유도해(`_sdk_session_id`) 그 값으로 미러링한다. 읽는 쪽도 같은 유도를 거쳐야
+  한다(`load_transcript`가 안에서 변환한다) — project_id를 그대로 프리픽스에 넣으면
+  아무것도 쓰이지 않은 곳을 뒤지고, `list_history`의 실패 강등이 그것을 빈 목록으로
+  삼킨다.
+
+복원은 **라이브 스트림과 같은 모양**을 만드는 것이 목표다(`session_history.transform_cli_transcript`).
+CLI는 도구를 부를 때마다 별도 assistant 줄을 쓰므로 줄마다 항목을 만들면 말풍선 하나였던
+턴이 여러 개로 쪼개지고 대부분이 빈 말풍선이 된다 — 턴 경계는 **실제 사용자 발화**이고
+(`tool_result`만 담은 user 줄은 도구 실행 결과이지 발화가 아니다) 그 안의 assistant 줄은
+하나로 누적한다.
+
 자세한 배포 절차는 `infra/README.md`, 수동 e2e 검증은
 `docs/superpowers/checklists/2026-07-24-prototype-generation-e2e.md` 참고.
 
@@ -36,6 +58,16 @@ Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론�
 인증이 필요 없는 토큰 링크(`/survey/{token}`)를 공유해 익명 응답을 받고, 집계를
 대시보드로 확인한 뒤 CSV로 내보내 Discovery의 검증 종합 단계에 넣는다. 응답은 S3에
 저장되며(응답 1건 = 객체 1개), 대시보드는 `rollup.json` 캐시를 읽는다.
+
+문항은 **응답자가 본 것이 데모라는 전제** 위에서 만들어진다(`survey/builder.py`의
+`QUESTIONNAIRE_PROMPT`). 성능·보안·실데이터 정확도·도입 시점은 묻지 않고 — 룰이 그
+단계에서 의도적으로 만들지 않는 것들이므로(`prototype-validation.md` Step 3의
+"NOT production code") 물어서 받은 낮은 점수는 판단에 쓸 수 없다 — 대신 "실제 업무에
+도입된다면 이 방향이 맞는가"를 가정형으로 묻는다. 기능 choice 문항에는 "사용하지
+않았다/해당 없음" 선택지가 들어간다: 룰의 Feature Validation 표에 "Not tested — Users
+did not reach this feature" 행이 있고, 그 선택지가 없으면 응답자가 써 보지 않은 기능을
+추측으로 평가해 집계가 신호와 잡음을 구별할 수 없다. 공용 설문 화면의 안내문도 같은
+전제를 말한다 — 두 곳이 어긋나면 응답자가 목 데이터를 실제 결과로 오해한다.
 
 설문 데이터는 대부분 프로젝트 프리픽스 아래(`projects/{pid}/prototypes/{slug}/survey/`)
 있지만, **토큰 인덱스만 버킷 루트의 `surveys/by-token/`에 있다** — 공개 링크는 토큰이
@@ -200,9 +232,20 @@ cd infra && npx cdk deploy PathfinderHostingStack --require-approval never
 
 ### 트러블슈팅
 
+**먼저 백엔드 로그를 본다.** 대부분의 증상이 화면에서는 빈 화면이나 일반적인 실패로만
+보이고, 원인은 여기에만 남는다:
+
+```bash
+aws ssm start-session --target <InstanceId>
+sudo journalctl -u pathfinder-backend -f            # 실시간
+sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # 프리뷰 프록시 소음 제거
+```
+
 | 증상 | 원인 / 대처 |
 |---|---|
 | 배포 직후 CloudFront 502 | EC2 첫 빌드가 진행 중(5~10분). SSM으로 `sudo tail -f /var/log/cloud-init-output.log` |
+| 특정 기능만 500이고 화면에는 원인이 안 보임 | 대개 IAM이다. 백엔드 로그의 `AccessDenied`가 어떤 액션·리소스인지 말해 준다(실측 사례: 설문 토큰 인덱스의 `s3:PutObject`, `/admin/users`의 `cognito-idp:*`) |
+| 워크스페이스 채팅 내역이 빈 목록 | `list_history`는 모든 실패를 `[]`로 강등하므로 화면만 보면 원인을 알 수 없다. `projects/{pid}/discovery/transcript/`에 객체가 있는지 먼저 확인하고, 없으면 미러링 쪽·있으면 읽기 쪽(세션 키 유도)을 본다 — 위 "Discovery 대화" 항목 참고 |
 | 스택이 `ROLLBACK_COMPLETE`라 재배포 거부 | **최초 생성이 실패한 스택은 업데이트가 불가능하다** — 고친 뒤에도 `cdk deploy`가 거부한다. 먼저 내린 다음 다시 배포한다: `npx cdk destroy PathfinderAuthStack` → `npx cdk deploy --all`. `UPDATE_ROLLBACK_COMPLETE`(기존 스택의 업데이트 실패)는 반대로 그냥 재배포하면 된다 |
 | 첫 대화 턴에서 `AccessDeniedException` | 배포 리전에 Bedrock 모델 액세스 미활성화. `ANTHROPIC_MODEL`이 IAM 허용 목록 밖이어도 같은 증상 — 아래 "환경 변수 요약"의 허용 값 참고 |
 | `` `temperature` is deprecated for this model `` | Opus 4.7 이후 모델은 샘플링 파라미터를 제거했다 — 아래 "참고"의 Bedrock 항목 |
@@ -285,6 +328,7 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `PATHFINDER_CORS_ORIGINS` | `http://localhost:3000` | 콤마 구분 허용 origin |
+| `PATHFINDER_LOG_LEVEL` | `INFO` | 애플리케이션 로그 레벨. `app.configure_logging()`이 기동 시 루트 핸들러를 붙이고 `pathfinder`·`claude_agent_sdk` 로거를 이 레벨로 연다 — 없으면 uvicorn이 자기 로거만 설정하므로 INFO가 조용히 사라진다(실측: journald 2905줄 중 애플리케이션 로그 0건) |
 | `PATHFINDER_S3_REGION` | `ap-northeast-2` | 영속 스토리지 리전(서울). **버킷이 만들어진 리전과 반드시 일치**시킬 것 |
 | `PATHFINDER_S3_BUCKET` | — | 아티팩트 버킷 (CDK 출력) |
 | `ANTHROPIC_MODEL` | — (EC2 배포는 `global.anthropic.claude-opus-4-8`) | Bedrock 추론 프로파일 id. IAM이 invoke를 허용하는 값은 `global.anthropic.claude-{opus-5,opus-4-8,opus-4-7,sonnet-5,sonnet-4-6}`. 기본값은 `infra/lib/backend-permissions.ts`의 `MODEL`이 user-data로 넘긴다 |
