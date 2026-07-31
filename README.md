@@ -3,7 +3,8 @@
 AI-PLC Discovery 워크숍을 위한 대화형 캔버스. Claude Agent SDK 기반 에이전트가 백엔드
 프로세스 안에서 직접(in-process) Discovery 방법론을 구동하고, 프론트엔드가 그 턴을
 실시간(SSE)으로 렌더한다. (구 Strands 드라이버는 `PATHFINDER_DISCOVERY_DRIVER=strands`
-폴백으로 남아 있다.)
+폴백으로 남아 있다.) 워크스페이스 채팅도 프로토타입 빌드와 같은 입력창 ■ 버튼으로 진행 중인
+턴을 중단할 수 있다(`POST /projects/{pid}/interrupt`) — 지금까지 한 작업은 그대로 남는다.
 
 Discovery가 산출한 프로토타입 스펙(`PROTOTYPE-{slug}.md`)은 프론트 **"프로토타입" 탭**에서
 바로 실물로 이어진다: 세션을 시작하면 백엔드 프로세스 안에서 직접 도는 Claude Agent SDK
