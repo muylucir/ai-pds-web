@@ -215,6 +215,10 @@ describe("Workspace page", () => {
       render(<WorkspacePage params={Promise.resolve({ projectId: "p1" })} />);
     });
     expect(screen.getByRole("status", { name: "이전 대화를 불러오는 중" })).toBeInTheDocument();
+    // 회귀 방지: items가 []이면 ChatTimeline 자체 빈 상태 문구
+    // ("대화를 시작해 보세요")가 스켈레톤과 동시에 뜰 뻔했다 — 복원 중임을
+    // 알리는 문구와 "아직 아무것도 없음" 문구가 정면으로 충돌하는 시나리오.
+    expect(screen.queryByText(/대화를 시작해 보세요/)).not.toBeInTheDocument();
   });
 
   it("로딩이 끝나면 스켈레톤이 사라진다", async () => {

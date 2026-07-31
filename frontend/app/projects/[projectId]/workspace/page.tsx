@@ -191,6 +191,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
                 onOpenArtifact={() => {}}
                 busy={streaming}
                 stickSignal={stickSignal}
+                historyLoading={historyLoading}
               />
             </>
           )}
