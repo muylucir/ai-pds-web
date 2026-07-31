@@ -50,8 +50,18 @@ export default function SurveyPage({ params }: { params: Promise<{ token: string
       {state.kind === "ready" && (
         <>
           <h1 className="text-xl font-bold text-slate-800 mb-2">{state.survey.title}</h1>
-          <p className="text-sm text-slate-500 mb-8">
-            프로토타입을 사용해 본 경험을 알려주세요. 응답은 익명으로 수집됩니다.
+          {/* 문항이 "실제 업무에 도입된다면"처럼 가정형으로 묻는 것과 짝이다
+              (backend/pathfinder/survey/builder.py). 응답자가 본 것은 핵심
+              흐름만 동작하는 데모이고 데이터는 목일 수 있는데, 안내문이 실사용
+              경험을 요구하면 두 전제가 어긋난다 — 목 데이터를 실제 결과로
+              오해한 채 완성도를 평가하게 되고, 그 점수는 접근에 대한 신호가
+              아니라 잡음이 된다. */}
+          <p data-testid="survey-intro" className="text-sm text-slate-500 mb-8">
+            체험하신 프로토타입에 대한 의견을 알려주세요. 완성된 제품이 아니라
+            아이디어를 검증하기 위한 데모이므로, 화면의 완성도나 데이터의
+            정확성보다 <strong className="font-semibold text-slate-600">접근 방향이
+            맞는지</strong>를 중심으로 답해 주시면 됩니다. 사용해 보지 않은
+            기능은 그대로 표시해 주세요. 응답은 익명으로 수집됩니다.
           </p>
           <SurveyForm questions={state.survey.questions}
                       onSubmit={(a) => void handleSubmit(a)}

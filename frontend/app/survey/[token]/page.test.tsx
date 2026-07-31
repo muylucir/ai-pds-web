@@ -26,6 +26,18 @@ describe("public survey page", () => {
     expect(await screen.findByText("검증 설문")).toBeInTheDocument();
   });
 
+  it("tells the respondent this is a prototype, not a finished product", async () => {
+    // 문항은 "실제 업무에 도입된다면"처럼 가정형으로 묻는다(survey/builder.py).
+    // 안내문이 "사용해 본 경험"을 요구하면 두 전제가 어긋나고, 응답자는 목
+    // 데이터를 실제 결과로 오해한 채 완성도를 평가한다.
+    vi.spyOn(api, "getPublicSurvey").mockResolvedValue({
+      title: "검증 설문", hypothesis: "가설", questions: QUESTIONS });
+    await renderPage();
+    const intro = await screen.findByTestId("survey-intro");
+    expect(intro.textContent).toMatch(/체험|데모|완성된 제품이 아/);
+    expect(intro.textContent).not.toMatch(/사용해 본 경험/);
+  });
+
   it("shows a closed notice for a closed survey", async () => {
     vi.spyOn(api, "getPublicSurvey").mockRejectedValue(new api.SurveyClosedError());
     await renderPage();
