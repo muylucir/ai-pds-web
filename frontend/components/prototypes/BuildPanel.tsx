@@ -117,15 +117,6 @@ export function BuildPanel({
         <header className="shrink-0 border-b border-slate-200 px-4 md:px-6 py-3 flex items-center justify-between gap-3">
           <h1 className="font-bold text-lg truncate">{slug}</h1>
           <div className="flex items-center gap-2 shrink-0">
-            {streaming && (
-              <button
-                type="button"
-                onClick={() => void interrupt()}
-                className="px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-sm font-medium text-slate-700"
-              >
-                중단
-              </button>
-            )}
             <button
               type="button"
               onClick={handleDone}
@@ -165,7 +156,12 @@ export function BuildPanel({
                 &ldquo;개선 이어서 하기&rdquo;를 눌러주세요.
               </p>
             )}
-            <ChatInput onSend={send} disabled={streaming || buildComplete !== null} />
+            <ChatInput
+              onSend={send}
+              disabled={streaming || buildComplete !== null}
+              onInterrupt={() => void interrupt()}
+              interrupting={streaming}
+            />
           </div>
 
           {/* basis-1/2 — 채팅과 합이 정확히 100%여야 한다. 종전 2/3은 채팅을
