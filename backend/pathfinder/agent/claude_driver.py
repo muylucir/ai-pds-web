@@ -688,6 +688,44 @@ class ClaudeDriver:
             _log.exception("transcript mirror flush failed — "
                            "chat history for this turn may be lost")
 
+    async def interrupt(self) -> None:
+        """진행 중인 턴을 끊는다. 지금까지 한 작업은 살린다.
+
+        proto/builder.py의 interrupt를 패턴으로 따르되 한 가지가 다르다 —
+        Discovery의 pending 질문은 S3에도 미러링된다(agent/pending_store.py).
+        인메모리만 지우면 `GET /pending`이 답할 수 없는 질문을 복원하고,
+        사용자가 제출한 답변은 아무도 듣지 않는 future를 resolve한다.
+
+        순서가 load-bearing이다: 우리 상태를 먼저 정리하고 마지막에 클라이언트를
+        건드린다. client.interrupt()가 던져도 pending이 남지 않는다.
+
+        멱등: 돌고 있는 턴이 없으면 아무것도 하지 않는다. 라우트는 세션 유무만
+        보고 이 메서드를 부르므로 이미 끝난 턴에 대한 요청이 정상적으로 들어온다.
+
+        `_turn_token`이 아니라 `_turn_active`/`_pending_question`으로 판단한다.
+        질문에서 파킹된 턴은 run()의 제너레이터가 questions -> done으로 끝나며
+        `_release_turn`이 이미 돌아 `_turn_token`이 None이 된 뒤에도 CLI
+        서브프로세스와 `_pending_question` future는 여전히 살아 있다(파일 상단
+        "single-turn slot" 절 참고) — `_turn_token`으로 판단하면 정확히 중단해야
+        할 그 상태(파킹된 질문)를 "중단할 것 없음"으로 오판한다.
+        """
+        if self._client is None:
+            return
+        if not self._turn_active and self._pending_question is None:
+            return
+        if self._pending_question is not None and not self._pending_question.done():
+            # 이 future를 기다리던 _on_can_use_tool은 턴과 함께 버려진다.
+            self._pending_question.cancel()
+        self._clear_pending_state()
+        await self._clear_pending_quietly()
+        # 큐에 남은 questions 이벤트는 답할 수 없는 카드다 — 흘려보내면 화면에
+        # 폼이 뜬다.
+        self._queue = [e for e in self._queue if e.kind != "questions"]
+        # 중단 사실을 남긴다. 이 이벤트가 화면의 "중단됨" 한 줄이 되고,
+        # 트랜스크립트에도 들어가 복원 시 재현된다.
+        self._queue.append(AgentEvent(kind="status", text="중단됨"))
+        await self._client.interrupt()
+
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
         name = input_data.get("tool_name", "")
         if name in _FILE_TOOLS:

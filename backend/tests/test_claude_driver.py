@@ -1395,3 +1395,49 @@ async def test_a_mirror_error_is_logged(tmp_path, caplog):
     assert events == [], "미러링 실패를 사용자 이벤트로 만들면 안 된다"
     assert "mirror" in caplog.text.lower()
     assert "S3 PutObject denied" in caplog.text
+
+
+# ---- 턴 중단 ----
+
+async def test_interrupt_clears_the_pending_question_from_s3(tmp_path):
+    """중단은 S3의 pending 레코드까지 지워야 한다.
+
+    Discovery의 pending은 인메모리와 S3 양쪽에 있다(agent/pending_store.py).
+    인메모리만 지우면 `GET /pending`이 답할 수 없는 질문을 복원한다 — 사용자가
+    폼을 채우고 제출했는데 아무 일도 일어나지 않는다. 그 future는 중단과 함께
+    버려졌기 때문이다. 프로토타입 빌더가 같은 정리를 하는 이유이고
+    (proto/builder.py의 interrupt), Discovery는 durable 사본이 하나 더 있다.
+    """
+    s3 = FakeS3Store()
+    d, _, _ = _driver(tmp_path, {"questions": True}, s3=s3)
+    kinds = [ev.kind async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert "questions" in kinds, kinds
+    assert PENDING_KEY in s3.blobs, "전제: 질문이 S3에 저장돼 있다"
+
+    await d.interrupt()
+
+    assert PENDING_KEY not in s3.blobs
+    assert d._pending_payload is None
+    assert d._pending_iid is None
+
+
+async def test_interrupt_without_a_live_turn_is_a_no_op(tmp_path):
+    """멱등이어야 한다. 이미 끝난 턴에 대한 중단 요청은 에러가 아니고, 라우트가
+    세션 유무만 보고 이 메서드를 부른다."""
+    d, _, _ = _driver(tmp_path, {})
+    await d.interrupt()   # 아무 턴도 돌지 않은 상태
+    await d.interrupt()   # 두 번 불러도 같다
+
+
+async def test_interrupt_records_that_the_turn_was_stopped(tmp_path):
+    """중단 사실이 이벤트로 흘러야 화면과 트랜스크립트에 남는다.
+
+    표시가 없으면 스크롤백을 나중에 볼 때 에이전트가 말을 마치지 못한 이유를
+    알 수 없다.
+    """
+    d, _, _ = _driver(tmp_path, {"questions": True})
+    [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+
+    await d.interrupt()
+
+    assert any(e.kind == "status" and e.text == "중단됨" for e in d._queue), d._queue
