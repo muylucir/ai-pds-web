@@ -44,14 +44,21 @@ export function AiMessage({ item }: { item: AiItem }) {
         AI
       </span>
       <div className="max-w-[85%] min-w-0">
-        <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-md px-4 py-3 text-sm leading-relaxed" aria-live="polite">
-          {item.streaming && item.text === "" ? (
-            <TypingDots />
-          ) : (
-            <Markdown text={item.text} />
-          )}
-          {item.error && <p className="mt-2 text-rose-600">{item.error}</p>}
-        </div>
+        {/* 말풍선은 보여줄 것이 있을 때만 그린다. 복원된 턴은 streaming이
+            false이므로, 텍스트가 없으면 타이핑 점도 뜨지 않아 내용 없는 회색
+            상자만 남는다 — 중단된 턴(유휴 타임아웃, SSE 끊김)이 그 모양이고
+            라이브에서 그 자리에 있던 것은 진행 표시였다. 아래 ReasoningTrace는
+            그대로 렌더되므로 도구를 무엇까지 돌렸는지는 남는다. */}
+        {(item.streaming || item.text !== "" || item.error) && (
+          <div data-testid="ai-bubble" className="bg-white border border-slate-200 rounded-2xl rounded-tl-md px-4 py-3 text-sm leading-relaxed" aria-live="polite">
+            {item.streaming && item.text === "" ? (
+              <TypingDots />
+            ) : (
+              <Markdown text={item.text} />
+            )}
+            {item.error && <p className="mt-2 text-rose-600">{item.error}</p>}
+          </div>
+        )}
         {item.streaming && <ActivityIndicator tool={lastStatus?.text} />}
         <ReasoningTrace entries={item.trace} />
       </div>

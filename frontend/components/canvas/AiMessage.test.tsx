@@ -94,6 +94,31 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
     expect(screen.getByText("문서를 작성하고 있어요")).toBeInTheDocument();
   });
 
+  it("복원된 턴에 텍스트가 없으면 빈 말풍선을 그리지 않는다", () => {
+    // 중단된 턴(유휴 타임아웃, SSE 끊김)이 이 모양으로 복원된다: text=""이고
+    // trace만 있다. streaming이 false라 타이핑 점도 뜨지 않으므로 내용 없는
+    // 회색 상자만 남는데, 라이브에서 그 자리에 있던 것은 진행 표시였고 그것은
+    // 복원 대상이 아니다. 트레이스는 무엇까지 돌렸는지의 유일한 기록이므로
+    // 유지한다.
+    render(
+      <AiMessage
+        item={{
+          ...base,
+          streaming: false,
+          text: "",
+          trace: [{ kind: "status", text: "Read", path: null }],
+        }}
+      />,
+    );
+    expect(screen.queryByTestId("ai-bubble")).not.toBeInTheDocument();
+    expect(screen.getByText("추론 과정")).toBeInTheDocument();
+  });
+
+  it("텍스트가 있으면 말풍선을 그린다", () => {
+    render(<AiMessage item={{ ...base, streaming: false, text: "완료" }} />);
+    expect(screen.getByTestId("ai-bubble")).toBeInTheDocument();
+  });
+
   it("스트리밍이 끝나면 활동 라인이 사라진다", () => {
     render(
       <AiMessage

@@ -167,6 +167,18 @@ def transform_cli_transcript(raw: list[dict]) -> list[HistoryItem]:
 
     message가 없는 줄(queue-operation, attachment, ai-title, last-prompt 등)은
     건너뛴다. 그 줄들은 CLI의 내부 부기이고 대화 내용이 아니다.
+
+    **한 턴은 말풍선 하나다.** CLI는 도구를 부를 때마다 별도 assistant 줄을 쓰므로
+    (실측한 5회 도구 사용 턴: thinking 1줄 + tool_use 5줄 + text 1줄), 줄마다
+    항목을 만들면 라이브에서 말풍선 하나였던 턴이 7개로 쪼개지고 그중 대부분이
+    텍스트 없는 빈 말풍선이 된다 — 화면에서는 "추론 과정"만 달린 빈 회색 상자가
+    줄줄이 나온다. 라이브는 턴 하나당 AiItem 하나를 만들어 message를 그 하나에
+    누적하고 도구는 같은 항목의 trace에 쌓으므로(useTurnStream.ts:108,121-123),
+    복원도 그렇게 모은다.
+
+    턴 경계는 **실제 사용자 발화**다. `tool_result`만 담은 user 줄은 사용자가 한
+    말이 아니라 도구 실행 결과이고, 라이브는 그 줄을 아무것도 렌더하지 않는다 —
+    경계로 취급하면 도구 호출 하나하나가 다시 턴이 되어 원래 문제로 돌아간다.
     """
     # 1패스: AskUserQuestion tool_use id 수집. 실제 트랜스크립트에는 Write/Read 등
     # 다른 tool_result가 섞여 있어, 답변 결과만 골라내려면 id 매칭이 필수다.
@@ -184,6 +196,34 @@ def transform_cli_transcript(raw: list[dict]) -> list[HistoryItem]:
                 ask_ids.add(str(block.get("id", "")))
 
     items: list[HistoryItem] = []
+    # 진행 중인 어시스턴트 턴. 실제 사용자 발화를 만나거나 트랜스크립트가 끝날
+    # 때 하나의 항목으로 확정된다.
+    turn_texts: list[str] = []
+    turn_trace: list[HistoryTraceEntry] = []
+    turn_cards: list[HistoryItem] = []
+
+    def flush_turn() -> None:
+        """모인 어시스턴트 턴을 항목 하나(+ 뒤따르는 카드)로 확정한다.
+
+        텍스트가 없고 트레이스만 있어도 말풍선을 만든다 — 중단된 턴(유휴
+        타임아웃, SSE 끊김)이 그 모양이고, 도구를 무엇까지 돌렸는지가 스크롤백에
+        남을 유일한 기록이다. 라이브에서 그 자리에 있던 진행 표시는 복원 대상이
+        아니다.
+
+        카드는 말풍선 **뒤**에 붙는다. 라이브에서는 모델이 "왜 묻는지" 설명을
+        먼저 흘리고 그 다음 질문 카드가 뜨므로(claude_driver의 _CONTACT_ADDENDUM이
+        그 설명을 요구한다), 카드를 즉시 내보내면 말풍선 확정이 미뤄지는 사이
+        순서가 뒤집혀 설명 없는 질문이 먼저 나온다.
+        """
+        nonlocal turn_texts, turn_trace, turn_cards
+        if turn_texts or turn_trace:
+            items.append(HistoryItem(
+                role="ai",
+                text=redact_credentials("\n".join(turn_texts)) if turn_texts else "",
+                trace=turn_trace))
+        items.extend(turn_cards)
+        turn_texts, turn_trace, turn_cards = [], [], []
+
     for m in raw:
         msg = m.get("message")
         if not isinstance(msg, dict):
@@ -230,21 +270,33 @@ def transform_cli_transcript(raw: list[dict]) -> list[HistoryItem]:
                     trace.append(HistoryTraceEntry(kind="status", text=name))
             elif btype == "tool_result":
                 if str(block.get("tool_use_id", "")) in ask_ids:
+                    # 사용자가 실제로 답한 것 — 진행 중인 어시스턴트 턴을 먼저
+                    # 닫아야 순서가 맞는다(질문 카드 다음에 답변 말풍선).
+                    flush_turn()
                     items.append(HistoryItem(
                         role="user",
                         text=redact_credentials(
                             _cli_answer_summary(block.get("content")))))
             # thinking/redacted_thinking 등은 생략 — 복원해 보여줄 내용이 아니다.
 
-        if texts or (role == "assistant" and trace):
-            # 텍스트 없이 도구만 부른 어시스턴트 턴도 라이브에서는 트레이스가
-            # 붙은 (빈) 말풍선이었다 — 트레이스를 잃지 않도록 빈 텍스트로 생성.
-            joined = redact_credentials("\n".join(texts)) if texts else ""
-            items.append(HistoryItem(
-                role="ai" if role == "assistant" else "user",
-                text=joined,
-                trace=trace if role == "assistant" else []))
+        if role == "assistant":
+            # 턴에 누적한다. 도구 호출마다 오는 별도 줄이 각자 말풍선이 되지
+            # 않도록, 확정은 다음 사용자 발화(또는 트랜스크립트 끝)로 미룬다.
+            turn_texts.extend(texts)
+            turn_trace.extend(trace)
+            turn_cards.extend(cards)
+            continue
+
+        # user 줄. 실제 발화만 턴 경계다 — tool_result만 담은 줄은 도구 실행
+        # 결과이고 라이브는 그것을 렌더하지 않는다(위 tool_result 분기가 답변
+        # 말풍선을 이미 만들었다).
+        if texts:
+            flush_turn()
+            items.append(HistoryItem(role="user",
+                                     text=redact_credentials("\n".join(texts))))
         items.extend(cards)
+
+    flush_turn()
     return items
 
 

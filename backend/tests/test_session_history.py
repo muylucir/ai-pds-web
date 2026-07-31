@@ -275,6 +275,137 @@ def test_cli_text_and_tools_match_the_live_representation():
     ]
 
 
+def test_cli_one_turn_is_one_bubble_not_one_per_tool_call():
+    """한 턴은 말풍선 하나다 — 도구 호출마다 빈 말풍선을 만들면 안 된다.
+
+    실측한 트랜스크립트 구조(실 CLI, 도구 5회 사용 턴):
+
+        assistant [thinking]
+        assistant [tool_use]   user [tool_result]   × 5
+        assistant [text]       <- 여기서만 사람이 읽을 내용이 나온다
+
+    CLI는 도구 호출마다 별도 assistant 줄을 쓴다. 줄마다 항목을 만들면 라이브에서
+    말풍선 하나였던 턴이 6개로 쪼개지고 그중 5개가 텍스트 없는 빈 말풍선이 된다
+    (실측: live message 이벤트 1개 -> restored ai 항목 6개, 빈 것 5개). 화면에서는
+    "추론 과정"만 달린 빈 회색 상자가 줄줄이 나온다.
+
+    라이브는 턴 하나당 AiItem 하나를 만들어 message를 그 하나에 누적하고 도구는
+    같은 항목의 trace에 쌓는다(useTurnStream.ts:108,121-123). 복원도 같아야 한다.
+    """
+    raw = [
+        _cli("user", "user", "두 파일을 쓰고 확인해줘"),
+        _cli("assistant", "assistant", [{"type": "thinking", "thinking": "..."}]),
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "t1", "name": "Write",
+             "input": {"file_path": "a.md"}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]),
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "t2", "name": "Write",
+             "input": {"file_path": "b.md"}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "t2", "content": "ok"}]),
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "t3", "name": "Read",
+             "input": {"file_path": "a.md"}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "t3", "content": "..."}]),
+        _cli("assistant", "assistant", [{"type": "text", "text": "완료"}]),
+    ]
+    items = transform_cli_transcript(raw)
+
+    assert [i.role for i in items] == ["user", "ai"], \
+        [(i.role, i.text) for i in items]
+    ai = items[1]
+    assert ai.text == "완료"
+    # 도구 3개가 모두 그 하나의 트레이스로 모인다.
+    assert [(t.kind, t.path or t.text) for t in ai.trace] == [
+        ("file_changed", "a.md"), ("file_changed", "b.md"), ("status", "Read")]
+
+
+def test_cli_a_turn_that_never_produced_text_is_not_an_empty_bubble():
+    """텍스트 없이 끝난 턴은 빈 말풍선이 아니라 트레이스만 남는다.
+
+    중단된 턴(유휴 타임아웃, SSE 끊김)이 이 모양이다. 말풍선을 만들면 내용 없는
+    회색 상자가 남는데, 라이브에서 그 자리에 있던 것은 진행 표시였고 그것은
+    복원 대상이 아니다.
+    """
+    raw = [
+        _cli("user", "user", "시작해줘"),
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "t1", "name": "Read",
+             "input": {"file_path": "x.md"}}]),
+    ]
+    items = transform_cli_transcript(raw)
+    ai = [i for i in items if i.role == "ai"]
+    assert len(ai) == 1, [(i.role, i.text) for i in items]
+    assert ai[0].text == ""
+    assert [t.text for t in ai[0].trace] == ["Read"]
+
+
+def test_cli_separate_user_turns_stay_separate():
+    """병합은 턴 안에서만 한다 — 실제 사용자 발화가 경계다.
+
+    tool_result를 담은 user 줄은 사용자 발화가 아니므로 경계가 아니다(라이브는
+    그 줄을 아무것도 렌더하지 않는다). 진짜 입력만 새 턴을 시작해야 두 번의
+    질문이 하나로 뭉치지 않는다.
+    """
+    raw = [
+        _cli("user", "user", "첫 질문"),
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "t1", "name": "Read",
+             "input": {"file_path": "a.md"}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]),
+        _cli("assistant", "assistant", [{"type": "text", "text": "첫 답"}]),
+        _cli("user", "user", "둘째 질문"),
+        _cli("assistant", "assistant", [{"type": "text", "text": "둘째 답"}]),
+    ]
+    items = transform_cli_transcript(raw)
+    assert [(i.role, i.text) for i in items] == [
+        ("user", "첫 질문"), ("ai", "첫 답"),
+        ("user", "둘째 질문"), ("ai", "둘째 답")]
+    assert [t.text for t in items[1].trace] == ["Read"]
+    assert not items[3].trace
+
+
+def test_cli_question_card_comes_after_the_bubble_that_asked():
+    """카드는 그것을 낸 말풍선 뒤에 온다.
+
+    라이브에서는 모델이 "왜 묻는지" 설명을 먼저 흘리고 그 다음 질문 카드가
+    붙는다(claude_driver의 _CONTACT_ADDENDUM이 그 설명을 요구한다). 카드가
+    말풍선보다 앞서면 스크롤백에서 설명 없는 질문이 먼저 뜨고 그 아래에 설명이
+    따라오는, 라이브에서는 본 적 없는 순서가 된다.
+
+    턴 누적 때문에 생기는 순서다 — 말풍선 확정이 다음 사용자 발화까지 미뤄지는
+    동안 카드는 곧바로 붙을 수 있다.
+    """
+    raw = [
+        _cli("user", "user", "시작해줘"),
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "r1", "name": "Read",
+             "input": {"file_path": "rules.md"}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "r1", "content": "ok"}]),
+        _cli("assistant", "assistant", [
+            {"type": "text", "text": "질문 드립니다."},
+            {"type": "tool_use", "id": "qa", "name": "AskUserQuestion",
+             "input": {"questions": []}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "qa",
+             "content": [{"text": '사용자 답변: {"1": "A"}'}]}]),
+        _cli("assistant", "assistant", [{"type": "text", "text": "작성했습니다."}]),
+    ]
+    items = transform_cli_transcript(raw)
+
+    assert [i.role for i in items] == ["user", "ai", "card", "user", "ai"], \
+        [(i.role, i.text) for i in items]
+    assert items[1].text == "질문 드립니다."
+    assert [t.text for t in items[1].trace] == ["Read"]
+    assert items[2].card == "questions"
+    assert items[3].text == "답변 제출 — 1: A"
+
+
 def test_cli_ask_user_question_becomes_a_card_not_a_trace_row():
     raw = [_cli("assistant", "assistant", [
         {"type": "text", "text": "질문 드립니다."},
