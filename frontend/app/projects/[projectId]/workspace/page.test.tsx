@@ -203,6 +203,29 @@ describe("Workspace page", () => {
     expect(screen.queryByText(/어떻게 시작할까요/)).toBeNull();
   });
 
+  it("히스토리를 불러오는 동안 스켈레톤을 보여준다", async () => {
+    // 종전에는 이 구간이 빈 화면이었다. historyLoading은 이미 있었지만 웰컴
+    // 카드를 가리는 데만 쓰였다(page.tsx의 showWelcome).
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ items: [], historyLoading: true, pendingQuestions: null, streaming: false });
+    // WorkspacePage는 use(params)로 첫 렌더에 suspend한다 — 이 파일의 다른
+    // 테스트들과 마찬가지로 act로 감싸 마이크로태스크가 플러시될 때까지
+    // 기다려야 렌더 결과를 동기적으로 조회할 수 있다.
+    await act(async () => {
+      render(<WorkspacePage params={Promise.resolve({ projectId: "p1" })} />);
+    });
+    expect(screen.getByRole("status", { name: "이전 대화를 불러오는 중" })).toBeInTheDocument();
+  });
+
+  it("로딩이 끝나면 스켈레톤이 사라진다", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false });
+    await act(async () => {
+      render(<WorkspacePage params={Promise.resolve({ projectId: "p1" })} />);
+    });
+    expect(screen.queryByRole("status", { name: "이전 대화를 불러오는 중" })).not.toBeInTheDocument();
+  });
+
   describe("file attachments", () => {
     it("uploads a file via the clip button, shows a chip, and prepends the attachment mention to the next message", async () => {
       server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));

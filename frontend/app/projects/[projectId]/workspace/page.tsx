@@ -4,6 +4,7 @@ import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import { StageSidebar } from "@/components/workspace/StageSidebar";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
+import { HistorySkeleton } from "@/components/canvas/HistorySkeleton";
 import { ChatInput } from "@/components/canvas/ChatInput";
 import { WorkspaceRightPanel } from "@/components/workspace/WorkspaceRightPanel";
 import { WorkspaceDocPanel } from "@/components/workspace/WorkspaceDocPanel";
@@ -181,14 +182,17 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               <WelcomeCard onStart={sendAndStick} />
             </div>
           ) : (
-            <ChatTimeline
-              items={items}
-              projectId={projectId}
-              onChoose={sendAndStick}
-              onOpenArtifact={() => {}}
-              busy={streaming}
-              stickSignal={stickSignal}
-            />
+            <>
+              {historyLoading && <HistorySkeleton />}
+              <ChatTimeline
+                items={items}
+                projectId={projectId}
+                onChoose={sendAndStick}
+                onOpenArtifact={() => {}}
+                busy={streaming}
+                stickSignal={stickSignal}
+              />
+            </>
           )}
           {uploadError && (
             <p role="alert" className="px-4 md:px-8 pb-1 text-xs text-red-600">
