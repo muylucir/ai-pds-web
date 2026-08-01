@@ -32,6 +32,10 @@ describe("CreateProjectForm", () => {
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
     expect(body).toEqual({ project_id: "pilot2", name: "신규 세션",
                            model_id: "global.anthropic.claude-sonnet-5" });
+    // onCreated가 서버 응답(생성된 프로젝트)으로 호출됐는지 확인한다 — 이
+    // 핸들러는 {project_id, name, model_id}를 돌려준다.
+    expect(onCreated).toHaveBeenCalledWith({ project_id: "pilot2", name: "신규 세션",
+                                             model_id: "global.anthropic.claude-sonnet-5" });
   });
 
   it("shows model names only — never the raw model id", async () => {
