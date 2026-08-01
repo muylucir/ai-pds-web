@@ -224,3 +224,22 @@ def test_interrupt_on_an_unknown_project_is_404(monkeypatch):
     별개다(있는 프로젝트의 없는 턴 ≠ 없는 프로젝트)."""
     _install_default(monkeypatch, "int-3")
     assert client.post("/projects/nope/interrupt").status_code == 404
+
+
+def test_interrupt_survives_a_raising_runner(monkeypatch):
+    """드라이버의 client.interrupt()가 던져도 라우트의 docstring이 약속하는
+    202/멱등 계약은 지킨다 — 사용자는 중단이 안 먹혔다고 다시 누를 뿐, 500을
+    받을 이유가 없다."""
+    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    runner = ScriptRunner()
+
+    async def boom():
+        raise RuntimeError("subprocess pipe closed")
+    runner.interrupt = boom
+
+    async def make(project_id):
+        return Workspace(runner)
+    monkeypatch.setattr(app_module, "make_workspace", make)
+    client.post("/projects", json={"project_id": "int-4"})
+
+    assert client.post("/projects/int-4/interrupt").status_code == 202

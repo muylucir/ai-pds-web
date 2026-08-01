@@ -1,5 +1,6 @@
 # backend/pathfinder/routes/turns.py
 import json
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -8,6 +9,7 @@ from pathfinder.routes.deps import ensure_workspace
 from pathfinder.models import AgentEvent, TurnResult
 
 router = APIRouter()
+_log = logging.getLogger(__name__)
 
 class MessageBody(BaseModel):
     text: str
@@ -71,5 +73,11 @@ async def interrupt_turn(pid: str):
     이벤트로 알린다.
     """
     ws = await ensure_workspace(pid)   # 없는 프로젝트는 404
-    await ws.runner.interrupt()
+    try:
+        await ws.runner.interrupt()
+    except Exception:
+        # 사용자가 중단을 요청했는데 실제로는 안 먹혔다는 뜻이라 로그로는
+        # 남긴다 — 하지만 이 docstring이 약속하는 202/멱등 계약은 지킨다.
+        # 프론트는 실패를 그냥 삼키므로(다시 누르면 됨) 500으로 깨질 이유가 없다.
+        _log.exception("interrupt failed for %s", pid)
     return {"status": "interrupting"}
