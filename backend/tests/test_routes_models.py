@@ -132,6 +132,29 @@ def test_admin_add_rejects_a_model_id_with_an_internal_space(catalog, client):
     assert r.status_code == 422
 
 
+@pytest.mark.parametrize("dots", [".", ".."])
+def test_admin_add_rejects_a_dot_segment_model_id(catalog, client, dots):
+    # 허용 문자('.')로만 되어 있어도 거부한다. RFC 3986의 dot-segment 정규화는
+    # **클라이언트**에서 일어나므로 이 두 값은 등록은 되지만 표준 클라이언트가
+    # 그 경로를 만들어 보낼 수 없다 — 프론트가 쓰는 WHATWG URL 파서 실측:
+    #   '/admin/models/.'  -> '/admin/models/'
+    #   '/admin/models/..' -> '/admin/'
+    # '/'가 들어간 id와 똑같이 "등록은 되는데 API로 지울 수 없는" 항목이 된다.
+    r = client.post("/admin/models", json={
+        "name": "x", "model_id": dots, "display": True})
+    assert r.status_code == 422
+
+
+def test_admin_add_accepts_dots_that_are_not_dot_segments(catalog, client):
+    # 정규화 대상은 정확히 '.'과 '..' 세그먼트뿐이다 — '...'이나 'abc.'는
+    # 경로에 그대로 남으므로 과잉 거부하지 않는다(가드가 필요 이상으로
+    # 넓어지면 실제 모델 id를 잘못 막는다).
+    for mid in ("...", "abc.", ".abc"):
+        r = client.post("/admin/models", json={
+            "name": mid, "model_id": mid, "display": False})
+        assert r.status_code == 201, mid
+
+
 def test_admin_add_accepts_every_legal_model_id_character(catalog, client):
     # 스펙(§5)이 정한 문자셋(영숫자·.·-·:)에 더해 '_'도 허용한다 — AWS 모델
     # id에 나타날 수 있는 합법적 문자이고, 라우트 세그먼트를 깨지 않는다.

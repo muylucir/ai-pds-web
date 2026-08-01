@@ -42,7 +42,16 @@ _ERROR_STATUS = {
 # 추가로 허용한다 — 스펙엔 없어도 AWS 모델 id에 나타날 수 있는 합법적이고
 # 세그먼트를 깨지 않는 문자라서, 이걸 빼서 실제 모델 id를 잘못 거부하는
 # 쪽이 이걸 허용해서 생기는 위험보다 크다.
-_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9.:_-]+$")
+#
+# `.`와 `..`는 허용 문자로만 되어 있어도 따로 거부한다: RFC 3986 §5.2.4의
+# dot-segment 정규화는 **클라이언트**에서 일어나므로, 그 두 값은 등록은 되지만
+# 표준 클라이언트가 그 경로를 만들어 보낼 수 없다. 실측(WHATWG URL 파서 —
+# 프론트의 fetch가 쓰는 것과 같은 것):
+#   new URL('/admin/models/.',  base).pathname === '/admin/models/'
+#   new URL('/admin/models/..', base).pathname === '/admin/'
+# 즉 '/'와 똑같이 "등록은 되는데 지울 수 없는" 항목이 된다. `...`나 `abc.`는
+# 정규화 대상이 아니므로(정확히 `.`과 `..` 세그먼트에만 적용된다) 허용한다.
+_MODEL_ID_RE = re.compile(r"^(?!\.{1,2}$)[A-Za-z0-9.:_-]+$")
 
 
 def _http_error(exc: CatalogError) -> HTTPException:
