@@ -111,6 +111,42 @@ def test_admin_add_rejects_a_whitespace_only_model_id(catalog, client):
     r = client.post("/admin/models", json={
         "name": "x", "model_id": "   ", "display": True})
     assert r.status_code == 422
+    # 공백 전용은 "비었다"는 메시지여야 한다 — 문자셋 위반 메시지가 아니라.
+    # 두 검증의 순서를 못박는 핀 테스트다.
+    assert r.json()["detail"] == "모델 ID를 입력하세요."
+
+
+def test_admin_add_rejects_a_model_id_with_a_slash(catalog, client):
+    # PATCH/DELETE /admin/models/{model_id}가 {model_id}를 :path가 아닌
+    # 단일 세그먼트로 받는다 — '/'가 들어간 id는 등록은 되지만 이후 그
+    # 경로로는 절대 다시 찾을 수 없다(오탈자 하나가 표시 슬롯을 영구히
+    # 점유하고 API로 지울 수 없게 만든다). 등록 시점에 막는다.
+    r = client.post("/admin/models", json={
+        "name": "x", "model_id": "oops/typed/slash", "display": True})
+    assert r.status_code == 422
+
+
+def test_admin_add_rejects_a_model_id_with_an_internal_space(catalog, client):
+    r = client.post("/admin/models", json={
+        "name": "x", "model_id": "has space", "display": True})
+    assert r.status_code == 422
+
+
+def test_admin_add_accepts_every_legal_model_id_character(catalog, client):
+    # 스펙(§5)이 정한 문자셋(영숫자·.·-·:)에 더해 '_'도 허용한다 — AWS 모델
+    # id에 나타날 수 있는 합법적 문자이고, 라우트 세그먼트를 깨지 않는다.
+    # 가드가 실제 id 모양을 과잉 거부하지 않는지 콜론과 언더스코어를 각각
+    # 확인한다(SEED_MODELS와 겹치지 않는 id를 쓴다 — 겹치면 409로 가려진다).
+    r = client.post("/admin/models", json={
+        "name": "콜론", "model_id": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "display": False})
+    assert r.status_code == 201
+
+    r = client.post("/admin/models", json={
+        "name": "언더스코어",
+        "model_id": "global.anthropic.claude-opus-5_v1",
+        "display": False})
+    assert r.status_code == 201
 
 
 # ---- PATCH /admin/models/{model_id} ----

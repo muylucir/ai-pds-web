@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -30,6 +31,18 @@ _ERROR_STATUS = {
     "not_found": 404,
     "readonly": 503,
 }
+
+
+# PATCH/DELETE /admin/models/{model_id}는 {model_id}를 :path가 아닌 단일 URL
+# 경로 세그먼트로 받는다(admin_patch_model·admin_delete_model 참고) — '/'가
+# 들어간 id는 admin_add_model로 등록은 되어도 그 경로로는 다시 찾을 수 없다.
+# 등록 시점에 문자셋을 막아야 오탈자 하나가 표시 슬롯(MAX_DISPLAYED=5)을
+# 영구히 점유하고 API로 지울 수 없는 상태(카탈로그 파일을 손으로 고쳐야
+# 하는 상태)를 만들지 않는다. 스펙(§5)의 문자셋은 영숫자·.·-·:이지만 '_'를
+# 추가로 허용한다 — 스펙엔 없어도 AWS 모델 id에 나타날 수 있는 합법적이고
+# 세그먼트를 깨지 않는 문자라서, 이걸 빼서 실제 모델 id를 잘못 거부하는
+# 쪽이 이걸 허용해서 생기는 위험보다 크다.
+_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9.:_-]+$")
 
 
 def _http_error(exc: CatalogError) -> HTTPException:
@@ -80,6 +93,10 @@ async def admin_add_model(body: AddModel):
         raise HTTPException(status_code=422, detail="이름을 입력하세요.")
     if not body.model_id.strip():
         raise HTTPException(status_code=422, detail="모델 ID를 입력하세요.")
+    if not _MODEL_ID_RE.match(body.model_id.strip()):
+        raise HTTPException(status_code=422,
+                            detail="모델 ID는 영숫자, '.', '-', '_', ':'만 "
+                                   "포함해야 합니다.")
     try:
         entry = await _catalog().add(body.name.strip(), body.model_id.strip(),
                                      display=body.display)
