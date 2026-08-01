@@ -104,6 +104,15 @@ def test_admin_add_rejects_a_blank_model_id(catalog, client):
     assert r.status_code == 422
 
 
+def test_admin_add_rejects_a_whitespace_only_model_id(catalog, client):
+    # "   "는 Pydantic의 min_length=1을 통과한다(공백도 문자다) — name과
+    # 대칭인 명시적 strip 검증이 없으면 빈 문자열 model_id가 등록되어 표시
+    # 슬롯을 영구히 점유하고 API로 지울 수도 없다.
+    r = client.post("/admin/models", json={
+        "name": "x", "model_id": "   ", "display": True})
+    assert r.status_code == 422
+
+
 # ---- PATCH /admin/models/{model_id} ----
 
 def test_admin_patch_changes_display(catalog, client):

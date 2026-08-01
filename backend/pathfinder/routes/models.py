@@ -78,6 +78,8 @@ async def admin_list_models():
 async def admin_add_model(body: AddModel):
     if not body.name.strip():
         raise HTTPException(status_code=422, detail="이름을 입력하세요.")
+    if not body.model_id.strip():
+        raise HTTPException(status_code=422, detail="모델 ID를 입력하세요.")
     try:
         entry = await _catalog().add(body.name.strip(), body.model_id.strip(),
                                      display=body.display)
