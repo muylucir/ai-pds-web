@@ -16,24 +16,35 @@ _MANIFEST = re.compile(r"^([^/]+)/project\.json$")
 
 
 async def write_manifest(root: S3StoreLike, project_id: str, name: str | None,
-                         created_at: str | None = None) -> str:
+                         created_at: str | None = None,
+                         model_id: str | None = None) -> str:
     """매니페스트를 쓰고 기록된 created_at을 반환한다 — 호출부(생성 라우트)가
-    같은 시각을 레지스트리에도 등록해 목록 정렬 기준을 일치시킨다."""
+    같은 시각을 레지스트리에도 등록해 목록 정렬 기준을 일치시킨다.
+
+    model_id는 카탈로그를 참조하지 않고 **복사**한다: 관리자가 그 모델을
+    카탈로그에서 지워도 이 프로젝트는 계속 같은 모델로 돌아야 한다. 미지정은
+    명시적 null로 기록한다 — 키를 빼면 '구 매니페스트'와 '모델을 고르지 않은
+    새 프로젝트'를 구별할 수 없다.
+    """
     ts = created_at or datetime.now(timezone.utc).isoformat()
     body = json.dumps(
-        {"project_id": project_id, "name": name, "created_at": ts},
+        {"project_id": project_id, "name": name, "created_at": ts,
+         "model_id": model_id},
         ensure_ascii=False)
     await root.put(f"{project_id}/project.json", body)
     return ts
 
 
-async def restore_projects(root: S3StoreLike) -> list[tuple[str, str | None, str | None]]:
-    """projects/ 스캔 → 매니페스트 병렬 GET → [(pid, name, created_at)].
+async def restore_projects(
+    root: S3StoreLike,
+) -> list[tuple[str, str | None, str | None, str | None]]:
+    """projects/ 스캔 → 매니페스트 병렬 GET → [(pid, name, created_at, model_id)].
     손상 항목은 로그 후 건너뜀 — 하나가 썩어도 나머지 복원을 막지 않는다.
-    created_at은 구 매니페스트에 없을 수 있어 None 허용(목록 정렬 시 맨 앞)."""
+    created_at·model_id는 구 매니페스트에 없을 수 있어 None 허용(정렬 시 맨 앞,
+    모델은 env 폴백)."""
     keys = [k for k in await root.list("") if _MANIFEST.match(k)]
     bodies = await asyncio.gather(*(root.get(k) for k in keys), return_exceptions=True)
-    out: list[tuple[str, str | None, str | None]] = []
+    out: list[tuple[str, str | None, str | None, str | None]] = []
     for key, body in zip(keys, bodies):
         if isinstance(body, BaseException):
             _log.warning("manifest read failed for %s: %r", key, body)
@@ -44,7 +55,7 @@ async def restore_projects(root: S3StoreLike) -> list[tuple[str, str | None, str
                 _log.warning("corrupt manifest skipped: %s", key)
                 continue
             pid = d.get("project_id") or _MANIFEST.match(key).group(1)  # type: ignore[union-attr]
-            out.append((pid, d.get("name"), d.get("created_at")))
+            out.append((pid, d.get("name"), d.get("created_at"), d.get("model_id")))
         except (json.JSONDecodeError, TypeError):
             _log.warning("corrupt manifest skipped: %s", key)
     return out

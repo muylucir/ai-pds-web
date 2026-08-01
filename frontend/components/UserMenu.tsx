@@ -74,12 +74,20 @@ export function UserMenu() {
             </p>
           </div>
           {me.role === "admin" && (
-            <Link
-              href="/admin/users"
-              className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-50"
-            >
-              사용자 관리
-            </Link>
+            <>
+              <Link
+                href="/admin/users"
+                className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-50"
+              >
+                사용자 관리
+              </Link>
+              <Link
+                href="/admin/models"
+                className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-50"
+              >
+                모델 관리
+              </Link>
+            </>
           )}
           {/* POST인 이유: GET 로그아웃은 링크 프리페치에 걸려 의도치 않게
               세션을 끊을 수 있다. */}

@@ -4,14 +4,16 @@ import { Template, Match } from 'aws-cdk-lib/assertions';
 import { PathfinderDrillStack } from '../lib/pathfinder-drill-stack';
 import { PathfinderHostingStack } from '../lib/pathfinder-hosting-stack';
 import { PathfinderAuthStack } from '../lib/pathfinder-auth-stack';
+import { MODEL } from '../lib/backend-permissions';
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 
 // 백엔드가 아티팩트 버킷에서 쓰는 프리픽스 전체. lib/backend-permissions.ts의
 // BACKEND_BUCKET_PREFIXES와 같아야 한다. surveys/*는 프로젝트 프리픽스 밖의
 // 토큰 인덱스(surveys/by-token/) 때문에 필요하다 — 공개 설문 링크가 토큰의
-// 소속 프로젝트를 알기 전에 읽어야 하는 값이다.
-const BUCKET_PREFIXES = ['projects/*', 'sessions/*', 'surveys/*'];
+// 소속 프로젝트를 알기 전에 읽어야 하는 값이다. models/*는 같은 이유로
+// 프로젝트 프리픽스 밖에 있는 모델 카탈로그(models/catalog.json) 때문이다.
+const BUCKET_PREFIXES = ['projects/*', 'sessions/*', 'surveys/*', 'models/*'];
 
 /** 객체 권한(Get/Put/Delete)과 목록 권한(ListBucket)이 BUCKET_PREFIXES를
  *  빠짐없이 덮는지 확인한다. 액션 존재만 보는 단정은 프리픽스 누락을 놓치고,
@@ -57,7 +59,7 @@ function testDrillUnchanged() {
       ]),
     },
   });
-  // S3 ListBucket 문 + projects/*·sessions/*·surveys/* prefix 조건 존재.
+  // S3 ListBucket 문 + projects/*·sessions/*·surveys/*·models/* prefix 조건 존재.
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
       Statement: Match.arrayWith([
@@ -66,14 +68,14 @@ function testDrillUnchanged() {
           Action: 's3:ListBucket',
           Condition: {
             StringLike: {
-              's3:prefix': Match.arrayWith(['projects/*', 'sessions/*', 'surveys/*']),
+              's3:prefix': Match.arrayWith(['projects/*', 'sessions/*', 'surveys/*', 'models/*']),
             },
           },
         }),
       ]),
     },
   });
-  // 세 프리픽스가 객체 권한과 목록 권한 양쪽에 다 있어야 한다.
+  // 네 프리픽스가 객체 권한과 목록 권한 양쪽에 다 있어야 한다.
   //
   // 위의 arrayWith 단정만으로는 부족했다 — 그건 "이 액션이 있다"만 보고
   // 리소스는 아예 보지 않아서, surveys/*가 객체 문에서 빠진 채로도 통과했다.
@@ -85,7 +87,7 @@ function testDrillUnchanged() {
   // 버킷 1개 노출.
   assert.ok(drill.artifactsBucket, 'artifactsBucket must be exposed');
   t.resourceCountIs('AWS::S3::Bucket', 1);
-  console.log('OK  drill stack: bedrock + s3 object/list on projects+sessions+surveys + bucket exposed');
+  console.log('OK  drill stack: bedrock + s3 object/list on projects+sessions+surveys+models + bucket exposed');
 }
 
 testDrillUnchanged();
@@ -176,23 +178,20 @@ function testComputeAndRole() {
   // 헬퍼를 쓰지만 여기서도 프리픽스를 확인한다. 두 스택 중 한쪽만 검사하면
   // 호출부가 갈라지는 순간 다시 조용히 놓친다.
   assertBucketPrefixesCovered(t);
-  // Sonnet 4.6부터 Opus 5까지 전부 invoke 가능해야 한다. ANTHROPIC_MODEL(기본
-  // Opus 4.8)만 허용하면 모델을 바꿔보려는 순간 AccessDenied가 나고, 그 실패는
-  // 첫 대화 턴에 가서야 드러난다 — env 한 줄로 전환할 수 있게 권한을 미리
-  // 넓혀 둔다. 이 목록은 backend-permissions.ts의 INVOKABLE_MODELS와 같아야
-  // 한다(ap-northeast-2에서 5개 모두 ACTIVE인 것을 실측 확인).
-  for (const m of [
-    'claude-opus-5',
-    'claude-opus-4-8',
-    'claude-opus-4-7',
-    'claude-sonnet-5',
-    'claude-sonnet-4-6',
-  ]) {
-    assert.match(allActions, new RegExp(`inference-profile/global\\.anthropic\\.${m}`),
-      `instance role can invoke ${m} inference profile`);
-    assert.match(allActions, new RegExp(`foundation-model/anthropic\\.${m}`),
-      `instance role can invoke ${m} foundation model`);
-  }
+  // 모델 허용은 명시 목록이 아니라 와일드카드다. 명시 목록이면 관리자가
+  // /admin/models에서 새 모델을 등록해도 IAM이 막아 첫 대화 턴에
+  // AccessDenied가 나고, 그 실패는 백엔드 로그에만 남는다 — "화면에서 모델을
+  // 추가할 수 있다"고 보여주면서 실제로는 cdk deploy가 필요한 상태가 최악이다.
+  // (spec 2026-08-01-per-project-model-selection §4)
+  assert.match(allActions, /inference-profile\/global\.anthropic\.claude-\*/,
+    'instance role can invoke any global Anthropic Claude inference profile');
+  assert.match(allActions, /foundation-model\/anthropic\.claude-\*/,
+    'instance role can invoke any Anthropic Claude foundation model');
+  // 폴백 기본값이 그 와일드카드에 실제로 포함되는지. MODEL은 카탈로그의 시드
+  // 목록에 없지만(콤보박스에 뜨지 않는다) 구 프로젝트와 미지정 폴백으로
+  // 남으므로 invoke 가능해야 한다.
+  assert.ok(MODEL.startsWith('global.anthropic.claude-'),
+    `MODEL ${MODEL} must fall under the global.anthropic.claude-* wildcard`);
   // lambda-microvms 제어 권한은 VM 계층과 함께 사라졌다.
   if (allActions.includes('lambda-microvms')) {
     throw new Error('hosting: instance role still carries lambda-microvms permissions');

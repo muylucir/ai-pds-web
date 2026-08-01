@@ -116,6 +116,17 @@ export interface ProjectSummary {
   name: string | null;
   // 목록 응답에만 실림(fail-soft: 상태 파일이 없거나 읽기 실패면 null).
   progress?: ProjectProgress | null;
+  // 이 프로젝트가 도는 Bedrock 모델 id. null = 미지정(서버의 env 기본값으로
+  // 돈다 — 프론트는 그 값을 알 수 없다).
+  model_id?: string | null;
+}
+
+// GET /projects/{pid} → ProjectDetail. 헤더의 모델 배지가 부르는 곳이다.
+export interface ProjectDetail {
+  project_id: string;
+  name: string | null;
+  created_at: string | null;
+  model_id: string | null;
 }
 
 export interface ProjectPage {

@@ -7,13 +7,14 @@ client = TestClient(app)
 def test_create_project_without_name_returns_null_name():
     r = client.post("/projects", json={"project_id": "plist-noname"})
     assert r.status_code == 200
-    assert r.json() == {"project_id": "plist-noname", "name": None}
+    assert r.json() == {"project_id": "plist-noname", "name": None, "model_id": None}
 
 
 def test_create_project_with_name_returns_it():
     r = client.post("/projects", json={"project_id": "plist-named", "name": "기획전 AI 어시스턴트"})
     assert r.status_code == 200
-    assert r.json() == {"project_id": "plist-named", "name": "기획전 AI 어시스턴트"}
+    assert r.json() == {"project_id": "plist-named", "name": "기획전 AI 어시스턴트",
+                        "model_id": None}
 
 
 def test_list_projects_includes_created_projects_with_names():

@@ -16,6 +16,7 @@ import {
   ApiError,
 } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
+import { useProjectModel } from "@/lib/useProjectModel";
 import { deriveApprovalState } from "@/lib/approvalState";
 
 // 클라이언트 Blob 다운로드 — 백엔드 왕복 없이 현재 로드된 마크다운을 저장한다.
@@ -47,6 +48,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const modelLabel = useProjectModel(projectId);
 
   const tree = useAsync(() => listArtifacts(projectId), [projectId]);
   const audit = useAsync(() => getAudit(projectId), [projectId]);
@@ -118,7 +120,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
 
   return (
     <>
-      <AppHeader activeTab="review" projectId={projectId} />
+      <AppHeader activeTab="review" projectId={projectId} modelLabel={modelLabel} />
       <main className="max-w-[1720px] mx-auto px-6 py-8">
         {isDiscoveryDocument && !contentLoadError && !approval.approved && (
           <>

@@ -77,6 +77,10 @@ did not reach this feature" 행이 있고, 그 선택지가 없으면 응답자�
 (`infra/lib/backend-permissions.ts`의 `BACKEND_BUCKET_PREFIXES`). 실제로 빠져 있어서
 설문 생성이 전부 500이었고, 원인은 백엔드 로그의 `AccessDenied`에만 남았다.
 
+같은 이유로 **모델 카탈로그도 버킷 루트(`models/catalog.json`)에 있다** — 프로젝트
+생성 화면이 프로젝트가 하나도 없는 상태에서 이것을 읽어야 하므로 프로젝트
+프리픽스 안에 둘 수 없다.
+
 ```
 frontend/  Next.js 15 (App Router) — 대시보드 · 워크스페이스 · 문서 리뷰 · 프로토타입 탭 · 로그인/사용자 관리
            (상단 네비는 이 4개다. `projects/[projectId]/canvas`·`/questions`는
@@ -124,7 +128,7 @@ npm install
 
 | 스택 | 만드는 것 |
 |---|---|
-| `PathfinderDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*` + `surveys/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
+| `PathfinderDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
 | `PathfinderAuthStack` | Cognito User Pool + Hosted UI v2 + 역할 그룹(`admin`/`pm`) + 시드 계정 2개 |
 | `PathfinderHostingStack` | VPC + EC2(AL2023 x86_64, m7i.2xlarge, EBS 100GB 암호화) + CloudFront |
 
@@ -248,7 +252,7 @@ sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # 프리
 | 특정 기능만 500이고 화면에는 원인이 안 보임 | 대개 IAM이다. 백엔드 로그의 `AccessDenied`가 어떤 액션·리소스인지 말해 준다(실측 사례: 설문 토큰 인덱스의 `s3:PutObject`, `/admin/users`의 `cognito-idp:*`) |
 | 워크스페이스 채팅 내역이 빈 목록 | `list_history`는 모든 실패를 `[]`로 강등하므로 화면만 보면 원인을 알 수 없다. `projects/{pid}/discovery/transcript/`에 객체가 있는지 먼저 확인하고, 없으면 미러링 쪽·있으면 읽기 쪽(세션 키 유도)을 본다 — 위 "Discovery 대화" 항목 참고 |
 | 스택이 `ROLLBACK_COMPLETE`라 재배포 거부 | **최초 생성이 실패한 스택은 업데이트가 불가능하다** — 고친 뒤에도 `cdk deploy`가 거부한다. 먼저 내린 다음 다시 배포한다: `npx cdk destroy PathfinderAuthStack` → `npx cdk deploy --all`. `UPDATE_ROLLBACK_COMPLETE`(기존 스택의 업데이트 실패)는 반대로 그냥 재배포하면 된다 |
-| 첫 대화 턴에서 `AccessDeniedException` | 배포 리전에 Bedrock 모델 액세스 미활성화. `ANTHROPIC_MODEL`이 IAM 허용 목록 밖이어도 같은 증상 — 아래 "환경 변수 요약"의 허용 값 참고 |
+| 첫 대화 턴에서 `AccessDeniedException` | **배포 리전에 그 모델의 Bedrock 모델 액세스가 꺼져 있다.** IAM은 `global.anthropic.claude-*`를 전부 허용하므로 이제 IAM이 원인일 가능성은 낮다 — 관리자 화면에서 새 모델을 등록했다면 콘솔에서 그 모델의 액세스를 켰는지 먼저 확인한다(IAM과 별개 설정이다) |
 | `` `temperature` is deprecated for this model `` | Opus 4.7 이후 모델은 샘플링 파라미터를 제거했다 — 아래 "참고"의 Bedrock 항목 |
 | 로그인 후 `redirect_mismatch` | 호스팅 스택의 콜백 URL 등록(`UpdateUserPoolClient`)이 실패. `cdk deploy PathfinderHostingStack` 재실행 |
 | `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 최초 1회만 필요하며 결과가 `cdk.context.json`에 캐시된다 |
@@ -332,7 +336,7 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `PATHFINDER_LOG_LEVEL` | `INFO` | 애플리케이션 로그 레벨. `app.configure_logging()`이 기동 시 루트 핸들러를 붙이고 `pathfinder`·`claude_agent_sdk` 로거를 이 레벨로 연다 — 없으면 uvicorn이 자기 로거만 설정하므로 INFO가 조용히 사라진다(실측: journald 2905줄 중 애플리케이션 로그 0건) |
 | `PATHFINDER_S3_REGION` | `ap-northeast-2` | 영속 스토리지 리전(서울). **버킷이 만들어진 리전과 반드시 일치**시킬 것 |
 | `PATHFINDER_S3_BUCKET` | — | 아티팩트 버킷 (CDK 출력) |
-| `ANTHROPIC_MODEL` | — (EC2 배포는 `global.anthropic.claude-opus-4-8`) | Bedrock 추론 프로파일 id. IAM이 invoke를 허용하는 값은 `global.anthropic.claude-{opus-5,opus-4-8,opus-4-7,sonnet-5,sonnet-4-6}`. 기본값은 `infra/lib/backend-permissions.ts`의 `MODEL`이 user-data로 넘긴다 |
+| `ANTHROPIC_MODEL` | — (EC2 배포는 `global.anthropic.claude-opus-4-8`) | **폴백** Bedrock 추론 프로파일 id. 프로젝트가 자기 모델을 가지면 그것이 이긴다(`app.project_model`) — 이 값은 이 기능 이전에 만든 프로젝트와 모델 미지정 시에만 쓰인다. IAM은 `global.anthropic.claude-*`를 전부 허용하므로 관리자 화면에서 등록한 모델은 배포 없이 바로 돈다 |
 | `PATHFINDER_RULES_DIR` | `<repo>/rule/aiplc-rules` | aiplc 룰 디렉토리(읽기 전용) |
 | `PATHFINDER_WORKSPACES_DIR` | 시스템 tmp 하위 | 프로젝트별 로컬 워크스페이스 루트 |
 | `PATHFINDER_DISCOVERY_DRIVER` | `claude` | Discovery 드라이버. `strands`로 구 드라이버 폴백. 그 외 값은 기동 시 ValueError |
@@ -397,11 +401,32 @@ cd frontend && npm run test:e2e
   통과시키는 것보다는 눈에 보이는 실패가 낫다는 판단이다. 로컬에서 인증을 켜고
   검증하려면 `NEXT_PUBLIC_API_BASE_URL=/api`로 띄워야 한다(쿠키는 same-origin에서만
   프록시를 타고 번역된다).
-- **Bedrock 모델과 샘플링 파라미터**: `ANTHROPIC_MODEL`은 Discovery 에이전트와 프로토타입
-  빌드 에이전트가 공용으로 쓴다. IAM이 invoke를 허용하는 5개(`opus-5`, `opus-4-8`,
-  `opus-4-7`, `sonnet-5`, `sonnet-4-6`) 안에서 env 한 줄로 전환할 수 있다
-  (`infra/lib/backend-permissions.ts`; 목록을 넓히려면 여기와
-  `infra/test/hosting-stack.assert.ts`를 함께 고친다).
+- **모델 선택은 프로젝트 단위다.** 프로젝트 생성 화면의 콤보박스에서 고른
+  모델이 그 프로젝트의 Discovery 에이전트·프로토타입 빌드 에이전트·설문 문항
+  생성에 전부 주입된다(`app.project_model`). 고를 수 있는 목록은 관리자
+  화면(`/admin/models`)에서 편집하고 S3의 `models/catalog.json`에 저장된다 —
+  파일이 없으면 코드의 시드 4개(Opus 5 / Opus 4.6 / Sonnet 5 / Sonnet 4.6)로
+  떨어지고, 그 시드는 관리자가 처음 수정할 때 비로소 파일이 된다.
+
+  **콤보박스에 뜨는 것은 최대 5개**이고, 그 5개를 고르는 것은 관리자가 켜고
+  끄는 표시 플래그다(등록 수 자체는 무제한). 여섯 번째를 켜려 하면 400과 함께
+  "무엇을 먼저 내리라"는 안내가 온다 — 정렬 상위 5개로 자르면 밀려난 모델이
+  화면에서 조용히 사라진다.
+
+  프로젝트가 고른 값은 매니페스트에 **복사**된다. 관리자가 카탈로그에서 그
+  모델을 지워도 진행 중인 프로젝트는 계속 같은 모델로 돌고, 헤더 배지에는
+  이름 대신 모델 id 원문이 뜬다.
+
+  **IAM은 `global.anthropic.claude-*`를 전부 허용한다**
+  (`infra/lib/backend-permissions.ts`). 명시 목록이던 시절에는 관리자가 새
+  모델을 등록해도 첫 대화 턴에 `AccessDenied`가 났다 — 화면에서 추가할 수
+  있다고 보여주면서 실제로는 `cdk deploy`가 필요한 상태가 최악이라 넓혔다.
+  단 **배포 리전에서 그 모델의 Bedrock 액세스가 켜져 있어야** 실제로 돈다
+  (IAM과 별개다).
+
+  `PATHFINDER_DISCOVERY_DRIVER=strands` 폴백 드라이버는 프로젝트별 모델을
+  **무시하고** 전역 `ANTHROPIC_MODEL`을 쓴다(의도된 범위 제외 —
+  `agent/driver.py` 주석).
 
   **Claude Opus 4.7 이후 모델(Opus 4.7·4.8·5, Sonnet 5)은 `temperature`/`top_p`/`top_k`와
   `budget_tokens`를 제거했다** — 보내면 요청 전체가 `ValidationException`으로 실패한다

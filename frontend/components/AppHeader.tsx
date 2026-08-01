@@ -13,9 +13,13 @@ export type HeaderTab = "dashboard" | "workspace" | "review" | "prototypes" | "p
 export function AppHeader({
   activeTab,
   projectId,
+  modelLabel,
 }: {
   activeTab: HeaderTab;
   projectId?: string;
+  // 이 프로젝트가 도는 모델의 표시 이름. null/undefined면 배지를 그리지
+  // 않는다 — 프로젝트가 없는 화면이거나, 모델 미지정(서버 env 기본값)이다.
+  modelLabel?: string | null;
 }) {
   const tab = (key: HeaderTab, label: string, href: string) => {
     const active = key === activeTab;
@@ -61,6 +65,15 @@ export function AppHeader({
           </nav>
         </div>
         <div className="flex items-center gap-3">
+          {modelLabel && (
+            <span
+              data-testid="model-badge"
+              title="이 프로젝트가 사용하는 AI 모델"
+              className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 border border-violet-200"
+            >
+              {modelLabel}
+            </span>
+          )}
           <span className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Bedrock 연결됨
           </span>

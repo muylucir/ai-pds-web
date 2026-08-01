@@ -39,7 +39,7 @@ def env(monkeypatch):
 
     replies = [GOOD_JSON]
 
-    def agent_factory():
+    def agent_factory(_pid):
         async def call(prompt):
             return replies.pop(0)
         return call
@@ -77,7 +77,7 @@ def test_create_409_when_open_survey_exists(env):
 
 
 def test_create_502_sanitized_when_generation_fails(env, monkeypatch):
-    def agent_factory():
+    def agent_factory(_pid):
         async def call(prompt):
             raise RuntimeError("AKIA-secret boom")
         return call

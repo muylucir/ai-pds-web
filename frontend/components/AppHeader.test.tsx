@@ -51,3 +51,15 @@ describe("AppHeader with a selected project", () => {
     expect(screen.queryByRole("link", { name: "빌드 캔버스" })).not.toBeInTheDocument();
   });
 });
+
+describe("AppHeader model badge", () => {
+  it("shows the model badge when a label is given", () => {
+    render(<AppHeader activeTab="workspace" projectId="p1" modelLabel="Opus 5" />);
+    expect(screen.getByText("Opus 5")).toBeInTheDocument();
+  });
+
+  it("shows no model badge without a label", () => {
+    render(<AppHeader activeTab="projects" />);
+    expect(screen.queryByTestId("model-badge")).toBeNull();
+  });
+});

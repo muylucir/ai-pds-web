@@ -11,21 +11,37 @@ async def test_write_manifest_puts_expected_key_and_shape():
     d = json.loads(root.blobs["p1/project.json"])
     assert d["project_id"] == "p1" and d["name"] == "이름"
     assert d["created_at"].endswith("+00:00") or d["created_at"].endswith("Z")  # UTC ISO8601
+    # 모델 미지정은 명시적 null로 기록한다 — 키 자체를 빼면 "구 매니페스트"와
+    # "모델을 고르지 않은 새 프로젝트"를 구별할 수 없다.
+    assert d["model_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_write_manifest_records_the_model_id():
+    root = FakeS3Store()
+    await write_manifest(root, "p1", None,
+                         model_id="global.anthropic.claude-opus-5")
+    d = json.loads(root.blobs["p1/project.json"])
+    assert d["model_id"] == "global.anthropic.claude-opus-5"
 
 
 @pytest.mark.asyncio
 async def test_restore_reads_manifests_and_skips_garbage():
     root = FakeS3Store()
     root.blobs["pa/project.json"] = json.dumps(
-        {"project_id": "pa", "name": "A", "created_at": "2026-07-22T01:00:00+00:00"})
+        {"project_id": "pa", "name": "A", "created_at": "2026-07-22T01:00:00+00:00",
+         "model_id": "global.anthropic.claude-opus-5"})
     root.blobs["pb/project.json"] = json.dumps({"project_id": "pb", "name": None})
     root.blobs["pc/project.json"] = "{{{ not json"           # 손상 → 건너뜀
     root.blobs["pd/project.json"] = "[1,2,3]"                # JSON but not dict → 건너뜀
     root.blobs["pa/aiplc-docs/audit.md"] = "# not a manifest"  # 매니페스트 아님 → 무시
-    restored = {pid: (name, created_at)
-                for pid, name, created_at in await restore_projects(root)}
-    # created_at은 매니페스트에서 승계, 없으면(구 매니페스트) None.
-    assert restored == {"pa": ("A", "2026-07-22T01:00:00+00:00"), "pb": (None, None)}
+    restored = {pid: (name, created_at, model_id)
+                for pid, name, created_at, model_id in await restore_projects(root)}
+    # created_at·model_id는 매니페스트에서 승계, 없으면(구 매니페스트) None.
+    assert restored == {
+        "pa": ("A", "2026-07-22T01:00:00+00:00", "global.anthropic.claude-opus-5"),
+        "pb": (None, None, None),
+    }
 
 
 @pytest.mark.asyncio
