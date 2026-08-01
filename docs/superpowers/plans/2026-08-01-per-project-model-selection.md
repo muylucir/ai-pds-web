@@ -1838,7 +1838,21 @@ export async function getProject(pid: string): Promise<ProjectDetail> {
                         model_id: null })),
 ```
 
-⚠️ MSW는 먼저 등록된 핸들러가 이긴다. `/projects/:pid`는 `/projects` 뒤에 두어야 목록 요청을 가로채지 않는다.
+핸들러 순서에 대한 정정(Task 7 리뷰에서 실측): MSW가 먼저 등록된 핸들러를 쓰는
+것은 맞지만, **이 세 패턴은 서로 겹치지 않으므로 순서가 동작을 바꾸지 않는다.**
+`path-to-regexp`가 만드는 정규식은 `$`로 끝나 세그먼트 수가 정확히 일치해야
+하기 때문이다:
+
+```
+/projects                 -> /^\/projects[\/#\?]?$/i
+/projects/:pid            -> /^\/projects(?:\/([^\/#\?]+?))[\/#\?]?$/i
+/projects/:pid/artifacts  -> /^\/projects(?:\/([^\/#\?]+?))\/artifacts[\/#\?]?$/i
+```
+
+`/projects/:pid`를 맨 앞으로 옮겨 전체 스위트를 돌려도 645개가 그대로 통과했다.
+읽기 좋게 목록·생성 핸들러를 묶어 두는 것은 여전히 좋지만, 순서가 load-bearing
+이라고 믿게 만드는 주석은 쓰지 않는다 — 진짜로 겹치는 패턴(예: `/projects/:pid`
+대 `/projects/health`)에서만 순서가 문제가 된다.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
