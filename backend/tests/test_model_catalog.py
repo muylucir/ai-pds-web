@@ -154,3 +154,14 @@ async def test_without_a_store_reads_seed_and_refuses_writes():
     with pytest.raises(CatalogError) as exc:
         await cat.add("x", "global.anthropic.claude-opus-4-8", display=False)
     assert exc.value.code == "readonly"
+
+
+@pytest.mark.asyncio
+async def test_update_does_not_mutate_the_module_level_seed():
+    # 회귀 방지: load()가 list(SEED_MODELS)를 돌려주던 시절 update()의 제자리
+    # 변경이 모듈 전역 상수를 영구히 오염시켰다. 파일 순서에 의존한 우연한
+    # 검출이 아니라 명시적으로 못박는다.
+    before = [(e.name, e.model_id, e.display) for e in SEED_MODELS]
+    cat = ModelCatalog(FakeS3Store())
+    await cat.update(SEED_MODELS[0].model_id, name="바뀐 이름", display=False)
+    assert [(e.name, e.model_id, e.display) for e in SEED_MODELS] == before

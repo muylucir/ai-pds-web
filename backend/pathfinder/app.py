@@ -369,8 +369,8 @@ async def _lifespan(_app: FastAPI):
     # 복원 실패는 기동을 막지 않는다.
     if durable_projects_enabled():
         try:
-            for pid, name, created_at in await restore_projects(projects_root_s3_factory()):
-                registry.register(pid, name, created_at=created_at)
+            for pid, name, created_at, model_id in await restore_projects(projects_root_s3_factory()):
+                registry.register(pid, name, created_at=created_at, model_id=model_id)
         except Exception:
             _log.exception("project-list restore failed; starting with empty registry")
     # 재시작으로 소멸한 인메모리 세션이 남긴 고아 호스팅 프로세스 정리

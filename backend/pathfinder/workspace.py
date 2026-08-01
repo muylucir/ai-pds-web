@@ -67,11 +67,17 @@ class ProjectRegistry:
         # 생성 시각(ISO 문자열) — 목록 정렬 기준. 매니페스트에서 복원되거나
         # 생성 라우트가 전달한다. 구 매니페스트에는 없을 수 있어 None 허용.
         self._created_at: dict[str, str | None] = {}
+        # 이 프로젝트가 도는 Bedrock 모델 id. 카탈로그를 참조(FK)하지 않고
+        # 값을 복사해 둔 것이다 — 관리자가 모델을 카탈로그에서 지워도 진행
+        # 중인 프로젝트가 모델을 잃으면 안 된다. None = 미지정(env 폴백).
+        self._model_id: dict[str, str | None] = {}
 
     def register(self, project_id: str, name: str | None = None,
-                 created_at: str | None = None) -> None:
+                 created_at: str | None = None,
+                 model_id: str | None = None) -> None:
         self._names[project_id] = name
         self._created_at[project_id] = created_at
+        self._model_id[project_id] = model_id
 
     def attach(self, project_id: str, workspace: Workspace) -> Workspace:
         if project_id not in self._names:
@@ -92,6 +98,7 @@ class ProjectRegistry:
         """등록·워크스페이스 모두 제거. 있던 Workspace를 반환(없으면 None). 멱등."""
         self._names.pop(project_id, None)
         self._created_at.pop(project_id, None)
+        self._model_id.pop(project_id, None)
         return self._workspaces.pop(project_id, None)
 
     def list_ids(self) -> list[str]:
@@ -107,3 +114,12 @@ class ProjectRegistry:
 
     def get_created_at(self, project_id: str) -> str | None:
         return self._created_at.get(project_id)
+
+    def get_model_id(self, project_id: str) -> str | None:
+        """이 프로젝트의 모델 id, 없으면 None.
+
+        get_name과 달리 미등록에 KeyError를 내지 않는다 —
+        app.project_model()이 폴백 체인의 첫 칸으로 쓰므로, 미등록도
+        '모델 없음'으로 다루는 것이 호출부를 단순하게 만든다.
+        """
+        return self._model_id.get(project_id)

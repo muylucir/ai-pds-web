@@ -45,3 +45,33 @@ def test_unknown_pid_raises_keyerror():
     reg = ProjectRegistry()
     with pytest.raises(KeyError):
         reg.get_name("nope")
+
+
+def test_register_stores_and_returns_model_id():
+    from pathfinder.workspace import ProjectRegistry
+    r = ProjectRegistry()
+    r.register("p1", "이름", created_at="2026-08-01T00:00:00+00:00",
+               model_id="global.anthropic.claude-opus-5")
+    assert r.get_model_id("p1") == "global.anthropic.claude-opus-5"
+
+
+def test_get_model_id_is_none_for_a_project_registered_without_one():
+    from pathfinder.workspace import ProjectRegistry
+    r = ProjectRegistry()
+    r.register("p1", "이름")
+    assert r.get_model_id("p1") is None
+
+
+def test_get_model_id_is_none_for_an_unknown_project():
+    # get_name은 KeyError를 내지만 이쪽은 None이다 — 호출부(project_model)가
+    # 폴백 체인의 첫 칸으로 쓰므로 미등록도 "모델 없음"이면 충분하다.
+    from pathfinder.workspace import ProjectRegistry
+    assert ProjectRegistry().get_model_id("nope") is None
+
+
+def test_remove_drops_the_model_id():
+    from pathfinder.workspace import ProjectRegistry
+    r = ProjectRegistry()
+    r.register("p1", None, model_id="global.anthropic.claude-opus-5")
+    r.remove("p1")
+    assert r.get_model_id("p1") is None
