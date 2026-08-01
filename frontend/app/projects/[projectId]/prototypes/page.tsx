@@ -19,10 +19,12 @@ import {
 } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
+import { useProjectModel } from "@/lib/useProjectModel";
 
 export default function PrototypesPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const list = useAsync(() => listPrototypes(projectId), [projectId]);
+  const modelLabel = useProjectModel(projectId);
 
   // Which card's build session is open, and whether THIS open should fire
   // the auto first-build turn — true only when startSession just created a
@@ -168,7 +170,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
 
   return (
     <>
-      <AppHeader activeTab="prototypes" projectId={projectId} />
+      <AppHeader activeTab="prototypes" projectId={projectId} modelLabel={modelLabel} />
       <main className="max-w-5xl mx-auto px-6 py-8">
         <h1 className="text-2xl font-bold mb-6">프로토타입</h1>
 
