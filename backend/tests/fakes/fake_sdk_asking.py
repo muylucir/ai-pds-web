@@ -104,14 +104,21 @@ def script_from(scripted: dict) -> list:
     """Contract-test dict script → the SDK message-object list FakeSdkClient
     eats. `questions`/`followup_questions` are deliberately NOT represented
     here — those go through AskingSdkClient's permission callback, which is
-    the only path that produces a `questions` event for real."""
+    the only path that produces a `questions` event for real.
+
+    `result_is_error`/`result_terminal_reason` script the turn's closing
+    ResultMessage directly — the CLI reports both a genuine failure (Bedrock
+    429/500/529, a wedged tool) and an interrupted turn this way, and the two
+    are told apart only by `terminal_reason` (SDK types.py:1249-1257)."""
     blocks: list = [TextBlock(text=t) for t in scripted.get("text", [])]
     blocks += [ToolUseBlock(id=f"t{i}", name=n, input={})
                for i, n in enumerate(scripted.get("tools", []))]
     msgs: list = []
     if blocks:
         msgs.append(AssistantMessage(content=blocks))
-    msgs.append(ResultMessage())
+    msgs.append(ResultMessage(
+        is_error=bool(scripted.get("result_is_error", False)),
+        terminal_reason=scripted.get("result_terminal_reason")))
     return msgs
 
 

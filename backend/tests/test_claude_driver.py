@@ -318,6 +318,60 @@ async def test_a_successful_turn_is_unaffected(tmp_path):
     assert "error" not in kinds, kinds
 
 
+# ---- 중단된 턴은 실패가 아니다 ----
+
+@pytest.mark.asyncio
+async def test_an_interrupted_turn_ends_with_done_not_error(tmp_path):
+    """중단은 사용자가 한 일이지 턴의 실패가 아니다.
+
+    CLI는 중단된 턴을 ResultMessage(is_error=True,
+    terminal_reason="aborted_streaming")으로 보고한다 — SDK types.py:1249-1257이
+    그 두 값("aborted_streaming"/"aborted_tools")을 interrupt()로 취소된 턴의
+    신호로 규정한다. is_error만 보면 "이번 턴이 실패했습니다"가 사용자가 방금
+    누른 중단 버튼의 결과로 뜬다.
+
+    실 CLI 프로브가 찾은 결함이다. 가짜 SDK 테스트가 중단 후 이 조합을
+    스크립트하지 않아서 유닛 테스트로는 드러나지 않았다.
+    """
+    d, _, _ = _driver(tmp_path, {"result_is_error": True,
+                                 "result_terminal_reason": "aborted_streaming"})
+    kinds = [ev.kind async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert kinds[-1] == "done", kinds
+    assert not any(k == "error" for k in kinds), kinds
+
+
+@pytest.mark.asyncio
+async def test_aborted_tools_is_also_not_a_failure(tmp_path):
+    """도구 실행 중 중단도 같다 — SDK가 두 값을 나란히 규정한다. 한쪽만
+    처리하면 도구가 돌던 중 누른 중단이 여전히 실패로 뜬다."""
+    d, _, _ = _driver(tmp_path, {"result_is_error": True,
+                                 "result_terminal_reason": "aborted_tools"})
+    kinds = [ev.kind async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert kinds[-1] == "done", kinds
+
+
+@pytest.mark.asyncio
+async def test_a_genuine_failure_still_reports_error(tmp_path):
+    """회귀 가드. 이 분기는 실패를 삼켰던 버그를 고친 코드다
+    (claude_driver.py:888-899의 이력) — Bedrock 429/500/529와 교착된 도구는
+    계속 error로 가야 한다. 중단만 예외로 빼는 것이지 분기를 무력화하는 게
+    아니다."""
+    d, _, _ = _driver(tmp_path, {"result_is_error": True,
+                                 "result_terminal_reason": "completed"})
+    kinds = [ev.kind async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert kinds[-1] == "error", kinds
+
+
+@pytest.mark.asyncio
+async def test_a_failure_without_a_terminal_reason_still_reports_error(tmp_path):
+    """오래된 CLI는 terminal_reason을 보내지 않는다(SDK 문서). 그때는 판단
+    근거가 is_error뿐이므로 종전대로 실패로 다룬다 — None을 "중단일 수도
+    있다"로 읽으면 진짜 실패가 조용히 done으로 나간다."""
+    d, _, _ = _driver(tmp_path, {"result_is_error": True})
+    kinds = [ev.kind async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert kinds[-1] == "error", kinds
+
+
 @pytest.mark.asyncio
 async def test_the_final_message_of_a_turn_is_translated_only_once(tmp_path):
     # 종결 경로는 두 소스를 소진할 때까지 반복 수확한다. 한 메시지가 inbox에서
