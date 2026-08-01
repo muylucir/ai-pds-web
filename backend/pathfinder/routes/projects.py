@@ -37,11 +37,36 @@ async def _progress(pid: str) -> dict | None:
 class CreateProject(BaseModel):
     project_id: str
     name: str | None = None
+    # 이 프로젝트가 쓸 Bedrock 모델 id. 미지정이면 env 기본값으로 돈다
+    # (app.project_model의 폴백 체인).
+    model_id: str | None = None
+
+
+async def _validate_model_id(model_id: str | None) -> None:
+    """카탈로그의 **표시 목록**에 있는지 확인한다.
+
+    등록 목록이 아니라 표시 목록인 이유: display가 꺼진 모델은 관리자가
+    의도적으로 내린 것이므로 새 프로젝트가 그것을 고르면 안 된다.
+
+    이 검증이 없으면 임의 문자열이 매니페스트에 들어가고, 실패는 첫 대화
+    턴의 AccessDenied(IAM 와일드카드 밖) 또는 ValidationException(존재하지
+    않는 프로파일)으로 나타난다 — 둘 다 백엔드 로그에만 남는다.
+    """
+    if model_id is None:
+        return
+    allowed = {e.model_id for e in await app_module.model_catalog().displayed()}
+    if model_id not in allowed:
+        raise HTTPException(status_code=400,
+                            detail="선택할 수 없는 모델입니다.")
+
 
 @router.post("/projects")
 async def create_project(body: CreateProject):
     if app_module.registry.is_registered(body.project_id):
         raise HTTPException(status_code=409, detail="project exists")
+    # 워크스페이스를 만들기 전에 검증한다 — 거절할 요청 때문에 로컬 디렉토리와
+    # 러너를 만들고 되돌리는 것은 낭비다.
+    await _validate_model_id(body.model_id)
     workspace = await app_module.make_workspace(body.project_id)
     # 매니페스트와 레지스트리가 같은 created_at을 갖도록 여기서 확정 —
     # 목록 정렬(생성일 오름차순) 기준이 재시작 전후로 달라지지 않는다.
@@ -49,7 +74,8 @@ async def create_project(body: CreateProject):
     if app_module.durable_projects_enabled():
         try:
             await write_manifest(app_module.projects_root_s3_factory(),
-                                 body.project_id, body.name, created_at=created_at)
+                                 body.project_id, body.name,
+                                 created_at=created_at, model_id=body.model_id)
         except Exception:
             # 스펙 결정: 재시작하면 사라질 프로젝트를 조용히 만들지 않는다.
             _log.exception("manifest write failed for %s", body.project_id)
@@ -58,9 +84,11 @@ async def create_project(body: CreateProject):
             except Exception:
                 _log.exception("workspace cleanup after manifest failure failed")
             raise HTTPException(status_code=500, detail="project persistence failed")
-    app_module.registry.register(body.project_id, body.name, created_at=created_at)
+    app_module.registry.register(body.project_id, body.name,
+                                 created_at=created_at, model_id=body.model_id)
     app_module.registry.attach(body.project_id, workspace)
-    return {"project_id": body.project_id, "name": body.name}
+    return {"project_id": body.project_id, "name": body.name,
+            "model_id": body.model_id}
 
 @router.get("/projects")
 async def list_projects(page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=50)):
@@ -73,13 +101,30 @@ async def list_projects(page: int = Query(1, ge=1), size: int = Query(10, ge=1, 
     return {
         "projects": [
             {"project_id": pid, "name": app_module.registry.get_name(pid),
-             "created_at": app_module.registry.get_created_at(pid), "progress": prog}
+             "created_at": app_module.registry.get_created_at(pid),
+             "model_id": app_module.registry.get_model_id(pid),
+             "progress": prog}
             for pid, prog in zip(page_ids, progresses)
         ],
         "total": total,
         "page": page,
         "size": size,
     }
+
+@router.get("/projects/{pid}")
+async def get_project(pid: str):
+    """프로젝트 하나의 메타데이터. 헤더의 모델 배지가 부르는 곳이다.
+
+    ensure_workspace를 타지 않고 레지스트리만 읽는다 — 배지 하나가 워크스페이스
+    lazy 초기화(러너 부팅)를 유발하면 안 된다. list_projects의 _progress가
+    같은 이유로 S3를 직접 읽는다.
+    """
+    if not app_module.registry.is_registered(pid):
+        raise HTTPException(status_code=404, detail="unknown project")
+    return {"project_id": pid,
+            "name": app_module.registry.get_name(pid),
+            "created_at": app_module.registry.get_created_at(pid),
+            "model_id": app_module.registry.get_model_id(pid)}
 
 @router.delete("/projects/{pid}")
 async def delete_project(pid: str):
