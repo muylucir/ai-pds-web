@@ -252,7 +252,7 @@ sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # 프리
 | 특정 기능만 500이고 화면에는 원인이 안 보임 | 대개 IAM이다. 백엔드 로그의 `AccessDenied`가 어떤 액션·리소스인지 말해 준다(실측 사례: 설문 토큰 인덱스의 `s3:PutObject`, `/admin/users`의 `cognito-idp:*`) |
 | 워크스페이스 채팅 내역이 빈 목록 | `list_history`는 모든 실패를 `[]`로 강등하므로 화면만 보면 원인을 알 수 없다. `projects/{pid}/discovery/transcript/`에 객체가 있는지 먼저 확인하고, 없으면 미러링 쪽·있으면 읽기 쪽(세션 키 유도)을 본다 — 위 "Discovery 대화" 항목 참고 |
 | 스택이 `ROLLBACK_COMPLETE`라 재배포 거부 | **최초 생성이 실패한 스택은 업데이트가 불가능하다** — 고친 뒤에도 `cdk deploy`가 거부한다. 먼저 내린 다음 다시 배포한다: `npx cdk destroy PathfinderAuthStack` → `npx cdk deploy --all`. `UPDATE_ROLLBACK_COMPLETE`(기존 스택의 업데이트 실패)는 반대로 그냥 재배포하면 된다 |
-| 첫 대화 턴에서 `AccessDeniedException` | 배포 리전에 Bedrock 모델 액세스 미활성화. `ANTHROPIC_MODEL`이 IAM 허용 목록 밖이어도 같은 증상 — 아래 "환경 변수 요약"의 허용 값 참고 |
+| 첫 대화 턴에서 `AccessDeniedException` | **배포 리전에 그 모델의 Bedrock 모델 액세스가 꺼져 있다.** IAM은 `global.anthropic.claude-*`를 전부 허용하므로 이제 IAM이 원인일 가능성은 낮다 — 관리자 화면에서 새 모델을 등록했다면 콘솔에서 그 모델의 액세스를 켰는지 먼저 확인한다(IAM과 별개 설정이다) |
 | `` `temperature` is deprecated for this model `` | Opus 4.7 이후 모델은 샘플링 파라미터를 제거했다 — 아래 "참고"의 Bedrock 항목 |
 | 로그인 후 `redirect_mismatch` | 호스팅 스택의 콜백 URL 등록(`UpdateUserPoolClient`)이 실패. `cdk deploy PathfinderHostingStack` 재실행 |
 | `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 최초 1회만 필요하며 결과가 `cdk.context.json`에 캐시된다 |
