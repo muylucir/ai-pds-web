@@ -2,6 +2,7 @@ import { CREDENTIALS } from "@/lib/auth";
 import type {
   AuditEntry,
   HistoryItem,
+  ProjectDetail,
   ProjectPage,
   ProjectState,
   ProjectSummary,
@@ -59,10 +60,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function createProject(projectId: string, name?: string): Promise<ProjectSummary> {
-  const body: { project_id: string; name?: string } = { project_id: projectId };
+export async function createProject(projectId: string, name?: string,
+                                    modelId?: string): Promise<ProjectSummary> {
+  const body: { project_id: string; name?: string; model_id?: string } = {
+    project_id: projectId,
+  };
   if (name !== undefined) body.name = name;
+  // 미지정은 키를 아예 빼서 보낸다 — 서버의 optional 필드와 맞고, null을 보내는
+  // 것과 결과가 같으므로 더 적게 보내는 쪽을 고른다.
+  if (modelId !== undefined) body.model_id = modelId;
   return request<ProjectSummary>("/projects", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function getProject(pid: string): Promise<ProjectDetail> {
+  return request<ProjectDetail>(`/projects/${encodeURIComponent(pid)}`);
 }
 
 export async function listProjects(page = 1, size = 10): Promise<ProjectPage> {

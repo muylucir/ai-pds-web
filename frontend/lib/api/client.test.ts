@@ -18,6 +18,7 @@ import {
   getPending,
   getHistory,
   uploadFile,
+  getProject,
 } from "./client";
 
 describe("Content-Type header behavior", () => {
@@ -257,5 +258,36 @@ describe("api client request shaping + response typing", () => {
       ),
     );
     await expect(uploadFile("p1", new File(["abc"], "a.md"))).rejects.toMatchObject({ status: 413 });
+  });
+
+  it("createProject sends model_id when given", async () => {
+    let body: any;
+    server.use(http.post(`${API_BASE_URL}/projects`, async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json({ project_id: "p1", name: null, model_id: body.model_id });
+    }));
+    await createProject("p1", undefined, "global.anthropic.claude-opus-5");
+    expect(body).toEqual({ project_id: "p1",
+                           model_id: "global.anthropic.claude-opus-5" });
+  });
+
+  it("createProject omits model_id when not given", async () => {
+    let body: any;
+    server.use(http.post(`${API_BASE_URL}/projects`, async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json({ project_id: "p1", name: null, model_id: null });
+    }));
+    await createProject("p1");
+    expect(body).toEqual({ project_id: "p1" });
+  });
+
+  it("getProject returns the project's metadata", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1`, () =>
+      HttpResponse.json({ project_id: "p1", name: "이름", created_at: null,
+                          model_id: "global.anthropic.claude-opus-5" })));
+    expect(await getProject("p1")).toEqual({
+      project_id: "p1", name: "이름", created_at: null,
+      model_id: "global.anthropic.claude-opus-5",
+    });
   });
 });
