@@ -11,8 +11,9 @@ const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 // 백엔드가 아티팩트 버킷에서 쓰는 프리픽스 전체. lib/backend-permissions.ts의
 // BACKEND_BUCKET_PREFIXES와 같아야 한다. surveys/*는 프로젝트 프리픽스 밖의
 // 토큰 인덱스(surveys/by-token/) 때문에 필요하다 — 공개 설문 링크가 토큰의
-// 소속 프로젝트를 알기 전에 읽어야 하는 값이다.
-const BUCKET_PREFIXES = ['projects/*', 'sessions/*', 'surveys/*'];
+// 소속 프로젝트를 알기 전에 읽어야 하는 값이다. models/*는 같은 이유로
+// 프로젝트 프리픽스 밖에 있는 모델 카탈로그(models/catalog.json) 때문이다.
+const BUCKET_PREFIXES = ['projects/*', 'sessions/*', 'surveys/*', 'models/*'];
 
 /** 객체 권한(Get/Put/Delete)과 목록 권한(ListBucket)이 BUCKET_PREFIXES를
  *  빠짐없이 덮는지 확인한다. 액션 존재만 보는 단정은 프리픽스 누락을 놓치고,
@@ -58,7 +59,7 @@ function testDrillUnchanged() {
       ]),
     },
   });
-  // S3 ListBucket 문 + projects/*·sessions/*·surveys/* prefix 조건 존재.
+  // S3 ListBucket 문 + projects/*·sessions/*·surveys/*·models/* prefix 조건 존재.
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
       Statement: Match.arrayWith([
@@ -67,14 +68,14 @@ function testDrillUnchanged() {
           Action: 's3:ListBucket',
           Condition: {
             StringLike: {
-              's3:prefix': Match.arrayWith(['projects/*', 'sessions/*', 'surveys/*']),
+              's3:prefix': Match.arrayWith(['projects/*', 'sessions/*', 'surveys/*', 'models/*']),
             },
           },
         }),
       ]),
     },
   });
-  // 세 프리픽스가 객체 권한과 목록 권한 양쪽에 다 있어야 한다.
+  // 네 프리픽스가 객체 권한과 목록 권한 양쪽에 다 있어야 한다.
   //
   // 위의 arrayWith 단정만으로는 부족했다 — 그건 "이 액션이 있다"만 보고
   // 리소스는 아예 보지 않아서, surveys/*가 객체 문에서 빠진 채로도 통과했다.
@@ -86,7 +87,7 @@ function testDrillUnchanged() {
   // 버킷 1개 노출.
   assert.ok(drill.artifactsBucket, 'artifactsBucket must be exposed');
   t.resourceCountIs('AWS::S3::Bucket', 1);
-  console.log('OK  drill stack: bedrock + s3 object/list on projects+sessions+surveys + bucket exposed');
+  console.log('OK  drill stack: bedrock + s3 object/list on projects+sessions+surveys+models + bucket exposed');
 }
 
 testDrillUnchanged();
