@@ -229,6 +229,18 @@ async def test_stop_tolerates_disconnect_raising(tmp_path):
     assert not r._local_root.exists()
 
 
+# ---- interrupt() tolerates a driver with no interrupt() (StrandsDriver) ----
+
+async def test_interrupt_tolerates_a_driver_with_no_interrupt(tmp_path):
+    # StrandsDriver has no subprocess to interrupt and no interrupt() method
+    # at all -- the runner must no-op instead of raising (FakeDriver, like
+    # StrandsDriver, has no interrupt).
+    driver = FakeDriver(workspace=tmp_path / "ws")
+    assert not hasattr(driver, "interrupt")
+    r = _runner(tmp_path, driver=driver)
+    await r.interrupt()  # must not raise
+
+
 async def test_input_holder_settable(tmp_path):
     r = _runner(tmp_path)
     assert r.input_holder is None

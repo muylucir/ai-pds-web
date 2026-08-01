@@ -25,6 +25,9 @@ export interface AiItem {
   trace: TraceEntry[];
   streaming: boolean;
   error: string | null;
+  // 사용자가 이 턴을 끊었다. trace가 아닌 별도 필드인 이유는 성격이 다르기
+  // 때문 — trace는 도구 실행 기록, 이것은 턴의 종결 사유다.
+  interrupted?: boolean;
 }
 // C2: structured timeline cards, materialized from file_changed paths seen
 // during a completed turn. Pure filename-suffix mapping (see

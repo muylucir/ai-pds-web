@@ -25,6 +25,7 @@ export function ChatTimeline({
   onOpenArtifact,
   busy,
   stickSignal,
+  historyLoading,
 }: {
   items: ChatTimelineItem[];
   projectId: string;
@@ -32,6 +33,7 @@ export function ChatTimeline({
   onOpenArtifact: () => void;
   busy: boolean;
   stickSignal?: number;
+  historyLoading?: boolean;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   // stick-to-bottom: 기본 켜짐. 사용자가 위로 스크롤하면 꺼지고, 바닥 근처로
@@ -77,9 +79,16 @@ export function ChatTimeline({
     >
       <div className="max-w-2xl mx-auto space-y-5">
         {items.length === 0 ? (
-          <p className="text-center text-sm text-slate-400 mt-10">
-            대화를 시작해 보세요 — 아래에 메시지를 입력하세요.
-          </p>
+          // historyLoading 중에는 이 문구를 숨긴다 — 부모(WorkspacePage)가
+          // 같은 자리에 HistorySkeleton을 겹쳐 그린다. 숨기지 않으면 "이전
+          // 대화를 복원하는 중"과 "대화를 시작해 보세요(=아직 아무것도 없음)"가
+          // 동시에 뜨는 모순이 생긴다 — 대화가 많은 프로젝트를 재진입할 때
+          // 정확히 이 태스크가 없애려던 시나리오다.
+          !historyLoading && (
+            <p className="text-center text-sm text-slate-400 mt-10">
+              대화를 시작해 보세요 — 아래에 메시지를 입력하세요.
+            </p>
+          )
         ) : (
           items.map((item) => {
             if (item.role === "user") return <UserMessage key={item.id} text={item.text} />;

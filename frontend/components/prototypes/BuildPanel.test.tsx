@@ -95,6 +95,28 @@ describe("BuildPanel", () => {
     expect(screen.queryByRole("button", { name: "중단" })).not.toBeInTheDocument();
   });
 
+  it("중단 버튼은 하나뿐이다 — 입력창 자리로 통일", async () => {
+    // 종전에는 헤더에 있었다. 입력창에 더하면서 지우지 않으면 같은 기능 버튼이
+    // 한 화면에 둘이 되고, 진행자가 어느 것을 말하는지 매번 짚어야 한다.
+    const interrupt = vi.fn().mockResolvedValue(undefined);
+    mockStream({ streaming: true, interrupt });
+    render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
+
+    expect(screen.getAllByRole("button", { name: "중단" })).toHaveLength(1);
+  });
+
+  it("빌드가 끝난 뒤에는 중단 버튼이 없다", () => {
+    // 입력창의 disabled는 `streaming || buildComplete !== null`이라 완료
+    // 후에도 참이다. 그 값으로 버튼을 판단하면 중단할 턴이 없는데 ■이 뜬다 —
+    // ChatInput에 interrupting을 따로 넘기는 이유다.
+    mockStream({
+      streaming: false,
+      buildComplete: { summary: "할 일 앱", remaining: "" },
+    });
+    render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "중단" })).not.toBeInTheDocument();
+  });
+
   it("완료 calls closeSession then onClose", async () => {
     mockStream();
     const onClose = vi.fn();

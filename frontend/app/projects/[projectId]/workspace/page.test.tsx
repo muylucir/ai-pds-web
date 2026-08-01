@@ -48,6 +48,7 @@ function mockWorkspaceStream(overrides: Partial<workspaceStream.WorkspaceStream>
     historyLoading: false,
     activeDoc: null,
     turnSeq: 0,
+    interrupt: vi.fn(),
     ...overrides,
   });
 }
@@ -184,6 +185,19 @@ describe("Workspace page", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
+  it("진행 중이면 중단 버튼이 뜨고 누르면 훅의 interrupt를 부른다", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    const user = userEvent.setup();
+    const interrupt = vi.fn();
+    mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: true, interrupt });
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    await screen.findByLabelText("스테이지 진행 상황");
+    await user.click(screen.getByRole("button", { name: "중단" }));
+    expect(interrupt).toHaveBeenCalledTimes(1);
+  });
+
   it("shows the welcome card only when history is empty and loaded", async () => {
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
     mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false });
@@ -201,6 +215,33 @@ describe("Workspace page", () => {
     });
     await screen.findByLabelText("스테이지 진행 상황");
     expect(screen.queryByText(/어떻게 시작할까요/)).toBeNull();
+  });
+
+  it("히스토리를 불러오는 동안 스켈레톤을 보여준다", async () => {
+    // 종전에는 이 구간이 빈 화면이었다. historyLoading은 이미 있었지만 웰컴
+    // 카드를 가리는 데만 쓰였다(page.tsx의 showWelcome).
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ items: [], historyLoading: true, pendingQuestions: null, streaming: false });
+    // WorkspacePage는 use(params)로 첫 렌더에 suspend한다 — 이 파일의 다른
+    // 테스트들과 마찬가지로 act로 감싸 마이크로태스크가 플러시될 때까지
+    // 기다려야 렌더 결과를 동기적으로 조회할 수 있다.
+    await act(async () => {
+      render(<WorkspacePage params={Promise.resolve({ projectId: "p1" })} />);
+    });
+    expect(screen.getByRole("status", { name: "이전 대화를 불러오는 중" })).toBeInTheDocument();
+    // 회귀 방지: items가 []이면 ChatTimeline 자체 빈 상태 문구
+    // ("대화를 시작해 보세요")가 스켈레톤과 동시에 뜰 뻔했다 — 복원 중임을
+    // 알리는 문구와 "아직 아무것도 없음" 문구가 정면으로 충돌하는 시나리오.
+    expect(screen.queryByText(/대화를 시작해 보세요/)).not.toBeInTheDocument();
+  });
+
+  it("로딩이 끝나면 스켈레톤이 사라진다", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false });
+    await act(async () => {
+      render(<WorkspacePage params={Promise.resolve({ projectId: "p1" })} />);
+    });
+    expect(screen.queryByRole("status", { name: "이전 대화를 불러오는 중" })).not.toBeInTheDocument();
   });
 
   describe("file attachments", () => {

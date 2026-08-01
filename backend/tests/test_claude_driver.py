@@ -318,6 +318,60 @@ async def test_a_successful_turn_is_unaffected(tmp_path):
     assert "error" not in kinds, kinds
 
 
+# ---- 중단된 턴은 실패가 아니다 ----
+
+@pytest.mark.asyncio
+async def test_an_interrupted_turn_ends_with_done_not_error(tmp_path):
+    """중단은 사용자가 한 일이지 턴의 실패가 아니다.
+
+    CLI는 중단된 턴을 ResultMessage(is_error=True,
+    terminal_reason="aborted_streaming")으로 보고한다 — SDK types.py:1249-1257이
+    그 두 값("aborted_streaming"/"aborted_tools")을 interrupt()로 취소된 턴의
+    신호로 규정한다. is_error만 보면 "이번 턴이 실패했습니다"가 사용자가 방금
+    누른 중단 버튼의 결과로 뜬다.
+
+    실 CLI 프로브가 찾은 결함이다. 가짜 SDK 테스트가 중단 후 이 조합을
+    스크립트하지 않아서 유닛 테스트로는 드러나지 않았다.
+    """
+    d, _, _ = _driver(tmp_path, {"result_is_error": True,
+                                 "result_terminal_reason": "aborted_streaming"})
+    kinds = [ev.kind async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert kinds[-1] == "done", kinds
+    assert not any(k == "error" for k in kinds), kinds
+
+
+@pytest.mark.asyncio
+async def test_aborted_tools_is_also_not_a_failure(tmp_path):
+    """도구 실행 중 중단도 같다 — SDK가 두 값을 나란히 규정한다. 한쪽만
+    처리하면 도구가 돌던 중 누른 중단이 여전히 실패로 뜬다."""
+    d, _, _ = _driver(tmp_path, {"result_is_error": True,
+                                 "result_terminal_reason": "aborted_tools"})
+    kinds = [ev.kind async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert kinds[-1] == "done", kinds
+
+
+@pytest.mark.asyncio
+async def test_a_genuine_failure_still_reports_error(tmp_path):
+    """회귀 가드. 이 분기는 실패를 삼켰던 버그를 고친 코드다
+    (claude_driver.py:888-899의 이력) — Bedrock 429/500/529와 교착된 도구는
+    계속 error로 가야 한다. 중단만 예외로 빼는 것이지 분기를 무력화하는 게
+    아니다."""
+    d, _, _ = _driver(tmp_path, {"result_is_error": True,
+                                 "result_terminal_reason": "completed"})
+    kinds = [ev.kind async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert kinds[-1] == "error", kinds
+
+
+@pytest.mark.asyncio
+async def test_a_failure_without_a_terminal_reason_still_reports_error(tmp_path):
+    """오래된 CLI는 terminal_reason을 보내지 않는다(SDK 문서). 그때는 판단
+    근거가 is_error뿐이므로 종전대로 실패로 다룬다 — None을 "중단일 수도
+    있다"로 읽으면 진짜 실패가 조용히 done으로 나간다."""
+    d, _, _ = _driver(tmp_path, {"result_is_error": True})
+    kinds = [ev.kind async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert kinds[-1] == "error", kinds
+
+
 @pytest.mark.asyncio
 async def test_the_final_message_of_a_turn_is_translated_only_once(tmp_path):
     # 종결 경로는 두 소스를 소진할 때까지 반복 수확한다. 한 메시지가 inbox에서
@@ -1395,3 +1449,49 @@ async def test_a_mirror_error_is_logged(tmp_path, caplog):
     assert events == [], "미러링 실패를 사용자 이벤트로 만들면 안 된다"
     assert "mirror" in caplog.text.lower()
     assert "S3 PutObject denied" in caplog.text
+
+
+# ---- 턴 중단 ----
+
+async def test_interrupt_clears_the_pending_question_from_s3(tmp_path):
+    """중단은 S3의 pending 레코드까지 지워야 한다.
+
+    Discovery의 pending은 인메모리와 S3 양쪽에 있다(agent/pending_store.py).
+    인메모리만 지우면 `GET /pending`이 답할 수 없는 질문을 복원한다 — 사용자가
+    폼을 채우고 제출했는데 아무 일도 일어나지 않는다. 그 future는 중단과 함께
+    버려졌기 때문이다. 프로토타입 빌더가 같은 정리를 하는 이유이고
+    (proto/builder.py의 interrupt), Discovery는 durable 사본이 하나 더 있다.
+    """
+    s3 = FakeS3Store()
+    d, _, _ = _driver(tmp_path, {"questions": True}, s3=s3)
+    kinds = [ev.kind async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert "questions" in kinds, kinds
+    assert PENDING_KEY in s3.blobs, "전제: 질문이 S3에 저장돼 있다"
+
+    await d.interrupt()
+
+    assert PENDING_KEY not in s3.blobs
+    assert d._pending_payload is None
+    assert d._pending_iid is None
+
+
+async def test_interrupt_without_a_live_turn_is_a_no_op(tmp_path):
+    """멱등이어야 한다. 이미 끝난 턴에 대한 중단 요청은 에러가 아니고, 라우트가
+    세션 유무만 보고 이 메서드를 부른다."""
+    d, _, _ = _driver(tmp_path, {})
+    await d.interrupt()   # 아무 턴도 돌지 않은 상태
+    await d.interrupt()   # 두 번 불러도 같다
+
+
+async def test_interrupt_records_that_the_turn_was_stopped(tmp_path):
+    """중단 사실이 이벤트로 흘러야 화면과 트랜스크립트에 남는다.
+
+    표시가 없으면 스크롤백을 나중에 볼 때 에이전트가 말을 마치지 못한 이유를
+    알 수 없다.
+    """
+    d, _, _ = _driver(tmp_path, {"questions": True})
+    [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+
+    await d.interrupt()
+
+    assert any(e.kind == "status" and e.text == "중단됨" for e in d._queue), d._queue

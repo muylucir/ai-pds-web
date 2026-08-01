@@ -93,6 +93,13 @@ _POLL_SECONDS = 0.05
 _TURN_FAILED_TEXT = ("이번 턴이 실패했습니다 — 잠시 후 다시 시도해 주세요. "
                      "반복되면 관리자에게 알려주세요.")
 
+# `ResultMessage.terminal_reason` 값 중 "취소됨"을 뜻하는 것들
+# (claude_agent_sdk/types.py:1249-1257): interrupt()로 끊긴 턴은 스트리밍 중이었든
+# 도구 실행 중이었든 이 둘 중 하나로 온다. 리터럴을 분기 안에 박지 않고 여기 모아
+# 두는 이유는 세 번째 값이 SDK에 추가됐을 때 이 목록 하나만 고치면 되게 하려는
+# 것이다.
+_INTERRUPTED_TERMINAL_REASONS = frozenset({"aborted_streaming", "aborted_tools"})
+
 # Discovery runs with a human in the loop watching the chat, unlike the
 # unattended prototype build -- but AskUserQuestion is still routed through
 # can_use_tool (see _on_can_use_tool below) and every other tool must execute
@@ -688,6 +695,46 @@ class ClaudeDriver:
             _log.exception("transcript mirror flush failed — "
                            "chat history for this turn may be lost")
 
+    async def interrupt(self) -> None:
+        """진행 중인 턴을 끊는다. 지금까지 한 작업은 살린다.
+
+        proto/builder.py의 interrupt를 패턴으로 따르되 한 가지가 다르다 —
+        Discovery의 pending 질문은 S3에도 미러링된다(agent/pending_store.py).
+        인메모리만 지우면 `GET /pending`이 답할 수 없는 질문을 복원하고,
+        사용자가 제출한 답변은 아무도 듣지 않는 future를 resolve한다.
+
+        순서가 load-bearing이다: 우리 상태를 먼저 정리하고 마지막에 클라이언트를
+        건드린다. client.interrupt()가 던져도 pending이 남지 않는다.
+
+        멱등: 돌고 있는 턴이 없으면 아무것도 하지 않는다. 라우트는 세션 유무만
+        보고 이 메서드를 부르므로 이미 끝난 턴에 대한 요청이 정상적으로 들어온다.
+
+        `_turn_token`이 아니라 `_turn_active`/`_pending_question`으로 판단한다.
+        질문에서 파킹된 턴은 run()의 제너레이터가 questions -> done으로 끝나며
+        `_release_turn`이 이미 돌아 `_turn_token`이 None이 된 뒤에도 CLI
+        서브프로세스와 `_pending_question` future는 여전히 살아 있다(파일 상단
+        "single-turn slot" 절 참고) — `_turn_token`으로 판단하면 정확히 중단해야
+        할 그 상태(파킹된 질문)를 "중단할 것 없음"으로 오판한다.
+        """
+        if self._client is None:
+            return
+        if not self._turn_active and self._pending_question is None:
+            return
+        if self._pending_question is not None and not self._pending_question.done():
+            # 이 future를 기다리던 _on_can_use_tool은 턴과 함께 버려진다.
+            self._pending_question.cancel()
+        self._clear_pending_state()
+        await self._clear_pending_quietly()
+        # 큐에 남은 questions 이벤트는 답할 수 없는 카드다 — 흘려보내면 화면에
+        # 폼이 뜬다.
+        self._queue = [e for e in self._queue if e.kind != "questions"]
+        # 중단 사실을 남긴다. 새 kind를 만들지 않고 기존 status로 흘리는 이유는
+        # 프론트가 이미 다루는 이벤트 모양을 재사용하기 위해서다 — 화면에서는
+        # 이 이벤트가 "중단됨" 한 줄이 된다. 이 마커는 라이브 SSE 큐에만
+        # 있다 — 트랜스크립트에는 들어가지 않으므로 새로고침 후 복원되지 않는다.
+        self._queue.append(AgentEvent(kind="status", text="중단됨"))
+        await self._client.interrupt()
+
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
         name = input_data.get("tool_name", "")
         if name in _FILE_TOOLS:
@@ -865,28 +912,50 @@ class ClaudeDriver:
             # (does not). Logged rather than shown -- an HTTP status is not
             # something a workshop attendee can act on.
             if getattr(msg, "is_error", False):
-                _log.error(
-                    "claude CLI reported a failed turn: api_error_status=%s "
-                    "subtype=%s terminal_reason=%s errors=%s",
-                    getattr(msg, "api_error_status", None),
-                    getattr(msg, "subtype", None),
-                    getattr(msg, "terminal_reason", None),
-                    getattr(msg, "errors", None),
-                )
-                # Recorded on the reader, NOT returned as an `error` event.
-                # `_pump` owns the terminal event and emits exactly one, always
-                # last (its invariant 1); returning a second terminal here
-                # would break that. The flag makes `_pump` emit `error`
-                # instead of `done` after its drain.
+                # `is_error` alone conflates two different things. The CLI sets
+                # it for a genuine failure (Bedrock 429/500/529, a wedged tool)
+                # AND for a turn the user cancelled via our own interrupt() --
+                # `terminal_reason` is what tells them apart
+                # (claude_agent_sdk/types.py:1249-1257 documents
+                # "aborted_streaming"/"aborted_tools" as the cancelled-turn
+                # values). Without this check, pressing the interrupt button
+                # showed "중단됨" (Task 5's status line, correct) stacked with
+                # "이번 턴이 실패했습니다" (a lie) -- the real-CLI probe that
+                # unit tests missed, because the fake SDK never scripted
+                # is_error=True together with an aborted terminal_reason.
                 #
-                # On the READER rather than on `self` because this is per-turn
-                # state: the reader's lifetime IS the turn's, so a failed turn
-                # cannot leak its verdict into the next one. A driver-level
-                # flag would have to be reset by hand on every entry path
-                # (`_stream`, `_continue_after_answers`) and would be wrong the
-                # moment one of them forgot.
-                if reader is not None:
-                    reader.failed = True
+                # `terminal_reason is None` (older CLIs that predate this
+                # field) falls through to the failure path below, same as
+                # before -- `is_error` is the only signal we have then.
+                terminal_reason = getattr(msg, "terminal_reason", None)
+                interrupted = terminal_reason in _INTERRUPTED_TERMINAL_REASONS
+                if not interrupted:
+                    _log.error(
+                        "claude CLI reported a failed turn: api_error_status=%s "
+                        "subtype=%s terminal_reason=%s errors=%s",
+                        getattr(msg, "api_error_status", None),
+                        getattr(msg, "subtype", None),
+                        terminal_reason,
+                        getattr(msg, "errors", None),
+                    )
+                    # Recorded on the reader, NOT returned as an `error` event.
+                    # `_pump` owns the terminal event and emits exactly one, always
+                    # last (its invariant 1); returning a second terminal here
+                    # would break that. The flag makes `_pump` emit `error`
+                    # instead of `done` after its drain.
+                    #
+                    # On the READER rather than on `self` because this is per-turn
+                    # state: the reader's lifetime IS the turn's, so a failed turn
+                    # cannot leak its verdict into the next one. A driver-level
+                    # flag would have to be reset by hand on every entry path
+                    # (`_stream`, `_continue_after_answers`) and would be wrong the
+                    # moment one of them forgot.
+                    if reader is not None:
+                        reader.failed = True
+                # 중단은 error 로그로 남기지 않는다: 사용자가 방금 누른 버튼의
+                # 정상적인 결과이지 우리가 찾아야 할 실패가 아니다. error로
+                # 남기면 워크숍 로그가 매 중단마다 오염되고, 진짜 실패(429/500/
+                # 529, 교착된 도구)를 찾을 때 잡음이 늘어난다.
             events.append(AgentEvent(kind="done"))
         return events
 

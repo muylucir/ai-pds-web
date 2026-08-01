@@ -52,6 +52,20 @@ describe("ChatTimeline", () => {
     expect(screen.getByText(/대화를 시작해 보세요/)).toBeInTheDocument();
   });
 
+  it("히스토리 로딩 중에는 빈 상태 문구를 숨긴다 (부모가 그리는 스켈레톤과 겹치지 않도록)", () => {
+    render(
+      <ChatTimeline
+        items={[]}
+        projectId="pilot1"
+        onChoose={vi.fn()}
+        onOpenArtifact={vi.fn()}
+        busy={false}
+        historyLoading
+      />,
+    );
+    expect(screen.queryByText(/대화를 시작해 보세요/)).not.toBeInTheDocument();
+  });
+
   it("renders the verbatim typing-hint chrome once there is at least one item, but not on the empty state", () => {
     const items: ChatItem[] = [{ id: "u1", role: "user", text: "필터 추가해줘" }];
     const { rerender } = render(

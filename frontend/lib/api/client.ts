@@ -130,6 +130,14 @@ export async function postMessage(pid: string, text: string): Promise<TurnResult
   });
 }
 
+// POST /projects/{pid}/interrupt → 202. 진행 중인 턴을 끊는다. 응답 시점에
+// 중단이 끝나 있지 않다(202) — 스트림이 종결 이벤트로 알린다.
+export async function interruptTurn(pid: string): Promise<void> {
+  await request<{ status: string }>(`/projects/${encodeURIComponent(pid)}/interrupt`, {
+    method: "POST",
+  });
+}
+
 // GET /projects/{pid}/pending → { pending: string | null }. The raw JSON
 // string (Task 9's QuestionsPayload shape) is returned as-is — callers parse
 // it with the same safeParse fallback used for streamed "questions" events.
