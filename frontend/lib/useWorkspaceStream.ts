@@ -149,8 +149,10 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       patchAi(aiId, (it) => {
         if (ev.kind === "message") return { ...it, text: it.text + (ev.text ?? "") };
         // 중단은 turn의 종결 사유라 trace가 아니라 전용 필드로 간다.
-        // 드라이버가 status로 흘리는 이유는 트랜스크립트에 남기기 위해서다
-        // (claude_driver.interrupt).
+        // 드라이버가 새 kind 대신 status로 흘리는 이유는 이미 다루는 이벤트
+        // 모양을 재사용하기 위해서다(claude_driver.interrupt). 이 마커는
+        // 라이브 스트림에만 있다 — 트랜스크립트에는 남지 않으므로 새로고침
+        // 후에는 이 줄이 다시 나타나지 않는다.
         if (ev.kind === "status" && ev.text === "중단됨") {
           return { ...it, interrupted: true };
         }

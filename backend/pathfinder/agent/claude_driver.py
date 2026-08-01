@@ -728,8 +728,10 @@ class ClaudeDriver:
         # 큐에 남은 questions 이벤트는 답할 수 없는 카드다 — 흘려보내면 화면에
         # 폼이 뜬다.
         self._queue = [e for e in self._queue if e.kind != "questions"]
-        # 중단 사실을 남긴다. 이 이벤트가 화면의 "중단됨" 한 줄이 되고,
-        # 트랜스크립트에도 들어가 복원 시 재현된다.
+        # 중단 사실을 남긴다. 새 kind를 만들지 않고 기존 status로 흘리는 이유는
+        # 프론트가 이미 다루는 이벤트 모양을 재사용하기 위해서다 — 화면에서는
+        # 이 이벤트가 "중단됨" 한 줄이 된다. 이 마커는 라이브 SSE 큐에만
+        # 있다 — 트랜스크립트에는 들어가지 않으므로 새로고침 후 복원되지 않는다.
         self._queue.append(AgentEvent(kind="status", text="중단됨"))
         await self._client.interrupt()
 
