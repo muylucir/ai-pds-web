@@ -99,6 +99,41 @@ def projects_root_s3_factory() -> S3StoreLike:
     return S3Store(bucket=bucket, prefix="projects/", client=client)
 
 
+# 모델 카탈로그용 — 버킷 루트 스토어. 카탈로그는 프로젝트보다 먼저 존재해야
+# 하므로(프로젝트 생성 화면이 프로젝트 없이 읽는다) projects/ 밖에 있다.
+# 테스트에서 monkeypatch.
+def models_root_s3_factory() -> S3StoreLike:
+    region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
+    client = boto3.client("s3", region_name=region)
+    return S3Store(bucket=bucket, prefix="", client=client)
+
+
+def model_catalog():
+    """ModelCatalog 팩토리 (monkeypatchable in tests).
+
+    버킷이 없으면 읽기 전용 카탈로그(시드만)를 준다 — 로컬 개발이 아무 설정
+    없이 프로젝트를 만들 수 있어야 하고, 그 화면의 콤보박스도 채워져야 한다.
+    """
+    from pathfinder.model_catalog import ModelCatalog
+    if not durable_projects_enabled():
+        return ModelCatalog(None)
+    return ModelCatalog(models_root_s3_factory())
+
+
+def project_model(project_id: str) -> str | None:
+    """이 프로젝트가 도는 Bedrock 모델 id.
+
+    폴백 순서는 프로젝트 → env → None이고 각 칸에 이유가 있다:
+      - 프로젝트: 생성 시 고른 값(매니페스트에 복사돼 있다).
+      - env(ANTHROPIC_MODEL): 이 기능 이전에 만든 프로젝트가 계속 도는 길.
+        배포에서는 backend-permissions.ts의 MODEL이 이 값을 넣는다.
+      - None: 로컬 개발에서 env도 없는 경우. 드라이버는 None을 받으면
+        ANTHROPIC_MODEL을 넣지 않아 SDK 기본값으로 간다(종전 동작).
+    """
+    return registry.get_model_id(project_id) or os.environ.get("ANTHROPIC_MODEL")
+
+
 # ---- 인증 (routes/*, auth/deps.py) ----
 
 _jwks_singleton = None
@@ -221,7 +256,7 @@ def driver_factory(project_id: str, local_root: Path):
         rules_dir=_rules_dir(),
         config_dir=str(_discovery_config_dir()),
         s3=s3_store_factory(project_id),
-        anthropic_model=os.environ.get("ANTHROPIC_MODEL"),
+        anthropic_model=project_model(project_id),
     )
 
 
@@ -290,7 +325,7 @@ def proto_session_factory(project_id: str, slug: str):
             session_id=session_id,
             resume=resume,
             session_store=store,
-            anthropic_model=os.environ.get("ANTHROPIC_MODEL"),
+            anthropic_model=project_model(project_id),
             permission_mode=_proto_permission_mode(),
         )
 
@@ -320,15 +355,28 @@ def survey_store_factory(project_id: str, slug: str):
                        slug=slug, project_id=project_id)
 
 
-def questionnaire_agent_factory():
+def questionnaire_agent_factory(project_id: str):
     """A one-shot `async (prompt) -> str` callable. Deliberately NOT
     StrandsDriver: that bakes in the AIPLC rules prompt, workspace tools and a
-    session manager, none of which belong in a stateless generation call."""
+    session manager, none of which belong in a stateless generation call.
+
+    project_id를 받는 이유: 문항 생성도 그 프로젝트의 모델로 돌아야 한다.
+    종전에는 os.environ["ANTHROPIC_MODEL"]을 직접 읽어, 프로젝트별 모델을
+    골라도 이 경로만 전역 env를 썼다.
+    """
+    model_id = project_model(project_id)
+
     async def call(prompt: str) -> str:
+        if not model_id:
+            # 여기가 유일하게 모델을 필수로 요구하는 지점이다(다른 둘은 None을
+            # SDK 기본값으로 넘긴다). 라우트가 502로 감싸고 이 문장이 로그에
+            # 남아 원인이 프로젝트 설정임을 말해 준다.
+            raise RuntimeError(
+                f"no model for project {project_id!r}: neither the project's "
+                "model_id nor ANTHROPIC_MODEL is set")
         from strands import Agent
         from strands.models import BedrockModel
-        model = BedrockModel(model_id=os.environ["ANTHROPIC_MODEL"],
-                             max_tokens=8000)
+        model = BedrockModel(model_id=model_id, max_tokens=8000)
         agent = Agent(model=model, tools=[], callback_handler=None)
         result = await agent.invoke_async(prompt)
         return str(result)

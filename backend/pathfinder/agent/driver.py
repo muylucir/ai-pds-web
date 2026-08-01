@@ -93,6 +93,11 @@ def _default_agent_factory(workspace: str, rules_dir: str):
         #   them from inferenceConfig, and Claude thinking rejects non-default
         #   sampling anyway.
         model = BedrockModel(
+            # ⚠️ 프로젝트별 모델 선택(app.project_model)은 이 폴백 드라이버에
+            # 적용되지 않는다 — PATHFINDER_DISCOVERY_DRIVER=strands로 돌리면
+            # 전역 ANTHROPIC_MODEL을 쓴다. 의도된 범위 제외다: 이 드라이버는
+            # 워크숍 중 탈출로이고 워크숍 후 삭제 예정이므로, 두 경로를 다
+            # 유지하는 대신 하나(ClaudeDriver)만 정확하게 둔다.
             model_id=os.environ["ANTHROPIC_MODEL"],
             max_tokens=64000,
             additional_request_fields={

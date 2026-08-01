@@ -63,7 +63,7 @@ async def create_survey(pid: str, slug: str):
     token = secrets.token_urlsafe(TOKEN_BYTES)
     try:
         qn = await build_questionnaire(
-            prototype_md, app_module.questionnaire_agent_factory(),
+            prototype_md, app_module.questionnaire_agent_factory(pid),
             token=token, project_id=pid, slug=slug, now=_now())
     except Exception:
         # Model/AWS detail can carry credentials -- log it, return a sanitized
