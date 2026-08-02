@@ -188,26 +188,38 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # "user" now means OUR config dir, so this is safe -- and it is
             # what `skills` needs open to discover anything.
             setting_sources=["user", "project"],
-            # Enable every skill discovered under CLAUDE_CONFIG_DIR (the repo's
-            # proto-config/skills/, shipped to /opt/pathfinder/proto-config).
-            # "all" rather than an explicit name list so adding a skill is one
-            # committed file with no code change. Safe precisely BECAUSE the
-            # config dir is ours: with the default ~/.claude this would enable
-            # whatever the host user happens to have installed.
-            # Note this makes the SDK pass `--allowedTools Skill`; under
-            # bypassPermissions that is not expected to restrict Bash/Write,
-            # but the e2e checklist verifies a real build turn still works.
-            skills="all",
+            # 우리가 shipping하는 스킬만 이름으로 켠다. 종전 "all"은
+            # CLAUDE_CONFIG_DIR 아래 것만 켜진다는 전제였지만 **틀렸다**:
+            # "all"은 CLI에 번들된 스킬까지 함께 켜고, 그 목록에 `run`
+            # ("Launch and drive this project's app... browser-driven")이
+            # 있다. 실측 사고: 빌드 에이전트가 Playwright chromium을 띄웠고
+            # (코어덤프의 Unit=pathfinder-backend.service로 확인) 그 검증이
+            # 포트 3000을 겨냥해 Pathfinder 프론트엔드가 SIGKILL로 죽었다
+            # (2026-08-01 16:13/16:18, journalctl status=9/KILL). 백엔드와
+            # 프론트엔드가 같은 유저(pathfinder)로 도므로 막을 것이 없었다.
+            #
+            # 이름 목록이면 SDK가 `Skill(shadcn-design)` 형태로만 허용하므로
+            # (subprocess_cli.py:_apply_skills_defaults) 번들 스킬이 들어오지
+            # 않는다. 스킬을 추가할 때 이 목록도 함께 고쳐야 한다 — "all"의
+            # "커밋 한 번으로 추가" 편의를 의도적으로 포기한 자리다.
+            #
+            # 주의: SDK 문서가 명시하듯 이것은 **컨텍스트 필터이지 샌드박스가
+            # 아니다**. 스킬을 숨길 뿐 Bash 자체를 막지는 못하므로, 에이전트가
+            # 직접 브라우저·서버를 띄우는 것은 CLAUDE.md 규약으로 함께 막는다
+            # (proto-config/CLAUDE.md의 "프로세스·포트" 절). 근본 격리는
+            # 빌드 에이전트를 별도 유저로 분리하는 것이고, 그것은 별건이다.
+            skills=["shadcn-design"],
             # 빌드 완료 선언용 커스텀 도구. Discovery(claude_driver.py:423-439)와
             # 같은 형태다. allowed_tools의 항목은 반드시
             # "mcp__<서버 키>__<도구 이름>"이어야 한다 — SDK가 --mcp-config를
             # 직렬화할 때 그 이름을 만들므로, 다른 표기는 조용히 승인 대기로
             # 남는다.
             #
-            # skills="all"과 충돌하지 않는다(실측): SDK의
-            # _apply_skills_defaults는 allowed_tools를 복사한 뒤 "Skill"을
-            # 덧붙이므로(subprocess_cli.py:434-452) shadcn-design 스킬이 그대로
-            # 살아 있다.
+            # skills 옵션과 충돌하지 않는다: SDK의 _apply_skills_defaults가
+            # allowed_tools를 복사한 뒤 스킬 항목을 덧붙이므로
+            # (subprocess_cli.py:434-452) 이 도구와 shadcn-design이 함께
+            # 살아 있다. 이름 목록에서는 "Skill" 대신 `Skill(shadcn-design)`이
+            # 붙는다는 점만 다르다.
             mcp_servers={PROTO_MCP_SERVER_NAME: create_sdk_mcp_server(
                 name=PROTO_MCP_SERVER_NAME, tools=_proto_tools_for(builder))},
             allowed_tools=[BUILD_COMPLETE_TOOL],

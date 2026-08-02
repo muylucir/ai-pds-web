@@ -149,12 +149,18 @@ def _real_options(resume=False, **kw):
     return captured["options"]
 
 
-def test_skills_are_enabled_for_the_whole_config_dir():
-    """`skills="all"` is what makes a committed proto-config/skills/<name>/
-    SKILL.md take effect with no code change. It is only safe because
-    CLAUDE_CONFIG_DIR is OURS -- with the default ~/.claude this would enable
-    whatever the host user happens to have installed."""
-    assert _real_options().skills == "all"
+def test_only_our_own_skills_are_enabled():
+    """Never `"all"`: that also enables the CLI's BUNDLED skills, and one of
+    them (`run` -- "Launch and drive this project's app... browser-driven") got
+    a build agent to start Playwright chromium, whose port-3000 target SIGKILLed
+    the Pathfinder frontend mid-workshop (2026-08-01 16:13/16:18; the coredump's
+    Unit was pathfinder-backend.service, so the browser was ours).
+
+    An explicit name list makes the SDK emit `Skill(shadcn-design)` instead of a
+    bare `Skill`, so bundled skills never enter the turn. Adding a skill to
+    proto-config/skills/ now also means adding its name here -- that cost is the
+    point of this test."""
+    assert _real_options().skills == ["shadcn-design"]
 
 
 def test_setting_sources_stay_open_so_skills_can_be_discovered():
@@ -325,10 +331,11 @@ def test_mcp_server_and_allowed_tools_are_wired(tmp_path, monkeypatch):
     options = captured["options"]
     assert PROTO_MCP_SERVER_NAME in options.mcp_servers
     assert BUILD_COMPLETE_TOOL in options.allowed_tools
-    # skills="all"이 살아 있어야 한다 — SDK가 allowed_tools를 복사한 뒤
-    # "Skill"을 덧붙이므로(subprocess_cli.py:434-452) 공존한다. shadcn-design
-    # 스킬이 이 값에 달려 있다.
-    assert options.skills == "all"
+    # 스킬 목록이 살아 있어야 한다 — SDK가 allowed_tools를 복사한 뒤 스킬 항목을
+    # 덧붙이므로(subprocess_cli.py:434-452) build_complete와 공존한다.
+    # shadcn-design이 이 값에 달려 있고, "all"로 되돌리면 번들 `run` 스킬이
+    # 함께 들어와 프론트엔드를 죽인 사고가 재현된다.
+    assert options.skills == ["shadcn-design"]
 
 
 async def test_the_tool_queues_a_build_complete_event(tmp_path):

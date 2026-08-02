@@ -262,6 +262,42 @@ async def test_log_tail_returns_last_n_lines(root):
         await host.stop(PID, SLUG)
 
 
+async def test_status_does_not_read_the_log(root, monkeypatch):
+    """`status()`는 로그 파일을 **열지 않는다**. 목록 라우트가 프로토타입마다
+    이걸 부르는데, `_tail_text`는 마지막 100줄을 얻으려고 파일을 전부 읽고
+    (`read_text()`) `.proto-host.log`는 회전이 없다. 실측: 100MB에서 호출당
+    237ms, 그것도 async 함수 안의 동기 I/O라 그동안 모든 SSE 스트림이 멈춘다.
+
+    `_tail_text` 호출 자체를 세는 이유: `log_tail == ""`만 검사하면 로그를
+    읽고 나서 버리는 구현도 통과하는데, 비용은 읽는 데 있지 담는 데 있지
+    않다."""
+    import pathfinder.proto.host as host_mod
+
+    _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    info = await host.start(PID, SLUG)
+    try:
+        assert info.state == "running"
+
+        calls = []
+        real = host_mod._tail_text
+        monkeypatch.setattr(host_mod, "_tail_text",
+                            lambda p, n: (calls.append(p), real(p, n))[1])
+
+        status = host.status(PID, SLUG)
+        assert status is not None
+        assert status.state == "running"
+        assert status.port == info.port
+        assert calls == [], f"status() read the log: {calls}"
+        assert status.log_tail == ""
+
+        # 반면 사용자가 명시적으로 요청하는 경로는 여전히 읽어야 한다.
+        assert isinstance(host.log_tail(PID, SLUG), str)
+        assert len(calls) == 1
+    finally:
+        await host.stop(PID, SLUG)
+
+
 # ---- in-place hosting (post-MicroVM): the build directory IS the served tree ----
 
 async def test_start_serves_an_existing_directory_without_wiping_it(root):
