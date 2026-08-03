@@ -83,7 +83,9 @@ def test_get_project_returns_metadata_without_booting_a_workspace(catalog, monke
     body = client.get("/projects/pm-5").json()
     assert body == {"project_id": "pm-5", "name": "이름",
                     "created_at": "2026-08-01T00:00:00+00:00",
-                    "model_id": CHOSEN}
+                    "model_id": CHOSEN,
+                    # language 없이 register된 프로젝트 — get_language가 "ko"로 확정한다.
+                    "language": "ko"}
     assert booted["n"] == 0
 
 

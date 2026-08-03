@@ -134,6 +134,20 @@ def project_model(project_id: str) -> str | None:
     return registry.get_model_id(project_id) or os.environ.get("ANTHROPIC_MODEL")
 
 
+def project_language(project_id: str) -> str:
+    """이 프로젝트의 생성물 언어("ko"|"en"). 항상 값이 있다.
+
+    project_model과 달리 env 폴백이 없다: 언어는 프로세스 전역 기본값을 가질
+    이유가 없고(모델은 배포가 정하는 것이 자연스럽지만 언어는 프로젝트의
+    성질이다), 레지스트리가 이미 "ko"로 확정한다.
+
+    이 함수를 두는 이유는 호출부(driver_factory, proto_session_factory,
+    survey_store_factory)가 registry를 직접 만지지 않게 하는 것이다 —
+    project_model과 같은 모양을 유지한다.
+    """
+    return registry.get_language(project_id)
+
+
 # ---- 인증 (routes/*, auth/deps.py) ----
 
 _jwks_singleton = None
@@ -417,8 +431,10 @@ async def _lifespan(_app: FastAPI):
     # 복원 실패는 기동을 막지 않는다.
     if durable_projects_enabled():
         try:
-            for pid, name, created_at, model_id in await restore_projects(projects_root_s3_factory()):
-                registry.register(pid, name, created_at=created_at, model_id=model_id)
+            for pid, name, created_at, model_id, language in await restore_projects(
+                    projects_root_s3_factory()):
+                registry.register(pid, name, created_at=created_at,
+                                  model_id=model_id, language=language)
         except Exception:
             _log.exception("project-list restore failed; starting with empty registry")
     # 재시작으로 소멸한 인메모리 세션이 남긴 고아 호스팅 프로세스 정리
