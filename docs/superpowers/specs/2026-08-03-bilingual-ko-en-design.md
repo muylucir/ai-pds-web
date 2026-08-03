@@ -176,36 +176,55 @@ Write/Edit이 자동 승인되고, "계획만 세우고 빌드하지 마"를 이
 ```
 frontend/lib/i18n/
   ko.ts, en.ts      — 평면 키 → 문자열 (중첩 없음)
-  index.ts          — Locale 타입, DEFAULT_LOCALE = "ko", 딕셔너리 조회
-  provider.tsx      — LocaleProvider + useT() (클라이언트 컴포넌트용)
-  server.ts         — cookies()에서 로케일 읽기 (서버 컴포넌트용)
+  index.ts          — Locale 타입, DEFAULT_LOCALE, LANG_COOKIE, 딕셔너리 조회
+  provider.tsx      — LocaleProvider + useT() + useLocale()
 ```
+
+`server.ts`는 없다 — `app/layout.tsx`가 `cookies()`를 직접 부르는 유일한
+지점이고, 파일 하나를 위한 모듈은 만들지 않는다.
 
 키는 **평면**으로 둔다. 중첩 객체는 타입 추론이 깊어지고 `t("a.b.c")` 형태의
 문자열 경로를 쓰면 타입 검사를 잃는다. `en.ts`가 `ko.ts`의 키 집합과 정확히
 같음을 타입으로 강제한다(`Record<keyof typeof ko, string>`) — 누락된 키가
 런타임 `undefined`가 아니라 컴파일 에러로 잡힌다.
 
-**서버/클라이언트 경계.** 59개 컴포넌트 중 26개가 서버 컴포넌트다
-(`AppHeader`, `StageTimeline`, `AiMessage`, `DocTree` 등). 서버 컴포넌트는
-React Context를 쓸 수 없으므로 두 경로가 필요하다:
+**서버/클라이언트 경계 — 실제로는 경계가 하나뿐이다.**
 
-- **서버**: `layout.tsx`가 `cookies()`로 로케일을 읽어 `<html lang>`을
-  설정하고, 서버 컴포넌트는 `getT()`를 직접 호출한다.
-- **클라이언트**: `layout.tsx`가 `LocaleProvider`로 감싸고 `"use client"`
-  컴포넌트는 `useT()`를 쓴다.
+`"use client"`가 없는 컴포넌트가 26개 있지만(`AppHeader`, `StageTimeline`,
+`AiMessage`, `DocTree` 등) **그중 서버에서 렌더되는 것은 하나도 없다.** 전수
+확인한 결과, `AppHeader`를 그리는 7개 페이지가 전부 `"use client"`이고
+(`app/page.tsx`, `admin/users`, `admin/models`, `dashboard`, `workspace`,
+`review`, `prototypes`), 나머지도 모두 그 트리 아래에서만 임포트된다. Next.js는
+클라이언트 컴포넌트가 임포트한 것을 클라이언트 번들에 넣으므로, 이 26개는
+**`"use client"`를 안 쓴 클라이언트 컴포넌트**다.
 
-`getT()`는 **쿠키 읽기 실패 시 `ko`로 폴백한다.** 테스트 환경(jsdom)에는
-`cookies()`가 없고, 그 폴백이 없으면 서버 컴포넌트 테스트가 전부 깨진다(§7).
+서버에서 실제로 렌더되는 것은 셋뿐이고 셋 다 UI 문자열이 없다:
+`app/layout.tsx`, 그리고 `redirect()`만 하는 `questions/page.tsx`·
+`canvas/page.tsx`.
 
-**언어 스위치.** `AppHeader`는 서버 컴포넌트인데 스위치는 상호작용이 필요하다.
-스위치만 별도 클라이언트 컴포넌트(`LanguageSwitcher`)로 만들어 헤더에 꽂는다 —
-`UserMenu`가 이미 같은 형태다. 스위치가 `pf_lang` 쿠키를 설정하고
-`router.refresh()`를 호출한다. 서버 컴포넌트가 새 로케일로 다시 렌더되고
-클라이언트 컴포넌트는 Provider 값 변경으로 갱신된다.
+따라서 **`getT()`(서버용 경로)를 만들지 않는다.** 필요한 것은 하나다:
 
-`localStorage`가 아니라 쿠키인 이유는 **서버 컴포넌트가 읽어야** 하기 때문이다.
-httpOnly가 아니다 — 클라이언트에서 써야 하고, 보안 값이 아니다.
+- `app/layout.tsx`가 `cookies()`로 로케일을 읽어 `<html lang>`에 넣고
+  `LocaleProvider`에 초기값으로 내려준다. 여기가 유일한 서버 측 로케일 판독
+  지점이다.
+- 나머지 전부 — 26개 포함 — 는 `useT()`를 쓴다. `"use client"`가 없는 파일에는
+  **추가한다**(이미 클라이언트 컴포넌트이므로 동작 변화 없이 훅 사용이
+  허용된다).
+
+이것이 §7의 테스트 부담을 없앤다: `cookies()`를 부르는 코드가 `layout.tsx`
+하나이고 그 파일은 컴포넌트 테스트 대상이 아니므로, jsdom에서 `cookies()`가
+없어 깨지는 테스트가 애초에 생기지 않는다.
+
+**언어 스위치.** `AppHeader`에 꽂는 `LanguageSwitcher`를 별도 파일로 만든다 —
+`AppHeader` 자체가 이미 클라이언트 컴포넌트지만, 스위치는 쿠키 쓰기와
+`router.refresh()`라는 별개 책임이라 분리한다(`UserMenu`가 같은 형태다).
+쿠키를 쓰고 `router.refresh()`를 호출하면 `layout.tsx`가 새 로케일로 다시
+렌더되어 `<html lang>`과 Provider 초기값이 갱신된다.
+
+`localStorage`가 아니라 쿠키인 이유는 **`layout.tsx`가 서버에서 읽어야** 하기
+때문이다 — `<html lang>`을 첫 페인트에 맞추려면 서버가 알아야 하고,
+`localStorage`는 서버에서 보이지 않아 깜빡임이 생긴다. httpOnly가 아니다 —
+스위치가 클라이언트에서 써야 하고, 보안 값이 아니다.
 
 **폰트는 그대로 둔다.** `layout.tsx:5`의 `Noto_Sans_KR`은 `subsets: ["latin"]`
 이라 라틴 문자만 가져온다(한글은 시스템 폴백). 영어 UI에서도 문제없다.
@@ -309,11 +328,13 @@ UI 언어의 단일 출처가 이미 프론트에 있으므로 백엔드에 두 
 없으면 `ko`이고, 테스트는 쿠키를 설정하지 않으므로 렌더 결과가 현재와 같다.
 베이스라인: `83개 파일 / 664개 테스트 통과`(2026-08-03 측정).
 
-깨지는 것은 두 부류뿐이다:
+깨지는 것은 없다. `cookies()`를 부르는 코드가 `app/layout.tsx` 하나이고 그
+파일은 컴포넌트 테스트 대상이 아니다(§5). 신규 테스트만 추가한다 —
+`LanguageSwitcher`, 그리고 아래 영어 렌더 항목들.
 
-1. **서버 컴포넌트 테스트** — `cookies()`가 jsdom에 없어 실패한다. `getT()`의
-   `ko` 폴백(§5)이 이것을 해결한다. 폴백이 동작함을 확인하는 테스트를 둔다.
-2. **`LanguageSwitcher`** — 신규 작성.
+**`useT()`가 Provider 밖에서 불릴 때 `ko`로 폴백한다.** 기존 테스트 535건은
+컴포넌트를 Provider로 감싸지 않고 `render()`하므로, 이 폴백이 그 테스트들을
+그대로 통과시키는 장치다. 폴백이 없으면 훅이 던지고 전부 깨진다.
 
 **한국어 문자열을 직접 쓰는 단정문 535건은 그대로 둔다.**
 `getByText("대시보드")`를 딕셔너리 조회로 바꾸면 "딕셔너리가 자기 자신과 같다"는
