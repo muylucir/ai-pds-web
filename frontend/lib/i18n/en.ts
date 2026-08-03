@@ -9,4 +9,11 @@ import type { ko } from "./ko";
 export const en: Record<keyof typeof ko, string> = {
   "nav.dashboard": "Dashboard",
   "nav.workspace": "Workspace",
+  "nav.review": "Document Review",
+  "nav.prototypes": "Prototypes",
+  "nav.ariaLabel": "Main menu",
+  "nav.needProject": "Select a project first",
+  "header.modelBadgeTitle": "The AI model this project runs on",
+  "header.bedrockConnected": "Bedrock connected",
+  "header.languageBadgeTitle": "Language of this project's documents, prototypes, and chat",
 };

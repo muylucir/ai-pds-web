@@ -1,8 +1,18 @@
+"use client";
 import Link from "next/link";
 
+import type { Locale } from "@/lib/i18n";
+import { useT } from "@/lib/i18n/provider";
+
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { UserMenu } from "./UserMenu";
 
 export type HeaderTab = "dashboard" | "workspace" | "review" | "prototypes" | "projects";
+
+// 언어 배지의 표기. 딕셔너리를 타지 않는다 — 언어 이름은 항상 그 언어 자체로
+// 적는다(LanguageSwitcher의 라벨과 같은 규약). "한국어"를 영어 UI에서 "Korean"
+// 으로 바꾸면 그 프로젝트의 문서가 실제로 어떤 글자로 나오는지 흐려진다.
+const LANGUAGE_LABEL: Record<Locale, string> = { ko: "한국어", en: "English" };
 
 // Ported from the shared <header> in files/ui/01–03. `projectId` is optional so
 // the project-list screen (no project chosen yet) can render the header. When no
@@ -14,13 +24,21 @@ export function AppHeader({
   activeTab,
   projectId,
   modelLabel,
+  projectLanguage,
 }: {
   activeTab: HeaderTab;
   projectId?: string;
   // 이 프로젝트가 도는 모델의 표시 이름. null/undefined면 배지를 그리지
   // 않는다 — 프로젝트가 없는 화면이거나, 모델 미지정(서버 env 기본값)이다.
   modelLabel?: string | null;
+  // 이 프로젝트의 **생성물 언어**. UI 로케일과 다를 수 있고, 그것이 정상이다 —
+  // 영어 UI로 한국어 프로젝트를 열면 문서는 한국어로 나온다. 이 배지가 그
+  // 사실을 화면에 드러낸다. null/undefined면 그리지 않는다(프로젝트 없는
+  // 화면, 또는 언어를 모르는 구 백엔드 응답).
+  projectLanguage?: Locale | null;
 }) {
+  const t = useT();
+
   const tab = (key: HeaderTab, label: string, href: string) => {
     const active = key === activeTab;
     const base = "px-3 py-2 rounded-lg text-sm";
@@ -30,7 +48,7 @@ export function AppHeader({
         <span
           className={`${base} text-slate-300 cursor-not-allowed select-none`}
           aria-disabled="true"
-          title="프로젝트를 먼저 선택하세요"
+          title={t("nav.needProject")}
         >
           {label}
         </span>
@@ -57,26 +75,36 @@ export function AppHeader({
             </span>
             Pathfinder
           </Link>
-          <nav className="hidden md:flex items-center gap-1" aria-label="주요 메뉴">
-            {tab("dashboard", "대시보드", `${base}/dashboard`)}
-            {tab("workspace", "워크스페이스", `${base}/workspace`)}
-            {tab("review", "문서 리뷰", `${base}/review`)}
-            {tab("prototypes", "프로토타입", `${base}/prototypes`)}
+          <nav className="hidden md:flex items-center gap-1" aria-label={t("nav.ariaLabel")}>
+            {tab("dashboard", t("nav.dashboard"), `${base}/dashboard`)}
+            {tab("workspace", t("nav.workspace"), `${base}/workspace`)}
+            {tab("review", t("nav.review"), `${base}/review`)}
+            {tab("prototypes", t("nav.prototypes"), `${base}/prototypes`)}
           </nav>
         </div>
         <div className="flex items-center gap-3">
+          {projectLanguage && (
+            <span
+              data-testid="language-badge"
+              title={t("header.languageBadgeTitle")}
+              className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-slate-50 text-slate-600 border border-slate-200"
+            >
+              {LANGUAGE_LABEL[projectLanguage]}
+            </span>
+          )}
           {modelLabel && (
             <span
               data-testid="model-badge"
-              title="이 프로젝트가 사용하는 AI 모델"
+              title={t("header.modelBadgeTitle")}
               className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 border border-violet-200"
             >
               {modelLabel}
             </span>
           )}
           <span className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Bedrock 연결됨
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> {t("header.bedrockConnected")}
           </span>
+          <LanguageSwitcher />
           <UserMenu />
         </div>
       </div>

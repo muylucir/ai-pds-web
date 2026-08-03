@@ -10,4 +10,11 @@
 export const ko = {
   "nav.dashboard": "대시보드",
   "nav.workspace": "워크스페이스",
+  "nav.review": "문서 리뷰",
+  "nav.prototypes": "프로토타입",
+  "nav.ariaLabel": "주요 메뉴",
+  "nav.needProject": "프로젝트를 먼저 선택하세요",
+  "header.modelBadgeTitle": "이 프로젝트가 사용하는 AI 모델",
+  "header.bedrockConnected": "Bedrock 연결됨",
+  "header.languageBadgeTitle": "이 프로젝트의 문서·프로토타입·채팅 언어",
 } as const;

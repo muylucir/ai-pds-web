@@ -13,7 +13,7 @@ import { AttachmentChips } from "@/components/workspace/AttachmentChips";
 import { QuestionForm } from "@/components/questions/QuestionForm";
 import { getState, uploadFile } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
-import { useProjectModel } from "@/lib/useProjectModel";
+import { useProjectMeta } from "@/lib/useProjectModel";
 import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 
 // The 4-pane workspace screen — grid ratio 1:3.5:3.5:4 (좌 스테이지 : 채팅 :
@@ -29,7 +29,7 @@ import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
-  const modelLabel = useProjectModel(projectId);
+  const { modelLabel, language } = useProjectMeta(projectId);
   const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, changedPaths, historyLoading, activeDoc, turnSeq } =
     useWorkspaceStream(projectId);
   // Show the Path A/B welcome starter only once history has finished loading
@@ -141,7 +141,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     // 포커스 이동만으로 헤더가 말려 올라간다(ui-bug.png). 루트를 포지셔닝
     // 컨텍스트로 만들어 이 클래스의 버그를 페이지 차원에서 차단한다.
     <div className="relative h-screen flex flex-col overflow-hidden">
-      <AppHeader activeTab="workspace" projectId={projectId} modelLabel={modelLabel} />
+      <AppHeader activeTab="workspace" projectId={projectId} modelLabel={modelLabel}
+                 projectLanguage={language} />
       <div className="flex-1 grid min-h-0 grid-cols-1 lg:grid-cols-[1fr_3.5fr_3.5fr_4fr]">
         <StageSidebar state={state.data} events={stages} />
 
