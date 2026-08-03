@@ -48,6 +48,7 @@ def _seed_env_probe_dir(root: Path, base_path: str,
         "fs.writeFileSync('built.txt', JSON.stringify({\n"
         "  NEXT_PUBLIC_BASE_PATH: process.env.NEXT_PUBLIC_BASE_PATH ?? null,\n"
         "  PROTO_BASE_PATH: process.env.PROTO_BASE_PATH ?? null,\n"
+        "  BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID ?? null,\n"
         "}));\n",
         encoding="utf-8")
     (target / "server.js").write_text(
@@ -80,10 +81,12 @@ async def test_build_receives_the_base_path_env(root):
         assert info.state == "running", info.log_tail
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"http://127.0.0.1:{info.port}/")
-        assert resp.json() == {
-            "NEXT_PUBLIC_BASE_PATH": f"/proto/{PID}/{SLUG}",
-            "PROTO_BASE_PATH": f"/proto/{PID}/{SLUG}",
-        }
+        # basePath 두 키만 본다 — 프로브는 다른 주입 값(BEDROCK_MODEL_ID)도
+        # 함께 기록하므로, 전체 dict를 고정하면 주입이 하나 늘 때마다 이
+        # 테스트가 무관하게 깨진다.
+        seen = resp.json()
+        assert seen["NEXT_PUBLIC_BASE_PATH"] == f"/proto/{PID}/{SLUG}"
+        assert seen["PROTO_BASE_PATH"] == f"/proto/{PID}/{SLUG}"
     finally:
         await host.stop(PID, SLUG)
 
@@ -102,8 +105,52 @@ async def test_build_env_absent_when_no_base_path_given(root):
         assert info.state == "running", info.log_tail
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"http://127.0.0.1:{info.port}/")
-        assert resp.json() == {"NEXT_PUBLIC_BASE_PATH": None,
-                               "PROTO_BASE_PATH": None}
+        seen = resp.json()
+        assert seen["NEXT_PUBLIC_BASE_PATH"] is None
+        assert seen["PROTO_BASE_PATH"] is None
+    finally:
+        await host.stop(PID, SLUG)
+
+
+async def test_build_and_start_receive_the_projects_model(root):
+    """프로토타입 **앱 자체**가 런타임에 쓸 모델도 프로젝트 설정을 따라야 한다.
+
+    종전에는 Discovery와 빌드 에이전트만 project_model()을 상속받았고
+    (app.py의 두 자리), 빌드된 앱은 에이전트가 자기 `.env.example`에 적어 둔
+    값으로 돌았다 — 실물에서
+    `BEDROCK_MODEL_ID=apac.anthropic.claude-sonnet-4-5-...`가 하드코딩된 채
+    프로젝트는 다른 모델로 설정돼 있었다.
+
+    빌드 단계에서 확인하는 이유: 프레임워크가 `process.env.*`를 빌드 시점에
+    인라인할 수 있어서, start에만 있는 값은 undefined로 굳는다."""
+    _seed_env_probe_dir(root, base_path="")
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    info = await host.start(PID, SLUG, model_id="global.anthropic.claude-opus-5")
+
+    try:
+        assert info.state == "running", info.log_tail
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"http://127.0.0.1:{info.port}/")
+        assert resp.json()["BEDROCK_MODEL_ID"] == "global.anthropic.claude-opus-5"
+    finally:
+        await host.stop(PID, SLUG)
+
+
+async def test_model_env_absent_when_no_model_given(root):
+    """`model_id`는 선택이다. 넘기지 않으면 빈 문자열이 아니라 **없어야** 한다 —
+    빈 값을 주면 앱이 "설정됐지만 빈 모델"로 읽어 Bedrock 호출이 알기 어려운
+    에러로 실패한다. base_path가 같은 이유로 선택인 것과 같은 규율이다."""
+    _seed_env_probe_dir(root, base_path="")
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    info = await host.start(PID, SLUG)
+
+    try:
+        assert info.state == "running", info.log_tail
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"http://127.0.0.1:{info.port}/")
+        assert resp.json()["BEDROCK_MODEL_ID"] is None
     finally:
         await host.stop(PID, SLUG)
 

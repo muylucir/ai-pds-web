@@ -157,7 +157,8 @@ class ProtoHost:
     # ---- public interface ----
 
     async def start(self, pid: str, slug: str, cwd: Path | None = None,
-                    base_path: str | None = None) -> HostInfo:
+                    base_path: str | None = None,
+                    model_id: str | None = None) -> HostInfo:
         """Run the npm lifecycle for one prototype and return its HostInfo.
 
         `base_path` is the public prefix the reverse proxy serves this prototype
@@ -168,6 +169,19 @@ class ProtoHost:
         the env vars are absent rather than empty, so a config reading
         `process.env.NEXT_PUBLIC_BASE_PATH ?? ''` can still tell "no prefix"
         from "prefix I forgot to pass".
+
+        `model_id` is the project's Bedrock model, so a prototype that calls an
+        LLM at runtime uses the model the user picked for the project rather
+        than one the build agent chose for itself. Without this the two drift:
+        Discovery and the build agent inherit the project model
+        (`app.project_model`), but the built app had only whatever the agent
+        wrote into its own `.env.example` -- observed in the wild as a
+        hardcoded `BEDROCK_MODEL_ID=apac.anthropic.claude-sonnet-4-5-...`
+        while the project was set to something else entirely.
+
+        Exported to the build step too, for the same reason as base_path: a
+        framework may inline `process.env.*` at build time, and a value that
+        only appears at start would be baked as undefined.
         """
         # If this (pid, slug) is already running/started, tear down its
         # previous process first.
@@ -191,6 +205,13 @@ class ProtoHost:
         if base_path:
             base_env = {"NEXT_PUBLIC_BASE_PATH": base_path,
                         "PROTO_BASE_PATH": base_path}
+        # 프로토타입 런타임이 읽을 모델. 에이전트가 `.env.example`에 적어 두는
+        # 이름과 같은 것을 쓴다(BEDROCK_MODEL_ID) -- 이름이 어긋나면 주입해도
+        # 앱이 읽지 않는다. NEXT_PUBLIC_ 접두어는 붙이지 않는다: 모델 id는 서버
+        # 측 호출에만 쓰이고, 그 접두어는 값을 클라이언트 번들에 인라인해
+        # 브라우저로 내보낸다.
+        if model_id:
+            base_env["BEDROCK_MODEL_ID"] = model_id
 
         rc = await self._run_npm(["install"], target_dir, log_path,
                                  env={**os.environ, **base_env})
