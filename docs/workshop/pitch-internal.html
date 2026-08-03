@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pathfinder 워크샵 — 고객 딜리버리 제안 (SA/AM 내부 공유용)</title>
+<title>AI-PLC Discovery 워크샵 — 고객 딜리버리 제안 (SA/AM 내부 공유용)</title>
 </head>
 <body style="margin:0; padding:0; background-color:rgb(244,245,248); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic','맑은 고딕',sans-serif; -webkit-font-smoothing:antialiased;">
 
@@ -28,7 +28,7 @@
         고객의 &ldquo;AI로 뭘 해야 할지 모르겠다&rdquo;에<br>반나절로 답을 주는 핸즈온
       </div>
       <div style="font-size:14.5px; line-height:1.7; color:rgb(196,201,230); margin-top:12px;">
-        Pathfinder 워크샵 &mdash; 고객 PM·기획 조직이 <b style="color:rgb(255,255,255);">자기 업무 아이디어를 직접 프로토타입까지</b> 만들어 보는 자리입니다. 우리가 딜리버리할 수 있고, 준비는 대부분 자동화돼 있습니다.
+        <b style="color:rgb(255,255,255);">AWS 공개 방법론 AI-PLC</b>(AI-Driven Product Life Cycle)의 Discovery 구간을 고객 PM·기획 조직과 반나절에 완주합니다. 구동 도구는 Pathfinder이고, 우리가 딜리버리할 수 있으며 준비는 대부분 자동화돼 있습니다.
       </div>
     </td>
   </tr>
@@ -79,8 +79,52 @@
               <b style="color:rgb(28,30,54);">유즈케이스가 고객의 언어로 나옵니다</b> &mdash; 우리가 제안한 목록이 아니라 <b>고객이 직접 고르고 검증한</b> 과제입니다. 다음 단계(PoC·MVP) 논의에서 근거가 이미 있는 상태로 시작합니다.
             </td>
           </tr>
+          <tr>
+            <td valign="top" style="font-size:14px; color:rgb(52,55,82); line-height:1.74; padding-bottom:10px;">
+              <b style="color:rgb(28,30,54);">고객에게 남는 것이 도구 종속이 아닙니다</b> &mdash; AI-PLC는 <b>AWS가 공개한 방법론</b>이므로(<span style="font-family:monospace; font-size:12.5px;">aws-samples/sample-ai-plc</span>) 고객이 워크샵 후에도 자체적으로 돌릴 수 있습니다. 그리고 방법론의 다음 구간이 Inception&middot;Construction이므로, <b>후속 논의가 방법론 안에서 자연스럽게 이어집니다.</b>
+            </td>
+          </tr>
         </tbody>
       </table>
+    </td>
+  </tr>
+
+  <!-- ===================== AI-PLC 라이프사이클 ===================== -->
+  <tr>
+    <td style="padding:28px 34px 0;">
+      <table cellspacing="0" cellpadding="0" border="0" style="width:100%; border-left:4px solid rgb(109,94,252);">
+        <tbody><tr><td bgcolor="rgb(244,245,255)" style="background-color:rgb(244,245,255); padding:8px 13px; font-size:15.5px; color:rgb(28,30,54);">
+          <b>워크샵이 방법론 어디에 있는가</b>
+        </td></tr></tbody>
+      </table>
+
+      <table cellspacing="0" cellpadding="0" border="0" style="width:100%; margin-top:14px; border:1px solid rgb(223,225,245);">
+        <tbody>
+          <tr>
+            <td width="25%" bgcolor="rgb(240,241,253)" style="background-color:rgb(240,241,253); border-right:1px solid rgb(223,225,245); padding:12px 10px; text-align:center;">
+              <div style="font-size:12px; font-weight:bold; color:rgb(76,62,210);">DISCOVERY</div>
+              <div style="font-size:11px; color:rgb(76,62,210); margin-top:3px;"><b>◀ 이 워크샵</b></div>
+              <div style="font-size:11.5px; color:rgb(84,88,116); margin-top:5px;">PM 주도 · 문제 정의</div>
+            </td>
+            <td width="25%" style="border-right:1px solid rgb(223,225,245); padding:12px 10px; text-align:center;">
+              <div style="font-size:12px; font-weight:bold; color:rgb(120,124,152);">INCEPTION</div>
+              <div style="font-size:11.5px; color:rgb(140,144,172); margin-top:5px;">요구사항 · 워크플로</div>
+            </td>
+            <td width="25%" style="border-right:1px solid rgb(223,225,245); padding:12px 10px; text-align:center;">
+              <div style="font-size:12px; font-weight:bold; color:rgb(120,124,152);">CONSTRUCTION</div>
+              <div style="font-size:11.5px; color:rgb(140,144,172); margin-top:5px;">설계 · 코드 · 테스트</div>
+            </td>
+            <td width="25%" style="padding:12px 10px; text-align:center;">
+              <div style="font-size:12px; font-weight:bold; color:rgb(120,124,152);">OPERATIONS</div>
+              <div style="font-size:11.5px; color:rgb(140,144,172); margin-top:5px;">배포 · 운영</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p style="margin:12px 0 0; font-size:13.5px; color:rgb(52,55,82); line-height:1.7;">
+        워크샵 산출물(<b>Discovery Document</b>)이 <b>Inception의 입력</b>입니다. 즉 워크샵이 끝난 지점이 <b>후속 제안의 출발점</b>이 됩니다 &mdash; &ldquo;다음은 무엇인가&rdquo;를 우리가 꺼내지 않아도 방법론이 이미 답을 갖고 있습니다.
+      </p>
     </td>
   </tr>
 
@@ -149,9 +193,9 @@
             ⚖️ 고객에게 이렇게 설명하세요 &mdash; 여기서 만든 것을 그대로 쓰는 자리가 아닙니다
           </div>
           <div style="font-size:13.5px; color:rgb(78,70,52); line-height:1.74;">
-            프로토타입은 <b>납품물이 아니라 판단의 근거</b>입니다. 운영·인증·사내 연동 같은 실제 구축은 고객의 개발 조직(또는 후속 프로젝트)의 몫으로 남습니다.
+            <b>방법론을 근거로 설명하면 방어할 필요가 없습니다.</b> Discovery는 AI-PLC의 첫 구간이고, 그 산출물은 다음 구간(Inception)의 <b>입력</b>으로 규정돼 있습니다. 즉 프로토타입은 납품물이 아니라 <b>다음 단계로 넘기는 근거</b>입니다 &mdash; 우리가 범위를 좁혀서가 아니라 방법론이 그렇게 정의합니다.
             <br><br>
-            이 자리의 목적은 <b>개발 일정을 잡기 전에 방향이 맞는지 먼저 확인하는 것</b>입니다. 그래서 산출물은 &ldquo;돌아가는 서비스&rdquo;가 아니라 <b>검증이 끝난 기획 문서 + 만져본 경험 + 반응 데이터</b>입니다.
+            운영·인증·사내 연동 같은 실제 구축은 Construction 구간이고, 고객의 개발 조직(또는 후속 프로젝트)의 몫입니다. 그래서 산출물은 &ldquo;돌아가는 서비스&rdquo;가 아니라 <b>검증이 끝난 기획 문서 + 만져본 경험 + 반응 데이터</b>입니다.
             <br><br>
             이 선을 처음부터 그어야 &ldquo;이거 그대로 쓸 수 있나요?&rdquo; 하는 기대와 어긋나지 않습니다.
           </div>
@@ -239,8 +283,54 @@
             ✔️&nbsp; 우리가 <b>인프라 담당자만 만나고 있어</b> 현업 접점을 넓혀야 하는 어카운트
           </td></tr>
           <tr><td valign="top" style="font-size:13.5px; color:rgb(120,124,152); line-height:1.74; padding-top:4px;">
-            ✖️&nbsp; 반대로, 이미 <b>만들 것이 확정</b>돼 구현·아키텍처 논의가 필요한 고객에게는 맞지 않습니다. 그 경우는 일반 Immersion Day가 낫습니다.
+            ✖️&nbsp; 반대로, 이미 <b>만들 것이 확정</b>돼 구현·아키텍처 논의가 필요한 고객에게는 맞지 않습니다. 이건 우리 판단이 아니라 방법론 규정입니다 &mdash; AI-PLC는 Discovery를 <b>신규 제품 정의(Greenfield) 전용</b>으로 규정하고, 기존 시스템 개선은 Inception 구간의 Reverse Engineering으로 보냅니다. 그 경우는 일반 Immersion Day가 낫습니다.
           </td></tr>
+        </tbody>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ===================== 고객이 물을 것 ===================== -->
+  <tr>
+    <td style="padding:28px 34px 0;">
+      <table cellspacing="0" cellpadding="0" border="0" style="width:100%; border-left:4px solid rgb(109,94,252);">
+        <tbody><tr><td bgcolor="rgb(244,245,255)" style="background-color:rgb(244,245,255); padding:8px 13px; font-size:15.5px; color:rgb(28,30,54);">
+          <b>고객이 물을 것 &mdash; 이렇게 답하세요</b>
+        </td></tr></tbody>
+      </table>
+
+      <table cellspacing="0" cellpadding="0" border="0" style="width:100%; margin-top:14px; border:1px solid rgb(223,225,245);">
+        <tbody>
+          <tr>
+            <td bgcolor="rgb(249,250,253)" style="background-color:rgb(249,250,253); padding:11px 14px; font-size:13.5px; color:rgb(28,30,54); border-bottom:1px solid rgb(223,225,245);">
+              <b>&ldquo;리포를 받아서 직접 돌리면 되지 않나요?&rdquo;</b>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:11px 14px; font-size:13.5px; color:rgb(52,55,82); border-bottom:1px solid rgb(223,225,245); line-height:1.72;">
+              돌릴 수 있습니다 &mdash; <b>Claude Code나 Kiro를 쓸 줄 아는 사람이라면.</b> 상류 룰은 질문을 채팅이 아니라 <span style="font-family:monospace; font-size:12.5px;">*-questions.md</span> 파일에 넣고 <span style="font-family:monospace; font-size:12.5px;">[Answer]:</span> 태그 뒤에 답하도록 규정합니다. 워크샵 참가자는 PM·기획자이고, 그들에게 필요한 것은 방법론이지 터미널이 아닙니다. Pathfinder는 <b>그 간극만</b> 메웁니다.
+            </td>
+          </tr>
+          <tr>
+            <td bgcolor="rgb(249,250,253)" style="background-color:rgb(249,250,253); padding:11px 14px; font-size:13.5px; color:rgb(28,30,54); border-bottom:1px solid rgb(223,225,245);">
+              <b>&ldquo;AI-PLC가 뭔가요?&rdquo;</b>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:11px 14px; font-size:13.5px; color:rgb(52,55,82); border-bottom:1px solid rgb(223,225,245); line-height:1.72;">
+              AWS가 공개한 AI 기반 제품 라이프사이클 방법론입니다(<span style="font-family:monospace; font-size:12.5px;">aws-samples/sample-ai-plc</span>). Discovery &rarr; Inception &rarr; Construction &rarr; Operations 네 구간이고, <b>워크샵은 첫 구간인 Discovery를 다룹니다.</b>
+            </td>
+          </tr>
+          <tr>
+            <td bgcolor="rgb(249,250,253)" style="background-color:rgb(249,250,253); padding:11px 14px; font-size:13.5px; color:rgb(28,30,54); border-bottom:1px solid rgb(223,225,245);">
+              <b>&ldquo;Pathfinder는 AWS 제품인가요?&rdquo;</b>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:11px 14px; font-size:13.5px; color:rgb(52,55,82); line-height:1.72;">
+              아닙니다. <b>AI-PLC 방법론을 워크샵에서 돌리기 위한 도구</b>입니다. 고객에게 파는 것은 방법론이고, 도구는 그것을 반나절에 완주하게 하는 수단입니다.
+            </td>
+          </tr>
         </tbody>
       </table>
     </td>
@@ -278,7 +368,7 @@
   <tr>
     <td style="padding:24px 34px 30px;">
       <div style="border-top:1px solid rgb(230,232,242); padding-top:14px; font-size:12px; color:rgb(138,142,168); line-height:1.75;">
-        <b>Pathfinder</b> · From Pain Point to Validated Prototype &mdash; AI-PLC Discovery 방법론을 대화형 캔버스로 구동하는 워크샵 플랫폼.<br>
+        <b>AWS AI-PLC</b>(AI-Driven Product Life Cycle) Discovery 핸즈온 &mdash; 방법론 원본 <span style="font-family:monospace;">github.com/aws-samples/sample-ai-plc</span> · 구동 도구 <b>Pathfinder</b>.<br>
         본 자료는 <b>AWS 내부 공유용</b>입니다. 고객 배포용 자료는 <span style="font-family:monospace;">edm.html</span>(초대 메일)과 <span style="font-family:monospace;">intro.html</span>(참가자 소개)을 사용하세요.
       </div>
     </td>
