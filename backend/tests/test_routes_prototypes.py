@@ -106,11 +106,16 @@ class FakeProtoHost:
         # basePath in at build time, so a missing value here is a 404 on every
         # asset, not a recoverable runtime detail.
         self.start_base_paths: list[object] = []
+        # 프로토타입 앱의 런타임 LLM 호출이 쓸 모델. 라우트가 이것을 넘기지
+        # 않으면 빌드된 앱이 에이전트가 임의로 고른 모델로 돌아, 사용자가
+        # 프로젝트에서 고른 값이 무시된다.
+        self.start_model_ids: list[object] = []
         self.purged: list[tuple[str, str]] = []
 
-    async def start(self, pid, slug, cwd=None, base_path=None):
+    async def start(self, pid, slug, cwd=None, base_path=None, model_id=None):
         self.start_cwds.append(cwd)
         self.start_base_paths.append(base_path)
+        self.start_model_ids.append(model_id)
         if self.start_exc is not None:
             raise self.start_exc
         info = self.infos.get((pid, slug))
@@ -1113,6 +1118,26 @@ def test_host_start_base_path_honours_an_empty_public_prefix(proto_env, monkeypa
     assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 200
 
     assert proto_env["host"].start_base_paths == [f"/proto/{PID}/{SLUG}"]
+
+
+def test_host_start_passes_the_projects_model(proto_env, monkeypatch):
+    """호스팅이 프로젝트 모델을 프로토타입 런타임으로 넘긴다.
+
+    이것이 없으면 사용자가 프로젝트에서 고른 모델이 세 곳 중 두 곳
+    (Discovery·빌드 에이전트)에만 적용되고, 빌드된 앱은 에이전트가 자기
+    `.env.example`에 박아 둔 모델로 돈다. 출처가 app.project_model() 하나여야
+    세 곳이 갈라지지 않는다."""
+    import pathfinder.app as app_module
+    monkeypatch.setattr(app_module, "project_model",
+                        lambda pid: "global.anthropic.claude-opus-5")
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 200
+
+    assert proto_env["host"].start_model_ids == ["global.anthropic.claude-opus-5"]
 
 
 def test_host_start_no_bundle_404(proto_env):

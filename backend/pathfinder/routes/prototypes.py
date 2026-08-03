@@ -532,7 +532,18 @@ async def start_host(pid: str, slug: str):
     try:
         info = await app_module.proto_host().start(
             pid, slug, cwd=_prototype_dir(pid, slug),
-            base_path=public_base_path(pid, slug))
+            base_path=public_base_path(pid, slug),
+            # 빌드 에이전트·Discovery와 같은 출처를 쓴다(app.project_model) —
+            # 프로토타입 앱의 런타임 LLM 호출도 프로젝트가 고른 모델로 돌아야
+            # 한다. 세 곳이 다른 값을 쓰면 사용자가 고른 모델이 어디에
+            # 적용되는지 알 수 없다.
+            #
+            # 리전은 주입하지 않는다: 백엔드도 Bedrock 리전을 명시적으로
+            # 넘기지 않고 boto3/SDK의 기본 해석(인스턴스 리전·AWS_REGION)에
+            # 맡긴다. 프로토타입은 `{**os.environ, ...}`로 백엔드 env를
+            # 물려받으므로 같은 해석을 그대로 따른다 -- 여기서 별도 규약을
+            # 만들면 백엔드와 프로토타입이 다른 리전을 볼 수 있다.
+            model_id=app_module.project_model(pid))
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="prototype bundle not found")
     if info.state == "failed":
