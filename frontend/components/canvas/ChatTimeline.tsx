@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import type { ChatItem as CanvasChatItem } from "@/lib/useTurnStream";
 import type { ChatItem as WorkspaceChatItem } from "@/lib/useWorkspaceStream";
+import { useT } from "@/lib/i18n/provider";
 import { UserMessage } from "./UserMessage";
 import { AiMessage } from "./AiMessage";
 import { QuestionCardSlot } from "./QuestionCardSlot";
@@ -35,6 +36,7 @@ export function ChatTimeline({
   stickSignal?: number;
   historyLoading?: boolean;
 }) {
+  const t = useT();
   const scrollerRef = useRef<HTMLDivElement>(null);
   // stick-to-bottom: 기본 켜짐. 사용자가 위로 스크롤하면 꺼지고, 바닥 근처로
   // 돌아오거나 메시지를 보내면(stickSignal 증가) 다시 켜진다. 스트리밍으로
@@ -91,7 +93,17 @@ export function ChatTimeline({
           )
         ) : (
           items.map((item) => {
-            if (item.role === "user") return <UserMessage key={item.id} text={item.text} />;
+            if (item.role === "user") {
+              // answers가 있으면 UI 언어로 문구를 다시 만든다 — 백엔드의 text는
+              // 이 필드를 모르는 구 프론트를 위한 한국어 폴백일 뿐이다.
+              const text = item.answers
+                ? `${t("chat.answersSubmitted")} — ${Object.entries(item.answers)
+                    .sort(([a], [b]) => a.localeCompare(b))
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(" · ")}`
+                : item.text;
+              return <UserMessage key={item.id} text={text} />;
+            }
             if (item.role === "ai") return <AiMessage key={item.id} item={item} />;
             if (item.role === "history-card") {
               // A questions file presented in a PAST turn (Task 5's history

@@ -152,6 +152,24 @@ describe("useWorkspaceStream", () => {
     expect(result.current.items.map((i) => i.role)).toEqual(["user", "ai", "history-card"]);
   });
 
+  it("답변 제출 턴의 answers를 items로 옮긴다", async () => {
+    // 이 배관이 끊기면 ChatTimeline이 UI 언어로 문구를 만들 근거를 잃고,
+    // 백엔드의 한국어 폴백 text가 영어 UI에 그대로 뜬다 — 화면만 보면
+    // "번역이 안 됐다"로 보이고 원인은 여기다.
+    vi.mocked(client.getHistory).mockResolvedValue([
+      { role: "user", text: "답변 제출 — 1: A", card: null, name: null, trace: [],
+        answers: { "1": "A" } },
+      { role: "user", text: "그냥 발화", card: null, name: null, trace: [] },
+    ]);
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    const [answered, plain] = result.current.items;
+    expect(answered.role === "user" && answered.answers).toEqual({ "1": "A" });
+    // answers가 없는 보통 말풍선은 null로 남는다 — undefined가 아니라 null이어야
+    // ChatTimeline의 `item.answers ?` 분기가 text 폴백을 탄다.
+    expect(plain.role === "user" && plain.answers).toBeNull();
+  });
+
   it("history load failure degrades to empty chat", async () => {
     vi.mocked(client.getHistory).mockRejectedValue(new Error("boom"));
     const { result } = renderHook(() => useWorkspaceStream("p1"));

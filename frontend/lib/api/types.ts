@@ -160,4 +160,7 @@ export interface HistoryItem {
   card: "questions" | null;
   name: string | null;
   trace: HistoryTraceEntry[];
+  // 답변 제출 턴의 구조화된 답변. 있으면 프론트가 UI 언어로 문구를 만들고,
+  // 없으면(자유 서술 답변, 또는 이 필드를 모르는 구 백엔드) text를 그대로 쓴다.
+  answers?: Record<string, string> | null;
 }

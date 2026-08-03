@@ -38,6 +38,53 @@ from pathfinder.s3store import S3StoreLike
 _log = logging.getLogger(__name__)
 _MSG_KEY = re.compile(r"message_(\d+)\.json$")
 
+#: 구 트랜스크립트의 접두사. 이미 S3에 있는 대화가 이것을 쓰므로 영구히
+#: 받아 준다 — 지우면 진행 중인 워크숍의 히스토리가 빈 말풍선이 된다.
+#: parsers/audit.py가 `사용자 입력|User Raw Input`을 둘 다 받는 것과 같은 규율.
+_LEGACY_ANSWER_PREFIX = "사용자 답변: "
+
+
+def _strip_answer_prefix(raw: str) -> str:
+    """ask_questions tool_result 본문에서 접두사를 벗긴다. 신·구 두 형태."""
+    # 함수 안에서 임포트한다 — strands_tools는 모듈 최상단에서 `strands`를
+    # 끌어오므로, 이 모듈(히스토리 복원)이 그 SDK에 의존하게 만들지 않는다.
+    from pathfinder.agent.strands_tools import ANSWER_PREFIX
+    for prefix in (ANSWER_PREFIX, _LEGACY_ANSWER_PREFIX):
+        if raw.startswith(prefix):
+            return raw[len(prefix):]
+    return raw
+
+
+def _parse_answers(raw: str) -> dict[str, str] | None:
+    """접두사를 벗긴 본문 → 답변 dict, 펼 수 없으면 None.
+
+    None은 자유 서술 답변(JSON이 아닌 것)이다. 그때는 호출부가 text 폴백만
+    채운다 — 프론트가 dict 없이도 말풍선을 그릴 수 있어야 한다.
+    """
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict) or not parsed:
+        return None
+    # 값이 문자열이 아닌 경우(에이전트가 숫자를 넣는 등)도 문자열로 통일한다 —
+    # 프론트의 Record<string, string> 계약을 지킨다.
+    return {str(k): str(v) for k, v in parsed.items()}
+
+
+def _answer_fallback_text(body: str, answers: dict[str, str] | None) -> str:
+    """answers를 모르는 소비자를 위한 한국어 폴백 문구.
+
+    사람이 읽는 최종 문구는 프론트가 UI 언어로 만든다(HistoryItem.answers).
+    여기 남은 한국어는 그 필드를 모르는 구 프론트가 빈 말풍선을 띄우지 않게
+    하는 안전망일 뿐이다 — 새 프론트는 이 값을 무시한다.
+    """
+    if answers:
+        pretty = " · ".join(f"{k}: {v}" for k, v in
+                            sorted(answers.items(), key=lambda kv: str(kv[0])))
+        return f"답변 제출 — {pretty}"
+    return f"답변 제출: {body}"
+
 #: 라이브 이벤트에서 file_changed로 표현되는 도구(claude_driver._FILE_TOOLS와
 #: 같은 집합). 히스토리도 같은 표현이어야 스크롤백이 라이브와 달라 보이지 않는다.
 _CLI_FILE_TOOLS = {"Write", "Edit", "MultiEdit"}
@@ -103,23 +150,15 @@ def transform_messages(raw: list[dict]) -> list[HistoryItem]:
                 tr = block["toolResult"]
                 if tr.get("toolUseId") in ask_ids:
                     inner = "".join(c.get("text", "") for c in tr.get("content", []))
-                    # 도구 결과 원문("사용자 답변: {...}")에서 답변부만 살린 요약.
-                    # 답변이 JSON 객체면 사람이 읽을 "번호: 값 · ..." 형태로 —
-                    # raw JSON을 사용자 말풍선에 그대로 노출하지 않는다.
-                    answer = inner.replace("사용자 답변: ", "", 1)
-                    try:
-                        parsed = json.loads(answer)
-                        if isinstance(parsed, dict) and parsed:
-                            pretty = " · ".join(
-                                f"{k}: {v}" for k, v in sorted(
-                                    parsed.items(), key=lambda kv: str(kv[0])))
-                            summary = f"답변 제출 — {pretty}"
-                        else:
-                            summary = f"답변 제출: {answer}"
-                    except (json.JSONDecodeError, TypeError):
-                        summary = f"답변 제출: {answer}"
+                    body = _strip_answer_prefix(inner)
+                    answers = _parse_answers(body)
+                    # text는 폴백으로 계속 채운다 — answers를 모르는 구
+                    # 프론트가 빈 말풍선을 띄우지 않게 한다. 사람이 읽는 문구는
+                    # answers가 있으면 프론트가 UI 언어로 다시 만든다.
                     items.append(HistoryItem(
-                        role="user", text=redact_credentials(summary)))
+                        role="user",
+                        text=redact_credentials(_answer_fallback_text(body, answers)),
+                        answers=answers))
             # reasoningContent 및 기타 블록은 생략 (실 세션의 reasoning text는
             # 비어 있고 signature만 있음 — 복원할 내용 자체가 없다)
         if texts or (role == "assistant" and trace):
@@ -134,28 +173,21 @@ def transform_messages(raw: list[dict]) -> list[HistoryItem]:
     return items
 
 
-def _cli_answer_summary(content: object) -> str:
-    """ask_questions tool_result 본문 → 사람이 읽는 답변 요약.
+def _cli_answer_summary(content: object) -> tuple[str, dict[str, str] | None]:
+    """ask_questions tool_result 본문 → (폴백 문구, answers dict 또는 None).
 
-    Converse 경로와 같은 규칙을 쓴다(위 transform_messages 참조): 원문
-    "사용자 답변: {...}"에서 답변부만 남기고, JSON 객체면 "번호: 값 · ..."로
-    편다 — raw JSON을 사용자 말풍선에 그대로 노출하지 않는다.
+    Converse 경로(transform_messages)와 같은 규칙을 쓴다: 접두사를 벗기고
+    (신·구 두 형태) JSON이면 dict로 편다. 반환이 tuple로 바뀐 것에 주의 —
+    호출부가 HistoryItem의 text와 answers를 함께 채운다.
     """
     if isinstance(content, list):
         inner = "".join(c.get("text", "") for c in content
                         if isinstance(c, dict))
     else:
         inner = str(content or "")
-    answer = inner.replace("사용자 답변: ", "", 1)
-    try:
-        parsed = json.loads(answer)
-    except (json.JSONDecodeError, TypeError):
-        return f"답변 제출: {answer}"
-    if isinstance(parsed, dict) and parsed:
-        pretty = " · ".join(f"{k}: {v}" for k, v in
-                            sorted(parsed.items(), key=lambda kv: str(kv[0])))
-        return f"답변 제출 — {pretty}"
-    return f"답변 제출: {answer}"
+    body = _strip_answer_prefix(inner)
+    answers = _parse_answers(body)
+    return _answer_fallback_text(body, answers), answers
 
 
 def transform_cli_transcript(raw: list[dict]) -> list[HistoryItem]:
@@ -273,10 +305,10 @@ def transform_cli_transcript(raw: list[dict]) -> list[HistoryItem]:
                     # 사용자가 실제로 답한 것 — 진행 중인 어시스턴트 턴을 먼저
                     # 닫아야 순서가 맞는다(질문 카드 다음에 답변 말풍선).
                     flush_turn()
-                    items.append(HistoryItem(
-                        role="user",
-                        text=redact_credentials(
-                            _cli_answer_summary(block.get("content")))))
+                    text, answers = _cli_answer_summary(block.get("content"))
+                    items.append(HistoryItem(role="user",
+                                             text=redact_credentials(text),
+                                             answers=answers))
             # thinking/redacted_thinking 등은 생략 — 복원해 보여줄 내용이 아니다.
 
         if role == "assistant":

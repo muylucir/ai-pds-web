@@ -9,6 +9,7 @@ import { ChatTimeline } from "./ChatTimeline";
 import type { ChatTimelineItem } from "./ChatTimeline";
 import type { ChatItem } from "@/lib/useTurnStream";
 import { strategyQuestions } from "@/test/fixtures/strategyQuestions";
+import { LocaleProvider } from "@/lib/i18n/provider";
 
 const STRAT = "aiplc-docs/discovery/product-strategy/strategy-questions.md";
 const DOC = "aiplc-docs/discovery/discovery-document.md";
@@ -153,5 +154,48 @@ describe("ChatTimeline — stick-to-bottom", () => {
     fireEvent.scroll(el);
     rerender(<Harness items={[msg("1"), msg("2")]} stickSignal={1} />);
     expect(el.scrollTop).toBe(el.scrollHeight);
+  });
+});
+
+describe("답변 제출 말풍선", () => {
+  // answers는 UserItem에 실려 온다(useWorkspaceStream.historyItemToChatItem이
+  // GET /history의 HistoryItem.answers를 그대로 옮긴다).
+  const answerItem: ChatTimelineItem = {
+    id: "a1",
+    role: "user",
+    text: "답변 제출 — 1: A · 2: B",
+    answers: { "1": "A", "2": "B" },
+  };
+
+  it("answers가 있으면 UI 언어로 문구를 만든다", () => {
+    render(
+      <LocaleProvider locale="en">
+        <Harness items={[answerItem]} />
+      </LocaleProvider>,
+    );
+    // 백엔드가 실어 보낸 한국어 text는 무시하고 UI 언어로 다시 만든다.
+    expect(screen.getByText(/Answers submitted/)).toBeInTheDocument();
+    expect(screen.getByText(/1: A · 2: B/)).toBeInTheDocument();
+    expect(screen.queryByText(/답변 제출/)).toBeNull();
+  });
+
+  it("한국어 UI에서는 한국어 문구다", () => {
+    render(
+      <LocaleProvider locale="ko">
+        <Harness items={[answerItem]} />
+      </LocaleProvider>,
+    );
+    expect(screen.getByText(/답변 제출/)).toBeInTheDocument();
+  });
+
+  it("answers가 없으면 백엔드의 text를 그대로 쓴다", () => {
+    // 자유 서술 답변, 또는 answers를 안 실어 보내는 구 백엔드.
+    render(
+      <LocaleProvider locale="en">
+        <Harness items={[{ ...answerItem, answers: null,
+                           text: "답변 제출: 자유 서술" }]} />
+      </LocaleProvider>,
+    );
+    expect(screen.getByText("답변 제출: 자유 서술")).toBeInTheDocument();
   });
 });

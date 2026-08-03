@@ -17,4 +17,5 @@ export const ko = {
   "header.modelBadgeTitle": "이 프로젝트가 사용하는 AI 모델",
   "header.bedrockConnected": "Bedrock 연결됨",
   "header.languageBadgeTitle": "이 프로젝트의 문서·프로토타입·채팅 언어",
+  "chat.answersSubmitted": "답변 제출",
 } as const;

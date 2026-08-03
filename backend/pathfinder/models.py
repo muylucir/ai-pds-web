@@ -55,6 +55,10 @@ class HistoryItem(BaseModel):
     name: str | None = None
     # role=="ai"일 때 그 턴의 도구 실행 트레이스(없으면 빈 리스트)
     trace: list[HistoryTraceEntry] = []
+    # 답변 제출 턴의 구조화된 답변({"1": "A", "2": "B,C"}). 사람이 읽는 문구는
+    # 프론트가 UI 언어로 만든다 — 백엔드는 UI 언어를 모른다. JSON이 아닌 자유
+    # 서술 답변은 dict로 펼 수 없어 None이고, 그때는 text만 쓴다.
+    answers: dict[str, str] | None = None
 
 class AgentEvent(BaseModel):
     kind: Literal["message", "questions", "stage", "document",

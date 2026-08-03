@@ -79,7 +79,12 @@ function isDocPath(path: string): boolean {
 
 function historyItemToChatItem(it: HistoryItem): ChatItem {
   if (it.role === "card") return { id: nextId(), role: "history-card", name: it.name };
-  if (it.role === "user") return { id: nextId(), role: "user", text: it.text ?? "" };
+  // answers를 그대로 옮긴다 — ChatTimeline이 UI 언어로 문구를 만드는 데 쓴다.
+  // 여기서 버리면 백엔드의 한국어 폴백 문구가 영어 UI에 그대로 뜬다.
+  if (it.role === "user") {
+    return { id: nextId(), role: "user", text: it.text ?? "",
+             answers: it.answers ?? null };
+  }
   return {
     id: nextId(),
     role: "ai",

@@ -17,6 +17,11 @@ export interface UserItem {
   id: string;
   role: "user";
   text: string;
+  // 복원된 답변 제출 턴의 구조화된 답변(GET /history의 HistoryItem.answers).
+  // 있으면 ChatTimeline이 UI 언어로 문구를 다시 만든다 — 백엔드의 text는 이
+  // 필드를 모르는 소비자를 위한 한국어 폴백이다. 라이브 턴에는 없다(그쪽은
+  // answerSummary가 선택지 문자를 옵션 텍스트로 펼쳐 이미 만들어 둔다).
+  answers?: Record<string, string> | null;
 }
 export interface AiItem {
   id: string;

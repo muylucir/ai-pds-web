@@ -22,6 +22,12 @@ from pathfinder.agent.questions_payload import normalize_questions_payload
 
 _log = logging.getLogger("pathfinder.agent")
 
+#: ask_questions tool_result의 접두사. session_history._strip_answer_prefix가
+#: 같은 값을 벗긴다 — 두 곳이 어긋나면 채팅 히스토리의 답변 말풍선이 깨진다.
+#: 언어 중립인 이유: 이 문자열은 사용자에게 보이지 않고(프론트가 UI 언어로
+#: 문구를 만든다) 파싱 계약일 뿐이다.
+ANSWER_PREFIX = "[answers] "
+
 QUESTIONS_SCHEMA_HINT = (
     "ask_questions의 questions_file 인자는 반드시 다음 JSON 형태여야 한다: "
     '{"name": str, "preamble": str|null, "parse_ok": true, "raw_markdown": null, '
@@ -82,7 +88,9 @@ def build_tools(workspace: str, rules_dir: str,
                     "위 형식에 맞춰 ask_questions를 다시 호출해라.")
         answers = tool_context.interrupt(
             "ask_questions", reason={"questions_payload": payload})
-        return f"사용자 답변: {json.dumps(answers, ensure_ascii=False)}"
+        # 언어 중립 접두사. session_history가 이것을 벗겨 answers dict를
+        # 복원한다 — 그쪽은 구 트랜스크립트의 "사용자 답변: "도 함께 받는다.
+        return f"{ANSWER_PREFIX}{json.dumps(answers, ensure_ascii=False)}"
 
     @tool
     def report_stage(stage: str, status: str, summary: str = "") -> str:

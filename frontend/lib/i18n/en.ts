@@ -16,4 +16,5 @@ export const en: Record<keyof typeof ko, string> = {
   "header.modelBadgeTitle": "The AI model this project runs on",
   "header.bedrockConnected": "Bedrock connected",
   "header.languageBadgeTitle": "Language of this project's documents, prototypes, and chat",
+  "chat.answersSubmitted": "Answers submitted",
 };
