@@ -282,7 +282,7 @@
       <div class="menu">
         <a href="#why"><span class="n">1</span>왜 AI-PLC인가</a>
         <a href="#aiplc"><span class="n">2</span>세 개의 진입점</a>
-        <a href="#pathfinder"><span class="n">3</span>Pathfinder란</a>
+        <a href="#pathfinder"><span class="n">3</span>왜 Pathfinder인가</a>
         <a href="#tour"><span class="n">4</span>화면 투어</a>
         <a href="#patha"><span class="n">5</span>오늘의 Path A</a>
         <a href="#proto"><span class="n">6</span>스펙 → 실물</a>
@@ -444,14 +444,43 @@
 
     <!-- 3. PATHFINDER -->
     <section id="pathfinder">
-      <h2>Pathfinder란 무엇인가</h2>
-      <p class="lead">제품 Discovery 방법론을 <b>웹 캔버스</b>로 옮긴 도구입니다. 터미널도, 설치도 필요 없습니다 — 브라우저만 있으면 됩니다.</p>
-      <p>Pathfinder 안에서는 <b>Discovery 에이전트</b>가 방법론 문서를 직접 읽고 그 절차대로 움직입니다. 여러분은 채팅으로 답하고, 질문 폼을 채우고, 게이트에서 승인합니다. 에이전트가 만든 문서는 실시간으로 화면에 나타나고, 모든 결정은 감사 기록으로 남습니다.</p>
+      <h2>왜 Pathfinder인가</h2>
+      <p class="lead">AI-PLC에는 <b>모순이 하나</b> 있습니다. 대상은 PM인데, 원래 실행 환경은 개발자 도구입니다.</p>
+      <p>방법론은 Claude Code나 Kiro 같은 AI 코딩 도구 안에서 도는 것을 전제로 쓰였습니다. 룰이 요구하는 것을 그대로 보면 이렇습니다 — 워크스페이스를 Git으로 관리하고, 에이전트가 만든 <code>*-questions.md</code> 파일을 <b>직접 열어</b> <code>[Answer]:</code> 태그 뒤에 답을 타이핑하고, 생성된 문서를 파일 탐색기로 찾아 읽습니다. 상류 룰은 <b>"질문을 채팅으로 하지 말고 반드시 파일에 넣으라"</b>고 규정합니다.</p>
+      <p><b>PM·기획자에게 이것은 번거로운 일이 아니라 불가능한 일입니다.</b> 그래서 방법론은 공개돼 있어도 정작 대상 독자가 혼자 돌릴 수 없었습니다. Pathfinder는 <b>그 간극만</b> 메웁니다 — 절차는 방법론 그대로 두고, 사용자가 만나는 부분을 브라우저로 바꿉니다.</p>
+
+      <table>
+        <thead><tr><th>AI-PLC 룰이 요구하는 것</th><th>Pathfinder에서는</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Claude Code · Kiro 등 AI 코딩 도구 설치·설정</td>
+            <td><b>브라우저만</b></td>
+          </tr>
+          <tr>
+            <td>워크스페이스를 Git으로 만들고 관리</td>
+            <td>프로젝트가 <b>자동 생성·보관</b></td>
+          </tr>
+          <tr>
+            <td><code>*-questions.md</code> 파일을 열어 <code>[Answer]:</code> 태그 뒤에 답 입력</td>
+            <td><b>질문 위저드 폼</b>에서 선택·입력</td>
+          </tr>
+          <tr>
+            <td>생성된 문서를 파일 탐색기·에디터로 찾아 읽기</td>
+            <td>화면 옆 <b>살아있는 문서 패널</b></td>
+          </tr>
+          <tr>
+            <td>프로토타입 빌드·호스팅 환경을 직접 구성</td>
+            <td>카드의 <b>버튼 → 링크로 열림</b></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>Pathfinder 안에서는 <b>Discovery 에이전트</b>가 그 방법론 문서를 직접 읽고 절차대로 움직입니다. 여러분은 채팅으로 답하고, 질문 폼을 채우고, 게이트에서 승인합니다. 에이전트가 만든 문서는 실시간으로 화면에 나타나고, 모든 결정은 감사 기록으로 남습니다.</p>
 
       <div class="cards c3">
         <div class="card">
-          <h4><span class="ico">🧭</span>방법론이 내장되어 있다</h4>
-          <p>"다음에 무엇을 할지"를 여러분이 기억할 필요가 없습니다. 에이전트가 정해진 절차를 따라 다음 단계를 이끕니다.</p>
+          <h4><span class="ico">🧭</span>AI-PLC 룰이 그대로 들어있다</h4>
+          <p>에이전트가 방법론 룰 파일을 읽고 그 절차대로 진행합니다. <b>다르게 만든 워크플로가 아닙니다</b> — 진행 언어만 한국어로 지정했습니다.</p>
         </div>
         <div class="card">
           <h4><span class="ico">📄</span>결과가 파일로 쌓인다</h4>
