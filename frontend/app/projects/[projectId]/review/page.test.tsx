@@ -87,6 +87,32 @@ describe("Review page", () => {
     await waitFor(() => expect(body).toEqual({ text: "승인" }));
   });
 
+  it("영어 프로젝트에서는 {text:'Approved'}를 보낸다", async () => {
+    mockTreeAndAudit();
+    // 프로젝트 언어가 en임을 알려주는 응답. useProjectMeta가 이것을 읽는다.
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1`, () =>
+        HttpResponse.json({ project_id: "pilot1", name: null, created_at: null,
+                            model_id: null, language: "en" })),
+      http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
+    );
+    let body: unknown = null;
+    server.use(
+      http.post(`${API_BASE_URL}/projects/pilot1/message`, async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ events: [{ kind: "done", text: null, path: null }] });
+      }),
+    );
+    render(<ReviewPage params={params} />);
+    await screen.findByText("Press Release");
+    const button = await screen.findByRole("button", { name: /승인하고 다음 단계로/ });
+    await userEvent.click(button);
+    // 대화가 영어로 진행되고 있으므로 영어 승인 단어가 가야 한다. 버튼 라벨은
+    // UI 로케일(여기서는 기본값 ko)이므로 한국어인 것이 맞다 — 이 둘이 다른
+    // 것이 정상이다.
+    await waitFor(() => expect(body).toEqual({ text: "Approved" }));
+  });
+
   it("수정 요청 링크는 워크스페이스 채팅으로 이동하며 문서명이 담긴 초안을 ?draft=로 전달한다", async () => {
     mockTreeAndAudit();
     await act(async () => {

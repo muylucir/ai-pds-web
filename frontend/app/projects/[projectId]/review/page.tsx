@@ -18,6 +18,8 @@ import {
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
 import { deriveApprovalState } from "@/lib/approvalState";
+import { approvalTurnText } from "@/lib/approvalMarker";
+import { DEFAULT_LOCALE } from "@/lib/i18n";
 
 // 클라이언트 Blob 다운로드 — 백엔드 왕복 없이 현재 로드된 마크다운을 저장한다.
 function downloadMarkdown(path: string, content: string) {
@@ -126,7 +128,11 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
         {isDiscoveryDocument && !contentLoadError && !approval.approved && (
           <>
             <ApprovalGate
-              onApprove={() => sendTurn("승인")}
+              // 프로젝트 언어의 승인 단어를 보낸다 — 이 텍스트는 에이전트에게
+              // 가고 트랜스크립트에 남으므로, 대화가 진행되는 언어여야 한다.
+              // language가 null인 경우(구 백엔드, 조회 실패)는 ko로 떨어진다 —
+              // 그것이 이 기능 이전 모든 프로젝트의 언어다.
+              onApprove={() => sendTurn(approvalTurnText(language ?? DEFAULT_LOCALE))}
               busy={busy}
               reviseHref={reviseHref}
             />
