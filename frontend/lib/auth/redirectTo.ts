@@ -26,13 +26,21 @@
 // 헬퍼를 쓰지 않는다 — 그건 cognitoUrls.ts가 APP_BASE_URL로 조립한다.
 import { NextResponse } from "next/server";
 
+/** 허용 상태 코드.
+ *
+ * 303이 있는 이유: POST로 들어온 요청(로그아웃 폼)을 GET 페이지로 보낼 때
+ * **반드시** 303이어야 한다. 307/308은 메서드를 보존하므로 POST가 그대로
+ * 재발행된다 — 실측 결함이었다(app/api/auth/logout/route.ts의 SEE_OTHER 주석).
+ */
+export type RedirectStatus = 302 | 303 | 307;
+
 /**
  * 앱 내부 경로로 리다이렉트한다. `path`는 반드시 "/"로 시작하는 상대 경로다.
  *
  * NextResponse.redirect()는 URL 파싱을 강제해 상대값을 거부하므로(“URL is
  * malformed”) 응답을 직접 만든다.
  */
-export function redirectTo(path: string, status: 302 | 307 = 307): NextResponse {
+export function redirectTo(path: string, status: RedirectStatus = 307): NextResponse {
   // 오픈 리다이렉트 방어: protocol-relative("//evil.example")나 절대 URL이
   // 흘러들면 상대값인 척하면서 오프사이트로 튄다. 호출자가 safeNext를 거친
   // 값을 넘기는 게 원칙이지만, 이 지점에서도 불변식을 지킨다.
@@ -41,7 +49,7 @@ export function redirectTo(path: string, status: 302 | 307 = 307): NextResponse 
 }
 
 /** `/login`으로 보내며 사유를 쿼리로 싣는다(로그인 화면이 한국어로 번역한다). */
-export function redirectToLogin(reason?: string, status: 302 | 307 = 307): NextResponse {
+export function redirectToLogin(reason?: string, status: RedirectStatus = 307): NextResponse {
   const path = reason ? `/login?error=${encodeURIComponent(reason)}` : "/login";
   return redirectTo(path, status);
 }
