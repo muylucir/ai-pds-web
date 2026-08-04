@@ -126,6 +126,11 @@ def _questions_event_from_interrupts(interrupts) -> AgentEvent | None:
 
 
 class StrandsDriver:
+    # 프로젝트별 언어를 지원하지 않는다: 이 드라이버는 폴백 경로이고 워크숍 후
+    # 삭제 예정이다(프로젝트별 모델도 같은 이유로 지원하지 않는다).
+    # PATHFINDER_DISCOVERY_DRIVER=strands로 돌리면 모든 프로젝트가 한국어로
+    # 돈다 — 상류 룰의 기본 언어가 아니라, 이 드라이버가 언어 지시를 조립하지
+    # 않고 system_prompt를 직접 만들기 때문이다.
     def __init__(self, workspace: str, rules_dir: str,
                  agent_factory: Callable[[dict, Callable], Any] | None = None):
         self._workspace = workspace

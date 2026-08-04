@@ -69,6 +69,11 @@ def _make_claude_driver(scripted: dict, tmp_path_factory=None):
     core = Path(rules) / "aws-aiplc-rules"
     core.mkdir(parents=True)
     (core / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
+    # 언어 지시도 최소 레이아웃의 일부다 — 없으면 place_rules가 던져서 턴이
+    # error 이벤트로 끝난다(절반만 번역된 문서보다 즉시 실패가 낫다는 규율).
+    lang = Path(rules) / "language"
+    lang.mkdir(parents=True)
+    (lang / "ko.md").write_text("KO", encoding="utf-8")
 
     s3 = FakeS3Store()
     driver = ClaudeDriver(workspace=ws, rules_dir=rules,

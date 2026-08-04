@@ -557,6 +557,7 @@ class ClaudeDriver:
 
     def __init__(self, workspace: str, rules_dir: str, config_dir: str,
                  s3: S3StoreLike, anthropic_model: str | None = None,
+                 language: str = "ko",
                  permission_mode: str = DEFAULT_PERMISSION_MODE,
                  client_factory: Callable[[dict], Any] | None = None,
                  session_store: Any = None):
@@ -571,6 +572,10 @@ class ClaudeDriver:
         self._session_store: Any = (session_store if session_store is not None
                                     else DiscoverySessionStore(s3))
         self._anthropic_model = anthropic_model
+        # 이 프로젝트의 생성물 언어. place_rules가 이 값으로 워크스페이스
+        # CLAUDE.md의 언어 지시를 고른다 — 프로젝트별 언어가 에이전트에게
+        # 닿는 유일한 경로다(공유 CLAUDE_CONFIG_DIR은 담을 수 없다).
+        self._language = language
         self._permission_mode = _validate_permission_mode(permission_mode)
         self._client_factory = client_factory or _default_client_factory(self)
         self._client: Any = None
@@ -1317,9 +1322,12 @@ class ClaudeDriver:
         only aiplc-docs/, prototype/, uploads/ -- never the rules) and without
         them the agent runs with no workflow to follow, which shows up as an
         empty conversation rather than an error. False means the turn must be
-        abandoned."""
+        abandoned.
+
+        매 턴 쓰는 것이 언어에도 유리하다: 언어 지시가 워크스페이스에 남아
+        있지 않아도 다음 턴에 다시 깔린다."""
         try:
-            place_rules(self._workspace, self._rules_dir)
+            place_rules(self._workspace, self._rules_dir, self._language)
             return True
         except Exception:
             _log.exception("rule placement failed")

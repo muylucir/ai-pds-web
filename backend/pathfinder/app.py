@@ -271,6 +271,7 @@ def driver_factory(project_id: str, local_root: Path):
         config_dir=str(_discovery_config_dir()),
         s3=s3_store_factory(project_id),
         anthropic_model=project_model(project_id),
+        language=project_language(project_id),
     )
 
 

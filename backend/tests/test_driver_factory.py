@@ -47,3 +47,14 @@ def test_a_known_value_starts_up_fine(monkeypatch):
     monkeypatch.delenv("PATHFINDER_DISCOVERY_DRIVER", raising=False)
     with TestClient(app_module.app) as client:
         assert client.get("/projects").status_code == 200
+
+
+def test_driver_factory_passes_the_project_language(monkeypatch, tmp_path):
+    """app.driver_factory가 레지스트리의 언어를 드라이버에 싣는다."""
+    import pathfinder.app as app_module
+    app_module.registry.register("lang-1", None, language="en")
+    try:
+        driver = app_module.driver_factory("lang-1", tmp_path)
+        assert driver._language == "en"
+    finally:
+        app_module.registry.remove("lang-1")
