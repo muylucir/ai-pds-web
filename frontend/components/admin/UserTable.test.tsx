@@ -66,13 +66,13 @@ describe("UserTable", () => {
   it("surfaces the server's refusal to demote the last admin", async () => {
     server.use(http.put(
       `${API_BASE_URL}/admin/users/admin@pathfinder.local/role`, () =>
-        HttpResponse.json(
-          { detail: "마지막 관리자는 강등할 수 없습니다. 먼저 다른 관리자를 지정하세요." },
-          { status: 400 })));
+        // 백엔드가 실제로 보내는 것을 목이 흉내내야 한다 — 문구가 아니라 코드다.
+        HttpResponse.json({ detail: "last_admin" }, { status: 400 })));
     render(<UserTable users={USERS} currentEmail="other@x.io" onChanged={() => {}} />);
     await userEvent.selectOptions(
       within(row("admin@pathfinder.local")).getByLabelText(/역할 변경/), "pm");
-    expect(await screen.findByText(/마지막 관리자는 강등할 수 없습니다/))
+    // 단정은 한국어 문구다 — Provider 없이 렌더하므로 기본 로케일(ko)이 걸린다.
+    expect(await screen.findByText(/마지막 관리자에게는 이 작업을 할 수 없습니다/))
       .toBeInTheDocument();
   });
 

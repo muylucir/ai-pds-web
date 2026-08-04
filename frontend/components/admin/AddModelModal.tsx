@@ -1,6 +1,8 @@
 "use client";
 import { useState } from "react";
 import { ApiError } from "@/lib/api/client";
+import { errorMessage } from "@/lib/api/errorMessage";
+import { useT } from "@/lib/i18n/provider";
 import { addModel } from "@/lib/api/models";
 
 export function AddModelModal({
@@ -13,6 +15,7 @@ export function AddModelModal({
   const [modelId, setModelId] = useState("");
   const [display, setDisplay] = useState(true);
   const [busy, setBusy] = useState(false);
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
@@ -26,7 +29,7 @@ export function AddModelModal({
       onClose();
     } catch (err) {
       // 실패하면 모달을 닫지 않는다 — 입력을 다시 치게 만들지 않기 위해서다.
-      setError(err instanceof ApiError ? err.detail : "모델 추가에 실패했습니다.");
+      setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));
     } finally {
       setBusy(false);
     }

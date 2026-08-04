@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from starlette.responses import Response
 
+from pathfinder import error_codes as ec
 from pathfinder.survey.models import (SCALE_MAX, SCALE_MIN, Questionnaire,
                                       SurveyResponse)
 from pathfinder.survey.store import SurveyStore
@@ -48,7 +49,7 @@ async def _resolve(token: str) -> tuple[SurveyStore, Questionnaire]:
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="survey not found")
     if qn.status == "closed":
-        raise HTTPException(status_code=410, detail="이 설문은 마감되었습니다.")
+        raise HTTPException(status_code=410, detail=ec.SURVEY_CLOSED)
     return store, qn
 
 
@@ -119,8 +120,7 @@ async def public_submit_survey(token: str, body: AnswersBody, request: Request):
     _reject_oversized_body(request)
     store, qn = await _resolve(token)
     if await store.response_count() >= MAX_RESPONSES:
-        raise HTTPException(status_code=429,
-                            detail="응답 수 상한에 도달했습니다. 설문을 마감해 주세요.")
+        raise HTTPException(status_code=429, detail=ec.SURVEY_FULL)
     clean = _validate_answers(qn, body.answers)
 
     resp = SurveyResponse(response_id=uuid.uuid4().hex,

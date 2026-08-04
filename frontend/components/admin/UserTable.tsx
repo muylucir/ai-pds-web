@@ -1,6 +1,8 @@
 "use client";
 import { useState } from "react";
 import { ApiError } from "@/lib/api/client";
+import { errorMessage } from "@/lib/api/errorMessage";
+import { useT } from "@/lib/i18n/provider";
 import {
   changeRole, deleteUser, resetPassword, setUserEnabled,
   type AdminUser, type UserRole,
@@ -23,6 +25,7 @@ export function UserTable({
   currentEmail: string | null;
   onChanged: () => void;
 }) {
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<AdminUser | null>(null);
@@ -37,7 +40,7 @@ export function UserTable({
       await fn();
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "요청이 실패했습니다.");
+      setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));
     } finally {
       setBusy(null);
     }
@@ -54,7 +57,7 @@ export function UserTable({
       setRevealed({ email: user.email, password: temp_password });
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "재설정에 실패했습니다.");
+      setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));
     } finally {
       setBusy(null);
     }

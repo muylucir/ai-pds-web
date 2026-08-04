@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
 from starlette.responses import Response
 
+from pathfinder import error_codes as ec
 from pathfinder.auth.cognito import CognitoError, generate_temp_password
 from pathfinder.auth.deps import require_admin
 from pathfinder.auth.models import Principal, Role
@@ -41,13 +42,14 @@ _ERROR_STATUS = {
     "TooManyRequestsException": 429,
 }
 
+# status → 안정적 에러 코드. 문구는 프론트가 소유한다(error_codes.py 헤더 참조).
 _ERROR_DETAIL = {
-    409: "이미 등록된 이메일입니다.",
-    404: "사용자를 찾을 수 없습니다.",
-    400: "요청이 올바르지 않습니다.",
-    403: "권한이 없습니다.",
-    429: "요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
-    500: "사용자 관리 요청 처리 중 오류가 발생했습니다.",
+    409: ec.EMAIL_EXISTS,
+    404: ec.USER_NOT_FOUND,
+    400: ec.BAD_REQUEST,
+    403: ec.FORBIDDEN,
+    429: ec.TOO_MANY_REQUESTS,
+    500: ec.USER_ADMIN_FAILED,
 }
 
 
@@ -59,7 +61,7 @@ def _http_error(exc: CognitoError) -> HTTPException:
     status = _ERROR_STATUS.get(exc.code, 502)
     _log.warning("cognito call failed (%s) -> %d", exc.code, status)
     return HTTPException(status_code=status,
-                         detail=_ERROR_DETAIL.get(status, "사용자 관리 요청이 실패했습니다."))
+                         detail=_ERROR_DETAIL.get(status, ec.USER_ADMIN_FAILED))
 
 
 class InviteBody(BaseModel):
@@ -76,8 +78,7 @@ def _admin():
     return app_module.cognito_admin()
 
 
-def _guard_privilege_removal(cognito, username: str, me: Principal,
-                             what: str) -> None:
+def _guard_privilege_removal(cognito, username: str, me: Principal) -> None:
     """관리자를 잃는 방향의 조작을 막는다.
 
     두 가지를 막는다:
@@ -97,7 +98,7 @@ def _guard_privilege_removal(cognito, username: str, me: Principal,
     if username.casefold() == me.username.casefold():
         raise HTTPException(
             status_code=400,
-            detail=f"자신의 계정은 {what}할 수 없습니다. 다른 관리자에게 요청하세요.")
+            detail=ec.SELF_TARGET)
     try:
         groups = cognito.groups_of(username)
     except CognitoError as exc:
@@ -111,7 +112,7 @@ def _guard_privilege_removal(cognito, username: str, me: Principal,
     if remaining <= 1:
         raise HTTPException(
             status_code=400,
-            detail=f"마지막 관리자는 {what}할 수 없습니다. 먼저 다른 관리자를 지정하세요.")
+            detail=ec.LAST_ADMIN)
 
 
 @router.get("/users")
@@ -156,7 +157,7 @@ async def invite_user(body: InviteBody, me: Principal = Depends(require_admin)):
             _log.exception("rollback failed; %s may be left without a role", username)
         raise HTTPException(
             status_code=500,
-            detail="사용자 생성에 실패했습니다. 다시 시도해 주세요.") from exc
+            detail=ec.USER_CREATE_FAILED) from exc
 
     return {"username": username, "email": email, "role": body.role,
             "temp_password": password}
@@ -184,7 +185,7 @@ async def change_role(username: str, body: RoleBody,
     cognito = _admin()
     # admin으로 올리는 것은 관리자를 늘리는 방향이라 언제나 안전하다.
     if body.role != "admin":
-        _guard_privilege_removal(cognito, username, me, "강등")
+        _guard_privilege_removal(cognito, username, me)
     try:
         cognito.set_group(username, body.role)
     except CognitoError as exc:
@@ -195,7 +196,7 @@ async def change_role(username: str, body: RoleBody,
 @router.post("/users/{username}/disable", status_code=204)
 async def disable_user(username: str, me: Principal = Depends(require_admin)):
     cognito = _admin()
-    _guard_privilege_removal(cognito, username, me, "비활성화")
+    _guard_privilege_removal(cognito, username, me)
     try:
         cognito.set_enabled(username, False)
     except CognitoError as exc:
@@ -217,7 +218,7 @@ async def enable_user(username: str, me: Principal = Depends(require_admin)):
 @router.delete("/users/{username}", status_code=204)
 async def delete_user(username: str, me: Principal = Depends(require_admin)):
     cognito = _admin()
-    _guard_privilege_removal(cognito, username, me, "삭제")
+    _guard_privilege_removal(cognito, username, me)
     try:
         cognito.delete_user(username)
     except CognitoError as exc:

@@ -1,6 +1,8 @@
 "use client";
 import { useState } from "react";
 import { ApiError } from "@/lib/api/client";
+import { errorMessage } from "@/lib/api/errorMessage";
+import { useT } from "@/lib/i18n/provider";
 import { deleteModel, patchModel, type AdminModel } from "@/lib/api/models";
 
 export function ModelTable({
@@ -9,6 +11,7 @@ export function ModelTable({
   models: AdminModel[];
   onChanged: () => void;
 }) {
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<AdminModel | null>(null);
@@ -22,7 +25,7 @@ export function ModelTable({
       await fn();
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "요청이 실패했습니다.");
+      setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));
     } finally {
       setBusy(null);
     }

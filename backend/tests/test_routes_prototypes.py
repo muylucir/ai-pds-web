@@ -523,7 +523,8 @@ def test_session_start_429_when_the_cap_is_reached(proto_env, monkeypatch):
         "aiplc-docs/discovery/prototypes/other/PROTOTYPE-other.md"] = "# other"
     second = client.post(f"/projects/{PID}/prototypes/other/session")
     assert second.status_code == 429
-    assert "빌드" in second.json()["detail"]
+    # detail은 안정적 코드다 — 문구는 프론트 딕셔너리가 소유한다.
+    assert second.json()["detail"] == "build_slots_busy"
 
 
 def test_session_start_releases_the_slot_when_start_fails(proto_env, monkeypatch):
@@ -755,6 +756,10 @@ def test_reset_502_when_a_purge_fails_and_keeps_local_state(proto_env, monkeypat
     resp = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
 
     assert resp.status_code == 502
+    # detail은 `코드:진단정보` 형태다 — 프론트(errorMessage.ts)가 콜론 앞을
+    # 코드로 번역하고 뒤를 괄호로 덧붙인다. 구분자가 바뀌면 코드를 못 찾아
+    # 사용자가 번역되지 않은 원문을 본다.
+    assert resp.json()["detail"] == "init_incomplete:survey"
     assert (proto_env["root"] / PID / SLUG).is_dir()
 
 

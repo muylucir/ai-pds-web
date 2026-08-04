@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.responses import Response
 
+from pathfinder import error_codes as ec
 from pathfinder.models import AgentEvent
 from pathfinder.parsers.redaction import redact_credentials
 from pathfinder.pathsafe import reject_unsafe_segment
@@ -255,7 +256,7 @@ async def start_session(pid: str, slug: str):
     if not app_module.build_semaphore.try_acquire():
         raise HTTPException(
             status_code=429,
-            detail="다른 팀이 프로토타입을 빌드하고 있습니다 — 잠시 후 다시 시도해 주세요")
+            detail=ec.BUILD_SLOTS_BUSY)
 
     session = app_module.proto_session_factory(pid, slug)
     try:
@@ -427,7 +428,7 @@ async def reset_prototype(pid: str, slug: str):
     if failures:
         raise HTTPException(
             status_code=502,
-            detail=f"초기화가 완료되지 않았습니다({', '.join(failures)}) — 다시 시도해 주세요")
+            detail=f"{ec.INIT_INCOMPLETE}:{','.join(failures)}")
     return Response(status_code=204)
 
 
@@ -518,7 +519,7 @@ async def start_host(pid: str, slug: str):
     if _live_session(pid, slug) is not None:
         raise HTTPException(
             status_code=409,
-            detail="빌드 세션이 진행 중입니다 — 세션을 먼저 종료해 주세요")
+            detail=ec.BUILD_SESSION_ACTIVE)
     # Pass cwd explicitly: ProtoHost's default is {root}/{pid}/{slug}, one level
     # ABOVE the served tree. That dir exists as soon as a session starts (it
     # holds the spec .md), so the host's own is_dir() guard passes and the miss

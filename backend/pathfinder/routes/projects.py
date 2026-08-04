@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from pathfinder import app as app_module
+from pathfinder import error_codes as ec
 from pathfinder.parsers.state import parse_state_file
 from pathfinder.project_store import write_manifest, delete_project_data
 
@@ -61,7 +62,7 @@ async def _validate_model_id(model_id: str | None) -> None:
     allowed = {e.model_id for e in await app_module.model_catalog().displayed()}
     if model_id not in allowed:
         raise HTTPException(status_code=400,
-                            detail="선택할 수 없는 모델입니다.")
+                            detail=ec.MODEL_NOT_SELECTABLE)
 
 
 #: 허용되는 생성물 언어. ProjectRegistry._LANGUAGES와 같은 집합이어야 한다 —
@@ -82,7 +83,7 @@ def _validate_language(language: str | None) -> None:
         return
     if language not in _LANGUAGES:
         raise HTTPException(status_code=400,
-                            detail="지원하지 않는 언어입니다.")
+                            detail=ec.LANGUAGE_UNSUPPORTED)
 
 
 @router.post("/projects")

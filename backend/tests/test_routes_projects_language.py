@@ -47,6 +47,8 @@ def test_create_rejects_an_unknown_language(monkeypatch):
     monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
     r = client.post("/projects", json={"project_id": "pl-3", "language": "ja"})
     assert r.status_code == 400
+    # detail은 안정적 코드다 — 프론트 딕셔너리가 이 값으로 문구를 찾는다.
+    assert r.json()["detail"] == "language_unsupported"
     assert not app_module.registry.is_registered("pl-3")
 
 

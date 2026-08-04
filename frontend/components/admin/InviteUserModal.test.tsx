@@ -60,7 +60,8 @@ describe("InviteUserModal", () => {
 
   it("shows the server message when the email already exists", async () => {
     server.use(http.post(`${API_BASE_URL}/admin/users`, () =>
-      HttpResponse.json({ detail: "이미 등록된 이메일입니다." }, { status: 409 })));
+      // 백엔드가 실제로 보내는 것을 목이 흉내내야 한다 — 문구가 아니라 코드다.
+      HttpResponse.json({ detail: "email_exists" }, { status: 409 })));
     render(<InviteUserModal onInvited={() => {}} onClose={() => {}} />);
     await userEvent.type(screen.getByLabelText("이메일"), "dup@x.io");
     await userEvent.click(screen.getByRole("button", { name: "초대" }));

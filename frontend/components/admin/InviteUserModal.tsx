@@ -1,6 +1,8 @@
 "use client";
 import { useState } from "react";
 import { ApiError } from "@/lib/api/client";
+import { errorMessage } from "@/lib/api/errorMessage";
+import { useT } from "@/lib/i18n/provider";
 import { inviteUser, type InviteResult, type UserRole } from "@/lib/api/adminUsers";
 import { TempPasswordPanel } from "./TempPasswordPanel";
 
@@ -14,6 +16,7 @@ export function InviteUserModal({
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<UserRole>("pm");
   const [busy, setBusy] = useState(false);
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<InviteResult | null>(null);
 
@@ -28,7 +31,7 @@ export function InviteUserModal({
       // 목록은 곧바로 갱신하되 모달은 닫지 않는다 — 비밀번호를 보여줘야 한다.
       onInvited();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "초대에 실패했습니다.");
+      setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));
     } finally {
       setBusy(false);
     }
