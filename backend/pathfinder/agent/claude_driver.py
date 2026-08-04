@@ -63,6 +63,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any, AsyncIterator, Callable
 
+from pathfinder.agent import prompts
 from pathfinder.agent.pending_store import clear_pending, load_pending, save_pending
 from pathfinder.agent.questions_payload import question_file_from_sdk
 from pathfinder.agent.session_store import DiscoverySessionStore
@@ -81,17 +82,15 @@ _LETTERS = "ABCDEFGHIJ"
 # docstring for why the poll exists at all.
 _POLL_SECONDS = 0.05
 
-# Shown when the CLI reports a failed turn (`ResultMessage.is_error`). Korean
-# and actionable, unlike the internal "agent turn failed" the other error paths
-# use: those are exception paths where the frontend substitutes its own copy,
-# whereas this one is the ordinary end of a turn the user watched happen.
+# The turn-failure text the CLI's `ResultMessage.is_error` produces, and the
+# "answer the open question first" line, both live in agent/prompts.py now --
+# they are per-project-language, so they cannot be module constants. See that
+# module's header for why (2026-08-04: an English project was reading Korean
+# on every one of these paths).
 #
-# Says to retry because the common causes are transient -- a Bedrock 429/529
-# under workshop load succeeds on the next attempt. The diagnostic detail
-# (`api_error_status`) goes to the log, not here: an HTTP status is not
-# something a workshop attendee can act on.
-_TURN_FAILED_TEXT = ("이번 턴이 실패했습니다 — 잠시 후 다시 시도해 주세요. "
-                     "반복되면 관리자에게 알려주세요.")
+# They are actionable prose, unlike the internal "agent turn failed" the other
+# error paths use: those are exception paths where the frontend substitutes its
+# own copy, whereas these are ordinary ends of a turn the user watched happen.
 
 # `ResultMessage.terminal_reason` 값 중 "취소됨"을 뜻하는 것들
 # (claude_agent_sdk/types.py:1249-1257): interrupt()로 끊긴 턴은 스트리밍 중이었든
@@ -122,12 +121,6 @@ INTERRUPTED_MARKER = "interrupted"
 DEFAULT_PERMISSION_MODE = "bypassPermissions"
 
 _MCP_SERVER_NAME = "pathfinder"
-
-# Mirrors StrandsDriver's B1 short-circuit (driver.py:166-177). Same wording,
-# because the frontend renders it as an ordinary AI message either way and the
-# two drivers must be indistinguishable.
-_ANSWER_FIRST = ("진행 중인 질문에 먼저 답변해 주세요 — 우측 패널의 질문 폼을 "
-                 "이용하세요.")
 
 
 class _MessageReader:
@@ -460,9 +453,12 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
         # MUST be spelled "mcp__<server key>__<tool name>" -- the SDK builds
         # that name itself when it serializes --mcp-config, so any other
         # spelling silently leaves the tool needing approval.
+        # 도구 설명과 반환 문자열도 프로젝트 언어로 간다 — 둘 다 모델이 매 턴
+        # 읽는 프롬프트다(agent/prompts.py 헤더).
         server = create_sdk_mcp_server(
             name=_MCP_SERVER_NAME,
-            tools=build_tools(driver._workspace, driver._emit))
+            tools=build_tools(driver._workspace, driver._emit,
+                              driver._language))
         options = ClaudeAgentOptions(
             permission_mode=driver._permission_mode,
             cwd=driver._workspace,
@@ -572,9 +568,14 @@ class ClaudeDriver:
         self._session_store: Any = (session_store if session_store is not None
                                     else DiscoverySessionStore(s3))
         self._anthropic_model = anthropic_model
-        # 이 프로젝트의 생성물 언어. place_rules가 이 값으로 워크스페이스
-        # CLAUDE.md의 언어 지시를 고른다 — 프로젝트별 언어가 에이전트에게
-        # 닿는 유일한 경로다(공유 CLAUDE_CONFIG_DIR은 담을 수 없다).
+        # 이 프로젝트의 생성물 언어. 세 곳으로 흐른다: place_rules(워크스페이스
+        # CLAUDE.md의 언어 지시), build_tools(도구 설명·반환 문자열), 그리고
+        # 이 드라이버가 만드는 모델·사용자 대상 텍스트(agent/prompts.py).
+        #
+        # 처음에는 place_rules 하나뿐이었고 그것이 결함이었다 — 지시만 영어로
+        # 바꿔도 도구 설명과 거부 메시지가 한국어로 남아 매 턴 모델 컨텍스트에
+        # 들어갔다. 공유 CLAUDE_CONFIG_DIR은 전 프로젝트가 공유하므로 여전히
+        # 프로젝트 언어를 담을 수 없다(그래서 그쪽 문서는 언어 중립이어야 한다).
         self._language = language
         self._permission_mode = _validate_permission_mode(permission_mode)
         self._client_factory = client_factory or _default_client_factory(self)
@@ -809,8 +810,7 @@ class ClaudeDriver:
         except ValueError as e:
             _log.warning("AskUserQuestion payload rejected: %s", e)
             return PermissionResultDeny(
-                message=f"질문을 만들 수 없다: {e}\n"
-                        "각 질문에 옵션을 최소 1개 넣어 AskUserQuestion을 다시 호출해라.")
+                message=prompts.question_payload_rejected(self._language, str(e)))
         iid = uuid.uuid4().hex
         payload = json.dumps({"interrupt_id": iid, "questions": qfile},
                              ensure_ascii=False)
@@ -1146,7 +1146,8 @@ class ClaudeDriver:
         # and S3 had nothing.
         await self._flush_transcript_mirror()
         if reader.failed:
-            yield AgentEvent(kind="error", text=_TURN_FAILED_TEXT)
+            yield AgentEvent(kind="error",
+                             text=prompts.turn_failed(self._language))
         else:
             yield AgentEvent(kind="done")
 
@@ -1303,12 +1304,10 @@ class ClaudeDriver:
         # resumed session answers the wrong question. It is also what the
         # contract test's echo fake reads back to prove the caller's
         # interrupt_id/answers reached the SDK call.
-        prompt = ("[질문 답변] 앞서 드린 질문에 사용자가 답했습니다. "
-                  "이 답변을 반영해 이어서 진행해 주세요.\n"
-                  + "\n".join(lines)
-                  + "\n(답변 기록)\n"
-                  + json.dumps({"interrupt_id": interrupt_id,
-                                "answers": answers}, ensure_ascii=False))
+        prompt = prompts.answers_resumed(
+            self._language, "\n".join(lines),
+            json.dumps({"interrupt_id": interrupt_id, "answers": answers},
+                       ensure_ascii=False))
         await self._clear_pending_quietly()
         self._clear_pending_state()
         async for ev in self._stream(prompt, session, resume=True):
@@ -1359,7 +1358,8 @@ class ClaudeDriver:
             # model.
             fut = self._pending_question
             if fut is not None and not fut.done():
-                yield AgentEvent(kind="message", text=_ANSWER_FIRST)
+                yield AgentEvent(kind="message",
+                                 text=prompts.answer_first(self._language))
                 if self._pending_payload is not None:
                     yield AgentEvent(kind="questions",
                                      payload=self._pending_payload)

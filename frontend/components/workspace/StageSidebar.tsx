@@ -95,7 +95,7 @@ export function StageSidebar({
           <div className="h-full bg-violet-500 rounded-full" style={{ width: `${pct}%` }} />
         </div>
         <p className="text-[11px] text-slate-400 mt-1">
-          {completed} / {total} 스테이지{merged.project_type ? ` · ${merged.project_type}` : ""}
+          {completed} / {total} {t("canvas.stageUnit")}{merged.project_type ? ` · ${merged.project_type}` : ""}
         </p>
       </div>
       <nav className="flex-1 overflow-y-auto p-3 text-sm space-y-0.5">
