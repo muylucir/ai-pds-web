@@ -17,6 +17,7 @@ import logging
 from datetime import datetime, timezone
 
 from pathfinder.survey.models import Questionnaire, Rollup, SurveyResponse
+from pathfinder.survey.report_labels import labels
 from pathfinder.survey.rollup import build_rollup
 
 _log = logging.getLogger(__name__)
@@ -109,32 +110,36 @@ def _csv_safe(value):
 
 
 def _results_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
-                      now: str) -> str:
+                      now: str, language: str = "ko") -> str:
     """Render the survey aggregate under prototype-validation.md's Step 6
     headings. Sections the rule expects the PM to judge (theme analysis, pain
     point mapping, build decision) are emitted as empty templates rather than
-    machine guesses."""
+    machine guesses.
+
+    Step 6이 정한 섹션 이름과 표 헤더는 양쪽 언어에서 영어다 — 룰이 그 이름으로
+    문서를 찾는다(report_labels.py 헤더 참조).
+    """
+    L = labels(language)
     lines = [
         "# Validation Results",
         "",
-        f"- **프로토타입**: {qn.slug}",
-        f"- **설문**: {qn.title}",
-        f"- **검증 가설**: {qn.hypothesis}",
-        f"- **응답 수**: {rollup.count}",
-        f"- **설문 상태**: {'마감' if qn.status == 'closed' else '진행 중'}",
-        f"- **취합 시각**: {now}",
+        f"- **{L['prototype']}**: {qn.slug}",
+        f"- **{L['survey']}**: {qn.title}",
+        f"- **{L['hypothesis']}**: {qn.hypothesis}",
+        f"- **{L['response_count']}**: {rollup.count}",
+        f"- **{L['survey_status']}**: "
+        f"{L['status_closed'] if qn.status == 'closed' else L['status_open']}",
+        f"- **{L['collected_at']}**: {now}",
         "",
-        "> 이 파일은 Pathfinder 설문 집계로 생성되었다. 아래 '정량 집계'와",
-        "> '자유 응답 전문'은 수집된 데이터이며, 테마 분석·pain point 매핑·",
-        "> 빌드 결정은 PM이 판단해 채운다(prototype-validation.md Step 6).",
+        L["note"],
         "",
         "## Feedback Sources",
         "",
         "| Source | Type | Users | Feedback Items |",
         "|---|---|---|---|",
-        f"| Pathfinder 검증 설문 | Survey | {rollup.count} | {rollup.count} |",
+        f"| {L['source_name']} | Survey | {rollup.count} | {rollup.count} |",
         "",
-        "## 정량 집계",
+        f"## {L['quantitative']}",
         "",
     ]
 
@@ -145,27 +150,28 @@ def _results_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
         lines.append(f"### Q{idx}. {q.text}")
         lines.append("")
         if stat.type == "scale":
-            lines.append(f"평균 **{stat.mean}** / 5 (응답 {stat.n}건)")
+            lines.append(f"{L['mean']} **{stat.mean}** {L['of_5']} "
+                         f"({L['responses_n'].format(n=stat.n)})")
             lines.append("")
-            lines.append("| 점수 | 응답 수 |")
+            lines.append(f"| {L['score']} | {L['count']} |")
             lines.append("|---|---|")
             for score in ("5", "4", "3", "2", "1"):
                 lines.append(f"| {score} | {stat.distribution.get(score, 0)} |")
         elif stat.type == "choice":
-            lines.append(f"응답 {stat.n}건")
+            lines.append(L["responses_n"].format(n=stat.n))
             lines.append("")
-            lines.append("| 선택지 | 응답 수 | 비율 |")
+            lines.append(f"| {L['option']} | {L['count']} | {L['ratio']} |")
             lines.append("|---|---|---|")
             for opt, n in stat.counts.items():
                 pct = f"{round(n / stat.n * 100)}%" if stat.n else "-"
                 lines.append(f"| {opt} | {n} | {pct} |")
         else:
-            lines.append(f"자유 응답 {stat.n}건 — 전문은 아래 '자유 응답 전문' 참조")
+            lines.append(L["free_n"].format(n=stat.n))
         lines.append("")
 
     text_questions = [q for q in qn.questions if q.type == "text"]
     if text_questions:
-        lines.append("## 자유 응답 전문")
+        lines.append(f"## {L['free_text']}")
         lines.append("")
         for idx, q in enumerate(qn.questions, start=1):
             if q.type != "text":
@@ -179,7 +185,7 @@ def _results_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
                        if isinstance(r.answers.get(q.id), str)
                        and str(r.answers[q.id]).strip()]
             if not answers:
-                lines.append("(응답 없음)")
+                lines.append(L["no_response"])
             else:
                 lines.extend(f"- {a}" for a in answers)
             lines.append("")
@@ -189,37 +195,38 @@ def _results_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
         "",
         "| Theme | Frequency | Severity | Representative Quote |",
         "|---|---|---|---|",
-        "| (PM이 위 자유 응답에서 도출) | | | |",
+        f"| {L['theme_placeholder']} | | | |",
         "",
         "## Pain Point Mapping",
         "",
         "| Original Pain Point | Validated? | Evidence |",
         "|---|---|---|",
-        "| (Envision의 pain point를 옮겨 판정) | | |",
+        f"| {L['pain_placeholder']} | | |",
         "",
         "## Build Decision",
         "",
-        "- [ ] Proceed — 검증됨, 다음 단계로",
-        "- [ ] Iterate — 부분 검증, 프로토타입 수정 후 재검증",
-        "- [ ] Pivot — 접근 재고 (Envision으로 복귀)",
+        f"- [ ] {L['decision_proceed']}",
+        f"- [ ] {L['decision_iterate']}",
+        f"- [ ] {L['decision_pivot']}",
         "",
     ])
     return "\n".join(lines)
 
 
-def _to_markdown(qn: Questionnaire) -> str:
-    lines = [f"# {qn.title}", "", f"**검증 가설**: {qn.hypothesis}", ""]
+def _to_markdown(qn: Questionnaire, language: str = "ko") -> str:
+    L = labels(language)
+    lines = [f"# {qn.title}", "", f"**{L['hypothesis']}**: {qn.hypothesis}", ""]
     for i, q in enumerate(qn.questions, start=1):
-        suffix = "" if q.required else " (선택)"
+        suffix = "" if q.required else L["optional_suffix"]
         lines.append(f"## Question {i}{suffix}")
         lines.append(q.text)
         lines.append("")
         if q.type == "scale":
-            lines.append("1(전혀 아니다) ~ 5(매우 그렇다) 중 선택")
+            lines.append(L["scale_hint"])
         elif q.type == "choice":
             lines.extend(f"- {opt}" for opt in q.options)
         else:
-            lines.append("(자유 응답)")
+            lines.append(L["free_response"])
         lines.append("")
     return "\n".join(lines)
 
@@ -229,11 +236,16 @@ class SurveyStore:
     (projects/{pid}/); `root_s3` is a bucket-root store used only for the
     token index, which must be readable before the project is known."""
 
-    def __init__(self, project_s3, root_s3, slug: str, project_id: str):
+    def __init__(self, project_s3, root_s3, slug: str, project_id: str,
+                 language: str = "ko"):
         self._s3 = project_s3
         self._root = root_s3
         self.slug = slug
         self.project_id = project_id
+        # 리포트 생성 언어. questionnaire.language가 아니라 프로젝트 언어를
+        # 쓰는 이유: 리포트는 산출물 문서이고 문서 언어는 프로젝트가 정한다.
+        # 정상 경로에서는 두 값이 같다(설문도 프로젝트 언어로 생성된다).
+        self._language = language
 
     @staticmethod
     def public_url_path(token: str) -> str:
@@ -274,7 +286,8 @@ class SurveyStore:
             f"{TOKEN_INDEX_PREFIX}{qn.token}.json",
             json.dumps({"project_id": qn.project_id, "slug": qn.slug}))
         await self._s3.put(questionnaire_key(self.slug), qn.model_dump_json())
-        await self._s3.put(questionnaire_md_key(self.slug), _to_markdown(qn))
+        await self._s3.put(questionnaire_md_key(self.slug),
+                           _to_markdown(qn, self._language))
 
     async def load_questionnaire(self) -> Questionnaire:
         raw = await self._s3.get(questionnaire_key(self.slug))
@@ -470,6 +483,7 @@ class SurveyStore:
         qn = await self.load_questionnaire()
         responses = await self.load_responses()
         rollup = build_rollup(qn.questions, responses, self._now(now))
-        md = _results_markdown(qn, responses, rollup, self._now(now))
+        md = _results_markdown(qn, responses, rollup, self._now(now),
+                               self._language)
         await self._s3.put(RESULTS_MD_KEY, md)
         return RESULTS_MD_KEY, rollup.count

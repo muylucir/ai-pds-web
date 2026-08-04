@@ -372,7 +372,8 @@ def surveys_root_s3_factory() -> S3StoreLike:
 def survey_store_factory(project_id: str, slug: str):
     from pathfinder.survey.store import SurveyStore
     return SurveyStore(s3_store_factory(project_id), surveys_root_s3_factory(),
-                       slug=slug, project_id=project_id)
+                       slug=slug, project_id=project_id,
+                       language=project_language(project_id))
 
 
 def questionnaire_agent_factory(project_id: str):

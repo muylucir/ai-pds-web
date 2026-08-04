@@ -103,3 +103,93 @@ async def test_resolve_unknown_token_raises():
 
 def test_public_url_path():
     assert SurveyStore.public_url_path("abc") == "/survey/abc"
+
+
+def test_results_markdown_is_english_for_an_english_survey():
+    """리포트는 aiplc-docs/**에 생성되는 산출물이므로 UI 언어가 아니라
+    프로젝트 언어를 따른다."""
+    from pathfinder.survey.store import _results_markdown
+    from pathfinder.survey.models import Questionnaire, Rollup
+
+    qn = Questionnaire(
+        token="t", status="open", slug="demo", project_id="p1",
+        created_at="2026-08-03T00:00:00+00:00", closed_at=None, language="en",
+        title="T", hypothesis="H",
+        questions=[{"id": "q1", "text": "Q1", "type": "text", "required": False}])
+    rollup = Rollup(count=0, per_question={}, rebuilt_at="2026-08-03T00:00:00+00:00")
+    md = _results_markdown(qn, [], rollup, "2026-08-03T00:00:00+00:00", "en")
+    assert "Prototype" in md or "prototype" in md
+    assert not any("가" <= c <= "힣" for c in md), md[:400]
+
+
+def test_results_markdown_stays_korean_by_default():
+    from pathfinder.survey.store import _results_markdown
+    from pathfinder.survey.models import Questionnaire, Rollup
+
+    qn = Questionnaire(
+        token="t", status="open", slug="demo", project_id="p1",
+        created_at="2026-08-03T00:00:00+00:00", closed_at=None,
+        title="T", hypothesis="H",
+        questions=[{"id": "q1", "text": "Q1", "type": "text", "required": False}])
+    rollup = Rollup(count=0, per_question={}, rebuilt_at="2026-08-03T00:00:00+00:00")
+    md = _results_markdown(qn, [], rollup, "2026-08-03T00:00:00+00:00", "ko")
+    assert "프로토타입" in md
+
+
+def test_results_markdown_keeps_the_rule_headings_in_english_for_both():
+    """prototype-validation.md Step 6이 정한 섹션 이름은 양쪽 언어에서 영어다 —
+    룰이 그 이름으로 문서를 찾는다."""
+    from pathfinder.survey.store import _results_markdown
+    from pathfinder.survey.models import Questionnaire, Rollup
+
+    qn = Questionnaire(
+        token="t", status="open", slug="demo", project_id="p1",
+        created_at="2026-08-03T00:00:00+00:00", closed_at=None,
+        title="T", hypothesis="H",
+        questions=[{"id": "q1", "text": "Q1", "type": "text", "required": False}])
+    rollup = Rollup(count=0, per_question={}, rebuilt_at="2026-08-03T00:00:00+00:00")
+    for language in ("ko", "en"):
+        md = _results_markdown(qn, [], rollup, "2026-08-03T00:00:00+00:00", language)
+        for heading in ("# Validation Results", "## Feedback Sources",
+                        "## Theme Analysis", "## Pain Point Mapping",
+                        "## Build Decision"):
+            assert heading in md, (language, heading)
+
+
+async def test_synthesize_writes_the_report_in_the_stores_language():
+    """스토어 → 리포트 배선. 이 홉이 끊기면 영어 프로젝트도 한국어 리포트를
+    받는다 — 에러는 없고, aiplc-docs/**에 잘못된 언어의 산출물이 남는다."""
+    project_s3, root_s3 = FakeS3Store(), FakeS3Store()
+    store = SurveyStore(project_s3, root_s3, slug=SLUG, project_id=PID,
+                        language="en")
+    # 설문 자체의 데이터(제목·가설·문항)도 영어여야 리포트에 한글이 남지
+    # 않는다 — 영어 프로젝트에서는 build_questionnaire가 그렇게 만든다.
+    await store.save_questionnaire(_qn(
+        language="en", title="Validation survey", hypothesis="H",
+        questions=[Question(id="q1", text="Useful?", type="scale")]))
+    await store.synthesize_results()
+    from pathfinder.survey.store import RESULTS_MD_KEY
+    md = project_s3.blobs[RESULTS_MD_KEY]
+    assert "Prototype" in str(md)
+    assert not any("가" <= c <= "힣" for c in str(md)), str(md)[:300]
+
+
+async def test_questionnaire_markdown_follows_the_stores_language():
+    project_s3, root_s3 = FakeS3Store(), FakeS3Store()
+    store = SurveyStore(project_s3, root_s3, slug=SLUG, project_id=PID,
+                        language="en")
+    await store.save_questionnaire(_qn(
+        language="en", title="Validation survey", hypothesis="H",
+        questions=[Question(id="q1", text="Useful?", type="scale")]))
+    from pathfinder.survey.store import questionnaire_md_key
+    md = str(project_s3.blobs[questionnaire_md_key(SLUG)])
+    assert "Validation hypothesis" in md
+    assert "검증 가설" not in md
+
+
+def test_report_labels_fall_back_to_korean_for_an_unknown_language():
+    """손상된 매니페스트가 임의 문자열을 실어 와도 리포트가 한국어로 나온다 —
+    이 기능 이전 모든 프로젝트의 언어가 그것이다."""
+    from pathfinder.survey.report_labels import labels
+    assert labels("klingon") == labels("ko")
+    assert labels("") == labels("ko")

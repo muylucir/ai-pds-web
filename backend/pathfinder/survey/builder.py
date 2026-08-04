@@ -18,7 +18,7 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 # The validation rule judges a prototype by feature-level signal and pain-point
 # mapping (prototype-validation.md Step 6), so the questions must produce that
 # evidence -- otherwise the PM gets answers they cannot synthesise.
-QUESTIONNAIRE_PROMPT = """\
+QUESTIONNAIRE_PROMPT_KO = """\
 아래는 프로토타입 명세(PROTOTYPE-*.md)다. 이 **프로토타입을 체험해 본**
 사람에게 물을 검증 설문 문항을 만들어라.
 
@@ -71,8 +71,75 @@ QUESTIONNAIRE_PROMPT = """\
 """
 
 
-def build_prompt(prototype_md: str) -> str:
-    return QUESTIONNAIRE_PROMPT.format(md=prototype_md)
+# 영어 판. 한국어 판과 **같은 제약을 같은 순서로** 담는다 — 조립하지 않고 두
+# 벌을 유지하는 이유는 proto/prompts.py와 같다(제약이 하나 빠지면 그 언어의
+# 설문만 조용히 나빠진다). test_survey_builder가 두 벌의 대조를 지킨다.
+QUESTIONNAIRE_PROMPT_EN = """\
+Below is a prototype spec (PROTOTYPE-*.md). Write validation survey questions to
+ask someone who **has tried this prototype**.
+
+What the respondent saw is the premise of every question. **This is a validation
+prototype, not a finished product** — a demo where only the core flow works, the
+data may be mocked, and some features may be screens only. It is not production
+code; security, error handling, and scalability were deliberately left out
+(prototype-validation.md Step 3).
+
+So do not ask about any of the following — a prototype cannot answer them, and an
+answer would only penalize what was built that way on purpose:
+- performance, response time, stability (errors, downtime)
+- security, permissions, handling of personal data
+- accuracy of real data (nobody can judge that from mock data)
+- purchase decisions such as timing, pricing, or contracts
+- production operations, maintenance, or completeness of integrations
+
+Ask instead about what the prototype really can answer: whether the problem was
+identified correctly, whether the proposed approach is a direction that solves it,
+whether the flow is understandable, and what is missing. Phrase questions
+**hypothetically** ("if this approach were adopted in your actual work…") so the
+respondent evaluates the approach rather than the polish of the demo.
+
+Requirements:
+- 6 to 10 questions.
+- Include questions that produce evidence for judging whether the spec's
+  validation hypothesis and success criteria hold.
+- Include a question asking whether each major feature is a **direction that
+  solves** the user's problem.
+- Include at least one free-response question that surfaces improvements and
+  missing needs.
+- For choice questions about a specific feature, include an option like **"did
+  not use it / not applicable"**. Not reaching some features in a prototype is
+  normal (the rule's Feature Validation table has a "Not tested — Users did not
+  reach this feature" row), and without that option respondents guess about
+  features they never tried, which leaves the aggregate unable to tell signal
+  from noise.
+- Do not write leading questions (questions that hint at the answer you want).
+
+Use exactly these three question types:
+- "scale": a 1-5 scale. Do not include options.
+- "choice": single select. Include two or more options.
+- "text": free response. Do not include options.
+
+Output **only** one JSON object in the shape below (no explanation, no preamble,
+no code fence):
+{{"title": "...", "hypothesis": "...", "questions": [
+  {{"id": "q1", "text": "...", "type": "scale", "required": true}},
+  {{"id": "q2", "text": "...", "type": "choice", "options": ["...", "..."], "required": true}},
+  {{"id": "q3", "text": "...", "type": "text", "required": false}}
+]}}
+
+Spec:
+---
+{md}
+---
+"""
+
+_PROMPTS = {"ko": QUESTIONNAIRE_PROMPT_KO, "en": QUESTIONNAIRE_PROMPT_EN}
+
+
+def build_prompt(prototype_md: str, language: str = "ko") -> str:
+    """설문 문항 생성 프롬프트. 알 수 없는 언어는 한국어로 떨어진다."""
+    template = _PROMPTS.get(language, QUESTIONNAIRE_PROMPT_KO)
+    return template.format(md=prototype_md)
 
 
 def _extract_json(reply: str) -> dict:
@@ -86,8 +153,9 @@ def _extract_json(reply: str) -> dict:
 
 async def build_questionnaire(prototype_md: str, agent, *, token: str,
                               project_id: str, slug: str, now: str,
+                              language: str = "ko",
                               attempts: int = 2) -> Questionnaire:
-    prompt = build_prompt(prototype_md)
+    prompt = build_prompt(prototype_md, language)
     last_error: Exception | None = None
     for attempt in range(attempts):
         reply = await agent(prompt)
@@ -96,6 +164,10 @@ async def build_questionnaire(prototype_md: str, agent, *, token: str,
             return Questionnaire(
                 token=token, status="open", slug=slug, project_id=project_id,
                 created_at=now, closed_at=None,
+                # 문항의 언어를 기록한다 — 공개 응답 페이지가 이 값으로 화면을
+                # 그린다. 응답자는 외부인이라 pf_lang 쿠키가 없고, 문항이
+                # 영어인데 화면만 한국어인 것은 응답자에게 더 나쁘다.
+                language=language,
                 title=data["title"], hypothesis=data["hypothesis"],
                 questions=data["questions"])
         except Exception as exc:  # noqa: BLE001 — retry on any malformed reply

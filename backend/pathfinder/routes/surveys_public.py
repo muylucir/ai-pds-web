@@ -57,7 +57,11 @@ async def _resolve(token: str) -> tuple[SurveyStore, Questionnaire]:
 async def public_get_survey(token: str):
     _, qn = await _resolve(token)
     # Questions only: no token echo, no project_id/slug, no aggregate.
+    # language를 함께 내보낸다 — 응답자는 외부인이라 pf_lang 쿠키가 없고,
+    # 문항이 영어인데 화면 문구만 한국어인 것은 응답자에게 더 나쁘다.
+    # project_id/slug/token은 계속 노출하지 않는다(이 파일 헤더의 규율).
     return {"title": qn.title, "hypothesis": qn.hypothesis,
+            "language": qn.language,
             "questions": [q.model_dump() for q in qn.questions]}
 
 

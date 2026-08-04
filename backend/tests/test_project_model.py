@@ -104,3 +104,13 @@ def test_proto_tools_get_the_builders_language(tmp_path):
     described = " ".join(str(getattr(t, "description", "")) for t in tools)
     assert described.strip() != ""
     assert not any("가" <= c <= "힣" for c in described), described
+
+
+def test_survey_store_factory_passes_the_projects_language(monkeypatch):
+    """설문 스토어가 프로젝트 언어를 받는다 — 리포트는 aiplc-docs/**에 남는
+    산출물이므로 UI 언어가 아니라 프로젝트 언어를 따른다."""
+    monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: object())
+    monkeypatch.setattr(app_module, "surveys_root_s3_factory", lambda: object())
+    app_module.registry.register("pm-test", None, language="en")
+    store = app_module.survey_store_factory("pm-test", "slug")
+    assert store._language == "en"
