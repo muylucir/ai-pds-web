@@ -37,9 +37,7 @@ export default function AdminModelsPage() {
           <div>
             <h1 className="text-2xl font-bold">{t("admin.modelsTitle")}</h1>
             <p className="mt-1 text-sm text-slate-500">
-              프로젝트 생성 화면의 모델 목록입니다. 여러 모델을 등록해 두고 그중
-              최대 5개만 표시할 수 있습니다. 이미 만든 프로젝트는 여기서 모델을
-              지워도 계속 같은 모델로 돕니다.
+              {t("admin.modelsSubtitle")}
             </p>
           </div>
           <button
@@ -47,7 +45,7 @@ export default function AdminModelsPage() {
             onClick={() => setAdding(true)}
             className="rounded-lg bg-violet-600 px-4 py-2 text-sm text-white hover:bg-violet-700"
           >
-            모델 추가
+            {t("admin.addModelTitle")}
           </button>
         </div>
 

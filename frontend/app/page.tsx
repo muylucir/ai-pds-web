@@ -6,8 +6,10 @@ import { CreateProjectForm } from "@/components/CreateProjectForm";
 import { ProjectList } from "@/components/ProjectList";
 import { listProjects } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
+import { useT } from "@/lib/i18n/provider";
 
 export default function Home() {
+  const t = useT();
   const router = useRouter();
   const [page, setPage] = useState(1);
   const { data, error, loading, reload } = useAsync(() => listProjects(page), [page]);
@@ -16,18 +18,18 @@ export default function Home() {
       <AppHeader activeTab="projects" />
       <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="mb-6">
-          <h1 className="text-2xl font-bold">프로젝트</h1>
+          <h1 className="text-2xl font-bold">{t("list.title")}</h1>
           <p className="text-sm text-slate-500 mt-1">
-            워크숍 세션을 개설하고 Discovery를 시작하세요.
+            {t("list.subtitle")}
           </p>
         </div>
         {/* 생성 성공 = 곧바로 그 프로젝트의 대시보드로 — 목록에 추가만 되는
             것보다 워크숍 시작 흐름이 자연스럽다. */}
         <CreateProjectForm onCreated={(p) => router.push(`/projects/${p.project_id}/dashboard`)} />
-        {loading && <p className="text-sm text-slate-400">불러오는 중…</p>}
+        {loading && <p className="text-sm text-slate-400">{t("page.loading")}</p>}
         {error && (
           <p className="text-sm text-rose-600">
-            프로젝트 목록을 불러오지 못했습니다. 백엔드 연결을 확인하세요.
+            {t("list.loadFailed")}
           </p>
         )}
         {data && (

@@ -46,8 +46,7 @@ export default function AdminUsersPage() {
           <div>
             <h1 className="text-2xl font-bold">{t("admin.usersTitle")}</h1>
             <p className="mt-1 text-sm text-slate-500">
-              신규 가입은 초대로만 가능합니다. 초대하면 임시 비밀번호가 한 번
-              표시되며, 사용자는 첫 로그인에서 비밀번호를 변경합니다.
+              {t("admin.usersSubtitle")}
             </p>
           </div>
           <button
@@ -55,7 +54,7 @@ export default function AdminUsersPage() {
             onClick={() => setInviting(true)}
             className="rounded-lg bg-violet-600 px-4 py-2 text-sm text-white hover:bg-violet-700"
           >
-            사용자 초대
+            {t("admin.inviteUserTitle")}
           </button>
         </div>
 
