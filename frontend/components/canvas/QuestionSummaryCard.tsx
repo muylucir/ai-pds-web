@@ -2,6 +2,7 @@
 import { useState } from "react";
 import type { QuestionFile } from "@/lib/api/types";
 import { answeredCount } from "@/lib/stageProgress";
+import { useT } from "@/lib/i18n/provider";
 
 function basename(path: string): string {
   const parts = path.split("/");
@@ -12,6 +13,7 @@ function basename(path: string): string {
 // Rendered when the caller (QuestionCardSlot, Task 3) has determined every
 // question in `file` is answered — this component just renders the data.
 export function QuestionSummaryCard({ file }: { file: QuestionFile }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const { answered } = answeredCount(file);
 
@@ -41,7 +43,7 @@ export function QuestionSummaryCard({ file }: { file: QuestionFile }) {
               label for the expanded state is our own a11y extension, not
               ported copy — it keeps the toggle's accessible name in sync
               with aria-expanded instead of leaving a stale "펼치기" label. */}
-          {expanded ? "접기" : "펼치기"}
+          {expanded ? t("canvas.collapse") : t("canvas.expand")}
         </button>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
@@ -61,7 +63,7 @@ export function QuestionSummaryCard({ file }: { file: QuestionFile }) {
               <p className="font-medium">
                 Q{q.number}. {q.text}
               </p>
-              <p className="text-slate-400 mt-0.5">답변: {q.answer ?? "-"}</p>
+              <p className="text-slate-400 mt-0.5">{t("canvas.answerLabel")}: {q.answer ?? "-"}</p>
             </li>
           ))}
         </ul>

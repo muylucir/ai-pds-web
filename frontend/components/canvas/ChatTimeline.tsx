@@ -77,7 +77,7 @@ export function ChatTimeline({
       ref={scrollerRef}
       onScroll={onScroll}
       className="chat-scroll flex-1 min-h-0 overflow-y-auto px-4 md:px-8 py-6"
-      aria-label="대화 타임라인"
+      aria-label={t("canvas.timelineLabel")}
     >
       <div className="max-w-2xl mx-auto space-y-5">
         {items.length === 0 ? (
@@ -132,9 +132,10 @@ export function ChatTimeline({
         )}
         {items.length > 0 && (
           <p className="text-center text-[11px] text-slate-400">
-            버튼 대신 채팅으로 답해도 됩니다 — <span className="italic">&quot;승인&quot;</span>,{" "}
-            <span className="italic">&quot;고객 인용문을 파트장 관점으로 바꿔줘&quot;</span>,{" "}
-            <span className="italic">&quot;이전 단계로 돌아가고 싶어&quot;</span>
+            {t("canvas.chatHintPrefix")}{" "}
+            <span className="italic">&quot;{t("canvas.chatHintExample1")}&quot;</span>,{" "}
+            <span className="italic">&quot;{t("canvas.chatHintExample2")}&quot;</span>,{" "}
+            <span className="italic">&quot;{t("canvas.chatHintExample3")}&quot;</span>
           </p>
         )}
       </div>

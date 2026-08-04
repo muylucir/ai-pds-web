@@ -1,6 +1,8 @@
+"use client";
 // frontend/components/canvas/ChatInput.tsx
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { useT } from "@/lib/i18n/provider";
 
 export function ChatInput({
   onSend,
@@ -24,6 +26,7 @@ export function ChatInput({
   // 없는데 ■이 뜬다.
   interrupting?: boolean;
 }) {
+  const t = useT();
   const [text, setText] = useState(initialText ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -49,7 +52,7 @@ export function ChatInput({
             <>
               <button
                 type="button"
-                aria-label="파일 첨부"
+                aria-label={t("canvas.attachFile")}
                 disabled={disabled}
                 onClick={() => fileRef.current?.click()}
                 className="shrink-0 text-slate-400 hover:text-violet-600 disabled:opacity-50"
@@ -85,9 +88,9 @@ export function ChatInput({
                 submit();
               }
             }}
-            placeholder="메시지를 입력하세요… (질문·수정요청·되돌아가기 무엇이든)"
+            placeholder={t("canvas.messagePlaceholder")}
             className="flex-1 resize-none text-sm focus:outline-none bg-transparent disabled:opacity-50"
-            aria-label="채팅 메시지 입력"
+            aria-label={t("canvas.messageInputLabel")}
             disabled={disabled}
           />
           {interrupting && onInterrupt ? (
@@ -95,7 +98,7 @@ export function ChatInput({
               type="button"
               onClick={onInterrupt}
               className="shrink-0 w-8 h-8 rounded-lg bg-slate-700 hover:bg-slate-800 text-white flex items-center justify-center"
-              aria-label="중단"
+              aria-label={t("canvas.stop")}
             >
               ■
             </button>
@@ -105,7 +108,7 @@ export function ChatInput({
               onClick={submit}
               disabled={disabled || text.trim() === ""}
               className="shrink-0 w-8 h-8 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white flex items-center justify-center"
-              aria-label="전송"
+              aria-label={t("canvas.send")}
             >
               ↑
             </button>

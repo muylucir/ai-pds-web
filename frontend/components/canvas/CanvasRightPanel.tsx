@@ -1,9 +1,14 @@
+"use client";
 import { DocumentView } from "./DocumentView";
 import { PreviewPanelBody } from "./PreviewPanel";
+import type { Dict } from "@/lib/i18n";
+import { useT } from "@/lib/i18n/provider";
 
-const TABS: { key: "document" | "preview"; label: string }[] = [
-  { key: "document", label: "문서" },
-  { key: "preview", label: "프리뷰" },
+// 라벨을 딕셔너리 키로 둔다 — 모듈 상수는 훅을 부를 수 없으므로 렌더에서
+// t(labelKey)로 푼다(ActivityIndicator의 LABEL_KEYS와 같은 규약).
+const TABS: { key: "document" | "preview"; labelKey: keyof Dict }[] = [
+  { key: "document", labelKey: "canvas.tabDocument" },
+  { key: "preview", labelKey: "canvas.tabPreview" },
 ];
 
 // The switchable right panel (C1's PreviewPanel-only pane, now a controlled
@@ -23,32 +28,34 @@ export function CanvasRightPanel({
   onRevise: (text: string) => void;
   busy: boolean;
 }) {
+  const t = useT();
   return (
     <aside
       className="hidden xl:flex w-[420px] shrink-0 bg-white border-l border-slate-200 flex-col"
-      aria-label="아티팩트 패널"
+      aria-label={t("canvas.artifactPanelLabel")}
     >
       <div
         className="px-4 pt-3 flex gap-1 border-b border-slate-100 text-xs shrink-0"
         role="tablist"
-        aria-label="아티팩트 패널 탭"
+        aria-label={t("canvas.artifactPanelTabsLabel")}
       >
-        {TABS.map((t) => {
-          const active = t.key === tab;
+        {/* 루프 변수를 `tabDef`로 둔다 — `t`는 번역 함수 이름이다. */}
+        {TABS.map((tabDef) => {
+          const active = tabDef.key === tab;
           return (
             <button
-              key={t.key}
+              key={tabDef.key}
               type="button"
               role="tab"
               aria-selected={active}
-              onClick={() => onTabChange(t.key)}
+              onClick={() => onTabChange(tabDef.key)}
               className={
                 active
                   ? "px-3 py-2 rounded-t-lg bg-violet-50 text-violet-700 font-bold border-b-2 border-violet-600"
                   : "px-3 py-2 text-slate-400 hover:text-slate-600"
               }
             >
-              {t.label}
+              {t(tabDef.labelKey)}
             </button>
           );
         })}

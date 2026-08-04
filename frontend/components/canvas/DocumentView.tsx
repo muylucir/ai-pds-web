@@ -3,6 +3,7 @@ import { useState } from "react";
 import { getDocument, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { Markdown } from "@/components/Markdown";
+import { useT } from "@/lib/i18n/provider";
 
 // Living-Document view for the right panel's "문서" tab. No part tabs (the
 // mockup's Part 1/2/3/4 row is NOT ported — GET /document returns one
@@ -22,6 +23,7 @@ export function DocumentView({
   onRevise: (text: string) => void;
   busy: boolean;
 }) {
+  const t = useT();
   const [revising, setRevising] = useState(false);
   const [text, setText] = useState("");
   const { data: markdown, loading, error } = useAsync(() => getDocument(projectId), [projectId]);
@@ -61,12 +63,12 @@ export function DocumentView({
       </div>
 
       <div className="flex-1 overflow-y-auto chat-scroll p-5 text-sm text-slate-700">
-        {loading && !markdown && <p className="text-slate-400">불러오는 중…</p>}
-        {notFound && <p className="text-slate-400">문서가 아직 없습니다.</p>}
+        {loading && !markdown && <p className="text-slate-400">{t("canvas.loading")}</p>}
+        {notFound && <p className="text-slate-400">{t("canvas.docNotYet")}</p>}
         {loadError && (
-          <p className="text-rose-600">문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
+          <p className="text-rose-600">{t("canvas.docLoadFailed")}</p>
         )}
-        {empty && <p className="text-slate-400">아직 작성된 문서가 없습니다.</p>}
+        {empty && <p className="text-slate-400">{t("canvas.docEmpty")}</p>}
         {/* !empty guards against a whitespace-only markdown value double-
             rendering alongside the "아직 작성된 문서가 없습니다." empty state
             above — `empty` already covers markdown.trim() === "" (see its
@@ -86,11 +88,11 @@ export function DocumentView({
           {revising && (
             <div className="space-y-2">
               <textarea
-                aria-label="수정 요청 사항"
+                aria-label={t("canvas.reviseRequestLabel")}
                 rows={3}
                 value={text}
                 onChange={(e) => setText(e.target.value)}
-                placeholder="예: FAQ에 다국어 지원 계획 항목을 추가해줘."
+                placeholder={t("canvas.reviseRequestPlaceholder")}
                 className="w-full text-sm rounded-lg border border-slate-200 p-3 focus:outline-none focus:ring-2 focus:ring-violet-400"
               />
               <div className="flex justify-end gap-2">
