@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import type { AnswerValue, SurveyQuestion } from "@/lib/api/surveys";
+import { useT } from "@/lib/i18n/provider";
 
 const SCALE_VALUES = [1, 2, 3, 4, 5];
 
@@ -9,6 +10,7 @@ export function SurveyForm({ questions, onSubmit, submitting }: {
   onSubmit: (answers: Record<string, AnswerValue>) => void;
   submitting: boolean;
 }) {
+  const t = useT();
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [showError, setShowError] = useState(false);
 
@@ -78,12 +80,12 @@ export function SurveyForm({ questions, onSubmit, submitting }: {
       ))}
 
       {showError && (
-        <p className="text-sm text-rose-600">필수 문항에 모두 답해 주세요.</p>
+        <p className="text-sm text-rose-600">{t("surveyForm.requiredMissing")}</p>
       )}
 
       <button type="submit" disabled={submitting}
               className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium disabled:opacity-50">
-        {submitting ? "제출 중…" : "제출"}
+        {submitting ? t("surveyForm.submitting") : t("surveyForm.submit")}
       </button>
     </form>
   );

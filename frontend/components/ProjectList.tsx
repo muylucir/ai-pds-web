@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { ProjectPage, ProjectProgress, ProjectSummary } from "@/lib/api/types";
 import { deleteProject } from "@/lib/api/client";
+import { useT } from "@/lib/i18n/provider";
 
 function progressLabel(p: ProjectProgress | null | undefined): string {
   if (!p) return "—";
@@ -19,6 +20,7 @@ export function ProjectList({
   onDeleted: () => void;
   onPageChange: (page: number) => void;
 }) {
+  const t = useT();
   const [target, setTarget] = useState<ProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +43,7 @@ export function ProjectList({
       setTarget(null);
       onDeleted();
     } catch {
-      setError("삭제에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+      setError(t("project.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -50,7 +52,7 @@ export function ProjectList({
   if (data.total === 0) {
     return (
       <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-sm text-slate-500">
-        아직 생성된 프로젝트가 없습니다. 새 프로젝트를 만들어 워크숍 세션을 시작하세요.
+        {t("project.emptyList")}
       </div>
     );
   }
@@ -63,11 +65,11 @@ export function ProjectList({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
-              <th scope="col" className="px-4 py-3 font-medium">프로젝트 ID</th>
-              <th scope="col" className="px-4 py-3 font-medium">프로젝트명</th>
-              <th scope="col" className="px-4 py-3 font-medium">진행상황</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("project.id")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("project.colName")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("project.colProgress")}</th>
               <th scope="col" className="px-4 py-3 w-12">
-                <span className="sr-only">삭제</span>
+                <span className="sr-only">{t("project.delete")}</span>
               </th>
             </tr>
           </thead>
@@ -89,7 +91,7 @@ export function ProjectList({
                 <td className="px-4 py-3 text-right">
                   <button
                     type="button"
-                    aria-label={`${p.name ?? p.project_id} 프로젝트 삭제`}
+                    aria-label={`${p.name ?? p.project_id} ${t("project.deleteAria")}`}
                     onClick={() => {
                       setError(null);
                       setTarget(p);
@@ -106,26 +108,26 @@ export function ProjectList({
       </div>
 
       <div className="flex items-center justify-between mt-4 text-sm text-slate-500">
-        <span>총 {data.total}건</span>
+        <span>{t("project.totalCount").replace("{n}", String(data.total))}</span>
         <div className="flex items-center gap-3">
           <button
             type="button"
-            aria-label="이전 페이지"
+            aria-label={t("project.prevPageAria")}
             disabled={data.page <= 1}
             onClick={() => onPageChange(data.page - 1)}
             className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none"
           >
-            ‹ 이전
+            {t("project.prevPage")}
           </button>
           <span>{data.page} / {totalPages}</span>
           <button
             type="button"
-            aria-label="다음 페이지"
+            aria-label={t("project.nextPageAria")}
             disabled={data.page >= totalPages}
             onClick={() => onPageChange(data.page + 1)}
             className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none"
           >
-            다음 ›
+            {t("project.nextPage")}
           </button>
         </div>
       </div>
@@ -138,15 +140,15 @@ export function ProjectList({
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="프로젝트 삭제 확인"
+            aria-label={t("project.deleteConfirmLabel")}
             className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="font-bold text-lg">
-              &apos;{target.name ?? target.project_id}&apos; 프로젝트 삭제
+              {t("project.deleteConfirmTitle").replace("{name}", target.name ?? target.project_id)}
             </h2>
             <p className="text-sm text-slate-600 mt-2">
-              채팅 기록과 모든 문서가 영구 삭제되며 되돌릴 수 없습니다.
+              {t("project.deleteConfirmBody")}
             </p>
             {error && <p className="text-sm text-rose-600 mt-3">{error}</p>}
             <div className="mt-5 flex justify-end gap-2">
@@ -156,7 +158,7 @@ export function ProjectList({
                 disabled={busy}
                 className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
               >
-                취소
+                {t("project.cancel")}
               </button>
               <button
                 type="button"
@@ -164,7 +166,7 @@ export function ProjectList({
                 disabled={busy}
                 className="px-4 py-2 text-sm rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold disabled:opacity-50"
               >
-                삭제
+                {t("project.delete")}
               </button>
             </div>
           </div>

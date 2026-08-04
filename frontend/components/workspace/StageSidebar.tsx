@@ -1,6 +1,8 @@
+"use client";
 // frontend/components/workspace/StageSidebar.tsx
 import type { ProjectState, StageState, StagePayload } from "@/lib/api/types";
 import { progressPercent, stageCounts } from "@/lib/stageProgress";
+import { useT } from "@/lib/i18n/provider";
 
 // Merge server-fetched stage state (GET /state — aiplc-state.md's parsed
 // snapshot, the fallback shown before any live event arrives) with the
@@ -73,6 +75,7 @@ export function StageSidebar({
   state: ProjectState | null;
   events: StagePayload[];
 }) {
+  const t = useT();
   const stages = mergeStages(state?.stages ?? [], events);
   const merged: ProjectState = {
     project_type: state?.project_type ?? null,
@@ -84,10 +87,10 @@ export function StageSidebar({
   return (
     <aside
       className="hidden lg:flex flex-col min-h-0 bg-white border-r border-slate-200"
-      aria-label="스테이지 진행 상황"
+      aria-label={t("canvas.stageProgressLabel")}
     >
       <div className="px-4 py-3 border-b border-slate-100">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Discovery 진행</p>
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">{t("canvas.discoveryProgress")}</p>
         <div className="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden">
           <div className="h-full bg-violet-500 rounded-full" style={{ width: `${pct}%` }} />
         </div>
@@ -101,9 +104,10 @@ export function StageSidebar({
         ))}
       </nav>
       <div className="p-3 border-t border-slate-100 text-[11px] text-slate-400 leading-relaxed">
-        워크플로우는 작업에 적응합니다.
+        {t("canvas.sidebarAdaptive")}
         <br />
-        채팅으로 <b>되돌아가기·건너뛰기</b>를 언제든 요청하세요.
+        {t("canvas.sidebarHintPrefix")} <b>{t("canvas.sidebarHintBold")}</b>
+        {t("canvas.sidebarHintSuffix")}
       </div>
     </aside>
   );

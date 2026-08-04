@@ -1,4 +1,6 @@
+"use client";
 import Link from "next/link";
+import { useT } from "@/lib/i18n/provider";
 
 function basename(path: string): string {
   const parts = path.split("/");
@@ -6,13 +8,14 @@ function basename(path: string): string {
 }
 
 export function ArtifactsPanel({ artifacts, projectId }: { artifacts: string[]; projectId: string }) {
+  const t = useT();
   return (
     <section className="bg-white rounded-xl border border-slate-200" aria-labelledby="artifact-heading">
       <div className="px-5 py-4 border-b border-slate-100">
-        <h2 id="artifact-heading" className="font-bold">산출물</h2>
+        <h2 id="artifact-heading" className="font-bold">{t("dash.artifacts")}</h2>
       </div>
       {artifacts.length === 0 ? (
-        <p className="p-5 text-sm text-slate-400">아직 생성된 산출물이 없습니다.</p>
+        <p className="p-5 text-sm text-slate-400">{t("dash.noArtifacts")}</p>
       ) : (
         <ul className="p-3 text-sm">
           {artifacts.map((path) => {

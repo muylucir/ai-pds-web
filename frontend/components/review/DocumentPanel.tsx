@@ -1,6 +1,9 @@
+"use client";
 import { Markdown } from "@/components/Markdown";
+import { useT } from "@/lib/i18n/provider";
 
 export function DocumentPanel({ markdown }: { markdown: string }) {
+  const t = useT();
   return (
     <article className="lg:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
@@ -14,7 +17,7 @@ export function DocumentPanel({ markdown }: { markdown: string }) {
       </div>
       <div className="p-6 text-sm text-slate-700">
         {markdown.trim() === "" ? (
-          <p className="text-slate-400">아직 작성된 문서가 없습니다.</p>
+          <p className="text-slate-400">{t("review.noDocYet")}</p>
         ) : (
           <Markdown text={markdown} />
         )}

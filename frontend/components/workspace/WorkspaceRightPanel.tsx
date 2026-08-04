@@ -1,7 +1,9 @@
+"use client";
 // frontend/components/workspace/WorkspaceRightPanel.tsx
 import { QuestionForm } from "@/components/questions/QuestionForm";
 import { PreviewPanelBody } from "@/components/canvas/PreviewPanel";
 import type { QuestionsPayload, StagePayload } from "@/lib/api/types";
+import { useT } from "@/lib/i18n/provider";
 
 // Stage-name substrings that indicate the "prototype build" step is active —
 // matched with `.includes` (not equality) so either the English backend
@@ -64,10 +66,11 @@ export function WorkspaceRightPanel({
   onSubmitAnswers: (answers: Record<string, string>) => void;
   busy: boolean;
 }) {
+  const t = useT();
   const mode = deriveMode(pendingQuestions, stages, busy);
   return (
     <aside
-      aria-label="컨텍스트 패널"
+      aria-label={t("ws.contextPanelAria")}
       className="hidden lg:flex flex-col min-w-0 min-h-0 bg-white border-l border-slate-200"
     >
       {mode === "questions" && pendingQuestions && (
@@ -76,15 +79,15 @@ export function WorkspaceRightPanel({
         </div>
       )}
       {mode === "preview" && (
-        <div aria-label="프로토타입 프리뷰" className="flex-1 flex flex-col min-h-0">
+        <div aria-label={t("ws.previewAria")} className="flex-1 flex flex-col min-h-0">
           <PreviewPanelBody projectId={projectId} />
         </div>
       )}
       {mode === "artifacts" && (
         <div className="flex-1 min-h-0 overflow-y-auto p-4">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">최근 산출물</p>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">{t("ws.recentArtifacts")}</p>
           {changedPaths.length === 0 ? (
-            <p className="text-sm text-slate-400">아직 변경된 파일이 없습니다.</p>
+            <p className="text-sm text-slate-400">{t("ws.noChangedFiles")}</p>
           ) : (
             <ul className="space-y-2 text-sm">
               {changedPaths.map((path) => (

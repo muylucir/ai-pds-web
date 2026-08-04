@@ -1,6 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import type { Dict } from "@/lib/i18n";
+import { useT } from "@/lib/i18n/provider";
 
 interface Me {
   authenticated: boolean;
@@ -8,12 +10,17 @@ interface Me {
   role?: "admin" | "pm" | null;
 }
 
-const ROLE_LABEL: Record<string, string> = { admin: "관리자", pm: "PM" };
+// admin 화면(UserTable)과 같은 규약 — 라벨은 딕셔너리 키다.
+const ROLE_LABEL_KEY: Record<string, keyof Dict> = {
+  admin: "admin.roleAdmin",
+  pm: "admin.rolePm",
+};
 
 // 토큰이 httpOnly 쿠키에 있어 JS가 읽을 수 없으므로, 표시용 정보는 서버에게
 // 묻는다(/api/auth/me). 부모가 prop으로 넘기지 않는 이유: 이 컴포넌트가 헤더의
 // 모든 화면에 들어가므로 각 페이지가 사용자 정보를 실어 보내는 배선을 만들지 않는다.
 export function UserMenu() {
+  const t = useT();
   const [me, setMe] = useState<Me | null>(null);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -59,7 +66,7 @@ export function UserMenu() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={`사용자 메뉴 (${me.email})`}
+        aria-label={t("user.menuAria").replace("{email}", me.email)}
         aria-expanded={open}
         className="h-9 w-9 rounded-full bg-violet-100 text-sm font-bold text-violet-700"
       >
@@ -70,7 +77,7 @@ export function UserMenu() {
           <div className="px-3 py-2">
             <p className="truncate text-sm font-medium">{me.email}</p>
             <p className="text-xs text-slate-500">
-              {ROLE_LABEL[me.role ?? ""] ?? "역할 없음"}
+              {ROLE_LABEL_KEY[me.role ?? ""] ? t(ROLE_LABEL_KEY[me.role ?? ""]) : t("user.noRole")}
             </p>
           </div>
           {me.role === "admin" && (
@@ -79,13 +86,13 @@ export function UserMenu() {
                 href="/admin/users"
                 className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-50"
               >
-                사용자 관리
+                {t("user.manageUsers")}
               </Link>
               <Link
                 href="/admin/models"
                 className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-50"
               >
-                모델 관리
+                {t("user.manageModels")}
               </Link>
             </>
           )}
@@ -96,7 +103,7 @@ export function UserMenu() {
               type="submit"
               className="w-full rounded-lg px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50"
             >
-              로그아웃
+              {t("user.signOut")}
             </button>
           </form>
         </div>
