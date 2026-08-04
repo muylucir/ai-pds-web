@@ -94,10 +94,39 @@ async def create_project(body: CreateProject):
     # 러너를 만들고 되돌리는 것은 낭비다.
     await _validate_model_id(body.model_id)
     _validate_language(body.language)
-    workspace = await app_module.make_workspace(body.project_id)
     # 매니페스트와 레지스트리가 같은 created_at을 갖도록 여기서 확정 —
     # 목록 정렬(생성일 오름차순) 기준이 재시작 전후로 달라지지 않는다.
     created_at = datetime.now(timezone.utc).isoformat()
+    # **register가 make_workspace보다 먼저 와야 한다.** 순서가 load-bearing이다.
+    #
+    # make_workspace는 driver_factory를 부르고, 그 팩토리는 project_language(pid)와
+    # project_model(pid)로 **레지스트리를 읽어** 드라이버를 조립한다. 예전에는
+    # make_workspace가 먼저였으므로 그 읽기가 아직 등록되지 않은 프로젝트를 보고
+    # 폴백값을 집었다 — 언어는 "ko", 모델은 env 기본값. 그리고 그렇게 만들어진
+    # 드라이버는 attach된 Workspace가 프로세스 수명 내내 들고 있으므로, 새로 만든
+    # 영어 프로젝트의 **모든 턴**이 한국어로 돌았다(2026-08-04 실측).
+    #
+    # 증상이 헷갈렸던 이유가 여기 있다: 매니페스트·레지스트리·헤더 배지는 모두
+    # "en"으로 맞게 들어간다. 어긋나는 것은 드라이버 하나뿐이어서, 화면은 영어인데
+    # 대화만 한국어인 상태로 보인다. 모델 쪽은 더 조용하다 — env 폴백이 있어
+    # 고른 모델이 아닌 배포 기본 모델로 돌면서 에러도 로그도 남지 않는다.
+    #
+    # 등록을 앞으로 옮기면 실패 시 되돌릴 것이 하나 늘어난다(아래 except의
+    # registry.remove). 그 대가로 "드라이버가 레지스트리를 읽는다"는 사실과
+    # 순서가 일치하게 된다 — 팩토리가 값을 인자로 받는 모양으로 바꾸는 대안도
+    # 있지만, 그러면 driver_factory·make_workspace·restore 경로가 모두 시그니처를
+    # 바꿔야 하고 lazy 초기화 경로(deps.ensure_workspace)는 여전히 레지스트리를
+    # 읽는다. 읽는 쪽을 그대로 두고 순서를 맞추는 편이 좁은 수정이다.
+    app_module.registry.register(body.project_id, body.name,
+                                 created_at=created_at, model_id=body.model_id,
+                                 language=body.language)
+    try:
+        workspace = await app_module.make_workspace(body.project_id)
+    except Exception:
+        # 등록만 남고 워크스페이스가 없는 상태를 남기지 않는다 — 그 상태는 목록에
+        # 보이지만 열 수 없는 프로젝트가 된다.
+        app_module.registry.remove(body.project_id)
+        raise
     if app_module.durable_projects_enabled():
         try:
             await write_manifest(app_module.projects_root_s3_factory(),
@@ -111,10 +140,9 @@ async def create_project(body: CreateProject):
                 await workspace.runner.stop()
             except Exception:
                 _log.exception("workspace cleanup after manifest failure failed")
+            # 등록도 되돌린다(이제 register가 앞에 있으므로 이것이 필요하다).
+            app_module.registry.remove(body.project_id)
             raise HTTPException(status_code=500, detail="project persistence failed")
-    app_module.registry.register(body.project_id, body.name,
-                                 created_at=created_at, model_id=body.model_id,
-                                 language=body.language)
     app_module.registry.attach(body.project_id, workspace)
     return {"project_id": body.project_id, "name": body.name,
             "model_id": body.model_id,
