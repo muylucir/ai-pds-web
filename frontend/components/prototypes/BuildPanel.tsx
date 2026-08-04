@@ -11,6 +11,7 @@ import { QuestionForm } from "@/components/questions/QuestionForm";
 import { closeSession, startHost } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import { usePrototypeStream } from "@/lib/usePrototypeStream";
+import { useT } from "@/lib/i18n/provider";
 
 export function BuildPanel({
   projectId,
@@ -27,6 +28,7 @@ export function BuildPanel({
   // otherwise receive a second "turn already in progress" style conflict).
   autoStart?: boolean;
 }) {
+  const t = useT();
   const {
     items, streaming, pendingQuestions, buildComplete, changedPaths,
     startBuild, send, submitAnswers, interrupt, restartForImprovement,
@@ -83,7 +85,7 @@ export function BuildPanel({
       setActionError(
         err instanceof ApiError && err.message
           ? err.message
-          : "호스팅을 시작하지 못했습니다. 다시 시도해 주세요.");
+          : t("proto.hostStartFailed"));
     } finally {
       setHosting(false);
     }
@@ -102,7 +104,7 @@ export function BuildPanel({
       setActionError(
         err instanceof ApiError && err.message
           ? err.message
-          : "개선 세션을 시작하지 못했습니다. 다시 시도해 주세요.");
+          : t("proto.improveStartFailed"));
     } finally {
       setRestarting(false);
     }
@@ -123,7 +125,7 @@ export function BuildPanel({
               disabled={closing}
               className="px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-medium"
             >
-              완료
+              {t("proto.done")}
             </button>
           </div>
         </header>
@@ -152,8 +154,7 @@ export function BuildPanel({
                 가리킨다. */}
             {buildComplete !== null && (
               <p className="shrink-0 px-4 md:px-8 pt-2 text-xs text-slate-400 text-center">
-                빌드 세션이 종료됐습니다. 이어서 작업하려면 완료 카드의
-                &ldquo;개선 이어서 하기&rdquo;를 눌러주세요.
+                {t("proto.sessionClosedNotice")}
               </p>
             )}
             <ChatInput
@@ -173,13 +174,13 @@ export function BuildPanel({
             {buildComplete && (
               <div className="p-4 border-b border-slate-200">
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                  <p className="text-sm font-bold text-emerald-800">빌드 완료</p>
+                  <p className="text-sm font-bold text-emerald-800">{t("proto.buildComplete")}</p>
                   <p className="mt-2 text-sm text-slate-700 whitespace-pre-wrap">
                     {buildComplete.summary}
                   </p>
                   {buildComplete.remaining && (
                     <>
-                      <p className="mt-3 text-xs font-bold text-slate-500">남은 작업</p>
+                      <p className="mt-3 text-xs font-bold text-slate-500">{t("proto.remainingWork")}</p>
                       <p className="mt-1 text-sm text-slate-600 whitespace-pre-wrap">
                         {buildComplete.remaining}
                       </p>
@@ -198,7 +199,7 @@ export function BuildPanel({
                     실제 사례) — 세 버튼 모두 streaming 중엔 막는다. */}
                 {streaming && (
                   <p className="mt-3 text-xs text-slate-400">
-                    빌드를 마무리하고 있어요 — 잠시 후 버튼을 누를 수 있습니다.
+                    {t("proto.finishingBuild")}
                   </p>
                 )}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -208,7 +209,7 @@ export function BuildPanel({
                     disabled={hosting || restarting || closing || streaming}
                     className="px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-medium"
                   >
-                    호스팅 시작
+                    {t("proto.startHosting")}
                   </button>
                   <button
                     type="button"
@@ -216,7 +217,7 @@ export function BuildPanel({
                     disabled={hosting || restarting || closing || streaming}
                     className="px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-sm font-medium text-slate-700"
                   >
-                    개선 이어서 하기
+                    {t("proto.continueImproving")}
                   </button>
                   <button
                     type="button"
@@ -224,7 +225,7 @@ export function BuildPanel({
                     disabled={hosting || restarting || closing || streaming}
                     className="px-3.5 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-sm font-medium text-slate-700"
                   >
-                    닫기
+                    {t("proto.close")}
                   </button>
                 </div>
               </div>
@@ -239,9 +240,9 @@ export function BuildPanel({
               </div>
             )}
             <div className="p-4">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">파일 변경 목록</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">{t("proto.changedFiles")}</p>
               {changedPaths.length === 0 ? (
-                <p className="text-sm text-slate-400">아직 변경된 파일이 없습니다.</p>
+                <p className="text-sm text-slate-400">{t("proto.noChangedFiles")}</p>
               ) : (
                 <ul className="space-y-2 text-sm">
                   {changedPaths.map((path) => (

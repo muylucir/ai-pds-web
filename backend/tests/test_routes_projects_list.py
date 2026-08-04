@@ -7,14 +7,17 @@ client = TestClient(app)
 def test_create_project_without_name_returns_null_name():
     r = client.post("/projects", json={"project_id": "plist-noname"})
     assert r.status_code == 200
-    assert r.json() == {"project_id": "plist-noname", "name": None, "model_id": None}
+    # language는 미지정이어도 응답에 실린다 — 실제로 돌게 될 언어("ko")를
+    # 말해야 프론트가 폴백 규칙을 또 알 필요가 없다.
+    assert r.json() == {"project_id": "plist-noname", "name": None, "model_id": None,
+                        "language": "ko"}
 
 
 def test_create_project_with_name_returns_it():
     r = client.post("/projects", json={"project_id": "plist-named", "name": "기획전 AI 어시스턴트"})
     assert r.status_code == 200
     assert r.json() == {"project_id": "plist-named", "name": "기획전 AI 어시스턴트",
-                        "model_id": None}
+                        "model_id": None, "language": "ko"}
 
 
 def test_list_projects_includes_created_projects_with_names():

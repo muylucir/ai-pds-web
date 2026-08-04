@@ -1047,3 +1047,33 @@ async def test_purge_session_state_is_idempotent():
     s3 = FakeS3Store()
     await purge_session_state(s3, SLUG)
     await purge_session_state(s3, SLUG)
+
+
+def test_first_prompt_is_english_for_an_english_project(tmp_path):
+    """영어 프로젝트의 개시 턴이 영어여야 한다.
+
+    브레이크("계획만 세우고 빌드하지 마")가 두 언어 모두에 있어야 한다 —
+    영어 판에서 그 지시가 빠지면 승인 없이 빌드가 시작된다.
+    """
+    session = PrototypeSession(
+        project_id=PROJECT_ID, slug=SLUG, s3=FakeS3Store(),
+        build_root=tmp_path / "protos",
+        builder_factory=lambda sid, resume: FakeBuilder(),
+        semaphore=BuildSemaphore(max_concurrent=2),
+        language="en",
+    )
+    prompt = session.first_prompt()
+    assert "do not start building" in prompt.lower()
+    assert "AskUserQuestion" in prompt
+    assert not any("가" <= c <= "힣" for c in prompt)
+
+
+def test_first_prompt_defaults_to_korean(tmp_path):
+    # 언어를 안 주는 호출부(구 코드, 테스트)가 기존 동작을 유지한다.
+    session = PrototypeSession(
+        project_id=PROJECT_ID, slug=SLUG, s3=FakeS3Store(),
+        build_root=tmp_path / "protos",
+        builder_factory=lambda sid, resume: FakeBuilder(),
+        semaphore=BuildSemaphore(max_concurrent=2),
+    )
+    assert "빌드는 시작하지 마" in session.first_prompt()

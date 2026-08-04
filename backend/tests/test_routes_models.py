@@ -113,7 +113,9 @@ def test_admin_add_rejects_a_whitespace_only_model_id(catalog, client):
     assert r.status_code == 422
     # 공백 전용은 "비었다"는 메시지여야 한다 — 문자셋 위반 메시지가 아니라.
     # 두 검증의 순서를 못박는 핀 테스트다.
-    assert r.json()["detail"] == "모델 ID를 입력하세요."
+    # detail은 안정적 코드다 — 문구는 프론트 딕셔너리가 소유한다
+    # (backend/pathfinder/error_codes.py 헤더 참조).
+    assert r.json()["detail"] == "model_id_required"
 
 
 def test_admin_add_rejects_a_model_id_with_a_slash(catalog, client):

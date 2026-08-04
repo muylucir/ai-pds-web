@@ -222,6 +222,9 @@ def test_cannot_demote_yourself(env, client):
     # 이게 없으면 관리자가 스스로를 잠가내고 복구 경로가 AWS 콘솔밖에 안 남는다.
     r = client.put(f"/admin/users/{ADMIN_EMAIL}/role", json={"role": "pm"})
     assert r.status_code == 400
+    # detail은 안정적 코드다 — 프론트 딕셔너리가 이 값으로 문구를 찾는다.
+    # 한국어 문장으로 회귀하면 영어 UI에 한국어가 뜬다.
+    assert r.json()["detail"] == "self_target"
     assert "set_group" not in [c[0] for c in env.calls]
 
 
@@ -240,6 +243,7 @@ def test_cannot_demote_the_last_admin(env, client):
     env.add("other-admin@x.io", role="admin")
     r = client.put("/admin/users/other-admin@x.io/role", json={"role": "pm"})
     assert r.status_code == 400
+    assert r.json()["detail"] == "last_admin"
     assert "set_group" not in [c[0] for c in env.calls]
 
 

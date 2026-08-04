@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import type { Question } from "@/lib/api/types";
+import { useT } from "@/lib/i18n/provider";
 
 // "B: 부연 설명" 값을 letter와 note로 분해한다. 첫 ": " 앞 토큰이 알려진
 // non-Other letter일 때만 분해 — "Broker: ..." 같은 값은 null(전체가 Other
@@ -22,6 +23,7 @@ export function QuestionCard({
   value: string;
   onChange: (next: string) => void;
 }) {
+  const t = useT();
   const name = `q${question.number}`;
   const multi = question.multi_select === true;
 
@@ -38,7 +40,7 @@ export function QuestionCard({
     if (lastOther === -1) return question.options;
     return question.options.map((o, i) =>
       o.is_other && i !== lastOther
-        ? { ...o, is_other: false, text: o.text.trim() || `보기 ${o.letter}` }
+        ? { ...o, is_other: false, text: o.text.trim() || `${t("q.optionFallback")} ${o.letter}` }
         : o,
     );
   })();
@@ -100,14 +102,14 @@ export function QuestionCard({
     // 오버플로를 만들고, 라벨 클릭(=input.focus())마다 문서가 스크롤되며
     // 헤더가 말려 올라간다(ui-bug.png). 라벨의 relative와 세트.
     <fieldset className="relative bg-white rounded-xl border-2 border-violet-300 shadow-sm shadow-violet-100 overflow-hidden">
-      <legend className="sr-only">질문 {question.number}</legend>
+      <legend className="sr-only">{t("q.legend")} {question.number}</legend>
       <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
         <span className="w-7 h-7 rounded-full bg-violet-600 text-white flex items-center justify-center text-xs font-bold" aria-hidden="true">
           {question.number}
         </span>
         <div>
           <h2 className="font-bold">Q{question.number}. {question.text}</h2>
-          {question.category && <p className="text-xs text-slate-400 mt-0.5">카테고리: {question.category}</p>}
+          {question.category && <p className="text-xs text-slate-400 mt-0.5">{t("q.category")}: {question.category}</p>}
         </div>
       </div>
       <div className="p-6 space-y-3">
@@ -139,15 +141,15 @@ export function QuestionCard({
                   <span className="shrink-0 w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-sm font-bold text-slate-500">
                     {opt.letter}
                   </span>
-                  <p className="font-medium">Other — 직접 입력</p>
+                  <p className="font-medium">{t("q.otherOption")}</p>
                 </label>
                 <textarea
-                  aria-label="기타 답변 직접 입력"
+                  aria-label={t("q.otherAria")}
                   rows={2}
                   value={otherActive ? value : ""}
                   onFocus={() => setOtherActive(true)}
                   onChange={(e) => { setOtherActive(true); onChange(e.target.value); }}
-                  placeholder="위 선택지에 없다면 직접 설명해 주세요…"
+                  placeholder={t("q.otherPlaceholder")}
                   className="mt-2 ml-10 w-[calc(100%-2.5rem)] text-sm rounded-lg border border-slate-200 p-3 focus:outline-none focus:ring-2 focus:ring-violet-400"
                 />
               </div>
@@ -178,7 +180,7 @@ export function QuestionCard({
                     <p className="font-medium">
                       {opt.text}
                       {opt.recommended && (
-                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 ml-1">★ AI 추천</span>
+                        <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 ml-1">{t("q.aiRecommended")}</span>
                       )}
                     </p>
                   </div>
@@ -197,7 +199,7 @@ export function QuestionCard({
                   onChange={(e) =>
                     onChange(e.target.value === "" ? opt.letter : `${opt.letter}: ${e.target.value}`)
                   }
-                  placeholder="부연 설명 (선택) — 수정 요청·조건·이유가 있으면 적어 주세요"
+                  placeholder={t("q.notePlaceholder")}
                   className="mt-2 ml-10 w-[calc(100%-2.5rem)] text-sm rounded-lg border border-slate-200 p-3 focus:outline-none focus:ring-2 focus:ring-violet-400"
                 />
               )}

@@ -32,6 +32,12 @@ def _driver(tmp_path, scripted, s3=None):
     rules = tmp_path / "rules" / "aws-aiplc-rules"
     rules.mkdir(parents=True)
     (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
+    # place_rules가 언어 지시를 요구한다 — 없으면 FileNotFoundError로
+    # 턴이 버려진다(절반만 번역된 문서보다 즉시 실패가 낫다는 규율).
+    lang = rules.parent / "language"
+    lang.mkdir(parents=True, exist_ok=True)
+    (lang / "ko.md").write_text("KO", encoding="utf-8")
+    (lang / "en.md").write_text("EN", encoding="utf-8")
     ws = tmp_path / "ws"
     ws.mkdir()
     captured: dict = {}
@@ -86,7 +92,9 @@ async def test_places_the_rules_before_the_first_turn(tmp_path):
     # 룰이 없으면 에이전트가 워크플로우를 모르는 채로 돈다.
     d, ws, _ = _driver(tmp_path, {"text": ["ok"]})
     [ev async for ev in d.run("hi", {"session_id": "s-1"})]
-    assert (ws / "CLAUDE.md").read_text(encoding="utf-8") == "WORKFLOW"
+    # CLAUDE.md는 이제 조립물이다: 언어 지시 다음에 워크플로우.
+    text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
+    assert text.index("KO") < text.index("WORKFLOW")
 
 
 @pytest.mark.asyncio
@@ -246,6 +254,12 @@ def _driver_with_failing_turn(tmp_path, scripted, *, status=500):
     rules = tmp_path / "rules" / "aws-aiplc-rules"
     rules.mkdir(parents=True)
     (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
+    # place_rules가 언어 지시를 요구한다 — 없으면 FileNotFoundError로
+    # 턴이 버려진다(절반만 번역된 문서보다 즉시 실패가 낫다는 규율).
+    lang = rules.parent / "language"
+    lang.mkdir(parents=True, exist_ok=True)
+    (lang / "ko.md").write_text("KO", encoding="utf-8")
+    (lang / "en.md").write_text("EN", encoding="utf-8")
     ws = tmp_path / "ws"
     ws.mkdir()
     d = ClaudeDriver(workspace=str(ws), rules_dir=str(tmp_path / "rules"),
@@ -910,7 +924,9 @@ async def test_places_the_rules_on_the_restart_answers_path_too(tmp_path):
     d, ws, _ = _driver(tmp_path, {"text": ["ok"]}, s3=s3)
     assert not (ws / "CLAUDE.md").exists()  # 차갑게 시작한다
     [ev async for ev in d.run_answers("i-1", {"1": "A"}, {"session_id": "s-1"})]
-    assert (ws / "CLAUDE.md").read_text(encoding="utf-8") == "WORKFLOW"
+    # CLAUDE.md는 이제 조립물이다: 언어 지시 다음에 워크플로우.
+    text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
+    assert text.index("KO") < text.index("WORKFLOW")
 
 
 @pytest.mark.asyncio
@@ -1106,6 +1122,12 @@ def _checking_driver(tmp_path, script=None, config_dir=None, workspace=None):
     if not rules.exists():
         rules.mkdir(parents=True)
         (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
+        # place_rules가 언어 지시를 요구한다 — 없으면 FileNotFoundError로
+        # 턴이 버려진다(절반만 번역된 문서보다 즉시 실패가 낫다는 규율).
+        lang = rules.parent / "language"
+        lang.mkdir(parents=True, exist_ok=True)
+        (lang / "ko.md").write_text("KO", encoding="utf-8")
+        (lang / "en.md").write_text("EN", encoding="utf-8")
     ws = workspace or (tmp_path / "ws")
     ws.mkdir(parents=True, exist_ok=True)
     cfg = config_dir or (tmp_path / "cfg")
@@ -1294,6 +1316,12 @@ async def test_a_failed_connect_does_not_poison_the_client_cache(tmp_path):
     rules = tmp_path / "rules" / "aws-aiplc-rules"
     rules.mkdir(parents=True)
     (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
+    # place_rules가 언어 지시를 요구한다 — 없으면 FileNotFoundError로
+    # 턴이 버려진다(절반만 번역된 문서보다 즉시 실패가 낫다는 규율).
+    lang = rules.parent / "language"
+    lang.mkdir(parents=True, exist_ok=True)
+    (lang / "ko.md").write_text("KO", encoding="utf-8")
+    (lang / "en.md").write_text("EN", encoding="utf-8")
     ws = tmp_path / "ws"
     ws.mkdir()
     d = ClaudeDriver(workspace=str(ws), rules_dir=str(tmp_path / "rules"),
@@ -1494,4 +1522,52 @@ async def test_interrupt_records_that_the_turn_was_stopped(tmp_path):
 
     await d.interrupt()
 
-    assert any(e.kind == "status" and e.text == "중단됨" for e in d._queue), d._queue
+    from pathfinder.agent.claude_driver import INTERRUPTED_MARKER
+    assert any(e.kind == "status" and e.text == INTERRUPTED_MARKER
+               for e in d._queue), d._queue
+
+
+def test_interrupt_marker_is_language_neutral():
+    """프론트가 이 문자열을 비교해 interrupted를 세운다
+    (frontend/lib/useWorkspaceStream.ts). 한국어로 두면 UI를 번역할 때
+    프론트가 중단을 인지하지 못한다 — 화면에 '중단됨' 한 줄이 안 뜨고 턴이
+    성공한 것처럼 보인다.
+
+    proto/builder.py가 이미 같은 값을 쓴다 — 두 드라이버가 어긋나면
+    프론트가 경로에 따라 다르게 동작한다."""
+    from pathfinder.agent.claude_driver import INTERRUPTED_MARKER
+    assert INTERRUPTED_MARKER == "interrupted"
+    # 사람이 읽는 문구가 아니므로 비ASCII가 없어야 한다.
+    assert INTERRUPTED_MARKER.isascii()
+
+
+def test_driver_places_the_project_language_directive(tmp_path):
+    """드라이버가 프로젝트 언어를 place_rules에 전달한다.
+
+    이 배선이 빠지면 모든 프로젝트가 한국어 지시로 돌고, 영어를 고른 사용자는
+    영어 UI로 한국어 문서를 받는다 — 에러는 없다.
+    """
+    from pathfinder.agent.claude_driver import ClaudeDriver
+    seen = {}
+
+    def fake_place_rules(workspace, rules_dir, language="ko"):
+        seen["language"] = language
+
+    import pathfinder.agent.claude_driver as mod
+    original = mod.place_rules
+    mod.place_rules = fake_place_rules
+    try:
+        d = ClaudeDriver(workspace=str(tmp_path), rules_dir=str(tmp_path),
+                         config_dir=str(tmp_path), s3=None,
+                         language="en", session_store=None)
+        assert d._place_rules() is True
+        assert seen["language"] == "en"
+    finally:
+        mod.place_rules = original
+
+
+def test_driver_defaults_to_korean(tmp_path):
+    from pathfinder.agent.claude_driver import ClaudeDriver
+    d = ClaudeDriver(workspace=str(tmp_path), rules_dir=str(tmp_path),
+                     config_dir=str(tmp_path), s3=None, session_store=None)
+    assert d._language == "ko"

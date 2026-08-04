@@ -119,6 +119,10 @@ export interface ProjectSummary {
   // 이 프로젝트가 도는 Bedrock 모델 id. null = 미지정(서버의 env 기본값으로
   // 돈다 — 프론트는 그 값을 알 수 없다).
   model_id?: string | null;
+  // 이 프로젝트의 생성물 언어. UI 언어(pf_lang 쿠키)와 별개다 — 문서·
+  // 프로토타입·채팅이 어느 언어로 나오는지. 백엔드는 항상 채워 보내지만
+  // (미지정은 "ko"로 확정) 구 백엔드 응답에는 없을 수 있어 옵셔널이다.
+  language?: "ko" | "en";
 }
 
 // GET /projects/{pid} → ProjectDetail. 헤더의 모델 배지가 부르는 곳이다.
@@ -127,6 +131,10 @@ export interface ProjectDetail {
   name: string | null;
   created_at: string | null;
   model_id: string | null;
+  // 이 프로젝트의 생성물 언어. UI 언어(pf_lang 쿠키)와 별개다 — 문서·
+  // 프로토타입·채팅이 어느 언어로 나오는지. 백엔드는 항상 채워 보내지만
+  // (미지정은 "ko"로 확정) 구 백엔드 응답에는 없을 수 있어 옵셔널이다.
+  language?: "ko" | "en";
 }
 
 export interface ProjectPage {
@@ -152,4 +160,7 @@ export interface HistoryItem {
   card: "questions" | null;
   name: string | null;
   trace: HistoryTraceEntry[];
+  // 답변 제출 턴의 구조화된 답변. 있으면 프론트가 UI 언어로 문구를 만들고,
+  // 없으면(자유 서술 답변, 또는 이 필드를 모르는 구 백엔드) text를 그대로 쓴다.
+  answers?: Record<string, string> | null;
 }

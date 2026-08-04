@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { answerSummary } from "./answerSummary";
 import type { QuestionFile, QuestionOption } from "@/lib/api/types";
+import { dictFor, type Dict } from "@/lib/i18n";
+
+// 실제 딕셔너리를 탄다 — 가짜 t를 넘기면 빈 제출 문구가 딕셔너리에서 온다는
+// 사실이 테스트에서 사라진다. 기본 로케일(ko)이므로 단정은 한국어 그대로다.
+const ko = dictFor("ko");
+const t = (key: keyof Dict) => ko[key];
 
 function opt(letter: string, text: string, is_other = false): QuestionOption {
   return { letter, text, is_other, recommended: false };
@@ -26,7 +32,7 @@ describe("answerSummary", () => {
       q(2, "출시 목표 시점은?"),
     ]);
 
-    expect(answerSummary(qf, { "1": "사내 QA 담당자", "2": "2개월 이내" })).toBe(
+    expect(answerSummary(qf, { "1": "사내 QA 담당자", "2": "2개월 이내" }, t)).toBe(
       "Q1. 주 사용자는 누구입니까?\n→ 사내 QA 담당자\n\nQ2. 출시 목표 시점은?\n→ 2개월 이내",
     );
   });
@@ -39,7 +45,7 @@ describe("answerSummary", () => {
       q(1, "어떤 방식이 좋습니까?", [opt("A", "기존 도구 확장"), opt("B", "신규 개발")]),
     ]);
 
-    expect(answerSummary(qf, { "1": "A" })).toBe(
+    expect(answerSummary(qf, { "1": "A" }, t)).toBe(
       "Q1. 어떤 방식이 좋습니까?\n→ A. 기존 도구 확장",
     );
   });
@@ -51,7 +57,7 @@ describe("answerSummary", () => {
       q(1, "어떤 방식이 좋습니까?", [opt("A", "기존 도구 확장"), opt("B", "신규 개발")]),
     ]);
 
-    expect(answerSummary(qf, { "1": "A: 단 인증만 새로" })).toBe(
+    expect(answerSummary(qf, { "1": "A: 단 인증만 새로" }, t)).toBe(
       "Q1. 어떤 방식이 좋습니까?\n→ A. 기존 도구 확장 — 단 인증만 새로",
     );
   });
@@ -66,7 +72,7 @@ describe("answerSummary", () => {
       ),
     ]);
 
-    expect(answerSummary(qf, { "1": "A,C" })).toBe(
+    expect(answerSummary(qf, { "1": "A,C" }, t)).toBe(
       "Q1. 필요한 기능을 고르세요\n→ A. 자동 생성, C. 이력 관리",
     );
   });
@@ -76,7 +82,7 @@ describe("answerSummary", () => {
     // exactly this case. A summary that split on ": " here would mangle it.
     const qf = file([q(1, "다른 의견이 있으면 적어주세요", [opt("A", "없음")])]);
 
-    expect(answerSummary(qf, { "1": "Broker: 큐를 따로 두고 싶다" })).toBe(
+    expect(answerSummary(qf, { "1": "Broker: 큐를 따로 두고 싶다" }, t)).toBe(
       "Q1. 다른 의견이 있으면 적어주세요\n→ Broker: 큐를 따로 두고 싶다",
     );
   });
@@ -88,7 +94,7 @@ describe("answerSummary", () => {
       q(1, "어떤 방식이 좋습니까?", [opt("A", "기존 도구 확장"), opt("X", "", true)]),
     ]);
 
-    expect(answerSummary(qf, { "1": "직접 만든 스크립트로" })).toBe(
+    expect(answerSummary(qf, { "1": "직접 만든 스크립트로" }, t)).toBe(
       "Q1. 어떤 방식이 좋습니까?\n→ 직접 만든 스크립트로",
     );
   });
@@ -96,7 +102,7 @@ describe("answerSummary", () => {
   it("skips questions the user left blank", () => {
     const qf = file([q(1, "첫 질문"), q(2, "두 번째 질문")]);
 
-    expect(answerSummary(qf, { "1": "답", "2": "" })).toBe("Q1. 첫 질문\n→ 답");
+    expect(answerSummary(qf, { "1": "답", "2": "" }, t)).toBe("Q1. 첫 질문\n→ 답");
   });
 
   it("falls back to a bare line when an answer has no matching question", () => {
@@ -105,7 +111,7 @@ describe("answerSummary", () => {
     // be worse than showing it without its question.
     const qf = file([q(1, "아는 질문")]);
 
-    expect(answerSummary(qf, { "1": "답", "9": "고아 답변" })).toBe(
+    expect(answerSummary(qf, { "1": "답", "9": "고아 답변" }, t)).toBe(
       "Q1. 아는 질문\n→ 답\n\nQ9.\n→ 고아 답변",
     );
   });
@@ -115,7 +121,7 @@ describe("answerSummary", () => {
 
     // An empty string would render as a blank user bubble — the very thing
     // this helper exists to prevent.
-    expect(answerSummary(qf, {})).toBe("답변 제출");
-    expect(answerSummary(qf, { "1": "   " })).toBe("답변 제출");
+    expect(answerSummary(qf, {}, t)).toBe("답변 제출");
+    expect(answerSummary(qf, { "1": "   " }, t)).toBe("답변 제출");
   });
 });

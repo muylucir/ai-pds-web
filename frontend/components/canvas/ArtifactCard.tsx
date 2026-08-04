@@ -1,14 +1,17 @@
+"use client";
+import { useT } from "@/lib/i18n/provider";
 // Presentational 📕 artifact button (mockup 04's inline artifact-card idiom).
 // The mockup's title/sub-copy is verbatim static chrome: the backend document
 // is one markdown blob (no part metadata), so "Part 1: Envision" is NOT
 // derived from `path` — it's the mockup's fixed label for the one artifact
 // card kind this slice produces (discovery-document.md).
 export function ArtifactCard({ path, onOpen }: { path: string; onOpen: () => void }) {
+  const t = useT();
   return (
     <button
       type="button"
       onClick={onOpen}
-      aria-label="discovery-document.md을 우측 패널에서 열기"
+      aria-label={`discovery-document.md${t("canvas.openArtifactAria")}`}
       className="w-full text-left rounded-xl border border-slate-200 bg-white hover:border-violet-300 hover:shadow-sm transition-all px-4 py-3 flex items-center gap-3"
     >
       <span
@@ -26,7 +29,7 @@ export function ArtifactCard({ path, onOpen }: { path: string; onOpen: () => voi
             instead, which is data we already have with no content sniffing. */}
         <span className="block text-[11px] text-slate-400 mt-0.5">{path}</span>
       </span>
-      <span className="text-xs text-violet-600 shrink-0">패널에서 열기 →</span>
+      <span className="text-xs text-violet-600 shrink-0">{t("canvas.openInPanel")}</span>
     </button>
   );
 }

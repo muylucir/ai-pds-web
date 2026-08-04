@@ -243,3 +243,120 @@ def test_interrupt_survives_a_raising_runner(monkeypatch):
     client.post("/projects", json={"project_id": "int-4"})
 
     assert client.post("/projects/int-4/interrupt").status_code == 202
+
+
+# ---- 긴 입력을 URL에서 빼는 2단계 핸들 (HTTP 431 결함) ----
+#
+# 실측한 결함: 한글 2,164자 입력이 encodeURIComponent로 14,376바이트 요청
+# 라인이 되고, 인증 쿠키(JWT 3개 ~3.7KB)와 합쳐 Node의 maxHeaderSize
+# 16,384바이트를 넘겨 프록시가 431을 냈다. EventSource는 상태 코드를 노출하지
+# 않아 화면에는 "연결이 끊어졌습니다"만 떴다.
+
+_LONG_KO = "가" * 3000
+
+
+def test_turn_handle_carries_text_out_of_the_url(monkeypatch):
+    """POST로 텍스트를 받고, SSE는 짧은 핸들만 URL에 싣는다."""
+    seen = {}
+
+    def script(text):
+        seen["text"] = text
+        return [AgentEvent(kind="message", text="ok"), AgentEvent(kind="done")]
+
+    _install_scripted(monkeypatch, "turnh1", script)
+    r = client.post("/projects/turnh1/turns", json={"text": _LONG_KO})
+    assert r.status_code == 200
+    handle = r.json()["turn_id"]
+    # 이것이 이 설계의 핵심 단정 — 핸들이 URL에 들어가므로 짧아야 한다.
+    assert len(handle) <= 64
+    with client.stream("GET", "/projects/turnh1/events",
+                       params={"turn": handle}) as resp:
+        body = "".join(chunk for chunk in resp.iter_text())
+    assert "ok" in body
+    # 에이전트는 원문 전체를 받았다 — 핸들이 텍스트를 잘라먹지 않는다.
+    assert seen["text"] == _LONG_KO
+
+
+def test_a_turn_handle_is_single_use(monkeypatch):
+    _install_default(monkeypatch, "turnh2")
+    handle = client.post("/projects/turnh2/turns",
+                         json={"text": "한 번만"}).json()["turn_id"]
+    with client.stream("GET", "/projects/turnh2/events",
+                       params={"turn": handle}) as r:
+        list(r.iter_lines())
+    # URL에 남은 핸들로 같은 턴을 다시 돌릴 수 없다.
+    again = client.get("/projects/turnh2/events", params={"turn": handle})
+    assert again.status_code == 400
+
+
+def test_an_unknown_turn_handle_is_400(monkeypatch):
+    _install_default(monkeypatch, "turnh3")
+    r = client.get("/projects/turnh3/events", params={"turn": "deadbeef"})
+    assert r.status_code == 400
+
+
+def test_events_requires_text_or_turn(monkeypatch):
+    """둘 다 없으면 무엇을 보낼지 알 수 없다 — 조용히 빈 턴을 돌리지 않는다."""
+    _install_default(monkeypatch, "turnh4")
+    r = client.get("/projects/turnh4/events")
+    assert r.status_code == 400
+
+
+def test_text_query_param_still_works(monkeypatch):
+    """짧은 입력의 기존 경로는 유지한다 — 프론트 배포와 백엔드 배포가 원자적이
+    아니므로, 구 프론트가 보내는 ?text=가 계속 동작해야 한다."""
+    _install_default(monkeypatch, "turnh5")
+    with client.stream("GET", "/projects/turnh5/events",
+                       params={"text": "짧은 입력"}) as r:
+        lines = [l for l in r.iter_lines() if l.startswith("data:")]
+    assert lines
+
+
+def test_turns_handle_is_scoped_to_its_project(monkeypatch):
+    _install_default(monkeypatch, "turnh6")
+    _install_default(monkeypatch, "turnh7")
+    handle = client.post("/projects/turnh6/turns",
+                         json={"text": "p6의 입력"}).json()["turn_id"]
+    # 다른 프로젝트에서 같은 핸들을 쓸 수 없다.
+    r = client.get("/projects/turnh7/events", params={"turn": handle})
+    assert r.status_code == 400
+
+
+def test_turns_unknown_project_404():
+    r = client.post("/projects/does-not-exist/turns", json={"text": "hi"})
+    assert r.status_code == 404
+
+
+def test_answers_handle_carries_answers_out_of_the_url(monkeypatch):
+    """답변 제출도 같은 배관을 쓴다 — 자유 서술이 길면 같은 한도에 걸린다."""
+    _install_default(monkeypatch, "turnh8")
+    with client.stream("GET", "/projects/turnh8/events",
+                       params={"text": "시작"}) as r:
+        list(r.iter_lines())
+    long_answers = {"1": "A", "2": "긴 자유 서술 " * 400}
+    r = client.post("/projects/turnh8/answers", json={"answers": long_answers})
+    assert r.status_code == 200
+    handle = r.json()["turn_id"]
+    assert len(handle) <= 64
+    with client.stream("GET", "/projects/turnh8/answers/stream",
+                       params={"turn": handle}) as resp:
+        lines = [l for l in resp.iter_lines() if l.startswith("data:")]
+    kinds = [json.loads(l[len("data:"):].strip())["kind"] for l in lines]
+    assert kinds[-1] == "done"
+
+
+def test_answers_stream_still_accepts_the_answers_query_param(monkeypatch):
+    _install_default(monkeypatch, "turnh9")
+    with client.stream("GET", "/projects/turnh9/events",
+                       params={"text": "시작"}) as r:
+        list(r.iter_lines())
+    with client.stream("GET", "/projects/turnh9/answers/stream",
+                       params={"answers": json.dumps({"1": "A"})}) as r:
+        lines = [l for l in r.iter_lines() if l.startswith("data:")]
+    assert lines
+
+
+def test_answers_stream_requires_answers_or_turn(monkeypatch):
+    _install_default(monkeypatch, "turnh10")
+    r = client.get("/projects/turnh10/answers/stream")
+    assert r.status_code == 400

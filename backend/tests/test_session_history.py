@@ -494,3 +494,59 @@ async def test_append_across_instances_does_not_overwrite_earlier_batches():
                                "message": {"role": "user", "content": "두 번째 턴"}}])
     items = await list_history(None, "sess-3", project_s3=s3)
     assert [i.text for i in items] == ["첫 턴", "두 번째 턴"]
+
+
+# ---- 언어 중립 접두사 + answers 전달 ----
+
+def test_parses_the_language_neutral_prefix():
+    # strands_tools가 이제 "[answers] {...}"를 만든다.
+    items = transform_messages([
+        _msg("assistant", [
+            {"toolUse": {"toolUseId": "t1", "name": "ask_questions", "input": {}}}], 0),
+        _msg("user", [
+            {"toolResult": {"toolUseId": "t1",
+                            "content": [{"text": '[answers] {"1": "A"}'}]}}], 1),
+    ])
+    answer = next(i for i in items if i.role == "user" and i.answers)
+    assert answer.answers == {"1": "A"}
+
+
+def test_still_parses_the_legacy_korean_prefix():
+    # 이미 S3에 있는 트랜스크립트는 옛 접두사를 쓴다 — 이것이 깨지면 진행 중인
+    # 워크숍의 채팅 히스토리가 전부 빈 말풍선이 된다.
+    items = transform_messages([
+        _msg("assistant", [
+            {"toolUse": {"toolUseId": "t1", "name": "ask_questions", "input": {}}}], 0),
+        _msg("user", [
+            {"toolResult": {"toolUseId": "t1",
+                            "content": [{"text": '사용자 답변: {"1": "A"}'}]}}], 1),
+    ])
+    answer = next(i for i in items if i.role == "user" and i.answers)
+    assert answer.answers == {"1": "A"}
+
+
+def test_free_text_answer_has_no_answers_dict():
+    # JSON이 아닌 자유 서술은 dict로 펼 수 없다. text 폴백만 남는다.
+    items = transform_messages([
+        _msg("assistant", [
+            {"toolUse": {"toolUseId": "t1", "name": "ask_questions", "input": {}}}], 0),
+        _msg("user", [
+            {"toolResult": {"toolUseId": "t1",
+                            "content": [{"text": "[answers] 자유 서술 응답"}]}}], 1),
+    ])
+    answer = next(i for i in items if i.role == "user" and i.text)
+    assert answer.answers is None
+    assert "자유 서술 응답" in answer.text
+
+
+def test_text_is_still_filled_as_a_fallback():
+    # answers를 모르는 구 프론트가 빈 말풍선을 띄우지 않게 한다.
+    items = transform_messages([
+        _msg("assistant", [
+            {"toolUse": {"toolUseId": "t1", "name": "ask_questions", "input": {}}}], 0),
+        _msg("user", [
+            {"toolResult": {"toolUseId": "t1",
+                            "content": [{"text": '[answers] {"1": "A"}'}]}}], 1),
+    ])
+    answer = next(i for i in items if i.role == "user" and i.answers)
+    assert answer.text and answer.text.strip() != ""

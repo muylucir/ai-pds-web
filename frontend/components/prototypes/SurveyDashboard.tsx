@@ -1,5 +1,6 @@
 "use client";
 import type { Rollup, SurveyQuestion } from "@/lib/api/surveys";
+import { useT } from "@/lib/i18n/provider";
 
 function ScaleBar({ label, n, max }: { label: string; n: number; max: number }) {
   const pct = max > 0 ? Math.round((n / max) * 100) : 0;
@@ -18,14 +19,15 @@ export function SurveyDashboard({ questions, rollup }: {
   questions: SurveyQuestion[];
   rollup: Rollup;
 }) {
+  const t = useT();
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-500">
-        응답 <span className="font-bold text-slate-800">{rollup.count}</span>건
+        {t("survey.responseCount").replace("{n}", String(rollup.count))}
       </p>
       {rollup.count === 0 && (
         <p className="text-sm text-slate-400">
-          아직 응답이 없습니다. 링크를 공유해 응답을 받아보세요.
+          {t("survey.noResponsesYet")}
         </p>
       )}
       {questions.map((q) => {
@@ -37,8 +39,9 @@ export function SurveyDashboard({ questions, rollup }: {
             {stat.type === "scale" && (
               <div className="space-y-1.5">
                 <p className="text-xs text-slate-500 mb-2">
-                  평균 <span className="font-bold text-violet-600">{stat.mean}</span>
-                  {" "}/ 5 · 응답 {stat.n}건
+                  {t("survey.mean")}{" "}
+                  <span className="font-bold text-violet-600">{stat.mean}</span>{" "}
+                  {t("survey.scaleSummary").replace("{n}", String(stat.n))}
                 </p>
                 {["5", "4", "3", "2", "1"].map((k) => (
                   <ScaleBar key={k} label={k} n={stat.distribution[k] ?? 0}
@@ -51,14 +54,14 @@ export function SurveyDashboard({ questions, rollup }: {
                 {Object.entries(stat.counts).map(([opt, n]) => (
                   <li key={opt} className="flex items-center gap-2 text-xs">
                     <span className="flex-1 text-slate-600">{opt}</span>
-                    <span className="text-slate-500">{n}건</span>
+                    <span className="text-slate-500">{t("survey.choiceCount").replace("{n}", String(n))}</span>
                   </li>
                 ))}
               </ul>
             )}
             {stat.type === "text" && (
               <div>
-                <p className="text-xs text-slate-500 mb-2">자유 응답 {stat.n}건</p>
+                <p className="text-xs text-slate-500 mb-2">{t("survey.freeTextResponses").replace("{n}", String(stat.n))}</p>
                 <ul className="space-y-2">
                   {stat.samples.map((s, i) => (
                     <li key={i} className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
@@ -68,7 +71,7 @@ export function SurveyDashboard({ questions, rollup }: {
                 </ul>
                 {stat.n > stat.samples.length && (
                   <p className="text-xs text-slate-400 mt-2">
-                    전체 응답은 CSV로 내보내 확인하세요.
+                    {t("survey.exportForAll")}
                   </p>
                 )}
               </div>

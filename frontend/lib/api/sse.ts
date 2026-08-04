@@ -1,5 +1,6 @@
 // frontend/lib/api/sse.ts
-import { API_BASE_URL } from "./client";
+import { API_BASE_URL, ApiError } from "./client";
+import { CREDENTIALS } from "@/lib/auth";
 import type { AgentEvent } from "./types";
 
 export interface StreamHandlers {
@@ -8,11 +9,15 @@ export interface StreamHandlers {
   onError?: (err: unknown) => void;
 }
 
-// Shared EventSource plumbing for both SSE endpoints below: parses each
-// frame's `data` as a JSON-encoded AgentEvent (matches backend turns.py),
-// finishes on a "done"/"error" event or a transport error, and closes the
-// EventSource. Returns an unsubscribe function for React effect cleanup.
-function openStream(url: string, handlers: StreamHandlers): () => void {
+// Shared EventSource plumbing: parses each frame's `data` as a JSON-encoded
+// AgentEvent (matches backend turns.py), finishes on a "done"/"error" event or
+// a transport error, and closes the EventSource. Returns an unsubscribe
+// function for React effect cleanup.
+//
+// Exported so prototypes.ts's build stream reuses this one implementation.
+// It used to keep a hand-copied twin of this ~30-line shape because the helper
+// was private — two copies of the frame contract is one too many.
+export function openStream(url: string, handlers: StreamHandlers): () => void {
   const es = new EventSource(url);
 
   const close = () => es.close();
@@ -41,30 +46,109 @@ function openStream(url: string, handlers: StreamHandlers): () => void {
   return close;
 }
 
-// Opens GET /projects/{pid}/events?text=... as an SSE stream.
-//
-// NOTE: In this slice SSE has no in-scope consumer — document-review uses the
-// synchronous postMessage path (see Task 4 Interfaces). This helper exists for
-// the Conversational Canvas plan (out of scope here) and as a future upgrade
-// path for long doc revisions.
+/**
+ * 턴 입력을 **본문으로** 보내고 짧은 핸들을 받는다.
+ *
+ * **왜 2단계인가.** 종전에는 텍스트가 SSE URL의 쿼리스트링으로 갔다
+ * (`?text=...`). EventSource는 GET만 지원해 본문을 실을 수 없기 때문이다.
+ * 그런데 한글은 encodeURIComponent로 한 글자가 9바이트가 된다. 실측:
+ * 2,164자 입력 → 14,376바이트 요청 라인. 여기에 인증 쿠키(Cognito JWT 3개,
+ * 약 3.7KB)가 더해져 Node.js의 maxHeaderSize 기본값 16,384바이트를 넘고,
+ * Next.js 프록시가 **HTTP 431**로 거절했다.
+ *
+ * 그 실패가 화면에서 "연결이 끊어졌습니다"로 보인 이유: EventSource는 HTTP
+ * 상태 코드를 노출하지 않는다. 431이든 500이든 네트워크 단절이든 똑같이
+ * onerror만 발화한다. 그래서 원인이 화면에서 완전히 숨었다.
+ *
+ * EventSource를 fetch+ReadableStream으로 바꾸지 않은 이유: 이 프록시 계층은
+ * HTTP/2에서 SSE가 깨지는 문제를 이미 겪고 해결한 곳이다
+ * (app/api/[...path]/route.ts 헤더의 ERR_HTTP2_PROTOCOL_ERROR 기록).
+ * 재연결과 쿠키 인증이 브라우저에 내장된 EventSource를 유지하고, 문제의
+ * 원인인 URL 길이만 없앤다.
+ *
+ * **개시 실패는 여기서 드러난다.** POST는 상태 코드를 주므로, 431/413 같은
+ * 실패가 스트림 오류로 뭉개지지 않고 ApiError로 호출부에 닿는다 — 그것이
+ * 이 결함이 다시 숨지 않게 하는 장치다.
+ */
+async function createTurn(path: string, body: unknown): Promise<string> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: CREDENTIALS,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const parsed = await res.json();
+      if (parsed && typeof parsed.detail === "string") detail = parsed.detail;
+    } catch {
+      // 비-JSON 본문(프록시가 낸 431 등) — statusText를 유지한다.
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return ((await res.json()) as { turn_id: string }).turn_id;
+}
+
+/**
+ * 핸들을 받아 스트림을 여는 공통 배관.
+ *
+ * 반환된 unsubscribe는 **개시 요청이 아직 진행 중일 때도** 유효하다: 취소
+ * 플래그를 세워 뒤늦게 도착한 핸들로 스트림을 열지 않는다. 없으면 사용자가
+ * 곧바로 화면을 떠난 경우 고아 스트림이 남는다.
+ */
+export function openViaHandle(
+  createPath: string,
+  body: unknown,
+  streamUrl: (turnId: string) => string,
+  handlers: StreamHandlers,
+): () => void {
+  let cancelled = false;
+  let closeStream: (() => void) | null = null;
+
+  void createTurn(createPath, body)
+    .then((turnId) => {
+      if (cancelled) return;
+      closeStream = openStream(streamUrl(turnId), handlers);
+    })
+    .catch((err) => {
+      if (cancelled) return;
+      // 턴을 열지 못했다 — 스트림도 열리지 않는다. onDone까지 불러 호출부의
+      // "진행 중" 상태를 반드시 풀어 준다(안 하면 입력이 영구히 잠긴다).
+      handlers.onError?.(err);
+      handlers.onDone();
+    });
+
+  return () => {
+    cancelled = true;
+    closeStream?.();
+  };
+}
+
+// Opens the events stream for one turn: POST the text, then stream by handle.
 export function streamEvents(pid: string, text: string, handlers: StreamHandlers): () => void {
-  return openStream(
-    `${API_BASE_URL}/projects/${encodeURIComponent(pid)}/events?text=${encodeURIComponent(text)}`,
+  const p = encodeURIComponent(pid);
+  return openViaHandle(
+    `/projects/${p}/turns`,
+    { text },
+    (turnId) => `${API_BASE_URL}/projects/${p}/events?turn=${encodeURIComponent(turnId)}`,
     handlers,
   );
 }
 
-// Opens GET /projects/{pid}/answers/stream?answers=... as an SSE stream —
-// the answer-submission twin of streamEvents (Task 9's /answers/stream).
+// The answer-submission twin of streamEvents. Answers ride in the body for the
+// same reason: a long free-text answer hits the same URL length ceiling.
 export function streamAnswers(
   pid: string,
   answers: Record<string, string>,
   handlers: StreamHandlers,
 ): () => void {
-  return openStream(
-    `${API_BASE_URL}/projects/${encodeURIComponent(pid)}/answers/stream?answers=${encodeURIComponent(
-      JSON.stringify(answers),
-    )}`,
+  const p = encodeURIComponent(pid);
+  return openViaHandle(
+    `/projects/${p}/answers`,
+    { answers },
+    (turnId) =>
+      `${API_BASE_URL}/projects/${p}/answers/stream?turn=${encodeURIComponent(turnId)}`,
     handlers,
   );
 }

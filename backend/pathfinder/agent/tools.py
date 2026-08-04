@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 from claude_agent_sdk import tool
 from pathfinder.models import AgentEvent
+from pathfinder.agent import prompts
 from pathfinder.agent.state_sync import upsert_stage
 
 _log = logging.getLogger("pathfinder.agent")
@@ -67,9 +68,16 @@ def _text_result(text: str) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}]}
 
 
-def build_tools(workspace: str, emit: Callable[[AgentEvent], None]) -> list:
+def build_tools(workspace: str, emit: Callable[[AgentEvent], None],
+                language: str = "ko") -> list:
     """워크스페이스 + 이벤트 싱크에 바인딩된 2개의 SdkMcpTool(claude_agent_sdk의
     @tool 데코레이터가 만드는 dataclass)을 리스트로 돌려준다.
+
+    language는 **도구 설명과 반환 문자열**의 언어다 — 둘 다 모델이 읽는
+    프롬프트이므로 대화 언어와 맞아야 한다(proto/tools.py가 같은 계약이다).
+    이 인자가 없던 동안 영어 프로젝트의 에이전트도 매 턴 한국어 도구 설명을
+    읽었고, 그것이 2026-08-04에 영어 프로젝트가 한국어로 대화한 원인의 일부였다
+    (agent/prompts.py 헤더에 전말이 있다).
 
     이 리스트 자체는 ClaudeAgentOptions에 바로 넣을 수 없다 — 호출부(Task 6의
     claude_driver.py)가 create_sdk_mcp_server(name=..., tools=build_tools(...))로
@@ -90,7 +98,7 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None]) -> list:
     허용되지만 다른 permission_mode에서는 매 호출마다 멈춘다.
     """
 
-    @tool("report_stage", "Discovery 스테이지 전이를 선언한다. aiplc-state.md도 자동 갱신된다.",
+    @tool("report_stage", prompts.report_stage_description(language),
          _REPORT_STAGE_SCHEMA)
     async def report_stage(args: dict[str, Any]) -> dict[str, Any]:
         stage = args["stage"]
@@ -114,9 +122,7 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None]) -> list:
             _log.exception("aiplc-state.md upsert failed (stage=%s)", stage)
         return _text_result(f"stage recorded: {stage} ({status})")
 
-    @tool("submit_document",
-         "리뷰 대상 문서가 준비/갱신되었음을 선언한다. **먼저 Write/Edit로 파일을 "
-         "쓴 뒤** 호출해야 한다 — 파일이 없거나 비어 있으면 선언이 거부된다.",
+    @tool("submit_document", prompts.submit_document_description(language),
          _SUBMIT_DOCUMENT_SCHEMA)
     async def submit_document(args: dict[str, Any]) -> dict[str, Any]:
         path = args["path"]
@@ -131,15 +137,11 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None]) -> list:
         try:
             p = _confine(workspace, path)
         except ValueError as exc:
-            return _text_result(f"거부됨 — {exc}. 워크스페이스 상대 경로만 제출할 수 있다.")
+            return _text_result(prompts.submit_document_escape(language, str(exc)))
         if not p.is_file():
-            return _text_result(
-                f"거부됨 — '{path}' 파일이 없다. Write로 문서를 먼저 "
-                f"저장한 뒤 submit_document를 다시 호출할 것.")
+            return _text_result(prompts.submit_document_missing(language, path))
         if not p.read_text(encoding="utf-8", errors="replace").strip():
-            return _text_result(
-                f"거부됨 — '{path}'가 비어 있다. Write로 내용을 채운 뒤 "
-                f"submit_document를 다시 호출할 것.")
+            return _text_result(prompts.submit_document_empty(language, path))
         emit(AgentEvent(kind="document", payload=json.dumps(
             {"path": path, "version": version, "summary": summary}, ensure_ascii=False)))
         return _text_result(f"document submitted: {path} {version}")

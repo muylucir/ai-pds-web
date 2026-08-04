@@ -1,6 +1,8 @@
 "use client";
 import { useState } from "react";
 import { ApiError } from "@/lib/api/client";
+import { errorMessage } from "@/lib/api/errorMessage";
+import { useT } from "@/lib/i18n/provider";
 import { deleteModel, patchModel, type AdminModel } from "@/lib/api/models";
 
 export function ModelTable({
@@ -9,6 +11,7 @@ export function ModelTable({
   models: AdminModel[];
   onChanged: () => void;
 }) {
+  const t = useT();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<AdminModel | null>(null);
@@ -22,7 +25,7 @@ export function ModelTable({
       await fn();
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "요청이 실패했습니다.");
+      setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));
     } finally {
       setBusy(null);
     }
@@ -38,9 +41,9 @@ export function ModelTable({
       <table className="w-full text-sm">
         <thead className="text-left text-xs text-slate-500">
           <tr className="border-b border-slate-200">
-            <th className="py-2 font-medium">이름</th>
-            <th className="py-2 font-medium">모델 ID</th>
-            <th className="py-2 font-medium">표시</th>
+            <th className="py-2 font-medium">{t("admin.colName")}</th>
+            <th className="py-2 font-medium">{t("admin.modelId")}</th>
+            <th className="py-2 font-medium">{t("admin.colDisplay")}</th>
             <th className="py-2" />
           </tr>
         </thead>
@@ -56,7 +59,7 @@ export function ModelTable({
                   type="button"
                   role="switch"
                   aria-checked={m.display}
-                  aria-label={`${m.name} 표시`}
+                  aria-label={`${m.name} ${t("admin.colDisplay")}`}
                   disabled={busy === m.model_id}
                   onClick={() => run(m.model_id,
                     () => patchModel(m.model_id, { display: !m.display }).then(() => undefined))}
@@ -70,11 +73,11 @@ export function ModelTable({
               <td className="py-3 text-right">
                 <button
                   type="button"
-                  aria-label={`${m.name} 삭제`}
+                  aria-label={`${m.name} ${t("admin.commonDelete")}`}
                   onClick={() => setConfirmDelete(m)}
                   className="text-xs text-rose-600 hover:underline"
                 >
-                  삭제
+                  {t("admin.commonDelete")}
                 </button>
               </td>
             </tr>
@@ -85,10 +88,9 @@ export function ModelTable({
       {confirmDelete && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
-            <h2 className="text-lg font-bold">모델 삭제</h2>
+            <h2 className="text-lg font-bold">{t("admin.deleteModelTitle")}</h2>
             <p className="mt-2 text-sm text-slate-600">
-              {confirmDelete.name}을(를) 목록에서 제거합니다. 이미 이 모델로 만든
-              프로젝트는 계속 같은 모델로 돕니다.
+              {t("admin.deleteModelBody").replace("{name}", confirmDelete.name)}
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button
@@ -96,7 +98,7 @@ export function ModelTable({
                 onClick={() => setConfirmDelete(null)}
                 className="rounded-lg border border-slate-200 px-4 py-2 text-sm"
               >
-                취소
+                {t("admin.commonCancel")}
               </button>
               <button
                 type="button"
@@ -107,7 +109,7 @@ export function ModelTable({
                 }}
                 className="rounded-lg bg-rose-600 px-4 py-2 text-sm text-white hover:bg-rose-700"
               >
-                삭제 확인
+                {t("admin.commonConfirmDelete")}
               </button>
             </div>
           </div>

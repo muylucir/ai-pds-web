@@ -30,18 +30,36 @@ async def test_restore_reads_manifests_and_skips_garbage():
     root = FakeS3Store()
     root.blobs["pa/project.json"] = json.dumps(
         {"project_id": "pa", "name": "A", "created_at": "2026-07-22T01:00:00+00:00",
-         "model_id": "global.anthropic.claude-opus-5"})
+         "model_id": "global.anthropic.claude-opus-5", "language": "en"})
     root.blobs["pb/project.json"] = json.dumps({"project_id": "pb", "name": None})
     root.blobs["pc/project.json"] = "{{{ not json"           # 손상 → 건너뜀
     root.blobs["pd/project.json"] = "[1,2,3]"                # JSON but not dict → 건너뜀
     root.blobs["pa/aiplc-docs/audit.md"] = "# not a manifest"  # 매니페스트 아님 → 무시
-    restored = {pid: (name, created_at, model_id)
-                for pid, name, created_at, model_id in await restore_projects(root)}
-    # created_at·model_id는 매니페스트에서 승계, 없으면(구 매니페스트) None.
+    restored = {pid: (name, created_at, model_id, language)
+                for pid, name, created_at, model_id, language
+                in await restore_projects(root)}
+    # created_at·model_id·language는 매니페스트에서 승계, 없으면(구 매니페스트) None.
     assert restored == {
-        "pa": ("A", "2026-07-22T01:00:00+00:00", "global.anthropic.claude-opus-5"),
-        "pb": (None, None, None),
+        "pa": ("A", "2026-07-22T01:00:00+00:00",
+               "global.anthropic.claude-opus-5", "en"),
+        "pb": (None, None, None, None),
     }
+
+
+@pytest.mark.asyncio
+async def test_write_manifest_records_the_language():
+    root = FakeS3Store()
+    await write_manifest(root, "p1", None, language="en")
+    assert json.loads(root.blobs["p1/project.json"])["language"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_write_manifest_records_an_unset_language_as_explicit_null():
+    # 키를 빼면 '구 매니페스트'와 '언어를 고르지 않은 새 프로젝트'를 구별할 수
+    # 없다 — model_id와 같은 판단이다.
+    root = FakeS3Store()
+    await write_manifest(root, "p1", None)
+    assert json.loads(root.blobs["p1/project.json"])["language"] is None
 
 
 @pytest.mark.asyncio

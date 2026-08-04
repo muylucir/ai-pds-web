@@ -21,7 +21,9 @@ def test_history_returns_items_from_session_store(monkeypatch):
         {"message": {"role": "user", "content": [{"text": "안녕"}]}, "message_id": 0})
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: s3)
     body = client.get("/projects/h1/history").json()
-    assert body == {"items": [{"role": "user", "text": "안녕", "card": None, "name": None, "trace": []}]}
+    # answers는 답변 제출 턴에만 채워진다 — 보통 말풍선에서는 None이다.
+    assert body == {"items": [{"role": "user", "text": "안녕", "card": None,
+                               "name": None, "trace": [], "answers": None}]}
 
 def test_history_empty_when_no_session(monkeypatch):
     _local_project(monkeypatch, "h2")

@@ -7,7 +7,8 @@ import { ArtifactsPanel } from "@/components/dashboard/ArtifactsPanel";
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { getState, listArtifacts, getAudit, listQuestionFiles, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
-import { useProjectModel } from "@/lib/useProjectModel";
+import { useProjectMeta } from "@/lib/useProjectModel";
+import { useT } from "@/lib/i18n/provider";
 
 export default function DashboardPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
@@ -15,19 +16,21 @@ export default function DashboardPage({ params }: { params: Promise<{ projectId:
   const artifacts = useAsync(() => listArtifacts(projectId), [projectId]);
   const audit = useAsync(() => getAudit(projectId), [projectId]);
   const questionFiles = useAsync(() => listQuestionFiles(projectId), [projectId]);
-  const modelLabel = useProjectModel(projectId);
+  const t = useT();
+  const { modelLabel, language } = useProjectMeta(projectId);
 
   const notFound = state.error instanceof ApiError && state.error.status === 404;
 
   return (
     <>
-      <AppHeader activeTab="dashboard" projectId={projectId} modelLabel={modelLabel} />
+      <AppHeader activeTab="dashboard" projectId={projectId} modelLabel={modelLabel}
+                 projectLanguage={language} />
       <main className="max-w-7xl mx-auto px-6 py-8">
-        {notFound && <p className="text-sm text-rose-600">프로젝트를 찾을 수 없습니다.</p>}
+        {notFound && <p className="text-sm text-rose-600">{t("page.projectNotFound")}</p>}
         {!notFound && state.error && (
-          <p className="text-sm text-rose-600">대시보드를 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
+          <p className="text-sm text-rose-600">{t("page.dashboardLoadFailed")}</p>
         )}
-        {state.loading && <p className="text-sm text-slate-400">불러오는 중…</p>}
+        {state.loading && <p className="text-sm text-slate-400">{t("page.loading")}</p>}
 
         {state.data && (
           <>
@@ -40,7 +43,7 @@ export default function DashboardPage({ params }: { params: Promise<{ projectId:
                 )}
               </div>
               {state.data.current_stage && (
-                <p className="text-sm text-slate-500 mt-1">현재 단계: {state.data.current_stage}</p>
+                <p className="text-sm text-slate-500 mt-1">{t("page.currentStage")}: {state.data.current_stage}</p>
               )}
             </div>
 

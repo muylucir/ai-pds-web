@@ -63,3 +63,33 @@ describe("public survey page", () => {
     expect(screen.queryByRole("button", { name: /제출/ })).not.toBeInTheDocument();
   });
 });
+
+describe("설문 언어가 화면 언어를 정한다", () => {
+  // 응답자는 외부인이라 pf_lang 쿠키가 없다 — layout의 Provider는 ko가 된다.
+  // 이 페이지만 그것을 무시하고 설문 언어를 쓴다.
+  it("영어 설문은 영어로 그려진다", async () => {
+    vi.spyOn(api, "getPublicSurvey").mockResolvedValue({
+      title: "Validation survey", hypothesis: "H", language: "en",
+      questions: QUESTIONS });
+    await renderPage();
+    expect(await screen.findByRole("button", { name: /Submit/i })).toBeInTheDocument();
+    // 안내문까지 영어여야 한다 — 폼만 영어면 절반짜리 화면이다.
+    const intro = await screen.findByTestId("survey-intro");
+    expect(intro.textContent).not.toMatch(/[가-힣]/);
+  });
+
+  it("언어를 모르는 설문(구 데이터)은 한국어로 그려진다", async () => {
+    vi.spyOn(api, "getPublicSurvey").mockResolvedValue({
+      title: "검증 설문", hypothesis: "가설", questions: QUESTIONS });
+    await renderPage();
+    expect(await screen.findByRole("button", { name: /제출/ })).toBeInTheDocument();
+  });
+
+  it("임의 문자열이 실려 와도 한국어로 떨어진다", async () => {
+    vi.spyOn(api, "getPublicSurvey").mockResolvedValue({
+      title: "검증 설문", hypothesis: "가설",
+      language: "klingon" as never, questions: QUESTIONS });
+    await renderPage();
+    expect(await screen.findByRole("button", { name: /제출/ })).toBeInTheDocument();
+  });
+});

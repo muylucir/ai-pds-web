@@ -64,7 +64,8 @@ async def create_survey(pid: str, slug: str):
     try:
         qn = await build_questionnaire(
             prototype_md, app_module.questionnaire_agent_factory(pid),
-            token=token, project_id=pid, slug=slug, now=_now())
+            token=token, project_id=pid, slug=slug, now=_now(),
+            language=app_module.project_language(pid))
     except Exception:
         # Model/AWS detail can carry credentials -- log it, return a sanitized
         # reason (same policy as routes/prototypes.py).

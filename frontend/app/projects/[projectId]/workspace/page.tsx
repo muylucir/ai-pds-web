@@ -13,8 +13,9 @@ import { AttachmentChips } from "@/components/workspace/AttachmentChips";
 import { QuestionForm } from "@/components/questions/QuestionForm";
 import { getState, uploadFile } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
-import { useProjectModel } from "@/lib/useProjectModel";
+import { useProjectMeta } from "@/lib/useProjectModel";
 import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
+import { useT } from "@/lib/i18n/provider";
 
 // The 4-pane workspace screen — grid ratio 1:3.5:3.5:4 (좌 스테이지 : 채팅 :
 // 컨텍스트 : 생성 문서). The 4th column (WorkspaceDocPanel) renders the latest
@@ -29,7 +30,8 @@ import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
-  const modelLabel = useProjectModel(projectId);
+  const t = useT();
+  const { modelLabel, language } = useProjectMeta(projectId);
   const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, changedPaths, historyLoading, activeDoc, turnSeq } =
     useWorkspaceStream(projectId);
   // Show the Path A/B welcome starter only once history has finished loading
@@ -90,7 +92,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
       const r = await uploadFile(projectId, file);
       setAttachments((prev) => [...prev, r.path]);
     } catch {
-      setUploadError("업로드에 실패했습니다. 지원 형식(md/txt/csv/xlsx/pdf)·5MB 이하인지 확인하세요.");
+      setUploadError(t("page.uploadFailed"));
     }
   }
 
@@ -141,7 +143,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     // 포커스 이동만으로 헤더가 말려 올라간다(ui-bug.png). 루트를 포지셔닝
     // 컨텍스트로 만들어 이 클래스의 버그를 페이지 차원에서 차단한다.
     <div className="relative h-screen flex flex-col overflow-hidden">
-      <AppHeader activeTab="workspace" projectId={projectId} modelLabel={modelLabel} />
+      <AppHeader activeTab="workspace" projectId={projectId} modelLabel={modelLabel}
+                 projectLanguage={language} />
       <div className="flex-1 grid min-h-0 grid-cols-1 lg:grid-cols-[1fr_3.5fr_3.5fr_4fr]">
         <StageSidebar state={state.data} events={stages} />
 
@@ -152,17 +155,17 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               className="m-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 flex items-center justify-between gap-3 text-sm"
             >
               <span className="text-violet-900">
-                문서가 갱신되었습니다 (v{lastDocument.version}){" "}
+                {t("page.docUpdated").replace("{version}", lastDocument.version)}{" "}
                 <Link
                   href={`/projects/${projectId}/review`}
                   className="font-medium text-violet-700 underline hover:text-violet-900"
                 >
-                  문서 리뷰
+                  {t("page.docReview")}
                 </Link>
               </span>
               <button
                 type="button"
-                aria-label="닫기"
+                aria-label={t("page.close")}
                 onClick={() => setDismissedDocVersion(lastDocument.version)}
                 className="shrink-0 text-violet-400 hover:text-violet-600"
               >
@@ -176,12 +179,12 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               onClick={() => setSheetOpen(true)}
               className="lg:hidden absolute top-3 right-3 z-10 px-3 py-1.5 rounded-full bg-violet-600 text-white text-xs font-bold shadow-lg"
             >
-              답변 대기 중인 질문 →
+              {t("page.pendingQuestions")}
             </button>
           )}
           {showWelcome ? (
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <WelcomeCard onStart={sendAndStick} />
+              <WelcomeCard onStart={sendAndStick} language={language} />
             </div>
           ) : (
             <>
@@ -238,7 +241,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             ref={sheetRef}
             role="dialog"
             aria-modal="true"
-            aria-label="질문 답변 시트"
+            aria-label={t("page.answerSheetLabel")}
             tabIndex={-1}
             className="bg-white rounded-t-2xl max-h-[85vh] overflow-y-auto p-6 focus:outline-none"
             onClick={(e) => e.stopPropagation()}
@@ -247,9 +250,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               type="button"
               onClick={() => setSheetOpen(false)}
               className="mb-3 text-xs text-slate-400"
-              aria-label="닫기"
+              aria-label={t("page.close")}
             >
-              닫기 ✕
+              {t("page.closeWithMark")}
             </button>
             <QuestionForm
               file={pendingQuestions.questions}

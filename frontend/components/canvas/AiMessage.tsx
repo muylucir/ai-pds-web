@@ -1,12 +1,15 @@
+"use client";
 // frontend/components/canvas/AiMessage.tsx
 import type { AiItem } from "@/lib/useTurnStream";
 import { Markdown } from "@/components/Markdown";
 import { ReasoningTrace } from "./ReasoningTrace";
 import { ActivityIndicator } from "./ActivityIndicator";
+import { useT } from "@/lib/i18n/provider";
 
 function TypingDots() {
+  const t = useT();
   return (
-    <span aria-label="AI가 작성 중" className="inline-flex items-center gap-1 py-1">
+    <span aria-label={t("canvas.aiWriting")} className="inline-flex items-center gap-1 py-1">
       {[0, 150, 300].map((delay) => (
         <span
           key={delay}
@@ -19,6 +22,7 @@ function TypingDots() {
 }
 
 export function AiMessage({ item }: { item: AiItem }) {
+  const t = useT();
   // 라이브 활동 라인: 스트리밍 중 가장 최근 status(도구 실행) 항목.
   // file_changed는 결과 기록이지 진행 상태가 아니므로 제외.
   const lastStatus = item.streaming
@@ -61,7 +65,7 @@ export function AiMessage({ item }: { item: AiItem }) {
         )}
         {item.streaming && <ActivityIndicator tool={lastStatus?.text} />}
         {item.interrupted && (
-          <p className="mt-1.5 text-xs text-slate-400">중단됨</p>
+          <p className="mt-1.5 text-xs text-slate-400">{t("canvas.interrupted")}</p>
         )}
         <ReasoningTrace entries={item.trace} />
       </div>

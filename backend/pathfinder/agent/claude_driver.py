@@ -63,6 +63,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any, AsyncIterator, Callable
 
+from pathfinder.agent import prompts
 from pathfinder.agent.pending_store import clear_pending, load_pending, save_pending
 from pathfinder.agent.questions_payload import question_file_from_sdk
 from pathfinder.agent.session_store import DiscoverySessionStore
@@ -81,17 +82,15 @@ _LETTERS = "ABCDEFGHIJ"
 # docstring for why the poll exists at all.
 _POLL_SECONDS = 0.05
 
-# Shown when the CLI reports a failed turn (`ResultMessage.is_error`). Korean
-# and actionable, unlike the internal "agent turn failed" the other error paths
-# use: those are exception paths where the frontend substitutes its own copy,
-# whereas this one is the ordinary end of a turn the user watched happen.
+# The turn-failure text the CLI's `ResultMessage.is_error` produces, and the
+# "answer the open question first" line, both live in agent/prompts.py now --
+# they are per-project-language, so they cannot be module constants. See that
+# module's header for why (2026-08-04: an English project was reading Korean
+# on every one of these paths).
 #
-# Says to retry because the common causes are transient -- a Bedrock 429/529
-# under workshop load succeeds on the next attempt. The diagnostic detail
-# (`api_error_status`) goes to the log, not here: an HTTP status is not
-# something a workshop attendee can act on.
-_TURN_FAILED_TEXT = ("이번 턴이 실패했습니다 — 잠시 후 다시 시도해 주세요. "
-                     "반복되면 관리자에게 알려주세요.")
+# They are actionable prose, unlike the internal "agent turn failed" the other
+# error paths use: those are exception paths where the frontend substitutes its
+# own copy, whereas these are ordinary ends of a turn the user watched happen.
 
 # `ResultMessage.terminal_reason` 값 중 "취소됨"을 뜻하는 것들
 # (claude_agent_sdk/types.py:1249-1257): interrupt()로 끊긴 턴은 스트리밍 중이었든
@@ -99,6 +98,18 @@ _TURN_FAILED_TEXT = ("이번 턴이 실패했습니다 — 잠시 후 다시 시
 # 두는 이유는 세 번째 값이 SDK에 추가됐을 때 이 목록 하나만 고치면 되게 하려는
 # 것이다.
 _INTERRUPTED_TERMINAL_REASONS = frozenset({"aborted_streaming", "aborted_tools"})
+
+#: 중단된 턴을 표시하는 `status` 이벤트의 text. **기계 신호이고 사람이 읽는
+#: 문구가 아니다** — frontend/lib/useWorkspaceStream.ts가 이 값을 비교해
+#: interrupted 플래그를 세우고, 화면 문구("중단됨"/"Interrupted")는 프론트가
+#: UI 언어로 그린다. proto/builder.py가 같은 값을 쓴다 — 두 드라이버가 어긋나면
+#: 프론트가 경로에 따라 다르게 동작한다.
+#:
+#: 언어 중립인 이유가 승인 마커(frontend/lib/approvalMarker.ts)와 다르다는 점에
+#: 주의: 저쪽은 에이전트에게 가고 트랜스크립트에 사용자 말풍선으로 남으므로
+#: 프로젝트 언어의 단어여야 한다. 이 마커는 라이브 SSE 큐에만 있고 아무도
+#: 읽지 않는다.
+INTERRUPTED_MARKER = "interrupted"
 
 # Discovery runs with a human in the loop watching the chat, unlike the
 # unattended prototype build -- but AskUserQuestion is still routed through
@@ -110,12 +121,6 @@ _INTERRUPTED_TERMINAL_REASONS = frozenset({"aborted_streaming", "aborted_tools"}
 DEFAULT_PERMISSION_MODE = "bypassPermissions"
 
 _MCP_SERVER_NAME = "pathfinder"
-
-# Mirrors StrandsDriver's B1 short-circuit (driver.py:166-177). Same wording,
-# because the frontend renders it as an ordinary AI message either way and the
-# two drivers must be indistinguishable.
-_ANSWER_FIRST = ("진행 중인 질문에 먼저 답변해 주세요 — 우측 패널의 질문 폼을 "
-                 "이용하세요.")
 
 
 class _MessageReader:
@@ -448,9 +453,12 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
         # MUST be spelled "mcp__<server key>__<tool name>" -- the SDK builds
         # that name itself when it serializes --mcp-config, so any other
         # spelling silently leaves the tool needing approval.
+        # 도구 설명과 반환 문자열도 프로젝트 언어로 간다 — 둘 다 모델이 매 턴
+        # 읽는 프롬프트다(agent/prompts.py 헤더).
         server = create_sdk_mcp_server(
             name=_MCP_SERVER_NAME,
-            tools=build_tools(driver._workspace, driver._emit))
+            tools=build_tools(driver._workspace, driver._emit,
+                              driver._language))
         options = ClaudeAgentOptions(
             permission_mode=driver._permission_mode,
             cwd=driver._workspace,
@@ -545,6 +553,7 @@ class ClaudeDriver:
 
     def __init__(self, workspace: str, rules_dir: str, config_dir: str,
                  s3: S3StoreLike, anthropic_model: str | None = None,
+                 language: str = "ko",
                  permission_mode: str = DEFAULT_PERMISSION_MODE,
                  client_factory: Callable[[dict], Any] | None = None,
                  session_store: Any = None):
@@ -559,6 +568,15 @@ class ClaudeDriver:
         self._session_store: Any = (session_store if session_store is not None
                                     else DiscoverySessionStore(s3))
         self._anthropic_model = anthropic_model
+        # 이 프로젝트의 생성물 언어. 세 곳으로 흐른다: place_rules(워크스페이스
+        # CLAUDE.md의 언어 지시), build_tools(도구 설명·반환 문자열), 그리고
+        # 이 드라이버가 만드는 모델·사용자 대상 텍스트(agent/prompts.py).
+        #
+        # 처음에는 place_rules 하나뿐이었고 그것이 결함이었다 — 지시만 영어로
+        # 바꿔도 도구 설명과 거부 메시지가 한국어로 남아 매 턴 모델 컨텍스트에
+        # 들어갔다. 공유 CLAUDE_CONFIG_DIR은 전 프로젝트가 공유하므로 여전히
+        # 프로젝트 언어를 담을 수 없다(그래서 그쪽 문서는 언어 중립이어야 한다).
+        self._language = language
         self._permission_mode = _validate_permission_mode(permission_mode)
         self._client_factory = client_factory or _default_client_factory(self)
         self._client: Any = None
@@ -729,10 +747,11 @@ class ClaudeDriver:
         # 폼이 뜬다.
         self._queue = [e for e in self._queue if e.kind != "questions"]
         # 중단 사실을 남긴다. 새 kind를 만들지 않고 기존 status로 흘리는 이유는
-        # 프론트가 이미 다루는 이벤트 모양을 재사용하기 위해서다 — 화면에서는
-        # 이 이벤트가 "중단됨" 한 줄이 된다. 이 마커는 라이브 SSE 큐에만
-        # 있다 — 트랜스크립트에는 들어가지 않으므로 새로고침 후 복원되지 않는다.
-        self._queue.append(AgentEvent(kind="status", text="중단됨"))
+        # 프론트가 이미 다루는 이벤트 모양을 재사용하기 위해서다 — 프론트는 이
+        # 마커를 보고 그 턴에 "중단됨" 한 줄을 UI 언어로 그린다. 이 마커는
+        # 라이브 SSE 큐에만 있다 — 트랜스크립트에 들어가지 않으므로 새로고침 후
+        # 복원되지 않는다.
+        self._queue.append(AgentEvent(kind="status", text=INTERRUPTED_MARKER))
         await self._client.interrupt()
 
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
@@ -791,8 +810,7 @@ class ClaudeDriver:
         except ValueError as e:
             _log.warning("AskUserQuestion payload rejected: %s", e)
             return PermissionResultDeny(
-                message=f"질문을 만들 수 없다: {e}\n"
-                        "각 질문에 옵션을 최소 1개 넣어 AskUserQuestion을 다시 호출해라.")
+                message=prompts.question_payload_rejected(self._language, str(e)))
         iid = uuid.uuid4().hex
         payload = json.dumps({"interrupt_id": iid, "questions": qfile},
                              ensure_ascii=False)
@@ -1128,7 +1146,8 @@ class ClaudeDriver:
         # and S3 had nothing.
         await self._flush_transcript_mirror()
         if reader.failed:
-            yield AgentEvent(kind="error", text=_TURN_FAILED_TEXT)
+            yield AgentEvent(kind="error",
+                             text=prompts.turn_failed(self._language))
         else:
             yield AgentEvent(kind="done")
 
@@ -1285,12 +1304,10 @@ class ClaudeDriver:
         # resumed session answers the wrong question. It is also what the
         # contract test's echo fake reads back to prove the caller's
         # interrupt_id/answers reached the SDK call.
-        prompt = ("[질문 답변] 앞서 드린 질문에 사용자가 답했습니다. "
-                  "이 답변을 반영해 이어서 진행해 주세요.\n"
-                  + "\n".join(lines)
-                  + "\n(답변 기록)\n"
-                  + json.dumps({"interrupt_id": interrupt_id,
-                                "answers": answers}, ensure_ascii=False))
+        prompt = prompts.answers_resumed(
+            self._language, "\n".join(lines),
+            json.dumps({"interrupt_id": interrupt_id, "answers": answers},
+                       ensure_ascii=False))
         await self._clear_pending_quietly()
         self._clear_pending_state()
         async for ev in self._stream(prompt, session, resume=True):
@@ -1304,9 +1321,12 @@ class ClaudeDriver:
         only aiplc-docs/, prototype/, uploads/ -- never the rules) and without
         them the agent runs with no workflow to follow, which shows up as an
         empty conversation rather than an error. False means the turn must be
-        abandoned."""
+        abandoned.
+
+        매 턴 쓰는 것이 언어에도 유리하다: 언어 지시가 워크스페이스에 남아
+        있지 않아도 다음 턴에 다시 깔린다."""
         try:
-            place_rules(self._workspace, self._rules_dir)
+            place_rules(self._workspace, self._rules_dir, self._language)
             return True
         except Exception:
             _log.exception("rule placement failed")
@@ -1338,7 +1358,8 @@ class ClaudeDriver:
             # model.
             fut = self._pending_question
             if fut is not None and not fut.done():
-                yield AgentEvent(kind="message", text=_ANSWER_FIRST)
+                yield AgentEvent(kind="message",
+                                 text=prompts.answer_first(self._language))
                 if self._pending_payload is not None:
                     yield AgentEvent(kind="questions",
                                      payload=self._pending_payload)

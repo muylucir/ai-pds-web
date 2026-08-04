@@ -6,6 +6,14 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
 import * as prototypeStream from "@/lib/usePrototypeStream";
+
+// AppHeader가 그리는 LanguageSwitcher가 useRouter()를 부른다 — 앱 라우터가
+// 마운트되지 않은 단위 테스트에서 그 훅은 던진다. 스위치의 동작은
+// components/LanguageSwitcher.test.tsx가 검증하므로 여기서는 마운트만 되게 한다.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+
 import PrototypesPage from "./page";
 
 // BuildPanel's own tests cover its rendering in depth; here it's exercised

@@ -3,12 +3,19 @@ import { useEffect, useState } from "react";
 import { createProject, ApiError } from "@/lib/api/client";
 import { listModels, type ModelOption } from "@/lib/api/models";
 import type { ProjectSummary } from "@/lib/api/types";
+import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n";
+import { useT } from "@/lib/i18n/provider";
 
 export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary) => void }) {
+  const t = useT();
   const [projectId, setProjectId] = useState("");
   const [name, setName] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
   const [modelId, setModelId] = useState("");
+  // 생성물 언어. UI 로케일과 무관하게 ko로 시작한다 — 이 값은 문서·프로토타입·
+  // 채팅의 언어이고, 영어 UI를 쓰는 사람이 한국어 프로젝트를 만드는 것이
+  // 정상이다. UI 로케일을 기본값으로 쓰면 그 선택을 조용히 대신 하게 된다.
+  const [language, setLanguage] = useState<Locale>(DEFAULT_LOCALE);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -35,17 +42,17 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
     setSubmitting(true);
     try {
       const created = await createProject(projectId.trim(), name.trim() || undefined,
-                                          modelId || undefined);
+                                          modelId || undefined, language);
       onCreated(created);
       setProjectId("");
       setName("");
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setError("이미 존재하는 프로젝트 ID입니다.");
+        setError(t("project.idExists"));
       } else if (err instanceof ApiError) {
-        setError(`프로젝트 생성에 실패했습니다. (${err.status})`);
+        setError(`${t("project.createFailed")} (${err.status})`);
       } else {
-        setError("네트워크 오류로 프로젝트를 생성하지 못했습니다.");
+        setError(t("project.createNetworkError"));
       }
     } finally {
       setSubmitting(false);
@@ -59,32 +66,32 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
     >
       <div className="flex-1">
         <label htmlFor="pid" className="block text-xs text-slate-500 mb-1">
-          프로젝트 ID
+          {t("project.id")}
         </label>
         <input
           id="pid"
           required
           value={projectId}
           onChange={(e) => setProjectId(e.target.value)}
-          placeholder="예: pilot2"
+          placeholder={t("project.idPlaceholder")}
           className="w-full text-sm rounded-lg border border-slate-200 p-2.5 focus:outline-none focus:ring-2 focus:ring-violet-400"
         />
       </div>
       <div className="flex-1">
         <label htmlFor="pname" className="block text-xs text-slate-500 mb-1">
-          프로젝트 이름 (선택)
+          {t("project.nameOptional")}
         </label>
         <input
           id="pname"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="예: 기획전 AI 어시스턴트"
+          placeholder={t("project.namePlaceholder")}
           className="w-full text-sm rounded-lg border border-slate-200 p-2.5 focus:outline-none focus:ring-2 focus:ring-violet-400"
         />
       </div>
       <div className="sm:w-44">
         <label htmlFor="pmodel" className="block text-xs text-slate-500 mb-1">
-          AI 모델
+          {t("header.modelBadgeTitleShort")}
         </label>
         {/* 이름만 보여준다 — 모델 id는 value로만 간다. */}
         <select
@@ -94,10 +101,26 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
           onChange={(e) => setModelId(e.target.value)}
           className="w-full text-sm rounded-lg border border-slate-200 p-2.5 bg-white disabled:bg-slate-50 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400"
         >
-          {models.length === 0 && <option value="">기본 모델</option>}
+          {models.length === 0 && <option value="">{t("project.defaultModel")}</option>}
           {models.map((m) => (
             <option key={m.model_id} value={m.model_id}>{m.name}</option>
           ))}
+        </select>
+      </div>
+      <div className="sm:w-36">
+        <label htmlFor="plang" className="block text-xs text-slate-500 mb-1">
+          {t("project.language")}
+        </label>
+        {/* 생성 후 바꿀 수 없다 — 진행 중에 바꾸면 이미 만들어진 문서와
+            트랜스크립트가 이전 언어로 남아 한 프로젝트 안에서 섞인다. */}
+        <select
+          id="plang"
+          value={language}
+          onChange={(e) => setLanguage(e.target.value as Locale)}
+          className="w-full text-sm rounded-lg border border-slate-200 p-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
+        >
+          <option value="ko">한국어</option>
+          <option value="en">English</option>
         </select>
       </div>
       <button
@@ -105,7 +128,7 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
         disabled={submitting || projectId.trim() === ""}
         className="px-5 py-2.5 text-sm rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-bold"
       >
-        프로젝트 생성
+        {t("project.create")}
       </button>
       {error && <p className="text-sm text-rose-600 w-full sm:w-auto">{error}</p>}
     </form>

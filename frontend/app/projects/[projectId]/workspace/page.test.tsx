@@ -7,6 +7,16 @@ import { API_BASE_URL } from "@/lib/api/client";
 import { projectState } from "@/test/fixtures/projectState";
 import * as workspaceStream from "@/lib/useWorkspaceStream";
 import * as client from "@/lib/api/client";
+
+// AppHeader가 그리는 LanguageSwitcher가 useRouter()를 부른다 — 앱 라우터가
+// 마운트되지 않은 단위 테스트에서 그 훅은 던진다. 스위치의 동작은
+// components/LanguageSwitcher.test.tsx가 검증하므로 여기서는 마운트만 되게 한다.
+// 이 페이지가 useSearchParams()를 쓰지 않고 window.location을 직접 읽는 것은
+// 의도된 설계다(page.tsx의 draft 주석) — 그래서 useRouter만 채워도 충분하다.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+
 import WorkspacePage from "./page";
 
 vi.mock("@/lib/api/client", async (orig) => ({

@@ -1,3 +1,5 @@
+"use client";
+import { useT } from "@/lib/i18n/provider";
 // Left-pane file tree for the review page — groups aiplc-docs/ artifact paths
 // by their sub-directory (relative to aiplc-docs/) and lets the caller drive
 // selection. Purely presentational: no fetching here, the page owns the
@@ -11,6 +13,7 @@ export function DocTree({
   selected: string | null;
   onSelect: (path: string) => void;
 }) {
+  const t = useT();
   const groups = new Map<string, string[]>();
   for (const p of paths) {
     const rel = p.replace(/^aiplc-docs\//, "");
@@ -18,7 +21,7 @@ export function DocTree({
     groups.set(dir, [...(groups.get(dir) ?? []), p]);
   }
   return (
-    <nav aria-label="산출물 문서" className="text-sm space-y-3">
+    <nav aria-label={t("review.docTreeAria")} className="text-sm space-y-3">
       {[...groups.entries()].sort().map(([dir, files]) => (
         <div key={dir || "(root)"}>
           {dir && <p className="px-2 pb-1 text-[11px] font-bold uppercase text-slate-400">{dir}</p>}

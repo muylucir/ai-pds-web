@@ -1,6 +1,7 @@
 // frontend/lib/useTurnStream.ts
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useT } from "@/lib/i18n/provider";
 import { streamEvents } from "@/lib/api/sse";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import type { AgentEvent } from "@/lib/api/types";
@@ -17,6 +18,11 @@ export interface UserItem {
   id: string;
   role: "user";
   text: string;
+  // 복원된 답변 제출 턴의 구조화된 답변(GET /history의 HistoryItem.answers).
+  // 있으면 ChatTimeline이 UI 언어로 문구를 다시 만든다 — 백엔드의 text는 이
+  // 필드를 모르는 소비자를 위한 한국어 폴백이다. 라이브 턴에는 없다(그쪽은
+  // answerSummary가 선택지 문자를 옵션 텍스트로 펼쳐 이미 만들어 둔다).
+  answers?: Record<string, string> | null;
 }
 export interface AiItem {
   id: string;
@@ -50,6 +56,14 @@ export type ChatItem = UserItem | AiItem | CardItem;
 
 let counter = 0;
 const nextId = () => `item-${counter++}`;
+
+// 턴 개시(POST)의 실패는 상태 코드를 준다 — EventSource의 익명 onerror와 달리
+// 원인을 말할 수 있는 유일한 지점이다. 413/431은 "입력이 길다"는 뜻이고, 그
+// 구분이 없으면 이 버그의 증상("연결이 끊어졌습니다")이 그대로 돌아온다.
+function isTooLong(err: unknown): boolean {
+  const status = (err as { status?: number } | null)?.status;
+  return status === 431 || status === 413;
+}
 
 // Pure filename mapping (zero methodology — same class of check as Plan B's
 // established `isClarification` endsWith check in questions/page.tsx): a
@@ -85,6 +99,7 @@ export interface TurnStream {
 // frame sets its error; done/transport-close finish the turn AND (C2) derive
 // zero or more structured cards from the turn's file_changed paths.
 export function useTurnStream(projectId: string, initial: ChatItem[] = []): TurnStream {
+  const t = useT();
   const [items, setItems] = useState<ChatItem[]>(initial);
   const [streaming, setStreaming] = useState(false);
   const stopRef = useRef<null | (() => void)>(null);
@@ -125,7 +140,7 @@ export function useTurnStream(projectId: string, initial: ChatItem[] = []): Turn
             if (ev.kind === "status" || ev.kind === "file_changed")
               return { ...it, trace: [...it.trace, { kind: ev.kind, text: ev.text, path: ev.path }] };
             if (ev.kind === "error")
-              return { ...it, error: ev.text ?? "턴 처리 중 오류가 발생했습니다." };
+              return { ...it, error: ev.text ?? t("stream.turnError") };
             return it; // "done" is handled by onDone
           });
         },
@@ -135,20 +150,20 @@ export function useTurnStream(projectId: string, initial: ChatItem[] = []): Turn
           if (derived.length > 0) setItems((prev) => [...prev, ...derived]);
           finish();
         },
-        onError: () => {
+        onError: (err) => {
           // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
           // 세션을 확인해 만료면 로그인으로 보낸다. 살아 있으면 아래 메시지가 맞다.
           void redirectIfSessionExpired(undefined, window.location.pathname);
           patchAi(aiId, (it) => ({
             ...it,
             streaming: false,
-            error: it.error ?? "연결이 끊어졌습니다. 다시 시도해 주세요.",
+            error: it.error ?? t(isTooLong(err) ? "stream.tooLong" : "stream.disconnected"),
           }));
           finish();
         },
       });
     },
-    [projectId, patchAi],
+    [projectId, patchAi, t],
   );
 
   // Close the stream if the component unmounts mid-turn.

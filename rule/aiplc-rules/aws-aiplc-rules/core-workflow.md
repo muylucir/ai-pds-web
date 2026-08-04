@@ -1,7 +1,5 @@
 # DISCOVERY PHASE WORKFLOW (Product Manager Workspace)
 
-# 모든 대화, 문서작성, 질의 응답은 한국어로 진행합니다. 단, 기술용어나 고유명사, 파일명 등은 영어를 그대로 유지합니다.
-
 ## Purpose
 This workspace is exclusively for Product Managers to complete the Discovery phase. The output is a comprehensive Discovery Document that will be provided to developers for Inception and Construction phases in a separate workspace.
 

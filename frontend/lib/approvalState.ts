@@ -1,4 +1,5 @@
 import type { AuditEntry } from "@/lib/api/types";
+import { isApprovalText } from "@/lib/approvalMarker";
 
 // Approval state is derived from the audit log, which is the only durable
 // record of the decision (aiplc-state.md has no "Discovery Document" stage —
@@ -11,10 +12,13 @@ import type { AuditEntry } from "@/lib/api/types";
 
 /** An audit entry that records an approval decision at the gate. */
 function isApproval(e: AuditEntry): boolean {
-  // The gate sends the literal turn text "승인"; the agent logs it as the raw
-  // user input. Matching the INPUT (not the AI's prose) keeps a narrative
-  // mention of "승인" in some other answer from counting as a decision.
-  return /^\s*승인\s*$/.test(e.user_input ?? "");
+  // 판정식은 approvalMarker.ts가 소유한다 — 게이트가 보내는 텍스트와 같은
+  // 파일에 두어야 한쪽만 바뀌는 일이 없다. 두 언어를 다 받으므로 기존 한국어
+  // 감사 로그도 계속 인식된다.
+  //
+  // INPUT을 보고 AI의 산문을 보지 않는 이유는 그대로다: 다른 답변에 등장한
+  // "승인"이 결정으로 세어지면 PM이 누르기 전에 게이트가 사라진다.
+  return isApprovalText(e.user_input ?? "");
 }
 
 /** An audit entry that records work which would invalidate a prior approval. */

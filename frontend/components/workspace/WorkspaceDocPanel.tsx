@@ -1,3 +1,4 @@
+"use client";
 // frontend/components/workspace/WorkspaceDocPanel.tsx
 "use client";
 import Link from "next/link";
@@ -5,6 +6,7 @@ import { useEffect, useState } from "react";
 import { listArtifacts, readArtifact, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { Markdown } from "@/components/Markdown";
+import { useT } from "@/lib/i18n/provider";
 
 // The workspace's 4th column. Renders the document the CONVERSATION is
 // currently about (activeDoc — submit_document 이벤트뿐 아니라 doc성
@@ -26,6 +28,7 @@ export function WorkspaceDocPanel({
   activeDoc: { path: string; version: string | null } | null;
   turnSeq: number;
 }) {
+  const t = useT();
   // 드롭다운 선택 상태. null = activeDoc 따름. activeDoc이 바뀌면(새 문서
   // 이벤트) 수동 선택을 리셋해 대화를 따라간다 — 스펙의 우선순위.
   const [manualPath, setManualPath] = useState<string | null>(null);
@@ -69,13 +72,13 @@ export function WorkspaceDocPanel({
 
   return (
     <aside
-      aria-label="생성된 문서"
+      aria-label={t("ws.generatedDocsAria")}
       className="hidden lg:flex flex-col min-w-0 min-h-0 bg-white border-l border-slate-200"
     >
       <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
         {options.length > 0 ? (
           <select
-            aria-label="문서 선택"
+            aria-label={t("ws.selectDocAria")}
             value={path ?? ""}
             onChange={(e) => setManualPath(e.target.value)}
             className="min-w-0 flex-1 text-xs font-bold text-slate-600 bg-transparent border border-slate-200 rounded-lg px-2 py-1.5 truncate focus:outline-none focus:ring-2 focus:ring-violet-300"
@@ -87,12 +90,12 @@ export function WorkspaceDocPanel({
             ))}
           </select>
         ) : (
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide truncate">생성된 문서</p>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide truncate">{t("ws.generatedDocs")}</p>
         )}
         {path !== null && (
           <button
             type="button"
-            aria-label="문서 새로고침"
+            aria-label={t("ws.refreshDocAria")}
             disabled={content.loading}
             onClick={() => {
               // 현재 문서와 산출물 목록을 함께 재조회 — 문서만 갱신하면 방금
@@ -114,12 +117,12 @@ export function WorkspaceDocPanel({
       <div className="flex-1 min-h-0 overflow-y-auto p-4 text-sm text-slate-700">
         {path === null ? (
           <p className="text-slate-400">
-            아직 생성된 문서가 없습니다. 문서가 만들어지면 여기에서 바로 확인할 수 있습니다.
+            {t("ws.noDocsYet")}
           </p>
         ) : loadError ? (
-          <p className="text-rose-600">문서를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.</p>
+          <p className="text-rose-600">{t("ws.docLoadFailed")}</p>
         ) : content.loading ? (
-          <p className="text-slate-400">문서를 불러오는 중…</p>
+          <p className="text-slate-400">{t("ws.docLoading")}</p>
         ) : missing ? (
           // 저장 자체가 안 된 상태 — "비어 있음"과 구분해서 알린다. 이걸 빈
           // 문서로 뭉개면 사용자는 문서가 만들어졌다고 믿고, 새로고침하면
@@ -129,7 +132,7 @@ export function WorkspaceDocPanel({
             이 메시지가 남으면 ↻로 다시 불러오거나 해당 작업을 다시 요청해 주세요.
           </p>
         ) : text.trim() === "" ? (
-          <p className="text-slate-400">문서 내용이 아직 비어 있습니다.</p>
+          <p className="text-slate-400">{t("ws.docEmpty")}</p>
         ) : (
           <Markdown text={text} />
         )}

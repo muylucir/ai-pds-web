@@ -1,6 +1,9 @@
 // frontend/lib/useTurnStream.test.tsx
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+import { server } from "@/test/msw/server";
+import { API_BASE_URL } from "@/lib/api/client";
 import { useTurnStream, type AiItem } from "./useTurnStream";
 import { normalTurn, errorTurn, questionsTurn, documentTurn } from "@/test/fixtures/agentEventStreams";
 import * as sessionRecovery from "@/lib/auth/sessionRecovery";
@@ -38,6 +41,13 @@ class FakeEventSource {
 
 beforeEach(() => {
   (globalThis as any).EventSource = FakeEventSource;
+  // 턴 텍스트가 URL이 아니라 POST 본문으로 가므로(431 결함 수정) 개시가
+  // 비동기다 — 목을 깔고 스트림이 열릴 때까지 기다린다.
+  FakeEventSource.last = null;
+  server.use(
+    http.post(`${API_BASE_URL}/projects/pilot1/turns`, () =>
+      HttpResponse.json({ turn_id: "t-1" })),
+  );
   vi.clearAllMocks();
 });
 afterEach(() => {
@@ -47,20 +57,28 @@ afterEach(() => {
 const ai = (items: ReturnType<typeof useTurnStream>["items"]) =>
   items.filter((i): i is AiItem => i.role === "ai");
 
+async function opened(): Promise<FakeEventSource> {
+  await waitFor(() => expect(FakeEventSource.last).not.toBeNull());
+  return FakeEventSource.last!;
+}
+
 describe("useTurnStream", () => {
-  it("appends a user bubble + a streaming AI bubble on send and opens the events stream", () => {
+  it("appends a user bubble + a streaming AI bubble on send and opens the events stream", async () => {
     const { result } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("필터 기능 추가해줘"));
     expect(result.current.items[0]).toMatchObject({ role: "user", text: "필터 기능 추가해줘" });
     expect(result.current.items[1]).toMatchObject({ role: "ai", streaming: true });
     expect(result.current.streaming).toBe(true);
-    expect(FakeEventSource.last!.url).toContain("/projects/pilot1/events?text=");
+    // 텍스트는 본문으로 갔고 URL에는 핸들만 있다.
+    const es = await opened();
+    expect(es.url).toContain("/projects/pilot1/events?turn=");
+    expect(es.url).not.toContain("text=");
   });
 
-  it("folds message frames into the AI bubble and trace frames into the reasoning trace, then finishes on done", () => {
+  it("folds message frames into the AI bubble and trace frames into the reasoning trace, then finishes on done", async () => {
     const { result } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("go"));
-    const es = FakeEventSource.last!;
+    const es = await opened();
     for (const frame of normalTurn) act(() => es.emit(frame));
 
     const last = ai(result.current.items)[0];
@@ -72,16 +90,16 @@ describe("useTurnStream", () => {
     expect(es.closed).toBe(true);
   });
 
-  it("surfaces an agent-reported error-kind frame on the AI bubble", () => {
+  it("surfaces an agent-reported error-kind frame on the AI bubble", async () => {
     const { result } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("build"));
-    const es = FakeEventSource.last!;
+    const es = await opened();
     for (const frame of errorTurn) act(() => es.emit(frame));
     expect(ai(result.current.items)[0].error).toMatch(/빌드에 실패했습니다/);
     expect(result.current.streaming).toBe(false);
   });
 
-  it("surfaces a transport error and ignores empty / concurrent sends", () => {
+  it("surfaces a transport error and ignores empty / concurrent sends", async () => {
     const { result } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("   ")); // empty after trim → ignored
     expect(result.current.items).toHaveLength(0);
@@ -90,7 +108,8 @@ describe("useTurnStream", () => {
     act(() => result.current.send("두 번째")); // in-flight → ignored
     expect(result.current.items.filter((i) => i.role === "user")).toHaveLength(1);
 
-    act(() => FakeEventSource.last!.fail());
+    const es = await opened();
+    act(() => es.fail());
     expect(ai(result.current.items)[0].error).toMatch(/연결/);
     expect(result.current.streaming).toBe(false);
   });
@@ -98,20 +117,21 @@ describe("useTurnStream", () => {
   // onError의 유일한 실제 배선 지점 — 이 콜이 지워지거나 인자가 바뀌면 사용자는
   // 만료된 세션에서도 로그인으로 보내지지 않는다. navigate는 undefined로 넘겨
   // (기본 전체 페이지 이동을 쓰게) 두고, currentPath는 현재 pathname이어야 한다.
-  it("checks the session on a transport error (the sole wiring point for redirectIfSessionExpired)", () => {
+  it("checks the session on a transport error (the sole wiring point for redirectIfSessionExpired)", async () => {
     const { result } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("go"));
-    act(() => FakeEventSource.last!.fail());
+    const es = await opened();
+    act(() => es.fail());
     expect(sessionRecovery.redirectIfSessionExpired).toHaveBeenCalledWith(
       undefined,
       window.location.pathname,
     );
   });
 
-  it("closes the stream if the component unmounts mid-turn", () => {
+  it("closes the stream if the component unmounts mid-turn", async () => {
     const { result, unmount } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("go"));
-    const es = FakeEventSource.last!;
+    const es = await opened();
     act(() => es.emit({ kind: "status", text: "진행 중…", path: null, payload: null })); // stream still live, not done/error
     expect(es.closed).toBe(false);
 
@@ -125,10 +145,10 @@ const cards = (items: ReturnType<typeof useTurnStream>["items"]) =>
   items.filter((i) => i.role === "card");
 
 describe("useTurnStream — structured timeline cards (C2)", () => {
-  it("appends a QuestionsCardItem when a turn's file_changed path ends in -questions.md", () => {
+  it("appends a QuestionsCardItem when a turn's file_changed path ends in -questions.md", async () => {
     const { result } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("Product Strategy 질문 만들어줘"));
-    const es = FakeEventSource.last!;
+    const es = await opened();
     for (const frame of questionsTurn) act(() => es.emit(frame));
 
     const found = cards(result.current.items);
@@ -140,10 +160,10 @@ describe("useTurnStream — structured timeline cards (C2)", () => {
     });
   });
 
-  it("appends an ArtifactCardItem when a turn's file_changed path ends in discovery-document.md", () => {
+  it("appends an ArtifactCardItem when a turn's file_changed path ends in discovery-document.md", async () => {
     const { result } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("문서 갱신해줘"));
-    const es = FakeEventSource.last!;
+    const es = await opened();
     for (const frame of documentTurn) act(() => es.emit(frame));
 
     const found = cards(result.current.items);
@@ -155,10 +175,10 @@ describe("useTurnStream — structured timeline cards (C2)", () => {
     });
   });
 
-  it("dedupes multiple file_changed events for the same path into a single card", () => {
+  it("dedupes multiple file_changed events for the same path into a single card", async () => {
     const { result } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("go"));
-    const es = FakeEventSource.last!;
+    const es = await opened();
     const repeated = [
       { kind: "file_changed" as const, text: null, path: "aiplc-docs/discovery/discovery-document.md", payload: null },
       { kind: "file_changed" as const, text: null, path: "aiplc-docs/discovery/discovery-document.md", payload: null },
@@ -168,10 +188,10 @@ describe("useTurnStream — structured timeline cards (C2)", () => {
     expect(cards(result.current.items)).toHaveLength(1);
   });
 
-  it("does not append a card for file_changed paths matching neither suffix (e.g. prototype source files)", () => {
+  it("does not append a card for file_changed paths matching neither suffix (e.g. prototype source files)", async () => {
     const { result } = renderHook(() => useTurnStream("pilot1"));
     act(() => result.current.send("필터 추가"));
-    const es = FakeEventSource.last!;
+    const es = await opened();
     for (const frame of normalTurn) act(() => es.emit(frame)); // normalTurn's path is prototype/src/components/FilterBar.tsx
     expect(cards(result.current.items)).toHaveLength(0);
   });

@@ -1,3 +1,5 @@
+"use client";
+import { useT } from "@/lib/i18n/provider";
 // frontend/components/canvas/HistorySkeleton.tsx
 //
 // 히스토리 복원 중 채팅 자리를 채우는 자리표시자. 종전에는 GET /history가 도는
@@ -7,11 +9,12 @@
 // AiMessage와 같은 아바타·폭을 쓰는 것이 의도적이다 — 로드가 끝나 실제 항목이
 // 들어올 때 레이아웃이 튀지 않는다.
 export function HistorySkeleton() {
+  const t = useT();
   // 폭을 다르게 둔다: 같은 길이 박스 세 개는 로딩 바처럼 보이고, 들쭉날쭉하면
   // 대화처럼 보인다.
   const widths = ["w-3/5", "w-4/5", "w-2/5"];
   return (
-    <div role="status" aria-label="이전 대화를 불러오는 중" className="space-y-4">
+    <div role="status" aria-label={t("canvas.historyLoading")} className="space-y-4">
       {widths.map((w, i) => (
         <div key={i} className="flex gap-3">
           <span

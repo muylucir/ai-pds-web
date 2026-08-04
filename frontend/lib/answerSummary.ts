@@ -13,10 +13,11 @@
 // first three are expandable, and telling them apart is the whole job here —
 // splitting free text on ": " would mangle the answer we are trying to surface.
 import type { QuestionFile, QuestionOption } from "@/lib/api/types";
+import type { Dict } from "@/lib/i18n";
 
-/** Shown when a submission carries no non-blank answer, so the bubble is never
- *  empty. Matches the old wording, which is still right for this one case. */
-const EMPTY = "답변 제출";
+/** 번역 함수. 순수 함수를 훅으로 만들지 않기 위해 인자로 받는다 — 호출부가
+ *  이미 훅 안이므로 그쪽에서 useT()로 얻어 넘긴다. */
+type T = (key: keyof Dict) => string;
 
 function letterText(options: QuestionOption[], letter: string): string | null {
   // is_other options are excluded deliberately: their letter is bookkeeping,
@@ -71,6 +72,7 @@ function renderAnswer(options: QuestionOption[], value: string): string {
 export function answerSummary(
   file: QuestionFile,
   answers: Record<string, string>,
+  t: T,
 ): string {
   const blocks: string[] = [];
   const seen = new Set<string>();
@@ -88,5 +90,8 @@ export function answerSummary(
     blocks.push(`Q${key}.\n→ ${value}`);
   }
 
-  return blocks.length > 0 ? blocks.join("\n\n") : EMPTY;
+  // 답변이 하나도 없으면 말풍선이 비지 않게 한 줄을 남긴다. Task 6이 만든
+  // chat.answersSubmitted를 재사용한다 — 값이 같은 키를 둘로 두면 나중에
+  // 한쪽만 고쳐 화면에서 문구가 갈린다.
+  return blocks.length > 0 ? blocks.join("\n\n") : t("chat.answersSubmitted");
 }

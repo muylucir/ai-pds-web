@@ -72,4 +72,25 @@ describe("deriveApprovalState", () => {
     ]);
     expect(state.approved).toBe(false);
   });
+
+  it("영어 프로젝트의 Approved 턴도 승인으로 센다", () => {
+    const state = deriveApprovalState([
+      entry(1, "I want to improve the NOTAM dashboard", "Discovery started"),
+      entry(2, "Approved", "Approval recorded — Discovery is complete.", "Final approval"),
+    ]);
+    expect(state).toEqual({ approved: true, approvedAtIndex: 2 });
+  });
+
+  it("영어 표기가 흔들려도 인식한다", () => {
+    // 감사 로그는 에이전트가 옮겨 적은 것이라 대소문자가 일정하지 않다.
+    const state = deriveApprovalState([entry(1, "approved", "ok", "Final approval")]);
+    expect(state.approved).toBe(true);
+  });
+
+  it("문장 속의 approved는 결정이 아니다", () => {
+    const state = deriveApprovalState([
+      entry(1, "what's next?", "Once you have approved, we move to Inception."),
+    ]);
+    expect(state.approved).toBe(false);
+  });
 });

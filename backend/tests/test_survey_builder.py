@@ -121,3 +121,52 @@ async def test_raises_after_exhausting_attempts():
         await build_questionnaire(MD, agent, token="t", project_id="p",
                                   slug="s", now="n")
     assert len(agent.prompts) == 2
+
+
+def test_prompt_is_korean_by_default():
+    p = build_prompt("# PROTOTYPE-demo")
+    assert any("가" <= c <= "힣" for c in p)
+
+
+def test_prompt_is_english_for_an_english_project():
+    p = build_prompt("# PROTOTYPE-demo", language="en")
+    # 프로토타입 명세가 프롬프트에 실리므로 명세의 글자는 제외하고 본다.
+    body = p.replace("# PROTOTYPE-demo", "")
+    assert not any("가" <= c <= "힣" for c in body), body[:400]
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_prompt_keeps_every_requirement(language):
+    """두 언어가 같은 제약을 담아야 한다. 하나라도 빠지면 그 언어의 설문이
+    프로토타입으로 답할 수 없는 것을 묻거나(성능·보안), 집계가 신호와 잡음을
+    구별할 수 없게 된다(해당 없음 선택지)."""
+    p = build_prompt("# spec", language=language)
+    assert "scale" in p and "choice" in p and "text" in p     # 문항 타입 3종
+    assert "JSON" in p
+    assert "hypothesis" in p and "questions" in p             # 출력 스키마
+    # "사용하지 않았다/해당 없음" 선택지 제약. 빠지면 응답자가 써 보지 않은
+    # 기능을 추측으로 평가해 집계가 신호와 잡음을 구별할 수 없게 된다.
+    assert ("해당 없음" in p or "not applicable" in p), p[:600]
+    # 프로토타입으로 답할 수 없는 것을 묻지 말라는 금지 목록.
+    assert ("보안" in p or "security" in p), p[:600]
+    # 가정형으로 물으라는 지시 — 데모의 완성도가 아니라 접근을 평가하게 한다.
+    assert ("가정형" in p or "hypothetical" in p), p[:600]
+
+
+def test_an_unknown_language_falls_back_to_korean():
+    assert build_prompt("# spec", language="klingon") == build_prompt("# spec")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["ko", "en"])
+async def test_build_questionnaire_records_the_language(language):
+    async def agent(prompt):
+        return ('{"title": "T", "hypothesis": "H", "questions": '
+                '[{"id": "q1", "text": "Q", "type": "text", "required": false}]}')
+
+    qn = await build_questionnaire("# spec", agent, token="tok",
+                                   project_id="p1", slug="demo",
+                                   now="2026-08-03T00:00:00+00:00",
+                                   language=language)
+    # 언어를 questionnaire에 기록해야 공개 응답 페이지가 그 언어로 그릴 수 있다.
+    assert qn.language == language

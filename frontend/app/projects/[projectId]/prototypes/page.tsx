@@ -19,12 +19,14 @@ import {
 } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
-import { useProjectModel } from "@/lib/useProjectModel";
+import { useProjectMeta } from "@/lib/useProjectModel";
+import { useT } from "@/lib/i18n/provider";
 
 export default function PrototypesPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const list = useAsync(() => listPrototypes(projectId), [projectId]);
-  const modelLabel = useProjectModel(projectId);
+  const t = useT();
+  const { modelLabel, language } = useProjectMeta(projectId);
 
   // Which card's build session is open, and whether THIS open should fire
   // the auto first-build turn — true only when startSession just created a
@@ -137,7 +139,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
       // so this is "press it again," not "give up." Shown INSIDE the
       // dialog (not a disconnected alert) so it sits next to what failed,
       // and the dialog stays open so retrying is one click away.
-      setResetError("초기화가 완료되지 않았습니다. 다시 시도해 주세요.");
+      setResetError(t("page.resetIncomplete"));
     } finally {
       // Runs even on failure: a partial reset still deleted things, and the
       // card must reflect that — if it still reads "빌드 완료" afterwards,
@@ -159,7 +161,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
       const status = await getHost(projectId, slug);
       setLogsText(status?.log_tail ?? "");
     } catch {
-      setLogsError("로그를 불러오지 못했습니다.");
+      setLogsError(t("page.logsLoadFailed"));
     }
   }
 
@@ -170,22 +172,22 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
 
   return (
     <>
-      <AppHeader activeTab="prototypes" projectId={projectId} modelLabel={modelLabel} />
+      <AppHeader activeTab="prototypes" projectId={projectId} modelLabel={modelLabel}
+                 projectLanguage={language} />
       <main className="max-w-5xl mx-auto px-6 py-8">
-        <h1 className="text-2xl font-bold mb-6">프로토타입</h1>
+        <h1 className="text-2xl font-bold mb-6">{t("page.prototypesTitle")}</h1>
 
-        {list.loading && <p className="text-sm text-slate-400">불러오는 중…</p>}
-        {list.error && <p className="text-sm text-rose-600">목록을 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>}
+        {list.loading && <p className="text-sm text-slate-400">{t("page.loading")}</p>}
+        {list.error && <p className="text-sm text-rose-600">{t("page.prototypeListFailed")}</p>}
 
         {list.data && list.data.active_builds >= list.data.max_builds && (
           <p className="mb-4 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            동시 빌드 상한({list.data.max_builds}건)에 도달했습니다 — 진행 중인 빌드가
-            끝나면 새 빌드를 시작할 수 있습니다.
+            {t("page.buildCapReached").replace("{max}", String(list.data.max_builds))}
           </p>
         )}
 
         {list.data && list.data.prototypes.length === 0 && (
-          <p className="text-sm text-slate-400">아직 프로토타입 스펙이 없습니다.</p>
+          <p className="text-sm text-slate-400">{t("page.noPrototypeSpecs")}</p>
         )}
 
         {list.data && list.data.prototypes.length > 0 && (
@@ -228,20 +230,20 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
         >
           <div
             role="dialog"
-            aria-label={`${logsSlug} 로그`}
+            aria-label={`${logsSlug} ${t("page.logsSuffix")}`}
             className="bg-white rounded-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto p-5"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3">
-              <h2 className="font-bold">{logsSlug} 로그</h2>
-              <button type="button" aria-label="닫기" className="text-slate-400" onClick={() => setLogsSlug(null)}>
+              <h2 className="font-bold">{logsSlug} {t("page.logsSuffix")}</h2>
+              <button type="button" aria-label={t("page.close")} className="text-slate-400" onClick={() => setLogsSlug(null)}>
                 ✕
               </button>
             </div>
             {logsError && <p className="text-sm text-rose-600">{logsError}</p>}
             {logsText !== null && (
               <pre className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap break-all">
-                {logsText || "(로그 없음)"}
+                {logsText || t("page.noLogs")}
               </pre>
             )}
           </div>
@@ -256,24 +258,24 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="프로토타입 초기화 확인"
+            aria-label={t("page.resetConfirmLabel")}
             className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="font-bold text-lg">
-              &apos;{resetTarget.slug}&apos; 프로토타입 초기화
+              {t("page.resetConfirmTitle").replace("{slug}", resetTarget.slug)}
             </h2>
             {/* Reassurance sits right under the title, not at the end — it
                 sets context ("this isn't total") but must not be the last
                 thing read, or it blunts the irreversibility warning below. */}
             <p className="text-xs text-slate-400 mt-1">
-              설계 문서(PROTOTYPE-*.md)는 남으므로 다시 빌드할 수 있습니다.
+              {t("page.resetKeepsSpec")}
             </p>
-            <p className="text-sm text-slate-600 mt-3">다음 항목이 삭제됩니다:</p>
+            <p className="text-sm text-slate-600 mt-3">{t("page.resetDeletesIntro")}</p>
             <ul className="text-sm text-slate-600 mt-1 list-disc list-inside space-y-0.5">
-              <li>빌드 결과와 실행 중인 서버</li>
-              <li>빌드 대화 기록</li>
-              <li>검증 설문</li>
+              <li>{t("page.resetItemBuild")}</li>
+              <li>{t("page.resetItemChat")}</li>
+              <li>{t("page.resetItemSurvey")}</li>
             </ul>
             {/* Irreversibility gets its OWN sentence, placed last, with
                 nothing after it to soften it — matching ProjectList.tsx's
@@ -281,12 +283,12 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 irreversible to lose, so the 0-response case stays quiet. */}
             {resetTarget.answers !== null && resetTarget.answers > 0 && (
               <p className="text-sm font-semibold text-rose-600 mt-3">
-                응답 {resetTarget.answers}건은 되돌릴 수 없습니다.
+                {t("page.resetResponsesWarn").replace("{n}", String(resetTarget.answers))}
               </p>
             )}
             {resetTarget.answers === null && (
               <p className="text-sm font-semibold text-amber-700 mt-3">
-                현재 응답 수를 확인하지 못했습니다 — 응답이 있다면 되돌릴 수 없이 삭제됩니다.
+                {t("page.resetResponsesUnknown")}
               </p>
             )}
             {resetError && <p className="text-sm text-rose-600 mt-3">{resetError}</p>}
@@ -297,7 +299,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 disabled={busySlug === resetTarget.slug}
                 className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
               >
-                취소
+                {t("page.cancel")}
               </button>
               <button
                 type="button"
@@ -305,7 +307,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 disabled={busySlug === resetTarget.slug}
                 className="px-4 py-2 text-sm rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold disabled:opacity-50"
               >
-                초기화
+                {t("page.reset")}
               </button>
             </div>
           </div>

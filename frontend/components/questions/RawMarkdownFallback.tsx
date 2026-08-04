@@ -2,6 +2,7 @@
 import { useState } from "react";
 import type { QuestionFile } from "@/lib/api/types";
 import { Markdown } from "@/components/Markdown";
+import { useT } from "@/lib/i18n/provider";
 
 export function RawMarkdownFallback({
   file,
@@ -12,6 +13,7 @@ export function RawMarkdownFallback({
   onSubmit: (text: string) => void;
   submitting: boolean;
 }) {
+  const t = useT();
   const [text, setText] = useState("");
   return (
     <form
@@ -22,8 +24,8 @@ export function RawMarkdownFallback({
       className="space-y-4"
     >
       <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-5 py-4 text-sm">
-        <p className="font-bold text-amber-900">표준 형식으로 파싱하지 못했습니다</p>
-        <p className="text-amber-800 mt-1">아래 원본 내용을 확인하고 자유롭게 답변을 작성해 주세요.</p>
+        <p className="font-bold text-amber-900">{t("q.parseFailed")}</p>
+        <p className="text-amber-800 mt-1">{t("q.parseFailedBody")}</p>
       </div>
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <Markdown text={file.raw_markdown ?? ""} />

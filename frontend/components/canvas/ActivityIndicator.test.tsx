@@ -2,34 +2,40 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { ActivityIndicator, activityLabel, formatElapsed } from "./ActivityIndicator";
+import { dictFor, type Dict } from "@/lib/i18n";
+
+// 실제 딕셔너리를 탄다 — 가짜 t를 넘기면 이 문구들이 딕셔너리에서 온다는 사실이
+// 테스트에서 사라진다. 기본 로케일(ko)이므로 단정은 한국어 그대로다.
+const koDict = dictFor("ko");
+const t = (key: keyof Dict) => koDict[key];
 
 afterEach(() => vi.useRealTimers());
 
 describe("formatElapsed", () => {
   it("60초 미만은 초만 보여준다", () => {
-    expect(formatElapsed(0)).toBe("0초");
-    expect(formatElapsed(59)).toBe("59초");
+    expect(formatElapsed(0, t)).toBe("0초");
+    expect(formatElapsed(59, t)).toBe("59초");
   });
 
   it("60초 이상은 분을 함께 보여준다 — 세 자리 초는 크기가 한눈에 안 읽힌다", () => {
-    expect(formatElapsed(60)).toBe("1분");
-    expect(formatElapsed(95)).toBe("1분 35초");
-    expect(formatElapsed(600)).toBe("10분");
+    expect(formatElapsed(60, t)).toBe("1분");
+    expect(formatElapsed(95, t)).toBe("1분 35초");
+    expect(formatElapsed(600, t)).toBe("10분");
   });
 });
 
 describe("activityLabel", () => {
   it("도구가 없으면 생각 중으로 대체한다 — 턴 시작 직후 구간이 가장 불안하다", () => {
-    expect(activityLabel(null)).toBe("생각하고 있어요");
-    expect(activityLabel(undefined)).toBe("생각하고 있어요");
+    expect(activityLabel(null, t)).toBe("생각하고 있어요");
+    expect(activityLabel(undefined, t)).toBe("생각하고 있어요");
   });
 
   it("build_complete도 라벨이 있다 — 폴백이 영어 도구명을 노출하면 안 된다", () => {
-    expect(activityLabel("build_complete")).toBe("빌드를 마무리하고 있어요");
+    expect(activityLabel("build_complete", t)).toBe("빌드를 마무리하고 있어요");
   });
 
   it("모르는 도구는 폴백으로 도구명을 그대로 쓴다", () => {
-    expect(activityLabel("weird_tool")).toBe("weird_tool 실행 중");
+    expect(activityLabel("weird_tool", t)).toBe("weird_tool 실행 중");
   });
 });
 

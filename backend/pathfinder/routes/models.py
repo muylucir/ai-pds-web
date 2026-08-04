@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 
+from pathfinder import error_codes as ec
 from pathfinder.auth.deps import require_admin
 from pathfinder.model_catalog import CatalogError
 
@@ -99,13 +100,11 @@ async def admin_list_models():
 @admin_router.post("/models", status_code=201)
 async def admin_add_model(body: AddModel):
     if not body.name.strip():
-        raise HTTPException(status_code=422, detail="이름을 입력하세요.")
+        raise HTTPException(status_code=422, detail=ec.NAME_REQUIRED)
     if not body.model_id.strip():
-        raise HTTPException(status_code=422, detail="모델 ID를 입력하세요.")
+        raise HTTPException(status_code=422, detail=ec.MODEL_ID_REQUIRED)
     if not _MODEL_ID_RE.match(body.model_id.strip()):
-        raise HTTPException(status_code=422,
-                            detail="모델 ID는 영숫자, '.', '-', '_', ':'만 "
-                                   "포함해야 합니다.")
+        raise HTTPException(status_code=422, detail=ec.MODEL_ID_CHARSET)
     try:
         entry = await _catalog().add(body.name.strip(), body.model_id.strip(),
                                      display=body.display)
@@ -118,7 +117,7 @@ async def admin_add_model(body: AddModel):
 async def admin_patch_model(model_id: str, body: PatchModel):
     name = body.name.strip() if body.name is not None else None
     if name is not None and not name:
-        raise HTTPException(status_code=422, detail="이름을 입력하세요.")
+        raise HTTPException(status_code=422, detail=ec.NAME_REQUIRED)
     try:
         entry = await _catalog().update(model_id, name=name, display=body.display)
     except CatalogError as exc:

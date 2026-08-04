@@ -248,8 +248,8 @@
     <!-- HERO -->
     <section class="hero" id="top">
       <p class="kicker">Facilitator Runbook · 진행자 전용 · 참가자에게 띄우지 않습니다</p>
-      <h1><span class="gr">Pathfinder 워크샵</span><br>운영 대본</h1>
-      <p>반일 핸즈온(Path A)의 당일 진행 대본입니다. 단계마다 <b>화면에서 무엇이 일어나는지 · 진행자가 개입할 지점 · 흔한 막힘</b>을 정리했습니다. 참가자용 소개자료는 <code>intro.html</code>입니다.</p>
+      <h1><span class="gr">AI-PLC Discovery 워크샵</span><br>운영 대본</h1>
+      <p>반일 핸즈온(Path A)의 당일 진행 대본입니다. 오늘 도는 것은 <b>AI-PLC</b>(AI-Driven Product Life Cycle, <code>aws-samples/sample-ai-plc</code>)의 <b>Discovery</b> 구간이고, 구동 도구가 Pathfinder입니다. 단계마다 <b>화면에서 무엇이 일어나는지 · 진행자가 개입할 지점 · 흔한 막힘</b>을 정리했습니다. 참가자용 소개자료는 <code>intro.html</code>입니다.</p>
       <div class="meta">
         <span class="chip">🕘 반일 · 약 4시간</span>
         <span class="chip">👥 PM · 기획자</span>
@@ -444,7 +444,7 @@
 
       <div class="note warn">
         <div class="h">⚠️ 범위 확장이 시간을 잡아먹는 1번 원인</div>
-        <p>참가자는 자연히 기능을 늘립니다("추천도 넣고, 재고 연동도…"). Envision 단계에서 <b>"오늘 프로토타입으로 확인할 가설 하나"</b>로 좁히도록 계속 당겨 주세요. 명세 단계에서 기능이 5개를 넘으면 빌드가 45분을 넘깁니다.</p>
+        <p>참가자는 자연히 기능을 늘립니다("추천도 넣고, 재고 연동도…"). Envision stage에서 <b>"오늘 프로토타입으로 확인할 가설 하나"</b>로 좁히도록 계속 당겨 주세요. 명세 단계에서 기능이 5개를 넘으면 빌드가 45분을 넘깁니다.</p>
       </div>
     </section>
 
@@ -685,6 +685,7 @@
     <section id="gates">
       <h2>게이트 운영 — 워크샵의 핵심</h2>
       <p class="lead">참가자가 오늘 배워야 할 단 하나를 고른다면: <b>AI가 만든 것을 사람이 판단하는 경험</b>입니다. 게이트가 그 순간입니다.</p>
+      <p>게이트는 우리가 워크샵용으로 넣은 장치가 아니라 <b>AI-PLC 룰의 규정</b>입니다. 상류 룰에는 과신 방지(<code>overconfidence-prevention.md</code>) 항목이 따로 있고, <b>&ldquo;확실하지 않으면 물어라 &mdash; 과신은 나쁜 결과로 이어진다&rdquo;</b>를 원칙으로 명시합니다. 진행자가 대신 승인하는 것은 편법이 아니라 <b>방법론을 어기는 것</b>입니다.</p>
 
       <div class="note stop">
         <div class="h">🚫 하지 말아야 할 것</div>
@@ -696,23 +697,23 @@
         <thead><tr><th>게이트</th><th>이때 물어볼 것</th></tr></thead>
         <tbody>
           <tr>
-            <td><span class="s">페인 포인트 분석</span></td>
+            <td><span class="s">Envision</span><br><span style="font-size:12px; color:var(--muted)">페인 포인트 분석</span></td>
             <td>"이게 <b>우리 고객</b>의 문제입니까, 아니면 일반적으로 그럴 것 같은 문제입니까?" — 가장 흔한 오류가 일반론으로 흐르는 것입니다.</td>
           </tr>
           <tr>
-            <td><span class="s">PR/FAQ</span> <span class="pill gate">핵심</span></td>
+            <td><span class="s">Envision</span> <span class="pill gate">핵심</span><br><span style="font-size:12px; color:var(--muted)">PR/FAQ</span></td>
             <td>"고객이 이걸 읽고 <b>무엇이 편해지는지</b> 알 수 있습니까?" / "여기 적힌 고객이 실제 우리 고객입니까?"</td>
           </tr>
           <tr>
-            <td><span class="s">솔루션 선택</span></td>
+            <td><span class="s">Solution Analysis</span><br><span style="font-size:12px; color:var(--muted)">솔루션 선택</span></td>
             <td>"이 솔루션이 <b>아까 그 페인 포인트</b>를 푸는 게 맞습니까? 다른 문제를 풀고 있지 않습니까?"</td>
           </tr>
           <tr>
-            <td><span class="s">프로토타입 명세</span> <span class="pill hot">범위 관리</span></td>
+            <td><span class="s">Prototype Spec</span> <span class="pill hot">범위 관리</span><br><span style="font-size:12px; color:var(--muted)"><code>PROTOTYPE-*.md</code></span></td>
             <td>"이걸 만들면 <b>어떤 가설이 확인</b>됩니까?" / "기능 중 <b>빼도 되는 것</b>은 무엇입니까?"</td>
           </tr>
           <tr>
-            <td><span class="s">Discovery 문서</span></td>
+            <td><span class="s">Discovery Document</span><br><span style="font-size:12px; color:var(--muted)">최종 산출물</span></td>
             <td>"이 문서만 받은 개발팀이 <b>무엇을 만들지 알 수 있습니까</b>? 빠진 게 있습니까?"</td>
           </tr>
         </tbody>
@@ -727,6 +728,33 @@
     <!-- 7. TROUBLESHOOTING -->
     <section id="trouble">
       <h2>트러블슈팅 · FAQ <span class="badge warm">현장 대응</span></h2>
+
+      <h3>참가자가 방법론에 대해 물을 것</h3>
+      <p class="lead">기술 장애보다 이 질문들이 먼저 나옵니다. <b>SA/AM 자료와 같은 답</b>을 쓰세요.</p>
+
+      <table>
+        <thead><tr><th>질문</th><th>이렇게 답하세요</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>"리포를 받아서 직접 돌리면 되지 않나요?"</b></td>
+            <td>돌릴 수 있습니다 — <b>Claude Code나 Kiro를 쓸 줄 아는 사람이라면.</b> 상류 룰은 질문을 채팅이 아니라 <code>*-questions.md</code> 파일에 넣고 <code>[Answer]:</code> 태그 뒤에 답하도록 규정합니다. 오늘 참가자에게 필요한 것은 방법론이지 터미널이 아닙니다. Pathfinder는 <b>그 간극만</b> 메웁니다.</td>
+          </tr>
+          <tr>
+            <td><b>"AI-PLC가 뭔가요?"</b></td>
+            <td>AWS가 공개한 AI 기반 제품 라이프사이클 방법론입니다(<code>aws-samples/sample-ai-plc</code>). Discovery → Inception → Construction → Operations 네 구간이고, <b>오늘은 첫 구간인 Discovery</b>를 돕니다.</td>
+          </tr>
+          <tr>
+            <td><b>"Pathfinder는 AWS 제품인가요?"</b></td>
+            <td>아닙니다. <b>AI-PLC 방법론을 돌리기 위한 도구</b>입니다. 오늘 배워 가는 것은 방법론이고, 도구는 그것을 반나절에 완주하게 하는 수단입니다.</td>
+          </tr>
+          <tr>
+            <td><b>"워크샵 끝나면 못 쓰는 거죠?"</b></td>
+            <td>환경은 정리되지만 <b>방법론은 공개돼 있습니다.</b> 산출물 zip을 받아 가면 사내에서 같은 절차를 이어서 돌릴 수 있습니다. <b>zip 다운로드를 반드시 챙기게 하세요</b> — 이 답을 하려면 산출물이 손에 있어야 합니다.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>기술 장애</h3>
       <p class="lead">증상 → 원인 → 대처. <b>위쪽이 더 자주 발생</b>하는 순서입니다.</p>
 
       <table>

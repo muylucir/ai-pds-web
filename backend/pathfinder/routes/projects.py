@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from pathfinder import app as app_module
+from pathfinder import error_codes as ec
 from pathfinder.parsers.state import parse_state_file
 from pathfinder.project_store import write_manifest, delete_project_data
 
@@ -40,6 +41,10 @@ class CreateProject(BaseModel):
     # 이 프로젝트가 쓸 Bedrock 모델 id. 미지정이면 env 기본값으로 돈다
     # (app.project_model의 폴백 체인).
     model_id: str | None = None
+    # 이 프로젝트의 생성물 언어("ko"|"en"). 미지정이면 "ko"로 돈다.
+    # UI 언어(pf_lang 쿠키)와 별개다 — 이쪽은 문서·프로토타입·채팅의 언어이고
+    # 생성 시점 1회 결정이다.
+    language: str | None = None
 
 
 async def _validate_model_id(model_id: str | None) -> None:
@@ -57,7 +62,28 @@ async def _validate_model_id(model_id: str | None) -> None:
     allowed = {e.model_id for e in await app_module.model_catalog().displayed()}
     if model_id not in allowed:
         raise HTTPException(status_code=400,
-                            detail="선택할 수 없는 모델입니다.")
+                            detail=ec.MODEL_NOT_SELECTABLE)
+
+
+#: 허용되는 생성물 언어. ProjectRegistry._LANGUAGES와 같은 집합이어야 한다 —
+#: 여기서 통과시킨 값이 그쪽 폴백에 걸리면 사용자가 고른 언어가 조용히
+#: 무시된다.
+_LANGUAGES = ("ko", "en")
+
+
+def _validate_language(language: str | None) -> None:
+    """두 값만 허용한다.
+
+    임의 문자열이 매니페스트에 들어가면 place_rules가 어느 지시 블록을 붙일지
+    결정할 수 없고, ProjectRegistry.get_language가 "ko"로 떨어뜨린다 — 즉
+    사용자가 고른 언어가 조용히 무시된다. 생성 시점에 막는 것이 그 침묵을
+    없애는 유일한 자리다.
+    """
+    if language is None:
+        return
+    if language not in _LANGUAGES:
+        raise HTTPException(status_code=400,
+                            detail=ec.LANGUAGE_UNSUPPORTED)
 
 
 @router.post("/projects")
@@ -67,6 +93,7 @@ async def create_project(body: CreateProject):
     # 워크스페이스를 만들기 전에 검증한다 — 거절할 요청 때문에 로컬 디렉토리와
     # 러너를 만들고 되돌리는 것은 낭비다.
     await _validate_model_id(body.model_id)
+    _validate_language(body.language)
     workspace = await app_module.make_workspace(body.project_id)
     # 매니페스트와 레지스트리가 같은 created_at을 갖도록 여기서 확정 —
     # 목록 정렬(생성일 오름차순) 기준이 재시작 전후로 달라지지 않는다.
@@ -75,7 +102,8 @@ async def create_project(body: CreateProject):
         try:
             await write_manifest(app_module.projects_root_s3_factory(),
                                  body.project_id, body.name,
-                                 created_at=created_at, model_id=body.model_id)
+                                 created_at=created_at, model_id=body.model_id,
+                                 language=body.language)
         except Exception:
             # 스펙 결정: 재시작하면 사라질 프로젝트를 조용히 만들지 않는다.
             _log.exception("manifest write failed for %s", body.project_id)
@@ -85,10 +113,14 @@ async def create_project(body: CreateProject):
                 _log.exception("workspace cleanup after manifest failure failed")
             raise HTTPException(status_code=500, detail="project persistence failed")
     app_module.registry.register(body.project_id, body.name,
-                                 created_at=created_at, model_id=body.model_id)
+                                 created_at=created_at, model_id=body.model_id,
+                                 language=body.language)
     app_module.registry.attach(body.project_id, workspace)
     return {"project_id": body.project_id, "name": body.name,
-            "model_id": body.model_id}
+            "model_id": body.model_id,
+            # 실제로 돌게 될 언어를 돌려준다(미지정 → "ko"). null을 돌려주면
+            # 프론트가 폴백 규칙을 또 알아야 한다.
+            "language": app_module.registry.get_language(body.project_id)}
 
 @router.get("/projects")
 async def list_projects(page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=50)):
@@ -103,6 +135,7 @@ async def list_projects(page: int = Query(1, ge=1), size: int = Query(10, ge=1, 
             {"project_id": pid, "name": app_module.registry.get_name(pid),
              "created_at": app_module.registry.get_created_at(pid),
              "model_id": app_module.registry.get_model_id(pid),
+             "language": app_module.registry.get_language(pid),
              "progress": prog}
             for pid, prog in zip(page_ids, progresses)
         ],
@@ -124,7 +157,8 @@ async def get_project(pid: str):
     return {"project_id": pid,
             "name": app_module.registry.get_name(pid),
             "created_at": app_module.registry.get_created_at(pid),
-            "model_id": app_module.registry.get_model_id(pid)}
+            "model_id": app_module.registry.get_model_id(pid),
+            "language": app_module.registry.get_language(pid)}
 
 @router.delete("/projects/{pid}")
 async def delete_project(pid: str):

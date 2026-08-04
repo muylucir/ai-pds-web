@@ -4,6 +4,7 @@ import { useAsync } from "@/lib/useAsync";
 import { answeredCount } from "@/lib/stageProgress";
 import { QuestionSummaryCard } from "./QuestionSummaryCard";
 import { ClarificationCard } from "./ClarificationCard";
+import { useT } from "@/lib/i18n/provider";
 
 function basename(path: string): string {
   const parts = path.split("/");
@@ -24,10 +25,11 @@ export function QuestionCardSlot({
   onChoose: (text: string) => void;
   busy: boolean;
 }) {
+  const t = useT();
   const { data: file, loading, error } = useAsync(() => getQuestionFile(projectId, path), [projectId, path]);
 
-  if (loading && !file) return <p className="text-xs text-slate-400 ml-1">불러오는 중…</p>;
-  if (error) return <p className="text-xs text-rose-600 ml-1">질문을 불러오지 못했습니다.</p>;
+  if (loading && !file) return <p className="text-xs text-slate-400 ml-1">{t("canvas.loading")}</p>;
+  if (error) return <p className="text-xs text-rose-600 ml-1">{t("canvas.questionsLoadFailed")}</p>;
   if (!file) return null;
 
   const { answered, total } = answeredCount(file);

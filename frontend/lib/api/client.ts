@@ -61,14 +61,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function createProject(projectId: string, name?: string,
-                                    modelId?: string): Promise<ProjectSummary> {
-  const body: { project_id: string; name?: string; model_id?: string } = {
+                                    modelId?: string,
+                                    language?: string): Promise<ProjectSummary> {
+  const body: { project_id: string; name?: string; model_id?: string;
+                language?: string } = {
     project_id: projectId,
   };
   if (name !== undefined) body.name = name;
   // 미지정은 키를 아예 빼서 보낸다 — 서버의 optional 필드와 맞고, null을 보내는
   // 것과 결과가 같으므로 더 적게 보내는 쪽을 고른다.
   if (modelId !== undefined) body.model_id = modelId;
+  if (language !== undefined) body.language = language;
   return request<ProjectSummary>("/projects", { method: "POST", body: JSON.stringify(body) });
 }
 
