@@ -139,6 +139,24 @@ export class PathfinderHostingStack extends cdk.Stack {
         'proto-config/projects', 'proto-config/sessions',
         'discovery-config/projects', 'discovery-config/sessions',
         '**/.proto-host.log', '**/.proto-host.pid',
+        // 이 리포를 개발할 때 쓰는 Claude Code 설정 — **런타임 트리에 있으면
+        // 안 된다.** 에이전트의 cwd가 /opt/pathfinder/workspaces/{pid}이고
+        // 이 파일은 /opt/pathfinder/.claude/에 실리므로 **조상**이 된다.
+        // Claude Code는 cwd에서 위로 올라가며 CLAUDE.md를 전부 로드한다 —
+        // 실제 CLI로 실측했다(cwd를 자손으로 두고 --debug로 로드 목록 확인:
+        // `/tmp/ancprobe/.claude/CLAUDE.md (ancestor project)`가 나왔다).
+        //
+        // 그래서 이것이 2026-08-04 결함의 남은 절반이었다: .claude/CLAUDE.md의
+        // 한국어 한 줄이 영어 프로젝트의 에이전트 컨텍스트에 매 턴 들어갔다.
+        // discovery-config를 언어 중립으로 고쳐도 이 경로가 남아 있었다.
+        // settings.json의 graphify 훅도 같이 실려 워크숍과 무관한 Glob/Grep
+        // 훅이 붙는다.
+        //
+        // config dir(discovery-config·proto-config)과 달리 이건 **끄는 스위치가
+        // 없다**: CLAUDE_CONFIG_DIR은 "user" 레벨만 옮기고, 조상 탐색은 cwd가
+        // 앱 트리 안에 있다는 사실에서 나온다. 에셋에서 빼는 것이 유일하게
+        // 확실한 차단이다.
+        '.claude',
       ],
     });
     asset.grantRead(role);
