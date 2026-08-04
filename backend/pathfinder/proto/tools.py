@@ -20,6 +20,7 @@ from typing import Any, Callable
 from claude_agent_sdk import tool
 
 from pathfinder.models import AgentEvent
+from pathfinder.proto import prompts
 from pathfinder.proto.session import has_build_output
 
 _log = logging.getLogger("pathfinder.proto")
@@ -65,18 +66,20 @@ def _has_output(workspace: str) -> bool:
 
 
 def build_proto_tools(workspace: str,
-                      emit: Callable[[AgentEvent], None]) -> list:
+                      emit: Callable[[AgentEvent], None],
+                      language: str = "ko") -> list:
     """워크스페이스 + 이벤트 싱크에 바인딩된 SdkMcpTool 리스트.
 
     Discovery의 build_tools와 같은 계약이다 — 이 리스트 자체는
     ClaudeAgentOptions에 바로 넣을 수 없고, 호출부(proto/builder.py)가
     create_sdk_mcp_server(name=PROTO_MCP_SERVER_NAME, tools=...)로 감싼다.
+
+    language는 도구 설명과 반환 문자열의 언어다 — 셋 다 모델이 읽는
+    프롬프트이므로 대화 언어와 맞아야 한다(proto/prompts.py).
     """
 
     @tool("build_complete",
-          "프로토타입 빌드가 완료되었음을 선언한다. **prototype/ 아래에 실제 "
-          "산출물을 만든 뒤** 호출해야 한다 — 비어 있으면 선언이 거부된다. "
-          "이 선언 뒤 빌드 세션이 종료되므로, 아직 작업이 남았으면 호출하지 마라.",
+          prompts.build_complete_description(language),
           _BUILD_COMPLETE_SCHEMA)
     async def build_complete(args: dict[str, Any]) -> dict[str, Any]:
         summary = args["summary"]
@@ -89,12 +92,10 @@ def build_proto_tools(workspace: str,
         if not _has_output(workspace):
             _log.warning("build_complete refused: prototype/ is empty (%s)",
                          workspace)
-            return _text_result(
-                "거부됨 — 작업 디렉토리의 `prototype/` 아래에 산출물이 없다. "
-                "완성물을 `prototype/`에 쓴 뒤 다시 선언해라.")
+            return _text_result(prompts.build_complete_rejection(language))
 
         emit(AgentEvent(kind="build_complete", payload=json.dumps(
             {"summary": summary, "remaining": remaining}, ensure_ascii=False)))
-        return _text_result("빌드 완료가 기록되었다. 세션을 종료한다.")
+        return _text_result(prompts.build_complete_recorded(language))
 
     return [build_complete]

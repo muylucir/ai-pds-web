@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import AsyncIterator, Callable, Literal, Protocol
 
 from pathfinder.models import AgentEvent
+from pathfinder.proto import prompts
 from pathfinder.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
@@ -144,6 +145,7 @@ class PrototypeSession:
         build_root: Path,
         builder_factory: Callable[[str, bool], BuilderLike],
         semaphore: SemaphoreLike,
+        language: str = "ko",
         idle_seconds: int | float = 1800,
     ):
         self.project_id = project_id
@@ -152,6 +154,9 @@ class PrototypeSession:
         self._build_root = Path(build_root)
         self._builder_factory = builder_factory
         self._semaphore = semaphore
+        # 이 프로젝트의 생성물 언어. 개시 프롬프트와 build_complete 도구
+        # 텍스트를 이 값으로 고른다(proto/prompts.py).
+        self._language = language
         self._idle_seconds = idle_seconds
 
         self.status: SessionStatus = "starting"
@@ -350,9 +355,7 @@ class PrototypeSession:
         if self._completion is not None:
             yield AgentEvent(
                 kind="error",
-                text="이 빌드 세션은 이미 완료되어 더 이상 메시지를 받을 수 "
-                     "없습니다. 개선 작업이 필요하면 '개선 이어서 하기'로 "
-                     "새 세션을 시작해 주세요.",
+                text=prompts.session_already_complete(self._language),
             )
             return
         self._arm_idle_timer()
@@ -498,44 +501,11 @@ class PrototypeSession:
         return self._plan_prompt()
 
     def _plan_prompt(self) -> str:
-        spec_key = self._spec_key()
-        proxy_path = f"/api/proto/{self.project_id}/{self.slug}/"
-        return (
-            f"`{spec_key}` 파일을 읽고, 프로토타입 구현 계획을 세워줘.\n"
-            "**이번 턴에서는 계획만 세우고 빌드는 시작하지 마.**\n\n"
-            "진행 방식:\n"
-            f"1. 먼저 `{spec_key}`를 읽고 요구사항을 정확히 파악해줘.\n"
-            "2. 그다음 구현 계획을 제시해줘. 기술 스택, 만들 화면/기능 목록, "
-            "파일 구조, 작업 순서를 포함하고, 스펙에서 애매했던 부분과 네가 임의로 "
-            "가정한 내용도 함께 밝혀줘.\n"
-            "3. 계획을 제시한 뒤 **반드시 AskUserQuestion으로 이 계획대로 실행할지, "
-            "수정할 부분이 있는지 물어보고 내 답을 기다려줘.** 승인 없이 다음 단계로 "
-            "넘어가면 안 돼.\n"
-            "4. 계획 단계에서는 파일을 만들거나 수정하지 마(Write/Edit 금지). "
-            "스펙을 읽는 것 외에는 아무것도 건드리지 말고, 계획은 메시지 본문으로만 "
-            "보여줘.\n"
-            "5. 내가 승인한 뒤에 빌드를 시작해줘. 빌드 중에도 불확실하거나 결정이 "
-            "필요한 사항이 있으면 마음대로 넘기지 말고 AskUserQuestion으로 먼저 "
-            "물어봐줘.\n\n"
-            "빌드 단계에서 지킬 것(승인 후 적용):\n"
-            "- 완성물은 반드시 작업 디렉토리 아래 `prototype/`에 두고, 빌드 방법과 "
-            "실행 방법을 설명하는 README를 함께 작성해줘.\n"
-            f"- 이 프로토타입은 경로 프록시(예: `{proxy_path}`) 하위 경로에서 서빙돼. "
-            "basePath와 상대 경로를 사용해서, 어떤 하위 경로에 배치되어도 정상 동작하도록 "
-            "구현해줘(절대 경로 하드코딩 금지).\n"
-            "- 코드에서 LLM 호출이 필요하면 Amazon Bedrock을 기본 자격증명 체인(인스턴스/"
-            "실행 롤)으로 사용해줘. API 키를 코드에 하드코딩하지 말고, 리전과 모델 ID는 "
-            "환경변수로 받도록 구현해줘.\n"
-            "- **모델 ID는 반드시 `process.env.BEDROCK_MODEL_ID`(또는 언어에 맞는 "
-            "동등 표현)로 읽어줘.** 호스팅이 이 이름으로 프로젝트에 설정된 모델을 "
-            "주입한다 — 다른 이름을 쓰거나 특정 모델 ID를 기본값으로 박아 두면 "
-            "사용자가 고른 모델이 무시된다. 환경변수가 없을 때의 폴백이 필요하면 "
-            "하드코딩한 모델로 조용히 넘어가지 말고 설정이 없다는 것을 드러내줘.\n"
-            "- 프로토타입이 완성되면 **`build_complete` 도구로 완료를 선언해줘.** "
-            "무엇을 만들었는지 요약(summary)과, 남은 작업이나 알려진 한계가 있으면 "
-            "remaining에 적어줘. 이 선언 뒤 빌드 세션이 종료되니, 아직 작업이 "
-            "남았으면 선언하지 말고 계속 진행해줘.\n"
-        )
+        """문장 자체는 proto/prompts.py가 언어별로 갖고 있다."""
+        return prompts.plan_prompt(
+            self._language,
+            spec_key=self._spec_key(),
+            proxy_path=f"/api/proto/{self.project_id}/{self.slug}/")
 
     def _resume_prompt(self) -> str:
         """Deliberately short. The agent already has the prior transcript and
@@ -545,18 +515,12 @@ class PrototypeSession:
 
         Unless the build tree is GONE, which the transcript cannot tell it --
         see `_missing_output_prompt`.
+
+        문장 자체는 proto/prompts.py가 언어별로 갖고 있다.
         """
         if not has_build_output(self.build_dir()):
             return self._missing_output_prompt()
-        return (
-            "이전 빌드 세션을 이어서 진행한다.\n"
-            "**아직 아무것도 빌드하거나 수정하지 마.**\n\n"
-            "1. 지금까지 진행한 내용과 남은 작업을 짧게 정리해줘.\n"
-            "2. 그다음 **AskUserQuestion으로 이번에 무엇을 진행할지 물어보고 내 답을 "
-            "기다려줘.** 남은 작업을 이어서 할지, 다른 것을 먼저 할지 내가 고를 수 "
-            "있게 선택지를 제시해줘.\n"
-            "3. 내가 고른 뒤에 작업을 시작해줘.\n"
-        )
+        return prompts.resume_prompt(self._language)
 
     def _missing_output_prompt(self) -> str:
         """산출물이 사라진 뒤의 개시 턴 — 찾지 말고 다시 만들라고 말한다.
@@ -574,22 +538,11 @@ class PrototypeSession:
         스펙을 다시 읽히는 것이 요점이다. 트랜스크립트의 기억은 요약이 아니라
         대화 기록이고, 거기서 코드를 복원할 수는 없다. 스펙은 S3에 살아 있고
         `start()`가 매번 로컬에 새로 심는다 -- 처음 빌드와 같은 입력이다.
+
+        문장 자체는 proto/prompts.py가 언어별로 갖고 있다.
         """
-        return (
-            "이전 빌드 세션의 기록은 남아 있지만, 작업 디렉토리의 "
-            "`prototype/`에 **산출물이 없다.** 초기화됐거나 빌드 환경이 "
-            "교체된 것이다.\n\n"
-            "**이전 코드를 찾지 마.** 이 환경 어디에도 남아 있지 않다. "
-            f"`{self._spec_key()}`를 다시 읽고 **처음부터 다시 만들면 된다.** "
-            "이전 대화에서 정한 방향과 결정사항은 그대로 활용해줘.\n\n"
-            "**아직 빌드는 시작하지 마.**\n"
-            "1. 스펙을 읽고, 이전 대화에서 합의된 내용을 반영한 구현 계획을 "
-            "짧게 제시해줘.\n"
-            "2. 그다음 **AskUserQuestion으로 이 계획대로 다시 만들지 물어보고 내 "
-            "답을 기다려줘.**\n"
-            "3. 내가 승인한 뒤에 빌드를 시작해줘. 완성물은 작업 디렉토리 아래 "
-            "`prototype/`에 두고, 끝나면 `build_complete`로 완료를 선언해줘.\n"
-        )
+        return prompts.missing_output_prompt(self._language,
+                                             spec_key=self._spec_key())
 
     def _handoff_prompt(self, handoff: dict) -> str:
         """완료된 빌드를 개선하는 새 세션의 개시 턴.
@@ -603,24 +556,17 @@ class PrototypeSession:
         트리는 로컬 디스크에 있어서 -- 인스턴스가 교체되면 요약만 살아남는다.
         "이미 빌드가 완료됐다"고 말하면서 없는 `prototype/`을 살펴보게 하는
         것이 정확히 그 탐색을 유발한다(`_missing_output_prompt` 참조).
+
+        문장 자체는 proto/prompts.py가 언어별로 갖고 있다.
         """
         if not has_build_output(self.build_dir()):
             return self._missing_output_prompt()
-        remaining = handoff.get("remaining") or "(따로 기록된 것 없음)"
-        return (
-            f"이 프로토타입은 이미 한 번 빌드가 완료됐다. 이번 세션은 개선 "
-            f"작업이다.\n\n"
-            f"이전 빌드 요약:\n{handoff['summary']}\n\n"
-            f"남은 작업으로 기록된 것:\n{remaining}\n\n"
-            "**아직 아무것도 수정하지 마.**\n"
-            f"1. 먼저 작업 디렉토리의 `prototype/`을 살펴보고 현재 상태를 파악해줘. "
-            f"필요하면 `{self._spec_key()}`도 다시 읽어줘.\n"
-            "2. 그다음 **AskUserQuestion으로 이번에 무엇을 개선할지 물어보고 내 "
-            "답을 기다려줘.** 위에 기록된 남은 작업을 할지, 다른 것을 할지 내가 "
-            "고를 수 있게 선택지를 제시해줘.\n"
-            "3. 내가 고른 뒤에 작업을 시작해줘. 개선이 끝나면 다시 "
-            "`build_complete`로 완료를 선언해줘.\n"
-        )
+        return prompts.handoff_prompt(
+            self._language,
+            spec_key=self._spec_key(),
+            summary=handoff["summary"],
+            remaining=handoff.get("remaining")
+            or prompts.missing_remaining_note(self._language))
 
 
 async def purge_session_state(s3, slug: str) -> None:

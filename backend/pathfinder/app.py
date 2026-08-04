@@ -332,6 +332,9 @@ def proto_session_factory(project_id: str, slug: str):
     config_dir = _proto_config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
     store = S3SessionStore(s3, slug=slug) if os.environ.get("PATHFINDER_S3_BUCKET") else None
+    # 한 번 읽어 빌더와 세션에 같은 값을 준다 — 둘이 어긋나면 프롬프트와 도구
+    # 설명의 언어가 갈린다.
+    language = project_language(project_id)
 
     def builder_factory(session_id: str, resume: bool):
         return PrototypeBuilder(
@@ -341,6 +344,7 @@ def proto_session_factory(project_id: str, slug: str):
             resume=resume,
             session_store=store,
             anthropic_model=project_model(project_id),
+            language=language,
             permission_mode=_proto_permission_mode(),
         )
 
@@ -349,6 +353,7 @@ def proto_session_factory(project_id: str, slug: str):
         build_root=build_root,
         builder_factory=builder_factory,
         semaphore=build_semaphore,
+        language=language,
     )
 
 

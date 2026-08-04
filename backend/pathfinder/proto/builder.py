@@ -159,7 +159,8 @@ def _proto_tools_for(builder: "PrototypeBuilder") -> list:
     받는다. 별도 경로를 만들면 그 보장을 잃는다.
     """
     from pathfinder.proto.tools import build_proto_tools
-    return build_proto_tools(builder._workspace, builder._queue.append)
+    return build_proto_tools(builder._workspace, builder._queue.append,
+                            builder._language)
 
 
 def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
@@ -269,6 +270,7 @@ class PrototypeBuilder:
     def __init__(self, workspace: str, config_dir: str, session_id: str,
                  resume: bool, session_store: Any = None,
                  anthropic_model: str | None = None,
+                 language: str = "ko",
                  permission_mode: str = DEFAULT_PERMISSION_MODE,
                  client_factory: Callable[[], Any] | None = None):
         self._workspace = workspace
@@ -277,6 +279,9 @@ class PrototypeBuilder:
         self._resume = resume
         self._session_store = session_store
         self._anthropic_model = anthropic_model
+        # 이 프로젝트의 생성물 언어. build_complete 도구의 설명과 반환 문자열을
+        # 이 값으로 고른다 — 셋 다 모델이 읽는 프롬프트다(proto/prompts.py).
+        self._language = language
         self._permission_mode = _validate_permission_mode(permission_mode)
         self._factory = client_factory or _default_client_factory(self)
         self._client: Any = None
