@@ -335,10 +335,11 @@ describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug
 describe("useWorkspaceStream — 중단 이벤트 라우팅 (분기 순서 고정)", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  // applyEvent의 status:"중단됨" 분기는 trace 분기보다 앞에 있고 return으로
-  // 끊긴다(useWorkspaceStream.ts). 순서가 바뀌거나 return이 빠지면 "중단됨"이
-  // trace에도 쌓여 접힌 "추론 과정" 안에 중복 노출된다 — 그 회귀를 여기서 고정한다.
-  it("status:중단됨은 interrupted 필드로만 가고 trace에는 쌓이지 않는다 — 평범한 status는 trace로 간다", async () => {
+  // applyEvent의 status:INTERRUPTED_MARKER 분기는 trace 분기보다 앞에 있고
+  // return으로 끊긴다(useWorkspaceStream.ts). 순서가 바뀌거나 return이 빠지면
+  // 그 마커가 trace에도 쌓여 접힌 "추론 과정" 안에 중복 노출된다 — 그 회귀를
+  // 여기서 고정한다.
+  it("status:interrupted는 interrupted 필드로만 가고 trace에는 쌓이지 않는다 — 평범한 status는 trace로 간다", async () => {
     // getHistory의 mockResolvedValue는 vi.clearAllMocks()로 지워지지 않는다
     // (호출 기록만 지운다) — 앞선 테스트가 남긴 값이 새는 것을 막기 위해
     // 이 describe에서 명시적으로 빈 히스토리를 고정한다.
@@ -346,7 +347,7 @@ describe("useWorkspaceStream — 중단 이벤트 라우팅 (분기 순서 고�
     drive(
       [
         { kind: "status", text: "file_read", path: null, payload: null },
-        { kind: "status", text: "중단됨", path: null, payload: null },
+        { kind: "status", text: "interrupted", path: null, payload: null },
         { kind: "done", text: null, path: null, payload: null },
       ],
       "streamEvents",
@@ -359,6 +360,29 @@ describe("useWorkspaceStream — 중단 이벤트 라우팅 (분기 순서 고�
     if (ai && ai.role === "ai") {
       expect(ai.interrupted).toBe(true);
       expect(ai.trace).toEqual([{ kind: "status", text: "file_read", path: null }]);
+    }
+  });
+
+  it("한국어 마커를 더 이상 중단으로 보지 않는다", async () => {
+    // 백엔드가 언어 중립 마커를 보내므로, 한국어 문자열은 이제 평범한 status
+    // 트레이스다. 둘 다 받으면 에이전트가 우연히 '중단됨'이라고 말한 도구
+    // 이름까지 중단으로 세게 된다.
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    drive(
+      [
+        { kind: "status", text: "중단됨", path: null, payload: null },
+        { kind: "done", text: null, path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행 중"));
+    const ai = result.current.items.find((i) => i.role === "ai");
+    expect(ai).toBeDefined();
+    if (ai && ai.role === "ai") {
+      expect(ai.interrupted).toBeFalsy();
+      expect(ai.trace).toEqual([{ kind: "status", text: "중단됨", path: null }]);
     }
   });
 });

@@ -31,6 +31,11 @@ export type ChatItem = UserItem | AiItem | HistoryCardItem;
 let counter = 0;
 const nextId = () => `wf-item-${counter++}`;
 
+// 백엔드 claude_driver.INTERRUPTED_MARKER와 같은 값이어야 한다(proto/builder.py도
+// 같은 값을 쓴다). 기계 신호이고 사람이 읽는 문구가 아니다 — 화면의 "중단됨"은
+// 이 플래그를 받은 AiMessage가 UI 언어로 그린다.
+const INTERRUPTED_MARKER = "interrupted";
+
 // Malformed JSON in a structured payload must not stop the stream — parsing
 // fails closed to `null` and the event is otherwise ignored (spec §4's
 // fallback principle: progress is never blocked by one bad frame).
@@ -158,7 +163,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         // 모양을 재사용하기 위해서다(claude_driver.interrupt). 이 마커는
         // 라이브 스트림에만 있다 — 트랜스크립트에는 남지 않으므로 새로고침
         // 후에는 이 줄이 다시 나타나지 않는다.
-        if (ev.kind === "status" && ev.text === "중단됨") {
+        if (ev.kind === "status" && ev.text === INTERRUPTED_MARKER) {
           return { ...it, interrupted: true };
         }
         if (ev.kind === "status" || ev.kind === "file_changed") {

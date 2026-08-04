@@ -100,6 +100,18 @@ _TURN_FAILED_TEXT = ("이번 턴이 실패했습니다 — 잠시 후 다시 시
 # 것이다.
 _INTERRUPTED_TERMINAL_REASONS = frozenset({"aborted_streaming", "aborted_tools"})
 
+#: 중단된 턴을 표시하는 `status` 이벤트의 text. **기계 신호이고 사람이 읽는
+#: 문구가 아니다** — frontend/lib/useWorkspaceStream.ts가 이 값을 비교해
+#: interrupted 플래그를 세우고, 화면 문구("중단됨"/"Interrupted")는 프론트가
+#: UI 언어로 그린다. proto/builder.py가 같은 값을 쓴다 — 두 드라이버가 어긋나면
+#: 프론트가 경로에 따라 다르게 동작한다.
+#:
+#: 언어 중립인 이유가 승인 마커(frontend/lib/approvalMarker.ts)와 다르다는 점에
+#: 주의: 저쪽은 에이전트에게 가고 트랜스크립트에 사용자 말풍선으로 남으므로
+#: 프로젝트 언어의 단어여야 한다. 이 마커는 라이브 SSE 큐에만 있고 아무도
+#: 읽지 않는다.
+INTERRUPTED_MARKER = "interrupted"
+
 # Discovery runs with a human in the loop watching the chat, unlike the
 # unattended prototype build -- but AskUserQuestion is still routed through
 # can_use_tool (see _on_can_use_tool below) and every other tool must execute
@@ -729,10 +741,11 @@ class ClaudeDriver:
         # 폼이 뜬다.
         self._queue = [e for e in self._queue if e.kind != "questions"]
         # 중단 사실을 남긴다. 새 kind를 만들지 않고 기존 status로 흘리는 이유는
-        # 프론트가 이미 다루는 이벤트 모양을 재사용하기 위해서다 — 화면에서는
-        # 이 이벤트가 "중단됨" 한 줄이 된다. 이 마커는 라이브 SSE 큐에만
-        # 있다 — 트랜스크립트에는 들어가지 않으므로 새로고침 후 복원되지 않는다.
-        self._queue.append(AgentEvent(kind="status", text="중단됨"))
+        # 프론트가 이미 다루는 이벤트 모양을 재사용하기 위해서다 — 프론트는 이
+        # 마커를 보고 그 턴에 "중단됨" 한 줄을 UI 언어로 그린다. 이 마커는
+        # 라이브 SSE 큐에만 있다 — 트랜스크립트에 들어가지 않으므로 새로고침 후
+        # 복원되지 않는다.
+        self._queue.append(AgentEvent(kind="status", text=INTERRUPTED_MARKER))
         await self._client.interrupt()
 
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:

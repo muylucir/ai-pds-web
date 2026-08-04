@@ -1494,4 +1494,20 @@ async def test_interrupt_records_that_the_turn_was_stopped(tmp_path):
 
     await d.interrupt()
 
-    assert any(e.kind == "status" and e.text == "중단됨" for e in d._queue), d._queue
+    from pathfinder.agent.claude_driver import INTERRUPTED_MARKER
+    assert any(e.kind == "status" and e.text == INTERRUPTED_MARKER
+               for e in d._queue), d._queue
+
+
+def test_interrupt_marker_is_language_neutral():
+    """프론트가 이 문자열을 비교해 interrupted를 세운다
+    (frontend/lib/useWorkspaceStream.ts). 한국어로 두면 UI를 번역할 때
+    프론트가 중단을 인지하지 못한다 — 화면에 '중단됨' 한 줄이 안 뜨고 턴이
+    성공한 것처럼 보인다.
+
+    proto/builder.py가 이미 같은 값을 쓴다 — 두 드라이버가 어긋나면
+    프론트가 경로에 따라 다르게 동작한다."""
+    from pathfinder.agent.claude_driver import INTERRUPTED_MARKER
+    assert INTERRUPTED_MARKER == "interrupted"
+    # 사람이 읽는 문구가 아니므로 비ASCII가 없어야 한다.
+    assert INTERRUPTED_MARKER.isascii()
