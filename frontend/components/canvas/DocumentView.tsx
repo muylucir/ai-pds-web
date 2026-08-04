@@ -106,7 +106,7 @@ export function DocumentView({
                   }}
                   className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
                 >
-                  취소
+                  {t("doc.cancel")}
                 </button>
                 <button
                   type="button"
@@ -114,7 +114,7 @@ export function DocumentView({
                   onClick={submitRevision}
                   className="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white font-medium hover:bg-violet-700 disabled:opacity-50"
                 >
-                  수정 요청 제출
+                  {t("doc.submitRevision")}
                 </button>
               </div>
             </div>
@@ -126,7 +126,7 @@ export function DocumentView({
               onClick={() => setRevising((v) => !v)}
               className="flex-1 py-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium disabled:opacity-50"
             >
-              ✏️ 수정 요청
+              {t("doc.requestRevision")}
             </button>
             <button
               type="button"
@@ -134,7 +134,7 @@ export function DocumentView({
               onClick={onApprove}
               className="flex-1 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold disabled:opacity-50"
             >
-              ✓ 이 문서 승인
+              {t("doc.approveThis")}
             </button>
           </div>
         </div>

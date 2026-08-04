@@ -43,12 +43,12 @@ export function QuestionCardSlot({
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm flex items-center justify-between gap-3">
-      <p className="text-slate-600">{basename(path)}에 답변이 필요합니다</p>
+      <p className="text-slate-600">{basename(path)}{t("chat.needsAnswerSuffix")}</p>
       <a
         href={`/projects/${projectId}/questions?file=${encodeURIComponent(path)}`}
         className="text-xs text-violet-600 font-medium shrink-0 hover:text-violet-700"
       >
-        질문 답변하러 가기 →
+        {t("chat.goAnswer")}
       </a>
     </div>
   );

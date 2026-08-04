@@ -193,7 +193,7 @@ export function QuestionCard({
                   "letter: note", 비우면 letter만. */}
               {checked && !multi && (
                 <textarea
-                  aria-label={`보기 ${opt.letter} 부연 설명`}
+                  aria-label={`${t("q.noteAriaPrefix")} ${opt.letter} ${t("q.noteAriaSuffix")}`}
                   rows={2}
                   value={note}
                   onChange={(e) =>

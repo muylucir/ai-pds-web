@@ -115,7 +115,7 @@ export function ChatInput({
           )}
         </div>
         <p className="text-[10px] text-slate-400 mt-1.5 text-center">
-          모든 입력은 원문 그대로 audit.md에 기록됩니다 · 크리덴셜은 절대 기록되지 않습니다
+          {t("chat.auditNotice")}
         </p>
       </div>
     </div>

@@ -92,7 +92,10 @@ describe("SurveyPanel — 결과 취합", () => {
     // The PM needs to know WHERE it landed — the rule's own path, so the
     // Discovery flow picks it up.
     expect(await screen.findByText(/validation-results\.md/)).toBeInTheDocument();
-    expect(screen.getByText(/7건/)).toBeInTheDocument();
+    // 응답 수가 화면에 있어야 한다. 문구는 딕셔너리가 소유하므로(기본 로케일
+    // ko: "7건을 …에 저장했습니다") 개수만 단정한다 — 리터럴 "7건"을 고정하면
+    // 문구를 번역 키로 옮길 때마다 이 테스트가 의미 없이 깨진다.
+    expect(screen.getByText(/\b7\b/)).toBeInTheDocument();
   });
 
   it("offers 취합 while the survey is still open (interim aggregate)", async () => {

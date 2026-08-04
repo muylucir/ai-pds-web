@@ -22,6 +22,7 @@ export const ko = {
   "stream.buildError": "빌드 중 오류가 발생했습니다.",
   "stream.tooLong": "입력이 너무 깁니다. 내용을 나눠서 보내 주세요.",
   "stream.disconnected": "연결이 끊어졌습니다. 다시 시도해 주세요.",
+  "stream.answersFailed": "답변을 제출하지 못했습니다. 다시 시도해 주세요.",
   // 진행 표시(ActivityIndicator). 도구명 → 활동 문구.
   "activity.thinking": "생각하고 있어요",
   "activity.questions": "질문을 준비하고 있어요",
@@ -371,4 +372,36 @@ export const ko = {
   "err.initIncomplete": "초기화가 완료되지 않았습니다 — 다시 시도해 주세요.",
   "err.surveyClosed": "이 설문은 마감되었습니다.",
   "err.surveyFull": "응답 수 상한에 도달했습니다. 설문을 마감해 주세요.",
+
+  // 2026-08-04에 전수 점검으로 찾은 누락분. 스펙 5단계(UI 문자열 65개 파일
+  // 치환)에서 빠진 것들이고, 전부 t()를 이미 쓰는 파일 안에 리터럴로 남아
+  // 있었다 — 즉 파일 단위로는 번역됐다고 보였다. 사용자가 영어 UI에서
+  // "아직 저장되지 않은 문서입니다"를 보고 신고했다.
+  "ws.docUnsaved": "아직 저장되지 않은 문서입니다. 턴이 끝나면 저장됩니다 — 턴이 끝난 뒤에도 이 메시지가 남으면 ↻로 다시 불러오거나 해당 작업을 다시 요청해 주세요.",
+  "ws.toFullReview": "전체 문서 리뷰 화면으로 →",
+  "ws.removeAttachment": "제거",
+  "q.answeredCount": "답변 완료",
+  "q.auditNotice": "모든 답변은 audit.md에 원문 그대로 기록됩니다",
+  "q.submitAnswers": "답변 제출 → AI 검증",
+  "q.goAnswerClarification": "확인 질문 답변하기 →",
+  "q.freeformLabel": "자유 답변",
+  "q.submit": "제출",
+  "q.noteAriaPrefix": "보기",
+  "q.noteAriaSuffix": "부연 설명",
+  "chat.emptyTimeline": "대화를 시작해 보세요 — 아래에 메시지를 입력하세요.",
+  "chat.questionsPresented": "질문지 제시됨",
+  "chat.auditNotice": "모든 입력은 원문 그대로 audit.md에 기록됩니다 · 크리덴셜은 절대 기록되지 않습니다",
+  "chat.needsAnswerSuffix": "에 답변이 필요합니다",
+  "chat.goAnswer": "질문 답변하러 가기 →",
+  "chat.answeredSuffix": "개 답변 완료",
+  "chat.submittedNote": "제출됨 · audit.md Entry 3 · 변경하려면 채팅으로 요청하세요",
+  "doc.cancel": "취소",
+  "doc.submitRevision": "수정 요청 제출",
+  "doc.requestRevision": "✏️ 수정 요청",
+  "doc.approveThis": "✓ 이 문서 승인",
+  "review.exportMd": ".md 내보내기",
+  "review.auditBody": "모든 입력은 원문 그대로 타임스탬프와 함께 기록됩니다. API 키·크리덴셜은 절대 기록되지 않습니다. 이 게이트에서의 승인/수정요청 결정도 즉시 기록됩니다.",
+  "survey.savedPrefix": "건을",
+  "survey.savedSuffix": "에 저장했습니다.",
+  "app.description": "AI-PLC Discovery 웹 서비스",
 } as const;

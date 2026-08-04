@@ -88,7 +88,7 @@ export function ChatTimeline({
           // 정확히 이 태스크가 없애려던 시나리오다.
           !historyLoading && (
             <p className="text-center text-sm text-slate-400 mt-10">
-              대화를 시작해 보세요 — 아래에 메시지를 입력하세요.
+              {t("chat.emptyTimeline")}
             </p>
           )
         ) : (
@@ -112,7 +112,7 @@ export function ChatTimeline({
               return (
                 <div key={item.id} className="ml-11 max-w-[85%]">
                   <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs text-violet-700">
-                    📋 질문지 제시됨{item.name ? ` — ${item.name}` : ""}
+                    📋 {t("chat.questionsPresented")}{item.name ? ` — ${item.name}` : ""}
                   </div>
                 </div>
               );

@@ -146,7 +146,7 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
               </button>
               {synthesized && (
                 <span className="text-xs text-slate-500 break-all">
-                  {synthesized.response_count}건을 <code>{synthesized.path}</code>에 저장했습니다.
+                  {t("survey.savedPrefix")} {synthesized.response_count} {t("survey.savedSuffix")} <code>{synthesized.path}</code>
                 </span>
               )}
             </div>

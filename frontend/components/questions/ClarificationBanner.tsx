@@ -23,7 +23,7 @@ export function ClarificationBanner({
             href={`/projects/${projectId}/questions?file=${encodeURIComponent(path)}`}
             className="mt-3 inline-block px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700"
           >
-            확인 질문 답변하기 →
+            {t("q.goAnswerClarification")}
           </Link>
         </div>
       </div>

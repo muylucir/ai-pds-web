@@ -127,10 +127,7 @@ export function WorkspaceDocPanel({
           // 저장 자체가 안 된 상태 — "비어 있음"과 구분해서 알린다. 이걸 빈
           // 문서로 뭉개면 사용자는 문서가 만들어졌다고 믿고, 새로고침하면
           // 목록에서 사라진 이유를 알 수 없다.
-          <p className="text-amber-700">
-            아직 저장되지 않은 문서입니다. 턴이 끝나면 저장됩니다 — 턴이 끝난 뒤에도
-            이 메시지가 남으면 ↻로 다시 불러오거나 해당 작업을 다시 요청해 주세요.
-          </p>
+          <p className="text-amber-700">{t("ws.docUnsaved")}</p>
         ) : text.trim() === "" ? (
           <p className="text-slate-400">{t("ws.docEmpty")}</p>
         ) : (
@@ -143,7 +140,7 @@ export function WorkspaceDocPanel({
             href={`/projects/${projectId}/review`}
             className="text-xs font-medium text-violet-700 underline hover:text-violet-900"
           >
-            전체 문서 리뷰 화면으로 →
+            {t("ws.toFullReview")}
           </Link>
         </div>
       )}

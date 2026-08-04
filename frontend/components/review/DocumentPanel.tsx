@@ -12,7 +12,7 @@ export function DocumentPanel({ markdown }: { markdown: string }) {
           <span className="text-[11px] px-2 py-0.5 rounded-full bg-violet-50 text-violet-600">Living Document</span>
         </div>
         <button className="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs">
-          .md 내보내기
+          {t("review.exportMd")}
         </button>
       </div>
       <div className="p-6 text-sm text-slate-700">

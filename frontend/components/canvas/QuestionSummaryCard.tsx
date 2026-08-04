@@ -26,10 +26,10 @@ export function QuestionSummaryCard({ file }: { file: QuestionFile }) {
           </span>
           <div>
             <p className="font-medium">
-              {basename(file.name)} · {answered}개 답변 완료
+              {basename(file.name)} · {answered}{t("chat.answeredSuffix")}
             </p>
             <p className="text-[11px] text-slate-400">
-              제출됨 · audit.md Entry 3 · 변경하려면 채팅으로 요청하세요
+              {t("chat.submittedNote")}
             </p>
           </div>
         </div>

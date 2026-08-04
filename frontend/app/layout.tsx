@@ -3,7 +3,7 @@ import { Noto_Sans_KR } from "next/font/google";
 import { cookies } from "next/headers";
 import "./globals.css";
 
-import { DEFAULT_LOCALE, isLocale, LANG_COOKIE } from "@/lib/i18n";
+import { DEFAULT_LOCALE, dictFor, isLocale, LANG_COOKIE } from "@/lib/i18n";
 import { LocaleProvider } from "@/lib/i18n/provider";
 
 const notoSansKr = Noto_Sans_KR({
@@ -13,10 +13,17 @@ const notoSansKr = Noto_Sans_KR({
   display: "swap",
 });
 
-export const metadata: Metadata = {
-  title: "Pathfinder",
-  description: "AI-PLC Discovery 웹 서비스",
-};
+// 정적 `metadata` 객체가 아니라 `generateMetadata`인 이유: description이 UI
+// 언어를 따라야 하고, 정적 객체는 쿠키를 읽기 전에 평가되므로 로케일을 알 수
+// 없다. Next가 요청마다 이 함수를 부르므로 여기서는 cookies()를 쓸 수 있다.
+export async function generateMetadata(): Promise<Metadata> {
+  const raw = (await cookies()).get(LANG_COOKIE)?.value;
+  const locale = isLocale(raw) ? raw : DEFAULT_LOCALE;
+  return {
+    title: "Pathfinder",   // 제품명 — 번역하지 않는다
+    description: dictFor(locale)["app.description"],
+  };
+}
 
 // 이 앱에서 cookies()를 부르는 유일한 지점이다. 로케일을 서버에서 읽는 이유는
 // <html lang>을 첫 페인트에 맞추기 위해서다 — localStorage는 서버에서 보이지

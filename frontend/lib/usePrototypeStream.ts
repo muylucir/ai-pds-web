@@ -294,7 +294,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       if (aiId) {
         patchAi(aiId, (it) => ({
           ...it,
-          error: it.error ?? "답변을 제출하지 못했습니다. 다시 시도해 주세요.",
+          error: it.error ?? t("stream.answersFailed"),
         }));
       }
     },

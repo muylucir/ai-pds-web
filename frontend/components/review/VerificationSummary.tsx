@@ -52,8 +52,7 @@ export function VerificationSummary({ entries }: { entries: AuditEntry[] }) {
       <section className="bg-slate-100 rounded-xl p-5 text-xs text-slate-500 leading-relaxed">
         <p className="font-medium text-slate-600 mb-1">{t("review.auditTrail")}</p>
         <p>
-          모든 입력은 원문 그대로 타임스탬프와 함께 기록됩니다. API 키·크리덴셜은 절대 기록되지 않습니다.
-          이 게이트에서의 승인/수정요청 결정도 즉시 기록됩니다.
+          {t("review.auditBody")}
         </p>
       </section>
     </div>

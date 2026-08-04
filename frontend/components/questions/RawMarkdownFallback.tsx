@@ -32,7 +32,7 @@ export function RawMarkdownFallback({
       </div>
       <div className="bg-white rounded-xl border border-slate-200 p-5">
         <label htmlFor="freeform" className="block text-sm font-medium mb-2">
-          자유 답변
+          {t("q.freeformLabel")}
         </label>
         <textarea
           id="freeform"
@@ -43,7 +43,7 @@ export function RawMarkdownFallback({
         />
         <div className="mt-3 flex justify-end">
           <button type="submit" disabled={submitting || text.trim() === ""} className="px-5 py-2.5 text-sm rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-bold">
-            제출
+            {t("q.submit")}
           </button>
         </div>
       </div>

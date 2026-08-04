@@ -1,4 +1,7 @@
+"use client";
 // frontend/components/workspace/AttachmentChips.tsx
+import { useT } from "@/lib/i18n/provider";
+
 export function AttachmentChips({
   paths,
   onRemove,
@@ -6,6 +9,7 @@ export function AttachmentChips({
   paths: string[];
   onRemove: (path: string) => void;
 }) {
+  const t = useT();
   if (paths.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-2 px-1 pb-2">
@@ -18,7 +22,7 @@ export function AttachmentChips({
           <span>{p.replace(/^uploads\//, "")}</span>
           <button
             type="button"
-            aria-label={`${p} 제거`}
+            aria-label={`${p} ${t("ws.removeAttachment")}`}
             onClick={() => onRemove(p)}
             className="text-violet-400 hover:text-violet-700"
           >
