@@ -4,6 +4,7 @@ import { renderHook, act } from "@testing-library/react";
 import { useWorkspaceStream } from "./useWorkspaceStream";
 import * as sse from "@/lib/api/sse";
 import * as client from "@/lib/api/client";
+import { ApiError } from "@/lib/api/client";
 import * as sessionRecovery from "@/lib/auth/sessionRecovery";
 import type { AgentEvent, HistoryItem } from "@/lib/api/types";
 
@@ -384,5 +385,47 @@ describe("useWorkspaceStream — 중단 이벤트 라우팅 (분기 순서 고�
       expect(ai.interrupted).toBeFalsy();
       expect(ai.trace).toEqual([{ kind: "status", text: "중단됨", path: null }]);
     }
+  });
+});
+
+describe("턴 개시 실패는 원인을 드러낸다", () => {
+  // 이 결함이 처음 숨은 이유가 여기다: EventSource는 상태 코드를 노출하지
+  // 않아 431이 "연결이 끊어졌습니다"로 뭉개졌다. 개시(POST)는 상태 코드를
+  // 주므로, 그 경로만은 원인을 말할 수 있어야 한다.
+  beforeEach(() => vi.clearAllMocks());
+
+  it("입력이 너무 길어 거절되면(431) 그 사실을 말한다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    vi.mocked(sse.streamEvents).mockImplementation(
+      (_pid: any, _text: any, handlers: any) => {
+        handlers.onError?.(new ApiError(431, "too long"));
+        handlers.onDone();
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("가".repeat(3000)));
+    const ai = result.current.items.find((i) => i.role === "ai");
+    expect(ai && ai.role === "ai" && ai.error).toMatch(/너무 깁니다|too long/i);
+    // "연결이 끊어졌습니다"로 뭉개지지 않아야 한다 — 그것이 이 버그의 증상이었다.
+    expect(ai && ai.role === "ai" && ai.error).not.toMatch(/연결이 끊어/);
+    expect(result.current.streaming).toBe(false);
+  });
+
+  it("그 밖의 실패는 기존 연결 오류 문구를 유지한다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    vi.mocked(sse.streamEvents).mockImplementation(
+      (_pid: any, _text: any, handlers: any) => {
+        handlers.onError?.(new Event("error"));
+        handlers.onDone();
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("짧음"));
+    const ai = result.current.items.find((i) => i.role === "ai");
+    expect(ai && ai.role === "ai" && ai.error).toMatch(/연결이 끊어/);
   });
 });

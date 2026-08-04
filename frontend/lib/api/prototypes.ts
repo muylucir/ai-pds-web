@@ -10,7 +10,7 @@
 // need: a 204 resolves to `undefined` instead of calling res.json().
 import { CREDENTIALS } from "@/lib/auth";
 import { API_BASE_URL, ApiError } from "./client";
-import type { StreamHandlers } from "./sse";
+import { openStream, openViaHandle, type StreamHandlers } from "./sse";
 import type { AgentEvent } from "./types";
 
 export type PrototypeState = "none" | "building" | "built" | "running" | "failed";
@@ -143,44 +143,33 @@ export function prototypePreviewUrl(pid: string, slug: string): string {
   return `${API_BASE_URL}/proto/${encodeURIComponent(pid)}/${encodeURIComponent(slug)}/`;
 }
 
-// Opens GET /prototypes/{slug}/events?text=... as an SSE stream — the
-// prototype-session twin of sse.ts's streamEvents/streamAnswers. sse.ts's
-// own `openStream` isn't exported, so this mirrors its ~30-line shape
-// (parse each frame's `data` as AgentEvent, finish on "done"/"error" or a
-// transport error, close the EventSource either way) rather than duplicating
-// its logic behind a private import that doesn't exist.
+//: 첫 턴의 센티널. 서버가 이 값을 session.first_prompt()로 치환한다
+//: (backend routes/prototypes.py의 _FIRST_TURN_SENTINEL) — 양쪽이 같은 값이어야
+//: 하므로 호출부가 리터럴을 쓰지 않게 여기서 이름을 준다.
+export const FIRST_TURN_SENTINEL = "__first__";
+
+// Opens the prototype build stream for one turn. Text rides in the POST body,
+// not the URL: a long Korean message becomes a ~9-byte-per-char query string
+// that pushed the request line past Node's 16KB maxHeaderSize and came back as
+// HTTP 431 (lib/api/sse.ts's openViaHandle documents the measurement).
+//
+// The first turn keeps using the `?text=__first__` sentinel — it is 9 bytes and
+// the server substitutes session.first_prompt() for it
+// (backend routes/prototypes.py's _FIRST_TURN_SENTINEL).
 export function streamPrototypeEvents(
   pid: string,
   slug: string,
   text: string,
   handlers: StreamHandlers,
 ): () => void {
-  const es = new EventSource(
-    `${API_BASE_URL}${sessionPath(pid, slug, "/events")}?text=${encodeURIComponent(text)}`,
+  const base = `${API_BASE_URL}${sessionPath(pid, slug, "/events")}`;
+  if (text === FIRST_TURN_SENTINEL) {
+    return openStream(`${base}?text=${encodeURIComponent(text)}`, handlers);
+  }
+  return openViaHandle(
+    sessionPath(pid, slug, "/turns"),
+    { text },
+    (turnId) => `${base}?turn=${encodeURIComponent(turnId)}`,
+    handlers,
   );
-
-  const close = () => es.close();
-
-  es.onmessage = (ev: MessageEvent) => {
-    let parsed: AgentEvent;
-    try {
-      parsed = JSON.parse(ev.data) as AgentEvent;
-    } catch (err) {
-      handlers.onError?.(err);
-      return;
-    }
-    handlers.onEvent(parsed);
-    if (parsed.kind === "done" || parsed.kind === "error") {
-      close();
-      handlers.onDone();
-    }
-  };
-
-  es.onerror = (err) => {
-    close();
-    handlers.onError?.(err);
-    handlers.onDone();
-  };
-
-  return close;
 }

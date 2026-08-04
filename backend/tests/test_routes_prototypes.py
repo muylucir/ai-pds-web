@@ -1474,3 +1474,64 @@ def test_list_state_built_for_a_completed_session(proto_env, monkeypatch):
 
     entry = next(p for p in resp.json()["prototypes"] if p["slug"] == SLUG)
     assert entry["state"] == "built"
+
+
+# ---- 긴 입력을 URL에서 빼는 2단계 핸들 (HTTP 431 결함) ----
+#
+# 워크스페이스 채팅과 같은 결함이다(pathfinder/turn_handles.py 헤더의 실측):
+# 긴 한글 입력이 URL에 실리면 요청 라인이 커져 프록시가 431을 내고,
+# EventSource는 상태 코드를 노출하지 않아 "연결이 끊어졌습니다"만 보인다.
+
+
+def test_session_turn_handle_carries_text_out_of_the_url(proto_env, monkeypatch):
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    long_text = "가" * 3000
+    r = client.post(f"/projects/{PID}/prototypes/{SLUG}/turns",
+                    json={"text": long_text})
+    assert r.status_code == 200
+    handle = r.json()["turn_id"]
+    # 핸들이 URL에 들어가므로 짧아야 한다 — 이것이 이 설계의 핵심이다.
+    assert len(handle) <= 64
+    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
+                       params={"turn": handle}) as resp:
+        list(resp.iter_lines())
+    # 에이전트는 원문 전체를 받았다 — 핸들이 텍스트를 잘라먹지 않는다.
+    assert session.messages == [long_text]
+
+
+def test_session_turn_handle_is_single_use(proto_env, monkeypatch):
+    _seed_spec(proto_env["s3"])
+    _install_session_factory(monkeypatch, FakePrototypeSession())
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    handle = client.post(f"/projects/{PID}/prototypes/{SLUG}/turns",
+                         json={"text": "한 번만"}).json()["turn_id"]
+    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
+                       params={"turn": handle}) as r:
+        list(r.iter_lines())
+    again = client.get(f"/projects/{PID}/prototypes/{SLUG}/events",
+                       params={"turn": handle})
+    assert again.status_code == 400
+
+
+def test_session_events_still_accepts_the_first_turn_sentinel(proto_env, monkeypatch):
+    """첫 턴 센티널과 짧은 입력의 기존 경로는 유지한다 — 배포가 원자적이 아니다."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
+                       params={"text": "__first__"}) as r:
+        list(r.iter_lines())
+    # 센티널은 서버가 first_prompt()로 치환한다.
+    assert session.messages == ["FIRST_PROMPT_TEXT"]
+
+
+def test_session_events_requires_text_or_turn(proto_env, monkeypatch):
+    _seed_spec(proto_env["s3"])
+    _install_session_factory(monkeypatch, FakePrototypeSession())
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    r = client.get(f"/projects/{PID}/prototypes/{SLUG}/events")
+    assert r.status_code == 400

@@ -32,6 +32,14 @@ export type ChatItem = UserItem | AiItem | HistoryCardItem;
 let counter = 0;
 const nextId = () => `wf-item-${counter++}`;
 
+// 턴 개시(POST)의 실패는 상태 코드를 준다 — EventSource의 익명 onerror와 달리
+// 원인을 말할 수 있는 유일한 지점이다. 413/431은 "입력이 길다"는 뜻이고, 그
+// 구분이 없으면 이 버그의 증상("연결이 끊어졌습니다")이 그대로 돌아온다.
+function isTooLong(err: unknown): boolean {
+  const status = (err as { status?: number } | null)?.status;
+  return status === 431 || status === 413;
+}
+
 // 백엔드 claude_driver.INTERRUPTED_MARKER와 같은 값이어야 한다(proto/builder.py도
 // 같은 값을 쓴다). 기계 신호이고 사람이 읽는 문구가 아니다 — 화면의 "중단됨"은
 // 이 플래그를 받은 AiMessage가 UI 언어로 그린다.
@@ -210,14 +218,14 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
           patchAi(aiId, (it) => ({ ...it, streaming: false }));
           finish();
         },
-        onError: () => {
+        onError: (err) => {
           // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
           // 세션을 확인해 만료면 로그인으로 보낸다. 살아 있으면 아래 메시지가 맞다.
           void redirectIfSessionExpired(undefined, window.location.pathname);
           patchAi(aiId, (it) => ({
             ...it,
             streaming: false,
-            error: it.error ?? t("stream.disconnected"),
+            error: it.error ?? t(isTooLong(err) ? "stream.tooLong" : "stream.disconnected"),
           }));
           finish();
         },

@@ -19,6 +19,7 @@ export const en: Record<keyof typeof ko, string> = {
   "chat.answersSubmitted": "Answers submitted",
   "stream.turnError": "Something went wrong while processing this turn.",
   "stream.buildError": "Something went wrong during the build.",
+  "stream.tooLong": "That message is too long. Please send it in smaller pieces.",
   "stream.disconnected": "The connection dropped. Please try again.",
   "activity.thinking": "Thinking",
   "activity.questions": "Preparing questions",

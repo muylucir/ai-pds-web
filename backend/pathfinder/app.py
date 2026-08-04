@@ -21,6 +21,7 @@ from pathfinder.agent.driver import StrandsDriver
 from pathfinder.agent.claude_driver import ClaudeDriver
 from pathfinder.s3store import S3Store, S3StoreLike
 from pathfinder.project_store import restore_projects
+from pathfinder.turn_handles import TurnHandleStore
 
 _log = logging.getLogger(__name__)
 
@@ -70,6 +71,12 @@ def configure_logging() -> None:
 
 
 registry = ProjectRegistry()
+
+# 턴 입력 핸들. 긴 채팅 텍스트를 SSE URL에서 빼기 위한 것이다 —
+# turn_handles.py 헤더에 실측한 HTTP 431의 원인과 함께 적어 뒀다.
+# proto_sessions와 같은 성질의 인메모리다: 수초 사는 값이고, 재시작 시
+# 유실되면 그 턴만 실패한다.
+turn_handles = TurnHandleStore()
 
 
 # Monkeypatchable in tests to inject a FakeS3Store (no AWS). Durable store keeps

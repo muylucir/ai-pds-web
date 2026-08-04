@@ -82,6 +82,17 @@ _SPEC_RE = re.compile(r"^aiplc-docs/discovery/prototypes/([^/]+)/PROTOTYPE-\1\.m
 # SSE-relayed turn (spec §4: 첫 턴 자동 발화).
 _FIRST_TURN_SENTINEL = "__first__"
 
+
+class TurnBody(BaseModel):
+    text: str
+
+
+def _handle_scope(pid: str, slug: str) -> str:
+    """턴 핸들의 소유자 키. 프로젝트만으로는 부족하다 — 한 프로젝트의 여러
+    프로토타입이 각자 세션을 갖고, slug를 빼면 다른 프로토타입의 핸들로 이
+    세션의 턴을 열 수 있다."""
+    return f"{pid}/{slug}"
+
 #: Statuses that mean the agent has work in flight, for the LIST's display
 #: state only. Deliberately excludes "ready": PrototypeSession sets that on the
 #: turn's `done` event, and it means ready for ANOTHER turn -- the session stays
@@ -273,10 +284,42 @@ async def start_session(pid: str, slug: str):
     return {"status": session.status}
 
 
+@router.post("/projects/{pid}/prototypes/{slug}/turns")
+async def create_session_turn(pid: str, slug: str, body: TurnBody):
+    """빌드 채팅 텍스트를 **본문**으로 받아 짧은 핸들을 돌려준다.
+
+    워크스페이스 채팅(routes/turns.py의 create_turn)과 같은 이유다:
+    EventSource는 GET만 지원해 본문을 실을 수 없고, 긴 입력이 URL에 실리면
+    프록시가 431을 낸다(pathfinder/turn_handles.py 헤더의 실측).
+
+    세션 존재를 여기서 확인해 없으면 404로 끝낸다 — 핸들만 받고 스트림에서
+    404가 나면 사용자는 "연결이 끊어졌습니다"만 본다.
+    """
+    import pathfinder.app as app_module
+    _require_registered(pid)
+    _require_session(pid, slug)
+    return {"turn_id": app_module.turn_handles.create(
+        _handle_scope(pid, slug), {"text": body.text})}
+
+
 @router.get("/projects/{pid}/prototypes/{slug}/events")
-async def stream_session_events(pid: str, slug: str, text: str):
+async def stream_session_events(pid: str, slug: str,
+                                turn: str | None = None,
+                                text: str | None = None):
+    import pathfinder.app as app_module
     _require_registered(pid)
     session = _require_session(pid, slug)
+    if turn is not None:
+        payload = app_module.turn_handles.consume(_handle_scope(pid, slug), turn)
+        if payload is None:
+            # 만료·재사용·다른 세션 — 어느 쪽인지 구별해 알려주지 않는다.
+            raise HTTPException(status_code=400,
+                                detail="turn handle is unknown or already used")
+        text = payload["text"]
+    elif text is None:
+        # 조용히 빈 턴을 돌리면 사용자는 응답 없는 말풍선을 보고 원인을 알 수 없다.
+        raise HTTPException(status_code=400,
+                            detail="either `turn` or `text` is required")
     if text == _FIRST_TURN_SENTINEL:
         text = session.first_prompt()
 

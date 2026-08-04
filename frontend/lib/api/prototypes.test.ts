@@ -240,24 +240,60 @@ class FakeEventSource {
 
 beforeEach(() => {
   (globalThis as any).EventSource = FakeEventSource;
+  // 개시가 비동기가 됐으므로, 이전 테스트가 남긴 인스턴스를 지워야
+  // protoOpened()가 "이번 테스트의" 스트림을 기다린다.
+  FakeEventSource.last = null;
 });
 afterEach(() => {
   delete (globalThis as any).EventSource;
 });
 
+// 센티널이 아닌 턴은 POST로 핸들을 먼저 받으므로 개시가 비동기다.
+function mockProtoTurns(turnId = "pt-1") {
+  server.use(
+    http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/turns`, () =>
+      HttpResponse.json({ turn_id: turnId })),
+  );
+}
+
+async function protoOpened(): Promise<FakeEventSource> {
+  await vi.waitFor(() => expect(FakeEventSource.last).not.toBeNull());
+  return FakeEventSource.last!;
+}
+
 describe("streamPrototypeEvents", () => {
-  it("opens the prototype events URL with the text query param", () => {
+  it("첫 턴 센티널은 URL로 그대로 간다 (9바이트라 길이 문제가 없다)", () => {
     streamPrototypeEvents("p1", "todo-app", "__first__", { onEvent: () => {}, onDone: () => {} });
     expect(FakeEventSource.last!.url).toBe(
       `${API_BASE_URL}/projects/p1/prototypes/todo-app/events?text=${encodeURIComponent("__first__")}`,
     );
   });
 
-  it("dispatches each frame and finishes on a done event", () => {
+  it("긴 입력은 본문으로 가고 URL에는 핸들만 실린다", async () => {
+    // 이것이 이 수정의 핵심 — 워크스페이스 채팅과 같은 431 결함이 여기에도 있었다.
+    let posted: unknown = null;
+    server.use(
+      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/turns`,
+        async ({ request }) => {
+          posted = await request.json();
+          return HttpResponse.json({ turn_id: "pt-long" });
+        }),
+    );
+    const long = "가".repeat(3000);
+    streamPrototypeEvents("p1", "todo-app", long, { onEvent: () => {}, onDone: () => {} });
+    const es = await protoOpened();
+    expect(es.url).toBe(
+      `${API_BASE_URL}/projects/p1/prototypes/todo-app/events?turn=pt-long`);
+    expect(es.url).not.toContain(encodeURIComponent("가"));
+    expect(posted).toEqual({ text: long });
+  });
+
+  it("dispatches each frame and finishes on a done event", async () => {
+    mockProtoTurns();
     const onEvent = vi.fn();
     const onDone = vi.fn();
     streamPrototypeEvents("p1", "todo-app", "go", { onEvent, onDone });
-    const es = FakeEventSource.last!;
+    const es = await protoOpened();
     es.emit({ kind: "status", text: "working", path: null, payload: null });
     es.emit({ kind: "message", text: "ok", path: null, payload: null });
     es.emit({ kind: "done", text: null, path: null, payload: null });
@@ -266,27 +302,31 @@ describe("streamPrototypeEvents", () => {
     expect(es.closed).toBe(true);
   });
 
-  it("finishes on an error event", () => {
+  it("finishes on an error event", async () => {
+    mockProtoTurns();
     const onEvent = vi.fn();
     const onDone = vi.fn();
     streamPrototypeEvents("p1", "todo-app", "go", { onEvent, onDone });
-    const es = FakeEventSource.last!;
+    const es = await protoOpened();
     es.emit({ kind: "error", text: "boom", path: null, payload: null });
     expect(onDone).toHaveBeenCalledTimes(1);
     expect(es.closed).toBe(true);
   });
 
-  it("unsubscribe closes the stream", () => {
+  it("unsubscribe closes the stream", async () => {
+    mockProtoTurns();
     const stop = streamPrototypeEvents("p1", "todo-app", "go", { onEvent: () => {}, onDone: () => {} });
+    const es = await protoOpened();
     stop();
-    expect(FakeEventSource.last!.closed).toBe(true);
+    expect(es.closed).toBe(true);
   });
 
-  it("a transport error closes the stream and calls onError + onDone", () => {
+  it("a transport error closes the stream and calls onError + onDone", async () => {
+    mockProtoTurns();
     const onError = vi.fn();
     const onDone = vi.fn();
     streamPrototypeEvents("p1", "todo-app", "go", { onEvent: () => {}, onDone, onError });
-    const es = FakeEventSource.last!;
+    const es = await protoOpened();
     es.onerror?.(new Event("error"));
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onDone).toHaveBeenCalledTimes(1);

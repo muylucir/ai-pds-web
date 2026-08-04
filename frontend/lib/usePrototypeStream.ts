@@ -7,6 +7,7 @@ import {
   submitPrototypeAnswers,
   interruptSession,
   startSession,
+  FIRST_TURN_SENTINEL,
 } from "@/lib/api/prototypes";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
@@ -25,6 +26,14 @@ export type ChatItem = UserItem | AiItem;
 
 let counter = 0;
 const nextId = () => `proto-item-${counter++}`;
+
+// 턴 개시(POST)의 실패는 상태 코드를 준다 — EventSource의 익명 onerror와 달리
+// 원인을 말할 수 있는 유일한 지점이다. 413/431은 "입력이 길다"는 뜻이고, 그
+// 구분이 없으면 이 버그의 증상("연결이 끊어졌습니다")이 그대로 돌아온다.
+function isTooLong(err: unknown): boolean {
+  const status = (err as { status?: number } | null)?.status;
+  return status === 431 || status === 413;
+}
 
 // Malformed JSON in a structured payload must not stop the stream — parsing
 // fails closed to `null` (same fail-closed contract as
@@ -218,14 +227,14 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
           patchAi(liveId(), (it) => ({ ...it, streaming: false }));
           finish();
         },
-        onError: () => {
+        onError: (err) => {
           // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
           // 세션을 확인해 만료면 로그인으로 보낸다. 살아 있으면 아래 메시지가 맞다.
           void redirectIfSessionExpired(undefined, window.location.pathname);
           patchAi(liveId(), (it) => ({
             ...it,
             streaming: false,
-            error: it.error ?? t("stream.disconnected"),
+            error: it.error ?? t(isTooLong(err) ? "stream.tooLong" : "stream.disconnected"),
           }));
           setPendingQuestions(null); // same defensive clear as the error-kind path above
           finish();
@@ -243,7 +252,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   const startBuild = useCallback(() => {
     if (stopRef.current) return;
     const aiId = openAiBubble();
-    runTurn((handlers) => streamPrototypeEvents(projectId, slug, "__first__", handlers), aiId);
+    runTurn((handlers) => streamPrototypeEvents(projectId, slug, FIRST_TURN_SENTINEL, handlers), aiId);
   }, [projectId, slug, runTurn, openAiBubble]);
 
   const send = useCallback(

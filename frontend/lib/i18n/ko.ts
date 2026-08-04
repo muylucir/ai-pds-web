@@ -20,6 +20,7 @@ export const ko = {
   "chat.answersSubmitted": "답변 제출",
   "stream.turnError": "턴 처리 중 오류가 발생했습니다.",
   "stream.buildError": "빌드 중 오류가 발생했습니다.",
+  "stream.tooLong": "입력이 너무 깁니다. 내용을 나눠서 보내 주세요.",
   "stream.disconnected": "연결이 끊어졌습니다. 다시 시도해 주세요.",
   // 진행 표시(ActivityIndicator). 도구명 → 활동 문구.
   "activity.thinking": "생각하고 있어요",

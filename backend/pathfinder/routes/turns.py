@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from pathfinder.parsers.redaction import redact_credentials
+import pathfinder.app as app_module
 from pathfinder.routes.deps import ensure_workspace
 from pathfinder.models import AgentEvent, TurnResult
 
@@ -13,6 +14,36 @@ _log = logging.getLogger(__name__)
 
 class MessageBody(BaseModel):
     text: str
+
+
+class AnswersBody(BaseModel):
+    answers: dict[str, str]
+
+
+def _turn_payload(pid: str, handle: str | None, inline: object,
+                  key: str) -> object:
+    """핸들 또는 인라인 쿼리 파라미터에서 턴 입력을 꺼낸다.
+
+    핸들 경로가 기본이다: 긴 입력이 URL에 실리면 요청 라인이 커져 프록시가
+    431을 낸다(pathfinder/turn_handles.py 헤더의 실측). 인라인 경로를 남겨
+    두는 이유는 배포가 원자적이지 않다는 것 — 백엔드가 먼저 올라간 순간
+    구 프론트가 여전히 ?text=/?answers=로 보낸다.
+
+    둘 다 없으면 400이다. 조용히 빈 턴을 돌리면 사용자는 아무 응답 없는
+    말풍선을 보고 원인을 알 수 없다.
+    """
+    if handle is not None:
+        payload = app_module.turn_handles.consume(pid, handle)
+        if payload is None:
+            # 만료·재사용·다른 프로젝트 — 어느 쪽인지 구별해 알려주지 않는다
+            # (핸들의 존재 여부가 정보가 되지 않게).
+            raise HTTPException(status_code=400,
+                                detail="turn handle is unknown or already used")
+        return payload[key]
+    if inline is None:
+        raise HTTPException(status_code=400,
+                            detail=f"either `turn` or `{key}` is required")
+    return inline
 
 def _redacted(event: AgentEvent) -> AgentEvent:
     """Return a copy of event with credential-bearing content redacted.
@@ -32,25 +63,54 @@ async def post_message(pid: str, body: MessageBody):
     events = [_redacted(e) async for e in ws.runner.send_message(body.text)]
     return TurnResult(events=events)
 
+@router.post("/projects/{pid}/turns")
+async def create_turn(pid: str, body: MessageBody):
+    """턴 텍스트를 **본문**으로 받아 짧은 핸들을 돌려준다.
+
+    EventSource는 GET만 지원해 본문을 실을 수 없으므로, 긴 입력을 URL에서
+    빼는 유일한 방법이 이 2단계다(pathfinder/turn_handles.py 헤더 참조).
+    워크스페이스를 여기서 확인해 없는 프로젝트는 404로 끝낸다 — 핸들만 받고
+    스트림에서 404가 나면 사용자는 "연결이 끊어졌습니다"만 본다.
+    """
+    await ensure_workspace(pid)
+    return {"turn_id": app_module.turn_handles.create(pid, {"text": body.text})}
+
+
 @router.get("/projects/{pid}/events")
-async def stream_events(pid: str, text: str):
+async def stream_events(pid: str, turn: str | None = None,
+                        text: str | None = None):
     ws = await ensure_workspace(pid)
+    resolved = _turn_payload(pid, turn, text, "text")
     async def gen():
-        async for event in ws.runner.send_message(text):
+        async for event in ws.runner.send_message(resolved):
             yield {"data": _redacted(event).model_dump_json()}
     return EventSourceResponse(gen())
 
+@router.post("/projects/{pid}/answers")
+async def create_answers_turn(pid: str, body: AnswersBody):
+    """답변 제출의 핸들 발급. `/turns`와 같은 이유다 — 자유 서술 답변이 길면
+    같은 URL 길이 한도에 걸린다."""
+    await ensure_workspace(pid)
+    return {"turn_id": app_module.turn_handles.create(pid,
+                                                      {"answers": body.answers})}
+
+
 @router.get("/projects/{pid}/answers/stream")
-async def stream_answers(pid: str, answers: str):
+async def stream_answers(pid: str, turn: str | None = None,
+                         answers: str | None = None):
     ws = await ensure_workspace(pid)
-    try:
-        parsed = json.loads(answers)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="answers must be a JSON object")
-    if not isinstance(parsed, dict):
+    raw = _turn_payload(pid, turn, answers, "answers")
+    # 핸들 경로는 이미 dict다(POST 본문이 검증했다). 인라인 경로만 파싱한다.
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400,
+                                detail="answers must be a JSON object")
+    if not isinstance(raw, dict):
         raise HTTPException(status_code=400, detail="answers must be a JSON object")
     async def gen():
-        async for event in ws.runner.send_answers(parsed):
+        async for event in ws.runner.send_answers(raw):
             yield {"data": _redacted(event).model_dump_json()}
     return EventSourceResponse(gen())
 
