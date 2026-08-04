@@ -1,6 +1,7 @@
 // frontend/lib/useWorkspaceStream.ts
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useT } from "@/lib/i18n/provider";
 import { streamEvents, streamAnswers } from "@/lib/api/sse";
 import { getPending, getHistory, interruptTurn } from "@/lib/api/client";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
@@ -103,6 +104,7 @@ function historyItemToChatItem(it: HistoryItem): ChatItem {
 }
 
 export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []): WorkspaceStream {
+  const t = useT();
   const [items, setItems] = useState<ChatItem[]>(initial);
   const [streaming, setStreaming] = useState(false);
   const [pendingQuestions, setPendingQuestions] = useState<QuestionsPayload | null>(null);
@@ -170,11 +172,11 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
           const trace: TraceEntry = { kind: ev.kind, text: ev.text, path: ev.path };
           return { ...it, trace: [...it.trace, trace] };
         }
-        if (ev.kind === "error") return { ...it, error: ev.text ?? "턴 처리 중 오류가 발생했습니다." };
+        if (ev.kind === "error") return { ...it, error: ev.text ?? t("stream.turnError") };
         return it; // "done" is handled by onDone
       });
     },
-    [patchAi],
+    [patchAi, t],
   );
 
   const runTurn = useCallback(
@@ -215,7 +217,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
           patchAi(aiId, (it) => ({
             ...it,
             streaming: false,
-            error: it.error ?? "연결이 끊어졌습니다. 다시 시도해 주세요.",
+            error: it.error ?? t("stream.disconnected"),
           }));
           finish();
         },
@@ -223,7 +225,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       if (finished) stop();
       else stopRef.current = stop;
     },
-    [applyEvent, patchAi],
+    [applyEvent, patchAi, t],
   );
 
   const send = useCallback(
@@ -253,8 +255,8 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       // text, and setPendingQuestions(null) is what takes it away. A bare
       // "답변 제출" left the transcript unreadable on scroll-back.
       const summary = pendingQuestions
-        ? answerSummary(pendingQuestions.questions, answers)
-        : "답변 제출";
+        ? answerSummary(pendingQuestions.questions, answers, t)
+        : t("chat.answersSubmitted");
       setPendingQuestions(null);
 
       const aiId = nextId();
@@ -265,7 +267,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       ]);
       runTurn((handlers) => streamAnswers(projectId, answers, handlers), aiId);
     },
-    [projectId, runTurn, pendingQuestions],
+    [projectId, runTurn, pendingQuestions, t],
   );
 
   const interrupt = useCallback(async () => {

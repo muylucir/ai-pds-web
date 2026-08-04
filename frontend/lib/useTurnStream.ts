@@ -1,6 +1,7 @@
 // frontend/lib/useTurnStream.ts
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useT } from "@/lib/i18n/provider";
 import { streamEvents } from "@/lib/api/sse";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import type { AgentEvent } from "@/lib/api/types";
@@ -90,6 +91,7 @@ export interface TurnStream {
 // frame sets its error; done/transport-close finish the turn AND (C2) derive
 // zero or more structured cards from the turn's file_changed paths.
 export function useTurnStream(projectId: string, initial: ChatItem[] = []): TurnStream {
+  const t = useT();
   const [items, setItems] = useState<ChatItem[]>(initial);
   const [streaming, setStreaming] = useState(false);
   const stopRef = useRef<null | (() => void)>(null);
@@ -130,7 +132,7 @@ export function useTurnStream(projectId: string, initial: ChatItem[] = []): Turn
             if (ev.kind === "status" || ev.kind === "file_changed")
               return { ...it, trace: [...it.trace, { kind: ev.kind, text: ev.text, path: ev.path }] };
             if (ev.kind === "error")
-              return { ...it, error: ev.text ?? "턴 처리 중 오류가 발생했습니다." };
+              return { ...it, error: ev.text ?? t("stream.turnError") };
             return it; // "done" is handled by onDone
           });
         },
@@ -147,13 +149,13 @@ export function useTurnStream(projectId: string, initial: ChatItem[] = []): Turn
           patchAi(aiId, (it) => ({
             ...it,
             streaming: false,
-            error: it.error ?? "연결이 끊어졌습니다. 다시 시도해 주세요.",
+            error: it.error ?? t("stream.disconnected"),
           }));
           finish();
         },
       });
     },
-    [projectId, patchAi],
+    [projectId, patchAi, t],
   );
 
   // Close the stream if the component unmounts mid-turn.

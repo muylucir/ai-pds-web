@@ -1,6 +1,7 @@
 // frontend/lib/usePrototypeStream.ts
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useT } from "@/lib/i18n/provider";
 import {
   streamPrototypeEvents,
   submitPrototypeAnswers,
@@ -55,6 +56,7 @@ export interface PrototypeStream {
 }
 
 export function usePrototypeStream(projectId: string, slug: string): PrototypeStream {
+  const t = useT();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [pendingQuestions, setPendingQuestions] = useState<QuestionsPayload | null>(null);
@@ -156,11 +158,11 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
           const trace: TraceEntry = { kind: ev.kind, text: ev.text, path: ev.path };
           return { ...it, trace: [...it.trace, trace] };
         }
-        if (ev.kind === "error") return { ...it, error: ev.text ?? "빌드 중 오류가 발생했습니다." };
+        if (ev.kind === "error") return { ...it, error: ev.text ?? t("stream.buildError") };
         return it; // "done" is handled by onDone
       });
     },
-    [patchAi, openAiBubble],
+    [patchAi, openAiBubble, t],
   );
 
   const runTurn = useCallback(
@@ -223,7 +225,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
           patchAi(liveId(), (it) => ({
             ...it,
             streaming: false,
-            error: it.error ?? "연결이 끊어졌습니다. 다시 시도해 주세요.",
+            error: it.error ?? t("stream.disconnected"),
           }));
           setPendingQuestions(null); // same defensive clear as the error-kind path above
           finish();
@@ -232,7 +234,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       if (finished) stop();
       else stopRef.current = stop;
     },
-    [applyEvent, patchAi],
+    [applyEvent, patchAi, t],
   );
 
   // The auto first-build turn: opens the events stream with the "__first__"
@@ -262,8 +264,8 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       // the success path clears them. Only appended once the server accepts —
       // a bubble on the 409 path would claim a submission that never landed.
       const summary = pendingQuestions
-        ? answerSummary(pendingQuestions.questions, answers)
-        : "답변 제출";
+        ? answerSummary(pendingQuestions.questions, answers, t)
+        : t("chat.answersSubmitted");
       const ok = await submitPrototypeAnswers(projectId, slug, answers);
       if (ok) {
         // No new STREAM here, unlike `send` — events keep flowing on the one
@@ -287,7 +289,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         }));
       }
     },
-    [projectId, slug, patchAi, pendingQuestions, openAiBubble],
+    [projectId, slug, patchAi, pendingQuestions, openAiBubble, t],
   );
 
   const interrupt = useCallback(async () => {
