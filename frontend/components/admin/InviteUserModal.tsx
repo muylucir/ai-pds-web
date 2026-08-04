@@ -40,7 +40,7 @@ export function InviteUserModal({
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/40 p-4">
       <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
-        <h2 className="text-lg font-bold">사용자 초대</h2>
+        <h2 className="text-lg font-bold">{t("admin.inviteUserTitle")}</h2>
         {result ? (
           <div className="mt-4">
             <TempPasswordPanel email={result.email} password={result.temp_password}
@@ -50,7 +50,7 @@ export function InviteUserModal({
           <form onSubmit={submit} className="mt-4 space-y-4">
             <div>
               <label htmlFor="invite-email" className="block text-sm font-medium">
-                이메일
+                {t("admin.email")}
               </label>
               <input
                 id="invite-email"
@@ -63,7 +63,7 @@ export function InviteUserModal({
             </div>
             <div>
               <label htmlFor="invite-role" className="block text-sm font-medium">
-                역할
+                {t("admin.role")}
               </label>
               <select
                 id="invite-role"
@@ -71,19 +71,19 @@ export function InviteUserModal({
                 onChange={(e) => setRole(e.target.value as UserRole)}
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               >
-                <option value="pm">PM — 프로젝트 전체 접근</option>
-                <option value="admin">관리자 — PM 권한 + 사용자 관리</option>
+                <option value="pm">{t("admin.rolePmOption")}</option>
+                <option value="admin">{t("admin.roleAdminOption")}</option>
               </select>
             </div>
             {error && <p className="text-sm text-rose-600">{error}</p>}
             <div className="flex justify-end gap-2">
               <button type="button" onClick={onClose}
                       className="rounded-lg border border-slate-300 px-4 py-2 text-sm">
-                취소
+                {t("admin.commonCancel")}
               </button>
               <button type="submit" disabled={busy}
                       className="rounded-lg bg-violet-600 px-4 py-2 text-sm text-white disabled:opacity-50">
-                {busy ? "초대 중…" : "초대"}
+                {busy ? t("admin.inviting") : t("admin.invite")}
               </button>
             </div>
           </form>
