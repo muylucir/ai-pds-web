@@ -20,6 +20,7 @@ import { useProjectMeta } from "@/lib/useProjectModel";
 import { deriveApprovalState } from "@/lib/approvalState";
 import { approvalTurnText } from "@/lib/approvalMarker";
 import { DEFAULT_LOCALE } from "@/lib/i18n";
+import { useT } from "@/lib/i18n/provider";
 
 // 클라이언트 Blob 다운로드 — 백엔드 왕복 없이 현재 로드된 마크다운을 저장한다.
 function downloadMarkdown(path: string, content: string) {
@@ -50,6 +51,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const t = useT();
   const { modelLabel, language } = useProjectMeta(projectId);
 
   const tree = useAsync(() => listArtifacts(projectId), [projectId]);
@@ -86,7 +88,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
 
   // 수정 요청 링크의 목적지 — 워크스페이스 채팅으로 이동하며 문서명이 포함된 초안을 ?draft=로 전달한다.
   const docName = selected ? selected.slice(selected.lastIndexOf("/") + 1) : "discovery-document.md";
-  const reviseHref = `/projects/${projectId}/workspace?draft=${encodeURIComponent(`${docName} 수정 요청: `)}`;
+  const reviseHref = `/projects/${projectId}/workspace?draft=${encodeURIComponent(`${docName} ${t("page.reviseDraftSuffix")}`)}`;
 
   async function sendTurn(text: string) {
     setBusy(true);
@@ -100,7 +102,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
       content.reload();
       audit.reload();
     } catch {
-      setActionError("요청 처리에 실패했습니다. 다시 시도해 주세요.");
+      setActionError(t("page.turnFailed"));
     } finally {
       setBusy(false);
     }
@@ -137,7 +139,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
               reviseHref={reviseHref}
             />
             {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
-            {busy && <p className="text-sm text-slate-400 mb-4">AI가 요청을 처리하고 있습니다…</p>}
+            {busy && <p className="text-sm text-slate-400 mb-4">{t("page.aiWorking")}</p>}
           </>
         )}
 
@@ -149,14 +151,14 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
             className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
           >
             <p className="text-sm text-emerald-800">
-              <span className="font-bold">✓ 승인 완료</span> — 이 문서로 Discovery 단계가
-              확정되었습니다. 수정하면 다시 승인이 필요합니다.
+              <span className="font-bold">{t("page.approvedBanner")}</span>{" "}
+              {t("page.approvedBannerBody")}
             </p>
             <Link
               href={reviseHref}
               className="shrink-0 px-4 py-2 rounded-lg border border-emerald-300 bg-white text-emerald-800 text-sm font-medium hover:bg-emerald-100"
             >
-              ✏️ 수정 요청
+              {t("page.requestRevision")}
             </Link>
           </div>
         )}
@@ -168,21 +170,21 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
 
           {contentLoadError ? (
             <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <p className="text-sm text-rose-600">문서를 불러오지 못했습니다. 백엔드 연결을 확인하세요.</p>
+              <p className="text-sm text-rose-600">{t("page.docLoadFailed")}</p>
             </div>
           ) : selected === null ? (
             <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <p className="text-sm text-slate-400">좌측에서 문서를 선택하세요.</p>
+              <p className="text-sm text-slate-400">{t("page.pickDocument")}</p>
             </div>
           ) : (
             <div>
               <div className="flex justify-end mb-3">
                 <button
                   type="button"
-                  onClick={() => downloadZip(projectId).catch(() => setActionError("압축 다운로드에 실패했습니다."))}
+                  onClick={() => downloadZip(projectId).catch(() => setActionError(t("page.zipDownloadFailed")))}
                   className="px-3 py-1.5 text-xs rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 mr-2"
                 >
-                  ⬇ 전체 다운로드 (.zip)
+                  {t("page.downloadAllZip")}
                 </button>
                 <button
                   type="button"
@@ -190,7 +192,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
                   disabled={content.loading}
                   className="px-3 py-1.5 text-xs rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
                 >
-                  ⬇ .md 다운로드
+                  {t("page.downloadMd")}
                 </button>
               </div>
               {isDiscoveryDocument ? (
