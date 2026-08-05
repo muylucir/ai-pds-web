@@ -1,438 +1,422 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
 <head>
-<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>[초대] Pathfinder 워크샵 — 아이디어를 AI와 함께 구체화해, 만질 수 있는 프로토타입까지</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
+  <title>막연한 아이디어를 검증 가능한 프로토타입으로</title>
+  <!--
+    권장 메일 제목: 막연한 아이디어, 반나절 만에 프로토타입으로 검증해 보세요
+    권장 프리헤더: PM·PO·기획자를 위한 브라우저 기반 제품 Discovery 핸즈온 워크숍
+    발송 전 {{...}} 형식의 운영 정보와 링크를 실제 값으로 교체하세요.
+  -->
+  <style>
+    html,
+    body {
+      margin: 0 !important;
+      padding: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    * {
+      -ms-text-size-adjust: 100%;
+      -webkit-text-size-adjust: 100%;
+    }
+    table,
+    td {
+      mso-table-lspace: 0pt !important;
+      mso-table-rspace: 0pt !important;
+      border-collapse: collapse !important;
+    }
+    a {
+      text-decoration: none;
+    }
+    @media only screen and (max-width: 640px) {
+      .email-shell {
+        width: 100% !important;
+      }
+      .mobile-pad {
+        padding-left: 24px !important;
+        padding-right: 24px !important;
+      }
+      .hero-title {
+        font-size: 36px !important;
+        line-height: 1.18 !important;
+        letter-spacing: -1.2px !important;
+      }
+      .mobile-block {
+        display: block !important;
+        width: 100% !important;
+      }
+      .mobile-block + .mobile-block {
+        padding-top: 12px !important;
+      }
+      .mobile-center {
+        text-align: center !important;
+      }
+      .step-number {
+        width: 42px !important;
+      }
+      .lifecycle-label {
+        font-size: 9px !important;
+      }
+    }
+  </style>
 </head>
-<!-- ============================================================
-     Pathfinder 워크샵 홍보 EDM
-     - 700px 고정폭 · table 레이아웃 · 전량 인라인 CSS (이메일 클라이언트 호환)
-     - 그라데이션은 background-image로 얹고 bgcolor에 단색 폴백을 둔다.
-       Outlook(Word 엔진)은 background-image를 무시하고 bgcolor만 읽으므로
-       그라데이션이 빠져도 대비가 유지된다.
-     - 【 】로 감싼 곳이 발송 전 채워야 할 자리다. 전체 검색으로 찾을 수 있다.
-     ============================================================ -->
-<body style="margin: 0; padding: 0; background-color: rgb(245, 246, 255); font-family: Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', Arial, sans-serif;">
+<body style="margin:0; padding:0; background-color:#f1f5f9; color:#1e293b; font-family:Arial, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;">
+  <!-- 프리헤더: 본문에서는 보이지 않고 받은편지함 미리보기에 사용됩니다. -->
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all; opacity:0; color:transparent;">
+    PM·PO·기획자를 위한 브라우저 기반 제품 Discovery 핸즈온 워크숍 — 아이디어를 문제 정의, 프로토타입, 검증 계획으로 구체화합니다.
+  </div>
 
-<!-- 프리헤더: 받은메일함 목록의 제목 옆 미리보기 문구. 본문에는 보이지 않는다. -->
-<div style="display: none; max-height: 0; overflow: hidden; mso-hide: all;">
-  반나절, 브라우저 하나로. 고객의 문제에서 출발해 실제로 도는 프로토타입까지 직접 만들어 봅니다.
-</div>
-
-<table cellspacing="0" cellpadding="0" border="0" style="background-color: rgb(245, 246, 255); width: 100%;">
-  <tbody>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background-color:#f1f5f9;">
     <tr>
-      <td align="center" style="padding: 20px 12px;">
-        <table cellspacing="0" cellpadding="0" border="0" style="border-width: 1px; border-style: solid; border-color: rgb(219, 221, 240); background-color: rgb(255, 255, 255); width: 700px; max-width: 700px;">
-          <tbody>
-
-            <!-- ===================== HEADER ===================== -->
-            <tr>
-              <td bgcolor="rgb(26, 22, 60)" style="background-color: rgb(26, 22, 60); background-image: linear-gradient(125deg, rgb(20, 18, 46) 0%, rgb(34, 26, 77) 45%, rgb(18, 58, 82) 100%); padding: 38px 34px 34px;">
-                <div style="text-transform: uppercase; letter-spacing: 2px; font-size: 11px; color: rgb(150, 220, 232); font-weight: bold;">
-                  AWS AI-PLC Discovery · 반일 핸즈온
-                </div>
-                <div style="line-height: 1.32; margin-top: 12px; font-size: 27px; color: rgb(255, 255, 255); font-weight: bold;">
-                  아이디어를 AI와 함께 구체화하고,
-                </div>
-                <div style="line-height: 1.32; margin-top: 2px; font-size: 27px; color: rgb(156, 226, 240); font-weight: bold;">
-                  프로토타입까지 직접 만들어 봅니다
-                </div>
-                <div style="margin-top: 16px; font-size: 14px; color: rgb(207, 212, 245); line-height: 1.6;">
-                  AI-PLC Discovery 워크샵 · Pathfinder로 진행
-                </div>
-                <!-- 메타 칩: 이메일에서 flex/gap이 안 먹으므로 셀 사이 간격은 padding으로 만든다 -->
-                <table cellspacing="0" cellpadding="0" border="0" style="margin-top: 20px;">
-                  <tbody>
-                    <tr>
-                      <td style="padding-right: 8px;">
-                        <table cellspacing="0" cellpadding="0" border="0" bgcolor="rgb(45, 40, 88)" style="background-color: rgb(45, 40, 88); border: 1px solid rgb(85, 80, 140);">
-                          <tbody><tr><td style="padding: 7px 14px; font-size: 12.5px; color: rgb(238, 240, 255); white-space: nowrap;">🕘 반일 · 약 4시간</td></tr></tbody>
-                        </table>
-                      </td>
-                      <td style="padding-right: 8px;">
-                        <table cellspacing="0" cellpadding="0" border="0" bgcolor="rgb(45, 40, 88)" style="background-color: rgb(45, 40, 88); border: 1px solid rgb(85, 80, 140);">
-                          <tbody><tr><td style="padding: 7px 14px; font-size: 12.5px; color: rgb(238, 240, 255); white-space: nowrap;">💻 브라우저만 준비</td></tr></tbody>
-                        </table>
-                      </td>
-                      <td>
-                        <table cellspacing="0" cellpadding="0" border="0" bgcolor="rgb(45, 40, 88)" style="background-color: rgb(45, 40, 88); border: 1px solid rgb(85, 80, 140);">
-                          <tbody><tr><td style="padding: 7px 14px; font-size: 12.5px; color: rgb(238, 240, 255); white-space: nowrap;">🙋 1인 1실습환경</td></tr></tbody>
-                        </table>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
-
-            <!-- ===================== 일정 요약 바 ===================== -->
-            <tr>
-              <td bgcolor="rgb(240, 241, 253)" style="background-color: rgb(240, 241, 253); border-bottom: 1px solid rgb(223, 225, 245); padding: 15px 34px; font-size: 13.5px; color: rgb(38, 40, 66); line-height: 1.7;">
-                <b>📅 【일시: 2026년 0월 0일(0) 00:00–00:00】</b>
-                &nbsp;·&nbsp; 📍 【장소】
-                &nbsp;·&nbsp; 👥 선착순 【00】명
-                &nbsp;·&nbsp; ✍️ 신청 마감 【0월 0일】
-              </td>
-            </tr>
-
-            <!-- ===================== 리드 ===================== -->
-            <tr>
-              <td style="padding: 32px 34px 6px;">
-                <p style="margin: 0 0 14px; font-size: 15px; line-height: 1.78; color: rgb(32, 34, 58);">
-                  머릿속에 있는 아이디어를 <b>말로 설명하는 것</b>과, 다른 사람이 <b>보고 만져볼 수 있게 만드는 것</b> 사이에는 큰 간격이 있습니다. 보통 이 간격을 건너려면 기획서를 쓰고, 개발팀과 회의를 잡고, 일정을 기다립니다.
-                </p>
-                <p style="margin: 0 0 14px; font-size: 15px; line-height: 1.78; color: rgb(32, 34, 58);">
-                  이 워크샵에서는 그 간격을 <b>반나절에 한 번 건너봅니다.</b> AI 에이전트와 대화하며 아이디어를 명세로 구체화하고, 그 명세를 <b>실제로 도는 프로토타입</b>으로 만들어 링크로 열어봅니다. 그리고 그게 쓸 만한 아이디어였는지 <b>사람들에게 직접 물어</b> 확인합니다.
-                </p>
-                <p style="margin: 0; font-size: 15px; line-height: 1.78; color: rgb(32, 34, 58);">
-                  코드를 쓰지 않습니다. 설치할 것도 없습니다. <b>브라우저 하나면 됩니다.</b>
-                </p>
-              </td>
-            </tr>
-
-            <!-- ===================== 포지셔닝: 왜 '만들기'가 아니라 '정하기'인가 ===================== -->
-            <tr>
-              <td style="padding: 30px 34px 0;">
-                <table cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-left: 4px solid rgb(109, 94, 252);">
-                  <tbody><tr><td bgcolor="rgb(244, 245, 255)" style="background-color: rgb(244, 245, 255); padding: 8px 13px; font-size: 15.5px; color: rgb(28, 30, 54);">
-                    <b>아이디어가 현실이 되기까지, 가장 오래 걸리는 구간</b>
-                  </td></tr></tbody>
-                </table>
-
-                <p style="margin: 15px 0 14px; font-size: 15px; line-height: 1.78; color: rgb(32, 34, 58);">
-                  아이디어를 실제 서비스로 만드는 일은 개발 조직이 잘합니다. 정작 시간이 오래 걸리는 곳은 그 <b>앞단</b>입니다 &mdash; 무엇을 만들지 정하고, 그게 맞는 방향인지 확인하고, 그것을 남이 이해할 수 있게 전달하는 구간입니다.
-                </p>
-                <p style="margin: 0 0 14px; font-size: 15px; line-height: 1.78; color: rgb(32, 34, 58);">
-                  이 구간이 느린 이유는 실력이 아니라 <b>확인할 방법이 없다는 것</b>입니다.
-                </p>
-
-                <table cellspacing="0" cellpadding="0" border="0" style="width: 100%; margin-bottom: 4px;">
-                  <tbody>
-                    <tr>
-                      <td valign="top" style="font-size: 14px; color: rgb(52, 55, 82); line-height: 1.74; padding-bottom: 9px;">
-                        <b style="color: rgb(28, 30, 54);">문서로는 반응을 받을 수 없습니다</b> &mdash; 기획서를 들고 가면 "좋아 보인다"는 말이 돌아옵니다. 정작 알고 싶은 건 <b>이걸 실제로 쓸까</b>인데, 만져볼 것이 없으면 그 질문에 답이 나오지 않습니다.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td valign="top" style="font-size: 14px; color: rgb(52, 55, 82); line-height: 1.74; padding-bottom: 9px;">
-                        <b style="color: rgb(28, 30, 54);">확인하려면 일정이 필요합니다</b> &mdash; 화면 하나라도 실제로 보려면 개발 리소스를 요청하고 순번을 기다립니다. 아직 맞는지도 모르는 아이디어에 그 비용을 쓰기 어려워, 검증되지 않은 채로 진행되거나 조용히 접힙니다.
-                      </td>
-                    </tr>
-                    <tr>
-                      <td valign="top" style="font-size: 14px; color: rgb(52, 55, 82); line-height: 1.74; padding-bottom: 9px;">
-                        <b style="color: rgb(28, 30, 54);">전달 과정에서 의도가 빠집니다</b> &mdash; 만드는 사람은 결국 다른 사람입니다. <b>무엇을 왜 그렇게 정했는지</b>가 함께 넘어가지 않으면 결과물이 처음 생각과 달라집니다. 많이 겪어본 그 간극입니다.
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-
-                <table cellspacing="0" cellpadding="0" border="0" bgcolor="rgb(240, 241, 253)" style="background-color: rgb(240, 241, 253); border: 1px solid rgb(206, 209, 245); width: 100%; margin-top: 12px;">
-                  <tbody><tr><td style="padding: 16px 18px;">
-                    <div style="font-size: 14.5px; color: rgb(28, 30, 54); font-weight: bold; margin-bottom: 6px;">
-                      🎯 임의로 만든 커리큘럼이 아닙니다
-                    </div>
-                    <div style="font-size: 13.5px; color: rgb(46, 48, 78); line-height: 1.74;">
-                      이 워크샵은 AWS가 공개한 방법론 <b>AI-PLC</b>(AI-Driven Product Life Cycle)의 <b>Discovery</b> 구간을 그대로 따라갑니다. 문제 정리 → 명세 → 만져볼 수 있는 프로토타입 → 사람들의 반응까지, <b>기다리지 않고 한 번에</b> 갑니다. 개발 일정을 잡기 전에 <b>이 방향이 맞는지 먼저 알 수 있게</b> 하는 것이 방법론의 목적입니다.
-                      <br><br>
-                      그래서 여기서 만드는 프로토타입은 <b>납품물이 아니라 판단의 근거</b>입니다. 운영·인증·연동 같은 실제 구축은 개발 조직의 몫으로 남겨 둡니다 &mdash; 대신 그쪽에 넘길 때 <b>검증까지 끝난 기획</b>을 함께 넘기게 됩니다.
-                      <br><br>
-                      방법론은 <b>공개되어 있습니다</b>(<span style="font-family: monospace; font-size: 12.5px;">github.com/aws-samples/sample-ai-plc</span>). 그래서 워크샵이 끝난 뒤에도 <b>사내에서 같은 절차를 이어서 쓸 수 있습니다.</b> 실제로 남는 건 그 방법입니다.
-                    </div>
-                  </td></tr></tbody>
-                </table>
-              </td>
-            </tr>
-
-            <!-- ===================== AI-PLC 라이프사이클 ===================== -->
-            <tr>
-              <td style="padding: 26px 34px 0;">
-                <div style="font-size: 13px; color: rgb(84, 88, 116); margin-bottom: 10px;">
-                  AI-PLC는 네 구간으로 이루어집니다. <b style="color: rgb(28, 30, 54);">이 워크샵은 첫 구간입니다.</b>
-                </div>
-                <table cellspacing="0" cellpadding="0" border="0" style="width: 100%; border: 1px solid rgb(223, 225, 245);">
-                  <tbody>
-                    <tr>
-                      <td width="25%" bgcolor="rgb(240, 241, 253)" style="background-color: rgb(240, 241, 253); border-right: 1px solid rgb(223, 225, 245); padding: 12px 10px; text-align: center;">
-                        <div style="font-size: 12px; font-weight: bold; color: rgb(76, 62, 210);">DISCOVERY</div>
-                        <div style="font-size: 11px; color: rgb(76, 62, 210); margin-top: 3px;"><b>◀ 이 워크샵</b></div>
-                        <div style="font-size: 11.5px; color: rgb(84, 88, 116); margin-top: 5px;">문제 정의</div>
-                      </td>
-                      <td width="25%" style="border-right: 1px solid rgb(223, 225, 245); padding: 12px 10px; text-align: center;">
-                        <div style="font-size: 12px; font-weight: bold; color: rgb(120, 124, 152);">INCEPTION</div>
-                        <div style="font-size: 11.5px; color: rgb(140, 144, 172); margin-top: 5px;">요구사항 · 워크플로</div>
-                      </td>
-                      <td width="25%" style="border-right: 1px solid rgb(223, 225, 245); padding: 12px 10px; text-align: center;">
-                        <div style="font-size: 12px; font-weight: bold; color: rgb(120, 124, 152);">CONSTRUCTION</div>
-                        <div style="font-size: 11.5px; color: rgb(140, 144, 172); margin-top: 5px;">설계 · 코드 · 테스트</div>
-                      </td>
-                      <td width="25%" style="padding: 12px 10px; text-align: center;">
-                        <div style="font-size: 12px; font-weight: bold; color: rgb(120, 124, 152);">OPERATIONS</div>
-                        <div style="font-size: 11.5px; color: rgb(140, 144, 172); margin-top: 5px;">배포 · 운영</div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-                <div style="font-size: 12.5px; color: rgb(120, 124, 152); line-height: 1.7; margin-top: 10px;">
-                  오늘의 산출물이 다음 구간의 입력이 됩니다. 그래서 <b>기획을 확정하기 전에</b> 방향을 먼저 확인하는 자리입니다.
-                </div>
-              </td>
-            </tr>
-
-            <!-- ===================== 4시간의 흐름 ===================== -->
-            <tr>
-              <td style="padding: 30px 34px 0;">
-                <table cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-left: 4px solid rgb(109, 94, 252);">
-                  <tbody><tr><td bgcolor="rgb(244, 245, 255)" style="background-color: rgb(244, 245, 255); padding: 8px 13px; font-size: 15.5px; color: rgb(28, 30, 54);">
-                    <b>반나절 동안 이런 순서로 갑니다</b>
-                  </td></tr></tbody>
-                </table>
-
-                <!-- 4단계 파이프라인 -->
-                <table cellspacing="0" cellpadding="0" border="0" style="width: 100%; margin-top: 16px;">
-                  <tbody>
-                    <!-- 1 -->
-                    <tr>
-                      <td valign="top" style="width: 42px; padding: 0 0 6px;">
-                        <table cellspacing="0" cellpadding="0" border="0" bgcolor="rgb(109, 94, 252)" style="background-color: rgb(109, 94, 252); width: 28px;">
-                          <tbody><tr><td align="center" style="padding: 5px 0; font-size: 12.5px; color: rgb(255,255,255); font-weight: bold;">1</td></tr></tbody>
-                        </table>
-                      </td>
-                      <td valign="top" style="padding: 0 0 6px;">
-                        <div style="font-size: 15px; color: rgb(28, 30, 54); font-weight: bold;">문제를 정리한다 <span style="font-size: 11.5px; color: rgb(140, 144, 172); font-weight: normal;">Envision</span></div>
-                        <div style="font-size: 13.5px; color: rgb(102, 106, 136); line-height: 1.65; margin-top: 3px;">
-                          고객이나 동료가 실제로 겪는 불편을 AI와 함께 정리합니다. 무엇을 만들지가 아니라 <b>무엇이 문제인지</b>부터 시작합니다.
-                        </div>
-                      </td>
-                    </tr>
-                    <tr><td></td><td style="padding: 0 0 6px; font-size: 13px; color: rgb(196, 199, 225); line-height: 1;">▼</td></tr>
-                    <!-- 2 -->
-                    <tr>
-                      <td valign="top" style="width: 42px; padding: 0 0 6px;">
-                        <table cellspacing="0" cellpadding="0" border="0" bgcolor="rgb(90, 106, 250)" style="background-color: rgb(90, 106, 250); width: 28px;">
-                          <tbody><tr><td align="center" style="padding: 5px 0; font-size: 12.5px; color: rgb(255,255,255); font-weight: bold;">2</td></tr></tbody>
-                        </table>
-                      </td>
-                      <td valign="top" style="padding: 0 0 6px;">
-                        <div style="font-size: 15px; color: rgb(28, 30, 54); font-weight: bold;">아이디어를 명세로 만든다 <span style="font-size: 11.5px; color: rgb(140, 144, 172); font-weight: normal;">Solution Analysis</span></div>
-                        <div style="font-size: 13.5px; color: rgb(102, 106, 136); line-height: 1.65; margin-top: 3px;">
-                          AI가 초안을 만들고 <b>여러분이 고칩니다.</b> 어떤 기능·어떤 화면이 필요한지, 그리고 <b>무엇을 확인하고 싶은지</b>가 한 문서로 정리됩니다.
-                        </div>
-                      </td>
-                    </tr>
-                    <tr><td></td><td style="padding: 0 0 6px; font-size: 13px; color: rgb(196, 199, 225); line-height: 1;">▼</td></tr>
-                    <!-- 3 -->
-                    <tr>
-                      <td valign="top" style="width: 42px; padding: 0 0 6px;">
-                        <table cellspacing="0" cellpadding="0" border="0" bgcolor="rgb(66, 140, 246)" style="background-color: rgb(66, 140, 246); width: 28px;">
-                          <tbody><tr><td align="center" style="padding: 5px 0; font-size: 12.5px; color: rgb(255,255,255); font-weight: bold;">3</td></tr></tbody>
-                        </table>
-                      </td>
-                      <td valign="top" style="padding: 0 0 6px;">
-                        <div style="font-size: 15px; color: rgb(28, 30, 54); font-weight: bold;">프로토타입으로 만든다 <span style="font-size: 11.5px; color: rgb(140, 144, 172); font-weight: normal;">Prototype Building</span></div>
-                        <div style="font-size: 13.5px; color: rgb(102, 106, 136); line-height: 1.65; margin-top: 3px;">
-                          같은 화면에서 버튼을 누르면 그 명세로 앱이 만들어집니다. 만드는 도중에도 <b>AI가 물어보고 여러분이 답합니다.</b> 완성되면 링크로 열어 직접 만져봅니다.
-                        </div>
-                      </td>
-                    </tr>
-                    <tr><td></td><td style="padding: 0 0 6px; font-size: 13px; color: rgb(196, 199, 225); line-height: 1;">▼</td></tr>
-                    <!-- 4 -->
-                    <tr>
-                      <td valign="top" style="width: 42px;">
-                        <table cellspacing="0" cellpadding="0" border="0" bgcolor="rgb(35, 196, 216)" style="background-color: rgb(35, 196, 216); width: 28px;">
-                          <tbody><tr><td align="center" style="padding: 5px 0; font-size: 12.5px; color: rgb(255,255,255); font-weight: bold;">4</td></tr></tbody>
-                        </table>
-                      </td>
-                      <td valign="top">
-                        <div style="font-size: 15px; color: rgb(28, 30, 54); font-weight: bold;">쓸 만한지 물어본다 <span style="font-size: 11.5px; color: rgb(140, 144, 172); font-weight: normal;">Prototype &amp; Validation</span></div>
-                        <div style="font-size: 13.5px; color: rgb(102, 106, 136); line-height: 1.65; margin-top: 3px;">
-                          설문을 만들어 링크를 돌리고, 참가자들이 <b>서로의 프로토타입에 응답</b>합니다. 내 아이디어에 대한 반응이 <b>숫자로</b> 돌아옵니다.
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
-
-            <!-- ===================== 오해 교정 ===================== -->
-            <tr>
-              <td style="padding: 28px 34px 0;">
-                <table cellspacing="0" cellpadding="0" border="0" bgcolor="rgb(255, 250, 240)" style="background-color: rgb(255, 250, 240); border: 1px solid rgb(245, 205, 150); width: 100%;">
-                  <tbody><tr><td style="padding: 16px 18px;">
-                    <div style="font-size: 14.5px; color: rgb(28, 30, 54); font-weight: bold; margin-bottom: 6px;">
-                      ⚖️ 미리 말씀드립니다 — AI가 알아서 다 만들어주는 체험이 아닙니다
-                    </div>
-                    <div style="font-size: 13.5px; color: rgb(78, 70, 52); line-height: 1.72;">
-                      AI는 초안을 아주 빠르게 만듭니다. 하지만 <b>그게 맞는지 아는 사람은 여러분입니다.</b> 이 워크샵은 단계마다 여러분이 읽고 판단해 <b>직접 승인</b>해야 다음으로 넘어갑니다. 하루가 끝날 때 남는 건 "AI가 대신 해줬다"가 아니라 <b>어디까지 AI에게 맡기고 어디서 내가 정해야 하는지</b>에 대한 감각입니다.
-                    </div>
-                  </td></tr></tbody>
-                </table>
-              </td>
-            </tr>
-
-            <!-- ===================== 이런 분에게 ===================== -->
-            <tr>
-              <td style="padding: 30px 34px 0;">
-                <table cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-left: 4px solid rgb(109, 94, 252);">
-                  <tbody><tr><td bgcolor="rgb(244, 245, 255)" style="background-color: rgb(244, 245, 255); padding: 8px 13px; font-size: 15.5px; color: rgb(28, 30, 54);">
-                    <b>이런 분께 권합니다</b>
-                  </td></tr></tbody>
-                </table>
-                <table cellspacing="0" cellpadding="0" border="0" style="width: 100%; margin-top: 14px;">
-                  <tbody>
-                    <tr>
-                      <td valign="top" style="font-size: 14px; color: rgb(52, 55, 82); line-height: 1.78; padding-bottom: 7px;">
-                        ✔️&nbsp; 아이디어는 있는데 <b>어떻게 정리해서 전달할지</b> 막막한 분
-                      </td>
-                    </tr>
-                    <tr>
-                      <td valign="top" style="font-size: 14px; color: rgb(52, 55, 82); line-height: 1.78; padding-bottom: 7px;">
-                        ✔️&nbsp; 기획서를 넘긴 뒤 <b>생각과 다른 결과물</b>을 받아본 경험이 있는 분
-                      </td>
-                    </tr>
-                    <tr>
-                      <td valign="top" style="font-size: 14px; color: rgb(52, 55, 82); line-height: 1.78; padding-bottom: 7px;">
-                        ✔️&nbsp; AI 도구를 업무에 쓰고 싶은데 <b>어디에 어떻게 써야 할지</b> 모호한 분
-                      </td>
-                    </tr>
-                    <tr>
-                      <td valign="top" style="font-size: 14px; color: rgb(52, 55, 82); line-height: 1.78;">
-                        ✔️&nbsp; <b>개발 경험이 없어도 괜찮습니다.</b> 코드를 쓰는 시간은 없습니다
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
-
-            <!-- ===================== 가져갈 것 ===================== -->
-            <tr>
-              <td style="padding: 30px 34px 0;">
-                <table cellspacing="0" cellpadding="0" border="0" style="width: 100%; border-left: 4px solid rgb(35, 196, 216);">
-                  <tbody><tr><td bgcolor="rgb(240, 252, 253)" style="background-color: rgb(240, 252, 253); padding: 8px 13px; font-size: 15.5px; color: rgb(28, 30, 54);">
-                    <b>끝나고 손에 남는 것</b>
-                  </td></tr></tbody>
-                </table>
-
-                <table cellspacing="0" cellpadding="0" border="0" style="width: 100%; margin-top: 14px;">
-                  <tbody>
-                    <tr>
-                      <td valign="top" style="width: 50%; padding: 0 6px 12px 0;">
-                        <table cellspacing="0" cellpadding="0" border="0" style="border: 1px solid rgb(223, 225, 245); width: 100%; height: 100%;">
-                          <tbody><tr><td style="padding: 15px 16px;">
-                            <div style="font-size: 14.5px; color: rgb(28, 30, 54); font-weight: bold;">📦 정리된 기획 문서</div>
-                            <div style="font-size: 13px; color: rgb(102, 106, 136); line-height: 1.65; margin-top: 5px;">
-                              문제 정리부터 프로토타입 명세까지 한 묶음으로. <b>개발팀에 그대로 넘길 수 있는 형태</b>입니다.
-                            </div>
-                          </td></tr></tbody>
-                        </table>
-                      </td>
-                      <td valign="top" style="width: 50%; padding: 0 0 12px 6px;">
-                        <table cellspacing="0" cellpadding="0" border="0" style="border: 1px solid rgb(223, 225, 245); width: 100%; height: 100%;">
-                          <tbody><tr><td style="padding: 15px 16px;">
-                            <div style="font-size: 14.5px; color: rgb(28, 30, 54); font-weight: bold;">🧪 내가 만든 프로토타입</div>
-                            <div style="font-size: 13px; color: rgb(102, 106, 136); line-height: 1.65; margin-top: 5px;">
-                              직접 만져본 그 결과물을 <b>파일로 내려받아</b> 돌아갑니다. 사내에서 <b>보여주고 설득하는 데</b> 쓸 수 있습니다.
-                            </div>
-                          </td></tr></tbody>
-                        </table>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td valign="top" style="width: 50%; padding: 0 6px 0 0;">
-                        <table cellspacing="0" cellpadding="0" border="0" style="border: 1px solid rgb(223, 225, 245); width: 100%; height: 100%;">
-                          <tbody><tr><td style="padding: 15px 16px;">
-                            <div style="font-size: 14.5px; color: rgb(28, 30, 54); font-weight: bold;">📊 반응 데이터</div>
-                            <div style="font-size: 13px; color: rgb(102, 106, 136); line-height: 1.65; margin-top: 5px;">
-                              "이 아이디어가 쓸 만한가"에 대한 응답 집계. <b>느낌이 아니라 숫자로</b> 된 근거입니다.
-                            </div>
-                          </td></tr></tbody>
-                        </table>
-                      </td>
-                      <td valign="top" style="width: 50%; padding: 0 0 0 6px;">
-                        <table cellspacing="0" cellpadding="0" border="0" style="border: 1px solid rgb(223, 225, 245); width: 100%; height: 100%;">
-                          <tbody><tr><td style="padding: 15px 16px;">
-                            <div style="font-size: 14.5px; color: rgb(28, 30, 54); font-weight: bold;">🧭 다시 쓸 수 있는 방법</div>
-                            <div style="font-size: 13px; color: rgb(102, 106, 136); line-height: 1.65; margin-top: 5px;">
-                              가장 중요한 것. <b>내 업무의 과제로</b> 같은 흐름을 다시 돌릴 수 있게 됩니다.
-                            </div>
-                          </td></tr></tbody>
-                        </table>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
-
-            <!-- ===================== CTA ===================== -->
-            <tr>
-              <td style="padding: 32px 34px 0;">
-                <table cellspacing="0" cellpadding="0" border="0" bgcolor="rgb(244, 245, 255)" style="background-color: rgb(244, 245, 255); border: 1px solid rgb(216, 214, 250); width: 100%;">
-                  <tbody><tr><td align="center" style="padding: 26px 24px;">
-                    <div style="font-size: 16.5px; color: rgb(28, 30, 54); font-weight: bold; line-height: 1.5;">
-                      자리가 한정되어 있습니다 — 선착순 【00】명
-                    </div>
-                    <div style="font-size: 13.5px; color: rgb(102, 106, 136); margin-top: 7px; line-height: 1.65;">
-                      실습 환경을 <b>참가자 한 분당 하나씩</b> 준비하기 때문에, 신청 마감 후에는 추가 참가가 어렵습니다.
-                    </div>
-                    <!-- CTA 버튼: a 태그에 배경을 직접 준다(Outlook은 td 배경+a 조합에서 색이 빠질 수 있음) -->
-                    <table cellspacing="0" cellpadding="0" border="0" style="margin: 20px auto 0;">
-                      <tbody><tr>
-                        <td bgcolor="rgb(90, 63, 224)" align="center" style="background-color: rgb(90, 63, 224); background-image: linear-gradient(120deg, rgb(109, 94, 252) 0%, rgb(74, 125, 255) 55%, rgb(35, 196, 216) 100%);">
-                          <a href="【신청 링크】" style="display: inline-block; padding: 14px 42px; font-size: 15.5px; font-weight: bold; color: rgb(255, 255, 255); text-decoration: none;">
-                            워크샵 신청하기 →
-                          </a>
-                        </td>
-                      </tr></tbody>
+      <td align="center" style="padding:28px 12px;">
+        <table role="presentation" class="email-shell" width="640" cellpadding="0" cellspacing="0" border="0" style="width:640px; max-width:640px; background-color:#ffffff; border-radius:20px; overflow:hidden; box-shadow:0 8px 30px rgba(15,23,42,0.08);">
+          <!-- Brand header -->
+          <tr>
+            <td class="mobile-pad" style="padding:22px 40px; background-color:#ffffff; border-bottom:1px solid #e2e8f0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td valign="middle">
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td width="34" height="34" align="center" valign="middle" style="width:34px; height:34px; border-radius:9px; background-color:#7c3aed; color:#ffffff; font-size:13px; line-height:34px; font-weight:700;">AI</td>
+                        <td style="padding-left:10px; color:#6d28d9; font-size:18px; line-height:24px; font-weight:700;">Pathfinder</td>
+                      </tr>
                     </table>
-                    <div style="font-size: 12.5px; color: rgb(122, 126, 156); margin-top: 14px;">
-                      신청 마감 <b>【0월 0일(0)】</b> · 문의 <a href="mailto:【담당자 이메일】" style="color: rgb(90, 63, 224); text-decoration: none;"><b>【담당자 이메일】</b></a>
-                    </div>
-                  </td></tr></tbody>
-                </table>
-              </td>
-            </tr>
+                  </td>
+                  <td align="right" valign="middle" style="color:#64748b; font-size:12px; line-height:18px;">
+                    Discovery Workshop
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
 
-            <!-- ===================== 안내 사항 ===================== -->
-            <tr>
-              <td style="padding: 26px 34px 0;">
-                <div style="font-size: 13px; color: rgb(28, 30, 54); font-weight: bold; margin-bottom: 8px;">참가 전 안내</div>
-                <table cellspacing="0" cellpadding="0" border="0" style="width: 100%;">
-                  <tbody>
-                    <tr><td style="font-size: 12.5px; color: rgb(112, 116, 146); line-height: 1.72; padding-bottom: 5px;">
-                      · <b>준비물은 노트북 한 대뿐입니다.</b> 설치할 프로그램은 없고, 접속 주소와 계정은 당일 개별 안내드립니다.
-                    </td></tr>
-                    <tr><td style="font-size: 12.5px; color: rgb(112, 116, 146); line-height: 1.72; padding-bottom: 5px;">
-                      · 실습은 <b>공통 예시 상황</b>으로 진행합니다. 사전에 준비해 오실 것은 없습니다.
-                    </td></tr>
-                    <tr><td style="font-size: 12.5px; color: rgb(112, 116, 146); line-height: 1.72;">
-                      · 실습 환경은 워크샵 종료 후 정리됩니다. <b>산출물은 종료 전에 내려받는 시간</b>을 따로 드립니다.
-                    </td></tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
+          <!-- Hero -->
+          <tr>
+            <td class="mobile-pad" style="padding:54px 40px 50px; background-color:#4c1d95;">
+              <p style="margin:0 0 18px; color:#ddd6fe; font-size:13px; line-height:20px; font-weight:700; letter-spacing:1.1px; text-transform:uppercase;">
+                AWS AI-PLC Discovery · 핸즈온 워크샵
+              </p>
+              <h1 class="hero-title" style="margin:0; color:#ffffff; font-size:46px; line-height:1.16; letter-spacing:-1.8px; font-weight:800;">
+                막연한 아이디어를<br>검증 가능한 프로토타입으로
+              </h1>
+              <p style="margin:22px 0 0; max-width:520px; color:#ede9fe; font-size:18px; line-height:1.65; word-break:keep-all;">
+                코딩 없이 브라우저에서 고객 문제를 정리하고, 가장 중요한 아이디어를 골라 직접 체험할 수 있는 데모와 검증 설문까지 만듭니다.
+              </p>
 
-            <!-- ===================== FOOTER ===================== -->
-            <tr>
-              <td style="padding: 28px 34px 30px;">
-                <div style="border-top: 1px solid rgb(230, 231, 246); padding-top: 18px; font-size: 12px; color: rgb(140, 144, 172); line-height: 1.7;">
-                  AWS AI-PLC Discovery 핸즈온 · 반일 · 구동 도구 Pathfinder<br>
-                  방법론 원본: <span style="font-family: monospace;">github.com/aws-samples/sample-ai-plc</span><br>
-                  본 메일은 워크샵 안내를 위해 발송되었습니다. 수신을 원하지 않으시면 <a href="mailto:【담당자 이메일】" style="color: rgb(140, 144, 172);">회신</a>해 주세요.
-                </div>
-              </td>
-            </tr>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:30px;">
+                <tr>
+                  <td align="center" bgcolor="#ffffff" style="border-radius:10px; background-color:#ffffff;">
+                    <a href="{{REGISTRATION_URL}}" target="_blank" style="display:inline-block; padding:15px 25px; color:#5b21b6; font-size:16px; line-height:20px; font-weight:700; border:1px solid #ffffff; border-radius:10px;">
+                      워크숍 신청하기&nbsp;&nbsp;→
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
 
-          </tbody>
+          <!-- Event facts -->
+          <tr>
+            <td class="mobile-pad" style="padding:0 40px; background-color:#ffffff;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:-1px; border:1px solid #ddd6fe; border-top:0; border-radius:0 0 14px 14px; background-color:#faf5ff;">
+                <tr>
+                  <td class="mobile-block" width="50%" valign="top" style="width:50%; padding:22px 20px 12px;">
+                    <p style="margin:0 0 5px; color:#7c3aed; font-size:11px; line-height:16px; font-weight:700; letter-spacing:0.8px;">일정</p>
+                    <p style="margin:0; color:#1e293b; font-size:15px; line-height:23px; font-weight:700;">2026. 09. 15. · 13:30-17:00</p>
+                  </td>
+                  <td class="mobile-block" width="50%" valign="top" style="width:50%; padding:22px 20px 12px;">
+                    <p style="margin:0 0 5px; color:#7c3aed; font-size:11px; line-height:16px; font-weight:700; letter-spacing:0.8px;">장소</p>
+                    <p style="margin:0; color:#1e293b; font-size:15px; line-height:23px; font-weight:700;">역삼동 센터필드 AWS 강의장</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="mobile-block" width="50%" valign="top" style="width:50%; padding:12px 20px 22px;">
+                    <p style="margin:0 0 5px; color:#7c3aed; font-size:11px; line-height:16px; font-weight:700; letter-spacing:0.8px;">대상</p>
+                    <p style="margin:0; color:#1e293b; font-size:15px; line-height:23px; font-weight:700;">PM · PO · 기획자 · 아이디어 오너</p>
+                  </td>
+                  <td class="mobile-block" width="50%" valign="top" style="width:50%; padding:12px 20px 22px;">
+                    <p style="margin:0 0 5px; color:#7c3aed; font-size:11px; line-height:16px; font-weight:700; letter-spacing:0.8px;">준비물</p>
+                    <p style="margin:0; color:#1e293b; font-size:15px; line-height:23px; font-weight:700;">개인 노트북 · 아이디어</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Problem framing -->
+          <tr>
+            <td class="mobile-pad" style="padding:52px 40px 18px;">
+              <p style="margin:0 0 10px; color:#7c3aed; font-size:12px; line-height:18px; font-weight:700; letter-spacing:0.9px;">IDEA TO EVIDENCE</p>
+              <h2 style="margin:0; color:#0f172a; font-size:28px; line-height:1.35; letter-spacing:-0.7px; word-break:keep-all;">
+                좋은 아이디어보다 먼저 필요한 것은<br>확인할 수 있는 가설입니다
+              </h2>
+              <p style="margin:17px 0 0; color:#475569; font-size:16px; line-height:1.75; word-break:keep-all;">
+                “AI로 무엇을 만들까?”에서 시작하지 않습니다. 누구의 어떤 문제가 중요한지, 현재 방식은 왜 부족한지, 무엇을 보여주면 방향을 판단할 수 있는지부터 함께 정리합니다.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Outcomes -->
+          <tr>
+            <td class="mobile-pad" style="padding:22px 40px 48px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="padding:0 0 13px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:12px;">
+                      <tr>
+                        <td width="44" valign="top" style="width:44px; padding:18px 0 18px 18px; color:#7c3aed; font-size:18px; line-height:24px; font-weight:800;">01</td>
+                        <td valign="top" style="padding:18px;">
+                          <p style="margin:0; color:#0f172a; font-size:16px; line-height:22px; font-weight:700;">고객 관점의 문제 정의</p>
+                          <p style="margin:5px 0 0; color:#64748b; font-size:14px; line-height:21px;">대상 사용자, 현재 대안, 핵심 Pain Point를 한 문장으로 정리합니다.</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 0 13px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:12px;">
+                      <tr>
+                        <td width="44" valign="top" style="width:44px; padding:18px 0 18px 18px; color:#7c3aed; font-size:18px; line-height:24px; font-weight:800;">02</td>
+                        <td valign="top" style="padding:18px;">
+                          <p style="margin:0; color:#0f172a; font-size:16px; line-height:22px; font-weight:700;">검증할 아이디어 하나</p>
+                          <p style="margin:5px 0 0; color:#64748b; font-size:14px; line-height:21px;">가치, 실행 가능성, 사용자 영향을 기준으로 후보를 좁힙니다.</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 0 13px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:12px;">
+                      <tr>
+                        <td width="44" valign="top" style="width:44px; padding:18px 0 18px 18px; color:#7c3aed; font-size:18px; line-height:24px; font-weight:800;">03</td>
+                        <td valign="top" style="padding:18px;">
+                          <p style="margin:0; color:#0f172a; font-size:16px; line-height:22px; font-weight:700;">직접 체험하는 프로토타입</p>
+                          <p style="margin:5px 0 0; color:#64748b; font-size:14px; line-height:21px;">AI가 만든 명세를 바탕으로 핵심 사용자 흐름을 실제 화면으로 확인합니다.</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc; border:1px solid #e2e8f0; border-radius:12px;">
+                      <tr>
+                        <td width="44" valign="top" style="width:44px; padding:18px 0 18px 18px; color:#7c3aed; font-size:18px; line-height:24px; font-weight:800;">04</td>
+                        <td valign="top" style="padding:18px;">
+                          <p style="margin:0; color:#0f172a; font-size:16px; line-height:22px; font-weight:700;">바로 공유할 검증 설문</p>
+                          <p style="margin:5px 0 0; color:#64748b; font-size:14px; line-height:21px;">프로토타입 링크와 함께 보내고, 응답을 다음 의사결정의 근거로 남깁니다.</p>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Method credibility -->
+          <tr>
+            <td class="mobile-pad" style="padding:46px 40px; background-color:#ecfdf5; border-top:1px solid #a7f3d0; border-bottom:1px solid #a7f3d0;">
+              <p style="margin:0 0 10px; color:#047857; font-size:12px; line-height:18px; font-weight:700; letter-spacing:0.8px;">검증된 방법론을 기반으로</p>
+              <h2 style="margin:0; color:#064e3b; font-size:25px; line-height:1.4; letter-spacing:-0.5px;">임의로 만든 커리큘럼이 아닙니다</h2>
+              <p style="margin:15px 0 0; color:#065f46; font-size:15px; line-height:1.75; word-break:keep-all;">
+                이 워크숍은 AWS가 공개한 <a href="https://github.com/aws-samples/sample-ai-plc" target="_blank" style="color:#5b21b6; font-weight:700; text-decoration:underline;">AI-Driven Product Life Cycle (AI-PLC)</a>의 Discovery 절차를 기반으로 합니다.
+              </p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px; background-color:#ffffff; border:1px solid #a7f3d0; border-radius:12px;">
+                <tr>
+                  <td style="padding:20px;">
+                    <p style="margin:0; color:#064e3b; font-size:17px; line-height:1.5; font-weight:800; word-break:keep-all;">
+                      AI-PLC의 체계는 그대로,<br>개발자 도구의 장벽은 없앴습니다.
+                    </p>
+                    <p style="margin:9px 0 0; color:#065f46; font-size:14px; line-height:1.7; word-break:keep-all;">
+                      Codex·Claude Code·Kiro 같은 코딩 어시스턴트를 참가자가 직접 설치하거나 조작할 필요가 없습니다.
+                    </p>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;">
+                      <tr>
+                        <td width="22" valign="top" style="width:22px; padding:4px 0; color:#10b981; font-size:14px; line-height:20px; font-weight:800;">✓</td>
+                        <td style="padding:4px 0; color:#334155; font-size:13px; line-height:20px;">별도 AI 코딩 도구 설치 없음</td>
+                      </tr>
+                      <tr>
+                        <td width="22" valign="top" style="width:22px; padding:4px 0; color:#10b981; font-size:14px; line-height:20px; font-weight:800;">✓</td>
+                        <td style="padding:4px 0; color:#334155; font-size:13px; line-height:20px;">터미널 명령어나 마크다운 파일 편집 없음</td>
+                      </tr>
+                      <tr>
+                        <td width="22" valign="top" style="width:22px; padding:4px 0; color:#10b981; font-size:14px; line-height:20px; font-weight:800;">✓</td>
+                        <td style="padding:4px 0; color:#334155; font-size:13px; line-height:20px;">질문, 문서 리뷰, 프로토타입 실행까지 브라우저에서</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:14px 0 0; color:#065f46; font-size:14px; line-height:1.7; word-break:keep-all;">
+                Pathfinder가 개발자 도구와 파일 편집이 필요했던 절차를 브라우저 기반 질문 위저드와 문서·프로토타입 화면으로 제공합니다. 방법론이 공개되어 있으므로 워크숍이 끝난 뒤에도 조직 안에서 같은 흐름을 이어서 활용할 수 있습니다.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Workshop to actual build -->
+          <tr>
+            <td class="mobile-pad" style="padding:46px 40px 20px;">
+              <p style="margin:0 0 9px; color:#7c3aed; font-size:12px; line-height:18px; font-weight:700; letter-spacing:0.9px;">WORKSHOP TO BUILD</p>
+              <h2 style="margin:0; color:#0f172a; font-size:25px; line-height:1.4; letter-spacing:-0.5px;">워크숍 이후, 실제 빌드로 이어갈 수 있습니다</h2>
+              <p style="margin:12px 0 0; color:#64748b; font-size:14px; line-height:1.7; word-break:keep-all;">오늘 확인한 문제, 선택한 범위, 프로토타입과 사용자 반응을 후속 <a href="https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/" target="_blank" style="color:#6d28d9; font-weight:700; text-decoration:underline;">AI-Driven Development Life Cycle (AI-DLC)</a>의 입력으로 정제해 실제 소프트웨어 빌드로 연결할 수 있습니다.</p>
+            </td>
+          </tr>
+          <tr>
+            <td class="mobile-pad" style="padding:10px 40px 48px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td class="mobile-block" width="32%" valign="top" style="width:32%; padding:18px 14px; background-color:#7c3aed; border:1px solid #7c3aed; border-radius:10px;">
+                    <p style="margin:0; color:#ddd6fe; font-size:10px; line-height:15px; font-weight:800;">01 · WORKSHOP</p>
+                    <p style="margin:7px 0 0; color:#ffffff; font-size:14px; line-height:20px; font-weight:800;">문제와 제품 가설 검증</p>
+                    <p style="margin:5px 0 0; color:#ede9fe; font-size:11px; line-height:17px;">문서 · 프로토타입 · 사용자 반응</p>
+                  </td>
+                  <td class="mobile-block" width="4%" align="center" valign="middle" style="width:4%; padding:8px 3px; color:#7c3aed; font-size:18px; line-height:24px; font-weight:900;">→</td>
+                  <td class="mobile-block" width="28%" valign="top" style="width:28%; padding:18px 14px; background-color:#ecfdf5; border:1px solid #a7f3d0; border-radius:10px;">
+                    <p style="margin:0; color:#047857; font-size:10px; line-height:15px; font-weight:800;">02 · HANDOFF</p>
+                    <p style="margin:7px 0 0; color:#064e3b; font-size:14px; line-height:20px; font-weight:800;">빌드 범위와 기준 정리</p>
+                    <p style="margin:5px 0 0; color:#065f46; font-size:11px; line-height:17px;">가정 · 제약 · 성공 기준</p>
+                  </td>
+                  <td class="mobile-block" width="4%" align="center" valign="middle" style="width:4%; padding:8px 3px; color:#7c3aed; font-size:18px; line-height:24px; font-weight:900;">→</td>
+                  <td class="mobile-block" width="32%" valign="top" style="width:32%; padding:18px 14px; background-color:#eff6ff; border:1px solid #93c5fd; border-radius:10px;">
+                    <p style="margin:0; color:#1d4ed8; font-size:10px; line-height:15px; font-weight:800;">03 · AI-DLC</p>
+                    <p style="margin:7px 0 0; color:#1e3a8a; font-size:14px; line-height:20px; font-weight:800;">실제 소프트웨어 빌드</p>
+                    <p style="margin:5px 0 0; color:#1e40af; font-size:11px; line-height:17px;">요구사항 · 설계 · 코드 · 테스트 · 배포</p>
+                  </td>
+                </tr>
+              </table>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px; background-color:#fff7ed; border:1px solid #fed7aa; border-radius:10px;">
+                <tr>
+                  <td style="padding:14px 16px; color:#9a3412; font-size:12px; line-height:1.65; word-break:keep-all;"><strong>워크숍의 데모를 그대로 배포하는 것은 아닙니다.</strong> 검증된 맥락을 인계하고 개발팀과 범위·품질 기준을 합의한 뒤, 별도의 AI-DLC 여정으로 실제 빌드를 진행합니다.</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Workshop flow -->
+          <tr>
+            <td class="mobile-pad" style="padding:46px 40px 20px; background-color:#f8fafc; border-top:1px solid #e2e8f0;">
+              <p style="margin:0 0 9px; color:#7c3aed; font-size:12px; line-height:18px; font-weight:700; letter-spacing:0.9px;">HALF-DAY FLOW</p>
+              <h2 style="margin:0; color:#0f172a; font-size:25px; line-height:1.4; letter-spacing:-0.5px;">반나절 동안 이 흐름을 완주합니다</h2>
+            </td>
+          </tr>
+          <tr>
+            <td class="mobile-pad" style="padding:10px 40px 48px; background-color:#f8fafc;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td class="step-number" width="54" valign="top" style="width:54px; padding:13px 0; color:#7c3aed; font-size:13px; line-height:20px; font-weight:800; border-bottom:1px solid #e2e8f0;">01</td>
+                  <td valign="top" style="padding:13px 0; border-bottom:1px solid #e2e8f0;">
+                    <p style="margin:0; color:#0f172a; font-size:15px; line-height:22px; font-weight:700;">문제를 정리한다 · Envision</p>
+                    <p style="margin:4px 0 0; color:#64748b; font-size:13px; line-height:20px;">고객, 현재 대안, 해결할 Pain Point를 명확히 합니다.</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="step-number" width="54" valign="top" style="width:54px; padding:13px 0; color:#7c3aed; font-size:13px; line-height:20px; font-weight:800; border-bottom:1px solid #e2e8f0;">02</td>
+                  <td valign="top" style="padding:13px 0; border-bottom:1px solid #e2e8f0;">
+                    <p style="margin:0; color:#0f172a; font-size:15px; line-height:22px; font-weight:700;">후보를 좁힌다 · Use Case Prioritization</p>
+                    <p style="margin:4px 0 0; color:#64748b; font-size:13px; line-height:20px;">아이디어를 비교하고 오늘 검증할 하나를 선택합니다.</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="step-number" width="54" valign="top" style="width:54px; padding:13px 0; color:#7c3aed; font-size:13px; line-height:20px; font-weight:800; border-bottom:1px solid #e2e8f0;">03</td>
+                  <td valign="top" style="padding:13px 0; border-bottom:1px solid #e2e8f0;">
+                    <p style="margin:0; color:#0f172a; font-size:15px; line-height:22px; font-weight:700;">직접 체험한다 · Prototype Building</p>
+                    <p style="margin:4px 0 0; color:#64748b; font-size:13px; line-height:20px;">핵심 흐름을 데모로 만들고 화면에서 바로 개선합니다.</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="step-number" width="54" valign="top" style="width:54px; padding:13px 0; color:#7c3aed; font-size:13px; line-height:20px; font-weight:800;">04</td>
+                  <td valign="top" style="padding:13px 0;">
+                    <p style="margin:0; color:#0f172a; font-size:15px; line-height:22px; font-weight:700;">다음 실험을 설계한다 · Prototype &amp; Validation</p>
+                    <p style="margin:4px 0 0; color:#64748b; font-size:13px; line-height:20px;">검증 설문을 만들고 누구에게 무엇을 확인할지 정합니다.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Audience -->
+          <tr>
+            <td class="mobile-pad" style="padding:48px 40px 20px;">
+              <p style="margin:0 0 9px; color:#7c3aed; font-size:12px; line-height:18px; font-weight:700; letter-spacing:0.9px;">WHO SHOULD JOIN</p>
+              <h2 style="margin:0; color:#0f172a; font-size:25px; line-height:1.4; letter-spacing:-0.5px;">이런 분께 권합니다</h2>
+            </td>
+          </tr>
+          <tr>
+            <td class="mobile-pad" style="padding:8px 40px 48px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td valign="top" width="24" style="width:24px; padding:7px 0; color:#10b981; font-size:16px; line-height:22px; font-weight:800;">✓</td>
+                  <td style="padding:7px 0; color:#334155; font-size:15px; line-height:22px;">고객 문제는 알지만 솔루션 범위를 잡기 어려운 PM·PO</td>
+                </tr>
+                <tr>
+                  <td valign="top" width="24" style="width:24px; padding:7px 0; color:#10b981; font-size:16px; line-height:22px; font-weight:800;">✓</td>
+                  <td style="padding:7px 0; color:#334155; font-size:15px; line-height:22px;">AI 아이디어를 문서가 아닌 실제 화면으로 확인하고 싶은 기획자</td>
+                </tr>
+                <tr>
+                  <td valign="top" width="24" style="width:24px; padding:7px 0; color:#10b981; font-size:16px; line-height:22px; font-weight:800;">✓</td>
+                  <td style="padding:7px 0; color:#334155; font-size:15px; line-height:22px;">개발 투자 전에 사용자 반응을 먼저 확인하고 싶은 아이디어 오너</td>
+                </tr>
+                <tr>
+                  <td valign="top" width="24" style="width:24px; padding:7px 0; color:#10b981; font-size:16px; line-height:22px; font-weight:800;">✓</td>
+                  <td style="padding:7px 0; color:#334155; font-size:15px; line-height:22px;">코딩 경험 없이 체계적인 제품 Discovery를 경험하고 싶은 비개발자</td>
+                </tr>
+              </table>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px; background-color:#fff7ed; border:1px solid #fed7aa; border-radius:10px;">
+                <tr>
+                  <td style="padding:15px 17px; color:#9a3412; font-size:13px; line-height:1.65; word-break:keep-all;">
+                    <strong>참고:</strong> 이 워크숍은 아직 해법이 열려 있는 신규 아이디어의 Discovery에 적합합니다. 이미 요구사항과 구현 범위가 확정된 개발 프로젝트에는 맞지 않을 수 있습니다.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Final CTA -->
+          <tr>
+            <td class="mobile-pad" align="center" style="padding:50px 40px; background-color:#111827;">
+              <p style="margin:0 0 10px; color:#a78bfa; font-size:12px; line-height:18px; font-weight:700; letter-spacing:0.9px;">BRING ONE IDEA</p>
+              <h2 style="margin:0; color:#ffffff; font-size:28px; line-height:1.4; letter-spacing:-0.6px; word-break:keep-all;">아이디어 하나만 가져오세요.<br>나머지는 함께 구체화합니다.</h2>
+              <p style="margin:14px 0 0; color:#cbd5e1; font-size:15px; line-height:1.7;">개발 경험은 필요하지 않습니다. 개인 노트북만 준비해 주세요.</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:26px;">
+                <tr>
+                  <td align="center" bgcolor="#7c3aed" style="border-radius:10px; background-color:#7c3aed;">
+                    <a href="{{REGISTRATION_URL}}" target="_blank" style="display:inline-block; padding:15px 27px; color:#ffffff; font-size:16px; line-height:20px; font-weight:700; border:1px solid #7c3aed; border-radius:10px;">
+                      지금 신청하기&nbsp;&nbsp;→
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:17px 0 0; color:#94a3b8; font-size:12px; line-height:18px;">제한된 좌석으로 인해 신청 현황에 따라 조기 마감될 수 있습니다.</p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td class="mobile-pad mobile-center" style="padding:28px 40px 32px; background-color:#ffffff;">
+              <p style="margin:0; color:#6d28d9; font-size:15px; line-height:22px; font-weight:700;">AI Pathfinder · AWS TIS팀</p>
+              <p style="margin:7px 0 0; color:#64748b; font-size:12px; line-height:19px;">
+                문의: <a href="mailto:{{CONTACT_EMAIL}}" style="color:#6d28d9; text-decoration:underline;">beomjun@amazon.com</a>
+              </p>
+              <p style="margin:14px 0 0; color:#94a3b8; font-size:11px; line-height:18px; word-break:keep-all;">
+                프로토타입은 제품 방향과 사용자 흐름을 검증하기 위한 데모이며, 운영 환경의 성능·보안·실데이터 정확성을 검증하는 결과물이 아닙니다.
+              </p>
+              <p style="margin:10px 0 0; color:#94a3b8; font-size:11px; line-height:18px;">
+                AI-PLC 공개 저장소: <a href="https://github.com/aws-samples/sample-ai-plc" target="_blank" style="color:#64748b; text-decoration:underline;">github.com/aws-samples/sample-ai-plc</a><br>
+                Pathfinder는 AI-PLC Discovery 워크숍 진행을 위한 도구이며 AWS 제품이 아닙니다.
+              </p>
+            </td>
+          </tr>
         </table>
       </td>
     </tr>
-  </tbody>
-</table>
-
+  </table>
 </body>
 </html>
