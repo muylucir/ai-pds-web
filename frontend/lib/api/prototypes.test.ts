@@ -15,6 +15,7 @@ import {
   stopHost,
   getHost,
   prototypePreviewUrl,
+  prototypeShareUrl,
   streamPrototypeEvents,
   resetPrototype,
 } from "./prototypes";
@@ -215,6 +216,37 @@ describe("prototypePreviewUrl", () => {
 
   it("encodes pid/slug segments", () => {
     expect(prototypePreviewUrl("p 1", "todo app")).toBe(`${API_BASE_URL}/proto/p%201/todo%20app/`);
+  });
+});
+
+// 이 파일은 @vitest-environment node다(MSW). origin을 인자로 받는 형태라
+// window 없이도 검증할 수 있다 — 그것이 인자를 둔 이유이기도 하다.
+describe("prototypeShareUrl", () => {
+  const ORIGIN = "https://d123.cloudfront.net";
+
+  // 공유용은 **절대 URL이어야 한다.** 배포에서 API_BASE_URL은 "/api"이므로
+  // prototypePreviewUrl은 상대 경로를 내놓고, 그것을 복사해 채팅에 붙이면
+  // 받는 사람에게는 아무 의미가 없다.
+  it("is absolute so it can be pasted outside the app", () => {
+    const url = prototypeShareUrl("p1", "todo-app", ORIGIN);
+    // 스킴은 API_BASE_URL이 상대(`/api` — 배포)냐 절대(로컬 :8000)냐에 따라
+    // 갈리므로 https를 단정하지 않는다. 중요한 성질은 **절대 URL**이라는 것이다.
+    expect(/^https?:\/\//.test(url)).toBe(true);
+    expect(url).toContain("/proto/p1/todo-app/");
+  });
+
+  it("keeps segment encoding", () => {
+    expect(prototypeShareUrl("p 1", "todo app", ORIGIN))
+      .toContain("/proto/p%201/todo%20app/");
+  });
+
+  // API_BASE_URL이 이미 절대 URL이면(로컬 개발의 http://localhost:8000) origin을
+  // 문자열로 덧붙이는 구현은 "https://d123...http://localhost:8000/..."을 만든다.
+  // new URL(relative, base)는 base를 상대 경로에만 적용하므로 그렇지 않다.
+  it("does not double-prefix an already absolute base", () => {
+    const url = prototypeShareUrl("p1", "todo-app", ORIGIN);
+    expect(url.match(/https?:\/\//g)).toHaveLength(1);
+    if (API_BASE_URL.startsWith("http")) expect(url.startsWith(API_BASE_URL)).toBe(true);
   });
 });
 

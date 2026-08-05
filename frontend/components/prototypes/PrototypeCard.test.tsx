@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PrototypeCard } from "./PrototypeCard";
@@ -89,6 +89,107 @@ describe("PrototypeCard", () => {
     expect(screen.queryByRole("button", { name: "프리뷰 열기" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "로그" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "호스팅 중지" })).toBeInTheDocument();
+  });
+
+  // 링크 복사. 호스팅 중일 때만 노출하는 이유는 그때만 링크가 동작하기
+  // 때문이다 — built 상태의 링크는 백엔드가 502를 준다
+  // (routes/proto_public.py). 깨진 링크를 공유하게 만들지 않는다.
+  describe("링크 복사", () => {
+    // userEvent.setup()이 navigator.clipboard를 getter로 심어 두므로
+    // Object.assign은 "has only a getter"로 던진다. defineProperty로 덮고
+    // afterEach에서 원래 서술자를 되돌린다 — 그러지 않으면 이 스텁이 다음
+    // 테스트의 userEvent까지 오염시킨다.
+    const original = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    afterEach(() => {
+      if (original) Object.defineProperty(navigator, "clipboard", original);
+      else Reflect.deleteProperty(navigator as unknown as object, "clipboard");
+    });
+
+    function clipboardSpy(impl?: () => Promise<void>) {
+      const writeText = vi.fn(impl ?? (() => Promise.resolve()));
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText }, configurable: true, writable: true,
+      });
+      return writeText;
+    }
+
+    it("running: copies an absolute, shareable URL", async () => {
+      const user = userEvent.setup();
+      const writeText = clipboardSpy();
+      render(
+        <PrototypeCard
+          info={info({ state: "running", port: 4021 })}
+          busy={false}
+          {...noop}
+          shareUrl="https://d123.cloudfront.net/api/proto/p1/todo-app/"
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "링크 복사" }));
+
+      expect(writeText).toHaveBeenCalledWith("https://d123.cloudfront.net/api/proto/p1/todo-app/");
+    });
+
+    // 가짜 타이머를 쓰지 않는다: userEvent가 자체적으로 타이머를 쓰기 때문에
+    // 이 조합이 클릭 대기에서 매달리고, 남은 실제 타이머가 다음 테스트까지
+    // 끌어간다(실측: 이 테스트와 뒤의 두 개가 5초 타임아웃). 되돌아온다는
+    // 사실만 확인하면 되므로 findBy*의 폴링에 2초를 맡긴다.
+    it("confirms the copy, then goes back so a second copy is visible", async () => {
+      const user = userEvent.setup();
+      clipboardSpy();
+      render(
+        <PrototypeCard
+          info={info({ state: "running", port: 4021 })}
+          busy={false}
+          {...noop}
+          shareUrl="https://x/api/proto/p1/todo-app/"
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "링크 복사" }));
+      expect(await screen.findByRole("button", { name: "복사됨" })).toBeInTheDocument();
+
+      // 2초 뒤 라벨이 돌아온다 — 그래야 두 번째 복사가 화면에서 구별된다.
+      expect(await screen.findByRole("button", { name: "링크 복사" }, { timeout: 3000 }))
+        .toBeInTheDocument();
+    });
+
+    it("does not claim success when the clipboard is unavailable", async () => {
+      const user = userEvent.setup();
+      // 비-HTTPS 오리진이나 권한 거부 — 조용히 성공한 척하면 사용자가 빈
+      // 클립보드를 붙여넣게 된다.
+      clipboardSpy(() => Promise.reject(new Error("denied")));
+      render(
+        <PrototypeCard
+          info={info({ state: "running", port: 4021 })}
+          busy={false}
+          {...noop}
+          shareUrl="https://x/api/proto/p1/todo-app/"
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "링크 복사" }));
+
+      expect(screen.getByRole("button", { name: "링크 복사" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "복사됨" })).toBeNull();
+    });
+
+    it("is absent before hosting starts — that link would 502", () => {
+      render(
+        <PrototypeCard
+          info={info({ state: "built" })}
+          busy={false}
+          {...noop}
+          shareUrl="https://x/api/proto/p1/todo-app/"
+        />,
+      );
+      expect(screen.queryByRole("button", { name: "링크 복사" })).toBeNull();
+    });
+
+    it("is absent when no shareUrl is supplied", () => {
+      render(<PrototypeCard info={info({ state: "running", port: 4021 })} busy={false} {...noop} />);
+      expect(screen.queryByRole("button", { name: "링크 복사" })).toBeNull();
+    });
   });
 
   it("failed: shows a rose 실패 badge plus 다시 빌드 and 로그", () => {

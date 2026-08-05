@@ -143,6 +143,23 @@ export function prototypePreviewUrl(pid: string, slug: string): string {
   return `${API_BASE_URL}/proto/${encodeURIComponent(pid)}/${encodeURIComponent(slug)}/`;
 }
 
+/** 같은 프리뷰를 **앱 밖으로 공유할 수 있는 절대 URL**로.
+ *
+ *  prototypePreviewUrl을 그대로 복사할 수 없는 이유: 배포에서 API_BASE_URL은
+ *  `/api`이므로 결과가 상대 경로이고, 그것을 채팅에 붙이면 받는 사람에게는
+ *  아무 의미가 없다. `new URL(..., origin)`을 쓰는 것은 로컬 개발처럼
+ *  API_BASE_URL이 이미 절대 URL일 때 origin을 덧붙여
+ *  "http://localhost:3000http://localhost:8000/..."을 만들지 않기 위해서다 —
+ *  base는 상대 경로일 때만 적용된다.
+ *
+ *  링크가 실제로 동작하는 것은 호스팅 중일 때뿐이다. 그렇지 않으면 백엔드가
+ *  502를 준다(routes/proto_public.py) — 그래서 호출부는 state === "running"에서만
+ *  이 값을 노출한다. */
+export function prototypeShareUrl(pid: string, slug: string,
+                                  origin: string = globalThis.location?.origin ?? ""): string {
+  return new URL(prototypePreviewUrl(pid, slug), origin).toString();
+}
+
 //: 첫 턴의 센티널. 서버가 이 값을 session.first_prompt()로 치환한다
 //: (backend routes/prototypes.py의 _FIRST_TURN_SENTINEL) — 양쪽이 같은 값이어야
 //: 하므로 호출부가 리터럴을 쓰지 않게 여기서 이름을 준다.

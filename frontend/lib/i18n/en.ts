@@ -159,6 +159,8 @@ export const en: Record<keyof typeof ko, string> = {
   "proto.openSession": "Open session",
   "proto.rebuild": "Rebuild",
   "proto.openPreview": "Open preview",
+  "proto.copyLink": "Copy link",
+  "proto.copied": "Copied",
   "proto.stopHosting": "Stop hosting",
   "proto.logs": "Logs",
   "proto.resetAria": "reset",

@@ -15,6 +15,7 @@ import {
   stopHost,
   getHost,
   prototypePreviewUrl,
+  prototypeShareUrl,
   resetPrototype,
 } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
@@ -207,6 +208,9 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 }
                 onReset={handleReset}
                 archiveUrl={prototypeArchiveUrl(projectId, info.slug)}
+                // 호스팅 중일 때만 — 그 밖의 상태에서 이 링크는 502다.
+                shareUrl={info.state === "running"
+                  ? prototypeShareUrl(projectId, info.slug) : undefined}
               />
             ))}
           </div>

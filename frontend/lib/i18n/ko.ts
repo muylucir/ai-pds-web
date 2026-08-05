@@ -165,6 +165,8 @@ export const ko = {
   "proto.openSession": "세션 열기",
   "proto.rebuild": "다시 빌드",
   "proto.openPreview": "프리뷰 열기",
+  "proto.copyLink": "링크 복사",
+  "proto.copied": "복사됨",
   "proto.stopHosting": "호스팅 중지",
   "proto.logs": "로그",
   "proto.resetAria": "초기화",

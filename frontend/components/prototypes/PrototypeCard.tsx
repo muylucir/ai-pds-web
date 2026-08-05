@@ -7,6 +7,8 @@
 //   none -> building -> built -> running
 //                          \-------> failed
 "use client";
+import { useEffect, useRef, useState } from "react";
+
 import type { PrototypeInfo, PrototypeState } from "@/lib/api/prototypes";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
@@ -44,6 +46,7 @@ export function PrototypeCard({
   onOpenSurvey,
   onReset,
   archiveUrl,
+  shareUrl,
   busy,
 }: {
   info: PrototypeInfo;
@@ -57,6 +60,10 @@ export function PrototypeCard({
    *  `info.state !== "none"` — there is nothing accumulated to clear. */
   onReset?: (slug: string) => void;
   archiveUrl?: string;
+  /** 공유용 절대 URL(`prototypeShareUrl`). 주어지고 호스팅 중일 때만 복사
+   *  버튼이 뜬다 — 그 밖의 상태에서는 링크가 502이므로 깨진 링크를 공유하게
+   *  된다(routes/proto_public.py). */
+  shareUrl?: string;
   busy: boolean;
 }) {
   const t = useT();
@@ -109,6 +116,7 @@ export function PrototypeCard({
                 {t("proto.openPreview")}
               </button>
             )}
+            {shareUrl && <CopyLinkButton url={shareUrl} disabled={busy} />}
             <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onStopHost}>
               {t("proto.stopHosting")}
             </button>
@@ -153,6 +161,44 @@ export function PrototypeCard({
         )}
       </div>
     </div>
+  );
+}
+
+/** 프리뷰 링크를 클립보드로. 워크숍에서 참가자에게 링크를 나눠 주는 것이
+ *  용도이므로 값은 **절대 URL**이어야 한다(호출부가 `prototypeShareUrl`로 만든다).
+ *
+ *  "복사됨"을 2초 후 되돌리는 이유: 두 번째 복사가 실제로 됐는지 화면에서
+ *  구별되어야 한다. 라벨이 영구히 "복사됨"이면 눌렀는지 알 수 없다.
+ *
+ *  실패를 삼키지 않는다 — `navigator.clipboard`는 비-HTTPS 오리진이나 권한
+ *  거부에서 없거나 던진다. 그때 "복사됨"을 띄우면 사용자가 빈 클립보드를
+ *  붙여넣고 원인을 알 수 없다. */
+function CopyLinkButton({ url, disabled }: { url: string; disabled: boolean }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 언마운트(호스팅 중지·리스트 갱신) 후 setState가 불리지 않게 정리한다.
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      return;   // 성공한 척하지 않는다
+    }
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <button type="button" className={SECONDARY_BTN} disabled={disabled}
+            onClick={() => void copy()}>
+      {copied ? t("proto.copied") : t("proto.copyLink")}
+    </button>
   );
 }
 
