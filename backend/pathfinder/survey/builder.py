@@ -19,6 +19,9 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 # mapping (prototype-validation.md Step 6), so the questions must produce that
 # evidence -- otherwise the PM gets answers they cannot synthesise.
 QUESTIONNAIRE_PROMPT_KO = """\
+**문항·제목·선택지·가설을 모두 한국어로 써라.** 아래 명세는 영어 헤딩을 쓰거나
+다른 언어로 쓰여 있을 수 있다 — 필요하면 옮겨 쓰고, 문항 자체는 한국어여야 한다.
+
 아래는 프로토타입 명세(PROTOTYPE-*.md)다. 이 **프로토타입을 체험해 본**
 사람에게 물을 검증 설문 문항을 만들어라.
 
@@ -74,7 +77,17 @@ QUESTIONNAIRE_PROMPT_KO = """\
 # 영어 판. 한국어 판과 **같은 제약을 같은 순서로** 담는다 — 조립하지 않고 두
 # 벌을 유지하는 이유는 proto/prompts.py와 같다(제약이 하나 빠지면 그 언어의
 # 설문만 조용히 나빠진다). test_survey_builder가 두 벌의 대조를 지킨다.
+#
+# **첫 줄의 언어 지시가 두 판 모두에 있어야 한다.** 프롬프트가 자기 산문의
+# 언어로 출력 언어를 암시하는 것만으로는 부족하다 — 실측(2026-08-05): 영어
+# 프롬프트에 한국어 명세를 실었더니 문항이 전부 한국어로 나왔다. `{md}`로 실린
+# 명세가 더 가깝고 구체적인 신호라 모델이 그것을 따라갔고, ko 프로젝트에서는
+# 명세와 출력이 우연히 일치해 결함이 보이지 않았다.
 QUESTIONNAIRE_PROMPT_EN = """\
+**Write every question, title, option, and hypothesis in English.** The spec below
+may be written in another language — translate as needed; the questions themselves
+must be in English.
+
 Below is a prototype spec (PROTOTYPE-*.md). Write validation survey questions to
 ask someone who **has tried this prototype**.
 

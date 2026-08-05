@@ -157,6 +157,48 @@ def test_an_unknown_language_falls_back_to_korean():
     assert build_prompt("# spec", language="klingon") == build_prompt("# spec")
 
 
+# 명세는 프로젝트 언어와 다른 언어로 쓰여 있을 수 있다. 실제 PROTOTYPE-*.md는
+# 상류 룰의 **영어 헤딩**(## Use Case Overview 등) 안에 프로젝트 언어의 산문이
+# 담긴 혼합 문서다(prototype-md-format.md의 템플릿).
+SPEC_IN_KOREAN = """# PROTOTYPE-todo.md
+## Use Case Overview
+### Problem Statement
+팀원들이 할 일을 이메일로 주고받아 진행 상황을 알 수 없다.
+## Key Features
+1. 할 일 등록 - 제목과 담당자를 입력한다
+"""
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_prompt_states_the_output_language_explicitly(language):
+    """프롬프트가 출력 언어를 **말해야** 한다 — 자기 산문의 언어로 암시하는
+    것으로는 부족하다.
+
+    실측한 결함(2026-08-05): language="en"인데 문항이 전부 한국어로 나왔다.
+    프롬프트 어디에도 어느 언어로 쓰라는 지시가 없었고, `{md}`로 실린 명세가
+    더 가깝고 구체적인 신호라 모델이 명세의 언어를 따라갔다. Bedrock 실호출로
+    A/B 확인: 지시 한 줄을 앞에 붙인 것만 다른 프롬프트는 영어로 나왔다.
+
+    discovery-config/CLAUDE.md가 기록한 그 실패와 같은 모양이다 — 맥락이 가까운
+    지시가 이긴다. 그래서 언어를 암시가 아니라 명시로 둔다.
+    """
+    p = build_prompt(SPEC_IN_KOREAN, language=language)
+    target = "한국어" if language == "ko" else "English"
+    directive = [ln for ln in p.splitlines() if target in ln]
+    assert directive, f"출력 언어({target}) 지시가 프롬프트에 없다:\n{p[:500]}"
+
+
+def test_english_prompt_survives_a_korean_spec():
+    """영어 프롬프트에서 한국어는 **명세 안에만** 있어야 한다.
+
+    명세를 제거한 나머지(=지시문)에 한글이 남아 있으면 그 프롬프트는 두 언어로
+    말하는 것이고, 모델이 어느 쪽을 따를지 예측할 수 없다.
+    """
+    p = build_prompt(SPEC_IN_KOREAN, language="en")
+    body = p.replace(SPEC_IN_KOREAN, "")
+    assert not any("가" <= c <= "힣" for c in body), body[:400]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["ko", "en"])
 async def test_build_questionnaire_records_the_language(language):
