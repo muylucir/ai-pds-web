@@ -61,7 +61,8 @@ CLI는 도구를 부를 때마다 별도 assistant 줄을 쓰므로 줄마다 �
 저장되며(응답 1건 = 객체 1개), 대시보드는 `rollup.json` 캐시를 읽는다.
 
 문항은 **응답자가 본 것이 데모라는 전제** 위에서 만들어진다(`survey/builder.py`의
-`QUESTIONNAIRE_PROMPT`). 성능·보안·실데이터 정확도·도입 시점은 묻지 않고 — 룰이 그
+`QUESTIONNAIRE_PROMPT_KO`/`_EN` — 프로젝트 언어로 고른다). 성능·보안·실데이터
+정확도·도입 시점은 묻지 않고 — 룰이 그
 단계에서 의도적으로 만들지 않는 것들이므로(`prototype-validation.md` Step 3의
 "NOT production code") 물어서 받은 낮은 점수는 판단에 쓸 수 없다 — 대신 "실제 업무에
 도입된다면 이 방향이 맞는가"를 가정형으로 묻는다. 기능 choice 문항에는 "사용하지
@@ -81,10 +82,17 @@ did not reach this feature" 행이 있고, 그 선택지가 없으면 응답자�
 생성 화면이 프로젝트가 하나도 없는 상태에서 이것을 읽어야 하므로 프로젝트
 프리픽스 안에 둘 수 없다.
 
+**한국어와 영어를 모두 지원한다.** 화면 언어는 상단 네비의 스위치로 언제든 바꾸고,
+문서·프로토타입·채팅이 나오는 언어는 프로젝트 생성 시 1회 고른다. 이 둘은 **서로
+참조하지 않는 별개 채널**이고, 그렇게 나눈 이유와 각 채널이 지나가는 경로는 아래
+"참고"의 언어 항목에 있다.
+
 ```
 frontend/  Next.js 15 (App Router) — 대시보드 · 워크스페이스 · 문서 리뷰 · 프로토타입 탭 · 로그인/사용자 관리
            (상단 네비는 이 4개다. `projects/[projectId]/canvas`·`/questions`는
             워크스페이스로 대체된 구 화면이 남아 있는 것 — 네비에 노출되지 않는다)
+           UI 문구는 전부 `lib/i18n/{ko,en}.ts` 딕셔너리가 소유한다 — 소스에 한국어를
+           직접 박으면 `lib/i18n/noHardcodedKorean.test.ts`가 실패한다
 backend/   FastAPI — 파서 · 인프로세스 Discovery 에이전트(Claude Agent SDK) · SSE 턴 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅 · JWT 검증
 infra/     CDK (TypeScript) — S3 버킷 + 백엔드 실행 롤 + Cognito(Hosted UI v2) + EC2/CloudFront (서울, 리전 파라미터화)
 ```
@@ -173,13 +181,22 @@ npx cdk deploy --all --require-approval never
 > ⚠️ **배포되는 것은 커밋된 코드가 아니라 현재 워킹 트리다.** 호스팅 스택은 리포
 > 루트를 zip 에셋으로 올린다(`.git`, `infra`, `docs`, `node_modules`, `.venv`,
 > `.next`, `cdk.out`, `__pycache__`, `*.egg-info`, `test-results`,
-> `playwright-report`, `files/*.png`, `.env*`, 그리고 빌드 에이전트의 런타임
-> 산출물(`proto-type/`·`protos/`·`*-config/projects/`) 제외 —
+> `playwright-report`, `files/*.png`, `.env*`, 빌드 에이전트의 런타임
+> 산출물(`proto-type/`·`protos/`·`*-config/projects/`·`*-config/sessions/`),
+> 그리고 **이 리포를 개발할 때 쓰는 `.claude/`** 제외 —
 > `lib/pathfinder-hosting-stack.ts`). 미커밋 변경도 그대로 배포되므로, 배포 전
 > `git status`로 의도한 상태인지 확인한다. `.gitignore`와는 **별개 목록**이므로
 > gitignored라고 자동 제외되지는 않는다 — 새로 gitignore한 로컬 산출물은 이
 > 목록에도 넣어야 한다. (실제로 `proto-type/`이 빠져 있어서, 개발 박스에서 만든
 > 프로토타입이 배포 zip에 실려 새 인스턴스에서 "빌드 완료"로 보였다.)
+>
+> `.claude/`가 이 목록에 있는 이유는 다른 것들과 다르다. 에이전트의 cwd가
+> `/opt/pathfinder/workspaces/{pid}`이고 이 파일은 `/opt/pathfinder/.claude/`에
+> 실리므로 **조상**이 된다 — Claude Code는 cwd에서 위로 올라가며 `CLAUDE.md`를
+> 전부 로드하므로, 개발용 설정의 한국어 한 줄이 영어 프로젝트의 컨텍스트에 매 턴
+> 들어갔다(실측). `CLAUDE_CONFIG_DIR`은 `user` 레벨만 옮기고 조상 탐색은 막지
+> 못하므로 **에셋에서 빼는 것이 유일한 차단이다.** `infra/test`가 이 목록을
+> 단정한다.
 
 ### 4. 출력값 확인
 
@@ -254,6 +271,10 @@ sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # 프리
 | 스택이 `ROLLBACK_COMPLETE`라 재배포 거부 | **최초 생성이 실패한 스택은 업데이트가 불가능하다** — 고친 뒤에도 `cdk deploy`가 거부한다. 먼저 내린 다음 다시 배포한다: `npx cdk destroy PathfinderAuthStack` → `npx cdk deploy --all`. `UPDATE_ROLLBACK_COMPLETE`(기존 스택의 업데이트 실패)는 반대로 그냥 재배포하면 된다 |
 | 첫 대화 턴에서 `AccessDeniedException` | **배포 리전에 그 모델의 Bedrock 모델 액세스가 꺼져 있다.** IAM은 `global.anthropic.claude-*`를 전부 허용하므로 이제 IAM이 원인일 가능성은 낮다 — 관리자 화면에서 새 모델을 등록했다면 콘솔에서 그 모델의 액세스를 켰는지 먼저 확인한다(IAM과 별개 설정이다) |
 | `` `temperature` is deprecated for this model `` | Opus 4.7 이후 모델은 샘플링 파라미터를 제거했다 — 아래 "참고"의 Bedrock 항목 |
+| 영어 프로젝트인데 문서·채팅이 한국어로 나옴 | 언어 지시가 두 레벨에서 충돌한 것이고 **이 실패는 에러를 내지 않는다.** 워크스페이스 `CLAUDE.md`(`place_rules`가 조립한 것) 맨 앞이 `language/en.md`인지, 그리고 상류 룰·공유 config dir·**앱 트리의 조상 `CLAUDE.md`** 에 언어 지시가 되살아나지 않았는지 본다 — 아래 "참고"의 언어 항목 |
+| 영어 UI인데 일부 문구만 한국어 | 딕셔너리를 안 타고 소스에 박힌 리터럴이다. `cd frontend && npm test -- noHardcodedKorean`이 위치를 집어 준다 |
+| 승인 버튼을 눌러도 게이트가 안 열림 | 턴 텍스트와 판정 정규식이 어긋난 것이다(`lib/approvalMarker.ts`가 둘의 단일 출처). 감사 로그의 `user_input`이 `승인`/`Approved` 중 무엇인지 확인한다 |
+| 긴 메시지를 보내면 "연결이 끊어졌습니다" | 요청 라인이 Node `maxHeaderSize`를 넘은 것(HTTP 431). 턴 텍스트가 POST 본문·핸들 경로를 타는지 본다 — 아래 "참고"의 긴 입력 항목 |
 | 로그인 후 `redirect_mismatch` | 호스팅 스택의 콜백 URL 등록(`UpdateUserPoolClient`)이 실패. `cdk deploy PathfinderHostingStack` 재실행 |
 | `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 최초 1회만 필요하며 결과가 `cdk.context.json`에 캐시된다 |
 | SSH 접속 불가 | 의도된 설계다. SSH 포트가 없고 SSM만 열려 있다 |
@@ -300,8 +321,10 @@ cd frontend
 npm run dev            # http://localhost:3000
 ```
 
-브라우저에서 `http://localhost:3000` → 프로젝트 생성 → 대시보드 / 워크스페이스 / 문서 리뷰 /
-프로토타입. 워크스페이스에서 메시지를 보내면 실 에이전트가 Bedrock으로 응답한다.
+브라우저에서 `http://localhost:3000` → 프로젝트 생성(모델과 **생성물 언어**를 여기서
+고른다) → 대시보드 / 워크스페이스 / 문서 리뷰 / 프로토타입. 워크스페이스에서 메시지를
+보내면 실 에이전트가 Bedrock으로 응답한다. 화면 언어는 상단 네비의 스위치로 언제든
+바꿀 수 있다(프로젝트의 생성물 언어와는 별개다 — 아래 "참고"의 언어 항목).
 
 ### 브라우저가 원격(리버스 프록시 뒤)일 때
 
@@ -344,6 +367,8 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `PATHFINDER_PROTO_MAX_CONCURRENT` | `10` | 동시 프로토타입 빌드 상한(전역). 초과 시 세션 시작이 429. 1인 1환경 워크숍 전제로 10 |
 | `PATHFINDER_PROTO_CONFIG_DIR` | `~/pathfinder-proto-config` | 빌드 에이전트 전용 `CLAUDE_CONFIG_DIR`. 미지정 시 호스트 유저의 `~/.claude`(개인 skills/agents)가 빌드에 섞인다. CDK 배포 시엔 레포의 `proto-config/`가 그대로 `/opt/pathfinder/proto-config`가 된다 — 빌드 에이전트에 미리 넣어둘 스킬은 `proto-config/skills/<name>/SKILL.md`에 커밋하면 자동 활성화(`skills="all"`). 자세한 내용은 `proto-config/README.md` |
 | `PATHFINDER_PROTO_ROOT` | `~/pathfinder-protos` | 프로토타입 빌드 + 호스팅 공용 루트 (EC2 로컬) |
+| `PATHFINDER_PROTO_PERMISSION_MODE` | `bypassPermissions` | 빌드 에이전트의 권한 모드. 빌드는 무인으로 돌아 승인해 줄 사람이 없다 — 더 조이려면 덮어쓴다(잘못된 값은 즉시 ValueError) |
+| `PATHFINDER_PUBLIC_PATH_PREFIX` | `/api` | **브라우저가 보는** 프로토타입 프리뷰 마운트. Next가 `basePath`를 빌드 타임에 자산 URL로 굽고 그 URL은 브라우저가 푸므로 이 값이 틀리면 자산이 404가 나고 화면이 스타일 없이 뜬다(자기 교정되는 리다이렉트가 아니다). 백엔드를 :8000으로 직접 부르는 로컬은 마운트가 없으므로 `""` |
 | `PATHFINDER_COGNITO_USER_POOL_ID` | — | Cognito 풀 id. **둘 다 비워야** 인증 전체 바이패스(로컬/테스트 기본). 하나만 비우면 모든 요청이 RuntimeError — 아래 "참고" 참조 |
 | `PATHFINDER_COGNITO_CLIENT_ID` | — | 앱 클라이언트 id. access 토큰의 `client_id` 클레임 검증용. **둘 다 비워야** 바이패스, 하나만 비우면 모든 요청이 RuntimeError |
 | `PATHFINDER_COGNITO_REGION` | `PATHFINDER_S3_REGION` | 풀이 있는 리전 |
@@ -436,9 +461,96 @@ cd frontend && npm run test:e2e
   정규식으로 검사해 특정 모델만 제외하는 우회는 만들지 않는다 — 기본 모델이 env로 바뀌면
   패턴이 새 모델을 놓쳐 같은 에러가 재발한다(실제로 `opus-(4-8|5)` 패턴이 `sonnet-5`를
   놓쳤다). 추론 깊이가 필요하면 `thinking: {type: "adaptive"}`를 쓴다.
+- **언어는 두 개의 독립된 채널이다.** 서로 참조하지 않는다.
+
+  | | UI 언어 | 생성물 언어 |
+  |---|---|---|
+  | 범위 | 사용자별 | 프로젝트별 |
+  | 저장 | `pf_lang` 쿠키 | `project.json` 매니페스트 |
+  | 변경 | 헤더 스위치로 언제든 | **생성 시 1회 결정** |
+
+  **왜 하나로 묶지 않는가.** UI 언어는 언제든 되돌릴 수 있지만 생성물 언어는 그럴
+  수 없다 — 이미 만들어진 `aiplc-docs/**`와 CLI 트랜스크립트가 이전 언어로 남기
+  때문이다. 워크숍 중간에 바꾸면 한 프로젝트 안에 두 언어가 섞이고 그 상태는
+  재현도 설명도 어렵다. 그래서 헤더에 **프로젝트 언어 배지를 읽기 전용으로**
+  띄운다 — 영어 UI로 한국어 프로젝트를 열면 문서는 한국어로 나오는 것이 정상이고,
+  그것이 화면에 드러나야 한다.
+
+  UI 쪽은 쿠키 기반이고 **경로는 불변이다**(`/ko/...` 세그먼트를 쓰지 않는다).
+  로케일 세그먼트를 도입하면 `middleware.ts`의 경로 판정, `safeNext`,
+  `rewriteLocation`, 그리고 `/api/proto/{pid}/{slug}/` 프록시 프리픽스가 전부
+  그것을 다뤄야 한다 — `trailingSlash`/`basePath` 리다이렉트 루프를 이미 겪은
+  프록시 계층을 언어 때문에 다시 건드릴 이유가 없다. `app/layout.tsx`가 쿠키를
+  읽는 **유일한 서버 측 지점**이고(`<html lang>` + Provider 초기값), 나머지는 전부
+  `useT()`를 쓴다.
+
+  생성물 쪽은 `model_id`가 이미 깐 길을 그대로 쓴다: 매니페스트 → `ProjectRegistry`
+  → `place_rules()`·프로토타입 프롬프트·설문 생성/리포트. 미지정은 명시적 `null`로
+  기록하고 읽을 때 `ko`로 떨어진다 — 이 기능 이전에 만든 프로젝트는 전부 한국어로
+  만들어진 것이므로 그게 사실에 맞다. `get_language()`가 `None`이 아니라 항상
+  확정된 값을 반환하는 것은 언어에 "없음"이라는 유효 상태가 없기 때문이다.
+
+  **언어 지시는 한 곳에서만 나온다.** `place_rules`가 워크스페이스 `CLAUDE.md`를
+  `language/{ko,en}.md` + `core-workflow.md` 순서로 조립한다. 상류 룰과 공유 config
+  dir(`discovery-config/`·`proto-config/`)에서 언어 지시를 **뺐고**, 백엔드
+  테스트가 그것이 돌아오지 않았음을 단정한다. 이유는 실제로 겪은 실패다 — 언어
+  지시가 두 레벨에 동시에 있으면 어느 쪽이 이길지 예측할 수 없고(문서 양식 바로
+  앞의 `**CRITICAL**: Do NOT deviate`가 더 강조돼 있고 맥락도 가까워 이겼다),
+  **그 실패는 조용하다.** 문서 절반이 영어로 나와도 에러는 없다. 그래서 언어를
+  문서 전체의 **전제로 맨 앞에** 두고, `ko.md`가 그 CRITICAL을 어떻게 읽어야
+  하는지까지 설명한다. 영어가 상류 룰의 원래 언어라 `en.md`에는 번역 오버라이드
+  절이 아예 없다.
+
+  프롬프트는 **조립하지 않고 언어별로 두 벌을 완성된 문장으로** 유지한다
+  (`agent/prompts.py`, `proto/prompts.py`, `survey/builder.py`). 빌드 에이전트는
+  `bypassPermissions`로 돌아 Write/Edit이 자동 승인되므로 "계획만 세우고 빌드하지
+  마"를 이 텍스트 밖에서 강제할 방법이 없다 — 치환으로 문장을 쪼개면 그 지시의
+  강도가 어느 언어에서 약해졌는지 알 수 없게 된다. **도구 설명과 거부 메시지도
+  모델이 읽는 프롬프트이므로** 같이 두 벌이다.
+
+  언어 결합이 **로직을 깨뜨리는** 지점은 따로 처리했다:
+  - **승인 게이트** — 턴 텍스트와 판정 정규식이 `lib/approvalMarker.ts` 한 모듈에서
+    나온다. 한쪽만 바뀌면 게이트가 조용히 열리지 않기 때문이다. 보내는 단어는 **UI
+    언어가 아니라 프로젝트 언어**를 따르고(대화가 그 언어로 진행 중이므로), 판정은
+    `/^\s*(승인|Approved)\s*$/i`로 두 언어를 다 받는다 — 기존 한국어 감사 로그가
+    계속 인식돼야 한다. 불투명 마커를 쓰지 않는 이유는 이 텍스트가 기계 신호가
+    아니라 에이전트에게 가고 사람이 읽는 발화이기 때문이다.
+  - **중단 마커** — 반대로 이건 순수한 기계 신호다(에이전트가 읽지 않고
+    트랜스크립트에도 안 남는다). 백엔드가 `text="interrupted"`를 보내고 화면 문구는
+    프론트가 UI 언어로 그린다.
+  - **백엔드 HTTP 에러** — `detail`이 안정적인 코드 문자열이고
+    (`error_codes.py`) 문구는 프론트 딕셔너리가 소유한다. 백엔드는 UI 언어를
+    모르고(프록시가 `Accept-Language`를 넘기지 않으며, 넘겨도 브라우저 값이 쿠키
+    스위치와 어긋난다), 백엔드에 두 번째 번역 시스템을 만들지 않는다. 프론트가
+    모르는 코드는 원문을 그대로 보여준다. 예외는 `survey/report_labels.py`인데
+    그쪽은 UI 문구가 아니라 **문서 생성기**이고 프로젝트 언어는 백엔드가 이미 안다.
+
+  **자동 테스트로는 여기까지다** — `CLAUDE.md`가 어떻게 조립됐는지는 확인할 수
+  있지만 모델이 그것을 따랐는지는 확인할 수 없다. 컴포넌트 테스트도 기본
+  로케일(ko)로 렌더하므로 번역된 문구와 하드코딩된 문구를 구별하지 못한다(그래서
+  `noHardcodedKorean.test.ts`가 기계로 판정한다). 워크숍 전에 한국어/영어 프로젝트를
+  각각 Envision까지 돌려 **채팅 말풍선, PR/FAQ의 `Q:` 문구, product-strategy·
+  go-to-market의 표 라벨, 섹션 헤딩**을 눈으로 확인한다 — 이 네 곳이 과거에 실제로
+  어긋났던 지점이다.
+
+  범위 밖: 이미 생성된 문서의 사후 번역, 생성 후 언어 변경, 생성된 프로토타입 앱의
+  i18n(단일 언어 데모다), 제3언어. `strands` 폴백 드라이버는 언어를 처리하지 않는다.
+- **긴 채팅 입력은 URL이 아니라 POST 본문으로 간다.** `EventSource`는 GET만
+  지원하므로 턴 텍스트가 원래 SSE 쿼리스트링에 실렸는데, 한글은
+  `encodeURIComponent`로 한 글자가 9바이트가 된다 — 2,164자 입력이 14,376바이트
+  요청 라인이 되고, 여기에 Cognito JWT 쿠키(약 3.7KB)가 더해져 Node의
+  `maxHeaderSize` 기본값 16,384바이트를 넘어 프록시가 **431**로 거절했다. 화면에는
+  "연결이 끊어졌습니다"만 떴다 — `EventSource`는 HTTP 상태를 노출하지 않아 431이든
+  네트워크 단절이든 `onerror`만 발화한다. 이제 텍스트를 POST로 받아 짧은
+  핸들(인메모리·1회용·60초)로 바꾸고 URL에는 그것만 싣는다(`turn_handles.py`,
+  세 스트림 전부). `EventSource`를 유지한 이유는 이 프록시 계층이 HTTP/2에서 SSE가
+  깨지는 문제를 이미 겪은 곳이라, 재연결과 쿠키 인증이 브라우저에 내장된 것을 두고
+  원인인 URL 길이만 없앴다.
 - **리전**: 모든 리소스(S3, 백엔드, Discovery 에이전트, 프로토타입 빌드/호스팅)는
   서울(`ap-northeast-2`) 통일이 기본. 다른 리전이 필요하면 `CDK_DEPLOY_REGION`(인프라)과
   `AWS_REGION`/`PATHFINDER_S3_REGION`(백엔드)으로 지정한다 — 세 값이 같은 리전을 가리켜야
   한다. 프로토타입 빌드는 이제 백엔드 프로세스 안에서 직접 돌기 때문에(도쿄 MicroVM 없음)
   더 이상 리전 예외가 없다.
 - 진행/결정 기록은 `.superpowers/sdd/progress.md`(git-ignored)와 `docs/superpowers/plans/` 참고.
+  설계 판단의 근거는 `docs/superpowers/specs/`에 있다 — 위 언어 항목의 전문은
+  `2026-08-03-bilingual-ko-en-design.md`.
