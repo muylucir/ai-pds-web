@@ -22,3 +22,5 @@ proto-type/
 **/.pytest_cache/
 .worktrees/
 graphify-out/
+.vscode/
+.claude/
