@@ -3,12 +3,21 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { ProjectPage, ProjectProgress, ProjectSummary } from "@/lib/api/types";
 import { deleteProject } from "@/lib/api/client";
+import { listModels } from "@/lib/api/models";
+import { isLocale, LANGUAGE_LABEL } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
 function progressLabel(p: ProjectProgress | null | undefined): string {
   if (!p) return "—";
   const count = `(${p.completed}/${p.total})`;
   return p.current_stage ? `${p.current_stage} ${count}` : count;
+}
+
+/** 생성일은 **날짜까지만** 보여준다 — 목록에서 시·분은 판단에 쓰이지 않고
+ *  열만 넓힌다. ISO 문자열의 앞 10자를 쓰는 것은 admin/UserTable과 같은
+ *  방식이다(Date로 파싱하면 로컬 타임존에 따라 날짜가 하루 밀린다). */
+function createdLabel(iso: string | null | undefined): string {
+  return iso ? iso.slice(0, 10) : "—";
 }
 
 export function ProjectList({
@@ -24,6 +33,21 @@ export function ProjectList({
   const [target, setTarget] = useState<ProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // model_id → 표시 이름. 목록 전체에 한 번만 부른다(행마다 부르면 페이지당
+  // 최대 50회다). 실패는 이름을 못 붙이는 것으로 끝나고 행은 id를 보여준다 —
+  // useProjectMeta가 헤더 배지에서 하는 것과 같은 판단이다.
+  const [modelNames, setModelNames] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let alive = true;
+    void listModels()
+      .then((models) => {
+        if (!alive) return;
+        setModelNames(Object.fromEntries(models.map((m) => [m.model_id, m.name])));
+      })
+      .catch(() => { /* id 원문으로 떨어진다 */ });
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     if (!target) return;
@@ -68,6 +92,9 @@ export function ProjectList({
               <th scope="col" className="px-4 py-3 font-medium">{t("project.id")}</th>
               <th scope="col" className="px-4 py-3 font-medium">{t("project.colName")}</th>
               <th scope="col" className="px-4 py-3 font-medium">{t("project.colProgress")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("project.colModel")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("project.colLanguage")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("project.colCreatedAt")}</th>
               <th scope="col" className="px-4 py-3 w-12">
                 <span className="sr-only">{t("project.delete")}</span>
               </th>
@@ -88,6 +115,17 @@ export function ProjectList({
                   </Link>
                 </td>
                 <td className="px-4 py-3 text-slate-600">{progressLabel(p.progress)}</td>
+                {/* 카탈로그에 없는 모델은 id 원문 — 관리자가 지운 모델로 도는
+                    프로젝트는 정상 경로이고, 그 사실이 화면에서 정직해야 한다. */}
+                <td className="px-4 py-3 text-slate-600">
+                  {p.model_id ? modelNames[p.model_id] ?? p.model_id : "—"}
+                </td>
+                <td className="px-4 py-3 text-slate-600">
+                  {isLocale(p.language) ? LANGUAGE_LABEL[p.language] : "—"}
+                </td>
+                <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
+                  {createdLabel(p.created_at)}
+                </td>
                 <td className="px-4 py-3 text-right">
                   <button
                     type="button"

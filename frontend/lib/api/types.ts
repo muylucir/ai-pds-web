@@ -114,6 +114,8 @@ export interface ProjectProgress {
 export interface ProjectSummary {
   project_id: string;
   name: string | null;
+  // 생성 시각(ISO). 구 매니페스트로 복원된 프로젝트는 null일 수 있다.
+  created_at?: string | null;
   // 목록 응답에만 실림(fail-soft: 상태 파일이 없거나 읽기 실패면 null).
   progress?: ProjectProgress | null;
   // 이 프로젝트가 도는 Bedrock 모델 id. null = 미지정(서버의 env 기본값으로

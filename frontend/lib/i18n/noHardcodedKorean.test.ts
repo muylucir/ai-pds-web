@@ -42,7 +42,9 @@ function isExempt(rel: string): boolean {
 const ALLOWED: Array<[string, string]> = [
   // 언어 이름은 그 언어로 쓴다 — 영어 UI에서도 한국어 선택지는 "한국어"여야
   // 사용자가 찾을 수 있다(브라우저·OS 언어 선택기의 보편적 관례).
-  ["components/AppHeader.tsx", "한국어"],
+  // LANGUAGE_LABEL이 그 표기의 단일 출처다(헤더 배지 + 프로젝트 목록이 쓴다).
+  // AppHeader는 이제 그 상수를 임포트하므로 예외가 필요 없다.
+  ["lib/i18n/index.ts", "LANGUAGE_LABEL"],
   ["components/CreateProjectForm.tsx", "한국어"],
   ["components/LanguageSwitcher.tsx", "한국어"],
   // 스위치의 aria-label은 두 언어를 함께 담는다 — 어느 언어 사용자든 스크린

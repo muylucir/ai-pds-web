@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 
-import type { Locale } from "@/lib/i18n";
+import { LANGUAGE_LABEL, type Locale } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
 import { LanguageSwitcher } from "./LanguageSwitcher";
@@ -9,10 +9,6 @@ import { UserMenu } from "./UserMenu";
 
 export type HeaderTab = "dashboard" | "workspace" | "review" | "prototypes" | "projects";
 
-// 언어 배지의 표기. 딕셔너리를 타지 않는다 — 언어 이름은 항상 그 언어 자체로
-// 적는다(LanguageSwitcher의 라벨과 같은 규약). "한국어"를 영어 UI에서 "Korean"
-// 으로 바꾸면 그 프로젝트의 문서가 실제로 어떤 글자로 나오는지 흐려진다.
-const LANGUAGE_LABEL: Record<Locale, string> = { ko: "한국어", en: "English" };
 
 // Ported from the shared <header> in files/ui/01–03. `projectId` is optional so
 // the project-list screen (no project chosen yet) can render the header. When no

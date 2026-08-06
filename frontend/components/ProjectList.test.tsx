@@ -14,6 +14,85 @@ const PAGE = {
   total: 2, page: 1, size: 10,
 };
 
+describe("ProjectList 메타데이터 열", () => {
+  const META = {
+    projects: [
+      {
+        project_id: "p1", name: "워크숍 A", created_at: "2026-08-01T09:30:00+00:00",
+        model_id: "global.anthropic.claude-opus-5", language: "ko" as const,
+        progress: null,
+      },
+      {
+        project_id: "p2", name: "Workshop B", created_at: "2026-07-15T00:00:00+00:00",
+        model_id: "global.anthropic.claude-sonnet-5", language: "en" as const,
+        progress: null,
+      },
+    ],
+    total: 2, page: 1, size: 10,
+  };
+
+  function models() {
+    server.use(
+      http.get(`${API_BASE_URL}/models`, () =>
+        HttpResponse.json({
+          models: [{ name: "Opus 5", model_id: "global.anthropic.claude-opus-5" }],
+        })),
+    );
+  }
+
+  it("shows the catalog display name for a known model", async () => {
+    models();
+    render(<ProjectList data={META} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    expect(await screen.findByText("Opus 5")).toBeInTheDocument();
+  });
+
+  it("falls back to the raw model id when the catalog has no entry", async () => {
+    // 관리자가 카탈로그에서 지운 모델로 도는 프로젝트는 정상 경로다 —
+    // 헤더 배지와 같은 규율로 id 원문을 보여준다.
+    models();
+    render(<ProjectList data={META} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    expect(await screen.findByText("global.anthropic.claude-sonnet-5")).toBeInTheDocument();
+  });
+
+  it("still renders rows when the model catalog fails", async () => {
+    server.use(http.get(`${API_BASE_URL}/models`, () => HttpResponse.error()));
+    render(<ProjectList data={META} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    // 카탈로그가 없으면 이름을 못 붙일 뿐, 행과 id는 그대로 보여야 한다.
+    expect(await screen.findByText("global.anthropic.claude-opus-5")).toBeInTheDocument();
+  });
+
+  it("labels each language in that language, not the UI language", () => {
+    render(<ProjectList data={META} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    expect(screen.getByText("한국어")).toBeInTheDocument();
+    expect(screen.getByText("English")).toBeInTheDocument();
+  });
+
+  it("shows the creation date as a plain day", () => {
+    render(<ProjectList data={META} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    expect(screen.getByText("2026-08-01")).toBeInTheDocument();
+    expect(screen.getByText("2026-07-15")).toBeInTheDocument();
+  });
+
+  it("renders a dash for projects missing this metadata", () => {
+    // 구 매니페스트로 복원된 프로젝트 — 빈 칸이 아니라 —로 없음을 드러낸다.
+    const bare = {
+      projects: [{ project_id: "old", name: "구 프로젝트", progress: null }],
+      total: 1, page: 1, size: 10,
+    };
+    render(<ProjectList data={bare} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    const row = screen.getByText("구 프로젝트").closest("tr")!;
+    // 진행상황·모델·언어·생성일 4칸이 모두 —
+    expect(row.textContent?.match(/—/g)?.length).toBe(4);
+  });
+
+  it("has a header for each new column", () => {
+    render(<ProjectList data={META} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    expect(screen.getByRole("columnheader", { name: "모델" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "언어" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "생성일" })).toBeInTheDocument();
+  });
+});
+
 describe("ProjectList delete", () => {
   it("shows a delete button per card and opens the confirm dialog with the warning copy", async () => {
     render(<ProjectList data={PAGE} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
@@ -99,7 +178,11 @@ describe("ProjectList table + pagination", () => {
     expect(screen.getByText("p1")).toBeInTheDocument();
     expect(screen.getByText("워크숍 A")).toBeInTheDocument();
     expect(screen.getByText("Envision (2/8)")).toBeInTheDocument();
-    expect(screen.getByText("—")).toBeInTheDocument();          // progress null
+    // progress null → —. 모델·언어·생성일 열도 없을 때 —를 쓰므로 행을 좁혀
+    // 진행상황 칸(3번째 td)만 본다. p2는 이름이 null이라 id 칸과 이름 링크
+    // 양쪽에 나오므로 행은 표의 2번째 tr로 잡는다.
+    const rows = screen.getAllByRole("row");
+    expect(rows[2].querySelectorAll("td")[2]).toHaveTextContent("—");
   });
 
   it("이름 링크는 대시보드로 가고, 이름 없으면 ID를 링크 텍스트로 쓴다", () => {
