@@ -12,6 +12,7 @@ import * as cr from 'aws-cdk-lib/custom-resources';
 import * as path from 'path';
 import { backendPolicyStatements, MODEL } from './backend-permissions';
 import { renderUserData } from './user-data';
+import appAssetExcludes from '../app-asset-excludes.json';
 import {
   ACCESS_TOKEN_VALIDITY_MINUTES, CLIENT_NAME, EXPLICIT_AUTH_FLOWS, ID_TOKEN_VALIDITY_MINUTES,
   LOCAL_APP_URL, OAUTH_SCOPES, REFRESH_TOKEN_VALIDITY_MINUTES,
@@ -123,41 +124,27 @@ export class PathfinderHostingStack extends cdk.Stack {
     // --- 앱 코드 에셋(리포 zip) ---
     const asset = new assets.Asset(this, 'AppAsset', {
       path: path.join(__dirname, '..', '..'), // 리포 루트
-      exclude: [
-        '.git', 'infra', 'docs',
-        '**/node_modules', '**/.venv', '**/.next', '**/cdk.out',
-        '**/__pycache__', '**/*.egg-info', '**/test-results',
-        '**/playwright-report', 'files/*.png',
-        '**/.env', '**/.env.*',
-        // 로컬 빌드 에이전트의 런타임 산출물 — .gitignore에도 있는 것들이다.
-        // node_modules/.next를 위에서 걸러도 소스는 남아서, 개발 박스에서
-        // 만든 프로토타입이 배포 zip에 실려 새 인스턴스의
-        // /opt/pathfinder/proto-type/에 심긴다. 그러면 그 프로토타입이 아무도
-        // 빌드하지 않았는데 "빌드 완료"로 보인다(has_build_output이 보는 것이
-        // 정확히 이 트리다). 세션 트랜스크립트·큐도 같은 이유로 뺀다.
-        'proto-type', 'protos',
-        'proto-config/projects', 'proto-config/sessions',
-        'discovery-config/projects', 'discovery-config/sessions',
-        '**/.proto-host.log', '**/.proto-host.pid',
-        // 이 리포를 개발할 때 쓰는 Claude Code 설정 — **런타임 트리에 있으면
-        // 안 된다.** 에이전트의 cwd가 /opt/pathfinder/workspaces/{pid}이고
-        // 이 파일은 /opt/pathfinder/.claude/에 실리므로 **조상**이 된다.
-        // Claude Code는 cwd에서 위로 올라가며 CLAUDE.md를 전부 로드한다 —
-        // 실제 CLI로 실측했다(cwd를 자손으로 두고 --debug로 로드 목록 확인:
-        // `/tmp/ancprobe/.claude/CLAUDE.md (ancestor project)`가 나왔다).
-        //
-        // 그래서 이것이 2026-08-04 결함의 남은 절반이었다: .claude/CLAUDE.md의
-        // 한국어 한 줄이 영어 프로젝트의 에이전트 컨텍스트에 매 턴 들어갔다.
-        // discovery-config를 언어 중립으로 고쳐도 이 경로가 남아 있었다.
-        // settings.json의 graphify 훅도 같이 실려 워크숍과 무관한 Glob/Grep
-        // 훅이 붙는다.
-        //
-        // config dir(discovery-config·proto-config)과 달리 이건 **끄는 스위치가
-        // 없다**: CLAUDE_CONFIG_DIR은 "user" 레벨만 옮기고, 조상 탐색은 cwd가
-        // 앱 트리 안에 있다는 사실에서 나온다. 에셋에서 빼는 것이 유일하게
-        // 확실한 차단이다.
-        '.claude',
-      ],
+      // CDK와 단일 CloudFormation 패키저가 같은 목록을 공유한다. 목록을
+      // 바꿀 때는 app-asset-excludes.json 하나만 수정한다 — 두 배포 경로가
+      // 서로 다른 것을 싣기 시작하면 한쪽에서만 나는 결함이 생긴다.
+      //
+      // JSON에는 주석을 달 수 없으므로 **실측으로 얻은 두 항목의 근거**를
+      // 여기 남긴다(지우면 다음 사람이 목록을 좁힐 때 이유를 모른다):
+      //
+      // - `proto-type`/`protos`: node_modules/.next를 걸러도 소스는 남아서,
+      //   개발 박스에서 만든 프로토타입이 배포 zip에 실려 새 인스턴스의
+      //   /opt/pathfinder/proto-type/에 심긴다. 그러면 아무도 빌드하지 않은
+      //   프로토타입이 "빌드 완료"로 보인다(has_build_output이 보는 것이 정확히
+      //   이 트리다). 세션 트랜스크립트·큐도 같은 이유로 뺀다.
+      // - `.claude`: 이 리포를 개발할 때 쓰는 Claude Code 설정이다. 에이전트의
+      //   cwd가 /opt/pathfinder/workspaces/{pid}이고 이 파일은
+      //   /opt/pathfinder/.claude/에 실리므로 **조상**이 된다. Claude Code는
+      //   cwd에서 위로 올라가며 CLAUDE.md를 전부 로드한다(실제 CLI로 확인:
+      //   `.../.claude/CLAUDE.md (ancestor project)`). 그래서 그 한국어 한 줄이
+      //   영어 프로젝트의 컨텍스트에 매 턴 들어갔다(d94aaa1). CLAUDE_CONFIG_DIR은
+      //   `user` 레벨만 옮기고 조상 탐색은 막지 못하므로 **에셋에서 빼는 것이
+      //   유일한 차단이다.** test/app-asset.assert.ts가 이것을 지킨다.
+      exclude: appAssetExcludes,
     });
     asset.grantRead(role);
 

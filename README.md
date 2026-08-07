@@ -120,8 +120,63 @@ cd ../frontend
 npm install
 ```
 
-인프라(`infra/`)는 AWS에 배포할 때 필요하다 — 아래 "CDK로 배포하기" 절 참고. 로컬
+인프라(`infra/`)는 AWS에 배포할 때 필요하다 — 아래 배포 절 참고. 로컬
 개발만 할 거면 S3 버킷을 만드는 `PathfinderDrillStack`만 배포하면 된다.
+
+---
+
+## 단일 CloudFormation YAML로 배포하기
+
+CDK를 설치하거나 bootstrap하지 않고도 `infra/cloudformation/pathfinder.yaml` **한
+템플릿**으로 전체 인프라를 한 스택에 배포할 수 있다. 만드는 기능은 CDK 3개 스택과
+같다: 런타임 S3·Bedrock/IAM, Cognito Hosted UI v2·그룹·시드 사용자, 2-AZ public
+VPC·EC2·EIP·CloudFront. 교차 스택 export와 Cognito callback 갱신 커스텀 리소스는
+단일 스택에서는 필요 없으므로 callback이 CloudFront를 직접 참조한다.
+
+CloudFormation YAML은 로컬 워킹 트리 파일을 자체적으로 포함할 수 없다. 따라서
+**앱 ZIP을 둘 기존 S3 버킷 하나**가 먼저 필요하다. 버킷은 배포 리전과 같아야 하고,
+배포 스크립트가 ZIP을 SSE-S3로 암호화해 content-addressed key에 올린다. 이 버킷은
+앱 코드/템플릿 staging 전용이며 스택이 만드는 런타임 아티팩트 버킷과 별개다.
+
+```bash
+# 사전 요구: AWS CLI v2, Python 3, 같은 리전의 기존 S3 staging 버킷
+cd infra/cloudformation
+./deploy.sh --asset-bucket <STAGING_BUCKET> \
+  --region ap-northeast-2 \
+  --stack-name pathfinder
+```
+
+프로파일을 쓰면 `--profile <PROFILE>`, 데모 기본 비밀번호를 바꾸려면
+`--seed-password '<PASSWORD>'`를 추가한다. 스크립트는 다음을 한 번에 수행한다:
+
+1. 현재 워킹 트리를 CDK와 **같은 제외 목록**(`infra/app-asset-excludes.json`)으로 ZIP
+2. ZIP SHA-256을 S3 key에 넣어 업로드
+3. `pathfinder.yaml`을 `CAPABILITY_IAM`으로 deploy
+4. CloudFormation Outputs 출력
+
+Node.js/CDK와 `cdk bootstrap`은 필요 없다. 앱 코드가 바뀌어 ZIP hash/key가 바뀌면
+Launch Template 새 버전과 1대짜리 ASG rolling update로 EC2가 깨끗하게 교체되고,
+고정 EIP는 새 인스턴스에 다시 연결된다. 같은 key를 덮어쓰면 CloudFormation이 변경을
+감지하지 못하므로 수동 업로드 시에도 반드시 content-addressed 새 key를 사용한다.
+
+직접 YAML을 배포하려면 먼저 `package_app.py`로 ZIP을 만들고 S3에 올린 뒤
+`AppAssetBucket`/`AppAssetKey` 파라미터를 넘긴다. 로컬 파일을 콘솔의 템플릿 업로드만으로
+자동 패키징하는 것은 CloudFormation 기능상 불가능하다.
+
+```bash
+python3 package_app.py /tmp/pathfinder-app.zip
+aws s3 cp /tmp/pathfinder-app.zip s3://<STAGING_BUCKET>/pathfinder/app-assets/<SHA256>.zip --sse AES256
+aws cloudformation deploy --template-file pathfinder.yaml --stack-name pathfinder \
+  --s3-bucket <STAGING_BUCKET> --capabilities CAPABILITY_IAM \
+  --parameter-overrides AppAssetBucket=<STAGING_BUCKET> AppAssetKey=pathfinder/app-assets/<SHA256>.zip
+```
+
+삭제는 `aws cloudformation delete-stack --stack-name pathfinder --region
+ap-northeast-2`. 템플릿의 인라인 custom resource가 런타임 S3를 비우고 EIP를 분리한 뒤
+리소스를 삭제한다. **기존 CDK 스택을 이 템플릿으로 업데이트하거나 같은 리소스를 동시에
+관리할 수는 없다.** 새 스택으로 배포해 데이터를 옮기거나, 기존 CDK 스택을 삭제한 뒤
+전환한다. 비용·Bedrock 모델 액세스·배포 후 5~10분 초기 빌드·시드 계정 경고는 아래 CDK
+경로와 동일하다. 상세 설계와 수동 명령은 `infra/README.md` 참고.
 
 ---
 

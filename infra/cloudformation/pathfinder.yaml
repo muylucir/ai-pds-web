@@ -1,0 +1,979 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Pathfinder workshop - runtime storage, Cognito, EC2 application hosting and
+  CloudFront in one stack. Upload a content-addressed application ZIP first.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Application asset
+        Parameters:
+          - AppAssetBucket
+          - AppAssetKey
+      - Label:
+          default: Compute and seed users
+        Parameters:
+          - InstanceType
+          - SeedPassword
+    ParameterLabels:
+      AppAssetBucket:
+        default: S3 bucket containing the application ZIP
+      AppAssetKey:
+        default: Content-addressed S3 key of the application ZIP
+      SeedPassword:
+        default: Demo password for both seed users
+
+Parameters:
+  AppAssetBucket:
+    Type: String
+    Description: Existing S3 bucket in this region containing the packaged application ZIP.
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+  AppAssetKey:
+    Type: String
+    Description: >-
+      Immutable, content-addressed ZIP key. Changing this value creates a new
+      Launch Template version and replaces the single ASG instance.
+    MinLength: 1
+  InstanceType:
+    Type: String
+    Default: m7i.2xlarge
+    Description: x86_64 instance type used for the workshop application and prototype builds.
+  SeedPassword:
+    Type: String
+    Default: 'PathFinder2026!@'
+    NoEcho: true
+    MinLength: 8
+    Description: >-
+      Demo-only password for admin@pathfinder.local and pm@pathfinder.local.
+      Override this for every non-demo deployment.
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+Conditions:
+  IsUsEast1:
+    Fn::Equals:
+      - Ref: AWS::Region
+      - us-east-1
+
+Resources:
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  BackendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: 'Pathfinder backend: Bedrock invoke and runtime S3 access.'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                Fn::Sub: 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PathfinderBackend
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - Fn::Sub: 'arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/global.anthropic.claude-*'
+                  - Fn::Sub: 'arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - Fn::Sub: '${ArtifactsBucket.Arn}/projects/*'
+                  - Fn::Sub: '${ArtifactsBucket.Arn}/sessions/*'
+                  - Fn::Sub: '${ArtifactsBucket.Arn}/surveys/*'
+                  - Fn::Sub: '${ArtifactsBucket.Arn}/models/*'
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::GetAtt:
+                    - ArtifactsBucket
+                    - Arn
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - projects/*
+                      - sessions/*
+                      - surveys/*
+                      - models/*
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      UserPoolName: pathfinder
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      AliasAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: admin_only
+            Priority: 1
+      MfaConfiguration: OFF
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId:
+        Ref: UserPool
+      GroupName: admin
+      Description: Pathfinder administrator - PM permissions plus user management
+      Precedence: 0
+
+  PmGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId:
+        Ref: UserPool
+      GroupName: pm
+      Description: Pathfinder PM - project access without user management
+      Precedence: 10
+
+  OriginVerifySecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Description: X-Origin-Verify shared secret for CloudFront and nginx.
+      GenerateSecretString:
+        PasswordLength: 32
+        ExcludePunctuation: true
+
+  ElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: 'Pathfinder: CloudFront in front of EC2 (header-authenticated origin).'
+        PriceClass: PriceClass_200
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: PathfinderEc2Origin
+            DomainName:
+              Fn::Sub:
+                - 'ec2-${IpWithDashes}.${ComputeDomain}'
+                - IpWithDashes:
+                    Fn::Join:
+                      - '-'
+                      - Fn::Split:
+                          - '.'
+                          - Fn::GetAtt:
+                              - ElasticIp
+                              - PublicIp
+                  ComputeDomain:
+                    Fn::If:
+                      - IsUsEast1
+                      - compute-1.amazonaws.com
+                      - Fn::Sub: '${AWS::Region}.compute.amazonaws.com'
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 60
+              OriginSSLProtocols:
+                - TLSv1.2
+            OriginCustomHeaders:
+              - HeaderName: X-Origin-Verify
+                HeaderValue:
+                  Fn::Sub: '{{resolve:secretsmanager:${OriginVerifySecret}:SecretString:::}}'
+        DefaultCacheBehavior:
+          TargetOriginId: PathfinderEc2Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - PATCH
+            - POST
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+        CacheBehaviors:
+          - PathPattern: /_next/static/*
+            TargetOriginId: PathfinderEc2Origin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId:
+        Ref: UserPool
+      ClientName: pathfinder-web
+      GenerateSecret: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      CallbackURLs:
+        - http://localhost:3000/api/auth/callback
+        - Fn::Sub: 'https://${Distribution.DomainName}/api/auth/callback'
+      LogoutURLs:
+        - http://localhost:3000/login
+        - Fn::Sub: 'https://${Distribution.DomainName}/login'
+      SupportedIdentityProviders:
+        - COGNITO
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 43200
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: minutes
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId:
+        Ref: UserPool
+      Domain:
+        Fn::Sub: 'pathfinder-${AWS::AccountId}-${AWS::Region}'
+      ManagedLoginVersion: 2
+
+  ManagedLoginBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    DependsOn:
+      - UserPoolDomain
+    Properties:
+      UserPoolId:
+        Ref: UserPool
+      ClientId:
+        Ref: UserPoolClient
+      UseCognitoProvidedValues: true
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: '${AWS::StackName}/Vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: Vpc
+      InternetGatewayId:
+        Ref: InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ''
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: '${AWS::StackName}/public-1'
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ''
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: '${AWS::StackName}/public-2'
+
+  PublicRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+
+  PublicRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+
+  PublicRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: InternetGateway
+
+  PublicRoute2:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: InternetGateway
+
+  PublicRouteAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable1
+      SubnetId:
+        Ref: PublicSubnet1
+
+  PublicRouteAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable2
+      SubnetId:
+        Ref: PublicSubnet2
+
+  CustomProviderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - Fn::Sub: 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: PathfinderCustomResources
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ec2:DescribeManagedPrefixLists
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminAddUserToGroup
+                Resource:
+                  Fn::GetAtt:
+                    - UserPool
+                    - Arn
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketVersions
+                Resource:
+                  Fn::GetAtt:
+                    - ArtifactsBucket
+                    - Arn
+              - Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                Resource:
+                  Fn::Sub: '${ArtifactsBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - autoscaling:DescribeAutoScalingGroups
+                  - ec2:DescribeInstances
+                  - ec2:DescribeAddresses
+                  - ec2:AssociateAddress
+                  - ec2:DisassociateAddress
+                Resource: '*'
+
+  CustomProviderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 300
+      MemorySize: 128
+      Role:
+        Fn::GetAtt:
+          - CustomProviderRole
+          - Arn
+      Code:
+        ZipFile: |
+          import time
+          import boto3
+          import cfnresponse
+          from botocore.exceptions import ClientError
+
+          def send(event, context, status, data=None, physical_id=None, reason=None):
+              cfnresponse.send(
+                  event, context, status, data or {},
+                  physicalResourceId=physical_id or event.get('PhysicalResourceId') or event['LogicalResourceId'],
+                  reason=reason,
+              )
+
+          def empty_bucket(name):
+              s3 = boto3.client('s3')
+              paginator = s3.get_paginator('list_object_versions')
+              for page in paginator.paginate(Bucket=name):
+                  objects = [
+                      {'Key': item['Key'], 'VersionId': item['VersionId']}
+                      for field in ('Versions', 'DeleteMarkers')
+                      for item in page.get(field, [])
+                  ]
+                  for index in range(0, len(objects), 1000):
+                      s3.delete_objects(Bucket=name, Delete={'Objects': objects[index:index + 1000], 'Quiet': True})
+              paginator = s3.get_paginator('list_objects_v2')
+              for page in paginator.paginate(Bucket=name):
+                  objects = [{'Key': item['Key']} for item in page.get('Contents', [])]
+                  for index in range(0, len(objects), 1000):
+                      s3.delete_objects(Bucket=name, Delete={'Objects': objects[index:index + 1000], 'Quiet': True})
+
+          def seed_users(props):
+              client = boto3.client('cognito-idp')
+              pool = props['UserPoolId']
+              password = props['Password']
+              users = [
+                  ('admin', 'admin@pathfinder.local', 'admin'),
+                  ('pm', 'pm@pathfinder.local', 'pm'),
+              ]
+              for username, email, group in users:
+                  try:
+                      client.admin_create_user(
+                          UserPoolId=pool,
+                          Username=username,
+                          MessageAction='SUPPRESS',
+                          UserAttributes=[
+                              {'Name': 'email', 'Value': email},
+                              {'Name': 'email_verified', 'Value': 'true'},
+                          ],
+                      )
+                  except client.exceptions.UsernameExistsException:
+                      pass
+                  client.admin_set_user_password(
+                      UserPoolId=pool, Username=username, Password=password, Permanent=True,
+                  )
+                  client.admin_add_user_to_group(
+                      UserPoolId=pool, Username=username, GroupName=group,
+                  )
+
+          def find_instance(asg_name):
+              autoscaling = boto3.client('autoscaling')
+              ec2 = boto3.client('ec2')
+              for _ in range(50):
+                  groups = autoscaling.describe_auto_scaling_groups(
+                      AutoScalingGroupNames=[asg_name],
+                  ).get('AutoScalingGroups', [])
+                  instances = groups[0].get('Instances', []) if groups else []
+                  candidates = [
+                      item['InstanceId'] for item in instances
+                      if item.get('LifecycleState') == 'InService'
+                  ]
+                  if candidates:
+                      instance_id = candidates[0]
+                      state = ec2.describe_instances(InstanceIds=[instance_id])['Reservations'][0]['Instances'][0]['State']['Name']
+                      if state == 'running':
+                          return instance_id
+                  time.sleep(5)
+              raise RuntimeError('timed out waiting for the ASG instance')
+
+          def attach_eip(props):
+              ec2 = boto3.client('ec2')
+              instance_id = find_instance(props['AutoScalingGroupName'])
+              ec2.associate_address(
+                  AllocationId=props['AllocationId'],
+                  InstanceId=instance_id,
+                  AllowReassociation=True,
+              )
+              return instance_id
+
+          def detach_eip(allocation_id):
+              ec2 = boto3.client('ec2')
+              addresses = ec2.describe_addresses(AllocationIds=[allocation_id]).get('Addresses', [])
+              if addresses and addresses[0].get('AssociationId'):
+                  ec2.disassociate_address(AssociationId=addresses[0]['AssociationId'])
+
+          def handler(event, context):
+              props = event.get('ResourceProperties', {})
+              mode = props.get('Mode')
+              request = event['RequestType']
+              physical_id = event.get('PhysicalResourceId') or f"pathfinder-{mode}"
+              try:
+                  if mode == 'PrefixList':
+                      if request == 'Delete':
+                          send(event, context, cfnresponse.SUCCESS, physical_id=physical_id)
+                          return
+                      response = boto3.client('ec2').describe_managed_prefix_lists(
+                          Filters=[{'Name': 'prefix-list-name', 'Values': [props['Name']]}],
+                      )
+                      matches = [item for item in response.get('PrefixLists', []) if item.get('PrefixListName') == props['Name']]
+                      if len(matches) != 1:
+                          raise RuntimeError(f"expected one managed prefix list named {props['Name']}, found {len(matches)}")
+                      send(event, context, cfnresponse.SUCCESS, {'PrefixListId': matches[0]['PrefixListId']}, physical_id)
+                  elif mode == 'SeedUsers':
+                      if request != 'Delete':
+                          seed_users(props)
+                      send(event, context, cfnresponse.SUCCESS, physical_id=physical_id)
+                  elif mode == 'EmptyBucket':
+                      if request == 'Delete':
+                          try:
+                              empty_bucket(props['BucketName'])
+                          except ClientError as error:
+                              if error.response.get('Error', {}).get('Code') not in ('NoSuchBucket', '404'):
+                                  raise
+                      send(event, context, cfnresponse.SUCCESS, physical_id=physical_id)
+                  elif mode == 'AttachEip':
+                      if request == 'Delete':
+                          detach_eip(props['AllocationId'])
+                          send(event, context, cfnresponse.SUCCESS, physical_id=physical_id)
+                      else:
+                          instance_id = attach_eip(props)
+                          send(event, context, cfnresponse.SUCCESS, {'InstanceId': instance_id}, physical_id)
+                  else:
+                      raise RuntimeError(f'unknown custom resource mode: {mode}')
+              except Exception as error:
+                  send(event, context, cfnresponse.FAILED, physical_id=physical_id, reason=str(error))
+
+  CloudFrontPrefixList:
+    Type: Custom::PathfinderPrefixList
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - CustomProviderFunction
+          - Arn
+      Mode: PrefixList
+      Name: com.amazonaws.global.cloudfront.origin-facing
+
+  ArtifactsBucketCleanup:
+    Type: Custom::PathfinderEmptyBucket
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - CustomProviderFunction
+          - Arn
+      Mode: EmptyBucket
+      BucketName:
+        Ref: ArtifactsBucket
+
+  SeedUsers:
+    Type: Custom::PathfinderSeedUsers
+    DependsOn:
+      - AdminGroup
+      - PmGroup
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - CustomProviderFunction
+          - Arn
+      Mode: SeedUsers
+      UserPoolId:
+        Ref: UserPool
+      Password:
+        Ref: SeedPassword
+      Version: '1'
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Pathfinder EC2: inbound 80 from CloudFront prefix list only.'
+      VpcId:
+        Ref: Vpc
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+
+  CloudFrontIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Fn::GetAtt:
+          - InstanceSecurityGroup
+          - GroupId
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourcePrefixListId:
+        Fn::GetAtt:
+          - CloudFrontPrefixList
+          - PrefixListId
+      Description: CloudFront origin-facing only
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: 'Pathfinder EC2: Bedrock, runtime S3, Cognito, app asset and origin secret.'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - Fn::Sub: 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: PathfinderInstance
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - Fn::Sub: 'arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/global.anthropic.claude-*'
+                  - Fn::Sub: 'arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - Fn::Sub: '${ArtifactsBucket.Arn}/projects/*'
+                  - Fn::Sub: '${ArtifactsBucket.Arn}/sessions/*'
+                  - Fn::Sub: '${ArtifactsBucket.Arn}/surveys/*'
+                  - Fn::Sub: '${ArtifactsBucket.Arn}/models/*'
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::GetAtt:
+                    - ArtifactsBucket
+                    - Arn
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - projects/*
+                      - sessions/*
+                      - surveys/*
+                      - models/*
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource:
+                  Ref: OriginVerifySecret
+              - Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:ListUsers
+                  - cognito-idp:ListUsersInGroup
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminDeleteUser
+                  - cognito-idp:AdminDisableUser
+                  - cognito-idp:AdminEnableUser
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminAddUserToGroup
+                  - cognito-idp:AdminRemoveUserFromGroup
+                  - cognito-idp:AdminListGroupsForUser
+                Resource:
+                  Fn::GetAtt:
+                    - UserPool
+                    - Arn
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: 'arn:${AWS::Partition}:s3:::${AppAssetBucket}/${AppAssetKey}'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: InstanceRole
+
+  AppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId:
+          Ref: LatestAmiId
+        InstanceType:
+          Ref: InstanceType
+        IamInstanceProfile:
+          Name:
+            Ref: InstanceProfile
+        SecurityGroupIds:
+          - Fn::GetAtt:
+              - InstanceSecurityGroup
+              - GroupId
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Encrypted: true
+              VolumeSize: 100
+              VolumeType: gp3
+              DeleteOnTermination: true
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value:
+                  Fn::Sub: '${AWS::StackName}/Instance'
+        UserData:
+          Fn::Base64:
+            Fn::Sub: |
+              #!/bin/bash
+              set -euxo pipefail
+              touch /var/log/pathfinder-bootstrap.log
+              chmod 600 /var/log/pathfinder-bootstrap.log
+              exec > >(tee -a /var/log/pathfinder-bootstrap.log) 2>&1
+
+              dnf install -y python3.11 python3.11-devel gcc nodejs20 nodejs20-npm nginx tar unzip shadow-utils
+              id -u pathfinder >/dev/null 2>&1 || useradd --system --create-home --shell /sbin/nologin pathfinder
+
+              mkdir -p /opt/pathfinder
+              cd /opt/pathfinder
+              aws s3 cp 's3://${AppAssetBucket}/${AppAssetKey}' /tmp/app.zip --region '${AWS::Region}'
+              unzip -o /tmp/app.zip -d /opt/pathfinder
+              rm -f /tmp/app.zip
+              mkdir -p /opt/pathfinder/protos /opt/pathfinder/proto-config /opt/pathfinder/workspaces /opt/pathfinder/discovery-config
+              chown -R pathfinder:pathfinder /opt/pathfinder
+
+              runuser -u pathfinder -- python3.11 -m venv /opt/pathfinder/backend/.venv
+              runuser -u pathfinder -- /opt/pathfinder/backend/.venv/bin/pip install --upgrade pip
+              runuser -u pathfinder -- /opt/pathfinder/backend/.venv/bin/pip install -e /opt/pathfinder/backend
+
+              set +x
+              COGNITO_SECRET=$(aws cognito-idp describe-user-pool-client --user-pool-id '${UserPool}' --client-id '${UserPoolClient}' --query 'UserPoolClient.ClientSecret' --output text --region '${AWS::Region}')
+              SECRET=$(aws secretsmanager get-secret-value --secret-id '${OriginVerifySecret}' --query SecretString --output text --region '${AWS::Region}')
+              set -x
+
+              cd /opt/pathfinder/frontend
+              runuser -u pathfinder -- env NEXT_PUBLIC_API_BASE_URL=/api HOME=/opt/pathfinder npm ci
+              runuser -u pathfinder -- env NEXT_PUBLIC_API_BASE_URL=/api HOME=/opt/pathfinder npm run build
+
+              cat > /etc/nginx/conf.d/pathfinder.conf <<NGINX
+              server {
+                listen 80 default_server;
+                server_name _;
+                client_max_body_size 6m;
+                large_client_header_buffers 4 32k;
+                if (\$http_x_origin_verify != "$SECRET") { return 403; }
+                location / {
+                  proxy_pass http://127.0.0.1:3000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto https;
+                  proxy_buffering off;
+                  proxy_buffer_size 32k;
+                  proxy_buffers 8 32k;
+                  proxy_busy_buffers_size 64k;
+                  proxy_read_timeout 3600s;
+                }
+              }
+              NGINX
+              sed -i '/^    server {/,/^    }/d' /etc/nginx/nginx.conf
+
+              cat > /etc/systemd/system/pathfinder-backend.service <<UNIT
+              [Unit]
+              Description=Pathfinder backend (FastAPI/uvicorn)
+              After=network.target
+              [Service]
+              User=pathfinder
+              Group=pathfinder
+              WorkingDirectory=/opt/pathfinder/backend
+              Environment=HOME=/opt/pathfinder
+              Environment=AWS_REGION=${AWS::Region}
+              Environment=AWS_DEFAULT_REGION=${AWS::Region}
+              Environment=PATHFINDER_S3_REGION=${AWS::Region}
+              Environment=PATHFINDER_S3_BUCKET=${ArtifactsBucket}
+              Environment=ANTHROPIC_MODEL=global.anthropic.claude-opus-4-8
+              Environment=PATHFINDER_PROTO_ROOT=/opt/pathfinder/protos
+              Environment=PATHFINDER_WORKSPACES_DIR=/opt/pathfinder/workspaces
+              Environment=PATHFINDER_PROTO_MAX_CONCURRENT=10
+              Environment=PATHFINDER_PROTO_CONFIG_DIR=/opt/pathfinder/proto-config
+              Environment=PATHFINDER_DISCOVERY_CONFIG_DIR=/opt/pathfinder/discovery-config
+              Environment=PATHFINDER_COGNITO_USER_POOL_ID=${UserPool}
+              Environment=PATHFINDER_COGNITO_CLIENT_ID=${UserPoolClient}
+              Environment=PATHFINDER_COGNITO_REGION=${AWS::Region}
+              ExecStart=/opt/pathfinder/backend/.venv/bin/uvicorn pathfinder.app:app --host 127.0.0.1 --port 8000
+              Restart=always
+              [Install]
+              WantedBy=multi-user.target
+              UNIT
+
+              cat > /etc/systemd/system/pathfinder-frontend.service <<UNIT
+              [Unit]
+              Description=Pathfinder frontend (Next.js)
+              After=network.target
+              [Service]
+              User=pathfinder
+              Group=pathfinder
+              WorkingDirectory=/opt/pathfinder/frontend
+              Environment=NODE_ENV=production
+              Environment=HOME=/opt/pathfinder
+              Environment=COGNITO_HOSTED_UI_DOMAIN=pathfinder-${AWS::AccountId}-${AWS::Region}.auth.${AWS::Region}.amazoncognito.com
+              Environment=COGNITO_CLIENT_ID=${UserPoolClient}
+              Environment=COGNITO_CLIENT_SECRET=$COGNITO_SECRET
+              Environment=APP_BASE_URL=https://${Distribution.DomainName}
+              ExecStart=/usr/bin/npx next start -H 127.0.0.1 -p 3000
+              Restart=always
+              [Install]
+              WantedBy=multi-user.target
+              UNIT
+
+              systemctl daemon-reload
+              systemctl enable --now nginx pathfinder-backend pathfinder-frontend
+
+  AppAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+      - PublicRoute1
+      - CloudFrontIngress
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: 1
+        MinInstancesInService: 0
+        PauseTime: PT0S
+    Properties:
+      MinSize: '1'
+      MaxSize: '1'
+      DesiredCapacity: '1'
+      HealthCheckType: EC2
+      VPCZoneIdentifier:
+        - Ref: PublicSubnet1
+      LaunchTemplate:
+        LaunchTemplateId:
+          Ref: AppLaunchTemplate
+        Version:
+          Fn::GetAtt:
+            - AppLaunchTemplate
+            - LatestVersionNumber
+
+  EipAttachment:
+    Type: Custom::PathfinderEipAttachment
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+          - CustomProviderFunction
+          - Arn
+      Mode: AttachEip
+      AutoScalingGroupName:
+        Ref: AppAutoScalingGroup
+      AllocationId:
+        Fn::GetAtt:
+          - ElasticIp
+          - AllocationId
+      LaunchTemplateVersion:
+        Fn::GetAtt:
+          - AppLaunchTemplate
+          - LatestVersionNumber
+
+Outputs:
+  DistributionDomain:
+    Description: Public Pathfinder URL.
+    Value:
+      Fn::Sub: 'https://${Distribution.DomainName}'
+  InstanceId:
+    Description: Current one-instance ASG member; use with AWS Systems Manager Session Manager.
+    Value:
+      Fn::GetAtt:
+        - EipAttachment
+        - InstanceId
+  EipAddress:
+    Description: Stable CloudFront origin address.
+    Value:
+      Fn::GetAtt:
+        - ElasticIp
+        - PublicIp
+  ArtifactsBucketName:
+    Description: PATHFINDER_S3_BUCKET.
+    Value:
+      Ref: ArtifactsBucket
+  BackendRoleArn:
+    Description: Standalone backend role with the same runtime permissions.
+    Value:
+      Fn::GetAtt:
+        - BackendRole
+        - Arn
+  Region:
+    Value:
+      Ref: AWS::Region
+  UserPoolId:
+    Value:
+      Ref: UserPool
+  UserPoolClientId:
+    Value:
+      Ref: UserPoolClient
+  HostedUiDomain:
+    Value:
+      Fn::Sub: 'pathfinder-${AWS::AccountId}-${AWS::Region}.auth.${AWS::Region}.amazoncognito.com'
