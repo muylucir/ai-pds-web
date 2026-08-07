@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 
 import pathfinder.app as app_module
 from pathfinder.models import AgentEvent
-from pathfinder.proto.host import HostInfo
+from pathfinder.proto.host import TOKEN_FILENAME, HostInfo
+from pathfinder.routes.proto_public import cookie_name
 from pathfinder.proto.limits import BuildSemaphore
 from pathfinder.workspace import Workspace
 from fakes.fake_runner import FakeRunner
@@ -149,6 +150,41 @@ class FakeProtoHost:
         info = self.infos.get((pid, slug))
         return info.log_tail if info else ""
 
+    # ---- access tokens ----
+    #
+    # 실제 파일을 쓴다(가짜 카운터가 아니라). 이 fake의 root는 fixture가
+    # app_module._proto_root()에 물린 tmp_path와 같은 값이므로, 토큰 파일이 실제
+    # 프로토타입 트리에 놓인다 -- 그래서 "아카이브 zip에 토큰이 실리지 않는다"를
+    # 단정하는 테스트가 진짜 파일을 상대로 검사하게 된다. 인메모리 dict로 두면
+    # 그 테스트는 아무것도 검증하지 않는 채로 통과한다.
+    def _token_path(self, pid, slug):
+        return self._root / pid / slug / TOKEN_FILENAME
+
+    def ensure_token(self, pid, slug):
+        path = self._token_path(pid, slug)
+        try:
+            existing = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            existing = ""
+        if existing:
+            return existing
+        token = f"token-{pid}-{slug}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(token, encoding="utf-8")
+        return token
+
+    def token_for(self, pid, slug):
+        try:
+            return self._token_path(pid, slug).read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+
+    def resolve_token(self, token):
+        for path in self._root.glob(f"*/*/{TOKEN_FILENAME}"):
+            if path.read_text(encoding="utf-8").strip() == token:
+                return (path.parent.parent.name, path.parent.name)
+        return None
+
 
 @pytest.fixture()
 def proto_env(monkeypatch, tmp_path):
@@ -231,8 +267,11 @@ def test_list_unknown_project_404(proto_env):
 def test_list_state_none(proto_env):
     _seed_spec(proto_env["s3"])
     body = client.get(f"/projects/{PID}/prototypes").json()
+    # access_url이 None인 것이 이 페이로드의 일부다: 호스팅되지 않은 프로토타입에는
+    # 공유할 링크가 없고, 프론트는 이 값의 부재로 버튼을 감춘다.
     assert body["prototypes"] == [{"slug": SLUG, "spec_path": SPEC_KEY,
                                    "state": "none", "port": None,
+                                   "access_url": None,
                                    "response_count": 0}]
 
 
@@ -693,6 +732,7 @@ def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
     body = client.get(f"/projects/{PID}/prototypes").json()
     assert body["prototypes"] == [{"slug": SLUG, "spec_path": SPEC_KEY,
                                    "state": "none", "port": None,
+                                   "access_url": None,
                                    "response_count": 0}]
 
 
@@ -1213,6 +1253,20 @@ def echo_server():
     thread.join(timeout=5)
 
 
+def _authorize(host, pid=PID, slug=SLUG) -> dict[str, str]:
+    """이 프로토타입의 접근 쿠키를 만들어 헤더 dict로 준다.
+
+    아래 프록시 테스트들이 단정하는 것은 **경로 전달**(basePath 정합성)이고
+    인증이 아니다. 그 테스트들이 쿠키를 들고 가지 않으면 전부 404에서 멈춰,
+    프리픽스를 잘못 전달하는 회귀를 더 이상 잡지 못한다 — 통과는 하지만
+    아무것도 검증하지 않는 상태가 된다.
+
+    인증 자체는 test_routes_proto_public.py가 단정한다.
+    """
+    token = host.ensure_token(pid, slug)
+    return {"Cookie": f"{cookie_name(pid, slug)}={token}"}
+
+
 def test_proxy_forwards_the_prefix_intact(proto_env, echo_server):
     """The proxy must forward /proto/{pid}/{slug}/... UNCHANGED, not strip the
     prefix.
@@ -1233,7 +1287,8 @@ def test_proxy_forwards_the_prefix_intact(proto_env, echo_server):
     from pathfinder.routes.proto_public import public_base_path
     resp = client.get(f"/proto/{PID}/{SLUG}/some/page",
                       params={"q": "1"},
-                      headers={"X-Origin-Verify": "secret-value"})
+                      headers={"X-Origin-Verify": "secret-value",
+                               **_authorize(proto_env["host"])})
     assert resp.status_code == 200
     assert resp.text == f"echo:{public_base_path(PID, SLUG)}/some/page?q=1"
     # The CloudFront shared secret must not reach the prototype process.
@@ -1257,7 +1312,8 @@ def test_proxy_forwards_the_same_prefix_the_build_was_given(proto_env, echo_serv
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
 
-    resp = client.get(f"/proto/{PID}/{SLUG}/_next/static/chunks/main.js")
+    resp = client.get(f"/proto/{PID}/{SLUG}/_next/static/chunks/main.js",
+                      headers=_authorize(proto_env["host"]))
 
     assert resp.status_code == 200
     assert resp.text == \
@@ -1271,13 +1327,20 @@ def test_proxy_forwards_a_public_dir_asset_under_the_prefix(proto_env, echo_serv
     from pathfinder.routes.proto_public import public_base_path
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
-    resp = client.get(f"/proto/{PID}/{SLUG}/logo.png")
+    resp = client.get(f"/proto/{PID}/{SLUG}/logo.png",
+                      headers=_authorize(proto_env["host"]))
     assert resp.status_code == 200
     assert resp.text == f"echo:{public_base_path(PID, SLUG)}/logo.png"
 
 
 def test_proxy_502_when_not_running(proto_env):
-    resp = client.get(f"/proto/{PID}/{SLUG}/index.html")
+    """호스팅이 꺼져 있을 때의 502는 **인증된** 요청에만 보인다.
+
+    쿠키를 들고 가는 것이 이 테스트의 핵심이다: 쿠키가 없으면 404가 먼저
+    나가므로(그것이 의도다 — 존재를 숨긴다) 이 502 분기는 도달하지 않는다.
+    """
+    resp = client.get(f"/proto/{PID}/{SLUG}/index.html",
+                      headers=_authorize(proto_env["host"]))
     assert resp.status_code == 502
     assert "start hosting first" in resp.text
 
@@ -1324,7 +1387,8 @@ def test_proxy_root_redirects_relatively_to_add_trailing_slash(
     refs, which at the slash-less URL resolve one level too high (slug lost)."""
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
-    resp = client.get(f"/proto/{PID}/{SLUG}", follow_redirects=False)
+    resp = client.get(f"/proto/{PID}/{SLUG}", follow_redirects=False,
+                      headers=_authorize(proto_env["host"]))
     assert resp.status_code == 307
     location = resp.headers["location"]
     assert location == f"/proto/{PID}/{SLUG}/"
@@ -1334,7 +1398,8 @@ def test_proxy_root_redirects_relatively_to_add_trailing_slash(
 def test_proxy_root_redirect_preserves_query(proto_env, echo_server):
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
-    resp = client.get(f"/proto/{PID}/{SLUG}?a=1&b=2", follow_redirects=False)
+    resp = client.get(f"/proto/{PID}/{SLUG}?a=1&b=2", follow_redirects=False,
+                      headers=_authorize(proto_env["host"]))
     assert resp.headers["location"] == f"/proto/{PID}/{SLUG}/?a=1&b=2"
 
 
@@ -1344,7 +1409,8 @@ def test_proxy_relative_asset_under_slug_prefix_is_served(proto_env, echo_server
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
     from pathfinder.routes.proto_public import public_base_path
-    resp = client.get(f"/proto/{PID}/{SLUG}/styles.css")
+    resp = client.get(f"/proto/{PID}/{SLUG}/styles.css",
+                      headers=_authorize(proto_env["host"]))
     assert resp.status_code == 200
     assert resp.text == f"echo:{public_base_path(PID, SLUG)}/styles.css"
 

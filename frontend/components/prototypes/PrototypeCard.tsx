@@ -60,9 +60,12 @@ export function PrototypeCard({
    *  `info.state !== "none"` — there is nothing accumulated to clear. */
   onReset?: (slug: string) => void;
   archiveUrl?: string;
-  /** 공유용 절대 URL(`prototypeShareUrl`). 주어지고 호스팅 중일 때만 복사
-   *  버튼이 뜬다 — 그 밖의 상태에서는 링크가 502이므로 깨진 링크를 공유하게
-   *  된다(routes/proto_public.py). */
+  /** 공유용 절대 URL(`absoluteShareUrl`이 서버의 `access_url`을 절대화한 값).
+   *  주어지고 호스팅 중일 때만 복사 버튼이 뜬다 — 그 밖의 상태에서는 링크가
+   *  502이므로 깨진 링크를 공유하게 된다(routes/proto_public.py).
+   *
+   *  이 URL에는 **접근 토큰이 들어 있다**. 참가자는 이것만으로 프로토타입에
+   *  들어오므로, 공유 범위가 곧 접근 범위다. */
   shareUrl?: string;
   busy: boolean;
 }) {
@@ -165,7 +168,7 @@ export function PrototypeCard({
 }
 
 /** 프리뷰 링크를 클립보드로. 워크숍에서 참가자에게 링크를 나눠 주는 것이
- *  용도이므로 값은 **절대 URL**이어야 한다(호출부가 `prototypeShareUrl`로 만든다).
+ *  용도이므로 값은 **절대 URL**이어야 한다(호출부가 `absoluteShareUrl`로 만든다).
  *
  *  "복사됨"을 2초 후 되돌리는 이유: 두 번째 복사가 실제로 됐는지 화면에서
  *  구별되어야 한다. 라벨이 영구히 "복사됨"이면 눌렀는지 알 수 없다.

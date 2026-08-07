@@ -459,6 +459,17 @@ async def _lifespan(_app: FastAPI):
             _log.info("swept %d orphan prototype hosting process(es)", swept)
     except Exception:
         _log.exception("orphan hosting sweep failed; continuing startup")
+    # 프로토타입 접근 토큰을 디스크에서 다시 읽는다. 위 스윕과 짝이지만 방향이
+    # 반대다: 스윕은 재시작으로 의미를 잃은 것(고아 프로세스)을 버리고, 이쪽은
+    # 재시작을 넘어 살아야 하는 것(이미 배포된 링크)을 되살린다. 이것이 없으면
+    # 워크숍 중 백엔드가 재시작될 때 참가자에게 나눠 준 URL이 전부 404가 되고,
+    # 다시 호스팅해도 복구되지 않는다 — 그 URL 안의 토큰은 바뀌지 않으므로.
+    try:
+        loaded = proto_host().load_tokens()
+        if loaded:
+            _log.info("loaded %d prototype access token(s)", loaded)
+    except Exception:
+        _log.exception("prototype token load failed; continuing startup")
     yield
 
 

@@ -27,6 +27,12 @@ from pathfinder.models import AgentEvent
 from pathfinder.parsers.redaction import redact_credentials
 from pathfinder.pathsafe import reject_unsafe_segment
 from pathfinder.proto.session import has_build_output, purge_session_state
+# 토큰 게이트의 경로 조립은 그 라우트를 소유한 모듈이 한다 — 여기서 f-string으로
+# 다시 쓰면 브라우저 관점 마운트(`/api`)를 두 곳에서 관리하게 되고, 그것이 이
+# 파일에서 이미 한 번 어긋났던 종류의 버그다(아래 start_host의 public_base_path
+# 주석 참고). proto_public은 pathfinder.app을 함수 안에서만 import하므로
+# 최상위 import가 순환을 만들지 않는다.
+from pathfinder.routes.proto_public import access_url_path
 from pathfinder.survey.store import purgeable_response_count
 
 _log = logging.getLogger(__name__)
@@ -241,8 +247,23 @@ async def list_prototypes(pid: str):
         # owns those keys, so the two cannot drift apart again.
         response_count = await purgeable_response_count(s3, slug)
 
+        # 공유용 접근 URL. **running일 때만** 실어 보낸다 — 그 밖의 상태에서
+        # 이 링크는 게이트가 502를 주므로, 존재하지 않는 것이 프론트가 링크를
+        # 노출할지 판단하는 기준이 된다(기존 shareUrl 조건과 같은 규칙).
+        #
+        # `token_for`이지 `ensure_token`이 아니다: GET이 자격증명을 만드는
+        # 부수효과를 가져서는 안 된다. 발급은 호스팅 시작(start_host) 한 곳에서만
+        # 일어난다 — 목록 조회가 토큰을 만들면, 한 번도 호스팅되지 않은
+        # 프로토타입에도 토큰 파일이 깔린다.
+        access_url = None
+        if state == "running":
+            token = host.token_for(pid, slug)
+            if token:
+                access_url = access_url_path(token)
+
         out.append({"slug": slug, "spec_path": spec_path,
                     "state": state, "port": port,
+                    "access_url": access_url,
                     "response_count": response_count})
     # Capacity travels with the list so a card can explain a 429 before the
     # user clicks (the cap is new -- MicroVM builds had no ceiling).
@@ -481,8 +502,15 @@ async def reset_prototype(pid: str, slug: str):
 # host bookkeeping, and -- from the S3 fallback -- the survey and transcript
 # subtrees, which share the prototypes/{slug}/ prefix with the bundle but are
 # anonymous respondents' words and build chatter respectively.
+#
+# `.proto-token` is a CREDENTIAL, not bookkeeping: it is the access token that
+# gates this prototype's public preview (proto/host.py's TOKEN_FILENAME). It
+# sits in this exact directory -- a sibling of the .proto-host.* files that
+# `_archive_entries` walks -- so leaving it out of this set would mail the live
+# access token to everyone who clicks "download", which is precisely the
+# audience the token exists to gate.
 _ARCHIVE_EXCLUDED_DIRS = {"node_modules", ".next", ".git"}
-_ARCHIVE_EXCLUDED_FILES = {".proto-host.log", ".proto-host.pid"}
+_ARCHIVE_EXCLUDED_FILES = {".proto-host.log", ".proto-host.pid", ".proto-token"}
 
 
 def _archive_excluded(rel: str) -> bool:
@@ -592,7 +620,14 @@ async def start_host(pid: str, slug: str):
         raise HTTPException(status_code=404, detail="prototype bundle not found")
     if info.state == "failed":
         raise HTTPException(status_code=502, detail=info.log_tail)
-    return {"state": info.state, "port": info.port, "log_tail": info.log_tail}
+    # 접근 토큰은 **여기서만** 발급한다. 프리뷰 링크가 의미를 갖는 것은 호스팅이
+    # 실제로 시작된 뒤이므로, 그보다 먼저 만들면 아무 데도 쓰이지 않는 자격증명이
+    # 디스크에 남는다. `ensure_token`이므로 stop -> start를 반복해도 값이 그대로다
+    # — 워크숍 중 호스팅을 껐다 켜는 것 때문에 이미 나눠 준 링크가 죽으면 안 된다.
+    # 링크를 폐기하는 의도된 경로는 리셋이고, 그쪽은 purge()가 토큰까지 지운다.
+    token = app_module.proto_host().ensure_token(pid, slug)
+    return {"state": info.state, "port": info.port, "log_tail": info.log_tail,
+            "access_url": access_url_path(token)}
 
 
 @router.get("/projects/{pid}/prototypes/{slug}/host")
@@ -602,7 +637,12 @@ async def host_status(pid: str, slug: str):
     info = app_module.proto_host().status(pid, slug)
     if info is None:
         raise HTTPException(status_code=404, detail="not hosted")
+    # GET은 토큰을 만들지 않는다(`token_for`) — 조회가 자격증명을 만드는 부수효과를
+    # 가지면, 호스팅된 적 없는 프로토타입에도 토큰이 깔린다. 아직 없으면 None이고,
+    # 프론트는 그때 링크를 노출하지 않는다.
+    token = app_module.proto_host().token_for(pid, slug)
     return {"state": info.state, "port": info.port,
+            "access_url": access_url_path(token) if token else None,
             "log_tail": app_module.proto_host().log_tail(pid, slug)}
 
 

@@ -10,6 +10,7 @@ function info(overrides: Partial<PrototypeInfo>): PrototypeInfo {
     spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md",
     state: "none",
     port: null,
+    access_url: null,
     response_count: 0,
     ...overrides,
   };

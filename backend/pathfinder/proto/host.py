@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import shutil
 import signal
 import socket
@@ -23,6 +24,22 @@ from typing import Literal
 from pathfinder.pathsafe import reject_unsafe_segment
 
 HostState = Literal["installing", "building", "running", "failed", "stopped"]
+
+#: The access token file, in the build directory's PARENT -- a sibling of
+#: `.proto-host.pid`/`.proto-host.log`, NOT inside the served `prototype/` tree.
+#:
+#: That placement is load-bearing twice over. The served tree is what a
+#: prototype's own dev server can hand out, and it is also what
+#: `_archive_entries` zips for the "download" button -- a token under
+#: `prototype/` would ride out to whoever downloads the bundle, which is
+#: exactly the audience the token exists to gate.
+TOKEN_FILENAME = ".proto-token"
+
+#: 32 bytes -> 43 urlsafe chars, the same strength as a survey token
+#: (`routes/surveys.py`'s TOKEN_BYTES). Deliberately identical: two kinds of
+#: public link with two different strengths invites the question "why", and the
+#: honest answer would be "no reason".
+TOKEN_BYTES = 32
 
 
 @dataclass
@@ -76,6 +93,102 @@ class ProtoHost:
         # scanner's bind probe releases its socket before the spawn, so two
         # concurrent starts could otherwise pick the same port.
         self._reserved: set[int] = set()
+        # token -> (pid, slug). A CACHE over the `.proto-token` files, not the
+        # source of truth: `load_tokens()` rebuilds it from disk at startup so
+        # links already handed out at a workshop survive a backend restart.
+        # (The registry above deliberately does NOT survive one -- a restart
+        # kills the npm subprocess, so there is no running host to remember.
+        # Tokens are different: the file outlives the process, and re-hosting
+        # must not invalidate a link someone already pasted into chat.)
+        self._tokens: dict[str, tuple[str, str]] = {}
+
+    # ---- access tokens ----
+
+    def _token_path(self, pid: str, slug: str) -> Path:
+        reject_unsafe_segment(pid)
+        reject_unsafe_segment(slug)
+        return self._root / pid / slug / TOKEN_FILENAME
+
+    def load_tokens(self) -> int:
+        """Rebuild the token cache from disk. Returns how many were found.
+
+        Called at startup alongside `sweep_orphans` (same glob shape, same
+        best-effort spirit). Without this, a backend restart would 404 every
+        link already distributed -- and unlike a lost subprocess, that is not
+        something re-hosting silently repairs: the participant's URL contains
+        the old token forever.
+
+        Unreadable or empty files are skipped rather than raised on. A token
+        file we cannot read is a link that cannot work no matter what we do
+        here; failing startup over it would take the whole backend down for one
+        prototype's broken link.
+        """
+        self._tokens.clear()
+        if not self._root.is_dir():
+            return 0
+        for token_file in self._root.glob(f"*/*/{TOKEN_FILENAME}"):
+            try:
+                token = token_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if not token:
+                continue
+            slug_dir = token_file.parent
+            self._tokens[token] = (slug_dir.parent.name, slug_dir.name)
+        return len(self._tokens)
+
+    def ensure_token(self, pid: str, slug: str) -> str:
+        """This prototype's access token, creating one only if absent.
+
+        Reuse is the point. Hosting gets stopped and restarted routinely during
+        a workshop, and minting a fresh token on each start would silently kill
+        every link already shared -- the failure would surface as participants
+        reporting a 404 on a URL that worked ten minutes ago. The deliberate
+        way to revoke is the reset button, whose `purge()` deletes the tree and
+        the token with it.
+        """
+        path = self._token_path(pid, slug)
+        try:
+            existing = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            existing = ""
+        if existing:
+            # Re-seed the cache: a restart's load_tokens() may have missed this
+            # (e.g. the dir appeared afterwards), and the file is authoritative.
+            self._tokens[existing] = (pid, slug)
+            return existing
+        token = secrets.token_urlsafe(TOKEN_BYTES)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(token, encoding="utf-8")
+        self._tokens[token] = (pid, slug)
+        return token
+
+    def token_for(self, pid: str, slug: str) -> str | None:
+        """This prototype's token if it has one, WITHOUT minting one.
+
+        Read paths (the list route, host status) use this: a GET must not have
+        the side effect of creating a credential.
+        """
+        try:
+            token = self._token_path(pid, slug).read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        if token:
+            self._tokens[token] = (pid, slug)
+        return token or None
+
+    def resolve_token(self, token: str) -> tuple[str, str] | None:
+        """token -> (pid, slug), or None if it resolves to nothing.
+
+        Compared in constant time against the cache's keys. A plain dict lookup
+        would leak timing on the hash comparison, and while that is a thin
+        channel over HTTP, the mitigation costs one loop over a dict that holds
+        one entry per prototype.
+        """
+        for known, target in self._tokens.items():
+            if secrets.compare_digest(known, token):
+                return target
+        return None
 
     # ---- internals ----
 
@@ -331,6 +444,17 @@ class ProtoHost:
         # that). A purged prototype must not exist at all, so evict it here --
         # otherwise the card would read a state for a tree that is gone.
         self._registry.pop((pid, slug), None)
+        # Revoke the access link. `rmtree` below deletes the token FILE, but the
+        # in-memory cache would go on resolving that token to this (pid, slug)
+        # for the life of the process -- and since the proxy's check is
+        # "does the cookie match this prototype's token", a stale cache entry
+        # means reset does not actually revoke until the backend restarts.
+        # Dropped BEFORE the rmtree so a partial failure cannot leave the token
+        # live: the tree surviving is recoverable (retry the reset), a live
+        # credential on a prototype the user believes they wiped is not.
+        for known, target_ids in list(self._tokens.items()):
+            if target_ids == (pid, slug):
+                del self._tokens[known]
         target = self._root / pid / slug
         if not target.is_dir():
             return

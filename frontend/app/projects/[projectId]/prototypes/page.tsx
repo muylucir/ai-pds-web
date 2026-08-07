@@ -14,8 +14,7 @@ import {
   startHost,
   stopHost,
   getHost,
-  prototypePreviewUrl,
-  prototypeShareUrl,
+  absoluteShareUrl,
   resetPrototype,
 } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
@@ -150,8 +149,15 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
     }
   }
 
-  function handleOpenPreview(slug: string) {
-    window.open(prototypePreviewUrl(projectId, slug), "_blank", "noopener,noreferrer");
+  // PM도 참가자와 **같은 토큰 링크**로 들어간다.
+  //
+  // 백엔드에 "로그인했으면 통과" 분기를 두지 않기 위해서다 — 경로가 둘이면
+  // proto_public.py가 인증 경계로 분리되어 있다는 사실이 흐려지고, 프론트
+  // 프록시도 세션 쿠키까지 forward해야 해서 방금 좁힌 허용목록이 다시 넓어진다.
+  // 덤으로 PM이 보는 화면이 참가자가 보는 화면과 정확히 같아지므로, 링크가
+  // 실제로 동작하는지를 PM이 자기 클릭으로 검증하게 된다.
+  function handleOpenPreview(accessUrl: string) {
+    window.open(accessUrl, "_blank", "noopener,noreferrer");
   }
 
   async function handleShowLogs(slug: string) {
@@ -201,16 +207,20 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 onBuild={() => handleBuild(info.slug)}
                 onStartHost={() => handleStartHost(info.slug)}
                 onStopHost={() => handleStopHost(info.slug)}
-                onOpenPreview={info.state === "running" ? () => handleOpenPreview(info.slug) : undefined}
+                // 판정 기준이 state에서 **access_url의 존재**로 바뀌었다. 서버가
+                // running일 때만 이 값을 실어 보내므로 조건은 사실상 같지만, 이
+                // 방향이면 "링크가 있다"와 "링크가 동작한다"가 한 값에서 나온다 —
+                // 프론트가 state를 보고 없는 URL을 만들어 낼 수 없다.
+                onOpenPreview={info.access_url
+                  ? () => handleOpenPreview(info.access_url as string) : undefined}
                 onShowLogs={() => handleShowLogs(info.slug)}
                 onOpenSurvey={() =>
                   setSurveySlug((cur) => (cur === info.slug ? null : info.slug))
                 }
                 onReset={handleReset}
                 archiveUrl={prototypeArchiveUrl(projectId, info.slug)}
-                // 호스팅 중일 때만 — 그 밖의 상태에서 이 링크는 502다.
-                shareUrl={info.state === "running"
-                  ? prototypeShareUrl(projectId, info.slug) : undefined}
+                shareUrl={info.access_url
+                  ? absoluteShareUrl(info.access_url) : undefined}
               />
             ))}
           </div>

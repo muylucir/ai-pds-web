@@ -39,9 +39,14 @@ const HOP_BY_HOP = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
   "te", "trailer", "transfer-encoding", "upgrade", "content-length",
   "content-encoding", "host",
-  // 세션 쿠키는 이 경계에서 멈춘다: withBearer()가 Authorization으로 번역하고
-  // 백엔드는 쿠키를 모른다.
-  "cookie",
+  // ⚠️ "cookie"는 여기에 없다 — 일부러다. 쿠키 판정은 withBearer()가 한 곳에서
+  // 한다(lib/api/proxyAuth.ts): 세션 JWT는 지우고 Authorization으로 번역하며,
+  // 프로토타입 접근 쿠키(pf_proto_*)만 허용목록으로 통과시킨다.
+  //
+  // 여기서도 지우면 withBearer가 볼 쿠키가 남지 않아 그 허용목록이 항상 빈
+  // 값이 되고, /api/proto/* 프리뷰가 전부 404가 된다 — 그 트래픽도 이
+  // 핸들러를 통과하기 때문이다. 지우는 자리가 둘이면 되살리는 쪽이 반드시
+  // 진다.
 ]);
 
 function filterHeaders(src: Headers): Headers {

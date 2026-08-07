@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import pathfinder.app as app_module
+from pathfinder.proto.host import TOKEN_FILENAME
 from pathfinder.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
@@ -65,6 +66,32 @@ def test_archive_excludes_build_artifacts(env):
 
     assert _names(client.get(f"/projects/{PID}/prototypes/{SLUG}/archive")) == \
         ["prototype/app.js"]
+
+
+def test_archive_never_ships_the_access_token(env):
+    """`.proto-token`은 이 프로토타입의 **접근 자격증명**이다.
+
+    빌드 디렉토리(`{root}/{pid}/{slug}`)에 `.proto-host.*`와 나란히 놓이고,
+    아카이브는 바로 그 디렉토리를 훑는다 — 제외하지 않으면 "다운로드"를 누른
+    모든 사람에게 살아 있는 접근 토큰이 함께 나간다. 그 다운로드를 받는 사람은
+    토큰이 막으려는 바로 그 대상일 수 있다.
+
+    위 test_archive_excludes_build_artifacts와 따로 두는 이유는 실패의 의미가
+    다르기 때문이다: 저쪽이 깨지면 zip이 커지고, 이쪽이 깨지면 자격증명이 샌다.
+    """
+    build = env["root"] / PID / SLUG / "prototype"
+    build.mkdir(parents=True)
+    (build / "app.js").write_text("x", encoding="utf-8")
+    # 실제 코드가 쓰는 위치와 이름을 그대로 쓴다(상수를 import해서 — 리터럴을
+    # 복사하면 파일명이 바뀔 때 이 테스트가 조용히 무의미해진다).
+    (build.parent / TOKEN_FILENAME).write_text("super-secret-token",
+                                               encoding="utf-8")
+
+    resp = client.get(f"/projects/{PID}/prototypes/{SLUG}/archive")
+
+    assert _names(resp) == ["prototype/app.js"]
+    # 이름뿐 아니라 값이 어디에도 없어야 한다 — 다른 항목에 섞여 들어가는 경로도 막는다.
+    assert b"super-secret-token" not in resp.content
 
 
 def test_archive_excludes_survey_and_transcript_from_the_s3_fallback(env):

@@ -25,12 +25,21 @@ from starlette.routing import Route
 import pathfinder.app as app_module
 from pathfinder.app import app
 
-# 무인증으로 열려 있어야 하는 경로 — 정확히 이 셋이다.
+# Cognito 인증 없이 열려 있어야 하는 경로 — 정확히 이 넷이다.
 #   /survey/{token}              익명 설문 응답 (계정 없는 최종 사용자)
+#   /proto/t/{token}             프로토타입 토큰 게이트 (쿠키를 심고 아래로 307)
 #   /proto/{pid}/{slug}          프로토타입 라이브 프리뷰 (같은 사용자가 앱을 실제로 써봐야 한다)
 #   /proto/{pid}/{slug}/{path:path}  위와 동일 — 프리뷰 내부 정적 자원 경로
+#
+# ⚠️ "Cognito 인증 없음"이 "무제한"은 아니다. 아래 세 프로토타입 경로는 계정
+# 대신 **프로토타입별 접근 토큰**으로 게이트된다(routes/proto_public.py):
+# 게이트가 토큰을 쿠키로 바꾸고, 프록시 두 개가 그 쿠키를 요구한다. 이 목록은
+# "여기에 require_user가 붙어 있지 않다"만 단정하므로, 토큰 게이트 자체가
+# 동작하는지는 test_routes_proto_public.py가 따로 단정한다 — 그쪽이 없으면
+# 이 목록은 "공개여도 된다"를 "아무 방어가 없어도 된다"로 잘못 읽히게 한다.
 PUBLIC_PATHS = {
     "/survey/{token}",
+    "/proto/t/{token}",
     "/proto/{pid}/{slug}",
     "/proto/{pid}/{slug}/{path:path}",
 }

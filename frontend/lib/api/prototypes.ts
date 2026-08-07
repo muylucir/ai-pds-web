@@ -20,6 +20,13 @@ export interface PrototypeInfo {
   spec_path: string;
   state: PrototypeState;
   port: number | null;
+  /** 토큰이 들어 있는 접근 경로(`/api/proto/t/{token}`). 호스팅 중이 아니면 null.
+   *
+   *  **서버가 만들어 내려보낸다** — 프론트가 pid/slug로 조립하지 않는다. 토큰은
+   *  클라이언트 상태가 아니고, 조립하려면 토큰 자체를 별도 필드로 받아야 하므로
+   *  링크가 아닌 곳에도 존재하게 된다. 상대 경로이므로 밖으로 공유할 때는
+   *  `absoluteShareUrl`로 절대화한다. */
+  access_url: string | null;
   /** Survey answers that a reset would destroy — shown in its confirmation. */
   response_count: number;
 }
@@ -30,6 +37,8 @@ export type HostState = "installing" | "building" | "running" | "failed" | "stop
 export interface HostStatus {
   state: HostState;
   port: number | null;
+  /** PrototypeInfo.access_url과 같은 값 — 아직 발급되지 않았으면 null. */
+  access_url: string | null;
   log_tail: string;
 }
 
@@ -137,27 +146,21 @@ export async function getHost(pid: string, slug: string): Promise<HostStatus | n
   }
 }
 
-// The reverse-proxied URL for a running prototype (routes.py's
-// proxy_prototype, mounted under /api in prod — see client.ts:13).
-export function prototypePreviewUrl(pid: string, slug: string): string {
-  return `${API_BASE_URL}/proto/${encodeURIComponent(pid)}/${encodeURIComponent(slug)}/`;
-}
-
-/** 같은 프리뷰를 **앱 밖으로 공유할 수 있는 절대 URL**로.
+/** 서버가 준 상대 접근 경로(`access_url`)를 **앱 밖으로 공유할 수 있는 절대
+ *  URL**로.
  *
- *  prototypePreviewUrl을 그대로 복사할 수 없는 이유: 배포에서 API_BASE_URL은
- *  `/api`이므로 결과가 상대 경로이고, 그것을 채팅에 붙이면 받는 사람에게는
- *  아무 의미가 없다. `new URL(..., origin)`을 쓰는 것은 로컬 개발처럼
- *  API_BASE_URL이 이미 절대 URL일 때 origin을 덧붙여
- *  "http://localhost:3000http://localhost:8000/..."을 만들지 않기 위해서다 —
- *  base는 상대 경로일 때만 적용된다.
+ *  상대 경로를 그대로 복사할 수 없는 이유: 배포에서 access_url은 `/api/proto/t/…`
+ *  이고, 그것을 채팅에 붙이면 받는 사람에게는 아무 의미가 없다.
+ *  `new URL(..., origin)`을 쓰는 것은 로컬 개발처럼 값이 **이미 절대 URL**일 때
+ *  origin을 덧붙여 "http://localhost:3000http://localhost:8000/..."을 만들지 않기
+ *  위해서다 — base는 상대 경로일 때만 적용된다. (구 prototypeShareUrl에서 그대로
+ *  가져온 판단이고, 그 경우를 고정한 테스트도 남아 있다.)
  *
- *  링크가 실제로 동작하는 것은 호스팅 중일 때뿐이다. 그렇지 않으면 백엔드가
- *  502를 준다(routes/proto_public.py) — 그래서 호출부는 state === "running"에서만
- *  이 값을 노출한다. */
-export function prototypeShareUrl(pid: string, slug: string,
-                                  origin: string = globalThis.location?.origin ?? ""): string {
-  return new URL(prototypePreviewUrl(pid, slug), origin).toString();
+ *  URL을 조립하지 않고 서버 값을 절대화만 하는 것이 이 함수의 전부다: 경로 모양과
+ *  토큰은 백엔드가 소유한다(routes/proto_public.py의 access_url_path). */
+export function absoluteShareUrl(accessUrl: string,
+                                 origin: string = globalThis.location?.origin ?? ""): string {
+  return new URL(accessUrl, origin).toString();
 }
 
 //: 첫 턴의 센티널. 서버가 이 값을 session.first_prompt()로 치환한다
