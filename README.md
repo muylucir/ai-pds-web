@@ -51,8 +51,7 @@ CLI는 도구를 부를 때마다 별도 assistant 줄을 쓰므로 줄마다 �
 (`tool_result`만 담은 user 줄은 도구 실행 결과이지 발화가 아니다) 그 안의 assistant 줄은
 하나로 누적한다.
 
-자세한 배포 절차는 `infra/README.md`, 수동 e2e 검증은
-`docs/superpowers/checklists/2026-07-24-prototype-generation-e2e.md` 참고.
+자세한 배포 절차는 `infra/README.md` 참고.
 
 프로토타입을 사용자에게 검증할 때는 같은 탭에서 **검증 설문**을 만들 수 있다.
 프로토타입 명세의 검증 가설·기능 목록에서 문항을 생성하고(`validation-questionnaire.md`),
@@ -606,6 +605,7 @@ cd frontend && npm run test:e2e
   `AWS_REGION`/`PATHFINDER_S3_REGION`(백엔드)으로 지정한다 — 세 값이 같은 리전을 가리켜야
   한다. 프로토타입 빌드는 이제 백엔드 프로세스 안에서 직접 돌기 때문에(도쿄 MicroVM 없음)
   더 이상 리전 예외가 없다.
-- 진행/결정 기록은 `.superpowers/sdd/progress.md`(git-ignored)와 `docs/superpowers/plans/` 참고.
-  설계 판단의 근거는 `docs/superpowers/specs/`에 있다 — 위 언어 항목의 전문은
-  `2026-08-03-bilingual-ko-en-design.md`.
+- 설계 판단의 **근거는 커밋 메시지와 코드 주석에 있다.** 스펙·계획서는 리포에서
+  제거했으므로(사내 산출문서), "왜 이렇게 되어 있는가"는 `git log`로 찾는다 —
+  이 README의 각 항목이 그 판단을 요약하고 있고, 더 자세한 것은 해당 파일을
+  건드린 커밋의 본문에 있다.
