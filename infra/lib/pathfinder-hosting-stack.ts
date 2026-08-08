@@ -124,9 +124,8 @@ export class PathfinderHostingStack extends cdk.Stack {
     // --- 앱 코드 에셋(리포 zip) ---
     const asset = new assets.Asset(this, 'AppAsset', {
       path: path.join(__dirname, '..', '..'), // 리포 루트
-      // CDK와 단일 CloudFormation 패키저가 같은 목록을 공유한다. 목록을
-      // 바꿀 때는 app-asset-excludes.json 하나만 수정한다 — 두 배포 경로가
-      // 서로 다른 것을 싣기 시작하면 한쪽에서만 나는 결함이 생긴다.
+      // 목록은 app-asset-excludes.json이 소유한다. 지금은 이 스택이 유일한
+      // 소비자다 — 같은 목록을 공유했던 단일 CloudFormation 패키저는 제거됐다.
       //
       // JSON에는 주석을 달 수 없으므로 **실측으로 얻은 두 항목의 근거**를
       // 여기 남긴다(지우면 다음 사람이 목록을 좁힐 때 이유를 모른다):
