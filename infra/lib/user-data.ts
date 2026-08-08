@@ -173,6 +173,16 @@ Environment=PATHFINDER_DISCOVERY_CONFIG_DIR=${APP}/discovery-config
 Environment=PATHFINDER_COGNITO_USER_POOL_ID=${userPoolId}
 Environment=PATHFINDER_COGNITO_CLIENT_ID=${userPoolClientId}
 Environment=PATHFINDER_COGNITO_REGION=${region}
+# 프로토타입 접근 쿠키에 Secure를 붙이는 스위치(routes/proto_public.py의
+# _cookie_secure). 프론트의 sessionCookieOptions가 NODE_ENV로 같은 판단을 하는 것과
+# 짝이고, 백엔드에는 그런 관습적 변수가 없으므로 명시한다.
+#
+# 이 줄이 없으면 백엔드는 기본값인 "설정 안 됨"을 보고 Secure를 **생략**한다 —
+# CloudFront가 HTTPS를 강제하므로 실동작은 문제없어 보이지만, 쿠키 자체는 평문
+# HTTP로도 전송될 수 있는 상태로 남는다. 로컬 개발에서는 이 변수를 두지 않아
+# Secure가 꺼지고(http://localhost에서 브라우저가 Secure 쿠키를 저장하지 않는다)
+# 프리뷰가 그대로 열린다.
+Environment=PATHFINDER_ENV=production
 ExecStart=${APP}/backend/.venv/bin/uvicorn pathfinder.app:app --host 127.0.0.1 --port 8000
 Restart=always
 [Install]

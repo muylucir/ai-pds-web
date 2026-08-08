@@ -53,6 +53,12 @@ CLI는 도구를 부를 때마다 별도 assistant 줄을 쓰므로 줄마다 �
 (`tool_result`만 담은 user 줄은 도구 실행 결과이지 발화가 아니다) 그 안의 assistant 줄은
 하나로 누적한다.
 
+워크스페이스 채팅에는 **파일을 첨부**할 수 있다(`POST /projects/{pid}/uploads`,
+`AttachmentChips`). `.md`/`.txt`/`.csv`/`.xlsx`/`.pdf`를 받아 **텍스트로 변환해**
+워크스페이스에 쓰고 그 경로를 대화에 얹는다 — 원본 바이너리를 에이전트에게 주지
+않는다(`parsers/uploads.py`). 상한은 5MB이고, 키에 uuid를 넣어 동시 업로드가 같은
+이름을 두고 경합하지 않는다.
+
 자세한 배포 절차는 `infra/README.md` 참고.
 
 프로토타입을 사용자에게 검증할 때는 같은 탭에서 **검증 설문**을 만들 수 있다.
@@ -60,6 +66,10 @@ CLI는 도구를 부를 때마다 별도 assistant 줄을 쓰므로 줄마다 �
 인증이 필요 없는 토큰 링크(`/survey/{token}`)를 공유해 익명 응답을 받고, 집계를
 대시보드로 확인한 뒤 CSV로 내보내 Discovery의 검증 종합 단계에 넣는다. 응답은 S3에
 저장되며(응답 1건 = 객체 1개), 대시보드는 `rollup.json` 캐시를 읽는다.
+
+설문은 **유일한 무인증 쓰기 경로**이므로 상한이 좁게 걸려 있다(`surveys_public.py`):
+설문 하나당 응답 1,000건(초과 시 429), 답변 1개당 2,000자, 본문 32KB. 문항에 정의된
+키만 저장하고 응답에 내부 식별자(project_id/slug/token)를 되돌려주지 않는다.
 
 문항은 **응답자가 본 것이 데모라는 전제** 위에서 만들어진다(`survey/builder.py`의
 `QUESTIONNAIRE_PROMPT_KO`/`_EN` — 프로젝트 언어로 고른다). 성능·보안·실데이터
@@ -276,6 +286,8 @@ sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # 프리
 | 영어 UI인데 일부 문구만 한국어 | 딕셔너리를 안 타고 소스에 박힌 리터럴이다. `cd frontend && npm test -- noHardcodedKorean`이 위치를 집어 준다 |
 | 승인 버튼을 눌러도 게이트가 안 열림 | 턴 텍스트와 판정 정규식이 어긋난 것이다(`lib/approvalMarker.ts`가 둘의 단일 출처). 감사 로그의 `user_input`이 `승인`/`Approved` 중 무엇인지 확인한다 |
 | 긴 메시지를 보내면 "연결이 끊어졌습니다" | 요청 라인이 Node `maxHeaderSize`를 넘은 것(HTTP 431). 턴 텍스트가 POST 본문·핸들 경로를 타는지 본다 — 아래 "참고"의 긴 입력 항목 |
+| 프로토타입 프리뷰가 404 | **의도된 응답이다** — 접근 토큰 쿠키가 없거나 다른 프로토타입의 것이다. 공유 링크(`/api/proto/t/{token}`)로 들어가야 쿠키가 심긴다. 옛 `/api/proto/{pid}/{slug}/` 링크는 이제 동작하지 않으므로 카드에서 링크를 다시 복사한다. 이 기능 이전에 호스팅 중이던 프로토타입은 토큰이 없으니 **"호스팅 시작"을 다시 눌러** 발급한다. 응답만으로는 원인을 알 수 없으므로(존재를 숨기는 것이 목적이라 없는 프로토타입과 같은 404다) 구별이 필요하면 `PATHFINDER_LOG_LEVEL=DEBUG`로 올린다 — `proto proxy 404: no valid cookie`가 찍힌다 |
+| 프리뷰 링크가 어제는 됐는데 오늘 404 | 리셋을 했다면 정상이다(리셋이 폐기 경로다 — `purge()`가 토큰을 지운다). 리셋을 안 했는데 이렇다면 빌드 트리가 사라진 것이다(인스턴스 교체). 토큰은 트리와 수명이 같으므로 다시 빌드·호스팅해야 한다 |
 | 로그인 후 `redirect_mismatch` | 호스팅 스택의 콜백 URL 등록(`UpdateUserPoolClient`)이 실패. `cdk deploy PathfinderHostingStack` 재실행 |
 | `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 최초 1회만 필요하며 결과가 `cdk.context.json`에 캐시된다 |
 | SSH 접속 불가 | 의도된 설계다. SSH 포트가 없고 SSM만 열려 있다 |
@@ -370,6 +382,7 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `PATHFINDER_PROTO_ROOT` | `~/pathfinder-protos` | 프로토타입 빌드 + 호스팅 공용 루트 (EC2 로컬) |
 | `PATHFINDER_PROTO_PERMISSION_MODE` | `bypassPermissions` | 빌드 에이전트의 권한 모드. 빌드는 무인으로 돌아 승인해 줄 사람이 없다 — 더 조이려면 덮어쓴다(잘못된 값은 즉시 ValueError) |
 | `PATHFINDER_PUBLIC_PATH_PREFIX` | `/api` | **브라우저가 보는** 프로토타입 프리뷰 마운트. Next가 `basePath`를 빌드 타임에 자산 URL로 굽고 그 URL은 브라우저가 푸므로 이 값이 틀리면 자산이 404가 나고 화면이 스타일 없이 뜬다(자기 교정되는 리다이렉트가 아니다). 백엔드를 :8000으로 직접 부르는 로컬은 마운트가 없으므로 `""` |
+| `PATHFINDER_ENV` | — (EC2 배포는 `production`) | `production`이면 프로토타입 접근 쿠키에 `Secure`를 붙인다(`routes/proto_public.py`의 `_cookie_secure` — 프론트가 `NODE_ENV`로 하는 것과 같은 판단이고, 백엔드에는 그런 관습적 변수가 없어 명시한다). 로컬은 비워 둔다: `http://localhost`에서 Secure 쿠키는 저장되지 않아 프리뷰가 열리지 않는다. **기본값이 "Secure 생략"이므로 배포에서 이 값이 빠지면 증상 없이 non-Secure 쿠키가 나간다** — `infra/test/user-data.assert.ts`가 그것을 단정한다 |
 | `PATHFINDER_COGNITO_USER_POOL_ID` | — | Cognito 풀 id. **둘 다 비워야** 인증 전체 바이패스(로컬/테스트 기본). 하나만 비우면 모든 요청이 RuntimeError — 아래 "참고" 참조 |
 | `PATHFINDER_COGNITO_CLIENT_ID` | — | 앱 클라이언트 id. access 토큰의 `client_id` 클레임 검증용. **둘 다 비워야** 바이패스, 하나만 비우면 모든 요청이 RuntimeError |
 | `PATHFINDER_COGNITO_REGION` | `PATHFINDER_S3_REGION` | 풀이 있는 리전 |

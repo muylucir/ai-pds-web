@@ -126,6 +126,12 @@ assert.ok(!s.includes('PATHFINDER_VM_REGION'), 'PATHFINDER_VM_REGION must be gon
 assert.ok(!s.includes('PATHFINDER_VM_IMAGE_ID'), 'PATHFINDER_VM_IMAGE_ID must be gone');
 assert.ok(!s.includes('PATHFINDER_VM_ROLE_ARN'), 'PATHFINDER_VM_ROLE_ARN must be gone');
 
+// 프로토타입 접근 쿠키의 Secure 스위치(routes/proto_public.py의 _cookie_secure).
+// 기본값이 "설정 안 됨 = Secure 생략"이라 이 줄이 빠지면 배포가 조용히 non-Secure
+// 쿠키를 내보낸다 — 화면상 아무 증상이 없으므로 테스트만이 잡을 수 있다.
+assert.match(s, /Environment=PATHFINDER_ENV=production/,
+  'PATHFINDER_ENV=production must be set — the backend omits Secure on the prototype access cookie without it');
+
 console.log('OK  user-data: prototype build env vars rendered, VM env vars gone');
 
 // 10) 서비스는 반드시 non-root로 돌아야 한다. Claude Code는 euid==0에서
