@@ -120,11 +120,30 @@ def cookie_name(pid: str, slug: str) -> str:
     return f"{COOKIE_PREFIX}{digest[:16]}"
 
 
+#: 접근 쿠키에 `Secure`를 붙일지. HTTPS로 서비스되는 배포에서 켠다.
+#:
+#: 스테이지 이름(`PATHFINDER_ENV=production`)이 아니라 **이 동작 하나만 가리키는
+#: 불리언**인 이유: 이름이 하는 일과 정확히 같아야 다음 사람이 범위를 오해하지
+#: 않는다. "환경" 변수는 로그 포맷·에러 상세 같은 것까지 묶어 부르게 되고, 그러면
+#: HTTPS 프록시를 앞에 둔 로컬 검증처럼 "프로덕션은 아니지만 Secure는 필요한"
+#: 구성을 표현할 수 없다.
+_COOKIE_SECURE_ENV = "PATHFINDER_COOKIE_SECURE"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
 def _cookie_secure() -> bool:
-    """프로덕션에서만 Secure. 프론트의 sessionCookieOptions와 같은 판단이다 —
-    로컬 http 개발에서 Secure를 켜면 브라우저가 쿠키를 저장하지 않아 프리뷰가
-    열리지 않는다."""
-    return os.environ.get("PATHFINDER_ENV", "").lower() == "production"
+    """접근 쿠키에 `Secure`를 붙일지.
+
+    기본값은 **꺼짐**이다. 로컬 개발이 `http://localhost`이고 브라우저는 평문
+    HTTP에서 Secure 쿠키를 저장하지 않으므로, 기본이 켜짐이면 아무 설정 없이
+    띄운 개발 환경에서 프리뷰가 열리지 않는다.
+
+    그 기본값의 대가는 배포에서 이 변수를 빠뜨리면 **증상 없이** non-Secure
+    쿠키가 나가는 것이다(CloudFront가 HTTPS를 강제하므로 화면상 아무 차이가
+    없다). 눈으로 잡을 수 없는 종류이므로 `infra/test/user-data.assert.ts`가
+    배포 설정에 이 값이 있는지 단정한다 -- 실제로 한 번 빠뜨렸다.
+    """
+    return os.environ.get(_COOKIE_SECURE_ENV, "").strip().lower() in _TRUTHY
 
 
 def _authorized(request: Request, pid: str, slug: str) -> bool:

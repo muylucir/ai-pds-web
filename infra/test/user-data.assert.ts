@@ -127,10 +127,14 @@ assert.ok(!s.includes('PATHFINDER_VM_IMAGE_ID'), 'PATHFINDER_VM_IMAGE_ID must be
 assert.ok(!s.includes('PATHFINDER_VM_ROLE_ARN'), 'PATHFINDER_VM_ROLE_ARN must be gone');
 
 // 프로토타입 접근 쿠키의 Secure 스위치(routes/proto_public.py의 _cookie_secure).
-// 기본값이 "설정 안 됨 = Secure 생략"이라 이 줄이 빠지면 배포가 조용히 non-Secure
-// 쿠키를 내보낸다 — 화면상 아무 증상이 없으므로 테스트만이 잡을 수 있다.
-assert.match(s, /Environment=PATHFINDER_ENV=production/,
-  'PATHFINDER_ENV=production must be set — the backend omits Secure on the prototype access cookie without it');
+// 기본값이 꺼짐이라 이 줄이 빠지면 배포가 조용히 non-Secure 쿠키를 내보낸다 —
+// 화면상 아무 증상이 없으므로 테스트만이 잡을 수 있다.
+assert.match(s, /Environment=PATHFINDER_COOKIE_SECURE=true/,
+  'PATHFINDER_COOKIE_SECURE=true must be set — the backend omits Secure on the prototype access cookie without it');
+// 구 이름이 되살아나지 않는지 본다. 백엔드는 이제 이 변수를 읽지 않으므로,
+// 남아 있으면 설정한 사람은 Secure가 켜졌다고 믿지만 실제로는 꺼져 있다.
+assert.ok(!s.includes('PATHFINDER_ENV'),
+  'PATHFINDER_ENV is gone — it was renamed to PATHFINDER_COOKIE_SECURE (the backend no longer reads it)');
 
 console.log('OK  user-data: prototype build env vars rendered, VM env vars gone');
 

@@ -382,7 +382,7 @@ NEXT_PUBLIC_API_BASE_URL=/api
 | `PATHFINDER_PROTO_ROOT` | `~/pathfinder-protos` | 프로토타입 빌드 + 호스팅 공용 루트 (EC2 로컬) |
 | `PATHFINDER_PROTO_PERMISSION_MODE` | `bypassPermissions` | 빌드 에이전트의 권한 모드. 빌드는 무인으로 돌아 승인해 줄 사람이 없다 — 더 조이려면 덮어쓴다(잘못된 값은 즉시 ValueError) |
 | `PATHFINDER_PUBLIC_PATH_PREFIX` | `/api` | **브라우저가 보는** 프로토타입 프리뷰 마운트. Next가 `basePath`를 빌드 타임에 자산 URL로 굽고 그 URL은 브라우저가 푸므로 이 값이 틀리면 자산이 404가 나고 화면이 스타일 없이 뜬다(자기 교정되는 리다이렉트가 아니다). 백엔드를 :8000으로 직접 부르는 로컬은 마운트가 없으므로 `""` |
-| `PATHFINDER_ENV` | — (EC2 배포는 `production`) | `production`이면 프로토타입 접근 쿠키에 `Secure`를 붙인다(`routes/proto_public.py`의 `_cookie_secure` — 프론트가 `NODE_ENV`로 하는 것과 같은 판단이고, 백엔드에는 그런 관습적 변수가 없어 명시한다). 로컬은 비워 둔다: `http://localhost`에서 Secure 쿠키는 저장되지 않아 프리뷰가 열리지 않는다. **기본값이 "Secure 생략"이므로 배포에서 이 값이 빠지면 증상 없이 non-Secure 쿠키가 나간다** — `infra/test/user-data.assert.ts`가 그것을 단정한다 |
+| `PATHFINDER_COOKIE_SECURE` | `false` (EC2 배포는 `true`) | 프로토타입 접근 쿠키에 `Secure`를 붙일지(`1`/`true`/`yes`/`on`). HTTPS로 서비스되면 켠다. 로컬은 끈 채로 둔다 — `http://localhost`에서 브라우저가 Secure 쿠키를 저장하지 않아 프리뷰가 열리지 않는다. **기본이 꺼짐이므로 배포에서 이 값이 빠지면 증상 없이 non-Secure 쿠키가 나간다**(CloudFront가 HTTPS를 강제해 화면상 차이가 없다) — `infra/test/user-data.assert.ts`가 배포 설정에 이 값이 있는지 단정한다. 스테이지 이름이 아니라 이 동작만 가리키는 불리언인 이유는 HTTPS 프록시를 앞에 둔 로컬 검증처럼 "프로덕션은 아니지만 Secure는 필요한" 구성이 있기 때문이다 |
 | `PATHFINDER_COGNITO_USER_POOL_ID` | — | Cognito 풀 id. **둘 다 비워야** 인증 전체 바이패스(로컬/테스트 기본). 하나만 비우면 모든 요청이 RuntimeError — 아래 "참고" 참조 |
 | `PATHFINDER_COGNITO_CLIENT_ID` | — | 앱 클라이언트 id. access 토큰의 `client_id` 클레임 검증용. **둘 다 비워야** 바이패스, 하나만 비우면 모든 요청이 RuntimeError |
 | `PATHFINDER_COGNITO_REGION` | `PATHFINDER_S3_REGION` | 풀이 있는 리전 |

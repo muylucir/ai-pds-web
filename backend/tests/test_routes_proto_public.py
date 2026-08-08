@@ -188,6 +188,42 @@ def test_the_cookie_is_httponly_and_lax(env):
     assert "expires" not in set_cookie
 
 
+def test_the_cookie_is_not_secure_by_default(env):
+    """기본값은 꺼짐이다 — 로컬 개발(http://localhost)에서 Secure를 붙이면
+    브라우저가 쿠키를 저장하지 않아 프리뷰가 아예 열리지 않는다."""
+    _running(env)
+    token = env["host"].ensure_token(PID, SLUG)
+    resp = client.get(f"/proto/t/{token}", follow_redirects=False)
+    assert "secure" not in resp.headers["set-cookie"].lower()
+
+
+@pytest.mark.parametrize("value", ["true", "TRUE", "1", "yes", "on", " true "])
+def test_cookie_secure_env_accepts_truthy_values(env, monkeypatch, value):
+    """`PATHFINDER_COOKIE_SECURE`가 켜지면 Secure가 붙는다.
+
+    여러 표기를 받는 이유: 이 값을 쓰는 곳이 systemd 유닛 파일과 셸 env라
+    `true`/`1`/`yes`가 모두 자연스럽게 나온다. 하나만 받으면 나머지를 쓴 사람은
+    켰다고 믿지만 실제로는 꺼져 있고, 그 실패는 화면에 드러나지 않는다.
+    """
+    monkeypatch.setenv("PATHFINDER_COOKIE_SECURE", value)
+    _running(env)
+    token = env["host"].ensure_token(PID, SLUG)
+    resp = client.get(f"/proto/t/{token}", follow_redirects=False)
+    assert "secure" in resp.headers["set-cookie"].lower()
+
+
+@pytest.mark.parametrize("value", ["", "false", "0", "no", "off", "production"])
+def test_cookie_secure_env_rejects_non_truthy_values(env, monkeypatch, value):
+    """켜지지 않는 값들. `production`이 여기 있는 것이 의도다 — 구 이름
+    (`PATHFINDER_ENV=production`)의 값을 새 변수에 그대로 넣는 실수가 조용히
+    통과하면, 이름을 좁힌 목적이 사라진다."""
+    monkeypatch.setenv("PATHFINDER_COOKIE_SECURE", value)
+    _running(env)
+    token = env["host"].ensure_token(PID, SLUG)
+    resp = client.get(f"/proto/t/{token}", follow_redirects=False)
+    assert "secure" not in resp.headers["set-cookie"].lower()
+
+
 def test_the_gate_502s_when_hosting_is_off(env):
     """유효한 토큰인데 호스팅이 꺼져 있으면 502.
 
