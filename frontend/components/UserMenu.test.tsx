@@ -1,9 +1,10 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse, type JsonBodyType } from "msw";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { server } from "@/test/msw/server";
 import { UserMenu } from "./UserMenu";
+import * as keepAlive from "@/lib/auth/keepSessionAlive";
 
 function mockMe(body: JsonBodyType, status = 200) {
   server.use(http.get("*/api/auth/me", () => HttpResponse.json(body, { status })));
@@ -47,6 +48,28 @@ describe("UserMenu", () => {
     mockMe({ authenticated: false }, 401);
     const { container } = render(<UserMenu />);
     await waitFor(() => expect(container.querySelector("button")).toBeNull());
+  });
+
+  it("starts the proactive token refresh for as long as it is mounted", async () => {
+    // 프로토타입 빌드 중 로그아웃되는 결함의 배선 지점. 갱신 타이머가 실제로
+    // 시작되지 않으면 route/keepSessionAlive가 둘 다 통과해도 사용자에게는
+    // 아무것도 고쳐지지 않는다.
+    //
+    // 이 컴포넌트에 붙이는 이유: 인증된 모든 화면의 헤더에 들어가므로 페이지마다
+    // 배선을 반복하지 않는다(이미 /api/auth/me를 같은 이유로 여기서 부른다).
+    // 프로토타입 화면만 감싸면 워크스페이스의 긴 디스커버리 턴이 빠진다.
+    const stop = vi.fn();
+    const start = vi.spyOn(keepAlive, "keepSessionAlive").mockReturnValue(stop);
+    mockMe({ authenticated: true, email: "a@b.io", role: "pm" });
+
+    const { unmount } = render(<UserMenu />);
+    await screen.findByRole("button", { name: /사용자 메뉴/ });
+    expect(start).toHaveBeenCalled();
+
+    // 언마운트에서 타이머를 반드시 정리한다 — 남으면 화면을 옮길 때마다
+    // 타이머가 하나씩 쌓여 Cognito를 여러 배로 때린다.
+    unmount();
+    expect(stop).toHaveBeenCalled();
   });
 
   it("logs out via POST so a prefetch cannot end the session", async () => {

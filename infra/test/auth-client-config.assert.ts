@@ -3,8 +3,33 @@ import {
   usernameForEmail,
   CALLBACK_PATH, GROUP_ADMIN, GROUP_PM, LOCAL_APP_URL, LOGOUT_PATH, OAUTH_SCOPES,
   SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
+  ACCESS_TOKEN_VALIDITY_MINUTES, ID_TOKEN_VALIDITY_MINUTES,
+  REFRESH_TOKEN_VALIDITY_MINUTES,
   callbackUrls, logoutUrls,
 } from '../lib/auth-client-config';
+
+// --- 토큰 유효기간: 프로토타입 빌드 한 번을 여유롭게 덮어야 한다.
+//
+// 실측 결함: 빌드 중 세션이 만료돼 로그아웃됐다. 1차 원인은 갱신이 백엔드
+// 401에만 반응하는데 열려 있는 SSE 연결은 401을 만들지 못한다는 것이었고,
+// 그쪽은 주기 갱신(frontend/lib/auth/keepSessionAlive.ts + /api/auth/refresh)으로
+// 고쳤다. 이 상수는 **두 번째 방어선**이다: 갱신이 몇 번 연속 실패해도
+// (네트워크 단절, Cognito 일시 오류) 빌드 한 번이 한 토큰 수명 안에서 끝나면
+// 사용자는 만료를 겪지 않는다.
+//
+// 빌드는 보통 1시간 이내다. access 60분은 그 경계와 정확히 겹쳐 여유가 0이므로
+// 최소 2배를 요구한다. Cognito의 access/id 상한은 24시간이다.
+assert.ok(ACCESS_TOKEN_VALIDITY_MINUTES >= 120,
+  'access token must outlast a full prototype build (~1h) with margin — 60m leaves none');
+assert.ok(ACCESS_TOKEN_VALIDITY_MINUTES <= 24 * 60,
+  'Cognito caps access-token validity at 24 hours');
+// id 토큰은 access와 같은 수명을 유지한다. 짧은 쪽이 먼저 만료되면 /api/auth/me가
+// 이메일·역할을 잃어 헤더가 비어 보이는데, 세션은 살아 있으므로 원인을 찾기 어렵다.
+assert.strictEqual(ID_TOKEN_VALIDITY_MINUTES, ACCESS_TOKEN_VALIDITY_MINUTES,
+  'id token must expire with the access token — a shorter one empties the header while the session lives');
+// refresh 창은 갱신이 가능한 전체 기간이다. 이것이 끝나면 주기 갱신도 무력하다.
+assert.strictEqual(REFRESH_TOKEN_VALIDITY_MINUTES, 60 * 24 * 30);
+console.log('OK  auth-client-config: token validity outlasts a prototype build');
 
 // 시드 비밀번호는 스펙이 못박은 값이다. 오타가 나면 배포는 성공하고 로그인만
 // 실패하므로(디버깅이 어렵다) 상수 자체를 단정한다.

@@ -3,6 +3,9 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
+// 네임스페이스로 가져온다 — 테스트가 vi.spyOn으로 타이머 시작을 관찰한다
+// (명명 import는 바인딩이 고정되어 스파이가 걸리지 않는다).
+import * as keepAlive from "@/lib/auth/keepSessionAlive";
 
 interface Me {
   authenticated: boolean;
@@ -24,6 +27,15 @@ export function UserMenu() {
   const [me, setMe] = useState<Me | null>(null);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // access 토큰의 주기 갱신. 이 컴포넌트에 있는 이유는 /api/auth/me를 여기서
+  // 부르는 것과 같다 — 인증된 모든 화면의 헤더에 들어가므로 페이지마다 배선을
+  // 반복하지 않는다.
+  //
+  // 프로토타입 화면만 감싸지 않는 이유: 워크스페이스의 긴 디스커버리 턴도 같은
+  // 만료 창을 갖는다(app/api/auth/refresh/route.ts 참조 — 갱신이 백엔드 401에만
+  // 반응하므로 열려 있는 SSE 연결은 갱신 기회를 만들지 못한다).
+  useEffect(() => keepAlive.keepSessionAlive(), []);
 
   useEffect(() => {
     let alive = true;

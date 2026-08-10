@@ -31,8 +31,25 @@ export const CLIENT_NAME = 'pathfinder-web';
 // UpdateUserPoolClient 재전송이 반드시 같은 값을 써야 한다 — PUT 시맨틱이라
 // 어긋나면 재배포 때마다 유효기간이 조용히 리셋된다. AuthStack은 이 값을
 // cdk.Duration.minutes()로 감싸 넘기고, HostingStack은 그대로 정수로 보낸다.
-export const ACCESS_TOKEN_VALIDITY_MINUTES = 60; // 1시간
-export const ID_TOKEN_VALIDITY_MINUTES = 60; // 1시간
+// access/id가 3시간인 이유는 **프로토타입 빌드 한 번**이다. 빌드는 보통 1시간
+// 이내인데, 종전 값(60분)은 그 경계와 정확히 겹쳐 여유가 0이었다.
+//
+// 만료의 1차 원인은 수명이 아니라 갱신 기회의 부재였다: 토큰 갱신은 /api
+// 프록시가 백엔드 401을 받았을 때만 발동하는데(app/api/[...path]/route.ts),
+// `GET /events`가 200으로 열린 뒤 수십 분을 사는 SSE 연결은 그 401을 다시
+// 만들지 못한다. 그래서 빌드가 도는 동안 갱신 기회가 하나도 없었다. 그쪽은
+// 주기 갱신으로 고쳤다(frontend/lib/auth/keepSessionAlive.ts + /api/auth/refresh).
+//
+// 이 값은 **두 번째 방어선**이다. 주기 갱신이 몇 번 연속 실패해도(네트워크
+// 단절, Cognito 일시 오류) 빌드 한 번이 한 토큰 수명 안에서 끝나면 사용자는
+// 만료를 겪지 않는다. 두 계층이 필요한 이유는 서로 다른 실패를 막기 때문이다:
+// 갱신은 3시간을 넘는 세션을, 이 수명은 갱신 자체의 실패를 덮는다.
+//
+// 24시간(Cognito 상한)까지 늘리지 않는 이유는 탈취된 토큰의 유효 창이 그만큼
+// 길어지기 때문이다. 3시간은 빌드를 덮으면서 그 창을 실무적으로 짧게 유지한다.
+// infra/test/auth-client-config.assert.ts가 이 근거를 불변식으로 지킨다.
+export const ACCESS_TOKEN_VALIDITY_MINUTES = 180; // 3시간
+export const ID_TOKEN_VALIDITY_MINUTES = 180; // 3시간 — access와 같아야 한다
 export const REFRESH_TOKEN_VALIDITY_MINUTES = 60 * 24 * 30; // 30일
 
 // AuthStack의 client가 명시적으로 ALLOW_REFRESH_TOKEN_AUTH만 켜는 이유는

@@ -21,6 +21,10 @@ discovery-config/settings.local.json
 proto-type/
 **/.pytest_cache/
 **/__pycache__/
+# 리포 루트에서 vitest/npx를 잘못 실행하면 .vite 캐시만 담긴 node_modules/가
+# 생긴다(패키지 루트는 frontend/·infra/다). frontend/.gitignore가 그쪽을 이미
+# 무시하므로 여기서는 루트만 막는다.
+/node_modules/
 .worktrees/
 graphify-out/
 .vscode/

@@ -5,6 +5,10 @@ import { PathfinderDrillStack } from '../lib/pathfinder-drill-stack';
 import { PathfinderHostingStack } from '../lib/pathfinder-hosting-stack';
 import { PathfinderAuthStack } from '../lib/pathfinder-auth-stack';
 import { MODEL } from '../lib/backend-permissions';
+import {
+  ACCESS_TOKEN_VALIDITY_MINUTES, ID_TOKEN_VALIDITY_MINUTES,
+  REFRESH_TOKEN_VALIDITY_MINUTES,
+} from '../lib/auth-client-config';
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 
@@ -295,12 +299,15 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   assert.strictEqual(params.PreventUserExistenceErrors, 'ENABLED');
   assert.strictEqual(params.EnableTokenRevocation, true);
   // 토큰 유효기간 + 리프레시 인증 플로우 — 처음 구현에서 빠졌던 필드들.
-  // AuthStack의 클라이언트 정의(1h/1h/30d, ALLOW_REFRESH_TOKEN_AUTH)와
-  // 정확히 같은 값이어야 한다: 하나라도 빠지면 재배포마다 그 필드가
-  // Cognito 기본값으로 조용히 리셋된다.
-  assert.strictEqual(params.AccessTokenValidity, 60);
-  assert.strictEqual(params.IdTokenValidity, 60);
-  assert.strictEqual(params.RefreshTokenValidity, 60 * 24 * 30);
+  // AuthStack의 클라이언트 정의와 정확히 같은 값이어야 한다: 하나라도 빠지면
+  // 재배포마다 그 필드가 Cognito 기본값으로 조용히 리셋된다.
+  //
+  // auth-client-config의 상수를 참조한다(리터럴을 박지 않는다). 리터럴이면
+  // 유효기간을 조정할 때 상수만 바꾸고 이 파일을 잊는 실패가 가능한데, 그때
+  // 깨지는 것은 "두 스택이 어긋났다"는 이 테스트가 지키려는 바로 그 불변식이다.
+  assert.strictEqual(params.AccessTokenValidity, ACCESS_TOKEN_VALIDITY_MINUTES);
+  assert.strictEqual(params.IdTokenValidity, ID_TOKEN_VALIDITY_MINUTES);
+  assert.strictEqual(params.RefreshTokenValidity, REFRESH_TOKEN_VALIDITY_MINUTES);
   assert.deepStrictEqual(params.TokenValidityUnits, {
     AccessToken: 'minutes', IdToken: 'minutes', RefreshToken: 'minutes',
   });
