@@ -540,6 +540,9 @@ app.include_router(artifacts.router, dependencies=_AUTH)
 from pathfinder.routes import answers  # noqa: E402
 app.include_router(answers.router, dependencies=_AUTH)
 
+from pathfinder.routes import approval  # noqa: E402
+app.include_router(approval.router, dependencies=_AUTH)
+
 from pathfinder.routes import turns  # noqa: E402
 app.include_router(turns.router, dependencies=_AUTH)
 

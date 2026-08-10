@@ -56,6 +56,12 @@ const ALLOWED: Array<[string, string]> = [
   ["components/review/VerificationSummary.tsx", "승인|게이트"],
   ["lib/approvalState.ts", "수정|revise"],
   ["lib/approvalMarker.ts", "승인|Approved"],
+  // 사용자가 **채팅으로** 답한 승인을 감사 로그에서 찾는 판정식과, 그것을
+  // 승인 게이트 문맥으로 제한하는 판정식. 실측(pilot1의 audit.md)에서 승인
+  // 게이트 5건 중 3건이 "동의"/"진행"/"A"였고, 그 표기는 프로젝트 언어로
+  // 기록돼 있어 UI 언어와 무관하다.
+  ["lib/approvalMarker.ts", "승인|동의|진행"],
+  ["lib/approvalMarker.ts", "최종\\s*승인"],
   // 에이전트가 쓴 스테이지 이름을 매칭한다 — 프로젝트 언어로 적혀 있다.
   ["components/workspace/WorkspaceRightPanel.tsx", "프로토타입"],
   // **에이전트에게 보내는** 텍스트다(트랜스크립트에 사용자 말풍선으로 남는다).

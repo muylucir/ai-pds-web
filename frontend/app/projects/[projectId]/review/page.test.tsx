@@ -34,6 +34,11 @@ function mockTreeAndAudit() {
       HttpResponse.json({ content: AUDIT_CONTENT }),
     ),
     http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
+    // 승인 이력 — 게이트 판정의 1순위 근거(lib/approvalState.ts). 기본값은
+    // "아직 승인 안 함"이라 게이트가 떠 있는 상태다.
+    http.get(`${API_BASE_URL}/projects/pilot1/approvals`, () =>
+      HttpResponse.json({ approvals: [], current_doc_hash: "h-current" }),
+    ),
   );
 }
 
@@ -72,45 +77,67 @@ describe("Review page", () => {
     expect(screen.queryByText("Press Release")).not.toBeInTheDocument();
   });
 
-  it("clicking Approve POSTs {text:'승인'} to /message", async () => {
+  it("clicking Approve POSTs to /approve, not a chat message", async () => {
+    // POST /message로 "승인" 텍스트를 보내던 것을 대체한다. 그 경로에서는
+    // 승인의 유일한 기록이 에이전트가 쓰는 audit.md였고, 에이전트가 문구를
+    // 달리 옮겨 적으면 사용자가 누른 사실이 사라졌다 — 실측으로 승인 게이트
+    // 5건 중 3건이 인식되지 않았다(lib/approvalState.ts 헤더).
+    //
+    // 승인 텍스트와 대상 문서 해시는 이제 백엔드가 정한다. 화면이 보낸 값을
+    // 믿으면 사용자가 보던 것과 다른(낡은) 내용을 승인할 수 있다.
     mockTreeAndAudit();
-    let body: any;
+    let approveCalls = 0;
+    let messageCalls = 0;
     server.use(
-      http.post(`${API_BASE_URL}/projects/pilot1/message`, async ({ request }) => {
-        body = await request.json();
-        return HttpResponse.json({ events: [{ kind: "done", text: null, path: null }] });
+      http.post(`${API_BASE_URL}/projects/pilot1/approve`, () => {
+        approveCalls += 1;
+        return HttpResponse.json({ approved: true });
+      }),
+      http.post(`${API_BASE_URL}/projects/pilot1/message`, () => {
+        messageCalls += 1;
+        return HttpResponse.json({ events: [] });
       }),
     );
     render(<ReviewPage params={params} />);
     await screen.findByText("Press Release");
     await userEvent.click(screen.getByRole("button", { name: /승인하고 다음 단계로/ }));
-    await waitFor(() => expect(body).toEqual({ text: "승인" }));
+
+    await waitFor(() => expect(approveCalls).toBe(1));
+    expect(messageCalls).toBe(0);
   });
 
-  it("영어 프로젝트에서는 {text:'Approved'}를 보낸다", async () => {
+  it("승인 레코드가 있고 해시가 일치하면 게이트가 뜨지 않는다", async () => {
+    // 감사 로그의 문구와 무관하게 판정된다 — 이 기능의 핵심이다.
     mockTreeAndAudit();
-    // 프로젝트 언어가 en임을 알려주는 응답. useProjectMeta가 이것을 읽는다.
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1`, () =>
-        HttpResponse.json({ project_id: "pilot1", name: null, created_at: null,
-                            model_id: null, language: "en" })),
-      http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
-    );
-    let body: unknown = null;
-    server.use(
-      http.post(`${API_BASE_URL}/projects/pilot1/message`, async ({ request }) => {
-        body = await request.json();
-        return HttpResponse.json({ events: [{ kind: "done", text: null, path: null }] });
-      }),
+      http.get(`${API_BASE_URL}/projects/pilot1/approvals`, () =>
+        HttpResponse.json({
+          approvals: [{ document: DISCOVERY_PATH, doc_hash: "h-current",
+                        approved_at: "2026-08-10T01:00:00Z" }],
+          current_doc_hash: "h-current",
+        }),
+      ),
     );
     render(<ReviewPage params={params} />);
     await screen.findByText("Press Release");
-    const button = await screen.findByRole("button", { name: /승인하고 다음 단계로/ });
-    await userEvent.click(button);
-    // 대화가 영어로 진행되고 있으므로 영어 승인 단어가 가야 한다. 버튼 라벨은
-    // UI 로케일(여기서는 기본값 ko)이므로 한국어인 것이 맞다 — 이 둘이 다른
-    // 것이 정상이다.
-    await waitFor(() => expect(body).toEqual({ text: "Approved" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /승인하고 다음 단계로/ })).not.toBeInTheDocument());
+  });
+
+  it("승인 이후 문서가 바뀌면(해시 불일치) 게이트가 다시 뜬다", async () => {
+    mockTreeAndAudit();
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/approvals`, () =>
+        HttpResponse.json({
+          approvals: [{ document: DISCOVERY_PATH, doc_hash: "h-old",
+                        approved_at: "2026-08-10T01:00:00Z" }],
+          current_doc_hash: "h-current",
+        }),
+      ),
+    );
+    render(<ReviewPage params={params} />);
+    await screen.findByText("Press Release");
+    expect(await screen.findByRole("button", { name: /승인하고 다음 단계로/ })).toBeInTheDocument();
   });
 
   it("수정 요청 링크는 워크스페이스 채팅으로 이동하며 문서명이 담긴 초안을 ?draft=로 전달한다", async () => {

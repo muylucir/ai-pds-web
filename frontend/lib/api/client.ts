@@ -1,4 +1,5 @@
 import { CREDENTIALS } from "@/lib/auth";
+import type { ApprovalEvidence, ApprovalRecord } from "@/lib/approvalState";
 import type {
   AuditEntry,
   HistoryItem,
@@ -95,6 +96,29 @@ export async function getState(pid: string): Promise<ProjectState> {
 
 export async function getAudit(pid: string): Promise<AuditEntry[]> {
   return request<AuditEntry[]>(`/projects/${encodeURIComponent(pid)}/audit`);
+}
+
+// 승인 이력 + 현재 문서 해시 — 게이트 판정의 1순위 근거다
+// (lib/approvalState.ts 참조). 감사 로그 파싱은 이력이 비어 있는 기존
+// 프로젝트를 위한 폴백으로만 쓴다.
+//
+// 해시를 프론트에서 계산하지 않는다: 알고리즘이 두 곳에 생기면 어긋나는 순간
+// 승인이 조용히 인식되지 않는다(게이트가 안 열릴 뿐이라 원인 추적이 어렵다).
+// 반환 형태가 그대로 deriveApprovalState의 두 번째 인자(ApprovalEvidence)다.
+export async function listApprovals(pid: string): Promise<ApprovalEvidence> {
+  const r = await request<{ approvals: ApprovalRecord[]; current_doc_hash: string | null }>(
+    `/projects/${encodeURIComponent(pid)}/approvals`);
+  return { approvals: r.approvals, currentDocHash: r.current_doc_hash };
+}
+
+/** 문서를 승인한다. 백엔드가 레코드를 먼저 쓰고 그 다음 에이전트 턴을 돌린다.
+ *
+ *  본문이 없는 이유: 승인 대상 문서와 그 해시를 **백엔드가** 정한다. 화면이
+ *  보낸 값을 믿으면 사용자가 보고 있던 것과 다른(낡은) 내용을 승인할 수 있다.
+ */
+export async function approveDocument(pid: string): Promise<void> {
+  await request<{ approved: boolean }>(
+    `/projects/${encodeURIComponent(pid)}/approve`, { method: "POST" });
 }
 
 export async function getDocument(pid: string): Promise<string> {

@@ -12,6 +12,10 @@ export const handlers = [
     return HttpResponse.json({ project_id: body.project_id, name: body.name ?? null });
   }),
   http.get(`${API_BASE_URL}/projects/:pid/artifacts`, () => HttpResponse.json({ artifacts: [] })),
+  // 문서 리뷰 화면이 승인 게이트 판정을 위해 부른다. 기본은 "아직 승인 안 함"
+  // (빈 이력) — 그 상태에서 게이트가 떠 있는 것이 정상이다.
+  http.get(`${API_BASE_URL}/projects/:pid/approvals`, () =>
+    HttpResponse.json({ approvals: [], current_doc_hash: null })),
   // 프로젝트 생성 화면과 헤더 배지가 모든 화면에서 부른다 — 기본을 두어
   // 화면 테스트가 모델 목록을 신경쓰지 않게 한다.
   http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),

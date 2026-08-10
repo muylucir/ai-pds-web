@@ -19,6 +19,8 @@ import {
   getHistory,
   uploadFile,
   getProject,
+  listApprovals,
+  approveDocument,
 } from "./client";
 
 describe("Content-Type header behavior", () => {
@@ -115,6 +117,46 @@ describe("api client request shaping + response typing", () => {
       http.get(`${API_BASE_URL}/projects/p1/document`, () => HttpResponse.json({ markdown: "# Doc" })),
     );
     expect(await getDocument("p1")).toBe("# Doc");
+  });
+
+  it("listApprovals returns the history and the backend's current doc hash", async () => {
+    // 현재 해시는 백엔드가 계산한다 — 프론트가 따로 계산하면 알고리즘이 두
+    // 곳에 생기고, 어긋나면 승인이 조용히 인식되지 않는다.
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/approvals`, () =>
+        HttpResponse.json({
+          approvals: [{ document: "d.md", doc_hash: "h1", approved_at: "2026-08-10T01:00:00Z" }],
+          current_doc_hash: "h1",
+        }),
+      ),
+    );
+    const r = await listApprovals("p1");
+    expect(r.approvals).toHaveLength(1);
+    expect(r.currentDocHash).toBe("h1");
+  });
+
+  it("listApprovals surfaces a null current hash (no document yet)", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/approvals`, () =>
+        HttpResponse.json({ approvals: [], current_doc_hash: null }),
+      ),
+    );
+    const r = await listApprovals("p1");
+    expect(r).toEqual({ approvals: [], currentDocHash: null });
+  });
+
+  it("approveDocument POSTs and needs no body", async () => {
+    // 승인 대상 문서와 그 해시는 백엔드가 정한다 — 클라이언트가 보낸 값을
+    // 믿으면 화면이 낡은 내용을 승인해 버릴 수 있다.
+    let method: string | null = null;
+    server.use(
+      http.post(`${API_BASE_URL}/projects/p1/approve`, ({ request }) => {
+        method = request.method;
+        return HttpResponse.json({ approved: true });
+      }),
+    );
+    await approveDocument("p1");
+    expect(method).toBe("POST");
   });
 
   it("listQuestionFiles / listArtifacts unwrap their arrays", async () => {

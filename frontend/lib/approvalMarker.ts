@@ -42,3 +42,33 @@ const APPROVAL_RE = /^\s*(승인|Approved)\s*$/i;
 export function isApprovalText(text: string): boolean {
   return APPROVAL_RE.test(text);
 }
+
+// ---- 채팅으로 답한 승인 (게이트 문맥 안에서만) ----
+//
+// 게이트 버튼은 항상 approvalTurnText()를 보내므로 위 판정식으로 충분하다.
+// 그런데 사용자는 **채팅으로도 승인한다** — 워크스페이스 하단이 자유 입력을
+// 권하고, 에이전트가 승인을 객관식으로 물으면 letter로 답한다.
+//
+// 실측(pilot1의 audit.md): 승인 게이트 5건 중 3건이 이 형태여서 인식되지
+// 않았다 — idx=41 "동의"(**최종 승인**), idx=33 "진행", idx=17 "A".
+//
+// 이 목록을 문맥 제한 없이 쓰면 안 된다. 평범한 대화의 "진행"이 결정으로
+// 세어지면 PM이 누르기 전에 게이트가 사라진다 — approvalState의 그 테스트가
+// 지키는 불변식이다. 그래서 `context`가 승인 게이트를 가리킬 때만 적용한다.
+// pilot1 로그에서 그 문맥은 정확히 승인 게이트만 가리켰다.
+const CHAT_APPROVAL_RE = /^\s*(승인|동의|진행|좋아요?|네|예|확인|[A-F]|Approved?|Agreed?|Proceed|Yes|OK)\s*$/i;
+
+//: `context`가 승인 게이트인지. 실측 로그의 표기를 그대로 받는다:
+//: "Envision — Step 6 Approval Gate", "Discovery Phase Complete — Final Approval",
+//: "최종 승인".
+const GATE_CONTEXT_RE = /approval\s*gate|final\s*approval|최종\s*승인|승인\s*게이트/i;
+
+/** 이 항목이 **승인 게이트 문맥에서** 사용자가 채팅으로 승인한 것인가.
+ *
+ *  레코드(approval_store)가 없는 기존 프로젝트를 위한 폴백이다. 레코드가
+ *  있으면 이 판정은 쓰이지 않는다 — 그쪽이 훨씬 정확하다.
+ */
+export function isChatApprovalInGateContext(text: string, context: string): boolean {
+  if (!GATE_CONTEXT_RE.test(context)) return false;
+  return CHAT_APPROVAL_RE.test(text);
+}

@@ -11,15 +11,14 @@ import {
   listArtifacts,
   readArtifact,
   getAudit,
-  postMessage,
+  listApprovals,
+  approveDocument,
   downloadArtifactsArchive,
   ApiError,
 } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
 import { deriveApprovalState } from "@/lib/approvalState";
-import { approvalTurnText } from "@/lib/approvalMarker";
-import { DEFAULT_LOCALE } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
 // 클라이언트 Blob 다운로드 — 백엔드 왕복 없이 현재 로드된 마크다운을 저장한다.
@@ -56,10 +55,16 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
 
   const tree = useAsync(() => listArtifacts(projectId), [projectId]);
   const audit = useAsync(() => getAudit(projectId), [projectId]);
-  // 승인 여부는 감사 로그에서 도출한다 — aiplc-state.md에는 "Discovery
-  // Document" 스테이지가 없다(룰도 에이전트도 그런 스테이지를 쓰지 않아 예전
-  // 조회는 항상 undefined였다). 승인 후 문서가 바뀌면 다시 미승인으로 돌아간다.
-  const approval = deriveApprovalState(audit.data ?? []);
+  // 승인 판정의 1순위 근거는 **승인 레코드**다(GET /approvals). 감사 로그
+  // 파싱은 레코드가 없는 기존 프로젝트를 위한 폴백으로만 쓴다 — 그 이유는
+  // lib/approvalState.ts 헤더에 있다(요약: 에이전트가 옮겨 적은 산문에서
+  // 결정을 복원하면 표현이 흔들릴 때 승인이 사라진다. 실측 5건 중 3건 실패).
+  //
+  // aiplc-state.md를 보지 않는 이유는 그대로다: 거기에는 "Discovery Document"
+  // 스테이지가 없어(룰도 에이전트도 그런 스테이지를 쓰지 않는다) 예전 조회는
+  // 항상 undefined였다.
+  const approvals = useAsync(() => listApprovals(projectId), [projectId]);
+  const approval = deriveApprovalState(audit.data ?? [], approvals.data ?? undefined);
 
   // Default selection: once the artifact tree loads, select
   // discovery-document.md if present. Guarded by `selected === null` so a
@@ -90,17 +95,21 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const docName = selected ? selected.slice(selected.lastIndexOf("/") + 1) : "discovery-document.md";
   const reviseHref = `/projects/${projectId}/workspace?draft=${encodeURIComponent(`${docName} ${t("page.reviseDraftSuffix")}`)}`;
 
-  async function sendTurn(text: string) {
+  /** 승인 버튼. POST /approve가 레코드를 먼저 쓰고 그 다음 에이전트 턴을 돈다.
+   *
+   *  postMessage("승인")로 보내지 않는 이유가 이 기능의 핵심이다: 그 경로에서는
+   *  승인의 유일한 기록이 에이전트가 쓰는 audit.md였고, 에이전트가 문구를 달리
+   *  옮겨 적으면 사용자가 누른 사실이 사라졌다(lib/approvalState.ts 헤더).
+   */
+  async function approve() {
     setBusy(true);
     setActionError(null);
     try {
-      await postMessage(projectId, text);
-      // tree too — a revision turn may CREATE a new document (e.g. a fresh
-      // FAQ/PR file), which must appear in the tree, not just refresh the
-      // currently-open file's content.
+      await approveDocument(projectId);
       tree.reload();
       content.reload();
       audit.reload();
+      approvals.reload();
     } catch {
       setActionError(t("page.turnFailed"));
     } finally {
@@ -134,7 +143,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
               // 가고 트랜스크립트에 남으므로, 대화가 진행되는 언어여야 한다.
               // language가 null인 경우(구 백엔드, 조회 실패)는 ko로 떨어진다 —
               // 그것이 이 기능 이전 모든 프로젝트의 언어다.
-              onApprove={() => sendTurn(approvalTurnText(language ?? DEFAULT_LOCALE))}
+              onApprove={approve}
               busy={busy}
               reviseHref={reviseHref}
             />
