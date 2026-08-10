@@ -27,5 +27,8 @@ proto-type/
 /node_modules/
 .worktrees/
 graphify-out/
+# archify 스킬 산출물(HTML+JSON 다이어그램). graphify-out/과 같은 성격 —
+# 리포의 코드에서 언제든 다시 생성되는 로컬 뷰다.
+diagrams/
 .vscode/
 .claude/
