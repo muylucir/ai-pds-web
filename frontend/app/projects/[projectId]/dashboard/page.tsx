@@ -49,9 +49,8 @@ export default function DashboardPage({ params }: { params: Promise<{ projectId:
 
             <ProgressCards
               state={state.data}
-              pendingQuestions={questionFiles.data?.length ?? 0}
+              questionFileCount={questionFiles.data?.length ?? 0}
               artifactCount={artifacts.data?.length ?? 0}
-              projectId={projectId}
             />
 
             <div className="grid lg:grid-cols-3 gap-6">

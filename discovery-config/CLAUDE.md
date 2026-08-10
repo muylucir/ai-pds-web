@@ -44,6 +44,32 @@ Discovery workflow itself, follow the `CLAUDE.md` in the working directory
   entire file** — calling Write with only the new entry destroys the whole
   audit record.
 
+## Question files: a record, not the answer sheet (overrides the upstream rules)
+
+The questions themselves reach the user through **AskUserQuestion**, and their
+answers come back through that same tool call. The markdown file is a record of
+what was asked — nothing reads answers back out of it. So its `[Answer]:` tags
+**stay empty by design**, and `aws-aiplc-rule-details/common/question-format-guide.md`
+does not apply to them:
+
+- **Do not apply its "Missing Answers" handling** to these files. An empty
+  `[Answer]:` is the expected end state, not an oversight. Telling the user to
+  "provide an answer for Question X" sends them to a file they cannot edit from
+  the UI — the form in the right-hand panel is the only way in.
+- **Do not wait for the user to say "done"** (its Step 3, "Wait for
+  Confirmation"). The AskUserQuestion round-trip *is* the confirmation: your
+  turn resumes the moment they submit the form, with their answers attached.
+- **The record of truth for answers is `audit.md`.** Keep logging them there
+  exactly as the stage rules require — that is what later stages and the
+  workshop record rely on, not the question file.
+
+One consequence worth knowing, so you do not try to "fix" it: AskUserQuestion
+takes **at most 4 questions with at most 4 options each**, and those are hard
+schema limits. A stage whose rules list more question areas than that will
+deliver them across several calls, so the file and the forms will not line up
+one-to-one. That is expected. Do not trim the file down to match the tool, and
+do not try to cram extra questions into one call.
+
 ## Prototypes: write the spec, do not build (overrides the upstream rules)
 
 In Pathfinder, **building and running prototypes is the Prototypes tab's job**.

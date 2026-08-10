@@ -79,7 +79,20 @@ export interface WorkspaceStream {
 }
 
 // 문서 패널이 따라갈 가치가 있는 산출물 경로인가 — aiplc-docs/ 아래 .md 중
-// 기록성 파일(audit/state)은 제외.
+// 기록성 파일(audit/state/질문)은 제외.
+//
+// 질문 파일(*-questions.md)이 audit/state와 같은 칸에 있는 이유: Pathfinder에서
+// 질문의 전달 경로는 AskUserQuestion 도구이고, 사용자가 답하는 화면은 우측
+// 패널의 QuestionForm이다(discovery-config/CLAUDE.md의 override 섹션). 마크다운
+// 파일은 상류 룰이 요구하는 기록물로만 남는다.
+//
+// 그래서 이걸 문서 패널에 띄우면 한 화면에 같은 질문의 두 버전이 나란히 뜨는데,
+// 그 둘은 애초에 일치할 수 없다: SDK 스키마가 질문 1-4개/보기 2-4개를 하드
+// 제한하므로(CLI 2.1.226의 `questions: dt(...).min(1).max(4)`와 "hard schema
+// constraints; do not exceed them even if the user requests more — split into
+// multiple calls instead"), 룰이 요구하는 7문항 문서는 폼에서 4+3 두 라운드로
+// 쪼개지고 문구도 각각 따로 생성된다. 실측으로 사용자가 그 불일치를 발견한
+// 경로가 바로 이 패널이었다.
 function isDocPath(path: string): boolean {
   return (
     path.startsWith("aiplc-docs/") &&
@@ -87,7 +100,8 @@ function isDocPath(path: string): boolean {
     !path.endsWith("/audit.md") &&
     path !== "aiplc-docs/audit.md" &&
     !path.endsWith("/aiplc-state.md") &&
-    path !== "aiplc-docs/aiplc-state.md"
+    path !== "aiplc-docs/aiplc-state.md" &&
+    !path.endsWith("-questions.md")
   );
 }
 

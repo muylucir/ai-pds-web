@@ -294,6 +294,28 @@ describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug
     expect(result.current.activeDoc).toBeNull();
   });
 
+  it("질문 문서(*-questions.md) 쓰기는 activeDoc을 바꾸지 않는다", async () => {
+    // 질문은 AskUserQuestion으로 전달되고 폼(우측 패널)이 정본 화면이다.
+    // 같은 질문의 마크다운 기록물까지 문서 패널에 띄우면 사용자가 한 화면에서
+    // 두 버전을 나란히 보게 되는데, 그 둘은 애초에 일치하지 않는다: SDK
+    // 스키마가 질문 1-4개/보기 2-4개로 하드 제한하므로(CLI 2.1.226:
+    // `questions: dt(...).min(1).max(4)`), 룰이 요구하는 7문항 문서는 4+3
+    // 두 라운드로 쪼개지고 문구도 따로 생성된다. audit.md/aiplc-state.md와
+    // 같은 이유로 제외한다 — 기록물이지 리뷰 대상 산출물이 아니다.
+    drive(
+      [
+        { kind: "file_changed", text: null,
+          path: "aiplc-docs/discovery/envision/pain-point-questions.md", payload: null },
+        { kind: "done", text: null, path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("페인 포인트 알려줘"));
+    expect(result.current.activeDoc).toBeNull();
+  });
+
   it("document 이벤트(submit_document)는 version과 함께 activeDoc을 갱신하고, 이후 doc성 file_changed가 최신-승리한다", async () => {
     drive(
       [

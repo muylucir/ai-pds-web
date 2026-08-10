@@ -200,3 +200,45 @@ def test_shared_config_dirs_have_no_language_directive():
         assert "한국어로 진행" not in text, rel
         # 번역 오버라이드 절도 language/ko.md로 옮겨졌어야 한다.
         assert "번역해서 쓴다" not in text, rel
+
+
+def test_upstream_question_rules_are_untouched():
+    """상류 룰은 고치지 않는다 — 질문 파일 규약도 예외가 아니다.
+
+    Pathfinder는 질문을 AskUserQuestion으로 전달하므로 `[Answer]:` 칸이 영구히
+    비어 있는데, 그렇다고 question-format-guide.md의 "Missing Answers" 처리를
+    지우는 것은 금지다. 상류 룰은 데이터이고, 갱신하면 로컬 수정이 조용히
+    사라진다. 대신 discovery-config가 override를 선언한다(아래 테스트).
+    """
+    repo_rules = Path(__file__).resolve().parents[2] / "rule" / "aiplc-rules"
+    guide = (repo_rules / "aws-aiplc-rule-details" / "common"
+             / "question-format-guide.md")
+    if not guide.is_file():
+        pytest.skip("repo rules not present")
+    text = guide.read_text(encoding="utf-8")
+    # 상류가 소유하는 두 지시. Pathfinder가 이것을 무력화하는 방법은 파일을
+    # 고치는 것이 아니라 discovery-config에서 override를 선언하는 것이다.
+    assert "If any [Answer]: tag is empty:" in text
+    assert "#### Step 3: Wait for Confirmation" in text
+
+
+def test_discovery_config_overrides_the_upstream_question_file_rules():
+    """질문 파일을 기록물로 강등하는 선언이 discovery-config에 있어야 한다.
+
+    없으면 두 규정이 한 상황에 적용되고 어느 쪽이 이길지 예측할 수 없다 —
+    상류 question-format-guide는 빈 `[Answer]:`를 보면 사용자에게 다시 답을
+    요구하라고 하고(그 파일은 UI에서 편집할 수 없다), "done"이라고 말할 때까지
+    기다리라고 한다(AskUserQuestion 왕복이 이미 확인이다). 그 충돌이 7f33652의
+    언어 지시 이중화와 같은 실패 모양이므로, 프로토타입 섹션과 같은 방식으로
+    어느 쪽이 이기는지 문서에 적어 둔다.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    path = repo / "discovery-config" / "CLAUDE.md"
+    if not path.is_file():
+        pytest.skip("discovery-config/CLAUDE.md not present")
+    text = path.read_text(encoding="utf-8")
+    # override라고 명시적으로 선언한다(프로토타입 섹션의 선례와 같은 표현).
+    assert "overrides the upstream rules" in text
+    # 빈 [Answer]:가 정상 상태라는 것, 그리고 답변의 정본이 audit.md라는 것.
+    assert "[Answer]:" in text
+    assert "audit.md" in text
