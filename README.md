@@ -114,7 +114,8 @@ CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all --require-approval never
 
 코드 수정은 필요 없다 — Bedrock 추론 프로파일은 글로벌이고, IAM ARN은 리전 와일드카드이며,
 CloudFront 프리픽스 리스트는 `PrefixList.fromLookup`이 배포 리전에서 자동 조회한다(조회
-결과는 `infra/cdk.context.json`에 캐시되며 커밋 대상이다).
+결과는 로컬 `infra/cdk.context.json`에 캐시된다 — 계정 ID가 키에 들어가는 캐시라 커밋하지
+않고, 크리덴셜이 있으면 synth/deploy가 다시 조회해 재생성한다).
 
 ### 코드만 다시 배포하기
 
@@ -155,7 +156,7 @@ sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # 프리
 | 첫 대화 턴에서 `AccessDeniedException` | 배포 리전에 그 모델의 **Bedrock 모델 액세스**가 꺼져 있다. IAM은 `global.anthropic.claude-*`를 전부 허용하므로 IAM이 원인일 가능성은 낮다 |
 | 특정 기능만 500이고 화면에는 원인이 안 보임 | 대개 IAM이다. 백엔드 로그의 `AccessDenied`가 어떤 액션·리소스인지 말해 준다 |
 | 로그인 후 `redirect_mismatch` | 호스팅 스택의 콜백 URL 등록(`UpdateUserPoolClient`)이 실패. `cdk deploy PathfinderHostingStack` 재실행 |
-| `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 최초 1회만 필요하며 결과가 `cdk.context.json`에 캐시된다 |
+| `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 결과가 로컬 `cdk.context.json`(gitignored)에 캐시되므로 클론당 최초 1회만 필요하다 |
 | SSH 접속 불가 | 의도된 설계다. SSH 포트가 없고 SSM만 열려 있다 |
 | 프로토타입 프리뷰가 404 | **의도된 응답이다** — 접근 토큰 쿠키가 없거나 다른 프로토타입의 것이다. 공유 링크(`/api/proto/t/{token}`)로 들어가야 쿠키가 심긴다. 자세한 분기는 `docs/design-notes.md`의 "인증과 프로토타입 접근 토큰" |
 | 영어 프로젝트인데 문서·채팅이 한국어로 나옴 | 언어 지시가 두 레벨에서 충돌한 것이고 **이 실패는 에러를 내지 않는다.** `docs/design-notes.md`의 "언어" 참고 |

@@ -105,8 +105,10 @@ npx cdk deploy --all --require-approval never
 ```
 > 호스팅 스택은 배포 리전의 CloudFront 프리픽스 리스트를 lookup하므로 첫
 > synth/deploy에 계정 크리덴셜이 필요하다. 조회 결과는 `cdk.context.json`에
-> 캐시되며 **커밋**한다(재현성). EC2 첫 부팅 빌드에 ~5–10분 걸리므로 배포
-> 완료 직후 CloudFront가 잠시 502를 반환할 수 있다(정상).
+> 캐시되지만 **커밋하지 않는다**(gitignored) — 항목 키에 계정 ID가 들어가서
+> 다른 계정에서는 무효인 캐시이고, 크리덴셜이 있으면 같은 값으로 재생성된다.
+> 그래서 클론당 첫 synth 1회는 크리덴셜이 필요하다. EC2 첫 부팅 빌드에 ~5–10분
+> 걸리므로 배포 완료 직후 CloudFront가 잠시 502를 반환할 수 있다(정상).
 
 ## 출력 (CfnOutputs)
 - `PathfinderHostingStack.DistributionDomain` — 접속 URL(`https://dxxxx.cloudfront.net`)

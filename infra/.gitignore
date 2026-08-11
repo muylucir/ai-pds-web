@@ -1,3 +1,10 @@
 node_modules/
 cdk.out/
 build/
+# lookup 캐시(AZ 목록 + CloudFront 프리픽스 리스트). 커밋하지 않는다 — 항목의
+# 키에 계정 ID가 들어가므로 다른 계정에서 배포하면 아무 역할을 못 하면서
+# 원 개발 계정의 번호만 리포에 남는다. 크리덴셜이 있으면 synth/deploy가 같은
+# 값을 다시 조회해 재생성한다(실측: 파일을 지우고 synth → 바이트 동일).
+# 잃는 것은 "크리덴셜 없는 첫 synth" 하나이고, 배포하는 사람은 어차피
+# 크리덴셜이 있다. infra/npm test는 이 파일을 쓰지 않는다.
+cdk.context.json
