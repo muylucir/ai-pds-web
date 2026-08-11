@@ -6,9 +6,19 @@ import type { ProjectSummary } from "@/lib/api/types";
 import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
+// 프로젝트 id에서 허용하지 않는 문자. id는 S3 키 프리픽스이자 로컬 워크스페이스
+// 디렉토리 이름이고 URL 경로 세그먼트로도 들어가므로, 공백·슬래시·한글 같은
+// 값이 들어가면 인코딩과 경로 문제로 나중에 터진다. 입력 단계에서 걸러 낸다.
+const ID_DISALLOWED = /[^A-Za-z0-9_-]/g;
+
 export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary) => void }) {
   const t = useT();
   const [projectId, setProjectId] = useState("");
+  // 입력에서 문자를 걸러 냈는지. 조용히 지우기만 하면 사용자는 자기 키보드가
+  // 씹혔다고 생각한다 — 걸러 냈을 때만 규칙을 알려 준다. 한 번 켜지면 입력을
+  // 비우거나 생성에 성공할 때까지 유지한다: 다음 글자가 유효하다고 바로 지우면
+  // 안내가 한 글자만 스쳐 지나가 읽을 수 없다.
+  const [idRejected, setIdRejected] = useState(false);
   const [name, setName] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
   const [modelId, setModelId] = useState("");
@@ -45,6 +55,7 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
                                           modelId || undefined, language);
       onCreated(created);
       setProjectId("");
+      setIdRejected(false);
       setName("");
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -68,11 +79,20 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
         <label htmlFor="pid" className="block text-xs text-slate-500 mb-1">
           {t("project.id")}
         </label>
+        {/* 붙여넣기·자동완성도 onChange를 타므로 여기서 한 번 걸러 내면
+            경로가 모두 덮인다. */}
         <input
           id="pid"
           required
           value={projectId}
-          onChange={(e) => setProjectId(e.target.value)}
+          title={t("project.idCharsHint")}
+          onChange={(e) => {
+            const raw = e.target.value;
+            const clean = raw.replace(ID_DISALLOWED, "");
+            setProjectId(clean);
+            if (clean !== raw) setIdRejected(true);
+            else if (clean === "") setIdRejected(false);
+          }}
           placeholder={t("project.idPlaceholder")}
           className="w-full text-sm rounded-lg border border-slate-200 p-2.5 focus:outline-none focus:ring-2 focus:ring-violet-400"
         />
@@ -130,7 +150,12 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
       >
         {t("project.create")}
       </button>
-      {error && <p className="text-sm text-rose-600 w-full sm:w-auto">{error}</p>}
+      {/* API 오류가 있으면 그쪽이 우선이다 — 걸러 낸 문자 안내보다 중요하다. */}
+      {(error ?? (idRejected ? t("project.idCharsHint") : null)) && (
+        <p className="text-sm text-rose-600 w-full sm:w-auto">
+          {error ?? t("project.idCharsHint")}
+        </p>
+      )}
     </form>
   );
 }

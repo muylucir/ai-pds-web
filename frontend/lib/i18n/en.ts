@@ -240,6 +240,7 @@ export const en: Record<keyof typeof ko, string> = {
   "project.createNetworkError": "A network error prevented creating the project.",
   "project.id": "Project ID",
   "project.idPlaceholder": "e.g. pilot2",
+  "project.idCharsHint": "Letters, digits, hyphen (-) and underscore (_) only. No spaces.",
   "project.nameOptional": "Project name (optional)",
   "project.namePlaceholder": "e.g. Campaign AI assistant",
   "project.defaultModel": "Default model",

@@ -97,6 +97,35 @@ describe("CreateProjectForm", () => {
     expect(await screen.findByLabelText("AI 모델")).toBeDisabled();
   });
 
+  it("프로젝트 ID 입력창은 영문·숫자·-·_ 만 받는다", async () => {
+    const user = userEvent.setup();
+    let body: unknown = null;
+    server.use(
+      http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
+      http.post(`${API_BASE_URL}/projects`, async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ project_id: "my-pilot_2", name: null, model_id: null,
+                                   language: "ko" });
+      }),
+    );
+    render(<CreateProjectForm onCreated={vi.fn()} />);
+    const input = screen.getByLabelText("프로젝트 ID");
+    // 공백·한글·슬래시·점은 통과하지 못하고, 허용 문자만 남는다.
+    await user.type(input, "my pilot_2 한글/x.y");
+    expect(input).toHaveValue("mypilot_2xy");
+    // 걸러 냈다는 사실을 알려 준다 — 조용히 지우면 키 입력이 씹힌 것처럼 보인다.
+    expect(screen.getByText(
+      "영문·숫자·하이픈(-)·밑줄(_)만 쓸 수 있습니다. 공백은 안 됩니다.",
+    )).toBeInTheDocument();
+    // 허용 문자로만 이뤄진 id는 그대로 실려 나간다.
+    await user.clear(input);
+    expect(screen.queryByText(/영문·숫자·하이픈/)).toBeNull();
+    await user.type(input, "my-pilot_2");
+    expect(input).toHaveValue("my-pilot_2");
+    await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
+    await waitFor(() => expect(body).toMatchObject({ project_id: "my-pilot_2" }));
+  });
+
   it("shows a Korean conflict message on 409", async () => {
     const user = userEvent.setup();
     server.use(
