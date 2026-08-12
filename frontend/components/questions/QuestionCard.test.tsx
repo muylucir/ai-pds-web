@@ -84,6 +84,43 @@ describe("QuestionCard", () => {
     expect(value).toBe("C");
   });
 
+  // Regression: 복수선택 질문이 단일선택과 **화면상 구별되지 않았다.** 실제
+  // input은 sr-only라 checkbox/radio 글리프가 보이지 않고, 카드 텍스트는 두
+  // 모드가 바이트 단위로 동일했다 — 두 번째 보기를 눌러 보기 전까지 여러 개를
+  // 고를 수 있다는 사실을 알 방법이 없었다. 배지(문구)와 인디케이터(모양)로
+  // 두 단서를 넣었고, 여기서 그 둘이 모드에 따라 갈리는 것을 단정한다.
+  it("복수선택 질문에 '여러 개 선택 가능' 배지를 단다", () => {
+    render(<QuestionCard question={MULTI_Q} value="" onChange={() => {}} />);
+    expect(screen.getByText("여러 개 선택 가능")).toBeInTheDocument();
+    expect(screen.queryByText("하나만 선택")).toBeNull();
+  });
+
+  it("단일선택 질문에는 '하나만 선택' 배지를 단다", () => {
+    render(<QuestionCard question={{ ...MULTI_Q, multi_select: false }} value="" onChange={() => {}} />);
+    expect(screen.getByText("하나만 선택")).toBeInTheDocument();
+    expect(screen.queryByText("여러 개 선택 가능")).toBeNull();
+  });
+
+  it("보이는 인디케이터가 모드에 따라 네모/동그라미로 갈린다", () => {
+    // sr-only가 아닌, 눈에 보이는 표시를 확인한다 — 이게 없으면 배지 문구만
+    // 남고 보기 하나하나가 어떤 컨트롤인지는 여전히 안 보인다.
+    const { container: multi } = render(<QuestionCard question={MULTI_Q} value="A" onChange={() => {}} />);
+    const multiMarks = [...multi.querySelectorAll('span[aria-hidden="true"]')]
+      .filter((el) => el.className.includes("border-2"));
+    expect(multiMarks).toHaveLength(3);
+    expect(multiMarks.every((el) => el.className.includes("rounded-md"))).toBe(true);
+    // 고른 보기만 채워진다.
+    expect(multiMarks.filter((el) => el.className.includes("bg-violet-600"))).toHaveLength(1);
+
+    const { container: single } = render(
+      <QuestionCard question={{ ...MULTI_Q, multi_select: false }} value="A" onChange={() => {}} />,
+    );
+    const singleMarks = [...single.querySelectorAll('span[aria-hidden="true"]')]
+      .filter((el) => el.className.includes("border-2"));
+    expect(singleMarks).toHaveLength(3);
+    expect(singleMarks.every((el) => el.className.includes("rounded-full"))).toBe(true);
+  });
+
   it("single-select questions still render radios", () => {
     render(<QuestionCard question={{ ...MULTI_Q, multi_select: false }} value="" onChange={() => {}} />);
     expect(screen.getAllByRole("radio").length).toBeGreaterThan(0);

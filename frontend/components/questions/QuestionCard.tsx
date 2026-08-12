@@ -14,6 +14,25 @@ function splitLetterNote(value: string, letters: string[]): { letter: string; no
   return letters.includes(head) ? { letter: head, note: value.slice(idx + 2) } : null;
 }
 
+// 선택 컨트롤의 **보이는** 표시. 실제 input은 sr-only(위 label 주석의 포커스
+// 이유)이므로 checkbox/radio 글리프가 화면에 나오지 않는다 — 그래서 복수선택
+// 질문이 단일선택과 완전히 같은 모양으로 보였고(카드 텍스트가 바이트 단위로
+// 동일), 사용자는 두 번째 보기를 눌러 보기 전까지 여러 개를 고를 수 있다는
+// 사실을 알 수 없었다. 모양으로 모드를 말한다: 네모=복수, 동그라미=단일.
+// aria-hidden — 진짜 상태는 sr-only input이 이미 스크린 리더에 알린다.
+function SelectIndicator({ checked, multi }: { checked: boolean; multi: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`shrink-0 mt-0.5 w-5 h-5 border-2 flex items-center justify-center text-[11px] font-bold leading-none ${
+        multi ? "rounded-md" : "rounded-full"
+      } ${checked ? "bg-violet-600 border-violet-600 text-white" : "bg-white border-slate-300 text-transparent"}`}
+    >
+      {multi ? "✓" : "●"}
+    </span>
+  );
+}
+
 export function QuestionCard({
   question,
   value,
@@ -109,7 +128,19 @@ export function QuestionCard({
         </span>
         <div>
           <h2 className="font-bold">Q{question.number}. {question.text}</h2>
-          {question.category && <p className="text-xs text-slate-400 mt-0.5">{t("q.category")}: {question.category}</p>}
+          <div className="flex items-center gap-2 mt-1">
+            {/* 두 모드 모두 배지를 단다. 복수선택에만 달면 배지가 **없는**
+                상태를 해석해야 하고, 단일선택 질문만 본 사용자는 그 규약을
+                배울 기회가 없다. */}
+            <span
+              className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${
+                multi ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-500"
+              }`}
+            >
+              {multi ? t("q.multiSelectBadge") : t("q.singleSelectBadge")}
+            </span>
+            {question.category && <p className="text-xs text-slate-400">{t("q.category")}: {question.category}</p>}
+          </div>
         </div>
       </div>
       <div className="p-6 space-y-3">
@@ -130,7 +161,7 @@ export function QuestionCard({
                     문서 루트 기준 좌표로 배치돼 <html>에 유령 오버플로를 만든다
                     → 라벨 클릭(=input.focus())마다 문서가 스크롤되며 헤더가 말려
                     올라감(ui-bug.png 회귀). */}
-                <label className="relative flex gap-3 cursor-pointer">
+                <label className="relative flex items-center gap-3 cursor-pointer">
                   <input
                     type={multi ? "checkbox" : "radio"}
                     name={name}
@@ -138,6 +169,7 @@ export function QuestionCard({
                     checked={otherActive}
                     onChange={activateOther}
                   />
+                  <SelectIndicator checked={otherActive} multi={multi} />
                   <span className="shrink-0 w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-sm font-bold text-slate-500">
                     {opt.letter}
                   </span>
@@ -173,6 +205,7 @@ export function QuestionCard({
                     checked ? "border-violet-600 bg-violet-50" : "border-slate-200"
                   }`}
                 >
+                  <SelectIndicator checked={checked} multi={multi} />
                   <span className="shrink-0 w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-sm font-bold text-slate-500">
                     {opt.letter}
                   </span>

@@ -286,6 +286,8 @@ export const en: Record<keyof typeof ko, string> = {
   "welcome.freeform": "You can also just type — start freely in the input below.",
   "q.legend": "Question",
   "q.category": "Category",
+  "q.multiSelectBadge": "Select all that apply",
+  "q.singleSelectBadge": "Pick one",
   "q.otherOption": "Other — write your own",
   "q.otherAria": "Write your own answer",
   "q.otherPlaceholder": "If none of the options fit, describe it yourself…",

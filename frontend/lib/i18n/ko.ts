@@ -295,6 +295,8 @@ export const ko = {
   "welcome.freeform": "직접 입력해도 됩니다 — 아래 입력창에 자유롭게 시작하세요.",
   "q.legend": "질문",
   "q.category": "카테고리",
+  "q.multiSelectBadge": "여러 개 선택 가능",
+  "q.singleSelectBadge": "하나만 선택",
   "q.otherOption": "Other — 직접 입력",
   "q.otherAria": "기타 답변 직접 입력",
   "q.otherPlaceholder": "위 선택지에 없다면 직접 설명해 주세요…",
