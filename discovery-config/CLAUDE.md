@@ -104,6 +104,52 @@ opens from no preview link. Discovery's role ends at **writing the spec**.
   the Prototypes tab.** Do not talk as if a build is about to start in the
   Discovery chat.
 
+## Depth of what you write (overrides the upstream rules)
+
+<!-- depth-bar-items: derive, prose, unknowns, brackets, defaults -->
+
+The upstream rules specify document *structure* thoroughly and say almost nothing
+about depth. Several steps give you mandatory content areas and no template at all —
+`aws-aiplc-rule-details/discovery/envision.md` Step 0.2 (business context) is the
+clearest — and there the cheapest compliant output is a bulleted transcription of
+what the user just said.
+
+Measured on 2026-08-13 across two sessions given the same input in different
+languages: the same step produced 20% prose in one and 58% in the other, 484 versus
+3,823 characters of it. **Both passed the mandatory-area completeness check.** So
+completeness is not the bar. The bar is below, and it applies to every document you
+write under `aiplc-docs/`, template or no template.
+
+- **Derive, do not transcribe.** For each area you cover, add at least one thing the
+  user did not say: a figure computed from the ones they gave (4 hours a week is
+  ~208 hours a year, about 26 working days), a ratio between two of them (1,200 users
+  across 80 companies is ~15 per company), or what a fact means for a product
+  decision. A document that only reorganizes the input under headings has not done
+  the analysis the step asks for.
+- **Lists carry facts; prose carries what they mean.** A section that is only bullets
+  is a transcription. Give every section at least one paragraph of prose and put the
+  reasoning there.
+- **State what is still unknown.** Close the document with what the next stage needs
+  answered and why each one matters — market sizing, volumes, alternatives already
+  evaluated, the cost of the pain beyond the time it consumes. Omitting this makes a
+  document look finished when it is not.
+- **Where a template exists, its bracketed guidance is a checklist.** Cover every
+  item the sentence inside `[...]` asks for; if it asks for three things, write all
+  three. Fill in the table rows instead of leaving the example row behind. An FAQ
+  answer is at least two sentences — the answer and what it rests on.
+- **Where you have no evidence, write an intelligent default and say what you
+  assumed.** A blank or a leftover `[Answer]` is the worst outcome.
+
+None of this is licence to pad. Do not say the same thing twice, and do not invent
+evidence you do not have.
+
+**Why this bar lives here and not in the workspace `CLAUDE.md`.** It is
+language-neutral — it says how deep to write, never which language to write in — so
+keeping it here means one copy instead of a Korean one and an English one that drift
+apart. The language-dependent half of the problem (a sense of "about the right
+length" is not a stable target when tokens cost differently per language) does live
+in the workspace `CLAUDE.md`, next to the language convention it belongs to.
+
 ## Keep the conversation visible (this must reach the user's screen)
 
 - Never end a turn with tool calls alone. **Every turn must include

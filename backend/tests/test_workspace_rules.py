@@ -200,27 +200,70 @@ def test_shared_config_dirs_have_no_language_directive():
         assert "한국어로 진행" not in text, rel
         # 번역 오버라이드 절도 language/ko.md로 옮겨졌어야 한다.
         assert "번역해서 쓴다" not in text, rel
+        # 두 문구를 지우는 것만으로는 부족하다: **문서의 언어 자체가 언어
+        # 신호다**(이 파일들의 상단 WHY 주석, 2026-08-04 실측 — 지시 한 줄을
+        # 지웠는데도 영어 프로젝트의 대화가 계속 한국어로 돌았다). 그래서
+        # 글자를 센다. 이 검사는 둔하지만 그 점이 장점이다 — 여기에 한국어로
+        # 조항을 추가하려는 어떤 시도도 걸린다.
+        assert not {c for c in text if "가" <= c <= "힣"}, (
+            f"{rel} 은 언어 중립이어야 한다 — 한글이 있으면 그 자체가 언어 신호다")
 
 
-#: 두 언어 지시가 같은 깊이 기준을 담고 있는지 검사하기 위한 앵커. 두 파일이
-#: 단어를 공유하지 않으므로(한쪽은 한국어 산문) 공유할 수 있는 것은 ASCII
-#: 마커뿐이다 — test_proto_prompts가 "AskUserQuestion" 같은 공유 토큰으로
-#: 두 벌의 대칭을 검사하는 것과 같은 방법이다.
-_DEPTH_BAR_MARKER = ("<!-- depth-bar-items: brackets, paragraph-fields, "
-                     "faq-answers, tables, defaults -->")
+#: 작성 깊이 기준(공유 config)과 언어 조항(언어 지시)을 각각 가리키는 앵커.
+#: 두 언어 파일이 단어를 공유하지 않으므로(한쪽은 한국어 산문) 공유할 수 있는
+#: 것은 ASCII 마커뿐이다 — test_proto_prompts가 "AskUserQuestion" 같은 공유
+#: 토큰으로 두 벌의 대칭을 검사하는 것과 같은 방법이다.
+_DEPTH_BAR_MARKER = "<!-- depth-bar-items: derive, prose, unknowns, brackets, defaults -->"
+_LANGUAGE_CLAUSE_MARKER = "<!-- depth-bar-language-clause -->"
 
 
-def test_both_language_directives_carry_the_same_depth_bar():
-    """분량 기준은 **두 언어에 모두** 있어야 한다.
+def test_the_depth_bar_lives_in_the_shared_config_not_the_language_directives():
+    """**작성 깊이 기준은 공유 config에 한 벌로 둔다.**
 
-    한쪽에만 있으면 그 언어의 문서만 두꺼워지고, 그 비대칭은 에러 없이 산출물
-    품질 차이로만 나타난다 — 2026-08-13 실측에서 섹션 수와 질문 수는 같은데
-    필드별 밀도가 갈렸던 것이 정확히 그 모양이다.
+    깊이는 언어 중립이다 — 어느 언어로 쓰든 같은 기준이 적용된다. 언어 지시에
+    두면 한국어 한 벌과 영어 한 벌이 되고, 두 벌은 갈라진다: 한쪽에만 조항이
+    추가되는 회귀는 에러 없이 산출물 품질 차이로만 나타난다.
 
-    왜 기준이 필요한가: 모델은 분량을 **토큰**으로 자기조절하고 토큰 비용은
-    언어마다 다르다. 스펙 2026-08-03-bilingual-ko-en은 "어느 언어로 쓰는가"만
-    다뤘고 "얼마나 깊이 쓰는가"는 범위에 없었다. 대칭인 언어 지시가 대칭인
-    결과를 주지 않는 이유가 그것이다.
+    자리를 이렇게 정한 근거는 리포의 선례다. 상류 룰(aws-aiplc-rule-details)이
+    부족할 때 그것을 고치지 않고 discovery-config에서 override를 선언한다 —
+    질문 파일 규약과 프로토타입 빌드 금지가 그 두 선례이고, 이것이 세 번째다.
+    상류 룰을 고치면 재동기화 때 조용히 사라진다(e12d806 → 2047ac3이 언어 지시로
+    같은 실패를 한 번 겪었다).
+
+    2026-08-13 실측이 이 기준이 필요한 이유다: 같은 입력을 언어만 바꿔 넣은 두
+    세션이 산문 비중 20% vs 58%(484자 vs 3,823자)로 갈렸고 **둘 다 필수 영역
+    완전성 검사는 통과했다.** 완전성은 기준이 아니다.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    config = repo / "discovery-config" / "CLAUDE.md"
+    if not config.is_file():
+        pytest.skip("discovery-config/CLAUDE.md not present")
+    text = config.read_text(encoding="utf-8")
+    assert _DEPTH_BAR_MARKER in text
+    assert "overrides the upstream rules" in text
+    # 마커만 남고 항목이 사라지는 것을 막는다 — 마커는 목록의 목차이고, 목차와
+    # 본문이 어긋나면 검사가 의미를 잃는다.
+    body = text.split(_DEPTH_BAR_MARKER, 1)[1]
+    assert body.count("\n- **") >= 5
+
+    # 두 벌이 되지 않아야 한다. 언어 지시에도 같은 기준이 들어가면 드리프트가
+    # 시작되고, 어느 쪽이 최신인지 알 수 없다.
+    rules = repo / "rule" / "aiplc-rules"
+    if not (rules / "language" / "ko.md").is_file():
+        return
+    for language in ("ko", "en"):
+        directive = (rules / "language" / f"{language}.md").read_text(
+            encoding="utf-8")
+        assert _DEPTH_BAR_MARKER not in directive, language
+
+
+def test_both_language_directives_carry_the_length_calibration_clause():
+    """언어에 걸린 절반은 언어 지시에 남는다.
+
+    모델은 분량을 **토큰**으로 자기조절하고 토큰 비용은 언어마다 3배 다르다 —
+    "적당한 길이"라는 감각이 언어별로 다른 결과를 준다는 사실은 언어 규약의
+    일부다. 이 조항이 사라지면 깊이 기준(공유 config)이 왜 필요한지에 대한
+    설명이 어느 문서에도 남지 않는다.
     """
     repo_rules = Path(__file__).resolve().parents[2] / "rule" / "aiplc-rules"
     if not (repo_rules / "language" / "ko.md").is_file():
@@ -228,11 +271,10 @@ def test_both_language_directives_carry_the_same_depth_bar():
     for language in ("ko", "en"):
         text = (repo_rules / "language" / f"{language}.md").read_text(
             encoding="utf-8")
-        assert _DEPTH_BAR_MARKER in text, language
-        # 마커만 남고 항목이 사라지는 것을 막는다 — 마커는 목록의 목차이고,
-        # 목차와 본문이 어긋나면 검사가 의미를 잃는다.
-        body = text.split(_DEPTH_BAR_MARKER, 1)[1]
-        assert body.count("\n- **") >= 5, language
+        assert _LANGUAGE_CLAUSE_MARKER in text, language
+        # 깊이 기준이 어디 있는지 가리켜야 한다 — 가리키는 문장이 없으면 그
+        # 기준은 이 문서를 먼저 읽는 에이전트에게 존재하지 않는 것과 같다.
+        assert "Depth of what you write" in text, language
 
 
 def test_upstream_question_rules_are_untouched():
