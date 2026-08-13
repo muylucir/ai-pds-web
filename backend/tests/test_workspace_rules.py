@@ -202,6 +202,39 @@ def test_shared_config_dirs_have_no_language_directive():
         assert "번역해서 쓴다" not in text, rel
 
 
+#: 두 언어 지시가 같은 깊이 기준을 담고 있는지 검사하기 위한 앵커. 두 파일이
+#: 단어를 공유하지 않으므로(한쪽은 한국어 산문) 공유할 수 있는 것은 ASCII
+#: 마커뿐이다 — test_proto_prompts가 "AskUserQuestion" 같은 공유 토큰으로
+#: 두 벌의 대칭을 검사하는 것과 같은 방법이다.
+_DEPTH_BAR_MARKER = ("<!-- depth-bar-items: brackets, paragraph-fields, "
+                     "faq-answers, tables, defaults -->")
+
+
+def test_both_language_directives_carry_the_same_depth_bar():
+    """분량 기준은 **두 언어에 모두** 있어야 한다.
+
+    한쪽에만 있으면 그 언어의 문서만 두꺼워지고, 그 비대칭은 에러 없이 산출물
+    품질 차이로만 나타난다 — 2026-08-13 실측에서 섹션 수와 질문 수는 같은데
+    필드별 밀도가 갈렸던 것이 정확히 그 모양이다.
+
+    왜 기준이 필요한가: 모델은 분량을 **토큰**으로 자기조절하고 토큰 비용은
+    언어마다 다르다. 스펙 2026-08-03-bilingual-ko-en은 "어느 언어로 쓰는가"만
+    다뤘고 "얼마나 깊이 쓰는가"는 범위에 없었다. 대칭인 언어 지시가 대칭인
+    결과를 주지 않는 이유가 그것이다.
+    """
+    repo_rules = Path(__file__).resolve().parents[2] / "rule" / "aiplc-rules"
+    if not (repo_rules / "language" / "ko.md").is_file():
+        pytest.skip("repo rules not present")
+    for language in ("ko", "en"):
+        text = (repo_rules / "language" / f"{language}.md").read_text(
+            encoding="utf-8")
+        assert _DEPTH_BAR_MARKER in text, language
+        # 마커만 남고 항목이 사라지는 것을 막는다 — 마커는 목록의 목차이고,
+        # 목차와 본문이 어긋나면 검사가 의미를 잃는다.
+        body = text.split(_DEPTH_BAR_MARKER, 1)[1]
+        assert body.count("\n- **") >= 5, language
+
+
 def test_upstream_question_rules_are_untouched():
     """상류 룰은 고치지 않는다 — 질문 파일 규약도 예외가 아니다.
 
