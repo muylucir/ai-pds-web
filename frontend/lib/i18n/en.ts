@@ -261,7 +261,7 @@ export const en: Record<keyof typeof ko, string> = {
   "project.nextPage": "Next ›",
   "project.deleteConfirmLabel": "Confirm project deletion",
   "project.deleteConfirmTitle": "Delete the '{name}' project",
-  "project.deleteConfirmBody": "The chat history and every document are permanently deleted. This cannot be undone.",
+  "project.deleteConfirmBody": "The chat history, documents, prototype builds and survey responses are permanently deleted, and every preview or survey link you shared stops working immediately. This cannot be undone.",
   "project.cancel": "Cancel",
   "user.menuAria": "User menu ({email})",
   "user.noRole": "No role",

@@ -270,7 +270,7 @@ export const ko = {
   "project.nextPage": "다음 ›",
   "project.deleteConfirmLabel": "프로젝트 삭제 확인",
   "project.deleteConfirmTitle": "'{name}' 프로젝트 삭제",
-  "project.deleteConfirmBody": "채팅 기록과 모든 문서가 영구 삭제되며 되돌릴 수 없습니다.",
+  "project.deleteConfirmBody": "채팅 기록·문서·프로토타입 빌드·설문 응답이 영구 삭제되고, 공유한 프리뷰·설문 링크가 즉시 끊깁니다. 되돌릴 수 없습니다.",
   "project.cancel": "취소",
   "user.menuAria": "사용자 메뉴 ({email})",
   "user.noRole": "역할 없음",

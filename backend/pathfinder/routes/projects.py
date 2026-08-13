@@ -8,6 +8,7 @@ from pathfinder import app as app_module
 from pathfinder import error_codes as ec
 from pathfinder.parsers.state import parse_state_file
 from pathfinder.project_store import write_manifest, delete_project_data
+from pathfinder.proto.cleanup import purge_project_prototypes
 
 _log = logging.getLogger(__name__)
 
@@ -190,8 +191,9 @@ async def get_project(pid: str):
 
 @router.delete("/projects/{pid}")
 async def delete_project(pid: str):
-    """전부 삭제(스펙 결정): VM stop(베스트에포트) → S3 세션+산출물 삭제
-    (실패 시 500, 멱등 재시도) → 레지스트리 제거."""
+    """전부 삭제(스펙 결정): 러너 stop(베스트에포트) → 프로토타입 실체 정리
+    (실패 시 500) → S3 세션+산출물 삭제(실패 시 500, 멱등 재시도) →
+    레지스트리 제거."""
     if not app_module.registry.is_registered(pid):
         raise HTTPException(status_code=404, detail="unknown project")
     already_stopped = None
@@ -201,6 +203,31 @@ async def delete_project(pid: str):
             await already_stopped.runner.stop()
         except Exception:
             _log.exception("runner stop failed for %s during delete (continuing)", pid)
+    # 프로토타입의 **실체**는 S3 프리픽스 밖에 있다: 로컬 빌드 트리, 도는
+    # 프리뷰 프로세스와 그 포트, 접근 토큰(파일 + 인메모리 캐시), 빌드 세션,
+    # 그리고 버킷 **루트**의 설문 토큰 인덱스(surveys/by-token/). 아래
+    # delete_project_data는 projects/{pid}/ 와 sessions/session_{pid}/ 만
+    # 지우므로 이것들이 전부 남았다 — 특히 토큰이 살아 있으면 이미 공유한
+    # 프리뷰 링크가 삭제된 프로젝트에서도 계속 열린다(프록시는 프로젝트 등록
+    # 여부를 보지 않고 proto_host의 토큰·상태만 본다).
+    #
+    # **S3 삭제보다 먼저** 돌아야 한다. 설문 토큰 인덱스는 역방향 조회가 없어서
+    # 문항 파일을 읽어야 회수할 수 있고, 프리픽스를 먼저 지우면 그 인덱스는
+    # 어떤 코드로도 도달할 수 없는 채로 영구히 남는다(SurveyStore.purge 참고).
+    # 그래서 실패는 여기서 500으로 끊는다: 레지스트리와 S3를 그대로 두어
+    # 재시도가 의미를 갖게 한다(모든 단계가 멱등이다).
+    durable = app_module.durable_projects_enabled()
+    failures = await purge_project_prototypes(
+        pid,
+        host=app_module.proto_host(),
+        sessions=app_module.proto_sessions,
+        s3=app_module.s3_store_factory(pid) if durable else None,
+        survey_store_factory=app_module.survey_store_factory if durable else None,
+    )
+    if failures:
+        _log.error("prototype cleanup failed for %s: %s", pid, ",".join(failures))
+        raise HTTPException(status_code=500,
+                            detail=f"prototype cleanup failed: {','.join(failures)}")
     if app_module.durable_projects_enabled():
         try:
             await delete_project_data(app_module.session_s3_factory(),

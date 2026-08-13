@@ -102,8 +102,12 @@ describe("ProjectList delete", () => {
     await userEvent.setup().click(buttons[0]);
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveTextContent("'워크숍 A' 프로젝트 삭제");
+    // 문구가 실제 삭제 범위를 말해야 한다 — 프로토타입 빌드와 설문 응답,
+    // 그리고 이미 공유한 링크가 함께 끊기는 것까지(백엔드가 이제 슬러그마다
+    // 리셋 경로를 돌려 실체와 토큰을 지운다).
     expect(dialog).toHaveTextContent(
-      "채팅 기록과 모든 문서가 영구 삭제되며 되돌릴 수 없습니다.",
+      "채팅 기록·문서·프로토타입 빌드·설문 응답이 영구 삭제되고, " +
+      "공유한 프리뷰·설문 링크가 즉시 끊깁니다. 되돌릴 수 없습니다.",
     );
   });
 

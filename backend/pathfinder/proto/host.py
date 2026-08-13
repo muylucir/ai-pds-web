@@ -487,6 +487,32 @@ class ProtoHost:
             swept += 1
         return swept
 
+    def slugs(self, pid: str) -> list[str]:
+        """이 프로젝트가 **로컬에** 갖고 있는 슬러그 전부.
+
+        세 출처의 합집합이고, 셋 다 필요하다: 디스크 디렉토리(빌드 트리 —
+        재시작 뒤에도 남는 것), 호스팅 레지스트리(도는 프로세스), 토큰
+        캐시(디렉토리가 아직 없는데 토큰만 발급된 경계 상태). 프로젝트 삭제가
+        "이 프로젝트의 모든 슬러그"를 정리할 때 무엇을 돌아야 하는지가 여기서
+        나온다 — S3 기록만 열거하면 기록 없이 로컬에만 남은 트리를 놓친다.
+
+        읽기 전용이고 실패하지 않는다. 디렉토리를 못 읽으면(권한·경합) 그
+        출처만 비운다 — 목록을 못 만들었다는 사실은 호출부가 다른 출처로
+        판단해야 하고, 열거 실패로 삭제 전체를 막는 것은 과하다.
+        """
+        reject_unsafe_segment(pid)
+        found = {slug for (p, slug) in self._registry if p == pid}
+        found |= {slug for (p, slug) in self._tokens.values() if p == pid}
+        base = self._root / pid
+        try:
+            if base.is_dir():
+                found |= {child.name for child in base.iterdir() if child.is_dir()}
+        except OSError:
+            # 이 모듈은 로거를 두지 않는다(전부 예외 전파 아니면 best-effort).
+            # 호출부(proto/cleanup.py)가 자기 실패 라벨로 기록한다.
+            pass
+        return sorted(found)
+
     def status(self, pid: str, slug: str) -> HostInfo | None:
         """`log_tail`은 항상 빈 문자열이다 -- 이 메서드는 목록 라우트가
         프로토타입마다 부르는 폴링 경로이고, 로그를 읽으면 이벤트 루프가

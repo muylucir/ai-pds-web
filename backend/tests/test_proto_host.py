@@ -399,6 +399,29 @@ async def test_start_writes_a_pid_file_and_removes_it_on_stop(root):
     assert not pid_file.exists()
 
 
+def test_slugs_unions_dirs_registry_and_token_cache(root):
+    """프로젝트 삭제가 "이 프로젝트의 모든 슬러그"를 여기서 얻는다. 디스크
+    디렉토리만 보면 토큰만 발급된 경계 상태를 놓치고, 그 슬러그의 토큰이
+    인메모리에 남아 삭제 뒤에도 링크가 풀린다."""
+    _seed_build_dir(root, slug="on-disk")
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    # 토큰만 있는 슬러그(디렉토리는 ensure_token이 만든다)
+    host.ensure_token(PID, "token-only")
+    # 다른 프로젝트는 섞이지 않는다.
+    _seed_build_dir(root, pid="other-proj", slug="not-mine")
+
+    assert host.slugs(PID) == ["on-disk", "token-only"]
+    assert host.slugs("other-proj") == ["not-mine"]
+    assert host.slugs("never-existed") == []
+
+
+def test_slugs_rejects_traversal_pid(root):
+    """`rmtree` 대상 경로를 만드는 값이므로 여기서도 한 세그먼트만 받는다."""
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    with pytest.raises(ValueError):
+        host.slugs("..")
+
+
 def test_sweep_orphans_removes_stale_pid_files(root):
     """Backend restart leaves the previous run's children behind -- this is the
     replacement for the orphan-VM sweep that went away with the VM layer. A pid

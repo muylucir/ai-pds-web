@@ -146,6 +146,16 @@ class FakeProtoHost:
     def status(self, pid, slug):
         return self.infos.get((pid, slug))
 
+    def slugs(self, pid):
+        """실물 ProtoHost.slugs와 같은 합집합(디렉토리 + 호스팅 레지스트리 +
+        토큰 파일). 프로젝트 삭제가 "이 프로젝트의 모든 슬러그"를 여기서 얻는다."""
+        found = {slug for (p, slug) in self.infos if p == pid}
+        if self._root is not None:
+            base = self._root / pid
+            if base.is_dir():
+                found |= {child.name for child in base.iterdir() if child.is_dir()}
+        return sorted(found)
+
     def log_tail(self, pid, slug, lines=100):
         info = self.infos.get((pid, slug))
         return info.log_tail if info else ""
