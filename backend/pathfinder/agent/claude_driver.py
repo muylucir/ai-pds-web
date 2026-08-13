@@ -71,6 +71,7 @@ from pathfinder.agent.questions_payload import (normalize_sdk_questions,
 from pathfinder.agent.session_store import DiscoverySessionStore
 from pathfinder.agent.tools import build_tools
 from pathfinder.agent.workspace_rules import place_rules
+from pathfinder.cli_settings import cli_context_env
 from pathfinder.models import AgentEvent
 from pathfinder.s3store import S3StoreLike
 
@@ -449,6 +450,10 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
         }
         if driver._anthropic_model:
             env["ANTHROPIC_MODEL"] = driver._anthropic_model
+        # 자동 컴팩션 시점. 미설정이면 키가 없고 CLI 기본값으로 간다.
+        # Discovery가 후반 스테이지에서 요약된 컨텍스트로 문서를 쓰는 것을
+        # 늦추는 스위치다(cli_settings 헤더의 실측 264k→53k).
+        env.update(cli_context_env())
         session_id, resume = _sdk_session_id(session)
         # Task 5 left create_sdk_mcp_server to the caller so build_tools could
         # keep a plain `-> list[SdkMcpTool]` contract. allowed_tools' entries

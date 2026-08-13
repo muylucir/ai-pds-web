@@ -221,6 +221,8 @@ EC2 배포는 user-data가 전부 채운다. 아래는 **로컬에서 손으로 
 | `PATHFINDER_LOG_LEVEL` | `INFO` | 애플리케이션 로그 레벨(`app.configure_logging()`) |
 | `PATHFINDER_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **둘 다 비우면** 인증 전체 바이패스(로컬 기본). 하나만 비우면 모든 요청이 RuntimeError(fail-closed) |
 | `PATHFINDER_COOKIE_SECURE` | `false` (EC2는 `true`) | 프로토타입 접근 쿠키에 `Secure`를 붙일지. 로컬은 끈 채로 둔다 |
+| `PATHFINDER_AUTO_COMPACT_WINDOW` | — (CLI 기본값) | 자동 컴팩션이 발동하는 컨텍스트 크기(토큰, 100000~1000000). 늦추면 후반 스테이지가 요약이 아닌 근거로 문서를 쓴다 — 대가는 턴당 비용 |
+| `PATHFINDER_LONG_CONTEXT` | `false` | 모델 id에 CLI의 `[1m]`(1M 컨텍스트 베타)을 붙일지. **상위호환이 아니다** — 비용·품질 대가는 `backend/pathfinder/cli_settings.py` 참고 |
 | `PATHFINDER_PUBLIC_PATH_PREFIX` | `/api` | **브라우저가 보는** 프리뷰 마운트. 백엔드를 :8000으로 직접 부르는 로컬은 `""` |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | 프론트가 부를 API base. 원격 프록시 뒤면 `/api` |
 | `COGNITO_HOSTED_UI_DOMAIN` / `COGNITO_CLIENT_ID` / `COGNITO_CLIENT_SECRET` | — | 프론트 server-side 전용. 시크릿에 **`NEXT_PUBLIC_` 금지** |

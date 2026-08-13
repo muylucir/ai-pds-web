@@ -184,6 +184,26 @@ Environment=PATHFINDER_COGNITO_REGION=${region}
 # 로컬 개발에서는 설정하지 않는다: http://localhost에서 브라우저가 Secure 쿠키를
 # 저장하지 않아 프리뷰가 열리지 않는다.
 Environment=PATHFINDER_COOKIE_SECURE=true
+# 컨텍스트 설정 두 개(backend/pathfinder/cli_settings.py). 둘은 **함께** 켠다:
+# 윈도우만 올리고 1M을 켜지 않으면 컴팩션 전에 모델의 컨텍스트 한도에 부딪힌다.
+#
+# 왜 켜는가: 실측(2026-08-13)에서 빌드 세션이 컨텍스트 264,040 → 53,375 토큰으로
+# 요약됐다. 요약 뒤에 쓰이는 후반 스테이지 문서는 근거가 아니라 요약에서 나오므로
+# 뒤로 갈수록 얇아지고, 한국어는 같은 대화에 토큰을 1.66배 써서 그 지점에 40%
+# 일찍 도달한다. 750000은 지금 발동 지점의 약 4배이면서 1M 상한 아래 마진을
+# 남기는 값이다.
+#
+# 대가는 턴당 비용이다 — 컴팩션이 늦어지면 전체 이력이 매 턴 재전송된다(캐시
+# 리드는 0.1배지만 0이 아니다). 워크숍 비용이 문제가 되면 먼저 이 값을 내린다.
+#
+# 1M 접미사가 Bedrock에서 필요한 이유는 cli_settings.cli_model_id의 docstring에
+# 있다(Opus는 native_1m_3p가 없어 베타를 켜야 한다). 로컬 개발에서는 둘 다
+# 설정하지 않는다 — 기본값이 꺼짐이고, 그 상태가 종전 동작이다.
+#
+# (이 파일은 TS 템플릿 리터럴이다 — 주석에도 백틱을 쓰지 말 것. 백틱 하나가
+# 리터럴을 닫아 user-data 전체가 파싱 에러가 된다.)
+Environment=PATHFINDER_AUTO_COMPACT_WINDOW=750000
+Environment=PATHFINDER_LONG_CONTEXT=true
 ExecStart=${APP}/backend/.venv/bin/uvicorn pathfinder.app:app --host 127.0.0.1 --port 8000
 Restart=always
 [Install]

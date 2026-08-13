@@ -136,6 +136,27 @@ assert.match(s, /Environment=PATHFINDER_COOKIE_SECURE=true/,
 assert.ok(!s.includes('PATHFINDER_ENV'),
   'PATHFINDER_ENV is gone — it was renamed to PATHFINDER_COOKIE_SECURE (the backend no longer reads it)');
 
+// 컨텍스트 설정 두 개(backend/pathfinder/cli_settings.py). COOKIE_SECURE와 같은
+// 실패 모양이다: 둘 다 기본값이 꺼짐이라 이 줄이 빠지면 배포가 조용히 종전
+// 동작으로 돌아간다 — 후반 스테이지 문서가 근거가 아니라 컴팩션 요약에서
+// 나오는 그 상태이고, 화면상 증상은 "문서가 좀 얇다"뿐이다.
+const compactWindow = s.match(/Environment=PATHFINDER_AUTO_COMPACT_WINDOW=(\d+)/);
+assert.ok(compactWindow,
+  'PATHFINDER_AUTO_COMPACT_WINDOW must be set — without it the CLI compacts at its own default and later Discovery stages write from a summary');
+const windowTokens = Number(compactWindow![1]);
+// cli_settings._WINDOW_MIN.._WINDOW_MAX. 밖의 값은 백엔드가 경고 후 무시하므로
+// 설정한 사람은 켰다고 믿지만 실제로는 CLI 기본값으로 돈다.
+assert.ok(windowTokens >= 100_000 && windowTokens <= 1_000_000,
+  `PATHFINDER_AUTO_COMPACT_WINDOW=${windowTokens} is outside the CLI's accepted range 100000..1000000 — the backend would warn and ignore it`);
+assert.match(s, /Environment=PATHFINDER_LONG_CONTEXT=true/,
+  'PATHFINDER_LONG_CONTEXT=true must be set — on Bedrock the Opus profile needs the [1m] suffix for a 1M window');
+// **둘은 함께 켠다.** 200k를 넘는 윈도우를 1M 없이 주면 컴팩션이 발동하기 전에
+// 모델의 컨텍스트 한도에 부딪힌다 — 그때의 실패는 컴팩션이 아니라 턴 에러다.
+if (windowTokens > 200_000) {
+  assert.match(s, /Environment=PATHFINDER_LONG_CONTEXT=true/,
+    `PATHFINDER_AUTO_COMPACT_WINDOW=${windowTokens} exceeds the 200k default window — PATHFINDER_LONG_CONTEXT=true is required alongside it`);
+}
+
 console.log('OK  user-data: prototype build env vars rendered, VM env vars gone');
 
 // 10) 서비스는 반드시 non-root로 돌아야 한다. Claude Code는 euid==0에서

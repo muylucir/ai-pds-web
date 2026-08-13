@@ -19,6 +19,7 @@ from pathfinder.workspace import ProjectRegistry, Workspace
 from pathfinder.runner import AgentRunner
 from pathfinder.agent.driver import StrandsDriver
 from pathfinder.agent.claude_driver import ClaudeDriver
+from pathfinder.cli_settings import cli_model_id
 from pathfinder.s3store import S3Store, S3StoreLike
 from pathfinder.project_store import restore_projects
 from pathfinder.turn_handles import TurnHandleStore
@@ -277,7 +278,10 @@ def driver_factory(project_id: str, local_root: Path):
         rules_dir=_rules_dir(),
         config_dir=str(_discovery_config_dir()),
         s3=s3_store_factory(project_id),
-        anthropic_model=project_model(project_id),
+        # cli_model_id를 여기서 씌운다(project_model 안이 아니다) — `[1m]`은
+        # CLI 별칭이고 Bedrock 모델 id가 아니라서, project_model을 그대로 쓰는
+        # 설문 생성 경로(BedrockModel)에 흘러가면 ValidationException이 된다.
+        anthropic_model=cli_model_id(project_model(project_id)),
         language=project_language(project_id),
     )
 
@@ -350,7 +354,8 @@ def proto_session_factory(project_id: str, slug: str):
             session_id=session_id,
             resume=resume,
             session_store=store,
-            anthropic_model=project_model(project_id),
+            # driver_factory와 같은 이유로 CLI용 조립을 여기서 한다.
+            anthropic_model=cli_model_id(project_model(project_id)),
             language=language,
             permission_mode=_proto_permission_mode(),
         )

@@ -25,6 +25,7 @@ from typing import Any, AsyncIterator, Callable
 
 from pathfinder.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
+from pathfinder.cli_settings import cli_context_env
 from pathfinder.models import AgentEvent
 
 _log = logging.getLogger(__name__)
@@ -183,6 +184,9 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
         }
         if builder._anthropic_model:
             env["ANTHROPIC_MODEL"] = builder._anthropic_model
+        # Discovery 드라이버와 같은 값을 쓴다 — 한쪽만 켜지면 같은 프로젝트에서
+        # 컴팩션 시점이 갈린다(cli_settings 헤더).
+        env.update(cli_context_env())
         options = ClaudeAgentOptions(
             permission_mode=builder._permission_mode,
             cwd=builder._workspace,
