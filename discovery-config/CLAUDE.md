@@ -1,7 +1,5 @@
 # Pathfinder integration contract (UI touchpoints — mandatory)
 
-# Write non-ASCII text (Korean, etc.) in tool-call parameters (JSON) as literal UTF-8. Never emit `\uXXXX` escapes.
-
 <!--
 WHY THIS FILE IS IN ENGLISH, and why that is not a language directive.
 
@@ -26,6 +24,11 @@ about.
 Keep this file in English when editing it. backend/tests/test_workspace_rules.py
 pins the invariant.
 -->
+
+Write non-ASCII text (Korean, etc.) in tool-call parameters (JSON) as literal
+UTF-8 — never as `\uXXXX` escapes. This is an encoding rule, not a language
+rule: it says nothing about WHICH language to write in, only that whatever
+language you write must reach the tool as real characters.
 
 This file governs only the touchpoints with the Pathfinder web UI. For the
 Discovery workflow itself, follow the `CLAUDE.md` in the working directory
