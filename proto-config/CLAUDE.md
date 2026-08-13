@@ -1,132 +1,169 @@
-# 툴 호출 파라미터(JSON)의 한글 등 비ASCII 문자열은 항상 리터럴 UTF-8로 작성하고, \uXXXX 유니코드 이스케이프로 표기하지 않는다.
-# 프로토타입을 생성할때 디자인은 shadcn-design 스킬을 사용
+# Prototype build contract (shared config — mandatory)
 
-## 프로세스·포트 — Pathfinder 자신을 죽이지 않는다 (최우선)
+<!--
+WHY THIS FILE IS IN ENGLISH, and why that is not a language directive.
 
-**너는 Pathfinder를 실행하고 있는 바로 그 서버 안에서 돌고 있다.** 백엔드와
-프론트엔드가 너와 **같은 유저(`pathfinder`)로** 돌기 때문에, 네가 보내는 신호는
-아무 방어 없이 그 프로세스들에 닿는다. 실제로 사고가 났다(2026-08-01): 빌드
-에이전트가 브라우저 검증을 위해 Playwright chromium을 띄웠고, 그 과정에서 포트
-3000의 프로세스가 SIGKILL로 죽었다 — 그것은 Pathfinder 프론트엔드였고, 워크숍
-참가자 화면에 "연결이 끊어졌습니다"가 떴다.
+This file lives in the build agent's shared CLAUDE_CONFIG_DIR ("user" level),
+so EVERY project reads it regardless of the language its user chose — it cannot
+carry a per-project language. discovery-config/CLAUDE.md, which sits in the
+same structural position for the Discovery agent, learned this the hard way on
+2026-08-04: an English project's chat ran in Korean because that whole file was
+Korean prose. **The language a document is written in is itself a language
+signal**, even when the document never says which language to use.
 
-아래는 취향이 아니라 **금지**다.
+So the rule here is the same: this file must be language-NEUTRAL, and for a
+document the model reads that means English. The per-project language reaches
+the build agent through proto/prompts.py (two complete language versions) and
+the workspace CLAUDE.md — those are the levels that can vary per project.
 
-- **포트 3000·8000을 건드리지 않는다.** 3000은 Pathfinder 프론트엔드, 8000은
-  백엔드다. 이 포트를 쓰거나, 조회하거나, 점유한 프로세스를 정리하려 하지 않는다.
-  프로토타입에 배정되는 포트는 **4000–8000 범위에서 호스팅이 고른다**(`host.py`의
-  `_scan_port`) — 네가 정하는 것이 아니다.
-- **다른 프로세스를 죽이지 않는다.** `pkill`, `killall`, `kill -9 $(lsof -ti:...)`,
-  `fuser -k` 류를 쓰지 않는다. 네가 **직접 띄운** 프로세스만 정리한다.
-- **브라우저 자동화(Playwright·Puppeteer·chrome-headless)를 실행하지 않는다.**
-  화면 확인은 사용자가 프로토타입 탭의 라이브 프리뷰로 한다. 스크린샷을 찍기 위해
-  브라우저를 띄우지 않는다. `npx playwright ...`, `npm run test:e2e`도 해당한다 —
-  리포의 `playwright.config.ts`는 **포트 3000을 겨냥하므로** 실행하면 위 사고가
-  그대로 재현된다.
-- **개발/프로덕션 서버를 띄운 채로 턴을 끝내지 않는다.** 빌드 검증은
-  `npm run build`로 한다. 런타임 확인이 꼭 필요하면 아래 규율을 지킨다.
+Keep this file in English when editing it. backend/tests/test_agent_language.py
+pins the invariant for both shared config dirs.
+-->
 
-### 서버를 꼭 띄워야 한다면
+Write non-ASCII text (Korean, etc.) in tool-call parameters (JSON) as literal
+UTF-8 — never as `\uXXXX` escapes. This is an encoding rule, not a language
+rule: it says nothing about WHICH language to write in, only that whatever
+language you write must reach the tool as real characters.
 
-`npm run start`/`dev`는 **npm이 실제 서버를 자식으로 띄운다.** 그래서 job
-스펙(`kill %1`)이나 npm의 PID만 죽이면 **실제 리스너가 고아로 남아 포트를 계속
-점유한다** — 우리 호스팅 코드도 같은 이유로 프로세스 그룹에 신호를 보낸다
-(`host.py`의 `stop()`). 반드시 이렇게 한다:
+Use the **shadcn-design** skill for the visual design of every prototype.
+
+## Processes and ports — do not kill Pathfinder itself (highest priority)
+
+**You are running inside the very server that runs Pathfinder.** The backend and
+the frontend run as **the same user you do (`pathfinder`)**, so any signal you
+send reaches those processes with nothing in the way. This has already caused an
+incident (2026-08-01): a build agent started Playwright chromium for browser
+verification, and in doing so the process on port 3000 was SIGKILLed — that was
+the Pathfinder frontend, and workshop participants saw "the connection dropped"
+on their screens.
+
+What follows is not a preference. It is **forbidden**.
+
+- **Never touch ports 3000 and 8000.** 3000 is the Pathfinder frontend, 8000 the
+  backend. Do not bind them, do not probe them, and do not try to clean up
+  whatever holds them. The port a prototype gets is **chosen by hosting from the
+  4000–8000 range** (`_scan_port` in `host.py`) — that is not your decision.
+- **Never kill a process you did not start.** No `pkill`, `killall`,
+  `kill -9 $(lsof -ti:...)`, `fuser -k` and friends. Clean up only the processes
+  **you started yourself**.
+- **Never run browser automation (Playwright, Puppeteer, chrome-headless).** The
+  user checks the screen through the live preview in the prototypes tab. Do not
+  start a browser to take screenshots. That includes `npx playwright ...` and
+  `npm run test:e2e` — the repo's `playwright.config.ts` **targets port 3000**,
+  so running it reproduces the incident above exactly.
+- **Never end a turn with a dev or production server still running.** Verify the
+  build with `npm run build`. If you genuinely need a runtime check, follow the
+  discipline below.
+
+### If you really must start a server
+
+`npm run start`/`dev` **starts the real server as a child of npm.** So killing
+the job spec (`kill %1`) or npm's PID alone **orphans the actual listener, which
+goes on holding the port** — our own hosting code signals the process group for
+the same reason (`stop()` in `host.py`). Always do it this way:
 
 ```bash
-# 1) 4000-8000 밖의 임의 포트 + 자기만의 프로세스 그룹으로 띄운다
+# 1) A port outside 4000-8000, in its own process group
 setsid npm run start > /tmp/smoke.log 2>&1 &
 PGID=$!
 sleep 6
-curl -s http://localhost:9123/... || true      # 검증
+curl -s http://localhost:9123/... || true      # verify
 
-# 2) 그룹째 정리한다. 이 줄을 빼면 서버가 남는다
+# 2) Clean up the whole group. Drop this line and the server survives
 kill -- -"$PGID" 2>/dev/null || true
 wait "$PGID" 2>/dev/null || true
 ```
 
-`kill %1 2>/dev/null` 같은 형태를 복사해 쓰지 않는다. 실제로 이 패턴이 서버를
-남겼고, 심지어 `kill %12>/dev/null`(→ `kill %12`로 파싱되어 아무것도 죽이지 않는
-오타)까지 나왔다. 리다이렉트를 붙일 때 **`%1`과 `2>`가 붙어버리지 않도록** 반드시
-공백을 둔다.
+Do not copy shapes like `kill %1 2>/dev/null`. That pattern really did leave
+servers behind, and it even produced `kill %12>/dev/null` (parsed as
+`kill %12`, which kills nothing). When you add a redirect, **keep a space
+between `%1` and `2>`**.
 
-## Bedrock 호출 코드 — 샘플링 파라미터를 보내지 않는다
+## Bedrock calls — do not send sampling parameters
 
-프로토타입 코드에서 Bedrock Claude를 호출할 때 **`temperature`, `top_p`,
-`top_k`를 보내지 않는다.** Claude Opus 4.7 이후 모델(Opus 4.7·4.8·5, Sonnet 5)은
-이 파라미터들을 제거했고, 보내면 요청 자체가 실패한다 — 이 배포의
-`ap-northeast-2`에서 실측한 에러다:
+When prototype code calls Bedrock Claude, **do not send `temperature`, `top_p`
+or `top_k`.** Claude Opus 4.7 and later models (Opus 4.7, 4.8, 5, Sonnet 5)
+removed these parameters, and sending them fails the whole request — this is the
+error as measured in this deployment's `ap-northeast-2`:
 
 ```
 ValidationException: The model returned the following errors:
   `temperature` is deprecated for this model.
 ```
 
-Converse API의 `inferenceConfig`에는 **`maxTokens`만** 넣는다:
+Put **only `maxTokens`** in the Converse API's `inferenceConfig`:
 
 ```js
-const inferenceConfig = { maxTokens };   // temperature/topP를 넣지 않는다
+const inferenceConfig = { maxTokens };   // no temperature/topP
 ```
 
-**모델별로 분기하지 말고 아예 보내지 않는다.** 모델 ID를 정규식으로 검사해
-특정 모델만 제외하는 우회 코드는 만들지 않는다 — 기본 모델은 환경변수로 바뀌고,
-그때마다 정규식이 새 모델을 놓쳐 같은 에러가 다시 난다(실제로 한 번 겪었다:
-`opus-(4-8|5)`만 잡는 패턴이 `sonnet-5`를 놓쳤다). 출력의 결정성이나 다양성이
-필요하면 프롬프트로 지시한다.
+**Do not branch on the model — just never send them.** Do not write a workaround
+that regex-matches the model ID to exclude particular models: the default model
+changes through an environment variable, and each time the regex misses the new
+model the same error returns (this happened once — a pattern matching only
+`opus-(4-8|5)` missed `sonnet-5`). If you need determinism or variety in the
+output, ask for it in the prompt.
 
-같은 이유로 **`budget_tokens`(extended thinking)도 보내지 않는다** — Opus 4.7
-이후 제거됐다. 추론 깊이가 필요하면 `additionalModelRequestFields`의
-`thinking: {type: "adaptive"}`를 쓴다.
+For the same reason, **do not send `budget_tokens` (extended thinking)** — it was
+removed in Opus 4.7 as well. When you need reasoning depth, use
+`thinking: {type: "adaptive"}` under `additionalModelRequestFields`.
 
-예외: Sonnet 4.6 이하는 `temperature`를 아직 받는다. 그래도 위 규칙을 따른다 —
-어느 모델에서도 동작하는 코드가 목적이다.
+Exception: Sonnet 4.6 and earlier still accept `temperature`. Follow the rule
+anyway — the goal is code that works on every model.
 
-## NextJS는 15 버전을 사용한다.
+## Use Next.js version 15
 
-## 프로토타입은 하위 경로에서 서빙된다 — basePath 필수
+## Prototypes are served from a sub-path — `basePath` is required
 
-프로토타입은 루트가 아니라 `/proto/{project_id}/{slug}/` 하위에서 리버스 프록시로
-서빙된다. 그 프리픽스는 호스팅이 빌드 시점에 `NEXT_PUBLIC_BASE_PATH` 환경변수로
-넘긴다(프레임워크 중립 별칭 `PROTO_BASE_PATH`도 같은 값).
+A prototype is served through a reverse proxy under
+`/proto/{project_id}/{slug}/`, not at the root. Hosting passes that prefix at
+build time through the `NEXT_PUBLIC_BASE_PATH` environment variable (the
+framework-neutral alias `PROTO_BASE_PATH` carries the same value).
 
-**Next.js 프로토타입은 `next.config.js`(또는 `.ts`/`.mjs`)에 아래를 반드시
-포함한다:**
+**A Next.js prototype MUST include the following in `next.config.js` (or
+`.ts`/`.mjs`):**
 
 ```js
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
 const nextConfig = {
   basePath,
-  // 프리픽스가 붙은 자산 URL을 그대로 쓰게 한다. basePath만으로도 _next/ 자산은
-  // 덮이지만, 명시해 두면 의도가 드러난다.
+  // Keep asset URLs prefixed. basePath alone already covers _next/ assets,
+  // but stating it makes the intent visible.
   assetPrefix: basePath || undefined,
-  // 프록시와 같은 방향으로 정규화한다. 아래 "trailingSlash" 절 참조 —
-  // 빼면 리다이렉트 무한 루프(ERR_TOO_MANY_REDIRECTS)가 난다.
+  // Normalize in the same direction as the proxy. See the "trailingSlash"
+  // section below — omit it and you get an infinite redirect loop
+  // (ERR_TOO_MANY_REDIRECTS).
   trailingSlash: true,
 };
 
 export default nextConfig;
 ```
 
-`basePath`를 빼면 **빌드 산출물의 자산 URL이 루트로 굳는다** — Next.js는 이 값을
-런타임이 아니라 빌드 시점에 인라인하므로, 배포 후에는 고칠 수 없고 화면이
-`/_next/static/...` 404로 깨진다. 프리픽스가 없는 환경(로컬 단독 실행)에서는
-환경변수가 없어 `""`가 되므로 그대로 동작한다.
+Leave `basePath` out and **the build bakes root-relative asset URLs** — Next.js
+inlines this value at build time, not at runtime, so it cannot be fixed after
+deployment and the screen breaks with `/_next/static/...` 404s. In an
+environment with no prefix (running locally on its own) the variable is absent,
+the value is `""`, and everything still works.
 
-**하드코딩 금지.** 프리픽스를 `next.config.js`에 문자열로 박지 말고 위처럼
-환경변수에서 읽는다 — slug가 바뀌면 값도 바뀐다.
+**Never hardcode it.** Do not write the prefix into `next.config.js` as a
+string; read it from the environment as above — the value changes when the slug
+does.
 
-**경로를 직접 쓸 때:** `<Link href="/about">`이나 `router.push("/about")`는
-Next.js가 `basePath`를 자동으로 붙이므로 그대로 둔다. 반면 `fetch("/api/...")`,
-`<img src="/logo.png">`처럼 프레임워크를 거치지 않는 참조는 자동 처리되지 않으니,
-`` `${basePath}/...` `` 형태로 조립하거나 Next.js의 `<Image>`를 쓴다.
+**When you write paths yourself:** `<Link href="/about">` and
+`router.push("/about")` get `basePath` prepended by Next.js, so leave them
+alone. References that bypass the framework — `fetch("/api/...")`,
+`<img src="/logo.png">` — are not handled for you, so compose them as
+`` `${basePath}/...` `` or use Next.js's `<Image>`.
 
-**Next.js가 아닌 경우** (Vite, CRA 등): 같은 값을 `PROTO_BASE_PATH`로 받는다.
-Vite는 `base`, CRA는 `PUBLIC_URL`이 대응하는 설정이다.
+**If it is not Next.js** (Vite, CRA, …): take the same value from
+`PROTO_BASE_PATH`. The corresponding settings are `base` for Vite and
+`PUBLIC_URL` for CRA.
 
-## trailingSlash: true — 빼면 리다이렉트 무한 루프가 난다
+## `trailingSlash: true` — omit it and you get an infinite redirect loop
 
-`basePath`와 **같은 비중으로 필수다.** 빠뜨리면 화면이 아예 열리지 않는다:
+This is **as mandatory as `basePath`**. Miss it and the screen never opens at
+all:
 
 ```
 This page isn't working
@@ -134,36 +171,40 @@ This page isn't working
 ERR_TOO_MANY_REDIRECTS
 ```
 
-**원인은 두 정규화가 서로 반대 방향이라는 것이다.** 프록시와 프로토타입이 같은
-URL을 두고 각자 "올바른 형태"로 되돌리려 하면서 서로의 결과를 무효화한다:
+**The cause is two normalizations pointing in opposite directions.** The proxy
+and the prototype each try to restore the same URL to their own "correct" form,
+undoing each other's result:
 
-| 주체 | 규칙 |
+| Party | Rule |
 |---|---|
-| Pathfinder 프록시 | 슬래시 **없음 → 있음** (`/proto/{pid}/{slug}` → `/proto/{pid}/{slug}/`) |
-| Next.js 기본값(`trailingSlash: false`) | 슬래시 **있음 → 없음** |
+| Pathfinder proxy | slash **absent → present** (`/proto/{pid}/{slug}` → `/proto/{pid}/{slug}/`) |
+| Next.js default (`trailingSlash: false`) | slash **present → absent** |
 
-실측한 순환(프록시 코드로 재현):
+The measured cycle (reproduced against the proxy code):
 
 ```
-브라우저  /api/proto/p1/demo/
-  → 프로토타입이 308 → /api/proto/p1/demo      (Next가 슬래시 제거)
-브라우저  /api/proto/p1/demo
-  → 프록시가 307   → /api/proto/p1/demo/       (프록시가 슬래시 추가)
-  → 무한 반복
+browser   /api/proto/p1/demo/
+  → prototype 308 → /api/proto/p1/demo      (Next strips the slash)
+browser   /api/proto/p1/demo
+  → proxy 307     → /api/proto/p1/demo/     (proxy adds the slash)
+  → repeat forever
 ```
 
-**프록시 쪽을 바꿀 수는 없다.** 프록시가 슬래시를 붙이는 이유는 상대 경로 자산
-참조다 — 슬래시 없는 `.../{slug}`에서 브라우저는 `href="styles.css"`를
-`.../{pid}/`(slug가 빠진 경로) 기준으로 풀어 모든 자산이 502가 된다. 슬래시를
-붙여야 문서의 base가 `.../{slug}/`가 되어 상대 참조가 프로토타입 안에 떨어진다.
+**The proxy side cannot change.** It adds the slash because of relative asset
+references: without the slash, at `.../{slug}` the browser resolves
+`href="styles.css"` against `.../{pid}/` (the slug is gone) and every asset
+502s. With the slash, the document's base becomes `.../{slug}/` and relative
+references land inside the prototype.
 
-그래서 **맞추는 쪽은 프로토타입이다.** `trailingSlash: true`를 넣으면 Next도
-프록시와 같은 방향(슬래시 있는 형태)으로 정규화하므로 순환이 생기지 않는다.
+**So the prototype is the side that adapts.** With `trailingSlash: true`, Next
+normalizes in the same direction as the proxy (the slash-present form) and no
+cycle can form.
 
-`basePath`처럼 빌드 시점에 굳는 설정이므로, 빠뜨린 프로토타입은 **재빌드해야
-고쳐진다** — 배포 후에는 손댈 수 없다.
+Like `basePath`, this setting is baked in at build time, so a prototype that
+missed it **is only fixed by rebuilding** — it cannot be patched after
+deployment.
 
-**Next.js가 아닌 경우:** 같은 성질의 설정을 찾아 슬래시 있는 형태로 맞춘다. 정적
-서버(`serve`, `http-server` 등)는 대개 디렉토리 URL을 그대로 다루므로 별도 설정이
-필요 없지만, SPA 라우터가 자체적으로 URL을 정규화한다면 슬래시를 **제거하지 않도록**
-설정한다.
+**If it is not Next.js:** find the equivalent setting and align it to the
+slash-present form. Static servers (`serve`, `http-server`, …) usually treat
+directory URLs as-is and need no configuration, but if an SPA router normalizes
+URLs itself, configure it **not to strip** the trailing slash.

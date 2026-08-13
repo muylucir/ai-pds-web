@@ -74,25 +74,32 @@ def test_korean_workspace_rules_still_carry_the_korean_directive():
 # ---- ② 공유 CLAUDE_CONFIG_DIR (이 결함의 주 원인) ----
 
 
-def test_shared_config_dir_claude_md_is_language_neutral():
+@pytest.mark.parametrize("config_dir", ["discovery-config", "proto-config"])
+def test_shared_config_dir_claude_md_is_language_neutral(config_dir):
     """**이 결함의 주 원인이었다.**
 
-    discovery-config/CLAUDE.md는 setting_sources의 "user" 레벨이라 전 프로젝트가
-    공유한다 — 프로젝트별 언어를 담을 수 없다. 스펙 §3은 여기서 언어 *지시 한
-    줄*을 지웠지만, 문서 전문이 한국어 산문으로 남아 있었다. 모델에게는 그
-    자체가 언어 신호다: 영어 프로젝트의 에이전트가 매 턴 1935자의 한국어를
-    읽으면서 워크스페이스의 "conduct all conversation in English"와 경쟁했다.
+    두 디렉토리 모두 setting_sources의 "user" 레벨이라 전 프로젝트가 공유한다 —
+    프로젝트별 언어를 담을 수 없다. 스펙 §3은 여기서 언어 *지시 한 줄*을
+    지웠지만, 문서 전문이 한국어 산문으로 남아 있었다. 모델에게는 그 자체가
+    언어 신호다: 영어 프로젝트의 에이전트가 매 턴 1935자의 한국어를 읽으면서
+    워크스페이스의 "conduct all conversation in English"와 경쟁했다.
 
     지시 유무가 아니라 글자를 보는 이유가 이것이다. 이 파일을 한국어로 되돌리는
     수정은 이 테스트를 통과할 수 없다.
+
+    **proto-config가 이 단정에 늦게 들어왔다(2026-08-13).** discovery만
+    검사하던 동안 proto-config/CLAUDE.md는 5,283자 중 1,807자가 한글인 상태로
+    남아 있었다 — 같은 구조, 같은 실패 경로인데 한쪽만 지키면 다른 쪽은 조용히
+    되돌아간다. 빌드 에이전트의 프로젝트 언어는 proto/prompts.py(두 언어 완본)와
+    워크스페이스 CLAUDE.md로 오고, 그 둘만이 프로젝트별로 달라질 수 있다.
     """
-    path = REPO / "discovery-config" / "CLAUDE.md"
+    path = REPO / config_dir / "CLAUDE.md"
     if not path.is_file():
-        pytest.skip("discovery-config/CLAUDE.md not present")
+        pytest.skip(f"{config_dir}/CLAUDE.md not present")
     text = path.read_text(encoding="utf-8")
     assert not hangul(text), (
-        "공유 config dir의 CLAUDE.md는 전 프로젝트가 읽으므로 언어 중립이어야 "
-        f"한다. 한글 {len(hangul(text))}자 발견: {hangul(text)[:12]}")
+        f"공유 config dir({config_dir})의 CLAUDE.md는 전 프로젝트가 읽으므로 "
+        f"언어 중립이어야 한다. 한글 {len(hangul(text))}자 발견: {hangul(text)[:12]}")
 
 
 # ---- ③ MCP 도구 설명·반환 문자열 (모델이 읽는 프롬프트) ----

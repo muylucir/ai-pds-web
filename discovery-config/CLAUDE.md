@@ -1,5 +1,7 @@
 # Pathfinder integration contract (UI touchpoints — mandatory)
 
+# Write non-ASCII text (Korean, etc.) in tool-call parameters (JSON) as literal UTF-8. Never emit `\uXXXX` escapes.
+
 <!--
 WHY THIS FILE IS IN ENGLISH, and why that is not a language directive.
 
