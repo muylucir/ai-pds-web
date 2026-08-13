@@ -56,6 +56,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 
 import anyio
@@ -122,6 +123,12 @@ def script_from(scripted: dict) -> list:
     return msgs
 
 
+@dataclass
+class _PermissionContext:
+    """실물 ToolPermissionContext의 최소 대역 — 드라이버가 읽는 필드만 둔다."""
+    tool_use_id: str | None = None
+
+
 class AskingSdkClient(FakeSdkClient):
     """Drives the driver's `can_use_tool` callback the way the real SDK does.
 
@@ -157,9 +164,13 @@ class AskingSdkClient(FakeSdkClient):
     """
 
     def __init__(self, can_use_tool, *, sdk_questions=None, tail=None,
-                 preface=None, result_with_question=False):
+                 preface=None, result_with_question=False,
+                 tool_use_id="toolu_fake_1"):
         super().__init__(tail if tail is not None else [ResultMessage()])
         self._can_use_tool = can_use_tool
+        #: 실물 SDK가 컨텍스트로 주는 tool_use_id. 답변 레코드의 키이고, 복원이
+        #: 트랜스크립트의 tool_result와 조인하는 값이다.
+        self.tool_use_id = tool_use_id
         self._sdk_questions = (DEFAULT_SDK_QUESTIONS if sdk_questions is None
                                else sdk_questions)
         if preface is None:
@@ -264,7 +275,13 @@ class AskingSdkClient(FakeSdkClient):
             # messages and the permission request land in the same tick exactly
             # as the CLI's read loop delivers them.
             self._ask_task = asyncio.ensure_future(self._can_use_tool(
-                "AskUserQuestion", {"questions": self._sdk_questions}, None))
+                "AskUserQuestion", {"questions": self._sdk_questions},
+                # 실물 SDK는 ToolPermissionContext를 넘기고 그 안의
+                # tool_use_id는 비어 있지 않음이 와이어 프로토콜 보장이다
+                # (claude_agent_sdk/types.py의 docstring). 드라이버가 답변
+                # 레코드를 그 값으로 키하므로(agent/answer_store.py) None을
+                # 넘기던 종전 fake로는 그 경로가 아예 돌지 않았다.
+                _PermissionContext(tool_use_id=self.tool_use_id)))
             self._ask_task.add_done_callback(self._on_permission_result)
             self._produce()
         # Awaiting the stream directly is what parks an anyio receiver — the

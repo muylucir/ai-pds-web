@@ -390,6 +390,7 @@ export const en: Record<keyof typeof ko, string> = {
   "chat.needsAnswerSuffix": " needs your answers",
   "chat.goAnswer": "Go answer the questions →",
   "chat.answeredSuffix": " answered",
+  "chat.questionCountSuffix": " questions",
   "chat.submittedNote": "Submitted · audit.md Entry 3 · ask in chat to change it",
   "doc.cancel": "Cancel",
   "doc.submitRevision": "Submit revision request",

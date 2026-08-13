@@ -64,8 +64,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, AsyncIterator, Callable
 
 from pathfinder.agent import prompts
+from pathfinder.agent.answer_store import save_answers
 from pathfinder.agent.pending_store import clear_pending, load_pending, save_pending
-from pathfinder.agent.questions_payload import question_file_from_sdk
+from pathfinder.agent.questions_payload import (normalize_sdk_questions,
+                                                 question_file_from_sdk)
 from pathfinder.agent.session_store import DiscoverySessionStore
 from pathfinder.agent.tools import build_tools
 from pathfinder.agent.workspace_rules import place_rules
@@ -798,7 +800,18 @@ class ClaudeDriver:
         if tool_name != "AskUserQuestion":
             return PermissionResultAllow(updated_input=input_data)
         import uuid
-        sdk_questions = input_data.get("questions", [])
+        # 문자열로 온 payload를 여기서 리스트로 편다 — 정규화 없이 넘기면
+        # question_file_from_sdk가 문자열을 문자 단위로 훑다가 AttributeError로
+        # 터지고, 그 예외는 이 콜백 밖으로 새어 턴을 죽인다. 관측된 거절
+        # 3건은 CLI가 이 콜백 **전에** 막은 것이라 여기서 살아나지 않는다
+        # (normalize_sdk_questions의 docstring에 근거를 적었다).
+        sdk_questions = normalize_sdk_questions(input_data.get("questions"))
+        # 복원 조인 키. SDK가 이 콜백에 tool_use_id를 주고(비어 있지 않음이 와이어
+        # 프로토콜 보장) 트랜스크립트의 tool_result도 같은 id를 들고 있으므로,
+        # 답변 레코드를 이것으로 키하면 복원이 순서·타임스탬프 추측 없이 정확히
+        # 조인된다(agent/answer_store.py의 헤더 참조). getattr로 읽는 것은 이
+        # 콜백을 직접 부르는 테스트 더블이 컨텍스트를 축약해 넘길 수 있기 때문이다.
+        tool_use_id = getattr(context, "tool_use_id", None) or ""
         # question_file_from_sdk raises ValueError on unusable input (e.g. a
         # question with zero options) -- deny with a message the model can
         # read and retry from, instead of letting the exception escape.
@@ -846,6 +859,10 @@ class ClaudeDriver:
                     v, q.get("options", []))
         finally:
             self._clear_pending_state()
+        # 복원용 레코드. **updated_input을 돌려주기 전에** 쓴다 — 이 반환으로
+        # 턴이 재개되고 곧 다음 도구가 돌기 시작하므로, 뒤에 두면 실패했을 때
+        # 어느 라운드의 기록이 빠졌는지 로그로도 짚기 어려워진다.
+        await self._save_answers_quietly(tool_use_id, iid, qfile, answers)
         return PermissionResultAllow(updated_input={
             "questions": sdk_questions,
             "answers": sdk_answers,
@@ -877,6 +894,27 @@ class ClaudeDriver:
                                sdk_questions=sdk_questions, session_id=session_id)
         except Exception:
             _log.exception("pending-question S3 persist failed")
+
+    async def _save_answers_quietly(self, tool_use_id: str, iid: str,
+                                    qfile: dict, answers: dict) -> None:
+        """제출된 답변을 S3에 기록한다. 절대 턴을 실패시키지 않는다.
+
+        pending 미러와 같은 판단이다 — 이 레코드는 복원 편의이고, S3 딸꾹질
+        때문에 사용자가 방금 답한 턴이 죽는 것이 더 나쁘다. 레코드가 없으면
+        복원은 구 세션과 같은 경로(CLI 산문 문구)로 떨어진다.
+
+        tool_use_id가 없으면 건너뛴다: 그 값이 복원 조인 키이므로, 없이 쓴
+        레코드는 어느 라운드의 것인지 알 수 없어 읽는 쪽이 쓸 수 없다.
+        """
+        if not tool_use_id:
+            _log.warning("no tool_use_id for answer record — skipped")
+            return
+        try:
+            await save_answers(self._s3, tool_use_id=tool_use_id,
+                               interrupt_id=iid, questions=qfile,
+                               answers={str(k): str(v) for k, v in answers.items()})
+        except Exception:
+            _log.exception("answer record S3 persist failed")
 
     async def _clear_pending_quietly(self) -> None:
         try:

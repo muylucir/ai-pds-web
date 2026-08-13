@@ -6,7 +6,7 @@ import { streamEvents, streamAnswers } from "@/lib/api/sse";
 import { getPending, getHistory, interruptTurn } from "@/lib/api/client";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
-import type { AgentEvent, HistoryItem, QuestionsPayload, StagePayload, DocumentPayload } from "@/lib/api/types";
+import type { AgentEvent, HistoryItem, QuestionFile, QuestionsPayload, StagePayload, DocumentPayload } from "@/lib/api/types";
 import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
 
 // This is a NEW hook cloned+extended from useTurnStream for the Task 11
@@ -26,6 +26,11 @@ export interface HistoryCardItem {
   id: string;
   role: "history-card";
   name: string | null;
+  // 그 라운드에서 실제로 물은 질문들(GET /history의 HistoryItem.questions).
+  // 트랜스크립트의 tool_use.input에 구조화된 채로 남아 있어 복원할 수 있다 —
+  // 종전에는 이것을 버려서 카드가 "질문 제시됨" 한 줄뿐이었다. 여전히
+  // **읽기 전용**이다: 라이브 폼(QuestionCardSlot)이 아니다.
+  file?: QuestionFile | null;
 }
 export type ChatItem = UserItem | AiItem | HistoryCardItem;
 
@@ -106,12 +111,17 @@ function isDocPath(path: string): boolean {
 }
 
 function historyItemToChatItem(it: HistoryItem): ChatItem {
-  if (it.role === "card") return { id: nextId(), role: "history-card", name: it.name };
-  // answers를 그대로 옮긴다 — ChatTimeline이 UI 언어로 문구를 만드는 데 쓴다.
-  // 여기서 버리면 백엔드의 한국어 폴백 문구가 영어 UI에 그대로 뜬다.
+  if (it.role === "card") {
+    return { id: nextId(), role: "history-card", name: it.name,
+             file: it.questions ?? null };
+  }
+  // answers와 questions를 그대로 옮긴다 — ChatTimeline이 UI 언어로 문구를
+  // 만드는 데 쓴다. 여기서 버리면 백엔드의 한국어 폴백 문구가 영어 UI에 그대로
+  // 뜨고, questions를 버리면 라이브와 같은 answerSummary를 부를 수 없어
+  // "1: A" 나열로 떨어진다.
   if (it.role === "user") {
     return { id: nextId(), role: "user", text: it.text ?? "",
-             answers: it.answers ?? null };
+             answers: it.answers ?? null, questions: it.questions ?? null };
   }
   return {
     id: nextId(),

@@ -23,7 +23,8 @@ import logging
 from pathlib import PurePosixPath
 from typing import Any, AsyncIterator, Callable
 
-from pathfinder.agent.questions_payload import question_file_from_sdk
+from pathfinder.agent.questions_payload import (normalize_sdk_questions,
+                                                 question_file_from_sdk)
 from pathfinder.models import AgentEvent
 
 _log = logging.getLogger(__name__)
@@ -540,7 +541,9 @@ class PrototypeBuilder:
         if tool_name != "AskUserQuestion":
             return PermissionResultAllow(updated_input=input_data)
         import json as _json, uuid
-        sdk_questions = input_data.get("questions", [])
+        # 문자열로 온 payload 정규화 — claude_driver와 같은 이유이고 같은
+        # 헬퍼다(그쪽 주석과 normalize_sdk_questions의 docstring 참고).
+        sdk_questions = normalize_sdk_questions(input_data.get("questions"))
         # question_file_from_sdk raises ValueError on unusable input (e.g. a
         # question with zero options) -- mirror ask_questions in tools.py:
         # deny with a message the model can read and retry from, instead of

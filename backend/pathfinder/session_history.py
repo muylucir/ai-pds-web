@@ -30,6 +30,9 @@ import asyncio
 import json
 import logging
 import re
+from pathfinder.agent.answer_store import load_answers
+from pathfinder.agent.questions_payload import (normalize_sdk_questions,
+                                                question_file_from_sdk)
 from pathfinder.agent.session_store import load_transcript
 from pathfinder.models import HistoryItem, HistoryTraceEntry
 from pathfinder.parsers.redaction import redact_credentials
@@ -190,7 +193,42 @@ def _cli_answer_summary(content: object) -> tuple[str, dict[str, str] | None]:
     return _answer_fallback_text(body, answers), answers
 
 
-def transform_cli_transcript(raw: list[dict]) -> list[HistoryItem]:
+def _is_error_result(block: dict) -> bool:
+    """이 tool_result가 실패인가.
+
+    CLI가 스키마 검증으로 막은 라운드는 `is_error: true`와 `<tool_use_error>`
+    본문으로 온다(실측: 모델이 `questions`를 JSON 문자열로 넘긴 3건). 그 라운드는
+    **사용자에게 질문이 뜨지도 않았으므로** 복원에서 카드를 만들면 아무도 보지
+    않은 질문 카드가 유령처럼 남는다. 모델은 그 에러를 읽고 다음 턴에 제대로
+    재시도하므로, 화면에는 재시도된 라운드 하나만 있어야 맞다.
+    """
+    if block.get("is_error") is True:
+        return True
+    content = block.get("content")
+    text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+    return "<tool_use_error>" in text
+
+
+def _sdk_questions_to_file(raw_input: object) -> dict | None:
+    """tool_use.input → 프론트 QuestionFile. 실패하면 None(복원을 막지 않는다).
+
+    라이브에서 카드를 만든 그 함수를 그대로 쓴다 — letter 부여와 Other 옵션
+    추가가 사용자가 실제로 본 것과 같아야 하기 때문이다. 옵션이 하나도 없는
+    질문은 ValueError이고, 그때는 카드 이름만 없는 종전 표시로 강등한다.
+    """
+    if not isinstance(raw_input, dict):
+        return None
+    questions = normalize_sdk_questions(raw_input.get("questions"))
+    if not questions:
+        return None
+    try:
+        return question_file_from_sdk(questions, name="discovery-questions")
+    except ValueError:
+        return None
+
+
+def transform_cli_transcript(raw: list[dict], *,
+                             answer_records: dict[str, dict] | None = None) -> list[HistoryItem]:
     """CLI 트랜스크립트(Anthropic Messages 모양) → 채팅 히스토리.
 
     라이브 스트림(claude_driver._translate)과 같은 표현을 만드는 것이 목표다 —
@@ -212,9 +250,19 @@ def transform_cli_transcript(raw: list[dict]) -> list[HistoryItem]:
     말이 아니라 도구 실행 결과이고, 라이브는 그 줄을 아무것도 렌더하지 않는다 —
     경계로 취급하면 도구 호출 하나하나가 다시 턴이 되어 원래 문제로 돌아간다.
     """
+    records = answer_records or {}
     # 1패스: AskUserQuestion tool_use id 수집. 실제 트랜스크립트에는 Write/Read 등
     # 다른 tool_result가 섞여 있어, 답변 결과만 골라내려면 id 매칭이 필수다.
+    #
+    # 같은 패스에서 두 가지를 더 모은다:
+    #   ask_files   id → 그 라운드의 질문 payload. tool_use.input에 SDK 원형이
+    #               구조화된 채로 남아 있으므로(산문이 아니다) 카드가 "무엇을
+    #               물었는지"를 되살릴 수 있다. 종전에는 이것을 버리고 카드를
+    #               name=None으로 강등했다.
+    #   errored     CLI가 막은 라운드. 카드를 만들지 않는다(_is_error_result).
     ask_ids: set[str] = set()
+    ask_files: dict[str, dict] = {}
+    errored: set[str] = set()
     for m in raw:
         msg = m.get("message")
         if not isinstance(msg, dict):
@@ -223,9 +271,17 @@ def transform_cli_transcript(raw: list[dict]) -> list[HistoryItem]:
         if not isinstance(content, list):
             continue
         for block in content:
-            if (isinstance(block, dict) and block.get("type") == "tool_use"
+            if not isinstance(block, dict):
+                continue
+            if (block.get("type") == "tool_use"
                     and block.get("name") == "AskUserQuestion"):
-                ask_ids.add(str(block.get("id", "")))
+                tid = str(block.get("id", ""))
+                ask_ids.add(tid)
+                qfile = _sdk_questions_to_file(block.get("input"))
+                if qfile is not None:
+                    ask_files[tid] = qfile
+            elif block.get("type") == "tool_result" and _is_error_result(block):
+                errored.add(str(block.get("tool_use_id", "")))
 
     items: list[HistoryItem] = []
     # 진행 중인 어시스턴트 턴. 실제 사용자 발화를 만나거나 트랜스크립트가 끝날
@@ -284,11 +340,20 @@ def transform_cli_transcript(raw: list[dict]) -> list[HistoryItem]:
             elif btype == "tool_use":
                 name = str(block.get("name", ""))
                 if name == "AskUserQuestion":
-                    # 라이브에서는 질문 카드였다. 카드에 붙일 이름은 payload
-                    # 빌더가 정하는 값과 같게 둔다(builder/driver 모두
-                    # name="...-questions"로 만든다) — 없으면 None으로 강등.
-                    cards.append(HistoryItem(role="card", card="questions",
-                                             name=None))
+                    # 라이브에서는 질문 카드였다. 질문 payload를 함께 실어
+                    # 보내므로 카드가 무엇을 물었는지 보여줄 수 있다.
+                    #
+                    # CLI가 막은 라운드는 카드를 만들지 않는다 — 사용자에게 뜬
+                    # 적이 없는 질문이고, 모델이 다음 턴에 재시도한 라운드가
+                    # 따로 카드를 만든다(그것이 사용자가 실제로 본 것이다).
+                    tid = str(block.get("id", ""))
+                    if tid in errored:
+                        continue
+                    qfile = ask_files.get(tid)
+                    cards.append(HistoryItem(
+                        role="card", card="questions",
+                        name=(qfile or {}).get("name"),
+                        questions=qfile))
                 elif name in _CLI_FILE_TOOLS:
                     inp = block.get("input")
                     path = ""
@@ -301,14 +366,33 @@ def transform_cli_transcript(raw: list[dict]) -> list[HistoryItem]:
                     # status 이벤트(도구 이름)와 같은 표현.
                     trace.append(HistoryTraceEntry(kind="status", text=name))
             elif btype == "tool_result":
-                if str(block.get("tool_use_id", "")) in ask_ids:
+                tid = str(block.get("tool_use_id", ""))
+                if tid in ask_ids and tid not in errored:
                     # 사용자가 실제로 답한 것 — 진행 중인 어시스턴트 턴을 먼저
                     # 닫아야 순서가 맞는다(질문 카드 다음에 답변 말풍선).
                     flush_turn()
-                    text, answers = _cli_answer_summary(block.get("content"))
-                    items.append(HistoryItem(role="user",
-                                             text=redact_credentials(text),
-                                             answers=answers))
+                    # 답변 레코드가 있으면 그것이 진실이다(agent/answer_store.py):
+                    # 우리가 받은 그대로의 문항번호 → letter/부연 맵과 그 순간의
+                    # 질문 payload. 그러면 프론트가 라이브와 **같은 함수**로 같은
+                    # 문구를 만든다. 레코드가 없는 세션(이 기능 이전)만 CLI가 쓴
+                    # 영어 문장으로 강등된다 — 그것을 되파싱하지 않는 이유는
+                    # 질문 텍스트에 따옴표가 들어가면 원리적으로 모호해지기
+                    # 때문이다(실측 사례가 있다).
+                    rec = records.get(tid)
+                    if rec is not None:
+                        answers = {str(k): str(v) for k, v in rec["answers"].items()}
+                        items.append(HistoryItem(
+                            role="user",
+                            text=redact_credentials(
+                                _answer_fallback_text("", answers)),
+                            answers=answers,
+                            questions=rec.get("questions")))
+                    else:
+                        text, answers = _cli_answer_summary(block.get("content"))
+                        items.append(HistoryItem(role="user",
+                                                 text=redact_credentials(text),
+                                                 answers=answers,
+                                                 questions=ask_files.get(tid)))
             # thinking/redacted_thinking 등은 생략 — 복원해 보여줄 내용이 아니다.
 
         if role == "assistant":
@@ -355,7 +439,11 @@ async def list_history(s3: S3StoreLike | None, session_id: str, *,
         try:
             cli_raw = await load_transcript(project_s3, session_id)
             if cli_raw:
-                return transform_cli_transcript(cli_raw)
+                # 답변 레코드는 트랜스크립트와 같은 프로젝트 프리픽스에 있다.
+                # 실패는 load_answers가 빈 dict로 강등하므로 히스토리는 레코드
+                # 없는 구 세션과 같은 경로로 복원된다.
+                records = await load_answers(project_s3)
+                return transform_cli_transcript(cli_raw, answer_records=records)
         except Exception:
             # strands 폴백을 여전히 시도한다 — 한쪽 포맷의 실패가 다른 쪽에서
             # 복원 가능한 히스토리를 가리면 안 된다.

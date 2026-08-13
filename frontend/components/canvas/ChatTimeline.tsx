@@ -8,6 +8,8 @@ import { UserMessage } from "./UserMessage";
 import { AiMessage } from "./AiMessage";
 import { QuestionCardSlot } from "./QuestionCardSlot";
 import { ArtifactCard } from "./ArtifactCard";
+import { HistoryQuestionsCard } from "./HistoryQuestionsCard";
+import { answerSummary } from "@/lib/answerSummary";
 
 // The canvas-era page (useTurnStream) and the Task 11 workspace page
 // (useWorkspaceStream) both render through this ONE component, each with its
@@ -94,14 +96,23 @@ export function ChatTimeline({
         ) : (
           items.map((item) => {
             if (item.role === "user") {
-              // answers가 있으면 UI 언어로 문구를 다시 만든다 — 백엔드의 text는
-              // 이 필드를 모르는 구 프론트를 위한 한국어 폴백일 뿐이다.
-              const text = item.answers
-                ? `${t("chat.answersSubmitted")} — ${Object.entries(item.answers)
-                    .sort(([a], [b]) => a.localeCompare(b))
-                    .map(([k, v]) => `${k}: ${v}`)
-                    .join(" · ")}`
-                : item.text;
+              // 복원된 답변 제출 턴. 세 단계로 내려간다:
+              //
+              //  1) answers + questions → 라이브가 쓰는 **그 함수**로 만든다.
+              //     문항 번호·보기 letter·보기 텍스트가 그대로 나오므로
+              //     스크롤백이 방금 본 화면과 같다. 이 조합은 답변 레코드가
+              //     있는 세션에서 온다(backend/agent/answer_store.py).
+              //  2) answers만 → "1: A" 나열. payload가 없어 보기 텍스트를
+              //     펼칠 수 없다(구 Strands 트랜스크립트).
+              //  3) 둘 다 없으면 백엔드 text — CLI가 쓴 문장이거나 자유 서술.
+              const text = item.answers && item.questions
+                ? answerSummary(item.questions, item.answers, t)
+                : item.answers
+                  ? `${t("chat.answersSubmitted")} — ${Object.entries(item.answers)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([k, v]) => `${k}: ${v}`)
+                      .join(" · ")}`
+                  : item.text;
               return <UserMessage key={item.id} text={text} />;
             }
             if (item.role === "ai") return <AiMessage key={item.id} item={item} />;
@@ -109,11 +120,10 @@ export function ChatTimeline({
               // A questions file presented in a PAST turn (Task 5's history
               // restore) — a static summary marker, never the live
               // interactive QuestionCardSlot form (mockup 04's ml-11 idiom).
+              // payload가 함께 복원되면 펼쳐서 질문·보기를 읽을 수 있다.
               return (
                 <div key={item.id} className="ml-11 max-w-[85%]">
-                  <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs text-violet-700">
-                    📋 {t("chat.questionsPresented")}{item.name ? ` — ${item.name}` : ""}
-                  </div>
+                  <HistoryQuestionsCard name={item.name} file={item.file} />
                 </div>
               );
             }

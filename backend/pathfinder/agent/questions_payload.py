@@ -162,6 +162,35 @@ def normalize_questions_payload(payload: Any, *, guess_other: bool = True) -> di
 #
 # builder._to_question_file에서 옮겨온 것이다. 두 경로가 한 함수로 수렴하면
 # is_other 중복 교정(normalize_questions_payload)이 프로토타입 빌드에도 적용된다.
+def normalize_sdk_questions(raw: object) -> list[dict]:
+    """AskUserQuestion의 `questions` 인자를 list[dict]로 정규화한다.
+
+    모델이 이 인자를 **직렬화된 JSON 문자열**로 넘기는 일이 있다(실측: 한
+    세션의 18라운드 중 3건). `_questions_file_name`이 Strands 경로에서 문서화한
+    그 shape 위험과 같은 것이고, 여기서 막지 않으면 question_file_from_sdk가
+    문자열을 문자 단위로 훑다가 AttributeError로 터진다 — 그 예외는 permission
+    콜백 밖으로 새어 턴을 죽인다.
+
+    ⚠️ **관측된 그 3건은 이 함수로 살아나지 않는다.** CLI가 우리 콜백을 부르기
+    **전에** 스키마 검증으로 거절했다(실측 근거: tool_use와 `InputValidationError`
+    tool_result가 같은 트랜스크립트 파일에 즉시 짝지어 있고, 백엔드 로그에는
+    그 시간대에 관련 경고가 한 줄도 없다). 모델은 그 에러를 읽고 다음 턴에
+    올바른 배열로 재시도하므로 사용자에게 질문이 유실되지는 않는다. 이 함수는
+    같은 shape가 콜백까지 도달하는 경로(SDK/CLI 버전 차이)에 대한 방어다.
+
+    리스트가 아니거나 파싱이 실패하면 빈 리스트 — 호출부는 옵션 없는 페이로드와
+    같은 경로(ValueError → 모델에게 거부 사유 반환)를 탄다.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [q for q in raw if isinstance(q, dict)]
+
+
 def question_file_from_sdk(sdk_questions: list[dict], *, name: str) -> dict:
     questions = []
     for i, q in enumerate(sdk_questions, start=1):

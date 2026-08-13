@@ -402,6 +402,7 @@ export const ko = {
   "chat.needsAnswerSuffix": "에 답변이 필요합니다",
   "chat.goAnswer": "질문 답변하러 가기 →",
   "chat.answeredSuffix": "개 답변 완료",
+  "chat.questionCountSuffix": "문항",
   "chat.submittedNote": "제출됨 · audit.md Entry 3 · 변경하려면 채팅으로 요청하세요",
   "doc.cancel": "취소",
   "doc.submitRevision": "수정 요청 제출",

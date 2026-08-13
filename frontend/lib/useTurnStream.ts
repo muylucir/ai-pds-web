@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
 import { streamEvents } from "@/lib/api/sse";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
-import type { AgentEvent } from "@/lib/api/types";
+import type { AgentEvent, QuestionFile } from "@/lib/api/types";
 
 // UI VIEW-STATE (not a backend contract): how streamed AgentEvent frames are
 // projected into the chat timeline. Backend contract types stay in
@@ -23,6 +23,10 @@ export interface UserItem {
   // 필드를 모르는 소비자를 위한 한국어 폴백이다. 라이브 턴에는 없다(그쪽은
   // answerSummary가 선택지 문자를 옵션 텍스트로 펼쳐 이미 만들어 둔다).
   answers?: Record<string, string> | null;
+  // answers와 짝인 질문 payload(GET /history의 HistoryItem.questions). 둘이 다
+  // 있으면 ChatTimeline이 라이브와 같은 answerSummary()를 불러 같은 문구를
+  // 만든다 — 없으면 answers를 "1: A" 식으로 나열하는 폴백으로 떨어진다.
+  questions?: QuestionFile | null;
 }
 export interface AiItem {
   id: string;

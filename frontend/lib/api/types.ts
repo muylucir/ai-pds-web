@@ -165,4 +165,8 @@ export interface HistoryItem {
   // 답변 제출 턴의 구조화된 답변. 있으면 프론트가 UI 언어로 문구를 만들고,
   // 없으면(자유 서술 답변, 또는 이 필드를 모르는 구 백엔드) text를 그대로 쓴다.
   answers?: Record<string, string> | null;
+  // 그 라운드의 질문 payload. answers와 함께 오면 라이브와 **같은**
+  // answerSummary()로 말풍선을 만든다(문항 번호·보기 letter·보기 텍스트가
+  // 여기서 나온다). card 항목에도 실려 "무엇을 물었는지"를 복원한다.
+  questions?: QuestionFile | null;
 }

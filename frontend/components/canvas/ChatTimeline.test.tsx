@@ -116,6 +116,40 @@ describe("ChatTimeline", () => {
     );
     expect(screen.getByText("📋 질문지 제시됨")).toBeInTheDocument();
   });
+
+  it("복원된 질문 payload가 있으면 문항 수를 보여주고 펼쳐서 질문·보기를 읽는다", async () => {
+    // 종전에는 "질문지 제시됨" 한 줄뿐이어서 스크롤백에서 무엇을 물었는지 알
+    // 수 없었다 — payload는 트랜스크립트의 tool_use.input에 구조화된 채로
+    // 남아 있는데 복원 코드가 버리고 있었다.
+    const items: ChatTimelineItem[] = [{
+      id: "h3", role: "history-card", name: "discovery-questions",
+      file: {
+        name: "discovery-questions", preamble: null, parse_ok: true,
+        raw_markdown: null,
+        questions: [{
+          number: 1, category: null, text: "무엇을 만드나요?", answer: null,
+          multi_select: false,
+          options: [
+            { letter: "A", text: "자동차 부품", is_other: false, recommended: false },
+            { letter: "X", text: "Other", is_other: true, recommended: false },
+          ],
+        }],
+      } as never,
+    }];
+    render(
+      <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />,
+    );
+    expect(screen.getByText(/1문항/)).toBeInTheDocument();
+    // 접힌 상태에서는 질문이 보이지 않는다(카드가 타임라인을 잡아먹지 않게).
+    expect(screen.queryByText(/무엇을 만드나요\?/)).toBeNull();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "펼치기" }));
+
+    expect(screen.getByText(/Q1\. 무엇을 만드나요\?/)).toBeInTheDocument();
+    expect(screen.getByText("A. 자동차 부품")).toBeInTheDocument();
+    // is_other는 자유 입력 자리표시자다 — 제시된 보기가 아니므로 나열하지 않는다.
+    expect(screen.queryByText(/X\. Other/)).toBeNull();
+  });
 });
 
 describe("ChatTimeline — stick-to-bottom", () => {
@@ -186,6 +220,53 @@ describe("답변 제출 말풍선", () => {
       </LocaleProvider>,
     );
     expect(screen.getByText(/답변 제출/)).toBeInTheDocument();
+  });
+
+  // 이 조합(answers + questions)이 답변 레코드가 있는 세션에서 온다. 종전에는
+  // 복원된 말풍선이 `답변 제출: Your questions have been answered: "질문"="라벨"`
+  // 한 줄이었다 — CLI가 쓴 영어 문장을 백엔드가 펼 수 없어 그대로 실어 보냈고,
+  // 문항 번호·보기 letter·보기 텍스트가 전부 사라졌다.
+  const questionFile = {
+    name: "discovery-questions",
+    preamble: null,
+    parse_ok: true,
+    raw_markdown: null,
+    questions: [
+      {
+        number: 1, category: "도메인", text: "무엇을 만드나요?", answer: null,
+        multi_select: false,
+        options: [
+          { letter: "A", text: "자동차 부품 — IATF 16949 환경", is_other: false, recommended: false },
+          { letter: "B", text: "가전", is_other: false, recommended: false },
+          { letter: "X", text: "Other", is_other: true, recommended: false },
+        ],
+      },
+      {
+        number: 2, category: "규모", text: "월 클레임 건수는?", answer: null,
+        multi_select: true,
+        options: [
+          { letter: "A", text: "10건 미만", is_other: false, recommended: false },
+          { letter: "B", text: "10~30건", is_other: false, recommended: false },
+        ],
+      },
+    ],
+  };
+
+  it("questions가 함께 오면 라이브와 같은 문구(질문 + 보기 텍스트)를 만든다", () => {
+    render(
+      <LocaleProvider locale="ko">
+        <Harness items={[{ ...answerItem, answers: { "1": "A", "2": "A,B" },
+                           questions: questionFile as never }]} />
+      </LocaleProvider>,
+    );
+    // 문항 번호와 질문 원문이 보인다.
+    expect(screen.getByText(/Q1\. 무엇을 만드나요\?/)).toBeInTheDocument();
+    // letter만이 아니라 보기 텍스트로 펼쳐진다.
+    expect(screen.getByText(/A\. 자동차 부품 — IATF 16949 환경/)).toBeInTheDocument();
+    // 복수선택은 고른 보기 모두.
+    expect(screen.getByText(/A\. 10건 미만, B\. 10~30건/)).toBeInTheDocument();
+    // 종전의 "1: A" 나열로 떨어지지 않는다.
+    expect(screen.queryByText(/1: A · 2: A,B/)).toBeNull();
   });
 
   it("answers가 없으면 백엔드의 text를 그대로 쓴다", () => {

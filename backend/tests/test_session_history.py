@@ -442,6 +442,108 @@ def test_cli_answer_tool_result_becomes_a_readable_user_bubble():
     assert users[0].text == "답변 제출 — 1: A · 2: B"
 
 
+#: SDK AskUserQuestion의 input 모양. 실제 트랜스크립트에서 옮겨온 것이다.
+_SDK_QUESTIONS = [
+    {"question": "무엇을 만드나요?", "header": "도메인", "multiSelect": False,
+     "options": [{"label": "자동차 부품", "description": "IATF 16949 환경"},
+                 {"label": "가전", "description": "소비자 제품"}]},
+    {"question": "월 클레임 건수는?", "header": "규모", "multiSelect": True,
+     "options": [{"label": "10건 미만"}, {"label": "10~30건"}]},
+]
+
+#: CLI가 AskUserQuestion 결과로 쓰는 **자기** 문장. 우리 접두사도 JSON도 아니다 —
+#: 이것을 되파싱하지 않는 것이 답변 레코드를 도입한 이유다.
+_CLI_ANSWER_SENTENCE = ('Your questions have been answered: '
+                        '"무엇을 만드나요?"="자동차 부품". '
+                        'You can now continue with these answers in mind.')
+
+
+def test_cli_answer_uses_the_answer_record_when_one_exists():
+    """레코드가 있으면 라이브와 같은 값으로 복원된다.
+
+    종전에는 CLI가 쓴 영어 문장을 그대로 `답변 제출: <문장>`으로 내보냈다 —
+    문항 번호·보기 letter·보기 텍스트가 전부 사라져서, 같은 대화가 새로고침
+    전후로 다르게 보였다. 레코드에는 우리가 받은 그대로의 답변 dict와 그 순간의
+    질문 payload가 있으므로 프론트가 answerSummary로 라이브와 같은 문구를 만든다.
+    """
+    raw = [
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "tu-1", "name": "AskUserQuestion",
+             "input": {"questions": _SDK_QUESTIONS}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "tu-1",
+             "content": _CLI_ANSWER_SENTENCE}]),
+    ]
+    records = {"tu-1": {"tool_use_id": "tu-1", "interrupt_id": "iid",
+                        "questions": {"name": "discovery-questions",
+                                      "questions": [{"number": 1}]},
+                        "answers": {"1": "A", "2": "A,B"}}}
+
+    items = transform_cli_transcript(raw, answer_records=records)
+
+    user = next(i for i in items if i.role == "user")
+    assert user.answers == {"1": "A", "2": "A,B"}
+    assert user.questions == records["tu-1"]["questions"]
+    # 영어 문장이 화면 문구로 새어나가지 않는다 — 프론트가 UI 언어로 다시 만든다.
+    assert "have been answered" not in (user.text or "")
+
+
+def test_cli_answer_falls_back_to_the_sentence_without_a_record():
+    """레코드 없는 세션(이 기능 이전)은 종전 동작을 유지한다 — 다만 그 라운드의
+    질문 payload는 트랜스크립트에서 복원되므로 카드가 무엇을 물었는지 말해준다."""
+    raw = [
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "tu-1", "name": "AskUserQuestion",
+             "input": {"questions": _SDK_QUESTIONS}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "tu-1",
+             "content": _CLI_ANSWER_SENTENCE}]),
+    ]
+    items = transform_cli_transcript(raw)
+
+    card = next(i for i in items if i.role == "card")
+    assert card.questions is not None
+    assert [q["text"] for q in card.questions["questions"]] == [
+        "무엇을 만드나요?", "월 클레임 건수는?"]
+    # 보기는 라이브와 같은 함수로 조립된다(letter + "라벨 — 설명" + Other 추가).
+    first = card.questions["questions"][0]["options"]
+    assert first[0]["letter"] == "A" and first[0]["text"] == "자동차 부품 — IATF 16949 환경"
+    assert first[-1]["is_other"] is True
+    user = next(i for i in items if i.role == "user")
+    assert user.answers is None and "have been answered" in (user.text or "")
+
+
+def test_cli_rejected_question_round_leaves_no_ghost_card():
+    """CLI가 스키마 검증으로 막은 라운드는 사용자에게 뜬 적이 없다.
+
+    실측: 모델이 `questions`를 JSON 문자열로 넘긴 3건이 `is_error: true`로
+    즉시 거절됐고, 모델은 다음 턴에 올바른 배열로 재시도했다. 거절된 라운드까지
+    카드를 만들면 아무도 보지 않은 질문 카드가 스크롤백에 남는다.
+    """
+    raw = [
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "bad", "name": "AskUserQuestion",
+             "input": {"questions": '[{"question": "..."}]'}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "bad", "is_error": True,
+             "content": "<tool_use_error>InputValidationError: ... "
+                        "`questions` type is expected as `array` but provided "
+                        "as `string`</tool_use_error>"}]),
+        _cli("assistant", "assistant", [
+            {"type": "tool_use", "id": "good", "name": "AskUserQuestion",
+             "input": {"questions": _SDK_QUESTIONS}}]),
+        _cli("user", "user", [
+            {"type": "tool_result", "tool_use_id": "good",
+             "content": _CLI_ANSWER_SENTENCE}]),
+    ]
+    items = transform_cli_transcript(raw)
+
+    cards = [i for i in items if i.role == "card"]
+    assert len(cards) == 1, [i.questions for i in cards]
+    # 거절된 라운드의 결과는 답변 말풍선도 만들지 않는다(답변이 아니다).
+    assert len([i for i in items if i.role == "user"]) == 1
+
+
 def _driver_session_key(project_id: str) -> dict:
     """드라이버가 미러링에 실제로 쓰는 세션 키.
 

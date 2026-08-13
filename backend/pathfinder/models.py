@@ -59,6 +59,10 @@ class HistoryItem(BaseModel):
     # 프론트가 UI 언어로 만든다 — 백엔드는 UI 언어를 모른다. JSON이 아닌 자유
     # 서술 답변은 dict로 펼 수 없어 None이고, 그때는 text만 쓴다.
     answers: dict[str, str] | None = None
+    # 그 라운드의 질문 payload(QuestionFile). 있으면 프론트가 라이브와 같은
+    # answerSummary()로 문구를 만든다 — 문항 번호·보기 letter·보기 텍스트가
+    # 여기서 나온다. role=="card"에도 실어 "무엇을 물었는지"를 복원한다.
+    questions: dict | None = None
 
 class AgentEvent(BaseModel):
     kind: Literal["message", "questions", "stage", "document",

@@ -110,6 +110,56 @@ async def test_persists_pending_questions_to_s3(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_persists_the_submitted_answers_as_a_record(tmp_path):
+    """복원이 CLI 산문에 의존하지 않게 하는 근거.
+
+    CLI가 트랜스크립트에 남기는 답변 결과는 자기가 만든 영어 문장이고
+    (`Your questions have been answered: "질문"="라벨"`), 우리 문항 번호·보기
+    letter가 거기에 없다. 그래서 답변이 도착한 순간의 정확한 값을 기록한다 —
+    승인 게이트에서 이미 같은 결정을 했다(08aaa85). 키는 tool_use_id이고, 그
+    값으로 복원이 트랜스크립트의 tool_result와 정확히 조인한다.
+    """
+    s3 = FakeS3Store()
+    d, _, cap = _driver(tmp_path, {"questions": True}, s3=s3)
+    events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+    iid = json.loads(next(e.payload for e in events if e.kind == "questions"))[
+        "interrupt_id"]
+
+    [ev async for ev in d.run_answers(iid, {"1": "A", "2": "B,C"},
+                                      {"session_id": "s-1"})]
+
+    key = f"answers/{cap['client'].tool_use_id}.json"
+    assert key in s3.blobs, list(s3.blobs)
+    saved = json.loads(s3.blobs[key])
+    assert saved["answers"] == {"1": "A", "2": "B,C"}
+    assert saved["interrupt_id"] == iid
+    # 질문 payload를 함께 남긴다 — 답변 값이 letter이므로 보기 텍스트로 펼치려면
+    # 그 순간의 payload가 필요하다.
+    assert saved["questions"]["questions"], saved["questions"]
+
+
+@pytest.mark.asyncio
+async def test_answer_record_failure_does_not_fail_the_turn(tmp_path):
+    """레코드는 복원 편의다 — S3 딸꾹질이 방금 답한 턴을 죽이면 더 나쁘다."""
+    class _PutBoom(FakeS3Store):
+        async def put(self, key, content):
+            if key.startswith("answers/"):
+                raise RuntimeError("s3 down")
+            return await super().put(key, content)
+
+    s3 = _PutBoom()
+    d, _, _ = _driver(tmp_path, {"questions": True}, s3=s3)
+    events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+    iid = json.loads(next(e.payload for e in events if e.kind == "questions"))[
+        "interrupt_id"]
+
+    later = [ev async for ev in d.run_answers(iid, {"1": "A"},
+                                              {"session_id": "s-1"})]
+
+    assert later and later[-1].kind == "done", [(e.kind, e.text) for e in later]
+
+
+@pytest.mark.asyncio
 async def test_the_question_turn_ends_so_answers_can_be_submitted(tmp_path):
     # 질문 턴은 questions 다음에 반드시 종결 이벤트로 끝나야 한다. 두 가지가
     # 여기에 걸려 있다: 프론트는 스트림이 열려 있는 동안 답변 제출을 거부하고
