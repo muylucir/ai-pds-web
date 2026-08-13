@@ -222,6 +222,30 @@ describe("BuildPanel", () => {
       expect(screen.getByText(/다크 모드/)).toBeInTheDocument();
     });
 
+    it("요약·남은 작업을 마크다운으로 렌더한다 — 원문 문법이 화면에 나오지 않는다", () => {
+      // 회귀: whitespace-pre-wrap 텍스트로 그려서 `- `·`**`·백틱이 그대로
+      // 보였다. 이 텍스트는 build_complete 도구의 인자이고 모델은 목록·강조를
+      // 쓴다(도구 스키마도 막지 않는다). 왼쪽 타임라인의 같은 에이전트 산문은
+      // 이미 마크다운으로 렌더되므로 한 화면에서 규약이 갈려 있었다.
+      mockStream({
+        buildComplete: {
+          summary: "**할 일 앱**을 만들었다\n\n- 목록 추가\n- `localStorage` 저장",
+          remaining: "- **다크 모드**",
+        },
+      });
+      const { container } = render(
+        <BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />,
+      );
+
+      // 강조·목록·인라인 코드가 요소로 존재한다.
+      expect(container.querySelector("strong")).toHaveTextContent("할 일 앱");
+      expect(container.querySelectorAll("li")).toHaveLength(3);   // 요약 2 + 남은 작업 1
+      expect(container.querySelector("code")).toHaveTextContent("localStorage");
+      // 마크다운 문법 문자가 화면 텍스트에 남아 있지 않다.
+      expect(screen.queryByText(/\*\*할 일 앱\*\*/)).toBeNull();
+      expect(screen.queryByText(/`localStorage`/)).toBeNull();
+    });
+
     it("남은 작업이 비어 있으면 그 줄을 그리지 않는다", () => {
       mockStream({ buildComplete: { summary: "완성", remaining: "" } });
       render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);

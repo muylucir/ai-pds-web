@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
 import { ChatInput } from "@/components/canvas/ChatInput";
 import { QuestionForm } from "@/components/questions/QuestionForm";
+import { Markdown } from "@/components/Markdown";
 import { closeSession, startHost } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import { usePrototypeStream } from "@/lib/usePrototypeStream";
@@ -175,15 +176,26 @@ export function BuildPanel({
               <div className="p-4 border-b border-slate-200">
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                   <p className="text-sm font-bold text-emerald-800">{t("proto.buildComplete")}</p>
-                  <p className="mt-2 text-sm text-slate-700 whitespace-pre-wrap">
-                    {buildComplete.summary}
-                  </p>
+                  {/* 마크다운으로 그린다. 이 텍스트는 build_complete 도구의
+                      summary/remaining 인자이고, 모델은 여기에 목록·강조·
+                      인라인 코드를 쓴다 — 도구 스키마도 그걸 막지 않는다.
+                      whitespace-pre-wrap으로 두면 `- `·`**`·백틱이 화면에
+                      원문 그대로 나온다. 같은 에이전트의 산문이 왼쪽
+                      타임라인에서는 이미 마크다운으로 렌더되므로(AiMessage),
+                      한 화면 안에서 같은 텍스트의 표시 규약이 갈리고 있었다.
+                      공용 Markdown이 raw HTML을 렌더하지 않는 것도 그대로
+                      유지된다. */}
+                  <Markdown
+                    text={buildComplete.summary}
+                    className="mt-2 text-slate-700 prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5"
+                  />
                   {buildComplete.remaining && (
                     <>
                       <p className="mt-3 text-xs font-bold text-slate-500">{t("proto.remainingWork")}</p>
-                      <p className="mt-1 text-sm text-slate-600 whitespace-pre-wrap">
-                        {buildComplete.remaining}
-                      </p>
+                      <Markdown
+                        text={buildComplete.remaining}
+                        className="mt-1 text-slate-600 prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5"
+                      />
                     </>
                   )}
                 </div>
