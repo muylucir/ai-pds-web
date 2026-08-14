@@ -1,6 +1,16 @@
 # Pathfinder
 
+**한국어** | [English](README.md)
+
 AI-PLC Discovery 워크숍용 대화형 캔버스.
+
+> **IMPORTANT**
+> 생성형 AI는 틀릴 수 있습니다. 선택한 AI 모델과 에이전틱 코딩 도구가 만들어낸 결과물과
+> 비용은 모두 직접 검토하시기 바랍니다. [AWS Responsible AI
+> Policy](https://aws.amazon.com/ai/responsible-ai/policy/)를 참고하세요.
+
+> **Note:** 이 리포지토리의 예제는 **실험·교육 목적**입니다. 개념과 기법을 보여주기 위한
+> 것이며, 프로덕션 환경에 그대로 쓰기 위한 것이 아닙니다.
 
 Claude Agent SDK 에이전트가 백엔드 프로세스 안에서 Discovery 방법론을 구동하고,
 프론트엔드가 그 턴을 SSE로 실시간 렌더한다. Discovery가 만든 프로토타입 스펙은 같은
@@ -17,6 +27,32 @@ infra/     CDK (TypeScript) — S3 + 백엔드 롤 + Cognito + EC2/CloudFront (�
 - 사용 방법(화면별 조작·관리자·운영): 앱의 **`/manual`** — 로그인 없이 열린다
 - **설계 판단의 근거는 커밋 메시지와 코드 주석에 있다.** "왜 이렇게 되어 있는가"는
   `git log`로 찾는다 — 해당 파일을 건드린 커밋 본문에 근거가 있다.
+
+---
+
+## AI-PLC — AI-Driven Product Life Cycle with Product Discovery, Strategy and Prototyping
+
+AI-PLC는 프로덕트 매니저·비즈니스 리더 등 **비개발 역할**이 제품 전략을 정의하고 무엇을
+만들어야 하는지 판단하도록 돕는 AI 주도 워크플로다. 워크플로를 쓰는 방식은 에이전틱 AI 도구와
+자연어로 대화하는 것이고, 고객 인사이트에서 검증된 프로토타입까지를 **한 세션 안에서** 지난다.
+페인포인트 분석, 유스케이스 우선순위화, PR/FAQ 작성(Working Backwards), 제품 전략, GTM 전략,
+프로토타입 생성을 다룬다.
+
+워크플로는 유연하다 — **지금 있는 지점에서 시작할 수 있다.** 고객 페인포인트를 처음
+탐색하는 중이든, 평가·우선순위화할 유스케이스 목록을 이미 갖고 있든, 기존 스펙에서 곧바로
+프로토타입 빌드로 뛰어들든 상관없다. 전체 여정을 한 세션에서 끝낼 수도 있고, 이식 가능한
+`PROTOTYPE-*.md`를 만들어 다른 팀이 자기 워크스페이스에서 프로토타입을 만들도록 넘길 수도 있다.
+
+워크플로 자체도 **필요에 맞게 고칠 수 있다** — 마크다운 파일로 정의되어 있어 질문, 스코어링
+프레임워크, 산출물 형식을 조정하거나 조직에 맞는 도메인 지침을 넣을 수 있다.
+
+**이 리포에서 그 워크플로가 있는 자리.** Pathfinder가 구동하는 룰셋은
+[aws-samples/sample-ai-plc](https://github.com/aws-samples/sample-ai-plc)의 AI-PLC 워크플로이며,
+여기에는 [`rule/aiplc-rules/`](rule/aiplc-rules)로 들어 있다 — 고칠 대상은 그 마크다운 파일들이다.
+백엔드가 **매 턴** 그것을 에이전트 워크스페이스로 복사하므로(`backend/pathfinder/agent/workspace_rules.py`),
+룰셋을 고치면 다음 턴부터 반영된다: 재시작도, 재배포도 필요 없다. Pathfinder가 그 워크플로
+바깥에 더하는 것은 채팅 기록만으로는 안 되는 부분이다 — 비개발 역할이 쓰는 브라우저 UI, 턴의
+실시간 렌더, 문서 리뷰, 그리고 같은 화면에서 프로토타입과 검증 설문까지 빌드·호스팅하는 것.
 
 ---
 
@@ -64,18 +100,16 @@ npx cdk deploy --all --require-approval never
 `next build`)가 대부분을 차지한다. `cdk deploy`가 끝난 직후에도 EC2 빌드가 진행 중일 수
 있어 **CloudFront가 몇 분간 502를 반환하는 것은 정상**이다.
 
-> ⚠️ **배포되는 것은 커밋이다 — 푸시하지 않은 것은 배포되지 않는다.** EC2가 부팅할 때
-> 공개 리포를 clone하고 커밋 하나에 고정한다(`git checkout --detach <sha>`). 기본값은 로컬
-> `HEAD`이고, `CDK_DEPLOY_REF`로 다른 커밋을 지정할 수 있다:
+> ⚠️ **배포되는 것은 `main`의 최신 커밋이다 — 푸시하지 않은 것은 배포되지 않는다.** EC2가
+> 부팅할 때 공개 리포를 clone하고 그 시점의 `origin/main`으로 맞춘다. 커밋 SHA를 고정하지
+> 않으므로 배포 전에 "이 커밋을 푸시했는가"를 따질 일이 없다 — 푸시된 것만 배포된다.
 >
-> ```bash
-> CDK_DEPLOY_REF=<sha> npx cdk deploy PathfinderHostingStack --require-approval never
-> ```
+> **대가: `cdk deploy`는 코드를 갱신하지 않는다.** user-data에 SHA가 없어 커밋을 밀어도
+> user-data가 그대로이고, 그러면 CloudFormation이 인스턴스를 교체하지 않는다. 코드 갱신은
+> [`pathfinder-update`](#코드-갱신하기)가 한다.
 >
-> clone은 **부팅 시점에** 일어나므로, 푸시하지 않은 커밋을 배포하면 `cdk deploy`는 성공하고
-> **EC2만 부팅에 실패한다**(화면에는 502). synth 때 경고가 뜨지만 막지는 않으니 푸시를 먼저 한다.
->
-> 인스턴스에서 무엇이 도는지는 `git -C /opt/pathfinder rev-parse HEAD`로 확인한다.
+> 인스턴스에서 무엇이 도는지는 `git -C /opt/pathfinder rev-parse HEAD`로 확인한다(부팅
+> 시점의 커밋은 부트스트랩 로그의 `booted commit:` 줄에도 남는다).
 >
 > 종전에는 리포 루트를 zip 에셋으로 올렸다. clone으로 바꾼 이유는 에셋이 **gitignore된
 > 파일까지 실었기** 때문이다 — 그래서 별도의 제외 목록을 사람이 관리해야 했고, 그 목록에서
@@ -128,54 +162,50 @@ CloudFront 프리픽스 리스트는 `PrefixList.fromLookup`이 배포 리전에
 결과는 로컬 `infra/cdk.context.json`에 캐시된다 — 계정 ID가 키에 들어가는 캐시라 커밋하지
 않고, 크리덴셜이 있으면 synth/deploy가 다시 조회해 재생성한다).
 
-### 코드만 다시 배포하기
+### 코드 갱신하기
+
+**`cdk deploy`가 아니다.** 배포에는 커밋 SHA가 없으므로 커밋을 밀어도 user-data가 바뀌지
+않고, 그러면 CloudFormation이 인스턴스를 교체하지 않는다 — `cdk deploy`는 "no changes"로
+끝난다. 코드 갱신은 인스턴스 위의 `pathfinder-update`가 한다:
 
 ```bash
-git push                                       # 배포되는 것은 커밋이다
-cd infra && npx cdk deploy PathfinderHostingStack --require-approval never
-```
-
-배포 커밋이 바뀌면 user-data가 바뀌고 **EC2가 교체된다**(`UserData`는 replacement 속성).
-새 인스턴스가 부팅해 빌드를 마칠 때까지 5~10분이 걸리고 그 사이 502가 난다.
-
-### 인스턴스를 교체하지 않고 핫픽스하기
-
-`/opt/pathfinder`는 **git 워킹 트리**이므로 그 자리에서 갱신할 수 있다. 워크숍 중처럼
-교체를 감당할 수 없을 때 쓴다.
-
-```bash
-git push                                       # 먼저 푸시한다
+git push                                       # 배포되는 것은 푸시된 main이다
 aws ssm start-session --target <InstanceId>
-sudo -u pathfinder git -C /opt/pathfinder fetch origin
-sudo -u pathfinder git -C /opt/pathfinder checkout --detach <sha>
+sudo pathfinder-update
 ```
 
-그다음 바꾼 쪽만 반영한다:
+`origin/main`으로 트리를 맞추고, **바뀐 쪽만** 반영한다:
 
-```bash
-# 프론트엔드를 고쳤다면 — 다시 빌드해야 한다
-cd /opt/pathfinder/frontend
-sudo -u pathfinder env NEXT_PUBLIC_API_BASE_URL=/api HOME=/opt/pathfinder npm ci    # 의존성이 바뀐 경우만
-sudo -u pathfinder env NEXT_PUBLIC_API_BASE_URL=/api HOME=/opt/pathfinder npm run build
-sudo systemctl restart pathfinder-frontend
+| 바뀐 것 | 하는 일 | 중단 |
+|---|---|---|
+| `rule/`·config dir만 | 트리만 갱신 | 없음 (다음 턴부터 새 룰을 읽는다) |
+| `backend/` | (`pyproject.toml`이 바뀐 경우만 재설치 후) 백엔드 재시작 | 진행 중인 턴·빌드 세션이 끊긴다 |
+| `frontend/` | (`package-lock.json`이 바뀐 경우만 `npm ci` 후) `next build` + 재시작 | 빌드 1~2분간 청크 404 |
+| 없음 (이미 최신) | 아무것도 하지 않는다 | 없음 |
 
-# 백엔드를 고쳤다면 — 빌드 없이 재시작만 (pip install -e 로 설치돼 있다)
-sudo systemctl restart pathfinder-backend
-```
+인스턴스 교체(5~10분 502)가 없으므로 워크숍 중에도 쓸 수 있다. 다만 위 표의 "중단"은
+남아 있으니, 프론트·백엔드 변경은 쉬는 시간에 반영한다.
 
-- **`NEXT_PUBLIC_API_BASE_URL=/api`를 빼면 안 된다.** 이 값이 클라이언트 번들에
-  인라인되므로, 빼고 빌드하면 브라우저가 `localhost:8000`을 불러 모든 API 호출이 죽는다 —
-  화면은 뜨는데 아무것도 동작하지 않는다.
-- `next build`가 도는 1~2분 동안 `.next`가 제자리에서 갈리므로 접속 중인 사용자에게 청크
-  404가 날 수 있다. 워크숍 중이면 쉬는 시간에 한다.
 - 백엔드 재시작은 **진행 중인 Discovery 턴과 빌드 세션을 끊는다.** 트랜스크립트는 S3에
   미러링되므로 대화는 이어지지만, 도는 빌드 세션은 완료 선언 없이 죽어 재개 경로를 탄다.
+- 인스턴스에서 손으로 고친 tracked 파일은 **되돌아간다**(`checkout -f`). 그런 파일 하나가
+  갱신 전체를 막는 것이 더 나쁘다는 판단이다 — 인스턴스에서 직접 편집하지 말고 푸시한다.
+  `protos/`·`workspaces/`·세션 상태는 untracked라 지워지지 않는다.
 - 확인: `git -C /opt/pathfinder rev-parse HEAD` 로 무엇이 도는지 보고,
   `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/`로 앱을 직접 찍는다
   (nginx는 CloudFront의 비밀 헤더가 없으면 403이므로 우회해서 본다).
 
-> ⚠️ 핫픽스는 다음 `cdk deploy`에서 **덮인다** — 그때 인스턴스가 배포 커밋으로 새로
-> 만들어진다. 그러므로 핫픽스한 커밋을 반드시 푸시해 두고, 다음 배포에 그 커밋 이후를 쓴다.
+### 인스턴스를 새로 만들기
+
+인프라를 바꿨을 때(user-data·인스턴스 타입·nginx 설정 등)는 `cdk deploy`가 인스턴스를
+교체하고, 새 인스턴스는 부팅하면서 그 시점의 최신 `main`을 가져온다:
+
+```bash
+cd infra && npx cdk deploy PathfinderHostingStack --require-approval never
+```
+
+부팅해 빌드를 마칠 때까지 5~10분이 걸리고 그 사이 502가 난다. 코드만 바뀐 경우에는 이
+경로가 필요 없다 — 위의 `pathfinder-update`를 쓴다.
 
 ### 삭제
 
@@ -292,3 +322,14 @@ cd frontend && npm test                         # 프론트 유닛 (Vitest + MSW
 cd infra && npm test                            # 인프라 합성 + 템플릿 단정 (배포 없이)
 cd frontend && npm run test:e2e                 # e2e (실 백엔드 + 실 Bedrock 필요)
 ```
+
+---
+
+## 라이선스
+
+[MIT-0](LICENSE) (MIT No Attribution). MIT와 같되 **저작권 고지 보존 의무가 없다** —
+가져다 쓰는 쪽이 LICENSE 파일을 들고 다니지 않아도 되고, 워크숍에서 이 리포를 복사해
+고객 리포로 만드는 사용 방식에 고지 의무를 얹지 않는다.
+
+SPDX 식별자는 각 패키지 메타데이터에도 있다: `backend/pyproject.toml`,
+`frontend/package.json`, `infra/package.json`.
