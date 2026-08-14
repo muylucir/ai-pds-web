@@ -10,100 +10,38 @@
 //      개발 박스의 proto-type/이 배포에 실려 "빌드 완료"로 보인 것).
 //
 // 리포가 공개된 뒤로는 인스턴스가 직접 clone할 수 있다. clone은 **tracked 파일만**
-// 가져오므로 2번의 실패 종류가 사라지고, 커밋을 고정하면 1번도 사라진다.
+// 가져오므로 2번의 실패 종류가 사라지고, 미커밋 변경이 배포되지 않으므로 1번도
+// 사라진다.
 //
-// 대가: 부팅이 GitHub에 도달해야 하고, 커밋하지 않은 변경은 배포할 수 없다.
-import { execFileSync } from 'node:child_process';
+// **커밋 SHA 고정에서 브랜치로 되돌린 이유.** 종전에는 synth 시점에
+// `git rev-parse HEAD`로 SHA를 구해 user-data에 박고 `checkout --detach`했다. 그
+// 방식은 배포자에게 "이 커밋을 푸시했는가"를 계속 요구했고 — 안 했으면 cdk deploy는
+// 성공하고 **EC2 부팅만** 실패한다 — CDK_DEPLOY_REF, synth 시점 푸시 여부 판정,
+// 오타 경고가 전부 그 하나의 실수를 막기 위해 존재했다. 지금은 인스턴스가 부팅
+// 시점의 **origin/main 최신 커밋**을 쓴다: synth가 git을 호출하지 않고, 배포되는
+// 것은 언제나 "푸시된 main"이므로 그 실수 자체가 성립하지 않는다.
+//
+// **대가: `cdk deploy`가 코드 갱신 수단이 아니다.** user-data 문자열에 SHA가 없어
+// 커밋을 밀어도 user-data가 바이트 단위로 같고, 그러면 CloudFormation이 인스턴스를
+// 교체하지 않는다(UserData는 replacement 속성). 그래서 코드 갱신은 인스턴스 위의
+// `pathfinder-update`가 담당한다(lib/user-data.ts가 부팅 시 설치한다) — SSM으로
+// 들어가 `sudo pathfinder-update` 한 줄이면 최신 main을 당겨 필요한 것만 다시
+// 빌드하고 서비스를 재시작한다. 인스턴스 교체(5~10분 502)가 없어 워크숍 중에도
+// 쓸 수 있다는 것이 이 방향의 실질적인 이득이다.
+//
+// 무엇이 도는지는 인스턴스에서 `git -C /opt/pathfinder rev-parse HEAD`로 본다
+// (부팅 시점의 커밋은 부트스트랩 로그에도 한 줄로 남는다).
+//
+// 대가 하나 더: 부팅이 GitHub에 도달해야 한다.
 
 /** 공개 리포. HTTPS이므로 인스턴스에 자격증명이 필요 없다. */
 export const REPO_URL = 'https://github.com/muylucir/ai-plc-pathfinder.git';
 
-/** `CDK_DEPLOY_REF`로 배포 커밋을 명시할 때 쓰는 환경변수 이름. */
-export const DEPLOY_REF_ENV = 'CDK_DEPLOY_REF';
-
 /**
- * 배포할 커밋.
+ * 배포 대상 브랜치. 인스턴스는 부팅 때, `pathfinder-update`는 실행될 때 이
+ * 브랜치의 원격 최신 커밋으로 맞춘다.
  *
- * 이 값은 user-data 문자열에 들어가므로 **배포의 결정성과 인스턴스 교체 여부를
- * 동시에 정한다.** 브랜치 이름(`main`)을 넣으면 안 되는 이유가 그것이다: user-data
- * 내용이 바뀌지 않아 `cdk deploy`가 인스턴스를 교체하지 않고, 그러면 배포가 코드
- * 갱신 수단이 아니게 된다. 커밋 SHA를 넣으면 커밋마다 user-data가 달라져
- * CloudFormation이 인스턴스를 교체한다(UserData는 replacement 속성이다).
- *
- * 순서:
- *   1. `CDK_DEPLOY_REF`가 있으면 그 값 (CI·롤백·특정 커밋 재배포)
- *   2. 없으면 로컬 `git rev-parse HEAD`
- *   3. 둘 다 안 되면 **던진다.** 브랜치 이름으로 조용히 떨어지지 않는다 —
- *      그 폴백은 위의 "교체가 안 일어난다"를 증상 없이 되살린다.
+ * 여기에 커밋 SHA를 넣지 말 것 — 그러면 `pathfinder-update`가 갱신할 것이 없는
+ * 고정 배포로 되돌아간다. 다른 브랜치를 쓰려면 이 값을 바꾼다(한 줄이다).
  */
-export function resolveDeployRef(): string {
-  const explicit = process.env[DEPLOY_REF_ENV]?.trim();
-  if (explicit) return explicit;
-
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: __dirname,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    throw new Error(
-      `cannot determine the commit to deploy: 'git rev-parse HEAD' failed and ` +
-      `${DEPLOY_REF_ENV} is not set.\n` +
-      `Set it explicitly, e.g. ${DEPLOY_REF_ENV}=<sha> npx cdk deploy --all`,
-    );
-  }
-}
-
-/** git이 이 환경에 아예 없는지. 없으면 검사 자체를 포기한다(경고 없음). */
-function gitMissing(err: unknown): boolean {
-  return (err as { code?: string } | null)?.code === 'ENOENT';
-}
-
-function git(args: string[]): { ok: boolean; out: string; missing: boolean } {
-  try {
-    const out = execFileSync('git', args, {
-      cwd: __dirname,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return { ok: true, out: out.trim(), missing: false };
-  } catch (err) {
-    return { ok: false, out: '', missing: gitMissing(err) };
-  }
-}
-
-/**
- * 배포 대상을 EC2가 실제로 clone할 수 있는지 미리 본다.
- *
- * clone은 **부팅 시점**에 일어난다. 그래서 이 실수는 `cdk deploy` 성공 +
- * **EC2 부팅 실패**로 나타난다 — 화면에는 502만 남고 원인은 cloud-init 로그에만
- * 있다(`fatal: reference is not a tree`). 여기서 미리 알린다.
- *
- * 두 가지를 구분해서 본다. 하나로 묶으면 더 흔한 쪽을 놓친다:
- *
- *   1. **로컬에도 없는 커밋** — CDK_DEPLOY_REF 오타나 fetch하지 않은 SHA.
- *      `git branch --contains`가 에러로 끝나므로, 이것을 그냥 삼키면 오타가
- *      아무 경고 없이 배포된다.
- *   2. **로컬에는 있지만 푸시되지 않은 커밋** — 가장 흔한 경우다. 명령은
- *      성공하고 출력이 비어 있다.
- *
- * git이 없으면 조용히 통과시킨다(오프라인/컨테이너 synth를 막을 이유가 없다).
- */
-export function warnIfRefNotPushed(ref: string): string | null {
-  const exists = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
-  if (exists.missing) return null;
-  if (!exists.ok || !exists.out) {
-    return `${ref} is not a commit in this repository — check ${DEPLOY_REF_ENV} for a typo, `
-      + 'or fetch it first. EC2 clones at boot, so this fails the instance, not the deploy.';
-  }
-
-  const onRemote = git(['branch', '--remotes', '--contains', exists.out]);
-  if (onRemote.missing) return null;
-  // 명령이 실패했다면(원격 추적 브랜치가 없는 리포 등) 판정하지 않는다.
-  if (!onRemote.ok) return null;
-  if (onRemote.out) return null;
-
-  return `${ref} is not on any remote branch — push it first. EC2 clones at boot, `
-    + 'so an unpushed commit fails the instance, not the deploy.';
-}
+export const DEPLOY_BRANCH = 'main';

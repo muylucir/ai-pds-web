@@ -7,7 +7,7 @@ const s = renderUserData({
   model: 'global.anthropic.claude-opus-4-8',
   secretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:hdr-AbCdEf',
   repoUrl: 'https://github.com/example/repo.git',
-  ref: 'abc1234def5678901234567890abcdef12345678',
+  branch: 'main',
   userPoolId: 'ap-northeast-2_TESTPOOL',
   userPoolClientId: 'client-test',
   hostedUiDomain: 'pathfinder-test.auth.ap-northeast-2.amazoncognito.com',
@@ -16,12 +16,20 @@ const s = renderUserData({
 
 // 1) 안전 옵션·로그
 assert.match(s, /set -euxo pipefail/, 'must be strict bash');
-// 2) 코드 배포: 리포 clone + 배포 커밋 고정.
-//    에셋 zip은 더 이상 쓰지 않는다 — 근거는 lib/deploy-source.ts.
+// 2) 코드 배포: 리포 clone + 배포 브랜치의 원격 최신 커밋으로 맞춤.
+//    에셋 zip도, 커밋 SHA 고정도 쓰지 않는다 — 근거는 lib/deploy-source.ts.
 assert.match(s, /git clone https:\/\/github\.com\/example\/repo\.git \/opt\/pathfinder/,
   'must clone the repo into the app tree');
-assert.match(s, /git -C \/opt\/pathfinder checkout --detach abc1234def5678901234567890abcdef12345678/,
-  'must pin the exact deploy commit — a branch name would leave the instance ambiguous');
+assert.match(s, /git -C \/opt\/pathfinder checkout -f -B main origin\/main/,
+  'must force the local branch onto origin/<branch> — the same line has to work on a '
+  + 'fresh clone and on a cloud-init re-run');
+assert.ok(!s.includes('checkout --detach'),
+  'the deployment is no longer pinned to a commit; a detached checkout would make '
+  + 'pathfinder-update unable to move the tree forward');
+// 부팅 커밋이 로그에 남아야 한다 — SHA가 배포에 없으므로 "무엇이 도는가"의 답이
+// 여기 말고는 인스턴스에 물어보는 수밖에 없다.
+assert.match(s, /git -C \/opt\/pathfinder --no-pager log -1 --format='booted commit: %H %s'/,
+  'the commit the instance booted on must be recorded in the bootstrap log');
 assert.ok(!/aws s3 cp .*\.zip/.test(s),
   'the asset zip download must be gone (the tree now comes from git, which carries only tracked files)');
 assert.ok(!s.includes('unzip -o'),
@@ -34,6 +42,46 @@ assert.match(s, /git config --system --add safe\.directory \/opt\/pathfinder/,
 // 멱등: cloud-init 재실행에서 이미 clone된 트리를 다시 clone하려 하면 실패한다.
 assert.match(s, /if \[ -d \/opt\/pathfinder\/\.git \]; then/,
   're-bootstrap must fetch instead of re-cloning');
+// 2b) 코드 갱신 경로. 배포에 SHA가 없으므로 cdk deploy는 인스턴스를 교체하지 않고
+//     코드를 갱신하지 않는다 — 이 스크립트가 **유일한** 갱신 수단이다. 없거나
+//     망가져도 배포는 성공하고, 그 사실은 갱신을 시도할 때에야 드러난다.
+{
+  assert.match(s, /cat > \/usr\/local\/bin\/pathfinder-update <<'UPDATE'/,
+    'the instance must ship pathfinder-update — with a branch (not a SHA) deployment, '
+    + 'cdk deploy no longer updates code and this is the only path that does');
+  assert.match(s, /chmod 755 \/usr\/local\/bin\/pathfinder-update/,
+    'pathfinder-update must be executable');
+  const start = s.indexOf("cat > /usr/local/bin/pathfinder-update <<'UPDATE'");
+  const end = s.indexOf('\nUPDATE\n', start);   // closing heredoc marker, not the opening one
+  assert.ok(end > start, 'the pathfinder-update heredoc must be closed');
+  const update = s.slice(start, end);
+
+  assert.match(update, /checkout -f -B main origin\/main/,
+    'pathfinder-update must move the tree onto the remote tip of the deploy branch');
+  // 이 env를 빼고 빌드하면 브라우저가 localhost:8000을 부른다 — 화면은 뜨고 모든
+  // API 호출이 죽는다. 손으로 하던 절차를 스크립트로 옮긴 주된 이유가 이 한 줄이다.
+  assert.match(update, /env NEXT_PUBLIC_API_BASE_URL=\/api HOME=\/opt\/pathfinder npm run build/,
+    'the frontend rebuild must carry NEXT_PUBLIC_API_BASE_URL=/api — without it the '
+    + 'bundle points the browser at localhost:8000 and every API call dies silently');
+  assert.match(update, /systemctl restart pathfinder-backend/, 'must be able to restart the backend');
+  assert.match(update, /systemctl restart pathfinder-frontend/, 'must be able to restart the frontend');
+  // 트리는 서비스 유저 소유다. root로 fetch하면 새 오브젝트가 root 소유로 섞여
+  // 다음 갱신이 권한으로 막힌다 — 그 실패는 갱신할 때만 보인다.
+  assert.match(update, /runuser -u pathfinder -- git -C \/opt\/pathfinder/,
+    'git must run as the service user that owns the tree, not as root');
+  // 갱신할 것이 없을 때 재시작하면 안 된다: 백엔드 재시작은 진행 중인 Discovery
+  // 턴과 빌드 세션을 끊는다.
+  assert.match(update, /if \[ "\$BEFORE" = "\$AFTER" \]; then/,
+    'an up-to-date instance must be left alone — a needless backend restart cuts '
+    + 'in-flight Discovery turns and build sessions');
+  // 런타임 데이터(protos/, workspaces/, */sessions/)는 untracked라 reset --hard로는
+  // 지워지지 않지만, git clean이나 rm -rf가 들어오면 지워진다.
+  assert.ok(!/git clean/.test(update),
+    'pathfinder-update must not git clean — protos/, workspaces/ and session state are untracked');
+  assert.ok(!/rm -rf/.test(update),
+    'pathfinder-update must not delete the tree — it updates it in place');
+  console.log('OK  user-data: pathfinder-update ships (branch deploys have no other code-update path)');
+}
 // 3) 시크릿 부팅 조회 (하드코딩 금지 — 런타임 조회)
 assert.match(s, /aws secretsmanager get-secret-value --secret-id arn:aws:secretsmanager:[^ ]+ /, 'must fetch secret at boot');
 // 4) nginx 헤더 검증 (403)
@@ -204,7 +252,7 @@ console.log('OK  user-data: services run as non-root pathfinder user, app tree o
     model: 'model-x',
     secretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:abc',
     repoUrl: 'https://github.com/example/repo.git',
-    ref: 'feedfacefeedfacefeedfacefeedfacefeedface',
+    branch: 'main',
     userPoolId: 'ap-northeast-2_POOL',
     userPoolClientId: 'client-abc',
     hostedUiDomain: 'pathfinder-x.auth.ap-northeast-2.amazoncognito.com',

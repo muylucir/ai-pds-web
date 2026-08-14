@@ -9,8 +9,10 @@
 - **PathfinderHostingStack** — VPC + EC2(AL2023 x86_64, m7i.2xlarge) +
   CloudFront. EC2는 CloudFront origin-facing 관리형 프리픽스 리스트(배포 리전
   자동)에서만 80을 받고, CloudFront가 붙이는 비밀 헤더 `X-Origin-Verify`를
-  nginx가 검증한다. user-data가 리포 에셋을 받아 백엔드/프론트를 빌드·기동
-  한다. 프로토타입 빌드(Claude Agent SDK 에이전트)는 이 백엔드 프로세스
+  nginx가 검증한다. user-data가 공개 리포를 clone해 `main`의 최신 커밋으로
+  맞춘 뒤 백엔드/프론트를 빌드·기동하고, 그 뒤의 코드 갱신용으로
+  `pathfinder-update`를 설치한다(배포에 커밋이 고정되지 않으므로
+  `cdk deploy`는 코드를 갱신하지 않는다 — 근거는 `lib/deploy-source.ts`). 프로토타입 빌드(Claude Agent SDK 에이전트)는 이 백엔드 프로세스
   안에서 직접 돌아간다 — 별도 VM/MicroVM 계층 없음. 배포 마지막에
   AuthStack의 앱 클라이언트에 실제 콜백 URL을 등록한다(아래 "콜백 URL 순환
   의존" 참고).

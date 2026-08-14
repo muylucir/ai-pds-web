@@ -9,7 +9,7 @@ import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import { backendPolicyStatements, MODEL } from './backend-permissions';
-import { REPO_URL, resolveDeployRef, warnIfRefNotPushed } from './deploy-source';
+import { DEPLOY_BRANCH, REPO_URL } from './deploy-source';
 import { renderUserData } from './user-data';
 import {
   ACCESS_TOKEN_VALIDITY_MINUTES, CLIENT_NAME, EXPLICIT_AUTH_FLOWS, ID_TOKEN_VALIDITY_MINUTES,
@@ -133,17 +133,14 @@ export class PathfinderHostingStack extends cdk.Stack {
     //   clone은 tracked 파일만 가져오므로 이 실패 **종류**가 사라진다.
     //   그 불변식(의도하지 않은 CLAUDE.md가 앱 트리에 없다)은 이제
     //   test/deployed-tree.assert.ts가 tracked 파일 목록으로 지킨다.
-    // - 배포되는 것이 커밋이 아니라 **워킹 트리**였다. 지금은 커밋 SHA가
-    //   user-data에 들어가므로 "무엇이 도는가"가 특정되고, 커밋이 바뀌면
-    //   user-data가 바뀌어 인스턴스가 교체된다(UserData는 replacement 속성).
-    const deployRef = resolveDeployRef();
-    const notPushed = warnIfRefNotPushed(deployRef);
-    if (notPushed) {
-      // 던지지 않는 이유: 오프라인/얕은 클론에서 판정이 틀릴 수 있고, synth를
-      // 막을 만한 확신이 없다. 대신 배포자가 볼 수 있게 남긴다 — clone은 부팅
-      // 시점에 일어나므로 이 실수는 cdk deploy 성공 + EC2 부팅 실패로 나타난다.
-      cdk.Annotations.of(this).addWarning(notPushed);
-    }
+    // - 배포되는 것이 커밋이 아니라 **워킹 트리**였다. 지금은 미커밋 변경이
+    //   배포되지 않는다 — 인스턴스는 푸시된 것만 clone한다.
+    //
+    // 무엇을 clone하는지는 브랜치로만 정한다(SHA를 박지 않는다). 그래서 이
+    // 스택은 배포 시점에 git을 호출하지 않고, **user-data가 코드 변경과 무관하게
+    // 동일하다** — 즉 cdk deploy는 인스턴스를 교체하지 않고 코드도 갱신하지
+    // 않는다. 코드 갱신은 인스턴스의 pathfinder-update가 한다(user-data.ts가
+    // 설치한다). 이 선택의 근거는 lib/deploy-source.ts.
 
     // --- user-data ---
     // CloudFront 도메인은 아래에서 만들어지지만 user-data는 지금 필요하다.
@@ -161,7 +158,7 @@ export class PathfinderHostingStack extends cdk.Stack {
         model: MODEL,
         secretArn: headerSecret.secretArn,
         repoUrl: REPO_URL,
-        ref: deployRef,
+        branch: DEPLOY_BRANCH,
         userPoolId: props.userPool.userPoolId,
         userPoolClientId: props.userPoolClient.userPoolClientId,
         hostedUiDomain: props.hostedUiDomain,

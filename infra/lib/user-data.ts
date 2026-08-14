@@ -6,12 +6,13 @@ export interface UserDataOptions {
   /** 공개 리포의 HTTPS clone URL. */
   repoUrl: string;
   /**
-   * 배포할 커밋. **브랜치 이름을 넣으면 안 된다** — 값이 그대로 이 스크립트에
-   * 들어가므로, 바뀌지 않는 값은 user-data를 바꾸지 않고 따라서 CloudFormation이
-   * 인스턴스를 교체하지 않는다(UserData는 replacement 속성이다). 그러면 배포가
-   * 코드 갱신 수단이 아니게 된다. 근거와 결정 규칙은 lib/deploy-source.ts.
+   * 배포 대상 브랜치. 부팅 때 이 브랜치의 **원격 최신 커밋**으로 맞춘다.
+   *
+   * 이 값이 커밋 SHA가 아니라 브랜치라는 것의 결과: user-data가 코드 변경과
+   * 무관하게 동일하므로 `cdk deploy`는 인스턴스를 교체하지 않는다. 코드 갱신은
+   * 아래에서 설치하는 `pathfinder-update`가 한다. 근거는 lib/deploy-source.ts.
    */
-  ref: string;
+  branch: string;
   // 인증. 이 값들이 비면 백엔드가 인증 바이패스로 돌아 배포가 무인증으로
   // 공개된다 — 호스팅 스택이 항상 채운다.
   userPoolId: string;
@@ -24,7 +25,7 @@ export interface UserDataOptions {
 // 부팅 시: 패키지 설치 → 서비스 유저 생성 → 리포 clone → 백엔드 venv/설치 →
 // 프론트 빌드 → 시크릿 조회 → nginx conf → systemd 기동. 헤더 불일치는 nginx가 403.
 export function renderUserData(opts: UserDataOptions): string {
-  const { region, bucketName, model, secretArn, repoUrl, ref,
+  const { region, bucketName, model, secretArn, repoUrl, branch,
           userPoolId, userPoolClientId, hostedUiDomain, appUrl } = opts;
   const APP = '/opt/pathfinder';
   // 서비스 전용 non-root 유저. 편의가 아니라 필수다: 프로토타입 빌드 에이전트가
@@ -49,15 +50,20 @@ dnf install -y python3.11 python3.11-devel gcc nodejs20 nodejs20-npm nginx tar u
 # --- 서비스 유저 (멱등: 재부트스트랩 시 이미 있을 수 있다) ---
 id -u ${SVC} >/dev/null 2>&1 || useradd --system --create-home --shell /sbin/nologin ${SVC}
 
-# --- 코드: 공개 리포를 clone 하고 배포 대상 커밋에 고정 ---
+# --- 코드: 공개 리포를 clone 하고 배포 브랜치의 최신 커밋으로 맞춘다 ---
 # S3 에셋 zip을 쓰지 않는 이유는 lib/deploy-source.ts에 있다(요지: 에셋은
 # gitignore된 파일까지 실어 보정 목록이 필요했고, 배포되는 것이 커밋이 아니라
 # 워킹 트리였다). clone은 tracked 파일만 가져오므로 그 두 문제가 함께 사라진다.
 #
-# --detach로 커밋에 직접 붙는 이유: 브랜치를 만들면 나중에 SSM으로 들어가
-# 'git pull'을 했을 때 그 브랜치가 배포 커밋보다 앞서 가고, 그러면 인스턴스가
-# 무엇을 돌리는지가 다시 흐려진다. detached HEAD는 "이 커밋을 돌린다"를 그대로
-# 드러낸다(핫픽스는 의도적으로 'git checkout main && git pull'을 해야 한다).
+# 커밋 SHA를 박지 않고 브랜치를 쓰는 이유도 같은 파일에 있다(요지: 배포자가
+# "이 커밋을 푸시했는가"를 신경 쓰지 않아도 되게 하는 것). 대가는 cdk deploy가
+# 코드를 갱신하지 못하는 것이고, 그 자리를 아래 pathfinder-update가 메운다.
+#
+# checkout -f -B로 로컬 브랜치를 원격에 강제로 맞춘다: 첫 clone에서도, cloud-init
+# 재실행에서도 결과가 같아야 한다. -f가 필요한 이유는 재실행 쪽이다 — 트리에
+# 수정된 tracked 파일이 하나라도 있으면 -f 없는 checkout은 거부되고, set -e 아래에서
+# 그 거부는 부팅 중단(증상은 502)이다. untracked 파일(protos/·workspaces/·세션
+# 상태)은 -f로도 지워지지 않는다.
 #
 # 멱등: 같은 인스턴스에서 다시 돌 수 있다(cloud-init 재실행). .git이 있으면
 # fetch만 하고, 없으면 새로 clone한다 — 중간에 끊긴 clone이 남긴 부분 트리는
@@ -74,7 +80,10 @@ else
   rm -rf ${APP}
   git clone ${repoUrl} ${APP}
 fi
-git -C ${APP} checkout --detach ${ref}
+git -C ${APP} checkout -f -B ${branch} origin/${branch}
+# 배포에 SHA가 없으므로 "무엇이 도는가"의 답이 로그에 남아야 한다. 부팅 시점의
+# origin/${branch}가 어느 커밋이었는지는 이 한 줄에만 기록된다.
+git -C ${APP} --no-pager log -1 --format='booted commit: %H %s'
 cd ${APP}
 
 # --- 빌드 산출물·설정 디렉토리를 앱 트리 안에 만든다 ---
@@ -263,6 +272,78 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+# --- 코드 갱신 경로: /usr/local/bin/pathfinder-update ---
+# 배포에 커밋 SHA가 없으므로 cdk deploy는 인스턴스를 교체하지 않고, 따라서 코드를
+# 갱신하지 않는다(근거는 lib/deploy-source.ts). "이 인스턴스를 최신 ${branch}로
+# 맞춘다"는 일을 이 스크립트가 맡는다 — 인스턴스 교체 없이 갱신되므로 워크숍
+# 중에도 쓸 수 있다.
+#
+# 손으로 하던 절차를 스크립트로 옮긴 이유는 그 절차에 **잊으면 앱이 조용히 죽는**
+# 단계가 있기 때문이다: next build에서 NEXT_PUBLIC_API_BASE_URL=/api를 빼면 그 값이
+# 클라이언트 번들에 인라인되지 않아 브라우저가 localhost:8000을 부르고, 화면은
+# 뜨는데 모든 API 호출이 죽는다. 재시작 범위를 바뀐 디렉터리로 좁히는 것도 같은
+# 이유다 — 백엔드 재시작은 진행 중인 Discovery 턴과 빌드 세션을 끊고, 프론트
+# 재빌드는 접속 중인 사용자에게 청크 404를 낸다. rule/만 바뀐 갱신(워크숍에서 가장
+# 흔한 경우)은 무중단으로 끝난다.
+#
+# git을 ${SVC}로 도는 이유: 트리는 아래 chown으로 ${SVC} 소유가 되고, root로
+# fetch하면 새 오브젝트가 root 소유로 섞여 다음 갱신이 권한으로 막힌다.
+cat > /usr/local/bin/pathfinder-update <<'UPDATE'
+#!/bin/bash
+# 이 인스턴스를 배포 브랜치의 원격 최신 커밋으로 맞춘다.
+# cdk deploy는 코드를 갱신하지 않는다 — 그 이유와 배경은 infra/lib/deploy-source.ts.
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  echo "pathfinder-update: run as root (sudo pathfinder-update)" >&2
+  exit 1
+fi
+
+# 경로·유저·브랜치는 리터럴로 박아 둔다(값은 user-data 생성 시점에 정해진다) —
+# 인스턴스에서 이 파일을 열어 읽는 사람이 무엇을 건드리는 스크립트인지 바로 보고,
+# test/user-data.assert.ts도 실제 문자열을 그대로 단정할 수 있다.
+gitsvc() { runuser -u ${SVC} -- git -C ${APP} "$@"; }
+
+BEFORE=$(gitsvc rev-parse HEAD)
+gitsvc fetch --prune origin
+# -f: 인스턴스에서 손으로 고친 tracked 파일은 **되돌아간다.** 그것 없이는 그런
+# 파일 하나가 갱신 전체를 거부시킨다 — 워크숍 중에 그 상태로 멈추는 것이 더 나쁘다.
+# untracked(protos/·workspaces/·세션 상태)는 이 명령으로 지워지지 않는다.
+gitsvc checkout -f -B ${branch} origin/${branch}
+AFTER=$(gitsvc rev-parse HEAD)
+
+if [ "$BEFORE" = "$AFTER" ]; then
+  echo "pathfinder-update: already at $AFTER — nothing to do, services untouched"
+  exit 0
+fi
+echo "pathfinder-update: $BEFORE -> $AFTER"
+gitsvc --no-pager log --oneline "$BEFORE..$AFTER"
+
+changed() { ! gitsvc diff --quiet "$BEFORE" "$AFTER" -- "$1"; }
+
+if changed backend/; then
+  # 의존성이 바뀐 경우만 다시 설치한다. 코드는 pip install -e 라 그대로 반영된다.
+  if changed backend/pyproject.toml; then
+    runuser -u ${SVC} -- ${APP}/backend/.venv/bin/pip install -e ${APP}/backend
+  fi
+  systemctl restart pathfinder-backend
+  echo "pathfinder-update: backend restarted (in-flight turns and build sessions were cut)"
+fi
+
+if changed frontend/; then
+  cd ${APP}/frontend
+  if changed frontend/package-lock.json; then
+    runuser -u ${SVC} -- env NEXT_PUBLIC_API_BASE_URL=/api HOME=${APP} npm ci
+  fi
+  # 이 env를 빼고 빌드하면 화면은 뜨고 모든 API 호출이 죽는다(위 주석 참조).
+  runuser -u ${SVC} -- env NEXT_PUBLIC_API_BASE_URL=/api HOME=${APP} npm run build
+  systemctl restart pathfinder-frontend
+  echo "pathfinder-update: frontend rebuilt and restarted"
+fi
+
+echo "pathfinder-update: now at $AFTER"
+UPDATE
+chmod 755 /usr/local/bin/pathfinder-update
 
 systemctl daemon-reload
 systemctl enable --now nginx pathfinder-backend pathfinder-frontend

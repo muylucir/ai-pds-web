@@ -1,24 +1,16 @@
 // infra/test/deploy-source.assert.ts
 //
-// 배포 커밋 결정 로직. 여기가 틀리면 실패가 **배포가 아니라 부팅에서** 난다 —
-// clone은 EC2가 부팅할 때 하므로, cdk deploy는 성공하고 인스턴스만 502가 된다.
-// 그래서 "조용히 그럴듯한 값으로 떨어지는" 경로가 하나도 없어야 한다.
+// 배포 대상(리포 + 브랜치)을 정하는 상수. 여기가 틀리면 실패가 **배포가 아니라
+// 부팅에서** 난다 — clone은 EC2가 부팅할 때 하므로, cdk deploy는 성공하고
+// 인스턴스만 502가 된다.
+//
+// 종전에는 이 파일이 커밋 SHA 결정 로직(로컬 HEAD 폴백, CDK_DEPLOY_REF, 푸시
+// 여부 판정)을 검증했다. 그 로직이 사라진 이유는 lib/deploy-source.ts에 있다.
+// 남은 위험은 하나다: **여기에 커밋 SHA가 들어오는 것.** 그러면 배포가 다시
+// 고정되고, pathfinder-update가 갱신할 것이 없어지는데 아무 에러도 나지 않는다.
 import * as assert from 'node:assert';
-import { execFileSync } from 'node:child_process';
 
-import { DEPLOY_REF_ENV, REPO_URL, resolveDeployRef, warnIfRefNotPushed } from '../lib/deploy-source';
-
-function withEnv(value: string | undefined, fn: () => void) {
-  const saved = process.env[DEPLOY_REF_ENV];
-  if (value === undefined) delete process.env[DEPLOY_REF_ENV];
-  else process.env[DEPLOY_REF_ENV] = value;
-  try {
-    fn();
-  } finally {
-    if (saved === undefined) delete process.env[DEPLOY_REF_ENV];
-    else process.env[DEPLOY_REF_ENV] = saved;
-  }
-}
+import { DEPLOY_BRANCH, REPO_URL } from '../lib/deploy-source';
 
 function testRepoUrlIsPublicHttps() {
   // HTTPS여야 인스턴스에 자격증명이 필요 없다. SSH(git@)로 바꾸면 부팅 시
@@ -29,74 +21,20 @@ function testRepoUrlIsPublicHttps() {
   console.log(`OK  deploy-source: public https clone url (${REPO_URL})`);
 }
 
-function testExplicitRefWins() {
-  withEnv('  deadbeef  ', () => {
-    // 공백은 다듬는다 — 셸에서 복사·붙여넣기한 값이 그대로 user-data에 들어가면
-    // `git checkout --detach ' deadbeef '`가 된다.
-    assert.strictEqual(resolveDeployRef(), 'deadbeef');
-  });
-  console.log('OK  deploy-source: CDK_DEPLOY_REF wins and is trimmed');
-}
-
-function testFallsBackToLocalHead() {
-  withEnv(undefined, () => {
-    const ref = resolveDeployRef();
-    const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-    assert.strictEqual(ref, head);
-    // 브랜치 이름으로 떨어지면 안 된다: 값이 바뀌지 않으면 user-data가 그대로이고,
-    // 그러면 CloudFormation이 인스턴스를 교체하지 않아 배포가 코드를 갱신하지 못한다.
-    assert.match(ref, /^[0-9a-f]{40}$/,
-      'the fallback must be a full commit SHA, never a branch name — a branch name '
-      + 'would keep user-data byte-identical across commits and stop the instance from being replaced');
-  });
-  console.log('OK  deploy-source: falls back to the local HEAD sha (not a branch name)');
-}
-
-function testEmptyEnvIsTreatedAsUnset() {
-  // `CDK_DEPLOY_REF= npx cdk deploy` 는 빈 문자열을 준다. 그것을 그대로 쓰면
-  // `git checkout --detach` 가 되어 부팅이 깨진다.
-  withEnv('', () => {
-    assert.match(resolveDeployRef(), /^[0-9a-f]{40}$/);
-  });
-  withEnv('   ', () => {
-    assert.match(resolveDeployRef(), /^[0-9a-f]{40}$/);
-  });
-  console.log('OK  deploy-source: empty/whitespace CDK_DEPLOY_REF falls back instead of shipping an empty ref');
-}
-
-function testWarnsOnRefThatIsNotACommit() {
-  // 이 경로가 이 파일이 존재하는 주된 이유다. 종전 구현은 git의 에러를 삼켜
-  // 오타가 아무 경고 없이 배포됐다 — 그리고 그 실패는 부팅에서만 보인다.
-  const w = warnIfRefNotPushed('0000000000000000000000000000000000000000');
-  assert.ok(w, 'a sha that is not a commit in this repo must warn');
-  assert.match(w!, /not a commit in this repository/);
-  assert.match(w!, new RegExp(DEPLOY_REF_ENV), 'the warning should name the env var to check');
-
-  const typo = warnIfRefNotPushed('mian');   // "main" 오타
-  assert.ok(typo, 'an unknown ref name must warn');
-  console.log('OK  deploy-source: warns when the ref is not a commit here (typo / not fetched)');
-}
-
-function testDoesNotWarnForAPushedCommit() {
-  const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  const onRemote = execFileSync('git', ['branch', '--remotes', '--contains', head], { encoding: 'utf8' }).trim();
-  if (!onRemote) {
-    // HEAD가 아직 푸시되지 않은 상태에서 이 테스트가 도는 경우 — 그때는
-    // 반대 방향을 확인한다(경고가 나와야 한다).
-    const w = warnIfRefNotPushed(head);
-    assert.ok(w, 'HEAD is not on a remote branch here, so it must warn');
-    assert.match(w!, /not on any remote branch/);
-    console.log('OK  deploy-source: warns for the local-but-unpushed HEAD (this checkout is ahead of origin)');
-    return;
-  }
-  assert.strictEqual(warnIfRefNotPushed(head), null,
-    'a commit that is on a remote branch must not warn');
-  console.log('OK  deploy-source: silent for a pushed commit');
+function testDeployTargetIsABranchNotACommit() {
+  assert.ok(DEPLOY_BRANCH.length > 0, 'a deploy branch must be set');
+  // SHA를 넣으면 인스턴스가 그 커밋에 고정되고, 최신 코드를 당기는 경로
+  // (pathfinder-update와 부팅 시 checkout)가 조용히 무력화된다.
+  assert.doesNotMatch(DEPLOY_BRANCH, /^[0-9a-f]{7,40}$/,
+    'the deploy target must be a branch name, not a commit SHA — a SHA pins the '
+    + 'instance and makes pathfinder-update a no-op, with no error to show it');
+  // user-data 문자열과 `git checkout -B <branch> origin/<branch>`에 그대로
+  // 들어가는 값이다. 공백·refs/ 접두어·와일드카드는 부팅에서만 실패한다.
+  assert.doesNotMatch(DEPLOY_BRANCH, /\s/, 'branch name must not contain whitespace');
+  assert.doesNotMatch(DEPLOY_BRANCH, /^refs\//,
+    'use the short branch name — it is used as both the local branch and origin/<branch>');
+  console.log(`OK  deploy-source: deploy target is a branch (${DEPLOY_BRANCH}), not a pinned commit`);
 }
 
 testRepoUrlIsPublicHttps();
-testExplicitRefWins();
-testFallsBackToLocalHead();
-testEmptyEnvIsTreatedAsUnset();
-testWarnsOnRefThatIsNotACommit();
-testDoesNotWarnForAPushedCommit();
+testDeployTargetIsABranchNotACommit();

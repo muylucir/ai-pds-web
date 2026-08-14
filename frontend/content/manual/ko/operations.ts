@@ -47,10 +47,11 @@ export const operations: ManualSection = {
     {
       kind: "callout",
       tone: "warn",
-      md: `**배포되는 것은 커밋입니다 — 푸시하지 않은 것은 배포되지 않습니다.** EC2가 부팅할 때
-리포를 clone하고 커밋 하나에 고정합니다. clone이 부팅 시점에 일어나므로, 푸시하지 않은
-커밋을 배포하면 \`cdk deploy\`는 성공하고 **인스턴스만 부팅에 실패합니다**(화면에는 502).
-배포 전에 \`git push\`를 하세요.`,
+      md: `**배포되는 것은 \`main\`의 최신 커밋입니다 — 푸시하지 않은 것은 배포되지 않습니다.** EC2가
+부팅할 때 리포를 clone하고 그 시점의 \`origin/main\`으로 맞춥니다. 배포 전에 \`git push\`를 하세요.
+
+여기서 오는 결과가 하나 있습니다: **\`cdk deploy\`는 코드를 갱신하지 않습니다.** 커밋을 밀어도
+인스턴스가 교체되지 않으므로, 코드 갱신은 [코드 갱신하기](/manual#redeploy)를 씁니다.`,
     },
     {
       kind: "details",
@@ -72,63 +73,53 @@ export const operations: ManualSection = {
       kind: "cmd",
       lines: ["CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all --require-approval never"],
     },
-    { kind: "heading", id: "redeploy", text: "코드만 다시 배포" },
+    { kind: "heading", id: "redeploy", text: "코드 갱신하기" },
+    {
+      kind: "md",
+      md: `**\`cdk deploy\`가 아닙니다.** 배포에는 커밋이 고정되어 있지 않아 커밋을 밀어도 인스턴스가
+교체되지 않고, \`cdk deploy\`는 "no changes"로 끝납니다. 갱신은 인스턴스 안의
+\`pathfinder-update\`가 합니다 — **인스턴스 교체가 없으므로 워크숍 중에도 쓸 수 있습니다.**`,
+    },
     {
       kind: "cmd",
+      caption: "먼저 푸시하고, SSM으로 들어가 한 줄 실행합니다",
       lines: [
         "git push",
-        "cd infra && npx cdk deploy PathfinderHostingStack --require-approval never",
-      ],
-    },
-    {
-      kind: "md",
-      md: `배포 커밋이 바뀌면 EC2가 **교체되면서** 새 커밋으로 다시 빌드합니다. 새 인스턴스가
-부팅해 빌드를 마칠 때까지 5~10분이 걸리고, 그 사이에는 502가 납니다.
-
-특정 커밋으로 배포하거나 되돌리려면 커밋을 지정합니다:
-\`CDK_DEPLOY_REF=<sha> npx cdk deploy PathfinderHostingStack\``,
-    },
-    { kind: "heading", id: "hotfix", text: "인스턴스를 교체하지 않고 고치기" },
-    {
-      kind: "md",
-      md: `워크숍 중처럼 5~10분의 중단을 감당할 수 없을 때 씁니다.
-\`/opt/pathfinder\`가 **git 워킹 트리**이므로 그 자리에서 갱신할 수 있습니다.`,
-    },
-    {
-      kind: "cmd",
-      caption: "먼저 푸시하고, SSM으로 들어가 배포 커밋을 옮깁니다",
-      lines: [
         "aws ssm start-session --target <InstanceId>",
-        "sudo -u pathfinder git -C /opt/pathfinder fetch origin",
-        "sudo -u pathfinder git -C /opt/pathfinder checkout --detach <sha>",
-      ],
-    },
-    {
-      kind: "cmd",
-      caption: "프론트를 고쳤다면 다시 빌드하고, 백엔드만 고쳤다면 재시작만 합니다",
-      lines: [
-        "cd /opt/pathfinder/frontend",
-        "sudo -u pathfinder env NEXT_PUBLIC_API_BASE_URL=/api HOME=/opt/pathfinder npm run build",
-        "sudo systemctl restart pathfinder-frontend",
-        "",
-        "sudo systemctl restart pathfinder-backend",
+        "sudo pathfinder-update",
       ],
     },
     {
       kind: "md",
-      md: `- **\`NEXT_PUBLIC_API_BASE_URL=/api\`를 빼면 안 됩니다.** 이 값이 클라이언트 번들에
-  인라인되므로, 빼고 빌드하면 브라우저가 \`localhost:8000\`을 불러 모든 API 호출이 죽습니다 —
-  화면은 뜨는데 아무것도 동작하지 않습니다.
-- 빌드가 도는 1~2분 동안 접속 중인 사용자에게 오류가 날 수 있습니다. 쉬는 시간에 하세요.
+      md: `\`origin/main\`으로 트리를 맞추고 **바뀐 쪽만** 반영합니다.
+
+| 바뀐 것 | 하는 일 | 중단 |
+|---|---|---|
+| 룰셋·설정만 | 트리만 갱신 | 없음 (다음 턴부터 새 룰을 읽습니다) |
+| 백엔드 | 백엔드 재시작 | 진행 중인 대화·빌드 세션이 끊깁니다 |
+| 프론트엔드 | 다시 빌드하고 재시작 | 빌드 1~2분간 접속 중인 사용자에게 오류 |
+| 없음 (이미 최신) | 아무것도 하지 않습니다 | 없음 |
+
 - 백엔드 재시작은 **진행 중인 대화와 빌드 세션을 끊습니다.** 대화는 다시 열면 이어지지만,
-  도는 빌드 세션은 재개 경로를 탑니다.
+  도는 빌드 세션은 재개 경로를 탑니다. 프론트·백엔드 갱신은 쉬는 시간에 하세요.
 - 무엇이 도는지는 \`git -C /opt/pathfinder rev-parse HEAD\`로 확인합니다.`,
     },
     {
       kind: "callout",
       tone: "warn",
-      md: `**핫픽스는 다음 \`cdk deploy\`에서 덮입니다** — 그때 인스턴스가 배포 커밋으로 새로
-만들어집니다. 고친 것을 반드시 푸시해 두고, 다음 배포에 그 커밋 이후를 쓰세요.`,
+      md: `**인스턴스에서 파일을 직접 고치지 마세요.** \`pathfinder-update\`가 트리를 \`main\`에
+맞추면서 그 수정을 되돌립니다. 고친 것은 푸시한 뒤 갱신하세요.`,
+    },
+    { kind: "heading", id: "hotfix", text: "인스턴스를 새로 만들기" },
+    {
+      kind: "md",
+      md: `인프라를 바꿨을 때만 필요합니다. \`cdk deploy\`가 인스턴스를 교체하고, 새 인스턴스는
+부팅하면서 그 시점의 최신 \`main\`을 가져옵니다. 부팅해 빌드를 마칠 때까지 5~10분이 걸리고
+그 사이에는 502가 납니다 — 코드만 바뀐 경우에는 위의 갱신을 쓰세요.`,
+    },
+    {
+      kind: "cmd",
+      lines: ["cd infra && npx cdk deploy PathfinderHostingStack --require-approval never"],
     },
     { kind: "heading", id: "teardown", text: "내리기" },
     {
@@ -190,7 +181,7 @@ Python **3.11**과 Node.js 20+가 필요합니다.`,
     {
       kind: "md",
       md: `환경변수 전체 목록은 \`infra/lib/user-data.ts\`의 systemd 유닛에 주석과 함께 있고,
-그 밖의 배포 절차는 리포의 \`README.md\`에 있습니다. **설계 판단의 근거는 커밋 메시지와
+그 밖의 배포 절차는 리포의 \`README.ko.md\`에 있습니다. **설계 판단의 근거는 커밋 메시지와
 코드 주석에 있습니다** — "왜 이렇게 되어 있는가"는 \`git log\`로 찾습니다.`,
     },
   ],

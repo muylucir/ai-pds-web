@@ -49,10 +49,12 @@ The address to open is the \`PathfinderHostingStack.DistributionDomain\` output.
     {
       kind: "callout",
       tone: "warn",
-      md: `**What gets deployed is a commit — anything unpushed is not deployed.** The instance clones the
-repository at boot and pins one commit. Because the clone happens at boot, deploying an unpushed
-commit means \`cdk deploy\` succeeds and **only the instance fails to start** (you see a 502).
-Run \`git push\` before deploying.`,
+      md: `**What gets deployed is the latest commit on \`main\` — anything unpushed is not deployed.** The
+instance clones the repository at boot and moves onto \`origin/main\` as it is at that moment. Run
+\`git push\` before deploying.
+
+One consequence follows: **\`cdk deploy\` does not update code.** Pushing a commit does not replace
+the instance, so use [updating the code](/manual#redeploy) instead.`,
     },
     {
       kind: "details",
@@ -74,64 +76,54 @@ management](/manual#invite) instead of the seed accounts.`,
       kind: "cmd",
       lines: ["CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all --require-approval never"],
     },
-    { kind: "heading", id: "redeploy", text: "Redeploying code only" },
+    { kind: "heading", id: "redeploy", text: "Updating the code" },
+    {
+      kind: "md",
+      md: `**Not with \`cdk deploy\`.** No commit is pinned in the deployment, so pushing one does not
+replace the instance and \`cdk deploy\` ends with "no changes". \`pathfinder-update\` on the instance
+does the update — **there is no instance replacement, so it is usable mid-workshop.**`,
+    },
     {
       kind: "cmd",
+      caption: "Push first, then run one line over SSM",
       lines: [
         "git push",
-        "cd infra && npx cdk deploy PathfinderHostingStack --require-approval never",
-      ],
-    },
-    {
-      kind: "md",
-      md: `When the deploy commit changes, the EC2 instance is **replaced** and rebuilds from the new
-commit. The new instance takes 5–10 minutes to boot and finish building, and you get 502s in the
-meantime.
-
-To deploy or roll back to a specific commit, name it:
-\`CDK_DEPLOY_REF=<sha> npx cdk deploy PathfinderHostingStack\``,
-    },
-    { kind: "heading", id: "hotfix", text: "Fixing without replacing the instance" },
-    {
-      kind: "md",
-      md: `Use this when you cannot afford the 5–10 minute gap, such as mid-workshop.
-\`/opt/pathfinder\` is a **git working tree**, so it can be updated in place.`,
-    },
-    {
-      kind: "cmd",
-      caption: "Push first, then move the deployed commit over SSM",
-      lines: [
         "aws ssm start-session --target <InstanceId>",
-        "sudo -u pathfinder git -C /opt/pathfinder fetch origin",
-        "sudo -u pathfinder git -C /opt/pathfinder checkout --detach <sha>",
-      ],
-    },
-    {
-      kind: "cmd",
-      caption: "Rebuild if you changed the frontend; a restart is enough for the backend alone",
-      lines: [
-        "cd /opt/pathfinder/frontend",
-        "sudo -u pathfinder env NEXT_PUBLIC_API_BASE_URL=/api HOME=/opt/pathfinder npm run build",
-        "sudo systemctl restart pathfinder-frontend",
-        "",
-        "sudo systemctl restart pathfinder-backend",
+        "sudo pathfinder-update",
       ],
     },
     {
       kind: "md",
-      md: `- **Do not drop \`NEXT_PUBLIC_API_BASE_URL=/api\`.** It is inlined into the client bundle, so
-  building without it makes the browser call \`localhost:8000\` and every API call dies — the screens
-  render and nothing works.
-- During the 1–2 minutes the build runs, users already connected may hit errors. Do it during a break.
+      md: `It moves the tree onto \`origin/main\` and acts on **only what changed**.
+
+| What changed | What it does | Disruption |
+|---|---|---|
+| Rules or config only | updates the tree | none (the next turn reads the new rules) |
+| Backend | restarts the backend | conversations and build sessions in progress are cut |
+| Frontend | rebuilds and restarts | users already connected may hit errors for 1–2 min |
+| Nothing (already current) | nothing at all | none |
+
 - Restarting the backend **cuts off conversations and build sessions in progress.** Conversations
-  resume when reopened; a running build session goes down the resume path instead.
+  resume when reopened; a running build session goes down the resume path instead. Apply frontend
+  and backend updates during a break.
 - Check what is running with \`git -C /opt/pathfinder rev-parse HEAD\`.`,
     },
     {
       kind: "callout",
       tone: "warn",
-      md: `**A hotfix is overwritten by the next \`cdk deploy\`** — the instance is rebuilt from the deploy
-commit at that point. Always push what you fixed, and deploy that commit or later next time.`,
+      md: `**Do not edit files directly on the instance.** \`pathfinder-update\` moves the tree onto
+\`main\` and reverts those edits. Push your fix, then update.`,
+    },
+    { kind: "heading", id: "hotfix", text: "Getting a fresh instance" },
+    {
+      kind: "md",
+      md: `Only needed when you change infrastructure. \`cdk deploy\` replaces the instance, and the new one
+picks up the latest \`main\` as it boots. It takes 5–10 minutes to boot and finish building, with 502s
+in the meantime — for code-only changes, use the update above.`,
+    },
+    {
+      kind: "cmd",
+      lines: ["cd infra && npx cdk deploy PathfinderHostingStack --require-approval never"],
     },
     { kind: "heading", id: "teardown", text: "Tearing it down" },
     {
