@@ -4,7 +4,7 @@
 // question wizard (QuestionForm) as the workspace screen — only the stream
 // hook (usePrototypeStream) and the surrounding chrome are new.
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
 import { ChatInput } from "@/components/canvas/ChatInput";
 import { QuestionForm } from "@/components/questions/QuestionForm";
@@ -39,12 +39,26 @@ export function BuildPanel({
   const [hosting, setHosting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const completeCardRef = useRef<HTMLDivElement | null>(null);
+  const completed = buildComplete !== null;
 
   useEffect(() => {
     if (autoStart) startBuild();
     // Mount-only — startBuild must fire at most once per panel lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 완료 카드는 파일 변경 목록 **아래**에 있다(그 배치의 이유는 카드 옆 주석).
+  // 그래서 변경 파일이 많으면 카드가 스크롤 밖에 생기고, 사용자는 완료를 눈으로
+  // 확인하지 못한 채 눌러야 할 버튼도 못 본다. 완료 순간 한 번만 스크롤해 카드를
+  // 시야에 넣는다 — `nearest`이므로 이미 보이면 아무 일도 하지 않는다.
+  //
+  // optional call인 이유: jsdom에는 scrollIntoView가 없다. 없다고 컴포넌트가
+  // 죽으면 이 패널의 테스트 전부가 배치 변경 때문에 깨진다.
+  useEffect(() => {
+    if (!completed) return;
+    completeCardRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [completed]);
 
   async function handleSubmitAnswers(answers: Record<string, string>) {
     setSubmittingAnswers(true);
@@ -172,8 +186,37 @@ export function BuildPanel({
               스크롤바도 없이 잘렸다(실측). shrink-0이라 flex가 되돌려주지도
               않는다. */}
           <aside className="w-full md:basis-1/2 md:min-w-0 shrink-0 border-t md:border-t-0 md:border-l border-slate-200 flex flex-col min-h-0 overflow-y-auto">
-            {buildComplete && (
+            {pendingQuestions && (
               <div className="p-4 border-b border-slate-200">
+                <QuestionForm
+                  file={pendingQuestions.questions}
+                  onSubmit={handleSubmitAnswers}
+                  submitting={submittingAnswers}
+                />
+              </div>
+            )}
+            <div className="p-4">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">{t("proto.changedFiles")}</p>
+              {changedPaths.length === 0 ? (
+                <p className="text-sm text-slate-400">{t("proto.noChangedFiles")}</p>
+              ) : (
+                <ul className="space-y-2 text-sm">
+                  {changedPaths.map((path) => (
+                    <li key={path} className="rounded-lg border border-slate-200 px-3 py-2 text-slate-600 break-all">
+                      {path}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {/* 완료 카드는 **파일 변경 목록 아래**다. 위에 두었을 때는 빌드가
+                끝나는 순간 카드가 사용자의 스크롤 위치보다 위에 생겼다 — 파일이
+                쌓이는 것을 내려 보고 있었으므로, 완료를 확인하려면 스크롤을 되올려야
+                했다(사용자 보고). 만들어진 결과 다음에 그 결과에 대한 결론이 오는
+                순서가 읽는 방향과 같다. 목록이 길어 카드가 화면 밖에 생기는 경우는
+                위 useEffect의 scrollIntoView가 처리한다. */}
+            {buildComplete && (
+              <div ref={completeCardRef} className="p-4 border-t border-slate-200">
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                   <p className="text-sm font-bold text-emerald-800">{t("proto.buildComplete")}</p>
                   {/* 마크다운으로 그린다. 이 텍스트는 build_complete 도구의
@@ -242,29 +285,6 @@ export function BuildPanel({
                 </div>
               </div>
             )}
-            {pendingQuestions && (
-              <div className="p-4 border-b border-slate-200">
-                <QuestionForm
-                  file={pendingQuestions.questions}
-                  onSubmit={handleSubmitAnswers}
-                  submitting={submittingAnswers}
-                />
-              </div>
-            )}
-            <div className="p-4">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">{t("proto.changedFiles")}</p>
-              {changedPaths.length === 0 ? (
-                <p className="text-sm text-slate-400">{t("proto.noChangedFiles")}</p>
-              ) : (
-                <ul className="space-y-2 text-sm">
-                  {changedPaths.map((path) => (
-                    <li key={path} className="rounded-lg border border-slate-200 px-3 py-2 text-slate-600 break-all">
-                      {path}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
           </aside>
         </div>
       </div>

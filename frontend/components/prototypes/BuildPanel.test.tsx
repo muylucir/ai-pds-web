@@ -212,6 +212,25 @@ describe("BuildPanel", () => {
   });
 
   describe("완료 카드", () => {
+    it("파일 변경 목록 **아래**에 온다 — 위에 있으면 스크롤을 되올려야 한다", () => {
+      // 사용자 보고: 빌드가 끝나는 순간 카드가 스크롤 위치보다 위에 생겨서,
+      // 파일이 쌓이는 것을 내려 보고 있던 사용자가 완료를 확인하려면 되올려야
+      // 했다. aside 하나가 스크롤 컨테이너이므로 순서가 곧 그 문제다 — DOM
+      // 순서로 못박는다(클래스나 좌표가 아니라 순서가 원인이었다).
+      mockStream({
+        streaming: false,
+        buildComplete: { summary: "할 일 앱", remaining: "" },
+        changedPaths: ["prototype/app/page.tsx", "prototype/lib/api.ts"],
+      });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      const files = screen.getByText("파일 변경 목록");
+      const complete = screen.getByText("빌드 완료");
+      expect(
+        files.compareDocumentPosition(complete) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
     it("완료 선언 후 요약과 남은 작업을 보여준다", () => {
       mockStream({
         buildComplete: { summary: "할 일 앱을 만들었다", remaining: "다크 모드" },
