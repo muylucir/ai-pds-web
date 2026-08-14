@@ -123,3 +123,29 @@ describe("AppHeader 언어 배지", () => {
     expect(screen.queryByTestId("language-badge")).toBeNull();
   });
 });
+
+describe("AppHeader 매뉴얼 링크", () => {
+  it("프로젝트가 없어도 매뉴얼로 가는 링크가 살아 있다", () => {
+    // 네 탭과 반대다 — 프로젝트별 탭은 프로젝트가 없으면 죽지만, 매뉴얼은
+    // 프로젝트가 없을 때(그리고 로그인 전에) 가장 필요하다.
+    render(<AppHeader activeTab="projects" />);
+    expect(screen.getByRole("link", { name: "매뉴얼" }))
+      .toHaveAttribute("href", "/manual");
+  });
+
+  it("매뉴얼 화면에서는 링크가 아니라 현재 위치로 표시한다", () => {
+    render(<AppHeader activeTab="manual" />);
+    expect(screen.queryByRole("link", { name: "매뉴얼" })).toBeNull();
+    expect(screen.getByText("매뉴얼")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("영어 로케일에서 라벨이 영어다", () => {
+    render(
+      <LocaleProvider locale="en">
+        <AppHeader activeTab="projects" />
+      </LocaleProvider>,
+    );
+    expect(screen.getByRole("link", { name: "Manual" }))
+      .toHaveAttribute("href", "/manual");
+  });
+});

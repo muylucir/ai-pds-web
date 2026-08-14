@@ -413,4 +413,27 @@ export const ko = {
   "survey.savedPrefix": "건을",
   "survey.savedSuffix": "에 저장했습니다.",
   "app.description": "AI-PLC Discovery 웹 서비스",
+
+  // 사용 매뉴얼(/manual)의 **껍데기**. 본문은 여기가 아니라
+  // content/manual/{ko,en}/ 에 있다 — 이 딕셔너리는 화면 문구용이고, 문단마다
+  // 키를 만들면 UI 문구를 찾는 사람이 매뉴얼 본문을 헤쳐야 한다.
+  "nav.manual": "매뉴얼",
+  "manual.title": "사용 매뉴얼",
+  "manual.subtitle": "화면마다 무엇을 하는 곳이고 어떤 버튼을 눌러야 하는지 정리했습니다.",
+  "manual.tocLabel": "매뉴얼 목차",
+  "manual.searchLabel": "매뉴얼 검색",
+  "manual.searchPlaceholder": "검색…",
+  "manual.searchClear": "검색어 지우기",
+  "manual.searchNoResults": "일치하는 내용이 없습니다.",
+  "manual.searchResultCount": "{n}개 절이 일치합니다.",
+  "manual.copyAria": "명령어 복사",
+  "manual.mockupNotice": "아래 그림의 문구는 실제 화면에서 가져온 것입니다",
+  "manual.diagramHint": "상자를 누르면 해당 절로 이동합니다",
+  "manual.backToTop": "맨 위로",
+  "manual.prevSection": "이전",
+  "manual.nextSection": "다음",
+  "manual.readManual": "사용 매뉴얼 보기",
+  "manual.calloutNote": "참고",
+  "manual.calloutWarn": "주의",
+  "manual.calloutTip": "도움말",
 } as const;

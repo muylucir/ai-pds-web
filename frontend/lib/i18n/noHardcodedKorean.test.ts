@@ -21,7 +21,11 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const ROOT = join(__dirname, "..", "..");
-const SCAN_DIRS = ["app", "components", "lib"];
+// content/ 가 목록에 있는 이유: 사용 매뉴얼 본문이 거기에 있고, 한국어 본문은
+// `content/manual/ko/**` 하나에만 있어야 한다. 스캔 대상에서 빼면 디렉토리를
+// 옮기는 것만으로 이 검사를 피할 수 있게 되므로, **넣고 예외를 명시한다** —
+// ko.ts를 예외로 두는 것과 같은 방식이다.
+const SCAN_DIRS = ["app", "components", "lib", "content"];
 
 /** 한글 음절. 자모까지 넣지 않는 이유는 실제 산문에는 완성형만 나오기 때문이다. */
 const HANGUL = /[가-힣]/;
@@ -29,6 +33,12 @@ const HANGUL = /[가-힣]/;
 /** 딕셔너리 자신과 테스트는 한국어를 담는 것이 일이다. */
 function isExempt(rel: string): boolean {
   if (rel.includes("lib/i18n/ko.ts")) return true;
+  // 사용 매뉴얼의 한국어 본문. ko.ts와 같은 위치의 예외다 — **한국어를 담는
+  // 것이 그 파일의 일**이고, 영어 짝은 content/manual/en/ 에 있으며
+  // content/manual/parity.test.ts가 두 쪽의 구조가 같은지 단정한다.
+  // 경로를 정확히 이 접두사로 좁혀 둔다: content/ 아래 다른 곳(예: 매뉴얼
+  // 렌더러가 쓰는 상수)에 한국어가 박히면 계속 잡힌다.
+  if (rel.startsWith("content/manual/ko/")) return true;
   if (/\.test\.(ts|tsx)$/.test(rel)) return true;
   return false;
 }
@@ -50,6 +60,11 @@ const ALLOWED: Array<[string, string]> = [
   // 스위치의 aria-label은 두 언어를 함께 담는다 — 어느 언어 사용자든 스크린
   // 리더로 찾을 수 있어야 하고, UI 언어로 번역하면 반대쪽 사용자가 잃는다.
   ["components/LanguageSwitcher.tsx", "Language / 언어"],
+  // 영어 매뉴얼이 **그 버튼을 가리키며** 설명하는 대목이다. 화면에 실제로
+  // "한국어"라고 적혀 있으므로(위 LANGUAGE_LABEL 규약), 영어로 "Korean"이라
+  // 쓰면 독자가 화면에서 그 버튼을 찾지 못한다.
+  ["content/manual/en/getting-started.ts", "한국어 / English"],
+  ["content/manual/en/create-project.ts", "한국어/English"],
   // 감사 로그·문서 본문을 **읽는** 정규식이다. 그 텍스트는 프로젝트 언어로
   // 기록돼 있고 UI 언어와 무관하므로, 두 언어를 다 받아야 한다
   // (parsers/audit.py가 `사용자 입력|User Raw Input`을 둘 다 받는 것과 같은 규율).

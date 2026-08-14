@@ -19,14 +19,24 @@ export type GateDecision =
 //   /survey/*    익명 설문 (계정 없는 최종 사용자)
 //   /proto/*     프로토타입 프리뷰 (같은 사용자가 앱을 실제로 써본다)
 //   /api/auth/*  로그인 왕복 자체
+//   /manual      사용 매뉴얼 — **백엔드 대응 경로가 없는 유일한 항목이다.**
+//                프론트 안에서만 렌더되는 정적 문서이고 API를 부르지 않으므로
+//                백엔드 PUBLIC_PATHS에 짝이 없다. 로그인 뒤에 두면 계정을
+//                받기 전에 "이게 뭘 하는 도구인지" 읽을 방법이 사라진다 —
+//                초대 메일에 링크를 넣는 것이 이 도구를 처음 만나는 경로다.
 const PUBLIC_PREFIXES = ["/login", "/survey/", "/proto/", "/api/auth/"];
 
 // /api/*는 통과시킨다: 프록시가 Bearer를 붙이고 백엔드가 판단한다. 여기서
 // 리다이렉트하면 fetch가 HTML 로그인 페이지를 받아 JSON 파싱 오류로 깨진다.
 const PASSTHROUGH_PREFIXES = ["/api/"];
 
+// 접두사가 아니라 **정확히 그 경로**만 공개인 것들. 하위 경로가 없는 단일
+// 화면이므로 startsWith로 열어 두면 나중에 생기는 /manual/xxx 가 판정을
+// 물려받는다 — 공개 목록은 넓히기보다 좁게 유지하는 편이 안전하다.
+const PUBLIC_EXACT = ["/login", "/manual"];
+
 function isPublic(pathname: string): boolean {
-  if (pathname === "/login") return true;
+  if (PUBLIC_EXACT.includes(pathname)) return true;
   return PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))
     || PASSTHROUGH_PREFIXES.some((p) => pathname.startsWith(p));
 }

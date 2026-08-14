@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
@@ -75,6 +76,16 @@ export default function LoginPage() {
         <Suspense fallback={<LoginButton href="/api/auth/login" />}>
           <LoginActions />
         </Suspense>
+
+        {/* 로그인 전에도 읽혀야 하는 링크다. 계정을 기다리는 사람이 이 도구가
+            무엇인지 알아볼 수 있는 유일한 경로이고, lib/auth/gate.ts가
+            /manual을 공개 경로로 두는 이유다. */}
+        <Link
+          href="/manual"
+          className="mt-4 block text-center text-sm text-violet-700 hover:underline"
+        >
+          {t("manual.readManual")}
+        </Link>
       </div>
     </main>
   );

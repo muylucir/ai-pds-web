@@ -7,7 +7,12 @@ import { useT } from "@/lib/i18n/provider";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { UserMenu } from "./UserMenu";
 
-export type HeaderTab = "dashboard" | "workspace" | "review" | "prototypes" | "projects";
+export type HeaderTab =
+  | "dashboard" | "workspace" | "review" | "prototypes" | "projects"
+  // 매뉴얼은 프로젝트에 속하지 않는다. 탭 줄(대시보드·워크스페이스·문서
+  // 리뷰·프로토타입)에 넣지 않고 오른쪽 링크로 두는 이유가 그것이다 —
+  // 그 네 개는 프로젝트가 없으면 눌리지 않는 항목이고, 매뉴얼은 그 반대다.
+  | "manual";
 
 
 // Ported from the shared <header> in files/ui/01–03. `projectId` is optional so
@@ -100,6 +105,23 @@ export function AppHeader({
           <span className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> {t("header.bedrockConnected")}
           </span>
+          {/* 매뉴얼 화면 자신에서는 현재 위치로만 표시한다 — 같은 곳으로 가는
+              링크를 누르게 두면 어디에 있는지 헷갈린다. */}
+          {activeTab === "manual" ? (
+            <span
+              aria-current="page"
+              className="px-2.5 py-1 text-sm font-medium text-violet-700"
+            >
+              {t("nav.manual")}
+            </span>
+          ) : (
+            <Link
+              href="/manual"
+              className="px-2.5 py-1 text-sm text-slate-500 rounded-lg hover:bg-slate-100"
+            >
+              {t("nav.manual")}
+            </Link>
+          )}
           <LanguageSwitcher />
           <UserMenu />
         </div>

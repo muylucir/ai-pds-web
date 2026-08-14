@@ -401,4 +401,26 @@ export const en: Record<keyof typeof ko, string> = {
   "survey.savedPrefix": "Saved",
   "survey.savedSuffix": "responses to",
   "app.description": "AI-PLC Discovery web service",
+
+  // The chrome of the user manual (/manual). Its body lives in
+  // content/manual/{ko,en}/, not here — see ko.ts for why.
+  "nav.manual": "Manual",
+  "manual.title": "User manual",
+  "manual.subtitle": "What each screen is for, and which button to press.",
+  "manual.tocLabel": "Manual contents",
+  "manual.searchLabel": "Search the manual",
+  "manual.searchPlaceholder": "Search…",
+  "manual.searchClear": "Clear the search",
+  "manual.searchNoResults": "Nothing matches that.",
+  "manual.searchResultCount": "{n} sections match.",
+  "manual.copyAria": "Copy the command",
+  "manual.mockupNotice": "The wording below is taken from the live screens",
+  "manual.diagramHint": "Select a box to jump to that section",
+  "manual.backToTop": "Back to top",
+  "manual.prevSection": "Previous",
+  "manual.nextSection": "Next",
+  "manual.readManual": "Read the user manual",
+  "manual.calloutNote": "Note",
+  "manual.calloutWarn": "Careful",
+  "manual.calloutTip": "Tip",
 };

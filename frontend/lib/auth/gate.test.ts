@@ -20,8 +20,18 @@ describe("public paths need no cookie", () => {
     "/api/auth/login",
     "/api/auth/callback",
     "/api/auth/logout",
+    // 매뉴얼은 계정을 받기 전에 읽혀야 한다 — 초대 메일의 링크가 이 도구를
+    // 처음 만나는 경로다.
+    "/manual",
   ])("allows %s", (path) => {
     expect(gateDecision(path, undefined)).toEqual({ kind: "allow" });
+  });
+
+  // /manual은 정확 일치다. 하위 경로를 접두사로 열어 두면 나중에 생기는
+  // /manual/* 가 판정을 물려받는다.
+  it("does not open sub-paths under /manual", () => {
+    expect(gateDecision("/manual/secret", undefined))
+      .toEqual({ kind: "login", next: "/manual/secret" });
   });
 });
 
