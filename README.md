@@ -13,8 +13,10 @@ backend/   FastAPI — Discovery 에이전트 · SSE 릴레이 · S3 영속화 �
 infra/     CDK (TypeScript) — S3 + 백엔드 롤 + Cognito + EC2/CloudFront (서울 기본)
 ```
 
-- 동작 방식과 설계 판단의 근거: [`docs/design-notes.md`](docs/design-notes.md)
 - 스택 내부 구조(콜백 URL 순환 의존, 오리진 보호 등): [`infra/README.md`](infra/README.md)
+- 사용 방법(화면별 조작·관리자·운영): 앱의 **`/manual`** — 로그인 없이 열린다
+- **설계 판단의 근거는 커밋 메시지와 코드 주석에 있다.** "왜 이렇게 되어 있는가"는
+  `git log`로 찾는다 — 해당 파일을 건드린 커밋 본문에 근거가 있다.
 
 ---
 
@@ -158,11 +160,11 @@ sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # 프리
 | 로그인 후 `redirect_mismatch` | 호스팅 스택의 콜백 URL 등록(`UpdateUserPoolClient`)이 실패. `cdk deploy PathfinderHostingStack` 재실행 |
 | `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 결과가 로컬 `cdk.context.json`(gitignored)에 캐시되므로 클론당 최초 1회만 필요하다 |
 | SSH 접속 불가 | 의도된 설계다. SSH 포트가 없고 SSM만 열려 있다 |
-| 프로토타입 프리뷰가 404 | **의도된 응답이다** — 접근 토큰 쿠키가 없거나 다른 프로토타입의 것이다. 공유 링크(`/api/proto/t/{token}`)로 들어가야 쿠키가 심긴다. 자세한 분기는 `docs/design-notes.md`의 "인증과 프로토타입 접근 토큰" |
-| 영어 프로젝트인데 문서·채팅이 한국어로 나옴 | 언어 지시가 두 레벨에서 충돌한 것이고 **이 실패는 에러를 내지 않는다.** `docs/design-notes.md`의 "언어" 참고 |
+| 프로토타입 프리뷰가 404 | **의도된 응답이다** — 접근 토큰 쿠키가 없거나 다른 프로토타입의 것이다. 공유 링크(`/api/proto/t/{token}`)로 들어가야 쿠키가 심긴다. 분기 조건은 `backend/pathfinder/routes/proto_public.py` |
+| 영어 프로젝트인데 문서·채팅이 한국어로 나옴 | 언어 지시가 두 레벨에서 충돌한 것이고 **이 실패는 에러를 내지 않는다.** 프로젝트 언어는 `rule/aiplc-rules/language/{ko,en}.md`와 공유 config dir(`proto-config/CLAUDE.md`·`discovery-config/CLAUDE.md`) 두 채널로 들어간다 — 둘이 어긋나면 화면은 정상인데 산출물만 다른 언어가 된다 |
 | 영어 UI인데 일부 문구만 한국어 | 딕셔너리를 안 타고 소스에 박힌 리터럴이다. `cd frontend && npm test -- noHardcodedKorean`이 위치를 집어 준다 |
-| 워크스페이스 채팅 내역이 빈 목록 | `list_history`가 모든 실패를 `[]`로 강등한다. `projects/{pid}/discovery/transcript/`에 객체가 있는지부터 확인한다 — `docs/design-notes.md`의 "트랜스크립트 미러링" |
-| 긴 메시지를 보내면 "연결이 끊어졌습니다" | 요청 라인이 Node `maxHeaderSize`를 넘은 것(HTTP 431). `docs/design-notes.md`의 "긴 채팅 입력" |
+| 워크스페이스 채팅 내역이 빈 목록 | `list_history`가 모든 실패를 `[]`로 강등한다. `projects/{pid}/discovery/transcript/`에 객체가 있는지부터 확인한다 — 미러링 키는 project_id에서 uuid5로 유도하므로(`agent/session_store.py`, `agent/claude_driver.py`) project_id를 그대로 프리픽스에 넣어 찾으면 빈 곳을 뒤진다 |
+| 긴 메시지를 보내면 "연결이 끊어졌습니다" | 요청 라인이 Node `maxHeaderSize`를 넘은 것(HTTP 431)이고 `EventSource`가 상태 코드를 노출하지 않아 이 문구만 뜬다. 지금은 턴 텍스트를 POST로 받아 1회용 핸들만 URL에 싣는다(`turn_handles.py`) — 다시 나면 입력을 나눠 보내거나 파일로 첨부한다 |
 
 ---
 
@@ -209,8 +211,12 @@ dev cross-origin 경고를 없애려면 `next.config.mjs`의 `allowedDevOrigins`
 
 ## 환경 변수
 
-EC2 배포는 user-data가 전부 채운다. 아래는 **로컬에서 손으로 설정하는 것들**이고, 전체
-목록은 [`docs/design-notes.md`](docs/design-notes.md#환경-변수-전체-목록)에 있다.
+EC2 배포는 user-data가 전부 채운다. 아래는 **로컬에서 손으로 설정하는 것들**이다.
+
+전체 목록은 두 곳에서 본다: 배포에 실제로 들어가는 값과 그 이유는
+[`infra/lib/user-data.ts`](infra/lib/user-data.ts)의 systemd 유닛(`Environment=` 줄마다
+주석이 붙어 있다), 기본값과 허용 범위는 이를 읽는 코드
+(`backend/pathfinder/app.py`·`backend/pathfinder/cli_settings.py`)에 있다.
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|

@@ -141,8 +141,10 @@ Node.js 20+ are required.`,
     },
     {
       kind: "md",
-      md: `The full environment-variable list and the reasoning behind the design decisions live in the
-repository's \`README.md\` and \`docs/design-notes.md\`.`,
+      md: `The full environment-variable list is in the systemd units in \`infra/lib/user-data.ts\`, each
+line commented, and the rest of the deployment procedure is in the repository's \`README.md\`.
+**The reasoning behind the design decisions lives in the commit messages and code comments** —
+"why is it like this" is a \`git log\` question.`,
     },
   ],
 };
