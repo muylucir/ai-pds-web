@@ -64,17 +64,26 @@ npx cdk deploy --all --require-approval never
 `next build`)가 대부분을 차지한다. `cdk deploy`가 끝난 직후에도 EC2 빌드가 진행 중일 수
 있어 **CloudFront가 몇 분간 502를 반환하는 것은 정상**이다.
 
-> ⚠️ **배포되는 것은 커밋된 코드가 아니라 현재 워킹 트리다.** 호스팅 스택은 리포 루트를
-> zip 에셋으로 올린다 — 제외 목록은 `infra/app-asset-excludes.json`이고 `.gitignore`와는
-> **별개**다. 미커밋 변경도 그대로 배포되므로 배포 전 `git status`로 확인한다. 새로
-> gitignore한 로컬 산출물은 이 목록에도 넣어야 한다(실제로 `proto-type/`이 빠져 있어서,
-> 개발 박스에서 만든 프로토타입이 배포 zip에 실려 새 인스턴스에서 "빌드 완료"로 보였다).
+> ⚠️ **배포되는 것은 커밋이다 — 푸시하지 않은 것은 배포되지 않는다.** EC2가 부팅할 때
+> 공개 리포를 clone하고 커밋 하나에 고정한다(`git checkout --detach <sha>`). 기본값은 로컬
+> `HEAD`이고, `CDK_DEPLOY_REF`로 다른 커밋을 지정할 수 있다:
 >
-> 목록의 **`.claude/`** 는 이유가 다르다. 에이전트의 cwd가 `/opt/pathfinder/workspaces/{pid}`
-> 이므로 `/opt/pathfinder/.claude/`는 **조상**이 되고, Claude Code는 cwd에서 위로 올라가며
-> `CLAUDE.md`를 전부 로드한다 — 개발용 설정의 한국어 한 줄이 영어 프로젝트의 컨텍스트에 매
-> 턴 들어갔다(실측). `CLAUDE_CONFIG_DIR`은 조상 탐색을 막지 못하므로 **에셋에서 빼는 것이
-> 유일한 차단이다.** `infra/test`가 이 목록을 단정한다.
+> ```bash
+> CDK_DEPLOY_REF=<sha> npx cdk deploy PathfinderHostingStack --require-approval never
+> ```
+>
+> clone은 **부팅 시점에** 일어나므로, 푸시하지 않은 커밋을 배포하면 `cdk deploy`는 성공하고
+> **EC2만 부팅에 실패한다**(화면에는 502). synth 때 경고가 뜨지만 막지는 않으니 푸시를 먼저 한다.
+>
+> 인스턴스에서 무엇이 도는지는 `git -C /opt/pathfinder rev-parse HEAD`로 확인한다.
+>
+> 종전에는 리포 루트를 zip 에셋으로 올렸다. clone으로 바꾼 이유는 에셋이 **gitignore된
+> 파일까지 실었기** 때문이다 — 그래서 별도의 제외 목록을 사람이 관리해야 했고, 그 목록에서
+> 빠진 것이 두 번 사고를 냈다(개발 박스의 `proto-type/`이 실려 아무도 빌드하지 않은
+> 프로토타입이 "빌드 완료"로 보인 것, 개발용 `.claude/CLAUDE.md`가 에이전트 cwd의 **조상**이
+> 되어 한국어 한 줄이 영어 프로젝트 컨텍스트에 매 턴 들어간 것). clone은 tracked 파일만
+> 가져오므로 그 실패 종류가 사라졌고, 남은 불변식은 `infra/test/deployed-tree.assert.ts`가
+> `git ls-files`로 단정한다.
 
 ### 4. 출력값
 
@@ -122,11 +131,51 @@ CloudFront 프리픽스 리스트는 `PrefixList.fromLookup`이 배포 리전에
 ### 코드만 다시 배포하기
 
 ```bash
+git push                                       # 배포되는 것은 커밋이다
 cd infra && npx cdk deploy PathfinderHostingStack --require-approval never
 ```
 
-에셋 해시가 바뀌면 user-data가 갱신되고 EC2가 교체된다. 급한 수정이라면 SSM으로 들어가
-직접 갱신하는 게 빠르다: `aws ssm start-session --target <InstanceId>`.
+배포 커밋이 바뀌면 user-data가 바뀌고 **EC2가 교체된다**(`UserData`는 replacement 속성).
+새 인스턴스가 부팅해 빌드를 마칠 때까지 5~10분이 걸리고 그 사이 502가 난다.
+
+### 인스턴스를 교체하지 않고 핫픽스하기
+
+`/opt/pathfinder`는 **git 워킹 트리**이므로 그 자리에서 갱신할 수 있다. 워크숍 중처럼
+교체를 감당할 수 없을 때 쓴다.
+
+```bash
+git push                                       # 먼저 푸시한다
+aws ssm start-session --target <InstanceId>
+sudo -u pathfinder git -C /opt/pathfinder fetch origin
+sudo -u pathfinder git -C /opt/pathfinder checkout --detach <sha>
+```
+
+그다음 바꾼 쪽만 반영한다:
+
+```bash
+# 프론트엔드를 고쳤다면 — 다시 빌드해야 한다
+cd /opt/pathfinder/frontend
+sudo -u pathfinder env NEXT_PUBLIC_API_BASE_URL=/api HOME=/opt/pathfinder npm ci    # 의존성이 바뀐 경우만
+sudo -u pathfinder env NEXT_PUBLIC_API_BASE_URL=/api HOME=/opt/pathfinder npm run build
+sudo systemctl restart pathfinder-frontend
+
+# 백엔드를 고쳤다면 — 빌드 없이 재시작만 (pip install -e 로 설치돼 있다)
+sudo systemctl restart pathfinder-backend
+```
+
+- **`NEXT_PUBLIC_API_BASE_URL=/api`를 빼면 안 된다.** 이 값이 클라이언트 번들에
+  인라인되므로, 빼고 빌드하면 브라우저가 `localhost:8000`을 불러 모든 API 호출이 죽는다 —
+  화면은 뜨는데 아무것도 동작하지 않는다.
+- `next build`가 도는 1~2분 동안 `.next`가 제자리에서 갈리므로 접속 중인 사용자에게 청크
+  404가 날 수 있다. 워크숍 중이면 쉬는 시간에 한다.
+- 백엔드 재시작은 **진행 중인 Discovery 턴과 빌드 세션을 끊는다.** 트랜스크립트는 S3에
+  미러링되므로 대화는 이어지지만, 도는 빌드 세션은 완료 선언 없이 죽어 재개 경로를 탄다.
+- 확인: `git -C /opt/pathfinder rev-parse HEAD` 로 무엇이 도는지 보고,
+  `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/`로 앱을 직접 찍는다
+  (nginx는 CloudFront의 비밀 헤더가 없으면 403이므로 우회해서 본다).
+
+> ⚠️ 핫픽스는 다음 `cdk deploy`에서 **덮인다** — 그때 인스턴스가 배포 커밋으로 새로
+> 만들어진다. 그러므로 핫픽스한 커밋을 반드시 푸시해 두고, 다음 배포에 그 커밋 이후를 쓴다.
 
 ### 삭제
 

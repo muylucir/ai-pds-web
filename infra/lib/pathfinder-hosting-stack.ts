@@ -4,15 +4,13 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as assets from 'aws-cdk-lib/aws-s3-assets';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as cr from 'aws-cdk-lib/custom-resources';
-import * as path from 'path';
 import { backendPolicyStatements, MODEL } from './backend-permissions';
+import { REPO_URL, resolveDeployRef, warnIfRefNotPushed } from './deploy-source';
 import { renderUserData } from './user-data';
-import appAssetExcludes from '../app-asset-excludes.json';
 import {
   ACCESS_TOKEN_VALIDITY_MINUTES, CLIENT_NAME, EXPLICIT_AUTH_FLOWS, ID_TOKEN_VALIDITY_MINUTES,
   LOCAL_APP_URL, OAUTH_SCOPES, REFRESH_TOKEN_VALIDITY_MINUTES,
@@ -121,31 +119,31 @@ export class PathfinderHostingStack extends cdk.Stack {
       resources: [props.userPool.userPoolArn],
     }));
 
-    // --- 앱 코드 에셋(리포 zip) ---
-    const asset = new assets.Asset(this, 'AppAsset', {
-      path: path.join(__dirname, '..', '..'), // 리포 루트
-      // 목록은 app-asset-excludes.json이 소유한다. 지금은 이 스택이 유일한
-      // 소비자다 — 같은 목록을 공유했던 단일 CloudFormation 패키저는 제거됐다.
-      //
-      // JSON에는 주석을 달 수 없으므로 **실측으로 얻은 두 항목의 근거**를
-      // 여기 남긴다(지우면 다음 사람이 목록을 좁힐 때 이유를 모른다):
-      //
-      // - `proto-type`/`protos`: node_modules/.next를 걸러도 소스는 남아서,
-      //   개발 박스에서 만든 프로토타입이 배포 zip에 실려 새 인스턴스의
-      //   /opt/pathfinder/proto-type/에 심긴다. 그러면 아무도 빌드하지 않은
-      //   프로토타입이 "빌드 완료"로 보인다(has_build_output이 보는 것이 정확히
-      //   이 트리다). 세션 트랜스크립트·큐도 같은 이유로 뺀다.
-      // - `.claude`: 이 리포를 개발할 때 쓰는 Claude Code 설정이다. 에이전트의
-      //   cwd가 /opt/pathfinder/workspaces/{pid}이고 이 파일은
-      //   /opt/pathfinder/.claude/에 실리므로 **조상**이 된다. Claude Code는
-      //   cwd에서 위로 올라가며 CLAUDE.md를 전부 로드한다(실제 CLI로 확인:
-      //   `.../.claude/CLAUDE.md (ancestor project)`). 그래서 그 한국어 한 줄이
-      //   영어 프로젝트의 컨텍스트에 매 턴 들어갔다(d94aaa1). CLAUDE_CONFIG_DIR은
-      //   `user` 레벨만 옮기고 조상 탐색은 막지 못하므로 **에셋에서 빼는 것이
-      //   유일한 차단이다.** test/app-asset.assert.ts가 이것을 지킨다.
-      exclude: appAssetExcludes,
-    });
-    asset.grantRead(role);
+    // --- 배포할 코드: 리포의 특정 커밋 ---
+    //
+    // 종전에는 리포 루트를 CDK 에셋(zip)으로 올리고 EC2가 S3에서 내려받았다.
+    // 그 방식이 남긴 두 가지가 이 변경의 이유다(자세한 근거는 lib/deploy-source.ts):
+    //
+    // - 에셋은 **gitignore된 파일까지 싣는다.** 그래서 app-asset-excludes.json
+    //   이라는 보정 목록이 필요했고, 그 목록에서 빠진 것이 두 번 사고를 냈다:
+    //   개발용 `.claude/CLAUDE.md`가 /opt/pathfinder/.claude/에 실려 에이전트
+    //   cwd의 **조상**이 되어 한국어 한 줄이 영어 프로젝트 컨텍스트에 매 턴
+    //   들어간 것(d94aaa1), 그리고 개발 박스의 `proto-type/`이 실려 아무도
+    //   빌드하지 않은 프로토타입이 "빌드 완료"로 보인 것.
+    //   clone은 tracked 파일만 가져오므로 이 실패 **종류**가 사라진다.
+    //   그 불변식(의도하지 않은 CLAUDE.md가 앱 트리에 없다)은 이제
+    //   test/deployed-tree.assert.ts가 tracked 파일 목록으로 지킨다.
+    // - 배포되는 것이 커밋이 아니라 **워킹 트리**였다. 지금은 커밋 SHA가
+    //   user-data에 들어가므로 "무엇이 도는가"가 특정되고, 커밋이 바뀌면
+    //   user-data가 바뀌어 인스턴스가 교체된다(UserData는 replacement 속성).
+    const deployRef = resolveDeployRef();
+    const notPushed = warnIfRefNotPushed(deployRef);
+    if (notPushed) {
+      // 던지지 않는 이유: 오프라인/얕은 클론에서 판정이 틀릴 수 있고, synth를
+      // 막을 만한 확신이 없다. 대신 배포자가 볼 수 있게 남긴다 — clone은 부팅
+      // 시점에 일어나므로 이 실수는 cdk deploy 성공 + EC2 부팅 실패로 나타난다.
+      cdk.Annotations.of(this).addWarning(notPushed);
+    }
 
     // --- user-data ---
     // CloudFront 도메인은 아래에서 만들어지지만 user-data는 지금 필요하다.
@@ -162,7 +160,8 @@ export class PathfinderHostingStack extends cdk.Stack {
         bucketName: props.artifactsBucket.bucketName,
         model: MODEL,
         secretArn: headerSecret.secretArn,
-        assetS3Uri: asset.s3ObjectUrl, // s3://bucket/key
+        repoUrl: REPO_URL,
+        ref: deployRef,
         userPoolId: props.userPool.userPoolId,
         userPoolClientId: props.userPoolClient.userPoolClientId,
         hostedUiDomain: props.hostedUiDomain,

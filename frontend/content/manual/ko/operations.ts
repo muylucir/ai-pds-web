@@ -47,8 +47,10 @@ export const operations: ManualSection = {
     {
       kind: "callout",
       tone: "warn",
-      md: `**배포되는 것은 커밋된 코드가 아니라 현재 워킹 트리입니다.** 미커밋 변경도 그대로
-올라가므로 배포 전에 \`git status\`로 확인하세요.`,
+      md: `**배포되는 것은 커밋입니다 — 푸시하지 않은 것은 배포되지 않습니다.** EC2가 부팅할 때
+리포를 clone하고 커밋 하나에 고정합니다. clone이 부팅 시점에 일어나므로, 푸시하지 않은
+커밋을 배포하면 \`cdk deploy\`는 성공하고 **인스턴스만 부팅에 실패합니다**(화면에는 502).
+배포 전에 \`git push\`를 하세요.`,
     },
     {
       kind: "details",
@@ -73,12 +75,60 @@ export const operations: ManualSection = {
     { kind: "heading", id: "redeploy", text: "코드만 다시 배포" },
     {
       kind: "cmd",
-      lines: ["cd infra && npx cdk deploy PathfinderHostingStack --require-approval never"],
+      lines: [
+        "git push",
+        "cd infra && npx cdk deploy PathfinderHostingStack --require-approval never",
+      ],
     },
     {
       kind: "md",
-      md: `에셋이 바뀌면 EC2가 교체되면서 새 코드로 다시 빌드합니다. 급한 한 줄 수정이라면
-SSM으로 인스턴스에 들어가 직접 고치는 편이 빠릅니다.`,
+      md: `배포 커밋이 바뀌면 EC2가 **교체되면서** 새 커밋으로 다시 빌드합니다. 새 인스턴스가
+부팅해 빌드를 마칠 때까지 5~10분이 걸리고, 그 사이에는 502가 납니다.
+
+특정 커밋으로 배포하거나 되돌리려면 커밋을 지정합니다:
+\`CDK_DEPLOY_REF=<sha> npx cdk deploy PathfinderHostingStack\``,
+    },
+    { kind: "heading", id: "hotfix", text: "인스턴스를 교체하지 않고 고치기" },
+    {
+      kind: "md",
+      md: `워크숍 중처럼 5~10분의 중단을 감당할 수 없을 때 씁니다.
+\`/opt/pathfinder\`가 **git 워킹 트리**이므로 그 자리에서 갱신할 수 있습니다.`,
+    },
+    {
+      kind: "cmd",
+      caption: "먼저 푸시하고, SSM으로 들어가 배포 커밋을 옮깁니다",
+      lines: [
+        "aws ssm start-session --target <InstanceId>",
+        "sudo -u pathfinder git -C /opt/pathfinder fetch origin",
+        "sudo -u pathfinder git -C /opt/pathfinder checkout --detach <sha>",
+      ],
+    },
+    {
+      kind: "cmd",
+      caption: "프론트를 고쳤다면 다시 빌드하고, 백엔드만 고쳤다면 재시작만 합니다",
+      lines: [
+        "cd /opt/pathfinder/frontend",
+        "sudo -u pathfinder env NEXT_PUBLIC_API_BASE_URL=/api HOME=/opt/pathfinder npm run build",
+        "sudo systemctl restart pathfinder-frontend",
+        "",
+        "sudo systemctl restart pathfinder-backend",
+      ],
+    },
+    {
+      kind: "md",
+      md: `- **\`NEXT_PUBLIC_API_BASE_URL=/api\`를 빼면 안 됩니다.** 이 값이 클라이언트 번들에
+  인라인되므로, 빼고 빌드하면 브라우저가 \`localhost:8000\`을 불러 모든 API 호출이 죽습니다 —
+  화면은 뜨는데 아무것도 동작하지 않습니다.
+- 빌드가 도는 1~2분 동안 접속 중인 사용자에게 오류가 날 수 있습니다. 쉬는 시간에 하세요.
+- 백엔드 재시작은 **진행 중인 대화와 빌드 세션을 끊습니다.** 대화는 다시 열면 이어지지만,
+  도는 빌드 세션은 재개 경로를 탑니다.
+- 무엇이 도는지는 \`git -C /opt/pathfinder rev-parse HEAD\`로 확인합니다.`,
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**핫픽스는 다음 \`cdk deploy\`에서 덮입니다** — 그때 인스턴스가 배포 커밋으로 새로
+만들어집니다. 고친 것을 반드시 푸시해 두고, 다음 배포에 그 커밋 이후를 쓰세요.`,
     },
     { kind: "heading", id: "teardown", text: "내리기" },
     {

@@ -3,7 +3,15 @@ export interface UserDataOptions {
   bucketName: string;
   model: string;
   secretArn: string;
-  assetS3Uri: string;
+  /** 공개 리포의 HTTPS clone URL. */
+  repoUrl: string;
+  /**
+   * 배포할 커밋. **브랜치 이름을 넣으면 안 된다** — 값이 그대로 이 스크립트에
+   * 들어가므로, 바뀌지 않는 값은 user-data를 바꾸지 않고 따라서 CloudFormation이
+   * 인스턴스를 교체하지 않는다(UserData는 replacement 속성이다). 그러면 배포가
+   * 코드 갱신 수단이 아니게 된다. 근거와 결정 규칙은 lib/deploy-source.ts.
+   */
+  ref: string;
   // 인증. 이 값들이 비면 백엔드가 인증 바이패스로 돌아 배포가 무인증으로
   // 공개된다 — 호스팅 스택이 항상 채운다.
   userPoolId: string;
@@ -13,10 +21,10 @@ export interface UserDataOptions {
 }
 
 // EC2 부트스트랩 스크립트. 순수 문자열 생성(부수효과 없음) — 단위 테스트 가능.
-// 부팅 시: 패키지 설치 → 서비스 유저 생성 → 에셋 전개 → 백엔드 venv/설치 →
+// 부팅 시: 패키지 설치 → 서비스 유저 생성 → 리포 clone → 백엔드 venv/설치 →
 // 프론트 빌드 → 시크릿 조회 → nginx conf → systemd 기동. 헤더 불일치는 nginx가 403.
 export function renderUserData(opts: UserDataOptions): string {
-  const { region, bucketName, model, secretArn, assetS3Uri,
+  const { region, bucketName, model, secretArn, repoUrl, ref,
           userPoolId, userPoolClientId, hostedUiDomain, appUrl } = opts;
   const APP = '/opt/pathfinder';
   // 서비스 전용 non-root 유저. 편의가 아니라 필수다: 프로토타입 빌드 에이전트가
@@ -35,18 +43,39 @@ touch /var/log/pathfinder-bootstrap.log
 chmod 600 /var/log/pathfinder-bootstrap.log
 exec > >(tee -a /var/log/pathfinder-bootstrap.log) 2>&1
 
-# --- 패키지 (AL2023: awscli2는 기본 탑재). shadow-utils = useradd. ---
-dnf install -y python3.11 python3.11-devel gcc nodejs20 nodejs20-npm nginx tar unzip shadow-utils
+# --- 패키지 (AL2023: awscli2는 기본 탑재). shadow-utils = useradd, git = 코드 배포. ---
+dnf install -y python3.11 python3.11-devel gcc nodejs20 nodejs20-npm nginx tar unzip shadow-utils git
 
 # --- 서비스 유저 (멱등: 재부트스트랩 시 이미 있을 수 있다) ---
 id -u ${SVC} >/dev/null 2>&1 || useradd --system --create-home --shell /sbin/nologin ${SVC}
 
-# --- 에셋 전개 ---
-mkdir -p ${APP}
+# --- 코드: 공개 리포를 clone 하고 배포 대상 커밋에 고정 ---
+# S3 에셋 zip을 쓰지 않는 이유는 lib/deploy-source.ts에 있다(요지: 에셋은
+# gitignore된 파일까지 실어 보정 목록이 필요했고, 배포되는 것이 커밋이 아니라
+# 워킹 트리였다). clone은 tracked 파일만 가져오므로 그 두 문제가 함께 사라진다.
+#
+# --detach로 커밋에 직접 붙는 이유: 브랜치를 만들면 나중에 SSM으로 들어가
+# 'git pull'을 했을 때 그 브랜치가 배포 커밋보다 앞서 가고, 그러면 인스턴스가
+# 무엇을 돌리는지가 다시 흐려진다. detached HEAD는 "이 커밋을 돌린다"를 그대로
+# 드러낸다(핫픽스는 의도적으로 'git checkout main && git pull'을 해야 한다).
+#
+# 멱등: 같은 인스턴스에서 다시 돌 수 있다(cloud-init 재실행). .git이 있으면
+# fetch만 하고, 없으면 새로 clone한다 — 중간에 끊긴 clone이 남긴 부분 트리는
+# .git이 없으므로 이 분기에서 정리된다. 첫 부팅에는 ${APP}이 비어 있으므로
+# 여기서 지워지는 사용자 데이터는 없다(protos/는 아래에서 만들어진다).
+#
+# safe.directory를 미리 넣는다: 아래에서 트리를 ${SVC} 소유로 넘기므로, 재실행
+# 때 root로 도는 이 git 명령이 "detected dubious ownership"으로 거부된다.
+# set -e 아래에서 그 거부는 부팅 중단이고, 증상은 502뿐이다.
+git config --system --add safe.directory ${APP}
+if [ -d ${APP}/.git ]; then
+  git -C ${APP} fetch --prune origin
+else
+  rm -rf ${APP}
+  git clone ${repoUrl} ${APP}
+fi
+git -C ${APP} checkout --detach ${ref}
 cd ${APP}
-aws s3 cp ${assetS3Uri} /tmp/app.zip --region ${region}
-unzip -o /tmp/app.zip -d ${APP}
-rm -f /tmp/app.zip
 
 # --- 빌드 산출물·설정 디렉토리를 앱 트리 안에 만든다 ---
 # CLAUDE_CONFIG_DIR을 유저 홈이 아니라 APP 트리에 두는 이유: 앱 소유 데이터를

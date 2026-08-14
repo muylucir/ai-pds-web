@@ -6,7 +6,8 @@ const s = renderUserData({
   bucketName: 'my-artifacts-bucket',
   model: 'global.anthropic.claude-opus-4-8',
   secretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:hdr-AbCdEf',
-  assetS3Uri: 's3://asset-bucket/abc123.zip',
+  repoUrl: 'https://github.com/example/repo.git',
+  ref: 'abc1234def5678901234567890abcdef12345678',
   userPoolId: 'ap-northeast-2_TESTPOOL',
   userPoolClientId: 'client-test',
   hostedUiDomain: 'pathfinder-test.auth.ap-northeast-2.amazoncognito.com',
@@ -15,8 +16,24 @@ const s = renderUserData({
 
 // 1) 안전 옵션·로그
 assert.match(s, /set -euxo pipefail/, 'must be strict bash');
-// 2) 에셋 다운로드
-assert.match(s, /aws s3 cp s3:\/\/asset-bucket\/abc123\.zip/, 'must download asset');
+// 2) 코드 배포: 리포 clone + 배포 커밋 고정.
+//    에셋 zip은 더 이상 쓰지 않는다 — 근거는 lib/deploy-source.ts.
+assert.match(s, /git clone https:\/\/github\.com\/example\/repo\.git \/opt\/pathfinder/,
+  'must clone the repo into the app tree');
+assert.match(s, /git -C \/opt\/pathfinder checkout --detach abc1234def5678901234567890abcdef12345678/,
+  'must pin the exact deploy commit — a branch name would leave the instance ambiguous');
+assert.ok(!/aws s3 cp .*\.zip/.test(s),
+  'the asset zip download must be gone (the tree now comes from git, which carries only tracked files)');
+assert.ok(!s.includes('unzip -o'),
+  'nothing is unzipped any more');
+assert.match(s, /dnf install -y [^\n]*\bgit\b/, 'git must be installed — AL2023 does not ship it');
+// clone 뒤에 트리를 서비스 유저에게 넘기므로, 재부트스트랩 때 root로 도는 git이
+// "dubious ownership"으로 거부된다. set -e 아래에서 그것은 부팅 중단이다.
+assert.match(s, /git config --system --add safe\.directory \/opt\/pathfinder/,
+  'safe.directory must be configured before git runs on the service-user-owned tree');
+// 멱등: cloud-init 재실행에서 이미 clone된 트리를 다시 clone하려 하면 실패한다.
+assert.match(s, /if \[ -d \/opt\/pathfinder\/\.git \]; then/,
+  're-bootstrap must fetch instead of re-cloning');
 // 3) 시크릿 부팅 조회 (하드코딩 금지 — 런타임 조회)
 assert.match(s, /aws secretsmanager get-secret-value --secret-id arn:aws:secretsmanager:[^ ]+ /, 'must fetch secret at boot');
 // 4) nginx 헤더 검증 (403)
@@ -186,7 +203,8 @@ console.log('OK  user-data: services run as non-root pathfinder user, app tree o
     bucketName: 'bucket-x',
     model: 'model-x',
     secretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:abc',
-    assetS3Uri: 's3://b/k.zip',
+    repoUrl: 'https://github.com/example/repo.git',
+    ref: 'feedfacefeedfacefeedfacefeedfacefeedface',
     userPoolId: 'ap-northeast-2_POOL',
     userPoolClientId: 'client-abc',
     hostedUiDomain: 'pathfinder-x.auth.ap-northeast-2.amazoncognito.com',
