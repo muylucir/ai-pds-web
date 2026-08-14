@@ -23,7 +23,7 @@ backend/   FastAPI — Discovery 에이전트 · SSE 릴레이 · S3 영속화 �
 infra/     CDK (TypeScript) — S3 + 백엔드 롤 + Cognito + EC2/CloudFront (서울 기본)
 ```
 
-- 스택 내부 구조(콜백 URL 순환 의존, 오리진 보호 등): [`infra/README.md`](infra/README.md)
+- 스택 내부 구조(콜백 URL 순환 의존, 오리진 보호 등): [`infra/README.ko.md`](infra/README.ko.md)
 - 사용 방법(화면별 조작·관리자·운영): 앱의 **`/manual`** — 로그인 없이 열린다
 - **설계 판단의 근거는 커밋 메시지와 코드 주석에 있다.** "왜 이렇게 되어 있는가"는
   `git log`로 찾는다 — 해당 파일을 건드린 커밋 본문에 근거가 있다.

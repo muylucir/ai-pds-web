@@ -1,126 +1,151 @@
-# Pathfinder Infra (CDK, 기본 ap-northeast-2 / 서울)
+# Pathfinder Infra (CDK, `ap-northeast-2` / Seoul by default)
 
-세 스택:
+[한국어](README.ko.md) | **English**
 
-- **PathfinderDrillStack** — S3 아티팩트 버킷(`projects/*` + `sessions/*`) +
-  백엔드 실행 롤(Bedrock invoke + S3). 인프로세스 Strands 에이전트용.
-- **PathfinderAuthStack** — Cognito User Pool + Hosted UI v2 + 역할 그룹 2개 +
-  시드 계정 2개. 아래 별도 절에서 설명.
-- **PathfinderHostingStack** — VPC + EC2(AL2023 x86_64, m7i.2xlarge) +
-  CloudFront. EC2는 CloudFront origin-facing 관리형 프리픽스 리스트(배포 리전
-  자동)에서만 80을 받고, CloudFront가 붙이는 비밀 헤더 `X-Origin-Verify`를
-  nginx가 검증한다. user-data가 공개 리포를 clone해 `main`의 최신 커밋으로
-  맞춘 뒤 백엔드/프론트를 빌드·기동하고, 그 뒤의 코드 갱신용으로
-  `pathfinder-update`를 설치한다(배포에 커밋이 고정되지 않으므로
-  `cdk deploy`는 코드를 갱신하지 않는다 — 근거는 `lib/deploy-source.ts`). 프로토타입 빌드(Claude Agent SDK 에이전트)는 이 백엔드 프로세스
-  안에서 직접 돌아간다 — 별도 VM/MicroVM 계층 없음. 배포 마지막에
-  AuthStack의 앱 클라이언트에 실제 콜백 URL을 등록한다(아래 "콜백 URL 순환
-  의존" 참고).
+The deployment walkthrough — bootstrap, `cdk deploy`, outputs, access, changing the region, updating
+the code, teardown, troubleshooting — is in the root [`README.md`](../README.md). This document is
+about **why the stacks are shaped the way they are**: the decisions that break silently, with no
+error, when someone misses them.
 
-> **PathfinderVmStack은 제거됐다** (2026-07-25). 프로토타입 빌드는 백엔드
-> 프로세스 안에서 돌고, 도쿄 MicroVM·이미지 빌드·토큰 민팅이 모두 사라졌다.
-> 이전에 배포한 적이 있다면 한 번 정리한다:
-> `npx cdk destroy PathfinderVmStack --region ap-northeast-1`
+## The three stacks
+
+| Stack | What it creates |
+|---|---|
+| `PathfinderDrillStack` | S3 artifact bucket (`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + backend execution role (Bedrock invoke + S3) |
+| `PathfinderAuthStack` | Cognito User Pool + Hosted UI v2 (managed login) + 2 role groups (`admin`/`pm`) + 2 seed accounts |
+| `PathfinderHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
+
+The three reference each other, so **deploy them together with `--all`** (`bin/app.ts` passes the
+bucket and User Pool references into the hosting stack). CDK decides the order.
+
+**Why there are four bucket prefixes** is written out in `lib/backend-permissions.ts`. They hold
+project data, session transcripts, surveys, and the model catalog — and the last two have to live
+**outside** the project prefix (a survey token is looked up before anyone knows which project it
+belongs to, and the model catalog is read when no project exists yet). The reasoning in that comment
+comes from a real bug: `surveys/*` was missing from the list and every survey creation returned 500.
+On screen it was a generic error; the cause was a single `AccessDenied` line in the backend log.
+
+Prototype builds (a Claude Agent SDK agent) run **inside the backend process** — there is no separate
+VM or MicroVM layer.
+
+## What gets deployed: pushed `main`, not your working tree
+
+user-data clones the public repo, moves onto the latest `origin/main` commit as of boot, then builds
+and starts the backend and frontend. The reasoning is spelled out in `lib/deploy-source.ts`; it comes
+down to two things.
+
+- **A clone only takes tracked files.** The previous CDK asset (zip) approach shipped gitignored
+  files too, which had to be corrected with a human-maintained exclusion list. What fell off that
+  list caused two incidents: the repo's development `.claude/CLAUDE.md` became an **ancestor** of the
+  agent's cwd and injected one Korean line into every turn of an English project, and a dev box's
+  `proto-type/` shipped, making a prototype nobody had built look "build complete".
+  `test/deployed-tree.assert.ts` pins that invariant using `git ls-files`.
+- **No commit SHA is pinned.** That means the deployer is never asked "did you push this commit?",
+  but the price is that **`cdk deploy` is not how you update code** — if the user-data string is
+  byte-identical, CloudFormation does not replace the instance. Updating code is the job of
+  `pathfinder-update`, which is installed at boot (see "Updating the code" in the root README).
 
 ## PathfinderAuthStack
 
-Cognito User Pool + Hosted UI v2(managed login) + 역할 그룹 2개 + 시드 계정 2개.
+- **Self-signup blocked** — `selfSignUpEnabled: false` renders as CFN
+  `AdminCreateUserConfig.AllowAdminCreateUserOnly: true`. The Hosted UI shows no sign-up link, and
+  new accounts exist only by invitation from `/admin/users`.
+- **Roles** — `admin` (precedence 0) / `pm` (precedence 10) groups. Role is not a custom attribute.
+- **username == email** — `signInAliases: { username: true, email: true }` becomes CFN
+  `AliasAttributes: ['email']`, which lets the caller choose the Username. With `{ email: true }`
+  alone it becomes `UsernameAttributes` and Cognito auto-generates a UUID username — and then the CDK
+  custom resource cannot know that value across redeployments, making seeding non-deterministic.
+- **Seed accounts** — `AdminCreateUser` (SUPPRESS) → `AdminSetUserPassword` (Permanent) →
+  `AdminAddUserToGroup`. The `CfnUserPoolUser` L1 construct cannot set a final password, so it would
+  demand a change on every first login; hence the custom resource.
 
-- **self-signup 차단** — `selfSignUpEnabled: false`가 CFN
-  `AdminCreateUserConfig.AllowAdminCreateUserOnly: true`로 떨어진다. Hosted UI에
-  회원가입 링크가 렌더되지 않고, 신규 계정은 `/admin/users`의 초대로만 생긴다.
-- **역할** — `admin`(precedence 0) / `pm`(precedence 10) 그룹. 커스텀 속성으로
-  role을 두지 않는다.
-- **username == 이메일** — `signInAliases: { username: true, email: true }`이므로
-  CFN `AliasAttributes: ['email']`이 되고 호출자가 Username을 지정한다.
-  `{ email: true }`만 두면 `UsernameAttributes`가 되어 Cognito가 username을 UUID로
-  자동 생성하는데, 그러면 CDK 커스텀 리소스가 재배포마다 그 값을 알 수 없어
-  시딩이 비결정적이 된다.
-- **시드 계정** — `AdminCreateUser`(SUPPRESS) → `AdminSetUserPassword`(Permanent) →
-  `AdminAddUserToGroup`. `CfnUserPoolUser` L1으로는 비밀번호를 확정할 수 없어
-  첫 로그인마다 변경을 요구하므로 커스텀 리소스를 쓴다.
+### One source of truth for the app client config
 
-### 앱 클라이언트 설정의 단일 출처
+Token validity (`ACCESS_TOKEN_VALIDITY_MINUTES` / `ID_TOKEN_VALIDITY_MINUTES` /
+`REFRESH_TOKEN_VALIDITY_MINUTES`), the permitted auth flows (`EXPLICIT_AUTH_FLOWS`), and the client
+name (`CLIENT_NAME`) live in `lib/auth-client-config.ts` alongside the seed-account constants. Both
+writers must use the same values: AuthStack when it creates the app client, and HostingStack when it
+resends the config with `UpdateUserPoolClient` at the end of the deployment (see below). If the two
+disagree, every redeployment silently resets validity and auth flows.
 
-토큰 유효기간(`ACCESS_TOKEN_VALIDITY_MINUTES` / `ID_TOKEN_VALIDITY_MINUTES` /
-`REFRESH_TOKEN_VALIDITY_MINUTES`), 허용 auth flow(`EXPLICIT_AUTH_FLOWS`), 클라이언트
-이름(`CLIENT_NAME`)은 시드 계정 상수와 함께 `lib/auth-client-config.ts`에 있다.
-AuthStack이 앱 클라이언트를 만들 때와 HostingStack이 배포 마지막에
-`UpdateUserPoolClient`로 재전송할 때 반드시 같은 값을 써야 하기 때문이다(아래
-"콜백 URL 순환 의존" 참고). 둘이 어긋나면 재배포마다 유효기간·인증 플로우가
-조용히 리셋된다.
+### The callback-URL circular dependency
 
-### 콜백 URL 순환 의존
+Cognito only accepts exact-match callback URLs (no wildcards), and the real URL depends on the
+CloudFront domain that HostingStack creates. So AuthStack deploys with localhost callbacks only, and
+HostingStack registers the real domain via `UpdateUserPoolClient` at the end of its deployment.
 
-Cognito는 콜백 URL의 전수 일치만 허용하고(와일드카드 불가) 실제 URL은
-HostingStack이 만드는 CloudFront 도메인에 달려 있다. AuthStack은 localhost 콜백만
-갖고 배포되고, HostingStack이 배포 마지막에 `UpdateUserPoolClient`로 실제 도메인을
-등록한다.
+⚠️ **That API has PUT semantics** — it clears any field you do not specify. So the call resends the
+*entire* client config (callback/logout URLs, OAuth scopes, token validity, auth flows), not just the
+callbacks. Because the values come from `lib/auth-client-config.ts` and nowhere else, they cannot
+drift from AuthStack. **If you add a field to AuthStack's app client, you must mirror it in
+HostingStack's resend** — miss it and that field is silently wiped on the next deployment. A drift
+detection test (`test/hosting-stack.assert.ts`) compares the two definitions so CI catches what a
+human misses.
 
-⚠️ **그 API는 PUT 시맨틱이다** — 지정하지 않은 필드를 지운다. 따라서 콜백만 보내는
-것이 아니라 클라이언트 설정 전체(콜백/로그아웃 URL, OAuth 스코프, 토큰 유효기간,
-auth flow)를 다시 쓴다. 값의 출처는 `lib/auth-client-config.ts` 하나뿐이라
-AuthStack과 어긋나지 않는다. **AuthStack의 앱 클라이언트에 필드를 추가하면
-HostingStack의 `UpdateUserPoolClient` 재전송에도 반드시 그 필드를 미러링해야
-한다** — 누락하면 재배포 시 그 필드가 조용히 지워진다. 이를 사람이 놓쳐도 CI가
-잡도록 드리프트 감지 테스트(`test/hosting-stack.assert.ts`)가 두 정의를 비교한다.
+### The client secret
 
-### 클라이언트 시크릿
+It is not exported as a CfnOutput. The EC2 instance reads it at boot with
+`aws cognito-idp describe-user-pool-client` — making a Secrets Manager copy would mean routing a
+Cognito-generated value through CloudFormation, which leaves it in the template in plaintext. The
+price is the `cognito-idp:DescribeUserPoolClient` permission on the instance role.
 
-CfnOutput으로 내보내지 않는다. EC2가 부팅 시
-`aws cognito-idp describe-user-pool-client`로 직접 읽는다 — Secrets Manager 사본을
-만들려면 Cognito가 생성한 값을 CFN 경유로 옮겨야 하고, 그러면 템플릿에 평문으로
-남는다. 대가는 인스턴스 롤의 `cognito-idp:DescribeUserPoolClient` 권한이다.
+### Seed password warning
 
-### 시드 비밀번호 경고
+`SEED_PASSWORD` (`PathFinder2026!@`) is a constant in `lib/auth-client-config.ts`, so it **stays in
+plaintext in the CloudFormation template and stack events, and a redeployment resets accounts to
+it.** It is for demos and workshops only: for anything real, replace it and use accounts invited from
+`/admin/users` instead of the seed accounts. Hiding it behind a `NoEcho` parameter was rejected
+because it would require passing the value on every `cdk deploy`, which conflicts with the
+deploy-in-one-command requirement.
 
-`SEED_PASSWORD`(`PathFinder2026!@`)는 CDK 소스의 상수이므로 **CloudFormation
-템플릿과 스택 이벤트에 평문으로 남는다.** 데모/워크숍 전용이며 운영 전환 시 반드시
-교체한다. `NoEcho` 파라미터로 가리는 대안은 `cdk deploy`마다 값을 넘겨야 해서
-"한 번에 배포" 요구와 충돌하므로 택하지 않았다.
+### Deletion
 
-### 삭제
+On `cdk destroy --all` the User Pool is `RemovalPolicy.DESTROY`, so **every user account disappears
+with it.**
 
-`cdk destroy --all` 시 User Pool은 `RemovalPolicy.DESTROY`이므로 **사용자 전원이
-함께 사라진다.**
+## Origin protection
 
-## 리전 (파라미터)
-기본 서울(`ap-northeast-2`). 다른 리전은 `CDK_DEPLOY_REGION`으로 오버라이드:
-```bash
-CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all   # 예: 도쿄
-```
-프리픽스 리스트 ID는 리전마다 다르지만 `PrefixList.fromLookup`이 배포 리전의
-ID를 자동 조회하므로 코드 수정이 필요 없다.
+EC2 accepts port 80 only from the CloudFront origin-facing managed prefix list (looked up
+automatically for the deployment region), and nginx verifies the secret `X-Origin-Verify` header
+CloudFront attaches. No SSH port is opened — access is `aws ssm start-session`. There are two layers
+because the prefix list only narrows traffic down to "came from CloudFront": **someone else's**
+CloudFront distribution is in that list too, so only the header distinguishes our distribution.
 
-## 테스트
+## Region lookup and cdk.context.json
+
+The default is Seoul (`ap-northeast-2`), overridden with `CDK_DEPLOY_REGION`. Prefix list IDs differ
+per region, but `PrefixList.fromLookup` resolves the deployment region's ID automatically, so no code
+changes are needed. The price is that **the hosting stack's first synth/deploy needs account
+credentials** (`npx cdk synth PathfinderDrillStack` does not).
+
+The lookup result is cached in `cdk.context.json`, which is **not committed** (gitignored) — the
+entry key contains the account ID, so the cache is invalid for any other account, and it is
+regenerated with the same value whenever credentials are present. That is why the first synth in a
+fresh clone needs credentials.
+
+## What the tests guard
+
 ```bash
 npm ci
-npm test            # user-data 순수함수 + 스택 어서션 (크리덴셜 불필요)
+npm test     # no credentials needed — pure functions + assertions on the synthesized template
 ```
 
-## Synth / deploy
+Six assertion files, each aimed at a regression **you cannot see by looking**:
+
+| File | What it guards |
+|---|---|
+| `user-data.assert.ts` | Every element of the boot script — nginx-var vs shell-var escaping, non-root execution (Claude Code refuses `bypassPermissions` at euid 0), the proxy buffer sizes that JWT cookies have to fit, the two config dirs being distinct paths, the two context switches, and that `pathfinder-update` ships |
+| `hosting-stack.assert.ts` | The SG being prefix-list-only (no SSH), EC2/EBS/EIP/instance role, CloudFront's origin header and HTTPS redirect, and the **app client drift detection** described above |
+| `auth-stack.assert.ts` | No-self-signup, alias username, groups, managed login v2, code-only client, and the pairing of the three seed-account steps |
+| `auth-client-config.assert.ts` | That token validity **outlasts one prototype build** (shorter and the session expires mid-build), plus the seed/group constants and callback/logout URL derivation |
+| `deployed-tree.assert.ts` | What must not be in the tree that becomes `/opt/pathfinder` (the dev-only `.claude/`, build output, session state) and what must be (rules, both language directives, both config dirs, the lockfile) |
+| `deploy-source.assert.ts` | That the clone URL is public HTTPS, and that the deploy target is a branch rather than a pinned commit |
+
+## PathfinderVmStack is gone (2026-07-25)
+
+Once prototype builds moved into the backend process, the Tokyo MicroVM, its image build, and token
+minting all went away. If you deployed it before, clean it up once:
+
 ```bash
-npx cdk synth PathfinderDrillStack      # 크리덴셜 불필요
-npx cdk synth PathfinderHostingStack    # 프리픽스 리스트 lookup — 크리덴셜 필요(최초 1회)
-npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2   # 계정·리전 최초 1회
-npx cdk deploy --all --require-approval never
+npx cdk destroy PathfinderVmStack --region ap-northeast-1
 ```
-> 호스팅 스택은 배포 리전의 CloudFront 프리픽스 리스트를 lookup하므로 첫
-> synth/deploy에 계정 크리덴셜이 필요하다. 조회 결과는 `cdk.context.json`에
-> 캐시되지만 **커밋하지 않는다**(gitignored) — 항목 키에 계정 ID가 들어가서
-> 다른 계정에서는 무효인 캐시이고, 크리덴셜이 있으면 같은 값으로 재생성된다.
-> 그래서 클론당 첫 synth 1회는 크리덴셜이 필요하다. EC2 첫 부팅 빌드에 ~5–10분
-> 걸리므로 배포 완료 직후 CloudFront가 잠시 502를 반환할 수 있다(정상).
-
-## 출력 (CfnOutputs)
-- `PathfinderHostingStack.DistributionDomain` — 접속 URL(`https://dxxxx.cloudfront.net`)
-- `PathfinderHostingStack.InstanceId` — SSM 접속: `aws ssm start-session --target <id>`
-- `PathfinderHostingStack.EipAddress` — 오리진 IP(디버그)
-- `PathfinderDrillStack.ArtifactsBucketName` / `BackendRoleArn` / `Region`
-- `PathfinderAuthStack.UserPoolId` / `UserPoolClientId` / `HostedUiDomain`
-
-## 접속 · 검증
-- 브라우저 → `DistributionDomain`(HTTPS) → CloudFront → EC2 nginx.
-- EC2에는 SSH 포트가 열려있지 않다 — `aws ssm start-session --target <InstanceId>`.
-- 오리진 직접 접근은 SG(프리픽스 리스트)로 차단되고, 설령 도달해도 nginx가
-  헤더 없으면 403.

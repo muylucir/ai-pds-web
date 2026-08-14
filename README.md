@@ -25,7 +25,7 @@ infra/     CDK (TypeScript) — S3 + backend role + Cognito + EC2/CloudFront (Se
 ```
 
 - Inside the stacks (the callback-URL circular dependency, origin protection, and so on):
-  [`infra/README.md`](infra/README.md) (Korean)
+  [`infra/README.md`](infra/README.md)
 - How to use it (screen-by-screen operation, admin, operations): the app's **`/manual`** — it opens
   without a login
 - **The reasoning behind the design decisions lives in the commit messages and code comments.**
