@@ -2,6 +2,7 @@
   "name": "pathfinder-infra",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT-0",
   "bin": { "app": "bin/app.ts" },
   "scripts": {
     "synth": "cdk synth",

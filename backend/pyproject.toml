@@ -2,6 +2,9 @@
 name = "pathfinder"
 version = "0.1.0"
 requires-python = ">=3.11"
+# PEP 639 SPDX 표현식(문자열). 구형 setuptools(<77)는 이 자리에 테이블만 받으므로
+# `pip install -e .`를 --no-build-isolation으로 돌리면 깨진다 — 격리 빌드를 쓸 것.
+license = "MIT-0"
 # boto3 floor 1.43.35 — Bedrock Converse + S3 + PutObject IfNoneMatch(조건부 쓰기).
 # claude-agent-sdk는 정확 버전 핀(==): 0.2.x는 churn이 잦고, wheel이 Claude Code
 # 네이티브 바이너리를 번들하므로 버전이 곧 실행 엔진 버전이다.
