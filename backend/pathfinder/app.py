@@ -117,6 +117,27 @@ def models_root_s3_factory() -> S3StoreLike:
     return S3Store(bucket=bucket, prefix="", client=client)
 
 
+# 브랜드 프로필용 — 버킷 루트 스토어. design/ 아래 profile.json 하나뿐이고
+# 모델 카탈로그와 같은 이유로 projects/ 밖에 있다. 테스트에서 monkeypatch.
+def design_root_s3_factory() -> S3StoreLike:
+    region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
+    client = boto3.client("s3", region_name=region)
+    return S3Store(bucket=bucket, prefix="", client=client)
+
+
+def design_profile_store():
+    """DesignProfileStore 팩토리 (monkeypatchable in tests).
+
+    버킷이 없으면 읽기 전용(None) 스토어를 준다 -- model_catalog()와 같은
+    이유: 버킷 없는 로컬 개발에서도 빌드 세션의 start()가 막히면 안 된다.
+    """
+    from pathfinder.design_profile import DesignProfileStore
+    if not durable_projects_enabled():
+        return DesignProfileStore(None)
+    return DesignProfileStore(design_root_s3_factory())
+
+
 def model_catalog():
     """ModelCatalog 팩토리 (monkeypatchable in tests).
 
@@ -366,6 +387,7 @@ def proto_session_factory(project_id: str, slug: str):
         builder_factory=builder_factory,
         semaphore=build_semaphore,
         language=language,
+        design_profiles=design_profile_store(),
     )
 
 

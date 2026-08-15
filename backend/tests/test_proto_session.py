@@ -58,7 +58,8 @@ class FakeBuilder:
         self.disconnect_calls += 1
 
 
-def _session(s3, tmp_path, builder, semaphore=None, idle_seconds=1800):
+def _session(s3, tmp_path, builder, semaphore=None, idle_seconds=1800,
+             design_profiles=None):
     calls: list[bool] = []
 
     def factory(session_id: str, resume: bool):
@@ -71,6 +72,7 @@ def _session(s3, tmp_path, builder, semaphore=None, idle_seconds=1800):
         builder_factory=factory,
         semaphore=semaphore or BuildSemaphore(max_concurrent=2),
         idle_seconds=idle_seconds,
+        design_profiles=design_profiles,
     )
     session._test_resume_calls = calls  # type: ignore[attr-defined]
     return session
@@ -151,6 +153,62 @@ async def test_start_writes_the_spec_into_the_build_directory(tmp_path):
     await session.start()
 
     assert (session.build_dir() / SPEC_KEY).read_text(encoding="utf-8") == "# spec body"
+
+
+# ---- start(): brand profile sync (design_profiles) ----
+#
+# 프로필 저장소는 세션이 spec을 읽는 프로젝트 스토어(s3)와는 별개의, 버킷
+# 루트에 있는 스토어다 -- 두 FakeS3Store를 섞으면 안 된다.
+
+async def test_start_plants_the_brand_profile(tmp_path):
+    from pathfinder.design_profile import DesignProfileStore
+    from pathfinder.proto.design_sync import DESIGN_FILENAME, THEME_FILENAME
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    profiles = DesignProfileStore(FakeS3Store())
+    await profiles.save(filename="acme.md", uploaded_by="admin@x",
+                        markdown="```tokens\nprimary: #5b2ea6\n```\n## 톤\n넉넉히.\n")
+
+    session = _session(s3, tmp_path, FakeBuilder(), design_profiles=profiles)
+    await session.start()
+
+    build_dir = session.build_dir()
+    assert "--primary: #5b2ea6;" in (build_dir / THEME_FILENAME).read_text()
+    assert "넉넉히" in (build_dir / DESIGN_FILENAME).read_text()
+    assert "pathfinder:design:start" in (build_dir / "CLAUDE.md").read_text()
+
+
+async def test_start_without_a_profile_plants_nothing(tmp_path):
+    from pathfinder.proto.design_sync import THEME_FILENAME
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    session = _session(s3, tmp_path, FakeBuilder())  # design_profiles 미지정
+
+    await session.start()
+
+    assert not (session.build_dir() / THEME_FILENAME).exists()
+
+
+async def test_start_refreshes_a_changed_profile(tmp_path):
+    from pathfinder.design_profile import DesignProfileStore
+    from pathfinder.proto.design_sync import THEME_FILENAME
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    profiles = DesignProfileStore(FakeS3Store())
+    await profiles.save(filename="a.md", uploaded_by="x",
+                        markdown="```tokens\nprimary: #5b2ea6\n```\n")
+    session = _session(s3, tmp_path, FakeBuilder(), design_profiles=profiles)
+    await session.start()
+
+    await profiles.save(filename="b.md", uploaded_by="x",
+                        markdown="```tokens\nprimary: #111111\n```\n")
+    await session.start()
+
+    css = (session.build_dir() / THEME_FILENAME).read_text()
+    assert "#111111" in css and "#5b2ea6" not in css
 
 
 # ---- turn relay: status transitions + question ownership ----

@@ -17,11 +17,18 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator, Callable, Literal, Protocol
+from typing import AsyncIterator, Callable, Literal, Protocol, TYPE_CHECKING
 
 from pathfinder.models import AgentEvent
 from pathfinder.proto import prompts
+from pathfinder.proto.design_sync import sync_design
 from pathfinder.s3store import S3StoreLike
+
+if TYPE_CHECKING:
+    # 타입 힌트만을 위한 지연 import. design_profile.py는 session.py를 쓰지
+    # 않아 순환은 아니지만, 이 모듈이 굳이 DesignProfileStore를 값으로
+    # 들고 다닐 일은 없다 -- 세션은 저장소를 opaque하게 받아 load()만 부른다.
+    from pathfinder.design_profile import DesignProfileStore
 
 _log = logging.getLogger(__name__)
 
@@ -147,6 +154,7 @@ class PrototypeSession:
         semaphore: SemaphoreLike,
         language: str = "ko",
         idle_seconds: int | float = 1800,
+        design_profiles: "DesignProfileStore | None" = None,
     ):
         self.project_id = project_id
         self.slug = slug
@@ -158,6 +166,9 @@ class PrototypeSession:
         # 텍스트를 이 값으로 고른다(proto/prompts.py).
         self._language = language
         self._idle_seconds = idle_seconds
+        # 프로필 저장소는 프로젝트 밖(버킷 루트)에 있어서 self._s3와 다른
+        # 스토어다. None이면 브랜드 없이 돈다 -- 기능 전체가 opt-in이다.
+        self._design_profiles = design_profiles
 
         self.status: SessionStatus = "starting"
         self._builder: BuilderLike | None = None
@@ -321,6 +332,12 @@ class PrototypeSession:
         spec_path = build_dir / self._spec_key()
         spec_path.parent.mkdir(parents=True, exist_ok=True)
         spec_path.write_text(spec_md, encoding="utf-8")
+
+        # 브랜드 프로필을 워크스페이스에 반영한다. spec과 같은 이유로 매
+        # start마다 새로 쓴다 -- admin이 고친 값이 이 세션부터 반영된다.
+        profile = (await self._design_profiles.load()
+                   if self._design_profiles is not None else None)
+        sync_design(build_dir, profile, self._language)
 
         self._builder = self._builder_factory(self._session_id, resume)
         self.status = "ready"
