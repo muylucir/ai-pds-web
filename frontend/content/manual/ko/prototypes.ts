@@ -8,7 +8,10 @@ export const prototypes: ManualSection = {
     {
       kind: "md",
       md: `Discovery가 \`PROTOTYPE-{이름}.md\` 명세를 만들면 프로토타입 탭에 카드로 나타납니다.
-카드 하나가 프로토타입 하나이고, 상태 배지가 지금 어디까지 왔는지 알려 줍니다.`,
+카드 하나가 프로토타입 하나이고, 상태 배지가 지금 어디까지 왔는지 알려 줍니다.
+
+화면의 색·서체는 관리자가 [브랜드 디자인](/manual#brand-design)에 올려 둔 값을 따릅니다.
+올려 둔 것이 없으면 기본 외형으로 나옵니다.`,
     },
     {
       kind: "mockup",

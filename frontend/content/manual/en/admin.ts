@@ -3,13 +3,13 @@ import type { ManualSection } from "../types";
 export const admin: ManualSection = {
   id: "admin",
   title: "Administrator screens",
-  lede: "Managing users and the model list. Visible only to the administrator role.",
+  lede: "Managing users, the model list, and the prototype brand. Visible only to the administrator role.",
   blocks: [
     {
       kind: "md",
-      md: `**User management** and **Model management** are in the user menu (the round icon) at the right
-of the header. They do not appear for non-administrators, and typing the address directly sends you
-back.`,
+      md: `**User management**, **Model management** and **Brand design** are in the user menu (the round
+icon) at the right of the header. They do not appear for non-administrators, and typing the address
+directly sends you back.`,
     },
     { kind: "heading", id: "invite", text: "Inviting a user" },
     {
@@ -60,6 +60,56 @@ the project list.`,
 
 Removing a model from the list does **not** move projects off it: **projects already created keep
 running on the same model.** The list only governs projects created from now on.`,
+    },
+    { kind: "heading", id: "brand-design", text: "Brand design" },
+    {
+      kind: "md",
+      md: `Prototypes are built with the shadcn/ui defaults. Upload one \`DESIGN.md\` here and **every
+prototype built afterwards carries your brand** — use it where the demo only convinces people in the
+company's own colours and typeface.
+
+There is **one** profile for the whole deployment (you cannot set a different one per project).`,
+    },
+    {
+      kind: "steps",
+      items: [
+        "Click **Download template** to get an empty `DESIGN.md`.",
+        "In the `tokens` block, **delete the leading `#`** on the lines you want and replace the values with your brand's. A line that keeps its `#` stays a comment and is ignored.",
+        "Below that, write guidance on tone, spacing and what to avoid (optional).",
+        "Click **Upload**. If the format is wrong it tells you **which line** to fix, so correct it and upload again.",
+      ],
+    },
+    {
+      kind: "md",
+      md: `| What goes in | Example |
+|---|---|
+| Colours (11 of them) | \`primary: #5b2ea6\` — \`#rgb\` or \`#rrggbb\` |
+| Corner radius | \`radius: 0.75rem\` — \`rem\` or \`px\` |
+| Typeface | \`font_sans: Pretendard\` — a font family name |
+
+Leave a line out and that one keeps the shadcn default. A typeface is **named, not shipped** — we do
+not bundle a webfont, so a viewer whose browser lacks that font sees the fallback. Say so in the
+prose if it genuinely has to be loaded.`,
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**When it takes effect differs per prototype.** Prototypes built **after** you upload the
+profile carry the brand immediately. Prototypes that already carry a brand pick up the new values
+**the next time they are hosted**. But **prototypes built before you first uploaded a profile do not
+change on a re-host** — the brand files were never put into them. For those, one
+[**Continue improving**](/manual#complete-card) session applies it.`,
+    },
+    {
+      kind: "md",
+      md: `**Replacing** keeps no copy of the previous file. Download the current one first
+(**Download original**) if you want to be able to go back.
+
+**Removing** it means prototypes built afterwards use the shadcn defaults again, and prototypes that
+already exist fall back to the default look the next time they are hosted.
+
+Every project reads this one file, English-language projects included — so **do not put instructions
+about on-screen text language in it** (the project's language setting decides that).`,
     },
   ],
 };

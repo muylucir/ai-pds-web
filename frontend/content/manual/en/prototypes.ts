@@ -8,7 +8,10 @@ export const prototypes: ManualSection = {
     {
       kind: "md",
       md: `Once Discovery has written a \`PROTOTYPE-{name}.md\` spec, it shows up as a card in the
-Prototypes tab. One card is one prototype, and the status badge tells you how far it has got.`,
+Prototypes tab. One card is one prototype, and the status badge tells you how far it has got.
+
+The colours and typeface come from whatever the administrator uploaded under
+[Brand design](/manual#brand-design). With nothing uploaded, prototypes use the default look.`,
     },
     {
       kind: "mockup",
