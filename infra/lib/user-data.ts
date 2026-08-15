@@ -35,11 +35,72 @@ export function renderUserData(opts: UserDataOptions): string {
   // non-root 'harness' 유저를 쓴 이유가 이것이고, 빌드가 백엔드 프로세스로
   // 흡수된 지금은 백엔드 자체가 non-root여야 한다.
   const SVC = 'pathfinder';
+  // ---------------------------------------------------------------------------
+  // 아래 템플릿 문자열의 주석은 **EC2 user-data 16KB 한계를 쓴다.** 한 번 넘겨서
+  // 배포가 InvalidRequest로 실패한 적이 있다(18,158바이트, 그중 주석 12KB·한글이
+  // 3바이트/자). 그래서 "왜"는 여기(TS 주석 = 바이트 0)에 적고, 템플릿 안에는
+  // 인스턴스에서 그 스크립트를 읽는 사람이 **깨뜨리지 않기 위해** 알아야 하는
+  // 한 줄만 남긴다. 긴 절차 하나(pathfinder-update)는 아예 리포 파일로 나가 있다
+  // (infra/scripts/pathfinder-update — 그 파일의 주석은 예산과 무관하다).
+  //
+  // 부트스트랩 로그를 600으로 잠그는 이유: 644면 서비스 유저가 읽을 수 있고, 그
+  // 계정은 프로토타입 빌드 에이전트를 bypassPermissions로 돌리는 계정이다. 아래
+  // 두 곳의 `set +x`로 시크릿 대입을 가리지만, 그것만 믿지 않고 파일 자체를 잠근다.
+  //
+  // S3 에셋 zip 대신 git clone인 이유, 커밋 SHA 대신 브랜치인 이유: lib/deploy-source.ts.
+  // 요지는 (1) 에셋은 gitignore된 파일까지 실어 보정 목록이 필요했고 배포되는 것이
+  // 커밋이 아니라 워킹 트리였다, (2) 배포자가 "이 커밋을 푸시했는가"를 신경 쓰지
+  // 않아도 되게 한다. 대가는 cdk deploy가 코드를 갱신하지 못하는 것이고, 그 자리를
+  // pathfinder-update가 메운다.
+  //
+  // `checkout -f -B`가 첫 clone과 cloud-init 재실행에서 같은 결과를 내야 한다. -f가
+  // 필요한 쪽은 재실행이다 — 수정된 tracked 파일이 하나라도 있으면 -f 없는 checkout은
+  // 거부되고, set -e 아래에서 그 거부는 부팅 중단(증상은 502)이다. untracked
+  // (protos/·workspaces/·세션 상태)는 -f로도 지워지지 않는다.
+  //
+  // `safe.directory`를 미리 넣는 이유: 아래에서 트리를 SVC 소유로 넘기므로 재실행 때
+  // root로 도는 git이 "dubious ownership"으로 거부되고, 그것도 부팅 중단이다.
+  //
+  // 두 CLAUDE_CONFIG_DIR(proto-config·discovery-config)을 앱 트리 안에 두고 **서로 다른
+  // 경로**로 두는 이유: 앱 소유 데이터를 한 경로로 모으고, 공유하면 skills="all" 때문에
+  // Discovery가 프로토타입 빌드용 shadcn-design 스킬을 켠 채로 돈다.
+  //
+  // ⚠️ 이 파일은 TS 템플릿 리터럴이다 — **주석에도 백틱을 쓰지 말 것.** 백틱 하나가
+  // 리터럴을 닫아 user-data 전체가 파싱 에러가 된다(템플릿 안 주석에도 해당).
+  //
+  // PATHFINDER_COOKIE_SECURE: 프로토타입 접근 쿠키의 Secure 스위치
+  // (routes/proto_public.py의 _cookie_secure). 빼면 기본값(꺼짐)으로 Secure가
+  // 생략되고, CloudFront 때문에 실동작은 정상으로 보이지만 쿠키는 평문 HTTP로도
+  // 전송될 수 있는 상태로 남는다 — 화면 증상이 없어 눈으로 안 잡히므로
+  // user-data.assert.ts가 이 줄의 존재를 단정한다(한 번 빠뜨린 적이 있다).
+  // 로컬 개발에서는 켜지 않는다(localhost에서 브라우저가 Secure 쿠키를 저장하지 않아
+  // 프리뷰가 열리지 않는다).
+  //
+  // PATHFINDER_AUTO_COMPACT_WINDOW / PATHFINDER_LONG_CONTEXT: 둘은 함께 켠다
+  // (cli_settings.py). 윈도우만 올리고 1M을 켜지 않으면 컴팩션 전에 모델 컨텍스트
+  // 한도에 부딪힌다. 왜 켜는가: 실측(2026-08-13)에서 빌드 세션이 264,040 → 53,375
+  // 토큰으로 요약됐고, 요약 뒤 후반 스테이지 문서는 근거가 아니라 요약에서 나와
+  // 뒤로 갈수록 얇아진다. 한국어는 같은 대화에 토큰을 1.66배 써서 그 지점에 40%
+  // 일찍 도달한다. 750000은 발동 지점의 약 4배이면서 1M 아래 마진을 남기는 값이다.
+  // 대가는 턴당 비용(컴팩션이 늦으면 전체 이력이 매 턴 재전송된다 — 캐시 리드는
+  // 0.1배지만 0이 아니다) — 워크숍 비용이 문제면 먼저 이 값을 내린다. Bedrock에서
+  // 1M 접미사가 필요한 이유는 cli_settings.cli_model_id의 docstring에 있다.
+  //
+  // 프론트 유닛: HOME이 쓰기 가능해야 npx가 캐시를 쓴다(root 홈은 못 쓴다).
+  // COGNITO_* 에 NEXT_PUBLIC_ 접두어를 붙이면 안 된다 — 클라이언트 번들에
+  // 인라인되어 시크릿이 브라우저로 나간다. CLIENT_SECRET을 인용 없이 확장하는 것은
+  // 안전하다(Cognito 시크릿은 [A-Za-z0-9_+]{24,64}로 셸 메타문자가 없다).
+  //
+  // nginx: 로그인 후 요청이 access/id/refresh JWT 쿠키 세 개를 싣는다 — 기본 버퍼
+  // (4k/8k)로는 Cookie 헤더가 넘쳐 400이 나므로 요청·응답 양쪽 버퍼를 올린다.
+  // `/api/` 전용 location을 두지 않는 것도 의도다: /api/*는 Next의
+  // app/api/[...path]/route.ts가 서버사이드에서 FastAPI로 넘기며 쿠키를 Bearer로
+  // 번역하는 지점이고, nginx가 FastAPI를 직접 가리키면 그 번역이 사라져 로그인과
+  // 모든 API 호출이 깨진다.
+  // ---------------------------------------------------------------------------
   return `#!/bin/bash
 set -euxo pipefail
-# 644(디폴트)면 pathfinder 서비스 유저(=bypassPermissions로 도는 프로토타입
-# 빌드 에이전트가 쓰는 그 계정)가 이 로그를 읽을 수 있다 — set +x로 감싼
-# 시크릿 대입도 못 미더워 파일 자체를 root 전용으로 잠근다.
+# 600: 이 로그는 시크릿 대입을 담을 수 있고, 644면 빌드 에이전트 계정이 읽는다.
 touch /var/log/pathfinder-bootstrap.log
 chmod 600 /var/log/pathfinder-bootstrap.log
 exec > >(tee -a /var/log/pathfinder-bootstrap.log) 2>&1
@@ -50,29 +111,8 @@ dnf install -y python3.11 python3.11-devel gcc nodejs20 nodejs20-npm nginx tar u
 # --- 서비스 유저 (멱등: 재부트스트랩 시 이미 있을 수 있다) ---
 id -u ${SVC} >/dev/null 2>&1 || useradd --system --create-home --shell /sbin/nologin ${SVC}
 
-# --- 코드: 공개 리포를 clone 하고 배포 브랜치의 최신 커밋으로 맞춘다 ---
-# S3 에셋 zip을 쓰지 않는 이유는 lib/deploy-source.ts에 있다(요지: 에셋은
-# gitignore된 파일까지 실어 보정 목록이 필요했고, 배포되는 것이 커밋이 아니라
-# 워킹 트리였다). clone은 tracked 파일만 가져오므로 그 두 문제가 함께 사라진다.
-#
-# 커밋 SHA를 박지 않고 브랜치를 쓰는 이유도 같은 파일에 있다(요지: 배포자가
-# "이 커밋을 푸시했는가"를 신경 쓰지 않아도 되게 하는 것). 대가는 cdk deploy가
-# 코드를 갱신하지 못하는 것이고, 그 자리를 아래 pathfinder-update가 메운다.
-#
-# checkout -f -B로 로컬 브랜치를 원격에 강제로 맞춘다: 첫 clone에서도, cloud-init
-# 재실행에서도 결과가 같아야 한다. -f가 필요한 이유는 재실행 쪽이다 — 트리에
-# 수정된 tracked 파일이 하나라도 있으면 -f 없는 checkout은 거부되고, set -e 아래에서
-# 그 거부는 부팅 중단(증상은 502)이다. untracked 파일(protos/·workspaces/·세션
-# 상태)은 -f로도 지워지지 않는다.
-#
-# 멱등: 같은 인스턴스에서 다시 돌 수 있다(cloud-init 재실행). .git이 있으면
-# fetch만 하고, 없으면 새로 clone한다 — 중간에 끊긴 clone이 남긴 부분 트리는
-# .git이 없으므로 이 분기에서 정리된다. 첫 부팅에는 ${APP}이 비어 있으므로
-# 여기서 지워지는 사용자 데이터는 없다(protos/는 아래에서 만들어진다).
-#
-# safe.directory를 미리 넣는다: 아래에서 트리를 ${SVC} 소유로 넘기므로, 재실행
-# 때 root로 도는 이 git 명령이 "detected dubious ownership"으로 거부된다.
-# set -e 아래에서 그 거부는 부팅 중단이고, 증상은 502뿐이다.
+# --- 코드: 공개 리포 clone → 배포 브랜치 최신 커밋 (근거는 lib/deploy-source.ts) ---
+# -f/safe.directory/분기는 cloud-init 재실행 때문이다. 빼면 부팅이 중단되고 증상은 502뿐.
 git config --system --add safe.directory ${APP}
 if [ -d ${APP}/.git ]; then
   git -C ${APP} fetch --prune origin
@@ -81,23 +121,14 @@ else
   git clone ${repoUrl} ${APP}
 fi
 git -C ${APP} checkout -f -B ${branch} origin/${branch}
-# 배포에 SHA가 없으므로 "무엇이 도는가"의 답이 로그에 남아야 한다. 부팅 시점의
-# origin/${branch}가 어느 커밋이었는지는 이 한 줄에만 기록된다.
+# 배포에 SHA가 없으므로 "무엇이 도는가"의 답이 이 한 줄에만 남는다.
 git -C ${APP} --no-pager log -1 --format='booted commit: %H %s'
 cd ${APP}
 
-# --- 빌드 산출물·설정 디렉토리를 앱 트리 안에 만든다 ---
-# CLAUDE_CONFIG_DIR을 유저 홈이 아니라 APP 트리에 두는 이유: 앱 소유 데이터를
-# 한 경로 아래로 모아 백업·정리·권한을 한 번에 다루고, 서비스 유저의 홈
-# 디렉토리 위치 변경에 의존하지 않게 한다.
-mkdir -p ${APP}/protos ${APP}/proto-config ${APP}/workspaces
-# Discovery 에이전트 전용 CLAUDE_CONFIG_DIR — proto-config와 같은 이유로 앱
-# 트리 안에 두고, 반드시 다른 경로다(공유하면 skills="all" 때문에 Discovery가
-# 프로토타입 빌드용 shadcn-design 스킬을 켠 채로 돈다).
-mkdir -p ${APP}/discovery-config
+# --- 산출물·설정 디렉토리. 두 config dir은 반드시 서로 다른 경로다 ---
+mkdir -p ${APP}/protos ${APP}/proto-config ${APP}/workspaces ${APP}/discovery-config
 
-# --- 소유권: 에셋 전개는 root가 했으므로 서비스 유저에게 넘긴다 ---
-# 백엔드는 venv 실행, 프론트는 .next 읽기, 빌드 에이전트는 protos/ 쓰기가 필요하다.
+# --- 소유권: 이후 모든 것이 서비스 유저로 돈다 ---
 chown -R ${SVC}:${SVC} ${APP}
 
 # --- 백엔드: venv + 설치 (서비스 유저로 — venv 소유권이 어긋나지 않게) ---
@@ -105,14 +136,8 @@ runuser -u ${SVC} -- python3.11 -m venv ${APP}/backend/.venv
 runuser -u ${SVC} -- ${APP}/backend/.venv/bin/pip install --upgrade pip
 runuser -u ${SVC} -- ${APP}/backend/.venv/bin/pip install -e ${APP}/backend
 
-# --- Cognito 앱 클라이언트 시크릿 (부팅 시 조회) ---
-# CFN 템플릿에 평문으로 남기지 않기 위해 Cognito에서 직접 읽는다. Secrets Manager
-# 사본을 두지 않는 이유: 시크릿은 Cognito가 만들었으므로 사본을 만들려면 값을
-# CFN 경유로 옮겨야 하고, 그러면 템플릿에 남는다.
-# set +x로 감싸는 이유: -x(xtrace)는 명령과 그 결과인 대입문을 둘 다 그대로
-# /var/log/pathfinder-bootstrap.log(644)에 남긴다 — 그 로그는 프로토타입 빌드
-# 에이전트를 bypassPermissions로 돌리는 같은 서비스 유저가 읽을 수 있으므로,
-# 켜둔 채로는 시크릿이 모델이 생성한 코드에 노출된다.
+# --- Cognito 클라이언트 시크릿 (부팅 조회 — CFN 템플릿에 평문으로 남기지 않는다) ---
+# set +x 필수: xtrace는 대입 결과를 로그에 남기고, 그 로그는 빌드 에이전트 계정이 읽는다.
 set +x
 COGNITO_SECRET=$(aws cognito-idp describe-user-pool-client \\
   --user-pool-id ${userPoolId} --client-id ${userPoolClientId} \\
@@ -124,9 +149,7 @@ cd ${APP}/frontend
 runuser -u ${SVC} -- env NEXT_PUBLIC_API_BASE_URL=/api HOME=${APP} npm ci
 runuser -u ${SVC} -- env NEXT_PUBLIC_API_BASE_URL=/api HOME=${APP} npm run build
 
-# --- 비밀 헤더 값 (부팅 시 조회, 하드코딩 안 함) ---
-# 위 COGNITO_SECRET과 같은 이유로 xtrace를 끈다 — 이 값도 부트스트랩 로그에
-# 그대로 남으면 같은 서비스 유저(=빌드 에이전트)가 읽을 수 있다.
+# --- 비밀 헤더 값 (부팅 조회). 위와 같은 이유로 xtrace를 끈다 ---
 set +x
 SECRET=$(aws secretsmanager get-secret-value --secret-id ${secretArn} --query SecretString --output text --region ${region})
 set -x
@@ -137,18 +160,13 @@ server {
   listen 80 default_server;
   server_name _;
   client_max_body_size 6m;
-  # 로그인 후 모든 요청이 access/id/refresh JWT 쿠키 세 개를 실어 보낸다.
-  # 기본값(4k/8k)으로는 그 Cookie 헤더가 넘쳐 400(Request Header Or Cookie Too
-  # Large)이 난다 — 응답 쪽 proxy_buffer_size와 짝이다.
+  # JWT 쿠키 3개가 기본 버퍼(4k/8k)를 넘겨 400이 난다 — 응답 쪽 버퍼와 짝이다.
   large_client_header_buffers 4 32k;
 
-  # CloudFront가 붙인 비밀 헤더 불일치(직접 스캔·타인 배포)는 무조건 차단.
+  # CloudFront 비밀 헤더 불일치(직접 스캔·타인 배포)는 무조건 차단.
   if (\\$http_x_origin_verify != "\${SECRET}") { return 403; }
 
-  # /api/*도 여기로 온다 — Next의 app/api/[...path]/route.ts가 same-origin
-  # 프록시로서 서버사이드에서 FastAPI(:8000)로 넘긴다(쿠키를 Bearer로 번역하는
-  # 지점이기도 하다). FastAPI를 nginx가 직접 가리키면 그 번역이 일어나지
-  # 않아 로그인·모든 API 호출이 깨진다 — /api/ 전용 location을 두지 않는다.
+  # /api/*도 여기로 온다. FastAPI를 직접 가리키면 쿠키→Bearer 번역이 사라져 다 깨진다.
   location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
@@ -156,17 +174,8 @@ server {
     proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto https;
     proxy_buffering off;          # SSE 즉시 전달 (browser -> nginx -> Next -> FastAPI)
-    # 응답 헤더 버퍼. proxy_buffering이 꺼져 있어도 nginx는 응답 **헤더**를 이
-    # 버퍼 하나에 담는다. 기본값(페이지 크기, 보통 4k)으로는 로그인 콜백이
-    # 내보내는 access/id/refresh JWT 세 개의 Set-Cookie가 넘쳐
-    # "upstream sent too big header"로 502가 난다(실측: 로그인 시 502).
-    #
-    # ⚠️ proxy_buffer_size만 키우면 nginx가 설정을 거부한다(실측):
-    #   "proxy_busy_buffers_size must be less than the size of all
-    #    proxy_buffers minus one buffer"
-    # busy_buffers 기본값이 buffer_size의 2배로 따라 올라가면서 기본
-    # proxy_buffers(8x4k=32k)와의 제약을 깨기 때문이다. 세 값을 함께 올려
-    # 제약(busy < buffers 총합 - 1개)을 만족시킨다: 64k < 8*32k - 32k.
+    # 세 값을 **함께** 올려야 한다. buffer_size만 키우면 nginx가 설정을 거부하고,
+    # 안 키우면 로그인 콜백의 Set-Cookie 3개가 넘쳐 502다. 근거는 lib/user-data.ts 주석.
     proxy_buffer_size 32k;
     proxy_buffers 8 32k;
     proxy_busy_buffers_size 64k;
@@ -174,9 +183,7 @@ server {
   }
 }
 NGINX
-# AL2023 기본 conf의 default_server와 충돌 방지 — 기본 server 블록 제거.
-# 앵커(^    server {)로 실제(들여쓰기된, 주석 아닌) 블록만 매칭 — 주석 처리된
-# TLS 예시 블록(#    server {)은 매칭하지 않으므로 파일 끝까지 삭제되는 사고 없음.
+# AL2023 기본 server 블록 제거(default_server 충돌). 앵커가 주석 예시를 건드리지 않는다.
 sed -i '/^    server {/,/^    }/d' /etc/nginx/nginx.conf
 
 # --- systemd 유닛 ---
@@ -202,44 +209,15 @@ Environment=PATHFINDER_WORKSPACES_DIR=${APP}/workspaces
 # 앱 트리 안에 두어 소유권·백업·정리를 APP 한 경로로 통일한다.
 Environment=PATHFINDER_PROTO_MAX_CONCURRENT=10
 Environment=PATHFINDER_PROTO_CONFIG_DIR=${APP}/proto-config
-# Discovery 드라이버(기본 claude, PATHFINDER_DISCOVERY_DRIVER로 strands 되돌림
-# 가능) 전용 CLAUDE_CONFIG_DIR. proto-config와 반드시 다른 경로 — 공유하면
-# Discovery가 프로토타입 빌드용 shadcn-design 스킬을 켠 채로 돈다.
+# proto-config와 반드시 다른 경로(공유하면 Discovery가 shadcn-design을 켠 채로 돈다).
 Environment=PATHFINDER_DISCOVERY_CONFIG_DIR=${APP}/discovery-config
-# 인증: 이 두 값이 비면 백엔드가 모든 요청을 통과시킨다(로컬 개발용 바이패스).
-# 배포에서는 반드시 채워져야 한다.
+# 이 두 값이 비면 백엔드가 모든 요청을 통과시킨다 — 배포에서는 반드시 채워진다.
 Environment=PATHFINDER_COGNITO_USER_POOL_ID=${userPoolId}
 Environment=PATHFINDER_COGNITO_CLIENT_ID=${userPoolClientId}
 Environment=PATHFINDER_COGNITO_REGION=${region}
-# 프로토타입 접근 쿠키에 Secure를 붙이는 스위치(routes/proto_public.py의
-# _cookie_secure). CloudFront가 HTTPS를 강제하므로 배포에서는 항상 켠다.
-#
-# 이 줄이 없으면 백엔드는 기본값(꺼짐)으로 Secure를 **생략**한다 — CloudFront
-# 때문에 실동작은 문제없어 보이지만, 쿠키 자체는 평문 HTTP로도 전송될 수 있는
-# 상태로 남는다. 화면상 증상이 없어 눈으로는 잡히지 않으므로 user-data.assert.ts가
-# 이 줄의 존재를 단정한다(실제로 한 번 빠뜨렸다).
-#
-# 로컬 개발에서는 설정하지 않는다: http://localhost에서 브라우저가 Secure 쿠키를
-# 저장하지 않아 프리뷰가 열리지 않는다.
+# 빼면 Secure가 생략된다 — 증상이 없어 눈으로 안 잡히므로 assert가 존재를 단정한다.
 Environment=PATHFINDER_COOKIE_SECURE=true
-# 컨텍스트 설정 두 개(backend/pathfinder/cli_settings.py). 둘은 **함께** 켠다:
-# 윈도우만 올리고 1M을 켜지 않으면 컴팩션 전에 모델의 컨텍스트 한도에 부딪힌다.
-#
-# 왜 켜는가: 실측(2026-08-13)에서 빌드 세션이 컨텍스트 264,040 → 53,375 토큰으로
-# 요약됐다. 요약 뒤에 쓰이는 후반 스테이지 문서는 근거가 아니라 요약에서 나오므로
-# 뒤로 갈수록 얇아지고, 한국어는 같은 대화에 토큰을 1.66배 써서 그 지점에 40%
-# 일찍 도달한다. 750000은 지금 발동 지점의 약 4배이면서 1M 상한 아래 마진을
-# 남기는 값이다.
-#
-# 대가는 턴당 비용이다 — 컴팩션이 늦어지면 전체 이력이 매 턴 재전송된다(캐시
-# 리드는 0.1배지만 0이 아니다). 워크숍 비용이 문제가 되면 먼저 이 값을 내린다.
-#
-# 1M 접미사가 Bedrock에서 필요한 이유는 cli_settings.cli_model_id의 docstring에
-# 있다(Opus는 native_1m_3p가 없어 베타를 켜야 한다). 로컬 개발에서는 둘 다
-# 설정하지 않는다 — 기본값이 꺼짐이고, 그 상태가 종전 동작이다.
-#
-# (이 파일은 TS 템플릿 리터럴이다 — 주석에도 백틱을 쓰지 말 것. 백틱 하나가
-# 리터럴을 닫아 user-data 전체가 파싱 에러가 된다.)
+# 이 둘은 **함께** 켠다(cli_settings.py). 윈도우만 올리면 컴팩션 전에 한도에 부딪힌다.
 Environment=PATHFINDER_AUTO_COMPACT_WINDOW=750000
 Environment=PATHFINDER_LONG_CONTEXT=true
 ExecStart=${APP}/backend/.venv/bin/uvicorn pathfinder.app:app --host 127.0.0.1 --port 8000
@@ -257,14 +235,10 @@ User=${SVC}
 Group=${SVC}
 WorkingDirectory=${APP}/frontend
 Environment=NODE_ENV=production
-# npx가 캐시를 쓰려면 쓰기 가능한 HOME이 필요하다(root 홈은 이제 못 쓴다).
 Environment=HOME=${APP}
-# Hosted UI 왕복과 토큰 교환. NEXT_PUBLIC_ 접두어를 붙이면 안 된다 —
-# 클라이언트 번들에 인라인되어 시크릿이 브라우저로 나간다.
+# NEXT_PUBLIC_ 접두어 금지 — 붙이면 시크릿이 클라이언트 번들로 나간다.
 Environment=COGNITO_HOSTED_UI_DOMAIN=${hostedUiDomain}
 Environment=COGNITO_CLIENT_ID=${userPoolClientId}
-# 인용 없이 그대로 확장한다 — Cognito 클라이언트 시크릿은 [A-Za-z0-9_+]{24,64}
-# 알파벳만 쓰므로(공백·따옴표·$ 등 셸 메타문자 없음) 이 heredoc 확장이 안전하다.
 Environment=COGNITO_CLIENT_SECRET=\${COGNITO_SECRET}
 Environment=APP_BASE_URL=${appUrl}
 ExecStart=/usr/bin/npx next start -H 127.0.0.1 -p 3000
@@ -273,77 +247,13 @@ Restart=always
 WantedBy=multi-user.target
 UNIT
 
-# --- 코드 갱신 경로: /usr/local/bin/pathfinder-update ---
-# 배포에 커밋 SHA가 없으므로 cdk deploy는 인스턴스를 교체하지 않고, 따라서 코드를
-# 갱신하지 않는다(근거는 lib/deploy-source.ts). "이 인스턴스를 최신 ${branch}로
-# 맞춘다"는 일을 이 스크립트가 맡는다 — 인스턴스 교체 없이 갱신되므로 워크숍
-# 중에도 쓸 수 있다.
-#
-# 손으로 하던 절차를 스크립트로 옮긴 이유는 그 절차에 **잊으면 앱이 조용히 죽는**
-# 단계가 있기 때문이다: next build에서 NEXT_PUBLIC_API_BASE_URL=/api를 빼면 그 값이
-# 클라이언트 번들에 인라인되지 않아 브라우저가 localhost:8000을 부르고, 화면은
-# 뜨는데 모든 API 호출이 죽는다. 재시작 범위를 바뀐 디렉터리로 좁히는 것도 같은
-# 이유다 — 백엔드 재시작은 진행 중인 Discovery 턴과 빌드 세션을 끊고, 프론트
-# 재빌드는 접속 중인 사용자에게 청크 404를 낸다. rule/만 바뀐 갱신(워크숍에서 가장
-# 흔한 경우)은 무중단으로 끝난다.
-#
-# git을 ${SVC}로 도는 이유: 트리는 아래 chown으로 ${SVC} 소유가 되고, root로
-# fetch하면 새 오브젝트가 root 소유로 섞여 다음 갱신이 권한으로 막힌다.
-cat > /usr/local/bin/pathfinder-update <<'UPDATE'
-#!/bin/bash
-# 이 인스턴스를 배포 브랜치의 원격 최신 커밋으로 맞춘다.
-# cdk deploy는 코드를 갱신하지 않는다 — 그 이유와 배경은 infra/lib/deploy-source.ts.
-set -euo pipefail
-if [ "$(id -u)" -ne 0 ]; then
-  echo "pathfinder-update: run as root (sudo pathfinder-update)" >&2
-  exit 1
-fi
-
-# 경로·유저·브랜치는 리터럴로 박아 둔다(값은 user-data 생성 시점에 정해진다) —
-# 인스턴스에서 이 파일을 열어 읽는 사람이 무엇을 건드리는 스크립트인지 바로 보고,
-# test/user-data.assert.ts도 실제 문자열을 그대로 단정할 수 있다.
-gitsvc() { runuser -u ${SVC} -- git -C ${APP} "$@"; }
-
-BEFORE=$(gitsvc rev-parse HEAD)
-gitsvc fetch --prune origin
-# -f: 인스턴스에서 손으로 고친 tracked 파일은 **되돌아간다.** 그것 없이는 그런
-# 파일 하나가 갱신 전체를 거부시킨다 — 워크숍 중에 그 상태로 멈추는 것이 더 나쁘다.
-# untracked(protos/·workspaces/·세션 상태)는 이 명령으로 지워지지 않는다.
-gitsvc checkout -f -B ${branch} origin/${branch}
-AFTER=$(gitsvc rev-parse HEAD)
-
-if [ "$BEFORE" = "$AFTER" ]; then
-  echo "pathfinder-update: already at $AFTER — nothing to do, services untouched"
-  exit 0
-fi
-echo "pathfinder-update: $BEFORE -> $AFTER"
-gitsvc --no-pager log --oneline "$BEFORE..$AFTER"
-
-changed() { ! gitsvc diff --quiet "$BEFORE" "$AFTER" -- "$1"; }
-
-if changed backend/; then
-  # 의존성이 바뀐 경우만 다시 설치한다. 코드는 pip install -e 라 그대로 반영된다.
-  if changed backend/pyproject.toml; then
-    runuser -u ${SVC} -- ${APP}/backend/.venv/bin/pip install -e ${APP}/backend
-  fi
-  systemctl restart pathfinder-backend
-  echo "pathfinder-update: backend restarted (in-flight turns and build sessions were cut)"
-fi
-
-if changed frontend/; then
-  cd ${APP}/frontend
-  if changed frontend/package-lock.json; then
-    runuser -u ${SVC} -- env NEXT_PUBLIC_API_BASE_URL=/api HOME=${APP} npm ci
-  fi
-  # 이 env를 빼고 빌드하면 화면은 뜨고 모든 API 호출이 죽는다(위 주석 참조).
-  runuser -u ${SVC} -- env NEXT_PUBLIC_API_BASE_URL=/api HOME=${APP} npm run build
-  systemctl restart pathfinder-frontend
-  echo "pathfinder-update: frontend rebuilt and restarted"
-fi
-
-echo "pathfinder-update: now at $AFTER"
-UPDATE
-chmod 755 /usr/local/bin/pathfinder-update
+# 코드 갱신 경로. 스크립트 본문과 그 이유는 infra/scripts/pathfinder-update에 있다.
+cat > /etc/pathfinder-deploy.env <<ENV
+APP=${APP}
+SVC=${SVC}
+BRANCH=${branch}
+ENV
+install -m 755 ${APP}/infra/scripts/pathfinder-update /usr/local/bin/pathfinder-update
 
 systemctl daemon-reload
 systemctl enable --now nginx pathfinder-backend pathfinder-frontend

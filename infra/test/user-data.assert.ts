@@ -42,32 +42,63 @@ assert.match(s, /git config --system --add safe\.directory \/opt\/pathfinder/,
 // 멱등: cloud-init 재실행에서 이미 clone된 트리를 다시 clone하려 하면 실패한다.
 assert.match(s, /if \[ -d \/opt\/pathfinder\/\.git \]; then/,
   're-bootstrap must fetch instead of re-cloning');
+// 2a) **EC2 user-data 16KB 한계.** 한 번 넘겨서 배포가 InvalidRequest로 실패했다
+//     (18,158바이트 — 그중 주석이 12KB였고 한글은 3바이트/자). CFN은 이걸 배포
+//     시점에야 거부하고, 그 실패는 인스턴스 **교체** 실패로 나타나므로 스택이
+//     롤백된다(같은 스택의 IAM 변경까지 함께 되돌아간다). 여기서 막는다.
+{
+  const bytes = Buffer.byteLength(s, 'utf8');
+  assert.ok(bytes <= 16384,
+    `user-data is ${bytes} bytes — EC2 rejects anything over 16384. Move long blocks to `
+    + 'infra/scripts/ (installed from the clone) and put the "why" in TS comments '
+    + 'outside the template literal, where it costs zero bytes.');
+  // 여유가 없으면 다음 한 줄이 다시 한계를 넘긴다 — 절반 이상 비워 둔다.
+  assert.ok(bytes <= 12288,
+    `user-data is ${bytes} bytes: under the hard limit but with less than 4KB of room. `
+    + 'Trim before adding more.');
+  console.log(`OK  user-data: ${bytes} bytes (limit 16384, headroom ${16384 - bytes})`);
+}
 // 2b) 코드 갱신 경로. 배포에 SHA가 없으므로 cdk deploy는 인스턴스를 교체하지 않고
 //     코드를 갱신하지 않는다 — 이 스크립트가 **유일한** 갱신 수단이다. 없거나
 //     망가져도 배포는 성공하고, 그 사실은 갱신을 시도할 때에야 드러난다.
+//
+//     본문은 user-data가 아니라 리포 파일(infra/scripts/pathfinder-update)에 있다:
+//     16KB 예산을 쓰지 않고, 스크립트를 고쳐도 인스턴스 교체가 필요 없다. 그래서
+//     이 절은 두 쪽을 각각 단정한다 — user-data는 설치와 설정만, 나머지는 그 파일.
 {
-  assert.match(s, /cat > \/usr\/local\/bin\/pathfinder-update <<'UPDATE'/,
-    'the instance must ship pathfinder-update — with a branch (not a SHA) deployment, '
-    + 'cdk deploy no longer updates code and this is the only path that does');
-  assert.match(s, /chmod 755 \/usr\/local\/bin\/pathfinder-update/,
-    'pathfinder-update must be executable');
-  const start = s.indexOf("cat > /usr/local/bin/pathfinder-update <<'UPDATE'");
-  const end = s.indexOf('\nUPDATE\n', start);   // closing heredoc marker, not the opening one
-  assert.ok(end > start, 'the pathfinder-update heredoc must be closed');
-  const update = s.slice(start, end);
+  assert.match(s, /install -m 755 \/opt\/pathfinder\/infra\/scripts\/pathfinder-update \/usr\/local\/bin\/pathfinder-update/,
+    'user-data must install pathfinder-update from the clone — with a branch (not a SHA) '
+    + 'deployment, cdk deploy no longer updates code and this is the only path that does');
+  assert.ok(!s.includes("<<'UPDATE'"),
+    'the update script must not be inlined back into user-data — that is what blew the '
+    + '16KB limit, and editing it would force an instance replacement');
+  // 스크립트는 경로·유저·브랜치를 이 파일에서 읽는다. 리터럴로 박으면
+  // DEPLOY_BRANCH를 바꿨을 때 조용히 어긋난다.
+  assert.match(s, /cat > \/etc\/pathfinder-deploy\.env <<ENV\nAPP=\/opt\/pathfinder\nSVC=pathfinder\nBRANCH=main\nENV/,
+    'user-data must write the deploy env the script reads (APP/SVC/BRANCH)');
 
-  assert.match(update, /checkout -f -B main origin\/main/,
+  const scriptPath = require('node:path').join(__dirname, '..', 'scripts', 'pathfinder-update');
+  const fs = require('node:fs') as typeof import('node:fs');
+  assert.ok(fs.existsSync(scriptPath), 'infra/scripts/pathfinder-update must exist');
+  // 실행 비트: user-data가 install -m 755로 깔지만, 리포에서 직접 돌려보는 경로도 있다.
+  assert.ok((fs.statSync(scriptPath).mode & 0o111) !== 0,
+    'infra/scripts/pathfinder-update must be executable in the repo');
+  const update: string = fs.readFileSync(scriptPath, 'utf8');
+
+  assert.match(update, /\. "\$ENV_FILE"/,
+    'the script must source the deploy env instead of hardcoding APP/SVC/BRANCH');
+  assert.match(update, /checkout -f -B "\$BRANCH" "origin\/\$BRANCH"/,
     'pathfinder-update must move the tree onto the remote tip of the deploy branch');
   // 이 env를 빼고 빌드하면 브라우저가 localhost:8000을 부른다 — 화면은 뜨고 모든
   // API 호출이 죽는다. 손으로 하던 절차를 스크립트로 옮긴 주된 이유가 이 한 줄이다.
-  assert.match(update, /env NEXT_PUBLIC_API_BASE_URL=\/api HOME=\/opt\/pathfinder npm run build/,
+  assert.match(update, /env NEXT_PUBLIC_API_BASE_URL=\/api HOME="\$APP" npm run build/,
     'the frontend rebuild must carry NEXT_PUBLIC_API_BASE_URL=/api — without it the '
     + 'bundle points the browser at localhost:8000 and every API call dies silently');
   assert.match(update, /systemctl restart pathfinder-backend/, 'must be able to restart the backend');
   assert.match(update, /systemctl restart pathfinder-frontend/, 'must be able to restart the frontend');
   // 트리는 서비스 유저 소유다. root로 fetch하면 새 오브젝트가 root 소유로 섞여
   // 다음 갱신이 권한으로 막힌다 — 그 실패는 갱신할 때만 보인다.
-  assert.match(update, /runuser -u pathfinder -- git -C \/opt\/pathfinder/,
+  assert.match(update, /runuser -u "\$SVC" -- git -C "\$APP"/,
     'git must run as the service user that owns the tree, not as root');
   // 갱신할 것이 없을 때 재시작하면 안 된다: 백엔드 재시작은 진행 중인 Discovery
   // 턴과 빌드 세션을 끊는다.
