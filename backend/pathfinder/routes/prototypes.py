@@ -26,7 +26,7 @@ from pathfinder import error_codes as ec
 from pathfinder.models import AgentEvent
 from pathfinder.parsers.redaction import redact_credentials
 from pathfinder.pathsafe import reject_unsafe_segment
-from pathfinder.proto.design_sync import sync_design
+from pathfinder.proto.design_sync import sync_design, theme_copies
 from pathfinder.proto.session import has_build_output, purge_session_state
 # 토큰 게이트의 경로 조립은 그 라우트를 소유한 모듈이 한다 — 여기서 f-string으로
 # 다시 쓰면 브라우저 관점 마운트(`/api`)를 두 곳에서 관리하게 되고, 그것이 이
@@ -618,6 +618,19 @@ async def start_host(pid: str, slug: str):
     try:
         profile = await app_module.design_profile_store().load()
         sync_design(build_dir, profile, app_module.project_language(pid))
+        # sync_design은 "갱신"만 한다 -- 프로필 업로드 **이전에** 빌드된
+        # 프로토타입은 prototype/ 아래에 테마 사본이 없어 아무것도 갈지 않고,
+        # 재호스팅해도 그대로 무브랜드로 남는다("재호스팅만으로 리브랜딩"이
+        # 성립하지 않는 유일한 경우). 화면(admin.designSubtitle)이 이 한계를
+        # 이제는 정확히 말하지만, 운영자가 "왜 아무 일도 안 일어났는지"를 이
+        # 요청 시점에도 알 수 있어야 한다 -- 개선 세션을 한 번 열어야
+        # 반영된다는 뜻이다.
+        if profile is not None and not theme_copies(build_dir):
+            _log.warning(
+                "design profile present but %s/%s has no theme copy under "
+                "prototype/ -- re-hosting cannot re-brand it; an improvement "
+                "session must run once to import pathfinder-theme.css first",
+                pid, slug)
     except Exception:
         # 브랜드 반영 실패가 호스팅 자체를 막지는 않는다 -- 화면이 열리는 것이
         # 색보다 우선이다. 원인은 로그에 남는다.

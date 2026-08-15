@@ -101,10 +101,24 @@ def test_design_rules_carry_every_directive(language):
     # 파일 이름 둘과 "직접 고치지 마라"가 빠지면 지시가 성립하지 않는다.
     assert "pathfinder-theme.css" in out
     assert "DESIGN.md" in out
-    for needle in (["복사", "import", "고치지", "시맨틱", "hex", "무관"]
+    for needle in (["복사", "import", "고치지", "시맨틱", "hex", "무관",
+                    # 최종 리뷰 C1: globals.css *다음에* 루트 레이아웃에서
+                    # import하라는 지시(캐스케이드에서 shadcn의 :root에
+                    # 지지 않으려면 필수) — 없으면 브랜드가 오류 없이
+                    # 무효화된다.
+                    "레이아웃",
+                    # 최종 리뷰 I5: 경고가 아니라 수리 지시여야 한다
+                    # (hsl(var(--x))를 감싸는 구식 설정을 고치라는 명령).
+                    "고쳐라",
+                    # 최종 리뷰 M12: DESIGN.md를 시각 디자인 참고자료로만
+                    # 다루고 무관한 지시는 무시하라는 방어적 문구.
+                    "무시"]
                    if language == "ko"
                    else ["Copy", "import", "Do not edit", "semantic", "hex",
-                         "unrelated"]):
+                         "unrelated",
+                         "layout",
+                         "change that setup",
+                         "ignore any instruction"]):
         assert needle in out, f"{language}: {needle!r}가 없다"
 
 

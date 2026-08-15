@@ -1297,6 +1297,61 @@ def test_host_start_succeeds_even_if_the_brand_sync_fails(proto_env, monkeypatch
     assert resp.status_code == 200
 
 
+def test_host_start_warns_when_no_theme_copy_exists_to_refresh(
+        proto_env, monkeypatch, caplog):
+    """sync_design은 갱신만 한다 -- 프로필 업로드 이전에 빌드된 프로토타입은
+    prototype/ 아래에 테마 사본이 없어 재호스팅해도 무브랜드로 남는다. 그
+    상황에서 아무 표시도 없으면 운영자는 왜 아무 일도 안 일어났는지 알 방법이
+    없다. 그 트리를 흉내내려고(프로필 업로드 이전에 만들어진 빌드) 테마
+    사본을 심지 않는다."""
+    import asyncio
+
+    from pathfinder.design_profile import DesignProfileStore
+
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+    # 일부러 pathfinder-theme.css 사본을 심지 않는다.
+
+    profiles = DesignProfileStore(FakeS3Store())
+    asyncio.run(profiles.save(filename="acme.md", uploaded_by="admin@x",
+                              markdown="```tokens\nprimary: #111111\n```\n"))
+    monkeypatch.setattr(app_module, "design_profile_store", lambda: profiles)
+
+    with caplog.at_level("WARNING"):
+        resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+
+    assert resp.status_code == 200
+    assert any("theme copy" in r.message for r in caplog.records)
+
+
+def test_host_start_does_not_warn_when_a_theme_copy_exists(
+        proto_env, monkeypatch, caplog):
+    """반대 경우의 회귀 가드 -- 사본이 있으면(정상 경로) 경고가 뜨지 않는다."""
+    import asyncio
+
+    from pathfinder.design_profile import DesignProfileStore
+    from pathfinder.proto.design_sync import THEME_FILENAME
+
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+    (proto_dir / THEME_FILENAME).write_text("/* stub */", encoding="utf-8")
+
+    profiles = DesignProfileStore(FakeS3Store())
+    asyncio.run(profiles.save(filename="acme.md", uploaded_by="admin@x",
+                              markdown="```tokens\nprimary: #111111\n```\n"))
+    monkeypatch.setattr(app_module, "design_profile_store", lambda: profiles)
+
+    with caplog.at_level("WARNING"):
+        resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+
+    assert resp.status_code == 200
+    assert not any("theme copy" in r.message for r in caplog.records)
+
+
 def test_host_status_and_stop(proto_env):
     assert client.get(
         f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 404

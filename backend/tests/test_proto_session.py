@@ -220,6 +220,24 @@ async def test_start_refreshes_a_changed_profile(tmp_path):
     assert "#111111" in css and "#5b2ea6" not in css
 
 
+async def test_start_survives_a_broken_profile_store(tmp_path):
+    """세션 시작이 브랜드 반영 실패로 죽으면 안 된다. DesignProfileStore.load()가
+    스스로 모든 S3 예외를 None으로 강등하지만, 그 약속이 어떤 이유로든 깨지는
+    경우까지 이중으로 대비한다 -- 호스팅 라우트(start_host)의 같은 try/except와
+    짝이다."""
+    class _BoomProfiles:
+        async def load(self):
+            raise RuntimeError("s3 unreachable")
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    session = _session(s3, tmp_path, FakeBuilder(), design_profiles=_BoomProfiles())
+
+    await session.start()  # 예외를 올리면 이 줄에서 실패한다.
+
+    assert session.status == "ready"
+
+
 # ---- turn relay: status transitions + question ownership ----
 
 async def test_send_message_relays_events_and_returns_to_ready(tmp_path):

@@ -83,15 +83,27 @@ def _walk(build_dir: Path):
             continue
         for entry in entries:
             if entry.is_dir():
-                if entry.name not in _SKIP_DIRS:
+                # 심볼릭 링크 디렉토리는 내려가지 않는다 -- prototype/ 아래는
+                # 에이전트가 자유롭게 쓰는 트리라 순환 심볼릭 링크가 있을 수
+                # 있고, 그러면 이 스택 워크가 끝나지 않는다. 무한 루프는
+                # 예외가 아니라서 session.start()·build_complete 도구·
+                # POST /host 어느 호출부의 try/except도 이걸 못 잡고 그대로
+                # 매달린다(실측 아님 — 방어적 수정).
+                if entry.name not in _SKIP_DIRS and not entry.is_symlink():
                     stack.append(entry)
             else:
                 yield entry
 
 
 def theme_copies(build_dir: Path) -> list[Path]:
-    """prototype/ 아래의 테마 사본. 이름으로 찾는다."""
-    return sorted(p for p in _walk(build_dir) if p.name == THEME_FILENAME)
+    """prototype/ 아래의 테마 사본. 이름으로 찾는다.
+
+    심볼릭 링크는 제외한다 -- 포함시키면 _write_theme_everywhere가 거기에
+    write_text를 호출해, 이름만 같은 심볼릭 링크가 가리키는 임의의 경로에
+    쓰게 된다.
+    """
+    return sorted(p for p in _walk(build_dir)
+                  if p.name == THEME_FILENAME and not p.is_symlink())
 
 
 def theme_required(build_dir: Path) -> bool:
@@ -177,9 +189,16 @@ def sync_design(build_dir: Path, profile: DesignProfile | None,
     if profile is None:
         # 한 번도 없었으면 아무것도 만들지 않는다(기능 전체가 opt-in이다).
         # 있었다가 지워진 경우에만 스텁으로 덮는다.
+        #
+        # DESIGN.md 삭제도 이 가드 **안에서만** 한다 -- root_theme.is_file()이
+        # 우리가 이 워크스페이스에 흔적을 심었다는 유일한 증거다. 이 조건
+        # 밖에서 지우면, 브랜드 프로필이 한 번도 없었던 프로젝트의 매
+        # POST /host가 빌드 에이전트가 자기 메모로 만들었을 루트
+        # DESIGN.md를(우리 것이 아닌데도) 조용히 지운다 -- _remove_section이
+        # 남의 CLAUDE.md 내용을 보존하는 것과 같은 원칙이다.
         if root_theme.is_file():
             _write_theme_everywhere(build_dir, root_theme, stub_css())
-        design_md.unlink(missing_ok=True)
+            design_md.unlink(missing_ok=True)
         _remove_section(claude_md)
         return
 

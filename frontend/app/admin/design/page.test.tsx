@@ -98,4 +98,25 @@ describe("admin design page", () => {
     // 실제로 일어나지 않는다.
     expect(deleteDesignProfile).not.toHaveBeenCalled();
   });
+
+  // 최종 리뷰 M9: remove()가 삭제 실패를 admin.designLoadFailed("불러오지
+  // 못했습니다")로 잘못 알렸다 — 실패한 것은 로딩이 아니라 삭제다. 전용 키
+  // (admin.designDeleteFailed)로 갈렸는지 여기서 직접 확인한다.
+  it("shows a delete-specific error when removal fails, not the load-failed message", async () => {
+    const profile = {
+      filename: "acme.md", uploaded_at: "2026-08-15T04:12:00+00:00",
+      uploaded_by: "admin@x", tokens: { primary: "#5b2ea6" }, prose: "톤",
+    };
+    vi.mocked(getDesignProfile).mockResolvedValue(profile);
+    vi.mocked(deleteDesignProfile).mockRejectedValue(new Error("boom"));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<AdminDesignPage />);
+    await waitFor(() => expect(screen.getByText("acme.md")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /제거|Remove/ }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(screen.getByRole("alert").textContent).toMatch(/제거|remove/i);
+  });
 });

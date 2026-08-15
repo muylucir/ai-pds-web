@@ -82,11 +82,18 @@ def test_crlf_and_bom_and_comments_are_tolerated():
     assert tokens == {"primary": "#5b2ea6"}
 
 
-def test_template_parses_and_declares_no_tokens():
-    # 서식은 admin이 그대로 내려받아 채우는 것이므로 반드시 유효해야 한다.
+def test_template_parses_and_the_worked_examples_are_real_tokens():
+    """서식은 admin이 그대로 내려받아 채우는 것이므로 반드시 유효하게
+    파싱돼야 한다. 최종 리뷰 I4: 예전에는 14개 토큰이 전부 주석 처리돼
+    있어서 "값만 고치고 `#`을 지우지 않는" 가장 흔한 admin 실수가 오류 없이
+    `{}`로 통과했다 -- 지금은 세 토큰을 `#`을 지운 예시로 내보내서, 서식을
+    그대로 받은 admin이 "#만 지우면 반영된다"를 직접 보게 한다."""
     tokens, prose = parse_design_md(TEMPLATE_MD)
-    assert tokens == {}
+    assert tokens == {"primary": "#5b2ea6", "radius": "0.75rem",
+                      "font_sans": "Pretendard"}
     assert prose.strip()
+    # "줄 앞의 #을 지우세요" 지시 자체가 빠지면 이 수정의 요점이 사라진다.
+    assert "지우세요" in TEMPLATE_MD and "앞의 `#`" in TEMPLATE_MD
     for key in ALLOWED_TOKENS:
         assert key in TEMPLATE_MD, f"서식에 {key} 안내가 없다"
 
@@ -128,6 +135,20 @@ async def test_corrupt_object_is_treated_as_absent():
     s3 = FakeS3Store()
     s3.blobs[DESIGN_PROFILE_KEY] = "{{{ not json"
     assert await DesignProfileStore(s3).load() is None
+
+
+@pytest.mark.asyncio
+async def test_load_returns_none_when_the_store_raises_a_non_missing_error():
+    """FileNotFoundError(없음)만 fail-soft하던 시절의 회귀 가드다.
+    AccessDenied·스로틀·네트워크 오류 같은 그 외 모든 예외도 None으로
+    강등돼야 한다 -- 그러지 않으면 이 스토어를 쓰는
+    PrototypeSession.start()가 통째로 죽는다(docstring이 약속한 것과
+    정반대)."""
+    class _BoomS3:
+        async def get(self, key: str) -> str:
+            raise RuntimeError("AccessDenied")
+
+    assert await DesignProfileStore(_BoomS3()).load() is None
 
 
 @pytest.mark.asyncio

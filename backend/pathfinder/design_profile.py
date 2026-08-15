@@ -53,13 +53,19 @@ _FONT = re.compile(r"^[A-Za-z0-9 ,'\"_-]+$")
 
 TEMPLATE_MD = """# 브랜드 디자인 프로필
 
-아래 `tokens` 블록의 값을 회사 브랜드로 바꾸세요. 필요 없는 줄은 지우면 됩니다
-(모두 선택 항목이고, 지운 값은 shadcn 기본값이 그대로 쓰입니다).
+아래 `tokens` 블록의 값을 회사 브랜드로 바꾸세요. **값을 쓰려면 줄 앞의 `#`을
+지우세요** — `#`이 남아 있으면 그 줄은 주석으로 무시되고 토큰이 반영되지
+않습니다(값만 고치고 `#`을 그대로 두면 서식은 유효하게 통과하지만 토큰이 하나도
+반영되지 않는 채로 저장됩니다). 필요 없는 줄은 통째로 지우면 됩니다(모두
+선택 항목이고, 지운 값은 shadcn 기본값이 그대로 쓰입니다).
 
-색은 `#rrggbb`, 길이는 `0.75rem`/`12px`, 서체는 폰트 이름을 씁니다.
+색은 `#rrggbb`, 길이는 `0.75rem`/`12px`, 서체는 폰트 이름을 씁니다. 아래 세
+줄은 `#`을 지운 예시입니다 — 그대로 두면 이 값이 브랜드로 적용됩니다.
 
 ```tokens
-# primary: #5b2ea6
+primary: #5b2ea6
+radius: 0.75rem
+font_sans: Pretendard
 # primary_foreground: #ffffff
 # secondary: #f1f5f9
 # accent: #ede9fe
@@ -70,8 +76,6 @@ TEMPLATE_MD = """# 브랜드 디자인 프로필
 # muted_foreground: #64748b
 # border: #e2e8f0
 # ring: #5b2ea6
-# radius: 0.75rem
-# font_sans: Pretendard
 # font_mono: JetBrains Mono
 ```
 
@@ -168,17 +172,27 @@ class DesignProfileStore:
         self._s3 = s3
 
     async def load(self) -> DesignProfile | None:
-        """없으면 None. 손상됐어도 None이다.
+        """없으면 None. 손상됐어도 None이다. S3가 그 밖의 이유로 실패해도 None이다.
 
         예외로 올리지 않는 이유는 ModelCatalog가 시드로 떨어지는 것과 같다:
         여기서 raise하면 손으로 편집된 JSON 하나가 **모든 빌드 세션의 start()를
         막는다.** None이면 브랜드 없이 계속 돌고 원인은 로그에 남는다.
+
+        `get` 자체도 넓게 감싼다 — 처음에는 FileNotFoundError(없음)만
+        잡았는데, AccessDenied·스로틀·네트워크 오류 같은 그 외 모든 S3 예외가
+        그대로 새 나가 이 함수의 약속(없거나 깨졌으면 None)을 어겼다. 이
+        스토어가 그 약속을 자기 안에서 지켜야, 호출하는 쪽(session.start(),
+        호스팅 라우트)이 저마다 다시 감싸는 것에 의존하지 않아도 된다.
         """
         if self._s3 is None:
             return None
         try:
             body = await self._s3.get(DESIGN_PROFILE_KEY)
         except FileNotFoundError:
+            return None
+        except Exception:
+            _log.exception("design profile fetch failed at %s; treating as absent",
+                           DESIGN_PROFILE_KEY)
             return None
         try:
             d = json.loads(body)

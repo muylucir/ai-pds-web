@@ -37,7 +37,10 @@ export default function AdminDesignPage() {
       await deleteDesignProfile();
       await reload();
     } catch {
-      setError(t("admin.designLoadFailed"));
+      // designLoadFailed("불러오지 못했습니다")가 아니라 이 키를 쓴다 -- 실패한
+      // 것은 로딩이 아니라 삭제이고, 잘못된 메시지는 다음에 뭘 시도해야 할지
+      // 헷갈리게 한다.
+      setError(t("admin.designDeleteFailed"));
     }
   }
 

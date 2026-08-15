@@ -335,9 +335,20 @@ class PrototypeSession:
 
         # 브랜드 프로필을 워크스페이스에 반영한다. spec과 같은 이유로 매
         # start마다 새로 쓴다 -- admin이 고친 값이 이 세션부터 반영된다.
-        profile = (await self._design_profiles.load()
-                   if self._design_profiles is not None else None)
-        sync_design(build_dir, profile, self._language)
+        #
+        # fail-soft: DesignProfileStore.load()는 이미 모든 S3 예외를 None으로
+        # 강등하지만, 여기서 한 번 더 감싼다 -- 그 약속이 어떤 이유로든 깨져도
+        # 브랜드 반영 실패가 빌드 세션 시작 자체를 막으면 안 된다. 호스팅
+        # 라우트(routes/prototypes.py의 start_host)가 같은 자리를 같은
+        # try/except로 감싸는 것과 짝이다 -- 두 호출부가 이 규율에서
+        # 어긋나면 한쪽만 브랜드 오류에 취약해진다.
+        try:
+            profile = (await self._design_profiles.load()
+                       if self._design_profiles is not None else None)
+            sync_design(build_dir, profile, self._language)
+        except Exception:
+            _log.exception("design sync at session start failed: %s/%s",
+                           self.project_id, self.slug)
 
         self._builder = self._builder_factory(self._session_id, resume)
         self.status = "ready"

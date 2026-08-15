@@ -157,3 +157,48 @@ def test_theme_imported_requires_a_reference(tmp_path):
 def test_english_project_gets_english_claude_section(tmp_path):
     sync_design(tmp_path, profile(), "en")
     assert "Brand design profile" in (tmp_path / "CLAUDE.md").read_text()
+
+
+# ---- 최종 리뷰 M1: 심볼릭 링크는 사본 탐색을 무한 루프로 만들 수 있다 ----
+
+def test_theme_copies_terminates_through_a_directory_symlink_cycle(tmp_path):
+    """prototype/ 아래에 자기 자신을 가리키는 디렉토리 심볼릭 링크가 있어도
+    끝나야 한다. 순환은 예외가 아니라 무한 루프라서, 고치기 전에는
+    session.start()·build_complete 도구·POST /host 어느 쪽의 try/except도
+    잡지 못하고 그대로 매달렸다."""
+    app = tmp_path / "prototype" / "app"
+    app.mkdir(parents=True)
+    (app / "loop").symlink_to(app)  # app/loop -> app 자신(순환)
+
+    assert theme_copies(tmp_path) == []  # 끝나기만 해도 이 테스트의 요점이다
+
+
+def test_theme_copies_excludes_a_symlink_named_like_the_theme_file(tmp_path):
+    """이름이 pathfinder-theme.css인 심볼릭 링크는 사본으로 인정하지 않는다
+    -- 인정하면 _write_theme_everywhere가 그 링크가 가리키는 임의의 경로에
+    write_text하게 된다."""
+    app = tmp_path / "prototype" / "app"
+    app.mkdir(parents=True)
+    target = tmp_path / "elsewhere.css"
+    target.write_text("/* 다른 파일 */", encoding="utf-8")
+    (app / THEME_FILENAME).symlink_to(target)
+
+    assert theme_copies(tmp_path) == []
+    sync_design(tmp_path, profile({"primary": "#111111"}), "ko")
+    # 심볼릭 링크를 통해 타깃에 쓰지 않았어야 한다.
+    assert target.read_text() == "/* 다른 파일 */"
+
+
+# ---- 최종 리뷰 M2: 프로필이 한 번도 없었으면 DESIGN.md를 건드리지 않는다 ----
+
+def test_sync_none_never_touches_an_agent_authored_design_md_when_we_planted_nothing(tmp_path):
+    """프로필이 한 번도 없었던 프로젝트에서도 sync_design(None, ...)이 매
+    호스팅마다 불린다(routes/prototypes.py의 start_host). 빌드 에이전트가
+    자기 메모로 루트에 DESIGN.md를 만들어 뒀다면, 우리가 흔적
+    (pathfinder-theme.css)을 심은 적이 없는 한 그 파일을 건드리면 안 된다 --
+    _remove_section이 남의 CLAUDE.md 내용을 보존하는 것과 같은 원칙이다."""
+    (tmp_path / DESIGN_FILENAME).write_text("에이전트 메모", encoding="utf-8")
+
+    sync_design(tmp_path, None, "ko")
+
+    assert (tmp_path / DESIGN_FILENAME).read_text() == "에이전트 메모"
