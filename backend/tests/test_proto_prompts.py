@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from pathfinder.proto import prompts
 from pathfinder.proto.prompts import (
     build_complete_description, build_complete_recorded,
     build_complete_rejection, handoff_prompt, missing_output_prompt,
@@ -92,3 +93,23 @@ def test_build_complete_recorded_exists(language):
 
 def test_an_unknown_language_falls_back_to_korean():
     assert _plan("klingon") == _plan("ko")
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_design_rules_carry_every_directive(language):
+    out = prompts.design_rules(language)
+    # 파일 이름 둘과 "직접 고치지 마라"가 빠지면 지시가 성립하지 않는다.
+    assert "pathfinder-theme.css" in out
+    assert "DESIGN.md" in out
+    for needle in (["복사", "import", "고치지", "시맨틱", "hex", "무관"]
+                   if language == "ko"
+                   else ["Copy", "import", "Do not edit", "semantic", "hex",
+                         "unrelated"]):
+        assert needle in out, f"{language}: {needle!r}가 없다"
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_theme_rejection_tells_the_agent_what_to_do(language):
+    out = prompts.build_complete_theme_rejection(language)
+    assert "pathfinder-theme.css" in out
+    assert ("거부됨" in out) if language == "ko" else ("Rejected" in out)

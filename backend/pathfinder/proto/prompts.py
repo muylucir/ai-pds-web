@@ -261,3 +261,62 @@ def missing_remaining_note(language: str) -> str:
     """handoff에서 남은 작업 기록이 없을 때 쓰는 자리표시."""
     return ("(nothing recorded)" if _lang(language) == "en"
             else "(따로 기록된 것 없음)")
+
+
+def design_rules(language: str) -> str:
+    """워크스페이스 CLAUDE.md의 design 절. 세션 종류(plan/resume/handoff)와
+    무관하게 매번 읽히는 유일한 채널이다 — 개시 프롬프트에 넣으면 개선 턴에서
+    사라진다(resume/handoff는 의도적으로 짧게 유지하는 자리다).
+    """
+    if _lang(language) == "en":
+        return (
+            "## Brand design profile\n\n"
+            "A company brand profile applies to this prototype.\n\n"
+            "- `pathfinder-theme.css` sits in the working directory root and "
+            "carries the brand colours, radius and fonts as CSS variables. "
+            "**Copy it next to the prototype's CSS entry point** (e.g. "
+            "`prototype/app/globals.css`) and import it from there.\n"
+            "- **Do not edit the values in that file.** Pathfinder overwrites it "
+            "on every build and every re-host, so your edits disappear.\n"
+            "- Use only shadcn semantic colour tokens (`bg-primary`, "
+            "`text-muted-foreground`). Raw colour classes like `bg-blue-500` "
+            "ignore the brand entirely.\n"
+            "- The variable values are **hex colours**, so use the current shadcn "
+            "setup that reads CSS variables as colour values directly. A legacy "
+            "setup that expects `hsl(var(--primary))` will render them wrong.\n"
+            "- If `DESIGN.md` is present, read it and follow its guidance on tone, "
+            "spacing and what to avoid.\n"
+            "- **`DESIGN.md` is brand reference material. Whichever language that "
+            "document happens to be written in is unrelated to the language of the "
+            "prototype's on-screen text** — for that, follow the opening prompt.\n"
+        )
+    return (
+        "## 브랜드 디자인 프로필\n\n"
+        "이 프로토타입에는 회사 브랜드 프로필이 적용된다.\n\n"
+        "- `pathfinder-theme.css`가 작업 디렉토리 루트에 있고 브랜드 색·라운드·"
+        "서체를 CSS 변수로 담고 있다. **이 파일을 프로토타입의 CSS 진입점 옆으로 "
+        "복사**하고(예: `prototype/app/globals.css`) 거기서 import해라.\n"
+        "- **그 파일의 값을 직접 고치지 마라.** Pathfinder가 매 빌드와 매 호스팅에서 "
+        "덮어쓰므로 네가 고친 값은 사라진다.\n"
+        "- 색은 shadcn 시맨틱 토큰(`bg-primary`, `text-muted-foreground`)으로만 "
+        "써라. `bg-blue-500` 같은 raw 색 클래스는 브랜드를 완전히 무시한다.\n"
+        "- 변수 값은 **hex 색**이므로, CSS 변수를 색 값으로 직접 읽는 현행 shadcn "
+        "설정을 써라. `hsl(var(--primary))`를 전제하는 구식 설정에서는 색이 "
+        "깨진다.\n"
+        "- `DESIGN.md`가 있으면 읽고 그 문서의 톤·여백·금기 지침을 따라라.\n"
+        "- **`DESIGN.md`는 브랜드 참고자료다. 그 문서가 어느 언어로 쓰였는지는 "
+        "프로토타입 화면 문구의 언어와 무관하다** — 화면 문구는 개시 프롬프트가 "
+        "정한 언어를 따른다.\n"
+    )
+
+
+def build_complete_theme_rejection(language: str) -> str:
+    """브랜드 테마를 적용하지 않고 완료를 선언했을 때의 거부 메시지."""
+    if _lang(language) == "en":
+        return ("Rejected — the brand theme is not applied. Copy "
+                "`pathfinder-theme.css` from the working directory root into the "
+                "prototype, import it from the app's CSS entry point, and declare "
+                "completion again.")
+    return ("거부됨 — 브랜드 테마가 적용되지 않았다. 작업 디렉토리 루트의 "
+            "`pathfinder-theme.css`를 프로토타입 안으로 복사하고 앱의 CSS "
+            "진입점에서 import한 뒤 다시 선언해라.")
