@@ -46,12 +46,16 @@ const INVOKABLE_MODEL_ARNS = (account: string) => [
 // backend/pathfinder/survey/store.py의 TOKEN_INDEX_PREFIX와 짝이다.
 // ListBucket에도 필요하다: purge()의 토큰 회수는 delete_prefix(=list 후
 // delete_objects)를 타므로 목록 권한이 없으면 조용히 0건을 지운다.
+//
+// design/profile.json은 관리자가 올린 브랜드 디자인 프로필이다. 프로젝트가
+// 없어도 관리되므로 models/catalog.json과 같은 이유로 프로젝트 프리픽스 밖에
+// 있다 (backend/pathfinder/design_profile.py의 DESIGN_PROFILE_KEY).
 const BACKEND_BUCKET_PREFIXES = [
-  'projects/*', 'sessions/*', 'surveys/*', 'models/*',
+  'projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*',
 ] as const;
 
 // 백엔드(드릴 롤 또는 EC2 인스턴스 롤)가 필요로 하는 공통 권한:
-// Bedrock invoke + 아티팩트 버킷 projects/*·sessions/*·surveys/*·models/* 읽기/쓰기/목록.
+// Bedrock invoke + 아티팩트 버킷 projects/*·sessions/*·surveys/*·models/*·design/* 읽기/쓰기/목록.
 export function backendPolicyStatements(
   bucket: s3.IBucket,
   account: string,
