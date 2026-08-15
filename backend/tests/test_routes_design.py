@@ -78,6 +78,21 @@ def test_oversized_upload_is_rejected(profiles, client):
     assert res.status_code == 413
 
 
+def test_spoofed_content_length_rejected_before_body_read(profiles, client):
+    # Reviewer-flagged gap(test_routes_uploads.py의 짝): 위의
+    # test_oversized_upload_is_rejected는 본문 자체가 한계를 넘어서 사전 체크
+    # 없이도 재검사(len(data))만으로 413이 나온다 — 사전 체크 분기가 한 번도
+    # 실행되지 않은 채 "존재"만 했을 수 있다. 여기서는 본문은 작게 두고
+    # Content-Length 헤더만 위조해서, 본문을 읽기도 전에 사전 체크 단독으로
+    # 413이 나오는지를 확인한다(TestClient/httpx는 명시적 Content-Length
+    # 오버라이드를 그대로 보낸다).
+    from pathfinder.design_profile import MAX_DESIGN_BYTES
+    res = client.put("/admin/design", files={
+        "file": ("a.md", b"x", "text/markdown")},
+        headers={"Content-Length": str(MAX_DESIGN_BYTES + 20_000)})
+    assert res.status_code == 413
+
+
 def test_delete_removes_it(profiles, client):
     client.put("/admin/design", files={
         "file": ("acme.md", GOOD_MD.encode("utf-8"), "text/markdown")})
