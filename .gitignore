@@ -9,6 +9,11 @@ files/
 # SDD scratch (progress ledger, briefs, review packages)
 .superpowers/
 
+# 설계 스펙·구현 플랜(SDD 산출물). 3de42ec에서 사내 산출문서를 지우고 공개
+# 리포로 전환했으므로, 같은 경로에 새로 쓰는 문서도 추적하지 않는다 —
+# 관례(docs/superpowers/specs/YYYY-MM-DD-<주제>-design.md)는 로컬에서 그대로 쓴다.
+docs/
+
 # 빌드 에이전트 config 루트의 런타임 산출물 (씨앗 skills/·agents/는 추적)
 proto-config/projects/
 proto-config/.credentials.json
