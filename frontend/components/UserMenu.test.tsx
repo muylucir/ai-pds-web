@@ -43,6 +43,21 @@ describe("UserMenu", () => {
     expect(screen.queryByRole("link", { name: "사용자 관리" })).toBeNull();
   });
 
+  it("shows the design profile link for admins", async () => {
+    mockMe({ authenticated: true, email: "admin@pathfinder.local", role: "admin" });
+    render(<UserMenu />);
+    await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
+    expect(screen.getByRole("link", { name: "브랜드 디자인" }))
+      .toHaveAttribute("href", "/admin/design");
+  });
+
+  it("hides the design profile link from a pm", async () => {
+    mockMe({ authenticated: true, email: "pm@pathfinder.local", role: "pm" });
+    render(<UserMenu />);
+    await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
+    expect(screen.queryByRole("link", { name: "브랜드 디자인" })).toBeNull();
+  });
+
   it("renders nothing when not authenticated", async () => {
     // 로그인 화면 등 인증 전 화면에서 빈 아바타가 뜨지 않게 한다.
     mockMe({ authenticated: false }, 401);

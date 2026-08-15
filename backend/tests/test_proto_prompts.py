@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from pathfinder.proto import prompts
 from pathfinder.proto.prompts import (
     build_complete_description, build_complete_recorded,
     build_complete_rejection, handoff_prompt, missing_output_prompt,
@@ -92,3 +93,41 @@ def test_build_complete_recorded_exists(language):
 
 def test_an_unknown_language_falls_back_to_korean():
     assert _plan("klingon") == _plan("ko")
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_design_rules_carry_every_directive(language):
+    out = prompts.design_rules(language)
+    # 파일 이름 둘과 "직접 고치지 마라"가 빠지면 지시가 성립하지 않는다.
+    assert "pathfinder-theme.css" in out
+    assert "DESIGN.md" in out
+    for needle in (["복사", "import", "고치지", "시맨틱", "hex", "무관",
+                    # 최종 리뷰 C1: globals.css *다음에* 루트 레이아웃에서
+                    # import하라는 지시(캐스케이드에서 shadcn의 :root에
+                    # 지지 않으려면 필수) — 없으면 브랜드가 오류 없이
+                    # 무효화된다.
+                    "레이아웃",
+                    # 최종 리뷰 I5: 경고가 아니라 수리 지시여야 한다
+                    # (hsl(var(--x))를 감싸는 구식 설정을 고치라는 명령).
+                    "고쳐라",
+                    # 최종 리뷰 M12: DESIGN.md를 시각 디자인 참고자료로만
+                    # 다루고 무관한 지시는 무시하라는 방어적 문구.
+                    "시각 디자인 참고자료"]
+                   if language == "ko"
+                   else ["Copy", "import", "Do not edit", "semantic", "hex",
+                         "unrelated",
+                         "layout",
+                         "change that setup",
+                         "ignore any instruction"]):
+        assert needle in out, f"{language}: {needle!r}가 없다"
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_theme_rejection_tells_the_agent_what_to_do(language):
+    out = prompts.build_complete_theme_rejection(language)
+    assert "pathfinder-theme.css" in out
+    assert ("거부됨" in out) if language == "ko" else ("Rejected" in out)
+    # 이 거부 문구는 design_rules와 같은 곳(globals.css *다음에* 루트
+    # 레이아웃에서 import)을 지목해야 한다 — 그렇지 않으면 에이전트가
+    # globals.css 안에서 import해 캐스케이드에서 지는 결함을 재현한다.
+    assert ("레이아웃" in out) if language == "ko" else ("layout" in out)

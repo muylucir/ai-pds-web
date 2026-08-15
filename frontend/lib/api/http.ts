@@ -6,7 +6,10 @@ import { CREDENTIALS } from "@/lib/auth";
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T | null> {
   const headers: Record<string, string> = {
-    ...(init?.body ? { "Content-Type": "application/json" } : {}),
+    // FormData 본문에는 Content-Type을 붙이지 않는다 — boundary는 브라우저가
+    // 만들고, 우리가 application/json을 박으면 서버가 multipart를 못 읽는다.
+    ...(init?.body && !(init.body instanceof FormData)
+      ? { "Content-Type": "application/json" } : {}),
     ...((init?.headers as Record<string, string>) ?? {}),
   };
   const res = await fetch(`${API_BASE_URL}${path}`, {

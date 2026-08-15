@@ -21,6 +21,7 @@ from claude_agent_sdk import tool
 
 from pathfinder.models import AgentEvent
 from pathfinder.proto import prompts
+from pathfinder.proto.design_sync import theme_imported, theme_required
 from pathfinder.proto.session import has_build_output
 
 _log = logging.getLogger("pathfinder.proto")
@@ -93,6 +94,16 @@ def build_proto_tools(workspace: str,
             _log.warning("build_complete refused: prototype/ is empty (%s)",
                          workspace)
             return _text_result(prompts.build_complete_rejection(language))
+
+        # 브랜드 프로필이 적용된 워크스페이스인데 테마가 붙지 않았으면 되돌려
+        # 보낸다. 판정은 디스크만 본다(design_sync.theme_required) — 도구 호출
+        # 경로에서 S3를 타지 않는다. 프로필이 없으면 이 검사는 아예 돌지 않아
+        # 기존 동작과 구분되지 않는다.
+        build_dir = Path(workspace)
+        if theme_required(build_dir) and not theme_imported(build_dir):
+            _log.warning("build_complete refused: brand theme not applied (%s)",
+                         workspace)
+            return _text_result(prompts.build_complete_theme_rejection(language))
 
         emit(AgentEvent(kind="build_complete", payload=json.dumps(
             {"summary": summary, "remaining": remaining}, ensure_ascii=False)))

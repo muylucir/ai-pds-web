@@ -106,6 +106,12 @@ export function UserMenu() {
               >
                 {t("user.manageModels")}
               </Link>
+              <Link
+                href="/admin/design"
+                className="block rounded-lg px-3 py-2 text-sm hover:bg-slate-50"
+              >
+                {t("user.manageDesign")}
+              </Link>
             </>
           )}
           {/* POST인 이유: GET 로그아웃은 링크 프리페치에 걸려 의도치 않게

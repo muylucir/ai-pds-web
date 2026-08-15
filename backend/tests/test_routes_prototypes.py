@@ -1222,6 +1222,136 @@ def test_host_start_409_while_a_build_session_is_live(proto_env, monkeypatch):
     assert resp.status_code == 409
 
 
+# ---- hosting: brand refresh right before the rebuild ----
+#
+# 이 태스크가 성립시키는 속성: 이미 완료된 프로토타입이 개선 세션 없이
+# **재호스팅만으로** 리브랜딩된다. 호스팅은 rmtree 없이 기존 트리에
+# `npm run build`를 돌리므로(proto/host.py), 리빌드 직전에 테마 파일만 새로
+# 쓰면 코드는 한 줄도 안 건드리고 색이 바뀐다.
+#
+# "빌드 도중 호스팅"이 이 규율을 깨지 않는 이유: 바로 위
+# test_host_start_409_while_a_build_session_is_live가 증명하듯,
+# `_live_session`(session.status가 _DEAD_STATUSES 밖이면 살아 있다고 본다)이
+# 이미 모든 살아 있는 세션 -- starting/building/waiting_input/ready 전부 --
+# 에서 호스팅 시작을 409로 막는다(routes/prototypes.py:590-593). 그래서 이
+# 태스크는 "빌드 중에는 갱신을 건너뛴다"는 별도 조건이 필요 없다: 빌드 중인
+# 프로토타입은 애초에 여기까지 오지 못한다.
+
+def test_host_start_refreshes_the_brand_theme_before_building(proto_env, monkeypatch):
+    """리빌드는 ProtoHost.start() 호출 **안에서** 일어난다. 그 호출이 끝난
+    뒤에 파일을 읽으면 "리빌드 전에 이미 새 값이었다"와 "리빌드가 끝난 뒤에야
+    바뀌었다"를 구별할 수 없으므로, FakeProtoHost.start를 감싸 호출 진입
+    시점의 내용을 캡처한다."""
+    import asyncio
+
+    from pathfinder.design_profile import DesignProfileStore
+    from pathfinder.proto.design_sync import THEME_FILENAME
+
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+    build_dir = proto_dir.parent
+    (build_dir / THEME_FILENAME).write_text("/* 낡은 테마 */", encoding="utf-8")
+
+    profiles = DesignProfileStore(FakeS3Store())
+    asyncio.run(profiles.save(filename="acme.md", uploaded_by="admin@x",
+                              markdown="```tokens\nprimary: #111111\n```\n"))
+    monkeypatch.setattr(app_module, "design_profile_store", lambda: profiles)
+
+    host = proto_env["host"]
+    seen: dict = {}
+    real_start = host.start
+
+    async def capturing_start(pid, slug, cwd=None, base_path=None, model_id=None):
+        # 리빌드는 이 호출 안에서 일어난다 -- 그 전에 파일이 새 값이어야 한다.
+        seen["css"] = (build_dir / THEME_FILENAME).read_text()
+        return await real_start(pid, slug, cwd=cwd, base_path=base_path,
+                                model_id=model_id)
+
+    monkeypatch.setattr(host, "start", capturing_start)
+
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+
+    assert resp.status_code == 200
+    assert "#111111" in seen["css"]
+
+
+def test_host_start_succeeds_even_if_the_brand_sync_fails(proto_env, monkeypatch):
+    """브랜드 반영 실패가 호스팅 자체를 막지 않는다 -- 화면이 열리는 것이
+    색보다 우선이다. design_profile_store() 자체가 터지는 경우로 실측한다:
+    브리프의 try/except가 그 호출까지 감싸므로, 여기서 실패해도 /host는
+    평소처럼 200을 내야 한다."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+
+    def boom():
+        raise RuntimeError("s3 unreachable")
+
+    monkeypatch.setattr(app_module, "design_profile_store", boom)
+
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+
+    assert resp.status_code == 200
+
+
+def test_host_start_warns_when_no_theme_copy_exists_to_refresh(
+        proto_env, monkeypatch, caplog):
+    """sync_design은 갱신만 한다 -- 프로필 업로드 이전에 빌드된 프로토타입은
+    prototype/ 아래에 테마 사본이 없어 재호스팅해도 무브랜드로 남는다. 그
+    상황에서 아무 표시도 없으면 운영자는 왜 아무 일도 안 일어났는지 알 방법이
+    없다. 그 트리를 흉내내려고(프로필 업로드 이전에 만들어진 빌드) 테마
+    사본을 심지 않는다."""
+    import asyncio
+
+    from pathfinder.design_profile import DesignProfileStore
+
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+    # 일부러 pathfinder-theme.css 사본을 심지 않는다.
+
+    profiles = DesignProfileStore(FakeS3Store())
+    asyncio.run(profiles.save(filename="acme.md", uploaded_by="admin@x",
+                              markdown="```tokens\nprimary: #111111\n```\n"))
+    monkeypatch.setattr(app_module, "design_profile_store", lambda: profiles)
+
+    with caplog.at_level("WARNING"):
+        resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+
+    assert resp.status_code == 200
+    assert any("theme copy" in r.message for r in caplog.records)
+
+
+def test_host_start_does_not_warn_when_a_theme_copy_exists(
+        proto_env, monkeypatch, caplog):
+    """반대 경우의 회귀 가드 -- 사본이 있으면(정상 경로) 경고가 뜨지 않는다."""
+    import asyncio
+
+    from pathfinder.design_profile import DesignProfileStore
+    from pathfinder.proto.design_sync import THEME_FILENAME
+
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "package.json").write_text("{}", encoding="utf-8")
+    (proto_dir / THEME_FILENAME).write_text("/* stub */", encoding="utf-8")
+
+    profiles = DesignProfileStore(FakeS3Store())
+    asyncio.run(profiles.save(filename="acme.md", uploaded_by="admin@x",
+                              markdown="```tokens\nprimary: #111111\n```\n"))
+    monkeypatch.setattr(app_module, "design_profile_store", lambda: profiles)
+
+    with caplog.at_level("WARNING"):
+        resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+
+    assert resp.status_code == 200
+    assert not any("theme copy" in r.message for r in caplog.records)
+
+
 def test_host_status_and_stop(proto_env):
     assert client.get(
         f"/projects/{PID}/prototypes/{SLUG}/host").status_code == 404

@@ -58,7 +58,8 @@ class FakeBuilder:
         self.disconnect_calls += 1
 
 
-def _session(s3, tmp_path, builder, semaphore=None, idle_seconds=1800):
+def _session(s3, tmp_path, builder, semaphore=None, idle_seconds=1800,
+             design_profiles=None):
     calls: list[bool] = []
 
     def factory(session_id: str, resume: bool):
@@ -71,6 +72,7 @@ def _session(s3, tmp_path, builder, semaphore=None, idle_seconds=1800):
         builder_factory=factory,
         semaphore=semaphore or BuildSemaphore(max_concurrent=2),
         idle_seconds=idle_seconds,
+        design_profiles=design_profiles,
     )
     session._test_resume_calls = calls  # type: ignore[attr-defined]
     return session
@@ -151,6 +153,89 @@ async def test_start_writes_the_spec_into_the_build_directory(tmp_path):
     await session.start()
 
     assert (session.build_dir() / SPEC_KEY).read_text(encoding="utf-8") == "# spec body"
+
+
+# ---- start(): brand profile sync (design_profiles) ----
+#
+# 프로필 저장소는 세션이 spec을 읽는 프로젝트 스토어(s3)와는 별개의, 버킷
+# 루트에 있는 스토어다 -- 두 FakeS3Store를 섞으면 안 된다.
+
+async def test_start_plants_the_brand_profile(tmp_path):
+    from pathfinder.design_profile import DesignProfileStore
+    from pathfinder.proto.design_sync import DESIGN_FILENAME, THEME_FILENAME
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    profiles = DesignProfileStore(FakeS3Store())
+    await profiles.save(filename="acme.md", uploaded_by="admin@x",
+                        markdown="```tokens\nprimary: #5b2ea6\n```\n## 톤\n넉넉히.\n")
+
+    session = _session(s3, tmp_path, FakeBuilder(), design_profiles=profiles)
+    await session.start()
+
+    build_dir = session.build_dir()
+    assert "--primary: #5b2ea6;" in (build_dir / THEME_FILENAME).read_text()
+    assert "넉넉히" in (build_dir / DESIGN_FILENAME).read_text()
+    assert "pathfinder:design:start" in (build_dir / "CLAUDE.md").read_text()
+
+
+async def test_start_without_a_profile_plants_nothing(tmp_path):
+    from pathfinder.proto.design_sync import DESIGN_FILENAME, THEME_FILENAME
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    session = _session(s3, tmp_path, FakeBuilder())  # design_profiles 미지정
+
+    await session.start()
+
+    build_dir = session.build_dir()
+    # 짝이 되는 test_start_plants_the_brand_profile은 세 산출물(테마·
+    # DESIGN.md·CLAUDE.md 절)이 전부 생긴다고 단언한다. 여기서는 그 세
+    # 산출물이 전부 없어야 "아무것도 심지 않는다"가 증명된다 -- 테마만
+    # 확인하면 프로필 없음 경로가 나중에 DESIGN.md나 CLAUDE.md 절을 무조건
+    # 쓰게 바뀌어도 이 테스트가 못 잡는다.
+    assert not (build_dir / THEME_FILENAME).exists()
+    assert not (build_dir / DESIGN_FILENAME).exists()
+    claude_md = build_dir / "CLAUDE.md"
+    assert not claude_md.is_file() or "pathfinder:design:start" not in claude_md.read_text()
+
+
+async def test_start_refreshes_a_changed_profile(tmp_path):
+    from pathfinder.design_profile import DesignProfileStore
+    from pathfinder.proto.design_sync import THEME_FILENAME
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    profiles = DesignProfileStore(FakeS3Store())
+    await profiles.save(filename="a.md", uploaded_by="x",
+                        markdown="```tokens\nprimary: #5b2ea6\n```\n")
+    session = _session(s3, tmp_path, FakeBuilder(), design_profiles=profiles)
+    await session.start()
+
+    await profiles.save(filename="b.md", uploaded_by="x",
+                        markdown="```tokens\nprimary: #111111\n```\n")
+    await session.start()
+
+    css = (session.build_dir() / THEME_FILENAME).read_text()
+    assert "#111111" in css and "#5b2ea6" not in css
+
+
+async def test_start_survives_a_broken_profile_store(tmp_path):
+    """세션 시작이 브랜드 반영 실패로 죽으면 안 된다. DesignProfileStore.load()가
+    스스로 모든 S3 예외를 None으로 강등하지만, 그 약속이 어떤 이유로든 깨지는
+    경우까지 이중으로 대비한다 -- 호스팅 라우트(start_host)의 같은 try/except와
+    짝이다."""
+    class _BoomProfiles:
+        async def load(self):
+            raise RuntimeError("s3 unreachable")
+
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    session = _session(s3, tmp_path, FakeBuilder(), design_profiles=_BoomProfiles())
+
+    await session.start()  # 예외를 올리면 이 줄에서 실패한다.
+
+    assert session.status == "ready"
 
 
 # ---- turn relay: status transitions + question ownership ----

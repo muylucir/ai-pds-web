@@ -27,6 +27,7 @@ import pytest
 from pathfinder.agent import prompts
 from pathfinder.agent.tools import build_tools
 from pathfinder.agent.workspace_rules import place_rules
+from pathfinder.proto import prompts as proto_prompts
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -158,6 +159,8 @@ async def test_submit_document_refusals_follow_the_project_language(tmp_path):
     (prompts.submit_document_escape, {"reason": "path escapes root"}),
     (prompts.submit_document_missing, {"path": "a.md"}),
     (prompts.submit_document_empty, {"path": "a.md"}),
+    (proto_prompts.design_rules, {}),
+    (proto_prompts.build_complete_theme_rejection, {}),
 ])
 def test_every_english_prompt_has_no_korean(fn, kwargs):
     """prompts.py의 모든 영어 갈래를 전수로 훑는다.
@@ -179,6 +182,8 @@ def test_every_english_prompt_has_no_korean(fn, kwargs):
     (prompts.submit_document_escape, {"reason": "탈출"}),
     (prompts.submit_document_missing, {"path": "a.md"}),
     (prompts.submit_document_empty, {"path": "a.md"}),
+    (proto_prompts.design_rules, {}),
+    (proto_prompts.build_complete_theme_rejection, {}),
 ])
 def test_every_korean_prompt_is_korean_and_unknown_falls_back(fn, kwargs):
     """ko 갈래가 살아 있고, 손상된 매니페스트의 임의 문자열이 ko로 떨어진다
