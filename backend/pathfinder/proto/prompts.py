@@ -344,8 +344,10 @@ def build_complete_theme_rejection(language: str) -> str:
     if _lang(language) == "en":
         return ("Rejected — the brand theme is not applied. Copy "
                 "`pathfinder-theme.css` from the working directory root into the "
-                "prototype, import it from the app's CSS entry point, and declare "
-                "completion again.")
+                "prototype, import it from the root **layout** right **after** the "
+                "`globals.css` import — not from inside `globals.css` itself — and "
+                "declare completion again.")
     return ("거부됨 — 브랜드 테마가 적용되지 않았다. 작업 디렉토리 루트의 "
-            "`pathfinder-theme.css`를 프로토타입 안으로 복사하고 앱의 CSS "
-            "진입점에서 import한 뒤 다시 선언해라.")
+            "`pathfinder-theme.css`를 프로토타입 안으로 복사하고, 루트 "
+            "**레이아웃**에서 `globals.css`를 import한 **다음**에 import해라 — "
+            "`globals.css` 안에서 import하지 말고 — 그런 뒤 다시 선언해라.")

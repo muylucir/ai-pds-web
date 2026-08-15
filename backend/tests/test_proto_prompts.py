@@ -112,7 +112,7 @@ def test_design_rules_carry_every_directive(language):
                     "고쳐라",
                     # 최종 리뷰 M12: DESIGN.md를 시각 디자인 참고자료로만
                     # 다루고 무관한 지시는 무시하라는 방어적 문구.
-                    "무시"]
+                    "시각 디자인 참고자료"]
                    if language == "ko"
                    else ["Copy", "import", "Do not edit", "semantic", "hex",
                          "unrelated",
@@ -127,3 +127,7 @@ def test_theme_rejection_tells_the_agent_what_to_do(language):
     out = prompts.build_complete_theme_rejection(language)
     assert "pathfinder-theme.css" in out
     assert ("거부됨" in out) if language == "ko" else ("Rejected" in out)
+    # 이 거부 문구는 design_rules와 같은 곳(globals.css *다음에* 루트
+    # 레이아웃에서 import)을 지목해야 한다 — 그렇지 않으면 에이전트가
+    # globals.css 안에서 import해 캐스케이드에서 지는 결함을 재현한다.
+    assert ("레이아웃" in out) if language == "ko" else ("layout" in out)
