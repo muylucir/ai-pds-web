@@ -180,7 +180,7 @@ async def test_start_plants_the_brand_profile(tmp_path):
 
 
 async def test_start_without_a_profile_plants_nothing(tmp_path):
-    from pathfinder.proto.design_sync import THEME_FILENAME
+    from pathfinder.proto.design_sync import DESIGN_FILENAME, THEME_FILENAME
 
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
@@ -188,7 +188,16 @@ async def test_start_without_a_profile_plants_nothing(tmp_path):
 
     await session.start()
 
-    assert not (session.build_dir() / THEME_FILENAME).exists()
+    build_dir = session.build_dir()
+    # 짝이 되는 test_start_plants_the_brand_profile은 세 산출물(테마·
+    # DESIGN.md·CLAUDE.md 절)이 전부 생긴다고 단언한다. 여기서는 그 세
+    # 산출물이 전부 없어야 "아무것도 심지 않는다"가 증명된다 -- 테마만
+    # 확인하면 프로필 없음 경로가 나중에 DESIGN.md나 CLAUDE.md 절을 무조건
+    # 쓰게 바뀌어도 이 테스트가 못 잡는다.
+    assert not (build_dir / THEME_FILENAME).exists()
+    assert not (build_dir / DESIGN_FILENAME).exists()
+    claude_md = build_dir / "CLAUDE.md"
+    assert not claude_md.is_file() or "pathfinder:design:start" not in claude_md.read_text()
 
 
 async def test_start_refreshes_a_changed_profile(tmp_path):
