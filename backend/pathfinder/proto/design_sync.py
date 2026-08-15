@@ -97,7 +97,7 @@ def theme_copies(build_dir: Path) -> list[Path]:
 def theme_required(build_dir: Path) -> bool:
     """이 워크스페이스에 브랜드 프로필이 적용되어야 하는가.
 
-    S3를 보지 않는다 — 루트 테마 파일의 존재와 그 첫 줄이 답이다. 게이트가
+    S3를 보지 않는다 — 루트 테마 파일의 존재와 그 내용이 답이다. 게이트가
     도구 호출 경로에서 네트워크를 타지 않게 하려는 것이다.
     """
     root = build_dir / THEME_FILENAME
@@ -122,6 +122,18 @@ def theme_imported(build_dir: Path) -> bool:
         except OSError:
             continue
     return False
+
+
+def _write_theme_everywhere(build_dir: Path, root_theme: Path, css: str) -> None:
+    """루트 테마 파일과 prototype/ 아래 사본을 전부 같은 내용으로 맞춘다.
+
+    스텁(프로필 없음)이든 실제 테마(프로필 있음)든 "쓸 내용을 무엇으로
+    정했는가"만 다르고 "어디에 쓰는가"는 같다 — 두 분기가 따로 낡지 않게
+    이 시퀀스를 한 곳에 둔다.
+    """
+    root_theme.write_text(css, encoding="utf-8")
+    for copy in theme_copies(build_dir):
+        copy.write_text(css, encoding="utf-8")
 
 
 def _upsert_section(path: Path, body: str) -> None:
@@ -166,19 +178,13 @@ def sync_design(build_dir: Path, profile: DesignProfile | None,
         # 한 번도 없었으면 아무것도 만들지 않는다(기능 전체가 opt-in이다).
         # 있었다가 지워진 경우에만 스텁으로 덮는다.
         if root_theme.is_file():
-            css = stub_css()
-            root_theme.write_text(css, encoding="utf-8")
-            for copy in theme_copies(build_dir):
-                copy.write_text(css, encoding="utf-8")
+            _write_theme_everywhere(build_dir, root_theme, stub_css())
         design_md.unlink(missing_ok=True)
         _remove_section(claude_md)
         return
 
     build_dir.mkdir(parents=True, exist_ok=True)
-    css = theme_css(profile.tokens)
-    root_theme.write_text(css, encoding="utf-8")
-    for copy in theme_copies(build_dir):
-        copy.write_text(css, encoding="utf-8")
+    _write_theme_everywhere(build_dir, root_theme, theme_css(profile.tokens))
 
     if profile.prose.strip():
         design_md.write_text(profile.prose.strip() + "\n", encoding="utf-8")
