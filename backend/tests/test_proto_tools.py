@@ -83,3 +83,57 @@ async def test_a_successful_completion_returns_text_for_the_agent(tmp_path):
     result = await handler({"summary": "완성"})
 
     assert result["content"][0]["type"] == "text"
+
+
+async def test_build_complete_is_refused_without_the_brand_theme(tmp_path):
+    from pathfinder.design_profile import DesignProfile
+    from pathfinder.proto.design_sync import sync_design
+
+    (tmp_path / "prototype").mkdir()
+    (tmp_path / "prototype" / "package.json").write_text("{}", encoding="utf-8")
+    sync_design(tmp_path, DesignProfile(
+        filename="a.md", uploaded_at="t", uploaded_by="x", markdown="(원문)",
+        tokens={"primary": "#5b2ea6"}, prose=""), "ko")
+
+    seen: list[AgentEvent] = []
+    handler = _handler(tmp_path, seen.append)
+
+    result = await handler({"summary": "다 만들었다"})
+
+    assert "pathfinder-theme.css" in result["content"][0]["text"]
+    # 거부는 세션을 끝내지 않는다 — 이벤트가 나가지 않아야 한다.
+    assert seen == []
+
+
+async def test_build_complete_passes_once_the_theme_is_imported(tmp_path):
+    from pathfinder.design_profile import DesignProfile
+    from pathfinder.proto.design_sync import THEME_FILENAME, sync_design
+
+    app = tmp_path / "prototype" / "app"
+    app.mkdir(parents=True)
+    sync_design(tmp_path, DesignProfile(
+        filename="a.md", uploaded_at="t", uploaded_by="x", markdown="(원문)",
+        tokens={"primary": "#5b2ea6"}, prose=""), "ko")
+    (app / THEME_FILENAME).write_text(
+        (tmp_path / THEME_FILENAME).read_text(), encoding="utf-8")
+    (app / "globals.css").write_text('@import "./pathfinder-theme.css";',
+                                     encoding="utf-8")
+
+    seen: list[AgentEvent] = []
+    handler = _handler(tmp_path, seen.append)
+
+    await handler({"summary": "다 만들었다"})
+
+    assert [e.kind for e in seen] == ["build_complete"]
+
+
+async def test_build_complete_skips_the_theme_check_without_a_profile(tmp_path):
+    (tmp_path / "prototype").mkdir()
+    (tmp_path / "prototype" / "package.json").write_text("{}", encoding="utf-8")
+
+    seen: list[AgentEvent] = []
+    handler = _handler(tmp_path, seen.append)
+
+    await handler({"summary": "다 만들었다"})
+
+    assert [e.kind for e in seen] == ["build_complete"]
