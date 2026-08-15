@@ -26,6 +26,7 @@ from pathfinder import error_codes as ec
 from pathfinder.models import AgentEvent
 from pathfinder.parsers.redaction import redact_credentials
 from pathfinder.pathsafe import reject_unsafe_segment
+from pathfinder.proto.design_sync import sync_design
 from pathfinder.proto.session import has_build_output, purge_session_state
 # 토큰 게이트의 경로 조립은 그 라우트를 소유한 모듈이 한다 — 여기서 f-string으로
 # 다시 쓰면 브라우저 관점 마운트(`/api`)를 두 곳에서 관리하게 되고, 그것이 이
@@ -601,6 +602,26 @@ async def start_host(pid: str, slug: str):
     # than re-formatted here -- two spellings of a build-time constant is the
     # same class of bug as the cwd/prototype mismatch above.
     from pathfinder.routes.proto_public import public_base_path
+    # 리빌드 직전에 브랜드 테마를 갱신한다. 호스팅은 rmtree 없이 기존 트리에
+    # `npm run build`를 돌리므로(proto/host.py), 여기서 파일만 새로 쓰면 코드는
+    # 한 줄도 건드리지 않고 색·서체·라운드만 바뀐다 -- 이미 완료된 프로토타입이
+    # 개선 세션 없이 리브랜딩되는 유일한 경로다.
+    #
+    # ProtoHost 안이 아니라 이 호출부에 두는 이유: 그 클래스는 S3도 브랜드도
+    # 모르는 범용 호스팅이다.
+    #
+    # 빌드 중인 세션을 여기서 따로 막지 않는다 -- 바로 위 `_live_session` 가드가
+    # starting/building/waiting_input/ready 전부를 이미 409로 걸러낸다. 이
+    # 지점에 도달했다는 것 자체가 "지금 아무도 이 트리에 쓰고 있지 않다"는
+    # 뜻이다.
+    build_dir = _prototype_dir(pid, slug).parent
+    try:
+        profile = await app_module.design_profile_store().load()
+        sync_design(build_dir, profile, app_module.project_language(pid))
+    except Exception:
+        # 브랜드 반영 실패가 호스팅 자체를 막지는 않는다 -- 화면이 열리는 것이
+        # 색보다 우선이다. 원인은 로그에 남는다.
+        _log.exception("design sync before host failed: %s/%s", pid, slug)
     try:
         info = await app_module.proto_host().start(
             pid, slug, cwd=_prototype_dir(pid, slug),
