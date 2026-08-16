@@ -1,8 +1,9 @@
-# 두 드라이버(StrandsDriver / ClaudeDriver)가 공유하는 계약.
+# runner.py가 Discovery 드라이버에 요구하는 계약.
 #
-# runner.py는 세 메서드만 쓴다(runner.py:129,167,183). 그 계약을 여기 한 곳에
-# 두고 양쪽에 걸면 "기능 동등"을 기계적으로 증명할 수 있다 — 삭제된
-# sandbox_contract.py가 같은 패턴이었다.
+# runner.py는 세 메서드만 쓴다(run/run_answers/pending). 드라이버가 하나뿐이
+# 됐어도 이 파일을 남기는 이유는 그 인터페이스를 글로 남겨 두는 자리가 필요하기
+# 때문이다 — 예전에는 두 드라이버(StrandsDriver / ClaudeDriver)에 함께 걸어
+# "기능 동등"을 증명하는 용도였고, 삭제된 sandbox_contract.py가 같은 패턴이었다.
 #
 # make_driver(scripted) 규약: scripted는 드라이버가 흉내낼 턴 대본이고,
 # (driver, session) 튜플을 돌려준다. 대본의 형태는 SDK마다 다르므로 각

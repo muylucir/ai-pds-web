@@ -248,11 +248,11 @@ def _wanted_by_text(sdk_questions: list[dict],
     하는 방어와 같다 — 0이나 음수를 그대로 인덱스로 쓰면 파이썬이 뒤에서부터
     세어 **다른 질문에 답이 붙는다.**
 
-    질문 텍스트의 필드명이 드라이버마다 다르다: SDK AskUserQuestion은
-    `question`, Strands `ask_questions`의 정규화 페이로드는 `text`다
-    (questions_payload._normalize_question). 둘을 여기서 함께 받는 이유는 두
-    드라이버가 같은 되기록을 쓰기 때문이다 — 한쪽만 지원하면 그 드라이버에서만
-    조용히 빈 칸이 남는다.
+    질문 텍스트의 필드명이 두 가지다: 원본 AskUserQuestion input은 `question`,
+    그것을 UI 계약으로 정규화한 페이로드는 `text`다
+    (questions_payload._normalize_question — 프론트가 읽고 답변 레코드에
+    저장되는 모양). 드라이버는 원본을 넘기지만 정규화된 모양이 들어와도
+    조용히 빈 칸이 되지 않게 둘을 함께 받는다.
     """
     out: dict[str, str] = {}
     for key, value in (answers or {}).items():

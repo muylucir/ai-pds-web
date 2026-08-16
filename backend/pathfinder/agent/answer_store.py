@@ -5,9 +5,9 @@
 #
 #   Your questions have been answered: "질문"="보기 라벨", ... . You can now …
 #
-# session_history._cli_answer_summary는 구 Strands `ask_questions` 계약(접두사 +
-# 답변 JSON dict)을 기대하므로 이 문장을 펼 수 없고, 결과가 `답변 제출: <영어
-# 문장>` 한 줄이었다 — 문항 번호·보기 letter·보기 텍스트가 전부 사라진다.
+# session_history._cli_answer_summary는 이 문장에서 답변을 펼 수 없다 — JSON이
+# 아니므로 결과가 `답변 제출: <영어 문장>` 한 줄이고, 문항 번호·보기 letter·
+# 보기 텍스트가 전부 사라진다.
 # 라이브 화면은 질문 payload와 답변 dict를 손에 들고 answerSummary()로 그리므로
 # 같은 대화가 새로고침 전후로 다르게 보였다.
 #

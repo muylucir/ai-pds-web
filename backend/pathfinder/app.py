@@ -17,7 +17,6 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from fastapi.middleware.cors import CORSMiddleware
 from pathfinder.workspace import ProjectRegistry, Workspace
 from pathfinder.runner import AgentRunner
-from pathfinder.agent.driver import StrandsDriver
 from pathfinder.agent.claude_driver import ClaudeDriver
 from pathfinder.cli_settings import cli_model_id
 from pathfinder.s3store import S3Store, S3StoreLike
@@ -90,7 +89,7 @@ def s3_store_factory(project_id: str) -> S3StoreLike:
     return S3Store(bucket=bucket, prefix=f"projects/{project_id}/", client=client)
 
 
-# Monkeypatchable in tests. Reads the strands session objects (sessions/ prefix)
+# Monkeypatchable in tests. Scoped to the `sessions/` prefix
 # that S3SessionManager writes; the backend only READS them for history.
 def session_s3_factory() -> S3StoreLike:
     region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
@@ -259,41 +258,19 @@ def _discovery_config_dir() -> Path:
                                "~/pathfinder-discovery-config")).expanduser()
 
 
-_DISCOVERY_DRIVERS = ("claude", "strands")
-
-
-def _discovery_driver_choice() -> str:
-    """PATHFINDER_DISCOVERY_DRIVER 값을 읽고 검증한다.
-
-    오타가 조용히 기본값으로 떨어지면 어느 드라이버가 도는지 알 수 없으므로,
-    알 수 없는 값은 ValueError로 죈다. 두 곳에서 부른다 — 하나로 합치지 않은
-    이유는 두 실패 시점이 서로 다른 방어선이기 때문이다:
-    - `_lifespan`(기동 시점): 배포 스크립트/로드밸런서의 헬스체크(GET / 또는
-      /openapi.json)는 이 값과 무관하게 200을 낼 수 있는 라우트들이다. 거기서
-      막지 않으면 오퍼레이터는 배포가 정상이라고 표시하고, 실패는 첫 워크숍
-      참가자가 프로젝트를 열 때(driver_factory 호출)서야 드러난다 — 다섯 번의
-      배포 사고를 겪은 이 프로젝트가 정확히 피하려는 그 모양이다.
-    - `driver_factory`(요청 시점): 기동 검증이 있더라도 두 번째 방어선으로
-      남긴다 — 예를 들어 프로세스 기동 후 환경이 바뀌는 경로가 생기더라도
-      여기서도 죈다.
-    """
-    choice = os.environ.get("PATHFINDER_DISCOVERY_DRIVER", "claude")
-    if choice not in _DISCOVERY_DRIVERS:
-        raise ValueError(
-            f"unknown PATHFINDER_DISCOVERY_DRIVER {choice!r}; expected 'claude' or 'strands'")
-    return choice
-
-
-# Discovery 드라이버 선택. 기본은 Claude Agent SDK — AI-PLC 룰이 전제한 실행
-# 환경이다. `strands`로 되돌릴 수 있게 둔 것은 워크숍 중 문제가 났을 때의
-# 탈출로다(EC2 교체 없이 env + restart). 워크숍이 끝나면 StrandsDriver와
-# strands-agents 의존성을 삭제한다.
+# Discovery 드라이버. Claude Agent SDK 한 벌뿐이다 — AI-PLC 룰이 전제한 실행
+# 환경이고, 여기 있던 `strands` 폴백은 삭제했다.
+#
+# **왜 폴백을 없앴는가.** 워크숍 중 env 하나로 되돌리는 탈출로로 뒀는데, 실제로는
+# 당길 수 없는 상태로 썩어 있었다: StrandsDriver는 `language`를 받지 않아 영어
+# 프로젝트가 한국어로 돌고(7f33652가 고친 그 결함), session_store·pending_store·
+# answer_store가 없어 트랜스크립트 미러링과 질문·답변 복원이 전부 빠진다. 그
+# 사실은 실제로 당기는 순간 — 즉 워크숍 중 사고가 났을 때 — 처음 드러난다.
+# 작동하는 롤백은 git revert + `pathfinder-update`다(배포가 브랜치를 가리키므로
+# 인스턴스 교체 없이 되돌아간다).
 #
 # Monkeypatchable in tests: 이 함수 자체를 fake agent_factory로 갈아끼운다.
 def driver_factory(project_id: str, local_root: Path):
-    choice = _discovery_driver_choice()
-    if choice == "strands":
-        return StrandsDriver(workspace=str(local_root), rules_dir=_rules_dir())
     return ClaudeDriver(
         workspace=str(local_root),
         rules_dir=_rules_dir(),
@@ -412,8 +389,8 @@ def survey_store_factory(project_id: str, slug: str):
 
 def questionnaire_agent_factory(project_id: str):
     """A one-shot `async (prompt) -> str` callable. Deliberately NOT
-    StrandsDriver: that bakes in the AIPLC rules prompt, workspace tools and a
-    session manager, none of which belong in a stateless generation call.
+    Discovery 드라이버: 그쪽은 AI-PLC 룰 프롬프트·워크스페이스 도구·세션
+    관리를 함께 싣는데, 무상태 생성 호출에는 그중 아무것도 필요 없다.
 
     project_id를 받는 이유: 문항 생성도 그 프로젝트의 모델로 돌아야 한다.
     종전에는 os.environ["ANTHROPIC_MODEL"]을 직접 읽어, 프로젝트별 모델을
@@ -461,12 +438,6 @@ async def _lifespan(_app: FastAPI):
     # 가장 먼저. 아래의 모든 것이 실패를 로그로 보고하고, 핸들러가 붙기 전의
     # 로그는 사라진다(configure_logging 참고 — 실제로 그렇게 잃었다).
     configure_logging()
-    # 기동 검증: PATHFINDER_DISCOVERY_DRIVER 오타는 여기서 죈다(의도적으로
-    # try/except로 감싸지 않는다 — uvicorn이 기동을 실패시켜야 배포 스크립트/
-    # 로드밸런서 헬스체크가 "정상"으로 잘못 판정하지 않는다). driver_factory
-    # 안의 같은 검증은 두 번째 방어선으로 남긴다(_discovery_driver_choice
-    # 참고).
-    _discovery_driver_choice()
     # 기동 시 S3 매니페스트에서 프로젝트 '목록'만 복원한다. 워크스페이스는 첫
     # 요청에서 lazy 초기화(deps.ensure_workspace) — 기동을 빠르게 유지한다.
     # 복원 실패는 기동을 막지 않는다.

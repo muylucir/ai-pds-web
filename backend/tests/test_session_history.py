@@ -1,230 +1,17 @@
-import json
-import pytest
-from pathfinder.session_history import transform_messages, list_history
-from pathfinder.models import HistoryItem
-
-def _msg(role, content, mid):
-    return {"message": {"role": role, "content": content}, "message_id": mid}
-
-RAW = [
-    _msg("user", [{"text": "AI-PLC를 시작해줘"}], 0),
-    _msg("assistant", [
-        {"reasoningContent": {"reasoningText": {"text": "", "signature": "sig"}}},
-        {"text": "환영합니다."},
-        {"toolUse": {"toolUseId": "tu-write", "name": "file_write",
-                     "input": {"path": "aiplc-docs/audit.md", "content": "x"}}}], 1),
-    _msg("user", [
-        {"toolResult": {"toolUseId": "tu-write", "status": "success",
-                        "content": [{"text": "written: aiplc-docs/audit.md"}]}}], 2),
-    _msg("assistant", [
-        {"text": "질문 드립니다."},
-        {"toolUse": {"toolUseId": "tu-ask", "name": "ask_questions",
-                     "input": {"questions_file": {"name": "discovery-mode-selection",
-                                                  "questions": []}}}}], 3),
-    _msg("user", [
-        {"toolResult": {"toolUseId": "tu-ask", "status": "success",
-                        "content": [{"text": '사용자 답변: {"1": "A"}'}]}}], 4),
-]
-
-def test_transform_user_and_assistant_text():
-    items = transform_messages(RAW)
-    assert items[0] == HistoryItem(role="user", text="AI-PLC를 시작해줘")
-    ai = next(i for i in items if i.role == "ai" and i.text == "환영합니다.")
-    assert ai is not None  # trace 유무와 무관하게 텍스트 아이템 존재
-
-def test_transform_ask_questions_becomes_card_and_answer_message():
-    items = transform_messages(RAW)
-    assert HistoryItem(role="card", card="questions", name="discovery-mode-selection") in items
-    answers = [i for i in items if i.role == "user" and i.text and i.text.startswith("답변 제출")]
-    assert answers and answers[0].text == "답변 제출 — 1: A"
-
-def test_transform_skips_reasoning_and_other_tool_blocks():
-    items = transform_messages(RAW)
-    texts = [i.text or "" for i in items]
-    assert not any("written: aiplc-docs" in t for t in texts)  # file_write toolResult 생략
-    assert len(items) == 5  # user, ai(환영), ai(질문 드립니다), card, user(답변 제출...)
-
-def test_transform_joins_multiple_text_blocks():
-    raw = [_msg("assistant", [{"text": "앞"}, {"text": "뒤"}], 0)]
-    assert transform_messages(raw) == [HistoryItem(role="ai", text="앞\n뒤")]
-
-def test_transform_redacts_credentials():
-    raw = [_msg("assistant", [{"text": "key AKIAIOSFODNN7EXAMPLE here"}], 0)]
-    assert "AKIAIOSFODNN7EXAMPLE" not in transform_messages(raw)[0].text
-
-@pytest.mark.asyncio
-async def test_list_history_fetches_messages_concurrently():
-    # 성능 회귀 가드: 81개 메시지를 순차로 읽으면 (개수 × S3 왕복)초가 걸려
-    # /history가 ~5초씩 걸렸다. get()들이 실제로 "겹쳐서" 실행되는지 —
-    # 최대 동시 in-flight 수가 1을 넘는지 — 를 직접 검증한다.
-    import asyncio
-    from tests.fakes.in_memory_s3 import FakeS3Store
-
-    class SlowFakeS3(FakeS3Store):
-        def __init__(self):
-            super().__init__()
-            self.in_flight = 0
-            self.max_in_flight = 0
-
-        async def get(self, key: str) -> str:
-            self.in_flight += 1
-            self.max_in_flight = max(self.max_in_flight, self.in_flight)
-            await asyncio.sleep(0.01)  # S3 왕복 흉내 — 겹침이 없으면 순차 대기
-            self.in_flight -= 1
-            return await super().get(key)
-
-    s3 = SlowFakeS3()
-    base = "session_p1/agents/agent_default/messages"
-    for n in range(10):
-        s3.blobs[f"{base}/message_{n}.json"] = json.dumps(
-            _msg("user", [{"text": f"m{n}"}], n))
-    items = await list_history(s3, "p1")
-    # 순서는 여전히 message_id 순이어야 하고,
-    assert [i.text for i in items] == [f"m{n}" for n in range(10)]
-    # 읽기는 병렬이어야 한다 (순차라면 max_in_flight == 1).
-    assert s3.max_in_flight > 1
-
-
-@pytest.mark.asyncio
-async def test_list_history_reads_sorted_and_tolerates_empty():
-    from tests.fakes.in_memory_s3 import FakeS3Store
-    s3 = FakeS3Store()
-    base = "session_p1/agents/agent_default/messages"
-    s3.blobs[f"{base}/message_10.json"] = json.dumps(_msg("user", [{"text": "열번째"}], 10))
-    s3.blobs[f"{base}/message_2.json"] = json.dumps(_msg("user", [{"text": "두번째"}], 2))
-    items = await list_history(s3, "p1")
-    assert [i.text for i in items] == ["두번째", "열번째"]  # 숫자 정렬 (문자열 정렬이면 10<2)
-    assert await list_history(FakeS3Store(), "없는세션") == []
-
-
-def test_transform_tolerates_questions_file_as_json_string():
-    # 실 세션 회귀: Strands/LLM이 ask_questions 인자의 questions_file을 dict가
-    # 아니라 직렬화된 JSON '문자열'로 넘기는 경우가 섞여 있다. dict로 가정한
-    # .get("name") 호출이 AttributeError를 던지면 transform_messages 전체가
-    # 죽어 list_history가 히스토리를 통째로 []로 강등했다(채팅 전체 미로딩).
-    qf_str = json.dumps({"name": "envision-pain-point-gathering-questions",
-                         "parse_ok": True, "preamble": "QA 팀", "questions": []},
-                        ensure_ascii=False)
-    raw = [
-        _msg("assistant", [
-            {"text": "질문 드립니다."},
-            {"toolUse": {"toolUseId": "tu-s", "name": "ask_questions",
-                         "input": {"questions_file": qf_str}}}], 0),
-        _msg("user", [
-            {"toolResult": {"toolUseId": "tu-s", "status": "success",
-                            "content": [{"text": '사용자 답변: {"1": "A"}'}]}}], 1),
-    ]
-    items = transform_messages(raw)
-    # 카드가 파싱된 name으로 생성되고, 답변 말풍선도 정상 매칭되어야 한다.
-    assert HistoryItem(role="card", card="questions",
-                       name="envision-pain-point-gathering-questions") in items
-    answers = [i for i in items if i.role == "user" and (i.text or "").startswith("답변 제출")]
-    assert answers and answers[0].text == "답변 제출 — 1: A"
-
-
-def test_transform_tolerates_unparseable_questions_file_string():
-    # questions_file 문자열이 JSON이 아니어도(파싱 실패) 죽지 않고 name=None
-    # 카드로 강등되어야 한다 — 여전히 전체 변환은 계속된다.
-    raw = [
-        _msg("assistant", [
-            {"toolUse": {"toolUseId": "tu-x", "name": "ask_questions",
-                         "input": {"questions_file": "not-json-just-text"}}}], 0),
-    ]
-    items = transform_messages(raw)
-    assert HistoryItem(role="card", card="questions", name=None) in items
-
-
-def test_answer_summary_is_human_readable_not_raw_json():
-    raw = [
-        _msg("assistant", [
-            {"toolUse": {"toolUseId": "tu-a", "name": "ask_questions",
-                         "input": {"questions_file": {"name": "q", "questions": []}}}}], 0),
-        _msg("user", [
-            {"toolResult": {"toolUseId": "tu-a", "status": "success",
-                            "content": [{"text": '사용자 답변: {"1": "A", "2": "B,C"}'}]}}], 1),
-    ]
-    items = transform_messages(raw)
-    answer = next(i for i in items if i.role == "user")
-    # raw JSON braces가 아니라 "1: A · 2: B,C" 형태
-    assert answer.text == "답변 제출 — 1: A · 2: B,C"
-
-
-def test_answer_summary_falls_back_to_raw_when_not_json():
-    raw = [
-        _msg("assistant", [
-            {"toolUse": {"toolUseId": "tu-a", "name": "ask_questions",
-                         "input": {"questions_file": {"name": "q", "questions": []}}}}], 0),
-        _msg("user", [
-            {"toolResult": {"toolUseId": "tu-a", "status": "success",
-                            "content": [{"text": "사용자 답변: 자유 서술 응답"}]}}], 1),
-    ]
-    items = transform_messages(raw)
-    answer = next(i for i in items if i.role == "user")
-    assert answer.text == "답변 제출: 자유 서술 응답"
-
-
-def test_ai_items_carry_tool_trace():
-    raw = [
-        _msg("assistant", [
-            {"text": "작업 중입니다."},
-            {"toolUse": {"toolUseId": "t1", "name": "file_read",
-                         "input": {"path": "aiplc-rules/x.md"}}},
-            {"toolUse": {"toolUseId": "t2", "name": "report_stage",
-                         "input": {"stage": "Envision", "status": "in_progress", "summary": ""}}},
-            {"toolUse": {"toolUseId": "t3", "name": "file_write",
-                         "input": {"path": "aiplc-docs/audit.md", "content": "x"}}},
-        ], 0),
-    ]
-    items = transform_messages(raw)
-    ai = next(i for i in items if i.role == "ai")
-    assert [t.model_dump() for t in ai.trace] == [
-        {"kind": "status", "text": "file_read", "path": None},
-        {"kind": "status", "text": "report_stage", "path": None},
-        {"kind": "file_changed", "text": None, "path": "aiplc-docs/audit.md"},
-    ]
-
-
-def test_trace_only_assistant_message_still_yields_ai_item():
-    # 텍스트 블록 없이 도구만 부른 어시스턴트 메시지 — 라이브에서는 트레이스가
-    # 붙은 빈 말풍선으로 보였던 턴. 트레이스를 잃지 않도록 text "" AI 아이템 생성.
-    raw = [
-        _msg("assistant", [
-            {"toolUse": {"toolUseId": "t1", "name": "file_append",
-                         "input": {"path": "aiplc-docs/audit.md", "content": "e"}}},
-        ], 0),
-    ]
-    items = transform_messages(raw)
-    ai = next(i for i in items if i.role == "ai")
-    assert ai.text == ""
-    assert [t.model_dump() for t in ai.trace] == [
-        {"kind": "file_changed", "text": None, "path": "aiplc-docs/audit.md"}]
-
-
-def test_ask_questions_not_duplicated_in_trace():
-    raw = [
-        _msg("assistant", [
-            {"text": "질문 드립니다."},
-            {"toolUse": {"toolUseId": "ta", "name": "ask_questions",
-                         "input": {"questions_file": {"name": "q"}}}},
-        ], 0),
-    ]
-    items = transform_messages(raw)
-    ai = next(i for i in items if i.role == "ai")
-    # ask_questions는 카드로 표현되므로 트레이스에는 넣지 않는다
-    assert not ai.trace
-    assert any(i.role == "card" for i in items)
-
-
-# ---- claude 드라이버(CLI 트랜스크립트) 경로 ----
+# claude 드라이버(CLI 트랜스크립트) 히스토리 복원.
 #
-# Discovery가 StrandsDriver → ClaudeDriver로 바뀌면서 트랜스크립트의 위치와
-# 포맷이 모두 바뀌었는데 이 모듈이 함께 옮겨오지 않았다. 위의 transform_messages는
-# Bedrock Converse 모양(toolUse/toolResult, camelCase)이고, CLI는 Anthropic
-# Messages 모양(block["type"] == "tool_use")이다. 프리픽스도 달라서 히스토리가
-# 항상 빈 목록이었고, list_history의 except → [] 강등이 그것을 조용히 삼켰다.
-from pathfinder.session_history import transform_cli_transcript
-from pathfinder.agent.session_store import DiscoverySessionStore
+# 예전에는 이 파일 앞쪽 절반이 strands 폴백 드라이버의 Bedrock Converse 모양
+# (toolUse/toolResult, camelCase)을 검사했다. 그 드라이버를 삭제하면서
+# transform_messages와 함께 지웠다 — 남은 것은 CLI의 Anthropic Messages 모양
+# (block["type"] == "tool_use")뿐이다.
+import json
+
+import pytest
+
 from fakes.in_memory_s3 import FakeS3Store
+from pathfinder.agent.session_store import DiscoverySessionStore
+from pathfinder.models import HistoryItem
+from pathfinder.session_history import list_history, transform_cli_transcript
 
 
 def _cli(type_, role=None, content=None, **extra):
@@ -393,7 +180,7 @@ def test_cli_question_card_comes_after_the_bubble_that_asked():
              "input": {"questions": []}}]),
         _cli("user", "user", [
             {"type": "tool_result", "tool_use_id": "qa",
-             "content": [{"text": '사용자 답변: {"1": "A"}'}]}]),
+             "content": [{"text": _CLI_ANSWER_SENTENCE}]}]),
         _cli("assistant", "assistant", [{"type": "text", "text": "작성했습니다."}]),
     ]
     items = transform_cli_transcript(raw)
@@ -403,7 +190,8 @@ def test_cli_question_card_comes_after_the_bubble_that_asked():
     assert items[1].text == "질문 드립니다."
     assert [t.text for t in items[1].trace] == ["Read"]
     assert items[2].card == "questions"
-    assert items[3].text == "답변 제출 — 1: A"
+    # 순서만 검사한다 — 문구는 위 테스트가 덮는다.
+    assert items[3].text.startswith("답변 제출")
 
 
 def test_cli_ask_user_question_becomes_a_card_not_a_trace_row():
@@ -416,6 +204,13 @@ def test_cli_ask_user_question_becomes_a_card_not_a_trace_row():
     ai = next(i for i in items if i.role == "ai")
     assert not ai.trace, "카드로 표현되므로 트레이스에 중복 노출하지 않는다"
     assert any(i.role == "card" and i.card == "questions" for i in items)
+
+
+#: CLI가 AskUserQuestion 결과로 쓰는 **자기** 문장. 우리 접두사도 JSON도 아니다 —
+#: 그래서 이 본문에서는 답변을 펼 수 없고, 정확한 값은 answer_records가 준다
+#: (agent/answer_store.py 헤더가 이 결정의 근거다).
+_CLI_ANSWER_SENTENCE = ('Your questions have been answered: "질문"="보기". '
+                        "You can now continue with these answers in mind.")
 
 
 def test_cli_answer_tool_result_becomes_a_readable_user_bubble():
@@ -433,13 +228,14 @@ def test_cli_answer_tool_result_becomes_a_readable_user_bubble():
              "content": [{"type": "text", "text": "written"}]}]),
         _cli("user", "user", [
             {"type": "tool_result", "tool_use_id": "ta",
-             "content": [{"type": "text",
-                          "text": '사용자 답변: {"1": "A", "2": "B"}'}]}]),
+             "content": [{"type": "text", "text": _CLI_ANSWER_SENTENCE}]}]),
     ]
     users = [i for i in transform_cli_transcript(raw) if i.role == "user"]
     assert len(users) == 1, [i.text for i in users]
-    # raw JSON을 그대로 노출하지 않는다 — Converse 경로와 같은 규칙.
-    assert users[0].text == "답변 제출 — 1: A · 2: B"
+    # 레코드가 없으면 CLI 문장을 그대로 폴백으로 실어 보낸다 — 빈 말풍선보다 낫다.
+    # 정확한 문항 번호·letter는 answer_records가 준다(agent/answer_store.py).
+    assert users[0].text.startswith("답변 제출")
+    assert users[0].answers is None
 
 
 #: SDK AskUserQuestion의 input 모양. 실제 트랜스크립트에서 옮겨온 것이다.
@@ -569,18 +365,9 @@ async def test_list_history_reads_what_the_session_store_wrote():
     ])
     # 프로덕션 배선과 같게: claude 트랜스크립트는 project_s3에서 읽는다
     # (드라이버가 s3_store_factory(pid)로 받은 그 스토어에 쓴다).
-    items = await list_history(None, "sess-1", project_s3=s3)
+    items = await list_history(s3, "sess-1")
     assert [(i.role, i.text) for i in items] == [
         ("user", "시작해줘"), ("ai", "네, 시작합니다.")]
-
-
-async def test_list_history_still_reads_the_strands_layout():
-    """드라이버를 strands로 되돌렸을 때(또는 교체 전 기존 세션) 여전히 복원된다."""
-    s3 = FakeS3Store()
-    s3.blobs["session_sess-2/agents/agent_default/messages/message_0.json"] = \
-        json.dumps(_msg("user", [{"text": "예전 대화"}], 0))
-    items = await list_history(s3, "sess-2")
-    assert [(i.role, i.text) for i in items] == [("user", "예전 대화")]
 
 
 async def test_append_across_instances_does_not_overwrite_earlier_batches():
@@ -594,61 +381,5 @@ async def test_append_across_instances_does_not_overwrite_earlier_batches():
     second = DiscoverySessionStore(s3)   # resume이 만드는 새 인스턴스
     await second.append(key, [{"type": "user",
                                "message": {"role": "user", "content": "두 번째 턴"}}])
-    items = await list_history(None, "sess-3", project_s3=s3)
+    items = await list_history(s3, "sess-3")
     assert [i.text for i in items] == ["첫 턴", "두 번째 턴"]
-
-
-# ---- 언어 중립 접두사 + answers 전달 ----
-
-def test_parses_the_language_neutral_prefix():
-    # strands_tools가 이제 "[answers] {...}"를 만든다.
-    items = transform_messages([
-        _msg("assistant", [
-            {"toolUse": {"toolUseId": "t1", "name": "ask_questions", "input": {}}}], 0),
-        _msg("user", [
-            {"toolResult": {"toolUseId": "t1",
-                            "content": [{"text": '[answers] {"1": "A"}'}]}}], 1),
-    ])
-    answer = next(i for i in items if i.role == "user" and i.answers)
-    assert answer.answers == {"1": "A"}
-
-
-def test_still_parses_the_legacy_korean_prefix():
-    # 이미 S3에 있는 트랜스크립트는 옛 접두사를 쓴다 — 이것이 깨지면 진행 중인
-    # 워크숍의 채팅 히스토리가 전부 빈 말풍선이 된다.
-    items = transform_messages([
-        _msg("assistant", [
-            {"toolUse": {"toolUseId": "t1", "name": "ask_questions", "input": {}}}], 0),
-        _msg("user", [
-            {"toolResult": {"toolUseId": "t1",
-                            "content": [{"text": '사용자 답변: {"1": "A"}'}]}}], 1),
-    ])
-    answer = next(i for i in items if i.role == "user" and i.answers)
-    assert answer.answers == {"1": "A"}
-
-
-def test_free_text_answer_has_no_answers_dict():
-    # JSON이 아닌 자유 서술은 dict로 펼 수 없다. text 폴백만 남는다.
-    items = transform_messages([
-        _msg("assistant", [
-            {"toolUse": {"toolUseId": "t1", "name": "ask_questions", "input": {}}}], 0),
-        _msg("user", [
-            {"toolResult": {"toolUseId": "t1",
-                            "content": [{"text": "[answers] 자유 서술 응답"}]}}], 1),
-    ])
-    answer = next(i for i in items if i.role == "user" and i.text)
-    assert answer.answers is None
-    assert "자유 서술 응답" in answer.text
-
-
-def test_text_is_still_filled_as_a_fallback():
-    # answers를 모르는 구 프론트가 빈 말풍선을 띄우지 않게 한다.
-    items = transform_messages([
-        _msg("assistant", [
-            {"toolUse": {"toolUseId": "t1", "name": "ask_questions", "input": {}}}], 0),
-        _msg("user", [
-            {"toolResult": {"toolUseId": "t1",
-                            "content": [{"text": '[answers] {"1": "A"}'}]}}], 1),
-    ])
-    answer = next(i for i in items if i.role == "user" and i.answers)
-    assert answer.text and answer.text.strip() != ""

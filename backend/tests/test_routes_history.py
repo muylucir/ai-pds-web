@@ -14,33 +14,20 @@ def _local_project(monkeypatch, pid):
     monkeypatch.setattr(app_module, "make_workspace", make)
     client.post("/projects", json={"project_id": pid})
 
-def test_history_returns_items_from_session_store(monkeypatch):
-    _local_project(monkeypatch, "h1")
-    s3 = FakeS3Store()
-    s3.blobs["session_h1/agents/agent_default/messages/message_0.json"] = json.dumps(
-        {"message": {"role": "user", "content": [{"text": "안녕"}]}, "message_id": 0})
-    monkeypatch.setattr(app_module, "session_s3_factory", lambda: s3)
-    body = client.get("/projects/h1/history").json()
-    # answers/questions는 답변 제출 턴과 질문 카드에만 채워진다 — 보통
-    # 말풍선에서는 둘 다 None이다.
-    assert body == {"items": [{"role": "user", "text": "안녕", "card": None,
-                               "name": None, "trace": [], "answers": None,
-                               "questions": None}]}
-
 def test_history_empty_when_no_session(monkeypatch):
     _local_project(monkeypatch, "h2")
-    monkeypatch.setattr(app_module, "session_s3_factory", lambda: FakeS3Store())
+    monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: FakeS3Store())
     assert client.get("/projects/h2/history").json() == {"items": []}
 
 def test_history_unknown_project_404(monkeypatch):
-    monkeypatch.setattr(app_module, "session_s3_factory", lambda: FakeS3Store())
+    monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: FakeS3Store())
     assert client.get("/projects/ghost/history").status_code == 404
 
 def test_history_degrades_when_factory_raises(monkeypatch):
     _local_project(monkeypatch, "h3")
-    def boom():
+    def boom(pid):
         raise RuntimeError("aws profile broken")
-    monkeypatch.setattr(app_module, "session_s3_factory", boom)
+    monkeypatch.setattr(app_module, "s3_store_factory", boom)
     r = client.get("/projects/h3/history")
     assert r.status_code == 200 and r.json() == {"items": []}
 
@@ -85,29 +72,15 @@ def test_history_restores_a_claude_driver_transcript(monkeypatch):
         ("user", "시작해줘"), ("ai", "네, 시작합니다.")]
 
 
-def test_history_still_restores_strands_when_the_claude_path_is_empty(monkeypatch):
-    # 드라이버를 되돌렸거나 교체 전 세션 — 폴백이 살아 있어야 한다.
-    _local_project(monkeypatch, "h6")
-    session_s3 = FakeS3Store()
-    session_s3.blobs["session_h6/agents/agent_default/messages/message_0.json"] = \
-        json.dumps({"message": {"role": "user", "content": [{"text": "예전 대화"}]},
-                    "message_id": 0})
-    monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: FakeS3Store())
-    monkeypatch.setattr(app_module, "session_s3_factory", lambda: session_s3)
-    items = client.get("/projects/h6/history").json()["items"]
-    assert [(i["role"], i["text"]) for i in items] == [("user", "예전 대화")]
-
-
 def test_history_degrades_when_the_project_store_raises(monkeypatch):
-    # 한쪽 스토어 생성 실패가 다른 쪽 복원을 막지 않는다.
+    """스토어 생성 실패(자격증명·버킷 미설정)는 히스토리를 비우되 화면은 막지
+    않는다. 예전에는 strands 폴백 스토어로 넘어갔지만 그 드라이버를 삭제해서
+    읽을 곳이 하나뿐이다 — 실패하면 빈 목록이 유일한 정직한 답이다."""
     _local_project(monkeypatch, "h7")
+
     def boom(pid):
         raise RuntimeError("aws profile broken")
-    session_s3 = FakeS3Store()
-    session_s3.blobs["session_h7/agents/agent_default/messages/message_0.json"] = \
-        json.dumps({"message": {"role": "user", "content": [{"text": "폴백"}]},
-                    "message_id": 0})
+
     monkeypatch.setattr(app_module, "s3_store_factory", boom)
-    monkeypatch.setattr(app_module, "session_s3_factory", lambda: session_s3)
-    items = client.get("/projects/h7/history").json()["items"]
-    assert [(i["role"], i["text"]) for i in items] == [("user", "폴백")]
+    r = client.get("/projects/h7/history")
+    assert r.status_code == 200 and r.json() == {"items": []}

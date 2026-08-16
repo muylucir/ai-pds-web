@@ -202,16 +202,18 @@ def test_answer_keys_that_do_not_index_a_question_are_skipped(tmp_path):
     assert all(answers[n] is None for n in range(2, 11))
 
 
-def test_strands_payload_uses_text_instead_of_question(tmp_path):
-    """두 드라이버의 필드명이 다르다 — 한쪽만 지원하면 그쪽만 조용히 빈 칸이 된다.
+def test_a_normalized_payload_uses_text_instead_of_question(tmp_path):
+    """질문 텍스트의 필드명 두 가지를 모두 받는다.
 
-    SDK AskUserQuestion은 `question`, Strands `ask_questions`의 정규화 페이로드는
-    `text`다(questions_payload._normalize_question).
+    원본 AskUserQuestion input은 `question`이고, 그것을 UI 계약으로 정규화한
+    페이로드는 `text`다(questions_payload._normalize_question — 프론트가 읽는
+    모양이자 답변 레코드에 저장되는 모양). 드라이버는 원본을 넘기지만, 레코드나
+    복원 경로에서 정규화된 모양이 들어와도 조용히 빈 칸이 되면 안 된다.
     """
     path = _write(tmp_path, "aiplc-docs/a-questions.md", TEN_QUESTIONS)
 
-    strands = [{"text": "질문 6 본문입니까?", "options": [{"letter": "A"}]}]
-    updated = record_answers(str(tmp_path), strands, {"1": "A"})
+    normalized = [{"text": "질문 6 본문입니까?", "options": [{"letter": "A"}]}]
+    updated = record_answers(str(tmp_path), normalized, {"1": "A"})
 
     assert updated == ["aiplc-docs/a-questions.md"]
     qf = parse_question_file("a.md", path.read_text(encoding="utf-8"))

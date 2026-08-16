@@ -1,8 +1,9 @@
 # backend/pathfinder/agent/claude_driver.py — Discovery agent driver on the
-# Claude Agent SDK, running IN-PROCESS (no VM). Same three-method contract as
-# StrandsDriver (driver.py) so runner.py and the frontend cannot tell them
-# apart -- proven by tests/driver_contract.py's assert_driver_contract, which
-# both drivers pass.
+# Claude Agent SDK, running IN-PROCESS (no VM). The ONLY Discovery driver; the
+# `strands` fallback was deleted (see app.driver_factory for why). It still
+# implements runner.py's three-method contract, asserted by
+# tests/driver_contract.py's assert_driver_contract -- kept as a separate
+# contract file so the interface runner.py depends on stays written down.
 #
 # Most of the SDK plumbing below (client construction, can_use_tool
 # interception, PostToolUse hook, event translation, the queue-polling race
@@ -545,13 +546,12 @@ def _suppress_shadowed_callback_warning() -> None:
 
 
 class ClaudeDriver:
-    """Discovery agent driver: same 3-method contract as StrandsDriver.
+    """Discovery agent driver. Implements runner.py's 3-method contract.
 
     One connected ClaudeSDKClient, kept across turns so the subprocess and its
     transcript persist. Hook/tool callbacks run on the SDK's own tasks while
     the turn drains on the caller's loop -- both on the SAME event loop, so a
-    plain list handoff is safe (no cross-thread locking, unlike
-    StrandsDriver's worker-thread emit).
+    plain list handoff is safe (no cross-thread locking).
     """
 
     def __init__(self, workspace: str, rules_dir: str, config_dir: str,

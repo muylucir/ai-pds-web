@@ -186,7 +186,7 @@ class AgentRunner:
         """
         interrupt = getattr(self._driver, "interrupt", None)
         if interrupt is None:
-            return  # StrandsDriver엔 interrupt()가 없다 — 끊을 서브프로세스가 없으니 no-op(여전히 멱등)
+            return  # 계약 밖의 선택 메서드다 — 없으면 no-op(여전히 멱등)
         await interrupt()
 
     async def pending(self) -> str | None:
@@ -204,13 +204,12 @@ class AgentRunner:
         """로컬 워크스페이스 정리 + 드라이버 종료. S3(durable)는 건드리지 않는다
         — 삭제는 projects.py의 delete_project_data가 담당.
 
-        드라이버의 disconnect()는 계약(run/run_answers/pending) 밖의 선택적
-        메서드다 — StrandsDriver에는 없다(그 드라이버는 프로세스 안 객체만
-        갖고 있어 정리할 서브프로세스가 없다). ClaudeDriver는 claude
-        서브프로세스를 붙들고 있으므로, 이걸 안 부르면 프로젝트를 삭제할
-        때마다 그 프로세스가 backend 수명 내내 샌다(~300-500MB). getattr로
-        존재 여부만 확인하고 없으면 조용히 건너뛴다 — hasattr 검사 자체가
-        StrandsDriver를 실패시키지 않는다."""
+        드라이버의 disconnect()는 계약(run/run_answers/pending) 밖의 **선택적**
+        메서드다. ClaudeDriver는 claude 서브프로세스를 붙들고 있으므로 이걸 안
+        부르면 프로젝트를 삭제할 때마다 그 프로세스가 backend 수명 내내
+        샌다(~300-500MB). getattr로 존재 여부만 확인하고 없으면 조용히
+        건너뛴다 — 드라이버가 하나뿐이 된 뒤에도 이 방어를 남기는 이유는
+        계약(runner.py가 쓰는 세 메서드)과 구현 편의를 섞지 않기 위해서다."""
         disconnect = getattr(self._driver, "disconnect", None)
         if disconnect is not None:
             try:

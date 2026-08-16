@@ -166,8 +166,7 @@ def normalize_sdk_questions(raw: object) -> list[dict]:
     """AskUserQuestion의 `questions` 인자를 list[dict]로 정규화한다.
 
     모델이 이 인자를 **직렬화된 JSON 문자열**로 넘기는 일이 있다(실측: 한
-    세션의 18라운드 중 3건). `_questions_file_name`이 Strands 경로에서 문서화한
-    그 shape 위험과 같은 것이고, 여기서 막지 않으면 question_file_from_sdk가
+    세션의 18라운드 중 3건). 여기서 막지 않으면 question_file_from_sdk가
     문자열을 문자 단위로 훑다가 AttributeError로 터진다 — 그 예외는 permission
     콜백 밖으로 새어 턴을 죽인다.
 
