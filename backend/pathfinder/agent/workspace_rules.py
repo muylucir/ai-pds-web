@@ -35,6 +35,39 @@ _LANGUAGE_DIR = "language"
 _LANGUAGES = ("ko", "en")
 _DEFAULT_LANGUAGE = "ko"
 
+#: 조립된 CLAUDE.md 맨 앞에 오는 툴 파라미터 인코딩 규칙.
+#:
+#: **왜 여기인가(2026-08-16 keumkang-v3의 결함).** 모델이 툴 파라미터의 한글을
+#: `\uXXXX` 이스케이프로 쓰면서 hex를 오타내면 "유효하지만 틀린" 음절이 된다
+#: (anthropics/claude-code#83033). 실측: 질문 파일은 `제공하시겠습니까`(U+ACA0)인데
+#: 물어본 질문은 `제공하시겜습니까`(U+AC9C)였다. 사용자는 깨진 한국어를 보고,
+#: 답변 되기록은 짝을 못 찾는다. 상류는 공식 미해결이고(모델 팀 이관, CLI로는
+#: 복원 불가) 권고하는 유일한 완화책이 이 지시다.
+#:
+#: 지시는 `discovery-config/CLAUDE.md`에 이미 있었는데도 결함이 났다. 그 파일이
+#: 스스로 "UI 접점에만 적용된다"며 모델을 **작업 디렉터리 CLAUDE.md**로 보내고,
+#: 거기에는 조항이 없었기 때문이다. 그래서 모델이 실제로 지목받는 파일에 둔다.
+#:
+#: **언어 중립이어야 한다.** 한글이 섞이면 그 자체가 언어 신호가 되어 영어
+#: 프로젝트의 대화를 한국어로 끌어당긴다(이 파일 상단의 7f33652 기록).
+#: 인코딩 규칙은 어느 언어로 쓸지에 대해 아무 말도 하지 않는다.
+_ENCODING_RULE = """<!-- pathfinder-tool-encoding -->
+# Tool-parameter encoding (applies to every tool call, in any language)
+
+Write non-ASCII text — Korean included — in tool-call parameters as **literal
+UTF-8 characters**. Never as `\\uXXXX` unicode escapes.
+
+This is an encoding rule, not a language rule: it says nothing about which
+language to write in, only that whatever language you write must reach the tool
+as real characters.
+
+Why it is worth stating this bluntly: hand-spelling four hex digits per syllable
+mis-spells some of them, and a mis-spelled codepoint decodes to a *different,
+valid-looking* syllable. The question then reads as nonsense to the user and no
+longer matches the question file it was written into, so their answer cannot be
+recorded against it.
+"""
+
 
 def _copy_if_changed(src: Path, dst: Path) -> None:
     """크기가 같으면 건너뛴다. 룰은 읽기 전용이므로 크기 비교로 충분하고,
@@ -81,8 +114,11 @@ def place_rules(workspace: str, rules_dir: str,
     # 않는다. 두 언어 지시의 크기가 우연히 같으면 언어를 바꿔도 파일이 그대로
     # 남는데, 그 침묵이 정확히 이 스펙이 없애려는 실패 모양이다. 파일 하나
     # 쓰기는 싸다.
+    # 인코딩 규칙이 **맨 앞**이다: 출력 형식은 문서 전체의 전제이고, 언어 지시와
+    # 경쟁하지 않는다(어느 언어로 쓸지에 대해 아무 말도 하지 않는다).
     (ws / "CLAUDE.md").write_text(
-        directive.read_text(encoding="utf-8") + "\n\n"
+        _ENCODING_RULE + "\n"
+        + directive.read_text(encoding="utf-8") + "\n\n"
         + core.read_text(encoding="utf-8"),
         encoding="utf-8")
 

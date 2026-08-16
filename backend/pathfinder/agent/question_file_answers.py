@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import logging
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from pathfinder.parsers.questions import parse_question_file, serialize_answers
@@ -78,32 +79,163 @@ def _record(workspace: str, sdk_questions: list[dict],
     if not wanted:
         return []
 
-    best: tuple[int, float] | None = None
-    best_write: tuple[Path, str] | None = None
+    miss = _Miss()
+    best: _FileMatch | None = None
     # rglob은 순서를 보장하지 않는다 — 동점 처리를 재현 가능하게 하려면 정렬이
     # 필요하다(mtime까지 같은 경우 경로 순서로 결정된다).
     for path in sorted(docs.rglob(_GLOB)):
-        found = _match_file(path, wanted)
+        found = _match_file(path, wanted, miss)
         if found is None:
             continue
-        new_md, hits = found
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            mtime = 0.0
-        score = (hits, mtime)
-        if best is None or score > best:
-            best, best_write = score, (path, new_md)
+        if best is None or found.score() > best.score():
+            best = found
 
-    if best_write is None:
+    if best is None:
+        # **조용히 실패하지 않는다.** 2026-08-16에 되기록이 안 됐는데 로그가 텅
+        # 비어 있어서 원인을 찾는 데 오래 걸렸다. 최선 후보와 그 점수를 남기면
+        # "임계값이 빡빡한가"(0.85에 가까움)와 "엉뚱한 파일을 보고 있는가"(낮음)를
+        # 바로 가를 수 있다.
+        _log.warning(
+            "question-file write-back: no match for %d answer(s); best %.3f "
+            "asked=%r candidate=%r", len(wanted), miss.ratio, miss.asked[:60],
+            miss.candidate[:60])
         return []
-    path, new_md = best_write
     try:
-        path.write_text(new_md, encoding="utf-8")
+        best.path.write_text(best.new_md, encoding="utf-8")
     except OSError:
-        _log.exception("question file not writable: %s", path)
+        _log.exception("question file not writable: %s", best.path)
         return []
-    return [path.relative_to(Path(workspace)).as_posix()]
+    rel = best.path.relative_to(Path(workspace)).as_posix()
+    if best.fuzzy:
+        # 유사 매칭이 일어났다 = **이 라운드의 한글이 깨졌다**(claude-code#83033).
+        # 리터럴 UTF-8 지시가 억제에 듣고 있는지를 알 수 있는 유일한 신호이므로
+        # info로 남긴다 — 세지 않으면 1층의 효과를 측정할 방법이 없다.
+        _log.info("question-file write-back: %s (%d exact, %d fuzzy — corrupted "
+                  "Hangul in this round, see claude-code#83033)",
+                  rel, best.exact, best.fuzzy)
+    else:
+        _log.info("question-file write-back: %s (%d exact)", rel, best.exact)
+    return [rel]
+
+
+#: 유사 매칭의 하한과 2등과의 최소 격차.
+#:
+#: **왜 유사 매칭이 필요한가(claude-code#83033).** 모델이 툴 파라미터의 한글을
+#: `\uXXXX` 이스케이프로 쓰면서 hex를 오타내면 그 코드포인트가 "유효하지만 틀린"
+#: 음절로 디코드된다. 밀도는 음절의 3~5%이고 호출마다 간헐적으로 켜지므로, 같은
+#: 턴에 파일(Write)은 깨끗하고 질문(AskUserQuestion)만 깨질 수 있다. 상류는 공식
+#: 미해결이고(모델 팀 이관, CLI로는 복원 불가) hex 오타가 무작위라 역변환도 없다.
+#:
+#: **왜 이 숫자인가.** keumkang-v3 6라운드 21문항 실측:
+#:   맞는 쌍 0.9677 / 가장 비슷한 오답 0.5806 / 그 외 ≤0.375 /
+#:   한 라운드 내 최대 0.32~0.40.
+#: 0.97과 0.58 사이가 비어 있다. 60자에 3음절이 깨져도 약 0.95, 20자에 1음절이
+#: 깨져도 0.95이므로 0.85는 양쪽으로 여유가 크다.
+#:
+#: **왜 격차도 요구하는가.** 임계값만 보면 비슷한 두 문항이 둘 다 넘을 수 있고,
+#: 그때 고르는 것은 동전 던지기다. 격차가 없으면 쓰지 않는다 — 빈 칸은 사람이
+#: 알아보지만 틀린 답은 알아볼 수 없다.
+_FUZZY_MIN = 0.85
+_FUZZY_MARGIN = 0.10
+
+
+class _FileMatch:
+    """한 파일의 매칭 결과. exact/fuzzy를 나눠 들고 있는 이유는 파일 선택에
+    쓰이기 때문이다 — 정확 일치가 있는 파일이 유사 일치만 있는 파일을 이긴다."""
+
+    __slots__ = ("path", "new_md", "exact", "fuzzy")
+
+    def __init__(self, path: Path, new_md: str, exact: int, fuzzy: int) -> None:
+        self.path, self.new_md, self.exact, self.fuzzy = path, new_md, exact, fuzzy
+
+    @property
+    def total(self) -> int:
+        return self.exact + self.fuzzy
+
+    def mtime(self) -> float:
+        try:
+            return self.path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def score(self) -> tuple[int, int, float]:
+        """파일 선택 순서. 정확 일치 수 → 전체 매칭 수 → 최근 수정 시각.
+
+        정확 일치를 최우선에 두는 것이 load-bearing이다: 지난 스테이지 파일에
+        비슷한 문장이 있으면 유사 매칭이 걸리고, mtime만 보면 그쪽이 더 최근일
+        때 정확히 일치하는 파일을 제치고 이긴다.
+        """
+        return (self.exact, self.total, self.mtime())
+
+
+#: 매칭에 실패한 라운드의 최선 후보. 진단 전용이다 — 2026-08-16에 되기록이
+#: 조용히 실패했고 로그가 텅 비어서 원인 추적이 늦어졌다. 이 숫자가 "임계값이
+#: 빡빡한가"와 "엉뚱한 파일을 보고 있는가"를 가른다.
+class _Miss:
+    __slots__ = ("ratio", "asked", "candidate")
+
+    def __init__(self) -> None:
+        self.ratio, self.asked, self.candidate = 0.0, "", ""
+
+    def offer(self, ratio: float, asked: str, candidate: str) -> None:
+        if ratio > self.ratio:
+            self.ratio, self.asked, self.candidate = ratio, asked, candidate
+
+
+def _ratio(a: str, b: str) -> float:
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _assign(questions, wanted: dict[str, str],
+            miss: _Miss) -> tuple[dict[int, str], int, int]:
+    """{문항번호: 값}, 정확 일치 수, 유사 일치 수.
+
+    정확 일치를 **먼저** 전부 확정한다. 유사 매칭이 먼저 돌면 깨진 질문이 다른
+    문항의 자리를 빼앗고, 정작 그 문항은 빈 칸으로 남는다.
+    """
+    norms = [(q.number, _norm(q.text)) for q in questions]
+    mapping: dict[int, str] = {}
+    claimed: set[int] = set()
+
+    remaining = dict(wanted)
+    for number, norm in norms:
+        if number in claimed:
+            continue
+        value = remaining.pop(norm, None)
+        if value is not None:
+            mapping[number], _ = value, claimed.add(number)
+    exact = len(mapping)
+    if not remaining:
+        return mapping, exact, 0
+
+    # 후보를 모아 점수 내림차순으로 배정한다. 한 문항을 두 질문이 노릴 수 있으므로
+    # 즉시 배정하지 않고 확신이 큰 쪽부터 자리를 준다.
+    candidates: list[tuple[float, str, int]] = []
+    for asked, value in remaining.items():
+        scored = sorted(((_ratio(asked, norm), number)
+                         for number, norm in norms if number not in claimed),
+                        reverse=True)
+        if not scored:
+            continue
+        best_ratio, best_number = scored[0]
+        runner_up = scored[1][0] if len(scored) > 1 else None
+        miss.offer(best_ratio, asked,
+                   next(n for num, n in norms if num == best_number))
+        if best_ratio < _FUZZY_MIN:
+            continue
+        if runner_up is not None and best_ratio - runner_up < _FUZZY_MARGIN:
+            # 어느 쪽인지 정할 근거가 없다 — 쓰지 않는다.
+            continue
+        candidates.append((best_ratio, asked, best_number))
+
+    fuzzy = 0
+    for best_ratio, asked, number in sorted(candidates, reverse=True):
+        if number in claimed:
+            continue
+        mapping[number] = remaining[asked]
+        claimed.add(number)
+        fuzzy += 1
+    return mapping, exact, fuzzy
 
 
 def _wanted_by_text(sdk_questions: list[dict],
@@ -139,8 +271,9 @@ def _wanted_by_text(sdk_questions: list[dict],
     return out
 
 
-def _match_file(path: Path, wanted: dict[str, str]) -> tuple[str, int] | None:
-    """이 파일에 답을 심은 결과와 매칭 수. 심을 것이 없으면 None."""
+def _match_file(path: Path, wanted: dict[str, str],
+                miss: _Miss) -> _FileMatch | None:
+    """이 파일에 답을 심은 결과. 심을 것이 없으면 None(최선 후보는 _miss에 남는다)."""
     try:
         md = path.read_text(encoding="utf-8")
     except OSError:
@@ -152,8 +285,7 @@ def _match_file(path: Path, wanted: dict[str, str]) -> tuple[str, int] | None:
         # 문항 번호를 부여할 방법이 없으므로 건드리지 않는다.
         return None
 
-    mapping = {q.number: wanted[_norm(q.text)]
-               for q in qfile.questions if _norm(q.text) in wanted}
+    mapping, exact, fuzzy = _assign(qfile.questions, wanted, miss)
     if not mapping:
         return None
     try:
@@ -169,4 +301,4 @@ def _match_file(path: Path, wanted: dict[str, str]) -> tuple[str, int] | None:
         # 않기 위해 남긴다 — 규약을 벗어난 파일을 만든 것은 에이전트다.
         _log.warning("question file has no [Answer]: slot to fill: %s", path)
         return None
-    return new_md, len(mapping)
+    return _FileMatch(path=path, new_md=new_md, exact=exact, fuzzy=fuzzy)

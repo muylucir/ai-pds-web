@@ -30,9 +30,16 @@ UTF-8 — never as `\uXXXX` escapes. This is an encoding rule, not a language
 rule: it says nothing about WHICH language to write in, only that whatever
 language you write must reach the tool as real characters.
 
-This file governs only the touchpoints with the Pathfinder web UI. For the
-Discovery workflow itself, follow the `CLAUDE.md` in the working directory
-(the AI-PLC core workflow), including its language convention.
+**That encoding rule applies to every tool call you make, in any language, and
+nothing below narrows it.** It is repeated at the top of the working-directory
+`CLAUDE.md` for the same reason. Hand-spelling `\uXXXX` mis-spells some
+codepoints, and a mis-spelled one decodes to a different, valid-looking syllable
+— the user then reads a nonsense question, and their answer cannot be matched
+back to the question file it belongs to.
+
+Apart from that rule, this file governs only the touchpoints with the Pathfinder
+web UI. For the Discovery workflow itself, follow the `CLAUDE.md` in the working
+directory (the AI-PLC core workflow), including its language convention.
 
 - When you ask the user a multiple-choice question, you MUST use the
   **AskUserQuestion** tool. Keep writing the question files

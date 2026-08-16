@@ -227,3 +227,127 @@ def test_duplicate_question_text_across_rounds_is_idempotent(tmp_path):
 
     qf = parse_question_file("a.md", path.read_text(encoding="utf-8"))
     assert qf.questions[0].answer == "B"
+
+
+# ---- 깨진 한글을 견디는 매칭 (claude-code#83033) ----
+# 모델이 툴 파라미터의 한글을 `\uXXXX` 이스케이프로 쓰면서 hex를 오타내면, 그
+# 코드포인트가 "유효하지만 틀린" 음절로 디코드된다. 밀도는 음절의 3~5%이고
+# 간헐적이라, 같은 턴에 파일(Write)은 깨끗한데 질문(AskUserQuestion)만 깨질 수
+# 있다 — keumkang-v3 실측: 파일 `제공하시겠습니까`(U+ACA0) vs 물어본
+# `제공하시겜습니까`(U+AC9C). 정확 일치만 보면 되기록이 조용히 실패한다.
+#
+# 상류는 공식 미해결이고(모델 팀 이관, CLI로는 복원 불가) hex 오타가 무작위라
+# 역변환도 없다. 그래서 매칭에 허용 범위를 둔다.
+#
+# 임계값 근거(keumkang-v3 6라운드 21문항 실측):
+#   맞는 쌍            0.9677
+#   가장 비슷한 오답    0.5806   ← 같은 "정보를 … 제공하시겠습니까?" 문형
+#   그 외 모든 쌍       ≤ 0.375
+#   한 라운드 내 최대   0.32~0.40
+# 0.97과 0.58 사이가 비어 있어 0.85는 양쪽으로 여유가 크다. 60자에 3음절이
+# 깨져도 약 0.95, 20자에 1음절이 깨져도 0.95다.
+
+#: 실측된 깨짐 그대로. 파일 쪽은 `겠`(U+ACA0), 물어본 쪽은 `겜`(U+AC9C).
+_CLEAN = "고객 페인 포인트에 대한 정보를 어떻게 제공하시겠습니까?"
+_CORRUPT = "고객 페인 포인트에 대한 정보를 어떻게 제공하시겜습니까?"
+
+
+def _one_question(text: str) -> str:
+    return f"""## Question 1
+{text}
+
+A) 대화형으로 답하겠습니다
+B) URL이 있습니다
+X) Other (please describe after [Answer]: tag below)
+
+[Answer]:
+"""
+
+
+def test_a_corrupted_syllable_still_matches(tmp_path):
+    """**이 테스트가 이 계층의 존재 이유다.** 실측 쌍 그대로."""
+    path = _write(tmp_path, "aiplc-docs/mode-selection-questions.md",
+                  _one_question(_CLEAN))
+
+    updated = record_answers(str(tmp_path), _sdk(_CORRUPT), {"1": "A"})
+
+    assert updated == ["aiplc-docs/mode-selection-questions.md"]
+    qf = parse_question_file("m.md", path.read_text(encoding="utf-8"))
+    assert qf.questions[0].answer == "A"
+
+
+def test_a_similar_but_different_question_is_not_matched(tmp_path):
+    """실측에서 가장 비슷한 오답 후보(0.5806)다. 이것이 통과하면 사용자가 하지
+    않은 결정이 다른 문항에 기록된다 — 임계값이 막아야 하는 바로 그 경우다."""
+    path = _write(tmp_path, "aiplc-docs/a-questions.md", _one_question(_CLEAN))
+    before = path.read_text(encoding="utf-8")
+
+    other = "비즈니스 컨텍스트 정보를 어떤 방식으로 제공하시겠습니까?"
+    assert record_answers(str(tmp_path), _sdk(other), {"1": "A"}) == []
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_a_close_pair_inside_one_file_is_left_blank(tmp_path):
+    """후보 둘이 비슷하게 가까우면 **아무것도 쓰지 않는다.**
+
+    2등과의 격차를 요구하는 이유다. 임계값만 보면 둘 다 넘을 수 있고, 그때
+    고르는 것은 동전 던지기다 — 빈 칸은 사람이 알아보지만 틀린 답은 못 알아본다.
+    """
+    md = (_one_question("부품 교체 이력은 어느 기간까지 남아 있습니까?")
+          + "\n" + _one_question("부품 교체 이력은 어느 기간까지 남아 있습니까?")
+          .replace("## Question 1", "## Question 2"))
+    path = _write(tmp_path, "aiplc-docs/a-questions.md", md)
+    before = path.read_text(encoding="utf-8")
+
+    # 두 문항과 거의 같은 거리에 있는 질문 — 어느 쪽인지 정할 근거가 없다.
+    asked = "부품 교체 이력은 어느 기간까지 남아 있습니까?!"
+    record_answers(str(tmp_path), _sdk(asked), {"1": "B"})
+
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_exact_matches_win_before_fuzzy_claims_a_slot(tmp_path):
+    """정확 일치가 먼저 자리를 잡아야 한다. 유사 매칭이 먼저 돌면 깨진 질문이
+    다른 문항의 자리를 빼앗고 정작 그 문항은 빈 칸으로 남는다."""
+    md = _one_question(_CLEAN) + "\n" + _one_question(_CORRUPT).replace(
+        "## Question 1", "## Question 2")
+    path = _write(tmp_path, "aiplc-docs/a-questions.md", md)
+
+    # 두 질문을 한 라운드에 묻는다 — 각자 자기 짝을 정확 일치로 찾아야 한다.
+    record_answers(str(tmp_path), _sdk(_CORRUPT, _CLEAN), {"1": "A", "2": "B"})
+
+    qf = parse_question_file("a.md", path.read_text(encoding="utf-8"))
+    answers = {q.number: q.answer for q in qf.questions}
+    assert answers[1] == "B", "Q1은 깨끗한 원본이므로 _CLEAN(2번 답변 B)의 짝이다"
+    assert answers[2] == "A", "Q2는 깨진 사본이므로 _CORRUPT(1번 답변 A)의 짝이다"
+
+
+def test_a_failed_match_is_logged_with_the_best_candidate(tmp_path, caplog):
+    """진단 공백을 메운다.
+
+    2026-08-16에 되기록이 조용히 실패했고 로그가 텅 비어서 원인 추적이 늦어졌다 —
+    매칭 실패에 아무 기록도 남기지 않았기 때문이다. 실패는 최선 후보와 그 점수를
+    남겨야 한다: 그 숫자가 "임계값이 빡빡한가" vs "엉뚱한 파일인가"를 가른다.
+    """
+    import logging
+    _write(tmp_path, "aiplc-docs/a-questions.md", _one_question(_CLEAN))
+
+    with caplog.at_level(logging.WARNING, logger="pathfinder.agent"):
+        assert record_answers(str(tmp_path),
+                              _sdk("전혀 다른 질문입니다"), {"1": "A"}) == []
+
+    assert any("no match" in r.message.lower() or "매칭" in r.message
+               for r in caplog.records), [r.message for r in caplog.records]
+
+
+def test_a_fuzzy_match_is_logged_so_suppression_can_be_measured(tmp_path, caplog):
+    """유사 매칭이 일어났다는 것은 **그 라운드의 한글이 깨졌다**는 뜻이다.
+    1층(리터럴 UTF-8 지시)이 듣고 있는지를 이 로그로만 알 수 있다."""
+    import logging
+    _write(tmp_path, "aiplc-docs/a-questions.md", _one_question(_CLEAN))
+
+    with caplog.at_level(logging.INFO, logger="pathfinder.agent"):
+        record_answers(str(tmp_path), _sdk(_CORRUPT), {"1": "A"})
+
+    assert any("fuzzy" in r.message.lower() for r in caplog.records), \
+        [r.message for r in caplog.records]

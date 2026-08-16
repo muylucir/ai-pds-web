@@ -383,3 +383,62 @@ def test_the_slugged_spec_is_required_on_every_path_including_a1():
     assert "lowercase letters, digits and hyphens only" in text
     # 정본이 어느 쪽인지 — 11KB 쌍둥이를 유지하면 드리프트가 시작된다.
     assert "artifact of record" in text
+
+
+#: 조립된 워크스페이스 CLAUDE.md의 인코딩 절을 가리키는 앵커.
+_ENCODING_MARKER = "<!-- pathfinder-tool-encoding -->"
+
+
+def test_the_assembled_claude_md_carries_the_tool_encoding_rule(tmp_path):
+    """**2026-08-16 keumkang-v3의 결함이 이 검사의 이유다.**
+
+    모델이 툴 파라미터의 한글을 `\\uXXXX` 이스케이프로 쓰면서 hex를 오타내면
+    "유효하지만 틀린" 음절이 된다(anthropics/claude-code#83033, 공식 미해결 —
+    모델 팀 이관, CLI로는 복원 불가). 실측: 파일은 `제공하시겠습니까`(U+ACA0)인데
+    물어본 질문은 `제공하시겜습니까`(U+AC9C)였다. 사용자는 깨진 한국어를 보고,
+    되기록은 짝을 못 찾는다.
+
+    상류가 권고하는 유일한 완화책이 이 지시다. 그런데 `discovery-config/CLAUDE.md`
+    에만 있었고, 그 파일은 스스로 "UI 접점에만 적용된다"며 모델을 작업 디렉터리
+    CLAUDE.md로 보낸다 — **거기에는 조항이 없었다.** 그래서 모델이 실제로 지목받는
+    파일에 넣는다.
+    """
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    place_rules(str(ws), str(_rules(tmp_path)), language="ko")
+    text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
+
+    assert _ENCODING_MARKER in text
+    # 지시의 두 축: 리터럴 UTF-8로 쓸 것, `\uXXXX`를 쓰지 말 것. 공백을 접고
+    # 보는 이유는 이 절이 80칼럼으로 감겨 있어서다 — 원문 부분문자열 검사는
+    # 내용이 아니라 줄바꿈 위치를 검사하게 된다(_discovery_config와 같은 규율).
+    folded = " ".join(text.split())
+    assert "literal UTF-8" in folded
+    assert "\\uXXXX" in folded
+    # 언어 지시보다 앞에 온다 — 출력 형식은 문서 전체의 전제다.
+    assert text.index(_ENCODING_MARKER) < text.index("KO-DIRECTIVE")
+
+
+def test_the_encoding_rule_is_language_neutral(tmp_path):
+    """인코딩 규칙은 어느 언어를 쓸지에 대해 아무 말도 하지 않는다.
+
+    한글이 섞이면 그 자체가 언어 신호가 되어(이 파일 상단의 실측 근거) 영어
+    프로젝트의 대화를 한국어로 끌어당긴다 — 7f33652의 실패 모양이다.
+    """
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    place_rules(str(ws), str(_rules(tmp_path)), language="en")
+    text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
+
+    block = text.split(_ENCODING_MARKER, 1)[1].split("EN-DIRECTIVE", 1)[0]
+    assert not {c for c in block if "가" <= c <= "힣"}, block
+
+
+def test_the_config_dir_does_not_scope_the_encoding_rule_away(tmp_path):
+    """`discovery-config/CLAUDE.md`가 "이 파일은 UI 접점에만 적용된다"고 말하면서
+    인코딩 조항을 같은 파일에 두면, 모델이 그 조항도 UI 접점 한정으로 읽을 수 있다.
+    그 축소가 실제 결함의 절반이었으므로 문서가 명시적으로 부인해야 한다."""
+    text = _discovery_config()
+    assert "literal" in text and "uXXXX" in text
+    # 인코딩 규칙만은 범위 축소의 예외라고 못박아야 한다.
+    assert "applies to every tool call" in text
