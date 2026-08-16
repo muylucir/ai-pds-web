@@ -22,8 +22,11 @@ _COMMON_SUBDIR = "aws-aiplc-rule-details/common"
 _CONTACT_ADDENDUM = f"""
 ## Pathfinder 통합 규약 (UI 접점 — 반드시 준수)
 - 사용자에게 객관식 질문을 할 때는 반드시 ask_questions 도구를 사용한다.
-  질문 파일(aiplc-docs/**-questions.md)은 기록용으로 계속 작성하되, 질문
-  전달 자체는 도구로만 한다. {QUESTIONS_SCHEMA_HINT}
+  질문 파일(aiplc-docs/**-questions.md)은 계속 작성하되, 질문 전달 자체는
+  도구로만 한다. 답변은 백엔드가 그 파일의 `[Answer]:` 칸에 심어 주므로
+  직접 쓰지 말고, 파일의 질문 문장과 도구에 넘기는 질문 문장을 **똑같이**
+  유지한다 — 매칭이 텍스트로 이뤄져서 문장이 갈리면 답이 심기지 않는다.
+  {QUESTIONS_SCHEMA_HINT}
 - 스테이지를 시작/완료할 때마다 report_stage 도구를 호출한다. 이 도구가
   aiplc-state.md를 자동 갱신하므로 상태 파일을 file_write로 직접 만들 필요 없다.
 - discovery-document를 생성/갱신할 때마다 submit_document 도구를 호출한다.

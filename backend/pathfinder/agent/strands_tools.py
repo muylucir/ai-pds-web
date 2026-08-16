@@ -19,6 +19,8 @@ from strands import tool
 from pathfinder.models import AgentEvent
 from pathfinder.agent.state_sync import upsert_stage
 from pathfinder.agent.questions_payload import normalize_questions_payload
+from pathfinder.agent.discovery_guard import write_denial
+from pathfinder.agent.question_file_answers import record_answers
 
 _log = logging.getLogger("pathfinder.agent")
 
@@ -45,6 +47,31 @@ QUESTIONS_SCHEMA_HINT = (
     "일반 보기(single-select) 답변은 'B' 또는 'B: 부연설명' 형태로 돌아온다 — "
     "': ' 뒤 부연은 사용자가 그 보기를 고르며 덧붙인 요청/조건이므로 반드시 읽고 반영한다."
 )
+
+
+def _outside_docs(path: str, workspace: str) -> str | None:
+    """`aiplc-docs/` 밖 쓰기면 모델에게 돌려줄 거부 문구, 아니면 None.
+
+    왜 여기에도 있는가: 실효 게이트는 ClaudeDriver의 PreToolUse 훅이지만
+    (agent/discovery_guard.py 헤더의 2026-08-16 결함 기록), StrandsDriver는
+    **롤백 경로**다. 한쪽만 막으면 드라이버를 되돌린 순간 결함이 조용히
+    되살아난다 — 질문 답변 되기록을 두 드라이버에 모두 배선한 것과 같은 이유다.
+    `_confine`은 워크스페이스 **탈출**만 막으므로 `prototype/index.html`을
+    그대로 통과시킨다.
+
+    문구가 한국어 리터럴인 것은 이 파일의 관례다(도구 설명·QUESTIONS_SCHEMA_HINT가
+    모두 한국어 고정). build_tools에 language가 없고, 그 3-인자 시그니처는
+    driver.py가 기대하는 것이라 바꾸지 않는다 — 언어를 아는 거부 문구는
+    agent/prompts.py를 쓰는 ClaudeDriver 쪽에 있다.
+    """
+    offender = write_denial(path, workspace)
+    if offender is None:
+        return None
+    return (f"거부됨 — Discovery는 'aiplc-docs/' 아래에만 쓸 수 있고 "
+            f"'{offender}'는 그 밖이다. 프로토타입을 만들고 실행하는 것은 "
+            "Prototypes 탭의 일이다. 대신 "
+            "'aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md'에 "
+            "스펙을 쓸 것.")
 
 
 def _confine(root: str, rel: str) -> Path:
@@ -88,6 +115,13 @@ def build_tools(workspace: str, rules_dir: str,
                     "위 형식에 맞춰 ask_questions를 다시 호출해라.")
         answers = tool_context.interrupt(
             "ask_questions", reason={"questions_payload": payload})
+        # 답변을 질문 파일의 `[Answer]:` 칸에도 심는다 — ai-plc 워크플로우가 그
+        # 칸을 읽는다(agent/question_file_answers.py 헤더). claude_driver와 같은
+        # 되기록을 쓰는 이유는 두 드라이버가 같은 계약을 내야 하기 때문이다:
+        # 한쪽만 심으면 드라이버를 롤백했을 때 조용히 빈 칸으로 돌아간다.
+        for rel in record_answers(workspace, payload.get("questions") or [],
+                                  answers if isinstance(answers, dict) else {}):
+            emit(AgentEvent(kind="file_changed", path=rel))
         # 언어 중립 접두사. session_history가 이것을 벗겨 answers dict를
         # 복원한다 — 그쪽은 구 트랜스크립트의 "사용자 답변: "도 함께 받는다.
         return f"{ANSWER_PREFIX}{json.dumps(answers, ensure_ascii=False)}"
@@ -171,6 +205,9 @@ def build_tools(workspace: str, rules_dir: str,
             path: 워크스페이스 상대 경로.
             content: 파일 전체 내용.
         """
+        refusal = _outside_docs(path, workspace)
+        if refusal:
+            return refusal
         p = _confine(workspace, path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
@@ -186,6 +223,9 @@ def build_tools(workspace: str, rules_dir: str,
             path: 워크스페이스 상대 경로.
             content: 덧붙일 내용.
         """
+        refusal = _outside_docs(path, workspace)
+        if refusal:
+            return refusal
         p = _confine(workspace, path)
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("a", encoding="utf-8") as f:

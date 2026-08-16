@@ -49,31 +49,41 @@ Discovery workflow itself, follow the `CLAUDE.md` in the working directory
   entire file** — calling Write with only the new entry destroys the whole
   audit record.
 
-## Question files: a record, not the answer sheet (overrides the upstream rules)
+## Question files: answers are written back for you (overrides the upstream rules)
 
 The questions themselves reach the user through **AskUserQuestion**, and their
-answers come back through that same tool call. The markdown file is a record of
-what was asked — nothing reads answers back out of it. So its `[Answer]:` tags
-**stay empty by design**, and `aws-aiplc-rule-details/common/question-format-guide.md`
-does not apply to them:
+answers come back through that same tool call. `aws-aiplc-rule-details/common/question-format-guide.md`
+applies to the file — its `[Answer]:` tags **do get filled in** — with these
+differences in *how*:
 
-- **Do not apply its "Missing Answers" handling** to these files. An empty
-  `[Answer]:` is the expected end state, not an oversight. Telling the user to
-  "provide an answer for Question X" sends them to a file they cannot edit from
-  the UI — the form in the right-hand panel is the only way in.
+- **Pathfinder fills the `[Answer]:` tags, not you.** The moment the user
+  submits the form, the backend writes each answer into the matching question in
+  `aiplc-docs/**/*-questions.md`. Read those tags freely (that is the point —
+  `common/session-continuity.md` has you re-read the stage's question file on
+  resume). **Do not write them yourself**: two writers on one line produce
+  conflicts, and your copy would be the stale one.
+- **Matching is by question text, not by question number.** So the question
+  wording you put in the file must be the *same sentence* you pass to
+  AskUserQuestion. If you reword it in the tool call, the answer has nothing to
+  match and the tag stays empty.
+- **Do not apply its "Missing Answers" handling** by sending the user to the
+  file. They cannot edit it from the UI — the form in the right-hand panel is
+  the only way in. If a tag you expected is still empty, ask that question again
+  through AskUserQuestion.
 - **Do not wait for the user to say "done"** (its Step 3, "Wait for
   Confirmation"). The AskUserQuestion round-trip *is* the confirmation: your
   turn resumes the moment they submit the form, with their answers attached.
-- **The record of truth for answers is `audit.md`.** Keep logging them there
-  exactly as the stage rules require — that is what later stages and the
-  workshop record rely on, not the question file.
+- **Keep logging answers in `audit.md` as well.** The question file carries the
+  decision; `audit.md` carries the audit trail the workshop record relies on.
 
 One consequence worth knowing, so you do not try to "fix" it: AskUserQuestion
 takes **at most 4 questions with at most 4 options each**, and those are hard
 schema limits. A stage whose rules list more question areas than that will
 deliver them across several calls, so the file and the forms will not line up
-one-to-one. That is expected. Do not trim the file down to match the tool, and
-do not try to cram extra questions into one call.
+one-to-one — round 2 starts numbering at 1 again. Text matching is what carries
+the answers to the right rows across that split, which is why the wording has to
+stay identical. Do not trim the file down to match the tool, and do not try to
+cram extra questions into one call.
 
 ## Prototypes: write the spec, do not build (overrides the upstream rules)
 
@@ -82,20 +92,46 @@ Only the dedicated hosting layer (`ProtoHost`) can allocate a port and register
 with the preview proxy, so a server you start here appears on no screen and
 opens from no preview link. Discovery's role ends at **writing the spec**.
 
-- Follow `aws-aiplc-rule-details/discovery/prototype-md-format.md` and write
-  `aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md`. That path
-  convention is what the Prototypes tab lists cards from — deviate and no card
-  appears.
+- **You write only under `aiplc-docs/`. Nothing else, ever.** This is the rule,
+  not a list of forbidden commands. A prototype is not "not built" because you
+  skipped `npm install` — it is not built because no source file exists outside
+  `aiplc-docs/`. A single self-contained `index.html` needs no package manager,
+  no port and no network, and it is still a build. So is a `.py`, a `.jsx`, a
+  `.css`. If you are about to create a file that a browser or a runtime would
+  execute, you are outside your scope.
+  This one is **enforced, not trusted**: a hook refuses `Write`/`Edit` outside
+  `aiplc-docs/`, and refuses shell commands that build, serve, or redirect
+  output to a path outside it. The refusal names the path or command and points
+  you back here — read it and write the spec instead of retrying with a
+  different path.
+- **The spec goes to `aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md`,
+  on every path — including Path A.1.** Follow
+  `aws-aiplc-rule-details/discovery/prototype-md-format.md` for its contents.
+  `aws-aiplc-rule-details/discovery/prototype-validation.md` tells you to write
+  only `aiplc-docs/discovery/prototype/prototype-spec.md` and stop; that is an
+  upstream gap, not permission to skip the slugged file. (The same upstream
+  document lists `Existing PROTOTYPE-*.md` as the build entry point, and
+  `prototype-context-generation.md` does produce the slugged path — Path A.1 is
+  the one flow that forgets it.)
+  - **The slug must match the directory name exactly.** The Prototypes tab finds
+    cards with a regex whose directory capture is back-referenced in the
+    filename, so `prototypes/foo/PROTOTYPE-bar.md` lists nothing. That slug is
+    also the id for building, hosting, surveys and deletion.
+  - Derive it as kebab-case from the use-case name and sanitize it the way
+    `prototype-context-generation.md` requires: lowercase letters, digits and
+    hyphens only; reject anything containing `/`, `\` or `..`.
+  - **`PROTOTYPE-{slug}.md` is the artifact of record.** Nothing in Pathfinder
+    reads `prototype-spec.md`. If Path A.1 already produced one, do not maintain
+    two full copies — they drift, and the drift shows up as a content
+    difference with no error. Keep the detail in `PROTOTYPE-{slug}.md`.
 - **Do not perform** the build steps in
   `aws-aiplc-rule-details/discovery/prototype-building.md`. Those rules were
   written for the upstream workshop, where a human runs everything locally.
-  Specifically, do not:
-  - run build/run commands such as `npm install` / `npm run build` /
-    `npm run dev`
-  - start prototype subprocesses (the credential-isolation guidance therefore
-    has nothing to apply to)
-  - report progress or completion like "Deploying to…" or
-    "Running at http://localhost:{port}"
+  Beyond the scope rule above, that also means: do not start prototype
+  subprocesses (the credential-isolation guidance therefore has nothing to
+  apply to), and do not report progress or completion like "Deploying to…",
+  "Running at http://localhost:{port}", or instructions for the user to serve
+  the files themselves.
 - **Do not choose a port.** The upstream rules' `Port: {3000 + X}` and the
   spec template's `Port` field are void in Pathfinder — hosting assigns the port
   at build time. A port written into the spec will disagree with the assigned

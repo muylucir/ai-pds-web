@@ -124,6 +124,42 @@ def answer_first(language: str) -> str:
             "이용하세요.")
 
 
+def write_outside_docs(language: str, path: str) -> str:
+    """`aiplc-docs/` 밖 파일 쓰기를 PreToolUse 훅이 거부할 때 모델이 읽는 이유.
+
+    무엇이 걸렸는지 **경로로 지목한다**: 지목이 없으면 모델이 같은 쓰기를 경로만
+    바꿔 재시도하며 루프에 빠진다. 그리고 대안을 함께 준다 — 거부만 하면 모델은
+    "막혔다"만 알고 스펙을 어디에 쓸지는 모른다(agent/discovery_guard.py 헤더의
+    결함 기록 참조).
+    """
+    if _lang(language) == "en":
+        return (f"Refused — Discovery may only write under 'aiplc-docs/', and "
+                f"'{path}' is outside it. Building and running prototypes is "
+                "the Prototypes tab's job, not this chat's. Write the spec to "
+                "'aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md' "
+                "instead, then tell the user to build it from the Prototypes "
+                "tab.")
+    return (f"거부됨 — Discovery는 'aiplc-docs/' 아래에만 쓸 수 있고 "
+            f"'{path}'는 그 밖이다. 프로토타입을 만들고 실행하는 것은 "
+            "Prototypes 탭의 일이며 이 대화의 일이 아니다. 대신 "
+            "'aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md'에 "
+            "스펙을 쓰고, 사용자에게 Prototypes 탭에서 빌드하라고 안내할 것.")
+
+
+def build_command_refused(language: str, fragment: str) -> str:
+    """빌드·서버 기동·워크스페이스 밖 파일 생성 명령을 거부할 때의 이유."""
+    if _lang(language) == "en":
+        return (f"Refused — '{fragment}' builds or serves a prototype, which "
+                "Discovery does not do. Only the Prototypes tab can allocate a "
+                "port and register with the preview proxy, so anything you "
+                "start here appears on no screen. Write the spec and stop "
+                "there.")
+    return (f"거부됨 — '{fragment}'는 프로토타입을 빌드하거나 서비스하는 "
+            "명령이고, Discovery는 그 일을 하지 않는다. 포트를 받아 프리뷰 "
+            "프록시에 등록할 수 있는 것은 Prototypes 탭뿐이므로 여기서 띄운 "
+            "것은 어느 화면에도 나타나지 않는다. 스펙 작성까지만 할 것.")
+
+
 def turn_failed(language: str) -> str:
     """CLI가 실패한 턴을 보고했을 때(`ResultMessage.is_error`) 채팅에 남기는 문구.
 

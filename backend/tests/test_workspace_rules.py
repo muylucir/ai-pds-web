@@ -280,10 +280,12 @@ def test_both_language_directives_carry_the_length_calibration_clause():
 def test_upstream_question_rules_are_untouched():
     """상류 룰은 고치지 않는다 — 질문 파일 규약도 예외가 아니다.
 
-    Pathfinder는 질문을 AskUserQuestion으로 전달하므로 `[Answer]:` 칸이 영구히
-    비어 있는데, 그렇다고 question-format-guide.md의 "Missing Answers" 처리를
-    지우는 것은 금지다. 상류 룰은 데이터이고, 갱신하면 로컬 수정이 조용히
-    사라진다. 대신 discovery-config가 override를 선언한다(아래 테스트).
+    Pathfinder는 `[Answer]:` 칸을 백엔드가 채우고(agent/question_file_answers.py)
+    사용자는 그 파일을 UI에서 편집할 수 없다. 그래서 question-format-guide.md의
+    "Missing Answers"(사용자를 그 파일로 보내는 처리)와 Step 3(사용자가 "done"이라고
+    말할 때까지 대기)은 이 제품에 맞지 않는다 — 그렇다고 그 파일을 지우거나 고치는
+    것은 금지다. 상류 룰은 데이터이고, 갱신하면 로컬 수정이 조용히 사라진다.
+    대신 discovery-config가 어느 쪽이 이기는지 선언한다(아래 테스트).
     """
     repo_rules = Path(__file__).resolve().parents[2] / "rule" / "aiplc-rules"
     guide = (repo_rules / "aws-aiplc-rule-details" / "common"
@@ -298,14 +300,20 @@ def test_upstream_question_rules_are_untouched():
 
 
 def test_discovery_config_overrides_the_upstream_question_file_rules():
-    """질문 파일을 기록물로 강등하는 선언이 discovery-config에 있어야 한다.
+    """답변 되기록의 규약이 discovery-config에 적혀 있어야 한다.
 
     없으면 두 규정이 한 상황에 적용되고 어느 쪽이 이길지 예측할 수 없다 —
-    상류 question-format-guide는 빈 `[Answer]:`를 보면 사용자에게 다시 답을
-    요구하라고 하고(그 파일은 UI에서 편집할 수 없다), "done"이라고 말할 때까지
-    기다리라고 한다(AskUserQuestion 왕복이 이미 확인이다). 그 충돌이 7f33652의
-    언어 지시 이중화와 같은 실패 모양이므로, 프로토타입 섹션과 같은 방식으로
-    어느 쪽이 이기는지 문서에 적어 둔다.
+    상류 question-format-guide는 빈 `[Answer]:`를 보면 사용자에게 그 파일에 답을
+    적으라고 하고(UI에서 편집할 수 없다), "done"이라고 말할 때까지 기다리라고
+    한다(AskUserQuestion 왕복이 이미 확인이다). 그 충돌이 7f33652의 언어 지시
+    이중화와 같은 실패 모양이므로, 프로토타입 섹션과 같은 방식으로 어느 쪽이
+    이기는지 문서에 적어 둔다.
+
+    **에이전트가 알아야 하는 두 가지를 특히 검사한다.** 되기록은 백엔드가
+    하므로 (1) 에이전트가 그 칸을 직접 쓰면 두 writer가 한 줄을 다투고,
+    (2) 매칭이 질문 텍스트로 이뤄지므로 파일과 도구의 문장이 갈리면 답이
+    조용히 심기지 않는다 — 둘 다 에러 없이 실패하는 모양이라 문서에 없으면
+    아무도 모른다.
     """
     repo = Path(__file__).resolve().parents[2]
     path = repo / "discovery-config" / "CLAUDE.md"
@@ -314,6 +322,64 @@ def test_discovery_config_overrides_the_upstream_question_file_rules():
     text = path.read_text(encoding="utf-8")
     # override라고 명시적으로 선언한다(프로토타입 섹션의 선례와 같은 표현).
     assert "overrides the upstream rules" in text
-    # 빈 [Answer]:가 정상 상태라는 것, 그리고 답변의 정본이 audit.md라는 것.
     assert "[Answer]:" in text
+    # audit.md는 정본에서 감사 추적으로 역할이 바뀌었을 뿐, 계속 요구된다.
     assert "audit.md" in text
+    # 되기록의 주체가 백엔드라는 것.
+    assert "Do not write them yourself" in text
+    # 매칭 키가 번호가 아니라 텍스트라는 것.
+    assert "by question text, not by question number" in text
+
+
+def _discovery_config() -> str:
+    """공백을 접은 discovery-config/CLAUDE.md.
+
+    줄바꿈을 접는 이유: 이 절의 문장은 80칼럼으로 감겨 있어서 원문 부분문자열
+    검사는 **줄바꿈 위치**를 검사하게 된다. 그러면 문단을 다시 감기만 해도
+    테스트가 깨지고(내용은 그대로인데), 반대로 검사를 통과시키려 문장을 한 줄로
+    늘어놓는 압력이 생긴다. 여기서 고정하려는 것은 규칙의 내용이다.
+    """
+    path = (Path(__file__).resolve().parents[2] / "discovery-config" / "CLAUDE.md")
+    if not path.is_file():
+        pytest.skip("discovery-config/CLAUDE.md not present")
+    return " ".join(path.read_text(encoding="utf-8").split())
+
+
+def test_the_prototype_scope_rule_is_a_boundary_not_a_command_list():
+    """**2026-08-16의 결함이 이 검사의 이유다.**
+
+    에이전트가 워크스페이스에 `prototype/index.html`을 만들었다. 당시 이 절이
+    금지한 것은 빌드 *명령*이었다 — npm install / npm run dev / 서브프로세스 /
+    포트 선택. 자기완결 HTML 한 장은 그중 아무것도 필요하지 않고, 에이전트의 자기
+    보고("패키지 설치·외부 통신 모두 불필요")가 곧 모든 조항을 만족했다는 증거다.
+
+    그래서 규칙이 **경계**(aiplc-docs/ 밖 금지)로 서술돼야 한다. 명령 열거로
+    되돌아가면 다음 우회는 다른 모양으로 온다 — 열거는 빠진 항목을 초대한다.
+    강제 장치가 있다는 사실도 적혀 있어야 한다: 모르면 거부를 버그로 오해하고
+    경로만 바꿔 재시도한다(agent/discovery_guard.py 헤더 참조).
+    """
+    text = _discovery_config()
+    assert "You write only under `aiplc-docs/`" in text
+    # 강제된다는 사실 + 거부가 무엇을 알려주는지.
+    assert "enforced, not trusted" in text
+
+
+def test_the_slugged_spec_is_required_on_every_path_including_a1():
+    """상류 Path A.1(prototype-validation.md)은 `prototype/prototype-spec.md`만
+    만들고 끝낸다. 그런데 Prototypes 탭이 카드를 만드는 유일한 경로는
+    `prototypes/{slug}/PROTOTYPE-{slug}.md`이고(routes/prototypes.py의 _SPEC_RE),
+    그 정규식은 디렉터리 캡처를 파일명에서 백레퍼런스한다 — 슬러그가 어긋나면
+    카드가 아예 없고, 빌드·호스팅·설문·삭제가 모두 그 슬러그로 키된다.
+
+    그러므로 "Path A.1도 예외가 아니다"가 문서에 있어야 한다. 없으면 상류 문서를
+    그대로 따른 세션이 공유용 산출물 없이 끝나고, 그 실패는 Prototypes 탭이
+    비어 있는 것으로만 나타난다.
+    """
+    text = _discovery_config()
+    assert "on every path — including Path A.1" in text
+    assert "PROTOTYPE-{slug}.md" in text
+    # 슬러그 == 디렉터리명이라는 제약과 새니타이즈 규칙.
+    assert "must match the directory name exactly" in text
+    assert "lowercase letters, digits and hyphens only" in text
+    # 정본이 어느 쪽인지 — 11KB 쌍둥이를 유지하면 드리프트가 시작된다.
+    assert "artifact of record" in text

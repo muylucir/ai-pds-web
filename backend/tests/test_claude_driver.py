@@ -138,6 +138,61 @@ async def test_persists_the_submitted_answers_as_a_record(tmp_path):
     assert saved["questions"]["questions"], saved["questions"]
 
 
+#: fake가 묻는 질문(fake_sdk_asking.DEFAULT_SDK_QUESTIONS)과 **같은 문장**을 담은
+#: 질문 파일. 되기록은 질문 텍스트로 맞추므로 이 문장이 어긋나면 매칭되지 않는다.
+_QUESTION_FILE_MD = """## Question 1
+다음 단계는?
+
+A) 진행
+B) 종료
+X) Other (please describe after [Answer]: tag below)
+
+[Answer]:
+"""
+
+
+@pytest.mark.asyncio
+async def test_answers_are_recorded_in_the_question_file(tmp_path):
+    """**ai-plc 워크플로우의 핵심 계약이다.**
+
+    상류 룰은 질문 파일을 답안지로 다룬다 — question-format-guide.md가 "Extract
+    answers after [Answer]: tags"를 지시하고, session-continuity.md:31-33은
+    스테이지 재개 때 그 파일을 읽으라고 한다. 답이 심기지 않으면 재개한 세션이
+    사용자의 결정을 잃는다. 배선이 끊기면 에러 없이 빈 칸만 남으므로 여기서 고정한다.
+    """
+    d, _, _ = _driver(tmp_path, {"questions": True})
+    qpath = tmp_path / "ws" / "aiplc-docs" / "strategy-questions.md"
+    qpath.parent.mkdir(parents=True)
+    qpath.write_text(_QUESTION_FILE_MD, encoding="utf-8")
+
+    events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+    iid = json.loads(next(e.payload for e in events if e.kind == "questions"))[
+        "interrupt_id"]
+    later = [ev async for ev in d.run_answers(iid, {"1": "B"},
+                                              {"session_id": "s-1"})]
+
+    assert "[Answer]: B" in qpath.read_text(encoding="utf-8")
+    # 화면의 산출물 패널이 갱신되도록 file_changed도 흘린다 — 파일만 바뀌고
+    # 이벤트가 없으면 사용자는 새로고침해야 답이 들어간 것을 본다.
+    assert ("aiplc-docs/strategy-questions.md"
+            in [e.path for e in later if e.kind == "file_changed"])
+
+
+@pytest.mark.asyncio
+async def test_a_missing_question_file_does_not_fail_the_answers_turn(tmp_path):
+    """질문 파일이 없는 것은 정상이다(프로토타입 경로 등). 턴이 죽으면 안 된다."""
+    d, _, _ = _driver(tmp_path, {"questions": True})
+    events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+    iid = json.loads(next(e.payload for e in events if e.kind == "questions"))[
+        "interrupt_id"]
+
+    later = [ev async for ev in d.run_answers(iid, {"1": "A"},
+                                              {"session_id": "s-1"})]
+
+    assert later and later[-1].kind == "done", [(e.kind, e.text) for e in later]
+    assert not [e for e in later if e.kind == "file_changed"]
+
+
 @pytest.mark.asyncio
 async def test_answer_record_failure_does_not_fail_the_turn(tmp_path):
     """레코드는 복원 편의다 — S3 딸꾹질이 방금 답한 턴을 죽이면 더 나쁘다."""
@@ -1621,3 +1676,77 @@ def test_driver_defaults_to_korean(tmp_path):
     d = ClaudeDriver(workspace=str(tmp_path), rules_dir=str(tmp_path),
                      config_dir=str(tmp_path), s3=None, session_store=None)
     assert d._language == "ko"
+
+
+# ---- Discovery 쓰기 범위 게이트 (PreToolUse) ----
+# 2026-08-16: 에이전트가 워크스페이스에 `prototype/index.html`을 만들어 버렸다.
+# 규칙은 discovery-config/CLAUDE.md에 산문으로만 있었고, 그 산문이 금지한 것은
+# 빌드 *명령*이라 자기완결 HTML 한 장은 모든 조항을 만족하며 통과했다.
+# 판정 표는 tests/test_discovery_guard.py가 덮고, 여기서는 **배선**을 고정한다.
+
+
+def test_the_gate_is_wired_and_excludes_askuserquestion(tmp_path, monkeypatch):
+    """**이 테스트가 질문 기능을 지킨다.**
+
+    SDK types.py의 can_use_tool 설명: PreToolUse 훅이 *allow*를 돌려주면
+    can_use_tool도 건너뛴다. 우리 AskUserQuestion 가로채기가 그 콜백에 있으므로
+    matcher에 AskUserQuestion이 들어가는 순간 질문 왕복 전체가 죽는다.
+    """
+    options = _captured_options(tmp_path, monkeypatch,
+                                {"session_id": "p1", "resume": False})
+    pre = (options.hooks or {}).get("PreToolUse")
+    assert pre, "PreToolUse 훅이 없으면 bypassPermissions에서 아무것도 막지 못한다"
+    matchers = [m.matcher for m in pre]
+    assert any("Write" in (m or "") and "Bash" in (m or "") for m in matchers), matchers
+    assert not any("AskUserQuestion" in (m or "") for m in matchers), matchers
+    # can_use_tool은 그대로 살아 있어야 한다 — 질문이 SSE 이벤트가 되는 유일한 경로다.
+    assert options.can_use_tool is not None
+
+
+def _pre(driver, tool_name, tool_input):
+    return driver._on_pre_tool_use(
+        {"tool_name": tool_name, "tool_input": tool_input}, "t1", None)
+
+
+async def test_the_gate_denies_the_html_that_caused_it(tmp_path):
+    d, _, _ = _driver(tmp_path, {"text": ["ok"]})
+    out = await _pre(d, "Write", {"file_path": "prototype/index.html"})
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    assert decision["hookEventName"] == "PreToolUse"
+    # 거부 이유는 모델이 읽는다 — 무엇이 걸렸는지와 어디에 쓰라는지가 있어야
+    # 경로만 바꿔 재시도하는 루프에 빠지지 않는다.
+    assert "prototype/index.html" in decision["permissionDecisionReason"]
+    assert "PROTOTYPE-" in decision["permissionDecisionReason"]
+
+
+async def test_the_gate_denies_build_and_serve_commands(tmp_path):
+    d, _, _ = _driver(tmp_path, {"text": ["ok"]})
+    for command in ("npm run dev", "cd prototype && python3 -m http.server 8000"):
+        out = await _pre(d, "Bash", {"command": command})
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny", command
+
+
+async def test_the_gate_passes_by_returning_an_empty_dict(tmp_path):
+    """통과는 빈 dict여야 한다 — "allow"를 돌려주면 can_use_tool이 건너뛰어지고
+    그 콜백에 있는 AskUserQuestion 가로채기가 죽는다(위 테스트의 근거와 같다)."""
+    d, _, _ = _driver(tmp_path, {"text": ["ok"]})
+    docs = await _pre(d, "Write",
+                      {"file_path": "aiplc-docs/discovery/discovery-document.md"})
+    assert docs == {}
+    spec = await _pre(d, "Write", {"file_path":
+        "aiplc-docs/discovery/prototypes/maint/PROTOTYPE-maint.md"})
+    assert spec == {}, "슬러그 산출물이 막히면 문제가 뒤바뀐다"
+    assert await _pre(d, "Bash", {"command": "ls aiplc-docs"}) == {}
+    # matcher 밖의 도구도 조용히 통과한다.
+    assert await _pre(d, "Read", {"file_path": "/etc/hosts"}) == {}
+
+
+async def test_the_gate_speaks_the_project_language(tmp_path):
+    """거부 이유는 모델 컨텍스트에 들어가는 텍스트다 — agent/prompts.py 헤더의
+    규약대로 프로젝트 언어를 따라야 한다."""
+    d, _, _ = _driver(tmp_path, {"text": ["ok"]})
+    d._language = "en"
+    reason = (await _pre(d, "Write", {"file_path": "prototype/index.html"})
+              )["hookSpecificOutput"]["permissionDecisionReason"]
+    assert not {c for c in reason if "가" <= c <= "힣"}, reason

@@ -60,12 +60,15 @@ import asyncio
 import json
 import logging
 import re
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
 from pathfinder.agent import prompts
 from pathfinder.agent.answer_store import save_answers
+from pathfinder.agent.discovery_guard import (WRITE_TOOLS, bash_denial,
+                                              write_denial)
 from pathfinder.agent.pending_store import clear_pending, load_pending, save_pending
+from pathfinder.agent.question_file_answers import record_answers
 from pathfinder.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
 from pathfinder.agent.session_store import DiscoverySessionStore
@@ -73,11 +76,15 @@ from pathfinder.agent.tools import build_tools
 from pathfinder.agent.workspace_rules import place_rules
 from pathfinder.cli_settings import cli_context_env
 from pathfinder.models import AgentEvent
+from pathfinder.pathsafe import workspace_relative as _rel
 from pathfinder.s3store import S3StoreLike
 
 _log = logging.getLogger("pathfinder.agent")
 
-_FILE_TOOLS = {"Write", "Edit", "MultiEdit"}
+#: 파일 쓰기 도구. discovery_guard가 소유한다 — PostToolUse(관측)와
+#: PreToolUse(차단)가 **같은** 집합을 봐야 한다. 두 벌로 두면 한쪽에만 도구가
+#: 추가되어 "관측되지만 막히지 않는" 구멍이 생긴다.
+_FILE_TOOLS = WRITE_TOOLS
 _LETTERS = "ABCDEFGHIJ"
 
 # How long `_pump` blocks on the next SDK message before checking the
@@ -266,32 +273,6 @@ def _iid_of(event: AgentEvent) -> str | None:
     except (json.JSONDecodeError, AttributeError):
         return None
     return value if isinstance(value, str) else None
-
-
-def _rel(path: str, workspace: str) -> str | None:
-    """Make a tool's file_path workspace-relative; reject escapes.
-
-    Ported from proto/builder.py's `_rel` (itself ported from the VM-era
-    claude_driver._rel). `relative_to` also raises ValueError when `path` is
-    absolute but shares no prefix with `workspace` at all (e.g. "/etc/passwd"
-    vs workspace "/workspace") -- not just for genuinely relative inputs. A
-    naive fallback (`path.lstrip("/")`) would treat both cases as "already
-    relative", letting an unrelated absolute path escape undetected. Only fall
-    back to the lstrip path when `path` was not absolute to begin with; an
-    absolute path that isn't under the workspace is always an escape.
-    """
-    ws = PurePosixPath(workspace)
-    p = PurePosixPath(path)
-    try:
-        rel = p.relative_to(ws)
-    except ValueError:
-        if path.startswith("/"):
-            return None
-        rel = PurePosixPath(path.lstrip("/"))
-    rel_str = str(rel)
-    if ".." in rel.parts or rel_str.startswith("/"):
-        return None
-    return rel_str
 
 
 def _validate_permission_mode(mode: str) -> str:
@@ -523,8 +504,23 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # SSE `questions` event). Dropping the callback to silence the
             # warning would break that.
             can_use_tool=driver._on_can_use_tool,
-            hooks={"PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
-                                               hooks=[driver._on_post_tool_use])]},
+            # PreToolUse가 이 제품의 유일한 실효 게이트다. 위 can_use_tool은
+            # bypassPermissions에서 Write/Bash에 대해 호출되지 않는다 — SDK가
+            # 그 사실과 해법을 직접 적어 뒀다(types.py의
+            # _get_can_use_tool_shadowed_warning: "To gate every tool call, use
+            # a PreToolUse hook instead").
+            #
+            # **matcher에 AskUserQuestion을 넣지 않는다.** types.py의 can_use_tool
+            # 설명에 따르면 PreToolUse 훅이 *allow*를 돌려주면 can_use_tool도
+            # 건너뛴다 — 질문 가로채기가 그 콜백에 있으므로 그러면 질문 왕복
+            # 전체가 죽는다. 같은 이유로 _on_pre_tool_use는 통과시킬 때
+            # "allow"가 아니라 **빈 dict**를 돌려준다.
+            hooks={
+                "PreToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit|Bash",
+                                           hooks=[driver._on_pre_tool_use])],
+                "PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
+                                            hooks=[driver._on_post_tool_use])],
+            },
         )
         return ClaudeSDKClient(options=options)
     return make
@@ -761,6 +757,41 @@ class ClaudeDriver:
         self._queue.append(AgentEvent(kind="status", text=INTERRUPTED_MARKER))
         await self._client.interrupt()
 
+    async def _on_pre_tool_use(self, input_data, tool_use_id, context) -> dict:
+        """Discovery의 쓰기 범위 게이트. 판정은 agent/discovery_guard.py.
+
+        왜 훅인가: Discovery는 bypassPermissions로 돌아 Write/Bash가 자동
+        승인되고 can_use_tool에 도달하지 않는다 — SDK가 지정한 유일한 게이트가
+        PreToolUse다(그 근거는 위 팩토리의 hooks 주석과 discovery_guard 헤더).
+
+        **통과는 빈 dict다.** "allow"를 돌려주면 can_use_tool까지 건너뛰어
+        AskUserQuestion 가로채기가 죽는다(types.py의 can_use_tool 설명).
+        """
+        name = input_data.get("tool_name", "")
+        tool_input = input_data.get("tool_input") or {}
+        if name in _FILE_TOOLS:
+            offender = write_denial(tool_input.get("file_path"), self._workspace)
+            reason = (None if offender is None
+                      else prompts.write_outside_docs(self._language, offender))
+        elif name == "Bash":
+            offender = bash_denial(tool_input.get("command"))
+            reason = (None if offender is None
+                      else prompts.build_command_refused(self._language, offender))
+        else:
+            # matcher가 위 셋만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
+            # 통과해야 한다 — 알 수 없는 도구를 막으면 턴이 멈춘다.
+            return {}
+        if reason is None:
+            return {}
+        # 로그로 남긴다: 거부 이유는 모델에게만 가므로, 무엇이 막혔는지
+        # 운영자가 확인할 경로가 따로 필요하다.
+        _log.warning("discovery gate denied %s: %s", name, offender)
+        return {"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }}
+
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
         name = input_data.get("tool_name", "")
         if name in _FILE_TOOLS:
@@ -868,6 +899,14 @@ class ClaudeDriver:
         # 턴이 재개되고 곧 다음 도구가 돌기 시작하므로, 뒤에 두면 실패했을 때
         # 어느 라운드의 기록이 빠졌는지 로그로도 짚기 어려워진다.
         await self._save_answers_quietly(tool_use_id, iid, qfile, answers)
+        # 답변을 질문 파일의 `[Answer]:` 칸에도 심는다. ai-plc 워크플로우가 그
+        # 칸을 읽기 때문이다 — 근거와 텍스트 매칭의 이유는
+        # agent/question_file_answers.py 헤더에 있다. 여기(반환 직전)인 이유는
+        # _save_answers_quietly와 같다: 이 반환으로 턴이 재개되고 다음 도구가
+        # 곧 돌기 시작하므로, 뒤에 두면 파일이 다음 스테이지의 읽기보다 늦을 수
+        # 있다. record_answers는 어떤 실패도 삼키고 빈 목록을 준다.
+        for rel in record_answers(self._workspace, sdk_questions, answers):
+            self._queue.append(AgentEvent(kind="file_changed", path=rel))
         return PermissionResultAllow(updated_input={
             "questions": sdk_questions,
             "answers": sdk_answers,

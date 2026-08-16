@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from pathlib import PurePosixPath
+from pathfinder.pathsafe import workspace_relative as _rel
 from typing import Any, AsyncIterator, Callable
 
 from pathfinder.agent.questions_payload import (normalize_sdk_questions,
@@ -103,34 +103,6 @@ def _interrupt_id_of(event: AgentEvent) -> str | None:
     except (json.JSONDecodeError, AttributeError):
         return None
     return value if isinstance(value, str) else None
-
-
-def _rel(path: str, workspace: str) -> str | None:
-    """Make a tool's file_path workspace-relative; reject escapes.
-    (Ported from the old claude_driver._rel — see its docstring for why any
-    `..` in the relativized parts is an escape, not merely relative.)
-
-    Fix vs. the brief's literal version: `relative_to` also raises ValueError
-    when `path` is absolute but shares no prefix with `workspace` at all
-    (e.g. "/etc/passwd" vs workspace "/workspace") — not just for genuinely
-    relative inputs. The original fallback (`path.lstrip("/")`) treated both
-    cases as "already relative", which let an unrelated absolute path escape
-    undetected (caught by test_post_tool_hook_rejects_escape). Only fall back
-    to the lstrip path when `path` was not absolute to begin with; an
-    absolute path that isn't under the workspace is always an escape.
-    """
-    ws = PurePosixPath(workspace)
-    p = PurePosixPath(path)
-    try:
-        rel = p.relative_to(ws)
-    except ValueError:
-        if path.startswith("/"):
-            return None
-        rel = PurePosixPath(path.lstrip("/"))
-    rel_str = str(rel)
-    if ".." in rel.parts or rel_str.startswith("/"):
-        return None
-    return rel_str
 
 
 def _validate_permission_mode(mode: str) -> str:
