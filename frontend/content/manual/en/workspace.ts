@@ -8,13 +8,18 @@ export const workspace: ManualSection = {
     {
       kind: "mockup",
       id: "workspace",
-      caption: "The workspace has three parts — stage progress on the left, the conversation in the middle, artifacts on the right",
+      caption: "The workspace has four columns — stage progress · the conversation · answering questions · the generated document",
     },
     {
       kind: "md",
-      md: `- **Left** — the Discovery stages and where you are. Stages can be added or dropped as you go.
-- **Middle** — the conversation with the AI. Question sheets are answered here.
-- **Right** — documents just written and files just changed. Select one to read it in place.`,
+      md: `- **First column · stages** — the Discovery stages and where you are. Stages can be added or dropped as you go.
+- **Second column · the conversation** — what you and the AI say to each other. This is where you direct the work and where decisions are made.
+- **Third column · answering questions** — where you answer the question sheets the AI raises. When there is no question, the prototype preview or the list of recent artifacts takes its place.
+- **Fourth column · the generated document** — the document just written, rendered in place. The dropdown at the top selects a different one, and ↻ reloads it.
+
+On a narrow window (a small laptop, or a screen split in half) the three side columns are hidden and
+only the conversation is left. Questions then arrive as a badge above the chat, and documents lead
+out to the Document Review screen.`,
     },
     { kind: "heading", id: "start", text: "Starting the conversation" },
     {
@@ -42,6 +47,30 @@ from this" — the AI works out which path that is.`,
 
 While the AI works, a single line tells you what it is doing — *Thinking*,
 *Writing the document*, *Preparing questions*, and so on.`,
+    },
+    { kind: "heading", id: "answer-panel", text: "The question panel (third column)" },
+    {
+      kind: "md",
+      md: `The third column shows one of three things, in this order of priority.
+
+| When | The third column shows |
+|---|---|
+| The AI has raised a question sheet | **The answer sheet** — pick the options, then **Submit answers → AI review** |
+| The prototype stage is in progress | **The prototype preview** — the built screen, right there |
+| Anything else | **Recent artifacts** — the files changed in this conversation |
+
+Questions come before everything else. When *Questions presented* appears in the conversation this
+column turns into the answer sheet, and Discovery waits there until an answer arrives. More
+questions may follow the ones you just submitted, so the column does not slide over to the preview
+on its own while the AI is still thinking.
+
+How to fill the sheet in — the option badges, what *★ AI recommended* means, the note field,
+changing an answer you already submitted — is covered in
+[Answering questions](/manual#questions). You can also skip the sheet and say "question 1 is B" in
+the conversation.
+
+When the window is too narrow for this column, a **Questions awaiting answers →** badge appears
+above the chat. It opens the same sheet from the bottom; Escape or a click outside closes it.`,
     },
     { kind: "heading", id: "interrupt", text: "Stopping a turn" },
     {
@@ -75,7 +104,7 @@ asks why a decision was made.`,
     {
       kind: "callout",
       tone: "note",
-      md: `You may see *"This document has not been saved yet"* in the right panel. Documents are saved
+      md: `You may see *"This document has not been saved yet"* in the fourth column. Documents are saved
 **when the turn ends**, so that is expected. If the message is still there after the turn
 finishes, reload it with ↻.`,
     },

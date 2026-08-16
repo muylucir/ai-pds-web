@@ -11,7 +11,7 @@
 export type MockupId =
   /** 프로젝트 생성 폼 — ID·이름·모델·문서 언어 */
   | "project-create"
-  /** 워크스페이스 3분할 — 스테이지 / 채팅 / 산출물 패널 */
+  /** 워크스페이스 4분할 — 스테이지 / 채팅 / 질문·컨텍스트 / 생성된 문서 */
   | "workspace"
   /** 질문 시트 — 단일·복수 선택, Other, AI 추천, 부연 설명 */
   | "question-sheet"

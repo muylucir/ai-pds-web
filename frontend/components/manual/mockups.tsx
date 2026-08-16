@@ -42,7 +42,9 @@ function Workspace() {
   const t = useT();
   return (
     <Frame>
-      <div className="grid grid-cols-[1fr_1.6fr_1fr] gap-2">
+      {/* 실제 화면의 4분할(1fr_3.5fr_3.5fr_4fr)을 줄인 비율 —
+          스테이지 / 대화 / 질문·컨텍스트 / 생성된 문서. */}
+      <div className="grid grid-cols-[0.8fr_1.5fr_1.2fr_1.4fr] gap-2">
         <Panel>
           <PanelTitle>{t("canvas.discoveryProgress")}</PanelTitle>
           <ul className="space-y-1">
@@ -84,16 +86,43 @@ function Workspace() {
           <p className="mt-1 text-[9px] text-slate-400">{t("chat.auditNotice")}</p>
         </Panel>
 
+        {/* 셋째 칸 — 질문이 오면 답변 시트, 없으면 프리뷰나 최근 산출물. */}
         <Panel>
-          <PanelTitle>{t("ws.generatedDocs")}</PanelTitle>
-          <ul className="space-y-1 text-[10px] text-slate-500">
-            <li className="rounded bg-slate-50 px-1.5 py-1">PR-FAQ.md</li>
-            <li className="rounded bg-slate-50 px-1.5 py-1">use-cases.md</li>
-            <li className="rounded bg-violet-50 px-1.5 py-1 text-violet-700">
-              PROTOTYPE-*.md
+          <PanelTitle>{t("ws.contextPanelAria")}</PanelTitle>
+          <div className="mb-1.5 flex flex-wrap items-center gap-1">
+            <Badge tone="violet">{t("q.legend")} 3</Badge>
+            <Badge tone="slate">{t("q.singleSelectBadge")}</Badge>
+          </div>
+          <ul className="space-y-1">
+            <li className="flex items-center gap-1.5 rounded border border-violet-300 bg-violet-50 px-1.5 py-1">
+              <span className="text-violet-600">◉</span>
+              <span className="h-1.5 flex-1 rounded bg-violet-200" />
+            </li>
+            <li className="flex items-center gap-1.5 rounded border border-slate-200 px-1.5 py-1">
+              <span className="text-slate-300">○</span>
+              <span className="h-1.5 flex-1 rounded bg-slate-100" />
             </li>
           </ul>
-          <p className="mt-2 text-[9px] text-slate-400">{t("ws.recentArtifacts")}</p>
+          <div className="mt-1.5 text-right">
+            <Btn tone="primary">{t("q.submitAnswers")}</Btn>
+          </div>
+          <p className="mt-1.5 text-[9px] text-slate-400">
+            {t("canvas.previewTitle")} · {t("ws.recentArtifacts")}
+          </p>
+        </Panel>
+
+        {/* 넷째 칸 — 방금 만들어진 문서를 그 자리에서 읽는다. */}
+        <Panel>
+          <PanelTitle>{t("ws.generatedDocs")}</PanelTitle>
+          <div className="flex items-center gap-1">
+            <span className="min-w-0 flex-1 truncate rounded border border-slate-300 px-1.5 py-1 text-[9px] text-slate-500">
+              PR-FAQ.md ▾
+            </span>
+            <span className="text-slate-400">↻</span>
+            <Badge tone="violet">v2</Badge>
+          </div>
+          <Lines n={4} className="mt-1.5" />
+          <p className="mt-1.5 text-[9px] text-violet-700 underline">{t("ws.toFullReview")}</p>
         </Panel>
       </div>
     </Frame>
