@@ -160,7 +160,8 @@ async def test_answers_are_recorded_in_the_question_file(tmp_path):
     스테이지 재개 때 그 파일을 읽으라고 한다. 답이 심기지 않으면 재개한 세션이
     사용자의 결정을 잃는다. 배선이 끊기면 에러 없이 빈 칸만 남으므로 여기서 고정한다.
     """
-    d, _, _ = _driver(tmp_path, {"questions": True})
+    s3 = FakeS3Store()
+    d, _, _ = _driver(tmp_path, {"questions": True}, s3=s3)
     qpath = tmp_path / "ws" / "aiplc-docs" / "strategy-questions.md"
     qpath.parent.mkdir(parents=True)
     qpath.write_text(_QUESTION_FILE_MD, encoding="utf-8")
@@ -172,6 +173,13 @@ async def test_answers_are_recorded_in_the_question_file(tmp_path):
                                               {"session_id": "s-1"})]
 
     assert "[Answer]: B" in qpath.read_text(encoding="utf-8")
+    # **S3에도 올라가야 한다.** runner.read_file이 S3에서 읽으므로(runner.py:55)
+    # 로컬만 쓰면 화면과 다음 스테이지는 빈 칸을 본다. 게다가 매 턴 시작의
+    # _restore_workspace_from_s3가 "S3가 무조건 이긴다"이므로, 턴이 종결 없이
+    # 버려지면 다음 턴이 로컬의 답변을 S3의 빈 파일로 덮는다.
+    key = "aiplc-docs/strategy-questions.md"
+    assert key in s3.blobs, list(s3.blobs)
+    assert "[Answer]: B" in s3.blobs[key]
     # 화면의 산출물 패널이 갱신되도록 file_changed도 흘린다 — 파일만 바뀌고
     # 이벤트가 없으면 사용자는 새로고침해야 답이 들어간 것을 본다.
     assert ("aiplc-docs/strategy-questions.md"

@@ -27,3 +27,23 @@ describe("Markdown", () => {
     expect(screen.getByText(/미완성 굵/)).toBeInTheDocument(); // 크래시 없이 표시
   });
 });
+
+// 2026-08-16: 백엔드가 심은 `[Answer]: A`가 화면에 전혀 나타나지 않았다.
+// 그 줄은 CommonMark 링크 참조 정의이고 렌더러는 출력을 만들지 않는다.
+describe("[Answer]: 줄", () => {
+  it("기록된 답변이 화면에 나타난다", () => {
+    // 이 렌더 경로가 살아 있는지가 이 기능의 사용자 가시성 전부다.
+    render(<Markdown text={"## Question 1\n질문?\n\n[Answer]: A\n"} />);
+    expect(screen.getByText(/\[Answer\]:/)).toBeInTheDocument();
+    expect(screen.getByText(/A$/)).toBeInTheDocument();
+  });
+
+  it("보기 안내 문구의 `[Answer]:`는 링크가 되지 않는다", () => {
+    // 정의가 남아 있으면 이 문구의 `[Answer]`가 링크로 바뀌고 대괄호가 사라진다 —
+    // 실측 화면에서 정확히 그 모양이었다.
+    const md = "X) Other (please describe after [Answer]: tag below)\n\n[Answer]: B\n";
+    const { container } = render(<Markdown text={md} />);
+    expect(container.querySelectorAll("a")).toHaveLength(0);
+    expect(container.textContent).toContain("[Answer]: tag below");
+  });
+});

@@ -906,11 +906,36 @@ class ClaudeDriver:
         # 곧 돌기 시작하므로, 뒤에 두면 파일이 다음 스테이지의 읽기보다 늦을 수
         # 있다. record_answers는 어떤 실패도 삼키고 빈 목록을 준다.
         for rel in record_answers(self._workspace, sdk_questions, answers):
+            await self._mirror_question_file_quietly(rel)
             self._queue.append(AgentEvent(kind="file_changed", path=rel))
         return PermissionResultAllow(updated_input={
             "questions": sdk_questions,
             "answers": sdk_answers,
         })
+
+    async def _mirror_question_file_quietly(self, rel: str) -> None:
+        """되기록한 질문 파일을 S3에도 올린다. 턴을 죽이지 않는다.
+
+        **왜 필요한가.** record_answers는 로컬 워크스페이스 파일에 쓰는데,
+        `runner.read_file`은 S3에서 읽는다(runner.py:55) — 화면의 산출물 패널과
+        다음 스테이지가 보는 것이 그쪽이다. 로컬만 쓰면 답변은 턴이 끝나
+        `_sync_workspace_to_s3`가 돌 때까지 **보이지 않는다.**
+
+        그리고 그 지연은 유실 창이기도 하다: `_restore_workspace_from_s3`가 매 턴
+        시작에 돌고 그 주석이 "S3가 무조건 이긴다"다(runner.py:79). 턴이 종결
+        이벤트 없이 버려지면(`_sync_abandoned_turn`은 베스트에포트다) 다음 턴이
+        S3의 빈 파일로 로컬을 덮어 답변이 사라진다.
+
+        로컬 파일을 되읽어 올리는 이유: 디스크에 있는 것과 정확히 같은 바이트를
+        올린다. 메모리의 사본을 따로 들고 다니면 둘이 어긋날 수 있다.
+        """
+        try:
+            content = (Path(self._workspace) / rel).read_text(encoding="utf-8")
+            await self._s3.put(rel, content)
+        except Exception:
+            # 로컬 파일은 이미 갱신됐고 턴 종료 sync가 두 번째 기회를 준다 —
+            # 여기서 턴을 죽이면 방금 제출한 답변이 사라진다.
+            _log.exception("question-file S3 mirror failed: %s", rel)
 
     def _clear_pending_state(self) -> None:
         self._pending_payload = None
