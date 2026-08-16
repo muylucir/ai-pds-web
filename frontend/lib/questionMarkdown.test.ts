@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { revealAnswerTags } from "./answerTags";
+import { revealAnswerTags, breakOptionLines, prepareQuestionMarkdown } from "./questionMarkdown";
 
 // 2026-08-16: 백엔드가 `[Answer]: A`를 심었는데 화면에 답변이 하나도 안 보였다.
 // `[Answer]: A`가 CommonMark **링크 참조 정의**라서 렌더러가 그 줄에 대해 아무
@@ -59,5 +59,54 @@ describe("revealAnswerTags", () => {
   it("`[Answer]:`가 없는 문서는 바뀌지 않는다", () => {
     const md = "# 제목\n\n본문입니다.\n";
     expect(revealAnswerTags(md)).toBe(md);
+  });
+});
+
+
+// 보기가 한 줄로 쭉 이어져 읽을 수 없었다. CommonMark에서 빈 줄 없이 이어진 줄은
+// 한 문단이고 줄바꿈이 공백으로 렌더되며, `A)`는 목록 표지가 아니다(숫자만 인정).
+describe("breakOptionLines", () => {
+  it("보기 줄 끝에 하드 브레이크를 붙인다", () => {
+    expect(breakOptionLines("A) 연 1~2건")).toBe("A) 연 1~2건  ");
+  });
+
+  it("A~F와 X를 모두 본다 — 백엔드 파서와 같은 집합", () => {
+    for (const l of ["A", "B", "C", "D", "E", "F", "X"]) {
+      expect(breakOptionLines(`${l}) 보기`)).toBe(`${l}) 보기  `);
+    }
+  });
+
+  it("연속한 보기가 각각 줄바꿈된다", () => {
+    const out = breakOptionLines("A) 하나\nB) 둘\nX) Other (please describe after [Answer]: tag below)");
+    expect(out).toBe("A) 하나  \nB) 둘  \nX) Other (please describe after [Answer]: tag below)  ");
+  });
+
+  it("이미 공백이 있어도 정확히 2개로 정규화한다", () => {
+    // 중복으로 붙이면 공백만 늘고, 3개 이상도 하드 브레이크이므로 무해하지만
+    // 출력이 입력에 따라 달라지면 스냅샷 비교가 흔들린다.
+    expect(breakOptionLines("A) 보기    ")).toBe("A) 보기  ");
+  });
+
+  it("보기가 아닌 줄은 건드리지 않는다", () => {
+    // 질문 본문, 표, 제목이 그대로 남아야 한다 — 파서로 렌더하지 않는 이유다.
+    const md = "## Question 1\n통관 단계에서 …?\n\n| # | 필수 영역 |\n|---|---|";
+    expect(breakOptionLines(md)).toBe(md);
+    // "G)"는 상류 형식에 없는 letter다 — 넓히면 산문의 괄호가 걸린다.
+    expect(breakOptionLines("G) 아님")).toBe("G) 아님");
+  });
+
+  it("letter 뒤에 공백이 없으면 보기가 아니다", () => {
+    // 백엔드 `_OPTION`이 `\s+`를 요구하므로 같은 경계를 지킨다.
+    expect(breakOptionLines("A)붙어있음")).toBe("A)붙어있음");
+  });
+});
+
+describe("prepareQuestionMarkdown", () => {
+  it("두 변환을 함께 적용한다", () => {
+    const md = "A) 하나\nB) 둘\n\n[Answer]: B";
+    const out = prepareQuestionMarkdown(md);
+    expect(out).toContain("A) 하나  ");
+    expect(out).toContain("B) 둘  ");
+    expect(out).toContain("**\\[Answer\\]:** B");
   });
 });

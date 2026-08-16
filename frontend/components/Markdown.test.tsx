@@ -47,3 +47,21 @@ describe("[Answer]: 줄", () => {
     expect(container.textContent).toContain("[Answer]: tag below");
   });
 });
+
+// 상류 형식은 보기를 줄바꿈으로만 구분한다. CommonMark에서 그 줄바꿈은 공백으로
+// 렌더되므로 `A) … B) … C) …`가 한 줄로 쭉 이어져 읽을 수 없었다.
+describe("보기 줄", () => {
+  it("보기가 각각 줄바꿈되어 렌더된다", () => {
+    const md = "A) 연 1~2건\nB) 연 3~5건\nC) 연 6건 이상\n";
+    const { container } = render(<Markdown text={md} />);
+    // 하드 브레이크가 <br>로 나온다 — 보기 3개면 사이에 2개.
+    expect(container.querySelectorAll("br").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("질문 본문은 줄바꿈이 강제되지 않는다", () => {
+    // 산문에 <br>을 뿌리면 문단이 들쭉날쭉해진다 — remark-breaks를 전역으로
+    // 쓰지 않은 이유다.
+    const { container } = render(<Markdown text={"첫 줄입니다\n이어지는 산문입니다\n"} />);
+    expect(container.querySelectorAll("br")).toHaveLength(0);
+  });
+});

@@ -1,4 +1,4 @@
-// `[Answer]:` 줄이 렌더되게 만든다.
+// 질문 파일 마크다운을 **렌더 직전에만** 손본다. 파일 자체는 건드리지 않는다.
 //
 // **왜 필요한가(2026-08-16의 결함).** 백엔드가 제출된 답변을 질문 파일의
 // `[Answer]:` 칸에 심는데(backend/pathfinder/agent/question_file_answers.py),
@@ -40,4 +40,35 @@ export function revealAnswerTags(markdown: string): string {
     const answer = value.trim();
     return answer === "" ? "**\\[Answer\\]:**" : `**\\[Answer\\]:** ${answer}`;
   });
+}
+
+
+//: 보기 한 줄. 백엔드 파서와 **같은 집합**이어야 한다
+//: (backend/pathfinder/parsers/questions.py의 `_OPTION`: `^([A-F]|X)\)\s+`).
+//: 한쪽만 넓히면 화면에는 보기로 보이는데 파싱은 안 되거나 그 반대가 된다.
+const OPTION_LINE = /^([A-FX]\)[ \t]+.*?)[ \t]*$/gm;
+
+/**
+ * 보기 줄 끝에 마크다운 하드 브레이크(공백 2개)를 붙인다.
+ *
+ * **왜 필요한가.** 상류 형식은 보기를 줄바꿈으로만 구분하고 줄 끝에 공백을 두지
+ * 않는다(question-format-guide.md). CommonMark에서 빈 줄 없이 이어진 줄은 한
+ * 문단이고 그 줄바꿈은 **공백으로** 렌더되므로, `A) … B) … C) …`가 한 줄로 쭉
+ * 이어져 읽을 수 없었다. `A)`는 목록 표지도 아니다 — 순서 목록은 숫자 + `.`/`)`
+ * 만 인정하므로 letter 보기는 그냥 텍스트다.
+ *
+ * 불릿 목록(`- A) …`)으로 바꾸지 않는 이유: 들여쓰기와 불릿이 생겨 문서 모양이
+ * 바뀐다. 하드 브레이크는 원래 의도한 "한 줄에 하나"를 그대로 만든다.
+ *
+ * 문단 마지막 줄에 붙는 하드 브레이크는 렌더러가 그냥 버리므로 무해하다.
+ */
+export function breakOptionLines(markdown: string): string {
+  return markdown.replace(OPTION_LINE, "$1  ");
+}
+
+/**
+ * 질문 파일을 화면에 올리기 전 변환 묶음. 순서는 무관하다(서로 다른 줄을 본다).
+ */
+export function prepareQuestionMarkdown(markdown: string): string {
+  return breakOptionLines(revealAnswerTags(markdown));
 }
