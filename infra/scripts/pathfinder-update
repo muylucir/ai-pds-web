@@ -71,6 +71,15 @@ if changed backend/; then
   if changed backend/pyproject.toml; then
     runuser -u "$SVC" -- "$APP/backend/.venv/bin/pip" install -e "$APP/backend"
   fi
+  # claude-agent-sdk는 하한만 걸려 있으므로(backend/pyproject.toml) 위 install은
+  # 이미 깔린 버전으로 만족해 버린다 — 최신을 받는 것은 이 -U 한 줄이다. 그래서
+  # pyproject.toml 게이트 **밖에** 있다: 의존성 줄이 안 바뀌어도 올라가야 한다.
+  #
+  # 위치가 restart 바로 위인 것도 의도다. 이 wheel은 Claude Code 실행 바이너리를
+  # 번들하므로 업그레이드가 곧 엔진 교체이고, 재시작 없이 갈면 살아 있는 백엔드는
+  # 낡은 프로세스인데 새로 뜨는 자식만 새 바이너리가 되어 섞인다.
+  # rule/만 바뀐 무중단 갱신은 이 블록에 아예 들어오지 않아 엔진이 그대로다.
+  runuser -u "$SVC" -- "$APP/backend/.venv/bin/pip" install -U claude-agent-sdk
   systemctl restart pathfinder-backend
   echo "pathfinder-update: backend restarted (in-flight turns and build sessions were cut)"
 fi

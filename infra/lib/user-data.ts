@@ -135,6 +135,9 @@ chown -R ${SVC}:${SVC} ${APP}
 runuser -u ${SVC} -- python3.11 -m venv ${APP}/backend/.venv
 runuser -u ${SVC} -- ${APP}/backend/.venv/bin/pip install --upgrade pip
 runuser -u ${SVC} -- ${APP}/backend/.venv/bin/pip install -e ${APP}/backend
+# claude-agent-sdk는 하한만 걸려 있어(backend/pyproject.toml) 위 install이 캐시된
+# 낡은 wheel로 만족할 수 있다 — 최신 엔진을 받으려면 -U로 따로 올린다.
+runuser -u ${SVC} -- ${APP}/backend/.venv/bin/pip install -U claude-agent-sdk
 
 # --- Cognito 클라이언트 시크릿 (부팅 조회 — CFN 템플릿에 평문으로 남기지 않는다) ---
 # set +x 필수: xtrace는 대입 결과를 로그에 남기고, 그 로그는 빌드 에이전트 계정이 읽는다.

@@ -6,11 +6,19 @@ requires-python = ">=3.11"
 # `pip install -e .`를 --no-build-isolation으로 돌리면 깨진다 — 격리 빌드를 쓸 것.
 license = "MIT-0"
 # boto3 floor 1.43.35 — Bedrock Converse + S3 + PutObject IfNoneMatch(조건부 쓰기).
-# claude-agent-sdk는 정확 버전 핀(==): 0.2.x는 churn이 잦고, wheel이 Claude Code
-# 네이티브 바이너리를 번들하므로 버전이 곧 실행 엔진 버전이다.
+# claude-agent-sdk는 하한만(>=) — 항상 최신을 쓴다. 상한이 없는 것은 의도이며,
+# 그래서 0.3·1.0 같은 파괴적 변경도 그대로 들어온다. wheel이 Claude Code 네이티브
+# 바이너리를 번들하므로 버전이 곧 실행 엔진 버전이다 — 즉 이 줄을 고치지 않아도
+# 실행 엔진이 바뀐다. 그 드리프트를 잡는 그물은 tests/test_sdk_available.py이고
+# (ClaudeAgentOptions의 필드 존재 + 번들 바이너리 실행 확인), SDK를 올린 뒤에는
+# 그 테스트를 돌려야 한다. 하한을 올리는 것은 "이 버전 미만은 못 쓴다"를 뜻한다.
+#
+# 주의: 이 제약만으로는 이미 깔린 venv가 갱신되지 않는다. pip은 설치된 버전이
+# 하한을 만족하면 그대로 두므로, 최신을 실제로 받는 것은 -U로 따로 올리는
+# infra/lib/user-data.ts(부팅)와 infra/scripts/pathfinder-update(갱신)다.
 # PyJWT[crypto]: Cognito access 토큰의 RS256 서명 검증. 암호 코드를 직접 쓰지
 # 않는다 — JWKS→공개키 변환과 서명 검증은 라이브러리에 맡긴다.
-dependencies = ["fastapi>=0.110", "pydantic[email]>=2.6", "sse-starlette>=2.0", "httpx>=0.27", "boto3>=1.43.35", "uvicorn>=0.30", "python-dotenv>=1.0", "openpyxl>=3.1", "pypdf>=4.0", "python-multipart>=0.0.9", "strands-agents>=1.48,<2", "claude-agent-sdk==0.2.126", "PyJWT[crypto]>=2.8"]
+dependencies = ["fastapi>=0.110", "pydantic[email]>=2.6", "sse-starlette>=2.0", "httpx>=0.27", "boto3>=1.43.35", "uvicorn>=0.30", "python-dotenv>=1.0", "openpyxl>=3.1", "pypdf>=4.0", "python-multipart>=0.0.9", "strands-agents>=1.48,<2", "claude-agent-sdk>=0.2.139", "PyJWT[crypto]>=2.8"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "moto[s3]>=5.0"]
