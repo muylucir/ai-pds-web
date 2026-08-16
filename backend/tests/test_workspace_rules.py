@@ -364,25 +364,32 @@ def test_the_prototype_scope_rule_is_a_boundary_not_a_command_list():
     assert "enforced, not trusted" in text
 
 
-def test_the_slugged_spec_is_required_on_every_path_including_a1():
-    """상류 Path A.1(prototype-validation.md)은 `prototype/prototype-spec.md`만
-    만들고 끝낸다. 그런데 Prototypes 탭이 카드를 만드는 유일한 경로는
-    `prototypes/{slug}/PROTOTYPE-{slug}.md`이고(routes/prototypes.py의 _SPEC_RE),
-    그 정규식은 디렉터리 캡처를 파일명에서 백레퍼런스한다 — 슬러그가 어긋나면
-    카드가 아예 없고, 빌드·호스팅·설문·삭제가 모두 그 슬러그로 키된다.
+def test_both_prototype_layouts_are_documented_as_valid():
+    """**2026-08-16의 오판을 되돌린 자리다.**
 
-    그러므로 "Path A.1도 예외가 아니다"가 문서에 있어야 한다. 없으면 상류 문서를
-    그대로 따른 세션이 공유용 산출물 없이 끝나고, 그 실패는 Prototypes 탭이
-    비어 있는 것으로만 나타난다.
+    처음에는 "Path A.1이 슬러그 파일을 빠뜨렸다"고 보고 그것을 쓰라고 지시했다.
+    틀렸다: `prototype-validation.md`가 선언하는 산출물 7개는 전부 단수
+    `prototype/`이고(556-562행), 그 문서의 `PROTOTYPE-` 유일한 언급(16행)은 "이미
+    있으면 빌드로 간다"는 진입 조건이다. 단일 프로토타입에는 구별할 대상이 없으니
+    슬러그가 될 것도 없다.
+
+    그래서 문서는 **두 레이아웃이 모두 정당하다**고 말해야 하고, 특히 슬러그
+    사본을 만들지 말라고 해야 한다 — 8KB 명세의 두 사본은 드리프트하고 그 차이는
+    에러 없이 내용 차이로만 나타난다. 카드 탐색이 두 레이아웃을 인식하는 쪽은
+    proto/layout.py가 담당한다(tests/test_proto_layout.py).
     """
     text = _discovery_config()
-    assert "on every path — including Path A.1" in text
-    assert "PROTOTYPE-{slug}.md" in text
-    # 슬러그 == 디렉터리명이라는 제약과 새니타이즈 규칙.
-    assert "must match the directory name exactly" in text
-    assert "lowercase letters, digits and hyphens only" in text
-    # 정본이 어느 쪽인지 — 11KB 쌍둥이를 유지하면 드리프트가 시작된다.
-    assert "artifact of record" in text
+    # 두 경로가 각각 어디에 쓰는지 적혀 있어야 한다.
+    assert "prototype/prototype-spec.md" in text
+    assert "prototypes/{slug}/PROTOTYPE-{slug}.md" in text
+    # 사본 금지 — 이것이 되돌린 판단의 핵심이다.
+    assert "Do not produce a slugged duplicate" in text
+    # 트리 다이어그램의 "All paths"를 어떻게 읽어야 하는지 남긴다 — 그 문장이
+    # 오판의 출발점이었으므로 다음 사람이 같은 길로 가지 않게 한다.
+    assert "governs a path beats the overview diagram" in text
+    # 슬러그를 쓰는 경로에서는 디렉터리명 == 파일명 제약이 여전히 유효하다.
+    assert "slug must equal the directory name" in text
+    assert "lowercase letters, digits and" in text
 
 
 #: 조립된 워크스페이스 CLAUDE.md의 인코딩 절을 가리키는 앵커.

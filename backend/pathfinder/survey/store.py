@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathfinder.survey.models import Questionnaire, Rollup, SurveyResponse
 from pathfinder.survey.report_labels import labels
 from pathfinder.survey.rollup import build_rollup
+from pathfinder.proto import layout
 
 _log = logging.getLogger(__name__)
 
@@ -78,8 +79,9 @@ async def purgeable_response_count(project_s3, slug: str) -> int:
 
 def questionnaire_md_key(slug: str) -> str:
     # aiplc-docs/ so the existing artifacts viewer can serve it (that route is
-    # hard-limited to this subtree).
-    return f"aiplc-docs/discovery/prototypes/{slug}/validation-questionnaire.md"
+    # hard-limited to this subtree). 디렉터리는 layout이 정한다 — 명세와 같은
+    # 곳에 둬야 단수 프로토타입의 설문지가 딴 트리에 홀로 생기지 않는다.
+    return f"{layout.artifact_dir(slug)}/validation-questionnaire.md"
 
 
 #: Where the rule expects validation synthesis to live

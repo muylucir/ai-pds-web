@@ -13,6 +13,7 @@ from starlette.responses import Response
 
 from pathfinder.survey.builder import build_questionnaire
 from pathfinder.survey.store import SurveyStore
+from pathfinder.proto import layout as proto_layout
 
 _log = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ async def create_survey(pid: str, slug: str):
         await store.archive_current()
 
     s3 = app_module.s3_store_factory(pid)
-    spec_key = f"aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md"
+    spec_key = proto_layout.spec_key(slug)
     try:
         prototype_md = await s3.get(spec_key)
     except FileNotFoundError:

@@ -114,8 +114,6 @@ def answer_first(language: str) -> str:
     화면 문구가 아니라 **대화 텍스트**다 — 채팅 말풍선에 AI 발화로 남고
     트랜스크립트에도 들어가므로 UI 언어가 아니라 프로젝트 언어를 따른다
     (lib/startMessage.ts와 approvalMarker.ts가 같은 판단을 기록해 뒀다).
-    StrandsDriver의 B1 단축(driver.py)과 같은 문구를 유지한다 — 두 드라이버가
-    구별되지 않아야 한다.
     """
     if _lang(language) == "en":
         return ("Please answer the question that is still open — use the "
@@ -131,19 +129,25 @@ def write_outside_docs(language: str, path: str) -> str:
     바꿔 재시도하며 루프에 빠진다. 그리고 대안을 함께 준다 — 거부만 하면 모델은
     "막혔다"만 알고 스펙을 어디에 쓸지는 모른다(agent/discovery_guard.py 헤더의
     결함 기록 참조).
+
+    **경로를 못박지 않는다.** 예전에는 `prototypes/{slug}/PROTOTYPE-{slug}.md`를
+    쓰라고 안내했는데, 그것은 Path B(use-case 우선순위, 3개)의 레이아웃이다.
+    Path A.1(Envision 파생, 단일)은 `prototype/prototype-spec.md`가 맞고 슬러그가
+    없다(proto/layout.py 헤더). 한쪽을 못박으면 다른 경로의 에이전트에게 틀린
+    지시가 되므로, 자기 스테이지 규칙이 정한 자리로 돌려보낸다.
     """
     if _lang(language) == "en":
         return (f"Refused — Discovery may only write under 'aiplc-docs/', and "
                 f"'{path}' is outside it. Building and running prototypes is "
                 "the Prototypes tab's job, not this chat's. Write the spec to "
-                "'aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md' "
-                "instead, then tell the user to build it from the Prototypes "
-                "tab.")
+                "the path your stage's rules specify under "
+                "'aiplc-docs/discovery/', then tell the user to build it from "
+                "the Prototypes tab.")
     return (f"거부됨 — Discovery는 'aiplc-docs/' 아래에만 쓸 수 있고 "
             f"'{path}'는 그 밖이다. 프로토타입을 만들고 실행하는 것은 "
-            "Prototypes 탭의 일이며 이 대화의 일이 아니다. 대신 "
-            "'aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md'에 "
-            "스펙을 쓰고, 사용자에게 Prototypes 탭에서 빌드하라고 안내할 것.")
+            "Prototypes 탭의 일이며 이 대화의 일이 아니다. 스펙은 "
+            "'aiplc-docs/discovery/' 아래, 지금 스테이지의 룰이 정한 경로에 "
+            "쓰고, 사용자에게 Prototypes 탭에서 빌드하라고 안내할 것.")
 
 
 def build_command_refused(language: str, fragment: str) -> str:

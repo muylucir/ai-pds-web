@@ -111,26 +111,26 @@ opens from no preview link. Discovery's role ends at **writing the spec**.
   output to a path outside it. The refusal names the path or command and points
   you back here — read it and write the spec instead of retrying with a
   different path.
-- **The spec goes to `aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md`,
-  on every path — including Path A.1.** Follow
-  `aws-aiplc-rule-details/discovery/prototype-md-format.md` for its contents.
-  `aws-aiplc-rule-details/discovery/prototype-validation.md` tells you to write
-  only `aiplc-docs/discovery/prototype/prototype-spec.md` and stop; that is an
-  upstream gap, not permission to skip the slugged file. (The same upstream
-  document lists `Existing PROTOTYPE-*.md` as the build entry point, and
-  `prototype-context-generation.md` does produce the slugged path — Path A.1 is
-  the one flow that forgets it.)
-  - **The slug must match the directory name exactly.** The Prototypes tab finds
-    cards with a regex whose directory capture is back-referenced in the
-    filename, so `prototypes/foo/PROTOTYPE-bar.md` lists nothing. That slug is
-    also the id for building, hosting, surveys and deletion.
-  - Derive it as kebab-case from the use-case name and sanitize it the way
+- **Write the spec where your own stage's rules say, and do not invent a second
+  copy.** The two upstream layouts are both correct and Pathfinder reads both:
+  - Path A.1 (Envision-derived, a single prototype) →
+    `aiplc-docs/discovery/prototype/prototype-spec.md`, exactly as
+    `aws-aiplc-rule-details/discovery/prototype-validation.md` lists in its
+    deliverables. There is no slug, because there is nothing to distinguish.
+  - Path B (use-case prioritization, three prototypes) →
+    `aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md`, per
+    `prototype-context-generation.md` and `prototype-md-format.md`.
+  The directory tree in `core-workflow.md` marks `prototypes/` as "All paths",
+  which reads as if A.1 owed a slugged file too. It does not: the document that
+  governs a path beats the overview diagram. **Do not produce a slugged
+  duplicate of a single-prototype spec** — two full copies drift, and the drift
+  shows up as a content difference with no error.
+  - When a path DOES use slugs, the slug must equal the directory name: the
+    Prototypes tab matches with a regex whose directory capture is
+    back-referenced in the filename, so `prototypes/foo/PROTOTYPE-bar.md` lists
+    nothing. Derive it as kebab-case and sanitize it the way
     `prototype-context-generation.md` requires: lowercase letters, digits and
     hyphens only; reject anything containing `/`, `\` or `..`.
-  - **`PROTOTYPE-{slug}.md` is the artifact of record.** Nothing in Pathfinder
-    reads `prototype-spec.md`. If Path A.1 already produced one, do not maintain
-    two full copies — they drift, and the drift shows up as a content
-    difference with no error. Keep the detail in `PROTOTYPE-{slug}.md`.
 - **Do not perform** the build steps in
   `aws-aiplc-rule-details/discovery/prototype-building.md`. Those rules were
   written for the upstream workshop, where a human runs everything locally.

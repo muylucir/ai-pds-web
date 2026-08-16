@@ -1725,7 +1725,11 @@ async def test_the_gate_denies_the_html_that_caused_it(tmp_path):
     # 거부 이유는 모델이 읽는다 — 무엇이 걸렸는지와 어디에 쓰라는지가 있어야
     # 경로만 바꿔 재시도하는 루프에 빠지지 않는다.
     assert "prototype/index.html" in decision["permissionDecisionReason"]
-    assert "PROTOTYPE-" in decision["permissionDecisionReason"]
+    # 대안을 주되 **레이아웃을 못박지 않는다** — Path B는 슬러그 경로,
+    # Path A.1은 단수 `prototype/`이 맞다(proto/layout.py). 한쪽을 못박으면
+    # 다른 경로의 에이전트에게 틀린 지시가 된다.
+    assert "aiplc-docs/discovery/" in decision["permissionDecisionReason"]
+    assert "PROTOTYPE-" not in decision["permissionDecisionReason"]
 
 
 async def test_the_gate_denies_build_and_serve_commands(tmp_path):

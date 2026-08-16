@@ -23,6 +23,7 @@ from pathfinder.models import AgentEvent
 from pathfinder.proto import prompts
 from pathfinder.proto.design_sync import sync_design
 from pathfinder.s3store import S3StoreLike
+from pathfinder.proto import layout
 
 if TYPE_CHECKING:
     # 타입 힌트만을 위한 지연 import. design_profile.py는 session.py를 쓰지
@@ -197,7 +198,7 @@ class PrototypeSession:
     # ---- path/key helpers ----
 
     def _spec_key(self) -> str:
-        return f"aiplc-docs/discovery/prototypes/{self.slug}/PROTOTYPE-{self.slug}.md"
+        return layout.spec_key(self.slug)
 
     def _session_key(self) -> str:
         return f"prototypes/{self.slug}/session.json"

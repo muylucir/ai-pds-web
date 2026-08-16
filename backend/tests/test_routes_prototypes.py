@@ -1741,3 +1741,42 @@ def test_session_events_requires_text_or_turn(proto_env, monkeypatch):
     client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
     r = client.get(f"/projects/{PID}/prototypes/{SLUG}/events")
     assert r.status_code == 400
+
+
+# ---- Path A.1의 단수 레이아웃도 카드가 된다 ----
+# 2026-08-16: 카드 탐색이 `prototypes/{slug}/PROTOTYPE-{slug}.md` 한 가지만 알아서,
+# Path A.1(Envision 파생, 단일 프로토타입)로 정상 완주한 세션이 카드를 하나도 만들지
+# 못했다 — keumkang-v5가 그 상태였다. 그 경로의 산출물 선언은 단수 `prototype/`이고
+# (prototype-validation.md:556-562) 슬러그가 될 것이 없다. 결함은 우리 경로 가정이었다.
+
+def test_list_includes_the_single_prototype_layout(proto_env):
+    """**이 테스트가 그 결함의 재현이자 회귀 가드다.**"""
+    from pathfinder.proto.layout import SINGLE_ID, SINGLE_SPEC_KEY
+
+    proto_env["s3"].blobs[SINGLE_SPEC_KEY] = "# 단일 프로토타입 명세"
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert [p["slug"] for p in body["prototypes"]] == [SINGLE_ID]
+    assert body["prototypes"][0]["spec_path"] == SINGLE_SPEC_KEY
+    assert body["prototypes"][0]["state"] == "none"
+
+
+def test_list_shows_both_layouts_when_both_exist(proto_env):
+    """Path B로 3개를 만든 뒤 Path A.1을 돌린 프로젝트는 명세가 4개다 —
+    카드도 그만큼 나오는 것이 맞다."""
+    from pathfinder.proto.layout import SINGLE_ID, SINGLE_SPEC_KEY
+
+    _seed_spec(proto_env["s3"])
+    proto_env["s3"].blobs[SINGLE_SPEC_KEY] = "# 단일 프로토타입 명세"
+    body = client.get(f"/projects/{PID}/prototypes").json()
+
+    assert sorted(p["slug"] for p in body["prototypes"]) == sorted([SLUG, SINGLE_ID])
+
+
+def test_list_ignores_other_files_in_the_single_prototype_dir(proto_env):
+    """그 디렉터리에는 design-context·build-instructions 등이 함께 쌓인다
+    (prototype-validation.md의 산출물 7개). 명세만 카드가 돼야 한다."""
+    proto_env["s3"].blobs["aiplc-docs/discovery/prototype/design-context.md"] = "x"
+    proto_env["s3"].blobs["aiplc-docs/discovery/prototype/build-instructions.md"] = "y"
+    body = client.get(f"/projects/{PID}/prototypes").json()
+    assert body["prototypes"] == []

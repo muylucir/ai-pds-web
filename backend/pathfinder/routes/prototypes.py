@@ -35,6 +35,7 @@ from pathfinder.proto.session import has_build_output, purge_session_state
 # 최상위 import가 순환을 만들지 않는다.
 from pathfinder.routes.proto_public import access_url_path
 from pathfinder.survey.store import purgeable_response_count
+from pathfinder.proto import layout as proto_layout
 
 _log = logging.getLogger(__name__)
 
@@ -81,8 +82,10 @@ def _reject_traversal_params(request: Request) -> None:
 
 router = APIRouter(dependencies=[Depends(_reject_traversal_params)])
 
-_SPEC_PREFIX = "aiplc-docs/discovery/prototypes/"
-_SPEC_RE = re.compile(r"^aiplc-docs/discovery/prototypes/([^/]+)/PROTOTYPE-\1\.md$")
+# 레이아웃 규칙은 proto/layout.py가 단독 소유한다 — 예전에는 이 접두사와
+# 정규식이 카드 탐색을, 그리고 같은 경로를 조립하는 f-string이 세 곳에 더
+# 흩어져 있었다. Path A.1의 단수 레이아웃을 인식하지 못한 결함이 그 복제 때문에
+# 네 곳을 동시에 고쳐야 하는 일이 됐다(그 모듈 헤더 참조).
 
 # The frontend opens the first events stream with this sentinel; the route
 # substitutes session.first_prompt() so the build kicks off as a normal
@@ -202,11 +205,7 @@ async def list_prototypes(pid: str):
     _require_registered(pid)
     s3 = app_module.s3_store_factory(pid)
 
-    slugs: dict[str, str] = {}
-    for key in await s3.list(_SPEC_PREFIX):
-        m = _SPEC_RE.match(key)
-        if m:
-            slugs[m.group(1)] = key
+    slugs = proto_layout.discover(await s3.list(proto_layout.DISCOVERY_PREFIX))
 
     host = app_module.proto_host()
     out = []
