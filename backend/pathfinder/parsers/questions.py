@@ -16,7 +16,25 @@ logger = logging.getLogger(__name__)
 #:
 #: `\b`가 경계다: 번호가 있어야 문항이므로 `## Questions 개요`나 `## Questionnaire`
 #: 는 걸리지 않는다. 그것까지 삼키면 카테고리 헤더가 한 문항으로 뭉개진다.
-_Q_HEADER = re.compile(r"^#{2,3}\s+Question\s+(\d+)\b", re.MULTILINE)
+#:
+#: **수식어 한 단어와 해시 4개를 허용한다.** 상류는 문항 헤딩을 한 형태로 쓰지
+#: 않는다 — `question-format-guide.md`가 `## Question [Number]`(22행)와
+#: `### Clarification Question 1`(223행, "Creating Clarification Questions")을
+#: 모두 템플릿으로 싣고, 룰셋에는 `#### Question 1: Brand & Design Context`도 있다.
+#: 2026-08-17 test-wf: `pain-point-clarification-questions.md`가 그 두 번째 형태를
+#: 써서 **문항 0개**로 읽혔고, 그 파일의 답변은 기록되지 않았다.
+#:
+#: 수식어를 **한 단어로 제한하는 것이 핵심**이다. 임의 접두를 허용하면
+#: `## Answer to Question 3` 같은 참조용 산문 헤딩까지 문항으로 잡혀 그 절 전체가
+#: 한 문항으로 뭉개진다 — 위 `\b` 경계가 막는 것과 같은 실패다. 번호는 여전히
+#: 유일한 판별자이므로 `### Question File Format`,
+#: `### Context Questions (Per Use Case)`,
+#: `### ⛔ GATE: Await PRFAQ Clarifying Question Answers`는 그대로 걸리지 않는다.
+#:
+#: `serialize_answers`가 같은 정규식을 쓴다(그 함수의 주석 참조) — 헤더 인식이
+#: 곧 되기록이므로 두 경로가 갈라지면 "파싱은 되는데 답변이 안 써지는" 상태가 된다.
+_Q_HEADER = re.compile(
+    r"^#{2,4}\s+(?:[A-Za-z][\w-]*\s+)?Question\s+(\d+)\b", re.MULTILINE)
 _CAT_HEADER = re.compile(r"^##\s+(?!Question\b)(.+?)\s*$", re.MULTILINE)
 _OPTION = re.compile(r"^([A-F]|X)\)\s+(.*)$")
 _ANSWER = re.compile(r"^\[Answer\]:\s*(.*)$")

@@ -1,6 +1,6 @@
 # backend/tests/test_parse_questions.py
 from pathlib import Path
-from pathfinder.parsers.questions import parse_question_file
+from pathfinder.parsers.questions import parse_question_file, serialize_answers
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -97,6 +97,103 @@ def test_a_heading_that_merely_starts_with_question_is_not_a_question():
     for heading in ("## Questions 개요", "## Question 없음", "## Questionnaire"):
         qf = parse_question_file("x.md", heading + "\n\n본문\n")
         assert not qf.parse_ok, heading
+
+
+# ---- 문항 헤더 앞에 붙는 수식어, 그리고 해시 4개 ----
+# 2026-08-17 test-wf: 질문 파일 8개 중 `pain-point-clarification-questions.md`가
+# **문항 0개**로 읽혀 raw markdown 폴백으로 떨어졌고, 그 파일의 답변은 기록되지
+# 않았다(`[Answer]` 슬롯 1개, 채워짐 0개). 정규식이 해시 바로 뒤에 `Question`이
+# 오기를 요구했는데 그 파일은 이렇게 쓴다:
+#
+#   ### Clarification Question 1
+#
+# **상류가 규정한 형식이다.** `question-format-guide.md`는 `## Question [Number]`
+# (22행)와 `### Clarification Question 1`(223행, "Creating Clarification
+# Questions") 두 가지를 모두 템플릿으로 싣는다. 룰셋 전체에는 해시 4개짜리
+# (`#### Question 1: Brand & Design Context`)도 있다.
+#
+# 번호가 여전히 유일한 판별자다: 수식어를 허용해도 `### Question File Format`이나
+# `### Context Questions (Per Use Case)`는 번호가 없어 걸리지 않는다. 수식어는
+# **한 단어**만 허용한다 — `## Answer to Question 3` 같은 참조용 산문 헤딩까지
+# 삼키면 그 절이 한 문항으로 뭉개진다(위 테스트가 막는 것과 같은 실패).
+
+def test_a_qualified_question_heading_parses():
+    """`### Clarification Question 1` — 상류 question-format-guide.md:223의 형식."""
+    md = """### Clarification Question 1
+프로토타입이 가장 먼저 증명해야 하는 것은 어느 쪽입니까?
+
+A) 근거 조회 화면
+B) 반복 유형 리포트
+X) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)
+
+[Answer]:
+"""
+    qf = parse_question_file("pain-point-clarification-questions.md", md)
+    assert qf.parse_ok
+    assert [q.number for q in qf.questions] == [1]
+    assert qf.questions[0].ask == "프로토타입이 가장 먼저 증명해야 하는 것은 어느 쪽입니까?"
+    assert [o.letter for o in qf.questions[0].options] == ["A", "B", "X"]
+
+
+def test_a_four_hash_question_heading_parses():
+    """`#### Question 1: Brand & Design Context` — 룰셋에 실제로 있는 형태."""
+    md = """#### Question 1: Brand & Design Context
+어떤 브랜드 톤을 원하십니까?
+
+A) 차분한
+B) 대담한
+
+[Answer]:
+"""
+    qf = parse_question_file("design-context.md", md)
+    assert qf.parse_ok
+    assert [q.number for q in qf.questions] == [1]
+    # 콜론 뒤 제목은 헤더의 접미사이지 본문이 아니다(접미사 테스트와 같은 계약).
+    assert qf.questions[0].ask == "어떤 브랜드 톤을 원하십니까?"
+
+
+def test_a_heading_that_names_question_without_a_number_is_still_not_a_question():
+    """수식어를 허용해도 번호가 없으면 문항이 아니다.
+
+    전부 룰셋에 실재하는 헤딩이다 — 이것들이 문항으로 잡히면 그 절 전체가
+    한 문항으로 뭉개진다."""
+    for heading in ("### Question File Format",
+                    "### Context Questions (Per Use Case)",
+                    "## MANDATORY: Question File Format",
+                    "### ⛔ GATE: Await PRFAQ Clarifying Question Answers",
+                    # 수식어는 한 단어만 — 참조용 산문 헤딩은 삼키지 않는다.
+                    "## Answer to Question 3"):
+        qf = parse_question_file("x.md", heading + "\n\n본문\n")
+        assert not qf.parse_ok, heading
+
+
+def test_answers_are_written_back_to_a_qualified_heading():
+    """파싱만으로는 부족하다 — 되기록까지 돌아야 이 결함이 닫힌다.
+
+    2026-08-17 test-wf에서 잃은 것은 파싱 결과가 아니라 **답변**이었다.
+    `serialize_answers`는 번호로 슬롯을 찾으므로 헤더 인식이 곧 되기록이다."""
+    md = """### Clarification Question 1
+어느 쪽입니까?
+
+A) 왼쪽
+B) 오른쪽
+
+[Answer]:
+
+### Clarification Question 2
+언제입니까?
+
+A) 지금
+B) 나중
+
+[Answer]:
+"""
+    out = serialize_answers(md, {1: "B", 2: "A"})
+    assert "[Answer]: B" in out
+    assert "[Answer]: A" in out
+    # 되읽어도 같은 번호로 잡혀야 한다(파서와 직렬화가 같은 기준을 쓴다는 불변식).
+    qf = parse_question_file("c.md", out)
+    assert [(q.number, q.answer) for q in qf.questions] == [(1, "B"), (2, "A")]
 
 
 # ---- Question.ask — 배경 산문과 실제 질문 문장을 나눈다 ----
