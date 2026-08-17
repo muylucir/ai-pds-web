@@ -10,6 +10,7 @@
 # stays open (the gating itself lands in a later task, not here).
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import re
@@ -208,8 +209,21 @@ async def list_prototypes(pid: str):
     slugs = proto_layout.discover(await s3.list(proto_layout.DISCOVERY_PREFIX))
 
     host = app_module.proto_host()
+    ordered = sorted(slugs.items())
+    # **슬러그별 S3 왕복을 미리 병렬로 걷는다.** 예전에는 루프 안에서 카드마다
+    # `s3.list(bundle)`과 `purgeable_response_count`를 순차로 await 해서 카드 N개에
+    # 2N번 왕복이었다 — 실측(2026-08-17): 왕복 1회 30ms이므로 카드 10개면 0.6초가
+    # 목록 조회에 그대로 붙는다. gather는 입력 순서대로 돌려주므로 아래 zip이
+    # 안전하다.
+    bundle_lists, response_counts = await asyncio.gather(
+        asyncio.gather(*(s3.list(f"prototypes/{slug}/bundle/")
+                         for slug, _ in ordered)),
+        asyncio.gather(*(purgeable_response_count(s3, slug)
+                         for slug, _ in ordered)),
+    )
     out = []
-    for slug, spec_path in sorted(slugs.items()):
+    for (slug, spec_path), bundle_keys, response_count in zip(
+            ordered, bundle_lists, response_counts):
         state = "none"
         port: int | None = None
 
@@ -220,8 +234,7 @@ async def list_prototypes(pid: str):
         # the deleted MicroVM's job). Keep the S3 check too as a fallback: a
         # redeployed box could in principle have only a bundle backup and no
         # local dir.
-        built = (_local_build_exists(pid, slug)
-                 or bool(await s3.list(f"prototypes/{slug}/bundle/")))
+        built = _local_build_exists(pid, slug) or bool(bundle_keys)
 
         if session is not None and session.status in _WORKING_STATUSES:
             state = "building"
@@ -245,8 +258,6 @@ async def list_prototypes(pid: str):
         # no count and no irreversibility warning, then destroyed all 12. The
         # definition of "a response a reset destroys" belongs to the module that
         # owns those keys, so the two cannot drift apart again.
-        response_count = await purgeable_response_count(s3, slug)
-
         # 공유용 접근 URL. **running일 때만** 실어 보낸다 — 그 밖의 상태에서
         # 이 링크는 게이트가 502를 주므로, 존재하지 않는 것이 프론트가 링크를
         # 노출할지 판단하는 기준이 된다(기존 shareUrl 조건과 같은 규칙).

@@ -23,6 +23,7 @@
 # 재제출은 같은 키를 덮는다(한 라운드의 최종 답변이 하나라는 사실과 일치).
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -82,10 +83,17 @@ async def load_answers(s3: S3StoreLike) -> dict[str, dict]:
     except Exception:
         _log.exception("answer record listing failed")
         return {}
+    # **병렬 GET.** 라운드 수에 선형이므로 순차로 읽으면 히스토리 로딩이 그만큼
+    # 늦어진다(실측 2026-08-17: S3 왕복 1회 30ms). session_store.load_transcript와
+    # 같은 판단이고, project_store.load_manifest가 이 리포의 선례다.
+    bodies = await asyncio.gather(*(s3.get(k) for k in keys),
+                                 return_exceptions=True)
     out: dict[str, dict] = {}
-    for key in keys:
+    for key, body in zip(keys, bodies):
         try:
-            data = json.loads(await s3.get(key))
+            if isinstance(body, BaseException):
+                raise body
+            data = json.loads(body)
         except Exception:
             _log.warning("unreadable answer record skipped: %s", key)
             continue

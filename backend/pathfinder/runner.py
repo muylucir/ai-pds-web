@@ -77,11 +77,22 @@ class AgentRunner:
     async def _restore_workspace_from_s3(self) -> None:
         """durable 워크스페이스(S3 = source of truth)를 로컬 FS로 복사한다.
         S3가 무조건 이긴다; 푸시는 멱등."""
-        for prefix in self._RESTORE_PREFIXES:
-            for key in await self._s3.list(prefix):
-                p = self._local_path(key)
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(await self._s3.get(key), encoding="utf-8")
+        # **목록도, 본문도 병렬로.** 이 함수는 **매 턴 시작**에 돌므로 순차 왕복이
+        # 그대로 답변 지연이 된다 — 실측(2026-08-17, 배포 인스턴스): S3 왕복 1회
+        # 30ms, 산출물 6개에 0.247초. 산출물 수에 선형이므로 50개면 ~3초다.
+        # (session_store.load_transcript와 같은 판단, 선례는 project_store.)
+        #
+        # 실패는 삼키지 않는다: 여기가 실패하면 워크스페이스가 불완전한 상태로
+        # 턴이 돌고 에이전트가 없는 파일을 못 찾는다. 그건 조용한 오작동이므로
+        # 예외를 그대로 올려 턴을 실패시킨다(sync의 fail-closed와 같은 규율).
+        key_lists = await asyncio.gather(
+            *(self._s3.list(prefix) for prefix in self._RESTORE_PREFIXES))
+        keys = [k for group in key_lists for k in group]
+        bodies = await asyncio.gather(*(self._s3.get(k) for k in keys))
+        for key, body in zip(keys, bodies):
+            p = self._local_path(key)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(body, encoding="utf-8")
 
     async def _sync_workspace_to_s3(self) -> None:
         """턴 출력(방법론 산출물 + 프로토타입 소스 서브트리)을 로컬에서 durable
