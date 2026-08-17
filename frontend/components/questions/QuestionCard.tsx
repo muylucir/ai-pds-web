@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import type { Question } from "@/lib/api/types";
-import { Markdown } from "@/components/Markdown";
+import { InlineMarkdown, Markdown } from "@/components/Markdown";
 import { useT } from "@/lib/i18n/provider";
 
 // "B: 부연 설명" 값을 letter와 note로 분해한다. 첫 ": " 앞 토큰이 알려진
@@ -128,7 +128,9 @@ export function QuestionCard({
           {question.number}
         </span>
         <div>
-          <h2 className="font-bold">Q{question.number}. {question.text}</h2>
+          <h2 className="font-bold">
+            Q{question.number}. <InlineMarkdown text={question.text} />
+          </h2>
           <div className="flex items-center gap-2 mt-1">
             {/* 두 모드 모두 배지를 단다. 복수선택에만 달면 배지가 **없는**
                 상태를 해석해야 하고, 단일선택 질문만 본 사용자는 그 규약을
@@ -223,7 +225,7 @@ export function QuestionCard({
                   </span>
                   <div>
                     <p className="font-medium">
-                      {opt.text}
+                      <InlineMarkdown text={opt.text} />
                       {opt.recommended && (
                         <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 ml-1">{t("q.aiRecommended")}</span>
                       )}

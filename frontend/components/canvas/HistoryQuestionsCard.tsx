@@ -13,6 +13,7 @@
 import { useState } from "react";
 import type { QuestionFile } from "@/lib/api/types";
 import { useT } from "@/lib/i18n/provider";
+import { InlineMarkdown } from "@/components/Markdown";
 
 export function HistoryQuestionsCard({
   name,
@@ -49,7 +50,7 @@ export function HistoryQuestionsCard({
           {questions.map((q) => (
             <li key={q.number}>
               <p className="font-medium text-slate-700">
-                Q{q.number}. {q.text}
+                Q{q.number}. <InlineMarkdown text={q.text} />
               </p>
               {/* is_other는 자유 입력 자리표시자다 — 실제로 제시된 보기가
                   아니므로 목록에서 뺀다(answerSummary의 letterText와 같은
@@ -59,7 +60,7 @@ export function HistoryQuestionsCard({
                   .filter((o) => !o.is_other)
                   .map((o) => (
                     <li key={o.letter}>
-                      {o.letter}. {o.text}
+                      {o.letter}. <InlineMarkdown text={o.text} />
                     </li>
                   ))}
               </ul>

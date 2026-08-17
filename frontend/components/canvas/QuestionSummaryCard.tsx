@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { QuestionFile } from "@/lib/api/types";
 import { answeredCount } from "@/lib/stageProgress";
 import { useT } from "@/lib/i18n/provider";
+import { InlineMarkdown } from "@/components/Markdown";
 
 function basename(path: string): string {
   const parts = path.split("/");
@@ -61,7 +62,7 @@ export function QuestionSummaryCard({ file }: { file: QuestionFile }) {
           {file.questions.map((q) => (
             <li key={q.number} className="text-xs text-slate-600">
               <p className="font-medium">
-                Q{q.number}. {q.text}
+                Q{q.number}. <InlineMarkdown text={q.text} />
               </p>
               <p className="text-slate-400 mt-0.5">{t("canvas.answerLabel")}: {q.answer ?? "-"}</p>
             </li>

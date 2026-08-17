@@ -1,6 +1,7 @@
 "use client";
 import type { QuestionFile } from "@/lib/api/types";
 import { useT } from "@/lib/i18n/provider";
+import { InlineMarkdown } from "@/components/Markdown";
 
 // Amber contradiction/clarification card (mockup 04's "답변 간 모순 감지"
 // idiom). Rendered when the caller (QuestionCardSlot, Task 3) has determined
@@ -36,7 +37,9 @@ export function ClarificationCard({
       {file.questions.map((q) => (
         <div key={q.number} className="mt-3">
           {q.category && <p className="text-xs font-medium text-amber-700">{q.category}</p>}
-          <p className="text-sm text-amber-800 mt-1 leading-relaxed">{q.text}</p>
+          <p className="text-sm text-amber-800 mt-1 leading-relaxed">
+            <InlineMarkdown text={q.text} />
+          </p>
           <div className="mt-2 flex flex-wrap gap-2">
             {q.options.map((opt) => (
               <button
@@ -46,7 +49,7 @@ export function ClarificationCard({
                 onClick={() => onChoose(`${opt.letter} — ${opt.text}`)}
                 className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-900 text-xs font-medium hover:bg-amber-100 disabled:opacity-50"
               >
-                {opt.letter}. {opt.text}
+                {opt.letter}. <InlineMarkdown text={opt.text} />
               </button>
             ))}
           </div>

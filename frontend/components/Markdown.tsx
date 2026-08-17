@@ -32,3 +32,46 @@ export function Markdown({ text, className }: { text: string; className?: string
     </div>
   );
 }
+
+// 인라인 전용 렌더러 — 질문 문장과 보기 라벨.
+//
+// **왜 위 `Markdown`을 쓸 수 없는가.** 보기는 `<label>` 안 flex 레이아웃이고, 위
+// 렌더러는 `<div className="prose …">`로 감싼 뒤 문단을 `<p>`로 그린다. 그러면
+// 라벨 안에 블록 요소와 prose 여백이 들어와 선택 컨트롤과의 정렬이 깨진다.
+//
+// **왜 아예 렌더하지 않으면 안 되는가(2026-08-18 실측).** 질문 파일의 보기는 실제로
+// 마크다운으로 쓰여 있다 — `A) **「조정 브리프」** — 조정 건 하나를 열면 …`. 평문으로
+// 그리면 `**`가 화면에 그대로 남는다. 질문 문장도 같다
+// (`제품명을 무엇으로 할까요? *(보도자료의 Heading)*`).
+//
+// 블록 요소는 **의도적으로 버린다**: 보기 라벨에 헤딩·목록·표가 오는 것은 애초에
+// 잘못된 입력이고, 렌더하면 카드가 부서진다. `unwrapDisallowed`로 내용은 남긴다 —
+// 태그만 벗기고 글자는 잃지 않는다.
+//
+// `prepareQuestionMarkdown`은 걸지 않는다. 그 변환은 **파일 전문**을 위한 것이다:
+// 줄 맨 앞 `[Answer]:`를 링크 정의에서 구해내고, 보기 줄에 하드 브레이크를 붙인다.
+// 여기 오는 것은 이미 파서가 잘라낸 한 조각이라 두 변환 모두 대상이 없고, 후자는
+// 오히려 라벨 안에 줄바꿈을 만든다.
+const BLOCK_ELEMENTS = ["h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li",
+                        "table", "thead", "tbody", "tr", "th", "td",
+                        "blockquote", "pre", "hr", "img"];
+
+export function InlineMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      // 문단을 감싸지 않는다 — 라벨/헤딩 안에서 인라인으로 흐르게 한다.
+      components={{
+        p: ({ children }) => <>{children}</>,
+        a: ({ children, href }) => (
+          <a href={href} target="_blank" rel="noopener noreferrer"
+             className="underline">{children}</a>
+        ),
+      }}
+      disallowedElements={BLOCK_ELEMENTS}
+      unwrapDisallowed
+    >
+      {text}
+    </ReactMarkdown>
+  );
+}

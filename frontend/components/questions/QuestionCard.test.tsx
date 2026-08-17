@@ -374,3 +374,79 @@ describe("QuestionCard — context", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 });
+
+// ---- 보기·질문 문장의 인라인 마크다운 ----
+// 2026-08-18 실측: 보기에 `**` 원문이 그대로 떴다. 질문 파일의 보기는 실제로 이렇게
+// 쓰여 있다(prfaq-clarifying-questions.md):
+//
+//     A) **「조정 브리프」** — 조정 건 하나를 열면 근거·반복 이력·과거 사례가 …
+//
+// 질문 문장도 같다: `제품명을 무엇으로 할까요? *(보도자료의 Heading, …)*`.
+// 공용 `Markdown`은 preamble·문서에만 걸려 있었고 카드는 평문으로 그렸다.
+//
+// **인라인 전용이어야 한다.** 보기는 `<label>` 안 flex 레이아웃이라 블록 요소(`<p>`)와
+// prose 여백이 들어오면 정렬이 깨진다. 그리고 보기 라벨에 헤딩·목록·표가 오는 것은
+// 애초에 잘못된 입력이므로 렌더하지 않는 편이 낫다.
+
+const MD_Q: Question = {
+  number: 1,
+  category: null,
+  text: "제품명을 무엇으로 할까요? *(보도자료의 Heading)*",
+  answer: null,
+  options: [
+    { letter: "A", text: "**「조정 브리프」** — 한 장으로 묶여 나온다는 뜻",
+      is_other: false, recommended: false },
+    { letter: "B", text: "`코드체` 보기", is_other: false, recommended: false },
+  ],
+};
+
+describe("QuestionCard — 인라인 마크다운", () => {
+  it("보기의 굵은체가 원문(**)이 아니라 굵게 렌더된다", () => {
+    render(<QuestionCard question={MD_Q} value="" onChange={() => {}} />);
+    // `**` 원문이 화면에 남아 있으면 안 된다.
+    expect(screen.queryByText(/\*\*/)).toBeNull();
+    const strong = screen.getByText("「조정 브리프」");
+    expect(strong.tagName).toBe("STRONG");
+  });
+
+  it("질문 문장의 기울임체도 렌더된다", () => {
+    render(<QuestionCard question={MD_Q} value="" onChange={() => {}} />);
+    const em = screen.getByText("(보도자료의 Heading)");
+    expect(em.tagName).toBe("EM");
+  });
+
+  it("코드체 보기도 렌더된다", () => {
+    render(<QuestionCard question={MD_Q} value="" onChange={() => {}} />);
+    expect(screen.getByText("코드체").tagName).toBe("CODE");
+  });
+
+  it("문단을 감싸지 않는다 — 카드의 <p> 안에 <p>를 중첩하면 잘못된 HTML이다", () => {
+    const { container } = render(
+      <QuestionCard question={MD_Q} value="" onChange={() => {}} />);
+    // 카드 자체는 `<p className="font-medium">`을 쓴다(그건 정상). 그 안에 렌더러가
+    // 또 <p>를 만들면 브라우저가 문단을 쪼개 레이아웃이 깨진다.
+    expect(container.querySelectorAll("p p").length).toBe(0);
+  });
+
+  it("보기에 블록 마크다운이 와도 카드를 부수지 않는다 (태그만 벗기고 글자는 남긴다)", () => {
+    // 보기 라벨에 헤딩·목록이 오는 것은 잘못된 입력이다. 렌더하면 카드가 부서지고,
+    // 버리면 글자가 사라진다 — unwrapDisallowed로 내용만 남긴다.
+    const blocky: Question = {
+      ...MD_Q,
+      options: [{ letter: "A", text: "## 헤딩\n\n- 목록 항목",
+                  is_other: false, recommended: false }],
+    };
+    const { container } = render(
+      <QuestionCard question={blocky} value="" onChange={() => {}} />);
+    // 카드 자체의 질문 헤딩(<h2>)은 정상이므로 보기 안으로 범위를 좁힌다.
+    expect(container.querySelectorAll(
+      "label h1, label h2, label h3, label ul, label ol, label li").length).toBe(0);
+    expect(screen.getByText(/헤딩/)).toBeInTheDocument();
+    expect(screen.getByText(/목록 항목/)).toBeInTheDocument();
+  });
+
+  it("마크다운이 없는 보기는 그대로 나온다", () => {
+    render(<QuestionCard question={MULTI_Q} value="" onChange={() => {}} />);
+    expect(screen.getByText("속도")).toBeInTheDocument();
+  });
+});
