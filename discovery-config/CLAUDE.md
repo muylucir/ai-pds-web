@@ -41,10 +41,10 @@ Apart from that rule, this file governs only the touchpoints with the Pathfinder
 web UI. For the Discovery workflow itself, follow the `CLAUDE.md` in the working
 directory (the AI-PLC core workflow), including its language convention.
 
-- When you ask the user a multiple-choice question, you MUST use the
-  **AskUserQuestion** tool. Keep writing the question files
-  (`aiplc-docs/**-questions.md`) as a record, but deliver the questions
-  themselves through the tool only.
+- When you ask the user a multiple-choice question, you ask it by **writing the
+  question file** (`aiplc-docs/**`, with `[Answer]:` tags). Pathfinder reads that
+  file and shows the questions as written. The **AskUserQuestion** tool is not
+  available — see the question-files section below.
 - Call the **report_stage** tool whenever you start or complete a stage. That
   tool updates `aiplc-state.md` for you, so you do not need to write the state
   file yourself.
@@ -56,41 +56,44 @@ directory (the AI-PLC core workflow), including its language convention.
   entire file** — calling Write with only the new entry destroys the whole
   audit record.
 
-## Question files: answers are written back for you (overrides the upstream rules)
+## Question files ARE the question form (overrides the upstream rules)
 
-The questions themselves reach the user through **AskUserQuestion**, and their
-answers come back through that same tool call. `aws-aiplc-rule-details/common/question-format-guide.md`
-applies to the file — its `[Answer]:` tags **do get filled in** — with these
-differences in *how*:
+**Write the question file. That is how you ask.** `aws-aiplc-rule-details/common/question-format-guide.md`
+applies as written — numbered questions, lettered options, an `[Answer]:` line
+under each. Pathfinder reads the file the moment you finish writing it and shows
+those questions to the user **exactly as you wrote them**, then fills the
+`[Answer]:` tags with their answers.
 
-- **Pathfinder fills the `[Answer]:` tags, not you.** The moment the user
-  submits the form, the backend writes each answer into the matching question in
-  `aiplc-docs/**/*-questions.md`. Read those tags freely (that is the point —
-  `common/session-continuity.md` has you re-read the stage's question file on
-  resume). **Do not write them yourself**: two writers on one line produce
-  conflicts, and your copy would be the stale one.
-- **Matching is by question text, not by question number.** So the question
-  wording you put in the file must be the *same sentence* you pass to
-  AskUserQuestion. If you reword it in the tool call, the answer has nothing to
-  match and the tag stays empty.
+- **AskUserQuestion is not available.** Calling it is refused, and the refusal
+  points you back here. There is nothing to route through a tool: the file is
+  the form.
+- **Write the questions in full.** There is no 4-question or 4-option ceiling to
+  work around, and nothing has to be shortened or split across rounds. A stage
+  whose rules list nine question areas gets one file with nine questions and one
+  screen.
+- **Put the background where the format guide puts it.** Prose above a question —
+  under a `##` heading, before the question's own heading — is shown to the user
+  as that question's context, markdown and tables included. This is where the
+  "why am I being asked this" belongs: an ambiguity you are resolving, the table
+  a confirmation gate refers to as "the items above". A question that reads as
+  unanswerable on its own is a question missing its context.
+- **Pathfinder fills the `[Answer]:` tags, not you.** They are matched by
+  question **number**, so numbering is what has to be stable — not wording.
+  Read the tags freely (that is the point — `common/session-continuity.md` has
+  you re-read the stage's question file on resume). **Do not write them
+  yourself**: two writers on one line produce conflicts, and your copy would be
+  the stale one.
+- **Your turn ends when you finish writing the file.** Do not keep working, do
+  not restate the questions in chat, and do not announce that you are about to
+  ask. The answers arrive in the file and you continue on the next turn.
 - **Do not apply its "Missing Answers" handling** by sending the user to the
-  file. They cannot edit it from the UI — the form in the right-hand panel is
-  the only way in. If a tag you expected is still empty, ask that question again
-  through AskUserQuestion.
+  file. They cannot edit it directly — the form in the right-hand panel is the
+  only way in. If a tag you expected is still empty, write the question again
+  (a new file, or new numbered questions appended to the same one).
 - **Do not wait for the user to say "done"** (its Step 3, "Wait for
-  Confirmation"). The AskUserQuestion round-trip *is* the confirmation: your
-  turn resumes the moment they submit the form, with their answers attached.
+  Confirmation"). Submitting the form *is* the confirmation.
 - **Keep logging answers in `audit.md` as well.** The question file carries the
   decision; `audit.md` carries the audit trail the workshop record relies on.
-
-One consequence worth knowing, so you do not try to "fix" it: AskUserQuestion
-takes **at most 4 questions with at most 4 options each**, and those are hard
-schema limits. A stage whose rules list more question areas than that will
-deliver them across several calls, so the file and the forms will not line up
-one-to-one — round 2 starts numbering at 1 again. Text matching is what carries
-the answers to the right rows across that split, which is why the wording has to
-stay identical. Do not trim the file down to match the tool, and do not try to
-cram extra questions into one call.
 
 ## Prototypes: write the spec, do not build (overrides the upstream rules)
 
@@ -246,8 +249,9 @@ in the workspace `CLAUDE.md`, next to the language convention it belongs to.
   did and what you are asking or expecting next. The chat bubble is filled from
   that text. A turn with tool calls and no text renders as an empty bubble, so
   it is forbidden.
-- On a turn that delivers questions via AskUserQuestion, explain in one
-  sentence why the question is needed before the form appears.
+- On a turn that delivers questions, explain in one sentence why they are needed
+  before the form appears. Per-question background belongs in the file (above the
+  question's heading) — this line is about the round as a whole.
 
 Write this conversational text in the language the workspace `CLAUDE.md`
 specifies — that is where the project's language is defined.

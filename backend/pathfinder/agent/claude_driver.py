@@ -929,6 +929,16 @@ class ClaudeDriver:
         from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
         if tool_name != "AskUserQuestion":
             return PermissionResultAllow(updated_input=input_data)
+        # 파일 경로가 켜져 있으면 이 도구는 쓰지 않는다. **거부**이지 삭제가
+        # 아니다 — 가로채기만 없애면 모델이 도구를 부른 순간 질문이 조용히
+        # 사라진다(화면에도 채팅에도 없다). 거부는 대체 행동을 함께 준다.
+        #
+        # 스위치가 하나인 이유: 두 경로가 동시에 살아 있으면 에이전트가 파일을
+        # 쓰고(훅이 카드를 띄우고) 이어서 이 도구까지 불러 같은 질문이 두 번 뜬다.
+        if _file_questions_enabled():
+            _log.info("AskUserQuestion denied — file questions are the only path")
+            return PermissionResultDeny(
+                message=prompts.ask_user_question_denied(self._language))
         import uuid
         # 문자열로 온 payload를 여기서 리스트로 편다 — 정규화 없이 넘기면
         # question_file_from_sdk가 문자열을 문자 단위로 훑다가 AttributeError로

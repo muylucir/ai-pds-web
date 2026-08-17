@@ -311,15 +311,17 @@ def test_discovery_config_overrides_the_upstream_question_file_rules():
 
     **에이전트가 알아야 하는 두 가지를 특히 검사한다.** 되기록은 백엔드가
     하므로 (1) 에이전트가 그 칸을 직접 쓰면 두 writer가 한 줄을 다투고,
-    (2) 매칭이 질문 텍스트로 이뤄지므로 파일과 도구의 문장이 갈리면 답이
-    조용히 심기지 않는다 — 둘 다 에러 없이 실패하는 모양이라 문서에 없으면
-    아무도 모른다.
+    (2) 매칭 키가 무엇인지 알아야 그것을 안정적으로 유지한다 — 둘 다 에러 없이
+    실패하는 모양이라 문서에 없으면 아무도 모른다.
+
+    2026-08-17에 (2)의 키가 **텍스트에서 번호로** 바뀌었다. 질문을 파일에서 그대로
+    읽게 되면서 도구 호출과 문장을 맞출 이유가 없어졌고, 그 "동일 문장" 요구가
+    질문 파일을 납작하게 만들던 원인이었다(19문항 중 15문항이 배경 산문 없는 한
+    문단이었다). 번호는 파일 안에서만 유지하면 되므로 요구가 훨씬 약하다.
     """
-    repo = Path(__file__).resolve().parents[2]
-    path = repo / "discovery-config" / "CLAUDE.md"
-    if not path.is_file():
-        pytest.skip("discovery-config/CLAUDE.md not present")
-    text = path.read_text(encoding="utf-8")
+    # 공백을 접어서 본다 — 줄바꿈 위치가 아니라 규칙의 내용을 고정한다
+    # (_discovery_config의 docstring에 그 근거가 있다).
+    text = _discovery_config()
     # override라고 명시적으로 선언한다(프로토타입 섹션의 선례와 같은 표현).
     assert "overrides the upstream rules" in text
     assert "[Answer]:" in text
@@ -327,8 +329,9 @@ def test_discovery_config_overrides_the_upstream_question_file_rules():
     assert "audit.md" in text
     # 되기록의 주체가 백엔드라는 것.
     assert "Do not write them yourself" in text
-    # 매칭 키가 번호가 아니라 텍스트라는 것.
-    assert "by question text, not by question number" in text
+    # 매칭 키가 번호라는 것 — 그리고 그 도구를 쓰지 않는다는 것.
+    assert "matched by question **number**" in text
+    assert "AskUserQuestion is not available" in text
 
 
 def _discovery_config() -> str:

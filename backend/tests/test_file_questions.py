@@ -273,3 +273,67 @@ async def test_pending_survives_a_missing_file(tmp_path):
     await save_pending_file(d._s3, file="aiplc-docs/gone.md")
     d._pending_payload = None
     assert await d.pending({"session_id": "s-1"}) is None
+
+
+# ---- AskUserQuestion을 더 이상 쓰지 않는다 ----
+# 삭제가 아니라 **거부 + 대체 지시**다. 가로채기를 그냥 없애면 모델이 도구를 부른
+# 순간 질문이 조용히 사라진다 — 화면에 카드도 없고 채팅에도 없다. 거부는 모델에게
+# "질문 파일을 써라"를 돌려주므로 그 구멍이 생기지 않는다. `write_outside_docs`가
+# 같은 패턴을 쓴다(거부만 하면 모델이 경로만 바꿔 재시도하며 루프에 빠진다).
+#
+# 스위치는 하나다: `PATHFINDER_FILE_QUESTIONS`가 켜지면 파일 경로가 유일한 경로이고,
+# 꺼지면 옛 가로채기가 그대로 돈다. 두 경로가 동시에 살아 있으면 같은 질문이 화면에
+# 두 번 뜬다.
+
+def _ctx():
+    class _C:
+        tool_use_id = "toolu_x"
+    return _C()
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_is_denied_when_file_questions_are_on(tmp_path):
+    d, _ = _driver(tmp_path)
+    result = await d._on_can_use_tool(
+        "AskUserQuestion",
+        {"questions": [{"question": "누구?", "header": "대상",
+                        "options": [{"label": "PM"}, {"label": "PO"}]}]},
+        _ctx())
+    assert type(result).__name__ == "PermissionResultDeny", result
+    # 대체 행동을 말해야 한다 — 거부만 하면 모델이 같은 도구를 재시도한다.
+    assert "[Answer]:" in result.message
+    # 그리고 질문이 사라지지 않았다: 카드는 뜨지 않고 파킹도 없다.
+    assert not _questions_events(d)
+    assert d._pending_question is None
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_still_works_when_file_questions_are_off(
+        tmp_path, monkeypatch):
+    """스위치가 꺼져 있으면 옛 경로가 그대로다 — 되돌릴 수 있어야 한다."""
+    monkeypatch.delenv("PATHFINDER_FILE_QUESTIONS", raising=False)
+    d, _ = _driver(tmp_path)
+    # **직접 await하지 않는다.** 꺼진 경로는 답변을 기다리며 future에 파킹되는 것이
+    # 정상 동작이라 await하면 영원히 돌아오지 않는다(실제 SDK도 별도 태스크에서
+    # 부른다 — tests/fakes/fake_sdk_asking.AskingSdkClient가 그 모양이다).
+    import asyncio
+    task = asyncio.create_task(d._on_can_use_tool(
+        "AskUserQuestion",
+        {"questions": [{"question": "누구?", "header": "대상",
+                        "options": [{"label": "PM"}, {"label": "PO"}]}]},
+        _ctx()))
+    for _ in range(4):
+        await asyncio.sleep(0)
+    assert not task.done(), "파킹되지 않았다 — 옛 경로가 깨졌다"
+    assert d._pending_question is not None
+    assert len(_questions_events(d)) == 1
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_other_tools_are_unaffected(tmp_path):
+    d, _ = _driver(tmp_path)
+    result = await d._on_can_use_tool("Write", {"file_path": "x.md"}, _ctx())
+    assert type(result).__name__ == "PermissionResultAllow"

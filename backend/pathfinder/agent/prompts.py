@@ -168,6 +168,39 @@ def answer_first(language: str) -> str:
             "이용하세요.")
 
 
+def ask_user_question_denied(language: str) -> str:
+    """AskUserQuestion을 거부할 때 모델이 읽는 이유 + 대체 행동.
+
+    **거부이지 삭제가 아니다.** 가로채기를 그냥 없애면 모델이 이 도구를 부른 순간
+    질문이 조용히 사라진다 — 화면에도 채팅에도 없다. 거부는 대체 행동을 손에
+    쥐여 주므로 그 구멍이 생기지 않는다(`write_outside_docs`가 같은 패턴이고,
+    거부만 하면 모델이 경로만 바꿔 재시도하며 루프에 빠진다는 기록이 그 함수에 있다).
+
+    왜 이 도구를 쓰지 않는가(2026-08-17 실측): 파일에 이미 쓴 질문을 이 도구의
+    입력으로 다시 만들면서 19문항 중 15개(79%)가 훼손됐다 — 한글 문자 치환 11건,
+    축약으로 답변 유실 4건. 파일을 그대로 읽으면 그 실패 종류가 사라진다.
+    """
+    if _lang(language) == "en":
+        return (
+            "AskUserQuestion is not available in Pathfinder. Ask by **writing the "
+            "question file** that `common/question-format-guide.md` already "
+            "specifies — the numbered questions, their lettered options, and an "
+            "`[Answer]:` line under each — anywhere under `aiplc-docs/`. "
+            "Pathfinder reads that file the moment you finish writing it and "
+            "shows the questions to the user exactly as you wrote them, so the "
+            "4-question / 4-option limits of this tool do not apply and nothing "
+            "has to be shortened. Your turn ends there; the answers arrive in the "
+            "file's `[Answer]:` tags and you continue on the next turn.")
+    return (
+        "Pathfinder에서는 AskUserQuestion을 쓸 수 없습니다. 질문은 "
+        "`common/question-format-guide.md`가 이미 규정한 **질문 파일을 쓰는 것**으로 "
+        "합니다 — 번호가 붙은 문항, letter가 붙은 보기, 각 문항 아래 `[Answer]:` 줄. "
+        "위치는 `aiplc-docs/` 아래 어디든 됩니다. 파일을 다 쓰는 순간 Pathfinder가 "
+        "그것을 읽어 **적은 그대로** 사용자에게 보여주므로, 이 도구의 4문항·4보기 "
+        "제한이 적용되지 않고 무엇도 줄여 쓸 필요가 없습니다. 턴은 거기서 끝나고, "
+        "답변은 그 파일의 `[Answer]:` 태그로 들어오며 다음 턴에 이어갑니다.")
+
+
 def file_questions_stop(language: str, path: str) -> str:
     """질문 파일을 쓰는 순간 턴을 멈출 때 모델이 읽는 이유.
 
