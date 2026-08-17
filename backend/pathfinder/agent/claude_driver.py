@@ -81,6 +81,7 @@ from pathfinder.cli_settings import cli_context_env
 from pathfinder.models import AgentEvent
 from pathfinder.pathsafe import workspace_relative as _rel
 from pathfinder.s3store import S3StoreLike
+from pathfinder.tool_trace import tool_detail
 
 _log = logging.getLogger("pathfinder.agent")
 
@@ -627,7 +628,10 @@ class ClaudeDriver:
         self._pending_question: asyncio.Future | None = None
         self._pending_payload: str | None = None
         self._pending_iid: str | None = None
-        self._last_status: str | None = None
+        # (도구 이름, detail) — 이름만으로 접으면 파일이 다른 연속 Read가
+        # 한 줄로 뭉개진다. INTERRUPTED_MARKER 비교는 event.text로 하므로
+        # 이 키가 튜플이 되어도 그 경로는 영향받지 않는다.
+        self._last_status: tuple[str, str | None] | None = None
         # rel path → 그 파일에서 **이미 물어본 미답 문항 집합**. 같은 집합을 두 번
         # 묻지 않는 가드다(_file_question_round 참조). 드라이버 인스턴스가 프로젝트
         # 수명을 살기 때문에 턴을 넘어 유지된다 — 백엔드 재시작 시 비지만, 그때는
@@ -1172,9 +1176,20 @@ class ClaudeDriver:
                 if btype == "TextBlock":
                     events.append(AgentEvent(kind="message", text=block.text))
                 elif btype == "ToolUseBlock":
-                    if block.name != self._last_status:
-                        self._last_status = block.name
-                        events.append(AgentEvent(kind="status", text=block.name))
+                    # 무엇을 했는지까지 보낸다 — `Read`만 뜨면 트레이스의 요점이
+                    # 빠진다(tool_trace 모듈 헤더). 값만 보내고 `🔍 Read · …`의
+                    # 아이콘·구분자는 프론트가 UI 언어로 그린다.
+                    detail = tool_detail(block.name, getattr(block, "input", None))
+                    # 중복 접기 키에 detail을 넣는다. 이름만으로 접으면 연속된
+                    # Read 세 번이 `Read` 한 줄로 뭉개진다 — 파일이 달라도 그렇다.
+                    key = (block.name, detail)
+                    if key != self._last_status:
+                        self._last_status = key
+                        events.append(AgentEvent(
+                            kind="status", text=block.name,
+                            payload=(json.dumps({"detail": detail},
+                                                ensure_ascii=False)
+                                     if detail else None)))
         elif tname == "ResultMessage":
             # The CLI reports turn failure HERE, not by raising: `is_error`
             # true means the turn ran but ended in failure (a Bedrock 429/500/

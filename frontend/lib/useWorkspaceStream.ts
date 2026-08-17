@@ -133,7 +133,8 @@ function historyItemToChatItem(it: HistoryItem): ChatItem {
     text: it.text ?? "",
     // 복원된 도구 트레이스 — 라이브 턴의 status/file_changed 이벤트와 같은
     // shape이라 AiMessage의 "추론 과정" 아코디언이 그대로 렌더한다.
-    trace: (it.trace ?? []).map((t) => ({ kind: t.kind, text: t.text, path: t.path })),
+    trace: (it.trace ?? []).map((t) => ({
+      kind: t.kind, text: t.text, path: t.path, detail: t.detail ?? null })),
     streaming: false,
     error: null,
   };
@@ -212,7 +213,13 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
           return { ...it, interrupted: true };
         }
         if (ev.kind === "status" || ev.kind === "file_changed") {
-          const trace: TraceEntry = { kind: ev.kind, text: ev.text, path: ev.path };
+          // status의 detail은 payload에 실려 온다(리댁션을 지나는 필드여야 하고,
+          // path는 구조적 필드로 취급되어 리댁션을 지나지 않는다 —
+          // backend/pathfinder/tool_trace.py의 근거).
+          const trace: TraceEntry = {
+            kind: ev.kind, text: ev.text, path: ev.path,
+            detail: safeParse<{ detail?: string }>(ev.payload)?.detail ?? null,
+          };
           return { ...it, trace: [...it.trace, trace] };
         }
         if (ev.kind === "error") return { ...it, error: ev.text ?? t("stream.turnError") };

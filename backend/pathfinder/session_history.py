@@ -25,6 +25,7 @@ from pathfinder.agent.questions_payload import (normalize_sdk_questions,
 from pathfinder.agent.session_store import load_transcript
 from pathfinder.models import HistoryItem, HistoryTraceEntry
 from pathfinder.parsers.redaction import redact_credentials
+from pathfinder.tool_trace import tool_detail
 from pathfinder.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
@@ -252,8 +253,13 @@ def transform_cli_transcript(raw: list[dict], *,
                                                    path=path))
                 else:
                     # Read/Glob/Grep/Bash/mcp__pathfinder__* 등 — 라이브의
-                    # status 이벤트(도구 이름)와 같은 표현.
-                    trace.append(HistoryTraceEntry(kind="status", text=name))
+                    # status 이벤트와 **같은 표현**이어야 한다. 그래서 detail도
+                    # 같은 모듈(tool_trace)로 뽑는다: 한쪽만 상세를 보이면
+                    # 새로고침 전후로 화면이 달라진다.
+                    detail = tool_detail(name, block.get("input"))
+                    trace.append(HistoryTraceEntry(
+                        kind="status", text=name,
+                        detail=redact_credentials(detail) if detail else None))
             elif btype == "tool_result":
                 tid = str(block.get("tool_use_id", ""))
                 if tid in ask_ids and tid not in errored:

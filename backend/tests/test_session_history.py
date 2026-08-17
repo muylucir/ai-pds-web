@@ -57,9 +57,27 @@ def test_cli_text_and_tools_match_the_live_representation():
     ai = next(i for i in transform_cli_transcript(raw) if i.role == "ai")
     assert ai.text == "문서를 씁니다."
     assert [t.model_dump() for t in ai.trace] == [
-        {"kind": "file_changed", "text": None, "path": "aiplc-docs/audit.md"},
-        {"kind": "status", "text": "Read", "path": None},
+        # 파일 도구는 경로를 `path`로 — 프론트가 "📝 파일 변경: …"을 그린다.
+        {"kind": "file_changed", "text": None, "path": "aiplc-docs/audit.md",
+         "detail": None},
+        # 그 외 도구는 이름 + **무엇을 했는지**. 라이브도 같은 값을 보낸다
+        # (둘 다 tool_trace.tool_detail을 쓴다) — 그것이 이 테스트의 요점이다.
+        {"kind": "status", "text": "Read", "path": None, "detail": "rules.md"},
     ]
+
+
+def test_cli_bash_commands_are_redacted_in_the_restored_trace():
+    """Bash 명령은 자격증명이 나타나는 자리다.
+
+    라이브는 `routes/turns._redacted`가 payload를 훑는다. 복원은 이 함수가 직접
+    통과시켜야 한다 — 한쪽만 하면 새로고침이 리댁션을 우회하는 경로가 된다."""
+    raw = [_cli("assistant", "assistant", [
+        {"type": "tool_use", "id": "t1", "name": "Bash",
+         "input": {"command": "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE ls"}},
+    ])]
+    ai = next(i for i in transform_cli_transcript(raw) if i.role == "ai")
+    detail = ai.trace[0].detail or ""
+    assert "AKIAIOSFODNN7EXAMPLE" not in detail, detail
 
 
 def test_cli_one_turn_is_one_bubble_not_one_per_tool_call():

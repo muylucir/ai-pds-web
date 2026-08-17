@@ -13,6 +13,13 @@ export interface TraceEntry {
   kind: "status" | "file_changed";
   text: string | null;
   path: string | null;
+  // 도구가 **무엇을 했는지** — 읽은 파일, 돌린 명령, 검색 패턴.
+  //
+  // 라이브에서는 status 이벤트의 payload(`{"detail": "…"}`)로 오고, 복원에서는
+  // HistoryTraceEntry의 필드로 온다. 값을 만드는 곳은 백엔드 한 곳이다
+  // (backend/pathfinder/tool_trace.py) — 라이브와 복원이 갈라지면 새로고침 전후로
+  // 화면이 달라진다. 아이콘과 구분자만 여기서 붙인다.
+  detail?: string | null;
 }
 export interface UserItem {
   id: string;

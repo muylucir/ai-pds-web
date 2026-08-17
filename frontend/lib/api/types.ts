@@ -180,6 +180,9 @@ export interface HistoryTraceEntry {
   kind: "status" | "file_changed";
   text: string | null;
   path: string | null;
+  // 도구가 무엇을 했는지. 라이브에서는 status payload로 오는 것과 **같은 값**이다
+  // (backend/pathfinder/tool_trace.py가 양쪽을 만든다).
+  detail?: string | null;
 }
 
 export interface HistoryItem {

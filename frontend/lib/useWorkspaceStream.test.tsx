@@ -308,8 +308,11 @@ it("restores tool traces onto AI history items", async () => {
   expect(ai.role).toBe("ai");
   if (ai.role === "ai") {
     expect(ai.trace).toEqual([
-      { kind: "status", text: "file_read", path: null },
-      { kind: "file_changed", text: null, path: "aiplc-docs/audit.md" },
+      // detail은 라이브(status payload)와 복원(HistoryTraceEntry 필드)이 같은
+      // shape으로 수렴한다는 요점이다 — 값을 만드는 곳은 백엔드 한 곳이다
+      // (backend/pathfinder/tool_trace.py).
+      { kind: "status", text: "file_read", path: null, detail: null },
+      { kind: "file_changed", text: null, path: "aiplc-docs/audit.md", detail: null },
     ]);
   }
 });
@@ -437,7 +440,8 @@ describe("useWorkspaceStream — 중단 이벤트 라우팅 (분기 순서 고�
     expect(ai).toBeDefined();
     if (ai && ai.role === "ai") {
       expect(ai.interrupted).toBe(true);
-      expect(ai.trace).toEqual([{ kind: "status", text: "file_read", path: null }]);
+      expect(ai.trace).toEqual([
+        { kind: "status", text: "file_read", path: null, detail: null }]);
     }
   });
 
@@ -460,7 +464,8 @@ describe("useWorkspaceStream — 중단 이벤트 라우팅 (분기 순서 고�
     expect(ai).toBeDefined();
     if (ai && ai.role === "ai") {
       expect(ai.interrupted).toBeFalsy();
-      expect(ai.trace).toEqual([{ kind: "status", text: "중단됨", path: null }]);
+      expect(ai.trace).toEqual([
+        { kind: "status", text: "중단됨", path: null, detail: null }]);
     }
   });
 });

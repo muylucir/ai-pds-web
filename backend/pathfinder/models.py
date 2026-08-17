@@ -66,6 +66,9 @@ class HistoryTraceEntry(BaseModel):
     kind: Literal["status", "file_changed"]
     text: str | None = None
     path: str | None = None
+    #: 도구가 **무엇을 했는지**(읽은 파일, 돌린 명령…). 라이브에서는 status 이벤트의
+    #: payload로 오고 여기서는 필드다 — 값을 만드는 곳은 한 곳이다(tool_trace).
+    detail: str | None = None
 
 
 class HistoryItem(BaseModel):
