@@ -192,6 +192,26 @@ def file_questions_stop(language: str, path: str) -> str:
             f"태그에 기록되니, 다음 턴에 파일을 다시 읽고 이어가세요.")
 
 
+def file_answers_recorded(language: str, path: str) -> str:
+    """질문 파일에 답변이 기록된 뒤 에이전트를 다시 부르는 턴의 텍스트.
+
+    `file_questions_stop`이 끝낸 턴을 이어받는다. 파킹된 future로 같은 턴을
+    재개하는 것이 아니라 **새 턴**이므로, 어디로 돌아가야 하는지를 이 문장이
+    전부 말해 줘야 한다 — 그래서 파일을 지목한다(질문 파일이 여러 개인 것이
+    정상이다; 실측한 한 프로젝트에 9개였다).
+
+    사용자 말풍선으로 남는 대화 텍스트다 — UI 언어가 아니라 프로젝트 언어를
+    따른다(`answer_first`가 같은 판단을 기록해 뒀다).
+    """
+    if _lang(language) == "en":
+        return (f"I answered the questions. My answers are now in the "
+                f"`[Answer]:` tags of `{path}` — read the file and continue from "
+                f"where you stopped. Do not ask them again.")
+    return (f"질문에 답했습니다. 답변은 `{path}`의 `[Answer]:` 태그에 들어 "
+            f"있으니, 파일을 읽고 멈춘 지점부터 이어가 주세요. 다시 묻지 "
+            f"마세요.")
+
+
 def write_outside_docs(language: str, path: str) -> str:
     """`aiplc-docs/` 밖 파일 쓰기를 PreToolUse 훅이 거부할 때 모델이 읽는 이유.
 

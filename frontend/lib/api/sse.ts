@@ -136,6 +136,31 @@ export function streamEvents(pid: string, text: string, handlers: StreamHandlers
   );
 }
 
+// 질문 파일에서 온 라운드의 답변 제출.
+//
+// streamAnswers와 무엇이 다른가: 저쪽은 파킹된 `can_use_tool` future를 깨워 **같은
+// 턴**을 이어가므로 `/answers/stream`으로 연다. 이 라운드에는 그 future가 없다 —
+// PostToolUse 훅이 질문 파일을 보고 턴을 이미 끝냈다. 그래서 백엔드가 답변을 파일에
+// 쓰고 **새 턴**의 핸들을 주고, 그 핸들은 보통 턴과 똑같이 `/events`로 연다.
+//
+// 이어갈 턴의 문장은 백엔드가 만든다(agent/prompts.py의 file_answers_recorded):
+// 에이전트가 읽는 텍스트는 UI 언어가 아니라 프로젝트 언어를 따라야 한다.
+export function streamFileAnswers(
+  pid: string,
+  file: string,
+  answers: Record<string, string>,
+  handlers: StreamHandlers,
+): () => void {
+  const p = encodeURIComponent(pid);
+  const path = file.split("/").map(encodeURIComponent).join("/");
+  return openViaHandle(
+    `/projects/${p}/questions/${path}/answers`,
+    { answers },
+    (turnId) => `${API_BASE_URL}/projects/${p}/events?turn=${encodeURIComponent(turnId)}`,
+    handlers,
+  );
+}
+
 // The answer-submission twin of streamEvents. Answers ride in the body for the
 // same reason: a long free-text answer hits the same URL length ceiling.
 export function streamAnswers(

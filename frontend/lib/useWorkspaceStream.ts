@@ -2,7 +2,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
-import { streamEvents, streamAnswers } from "@/lib/api/sse";
+import { streamEvents, streamAnswers, streamFileAnswers } from "@/lib/api/sse";
 import { getPending, getHistory, interruptTurn } from "@/lib/api/client";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
@@ -300,6 +300,9 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       const summary = pendingQuestions
         ? answerSummary(pendingQuestions.questions, answers, t)
         : t("chat.answersSubmitted");
+      // 어느 경로로 보낼지는 **지금** 정한다 — 아래 setPendingQuestions(null)이
+      // 판별자를 없애기 때문이다.
+      const file = pendingQuestions?.file;
       setPendingQuestions(null);
 
       const aiId = nextId();
@@ -308,7 +311,13 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         { id: nextId(), role: "user", text: summary },
         { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
       ]);
-      runTurn((handlers) => streamAnswers(projectId, answers, handlers), aiId);
+      runTurn(
+        (handlers) =>
+          file
+            ? streamFileAnswers(projectId, file, answers, handlers)
+            : streamAnswers(projectId, answers, handlers),
+        aiId,
+      );
     },
     [projectId, runTurn, pendingQuestions, t],
   );

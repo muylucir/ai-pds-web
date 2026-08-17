@@ -336,3 +336,41 @@ describe("중복 Other 방어 (regression)", () => {
     expect(onChange).toHaveBeenCalledWith("B");
   });
 });
+
+// ---- 문항 앞의 설명 산문(context) ----
+// 질문 파일에서 온 라운드에만 있다. AskUserQuestion 페이로드에는 이 필드가 없어서
+// 사용자는 "왜 이걸 묻는지"를 못 보고 답했다 — 2026-08-17 실측한 확인 게이트 질문은
+// "**위에 정리한** 페인 포인트 5건이 정확합니까?"인데 그 "위에 정리한" 표가 파서에서
+// 사라져 답할 수 없는 질문으로 화면에 떴다.
+
+const CONTEXT_Q: Question = {
+  number: 1,
+  category: "확인 대상 요약",
+  text: "위에 정리한 내용이 정확합니까?",
+  context: "| # | 페인 포인트 |\n|---|---|\n| 1 | 반복 삭감 |\n| 2 | 사일로 |",
+  answer: null,
+  options: [{ letter: "A", text: "정확하다", is_other: false, recommended: false }],
+};
+
+describe("QuestionCard — context", () => {
+  it("표가 표로 렌더된다 (평문이면 답할 수 없는 질문이 된다)", () => {
+    render(<QuestionCard question={CONTEXT_Q} value="" onChange={() => {}} />);
+    // 마크다운으로 렌더 — 줄바꿈이 살아 있어야 표가 성립한다.
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByText("반복 삭감")).toBeInTheDocument();
+    expect(screen.getByText("사일로")).toBeInTheDocument();
+  });
+
+  it("context가 없으면 아무것도 그리지 않는다", () => {
+    render(<QuestionCard question={MULTI_Q} value="" onChange={() => {}} />);
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("공백뿐인 context는 빈 블록을 남기지 않는다", () => {
+    render(
+      <QuestionCard question={{ ...CONTEXT_Q, context: "   \n\n  " }} value=""
+                    onChange={() => {}} />,
+    );
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+});

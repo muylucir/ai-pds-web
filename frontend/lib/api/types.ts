@@ -89,8 +89,17 @@ export interface TurnResult {
 // Structured payload shapes carried as a JSON string in AgentEvent.payload for
 // the "questions" / "stage" / "document" kinds (Task 1's AgentEvent extension).
 export interface QuestionsPayload {
+  // 파킹된 턴의 식별자. 파일에서 온 라운드는 빈 문자열이다 — 그때는 이어갈 턴이
+  // 없고 답변이 파일로 간다.
   interrupt_id: string;
   questions: QuestionFile;
+  // 설정되면 이 라운드는 **질문 파일에서 그대로** 왔다는 뜻이고, 그 값이 워크스페이스
+  // 상대 경로다. 답변은 파킹된 턴이 아니라 그 파일로 제출한다
+  // (backend routes/answers.py의 submit_file_answers).
+  //
+  // 이것이 판별자다. `interrupt_id === ""`로 판단하지 않는 이유: 빈 문자열은
+  // "값이 없다"와 "파일에서 왔다"를 구별하지 못한다.
+  file?: string;
 }
 
 // build_complete 이벤트의 payload. remaining은 옵셔널이 아니다 — 백엔드가

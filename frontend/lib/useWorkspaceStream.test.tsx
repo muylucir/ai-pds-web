@@ -41,8 +41,37 @@ const QUESTIONS_PAYLOAD = JSON.stringify({
   },
 });
 
-function drive(events: AgentEvent[], impl: "streamEvents" | "streamAnswers") {
-  vi.mocked(sse[impl]).mockImplementation((_pid: any, _arg: any, handlers: any) => {
+// 질문 파일에서 온 라운드. `file`이 판별자이고 `interrupt_id`는 빈 문자열이다 —
+// 파킹된 턴이 없으므로 답변이 그 파일로 간다(backend routes/answers.py).
+const FILE_QUESTIONS_PAYLOAD = JSON.stringify({
+  interrupt_id: "",
+  file: "aiplc-docs/discovery/envision/pain-point-questions.md",
+  questions: {
+    name: "pain-point-questions.md",
+    preamble: null,
+    parse_ok: true,
+    raw_markdown: null,
+    questions: [
+      {
+        number: 3,
+        category: null,
+        text: "어느 쪽입니까?",
+        context: "| # | 항목 |\n|---|---|\n| 1 | 반복 삭감 |",
+        answer: null,
+        options: [{ letter: "A", text: "왼쪽", is_other: false, recommended: false }],
+      },
+    ],
+  },
+});
+
+function drive(
+  events: AgentEvent[],
+  impl: "streamEvents" | "streamAnswers" | "streamFileAnswers",
+) {
+  // handlers는 **마지막** 인자다 — streamFileAnswers는 file을 하나 더 받아
+  // 4인자다. 위치를 3번으로 박으면 그 함수에서는 answers를 handlers로 읽는다.
+  vi.mocked(sse[impl]).mockImplementation((...args: any[]) => {
+    const handlers = args[args.length - 1];
     for (const ev of events) handlers.onEvent(ev);
     handlers.onDone();
     return () => {};
@@ -101,6 +130,32 @@ describe("useWorkspaceStream", () => {
     expect(vi.mocked(sse.streamAnswers).mock.calls[0][1]).toEqual({ "1": "A" });
     expect(result.current.pendingQuestions).toBeNull();
     expect(result.current.lastDocument?.version).toBe("v1");
+  });
+
+  it("a file-sourced round submits to the file, not to the parked turn", async () => {
+    // 파킹된 can_use_tool future가 없는 라운드다 — PostToolUse 훅이 턴을 이미
+    // 끝냈으므로 `/answers`(같은 턴 재개)로 보내면 400이 된다.
+    drive(
+      [
+        { kind: "questions", text: null, path: null, payload: FILE_QUESTIONS_PAYLOAD },
+        { kind: "done", text: null, path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("시작"));
+    expect(result.current.pendingQuestions?.file).toBe(
+      "aiplc-docs/discovery/envision/pain-point-questions.md");
+
+    drive([{ kind: "done", text: null, path: null, payload: null }], "streamFileAnswers");
+    act(() => result.current.submitAnswers({ "3": "A" }));
+
+    expect(vi.mocked(sse.streamAnswers)).not.toHaveBeenCalled();
+    const call = vi.mocked(sse.streamFileAnswers).mock.calls[0];
+    expect(call[1]).toBe("aiplc-docs/discovery/envision/pain-point-questions.md");
+    expect(call[2]).toEqual({ "3": "A" });
+    expect(result.current.pendingQuestions).toBeNull();
   });
 
   it("malformed payload does not crash the stream (fallback: chat keeps going)", async () => {

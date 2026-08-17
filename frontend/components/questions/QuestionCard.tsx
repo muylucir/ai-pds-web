@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import type { Question } from "@/lib/api/types";
+import { Markdown } from "@/components/Markdown";
 import { useT } from "@/lib/i18n/provider";
 
 // "B: 부연 설명" 값을 letter와 note로 분해한다. 첫 ": " 앞 토큰이 알려진
@@ -143,6 +144,17 @@ export function QuestionCard({
           </div>
         </div>
       </div>
+      {/* 문항 앞의 설명 산문 — "왜 이걸 묻는가". 질문 파일에서 온 라운드에만
+          있다(AskUserQuestion 페이로드에는 이 필드가 없다).
+
+          마크다운으로 렌더하는 이유: 표가 들어온다. 실측한 확인 게이트 질문은
+          "**위에 정리한** 페인 포인트 5건이 정확합니까?"이고 그 전제가 5행 표다 —
+          평문으로 뿌리면 답할 수 없는 질문이 된다. */}
+      {question.context?.trim() && (
+        <div className="px-6 pt-4 text-sm text-slate-600 border-b border-slate-100 pb-4">
+          <Markdown text={question.context} />
+        </div>
+      )}
       <div className="p-6 space-y-3">
         {options.map((opt) => {
           if (opt.is_other) {
