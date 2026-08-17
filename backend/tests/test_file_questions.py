@@ -337,3 +337,29 @@ async def test_other_tools_are_unaffected(tmp_path):
     d, _ = _driver(tmp_path)
     result = await d._on_can_use_tool("Write", {"file_path": "x.md"}, _ctx())
     assert type(result).__name__ == "PermissionResultAllow"
+
+
+@pytest.mark.asyncio
+async def test_the_question_file_is_in_s3_before_the_card_is_advertised(tmp_path):
+    """훅이 파일을 **직접** S3에 올린다 — 턴 종료 sync를 기다리지 않는다.
+
+    2026-08-17 실측한 실패: 실제 턴에서 훅이 발동해 카드가 떴는데
+    `GET /pending`은 `file=None`을, 답변 제출은 404를 돌려줬다. 훅은 로컬 파일을
+    읽고 마커만 S3에 쓰는데, 질문 파일 자체는 러너가 **턴이 끝난 뒤** 올리기
+    때문이다(runner의 done/error sync). 그 사이가 창이다:
+
+      - `pending()`은 마커가 가리키는 파일을 S3에서 못 찾아 None으로 떨어진다
+        (새로고침하면 카드가 사라진다)
+      - 답변 제출은 `runner.read_file`이 S3를 읽으므로 404가 된다
+
+    카드를 광고하는 순간 그 파일은 이미 정본(S3)에 있어야 한다. 내용을 이미
+    손에 들고 있으므로 여기서 올리는 것이 가장 싸고 확실하다 — 한 라운드에
+    S3 put 하나.
+    """
+    d, ws = _driver(tmp_path)
+    await _post(d, _write(ws, REL, QUESTION_MD))
+    assert await d._s3.get(REL) == QUESTION_MD
+    # 그리고 마커보다 먼저 있어야 한다 — 마커가 없는 파일을 가리키는 상태가
+    # 되면 위의 두 실패가 그대로 재현된다.
+    from pathfinder.agent.pending_store import load_pending_file
+    assert await load_pending_file(d._s3) == REL

@@ -815,8 +815,11 @@ class ClaudeDriver:
             "permissionDecisionReason": reason,
         }}
 
-    def _file_question_round(self, rel: str) -> Any | None:
-        """방금 써진 `rel`이 **물어야 할 질문 라운드**면 파싱 결과를 돌려준다.
+    def _file_question_round(self, rel: str) -> tuple[Any, str] | None:
+        """방금 써진 `rel`이 **물어야 할 질문 라운드**면 `(파싱 결과, 원문)`을 준다.
+
+        원문을 함께 주는 이유: 호출부가 그 파일을 S3에 올려야 하고(카드를 광고하기
+        전에 정본에 있어야 한다), 같은 파일을 두 번 읽을 이유가 없다.
 
         네 가지를 모두 만족해야 한다:
 
@@ -854,7 +857,7 @@ class ClaudeDriver:
         if self._asked_question_sets.get(rel) == unanswered:
             return None
         self._asked_question_sets[rel] = unanswered
-        return qfile
+        return qfile, md
 
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
         name = input_data.get("tool_name", "")
@@ -871,23 +874,36 @@ class ClaudeDriver:
         self._queue.append(AgentEvent(kind="file_changed", path=rel))
         if not _file_questions_enabled():
             return {}
-        qfile = self._file_question_round(rel)
-        if qfile is None:
+        round_ = self._file_question_round(rel)
+        if round_ is None:
             return {}
+        qfile, md = round_
         # `interrupt_id`는 빈 문자열이다: 파킹된 can_use_tool future가 없으므로
         # 되돌아올 곳이 턴이 아니라 **파일**이다. 프론트는 `file`로 그 차이를
         # 판별해 답변을 PUT /projects/{pid}/questions/{name}으로 보낸다.
         self._queue.append(AgentEvent(kind="questions", payload=json.dumps(
             {"interrupt_id": "", "file": rel, "questions": qfile},
             ensure_ascii=False, default=lambda o: o.model_dump())))
-        # 새로고침·재시작 복원의 근거. 경로 하나만 남기고 내용은 매번 파일에서
-        # 다시 읽는다(save_pending_file의 docstring에 그 셋을 적었다).
+        # **파일을 먼저 S3에 올린다 — 턴 종료 sync를 기다리지 않는다.**
+        #
+        # 2026-08-17 실측한 실패: 실제 턴에서 카드는 떴는데 `GET /pending`이
+        # `file=None`을, 답변 제출이 404를 돌려줬다. 훅은 로컬 파일을 읽는데 그
+        # 파일이 S3(정본)에 올라가는 것은 러너의 done/error sync 시점이다. 그 사이가
+        # 창이고, 그 창에서 `pending()`은 마커가 가리키는 파일을 못 찾고 답변 제출은
+        # `runner.read_file`이 S3를 읽으므로 404가 된다.
+        #
+        # 카드를 광고하는 순간 그 파일은 이미 정본에 있어야 한다. 내용을 이미 손에
+        # 들고 있으므로 여기서 올리는 것이 가장 싸고 확실하다(라운드당 put 하나).
+        # 러너의 sync가 나중에 같은 내용을 다시 올리는 것은 무해하다.
         try:
+            await self._s3.put(rel, md)
+            # 마커는 파일 **다음**이다 — 순서가 뒤집히면 위의 두 실패가 그대로
+            # 재현되는 창이 남는다.
             await save_pending_file(self._s3, file=rel)
         except Exception:
-            # 복원 편의가 실패해도 이 턴의 질문은 이미 큐에 있다 — 라이브 카드는
-            # 뜨고 새로고침만 못 살아난다. 턴을 죽이는 것이 더 나쁘다.
-            _log.exception("recording the open question file failed")
+            # 라이브 카드는 이미 큐에 있다 — 실패해도 이 턴의 질문은 화면에 뜨고,
+            # 새로고침 복원과 답변 제출만 못 된다. 턴을 죽이는 것이 더 나쁘다.
+            _log.exception("publishing the open question file failed")
         # 훅은 사람을 기다리지 않는다 — 즉시 턴만 멈춘다. 실측(2026-08-17):
         # `continue_: False`는 `terminal_reason='hook_stopped'` + `is_error=False`로
         # 끝나므로 `_translate`가 이미 정상 `done`으로 처리하고, 같은 메시지에
