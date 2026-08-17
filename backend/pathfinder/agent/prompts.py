@@ -168,6 +168,30 @@ def answer_first(language: str) -> str:
             "이용하세요.")
 
 
+def file_questions_stop(language: str, path: str) -> str:
+    """질문 파일을 쓰는 순간 턴을 멈출 때 모델이 읽는 이유.
+
+    PostToolUse 훅의 `stopReason`으로 간다. 모델 컨텍스트에 들어가므로 프로젝트
+    언어를 따른다.
+
+    **다시 묻지 말라고 명시하는 것이 요점이다.** 상류 룰은 질문을 만든 뒤 사용자에게
+    물으라고 지시하는데, 이 경로에서는 Pathfinder가 파일을 그대로 화면에 띄운다.
+    그 사실을 말해 주지 않으면 다음 턴에 모델이 AskUserQuestion으로 같은 질문을
+    다시 만들고 — 그것이 2026-08-17에 문항 79%를 훼손한 바로 그 재생성이다.
+    """
+    if _lang(language) == "en":
+        return (f"Stopping here: Pathfinder is showing the questions in "
+                f"`{path}` to the user, read from the file exactly as you wrote "
+                f"them. Do NOT ask them again with AskUserQuestion and do not "
+                f"restate them in chat. The user's answers will be written into "
+                f"the file's `[Answer]:` tags; read the file again on the next "
+                f"turn and continue from there.")
+    return (f"여기서 멈춥니다: `{path}`의 질문을 Pathfinder가 **파일에서 그대로 "
+            f"읽어** 사용자 화면에 띄웁니다. AskUserQuestion으로 다시 묻지 말고 "
+            f"채팅에 옮겨 적지도 마세요. 사용자의 답변은 그 파일의 `[Answer]:` "
+            f"태그에 기록되니, 다음 턴에 파일을 다시 읽고 이어가세요.")
+
+
 def write_outside_docs(language: str, path: str) -> str:
     """`aiplc-docs/` 밖 파일 쓰기를 PreToolUse 훅이 거부할 때 모델이 읽는 이유.
 

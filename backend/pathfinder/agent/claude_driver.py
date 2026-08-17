@@ -131,6 +131,21 @@ INTERRUPTED_MARKER = "interrupted"
 # the turn with no operator to answer the CLI-level prompt.
 DEFAULT_PERMISSION_MODE = "bypassPermissions"
 
+#: 불리언 env의 해석. cli_settings.py·routes/proto_public.py의 _TRUTHY와 같은 규율.
+_TRUTHY = {"1", "true", "yes", "on"}
+
+#: 질문 파일을 PostToolUse 훅에서 **파일 그대로** 물을지.
+#:
+#: 기본 꺼짐이다. 켜면 질문 파일을 쓴 턴이 그 자리에서 멈추는데, 답변을 파일로
+#: 되보내는 프론트 경로가 아직 없다 — 그 상태로 워크숍에서 켜지면 턴이 멈춘 뒤
+#: 아무도 답변을 보낼 수 없다. 제출 경로가 붙은 뒤 기본값을 뒤집는다.
+FILE_QUESTIONS_ENV = "PATHFINDER_FILE_QUESTIONS"
+
+
+def _file_questions_enabled() -> bool:
+    import os
+    return os.environ.get(FILE_QUESTIONS_ENV, "").strip().lower() in _TRUTHY
+
 _MCP_SERVER_NAME = "pathfinder"
 
 
@@ -594,6 +609,11 @@ class ClaudeDriver:
         self._pending_payload: str | None = None
         self._pending_iid: str | None = None
         self._last_status: str | None = None
+        # rel path → 그 파일에서 **이미 물어본 미답 문항 집합**. 같은 집합을 두 번
+        # 묻지 않는 가드다(_file_question_round 참조). 드라이버 인스턴스가 프로젝트
+        # 수명을 살기 때문에 턴을 넘어 유지된다 — 백엔드 재시작 시 비지만, 그때는
+        # 답변이 이미 파일에 있으므로 "미답 문항 없음" 조건이 재질문을 막는다.
+        self._asked_question_sets: dict[str, tuple[str, ...]] = {}
         self._current_session_id: str | None = None
         # The task draining the current turn's receive_response(). Outlives the
         # `run()` generator on purpose when a question parks the turn -- that is
@@ -793,17 +813,80 @@ class ClaudeDriver:
             "permissionDecisionReason": reason,
         }}
 
+    def _file_question_round(self, rel: str) -> Any | None:
+        """방금 써진 `rel`이 **물어야 할 질문 라운드**면 파싱 결과를 돌려준다.
+
+        네 가지를 모두 만족해야 한다:
+
+        1. **내용으로 판단한다 — 파일 이름이 아니라 `[Answer]:` 슬롯이 있는가.**
+           상류는 자기 명명규칙(`{phase}-questions.md`)을 어긴 전례가 있다 —
+           `design-context.md`에도 질문을 넣었다(question_file_answers.py 헤더).
+        2. `parse_ok`. 파싱이 안 되면 **조용히 지나간다.** 상류 포맷은 안정적이지
+           않으므로(2026-08-17: 8파일 중 1개가 파서를 벗어났다) 여기서 막으면
+           질문이 화면에 아예 뜨지 않는다 — 차단이 아니라 열화여야 한다.
+        3. 답이 비어 있는 문항이 하나라도 있어야 한다. 에이전트가 답변을 되읽고
+           파일을 다시 쓰는 것은 정상 동작이고, 그때 다시 물으면 안 된다.
+        4. **같은 미답 문항 집합을 두 번 묻지 않는다.** 가드를 파일 단위가 아니라
+           미답 문항 집합으로 두는 이유: 답변 뒤 문항이 추가되는 경우
+           (`### Clarification Question 2`)는 물어야 한다.
+
+        디스크에서 읽는다 — `Edit`/`MultiEdit`의 tool_input에는 전체 내용이 없고,
+        PostToolUse는 쓰기가 끝난 뒤에 돈다.
+        """
+        from pathfinder.parsers.questions import parse_question_file
+        try:
+            md = (Path(self._workspace) / rel).read_text(encoding="utf-8")
+        except OSError:
+            return None
+        if "[Answer]:" not in md:
+            return None
+        qfile = parse_question_file(rel, md)
+        if not qfile.parse_ok:
+            _log.info("file questions: %s has [Answer] tags but does not parse "
+                      "— leaving it to the AskUserQuestion path", rel)
+            return None
+        unanswered = tuple(q.ask or q.text for q in qfile.questions
+                           if not (q.answer or "").strip())
+        if not unanswered:
+            return None
+        if self._asked_question_sets.get(rel) == unanswered:
+            return None
+        self._asked_question_sets[rel] = unanswered
+        return qfile
+
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
         name = input_data.get("tool_name", "")
-        if name in _FILE_TOOLS:
-            fp = (input_data.get("tool_input") or {}).get("file_path", "")
-            rel = _rel(fp, self._workspace)
-            if rel is None:
-                self._queue.append(AgentEvent(
-                    kind="status", text="file outside workspace ignored"))
-            else:
-                self._queue.append(AgentEvent(kind="file_changed", path=rel))
-        return {}
+        if name not in _FILE_TOOLS:
+            return {}
+        fp = (input_data.get("tool_input") or {}).get("file_path", "")
+        rel = _rel(fp, self._workspace)
+        if rel is None:
+            self._queue.append(AgentEvent(
+                kind="status", text="file outside workspace ignored"))
+            return {}
+        # 질문 파일도 산출물이다 — 문서 패널이 이 이벤트로 갱신되므로 아래 분기와
+        # 무관하게 먼저 흘린다.
+        self._queue.append(AgentEvent(kind="file_changed", path=rel))
+        if not _file_questions_enabled():
+            return {}
+        qfile = self._file_question_round(rel)
+        if qfile is None:
+            return {}
+        # `interrupt_id`는 빈 문자열이다: 파킹된 can_use_tool future가 없으므로
+        # 되돌아올 곳이 턴이 아니라 **파일**이다. 프론트는 `file`로 그 차이를
+        # 판별해 답변을 PUT /projects/{pid}/questions/{name}으로 보낸다.
+        self._queue.append(AgentEvent(kind="questions", payload=json.dumps(
+            {"interrupt_id": "", "file": rel, "questions": qfile},
+            ensure_ascii=False, default=lambda o: o.model_dump())))
+        # 훅은 사람을 기다리지 않는다 — 즉시 턴만 멈춘다. 실측(2026-08-17):
+        # `continue_: False`는 `terminal_reason='hook_stopped'` + `is_error=False`로
+        # 끝나므로 `_translate`가 이미 정상 `done`으로 처리하고, 같은 메시지에
+        # 배치로 온 뒤 도구 호출들은 실행되지 않는다(그것이 의도다 — 모델이
+        # AskUserQuestion으로 같은 질문을 다시 만들지 못한다).
+        _log.info("file questions: asking %d question(s) from %s",
+                  len(qfile.questions), rel)
+        return {"continue_": False,
+                "stopReason": prompts.file_questions_stop(self._language, rel)}
 
     def _answer_to_sdk(self, value: str, sdk_options: list[dict]) -> str:
         """QuestionForm answer value → SDK label(s). Accepted forms:
