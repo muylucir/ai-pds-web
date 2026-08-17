@@ -54,6 +54,14 @@ def _parse(name: str, markdown: str) -> QuestionFile:
     current_category: str | None = None
     preamble_lines: list[str] = []
     seen_first_header = False
+    # 카테고리 헤더 뒤, 문항 헤더 앞의 최상위 산문. 다음 문항의 `context`가 된다.
+    # 카테고리가 바뀌면 버려진다 — 그 산문은 이전 카테고리의 것이므로 다른
+    # 카테고리의 문항에 붙이면 엉뚱한 설명이 달린다.
+    #
+    # 문항 블록 **안**은 아래 내부 루프가 다음 헤더까지 전부 소비하므로, 최상위
+    # 산문은 카테고리 헤더 직후에만 생긴다. 그래서 이 버퍼는 대부분의 파일에서
+    # 끝까지 비어 있고 기존 파싱 결과가 바뀌지 않는다.
+    context_blocks: list[list[str]] = [[]]
 
     i = 0
     n = len(lines)
@@ -65,12 +73,19 @@ def _parse(name: str, markdown: str) -> QuestionFile:
         if cm and not qm and line.startswith("## "):
             current_category = cm.group(1).strip()
             seen_first_header = True
+            context_blocks = [[]]
             i += 1
             continue
         if qm:
             seen_first_header = True
             number = int(qm.group(1))
             i += 1
+            # 블록 안은 `\n`으로 잇는다 — `text`/`ask`가 `" "`로 잇는 것과 다르다.
+            # 그쪽은 유사도 비교에 쓰이지만 context는 **마크다운으로 렌더**되므로
+            # 줄 구조가 의미를 갖는다. 실측: 확인 게이트 질문의 전제가 5행 표인데
+            # 공백으로 이으면 `| # | … | |---|---| | 1 | …`이 되어 표가 아니게 된다.
+            context = "\n\n".join("\n".join(b) for b in context_blocks if b).strip()
+            context_blocks = [[]]
             # 문단 단위로 모은다. 마지막 문단이 실제 질문 문장이고(models.Question.ask
             # 참조) 그 앞은 메타·배경이다. 빈 줄이 문단 경계다.
             text_blocks: list[list[str]] = [[]]
@@ -105,11 +120,23 @@ def _parse(name: str, markdown: str) -> QuestionFile:
                 number=number, category=current_category,
                 text=" ".join(l for b in blocks for l in b).strip(),
                 ask=" ".join(blocks[-1]).strip() if blocks else "",
+                context=context,
                 options=options, answer=answer,
             ))
             continue
         if not seen_first_header and line.strip():
             preamble_lines.append(line.rstrip())
+        elif seen_first_header:
+            # 첫 헤더 뒤의 최상위 산문 — 다음 문항의 context로 모은다. 빈 줄이
+            # 문단 경계다(문항 본문과 같은 규칙).
+            #
+            # `rstrip`만 한다: 들여쓰기가 마크다운의 의미다(중첩 목록, 코드 블록).
+            # preamble_lines도 같은 이유로 rstrip을 쓴다.
+            kept = line.rstrip()
+            if kept.strip() and kept.strip() != "---":
+                context_blocks[-1].append(kept)
+            elif not kept.strip() and context_blocks[-1]:
+                context_blocks.append([])
         i += 1
 
     if not questions:

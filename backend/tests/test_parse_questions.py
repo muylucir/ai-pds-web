@@ -196,6 +196,117 @@ B) 나중
     assert [(q.number, q.answer) for q in qf.questions] == [(1, "B"), (2, "A")]
 
 
+# ---- Question.context — 카테고리 헤더와 문항 헤더 사이의 산문 ----
+# 2026-08-17 test-wf: `pain-point-clarification-questions.md`가 1,350자인데 파서가
+# 붙잡은 것은 712자였다. 사라진 ~470자는 `## 모호성 1: …`(카테고리)와
+# `### Clarification Question 1`(문항) **사이의 설명 문단들**이다. preamble은 첫
+# 헤더 뒤를 받지 않고 문항 본문은 헤더 뒤부터 시작하므로 어느 쪽에도 안 들어갔다.
+#
+# 그런데 그 산문이 **"왜 이걸 묻는가"**다. 상류가 명확화 질문 템플릿
+# (`question-format-guide.md`의 "Creating Clarification Questions")에서 의도한
+# 구조이고, 질문 파일을 결정론적으로 렌더할 때 사용자가 읽어야 하는 내용이다.
+#
+# `text`를 늘리지 않고 별 필드로 두는 이유: `text`는 이미 ~200자여서 0.3721
+# 사고를 낸 값이고(위 절), 더 늘리면 그 비교가 더 나빠진다. `ask`/`text` 계약은
+# 그대로 두고 새 필드만 얹는다.
+
+def test_prose_between_a_category_and_a_question_becomes_context():
+    md = """# 명확화 질문
+
+서두 문단.
+
+## 모호성 1: 두 답변이 다른 문제를 겨냥함
+
+Question 2에서는 C를 고르셨습니다.
+
+그런데 Question 5에서는 D를 고르셨습니다. 모순은 아니지만 확인이 필요합니다.
+
+### Clarification Question 1
+어느 쪽입니까?
+
+A) 왼쪽
+B) 오른쪽
+
+[Answer]:
+"""
+    qf = parse_question_file("pain-point-clarification-questions.md", md)
+    assert qf.parse_ok
+    q = qf.questions[0]
+    assert q.category == "모호성 1: 두 답변이 다른 문제를 겨냥함"
+    # 두 문단이 모두 잡히고, 문단 경계가 남는다.
+    assert "Question 2에서는 C를 고르셨습니다." in q.context
+    assert "모순은 아니지만 확인이 필요합니다." in q.context
+    assert "\n\n" in q.context, "문단 경계가 사라지면 렌더가 한 덩어리가 된다"
+    # ask/text 계약은 그대로 — 산문이 그쪽으로 새지 않는다.
+    assert q.ask == "어느 쪽입니까?"
+    assert q.text == "어느 쪽입니까?"
+    # 서두는 여전히 preamble이다(첫 헤더 앞).
+    assert "서두 문단." in (qf.preamble or "")
+
+
+def test_context_keeps_line_structure_so_a_table_stays_a_table():
+    """확인 게이트 질문의 전제가 표인 경우가 실제로 있다.
+
+    2026-08-17 test-wf `pain-point-confirmation-questions.md`: 질문이 "**위에
+    정리한** 페인 포인트 5건이 정확합니까?"라서 그 5행 표가 질문의 전제다. 문단
+    안을 공백으로 이으면 `| # | … | |---|---| | 1 | …`이 되어 표가 아니게 된다."""
+    md = """## 확인 대상 요약
+
+| # | 페인 포인트 |
+|---|---|
+| 1 | 반복 삭감 |
+| 2 | 사일로 |
+
+## Question 1
+위에 정리한 내용이 정확합니까?
+
+A) 정확하다
+
+[Answer]:
+"""
+    q = parse_question_file("pain-point-confirmation-questions.md", md).questions[0]
+    lines = q.context.splitlines()
+    assert lines[0].startswith("| # |")
+    assert lines[1].startswith("|---")
+    assert len([l for l in lines if l.startswith("|")]) == 4
+
+
+def test_context_is_empty_when_a_question_follows_its_header_directly():
+    """기존 파일 모양(문항 8개 중 7개)에서는 변화가 없어야 한다."""
+    md = """## Question 1
+질문?
+
+A) 예
+B) 아니오
+
+[Answer]:
+"""
+    q = parse_question_file("x.md", md).questions[0]
+    assert q.context == ""
+
+
+def test_context_does_not_leak_across_categories():
+    """`## Cat A` + 산문 + `## Cat B` + 문항이면 그 산문은 Cat A 것이다.
+
+    문항에 붙이면 엉뚱한 설명이 붙으므로 카테고리 헤더에서 버퍼를 비운다."""
+    md = """## Cat A
+
+A 카테고리에 대한 설명.
+
+## Cat B
+
+### Question 1
+질문?
+
+A) 예
+
+[Answer]:
+"""
+    q = parse_question_file("x.md", md).questions[0]
+    assert q.category == "Cat B"
+    assert "A 카테고리에 대한 설명." not in q.context
+
+
 # ---- Question.ask — 배경 산문과 실제 질문 문장을 나눈다 ----
 # 2026-08-16 keumkang-v5: `design-context.md` Q4의 답변이 기록되지 않았다. 파서가
 # 옵션 앞의 **모든 줄**을 본문으로 잡는데, 그 문항은 메타(`**작성 시각**`) + 배경

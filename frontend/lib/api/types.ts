@@ -22,6 +22,13 @@ export interface Question {
   // Optional — file-parsed questions (raw_markdown fallback path) lack this
   // field entirely; treat missing/undefined as false (single-select radios).
   multi_select?: boolean;
+  // 카테고리 헤더와 문항 헤더 **사이**의 산문 — "왜 이걸 묻는가". `text`가 문항
+  // 헤더 뒤의 본문인 것과 다르다. 마크다운으로 렌더한다(표·목록이 들어온다).
+  //
+  // Optional인 이유는 multi_select와 같다: AskUserQuestion에서 만든 페이로드에는
+  // 이 필드가 없다. 대부분의 파일에서도 빈 문자열이다(문항 헤더 바로 뒤에 질문이
+  // 오는 형태) — 값이 있는 것은 상류의 명확화/확인 게이트 질문 템플릿이다.
+  context?: string;
 }
 
 export interface QuestionFile {

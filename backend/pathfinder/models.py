@@ -20,6 +20,18 @@ class Question(BaseModel):
     #: 비교하면 길이 차이로 유사도가 무너진다 — 2026-08-16 keumkang-v5의
     #: design-context.md Q4가 그렇게 유실됐다(0.3721). 문단이 하나면 text와 같다.
     ask: str = ""
+    #: 카테고리 헤더와 이 문항의 헤더 **사이**에 있던 산문 — "왜 이걸 묻는가".
+    #:
+    #: `text`와 다른 것: `text`는 문항 헤더 *뒤*의 본문이고, 이건 *앞*의 설명이다.
+    #: 상류의 명확화 질문 템플릿(question-format-guide.md의 "Creating Clarification
+    #: Questions")이 그 자리에 모호성의 근거를 쓴다. 2026-08-17 test-wf에서
+    #: `pain-point-clarification-questions.md` 1,350자 중 ~470자가 이 산문이었고
+    #: 파서가 어디에도 담지 않아 사라졌다.
+    #:
+    #: `text`에 합치지 않는 이유는 `ask` 주석의 0.3721 사고와 같다 — `text`를 더
+    #: 늘리면 그 비교가 더 나빠진다. 대부분의 파일에서는 빈 문자열이다(문항 헤더
+    #: 바로 뒤에 질문이 오는 형태).
+    context: str = ""
     options: list[QuestionOption]
     answer: str | None = None
     multi_select: bool = False
