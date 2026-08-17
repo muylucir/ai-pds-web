@@ -133,20 +133,37 @@ INTERRUPTED_MARKER = "interrupted"
 # the turn with no operator to answer the CLI-level prompt.
 DEFAULT_PERMISSION_MODE = "bypassPermissions"
 
-#: 불리언 env의 해석. cli_settings.py·routes/proto_public.py의 _TRUTHY와 같은 규율.
-_TRUTHY = {"1", "true", "yes", "on"}
-
-#: 질문 파일을 PostToolUse 훅에서 **파일 그대로** 물을지.
+#: 질문 파일을 PostToolUse 훅에서 **파일 그대로** 물을지. **기본 켜짐.**
 #:
-#: 기본 꺼짐이다. 켜면 질문 파일을 쓴 턴이 그 자리에서 멈추는데, 답변을 파일로
-#: 되보내는 프론트 경로가 아직 없다 — 그 상태로 워크숍에서 켜지면 턴이 멈춘 뒤
-#: 아무도 답변을 보낼 수 없다. 제출 경로가 붙은 뒤 기본값을 뒤집는다.
+#: 이것이 유일한 질문 경로다 — 켜지면 AskUserQuestion 호출은 거부되고 거부
+#: 메시지가 질문 파일을 쓰라고 돌려보낸다. 둘을 동시에 켜면 같은 질문이 화면에
+#: 두 번 뜬다(에이전트가 파일을 쓰고, 훅이 카드를 띄우고, 이어서 도구까지 부른다).
+#:
+#: **왜 기본이 켜짐인가.** 파일에 쓴 질문을 이 도구의 입력으로 다시 만들면서
+#: 실측 19문항 중 15개(79%)가 훼손됐다 — 한글 문자 치환 11건("푸로토하이프가 …
+#: 어느 쉘입니까?"가 화면에 떴다), 축약으로 답변 유실 4건. 파일을 그대로 읽으면
+#: 그 실패 종류가 사라진다.
+#:
+#: 2026-08-17에 실제 Discovery 턴으로 한 바퀴 돌려 뒤집었다: 훅이 카드를 띄우고
+#: 턴이 멈추고, 답변이 파일에 기록되고, **다음 턴에 모델이 그 답을 읽어 워크플로우를
+#: 이어갔다**(AskUserQuestion을 다시 부르지 않았다). 그 마지막 지점이 유일한
+#: 미검증 항목이었다.
+#:
+#: 탈출로: 이 env를 falsy로 두면 옛 경로로 돌아간다. 인스턴스에서는 user-data가
+#: systemd `Environment=`로 값을 주입하므로 그 파일을 고치면 인스턴스 교체가
+#: 필요하다 — 대신 gitignore된 `backend/.env`를 만들면 `pathfinder-update`가
+#: 되돌리지 않으므로(추적되지 않는 파일) 재배포 없이 끌 수 있다.
 FILE_QUESTIONS_ENV = "PATHFINDER_FILE_QUESTIONS"
+
+#: 불리언 env를 **끄는** 쪽으로 읽을 값. cli_settings.py·routes/proto_public.py의
+#: `_TRUTHY`와 같은 규율의 반대편이다 — 기본이 켜짐인 설정은 "값이 없음"을 켜짐으로
+#: 읽어야 하므로 켜는 목록이 아니라 끄는 목록이 필요하다.
+_FALSY = {"0", "false", "no", "off"}
 
 
 def _file_questions_enabled() -> bool:
     import os
-    return os.environ.get(FILE_QUESTIONS_ENV, "").strip().lower() in _TRUTHY
+    return os.environ.get(FILE_QUESTIONS_ENV, "").strip().lower() not in _FALSY
 
 _MCP_SERVER_NAME = "pathfinder"
 

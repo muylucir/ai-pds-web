@@ -12,6 +12,16 @@ import json
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _legacy_question_path(monkeypatch):
+    """이 계약은 **AskUserQuestion 경로**의 것이다 — `run_answers(interrupt_id, …)`가
+    그 경로의 인터페이스다. 2026-08-17에 기본 질문 경로가 질문 파일로 바뀌면서 이
+    경로는 탈출로가 됐고(claude_driver.FILE_QUESTIONS_ENV), 탈출로가 살아 있어야
+    하므로 이 계약도 살아 있어야 한다. 기본값에 의존하지 않고 명시적으로 끈다.
+    """
+    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
+
 from pathfinder.agent.claude_driver import ClaudeDriver
 from pathfinder.agent.pending_store import PENDING_KEY
 from tests.driver_contract import assert_driver_contract

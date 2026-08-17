@@ -28,6 +28,18 @@ def _cleanup_parked_callbacks():
     cancel_pending_callbacks()
 
 
+@pytest.fixture(autouse=True)
+def _legacy_question_path(monkeypatch):
+    """이 파일은 **AskUserQuestion 경로**를 검증한다 — 그 경로는 2026-08-17에
+    기본값이 뒤집혀 탈출로가 됐다(claude_driver.FILE_QUESTIONS_ENV의 주석).
+
+    탈출로는 살아 있어야 하므로 그 검증도 살아 있어야 한다. 기본값에 의존하지 않고
+    여기서 명시적으로 끄는 이유: 기본값이 바뀌었을 때 이 파일이 "조용히 다른 것을
+    검증하는" 상태가 되지 않게 한다 — 실제로 그렇게 됐고, 그래서 이 픽스처가 생겼다.
+    """
+    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
+
+
 def _driver(tmp_path, scripted, s3=None):
     rules = tmp_path / "rules" / "aws-aiplc-rules"
     rules.mkdir(parents=True)

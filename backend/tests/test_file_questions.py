@@ -55,13 +55,6 @@ X) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)
 """
 
 
-@pytest.fixture(autouse=True)
-def _enable(monkeypatch):
-    """이 경로는 기본 꺼져 있다 — 프론트 제출 경로가 붙기 전까지 켜면 턴이 멈춘
-    뒤 아무도 답변을 보낼 수 없다. 테스트는 명시적으로 켠다."""
-    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "1")
-
-
 def _driver(tmp_path: Path) -> tuple[ClaudeDriver, Path]:
     ws = tmp_path / "ws"
     (ws / "aiplc-docs" / "discovery" / "envision").mkdir(parents=True)
@@ -197,10 +190,27 @@ B) 나중
 
 
 @pytest.mark.asyncio
-async def test_disabled_by_default(tmp_path, monkeypatch):
-    """기본은 꺼짐. 프론트 제출 경로가 붙기 전에 켜지면 턴이 멈춘 뒤 아무도
-    답변을 보낼 수 없다 — 되돌릴 수 있는 상태로 들어간다."""
+async def test_enabled_by_default(tmp_path, monkeypatch):
+    """**기본 켜짐이다.** 실제 Discovery 턴으로 한 바퀴 돌려 확인한 뒤 뒤집었다
+    (2026-08-17): 훅이 질문 파일을 읽어 카드를 띄우고 턴이 멈추고, 답변이 파일에
+    기록되고, 다음 턴에 모델이 그 답을 읽어 워크플로우를 이어갔다 — 그 마지막
+    지점이 유일한 미검증 항목이었다."""
     monkeypatch.delenv("PATHFINDER_FILE_QUESTIONS", raising=False)
+    d, ws = _driver(tmp_path)
+    out = await _post(d, _write(ws, REL, QUESTION_MD))
+    assert out.get("continue_") is False
+    assert len(_questions_events(d)) == 1
+
+
+@pytest.mark.asyncio
+async def test_can_be_switched_off(tmp_path, monkeypatch):
+    """탈출로는 남긴다 — env를 falsy로 두면 옛 AskUserQuestion 경로로 돌아간다.
+
+    인스턴스에서는 user-data가 systemd `Environment=`로 값을 주입하므로 그 파일을
+    고치면 인스턴스 교체가 필요하다. 대신 gitignore된 `backend/.env`를 만들면
+    `pathfinder-update`가 되돌리지 않으므로(추적되지 않는 파일) 재배포 없이 끌 수
+    있다."""
+    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
     d, ws = _driver(tmp_path)
     out = await _post(d, _write(ws, REL, QUESTION_MD))
     assert out == {}
@@ -311,7 +321,7 @@ async def test_ask_user_question_is_denied_when_file_questions_are_on(tmp_path):
 async def test_ask_user_question_still_works_when_file_questions_are_off(
         tmp_path, monkeypatch):
     """스위치가 꺼져 있으면 옛 경로가 그대로다 — 되돌릴 수 있어야 한다."""
-    monkeypatch.delenv("PATHFINDER_FILE_QUESTIONS", raising=False)
+    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
     d, _ = _driver(tmp_path)
     # **직접 await하지 않는다.** 꺼진 경로는 답변을 기다리며 future에 파킹되는 것이
     # 정상 동작이라 await하면 영원히 돌아오지 않는다(실제 SDK도 별도 태스크에서
