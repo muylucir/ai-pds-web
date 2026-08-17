@@ -40,6 +40,37 @@ def test_plan_prompt_carries_every_directive(language):
 
 
 @pytest.mark.parametrize("language", ["ko", "en"])
+def test_plan_prompt_names_the_agentic_stack(language):
+    """agentic 프로토타입의 스택을 프롬프트가 직접 못 박아야 한다.
+
+    상류 룰(`aws-aiplc-rule-details/discovery/prototype-building.md`)은 Strands를
+    요구하면서 `pip install strands-agents ... flask`로 쓰여 있다. 그런데
+    `ProtoHost`는 npm 라이프사이클만 돌리므로(proto/host.py) 파이썬 프로토타입은
+    만들어져도 서빙되지 않는다. 이름을 적어 두지 않으면 에이전트가 스펙에 섞여
+    들어온 파이썬 전제를 따라간다 — 그것이 "Strands prototype creation is
+    broken"의 경로였다.
+
+    프롬프트에 두는 이유: 스킬(shadcn-design)은 UI가 있는 프로토타입에만
+    걸리고, LLM 호출은 UI가 없어도 필요하다. 이 프롬프트가 유일하게 항상
+    읽히는 자리다."""
+    p = _plan(language)
+    assert "@strands-agents/sdk" in p
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_plan_prompt_forbids_sampling_parameters(language):
+    """`temperature` 금지가 두 언어에 다 있어야 한다.
+
+    실측(2026-08-17): `new BedrockModel({ temperature: 0.7 })`은
+    `ModelError: temperature is deprecated for this model`로 실패하는데, 그 값이
+    Strands SDK README의 **예제 그대로**다. 에이전트가 README를 베끼는 것이
+    기본 동작이므로, 금지를 프롬프트에 두지 않으면 agentic 프로토타입이 전부
+    첫 호출에서 깨진다."""
+    p = _plan(language)
+    assert "temperature" in p
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
 def test_plan_prompt_forbids_building_in_the_first_turn(language):
     p = _plan(language).lower()
     # 이 지시가 유일한 브레이크다 — 없으면 에이전트가 바로 빌드를 시작한다.

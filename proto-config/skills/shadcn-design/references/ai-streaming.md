@@ -1,22 +1,173 @@
 # shadcn AI 스트리밍 레퍼런스 (MarkdownContent + useAIStreaming)
 
-AI FR이 있으면 `check-markdown-render.mjs`(sub-check [J])가 아래를 **정적으로 강제**한다(DS-무관):
+AI 기능이 있는 프로토타입은 아래를 갖춘다(디자인 시스템과 무관한 공통 요구):
 1. `package.json`에 `react-markdown` + `remark-gfm`
-2. `src/`에 `useAIStreaming` 훅 사용 컴포넌트 ≥1
-3. `src/`에 `react-markdown` import + `<ReactMarkdown` 또는 `<MarkdownContent` JSX ≥1
+2. `useAIStreaming` 훅을 쓰는 컴포넌트 ≥1
+3. `react-markdown` import + `<ReactMarkdown` 또는 `<MarkdownContent` JSX ≥1
 4. `useAIStreaming` 사용 컴포넌트는 직접/간접으로 react-markdown 렌더
 
 **마크다운 파싱은 DS-무관**(react-markdown 공통). shadcn 어댑터는 **코드블록/링크 렌더만 shadcn 스타일**로 매핑한다.
 
+## 패턴 0: 서버 라우트 — Strands 에이전트를 SSE로 흘린다
+
+에이전트는 **서버측에서만** 돈다(`proto-config/CLAUDE.md`의 "Agentic prototypes" 절).
+아래 매핑은 이 배포에서 실측한 이벤트 형태다(2026-08-17, `@strands-agents/sdk` 1.13.0):
+
+| Strands 이벤트 | 꺼내는 곳 | wire 이벤트 |
+|---|---|---|
+| `modelStreamUpdateEvent` → `event.type === 'modelContentBlockDeltaEvent'` | `event.delta.text` (단, `event.delta.type === 'textDelta'`일 때만) | `text` (`content`) |
+| `beforeToolCallEvent` | `toolUse.name` | `tool_start` (`name`) |
+| `afterToolCallEvent` | `toolUse.name`, `result.status` | `tool_end` (`name`) |
+| `agentResultEvent` | — | `done` |
+| (throw) | `err.message` | `error` (`message`) |
+
+`modelStreamUpdateEvent.event`의 나머지 변종(`modelMessageStartEvent`,
+`modelContentBlockStopEvent`, `modelMessageStopEvent`, `modelMetadataEvent`)은
+UI가 쓰지 않으므로 흘리지 않는다. `delta.type`을 확인하지 않으면 도구 입력
+델타가 본문 텍스트로 새어 화면에 JSON 조각이 찍힌다.
+
+**도구 호출 전후의 텍스트는 구분자 없이 이어진다.** 에이전트는 도구를 부르기
+전에 한 마디("확인해 보겠습니다"), 결과를 받고 또 한 마디를 하는데, 두 텍스트가
+서로 다른 content block이라 그대로 흘리면 `…확인해 보겠습니다주문 A-7은…`처럼
+붙는다(실측). 도구 라운드가 끝난 뒤 첫 텍스트에 단락 구분을 한 번 넣어 준다 —
+아래 `pendingBreak`가 그것이다.
+
+```ts
+// app/api/chat/route.ts
+import { Agent, BedrockModel } from '@strands-agents/sdk';
+
+export const runtime = 'nodejs';   // edge 아님 — AWS SDK가 Node API를 쓴다
+
+export async function POST(req: Request) {
+  const { message } = await req.json();
+  const agent = new Agent({
+    model: new BedrockModel({
+      region: process.env.AWS_REGION,
+      modelId: process.env.BEDROCK_MODEL_ID,
+      maxTokens: 4096,             // temperature/topP/topK 금지
+    }),
+    tools: [/* … */],
+  });
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (type: string, payload: Record<string, unknown> = {}) =>
+        controller.enqueue(encoder.encode(
+          `data: ${JSON.stringify({ type, ...payload })}\n\n`));
+      let sawText = false;
+      let pendingBreak = false;
+      try {
+        for await (const ev of agent.stream(message)) {
+          if (ev.type === 'modelStreamUpdateEvent') {
+            const e = ev.event as any;
+            if (e?.type === 'modelContentBlockDeltaEvent'
+                && e.delta?.type === 'textDelta') {
+              const prefix = pendingBreak && sawText ? '\n\n' : '';
+              pendingBreak = false;
+              sawText = true;
+              send('text', { content: prefix + e.delta.text });
+            }
+          } else if (ev.type === 'beforeToolCallEvent') {
+            send('tool_start', { name: ev.toolUse.name });
+          } else if (ev.type === 'afterToolCallEvent') {
+            send('tool_end', { name: ev.toolUse.name, status: ev.result?.status });
+            pendingBreak = true;   // 다음 텍스트는 새 단락으로 시작한다
+          } else if (ev.type === 'agentResultEvent') {
+            send('done');
+          }
+        }
+      } catch (err) {
+        send('error', { message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/event-stream',
+               'Cache-Control': 'no-cache, no-transform',
+               Connection: 'keep-alive' },
+  });
+}
+```
+
+`no-transform`을 빼면 프리뷰 프록시 경로에서 응답이 버퍼링돼 스트리밍이 죽는다.
+
 ## 패턴 1: useAIStreaming 훅 (SSE)
 
-wire event_type SSOT는 cloudscape와 동일: `text` / `tool_start` / `tool_end` / `error` / `done` (필드 `content`/`name`/`message`/`messageId`). SSE 파싱 훅 자체는 DS-무관이므로 cloudscape 스킬의 `references/ai-streaming.md` 패턴 1과 동일 구현을 쓴다(전송·상태관리는 DS와 무관). `src/hooks/useAIStreaming.ts`에 `{ messages, send, stop, ... }` 반환.
+wire event_type SSOT: `text` / `tool_start` / `tool_end` / `error` / `done`
+(필드 `content` / `name` / `message`). 훅 자체는 DS-무관이다.
+
+```ts
+// src/hooks/useAIStreaming.ts
+'use client';
+import { useCallback, useRef, useState } from 'react';
+
+export type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
+export function useAIStreaming(endpoint: string) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [content, setContent] = useState('');       // 스트리밍 중인 본문
+  const [isStreaming, setStreaming] = useState(false);
+  const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const abort = useRef<AbortController | null>(null);
+
+  const stop = useCallback(() => abort.current?.abort(), []);
+
+  const send = useCallback(async (text: string) => {
+    setMessages((m) => [...m, { role: 'user', content: text }]);
+    setContent(''); setError(null); setStreaming(true);
+    const ac = new AbortController(); abort.current = ac;
+    let acc = '';
+    try {
+      // 상대 경로 — basePath 하위에서 서빙되므로 절대 경로를 쓰면 404가 된다.
+      const res = await fetch(endpoint, {
+        method: 'POST', signal: ac.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // SSE 프레임 경계는 빈 줄이다. 마지막 조각은 다음 청크와 이어지므로 남긴다.
+        const frames = buf.split('\n\n'); buf = frames.pop() ?? '';
+        for (const frame of frames) {
+          const line = frame.split('\n').find((l) => l.startsWith('data:'));
+          if (!line) continue;
+          const ev = JSON.parse(line.slice(5).trim());
+          if (ev.type === 'text') { acc += ev.content; setContent(acc); }
+          else if (ev.type === 'tool_start') setActiveTool(ev.name);
+          else if (ev.type === 'tool_end') setActiveTool(null);
+          else if (ev.type === 'error') setError(ev.message);
+        }
+      }
+      if (acc) setMessages((m) => [...m, { role: 'assistant', content: acc }]);
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === 'AbortError')) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      setStreaming(false); setActiveTool(null); setContent('');
+      abort.current = null;
+    }
+  }, [endpoint]);
+
+  return { messages, content, isStreaming, activeTool, error, send, stop };
+}
+```
 
 ## 패턴 2: AI 채팅 — Markdown 스트리밍 렌더링 (shadcn 버전)
 
-코드블록/링크만 shadcn/Tailwind로 매핑. **react-markdown+remark-gfm은 그대로**([J] 계약 충족).
+코드블록/링크만 shadcn/Tailwind로 매핑. **react-markdown+remark-gfm은 그대로 쓴다.**
 
-> **코드 문법 강조는 코드-중심 chat에서 필수 (FR "코드 블록 문법 강조" AC).** shadcn은 Cloudscape의 `CodeView` 같은 내장 하이라이터가 없다 — 그래서 어댑터가 **명시적으로** 하이라이터를 채워야 한다. 죽은 `<pre><code className="language-ts">`(강조 안 됨)로 끝내지 말 것. 표준 = `react-syntax-highlighter`(Prism). API 문서/개발자 도구처럼 **코드 예제 가독성이 요구에 명시된 chat `ui_type`이면 하이라이터는 "선택"이 아니라 필수**다([J] 게이트가 chat일 때 하이라이터 의존성+배선을 정적 강제). 순수 대화/요약 등 코드가 없는 챗이면 생략 가능.
+> **코드 문법 강조는 코드-중심 chat에서 필수 (FR "코드 블록 문법 강조" AC).** shadcn은 Cloudscape의 `CodeView` 같은 내장 하이라이터가 없다 — 그래서 어댑터가 **명시적으로** 하이라이터를 채워야 한다. 죽은 `<pre><code className="language-ts">`(강조 안 됨)로 끝내지 말 것. 표준 = `react-syntax-highlighter`(Prism). API 문서/개발자 도구처럼 **코드 예제 가독성이 요구에 명시된 chat `ui_type`이면 하이라이터는 "선택"이 아니라 필수**다(chat이면 하이라이터 의존성과 code 컴포넌트 배선까지 함께 갖춘다). 순수 대화/요약 등 코드가 없는 챗이면 생략 가능.
 
 `react-syntax-highlighter`는 코드블록 렌더 컴포넌트로 분리한다(복사 버튼 공존 + 다크모드 테마 전환). 아래 `CodeBlock`이 그것:
 
@@ -125,7 +276,7 @@ export function MarkdownContent({ content }: { content: string }) {
 
 assistant/AI 응답 자리에 `<MarkdownContent content={msg.content} />`. user 메시지는 raw text 허용(마크다운 의도 없음). 메시지 목록은 스크롤 컨테이너 + 하단 입력(`Textarea` + `Button`). 스트리밍 중 `send`/`stop` 버튼 토글.
 
-> **스크롤 컨테이너 (공식 채팅 프리미티브 — 선택)**: 공식 shadcn은 채팅에 `MessageScroller`(+`MessageScrollerProvider`/`Viewport`/`Content`/`Item`)와 `Message`/`Bubble`을 두어 자동 하단 고정·위치 복원·jump-to-latest를 내장 제공한다(raw overflow 컨테이너나 `ScrollArea` 수동 배선을 지양). 채팅이 길거나 스크롤 UX가 중요하면 `MessageScroller`를 채택할 수 있다. **단 데이터는 `useAIStreaming`, assistant 본문은 `MarkdownContent`(react-markdown)를 유지**해야 `[J]` 게이트를 통과한다 — 프리미티브는 프레젠테이션 쉘로만 쓰고 스트리밍/본문 계약을 대체하지 않는다(AI Elements 패턴 4와 동일한 경계).
+> **스크롤 컨테이너 (공식 채팅 프리미티브 — 선택)**: 공식 shadcn은 채팅에 `MessageScroller`(+`MessageScrollerProvider`/`Viewport`/`Content`/`Item`)와 `Message`/`Bubble`을 두어 자동 하단 고정·위치 복원·jump-to-latest를 내장 제공한다(raw overflow 컨테이너나 `ScrollArea` 수동 배선을 지양). 채팅이 길거나 스크롤 UX가 중요하면 `MessageScroller`를 채택할 수 있다. **단 데이터는 `useAIStreaming`, assistant 본문은 `MarkdownContent`(react-markdown)를 유지**한다 — 프리미티브는 프레젠테이션 쉘로만 쓰고 스트리밍/본문 계약을 대체하지 않는다(AI Elements 패턴 4와 동일한 경계).
 
 상세 shadcn 채팅 블록: WebFetch `https://ui.shadcn.com/blocks` (chat 관련) 또는 커스텀.
 
@@ -154,12 +305,12 @@ npx shadcn@latest add https://registry.ai-sdk.dev/message.json
 
 ### ★경계 (필수 준수) — AI SDK 훅 배제, `useAIStreaming`에 배선★
 
-AI Elements는 **Vercel AI SDK(`ai` 패키지)에 깊게 결합**돼 있다(`useChat`/`useCompletion`/`streamText` 등 — 스트리밍·상태·타입세이프를 AI SDK가 제공). 이 하네스는 **AI를 Strands SDK + Bedrock으로 구현**하고(Rule 9), SSE 스트리밍은 `useAIStreaming` 계약(`text`/`tool_start`/`tool_end`/`error`/`done`)이 SSOT다. 따라서:
+AI Elements는 **Vercel AI SDK(`ai` 패키지)에 깊게 결합**돼 있다(`useChat`/`useCompletion`/`streamText` 등 — 스트리밍·상태·타입세이프를 AI SDK가 제공). 이 프로토타입의 AI는 **Strands Agents TypeScript SDK(`@strands-agents/sdk`) + Bedrock**을 서버 라우트에서 돌려 구현하고(패턴 0), SSE 스트리밍은 `useAIStreaming` 계약(`text`/`tool_start`/`tool_end`/`error`/`done`)이 SSOT다. 따라서:
 
 - ✅ **채택**: AI Elements의 **프레젠테이션 컴포넌트만**(`conversation`/`message`/`sources`/`reasoning`/`tool`/`prompt-input`의 UI 부분). 이들은 순수 렌더 컴포넌트라 데이터를 props로 받는다.
-- ❌ **배제**: AI Elements/AI SDK의 **데이터 훅**(`useChat`, `useCompletion`, `@ai-sdk/react`), `transport`, `DefaultChatTransport` 등. 이걸 쓰면 하네스의 SSE 계약과 이중 전송이 생겨 `[J]` 게이트·strands SSOT와 충돌한다.
+- ❌ **배제**: AI Elements/AI SDK의 **데이터 훅**(`useChat`, `useCompletion`, `@ai-sdk/react`), `transport`, `DefaultChatTransport` 등. 이걸 쓰면 SSE 계약과 이중 전송이 생겨 패턴 0의 서버 라우트와 충돌한다.
 - **데이터 소스 = `useAIStreaming`**: 컴포넌트에 넘기는 messages/content/activeTool/citations는 전부 `useAIStreaming()` 반환값에서 나온다. `useChat()`을 호출하지 않는다.
-- **마크다운 본문 = 여전히 `react-markdown`**: `message` 안의 assistant 텍스트는 `<MarkdownContent>`(react-markdown+remark-gfm)로 렌더한다 — `[J]` 게이트가 `useAIStreaming` + react-markdown/`<MarkdownContent>` 사용을 정적 강제하므로, AI Elements를 써도 이 두 요소는 **반드시 유지**한다(AI Elements의 자체 markdown 렌더러로 대체 금지 — 게이트 FAIL).
+- **마크다운 본문 = 여전히 `react-markdown`**: `message` 안의 assistant 텍스트는 `<MarkdownContent>`(react-markdown+remark-gfm)로 렌더한다 — AI Elements를 써도 이 두 요소는 **반드시 유지**한다(AI Elements의 자체 markdown 렌더러로 대체하지 않는다).
 
 **배선 예시 (개념)**:
 ```tsx
@@ -178,7 +329,7 @@ export function ChatPanel() {
         {messages.map((m) => (
           <Message key={m.id} from={m.role}>
             <MessageContent>
-              {/* assistant 본문은 [J] 계약대로 react-markdown 유지 (raw {content} 직접 노출 금지) */}
+              {/* assistant 본문은 react-markdown 유지 (raw {content} 직접 노출 금지) */}
               {m.role === 'assistant'
                 ? <MarkdownContent content={m.content} />
                 : <span>{m.content}</span>}
@@ -192,4 +343,4 @@ export function ChatPanel() {
 }
 ```
 
-> **정직 경계**: AI Elements는 **선택 강화**다 — shadcn 어댑터 자체는 ready(2026-07-14 승격)이나, AI Elements 통합은 아직 실 앱 검증 이력이 없다. chat `ui_type`이 아니거나 단순 Q&A면 패턴 2(기본 MarkdownContent)로 충분하며 AI Elements를 강제하지 않는다. 채택 시에도 위 경계(AI SDK 훅 배제 + `useAIStreaming` + react-markdown 유지)를 벗어나면 `[J]` 게이트가 FAIL시킨다.
+> **정직 경계**: AI Elements는 **선택 강화**다 — shadcn 어댑터 자체는 ready(2026-07-14 승격)이나, AI Elements 통합은 아직 실 앱 검증 이력이 없다. chat `ui_type`이 아니거나 단순 Q&A면 패턴 2(기본 MarkdownContent)로 충분하며 AI Elements를 강제하지 않는다. 채택 시에도 위 경계(AI SDK 훅 배제 + `useAIStreaming` + react-markdown 유지)를 벗어나면 전송이 이중으로 흘러 화면이 깨진다.

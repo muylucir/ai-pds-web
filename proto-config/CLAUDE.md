@@ -97,6 +97,19 @@ Put **only `maxTokens`** in the Converse API's `inferenceConfig`:
 const inferenceConfig = { maxTokens };   // no temperature/topP
 ```
 
+**This applies to every surface that reaches Bedrock, not just Converse.** The
+Strands Agents SDK takes the same parameters on its model constructor, and its
+README's own example passes `temperature: 0.7` — copying that line is the
+fastest way to break an agentic prototype on the first call. Measured in this
+deployment's `ap-northeast-2` against `global.anthropic.claude-opus-5`:
+
+```js
+new BedrockModel({ region, modelId, maxTokens })                  // ✅ works
+new BedrockModel({ region, modelId, maxTokens, temperature: 0.7 }) // ❌ ModelError
+//   ModelError: The model returned the following errors:
+//     `temperature` is deprecated for this model.
+```
+
 **Do not branch on the model — just never send them.** Do not write a workaround
 that regex-matches the model ID to exclude particular models: the default model
 changes through an environment variable, and each time the regex misses the new
@@ -110,6 +123,64 @@ removed in Opus 4.7 as well. When you need reasoning depth, use
 
 Exception: Sonnet 4.6 and earlier still accept `temperature`. Follow the rule
 anyway — the goal is code that works on every model.
+
+## Agentic prototypes — the Strands Agents **TypeScript** SDK
+
+When the spec calls for an agent (a tool-calling loop, not a single completion),
+use **`@strands-agents/sdk`** — the TypeScript SDK — from a server-side route
+handler.
+
+**Why TypeScript and not the Python SDK.** Hosting runs the npm lifecycle and
+nothing else: `npm install` → `npm run build` → `npm run start`. There is no
+virtualenv step, no `pip`, no second process. A Python agent is therefore never
+started, and the prototype opens as a blank page with the build reported
+successful — the worst failure shape there is, because nothing errors. The
+upstream AI-PLC rules reach for the Python SDK — installed with a Python package
+manager and served by a Python web framework — because they assume a laptop where
+a human runs both processes by hand. That assumption does not hold here; the
+TypeScript SDK is the equivalent that does.
+
+```ts
+// app/api/chat/route.ts — server-side only
+import { Agent, BedrockModel, tool } from '@strands-agents/sdk';
+import { z } from 'zod';
+
+const model = new BedrockModel({
+  region: process.env.AWS_REGION,
+  modelId: process.env.BEDROCK_MODEL_ID,   // injected by hosting
+  maxTokens: 4096,                         // no temperature/topP/topK
+});
+
+const lookup = tool({
+  name: 'lookup_claim',
+  description: 'Look up a claim by id.',
+  inputSchema: z.object({ claimId: z.string() }),
+  callback: async ({ claimId }) => `Claim ${claimId}: under review`,
+});
+
+const agent = new Agent({ model, tools: [lookup], systemPrompt: '…' });
+
+for await (const event of agent.stream(userText)) {
+  // translate to the SSE contract the UI reads — see the shadcn-design skill's
+  // references/ai-streaming.md
+}
+```
+
+Requirements, all verified in this deployment (2026-08-17):
+
+- **Node 20+** (the SDK's own `engines`), which is what hosting runs.
+- **No credentials to configure.** `@aws-sdk/client-bedrock-runtime` is a direct
+  dependency and picks up the instance role through the default chain.
+- **Install cost is small**: `@strands-agents/sdk` plus its three required peers
+  (`@modelcontextprotocol/sdk`, `@opentelemetry/api`, `zod`) resolved in ~8s.
+  The other 19 peers are optional — do not add them unless the spec needs them.
+- **Server-side only.** The model ID arrives as `BEDROCK_MODEL_ID` without a
+  `NEXT_PUBLIC_` prefix precisely so it cannot reach the browser bundle. Never
+  construct an agent in a client component.
+
+If the prototype only needs one completion and no tools, call Bedrock's Converse
+API directly with `@aws-sdk/client-bedrock-runtime` — do not pull in the agent
+loop for a single request.
 
 ## Use Next.js version 15
 

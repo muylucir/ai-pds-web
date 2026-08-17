@@ -88,10 +88,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 ### Table with TanStack Table (필수 — cloudscape useCollection 대응)
 목록 화면은 `@tanstack/react-table`의 `useReactTable`로 필터/정렬/페이지네이션을 구현한다(cloudscape의 `useCollection` 역할). 상세 코드: `references/patterns.md`.
 
-### AI Chat — Markdown 스트리밍 ([J] 게이트 계약 — 필수)
-AI FR이 있으면 `check-markdown-render.mjs`([J])가 강제한다(DS-무관): (1) `react-markdown`+`remark-gfm` 의존성 (2) `useAIStreaming` 훅 사용 (3) `MarkdownContent`/`ReactMarkdown` JSX로 렌더 (4) **chat `ui_type`이면 코드 문법 강조 하이라이터**(`react-syntax-highlighter` 등) 의존성 + code 컴포넌트 배선. **마크다운 파싱·하이라이터 존재는 DS-무관**이고, shadcn 어댑터는 코드블록(하이라이트 테마)/링크 렌더만 shadcn 스타일로 매핑한다. shadcn엔 Cloudscape `CodeView` 같은 내장 하이라이터가 없으므로 `CodeBlock`을 명시 생성해야 한다 — 죽은 `language-*` 클래스로 끝내면 FR "코드 블록 문법 강조" AC 미충족. 상세: `references/ai-streaming.md` 패턴 2.
+### AI Chat — Markdown 스트리밍 (필수)
+AI 기능이 있으면 아래를 모두 갖춘다(DS-무관): (1) `react-markdown`+`remark-gfm` 의존성 (2) `useAIStreaming` 훅 사용 (3) `MarkdownContent`/`ReactMarkdown` JSX로 렌더 (4) **chat `ui_type`이면 코드 문법 강조 하이라이터**(`react-syntax-highlighter` 등) 의존성 + code 컴포넌트 배선. **마크다운 파싱·하이라이터 존재는 DS-무관**이고, shadcn 어댑터는 코드블록(하이라이트 테마)/링크 렌더만 shadcn 스타일로 매핑한다. shadcn엔 Cloudscape `CodeView` 같은 내장 하이라이터가 없으므로 `CodeBlock`을 명시 생성해야 한다 — 죽은 `language-*` 클래스로 끝내면 FR "코드 블록 문법 강조" AC 미충족. 상세: `references/ai-streaming.md` 패턴 2.
 
-> **AI Elements (선택 — chat/AI-native `ui_type`)**: shadcn 위에 얹은 Vercel의 AI 특화 레지스트리(`conversation`/`message`/`sources`/`inline-citation`/`reasoning`/`tool`/`prompt-input` — copy-in). 손수 조립 대신 성숙한 AI UI를 쓸 수 있다. **단 프레젠테이션 컴포넌트만 채택하고 AI SDK 데이터 훅(`useChat` 등)은 배제**한다 — 데이터는 하네스 `useAIStreaming`, 본문은 `react-markdown`을 유지해야 `[J]` 게이트를 통과한다(경계·배선 예시는 `references/ai-streaming.md` 패턴 4).
+> **AI Elements (선택 — chat/AI-native `ui_type`)**: shadcn 위에 얹은 Vercel의 AI 특화 레지스트리(`conversation`/`message`/`sources`/`inline-citation`/`reasoning`/`tool`/`prompt-input` — copy-in). 손수 조립 대신 성숙한 AI UI를 쓸 수 있다. **단 프레젠테이션 컴포넌트만 채택하고 AI SDK 데이터 훅(`useChat` 등)은 배제**한다 — 데이터는 `useAIStreaming`, 본문은 `react-markdown`을 유지한다(경계·배선 예시는 `references/ai-streaming.md` 패턴 4).
 
 ### Form with react-hook-form + zod
 shadcn `Form`은 react-hook-form을 감싼다. 요청 스키마는 zod(`z.infer`로 타입 도출 — CLAUDE.md API Contract). 상세: `references/patterns.md`.
@@ -106,7 +106,7 @@ shadcn `Form`은 react-hook-form을 감싼다. 요청 스키마는 zod(`z.infer`
 - **스타일링(공식 규칙)**: `cn()`으로 클래스 병합(템플릿 리터럴 삼항 금지), Tailwind 스페이싱 스케일만(매직 넘버 금지). **간격은 `flex`/`grid`+`gap-*`**(`space-y-*`/`space-x-*` 금지), 정사각형은 `size-*`, 색은 시맨틱 토큰(`bg-primary`/`text-muted-foreground` — raw `bg-blue-500`/수동 `dark:` 오버라이드 금지), 외형은 built-in `variant` 우선(수동 className 지양). 오버레이 z-index 수동 지정 금지.
 - **아이콘(공식 규칙)**: 컴포넌트 내부 아이콘엔 sizing 클래스(`size-4`) 금지 — 버튼 아이콘은 `data-icon="inline-start｜inline-end"`. 아이콘은 컴포넌트 객체로 전달(문자열 키 금지), import는 `iconLibrary` 설정 따름. 상세 `references/foundations.md`.
 - **컴포넌트 우선(수기 마크업 금지)**: `<hr>`→`Separator`, 상태 span→`Badge`, 빈 상태→`Empty`, 로딩→`Skeleton`/`Spinner`+`disabled`, 콜아웃→`Alert`, 토스트→`sonner`. Dialog/Sheet/Drawer는 `*Title` 필수(숨기면 `sr-only`), Avatar는 `AvatarFallback` 필수, 항목은 부모 그룹에 중첩(`SelectItem`→`SelectGroup`, `TabsTrigger`→`TabsList`). 상세 `references/components.md`.
-- `"use client"`는 이벤트 핸들러/훅/Radix 상호작용 컴포넌트에만(RSC-by-default — CLAUDE.md Rule 6/7).
+- `"use client"`는 이벤트 핸들러/훅/Radix 상호작용 컴포넌트에만(RSC-by-default).
 - 폼=react-hook-form+zod(정본) + `Field`/`FieldGroup` 레이아웃 + `data-invalid`/`aria-invalid` 검증, 테이블=TanStack Table (커스텀 상태 재발명 금지).
 
 ## Accessibility
@@ -117,6 +117,6 @@ Radix 프리미티브가 ARIA 속성·키보드 네비·포커스 관리를 내�
 
 - `references/components.md` — shadcn 컴포넌트 카탈로그(폼/채팅/Empty 신 프리미티브 포함) + `npx shadcn add` 경로 + 컴포넌트 우선/접근성 규칙
 - `references/patterns.md` — ui_type별 구성(table-view/form/wizard/dashboard/detail/chat) + **Base UI vs Radix 분기**
-- `references/ai-streaming.md` — MarkdownContent + useAIStreaming ([J] 계약) + AI Elements(패턴 4, 선택)
+- `references/ai-streaming.md` — 서버 라우트(Strands→SSE, 패턴 0) + useAIStreaming + MarkdownContent + AI Elements(패턴 4, 선택)
 - `references/layout.md` — sidebar 블록 앱 셸 + 보호/공개 라우트
 - `references/foundations.md` — Tailwind 토큰/테마/스페이싱

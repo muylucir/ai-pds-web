@@ -169,6 +169,28 @@ opens from no preview link. Discovery's role ends at **writing the spec**.
     uses, and asking for a key blocks the user on something they cannot give.
   - This is the same reason the `Port` field is void (above): anything the
     hosting layer assigns at build time must not be guessed in the spec.
+- **The prototype runtime is Node, and "agent" means the TypeScript SDK.**
+  Hosting runs the npm lifecycle and nothing else (`npm install` →
+  `npm run build` → `npm run start`). A Python prototype is therefore never
+  started: the build reports success and the preview opens as a blank page, with
+  no error anywhere. `aws-aiplc-rule-details/discovery/prototype-building.md`
+  reaches for the Python Strands SDK and a Python web framework because upstream
+  assumes a laptop where a human runs both processes by hand — that assumption
+  does not hold here.
+  - **Do not write an interpreter setup, a package-manager command, or a second
+    backend process into the spec or the build instructions.** Describe what the
+    agent must *do* — its tools, its inputs, what it decides, what it must not
+    decide — and leave the stack to the build agent, which has its own rules for
+    it.
+  - When the spec genuinely has to name the stack (an agentic use case whose
+    feasibility argument depends on it), name **`@strands-agents/sdk`** — the
+    Strands Agents *TypeScript* SDK, running server-side. It reaches Bedrock
+    through the credentials the build already holds, which is why there is still
+    nothing to ask the user for.
+  - This is also what keeps the spec portable in the direction that matters. A
+    team that picks up a `PROTOTYPE-*.md` in an IDE can still build it with the
+    Python SDK, because the spec describes the agent rather than the install. A
+    spec that hard-codes one runtime is the one that does not travel.
 
 ## Depth of what you write (overrides the upstream rules)
 

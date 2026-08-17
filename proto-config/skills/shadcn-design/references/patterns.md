@@ -33,7 +33,7 @@ export function DataTable<T>({ columns, data }: { columns: ColumnDef<T>[]; data:
 
 ## form / wizard — react-hook-form + zod
 
-shadcn `Form`은 react-hook-form을 감싼다. 요청 스키마는 zod(`z.infer`로 타입 도출 — BE와 공유). **RHF + zod resolver가 하네스 정본**(`api-contract-zod` 스킬 + `[J]` 계약) — 검증/제출 배선은 여기서 벗어나지 않는다.
+shadcn `Form`은 react-hook-form을 감싼다. 요청 스키마는 zod(`z.infer`로 타입 도출 — BE와 공유). **RHF + zod resolver가 정본**이다 — 검증/제출 배선은 여기서 벗어나지 않는다.
 
 ```tsx
 'use client';
@@ -78,4 +78,4 @@ shadcn은 이제 **두 프리미티브 백엔드**를 지원한다 — 전통 **
 
 ## chat — AI 스트리밍
 
-메시지 목록 + `MarkdownContent`(assistant) + `Textarea`+`Button` 입력. 스크롤 컨테이너는 **`MessageScroller`(공식 채팅 프리미티브 — 자동 하단 고정/위치 복원)를 선택 채택**하거나 `ScrollArea`로 구성한다. 본문 렌더(`react-markdown`)와 스트리밍(`useAIStreaming` SSE 계약)은 하네스 SSOT이므로 어느 쪽을 쓰든 유지한다. 상세는 `references/ai-streaming.md`([J] 계약).
+메시지 목록 + `MarkdownContent`(assistant) + `Textarea`+`Button` 입력. 스크롤 컨테이너는 **`MessageScroller`(공식 채팅 프리미티브 — 자동 하단 고정/위치 복원)를 선택 채택**하거나 `ScrollArea`로 구성한다. 본문 렌더(`react-markdown`)와 스트리밍(`useAIStreaming` SSE 계약)은 하네스 SSOT이므로 어느 쪽을 쓰든 유지한다. 상세는 `references/ai-streaming.md`.

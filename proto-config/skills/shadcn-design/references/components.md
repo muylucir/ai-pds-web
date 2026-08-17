@@ -63,7 +63,7 @@ copy-in 모델: `npx shadcn@latest add {name}` → `@/components/ui/{name}`에�
 | MessageScroller | `message-scroller` | 채팅 스크롤 컨테이너 (자동 하단 고정/위치 복원/jump-to-latest). raw overflow 컨테이너·`ScrollArea` 수동 배선 대신 |
 | Message / Bubble | `message` `bubble` | 메시지 행(아바타/헤더/본문/푸터) + 말풍선 표면·리액션 |
 
-> **채팅은 하네스 계약 우선**: 본문은 `react-markdown`(`MarkdownContent`), 스트리밍은 `useAIStreaming` SSE 계약이 SSOT다(`[J]` 게이트). MessageScroller/Message/Bubble은 **프레젠테이션 쉘로만 선택 채택**하고 데이터/본문 렌더는 하네스 계약을 유지한다 — 상세는 `references/ai-streaming.md`.
+> **채팅은 하네스 계약 우선**: 본문은 `react-markdown`(`MarkdownContent`), 스트리밍은 `useAIStreaming` SSE 계약이 SSOT다. MessageScroller/Message/Bubble은 **프레젠테이션 쉘로만 선택 채택**하고 데이터/본문 렌더는 하네스 계약을 유지한다 — 상세는 `references/ai-streaming.md`.
 
 > 전체 목록·props·접근성은 `npx shadcn@latest view @shadcn/{name}`(소스) / `npx shadcn@latest docs {name}`(예제 URL)로 그 시점에 조회. WebFetch `https://ui.shadcn.com/docs/components/{name}`도 가능(온디맨드, 정독 금지).
 

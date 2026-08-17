@@ -49,7 +49,7 @@ export default function LoginPage() {
 }
 ```
 
-## RSC-by-default (CLAUDE.md Rule 6/7)
+## RSC-by-default
 
 - `page.tsx`는 기본 Server Component. 데이터는 서버에서 fetch.
 - `"use client"`는 Radix 상호작용/이벤트/훅이 필요한 island 컴포넌트에만(예: `DataTable`, 폼, 사이드바 토글, 채팅). page는 island를 import만.
