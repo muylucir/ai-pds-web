@@ -11,7 +11,15 @@ class QuestionOption(BaseModel):
 class Question(BaseModel):
     number: int
     category: str | None = None
+    #: 옵션 앞의 본문 전체(배경 산문 포함). 화면에 보여주는 값이다.
     text: str
+    #: 그중 **마지막 문단** — 실제로 묻는 문장이다.
+    #:
+    #: 왜 나눠 두는가: 파일은 배경 산문 + 질문을 함께 담는데 AskUserQuestion에는
+    #: 질문 문장만 간다. 답변 되기록이 `text`(~200자)와 도구의 질문(~22자)을
+    #: 비교하면 길이 차이로 유사도가 무너진다 — 2026-08-16 keumkang-v5의
+    #: design-context.md Q4가 그렇게 유실됐다(0.3721). 문단이 하나면 text와 같다.
+    ask: str = ""
     options: list[QuestionOption]
     answer: str | None = None
     multi_select: bool = False

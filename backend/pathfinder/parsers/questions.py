@@ -53,7 +53,9 @@ def _parse(name: str, markdown: str) -> QuestionFile:
             seen_first_header = True
             number = int(qm.group(1))
             i += 1
-            text_parts: list[str] = []
+            # 문단 단위로 모은다. 마지막 문단이 실제 질문 문장이고(models.Question.ask
+            # 참조) 그 앞은 메타·배경이다. 빈 줄이 문단 경계다.
+            text_blocks: list[list[str]] = [[]]
             options: list[QuestionOption] = []
             answer: str | None = None
             # consume until next header
@@ -75,11 +77,17 @@ def _parse(name: str, markdown: str) -> QuestionFile:
                         recommended=recommended,
                     ))
                 elif raw and not options:
-                    text_parts.append(raw)
+                    text_blocks[-1].append(raw)
+                elif not raw and text_blocks[-1] and not options:
+                    # 빈 줄 = 문단 경계. 옵션이 시작된 뒤의 빈 줄은 무시한다.
+                    text_blocks.append([])
                 i += 1
+            blocks = [b for b in text_blocks if b]
             questions.append(Question(
                 number=number, category=current_category,
-                text=" ".join(text_parts).strip(), options=options, answer=answer,
+                text=" ".join(l for b in blocks for l in b).strip(),
+                ask=" ".join(blocks[-1]).strip() if blocks else "",
+                options=options, answer=answer,
             ))
             continue
         if not seen_first_header and line.strip():

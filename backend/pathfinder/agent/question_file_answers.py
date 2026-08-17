@@ -236,15 +236,23 @@ def _assign(questions, wanted: dict[str, str],
     정확 일치를 **먼저** 전부 확정한다. 유사 매칭이 먼저 돌면 깨진 질문이 다른
     문항의 자리를 빼앗고, 정작 그 문항은 빈 칸으로 남는다.
     """
-    norms = [(q.number, _norm(q.text)) for q in questions]
+    # 문항마다 비교할 문자열이 **둘**이다: 본문 전체(text)와 마지막 문단(ask).
+    #
+    # 파일은 배경 산문 + 질문을 함께 담는데 AskUserQuestion에는 질문 문장만 간다
+    # (models.Question.ask 참조). text만 비교하면 길이 차이로 유사도가 무너진다 —
+    # keumkang-v5의 design-context.md Q4가 0.3721로 유실됐다. 둘 중 더 잘 맞는
+    # 쪽을 쓴다. 문단이 하나면 두 값이 같아 비용도 없다.
+    norms = [(q.number, _norm(q.text), _norm(q.ask)) for q in questions]
     mapping: dict[int, str] = {}
     claimed: set[int] = set()
 
     remaining = dict(wanted)
-    for number, norm in norms:
+    for number, norm, ask in norms:
         if number in claimed:
             continue
         value = remaining.pop(norm, None)
+        if value is None and ask and ask != norm:
+            value = remaining.pop(ask, None)
         if value is not None:
             mapping[number], _ = value, claimed.add(number)
     exact = len(mapping)
@@ -255,15 +263,16 @@ def _assign(questions, wanted: dict[str, str],
     # 즉시 배정하지 않고 확신이 큰 쪽부터 자리를 준다.
     candidates: list[tuple[float, str, int]] = []
     for asked, value in remaining.items():
-        scored = sorted(((_ratio(asked, norm), number)
-                         for number, norm in norms if number not in claimed),
+        scored = sorted(((max(_ratio(asked, norm),
+                              _ratio(asked, ask) if ask else 0.0), number)
+                         for number, norm, ask in norms if number not in claimed),
                         reverse=True)
         if not scored:
             continue
         best_ratio, best_number = scored[0]
         runner_up = scored[1][0] if len(scored) > 1 else None
         miss.offer(best_ratio, asked,
-                   next(n for num, n in norms if num == best_number))
+                   next(n for num, n, _a in norms if num == best_number))
         if best_ratio < _FUZZY_MIN:
             continue
         if runner_up is not None and best_ratio - runner_up < _FUZZY_MARGIN:

@@ -455,3 +455,66 @@ def test_a_near_miss_is_a_warning(tmp_path, caplog):
 
     assert [r for r in caplog.records if r.levelno >= logging.WARNING], \
         [(r.levelname, r.message) for r in caplog.records]
+
+
+# ---- 배경 산문이 붙은 문항도 매칭된다 ----
+# 파일은 배경 + 질문을 함께 담고 AskUserQuestion에는 질문 문장만 간다. 그래서
+# `q.text`(~200자)와 도구의 질문(~22자)을 비교하면 길이 차이로 유사도가 무너진다 —
+# keumkang-v5의 design-context.md Q4가 0.3721로 유실됐다. `q.ask`(마지막 문단)와도
+# 비교해 해결한다. 구조적 관계이므로 특수 케이스가 아니다.
+
+_WITH_BACKGROUND = """## Question 4 (모호성 해소 — Question 3 답변에 따른 후속)
+
+**작성 시각**: 2026-08-16T22:49:36Z
+
+Question 3에서 D(데스크톱과 모바일 모두)를 선택했다. 이는 모순은 아니지만 해소해야 할
+모호성을 남긴다. 25행 × 3열 매트릭스는 좁은 화면에 그대로 들어가지 않으므로, 모바일에서는
+격자가 아니라 목록 형태의 별도 레이아웃이 필요하다.
+
+모바일에서 어떤 작업까지 하실 계획입니까?
+
+A) 열람과 근거 확인까지만
+B) 데스크톱과 동일한 모든 기능
+X) Other (please describe after [Answer]: tag below)
+
+[Answer]:
+"""
+
+
+def test_a_question_with_background_prose_matches_on_its_last_paragraph(tmp_path):
+    """**실측 재현이다.** 도구에 간 질문은 마지막 문단뿐이었다."""
+    path = _write(tmp_path, "aiplc-docs/discovery/prototype/design-context.md",
+                  _WITH_BACKGROUND)
+
+    updated = record_answers(str(tmp_path),
+                             _sdk("모바일에서 어떤 작업까지 하실 계획입니까?"),
+                             {"1": "A"})
+
+    assert updated == ["aiplc-docs/discovery/prototype/design-context.md"]
+    qf = parse_question_file("d.md", path.read_text(encoding="utf-8"))
+    assert {q.number: q.answer for q in qf.questions}[4] == "A"
+
+
+def test_background_matching_survives_corrupted_hangul(tmp_path):
+    """실측 그대로: `작업까지` → `작업짝짜`. 두 결함이 한 라운드에 겹쳐 있었다."""
+    path = _write(tmp_path, "aiplc-docs/discovery/prototype/design-context.md",
+                  _WITH_BACKGROUND)
+
+    record_answers(str(tmp_path),
+                   _sdk("모바일에서 어떤 작업짝짜 하실 계획입니까?"), {"1": "B"})
+
+    qf = parse_question_file("d.md", path.read_text(encoding="utf-8"))
+    assert {q.number: q.answer for q in qf.questions}[4] == "B"
+
+
+def test_the_background_itself_does_not_become_a_match(tmp_path):
+    """배경 산문에 얹혀 매칭되면 안 된다 — 도구가 배경 문장을 물을 일은 없고,
+    긴 문단은 우연한 조각 일치로 오탐을 만든다."""
+    path = _write(tmp_path, "aiplc-docs/discovery/prototype/design-context.md",
+                  _WITH_BACKGROUND)
+    before = path.read_text(encoding="utf-8")
+
+    assert record_answers(str(tmp_path),
+                          _sdk("25행 × 3열 매트릭스는 좁은 화면에 들어갑니까?"),
+                          {"1": "A"}) == []
+    assert path.read_text(encoding="utf-8") == before
