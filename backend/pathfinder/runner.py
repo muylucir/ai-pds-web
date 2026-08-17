@@ -12,6 +12,7 @@ from pathfinder.globmatch import matches_glob
 from pathfinder.pathsafe import reject_unsafe
 from pathfinder.s3store import S3StoreLike
 from pathfinder.parsers.redaction import redact_credentials
+from pathfinder.workspace_sync import SYNC_GLOBS, content_for_s3
 
 _log = logging.getLogger(__name__)
 
@@ -32,7 +33,10 @@ class AgentRunner:
     로컬 → S3 sync. VM/부팅 상태기계는 없다 — 로컬 디렉토리는 휘발이며 매 턴
     시작 시 S3에서 재구성된다(S3 = source of truth)."""
 
-    _SYNC_GLOBS = ("aiplc-docs/**/*", "prototype/**/*", "uploads/**/*")
+    #: workspace_sync가 소유한다 — 쓰기 직후 게시(claude_driver의 PostToolUse
+    #: 훅)와 이 배치 sync가 **같은 집합**을 올려야 한다. 두 벌로 두면 한쪽에만
+    #: 있는 파일이 "있다가 없어지는 문서"로 보인다.
+    _SYNC_GLOBS = SYNC_GLOBS
     _RESTORE_PREFIXES = ("aiplc-docs/", "prototype/", "uploads/")
 
     def __init__(self, project_id, driver, s3: S3StoreLike, local_root: Path, session: dict):
@@ -106,9 +110,10 @@ class AgentRunner:
                     continue
                 reject_unsafe(key)  # fail-closed: 안전하지 않은 키는 sync 전체 중단
                 content = path.read_text(encoding="utf-8", errors="replace")
-                if key == "aiplc-docs/audit.md":
-                    content = redact_credentials(content)
-                await self._s3.put(key, content)
+                # 리댁션 규칙도 workspace_sync가 소유한다 — 여기에 복사해 두면
+                # 쓰기 직후 게시 쪽이 빠뜨렸을 때 audit.md가 리댁션 없이
+                # 정본에 올라가고, 그 실패는 에러를 내지 않는다.
+                await self._s3.put(key, content_for_s3(key, content))
 
     async def _sync_abandoned_turn(self) -> None:
         """Best-effort sync for a turn that never produced a terminal event.

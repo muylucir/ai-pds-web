@@ -29,6 +29,13 @@ from pathfinder.agent.tools import build_tools
 from pathfinder.agent.workspace_rules import place_rules
 from pathfinder.proto import prompts as proto_prompts
 
+
+async def _noop_publish(rel: str) -> None:
+    """게시는 이 파일들의 관심사가 아니다 — build_tools가 게시자를 **필수**로
+    받는 이유는 새 호출부가 조용히 빠뜨리지 못하게 하는 것이고, 그 계약은
+    test_agent_tools의 게시 테스트와 test_workspace_sync가 지킨다."""
+    return None
+
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -108,20 +115,20 @@ def test_shared_config_dir_claude_md_is_language_neutral(config_dir):
 
 def test_english_tool_descriptions_have_no_korean():
     """도구 설명은 매 턴 모델 컨텍스트에 들어가는 프롬프트다."""
-    bad = {t.name: t.description for t in build_tools("/tmp/ws", lambda e: None, "en")
+    bad = {t.name: t.description for t in build_tools("/tmp/ws", lambda e: None, "en", publish=_noop_publish)
            if hangul(t.description)}
     assert not bad, f"영어 프로젝트의 도구 설명에 한글이 있다: {bad}"
 
 
 def test_korean_tool_descriptions_are_still_korean():
     """대칭 확인 — 영어를 배선하면서 한국어를 잃지 않는다."""
-    descs = [t.description for t in build_tools("/tmp/ws", lambda e: None, "ko")]
+    descs = [t.description for t in build_tools("/tmp/ws", lambda e: None, "ko", publish=_noop_publish)]
     assert all(hangul(d) for d in descs), descs
 
 
 def test_build_tools_defaults_to_korean():
     """인자를 안 주는 호출부(구 코드, 테스트)가 기존 동작을 유지한다."""
-    descs = [t.description for t in build_tools("/tmp/ws", lambda e: None)]
+    descs = [t.description for t in build_tools("/tmp/ws", lambda e: None, publish=_noop_publish)]
     assert all(hangul(d) for d in descs), descs
 
 
@@ -131,7 +138,7 @@ async def test_submit_document_refusals_follow_the_project_language(tmp_path):
     번역되면 나머지가 조용히 한국어로 남는다."""
     ws = tmp_path / "ws"
     ws.mkdir()
-    tools = {t.name: t for t in build_tools(str(ws), lambda e: None, "en")}
+    tools = {t.name: t for t in build_tools(str(ws), lambda e: None, "en", publish=_noop_publish)}
     submit = tools["submit_document"]
 
     async def call(**kw):
@@ -226,7 +233,7 @@ def test_driver_passes_its_language_to_the_tools(tmp_path):
 
     seen: dict = {}
 
-    def fake_build_tools(workspace, emit, language="ko"):
+    def fake_build_tools(workspace, emit, language="ko", *, publish=None):
         seen["language"] = language
         return []
 

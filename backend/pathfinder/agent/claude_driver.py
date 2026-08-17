@@ -82,6 +82,7 @@ from pathfinder.models import AgentEvent
 from pathfinder.pathsafe import workspace_relative as _rel
 from pathfinder.s3store import S3StoreLike
 from pathfinder.tool_trace import tool_detail
+from pathfinder.workspace_sync import publish_file
 
 _log = logging.getLogger("pathfinder.agent")
 
@@ -482,7 +483,12 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
         server = create_sdk_mcp_server(
             name=_MCP_SERVER_NAME,
             tools=build_tools(driver._workspace, driver._emit,
-                              driver._language))
+                              driver._language,
+                              # report_stage가 aiplc-state.md를 로컬에 직접 쓰고
+                              # emit으로 알린다 — PostToolUse 훅을 지나지 않으므로
+                              # 그 훅과 **같은 게시 경로**를 손에 쥐여 준다
+                              # (workspace_sync가 규칙을 소유한다).
+                              publish=driver._publish))
         options = ClaudeAgentOptions(
             permission_mode=driver._permission_mode,
             cwd=driver._workspace,
@@ -648,6 +654,14 @@ class ClaudeDriver:
         self._reader: _MessageReader | None = None
 
     # ---- plumbing ----
+
+    async def _publish(self, rel: str) -> None:
+        """워크스페이스 파일 하나를 정본에 올린다 — 도구에 넘기는 게시자.
+
+        PostToolUse 훅이 쓰는 것과 같은 함수다(workspace_sync.publish_file). 두 벌로
+        두면 audit.md 리댁션과 대상 글롭이 갈라진다.
+        """
+        await publish_file(self._s3, Path(self._workspace), rel)
 
     def _emit(self, event: AgentEvent) -> None:
         """The `emit` sink handed to build_tools -- report_stage/
@@ -895,6 +909,15 @@ class ClaudeDriver:
             self._queue.append(AgentEvent(
                 kind="status", text="file outside workspace ignored"))
             return {}
+        # **광고하기 전에 게시한다.** `file_changed`를 받은 UI는 곧바로 그 문서를
+        # 읽으러 오는데(WorkspaceDocPanel), 읽기 경로는 전부 정본(S3)이다. 정본
+        # 게시를 턴 종료까지 미루면 "작성됐다는데 목록에 없다 / 골라도 내용이
+        # 없다 / 잠깐 보이다 사라진다"가 된다 — 2026-08-18에 실제로 그랬고,
+        # 실측한 S3 타임스탬프 16개가 전부 턴 끝 1초 안이었다.
+        #
+        # 실패해도 턴을 죽이지 않는다(publish_file이 삼킨다). 턴 종료 배치 sync가
+        # 여전히 백스톱이다.
+        await publish_file(self._s3, Path(self._workspace), rel)
         # 질문 파일도 산출물이다 — 문서 패널이 이 이벤트로 갱신되므로 아래 분기와
         # 무관하게 먼저 흘린다.
         self._queue.append(AgentEvent(kind="file_changed", path=rel))
@@ -937,9 +960,9 @@ class ClaudeDriver:
         # 들고 있으므로 여기서 올리는 것이 가장 싸고 확실하다(라운드당 put 하나).
         # 러너의 sync가 나중에 같은 내용을 다시 올리는 것은 무해하다.
         try:
-            await self._s3.put(rel, md)
-            # 마커는 파일 **다음**이다 — 순서가 뒤집히면 위의 두 실패가 그대로
-            # 재현되는 창이 남는다.
+            # 파일은 위에서 이미 게시됐다(publish_file) — 모든 산출물이 같은 경로를
+            # 지나므로 질문 파일 전용 업로드는 남기지 않는다. 마커는 그 **다음**이다:
+            # 순서가 뒤집히면 마커가 정본에 없는 파일을 가리키는 창이 남는다.
             await save_pending_file(self._s3, file=rel)
         except Exception:
             # 라이브 카드는 이미 큐에 있다 — 실패해도 이 턴의 질문은 화면에 뜨고,

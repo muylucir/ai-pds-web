@@ -4,6 +4,13 @@ from pathfinder.models import AgentEvent
 from pathfinder.agent.tools import build_tools
 
 
+async def _noop_publish(rel: str) -> None:
+    """게시는 이 파일들의 관심사가 아니다 — build_tools가 게시자를 **필수**로
+    받는 이유는 새 호출부가 조용히 빠뜨리지 못하게 하는 것이고, 그 계약은
+    test_agent_tools의 게시 테스트와 test_workspace_sync가 지킨다."""
+    return None
+
+
 def _tool_by_name(tools, name):
     # claude_agent_sdk의 SdkMcpTool은 .name을 노출하고, .handler가 실제 async
     # 구현이다 — strands @tool 객체(.tool_name, 직접 호출 가능)와 다르다.
@@ -12,7 +19,7 @@ def _tool_by_name(tools, name):
 
 def _tools(workspace):
     emitted = []
-    tools = build_tools(str(workspace), emitted.append)
+    tools = build_tools(str(workspace), emitted.append, publish=_noop_publish)
     return {name: _tool_by_name(tools, name)
             for name in ("report_stage", "submit_document",
                          "handoff_prototype")}, emitted
@@ -51,7 +58,7 @@ async def test_report_stage_survives_state_write_failure(tmp_path, monkeypatch):
     from pathfinder.agent import tools as tools_mod
     monkeypatch.setattr(tools_mod, "upsert_stage",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    tools = {t.name: t for t in tools_mod.build_tools(str(ws), emitted.append)}
+    tools = {t.name: t for t in tools_mod.build_tools(str(ws), emitted.append, publish=_noop_publish)}
     out = await _call(tools["report_stage"], stage="Envision", status="in_progress")
     assert "stage recorded" in out
     assert emitted and emitted[0].kind == "stage"
@@ -192,3 +199,53 @@ async def test_handoff_refuses_a_path_escaping_slug(tmp_path):
     out = await _call(tools["handoff_prototype"], slug="../../etc")
     assert "거부" in out or "Refused" in out
     assert not emitted
+
+
+# ---- report_stage도 쓰기 직후 게시한다 ----
+# 2026-08-18 실측: 실제 턴에서 `file_changed`가 온 직후 그 문서를 읽으면 되는데
+# (Write 도구 경로는 PostToolUse 훅이 게시한다) `aiplc-docs/aiplc-state.md`만
+# 404였다. 이 도구는 파일을 **로컬에 직접 쓰고** emit으로 알리므로 그 훅을 지나지
+# 않고, 그래서 게시 계약을 빠뜨렸다 — 진행률 사이드바가 턴 종료까지 낡은 상태를
+# 읽었다(UI의 읽기 경로는 전부 정본이다).
+#
+# 게시자를 **필수 인자로** 받는다. 기본값을 no-op로 두면 새 호출부가 조용히
+# 빠뜨리고, 그 실패는 "화면이 낡아 보인다"로만 나타난다.
+
+async def test_report_stage_publishes_the_state_file(tmp_path):
+    published: list[str] = []
+
+    async def publish(rel: str) -> None:
+        published.append(rel)
+
+    tools = {t.name: t for t in build_tools(
+        str(tmp_path / "ws"), lambda e: None, publish=publish)}
+    await _call(tools["report_stage"], stage="Envision", status="in_progress")
+    assert published == ["aiplc-docs/aiplc-state.md"]
+
+
+async def test_report_stage_survives_a_failing_publisher(tmp_path):
+    """게시 실패가 스테이지 기록을 막지 않는다 — 화면 이벤트가 우선이라는
+    기존 fail-soft 규율과 같다(그 위의 upsert 실패 처리 참조)."""
+    async def publish(rel: str) -> None:
+        raise RuntimeError("s3 down")
+
+    emitted: list[AgentEvent] = []
+    tools = {t.name: t for t in build_tools(
+        str(tmp_path / "ws"), emitted.append, publish=publish)}
+    out = await _call(tools["report_stage"], stage="Envision", status="completed")
+    assert "stage recorded" in out
+    assert any(e.kind == "stage" for e in emitted)
+
+
+async def test_the_state_file_is_published_with_its_new_content(tmp_path):
+    """게시가 upsert **뒤에** 일어나야 한다 — 앞이면 갱신 전 내용이 정본에 간다."""
+    ws = tmp_path / "ws"
+    seen: list[str] = []
+
+    async def publish(rel: str) -> None:
+        seen.append((ws / rel).read_text(encoding="utf-8"))
+
+    tools = {t.name: t for t in build_tools(str(ws), lambda e: None,
+                                            publish=publish)}
+    await _call(tools["report_stage"], stage="Envision", status="completed")
+    assert seen and "Envision" in seen[0]

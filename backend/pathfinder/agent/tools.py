@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 from claude_agent_sdk import tool
 from pathfinder.models import AgentEvent
 from pathfinder.agent import prompts
@@ -80,9 +80,20 @@ def _text_result(text: str) -> dict[str, Any]:
 
 
 def build_tools(workspace: str, emit: Callable[[AgentEvent], None],
-                language: str = "ko") -> list:
+                language: str = "ko", *,
+                publish: Callable[[str], Awaitable[None]]) -> list:
     """워크스페이스 + 이벤트 싱크에 바인딩된 2개의 SdkMcpTool(claude_agent_sdk의
     @tool 데코레이터가 만드는 dataclass)을 리스트로 돌려준다.
+
+    `publish(rel)`은 워크스페이스 파일 하나를 정본(S3)에 올린다. **키워드 필수**다 —
+    기본값을 no-op으로 두면 새 호출부가 조용히 빠뜨리고, 그 실패는 "화면이 낡아
+    보인다"로만 나타난다.
+
+    왜 필요한가(2026-08-18 실측): 이 모듈의 `report_stage`는 `aiplc-state.md`를
+    **로컬에 직접 쓰고** `emit`으로 알린다. 그래서 claude_driver의 PostToolUse 훅을
+    지나지 않고, 그 훅이 지키는 계약("광고하기 전에 게시한다",
+    pathfinder/workspace_sync.py)을 빠뜨렸다. UI의 읽기 경로는 전부 정본이므로
+    진행률 사이드바가 턴 종료까지 낡은 상태를 읽었다.
 
     language는 **도구 설명과 반환 문자열**의 언어다 — 둘 다 모델이 읽는
     프롬프트이므로 대화 언어와 맞아야 한다(proto/tools.py가 같은 계약이다).
@@ -128,9 +139,13 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None],
             existing = p.read_text(encoding="utf-8") if p.is_file() else None
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(upsert_stage(existing, stage, status), encoding="utf-8")
+            # 게시는 upsert **뒤**다 — 앞이면 갱신 전 내용이 정본에 간다. 그리고
+            # emit **앞**이다: 이벤트를 받은 UI가 곧바로 읽으러 오는데 그 시점에
+            # 정본에 없으면 낡은 상태(또는 404)를 본다.
+            await publish("aiplc-docs/aiplc-state.md")
             emit(AgentEvent(kind="file_changed", path="aiplc-docs/aiplc-state.md"))
         except Exception:
-            _log.exception("aiplc-state.md upsert failed (stage=%s)", stage)
+            _log.exception("aiplc-state.md upsert/publish failed (stage=%s)", stage)
         return _text_result(f"stage recorded: {stage} ({status})")
 
     @tool("submit_document", prompts.submit_document_description(language),

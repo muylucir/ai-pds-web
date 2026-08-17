@@ -38,11 +38,20 @@ export function WorkspaceDocPanel({
   const path = manualPath ?? activeDoc?.path ?? null;
   const version = activeDoc?.version ?? null;
 
-  // 산출물 목록 — 턴 종료(turnSeq)마다 재조회해 새 문서를 반영. 목록이 아직
-  // path를 포함하지 않을 수 있으므로(턴 중 file_changed가 turnSeq보다 먼저
-  // 도착) 현재 path를 항상 union — 드롭다운/본문 미스매치 및 "목록이 비어
+  // 산출물 목록 — 턴 종료(turnSeq)와 **새 문서가 생길 때마다**(activeDoc.path)
+  // 재조회한다.
+  //
+  // `activeDoc?.path`를 키에 넣는 이유(2026-08-18): 백엔드가 이제 쓰기 직후에
+  // 문서를 정본에 게시하므로(backend/pathfinder/workspace_sync.py) 턴 중에도 목록이
+  // 정확할 수 있다. 턴 종료만 기다리면 한 턴에 문서 5개를 쓰는 동안 드롭다운에는
+  // 현재 문서 하나(아래 union)만 보이고, 앞서 쓴 것들은 정본에 있는데도 목록에
+  // 없다 — 실측한 증상 중 "잠깐 나타났다 사라진다"가 그 모양이다.
+  //
+  // 목록이 아직 path를 포함하지 않을 수 있으므로(이벤트가 게시보다 먼저 도착하는
+  // 짧은 창) 현재 path를 항상 union — 드롭다운/본문 미스매치 및 "목록이 비어
   // 있으면 select 자체가 숨겨지는" 문제를 함께 해결한다.
-  const artifacts = useAsync(() => listArtifacts(projectId), [projectId, turnSeq]);
+  const artifacts = useAsync(() => listArtifacts(projectId),
+                             [projectId, turnSeq, activeDoc?.path ?? ""]);
   const listed = artifacts.data ?? [];
   const options = path && !listed.includes(path) ? [...listed, path] : listed;
 
