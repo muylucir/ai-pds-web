@@ -37,3 +37,14 @@ graphify-out/
 diagrams/
 .vscode/
 .claude/
+
+# rule/ 아래에는 상류 룰셋(aiplc-rules)만 추적한다.
+#
+# 왜 필요한가(2026-08-17): 로컬 개발 설정이 `PATHFINDER_WORKSPACES_DIR`을 이 레포의
+# `rule/`로 잡아 두면 프로젝트 워크스페이스가 그 아래에 만들어지고, 루트에서
+# `git add -A`를 하면 그대로 추적된다. 실제로 그렇게 들어갔고
+# `infra/test/deployed-tree.assert.ts`가 잡았다 — 그 워크스페이스에는 조립된
+# `CLAUDE.md`가 있고, 배포 트리에서 워크스페이스의 **조상**이 되는 CLAUDE.md는
+# 전부 에이전트 컨텍스트로 로드된다(README가 기록한 사고와 같은 부류다).
+/rule/*
+!/rule/aiplc-rules/
