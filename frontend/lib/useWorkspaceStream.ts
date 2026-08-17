@@ -6,7 +6,8 @@ import { streamEvents, streamAnswers } from "@/lib/api/sse";
 import { getPending, getHistory, interruptTurn } from "@/lib/api/client";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
-import type { AgentEvent, HistoryItem, QuestionFile, QuestionsPayload, StagePayload, DocumentPayload } from "@/lib/api/types";
+import type { AgentEvent, HistoryItem, QuestionFile, QuestionsPayload, StagePayload, DocumentPayload,
+  PrototypeReadyPayload } from "@/lib/api/types";
 import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
 
 // This is a NEW hook cloned+extended from useTurnStream for the Task 11
@@ -71,6 +72,9 @@ export interface WorkspaceStream {
   pendingQuestions: QuestionsPayload | null;
   stages: StagePayload[];
   lastDocument: DocumentPayload | null;
+  // Discovery가 빌드로 넘긴 프로토타입. 채팅에 "Prototypes 탭으로"
+  // 카드를 띄우는 근거다(에이전트의 안내 문장에 의존하지 않는다).
+  prototypeReady: PrototypeReadyPayload | null;
   changedPaths: string[];
   historyLoading: boolean;
   // 문서 패널이 따라가야 할 "지금 대화 중인 문서" — submit_document뿐 아니라
@@ -142,6 +146,8 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   const [pendingQuestions, setPendingQuestions] = useState<QuestionsPayload | null>(null);
   const [stages, setStages] = useState<StagePayload[]>([]);
   const [lastDocument, setLastDocument] = useState<DocumentPayload | null>(null);
+  const [prototypeReady, setPrototypeReady] =
+    useState<PrototypeReadyPayload | null>(null);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [activeDoc, setActiveDoc] = useState<{ path: string; version: string | null } | null>(null);
@@ -180,6 +186,11 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       if (ev.kind === "stage") {
         const parsed = safeParse<StagePayload>(ev.payload);
         if (parsed) setStages((prev) => [...prev, parsed]);
+        return;
+      }
+      if (ev.kind === "prototype_ready") {
+        const parsed = safeParse<PrototypeReadyPayload>(ev.payload);
+        if (parsed) setPrototypeReady(parsed);
         return;
       }
       if (ev.kind === "document") {
@@ -365,6 +376,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     pendingQuestions,
     stages,
     lastDocument,
+    prototypeReady,
     changedPaths,
     historyLoading,
     activeDoc,

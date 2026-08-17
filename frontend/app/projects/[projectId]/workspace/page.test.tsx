@@ -52,6 +52,7 @@ function mockWorkspaceStream(overrides: Partial<workspaceStream.WorkspaceStream>
     send: vi.fn(),
     submitAnswers: vi.fn(),
     pendingQuestions: null,
+    prototypeReady: null,
     stages: [],
     lastDocument: null,
     changedPaths: [],
@@ -350,5 +351,33 @@ describe("Workspace page", () => {
         "AI-PLC를 시작해줘. Path A(고객 페인 포인트에서 시작)로 진행하고 싶어.",
       );
     });
+  });
+});
+
+// 2026-08-17: Discovery가 프로토타입을 빌드로 넘겨도 화면에 그 문이 없었다.
+// 에이전트가 "Prototypes 탭에서 빌드하세요"를 말해 주기를 기대했는데, 실측
+// keumkang-v5에서 그 안내는 0회였고 사용자가 막혔다. 그래서 이벤트 기반 어포던스를
+// 둔다 — 에이전트의 문장에 의존하지 않는다.
+describe("프로토타입 인수인계 카드", () => {
+  it("prototype_ready가 오면 Prototypes 탭으로 가는 링크가 뜬다", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({
+      historyLoading: true,
+      prototypeReady: { slug: "prototype", spec_path: "aiplc-docs/x.md" },
+    });
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    const link = screen.getByRole("link", { name: /Prototypes/i });
+    expect(link).toHaveAttribute("href", "/projects/p1/prototypes");
+  });
+
+  it("없으면 카드가 뜨지 않는다", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ historyLoading: true, prototypeReady: null });
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    expect(screen.queryByRole("link", { name: /Prototypes/i })).toBeNull();
   });
 });

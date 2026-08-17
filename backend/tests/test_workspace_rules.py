@@ -449,3 +449,26 @@ def test_the_config_dir_does_not_scope_the_encoding_rule_away(tmp_path):
     assert "literal" in text and "uXXXX" in text
     # 인코딩 규칙만은 범위 축소의 예외라고 못박아야 한다.
     assert "applies to every tool call" in text
+
+
+def test_the_prototype_handoff_and_model_overrides_are_documented():
+    """**2026-08-17의 두 결함을 한 절로 닫은 자리다.**
+
+    Path A.1의 Step 3은 "Build Prototype"이고 상류 Step 4~11은 돌아가는
+    프로토타입을 전제한다. Pathfinder는 빌드를 Prototypes 탭이 하는데, 금지만 있고
+    멈출 지점·다음 행동이 문서에 없어서 에이전트가 즉흥 대응했다 — 실측
+    keumkang-v5: 자격증명 점검 → API 키 요구 → 선행 조건 3건 나열, 탭 안내는 0회.
+
+    같은 공백이 모델 문제로도 나타났다. `llm-model-configuration.md`가 제공자
+    선택과 API 키를 요구하고 모델 ID 세 개를 서로 다르게 적어 두는데, 그것을
+    무력화하는 절이 없었다. 프로젝트는 이미 모델을 갖고 빌드가 그것을 상속한다.
+    """
+    text = _discovery_config()
+    # 멈출 지점과 대체 행동(도구)이 있어야 한다.
+    assert "handoff_prototype" in text
+    assert "end your turn" in text
+    # Step 4~6은 버리는 게 아니라 유보한다 — 그 말이 없으면 에이전트가 계속 간다.
+    assert "not abandoned; they are deferred" in text
+    # 모델·자격증명을 묻지 말라는 것, 그리고 스펙에 모델 ID를 쓰지 말라는 것.
+    assert "already provisioned. Never ask for them" in text
+    assert "do not write a model ID" in text

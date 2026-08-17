@@ -75,6 +75,11 @@ class HistoryItem(BaseModel):
 class AgentEvent(BaseModel):
     kind: Literal["message", "questions", "stage", "document",
                   "file_changed", "status", "done", "error",
+                  # Discovery가 프로토타입을 빌드로 넘겼다는 선언
+                  # (agent/tools.py의 handoff_prototype). 프론트가 이 이벤트로
+                  # "Prototypes 탭으로 가기" 카드를 그린다 — 에이전트가 안내
+                  # 문장을 잊어도 사용자에게 클릭할 곳이 남아야 한다.
+                  "prototype_ready",
                   # 프로토타입 빌드의 명시적 완료 선언(proto/tools.py). 이
                   # 이벤트가 세션의 수명을 끝낸다 — proto/session.py가
                   # 관찰해 status를 "complete"로 바꾼다.

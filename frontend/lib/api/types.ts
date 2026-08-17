@@ -62,6 +62,8 @@ export type AgentEventKind =
   | "file_changed"
   | "status"
   | "done"
+  // Discovery가 프로토타입을 빌드로 넘겼다는 선언(handoff_prototype).
+  | "prototype_ready"
   // 프로토타입 빌드의 완료 선언. 백엔드 models.py의 Literal과 한 쌍이다.
   | "build_complete"
   | "error";
@@ -102,6 +104,14 @@ export interface DocumentPayload {
   path: string;
   version: string;
   summary: string;
+}
+
+// handoff_prototype이 흘리는 payload. 이 카드가 있어야 **에이전트가 안내 문장을
+// 잊어도** 사용자에게 클릭할 곳이 남는다 — 2026-08-17까지는 안내가 없으면
+// 사용자가 Discovery에서 막혔다.
+export interface PrototypeReadyPayload {
+  slug: string;
+  spec_path: string;
 }
 
 // GET /projects?page&size → ProjectPage; POST /projects → ProjectSummary.

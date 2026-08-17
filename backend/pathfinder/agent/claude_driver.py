@@ -461,7 +461,8 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # rule-file reads (discovery-config/README.md).
             mcp_servers={_MCP_SERVER_NAME: server},
             allowed_tools=[f"mcp__{_MCP_SERVER_NAME}__report_stage",
-                           f"mcp__{_MCP_SERVER_NAME}__submit_document"],
+                           f"mcp__{_MCP_SERVER_NAME}__submit_document",
+                           f"mcp__{_MCP_SERVER_NAME}__handoff_prototype"],
             # Exactly one of the two, never both: the CLI rejects
             # `--session-id` alongside `--resume` unless `--fork-session` is
             # also passed ("--session-id can only be used with --continue or

@@ -14,7 +14,8 @@ def _tools(workspace):
     emitted = []
     tools = build_tools(str(workspace), emitted.append)
     return {name: _tool_by_name(tools, name)
-            for name in ("report_stage", "submit_document")}, emitted
+            for name in ("report_stage", "submit_document",
+                         "handoff_prototype")}, emitted
 
 
 async def _call(tool, **kwargs):
@@ -119,3 +120,75 @@ async def test_submit_document_rejects_a_path_escaping_the_workspace(tmp_path):
 
     assert "document" not in [e.kind for e in emitted]
     assert "escape" in result.lower() or "경로" in result
+
+
+# ---- handoff_prototype — 빌드로 넘기는 행동 ----
+# 2026-08-17: Path A.1의 Step 3은 "Build Prototype"이고 상류 Step 4~11은 돌아가는
+# 프로토타입을 전제한다. Pathfinder는 빌드를 Prototypes 탭이 하므로 그 자리에서
+# 흐름이 끊겼다 — 그런데 **금지만 있고 대체 행동이 없어서** 에이전트가 즉흥
+# 대응했다(실측 keumkang-v5: 자격증명 점검 → API 키 요구 → 선행 조건 3건 나열,
+# Prototypes 탭 안내는 한 번도 없었다).
+#
+# report_stage가 있어서 상태 파일을 손으로 안 쓰고, submit_document가 있어서 문서
+# 준비를 선언하는 것과 같은 규율이다: **도구가 행동을 만든다.** 이 도구가
+# "빌드로 넘어가기"라는 하고 싶은 일에 대응한다.
+
+async def test_handoff_refuses_when_the_spec_is_not_there(tmp_path):
+    """submit_document와 같은 규율 — 도구가 거짓을 선언할 수 없다. 명세가 없으면
+    Prototypes 탭에 카드가 없으므로, 넘겼다고 말하면 사용자가 빈 탭을 본다."""
+    tools, emitted = _tools(tmp_path / "ws")
+    out = await _call(tools["handoff_prototype"], slug="prototype")
+    assert "거부" in out or "Refused" in out
+    assert not emitted, "거부했는데 이벤트를 흘리면 화면에 카드가 뜬다"
+
+
+async def test_handoff_accepts_the_single_prototype_layout(tmp_path):
+    """Path A.1의 명세 경로다(proto/layout.py의 SINGLE_SPEC_KEY)."""
+    ws = tmp_path / "ws"
+    spec = ws / "aiplc-docs" / "discovery" / "prototype" / "prototype-spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("# 명세", encoding="utf-8")
+
+    tools, emitted = _tools(ws)
+    out = await _call(tools["handoff_prototype"], slug="prototype")
+
+    assert "Prototypes" in out
+    kinds = [e.kind for e in emitted]
+    assert "prototype_ready" in kinds, kinds
+
+
+async def test_handoff_accepts_the_slugged_layout(tmp_path):
+    ws = tmp_path / "ws"
+    spec = (ws / "aiplc-docs" / "discovery" / "prototypes" / "maint"
+            / "PROTOTYPE-maint.md")
+    spec.parent.mkdir(parents=True)
+    spec.write_text("# 명세", encoding="utf-8")
+
+    tools, emitted = _tools(ws)
+    await _call(tools["handoff_prototype"], slug="maint")
+
+    payloads = [e.payload for e in emitted if e.kind == "prototype_ready"]
+    assert payloads and "maint" in payloads[0]
+
+
+async def test_handoff_tells_the_agent_to_stop_and_not_ask_for_credentials(tmp_path):
+    """반환 문자열이 다음 행동을 지정한다. 이것이 없으면 에이전트가 Step 4로
+    계속 가거나(돌아가는 프로토타입이 없으니 실패한다) 자격증명을 묻는다 —
+    프로젝트가 모델과 자격증명을 이미 갖고 있는데도."""
+    ws = tmp_path / "ws"
+    spec = ws / "aiplc-docs" / "discovery" / "prototype" / "prototype-spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("# 명세", encoding="utf-8")
+
+    tools, _ = _tools(ws)
+    out = await _call(tools["handoff_prototype"], slug="prototype")
+
+    assert "턴" in out or "end your turn" in out.lower()
+    assert "자격증명" in out or "credential" in out.lower()
+
+
+async def test_handoff_refuses_a_path_escaping_slug(tmp_path):
+    tools, emitted = _tools(tmp_path / "ws")
+    out = await _call(tools["handoff_prototype"], slug="../../etc")
+    assert "거부" in out or "Refused" in out
+    assert not emitted

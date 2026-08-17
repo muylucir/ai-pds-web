@@ -17,6 +17,7 @@ from claude_agent_sdk import tool
 from pathfinder.models import AgentEvent
 from pathfinder.agent import prompts
 from pathfinder.agent.state_sync import upsert_stage
+from pathfinder.proto import layout
 
 _log = logging.getLogger("pathfinder.agent")
 
@@ -58,6 +59,16 @@ _SUBMIT_DOCUMENT_SCHEMA: dict[str, Any] = {
         "summary": {"type": "string"},
     },
     "required": ["path", "version"],
+}
+
+
+#: 넘길 프로토타입의 id 하나. 경로는 우리가 정한다 — 에이전트가 경로를 넘기면
+#: 레이아웃 규약이 프롬프트로 새어나가고(proto/layout.py가 단독 소유해야 한다)
+#: 틀린 경로를 선언할 여지가 생긴다.
+_HANDOFF_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"slug": {"type": "string"}},
+    "required": ["slug"],
 }
 
 
@@ -146,4 +157,35 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None],
             {"path": path, "version": version, "summary": summary}, ensure_ascii=False)))
         return _text_result(f"document submitted: {path} {version}")
 
-    return [report_stage, submit_document]
+    @tool("handoff_prototype", prompts.handoff_prototype_description(language),
+         _HANDOFF_SCHEMA)
+    async def handoff_prototype(args: dict[str, Any]) -> dict[str, Any]:
+        """빌드를 Prototypes 탭으로 넘긴다.
+
+        **왜 도구인가(2026-08-17의 결함).** Path A.1의 Step 3은 "Build Prototype"
+        이고 상류 Step 4~11은 돌아가는 프로토타입을 전제한다. Pathfinder는 빌드를
+        Prototypes 탭이 하므로 그 자리에서 흐름이 끊겼다 — 그런데 금지만 있고
+        **대체 행동이 없어서** 에이전트가 즉흥 대응했다(실측 keumkang-v5:
+        자격증명 점검 → API 키 요구 → 선행 조건 나열, 탭 안내는 0회).
+        report_stage·submit_document와 같은 규율이다: 도구가 행동을 만든다.
+
+        명세 파일 존재를 확인하는 이유는 submit_document와 같다 — 카드는 그 파일에서
+        파생되므로(routes/prototypes.py의 discover), 없는데 넘겼다고 하면 사용자가
+        빈 탭을 본다.
+        """
+        slug = args["slug"]
+        try:
+            rel = layout.spec_key(slug)
+            p = _confine(workspace, rel)
+        except ValueError as exc:
+            return _text_result(prompts.submit_document_escape(language, str(exc)))
+        if not p.is_file():
+            return _text_result(prompts.handoff_prototype_missing(language, rel))
+        # 이 이벤트가 화면의 "Prototypes 탭으로 가기" 카드를 만든다. 에이전트가
+        # 안내 문장을 잊어도 사용자에게 클릭할 곳이 남아야 한다 — 지금까지는
+        # 안내가 없으면 사용자가 막혔다.
+        emit(AgentEvent(kind="prototype_ready", payload=json.dumps(
+            {"slug": slug, "spec_path": rel}, ensure_ascii=False)))
+        return _text_result(prompts.handoff_prototype_done(language, slug))
+
+    return [report_stage, submit_document, handoff_prototype]

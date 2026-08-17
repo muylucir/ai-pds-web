@@ -32,7 +32,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const state = useAsync(() => getState(projectId), [projectId]);
   const t = useT();
   const { modelLabel, language } = useProjectMeta(projectId);
-  const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, changedPaths, historyLoading, activeDoc, turnSeq } =
+  const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, prototypeReady, changedPaths, historyLoading, activeDoc, turnSeq } =
     useWorkspaceStream(projectId);
   // Show the Path A/B welcome starter only once history has finished loading
   // (avoids a flash of the welcome card before restored history arrives) AND
@@ -149,6 +149,27 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
         <StageSidebar state={state.data} events={stages} />
 
         <main className="relative flex flex-col min-w-0 min-h-0 bg-slate-50">
+          {/* Discovery가 프로토타입을 빌드로 넘겼을 때의 어포던스.
+              **에이전트의 안내 문장에 의존하지 않는다** — 2026-08-17까지는 그
+              문장이 나오지 않아 사용자가 Discovery에서 막혔다(실측 keumkang-v5:
+              Prototypes 탭 안내 0회). 닫기 버튼을 두지 않은 것도 의도다: 다음
+              단계로 가는 유일한 문이므로 실수로 닫으면 다시 막힌다. */}
+          {prototypeReady && (
+            <div
+              role="status"
+              className="m-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center justify-between gap-3 text-sm"
+            >
+              <span className="text-emerald-900">
+                {t("page.prototypeReady")}
+              </span>
+              <Link
+                href={`/projects/${projectId}/prototypes`}
+                className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700"
+              >
+                {t("page.prototypeBuildCta")}
+              </Link>
+            </div>
+          )}
           {showDocBanner && lastDocument && (
             <div
               role="status"

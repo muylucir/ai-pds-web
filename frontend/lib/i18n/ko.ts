@@ -224,6 +224,8 @@ export const ko = {
   "page.uploadFailed": "업로드에 실패했습니다. 지원 형식(md/txt/csv/xlsx/pdf)·5MB 이하인지 확인하세요.",
   "page.docUpdated": "문서가 갱신되었습니다 (v{version})",
   "page.docReview": "문서 리뷰",
+  "page.prototypeReady": "프로토타입 명세가 준비됐습니다 — 빌드는 Prototypes 탭에서 진행합니다.",
+  "page.prototypeBuildCta": "Prototypes 탭으로",
   "page.close": "닫기",
   "page.pendingQuestions": "답변 대기 중인 질문 →",
   "page.answerSheetLabel": "질문 답변 시트",

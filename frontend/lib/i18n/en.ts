@@ -216,6 +216,8 @@ export const en: Record<keyof typeof ko, string> = {
   "page.uploadFailed": "Upload failed. Check that the file is a supported type (md/txt/csv/xlsx/pdf) and under 5MB.",
   "page.docUpdated": "The document was updated (v{version})",
   "page.docReview": "Document Review",
+  "page.prototypeReady": "The prototype spec is ready — builds run in the Prototypes tab.",
+  "page.prototypeBuildCta": "Go to Prototypes",
   "page.close": "Close",
   "page.pendingQuestions": "Questions awaiting answers →",
   "page.answerSheetLabel": "Answer sheet",

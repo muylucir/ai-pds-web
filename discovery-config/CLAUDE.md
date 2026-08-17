@@ -143,9 +143,32 @@ opens from no preview link. Discovery's role ends at **writing the spec**.
   spec template's `Port` field are void in Pathfinder — hosting assigns the port
   at build time. A port written into the spec will disagree with the assigned
   one and mislead the user.
-- After saving the spec, **end your turn by telling the user to build it from
-  the Prototypes tab.** Do not talk as if a build is about to start in the
-  Discovery chat.
+- **Where Path A.1 stops, and how it continues.**
+  `aws-aiplc-rule-details/discovery/prototype-validation.md` runs Step 1 → Step
+  11, and its Step 3 is "Build Prototype". In Pathfinder Step 3 ends one document
+  earlier:
+  - Write `build-instructions.md` as that step specifies, then call
+    **handoff_prototype** with the prototype's slug and **end your turn**,
+    telling the user to build it from the Prototypes tab. That tool is the
+    replacement for building — it is what makes the card actionable there.
+  - **Steps 4-6 (Iterate, Validation Setup, Feedback Synthesis) are not
+    abandoned; they are deferred.** They all presume a running prototype, which
+    only exists after the user builds. Resume them when the user comes back with
+    a built prototype or survey results — Pathfinder runs the survey, so Step 5's
+    questionnaire is generated for you.
+  - Do not talk as if a build is about to start in the Discovery chat.
+- **The model and the credentials are already provisioned. Never ask for them.**
+  `aws-aiplc-rule-details/common/llm-model-configuration.md` has the agent pick a
+  provider, hard-codes model IDs (its own three disagree with each other) and
+  treats API keys as a prerequisite. All of that is void here: the project was
+  created with a model, every build inherits it, and the runtime holds the
+  credentials.
+  - Do not offer a provider/model choice, do not write a model ID into the spec
+    or the build instructions, and do not check environment variables for API
+    keys. A model ID you write will disagree with the one the build actually
+    uses, and asking for a key blocks the user on something they cannot give.
+  - This is the same reason the `Port` field is void (above): anything the
+    hosting layer assigns at build time must not be guessed in the spec.
 
 ## Depth of what you write (overrides the upstream rules)
 

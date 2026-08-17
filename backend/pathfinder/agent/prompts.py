@@ -62,6 +62,26 @@ def submit_document_description(language: str) -> str:
             "거부된다.")
 
 
+def handoff_prototype_description(language: str) -> str:
+    """`handoff_prototype` 도구 설명.
+
+    **이 문장이 이 도구의 절반이다.** 도구 목록은 매 턴 컨텍스트에 들어가므로,
+    정적 규칙 문서보다 확실하게 "빌드는 내 일이 아니다"를 전달한다. 2026-08-17에
+    금지만 있고 대체 행동이 없어서 에이전트가 자격증명을 묻고 선행 조건을
+    나열했다 — 그 자리를 이 도구가 채운다.
+    """
+    if _lang(language) == "en":
+        return ("Hand the finished prototype spec over to the Prototypes tab, "
+                "which is where builds and hosting happen. Call this instead of "
+                "building: you cannot build here, and the project's model and "
+                "credentials are already provisioned — never ask the user for an "
+                "API key, a provider or a model. Then end your turn.")
+    return ("완성된 프로토타입 명세를 Prototypes 탭으로 넘긴다 — 빌드와 호스팅은 "
+            "그곳에서 일어난다. 빌드를 시도하는 대신 이 도구를 호출한다: 여기서는 "
+            "빌드할 수 없고, 프로젝트의 모델과 자격증명은 이미 준비되어 있다 — "
+            "API 키·제공자·모델을 사용자에게 묻지 않는다. 호출한 뒤 턴을 끝낸다.")
+
+
 # ---- 도구 반환 문자열 (agent/tools.py) ----
 #
 # 거부 문자열은 에이전트가 읽고 스스로 고치는 지시다. 무엇이 잘못됐는지와
@@ -92,6 +112,32 @@ def submit_document_empty(language: str, path: str) -> str:
                 "then call submit_document again.")
     return (f"거부됨 — '{path}'가 비어 있다. Write로 내용을 채운 뒤 "
             "submit_document를 다시 호출할 것.")
+
+
+def handoff_prototype_missing(language: str, path: str) -> str:
+    """명세 파일이 없을 때. submit_document와 같은 규율 — 도구가 거짓을 선언하면
+    사용자가 빈 Prototypes 탭을 본다(카드는 명세 파일에서 파생된다)."""
+    if _lang(language) == "en":
+        return (f"Refused — no prototype spec at '{path}'. Write the spec your "
+                "stage's rules specify first, then call handoff_prototype again.")
+    return (f"거부됨 — '{path}'에 프로토타입 명세가 없다. 지금 스테이지의 룰이 "
+            "정한 자리에 명세를 먼저 쓴 뒤 handoff_prototype을 다시 호출할 것.")
+
+
+def handoff_prototype_done(language: str, slug: str) -> str:
+    """넘기기 성공. **다음 행동을 지정한다** — 이것이 없으면 에이전트가 상류
+    Step 4(Iterate)로 계속 가거나 자격증명을 묻는다. 둘 다 실측된 실패다."""
+    if _lang(language) == "en":
+        return (f"Handed off: '{slug}' is now a card in the Prototypes tab. "
+                "**End your turn here** and tell the user to build it there. Do "
+                "not ask for credentials, an API key, a provider or a model — the "
+                "project already has them. Iteration and validation resume after "
+                "they come back with a built prototype and survey results.")
+    return (f"넘겼다: '{slug}'가 Prototypes 탭의 카드로 준비됐다. "
+            "**여기서 턴을 끝내고** 사용자에게 그 탭에서 빌드하라고 안내할 것. "
+            "자격증명·API 키·제공자·모델을 묻지 않는다 — 프로젝트가 이미 갖고 "
+            "있다. 개선(Iterate)과 검증은 사용자가 빌드와 설문을 마치고 돌아온 "
+            "뒤에 재개한다.")
 
 
 # ---- 드라이버가 만드는 텍스트 (agent/claude_driver.py) ----
