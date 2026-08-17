@@ -201,6 +201,40 @@ def ask_user_question_denied(language: str) -> str:
         "답변은 그 파일의 `[Answer]:` 태그로 들어오며 다음 턴에 이어갑니다.")
 
 
+def file_questions_unparsed(language: str, path: str) -> str:
+    """질문 파일에 `[Answer]:`는 있는데 문항을 읽을 수 없을 때 모델에게 주는 노트.
+
+    PostToolUse 훅의 `additionalContext`로 간다 — **턴을 멈추지 않는다.** 멈추면
+    모델이 이 노트를 읽고 고칠 기회가 없어 사용자가 막힌다. 실측(2026-08-17):
+    모델은 이 노트를 읽고 같은 턴 안에서 파일을 고쳐 다시 쓰고, 그 재작성이 훅을
+    다시 태워 정상 카드가 뜬다.
+
+    **왜 침묵하면 안 되는가.** 처음에는 조용히 지나가게 만들었고, 그 판단은
+    AskUserQuestion이 폴백으로 살아 있을 때만 옳았다. 그 도구가 거부되는 지금
+    파싱 실패는 질문의 완전한 소실이다 — sarang-hpt에서 그렇게 됐다: 파일은
+    만들어졌고 카드는 뜨지 않았고 채팅에도 아무 말이 없었다.
+
+    무엇을 고쳐야 하는지 **지목한다**. 이유만 주면 모델이 같은 파일을 다시 쓴다
+    (`write_outside_docs`가 같은 이유로 대안을 함께 준다).
+    """
+    if _lang(language) == "en":
+        return (
+            f"Pathfinder could not read the questions in `{path}`, so nothing was "
+            f"shown to the user. The file has `[Answer]:` tags but no question the "
+            f"parser recognizes. Each question needs a heading of the form "
+            f"`## Question <number>` — ASCII, exactly as "
+            f"`common/question-format-guide.md` writes it — followed by the question "
+            f"sentence, its lettered options, and an `[Answer]:` line. Rewrite the "
+            f"file that way; the questions appear as soon as you do.")
+    return (
+        f"`{path}`의 질문을 Pathfinder가 읽지 못해 사용자에게 아무것도 표시되지 "
+        f"않았습니다. `[Answer]:` 태그는 있는데 파서가 인식하는 문항이 없습니다. "
+        f"각 문항에는 `## Question <번호>` 형태의 헤딩이 필요합니다 — "
+        f"`common/question-format-guide.md`가 적은 그대로 ASCII로 씁니다(본문과 "
+        f"보기는 프로젝트 언어로 씁니다). 그 뒤에 질문 문장, letter가 붙은 보기, "
+        f"`[Answer]:` 줄이 옵니다. 그렇게 다시 쓰면 질문이 바로 표시됩니다.")
+
+
 def file_questions_stop(language: str, path: str) -> str:
     """질문 파일을 쓰는 순간 턴을 멈출 때 모델이 읽는 이유.
 

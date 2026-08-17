@@ -633,6 +633,9 @@ class ClaudeDriver:
         # 수명을 살기 때문에 턴을 넘어 유지된다 — 백엔드 재시작 시 비지만, 그때는
         # 답변이 이미 파일에 있으므로 "미답 문항 없음" 조건이 재질문을 막는다.
         self._asked_question_sets: dict[str, tuple[str, ...]] = {}
+        # rel path → 파싱 실패를 이미 알린 내용. 같은 내용에 같은 노트를 반복하지
+        # 않되, 내용이 달라지면 다시 알린다(_on_post_tool_use 참조).
+        self._unparsed_noted: dict[str, str] = {}
         self._current_session_id: str | None = None
         # The task draining the current turn's receive_response(). Outlives the
         # `run()` generator on purpose when a question parks the turn -- that is
@@ -833,6 +836,8 @@ class ClaudeDriver:
         }}
 
     def _file_question_round(self, rel: str) -> tuple[Any, str] | None:
+        # 돌려주는 것 셋: None(해당 없음) / ("unparsed", 원문) / (QuestionFile, 원문).
+        # 파싱 실패를 None과 구별하는 이유는 침묵이 곧 질문 소실이기 때문이다.
         """방금 써진 `rel`이 **물어야 할 질문 라운드**면 `(파싱 결과, 원문)`을 준다.
 
         원문을 함께 주는 이유: 호출부가 그 파일을 S3에 올려야 하고(카드를 광고하기
@@ -864,9 +869,9 @@ class ClaudeDriver:
             return None
         qfile = parse_question_file(rel, md)
         if not qfile.parse_ok:
-            _log.info("file questions: %s has [Answer] tags but does not parse "
-                      "— leaving it to the AskUserQuestion path", rel)
-            return None
+            # 조용히 넘기지 않는다 — AskUserQuestion이 거부되는 지금 이것은 질문의
+            # 완전한 소실이다(prompts.file_questions_unparsed의 근거).
+            return "unparsed", md
         unanswered = tuple(q.ask or q.text for q in qfile.questions
                            if not (q.answer or "").strip())
         if not unanswered:
@@ -895,6 +900,21 @@ class ClaudeDriver:
         if round_ is None:
             return {}
         qfile, md = round_
+        if qfile == "unparsed":
+            # 같은 내용에 같은 노트를 반복하지 않는다(턴 안 무한 왕복 방지). 내용이
+            # **달라지면** 다시 알린다 — 고쳐 썼는데 여전히 틀린 경우가 그것이고,
+            # 그때 침묵하면 다시 질문이 사라진다.
+            if self._unparsed_noted.get(rel) == md:
+                _log.warning("file questions: %s still does not parse (already "
+                             "reported this content)", rel)
+                return {}
+            self._unparsed_noted[rel] = md
+            _log.warning("file questions: %s has [Answer] tags but no parsable "
+                         "question — telling the agent", rel)
+            return {"hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": prompts.file_questions_unparsed(
+                    self._language, rel)}}
         # `interrupt_id`는 빈 문자열이다: 파킹된 can_use_tool future가 없으므로
         # 되돌아올 곳이 턴이 아니라 **파일**이다. 프론트는 `file`로 그 차이를
         # 판별해 답변을 PUT /projects/{pid}/questions/{name}으로 보낸다.

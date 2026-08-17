@@ -33,8 +33,24 @@ logger = logging.getLogger(__name__)
 #:
 #: `serialize_answers`가 같은 정규식을 쓴다(그 함수의 주석 참조) — 헤더 인식이
 #: 곧 되기록이므로 두 경로가 갈라지면 "파싱은 되는데 답변이 안 써지는" 상태가 된다.
+#:
+#: **지역화된 헤딩도 읽는다(`## 질문 1`).** 2026-08-17 sarang-hpt: 완전히 정상인
+#: 질문 파일이 문항 0개로 읽혀 카드가 뜨지 않았고, 다른 점은 헤딩 단어뿐이었다.
+#: 원인은 규약 변경이다 — 질문 파일이 도구 호출의 사본이 아니라 사용자용 산출물이
+#: 되면서 에이전트가 헤딩까지 프로젝트 언어로 옮겼다. AskUserQuestion이 거부되는
+#: 지금 그 질문은 **완전히 사라진다.**
+#:
+#: 관용을 여기 두고 `## Question N`을 쓰라는 지시는 `discovery-config/CLAUDE.md`에
+#: 둔다 — 상류 `question-format-guide.md`가 그 형식의 정본이고 건드리지 않는다.
+#:
+#: **허용목록이지 일반 규칙이 아니다.** "숫자로 끝나는 헤딩"처럼 느슨하게 하면
+#: 실재하는 카테고리 헤딩을 삼킨다 — 명확화 질문 파일의 `## 모호성 1`이 그것이고,
+#: 그것을 문항으로 삼으면 그 아래의 진짜 문항이 절 안으로 흡수된다. 프로젝트
+#: 언어가 ko/en 둘뿐이므로(models·prompts의 `_LANGUAGES`) 목록으로 충분하다.
+_QUESTION_WORDS = ("Question", "질문")
 _Q_HEADER = re.compile(
-    r"^#{2,4}\s+(?:[A-Za-z][\w-]*\s+)?Question\s+(\d+)\b", re.MULTILINE)
+    r"^#{2,4}\s+(?:\S+\s+)??(?:" + "|".join(_QUESTION_WORDS) + r")\s+(\d+)\b",
+    re.MULTILINE)
 _CAT_HEADER = re.compile(r"^##\s+(?!Question\b)(.+?)\s*$", re.MULTILINE)
 _OPTION = re.compile(r"^([A-F]|X)\)\s+(.*)$")
 _ANSWER = re.compile(r"^\[Answer\]:\s*(.*)$")

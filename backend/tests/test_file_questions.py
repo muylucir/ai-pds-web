@@ -143,15 +143,43 @@ async def test_a_fully_answered_file_does_not_ask(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_an_unparseable_file_with_answer_tags_does_not_ask(tmp_path):
-    """파싱이 안 되면 물어볼 것이 없다 — 조용히 지나가고 오늘 동작으로 남는다.
+async def test_an_unparseable_file_tells_the_agent_instead_of_going_silent(tmp_path):
+    """파싱 실패를 **조용히 넘기지 않는다.**
 
-    차단이 아니라 열화여야 한다: 상류 포맷은 안정적이지 않다(2026-08-17에 8파일
-    중 1개가 파서를 벗어났다)."""
+    처음에는 조용히 지나가게 만들었다("차단이 아니라 열화"). 그 판단은
+    AskUserQuestion이 폴백으로 살아 있을 때만 옳았다 — 그 도구가 거부되는 지금
+    파싱 실패는 **질문의 완전한 소실**이다. 2026-08-17 sarang-hpt에서 정확히 그렇게
+    됐다: 파일은 만들어졌고 카드는 뜨지 않았고 채팅에도 아무 말이 없었다.
+
+    턴을 멈추지 않고 `additionalContext`로 알린다. 멈추면 모델이 그 이유를 읽고
+    고칠 기회가 없어 사용자가 막힌다. 실측(2026-08-17): 모델은 이 노트를 읽고
+    **같은 턴 안에서** 파일을 고쳐 다시 쓰고, 그 재작성이 훅을 다시 태워 정상
+    카드가 뜬다."""
     d, ws = _driver(tmp_path)
     out = await _post(d, _write(ws, REL, "# 제목\n\n[Answer]:\n"))
-    assert out == {}
+    assert out.get("continue_") is not False, "턴을 멈추면 안 된다"
+    note = (out.get("hookSpecificOutput") or {}).get("additionalContext") or ""
+    assert note, out
+    # 무엇을 고쳐야 하는지 지목해야 한다 — 이유만 주면 같은 파일을 다시 쓴다.
+    assert "## Question" in note
     assert not _questions_events(d)
+
+
+@pytest.mark.asyncio
+async def test_the_same_unparseable_content_is_not_reported_twice(tmp_path):
+    """같은 내용에 같은 노트를 반복하지 않는다 — 턴 안 무한 왕복을 막는다.
+
+    내용이 **달라지면** 다시 알린다: 모델이 고쳐 썼는데 여전히 틀린 경우가 그것이고,
+    그때 침묵하면 다시 질문이 사라진다."""
+    d, ws = _driver(tmp_path)
+    broken = "# 제목\n\n[Answer]:\n"
+    first = await _post(d, _write(ws, REL, broken))
+    assert (first.get("hookSpecificOutput") or {}).get("additionalContext")
+    second = await _post(d, _write(ws, REL, broken))
+    assert second == {}, second
+    # 다른(여전히 틀린) 내용이면 다시 알린다.
+    third = await _post(d, _write(ws, REL, broken + "\n다른 내용\n"))
+    assert (third.get("hookSpecificOutput") or {}).get("additionalContext")
 
 
 @pytest.mark.asyncio

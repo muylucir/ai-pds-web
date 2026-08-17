@@ -369,3 +369,79 @@ X) Other (please describe after [Answer]: tag below)
     q = parse_question_file("a.md", md).questions[0]
     assert q.ask == ""
     assert q.text == ""
+
+
+# ---- 지역화된 문항 헤딩 ----
+# 2026-08-17 sarang-hpt 실측: `business-context-questions.md`가 만들어졌는데 질문
+# 카드가 뜨지 않았다. 파일은 완전히 정상인데 헤딩만 한국어였다:
+#
+#     ## 질문 1
+#     비즈니스 컨텍스트 정보를 어떤 방식으로 제공하시겠습니까?
+#     A) … D) … X) 기타
+#     [Answer]:
+#
+# 정규식이 리터럴 `Question`을 요구해 문항 0개로 읽혔다. **회귀의 원인은 규약
+# 변경이다**: 질문 파일이 도구 호출의 사본이 아니라 사용자용 산출물이 되면서
+# 에이전트가 헤딩까지 프로젝트 언어로 지역화했다. 그리고 AskUserQuestion이 이제
+# 거부되므로 그 질문은 **완전히 사라졌다** — 옛 폴백이 없어진 뒤의 새 실패 모양이다.
+#
+# 관용은 여기(우리 파서)에 두고, `## Question N`을 쓰라는 지시는
+# `discovery-config/CLAUDE.md`에 둔다. 상류 `question-format-guide.md`는 건드리지
+# 않는다 — 그 파일이 `## Question [Number]`를 규정한 정본이다.
+#
+# 허용목록으로 하는 이유: 느슨한 규칙(`숫자로 끝나는 헤딩`)은 실재하는 카테고리
+# 헤딩을 삼킨다 — 명확화 질문 파일의 `## 모호성 1`이 그것이다.
+
+def test_a_korean_question_heading_parses():
+    md = """## 질문 1
+비즈니스 컨텍스트 정보를 어떤 방식으로 제공하시겠습니까?
+
+A) 직접 서술하겠습니다
+B) URL이 있습니다
+X) 기타 (아래 [Answer]: 태그 뒤에 직접 설명해 주세요)
+
+[Answer]:
+"""
+    qf = parse_question_file("business-context-questions.md", md)
+    assert qf.parse_ok
+    assert [q.number for q in qf.questions] == [1]
+    assert qf.questions[0].ask == "비즈니스 컨텍스트 정보를 어떤 방식으로 제공하시겠습니까?"
+    assert [o.letter for o in qf.questions[0].options] == ["A", "B", "X"]
+
+
+def test_a_korean_qualified_question_heading_parses():
+    """수식어도 같이 온다 — 영어 쪽 `Clarification Question 1`의 대응."""
+    md = """### 명확화 질문 1
+어느 쪽입니까?
+
+A) 왼쪽
+B) 오른쪽
+
+[Answer]:
+"""
+    qf = parse_question_file("c.md", md)
+    assert qf.parse_ok
+    assert [q.number for q in qf.questions] == [1]
+
+
+def test_a_korean_category_heading_is_not_a_question():
+    """`## 모호성 1`은 카테고리다 — 실제 명확화 질문 파일이 쓰는 헤딩이다.
+
+    이것을 문항으로 삼으면 그 절 전체가 한 문항으로 뭉개지고, 그 아래의 진짜
+    문항(`### 명확화 질문 1`)이 그 안에 흡수된다."""
+    md = """## 모호성 1
+
+설명 문단.
+
+### 명확화 질문 1
+어느 쪽입니까?
+
+A) 왼쪽
+
+[Answer]:
+"""
+    qf = parse_question_file("c.md", md)
+    assert qf.parse_ok
+    assert [q.number for q in qf.questions] == [1]
+    assert qf.questions[0].category == "모호성 1"
+    assert "설명 문단." in qf.questions[0].context

@@ -71,6 +71,15 @@ those questions to the user **exactly as you wrote them**, then fills the
   work around, and nothing has to be shortened or split across rounds. A stage
   whose rules list nine question areas gets one file with nine questions and one
   screen.
+- **The question heading stays ASCII: `## Question <number>`.** Everything else in
+  the file — the question sentence, the options, the background prose — is written
+  in the project's language, but that one heading is a *structural marker*, not
+  prose. It is what pairs each answer with its question when Pathfinder writes the
+  `[Answer]:` tags back, and it is the form
+  `common/question-format-guide.md` specifies. Translating the word "Question"
+  into the project's language has produced a file that looked perfect and showed
+  **nothing** to the user. The parser tolerates a translated heading today, but do
+  not rely on that — write the ASCII form.
 - **Put the background where the format guide puts it.** Prose above a question —
   under a `##` heading, before the question's own heading — is shown to the user
   as that question's context, markdown and tables included. This is where the
