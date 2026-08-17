@@ -207,3 +207,69 @@ async def test_disabled_by_default(tmp_path, monkeypatch):
     assert not _questions_events(d)
     # 산출물 이벤트는 여전히 나간다.
     assert any(e.kind == "file_changed" for e in d._queue)
+
+
+# ---- 새로고침·재시작 복원 (GET /pending) ----
+# 훅이 흘리는 `questions` 이벤트는 **라이브 한 번**뿐이다. 사용자가 카드를 받은 뒤
+# 브라우저를 새로고침하면 그 이벤트는 다시 오지 않으므로, `GET /pending`이 카드를
+# 되살려야 한다. 옛 경로는 `pending_store`가 그 일을 했다.
+#
+# **저장 기제가 문제였던 적은 없다 — 퍼지 매칭이 문제였다.** 그래서 그 기제를 쓰되
+# 담는 것을 **파일 경로 하나**로 줄인다. 질문 내용은 저장하지 않고 매번 파일에서
+# 다시 읽는다:
+#
+#   - 항상 최신이다. 에이전트가 파일을 고쳐도 카드가 따라간다.
+#   - **clear 단계가 필요 없다.** `runner.write_file`이 S3에 직접 쓰므로
+#     (runner.py:57-59) 답변이 기록되는 순간 S3가 최신이고, 미답 문항이 없으면
+#     pending()이 자연히 None이 된다. 지울 것을 잊어 죽은 카드가 남는 경로가
+#     구조적으로 없다.
+#
+# 경로를 저장하는 이유는 모호성이다: 실측한 프로젝트에 미답 파일이 **동시에 3개**
+# 있었다(답변이 유실된 결과). 스캔만으로는 어느 라운드가 열려 있는지 알 수 없고,
+# 틀린 카드를 보여주는 것은 안 보여주는 것보다 나쁘다.
+
+@pytest.mark.asyncio
+async def test_the_hook_records_which_file_is_open(tmp_path):
+    d, ws = _driver(tmp_path)
+    await _post(d, _write(ws, REL, QUESTION_MD))
+    from pathfinder.agent.pending_store import load_pending_file
+    assert await load_pending_file(d._s3) == REL
+
+
+@pytest.mark.asyncio
+async def test_pending_rebuilds_the_card_from_s3_after_a_refresh(tmp_path):
+    """인메모리 상태가 없어도(=재시작) 복원돼야 한다."""
+    d, ws = _driver(tmp_path)
+    await _post(d, _write(ws, REL, QUESTION_MD))
+    # 턴이 끝나면 러너가 워크스페이스를 S3로 올린다 — 그 상태를 만든다.
+    await d._s3.put(REL, QUESTION_MD)
+    # 새 프로세스인 척: 인메모리 pending 상태를 비운다.
+    d._pending_payload = None
+    payload = json.loads(await d.pending({"session_id": "s-1"}))
+    assert payload["file"] == REL
+    assert payload["interrupt_id"] == ""
+    qs = payload["questions"]["questions"]
+    assert [q["number"] for q in qs] == [1]
+    assert qs[0]["ask"] == "어느 쪽입니까?"
+
+
+@pytest.mark.asyncio
+async def test_pending_goes_away_once_the_answers_are_in_the_file(tmp_path):
+    """clear를 부르지 않는다 — 파일에서 파생되므로 답변이 곧 종료 신호다."""
+    d, ws = _driver(tmp_path)
+    await _post(d, _write(ws, REL, QUESTION_MD))
+    await d._s3.put(REL, QUESTION_MD.replace("[Answer]:", "[Answer]: A"))
+    d._pending_payload = None
+    assert await d.pending({"session_id": "s-1"}) is None
+
+
+@pytest.mark.asyncio
+async def test_pending_survives_a_missing_file(tmp_path):
+    """마커는 있는데 파일이 없으면(삭제·경로 변경) 조용히 None이다.
+
+    복원은 편의이므로 500을 내지 않는다 — pending_store의 같은 규율."""
+    d, _ = _driver(tmp_path)
+    from pathfinder.agent.pending_store import save_pending_file
+    await save_pending_file(d._s3, file="aiplc-docs/gone.md")
+    d._pending_payload = None
+    assert await d.pending({"session_id": "s-1"}) is None

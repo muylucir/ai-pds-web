@@ -68,7 +68,9 @@ from pathfinder.agent import prompts
 from pathfinder.agent.answer_store import save_answers
 from pathfinder.agent.discovery_guard import (WRITE_TOOLS, bash_denial,
                                               write_denial)
-from pathfinder.agent.pending_store import clear_pending, load_pending, save_pending
+from pathfinder.agent.pending_store import (clear_pending, load_pending,
+                                              load_pending_file, save_pending,
+                                              save_pending_file)
 from pathfinder.agent.question_file_answers import record_answers
 from pathfinder.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
@@ -878,6 +880,14 @@ class ClaudeDriver:
         self._queue.append(AgentEvent(kind="questions", payload=json.dumps(
             {"interrupt_id": "", "file": rel, "questions": qfile},
             ensure_ascii=False, default=lambda o: o.model_dump())))
+        # 새로고침·재시작 복원의 근거. 경로 하나만 남기고 내용은 매번 파일에서
+        # 다시 읽는다(save_pending_file의 docstring에 그 셋을 적었다).
+        try:
+            await save_pending_file(self._s3, file=rel)
+        except Exception:
+            # 복원 편의가 실패해도 이 턴의 질문은 이미 큐에 있다 — 라이브 카드는
+            # 뜨고 새로고침만 못 살아난다. 턴을 죽이는 것이 더 나쁘다.
+            _log.exception("recording the open question file failed")
         # 훅은 사람을 기다리지 않는다 — 즉시 턴만 멈춘다. 실측(2026-08-17):
         # `continue_: False`는 `terminal_reason='hook_stopped'` + `is_error=False`로
         # 끝나므로 `_translate`가 이미 정상 `done`으로 처리하고, 같은 메시지에
@@ -1620,15 +1630,49 @@ class ClaudeDriver:
 
     async def pending(self, session: dict) -> str | None:
         """Contract: runner.py:183 calls this. In-memory first, then S3 --
-        covers both a same-process refresh and a backend restart."""
+        covers both a same-process refresh and a backend restart.
+
+        세 번째로 **파일 질문 라운드**를 본다. 그 라운드는 파킹된 future를 남기지
+        않으므로(PostToolUse 훅이 턴을 끝냈다) 위 두 경로에 아무것도 없다.
+        마지막에 두는 이유: 위 둘이 값을 가진 상태는 답을 기다리는 살아 있는
+        future가 있다는 뜻이고, 그때는 그 질문이 답해져야 턴이 재개된다.
+        """
         if self._pending_payload is not None:
             return self._pending_payload
         data = await load_pending(self._s3)
-        if data is None:
+        if data is not None:
+            return json.dumps({"interrupt_id": data["interrupt_id"],
+                               "questions": data["questions"]},
+                              ensure_ascii=False)
+        return await self._pending_from_file()
+
+    async def _pending_from_file(self) -> str | None:
+        """열려 있는 질문 파일을 S3에서 다시 읽어 카드를 재구성한다.
+
+        **로컬 워크스페이스가 아니라 S3를 읽는다.** 로컬은 턴 시작에만 복원되므로
+        (runner.py의 `_restore_workspace_from_s3`) 재시작 직후의 `GET /pending`은
+        빈 디렉터리를 보게 된다. S3가 유일한 진실이다.
+
+        미답 문항이 없으면 None이다 — 그것이 이 라운드의 종료 신호이고, 그래서
+        답변 제출 경로가 무엇도 지우지 않아도 된다.
+        """
+        rel = await load_pending_file(self._s3)
+        if rel is None:
             return None
-        return json.dumps({"interrupt_id": data["interrupt_id"],
-                           "questions": data["questions"]},
-                          ensure_ascii=False)
+        from pathfinder.parsers.questions import parse_question_file
+        try:
+            md = await self._s3.get(rel)
+        except FileNotFoundError:
+            # 파일이 사라졌다(삭제·경로 변경). 복원은 편의이므로 조용히 포기한다.
+            return None
+        qfile = parse_question_file(rel, md)
+        if not qfile.parse_ok:
+            return None
+        if not any(not (q.answer or "").strip() for q in qfile.questions):
+            return None
+        return json.dumps({"interrupt_id": "", "file": rel, "questions": qfile},
+                          ensure_ascii=False,
+                          default=lambda o: o.model_dump())
 
     # ---- lifecycle (beyond the three-method contract) ----
 
