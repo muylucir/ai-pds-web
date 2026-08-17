@@ -329,16 +329,22 @@ def test_a_failed_match_is_logged_with_the_best_candidate(tmp_path, caplog):
 
     2026-08-16에 되기록이 조용히 실패했고 로그가 텅 비어서 원인 추적이 늦어졌다 —
     매칭 실패에 아무 기록도 남기지 않았기 때문이다. 실패는 최선 후보와 그 점수를
-    남겨야 한다: 그 숫자가 "임계값이 빡빡한가" vs "엉뚱한 파일인가"를 가른다.
+    남겨야 한다: 그 숫자가 "임계값이 빡빡한가" vs "애초에 없는 질문인가"를 가른다.
+
+    레벨은 점수가 정한다(아래 두 테스트) — 여기서는 **기록이 남는다**는 것과
+    진단에 필요한 값이 담긴다는 것만 본다.
     """
     import logging
     _write(tmp_path, "aiplc-docs/a-questions.md", _one_question(_CLEAN))
 
-    with caplog.at_level(logging.WARNING, logger="pathfinder.agent"):
+    with caplog.at_level(logging.DEBUG, logger="pathfinder.agent"):
         assert record_answers(str(tmp_path),
                               _sdk("전혀 다른 질문입니다"), {"1": "A"}) == []
 
-    assert any("no match" in r.message.lower() or "매칭" in r.message
+    assert any("no match" in r.message.lower() for r in caplog.records), \
+        [r.message for r in caplog.records]
+    # 최선 후보와 점수가 있어야 다음 사람이 원인을 가를 수 있다.
+    assert any("best" in r.message and "candidate=" in r.message
                for r in caplog.records), [r.message for r in caplog.records]
 
 
@@ -353,3 +359,99 @@ def test_a_fuzzy_match_is_logged_so_suppression_can_be_measured(tmp_path, caplog
 
     assert any("fuzzy" in r.message.lower() for r in caplog.records), \
         [r.message for r in caplog.records]
+
+
+# ---- 후보 선정: 이름이 아니라 내용으로 ----
+# 2026-08-16 keumkang-v5: `design-context.md`가 완전한 질문 파일인데(문항 3개,
+# `[Answer]:` 슬롯 3개) 답변이 하나도 기록되지 않았다. 후보 glob이
+# `*-questions.md`였고 그 이름에 걸리지 않았기 때문이다.
+#
+# 이름에 의존할 수 없는 이유는 **상류가 자기 명명 규칙을 스스로 안 지킨다**는 것이다:
+# question-format-guide.md는 `{phase-name}-questions.md`를 규정하는데,
+# prototype-validation.md는 Step 2의 산출물을 `design-context.md`로 지정하면서 그
+# 안에 질문 형식을 쓰라고 한다.
+#
+# 실측으로 넓혀도 안전하다(keumkang-v5의 aiplc-docs 15개 파일): 추가되는 것은
+# design-context.md 하나뿐이고 audit.md·discovery-document.md·prototype-spec.md 등
+# 8개는 전부 걸리지 않는다.
+
+def test_a_question_file_not_named_questions_md_is_still_filled(tmp_path):
+    """**이 테스트가 그 결함의 재현이다.**"""
+    path = _write(tmp_path, "aiplc-docs/discovery/prototype/design-context.md",
+                  _one_question("이 프로토타입은 어떤 모습이어야 합니까?"))
+
+    updated = record_answers(str(tmp_path),
+                             _sdk("이 프로토타입은 어떤 모습이어야 합니까?"),
+                             {"1": "A"})
+
+    assert updated == ["aiplc-docs/discovery/prototype/design-context.md"]
+    qf = parse_question_file("d.md", path.read_text(encoding="utf-8"))
+    assert qf.questions[0].answer == "A"
+
+
+def test_documents_that_merely_mention_an_answer_tag_are_not_touched(tmp_path):
+    """`audit.md`는 질문과 `[Answer]: B`를 **인용**한다. 줄 맨 앞이 아니고
+    `## Question N` 헤더도 없으므로 질문 파일이 아니다 — 감사 기록을 답변
+    되기록이 덮으면 워크숍 기록이 훼손된다."""
+    audit = _write(tmp_path, "aiplc-docs/audit.md",
+                   "## Envision Step 1\n\n**Q1**: \"질문 1 본문입니까?\"\n"
+                   "**Recorded Answer Tag**: `[Answer]: B`\n")
+    before = audit.read_text(encoding="utf-8")
+    _write(tmp_path, "aiplc-docs/a-questions.md", TEN_QUESTIONS)
+
+    record_answers(str(tmp_path), _sdk("질문 1 본문입니까?"), {"1": "A"})
+
+    assert audit.read_text(encoding="utf-8") == before
+
+
+def test_a_document_with_no_answer_slot_is_not_even_parsed(tmp_path, caplog):
+    """후보를 넓히면서 파서를 모든 문서에 돌리면, 파싱 실패마다 경고 + 스택
+    트레이스가 찍혀 로그가 잡음으로 덮인다(parse_question_file의 fallback 경고).
+    그래서 `[Answer]:` 슬롯 유무를 **파싱 전에** 값싸게 걸러낸다."""
+    import logging
+    _write(tmp_path, "aiplc-docs/discovery/discovery-document.md",
+           "# Discovery Document\n\n## Part 1\n\n산문입니다.\n" * 20)
+    _write(tmp_path, "aiplc-docs/a-questions.md", TEN_QUESTIONS)
+
+    with caplog.at_level(logging.WARNING, logger="pathfinder.parsers.questions"):
+        record_answers(str(tmp_path), _sdk("질문 1 본문입니까?"), {"1": "A"})
+
+    assert not [r for r in caplog.records
+                if "falling back to raw markdown" in r.message], \
+        [r.message for r in caplog.records]
+
+
+# ---- 실패 로그를 두 종류로 나눈다 ----
+# keumkang-v5의 `no match` 5건 중 **3건은 결함이 아니었다** — 게이트/승인 질문이라
+# 질문 파일이 애초에 없고 audit.md에만 기록된다. 진짜 결함(파일에 있는데 못 찾음)과
+# 같은 경고로 묶으면 잡음에 묻힌다. 최선 점수가 그 둘을 가른다.
+
+def test_a_round_with_no_question_file_is_not_a_warning(tmp_path, caplog):
+    """게이트 질문은 파일이 없는 것이 정상이다. 기록할 곳이 없으니 빈 칸도 없다."""
+    import logging
+    _write(tmp_path, "aiplc-docs/a-questions.md", _one_question(_CLEAN))
+
+    with caplog.at_level(logging.DEBUG, logger="pathfinder.agent"):
+        assert record_answers(str(tmp_path),
+                              _sdk("regmatrix 제작으로 진행하시겠습니까?"),
+                              {"1": "A"}) == []
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING], \
+        [r.message for r in caplog.records]
+    # 그래도 흔적은 남긴다 — 조용히 사라지면 다음 진단이 또 로그 없이 시작된다.
+    assert caplog.records
+
+
+def test_a_near_miss_is_a_warning(tmp_path, caplog):
+    """파일에 그 질문이 있는데 임계값을 못 넘은 경우다. 이건 조사 대상이므로
+    경고여야 한다 — 임계값이 빡빡한지, 한글이 심하게 깨졌는지 갈린다."""
+    import logging
+    # 실측 0.7692 — 임계값(0.85) 미만이면서 근접선(0.70) 이상인 쌍이다.
+    _write(tmp_path, "aiplc-docs/a-questions.md",
+           _one_question("고객 페인 포인트에 대한 자료를 어떤 경로로 준비하시겠습니까?"))
+
+    with caplog.at_level(logging.DEBUG, logger="pathfinder.agent"):
+        record_answers(str(tmp_path), _sdk(_CLEAN), {"1": "A"})
+
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING], \
+        [(r.levelname, r.message) for r in caplog.records]

@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -36,9 +37,35 @@ from pathfinder.parsers.questions import parse_question_file, serialize_answers
 
 _log = logging.getLogger("pathfinder.agent")
 
-#: 질문 파일 규약(question-format-guide.md의 파일 명명 규칙). Workspace.
-#: list_question_files의 glob과 같은 집합을 본다.
-_GLOB = "*-questions.md"
+#: 후보 파일. **이름이 아니라 내용으로 고른다.**
+#:
+#: 예전에는 `*-questions.md`였고, 그래서 `design-context.md`의 답변이 통째로
+#: 유실됐다(2026-08-16 keumkang-v5: 문항 3개·슬롯 3개인데 0건 기록). 이름에
+#: 의존할 수 없는 이유는 **상류가 자기 명명 규칙을 스스로 안 지킨다**는 것이다 —
+#: question-format-guide.md는 `{phase-name}-questions.md`를 규정하는데
+#: prototype-validation.md는 Step 2의 산출물을 `design-context.md`로 지정하면서
+#: 그 안에 질문 형식을 쓰라고 한다.
+#:
+#: 넓혀도 안전하다는 것은 실측으로 확인했다(keumkang-v5의 aiplc-docs 15개 파일):
+#: 추가되는 것은 design-context.md 하나뿐이고 audit.md·discovery-document.md·
+#: prototype-spec.md 등 8개는 아래 두 관문에서 전부 걸러진다.
+#:
+#: 참고: Workspace.list_question_files(대시보드의 질문 파일 목록)는 여전히 이름
+#: 규칙을 본다. 두 집합이 갈리는 것은 알고 둔 것이다 — 답변은 문서 패널에서
+#: 이미 보이므로(components/Markdown.tsx의 `[Answer]:` 노출) 이번 결함과 무관한
+#: UI 변경을 같이 끌고 오지 않기 위해서다.
+_GLOB = "*.md"
+
+#: 첫 관문. 줄 맨 앞의 `[Answer]:`가 하나도 없으면 질문 파일이 아니다.
+#:
+#: **파싱 전에** 걸러내는 것이 요점이다. 모든 문서에 parse_question_file을 돌리면
+#: 실패마다 경고 + 스택 트레이스가 찍혀(그 함수의 fallback 경고) 로그가 잡음으로
+#: 덮인다 — 진단 로그를 넣은 목적이 무너진다. 값싼 문자열 스캔으로 끝낸다.
+#:
+#: `^`가 필수다: audit.md는 `**Recorded Answer Tag**: \`[Answer]: B\``처럼 답변
+#: 태그를 **인용**한다. 줄 맨 앞이 아니므로 걸리지 않는다(두 번째 관문인
+#: parse_ok에서도 걸리지만, 여기서 먼저 끝내는 편이 싸다).
+_ANSWER_SLOT = re.compile(r"^\[Answer\]:", re.MULTILINE)
 _DOCS_DIR = "aiplc-docs"
 
 
@@ -92,13 +119,19 @@ def _record(workspace: str, sdk_questions: list[dict],
 
     if best is None:
         # **조용히 실패하지 않는다.** 2026-08-16에 되기록이 안 됐는데 로그가 텅
-        # 비어 있어서 원인을 찾는 데 오래 걸렸다. 최선 후보와 그 점수를 남기면
-        # "임계값이 빡빡한가"(0.85에 가까움)와 "엉뚱한 파일을 보고 있는가"(낮음)를
-        # 바로 가를 수 있다.
-        _log.warning(
-            "question-file write-back: no match for %d answer(s); best %.3f "
-            "asked=%r candidate=%r", len(wanted), miss.ratio, miss.asked[:60],
-            miss.candidate[:60])
+        # 비어 있어서 원인을 찾는 데 오래 걸렸다.
+        #
+        # 다만 두 종류를 **레벨로 가른다.** keumkang-v5의 실패 5건 중 3건은 결함이
+        # 아니었다 — 게이트/승인 질문이라 질문 파일이 애초에 없고 audit.md에만
+        # 기록된다(기록할 곳이 없으니 빈 칸도 없다). 그걸 진짜 결함과 같은 경고로
+        # 묶으면 잡음에 묻힌다. 최선 점수가 둘을 가른다: 근처까지 온 후보가 있으면
+        # 조사 대상(경고), 전부 멀면 애초에 없는 질문이다(info).
+        detail = ("no match for %d answer(s); best %.3f asked=%r candidate=%r",
+                  len(wanted), miss.ratio, miss.asked[:60], miss.candidate[:60])
+        if miss.ratio >= _NEAR_MISS_MIN:
+            _log.warning("question-file write-back: " + detail[0], *detail[1:])
+        else:
+            _log.info("question-file write-back: " + detail[0], *detail[1:])
         return []
     try:
         best.path.write_text(best.new_md, encoding="utf-8")
@@ -137,6 +170,16 @@ def _record(workspace: str, sdk_questions: list[dict],
 #: 알아보지만 틀린 답은 알아볼 수 없다.
 _FUZZY_MIN = 0.85
 _FUZZY_MARGIN = 0.10
+
+#: 실패를 "조사 대상"과 "애초에 없는 질문"으로 가르는 선.
+#:
+#: 이 값 이상이면 파일에 비슷한 문항이 있는데 임계값을 못 넘은 것이므로 조사
+#: 대상이다(경고). 미만이면 어느 후보도 근처에 없었던 것 — 게이트/승인 질문처럼
+#: 질문 파일 자체가 없는 경우이고 정상이다(info).
+#:
+#: 실측이 이 선을 뒷받침한다: keumkang-v5의 실패 5건은 전부 0.345~0.552였고 모두
+#: "파일에 없는 질문"이었다. 반대로 깨진 한글의 맞는 쌍은 0.9677이었다.
+_NEAR_MISS_MIN = 0.70
 
 
 class _FileMatch:
@@ -278,6 +321,9 @@ def _match_file(path: Path, wanted: dict[str, str],
         md = path.read_text(encoding="utf-8")
     except OSError:
         _log.warning("unreadable question file skipped: %s", path)
+        return None
+    if not _ANSWER_SLOT.search(md):
+        # 질문 파일이 아니다. 파싱하지 않는다(_ANSWER_SLOT 주석 참조).
         return None
     qfile = parse_question_file(path.name, md)
     if not qfile.parse_ok:

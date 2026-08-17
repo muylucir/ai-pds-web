@@ -6,7 +6,17 @@ from pathfinder.models import Question, QuestionOption, QuestionFile
 
 logger = logging.getLogger(__name__)
 
-_Q_HEADER = re.compile(r"^#{2,3}\s+Question\s+(\d+)\s*$", re.MULTILINE)
+#: 문항 헤더. 번호 뒤에 **접미사를 허용한다** — 상류 형식은 `## Question [Number]`
+#: 만 규정하고 뒤에 오는 것을 금지하지 않으며, 에이전트는 후속 질문에 설명을 붙인다
+#: (실측: `## Question 4 (모호성 해소 — Question 3 답변에 따른 후속)`).
+#:
+#: 예전에는 `(\d+)\s*$`로 줄 끝을 요구해서 그런 문항을 **아예 못 봤다**. 그러면
+#: 답변이 기록되지 않고(question_file_answers가 그 번호를 모른다) 화면의 문항 수·
+#: answeredCount·진행률도 함께 어긋난다 — 2026-08-16 keumkang-v5의 결함이다.
+#:
+#: `\b`가 경계다: 번호가 있어야 문항이므로 `## Questions 개요`나 `## Questionnaire`
+#: 는 걸리지 않는다. 그것까지 삼키면 카테고리 헤더가 한 문항으로 뭉개진다.
+_Q_HEADER = re.compile(r"^#{2,3}\s+Question\s+(\d+)\b", re.MULTILINE)
 _CAT_HEADER = re.compile(r"^##\s+(?!Question\b)(.+?)\s*$", re.MULTILINE)
 _OPTION = re.compile(r"^([A-F]|X)\)\s+(.*)$")
 _ANSWER = re.compile(r"^\[Answer\]:\s*(.*)$")
