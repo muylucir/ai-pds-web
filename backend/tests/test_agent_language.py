@@ -166,6 +166,7 @@ async def test_submit_document_refusals_follow_the_project_language(tmp_path):
     (prompts.submit_document_escape, {"reason": "path escapes root"}),
     (prompts.submit_document_missing, {"path": "a.md"}),
     (prompts.submit_document_empty, {"path": "a.md"}),
+    (prompts.report_stage_missing, {}),
     (proto_prompts.design_rules, {}),
     (proto_prompts.build_complete_theme_rejection, {}),
 ])
@@ -189,6 +190,7 @@ def test_every_english_prompt_has_no_korean(fn, kwargs):
     (prompts.submit_document_escape, {"reason": "탈출"}),
     (prompts.submit_document_missing, {"path": "a.md"}),
     (prompts.submit_document_empty, {"path": "a.md"}),
+    (prompts.report_stage_missing, {}),
     (proto_prompts.design_rules, {}),
     (proto_prompts.build_complete_theme_rejection, {}),
 ])

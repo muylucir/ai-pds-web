@@ -10,12 +10,15 @@ from fakes.fake_runner import FakeRunner
 FIX = Path(__file__).parent / "fixtures"
 client = TestClient(app)
 
-def _seed(monkeypatch, pid):
+def _seed(monkeypatch, pid, language=None):
     monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
     async def make(project_id):
         return Workspace(FakeRunner())
     monkeypatch.setattr(app_module, "make_workspace", make)
-    client.post("/projects", json={"project_id": pid})
+    body = {"project_id": pid}
+    if language is not None:
+        body["language"] = language
+    client.post("/projects", json=body)
     ws = registry.get(pid)
     # Use asyncio.run (not get_event_loop().run_until_complete) — the latter is
     # deprecated on 3.11 and conflicts with pytest-asyncio's managed loop.
@@ -95,3 +98,82 @@ def test_submitting_an_unknown_question_number_400(monkeypatch):
     _seed(monkeypatch, "fq4")
     assert _submit("fq4", {"99": "A"}).status_code == 400
     assert _submit("fq4", {"abc": "A"}).status_code == 400
+
+
+# ---- 유실된 report_stage의 회수 ----
+# 훅이 질문 파일 쓰기에서 턴을 끝내면 같은 메시지에 배치된 뒤 도구 호출은 실행되지
+# 않는다(claude_driver._on_post_tool_use). 그래서 `report_stage`가 Write 뒤에 배치된
+# 턴에서는 그 호출이 사라지고, aiplc-state.md가 없어 배지가 빈다(2026-08-18
+# test123456에서 실제로 그랬다). 재개 턴은 "멈춘 지점부터"라서 회수 계기가 없다 —
+# 이 엔드포인트가 그 유일한 계기이므로 여기서 지목한다.
+#
+# 순서 지시 자체는 discovery-config/CLAUDE.md가 소유하고, 이것은 그것이 빗나갔을
+# 때의 백스톱이다. 그래서 상태 파일을 백엔드가 대신 쓰지 않는다 — 스테이지 이름을
+# 아는 것은 에이전트뿐이고, 경로에서 추측하면 룰셋 스테이지 이름의 두 번째 사본이
+# 생긴다(prompts.report_stage_missing).
+
+def _state(pid: str, markdown: str):
+    asyncio.run(registry.get(pid).runner.write_file(
+        "aiplc-docs/aiplc-state.md", markdown))
+
+
+def _resume_text(pid: str) -> str:
+    handle = _submit(pid, {"1": "B"}).json()["turn_id"]
+    payload = app_module.turn_handles.consume(pid, handle)
+    assert payload is not None
+    return payload["text"]
+
+
+def test_the_resume_turn_asks_for_report_stage_when_the_state_file_never_landed(
+        monkeypatch):
+    _seed(monkeypatch, "fq5")  # aiplc-state.md 없음
+    text = _resume_text("fq5")
+    assert "report_stage" in text
+    # 파일 지목은 그대로 남아야 한다 — 노트가 원래 프롬프트를 대체하지 않는다.
+    assert "strategy-questions.md" in text
+
+
+def test_a_state_file_without_a_current_stage_still_counts_as_missing(monkeypatch):
+    """판정은 파일 부재가 아니라 `current_stage is None`이다.
+
+    `upsert_stage`는 항상 Current Stage 줄을 쓰므로, 그 줄이 없는 파일은
+    `report_stage`가 유효하게 닿은 적이 없다는 뜻이다 — 파일만 보면 이 경우를
+    놓친다."""
+    _seed(monkeypatch, "fq6")
+    _state("fq6", "# AI-PLC State\n\n## Stage Progress\n")
+    assert "report_stage" in _resume_text("fq6")
+
+
+def test_the_resume_turn_stays_quiet_once_a_stage_is_recorded(monkeypatch):
+    """정상 순서로 돈 턴에는 이 노트가 붙지 않는다.
+
+    매 라운드 붙으면 에이전트가 이미 선언한 스테이지를 다시 선언하고, 그 반복이
+    체크리스트를 흔든다."""
+    _seed(monkeypatch, "fq7")
+    _state("fq7", "# AI-PLC State\n\n- **Current Stage**: Envision\n\n"
+                  "## Stage Progress\n- [ ] Envision\n")
+    text = _resume_text("fq7")
+    assert "report_stage" not in text
+    assert "strategy-questions.md" in text
+
+
+def test_the_note_follows_the_project_language(monkeypatch):
+    """에이전트가 읽는 문장이므로 UI 언어가 아니라 프로젝트 언어다
+    (agent/prompts.py 헤더의 규약)."""
+    _seed(monkeypatch, "fq8", language="en")
+    text = _resume_text("fq8")
+    assert "report_stage" in text
+    # 영어 프로젝트의 프롬프트에 한글이 섞이면 그 프로젝트의 대화가 한국어로
+    # 샌다 — 2026-08-04 결함의 모양이다.
+    assert not any("가" <= ch <= "힣" for ch in text)
+
+
+def test_a_failing_state_probe_does_not_break_answer_submission(monkeypatch):
+    """사용자는 폼을 이미 제출했다. 노트는 보조 지시이므로 제출을 막지 못한다."""
+    _seed(monkeypatch, "fq9")
+    async def boom():
+        raise RuntimeError("s3 down")
+    monkeypatch.setattr(registry.get("fq9"), "get_state", boom)
+    r = _submit("fq9", {"1": "B"})
+    assert r.status_code == 200, r.text
+    assert r.json()["turn_id"]

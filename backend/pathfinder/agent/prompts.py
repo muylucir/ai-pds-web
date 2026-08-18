@@ -308,6 +308,43 @@ def file_answers_recorded(language: str, path: str) -> str:
             f"마세요.")
 
 
+def report_stage_missing(language: str) -> str:
+    """`aiplc-state.md`에 Current Stage가 없을 때 재개 턴에 덧붙이는 지목.
+
+    `file_answers_recorded`에 이어 붙는 **완성된 문단**이다. 조각 치환이 아니라
+    문단 연결이므로 이 파일 헤더의 "두 벌을 완성문으로" 규율을 지킨다.
+
+    **왜 상태 파일을 백엔드가 대신 쓰지 않는가.** `state_sync.upsert_stage`는
+    스테이지 **이름**을 요구하고, 그것을 아는 것은 에이전트뿐이다. 경로에서
+    추측하려면(`.../envision/xxx-questions.md` → "Envision") 룰셋의 스테이지
+    이름을 복제한 매핑이 새로 생기는데, 그것은 룰셋 교체 때 조용히 어긋나는
+    두 번째 진실 공급원이다. 게다가 틀린 이름을 한 번 쓰면 이후 `upsert_stage`의
+    정확-일치 매칭이 빗나가 체크리스트가 두 줄로 갈린다.
+
+    **왜 유실이 생기는가(2026-08-18, test123456).** PostToolUse 훅이 질문 파일
+    쓰기에서 턴을 끝내면 같은 메시지에 배치된 뒤 도구 호출은 실행되지 않는다
+    (claude_driver._on_post_tool_use). 그 턴에서 `report_stage`가 Write 뒤에
+    배치되면 그대로 사라지고, 재개 턴은 "멈춘 지점부터 이어가라"이므로 회수되는
+    경로가 없다 — 대시보드·사이드바 배지가 프로젝트 내내 빈다
+    (state_sync.py 헤더의 qa-test 사고와 같은 증상이다).
+
+    순서 지시는 discovery-config/CLAUDE.md가 소유한다. 이것은 그 지시가 빗나간
+    경우의 백스톱이고, 그래서 **이유가 아니라 다음 행동**을 준다.
+    """
+    if _lang(language) == "en":
+        return ("Also: `aiplc-docs/aiplc-state.md` still has no current stage, so "
+                "`report_stage` did not run for the stage you are in. Call it "
+                "**first**, before anything else this turn — the stage badges are "
+                "empty until you do. Then continue. Remember that a question file "
+                "write ends the turn, so `report_stage` belongs before it, never "
+                "after.")
+    return ("그리고 `aiplc-docs/aiplc-state.md`에 현재 스테이지가 아직 없습니다 — "
+            "지금 스테이지에 대한 `report_stage`가 실행되지 않았습니다. 이번 턴에서 "
+            "**가장 먼저** 그것을 호출해 주세요. 그때까지 스테이지 배지가 비어 "
+            "있습니다. 호출한 뒤 이어가시면 됩니다. 질문 파일을 쓰면 턴이 끝나므로 "
+            "`report_stage`는 그 **앞**에 두세요 — 뒤에 두면 실행되지 않습니다.")
+
+
 def write_outside_docs(language: str, path: str) -> str:
     """`aiplc-docs/` 밖 파일 쓰기를 PreToolUse 훅이 거부할 때 모델이 읽는 이유.
 

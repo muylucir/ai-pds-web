@@ -1,4 +1,6 @@
 # backend/pathfinder/routes/answers.py
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import pathfinder.app as app_module
@@ -55,6 +57,27 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
         raise HTTPException(status_code=404, detail="question file not found")
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    text = prompts.file_answers_recorded(app_module.project_language(pid), name)
+    language = app_module.project_language(pid)
+    text = prompts.file_answers_recorded(language, name)
+    # 유실된 `report_stage`를 여기서 회수한다. 훅이 질문 파일 쓰기에서 턴을 끝내면
+    # 같은 메시지에 배치된 뒤 도구 호출은 실행되지 않으므로(claude_driver의
+    # _on_post_tool_use), Write 뒤에 배치된 `report_stage`는 사라진다. 재개 턴은
+    # "멈춘 지점부터"라서 그것을 되돌릴 계기가 없다 — 이 턴이 그 유일한 계기다.
+    #
+    # `current_stage is None`으로 판정하는 이유: 파일 부재보다 넓다. `upsert_stage`는
+    # 항상 Current Stage 줄을 쓰므로, 그 줄이 없다는 것은 파일이 없든 손상됐든
+    # **report_stage가 유효하게 닿은 적이 없다**는 뜻이다.
+    #
+    # 상태 파일을 백엔드가 대신 쓰지 않는 이유는 prompts.report_stage_missing에 있다
+    # (요약: 스테이지 이름을 아는 것은 에이전트뿐이고, 경로에서 추측하면 룰셋
+    # 스테이지 이름의 두 번째 사본이 생긴다).
+    try:
+        if (await ws.get_state()).current_stage is None:
+            text += "\n\n" + prompts.report_stage_missing(language)
+    except Exception:
+        # 상태를 읽지 못하는 것으로 답변 제출을 막지 않는다 — 사용자는 폼을 이미
+        # 제출했고, 이 노트는 배지를 살리는 보조 지시일 뿐이다.
+        logging.getLogger("pathfinder.agent").exception(
+            "state probe for the resume turn failed — continuing without the note")
     return {"turn_id": app_module.turn_handles.create(pid, {"text": text}),
             "questions": qfile}
