@@ -31,6 +31,26 @@ def _confine(root: str, rel: str) -> Path:
     return p
 
 
+def _discovery_keys(root: str) -> list[str]:
+    """`aiplc-docs/discovery/` 아래 파일을 **S3 키 모양**(워크스페이스 상대 POSIX
+    경로)으로 걷는다. `layout.discover`가 그 모양을 받도록 설계돼 있어
+    (proto/layout.py) 목록 라우트와 **같은 함수**로 판정할 수 있다.
+
+    S3가 아니라 로컬 디스크를 읽는다: 에이전트는 방금 Write한 명세를 곧바로
+    인계하고 `publish`는 submit_document 경로에서만 돈다. 인계 시점의 정본은
+    디스크다. 그리고 동기 함수로 남아 hot path에 왕복을 더하지 않는다.
+    """
+    try:
+        base = _confine(root, layout.DISCOVERY_PREFIX)
+    except ValueError:      # pragma: no cover — 상수 프리픽스라 탈출 불가
+        return []
+    if not base.is_dir():
+        return []
+    resolved_root = Path(root).resolve()
+    return sorted(p.relative_to(resolved_root).as_posix()
+                  for p in base.rglob("*") if p.is_file())
+
+
 # 명시적 JSON Schema 딕셔너리를 쓴다(@tool의 dict-형태 숏컷 {"key": type, ...}
 # 대신). 그 숏컷은 모든 키를 required로 만든다(claude_agent_sdk/__init__.py의
 # create_sdk_mcp_server._build_schema: `"required": list(properties.keys())`) —
@@ -65,9 +85,22 @@ _SUBMIT_DOCUMENT_SCHEMA: dict[str, Any] = {
 #: 넘길 프로토타입의 id 하나. 경로는 우리가 정한다 — 에이전트가 경로를 넘기면
 #: 레이아웃 규약이 프롬프트로 새어나가고(proto/layout.py가 단독 소유해야 한다)
 #: 틀린 경로를 선언할 여지가 생긴다.
+#:
+#: **id는 짓는 것이 아니라 고르는 것이다.** description이 그 말을 하는 이유는
+#: 2026-08-18 실측(hpt-sarang)이다: 설명이 없으니 에이전트가 제품명에서
+#: `claim-appeal-evidence-assistant`를 만들어 넘겼고, 단일 해법 프로젝트에
+#: 카드가 둘 뜨는 화면이 됐다. 슬러그는 이름이 아니라 **형제가 여럿일 때의
+#: 구별자**이므로(core-workflow.md의 top-3 레이아웃), 지어낸 슬러그는 없는
+#: 형제를 하나 만들어낸다.
 _HANDOFF_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"slug": {"type": "string"}},
+    "properties": {"slug": {
+        "type": "string",
+        "description": ("The id of a prototype whose spec you have ALREADY "
+                        "written. Do not invent one — not from the product "
+                        "name, not from anything. If this project has a "
+                        "single prototype, the id is 'prototype'."),
+    }},
     "required": ["slug"],
 }
 
@@ -187,15 +220,29 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None],
         명세 파일 존재를 확인하는 이유는 submit_document와 같다 — 카드는 그 파일에서
         파생되므로(routes/prototypes.py의 discover), 없는데 넘겼다고 하면 사용자가
         빈 탭을 본다.
+
+        **왜 `spec_key(slug)`가 아니라 `discover(...)`의 멤버십인가(2026-08-18).**
+        `spec_key`는 "이 id의 명세가 있어야 할 자리"를 계산한다. 그것을 에이전트가
+        방금 지어낸 이름에 적용하면 **없는 게 당연한 경로**가 나오고, 옛 거부
+        문구는 그 경로를 가리키며 "여기에 명세를 써라"라고 했다. hpt-sarang에서
+        에이전트는 그 지시를 따라 포인터 파일을 만들었고, 카드가 둘이 됐다 —
+        파일은 에이전트의 즉흥이 아니라 **도구가 시킨 일**이었다.
+
+        멤버십으로 바꾸면 단수·복수가 한 규칙으로 덮인다. Path A.1이면 후보가
+        `{'prototype'}` 하나, Path A.2/B면 top-3 슬러그 셋이고, 어느 쪽이든
+        에이전트는 **있는 것 중에서 고르는** 행위만 한다. 이름을 지어낼 자리가
+        구조적으로 없다.
+
+        슬러그로 경로를 조립하지 않으므로 탈출 검사도 필요 없어졌다 —
+        `_discovery_keys`가 돌려주는 키에는 `..`가 들어올 수 없고, 그 집합 밖의
+        슬러그는 전부 unknown이다.
         """
         slug = args["slug"]
-        try:
-            rel = layout.spec_key(slug)
-            p = _confine(workspace, rel)
-        except ValueError as exc:
-            return _text_result(prompts.submit_document_escape(language, str(exc)))
-        if not p.is_file():
-            return _text_result(prompts.handoff_prototype_missing(language, rel))
+        found = layout.discover(_discovery_keys(workspace))
+        rel = found.get(slug)
+        if rel is None:
+            return _text_result(
+                prompts.handoff_prototype_unknown(language, slug, sorted(found)))
         # 이 이벤트가 화면의 "Prototypes 탭으로 가기" 카드를 만든다. 에이전트가
         # 안내 문장을 잊어도 사용자에게 클릭할 곳이 남아야 한다 — 지금까지는
         # 안내가 없으면 사용자가 막혔다.

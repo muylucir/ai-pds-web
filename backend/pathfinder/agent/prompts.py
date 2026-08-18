@@ -75,11 +75,15 @@ def handoff_prototype_description(language: str) -> str:
                 "which is where builds and hosting happen. Call this instead of "
                 "building: you cannot build here, and the project's model and "
                 "credentials are already provisioned — never ask the user for an "
-                "API key, a provider or a model. Then end your turn.")
+                "API key, a provider or a model. `slug` names a spec you have "
+                "already written; for a single-prototype project it is "
+                "'prototype'. Then end your turn.")
     return ("완성된 프로토타입 명세를 Prototypes 탭으로 넘긴다 — 빌드와 호스팅은 "
             "그곳에서 일어난다. 빌드를 시도하는 대신 이 도구를 호출한다: 여기서는 "
             "빌드할 수 없고, 프로젝트의 모델과 자격증명은 이미 준비되어 있다 — "
-            "API 키·제공자·모델을 사용자에게 묻지 않는다. 호출한 뒤 턴을 끝낸다.")
+            "API 키·제공자·모델을 사용자에게 묻지 않는다. `slug`는 **이미 써 둔** "
+            "명세의 id다 — 단일 프로토타입 프로젝트에서는 'prototype'이다. "
+            "호출한 뒤 턴을 끝낸다.")
 
 
 # ---- 도구 반환 문자열 (agent/tools.py) ----
@@ -114,14 +118,39 @@ def submit_document_empty(language: str, path: str) -> str:
             "submit_document를 다시 호출할 것.")
 
 
-def handoff_prototype_missing(language: str, path: str) -> str:
-    """명세 파일이 없을 때. submit_document와 같은 규율 — 도구가 거짓을 선언하면
-    사용자가 빈 Prototypes 탭을 본다(카드는 명세 파일에서 파생된다)."""
+def handoff_prototype_unknown(language: str, slug: str,
+                              available: list[str]) -> str:
+    """넘기려는 id의 명세가 없을 때. **있는 id를 나열한다.**
+
+    옛 문구는 `spec_key(slug)`가 계산한 경로를 지목하며 "룰이 정한 자리에 명세를
+    먼저 쓰라"고 했다. 그 문구가 2026-08-18 hpt-sarang에서 실제로 만든 결과:
+    에이전트가 제품명으로 슬러그를 지어냈고, 존재하지 않는 그 경로에 파일을
+    **새로 만들어** 검사를 통과했다. 단일 해법 프로젝트에 카드가 둘 뜨는 화면이
+    됐다. 이유만 말하고 다음 행동을 지정하지 않으면 모델이 즉흥한다는 이 파일
+    헤더의 원칙이, 여기서는 **틀린 행동을 지정해서** 어긋난 것이다.
+
+    그래서 지목하는 것을 경로에서 **후보 목록**으로 바꾼다. 고를 것이 화면에
+    있으면 지어낼 이유가 없다. 후보가 비어 있는 경우(명세를 아직 안 씀)는
+    별도로 말한다 — 그때는 정말로 파일을 써야 한다.
+    """
     if _lang(language) == "en":
-        return (f"Refused — no prototype spec at '{path}'. Write the spec your "
-                "stage's rules specify first, then call handoff_prototype again.")
-    return (f"거부됨 — '{path}'에 프로토타입 명세가 없다. 지금 스테이지의 룰이 "
-            "정한 자리에 명세를 먼저 쓴 뒤 handoff_prototype을 다시 호출할 것.")
+        if not available:
+            return (f"Refused — '{slug}' does not exist, and this workspace has "
+                    "no prototype spec at all yet. Write the spec where your "
+                    "stage's rules put it, then call handoff_prototype again.")
+        listed = ", ".join(f"'{s}'" for s in available)
+        return (f"Refused — '{slug}' is not a prototype in this workspace. Hand "
+                f"off one of these instead: {listed}. Pick from that list; do "
+                "not invent an id and do not create a new spec file to make "
+                "one exist.")
+    if not available:
+        return (f"거부됨 — '{slug}'는 없고, 이 워크스페이스에는 프로토타입 명세가 "
+                "아직 하나도 없다. 지금 스테이지의 룰이 정한 자리에 명세를 먼저 "
+                "쓴 뒤 handoff_prototype을 다시 호출할 것.")
+    listed = ", ".join(f"'{s}'" for s in available)
+    return (f"거부됨 — '{slug}'는 이 워크스페이스의 프로토타입이 아니다. 다음 중 "
+            f"하나를 넘길 것: {listed}. 이 목록에서 고른다 — id를 지어내지 말고, "
+            "지어낸 id를 존재하게 만들려고 새 명세 파일을 만들지도 말 것.")
 
 
 def handoff_prototype_done(language: str, slug: str) -> str:

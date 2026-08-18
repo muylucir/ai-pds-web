@@ -201,6 +201,89 @@ async def test_handoff_refuses_a_path_escaping_slug(tmp_path):
     assert not emitted
 
 
+# ---- 지어낸 슬러그 (2026-08-18 실측: hpt-sarang) ----
+# 단일 해법으로 완주한 프로젝트에서 에이전트가 제품명으로
+# `claim-appeal-evidence-assistant`를 만들어 넘겼다. 옛 구현은 `spec_key(slug)`로
+# **없는 게 당연한 경로**를 계산해 지목하며 "룰이 정한 자리에 명세를 먼저 쓰라"고
+# 했고, 에이전트는 그 지시대로 그 자리에 파일을 만들어 검사를 통과시켰다. 명세가
+# 둘로 보이니 카드도 둘이 떴다(routes/prototypes.py가 파일에서 카드를 파생한다).
+#
+# 슬러그는 이름이 아니라 **형제가 여럿일 때의 구별자**다(core-workflow.md의 top-3
+# 레이아웃). 형제가 없는 프로젝트에서 슬러그를 지어내면 없는 형제가 하나 생긴다.
+
+async def test_handoff_refuses_an_invented_slug_and_names_the_real_id(tmp_path):
+    """거부만으로는 부족하다 — 옛 문구도 거부는 했다. **고를 것을 보여줘야** 한다."""
+    ws = tmp_path / "ws"
+    spec = ws / "aiplc-docs" / "discovery" / "prototype" / "prototype-spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("# 명세", encoding="utf-8")
+
+    tools, emitted = _tools(ws)
+    out = await _call(tools["handoff_prototype"],
+                      slug="claim-appeal-evidence-assistant")
+
+    assert "거부" in out or "Refused" in out
+    assert not emitted, "거부했는데 이벤트를 흘리면 카드가 뜬다"
+    assert "prototype" in out, f"고를 수 있는 id를 알려주지 않는다: {out}"
+    # 옛 문구의 실제 피해: 슬러그 경로를 지목해 파일 생성을 지시했다.
+    assert "PROTOTYPE-claim-appeal-evidence-assistant" not in out, (
+        "없는 경로를 지목하면 에이전트가 그 자리에 파일을 만든다")
+
+
+async def test_handoff_refusal_does_not_ask_for_a_new_spec_when_one_exists(tmp_path):
+    """명세가 이미 있으면 "명세를 먼저 써라"는 **틀린 지시**다 — 에이전트는 이미
+    썼고, 어긋난 쪽은 슬러그다."""
+    ws = tmp_path / "ws"
+    spec = ws / "aiplc-docs" / "discovery" / "prototype" / "prototype-spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("# 명세", encoding="utf-8")
+
+    tools, _ = _tools(ws)
+    out = await _call(tools["handoff_prototype"], slug="made-up")
+
+    assert "쓴 뒤" not in out and "Write the spec" not in out
+
+
+async def test_handoff_lists_every_candidate_in_the_multi_prototype_layout(tmp_path):
+    """Path A.2/B는 top 3다. 후보가 여럿이면 셋 다 보여야 한다 — 하나만 알려주면
+    에이전트가 나머지를 못 넘기거나 다시 지어낸다."""
+    ws = tmp_path / "ws"
+    base = ws / "aiplc-docs" / "discovery" / "prototypes"
+    for slug in ("triage", "maint", "billing"):
+        spec = base / slug / f"PROTOTYPE-{slug}.md"
+        spec.parent.mkdir(parents=True)
+        spec.write_text("# 명세", encoding="utf-8")
+
+    tools, emitted = _tools(ws)
+    out = await _call(tools["handoff_prototype"], slug="invented")
+
+    assert not emitted
+    for slug in ("triage", "maint", "billing"):
+        assert slug in out, f"{slug}가 후보 목록에 없다: {out}"
+
+
+async def test_handoff_asks_for_a_spec_only_when_there_is_none(tmp_path):
+    """후보가 비어 있을 때는 정말로 파일을 써야 한다 — 그 경로는 남는다."""
+    tools, _ = _tools(tmp_path / "ws")
+    out = await _call(tools["handoff_prototype"], slug="prototype")
+    assert "쓴 뒤" in out or "Write the spec" in out
+
+
+async def test_handoff_reports_the_real_spec_path_not_a_computed_one(tmp_path):
+    """이벤트의 `spec_path`는 `discover`가 찾은 **실제 키**다. 계산한 경로를 실으면
+    단일 레이아웃에서 빌드가 없는 파일을 읽으러 간다."""
+    ws = tmp_path / "ws"
+    spec = ws / "aiplc-docs" / "discovery" / "prototype" / "prototype-spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("# 명세", encoding="utf-8")
+
+    tools, emitted = _tools(ws)
+    await _call(tools["handoff_prototype"], slug="prototype")
+
+    payload = next(e.payload for e in emitted if e.kind == "prototype_ready")
+    assert "aiplc-docs/discovery/prototype/prototype-spec.md" in payload
+
+
 # ---- report_stage도 쓰기 직후 게시한다 ----
 # 2026-08-18 실측: 실제 턴에서 `file_changed`가 온 직후 그 문서를 읽으면 되는데
 # (Write 도구 경로는 PostToolUse 훅이 게시한다) `aiplc-docs/aiplc-state.md`만
