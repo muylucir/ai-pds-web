@@ -119,10 +119,6 @@ def test_is_idempotent(tmp_path):
 def test_skips_a_file_already_present_with_the_same_size(tmp_path):
     # 매 턴 수십 개 파일을 다시 쓰지 않는다. 룰은 읽기 전용이므로 크기가 같으면
     # 같은 파일로 본다. mtime을 뒤로 밀어 두고 그대로인지 확인한다.
-    #
-    # 대상이 CLAUDE.md가 아니라 상세 룰인 것에 주의: CLAUDE.md는 이제 조립물이라
-    # 크기 비교를 적용하지 않는다(두 언어 지시의 크기가 우연히 같으면 언어를
-    # 바꿔도 파일이 그대로 남는다 — 정확히 이 스펙이 없애려는 침묵이다).
     ws = tmp_path / "ws"
     ws.mkdir()
     rules = _rules(tmp_path)
@@ -395,53 +391,65 @@ def test_both_prototype_layouts_are_documented_as_valid():
     assert "lowercase letters, digits and" in text
 
 
-#: 조립된 워크스페이스 CLAUDE.md의 인코딩 절을 가리키는 앵커.
+#: 조립된 워크스페이스 CLAUDE.md에 인코딩 절이 **없어야** 함을 확인하는 앵커.
 _ENCODING_MARKER = "<!-- pathfinder-tool-encoding -->"
 
 
-def test_the_assembled_claude_md_carries_the_tool_encoding_rule(tmp_path):
-    """**2026-08-16 keumkang-v3의 결함이 이 검사의 이유다.**
+def test_the_assembled_claude_md_does_not_duplicate_the_encoding_rule(tmp_path):
+    """**2026-08-18에 뒤집은 검사다.** 전에는 이 절이 있어야 한다고 요구했다.
 
-    모델이 툴 파라미터의 한글을 `\\uXXXX` 이스케이프로 쓰면서 hex를 오타내면
-    "유효하지만 틀린" 음절이 된다(anthropics/claude-code#83033, 공식 미해결 —
-    모델 팀 이관, CLI로는 복원 불가). 실측: 파일은 `제공하시겠습니까`(U+ACA0)인데
-    물어본 질문은 `제공하시겜습니까`(U+AC9C)였다. 사용자는 깨진 한국어를 보고,
-    되기록은 짝을 못 찾는다.
+    원래 근거(2026-08-16 keumkang-v3): 모델이 툴 파라미터의 한글을 `\\uXXXX`로
+    쓰면서 hex를 오타내면 "유효하지만 틀린" 음절이 된다 — 파일은
+    `제공하시겠습니까`(U+ACA0)인데 물어본 질문은 `제공하시겜습니까`(U+AC9C)였다.
+    지시는 `discovery-config/CLAUDE.md`에 이미 있었는데도 결함이 났고, 그 파일이
+    스스로 "UI 접점에만 적용"이라며 모델을 작업 디렉터리 CLAUDE.md로 보냈기
+    때문이었다. 그래서 그쪽에도 복제했다.
 
-    상류가 권고하는 유일한 완화책이 이 지시다. 그런데 `discovery-config/CLAUDE.md`
-    에만 있었고, 그 파일은 스스로 "UI 접점에만 적용된다"며 모델을 작업 디렉터리
-    CLAUDE.md로 보낸다 — **거기에는 조항이 없었다.** 그래서 모델이 실제로 지목받는
-    파일에 넣는다.
+    근거가 양쪽에서 사라졌다:
+
+    1. **그 실패는 AskUserQuestion 경로의 것이었다.** 같은 턴에 Write로 쓴 파일은
+       깨끗하고 그 도구의 입력만 깨졌다(agent/question_file_answers.py). 그 도구는
+       이제 기본으로 거부된다(claude_driver.FILE_QUESTIONS_ENV).
+    2. **공유 config가 스스로 좁히기를 그만뒀다** — "applies to every tool call
+       ... nothing below narrows it"이 그 자리에 명시돼 있고, 아래
+       `test_the_config_dir_does_not_scope_the_encoding_rule_away`가 고정한다.
+
+    그래서 복제를 지운다. 한 규칙이 두 곳에 있으면 어느 쪽이 최신인지 알 수
+    없다 — 이 파일이 깊이 기준에 대해 이미 같은 이유로 고정한 원칙이다
+    (`test_the_depth_bar_lives_in_the_shared_config`).
+
+    **규칙 자체가 사라지지 않았음을 함께 확인한다.** 복제 제거와 규칙 유실은
+    코드에서 한 글자 차이이고, 후자는 깨진 한국어 질문으로만 드러난다.
     """
     ws = tmp_path / "ws"
     ws.mkdir()
     place_rules(str(ws), str(_rules(tmp_path)), language="ko")
     text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
 
-    assert _ENCODING_MARKER in text
-    # 지시의 두 축: 리터럴 UTF-8로 쓸 것, `\uXXXX`를 쓰지 말 것. 공백을 접고
-    # 보는 이유는 이 절이 80칼럼으로 감겨 있어서다 — 원문 부분문자열 검사는
-    # 내용이 아니라 줄바꿈 위치를 검사하게 된다(_discovery_config와 같은 규율).
+    assert _ENCODING_MARKER not in text
     folded = " ".join(text.split())
-    assert "literal UTF-8" in folded
-    assert "\\uXXXX" in folded
-    # 언어 지시보다 앞에 온다 — 출력 형식은 문서 전체의 전제다.
-    assert text.index(_ENCODING_MARKER) < text.index("KO-DIRECTIVE")
+    assert "literal UTF-8" not in folded
+
+    # 규칙은 공유 config에 남아 있어야 한다.
+    config = " ".join(_discovery_config().split())
+    assert "literal UTF-8" in config
+    assert "\\uXXXX" in config
 
 
-def test_the_encoding_rule_is_language_neutral(tmp_path):
-    """인코딩 규칙은 어느 언어를 쓸지에 대해 아무 말도 하지 않는다.
+def test_the_assembled_claude_md_starts_with_the_language_directive(tmp_path):
+    """언어 지시가 **1행**이다.
 
-    한글이 섞이면 그 자체가 언어 신호가 되어(이 파일 상단의 실측 근거) 영어
-    프로젝트의 대화를 한국어로 끌어당긴다 — 7f33652의 실패 모양이다.
+    인코딩 절을 떼어내며 비워진 자리를 이것이 받는다. 프로젝트마다 달라지는
+    유일한 블록이고, 한 번 싸움에서 진 적이 있다 — 7f33652에서 "맥락이 가까운"
+    템플릿의 CRITICAL이 언어 지시를 이겨 PR/FAQ 질문 20여 개가 영어로 남았다.
+    문서 전체의 전제는 맨 앞에 둔다.
     """
     ws = tmp_path / "ws"
     ws.mkdir()
-    place_rules(str(ws), str(_rules(tmp_path)), language="en")
+    place_rules(str(ws), str(_rules(tmp_path)), language="ko")
     text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
 
-    block = text.split(_ENCODING_MARKER, 1)[1].split("EN-DIRECTIVE", 1)[0]
-    assert not {c for c in block if "가" <= c <= "힣"}, block
+    assert text.startswith("KO-DIRECTIVE")
 
 
 def test_the_config_dir_does_not_scope_the_encoding_rule_away(tmp_path):

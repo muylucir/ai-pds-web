@@ -31,8 +31,10 @@ rule: it says nothing about WHICH language to write in, only that whatever
 language you write must reach the tool as real characters.
 
 **That encoding rule applies to every tool call you make, in any language, and
-nothing below narrows it.** It is repeated at the top of the working-directory
-`CLAUDE.md` for the same reason. Hand-spelling `\uXXXX` mis-spells some
+nothing below narrows it.** This is the only place it is stated — the
+working-directory `CLAUDE.md` carried a copy until 2026-08-18, and that copy was
+dropped once this sentence closed the loophole that had made the duplicate
+necessary. Hand-spelling `\uXXXX` mis-spells some
 codepoints, and a mis-spelled one decodes to a different, valid-looking syllable
 — the user then reads a nonsense question, and their answer cannot be matched
 back to the question file it belongs to.

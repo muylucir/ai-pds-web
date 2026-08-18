@@ -19,6 +19,14 @@
 # defined`가 반대를 말했고, 후자가 이겨서 PR/FAQ 질문 20여 개가 영어로 남았다.
 # 그래서 상류 룰 파일과 공유 config에서 언어 줄을 지우고, 유일한 출처를
 # language/{ko,en}.md로 만든다(test_workspace_rules가 그 불변식을 지킨다).
+#
+# **이 파일이 조립하는 것은 언어 지시 + core-workflow 둘뿐이다.** 한때 툴
+# 파라미터 인코딩 규칙도 맨 앞에 붙였는데(2026-08-16 keumkang-v3), 그것은
+# AskUserQuestion 경로의 워크어라운드였다. 그 도구가 기본 거부로 바뀌고
+# (claude_driver.FILE_QUESTIONS_ENV) 공유 config가 "nothing below narrows it"을
+# 명시하면서 근거가 양쪽에서 사라져 2026-08-18에 떼어냈다. 규칙이 필요해지는
+# 유일한 경우는 그 env를 꺼서 옛 질문 경로로 돌아갈 때이고, 그때도 공유
+# config의 조항이 그대로 적용된다.
 from __future__ import annotations
 
 import logging
@@ -34,39 +42,6 @@ _LANGUAGE_DIR = "language"
 #: 지원 언어. ProjectRegistry._LANGUAGES와 같은 집합이어야 한다.
 _LANGUAGES = ("ko", "en")
 _DEFAULT_LANGUAGE = "ko"
-
-#: 조립된 CLAUDE.md 맨 앞에 오는 툴 파라미터 인코딩 규칙.
-#:
-#: **왜 여기인가(2026-08-16 keumkang-v3의 결함).** 모델이 툴 파라미터의 한글을
-#: `\uXXXX` 이스케이프로 쓰면서 hex를 오타내면 "유효하지만 틀린" 음절이 된다
-#: (anthropics/claude-code#83033). 실측: 질문 파일은 `제공하시겠습니까`(U+ACA0)인데
-#: 물어본 질문은 `제공하시겜습니까`(U+AC9C)였다. 사용자는 깨진 한국어를 보고,
-#: 답변 되기록은 짝을 못 찾는다. 상류는 공식 미해결이고(모델 팀 이관, CLI로는
-#: 복원 불가) 권고하는 유일한 완화책이 이 지시다.
-#:
-#: 지시는 `discovery-config/CLAUDE.md`에 이미 있었는데도 결함이 났다. 그 파일이
-#: 스스로 "UI 접점에만 적용된다"며 모델을 **작업 디렉터리 CLAUDE.md**로 보내고,
-#: 거기에는 조항이 없었기 때문이다. 그래서 모델이 실제로 지목받는 파일에 둔다.
-#:
-#: **언어 중립이어야 한다.** 한글이 섞이면 그 자체가 언어 신호가 되어 영어
-#: 프로젝트의 대화를 한국어로 끌어당긴다(이 파일 상단의 7f33652 기록).
-#: 인코딩 규칙은 어느 언어로 쓸지에 대해 아무 말도 하지 않는다.
-_ENCODING_RULE = """<!-- pathfinder-tool-encoding -->
-# Tool-parameter encoding (applies to every tool call, in any language)
-
-Write non-ASCII text — Korean included — in tool-call parameters as **literal
-UTF-8 characters**. Never as `\\uXXXX` unicode escapes.
-
-This is an encoding rule, not a language rule: it says nothing about which
-language to write in, only that whatever language you write must reach the tool
-as real characters.
-
-Why it is worth stating this bluntly: hand-spelling four hex digits per syllable
-mis-spells some of them, and a mis-spelled codepoint decodes to a *different,
-valid-looking* syllable. The question then reads as nonsense to the user and no
-longer matches the question file it was written into, so their answer cannot be
-recorded against it.
-"""
 
 
 def _copy_if_changed(src: Path, dst: Path) -> None:
@@ -110,15 +85,26 @@ def place_rules(workspace: str, rules_dir: str,
 
     ws = Path(workspace)
     ws.mkdir(parents=True, exist_ok=True)
-    # 조립 결과는 원본 파일이 아니므로 _copy_if_changed의 크기 비교를 쓰지
-    # 않는다. 두 언어 지시의 크기가 우연히 같으면 언어를 바꿔도 파일이 그대로
+    # 조립 결과는 원본 파일이 아니므로 _copy_if_changed의 비교를 쓰지 않는다.
+    # 두 언어 지시의 크기가 우연히 같으면 언어를 바꿔도 파일이 그대로
     # 남는데, 그 침묵이 정확히 이 스펙이 없애려는 실패 모양이다. 파일 하나
-    # 쓰기는 싸다.
-    # 인코딩 규칙이 **맨 앞**이다: 출력 형식은 문서 전체의 전제이고, 언어 지시와
-    # 경쟁하지 않는다(어느 언어로 쓸지에 대해 아무 말도 하지 않는다).
+    # 쓰기는 싸다. 그리고 매 턴 같은 바이트를 쓰므로 프롬프트 캐시는 유지된다.
+    #
+    # **언어 지시가 1행이다.** 여기 있던 툴 파라미터 인코딩 규칙은 2026-08-18에
+    # 떼어냈다 — 그것은 AskUserQuestion 경로의 워크어라운드였고(파일 쓰기는
+    # 깨끗하고 그 도구의 입력만 깨졌다, agent/question_file_answers.py 참고)
+    # 그 도구는 이제 기본으로 거부된다(claude_driver.FILE_QUESTIONS_ENV).
+    # 규칙 자체는 공유 config에 남아 있고, 그쪽이 스스로를 좁히지 않겠다고
+    # 명시하므로(discovery-config/CLAUDE.md: "nothing below narrows it") 이 자리에
+    # 복제해 둘 이유가 없어졌다 — 한 규칙이 두 곳에 있으면 어느 쪽이 최신인지
+    # 알 수 없다는 것이 이 리포지토리가 깊이 기준에 대해 이미 테스트로 고정한
+    # 원칙이다.
+    #
+    # 그리고 이 자리는 프로젝트마다 달라지는 것에 주어야 한다. 언어 지시는 한
+    # 번 싸움에서 진 적이 있다(7f33652: 템플릿의 CRITICAL이 이겨 PR/FAQ 질문
+    # 20여 개가 영어로 남았다). 문서 전체의 전제는 맨 앞에 둔다.
     (ws / "CLAUDE.md").write_text(
-        _ENCODING_RULE + "\n"
-        + directive.read_text(encoding="utf-8") + "\n\n"
+        directive.read_text(encoding="utf-8") + "\n\n"
         + core.read_text(encoding="utf-8"),
         encoding="utf-8")
 
