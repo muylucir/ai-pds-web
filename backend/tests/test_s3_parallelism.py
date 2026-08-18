@@ -86,6 +86,21 @@ async def test_load_transcript_keeps_batch_order():
         [f"turn {n}" for n in range(1, 13)]
 
 
+async def test_sdk_session_store_load_reads_batches_in_parallel():
+    from pathfinder.agent.session_store import DiscoverySessionStore
+
+    s3 = ConcurrencyProbe()
+    for n in range(1, 9):
+        s3.blobs[f"discovery/transcript/session/main/{n:08d}.jsonl"] = (
+            json.dumps({"n": n}))
+
+    entries = await DiscoverySessionStore(s3).load(
+        {"session_id": "session"})
+
+    assert [entry["n"] for entry in entries] == list(range(1, 9))
+    assert s3.peak > 1, f"순차로 읽고 있다(peak={s3.peak})"
+
+
 async def test_one_unreadable_batch_does_not_lose_the_rest():
     """`return_exceptions=True`의 근거. 손상된 객체 하나가 대화 전체를 빈 목록으로
     만드는 것이 더 나쁘다(list_history의 강등과 같은 원칙)."""
@@ -176,6 +191,37 @@ async def test_workspace_restore_still_fails_the_turn_on_error(tmp_path):
 
     with pytest.raises(RuntimeError):
         await runner._restore_workspace_from_s3()
+
+
+async def test_workspace_sync_uses_bounded_parallel_uploads(tmp_path):
+    from pathfinder.runner import AgentRunner
+
+    class PutProbe(FakeS3Store):
+        def __init__(self):
+            super().__init__()
+            self.in_flight = 0
+            self.peak = 0
+
+        async def put(self, key, content):
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+            try:
+                await asyncio.sleep(0)
+                return await super().put(key, content)
+            finally:
+                self.in_flight -= 1
+
+    s3 = PutProbe()
+    for n in range(20):
+        path = tmp_path / "aiplc-docs" / f"doc-{n}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {n}")
+    runner = AgentRunner(project_id="p1", driver=None, s3=s3,
+                         local_root=str(tmp_path), session={})
+
+    await runner._sync_workspace_to_s3()
+
+    assert 1 < s3.peak <= 8
 
 
 class ListConcurrencyProbe(FakeS3Store):

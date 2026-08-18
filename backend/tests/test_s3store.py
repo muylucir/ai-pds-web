@@ -23,6 +23,15 @@ async def test_fake_list_returns_sorted_keys_under_prefix():
     await s3.put("prototype/app.py", "3")
     assert await s3.list("aiplc-docs/") == ["aiplc-docs/a.md", "aiplc-docs/b.md"]
 
+async def test_fake_list_with_etags_changes_when_content_changes():
+    s3 = FakeS3Store()
+    await s3.put("aiplc-docs/a.md", "one")
+    first = await s3.list_with_etags("aiplc-docs/")
+    await s3.put("aiplc-docs/a.md", "two")
+    second = await s3.list_with_etags("aiplc-docs/")
+    assert first[0][0] == second[0][0] == "aiplc-docs/a.md"
+    assert first[0][1] != second[0][1]
+
 # ---- Real S3Store against moto (proves the boto3 data-plane wiring) ----
 
 @mock_aws
@@ -67,6 +76,19 @@ async def test_s3store_list_strips_prefix_and_sorts_moto():
         await store.put("aiplc-docs/b.md", "1")
         await store.put("aiplc-docs/a.md", "2")
         assert await store.list("aiplc-docs/") == ["aiplc-docs/a.md", "aiplc-docs/b.md"]
+
+async def test_s3store_list_with_etags_moto():
+    with mock_aws():
+        client = boto3.client("s3", region_name="ap-northeast-2")
+        client.create_bucket(
+            Bucket="pf-bucket",
+            CreateBucketConfiguration={"LocationConstraint": "ap-northeast-2"},
+        )
+        store = S3Store(bucket="pf-bucket", prefix="projects/p1/", client=client)
+        put_etag = await store.put("aiplc-docs/a.md", "one")
+        assert await store.list_with_etags("aiplc-docs/") == [
+            ("aiplc-docs/a.md", put_etag)
+        ]
 
 async def test_s3store_keys_are_namespaced_by_prefix_moto():
     # Two projects share a bucket but must not see each other's keys.

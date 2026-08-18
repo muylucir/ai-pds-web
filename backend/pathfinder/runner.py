@@ -1,20 +1,27 @@
 # backend/pathfinder/runner.py — 턴 오케스트레이션(in-process 에이전트, VM 없음).
 from __future__ import annotations
 import asyncio
+import hashlib
 import json
 import logging
 import shutil
+import time
 from pathlib import Path, PurePosixPath
 from typing import AsyncIterator
 
 from pathfinder.models import AgentEvent
 from pathfinder.globmatch import matches_glob
 from pathfinder.pathsafe import reject_unsafe
+from pathfinder.performance import log_performance
 from pathfinder.s3store import S3StoreLike
-from pathfinder.parsers.redaction import redact_credentials
 from pathfinder.workspace_sync import SYNC_GLOBS, content_for_s3
 
 _log = logging.getLogger(__name__)
+_SYNC_CONCURRENCY = 8
+
+
+def _content_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def _interrupt_id_from(payload: str | None) -> str | None:
@@ -47,7 +54,12 @@ class AgentRunner:
         self._session = session
         self._turn_active = False
         self._pending_interrupt_id: str | None = None
+        self._remote_etags: dict[str, str | None] | None = None
+        self._synced_hashes: dict[str, str] = {}
         self.input_holder: str | None = None
+        set_callback = getattr(driver, "set_file_published_callback", None)
+        if set_callback is not None:
+            set_callback(self._record_published_file)
 
     def set_input_holder(self, holder: str | None) -> None:
         self.input_holder = holder
@@ -78,42 +90,122 @@ class AgentRunner:
         reject_unsafe(key)
         return self._local_root / key
 
+    async def _list_with_etags(
+        self, prefix: str,
+    ) -> list[tuple[str, str | None]]:
+        list_with_etags = getattr(self._s3, "list_with_etags", None)
+        if list_with_etags is not None:
+            return await list_with_etags(prefix)
+        # Compatibility for small test/application adapters that implement the
+        # older protocol. A missing ETag deliberately forces a GET every turn.
+        return [(key, None) for key in await self._s3.list(prefix)]
+
+    def _record_published_file(
+        self, key: str, content: str, etag: str | None,
+    ) -> None:
+        """Remember a successful PostToolUse/turn-end upload."""
+        self._synced_hashes[key] = _content_hash(content)
+        if etag is not None and self._remote_etags is not None:
+            self._remote_etags[key] = etag
+
     async def _restore_workspace_from_s3(self) -> None:
         """durable 워크스페이스(S3 = source of truth)를 로컬 FS로 복사한다.
-        S3가 무조건 이긴다; 푸시는 멱등."""
-        # **목록도, 본문도 병렬로.** 이 함수는 **매 턴 시작**에 돌므로 순차 왕복이
-        # 그대로 답변 지연이 된다 — 실측(2026-08-17, 배포 인스턴스): S3 왕복 1회
-        # 30ms, 산출물 6개에 0.247초. 산출물 수에 선형이므로 50개면 ~3초다.
-        # (session_store.load_transcript와 같은 판단, 선례는 project_store.)
-        #
-        # 실패는 삼키지 않는다: 여기가 실패하면 워크스페이스가 불완전한 상태로
-        # 턴이 돌고 에이전트가 없는 파일을 못 찾는다. 그건 조용한 오작동이므로
-        # 예외를 그대로 올려 턴을 실패시킨다(sync의 fail-closed와 같은 규율).
-        key_lists = await asyncio.gather(
-            *(self._s3.list(prefix) for prefix in self._RESTORE_PREFIXES))
-        keys = [k for group in key_lists for k in group]
-        bodies = await asyncio.gather(*(self._s3.get(k) for k in keys))
+        첫 턴은 전부 받고, 이후에는 ETag가 달라진 파일만 받는다."""
+        started = time.perf_counter()
+        cold = self._remote_etags is None
+        metadata_groups = await asyncio.gather(
+            *(self._list_with_etags(prefix)
+              for prefix in self._RESTORE_PREFIXES))
+        remote = {
+            key: etag
+            for group in metadata_groups
+            for key, etag in group
+        }
+        previous = self._remote_etags or {}
+        removed = set(previous) - set(remote)
+        for key in removed:
+            path = self._local_path(key)
+            if path.is_file():
+                path.unlink()
+            self._synced_hashes.pop(key, None)
+
+        keys = [
+            key for key, etag in remote.items()
+            if cold
+            or etag is None
+            or previous.get(key) != etag
+            or not self._local_path(key).is_file()
+        ]
+        bodies = await asyncio.gather(*(self._s3.get(key) for key in keys))
         for key, body in zip(keys, bodies):
             p = self._local_path(key)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(body, encoding="utf-8")
+            self._synced_hashes[key] = _content_hash(body)
+        self._remote_etags = remote
+        log_performance(
+            _log,
+            str(self.project_id),
+            "restore",
+            started,
+            cold=str(cold).lower(),
+            listed=len(remote),
+            downloaded=len(keys),
+            removed=len(removed),
+        )
 
     async def _sync_workspace_to_s3(self) -> None:
         """턴 출력(방법론 산출물 + 프로토타입 소스 서브트리)을 로컬에서 durable
         S3로 끌어올린다. audit.md는 저장 시 redaction(direct S3 reader 노출 차단)."""
-        for glob in self._SYNC_GLOBS:
-            for path in self._local_root.rglob("*"):
-                if not path.is_file():
-                    continue
-                key = path.relative_to(self._local_root).as_posix()
-                if not matches_glob(key, glob):
-                    continue
-                reject_unsafe(key)  # fail-closed: 안전하지 않은 키는 sync 전체 중단
-                content = path.read_text(encoding="utf-8", errors="replace")
-                # 리댁션 규칙도 workspace_sync가 소유한다 — 여기에 복사해 두면
-                # 쓰기 직후 게시 쪽이 빠뜨렸을 때 audit.md가 리댁션 없이
-                # 정본에 올라가고, 그 실패는 에러를 내지 않는다.
-                await self._s3.put(key, content_for_s3(key, content))
+        started = time.perf_counter()
+        scanned = 0
+        changed: list[tuple[str, str]] = []
+        for path in self._local_root.rglob("*"):
+            if not path.is_file():
+                continue
+            key = path.relative_to(self._local_root).as_posix()
+            if not any(matches_glob(key, glob) for glob in self._SYNC_GLOBS):
+                continue
+            scanned += 1
+            reject_unsafe(key)
+            content = content_for_s3(
+                key, path.read_text(encoding="utf-8", errors="replace"))
+            if self._synced_hashes.get(key) != _content_hash(content):
+                changed.append((key, content))
+
+        semaphore = asyncio.Semaphore(_SYNC_CONCURRENCY)
+        uploaded = 0
+
+        async def upload(key: str, content: str) -> None:
+            nonlocal uploaded
+            async with semaphore:
+                etag = await self._s3.put(key, content)
+            self._record_published_file(key, content, etag)
+            uploaded += 1
+
+        try:
+            results = await asyncio.gather(
+                *(upload(key, content) for key, content in changed),
+                return_exceptions=True,
+            )
+            failure = next(
+                (result for result in results
+                 if isinstance(result, BaseException)),
+                None,
+            )
+            if failure is not None:
+                raise failure
+        finally:
+            log_performance(
+                _log,
+                str(self.project_id),
+                "sync",
+                started,
+                scanned=scanned,
+                changed=len(changed),
+                uploaded=uploaded,
+                concurrency=_SYNC_CONCURRENCY,
+            )
 
     async def _sync_abandoned_turn(self) -> None:
         """Best-effort sync for a turn that never produced a terminal event.
@@ -139,10 +231,24 @@ class AgentRunner:
             return
         self._turn_active = True
         synced = False
+        turn_started = time.perf_counter()
+        first_event = False
+        first_text = False
         try:
             self._local_root.mkdir(parents=True, exist_ok=True)
             await self._restore_workspace_from_s3()
             async for event in self._driver.run(text, self._session):
+                if not first_event:
+                    log_performance(
+                        _log,
+                        str(self.project_id), "first_agent_event", turn_started,
+                        kind=event.kind)
+                    first_event = True
+                if not first_text and event.kind == "message" and event.text:
+                    log_performance(
+                        _log,
+                        str(self.project_id), "first_text", turn_started)
+                    first_text = True
                 if event.kind == "questions":
                     got = _interrupt_id_from(event.payload)
                     if got:
@@ -166,6 +272,10 @@ class AgentRunner:
             # truth for both) never received it.
             if not synced:
                 await self._sync_abandoned_turn()
+            log_performance(
+                _log,
+                str(self.project_id), "turn_total", turn_started,
+                route="message", synced=str(synced).lower())
 
     async def send_answers(self, answers: dict[str, str]) -> AsyncIterator[AgentEvent]:
         if self._turn_active:
@@ -176,11 +286,25 @@ class AgentRunner:
             return
         self._turn_active = True
         synced = False
+        turn_started = time.perf_counter()
+        first_event = False
+        first_text = False
         try:
             self._local_root.mkdir(parents=True, exist_ok=True)
             await self._restore_workspace_from_s3()
             interrupt_id, self._pending_interrupt_id = self._pending_interrupt_id, None
             async for event in self._driver.run_answers(interrupt_id, answers, self._session):
+                if not first_event:
+                    log_performance(
+                        _log,
+                        str(self.project_id), "first_agent_event", turn_started,
+                        kind=event.kind)
+                    first_event = True
+                if not first_text and event.kind == "message" and event.text:
+                    log_performance(
+                        _log,
+                        str(self.project_id), "first_text", turn_started)
+                    first_text = True
                 if event.kind == "questions":
                     got = _interrupt_id_from(event.payload)
                     if got:
@@ -193,6 +317,10 @@ class AgentRunner:
             self._turn_active = False
             if not synced:
                 await self._sync_abandoned_turn()  # see send_message's note
+            log_performance(
+                _log,
+                str(self.project_id), "turn_total", turn_started,
+                route="answers", synced=str(synced).lower())
 
     async def interrupt(self) -> None:
         """진행 중인 턴을 끊는다. 드라이버로 위임한다.

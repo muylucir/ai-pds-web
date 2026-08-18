@@ -82,6 +82,34 @@ async def test_send_message_relays_and_terminates(tmp_path):
     assert evs[-1].kind == "done"
 
 
+async def test_turn_logs_structured_performance_phases(tmp_path, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="pathfinder.runner")
+    r = _runner(tmp_path)
+    await _collect(r.send_message("go"))
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("turn_performance project_id=p1 phase=restore" in m
+               for m in messages)
+    assert any("turn_performance project_id=p1 phase=sync" in m
+               for m in messages)
+    assert any("turn_performance project_id=p1 phase=turn_total" in m
+               for m in messages)
+
+
+async def test_performance_logs_can_be_disabled(tmp_path, caplog, monkeypatch):
+    import logging
+
+    monkeypatch.setenv("PATHFINDER_PERFORMANCE_LOGS", "false")
+    caplog.set_level(logging.INFO)
+    r = _runner(tmp_path)
+    await _collect(r.send_message("go"))
+
+    assert not any("turn_performance" in record.getMessage()
+                   for record in caplog.records)
+
+
 async def test_turn_syncs_written_files_to_s3(tmp_path):
     root = tmp_path / "ws"
     d = FakeDriver(files_written={"aiplc-docs/aiplc-state.md": "stage: Discovery",
@@ -113,6 +141,101 @@ async def test_restore_pushes_s3_into_local_before_turn(tmp_path):
     r = _runner(tmp_path, driver=d, s3=s3)
     await _collect(r.send_message("읽어줘"))
     assert (root / "uploads" / "의견.md").read_text(encoding="utf-8") == "# 의견"
+
+
+async def test_warm_restore_downloads_only_changed_s3_files(tmp_path):
+    class CountingS3(FakeS3Store):
+        def __init__(self):
+            super().__init__()
+            self.get_calls = []
+
+        async def get(self, key):
+            self.get_calls.append(key)
+            return await super().get(key)
+
+    s3 = CountingS3()
+    s3.blobs["aiplc-docs/a.md"] = "a1"
+    s3.blobs["aiplc-docs/b.md"] = "b1"
+    r = _runner(tmp_path, s3=s3)
+
+    await r._restore_workspace_from_s3()
+    assert sorted(s3.get_calls) == ["aiplc-docs/a.md", "aiplc-docs/b.md"]
+
+    s3.get_calls.clear()
+    await r._restore_workspace_from_s3()
+    assert s3.get_calls == []
+
+    s3.blobs["aiplc-docs/a.md"] = "a2"
+    await r._restore_workspace_from_s3()
+    assert s3.get_calls == ["aiplc-docs/a.md"]
+    assert (r._local_root / "aiplc-docs/a.md").read_text() == "a2"
+
+
+async def test_warm_restore_removes_files_deleted_from_s3(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs["aiplc-docs/gone.md"] = "old"
+    r = _runner(tmp_path, s3=s3)
+
+    await r._restore_workspace_from_s3()
+    del s3.blobs["aiplc-docs/gone.md"]
+    await r._restore_workspace_from_s3()
+
+    assert not (r._local_root / "aiplc-docs/gone.md").exists()
+
+
+async def test_turn_end_sync_uploads_only_changed_files(tmp_path):
+    class CountingS3(FakeS3Store):
+        def __init__(self):
+            super().__init__()
+            self.put_calls = []
+
+        async def put(self, key, content):
+            self.put_calls.append(key)
+            return await super().put(key, content)
+
+    s3 = CountingS3()
+    s3.blobs["aiplc-docs/a.md"] = "a1"
+    s3.blobs["aiplc-docs/b.md"] = "b1"
+    r = _runner(tmp_path, s3=s3)
+    await r._restore_workspace_from_s3()
+
+    await r._sync_workspace_to_s3()
+    assert s3.put_calls == []
+
+    (r._local_root / "aiplc-docs/a.md").write_text("a2")
+    await r._sync_workspace_to_s3()
+    assert s3.put_calls == ["aiplc-docs/a.md"]
+
+
+async def test_immediate_publish_is_not_uploaded_again_at_turn_end(tmp_path):
+    class CountingS3(FakeS3Store):
+        def __init__(self):
+            super().__init__()
+            self.put_calls = []
+
+        async def put(self, key, content):
+            self.put_calls.append(key)
+            return await super().put(key, content)
+
+    class CallbackDriver(FakeDriver):
+        def set_file_published_callback(self, callback):
+            self.on_published = callback
+
+    root = tmp_path / "ws"
+    s3 = CountingS3()
+    driver = CallbackDriver(workspace=root)
+    r = _runner(tmp_path, driver=driver, s3=s3)
+    await r._restore_workspace_from_s3()
+    path = root / "aiplc-docs/new.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("new")
+
+    canonical = path.read_text()
+    etag = await s3.put("aiplc-docs/new.md", canonical)
+    driver.on_published("aiplc-docs/new.md", canonical, etag)
+    await r._sync_workspace_to_s3()
+
+    assert s3.put_calls == ["aiplc-docs/new.md"]
 
 
 async def test_sync_completes_before_done_yield(tmp_path):

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 
 class FakeS3Store:
     """In-memory S3StoreLike for runner/route unit tests (no boto3, no AWS).
@@ -20,8 +21,9 @@ class FakeS3Store:
     async def get(self, key: str) -> str:
         return (await self.get_bytes(key)).decode("utf-8")
 
-    async def put(self, key: str, content: str) -> None:
+    async def put(self, key: str, content: str) -> str:
         await self.put_bytes(key, content.encode("utf-8"))
+        return self._etag(self._raw[key])
 
     async def put_if_absent(self, key: str, content: str) -> bool:
         if key in self._raw:
@@ -39,6 +41,13 @@ class FakeS3Store:
 
     async def list(self, prefix: str) -> list[str]:
         return sorted(k for k in self._raw if k.startswith(prefix))
+
+    async def list_with_etags(self, prefix: str) -> list[tuple[str, str]]:
+        return [(k, self._etag(self._raw[k])) for k in await self.list(prefix)]
+
+    @staticmethod
+    def _etag(content: bytes) -> str:
+        return f'"{hashlib.md5(content, usedforsecurity=False).hexdigest()}"'
 
     async def delete_prefix(self, prefix: str) -> int:
         doomed = [k for k in self._raw if k.startswith(prefix)]

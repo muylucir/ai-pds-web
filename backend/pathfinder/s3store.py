@@ -7,9 +7,10 @@ from botocore.exceptions import ClientError
 
 class S3StoreLike(Protocol):
     async def get(self, key: str) -> str: ...
-    async def put(self, key: str, content: str) -> None: ...
+    async def put(self, key: str, content: str) -> str | None: ...
     async def put_if_absent(self, key: str, content: str) -> bool: ...
     async def list(self, prefix: str) -> list[str]: ...
+    async def list_with_etags(self, prefix: str) -> list[tuple[str, str]]: ...
     async def delete_prefix(self, prefix: str) -> int: ...
     # Binary-safe pair, used only by the prototype bundle backup/restore and
     # the handoff zip. The text methods above decode as UTF-8, which mangles
@@ -46,15 +47,16 @@ class S3Store:
 
         return await asyncio.to_thread(_get)
 
-    async def put(self, key: str, content: str) -> None:
-        def _put() -> None:
-            self._client.put_object(
+    async def put(self, key: str, content: str) -> str | None:
+        def _put() -> str | None:
+            response = self._client.put_object(
                 Bucket=self._bucket,
                 Key=self._full_key(key),
                 Body=content.encode("utf-8"),
             )
+            return response.get("ETag")
 
-        await asyncio.to_thread(_put)
+        return await asyncio.to_thread(_put)
 
     async def put_if_absent(self, key: str, content: str) -> bool:
         """Conditional write (S3 IfNoneMatch). Returns False if the key
@@ -94,14 +96,20 @@ class S3Store:
         await asyncio.to_thread(_put)
 
     async def list(self, prefix: str) -> list[str]:
-        def _list() -> list[str]:
+        return [key for key, _ in await self.list_with_etags(prefix)]
+
+    async def list_with_etags(self, prefix: str) -> list[tuple[str, str]]:
+        def _list() -> list[tuple[str, str]]:
             full = self._full_key(prefix)
             paginator = self._client.get_paginator("list_objects_v2")
-            keys: list[str] = []
+            keys: list[tuple[str, str]] = []
             for page in paginator.paginate(Bucket=self._bucket, Prefix=full):
                 for obj in page.get("Contents", []):
-                    keys.append(obj["Key"][len(self._prefix):])  # strip namespace
-            return sorted(keys)
+                    keys.append((
+                        obj["Key"][len(self._prefix):],
+                        obj.get("ETag", ""),
+                    ))
+            return sorted(keys, key=lambda item: item[0])
 
         return await asyncio.to_thread(_list)
 

@@ -108,9 +108,10 @@ class DiscoverySessionStore:
         keys = await self._s3.list(prefix)
         if not keys:
             return None  # never written (or emptied -- the SDK treats both alike)
+        bodies = await asyncio.gather(
+            *(self._s3.get(k) for k in sorted(keys)))
         entries: list[dict] = []
-        for k in sorted(keys):
-            body = await self._s3.get(k)
+        for body in bodies:
             entries.extend(json.loads(line) for line in body.splitlines() if line)
         return entries
 

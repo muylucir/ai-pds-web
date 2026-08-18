@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
 
 from pathfinder.globmatch import matches_glob
 from pathfinder.parsers.redaction import redact_credentials
@@ -55,7 +56,12 @@ def content_for_s3(key: str, text: str) -> str:
     return redact_credentials(text) if key in _REDACTED_KEYS else text
 
 
-async def publish_file(s3: S3StoreLike, local_root: Path, key: str) -> bool:
+async def publish_file(
+    s3: S3StoreLike,
+    local_root: Path,
+    key: str,
+    on_published: Callable[[str, str, str | None], None] | None = None,
+) -> bool:
     """워크스페이스의 파일 하나를 정본에 올린다. 올렸으면 True.
 
     **예외를 던지지 않는다.** 이 함수는 쓰기 직후 훅에서 불린다 — 게시는 부수
@@ -79,10 +85,13 @@ async def publish_file(s3: S3StoreLike, local_root: Path, key: str) -> bool:
     except OSError:
         # 이미 지워졌거나 디렉터리다 — 배치 sync가 최종 상태를 올린다.
         return False
+    canonical = content_for_s3(key, text)
     try:
-        await s3.put(key, content_for_s3(key, text))
+        etag = await s3.put(key, canonical)
     except Exception:
         _log.exception("publishing %s to S3 failed — the turn-end sync will "
                        "retry", key)
         return False
+    if on_published is not None:
+        on_published(key, canonical, etag)
     return True

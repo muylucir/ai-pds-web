@@ -61,6 +61,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
@@ -82,6 +83,7 @@ from pathfinder.agent.workspace_rules import place_rules
 from pathfinder.cli_settings import cli_context_env
 from pathfinder.models import AgentEvent
 from pathfinder.pathsafe import workspace_relative as _rel
+from pathfinder.performance import log_performance
 from pathfinder.s3store import S3StoreLike
 from pathfinder.tool_trace import tool_detail
 from pathfinder.workspace_sync import publish_file
@@ -256,6 +258,7 @@ class _MessageReader:
         # `_stream` to degrade, while this one only changes which terminal
         # event `_pump` emits. See `_translate`'s ResultMessage branch.
         self.failed = False
+        self.transcript_flushed = False
         # Woken on every append so the pump reacts immediately instead of
         # waiting out its poll interval; sticky, cleared by settle().
         self.wake = asyncio.Event()
@@ -520,7 +523,7 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # ("resume"), so this factory only spells the choice out.
             session_id=None if resume else session_id,
             resume=session_id if resume else None,
-            # Mirror every transcript line to S3. Without it the conversation
+            # Mirror transcript batches to S3. Without it the conversation
             # lives ONLY in the CLI's local .jsonl, so an EC2 replacement or
             # redeploy loses the whole Discovery history -- and chat restore had
             # nothing durable to read (session_history was still pointed at
@@ -528,15 +531,10 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # mechanism the prototype builder already uses (proto/builder.py's
             # session_store), different key prefix.
             session_store=driver._session_store,
-            # `eager`, not the SDK default `batched`. Batched only flushes on a
-            # `result` message or `close()` (query.py), and a Discovery turn
-            # reaches NEITHER: a question ends run() right there with
-            # `questions` -> `done` (see this module's header) and the client
-            # stays cached for the life of the process. Measured on the
-            # workshop box: 47 transcript lines on local disk, 0 objects in S3,
-            # and no error anywhere -- the mirror was working exactly as
-            # documented, just never asked to write.
-            session_store_flush="eager",
+            # Flush once at Pathfinder's explicit turn boundary. `_pump`
+            # handles normal/question terminals, while stream finally blocks
+            # cover errors and abandoned SSE consumers.
+            session_store_flush="batched",
             # Kept even under bypassPermissions, which the SDK warns shadows
             # this callback entirely. The warning overstates our case: probed
             # against the real CLI (see builder.py), Bash/Write do skip the
@@ -661,6 +659,9 @@ class ClaudeDriver:
         # what keeps the rest of the turn's messages for `run_answers`. See
         # _MessageReader.
         self._reader: _MessageReader | None = None
+        self._on_file_published: (
+            Callable[[str, str, str | None], None] | None
+        ) = None
 
     # ---- plumbing ----
 
@@ -676,6 +677,12 @@ class ClaudeDriver:
         this way: they are derived in `_emit_stage_events`/`_handoff_stop` and
         appended to `_queue` directly."""
         self._queue.append(event)
+
+    def set_file_published_callback(
+        self,
+        callback: Callable[[str, str, str | None], None] | None,
+    ) -> None:
+        self._on_file_published = callback
 
     # There is deliberately NO `drain_queue()` here, though builder.py:183 has
     # one and this file otherwise mirrors it. A batch pop is precisely the
@@ -740,6 +747,7 @@ class ClaudeDriver:
 
     async def _ensure_client(self, session: dict):
         if self._client is None:
+            started = time.perf_counter()
             _suppress_shadowed_callback_warning()
             client = self._client_factory(session)
             try:
@@ -762,9 +770,12 @@ class ClaudeDriver:
                 self._client = None
                 raise
             self._client = client
+            log_performance(
+                _log,
+                self._current_session_id, "connect", started, cold="true")
         return self._client
 
-    async def _flush_transcript_mirror(self) -> None:
+    async def _flush_transcript_mirror(self) -> bool:
         """Force this turn's mirrored transcript out to S3.
 
         Reaches into the SDK's batcher (`client._query`) rather than calling a
@@ -772,19 +783,29 @@ class ClaudeDriver:
         on `result`/`close()`, and Discovery hits neither (see the call site).
         Guarded with getattr and a broad except precisely BECAUSE it is a
         private handle -- an SDK upgrade that moves or renames it must cost the
-        durability of chat history, not the turn the user is watching. When that
-        happens the log line is the signal, and `eager` per-frame flushing is
-        still underneath as the weaker guarantee.
+        durability of chat history, not the turn the user is watching.
         """
+        started = time.perf_counter()
         batcher = getattr(getattr(self._client, "_query", None),
                           "_transcript_mirror_batcher", None)
         if batcher is None:
-            return
+            log_performance(
+                _log,
+                self._current_session_id, "transcript_flush", started,
+                available="false")
+            return True
         try:
             await batcher.flush()
         except Exception:
             _log.exception("transcript mirror flush failed — "
                            "chat history for this turn may be lost")
+            return False
+        finally:
+            log_performance(
+                _log,
+                self._current_session_id, "transcript_flush", started,
+                available="true")
+        return True
 
     async def interrupt(self) -> None:
         """진행 중인 턴을 끊는다. 지금까지 한 작업은 살린다.
@@ -1001,7 +1022,12 @@ class ClaudeDriver:
         #
         # 실패해도 턴을 죽이지 않는다(publish_file이 삼킨다). 턴 종료 배치 sync가
         # 여전히 백스톱이다.
-        await publish_file(self._s3, Path(self._workspace), rel)
+        await publish_file(
+            self._s3,
+            Path(self._workspace),
+            rel,
+            on_published=self._on_file_published,
+        )
         # 질문 파일도 산출물이다 — 문서 패널이 이 이벤트로 갱신되므로 아래 분기와
         # 무관하게 먼저 흘린다.
         self._queue.append(AgentEvent(kind="file_changed", path=rel))
@@ -1561,15 +1587,11 @@ class ClaudeDriver:
         # for the caller `done` means the turn is over -- the SSE response
         # closes and nothing else will run on our behalf.
         #
-        # `session_store_flush="eager"` already schedules a flush per frame, but
-        # those are fire-and-forget: the last frames of a turn can still be
-        # in flight here. And the usual backstops do not apply to Discovery --
-        # the SDK flushes on a `result` message or `close()`, and a question
-        # turn reaches neither (`asked` ends the pump with the CLI still parked,
-        # and the client stays cached). Measured on the workshop box: HTTP
-        # returned 200 at 00:34:31 while the CLI kept writing until 00:35:50,
-        # and S3 had nothing.
-        await self._flush_transcript_mirror()
+        # The SDK's batched mode normally flushes on `result` or `close()`, and
+        # a question turn reaches neither (`asked` leaves the CLI parked while
+        # the client stays cached). This explicit boundary keeps batching from
+        # weakening durability.
+        reader.transcript_flushed = await self._flush_transcript_mirror()
         if reader.failed:
             yield AgentEvent(kind="error",
                              text=prompts.turn_failed(self._language))
@@ -1612,6 +1634,10 @@ class ClaudeDriver:
     async def _stream(self, text: str, session: dict,
                       resume: bool = False) -> AsyncIterator[AgentEvent]:
         """Assumes the caller already holds the turn slot (see above)."""
+        turn_started = time.perf_counter()
+        first_sdk_event_logged = False
+        first_text_logged = False
+        reader_for_turn: _MessageReader | None = None
         self._last_status = None
         self._current_session_id = session.get("session_id")
         try:
@@ -1628,9 +1654,28 @@ class ClaudeDriver:
             # reader was still holding belongs to a turn nobody will relay --
             # this is the only place it is safe to drop it.
             self._retire_reader()
+            query_started = time.perf_counter()
             await client.query(text)
-            self._reader = _MessageReader(client.receive_response().__aiter__())
-            async for ev in self._pump(self._reader):
+            log_performance(
+                _log,
+                self._current_session_id, "query", query_started)
+            reader_for_turn = _MessageReader(
+                client.receive_response().__aiter__())
+            self._reader = reader_for_turn
+            async for ev in self._pump(reader_for_turn):
+                if not first_sdk_event_logged:
+                    log_performance(
+                        _log,
+                        self._current_session_id,
+                        "first_sdk_event",
+                        turn_started,
+                    )
+                    first_sdk_event_logged = True
+                if not first_text_logged and ev.kind == "message" and ev.text:
+                    log_performance(
+                        _log,
+                        self._current_session_id, "first_text", turn_started)
+                    first_text_logged = True
                 yield ev
         except Exception:
             _log.exception("claude sdk turn failed")
@@ -1638,6 +1683,12 @@ class ClaudeDriver:
                 yield ev
             yield AgentEvent(kind="error", text="agent turn failed")
             return
+        finally:
+            if reader_for_turn is None or not reader_for_turn.transcript_flushed:
+                await self._flush_transcript_mirror()
+            log_performance(
+                _log,
+                self._current_session_id, "driver_turn_total", turn_started)
 
     async def _continue_after_answers(self) -> AsyncIterator[AgentEvent]:
         """Relay the REST of a turn that `_pump` parked on a question.
@@ -1668,6 +1719,7 @@ class ClaudeDriver:
             _log.warning("answers resolved with no reader for the turn")
             yield AgentEvent(kind="error", text="agent turn failed")
             return
+        reader.transcript_flushed = False
         try:
             async for ev in self._pump(reader):
                 yield ev
@@ -1677,6 +1729,9 @@ class ClaudeDriver:
                 yield ev
             yield AgentEvent(kind="error", text="agent turn failed")
             return
+        finally:
+            if not reader.transcript_flushed:
+                await self._flush_transcript_mirror()
 
     async def _resume_with_answers(self, interrupt_id: str,
                                    answers: dict[str, str],
@@ -1750,15 +1805,21 @@ class ClaudeDriver:
 
         매 턴 쓰는 것이 언어에도 유리하다: 언어 지시가 워크스페이스에 남아
         있지 않아도 다음 턴에 다시 깔린다."""
+        started = time.perf_counter()
         try:
             place_rules(self._workspace, self._rules_dir, self._language)
             return True
         except Exception:
             _log.exception("rule placement failed")
             return False
+        finally:
+            log_performance(
+                _log,
+                self._current_session_id, "rules", started)
 
     async def run(self, text: str, session: dict) -> AsyncIterator[AgentEvent]:
         """Contract: runner.py:129 calls this."""
+        self._current_session_id = session.get("session_id")
         if not self._place_rules():
             yield AgentEvent(kind="error", text="agent turn failed")
             return
@@ -1813,6 +1874,7 @@ class ClaudeDriver:
         # agent's first post-restart action would otherwise run with no
         # CLAUDE.md at all. Cheap and idempotent, so it is unconditional
         # rather than branch-dependent.
+        self._current_session_id = session.get("session_id")
         if not self._place_rules():
             yield AgentEvent(kind="error", text="agent turn failed")
             return

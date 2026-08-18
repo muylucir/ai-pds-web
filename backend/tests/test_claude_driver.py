@@ -1512,30 +1512,19 @@ def _captured_options(tmp_path, monkeypatch, session):
     return captured["options"]
 
 
-def test_transcript_mirroring_does_not_wait_for_the_end_of_a_turn(tmp_path, monkeypatch):
-    """미러링은 `eager`여야 한다 — Discovery의 턴은 `result`에 도달하지 않는다.
-
-    SDK 기본값 `batched`는 `result` 메시지나 `close()`에서만 flush한다
-    (claude_agent_sdk/_internal/query.py). Discovery는 질문이 뜨면 그 자리에서
-    `questions` -> `done`으로 run()을 끝내고(이 모듈 상단 주석) 클라이언트를
-    캐시로 살려두므로 둘 중 어느 것에도 닿지 않는다. 그러면 그 턴의 대화가 SDK
-    메모리에만 남고 프로세스와 함께 사라진다 -- 실측: 로컬 트랜스크립트 47줄,
-    S3 0건.
-    """
+def test_transcript_mirroring_flushes_in_turn_batches(tmp_path, monkeypatch):
+    """프레임별 S3 PUT 대신 명시적인 Pathfinder 턴 경계에서 flush한다."""
     options = _captured_options(tmp_path, monkeypatch,
                                 {"session_id": "p1", "resume": False})
     assert options.session_store is not None, "미러링 자체가 꺼져 있다"
-    assert options.session_store_flush == "eager", (
-        "batched면 질문에서 끝나는 턴의 트랜스크립트가 flush되지 않는다")
+    assert options.session_store_flush == "batched"
 
 
 async def test_parking_on_a_question_flushes_the_transcript(tmp_path):
     """질문으로 턴을 마감할 때 미러 배처를 직접 flush해야 한다.
 
-    `eager`가 프레임마다 백그라운드 flush를 걸지만 그것은 fire-and-forget이다 --
-    턴을 끝내고 SSE 응답이 닫히는 시점에 마지막 프레임이 아직 안 나갔을 수 있다.
-    프로덕션에서 정확히 그 모양이었다: HTTP는 00:34:31에 200으로 끝났는데 CLI는
-    00:35:50까지 계속 썼고, S3에는 아무것도 남지 않았다.
+    배치 모드는 SDK의 result/close에만 의존할 수 없으므로 질문 terminal 전에
+    Pathfinder가 직접 flush해야 한다.
     """
     flushed = []
 
