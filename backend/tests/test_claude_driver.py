@@ -44,12 +44,6 @@ def _driver(tmp_path, scripted, s3=None):
     rules = tmp_path / "rules" / "aws-aiplc-rules"
     rules.mkdir(parents=True)
     (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
-    # place_rules가 언어 지시를 요구한다 — 없으면 FileNotFoundError로
-    # 턴이 버려진다(절반만 번역된 문서보다 즉시 실패가 낫다는 규율).
-    lang = rules.parent / "language"
-    lang.mkdir(parents=True, exist_ok=True)
-    (lang / "ko.md").write_text("KO", encoding="utf-8")
-    (lang / "en.md").write_text("EN", encoding="utf-8")
     ws = tmp_path / "ws"
     ws.mkdir()
     captured: dict = {}
@@ -104,9 +98,10 @@ async def test_places_the_rules_before_the_first_turn(tmp_path):
     # 룰이 없으면 에이전트가 워크플로우를 모르는 채로 돈다.
     d, ws, _ = _driver(tmp_path, {"text": ["ok"]})
     [ev async for ev in d.run("hi", {"session_id": "s-1"})]
-    # CLAUDE.md는 이제 조립물이다: 언어 지시 다음에 워크플로우.
+    # CLAUDE.md는 이제 조립물이다: 언어 지시 다음에 워크플로우. 지시는 픽스처가
+    # 아니라 패키지(pathfinder/agent/language/)에서 온다.
     text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
-    assert text.index("KO") < text.index("WORKFLOW")
+    assert text.index("언어 규약") < text.index("WORKFLOW")
 
 
 @pytest.mark.asyncio
@@ -379,12 +374,6 @@ def _driver_with_failing_turn(tmp_path, scripted, *, status=500):
     rules = tmp_path / "rules" / "aws-aiplc-rules"
     rules.mkdir(parents=True)
     (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
-    # place_rules가 언어 지시를 요구한다 — 없으면 FileNotFoundError로
-    # 턴이 버려진다(절반만 번역된 문서보다 즉시 실패가 낫다는 규율).
-    lang = rules.parent / "language"
-    lang.mkdir(parents=True, exist_ok=True)
-    (lang / "ko.md").write_text("KO", encoding="utf-8")
-    (lang / "en.md").write_text("EN", encoding="utf-8")
     ws = tmp_path / "ws"
     ws.mkdir()
     d = ClaudeDriver(workspace=str(ws), rules_dir=str(tmp_path / "rules"),
@@ -1049,9 +1038,10 @@ async def test_places_the_rules_on_the_restart_answers_path_too(tmp_path):
     d, ws, _ = _driver(tmp_path, {"text": ["ok"]}, s3=s3)
     assert not (ws / "CLAUDE.md").exists()  # 차갑게 시작한다
     [ev async for ev in d.run_answers("i-1", {"1": "A"}, {"session_id": "s-1"})]
-    # CLAUDE.md는 이제 조립물이다: 언어 지시 다음에 워크플로우.
+    # CLAUDE.md는 이제 조립물이다: 언어 지시 다음에 워크플로우. 지시는 픽스처가
+    # 아니라 패키지(pathfinder/agent/language/)에서 온다.
     text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
-    assert text.index("KO") < text.index("WORKFLOW")
+    assert text.index("언어 규약") < text.index("WORKFLOW")
 
 
 @pytest.mark.asyncio
@@ -1247,12 +1237,8 @@ def _checking_driver(tmp_path, script=None, config_dir=None, workspace=None):
     if not rules.exists():
         rules.mkdir(parents=True)
         (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
-        # place_rules가 언어 지시를 요구한다 — 없으면 FileNotFoundError로
-        # 턴이 버려진다(절반만 번역된 문서보다 즉시 실패가 낫다는 규율).
-        lang = rules.parent / "language"
-        lang.mkdir(parents=True, exist_ok=True)
-        (lang / "ko.md").write_text("KO", encoding="utf-8")
-        (lang / "en.md").write_text("EN", encoding="utf-8")
+        # 언어 지시는 픽스처가 만들지 않는다 — `rules_dir`가 아니라 패키지
+        # (pathfinder/agent/language/)에서 온다.
     ws = workspace or (tmp_path / "ws")
     ws.mkdir(parents=True, exist_ok=True)
     cfg = config_dir or (tmp_path / "cfg")
@@ -1441,12 +1427,6 @@ async def test_a_failed_connect_does_not_poison_the_client_cache(tmp_path):
     rules = tmp_path / "rules" / "aws-aiplc-rules"
     rules.mkdir(parents=True)
     (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
-    # place_rules가 언어 지시를 요구한다 — 없으면 FileNotFoundError로
-    # 턴이 버려진다(절반만 번역된 문서보다 즉시 실패가 낫다는 규율).
-    lang = rules.parent / "language"
-    lang.mkdir(parents=True, exist_ok=True)
-    (lang / "ko.md").write_text("KO", encoding="utf-8")
-    (lang / "en.md").write_text("EN", encoding="utf-8")
     ws = tmp_path / "ws"
     ws.mkdir()
     d = ClaudeDriver(workspace=str(ws), rules_dir=str(tmp_path / "rules"),

@@ -15,9 +15,9 @@ even when the document never says which language to use.
 So the rule for this file is stronger than "no language directive": it must be
 language-NEUTRAL, and for a document the model reads that means the upstream
 rules' own language, English. The per-project language flows through the
-workspace CLAUDE.md instead (rule/aiplc-rules/language/{ko,en}.md, assembled by
-agent/workspace_rules.py) — that is the "project" level, the only level that can
-vary per project. It stays the single source of truth for which language to
+workspace CLAUDE.md instead (backend/pathfinder/agent/language/{ko,en}.md,
+assembled by agent/workspace_rules.py) — that is the "project" level, the only
+level that can vary per project. It stays the single source of truth for which language to
 speak; nothing here competes with it, which is what commit 7f33652's failure was
 about.
 
@@ -34,10 +34,10 @@ language you write must reach the tool as real characters.
 nothing below narrows it.** This is the only place it is stated — the
 working-directory `CLAUDE.md` carried a copy until 2026-08-18, and that copy was
 dropped once this sentence closed the loophole that had made the duplicate
-necessary. Hand-spelling `\uXXXX` mis-spells some
-codepoints, and a mis-spelled one decodes to a different, valid-looking syllable
-— the user then reads a nonsense question, and their answer cannot be matched
-back to the question file it belongs to.
+necessary. Hand-spelling `\uXXXX` mis-spells some codepoints, and a mis-spelled
+one decodes to a different, valid-looking syllable — the user then reads a
+nonsense question, and their answer cannot be matched back to the question file
+it belongs to.
 
 Apart from that rule, this file governs only the touchpoints with the Pathfinder
 web UI. For the Discovery workflow itself, follow the `CLAUDE.md` in the working

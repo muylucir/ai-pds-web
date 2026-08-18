@@ -112,8 +112,11 @@ function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
     'proto-config/CLAUDE.md',
     'proto-config/skills/shadcn-design/SKILL.md',
     'rule/aiplc-rules/aws-aiplc-rules/core-workflow.md',
-    'rule/aiplc-rules/language/ko.md',
-    'rule/aiplc-rules/language/en.md',
+    // 언어 지시는 2026-08-18에 룰셋 트리 밖으로 나왔다 — 업스트림 aiplc-rules/에는
+    // language/ 가 없으므로, 룰셋을 통째로 갈아 끼울 때 우리 콘텐츠가 함께
+    // 사라지지 않아야 한다(backend/pathfinder/agent/workspace_rules.py).
+    'backend/pathfinder/agent/language/ko.md',
+    'backend/pathfinder/agent/language/en.md',
   ]) {
     assert.ok(files.has(rel),
       `${rel} must be tracked — the instance clones the repo, so anything ` +

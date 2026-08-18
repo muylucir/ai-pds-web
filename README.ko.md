@@ -240,7 +240,7 @@ sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # 프리
 | `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 결과가 로컬 `cdk.context.json`(gitignored)에 캐시되므로 클론당 최초 1회만 필요하다 |
 | SSH 접속 불가 | 의도된 설계다. SSH 포트가 없고 SSM만 열려 있다 |
 | 프로토타입 프리뷰가 404 | **의도된 응답이다** — 접근 토큰 쿠키가 없거나 다른 프로토타입의 것이다. 공유 링크(`/api/proto/t/{token}`)로 들어가야 쿠키가 심긴다. 분기 조건은 `backend/pathfinder/routes/proto_public.py` |
-| 영어 프로젝트인데 문서·채팅이 한국어로 나옴 | 언어 지시가 두 레벨에서 충돌한 것이고 **이 실패는 에러를 내지 않는다.** 프로젝트 언어는 `rule/aiplc-rules/language/{ko,en}.md`와 공유 config dir(`proto-config/CLAUDE.md`·`discovery-config/CLAUDE.md`) 두 채널로 들어간다 — 둘이 어긋나면 화면은 정상인데 산출물만 다른 언어가 된다 |
+| 영어 프로젝트인데 문서·채팅이 한국어로 나옴 | 언어 지시가 두 레벨에서 충돌한 것이고 **이 실패는 에러를 내지 않는다.** 프로젝트 언어는 `backend/pathfinder/agent/language/{ko,en}.md`와 공유 config dir(`proto-config/CLAUDE.md`·`discovery-config/CLAUDE.md`) 두 채널로 들어간다 — 둘이 어긋나면 화면은 정상인데 산출물만 다른 언어가 된다 |
 | 영어 UI인데 일부 문구만 한국어 | 딕셔너리를 안 타고 소스에 박힌 리터럴이다. `cd frontend && npm test -- noHardcodedKorean`이 위치를 집어 준다 |
 | 워크스페이스 채팅 내역이 빈 목록 | `list_history`가 모든 실패를 `[]`로 강등한다. `projects/{pid}/discovery/transcript/`에 객체가 있는지부터 확인한다 — 미러링 키는 project_id에서 uuid5로 유도하므로(`agent/session_store.py`, `agent/claude_driver.py`) project_id를 그대로 프리픽스에 넣어 찾으면 빈 곳을 뒤진다 |
 | 긴 메시지를 보내면 "연결이 끊어졌습니다" | 요청 라인이 Node `maxHeaderSize`를 넘은 것(HTTP 431)이고 `EventSource`가 상태 코드를 노출하지 않아 이 문구만 뜬다. 지금은 턴 텍스트를 POST로 받아 1회용 핸들만 URL에 싣는다(`turn_handles.py`) — 다시 나면 입력을 나눠 보내거나 파일로 첨부한다 |

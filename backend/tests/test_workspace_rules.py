@@ -10,16 +10,38 @@ import pytest
 from pathfinder.agent.workspace_rules import place_rules
 
 
+#: 실제 언어 지시의 첫 헤딩. 픽스처 스텁(옛 `KO-DIRECTIVE`/`EN-DIRECTIVE`)을 쓰지
+#: 않는 이유: 지시가 `rule/aiplc-rules/` 밖(`pathfinder/agent/language/`)으로
+#: 옮겨졌고, 픽스처가 그것을 흉내내려면 패키지 경로를 monkeypatch해야 한다. 실물을
+#: 그대로 쓰면 픽스처와 실물의 드리프트도 함께 사라진다 — 그 드리프트가
+#: `test_works_against_the_real_repo_rules`가 존재하는 이유다.
+_KO_MARK = "# 언어 규약"
+_EN_MARK = "# Language convention"
+
+#: 언어 지시가 사는 곳. 패키지 안이므로 **항상 존재한다** — 아래 불변식 검사들이
+#: "없으면 skip"으로 조용히 물러나지 않는 이유다. `rule/aiplc-rules/` 아래에
+#: 있을 때는 리포 체크아웃에 따라 없을 수 있어 skip이 정당했지만, 그 skip이
+#: 이동 후에 검사를 사라지게 만들 뻔했다.
+_LANG_DIR = (Path(__file__).resolve().parents[1]
+             / "pathfinder" / "agent" / "language")
+
+
+def _directive(language: str) -> str:
+    return (_LANG_DIR / f"{language}.md").read_text(encoding="utf-8")
+
+
 def _rules(tmp_path: Path) -> Path:
-    """리포의 rule/aiplc-rules 레이아웃을 흉내낸 픽스처."""
+    """리포의 rule/aiplc-rules 레이아웃을 흉내낸 픽스처.
+
+    **언어 지시는 여기 없다.** 업스트림 `aiplc-rules/`에는 `.gitkeep`과
+    `aws-aiplc-rules/`·`aws-aiplc-rule-details/`뿐이고(실측), 우리 지시는
+    `pathfinder/agent/language/`에 산다. 픽스처가 그 사실을 반영해야 "룰셋을 통째로
+    갈아 끼운다"는 조작이 테스트에서도 안전하게 보인다.
+    """
     rules = tmp_path / "rules"
     (rules / "aws-aiplc-rules").mkdir(parents=True)
     (rules / "aws-aiplc-rules" / "core-workflow.md").write_text(
         "# DISCOVERY PHASE WORKFLOW", encoding="utf-8")
-    lang = rules / "language"
-    lang.mkdir(parents=True)
-    (lang / "ko.md").write_text("KO-DIRECTIVE", encoding="utf-8")
-    (lang / "en.md").write_text("EN-DIRECTIVE", encoding="utf-8")
     details = rules / "aws-aiplc-rule-details" / "common"
     details.mkdir(parents=True)
     (details / "process-overview.md").write_text("OVERVIEW", encoding="utf-8")
@@ -34,8 +56,8 @@ def test_claude_md_is_language_directive_then_core_workflow(tmp_path):
     # 언어 지시가 **앞에** 온다. discovery-config/CLAUDE.md가 기록한 실패에서
     # "맥락이 가까운" 템플릿의 CRITICAL이 언어 지시를 이겼으므로, 여기서는
     # 언어를 문서 전체의 전제로 맨 앞에 둔다.
-    assert text.index("KO-DIRECTIVE") < text.index("# DISCOVERY PHASE WORKFLOW")
-    assert "EN-DIRECTIVE" not in text
+    assert text.index(_KO_MARK) < text.index("# DISCOVERY PHASE WORKFLOW")
+    assert _EN_MARK not in text
 
 
 def test_english_project_gets_the_english_directive(tmp_path):
@@ -43,9 +65,9 @@ def test_english_project_gets_the_english_directive(tmp_path):
     ws.mkdir()
     place_rules(str(ws), str(_rules(tmp_path)), language="en")
     text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
-    assert "EN-DIRECTIVE" in text
+    assert _EN_MARK in text
     # 한국어 지시가 남으면 두 지시가 충돌한다 — 이것이 7f33652의 실패 모양이다.
-    assert "KO-DIRECTIVE" not in text
+    assert _KO_MARK not in text
 
 
 def test_the_two_languages_produce_different_claude_md(tmp_path):
@@ -63,7 +85,7 @@ def test_defaults_to_korean(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     place_rules(str(ws), str(_rules(tmp_path)))
-    assert "KO-DIRECTIVE" in (ws / "CLAUDE.md").read_text(encoding="utf-8")
+    assert _KO_MARK in (ws / "CLAUDE.md").read_text(encoding="utf-8")
 
 
 def test_an_unknown_language_falls_back_to_korean(tmp_path):
@@ -71,7 +93,7 @@ def test_an_unknown_language_falls_back_to_korean(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     place_rules(str(ws), str(_rules(tmp_path)), language="klingon")
-    assert "KO-DIRECTIVE" in (ws / "CLAUDE.md").read_text(encoding="utf-8")
+    assert _KO_MARK in (ws / "CLAUDE.md").read_text(encoding="utf-8")
 
 
 def test_switching_language_rewrites_claude_md(tmp_path):
@@ -82,19 +104,43 @@ def test_switching_language_rewrites_claude_md(tmp_path):
     rules = _rules(tmp_path)
     place_rules(str(ws), str(rules), language="ko")
     place_rules(str(ws), str(rules), language="en")
-    assert "EN-DIRECTIVE" in (ws / "CLAUDE.md").read_text(encoding="utf-8")
+    assert _EN_MARK in (ws / "CLAUDE.md").read_text(encoding="utf-8")
 
 
-def test_raises_when_the_language_directive_is_missing(tmp_path):
+def test_raises_when_the_language_directive_is_missing(tmp_path, monkeypatch):
     # core-workflow가 없을 때와 같은 규율이다: 룰 없이 조용히 진행하면
     # 에이전트가 언어를 모르는 채로 돌고, 그건 절반만 번역된 문서로 나타나
     # 원인 추적이 어렵다.
+    #
+    # 지시가 패키지 안에 있으므로 파일을 지울 수 없다 — 대신 탐색 경로를 빈
+    # 디렉터리로 돌린다. 이 경로는 설치가 망가진 경우에만 실현되지만, 그때 조용히
+    # 진행하지 않는다는 것이 검사할 값이다.
+    import pathfinder.agent.workspace_rules as wr
+    monkeypatch.setattr(wr, "_LANGUAGE_DIR", tmp_path / "no-language")
     ws = tmp_path / "ws"
     ws.mkdir()
-    rules = _rules(tmp_path)
-    (rules / "language" / "ko.md").unlink()
     with pytest.raises(FileNotFoundError):
-        place_rules(str(ws), str(rules), language="ko")
+        place_rules(str(ws), str(_rules(tmp_path)), language="ko")
+
+
+def test_the_language_directives_live_outside_the_upstream_ruleset():
+    """**2026-08-18에 옮긴 자리를 고정한다.**
+
+    업스트림 `aiplc-rules/`에는 `.gitkeep`·`aws-aiplc-rules/`·
+    `aws-aiplc-rule-details/`뿐이고 `language/`는 없다(GitHub API로 확인).
+    우리 지시를 그 트리 안에 두면 룰셋 교체가 "디렉터리를 통째로 갈아 끼운다"로
+    끝나지 못하고 — 그렇게 하면 지시가 함께 사라진다 — 이 제품의 최우선 제약이
+    사람의 주의력에 걸린다. 그리고 그 디렉터리는 읽기 전용으로 다루므로, 지시를
+    고쳐야 할 때 손댈 수 없는 자리이기도 했다.
+
+    되돌아가는 것을 막는 것이 이 검사다: 룰셋 트리에 `language/`가 다시 생기면
+    실패한다.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    assert not (repo / "rule" / "aiplc-rules" / "language").exists()
+    for language in ("ko", "en"):
+        assert (repo / "backend" / "pathfinder" / "agent" / "language"
+                / f"{language}.md").is_file()
 
 
 def test_copies_rule_details_under_the_name_the_rules_expect(tmp_path):
@@ -285,13 +331,8 @@ def test_the_depth_bar_lives_in_the_shared_config_not_the_language_directives():
 
     # 두 벌이 되지 않아야 한다. 언어 지시에도 같은 기준이 들어가면 드리프트가
     # 시작되고, 어느 쪽이 최신인지 알 수 없다.
-    rules = repo / "rule" / "aiplc-rules"
-    if not (rules / "language" / "ko.md").is_file():
-        return
     for language in ("ko", "en"):
-        directive = (rules / "language" / f"{language}.md").read_text(
-            encoding="utf-8")
-        assert _DEPTH_BAR_MARKER not in directive, language
+        assert _DEPTH_BAR_MARKER not in _directive(language), language
 
 
 def test_both_language_directives_carry_the_length_calibration_clause():
@@ -302,12 +343,8 @@ def test_both_language_directives_carry_the_length_calibration_clause():
     일부다. 이 조항이 사라지면 깊이 기준(공유 config)이 왜 필요한지에 대한
     설명이 어느 문서에도 남지 않는다.
     """
-    repo_rules = Path(__file__).resolve().parents[2] / "rule" / "aiplc-rules"
-    if not (repo_rules / "language" / "ko.md").is_file():
-        pytest.skip("repo rules not present")
     for language in ("ko", "en"):
-        text = (repo_rules / "language" / f"{language}.md").read_text(
-            encoding="utf-8")
+        text = _directive(language)
         assert _LANGUAGE_CLAUSE_MARKER in text, language
         # 깊이 기준이 어디 있는지 가리켜야 한다 — 가리키는 문장이 없으면 그
         # 기준은 이 문서를 먼저 읽는 에이전트에게 존재하지 않는 것과 같다.
@@ -490,7 +527,7 @@ def test_the_assembled_claude_md_starts_with_the_language_directive(tmp_path):
     place_rules(str(ws), str(_rules(tmp_path)), language="ko")
     text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
 
-    assert text.startswith("KO-DIRECTIVE")
+    assert text.startswith(_KO_MARK)
 
 
 def test_the_config_dir_does_not_scope_the_encoding_rule_away(tmp_path):

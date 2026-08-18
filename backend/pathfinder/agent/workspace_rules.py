@@ -37,7 +37,25 @@ _log = logging.getLogger("pathfinder.agent")
 
 _CORE_WORKFLOW = "aws-aiplc-rules/core-workflow.md"
 _DETAILS_DIR = "aws-aiplc-rule-details"
-_LANGUAGE_DIR = "language"
+
+#: 언어 지시가 사는 곳 — **이 패키지 안이다.**
+#:
+#: 2026-08-18까지는 `rule/aiplc-rules/language/`였다. 그 자리는 틀렸다: 업스트림
+#: `aiplc-rules/`에는 `.gitkeep`·`aws-aiplc-rules/`·`aws-aiplc-rule-details/`뿐이고
+#: `language/`는 우리가 2047ac3에서 넣은 우리 콘텐츠였다. 즉 업스트림 트리 안에
+#: 우리 판단이 섞여 있었다.
+#:
+#: 그 배치의 대가는 룰셋 교체다. 교체가 "`rule/aiplc-rules/`를 지우고 새
+#: `aiplc-rules/`를 복사"여야 가장 안전한데, 그러면 언어 지시가 함께 사라졌다.
+#: 조용히 죽지는 않았지만(`place_rules`가 던지고 턴이 실패한다) 룰셋만 갱신하면
+#: 그대로 돈다는 이 제품의 최우선 제약을 사람의 주의력에 의존하게 만들었다.
+#: 게다가 `rule/aiplc-rules/`는 읽기 전용으로 다루는 디렉터리이므로, 언어 지시를
+#: 고쳐야 할 때 손댈 수 없는 자리에 있었다.
+#:
+#: 조립하는 코드 옆에 두면 둘 다 사라진다: 룰셋 트리는 순수하게 업스트림 것이 되고,
+#: 언어 지시는 우리가 고칠 수 있는 자리에 온다. 배포는 `pip install -e`이므로
+#: (infra/lib/user-data.ts:137) 패키지 상대 경로가 소스 트리를 그대로 가리킨다.
+_LANGUAGE_DIR = Path(__file__).resolve().parent / "language"
 
 #: 지원 언어. ProjectRegistry._LANGUAGES와 같은 집합이어야 한다.
 _LANGUAGES = ("ko", "en")
@@ -102,7 +120,11 @@ def place_rules(workspace: str, rules_dir: str,
     lang = language if language in _LANGUAGES else _DEFAULT_LANGUAGE
     if lang != language:
         _log.warning("unknown project language %r — using %s", language, lang)
-    directive = root / _LANGUAGE_DIR / f"{lang}.md"
+    # 언어 지시는 `rules_dir`가 아니라 이 패키지에서 온다(_LANGUAGE_DIR 참고).
+    # 없으면 던진다 — core-workflow가 없을 때와 같은 규율이다. 조용히 진행하면
+    # 절반만 번역된 문서로 나타나 원인 추적이 더 어렵다. 패키지 안이므로 설치가
+    # 망가진 경우 말고는 일어나지 않는다.
+    directive = _LANGUAGE_DIR / f"{lang}.md"
     if not directive.is_file():
         raise FileNotFoundError(f"language directive not found: {directive}")
 
