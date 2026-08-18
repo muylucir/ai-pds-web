@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import re
 from difflib import SequenceMatcher
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pathfinder.parsers.questions import parse_question_file, serialize_answers
 
@@ -67,6 +67,42 @@ _GLOB = "*.md"
 #: parse_ok에서도 걸리지만, 여기서 먼저 끝내는 편이 싸다).
 _ANSWER_SLOT = re.compile(r"^\[Answer\]:", re.MULTILINE)
 _DOCS_DIR = "aiplc-docs"
+
+#: 내용이 무엇이든 질문 파일이 **아닌** 문서. 이름으로 제외하는 유일한 자리다.
+#:
+#: **왜 이름으로 제외하는가(2026-08-18 실측).** 위 `_ANSWER_SLOT`의 `^` 앵커는
+#: audit.md가 태그를 **인용**하는 경우(`**Recorded Answer Tag**: \`[Answer]: B\`')만
+#: 막는다. 그런데 `core-workflow.md:303-304`는 audit.md에 대해
+#: "**MANDATORY**: Log ALL user inputs ... Capture user's COMPLETE RAW INPUT
+#: exactly as provided"를 요구한다 — 답변 라운드를 충실히 기록하면 `[Answer]: A`가
+#: **줄 맨 앞에** 놓일 수 있고, 그때 앵커는 통과한다. 실제로 그렇게 됐다:
+#: 에이전트가 audit 기록에 적은 태그 문구가 질문 파서에 걸려, 에이전트가
+#: "audit.md는 질문 파일이 아니므로 그 표기를 없애겠다"며 **자기 기록을 훼손**했다.
+#:
+#: 즉 audit.md는 정의상 사용자 입력의 축자 사본이므로 **그 내용으로는 분류할 수
+#: 없다.** 이름이 유일하게 남는 신호다. `aiplc-state.md`도 같은 이유로 넣는다 —
+#: 우리 상태 파일이고 답변을 인용할 수 있으며, 질문 파일이 될 일이 없다.
+#:
+#: 이름 규칙으로 **포함**하지 않는 것과 모순이 아니다: 상류는 자기 명명규칙을
+#: 어긴 전례가 있어(`design-context.md`에 질문을 넣었다) 포함은 내용으로 판단해야
+#: 한다. 반대로 이 둘은 상류가 **용도를 규정한** 파일이므로 이름이 신뢰할 수 있다.
+NEVER_QUESTION_FILES = frozenset({"audit.md", "aiplc-state.md"})
+
+
+def looks_like_question_file(rel: str, markdown: str) -> bool:
+    """이 문서를 질문 라운드로 취급해도 되는가.
+
+    **훅과 되기록이 같은 판정을 써야 한다.** 2026-08-18까지 갈라져 있었다 —
+    되기록은 `^\\[Answer\\]:` 앵커였고 훅(claude_driver)은 `"[Answer]:" in md`
+    단순 포함이었다. 그래서 태그를 인용만 한 문서가 훅에는 걸리고 되기록에는
+    안 걸렸다. 두 관문이 다르면 "질문 파일이란 무엇인가"의 답이 두 개가 된다.
+
+    `rel`은 워크스페이스 상대 경로다. 이름 판정은 basename으로 한다 —
+    `aiplc-docs/audit.md`든 하위 디렉터리의 audit.md든 용도는 같다.
+    """
+    if PurePosixPath(rel).name in NEVER_QUESTION_FILES:
+        return False
+    return bool(_ANSWER_SLOT.search(markdown))
 
 
 def _norm(text: object) -> str:
@@ -331,8 +367,8 @@ def _match_file(path: Path, wanted: dict[str, str],
     except OSError:
         _log.warning("unreadable question file skipped: %s", path)
         return None
-    if not _ANSWER_SLOT.search(md):
-        # 질문 파일이 아니다. 파싱하지 않는다(_ANSWER_SLOT 주석 참조).
+    if not looks_like_question_file(path.name, md):
+        # 질문 파일이 아니다. 파싱하지 않는다(그 함수와 _ANSWER_SLOT 주석 참조).
         return None
     qfile = parse_question_file(path.name, md)
     if not qfile.parse_ok:

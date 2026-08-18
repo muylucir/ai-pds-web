@@ -72,7 +72,8 @@ from pathfinder.agent.pending_store import (clear_pending, load_pending,
                                               load_pending_file, save_pending,
                                               save_pending_file)
 from pathfinder.agent import reconcile
-from pathfinder.agent.question_file_answers import record_answers
+from pathfinder.agent.question_file_answers import (looks_like_question_file,
+                                                    record_answers)
 from pathfinder.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
 from pathfinder.agent.session_store import DiscoverySessionStore
@@ -871,9 +872,18 @@ class ClaudeDriver:
 
         네 가지를 모두 만족해야 한다:
 
-        1. **내용으로 판단한다 — 파일 이름이 아니라 `[Answer]:` 슬롯이 있는가.**
-           상류는 자기 명명규칙(`{phase}-questions.md`)을 어긴 전례가 있다 —
-           `design-context.md`에도 질문을 넣었다(question_file_answers.py 헤더).
+        1. **`looks_like_question_file`이 참이어야 한다** — 줄 맨 앞의 `[Answer]:`
+           슬롯이 있고, 이름이 `NEVER_QUESTION_FILES`가 아니어야 한다.
+           포함은 이름이 아니라 내용으로 판단한다: 상류는 자기 명명규칙
+           (`{phase}-questions.md`)을 어긴 전례가 있다 — `design-context.md`에도
+           질문을 넣었다(question_file_answers.py 헤더). 반대로 audit.md처럼 상류가
+           **용도를 규정한** 파일은 이름으로 제외한다.
+
+           2026-08-18까지 이 관문이 되기록과 갈라져 있었다(여기는
+           `"[Answer]:" in md` 단순 포함, 저쪽은 `^` 앵커). 그래서 audit.md가
+           태그를 기록하자 여기에만 걸렸고, 에이전트가 "audit.md는 질문 파일이
+           아니므로 그 표기를 없애겠다"며 **자기 감사 기록을 훼손**했다 —
+           `core-workflow.md:303`이 원문 그대로 남기라고 요구한 그 기록이다.
         2. `parse_ok`. 파싱이 안 되면 **조용히 지나간다.** 상류 포맷은 안정적이지
            않으므로(2026-08-17: 8파일 중 1개가 파서를 벗어났다) 여기서 막으면
            질문이 화면에 아예 뜨지 않는다 — 차단이 아니라 열화여야 한다.
@@ -891,7 +901,7 @@ class ClaudeDriver:
             md = (Path(self._workspace) / rel).read_text(encoding="utf-8")
         except OSError:
             return None
-        if "[Answer]:" not in md:
+        if not looks_like_question_file(rel, md):
             return None
         qfile = parse_question_file(rel, md)
         if not qfile.parse_ok:

@@ -401,3 +401,61 @@ async def test_the_question_file_is_in_s3_before_the_card_is_advertised(tmp_path
     # 되면 위의 두 실패가 그대로 재현된다.
     from pathfinder.agent.pending_store import load_pending_file
     assert await load_pending_file(d._s3) == REL
+
+
+# ---- audit.md는 내용이 무엇이든 질문 파일이 아니다 (2026-08-18 실측) ----
+# `core-workflow.md:303-304`가 audit.md에 대해 "**MANDATORY**: Log ALL user
+# inputs ... Capture user's COMPLETE RAW INPUT exactly as provided"를 요구한다.
+# 답변 라운드를 충실히 기록하면 `[Answer]: A`가 줄 맨 앞에 놓인다.
+#
+# 그때 이 훅이 audit.md를 질문 파일로 잡았고, 에이전트가 이렇게 반응했다:
+# "audit 기록에 적어 둔 [Answer] 태그 문구가 질문 파서에 걸렸습니다 — audit.md는
+# 질문 파일이 아니므로 그 표기를 없애 기록만 남기겠습니다." 즉 우리 탐지가
+# **상류가 원문 보존을 요구한 감사 기록을 훼손시켰다.**
+
+@pytest.mark.asyncio
+async def test_audit_md_with_a_raw_answer_tag_does_not_ask(tmp_path):
+    d, ws = _driver(tmp_path)
+    audit = (
+        "# AI-PLC Audit Log\n"
+        "\n"
+        "## 2026-08-18 — Envision Step 0.1 답변 수신 (원문)\n"
+        "\n"
+        "`business-context-questions.md` 1번 문항의 답변 태그 원문:\n"
+        "\n"
+        "## Question 1\n"
+        "\n"
+        "A) 자유 서술\n"
+        "B) 구조화된 질문\n"
+        "\n"
+        # 빈 슬롯이다 — 에이전트가 방금 만든 질문 파일을 원문 그대로 옮겨 적으면
+        # 이 모양이 된다. 이것이 실제로 파서에 걸린 상태다.
+        "[Answer]:\n"
+    )
+    out = await _post(d, _write(ws, "aiplc-docs/audit.md", audit))
+    assert out == {}, "감사 기록으로 턴을 멈추면 에이전트가 그 기록을 지운다"
+    assert not _questions_events(d)
+
+
+@pytest.mark.asyncio
+async def test_aiplc_state_md_with_a_raw_answer_tag_does_not_ask(tmp_path):
+    """상태 파일도 같다 — 우리 파일이고 답변을 인용할 수 있다."""
+    d, ws = _driver(tmp_path)
+    out = await _post(d, _write(ws, "aiplc-docs/aiplc-state.md",
+                                "# AI-PLC State\n\n## Question 1\n\nA) x\nB) y\n\n[Answer]:\n"))
+    assert out == {}
+    assert not _questions_events(d)
+
+
+@pytest.mark.asyncio
+async def test_a_quoted_answer_tag_does_not_ask(tmp_path):
+    """줄 맨 앞이 아닌 인용은 어느 파일에서도 질문이 아니다.
+
+    훅이 `"[Answer]:" in md` 단순 포함이던 동안 여기서도 걸렸다 — 되기록 쪽
+    (`^` 앵커)과 판정이 갈라져 있었다.
+    """
+    d, ws = _driver(tmp_path)
+    out = await _post(d, _write(ws, "aiplc-docs/discovery/notes.md",
+                                "# 메모\n\n답변 태그는 `[Answer]: B` 꼴로 적는다.\n"))
+    assert out == {}
+    assert not _questions_events(d)
