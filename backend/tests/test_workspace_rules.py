@@ -666,3 +666,30 @@ def test_the_prototype_handoff_and_model_overrides_are_documented():
     # 모델·자격증명을 묻지 말라는 것, 그리고 스펙에 모델 ID를 쓰지 말라는 것.
     assert "already provisioned. Never ask for them" in text
     assert "do not write a model ID" in text
+
+
+def test_the_config_says_where_a_document_preface_goes():
+    """**2026-08-18 실측(123456test).** 에이전트가 "이 문서의 성격과 답변 방법"을
+    `##` 섹션으로 써서, 1,100자 산문과 표가 통째로 **Question 1의 부연설명**이 되고
+    그 헤딩이 6문항 전부의 카테고리로 붙었다.
+
+    파서 결함이 아니다 — `## Question`이 아닌 `##`를 카테고리로 보고 그 아래 산문을
+    다음 문항의 context로 돌리는 규칙 하나뿐이고(parsers/questions.py), 문서 머리말과
+    문항별 부연설명은 그 규칙에게 같은 모양이다. 실측으로 확인한 갈림길: 머리말에
+    `##`를 **붙이지 않으면** 그대로 `preamble`이 되고 Question 1은 깨끗하다.
+
+    그러므로 고칠 수 있는 자리는 에이전트에게 자리를 알려주는 것뿐이다. 상류
+    `question-format-guide.md`는 건드리지 않는다(재동기화 때 사라진다) — 이 파일의
+    `overrides the upstream rules`가 그 자리다.
+
+    "첫 문항 앞은 전부 preamble"로 파서를 바꾸지 않은 이유도 남긴다: 그 모양이
+    **정당한** 실제 파일이 있다 — `pain-point-clarification-questions.md`의
+    `## 확인 1 — 숫자가 맞지 않습니다`와 `design-context.md`의
+    `## 제안한 프로토타입 범위 요약`은 바로 뒤 문항의 전제이고,
+    `strategy-questions.md`의 `## Positioning`은 Q1~Q3를 묶는 진짜 카테고리다.
+    """
+    text = _discovery_config()
+    assert "above the first `##` heading" in text
+    # 잘못 두면 무엇이 일어나는지도 말해야 한다 — 이유 없는 지시는 지켜지지 않는다
+    # (agent/prompts.py 헤더의 규율).
+    assert "becomes the *first question's* context" in text

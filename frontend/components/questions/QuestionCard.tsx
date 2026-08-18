@@ -138,6 +138,26 @@ export function QuestionCard({
     // 헤더가 말려 올라간다(ui-bug.png). 라벨의 relative와 세트.
     <fieldset className="relative bg-white rounded-xl border-2 border-violet-300 shadow-sm shadow-violet-100 overflow-hidden">
       <legend className="sr-only">{t("q.legend")} {question.number}</legend>
+      {/* 문항 앞의 설명 산문 — "왜 이걸 묻는가". 질문 파일에서 온 라운드에만
+          있다(AskUserQuestion 페이로드에는 이 필드가 없다).
+
+          **질문 문장보다 위에 온다(2026-08-18).** 파일에서 이 산문은 `## Question N`
+          헤딩 **앞**에 있고(그것이 이 필드가 채워지는 유일한 조건이다,
+          parsers/questions.py), 배경을 읽고 질문을 읽는 것이 쓴 사람의 순서다.
+          전에는 제목 아래에 뿌려서 카드가 "질문 → 배경 1,126자 + 표 → 입력칸"으로
+          읽혔다 — 실측(123456test)에서 사용자가 파싱 오류로 오진했다.
+
+          마크다운으로 렌더하는 이유: 표가 들어온다. 실측한 확인 게이트 질문은
+          "**위에 정리한** 페인 포인트 5건이 정확합니까?"이고 그 전제가 5행 표다 —
+          평문으로 뿌리면 답할 수 없는 질문이 된다.
+
+          배경색으로 질문과 구별한다: 같은 흰 바탕에 이어 두면 어디까지가 배경이고
+          어디부터가 묻는 말인지 경계가 사라진다. */}
+      {question.context?.trim() && (
+        <div className="px-6 py-4 bg-slate-50 text-sm text-slate-600 border-b border-slate-100">
+          <Markdown text={question.context} />
+        </div>
+      )}
       <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
         <span className="w-7 h-7 rounded-full bg-violet-600 text-white flex items-center justify-center text-xs font-bold" aria-hidden="true">
           {question.number}
@@ -172,17 +192,6 @@ export function QuestionCard({
           </div>
         </div>
       </div>
-      {/* 문항 앞의 설명 산문 — "왜 이걸 묻는가". 질문 파일에서 온 라운드에만
-          있다(AskUserQuestion 페이로드에는 이 필드가 없다).
-
-          마크다운으로 렌더하는 이유: 표가 들어온다. 실측한 확인 게이트 질문은
-          "**위에 정리한** 페인 포인트 5건이 정확합니까?"이고 그 전제가 5행 표다 —
-          평문으로 뿌리면 답할 수 없는 질문이 된다. */}
-      {question.context?.trim() && (
-        <div className="px-6 pt-4 text-sm text-slate-600 border-b border-slate-100 pb-4">
-          <Markdown text={question.context} />
-        </div>
-      )}
       <div className="p-6 space-y-3">
         {/* 주관식: 라디오·체크박스 없이 입력칸 하나. `value`에 직접 바인딩하는
             이유는 `otherActive`가 보기와의 관계를 추적하는 상태이고 여기에는

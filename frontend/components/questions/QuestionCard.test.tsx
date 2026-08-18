@@ -373,6 +373,22 @@ describe("QuestionCard — context", () => {
     );
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
+
+  // 2026-08-18 실측(123456test): 배경이 제목 아래로 가서 카드가
+  // "질문 → 배경 1,126자 + 표 → 입력칸"으로 읽혔고, 사용자가 파싱 오류로
+  // 오진했다. 파일에서 이 산문은 `## Question N` 헤딩 **앞**에 있다.
+  it("배경이 질문 문장보다 위에 온다 — 파일에 쓰인 순서다", () => {
+    const { container } = render(
+      <QuestionCard question={CONTEXT_Q} value="" onChange={() => {}} />,
+    );
+    const table = screen.getByRole("table");
+    const heading = screen.getByRole("heading", { level: 2 });
+    // DOCUMENT_POSITION_FOLLOWING: heading이 table **뒤에** 있다.
+    expect(
+      table.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(container).toBeTruthy();
+  });
 });
 
 // ---- 보기·질문 문장의 인라인 마크다운 ----

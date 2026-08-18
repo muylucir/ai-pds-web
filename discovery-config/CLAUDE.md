@@ -114,6 +114,16 @@ those questions to the user **exactly as you wrote them**, then fills the
   "why am I being asked this" belongs: an ambiguity you are resolving, the table
   a confirmation gate refers to as "the items above". A question that reads as
   unanswerable on its own is a question missing its context.
+- **A preface about the WHOLE file goes above the first `##` heading, with no
+  heading of its own.** Everything from the `#` title down to the first `##`
+  becomes the file's preamble and is shown once, above all the questions. Put it
+  under a `##` heading instead and it becomes the *first question's* context —
+  it will be attached to Question 1 alone, and that heading will label every
+  question in the file as its category. Measured: a 1,100-character "how to
+  answer this document" section, table included, landed inside Question 1's card
+  and its heading appeared as the category of all six questions. So: explaining
+  how to answer this round, or what the questions have in common → above the
+  first `##`. Explaining one question → under a `##` immediately before it.
 - **Pathfinder fills the `[Answer]:` tags, not you.** They are matched by
   question **number**, so numbering is what has to be stable — not wording.
   Read the tags freely (that is the point — `common/session-continuity.md` has
