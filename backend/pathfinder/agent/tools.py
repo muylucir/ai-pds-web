@@ -17,6 +17,7 @@ from claude_agent_sdk import tool
 from pathfinder.models import AgentEvent
 from pathfinder.agent import prompts
 from pathfinder.agent.state_sync import upsert_stage
+from pathfinder.parsers.state import normalize_stage_name
 from pathfinder.proto import layout
 
 _log = logging.getLogger("pathfinder.agent")
@@ -156,7 +157,11 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None],
     @tool("report_stage", prompts.report_stage_description(language),
          _REPORT_STAGE_SCHEMA)
     async def report_stage(args: dict[str, Any]) -> dict[str, Any]:
-        stage = args["stage"]
+        # 모델이 보낸 이름을 **키로 쓰기 전에** 정규화한다 — 2026-08-18에
+        # `"Prototype &amp; Validation"`이 들어왔다(parsers/state.py의
+        # normalize_stage_name에 전말). 이벤트와 상태 파일이 같은 이름을 봐야
+        # 사이드바와 체크리스트가 어긋나지 않는다.
+        stage = normalize_stage_name(args["stage"])
         status = args["status"]
         summary = args.get("summary", "")
         if status not in ("pending", "in_progress", "completed"):

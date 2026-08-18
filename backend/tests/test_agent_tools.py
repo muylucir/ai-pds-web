@@ -332,3 +332,50 @@ async def test_the_state_file_is_published_with_its_new_content(tmp_path):
                                             publish=publish)}
     await _call(tools["report_stage"], stage="Envision", status="completed")
     assert seen and "Envision" in seen[0]
+
+
+# ---- report_stage는 모델이 보낸 이름을 키로 쓰기 전에 정규화한다 ----
+# 2026-08-18 실측(hpt-sarang): 모델이 `"stage": "Prototype &amp; Validation"`을
+# 보냈다. 같은 호출의 summary와 직전 호출은 `&`가 정상이었다 — 그 필드 하나의
+# 이스케이프다. 이름은 키이므로 표시·매칭·집계가 함께 깨진다.
+
+async def test_report_stage_unescapes_the_stage_name_in_the_state_file(tmp_path):
+    ws = tmp_path / "ws"
+    tools, _ = _tools(ws)
+
+    await _call(tools["report_stage"], stage="Prototype &amp; Validation",
+                status="in_progress")
+
+    md = (ws / "aiplc-docs" / "aiplc-state.md").read_text(encoding="utf-8")
+    assert "&amp;" not in md, md
+    assert "Prototype & Validation" in md
+
+
+async def test_report_stage_unescapes_the_stage_name_in_the_event(tmp_path):
+    """이벤트와 파일이 같은 이름을 봐야 사이드바와 체크리스트가 어긋나지 않는다."""
+    tools, emitted = _tools(tmp_path / "ws")
+
+    await _call(tools["report_stage"], stage="Prototype &amp; Validation",
+                status="in_progress")
+
+    payload = next(e.payload for e in emitted if e.kind == "stage")
+    assert "&amp;" not in payload, payload
+    assert "Prototype & Validation" in payload
+
+
+async def test_escaped_then_clean_call_updates_one_line_not_two(tmp_path):
+    """정규화가 막는 실제 피해. 이스케이프된 이름을 그대로 쓰면 다음의 올바른
+    호출이 이름이 다르다고 판단해 체크라인을 **하나 더** 만들고, 진행률이 같은
+    스테이지를 두 번 센다."""
+    ws = tmp_path / "ws"
+    tools, _ = _tools(ws)
+
+    await _call(tools["report_stage"], stage="Prototype &amp; Validation",
+                status="in_progress")
+    await _call(tools["report_stage"], stage="Prototype & Validation",
+                status="completed")
+
+    md = (ws / "aiplc-docs" / "aiplc-state.md").read_text(encoding="utf-8")
+    assert md.count("Prototype & Validation") == 2, md   # Current Stage 1 + 체크라인 1
+    assert "- [x] Prototype & Validation" in md
+    assert "- [ ] Prototype & Validation" not in md
