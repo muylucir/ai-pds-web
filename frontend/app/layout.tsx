@@ -20,7 +20,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const raw = (await cookies()).get(LANG_COOKIE)?.value;
   const locale = isLocale(raw) ? raw : DEFAULT_LOCALE;
   return {
-    title: "Pathfinder",   // 제품명 — 번역하지 않는다
+    title: "AI-PDS",   // 제품명 — 번역하지 않는다
     description: dictFor(locale)["app.description"],
   };
 }

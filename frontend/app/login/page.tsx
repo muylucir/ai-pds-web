@@ -61,9 +61,9 @@ export default function LoginPage() {
       <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-sm">
         <div className="flex items-center gap-2 text-lg font-bold text-violet-700">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 text-sm font-bold text-white">
-            AI
+            WEB
           </span>
-          Pathfinder
+          AI-PDS
         </div>
         <h1 className="mt-6 text-xl font-bold">{t("login.signIn")}</h1>
         <p className="mt-1 text-sm text-slate-500">

@@ -72,9 +72,9 @@ export function AppHeader({
         <div className="flex items-center gap-8">
           <Link href="/" className="flex items-center gap-2 font-bold text-lg text-violet-700">
             <span className="w-8 h-8 rounded-lg bg-violet-600 text-white flex items-center justify-center text-sm font-bold">
-              AI
+              WEB
             </span>
-            Pathfinder
+            AI-PDS
           </Link>
           <nav className="hidden md:flex items-center gap-1" aria-label={t("nav.ariaLabel")}>
             {tab("dashboard", t("nav.dashboard"), `${base}/dashboard`)}
