@@ -100,17 +100,14 @@ def test_submitting_an_unknown_question_number_400(monkeypatch):
     assert _submit("fq4", {"abc": "A"}).status_code == 400
 
 
-# ---- 유실된 report_stage의 회수 ----
-# 훅이 질문 파일 쓰기에서 턴을 끝내면 같은 메시지에 배치된 뒤 도구 호출은 실행되지
-# 않는다(claude_driver._on_post_tool_use). 그래서 `report_stage`가 Write 뒤에 배치된
-# 턴에서는 그 호출이 사라지고, aiplc-state.md가 없어 배지가 빈다(2026-08-18
-# test123456에서 실제로 그랬다). 재개 턴은 "멈춘 지점부터"라서 회수 계기가 없다 —
-# 이 엔드포인트가 그 유일한 계기이므로 여기서 지목한다.
+# ---- 상태 파일이 없을 때의 지목 ----
+# 스테이지 배지는 `aiplc-state.md`에서 유도된다(agent/reconcile.py). 훅과 턴 경계
+# 재조정은 파일이 **있을 때** 그것을 화면으로 옮기고, 파일 자체가 없으면 옮길 것이
+# 없다 — 그리고 그것을 만들 수 있는 것은 에이전트뿐이다(스테이지 이름을 아는 것이
+# 에이전트뿐이므로, 경로에서 추측하면 룰셋 스테이지 이름의 두 번째 사본이 생긴다).
 #
-# 순서 지시 자체는 discovery-config/CLAUDE.md가 소유하고, 이것은 그것이 빗나갔을
-# 때의 백스톱이다. 그래서 상태 파일을 백엔드가 대신 쓰지 않는다 — 스테이지 이름을
-# 아는 것은 에이전트뿐이고, 경로에서 추측하면 룰셋 스테이지 이름의 두 번째 사본이
-# 생긴다(prompts.report_stage_missing).
+# 답변 제출 턴이 그 지목의 자리다. 2026-08-18 test123456에서 첫 턴이 상태 파일 없이
+# 끝났고, 재개 턴은 "멈춘 지점부터"라서 스스로 그것을 만들 계기가 없었다.
 
 def _state(pid: str, markdown: str):
     asyncio.run(registry.get(pid).runner.write_file(
@@ -124,11 +121,11 @@ def _resume_text(pid: str) -> str:
     return payload["text"]
 
 
-def test_the_resume_turn_asks_for_report_stage_when_the_state_file_never_landed(
+def test_the_resume_turn_asks_for_the_state_file_when_it_never_landed(
         monkeypatch):
     _seed(monkeypatch, "fq5")  # aiplc-state.md 없음
     text = _resume_text("fq5")
-    assert "report_stage" in text
+    assert "aiplc-state.md" in text
     # 파일 지목은 그대로 남아야 한다 — 노트가 원래 프롬프트를 대체하지 않는다.
     assert "strategy-questions.md" in text
 
@@ -136,12 +133,11 @@ def test_the_resume_turn_asks_for_report_stage_when_the_state_file_never_landed(
 def test_a_state_file_without_a_current_stage_still_counts_as_missing(monkeypatch):
     """판정은 파일 부재가 아니라 `current_stage is None`이다.
 
-    `upsert_stage`는 항상 Current Stage 줄을 쓰므로, 그 줄이 없는 파일은
-    `report_stage`가 유효하게 닿은 적이 없다는 뜻이다 — 파일만 보면 이 경우를
-    놓친다."""
+    상류 룰이 요구하는 형태에는 항상 Current Stage 줄이 있으므로, 그 줄이 없는
+    파일은 읽을 상태가 없다는 뜻이다 — 파일 존재만 보면 이 경우를 놓친다."""
     _seed(monkeypatch, "fq6")
     _state("fq6", "# AI-PLC State\n\n## Stage Progress\n")
-    assert "report_stage" in _resume_text("fq6")
+    assert "aiplc-state.md" in _resume_text("fq6")
 
 
 def test_the_resume_turn_stays_quiet_once_a_stage_is_recorded(monkeypatch):
@@ -153,7 +149,7 @@ def test_the_resume_turn_stays_quiet_once_a_stage_is_recorded(monkeypatch):
     _state("fq7", "# AI-PLC State\n\n- **Current Stage**: Envision\n\n"
                   "## Stage Progress\n- [ ] Envision\n")
     text = _resume_text("fq7")
-    assert "report_stage" not in text
+    assert "aiplc-state.md" not in text
     assert "strategy-questions.md" in text
 
 
@@ -162,7 +158,7 @@ def test_the_note_follows_the_project_language(monkeypatch):
     (agent/prompts.py 헤더의 규약)."""
     _seed(monkeypatch, "fq8", language="en")
     text = _resume_text("fq8")
-    assert "report_stage" in text
+    assert "aiplc-state.md" in text
     # 영어 프로젝트의 프롬프트에 한글이 섞이면 그 프로젝트의 대화가 한국어로
     # 샌다 — 2026-08-04 결함의 모양이다.
     assert not any("가" <= ch <= "힣" for ch in text)

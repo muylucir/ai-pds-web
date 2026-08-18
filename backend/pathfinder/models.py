@@ -91,7 +91,8 @@ class AgentEvent(BaseModel):
     kind: Literal["message", "questions", "stage", "document",
                   "file_changed", "status", "done", "error",
                   # Discovery가 프로토타입을 빌드로 넘겼다는 선언
-                  # (agent/tools.py의 handoff_prototype). 프론트가 이 이벤트로
+                  # (agent/reconcile.py가 build-instructions.md 쓰기에서
+                  # 유도한다). 프론트가 이 이벤트로
                   # "Prototypes 탭으로 가기" 카드를 그린다 — 에이전트가 안내
                   # 문장을 잊어도 사용자에게 클릭할 곳이 남아야 한다.
                   "prototype_ready",

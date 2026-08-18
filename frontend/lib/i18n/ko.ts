@@ -32,7 +32,6 @@ export const ko = {
   "activity.working": "작업을 진행하고 있어요",
   "activity.fetching": "정보를 수집하고 있어요",
   "activity.buildFinishing": "빌드를 마무리하고 있어요",
-  "activity.reportStage": "진행 상황을 기록하고 있어요",
   "activity.submitDocument": "문서를 제출하고 있어요",
   // 알 수 없는 도구는 이름을 그대로 노출한다 — {tool}이 치환된다.
   "activity.genericSuffix": "실행 중",

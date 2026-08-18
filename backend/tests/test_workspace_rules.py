@@ -408,16 +408,15 @@ def test_discovery_config_overrides_the_upstream_question_file_rules():
     assert "AskUserQuestion is not available" in text
 
 
-def test_the_question_file_write_is_declared_the_last_tool_call_of_the_turn():
+def test_the_turn_ending_writes_are_named_and_ordered():
     """**2026-08-18의 결함이 이 검사의 이유다(test123456).**
 
-    PostToolUse 훅은 질문 파일 쓰기에서 턴을 끝내고, 같은 메시지에 배치된 뒤 도구
+    PostToolUse 훅은 어떤 파일 쓰기에서 턴을 끝내고, 같은 메시지에 배치된 뒤 도구
     호출은 실행되지 않는다(claude_driver._on_post_tool_use). 그런데 이 파일은 그
     사실을 적지 않고 "파일을 다 쓰면 턴이 끝난다"까지만 말했다. 실측 결과:
     에이전트가 audit.md → 질문 파일을 먼저 쓰고 welcome 메시지·Workspace Detection
     보고·GATE 안내를 **그 뒤에** 두었고, 전부 화면에 도달하지 않았다. 같은 턴의
-    `report_stage`도 사라져 aiplc-state.md가 만들어지지 않았다(스키마는 ToolSearch로
-    가져온 것이 트레이스에 남아 있다).
+    `report_stage`도 사라져 aiplc-state.md가 만들어지지 않았다.
 
     Claude Code에서 같은 룰로 돌린 3회 전부 같은 순서였다 — 로컬에는 훅이 없어서
     벌을 받지 않았을 뿐이다. 즉 순서를 적지 않으면 상류 룰을 그대로 따르는 에이전트가
@@ -428,18 +427,26 @@ def test_the_question_file_write_is_declared_the_last_tool_call_of_the_turn():
     user")가 질문하는 스테이지보다 앞에 있다. 그래서 이것은 override가 아니라
     **상류 순서를 이 경로에서 성립시키는 진술**이다.
 
+    **턴을 끊는 파일이 둘이라는 것을 함께 고정한다.** 처음에는 질문 파일 하나였고,
+    2026-08-18에 `build-instructions.md`가 합류했다(`handoff_prototype` 도구가 훅으로
+    옮겨 갔다 — agent/reconcile.py). 목록이 한 자리에 있어야 다음에 셋이 될 때 같은
+    함정을 다시 파지 않는다.
+
     그리고 반대쪽 조항이 이 순서를 막지 않아야 한다. 옛 문구는 "do not announce
     that you are about to ask"였는데, 그것이 "쓰기 전에 말하지 마라"로 읽혀
     "Keep the conversation visible" 절과 정면으로 부딪쳤다 — 실측한 턴이 welcome을
     건너뛰고 두 문장만 남긴 것이 그 충돌의 모양이다.
     """
     text = _discovery_config()
-    # 마지막 도구 호출이라는 것, 그리고 뒤에 배치한 호출이 **버려진다**는 것.
-    # 후자가 없으면 순서는 취향으로 읽히고, 이 실패는 에러 없이 온다.
-    assert "LAST tool call of the turn" in text
+    # 턴을 끊는 파일 둘이 한 자리에 이름으로 적혀 있다.
+    assert "Turn-ending writes" in text
+    assert "build-instructions.md" in text
+    assert "[Answer]:" in text
+    # 뒤에 배치한 호출이 **버려진다**는 것. 없으면 순서는 취향으로 읽히고, 이
+    # 실패는 에러 없이 온다.
     assert "discarded" in text
     # 무엇이 앞에 오는지 지목한다 — 이유만 주면 모델이 즉흥한다(prompts.py 헤더).
-    for before in ("report_stage", "submit_document", "audit.md"):
+    for before in ("submit_document", "audit.md", "aiplc-state.md"):
         assert before in text
     # 상류 근거를 지목해 둔다. 없으면 다음 사람이 이 조항을 Pathfinder의 변덕으로
     # 읽고 상류 재동기화 때 지운다.
@@ -447,6 +454,28 @@ def test_the_question_file_write_is_declared_the_last_tool_call_of_the_turn():
     # 충돌 문구가 돌아오지 않는다. 질문을 **옮겨 적는 것**만 금지여야 한다.
     assert "do not announce that you are about to ask" not in text
     assert "Do not restate the questions in chat" in text
+
+
+def test_the_state_file_is_the_agents_job_and_no_tool_is_named():
+    """스테이지 갱신이 도구에서 파일로 돌아온 것을 고정한다.
+
+    2026-08-18까지 이 파일은 "`report_stage`를 부르고 상태 파일은 직접 쓰지 마라"고
+    상류를 override했다. 그 도구가 훅으로 대체되면서(agent/reconcile.py) override의
+    근거가 사라졌다 — 상류 룰은 원래 에이전트가 이 파일을 직접 갱신하라고 요구하고
+    (`common/workflow-changes.md`, 각 스테이지의 "Update State Tracking"),
+    Pathfinder는 그것을 읽는다. 즉 이 경로는 로컬 Claude Code와 같아졌다.
+
+    **없는 도구를 부르라고 적혀 있으면 안 된다.** 이름이 남아 있으면 에이전트가
+    존재하지 않는 도구를 찾고, 그 실패는 조용하다(도구 목록에 없으므로 호출 자체가
+    성립하지 않는다).
+    """
+    text = _discovery_config()
+    assert "report_stage" not in text
+    assert "handoff_prototype" not in text
+    # 무엇을 해야 하는지가 그 자리를 채운다 — 금지만 남기면 모델이 즉흥한다.
+    assert "aiplc-docs/aiplc-state.md" in text
+    assert "Stage Progress" in text
+    assert "workflow-changes.md" in text
 
 
 def _discovery_config() -> str:
@@ -621,11 +650,17 @@ def test_the_prototype_handoff_and_model_overrides_are_documented():
     같은 공백이 모델 문제로도 나타났다. `llm-model-configuration.md`가 제공자
     선택과 API 키를 요구하고 모델 ID 세 개를 서로 다르게 적어 두는데, 그것을
     무력화하는 절이 없었다. 프로젝트는 이미 모델을 갖고 빌드가 그것을 상속한다.
+
+    **2026-08-18에 대체 행동이 도구에서 파일로 바뀌었다.** `handoff_prototype`이
+    PostToolUse 훅으로 옮겨 갔으므로(agent/reconcile.py) 멈출 지점은 이제 도구 호출이
+    아니라 `build-instructions.md` 쓰기다. 이 검사가 지키는 것은 그대로다: **멈출
+    지점과 다음 행동이 문서에 있어야 한다.** 그것이 없을 때 실측된 결과가 위의
+    즉흥 대응이고, 도구가 훅이 되어도 그 공백은 같은 모양으로 돌아온다.
     """
     text = _discovery_config()
-    # 멈출 지점과 대체 행동(도구)이 있어야 한다.
-    assert "handoff_prototype" in text
-    assert "end your turn" in text
+    # 멈출 지점(무엇을 쓰면 끝나는가)과 그 뒤의 행동이 있어야 한다.
+    assert "build-instructions.md" in text
+    assert "that write is the handoff, and it ends your turn" in text.lower()
     # Step 4~6은 버리는 게 아니라 유보한다 — 그 말이 없으면 에이전트가 계속 간다.
     assert "not abandoned; they are deferred" in text
     # 모델·자격증명을 묻지 말라는 것, 그리고 스펙에 모델 ID를 쓰지 말라는 것.

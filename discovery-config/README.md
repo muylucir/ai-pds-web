@@ -8,8 +8,8 @@ Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR` (`PATHFINDER_DISCOVERY_CONFIG_
 지시한다. 이 지시가 Discovery에 들어가면 문서 작성 중 무관한 UI 스킬을 로드한다.
 게다가 프로토타입 빌더는 `skills="all"`이므로 **config dir의 모든 스킬이
 활성화**된다 — 공유하면 Discovery가 shadcn-design을 켠 채로 돈다. 역방향도 같다:
-여기의 `report_stage`/`submit_document` 규약이 빌더에 들어가면 존재하지 않는
-도구를 부르려 한다.
+여기의 `submit_document` 규약과 질문 파일·상태 파일 규약이 빌더에 들어가면
+존재하지 않는 도구를 부르거나 빌더에 없는 파일을 찾으려 한다.
 
 미지정 시 호스트 유저의 `~/.claude`(개인 skills/agents/CLAUDE.md)가 섞여 워크숍
 결과가 호스트 설정에 따라 달라진다 — 그래서 격리된 값을 반드시 준다.

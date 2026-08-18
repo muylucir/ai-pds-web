@@ -47,9 +47,12 @@ AI-PLC core workflow), including its language convention.
   question file** (`aiplc-docs/**`, with `[Answer]:` tags). Pathfinder reads that
   file and shows the questions as written. The **AskUserQuestion** tool is not
   available — see the question-files section below.
-- Call the **report_stage** tool whenever you start or complete a stage. That
-  tool updates `aiplc-state.md` for you, so you do not need to write the state
-  file yourself.
+- Keep **`aiplc-docs/aiplc-state.md`** updated exactly as the upstream rules say
+  (`common/workflow-changes.md`, and each stage's own "Update State Tracking"
+  step). Pathfinder reads that file and updates the stage badges itself — there is
+  no tool to call, and no reason to describe stage transitions in chat instead.
+  Keep the `- **Current Stage**: <name>` line and the `## Stage Progress`
+  checklist in the shape those rules show; that shape is what gets read.
 - Call the **submit_document** tool whenever you create or update a
   discovery-document. **Order matters: save the file first, then call
   submit_document.** If the file is missing or empty the tool refuses the
@@ -57,6 +60,29 @@ AI-PLC core workflow), including its language convention.
 - To add an entry to `audit.md`, append with **Edit**. **Write replaces the
   entire file** — calling Write with only the new entry destroys the whole
   audit record.
+
+## Turn-ending writes: two files end the turn when you write them
+
+Most of what Pathfinder shows the user is derived from the files you write, not
+from tools you call. Two of those files also hand control back to the user, so
+**writing them ends your turn immediately**:
+
+| File | What it hands over |
+|---|---|
+| a question file (`[Answer]:` tags) | the question form in the right-hand panel |
+| `build-instructions.md` | the prototype card in the Prototypes tab |
+
+**Everything else in the turn must come before that write.** Pathfinder stops the
+turn the moment the file lands, and any tool call you batched after it in the same
+message is discarded — silently, with no error. So the order is: your
+conversational text for the user, then `submit_document` and the `audit.md`
+`Edit` and the `aiplc-state.md` update, and the turn-ending file last.
+
+This is what the upstream rules already ask for and it is not a special case:
+`aws-aiplc-rules/core-workflow.md` puts the mandatory welcome message and the
+Workspace Detection findings *before* the stage that asks, and its Workspace
+Detection step 6 is "Present completion message to user". A turn that writes the
+turn-ending file first and narrates afterwards loses the narration.
 
 ## Question files ARE the question form (overrides the upstream rules)
 
@@ -94,17 +120,9 @@ those questions to the user **exactly as you wrote them**, then fills the
   you re-read the stage's question file on resume). **Do not write them
   yourself**: two writers on one line produce conflicts, and your copy would be
   the stale one.
-- **Writing the file is the LAST tool call of the turn, and everything else in
-  the turn comes before it.** Pathfinder ends the turn the moment the file is
-  written, and any tool call you batched after it in the same message is
-  discarded — silently, with no error. So the order is: your conversational text
-  for the user, then `report_stage` / `submit_document` / the `audit.md` `Edit`,
-  and the question file last.
-  This is what the upstream rules already ask for and it is not a special case:
-  `aws-aiplc-rules/core-workflow.md` puts the mandatory welcome message and the
-  Workspace Detection findings *before* the stage that asks, and its Workspace
-  Detection step 6 is "Present completion message to user". A turn that writes
-  the question file first and narrates afterwards loses the narration.
+- **Writing the file is the LAST tool call of the turn** — see "Turn-ending
+  writes" above for what that means for everything else in the turn, and why the
+  upstream rules already ask for that order.
 - **Do not restate the questions in chat** — they are already on the user's
   screen, read from the file. Explaining *why* this round is being asked is
   required, not forbidden (see "Keep the conversation visible" below); what is
@@ -175,10 +193,12 @@ opens from no preview link. Discovery's role ends at **writing the spec**.
   `aws-aiplc-rule-details/discovery/prototype-validation.md` runs Step 1 → Step
   11, and its Step 3 is "Build Prototype". In Pathfinder Step 3 ends one document
   earlier:
-  - Write `build-instructions.md` as that step specifies, then call
-    **handoff_prototype** with the prototype's slug and **end your turn**,
-    telling the user to build it from the Prototypes tab. That tool is the
-    replacement for building — it is what makes the card actionable there.
+  - Write `build-instructions.md` as that step specifies, next to the spec it
+    builds from. **That write is the handoff, and it ends your turn** — Pathfinder
+    turns the prototype into a card in the Prototypes tab the moment the file
+    lands, so there is no tool to call. Say what you did and tell the user to
+    build it in that tab, and say it *before* you write the file (see
+    "Turn-ending writes" above).
   - **Steps 4-6 (Iterate, Validation Setup, Feedback Synthesis) are not
     abandoned; they are deferred.** They all presume a running prototype, which
     only exists after the user builds. Resume them when the user comes back with

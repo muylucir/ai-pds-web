@@ -37,14 +37,6 @@ def _lang(language: str) -> str:
 # ---- MCP 도구 설명 (agent/tools.py) ----
 
 
-def report_stage_description(language: str) -> str:
-    """`report_stage` 도구 설명. 도구 설명은 모델이 읽는 프롬프트다."""
-    if _lang(language) == "en":
-        return ("Declare a Discovery stage transition. This also updates "
-                "aiplc-state.md automatically.")
-    return "Discovery 스테이지 전이를 선언한다. aiplc-state.md도 자동 갱신된다."
-
-
 def submit_document_description(language: str) -> str:
     """`submit_document` 도구 설명.
 
@@ -60,30 +52,6 @@ def submit_document_description(language: str) -> str:
     return ("리뷰 대상 문서가 준비/갱신되었음을 선언한다. **먼저 Write/Edit로 "
             "파일을 쓴 뒤** 호출해야 한다 — 파일이 없거나 비어 있으면 선언이 "
             "거부된다.")
-
-
-def handoff_prototype_description(language: str) -> str:
-    """`handoff_prototype` 도구 설명.
-
-    **이 문장이 이 도구의 절반이다.** 도구 목록은 매 턴 컨텍스트에 들어가므로,
-    정적 규칙 문서보다 확실하게 "빌드는 내 일이 아니다"를 전달한다. 2026-08-17에
-    금지만 있고 대체 행동이 없어서 에이전트가 자격증명을 묻고 선행 조건을
-    나열했다 — 그 자리를 이 도구가 채운다.
-    """
-    if _lang(language) == "en":
-        return ("Hand the finished prototype spec over to the Prototypes tab, "
-                "which is where builds and hosting happen. Call this instead of "
-                "building: you cannot build here, and the project's model and "
-                "credentials are already provisioned — never ask the user for an "
-                "API key, a provider or a model. `slug` names a spec you have "
-                "already written; for a single-prototype project it is "
-                "'prototype'. Then end your turn.")
-    return ("완성된 프로토타입 명세를 Prototypes 탭으로 넘긴다 — 빌드와 호스팅은 "
-            "그곳에서 일어난다. 빌드를 시도하는 대신 이 도구를 호출한다: 여기서는 "
-            "빌드할 수 없고, 프로젝트의 모델과 자격증명은 이미 준비되어 있다 — "
-            "API 키·제공자·모델을 사용자에게 묻지 않는다. `slug`는 **이미 써 둔** "
-            "명세의 id다 — 단일 프로토타입 프로젝트에서는 'prototype'이다. "
-            "호출한 뒤 턴을 끝낸다.")
 
 
 # ---- 도구 반환 문자열 (agent/tools.py) ----
@@ -116,57 +84,6 @@ def submit_document_empty(language: str, path: str) -> str:
                 "then call submit_document again.")
     return (f"거부됨 — '{path}'가 비어 있다. Write로 내용을 채운 뒤 "
             "submit_document를 다시 호출할 것.")
-
-
-def handoff_prototype_unknown(language: str, slug: str,
-                              available: list[str]) -> str:
-    """넘기려는 id의 명세가 없을 때. **있는 id를 나열한다.**
-
-    옛 문구는 `spec_key(slug)`가 계산한 경로를 지목하며 "룰이 정한 자리에 명세를
-    먼저 쓰라"고 했다. 그 문구가 2026-08-18 hpt-sarang에서 실제로 만든 결과:
-    에이전트가 제품명으로 슬러그를 지어냈고, 존재하지 않는 그 경로에 파일을
-    **새로 만들어** 검사를 통과했다. 단일 해법 프로젝트에 카드가 둘 뜨는 화면이
-    됐다. 이유만 말하고 다음 행동을 지정하지 않으면 모델이 즉흥한다는 이 파일
-    헤더의 원칙이, 여기서는 **틀린 행동을 지정해서** 어긋난 것이다.
-
-    그래서 지목하는 것을 경로에서 **후보 목록**으로 바꾼다. 고를 것이 화면에
-    있으면 지어낼 이유가 없다. 후보가 비어 있는 경우(명세를 아직 안 씀)는
-    별도로 말한다 — 그때는 정말로 파일을 써야 한다.
-    """
-    if _lang(language) == "en":
-        if not available:
-            return (f"Refused — '{slug}' does not exist, and this workspace has "
-                    "no prototype spec at all yet. Write the spec where your "
-                    "stage's rules put it, then call handoff_prototype again.")
-        listed = ", ".join(f"'{s}'" for s in available)
-        return (f"Refused — '{slug}' is not a prototype in this workspace. Hand "
-                f"off one of these instead: {listed}. Pick from that list; do "
-                "not invent an id and do not create a new spec file to make "
-                "one exist.")
-    if not available:
-        return (f"거부됨 — '{slug}'는 없고, 이 워크스페이스에는 프로토타입 명세가 "
-                "아직 하나도 없다. 지금 스테이지의 룰이 정한 자리에 명세를 먼저 "
-                "쓴 뒤 handoff_prototype을 다시 호출할 것.")
-    listed = ", ".join(f"'{s}'" for s in available)
-    return (f"거부됨 — '{slug}'는 이 워크스페이스의 프로토타입이 아니다. 다음 중 "
-            f"하나를 넘길 것: {listed}. 이 목록에서 고른다 — id를 지어내지 말고, "
-            "지어낸 id를 존재하게 만들려고 새 명세 파일을 만들지도 말 것.")
-
-
-def handoff_prototype_done(language: str, slug: str) -> str:
-    """넘기기 성공. **다음 행동을 지정한다** — 이것이 없으면 에이전트가 상류
-    Step 4(Iterate)로 계속 가거나 자격증명을 묻는다. 둘 다 실측된 실패다."""
-    if _lang(language) == "en":
-        return (f"Handed off: '{slug}' is now a card in the Prototypes tab. "
-                "**End your turn here** and tell the user to build it there. Do "
-                "not ask for credentials, an API key, a provider or a model — the "
-                "project already has them. Iteration and validation resume after "
-                "they come back with a built prototype and survey results.")
-    return (f"넘겼다: '{slug}'가 Prototypes 탭의 카드로 준비됐다. "
-            "**여기서 턴을 끝내고** 사용자에게 그 탭에서 빌드하라고 안내할 것. "
-            "자격증명·API 키·제공자·모델을 묻지 않는다 — 프로젝트가 이미 갖고 "
-            "있다. 개선(Iterate)과 검증은 사용자가 빌드와 설문을 마치고 돌아온 "
-            "뒤에 재개한다.")
 
 
 # ---- 드라이버가 만드는 텍스트 (agent/claude_driver.py) ----
@@ -308,41 +225,71 @@ def file_answers_recorded(language: str, path: str) -> str:
             f"마세요.")
 
 
-def report_stage_missing(language: str) -> str:
+def state_file_missing(language: str) -> str:
     """`aiplc-state.md`에 Current Stage가 없을 때 재개 턴에 덧붙이는 지목.
 
     `file_answers_recorded`에 이어 붙는 **완성된 문단**이다. 조각 치환이 아니라
     문단 연결이므로 이 파일 헤더의 "두 벌을 완성문으로" 규율을 지킨다.
 
-    **왜 상태 파일을 백엔드가 대신 쓰지 않는가.** `state_sync.upsert_stage`는
-    스테이지 **이름**을 요구하고, 그것을 아는 것은 에이전트뿐이다. 경로에서
-    추측하려면(`.../envision/xxx-questions.md` → "Envision") 룰셋의 스테이지
-    이름을 복제한 매핑이 새로 생기는데, 그것은 룰셋 교체 때 조용히 어긋나는
-    두 번째 진실 공급원이다. 게다가 틀린 이름을 한 번 쓰면 이후 `upsert_stage`의
-    정확-일치 매칭이 빗나가 체크리스트가 두 줄로 갈린다.
+    **왜 백엔드가 대신 쓰지 않는가.** 스테이지 **이름**을 아는 것은 에이전트뿐이다.
+    경로에서 추측하려면(`.../envision/xxx-questions.md` → "Envision") 룰셋의
+    스테이지 이름을 복제한 매핑이 새로 생기는데, 그것은 룰셋 교체 때 조용히
+    어긋나는 두 번째 진실 공급원이다.
 
-    **왜 유실이 생기는가(2026-08-18, test123456).** PostToolUse 훅이 질문 파일
-    쓰기에서 턴을 끝내면 같은 메시지에 배치된 뒤 도구 호출은 실행되지 않는다
-    (claude_driver._on_post_tool_use). 그 턴에서 `report_stage`가 Write 뒤에
-    배치되면 그대로 사라지고, 재개 턴은 "멈춘 지점부터 이어가라"이므로 회수되는
-    경로가 없다 — 대시보드·사이드바 배지가 프로젝트 내내 빈다
-    (state_sync.py 헤더의 qa-test 사고와 같은 증상이다).
+    **2026-08-18에 도구에서 파일로 바뀌었다.** 옛 문구는 `report_stage`를 부르라고
+    했다. 그 도구가 PostToolUse 훅으로 대체되면서(agent/reconcile.py) 이 지목의
+    대상도 도구 호출에서 **파일 쓰기**로 옮겨 왔다 — 그리고 그것이 상류 룰이
+    원래 요구하는 행동이다(`common/workflow-changes.md`,
+    `discovery/prototype-validation.md` Step 10).
 
-    순서 지시는 discovery-config/CLAUDE.md가 소유한다. 이것은 그 지시가 빗나간
-    경우의 백스톱이고, 그래서 **이유가 아니라 다음 행동**을 준다.
+    지목이 여전히 필요한 이유: 훅과 턴 경계 재조정은 파일이 **있을 때** 그것을
+    화면으로 옮긴다. 파일 자체가 없으면 옮길 것이 없고, 그것을 만들 수 있는 것은
+    에이전트뿐이다.
     """
     if _lang(language) == "en":
         return ("Also: `aiplc-docs/aiplc-state.md` still has no current stage, so "
-                "`report_stage` did not run for the stage you are in. Call it "
-                "**first**, before anything else this turn — the stage badges are "
-                "empty until you do. Then continue. Remember that a question file "
-                "write ends the turn, so `report_stage` belongs before it, never "
-                "after.")
-    return ("그리고 `aiplc-docs/aiplc-state.md`에 현재 스테이지가 아직 없습니다 — "
-            "지금 스테이지에 대한 `report_stage`가 실행되지 않았습니다. 이번 턴에서 "
-            "**가장 먼저** 그것을 호출해 주세요. 그때까지 스테이지 배지가 비어 "
-            "있습니다. 호출한 뒤 이어가시면 됩니다. 질문 파일을 쓰면 턴이 끝나므로 "
-            "`report_stage`는 그 **앞**에 두세요 — 뒤에 두면 실행되지 않습니다.")
+                "the stage badges are empty. Write that file the way "
+                "`common/workflow-changes.md` and your stage's rules specify — a "
+                "`- **Current Stage**: <name>` line and a `## Stage Progress` "
+                "checklist — and keep it updated as you go. Pathfinder reads the "
+                "file and updates the badges itself; there is no tool to call.")
+    return ("그리고 `aiplc-docs/aiplc-state.md`에 현재 스테이지가 아직 없어서 "
+            "스테이지 배지가 비어 있습니다. `common/workflow-changes.md`와 지금 "
+            "스테이지의 룰이 정한 형태로 그 파일을 써 주세요 — "
+            "`- **Current Stage**: <이름>` 줄과 `## Stage Progress` 체크리스트 — "
+            "그리고 진행하면서 계속 갱신해 주세요. Pathfinder가 그 파일을 읽어 "
+            "배지를 스스로 갱신합니다. 호출할 도구는 없습니다.")
+
+
+def prototype_handoff_stop(language: str, slug: str) -> str:
+    """`build-instructions.md`를 쓰는 순간 턴을 멈출 때 모델이 읽는 이유.
+
+    PostToolUse 훅의 `stopReason`으로 간다(`file_questions_stop`과 같은 경로).
+
+    **다음 행동을 지정하는 것이 요점이다.** 옛 `handoff_prototype` 도구의 성공
+    문구가 이미 이 판단을 기록해 뒀다: 지정하지 않으면 에이전트가 상류 Step 4
+    (Iterate)로 계속 가거나 자격증명을 묻는다 — 둘 다 실측된 실패다(keumkang-v5:
+    자격증명 점검 → API 키 요구 → 선행 조건 나열, 탭 안내 0회).
+
+    도구가 훅이 되면서 달라진 것은 **누가 호출을 보장하는가**뿐이다. 문구가 담아야
+    하는 내용은 그대로다: 여기서 끝난다, 빌드는 탭에서 한다, 자격증명을 묻지 않는다,
+    Step 4-6은 버린 것이 아니라 미룬 것이다.
+    """
+    if _lang(language) == "en":
+        return (f"Stopping here: '{slug}' is now a card in the Prototypes tab, and "
+                f"Pathfinder put it there when you wrote the build instructions — "
+                f"there is no tool to call. **End your turn** and tell the user to "
+                f"build it in that tab. Do not ask for credentials, an API key, a "
+                f"provider or a model; the project already has them. Iteration and "
+                f"validation (Steps 4-6) are deferred, not abandoned — resume them "
+                f"when the user comes back with a built prototype or survey "
+                f"results.")
+    return (f"여기서 멈춥니다: '{slug}'가 Prototypes 탭의 카드로 준비됐습니다 — "
+            f"빌드 지시를 쓰는 순간 Pathfinder가 등록했으므로 호출할 도구는 "
+            f"없습니다. **턴을 끝내고** 사용자에게 그 탭에서 빌드하라고 안내해 "
+            f"주세요. 자격증명·API 키·제공자·모델을 묻지 마세요 — 프로젝트가 이미 "
+            f"갖고 있습니다. 개선과 검증(Step 4-6)은 버린 것이 아니라 미룬 "
+            f"것입니다. 사용자가 빌드와 설문을 마치고 돌아오면 재개하세요.")
 
 
 def write_outside_docs(language: str, path: str) -> str:

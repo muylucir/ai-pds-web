@@ -71,6 +71,7 @@ from pathfinder.agent.discovery_guard import (WRITE_TOOLS, bash_denial,
 from pathfinder.agent.pending_store import (clear_pending, load_pending,
                                               load_pending_file, save_pending,
                                               save_pending_file)
+from pathfinder.agent import reconcile
 from pathfinder.agent.question_file_answers import record_answers
 from pathfinder.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
@@ -483,12 +484,7 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
         server = create_sdk_mcp_server(
             name=_MCP_SERVER_NAME,
             tools=build_tools(driver._workspace, driver._emit,
-                              driver._language,
-                              # report_stage가 aiplc-state.md를 로컬에 직접 쓰고
-                              # emit으로 알린다 — PostToolUse 훅을 지나지 않으므로
-                              # 그 훅과 **같은 게시 경로**를 손에 쥐여 준다
-                              # (workspace_sync가 규칙을 소유한다).
-                              publish=driver._publish))
+                              driver._language))
         options = ClaudeAgentOptions(
             permission_mode=driver._permission_mode,
             cwd=driver._workspace,
@@ -501,9 +497,10 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # setup has no skills of its own -- it is CLAUDE.md plus on-demand
             # rule-file reads (discovery-config/README.md).
             mcp_servers={_MCP_SERVER_NAME: server},
-            allowed_tools=[f"mcp__{_MCP_SERVER_NAME}__report_stage",
-                           f"mcp__{_MCP_SERVER_NAME}__submit_document",
-                           f"mcp__{_MCP_SERVER_NAME}__handoff_prototype"],
+            # 도구가 하나다. `report_stage`와 `handoff_prototype`은 2026-08-18에
+            # PostToolUse 훅으로 옮겨 갔다 — 도구는 모델이 부르지 않으면 침묵하고,
+            # 그 침묵이 두 번 실측됐다(agent/reconcile.py 헤더).
+            allowed_tools=[f"mcp__{_MCP_SERVER_NAME}__submit_document"],
             # Exactly one of the two, never both: the CLI rejects
             # `--session-id` alongside `--resume` unless `--fork-session` is
             # also passed ("--session-id can only be used with --continue or
@@ -646,6 +643,17 @@ class ClaudeDriver:
         # rel path → 파싱 실패를 이미 알린 내용. 같은 내용에 같은 노트를 반복하지
         # 않되, 내용이 달라지면 다시 알린다(_on_post_tool_use 참조).
         self._unparsed_noted: dict[str, str] = {}
+        # 스테이지 이름 → 이미 흘린 상태. `aiplc-state.md`에서 유도한 `stage`
+        # 이벤트의 diff 커서다(agent/reconcile.stage_events). 프론트가 이벤트를
+        # 누적하므로 같은 상태를 다시 흘리면 사이드바 목록이 자란다.
+        #
+        # 드라이버 인스턴스가 프로젝트 수명을 사는 것에 의존하지 않는다: 백엔드
+        # 재시작으로 커서가 비면 다음 상태 파일 쓰기에서 전체를 한 번 다시 흘리고,
+        # 프론트는 그 시점에 이미 REST로 상태를 읽어 화면을 세운 뒤다.
+        self._stage_status: dict[str, str] = {}
+        # 이미 `prototype_ready`를 흘린 프로토타입 id. 두 번 알리면 채팅에 카드가
+        # 두 장 뜬다(agent/reconcile.prototype_events).
+        self._handed_off: set[str] = set()
         self._current_session_id: str | None = None
         # The task draining the current turn's receive_response(). Outlives the
         # `run()` generator on purpose when a question parks the turn -- that is
@@ -655,17 +663,17 @@ class ClaudeDriver:
 
     # ---- plumbing ----
 
-    async def _publish(self, rel: str) -> None:
-        """워크스페이스 파일 하나를 정본에 올린다 — 도구에 넘기는 게시자.
-
-        PostToolUse 훅이 쓰는 것과 같은 함수다(workspace_sync.publish_file). 두 벌로
-        두면 audit.md 리댁션과 대상 글롭이 갈라진다.
-        """
-        await publish_file(self._s3, Path(self._workspace), rel)
+    # `_publish`가 여기 있었다. `report_stage`가 상태 파일을 직접 쓰면서 PostToolUse
+    # 훅을 지나지 않았기 때문에 그 도구에게 게시자를 손에 쥐여 줘야 했다. 그 도구가
+    # 훅으로 옮겨 간 뒤(agent/reconcile.py) 상태 파일도 다른 산출물과 같은 경로로
+    # 게시되므로 예외가 사라졌고, 예외를 위한 게시자도 사라졌다. 게시는
+    # `_on_post_tool_use`가 `publish_file`을 직접 부른다.
 
     def _emit(self, event: AgentEvent) -> None:
-        """The `emit` sink handed to build_tools -- report_stage/
-        submit_document push stage/document events through here."""
+        """The `emit` sink handed to build_tools -- `submit_document` pushes its
+        `document` event through here. Stage and handoff events no longer arrive
+        this way: they are derived in `_emit_stage_events`/`_handoff_stop` and
+        appended to `_queue` directly."""
         self._queue.append(event)
 
     # There is deliberately NO `drain_queue()` here, though builder.py:183 has
@@ -899,6 +907,72 @@ class ClaudeDriver:
         self._asked_question_sets[rel] = unanswered
         return qfile, md
 
+    def _emit_stage_events(self) -> None:
+        """`aiplc-state.md`를 읽어 상태가 바뀐 스테이지만 `stage`로 흘린다.
+
+        커서(`self._stage_status`)를 갱신하는 유일한 자리다 — 훅 경로와 턴 경계
+        재조정이 **같은 함수**를 지나므로 두 경로가 같은 diff를 본다. 두 벌로 두면
+        한쪽이 흘린 것을 다른 쪽이 다시 흘린다.
+        """
+        events, self._stage_status = reconcile.stage_events(
+            reconcile.read_state(Path(self._workspace)), self._stage_status)
+        for ev in events:
+            self._queue.append(ev)
+
+    def _reconcile_turn(self) -> None:
+        """턴이 끝나기 전에 워크스페이스와 UI를 맞춘다. `_pump`가 부른다.
+
+        훅이 못 본 변경(Bash 경유)과 놓친 이벤트(배치 드롭)를 여기서 되찾는다.
+        인계는 알리기만 하고 **턴을 끊지 않는다** — 턴은 이미 끝나는 중이고,
+        여기서 `continue_: False`를 낼 자리도 없다.
+
+        예외를 삼킨다. 재조정은 백스톱이므로 그것이 턴을 실패시키면 백스톱이
+        아니라 새 실패 원인이 된다(runner._sync_abandoned_turn이 같은 판단이다).
+        """
+        try:
+            self._emit_stage_events()
+        except Exception:
+            _log.exception("stage reconciliation failed")
+        try:
+            events, self._handed_off = reconcile.prototype_events(
+                Path(self._workspace), self._handed_off)
+            for ev in events:
+                self._queue.append(ev)
+        except Exception:
+            _log.exception("prototype handoff reconciliation failed")
+
+    def _handoff_stop(self, rel: str) -> dict | None:
+        """`build-instructions.md` 쓰기를 인계로 확정하고 턴을 끝낸다.
+
+        `None`이면 확정하지 않았다는 뜻이고, 그때는 턴이 계속된다. 확정하지 않는
+        경우는 명세가 아직 없을 때다 — Prototypes 탭은 명세에서 카드를 만들므로
+        (`routes/prototypes.py`가 `layout.discover`로 목록을 만든다) 빌드 지시만
+        있으면 사용자가 빈 탭을 본다. 옛 `handoff_prototype`이 명세 존재를 확인한
+        이유가 그것이고, 그 검사는 `reconcile.handed_off`로 옮겨 갔다.
+
+        **턴을 끝내는 이유는 질문 파일과 같다.** 여기서 Discovery의 일이 끝나고
+        다음 행동은 사용자의 것이다(Prototypes 탭에서 빌드). 끝내지 않으면 상류
+        Step 4(Iterate)로 계속 가거나 자격증명을 묻는다 — 둘 다 실측된 실패다.
+        그래서 `stopReason`이 다음 행동을 **지정한다**: 이유만 주면 모델이
+        즉흥한다는 것이 prompts.py 헤더의 원칙이다.
+        """
+        events, cursor = reconcile.prototype_events(
+            Path(self._workspace), self._handed_off)
+        if not events:
+            # 이미 알린 인계라면 조용히 지나간다(빌드 지시를 고쳐 쓴 경우) — 카드가
+            # 두 장 뜨지 않고, 턴도 다시 끊지 않는다.
+            if reconcile.prototype_id_for(rel) not in self._handed_off:
+                _log.warning("build instructions at %s have no prototype spec "
+                             "yet — not handing off", rel)
+            return None
+        self._handed_off = cursor
+        for ev in events:
+            self._queue.append(ev)
+        slug = reconcile.prototype_id_for(rel) or ""
+        _log.info("prototype handed off from %s (slug=%s)", rel, slug)
+        return {"continue_": False,
+                "stopReason": prompts.prototype_handoff_stop(self._language, slug)}
+
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
         name = input_data.get("tool_name", "")
         if name not in _FILE_TOOLS:
@@ -921,6 +995,23 @@ class ClaudeDriver:
         # 질문 파일도 산출물이다 — 문서 패널이 이 이벤트로 갱신되므로 아래 분기와
         # 무관하게 먼저 흘린다.
         self._queue.append(AgentEvent(kind="file_changed", path=rel))
+        # 스테이지 배지: 상태 파일을 **파싱해서** 유도한다(옛 `report_stage` 도구를
+        # 대체한다 — agent/reconcile.py 헤더에 그 전말이 있다). 상류 룰이 에이전트에게
+        # 이 파일을 직접 갱신하라고 요구하므로(common/workflow-changes.md,
+        # discovery/prototype-validation.md Step 10) 신호는 이미 워크스페이스에 있다.
+        #
+        # 훅 페이로드가 아니라 **디스크**를 읽는다. Edit는 패치만 담으므로 페이로드로는
+        # 파일 전문을 알 수 없고, `_file_question_round`가 같은 이유로 같은 선택을 했다.
+        if rel == reconcile.STATE_KEY:
+            self._emit_stage_events()
+        # 프로토타입 인계: Step 3의 마지막 산출물이 쓰이는 순간이다. 옛
+        # `handoff_prototype` 도구와 달리 모델이 잊을 수 없다 — 2026-08-17
+        # keumkang-v5에서 탭 안내가 0회였던 것이 그 도구가 생긴 이유였고, 도구는
+        # "부르지 않으면 침묵"이라는 같은 실패를 한 단계 뒤로 미룬 것이었다.
+        if reconcile.prototype_id_for(rel) is not None:
+            stop = self._handoff_stop(rel)
+            if stop is not None:
+                return stop
         if not _file_questions_enabled():
             return {}
         round_ = self._file_question_round(rel)
@@ -1409,6 +1500,28 @@ class ClaudeDriver:
             # contract's "agent turn failed" -- messages already relayed above
             # have reached the consumer first.
             raise reader.error
+        # 턴 경계 재조정 — 훅이 놓친 것을 워크스페이스에서 되찾는다.
+        #
+        # **왜 훅만으로는 부족한가.** PostToolUse는 `Write|Edit|MultiEdit`에만 붙으므로
+        # 에이전트가 Bash로 파일을 고치면(`python3 -c`, `sed`, 리다이렉션) 훅이 그것을
+        # 보지 못한다. discovery_guard.py 헤더가 같은 한계를 이미 기록해 뒀다 — Bash는
+        # 임의 코드 실행이라 거부목록으로 모든 경로를 덮을 수 없고, matcher에 Bash를
+        # 넣어도 명령에서 대상 파일을 알아낼 수 없다.
+        #
+        # 그래서 매 순간의 선언(도구)도, 매 쓰기의 관측(훅)도 아니라 **경계의 정합성**이
+        # 마지막 근거다. 여기서 디스크를 한 번 읽으면 Bash 우회·훅 유실·배치 드롭이
+        # 전부 덮인다. 2026-08-18 test123456의 유실된 `report_stage`도 여기서 잡힌다.
+        #
+        # **종결 배출 앞이라는 위치가 요점이다.** `frontend/lib/api/sse.ts:29`가 `done`에서
+        # EventSource를 닫으므로 그 뒤의 이벤트는 화면에 닿지 않는다(위 invariant 1).
+        # 여기서 큐에 넣으면 아래 드레인 루프가 그것을 종결 이벤트 앞에 배출한다.
+        #
+        # 이미 흘린 것은 다시 흘리지 않는다 — 두 커서(`_stage_status`, `_handed_off`)가
+        # 훅 경로와 공유되므로 재조정은 대개 아무 일도 하지 않는다. 그것이 정상이다.
+        #
+        # `asked`(질문으로 끝난 턴)에서도 돈다. 그 경로가 정확히 유실이 관측된
+        # 경로다: 질문 파일 쓰기가 턴을 끊으면서 같이 배치된 호출이 사라졌다.
+        self._reconcile_turn()
         # Terminal relay. Every `yield` above handed control to the scheduler,
         # which is exactly when the reader can append another message and a tool
         # callback can queue another event -- so drain both to exhaustion before
