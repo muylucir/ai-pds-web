@@ -15,7 +15,7 @@ import { LocaleProvider } from "@/lib/i18n/provider";
 describe("AppHeader without a selected project", () => {
   it("renders the brand and shows the per-project tabs DISABLED (not links)", () => {
     render(<AppHeader activeTab="projects" />);
-    expect(screen.getByText("Pathfinder")).toBeInTheDocument();
+    expect(screen.getByText("AI-PDS")).toBeInTheDocument();
     // The per-project tabs require a project, so with none selected they must
     // not be clickable links (a live link would navigate to a dead #/… route
     // and appear broken). They render as disabled spans instead.
