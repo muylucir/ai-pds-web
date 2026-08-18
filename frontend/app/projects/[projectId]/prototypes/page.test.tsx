@@ -72,7 +72,7 @@ describe("Prototypes page", () => {
     await act(async () => {
       render(<PrototypesPage params={params} />);
     });
-    expect(await screen.findByText(/아직 프로토타입 스펙이 없습니다/)).toBeInTheDocument();
+    expect(await screen.findByText(/아직 프로토타입 명세가 없습니다/)).toBeInTheDocument();
   });
 
   it("onBuild with a fresh 202 session opens BuildPanel with autoStart (fires the first-build turn)", async () => {

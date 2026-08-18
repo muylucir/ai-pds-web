@@ -167,7 +167,7 @@ export const en: Record<keyof typeof ko, string> = {
   "proto.close": "Close",
   "proto.changedFiles": "Changed files",
   "proto.noChangedFiles": "No files have changed yet.",
-  "proto.statusNone": "Spec only",
+  "proto.statusNone": "Not built",
   "proto.statusBuilding": "Building",
   "proto.statusBuilt": "Built",
   "proto.statusRunning": "Running",

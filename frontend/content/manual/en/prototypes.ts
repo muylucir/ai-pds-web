@@ -7,7 +7,7 @@ export const prototypes: ManualSection = {
   blocks: [
     {
       kind: "md",
-      md: `Once Discovery has written a \`PROTOTYPE-{name}.md\` spec, it shows up as a card in the
+      md: `Once Discovery has written a prototype spec, it shows up as a card in the
 Prototypes tab. One card is one prototype, and the status badge tells you how far it has got.
 
 The colours and typeface come from whatever the administrator uploaded under
@@ -22,7 +22,7 @@ The colours and typeface come from whatever the administrator uploaded under
       kind: "md",
       md: `| Status | Meaning | What to do next |
 |---|---|---|
-| Spec only | The spec exists, nothing has been built | **Start build** |
+| Not built | Nothing has been built yet | **Start build** |
 | Building | It is being built right now | **Open session** to watch |
 | Built | It exists but is not running | **Start hosting** |
 | Running | The preview is live | **Open preview** · **Copy link** |
@@ -84,7 +84,7 @@ frees up when a running build finishes, so pressing the button again shortly wor
     { kind: "heading", id: "proto-reset", text: "Resetting" },
     {
       kind: "md",
-      md: `**Reset** on a card returns that prototype to spec-only.
+      md: `**Reset** on a card returns that prototype to **Not built**. The spec stays.
 
 Deleted — the build output and any running server · the build conversation · the validation
 survey and its responses.

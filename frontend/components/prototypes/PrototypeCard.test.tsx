@@ -25,7 +25,7 @@ const noop = {
 describe("PrototypeCard", () => {
   it("none: shows the spec-only badge and a single 빌드 시작 button", () => {
     render(<PrototypeCard info={info({ state: "none" })} busy={false} {...noop} />);
-    expect(screen.getByText("스펙만 있음")).toBeInTheDocument();
+    expect(screen.getByText("빌드 전")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "빌드 시작" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "호스팅 시작" })).not.toBeInTheDocument();
   });
