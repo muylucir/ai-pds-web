@@ -94,9 +94,23 @@ those questions to the user **exactly as you wrote them**, then fills the
   you re-read the stage's question file on resume). **Do not write them
   yourself**: two writers on one line produce conflicts, and your copy would be
   the stale one.
-- **Your turn ends when you finish writing the file.** Do not keep working, do
-  not restate the questions in chat, and do not announce that you are about to
-  ask. The answers arrive in the file and you continue on the next turn.
+- **Writing the file is the LAST tool call of the turn, and everything else in
+  the turn comes before it.** Pathfinder ends the turn the moment the file is
+  written, and any tool call you batched after it in the same message is
+  discarded — silently, with no error. So the order is: your conversational text
+  for the user, then `report_stage` / `submit_document` / the `audit.md` `Edit`,
+  and the question file last.
+  This is what the upstream rules already ask for and it is not a special case:
+  `aws-aiplc-rules/core-workflow.md` puts the mandatory welcome message and the
+  Workspace Detection findings *before* the stage that asks, and its Workspace
+  Detection step 6 is "Present completion message to user". A turn that writes
+  the question file first and narrates afterwards loses the narration.
+- **Do not restate the questions in chat** — they are already on the user's
+  screen, read from the file. Explaining *why* this round is being asked is
+  required, not forbidden (see "Keep the conversation visible" below); what is
+  forbidden is copying the questions or their options into the chat.
+- **Do not keep working after the write.** The answers arrive in the file and you
+  continue on the next turn.
 - **Do not apply its "Missing Answers" handling** by sending the user to the
   file. They cannot edit it directly — the form in the right-hand panel is the
   only way in. If a tag you expected is still empty, write the question again
@@ -263,6 +277,11 @@ in the workspace `CLAUDE.md`, next to the language convention it belongs to.
 - On a turn that delivers questions, explain in one sentence why they are needed
   before the form appears. Per-question background belongs in the file (above the
   question's heading) — this line is about the round as a whole.
+- **On a question turn, "before" is literal.** The turn ends at the write, so
+  text emitted after it never reaches the screen (see "Question files ARE the
+  question form"). Everything you owe the user this turn — the welcome message on
+  the first turn, the Workspace Detection findings, what you just decided, what
+  the gate is waiting for — is said *before* you write the file.
 
 Write this conversational text in the language the workspace `CLAUDE.md`
 specifies — that is where the project's language is defined.

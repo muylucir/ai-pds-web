@@ -408,6 +408,47 @@ def test_discovery_config_overrides_the_upstream_question_file_rules():
     assert "AskUserQuestion is not available" in text
 
 
+def test_the_question_file_write_is_declared_the_last_tool_call_of_the_turn():
+    """**2026-08-18의 결함이 이 검사의 이유다(test123456).**
+
+    PostToolUse 훅은 질문 파일 쓰기에서 턴을 끝내고, 같은 메시지에 배치된 뒤 도구
+    호출은 실행되지 않는다(claude_driver._on_post_tool_use). 그런데 이 파일은 그
+    사실을 적지 않고 "파일을 다 쓰면 턴이 끝난다"까지만 말했다. 실측 결과:
+    에이전트가 audit.md → 질문 파일을 먼저 쓰고 welcome 메시지·Workspace Detection
+    보고·GATE 안내를 **그 뒤에** 두었고, 전부 화면에 도달하지 않았다. 같은 턴의
+    `report_stage`도 사라져 aiplc-state.md가 만들어지지 않았다(스키마는 ToolSearch로
+    가져온 것이 트레이스에 남아 있다).
+
+    Claude Code에서 같은 룰로 돌린 3회 전부 같은 순서였다 — 로컬에는 훅이 없어서
+    벌을 받지 않았을 뿐이다. 즉 순서를 적지 않으면 상류 룰을 그대로 따르는 에이전트가
+    이 경로에서 진다.
+
+    상류 룰은 이미 이 순서를 요구한다: `core-workflow.md`의 "MANDATORY: Custom
+    Welcome Message"와 Workspace Detection 6단계("Present completion message to
+    user")가 질문하는 스테이지보다 앞에 있다. 그래서 이것은 override가 아니라
+    **상류 순서를 이 경로에서 성립시키는 진술**이다.
+
+    그리고 반대쪽 조항이 이 순서를 막지 않아야 한다. 옛 문구는 "do not announce
+    that you are about to ask"였는데, 그것이 "쓰기 전에 말하지 마라"로 읽혀
+    "Keep the conversation visible" 절과 정면으로 부딪쳤다 — 실측한 턴이 welcome을
+    건너뛰고 두 문장만 남긴 것이 그 충돌의 모양이다.
+    """
+    text = _discovery_config()
+    # 마지막 도구 호출이라는 것, 그리고 뒤에 배치한 호출이 **버려진다**는 것.
+    # 후자가 없으면 순서는 취향으로 읽히고, 이 실패는 에러 없이 온다.
+    assert "LAST tool call of the turn" in text
+    assert "discarded" in text
+    # 무엇이 앞에 오는지 지목한다 — 이유만 주면 모델이 즉흥한다(prompts.py 헤더).
+    for before in ("report_stage", "submit_document", "audit.md"):
+        assert before in text
+    # 상류 근거를 지목해 둔다. 없으면 다음 사람이 이 조항을 Pathfinder의 변덕으로
+    # 읽고 상류 재동기화 때 지운다.
+    assert "core-workflow.md" in text
+    # 충돌 문구가 돌아오지 않는다. 질문을 **옮겨 적는 것**만 금지여야 한다.
+    assert "do not announce that you are about to ask" not in text
+    assert "Do not restate the questions in chat" in text
+
+
 def _discovery_config() -> str:
     """공백을 접은 discovery-config/CLAUDE.md.
 
