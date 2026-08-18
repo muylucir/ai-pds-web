@@ -8,6 +8,15 @@ _CURRENT_STAGE = re.compile(r"\*\*Current Stage\*\*:\s*(.+)")
 _CHECK = re.compile(r"^- \[([ xX])\]\s*(.+)$")
 _SPLIT = re.compile(r"\s+[—-]\s+")
 
+#: 스테이지 체크리스트가 사는 섹션. 상류가 정한 이름이다
+#: (`inception/workspace-detection.md`의 상태 파일 템플릿, 각 스테이지의
+#: "Update State Tracking" 단계).
+_PROGRESS_HEADER = re.compile(r"^## Stage Progress\s*$")
+
+#: 그 섹션을 닫는 것: 다음 `##` 헤딩. `###`는 **닫지 않는다** — 상류 템플릿이
+#: 섹션 안에 `### 🟣 DISCOVERY PHASE`를 두기 때문이다(envision.md:420-425).
+_H2 = re.compile(r"^## ")
+
 #: 스테이지 이름에 실제로 나타난 이스케이프. XML 사전정의 엔티티 5개로 좁혔다.
 _ENTITIES = {"&amp;": "&", "&lt;": "<", "&gt;": ">",
              "&quot;": '"', "&#39;": "'", "&apos;": "'"}
@@ -46,9 +55,35 @@ def normalize_stage_name(raw: str) -> str:
     return _ENTITY_RE.sub(lambda m: _ENTITIES[m.group(0)], raw).strip()
 
 def parse_state_file(markdown: str) -> ProjectState:
+    """`aiplc-state.md` → 진행률 사이드바가 읽는 상태.
+
+    **체크박스는 `## Stage Progress` 안에서만 스테이지다(2026-08-18 실측:
+    test12345678).** 그 프로젝트의 사이드바에 14개가 떴다 — 스테이지 6개와,
+    에이전트가 자기 기록용으로 만든 `## Envision 진행 내역`의 하위 단계 8개
+    (`Step 0.1`~`Step 6`)가 섞여 있었다. 진행률이 스테이지 6개가 아니라 14개를
+    세니 화면의 숫자도 뜻을 잃는다.
+
+    왜 이제 드러났는가: 예전에는 `report_stage` 도구가 상태 파일을 우리 손으로
+    upsert했고 그 쓰기 경로(`state_sync.upsert_stage`)는 `## Stage Progress`
+    블록만 건드렸다. 2026-08-18에 그 도구가 훅으로 대체되면서 파일을 쓰는 것은
+    **에이전트 단독**이 됐고, 상류 템플릿은 그 섹션을 `[Will be populated as
+    workflow progresses]`로만 규정한다 — 즉 나머지 문서에 무엇을 적어도 규칙
+    위반이 아니다. 가려 읽던 쪽이 없어졌으니 읽기 쪽이 가려야 한다.
+
+    하위 단계 기록을 금지하지 않는 이유: 그것은 에이전트에게 유용한 장부이고,
+    상류가 허용한다. 우리가 할 일은 그것을 스테이지로 **읽지 않는** 것이다.
+
+    섹션이 아예 없으면 문서 전체를 훑는다 — 옛 동작이다. 빈 사이드바는 "질문
+    파싱이 실패했는데 조용히 넘어가 질문이 사라졌다"와 같은 종류의 실패이고,
+    잘못된 항목이 몇 개 섞이는 것보다 나쁘다.
+    """
     project_type = None
     current_stage = None
     stages: list[StageState] = []
+    # 섹션이 없는 문서를 위한 폴백: 헤딩을 한 번도 만나지 못하면 전부 훑는다.
+    has_section = any(_PROGRESS_HEADER.match(ln.rstrip())
+                      for ln in markdown.splitlines())
+    in_progress_block = not has_section
     for line in markdown.splitlines():
         line = line.rstrip()
         if project_type is None and (m := _PROJECT_TYPE.search(line)):
@@ -56,6 +91,15 @@ def parse_state_file(markdown: str) -> ProjectState:
             continue
         if current_stage is None and (m := _CURRENT_STAGE.search(line)):
             current_stage = normalize_stage_name(m.group(1))
+            continue
+        if has_section:
+            if _PROGRESS_HEADER.match(line):
+                in_progress_block = True
+                continue
+            if in_progress_block and _H2.match(line):
+                in_progress_block = False
+                # 다음 섹션 헤딩 자체는 체크라인이 아니므로 계속 진행해도 된다.
+        if not in_progress_block:
             continue
         if (m := _CHECK.match(line.strip())):
             checked = m.group(1).lower() == "x"

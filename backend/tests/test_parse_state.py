@@ -106,3 +106,84 @@ def test_leaves_ordinary_ampersands_alone():
     )
     assert st.current_stage == "R&D Review"
     assert [s.status for s in st.stages] == ["in_progress"]
+
+
+# ---- 체크박스는 `## Stage Progress` 안에서만 스테이지다 ----
+# 2026-08-18 실측(test12345678): 사이드바에 14개가 떴다 — 스테이지 6개 +
+# 에이전트가 자기 장부로 만든 `## Envision 진행 내역`의 하위 단계 8개. 예전에는
+# `report_stage`가 상태 파일을 우리 손으로 upsert하며 그 섹션만 건드렸는데
+# (state_sync.upsert_stage), 그 도구가 훅으로 대체되고 파일을 에이전트가 단독으로
+# 쓰게 되면서 가려 읽던 쪽이 없어졌다.
+
+_REAL_SHAPE = (
+    "# AI-PLC State Tracking\n"
+    "\n"
+    "## Project Information\n"
+    "- **Project Type**: Greenfield\n"
+    "- **Current Stage**: DISCOVERY - Envision\n"
+    "\n"
+    "## Stage Progress\n"
+    "### 🟣 DISCOVERY PHASE\n"
+    "- [x] Workspace Detection\n"
+    "- [x] Discovery Mode Selection (Path A 선택)\n"
+    "- [ ] Envision\n"
+    "- [ ] Solution Analysis\n"
+    "- [ ] Product Strategy\n"
+    "- [ ] Go-to-Market\n"
+    "\n"
+    "## Envision 진행 내역\n"
+    "- [x] Step 0.1 — 사업 컨텍스트 입력 방식 선택\n"
+    "- [x] Step 0.2 — 사업 컨텍스트 수집\n"
+    "- [ ] Step 1 — Pain Point 입력 방식 결정\n"
+    "- [ ] Step 2 — Pain Point 수집\n"
+)
+
+
+def test_sub_step_checklists_outside_the_section_are_not_stages():
+    st = parse_state_file(_REAL_SHAPE)
+    assert [s.name for s in st.stages] == [
+        "Workspace Detection", "Discovery Mode Selection (Path A 선택)",
+        "Envision", "Solution Analysis", "Product Strategy", "Go-to-Market",
+    ]
+
+
+def test_a_sub_heading_does_not_close_the_section():
+    """상류 템플릿이 섹션 안에 `### 🟣 DISCOVERY PHASE`를 둔다
+    (envision.md:420-425). `###`에서 섹션을 닫으면 스테이지가 전부 사라진다."""
+    st = parse_state_file(_REAL_SHAPE)
+    assert len(st.stages) == 6, [s.name for s in st.stages]
+
+
+def test_current_stage_still_resolves_with_a_phase_prefix():
+    """`DISCOVERY - Envision`처럼 접두사가 붙어도 부분 포함 폴백이 자기 줄을
+    찾아야 한다 — 못 찾으면 진행 중 스테이지가 아무것도 아니게 된다."""
+    st = parse_state_file(_REAL_SHAPE)
+    assert [s.name for s in st.stages if s.status == "in_progress"] == ["Envision"]
+
+
+def test_falls_back_to_the_whole_document_without_the_section():
+    """섹션이 없는 문서는 옛 동작으로 훑는다. 빈 사이드바는 잘못된 항목이 섞이는
+    것보다 나쁘다 — 질문 파싱이 조용히 실패해 질문이 사라졌던 것과 같은 종류다."""
+    st = parse_state_file(
+        "# AI-PLC State\n"
+        "- **Current Stage**: Envision\n"
+        "- [x] Workspace Detection\n"
+        "- [ ] Envision\n"
+    )
+    assert [s.name for s in st.stages] == ["Workspace Detection", "Envision"]
+    assert [s.status for s in st.stages] == ["completed", "in_progress"]
+
+
+def test_a_section_that_is_empty_yields_no_stages():
+    """상류 템플릿의 초기 상태다 — `[Will be populated as workflow progresses]`.
+    폴백이 여기서 켜지면 문서 나머지의 체크박스를 스테이지로 읽는다."""
+    st = parse_state_file(
+        "# AI-PLC State Tracking\n"
+        "- **Current Stage**: Workspace Detection\n"
+        "## Stage Progress\n"
+        "[Will be populated as workflow progresses]\n"
+        "\n"
+        "## Notes\n"
+        "- [x] 이건 스테이지가 아니다\n"
+    )
+    assert st.stages == []
