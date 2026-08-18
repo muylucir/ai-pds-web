@@ -116,18 +116,59 @@ def test_is_idempotent(tmp_path):
     assert (ws / "CLAUDE.md").read_text(encoding="utf-8") == first
 
 
-def test_skips_a_file_already_present_with_the_same_size(tmp_path):
-    # 매 턴 수십 개 파일을 다시 쓰지 않는다. 룰은 읽기 전용이므로 크기가 같으면
-    # 같은 파일로 본다. mtime을 뒤로 밀어 두고 그대로인지 확인한다.
+def test_skips_a_file_that_is_unchanged(tmp_path):
+    """매 턴 수십 개 파일을 다시 쓰지 않는다 — 손대지 않았으면 건너뛴다.
+
+    `copy2`가 mtime을 보존하므로 첫 배치 뒤 dst와 src의 (크기, mtime)이 같고,
+    두 번째 호출은 아무것도 하지 않는다. `copyfile`로 되돌리면 mtime이 매번
+    갱신돼 이 캐시가 사실상 꺼진다 — 그것을 이 검사가 잡는다.
+
+    대상이 CLAUDE.md가 아니라 상세 룰인 것에 주의: CLAUDE.md는 조립물이라 비교
+    없이 매번 쓴다(두 언어 지시가 우연히 같은 지문을 가지면 언어를 바꿔도 파일이
+    그대로 남는다 — 정확히 이 스펙이 없애려는 침묵이다).
+    """
     ws = tmp_path / "ws"
     ws.mkdir()
     rules = _rules(tmp_path)
     place_rules(str(ws), str(rules), language="ko")
     target = ws / "aws-aiplc-rule-details" / "common" / "process-overview.md"
-    import os
-    os.utime(target, (1, 1))
+    before = target.stat().st_mtime_ns
     place_rules(str(ws), str(rules), language="ko")
-    assert target.stat().st_mtime == 1
+    assert target.stat().st_mtime_ns == before
+
+
+def test_refreshes_a_rule_whose_size_did_not_change(tmp_path):
+    """**크기만 비교하면 룰셋 교체가 조용히 반쯤 적용된다.**
+
+    매 턴 배치하는 목적이 바로 룰셋 교체를 진행 중인 프로젝트에 닿게 하는
+    것이다(룰은 S3에 없고 워크스페이스는 턴마다 재구성된다 —
+    claude_driver._place_rules). 그런데 판정이 크기뿐이면 갱신된 상세 룰의 바이트
+    수가 우연히 같을 때 그 파일만 낡은 채로 남는다. 에이전트가 옛 절차를 따르는
+    것으로만 드러나므로 추적이 거의 불가능하다.
+
+    `OVERVIEW` → `REVISED!!`가 아니라 **같은 길이**로 바꾸는 것이 요점이다.
+    """
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    rules = _rules(tmp_path)
+    place_rules(str(ws), str(rules), language="ko")
+    target = ws / "aws-aiplc-rule-details" / "common" / "process-overview.md"
+    assert target.read_text(encoding="utf-8") == "OVERVIEW"
+
+    src = rules / "aws-aiplc-rule-details" / "common" / "process-overview.md"
+    src.write_text("REVISED!", encoding="utf-8")      # 길이 8, 원본과 동일
+    assert src.stat().st_size == len("OVERVIEW")
+    # mtime을 **명시적으로** 앞으로 민다. 커널의 coarse 시각은 tick 단위로만
+    # 갱신되므로(실측 gap 20ms를 구분하는 파일시스템에서도) 위 배치와 이 쓰기가
+    # 한 tick 안에 들어가면 src의 mtime이 그대로다 — 테스트 안에서만 가능한
+    # 상황이고, 룰셋 교체는 배포 → 재시작 → 다음 턴이므로 항상 tick보다 멀다.
+    # 여기서는 "배포가 파일을 갈아 끼웠다"를 결정적으로 재현한다.
+    import os
+    later = src.stat().st_mtime_ns + 1_000_000_000
+    os.utime(src, ns=(later, later))
+
+    place_rules(str(ws), str(rules), language="ko")
+    assert target.read_text(encoding="utf-8") == "REVISED!"
 
 
 def test_overwrites_a_file_whose_size_differs(tmp_path):

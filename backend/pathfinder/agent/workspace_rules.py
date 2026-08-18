@@ -45,12 +45,35 @@ _DEFAULT_LANGUAGE = "ko"
 
 
 def _copy_if_changed(src: Path, dst: Path) -> None:
-    """크기가 같으면 건너뛴다. 룰은 읽기 전용이므로 크기 비교로 충분하고,
-    매 턴 수십 개 파일을 다시 쓰지 않게 한다."""
-    if dst.is_file() and dst.stat().st_size == src.stat().st_size:
-        return
+    """크기와 mtime이 **둘 다** 같으면 건너뛴다.
+
+    매 턴 수십 개 파일을 다시 쓰지 않기 위한 캐시이지만, 판정이 헐거우면 이
+    모듈의 존재 이유가 그 자리에서 무너진다. 매 턴 배치하는 목적은 **룰셋 교체가
+    진행 중인 프로젝트에 닿는 것**이다(룰은 S3에 없고 워크스페이스는 턴마다
+    재구성된다). 크기만 비교하면 룰셋을 갱신했는데 어떤 상세 룰의 바이트 수가
+    우연히 같을 때 그 파일만 낡은 채로 남고, 아무 신호가 없다 — 에이전트가 옛
+    절차를 따르는 것으로만 드러나므로 추적이 거의 불가능하다.
+
+    mtime을 함께 보는 것으로 충분하다: 룰은 배포가 파일을 갈아 끼우므로 내용이
+    바뀌면 mtime도 바뀐다. 해시는 매 턴 수십 개 파일을 읽어야 해서 이 캐시가
+    없애려던 비용을 되살린다. `copyfile`이 아니라 `copy2`인 이유는 mtime 보존이다 —
+    보존하지 않으면 dst가 매번 새 시각을 갖고, 비교가 영원히 불일치해 캐시가
+    사실상 꺼진다.
+
+    **`st_mtime_ns`로 정확히 비교한다.** 초 단위로 자르면(`int(st_mtime)`) 같은
+    초 안에 갈아 끼운 룰을 놓친다 — 배포는 파일 수십 개를 순식간에 쓰므로 흔한
+    경우다. 그리고 "dst가 src보다 새로우면 최신"으로 완화하지도 않는다: 아카이브를
+    풀어 배포하면 원본 mtime이 과거로 복원될 수 있고, 그러면 갱신된 룰이 영원히
+    낡은 것으로 판정된다. 정확 일치가 "이것은 그 파일의 사본이다"의 정확한 의미고,
+    빗나갈 때의 대가는 작은 파일 23개를 한 번 더 복사하는 것뿐이다 — 놓칠 때의
+    대가와 비교가 되지 않는다.
+    """
+    if dst.is_file():
+        s, d = src.stat(), dst.stat()
+        if s.st_size == d.st_size and s.st_mtime_ns == d.st_mtime_ns:
+            return
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(src, dst)
+    shutil.copy2(src, dst)
 
 
 def place_rules(workspace: str, rules_dir: str,
@@ -86,7 +109,7 @@ def place_rules(workspace: str, rules_dir: str,
     ws = Path(workspace)
     ws.mkdir(parents=True, exist_ok=True)
     # 조립 결과는 원본 파일이 아니므로 _copy_if_changed의 비교를 쓰지 않는다.
-    # 두 언어 지시의 크기가 우연히 같으면 언어를 바꿔도 파일이 그대로
+    # 두 언어 지시의 크기·mtime이 우연히 같으면 언어를 바꿔도 파일이 그대로
     # 남는데, 그 침묵이 정확히 이 스펙이 없애려는 실패 모양이다. 파일 하나
     # 쓰기는 싸다. 그리고 매 턴 같은 바이트를 쓰므로 프롬프트 캐시는 유지된다.
     #
