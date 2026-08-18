@@ -11,7 +11,18 @@ _SPLIT = re.compile(r"\s+[—-]\s+")
 #: 스테이지 체크리스트가 사는 섹션. 상류가 정한 이름이다
 #: (`inception/workspace-detection.md`의 상태 파일 템플릿, 각 스테이지의
 #: "Update State Tracking" 단계).
-_PROGRESS_HEADER = re.compile(r"^## Stage Progress\s*$")
+#:
+#: **정확 일치가 아니라 포함이다.** 처음에는 `^## Stage Progress\s*$`였는데, 그러면
+#: 헤딩이 장식되는 순간(`## Stage Progress (Discovery)`, `## 🟣 Stage Progress`)
+#: 섹션을 못 찾아 아래 폴백이 켜지고 문서 전체를 훑는다 — 즉 이 수정이 없애려던
+#: 증상이 **조용히** 되돌아온다. 에이전트가 헤딩을 장식하는 것은 관측된 습성이다
+#: (`### 🟣 DISCOVERY PHASE`, `## Envision 진행 내역`). 대문자 표기도 마찬가지로
+#: 관대하게 받는다.
+#:
+#: 과하게 물어도(`## Notes on Stage Progress`) 그 섹션의 체크박스가 스테이지로
+#: 읽히는 정도이고, 못 물면 문서 전체가 스테이지가 된다 — 두 실패의 크기가 다르다.
+#: `^## `는 `###`을 자연히 배제한다(세 번째 문자가 공백이어야 한다).
+_PROGRESS_HEADER = re.compile(r"^## .*stage progress", re.IGNORECASE)
 
 #: 그 섹션을 닫는 것: 다음 `##` 헤딩. `###`는 **닫지 않는다** — 상류 템플릿이
 #: 섹션 안에 `### 🟣 DISCOVERY PHASE`를 두기 때문이다(envision.md:420-425).

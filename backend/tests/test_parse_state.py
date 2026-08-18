@@ -187,3 +187,29 @@ def test_a_section_that_is_empty_yields_no_stages():
         "- [x] 이건 스테이지가 아니다\n"
     )
     assert st.stages == []
+
+
+def test_a_decorated_section_heading_is_still_the_section():
+    """**정확 일치였으면 이 수정이 조용히 되돌아간다.**
+
+    헤딩이 장식되면 섹션을 못 찾아 폴백이 켜지고 문서 전체가 스테이지가 된다.
+    에이전트가 헤딩을 장식하는 것은 관측된 습성이다(`### 🟣 DISCOVERY PHASE`,
+    `## Envision 진행 내역`).
+    """
+    for heading in ("## Stage Progress",
+                    "## Stage Progress (Discovery)",
+                    "## Stage Progress — DISCOVERY PHASE",
+                    "## 🟣 Stage Progress",
+                    "## stage progress"):
+        st = parse_state_file(
+            "# S\n"
+            "- **Current Stage**: Envision\n"
+            f"{heading}\n"
+            "- [x] Workspace Detection\n"
+            "- [ ] Envision\n"
+            "\n"
+            "## Envision 진행 내역\n"
+            "- [x] Step 0.1 — a\n"
+            "- [ ] Step 1 — b\n"
+        )
+        assert [s.name for s in st.stages] == ["Workspace Detection", "Envision"], heading
