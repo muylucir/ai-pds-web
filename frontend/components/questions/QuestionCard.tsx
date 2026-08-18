@@ -65,6 +65,21 @@ export function QuestionCard({
     );
   })();
 
+  // 보기가 **하나도 없는** 문항 = 주관식이다. 파싱 실패가 아니다.
+  //
+  // **실측(2026-08-18, 123456test).** Envision Step 0.2의 Mode A(자유 서술)는
+  // 선택지 없이 묻는 것이 정상 동작이고, 에이전트가 파일에 그렇게 썼다:
+  // "A/B/C 선택지가 없습니다 — 각 항목은 `[Answer]:` 뒤에 문장으로 답해 주십시오."
+  // 파서는 그 파일을 정확히 읽었다(5문항, 질문 텍스트 정상, options=0). 그런데
+  // 이 컴포넌트가 보기 배열만 순회하므로 카드 본문이 **비었다** — 고를 것도 없고
+  // 입력할 칸도 없어서 사용자가 답을 낼 방법이 아예 없었다. 배지는 "하나만
+  // 선택"이라고 말하고 있었다(고를 것이 0개인데).
+  //
+  // 자유 텍스트 자체는 이미 두 곳에서 지원한다 — `X) Other` 보기와 파싱 실패
+  // 폴백(RawMarkdownFallback). 빠져 있던 것은 "정상 파싱된 0-보기 문항"이라는
+  // 가운데 경우다.
+  const freeform = options.length === 0;
+
   // Value contract stays a plain string (QuestionForm's answers dict/submit
   // path is unchanged): a single letter or (multi) comma-joined letters like
   // "A,C" for option picks, or raw free text for the Other option.
@@ -135,12 +150,23 @@ export function QuestionCard({
             {/* 두 모드 모두 배지를 단다. 복수선택에만 달면 배지가 **없는**
                 상태를 해석해야 하고, 단일선택 질문만 본 사용자는 그 규약을
                 배울 기회가 없다. */}
+            {/* 주관식에는 선택 배지를 달지 않는다. 고를 것이 0개인데 "하나만
+                선택"이라고 말하면 사용자가 보기가 안 뜬 고장으로 읽는다 —
+                실측에서 실제로 그 화면이었다. */}
             <span
               className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${
-                multi ? "bg-violet-100 text-violet-700" : "bg-slate-100 text-slate-500"
+                freeform
+                  ? "bg-sky-50 text-sky-700"
+                  : multi
+                    ? "bg-violet-100 text-violet-700"
+                    : "bg-slate-100 text-slate-500"
               }`}
             >
-              {multi ? t("q.multiSelectBadge") : t("q.singleSelectBadge")}
+              {freeform
+                ? t("q.freeformLabel")
+                : multi
+                  ? t("q.multiSelectBadge")
+                  : t("q.singleSelectBadge")}
             </span>
             {question.category && <p className="text-xs text-slate-400">{t("q.category")}: {question.category}</p>}
           </div>
@@ -158,6 +184,20 @@ export function QuestionCard({
         </div>
       )}
       <div className="p-6 space-y-3">
+        {/* 주관식: 라디오·체크박스 없이 입력칸 하나. `value`에 직접 바인딩하는
+            이유는 `otherActive`가 보기와의 관계를 추적하는 상태이고 여기에는
+            보기가 없기 때문이다 — 그 상태를 끼우면 복원된 답변이 첫 렌더에서
+            비어 보이는 경로가 생긴다. */}
+        {freeform && (
+          <textarea
+            aria-label={`${t("q.legend")} ${question.number} ${t("q.freeformLabel")}`}
+            rows={4}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={t("q.freeformPlaceholder")}
+            className="w-full text-sm rounded-lg border border-slate-200 p-3 focus:outline-none focus:ring-2 focus:ring-violet-400"
+          />
+        )}
         {options.map((opt) => {
           if (opt.is_other) {
             // 중요: textarea를 라디오/체크박스의 <label> 안에 중첩하지 않는다.

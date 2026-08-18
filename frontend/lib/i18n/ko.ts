@@ -412,6 +412,7 @@ export const ko = {
   "q.submitAnswers": "답변 제출 → AI 검증",
   "q.goAnswerClarification": "확인 질문 답변하기 →",
   "q.freeformLabel": "자유 답변",
+  "q.freeformPlaceholder": "선택지 없이 자유롭게 답해 주세요 — 길이 제한은 없습니다.",
   "q.submit": "제출",
   "q.noteAriaPrefix": "보기",
   "q.noteAriaSuffix": "부연 설명",

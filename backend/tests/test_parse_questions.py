@@ -445,3 +445,45 @@ A) 왼쪽
     assert [q.number for q in qf.questions] == [1]
     assert qf.questions[0].category == "모호성 1"
     assert "설명 문단." in qf.questions[0].context
+
+
+# ---- 보기 없는 문항은 주관식이지 파싱 실패가 아니다 ----
+# 2026-08-18 실측(123456test): Envision Step 0.2의 Mode A(자유 서술)가 선택지 없이
+# 묻는다. 파서는 이 파일을 정확히 읽었고 결함은 프론트 렌더링이었지만
+# (QuestionCard가 보기 배열만 순회해 카드 본문이 비었다), 그 화면을 "파서가 못
+# 읽었다"로 오진하기 쉬우므로 여기서 계약을 고정한다. 보기를 필수로 만드는
+# "수정"이 들어오면 이 검사가 막는다.
+
+_FREEFORM_MD = """# Business Context — 자유 서술 (Mode A)
+
+## 배경
+
+선택지가 없습니다 — `[Answer]:` 뒤에 문장으로 답해 주십시오.
+
+## Question 1
+
+어떤 산업 또는 비즈니스 도메인을 위한 제품입니까?
+
+[Answer]: 
+
+## Question 2
+
+그 도메인에서 비즈니스의 현재 상태는 어떻습니까?
+
+[Answer]: 
+"""
+
+
+def test_a_question_with_no_options_still_parses():
+    qfile = parse_question_file("business-context-detail-questions.md", _FREEFORM_MD)
+    assert qfile.parse_ok
+    assert [q.number for q in qfile.questions] == [1, 2]
+    assert all(q.options == [] for q in qfile.questions)
+    # 질문 문장이 남아야 한다 — 없으면 화면에 제목만 뜬다.
+    assert "산업" in (qfile.questions[0].text or "")
+
+
+def test_free_text_round_trips_through_a_no_option_file():
+    out = serialize_answers(_FREEFORM_MD, {1: "B2B SaaS 물류", 2: "운영 중"})
+    again = parse_question_file("x.md", out)
+    assert [q.answer for q in again.questions] == ["B2B SaaS 물류", "운영 중"]

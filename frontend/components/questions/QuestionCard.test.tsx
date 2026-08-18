@@ -450,3 +450,51 @@ describe("QuestionCard — 인라인 마크다운", () => {
     expect(screen.getByText("속도")).toBeInTheDocument();
   });
 });
+
+// ---- 보기 없는 문항 = 주관식 (2026-08-18 실측: 123456test) ----
+// Envision Step 0.2의 Mode A(자유 서술)는 선택지 없이 묻는 것이 정상이고,
+// 파서도 그 파일을 정확히 읽었다(5문항, 질문 텍스트 정상, options=0). 그런데 이
+// 컴포넌트가 보기 배열만 순회하므로 카드 본문이 비어 **답을 낼 방법이 아예
+// 없었다.** 배지는 고를 것이 0개인데 "하나만 선택"이라고 말했다.
+
+const FREEFORM_Q: Question = {
+  number: 1,
+  category: null,
+  text: "어떤 산업 또는 비즈니스 도메인을 위한 제품입니까?",
+  answer: null,
+  multi_select: false,
+  options: [],
+};
+
+describe("보기가 없는 문항", () => {
+  it("입력칸을 그린다 — 이것이 없으면 답을 낼 방법이 없다", () => {
+    render(<QuestionCard question={FREEFORM_Q} value="" onChange={vi.fn()} />);
+    expect(screen.getByRole("textbox")).toBeInTheDocument();
+  });
+
+  it("'하나만 선택' 배지를 달지 않는다 — 고를 것이 0개다", () => {
+    render(<QuestionCard question={FREEFORM_Q} value="" onChange={vi.fn()} />);
+    expect(screen.queryByText("하나만 선택")).not.toBeInTheDocument();
+    expect(screen.getByText("자유 답변")).toBeInTheDocument();
+  });
+
+  it("입력한 문장을 그대로 올린다 — letter 규약을 거치지 않는다", async () => {
+    const spy = vi.fn();
+    render(<Harness question={FREEFORM_Q} initial="" spy={spy} />);
+    await userEvent.type(screen.getByRole("textbox"), "B2B SaaS 물류");
+    expect(spy).toHaveBeenLastCalledWith("B2B SaaS 물류");
+  });
+
+  it("복원된 답변이 첫 렌더에 보인다", () => {
+    // 보기가 있을 때 자유 텍스트는 `otherActive` 상태를 거치는데, 보기가 없으면
+    // 그 상태에 기댈 수 없다 — value에 직접 바인딩해야 한다.
+    render(<QuestionCard question={FREEFORM_Q} value="이미 답한 내용" onChange={vi.fn()} />);
+    expect(screen.getByRole("textbox")).toHaveValue("이미 답한 내용");
+  });
+
+  it("라디오·체크박스를 만들지 않는다", () => {
+    render(<QuestionCard question={FREEFORM_Q} value="" onChange={vi.fn()} />);
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+});

@@ -400,6 +400,7 @@ export const en: Record<keyof typeof ko, string> = {
   "q.submitAnswers": "Submit answers → AI review",
   "q.goAnswerClarification": "Answer the clarifying questions →",
   "q.freeformLabel": "Your own answer",
+  "q.freeformPlaceholder": "Answer in your own words — there is no length limit.",
   "q.submit": "Submit",
   "q.noteAriaPrefix": "Option",
   "q.noteAriaSuffix": "note",
