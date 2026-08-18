@@ -416,9 +416,18 @@ def _discovery_config() -> str:
     테스트가 깨지고(내용은 그대로인데), 반대로 검사를 통과시키려 문장을 한 줄로
     늘어놓는 압력이 생긴다. 여기서 고정하려는 것은 규칙의 내용이다.
     """
-    path = (Path(__file__).resolve().parents[2] / "discovery-config" / "CLAUDE.md")
+    return _folded_config("discovery-config")
+
+
+def _proto_config() -> str:
+    """공백을 접은 proto-config/CLAUDE.md — 이유는 `_discovery_config`와 같다."""
+    return _folded_config("proto-config")
+
+
+def _folded_config(directory: str) -> str:
+    path = Path(__file__).resolve().parents[2] / directory / "CLAUDE.md"
     if not path.is_file():
-        pytest.skip("discovery-config/CLAUDE.md not present")
+        pytest.skip(f"{directory}/CLAUDE.md not present")
     return " ".join(path.read_text(encoding="utf-8").split())
 
 
@@ -508,10 +517,13 @@ def test_the_assembled_claude_md_does_not_duplicate_the_encoding_rule(tmp_path):
     folded = " ".join(text.split())
     assert "literal UTF-8" not in folded
 
-    # 규칙은 공유 config에 남아 있어야 한다.
-    config = " ".join(_discovery_config().split())
-    assert "literal UTF-8" in config
-    assert "\\uXXXX" in config
+    # **규칙이 완전히 사라지지는 않았음을 함께 확인한다.** 복제 제거와 규칙 유실은
+    # 코드에서 한 글자 차이이고, 후자는 깨진 한국어 질문으로만 드러난다. 남은 자리는
+    # `proto-config`다 — 그쪽 경로가 AskUserQuestion을 여전히 필수로 쓴다
+    # (test_the_encoding_rule_survives_only_where_askuserquestion_does에 전말).
+    proto = _proto_config()
+    assert "literal UTF-8" in proto
+    assert "\\uXXXX" in proto
 
 
 def test_the_assembled_claude_md_starts_with_the_language_directive(tmp_path):
@@ -530,14 +542,31 @@ def test_the_assembled_claude_md_starts_with_the_language_directive(tmp_path):
     assert text.startswith(_KO_MARK)
 
 
-def test_the_config_dir_does_not_scope_the_encoding_rule_away(tmp_path):
-    """`discovery-config/CLAUDE.md`가 "이 파일은 UI 접점에만 적용된다"고 말하면서
-    인코딩 조항을 같은 파일에 두면, 모델이 그 조항도 UI 접점 한정으로 읽을 수 있다.
-    그 축소가 실제 결함의 절반이었으므로 문서가 명시적으로 부인해야 한다."""
-    text = _discovery_config()
-    assert "literal" in text and "uXXXX" in text
-    # 인코딩 규칙만은 범위 축소의 예외라고 못박아야 한다.
-    assert "applies to every tool call" in text
+def test_the_encoding_rule_survives_only_where_askuserquestion_does():
+    """**비대칭이 의도다.** 2026-08-18에 두 config를 다르게 만들었다.
+
+    인코딩 규칙(claude-code#83033: `\\uXXXX` hex 오타 → 다른 유효한 음절)은 한
+    도구, AskUserQuestion의 완화책이었다. 두 경로의 사정이 반대다:
+
+    - **Discovery**: 그 도구가 거부된다(claude_driver.FILE_QUESTIONS_ENV 기본 켜짐).
+      질문은 파일로 하고, 깨진 한글이 와도 퍼지 매칭이 답변을 기록한다
+      (agent/question_file_answers.py의 `_FUZZY_MIN`). 규칙이 할 일이 없다.
+    - **프로토타입 빌드**: 그 도구가 **필수**다. proto/prompts.py가 "계획을 제시한
+      뒤 반드시 AskUserQuestion으로" 승인을 받으라고 지시하고 proto/builder.py가
+      거기서 대기한다. 질문 파일이 없으니 퍼지 매칭도 뒤에 없다.
+
+    그래서 한쪽에서 지우고 한쪽에서 지킨다. "두 공유 config를 같은 모양으로"
+    맞추려는 정리(132e409가 그 방향이었다)가 이 검사를 깨뜨릴 것이고, 그때
+    읽어야 하는 것은 discovery-config/CLAUDE.md 상단의 제거 근거 주석이다.
+    """
+    proto = _proto_config()
+    assert "literal" in proto and "uXXXX" in proto, (
+        "프로토타입 경로는 AskUserQuestion이 필수다 — 규칙이 사라지면 승인 질문이 "
+        "깨진 한글로 뜨고, 그쪽에는 퍼지 매칭이 없다")
+
+    assert "as literal UTF-8" not in _discovery_config(), (
+        "Discovery 경로에는 그 도구가 없다 — 규칙을 되살리면 죽은 완화책이 "
+        "통합 계약의 맨 앞자리를 다시 차지한다")
 
 
 def test_the_prototype_handoff_and_model_overrides_are_documented():

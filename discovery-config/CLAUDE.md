@@ -25,23 +25,23 @@ Keep this file in English when editing it. backend/tests/test_workspace_rules.py
 pins the invariant.
 -->
 
-Write non-ASCII text (Korean, etc.) in tool-call parameters (JSON) as literal
-UTF-8 — never as `\uXXXX` escapes. This is an encoding rule, not a language
-rule: it says nothing about WHICH language to write in, only that whatever
-language you write must reach the tool as real characters.
+<!--
+The tool-parameter encoding rule that used to open this file was removed on
+2026-08-18. It mitigated one tool, AskUserQuestion, which this path no longer
+uses. proto-config/CLAUDE.md keeps it because that path still requires the tool —
+do not "unify" the two files. The reasoning is pinned by
+backend/tests/test_workspace_rules.py::
+test_the_encoding_rule_survives_only_where_askuserquestion_does; read that
+docstring before restoring anything here.
 
-**That encoding rule applies to every tool call you make, in any language, and
-nothing below narrows it.** This is the only place it is stated — the
-working-directory `CLAUDE.md` carried a copy until 2026-08-18, and that copy was
-dropped once this sentence closed the loophole that had made the duplicate
-necessary. Hand-spelling `\uXXXX` mis-spells some codepoints, and a mis-spelled
-one decodes to a different, valid-looking syllable — the user then reads a
-nonsense question, and their answer cannot be matched back to the question file
-it belongs to.
+Keep such notes SHORT. Everything in this file, comments included, is context the
+model reads every turn — a removed rule quoted back in full is the rule, still
+being read.
+-->
 
-Apart from that rule, this file governs only the touchpoints with the Pathfinder
-web UI. For the Discovery workflow itself, follow the `CLAUDE.md` in the working
-directory (the AI-PLC core workflow), including its language convention.
+This file governs only the touchpoints with the Pathfinder web UI. For the
+Discovery workflow itself, follow the `CLAUDE.md` in the working directory (the
+AI-PLC core workflow), including its language convention.
 
 - When you ask the user a multiple-choice question, you ask it by **writing the
   question file** (`aiplc-docs/**`, with `[Answer]:` tags). Pathfinder reads that
