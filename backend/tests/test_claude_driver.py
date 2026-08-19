@@ -822,25 +822,35 @@ async def test_a_new_turn_does_not_lose_messages_to_the_previous_reader(tmp_path
     assert not reader1.task.done()          # 옛 리더가 살아 있다
     assert d._pending_question is None or d._pending_question.done()
 
-    # 새 턴. 메시지는 query()가 나간 뒤에 도착시킨다 — 그래야 이 턴의 것이다.
+    # **2026-08-19에 계약이 바뀌었다.** 전에는 새 메시지가 query()까지 가고
+    # `_retire_reader()`가 옛 리더를 걷어냈다 — 위 실측이 그 필요를 만든 것이고,
+    # 그 전제는 "그 턴은 아무도 relay하지 않는다"였다. 재접속 경로(`run_live`)가
+    # 생기면서 그 전제가 깨졌다: 진행 중인 턴은 이제 볼 수 있으므로, 덮는 것이
+    # 곧 사용자가 기다린 작업을 버리는 것이다.
+    #
+    # 그래서 새 턴을 **거부**한다. 두 리더가 경쟁하는 원래 위험도 함께 사라진다 —
+    # query()가 나가지 않으므로 두 번째 리더가 만들어지지 않는다.
+    events = [ev async for ev in d.run("새 메시지", {"session_id": "s-1"})]
+    assert [e.kind for e in events] == ["error"], events
+    assert events[0].text == "turn already in progress"
+    assert not reader1.task.done()          # 진행 중인 턴은 살아 있다
+
+    # 그리고 그것을 **볼 수 있다** — 버려진 답변 턴의 나머지가 여기서 나온다.
     got = []
 
-    async def turn2():
-        async for ev in d.run("새 메시지", {"session_id": "s-1"}):
+    async def watch():
+        async for ev in d.run_live():
             got.append((ev.kind, ev.text))
 
-    task = asyncio.ensure_future(turn2())
+    task = asyncio.ensure_future(watch())
     for _ in range(4):
         await asyncio.sleep(0)
-    cap["client"].deliver_late("새 턴 문장 1")
-    cap["client"].deliver_late("새 턴 문장 2")
+    cap["client"].deliver_late("이어서 온 문장")
     cap["client"].finish_turn()
-    await asyncio.wait_for(task, 3)         # 걷어내지 않으면 여기서 매달린다
+    await asyncio.wait_for(task, 3)
 
-    texts = [t for k, t in got if k == "message"]
-    assert texts == ["새 턴 문장 1", "새 턴 문장 2"], got
+    assert "이어서 온 문장" in [t for k, t in got if k == "message"], got
     assert got[-1][0] == "done", got
-    assert reader1.inbox == []              # 훔쳐간 것이 없다
 
 
 @pytest.mark.asyncio
@@ -1743,3 +1753,80 @@ async def test_the_gate_speaks_the_project_language(tmp_path):
     reason = (await _pre(d, "Write", {"file_path": "prototype/index.html"})
               )["hookSpecificOutput"]["permissionDecisionReason"]
     assert not {c for c in reason if "가" <= c <= "힣"}, reason
+
+
+# ---- 절전·화면보호기로 끊긴 턴에 다시 붙기 (2026-08-19) ----
+# 턴이 2.5~5.6분이고 화면보호기 기본값이 5~10분이라 사실상 매 턴 겹친다. 그때
+# 잃는 것은 화면뿐이다 — 리더는 계속 읽고, 파일은 PostToolUse가 즉시 S3에 올리고,
+# 포기 경로가 트랜스크립트를 flush한다. 없던 것은 **진행 중인 턴을 다시 볼 창구**다.
+
+@pytest.mark.asyncio
+async def test_reattaching_relays_what_was_buffered_while_away(tmp_path):
+    """`outbox`는 이미 "DURABLE HOME"으로 설계돼 있다 — 흘려줄 경로만 없었다."""
+    d, runner, cap = _runner(tmp_path, {"questions": True,
+                                        "preface_texts": ["문장 1", "문장 2",
+                                                          "문장 3"]})
+    agen = runner.send_message("hi").__aiter__()
+    async for _ in agen:
+        break                              # 첫 프레임 직후 절전
+    await agen.aclose()
+    await _reconnect_gap()
+
+    assert d.has_live_turn(), "리더가 죽었으면 붙을 것이 없다"
+    relayed = [e.text async for e in runner.reattach() if e.kind == "message"]
+    for text in ("문장 1", "문장 2", "문장 3"):
+        assert text in relayed, relayed
+
+
+@pytest.mark.asyncio
+async def test_reattaching_with_no_live_turn_ends_quietly(tmp_path):
+    """늦게 돌아와 턴이 이미 끝난 경우 — 정상 경로다. 에러가 아니라 `done`이어야
+    프론트가 `GET /history`로 화면을 복원한다."""
+    d, runner, _ = _runner(tmp_path, {"text": ["ok"]})
+    [ev async for ev in runner.send_message("hi")]
+    assert not d.has_live_turn()
+
+    events = [ev async for ev in runner.reattach()]
+    assert [e.kind for e in events] == ["done"], events
+
+
+@pytest.mark.asyncio
+async def test_a_parked_question_is_not_treated_as_a_live_turn_by_run(tmp_path):
+    """가드를 파킹된 질문 short-circuit **뒤에** 둔 이유.
+
+    파킹된 턴의 리더도 살아 있으므로(has_live_turn 참), 앞에 두면 "답변 먼저"
+    안내와 질문 폼 재노출이 거부로 바뀐다.
+    """
+    d, _, _ = _driver(tmp_path, {"questions": True})
+    [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+    assert d.has_live_turn()
+
+    events = [ev async for ev in d.run("또 보냄", {"session_id": "s-1"})]
+    kinds = [e.kind for e in events]
+    assert "error" not in kinds, events      # 거부가 아니라
+    assert "questions" in kinds, events      # 질문을 다시 띄운다
+
+
+@pytest.mark.asyncio
+async def test_a_live_turn_with_no_consumer_can_still_be_interrupted(tmp_path):
+    """**막힘 방지가 이 검사의 이유다.**
+
+    `run()`이 진행 중인 턴을 거부하기 시작했으므로, 그 턴을 끊을 수 없으면
+    사용자는 영구히 막힌다. 그런데 소비자 없는 생성 중 턴은 `_turn_active`가
+    False이고 파킹된 질문도 없어서, interrupt가 "중단할 것 없음"으로 오판했다.
+    """
+    d, runner, cap = _runner(tmp_path, {"questions": True,
+                                        "preface_texts": ["문장 1", "문장 2"]})
+    agen = runner.send_message("hi").__aiter__()
+    async for _ in agen:
+        break
+    await agen.aclose()
+    await _reconnect_gap()
+    assert d.has_live_turn()
+
+    await runner.interrupt()
+    # 중단이 실제로 일어났다는 관측 가능한 증거 — 조기 return이면 이 마커가 없다
+    # (test_interrupt_records_that_the_turn_was_stopped와 같은 단정).
+    from pathfinder.agent.claude_driver import INTERRUPTED_MARKER
+    assert any(e.kind == "status" and e.text == INTERRUPTED_MARKER
+               for e in d._queue), "소비자가 없으면 끊지 못했다"

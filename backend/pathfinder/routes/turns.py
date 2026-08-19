@@ -86,6 +86,25 @@ async def stream_events(pid: str, turn: str | None = None,
             yield {"data": _redacted(event).model_dump_json()}
     return EventSourceResponse(gen())
 
+@router.get("/projects/{pid}/events/live")
+async def stream_live(pid: str):
+    """진행 중인 턴에 다시 붙는다. **핸들이 없다.**
+
+    다른 스트림 경로는 `POST`가 만든 1회용·60초 핸들을 요구한다 — 긴 입력을
+    URL에서 빼기 위한 것이고(turn_handles.py), 그래서 재접속에는 쓸 수 없다.
+    이 경로는 입력이 없으므로 실을 것도 없다: 이미 돌고 있는 턴을 볼 뿐이다.
+
+    붙을 턴이 없으면 `done` 하나로 끝난다(에러가 아니다). 프론트는 그때
+    `GET /history`로 화면을 복원한다 — 사용자가 늦게 돌아왔고 턴이 그동안 끝난
+    것이 정상 경로다.
+    """
+    ws = await ensure_workspace(pid)
+    async def gen():
+        async for event in ws.runner.reattach():
+            yield {"data": _redacted(event).model_dump_json()}
+    return EventSourceResponse(gen())
+
+
 @router.post("/projects/{pid}/answers")
 async def create_answers_turn(pid: str, body: AnswersBody):
     """답변 제출의 핸들 발급. `/turns`와 같은 이유다 — 자유 서술 답변이 길면

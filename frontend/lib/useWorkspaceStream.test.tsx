@@ -64,6 +64,17 @@ const FILE_QUESTIONS_PAYLOAD = JSON.stringify({
   },
 });
 
+// `streamLive`의 기본값: **붙을 턴이 없다**(프레임 없이 done). 전송 오류를
+// 시뮬레이션하는 기존 테스트들이 재접속을 한 번 거쳐 원래의 포기 경로로
+// 떨어지도록 하는 것이 요점이다 — 자동 모킹은 핸들러를 아무것도 부르지 않아
+// 턴이 영원히 끝나지 않는다.
+function noLiveTurn() {
+  vi.mocked(sse.streamLive).mockImplementation((...args: any[]) => {
+    args[args.length - 1].onDone();
+    return () => {};
+  });
+}
+
 function drive(
   events: AgentEvent[],
   impl: "streamEvents" | "streamAnswers" | "streamFileAnswers",
@@ -79,7 +90,7 @@ function drive(
 }
 
 describe("useWorkspaceStream", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); noLiveTurn(); });
 
   it("questions event fills pendingQuestions; stage event appends stages", async () => {
     drive(
@@ -318,7 +329,7 @@ it("restores tool traces onto AI history items", async () => {
 });
 
 describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug2)", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); noLiveTurn(); });
 
   it("doc성 file_changed가 activeDoc을 갱신한다 (submit_document 없이도)", async () => {
     drive(
@@ -414,7 +425,7 @@ describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug
 });
 
 describe("useWorkspaceStream — 중단 이벤트 라우팅 (분기 순서 고정)", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); noLiveTurn(); });
 
   // applyEvent의 status:INTERRUPTED_MARKER 분기는 trace 분기보다 앞에 있고
   // return으로 끊긴다(useWorkspaceStream.ts). 순서가 바뀌거나 return이 빠지면
@@ -474,7 +485,7 @@ describe("턴 개시 실패는 원인을 드러낸다", () => {
   // 이 결함이 처음 숨은 이유가 여기다: EventSource는 상태 코드를 노출하지
   // 않아 431이 "연결이 끊어졌습니다"로 뭉개졌다. 개시(POST)는 상태 코드를
   // 주므로, 그 경로만은 원인을 말할 수 있어야 한다.
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); noLiveTurn(); });
 
   it("입력이 너무 길어 거절되면(431) 그 사실을 말한다", async () => {
     vi.mocked(client.getHistory).mockResolvedValue([]);
@@ -509,5 +520,95 @@ describe("턴 개시 실패는 원인을 드러낸다", () => {
     act(() => result.current.send("짧음"));
     const ai = result.current.items.find((i) => i.role === "ai");
     expect(ai && ai.role === "ai" && ai.error).toMatch(/연결이 끊어/);
+  });
+});
+
+// ---- 절전·화면보호기로 끊긴 턴에 다시 붙기 (2026-08-19) ----
+// 턴이 2.5~5.6분이고 화면보호기 기본값이 5~10분이라 사실상 매 턴 겹친다. 서버
+// 쪽에서는 아무것도 잃지 않는다 — 에이전트는 계속 쓰고 리더는 계속 읽는다.
+// 화면만 잃었으므로 이어서 볼 수 있어야 한다.
+describe("useWorkspaceStream — 끊긴 턴 재접속", () => {
+  beforeEach(() => { vi.clearAllMocks(); noLiveTurn(); });
+
+  it("전송이 끊기면 진행 중인 턴에 붙어 나머지를 이어 받는다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    vi.mocked(sse.streamEvents).mockImplementation(
+      (_pid: any, _text: any, handlers: any) => {
+        handlers.onEvent({ kind: "message", text: "끊기기 전", path: null, payload: null });
+        handlers.onError?.(new Event("error"));   // 절전
+        return () => {};
+      },
+    );
+    vi.mocked(sse.streamLive).mockImplementation((...args: any[]) => {
+      const handlers = args[args.length - 1];
+      handlers.onEvent({ kind: "message", text: " 그리고 이어서", path: null, payload: null });
+      handlers.onDone();
+      return () => {};
+    });
+
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("보냄"));
+
+    const ai = result.current.items.find((i) => i.role === "ai");
+    expect(ai && ai.role === "ai" && ai.text).toBe("끊기기 전 그리고 이어서");
+    // 이어 받았으면 오류가 아니다 — 라이브 뷰를 되찾았다.
+    expect(ai && ai.role === "ai" && ai.error).toBeNull();
+    expect(result.current.streaming).toBe(false);
+  });
+
+  it("붙을 턴이 없으면 원래의 연결 오류 문구로 떨어진다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    vi.mocked(sse.streamEvents).mockImplementation(
+      (_pid: any, _text: any, handlers: any) => {
+        handlers.onError?.(new Event("error"));
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("보냄"));
+
+    const ai = result.current.items.find((i) => i.role === "ai");
+    expect(ai && ai.role === "ai" && ai.error).toMatch(/연결이 끊어/);
+    expect(result.current.streaming).toBe(false);
+  });
+
+  it("개시 실패(431)에는 재접속을 시도하지 않는다 — 붙을 턴이 없다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    vi.mocked(sse.streamEvents).mockImplementation(
+      (_pid: any, _text: any, handlers: any) => {
+        handlers.onError?.(new ApiError(431, "too long"));
+        handlers.onDone();
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("가".repeat(3000)));
+
+    expect(sse.streamLive).not.toHaveBeenCalled();
+    const ai = result.current.items.find((i) => i.role === "ai");
+    expect(ai && ai.role === "ai" && ai.error).toMatch(/너무 깁니다|too long/i);
+  });
+
+  it("재접속이 또 끊기면 포기한다 — 무한 재시도가 되면 입력이 영구히 잠긴다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    vi.mocked(sse.streamEvents).mockImplementation(
+      (_pid: any, _text: any, handlers: any) => {
+        handlers.onError?.(new Event("error"));
+        return () => {};
+      },
+    );
+    vi.mocked(sse.streamLive).mockImplementation((...args: any[]) => {
+      args[args.length - 1].onError?.(new Event("error"));
+      return () => {};
+    });
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("보냄"));
+
+    expect(sse.streamLive).toHaveBeenCalledTimes(1);
+    expect(result.current.streaming).toBe(false);
   });
 });

@@ -72,6 +72,14 @@ class ScriptRunner:
     async def pending(self):
         return self._pending_payload
 
+    #: `GET /events/live`가 부르는 것. 기본은 "붙을 턴이 없음"이고, 테스트가
+    #: `live_script`를 채우면 그것을 흘린다.
+    live_script = None
+
+    async def reattach(self):
+        for e in (self.live_script or [AgentEvent(kind="done")]):
+            yield e
+
     async def interrupt(self):
         self.interrupts += 1
 
@@ -360,3 +368,30 @@ def test_answers_stream_requires_answers_or_turn(monkeypatch):
     _install_default(monkeypatch, "turnh10")
     r = client.get("/projects/turnh10/answers/stream")
     assert r.status_code == 400
+
+
+def test_live_stream_relays_an_in_flight_turn(monkeypatch):
+    """절전에서 돌아온 브라우저가 붙는 경로. **핸들이 없다** — 다른 스트림들은
+    POST가 만든 1회용·60초 핸들을 요구해서 재접속에 쓸 수 없다."""
+    # 러너는 요청마다 새로 만들어지므로(_install_scripted의 make) 클래스 속성에
+    # 심는다. monkeypatch가 테스트 뒤 되돌린다.
+    monkeypatch.setattr(ScriptRunner, "live_script",
+                        [AgentEvent(kind="message", text="자리를 비운 동안 온 문장"),
+                         AgentEvent(kind="done")])
+    _install_scripted(monkeypatch, "live1", _structured_first_turn)
+    with client.stream("GET", "/projects/live1/events/live") as r:
+        assert r.status_code == 200
+        body = "".join(r.iter_text())
+    assert "자리를 비운 동안 온 문장" in body
+    assert '"kind":"done"' in body.replace(" ", "")
+
+
+def test_live_stream_ends_quietly_when_nothing_is_running(monkeypatch):
+    """늦게 돌아와 턴이 끝난 경우 — 에러가 아니라 `done`이어야 프론트가
+    `GET /history`로 복원한다."""
+    _install_scripted(monkeypatch, "live2", _structured_first_turn)
+    with client.stream("GET", "/projects/live2/events/live") as r:
+        assert r.status_code == 200
+        body = "".join(r.iter_text())
+    assert '"kind":"error"' not in body.replace(" ", "")
+    assert '"kind":"done"' in body.replace(" ", "")

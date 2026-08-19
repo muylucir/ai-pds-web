@@ -2,7 +2,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
-import { streamEvents, streamAnswers, streamFileAnswers } from "@/lib/api/sse";
+import { streamEvents, streamAnswers, streamFileAnswers, streamLive } from "@/lib/api/sse";
 import { getPending, getHistory, interruptTurn } from "@/lib/api/client";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
@@ -245,6 +245,9 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       // relying on assignment order, so `finish()`'s `stopRef.current = null`
       // never gets clobbered by the stale closer being stored afterwards.
       let finished = false;
+      // 재접속을 이 턴에서 이미 시도했는지. 턴 지역 변수인 것이 요점이다 —
+      // 턴마다 한 번씩 기회를 주고, 한 턴 안에서는 루프가 되지 않는다.
+      let reattempted = false;
       const finish = () => {
         finished = true;
         setStreaming(false);
@@ -264,12 +267,49 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
           // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
           // 세션을 확인해 만료면 로그인으로 보낸다. 살아 있으면 아래 메시지가 맞다.
           void redirectIfSessionExpired(undefined, window.location.pathname);
-          patchAi(aiId, (it) => ({
-            ...it,
-            streaming: false,
-            error: it.error ?? t(isTooLong(err) ? "stream.tooLong" : "stream.disconnected"),
-          }));
-          finish();
+          const giveUp = () => {
+            patchAi(aiId, (it) => ({
+              ...it,
+              streaming: false,
+              error: it.error ?? t(isTooLong(err) ? "stream.tooLong" : "stream.disconnected"),
+            }));
+            finish();
+          };
+          // **한 번은 다시 붙어 본다(2026-08-19).** 절전·화면보호기로 끊긴
+          // 경우 서버에서는 아무것도 잃지 않는다 — 에이전트는 계속 쓰고
+          // `_MessageReader`가 계속 읽는다. 화면만 잃은 것이므로 이어서 볼 수
+          // 있다. 턴이 2.5~5.6분이라 화면보호기 기본값(5~10분)과 정면으로
+          // 겹치고, 그래서 이 경로가 예외가 아니라 일상이다.
+          //
+          // 한 번만 시도한다: 재시도 루프는 진짜 오프라인에서 스트림을 무한히
+          // 다시 여는 것이 되고, 그때 화면은 "진행 중"으로 영구히 잠긴다.
+          //
+          // **개시 실패에는 시도하지 않는다.** `err`에 HTTP 상태가 있으면
+          // `POST /turns`가 거절된 것이므로(431/413 등, openViaHandle의 catch)
+          // 애초에 붙을 턴이 만들어지지 않았다. 시도해도 빈손으로 돌아오지만
+          // 그 사이 원인 문구("입력이 너무 깁니다")가 늦어진다 — 431이
+          // "연결이 끊어졌습니다"로 뭉개졌던 것이 이 파일이 이미 고친 버그다.
+          const hasHttpStatus =
+            typeof (err as { status?: unknown } | null)?.status === "number";
+          if (reattempted || hasHttpStatus) return giveUp();
+          reattempted = true;
+          let sawFrame = false;
+          stopRef.current = streamLive(projectId, {
+            onEvent: (ev) => {
+              sawFrame = true;
+              applyEvent(aiId, ev);
+            },
+            onDone: () => {
+              // 프레임이 하나도 없었다 = 붙을 턴이 없다(늦게 돌아왔고 그동안
+              // 턴이 끝났다). 그때는 원래 메시지가 맞다 — 라이브 뷰는 실제로
+              // 잃었고, `finish()`가 올리는 turnSeq가 문서 패널을 다시 읽게
+              // 하므로 산출물은 화면에 돌아온다.
+              if (!sawFrame) return giveUp();
+              patchAi(aiId, (it) => ({ ...it, streaming: false }));
+              finish();
+            },
+            onError: () => giveUp(),
+          });
         },
       });
       if (finished) stop();

@@ -277,6 +277,49 @@ class AgentRunner:
                 str(self.project_id), "turn_total", turn_started,
                 route="message", synced=str(synced).lower())
 
+    async def reattach(self) -> AsyncIterator[AgentEvent]:
+        """Relay a turn whose SSE consumer went away (sleep, screensaver, proxy).
+
+        **워크스페이스를 복원하지 않는다.** 다른 두 경로는 턴을 **시작**하므로
+        S3가 이겨야 하지만, 여기서는 에이전트가 지금 그 디렉터리에 쓰고 있다 —
+        복원하면 방금 쓴 파일을 S3의 옛 사본으로 덮는다. 이 경로가 하는 일은
+        보는 것뿐이다.
+
+        드라이버가 `run_live`를 갖고 있지 않으면(Strands 시절 계약, 테스트 더블)
+        `done` 하나로 끝낸다 — 재접속은 편의이고, 없다는 이유로 화면을 깨지
+        않는다. 호출부는 그때 `GET /history`로 떨어진다.
+        """
+        if self._turn_active:
+            yield AgentEvent(kind="error", text="turn already in progress")
+            return
+        run_live = getattr(self._driver, "run_live", None)
+        if run_live is None:
+            yield AgentEvent(kind="done")
+            return
+        self._turn_active = True
+        synced = False
+        turn_started = time.perf_counter()
+        try:
+            async for event in run_live():
+                if event.kind == "questions":
+                    got = _interrupt_id_from(event.payload)
+                    if got:
+                        self._pending_interrupt_id = got
+                if event.kind in ("done", "error"):
+                    # 종결 전에 올린다 — `done`을 본 클라이언트가 곧바로 문서를
+                    # 읽으므로(send_message와 같은 규율).
+                    await self._sync_workspace_to_s3()
+                    synced = True
+                yield event
+        finally:
+            self._turn_active = False
+            if not synced:
+                await self._sync_abandoned_turn()
+            log_performance(
+                _log,
+                str(self.project_id), "turn_total", turn_started,
+                route="reattach", synced=str(synced).lower())
+
     async def send_answers(self, answers: dict[str, str]) -> AsyncIterator[AgentEvent]:
         if self._turn_active:
             yield AgentEvent(kind="error", text="turn already in progress")

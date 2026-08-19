@@ -125,6 +125,25 @@ export function openViaHandle(
   };
 }
 
+/**
+ * 진행 중인 턴에 다시 붙는다. **핸들이 없다.**
+ *
+ * 다른 스트림은 전부 `POST`로 1회용·60초 핸들을 받아 그것으로 연다 — 긴 입력을
+ * URL에서 빼기 위한 것이고(turn_handles.py), 그래서 재접속에는 쓸 수 없다. 이
+ * 경로는 실을 입력이 없다: 이미 돌고 있는 턴을 볼 뿐이다.
+ *
+ * **왜 필요한가.** PC가 절전·화면보호기로 들어가면 네트워크가 끊겨 EventSource가
+ * 죽는다. 턴이 2.5~5.6분이라 화면보호기 기본값과 정면으로 겹친다. 서버 쪽에서
+ * 잃는 것은 없다(에이전트는 계속 쓰고, 파일은 즉시 S3로 간다) — 화면만 잃었다.
+ *
+ * 붙을 턴이 없으면 프레임 없이 `done`만 온다. 호출부가 그것으로 "이어볼 것이
+ * 없다"를 판단한다.
+ */
+export function streamLive(pid: string, handlers: StreamHandlers): () => void {
+  const p = encodeURIComponent(pid);
+  return openStream(`${API_BASE_URL}/projects/${p}/events/live`, handlers);
+}
+
 // Opens the events stream for one turn: POST the text, then stream by handle.
 export function streamEvents(pid: string, text: string, handlers: StreamHandlers): () => void {
   const p = encodeURIComponent(pid);

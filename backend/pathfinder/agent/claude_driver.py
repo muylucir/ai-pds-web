@@ -827,10 +827,18 @@ class ClaudeDriver:
         서브프로세스와 `_pending_question` future는 여전히 살아 있다(파일 상단
         "single-turn slot" 절 참고) — `_turn_token`으로 판단하면 정확히 중단해야
         할 그 상태(파킹된 질문)를 "중단할 것 없음"으로 오판한다.
+
+        **`has_live_turn`이 그 계열의 세 번째 경우다(2026-08-19).** 소비자가
+        사라진 채 생성 중인 턴은 `_turn_active`가 False이고 파킹된 질문도 없다 —
+        위 두 조건만 보면 "중단할 것 없음"이 되어 아무것도 하지 않았다. `run()`이
+        진행 중인 턴을 덮지 못하게 거부하기 시작한 지금 그것은 **막힘**이다:
+        재접속해서 볼 수는 있지만 끊을 수가 없고, 새 메시지도 거부된다. 절전에서
+        돌아온 사용자에게 유일한 탈출구가 이 경로다.
         """
         if self._client is None:
             return
-        if not self._turn_active and self._pending_question is None:
+        if (not self._turn_active and self._pending_question is None
+                and not self.has_live_turn()):
             return
         if self._pending_question is not None and not self._pending_question.done():
             # 이 future를 기다리던 _on_can_use_tool은 턴과 함께 버려진다.
@@ -1851,7 +1859,74 @@ class ClaudeDriver:
                                      payload=self._pending_payload)
                 yield AgentEvent(kind="done")
                 return
+            # **버려진 턴을 새 턴이 덮지 못하게 한다(2026-08-19).** 슬롯은
+            # 소비자가 사라지면 즉시 풀리므로(위 주석) 여기까지 올 수 있는데,
+            # 그때 `_stream`은 `_retire_reader()`로 **진행 중인 턴의 리더를
+            # 취소하고** 같은 CLI 세션에 `query()`를 겹쳐 넣는다. 그 함수의
+            # 주석이 스스로 "the turn nobody will relay"를 전제로 쓰여 있다 —
+            # 재접속 경로(`run_live`)가 생긴 지금 그 전제가 더 이상 참이 아니다.
+            #
+            # 파킹된 질문 short-circuit **뒤에** 두는 것이 중요하다: 그 리더도
+            # 살아 있으므로(has_live_turn 참) 앞에 두면 질문 폼을 다시 띄우는
+            # 경로가 이 거부로 바뀐다.
+            if self.has_live_turn():
+                _log.info("refusing a new turn: one is still streaming with no "
+                          "consumer — the caller should reattach")
+                yield AgentEvent(kind="error", text="turn already in progress")
+                return
             async for ev in self._stream(text, session):
+                yield ev
+        finally:
+            self._release_turn(token)
+
+    def has_live_turn(self) -> bool:
+        """A turn is still streaming with nobody consuming it.
+
+        **왜 `_turn_active`로는 알 수 없는가.** 그 플래그는 *소비자*가 있는지를
+        말한다. SSE가 끊기면 `run()`의 finally가 그것을 즉시 지운다 —
+        의도된 동작이다(재접속한 브라우저가 "turn already in progress"로 튕기지
+        않아야 한다). 하지만 CLI 턴 자체는 계속 돌고 `_MessageReader`가 계속
+        읽는다. 그 둘을 구별하는 것이 이 함수다.
+
+        `ended`까지 보는 이유: 파킹된 질문의 리더는 살아 있지만 끝나지 않았고
+        (그래서 True), 정상 종료한 턴의 리더는 태스크가 끝났거나 `ended`다.
+        """
+        reader = self._reader
+        return (reader is not None and not reader.task.done()
+                and not reader.ended)
+
+    async def run_live(self) -> AsyncIterator[AgentEvent]:
+        """진행 중인 턴에 다시 붙는다 — 새 `query()` 없이.
+
+        **왜 필요한가(2026-08-19).** 사용자의 PC가 절전·화면보호기로 들어가면
+        네트워크가 끊기고 SSE가 죽는다. 턴이 2.5~5.6분이므로 화면보호기 기본값
+        (5~10분)과 정면으로 겹친다. 그때 잃는 것은 **화면뿐**이다: 리더는 계속
+        읽고(`has_live_turn`), 파일은 PostToolUse가 쓰는 즉시 S3에 올라가고,
+        포기 경로가 트랜스크립트를 flush한다. 그런데 그 진행 중인 턴을 **다시
+        볼 창구가 없었다** — `GET /pending`은 질문에 파킹된 경우만, `GET /history`
+        는 끝난 뒤만이고, `GET /events?turn=`은 POST가 만든 1회용·60초 핸들을
+        요구한다.
+
+        **`_continue_after_answers`를 그대로 쓴다.** 그 함수의 본문은 이미
+        "진행 중인 턴의 나머지를 같은 리더로 흘린다"가 전부다 — 답변 해소
+        (`fut.set_result`)는 `run_answers`가 그것을 부르기 **전에** 한다. 즉
+        재접속과 답변 후 재개는 같은 동작이고, 다른 것은 그 앞에 무엇을 하는지뿐이다.
+
+        붙을 턴이 없으면 `done` 하나만 준다 — 에러가 아니다. 사용자가 늦게
+        돌아왔고 턴이 그동안 끝난 것이 정상 경로이며, 그때 화면은
+        `GET /history`로 복원된다.
+        """
+        token = self._acquire_turn()
+        if token is None:
+            # 다른 소비자가 이미 그 턴을 읽고 있다(탭 두 개). 두 곳으로 흘리면
+            # 한쪽이 메시지를 잃는다 — 리더의 outbox는 소비자 하나를 전제한다.
+            yield AgentEvent(kind="error", text="turn already in progress")
+            return
+        try:
+            if not self.has_live_turn():
+                yield AgentEvent(kind="done")
+                return
+            async for ev in self._continue_after_answers():
                 yield ev
         finally:
             self._release_turn(token)
