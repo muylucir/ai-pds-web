@@ -9,7 +9,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 
-import type { PrototypeInfo, PrototypeState } from "@/lib/api/prototypes";
+import type { HostState, PrototypeInfo, PrototypeState } from "@/lib/api/prototypes";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
@@ -45,6 +45,7 @@ export function PrototypeCard({
   onShowLogs,
   onOpenSurvey,
   onReset,
+  startingPhase,
   archiveUrl,
   shareUrl,
   busy,
@@ -59,6 +60,11 @@ export function PrototypeCard({
   /** Wipe build + session + survey, keeping the spec. Rendered only when
    *  `info.state !== "none"` — there is nothing accumulated to clear. */
   onReset?: (slug: string) => void;
+  /** 호스팅 시작이 진행 중일 때의 단계. `POST /host`가 npm install → build →
+   *  포트 대기를 전부 await하므로(routes/prototypes.py), 그동안 카드에는 비활성
+   *  버튼밖에 없어 "아무 반응 없음"으로 읽혔다. 호출부가 `GET /host`를 폴링해
+   *  넘겨준다 — 서버가 이미 기록하는 상태다. */
+  startingPhase?: HostState | null;
   archiveUrl?: string;
   /** 공유용 절대 URL(`absoluteShareUrl`이 서버의 `access_url`을 절대화한 값).
    *  주어지고 호스팅 중일 때만 복사 버튼이 뜬다 — 그 밖의 상태에서는 링크가
@@ -75,6 +81,20 @@ export function PrototypeCard({
   const badgeLabel =
     info.state === "running" && info.port != null ? `${label} :${info.port}` : label;
 
+  // 호스팅 시작 중이면 목록의 상태(`built`)보다 **더 정확한 것**을 안다.
+  // `POST /host`가 npm install → build → 포트 대기를 전부 await하는 동안 카드가
+  // "빌드 완료 + 비활성 버튼"으로 멈춰 있었다 — 실측 13분짜리 구간이고, 사용자가
+  // "아무 반응 없음"으로 읽었다. 그 단계는 서버가 이미 기록한다.
+  //
+  // `failed`/`stopped`는 여기서 쓰지 않는다: 그때는 POST가 이미 반환했고
+  // (실패는 502) 목록이 다시 읽히므로, 진행 표시가 남아 있으면 오히려 낡은 정보다.
+  const PHASE_KEYS: Partial<Record<HostState, keyof Dict>> = {
+    installing: "proto.hostInstalling",
+    building: "proto.hostBuildingHost",
+    running: "proto.hostStarting",
+  };
+  const phaseKey = startingPhase ? PHASE_KEYS[startingPhase] : undefined;
+
   return (
     <div className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-center gap-3">
       <span
@@ -86,7 +106,18 @@ export function PrototypeCard({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-sm truncate">{info.slug}</span>
-          <span className={`text-[11px] px-2 py-0.5 rounded-full shrink-0 ${badge.cls}`}>{badgeLabel}</span>
+          <span
+            className={`text-[11px] px-2 py-0.5 rounded-full shrink-0 ${
+              phaseKey
+                ? "bg-violet-100 text-violet-700 animate-pulse"
+                : badge.cls
+            }`}
+            // 진행 중임을 스크린 리더에도 알린다 — 텍스트가 바뀌는 것만으로는
+            // 읽어 주지 않는다.
+            aria-live={phaseKey ? "polite" : undefined}
+          >
+            {phaseKey ? t(phaseKey) : badgeLabel}
+          </span>
         </div>
         <span className="block text-[11px] text-slate-400 mt-0.5 truncate">{info.spec_path}</span>
       </div>

@@ -17,6 +17,7 @@ import {
   absoluteShareUrl,
   resetPrototype,
 } from "@/lib/api/prototypes";
+import type { HostState } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
@@ -54,6 +55,15 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
     null,
   );
   const [resetError, setResetError] = useState<string | null>(null);
+  // 호스팅 시작 중의 진행 단계. `POST /host`가 `npm install` → `npm run build` →
+  // 포트 대기(최대 60초)를 **전부 await한 뒤** 응답하므로, 그동안 화면에는 비활성
+  // 버튼밖에 없었다 — 사용자가 "아무 반응이 없다"고 읽는 구간이다.
+  //
+  // 서버를 고칠 필요가 없다: `ProtoHost.start`가 진행하며 `_registry`의 state를
+  // installing → building → running으로 바꾸고 `GET /host`가 그것을 그대로
+  // 돌려준다. 즉 **이미 관측 가능한 상태**를 폴링해서 보여주기만 하면 된다.
+  const [hostPhase, setHostPhase] =
+    useState<{ slug: string; state: HostState } | null>(null);
 
   useEffect(() => {
     if (!resetTarget) return;
@@ -88,9 +98,22 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
 
   async function handleStartHost(slug: string) {
     setBusySlug(slug);
+    // 서버가 `installing`을 기록하기 전(start가 먼저 stop을 호출한다)에는 404가
+    // 정상이다 — getHost가 그것을 null로 접어 주므로 그대로 두고 다음 폴링을
+    // 기다린다. 폴링 자체의 실패로 호스팅을 중단시키지 않는다: 이 값은 표시용이다.
+    setHostPhase({ slug, state: "installing" });
+    const poll = setInterval(() => {
+      void getHost(projectId, slug)
+        .then((st) => {
+          if (st) setHostPhase({ slug, state: st.state });
+        })
+        .catch(() => {});
+    }, 1500);
     try {
       await startHost(projectId, slug);
     } finally {
+      clearInterval(poll);
+      setHostPhase(null);
       setBusySlug(null);
       list.reload();
     }
@@ -206,6 +229,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 busy={busySlug === info.slug}
                 onBuild={() => handleBuild(info.slug)}
                 onStartHost={() => handleStartHost(info.slug)}
+                startingPhase={hostPhase?.slug === info.slug ? hostPhase.state : null}
                 onStopHost={() => handleStopHost(info.slug)}
                 // 판정 기준이 state에서 **access_url의 존재**로 바뀌었다. 서버가
                 // running일 때만 이 값을 실어 보내므로 조건은 사실상 같지만, 이

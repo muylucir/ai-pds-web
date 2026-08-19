@@ -278,3 +278,43 @@ describe("PrototypeCard", () => {
     expect(screen.queryByRole("button", { name: /초기화/ })).toBeNull();
   });
 });
+
+// ---- 호스팅 시작 중의 진행 표시 (2026-08-19) ----
+// `POST /host`가 npm install → npm run build → 포트 대기(최대 60초)를 전부
+// await한 뒤 응답한다. 그동안 카드는 "빌드 완료 + 비활성 버튼"으로 멈춰 있었고,
+// 실측 13분짜리 구간이라 사용자가 "아무 반응 없음"으로 읽었다. 서버는 그 단계를
+// 이미 기록하므로(ProtoHost._registry의 state) 보여주기만 하면 된다.
+
+const BUILT_Q: PrototypeInfo = {
+  slug: "prototype",
+  spec_path: "aiplc-docs/discovery/prototype/prototype-spec.md",
+  state: "built",
+  port: null,
+  access_url: null,
+  response_count: 0,
+};
+
+describe("호스팅 시작 중 진행 표시", () => {
+  it("단계를 배지에 보여준다 — 목록의 '빌드 완료'보다 정확하다", () => {
+    render(<PrototypeCard info={BUILT_Q} busy startingPhase="installing"
+                          onBuild={vi.fn()} onStartHost={vi.fn()} onStopHost={vi.fn()} />);
+    expect(screen.getByText("의존성 설치 중…")).toBeInTheDocument();
+    expect(screen.queryByText("빌드 완료")).not.toBeInTheDocument();
+  });
+
+  it("단계가 넘어가면 문구도 넘어간다", () => {
+    const { rerender } = render(
+      <PrototypeCard info={BUILT_Q} busy startingPhase="installing"
+                     onBuild={vi.fn()} onStartHost={vi.fn()} onStopHost={vi.fn()} />);
+    rerender(<PrototypeCard info={BUILT_Q} busy startingPhase="running"
+                            onBuild={vi.fn()} onStartHost={vi.fn()} onStopHost={vi.fn()} />);
+    expect(screen.getByText("서버 시작 중…")).toBeInTheDocument();
+  });
+
+  it("진행 중이 아니면 원래 상태 배지로 돌아간다", () => {
+    render(<PrototypeCard info={BUILT_Q} busy={false} startingPhase={null}
+                          onBuild={vi.fn()} onStartHost={vi.fn()} onStopHost={vi.fn()} />);
+    expect(screen.getByText("빌드 완료")).toBeInTheDocument();
+    expect(screen.queryByText(/설치 중|시작 중/)).not.toBeInTheDocument();
+  });
+});
