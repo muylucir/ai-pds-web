@@ -163,6 +163,7 @@ async def test_submit_document_refusals_follow_the_project_language(tmp_path):
     (prompts.prototype_handoff_stop, {"slug": "prototype"}),
     (proto_prompts.design_rules, {}),
     (proto_prompts.build_complete_theme_rejection, {}),
+    (proto_prompts.unsafe_command_refused, {"fragment": "npm run dev"}),
 ])
 def test_every_english_prompt_has_no_korean(fn, kwargs):
     """prompts.py의 모든 영어 갈래를 전수로 훑는다.
@@ -187,6 +188,7 @@ def test_every_english_prompt_has_no_korean(fn, kwargs):
     (prompts.prototype_handoff_stop, {"slug": "prototype"}),
     (proto_prompts.design_rules, {}),
     (proto_prompts.build_complete_theme_rejection, {}),
+    (proto_prompts.unsafe_command_refused, {"fragment": "npm run dev"}),
 ])
 def test_every_korean_prompt_is_korean_and_unknown_falls_back(fn, kwargs):
     """ko 갈래가 살아 있고, 손상된 매니페스트의 임의 문자열이 ko로 떨어진다

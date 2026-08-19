@@ -33,11 +33,25 @@ PATHFINDER_PROTO_CONFIG_DIR=/abs/path/to/repo/proto-config
 ## 스킬 추가 방법
 
 1. `skills/<name>/SKILL.md`를 만든다(frontmatter의 `name`은 디렉토리명과 일치).
-2. 커밋한다. 끝 — `PrototypeBuilder`가 `skills="all"`로 열려 있어
-   **디스커버된 스킬이 자동으로 활성화**된다. 코드 변경이 필요 없다.
+2. **`backend/pathfinder/proto/builder.py`의 `skills=[...]` 목록에 이름을 넣는다.**
+   목록에 없으면 파일이 있어도 켜지지 않는다.
 
-`skills="all"`의 대가: 여기 파일을 넣는 순간 켜진다. 실험용 스킬을 임시로 두면
-그대로 워크숍 빌드에 들어가므로, 켜고 싶지 않은 것은 커밋하지 않는다.
+현재 켜져 있는 것은 `shadcn-design` 하나다.
+
+**왜 이름 목록인가(2026-08-01의 사고).** 예전에는 `skills="all"`이었고, README도
+"커밋하면 끝"이라고 안내했다. 그 전제는 "config dir 아래 것만 켜진다"였는데
+**틀렸다** — `"all"`은 CLI에 번들된 스킬까지 함께 켜고, 그 목록에 `run`("Launch
+and drive this project's app… browser-driven")이 있다. 빌드 에이전트가 그
+스킬로 Playwright chromium을 띄웠고, 검증이 포트 3000을 겨냥해 Pathfinder
+프론트엔드가 SIGKILL로 죽었다(journalctl status=9/KILL). 백엔드·프론트엔드가
+빌드 에이전트와 같은 유저로 돌므로 막을 것이 없었다.
+
+그래서 **"커밋 한 번으로 추가"의 편의를 의도적으로 포기했다.** 스킬을 추가할 때
+코드도 한 줄 고치는 것이 그 대가다.
+
+이 목록은 **컨텍스트 필터이지 샌드박스가 아니다** — 스킬을 숨길 뿐 Bash 자체를
+막지는 못한다. 브라우저·서버 기동·프로세스 종료는 PreToolUse 훅이 코드로 거부한다
+(`proto/build_guard.py`).
 
 ## 런타임에 생기는 것 (gitignored)
 

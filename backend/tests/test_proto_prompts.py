@@ -25,49 +25,46 @@ def _plan(language: str) -> str:
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_plan_prompt_carries_every_directive(language):
     """두 언어 모두 같은 브레이크를 걸어야 한다. 하나라도 빠지면 그 언어의
-    빌드는 승인 없이 시작되거나 산출물을 엉뚱한 곳에 둔다."""
+    빌드는 승인 없이 시작된다.
+
+    이 프롬프트가 소유하는 것은 **세션의 흐름**이다 — 계획, 승인, 화면 문구의
+    언어, 완료 선언, 그리고 이 빌드에만 해당하는 런타임 값(스펙 경로와 프록시
+    경로). 공통 기술 계약은 `proto-config/CLAUDE.md`가 소유한다
+    (test_build_agent_contract가 그쪽을 고정한다).
+    """
     p = _plan(language)
     assert SPEC in p                    # 스펙을 읽으라고 지시
     assert "AskUserQuestion" in p       # 승인을 받으라고 지시
-    assert "prototype/" in p            # 산출물 위치
     assert "build_complete" in p        # 완료 선언
-    assert "BEDROCK_MODEL_ID" in p      # 모델 주입 이름
-    assert "basePath" in p              # 하위 경로 서빙
-    assert PROXY in p
+    assert PROXY in p                   # 이 빌드의 프록시 경로(런타임 값)
     # 생성되는 앱의 화면 문구도 프로젝트 언어여야 한다(스펙 §4). 이 지시가
     # 없으면 영어 프로젝트가 한국어 UI의 프로토타입을 받는다.
     assert "i18n" in p
 
 
-@pytest.mark.parametrize("language", ["ko", "en"])
-def test_plan_prompt_names_the_agentic_stack(language):
-    """agentic 프로토타입의 스택을 프롬프트가 직접 못 박아야 한다.
-
-    상류 룰(`aws-aiplc-rule-details/discovery/prototype-building.md`)은 Strands를
-    요구하면서 `pip install strands-agents ... flask`로 쓰여 있다. 그런데
-    `ProtoHost`는 npm 라이프사이클만 돌리므로(proto/host.py) 파이썬 프로토타입은
-    만들어져도 서빙되지 않는다. 이름을 적어 두지 않으면 에이전트가 스펙에 섞여
-    들어온 파이썬 전제를 따라간다 — 그것이 "Strands prototype creation is
-    broken"의 경로였다.
-
-    프롬프트에 두는 이유: 스킬(shadcn-design)은 UI가 있는 프로토타입에만
-    걸리고, LLM 호출은 UI가 없어도 필요하다. 이 프롬프트가 유일하게 항상
-    읽히는 자리다."""
-    p = _plan(language)
-    assert "@strands-agents/sdk" in p
+#: 공통 기술 계약의 토큰. `proto-config/CLAUDE.md`가 소유하며, 이 프롬프트가
+#: 다시 말하면 같은 규칙이 세 벌(ko/en 프롬프트 + 계약)이 된다.
+SHARED_CONTRACT_TOKENS = ("@strands-agents/sdk", "temperature",
+                          "BEDROCK_MODEL_ID", "basePath", "prototype/")
 
 
 @pytest.mark.parametrize("language", ["ko", "en"])
-def test_plan_prompt_forbids_sampling_parameters(language):
-    """`temperature` 금지가 두 언어에 다 있어야 한다.
+@pytest.mark.parametrize("token", SHARED_CONTRACT_TOKENS)
+def test_the_plan_prompt_does_not_restate_the_shared_contract(language, token):
+    """기술 규칙은 `proto-config/CLAUDE.md`에만 있어야 한다.
 
-    실측(2026-08-17): `new BedrockModel({ temperature: 0.7 })`은
-    `ModelError: temperature is deprecated for this model`로 실패하는데, 그 값이
-    Strands SDK README의 **예제 그대로**다. 에이전트가 README를 베끼는 것이
-    기본 동작이므로, 금지를 프롬프트에 두지 않으면 agentic 프로토타입이 전부
-    첫 호출에서 깨진다."""
-    p = _plan(language)
-    assert "temperature" in p
+    **왜 옮겼는가.** 이 규칙들이 원래 프롬프트에 있었던 근거는 "스킬은 UI가 있는
+    프로토타입에만 걸리고, 이 프롬프트가 유일하게 항상 읽히는 자리다"였다. 그
+    전제가 틀렸다 — `proto-config/CLAUDE.md`는 `setting_sources`의 **"user"
+    레벨**이므로(builder.py가 `CLAUDE_CONFIG_DIR`을 갈아끼운다) 스킬 호출과
+    무관하게 매 턴 읽힌다. 비교 대상은 스킬이 아니라 계약 파일이었다.
+
+    세 벌을 유지하는 대가는 실측돼 있다: 언어별 프롬프트 2벌은 한쪽에만 규칙이
+    빠지는 경로이고(이 파일 헤더), 거기에 계약 파일까지 더하면 어느 쪽이 최신인지
+    알 수 없다.
+    """
+    assert token not in _plan(language), (
+        f"{token!r}가 프롬프트에 남아 있다 — proto-config/CLAUDE.md가 SSOT다")
 
 
 @pytest.mark.parametrize("language", ["ko", "en"])
@@ -162,3 +159,30 @@ def test_theme_rejection_tells_the_agent_what_to_do(language):
     # 레이아웃에서 import)을 지목해야 한다 — 그렇지 않으면 에이전트가
     # globals.css 안에서 import해 캐스케이드에서 지는 결함을 재현한다.
     assert ("레이아웃" in out) if language == "ko" else ("layout" in out)
+
+
+# ---- Bash 게이트의 거부 문구 (proto/build_guard.py의 판정에 붙는다) ----
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_the_unsafe_command_refusal_names_what_was_caught(language):
+    """무엇이 걸렸는지 **조각으로 지목**해야 한다.
+
+    지목이 없으면 모델이 같은 명령을 형태만 바꿔 재시도하며 루프에 빠진다 —
+    agent/prompts.write_outside_docs의 docstring이 그 결함을 기록해 뒀고,
+    이 게이트도 같은 실패 경로를 갖는다.
+    """
+    out = prompts.unsafe_command_refused(language, "npx playwright test")
+    assert "npx playwright test" in out
+    assert ("거부됨" in out) if language == "ko" else ("Refused" in out)
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_the_unsafe_command_refusal_offers_the_alternative(language):
+    """거부만 하면 모델은 '막혔다'만 알고 무엇으로 검증할지는 모른다.
+
+    빌드 검증 수단(`npm run build`)과 화면 확인 주체(프로토타입 탭의 라이브
+    프리뷰)를 함께 준다.
+    """
+    out = prompts.unsafe_command_refused(language, "npm run dev")
+    assert "npm run build" in out

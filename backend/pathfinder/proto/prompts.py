@@ -42,34 +42,9 @@ def plan_prompt(language: str, *, spec_key: str, proxy_path: str) -> str:
             "uncertain or needs a decision, do not decide it on your own — ask with "
             "AskUserQuestion first.\n\n"
             "Rules for the build stage (apply after approval):\n"
-            "- Put the finished work under `prototype/` in the working directory, "
-            "and write a README explaining how to build and run it.\n"
-            f"- This prototype is served under a path proxy (e.g. `{proxy_path}`). "
-            "Use basePath and relative paths so it works correctly no matter which "
-            "sub-path it is placed under (never hardcode absolute paths).\n"
-            "- If the code needs to call an LLM, use Amazon Bedrock through the "
-            "default credential chain (instance/execution role). Do not hardcode an "
-            "API key; read the region and model ID from environment variables.\n"
-            "- **Read the model ID from `process.env.BEDROCK_MODEL_ID`** (or the "
-            "equivalent for your language). Hosting injects the project's configured "
-            "model under that name — a different name, or a specific model ID "
-            "baked in as the default, means the model the user chose is ignored. If "
-            "you need a fallback when the variable is absent, do not quietly use a "
-            "hardcoded model; surface that the setting is missing.\n"
-            "- **If the prototype needs an agent — a tool-calling loop rather "
-            "than one completion — use the Strands Agents TypeScript SDK, "
-            "`@strands-agents/sdk`.** Run it server-side (a Next.js route "
-            "handler), never in the browser, and reach Bedrock through the same "
-            "default credential chain. **Do not use the Python SDK**: hosting "
-            "runs the npm lifecycle only (`npm install` -> `npm run build` -> "
-            "`npm run start`), so a Python process is never started and the "
-            "prototype opens as a blank page no matter how correct the code is.\n"
-            "- **Never send `temperature`, `topP` or `topK`** — not in Converse's "
-            "`inferenceConfig`, and not to `new BedrockModel({...})`. Recent "
-            "Claude models removed them and the whole request fails with "
-            "\"`temperature` is deprecated for this model\". The Strands README's "
-            "own example passes `temperature: 0.7` — do not copy that line. Pass "
-            "`maxTokens` only; if you need determinism, ask for it in the prompt.\n"
+            f"- This prototype will be served under the path proxy `{proxy_path}`, "
+            "not at the root. Follow the sub-path rules in the build contract "
+            "(`CLAUDE.md`) so the screen opens there.\n"
             "- **Write the prototype's own on-screen text in English** — labels, "
             "buttons, headings, placeholder copy, and any sample data a viewer "
             "reads. The prototype is a single-language demo; do not build an i18n "
@@ -98,33 +73,9 @@ def plan_prompt(language: str, *, spec_key: str, proxy_path: str) -> str:
         "필요한 사항이 있으면 마음대로 넘기지 말고 AskUserQuestion으로 먼저 "
         "물어봐줘.\n\n"
         "빌드 단계에서 지킬 것(승인 후 적용):\n"
-        "- 완성물은 반드시 작업 디렉토리 아래 `prototype/`에 두고, 빌드 방법과 "
-        "실행 방법을 설명하는 README를 함께 작성해줘.\n"
-        f"- 이 프로토타입은 경로 프록시(예: `{proxy_path}`) 하위 경로에서 서빙돼. "
-        "basePath와 상대 경로를 사용해서, 어떤 하위 경로에 배치되어도 정상 동작하도록 "
-        "구현해줘(절대 경로 하드코딩 금지).\n"
-        "- 코드에서 LLM 호출이 필요하면 Amazon Bedrock을 기본 자격증명 체인(인스턴스/"
-        "실행 롤)으로 사용해줘. API 키를 코드에 하드코딩하지 말고, 리전과 모델 ID는 "
-        "환경변수로 받도록 구현해줘.\n"
-        "- **모델 ID는 반드시 `process.env.BEDROCK_MODEL_ID`(또는 언어에 맞는 "
-        "동등 표현)로 읽어줘.** 호스팅이 이 이름으로 프로젝트에 설정된 모델을 "
-        "주입한다 — 다른 이름을 쓰거나 특정 모델 ID를 기본값으로 박아 두면 "
-        "사용자가 고른 모델이 무시된다. 환경변수가 없을 때의 폴백이 필요하면 "
-        "하드코딩한 모델로 조용히 넘어가지 말고 설정이 없다는 것을 드러내줘.\n"
-        "- **프로토타입에 에이전트가 필요하면(한 번의 완성이 아니라 도구를 "
-        "호출하는 루프라면) Strands Agents **TypeScript** SDK, "
-        "`@strands-agents/sdk`를 써줘.** 브라우저가 아니라 서버측(Next.js route "
-        "handler)에서 돌리고, Bedrock은 같은 기본 자격증명 체인으로 붙어줘. "
-        "**파이썬 SDK는 쓰지 마** — 호스팅은 npm 라이프사이클만 돌린다"
-        "(`npm install` → `npm run build` → `npm run start`). 파이썬 프로세스는 "
-        "아예 시작되지 않으므로, 코드가 아무리 맞아도 프로토타입은 빈 화면으로 "
-        "열린다.\n"
-        "- **`temperature`·`topP`·`topK`는 절대 보내지 마** — Converse의 "
-        "`inferenceConfig`에도, `new BedrockModel({...})`에도. 최근 Claude 모델은 "
-        "이 파라미터를 없앴고, 보내면 요청 전체가 "
-        "\"`temperature` is deprecated for this model\"로 실패한다. Strands "
-        "README의 예제가 `temperature: 0.7`을 넣고 있으니 그 줄은 베끼지 마. "
-        "`maxTokens`만 넘기고, 결정성이 필요하면 프롬프트로 요구해줘.\n"
+        f"- 이 프로토타입은 루트가 아니라 경로 프록시 `{proxy_path}` 하위에서 "
+        "서빙돼. 화면이 그 경로에서 열리도록 빌드 계약(`CLAUDE.md`)의 하위 경로 "
+        "규칙을 따라줘.\n"
         "- **프로토타입 화면의 문구는 한국어로 써줘** — 라벨, 버튼, 헤딩, "
         "플레이스홀더, 그리고 보는 사람이 읽는 샘플 데이터까지. 프로토타입은 "
         "단일 언어 데모이니 i18n 계층을 만들지는 마.\n"
@@ -379,3 +330,40 @@ def build_complete_theme_rejection(language: str) -> str:
             "`pathfinder-theme.css`를 프로토타입 안으로 복사하고, 루트 "
             "**레이아웃**에서 `globals.css`를 import한 **다음**에 import해라 — "
             "`globals.css` 안에서 import하지 말고 — 그런 뒤 다시 선언해라.")
+
+
+def unsafe_command_refused(language: str, fragment: str) -> str:
+    """PreToolUse 훅이 Bash를 거부할 때 모델이 읽는 이유. 판정은
+    proto/build_guard.py.
+
+    **무엇이 걸렸는지 조각으로 지목한다.** 지목이 없으면 모델이 같은 명령을 형태만
+    바꿔 재시도하며 루프에 빠진다(agent/prompts.write_outside_docs가 그 결함을
+    기록해 뒀고, 이 게이트도 같은 실패 경로를 갖는다).
+
+    **대안을 함께 준다.** 거부만 하면 모델은 "막혔다"만 알고 무엇으로 검증할지는
+    모른다 — 빌드 검증은 `npm run build`이고, 화면 확인은 프로토타입 탭의 라이브
+    프리뷰가 하는 일이다.
+
+    금지의 근거를 한 줄로 적는다: 백엔드·프론트엔드가 빌드 에이전트와 **같은
+    유저로 돌기 때문**이다. 이유 없이 금지하면 모델이 예외를 합리화한다
+    (2026-08-01: 브라우저 검증이 포트 3000을 겨냥해 프론트엔드를 SIGKILL했다).
+    """
+    if _lang(language) == "en":
+        return (f"Refused — `{fragment}` is not available during a build. The "
+                "backend and frontend run as the same user you do, so a browser "
+                "launch, a dev/production server, a process kill, or anything "
+                "touching ports 3000 and 8000 can take Pathfinder itself down "
+                "(this happened: a browser verification SIGKILLed the frontend "
+                "mid-workshop).\n"
+                "Verify the build with `npm run build`. The user checks the "
+                "screen through the live preview in the prototypes tab — you do "
+                "not need to open one, and hosting starts the server itself.")
+    return (f"거부됨 — `{fragment}`는 빌드 중에 쓸 수 없다. 백엔드와 프론트엔드가 "
+            "너와 **같은 유저로 돌기 때문에** 브라우저 기동·dev/production 서버·"
+            "프로세스 종료, 그리고 포트 3000·8000을 건드리는 명령은 Pathfinder "
+            "자신을 죽일 수 있다(실제로 일어났다: 브라우저 검증이 포트 3000을 "
+            "겨냥해 워크숍 중 프론트엔드가 SIGKILL로 죽었다).\n"
+            "빌드 검증은 `npm run build`로 한다. 화면 확인은 프로토타입 탭의 "
+            "라이브 프리뷰가 하는 일이므로 브라우저를 열 필요가 없고, 서버는 "
+            "hosting이 직접 띄운다."
+            )

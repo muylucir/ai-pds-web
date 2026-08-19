@@ -774,14 +774,14 @@ def test_first_prompt_covers_the_build_directives(tmp_path):
 
     prompt = session.first_prompt()
 
+    # 이 프롬프트가 소유하는 것은 세션의 흐름과 이 빌드의 런타임 값뿐이다.
+    # 공통 기술 계약(산출물 위치·README·Bedrock 자격증명·모델 ID·basePath·
+    # 샘플링 파라미터)은 `proto-config/CLAUDE.md`로 옮겼다 —
+    # test_proto_prompts.test_the_plan_prompt_does_not_restate_the_shared_contract와
+    # test_build_agent_contract가 그 분담을 양쪽에서 고정한다.
     assert SPEC_KEY in prompt
     assert "AskUserQuestion" in prompt
-    assert "prototype/" in prompt
-    assert "README" in prompt
     assert f"/api/proto/{PROJECT_ID}/{SLUG}/" in prompt
-    assert "basePath" in prompt or "상대 경로" in prompt
-    assert "Bedrock" in prompt
-    assert "하드코딩" in prompt
 
 
 def test_first_prompt_no_longer_names_the_vm_absolute_path(tmp_path):

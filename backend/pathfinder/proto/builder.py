@@ -27,6 +27,8 @@ from pathfinder.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
 from pathfinder.cli_settings import cli_context_env
 from pathfinder.models import AgentEvent
+from pathfinder.proto import prompts
+from pathfinder.proto.build_guard import bash_denial
 
 _log = logging.getLogger(__name__)
 
@@ -219,8 +221,24 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # intercept (it is how a question becomes an SSE `questions` event).
             # Dropping the callback to silence the warning would break that.
             can_use_tool=builder._on_can_use_tool,
-            hooks={"PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
-                                               hooks=[builder._on_post_tool_use])]},
+            # PreToolUse가 Bash의 유일한 실효 게이트다. 위 can_use_tool은
+            # bypassPermissions에서 Bash에 대해 호출되지 않는다 — SDK가 그 사실과
+            # 해법을 직접 적어 뒀다(types.py의
+            # _get_can_use_tool_shadowed_warning: "To gate every tool call, use
+            # a PreToolUse hook instead"). 판정부는 proto/build_guard.py.
+            #
+            # **matcher에 AskUserQuestion을 넣지 않는다.** PreToolUse 훅이
+            # *allow*를 돌려주면 can_use_tool도 건너뛰는데, 질문을 SSE 이벤트로
+            # 바꾸는 가로채기가 그 콜백에 있으므로 질문 왕복 전체가 죽는다.
+            # 같은 이유로 _on_pre_tool_use는 통과할 때 "allow"가 아니라 **빈
+            # dict**를 돌려준다. Discovery가 같은 함정을 같은 방식으로 피한다
+            # (claude_driver.py의 hooks 주석).
+            hooks={
+                "PreToolUse": [HookMatcher(matcher="Bash",
+                                           hooks=[builder._on_pre_tool_use])],
+                "PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
+                                            hooks=[builder._on_post_tool_use])],
+            },
         )
         return ClaudeSDKClient(options=options)
     return make
@@ -482,6 +500,34 @@ class PrototypeBuilder:
     # Conclusion: the Discovery ruling does transfer, but for a reason that had
     # to be re-checked -- this tab's reducers are dedupe-by-path or append-only
     # cosmetic, and the one non-idempotent kind is dropped at its death points.
+    async def _on_pre_tool_use(self, input_data, tool_use_id, context) -> dict:
+        """빌드 에이전트의 Bash 게이트. 판정은 proto/build_guard.py.
+
+        왜 훅인가: 빌드는 `bypassPermissions`로 돌아 Bash가 자동 승인되고
+        can_use_tool에 도달하지 않는다 — SDK가 지정한 유일한 게이트가
+        PreToolUse다(그 근거는 위 팩토리의 hooks 주석과 build_guard 헤더).
+
+        **통과는 빈 dict다.** "allow"를 돌려주면 can_use_tool까지 건너뛰어
+        AskUserQuestion 가로채기가 죽는다(types.py의 can_use_tool 설명).
+        """
+        name = input_data.get("tool_name", "")
+        if name != "Bash":
+            # matcher가 Bash만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
+            # 통과해야 한다 — 알 수 없는 도구를 막으면 빌드가 멈춘다.
+            return {}
+        offender = bash_denial((input_data.get("tool_input") or {}).get("command"))
+        if offender is None:
+            return {}
+        # 로그로 남긴다: 거부 이유는 모델에게만 가므로, 무엇이 막혔는지 운영자가
+        # 확인할 경로가 따로 필요하다.
+        _log.warning("build gate denied Bash: %s", offender)
+        return {"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": prompts.unsafe_command_refused(
+                self._language, offender),
+        }}
+
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
         name = input_data.get("tool_name", "")
         if name in _FILE_TOOLS:

@@ -147,3 +147,101 @@ def test_discovery_override_pins_the_prototype_runtime():
     assert "Node" in text, "프로토타입 런타임이 Node라는 사실이 없다"
     assert "@strands-agents/sdk" in text, (
         "agentic 스펙이 가리켜야 할 SDK 이름이 없다")
+
+
+# ---- 금지하면서 실행법을 가르치지 않는다 ----
+
+#: 서버 기동 레시피의 흔적. `proto-config/CLAUDE.md`에 "If you really must start a
+#: server" 절이 있었고, `setsid npm run start` / `kill -- -$PGID`를 그대로 적어
+#: 뒀다 — 금지하는 문장 바로 아래에서.
+SERVER_RECIPE = ("setsid", "PGID", "kill -- -", "smoke.log")
+
+
+@pytest.mark.parametrize("needle", SERVER_RECIPE)
+def test_no_recipe_for_starting_a_server(needle):
+    """서버 기동은 이제 코드로 막힌다(proto/build_guard.py) — 레시피는 남아 있을
+    이유가 없고, 남아 있으면 금지된 일의 실행 가능성만 높인다.
+
+    `test_build_guard.test_wrapping_the_server_in_setsid_is_still_denied`가 그
+    명령이 실제로 거부됨을 고정한다.
+    """
+    hits = [str(p.relative_to(REPO)) for p in _build_agent_files()
+            if needle in _text(p)]
+    assert not hits, (
+        f"{needle!r} — 서버 기동 레시피가 남아 있다. 기동은 build_guard가 "
+        f"거부하므로 이 문장은 우회법 교습일 뿐이다. 위치: {hits}")
+
+
+def test_the_process_gate_is_advertised_as_enforced():
+    """"금지"만 적으면 에이전트가 예외를 합리화한다.
+
+    강제된다는 사실을 적어야 시도 자체가 줄고, 거부를 만났을 때 그것이 버그가
+    아니라 규약임을 안다 — `discovery-config/CLAUDE.md`가 쓰기 범위 규칙에 대해
+    같은 문장을 갖고 있다("This one is enforced, not trusted").
+    """
+    text = _text(PROTO_CONFIG / "CLAUDE.md")
+    assert "enforced" in text.lower(), (
+        "프로세스·포트 규칙이 강제된다는 표시가 없다 — build_guard가 실제로 "
+        "막는데 계약이 그것을 말하지 않으면 에이전트는 산문으로 읽는다")
+
+
+# ---- 공통 기술 계약의 SSOT는 이 파일이다 ----
+
+#: `plan_prompt`에서 옮겨 온 규칙들. 언어별 프롬프트 2벌 + 계약 = 3벌이었고,
+#: 그중 하나가 빠지는 것이 이 리포가 이미 기록해 둔 드리프트 경로다.
+#: test_proto_prompts.test_the_plan_prompt_does_not_restate_the_shared_contract가
+#: 프롬프트 쪽의 부재를 고정하고, 이 테스트가 계약 쪽의 존재를 고정한다 —
+#: 한쪽만 있으면 규칙이 어디에도 없는 상태가 통과한다.
+MOVED_FROM_THE_PLAN_PROMPT = {
+    "prototype/": "산출물 위치",
+    "README": "빌드·실행 설명 문서",
+    "BEDROCK_MODEL_ID": "호스팅이 모델을 주입하는 환경변수 이름",
+    "default credential chain": "API 키를 하드코딩하지 않는 근거",
+    "basePath": "하위 경로 서빙",
+    "@strands-agents/sdk": "agentic 스택",
+    "BedrockModel": "샘플링 파라미터 금지가 Strands 생성자도 덮는다",
+}
+
+
+@pytest.mark.parametrize("needle,what",
+                         sorted(MOVED_FROM_THE_PLAN_PROMPT.items()))
+def test_the_contract_carries_what_the_plan_prompt_gave_up(needle, what):
+    text = _text(PROTO_CONFIG / "CLAUDE.md")
+    assert needle in text, (
+        f"{needle!r}({what})가 계약에 없다 — plan_prompt에서 뺐으므로 이제 "
+        f"어디에도 없다")
+
+
+# ---- README가 실제 배선과 일치한다 ----
+
+def test_no_readme_promises_that_a_skill_activates_by_itself():
+    """`skills="all"`은 2026-08-01 사고의 원인이었고 이미 되돌렸다.
+
+    builder.py는 `skills=["shadcn-design"]`로 **이름 목록**을 넘긴다("all"은
+    CLI 번들 스킬까지 켜고, 그 목록의 `run`이 브라우저를 띄워 프론트엔드를
+    죽였다). 두 README는 "커밋한다. 끝 — 코드 변경이 필요 없다"고 안내하고
+    있었다. 그 안내를 따르면 새 스킬이 **조용히 켜지지 않는다.**
+
+    검사 대상은 그 **약속**이며 `skills="all"`이라는 말 자체가 아니다. 되돌린
+    이유를 설명하려면 그 이름을 불러야 하고, README는 모델이 읽지 않으므로
+    (`_build_agent_files`에 없다) 언급의 컨텍스트 비용도 없다.
+    """
+    stale = []
+    for readme in (PROTO_CONFIG / "README.md", DISCOVERY_CONFIG / "README.md"):
+        if not readme.is_file():
+            continue
+        if "코드 변경이 필요 없다" in _text(readme):
+            stale.append(str(readme.relative_to(REPO)))
+    assert not stale, (
+        "스킬이 저절로 켜진다고 약속한다 — builder.py의 목록을 함께 고쳐야 "
+        f"한다. 위치: {stale}")
+
+
+def test_the_proto_readme_names_the_skill_that_is_actually_enabled():
+    """새 스킬을 추가할 때 코드도 고쳐야 한다는 사실이 README에 있어야 한다 —
+    "all"의 편의를 의도적으로 포기한 자리이므로(builder.py의 주석) 그 대가를
+    문서가 말해야 한다."""
+    text = _text(PROTO_CONFIG / "README.md")
+    assert "shadcn-design" in text
+    assert "builder.py" in text, (
+        "스킬 목록을 어디서 고치는지 지목하지 않는다")

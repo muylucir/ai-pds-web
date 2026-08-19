@@ -1,317 +1,72 @@
-# Pathfinder integration contract (UI touchpoints — mandatory)
+# AI-PDS Web runtime integration contract
 
-<!--
-WHY THIS FILE IS IN ENGLISH, and why that is not a language directive.
+This file defines only the runtime boundary between the AI-PDS workflow and the web application. Follow the workspace `CLAUDE.md` and its referenced rule files
+for the workflow, stage order, terminology, document formats, and project language. Where this contract overrides the upstream rules, the override applies only because the web runtime handles that interaction differently.
 
-This file lives in the shared CLAUDE_CONFIG_DIR ("user" in
-setting_sources=["user", "project"]), so EVERY project reads it regardless of
-the language its user chose — it cannot carry a per-project language. Spec
-2026-08-03-bilingual-ko-en §3 concluded from that only that the language
-DIRECTIVE had to be removed from here. That was not enough: on 2026-08-04 an
-English project's chat still ran in Korean, because this whole file was Korean
-prose. **The language a document is written in is itself a language signal**,
-even when the document never says which language to use.
+## Required artifacts
 
-So the rule for this file is stronger than "no language directive": it must be
-language-NEUTRAL, and for a document the model reads that means the upstream
-rules' own language, English. The per-project language flows through the
-workspace CLAUDE.md instead (backend/pathfinder/agent/language/{ko,en}.md,
-assembled by agent/workspace_rules.py) — that is the "project" level, the only
-level that can vary per project. It stays the single source of truth for which language to
-speak; nothing here competes with it, which is what commit 7f33652's failure was
-about.
+- Keep `aiplc-docs/aiplc-state.md` current as required by `common/workflow-changes.md` and each stage's "Update State Tracking" step. Preserve the `- **Current Stage**: <name>` line and the `## Stage Progress` checklist; AI-PDS Web derives the stage UI from this file.
+- After creating or updating a discovery document, call `submit_document`. Write the file first; the tool rejects a missing or empty file.
+- Append audit entries to `audit.md` with Edit. Do not replace the existing audit history with a partial Write.
 
-Keep this file in English when editing it. backend/tests/test_workspace_rules.py
-pins the invariant.
--->
+## Turn-ending writes
 
-<!--
-The tool-parameter encoding rule that used to open this file was removed on
-2026-08-18. It mitigated one tool, AskUserQuestion, which this path no longer
-uses. proto-config/CLAUDE.md keeps it because that path still requires the tool —
-do not "unify" the two files. The reasoning is pinned by
-backend/tests/test_workspace_rules.py::
-test_the_encoding_rule_survives_only_where_askuserquestion_does; read that
-docstring before restoring anything here.
+Writing either of these files hands control to the user and immediately ends the
+turn:
 
-Keep such notes SHORT. Everything in this file, comments included, is context the
-model reads every turn — a removed rule quoted back in full is the rule, still
-being read.
--->
-
-This file governs only the touchpoints with the Pathfinder web UI. For the
-Discovery workflow itself, follow the `CLAUDE.md` in the working directory (the
-AI-PLC core workflow), including its language convention.
-
-- When you ask the user a multiple-choice question, you ask it by **writing the
-  question file** (`aiplc-docs/**`, with `[Answer]:` tags). Pathfinder reads that
-  file and shows the questions as written. The **AskUserQuestion** tool is not
-  available — see the question-files section below.
-- Keep **`aiplc-docs/aiplc-state.md`** updated exactly as the upstream rules say
-  (`common/workflow-changes.md`, and each stage's own "Update State Tracking"
-  step). Pathfinder reads that file and updates the stage badges itself — there is
-  no tool to call, and no reason to describe stage transitions in chat instead.
-  Keep the `- **Current Stage**: <name>` line and the `## Stage Progress`
-  checklist in the shape those rules show; that shape is what gets read.
-- Call the **submit_document** tool whenever you create or update a
-  discovery-document. **Order matters: save the file first, then call
-  submit_document.** If the file is missing or empty the tool refuses the
-  declaration and tells you why — which means: go back and save the file.
-- To add an entry to `audit.md`, append with **Edit**. **Write replaces the
-  entire file** — calling Write with only the new entry destroys the whole
-  audit record.
-
-## Turn-ending writes: two files end the turn when you write them
-
-Most of what Pathfinder shows the user is derived from the files you write, not
-from tools you call. Two of those files also hand control back to the user, so
-**writing them ends your turn immediately**:
-
-| File | What it hands over |
+| File | Handoff |
 |---|---|
-| a question file (`[Answer]:` tags) | the question form in the right-hand panel |
-| `build-instructions.md` | the prototype card in the Prototypes tab |
+| A question file containing `[Answer]:` tags | Shows the question form |
+| `build-instructions.md` | Shows the prototype card |
 
-**Everything else in the turn must come before that write.** Pathfinder stops the
-turn the moment the file lands, and any tool call you batched after it in the same
-message is discarded — silently, with no error. So the order is: your
-conversational text for the user, then `submit_document` and the `audit.md`
-`Edit` and the `aiplc-state.md` update, and the turn-ending file last.
+Any tool calls placed after that write are discarded. Before the turn-ending write, provide the user-facing message and complete every required `submit_document` call, `audit.md` Edit, and `aiplc-state.md` update. This keeps the ordering already required by `core-workflow.md`.
 
-This is what the upstream rules already ask for and it is not a special case:
-`aws-aiplc-rules/core-workflow.md` puts the mandatory welcome message and the
-Workspace Detection findings *before* the stage that asks, and its Workspace
-Detection step 6 is "Present completion message to user". A turn that writes the
-turn-ending file first and narrates afterwards loses the narration.
+## Question files
 
-## Question files ARE the question form (overrides the upstream rules)
+The question file is the web form.
+Follow `aws-aiplc-rule-details/common/question-format-guide.md` with numbered questions, lettered options, and an `[Answer]:` line under each question.
 
-**Write the question file. That is how you ask.** `aws-aiplc-rule-details/common/question-format-guide.md`
-applies as written — numbered questions, lettered options, an `[Answer]:` line
-under each. Pathfinder reads the file the moment you finish writing it and shows
-those questions to the user **exactly as you wrote them**, then fills the
-`[Answer]:` tags with their answers.
+- **AskUserQuestion is not available.** Write the complete question file under `aiplc-docs/`; AI-PDS Web renders it without the tool's question or option limits.
+- **Use `## Question <number>` headings.** Keep the number stable. Answers are matched by question **number**.
+- **Place file-wide preamble text above the first `##` heading.** A preface put under a `##` heading becomes the *first question's* context. Put context for one question under a `##` heading immediately before that question.
+- **AI-PDS Web fills the `[Answer]:` tags. Do not write them yourself.** Read them when continuing after the user submits the form.
+- **Write the question file last.** Do not continue with more tools after the write.
+- **Do not restate the questions in chat.** Explain why the question round is needed before writing the file.
+- **Do not send the user to edit the file or wait for a separate "done".** The web form is the editing surface, and submitting it is confirmation. If an expected answer is still missing, present it again through a question file.
+- **Keep the audit trail.** Record the resulting decisions in `audit.md`.
 
-- **AskUserQuestion is not available.** Calling it is refused, and the refusal
-  points you back here. There is nothing to route through a tool: the file is
-  the form.
-- **Write the questions in full.** There is no 4-question or 4-option ceiling to
-  work around, and nothing has to be shortened or split across rounds. A stage
-  whose rules list nine question areas gets one file with nine questions and one
-  screen.
-- **The question heading stays ASCII: `## Question <number>`.** Everything else in
-  the file — the question sentence, the options, the background prose — is written
-  in the project's language, but that one heading is a *structural marker*, not
-  prose. It is what pairs each answer with its question when Pathfinder writes the
-  `[Answer]:` tags back, and it is the form
-  `common/question-format-guide.md` specifies. Translating the word "Question"
-  into the project's language has produced a file that looked perfect and showed
-  **nothing** to the user. The parser tolerates a translated heading today, but do
-  not rely on that — write the ASCII form.
-- **Put the background where the format guide puts it.** Prose above a question —
-  under a `##` heading, before the question's own heading — is shown to the user
-  as that question's context, markdown and tables included. This is where the
-  "why am I being asked this" belongs: an ambiguity you are resolving, the table
-  a confirmation gate refers to as "the items above". A question that reads as
-  unanswerable on its own is a question missing its context.
-- **A preface about the WHOLE file goes above the first `##` heading, with no
-  heading of its own.** Everything from the `#` title down to the first `##`
-  becomes the file's preamble and is shown once, above all the questions. Put it
-  under a `##` heading instead and it becomes the *first question's* context —
-  it will be attached to Question 1 alone, and that heading will label every
-  question in the file as its category. Measured: a 1,100-character "how to
-  answer this document" section, table included, landed inside Question 1's card
-  and its heading appeared as the category of all six questions. So: explaining
-  how to answer this round, or what the questions have in common → above the
-  first `##`. Explaining one question → under a `##` immediately before it.
-- **Pathfinder fills the `[Answer]:` tags, not you.** They are matched by
-  question **number**, so numbering is what has to be stable — not wording.
-  Read the tags freely (that is the point — `common/session-continuity.md` has
-  you re-read the stage's question file on resume). **Do not write them
-  yourself**: two writers on one line produce conflicts, and your copy would be
-  the stale one.
-- **Writing the file is the LAST tool call of the turn** — see "Turn-ending
-  writes" above for what that means for everything else in the turn, and why the
-  upstream rules already ask for that order.
-- **Do not restate the questions in chat** — they are already on the user's
-  screen, read from the file. Explaining *why* this round is being asked is
-  required, not forbidden (see "Keep the conversation visible" below); what is
-  forbidden is copying the questions or their options into the chat.
-- **Do not keep working after the write.** The answers arrive in the file and you
-  continue on the next turn.
-- **Do not apply its "Missing Answers" handling** by sending the user to the
-  file. They cannot edit it directly — the form in the right-hand panel is the
-  only way in. If a tag you expected is still empty, write the question again
-  (a new file, or new numbered questions appended to the same one).
-- **Do not wait for the user to say "done"** (its Step 3, "Wait for
-  Confirmation"). Submitting the form *is* the confirmation.
-- **Keep logging answers in `audit.md` as well.** The question file carries the
-  decision; `audit.md` carries the audit trail the workshop record relies on.
+## Prototype handoff
 
-## Prototypes: write the spec, do not build (overrides the upstream rules)
+Discovery writes specifications; the Prototypes tab builds and runs them.
 
-In Pathfinder, **building and running prototypes is the Prototypes tab's job**.
-Only the dedicated hosting layer (`ProtoHost`) can allocate a port and register
-with the preview proxy, so a server you start here appears on no screen and
-opens from no preview link. Discovery's role ends at **writing the spec**.
+- **You write only under `aiplc-docs/`.** This boundary is enforced, not trusted: hooks reject writes elsewhere and reject build or serve commands.
+- **Use the path defined by the applicable workflow path.**
+  - Path A.1:
+    `aiplc-docs/discovery/prototype/prototype-spec.md`
+  - Path B:
+    `aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md`
+  Do not produce a slugged duplicate for Path A.1. The document that governs a path beats the overview diagram. For Path B, the slug must equal the directory name and contain lowercase letters, digits and hyphens only.
+- **Do not execute the prototype build instructions.** Do not create executable source files, install packages, start processes, choose a port, or report a local server URL from Discovery.
+- **End Path A.1 build preparation at `build-instructions.md`.** Explain the handoff to the user before writing it; that write is the handoff, and it ends your turn. Steps that require a running prototype are not abandoned; they are deferred until the user builds it in the Prototypes tab.
+- **The model and credentials are already provisioned. Never ask for them.** Do not offer provider selection, do not write a model ID or port into the specification, and do not inspect the environment for credentials.
+- **The hosted runtime is Node.** Describe the agent's behavior rather than interpreter setup or a second backend process. When an agentic specification must identify the implementation SDK, use the server-side TypeScript package `@strands-agents/sdk`.
 
-- **You write only under `aiplc-docs/`. Nothing else, ever.** This is the rule,
-  not a list of forbidden commands. A prototype is not "not built" because you
-  skipped `npm install` — it is not built because no source file exists outside
-  `aiplc-docs/`. A single self-contained `index.html` needs no package manager,
-  no port and no network, and it is still a build. So is a `.py`, a `.jsx`, a
-  `.css`. If you are about to create a file that a browser or a runtime would
-  execute, you are outside your scope.
-  This one is **enforced, not trusted**: a hook refuses `Write`/`Edit` outside
-  `aiplc-docs/`, and refuses shell commands that build, serve, or redirect
-  output to a path outside it. The refusal names the path or command and points
-  you back here — read it and write the spec instead of retrying with a
-  different path.
-- **Write the spec where your own stage's rules say, and do not invent a second
-  copy.** The two upstream layouts are both correct and Pathfinder reads both:
-  - Path A.1 (Envision-derived, a single prototype) →
-    `aiplc-docs/discovery/prototype/prototype-spec.md`, exactly as
-    `aws-aiplc-rule-details/discovery/prototype-validation.md` lists in its
-    deliverables. There is no slug, because there is nothing to distinguish.
-  - Path B (use-case prioritization, three prototypes) →
-    `aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md`, per
-    `prototype-context-generation.md` and `prototype-md-format.md`.
-  The directory tree in `core-workflow.md` marks `prototypes/` as "All paths",
-  which reads as if A.1 owed a slugged file too. It does not: the document that
-  governs a path beats the overview diagram. **Do not produce a slugged
-  duplicate of a single-prototype spec** — two full copies drift, and the drift
-  shows up as a content difference with no error.
-  - When a path DOES use slugs, the slug must equal the directory name: the
-    Prototypes tab matches with a regex whose directory capture is
-    back-referenced in the filename, so `prototypes/foo/PROTOTYPE-bar.md` lists
-    nothing. Derive it as kebab-case and sanitize it the way
-    `prototype-context-generation.md` requires: lowercase letters, digits and
-    hyphens only; reject anything containing `/`, `\` or `..`.
-- **Do not perform** the build steps in
-  `aws-aiplc-rule-details/discovery/prototype-building.md`. Those rules were
-  written for the upstream workshop, where a human runs everything locally.
-  Beyond the scope rule above, that also means: do not start prototype
-  subprocesses (the credential-isolation guidance therefore has nothing to
-  apply to), and do not report progress or completion like "Deploying to…",
-  "Running at http://localhost:{port}", or instructions for the user to serve
-  the files themselves.
-- **Do not choose a port.** The upstream rules' `Port: {3000 + X}` and the
-  spec template's `Port` field are void in Pathfinder — hosting assigns the port
-  at build time. A port written into the spec will disagree with the assigned
-  one and mislead the user.
-- **Where Path A.1 stops, and how it continues.**
-  `aws-aiplc-rule-details/discovery/prototype-validation.md` runs Step 1 → Step
-  11, and its Step 3 is "Build Prototype". In Pathfinder Step 3 ends one document
-  earlier:
-  - Write `build-instructions.md` as that step specifies, next to the spec it
-    builds from. **That write is the handoff, and it ends your turn** — Pathfinder
-    turns the prototype into a card in the Prototypes tab the moment the file
-    lands, so there is no tool to call. Say what you did and tell the user to
-    build it in that tab, and say it *before* you write the file (see
-    "Turn-ending writes" above).
-  - **Steps 4-6 (Iterate, Validation Setup, Feedback Synthesis) are not
-    abandoned; they are deferred.** They all presume a running prototype, which
-    only exists after the user builds. Resume them when the user comes back with
-    a built prototype or survey results — Pathfinder runs the survey, so Step 5's
-    questionnaire is generated for you.
-  - Do not talk as if a build is about to start in the Discovery chat.
-- **The model and the credentials are already provisioned. Never ask for them.**
-  `aws-aiplc-rule-details/common/llm-model-configuration.md` has the agent pick a
-  provider, hard-codes model IDs (its own three disagree with each other) and
-  treats API keys as a prerequisite. All of that is void here: the project was
-  created with a model, every build inherits it, and the runtime holds the
-  credentials.
-  - Do not offer a provider/model choice, do not write a model ID into the spec
-    or the build instructions, and do not check environment variables for API
-    keys. A model ID you write will disagree with the one the build actually
-    uses, and asking for a key blocks the user on something they cannot give.
-  - This is the same reason the `Port` field is void (above): anything the
-    hosting layer assigns at build time must not be guessed in the spec.
-- **The prototype runtime is Node, and "agent" means the TypeScript SDK.**
-  Hosting runs the npm lifecycle and nothing else (`npm install` →
-  `npm run build` → `npm run start`). A Python prototype is therefore never
-  started: the build reports success and the preview opens as a blank page, with
-  no error anywhere. `aws-aiplc-rule-details/discovery/prototype-building.md`
-  reaches for the Python Strands SDK and a Python web framework because upstream
-  assumes a laptop where a human runs both processes by hand — that assumption
-  does not hold here.
-  - **Do not write an interpreter setup, a package-manager command, or a second
-    backend process into the spec or the build instructions.** Describe what the
-    agent must *do* — its tools, its inputs, what it decides, what it must not
-    decide — and leave the stack to the build agent, which has its own rules for
-    it.
-  - When the spec genuinely has to name the stack (an agentic use case whose
-    feasibility argument depends on it), name **`@strands-agents/sdk`** — the
-    Strands Agents *TypeScript* SDK, running server-side. It reaches Bedrock
-    through the credentials the build already holds, which is why there is still
-    nothing to ask the user for.
-  - This is also what keeps the spec portable in the direction that matters. A
-    team that picks up a `PROTOTYPE-*.md` in an IDE can still build it with the
-    Python SDK, because the spec describes the agent rather than the install. A
-    spec that hard-codes one runtime is the one that does not travel.
-
-## Depth of what you write (overrides the upstream rules)
+## Depth of what you write
 
 <!-- depth-bar-items: derive, prose, unknowns, brackets, defaults -->
 
-The upstream rules specify document *structure* thoroughly and say almost nothing
-about depth. Several steps give you mandatory content areas and no template at all —
-`aws-aiplc-rule-details/discovery/envision.md` Step 0.2 (business context) is the
-clearest — and there the cheapest compliant output is a bulleted transcription of
-what the user just said.
+Apply this quality bar to every document under `aiplc-docs/`:
 
-Measured on 2026-08-13 across two sessions given the same input in different
-languages: the same step produced 20% prose in one and 58% in the other, 484 versus
-3,823 characters of it. **Both passed the mandatory-area completeness check.** So
-completeness is not the bar. The bar is below, and it applies to every document you
-write under `aiplc-docs/`, template or no template.
+- **Derive, do not only transcribe.** Add a calculation, relationship, or product implication where the evidence supports it.
+- **Use prose for meaning.** Lists can carry facts, but explain what the facts imply for the decision.
+- **State material unknowns.** Identify what a later stage still needs and why it matters.
+- **Treat bracketed template guidance as a checklist.** Cover each requested item, replace example rows, and leave no placeholder answers.
+- **Use explicit assumptions when evidence is missing.** Never present an assumption as customer evidence.
 
-- **Derive, do not transcribe.** For each area you cover, add at least one thing the
-  user did not say: a figure computed from the ones they gave (4 hours a week is
-  ~208 hours a year, about 26 working days), a ratio between two of them (1,200 users
-  across 80 companies is ~15 per company), or what a fact means for a product
-  decision. A document that only reorganizes the input under headings has not done
-  the analysis the step asks for.
-- **Lists carry facts; prose carries what they mean.** A section that is only bullets
-  is a transcription. Give every section at least one paragraph of prose and put the
-  reasoning there.
-- **State what is still unknown.** Close the document with what the next stage needs
-  answered and why each one matters — market sizing, volumes, alternatives already
-  evaluated, the cost of the pain beyond the time it consumes. Omitting this makes a
-  document look finished when it is not.
-- **Where a template exists, its bracketed guidance is a checklist.** Cover every
-  item the sentence inside `[...]` asks for; if it asks for three things, write all
-  three. Fill in the table rows instead of leaving the example row behind. An FAQ
-  answer is at least two sentences — the answer and what it rests on.
-- **Where you have no evidence, write an intelligent default and say what you
-  assumed.** A blank or a leftover `[Answer]` is the worst outcome.
+Be concise, avoid duplication, and do not invent evidence.
 
-None of this is licence to pad. Do not say the same thing twice, and do not invent
-evidence you do not have.
+## Keep the conversation visible
 
-**Why this bar lives here and not in the workspace `CLAUDE.md`.** It is
-language-neutral — it says how deep to write, never which language to write in — so
-keeping it here means one copy instead of a Korean one and an English one that drift
-apart. The language-dependent half of the problem (a sense of "about the right
-length" is not a stable target when tokens cost differently per language) does live
-in the workspace `CLAUDE.md`, next to the language convention it belongs to.
-
-## Keep the conversation visible (this must reach the user's screen)
-
-- Never end a turn with tool calls alone. **Every turn must include
-  conversational text for the user** — before calling tools, say in a sentence
-  or two what you are doing and why; when ending the turn, summarize what you
-  did and what you are asking or expecting next. The chat bubble is filled from
-  that text. A turn with tool calls and no text renders as an empty bubble, so
-  it is forbidden.
-- On a turn that delivers questions, explain in one sentence why they are needed
-  before the form appears. Per-question background belongs in the file (above the
-  question's heading) — this line is about the round as a whole.
-- **On a question turn, "before" is literal.** The turn ends at the write, so
-  text emitted after it never reaches the screen (see "Question files ARE the
-  question form"). Everything you owe the user this turn — the welcome message on
-  the first turn, the Workspace Detection findings, what you just decided, what
-  the gate is waiting for — is said *before* you write the file.
-
-Write this conversational text in the language the workspace `CLAUDE.md`
-specifies — that is where the project's language is defined.
+- Include user-facing conversational text in every turn; never return tool activity alone.
+- On a question or prototype-handoff turn, say what was completed and what the user should do next before the turn-ending write.
+- Use the language specified by the workspace `CLAUDE.md`.

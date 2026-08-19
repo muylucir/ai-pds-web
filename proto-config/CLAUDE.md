@@ -1,281 +1,84 @@
 # Prototype build contract (shared config — mandatory)
 
-<!--
-WHY THIS FILE IS IN ENGLISH, and why that is not a language directive.
-
-This file lives in the build agent's shared CLAUDE_CONFIG_DIR ("user" level),
-so EVERY project reads it regardless of the language its user chose — it cannot
-carry a per-project language. discovery-config/CLAUDE.md, which sits in the
-same structural position for the Discovery agent, learned this the hard way on
-2026-08-04: an English project's chat ran in Korean because that whole file was
-Korean prose. **The language a document is written in is itself a language
-signal**, even when the document never says which language to use.
-
-So the rule here is the same: this file must be language-NEUTRAL, and for a
-document the model reads that means English. The per-project language reaches
-the build agent through proto/prompts.py (two complete language versions) and
-the workspace CLAUDE.md — those are the levels that can vary per project.
-
-Keep this file in English when editing it. backend/tests/test_agent_language.py
-pins the invariant for both shared config dirs.
--->
-
-Write non-ASCII text (Korean, etc.) in tool-call parameters (JSON) as literal
-UTF-8 — never as `\uXXXX` escapes. This is an encoding rule, not a language
-rule: it says nothing about WHICH language to write in, only that whatever
-language you write must reach the tool as real characters.
+Write non-ASCII text (Korean, etc.) in tool-call parameters (JSON) as literal UTF-8 — never as `\uXXXX` escapes. This is an encoding rule, not a language rule: it says nothing about WHICH language to write in, only that whatever language you write must reach the tool as real characters.
 
 Use the **shadcn-design** skill for the visual design of every prototype.
 
-## Processes and ports — do not kill Pathfinder itself (highest priority)
+## Where the work goes
 
-**You are running inside the very server that runs Pathfinder.** The backend and
-the frontend run as **the same user you do (`pathfinder`)**, so any signal you
-send reaches those processes with nothing in the way. This has already caused an
-incident (2026-08-01): a build agent started Playwright chromium for browser
-verification, and in doing so the process on port 3000 was SIGKILLed — that was
-the Pathfinder frontend, and workshop participants saw "the connection dropped"
-on their screens.
+Put the finished prototype under **`prototype/`** in the working directory, with a **README** explaining how to build and run it. Hosting serves that directory; work left anywhere else is not part of the prototype.
 
-What follows is not a preference. It is **forbidden**.
+## Processes and ports — enforced, not trusted
 
-- **Never touch ports 3000 and 8000.** 3000 is the Pathfinder frontend, 8000 the
-  backend. Do not bind them, do not probe them, and do not try to clean up
-  whatever holds them. The port a prototype gets is **chosen by hosting from the
-  4000–8000 range** (`_scan_port` in `host.py`) — that is not your decision.
-- **Never kill a process you did not start.** No `pkill`, `killall`,
-  `kill -9 $(lsof -ti:...)`, `fuser -k` and friends. Clean up only the processes
-  **you started yourself**.
-- **Never run browser automation (Playwright, Puppeteer, chrome-headless).** The
-  user checks the screen through the live preview in the prototypes tab. Do not
-  start a browser to take screenshots. That includes `npx playwright ...` and
-  `npm run test:e2e` — the repo's `playwright.config.ts` **targets port 3000**,
-  so running it reproduces the incident above exactly.
-- **Never end a turn with a dev or production server still running.** Verify the
-  build with `npm run build`. If you genuinely need a runtime check, follow the
-  discipline below.
+**You run inside the very server that runs AI-PDS Web**, as the same user (`pathfinder`), so a stray signal reaches the app itself. A browser verification once SIGKILLed the frontend mid-workshop.
 
-### If you really must start a server
+A PreToolUse hook therefore **rejects** these before they run. The refusal names what was caught; read it rather than retrying a variant.
 
-`npm run start`/`dev` **starts the real server as a child of npm.** So killing
-the job spec (`kill %1`) or npm's PID alone **orphans the actual listener, which
-goes on holding the port** — our own hosting code signals the process group for
-the same reason (`stop()` in `host.py`). Always do it this way:
+- Browser automation — Playwright, Puppeteer, headless Chrome/Chromium, `npm run test:e2e`. The user checks the screen through the live preview in the prototypes tab, so you never need to open a browser.
+- Dev or production servers — `npm run dev`, `npm run start`, `next dev/start`, and the same through `pnpm`/`yarn`/`bun`. Hosting starts the server itself.
+- Killing processes you did not start — `pkill`, `killall`, `fuser -k`, `kill $(lsof …)`.
+- Anything touching **ports 3000 and 8000** (the frontend and the backend). A prototype's port is assigned by hosting from the 4000–7999 range; it is not your decision.
 
-```bash
-# 1) A port outside 4000-8000, in its own process group
-setsid npm run start > /tmp/smoke.log 2>&1 &
-PGID=$!
-sleep 6
-curl -s http://localhost:9123/... || true      # verify
+**Verify the build with `npm run build`.** That is the whole runtime check you need, and it is not blocked.
 
-# 2) Clean up the whole group. Drop this line and the server survives
-kill -- -"$PGID" 2>/dev/null || true
-wait "$PGID" 2>/dev/null || true
-```
+## Bedrock calls
 
-Do not copy shapes like `kill %1 2>/dev/null`. That pattern really did leave
-servers behind, and it even produced `kill %12>/dev/null` (parsed as
-`kill %12`, which kills nothing). When you add a redirect, **keep a space
-between `%1` and `2>`**.
+Reach Bedrock through the **default credential chain** (the instance/execution role). Never hardcode an API key, and read the region from the environment.
 
-## Bedrock calls — do not send sampling parameters
+**Read the model ID from `process.env.BEDROCK_MODEL_ID`** (or your language's equivalent). Hosting injects the project's configured model under that name, so a different name — or a specific model ID baked in as the default — silently ignores the model the user chose. If you need a fallback when the variable is absent, surface that the setting is missing rather than quietly substituting one.
 
-When prototype code calls Bedrock Claude, **do not send `temperature`, `top_p`
-or `top_k`.** Claude Opus 4.7 and later models (Opus 4.7, 4.8, 5, Sonnet 5)
-removed these parameters, and sending them fails the whole request — this is the
-error as measured in this deployment's `ap-northeast-2`:
+### Do not send sampling parameters
+
+**Do not send `temperature`, `top_p` or `top_k`.** Claude Opus 4.7 and later (Opus 4.7, 4.8, 5, Sonnet 5) removed them, and sending one fails the whole request:
 
 ```
-ValidationException: The model returned the following errors:
-  `temperature` is deprecated for this model.
+ValidationException: `temperature` is deprecated for this model.
 ```
 
-Put **only `maxTokens`** in the Converse API's `inferenceConfig`:
+Put **only `maxTokens`** in the Converse API's `inferenceConfig`.
 
-```js
-const inferenceConfig = { maxTokens };   // no temperature/topP
-```
+**This applies to every surface that reaches Bedrock.** The Strands Agents SDK takes the same parameters on `new BedrockModel({ … })`, and its README's own example passes `temperature: 0.7` — copying that line breaks an agentic prototype on the first call. Pass `{ region, modelId, maxTokens }` and nothing else.
 
-**This applies to every surface that reaches Bedrock, not just Converse.** The
-Strands Agents SDK takes the same parameters on its model constructor, and its
-README's own example passes `temperature: 0.7` — copying that line is the
-fastest way to break an agentic prototype on the first call. Measured in this
-deployment's `ap-northeast-2` against `global.anthropic.claude-opus-5`:
+**Do not branch on the model ID to decide.** The default model changes through an environment variable, so any pattern that excludes particular models goes stale and the error returns. If you need determinism or variety, ask for it in the prompt.
 
-```js
-new BedrockModel({ region, modelId, maxTokens })                  // ✅ works
-new BedrockModel({ region, modelId, maxTokens, temperature: 0.7 }) // ❌ ModelError
-//   ModelError: The model returned the following errors:
-//     `temperature` is deprecated for this model.
-```
-
-**Do not branch on the model — just never send them.** Do not write a workaround
-that regex-matches the model ID to exclude particular models: the default model
-changes through an environment variable, and each time the regex misses the new
-model the same error returns (this happened once — a pattern matching only
-`opus-(4-8|5)` missed `sonnet-5`). If you need determinism or variety in the
-output, ask for it in the prompt.
-
-For the same reason, **do not send `budget_tokens` (extended thinking)** — it was
-removed in Opus 4.7 as well. When you need reasoning depth, use
-`thinking: {type: "adaptive"}` under `additionalModelRequestFields`.
-
-Exception: Sonnet 4.6 and earlier still accept `temperature`. Follow the rule
-anyway — the goal is code that works on every model.
+For the same reason, **do not send `budget_tokens` (extended thinking)** — also removed in Opus 4.7. When you need reasoning depth, use `thinking: {type: "adaptive"}` under `additionalModelRequestFields`.
 
 ## Agentic prototypes — the Strands Agents **TypeScript** SDK
 
-When the spec calls for an agent (a tool-calling loop, not a single completion),
-use **`@strands-agents/sdk`** — the TypeScript SDK — from a server-side route
-handler.
+When the spec calls for an agent (a tool-calling loop, not a single completion), use **`@strands-agents/sdk`**:
 
-**Why TypeScript and not the Python SDK.** Hosting runs the npm lifecycle and
-nothing else: `npm install` → `npm run build` → `npm run start`. There is no
-virtualenv step, no `pip`, no second process. A Python agent is therefore never
-started, and the prototype opens as a blank page with the build reported
-successful — the worst failure shape there is, because nothing errors. The
-upstream AI-PLC rules reach for the Python SDK — installed with a Python package
-manager and served by a Python web framework — because they assume a laptop where
-a human runs both processes by hand. That assumption does not hold here; the
-TypeScript SDK is the equivalent that does.
+- **Server-side only** — a route handler, never a client component. The model ID arrives as `BEDROCK_MODEL_ID` without a `NEXT_PUBLIC_` prefix precisely so it cannot reach the browser bundle.
+- **Node 20+**, which is what hosting runs.
+- **No credentials to configure.** `@aws-sdk/client-bedrock-runtime` is a direct dependency and picks up the instance role through the default chain.
+- **Install only what you need** — the SDK plus `@modelcontextprotocol/sdk`, `@opentelemetry/api` and `zod`. Its other peers are optional.
+- **A single completion needs no agent loop.** Call Converse directly with `@aws-sdk/client-bedrock-runtime` instead.
 
-```ts
-// app/api/chat/route.ts — server-side only
-import { Agent, BedrockModel, tool } from '@strands-agents/sdk';
-import { z } from 'zod';
+Why TypeScript: hosting runs the npm lifecycle and nothing else, so an agent in another language is never started and the prototype opens as a blank page with the build reported successful — a failure with no error anywhere. The upstream AI-PDS rules assume a laptop where a human runs two processes by hand; that assumption does not hold here.
 
-const model = new BedrockModel({
-  region: process.env.AWS_REGION,
-  modelId: process.env.BEDROCK_MODEL_ID,   // injected by hosting
-  maxTokens: 4096,                         // no temperature/topP/topK
-});
-
-const lookup = tool({
-  name: 'lookup_claim',
-  description: 'Look up a claim by id.',
-  inputSchema: z.object({ claimId: z.string() }),
-  callback: async ({ claimId }) => `Claim ${claimId}: under review`,
-});
-
-const agent = new Agent({ model, tools: [lookup], systemPrompt: '…' });
-
-for await (const event of agent.stream(userText)) {
-  // translate to the SSE contract the UI reads — see the shadcn-design skill's
-  // references/ai-streaming.md
-}
-```
-
-Requirements, all verified in this deployment (2026-08-17):
-
-- **Node 20+** (the SDK's own `engines`), which is what hosting runs.
-- **No credentials to configure.** `@aws-sdk/client-bedrock-runtime` is a direct
-  dependency and picks up the instance role through the default chain.
-- **Install cost is small**: `@strands-agents/sdk` plus its three required peers
-  (`@modelcontextprotocol/sdk`, `@opentelemetry/api`, `zod`) resolved in ~8s.
-  The other 19 peers are optional — do not add them unless the spec needs them.
-- **Server-side only.** The model ID arrives as `BEDROCK_MODEL_ID` without a
-  `NEXT_PUBLIC_` prefix precisely so it cannot reach the browser bundle. Never
-  construct an agent in a client component.
-
-If the prototype only needs one completion and no tools, call Bedrock's Converse
-API directly with `@aws-sdk/client-bedrock-runtime` — do not pull in the agent
-loop for a single request.
+For streaming an agent's events to the UI, follow the shadcn-design skill's `references/ai-streaming.md` — it carries the verified event mapping.
 
 ## Use Next.js version 15
 
-## Prototypes are served from a sub-path — `basePath` is required
+## Serving from a sub-path — `basePath` and `trailingSlash` are both required
 
-A prototype is served through a reverse proxy under
-`/proto/{project_id}/{slug}/`, not at the root. Hosting passes that prefix at
-build time through the `NEXT_PUBLIC_BASE_PATH` environment variable (the
-framework-neutral alias `PROTO_BASE_PATH` carries the same value).
+A prototype is served through a reverse proxy under `/proto/{project_id}/{slug}/`, not at the root. Hosting passes that prefix at build time as `NEXT_PUBLIC_BASE_PATH` (the framework-neutral alias `PROTO_BASE_PATH` carries the same value).
 
-**A Next.js prototype MUST include the following in `next.config.js` (or
-`.ts`/`.mjs`):**
+**A Next.js prototype MUST include this in `next.config.js` (or `.ts`/`.mjs`):**
 
 ```js
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
 const nextConfig = {
   basePath,
-  // Keep asset URLs prefixed. basePath alone already covers _next/ assets,
-  // but stating it makes the intent visible.
   assetPrefix: basePath || undefined,
-  // Normalize in the same direction as the proxy. See the "trailingSlash"
-  // section below — omit it and you get an infinite redirect loop
-  // (ERR_TOO_MANY_REDIRECTS).
   trailingSlash: true,
 };
 
 export default nextConfig;
 ```
 
-Leave `basePath` out and **the build bakes root-relative asset URLs** — Next.js
-inlines this value at build time, not at runtime, so it cannot be fixed after
-deployment and the screen breaks with `/_next/static/...` 404s. In an
-environment with no prefix (running locally on its own) the variable is absent,
-the value is `""`, and everything still works.
-
-**Never hardcode it.** Do not write the prefix into `next.config.js` as a
-string; read it from the environment as above — the value changes when the slug
-does.
-
-**When you write paths yourself:** `<Link href="/about">` and
-`router.push("/about")` get `basePath` prepended by Next.js, so leave them
-alone. References that bypass the framework — `fetch("/api/...")`,
-`<img src="/logo.png">` — are not handled for you, so compose them as
-`` `${basePath}/...` `` or use Next.js's `<Image>`.
-
-**If it is not Next.js** (Vite, CRA, …): take the same value from
-`PROTO_BASE_PATH`. The corresponding settings are `base` for Vite and
-`PUBLIC_URL` for CRA.
-
-## `trailingSlash: true` — omit it and you get an infinite redirect loop
-
-This is **as mandatory as `basePath`**. Miss it and the screen never opens at
-all:
-
-```
-This page isn't working
-... redirected you too many times.
-ERR_TOO_MANY_REDIRECTS
-```
-
-**The cause is two normalizations pointing in opposite directions.** The proxy
-and the prototype each try to restore the same URL to their own "correct" form,
-undoing each other's result:
-
-| Party | Rule |
-|---|---|
-| Pathfinder proxy | slash **absent → present** (`/proto/{pid}/{slug}` → `/proto/{pid}/{slug}/`) |
-| Next.js default (`trailingSlash: false`) | slash **present → absent** |
-
-The measured cycle (reproduced against the proxy code):
-
-```
-browser   /api/proto/p1/demo/
-  → prototype 308 → /api/proto/p1/demo      (Next strips the slash)
-browser   /api/proto/p1/demo
-  → proxy 307     → /api/proto/p1/demo/     (proxy adds the slash)
-  → repeat forever
-```
-
-**The proxy side cannot change.** It adds the slash because of relative asset
-references: without the slash, at `.../{slug}` the browser resolves
-`href="styles.css"` against `.../{pid}/` (the slug is gone) and every asset
-502s. With the slash, the document's base becomes `.../{slug}/` and relative
-references land inside the prototype.
-
-**So the prototype is the side that adapts.** With `trailingSlash: true`, Next
-normalizes in the same direction as the proxy (the slash-present form) and no
-cycle can form.
-
-Like `basePath`, this setting is baked in at build time, so a prototype that
-missed it **is only fixed by rebuilding** — it cannot be patched after
-deployment.
-
-**If it is not Next.js:** find the equivalent setting and align it to the
-slash-present form. Static servers (`serve`, `http-server`, …) usually treat
-directory URLs as-is and need no configuration, but if an SPA router normalizes
-URLs itself, configure it **not to strip** the trailing slash.
+- **Read it from the environment; never hardcode the prefix.** The value changes when the slug does, and with no prefix it is `""` and everything still works.
+- **`trailingSlash: true` is as mandatory as `basePath`.** The proxy normalizes toward the slash-present form and cannot do otherwise — without the slash, a relative `href="styles.css"` resolves above the slug and every asset 502s. A prototype that normalizes the opposite way produces `ERR_TOO_MANY_REDIRECTS` and the screen never opens.
+- **Both are baked in at build time**, so a prototype that missed either is only fixed by rebuilding — it cannot be patched after deployment.
+- **When you write paths yourself:** `<Link href="/about">` and `router.push("/about")` get `basePath` prepended for you. References that bypass the framework — `fetch("/api/…")`, `<img src="/logo.png">` — do not, so compose them as `` `${basePath}/…` `` or use Next.js's `<Image>`.
+- **If it is not Next.js** (Vite, CRA, …): take the same value from `PROTO_BASE_PATH` — `base` for Vite, `PUBLIC_URL` for CRA — and align URL normalization to the slash-present form.

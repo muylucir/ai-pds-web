@@ -384,3 +384,110 @@ async def test_a_queued_completion_is_relayed_before_the_terminal_done(tmp_path)
     assert "build_complete" in kinds
     assert kinds.index("build_complete") < kinds.index("done")
     assert kinds[-1] == "done"
+
+
+# ---- Bash 게이트 (PreToolUse) ----
+#
+# 2026-08-01: 빌드 에이전트가 Playwright chromium을 띄웠고 그 검증이 포트 3000을
+# 겨냥해 Pathfinder 프론트엔드가 SIGKILL로 죽었다. 그때의 완화책은 skills 좁히기와
+# CLAUDE.md 산문뿐이었고, builder.py의 skills 주석이 스스로 적어 뒀듯 스킬 목록은
+# **컨텍스트 필터이지 샌드박스가 아니다** — Bash는 그대로 열려 있었다.
+
+def test_the_bash_gate_is_wired_as_a_pretooluse_hook(tmp_path, monkeypatch):
+    """빌드는 bypassPermissions로 돌아 can_use_tool이 Bash에 도달하지 않는다
+    (SDK의 _get_can_use_tool_shadowed_warning: "To gate every tool call, use a
+    PreToolUse hook instead"). 실효 게이트는 PreToolUse뿐이다."""
+    from pathfinder.proto.builder import _default_client_factory
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, options=None):
+            captured["options"] = options
+
+    import claude_agent_sdk
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClient)
+
+    b = PrototypeBuilder(
+        workspace=str(tmp_path), config_dir=str(tmp_path / "config"),
+        session_id="11111111-2222-3333-4444-555555555555", resume=False)
+    _default_client_factory(b)()
+
+    matchers = captured["options"].hooks["PreToolUse"]
+    assert any("Bash" in m.matcher for m in matchers), (
+        "PreToolUse가 Bash를 걸지 않는다 — 산문만 남고 강제가 없다")
+
+
+def test_the_bash_gate_never_matches_askuserquestion(tmp_path, monkeypatch):
+    """matcher에 AskUserQuestion을 넣으면 질문 왕복 전체가 죽는다.
+
+    PreToolUse가 *allow*를 돌려주면 can_use_tool을 건너뛰는데(SDK types.py),
+    질문을 SSE 이벤트로 바꾸는 가로채기가 그 콜백에 있다. claude_driver.py가
+    같은 함정을 주석으로 남겨 뒀다.
+    """
+    from pathfinder.proto.builder import _default_client_factory
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, options=None):
+            captured["options"] = options
+
+    import claude_agent_sdk
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClient)
+
+    b = PrototypeBuilder(
+        workspace=str(tmp_path), config_dir=str(tmp_path / "config"),
+        session_id="11111111-2222-3333-4444-555555555555", resume=False)
+    _default_client_factory(b)()
+
+    for matcher in captured["options"].hooks["PreToolUse"]:
+        assert "AskUserQuestion" not in matcher.matcher
+
+
+async def test_the_gate_denies_browser_automation(tmp_path):
+    b = _builder(tmp_path, None)
+    out = await b._on_pre_tool_use(
+        {"tool_name": "Bash", "tool_input": {"command": "npx playwright test"}},
+        "t1", None)
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    assert "playwright" in decision["permissionDecisionReason"]
+
+
+async def test_the_gate_denies_a_server_that_would_hold_a_port(tmp_path):
+    b = _builder(tmp_path, None)
+    out = await b._on_pre_tool_use(
+        {"tool_name": "Bash", "tool_input": {"command": "npm run start"}},
+        "t1", None)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+async def test_the_gate_passes_the_build_with_an_empty_dict(tmp_path):
+    """**통과는 빈 dict다.** "allow"를 돌려주면 can_use_tool까지 건너뛰어
+    AskUserQuestion 가로채기가 죽는다 — claude_driver._on_pre_tool_use와 같은
+    규율이다."""
+    b = _builder(tmp_path, None)
+    out = await b._on_pre_tool_use(
+        {"tool_name": "Bash", "tool_input": {"command": "npm run build"}},
+        "t1", None)
+    assert out == {}
+
+
+async def test_the_gate_ignores_tools_it_does_not_judge(tmp_path):
+    """matcher와 이 분기가 어긋나도 조용히 통과해야 한다 — 알 수 없는 도구를
+    막으면 빌드가 멈춘다."""
+    b = _builder(tmp_path, None)
+    out = await b._on_pre_tool_use(
+        {"tool_name": "Write", "tool_input": {"file_path": "app/page.tsx"}},
+        "t1", None)
+    assert out == {}
+
+
+async def test_the_gate_refuses_in_the_project_language(tmp_path):
+    b = _builder(tmp_path, None, language="en")
+    out = await b._on_pre_tool_use(
+        {"tool_name": "Bash", "tool_input": {"command": "pkill -f node"}},
+        "t1", None)
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "Refused" in reason

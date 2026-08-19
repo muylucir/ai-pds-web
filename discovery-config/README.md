@@ -6,10 +6,14 @@ Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR` (`PATHFINDER_DISCOVERY_CONFIG_
 
 `proto-config/CLAUDE.md`는 "프로토타입 디자인은 shadcn-design 스킬을 사용"을
 지시한다. 이 지시가 Discovery에 들어가면 문서 작성 중 무관한 UI 스킬을 로드한다.
-게다가 프로토타입 빌더는 `skills="all"`이므로 **config dir의 모든 스킬이
-활성화**된다 — 공유하면 Discovery가 shadcn-design을 켠 채로 돈다. 역방향도 같다:
+빌더는 그 스킬을 이름으로 켜므로(`builder.py`의 `skills=["shadcn-design"]`)
+config dir을 공유하면 Discovery도 같은 스킬을 켠 채로 돌게 된다. 역방향도 같다:
 여기의 `submit_document` 규약과 질문 파일·상태 파일 규약이 빌더에 들어가면
 존재하지 않는 도구를 부르거나 빌더에 없는 파일을 찾으려 한다.
+
+Discovery는 `skills`를 아예 주지 않는다(아래 "skills를 두지 않는다" 참조).
+빌더가 이름 목록을 쓰는 이유는 `proto-config/README.md`에 있다 — 예전의
+`skills="all"`이 CLI 번들 스킬까지 켜서 2026-08-01에 프론트엔드를 죽였다.
 
 미지정 시 호스트 유저의 `~/.claude`(개인 skills/agents/CLAUDE.md)가 섞여 워크숍
 결과가 호스트 설정에 따라 달라진다 — 그래서 격리된 값을 반드시 준다.
