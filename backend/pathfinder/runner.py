@@ -53,6 +53,11 @@ class AgentRunner:
         self._local_root = Path(local_root)
         self._session = session
         self._turn_active = False
+        #: 슬롯을 쥔 턴의 신원. `reattach`가 선점할 수 있으므로 플래그만으로는
+        #: 부족하다 — 선점된 턴의 finally가 나중에 닫히며 플래그를 내려놓으면
+        #: 재접속이 스트리밍하는 동안 새 턴이 끼어든다. 드라이버가 같은 이유로
+        #: 같은 규율을 갖는다(ClaudeDriver._acquire_turn/_release_turn).
+        self._turn_token: object | None = None
         self._pending_interrupt_id: str | None = None
         self._remote_etags: dict[str, str | None] | None = None
         self._synced_hashes: dict[str, str] = {}
@@ -225,11 +230,30 @@ class AgentRunner:
 
     # ---- turn relay ----
 
+    def _claim_turn(self, *, preempt: bool = False) -> object | None:
+        """턴 슬롯을 쥔다. 이미 쥐어져 있으면 None(`preempt`면 빼앗는다).
+
+        토큰을 발급하는 이유는 해제를 홀더에게만 허용하기 위해서다 —
+        `_finish_turn`이 토큰을 확인하므로, 선점된 턴이 뒤늦게 닫히며 해제를
+        시도해도 새 홀더의 슬롯은 풀리지 않는다.
+        """
+        if self._turn_active and not preempt:
+            return None
+        self._turn_active = True
+        self._turn_token = object()
+        return self._turn_token
+
+    def _finish_turn(self, token: object | None) -> None:
+        """이 토큰이 아직 홀더면 슬롯을 놓는다. 아니면 no-op(선점당한 경우)."""
+        if self._turn_token is token:
+            self._turn_active = False
+            self._turn_token = None
+
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
-        if self._turn_active:
+        token = self._claim_turn()
+        if token is None:
             yield AgentEvent(kind="error", text="turn already in progress")
             return
-        self._turn_active = True
         synced = False
         turn_started = time.perf_counter()
         first_event = False
@@ -262,7 +286,7 @@ class AgentRunner:
                     synced = True
                 yield event
         finally:
-            self._turn_active = False
+            self._finish_turn(token)
             # Backstop for every path that never reached the terminal event:
             # an SSE client disconnecting, a proxy timeout, the user navigating
             # away (GeneratorExit here), or the driver raising mid-turn. Without
@@ -288,15 +312,27 @@ class AgentRunner:
         드라이버가 `run_live`를 갖고 있지 않으면(Strands 시절 계약, 테스트 더블)
         `done` 하나로 끝낸다 — 재접속은 편의이고, 없다는 이유로 화면을 깨지
         않는다. 호출부는 그때 `GET /history`로 떨어진다.
+
+        **진행 중이라고 거부하지 않는다.** 예전에는 다른 세 메서드에서 복사한
+        `if self._turn_active:` 가드가 맨 앞에 있었는데, 그 플래그의 의미는
+        "소비자가 있다"이고(`ClaudeDriver.has_live_turn`의 docstring이 그 의미와
+        "재접속한 브라우저가 튕기지 않아야 한다"를 함께 적어 뒀다) 그것은 재접속이
+        **견뎌야 하는** 조건이다. 나머지 세 메서드에서는 맞는 가드다 — 그쪽은 턴을
+        시작한다.
+
+        실측(2026-08-19, 배포 인스턴스): 그 가드 때문에 사용자 화면에 에이전트
+        발화로 `turn already in progress`가 떴다. 계측 결과 이 가드가 가장 먼저
+        발화하고 드라이버의 `has_live_turn()`은 조회조차 되지 않았다.
+
+        **토큰으로 슬롯을 쥔다.** 선점된 `send_message`의 finally가 나중에 닫히며
+        플래그를 내려놓으면, 재접속이 스트리밍하는 동안 새 턴이 끼어든다. 드라이버가
+        같은 이유로 같은 규율을 갖는다(`_acquire_turn`/`_release_turn`).
         """
-        if self._turn_active:
-            yield AgentEvent(kind="error", text="turn already in progress")
-            return
         run_live = getattr(self._driver, "run_live", None)
         if run_live is None:
             yield AgentEvent(kind="done")
             return
-        self._turn_active = True
+        token = self._claim_turn(preempt=True)
         synced = False
         turn_started = time.perf_counter()
         try:
@@ -312,7 +348,7 @@ class AgentRunner:
                     synced = True
                 yield event
         finally:
-            self._turn_active = False
+            self._finish_turn(token)
             if not synced:
                 await self._sync_abandoned_turn()
             log_performance(
@@ -321,13 +357,13 @@ class AgentRunner:
                 route="reattach", synced=str(synced).lower())
 
     async def send_answers(self, answers: dict[str, str]) -> AsyncIterator[AgentEvent]:
-        if self._turn_active:
-            yield AgentEvent(kind="error", text="turn already in progress")
-            return
         if self._pending_interrupt_id is None:
             yield AgentEvent(kind="error", text="no pending questions")
             return
-        self._turn_active = True
+        token = self._claim_turn()
+        if token is None:
+            yield AgentEvent(kind="error", text="turn already in progress")
+            return
         synced = False
         turn_started = time.perf_counter()
         first_event = False
@@ -357,7 +393,7 @@ class AgentRunner:
                     synced = True
                 yield event
         finally:
-            self._turn_active = False
+            self._finish_turn(token)
             if not synced:
                 await self._sync_abandoned_turn()  # see send_message's note
             log_performance(

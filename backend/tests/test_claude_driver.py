@@ -1830,3 +1830,97 @@ async def test_a_live_turn_with_no_consumer_can_still_be_interrupted(tmp_path):
     from pathfinder.agent.claude_driver import INTERRUPTED_MARKER
     assert any(e.kind == "status" and e.text == INTERRUPTED_MARKER
                for e in d._queue), "소비자가 없으면 끊지 못했다"
+
+
+@pytest.mark.asyncio
+async def test_reattaching_is_not_refused_while_the_stale_consumer_still_holds(tmp_path):
+    """**절전된 클라이언트는 FIN을 보내지 않는다** — 서버의 제너레이터가 살아 있다.
+
+    위 `test_reattaching_relays_what_was_buffered_while_away`는 재접속 전에
+    `await agen.aclose()`를 한다. 그 한 줄이 `send_message`의 finally를 돌려
+    양쪽 `_turn_active`를 내려놓는 것, 즉 **"서버가 끊김을 이미 알아챘다"**는
+    상태를 만든다. 프로덕션에는 그 한 줄이 없다: 정지된 머신은 FIN을 보내지
+    않고 CloudFront는 오리진 연결을 쥐고 있으므로, 브라우저가 깨어나
+    `EventSource.onerror`로 즉시 재접속할 때 서버는 아직 소비자가 있다고 믿는다.
+
+    실측(2026-08-19, 배포 인스턴스): 사용자 화면에 에이전트 발화로
+    `turn already in progress`가 떴다. 계측 결과 `runner.reattach()`의 게이트가
+    가장 먼저 발화하고 `has_live_turn()`은 조회조차 되지 않았다.
+
+    **정책: 방금 온 요청이 이긴다.** 사람은 한 번에 한 화면만 보므로 새 연결이
+    진짜 사용자다. 그래서 재접속은 슬롯을 **선점**한다.
+
+    붙을 턴이 이미 끝났으면 `done`이어야 한다(에러가 아니다) — 프론트가 그것으로
+    `GET /history` 복원을 판단한다. 그래서 단정은 "error가 아니다"다: 어느 쪽이든
+    정상 경로이고, 거부만이 결함이다.
+    """
+    d, runner, _ = _runner(tmp_path, {"questions": True,
+                                      "preface_texts": ["문장 1", "문장 2"]})
+    agen = runner.send_message("hi").__aiter__()
+    async for _ in agen:
+        break                      # 첫 프레임 직후 절전 — aclose 없음
+    await _reconnect_gap()
+    assert runner._turn_active, "전제 확인 — 서버는 아직 소비자가 있다고 믿는다"
+
+    events = [ev async for ev in runner.reattach()]
+
+    assert [e.kind for e in events] != ["error"], (
+        f"재접속이 거부됐다: {[(e.kind, e.text) for e in events]}")
+    await agen.aclose()
+
+
+@pytest.mark.asyncio
+async def test_reattaching_preempts_the_slot_so_the_old_holder_cannot_release_it(tmp_path):
+    """선점은 토큰 교체로 이뤄진다 — 옛 홀더의 `_release_turn`이 no-op이 된다.
+
+    `_release_turn`이 이미 토큰 가드다("a rejected caller cannot release the slot
+    the live turn is holding"). 선점이 새 토큰을 발급하므로, 나중에 옛
+    제너레이터가 닫히며 자기 토큰으로 해제를 시도해도 재접속이 쥔 슬롯은 풀리지
+    않는다. 이 불변식이 없으면 재접속이 스트리밍하는 동안 새 `send_message`가
+    끼어들어 같은 CLI 세션에 `query()`를 겹쳐 넣는다.
+    """
+    d, _, _ = _driver(tmp_path, {"text": ["ok"]})
+    stale = d._acquire_turn()
+    assert stale is not None
+
+    fresh = d._acquire_turn(preempt=True)
+
+    assert fresh is not None and fresh is not stale
+    d._release_turn(stale)                    # 옛 홀더가 뒤늦게 닫힌다
+    assert d._turn_active, "옛 토큰이 재접속의 슬롯을 풀었다"
+    d._release_turn(fresh)
+    assert not d._turn_active
+
+
+@pytest.mark.asyncio
+async def test_a_preempted_consumer_stops_relaying(tmp_path):
+    """선점은 **실제 중단**이어야 한다 — 토큰만 바꾸고 옛 루프를 두면 부족하다.
+
+    옛 소비자의 제너레이터는 `yield`에 멈춰 있을 뿐 죽지 않았다. 클라이언트의
+    TCP가 되살아나 다시 읽으면 두 소비자가 같은 `outbox`를 나눠 읽고, 그것이
+    옛 게이트의 주석이 경고한 바로 그 손실이다("두 곳으로 흘리면 한쪽이
+    메시지를 잃는다 — 리더의 outbox는 소비자 하나를 전제한다").
+
+    "방금 온 요청이 이긴다"가 참이려면 옛 쪽이 조용히 끝나야 한다.
+    """
+    d, runner, _ = _runner(tmp_path, {"questions": True,
+                                      "preface_texts": ["문장 1", "문장 2"]})
+    agen = runner.send_message("hi").__aiter__()
+    async for _ in agen:
+        break
+    await _reconnect_gap()
+
+    # 재접속이 슬롯을 선점한다.
+    live = runner.reattach().__aiter__()
+    async for _ in live:
+        break
+
+    # 옛 소비자가 다시 읽으려 하면 프레임을 더 받지 못하고 끝난다.
+    leftover = []
+    try:
+        async for ev in agen:
+            leftover.append((ev.kind, ev.text))
+    except StopAsyncIteration:
+        pass
+    assert leftover == [], f"선점된 소비자가 계속 흘렸다: {leftover}"
+    await live.aclose()

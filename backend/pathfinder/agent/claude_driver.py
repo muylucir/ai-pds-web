@@ -1492,6 +1492,23 @@ class ClaudeDriver:
         """
         asked = False
         ended = False
+        # 이 pump를 시작한 홀더의 신원. 재접속이 슬롯을 선점하면
+        # (`_acquire_turn(preempt=True)`) 이 값은 더 이상 홀더가 아니고, 아래
+        # 검사가 그것을 **실제 중단**으로 옮긴다.
+        #
+        # 토큰만 바꾸고 이 루프를 두면 부족하다: 옛 소비자의 제너레이터는 `yield`에
+        # 멈춰 있을 뿐 죽지 않았으므로, 클라이언트의 TCP가 되살아나 다시 읽으면 두
+        # 소비자가 같은 `outbox`를 나눠 읽는다. 실측(테스트): 선점 후 옛 소비자가
+        # `문장 2`·`questions`·`done`을 가져가 재접속한 화면에서 사라졌다.
+        #
+        # **검사는 `yield` 앞이다.** 위 소유권 규칙("항목은 소비자가 받은 뒤에만
+        # 자기 자리를 떠난다")이 그대로 유지되어야 하므로, 여기서 멈추면 남은
+        # 항목은 pop되지 않고 `outbox`/`_queue`에 소유된 채 남아 다음 pump가
+        # relay한다 — 즉 선점은 프레임을 버리지 않고 **넘긴다.**
+        pump_token = self._turn_token
+
+        def owns_turn() -> bool:
+            return self._turn_token is pump_token
 
         def translate_into_outbox() -> None:
             """Move messages inbox -> outbox, translating. Never yields.
@@ -1519,6 +1536,8 @@ class ClaudeDriver:
             nonlocal asked
             for queue in (reader.outbox, self._queue):
                 while queue:
+                    if not owns_turn():
+                        return          # 선점됨 — 남은 항목은 소유된 채 넘긴다
                     ev = queue[0]
                     yield ev
                     # Reached only if the consumer came back for the next item,
@@ -1528,6 +1547,8 @@ class ClaudeDriver:
                     asked = asked or ev.kind == "questions"
 
         while True:
+            if not owns_turn():
+                return                  # 선점됨 — 위 pump_token 주석 참조
             # The only cancellable wait in this function, and it waits on an
             # Event -- which carries no payload, so a cancellation here cannot
             # lose anything.
@@ -1624,11 +1645,30 @@ class ClaudeDriver:
     # rejected by ours with "turn already in progress" -- the user's retry
     # bounced off a turn that no longer existed.
 
-    def _acquire_turn(self) -> object | None:
+    def _acquire_turn(self, *, preempt: bool = False) -> object | None:
         """Claim the turn slot; None if one is already running. The token
         identifies THIS turn so a rejected caller cannot release the slot the
-        live turn is holding."""
-        if self._turn_active:
+        live turn is holding.
+
+        `preempt=True` takes the slot regardless and **never returns None**. Only
+        the reattach path uses it, and the policy it implements is "the request
+        that just arrived wins": a person watches one screen at a time, so a new
+        connection is the real user and whatever held the slot is presumed
+        stale.
+
+        This is what makes reattach possible at all. The flag says "a consumer
+        exists" (see `has_live_turn`), and a suspended laptop never sends a FIN
+        -- so the generator of the consumer that went away is still alive at its
+        `yield`, still holding the slot, exactly when reattach is needed. Before
+        preemption the reattach request was refused with "turn already in
+        progress" (measured on the deployed instance 2026-08-19, where that text
+        reached the user as agent speech).
+
+        Issuing a NEW token is the whole eviction mechanism: `_release_turn` is
+        token-guarded, so when the stale holder finally closes, its release is a
+        no-op and cannot free the slot underneath the reattached consumer.
+        """
+        if self._turn_active and not preempt:
             return None
         self._turn_active = True
         self._turn_token = object()
@@ -1916,12 +1956,20 @@ class ClaudeDriver:
         돌아왔고 턴이 그동안 끝난 것이 정상 경로이며, 그때 화면은
         `GET /history`로 복원된다.
         """
-        token = self._acquire_turn()
-        if token is None:
-            # 다른 소비자가 이미 그 턴을 읽고 있다(탭 두 개). 두 곳으로 흘리면
-            # 한쪽이 메시지를 잃는다 — 리더의 outbox는 소비자 하나를 전제한다.
-            yield AgentEvent(kind="error", text="turn already in progress")
-            return
+        # **선점한다** — 이 경로는 거부하지 않는다.
+        #
+        # 예전에는 `_acquire_turn()`으로 잡고 실패하면 "turn already in
+        # progress"를 냈고, 근거는 "탭 두 개가 같은 outbox를 읽으면 한쪽이
+        # 메시지를 잃는다"였다. 그 근거는 맞지만 **이 게이트가 막는 것의 대부분은
+        # 두 번째 탭이 아니라 죽은 첫 번째 탭이다**: 절전된 클라이언트는 FIN을
+        # 보내지 않으므로 떠난 소비자의 제너레이터가 슬롯을 쥔 채 살아 있고,
+        # 그것이 정확히 재접속이 필요한 순간이다. 실측(2026-08-19): 거부 문구가
+        # 사용자 화면에 에이전트 발화로 떴다.
+        #
+        # 정책은 "방금 온 요청이 이긴다"다. 사람은 한 번에 한 화면만 보므로 새
+        # 연결이 진짜 사용자다. 옛 소비자는 새 토큰 발급으로 축출된다(아래
+        # `_owns_turn` 검사가 그것을 실제 중단으로 옮긴다).
+        token = self._acquire_turn(preempt=True)
         try:
             if not self.has_live_turn():
                 yield AgentEvent(kind="done")
