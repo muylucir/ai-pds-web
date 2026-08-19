@@ -79,8 +79,9 @@ def _make_claude_driver(scripted: dict, tmp_path_factory=None):
     core = Path(rules) / "aws-aiplc-rules"
     core.mkdir(parents=True)
     (core / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
-    # 언어 지시는 이 픽스처에 없다 — `rules_dir`가 아니라 패키지
-    # (pathfinder/agent/language/)에서 오므로 최소 레이아웃의 일부가 아니다.
+    # 언어 지시는 이 픽스처에 없다 — `rules_dir`가 아니라 코드
+    # (agent/workspace_rules.LANGUAGE_DIRECTIVES)에서 오므로 최소 레이아웃의
+    # 일부가 아니다.
 
     s3 = FakeS3Store()
     driver = ClaudeDriver(workspace=ws, rules_dir=rules,

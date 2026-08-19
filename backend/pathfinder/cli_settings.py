@@ -12,8 +12,9 @@
 # 갈수록 얇아진다. 한국어는 같은 내용에 토큰을 1.66배 쓰므로 그 지점에 40%
 # 일찍 도달한다.
 #
-# 지배 원인은 이것이 아니라 분량 기준의 부재였고(pathfinder/agent/language/*.md의
-# 깊이 기준), 여기는 **증폭기**를 다룬다. 둘을 같이 고쳐야 후반 문서가 회복된다.
+# 지배 원인은 이것이 아니라 분량 기준의 부재였고(discovery-config/CLAUDE.md의 깊이
+# 기준과 agent/workspace_rules.LANGUAGE_DIRECTIVES의 분량 조항), 여기는
+# **증폭기**를 다룬다. 둘을 같이 고쳐야 후반 문서가 회복된다.
 from __future__ import annotations
 
 import logging

@@ -11,23 +11,30 @@ from pathfinder.agent.workspace_rules import place_rules
 
 
 #: 실제 언어 지시의 첫 헤딩. 픽스처 스텁(옛 `KO-DIRECTIVE`/`EN-DIRECTIVE`)을 쓰지
-#: 않는 이유: 지시가 `rule/aiplc-rules/` 밖(`pathfinder/agent/language/`)으로
-#: 옮겨졌고, 픽스처가 그것을 흉내내려면 패키지 경로를 monkeypatch해야 한다. 실물을
+#: 않는 이유: 지시가 `rule/aiplc-rules/` 밖(이제 코드 상수)으로 옮겨졌고,
+#: 픽스처가 그것을 흉내내려면 모듈 속성을 monkeypatch해야 한다. 실물을
 #: 그대로 쓰면 픽스처와 실물의 드리프트도 함께 사라진다 — 그 드리프트가
 #: `test_works_against_the_real_repo_rules`가 존재하는 이유다.
 _KO_MARK = "# 언어 규약"
 _EN_MARK = "# Language convention"
 
-#: 언어 지시가 사는 곳. 패키지 안이므로 **항상 존재한다** — 아래 불변식 검사들이
-#: "없으면 skip"으로 조용히 물러나지 않는 이유다. `rule/aiplc-rules/` 아래에
-#: 있을 때는 리포 체크아웃에 따라 없을 수 있어 skip이 정당했지만, 그 skip이
-#: 이동 후에 검사를 사라지게 만들 뻔했다.
-_LANG_DIR = (Path(__file__).resolve().parents[1]
-             / "pathfinder" / "agent" / "language")
-
 
 def _directive(language: str) -> str:
-    return (_LANG_DIR / f"{language}.md").read_text(encoding="utf-8")
+    """언어 지시는 **코드**다(`workspace_rules.LANGUAGE_DIRECTIVES`).
+
+    2026-08-19에 `pathfinder/agent/language/{ko,en}.md`에서 옮겼다. 파일이었기
+    때문에만 존재했던 실패 경로가 사라진다 — 문자열 리터럴은 잃어버릴 수 없으므로
+    "지시가 없는 채로 조립한다"가 구조적으로 불가능해진다(옛
+    `test_raises_when_the_language_directive_is_missing`은 그 상태를 만들려고
+    탐색 경로를 monkeypatch해야 했고, docstring이 스스로 "설치가 망가진 경우에만
+    실현된다"고 적어 뒀다).
+
+    그리고 두 판이 한 파일에 나란히 놓인다. 파일 두 개로 떨어져 있던 동안 갈라져
+    있었다 — ko 3,389자 / en 1,310자였고, en은 "번역할 것이 없다"로 끝내
+    양식 처리 판단을 아예 담지 않았다.
+    """
+    from pathfinder.agent.workspace_rules import LANGUAGE_DIRECTIVES
+    return LANGUAGE_DIRECTIVES[language]
 
 
 def _rules(tmp_path: Path) -> Path:
@@ -35,8 +42,8 @@ def _rules(tmp_path: Path) -> Path:
 
     **언어 지시는 여기 없다.** 업스트림 `aiplc-rules/`에는 `.gitkeep`과
     `aws-aiplc-rules/`·`aws-aiplc-rule-details/`뿐이고(실측), 우리 지시는
-    `pathfinder/agent/language/`에 산다. 픽스처가 그 사실을 반영해야 "룰셋을 통째로
-    갈아 끼운다"는 조작이 테스트에서도 안전하게 보인다.
+    `agent/workspace_rules.LANGUAGE_DIRECTIVES`에 산다. 픽스처가 그 사실을
+    반영해야 "룰셋을 통째로 갈아 끼운다"는 조작이 테스트에서도 안전하게 보인다.
     """
     rules = tmp_path / "rules"
     (rules / "aws-aiplc-rules").mkdir(parents=True)
@@ -107,22 +114,6 @@ def test_switching_language_rewrites_claude_md(tmp_path):
     assert _EN_MARK in (ws / "CLAUDE.md").read_text(encoding="utf-8")
 
 
-def test_raises_when_the_language_directive_is_missing(tmp_path, monkeypatch):
-    # core-workflow가 없을 때와 같은 규율이다: 룰 없이 조용히 진행하면
-    # 에이전트가 언어를 모르는 채로 돌고, 그건 절반만 번역된 문서로 나타나
-    # 원인 추적이 어렵다.
-    #
-    # 지시가 패키지 안에 있으므로 파일을 지울 수 없다 — 대신 탐색 경로를 빈
-    # 디렉터리로 돌린다. 이 경로는 설치가 망가진 경우에만 실현되지만, 그때 조용히
-    # 진행하지 않는다는 것이 검사할 값이다.
-    import pathfinder.agent.workspace_rules as wr
-    monkeypatch.setattr(wr, "_LANGUAGE_DIR", tmp_path / "no-language")
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    with pytest.raises(FileNotFoundError):
-        place_rules(str(ws), str(_rules(tmp_path)), language="ko")
-
-
 def test_the_language_directives_live_outside_the_upstream_ruleset():
     """**2026-08-18에 옮긴 자리를 고정한다.**
 
@@ -134,13 +125,52 @@ def test_the_language_directives_live_outside_the_upstream_ruleset():
     고쳐야 할 때 손댈 수 없는 자리이기도 했다.
 
     되돌아가는 것을 막는 것이 이 검사다: 룰셋 트리에 `language/`가 다시 생기면
-    실패한다.
+    실패한다. Rachna의 Kiro 리포를 submodule로 참조하게 되면 그 트리는 우리가
+    쓸 수 없는 자리가 되므로, 이 불변식이 그 이행의 선행 조건이기도 하다.
     """
     repo = Path(__file__).resolve().parents[2]
     assert not (repo / "rule" / "aiplc-rules" / "language").exists()
+
+
+def test_the_language_directive_is_code_not_a_file():
+    """2026-08-19: 파일 두 개를 상수 두 개로 바꿨다.
+
+    프로덕션 독자가 `place_rules` 하나뿐이었고, 파일이라는 사실이 사 온 것은
+    "없을 수 있다"는 상태와 그것을 지키는 raise 하나였다. 상수는 그 상태를
+    가질 수 없다.
+
+    그리고 모델이 읽는 텍스트를 언어별 두 벌로 코드가 소유하는 것이 이 리포의
+    기존 규약이다 — `agent/prompts.py`, `proto/prompts.py`, `survey/builder.py`,
+    `survey/report_labels.py`가 모두 그 형태이고 `discovery_guard.py` 헤더가
+    그것을 규약으로 적어 뒀다. `language/*.md`만 예외였다.
+    """
+    from pathfinder.agent.workspace_rules import LANGUAGE_DIRECTIVES
+    assert set(LANGUAGE_DIRECTIVES) == {"ko", "en"}
+    assert all(v.strip() for v in LANGUAGE_DIRECTIVES.values())
+
+    repo = Path(__file__).resolve().parents[2]
+    assert not (repo / "backend" / "pathfinder" / "agent" / "language").exists(), (
+        "언어 지시가 다시 파일이 됐다 — 상수여야 '없는 상태'가 불가능하다")
+
+
+def test_both_directives_reconcile_the_template_critical():
+    """양식의 CRITICAL을 **양쪽 판이 모두** 화해시켜야 한다.
+
+    실패 메커니즘(7f33652)은 "양식 바로 앞의 `**CRITICAL**: ... exactly as
+    defined ... Do NOT deviate`가 더 가까워서 먼 언어 지시를 이겼다"였다. 그
+    CRITICAL을 이름으로 부르지 않으면 에이전트가 `envision.md`를 읽는 순간 우리
+    규칙과 연결할 고리가 없다.
+
+    **en 판에도 필요하다.** 옛 en.md는 "There is nothing to translate"로 끝내
+    이 판단을 아예 담지 않았다 — 영어 프로젝트에서도 "구조는 유지하고 사용자
+    노출 문구는 이 언어로"라는 결정은 필요하다(양식에 다른 언어의 리터럴이
+    섞여 들어올 수 있고, 구조 마커와 번역 대상의 구분은 언어와 무관하다).
+    """
     for language in ("ko", "en"):
-        assert (repo / "backend" / "pathfinder" / "agent" / "language"
-                / f"{language}.md").is_file()
+        text = _directive(language)
+        assert "CRITICAL" in text, f"{language}: 양식의 CRITICAL을 지목하지 않는다"
+        needle = "구조" if language == "ko" else "structure"
+        assert needle in text, f"{language}: 구조와 언어를 구분하지 않는다"
 
 
 def test_copies_rule_details_under_the_name_the_rules_expect(tmp_path):

@@ -99,7 +99,7 @@ async def test_places_the_rules_before_the_first_turn(tmp_path):
     d, ws, _ = _driver(tmp_path, {"text": ["ok"]})
     [ev async for ev in d.run("hi", {"session_id": "s-1"})]
     # CLAUDE.md는 이제 조립물이다: 언어 지시 다음에 워크플로우. 지시는 픽스처가
-    # 아니라 패키지(pathfinder/agent/language/)에서 온다.
+    # 아니라 코드(agent/workspace_rules.LANGUAGE_DIRECTIVES)에서 온다.
     text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
     assert text.index("언어 규약") < text.index("WORKFLOW")
 
@@ -1049,7 +1049,7 @@ async def test_places_the_rules_on_the_restart_answers_path_too(tmp_path):
     assert not (ws / "CLAUDE.md").exists()  # 차갑게 시작한다
     [ev async for ev in d.run_answers("i-1", {"1": "A"}, {"session_id": "s-1"})]
     # CLAUDE.md는 이제 조립물이다: 언어 지시 다음에 워크플로우. 지시는 픽스처가
-    # 아니라 패키지(pathfinder/agent/language/)에서 온다.
+    # 아니라 코드(agent/workspace_rules.LANGUAGE_DIRECTIVES)에서 온다.
     text = (ws / "CLAUDE.md").read_text(encoding="utf-8")
     assert text.index("언어 규약") < text.index("WORKFLOW")
 
@@ -1248,7 +1248,7 @@ def _checking_driver(tmp_path, script=None, config_dir=None, workspace=None):
         rules.mkdir(parents=True)
         (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
         # 언어 지시는 픽스처가 만들지 않는다 — `rules_dir`가 아니라 패키지
-        # (pathfinder/agent/language/)에서 온다.
+        # (agent/workspace_rules.LANGUAGE_DIRECTIVES)에서 온다.
     ws = workspace or (tmp_path / "ws")
     ws.mkdir(parents=True, exist_ok=True)
     cfg = config_dir or (tmp_path / "cfg")
