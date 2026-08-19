@@ -245,3 +245,46 @@ def test_the_proto_readme_names_the_skill_that_is_actually_enabled():
     assert "shadcn-design" in text
     assert "builder.py" in text, (
         "스킬 목록을 어디서 고치는지 지목하지 않는다")
+
+
+# ---- 브랜드 프로필: 두 디자인 권위의 우선순위 ----
+
+def test_the_contract_names_the_brand_section_and_its_precedence():
+    """프로필이 있는 프로젝트에서 빌드 에이전트는 디자인 권위를 **둘** 읽는다.
+
+    "user" 레벨(`proto-config/CLAUDE.md`)은 shadcn-design 스킬의 기본 외형을,
+    "project" 레벨(빌드 디렉터리 `CLAUDE.md`)은 `design_sync`가 심은 브랜드 절을
+    지시한다. 어느 쪽이 이기는지 적혀 있지 않으면 결과가 근접성과 CSS 캐스케이드에
+    맡겨진다 — 실제로는 맞게 나오지만 그것은 **우연히 맞는 것**이고 명시된 계약이
+    아니다.
+
+    이 사실은 **공유 사실**이다: "브랜드 절이 나타날 수 있고, 나타나면 그쪽이
+    이긴다"는 모든 빌드에 대해 참이므로 프로젝트별 값이 아니다. 그래서 조건부
+    문장으로 "user" 레벨에 둔다 — 프로필이 없는 빌드에는 아무 지시도 주지 않는다.
+    """
+    text = _text(PROTO_CONFIG / "CLAUDE.md")
+    assert "shadcn-design" in text
+    assert "DESIGN.md" in text, "브랜드 참고 문서를 지목하지 않는다"
+
+
+def test_the_brand_marker_in_the_contract_is_the_one_design_sync_writes():
+    """마커는 `design_sync`가 심는 것과 **같은 문자열**이어야 한다.
+
+    이름이 바뀌면 계약의 지목이 조용히 낡는다 — 에이전트는 존재하지 않는 마커를
+    찾고, 아무 에러도 나지 않는다. 그래서 상수를 직접 import해 대조한다.
+    """
+    from pathfinder.proto.design_sync import _SECTION_START
+    assert _SECTION_START in _text(PROTO_CONFIG / "CLAUDE.md"), (
+        f"{_SECTION_START!r}를 지목하지 않는다")
+
+
+def test_the_contract_does_not_depend_on_the_localized_brand_heading():
+    """헤딩은 지역화된다 — `## Brand design profile` / `## 브랜드 디자인 프로필`.
+
+    공유 config는 언어 중립이어야 하므로(test_agent_language가 고정한다) 한쪽
+    언어의 헤딩을 지목하면 다른 언어 프로젝트에서 찾을 수 없는 것을 가리킨다.
+    언어와 무관한 식별자는 `design_sync`의 HTML 주석 마커뿐이다.
+    """
+    text = _text(PROTO_CONFIG / "CLAUDE.md")
+    assert "Brand design profile" not in text, (
+        "지역화되는 헤딩을 지목한다 — 마커를 쓸 것")
