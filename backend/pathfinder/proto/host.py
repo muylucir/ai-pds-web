@@ -462,6 +462,31 @@ class ProtoHost:
         if target.exists():
             raise RuntimeError(f"purge left residue: {target}")
 
+    async def purge_project(self, pid: str) -> None:
+        """Delete this project's prototype root, `{root}/{pid}`. Idempotent.
+
+        `purge` above removes `{root}/{pid}/{slug}`, so purging every slug still
+        leaves the parent behind as an empty shell -- observed on the deployed
+        instance (2026-08-19): three such directories for projects that no
+        longer existed.
+
+        **Callers must run this AFTER purging every slug, never before.** Each
+        slug's `purge` calls `stop` first, deliberately: removing a tree under a
+        live `npm start` orphans the process, which keeps holding its port. This
+        method does not stop anything, so reaching it before the per-slug sweep
+        would reproduce exactly that failure.
+
+        Raises `RuntimeError` on residue, and `ValueError` on a `pid` that is not
+        one ordinary path segment -- same reasoning as `purge`.
+        """
+        reject_unsafe_segment(pid)
+        target = self._root / pid
+        if not target.is_dir():
+            return
+        await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
+        if target.exists():
+            raise RuntimeError(f"project purge left residue: {target}")
+
     def sweep_orphans(self) -> int:
         """Kill hosting processes left over from a previous backend run and
         clean up their pid files. Replaces the orphan-VM sweep that went away

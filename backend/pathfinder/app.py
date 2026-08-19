@@ -1,7 +1,9 @@
 # backend/pathfinder/app.py
 from __future__ import annotations
+import asyncio
 import logging
 import os
+import shutil
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,6 +23,7 @@ from pathfinder.agent.claude_driver import ClaudeDriver
 from pathfinder.cli_settings import cli_model_id
 from pathfinder.s3store import S3Store, S3StoreLike
 from pathfinder.project_store import restore_projects
+from pathfinder.pathsafe import reject_unsafe_segment
 from pathfinder.turn_handles import TurnHandleStore
 
 _log = logging.getLogger(__name__)
@@ -251,6 +254,40 @@ def _rules_dir() -> str:
 def _workspaces_dir() -> Path:
     root = os.environ.get("PATHFINDER_WORKSPACES_DIR")
     return Path(root) if root else Path(tempfile.gettempdir()) / "pathfinder-workspaces"
+
+
+async def purge_local_workspace(project_id: str) -> None:
+    """이 프로젝트의 로컬 워크스페이스 디렉터리를 지운다. 멱등.
+
+    **왜 `runner.stop()`으로 부족한가.** 그 안에도 rmtree가 있지만 두 조건에
+    걸린다. 첫째, 삭제 라우트가 `registry.has_workspace(pid)`일 때만 stop을
+    부르는데 그 플래그는 `attach()`로만 채워지고, 기동 시 복원은
+    `register()`만 한다(위 lifespan: "프로젝트 '목록'만 복원") — 즉 **재시작 뒤
+    한 번도 열지 않은 프로젝트는 전부 False**이고, 그것이 워크숍마다 재배포가
+    있는 이 제품의 흔한 상태다. 둘째, stop의 실패는 의도적으로 삼켜지므로
+    드라이버 종료가 실패하면 rmtree까지 함께 건너뛴다.
+
+    실측(2026-08-19, 배포 인스턴스): `/opt/pathfinder/workspaces/`에 S3에 없는
+    프로젝트 6개의 디렉터리가 남아 있었다. 사용자에게는 "채팅 기록·문서가 영구
+    삭제된다"고 약속한 상태다(`project.deleteConfirmBody`).
+
+    **잔여물은 raise다.** `ignore_errors=True`는 첫 실패에서 멈추지 않고 갈 수
+    있는 만큼 가게 하는 용도이므로 성공 신호로 쓸 수 없다 — node_modules 깊은
+    곳의 권한 오류가 성공으로 보고되면 문서가 남은 채 "삭제됐다"가 된다.
+    `ProtoHost.purge`가 같은 이유로 같은 모양을 갖는다.
+
+    **`reject_unsafe_segment`가 선행한다.** URL 파라미터 하나가 디렉터리 이름이
+    되는 자리이고, `pathlib`은 정규화하지 않으므로 `".."`는 정말로 부모다 — 검증
+    없이는 한 프로젝트 삭제가 `workspaces/` 전체의 rmtree가 된다. 라우트도 막지만
+    (그쪽이 1차 방어) 위험한 원시 연산이 누가 부르든 무기가 되기를 거부한다.
+    """
+    reject_unsafe_segment(project_id)
+    target = _workspaces_dir() / project_id
+    if not target.is_dir():
+        return
+    await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
+    if target.exists():
+        raise RuntimeError(f"workspace purge left residue: {target}")
 
 
 def _discovery_config_dir() -> Path:

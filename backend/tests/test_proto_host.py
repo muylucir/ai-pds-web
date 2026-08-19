@@ -579,3 +579,57 @@ async def test_purge_refuses_an_unsafe_pid_too(root, bad_pid):
         await host.purge(bad_pid, SLUG)
 
     assert (root / "victim" / "theirs").is_dir()
+
+
+# ---- purge_project: 부모 디렉터리 ----
+
+async def test_purge_project_removes_the_parent_shell(root):
+    """`purge`는 `{root}/{pid}/{slug}`만 지우므로 부모가 빈 껍데기로 남는다.
+
+    실측(2026-08-19, 배포 인스턴스): 존재하지 않는 프로젝트 3개의 빈 디렉터리가
+    `/opt/pathfinder/protos/`에 남아 있었다.
+    """
+    _seed_build_dir(root, pid=PID, slug=SLUG)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    await host.purge(PID, SLUG)
+    assert (root / PID).is_dir(), "전제 확인 — purge는 부모를 남긴다"
+
+    await host.purge_project(PID)
+
+    assert not (root / PID).exists()
+
+
+async def test_purge_project_is_idempotent(root):
+    """없는 프로젝트는 no-op이다 — 재시도가 수렴해야 하고, 프로토타입을 한 번도
+    만들지 않은 프로젝트의 삭제가 흔한 경우다."""
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    await host.purge_project("never-built")
+    await host.purge_project("never-built")
+
+
+async def test_purge_project_leaves_other_projects_alone(root):
+    _seed_build_dir(root, pid="victim", slug="theirs")
+    _seed_build_dir(root, pid=PID, slug=SLUG)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    await host.purge_project(PID)
+
+    assert not (root / PID).exists()
+    assert (root / "victim" / "theirs").is_dir()
+
+
+@pytest.mark.parametrize("bad_pid", ["..", ".", "", "a/b"])
+async def test_purge_project_refuses_an_unsafe_pid(root, bad_pid):
+    """`rmtree`가 하나의 URL 파라미터를 디렉터리 이름으로 받는 자리다.
+
+    `pathlib`은 정규화하지 않으므로 `root / ".."`는 정말로 root의 부모이고
+    `root / "."`는 root 자신이다 — 검증이 없으면 한 프로젝트 삭제가 **모든**
+    프로젝트의 빌드 트리를 지운다. `purge`가 같은 이유로 같은 가드를 갖는다.
+    """
+    _seed_build_dir(root, pid="victim", slug="theirs")
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+
+    with pytest.raises(ValueError):
+        await host.purge_project(bad_pid)
+
+    assert (root / "victim" / "theirs").is_dir()

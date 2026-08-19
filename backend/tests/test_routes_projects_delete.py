@@ -27,6 +27,8 @@ class _FakeHost:
         self.root = root
         self.purged: list[tuple[str, str]] = []
         self.purge_exc: Exception | None = None
+        self.purged_projects: list[str] = []
+        self.purge_project_exc: Exception | None = None
 
     def slugs(self, pid):
         found: set[str] = set()
@@ -43,6 +45,17 @@ class _FakeHost:
         if self.root is not None:
             import shutil
             shutil.rmtree(self.root / pid / slug, ignore_errors=True)
+
+    async def purge_project(self, pid):
+        """부모 디렉터리 정리. 실물처럼 **실제로** 지운다 — 카운터만 두면
+        "빈 껍데기가 남지 않는다"를 단정하는 테스트가 공허해진다(`purge`와 같은
+        이유)."""
+        self.purged_projects.append(pid)
+        if self.purge_project_exc is not None:
+            raise self.purge_project_exc
+        if self.root is not None:
+            import shutil
+            shutil.rmtree(self.root / pid, ignore_errors=True)
 
 
 class _FakeSession:
@@ -328,3 +341,124 @@ def test_delete_stops_runner_attached_by_concurrent_boot_during_s3_await(monkeyp
     assert r.status_code == 200
     assert runner2.stopped == 1
     assert not app_module.registry.is_registered(pid)
+
+
+# ---- 로컬 실체의 잔여물 ----
+#
+# 실측(2026-08-19, 배포 인스턴스): `/opt/pathfinder/workspaces/`에 삭제된 프로젝트
+# 6개의 디렉터리가 남아 있었고(합 2.35MB), S3 `projects/`에는 그중 어느 것도 없었다.
+# `/opt/pathfinder/protos/`에는 빈 부모 디렉터리 3개가 남아 있었다.
+
+def test_delete_removes_the_workspace_dir_of_a_project_never_booted_this_process(
+        monkeypatch, tmp_path):
+    """**재시작 뒤 한 번도 열지 않은 프로젝트**를 삭제해도 워크스페이스가 사라져야
+    한다.
+
+    이것이 흔한 경로다. 기동 시 `app.py`는 S3 매니페스트에서 목록만 복원하며
+    `registry.register()`만 부르고 `attach()`는 하지 않는다(워크스페이스는 첫
+    요청에서 lazy 초기화). 그래서 재시작 직후 모든 프로젝트가
+    `has_workspace() == False`이고, 옛 삭제 경로는 로컬 정리를 그 플래그에 걸어
+    뒀으므로 — `runner.stop()` 안에만 rmtree가 있었다 — 디스크의 디렉터리가 그대로
+    남았다. 사용자에게는 "채팅 기록·문서가 영구 삭제된다"고 약속한 상태다.
+    """
+    sessions, root = FakeS3Store(), FakeS3Store()
+    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
+    monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
+    ws_root = tmp_path / "workspaces"
+    monkeypatch.setattr(app_module, "_workspaces_dir", lambda: ws_root)
+
+    # 등록만 한다 — attach 없음. 재시작 직후의 상태다.
+    app_module.registry.register("del-ws")
+    root.blobs["del-ws/project.json"] = "{}"
+    left_behind = ws_root / "del-ws" / "aiplc-docs"
+    left_behind.mkdir(parents=True)
+    (left_behind / "audit.md").write_text("secrets", encoding="utf-8")
+
+    r = client.delete("/projects/del-ws")
+
+    assert r.status_code == 200, r.text
+    assert not (ws_root / "del-ws").exists(), "워크스페이스 디렉터리가 남았다"
+
+
+def test_delete_removes_the_workspace_dir_when_the_runner_is_attached(
+        monkeypatch, tmp_path):
+    """attach된 정상 경로에서도 같은 결과여야 한다 — 대칭 확인.
+
+    이쪽은 `runner.stop()`이 이미 지우지만, 그 rmtree는 드라이버 종료와 한 몸이라
+    stop이 실패하면 함께 건너뛰어진다(그 실패는 의도적으로 삼킨다). 경로 기반
+    삭제가 그 뒤를 받는다.
+    """
+    sessions, root = FakeS3Store(), FakeS3Store()
+    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
+    monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
+    ws_root = tmp_path / "workspaces"
+    monkeypatch.setattr(app_module, "_workspaces_dir", lambda: ws_root)
+
+    class _BrokenRunner:
+        async def stop(self):
+            raise RuntimeError("driver disconnect failed")
+
+    app_module.registry.register("del-ws2")
+    app_module.registry.attach("del-ws2", Workspace(_BrokenRunner()))
+    root.blobs["del-ws2/project.json"] = "{}"
+    (ws_root / "del-ws2").mkdir(parents=True)
+
+    r = client.delete("/projects/del-ws2")
+
+    assert r.status_code == 200, r.text
+    assert not (ws_root / "del-ws2").exists()
+
+
+def test_delete_removes_the_projects_prototype_root(monkeypatch, _proto_wiring):
+    """슬러그를 다 지운 뒤 **부모 디렉터리**도 사라져야 한다.
+
+    `host.purge`가 지우는 것은 `{root}/{pid}/{slug}`뿐이라(host.py) 빈 껍데기가
+    남았다. 부모를 슬러그 루프 **뒤에** 지우는 것이 중요하다 — 먼저 지우면 도는
+    `npm start` 밑에서 트리가 사라져 프로세스가 고아가 되고 포트를 계속 물고 있다
+    (`host.purge`가 `stop`을 먼저 부르는 이유와 같은 위험).
+    """
+    sessions, root = FakeS3Store(), FakeS3Store()
+    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
+    monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
+    monkeypatch.setattr(app_module, "_workspaces_dir",
+                        lambda: _proto_wiring["proto_root"] / "ws")
+    _seed_project("del-pr", sessions, root)
+    _seed_prototype(_proto_wiring, "del-pr", "demo", "tok-pr")
+
+    r = client.delete("/projects/del-pr")
+
+    assert r.status_code == 200, r.text
+    assert not (_proto_wiring["proto_root"] / "del-pr").exists(), (
+        "프로토타입 부모 디렉터리가 남았다")
+
+
+def test_delete_does_not_purge_the_prototype_root_when_a_slug_failed(
+        monkeypatch, _proto_wiring):
+    """슬러그 하나가 실패하면 부모를 지우지 않는다.
+
+    부모를 지우면 남은 슬러그의 빌드 트리가 함께 사라지고, 재시도가 회수해야 할
+    실체가 없어진다 — 슬러그별 게이트(설문 purge 실패 시 `continue`)와 같은
+    판단이다. 그리고 `purge_project`는 아무것도 멈추지 않으므로, 실패한 슬러그가
+    아직 프로세스를 쥐고 있으면 그 트리를 지우는 것은 포트를 물고 있는 고아를
+    만드는 일이다(`ProtoHost.purge`가 `stop`을 먼저 부르는 이유).
+    """
+    sessions, root = FakeS3Store(), FakeS3Store()
+    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
+    monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
+    _seed_project("del-gate", sessions, root)
+    _seed_prototype(_proto_wiring, "del-gate", "demo", "tok-gate")
+    _proto_wiring["host"].purge_exc = RuntimeError("rmtree denied")
+
+    r = client.delete("/projects/del-gate")
+
+    assert r.status_code == 500
+    assert _proto_wiring["host"].purged_projects == [], (
+        "슬러그가 실패했는데 부모를 지웠다")
+    # 재시도가 의미를 갖도록 S3와 레지스트리가 남아 있어야 한다.
+    assert app_module.registry.is_registered("del-gate")
+    assert any(k.startswith("del-gate/") for k in root.blobs)
+    app_module.registry.remove("del-gate")

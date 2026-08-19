@@ -228,6 +228,19 @@ async def delete_project(pid: str):
         _log.error("prototype cleanup failed for %s: %s", pid, ",".join(failures))
         raise HTTPException(status_code=500,
                             detail=f"prototype cleanup failed: {','.join(failures)}")
+    # 워크스페이스 디렉터리는 **경로로** 지운다 — 위 `runner.stop()`에도 rmtree가
+    # 있지만 `has_workspace(pid)` 게이트 안에 있고, 그 플래그는 기동 시 복원이
+    # `register()`만 하므로 **재시작 뒤 한 번도 열지 않은 프로젝트는 전부
+    # False**다(app.purge_local_workspace의 docstring에 실측이 있다). 그리고
+    # stop의 실패는 삼켜지므로 드라이버 종료가 실패하면 rmtree도 함께 건너뛴다.
+    #
+    # S3 삭제보다 먼저 두어 실패가 500으로 끊기게 한다: 문서가 로컬에 남은 채
+    # "삭제됐다"고 응답하면 사용자에게 한 약속과 어긋난다.
+    try:
+        await app_module.purge_local_workspace(pid)
+    except Exception:
+        _log.exception("workspace purge failed for %s", pid)
+        raise HTTPException(status_code=500, detail="workspace purge failed")
     if app_module.durable_projects_enabled():
         try:
             await delete_project_data(app_module.session_s3_factory(),

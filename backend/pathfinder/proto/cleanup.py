@@ -111,4 +111,21 @@ async def purge_project_prototypes(
         except Exception:
             _log.exception("delete: build-tree purge failed: %s/%s", project_id, slug)
             failures.append(f"build-tree:{slug}")
+
+    # 부모 디렉터리(`{proto_root}/{pid}`)는 슬러그 루프 **뒤에** 지운다.
+    #
+    # 순서가 load-bearing이다: 슬러그별 `purge`는 각각 `stop()`을 먼저 부르는데,
+    # 부모를 먼저 지우면 도는 `npm start` 밑에서 트리가 사라져 프로세스가 고아가
+    # 되고 포트를 계속 물고 있다(`ProtoHost.purge`의 docstring이 경고하는 그
+    # 실패). `purge_project`는 아무것도 멈추지 않으므로 이 위치가 유일하게 안전한
+    # 자리다.
+    #
+    # 실패가 있으면 건너뛴다: 남은 슬러그의 트리를 부모째로 지우면 재시도가
+    # 회수해야 할 실체가 사라진다 — 슬러그별 게이트와 같은 판단이다.
+    if not failures:
+        try:
+            await host.purge_project(project_id)
+        except Exception:
+            _log.exception("delete: prototype root purge failed: %s", project_id)
+            failures.append("proto-root")
     return failures
