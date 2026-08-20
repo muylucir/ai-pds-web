@@ -13,8 +13,8 @@ from pathfinder.auth.cognito import CognitoError, ManagedUser
 from pathfinder.auth.deps import require_admin, require_user
 from pathfinder.auth.models import Principal
 
-ADMIN_EMAIL = "admin@pathfinder.local"
-PM_EMAIL = "pm@pathfinder.local"
+ADMIN_EMAIL = "admin@aipds.local"
+PM_EMAIL = "pm@aipds.local"
 
 
 class FakeCognito:
@@ -84,7 +84,7 @@ class FakeCognito:
 
 @pytest.fixture()
 def env(monkeypatch):
-    """가짜 Cognito + '나는 admin@pathfinder.local' 라는 요청자."""
+    """가짜 Cognito + '나는 admin@aipds.local' 라는 요청자."""
     fake = FakeCognito()
     fake.add(ADMIN_EMAIL, role="admin")
     fake.add(PM_EMAIL, role="pm")

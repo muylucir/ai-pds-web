@@ -68,16 +68,16 @@ def test_list_users_maps_attributes_and_groups(admin):
     a, stub = admin
     stub.add_response(
         "list_users",
-        {"Users": [_user("admin@pathfinder.local", "admin@pathfinder.local"),
-                   _user("pm@pathfinder.local", "pm@pathfinder.local")]},
+        {"Users": [_user("admin@aipds.local", "admin@aipds.local"),
+                   _user("pm@aipds.local", "pm@aipds.local")]},
         {"UserPoolId": POOL, "Limit": 60},
     )
     stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "admin"}]},
-                      {"UserPoolId": POOL, "Username": "admin@pathfinder.local"})
+                      {"UserPoolId": POOL, "Username": "admin@aipds.local"})
     stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "pm"}]},
-                      {"UserPoolId": POOL, "Username": "pm@pathfinder.local"})
+                      {"UserPoolId": POOL, "Username": "pm@aipds.local"})
     users = a.list_users()
-    assert [u.email for u in users] == ["admin@pathfinder.local", "pm@pathfinder.local"]
+    assert [u.email for u in users] == ["admin@aipds.local", "pm@aipds.local"]
     assert [u.role for u in users] == ["admin", "pm"]
     assert users[0].status == "CONFIRMED" and users[0].enabled is True
     assert users[0].created_at.startswith("2026-07-25")
