@@ -10,10 +10,10 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.app import app, registry
-from pathfinder.approval_store import load_approvals
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.app import app, registry
+from aipds.approval_store import load_approvals
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 
@@ -23,7 +23,7 @@ _DOC = "aiplc-docs/discovery/discovery-document.md"
 
 
 def _seed(monkeypatch, pid, *, doc_text: str | None = "# Discovery Document\n본문\n"):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     s3 = FakeS3Store()
     monkeypatch.setattr(app_module, "s3_store_factory", lambda project_id: s3)
 
@@ -162,7 +162,7 @@ def test_the_hash_tracks_the_document_text(monkeypatch):
 
 
 def test_approve_on_an_unknown_project_is_404(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     assert client.post("/projects/nope-not-here/approve").status_code == 404
 
 

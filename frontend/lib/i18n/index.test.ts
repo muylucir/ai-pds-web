@@ -9,7 +9,7 @@ describe("locale basics", () => {
   });
 
   it("쿠키 이름을 한 곳에서만 정한다", () => {
-    expect(LANG_COOKIE).toBe("pf_lang");
+    expect(LANG_COOKIE).toBe("aipds_lang");
   });
 
   it("isLocale은 두 값만 통과시킨다", () => {

@@ -1,6 +1,6 @@
 import json
 import pytest
-from pathfinder.project_store import write_manifest, restore_projects, delete_project_data
+from aipds.project_store import write_manifest, restore_projects, delete_project_data
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 

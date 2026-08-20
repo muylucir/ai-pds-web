@@ -7,7 +7,7 @@
 # 중복 렌더됐고, 두 라디오가 같은 otherActive 상태를 공유해 선택이 깨졌다.
 # 프롬프트 규약만으로는 못 막는다 — 모델은 이미 규약을 받고도 틀렸다.
 import pytest
-from pathfinder.agent.questions_payload import normalize_questions_payload
+from aipds.agent.questions_payload import normalize_questions_payload
 
 
 def _q(options, **kw):
@@ -173,7 +173,7 @@ def test_keeps_hangul_literal_rather_than_escaped():
 # ---- SDK AskUserQuestion input → QuestionFile ----
 # builder._to_question_file과 Discovery의 정규화가 같은 일을 하던 것을 합친다.
 # 합치면 is_other 중복 교정(2026-07-26 버그)이 프로토타입 빌더에도 적용된다.
-from pathfinder.agent.questions_payload import question_file_from_sdk
+from aipds.agent.questions_payload import question_file_from_sdk
 
 SDK_Q = [{"question": "다음 단계는?", "header": "Next",
           "multiSelect": False,

@@ -3,14 +3,14 @@
 // 쿠키 이름과 속성의 단일 출처. route handler 3개와 프록시, 미들웨어가 같은
 // 이름을 봐야 한다.
 
-export const ACCESS_COOKIE = "pf_access";
-export const ID_COOKIE = "pf_id";
-export const REFRESH_COOKIE = "pf_refresh";
+export const ACCESS_COOKIE = "aipds_access";
+export const ID_COOKIE = "aipds_id";
+export const REFRESH_COOKIE = "aipds_refresh";
 
 // 로그인 왕복 중에만 존재하는 값 — 콜백에서 소비하고 즉시 지운다.
-export const VERIFIER_COOKIE = "pf_pkce";
-export const STATE_COOKIE = "pf_state";
-export const NEXT_COOKIE = "pf_next";
+export const VERIFIER_COOKIE = "aipds_pkce";
+export const STATE_COOKIE = "aipds_state";
+export const NEXT_COOKIE = "aipds_next";
 
 const isProd = () => process.env.NODE_ENV === "production";
 

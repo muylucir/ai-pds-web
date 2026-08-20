@@ -1,7 +1,7 @@
 import json
 import pytest
-from pathfinder.survey.builder import build_prompt, build_questionnaire
-from pathfinder.survey.inputs import DiscoveryContext
+from aipds.survey.builder import build_prompt, build_questionnaire
+from aipds.survey.inputs import DiscoveryContext
 
 MD = """# PROTOTYPE-demo
 ## Use Case Overview

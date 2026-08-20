@@ -3,10 +3,10 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.survey.models import Question, Questionnaire, SurveyResponse
-from pathfinder.survey.store import SurveyStore
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.survey.models import Question, Questionnaire, SurveyResponse
+from aipds.survey.store import SurveyStore
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 
@@ -23,7 +23,7 @@ GOOD_JSON = json.dumps({
 
 @pytest.fixture()
 def env(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     project_s3, root_s3 = FakeS3Store(), FakeS3Store()
     project_s3.blobs[SPEC_KEY] = "# PROTOTYPE demo\n검증 가설: 판독 시간 단축"
 

@@ -9,9 +9,9 @@ import json
 import pytest
 
 from fakes.in_memory_s3 import FakeS3Store
-from pathfinder.agent.session_store import DiscoverySessionStore
-from pathfinder.models import HistoryItem
-from pathfinder.session_history import list_history, transform_cli_transcript
+from aipds.agent.session_store import DiscoverySessionStore
+from aipds.models import HistoryItem
+from aipds.session_history import list_history, transform_cli_transcript
 
 
 def _cli(type_, role=None, content=None, **extra):
@@ -366,7 +366,7 @@ def _driver_session_key(project_id: str) -> dict:
     읽는 쪽이 원본 project_id를 쓰면 아무것도 쓰이지 않은 프리픽스를 뒤진다.
     양쪽이 같은 실수를 하면 어긋난 상태로도 테스트는 통과한다.
     """
-    from pathfinder.agent.claude_driver import _sdk_session_id
+    from aipds.agent.claude_driver import _sdk_session_id
     session_id, _ = _sdk_session_id({"session_id": project_id})
     return {"session_id": session_id}
 

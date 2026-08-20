@@ -1,6 +1,6 @@
 // infra/test/deployed-tree.assert.ts
 //
-// **/opt/pathfinder가 될 트리에 있으면 안 되는 것이 없는지** 확인한다.
+// **/opt/aipds가 될 트리에 있으면 안 되는 것이 없는지** 확인한다.
 //
 // 이 테스트는 app-asset.assert.ts를 대체한 것이다. 종전에는 코드가 CDK 에셋
 // zip으로 갔으므로 synth해서 스테이징된 디렉터리를 들여다봤다. 지금은 EC2가
@@ -12,8 +12,8 @@
 // 채팅이 계속 한국어로 진행됐다. 원인의 절반은 discovery-config였고(그쪽은
 // backend/tests/test_agent_language.py가 지킨다), 남은 절반이 이것이다:
 //
-//   에이전트 cwd     /opt/pathfinder/workspaces/{pid}
-//   트리에 있던 것   /opt/pathfinder/.claude/CLAUDE.md   <- **조상**
+//   에이전트 cwd     /opt/aipds/workspaces/{pid}
+//   트리에 있던 것   /opt/aipds/.claude/CLAUDE.md   <- **조상**
 //
 // Claude Code는 cwd에서 위로 올라가며 CLAUDE.md를 전부 로드한다(실제 CLI로
 // 확인: `claude --debug -p "로드한 CLAUDE.md 경로를 나열해라"`가 `(ancestor
@@ -51,8 +51,8 @@ function testNoUnexpectedClaudeMdInTheDeployedTree() {
   const devClaude = files.filter((f) => f === '.claude' || f.startsWith('.claude/'));
   assert.deepStrictEqual(devClaude, [],
     'the repo-development .claude/ must NOT be tracked: it would be cloned to ' +
-    '/opt/pathfinder/.claude/, an ANCESTOR of the agent cwd ' +
-    '(/opt/pathfinder/workspaces/{pid}), and Claude Code loads ancestor ' +
+    '/opt/aipds/.claude/, an ANCESTOR of the agent cwd ' +
+    '(/opt/aipds/workspaces/{pid}), and Claude Code loads ancestor ' +
     'CLAUDE.md files — measured against the real CLI. Its Korean line would ' +
     'then enter every English project\'s context, and there is no runtime ' +
     `switch to turn it off. Found: ${devClaude.join(', ')}`);
@@ -67,8 +67,8 @@ function testNoUnexpectedClaudeMdInTheDeployedTree() {
   for (const rel of found) {
     assert.ok(ALLOWED.has(rel),
       `unexpected tracked CLAUDE.md: ${rel}\n` +
-      'Every CLAUDE.md under /opt/pathfinder that is an ancestor of ' +
-      '/opt/pathfinder/workspaces/{pid} is loaded into the agent context. If ' +
+      'Every CLAUDE.md under /opt/aipds that is an ancestor of ' +
+      '/opt/aipds/workspaces/{pid} is loaded into the agent context. If ' +
       'this file is meant to ship, add it to ALLOWED here and make sure it is ' +
       'language-neutral (see backend/tests/test_agent_language.py).');
   }
@@ -105,7 +105,7 @@ function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
   // .gitignore가 그 자리다 — 같은 방향의 실수가 여전히 가능하다.
   const files = new Set(trackedFiles());
   for (const rel of [
-    'backend/pathfinder/app.py',
+    'backend/aipds/app.py',
     'frontend/package.json',
     'frontend/package-lock.json',   // npm ci 가 부팅 시 요구한다
     'discovery-config/CLAUDE.md',
@@ -114,15 +114,25 @@ function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
     'rule/aiplc-rules/aws-aiplc-rules/core-workflow.md',
     // 언어 지시는 2026-08-18에 룰셋 트리 밖으로 나왔다 — 업스트림 aiplc-rules/에는
     // language/ 가 없으므로, 룰셋을 통째로 갈아 끼울 때 우리 콘텐츠가 함께
-    // 사라지지 않아야 한다(backend/pathfinder/agent/workspace_rules.py).
-    'backend/pathfinder/agent/language/ko.md',
-    'backend/pathfinder/agent/language/en.md',
+    // 사라지지 않아야 한다.
+    //
+    // **그 뒤 2026-08-19(8b58cba)에 파일에서 코드로 다시 옮겼다** —
+    // `language/{ko,en}.md` 두 파일이 `workspace_rules.LANGUAGE_DIRECTIVES`
+    // 상수가 됐다. 이 목록은 그것을 따라가지 못해 지운 파일을 계속 요구했고,
+    // 그날부터 이 단정이 실패했다(런타임 영향은 없다 — 부팅이 그 파일을 필요로
+    // 하지 않는다). backend/tests/test_workspace_rules.py의
+    // `test_the_language_directive_is_code_not_a_file`이 정반대를 단정하므로,
+    // 두 테스트가 서로 모순한 상태였다.
+    //
+    // 불변식은 그대로다: **언어 지시가 인스턴스에 실린다.** 실리는 자리만
+    // 파일에서 이 모듈로 바뀌었다.
+    'backend/aipds/agent/workspace_rules.py',
   ]) {
     assert.ok(files.has(rel),
       `${rel} must be tracked — the instance clones the repo, so anything ` +
-      'untracked simply does not exist at /opt/pathfinder');
+      'untracked simply does not exist at /opt/aipds');
   }
-  console.log('OK  deployed tree: rules, both language directives, both config dirs and the lockfile ship');
+  console.log('OK  deployed tree: rules, the language directives, both config dirs and the lockfile ship');
 }
 
 testNoUnexpectedClaudeMdInTheDeployedTree();

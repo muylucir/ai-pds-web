@@ -1,15 +1,15 @@
 import asyncio
 from fastapi.testclient import TestClient
-import pathfinder.app as app_module
-from pathfinder.app import app, registry
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.app import app, registry
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 
 client = TestClient(app)
 
 
 def _seed(monkeypatch, pid):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")  # offline: no durable manifest write
     async def make(project_id):
         return Workspace(FakeRunner())
     monkeypatch.setattr(app_module, "make_workspace", make)

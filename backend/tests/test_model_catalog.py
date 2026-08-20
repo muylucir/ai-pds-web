@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from pathfinder.model_catalog import (
+from aipds.model_catalog import (
     CATALOG_KEY, MAX_DISPLAYED, SEED_MODELS, CatalogError, ModelCatalog,
 )
 from tests.fakes.in_memory_s3 import FakeS3Store

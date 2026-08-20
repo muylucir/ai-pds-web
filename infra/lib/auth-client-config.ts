@@ -5,12 +5,12 @@
 // 갱신한다. 그 API는 PUT 시맨틱이어서 지정하지 않은 필드를 지우므로, 두 곳이
 // 같은 값을 봐야 한다. 스택 간 import는 순환을 만들기 때문에 순수 상수 모듈로 뺀다.
 
-export const SEED_ADMIN_EMAIL = 'admin@pathfinder.local';
-export const SEED_PM_EMAIL = 'pm@pathfinder.local';
+export const SEED_ADMIN_EMAIL = 'admin@aipds.local';
+export const SEED_PM_EMAIL = 'pm@aipds.local';
 
 // 데모/워크숍용 사전 설정 비밀번호. ⚠️ CloudFormation 템플릿과 스택 이벤트에
 // 평문으로 남는다 — 운영 전환 시 반드시 교체한다(스펙 §4.1).
-export const SEED_PASSWORD = 'PathFinder2026!@';
+export const SEED_PASSWORD = 'AiPdsWeb2026@!';
 
 export const GROUP_ADMIN = 'admin';
 export const GROUP_PM = 'pm';
@@ -25,7 +25,7 @@ export const OAUTH_SCOPES = ['openid', 'email', 'profile'];
 // 앱 클라이언트 이름. 콘솔에 뜨는 이름이라 값 자체는 사소하지만, 다른 PUT
 // 필드들과 같은 이유로 여기 둔다 — AuthStack만 알고 HostingStack의 재전송이
 // 모르면 재배포마다 Cognito가 만든 기본 이름으로 조용히 바뀐다.
-export const CLIENT_NAME = 'pathfinder-web';
+export const CLIENT_NAME = 'aipds-web';
 
 // 토큰 유효기간 (분 단위). AuthStack의 client 정의와 HostingStack의
 // UpdateUserPoolClient 재전송이 반드시 같은 값을 써야 한다 — PUT 시맨틱이라
@@ -53,7 +53,7 @@ export const ID_TOKEN_VALIDITY_MINUTES = 180; // 3시간 — access와 같아야
 export const REFRESH_TOKEN_VALIDITY_MINUTES = 60 * 24 * 30; // 30일
 
 // AuthStack의 client가 명시적으로 ALLOW_REFRESH_TOKEN_AUTH만 켜는 이유는
-// pathfinder-auth-stack.ts의 authFlows 설정(userSrp/userPassword 둘 다 false)에
+// aipds-auth-stack.ts의 authFlows 설정(userSrp/userPassword 둘 다 false)에
 // 있다 — CDK가 그 외에는 아무 플래그도 안 켜면서도 refreshTokenRotationGracePeriod를
 // 지정하지 않았을 때 이 플로우 하나만 자동으로 추가한다. /api 프록시의 401 리프레시
 // 경로가 이 플로우에 의존하므로, UpdateUserPoolClient 재전송에서 빠지면 재배포마다
@@ -89,7 +89,7 @@ export function logoutUrls(appUrls: string[]): string[] {
  * (UsernameAttributes)을 쓰지 않는 이유는 README의 "username == 이메일" 절과
  * 같다 — 재배포마다 값을 알 수 없어 시딩이 비결정적이 된다.
  *
- * ⚠️ **backend/pathfinder/auth/cognito.py의 username_for_email과 같은 규칙이어야
+ * ⚠️ **backend/aipds/auth/cognito.py의 username_for_email과 같은 규칙이어야
  * 한다.** 어긋나면 시드 계정과 초대 계정의 Username 규칙이 갈리고, 재배포 시
  * 시드가 기존 사용자를 못 찾아 중복 계정을 만든다.
  *

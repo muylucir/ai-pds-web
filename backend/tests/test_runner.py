@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 import pytest
-from pathfinder.runner import AgentRunner
-from pathfinder.models import AgentEvent
+from aipds.runner import AgentRunner
+from aipds.models import AgentEvent
 from fakes.in_memory_s3 import FakeS3Store
 
 Q_PAYLOAD = json.dumps({"interrupt_id": "i-7", "questions": {"name": "q", "questions": []}})
@@ -85,7 +85,7 @@ async def test_send_message_relays_and_terminates(tmp_path):
 async def test_turn_logs_structured_performance_phases(tmp_path, caplog):
     import logging
 
-    caplog.set_level(logging.INFO, logger="pathfinder.runner")
+    caplog.set_level(logging.INFO, logger="aipds.runner")
     r = _runner(tmp_path)
     await _collect(r.send_message("go"))
 
@@ -101,7 +101,7 @@ async def test_turn_logs_structured_performance_phases(tmp_path, caplog):
 async def test_performance_logs_can_be_disabled(tmp_path, caplog, monkeypatch):
     import logging
 
-    monkeypatch.setenv("PATHFINDER_PERFORMANCE_LOGS", "false")
+    monkeypatch.setenv("AIPDS_PERFORMANCE_LOGS", "false")
     caplog.set_level(logging.INFO)
     r = _runner(tmp_path)
     await _collect(r.send_message("go"))

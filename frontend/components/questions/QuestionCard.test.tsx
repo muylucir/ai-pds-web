@@ -217,7 +217,7 @@ describe("QuestionCard — 보기 부연 설명 (letter + note)", () => {
   // 스펙(2026-07-21-option-annotation-design.md): 일반 보기를 고르면 그 보기
   // 아래 '부연 설명 (선택)' 입력란이 펼쳐지고, 입력하면 "B: <설명>" 단일
   // 문자열로 제출된다. Kiro/Claude Code의 "[Answer]: letter + 설명" 경험을
-  // 파일 편집 없는 Pathfinder 폼에 재현하는 값 계약.
+  // 파일 편집 없는 AI-PDS 폼에 재현하는 값 계약.
 
   it("보기를 선택하면 부연 설명 입력란이 그 보기 아래 펼쳐진다", async () => {
     const user = userEvent.setup();

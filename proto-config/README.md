@@ -1,7 +1,7 @@
 # proto-config — 프로토타입 빌드 에이전트의 CLAUDE_CONFIG_DIR
 
 이 디렉토리는 프로토타입 빌드 에이전트(Claude Agent SDK)의 config 루트다.
-`PATHFINDER_PROTO_CONFIG_DIR`가 여기를 가리키고, 그 값은 SDK에
+`AIPDS_PROTO_CONFIG_DIR`가 여기를 가리키고, 그 값은 SDK에
 `CLAUDE_CONFIG_DIR`로 전달된다.
 
 **이 디렉토리가 곧 `~/.claude`와 동급이다.** `CLAUDE_CONFIG_DIR`가 설정되면 SDK는
@@ -21,19 +21,19 @@ CLAUDE.md가 빌드 결과에 섞여** 재현이 되지 않는다. 여기로 갈
 
 ## 배포 경로
 
-CDK 에셋 zip이 레포 루트를 `/opt/pathfinder/`로 전개하므로, 이 디렉토리는
-별도 복사 단계 없이 `/opt/pathfinder/proto-config/`가 된다. 로컬 개발에서는
-`PATHFINDER_PROTO_CONFIG_DIR`로 이 디렉토리를 직접 가리키면 된다:
+CDK 에셋 zip이 레포 루트를 `/opt/aipds/`로 전개하므로, 이 디렉토리는
+별도 복사 단계 없이 `/opt/aipds/proto-config/`가 된다. 로컬 개발에서는
+`AIPDS_PROTO_CONFIG_DIR`로 이 디렉토리를 직접 가리키면 된다:
 
 ```bash
 # backend/.env
-PATHFINDER_PROTO_CONFIG_DIR=/abs/path/to/repo/proto-config
+AIPDS_PROTO_CONFIG_DIR=/abs/path/to/repo/proto-config
 ```
 
 ## 스킬 추가 방법
 
 1. `skills/<name>/SKILL.md`를 만든다(frontmatter의 `name`은 디렉토리명과 일치).
-2. **`backend/pathfinder/proto/builder.py`의 `skills=[...]` 목록에 이름을 넣는다.**
+2. **`backend/aipds/proto/builder.py`의 `skills=[...]` 목록에 이름을 넣는다.**
    목록에 없으면 파일이 있어도 켜지지 않는다.
 
 현재 켜져 있는 것은 `shadcn-design` 하나다.
@@ -42,7 +42,7 @@ PATHFINDER_PROTO_CONFIG_DIR=/abs/path/to/repo/proto-config
 "커밋하면 끝"이라고 안내했다. 그 전제는 "config dir 아래 것만 켜진다"였는데
 **틀렸다** — `"all"`은 CLI에 번들된 스킬까지 함께 켜고, 그 목록에 `run`("Launch
 and drive this project's app… browser-driven")이 있다. 빌드 에이전트가 그
-스킬로 Playwright chromium을 띄웠고, 검증이 포트 3000을 겨냥해 Pathfinder
+스킬로 Playwright chromium을 띄웠고, 검증이 포트 3000을 겨냥해 AI-PDS
 프론트엔드가 SIGKILL로 죽었다(journalctl status=9/KILL). 백엔드·프론트엔드가
 빌드 에이전트와 같은 유저로 돌므로 막을 것이 없었다.
 

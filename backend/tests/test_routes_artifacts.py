@@ -3,9 +3,9 @@ import asyncio
 from pathlib import Path
 from urllib.parse import quote
 from fastapi.testclient import TestClient
-import pathfinder.app as app_module
-from pathfinder.app import app, registry
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.app import app, registry
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 
 FIX = Path(__file__).parent / "fixtures"
@@ -13,7 +13,7 @@ client = TestClient(app)
 
 
 def _install(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")  # offline: no durable manifest write
     async def make(project_id):
         return Workspace(FakeRunner())
     monkeypatch.setattr(app_module, "make_workspace", make)
@@ -122,7 +122,7 @@ def test_archive_quote_and_crlf_in_pid_yields_safe_header():
     # segment (TestClient/httpx reject or mangle CRLF in URLs before this
     # even reaches the route), so we unit-test the header builder directly
     # rather than going through client.get(...).
-    from pathfinder.routes.artifacts import _content_disposition
+    from aipds.routes.artifacts import _content_disposition
     pid = 'we"ird\r\npid'
     cd = _content_disposition(pid)
     assert "\r" not in cd and "\n" not in cd

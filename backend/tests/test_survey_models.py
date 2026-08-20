@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from pathfinder.survey.models import (Question, Questionnaire, SurveyResponse,
+from aipds.survey.models import (Question, Questionnaire, SurveyResponse,
                                       Rollup, ScaleStat, ChoiceStat, TextStat)
 
 

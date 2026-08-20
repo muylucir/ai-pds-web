@@ -38,7 +38,7 @@ function SurveyBody({
         <>
           <h1 className="text-xl font-bold text-slate-800 mb-2">{state.survey.title}</h1>
           {/* 문항이 "실제 업무에 도입된다면"처럼 가정형으로 묻는 것과 짝이다
-              (backend/pathfinder/survey/builder.py). 응답자가 본 것은 핵심
+              (backend/aipds/survey/builder.py). 응답자가 본 것은 핵심
               흐름만 동작하는 데모이고 데이터는 목일 수 있는데, 안내문이 실사용
               경험을 요구하면 두 전제가 어긋난다 — 목 데이터를 실제 결과로
               오해한 채 완성도를 평가하게 되고, 그 점수는 접근에 대한 신호가

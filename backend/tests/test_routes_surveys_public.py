@@ -2,9 +2,9 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.survey.models import Question, Questionnaire
-from pathfinder.survey.store import SurveyStore, responses_prefix
+import aipds.app as app_module
+from aipds.survey.models import Question, Questionnaire
+from aipds.survey.store import SurveyStore, responses_prefix
 from fakes.in_memory_s3 import FakeS3Store
 
 client = TestClient(app_module.app)
@@ -136,7 +136,7 @@ def test_post_rejects_oversized_answer(env):
 
 
 def test_post_429_when_response_cap_reached(env, monkeypatch):
-    import pathfinder.routes.surveys_public as pub
+    import aipds.routes.surveys_public as pub
     monkeypatch.setattr(pub, "MAX_RESPONSES", 1)
     client.post(f"/survey/{TOKEN}", json={"answers": {"q1": 4, "q2": "A"}})
     resp = client.post(f"/survey/{TOKEN}", json={"answers": {"q1": 4, "q2": "A"}})

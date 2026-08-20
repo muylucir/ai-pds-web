@@ -11,7 +11,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from pathfinder.auth.verifier import JwksCache, TokenError, verify_access_token
+from aipds.auth.verifier import JwksCache, TokenError, verify_access_token
 
 REGION = "ap-northeast-2"
 POOL = "ap-northeast-2_TEST123"
@@ -46,7 +46,7 @@ def _token(**overrides) -> str:
         "auth_time": now,
         "iat": now,
         "exp": now + 3600,
-        "username": "admin@pathfinder.local",
+        "username": "admin@aipds.local",
     }
     claims.update(overrides)
     return jwt.encode(claims, _private_key, algorithm="RS256",
@@ -85,7 +85,7 @@ async def _verify(token: str, *, cache: JwksCache | None = None,
 
 async def test_valid_token_yields_principal_with_role_from_groups():
     principal = await _verify(_token())
-    assert principal.username == "admin@pathfinder.local"
+    assert principal.username == "admin@aipds.local"
     assert principal.sub == "11111111-2222-3333-4444-555555555555"
     assert principal.role == "admin"
 

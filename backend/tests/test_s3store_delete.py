@@ -1,5 +1,5 @@
 import pytest
-from pathfinder.s3store import S3Store
+from aipds.s3store import S3Store
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 

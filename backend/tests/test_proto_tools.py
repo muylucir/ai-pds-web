@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import json
 
-from pathfinder.models import AgentEvent
-from pathfinder.proto.tools import (BUILD_COMPLETE_TOOL, PROTO_MCP_SERVER_NAME,
+from aipds.models import AgentEvent
+from aipds.proto.tools import (BUILD_COMPLETE_TOOL, PROTO_MCP_SERVER_NAME,
                                     build_proto_tools)
 
 
@@ -86,8 +86,8 @@ async def test_a_successful_completion_returns_text_for_the_agent(tmp_path):
 
 
 async def test_build_complete_is_refused_without_the_brand_theme(tmp_path):
-    from pathfinder.design_profile import DesignProfile
-    from pathfinder.proto.design_sync import sync_design
+    from aipds.design_profile import DesignProfile
+    from aipds.proto.design_sync import sync_design
 
     (tmp_path / "prototype").mkdir()
     (tmp_path / "prototype" / "package.json").write_text("{}", encoding="utf-8")
@@ -100,14 +100,14 @@ async def test_build_complete_is_refused_without_the_brand_theme(tmp_path):
 
     result = await handler({"summary": "다 만들었다"})
 
-    assert "pathfinder-theme.css" in result["content"][0]["text"]
+    assert "aipds-theme.css" in result["content"][0]["text"]
     # 거부는 세션을 끝내지 않는다 — 이벤트가 나가지 않아야 한다.
     assert seen == []
 
 
 async def test_build_complete_passes_once_the_theme_is_imported(tmp_path):
-    from pathfinder.design_profile import DesignProfile
-    from pathfinder.proto.design_sync import THEME_FILENAME, sync_design
+    from aipds.design_profile import DesignProfile
+    from aipds.proto.design_sync import THEME_FILENAME, sync_design
 
     app = tmp_path / "prototype" / "app"
     app.mkdir(parents=True)
@@ -116,7 +116,7 @@ async def test_build_complete_passes_once_the_theme_is_imported(tmp_path):
         tokens={"primary": "#5b2ea6"}, prose=""), "ko")
     (app / THEME_FILENAME).write_text(
         (tmp_path / THEME_FILENAME).read_text(), encoding="utf-8")
-    (app / "globals.css").write_text('@import "./pathfinder-theme.css";',
+    (app / "globals.css").write_text('@import "./aipds-theme.css";',
                                      encoding="utf-8")
 
     seen: list[AgentEvent] = []
@@ -136,8 +136,8 @@ async def test_build_complete_skips_the_theme_check_when_the_profile_has_no_toke
     거짓으로 통과시키지는 않는다 — 루트 테마 파일이 no-profile 스텁이므로
     "브랜드 적용됨"이라고 주장하는 파일이 워크스페이스에 남지 않는다.
     """
-    from pathfinder.design_profile import DesignProfile
-    from pathfinder.proto.design_sync import sync_design
+    from aipds.design_profile import DesignProfile
+    from aipds.proto.design_sync import sync_design
 
     (tmp_path / "prototype").mkdir()
     (tmp_path / "prototype" / "package.json").write_text("{}", encoding="utf-8")

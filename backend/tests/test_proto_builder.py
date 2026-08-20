@@ -2,8 +2,8 @@
 # The driver logic is unchanged; only its home and constructor moved.
 from __future__ import annotations
 
-from pathfinder.models import AgentEvent
-from pathfinder.proto.builder import PrototypeBuilder
+from aipds.models import AgentEvent
+from aipds.proto.builder import PrototypeBuilder
 from fakes.fake_sdk import (AssistantMessage, FakeSdkClient, ResultMessage,
                             TextBlock, ToolUseBlock)
 
@@ -130,7 +130,7 @@ _SID = "11111111-2222-3333-4444-555555555555"
 def _real_options(resume=False, **kw):
     """Capture the ClaudeAgentOptions the default factory hands the SDK."""
     import claude_agent_sdk
-    import pathfinder.proto.builder as bmod
+    import aipds.proto.builder as bmod
 
     captured = {}
 
@@ -141,7 +141,7 @@ def _real_options(resume=False, **kw):
     original, claude_agent_sdk.ClaudeSDKClient = claude_agent_sdk.ClaudeSDKClient, Spy
     try:
         builder = bmod.PrototypeBuilder(
-            workspace="/tmp/ws", config_dir="/opt/pathfinder/proto-config",
+            workspace="/tmp/ws", config_dir="/opt/aipds/proto-config",
             session_id=_SID, resume=resume, **kw)
         builder._factory()
     finally:
@@ -153,8 +153,8 @@ def test_only_our_own_skills_are_enabled():
     """Never `"all"`: that also enables the CLI's BUNDLED skills, and one of
     them (`run` -- "Launch and drive this project's app... browser-driven") got
     a build agent to start Playwright chromium, whose port-3000 target SIGKILLed
-    the Pathfinder frontend mid-workshop (2026-08-01 16:13/16:18; the coredump's
-    Unit was pathfinder-backend.service, so the browser was ours).
+    the AI-PDS frontend mid-workshop (2026-08-01 16:13/16:18; the coredump's
+    Unit was aipds-backend.service, so the browser was ours).
 
     An explicit name list makes the SDK emit `Skill(shadcn-design)` instead of a
     bare `Skill`, so bundled skills never enter the turn. Adding a skill to
@@ -173,7 +173,7 @@ def test_config_dir_is_always_injected():
     """The guard against the bundled binary falling back to the backend user's
     personal ~/.claude (their own skills/agents/CLAUDE.md leaking into every
     build). There is exactly one options site, so this pins it."""
-    assert _real_options().env["CLAUDE_CONFIG_DIR"] == "/opt/pathfinder/proto-config"
+    assert _real_options().env["CLAUDE_CONFIG_DIR"] == "/opt/aipds/proto-config"
 
 
 def test_we_do_not_restrict_the_agents_own_tools():
@@ -185,7 +185,7 @@ def test_we_do_not_restrict_the_agents_own_tools():
     exactly our one custom MCP tool, not the empty list an earlier draft of
     this test pinned. That is additive, not a restriction -- Bash/Write/Edit
     are still absent from this list and still unrestricted."""
-    from pathfinder.proto.tools import BUILD_COMPLETE_TOOL
+    from aipds.proto.tools import BUILD_COMPLETE_TOOL
     assert _real_options().allowed_tools == [BUILD_COMPLETE_TOOL]
 
 
@@ -231,7 +231,7 @@ def test_an_unknown_permission_mode_is_rejected_at_construction():
     --permission-mode and fail at connect() -- the same class of late,
     opaque failure as the --session-id/--resume clash. Fail loudly instead."""
     import pytest
-    from pathfinder.proto.builder import PrototypeBuilder
+    from aipds.proto.builder import PrototypeBuilder
 
     with pytest.raises(ValueError, match="bypassPermission"):
         PrototypeBuilder(workspace="/tmp/ws", config_dir="/tmp/cfg",
@@ -311,8 +311,8 @@ def test_mcp_server_and_allowed_tools_are_wired(tmp_path, monkeypatch):
     client_factory를 주입하는 다른 테스트들은 이 경로를 전혀 타지 않으므로,
     배선이 빠져도 그 테스트들은 전부 통과한다 — 그래서 옵션을 직접 붙잡는다.
     """
-    from pathfinder.proto.builder import _default_client_factory
-    from pathfinder.proto.tools import BUILD_COMPLETE_TOOL, PROTO_MCP_SERVER_NAME
+    from aipds.proto.builder import _default_client_factory
+    from aipds.proto.tools import BUILD_COMPLETE_TOOL, PROTO_MCP_SERVER_NAME
 
     captured = {}
 
@@ -341,7 +341,7 @@ def test_mcp_server_and_allowed_tools_are_wired(tmp_path, monkeypatch):
 async def test_the_tool_queues_a_build_complete_event(tmp_path):
     """도구의 emit이 빌더 큐로 가는지 — _on_post_tool_use와 같은 경로여야
     _relay_queue의 소유권 규율(배달 후 pop)을 받는다."""
-    from pathfinder.proto.builder import _proto_tools_for
+    from aipds.proto.builder import _proto_tools_for
 
     (tmp_path / "prototype").mkdir()
     (tmp_path / "prototype" / "index.html").write_text("x")
@@ -366,7 +366,7 @@ async def test_a_queued_completion_is_relayed_before_the_terminal_done(tmp_path)
     sse.ts가 done에서 EventSource를 닫으므로, 순서가 뒤집히면 완료 이벤트가
     클라이언트에 닿지 않고 완료 카드가 영원히 뜨지 않는다.
     """
-    from pathfinder.proto.builder import _proto_tools_for
+    from aipds.proto.builder import _proto_tools_for
 
     (tmp_path / "prototype").mkdir()
     (tmp_path / "prototype" / "index.html").write_text("x")
@@ -389,7 +389,7 @@ async def test_a_queued_completion_is_relayed_before_the_terminal_done(tmp_path)
 # ---- Bash 게이트 (PreToolUse) ----
 #
 # 2026-08-01: 빌드 에이전트가 Playwright chromium을 띄웠고 그 검증이 포트 3000을
-# 겨냥해 Pathfinder 프론트엔드가 SIGKILL로 죽었다. 그때의 완화책은 skills 좁히기와
+# 겨냥해 AI-PDS 프론트엔드가 SIGKILL로 죽었다. 그때의 완화책은 skills 좁히기와
 # CLAUDE.md 산문뿐이었고, builder.py의 skills 주석이 스스로 적어 뒀듯 스킬 목록은
 # **컨텍스트 필터이지 샌드박스가 아니다** — Bash는 그대로 열려 있었다.
 
@@ -397,7 +397,7 @@ def test_the_bash_gate_is_wired_as_a_pretooluse_hook(tmp_path, monkeypatch):
     """빌드는 bypassPermissions로 돌아 can_use_tool이 Bash에 도달하지 않는다
     (SDK의 _get_can_use_tool_shadowed_warning: "To gate every tool call, use a
     PreToolUse hook instead"). 실효 게이트는 PreToolUse뿐이다."""
-    from pathfinder.proto.builder import _default_client_factory
+    from aipds.proto.builder import _default_client_factory
 
     captured = {}
 
@@ -425,7 +425,7 @@ def test_the_bash_gate_never_matches_askuserquestion(tmp_path, monkeypatch):
     질문을 SSE 이벤트로 바꾸는 가로채기가 그 콜백에 있다. claude_driver.py가
     같은 함정을 주석으로 남겨 뒀다.
     """
-    from pathfinder.proto.builder import _default_client_factory
+    from aipds.proto.builder import _default_client_factory
 
     captured = {}
 

@@ -2,9 +2,9 @@
 import asyncio
 import pytest
 from fastapi import HTTPException
-from pathfinder import app as app_module
-from pathfinder.workspace import Workspace
-from pathfinder.routes.deps import ensure_workspace
+from aipds import app as app_module
+from aipds.workspace import Workspace
+from aipds.routes.deps import ensure_workspace
 
 
 class _FakeRunner:

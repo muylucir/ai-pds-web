@@ -1,10 +1,10 @@
 # backend/tests/test_build_guard.py — 빌드 에이전트의 Bash 게이트.
 #
 # **왜 이 게이트가 생겼는가(2026-08-01의 사고).** 빌드 에이전트가 브라우저 검증을
-# 위해 Playwright chromium을 띄웠고, 그 검증이 포트 3000을 겨냥해 Pathfinder
+# 위해 Playwright chromium을 띄웠고, 그 검증이 포트 3000을 겨냥해 AI-PDS
 # 프론트엔드가 SIGKILL로 죽었다(journalctl status=9/KILL, 코어덤프의
-# Unit=pathfinder-backend.service). 백엔드와 프론트엔드가 빌드 에이전트와 **같은
-# 유저(`pathfinder`)로 도므로** 막을 것이 없었고, 워크숍 참가자 화면에는 "연결이
+# Unit=aipds-backend.service). 백엔드와 프론트엔드가 빌드 에이전트와 **같은
+# 유저(`aipds`)로 도므로** 막을 것이 없었고, 워크숍 참가자 화면에는 "연결이
 # 끊겼다"가 떴다.
 #
 # 그때의 완화책은 두 가지였고 **둘 다 코드가 아니었다**:
@@ -26,7 +26,7 @@
 # 영어 프로젝트로 샌다).
 from __future__ import annotations
 
-from pathfinder.proto.build_guard import bash_denial
+from aipds.proto.build_guard import bash_denial
 
 
 # ---- 빌드의 정상 경로는 통과해야 한다 ----
@@ -144,7 +144,7 @@ def test_killing_a_pid_you_hold_is_allowed():
     assert bash_denial("kill 12345") is None
 
 
-# ---- 포트 3000·8000: Pathfinder 자신이다 ----
+# ---- 포트 3000·8000: AI-PDS 자신이다 ----
 #
 # hosting이 배정하는 범위는 range(4000, 8000)이므로(proto/host.py의 _scan_port)
 # 3000·8000은 어느 프로토타입에도 배정되지 않는다 — 막아도 충돌하지 않는다.

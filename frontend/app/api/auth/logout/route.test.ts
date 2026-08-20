@@ -58,7 +58,7 @@ describe("POST /api/auth/logout", () => {
 
     // 쿠키를 지우지 않으면 Hosted UI에서 돌아온 뒤에도 게이트가 통과한다.
     const setCookie = res.headers.getSetCookie().join("\n");
-    for (const name of ["pf_access", "pf_id", "pf_refresh"]) {
+    for (const name of ["aipds_access", "aipds_id", "aipds_refresh"]) {
       expect(setCookie).toContain(`${name}=`);
     }
     expect(setCookie).toContain("Max-Age=0");

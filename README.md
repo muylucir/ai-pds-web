@@ -1,4 +1,4 @@
-# Pathfinder
+# AI-PDS
 
 [한국어](README.ko.md) | **English**
 
@@ -53,12 +53,12 @@ The workflows are also fully customizable to your needs — they are defined in 
 you can edit to adjust questions, scoring frameworks, output formats, or add domain-specific
 guidance for your organization.
 
-**Where that workflow lives in this repo.** The ruleset Pathfinder drives is the AI-PLC workflow
+**Where that workflow lives in this repo.** The ruleset AI-PDS drives is the AI-PLC workflow
 from [aws-samples/sample-ai-plc](https://github.com/aws-samples/sample-ai-plc), and it ships here
 under [`rule/aiplc-rules/`](rule/aiplc-rules) — those markdown files are the ones to edit. The
 backend copies them into the agent's workspace on **every turn**
-(`backend/pathfinder/agent/workspace_rules.py`), so an edited ruleset takes effect on the next turn:
-no restart, no redeployment. What Pathfinder adds around the workflow is the part a chat transcript
+(`backend/aipds/agent/workspace_rules.py`), so an edited ruleset takes effect on the next turn:
+no restart, no redeployment. What AI-PDS adds around the workflow is the part a chat transcript
 cannot do — a browser UI for non-technical roles, live turn rendering, document review, and building
 and hosting the prototype plus its validation survey from the same screen.
 
@@ -72,9 +72,9 @@ CloudFront goes in front of it.
 
 | Stack | What it creates |
 |---|---|
-| `PathfinderDrillStack` | S3 artifact bucket (`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + backend execution role (Bedrock invoke + S3) |
-| `PathfinderAuthStack` | Cognito User Pool + Hosted UI v2 + role groups (`admin`/`pm`) + 2 seed accounts |
-| `PathfinderHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
+| `AipdsDrillStack` | S3 artifact bucket (`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + backend execution role (Bedrock invoke + S3) |
+| `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 + role groups (`admin`/`pm`) + 2 seed accounts |
+| `AipdsHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
 
 The three stacks depend on each other, so **deploy them together with `--all`** (`app.ts` passes
 the bucket and User Pool references into the hosting stack). CDK decides the order.
@@ -119,9 +119,9 @@ and review them yourself.
 >
 > **The price: `cdk deploy` does not update code.** With no SHA in user-data, pushing a commit
 > leaves user-data byte-identical, and CloudFormation therefore does not replace the instance.
-> Updating code is [`pathfinder-update`](#updating-the-code)'s job.
+> Updating code is [`aipds-update`](#updating-the-code)'s job.
 >
-> To see what is actually running on the instance: `git -C /opt/pathfinder rev-parse HEAD` (the
+> To see what is actually running on the instance: `git -C /opt/aipds rev-parse HEAD` (the
 > commit it booted on is also in the bootstrap log, on the `booted commit:` line).
 >
 > Previously the repo root was uploaded as a zip asset. The reason for switching to a clone is that
@@ -136,14 +136,14 @@ and review them yourself.
 ### 4. Outputs
 
 ```
-PathfinderHostingStack.DistributionDomain → access URL (https://dxxxx.cloudfront.net)
-PathfinderHostingStack.InstanceId         → aws ssm start-session --target <id>
-PathfinderDrillStack.ArtifactsBucketName  → PATHFINDER_S3_BUCKET
-PathfinderDrillStack.BackendRoleArn       → the backend must run with this role (or an equivalent policy)
-PathfinderDrillStack.Region               → AWS_REGION / PATHFINDER_S3_REGION
-PathfinderAuthStack.UserPoolId            → PATHFINDER_COGNITO_USER_POOL_ID
-PathfinderAuthStack.UserPoolClientId      → PATHFINDER_COGNITO_CLIENT_ID / COGNITO_CLIENT_ID
-PathfinderAuthStack.HostedUiDomain        → COGNITO_HOSTED_UI_DOMAIN
+AipdsHostingStack.DistributionDomain → access URL (https://dxxxx.cloudfront.net)
+AipdsHostingStack.InstanceId         → aws ssm start-session --target <id>
+AipdsDrillStack.ArtifactsBucketName  → AIPDS_S3_BUCKET
+AipdsDrillStack.BackendRoleArn       → the backend must run with this role (or an equivalent policy)
+AipdsDrillStack.Region               → AWS_REGION / AIPDS_S3_REGION
+AipdsAuthStack.UserPoolId            → AIPDS_COGNITO_USER_POOL_ID
+AipdsAuthStack.UserPoolClientId      → AIPDS_COGNITO_CLIENT_ID / COGNITO_CLIENT_ID
+AipdsAuthStack.HostedUiDomain        → COGNITO_HOSTED_UI_DOMAIN
 ```
 
 In an EC2 deployment, user-data puts these values into the backend and frontend env automatically —
@@ -156,8 +156,8 @@ Open `DistributionDomain` and log in with a seed account:
 
 | Account | Role | Password |
 |---|---|---|
-| `admin@pathfinder.local` | Administrator (can manage users) | `PathFinder2026!@` |
-| `pm@pathfinder.local` | PM | `PathFinder2026!@` |
+| `admin@aipds.local` | Administrator (can manage users) | `AiPdsWeb2026@!` |
+| `pm@aipds.local` | PM | `AiPdsWeb2026@!` |
 
 > ⚠️ **These passwords are for demos and workshops.** They are constants in the CDK source, so they
 > remain in plaintext in the CloudFormation template and stack events, and a redeployment resets
@@ -183,12 +183,12 @@ looking it up again when credentials are present).
 
 **Not with `cdk deploy`.** The deployment carries no commit SHA, so pushing a commit does not
 change user-data, and CloudFormation therefore does not replace the instance — `cdk deploy` ends
-with "no changes". Updating code is what `pathfinder-update` on the instance is for:
+with "no changes". Updating code is what `aipds-update` on the instance is for:
 
 ```bash
 git push                                       # what gets deployed is pushed main
 aws ssm start-session --target <InstanceId>
-sudo pathfinder-update
+sudo aipds-update
 ```
 
 It moves the tree onto `origin/main` and acts on **only what changed**:
@@ -209,7 +209,7 @@ disruptions in the table still apply, though — apply frontend and backend chan
 - Tracked files you edited by hand on the instance are **reverted** (`checkout -f`). The judgment
   is that one such file blocking every future update is worse — do not edit on the instance, push
   instead. `protos/`, `workspaces/` and session state are untracked and are not touched.
-- Verify: `git -C /opt/pathfinder rev-parse HEAD` tells you what is running, and
+- Verify: `git -C /opt/aipds rev-parse HEAD` tells you what is running, and
   `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/` hits the app directly (nginx
   returns 403 without CloudFront's secret header, so bypass it).
 
@@ -219,11 +219,11 @@ When you change infrastructure (user-data, instance type, nginx config, …), `c
 the instance, and the new one picks up the latest `main` as it boots:
 
 ```bash
-cd infra && npx cdk deploy PathfinderHostingStack --require-approval never
+cd infra && npx cdk deploy AipdsHostingStack --require-approval never
 ```
 
 It takes 5–10 minutes to boot and finish the build, with 502s in the meantime. Code-only changes do
-not need this path — use `pathfinder-update` above.
+not need this path — use `aipds-update` above.
 
 ### Teardown
 
@@ -244,21 +244,21 @@ generic failure, and the cause is recorded here and nowhere else:
 
 ```bash
 aws ssm start-session --target <InstanceId>
-sudo journalctl -u pathfinder-backend -f            # live
-sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # drop preview-proxy noise
+sudo journalctl -u aipds-backend -f            # live
+sudo journalctl -u aipds-backend --since -1h | grep -v '/proto/'   # drop preview-proxy noise
 ```
 
 | Symptom | Cause / what to do |
 |---|---|
 | CloudFront 502 right after deploying | The EC2 first build is still running (5–10 min). Over SSM: `sudo tail -f /var/log/cloud-init-output.log` |
-| A stack is `ROLLBACK_COMPLETE` and refuses to redeploy | **A stack whose initial creation failed cannot be updated.** Destroy it first, then deploy again: `npx cdk destroy PathfinderAuthStack` → `npx cdk deploy --all`. `UPDATE_ROLLBACK_COMPLETE` (a failed update of an existing stack) just needs a redeploy |
+| A stack is `ROLLBACK_COMPLETE` and refuses to redeploy | **A stack whose initial creation failed cannot be updated.** Destroy it first, then deploy again: `npx cdk destroy AipdsAuthStack` → `npx cdk deploy --all`. `UPDATE_ROLLBACK_COMPLETE` (a failed update of an existing stack) just needs a redeploy |
 | `AccessDeniedException` on the first conversation turn | **Bedrock model access** for that model is off in the deployment region. IAM allows all of `global.anthropic.claude-*`, so IAM is an unlikely cause |
 | One feature 500s and the screen shows no reason | Usually IAM. The `AccessDenied` in the backend log names the action and resource |
-| `redirect_mismatch` after login | The hosting stack's callback-URL registration (`UpdateUserPoolClient`) failed. Re-run `cdk deploy PathfinderHostingStack` |
+| `redirect_mismatch` after login | The hosting stack's callback-URL registration (`UpdateUserPoolClient`) failed. Re-run `cdk deploy AipdsHostingStack` |
 | `cdk synth` asks for credentials | The hosting stack's prefix-list lookup. The result is cached in the local `cdk.context.json` (gitignored), so it is only needed once per clone |
 | Cannot SSH in | By design. There is no SSH port; only SSM is open |
-| A prototype preview 404s | **That is the intended response** — the access-token cookie is missing or belongs to a different prototype. You have to enter through the share link (`/api/proto/t/{token}`) for the cookie to be set. The branch conditions are in `backend/pathfinder/routes/proto_public.py` |
-| An English project produces Korean documents and chat | Two levels of language instruction conflicted, and **this failure raises no error.** A project's language enters through two channels: `backend/pathfinder/agent/language/{ko,en}.md` and the shared config dirs (`proto-config/CLAUDE.md`, `discovery-config/CLAUDE.md`) — when they disagree, the screen looks fine and only the artifacts come out in the other language |
+| A prototype preview 404s | **That is the intended response** — the access-token cookie is missing or belongs to a different prototype. You have to enter through the share link (`/api/proto/t/{token}`) for the cookie to be set. The branch conditions are in `backend/aipds/routes/proto_public.py` |
+| An English project produces Korean documents and chat | Two levels of language instruction conflicted, and **this failure raises no error.** A project's language enters through two channels: `backend/aipds/agent/language/{ko,en}.md` and the shared config dirs (`proto-config/CLAUDE.md`, `discovery-config/CLAUDE.md`) — when they disagree, the screen looks fine and only the artifacts come out in the other language |
 | English UI but a few strings are Korean | A literal hardcoded in the source instead of going through the dictionary. `cd frontend && npm test -- noHardcodedKorean` points at the location |
 | Workspace chat history is an empty list | `list_history` downgrades every failure to `[]`. Start by checking whether objects exist under `projects/{pid}/discovery/transcript/` — the mirroring key is derived from the project_id with uuid5 (`agent/session_store.py`, `agent/claude_driver.py`), so putting the raw project_id in the prefix means you are looking in an empty place |
 | "The connection was lost" when sending a long message | The request line exceeded Node's `maxHeaderSize` (HTTP 431) and `EventSource` does not expose the status code, so this is the only message you get. Turn text is now POSTed and only a one-shot handle rides in the URL (`turn_handles.py`) — if it happens again, split the input or attach it as a file |
@@ -269,7 +269,7 @@ sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # drop p
 
 Frontend (:3000) → backend (:8000) → the Discovery agent running inside the backend calls Bedrock.
 The bucket and role are still required, so deploying just
-`npx cdk deploy PathfinderDrillStack` is enough.
+`npx cdk deploy AipdsDrillStack` is enough.
 
 **Requirements**: Python **3.11** (3.9 will not work), Node.js 20+, credentials with Bedrock access.
 
@@ -280,7 +280,7 @@ cd ../frontend && npm install
 cp ../backend/.env.example ../backend/.env      # take the values from the CfnOutputs above
 
 # terminal 1 — backend
-cd backend && .venv/bin/python -m uvicorn pathfinder.app:app --host 0.0.0.0 --port 8000 --reload
+cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
 
 # terminal 2 — frontend
 cd frontend && npm run dev            # http://localhost:3000
@@ -288,6 +288,11 @@ cd frontend && npm run dev            # http://localhost:3000
 
 `http://localhost:3000` → create a project (you pick the model and the **artifact language** here)
 → dashboard / workspace / document review / prototypes.
+
+If you already have a gitignored `backend/.env` from before this rename, update its keys to the
+`AIPDS_*` names shown in `.env.example`. The failure if you don't is silent: an unset
+`AIPDS_S3_BUCKET` just makes the app run local-only, and an unset `AIPDS_COGNITO_*` pair is a
+documented full auth bypass — neither prints a warning.
 
 ### When the browser is remote (behind a reverse proxy)
 
@@ -299,7 +304,7 @@ route handler (`app/api/[...path]/route.ts`) proxies to the backend server-side:
 ```bash
 # frontend/.env.local
 NEXT_PUBLIC_API_BASE_URL=/api
-# (if the backend is on another host/port) PATHFINDER_BACKEND_URL=http://localhost:8000
+# (if the backend is on another host/port) AIPDS_BACKEND_URL=http://localhost:8000
 ```
 
 To silence the dev cross-origin warning, add that hostname to `allowedDevOrigins` in
@@ -316,21 +321,21 @@ locally**.
 For the full list, look in two places: the values that actually go into a deployment and the reason
 for each are in the systemd units in [`infra/lib/user-data.ts`](infra/lib/user-data.ts) (every
 `Environment=` line carries a comment), and the defaults and accepted ranges are in the code that
-reads them (`backend/pathfinder/app.py`, `backend/pathfinder/cli_settings.py`).
+reads them (`backend/aipds/app.py`, `backend/aipds/cli_settings.py`).
 
 | Variable | Default | Description |
 |---|---|---|
-| `PATHFINDER_S3_BUCKET` | — | Artifact bucket (a CDK output) |
-| `PATHFINDER_S3_REGION` | `ap-northeast-2` | Persistent-storage region. **Match the region the bucket was created in** |
+| `AIPDS_S3_BUCKET` | — | Artifact bucket (a CDK output) |
+| `AIPDS_S3_REGION` | `ap-northeast-2` | Persistent-storage region. **Match the region the bucket was created in** |
 | `ANTHROPIC_MODEL` | — (EC2 uses `global.anthropic.claude-opus-4-8`) | **Fallback** Bedrock inference profile id. If a project has its own model, that one wins |
-| `PATHFINDER_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
-| `PATHFINDER_LOG_LEVEL` | `INFO` | Application log level (`app.configure_logging()`) |
-| `PATHFINDER_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **Leave both empty** to bypass authentication entirely (the local default). Leave only one empty and every request raises RuntimeError (fail-closed) |
-| `PATHFINDER_COOKIE_SECURE` | `false` (EC2 uses `true`) | Whether to add `Secure` to the prototype access cookie. Leave it off locally |
-| `PATHFINDER_AUTO_COMPACT_WINDOW` | — (the CLI default) | The context size (in tokens, 100000–1000000) at which auto-compaction fires. Delaying it lets late stages write documents from the evidence rather than from a summary — the price is per-turn cost |
-| `PATHFINDER_LONG_CONTEXT` | `false` | Whether to append the CLI's `[1m]` (1M context beta) to the model id. **It is not a strict upgrade** — see `backend/pathfinder/cli_settings.py` for the cost and quality trade-off |
-| `PATHFINDER_FILE_QUESTIONS` | `true` | Whether the agent asks by **writing a question file** (Pathfinder reads it and shows the questions verbatim) instead of through the AskUserQuestion tool. Set it falsy to fall back to the tool — that path is kept as an escape hatch. Measured reason for the default: re-emitting a written question through the tool damaged 15 of 19 questions (Korean characters substituted, wording truncated so answers were never recorded). See `backend/pathfinder/agent/claude_driver.py`'s `FILE_QUESTIONS_ENV` |
-| `PATHFINDER_PUBLIC_PATH_PREFIX` | `/api` | The preview mount **as the browser sees it**. Use `""` locally when calling the backend directly on :8000 |
+| `AIPDS_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
+| `AIPDS_LOG_LEVEL` | `INFO` | Application log level (`app.configure_logging()`) |
+| `AIPDS_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **Leave both empty** to bypass authentication entirely (the local default). Leave only one empty and every request raises RuntimeError (fail-closed) |
+| `AIPDS_COOKIE_SECURE` | `false` (EC2 uses `true`) | Whether to add `Secure` to the prototype access cookie. Leave it off locally |
+| `AIPDS_AUTO_COMPACT_WINDOW` | — (the CLI default) | The context size (in tokens, 100000–1000000) at which auto-compaction fires. Delaying it lets late stages write documents from the evidence rather than from a summary — the price is per-turn cost |
+| `AIPDS_LONG_CONTEXT` | `false` | Whether to append the CLI's `[1m]` (1M context beta) to the model id. **It is not a strict upgrade** — see `backend/aipds/cli_settings.py` for the cost and quality trade-off |
+| `AIPDS_FILE_QUESTIONS` | `true` | Whether the agent asks by **writing a question file** (AI-PDS reads it and shows the questions verbatim) instead of through the AskUserQuestion tool. Set it falsy to fall back to the tool — that path is kept as an escape hatch. Measured reason for the default: re-emitting a written question through the tool damaged 15 of 19 questions (Korean characters substituted, wording truncated so answers were never recorded). See `backend/aipds/agent/claude_driver.py`'s `FILE_QUESTIONS_ENV` |
+| `AIPDS_PUBLIC_PATH_PREFIX` | `/api` | The preview mount **as the browser sees it**. Use `""` locally when calling the backend directly on :8000 |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | The API base the frontend calls. Behind a remote proxy, `/api` |
 | `COGNITO_HOSTED_UI_DOMAIN` / `COGNITO_CLIENT_ID` / `COGNITO_CLIENT_SECRET` | — | Frontend server-side only. **Never `NEXT_PUBLIC_`** for secrets |
 

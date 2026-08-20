@@ -34,22 +34,22 @@ const INVOKABLE_MODEL_ARNS = (account: string) => [
 // surveys/by-token/{token}.json은 토큰 -> 프로토타입 단방향 인덱스다. 공개
 // 설문 링크(/survey/{token})는 토큰이 어느 프로젝트 것인지 알기 전에 이걸
 // 읽어야 하므로 projects/{pid}/ 안에 둘 수 없다
-// (backend/pathfinder/app.py의 surveys_root_s3_factory).
+// (backend/aipds/app.py의 surveys_root_s3_factory).
 //
 // models/catalog.json은 프로젝트 생성 화면의 모델 목록이다. 프로젝트가 하나도
 // 없는 상태에서 읽히므로 같은 이유로 프로젝트 프리픽스 밖에 있다
-// (backend/pathfinder/model_catalog.py의 CATALOG_KEY).
+// (backend/aipds/model_catalog.py의 CATALOG_KEY).
 //
 // 실측 배포 버그: 이 목록에 surveys/*가 없어서 설문 생성이 전부 500이었고,
 // 백엔드 로그에만 AccessDenied(PutObject on surveys/by-token/...)가 남았다.
 // 설문 기능이 들어온 뒤 이 헬퍼가 함께 갱신되지 않은 것이 원인 —
-// backend/pathfinder/survey/store.py의 TOKEN_INDEX_PREFIX와 짝이다.
+// backend/aipds/survey/store.py의 TOKEN_INDEX_PREFIX와 짝이다.
 // ListBucket에도 필요하다: purge()의 토큰 회수는 delete_prefix(=list 후
 // delete_objects)를 타므로 목록 권한이 없으면 조용히 0건을 지운다.
 //
 // design/profile.json은 관리자가 올린 브랜드 디자인 프로필이다. 프로젝트가
 // 없어도 관리되므로 models/catalog.json과 같은 이유로 프로젝트 프리픽스 밖에
-// 있다 (backend/pathfinder/design_profile.py의 DESIGN_PROFILE_KEY).
+// 있다 (backend/aipds/design_profile.py의 DESIGN_PROFILE_KEY).
 const BACKEND_BUCKET_PREFIXES = [
   'projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*',
 ] as const;

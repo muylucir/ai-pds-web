@@ -1,4 +1,4 @@
-# Pathfinder
+# AI-PDS
 
 **한국어** | [English](README.md)
 
@@ -46,11 +46,11 @@ AI-PLC는 프로덕트 매니저·비즈니스 리더 등 **비개발 역할**�
 워크플로 자체도 **필요에 맞게 고칠 수 있다** — 마크다운 파일로 정의되어 있어 질문, 스코어링
 프레임워크, 산출물 형식을 조정하거나 조직에 맞는 도메인 지침을 넣을 수 있다.
 
-**이 리포에서 그 워크플로가 있는 자리.** Pathfinder가 구동하는 룰셋은
+**이 리포에서 그 워크플로가 있는 자리.** AI-PDS가 구동하는 룰셋은
 [aws-samples/sample-ai-plc](https://github.com/aws-samples/sample-ai-plc)의 AI-PLC 워크플로이며,
 여기에는 [`rule/aiplc-rules/`](rule/aiplc-rules)로 들어 있다 — 고칠 대상은 그 마크다운 파일들이다.
-백엔드가 **매 턴** 그것을 에이전트 워크스페이스로 복사하므로(`backend/pathfinder/agent/workspace_rules.py`),
-룰셋을 고치면 다음 턴부터 반영된다: 재시작도, 재배포도 필요 없다. Pathfinder가 그 워크플로
+백엔드가 **매 턴** 그것을 에이전트 워크스페이스로 복사하므로(`backend/aipds/agent/workspace_rules.py`),
+룰셋을 고치면 다음 턴부터 반영된다: 재시작도, 재배포도 필요 없다. AI-PDS가 그 워크플로
 바깥에 더하는 것은 채팅 기록만으로는 안 되는 부분이다 — 비개발 역할이 쓰는 브라우저 UI, 턴의
 실시간 렌더, 문서 리뷰, 그리고 같은 화면에서 프로토타입과 검증 설문까지 빌드·호스팅하는 것.
 
@@ -63,9 +63,9 @@ AI-PLC는 프로덕트 매니저·비즈니스 리더 등 **비개발 역할**�
 
 | 스택 | 만드는 것 |
 |---|---|
-| `PathfinderDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
-| `PathfinderAuthStack` | Cognito User Pool + Hosted UI v2 + 역할 그룹(`admin`/`pm`) + 시드 계정 2개 |
-| `PathfinderHostingStack` | VPC + EC2(AL2023 x86_64, m7i.2xlarge, EBS 100GB 암호화) + CloudFront |
+| `AipdsDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
+| `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 + 역할 그룹(`admin`/`pm`) + 시드 계정 2개 |
+| `AipdsHostingStack` | VPC + EC2(AL2023 x86_64, m7i.2xlarge, EBS 100GB 암호화) + CloudFront |
 
 세 스택은 서로 의존하므로 **`--all`로 함께 배포**한다(`app.ts`가 버킷·User Pool 참조를
 호스팅 스택에 넘긴다). 배포 순서는 CDK가 정한다.
@@ -106,9 +106,9 @@ npx cdk deploy --all --require-approval never
 >
 > **대가: `cdk deploy`는 코드를 갱신하지 않는다.** user-data에 SHA가 없어 커밋을 밀어도
 > user-data가 그대로이고, 그러면 CloudFormation이 인스턴스를 교체하지 않는다. 코드 갱신은
-> [`pathfinder-update`](#코드-갱신하기)가 한다.
+> [`aipds-update`](#코드-갱신하기)가 한다.
 >
-> 인스턴스에서 무엇이 도는지는 `git -C /opt/pathfinder rev-parse HEAD`로 확인한다(부팅
+> 인스턴스에서 무엇이 도는지는 `git -C /opt/aipds rev-parse HEAD`로 확인한다(부팅
 > 시점의 커밋은 부트스트랩 로그의 `booted commit:` 줄에도 남는다).
 >
 > 종전에는 리포 루트를 zip 에셋으로 올렸다. clone으로 바꾼 이유는 에셋이 **gitignore된
@@ -122,14 +122,14 @@ npx cdk deploy --all --require-approval never
 ### 4. 출력값
 
 ```
-PathfinderHostingStack.DistributionDomain → 접속 URL (https://dxxxx.cloudfront.net)
-PathfinderHostingStack.InstanceId         → aws ssm start-session --target <id>
-PathfinderDrillStack.ArtifactsBucketName  → PATHFINDER_S3_BUCKET
-PathfinderDrillStack.BackendRoleArn       → 백엔드가 이 롤(또는 동등 정책)로 실행돼야 함
-PathfinderDrillStack.Region               → AWS_REGION / PATHFINDER_S3_REGION
-PathfinderAuthStack.UserPoolId            → PATHFINDER_COGNITO_USER_POOL_ID
-PathfinderAuthStack.UserPoolClientId      → PATHFINDER_COGNITO_CLIENT_ID / COGNITO_CLIENT_ID
-PathfinderAuthStack.HostedUiDomain        → COGNITO_HOSTED_UI_DOMAIN
+AipdsHostingStack.DistributionDomain → 접속 URL (https://dxxxx.cloudfront.net)
+AipdsHostingStack.InstanceId         → aws ssm start-session --target <id>
+AipdsDrillStack.ArtifactsBucketName  → AIPDS_S3_BUCKET
+AipdsDrillStack.BackendRoleArn       → 백엔드가 이 롤(또는 동등 정책)로 실행돼야 함
+AipdsDrillStack.Region               → AWS_REGION / AIPDS_S3_REGION
+AipdsAuthStack.UserPoolId            → AIPDS_COGNITO_USER_POOL_ID
+AipdsAuthStack.UserPoolClientId      → AIPDS_COGNITO_CLIENT_ID / COGNITO_CLIENT_ID
+AipdsAuthStack.HostedUiDomain        → COGNITO_HOSTED_UI_DOMAIN
 ```
 
 EC2 배포에서는 user-data가 이 값들을 자동으로 백엔드/프론트 env에 넣는다 — 손으로 설정할
@@ -141,8 +141,8 @@ EC2 배포에서는 user-data가 이 값들을 자동으로 백엔드/프론트 
 
 | 계정 | 역할 | 비밀번호 |
 |---|---|---|
-| `admin@pathfinder.local` | 관리자 (사용자 관리 가능) | `PathFinder2026!@` |
-| `pm@pathfinder.local` | PM | `PathFinder2026!@` |
+| `admin@aipds.local` | 관리자 (사용자 관리 가능) | `AiPdsWeb2026@!` |
+| `pm@aipds.local` | PM | `AiPdsWeb2026@!` |
 
 > ⚠️ **이 비밀번호는 데모/워크숍용이다.** CDK 소스의 상수이므로 CloudFormation 템플릿과
 > 스택 이벤트에 평문으로 남고, 재배포하면 이 값으로 되돌아간다. 실제 운영에 쓰려면
@@ -166,12 +166,12 @@ CloudFront 프리픽스 리스트는 `PrefixList.fromLookup`이 배포 리전에
 
 **`cdk deploy`가 아니다.** 배포에는 커밋 SHA가 없으므로 커밋을 밀어도 user-data가 바뀌지
 않고, 그러면 CloudFormation이 인스턴스를 교체하지 않는다 — `cdk deploy`는 "no changes"로
-끝난다. 코드 갱신은 인스턴스 위의 `pathfinder-update`가 한다:
+끝난다. 코드 갱신은 인스턴스 위의 `aipds-update`가 한다:
 
 ```bash
 git push                                       # 배포되는 것은 푸시된 main이다
 aws ssm start-session --target <InstanceId>
-sudo pathfinder-update
+sudo aipds-update
 ```
 
 `origin/main`으로 트리를 맞추고, **바뀐 쪽만** 반영한다:
@@ -191,7 +191,7 @@ sudo pathfinder-update
 - 인스턴스에서 손으로 고친 tracked 파일은 **되돌아간다**(`checkout -f`). 그런 파일 하나가
   갱신 전체를 막는 것이 더 나쁘다는 판단이다 — 인스턴스에서 직접 편집하지 말고 푸시한다.
   `protos/`·`workspaces/`·세션 상태는 untracked라 지워지지 않는다.
-- 확인: `git -C /opt/pathfinder rev-parse HEAD` 로 무엇이 도는지 보고,
+- 확인: `git -C /opt/aipds rev-parse HEAD` 로 무엇이 도는지 보고,
   `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/`로 앱을 직접 찍는다
   (nginx는 CloudFront의 비밀 헤더가 없으면 403이므로 우회해서 본다).
 
@@ -201,11 +201,11 @@ sudo pathfinder-update
 교체하고, 새 인스턴스는 부팅하면서 그 시점의 최신 `main`을 가져온다:
 
 ```bash
-cd infra && npx cdk deploy PathfinderHostingStack --require-approval never
+cd infra && npx cdk deploy AipdsHostingStack --require-approval never
 ```
 
 부팅해 빌드를 마칠 때까지 5~10분이 걸리고 그 사이 502가 난다. 코드만 바뀐 경우에는 이
-경로가 필요 없다 — 위의 `pathfinder-update`를 쓴다.
+경로가 필요 없다 — 위의 `aipds-update`를 쓴다.
 
 ### 삭제
 
@@ -226,21 +226,21 @@ cd infra && npx cdk destroy --all
 
 ```bash
 aws ssm start-session --target <InstanceId>
-sudo journalctl -u pathfinder-backend -f            # 실시간
-sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # 프리뷰 프록시 소음 제거
+sudo journalctl -u aipds-backend -f            # 실시간
+sudo journalctl -u aipds-backend --since -1h | grep -v '/proto/'   # 프리뷰 프록시 소음 제거
 ```
 
 | 증상 | 원인 / 대처 |
 |---|---|
 | 배포 직후 CloudFront 502 | EC2 첫 빌드가 진행 중(5~10분). SSM으로 `sudo tail -f /var/log/cloud-init-output.log` |
-| 스택이 `ROLLBACK_COMPLETE`라 재배포 거부 | **최초 생성이 실패한 스택은 업데이트가 불가능하다.** 먼저 내린 뒤 다시 배포한다: `npx cdk destroy PathfinderAuthStack` → `npx cdk deploy --all`. `UPDATE_ROLLBACK_COMPLETE`(기존 스택의 업데이트 실패)는 그냥 재배포하면 된다 |
+| 스택이 `ROLLBACK_COMPLETE`라 재배포 거부 | **최초 생성이 실패한 스택은 업데이트가 불가능하다.** 먼저 내린 뒤 다시 배포한다: `npx cdk destroy AipdsAuthStack` → `npx cdk deploy --all`. `UPDATE_ROLLBACK_COMPLETE`(기존 스택의 업데이트 실패)는 그냥 재배포하면 된다 |
 | 첫 대화 턴에서 `AccessDeniedException` | 배포 리전에 그 모델의 **Bedrock 모델 액세스**가 꺼져 있다. IAM은 `global.anthropic.claude-*`를 전부 허용하므로 IAM이 원인일 가능성은 낮다 |
 | 특정 기능만 500이고 화면에는 원인이 안 보임 | 대개 IAM이다. 백엔드 로그의 `AccessDenied`가 어떤 액션·리소스인지 말해 준다 |
-| 로그인 후 `redirect_mismatch` | 호스팅 스택의 콜백 URL 등록(`UpdateUserPoolClient`)이 실패. `cdk deploy PathfinderHostingStack` 재실행 |
+| 로그인 후 `redirect_mismatch` | 호스팅 스택의 콜백 URL 등록(`UpdateUserPoolClient`)이 실패. `cdk deploy AipdsHostingStack` 재실행 |
 | `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 결과가 로컬 `cdk.context.json`(gitignored)에 캐시되므로 클론당 최초 1회만 필요하다 |
 | SSH 접속 불가 | 의도된 설계다. SSH 포트가 없고 SSM만 열려 있다 |
-| 프로토타입 프리뷰가 404 | **의도된 응답이다** — 접근 토큰 쿠키가 없거나 다른 프로토타입의 것이다. 공유 링크(`/api/proto/t/{token}`)로 들어가야 쿠키가 심긴다. 분기 조건은 `backend/pathfinder/routes/proto_public.py` |
-| 영어 프로젝트인데 문서·채팅이 한국어로 나옴 | 언어 지시가 두 레벨에서 충돌한 것이고 **이 실패는 에러를 내지 않는다.** 프로젝트 언어는 `backend/pathfinder/agent/language/{ko,en}.md`와 공유 config dir(`proto-config/CLAUDE.md`·`discovery-config/CLAUDE.md`) 두 채널로 들어간다 — 둘이 어긋나면 화면은 정상인데 산출물만 다른 언어가 된다 |
+| 프로토타입 프리뷰가 404 | **의도된 응답이다** — 접근 토큰 쿠키가 없거나 다른 프로토타입의 것이다. 공유 링크(`/api/proto/t/{token}`)로 들어가야 쿠키가 심긴다. 분기 조건은 `backend/aipds/routes/proto_public.py` |
+| 영어 프로젝트인데 문서·채팅이 한국어로 나옴 | 언어 지시가 두 레벨에서 충돌한 것이고 **이 실패는 에러를 내지 않는다.** 프로젝트 언어는 `backend/aipds/agent/language/{ko,en}.md`와 공유 config dir(`proto-config/CLAUDE.md`·`discovery-config/CLAUDE.md`) 두 채널로 들어간다 — 둘이 어긋나면 화면은 정상인데 산출물만 다른 언어가 된다 |
 | 영어 UI인데 일부 문구만 한국어 | 딕셔너리를 안 타고 소스에 박힌 리터럴이다. `cd frontend && npm test -- noHardcodedKorean`이 위치를 집어 준다 |
 | 워크스페이스 채팅 내역이 빈 목록 | `list_history`가 모든 실패를 `[]`로 강등한다. `projects/{pid}/discovery/transcript/`에 객체가 있는지부터 확인한다 — 미러링 키는 project_id에서 uuid5로 유도하므로(`agent/session_store.py`, `agent/claude_driver.py`) project_id를 그대로 프리픽스에 넣어 찾으면 빈 곳을 뒤진다 |
 | 긴 메시지를 보내면 "연결이 끊어졌습니다" | 요청 라인이 Node `maxHeaderSize`를 넘은 것(HTTP 431)이고 `EventSource`가 상태 코드를 노출하지 않아 이 문구만 뜬다. 지금은 턴 텍스트를 POST로 받아 1회용 핸들만 URL에 싣는다(`turn_handles.py`) — 다시 나면 입력을 나눠 보내거나 파일로 첨부한다 |
@@ -250,7 +250,7 @@ sudo journalctl -u pathfinder-backend --since -1h | grep -v '/proto/'   # 프리
 ## 로컬 개발 실행
 
 프론트(:3000) → 백엔드(:8000) → 백엔드 안에서 도는 Discovery 에이전트가 Bedrock을 호출한다.
-버킷·롤은 필요하므로 `npx cdk deploy PathfinderDrillStack`만 배포하면 된다.
+버킷·롤은 필요하므로 `npx cdk deploy AipdsDrillStack`만 배포하면 된다.
 
 **사전 요구사항**: Python **3.11**(3.9로는 안 됨), Node.js 20+, Bedrock 접근 자격증명.
 
@@ -261,7 +261,7 @@ cd ../frontend && npm install
 cp ../backend/.env.example ../backend/.env      # 값은 위 CfnOutputs에서 가져온다
 
 # 터미널 1 — 백엔드
-cd backend && .venv/bin/python -m uvicorn pathfinder.app:app --host 0.0.0.0 --port 8000 --reload
+cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
 
 # 터미널 2 — 프론트엔드
 cd frontend && npm run dev            # http://localhost:3000
@@ -269,6 +269,11 @@ cd frontend && npm run dev            # http://localhost:3000
 
 `http://localhost:3000` → 프로젝트 생성(모델과 **생성물 언어**를 여기서 고른다) → 대시보드 /
 워크스페이스 / 문서 리뷰 / 프로토타입.
+
+이 리네임 전에 만들어 둔 gitignore된 `backend/.env`가 있다면, 그 안의 키를
+`.env.example`에 있는 `AIPDS_*` 이름으로 바꾸세요. 안 바꿔도 증상이 없습니다:
+`AIPDS_S3_BUCKET`이 비어 있으면 앱은 그냥 로컬 전용으로 돌고, `AIPDS_COGNITO_*` 쌍이
+비어 있으면 인증이 전체 바이패스됩니다(문서화된 동작) — 둘 다 경고를 찍지 않습니다.
 
 ### 브라우저가 원격(리버스 프록시 뒤)일 때
 
@@ -280,7 +285,7 @@ cd frontend && npm run dev            # http://localhost:3000
 ```bash
 # frontend/.env.local
 NEXT_PUBLIC_API_BASE_URL=/api
-# (백엔드가 다른 호스트/포트면) PATHFINDER_BACKEND_URL=http://localhost:8000
+# (백엔드가 다른 호스트/포트면) AIPDS_BACKEND_URL=http://localhost:8000
 ```
 
 dev cross-origin 경고를 없애려면 `next.config.mjs`의 `allowedDevOrigins`에 그 호스트명을
@@ -295,21 +300,21 @@ EC2 배포는 user-data가 전부 채운다. 아래는 **로컬에서 손으로 
 전체 목록은 두 곳에서 본다: 배포에 실제로 들어가는 값과 그 이유는
 [`infra/lib/user-data.ts`](infra/lib/user-data.ts)의 systemd 유닛(`Environment=` 줄마다
 주석이 붙어 있다), 기본값과 허용 범위는 이를 읽는 코드
-(`backend/pathfinder/app.py`·`backend/pathfinder/cli_settings.py`)에 있다.
+(`backend/aipds/app.py`·`backend/aipds/cli_settings.py`)에 있다.
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `PATHFINDER_S3_BUCKET` | — | 아티팩트 버킷(CDK 출력) |
-| `PATHFINDER_S3_REGION` | `ap-northeast-2` | 영속 스토리지 리전. **버킷이 만들어진 리전과 일치**시킬 것 |
+| `AIPDS_S3_BUCKET` | — | 아티팩트 버킷(CDK 출력) |
+| `AIPDS_S3_REGION` | `ap-northeast-2` | 영속 스토리지 리전. **버킷이 만들어진 리전과 일치**시킬 것 |
 | `ANTHROPIC_MODEL` | — (EC2는 `global.anthropic.claude-opus-4-8`) | **폴백** Bedrock 추론 프로파일 id. 프로젝트가 자기 모델을 가지면 그것이 이긴다 |
-| `PATHFINDER_CORS_ORIGINS` | `http://localhost:3000` | 콤마 구분 허용 origin |
-| `PATHFINDER_LOG_LEVEL` | `INFO` | 애플리케이션 로그 레벨(`app.configure_logging()`) |
-| `PATHFINDER_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **둘 다 비우면** 인증 전체 바이패스(로컬 기본). 하나만 비우면 모든 요청이 RuntimeError(fail-closed) |
-| `PATHFINDER_COOKIE_SECURE` | `false` (EC2는 `true`) | 프로토타입 접근 쿠키에 `Secure`를 붙일지. 로컬은 끈 채로 둔다 |
-| `PATHFINDER_AUTO_COMPACT_WINDOW` | — (CLI 기본값) | 자동 컴팩션이 발동하는 컨텍스트 크기(토큰, 100000~1000000). 늦추면 후반 스테이지가 요약이 아닌 근거로 문서를 쓴다 — 대가는 턴당 비용 |
-| `PATHFINDER_LONG_CONTEXT` | `false` | 모델 id에 CLI의 `[1m]`(1M 컨텍스트 베타)을 붙일지. **상위호환이 아니다** — 비용·품질 대가는 `backend/pathfinder/cli_settings.py` 참고 |
-| `PATHFINDER_FILE_QUESTIONS` | `true` | 에이전트가 **질문 파일을 써서** 묻게 할지(Pathfinder가 그 파일을 읽어 적은 그대로 보여준다). falsy로 두면 AskUserQuestion 도구 경로로 돌아간다 — 탈출로로 남겨 둔다. 기본값의 실측 근거: 파일에 쓴 질문을 도구로 다시 만들면서 19문항 중 15개가 훼손됐다(한글 문자 치환, 축약으로 답변 유실). `backend/pathfinder/agent/claude_driver.py`의 `FILE_QUESTIONS_ENV` 참고 |
-| `PATHFINDER_PUBLIC_PATH_PREFIX` | `/api` | **브라우저가 보는** 프리뷰 마운트. 백엔드를 :8000으로 직접 부르는 로컬은 `""` |
+| `AIPDS_CORS_ORIGINS` | `http://localhost:3000` | 콤마 구분 허용 origin |
+| `AIPDS_LOG_LEVEL` | `INFO` | 애플리케이션 로그 레벨(`app.configure_logging()`) |
+| `AIPDS_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **둘 다 비우면** 인증 전체 바이패스(로컬 기본). 하나만 비우면 모든 요청이 RuntimeError(fail-closed) |
+| `AIPDS_COOKIE_SECURE` | `false` (EC2는 `true`) | 프로토타입 접근 쿠키에 `Secure`를 붙일지. 로컬은 끈 채로 둔다 |
+| `AIPDS_AUTO_COMPACT_WINDOW` | — (CLI 기본값) | 자동 컴팩션이 발동하는 컨텍스트 크기(토큰, 100000~1000000). 늦추면 후반 스테이지가 요약이 아닌 근거로 문서를 쓴다 — 대가는 턴당 비용 |
+| `AIPDS_LONG_CONTEXT` | `false` | 모델 id에 CLI의 `[1m]`(1M 컨텍스트 베타)을 붙일지. **상위호환이 아니다** — 비용·품질 대가는 `backend/aipds/cli_settings.py` 참고 |
+| `AIPDS_FILE_QUESTIONS` | `true` | 에이전트가 **질문 파일을 써서** 묻게 할지(AI-PDS가 그 파일을 읽어 적은 그대로 보여준다). falsy로 두면 AskUserQuestion 도구 경로로 돌아간다 — 탈출로로 남겨 둔다. 기본값의 실측 근거: 파일에 쓴 질문을 도구로 다시 만들면서 19문항 중 15개가 훼손됐다(한글 문자 치환, 축약으로 답변 유실). `backend/aipds/agent/claude_driver.py`의 `FILE_QUESTIONS_ENV` 참고 |
+| `AIPDS_PUBLIC_PATH_PREFIX` | `/api` | **브라우저가 보는** 프리뷰 마운트. 백엔드를 :8000으로 직접 부르는 로컬은 `""` |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | 프론트가 부를 API base. 원격 프록시 뒤면 `/api` |
 | `COGNITO_HOSTED_UI_DOMAIN` / `COGNITO_CLIENT_ID` / `COGNITO_CLIENT_SECRET` | — | 프론트 server-side 전용. 시크릿에 **`NEXT_PUBLIC_` 금지** |
 

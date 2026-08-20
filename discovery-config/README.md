@@ -1,6 +1,6 @@
 # discovery-config
 
-Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR` (`PATHFINDER_DISCOVERY_CONFIG_DIR`).
+Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR` (`AIPDS_DISCOVERY_CONFIG_DIR`).
 
 ## 왜 proto-config와 분리하는가
 
@@ -33,12 +33,12 @@ CWD 상대경로를 전제하므로, config dir에 두면 그 경로가 맞지 �
 ## 상류 룰과 어긋나는 부분은 CLAUDE.md에서 덮는다
 
 `rule/aiplc-rules/`는 읽기 전용 마스터다 — 상류가 갱신되면 사본이 덮이므로 룰
-본문을 직접 고치면 그 수정은 유실된다. Pathfinder의 구조와 맞지 않는 지시는
+본문을 직접 고치면 그 수정은 유실된다. AI-PDS의 구조와 맞지 않는 지시는
 `CLAUDE.md`에 **무엇을 하지 말라고 명시해** 덮는다.
 
 현재 덮고 있는 것: `prototype-building.md`의 빌드·실행 단계와 포트 지정
 (`Port: {3000 + X}`). 상류 룰은 사람이 로컬에서 직접 돌리는 워크숍을 전제하지만,
-Pathfinder에서는 프로토타입 탭의 `ProtoHost`만이 포트를 배정하고 프리뷰 프록시에
+AI-PDS에서는 프로토타입 탭의 `ProtoHost`만이 포트를 배정하고 프리뷰 프록시에
 등록할 수 있다 — Discovery가 스스로 띄운 서버는 어느 화면에도 나타나지 않는다.
 그래서 분업은 **Discovery는 스펙까지, 빌드는 프로토타입 탭**이다. 경계는
 `routes/prototypes.py`의 `_SPEC_RE`가 정하는 스펙 경로 규약이다.

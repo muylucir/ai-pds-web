@@ -1,4 +1,4 @@
-from pathfinder.parsers.redaction import redact_credentials
+from aipds.parsers.redaction import redact_credentials
 
 def test_redacts_known_credential_prefixes():
     assert redact_credentials("key AKIAIOSFODNN7EXAMPLE done") == "key [CREDENTIAL REDACTED] done"

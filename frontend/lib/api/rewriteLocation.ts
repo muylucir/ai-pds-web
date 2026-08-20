@@ -4,7 +4,7 @@
 // handlers (GET/POST/...) and a fixed set of config exports from a route file —
 // any other export fails the build's generated type check.
 export const DEFAULT_BACKEND =
-  process.env.PATHFINDER_BACKEND_URL ?? "http://localhost:8000";
+  process.env.AIPDS_BACKEND_URL ?? "http://localhost:8000";
 
 // Map a backend redirect target onto the same-origin proxy. Absolute URLs that
 // point at the backend become "/api/<path>"; bare absolute paths get the same

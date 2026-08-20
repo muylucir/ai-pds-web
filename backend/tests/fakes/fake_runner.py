@@ -1,7 +1,7 @@
 # backend/tests/fakes/fake_runner.py
 from __future__ import annotations
-from pathfinder.globmatch import matches_glob
-from pathfinder.pathsafe import reject_unsafe
+from aipds.globmatch import matches_glob
+from aipds.pathsafe import reject_unsafe
 from fakes.in_memory_s3 import FakeS3Store
 
 

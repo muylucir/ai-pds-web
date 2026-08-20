@@ -7,9 +7,9 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.proto.host import TOKEN_FILENAME
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.proto.host import TOKEN_FILENAME
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 
@@ -21,7 +21,7 @@ SLUG = "demo"
 
 @pytest.fixture
 def env(monkeypatch, tmp_path):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     s3 = FakeS3Store()
 
     async def fake_make_workspace(pid):

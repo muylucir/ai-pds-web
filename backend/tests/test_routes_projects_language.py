@@ -9,7 +9,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
+import aipds.app as app_module
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 client = TestClient(app_module.app)
@@ -24,7 +24,7 @@ def cleanup():
 
 def test_create_accepts_en_and_records_it(monkeypatch):
     fake = FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: fake)
     r = client.post("/projects", json={"project_id": "pl-1", "language": "en"})
     assert r.status_code == 200
@@ -34,7 +34,7 @@ def test_create_accepts_en_and_records_it(monkeypatch):
 
 
 def test_create_without_a_language_defaults_to_ko(monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     r = client.post("/projects", json={"project_id": "pl-2"})
     assert r.status_code == 200
     # 응답은 실제로 돌게 될 언어를 말한다 — 미지정을 null로 돌려주면 프론트가
@@ -44,7 +44,7 @@ def test_create_without_a_language_defaults_to_ko(monkeypatch):
 
 
 def test_create_rejects_an_unknown_language(monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     r = client.post("/projects", json={"project_id": "pl-3", "language": "ja"})
     assert r.status_code == 400
     # detail은 안정적 코드다 — 프론트 딕셔너리가 이 값으로 문구를 찾는다.
@@ -53,7 +53,7 @@ def test_create_rejects_an_unknown_language(monkeypatch):
 
 
 def test_get_project_includes_the_language(monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     app_module.registry.register("pl-4", "이름",
                                  created_at="2026-08-03T00:00:00+00:00",
                                  language="en")
@@ -62,7 +62,7 @@ def test_get_project_includes_the_language(monkeypatch):
 
 
 def test_list_includes_the_language(monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     client.post("/projects", json={"project_id": "pl-5", "language": "en"})
     rows = client.get("/projects?page=1&size=50").json()["projects"]
     row = next(p for p in rows if p["project_id"] == "pl-5")
@@ -104,7 +104,7 @@ def test_the_created_projects_driver_gets_the_chosen_language(monkeypatch):
     같은 순서 문제가 model_id에도 있다(test_the_created_projects_driver_gets_
     the_chosen_model). 언어와 달리 모델은 env 폴백이 있어 조용히 다른 모델로 돌았다.
     """
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     seen: dict = {}
 
     def spy_factory(pid, local_root):
@@ -123,12 +123,12 @@ def test_the_created_projects_driver_gets_the_chosen_model(monkeypatch):
     """같은 순서 결함의 model_id 판. 언어보다 찾기 어렵다 — project_model은 env
     폴백(ANTHROPIC_MODEL)이 있어서, 고른 모델이 아니라 배포 기본 모델로 조용히
     돈다(에러도, 로그도 없다)."""
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     monkeypatch.setenv("ANTHROPIC_MODEL", "env-default-model")
     monkeypatch.setattr(app_module, "_validate_model_id",
                         lambda *a, **k: None, raising=False)
 
-    import pathfinder.routes.projects as routes_projects
+    import aipds.routes.projects as routes_projects
     async def ok(_model_id):
         return None
     monkeypatch.setattr(routes_projects, "_validate_model_id", ok)

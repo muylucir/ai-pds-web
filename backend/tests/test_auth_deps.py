@@ -8,10 +8,10 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.auth.deps import require_admin, require_user
-from pathfinder.auth.models import Principal
-from pathfinder.auth.verifier import TokenError
+import aipds.app as app_module
+from aipds.auth.deps import require_admin, require_user
+from aipds.auth.models import Principal
+from aipds.auth.verifier import TokenError
 
 REGION = "ap-northeast-2"
 POOL = "ap-northeast-2_TEST123"
@@ -58,7 +58,7 @@ def with_auth(monkeypatch):
         except KeyError:
             raise TokenError("no such token")
 
-    import pathfinder.auth.deps as deps_module
+    import aipds.auth.deps as deps_module
     monkeypatch.setattr(deps_module, "verify_access_token", fake_verify)
     return state
 
@@ -94,7 +94,7 @@ def test_invalid_token_is_401(with_auth):
 
 def test_valid_admin_token_passes_both_dependencies(with_auth):
     with_auth["principals"]["tok-admin"] = Principal(
-        username="admin@pathfinder.local", sub="s-1", role="admin")
+        username="admin@aipds.local", sub="s-1", role="admin")
     client = TestClient(_probe_app())
     headers = {"Authorization": "Bearer tok-admin"}
     assert client.get("/any", headers=headers).json()["role"] == "admin"
@@ -103,7 +103,7 @@ def test_valid_admin_token_passes_both_dependencies(with_auth):
 
 def test_pm_passes_require_user_but_is_403_on_require_admin(with_auth):
     with_auth["principals"]["tok-pm"] = Principal(
-        username="pm@pathfinder.local", sub="s-2", role="pm")
+        username="pm@aipds.local", sub="s-2", role="pm")
     client = TestClient(_probe_app())
     headers = {"Authorization": "Bearer tok-pm"}
     assert client.get("/any", headers=headers).json()["role"] == "pm"
@@ -123,7 +123,7 @@ def test_unauthenticated_request_to_admin_route_is_401_not_403(with_auth):
 
 def test_bearer_scheme_is_case_insensitive(with_auth):
     with_auth["principals"]["tok-admin"] = Principal(
-        username="admin@pathfinder.local", sub="s-1", role="admin")
+        username="admin@aipds.local", sub="s-1", role="admin")
     client = TestClient(_probe_app())
     assert client.get("/any", headers={"Authorization": "bearer tok-admin"}
                       ).status_code == 200
@@ -131,8 +131,8 @@ def test_bearer_scheme_is_case_insensitive(with_auth):
 
 def test_empty_user_pool_id_counts_as_unset(monkeypatch):
     # env를 빈 문자열로 내보내는 배포 스크립트가 인증을 조용히 켜지 않게 한다.
-    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", "")
-    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", "")
+    monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", "")
+    monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", "")
     assert app_module.cognito_config() is None
 
 
@@ -141,35 +141,35 @@ def test_config_requires_both_pool_and_client(monkeypatch):
     # 사고다 — None(바이패스)으로 취급하면 모든 요청이 조용히 가상 admin으로
     # 통과한다. 그래서 예외로 즉시 터뜨린다(fail-closed): 500이 되더라도
     # 보이는 실패가 조용한 권한 유출보다 낫다.
-    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", POOL)
-    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", "")
-    with pytest.raises(RuntimeError, match="PATHFINDER_COGNITO_USER_POOL_ID"
-                       ".*PATHFINDER_COGNITO_CLIENT_ID"):
+    monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", POOL)
+    monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", "")
+    with pytest.raises(RuntimeError, match="AIPDS_COGNITO_USER_POOL_ID"
+                       ".*AIPDS_COGNITO_CLIENT_ID"):
         app_module.cognito_config()
 
 
 def test_config_requires_both_client_and_pool(monkeypatch):
     # 대칭 케이스: client만 있고 풀이 없어도 같은 배포 사고이므로 같이 터진다.
-    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", "")
-    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", CLIENT_ID)
-    with pytest.raises(RuntimeError, match="PATHFINDER_COGNITO_USER_POOL_ID"
-                       ".*PATHFINDER_COGNITO_CLIENT_ID"):
+    monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", "")
+    monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", CLIENT_ID)
+    with pytest.raises(RuntimeError, match="AIPDS_COGNITO_USER_POOL_ID"
+                       ".*AIPDS_COGNITO_CLIENT_ID"):
         app_module.cognito_config()
 
 
 def test_both_unset_still_bypasses(monkeypatch):
     # 둘 다 아예 설정되지 않은 것(로컬 개발의 기본 상태)은 여전히 바이패스다 —
     # 반쯤 설정된 상태와 혼동하면 안 된다.
-    monkeypatch.delenv("PATHFINDER_COGNITO_USER_POOL_ID", raising=False)
-    monkeypatch.delenv("PATHFINDER_COGNITO_CLIENT_ID", raising=False)
+    monkeypatch.delenv("AIPDS_COGNITO_USER_POOL_ID", raising=False)
+    monkeypatch.delenv("AIPDS_COGNITO_CLIENT_ID", raising=False)
     assert app_module.cognito_config() is None
 
 
 def test_both_empty_strings_still_bypasses(monkeypatch):
     # 둘 다 빈 문자열인 것도 "미설정"과 동치다(둘 다 없음 vs 둘 다 있음 —
     # 하나만 있는 경우와 구분되는 정상 바이패스 경로).
-    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", "")
-    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", "")
+    monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", "")
+    monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", "")
     assert app_module.cognito_config() is None
 
 
@@ -178,8 +178,8 @@ async def test_require_user_raises_on_half_configured_env(monkeypatch):
     # require_user는 Principal을 반환해서는 안 된다(특히 LOCAL_PRINCIPAL을
     # 반환해서는 안 된다) — 예외가 그대로 올라와야 한다. cognito_config()가
     # 반쯤 설정된 경우에 None을 반환하도록 되돌리면 이 테스트가 실패해야 한다.
-    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", POOL)
-    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", "")
+    monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", POOL)
+    monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", "")
 
     from starlette.requests import Request as StarletteRequest
 
@@ -190,17 +190,17 @@ async def test_require_user_raises_on_half_configured_env(monkeypatch):
 
 
 def test_config_is_read_when_both_present(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", POOL)
-    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", CLIENT_ID)
-    monkeypatch.setenv("PATHFINDER_S3_REGION", REGION)
-    monkeypatch.delenv("PATHFINDER_COGNITO_REGION", raising=False)
+    monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", POOL)
+    monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", CLIENT_ID)
+    monkeypatch.setenv("AIPDS_S3_REGION", REGION)
+    monkeypatch.delenv("AIPDS_COGNITO_REGION", raising=False)
     cfg = app_module.cognito_config()
     assert cfg == {"region": REGION, "user_pool_id": POOL, "client_id": CLIENT_ID}
 
 
 def test_cognito_region_env_overrides_s3_region(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", POOL)
-    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", CLIENT_ID)
-    monkeypatch.setenv("PATHFINDER_S3_REGION", "ap-northeast-2")
-    monkeypatch.setenv("PATHFINDER_COGNITO_REGION", "us-east-1")
+    monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", POOL)
+    monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", CLIENT_ID)
+    monkeypatch.setenv("AIPDS_S3_REGION", "ap-northeast-2")
+    monkeypatch.setenv("AIPDS_COGNITO_REGION", "us-east-1")
     assert app_module.cognito_config()["region"] == "us-east-1"

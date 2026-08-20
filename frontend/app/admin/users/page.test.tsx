@@ -15,7 +15,7 @@ vi.mock("next/navigation", () => ({
 import AdminUsersPage from "./page";
 
 const USERS = [
-  { username: "admin@pathfinder.local", email: "admin@pathfinder.local",
+  { username: "admin@aipds.local", email: "admin@aipds.local",
     role: "admin", status: "CONFIRMED", enabled: true,
     created_at: "2026-07-25T00:00:00+00:00" },
 ];
@@ -24,7 +24,7 @@ function mockList() {
   server.use(
     http.get(`${API_BASE_URL}/admin/users`, () => HttpResponse.json({ users: USERS })),
     http.get("*/api/auth/me", () => HttpResponse.json({
-      authenticated: true, email: "admin@pathfinder.local", role: "admin",
+      authenticated: true, email: "admin@aipds.local", role: "admin",
     })),
   );
 }
@@ -33,13 +33,13 @@ describe("/admin/users", () => {
   it("lists users", async () => {
     mockList();
     render(<AdminUsersPage />);
-    expect(await screen.findByText("admin@pathfinder.local")).toBeInTheDocument();
+    expect(await screen.findByText("admin@aipds.local")).toBeInTheDocument();
   });
 
   it("opens the invite modal", async () => {
     mockList();
     render(<AdminUsersPage />);
-    await screen.findByText("admin@pathfinder.local");
+    await screen.findByText("admin@aipds.local");
     await userEvent.click(screen.getByRole("button", { name: "사용자 초대" }));
     expect(screen.getByLabelText("이메일")).toBeInTheDocument();
   });
@@ -50,7 +50,7 @@ describe("/admin/users", () => {
       http.get(`${API_BASE_URL}/admin/users`, () =>
         HttpResponse.json({ detail: "admin role required" }, { status: 403 })),
       http.get("*/api/auth/me", () => HttpResponse.json({
-        authenticated: true, email: "pm@pathfinder.local", role: "pm",
+        authenticated: true, email: "pm@aipds.local", role: "pm",
       })),
     );
     render(<AdminUsersPage />);
@@ -62,7 +62,7 @@ describe("/admin/users", () => {
       http.get(`${API_BASE_URL}/admin/users`, () =>
         HttpResponse.json({ detail: "boom" }, { status: 502 })),
       http.get("*/api/auth/me", () => HttpResponse.json({
-        authenticated: true, email: "admin@pathfinder.local", role: "admin",
+        authenticated: true, email: "admin@aipds.local", role: "admin",
       })),
     );
     render(<AdminUsersPage />);

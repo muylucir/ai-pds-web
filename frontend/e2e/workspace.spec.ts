@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 // INTEGRATION: drives the unified 3-pane /workspace screen against a LIVE
 // backend running the in-process Strands agent against real Bedrock (post
 // MicroVM-removal — Task 11). Requires the backend to be up with
-// PATHFINDER_S3_BUCKET + ANTHROPIC_MODEL + host AWS credentials configured;
+// AIPDS_S3_BUCKET + ANTHROPIC_MODEL + host AWS credentials configured;
 // it is NOT part of the default CI unit suite and only runs in an environment
 // that has those credentials.
 //

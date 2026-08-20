@@ -56,12 +56,12 @@ describe("cookie name constants", () => {
   it("have the exact expected string values", () => {
     // route handler·미들웨어·프록시가 모두 같은 문자열을 참조한다 — 오타 하나가
     // 세션을 조용히 깨뜨린다.
-    expect(ACCESS_COOKIE).toBe("pf_access");
-    expect(ID_COOKIE).toBe("pf_id");
-    expect(REFRESH_COOKIE).toBe("pf_refresh");
-    expect(VERIFIER_COOKIE).toBe("pf_pkce");
-    expect(STATE_COOKIE).toBe("pf_state");
-    expect(NEXT_COOKIE).toBe("pf_next");
+    expect(ACCESS_COOKIE).toBe("aipds_access");
+    expect(ID_COOKIE).toBe("aipds_id");
+    expect(REFRESH_COOKIE).toBe("aipds_refresh");
+    expect(VERIFIER_COOKIE).toBe("aipds_pkce");
+    expect(STATE_COOKIE).toBe("aipds_state");
+    expect(NEXT_COOKIE).toBe("aipds_next");
   });
 
   it("are all distinct", () => {

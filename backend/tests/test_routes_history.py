@@ -1,14 +1,14 @@
 import json
 from fastapi.testclient import TestClient
-import pathfinder.app as app_module
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.workspace import Workspace
 from tests.fakes.in_memory_s3 import FakeS3Store
 from tests.fakes.fake_runner import FakeRunner
 
 client = TestClient(app_module.app)
 
 def _local_project(monkeypatch, pid):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")  # offline: no durable manifest write
     async def make(project_id):
         return Workspace(FakeRunner())
     monkeypatch.setattr(app_module, "make_workspace", make)
@@ -48,8 +48,8 @@ async def _write_cli_transcript(s3, project_id, entries):
     project_id로 쓰고 라우트가 같은 값으로 읽으면, 쓰는 키와 읽는 키가 어긋난
     상태에서도 테스트만 통과한다(실제로 그렇게 통과하고 있었다).
     """
-    from pathfinder.agent.claude_driver import _sdk_session_id
-    from pathfinder.agent.session_store import DiscoverySessionStore
+    from aipds.agent.claude_driver import _sdk_session_id
+    from aipds.agent.session_store import DiscoverySessionStore
     session_id, _ = _sdk_session_id({"session_id": project_id})
     await DiscoverySessionStore(s3).append({"session_id": session_id}, entries)
 

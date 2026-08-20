@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from pathfinder.turn_handles import (
+from aipds.turn_handles import (
     TurnHandleStore, HANDLE_TTL_SECONDS,
 )
 

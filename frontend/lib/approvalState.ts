@@ -3,7 +3,7 @@ import { isApprovalText, isChatApprovalInGateContext } from "@/lib/approvalMarke
 
 // 승인 판정의 근거는 **두 계층**이다.
 //
-// 1순위: 승인 레코드(backend/pathfinder/approval_store.py). 게이트 버튼을 누른
+// 1순위: 승인 레코드(backend/aipds/approval_store.py). 게이트 버튼을 누른
 //   순간 백엔드가 쓰는 구조화된 기록이다.
 // 폴백: 감사 로그 파싱. 레코드가 없는 기존 프로젝트에만 쓴다.
 //

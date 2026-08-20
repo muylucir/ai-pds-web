@@ -3,8 +3,8 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from pathfinder import app as app_module
-from pathfinder.workspace import Workspace
+from aipds import app as app_module
+from aipds.workspace import Workspace
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 client = TestClient(app_module.app)
@@ -116,7 +116,7 @@ def _seed_prototype(env, pid: str, slug: str, token: str) -> _FakeSession:
 
 def test_delete_removes_registry_vm_and_s3(monkeypatch):
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     runner = _seed_project("del-1", sessions, root)
@@ -139,7 +139,7 @@ def test_delete_purges_prototype_runtime_state_and_root_token_index(monkeypatch,
     """
     env = _proto_wiring
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     pid = "del-proto"
@@ -162,7 +162,7 @@ def test_delete_cleans_every_slug_of_the_project(monkeypatch, _proto_wiring):
     """슬러그가 여럿이면 전부 돈다. 하나만 돌면 나머지는 조용히 남는다."""
     env = _proto_wiring
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     pid = "del-multi"
@@ -188,7 +188,7 @@ def test_delete_500_keeps_s3_and_registry_when_build_tree_purge_fails(monkeypatc
     """
     env = _proto_wiring
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     pid = "del-stuck"
@@ -212,7 +212,7 @@ def test_delete_keeps_build_tree_when_survey_purge_fails(monkeypatch, _proto_wir
     """
     env = _proto_wiring
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
 
@@ -242,14 +242,14 @@ def test_delete_cleans_local_prototypes_without_durable_storage(monkeypatch, _pr
     """버킷 미설정(로컬/테스트)에서도 로컬 실체 정리는 돈다 — 빌드 트리와 세션은
     S3와 무관하게 존재한다. 설문 단계만 건너뛴다.
 
-    setenv("")가 필요하다: pathfinder.app이 기동 시 backend/.env를 로드하므로
-    개발 박스에서는 PATHFINDER_S3_BUCKET이 이미 채워져 있고, 그러면 이 테스트가
+    setenv("")가 필요하다: aipds.app이 기동 시 backend/.env를 로드하므로
+    개발 박스에서는 AIPDS_S3_BUCKET이 이미 채워져 있고, 그러면 이 테스트가
     durable 경로를 타서 검증하려던 분기를 지나친다(실측 — 이 줄이 없어 설문
     인덱스가 지워졌다). test_routes_prototypes.py의 proto_env도 같은 이유로
     같은 줄을 둔다.
     """
     env = _proto_wiring
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     pid = "del-nodurable"
     app_module.registry.register(pid)
     session = _seed_prototype(env, pid, "checkout", "tok-nd")
@@ -271,7 +271,7 @@ def test_delete_unknown_project_404():
 
 def test_delete_continues_when_stop_fails(monkeypatch):
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     runner = _seed_project("del-2", sessions, root)
@@ -291,7 +291,7 @@ def test_delete_returns_500_and_keeps_registry_on_s3_failure(monkeypatch):
             raise RuntimeError("s3 down")
 
     sessions, root = _ExplodingStore(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     _seed_project("del-3", sessions, root)
@@ -304,7 +304,7 @@ def test_delete_returns_500_and_keeps_registry_on_s3_failure(monkeypatch):
 def test_delete_registered_but_unbooted_project(monkeypatch):
     # 복원 직후(워크스페이스 없음) 상태에서도 삭제 가능해야 한다
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     app_module.registry.register("del-4")
@@ -331,7 +331,7 @@ def test_delete_stops_runner_attached_by_concurrent_boot_during_s3_await(monkeyp
             return await super().delete_prefix(prefix)
 
     sessions, root = _RaceSessionsStore(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     app_module.registry.register(pid)
@@ -345,9 +345,9 @@ def test_delete_stops_runner_attached_by_concurrent_boot_during_s3_await(monkeyp
 
 # ---- 로컬 실체의 잔여물 ----
 #
-# 실측(2026-08-19, 배포 인스턴스): `/opt/pathfinder/workspaces/`에 삭제된 프로젝트
+# 실측(2026-08-19, 배포 인스턴스): `/opt/aipds/workspaces/`에 삭제된 프로젝트
 # 6개의 디렉터리가 남아 있었고(합 2.35MB), S3 `projects/`에는 그중 어느 것도 없었다.
-# `/opt/pathfinder/protos/`에는 빈 부모 디렉터리 3개가 남아 있었다.
+# `/opt/aipds/protos/`에는 빈 부모 디렉터리 3개가 남아 있었다.
 
 def test_delete_removes_the_workspace_dir_of_a_project_never_booted_this_process(
         monkeypatch, tmp_path):
@@ -362,7 +362,7 @@ def test_delete_removes_the_workspace_dir_of_a_project_never_booted_this_process
     남았다. 사용자에게는 "채팅 기록·문서가 영구 삭제된다"고 약속한 상태다.
     """
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     ws_root = tmp_path / "workspaces"
@@ -390,7 +390,7 @@ def test_delete_removes_the_workspace_dir_when_the_runner_is_attached(
     삭제가 그 뒤를 받는다.
     """
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     ws_root = tmp_path / "workspaces"
@@ -420,7 +420,7 @@ def test_delete_removes_the_projects_prototype_root(monkeypatch, _proto_wiring):
     (`host.purge`가 `stop`을 먼저 부르는 이유와 같은 위험).
     """
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     monkeypatch.setattr(app_module, "_workspaces_dir",
@@ -446,7 +446,7 @@ def test_delete_does_not_purge_the_prototype_root_when_a_slug_failed(
     만드는 일이다(`ProtoHost.purge`가 `stop`을 먼저 부르는 이유).
     """
     sessions, root = FakeS3Store(), FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: root)
     _seed_project("del-gate", sessions, root)

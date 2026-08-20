@@ -1,6 +1,6 @@
 # backend/tests/test_question_file_answers.py — 답변이 질문 파일에 되기록되는가.
 #
-# 왜 이 파일이 생겼는가: Pathfinder는 질문을 AskUserQuestion으로 전달하면서
+# 왜 이 파일이 생겼는가: AI-PDS는 질문을 AskUserQuestion으로 전달하면서
 # 질문 파일의 `[Answer]:` 칸을 영구히 비워 뒀다. ai-plc 워크플로우는 그 칸이
 # 채워지는 것을 전제로 돌아간다 — aws-aiplc-rule-details/common/question-format-guide.md
 # 의 "Read the question file / Extract answers after [Answer]: tags"이고,
@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pathfinder.agent.question_file_answers import record_answers
-from pathfinder.parsers.questions import parse_question_file
+from aipds.agent.question_file_answers import record_answers
+from aipds.parsers.questions import parse_question_file
 
 #: 10문항 파일. 라운드 경계를 넘는 매칭을 검사하려면 AskUserQuestion의 4문항
 #: 한계보다 긴 파일이어야 한다.
@@ -337,7 +337,7 @@ def test_a_failed_match_is_logged_with_the_best_candidate(tmp_path, caplog):
     import logging
     _write(tmp_path, "aiplc-docs/a-questions.md", _one_question(_CLEAN))
 
-    with caplog.at_level(logging.DEBUG, logger="pathfinder.agent"):
+    with caplog.at_level(logging.DEBUG, logger="aipds.agent"):
         assert record_answers(str(tmp_path),
                               _sdk("전혀 다른 질문입니다"), {"1": "A"}) == []
 
@@ -354,7 +354,7 @@ def test_a_fuzzy_match_is_logged_so_suppression_can_be_measured(tmp_path, caplog
     import logging
     _write(tmp_path, "aiplc-docs/a-questions.md", _one_question(_CLEAN))
 
-    with caplog.at_level(logging.INFO, logger="pathfinder.agent"):
+    with caplog.at_level(logging.INFO, logger="aipds.agent"):
         record_answers(str(tmp_path), _sdk(_CORRUPT), {"1": "A"})
 
     assert any("fuzzy" in r.message.lower() for r in caplog.records), \
@@ -413,7 +413,7 @@ def test_a_document_with_no_answer_slot_is_not_even_parsed(tmp_path, caplog):
            "# Discovery Document\n\n## Part 1\n\n산문입니다.\n" * 20)
     _write(tmp_path, "aiplc-docs/a-questions.md", TEN_QUESTIONS)
 
-    with caplog.at_level(logging.WARNING, logger="pathfinder.parsers.questions"):
+    with caplog.at_level(logging.WARNING, logger="aipds.parsers.questions"):
         record_answers(str(tmp_path), _sdk("질문 1 본문입니까?"), {"1": "A"})
 
     assert not [r for r in caplog.records
@@ -431,7 +431,7 @@ def test_a_round_with_no_question_file_is_not_a_warning(tmp_path, caplog):
     import logging
     _write(tmp_path, "aiplc-docs/a-questions.md", _one_question(_CLEAN))
 
-    with caplog.at_level(logging.DEBUG, logger="pathfinder.agent"):
+    with caplog.at_level(logging.DEBUG, logger="aipds.agent"):
         assert record_answers(str(tmp_path),
                               _sdk("regmatrix 제작으로 진행하시겠습니까?"),
                               {"1": "A"}) == []
@@ -450,7 +450,7 @@ def test_a_near_miss_is_a_warning(tmp_path, caplog):
     _write(tmp_path, "aiplc-docs/a-questions.md",
            _one_question("고객 페인 포인트에 대한 자료를 어떤 경로로 준비하시겠습니까?"))
 
-    with caplog.at_level(logging.DEBUG, logger="pathfinder.agent"):
+    with caplog.at_level(logging.DEBUG, logger="aipds.agent"):
         record_answers(str(tmp_path), _sdk(_CLEAN), {"1": "A"})
 
     assert [r for r in caplog.records if r.levelno >= logging.WARNING], \
