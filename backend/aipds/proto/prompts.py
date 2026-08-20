@@ -119,7 +119,7 @@ def missing_output_prompt(language: str, *, spec_key: str) -> str:
 
     이 지시가 없으면 에이전트는 트랜스크립트를 믿고 없는 코드를 찾아 나선다.
     실측: 리셋된 프로토타입에서 작업 디렉토리 → 다른 프로토타입 디렉토리 →
-    `/opt/pathfinder/frontend` → 파일시스템 전체로 탐색을 넓히며 19초 이상을
+    `/opt/aipds/frontend` → 파일시스템 전체로 탐색을 넓히며 19초 이상을
     태웠고, 성공할 수 없는 탐색이었다.
     """
     if _lang(language) == "en":

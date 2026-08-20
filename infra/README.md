@@ -1,4 +1,4 @@
-# Pathfinder Infra (CDK, `ap-northeast-2` / Seoul by default)
+# AI-PDS Infra (CDK, `ap-northeast-2` / Seoul by default)
 
 [한국어](README.ko.md) | **English**
 
@@ -11,9 +11,9 @@ error, when someone misses them.
 
 | Stack | What it creates |
 |---|---|
-| `PathfinderDrillStack` | S3 artifact bucket (`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + backend execution role (Bedrock invoke + S3) |
-| `PathfinderAuthStack` | Cognito User Pool + Hosted UI v2 (managed login) + 2 role groups (`admin`/`pm`) + 2 seed accounts |
-| `PathfinderHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
+| `AipdsDrillStack` | S3 artifact bucket (`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + backend execution role (Bedrock invoke + S3) |
+| `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 (managed login) + 2 role groups (`admin`/`pm`) + 2 seed accounts |
+| `AipdsHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
 
 The three reference each other, so **deploy them together with `--all`** (`bin/app.ts` passes the
 bucket and User Pool references into the hosting stack). CDK decides the order.
@@ -43,9 +43,9 @@ down to two things.
 - **No commit SHA is pinned.** That means the deployer is never asked "did you push this commit?",
   but the price is that **`cdk deploy` is not how you update code** — if the user-data string is
   byte-identical, CloudFormation does not replace the instance. Updating code is the job of
-  `pathfinder-update`, which is installed at boot (see "Updating the code" in the root README).
+  `aipds-update`, which is installed at boot (see "Updating the code" in the root README).
 
-## PathfinderAuthStack
+## AipdsAuthStack
 
 - **Self-signup blocked** — `selfSignUpEnabled: false` renders as CFN
   `AdminCreateUserConfig.AllowAdminCreateUserOnly: true`. The Hosted UI shows no sign-up link, and
@@ -116,7 +116,7 @@ CloudFront distribution is in that list too, so only the header distinguishes ou
 The default is Seoul (`ap-northeast-2`), overridden with `CDK_DEPLOY_REGION`. Prefix list IDs differ
 per region, but `PrefixList.fromLookup` resolves the deployment region's ID automatically, so no code
 changes are needed. The price is that **the hosting stack's first synth/deploy needs account
-credentials** (`npx cdk synth PathfinderDrillStack` does not).
+credentials** (`npx cdk synth AipdsDrillStack` does not).
 
 The lookup result is cached in `cdk.context.json`, which is **not committed** (gitignored) — the
 entry key contains the account ID, so the cache is invalid for any other account, and it is
@@ -134,11 +134,11 @@ Six assertion files, each aimed at a regression **you cannot see by looking**:
 
 | File | What it guards |
 |---|---|
-| `user-data.assert.ts` | Every element of the boot script — nginx-var vs shell-var escaping, non-root execution (Claude Code refuses `bypassPermissions` at euid 0), the proxy buffer sizes that JWT cookies have to fit, the two config dirs being distinct paths, the two context switches, and that `pathfinder-update` ships |
+| `user-data.assert.ts` | Every element of the boot script — nginx-var vs shell-var escaping, non-root execution (Claude Code refuses `bypassPermissions` at euid 0), the proxy buffer sizes that JWT cookies have to fit, the two config dirs being distinct paths, the two context switches, and that `aipds-update` ships |
 | `hosting-stack.assert.ts` | The SG being prefix-list-only (no SSH), EC2/EBS/EIP/instance role, CloudFront's origin header and HTTPS redirect, and the **app client drift detection** described above |
 | `auth-stack.assert.ts` | No-self-signup, alias username, groups, managed login v2, code-only client, and the pairing of the three seed-account steps |
 | `auth-client-config.assert.ts` | That token validity **outlasts one prototype build** (shorter and the session expires mid-build), plus the seed/group constants and callback/logout URL derivation |
-| `deployed-tree.assert.ts` | What must not be in the tree that becomes `/opt/pathfinder` (the dev-only `.claude/`, build output, session state) and what must be (rules, both language directives, both config dirs, the lockfile) |
+| `deployed-tree.assert.ts` | What must not be in the tree that becomes `/opt/aipds` (the dev-only `.claude/`, build output, session state) and what must be (rules, both language directives, both config dirs, the lockfile) |
 | `deploy-source.assert.ts` | That the clone URL is public HTTPS, and that the deploy target is a branch rather than a pinned commit |
 
 ## PathfinderVmStack is gone (2026-07-25)

@@ -10,7 +10,7 @@ const s = renderUserData({
   branch: 'main',
   userPoolId: 'ap-northeast-2_TESTPOOL',
   userPoolClientId: 'client-test',
-  hostedUiDomain: 'pathfinder-test.auth.ap-northeast-2.amazoncognito.com',
+  hostedUiDomain: 'aipds-test.auth.ap-northeast-2.amazoncognito.com',
   appUrl: 'https://example.cloudfront.net',
 });
 
@@ -18,17 +18,17 @@ const s = renderUserData({
 assert.match(s, /set -euxo pipefail/, 'must be strict bash');
 // 2) 코드 배포: 리포 clone + 배포 브랜치의 원격 최신 커밋으로 맞춤.
 //    에셋 zip도, 커밋 SHA 고정도 쓰지 않는다 — 근거는 lib/deploy-source.ts.
-assert.match(s, /git clone https:\/\/github\.com\/example\/repo\.git \/opt\/pathfinder/,
+assert.match(s, /git clone https:\/\/github\.com\/example\/repo\.git \/opt\/aipds/,
   'must clone the repo into the app tree');
-assert.match(s, /git -C \/opt\/pathfinder checkout -f -B main origin\/main/,
+assert.match(s, /git -C \/opt\/aipds checkout -f -B main origin\/main/,
   'must force the local branch onto origin/<branch> — the same line has to work on a '
   + 'fresh clone and on a cloud-init re-run');
 assert.ok(!s.includes('checkout --detach'),
   'the deployment is no longer pinned to a commit; a detached checkout would make '
-  + 'pathfinder-update unable to move the tree forward');
+  + 'aipds-update unable to move the tree forward');
 // 부팅 커밋이 로그에 남아야 한다 — SHA가 배포에 없으므로 "무엇이 도는가"의 답이
 // 여기 말고는 인스턴스에 물어보는 수밖에 없다.
-assert.match(s, /git -C \/opt\/pathfinder --no-pager log -1 --format='booted commit: %H %s'/,
+assert.match(s, /git -C \/opt\/aipds --no-pager log -1 --format='booted commit: %H %s'/,
   'the commit the instance booted on must be recorded in the bootstrap log');
 assert.ok(!/aws s3 cp .*\.zip/.test(s),
   'the asset zip download must be gone (the tree now comes from git, which carries only tracked files)');
@@ -37,10 +37,10 @@ assert.ok(!s.includes('unzip -o'),
 assert.match(s, /dnf install -y [^\n]*\bgit\b/, 'git must be installed — AL2023 does not ship it');
 // clone 뒤에 트리를 서비스 유저에게 넘기므로, 재부트스트랩 때 root로 도는 git이
 // "dubious ownership"으로 거부된다. set -e 아래에서 그것은 부팅 중단이다.
-assert.match(s, /git config --system --add safe\.directory \/opt\/pathfinder/,
+assert.match(s, /git config --system --add safe\.directory \/opt\/aipds/,
   'safe.directory must be configured before git runs on the service-user-owned tree');
 // 멱등: cloud-init 재실행에서 이미 clone된 트리를 다시 clone하려 하면 실패한다.
-assert.match(s, /if \[ -d \/opt\/pathfinder\/\.git \]; then/,
+assert.match(s, /if \[ -d \/opt\/aipds\/\.git \]; then/,
   're-bootstrap must fetch instead of re-cloning');
 // 2a) **EC2 user-data 16KB 한계.** 한 번 넘겨서 배포가 InvalidRequest로 실패했다
 //     (18,158바이트 — 그중 주석이 12KB였고 한글은 3바이트/자). CFN은 이걸 배포
@@ -62,40 +62,40 @@ assert.match(s, /if \[ -d \/opt\/pathfinder\/\.git \]; then/,
 //     코드를 갱신하지 않는다 — 이 스크립트가 **유일한** 갱신 수단이다. 없거나
 //     망가져도 배포는 성공하고, 그 사실은 갱신을 시도할 때에야 드러난다.
 //
-//     본문은 user-data가 아니라 리포 파일(infra/scripts/pathfinder-update)에 있다:
+//     본문은 user-data가 아니라 리포 파일(infra/scripts/aipds-update)에 있다:
 //     16KB 예산을 쓰지 않고, 스크립트를 고쳐도 인스턴스 교체가 필요 없다. 그래서
 //     이 절은 두 쪽을 각각 단정한다 — user-data는 설치와 설정만, 나머지는 그 파일.
 {
-  assert.match(s, /install -m 755 \/opt\/pathfinder\/infra\/scripts\/pathfinder-update \/usr\/local\/bin\/pathfinder-update/,
-    'user-data must install pathfinder-update from the clone — with a branch (not a SHA) '
+  assert.match(s, /install -m 755 \/opt\/aipds\/infra\/scripts\/aipds-update \/usr\/local\/bin\/aipds-update/,
+    'user-data must install aipds-update from the clone — with a branch (not a SHA) '
     + 'deployment, cdk deploy no longer updates code and this is the only path that does');
   assert.ok(!s.includes("<<'UPDATE'"),
     'the update script must not be inlined back into user-data — that is what blew the '
     + '16KB limit, and editing it would force an instance replacement');
   // 스크립트는 경로·유저·브랜치를 이 파일에서 읽는다. 리터럴로 박으면
   // DEPLOY_BRANCH를 바꿨을 때 조용히 어긋난다.
-  assert.match(s, /cat > \/etc\/pathfinder-deploy\.env <<ENV\nAPP=\/opt\/pathfinder\nSVC=pathfinder\nBRANCH=main\nENV/,
+  assert.match(s, /cat > \/etc\/aipds-deploy\.env <<ENV\nAPP=\/opt\/aipds\nSVC=aipds\nBRANCH=main\nENV/,
     'user-data must write the deploy env the script reads (APP/SVC/BRANCH)');
 
-  const scriptPath = require('node:path').join(__dirname, '..', 'scripts', 'pathfinder-update');
+  const scriptPath = require('node:path').join(__dirname, '..', 'scripts', 'aipds-update');
   const fs = require('node:fs') as typeof import('node:fs');
-  assert.ok(fs.existsSync(scriptPath), 'infra/scripts/pathfinder-update must exist');
+  assert.ok(fs.existsSync(scriptPath), 'infra/scripts/aipds-update must exist');
   // 실행 비트: user-data가 install -m 755로 깔지만, 리포에서 직접 돌려보는 경로도 있다.
   assert.ok((fs.statSync(scriptPath).mode & 0o111) !== 0,
-    'infra/scripts/pathfinder-update must be executable in the repo');
+    'infra/scripts/aipds-update must be executable in the repo');
   const update: string = fs.readFileSync(scriptPath, 'utf8');
 
   assert.match(update, /\. "\$ENV_FILE"/,
     'the script must source the deploy env instead of hardcoding APP/SVC/BRANCH');
   assert.match(update, /checkout -f -B "\$BRANCH" "origin\/\$BRANCH"/,
-    'pathfinder-update must move the tree onto the remote tip of the deploy branch');
+    'aipds-update must move the tree onto the remote tip of the deploy branch');
   // 이 env를 빼고 빌드하면 브라우저가 localhost:8000을 부른다 — 화면은 뜨고 모든
   // API 호출이 죽는다. 손으로 하던 절차를 스크립트로 옮긴 주된 이유가 이 한 줄이다.
   assert.match(update, /env NEXT_PUBLIC_API_BASE_URL=\/api HOME="\$APP" npm run build/,
     'the frontend rebuild must carry NEXT_PUBLIC_API_BASE_URL=/api — without it the '
     + 'bundle points the browser at localhost:8000 and every API call dies silently');
-  assert.match(update, /systemctl restart pathfinder-backend/, 'must be able to restart the backend');
-  assert.match(update, /systemctl restart pathfinder-frontend/, 'must be able to restart the frontend');
+  assert.match(update, /systemctl restart aipds-backend/, 'must be able to restart the backend');
+  assert.match(update, /systemctl restart aipds-frontend/, 'must be able to restart the frontend');
   // 트리는 서비스 유저 소유다. root로 fetch하면 새 오브젝트가 root 소유로 섞여
   // 다음 갱신이 권한으로 막힌다 — 그 실패는 갱신할 때만 보인다.
   assert.match(update, /runuser -u "\$SVC" -- git -C "\$APP"/,
@@ -108,10 +108,10 @@ assert.match(s, /if \[ -d \/opt\/pathfinder\/\.git \]; then/,
   // 런타임 데이터(protos/, workspaces/, */sessions/)는 untracked라 reset --hard로는
   // 지워지지 않지만, git clean이나 rm -rf가 들어오면 지워진다.
   assert.ok(!/git clean/.test(update),
-    'pathfinder-update must not git clean — protos/, workspaces/ and session state are untracked');
+    'aipds-update must not git clean — protos/, workspaces/ and session state are untracked');
   assert.ok(!/rm -rf/.test(update),
-    'pathfinder-update must not delete the tree — it updates it in place');
-  console.log('OK  user-data: pathfinder-update ships (branch deploys have no other code-update path)');
+    'aipds-update must not delete the tree — it updates it in place');
+  console.log('OK  user-data: aipds-update ships (branch deploys have no other code-update path)');
 }
 // 3) 시크릿 부팅 조회 (하드코딩 금지 — 런타임 조회)
 assert.match(s, /aws secretsmanager get-secret-value --secret-id arn:aws:secretsmanager:[^ ]+ /, 'must fetch secret at boot');
@@ -129,13 +129,13 @@ assert.match(s, /(?<!\\)\\\$proxy_add_x_forwarded_for\b/, 'nginx var \\$proxy_ad
 // 4c) 대조: 시크릿 변수는 백슬래시 없이 남아야 부팅 시 bash가 실제 값으로 치환한다.
 assert.ok(s.includes('"${SECRET}"'), 'secret var must be unescaped so bash expands it');
 assert.ok(!s.includes('\\${SECRET}'), 'secret var must NOT be backslash-escaped');
-// 4d) 로그 파일 권한: pathfinder 서비스 유저(=bypassPermissions로 도는
+// 4d) 로그 파일 권한: aipds 서비스 유저(=bypassPermissions로 도는
 //     프로토타입 빌드 에이전트가 쓰는 그 계정)가 부트스트랩 로그를 읽으면 안
 //     된다 — 644(기본값)면 읽힌다.
-assert.match(s, /chmod 600 \/var\/log\/pathfinder-bootstrap\.log/, 'bootstrap log must be root-only (600), not world/group-readable');
+assert.match(s, /chmod 600 \/var\/log\/aipds-bootstrap\.log/, 'bootstrap log must be root-only (600), not world/group-readable');
 // 4e) xtrace(-x)는 두 시크릿 조회(Cognito client secret, X-Origin-Verify
 //     header secret) 둘 다에서 꺼져 있어야 한다 — 켜져 있으면 명령과 그
-//     결과 대입이 로그(사양상 pathfinder 유저가 읽는 그 로그)에 그대로
+//     결과 대입이 로그(사양상 aipds 유저가 읽는 그 로그)에 그대로
 //     남는다. "set +x ... COGNITO_SECRET=... set -x"처럼 대입이 그 사이에
 //     있는지 직접 확인한다(단순히 어딘가에 set +x가 있다는 것만으로는
 //     부족하다 — 순서가 어긋나면 트레이스가 여전히 켜진 채로 대입이 실행된다).
@@ -161,7 +161,7 @@ for (const [name, pattern] of [
 assert.ok(!/proxy_pass http:\/\/127\.0\.0\.1:8000/.test(s),
   'FastAPI must not be reachable directly through nginx — every request goes through Next first');
 {
-  const nginxStart = s.indexOf('cat > /etc/nginx/conf.d/pathfinder.conf');
+  const nginxStart = s.indexOf('cat > /etc/nginx/conf.d/aipds.conf');
   const nginxEnd = s.indexOf('\nNGINX\n', nginxStart); // closing heredoc marker, not the opening "<<NGINX"
   const nginxBlock = s.slice(nginxStart, nginxEnd);
   // 정확히 하나의 location — /api/ 전용 location이 없다(있으면 FastAPI로 새는
@@ -191,8 +191,8 @@ assert.match(s, /AIPDS_S3_BUCKET=my-artifacts-bucket/, 'backend bucket env');
 assert.match(s, /ANTHROPIC_MODEL=global\.anthropic\.claude-opus-4-8/, 'backend model env');
 assert.match(s, /AIPDS_S3_REGION=ap-northeast-2/, 'backend s3 region env');
 // 8) systemd 유닛
-assert.match(s, /pathfinder-backend\.service/, 'backend unit');
-assert.match(s, /pathfinder-frontend\.service/, 'frontend unit');
+assert.match(s, /aipds-backend\.service/, 'backend unit');
+assert.match(s, /aipds-frontend\.service/, 'frontend unit');
 assert.match(s, /uvicorn aipds\.app:app --host 127\.0\.0\.1 --port 8000/, 'uvicorn cmd');
 assert.match(s, /next start -H 127\.0\.0\.1 -p 3000/, 'next start cmd');
 // 9) 시크릿 하드코딩되지 않음 (실제 값은 부팅 시점에만 존재)
@@ -209,14 +209,14 @@ assert.ok(s.includes("sed -i '/^    server {/"), 'must use the anchored sed that
 console.log('OK  user-data: all required elements present (incl. nginx-var vs secret-var escaping)');
 
 // 9) 프로토타입 빌드: 동시 빌드 상한 + 빌드 에이전트 전용 CLAUDE_CONFIG_DIR env.
-assert.match(s, /Environment=AIPDS_PROTO_ROOT=\/opt\/pathfinder\/protos/, 'proto host root env');
+assert.match(s, /Environment=AIPDS_PROTO_ROOT=\/opt\/aipds\/protos/, 'proto host root env');
 assert.match(s, /Environment=AIPDS_PROTO_MAX_CONCURRENT=10/, 'proto build concurrency cap env');
 // CLAUDE_CONFIG_DIR lives INSIDE the app tree, not in a user's home: app-owned
 // data stays under one path for backup/cleanup/ownership, and nothing depends on
 // where the service user's home happens to be.
-assert.match(s, /Environment=AIPDS_PROTO_CONFIG_DIR=\/opt\/pathfinder\/proto-config/, 'proto build CLAUDE_CONFIG_DIR env must live under the app tree');
+assert.match(s, /Environment=AIPDS_PROTO_CONFIG_DIR=\/opt\/aipds\/proto-config/, 'proto build CLAUDE_CONFIG_DIR env must live under the app tree');
 assert.ok(!s.includes('/home/ec2-user/aipds-proto-config'), 'CLAUDE_CONFIG_DIR must no longer point at a user home');
-assert.match(s, /mkdir -p \/opt\/pathfinder\/protos \/opt\/pathfinder\/proto-config \/opt\/pathfinder\/workspaces/, 'app-owned data dirs must be created at boot');
+assert.match(s, /mkdir -p \/opt\/aipds\/protos \/opt\/aipds\/proto-config \/opt\/aipds\/workspaces/, 'app-owned data dirs must be created at boot');
 
 // 프로토타입 접근 쿠키의 Secure 스위치(routes/proto_public.py의 _cookie_secure).
 // 기본값이 꺼짐이라 이 줄이 빠지면 배포가 조용히 non-Secure 쿠키를 내보낸다 —
@@ -255,21 +255,21 @@ console.log('OK  user-data: prototype build env vars rendered, VM env vars gone'
 //     bypassPermissions를 거부하고(6d21e1f 실측), `--version`은 root에서도
 //     성공해 그 실패를 가린다 — 즉 부팅은 정상으로 보이고 첫 빌드 턴에서야
 //     502로 드러난다. 이 어서션이 그 회귀를 부팅 전에 잡는 유일한 방어선이다.
-const backendUnit = s.slice(s.indexOf('pathfinder-backend.service'), s.indexOf('pathfinder-frontend.service'));
-assert.match(backendUnit, /^User=pathfinder$/m, 'backend service MUST run as the non-root pathfinder user (root breaks the build agent)');
-assert.match(backendUnit, /^Group=pathfinder$/m, 'backend service must set its group too');
-assert.match(s, /useradd --system --create-home --shell \/sbin\/nologin pathfinder/, 'service user must be created');
-assert.match(s, /id -u pathfinder >\/dev\/null 2>&1 \|\|/, 'useradd must be idempotent for re-bootstrap');
+const backendUnit = s.slice(s.indexOf('aipds-backend.service'), s.indexOf('aipds-frontend.service'));
+assert.match(backendUnit, /^User=aipds$/m, 'backend service MUST run as the non-root aipds user (root breaks the build agent)');
+assert.match(backendUnit, /^Group=aipds$/m, 'backend service must set its group too');
+assert.match(s, /useradd --system --create-home --shell \/sbin\/nologin aipds/, 'service user must be created');
+assert.match(s, /id -u aipds >\/dev\/null 2>&1 \|\|/, 'useradd must be idempotent for re-bootstrap');
 assert.match(s, /dnf install -y [^\n]*shadow-utils/, 'shadow-utils provides useradd');
-assert.match(s, /chown -R pathfinder:pathfinder \/opt\/pathfinder/, 'app tree must be handed to the service user (root unzipped it)');
+assert.match(s, /chown -R aipds:aipds \/opt\/aipds/, 'app tree must be handed to the service user (root unzipped it)');
 // venv/npm must be built AS the service user, or the runtime user cannot use them.
-assert.match(s, /runuser -u pathfinder -- python3\.11 -m venv/, 'venv must be created as the service user');
-assert.match(s, /runuser -u pathfinder -- env NEXT_PUBLIC_API_BASE_URL=\/api HOME=\/opt\/pathfinder npm ci/, 'npm ci must run as the service user with a writable HOME');
+assert.match(s, /runuser -u aipds -- python3\.11 -m venv/, 'venv must be created as the service user');
+assert.match(s, /runuser -u aipds -- env NEXT_PUBLIC_API_BASE_URL=\/api HOME=\/opt\/aipds npm ci/, 'npm ci must run as the service user with a writable HOME');
 // Both units need a writable HOME: the service user's real home is not used, and
 // npx/npm and the bundled binary all want somewhere to cache.
-assert.match(backendUnit, /^Environment=HOME=\/opt\/pathfinder$/m, 'backend unit needs a writable HOME');
+assert.match(backendUnit, /^Environment=HOME=\/opt\/aipds$/m, 'backend unit needs a writable HOME');
 
-console.log('OK  user-data: services run as non-root pathfinder user, app tree owned by it');
+console.log('OK  user-data: services run as non-root aipds user, app tree owned by it');
 
 // --- 인증 배선 (Cognito) ---
 {
@@ -282,7 +282,7 @@ console.log('OK  user-data: services run as non-root pathfinder user, app tree o
     branch: 'main',
     userPoolId: 'ap-northeast-2_POOL',
     userPoolClientId: 'client-abc',
-    hostedUiDomain: 'pathfinder-x.auth.ap-northeast-2.amazoncognito.com',
+    hostedUiDomain: 'aipds-x.auth.ap-northeast-2.amazoncognito.com',
     appUrl: 'https://d123.cloudfront.net',
   });
 
@@ -297,7 +297,7 @@ console.log('OK  user-data: services run as non-root pathfinder user, app tree o
   // 'AIPDS_COGNITO_CLIENT_ID=client-abc' 줄도 부분 문자열로 매치되어
   // 프론트 줄이 삭제돼도 통과해버린다 — 'Environment=' 접두어까지 포함해
   // 프론트 systemd 줄만 매치하도록 고정한다.
-  assert.ok(script.includes('COGNITO_HOSTED_UI_DOMAIN=pathfinder-x.auth.ap-northeast-2.amazoncognito.com'));
+  assert.ok(script.includes('COGNITO_HOSTED_UI_DOMAIN=aipds-x.auth.ap-northeast-2.amazoncognito.com'));
   assert.ok(script.includes('Environment=COGNITO_CLIENT_ID=client-abc'),
     'frontend unit must set COGNITO_CLIENT_ID (must not match the backend AIPDS_COGNITO_CLIENT_ID line)');
   assert.ok(script.includes('APP_BASE_URL=https://d123.cloudfront.net'));
@@ -365,7 +365,7 @@ console.log('OK  user-data: large_client_header_buffers fits JWT cookies on requ
 // 떨어져 개인 skills/agents가 워크숍 결과에 섞인다(proto-config와 같은 이유).
 assert.match(s, /AIPDS_DISCOVERY_CONFIG_DIR=/,
   'backend must get AIPDS_DISCOVERY_CONFIG_DIR — otherwise the host user\'s ~/.claude leaks into Discovery');
-assert.match(s, /\/opt\/pathfinder\/discovery-config/,
+assert.match(s, /\/opt\/aipds\/discovery-config/,
   'discovery config dir must point at the shipped asset path');
 // proto와 discovery의 config dir이 서로 다른 경로여야 한다 — 공유하면
 // Discovery가 shadcn-design 스킬을 켠 채로 돈다(skills="all").

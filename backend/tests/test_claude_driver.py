@@ -1364,7 +1364,7 @@ def test_the_transcript_path_matches_the_cli_layout(tmp_path):
     #   /tmp/pf-k/한글프로젝트     -> -tmp-pf-k-------
     from aipds.agent.claude_driver import _transcript_path
 
-    p = _transcript_path("/opt/pathfinder/discovery-config",
+    p = _transcript_path("/opt/aipds/discovery-config",
                          "/tmp/pathfinder-workspaces/acme_1.2-x",
                          "bde34f1e-bdb0-5f78-8ca2-07822c3609a0")
     assert p.parent.name == "-tmp-pathfinder-workspaces-acme-1-2-x"

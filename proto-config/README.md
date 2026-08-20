@@ -21,8 +21,8 @@ CLAUDE.md가 빌드 결과에 섞여** 재현이 되지 않는다. 여기로 갈
 
 ## 배포 경로
 
-CDK 에셋 zip이 레포 루트를 `/opt/pathfinder/`로 전개하므로, 이 디렉토리는
-별도 복사 단계 없이 `/opt/pathfinder/proto-config/`가 된다. 로컬 개발에서는
+CDK 에셋 zip이 레포 루트를 `/opt/aipds/`로 전개하므로, 이 디렉토리는
+별도 복사 단계 없이 `/opt/aipds/proto-config/`가 된다. 로컬 개발에서는
 `AIPDS_PROTO_CONFIG_DIR`로 이 디렉토리를 직접 가리키면 된다:
 
 ```bash

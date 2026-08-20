@@ -25,7 +25,7 @@ export const OAUTH_SCOPES = ['openid', 'email', 'profile'];
 // 앱 클라이언트 이름. 콘솔에 뜨는 이름이라 값 자체는 사소하지만, 다른 PUT
 // 필드들과 같은 이유로 여기 둔다 — AuthStack만 알고 HostingStack의 재전송이
 // 모르면 재배포마다 Cognito가 만든 기본 이름으로 조용히 바뀐다.
-export const CLIENT_NAME = 'pathfinder-web';
+export const CLIENT_NAME = 'aipds-web';
 
 // 토큰 유효기간 (분 단위). AuthStack의 client 정의와 HostingStack의
 // UpdateUserPoolClient 재전송이 반드시 같은 값을 써야 한다 — PUT 시맨틱이라
@@ -53,7 +53,7 @@ export const ID_TOKEN_VALIDITY_MINUTES = 180; // 3시간 — access와 같아야
 export const REFRESH_TOKEN_VALIDITY_MINUTES = 60 * 24 * 30; // 30일
 
 // AuthStack의 client가 명시적으로 ALLOW_REFRESH_TOKEN_AUTH만 켜는 이유는
-// pathfinder-auth-stack.ts의 authFlows 설정(userSrp/userPassword 둘 다 false)에
+// aipds-auth-stack.ts의 authFlows 설정(userSrp/userPassword 둘 다 false)에
 // 있다 — CDK가 그 외에는 아무 플래그도 안 켜면서도 refreshTokenRotationGracePeriod를
 // 지정하지 않았을 때 이 플로우 하나만 자동으로 추가한다. /api 프록시의 401 리프레시
 // 경로가 이 플로우에 의존하므로, UpdateUserPoolClient 재전송에서 빠지면 재배포마다

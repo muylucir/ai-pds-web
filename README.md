@@ -121,7 +121,7 @@ and review them yourself.
 > leaves user-data byte-identical, and CloudFormation therefore does not replace the instance.
 > Updating code is [`pathfinder-update`](#updating-the-code)'s job.
 >
-> To see what is actually running on the instance: `git -C /opt/pathfinder rev-parse HEAD` (the
+> To see what is actually running on the instance: `git -C /opt/aipds rev-parse HEAD` (the
 > commit it booted on is also in the bootstrap log, on the `booted commit:` line).
 >
 > Previously the repo root was uploaded as a zip asset. The reason for switching to a clone is that
@@ -209,7 +209,7 @@ disruptions in the table still apply, though — apply frontend and backend chan
 - Tracked files you edited by hand on the instance are **reverted** (`checkout -f`). The judgment
   is that one such file blocking every future update is worse — do not edit on the instance, push
   instead. `protos/`, `workspaces/` and session state are untracked and are not touched.
-- Verify: `git -C /opt/pathfinder rev-parse HEAD` tells you what is running, and
+- Verify: `git -C /opt/aipds rev-parse HEAD` tells you what is running, and
   `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/` hits the app directly (nginx
   returns 403 without CloudFront's secret header, so bypass it).
 

@@ -35,14 +35,14 @@ export const operations: ManualSection = {
 
 | 스택 | 만드는 것 |
 |---|---|
-| \`PathfinderDrillStack\` | 산출물 S3 버킷 + 백엔드 실행 롤 |
-| \`PathfinderAuthStack\` | Cognito User Pool + 로그인 화면 + 역할 그룹 + 시드 계정 |
-| \`PathfinderHostingStack\` | VPC + EC2 + CloudFront |
+| \`AipdsDrillStack\` | 산출물 S3 버킷 + 백엔드 실행 롤 |
+| \`AipdsAuthStack\` | Cognito User Pool + 로그인 화면 + 역할 그룹 + 시드 계정 |
+| \`AipdsHostingStack\` | VPC + EC2 + CloudFront |
 
 **15~20분** 걸립니다. \`cdk deploy\`가 끝난 뒤에도 EC2가 백엔드·프론트를 빌드하고 있을 수 있어
 **몇 분간 502가 나오는 것은 정상입니다.**
 
-접속 주소는 출력값 \`PathfinderHostingStack.DistributionDomain\` 입니다.`,
+접속 주소는 출력값 \`AipdsHostingStack.DistributionDomain\` 입니다.`,
     },
     {
       kind: "callout",
@@ -78,7 +78,7 @@ export const operations: ManualSection = {
       kind: "md",
       md: `**\`cdk deploy\`가 아닙니다.** 배포에는 커밋이 고정되어 있지 않아 커밋을 밀어도 인스턴스가
 교체되지 않고, \`cdk deploy\`는 "no changes"로 끝납니다. 갱신은 인스턴스 안의
-\`pathfinder-update\`가 합니다 — **인스턴스 교체가 없으므로 워크숍 중에도 쓸 수 있습니다.**`,
+\`aipds-update\`가 합니다 — **인스턴스 교체가 없으므로 워크숍 중에도 쓸 수 있습니다.**`,
     },
     {
       kind: "cmd",
@@ -86,7 +86,7 @@ export const operations: ManualSection = {
       lines: [
         "git push",
         "aws ssm start-session --target <InstanceId>",
-        "sudo pathfinder-update",
+        "sudo aipds-update",
       ],
     },
     {
@@ -102,12 +102,12 @@ export const operations: ManualSection = {
 
 - 백엔드 재시작은 **진행 중인 대화와 빌드 세션을 끊습니다.** 대화는 다시 열면 이어지지만,
   도는 빌드 세션은 재개 경로를 탑니다. 프론트·백엔드 갱신은 쉬는 시간에 하세요.
-- 무엇이 도는지는 \`git -C /opt/pathfinder rev-parse HEAD\`로 확인합니다.`,
+- 무엇이 도는지는 \`git -C /opt/aipds rev-parse HEAD\`로 확인합니다.`,
     },
     {
       kind: "callout",
       tone: "warn",
-      md: `**인스턴스에서 파일을 직접 고치지 마세요.** \`pathfinder-update\`가 트리를 \`main\`에
+      md: `**인스턴스에서 파일을 직접 고치지 마세요.** \`aipds-update\`가 트리를 \`main\`에
 맞추면서 그 수정을 되돌립니다. 고친 것은 푸시한 뒤 갱신하세요.`,
     },
     { kind: "heading", id: "hotfix", text: "인스턴스를 새로 만들기" },
@@ -119,7 +119,7 @@ export const operations: ManualSection = {
     },
     {
       kind: "cmd",
-      lines: ["cd infra && npx cdk deploy PathfinderHostingStack --require-approval never"],
+      lines: ["cd infra && npx cdk deploy AipdsHostingStack --require-approval never"],
     },
     { kind: "heading", id: "teardown", text: "내리기" },
     {
@@ -140,7 +140,7 @@ export const operations: ManualSection = {
 |---|---|
 | 배포 직후 CloudFront 502 | EC2 첫 빌드가 진행 중입니다(5~10분). 기다립니다 |
 | 첫 대화에서 권한 오류 | 배포 리전에 그 모델의 **Bedrock 모델 액세스**가 꺼져 있습니다 |
-| 로그인 후 리다이렉트 오류 | 콜백 URL 등록이 실패한 것입니다. \`cdk deploy PathfinderHostingStack\` 재실행 |
+| 로그인 후 리다이렉트 오류 | 콜백 URL 등록이 실패한 것입니다. \`cdk deploy AipdsHostingStack\` 재실행 |
 | 스택이 \`ROLLBACK_COMPLETE\`라 재배포 거부 | 최초 생성이 실패한 스택은 업데이트할 수 없습니다. 그 스택만 destroy한 뒤 다시 배포합니다 |
 | 프로토타입 프리뷰가 404 | 의도된 응답입니다 — [공유 링크](/manual#share)로 들어가야 합니다 |
 | 영어 화면인데 문서가 한국어 | 정상입니다 — [문서 언어](/manual#doc-language)는 화면 언어와 별개입니다 |
@@ -157,14 +157,14 @@ export const operations: ManualSection = {
       caption: "백엔드 로그 — 원인이 여기에만 남는 경우가 많습니다",
       lines: [
         "aws ssm start-session --target <InstanceId>",
-        "sudo journalctl -u pathfinder-backend -f",
+        "sudo journalctl -u aipds-backend -f",
       ],
     },
     { kind: "heading", id: "local-dev", text: "로컬에서 띄우기" },
     {
       kind: "md",
       md: `프론트(:3000) → 백엔드(:8000) → 백엔드 안의 에이전트가 Bedrock을 호출합니다.
-S3 버킷과 롤은 필요하므로 \`PathfinderDrillStack\`만 배포해 두면 됩니다.
+S3 버킷과 롤은 필요하므로 \`AipdsDrillStack\`만 배포해 두면 됩니다.
 Python **3.11**과 Node.js 20+가 필요합니다.`,
     },
     {

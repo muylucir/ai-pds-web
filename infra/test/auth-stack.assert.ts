@@ -1,7 +1,7 @@
 import * as assert from 'node:assert';
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { PathfinderAuthStack } from '../lib/pathfinder-auth-stack';
+import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import {
   GROUP_ADMIN, GROUP_PM, SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
   usernameForEmail,
@@ -10,7 +10,7 @@ import {
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 
 const app = new cdk.App();
-const stack = new PathfinderAuthStack(app, 'Auth', { env: ENV });
+const stack = new AipdsAuthStack(app, 'Auth', { env: ENV });
 const t = Template.fromStack(stack);
 
 // --- self-signup 차단: 이 요구사항의 실체는 이 한 필드다. ---
@@ -63,7 +63,7 @@ t.hasResourceProperties('AWS::Cognito::UserPoolGroup', {
 // --- Hosted UI v2 (managed login). v1이면 브랜딩 디자이너가 아닌 구 UI가 뜬다. ---
 t.hasResourceProperties('AWS::Cognito::UserPoolDomain', {
   ManagedLoginVersion: 2,
-  Domain: 'pathfinder-123456789012-ap-northeast-2',
+  Domain: 'aipds-123456789012-ap-northeast-2',
 });
 // v2는 브랜딩 스타일 레코드가 있어야 정상 렌더된다.
 t.hasResourceProperties('AWS::Cognito::ManagedLoginBranding', {
@@ -72,7 +72,7 @@ t.hasResourceProperties('AWS::Cognito::ManagedLoginBranding', {
 // ClientId는 CDK 타입에서 옵셔널이지만 Cognito API에는 필수다 — 브랜딩 스타일은
 // 앱 클라이언트 단위로 연결된다. 빠뜨리면 합성/유닛 테스트는 통과하고 실배포가
 // "Value null at 'clientId' failed to satisfy constraint"로 죽는다(실측:
-// PathfinderAuthStack ROLLBACK). 실제 클라이언트를 가리키는지까지 확인한다.
+// AipdsAuthStack ROLLBACK). 실제 클라이언트를 가리키는지까지 확인한다.
 const brandings = t.findResources('AWS::Cognito::ManagedLoginBranding');
 const brandingProps = Object.values(brandings)[0].Properties;
 assert.ok(

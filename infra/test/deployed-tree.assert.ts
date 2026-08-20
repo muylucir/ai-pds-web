@@ -1,6 +1,6 @@
 // infra/test/deployed-tree.assert.ts
 //
-// **/opt/pathfinder가 될 트리에 있으면 안 되는 것이 없는지** 확인한다.
+// **/opt/aipds가 될 트리에 있으면 안 되는 것이 없는지** 확인한다.
 //
 // 이 테스트는 app-asset.assert.ts를 대체한 것이다. 종전에는 코드가 CDK 에셋
 // zip으로 갔으므로 synth해서 스테이징된 디렉터리를 들여다봤다. 지금은 EC2가
@@ -12,8 +12,8 @@
 // 채팅이 계속 한국어로 진행됐다. 원인의 절반은 discovery-config였고(그쪽은
 // backend/tests/test_agent_language.py가 지킨다), 남은 절반이 이것이다:
 //
-//   에이전트 cwd     /opt/pathfinder/workspaces/{pid}
-//   트리에 있던 것   /opt/pathfinder/.claude/CLAUDE.md   <- **조상**
+//   에이전트 cwd     /opt/aipds/workspaces/{pid}
+//   트리에 있던 것   /opt/aipds/.claude/CLAUDE.md   <- **조상**
 //
 // Claude Code는 cwd에서 위로 올라가며 CLAUDE.md를 전부 로드한다(실제 CLI로
 // 확인: `claude --debug -p "로드한 CLAUDE.md 경로를 나열해라"`가 `(ancestor
@@ -51,8 +51,8 @@ function testNoUnexpectedClaudeMdInTheDeployedTree() {
   const devClaude = files.filter((f) => f === '.claude' || f.startsWith('.claude/'));
   assert.deepStrictEqual(devClaude, [],
     'the repo-development .claude/ must NOT be tracked: it would be cloned to ' +
-    '/opt/pathfinder/.claude/, an ANCESTOR of the agent cwd ' +
-    '(/opt/pathfinder/workspaces/{pid}), and Claude Code loads ancestor ' +
+    '/opt/aipds/.claude/, an ANCESTOR of the agent cwd ' +
+    '(/opt/aipds/workspaces/{pid}), and Claude Code loads ancestor ' +
     'CLAUDE.md files — measured against the real CLI. Its Korean line would ' +
     'then enter every English project\'s context, and there is no runtime ' +
     `switch to turn it off. Found: ${devClaude.join(', ')}`);
@@ -67,8 +67,8 @@ function testNoUnexpectedClaudeMdInTheDeployedTree() {
   for (const rel of found) {
     assert.ok(ALLOWED.has(rel),
       `unexpected tracked CLAUDE.md: ${rel}\n` +
-      'Every CLAUDE.md under /opt/pathfinder that is an ancestor of ' +
-      '/opt/pathfinder/workspaces/{pid} is loaded into the agent context. If ' +
+      'Every CLAUDE.md under /opt/aipds that is an ancestor of ' +
+      '/opt/aipds/workspaces/{pid} is loaded into the agent context. If ' +
       'this file is meant to ship, add it to ALLOWED here and make sure it is ' +
       'language-neutral (see backend/tests/test_agent_language.py).');
   }
@@ -130,7 +130,7 @@ function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
   ]) {
     assert.ok(files.has(rel),
       `${rel} must be tracked — the instance clones the repo, so anything ` +
-      'untracked simply does not exist at /opt/pathfinder');
+      'untracked simply does not exist at /opt/aipds');
   }
   console.log('OK  deployed tree: rules, the language directives, both config dirs and the lockfile ship');
 }

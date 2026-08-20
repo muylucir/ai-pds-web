@@ -4,7 +4,7 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { backendPolicyStatements } from './backend-permissions';
 
-export class PathfinderDrillStack extends cdk.Stack {
+export class AipdsDrillStack extends cdk.Stack {
   public readonly artifactsBucket: s3.Bucket;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -25,7 +25,7 @@ export class PathfinderDrillStack extends cdk.Stack {
     // 인스턴스 프로파일에 부여한다(호스트 자격증명 모델, spec §2).
     const backendRole = new iam.Role(this, 'BackendRole', {
       assumedBy: new iam.AccountPrincipal(account),
-      description: 'Pathfinder backend: Bedrock invoke + artifacts/session S3 access.',
+      description: 'AI-PDS backend: Bedrock invoke + artifacts/session S3 access.',
     });
     for (const stmt of backendPolicyStatements(bucket, account)) {
       backendRole.addToPolicy(stmt);

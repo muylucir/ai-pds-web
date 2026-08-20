@@ -29,7 +29,7 @@ export interface HostingStackProps extends cdk.StackProps {
   hostedUiDomain: string;
 }
 
-export class PathfinderHostingStack extends cdk.Stack {
+export class AipdsHostingStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: HostingStackProps) {
     super(scope, id, props);
 
@@ -55,7 +55,7 @@ export class PathfinderHostingStack extends cdk.Stack {
       allowAllOutbound: true, // 패키지 설치 · Bedrock · S3
       // ASCII만: EC2는 GroupDescription의 비ASCII를 거부한다("Character sets
       // beyond ASCII are not supported"). em dash 하나로 스택이 롤백된다(실측).
-      description: 'Pathfinder EC2: inbound 80 from CloudFront prefix list only.',
+      description: 'AI-PDS EC2: inbound 80 from CloudFront prefix list only.',
     });
     sg.addIngressRule(
       ec2.Peer.prefixList(cfPrefixListId),
@@ -82,7 +82,7 @@ export class PathfinderHostingStack extends cdk.Stack {
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
       ],
-      description: 'Pathfinder EC2: Bedrock + artifacts S3 + read header secret.',
+      description: 'AI-PDS EC2: Bedrock + artifacts S3 + read header secret.',
     });
     for (const stmt of backendPolicyStatements(props.artifactsBucket, account)) {
       role.addToPolicy(stmt);
@@ -126,7 +126,7 @@ export class PathfinderHostingStack extends cdk.Stack {
     //
     // - 에셋은 **gitignore된 파일까지 싣는다.** 그래서 app-asset-excludes.json
     //   이라는 보정 목록이 필요했고, 그 목록에서 빠진 것이 두 번 사고를 냈다:
-    //   개발용 `.claude/CLAUDE.md`가 /opt/pathfinder/.claude/에 실려 에이전트
+    //   개발용 `.claude/CLAUDE.md`가 /opt/aipds/.claude/에 실려 에이전트
     //   cwd의 **조상**이 되어 한국어 한 줄이 영어 프로젝트 컨텍스트에 매 턴
     //   들어간 것(d94aaa1), 그리고 개발 박스의 `proto-type/`이 실려 아무도
     //   빌드하지 않은 프로토타입이 "빌드 완료"로 보인 것.
@@ -139,7 +139,7 @@ export class PathfinderHostingStack extends cdk.Stack {
     // 무엇을 clone하는지는 브랜치로만 정한다(SHA를 박지 않는다). 그래서 이
     // 스택은 배포 시점에 git을 호출하지 않고, **user-data가 코드 변경과 무관하게
     // 동일하다** — 즉 cdk deploy는 인스턴스를 교체하지 않고 코드도 갱신하지
-    // 않는다. 코드 갱신은 인스턴스의 pathfinder-update가 한다(user-data.ts가
+    // 않는다. 코드 갱신은 인스턴스의 aipds-update가 한다(user-data.ts가
     // 설치한다). 이 선택의 근거는 lib/deploy-source.ts.
 
     // --- user-data ---
@@ -216,7 +216,7 @@ export class PathfinderHostingStack extends cdk.Stack {
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       // 위 SG와 같은 이유로 ASCII만 쓴다(CloudFront는 비ASCII를 받아줄 수도
       // 있으나, 콘솔 표시용 문자열에 굳이 그 위험을 남기지 않는다).
-      comment: 'Pathfinder: CloudFront in front of EC2 (header-authenticated origin).',
+      comment: 'AI-PDS: CloudFront in front of EC2 (header-authenticated origin).',
       priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
       defaultBehavior: {
         origin,
@@ -283,7 +283,7 @@ export class PathfinderHostingStack extends cdk.Stack {
         },
         ExplicitAuthFlows: EXPLICIT_AUTH_FLOWS,
       },
-      physicalResourceId: cr.PhysicalResourceId.of('pathfinder-callback-urls'),
+      physicalResourceId: cr.PhysicalResourceId.of('aipds-callback-urls'),
     };
 
     const clientUpdate = new cr.AwsCustomResource(this, 'RegisterCallbackUrls', {

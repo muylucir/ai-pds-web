@@ -10,7 +10,7 @@ export interface UserDataOptions {
    *
    * 이 값이 커밋 SHA가 아니라 브랜치라는 것의 결과: user-data가 코드 변경과
    * 무관하게 동일하므로 `cdk deploy`는 인스턴스를 교체하지 않는다. 코드 갱신은
-   * 아래에서 설치하는 `pathfinder-update`가 한다. 근거는 lib/deploy-source.ts.
+   * 아래에서 설치하는 `aipds-update`가 한다. 근거는 lib/deploy-source.ts.
    */
   branch: string;
   // 인증. 이 값들이 비면 백엔드가 인증 바이패스로 돌아 배포가 무인증으로
@@ -27,21 +27,21 @@ export interface UserDataOptions {
 export function renderUserData(opts: UserDataOptions): string {
   const { region, bucketName, model, secretArn, repoUrl, branch,
           userPoolId, userPoolClientId, hostedUiDomain, appUrl } = opts;
-  const APP = '/opt/pathfinder';
+  const APP = '/opt/aipds';
   // 서비스 전용 non-root 유저. 편의가 아니라 필수다: 프로토타입 빌드 에이전트가
   // 띄우는 Claude Code 바이너리는 euid==0에서 bypassPermissions를 거부한다
   // (6d21e1f에서 실측 — `--version`은 root에서도 성공해 이 실패를 가리므로,
   // 부팅은 정상으로 보이고 첫 빌드 턴에서야 502로 드러난다). MicroVM 이미지가
   // non-root 'harness' 유저를 쓴 이유가 이것이고, 빌드가 백엔드 프로세스로
   // 흡수된 지금은 백엔드 자체가 non-root여야 한다.
-  const SVC = 'pathfinder';
+  const SVC = 'aipds';
   // ---------------------------------------------------------------------------
   // 아래 템플릿 문자열의 주석은 **EC2 user-data 16KB 한계를 쓴다.** 한 번 넘겨서
   // 배포가 InvalidRequest로 실패한 적이 있다(18,158바이트, 그중 주석 12KB·한글이
   // 3바이트/자). 그래서 "왜"는 여기(TS 주석 = 바이트 0)에 적고, 템플릿 안에는
   // 인스턴스에서 그 스크립트를 읽는 사람이 **깨뜨리지 않기 위해** 알아야 하는
-  // 한 줄만 남긴다. 긴 절차 하나(pathfinder-update)는 아예 리포 파일로 나가 있다
-  // (infra/scripts/pathfinder-update — 그 파일의 주석은 예산과 무관하다).
+  // 한 줄만 남긴다. 긴 절차 하나(aipds-update)는 아예 리포 파일로 나가 있다
+  // (infra/scripts/aipds-update — 그 파일의 주석은 예산과 무관하다).
   //
   // 부트스트랩 로그를 600으로 잠그는 이유: 644면 서비스 유저가 읽을 수 있고, 그
   // 계정은 프로토타입 빌드 에이전트를 bypassPermissions로 돌리는 계정이다. 아래
@@ -51,7 +51,7 @@ export function renderUserData(opts: UserDataOptions): string {
   // 요지는 (1) 에셋은 gitignore된 파일까지 실어 보정 목록이 필요했고 배포되는 것이
   // 커밋이 아니라 워킹 트리였다, (2) 배포자가 "이 커밋을 푸시했는가"를 신경 쓰지
   // 않아도 되게 한다. 대가는 cdk deploy가 코드를 갱신하지 못하는 것이고, 그 자리를
-  // pathfinder-update가 메운다.
+  // aipds-update가 메운다.
   //
   // `checkout -f -B`가 첫 clone과 cloud-init 재실행에서 같은 결과를 내야 한다. -f가
   // 필요한 쪽은 재실행이다 — 수정된 tracked 파일이 하나라도 있으면 -f 없는 checkout은
@@ -101,9 +101,9 @@ export function renderUserData(opts: UserDataOptions): string {
   return `#!/bin/bash
 set -euxo pipefail
 # 600: 이 로그는 시크릿 대입을 담을 수 있고, 644면 빌드 에이전트 계정이 읽는다.
-touch /var/log/pathfinder-bootstrap.log
-chmod 600 /var/log/pathfinder-bootstrap.log
-exec > >(tee -a /var/log/pathfinder-bootstrap.log) 2>&1
+touch /var/log/aipds-bootstrap.log
+chmod 600 /var/log/aipds-bootstrap.log
+exec > >(tee -a /var/log/aipds-bootstrap.log) 2>&1
 
 # --- 패키지 (AL2023: awscli2는 기본 탑재). shadow-utils = useradd, git = 코드 배포. ---
 dnf install -y python3.11 python3.11-devel gcc nodejs20 nodejs20-npm nginx tar unzip shadow-utils git
@@ -158,7 +158,7 @@ SECRET=$(aws secretsmanager get-secret-value --secret-id ${secretArn} --query Se
 set -x
 
 # --- nginx: 헤더 검증 + 라우팅 ---
-cat > /etc/nginx/conf.d/pathfinder.conf <<NGINX
+cat > /etc/nginx/conf.d/aipds.conf <<NGINX
 server {
   listen 80 default_server;
   server_name _;
@@ -190,9 +190,9 @@ NGINX
 sed -i '/^    server {/,/^    }/d' /etc/nginx/nginx.conf
 
 # --- systemd 유닛 ---
-cat > /etc/systemd/system/pathfinder-backend.service <<UNIT
+cat > /etc/systemd/system/aipds-backend.service <<UNIT
 [Unit]
-Description=Pathfinder backend (FastAPI/uvicorn)
+Description=AI-PDS backend (FastAPI/uvicorn)
 After=network.target
 [Service]
 # non-root 필수 — Claude Code가 root에서 bypassPermissions를 거부한다(위 주석 참조).
@@ -229,9 +229,9 @@ Restart=always
 WantedBy=multi-user.target
 UNIT
 
-cat > /etc/systemd/system/pathfinder-frontend.service <<UNIT
+cat > /etc/systemd/system/aipds-frontend.service <<UNIT
 [Unit]
-Description=Pathfinder frontend (Next.js)
+Description=AI-PDS frontend (Next.js)
 After=network.target
 [Service]
 User=${SVC}
@@ -250,15 +250,15 @@ Restart=always
 WantedBy=multi-user.target
 UNIT
 
-# 코드 갱신 경로. 스크립트 본문과 그 이유는 infra/scripts/pathfinder-update에 있다.
-cat > /etc/pathfinder-deploy.env <<ENV
+# 코드 갱신 경로. 스크립트 본문과 그 이유는 infra/scripts/aipds-update에 있다.
+cat > /etc/aipds-deploy.env <<ENV
 APP=${APP}
 SVC=${SVC}
 BRANCH=${branch}
 ENV
-install -m 755 ${APP}/infra/scripts/pathfinder-update /usr/local/bin/pathfinder-update
+install -m 755 ${APP}/infra/scripts/aipds-update /usr/local/bin/aipds-update
 
 systemctl daemon-reload
-systemctl enable --now nginx pathfinder-backend pathfinder-frontend
+systemctl enable --now nginx aipds-backend aipds-frontend
 `;
 }

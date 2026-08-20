@@ -345,9 +345,9 @@ def test_delete_stops_runner_attached_by_concurrent_boot_during_s3_await(monkeyp
 
 # ---- 로컬 실체의 잔여물 ----
 #
-# 실측(2026-08-19, 배포 인스턴스): `/opt/pathfinder/workspaces/`에 삭제된 프로젝트
+# 실측(2026-08-19, 배포 인스턴스): `/opt/aipds/workspaces/`에 삭제된 프로젝트
 # 6개의 디렉터리가 남아 있었고(합 2.35MB), S3 `projects/`에는 그중 어느 것도 없었다.
-# `/opt/pathfinder/protos/`에는 빈 부모 디렉터리 3개가 남아 있었다.
+# `/opt/aipds/protos/`에는 빈 부모 디렉터리 3개가 남아 있었다.
 
 def test_delete_removes_the_workspace_dir_of_a_project_never_booted_this_process(
         monkeypatch, tmp_path):

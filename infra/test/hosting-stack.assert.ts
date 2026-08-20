@@ -1,9 +1,9 @@
 import * as assert from 'node:assert';
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { PathfinderDrillStack } from '../lib/pathfinder-drill-stack';
-import { PathfinderHostingStack } from '../lib/pathfinder-hosting-stack';
-import { PathfinderAuthStack } from '../lib/pathfinder-auth-stack';
+import { AipdsDrillStack } from '../lib/aipds-drill-stack';
+import { AipdsHostingStack } from '../lib/aipds-hosting-stack';
+import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import { MODEL } from '../lib/backend-permissions';
 import {
   ACCESS_TOKEN_VALIDITY_MINUTES, ID_TOKEN_VALIDITY_MINUTES,
@@ -42,7 +42,7 @@ function assertBucketPrefixesCovered(t: Template) {
 
 function testDrillUnchanged() {
   const app = new cdk.App();
-  const drill = new PathfinderDrillStack(app, 'Drill', { env: ENV });
+  const drill = new AipdsDrillStack(app, 'Drill', { env: ENV });
   const t = Template.fromStack(drill);
 
   // Bedrock invoke 문 존재.
@@ -100,9 +100,9 @@ testDrillUnchanged();
 
 function makeHosting() {
   const app = new cdk.App();
-  const drill = new PathfinderDrillStack(app, 'Drill2', { env: ENV });
-  const auth = new PathfinderAuthStack(app, 'Auth2', { env: ENV });
-  const stack = new PathfinderHostingStack(app, 'Hosting', {
+  const drill = new AipdsDrillStack(app, 'Drill2', { env: ENV });
+  const auth = new AipdsAuthStack(app, 'Auth2', { env: ENV });
+  const stack = new AipdsHostingStack(app, 'Hosting', {
     env: ENV,
     artifactsBucket: drill.artifactsBucket,
     cfPrefixListId: 'pl-test0000',   // 주입 → fromLookup 우회(크리덴셜 불필요)
@@ -253,9 +253,9 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
 // --- 콜백 URL 주입 (순환 의존 해소) ---
 {
   const app = new cdk.App();
-  const drill = new PathfinderDrillStack(app, 'Drill3', { env: ENV });
-  const auth = new PathfinderAuthStack(app, 'Auth3', { env: ENV });
-  const hosting = new PathfinderHostingStack(app, 'Hosting3', {
+  const drill = new AipdsDrillStack(app, 'Drill3', { env: ENV });
+  const auth = new AipdsAuthStack(app, 'Auth3', { env: ENV });
+  const hosting = new AipdsHostingStack(app, 'Hosting3', {
     env: ENV,
     artifactsBucket: drill.artifactsBucket,
     cfPrefixListId: 'pl-1234',
@@ -380,9 +380,9 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
 // 나가지 않는다).
 {
   const app = new cdk.App();
-  const drill = new PathfinderDrillStack(app, 'Drill4', { env: ENV });
-  const auth = new PathfinderAuthStack(app, 'Auth4', { env: ENV });
-  const hosting = new PathfinderHostingStack(app, 'Hosting4', {
+  const drill = new AipdsDrillStack(app, 'Drill4', { env: ENV });
+  const auth = new AipdsAuthStack(app, 'Auth4', { env: ENV });
+  const hosting = new AipdsHostingStack(app, 'Hosting4', {
     env: ENV,
     artifactsBucket: drill.artifactsBucket,
     userPool: auth.userPool,
@@ -441,9 +441,9 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
 // 하나라도 빠지면 그 기능만 502가 되고, 화면에서는 원인이 보이지 않는다.
 {
   const app = new cdk.App();
-  const drill = new PathfinderDrillStack(app, 'Drill5', { env: ENV });
-  const auth = new PathfinderAuthStack(app, 'Auth5', { env: ENV });
-  const hosting = new PathfinderHostingStack(app, 'Hosting5', {
+  const drill = new AipdsDrillStack(app, 'Drill5', { env: ENV });
+  const auth = new AipdsAuthStack(app, 'Auth5', { env: ENV });
+  const hosting = new AipdsHostingStack(app, 'Hosting5', {
     env: ENV,
     artifactsBucket: drill.artifactsBucket,
     userPool: auth.userPool,

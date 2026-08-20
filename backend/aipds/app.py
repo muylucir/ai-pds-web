@@ -267,7 +267,7 @@ async def purge_local_workspace(project_id: str) -> None:
     있는 이 제품의 흔한 상태다. 둘째, stop의 실패는 의도적으로 삼켜지므로
     드라이버 종료가 실패하면 rmtree까지 함께 건너뛴다.
 
-    실측(2026-08-19, 배포 인스턴스): `/opt/pathfinder/workspaces/`에 S3에 없는
+    실측(2026-08-19, 배포 인스턴스): `/opt/aipds/workspaces/`에 S3에 없는
     프로젝트 6개의 디렉터리가 남아 있었다. 사용자에게는 "채팅 기록·문서가 영구
     삭제된다"고 약속한 상태다(`project.deleteConfirmBody`).
 
