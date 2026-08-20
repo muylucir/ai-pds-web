@@ -71,13 +71,26 @@ company's own colours and typeface.
 There is **one** profile for the whole deployment (you cannot set a different one per project).`,
     },
     {
+      kind: "md",
+      md: `There are two ways in. **A design document you already have works as-is** — if it states colours
+and fonts in prose or tables, Pathfinder reads them, shows you the tokens it found, and lets you check
+and correct them before saving. Starting from scratch is faster with the template.`,
+    },
+    {
       kind: "steps",
       items: [
-        "Click **Download template** to get an empty `DESIGN.md`.",
-        "In the `tokens` block, **delete the leading `#`** on the lines you want and replace the values with your brand's. A line that keeps its `#` stays a comment and is ignored.",
-        "Below that, write guidance on tone, spacing and what to avoid (optional).",
+        "**Using a document you already have**: pick the file and click **Next**. The tokens found in it appear in a table with colour swatches.",
+        "Check the values. **Where the document does not answer, you decide** — if it uses one colour for brand headings and another for buttons, which one becomes `primary` is yours to set.",
+        "**Starting from the template**: click **Download template** for an empty `DESIGN.md`, then in the `tokens` block **delete the leading `#`** on the lines you want and replace the values. A line that keeps its `#` stays a comment and is ignored. A document that has a `tokens` block is used as it is (nothing is extracted).",
+        "Write guidance on tone, spacing and what to avoid (optional).",
         "Click **Upload**. If the format is wrong it tells you **which line** to fix, so correct it and upload again.",
       ],
+    },
+    {
+      kind: "md",
+      md: `Saving with no tokens at all **leaves a warning on the screen.** In that state only the prose
+reaches the build agent and the colours stay at the shadcn defaults — sometimes it lands, sometimes it
+does not, so tokens are what make the colours certain.`,
     },
     {
       kind: "md",

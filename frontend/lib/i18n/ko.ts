@@ -159,6 +159,12 @@ export const ko = {
   "admin.designProse": "지침",
   "admin.designUploadedBy": "올린 사람",
   "admin.designLanguageNote": "이 파일은 모든 프로젝트가 함께 읽습니다. 영어 프로젝트에도 그대로 전달되므로, 화면 문구 언어를 지시하는 문장은 넣지 마세요.",
+  "admin.designNext": "다음",
+  "admin.designPreviewBusy": "문서에서 토큰을 찾는 중…",
+  "admin.designOriginFence": "이 문서에는 이미 토큰 블록이 있어 그 값을 그대로 씁니다.",
+  "admin.designOriginExtracted": "문서에서 뽑은 값입니다. 저장 전에 확인하고, 역할이 어긋난 값은 고치세요.",
+  "admin.designOriginNone": "이 문서에서 토큰을 찾지 못했습니다. 그대로 저장하면 산문만 전달되고 화면의 색·서체는 shadcn 기본값으로 남습니다.",
+  "admin.designNoTokens": "토큰이 없어 색·서체가 화면에 반영되지 않습니다 — 산문만 전달됩니다. 색 값이 적힌 DESIGN.md를 다시 올리면 반영됩니다.",
   // 프로토타입 탭
   "proto.hostStartFailed": "호스팅을 시작하지 못했습니다. 다시 시도해 주세요.",
   "proto.improveStartFailed": "개선 세션을 시작하지 못했습니다. 다시 시도해 주세요.",

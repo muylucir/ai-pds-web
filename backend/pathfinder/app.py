@@ -452,6 +452,37 @@ def questionnaire_agent_factory(project_id: str):
     return call
 
 
+def design_token_extractor():
+    """산문뿐인 DESIGN.md에서 토큰을 뽑을 단발 호출자. 모델이 없으면 None.
+
+    `questionnaire_agent_factory`와 같은 모양(Strands + BedrockModel 단발)이지만
+    두 곳이 다른 점이 둘 있다.
+
+    1. `project_model()`을 쓸 수 없다 — 브랜드 프로필은 프로젝트 밖의 전역 한
+       장이고(design_profile.py), 업로드 시점에는 프로젝트가 없다. 그래서 배포가
+       내보내는 기본 모델(`ANTHROPIC_MODEL`, infra/lib/backend-permissions.ts의
+       MODEL)을 읽는다.
+    2. 모델이 없을 때 RuntimeError를 올리지 않고 None을 돌려준다. 그쪽은 문항
+       생성이 곧 그 요청의 목적이라 실패해야 하지만, 여기서 실패하면 추출이
+       **업로드 자체를** 막는다 — 토큰 없이 산문만 적용하는 것도 유효한
+       상태다(라우트가 경고로 번역한다).
+
+    `temperature`는 넘기지 않는다 — Opus 4.7+·Sonnet 5는 샘플링 파라미터를 400으로
+    거부한다. max_tokens가 작은 이유는 출력이 ```tokens 블록 한 개(최대 14줄)라서다.
+    """
+    model_id = os.environ.get("ANTHROPIC_MODEL")
+    if not model_id:
+        return None
+
+    async def call(prompt: str) -> str:
+        from strands import Agent
+        from strands.models import BedrockModel
+        model = BedrockModel(model_id=model_id, max_tokens=2000)
+        agent = Agent(model=model, tools=[], callback_handler=None)
+        return str(await agent.invoke_async(prompt))
+    return call
+
+
 async def make_workspace(project_id: str) -> Workspace:
     s3 = s3_store_factory(project_id)
     local_root = _workspaces_dir() / project_id

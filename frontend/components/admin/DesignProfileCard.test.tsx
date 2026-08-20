@@ -14,6 +14,7 @@ const BASE: DesignProfile = {
   uploaded_by: "admin@x",
   tokens: { primary: "#5b2ea6" },
   prose: "여백을 넉넉히 쓴다.",
+  warnings: [],
 };
 
 describe("DesignProfileCard", () => {
@@ -41,6 +42,23 @@ describe("DesignProfileCard", () => {
                               onReplace={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByText("acme.md")).toBeInTheDocument();
     expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
+  it("says out loud that a token-less profile never reaches the screen", () => {
+    // 2026-08-19 실측: 토큰 0개 프로필이 조용히 저장되어, 같은 프로필에서 한
+    // 프로토타입은 브랜드가 보이고 다른 하나는 안 보였다. 다시 열었을 때도
+    // 이유를 알 수 있어야 한다(백엔드가 warnings를 유도해 내려준다).
+    render(<DesignProfileCard
+      profile={{ ...BASE, tokens: {}, warnings: ["no-tokens"] }}
+      onReplace={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.getByText(/반영되지 않습니다|never reach the screen/))
+      .toBeInTheDocument();
+  });
+
+  it("stays quiet when the profile has tokens", () => {
+    render(<DesignProfileCard profile={BASE} onReplace={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.queryByText(/반영되지 않습니다|never reach the screen/))
+      .not.toBeInTheDocument();
   });
 
   it("does not leave an empty collapsible section when there is no prose", () => {

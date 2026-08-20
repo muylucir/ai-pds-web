@@ -151,6 +151,34 @@ def test_design_rules_carry_every_directive(language):
 
 
 @pytest.mark.parametrize("language", ["ko", "en"])
+def test_design_rules_without_tokens_point_at_the_document(language):
+    """토큰이 없으면 브랜드의 출처는 테마 파일이 아니라 DESIGN.md다.
+
+    2026-08-19 실측: 값이 없는 테마 파일을 "브랜드 프로필에서 생성됨"이라고
+    가리킨 결과, 한 에이전트는 그 파일을 덮을 것이 없다고 읽고 shadcn 기본값을
+    뒀고 다른 에이전트는 산문을 읽어 팔레트를 옮겼다. 지시가 값이 있는 곳을
+    가리켜야 한다.
+    """
+    out = prompts.design_rules(language, has_tokens=False)
+    assert "DESIGN.md" in out
+    assert "globals.css" in out
+    for needle in (["값이 없다", "옮겨라"] if language == "ko"
+                   else ["no values", "move"]):
+        assert needle in out, f"{language}: {needle!r}가 없다"
+    # 배선은 여전히 요구한다 — 이 import가 나중에 올라올 브랜드를 다시 빌드하지
+    # 않고 이 프로토타입에 닿게 하는 유일한 길이다.
+    assert "pathfinder-theme.css" in out
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_design_rules_with_tokens_do_not_ask_for_a_manual_move(language):
+    # 토큰이 있으면 값을 손으로 옮기라는 지시가 없어야 한다 — 두 지시가 함께
+    # 있으면 에이전트가 우리가 덮어쓰는 파일과 자기가 쓴 값을 동시에 들고 있게 된다.
+    out = prompts.design_rules(language, has_tokens=True)
+    assert ("옮겨라" not in out) if language == "ko" else ("move" not in out)
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
 def test_theme_rejection_tells_the_agent_what_to_do(language):
     out = prompts.build_complete_theme_rejection(language)
     assert "pathfinder-theme.css" in out
