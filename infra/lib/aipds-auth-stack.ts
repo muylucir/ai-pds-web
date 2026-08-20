@@ -18,7 +18,7 @@ const SCOPE_MAP: Record<string, cognito.OAuthScope> = {
   profile: cognito.OAuthScope.PROFILE,
 };
 
-export class PathfinderAuthStack extends cdk.Stack {
+export class AipdsAuthStack extends cdk.Stack {
   public readonly userPool: cognito.UserPool;
   public readonly userPoolClient: cognito.UserPoolClient;
   public readonly hostedUiDomain: string;
@@ -30,7 +30,7 @@ export class PathfinderAuthStack extends cdk.Stack {
 
     // --- User Pool ---
     this.userPool = new cognito.UserPool(this, 'UserPool', {
-      userPoolName: 'pathfinder',
+      userPoolName: 'aipds',
       // 이 한 줄이 "self signup 금지"의 실체다 → CFN
       // AdminCreateUserConfig.AllowAdminCreateUserOnly: true.
       // Hosted UI에 회원가입 링크 자체가 렌더되지 않는다.
@@ -64,19 +64,19 @@ export class PathfinderAuthStack extends cdk.Stack {
     new cognito.CfnUserPoolGroup(this, 'AdminGroup', {
       userPoolId: this.userPool.userPoolId,
       groupName: GROUP_ADMIN,
-      description: 'Pathfinder 관리자 — PM 권한 + 사용자 관리',
+      description: 'AI-PDS 관리자 — PM 권한 + 사용자 관리',
       precedence: 0,
     });
     new cognito.CfnUserPoolGroup(this, 'PmGroup', {
       userPoolId: this.userPool.userPoolId,
       groupName: GROUP_PM,
-      description: 'Pathfinder PM — 프로젝트 전체 접근, 사용자 관리 제외',
+      description: 'AI-PDS PM — 프로젝트 전체 접근, 사용자 관리 제외',
       precedence: 10,
     });
 
     // --- Hosted UI v2 (managed login) ---
     // 도메인 프리픽스는 계정·리전 안에서 유일해야 한다.
-    const domainPrefix = `pathfinder-${account}-${region}`;
+    const domainPrefix = `aipds-${account}-${region}`;
     const domain = this.userPool.addDomain('HostedUi', {
       cognitoDomain: { domainPrefix },
       managedLoginVersion: cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN,
@@ -113,7 +113,7 @@ export class PathfinderAuthStack extends cdk.Stack {
     // clientId는 CDK 타입에서 옵셔널이지만 Cognito API에는 필수다 — 브랜딩
     // 스타일은 user pool이 아니라 앱 클라이언트 단위로 연결된다. 넘기지 않으면
     // 합성과 유닛 테스트는 통과하고 실배포가 "Value null at 'clientId' failed to
-    // satisfy constraint"로 죽는다(실측: PathfinderAuthStack ROLLBACK).
+    // satisfy constraint"로 죽는다(실측: AipdsAuthStack ROLLBACK).
     // 그래서 이 블록은 반드시 클라이언트 생성 뒤에 온다.
     const branding = new cognito.CfnManagedLoginBranding(this, 'Branding', {
       userPoolId: this.userPool.userPoolId,

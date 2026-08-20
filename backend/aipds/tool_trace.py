@@ -79,7 +79,7 @@ def tool_detail(name: str, tool_input: object) -> str | None:
         return None
     value = raw.strip()
     if name in _PATH_TOOLS:
-        # 절대 경로를 그대로 찍으면 `/opt/pathfinder/workspaces/{pid}/`가 붙는다 —
+        # 절대 경로를 그대로 찍으면 `/opt/aipds/workspaces/{pid}/`가 붙는다 —
         # 사용자에게 의미 없고 프로젝트 id가 트레이스에 새어 나온다. 워크스페이스
         # 밖의 경로는 손대지 않는다(그 자체가 신호다).
         value = _shorten_path(value)

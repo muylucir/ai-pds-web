@@ -63,9 +63,9 @@ def test_a_long_command_is_truncated():
 
 
 def test_paths_are_workspace_relative_when_possible():
-    """절대 경로를 그대로 찍으면 `/opt/pathfinder/workspaces/{pid}/`가 화면에 붙는다 —
+    """절대 경로를 그대로 찍으면 `/opt/aipds/workspaces/{pid}/`가 화면에 붙는다 —
     사용자에게 의미 없고, 프로젝트 id가 트레이스에 새어 나온다."""
-    assert tool_detail("Read", {"file_path": "/opt/pathfinder/workspaces/p1/"
+    assert tool_detail("Read", {"file_path": "/opt/aipds/workspaces/p1/"
                                              "aiplc-docs/discovery/x.md"}) \
         == "aiplc-docs/discovery/x.md"
     # 워크스페이스 밖이면 손대지 않는다(그 자체가 신호다).

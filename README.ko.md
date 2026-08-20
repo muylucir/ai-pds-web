@@ -108,7 +108,7 @@ npx cdk deploy --all --require-approval never
 > user-data가 그대로이고, 그러면 CloudFormation이 인스턴스를 교체하지 않는다. 코드 갱신은
 > [`pathfinder-update`](#코드-갱신하기)가 한다.
 >
-> 인스턴스에서 무엇이 도는지는 `git -C /opt/pathfinder rev-parse HEAD`로 확인한다(부팅
+> 인스턴스에서 무엇이 도는지는 `git -C /opt/aipds rev-parse HEAD`로 확인한다(부팅
 > 시점의 커밋은 부트스트랩 로그의 `booted commit:` 줄에도 남는다).
 >
 > 종전에는 리포 루트를 zip 에셋으로 올렸다. clone으로 바꾼 이유는 에셋이 **gitignore된
@@ -191,7 +191,7 @@ sudo pathfinder-update
 - 인스턴스에서 손으로 고친 tracked 파일은 **되돌아간다**(`checkout -f`). 그런 파일 하나가
   갱신 전체를 막는 것이 더 나쁘다는 판단이다 — 인스턴스에서 직접 편집하지 말고 푸시한다.
   `protos/`·`workspaces/`·세션 상태는 untracked라 지워지지 않는다.
-- 확인: `git -C /opt/pathfinder rev-parse HEAD` 로 무엇이 도는지 보고,
+- 확인: `git -C /opt/aipds rev-parse HEAD` 로 무엇이 도는지 보고,
   `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/`로 앱을 직접 찍는다
   (nginx는 CloudFront의 비밀 헤더가 없으면 403이므로 우회해서 본다).
 

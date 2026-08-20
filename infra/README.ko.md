@@ -1,4 +1,4 @@
-# Pathfinder Infra (CDK, 기본 ap-northeast-2 / 서울)
+# AI-PDS Infra (CDK, 기본 ap-northeast-2 / 서울)
 
 **한국어** | [English](README.md)
 
@@ -10,9 +10,9 @@
 
 | 스택 | 만드는 것 |
 |---|---|
-| `PathfinderDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
-| `PathfinderAuthStack` | Cognito User Pool + Hosted UI v2(managed login) + 역할 그룹 2개(`admin`/`pm`) + 시드 계정 2개 |
-| `PathfinderHostingStack` | VPC + EC2(AL2023 x86_64, m7i.2xlarge, 100 GB 암호화 EBS) + CloudFront |
+| `AipdsDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
+| `AipdsAuthStack` | Cognito User Pool + Hosted UI v2(managed login) + 역할 그룹 2개(`admin`/`pm`) + 시드 계정 2개 |
+| `AipdsHostingStack` | VPC + EC2(AL2023 x86_64, m7i.2xlarge, 100 GB 암호화 EBS) + CloudFront |
 
 세 스택은 서로를 참조하므로 **`--all`로 함께 배포한다**(`bin/app.ts`가 버킷과 User
 Pool 참조를 호스팅 스택에 넘긴다). 순서는 CDK가 정한다.
@@ -42,9 +42,9 @@ user-data가 공개 리포를 clone해 부팅 시점의 `origin/main` 최신 커
 - **커밋 SHA를 고정하지 않는다.** 그래서 배포자에게 "이 커밋을 푸시했는가"를 묻지
   않지만, 대가로 **`cdk deploy`가 코드 갱신 수단이 아니다** — user-data 문자열이
   바이트 단위로 같으면 CloudFormation이 인스턴스를 교체하지 않는다. 코드 갱신은
-  부팅 시 설치되는 `pathfinder-update`가 담당한다(루트 README의 "코드 갱신" 절).
+  부팅 시 설치되는 `aipds-update`가 담당한다(루트 README의 "코드 갱신" 절).
 
-## PathfinderAuthStack
+## AipdsAuthStack
 
 - **self-signup 차단** — `selfSignUpEnabled: false`가 CFN
   `AdminCreateUserConfig.AllowAdminCreateUserOnly: true`로 떨어진다. Hosted UI에
@@ -118,7 +118,7 @@ CloudFront 배포도 그 목록에 들어가므로, 우리 배포인지는 헤�
 기본 서울(`ap-northeast-2`), `CDK_DEPLOY_REGION`으로 오버라이드한다. 프리픽스 리스트
 ID는 리전마다 다르지만 `PrefixList.fromLookup`이 배포 리전의 ID를 자동 조회하므로
 코드 수정이 필요 없다. 대가는 **호스팅 스택의 첫 synth/deploy에 계정 크리덴셜이
-필요**하다는 것이다(`npx cdk synth PathfinderDrillStack`은 필요 없다).
+필요**하다는 것이다(`npx cdk synth AipdsDrillStack`은 필요 없다).
 
 조회 결과는 `cdk.context.json`에 캐시되지만 **커밋하지 않는다**(gitignored) — 항목
 키에 계정 ID가 들어가 다른 계정에서는 무효인 캐시이고, 크리덴셜이 있으면 같은 값으로
@@ -135,11 +135,11 @@ npm test     # 크리덴셜 불필요 — 순수함수 + 합성된 템플릿 단
 
 | 파일 | 지키는 것 |
 |---|---|
-| `user-data.assert.ts` | 부팅 스크립트의 요소 전부 — nginx 변수 vs 셸 변수 이스케이프, non-root 실행(Claude Code는 euid 0에서 `bypassPermissions`를 거부한다), JWT 쿠키가 들어가는 프록시 버퍼 크기, 두 config dir이 서로 다른 경로인지, 컨텍스트 스위치 두 개, `pathfinder-update` 설치 |
+| `user-data.assert.ts` | 부팅 스크립트의 요소 전부 — nginx 변수 vs 셸 변수 이스케이프, non-root 실행(Claude Code는 euid 0에서 `bypassPermissions`를 거부한다), JWT 쿠키가 들어가는 프록시 버퍼 크기, 두 config dir이 서로 다른 경로인지, 컨텍스트 스위치 두 개, `aipds-update` 설치 |
 | `hosting-stack.assert.ts` | SG가 프리픽스 리스트 전용인지(SSH 없음), EC2/EBS/EIP/인스턴스 롤, CloudFront의 오리진 헤더와 HTTPS 리다이렉트, 그리고 위의 **앱 클라이언트 드리프트 감지** |
 | `auth-stack.assert.ts` | self-signup 차단·alias username·그룹·managed login v2·code-only 클라이언트, 시드 계정 3단계의 짝 맞춤 |
 | `auth-client-config.assert.ts` | 토큰 유효기간이 **프로토타입 빌드 1회보다 길다**(짧으면 빌드 중 세션이 만료된다), 시드/그룹 상수와 콜백·로그아웃 URL 파생 |
-| `deployed-tree.assert.ts` | `/opt/pathfinder`가 될 트리에 있으면 안 되는 것(개발용 `.claude/`, 빌드 산출물, 세션 상태)과 있어야 하는 것(룰, 두 언어 지시, 두 config dir, 락파일) |
+| `deployed-tree.assert.ts` | `/opt/aipds`가 될 트리에 있으면 안 되는 것(개발용 `.claude/`, 빌드 산출물, 세션 상태)과 있어야 하는 것(룰, 두 언어 지시, 두 config dir, 락파일) |
 | `deploy-source.assert.ts` | clone URL이 공개 HTTPS인지, 배포 대상이 커밋이 아니라 브랜치인지 |
 
 ## PathfinderVmStack은 제거됐다 (2026-07-25)

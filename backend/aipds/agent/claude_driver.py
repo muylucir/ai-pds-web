@@ -435,7 +435,7 @@ def _transcript_exists(config_dir: str, workspace: str, session_id: str) -> bool
     own state is the only thing that can answer it. Anything we persisted
     separately (S3, a driver attribute) would be a second source of truth that
     drifts the moment the config dir is recycled, the instance is replaced, or
-    a deploy wipes /opt/pathfinder -- and the drift is silent in both
+    a deploy wipes /opt/aipds -- and the drift is silent in both
     directions. proto/session.py:124-138 makes the same "resume only if the
     saved id is real" call for the builder; the difference is only WHERE the
     evidence lives (it owns its S3 record, we read the CLI's disk).

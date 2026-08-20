@@ -37,14 +37,14 @@ common mistake.`,
 
 | Stack | What it creates |
 |---|---|
-| \`PathfinderDrillStack\` | The artifacts S3 bucket + the backend execution role |
-| \`PathfinderAuthStack\` | Cognito user pool + hosted sign-in + role groups + seed accounts |
-| \`PathfinderHostingStack\` | VPC + EC2 + CloudFront |
+| \`AipdsDrillStack\` | The artifacts S3 bucket + the backend execution role |
+| \`AipdsAuthStack\` | Cognito user pool + hosted sign-in + role groups + seed accounts |
+| \`AipdsHostingStack\` | VPC + EC2 + CloudFront |
 
 It takes **15–20 minutes**. Even after \`cdk deploy\` returns, EC2 may still be building the backend
 and frontend, so **a few minutes of 502 responses is normal.**
 
-The address to open is the \`PathfinderHostingStack.DistributionDomain\` output.`,
+The address to open is the \`AipdsHostingStack.DistributionDomain\` output.`,
     },
     {
       kind: "callout",
@@ -80,7 +80,7 @@ management](/manual#invite) instead of the seed accounts.`,
     {
       kind: "md",
       md: `**Not with \`cdk deploy\`.** No commit is pinned in the deployment, so pushing one does not
-replace the instance and \`cdk deploy\` ends with "no changes". \`pathfinder-update\` on the instance
+replace the instance and \`cdk deploy\` ends with "no changes". \`aipds-update\` on the instance
 does the update — **there is no instance replacement, so it is usable mid-workshop.**`,
     },
     {
@@ -89,7 +89,7 @@ does the update — **there is no instance replacement, so it is usable mid-work
       lines: [
         "git push",
         "aws ssm start-session --target <InstanceId>",
-        "sudo pathfinder-update",
+        "sudo aipds-update",
       ],
     },
     {
@@ -106,12 +106,12 @@ does the update — **there is no instance replacement, so it is usable mid-work
 - Restarting the backend **cuts off conversations and build sessions in progress.** Conversations
   resume when reopened; a running build session goes down the resume path instead. Apply frontend
   and backend updates during a break.
-- Check what is running with \`git -C /opt/pathfinder rev-parse HEAD\`.`,
+- Check what is running with \`git -C /opt/aipds rev-parse HEAD\`.`,
     },
     {
       kind: "callout",
       tone: "warn",
-      md: `**Do not edit files directly on the instance.** \`pathfinder-update\` moves the tree onto
+      md: `**Do not edit files directly on the instance.** \`aipds-update\` moves the tree onto
 \`main\` and reverts those edits. Push your fix, then update.`,
     },
     { kind: "heading", id: "hotfix", text: "Getting a fresh instance" },
@@ -123,7 +123,7 @@ in the meantime — for code-only changes, use the update above.`,
     },
     {
       kind: "cmd",
-      lines: ["cd infra && npx cdk deploy PathfinderHostingStack --require-approval never"],
+      lines: ["cd infra && npx cdk deploy AipdsHostingStack --require-approval never"],
     },
     { kind: "heading", id: "teardown", text: "Tearing it down" },
     {
@@ -144,7 +144,7 @@ plus a Bedrock call per conversation turn) — take it down when it is not in us
 |---|---|
 | CloudFront 502 right after deploying | The first EC2 build is still running (5–10 min). Wait |
 | Permission error on the first conversation | **Bedrock model access** for that model is off in the deployment region |
-| Redirect error after signing in | Callback URL registration failed. Re-run \`cdk deploy PathfinderHostingStack\` |
+| Redirect error after signing in | Callback URL registration failed. Re-run \`cdk deploy AipdsHostingStack\` |
 | Stack refuses to redeploy, stuck in \`ROLLBACK_COMPLETE\` | A stack whose first creation failed cannot be updated. Destroy that stack, then deploy again |
 | Prototype preview returns 404 | That is the intended response — enter through the [share link](/manual#share) |
 | English interface but Korean documents | Correct — [document language](/manual#doc-language) is separate from screen language |
@@ -161,14 +161,14 @@ plus a Bedrock call per conversation turn) — take it down when it is not in us
       caption: "The backend log — often the only place the cause is recorded",
       lines: [
         "aws ssm start-session --target <InstanceId>",
-        "sudo journalctl -u pathfinder-backend -f",
+        "sudo journalctl -u aipds-backend -f",
       ],
     },
     { kind: "heading", id: "local-dev", text: "Running it locally" },
     {
       kind: "md",
       md: `Frontend (:3000) → backend (:8000) → the agent inside the backend calls Bedrock. You still need
-the S3 bucket and the role, so deploying just \`PathfinderDrillStack\` is enough. Python **3.11** and
+the S3 bucket and the role, so deploying just \`AipdsDrillStack\` is enough. Python **3.11** and
 Node.js 20+ are required.`,
     },
     {

@@ -587,7 +587,7 @@ async def test_purge_project_removes_the_parent_shell(root):
     """`purge`는 `{root}/{pid}/{slug}`만 지우므로 부모가 빈 껍데기로 남는다.
 
     실측(2026-08-19, 배포 인스턴스): 존재하지 않는 프로젝트 3개의 빈 디렉터리가
-    `/opt/pathfinder/protos/`에 남아 있었다.
+    `/opt/aipds/protos/`에 남아 있었다.
     """
     _seed_build_dir(root, pid=PID, slug=SLUG)
     host = ProtoHost(root=root, port_range=range(4001, 4010))

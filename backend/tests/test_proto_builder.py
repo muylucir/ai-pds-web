@@ -141,7 +141,7 @@ def _real_options(resume=False, **kw):
     original, claude_agent_sdk.ClaudeSDKClient = claude_agent_sdk.ClaudeSDKClient, Spy
     try:
         builder = bmod.PrototypeBuilder(
-            workspace="/tmp/ws", config_dir="/opt/pathfinder/proto-config",
+            workspace="/tmp/ws", config_dir="/opt/aipds/proto-config",
             session_id=_SID, resume=resume, **kw)
         builder._factory()
     finally:
@@ -173,7 +173,7 @@ def test_config_dir_is_always_injected():
     """The guard against the bundled binary falling back to the backend user's
     personal ~/.claude (their own skills/agents/CLAUDE.md leaking into every
     build). There is exactly one options site, so this pins it."""
-    assert _real_options().env["CLAUDE_CONFIG_DIR"] == "/opt/pathfinder/proto-config"
+    assert _real_options().env["CLAUDE_CONFIG_DIR"] == "/opt/aipds/proto-config"
 
 
 def test_we_do_not_restrict_the_agents_own_tools():

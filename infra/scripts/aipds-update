@@ -17,19 +17,19 @@
 # user-data에 heredoc으로 박지 않는 이유 둘: EC2 user-data는 16KB 한계가 있고(한 번
 # 넘겨서 배포가 실패한 적이 있다), user-data를 편집하면 EC2가 인스턴스 교체를
 # 요구해서 protos/·workspaces/의 로컬 산출물이 날아간다. 리포 파일이면 이 스크립트를
-# 고치는 것 자체가 `pathfinder-update`로 반영된다.
+# 고치는 것 자체가 `aipds-update`로 반영된다.
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "pathfinder-update: run as root (sudo pathfinder-update)" >&2
+  echo "aipds-update: run as root (sudo aipds-update)" >&2
   exit 1
 fi
 
 # 경로·유저·브랜치는 CDK가 정한다(lib/user-data.ts가 부팅 때 이 파일을 쓴다) —
 # 여기에 리터럴로 박으면 DEPLOY_BRANCH를 바꿨을 때 조용히 어긋난다.
-ENV_FILE=/etc/pathfinder-deploy.env
+ENV_FILE=/etc/aipds-deploy.env
 if [ ! -r "$ENV_FILE" ]; then
-  echo "pathfinder-update: $ENV_FILE not found — this instance predates the split-out" \
+  echo "aipds-update: $ENV_FILE not found — this instance predates the split-out" \
        "script; re-deploy the stack or write APP/SVC/BRANCH into it by hand" >&2
   exit 1
 fi
@@ -52,18 +52,18 @@ gitsvc checkout -f -B "$BRANCH" "origin/$BRANCH"
 AFTER=$(gitsvc rev-parse HEAD)
 
 if [ "$BEFORE" = "$AFTER" ]; then
-  echo "pathfinder-update: already at $AFTER — nothing to do, services untouched"
+  echo "aipds-update: already at $AFTER — nothing to do, services untouched"
   exit 0
 fi
-echo "pathfinder-update: $BEFORE -> $AFTER"
+echo "aipds-update: $BEFORE -> $AFTER"
 gitsvc --no-pager log --oneline "$BEFORE..$AFTER"
 
 changed() { ! gitsvc diff --quiet "$BEFORE" "$AFTER" -- "$1"; }
 
 # 이 스크립트 자신이 바뀌었으면 새 것을 깔아 둔다(다음 실행부터 적용된다).
-if changed infra/scripts/pathfinder-update; then
-  install -m 755 "$APP/infra/scripts/pathfinder-update" /usr/local/bin/pathfinder-update
-  echo "pathfinder-update: self-updated — the next run uses the new script"
+if changed infra/scripts/aipds-update; then
+  install -m 755 "$APP/infra/scripts/aipds-update" /usr/local/bin/aipds-update
+  echo "aipds-update: self-updated — the next run uses the new script"
 fi
 
 if changed backend/; then
@@ -80,8 +80,8 @@ if changed backend/; then
   # 낡은 프로세스인데 새로 뜨는 자식만 새 바이너리가 되어 섞인다.
   # rule/만 바뀐 무중단 갱신은 이 블록에 아예 들어오지 않아 엔진이 그대로다.
   runuser -u "$SVC" -- "$APP/backend/.venv/bin/pip" install -U claude-agent-sdk
-  systemctl restart pathfinder-backend
-  echo "pathfinder-update: backend restarted (in-flight turns and build sessions were cut)"
+  systemctl restart aipds-backend
+  echo "aipds-update: backend restarted (in-flight turns and build sessions were cut)"
 fi
 
 if changed frontend/; then
@@ -91,8 +91,8 @@ if changed frontend/; then
   fi
   # 이 env를 빼고 빌드하면 화면은 뜨고 모든 API 호출이 죽는다(파일 상단 주석 참조).
   runuser -u "$SVC" -- env NEXT_PUBLIC_API_BASE_URL=/api HOME="$APP" npm run build
-  systemctl restart pathfinder-frontend
-  echo "pathfinder-update: frontend rebuilt and restarted"
+  systemctl restart aipds-frontend
+  echo "aipds-update: frontend rebuilt and restarted"
 fi
 
-echo "pathfinder-update: now at $AFTER"
+echo "aipds-update: now at $AFTER"

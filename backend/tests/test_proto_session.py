@@ -880,7 +880,7 @@ async def test_resume_without_local_output_says_rebuild_not_search(tmp_path):
 
     에이전트의 맥락(트랜스크립트)에는 자기가 만든 코드가 있다고 남아 있으므로,
     상태를 알려주지 않으면 없는 코드를 찾아 파일시스템을 훑는다. 실측: 리셋된
-    프로토타입에서 `/opt/pathfinder/protos/...`부터 `/opt/pathfinder/frontend`,
+    프로토타입에서 `/opt/aipds/protos/...`부터 `/opt/aipds/frontend`,
     다른 프로토타입 디렉토리까지 뒤지며 19초 이상을 태웠다. 그 탐색은 절대
     성공할 수 없다 — 트리가 삭제됐기 때문이다. 다시 만들라고 말해야 한다.
     """
