@@ -78,7 +78,7 @@ class ProtoHost:
     # 4000-7999. Both ends matter: 3000 is the frontend dev server and 8000 is
     # this backend, so the range deliberately stops short of 8000 rather than
     # extending to a round number. Wide (4000 ports) even though
-    # PATHFINDER_PROTO_MAX_CONCURRENT caps live builds at 2 -- `_scan_port`
+    # AIPDS_PROTO_MAX_CONCURRENT caps live builds at 2 -- `_scan_port`
     # probes sequentially and skips anything already bound, so leftovers from a
     # previous process cost a few probes, not a wedged start.
     def __init__(self, root: Path, port_range: range = range(4000, 8000)):

@@ -11,7 +11,7 @@ FIX = Path(__file__).parent / "fixtures"
 client = TestClient(app)
 
 def _seed(monkeypatch, pid, language=None):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")  # offline: no durable manifest write
     async def make(project_id):
         return Workspace(FakeRunner())
     monkeypatch.setattr(app_module, "make_workspace", make)

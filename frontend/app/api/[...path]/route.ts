@@ -31,7 +31,7 @@ import { refreshTokens } from "@/lib/auth/tokenExchange";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const BACKEND = process.env.PATHFINDER_BACKEND_URL ?? "http://localhost:8000";
+const BACKEND = process.env.AIPDS_BACKEND_URL ?? "http://localhost:8000";
 
 // Hop-by-hop headers must never cross a proxy boundary (RFC 7230 §6.1) and
 // several are outright illegal over HTTP/2. Strip them from both directions.

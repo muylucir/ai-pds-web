@@ -23,7 +23,7 @@ GOOD_JSON = json.dumps({
 
 @pytest.fixture()
 def env(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     project_s3, root_s3 = FakeS3Store(), FakeS3Store()
     project_s3.blobs[SPEC_KEY] = "# PROTOTYPE demo\n검증 가설: 판독 시간 단축"
 

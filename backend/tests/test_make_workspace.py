@@ -5,7 +5,7 @@ from aipds.runner import AgentRunner
 
 
 async def test_make_workspace_builds_runner_backed_workspace(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     ws = await app_module.make_workspace("proj-x")
     assert isinstance(ws, Workspace)
     assert isinstance(ws.runner, AgentRunner)
@@ -18,7 +18,7 @@ def test_make_workspace_signature():
 
 
 async def test_runner_input_holder_settable(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     ws = await app_module.make_workspace("proj-ih")
     assert ws.runner.input_holder is None
     ws.runner.set_input_holder("facilitator-9")

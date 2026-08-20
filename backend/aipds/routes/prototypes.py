@@ -467,7 +467,7 @@ async def reset_prototype(pid: str, slug: str):
     # Popping up front made a failed close() unretryable: the session was gone
     # from the registry, so the retry saw "no session" (the normal case) and
     # answered 204 while the build slot close() releases stayed held until the
-    # process restarted. With PATHFINDER_PROTO_MAX_CONCURRENT capping a workshop
+    # process restarted. With AIPDS_PROTO_MAX_CONCURRENT capping a workshop
     # box at 2, one leaked slot is a real 429 for another team, and this route's
     # own contract is that no failure path may leave state a retry cannot fix.
     # Leaving the entry in place also keeps close()'s own idempotence guard

@@ -158,16 +158,16 @@ def test_docs_openapi_url_is_none_when_auth_is_configured(monkeypatch):
     # registry 등 다른 모듈 전역 싱글턴이 새로 생겨, 이미 그 객체를 참조해 둔
     # 다른 테스트 파일들(test_routes_answers.py 등)이 KeyError로 깨진다
     # (실측). 그래서 그 함수만 monkeypatch로 env를 갈아끼워 직접 검증한다.
-    monkeypatch.setenv("PATHFINDER_COGNITO_USER_POOL_ID", "ap-northeast-2_TEST123")
-    monkeypatch.setenv("PATHFINDER_COGNITO_CLIENT_ID", "client-abc")
+    monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", "ap-northeast-2_TEST123")
+    monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", "client-abc")
     assert app_module._docs_openapi_url() is None
 
 
 def test_docs_openapi_url_is_set_when_auth_is_not_configured(monkeypatch):
     # 반대 방향: 로컬 개발(인증 미설정)에서는 문서 UI가 여전히 켜져 있어야
     # 한다 — 이건 사고가 아니라 기록된 선택이다(Finding 3 리뷰 참고).
-    monkeypatch.delenv("PATHFINDER_COGNITO_USER_POOL_ID", raising=False)
-    monkeypatch.delenv("PATHFINDER_COGNITO_CLIENT_ID", raising=False)
+    monkeypatch.delenv("AIPDS_COGNITO_USER_POOL_ID", raising=False)
+    monkeypatch.delenv("AIPDS_COGNITO_CLIENT_ID", raising=False)
     assert app_module._docs_openapi_url() == "/openapi.json"
 
 

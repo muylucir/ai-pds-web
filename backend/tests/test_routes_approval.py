@@ -23,7 +23,7 @@ _DOC = "aiplc-docs/discovery/discovery-document.md"
 
 
 def _seed(monkeypatch, pid, *, doc_text: str | None = "# Discovery Document\n본문\n"):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     s3 = FakeS3Store()
     monkeypatch.setattr(app_module, "s3_store_factory", lambda project_id: s3)
 
@@ -162,7 +162,7 @@ def test_the_hash_tracks_the_document_text(monkeypatch):
 
 
 def test_approve_on_an_unknown_project_is_404(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     assert client.post("/projects/nope-not-here/approve").status_code == 404
 
 

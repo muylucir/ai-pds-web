@@ -9,7 +9,7 @@ client = TestClient(app_module.app)
 
 def test_create_writes_manifest_when_durable(monkeypatch):
     fake = FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: fake)
     r = client.post("/projects", json={"project_id": "persist-1", "name": "이름"})
     assert r.status_code == 200
@@ -18,7 +18,7 @@ def test_create_writes_manifest_when_durable(monkeypatch):
 
 
 def test_create_without_bucket_writes_no_manifest(monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     r = client.post("/projects", json={"project_id": "persist-2"})
     assert r.status_code == 200  # 로컬 모드: 매니페스트 생략, 기존 동작
 
@@ -37,7 +37,7 @@ def test_create_fails_500_when_manifest_write_fails(monkeypatch):
     async def _fake_make_workspace(pid):
         return Workspace(_FakeRunner())
 
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: _ExplodingStore())
     monkeypatch.setattr(app_module, "make_workspace", _fake_make_workspace)
     r = client.post("/projects", json={"project_id": "persist-3"})

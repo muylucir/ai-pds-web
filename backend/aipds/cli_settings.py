@@ -26,10 +26,10 @@ _log = logging.getLogger(__name__)
 _TRUTHY = {"1", "true", "yes", "on"}
 
 #: 1M 컨텍스트를 켤지. 기본 꺼짐 — 켜는 것이 무료가 아니다(아래 docstring).
-LONG_CONTEXT_ENV = "PATHFINDER_LONG_CONTEXT"
+LONG_CONTEXT_ENV = "AIPDS_LONG_CONTEXT"
 
 #: 자동 컴팩션이 발동하는 컨텍스트 크기(토큰). 미설정이면 CLI 기본값.
-AUTO_COMPACT_WINDOW_ENV = "PATHFINDER_AUTO_COMPACT_WINDOW"
+AUTO_COMPACT_WINDOW_ENV = "AIPDS_AUTO_COMPACT_WINDOW"
 
 #: CLI가 받아들이는 범위. 번들 CLI(2.1.231)의 설정 스키마에서 온 값이다
 #: (`autoCompactWindow: int().min(1e5).max(1e6)`). 밖의 값을 넘기면 CLI가

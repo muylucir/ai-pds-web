@@ -187,9 +187,9 @@ assert.ok(!/proxy_pass http:\/\/127\.0\.0\.1:8000/.test(s),
 // 6) 프론트 빌드 env (same-origin API)
 assert.match(s, /NEXT_PUBLIC_API_BASE_URL=\/api/, 'front build uses /api');
 // 7) 백엔드 env
-assert.match(s, /PATHFINDER_S3_BUCKET=my-artifacts-bucket/, 'backend bucket env');
+assert.match(s, /AIPDS_S3_BUCKET=my-artifacts-bucket/, 'backend bucket env');
 assert.match(s, /ANTHROPIC_MODEL=global\.anthropic\.claude-opus-4-8/, 'backend model env');
-assert.match(s, /PATHFINDER_S3_REGION=ap-northeast-2/, 'backend s3 region env');
+assert.match(s, /AIPDS_S3_REGION=ap-northeast-2/, 'backend s3 region env');
 // 8) systemd 유닛
 assert.match(s, /pathfinder-backend\.service/, 'backend unit');
 assert.match(s, /pathfinder-frontend\.service/, 'frontend unit');
@@ -209,48 +209,44 @@ assert.ok(s.includes("sed -i '/^    server {/"), 'must use the anchored sed that
 console.log('OK  user-data: all required elements present (incl. nginx-var vs secret-var escaping)');
 
 // 9) 프로토타입 빌드: 동시 빌드 상한 + 빌드 에이전트 전용 CLAUDE_CONFIG_DIR env.
-//    VM 시절의 PATHFINDER_VM_* 3종은 완전히 사라졌다(인프라에서 VM 계층 삭제).
-assert.match(s, /Environment=PATHFINDER_PROTO_ROOT=\/opt\/pathfinder\/protos/, 'proto host root env');
-assert.match(s, /Environment=PATHFINDER_PROTO_MAX_CONCURRENT=10/, 'proto build concurrency cap env');
+assert.match(s, /Environment=AIPDS_PROTO_ROOT=\/opt\/pathfinder\/protos/, 'proto host root env');
+assert.match(s, /Environment=AIPDS_PROTO_MAX_CONCURRENT=10/, 'proto build concurrency cap env');
 // CLAUDE_CONFIG_DIR lives INSIDE the app tree, not in a user's home: app-owned
 // data stays under one path for backup/cleanup/ownership, and nothing depends on
 // where the service user's home happens to be.
-assert.match(s, /Environment=PATHFINDER_PROTO_CONFIG_DIR=\/opt\/pathfinder\/proto-config/, 'proto build CLAUDE_CONFIG_DIR env must live under the app tree');
-assert.ok(!s.includes('/home/ec2-user/pathfinder-proto-config'), 'CLAUDE_CONFIG_DIR must no longer point at a user home');
+assert.match(s, /Environment=AIPDS_PROTO_CONFIG_DIR=\/opt\/pathfinder\/proto-config/, 'proto build CLAUDE_CONFIG_DIR env must live under the app tree');
+assert.ok(!s.includes('/home/ec2-user/aipds-proto-config'), 'CLAUDE_CONFIG_DIR must no longer point at a user home');
 assert.match(s, /mkdir -p \/opt\/pathfinder\/protos \/opt\/pathfinder\/proto-config \/opt\/pathfinder\/workspaces/, 'app-owned data dirs must be created at boot');
-assert.ok(!s.includes('PATHFINDER_VM_REGION'), 'PATHFINDER_VM_REGION must be gone');
-assert.ok(!s.includes('PATHFINDER_VM_IMAGE_ID'), 'PATHFINDER_VM_IMAGE_ID must be gone');
-assert.ok(!s.includes('PATHFINDER_VM_ROLE_ARN'), 'PATHFINDER_VM_ROLE_ARN must be gone');
 
 // 프로토타입 접근 쿠키의 Secure 스위치(routes/proto_public.py의 _cookie_secure).
 // 기본값이 꺼짐이라 이 줄이 빠지면 배포가 조용히 non-Secure 쿠키를 내보낸다 —
 // 화면상 아무 증상이 없으므로 테스트만이 잡을 수 있다.
-assert.match(s, /Environment=PATHFINDER_COOKIE_SECURE=true/,
-  'PATHFINDER_COOKIE_SECURE=true must be set — the backend omits Secure on the prototype access cookie without it');
+assert.match(s, /Environment=AIPDS_COOKIE_SECURE=true/,
+  'AIPDS_COOKIE_SECURE=true must be set — the backend omits Secure on the prototype access cookie without it');
 // 구 이름이 되살아나지 않는지 본다. 백엔드는 이제 이 변수를 읽지 않으므로,
 // 남아 있으면 설정한 사람은 Secure가 켜졌다고 믿지만 실제로는 꺼져 있다.
-assert.ok(!s.includes('PATHFINDER_ENV'),
-  'PATHFINDER_ENV is gone — it was renamed to PATHFINDER_COOKIE_SECURE (the backend no longer reads it)');
+assert.ok(!s.includes('AIPDS_ENV'),
+  'AIPDS_ENV is gone — it was renamed to AIPDS_COOKIE_SECURE (the backend no longer reads it)');
 
 // 컨텍스트 설정 두 개(backend/pathfinder/cli_settings.py). COOKIE_SECURE와 같은
 // 실패 모양이다: 둘 다 기본값이 꺼짐이라 이 줄이 빠지면 배포가 조용히 종전
 // 동작으로 돌아간다 — 후반 스테이지 문서가 근거가 아니라 컴팩션 요약에서
 // 나오는 그 상태이고, 화면상 증상은 "문서가 좀 얇다"뿐이다.
-const compactWindow = s.match(/Environment=PATHFINDER_AUTO_COMPACT_WINDOW=(\d+)/);
+const compactWindow = s.match(/Environment=AIPDS_AUTO_COMPACT_WINDOW=(\d+)/);
 assert.ok(compactWindow,
-  'PATHFINDER_AUTO_COMPACT_WINDOW must be set — without it the CLI compacts at its own default and later Discovery stages write from a summary');
+  'AIPDS_AUTO_COMPACT_WINDOW must be set — without it the CLI compacts at its own default and later Discovery stages write from a summary');
 const windowTokens = Number(compactWindow![1]);
 // cli_settings._WINDOW_MIN.._WINDOW_MAX. 밖의 값은 백엔드가 경고 후 무시하므로
 // 설정한 사람은 켰다고 믿지만 실제로는 CLI 기본값으로 돈다.
 assert.ok(windowTokens >= 100_000 && windowTokens <= 1_000_000,
-  `PATHFINDER_AUTO_COMPACT_WINDOW=${windowTokens} is outside the CLI's accepted range 100000..1000000 — the backend would warn and ignore it`);
-assert.match(s, /Environment=PATHFINDER_LONG_CONTEXT=true/,
-  'PATHFINDER_LONG_CONTEXT=true must be set — on Bedrock the Opus profile needs the [1m] suffix for a 1M window');
+  `AIPDS_AUTO_COMPACT_WINDOW=${windowTokens} is outside the CLI's accepted range 100000..1000000 — the backend would warn and ignore it`);
+assert.match(s, /Environment=AIPDS_LONG_CONTEXT=true/,
+  'AIPDS_LONG_CONTEXT=true must be set — on Bedrock the Opus profile needs the [1m] suffix for a 1M window');
 // **둘은 함께 켠다.** 200k를 넘는 윈도우를 1M 없이 주면 컴팩션이 발동하기 전에
 // 모델의 컨텍스트 한도에 부딪힌다 — 그때의 실패는 컴팩션이 아니라 턴 에러다.
 if (windowTokens > 200_000) {
-  assert.match(s, /Environment=PATHFINDER_LONG_CONTEXT=true/,
-    `PATHFINDER_AUTO_COMPACT_WINDOW=${windowTokens} exceeds the 200k default window — PATHFINDER_LONG_CONTEXT=true is required alongside it`);
+  assert.match(s, /Environment=AIPDS_LONG_CONTEXT=true/,
+    `AIPDS_AUTO_COMPACT_WINDOW=${windowTokens} exceeds the 200k default window — AIPDS_LONG_CONTEXT=true is required alongside it`);
 }
 
 console.log('OK  user-data: prototype build env vars rendered, VM env vars gone');
@@ -291,19 +287,19 @@ console.log('OK  user-data: services run as non-root pathfinder user, app tree o
   });
 
   // 백엔드: 이 두 값이 있어야 인증이 켜진다(없으면 바이패스 = 무인증 공개).
-  assert.ok(script.includes('PATHFINDER_COGNITO_USER_POOL_ID=ap-northeast-2_POOL'),
+  assert.ok(script.includes('AIPDS_COGNITO_USER_POOL_ID=ap-northeast-2_POOL'),
     'backend must receive the user pool id — without it auth is bypassed');
-  assert.ok(script.includes('PATHFINDER_COGNITO_CLIENT_ID=client-abc'),
+  assert.ok(script.includes('AIPDS_COGNITO_CLIENT_ID=client-abc'),
     'backend must receive the client id');
 
   // 프론트: Hosted UI 도메인·클라이언트·앱 URL.
   // 'COGNITO_CLIENT_ID=client-abc'만 찾으면 백엔드의
-  // 'PATHFINDER_COGNITO_CLIENT_ID=client-abc' 줄도 부분 문자열로 매치되어
+  // 'AIPDS_COGNITO_CLIENT_ID=client-abc' 줄도 부분 문자열로 매치되어
   // 프론트 줄이 삭제돼도 통과해버린다 — 'Environment=' 접두어까지 포함해
   // 프론트 systemd 줄만 매치하도록 고정한다.
   assert.ok(script.includes('COGNITO_HOSTED_UI_DOMAIN=pathfinder-x.auth.ap-northeast-2.amazoncognito.com'));
   assert.ok(script.includes('Environment=COGNITO_CLIENT_ID=client-abc'),
-    'frontend unit must set COGNITO_CLIENT_ID (must not match the backend PATHFINDER_COGNITO_CLIENT_ID line)');
+    'frontend unit must set COGNITO_CLIENT_ID (must not match the backend AIPDS_COGNITO_CLIENT_ID line)');
   assert.ok(script.includes('APP_BASE_URL=https://d123.cloudfront.net'));
 
   // 클라이언트 시크릿은 부팅 시 Cognito에서 조회한다 — 템플릿에 평문으로 남기지 않는다.
@@ -367,14 +363,14 @@ console.log('OK  user-data: large_client_header_buffers fits JWT cookies on requ
 
 // 14) Discovery 드라이버 env — 미주입 시 config dir이 호스트 유저의 ~/.claude로
 // 떨어져 개인 skills/agents가 워크숍 결과에 섞인다(proto-config와 같은 이유).
-assert.match(s, /PATHFINDER_DISCOVERY_CONFIG_DIR=/,
-  'backend must get PATHFINDER_DISCOVERY_CONFIG_DIR — otherwise the host user\'s ~/.claude leaks into Discovery');
+assert.match(s, /AIPDS_DISCOVERY_CONFIG_DIR=/,
+  'backend must get AIPDS_DISCOVERY_CONFIG_DIR — otherwise the host user\'s ~/.claude leaks into Discovery');
 assert.match(s, /\/opt\/pathfinder\/discovery-config/,
   'discovery config dir must point at the shipped asset path');
 // proto와 discovery의 config dir이 서로 다른 경로여야 한다 — 공유하면
 // Discovery가 shadcn-design 스킬을 켠 채로 돈다(skills="all").
-const protoCfg = s.match(/PATHFINDER_PROTO_CONFIG_DIR=([^\s\\]+)/);
-const discCfg = s.match(/PATHFINDER_DISCOVERY_CONFIG_DIR=([^\s\\]+)/);
+const protoCfg = s.match(/AIPDS_PROTO_CONFIG_DIR=([^\s\\]+)/);
+const discCfg = s.match(/AIPDS_DISCOVERY_CONFIG_DIR=([^\s\\]+)/);
 assert.ok(protoCfg && discCfg, 'both config dirs must be set');
 assert.notStrictEqual(protoCfg![1], discCfg![1],
   'proto and discovery CLAUDE_CONFIG_DIRs must not be the same path');

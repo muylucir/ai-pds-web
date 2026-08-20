@@ -11,7 +11,7 @@ client = TestClient(app_module.app)
 _KEY_RE = re.compile(r"^uploads/[0-9a-f]{8}/(.+)$")
 
 def _local_project(monkeypatch, pid):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")  # offline: no durable manifest write
     async def make(project_id):
         return Workspace(FakeRunner())
     monkeypatch.setattr(app_module, "make_workspace", make)

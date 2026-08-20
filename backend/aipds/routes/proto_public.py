@@ -83,7 +83,7 @@ def proxy_prefix(pid: str, slug: str) -> str:
 #: `/api` before forwarding to FastAPI — so a path this app sees as
 #: `/proto/...` was `/api/proto/...` in the browser. Configurable because local
 #: dev talks to :8000 directly with no mount at all (set it to "").
-_PUBLIC_PREFIX_ENV = "PATHFINDER_PUBLIC_PATH_PREFIX"
+_PUBLIC_PREFIX_ENV = "AIPDS_PUBLIC_PATH_PREFIX"
 _PUBLIC_PREFIX_DEFAULT = "/api"
 
 
@@ -122,12 +122,12 @@ def cookie_name(pid: str, slug: str) -> str:
 
 #: 접근 쿠키에 `Secure`를 붙일지. HTTPS로 서비스되는 배포에서 켠다.
 #:
-#: 스테이지 이름(`PATHFINDER_ENV=production`)이 아니라 **이 동작 하나만 가리키는
+#: 스테이지 이름(`AIPDS_ENV=production`)이 아니라 **이 동작 하나만 가리키는
 #: 불리언**인 이유: 이름이 하는 일과 정확히 같아야 다음 사람이 범위를 오해하지
 #: 않는다. "환경" 변수는 로그 포맷·에러 상세 같은 것까지 묶어 부르게 되고, 그러면
 #: HTTPS 프록시를 앞에 둔 로컬 검증처럼 "프로덕션은 아니지만 Secure는 필요한"
 #: 구성을 표현할 수 없다.
-_COOKIE_SECURE_ENV = "PATHFINDER_COOKIE_SECURE"
+_COOKIE_SECURE_ENV = "AIPDS_COOKIE_SECURE"
 _TRUTHY = {"1", "true", "yes", "on"}
 
 

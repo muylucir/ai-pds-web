@@ -24,8 +24,8 @@ _MODEL = "global.anthropic.claude-opus-5"
 def clean_env(monkeypatch):
     """두 스위치를 명시적으로 끈 상태에서 시작한다 — backend/.env가 실려 있으면
     (load_dotenv) 테스트가 배포 설정에 따라 달라진다."""
-    monkeypatch.delenv("PATHFINDER_LONG_CONTEXT", raising=False)
-    monkeypatch.delenv("PATHFINDER_AUTO_COMPACT_WINDOW", raising=False)
+    monkeypatch.delenv("AIPDS_LONG_CONTEXT", raising=False)
+    monkeypatch.delenv("AIPDS_AUTO_COMPACT_WINDOW", raising=False)
     yield
     app_module.registry.remove("cs-test")
 
@@ -43,21 +43,21 @@ def test_long_context_is_off_by_default():
 
 @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
 def test_truthy_forms_turn_it_on(monkeypatch, value):
-    monkeypatch.setenv("PATHFINDER_LONG_CONTEXT", value)
+    monkeypatch.setenv("AIPDS_LONG_CONTEXT", value)
     assert cli_model_id(_MODEL) == f"{_MODEL}[1m]"
 
 
 def test_a_none_model_stays_none(monkeypatch):
     """없는 값에 접미사를 붙이면 폴백이 깨진다 — 드라이버는 None을 받으면
     ANTHROPIC_MODEL을 넣지 않고 CLI 기본값으로 간다(project_model의 마지막 칸)."""
-    monkeypatch.setenv("PATHFINDER_LONG_CONTEXT", "1")
+    monkeypatch.setenv("AIPDS_LONG_CONTEXT", "1")
     assert cli_model_id(None) is None
 
 
 def test_the_suffix_is_not_doubled(monkeypatch):
     """멱등이어야 한다 — env 기본값(ANTHROPIC_MODEL)에 이미 접미사가 박혀 있는
     배포에서 `...[1m][1m]`이 나가면 CLI가 모델을 찾지 못한다."""
-    monkeypatch.setenv("PATHFINDER_LONG_CONTEXT", "1")
+    monkeypatch.setenv("AIPDS_LONG_CONTEXT", "1")
     assert cli_model_id(f"{_MODEL}[1m]") == f"{_MODEL}[1m]"
 
 
@@ -72,7 +72,7 @@ def test_no_window_means_no_env_key():
 
 
 def test_a_valid_window_reaches_the_env(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_AUTO_COMPACT_WINDOW", "800000")
+    monkeypatch.setenv("AIPDS_AUTO_COMPACT_WINDOW", "800000")
     assert cli_context_env() == {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "800000"}
 
 
@@ -81,12 +81,12 @@ def test_a_window_outside_the_cli_range_is_dropped(monkeypatch, value):
     """번들 CLI의 설정 스키마는 1e5..1e6만 받는다. 밖의 값을 그대로 넘기면 CLI가
     설정을 거부하는데 그 거부는 우리 로그에 남지 않는다 — 여기서 떨어뜨리고
     경고를 남기는 편이 추적 가능하다."""
-    monkeypatch.setenv("PATHFINDER_AUTO_COMPACT_WINDOW", value)
+    monkeypatch.setenv("AIPDS_AUTO_COMPACT_WINDOW", value)
     assert cli_context_env() == {}
 
 
 def test_a_non_numeric_window_is_dropped(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_AUTO_COMPACT_WINDOW", "8oo000")
+    monkeypatch.setenv("AIPDS_AUTO_COMPACT_WINDOW", "8oo000")
     assert cli_context_env() == {}
 
 
@@ -100,14 +100,14 @@ def test_project_model_never_carries_the_cli_suffix(monkeypatch):
     (app.questionnaire_agent_factory). 거기에 대괄호가 들어가면 Bedrock이
     ValidationException을 던지고, 증상은 "Discovery는 되는데 설문 생성만 502"다.
     """
-    monkeypatch.setenv("PATHFINDER_LONG_CONTEXT", "1")
+    monkeypatch.setenv("AIPDS_LONG_CONTEXT", "1")
     app_module.registry.register("cs-test", None, model_id=_MODEL)
     assert app_module.project_model("cs-test") == _MODEL
 
 
 def test_driver_factory_applies_the_suffix(monkeypatch, tmp_path):
-    monkeypatch.setenv("PATHFINDER_LONG_CONTEXT", "1")
-    monkeypatch.setenv("PATHFINDER_DISCOVERY_DRIVER", "claude")
+    monkeypatch.setenv("AIPDS_LONG_CONTEXT", "1")
+    monkeypatch.setenv("AIPDS_DISCOVERY_DRIVER", "claude")
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: object())
     app_module.registry.register("cs-test", None, model_id=_MODEL)
     driver = app_module.driver_factory("cs-test", tmp_path)
@@ -117,10 +117,10 @@ def test_driver_factory_applies_the_suffix(monkeypatch, tmp_path):
 def test_builder_factory_applies_the_suffix(monkeypatch, tmp_path):
     """빌더도 같은 값을 받아야 한다 — 프로토타입 빌드가 컴팩션에 걸리는 것을
     실측한 세션이 바로 이쪽이다(264,040 → 53,375 토큰)."""
-    monkeypatch.setenv("PATHFINDER_LONG_CONTEXT", "1")
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
-    monkeypatch.setenv("PATHFINDER_PROTO_ROOT", str(tmp_path / "protos"))
-    monkeypatch.setenv("PATHFINDER_PROTO_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("AIPDS_LONG_CONTEXT", "1")
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
+    monkeypatch.setenv("AIPDS_PROTO_ROOT", str(tmp_path / "protos"))
+    monkeypatch.setenv("AIPDS_PROTO_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: object())
     app_module.registry.register("cs-test", None, model_id=_MODEL)
     session = app_module.proto_session_factory("cs-test", "slug")
@@ -171,7 +171,7 @@ def _builder_env(tmp_path, monkeypatch) -> dict:
 
 
 def test_both_agents_get_the_same_compact_window(tmp_path, monkeypatch):
-    monkeypatch.setenv("PATHFINDER_AUTO_COMPACT_WINDOW", "750000")
+    monkeypatch.setenv("AIPDS_AUTO_COMPACT_WINDOW", "750000")
     discovery = _discovery_env(tmp_path / "d", monkeypatch)
     builder = _builder_env(tmp_path / "b", monkeypatch)
     assert discovery["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "750000"

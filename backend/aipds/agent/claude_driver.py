@@ -159,7 +159,7 @@ DEFAULT_PERMISSION_MODE = "bypassPermissions"
 #: systemd `Environment=`로 값을 주입하므로 그 파일을 고치면 인스턴스 교체가
 #: 필요하다 — 대신 gitignore된 `backend/.env`를 만들면 `pathfinder-update`가
 #: 되돌리지 않으므로(추적되지 않는 파일) 재배포 없이 끌 수 있다.
-FILE_QUESTIONS_ENV = "PATHFINDER_FILE_QUESTIONS"
+FILE_QUESTIONS_ENV = "AIPDS_FILE_QUESTIONS"
 
 #: 불리언 env를 **끄는** 쪽으로 읽을 값. cli_settings.py·routes/proto_public.py의
 #: `_TRUTHY`와 같은 규율의 반대편이다 — 기본이 켜짐인 설정은 "값이 없음"을 켜짐으로
