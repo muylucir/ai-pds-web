@@ -141,8 +141,8 @@ EC2 배포에서는 user-data가 이 값들을 자동으로 백엔드/프론트 
 
 | 계정 | 역할 | 비밀번호 |
 |---|---|---|
-| `admin@pathfinder.local` | 관리자 (사용자 관리 가능) | `PathFinder2026!@` |
-| `pm@pathfinder.local` | PM | `PathFinder2026!@` |
+| `admin@aipds.local` | 관리자 (사용자 관리 가능) | `AiPdsWeb2026@!` |
+| `pm@aipds.local` | PM | `AiPdsWeb2026@!` |
 
 > ⚠️ **이 비밀번호는 데모/워크숍용이다.** CDK 소스의 상수이므로 CloudFormation 템플릿과
 > 스택 이벤트에 평문으로 남고, 재배포하면 이 값으로 되돌아간다. 실제 운영에 쓰려면

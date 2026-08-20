@@ -19,7 +19,7 @@ def catalog(monkeypatch):
     """쓰기 가능한 카탈로그 + 'admin으로 로그인한' 요청자."""
     cat = ModelCatalog(FakeS3Store())
     monkeypatch.setattr(app_module, "model_catalog", lambda: cat)
-    me = Principal(username="admin@pathfinder.local", sub="s-admin", role="admin")
+    me = Principal(username="admin@aipds.local", sub="s-admin", role="admin")
     app_module.app.dependency_overrides[require_admin] = lambda: me
     app_module.app.dependency_overrides[require_user] = lambda: me
     yield cat
@@ -211,7 +211,7 @@ def test_admin_delete_unknown_model_is_404(catalog, client):
 
 def test_admin_write_without_a_bucket_is_503(monkeypatch, client):
     monkeypatch.setattr(app_module, "model_catalog", lambda: ModelCatalog(None))
-    me = Principal(username="admin@pathfinder.local", sub="s-admin", role="admin")
+    me = Principal(username="admin@aipds.local", sub="s-admin", role="admin")
     app_module.app.dependency_overrides[require_admin] = lambda: me
     app_module.app.dependency_overrides[require_user] = lambda: me
     try:

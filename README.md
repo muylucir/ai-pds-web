@@ -156,8 +156,8 @@ Open `DistributionDomain` and log in with a seed account:
 
 | Account | Role | Password |
 |---|---|---|
-| `admin@pathfinder.local` | Administrator (can manage users) | `PathFinder2026!@` |
-| `pm@pathfinder.local` | PM | `PathFinder2026!@` |
+| `admin@aipds.local` | Administrator (can manage users) | `AiPdsWeb2026@!` |
+| `pm@aipds.local` | PM | `AiPdsWeb2026@!` |
 
 > ⚠️ **These passwords are for demos and workshops.** They are constants in the CDK source, so they
 > remain in plaintext in the CloudFormation template and stack events, and a redeployment resets

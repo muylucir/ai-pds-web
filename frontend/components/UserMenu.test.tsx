@@ -12,23 +12,23 @@ function mockMe(body: JsonBodyType, status = 200) {
 
 describe("UserMenu", () => {
   it("shows the signed-in email's initial", async () => {
-    mockMe({ authenticated: true, email: "admin@pathfinder.local", role: "admin" });
+    mockMe({ authenticated: true, email: "admin@aipds.local", role: "admin" });
     render(<UserMenu />);
     expect(await screen.findByRole("button", { name: /사용자 메뉴/ }))
       .toHaveTextContent("A");
   });
 
   it("reveals email, role and logout when opened", async () => {
-    mockMe({ authenticated: true, email: "pm@pathfinder.local", role: "pm" });
+    mockMe({ authenticated: true, email: "pm@aipds.local", role: "pm" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
-    expect(screen.getByText("pm@pathfinder.local")).toBeInTheDocument();
+    expect(screen.getByText("pm@aipds.local")).toBeInTheDocument();
     expect(screen.getByText("PM")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "로그아웃" })).toBeInTheDocument();
   });
 
   it("offers 사용자 관리 to an admin", async () => {
-    mockMe({ authenticated: true, email: "admin@pathfinder.local", role: "admin" });
+    mockMe({ authenticated: true, email: "admin@aipds.local", role: "admin" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
     expect(screen.getByRole("link", { name: "사용자 관리" }))
@@ -37,14 +37,14 @@ describe("UserMenu", () => {
 
   it("hides 사용자 관리 from a pm", async () => {
     // pm에게 열리지 않을 화면의 링크를 보여주지 않는다(실제 차단은 백엔드).
-    mockMe({ authenticated: true, email: "pm@pathfinder.local", role: "pm" });
+    mockMe({ authenticated: true, email: "pm@aipds.local", role: "pm" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
     expect(screen.queryByRole("link", { name: "사용자 관리" })).toBeNull();
   });
 
   it("shows the design profile link for admins", async () => {
-    mockMe({ authenticated: true, email: "admin@pathfinder.local", role: "admin" });
+    mockMe({ authenticated: true, email: "admin@aipds.local", role: "admin" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
     expect(screen.getByRole("link", { name: "브랜드 디자인" }))
@@ -52,7 +52,7 @@ describe("UserMenu", () => {
   });
 
   it("hides the design profile link from a pm", async () => {
-    mockMe({ authenticated: true, email: "pm@pathfinder.local", role: "pm" });
+    mockMe({ authenticated: true, email: "pm@aipds.local", role: "pm" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
     expect(screen.queryByRole("link", { name: "브랜드 디자인" })).toBeNull();
@@ -99,7 +99,7 @@ describe("UserMenu", () => {
   it("falls back to a placeholder label for an unrecognized role", async () => {
     // ROLE_LABEL에 없는 값이 오면(백엔드 회귀·미래의 세 번째 역할) 빈 텍스트가
     // 아니라 안내 문구를 보여준다. admin 링크도 노출하지 않는다.
-    mockMe({ authenticated: true, email: "x@pathfinder.local", role: "superuser" });
+    mockMe({ authenticated: true, email: "x@aipds.local", role: "superuser" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
     expect(screen.getByText("역할 없음")).toBeInTheDocument();
@@ -147,7 +147,7 @@ describe("UserMenu", () => {
   });
 
   it("keeps the admin link clickable — the outside-click handler doesn't swallow it", async () => {
-    mockMe({ authenticated: true, email: "admin@pathfinder.local", role: "admin" });
+    mockMe({ authenticated: true, email: "admin@aipds.local", role: "admin" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
     const link = screen.getByRole("link", { name: "사용자 관리" });

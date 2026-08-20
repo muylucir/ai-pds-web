@@ -33,9 +33,9 @@ console.log('OK  auth-client-config: token validity outlasts a prototype build')
 
 // 시드 비밀번호는 스펙이 못박은 값이다. 오타가 나면 배포는 성공하고 로그인만
 // 실패하므로(디버깅이 어렵다) 상수 자체를 단정한다.
-assert.strictEqual(SEED_PASSWORD, 'PathFinder2026!@');
-assert.strictEqual(SEED_ADMIN_EMAIL, 'admin@pathfinder.local');
-assert.strictEqual(SEED_PM_EMAIL, 'pm@pathfinder.local');
+assert.strictEqual(SEED_PASSWORD, 'AiPdsWeb2026@!');
+assert.strictEqual(SEED_ADMIN_EMAIL, 'admin@aipds.local');
+assert.strictEqual(SEED_PM_EMAIL, 'pm@aipds.local');
 
 // Task 3이 이 값으로 Cognito 그룹을 만들고 Task 4의 토큰 검증이 같은 문자열을
 // cognito:groups 클레임과 맞춘다 — 오타는 배포까지 통과한 뒤 런타임 권한
@@ -79,8 +79,8 @@ console.log('OK  auth-client-config: seed constants + group constants + callback
 // for email alias"). 실측: 이 규칙을 몰라 시드 계정 생성이 스택 롤백을 냈다.
 // backend/pathfinder/auth/cognito.py의 username_for_email과 같은 규칙이어야
 // 한다 — 어긋나면 초대 계정과 시드 계정의 Username 규칙이 갈린다.
-assert.strictEqual(usernameForEmail('admin@pathfinder.local'), 'admin');
-assert.strictEqual(usernameForEmail('pm@pathfinder.local'), 'pm');
+assert.strictEqual(usernameForEmail('admin@aipds.local'), 'admin');
+assert.strictEqual(usernameForEmail('pm@aipds.local'), 'pm');
 // 시드 상수에 실제로 적용했을 때의 값 — 이게 배포되는 Username이다.
 assert.strictEqual(usernameForEmail(SEED_ADMIN_EMAIL), 'admin');
 assert.strictEqual(usernameForEmail(SEED_PM_EMAIL), 'pm');

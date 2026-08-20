@@ -91,7 +91,7 @@ price is the `cognito-idp:DescribeUserPoolClient` permission on the instance rol
 
 ### Seed password warning
 
-`SEED_PASSWORD` (`PathFinder2026!@`) is a constant in `lib/auth-client-config.ts`, so it **stays in
+`SEED_PASSWORD` (`AiPdsWeb2026@!`) is a constant in `lib/auth-client-config.ts`, so it **stays in
 plaintext in the CloudFormation template and stack events, and a redeployment resets accounts to
 it.** It is for demos and workshops only: for anything real, replace it and use accounts invited from
 `/admin/users` instead of the seed accounts. Hiding it behind a `NoEcho` parameter was rejected

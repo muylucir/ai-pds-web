@@ -94,7 +94,7 @@ CfnOutput으로 내보내지 않는다. EC2가 부팅 시
 
 ### 시드 비밀번호 경고
 
-`SEED_PASSWORD`(`PathFinder2026!@`)는 `lib/auth-client-config.ts`의 상수이므로
+`SEED_PASSWORD`(`AiPdsWeb2026@!`)는 `lib/auth-client-config.ts`의 상수이므로
 **CloudFormation 템플릿과 스택 이벤트에 평문으로 남고, 재배포는 이 값으로
 되돌린다.** 데모/워크숍 전용이며 운영 전환 시 반드시 교체하고 `/admin/users`에서
 초대한 계정을 쓴다. `NoEcho` 파라미터로 가리는 대안은 `cdk deploy`마다 값을 넘겨야

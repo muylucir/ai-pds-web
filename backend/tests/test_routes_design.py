@@ -22,7 +22,7 @@ GOOD_MD = "```tokens\nprimary: #5b2ea6\n```\n## 톤\n여백을 넉넉히.\n"
 def profiles(monkeypatch):
     store = DesignProfileStore(FakeS3Store())
     monkeypatch.setattr(app_module, "design_profile_store", lambda: store)
-    me = Principal(username="admin@pathfinder.local", sub="s-admin", role="admin")
+    me = Principal(username="admin@aipds.local", sub="s-admin", role="admin")
     app_module.app.dependency_overrides[require_admin] = lambda: me
     app_module.app.dependency_overrides[require_user] = lambda: me
     yield store
@@ -48,7 +48,7 @@ def test_upload_returns_parsed_tokens_and_prose(profiles, client):
     assert body["filename"] == "acme.md"
     assert body["tokens"] == {"primary": "#5b2ea6"}
     assert "여백을 넉넉히" in body["prose"]
-    assert body["uploaded_by"] == "admin@pathfinder.local"
+    assert body["uploaded_by"] == "admin@aipds.local"
     # 원문은 이 응답에 넣지 않는다 — 화면은 /raw로 내려받는다.
     assert "markdown" not in body
 

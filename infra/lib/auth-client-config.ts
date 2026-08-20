@@ -5,12 +5,12 @@
 // 갱신한다. 그 API는 PUT 시맨틱이어서 지정하지 않은 필드를 지우므로, 두 곳이
 // 같은 값을 봐야 한다. 스택 간 import는 순환을 만들기 때문에 순수 상수 모듈로 뺀다.
 
-export const SEED_ADMIN_EMAIL = 'admin@pathfinder.local';
-export const SEED_PM_EMAIL = 'pm@pathfinder.local';
+export const SEED_ADMIN_EMAIL = 'admin@aipds.local';
+export const SEED_PM_EMAIL = 'pm@aipds.local';
 
 // 데모/워크숍용 사전 설정 비밀번호. ⚠️ CloudFormation 템플릿과 스택 이벤트에
 // 평문으로 남는다 — 운영 전환 시 반드시 교체한다(스펙 §4.1).
-export const SEED_PASSWORD = 'PathFinder2026!@';
+export const SEED_PASSWORD = 'AiPdsWeb2026@!';
 
 export const GROUP_ADMIN = 'admin';
 export const GROUP_PM = 'pm';

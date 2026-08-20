@@ -94,7 +94,7 @@ def test_invalid_token_is_401(with_auth):
 
 def test_valid_admin_token_passes_both_dependencies(with_auth):
     with_auth["principals"]["tok-admin"] = Principal(
-        username="admin@pathfinder.local", sub="s-1", role="admin")
+        username="admin@aipds.local", sub="s-1", role="admin")
     client = TestClient(_probe_app())
     headers = {"Authorization": "Bearer tok-admin"}
     assert client.get("/any", headers=headers).json()["role"] == "admin"
@@ -103,7 +103,7 @@ def test_valid_admin_token_passes_both_dependencies(with_auth):
 
 def test_pm_passes_require_user_but_is_403_on_require_admin(with_auth):
     with_auth["principals"]["tok-pm"] = Principal(
-        username="pm@pathfinder.local", sub="s-2", role="pm")
+        username="pm@aipds.local", sub="s-2", role="pm")
     client = TestClient(_probe_app())
     headers = {"Authorization": "Bearer tok-pm"}
     assert client.get("/any", headers=headers).json()["role"] == "pm"
@@ -123,7 +123,7 @@ def test_unauthenticated_request_to_admin_route_is_401_not_403(with_auth):
 
 def test_bearer_scheme_is_case_insensitive(with_auth):
     with_auth["principals"]["tok-admin"] = Principal(
-        username="admin@pathfinder.local", sub="s-1", role="admin")
+        username="admin@aipds.local", sub="s-1", role="admin")
     client = TestClient(_probe_app())
     assert client.get("/any", headers={"Authorization": "bearer tok-admin"}
                       ).status_code == 200
