@@ -6,7 +6,7 @@ import json
 import pytest
 
 from fakes.in_memory_s3 import FakeS3Store
-from pathfinder.survey.store import (SurveyStore,
+from aipds.survey.store import (SurveyStore,
                                      purgeable_response_count,
                                      questionnaire_key, questionnaire_md_key,
                                      results_md_key, survey_summary,
@@ -102,7 +102,7 @@ async def test_purge_keeps_the_spec_that_shares_the_directory():
     (`aiplc-docs/discovery/prototype/`). 프리픽스로 지우면 스펙이 사라지고,
     그러면 카드가 목록에서 사라진다 — 리셋이 아니라 삭제가 된다.
     """
-    from pathfinder.proto import layout
+    from aipds.proto import layout
     project_s3, root_s3 = FakeS3Store(), FakeS3Store()
     store = SurveyStore(project_s3, root_s3, slug=layout.SINGLE_ID,
                         project_id=PID)

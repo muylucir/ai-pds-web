@@ -1,9 +1,9 @@
 # backend/tests/test_routes_turns.py
 import json
 from fastapi.testclient import TestClient
-import pathfinder.app as app_module
-from pathfinder.workspace import Workspace
-from pathfinder.models import AgentEvent
+import aipds.app as app_module
+from aipds.workspace import Workspace
+from aipds.models import AgentEvent
 
 client = TestClient(app_module.app)
 

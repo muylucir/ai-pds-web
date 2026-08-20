@@ -57,8 +57,8 @@ def _seed_transcript(s3: FakeS3Store, session_uuid: str, batches: int) -> None:
 
 async def test_load_transcript_reads_batches_in_parallel():
     """가장 큰 단일 손실이었다 — 실측 0.877초(32배치). 세션 길이에 선형이다."""
-    from pathfinder.agent.claude_driver import _sdk_session_id
-    from pathfinder.agent.session_store import load_transcript
+    from aipds.agent.claude_driver import _sdk_session_id
+    from aipds.agent.session_store import load_transcript
 
     s3 = ConcurrencyProbe()
     resolved, _ = _sdk_session_id({"session_id": "p1"})
@@ -73,8 +73,8 @@ async def test_load_transcript_reads_batches_in_parallel():
 async def test_load_transcript_keeps_batch_order():
     """`gather`는 입력 순서대로 돌려주므로 키 정렬이 곧 대화 순서다. 이것이
     깨지면 채팅이 뒤섞여 복원된다 — 조용한 오작동이다."""
-    from pathfinder.agent.claude_driver import _sdk_session_id
-    from pathfinder.agent.session_store import load_transcript
+    from aipds.agent.claude_driver import _sdk_session_id
+    from aipds.agent.session_store import load_transcript
 
     s3 = ConcurrencyProbe()
     resolved, _ = _sdk_session_id({"session_id": "p1"})
@@ -87,7 +87,7 @@ async def test_load_transcript_keeps_batch_order():
 
 
 async def test_sdk_session_store_load_reads_batches_in_parallel():
-    from pathfinder.agent.session_store import DiscoverySessionStore
+    from aipds.agent.session_store import DiscoverySessionStore
 
     s3 = ConcurrencyProbe()
     for n in range(1, 9):
@@ -104,8 +104,8 @@ async def test_sdk_session_store_load_reads_batches_in_parallel():
 async def test_one_unreadable_batch_does_not_lose_the_rest():
     """`return_exceptions=True`의 근거. 손상된 객체 하나가 대화 전체를 빈 목록으로
     만드는 것이 더 나쁘다(list_history의 강등과 같은 원칙)."""
-    from pathfinder.agent.claude_driver import _sdk_session_id
-    from pathfinder.agent.session_store import load_transcript
+    from aipds.agent.claude_driver import _sdk_session_id
+    from aipds.agent.session_store import load_transcript
 
     class OneBoom(ConcurrencyProbe):
         async def get(self, key: str) -> str:
@@ -124,7 +124,7 @@ async def test_one_unreadable_batch_does_not_lose_the_rest():
 
 async def test_load_answers_reads_records_in_parallel():
     """라운드 수에 선형이다."""
-    from pathfinder.agent.answer_store import load_answers
+    from aipds.agent.answer_store import load_answers
 
     s3 = ConcurrencyProbe()
     for n in range(10):
@@ -139,7 +139,7 @@ async def test_load_answers_reads_records_in_parallel():
 
 
 async def test_load_answers_skips_a_broken_record_without_losing_the_rest():
-    from pathfinder.agent.answer_store import load_answers
+    from aipds.agent.answer_store import load_answers
 
     class OneBoom(ConcurrencyProbe):
         async def get(self, key: str) -> str:
@@ -161,7 +161,7 @@ async def test_load_answers_skips_a_broken_record_without_losing_the_rest():
 async def test_workspace_restore_reads_files_in_parallel(tmp_path):
     """**매 턴 시작**에 도는 경로다 — 순차 왕복이 그대로 답변 지연이 된다.
     실측 0.247초(산출물 6개), 산출물 수에 선형이므로 50개면 ~3초다."""
-    from pathfinder.runner import AgentRunner
+    from aipds.runner import AgentRunner
 
     s3 = ConcurrencyProbe()
     for n in range(10):
@@ -178,7 +178,7 @@ async def test_workspace_restore_reads_files_in_parallel(tmp_path):
 async def test_workspace_restore_still_fails_the_turn_on_error(tmp_path):
     """복원 실패는 삼키지 않는다 — 워크스페이스가 불완전한 채로 턴이 돌면
     에이전트가 없는 파일을 못 찾고, 그건 조용한 오작동이다."""
-    from pathfinder.runner import AgentRunner
+    from aipds.runner import AgentRunner
 
     class Boom(ConcurrencyProbe):
         async def get(self, key: str) -> str:
@@ -194,7 +194,7 @@ async def test_workspace_restore_still_fails_the_turn_on_error(tmp_path):
 
 
 async def test_workspace_sync_uses_bounded_parallel_uploads(tmp_path):
-    from pathfinder.runner import AgentRunner
+    from aipds.runner import AgentRunner
 
     class PutProbe(FakeS3Store):
         def __init__(self):
@@ -245,8 +245,8 @@ class ListConcurrencyProbe(FakeS3Store):
 async def test_prototype_list_does_not_round_trip_per_card(monkeypatch, tmp_path):
     """카드 N개에 2N번 순차 왕복이었다(bundle 조회 + 설문 응답 수). 실측 왕복
     30ms이므로 카드 10개면 0.6초가 목록 조회에 그대로 붙었다."""
-    import pathfinder.app as app_module
-    from pathfinder.routes.prototypes import list_prototypes
+    import aipds.app as app_module
+    from aipds.routes.prototypes import list_prototypes
 
     s3 = ListConcurrencyProbe()
     for n in range(6):

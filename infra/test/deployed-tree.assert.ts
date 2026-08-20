@@ -105,7 +105,7 @@ function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
   // .gitignore가 그 자리다 — 같은 방향의 실수가 여전히 가능하다.
   const files = new Set(trackedFiles());
   for (const rel of [
-    'backend/pathfinder/app.py',
+    'backend/aipds/app.py',
     'frontend/package.json',
     'frontend/package-lock.json',   // npm ci 가 부팅 시 요구한다
     'discovery-config/CLAUDE.md',
@@ -126,7 +126,7 @@ function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
     //
     // 불변식은 그대로다: **언어 지시가 인스턴스에 실린다.** 실리는 자리만
     // 파일에서 이 모듈로 바뀌었다.
-    'backend/pathfinder/agent/workspace_rules.py',
+    'backend/aipds/agent/workspace_rules.py',
   ]) {
     assert.ok(files.has(rel),
       `${rel} must be tracked — the instance clones the repo, so anything ` +

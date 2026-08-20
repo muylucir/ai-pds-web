@@ -1,7 +1,7 @@
 import inspect
-import pathfinder.app as app_module
-from pathfinder.workspace import Workspace
-from pathfinder.runner import AgentRunner
+import aipds.app as app_module
+from aipds.workspace import Workspace
+from aipds.runner import AgentRunner
 
 
 async def test_make_workspace_builds_runner_backed_workspace(monkeypatch):

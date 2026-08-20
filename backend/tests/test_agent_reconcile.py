@@ -10,7 +10,7 @@
 import json
 from pathlib import Path
 
-from pathfinder.agent import reconcile
+from aipds.agent import reconcile
 
 
 def _payloads(events):

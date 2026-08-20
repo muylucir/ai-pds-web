@@ -11,7 +11,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from pathfinder.auth.verifier import JwksCache, TokenError, verify_access_token
+from aipds.auth.verifier import JwksCache, TokenError, verify_access_token
 
 REGION = "ap-northeast-2"
 POOL = "ap-northeast-2_TEST123"

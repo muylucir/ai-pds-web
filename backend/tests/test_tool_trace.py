@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from pathfinder.tool_trace import DETAIL_MAX, tool_detail
+from aipds.tool_trace import DETAIL_MAX, tool_detail
 
 
 @pytest.mark.parametrize("name,inp,expected", [

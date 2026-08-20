@@ -3,10 +3,10 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.survey.models import Question, Questionnaire, SurveyResponse
-from pathfinder.survey.store import SurveyStore
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.survey.models import Question, Questionnaire, SurveyResponse
+from aipds.survey.store import SurveyStore
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 

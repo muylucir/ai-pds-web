@@ -10,9 +10,9 @@ import json
 
 import pytest
 
-from pathfinder.agent.claude_driver import ClaudeDriver
-from pathfinder.agent.pending_store import PENDING_KEY, save_pending
-from pathfinder.models import AgentEvent
+from aipds.agent.claude_driver import ClaudeDriver
+from aipds.agent.pending_store import PENDING_KEY, save_pending
+from aipds.models import AgentEvent
 from tests.fakes.fake_sdk_asking import (
     PREFACE_TEXT, cancel_pending_callbacks, sdk_client_for,
 )
@@ -72,7 +72,7 @@ def _runner(tmp_path, scripted, s3=None):
     `GeneratorExit` has to propagate through. A driver-only test would not
     exercise that layer.
     """
-    from pathfinder.runner import AgentRunner
+    from aipds.runner import AgentRunner
 
     s3 = s3 or FakeS3Store()
     d, ws, cap = _driver(tmp_path, scripted, s3=s3)
@@ -680,7 +680,7 @@ async def test_the_error_path_does_not_strand_queued_events_either(tmp_path):
     # 다음 턴이 query()에서 죽는다 — 그 항목들을 relay할 _pump이 아직 없으므로
     # 실패 경로의 드레인이 유일한 출구다. 여기서 batch pop하면 소비자가 중간에
     # 사라진 순간 나머지가 죽는다(실측: doc2/doc3 소멸).
-    from pathfinder.runner import AgentRunner
+    from aipds.runner import AgentRunner
     from tests.fakes.fake_sdk import FakeSdkClient
 
     class _QueryFails(FakeSdkClient):
@@ -935,7 +935,7 @@ async def test_resumes_with_the_answer_as_text_when_the_future_is_gone(tmp_path)
     # 재시작 후에도 이 프로젝트의 트랜스크립트는 디스크에 남아 있다 — 그것이 이
     # 경로가 이어받을 대상이다. 그 파일을 CLI가 쓰는 자리에 놓아 재시작 직후의
     # 실제 상태를 만든다.
-    from pathfinder.agent.claude_driver import _sdk_session_id, _transcript_path
+    from aipds.agent.claude_driver import _sdk_session_id, _transcript_path
     sid, _ = _sdk_session_id({"session_id": "s-1"})
     t = _transcript_path(d._config_dir, d._workspace, sid)
     t.parent.mkdir(parents=True, exist_ok=True)
@@ -1184,7 +1184,7 @@ async def test_uses_the_discovery_config_dir_not_the_prototype_one(tmp_path):
 def test_a_non_uuid_session_id_becomes_a_stable_uuid():
     import uuid
 
-    from pathfinder.agent.claude_driver import _sdk_session_id
+    from aipds.agent.claude_driver import _sdk_session_id
 
     sid, resume = _sdk_session_id({"session_id": "pilot1", "resume": True})
     uuid.UUID(sid)                       # CLI가 받아들이는 형태
@@ -1201,7 +1201,7 @@ def test_a_non_uuid_session_id_becomes_a_stable_uuid():
 def test_an_already_uuid_session_id_is_passed_through():
     import uuid
 
-    from pathfinder.agent.claude_driver import _sdk_session_id
+    from aipds.agent.claude_driver import _sdk_session_id
 
     given = str(uuid.uuid4())
     sid, resume = _sdk_session_id({"session_id": given, "resume": True})
@@ -1212,7 +1212,7 @@ def test_an_already_uuid_session_id_is_passed_through():
 def test_a_missing_session_id_does_not_claim_to_resume():
     import uuid
 
-    from pathfinder.agent.claude_driver import _sdk_session_id
+    from aipds.agent.claude_driver import _sdk_session_id
 
     sid, resume = _sdk_session_id({"resume": True})
     uuid.UUID(sid)
@@ -1362,7 +1362,7 @@ def test_the_transcript_path_matches_the_cli_layout(tmp_path):
     #   /tmp/pf-probe/acme_1.2-x -> -tmp-pf-probe-acme-1-2-x
     #   /tmp/pf-e2/Acme Corp     -> -tmp-pf-e2-Acme-Corp
     #   /tmp/pf-k/한글프로젝트     -> -tmp-pf-k-------
-    from pathfinder.agent.claude_driver import _transcript_path
+    from aipds.agent.claude_driver import _transcript_path
 
     p = _transcript_path("/opt/pathfinder/discovery-config",
                          "/tmp/pathfinder-workspaces/acme_1.2-x",
@@ -1392,7 +1392,7 @@ def test_the_transcript_path_matches_the_cli_layout(tmp_path):
 def test_the_transcript_probe_reads_the_file_the_cli_writes(tmp_path):
     # _transcript_exists가 "그 파일이 있느냐"만 보는지. CLI의 "already in use"
     # 검사가 정확히 이것이다 — 파일을 옮기자 같은 --session-id가 다시 성공했다.
-    from pathfinder.agent.claude_driver import (
+    from aipds.agent.claude_driver import (
         _transcript_exists, _transcript_path,
     )
 
@@ -1505,7 +1505,7 @@ def _captured_options(tmp_path, monkeypatch, session):
     붙어 있었는데도 워크스페이스 히스토리가 비어 있었고, 그 조합을 검사하는
     테스트가 없어서 원인이 프로덕션 로그에서만 드러났다.
     """
-    from pathfinder.agent.claude_driver import _default_client_factory
+    from aipds.agent.claude_driver import _default_client_factory
 
     captured = {}
 
@@ -1575,7 +1575,7 @@ async def test_a_mirror_error_is_logged(tmp_path, caplog):
     FakeSystemMessage.__name__ = "SystemMessage"
 
     d, _, _ = _driver(tmp_path, {})
-    with caplog.at_level(logging.WARNING, logger="pathfinder.agent"):
+    with caplog.at_level(logging.WARNING, logger="aipds.agent"):
         events = d._translate(FakeSystemMessage())
 
     assert events == [], "미러링 실패를 사용자 이벤트로 만들면 안 된다"
@@ -1626,7 +1626,7 @@ async def test_interrupt_records_that_the_turn_was_stopped(tmp_path):
 
     await d.interrupt()
 
-    from pathfinder.agent.claude_driver import INTERRUPTED_MARKER
+    from aipds.agent.claude_driver import INTERRUPTED_MARKER
     assert any(e.kind == "status" and e.text == INTERRUPTED_MARKER
                for e in d._queue), d._queue
 
@@ -1639,7 +1639,7 @@ def test_interrupt_marker_is_language_neutral():
 
     proto/builder.py가 이미 같은 값을 쓴다 — 두 드라이버가 어긋나면
     프론트가 경로에 따라 다르게 동작한다."""
-    from pathfinder.agent.claude_driver import INTERRUPTED_MARKER
+    from aipds.agent.claude_driver import INTERRUPTED_MARKER
     assert INTERRUPTED_MARKER == "interrupted"
     # 사람이 읽는 문구가 아니므로 비ASCII가 없어야 한다.
     assert INTERRUPTED_MARKER.isascii()
@@ -1651,13 +1651,13 @@ def test_driver_places_the_project_language_directive(tmp_path):
     이 배선이 빠지면 모든 프로젝트가 한국어 지시로 돌고, 영어를 고른 사용자는
     영어 UI로 한국어 문서를 받는다 — 에러는 없다.
     """
-    from pathfinder.agent.claude_driver import ClaudeDriver
+    from aipds.agent.claude_driver import ClaudeDriver
     seen = {}
 
     def fake_place_rules(workspace, rules_dir, language="ko"):
         seen["language"] = language
 
-    import pathfinder.agent.claude_driver as mod
+    import aipds.agent.claude_driver as mod
     original = mod.place_rules
     mod.place_rules = fake_place_rules
     try:
@@ -1671,7 +1671,7 @@ def test_driver_places_the_project_language_directive(tmp_path):
 
 
 def test_driver_defaults_to_korean(tmp_path):
-    from pathfinder.agent.claude_driver import ClaudeDriver
+    from aipds.agent.claude_driver import ClaudeDriver
     d = ClaudeDriver(workspace=str(tmp_path), rules_dir=str(tmp_path),
                      config_dir=str(tmp_path), s3=None, session_store=None)
     assert d._language == "ko"
@@ -1827,7 +1827,7 @@ async def test_a_live_turn_with_no_consumer_can_still_be_interrupted(tmp_path):
     await runner.interrupt()
     # 중단이 실제로 일어났다는 관측 가능한 증거 — 조기 return이면 이 마커가 없다
     # (test_interrupt_records_that_the_turn_was_stopped와 같은 단정).
-    from pathfinder.agent.claude_driver import INTERRUPTED_MARKER
+    from aipds.agent.claude_driver import INTERRUPTED_MARKER
     assert any(e.kind == "status" and e.text == INTERRUPTED_MARKER
                for e in d._queue), "소비자가 없으면 끊지 못했다"
 

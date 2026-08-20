@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from pathfinder.design_profile import DesignProfile
-from pathfinder.proto.design_sync import (
+from aipds.design_profile import DesignProfile
+from aipds.proto.design_sync import (
     DESIGN_FILENAME, THEME_FILENAME, stub_css, sync_design, theme_copies,
     theme_css, theme_imported, theme_required,
 )

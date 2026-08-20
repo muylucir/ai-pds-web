@@ -12,7 +12,7 @@ import pytest
 from botocore.exceptions import EndpointConnectionError
 from botocore.stub import Stubber
 
-from pathfinder.auth.cognito import (CognitoAdmin, CognitoError, ManagedUser,
+from aipds.auth.cognito import (CognitoAdmin, CognitoError, ManagedUser,
                                      generate_temp_password)
 
 POOL = "ap-northeast-2_TEST123"

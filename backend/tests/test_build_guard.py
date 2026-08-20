@@ -26,7 +26,7 @@
 # 영어 프로젝트로 샌다).
 from __future__ import annotations
 
-from pathfinder.proto.build_guard import bash_denial
+from aipds.proto.build_guard import bash_denial
 
 
 # ---- 빌드의 정상 경로는 통과해야 한다 ----

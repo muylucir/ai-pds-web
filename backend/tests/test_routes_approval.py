@@ -10,10 +10,10 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.app import app, registry
-from pathfinder.approval_store import load_approvals
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.app import app, registry
+from aipds.approval_store import load_approvals
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 

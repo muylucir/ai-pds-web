@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from pathfinder.proto import prompts
-from pathfinder.proto.prompts import (
+from aipds.proto import prompts
+from aipds.proto.prompts import (
     build_complete_description, build_complete_recorded,
     build_complete_rejection, handoff_prompt, missing_output_prompt,
     plan_prompt, resume_prompt,

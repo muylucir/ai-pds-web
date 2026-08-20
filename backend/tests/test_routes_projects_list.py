@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from pathfinder.app import app
+from aipds.app import app
 
 client = TestClient(app)
 
@@ -39,7 +39,7 @@ def test_list_projects_is_empty_capable():
 
 
 # ---- 페이지네이션 + progress (2026-07-21-project-list-table spec) ----
-from pathfinder import app as app_module
+from aipds import app as app_module
 from fakes.in_memory_s3 import FakeS3Store
 
 _STATE_MD = """# AI-PLC State Tracking

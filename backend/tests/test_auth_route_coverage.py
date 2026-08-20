@@ -22,8 +22,8 @@ import fastapi.routing as fastapi_routing
 from fastapi.testclient import TestClient
 from starlette.routing import Route
 
-import pathfinder.app as app_module
-from pathfinder.app import app
+import aipds.app as app_module
+from aipds.app import app
 
 # Cognito 인증 없이 열려 있어야 하는 경로 — 정확히 이 넷이다.
 #   /survey/{token}              익명 설문 응답 (계정 없는 최종 사용자)
@@ -73,14 +73,14 @@ def _app_routes() -> list[Any]:
 
 def _has_auth_dependency(route: Any) -> bool:
     """이 라우트의 의존성 트리에 require_user가 있는가."""
-    from pathfinder.auth.deps import require_user
+    from aipds.auth.deps import require_user
     return any(getattr(d, "call", None) is require_user
                for d in route.dependant.dependencies)
 
 
 def _has_admin_dependency(route: Any) -> bool:
     """이 라우트의 의존성 트리에 require_admin이 있는가."""
-    from pathfinder.auth.deps import require_admin
+    from aipds.auth.deps import require_admin
     return any(getattr(d, "call", None) is require_admin
                for d in route.dependant.dependencies)
 
@@ -154,7 +154,7 @@ def test_docs_openapi_url_is_none_when_auth_is_configured(monkeypatch):
     # include_router(..., dependencies=_AUTH)를 절대 거치지 않는다 — 인증이
     # 켜진 배포에서 그대로 두면 계정 없는 방문자에게 전체 라우트 표·파라미터
     # 스키마를 통째로 내주는 것과 같다. app.py는 이 결정을 app_module._docs_
-    # openapi_url()로 뽑아 뒀다 — pathfinder.app 전체를 importlib.reload()하면
+    # openapi_url()로 뽑아 뒀다 — aipds.app 전체를 importlib.reload()하면
     # registry 등 다른 모듈 전역 싱글턴이 새로 생겨, 이미 그 객체를 참조해 둔
     # 다른 테스트 파일들(test_routes_answers.py 등)이 KeyError로 깨진다
     # (실측). 그래서 그 함수만 monkeypatch로 env를 갈아끼워 직접 검증한다.
@@ -175,7 +175,7 @@ def test_docs_are_absent_on_the_real_app_when_openapi_url_is_none():
     # Finding 3, end-to-end: build a FastAPI app the same way app.py does
     # (openapi_url=None) and confirm the three doc routes actually 404 rather
     # than just asserting the config value in isolation. A fresh app avoids
-    # touching pathfinder.app's module-level singletons (registry etc.) that
+    # touching aipds.app's module-level singletons (registry etc.) that
     # other test files hold direct references to.
     from fastapi import FastAPI
     probe = FastAPI(title="probe", openapi_url=None)

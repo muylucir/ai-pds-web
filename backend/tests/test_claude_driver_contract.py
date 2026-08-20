@@ -22,8 +22,8 @@ def _legacy_question_path(monkeypatch):
     """
     monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
 
-from pathfinder.agent.claude_driver import ClaudeDriver
-from pathfinder.agent.pending_store import PENDING_KEY
+from aipds.agent.claude_driver import ClaudeDriver
+from aipds.agent.pending_store import PENDING_KEY
 from tests.driver_contract import assert_driver_contract
 from tests.fakes.fake_sdk_asking import cancel_pending_callbacks, sdk_client_for
 from tests.fakes.in_memory_s3 import FakeS3Store

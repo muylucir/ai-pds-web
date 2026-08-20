@@ -1,5 +1,5 @@
-from pathfinder.survey.models import Question, SurveyResponse
-from pathfinder.survey.rollup import build_rollup, TEXT_SAMPLE_LIMIT
+from aipds.survey.models import Question, SurveyResponse
+from aipds.survey.rollup import build_rollup, TEXT_SAMPLE_LIMIT
 
 NOW = "2026-07-25T00:00:00Z"
 

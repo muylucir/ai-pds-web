@@ -7,10 +7,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.auth.deps import require_admin, require_user
-from pathfinder.auth.models import Principal
-from pathfinder.model_catalog import SEED_MODELS, ModelCatalog
+import aipds.app as app_module
+from aipds.auth.deps import require_admin, require_user
+from aipds.auth.models import Principal
+from aipds.model_catalog import SEED_MODELS, ModelCatalog
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 

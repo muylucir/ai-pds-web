@@ -40,7 +40,7 @@
 #                                것이 계약이다.
 from __future__ import annotations
 
-from pathfinder.models import AgentEvent
+from aipds.models import AgentEvent
 
 
 async def _collect(agen) -> list[AgentEvent]:

@@ -24,7 +24,7 @@ import logging
 
 import pytest
 
-from pathfinder.survey import inputs
+from aipds.survey import inputs
 from fakes.in_memory_s3 import FakeS3Store
 
 E = inputs.ENVISION_PREFIX
