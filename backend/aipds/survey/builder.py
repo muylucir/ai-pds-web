@@ -302,7 +302,7 @@ async def build_questionnaire(prototype_md: str, agent, *, token: str,
                 token=token, status="open", slug=slug, project_id=project_id,
                 created_at=now, closed_at=None,
                 # 문항의 언어를 기록한다 — 공개 응답 페이지가 이 값으로 화면을
-                # 그린다. 응답자는 외부인이라 pf_lang 쿠키가 없고, 문항이
+                # 그린다. 응답자는 외부인이라 aipds_lang 쿠키가 없고, 문항이
                 # 영어인데 화면만 한국어인 것은 응답자에게 더 나쁘다.
                 language=language,
                 title=data["title"], hypothesis=data["hypothesis"],

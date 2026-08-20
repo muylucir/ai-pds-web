@@ -13,11 +13,11 @@ import { LocaleProvider } from "@/lib/i18n/provider";
 beforeEach(() => {
   refresh.mockClear();
   // 쿠키는 jsdom 문서에 남으므로 테스트 간 지운다.
-  document.cookie = "pf_lang=; max-age=0; path=/";
+  document.cookie = "aipds_lang=; max-age=0; path=/";
 });
 
 afterEach(() => {
-  document.cookie = "pf_lang=; max-age=0; path=/";
+  document.cookie = "aipds_lang=; max-age=0; path=/";
 });
 
 describe("LanguageSwitcher", () => {
@@ -51,7 +51,7 @@ describe("LanguageSwitcher", () => {
       </LocaleProvider>,
     );
     await user.click(screen.getByRole("button", { name: "English" }));
-    expect(document.cookie).toContain("pf_lang=en");
+    expect(document.cookie).toContain("aipds_lang=en");
     // refresh가 없으면 layout.tsx가 다시 렌더되지 않아 <html lang>과 Provider
     // 초기값이 그대로 남는다 — 쿠키만 바뀌고 화면은 안 바뀐다.
     expect(refresh).toHaveBeenCalledOnce();

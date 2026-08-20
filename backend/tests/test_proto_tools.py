@@ -100,7 +100,7 @@ async def test_build_complete_is_refused_without_the_brand_theme(tmp_path):
 
     result = await handler({"summary": "다 만들었다"})
 
-    assert "pathfinder-theme.css" in result["content"][0]["text"]
+    assert "aipds-theme.css" in result["content"][0]["text"]
     # 거부는 세션을 끝내지 않는다 — 이벤트가 나가지 않아야 한다.
     assert seen == []
 
@@ -116,7 +116,7 @@ async def test_build_complete_passes_once_the_theme_is_imported(tmp_path):
         tokens={"primary": "#5b2ea6"}, prose=""), "ko")
     (app / THEME_FILENAME).write_text(
         (tmp_path / THEME_FILENAME).read_text(), encoding="utf-8")
-    (app / "globals.css").write_text('@import "./pathfinder-theme.css";',
+    (app / "globals.css").write_text('@import "./aipds-theme.css";',
                                      encoding="utf-8")
 
     seen: list[AgentEvent] = []

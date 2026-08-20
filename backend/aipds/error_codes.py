@@ -2,7 +2,7 @@
 #
 # 백엔드는 UI 언어를 모른다: 프록시(frontend/app/api/[...path]/route.ts의
 # filterHeaders)가 Accept-Language를 전달하지 않고, 전달하게 만들어도 브라우저
-# 값이 들어와 UI 스위치(pf_lang 쿠키)와 어긋난다. 그래서 문구를 만들지 않고
+# 값이 들어와 UI 스위치(aipds_lang 쿠키)와 어긋난다. 그래서 문구를 만들지 않고
 # 코드를 보내며, 문구는 프론트 딕셔너리가 소유한다
 # (frontend/lib/api/errorMessage.ts).
 #

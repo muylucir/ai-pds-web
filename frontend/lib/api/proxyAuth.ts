@@ -11,7 +11,7 @@ const REPLAYABLE_METHODS = new Set(["GET", "HEAD", "DELETE"]);
 //: (backend/pathfinder/routes/proto_public.py의 COOKIE_PREFIX) — 양쪽이 같은
 //: 문자열이어야 하고, 어긋나면 쿠키가 백엔드에 닿지 않아 모든 프로토타입
 //: 프리뷰가 404가 된다.
-const PROTO_COOKIE_PREFIX = "pf_proto_";
+const PROTO_COOKIE_PREFIX = "aipds_proto_";
 
 /** 백엔드로 보낼 수 있는 쿠키만 남긴 Cookie 헤더 값. 없으면 null.
  *

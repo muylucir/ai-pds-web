@@ -1344,7 +1344,7 @@ def test_host_start_warns_when_no_theme_copy_exists_to_refresh(
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
     (proto_dir / "package.json").write_text("{}", encoding="utf-8")
-    # 일부러 pathfinder-theme.css 사본을 심지 않는다.
+    # 일부러 aipds-theme.css 사본을 심지 않는다.
 
     profiles = DesignProfileStore(FakeS3Store())
     asyncio.run(profiles.save(filename="acme.md", uploaded_by="admin@x",

@@ -22,15 +22,15 @@ from aipds.proto import prompts
 _log = logging.getLogger(__name__)
 
 DESIGN_FILENAME = "DESIGN.md"
-THEME_FILENAME = "pathfinder-theme.css"
+THEME_FILENAME = "aipds-theme.css"
 _CLAUDE_FILENAME = "CLAUDE.md"
 
 #: 이 표시가 첫 줄에 있으면 "프로필이 지워진 뒤 남은 스텁"이다. theme_required가
 #: 이걸로 "프로필 있음"과 구분한다 — 게이트가 S3를 보지 않아도 되는 이유다.
-_NO_PROFILE_MARKER = "/* pathfinder-theme: no brand profile */"
+_NO_PROFILE_MARKER = "/* aipds-theme: no brand profile */"
 
-_SECTION_START = "<!-- pathfinder:design:start -->"
-_SECTION_END = "<!-- pathfinder:design:end -->"
+_SECTION_START = "<!-- aipds:design:start -->"
+_SECTION_END = "<!-- aipds:design:end -->"
 
 #: 사내 폰트가 브라우저에 없을 때 떨어질 자리. 웹폰트는 싣지 않는다(비목표) —
 #: 임의의 CDN을 프로토타입에 주입하지 않는다.
@@ -57,7 +57,7 @@ def theme_css(tokens: dict[str, str]) -> str:
     화면이 깨지지 않는다.
     """
     lines = [
-        "/* pathfinder-theme: generated from the admin brand profile.",
+        "/* aipds-theme: generated from the admin brand profile.",
         "   Do not edit — it is overwritten on every build and every re-host. */",
         ":root {",
     ]

@@ -5,7 +5,7 @@
 // 사람이 이 도구가 무엇인지 읽을 수 있어야 하고, 초대 메일에 넣을 링크가
 // 그것이다.
 //
-// 언어는 별도 토글을 두지 않는다 — 헤더의 기존 LanguageSwitcher(pf_lang 쿠키)를
+// 언어는 별도 토글을 두지 않는다 — 헤더의 기존 LanguageSwitcher(aipds_lang 쿠키)를
 // 그대로 따른다. app/layout.tsx가 서버에서 그 쿠키를 읽어 <html lang>과
 // LocaleProvider를 맞추므로, 매뉴얼도 첫 페인트부터 맞는 언어로 나온다.
 import { useMemo, useState } from "react";

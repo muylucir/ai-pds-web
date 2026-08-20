@@ -176,7 +176,7 @@ async def test_start_plants_the_brand_profile(tmp_path):
     build_dir = session.build_dir()
     assert "--primary: #5b2ea6;" in (build_dir / THEME_FILENAME).read_text()
     assert "넉넉히" in (build_dir / DESIGN_FILENAME).read_text()
-    assert "pathfinder:design:start" in (build_dir / "CLAUDE.md").read_text()
+    assert "aipds:design:start" in (build_dir / "CLAUDE.md").read_text()
 
 
 async def test_start_without_a_profile_plants_nothing(tmp_path):
@@ -197,7 +197,7 @@ async def test_start_without_a_profile_plants_nothing(tmp_path):
     assert not (build_dir / THEME_FILENAME).exists()
     assert not (build_dir / DESIGN_FILENAME).exists()
     claude_md = build_dir / "CLAUDE.md"
-    assert not claude_md.is_file() or "pathfinder:design:start" not in claude_md.read_text()
+    assert not claude_md.is_file() or "aipds:design:start" not in claude_md.read_text()
 
 
 async def test_start_refreshes_a_changed_profile(tmp_path):
