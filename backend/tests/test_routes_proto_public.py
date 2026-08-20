@@ -68,7 +68,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "proto_host", lambda: host)
     monkeypatch.setattr(app_module, "_proto_root", lambda: tmp_path)
     # 게이트/프록시가 계산하는 브라우저 관점 프리픽스를 배포와 같게 고정한다.
-    monkeypatch.setenv("PATHFINDER_PUBLIC_PATH_PREFIX", "/api")
+    monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "/api")
     return {"host": host, "root": tmp_path}
 
 
@@ -199,13 +199,13 @@ def test_the_cookie_is_not_secure_by_default(env):
 
 @pytest.mark.parametrize("value", ["true", "TRUE", "1", "yes", "on", " true "])
 def test_cookie_secure_env_accepts_truthy_values(env, monkeypatch, value):
-    """`PATHFINDER_COOKIE_SECURE`가 켜지면 Secure가 붙는다.
+    """`AIPDS_COOKIE_SECURE`가 켜지면 Secure가 붙는다.
 
     여러 표기를 받는 이유: 이 값을 쓰는 곳이 systemd 유닛 파일과 셸 env라
     `true`/`1`/`yes`가 모두 자연스럽게 나온다. 하나만 받으면 나머지를 쓴 사람은
     켰다고 믿지만 실제로는 꺼져 있고, 그 실패는 화면에 드러나지 않는다.
     """
-    monkeypatch.setenv("PATHFINDER_COOKIE_SECURE", value)
+    monkeypatch.setenv("AIPDS_COOKIE_SECURE", value)
     _running(env)
     token = env["host"].ensure_token(PID, SLUG)
     resp = client.get(f"/proto/t/{token}", follow_redirects=False)
@@ -215,9 +215,9 @@ def test_cookie_secure_env_accepts_truthy_values(env, monkeypatch, value):
 @pytest.mark.parametrize("value", ["", "false", "0", "no", "off", "production"])
 def test_cookie_secure_env_rejects_non_truthy_values(env, monkeypatch, value):
     """켜지지 않는 값들. `production`이 여기 있는 것이 의도다 — 구 이름
-    (`PATHFINDER_ENV=production`)의 값을 새 변수에 그대로 넣는 실수가 조용히
+    (`AIPDS_ENV=production`)의 값을 새 변수에 그대로 넣는 실수가 조용히
     통과하면, 이름을 좁힌 목적이 사라진다."""
-    monkeypatch.setenv("PATHFINDER_COOKIE_SECURE", value)
+    monkeypatch.setenv("AIPDS_COOKIE_SECURE", value)
     _running(env)
     token = env["host"].ensure_token(PID, SLUG)
     resp = client.get(f"/proto/t/{token}", follow_redirects=False)
@@ -244,7 +244,7 @@ def test_the_gate_then_the_proxy_works_end_to_end(env, monkeypatch):
     `_authorized`) 한쪽만 바꾸면 조용히 어긋난다. 쿠키 잼을 가진 클라이언트로
     왕복시켜 그 연결을 고정한다.
 
-    **`PATHFINDER_PUBLIC_PATH_PREFIX=""`로 도는 것이 이 테스트의 조건이다.**
+    **`AIPDS_PUBLIC_PATH_PREFIX=""`로 도는 것이 이 테스트의 조건이다.**
     배포값("/api")에서는 쿠키의 Path가 `/api/proto/...`인데 이 앱이 받는 경로는
     `/proto/...`이므로, httpx의 쿠키 잼이 (브라우저와 똑같이, 그리고 올바르게)
     쿠키를 보내지 않는다. 배포에서는 브라우저가 `/api/proto/...`로 보내고 Next
@@ -253,7 +253,7 @@ def test_the_gate_then_the_proxy_works_end_to_end(env, monkeypatch):
     구성(로컬 개발이 실제로 쓰는 값)의 왕복이고, 그것이 이름·값의 정합성을
     확인하는 데는 충분하다.
     """
-    monkeypatch.setenv("PATHFINDER_PUBLIC_PATH_PREFIX", "")
+    monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "")
     _running(env)
     token = env["host"].ensure_token(PID, SLUG)
 

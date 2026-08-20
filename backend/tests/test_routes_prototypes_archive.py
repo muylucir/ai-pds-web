@@ -21,7 +21,7 @@ SLUG = "demo"
 
 @pytest.fixture
 def env(monkeypatch, tmp_path):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     s3 = FakeS3Store()
 
     async def fake_make_workspace(pid):

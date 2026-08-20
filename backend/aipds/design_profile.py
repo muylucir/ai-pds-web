@@ -213,7 +213,7 @@ class DesignProfileStore:
         if self._s3 is None:
             raise DesignProfileError(
                 "readonly",
-                "design profile is read-only without PATHFINDER_S3_BUCKET")
+                "design profile is read-only without AIPDS_S3_BUCKET")
         tokens, prose = parse_design_md(markdown)
         uploaded_at = datetime.now(timezone.utc).isoformat()
         await self._s3.put(DESIGN_PROFILE_KEY, json.dumps({
@@ -232,5 +232,5 @@ class DesignProfileStore:
         if self._s3 is None:
             raise DesignProfileError(
                 "readonly",
-                "design profile is read-only without PATHFINDER_S3_BUCKET")
+                "design profile is read-only without AIPDS_S3_BUCKET")
         await self._s3.delete_prefix(DESIGN_PREFIX)

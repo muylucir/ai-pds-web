@@ -130,7 +130,7 @@ class ModelCatalog:
         if self._s3 is None:
             raise CatalogError(
                 "readonly",
-                "model catalog is read-only without PATHFINDER_S3_BUCKET")
+                "model catalog is read-only without AIPDS_S3_BUCKET")
         return await self.load()
 
     @staticmethod

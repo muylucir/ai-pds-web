@@ -37,7 +37,7 @@ def _legacy_question_path(monkeypatch):
     여기서 명시적으로 끄는 이유: 기본값이 바뀌었을 때 이 파일이 "조용히 다른 것을
     검증하는" 상태가 되지 않게 한다 — 실제로 그렇게 됐고, 그래서 이 픽스처가 생겼다.
     """
-    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
+    monkeypatch.setenv("AIPDS_FILE_QUESTIONS", "false")
 
 
 def _driver(tmp_path, scripted, s3=None):

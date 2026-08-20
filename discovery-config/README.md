@@ -1,6 +1,6 @@
 # discovery-config
 
-Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR` (`PATHFINDER_DISCOVERY_CONFIG_DIR`).
+Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR` (`AIPDS_DISCOVERY_CONFIG_DIR`).
 
 ## 왜 proto-config와 분리하는가
 

@@ -27,7 +27,7 @@ type T = (key: keyof Dict) => string;
 // 두 드라이버가 서로 다른 도구 이름을 보낸다: Claude Agent SDK는 내장 도구명
 // (Write/Read/Edit/AskUserQuestion), Strands는 자작 도구명(file_write/…).
 // 매핑에 없으면 activityLabel의 폴백이 영어 도구명을 그대로 노출하므로 양쪽을
-// 모두 둔다(PATHFINDER_DISCOVERY_DRIVER 폴백 기간 동안 필요).
+// 모두 둔다(AIPDS_DISCOVERY_DRIVER 폴백 기간 동안 필요).
 const ACTIVITY_LABEL_KEYS: Record<string, keyof Dict> = {
   // Claude Agent SDK 제한된 도구 (MCP 또는 allowed_tools로만 활성화)
   AskUserQuestion: "activity.questions",

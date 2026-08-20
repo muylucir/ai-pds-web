@@ -223,7 +223,7 @@ async def test_enabled_by_default(tmp_path, monkeypatch):
     (2026-08-17): 훅이 질문 파일을 읽어 카드를 띄우고 턴이 멈추고, 답변이 파일에
     기록되고, 다음 턴에 모델이 그 답을 읽어 워크플로우를 이어갔다 — 그 마지막
     지점이 유일한 미검증 항목이었다."""
-    monkeypatch.delenv("PATHFINDER_FILE_QUESTIONS", raising=False)
+    monkeypatch.delenv("AIPDS_FILE_QUESTIONS", raising=False)
     d, ws = _driver(tmp_path)
     out = await _post(d, _write(ws, REL, QUESTION_MD))
     assert out.get("continue_") is False
@@ -238,7 +238,7 @@ async def test_can_be_switched_off(tmp_path, monkeypatch):
     고치면 인스턴스 교체가 필요하다. 대신 gitignore된 `backend/.env`를 만들면
     `pathfinder-update`가 되돌리지 않으므로(추적되지 않는 파일) 재배포 없이 끌 수
     있다."""
-    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
+    monkeypatch.setenv("AIPDS_FILE_QUESTIONS", "false")
     d, ws = _driver(tmp_path)
     out = await _post(d, _write(ws, REL, QUESTION_MD))
     assert out == {}
@@ -319,7 +319,7 @@ async def test_pending_survives_a_missing_file(tmp_path):
 # "질문 파일을 써라"를 돌려주므로 그 구멍이 생기지 않는다. `write_outside_docs`가
 # 같은 패턴을 쓴다(거부만 하면 모델이 경로만 바꿔 재시도하며 루프에 빠진다).
 #
-# 스위치는 하나다: `PATHFINDER_FILE_QUESTIONS`가 켜지면 파일 경로가 유일한 경로이고,
+# 스위치는 하나다: `AIPDS_FILE_QUESTIONS`가 켜지면 파일 경로가 유일한 경로이고,
 # 꺼지면 옛 가로채기가 그대로 돈다. 두 경로가 동시에 살아 있으면 같은 질문이 화면에
 # 두 번 뜬다.
 
@@ -349,7 +349,7 @@ async def test_ask_user_question_is_denied_when_file_questions_are_on(tmp_path):
 async def test_ask_user_question_still_works_when_file_questions_are_off(
         tmp_path, monkeypatch):
     """스위치가 꺼져 있으면 옛 경로가 그대로다 — 되돌릴 수 있어야 한다."""
-    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
+    monkeypatch.setenv("AIPDS_FILE_QUESTIONS", "false")
     d, _ = _driver(tmp_path)
     # **직접 await하지 않는다.** 꺼진 경로는 답변을 기다리며 future에 파킹되는 것이
     # 정상 동작이라 await하면 영원히 돌아오지 않는다(실제 SDK도 별도 태스크에서

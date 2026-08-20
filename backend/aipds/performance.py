@@ -4,7 +4,7 @@ import logging
 import os
 import time
 
-PERFORMANCE_LOGS_ENV = "PATHFINDER_PERFORMANCE_LOGS"
+PERFORMANCE_LOGS_ENV = "AIPDS_PERFORMANCE_LOGS"
 _FALSY = frozenset({"0", "false", "no", "off"})
 
 

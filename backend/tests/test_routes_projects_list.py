@@ -86,7 +86,7 @@ def test_no_params_defaults_to_page1_size10():
 
 
 def test_progress_read_from_s3_state(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "bkt")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "bkt")
     fake = FakeS3Store()
     fake.blobs["aiplc-docs/aiplc-state.md"] = _STATE_MD
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: fake)
@@ -98,7 +98,7 @@ def test_progress_read_from_s3_state(monkeypatch):
 
 
 def test_progress_null_when_state_missing(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "bkt")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "bkt")
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: FakeS3Store())
     _register("pg-nostate")
     r = client.get("/projects", params={"size": 50})
@@ -107,7 +107,7 @@ def test_progress_null_when_state_missing(monkeypatch):
 
 
 def test_progress_null_when_bucket_unset(monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     _register("pg-nobucket")
     r = client.get("/projects", params={"size": 50})
     row = next(p for p in r.json()["projects"] if p["project_id"] == "pg-nobucket")
@@ -115,7 +115,7 @@ def test_progress_null_when_bucket_unset(monkeypatch):
 
 
 def test_progress_null_when_s3_raises(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "bkt")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "bkt")
     class Boom:
         async def get(self, key):
             raise RuntimeError("s3 down")
@@ -130,7 +130,7 @@ def test_listing_does_not_initialize_workspaces(monkeypatch):
     # 목록 조회가 ensure_workspace/lazy 초기화를 유발하면 안 된다 — 복원 직후
     # 프로젝트 100개가 등록만 된 상태에서 목록을 열어도 워크스페이스는 그대로
     # 비어 있어야 한다.
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "bkt")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "bkt")
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: FakeS3Store())
     _register("pg-lazy")
     client.get("/projects", params={"size": 50})

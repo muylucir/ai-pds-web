@@ -1,7 +1,7 @@
 # proto-config — 프로토타입 빌드 에이전트의 CLAUDE_CONFIG_DIR
 
 이 디렉토리는 프로토타입 빌드 에이전트(Claude Agent SDK)의 config 루트다.
-`PATHFINDER_PROTO_CONFIG_DIR`가 여기를 가리키고, 그 값은 SDK에
+`AIPDS_PROTO_CONFIG_DIR`가 여기를 가리키고, 그 값은 SDK에
 `CLAUDE_CONFIG_DIR`로 전달된다.
 
 **이 디렉토리가 곧 `~/.claude`와 동급이다.** `CLAUDE_CONFIG_DIR`가 설정되면 SDK는
@@ -23,11 +23,11 @@ CLAUDE.md가 빌드 결과에 섞여** 재현이 되지 않는다. 여기로 갈
 
 CDK 에셋 zip이 레포 루트를 `/opt/pathfinder/`로 전개하므로, 이 디렉토리는
 별도 복사 단계 없이 `/opt/pathfinder/proto-config/`가 된다. 로컬 개발에서는
-`PATHFINDER_PROTO_CONFIG_DIR`로 이 디렉토리를 직접 가리키면 된다:
+`AIPDS_PROTO_CONFIG_DIR`로 이 디렉토리를 직접 가리키면 된다:
 
 ```bash
 # backend/.env
-PATHFINDER_PROTO_CONFIG_DIR=/abs/path/to/repo/proto-config
+AIPDS_PROTO_CONFIG_DIR=/abs/path/to/repo/proto-config
 ```
 
 ## 스킬 추가 방법

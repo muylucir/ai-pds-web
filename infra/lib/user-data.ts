@@ -68,7 +68,7 @@ export function renderUserData(opts: UserDataOptions): string {
   // ⚠️ 이 파일은 TS 템플릿 리터럴이다 — **주석에도 백틱을 쓰지 말 것.** 백틱 하나가
   // 리터럴을 닫아 user-data 전체가 파싱 에러가 된다(템플릿 안 주석에도 해당).
   //
-  // PATHFINDER_COOKIE_SECURE: 프로토타입 접근 쿠키의 Secure 스위치
+  // AIPDS_COOKIE_SECURE: 프로토타입 접근 쿠키의 Secure 스위치
   // (routes/proto_public.py의 _cookie_secure). 빼면 기본값(꺼짐)으로 Secure가
   // 생략되고, CloudFront 때문에 실동작은 정상으로 보이지만 쿠키는 평문 HTTP로도
   // 전송될 수 있는 상태로 남는다 — 화면 증상이 없어 눈으로 안 잡히므로
@@ -76,7 +76,7 @@ export function renderUserData(opts: UserDataOptions): string {
   // 로컬 개발에서는 켜지 않는다(localhost에서 브라우저가 Secure 쿠키를 저장하지 않아
   // 프리뷰가 열리지 않는다).
   //
-  // PATHFINDER_AUTO_COMPACT_WINDOW / PATHFINDER_LONG_CONTEXT: 둘은 함께 켠다
+  // AIPDS_AUTO_COMPACT_WINDOW / AIPDS_LONG_CONTEXT: 둘은 함께 켠다
   // (cli_settings.py). 윈도우만 올리고 1M을 켜지 않으면 컴팩션 전에 모델 컨텍스트
   // 한도에 부딪힌다. 왜 켜는가: 실측(2026-08-13)에서 빌드 세션이 264,040 → 53,375
   // 토큰으로 요약됐고, 요약 뒤 후반 스테이지 문서는 근거가 아니라 요약에서 나와
@@ -202,27 +202,27 @@ WorkingDirectory=${APP}/backend
 Environment=HOME=${APP}
 Environment=AWS_REGION=${region}
 Environment=AWS_DEFAULT_REGION=${region}
-Environment=PATHFINDER_S3_REGION=${region}
-Environment=PATHFINDER_S3_BUCKET=${bucketName}
+Environment=AIPDS_S3_REGION=${region}
+Environment=AIPDS_S3_BUCKET=${bucketName}
 Environment=ANTHROPIC_MODEL=${model}
-Environment=PATHFINDER_PROTO_ROOT=${APP}/protos
-Environment=PATHFINDER_WORKSPACES_DIR=${APP}/workspaces
+Environment=AIPDS_PROTO_ROOT=${APP}/protos
+Environment=AIPDS_WORKSPACES_DIR=${APP}/workspaces
 # 프로토타입 빌드: 동시 빌드 상한과 빌드 에이전트 전용 CLAUDE_CONFIG_DIR.
 # 후자를 비우면 번들 Claude Code 바이너리가 서비스 유저의 ~/.claude를 읽는다 —
 # 앱 트리 안에 두어 소유권·백업·정리를 APP 한 경로로 통일한다.
-Environment=PATHFINDER_PROTO_MAX_CONCURRENT=10
-Environment=PATHFINDER_PROTO_CONFIG_DIR=${APP}/proto-config
+Environment=AIPDS_PROTO_MAX_CONCURRENT=10
+Environment=AIPDS_PROTO_CONFIG_DIR=${APP}/proto-config
 # proto-config와 반드시 다른 경로(공유하면 Discovery가 shadcn-design을 켠 채로 돈다).
-Environment=PATHFINDER_DISCOVERY_CONFIG_DIR=${APP}/discovery-config
+Environment=AIPDS_DISCOVERY_CONFIG_DIR=${APP}/discovery-config
 # 이 두 값이 비면 백엔드가 모든 요청을 통과시킨다 — 배포에서는 반드시 채워진다.
-Environment=PATHFINDER_COGNITO_USER_POOL_ID=${userPoolId}
-Environment=PATHFINDER_COGNITO_CLIENT_ID=${userPoolClientId}
-Environment=PATHFINDER_COGNITO_REGION=${region}
+Environment=AIPDS_COGNITO_USER_POOL_ID=${userPoolId}
+Environment=AIPDS_COGNITO_CLIENT_ID=${userPoolClientId}
+Environment=AIPDS_COGNITO_REGION=${region}
 # 빼면 Secure가 생략된다 — 증상이 없어 눈으로 안 잡히므로 assert가 존재를 단정한다.
-Environment=PATHFINDER_COOKIE_SECURE=true
+Environment=AIPDS_COOKIE_SECURE=true
 # 이 둘은 **함께** 켠다(cli_settings.py). 윈도우만 올리면 컴팩션 전에 한도에 부딪힌다.
-Environment=PATHFINDER_AUTO_COMPACT_WINDOW=750000
-Environment=PATHFINDER_LONG_CONTEXT=true
+Environment=AIPDS_AUTO_COMPACT_WINDOW=750000
+Environment=AIPDS_LONG_CONTEXT=true
 ExecStart=${APP}/backend/.venv/bin/uvicorn pathfinder.app:app --host 127.0.0.1 --port 8000
 Restart=always
 [Install]

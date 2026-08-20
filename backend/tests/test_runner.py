@@ -101,7 +101,7 @@ async def test_turn_logs_structured_performance_phases(tmp_path, caplog):
 async def test_performance_logs_can_be_disabled(tmp_path, caplog, monkeypatch):
     import logging
 
-    monkeypatch.setenv("PATHFINDER_PERFORMANCE_LOGS", "false")
+    monkeypatch.setenv("AIPDS_PERFORMANCE_LOGS", "false")
     caplog.set_level(logging.INFO)
     r = _runner(tmp_path)
     await _collect(r.send_message("go"))

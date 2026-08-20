@@ -9,7 +9,7 @@ def test_lifespan_restores_registered_projects(monkeypatch):
     fake = FakeS3Store()
     fake.blobs["restored-1/project.json"] = json.dumps(
         {"project_id": "restored-1", "name": "복원된 프로젝트"})
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: fake)
     # with-구문이 lifespan을 실행한다 (모듈 레벨 TestClient는 실행 안 함)
     with TestClient(app_module.app) as client:
@@ -32,7 +32,7 @@ def test_lifespan_restores_the_generated_language(monkeypatch):
         {"project_id": "restored-en", "name": None, "language": "en"})
     fake.blobs["restored-legacy/project.json"] = json.dumps(
         {"project_id": "restored-legacy", "name": None})
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: fake)
     try:
         with TestClient(app_module.app):
@@ -45,7 +45,7 @@ def test_lifespan_restores_the_generated_language(monkeypatch):
 
 
 def test_lifespan_skips_restore_without_bucket(monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     called = {"n": 0}
 
     def _boom():
@@ -59,7 +59,7 @@ def test_lifespan_skips_restore_without_bucket(monkeypatch):
 
 
 def test_lifespan_survives_restore_failure(monkeypatch):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
 
     class _ExplodingStore:
         async def list(self, prefix):

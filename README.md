@@ -138,11 +138,11 @@ and review them yourself.
 ```
 PathfinderHostingStack.DistributionDomain → access URL (https://dxxxx.cloudfront.net)
 PathfinderHostingStack.InstanceId         → aws ssm start-session --target <id>
-PathfinderDrillStack.ArtifactsBucketName  → PATHFINDER_S3_BUCKET
+PathfinderDrillStack.ArtifactsBucketName  → AIPDS_S3_BUCKET
 PathfinderDrillStack.BackendRoleArn       → the backend must run with this role (or an equivalent policy)
-PathfinderDrillStack.Region               → AWS_REGION / PATHFINDER_S3_REGION
-PathfinderAuthStack.UserPoolId            → PATHFINDER_COGNITO_USER_POOL_ID
-PathfinderAuthStack.UserPoolClientId      → PATHFINDER_COGNITO_CLIENT_ID / COGNITO_CLIENT_ID
+PathfinderDrillStack.Region               → AWS_REGION / AIPDS_S3_REGION
+PathfinderAuthStack.UserPoolId            → AIPDS_COGNITO_USER_POOL_ID
+PathfinderAuthStack.UserPoolClientId      → AIPDS_COGNITO_CLIENT_ID / COGNITO_CLIENT_ID
 PathfinderAuthStack.HostedUiDomain        → COGNITO_HOSTED_UI_DOMAIN
 ```
 
@@ -299,7 +299,7 @@ route handler (`app/api/[...path]/route.ts`) proxies to the backend server-side:
 ```bash
 # frontend/.env.local
 NEXT_PUBLIC_API_BASE_URL=/api
-# (if the backend is on another host/port) PATHFINDER_BACKEND_URL=http://localhost:8000
+# (if the backend is on another host/port) AIPDS_BACKEND_URL=http://localhost:8000
 ```
 
 To silence the dev cross-origin warning, add that hostname to `allowedDevOrigins` in
@@ -320,17 +320,17 @@ reads them (`backend/pathfinder/app.py`, `backend/pathfinder/cli_settings.py`).
 
 | Variable | Default | Description |
 |---|---|---|
-| `PATHFINDER_S3_BUCKET` | — | Artifact bucket (a CDK output) |
-| `PATHFINDER_S3_REGION` | `ap-northeast-2` | Persistent-storage region. **Match the region the bucket was created in** |
+| `AIPDS_S3_BUCKET` | — | Artifact bucket (a CDK output) |
+| `AIPDS_S3_REGION` | `ap-northeast-2` | Persistent-storage region. **Match the region the bucket was created in** |
 | `ANTHROPIC_MODEL` | — (EC2 uses `global.anthropic.claude-opus-4-8`) | **Fallback** Bedrock inference profile id. If a project has its own model, that one wins |
-| `PATHFINDER_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
-| `PATHFINDER_LOG_LEVEL` | `INFO` | Application log level (`app.configure_logging()`) |
-| `PATHFINDER_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **Leave both empty** to bypass authentication entirely (the local default). Leave only one empty and every request raises RuntimeError (fail-closed) |
-| `PATHFINDER_COOKIE_SECURE` | `false` (EC2 uses `true`) | Whether to add `Secure` to the prototype access cookie. Leave it off locally |
-| `PATHFINDER_AUTO_COMPACT_WINDOW` | — (the CLI default) | The context size (in tokens, 100000–1000000) at which auto-compaction fires. Delaying it lets late stages write documents from the evidence rather than from a summary — the price is per-turn cost |
-| `PATHFINDER_LONG_CONTEXT` | `false` | Whether to append the CLI's `[1m]` (1M context beta) to the model id. **It is not a strict upgrade** — see `backend/pathfinder/cli_settings.py` for the cost and quality trade-off |
-| `PATHFINDER_FILE_QUESTIONS` | `true` | Whether the agent asks by **writing a question file** (Pathfinder reads it and shows the questions verbatim) instead of through the AskUserQuestion tool. Set it falsy to fall back to the tool — that path is kept as an escape hatch. Measured reason for the default: re-emitting a written question through the tool damaged 15 of 19 questions (Korean characters substituted, wording truncated so answers were never recorded). See `backend/pathfinder/agent/claude_driver.py`'s `FILE_QUESTIONS_ENV` |
-| `PATHFINDER_PUBLIC_PATH_PREFIX` | `/api` | The preview mount **as the browser sees it**. Use `""` locally when calling the backend directly on :8000 |
+| `AIPDS_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
+| `AIPDS_LOG_LEVEL` | `INFO` | Application log level (`app.configure_logging()`) |
+| `AIPDS_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **Leave both empty** to bypass authentication entirely (the local default). Leave only one empty and every request raises RuntimeError (fail-closed) |
+| `AIPDS_COOKIE_SECURE` | `false` (EC2 uses `true`) | Whether to add `Secure` to the prototype access cookie. Leave it off locally |
+| `AIPDS_AUTO_COMPACT_WINDOW` | — (the CLI default) | The context size (in tokens, 100000–1000000) at which auto-compaction fires. Delaying it lets late stages write documents from the evidence rather than from a summary — the price is per-turn cost |
+| `AIPDS_LONG_CONTEXT` | `false` | Whether to append the CLI's `[1m]` (1M context beta) to the model id. **It is not a strict upgrade** — see `backend/pathfinder/cli_settings.py` for the cost and quality trade-off |
+| `AIPDS_FILE_QUESTIONS` | `true` | Whether the agent asks by **writing a question file** (Pathfinder reads it and shows the questions verbatim) instead of through the AskUserQuestion tool. Set it falsy to fall back to the tool — that path is kept as an escape hatch. Measured reason for the default: re-emitting a written question through the tool damaged 15 of 19 questions (Korean characters substituted, wording truncated so answers were never recorded). See `backend/pathfinder/agent/claude_driver.py`'s `FILE_QUESTIONS_ENV` |
+| `AIPDS_PUBLIC_PATH_PREFIX` | `/api` | The preview mount **as the browser sees it**. Use `""` locally when calling the backend directly on :8000 |
 | `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | The API base the frontend calls. Behind a remote proxy, `/api` |
 | `COGNITO_HOSTED_UI_DOMAIN` / `COGNITO_CLIENT_ID` / `COGNITO_CLIENT_SECRET` | — | Frontend server-side only. **Never `NEXT_PUBLIC_`** for secrets |
 

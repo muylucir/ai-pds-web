@@ -11,7 +11,7 @@ import boto3
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-# backend/.env (gitignored, optional) feeds the PATHFINDER_*/ANTHROPIC_MODEL
+# backend/.env (gitignored, optional) feeds the AIPDS_*/ANTHROPIC_MODEL
 # settings read via os.environ below. Real environment variables win over the
 # file (override=False) so shell exports / container env keep working as
 # before, and a missing file is a silent no-op (local mode needs no config).
@@ -29,7 +29,7 @@ from aipds.turn_handles import TurnHandleStore
 _log = logging.getLogger(__name__)
 
 #: 애플리케이션 로그 레벨. 기본 INFO — 진단에 필요한 것 대부분이 그 레벨이다.
-_LOG_LEVEL_ENV = "PATHFINDER_LOG_LEVEL"
+_LOG_LEVEL_ENV = "AIPDS_LOG_LEVEL"
 
 #: configure_logging이 자기가 붙인 핸들러를 알아보기 위한 표식. 재호출 시
 #: 핸들러가 쌓여 같은 줄이 여러 번 찍히는 것을 막는다(uvicorn --reload,
@@ -86,8 +86,8 @@ turn_handles = TurnHandleStore()
 # the project's aiplc-docs/prototype/uploads subtree (S3 = source of truth); the
 # in-process AgentRunner restores it to a local workspace at the start of a turn.
 def s3_store_factory(project_id: str) -> S3StoreLike:
-    region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
-    bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
+    region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("AIPDS_S3_BUCKET", "")
     client = boto3.client("s3", region_name=region)
     return S3Store(bucket=bucket, prefix=f"projects/{project_id}/", client=client)
 
@@ -95,16 +95,16 @@ def s3_store_factory(project_id: str) -> S3StoreLike:
 # Monkeypatchable in tests. Scoped to the `sessions/` prefix
 # that S3SessionManager writes; the backend only READS them for history.
 def session_s3_factory() -> S3StoreLike:
-    region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
-    bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
+    region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("AIPDS_S3_BUCKET", "")
     client = boto3.client("s3", region_name=region)
     return S3Store(bucket=bucket, prefix="sessions/", client=client)
 
 
 # 매니페스트/삭제용 — projects/ 전체를 보는 root 스토어. 테스트에서 monkeypatch.
 def projects_root_s3_factory() -> S3StoreLike:
-    region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
-    bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
+    region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("AIPDS_S3_BUCKET", "")
     client = boto3.client("s3", region_name=region)
     return S3Store(bucket=bucket, prefix="projects/", client=client)
 
@@ -113,8 +113,8 @@ def projects_root_s3_factory() -> S3StoreLike:
 # 하므로(프로젝트 생성 화면이 프로젝트 없이 읽는다) projects/ 밖에 있다.
 # 테스트에서 monkeypatch.
 def models_root_s3_factory() -> S3StoreLike:
-    region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
-    bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
+    region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("AIPDS_S3_BUCKET", "")
     client = boto3.client("s3", region_name=region)
     return S3Store(bucket=bucket, prefix="", client=client)
 
@@ -122,8 +122,8 @@ def models_root_s3_factory() -> S3StoreLike:
 # 브랜드 프로필용 — 버킷 루트 스토어. design/ 아래 profile.json 하나뿐이고
 # 모델 카탈로그와 같은 이유로 projects/ 밖에 있다. 테스트에서 monkeypatch.
 def design_root_s3_factory() -> S3StoreLike:
-    region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
-    bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
+    region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("AIPDS_S3_BUCKET", "")
     client = boto3.client("s3", region_name=region)
     return S3Store(bucket=bucket, prefix="", client=client)
 
@@ -199,18 +199,18 @@ def cognito_config() -> dict | None:
     호출되므로(require_user), 배포 스크립트가 두 변수 중 하나를 지우는 순간
     재시작 없이도 즉시 이 예외가 뜬다.
     """
-    pool = os.environ.get("PATHFINDER_COGNITO_USER_POOL_ID", "").strip()
-    client = os.environ.get("PATHFINDER_COGNITO_CLIENT_ID", "").strip()
+    pool = os.environ.get("AIPDS_COGNITO_USER_POOL_ID", "").strip()
+    client = os.environ.get("AIPDS_COGNITO_CLIENT_ID", "").strip()
     if not pool and not client:
         return None
     if not pool or not client:
         raise RuntimeError(
-            "PATHFINDER_COGNITO_USER_POOL_ID and PATHFINDER_COGNITO_CLIENT_ID "
+            "AIPDS_COGNITO_USER_POOL_ID and AIPDS_COGNITO_CLIENT_ID "
             "must both be set or both be unset — exactly one is set, which "
             "would otherwise silently bypass authentication as admin for "
             "every request")
-    region = (os.environ.get("PATHFINDER_COGNITO_REGION", "").strip()
-              or os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2"))
+    region = (os.environ.get("AIPDS_COGNITO_REGION", "").strip()
+              or os.environ.get("AIPDS_S3_REGION", "ap-northeast-2"))
     return {"region": region, "user_pool_id": pool, "client_id": client}
 
 
@@ -235,25 +235,25 @@ def cognito_admin():
     cfg = cognito_config()
     if cfg is None:
         raise RuntimeError(
-            "user management requires PATHFINDER_COGNITO_USER_POOL_ID / "
-            "PATHFINDER_COGNITO_CLIENT_ID")
+            "user management requires AIPDS_COGNITO_USER_POOL_ID / "
+            "AIPDS_COGNITO_CLIENT_ID")
     client = boto3.client("cognito-idp", region_name=cfg["region"])
     return CognitoAdmin(client, cfg["user_pool_id"])
 
 
 def durable_projects_enabled() -> bool:
     """버킷 미설정(로컬/테스트)이면 목록 영속화 전체를 생략한다."""
-    return bool(os.environ.get("PATHFINDER_S3_BUCKET"))
+    return bool(os.environ.get("AIPDS_S3_BUCKET"))
 
 
 def _rules_dir() -> str:
     default = str(Path(__file__).resolve().parent.parent.parent / "rule" / "aiplc-rules")
-    return os.environ.get("PATHFINDER_RULES_DIR", default)
+    return os.environ.get("AIPDS_RULES_DIR", default)
 
 
 def _workspaces_dir() -> Path:
-    root = os.environ.get("PATHFINDER_WORKSPACES_DIR")
-    return Path(root) if root else Path(tempfile.gettempdir()) / "pathfinder-workspaces"
+    root = os.environ.get("AIPDS_WORKSPACES_DIR")
+    return Path(root) if root else Path(tempfile.gettempdir()) / "aipds-workspaces"
 
 
 async def purge_local_workspace(project_id: str) -> None:
@@ -291,8 +291,8 @@ async def purge_local_workspace(project_id: str) -> None:
 
 
 def _discovery_config_dir() -> Path:
-    return Path(os.environ.get("PATHFINDER_DISCOVERY_CONFIG_DIR",
-                               "~/pathfinder-discovery-config")).expanduser()
+    return Path(os.environ.get("AIPDS_DISCOVERY_CONFIG_DIR",
+                               "~/aipds-discovery-config")).expanduser()
 
 
 # Discovery 드라이버. Claude Agent SDK 한 벌뿐이다 — AI-PLC 룰이 전제한 실행
@@ -331,22 +331,22 @@ _proto_host_singleton = None
 
 
 def _proto_root() -> Path:
-    return Path(os.environ.get("PATHFINDER_PROTO_ROOT",
-                               "~/pathfinder-protos")).expanduser()
+    return Path(os.environ.get("AIPDS_PROTO_ROOT",
+                               "~/aipds-protos")).expanduser()
 
 
 def _proto_config_dir() -> Path:
     """빌드 에이전트 전용 CLAUDE_CONFIG_DIR. 지정하지 않으면 번들 바이너리가
     백엔드 유저의 ~/.claude(개인 skills/agents/CLAUDE.md)를 읽는다."""
-    return Path(os.environ.get("PATHFINDER_PROTO_CONFIG_DIR",
-                               "~/pathfinder-proto-config")).expanduser()
+    return Path(os.environ.get("AIPDS_PROTO_CONFIG_DIR",
+                               "~/aipds-proto-config")).expanduser()
 
 
 def _proto_permission_mode() -> str:
     """빌드는 무인으로 돌아간다 — 승인해 줄 사람이 없으므로 bypassPermissions가
     기본값이다. 더 조이려면 환경변수로 덮어쓴다(잘못된 값은 즉시 ValueError)."""
     from aipds.proto.builder import DEFAULT_PERMISSION_MODE
-    return os.environ.get("PATHFINDER_PROTO_PERMISSION_MODE",
+    return os.environ.get("AIPDS_PROTO_PERMISSION_MODE",
                           DEFAULT_PERMISSION_MODE)
 
 
@@ -354,7 +354,7 @@ def _proto_permission_mode() -> str:
 from aipds.proto.limits import BuildSemaphore  # noqa: E402
 
 build_semaphore = BuildSemaphore(
-    max_concurrent=int(os.environ.get("PATHFINDER_PROTO_MAX_CONCURRENT", "10")))
+    max_concurrent=int(os.environ.get("AIPDS_PROTO_MAX_CONCURRENT", "10")))
 
 
 def proto_host():
@@ -377,7 +377,7 @@ def proto_session_factory(project_id: str, slug: str):
     build_root = _proto_root()
     config_dir = _proto_config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
-    store = S3SessionStore(s3, slug=slug) if os.environ.get("PATHFINDER_S3_BUCKET") else None
+    store = S3SessionStore(s3, slug=slug) if os.environ.get("AIPDS_S3_BUCKET") else None
     # 한 번 읽어 빌더와 세션에 같은 값을 준다 — 둘이 어긋나면 프롬프트와 도구
     # 설명의 언어가 갈린다.
     language = project_language(project_id)
@@ -411,8 +411,8 @@ def proto_session_factory(project_id: str, slug: str):
 def surveys_root_s3_factory() -> S3StoreLike:
     """Bucket-root store: the token index must be readable before we know
     which project a token belongs to."""
-    region = os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2")
-    bucket = os.environ.get("PATHFINDER_S3_BUCKET", "")
+    region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
+    bucket = os.environ.get("AIPDS_S3_BUCKET", "")
     client = boto3.client("s3", region_name=region)
     return S3Store(bucket=bucket, prefix="", client=client)
 
@@ -491,8 +491,8 @@ async def make_workspace(project_id: str) -> Workspace:
     # durable store's bucket/region, keyed by project_id.
     session = {
         "session_id": project_id,
-        "bucket": os.environ.get("PATHFINDER_S3_BUCKET", ""),
-        "region": os.environ.get("PATHFINDER_S3_REGION", "ap-northeast-2"),
+        "bucket": os.environ.get("AIPDS_S3_BUCKET", ""),
+        "region": os.environ.get("AIPDS_S3_REGION", "ap-northeast-2"),
         "prefix": "sessions",
     }
     driver = driver_factory(project_id, local_root)
@@ -578,7 +578,7 @@ app = FastAPI(title="Pathfinder", lifespan=_lifespan,
 # specific Origin), but keep the allowlist explicit regardless.
 _cors_origins = [
     o.strip()
-    for o in os.environ.get("PATHFINDER_CORS_ORIGINS", "http://localhost:3000").split(",")
+    for o in os.environ.get("AIPDS_CORS_ORIGINS", "http://localhost:3000").split(",")
     if o.strip()
 ]
 app.add_middleware(

@@ -199,7 +199,7 @@ class FakeProtoHost:
 @pytest.fixture()
 def proto_env(monkeypatch, tmp_path):
     """Registered project + fake S3/session/host wiring."""
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     # VM env vars are gone -- the session route's config guard now checks a
     # build slot, not an image ARN.
     #
@@ -223,13 +223,13 @@ def proto_env(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: fake_s3)
     # SurveyStore.purge() (exercised by the reset route) also reads/writes the
     # bucket-root token index via surveys_root_s3_factory(); left unpatched it
-    # falls through to a real boto3 client with PATHFINDER_S3_BUCKET="" and
+    # falls through to a real boto3 client with AIPDS_S3_BUCKET="" and
     # blows up on bucket-name validation before it ever reaches the fake.
     monkeypatch.setattr(app_module, "surveys_root_s3_factory",
                         lambda: fake_root_s3)
     # list_prototypes' "built" signal reads the local build dir straight off
     # disk (app_module._proto_root() / pid / slug) -- point it at tmp_path so
-    # tests never touch the real ~/pathfinder-protos, matching
+    # tests never touch the real ~/aipds-protos, matching
     # test_routes_prototypes_archive.py's fixture.
     monkeypatch.setattr(app_module, "_proto_root", lambda: tmp_path)
 
@@ -924,7 +924,7 @@ def test_reset_502_when_the_build_tree_purge_fails(proto_env):
 def test_reset_502_when_the_session_close_fails(proto_env, monkeypatch):
     """The `session` branch. close() releases the build slot, so a swallowed
     failure here reports success over a slot that stays held until the process
-    restarts -- and with PATHFINDER_PROTO_MAX_CONCURRENT capping a workshop box
+    restarts -- and with AIPDS_PROTO_MAX_CONCURRENT capping a workshop box
     at 2, that is a real 429 for another team."""
     _seed_spec(proto_env["s3"])
     session = FakePrototypeSession()
@@ -1180,7 +1180,7 @@ def test_host_start_base_path_is_the_browser_visible_prefix(proto_env, monkeypat
     /proto/.../_next/static/... -- which CloudFront 404s, the very symptom this
     work is fixing.
 
-    The mount is configuration, not a constant: PATHFINDER_PUBLIC_PATH_PREFIX
+    The mount is configuration, not a constant: AIPDS_PUBLIC_PATH_PREFIX
     carries it, defaulting to "/api" to match the deployed nginx/Next wiring.
     """
     _seed_spec(proto_env["s3"])
@@ -1196,7 +1196,7 @@ def test_host_start_base_path_is_the_browser_visible_prefix(proto_env, monkeypat
 def test_host_start_base_path_honours_an_empty_public_prefix(proto_env, monkeypatch):
     """Local dev calls the backend directly (no /api mount), so the override
     must be able to clear the prefix entirely rather than only replace it."""
-    monkeypatch.setenv("PATHFINDER_PUBLIC_PATH_PREFIX", "")
+    monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "")
     _seed_spec(proto_env["s3"])
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
