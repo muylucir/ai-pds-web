@@ -12,16 +12,15 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
-#: 단 하나 남은 허용은 **우리 코드 밖의 진짜 이름**을 가리키는 값이다 — 우리
-#: 이름과 우리 코드는 전부 바꾼다; 밖의 것을 가리키는 참조는 밖의 실제 값과
-#: 맞아야 하므로 바꾸지 않는다. 그래서 이 파일이 아니라 여기 이 값 자체를 넓히는
-#: 것은 금지다(아래 두 테스트가 목록의 크기와 각 줄의 실재를 함께 고정한다).
-ALLOWED = {
-    # GitHub 리포 이름. 리포는 이 계획의 범위 밖이고 이름을 유지하는 것이
-    # 결정 사항이다 — 이 값이 바뀌면 부팅의 `git clone`이 깨진다.
-    "infra/lib/deploy-source.ts": re.compile(r"ai-plc-pathfinder"),
-}
-
+#: **예외는 없다.** 한동안 넷이 있었다 — GitHub 리포 URL, 이미 지운
+#: CloudFormation 스택 이름(ko/en 두 줄), S3 미러링 키를 파생하는 uuid5 씨드.
+#: 넷 다 "우리 코드 밖의 실체가 옛 이름을 갖고 있다"는 이유였고, 넷 다 그 실체를
+#: 옮기거나 지우면서 사라졌다: 스택은 실제로 destroy했고, 씨드는 마이그레이션
+#: 절차가 프리픽스를 옮기게 만들어 풀었고, 리포는 `ai-pds-web`으로 개명했다.
+#:
+#: 그래서 이 단정에 허용 기계가 없다. 다시 필요해지면 그때 넣는다 — 그 결정이
+#: 리뷰에 보이는 것이 목록을 미리 비워 두는 것보다 낫고, 쓰이지 않는 예외 통로는
+#: 넓혀도 아무 테스트가 깨지지 않는 자리가 된다.
 _NAME = re.compile(r"pathfinder", re.IGNORECASE)
 
 #: 이 파일 자신의 상대 경로. 여기는 금지어를 **말하는** 자리다 — 허용 목록의
@@ -43,14 +42,9 @@ def _offending_path(rel: str) -> str | None:
     이 브랜치의 대부분은 **파일 이름 바꾸기**(83개)였다 — 내용을 훑는
     `_offending_lines`는 그 카테고리를 전혀 보지 않는다: 되살아난
     `infra/scripts/pathfinder-update`나 `backend/pathfinder/`가 내용은 전부
-    `aipds`라도 이 검사 없이는 그대로 통과한다. 허용은 경로 자체에도 적용한다
-    — 네 허용 모두 경로 자체는 깨끗하므로(`aipds`만 담고 있다), 이 검사가
-    새 허용을 요구하지는 않는다.
+    `aipds`라도 이 검사 없이는 그대로 통과한다.
     """
     if not _NAME.search(rel):
-        return None
-    allowed = ALLOWED.get(rel)
-    if allowed is not None and allowed.search(rel):
         return None
     return f"{rel}: 파일 경로 자체가 옛 제품 이름을 담고 있다"
 
@@ -61,26 +55,21 @@ def _offending_lines(rel: str) -> list[str]:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return []          # 바이너리·읽을 수 없는 파일은 이 검사의 대상이 아니다
-    allowed = ALLOWED.get(rel)
     bad = []
     path_offender = _offending_path(rel)
     if path_offender is not None:
         bad.append(path_offender)
     for number, line in enumerate(text.splitlines(), 1):
-        if not _NAME.search(line):
-            continue
-        if allowed is not None and allowed.search(line):
-            continue
-        bad.append(f"{rel}:{number}: {line.strip()}")
+        if _NAME.search(line):
+            bad.append(f"{rel}:{number}: {line.strip()}")
     return bad
 
 
 def test_no_tracked_file_mentions_the_old_product_name():
     """제품 이름이 두 겹이면 화면과 로그·문서가 다른 제품을 가리킨다.
 
-    허용은 넷뿐이다 — GitHub 리포 URL, 이미 삭제된 CloudFormation 스택 이름
-    (ko/en 두 줄), S3 미러링 키를 파생하는 uuid5 씨드. 전부 우리 코드 밖의
-    진짜 값을 가리키므로 바꾸지 않는다(ALLOWED 정의의 주석 참고).
+    예외 없이 0이다. 이 파일 자신만 뺀다(`_SELF`) — 여기는 금지어를 **말하는**
+    자리다.
     """
     offenders = [line for rel in _tracked() for line in _offending_lines(rel)]
     assert not offenders, (
@@ -102,32 +91,27 @@ def test_the_path_check_flags_a_resurrected_old_name_path():
     assert _offending_path("backend/pathfinder/app.py") is not None
     # 대조: 이름이 깨끗한 경로는 걸리지 않는다.
     assert _offending_path("infra/scripts/aipds-update") is None
-    # 대조: 허용 목록에 있는 경로는 (경로 자체가 깨끗하므로) 걸리지 않는다.
-    for rel in ALLOWED:
-        assert _offending_path(rel) is None
 
 
-def test_the_allowance_is_exactly_this_one_line():
-    """허용 목록이 소리 없이 늘어나는 것을 막는다.
+def test_this_guard_has_no_exception_mechanism():
+    """예외 통로가 소리 없이 생기는 것을 막는다.
 
-    새 허용을 넣으려면 이 테스트도 고쳐야 하므로, 그 결정이 리뷰에 보인다.
+    한동안 허용 목록이 있었다(리포 URL·지운 스택 이름·uuid5 씨드). 넷 다 "우리
+    코드 밖의 실체가 옛 이름을 갖고 있다"였고, 넷 다 그 실체를 옮기거나 지우면서
+    사라졌다. 지금은 예외가 0이므로 목록도 없다.
 
-    경로만 비교하면 통과하지 못한다 — 패턴까지 값으로 고정한다. ALLOWED의
-    주석은 패턴을 넓히지 말라고 말하지만, 집합 비교는 경로만 보므로 그 파일의
-    패턴을 맨 `pathfinder`로 넓혀도 통과해 버린다 — 그렇게 넓힌 순간 그 파일의
-    나머지 회귀는 이 가드가 더 이상 잡지 못한다. 패턴 문자열까지 비교하면 그
-    넓히기 자체가 여기서 실패한다.
+    빈 목록을 남겨 두지 않는 이유: 쓰이지 않는 예외 통로는 넓혀도 아무 테스트가
+    깨지지 않는 자리가 된다. 다시 필요해지면 기계를 되살리는 커밋이 그 결정을
+    리뷰에 드러낸다 — 이 테스트가 먼저 깨져서 그렇게 만든다.
     """
-    assert {rel: p.pattern for rel, p in ALLOWED.items()} == {
-        "infra/lib/deploy-source.ts": r"ai-plc-pathfinder",
-    }
+    assert not hasattr(_this_module(), "ALLOWED"), (
+        "허용 기계를 되살렸다면 왜 필요한지, 왜 그 범위인지를 이 테스트와 함께 "
+        "고쳐라 — 목록의 존재 자체가 리뷰에 보여야 한다")
 
 
-def test_every_allowance_still_points_at_a_real_line():
-    """허용 목록이 유령을 가리키지 않는다 — 가리키는 값이 실제로 바뀌면 실패한다."""
-    for rel, pattern in ALLOWED.items():
-        text = (REPO / rel).read_text(encoding="utf-8")
-        assert pattern.search(text), f"{rel}의 허용 패턴이 더는 실재를 가리키지 않는다"
+def _this_module():
+    import sys
+    return sys.modules[__name__]
 
 
 def test_the_session_id_seed_derives_the_migrated_uuid():
