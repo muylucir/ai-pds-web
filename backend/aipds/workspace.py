@@ -1,4 +1,4 @@
-# backend/pathfinder/workspace.py
+# backend/aipds/workspace.py
 from __future__ import annotations
 from aipds.models import QuestionFile, ProjectState, AuditEntry
 from aipds.parsers.questions import parse_question_file, serialize_answers

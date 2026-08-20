@@ -1,4 +1,4 @@
-# backend/pathfinder/proto/session.py — PrototypeSession: one prototype build
+# backend/aipds/proto/session.py — PrototypeSession: one prototype build
 # session's orchestration.
 #
 # Post-MicroVM shape: no boot, no HTTP file push, no VM stop. What remains is

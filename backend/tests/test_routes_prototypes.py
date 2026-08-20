@@ -1716,7 +1716,7 @@ def test_list_state_built_for_a_completed_session(proto_env, monkeypatch):
 
 # ---- 긴 입력을 URL에서 빼는 2단계 핸들 (HTTP 431 결함) ----
 #
-# 워크스페이스 채팅과 같은 결함이다(pathfinder/turn_handles.py 헤더의 실측):
+# 워크스페이스 채팅과 같은 결함이다(aipds/turn_handles.py 헤더의 실측):
 # 긴 한글 입력이 URL에 실리면 요청 라인이 커져 프록시가 431을 내고,
 # EventSource는 상태 코드를 노출하지 않아 "연결이 끊어졌습니다"만 보인다.
 

@@ -1,4 +1,4 @@
-# backend/pathfinder/survey/inputs.py — 설문 문항 생성이 프로토타입 스펙 밖에서
+# backend/aipds/survey/inputs.py — 설문 문항 생성이 프로토타입 스펙 밖에서
 # 끌어오는 Envision 산출물.
 #
 # **왜 스펙만으로는 부족한가.** 스펙의 `Problem Statement`·`Business Value`는

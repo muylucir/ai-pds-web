@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/prompts.py — Discovery 에이전트가 **읽는** 텍스트의
+# backend/aipds/agent/prompts.py — Discovery 에이전트가 **읽는** 텍스트의
 # 언어별 두 벌.
 #
 # 여기 있는 것은 전부 모델 컨텍스트에 들어간다: MCP 도구 설명(매 턴 도구 목록과

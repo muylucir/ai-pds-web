@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/pending_store.py — pending 질문의 S3 영속.
+# backend/aipds/agent/pending_store.py — pending 질문의 S3 영속.
 #
 # 왜 필요한가: Strands는 세션에 pending interrupt를 함께 영속했지만(그래서
 # agent._interrupt_state를 읽으면 됐다), Claude Agent SDK의 session store는

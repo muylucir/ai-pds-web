@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/session_store.py — SDK SessionStore adapter over S3
+# backend/aipds/agent/session_store.py — SDK SessionStore adapter over S3
 # for DISCOVERY (ClaudeDriver).
 #
 # Why this exists: the CLI keeps its transcript on LOCAL DISK

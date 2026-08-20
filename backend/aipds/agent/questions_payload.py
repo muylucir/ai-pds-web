@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/questions_payload.py — ask_questions 페이로드 정규화.
+# backend/aipds/agent/questions_payload.py — ask_questions 페이로드 정규화.
 #
 # 왜 필요한가: 마크다운 경로(parsers/questions.py)는 is_other를 코드가 판정한다
 # (letter == "X" 또는 텍스트가 "other"로 시작). 반면 ask_questions는 모델이 만든

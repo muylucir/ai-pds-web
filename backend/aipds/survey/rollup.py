@@ -1,4 +1,4 @@
-# backend/pathfinder/survey/rollup.py — pure aggregation: responses -> Rollup.
+# backend/aipds/survey/rollup.py — pure aggregation: responses -> Rollup.
 #
 # Kept free of S3/HTTP so the dashboard's numbers are unit-testable, and so a
 # rollup rebuild is a pure re-derivation from the response objects (which are

@@ -1,4 +1,4 @@
-# backend/pathfinder/parsers/audit.py
+# backend/aipds/parsers/audit.py
 from __future__ import annotations
 import re
 from aipds.models import AuditEntry

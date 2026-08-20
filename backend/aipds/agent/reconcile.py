@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/reconcile.py — 워크스페이스에서 UI 이벤트를 **유도**한다.
+# backend/aipds/agent/reconcile.py — 워크스페이스에서 UI 이벤트를 **유도**한다.
 #
 # **왜 이 모듈이 생겼는가.** 스테이지 사이드바와 Prototypes 카드는 원래 모델이
 # 부르는 MCP 도구(`report_stage`, `handoff_prototype`)가 만들었다. 도구는 모델이

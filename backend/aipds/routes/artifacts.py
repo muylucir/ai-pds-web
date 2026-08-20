@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/artifacts.py
+# backend/aipds/routes/artifacts.py
 import asyncio
 import io
 import re

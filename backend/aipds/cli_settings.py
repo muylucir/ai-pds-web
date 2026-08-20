@@ -1,4 +1,4 @@
-# backend/pathfinder/cli_settings.py — 번들 CLI에 넘기는 컨텍스트 설정.
+# backend/aipds/cli_settings.py — 번들 CLI에 넘기는 컨텍스트 설정.
 #
 # 두 에이전트(Discovery 드라이버, 프로토타입 빌더)가 같은 CLI를 서브프로세스로
 # 띄우므로 두 곳이 같은 값을 쓴다. 그래서 값을 만드는 곳을 여기 하나로 둔다 —

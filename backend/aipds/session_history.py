@@ -1,4 +1,4 @@
-# backend/pathfinder/session_history.py
+# backend/aipds/session_history.py
 """S3 세션 트랜스크립트 → 채팅 히스토리 변환.
 
 위치: `discovery/transcript/{session}/main/NNNNNNNN.jsonl`

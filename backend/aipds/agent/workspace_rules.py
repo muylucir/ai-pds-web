@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/workspace_rules.py — 상류 AI-PLC 레이아웃을
+# backend/aipds/agent/workspace_rules.py — 상류 AI-PLC 레이아웃을
 # 워크스페이스에 재현하고, 언어 지시를 그 앞에 붙인다.
 #
 # 상류(aws-samples/sample-ai-plc)의 Claude Code 셋업은 core-workflow.md를

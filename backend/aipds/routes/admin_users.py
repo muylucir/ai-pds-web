@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/admin_users.py — 사용자 관리 (admin 전용).
+# backend/aipds/routes/admin_users.py — 사용자 관리 (admin 전용).
 #
 # 신규 가입은 초대로만 가능하다(풀은 AllowAdminCreateUserOnly). 이 라우터가 그
 # 초대 창구다. Cognito 호출 자체는 auth/cognito.py가 담당하고, 여기서는 정책만

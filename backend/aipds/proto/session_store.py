@@ -1,4 +1,4 @@
-# backend/pathfinder/proto/session_store.py — SDK SessionStore adapter over S3.
+# backend/aipds/proto/session_store.py — SDK SessionStore adapter over S3.
 #
 # This is what makes prototype build context outlive a session: the SDK mirrors
 # every transcript line here, and on resume it loads them back and materializes

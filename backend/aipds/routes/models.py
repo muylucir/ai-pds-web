@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/models.py — 모델 카탈로그.
+# backend/aipds/routes/models.py — 모델 카탈로그.
 #
 # 두 라우터로 나뉘는 이유는 권한이 다르기 때문이다:
 #   router       GET /models        — 프로젝트 생성 화면의 콤보박스(일반 사용자)

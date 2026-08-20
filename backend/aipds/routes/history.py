@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/history.py
+# backend/aipds/routes/history.py
 #
 # 트랜스크립트는 `projects/{pid}/discovery/transcript/...` 한 곳에만 있다 —
 # ClaudeDriver가 `s3_store_factory(pid)`로 받은 스토어에 쓴다

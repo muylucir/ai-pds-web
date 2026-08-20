@@ -1,4 +1,4 @@
-# backend/pathfinder/survey/store.py — S3 persistence for validation surveys.
+# backend/aipds/survey/store.py — S3 persistence for validation surveys.
 #
 # Layout (spec §3), under the project prefix:
 #   prototypes/{slug}/survey/questionnaire.json   definition + token + status

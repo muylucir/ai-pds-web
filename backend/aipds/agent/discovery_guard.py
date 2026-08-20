@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/discovery_guard.py — Discovery의 쓰기 범위 판정.
+# backend/aipds/agent/discovery_guard.py — Discovery의 쓰기 범위 판정.
 #
 # **왜 이 파일이 생겼는가(2026-08-16의 결함).** Discovery 에이전트가 워크스페이스에
 # 프로토타입을 `prototype/index.html`로 만들어 버렸다. 빌드·호스팅은 Prototypes

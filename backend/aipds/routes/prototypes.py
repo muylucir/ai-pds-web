@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/prototypes.py — prototype build sessions + hosting.
+# backend/aipds/routes/prototypes.py — prototype build sessions + hosting.
 #
 # REST + SSE for the prototype tab: session lifecycle against an in-process
 # build agent (PrototypeSession) and local hosting (ProtoHost) -- start/stop a
@@ -330,7 +330,7 @@ async def create_session_turn(pid: str, slug: str, body: TurnBody):
 
     워크스페이스 채팅(routes/turns.py의 create_turn)과 같은 이유다:
     EventSource는 GET만 지원해 본문을 실을 수 없고, 긴 입력이 URL에 실리면
-    프록시가 431을 낸다(pathfinder/turn_handles.py 헤더의 실측).
+    프록시가 431을 낸다(aipds/turn_handles.py 헤더의 실측).
 
     세션 존재를 여기서 확인해 없으면 404로 끝낸다 — 핸들만 받고 스트림에서
     404가 나면 사용자는 "연결이 끊어졌습니다"만 본다.
@@ -647,7 +647,7 @@ async def start_host(pid: str, slug: str):
             _log.warning(
                 "design profile present but %s/%s has no theme copy under "
                 "prototype/ -- re-hosting cannot re-brand it; an improvement "
-                "session must run once to import aipds-theme.css first",
+                "session must run once to import pathfinder-theme.css first",
                 pid, slug)
     except Exception:
         # 브랜드 반영 실패가 호스팅 자체를 막지는 않는다 -- 화면이 열리는 것이

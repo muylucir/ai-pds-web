@@ -1,4 +1,4 @@
-# backend/pathfinder/proto/limits.py — global cap on concurrent prototype
+# backend/aipds/proto/limits.py — global cap on concurrent prototype
 # builds.
 #
 # The MicroVM era had no cap: each build booted its own VM in Tokyo and AWS

@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/claude_driver.py — Discovery agent driver on the
+# backend/aipds/agent/claude_driver.py — Discovery agent driver on the
 # Claude Agent SDK, running IN-PROCESS (no VM). The ONLY Discovery driver; the
 # `strands` fallback was deleted (see app.driver_factory for why). It still
 # implements runner.py's three-method contract, asserted by

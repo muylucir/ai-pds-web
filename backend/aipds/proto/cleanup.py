@@ -1,4 +1,4 @@
-# backend/pathfinder/proto/cleanup.py — 프로젝트 단위 프로토타입 정리.
+# backend/aipds/proto/cleanup.py — 프로젝트 단위 프로토타입 정리.
 #
 # 프로토타입은 **기록과 실체가 다른 곳에 산다.** S3의 projects/{pid}/prototypes/**
 # 는 기록(스펙·트랜스크립트·handoff·설문)이고, 실체는 EC2 로컬 디스크의

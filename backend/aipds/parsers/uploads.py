@@ -1,4 +1,4 @@
-# backend/pathfinder/parsers/uploads.py
+# backend/aipds/parsers/uploads.py
 """업로드 파일 → 에이전트가 file_read로 읽을 텍스트 변환.
 
 xlsx는 VM 안 에이전트가 직접 못 읽으므로(텍스트 도구뿐) 업로드 시점에

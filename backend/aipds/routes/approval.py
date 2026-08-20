@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/approval.py — 문서 승인 게이트.
+# backend/aipds/routes/approval.py — 문서 승인 게이트.
 #
 # 왜 별도 라우트인가(POST /message로 "승인"을 보내는 것으로 충분하지 않은
 # 이유): 그 경로는 승인의 유일한 기록이 **에이전트가 쓰는 audit.md**였다.

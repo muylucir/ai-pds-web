@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/design.py — 브랜드 디자인 프로필(관리자 전용).
+# backend/aipds/routes/design.py — 브랜드 디자인 프로필(관리자 전용).
 #
 # 라우터 전체에 require_admin을 붙인다(admin_users.py·models.py와 같은
 # 규율) — 라우트마다 붙이는 것을 잊을 여지를 없앤다.

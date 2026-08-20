@@ -1,4 +1,4 @@
-# backend/pathfinder/auth/models.py
+# backend/aipds/auth/models.py
 from __future__ import annotations
 
 from dataclasses import dataclass

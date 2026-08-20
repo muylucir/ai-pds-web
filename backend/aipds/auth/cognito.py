@@ -1,4 +1,4 @@
-# backend/pathfinder/auth/cognito.py
+# backend/aipds/auth/cognito.py
 #
 # Cognito Admin* API 래퍼. boto3 호출을 라우트에서 분리하는 이유는 s3store.py와
 # 같다: 라우트는 정책(마지막 관리자 보호, 부분 실패 롤백)만 다루고, 이 파일은

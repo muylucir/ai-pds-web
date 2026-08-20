@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/projects.py
+# backend/aipds/routes/projects.py
 import asyncio
 import logging
 from datetime import datetime, timezone

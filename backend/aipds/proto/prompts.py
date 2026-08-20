@@ -1,4 +1,4 @@
-# backend/pathfinder/proto/prompts.py — 빌드 에이전트의 개시 프롬프트, 언어별.
+# backend/aipds/proto/prompts.py — 빌드 에이전트의 개시 프롬프트, 언어별.
 #
 # **조립하지 않고 언어별로 완성된 문장 두 벌을 유지한다.** 이 프롬프트는 빌드
 # 에이전트의 유일한 브레이크다(proto/session.py의 first_prompt docstring):

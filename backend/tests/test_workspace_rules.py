@@ -149,7 +149,7 @@ def test_the_language_directive_is_code_not_a_file():
     assert all(v.strip() for v in LANGUAGE_DIRECTIVES.values())
 
     repo = Path(__file__).resolve().parents[2]
-    assert not (repo / "backend" / "pathfinder" / "agent" / "language").exists(), (
+    assert not (repo / "backend" / "aipds" / "agent" / "language").exists(), (
         "언어 지시가 다시 파일이 됐다 — 상수여야 '없는 상태'가 불가능하다")
 
 

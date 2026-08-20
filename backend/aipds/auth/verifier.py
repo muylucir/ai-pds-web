@@ -1,4 +1,4 @@
-# backend/pathfinder/auth/verifier.py
+# backend/aipds/auth/verifier.py
 #
 # Cognito access 토큰 검증. 서명 검증은 PyJWT에 맡긴다(암호 코드를 직접 쓰지 않는다).
 #

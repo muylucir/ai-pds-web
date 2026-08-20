@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/question_file_answers.py — 제출된 답변을 질문 파일의
+# backend/aipds/agent/question_file_answers.py — 제출된 답변을 질문 파일의
 # `[Answer]:` 칸에 되기록한다.
 #
 # **왜 필요한가.** ai-plc 워크플로우는 질문 파일이 답안지라는 전제로 돌아간다:

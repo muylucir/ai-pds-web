@@ -1,4 +1,4 @@
-# backend/pathfinder/survey/builder.py — PROTOTYPE spec -> survey questions.
+# backend/aipds/survey/builder.py — PROTOTYPE spec -> survey questions.
 #
 # One agent turn, not the Discovery StrandsDriver: that driver bakes in the
 # AIPLC rules system prompt, the workspace tool set and a session manager, none
