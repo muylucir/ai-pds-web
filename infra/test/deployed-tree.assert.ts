@@ -114,15 +114,25 @@ function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
     'rule/aiplc-rules/aws-aiplc-rules/core-workflow.md',
     // 언어 지시는 2026-08-18에 룰셋 트리 밖으로 나왔다 — 업스트림 aiplc-rules/에는
     // language/ 가 없으므로, 룰셋을 통째로 갈아 끼울 때 우리 콘텐츠가 함께
-    // 사라지지 않아야 한다(backend/pathfinder/agent/workspace_rules.py).
-    'backend/pathfinder/agent/language/ko.md',
-    'backend/pathfinder/agent/language/en.md',
+    // 사라지지 않아야 한다.
+    //
+    // **그 뒤 2026-08-19(8b58cba)에 파일에서 코드로 다시 옮겼다** —
+    // `language/{ko,en}.md` 두 파일이 `workspace_rules.LANGUAGE_DIRECTIVES`
+    // 상수가 됐다. 이 목록은 그것을 따라가지 못해 지운 파일을 계속 요구했고,
+    // 그날부터 이 단정이 실패했다(런타임 영향은 없다 — 부팅이 그 파일을 필요로
+    // 하지 않는다). backend/tests/test_workspace_rules.py의
+    // `test_the_language_directive_is_code_not_a_file`이 정반대를 단정하므로,
+    // 두 테스트가 서로 모순한 상태였다.
+    //
+    // 불변식은 그대로다: **언어 지시가 인스턴스에 실린다.** 실리는 자리만
+    // 파일에서 이 모듈로 바뀌었다.
+    'backend/pathfinder/agent/workspace_rules.py',
   ]) {
     assert.ok(files.has(rel),
       `${rel} must be tracked — the instance clones the repo, so anything ` +
       'untracked simply does not exist at /opt/pathfinder');
   }
-  console.log('OK  deployed tree: rules, both language directives, both config dirs and the lockfile ship');
+  console.log('OK  deployed tree: rules, the language directives, both config dirs and the lockfile ship');
 }
 
 testNoUnexpectedClaudeMdInTheDeployedTree();
