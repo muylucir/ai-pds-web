@@ -280,7 +280,7 @@ cd ../frontend && npm install
 cp ../backend/.env.example ../backend/.env      # take the values from the CfnOutputs above
 
 # terminal 1 — backend
-cd backend && .venv/bin/python -m uvicorn pathfinder.app:app --host 0.0.0.0 --port 8000 --reload
+cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
 
 # terminal 2 — frontend
 cd frontend && npm run dev            # http://localhost:3000

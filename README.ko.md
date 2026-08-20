@@ -261,7 +261,7 @@ cd ../frontend && npm install
 cp ../backend/.env.example ../backend/.env      # 값은 위 CfnOutputs에서 가져온다
 
 # 터미널 1 — 백엔드
-cd backend && .venv/bin/python -m uvicorn pathfinder.app:app --host 0.0.0.0 --port 8000 --reload
+cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
 
 # 터미널 2 — 프론트엔드
 cd frontend && npm run dev            # http://localhost:3000
