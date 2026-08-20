@@ -35,7 +35,7 @@ from pathfinder.proto.session import has_build_output, purge_session_state
 # 주석 참고). proto_public은 pathfinder.app을 함수 안에서만 import하므로
 # 최상위 import가 순환을 만들지 않는다.
 from pathfinder.routes.proto_public import access_url_path
-from pathfinder.survey.store import purgeable_response_count
+from pathfinder.survey.store import survey_summary
 from pathfinder.proto import layout as proto_layout
 
 _log = logging.getLogger(__name__)
@@ -211,19 +211,18 @@ async def list_prototypes(pid: str):
     host = app_module.proto_host()
     ordered = sorted(slugs.items())
     # **슬러그별 S3 왕복을 미리 병렬로 걷는다.** 예전에는 루프 안에서 카드마다
-    # `s3.list(bundle)`과 `purgeable_response_count`를 순차로 await 해서 카드 N개에
+    # `s3.list(bundle)`과 설문 조회를 순차로 await 해서 카드 N개에
     # 2N번 왕복이었다 — 실측(2026-08-17): 왕복 1회 30ms이므로 카드 10개면 0.6초가
     # 목록 조회에 그대로 붙는다. gather는 입력 순서대로 돌려주므로 아래 zip이
     # 안전하다.
-    bundle_lists, response_counts = await asyncio.gather(
+    bundle_lists, surveys = await asyncio.gather(
         asyncio.gather(*(s3.list(f"prototypes/{slug}/bundle/")
                          for slug, _ in ordered)),
-        asyncio.gather(*(purgeable_response_count(s3, slug)
-                         for slug, _ in ordered)),
+        asyncio.gather(*(survey_summary(s3, slug) for slug, _ in ordered)),
     )
     out = []
-    for (slug, spec_path), bundle_keys, response_count in zip(
-            ordered, bundle_lists, response_counts):
+    for (slug, spec_path), bundle_keys, survey in zip(
+            ordered, bundle_lists, surveys):
         state = "none"
         port: int | None = None
 
@@ -247,7 +246,15 @@ async def list_prototypes(pid: str):
             state = "failed"
 
         # Rides the list so the reset confirmation can name the number of
-        # answers about to be destroyed without a second round trip.
+        # answers about to be destroyed without a second round trip, and so a
+        # card can say "no survey" at all.
+        #
+        # **`has_survey`가 `response_count > 0`과 다른 질문이다.** 설문이 없을
+        # 때도 0이고 설문이 있는데 응답이 아직 없을 때도 0이라, 카드는 두 상태를
+        # 구별할 수 없었다 — 실측 test2222에서 프로토타입 3개 중 1개에만 설문이
+        # 있었는데 화면에 그 사실이 없어 나머지 둘이 빠진 것을 알아차릴 방법이
+        # 없었다. 두 값이 `survey_summary`의 **한 번의 list**에서 함께 나오므로
+        # 필드가 늘어도 왕복은 그대로다.
         #
         # Delegated to survey/store.py rather than counted here from
         # `responses_prefix`: that prefix is the CURRENT round only, but
@@ -275,7 +282,8 @@ async def list_prototypes(pid: str):
         out.append({"slug": slug, "spec_path": spec_path,
                     "state": state, "port": port,
                     "access_url": access_url,
-                    "response_count": response_count})
+                    "response_count": survey.responses,
+                    "has_survey": survey.exists})
     # Capacity travels with the list so a card can explain a 429 before the
     # user clicks (the cap is new -- MicroVM builds had no ceiling).
     return {"prototypes": out, **app_module.build_semaphore.snapshot()}

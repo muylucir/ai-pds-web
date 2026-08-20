@@ -118,6 +118,24 @@ export function PrototypeCard({
           >
             {phaseKey ? t(phaseKey) : badgeLabel}
           </span>
+          {/* 설문 상태. **`state !== "none"`일 때만 건다** — 아직 빌드할 것도
+              없는 단계에서 "설문 없음"은 할 일처럼 읽혀 잡음이 된다.
+
+              `has_survey`가 필요한 이유는 `response_count`가 두 상태에서 같기
+              때문이다: 설문이 없어도 0, 설문이 있고 응답이 아직 없어도 0. 실측
+              test2222에서 프로토타입 3개 중 1개에만 설문이 있었는데 카드에 그
+              사실이 없어 나머지 둘이 빠진 것을 알아차릴 방법이 없었다. */}
+          {info.state !== "none" && (
+            <span
+              className={`text-[11px] shrink-0 ${
+                info.has_survey ? "text-slate-500" : "text-amber-600"
+              }`}
+            >
+              {info.has_survey
+                ? t("proto.surveyResponses").replace("{n}", String(info.response_count))
+                : t("proto.surveyNone")}
+            </span>
+          )}
         </div>
         <span className="block text-[11px] text-slate-400 mt-0.5 truncate">{info.spec_path}</span>
       </div>

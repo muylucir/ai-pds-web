@@ -191,6 +191,8 @@ export const en: Record<keyof typeof ko, string> = {
   "proto.resetAria": "reset",
   "proto.reset": "Reset",
   "proto.survey": "Survey",
+  "proto.surveyNone": "No survey",
+  "proto.surveyResponses": "Survey · {n} responses",
   "proto.download": "Download",
   "survey.loadFailed": "Could not load the survey.",
   "survey.generateFailed": "Could not generate the questions. Please try again.",

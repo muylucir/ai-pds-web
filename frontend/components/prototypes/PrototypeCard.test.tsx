@@ -12,6 +12,7 @@ function info(overrides: Partial<PrototypeInfo>): PrototypeInfo {
     port: null,
     access_url: null,
     response_count: 0,
+    has_survey: false,
     ...overrides,
   };
 }
@@ -292,6 +293,7 @@ const BUILT_Q: PrototypeInfo = {
   port: null,
   access_url: null,
   response_count: 0,
+  has_survey: false,
 };
 
 describe("호스팅 시작 중 진행 표시", () => {
@@ -316,5 +318,39 @@ describe("호스팅 시작 중 진행 표시", () => {
                           onBuild={vi.fn()} onStartHost={vi.fn()} onStopHost={vi.fn()} />);
     expect(screen.getByText("빌드 완료")).toBeInTheDocument();
     expect(screen.queryByText(/설치 중|시작 중/)).not.toBeInTheDocument();
+  });
+});
+
+
+describe("PrototypeCard — 설문 표시", () => {
+  // 실측 test2222: 프로토타입 3개 중 1개에만 설문이 있었는데 카드에 그 사실이
+  // 없어 나머지 둘이 빠진 것을 알아차릴 방법이 없었다. `response_count`만으로는
+  // 표현할 수 없다 — 설문 없음도 0, 응답 0건도 0이다.
+
+  it("설문이 없으면 '설문 없음'을 보여준다", () => {
+    render(<PrototypeCard info={info({ state: "built", has_survey: false })}
+                          busy={false} {...noop} />);
+    expect(screen.getByText("설문 없음")).toBeInTheDocument();
+  });
+
+  it("설문이 있으면 응답 수를 보여준다", () => {
+    render(<PrototypeCard info={info({ state: "built", has_survey: true, response_count: 3 })}
+                          busy={false} {...noop} />);
+    expect(screen.getByText("설문 · 응답 3건")).toBeInTheDocument();
+    expect(screen.queryByText("설문 없음")).not.toBeInTheDocument();
+  });
+
+  it("설문이 있고 응답이 0건이어도 '설문 없음'이 아니다", () => {
+    render(<PrototypeCard info={info({ state: "built", has_survey: true, response_count: 0 })}
+                          busy={false} {...noop} />);
+    expect(screen.getByText("설문 · 응답 0건")).toBeInTheDocument();
+    expect(screen.queryByText("설문 없음")).not.toBeInTheDocument();
+  });
+
+  it("빌드 전 프로토타입에는 설문 표시를 걸지 않는다", () => {
+    // 아직 만들 것이 없는 단계에서 "설문 없음"은 할 일처럼 읽혀 잡음이 된다.
+    render(<PrototypeCard info={info({ state: "none", has_survey: false })}
+                          busy={false} {...noop} />);
+    expect(screen.queryByText("설문 없음")).not.toBeInTheDocument();
   });
 });

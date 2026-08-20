@@ -14,6 +14,7 @@ import csv
 import io
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from pathfinder.survey.models import Questionnaire, Rollup, SurveyResponse
@@ -68,13 +69,47 @@ async def purgeable_response_count(project_s3, slug: str) -> int:
     bucket-root boto3 client per slug, which this question does not need (only
     the project store).
     """
+    return (await survey_summary(project_s3, slug)).responses
+
+
+@dataclass(frozen=True)
+class SurveySummary:
+    """이 프로토타입의 설문에 대해 목록 라우트가 알아야 하는 전부."""
+
+    #: 지금 응답을 받을 수 있는 설문이 있는가(= 라이브 `questionnaire.json`).
+    exists: bool
+    #: 리셋이 파괴할 답변 수 — 라이브 회차와 아카이브된 회차를 합친다.
+    responses: int
+
+
+async def survey_summary(project_s3, slug: str) -> SurveySummary:
+    """설문 존재 여부와 응답 수. **왕복 하나로 둘 다 답한다.**
+
+    **왜 존재 여부가 따로 필요한가(2026-08-20 실측).** 응답 수만으로는 "설문이
+    없다"와 "설문은 있고 응답이 0건이다"가 구별되지 않는다. 둘 다 0이다. 그래서
+    카드가 "이 프로토타입에는 설문이 없다"를 말할 수 없었고, test2222에서
+    프로토타입 3개 중 1개에만 설문이 있는데 화면에 그 사실이 없었다 — 나머지 둘의
+    설문이 빠진 것을 알아차릴 방법이 없었다.
+
+    **왜 한 번만 list하는가.** 목록 라우트가 카드마다 이 질문을 하므로(그 라우트가
+    `asyncio.gather`로 병렬화하는 이유이기도 하다) 왕복을 하나 늘리면 프로토타입
+    수만큼 늘어난다. 두 사실이 같은 키 목록에 다 들어 있어서 나눌 이유가 없다.
+
+    `exists`는 **라이브** questionnaire만 본다. 아카이브만 남은 상태
+    (`archive_current()` 직후 새 문항 생성이 502로 실패한 경우)에서 PM이 할 일은
+    설문을 다시 만드는 것이므로 "없음"이 맞다. 그래도 `responses`는 아카이브를
+    세는데, 리셋이 파괴할 답변이 실재하기 때문이다.
+    """
     keys = await project_s3.list(survey_prefix(slug))
     # Any `.../responses/{id}.json`, in the live round or any archived one.
     # Matched on the whole `/responses/` segment rather than a startswith so a
     # future sibling prefix (`responses-draft/`) cannot quietly inflate the
     # count; the trailing-slash exclusion skips the empty directory marker some
     # S3 console/CLI flows leave behind, which is not an answer.
-    return sum(1 for k in keys if "/responses/" in k and not k.endswith("/"))
+    return SurveySummary(
+        exists=questionnaire_key(slug) in keys,
+        responses=sum(1 for k in keys
+                      if "/responses/" in k and not k.endswith("/")))
 
 
 def questionnaire_md_key(slug: str) -> str:

@@ -29,6 +29,16 @@ The colours and typeface come from whatever the administrator uploaded under
 | Failed | The build did not finish | Check **Logs**, then **Rebuild** |`,
     },
     {
+      kind: "md",
+      md: `Next to the status badge the card also says whether a **validation survey** exists.
+It reads *No survey* until you create one, then *Survey · N responses* — a survey with zero
+responses is a different state from having no survey at all.
+
+That indicator matters most when you build several prototypes to compare. **Each card gets
+its own survey** — creating one on a prototype does not create one on the others, so make one
+for every prototype you want to validate.`,
+    },
+    {
       kind: "steps",
       items: [
         "**Start build** — a build session opens and the AI reads the spec and starts working.",

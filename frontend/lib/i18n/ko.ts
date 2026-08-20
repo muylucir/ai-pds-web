@@ -197,6 +197,8 @@ export const ko = {
   "proto.resetAria": "초기화",
   "proto.reset": "초기화",
   "proto.survey": "설문",
+  "proto.surveyNone": "설문 없음",
+  "proto.surveyResponses": "설문 · 응답 {n}건",
   "proto.download": "다운로드",
   // 설문 패널·대시보드
   "survey.loadFailed": "설문 정보를 불러오지 못했습니다.",

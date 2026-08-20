@@ -29,6 +29,14 @@ export interface PrototypeInfo {
   access_url: string | null;
   /** Survey answers that a reset would destroy — shown in its confirmation. */
   response_count: number;
+  /** 지금 응답을 받을 수 있는 설문이 있는가.
+   *
+   *  **`response_count > 0`과 다른 질문이다.** 설문이 없을 때도 0이고 설문이
+   *  있는데 응답이 아직 없을 때도 0이라, 이 필드 없이는 카드가 두 상태를 구별할
+   *  수 없다 — 실측 test2222에서 프로토타입 3개 중 1개에만 설문이 있었는데
+   *  화면에 그 사실이 없었다. 서버가 설문 트리를 이미 조회하는 그 한 번에서
+   *  함께 나온다(backend survey/store.py의 `survey_summary`). */
+  has_survey: boolean;
 }
 
 // Mirrors backend/pathfinder/proto/host.py's HostState Literal exactly.

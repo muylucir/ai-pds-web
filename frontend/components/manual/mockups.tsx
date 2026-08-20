@@ -213,7 +213,12 @@ function PrototypeCard() {
         <Panel>
           <div className="flex items-center justify-between">
             <span className="font-semibold text-slate-600">PROTOTYPE-*.md</span>
-            <Badge tone="emerald">{t("proto.statusRunning")}</Badge>
+            <span className="flex items-center gap-2">
+              <Badge tone="emerald">{t("proto.statusRunning")}</Badge>
+              <span className="text-[11px] text-slate-500">
+                {t("proto.surveyResponses").replace("{n}", "3")}
+              </span>
+            </span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Btn tone="primary">{t("proto.openPreview")}</Btn>

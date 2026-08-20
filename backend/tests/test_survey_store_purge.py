@@ -9,7 +9,7 @@ from fakes.in_memory_s3 import FakeS3Store
 from pathfinder.survey.store import (SurveyStore,
                                      purgeable_response_count,
                                      questionnaire_key, questionnaire_md_key,
-                                     results_md_key,
+                                     results_md_key, survey_summary,
                                      survey_prefix)
 
 pytestmark = pytest.mark.asyncio
@@ -255,3 +255,80 @@ async def test_purge_raises_on_an_unreadable_archived_questionnaire_too():
 
     assert "surveys/by-token/tok-old.json" in root_s3.blobs
     assert "surveys/by-token/tok-current.json" in root_s3.blobs
+
+
+# ---- survey_summary: 카드가 "설문 없음"을 표시할 수 있게 하는 신호 ----
+#
+# **왜 `purgeable_response_count`만으로는 안 되는가.** 그 값은 설문이 없을 때도
+# 0이고, 설문이 있는데 응답이 아직 없을 때도 0이다. 두 상태가 구별되지 않아서
+# 카드가 "이 프로토타입에는 설문이 없다"를 말할 수 없었다 — 실측 test2222에서
+# 프로토타입 3개 중 1개만 설문이 있었는데 화면에 그 사실이 없었다.
+#
+# **추가 S3 호출 없이 얻는다.** 이 함수는 종전과 똑같이 `survey_prefix(slug)`를
+# 한 번 list하고, 그 결과에서 두 사실을 같이 읽는다. 목록 라우트는 카드마다 이
+# 조회를 하므로 왕복을 늘리면 프로토타입 수만큼 늘어난다.
+
+async def test_summary_reports_no_survey_on_an_untouched_prototype():
+    project_s3 = FakeS3Store()
+    got = await survey_summary(project_s3, SLUG)
+    assert got.exists is False and got.responses == 0
+
+
+async def test_summary_distinguishes_a_survey_with_no_answers_yet():
+    """이것이 종전에 표현할 수 없던 상태다 — 설문은 있고 응답은 0건."""
+    project_s3, root_s3 = FakeS3Store(), FakeS3Store()
+    _seed_survey(project_s3, root_s3, "tok-current")
+    got = await survey_summary(project_s3, SLUG)
+    assert got.exists is True and got.responses == 0
+
+
+async def test_summary_counts_live_and_archived_answers():
+    project_s3, root_s3 = FakeS3Store(), FakeS3Store()
+    _seed_survey(project_s3, root_s3, "tok-current")
+    project_s3.blobs[f"{survey_prefix(SLUG)}responses/r1.json"] = "{}"
+    project_s3.blobs[
+        f"{survey_prefix(SLUG)}archive/2026-01-01T00:00:00Z/responses/a1.json"] = "{}"
+    got = await survey_summary(project_s3, SLUG)
+    assert got.exists is True and got.responses == 2
+
+
+async def test_summary_says_no_survey_when_only_an_archived_round_remains():
+    """아카이브만 남은 상태는 "설문 없음"이다.
+
+    `archive_current()`가 닫힌 회차를 옮긴 직후 새 문항 생성이 실패하면(502) 이
+    모양이 된다. 그때 PM이 할 일은 설문을 다시 만드는 것이므로 카드는 "없음"이라고
+    말해야 한다. 응답 수는 그래도 센다 — 리셋이 파괴할 답변이 실재한다.
+    """
+    project_s3, root_s3 = FakeS3Store(), FakeS3Store()
+    _seed_survey(project_s3, root_s3, "tok-old", closed_at="2026-01-01T00:00:00Z")
+    project_s3.blobs[
+        f"{survey_prefix(SLUG)}archive/2026-01-01T00:00:00Z/responses/a1.json"] = "{}"
+    got = await survey_summary(project_s3, SLUG)
+    assert got.exists is False
+    assert got.responses == 1
+
+
+async def test_summary_uses_one_listing():
+    """왕복 하나. 카드 N개면 N번 불리므로 여기서 늘면 N배로 늘어난다."""
+    project_s3, root_s3 = FakeS3Store(), FakeS3Store()
+    _seed_survey(project_s3, root_s3, "tok-current")
+    calls = []
+    original = project_s3.list
+
+    async def counting(prefix):
+        calls.append(prefix)
+        return await original(prefix)
+
+    project_s3.list = counting
+    await survey_summary(project_s3, SLUG)
+    assert calls == [survey_prefix(SLUG)]
+
+
+async def test_purgeable_count_agrees_with_the_summary():
+    """두 값이 갈라지면 리셋 경고와 카드 표시가 서로 다른 수를 말한다."""
+    project_s3, root_s3 = FakeS3Store(), FakeS3Store()
+    _seed_survey(project_s3, root_s3, "tok-current")
+    for i in range(3):
+        project_s3.blobs[f"{survey_prefix(SLUG)}responses/r{i}.json"] = "{}"
+    assert (await survey_summary(project_s3, SLUG)).responses == \
+        await purgeable_response_count(project_s3, SLUG)

@@ -282,7 +282,8 @@ def test_list_state_none(proto_env):
     assert body["prototypes"] == [{"slug": SLUG, "spec_path": SPEC_KEY,
                                    "state": "none", "port": None,
                                    "access_url": None,
-                                   "response_count": 0}]
+                                   "response_count": 0,
+                                   "has_survey": False}]
 
 
 def test_list_state_built(proto_env):
@@ -473,6 +474,29 @@ def test_list_reports_zero_responses_when_there_is_no_survey(proto_env):
     _seed_spec(proto_env["s3"])
     body = client.get(f"/projects/{PID}/prototypes").json()
     assert body["prototypes"][0]["response_count"] == 0
+
+
+def test_list_says_whether_a_survey_exists_at_all(proto_env):
+    """응답 수로는 표현할 수 없는 구분이다 — 설문 없음도 0, 응답 0건도 0이다.
+
+    실측 test2222: 프로토타입 3개 중 1개만 설문이 있었는데 카드에 그 사실이 없어
+    나머지 둘의 설문이 빠진 것을 알아차릴 방법이 없었다.
+    """
+    _seed_spec(proto_env["s3"])
+    assert client.get(f"/projects/{PID}/prototypes").json()[
+        "prototypes"][0]["has_survey"] is False
+
+    proto_env["s3"].blobs[f"prototypes/{SLUG}/survey/questionnaire.json"] = "{}"
+    assert client.get(f"/projects/{PID}/prototypes").json()[
+        "prototypes"][0]["has_survey"] is True
+
+
+def test_list_reports_a_survey_that_has_no_answers_yet(proto_env):
+    """설문은 있고 응답은 0건 — 카드가 "설문 없음"으로 오인하면 안 된다."""
+    _seed_spec(proto_env["s3"])
+    proto_env["s3"].blobs[f"prototypes/{SLUG}/survey/questionnaire.json"] = "{}"
+    info = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+    assert info["has_survey"] is True and info["response_count"] == 0
 
 
 def test_list_counts_archived_responses_because_a_reset_destroys_them(proto_env):
@@ -750,7 +774,8 @@ def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
     assert body["prototypes"] == [{"slug": SLUG, "spec_path": SPEC_KEY,
                                    "state": "none", "port": None,
                                    "access_url": None,
-                                   "response_count": 0}]
+                                   "response_count": 0,
+                                   "has_survey": False}]
 
 
 def test_reset_closes_a_live_session_and_frees_its_build_slot(proto_env, monkeypatch):
