@@ -43,7 +43,7 @@ class CreateProject(BaseModel):
     # (app.project_model의 폴백 체인).
     model_id: str | None = None
     # 이 프로젝트의 생성물 언어("ko"|"en"). 미지정이면 "ko"로 돈다.
-    # UI 언어(pf_lang 쿠키)와 별개다 — 이쪽은 문서·프로토타입·채팅의 언어이고
+    # UI 언어(aipds_lang 쿠키)와 별개다 — 이쪽은 문서·프로토타입·채팅의 언어이고
     # 생성 시점 1회 결정이다.
     language: str | None = None
 

@@ -104,7 +104,7 @@ def public_base_path(pid: str, slug: str) -> str:
 #: 쿠키 이름의 접두어. 프론트 프록시의 허용목록이 이 접두어로 판정하므로
 #: (frontend/lib/api/proxyAuth.ts의 forwardableCookies) 양쪽이 같아야 한다 —
 #: 어긋나면 쿠키가 백엔드에 닿지 않고 모든 프리뷰가 404가 된다.
-COOKIE_PREFIX = "pf_proto_"
+COOKIE_PREFIX = "aipds_proto_"
 
 
 def cookie_name(pid: str, slug: str) -> str:

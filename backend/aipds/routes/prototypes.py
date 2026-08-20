@@ -647,7 +647,7 @@ async def start_host(pid: str, slug: str):
             _log.warning(
                 "design profile present but %s/%s has no theme copy under "
                 "prototype/ -- re-hosting cannot re-brand it; an improvement "
-                "session must run once to import pathfinder-theme.css first",
+                "session must run once to import aipds-theme.css first",
                 pid, slug)
     except Exception:
         # 브랜드 반영 실패가 호스팅 자체를 막지는 않는다 -- 화면이 열리는 것이

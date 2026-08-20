@@ -65,7 +65,7 @@ describe("public survey page", () => {
 });
 
 describe("설문 언어가 화면 언어를 정한다", () => {
-  // 응답자는 외부인이라 pf_lang 쿠키가 없다 — layout의 Provider는 ko가 된다.
+  // 응답자는 외부인이라 aipds_lang 쿠키가 없다 — layout의 Provider는 ko가 된다.
   // 이 페이지만 그것을 무시하고 설문 언어를 쓴다.
   it("영어 설문은 영어로 그려진다", async () => {
     vi.spyOn(api, "getPublicSurvey").mockResolvedValue({

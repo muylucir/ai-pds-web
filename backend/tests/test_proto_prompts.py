@@ -127,7 +127,7 @@ def test_an_unknown_language_falls_back_to_korean():
 def test_design_rules_carry_every_directive(language):
     out = prompts.design_rules(language)
     # 파일 이름 둘과 "직접 고치지 마라"가 빠지면 지시가 성립하지 않는다.
-    assert "pathfinder-theme.css" in out
+    assert "aipds-theme.css" in out
     assert "DESIGN.md" in out
     for needle in (["복사", "import", "고치지", "시맨틱", "hex", "무관",
                     # 최종 리뷰 C1: globals.css *다음에* 루트 레이아웃에서
@@ -167,7 +167,7 @@ def test_design_rules_without_tokens_point_at_the_document(language):
         assert needle in out, f"{language}: {needle!r}가 없다"
     # 배선은 여전히 요구한다 — 이 import가 나중에 올라올 브랜드를 다시 빌드하지
     # 않고 이 프로토타입에 닿게 하는 유일한 길이다.
-    assert "pathfinder-theme.css" in out
+    assert "aipds-theme.css" in out
 
 
 @pytest.mark.parametrize("language", ["ko", "en"])
@@ -181,7 +181,7 @@ def test_design_rules_with_tokens_do_not_ask_for_a_manual_move(language):
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_theme_rejection_tells_the_agent_what_to_do(language):
     out = prompts.build_complete_theme_rejection(language)
-    assert "pathfinder-theme.css" in out
+    assert "aipds-theme.css" in out
     assert ("거부됨" in out) if language == "ko" else ("Rejected" in out)
     # 이 거부 문구는 design_rules와 같은 곳(globals.css *다음에* 루트
     # 레이아웃에서 import)을 지목해야 한다 — 그렇지 않으면 에이전트가

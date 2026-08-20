@@ -41,7 +41,7 @@ const HOP_BY_HOP = new Set([
   "content-encoding", "host",
   // ⚠️ "cookie"는 여기에 없다 — 일부러다. 쿠키 판정은 withBearer()가 한 곳에서
   // 한다(lib/api/proxyAuth.ts): 세션 JWT는 지우고 Authorization으로 번역하며,
-  // 프로토타입 접근 쿠키(pf_proto_*)만 허용목록으로 통과시킨다.
+  // 프로토타입 접근 쿠키(aipds_proto_*)만 허용목록으로 통과시킨다.
   //
   // 여기서도 지우면 withBearer가 볼 쿠키가 남지 않아 그 허용목록이 항상 빈
   // 값이 되고, /api/proto/* 프리뷰가 전부 404가 된다 — 그 트래픽도 이
