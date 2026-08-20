@@ -56,12 +56,12 @@ describe("POST /api/auth/refresh", () => {
     vi.stubGlobal("fetch", fetchSpy);
 
     const { POST } = await import("./route");
-    const res = await POST(request("pf_refresh=r-1") as never);
+    const res = await POST(request("aipds_refresh=r-1") as never);
 
     expect(res.status).toBe(200);
     const setCookie = res.headers.getSetCookie().join("\n");
-    expect(setCookie).toContain("pf_access=new-access");
-    expect(setCookie).toContain("pf_id=new-id");
+    expect(setCookie).toContain("aipds_access=new-access");
+    expect(setCookie).toContain("aipds_id=new-id");
     // httpOnly가 빠지면 갱신된 토큰만 JS로 읽히게 되어, 이 라우트가 XSS
     // 노출면을 새로 만드는 셈이 된다.
     expect(setCookie).toContain("HttpOnly");
@@ -74,7 +74,7 @@ describe("POST /api/auth/refresh", () => {
     vi.stubGlobal("fetch", fetchSpy);
 
     const { POST } = await import("./route");
-    await POST(request("pf_refresh=r-1") as never);
+    await POST(request("aipds_refresh=r-1") as never);
 
     const body = String(fetchSpy.mock.calls[0]?.[1]?.body ?? "");
     expect(body).toContain("grant_type=refresh_token");
@@ -99,7 +99,7 @@ describe("POST /api/auth/refresh", () => {
     vi.stubGlobal("fetch", stubTokenEndpoint({ error: "invalid_grant" }, 400));
 
     const { POST } = await import("./route");
-    const res = await POST(request("pf_refresh=stale") as never);
+    const res = await POST(request("aipds_refresh=stale") as never);
 
     expect(res.status).toBe(401);
     await expect(res.json()).resolves.toMatchObject({ authenticated: false });
@@ -114,9 +114,9 @@ describe("POST /api/auth/refresh", () => {
     }));
 
     const { POST } = await import("./route");
-    const res = await POST(request("pf_refresh=r-1") as never);
+    const res = await POST(request("aipds_refresh=r-1") as never);
 
     const setCookie = res.headers.getSetCookie().join("\n");
-    expect(setCookie).not.toContain("pf_refresh=");
+    expect(setCookie).not.toContain("aipds_refresh=");
   });
 });

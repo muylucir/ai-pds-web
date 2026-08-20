@@ -22,7 +22,7 @@ const PROTO_COOKIE_PREFIX = "aipds_proto_";
  *  기능이 동작하지 않는 쪽으로 실패한다.
  *
  *  프로토타입 접근 쿠키만 통과시키는 이유는 그것이 **백엔드가 판단해야 하는
- *  유일한 쿠키**이기 때문이다. 세션 JWT(pf_access/pf_id/pf_refresh)는 이
+ *  유일한 쿠키**이기 때문이다. 세션 JWT(aipds_access/aipds_id/aipds_refresh)는 이
  *  경계에서 멈추고 withBearer가 Authorization으로 번역한다 — 백엔드는 세션
  *  쿠키를 읽지 않는다. */
 export function forwardableCookies(cookieHeader: string | null | undefined): string | null {

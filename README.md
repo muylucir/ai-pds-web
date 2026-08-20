@@ -289,6 +289,11 @@ cd frontend && npm run dev            # http://localhost:3000
 `http://localhost:3000` → create a project (you pick the model and the **artifact language** here)
 → dashboard / workspace / document review / prototypes.
 
+If you already have a gitignored `backend/.env` from before this rename, update its keys to the
+`AIPDS_*` names shown in `.env.example`. The failure if you don't is silent: an unset
+`AIPDS_S3_BUCKET` just makes the app run local-only, and an unset `AIPDS_COGNITO_*` pair is a
+documented full auth bypass — neither prints a warning.
+
 ### When the browser is remote (behind a reverse proxy)
 
 If the browser reaches the app through a proxy hostname rather than `localhost`, the client's calls

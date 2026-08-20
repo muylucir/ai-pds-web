@@ -38,7 +38,7 @@ describe("GET /api/auth/callback", () => {
     const { GET } = await import("./route");
     const res = await GET(request(
       "https://app.example.com/api/auth/callback?code=c1&state=s1",
-      { pf_pkce: "verifier-1", pf_state: "s1", pf_next: "/projects/p1/dashboard" },
+      { aipds_pkce: "verifier-1", aipds_state: "s1", aipds_next: "/projects/p1/dashboard" },
     ) as never);
 
     expect(res.status).toBe(302);
@@ -47,17 +47,17 @@ describe("GET /api/auth/callback", () => {
 
     const setCookies = res.headers.getSetCookie();
     const joined = setCookies.join("\n");
-    for (const name of ["pf_access", "pf_id", "pf_refresh"]) {
+    for (const name of ["aipds_access", "aipds_id", "aipds_refresh"]) {
       expect(joined).toContain(`${name}=`);
     }
     // 토큰이 JS에 노출되지 않아야 한다 — 이 설계의 핵심 성질이다.
-    for (const c of setCookies.filter((c) => /^pf_(access|id|refresh)=/.test(c))) {
+    for (const c of setCookies.filter((c) => /^aipds_(access|id|refresh)=/.test(c))) {
       expect(c).toMatch(/HttpOnly/i);
       expect(c).toMatch(/SameSite=Lax/i);
     }
     // 왕복용 쿠키는 소비 후 삭제된다.
-    expect(joined).toMatch(/pf_pkce=;|pf_pkce=""/);
-    expect(joined).toMatch(/pf_state=;|pf_state=""/);
+    expect(joined).toMatch(/aipds_pkce=;|aipds_pkce=""/);
+    expect(joined).toMatch(/aipds_state=;|aipds_state=""/);
   });
 
   it("defaults to / when no next cookie was saved", async () => {
@@ -65,7 +65,7 @@ describe("GET /api/auth/callback", () => {
     const { GET } = await import("./route");
     const res = await GET(request(
       "https://app.example.com/api/auth/callback?code=c1&state=s1",
-      { pf_pkce: "v", pf_state: "s1" },
+      { aipds_pkce: "v", aipds_state: "s1" },
     ) as never);
     expect(res.headers.get("location")).toBe("/");
   });
@@ -76,7 +76,7 @@ describe("GET /api/auth/callback", () => {
     const { GET } = await import("./route");
     const res = await GET(request(
       "https://app.example.com/api/auth/callback?code=c1&state=attacker",
-      { pf_pkce: "v", pf_state: "ours" },
+      { aipds_pkce: "v", aipds_state: "ours" },
     ) as never);
     expect(res.status).toBe(302);
     expect(res.headers.get("location"))
@@ -85,18 +85,18 @@ describe("GET /api/auth/callback", () => {
   });
 
   it("clears the round-trip cookies even on a state mismatch", async () => {
-    // 실패 경로에서도 pf_pkce/pf_state/pf_next를 지운다 — 성공 경로에서만
+    // 실패 경로에서도 aipds_pkce/aipds_state/aipds_next를 지운다 — 성공 경로에서만
     // 지우면 실패한 시도의 PKCE 자재가 다음 로그인까지 브라우저에 남는다.
     mockTokenEndpoint();
     const { GET } = await import("./route");
     const res = await GET(request(
       "https://app.example.com/api/auth/callback?code=c1&state=attacker",
-      { pf_pkce: "v", pf_state: "ours", pf_next: "/somewhere" },
+      { aipds_pkce: "v", aipds_state: "ours", aipds_next: "/somewhere" },
     ) as never);
     const joined = res.headers.getSetCookie().join("\n");
-    expect(joined).toMatch(/pf_pkce=;|pf_pkce=""/);
-    expect(joined).toMatch(/pf_state=;|pf_state=""/);
-    expect(joined).toMatch(/pf_next=;|pf_next=""/);
+    expect(joined).toMatch(/aipds_pkce=;|aipds_pkce=""/);
+    expect(joined).toMatch(/aipds_state=;|aipds_state=""/);
+    expect(joined).toMatch(/aipds_next=;|aipds_next=""/);
   });
 
   it("rejects a missing verifier cookie", async () => {
@@ -104,7 +104,7 @@ describe("GET /api/auth/callback", () => {
     const { GET } = await import("./route");
     const res = await GET(request(
       "https://app.example.com/api/auth/callback?code=c1&state=s1",
-      { pf_state: "s1" },
+      { aipds_state: "s1" },
     ) as never);
     expect(res.headers.get("location"))
       .toBe("/login?error=state_mismatch");
@@ -128,7 +128,7 @@ describe("GET /api/auth/callback", () => {
     const { GET } = await import("./route");
     const res = await GET(request(
       "https://app.example.com/api/auth/callback?code=stale&state=s1",
-      { pf_pkce: "v", pf_state: "s1" },
+      { aipds_pkce: "v", aipds_state: "s1" },
     ) as never);
     expect(res.headers.get("location"))
       .toBe("/login?error=exchange_failed");
@@ -140,7 +140,7 @@ describe("GET /api/auth/callback", () => {
     const { GET } = await import("./route");
     const res = await GET(request(
       "https://app.example.com/api/auth/callback?code=c1&state=s1",
-      { pf_pkce: "v", pf_state: "s1", pf_next: "https://evil.example/steal" },
+      { aipds_pkce: "v", aipds_state: "s1", aipds_next: "https://evil.example/steal" },
     ) as never);
     expect(res.headers.get("location")).toBe("/");
   });
@@ -150,7 +150,7 @@ describe("GET /api/auth/callback", () => {
     const { GET } = await import("./route");
     const res = await GET(request(
       "https://app.example.com/api/auth/callback?code=c1&state=s1",
-      { pf_pkce: "v", pf_state: "s1", pf_next: "//evil.example/steal" },
+      { aipds_pkce: "v", aipds_state: "s1", aipds_next: "//evil.example/steal" },
     ) as never);
     expect(res.headers.get("location")).toBe("/");
   });
@@ -167,7 +167,7 @@ describe("GET /api/auth/callback — Location은 오리진을 새지 않는다",
     const res = await GET(request(
       // 프록시 뒤 상황 재현: 내부 주소로 들어온 요청.
       "http://localhost:3000/api/auth/callback?code=c1&state=s1",
-      { pf_pkce: "v", pf_state: "s1", pf_next: "/projects/p1/dashboard" },
+      { aipds_pkce: "v", aipds_state: "s1", aipds_next: "/projects/p1/dashboard" },
     ) as never);
     const location = res.headers.get("location")!;
     expect(location).toBe("/projects/p1/dashboard");
@@ -180,7 +180,7 @@ describe("GET /api/auth/callback — Location은 오리진을 새지 않는다",
     const { GET } = await import("./route");
     const res = await GET(request(
       "http://localhost:3000/api/auth/callback?code=c1&state=attacker",
-      { pf_pkce: "v", pf_state: "ours" },
+      { aipds_pkce: "v", aipds_state: "ours" },
     ) as never);
     const location = res.headers.get("location")!;
     expect(location).toBe("/login?error=state_mismatch");
@@ -197,7 +197,7 @@ describe("GET /api/auth/callback — Location은 오리진을 새지 않는다",
       mockTokenEndpoint();
       const res = await GET(request(
         "https://app.example.com/api/auth/callback?code=c1&state=s1",
-        { pf_pkce: "v", pf_state: "s1", pf_next: evil },
+        { aipds_pkce: "v", aipds_state: "s1", aipds_next: evil },
       ) as never);
       const location = res.headers.get("location")!;
       expect(location, `next=${evil}`).toBe("/");

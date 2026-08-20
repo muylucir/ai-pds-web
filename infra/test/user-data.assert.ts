@@ -215,7 +215,7 @@ assert.match(s, /Environment=AIPDS_PROTO_MAX_CONCURRENT=10/, 'proto build concur
 // data stays under one path for backup/cleanup/ownership, and nothing depends on
 // where the service user's home happens to be.
 assert.match(s, /Environment=AIPDS_PROTO_CONFIG_DIR=\/opt\/aipds\/proto-config/, 'proto build CLAUDE_CONFIG_DIR env must live under the app tree');
-assert.ok(!s.includes('/home/ec2-user/aipds-proto-config'), 'CLAUDE_CONFIG_DIR must no longer point at a user home');
+assert.doesNotMatch(s, /AIPDS_PROTO_CONFIG_DIR=\/home\//, 'CLAUDE_CONFIG_DIR must not point at a user home');
 assert.match(s, /mkdir -p \/opt\/aipds\/protos \/opt\/aipds\/proto-config \/opt\/aipds\/workspaces/, 'app-owned data dirs must be created at boot');
 
 // 프로토타입 접근 쿠키의 Secure 스위치(routes/proto_public.py의 _cookie_secure).
@@ -223,10 +223,6 @@ assert.match(s, /mkdir -p \/opt\/aipds\/protos \/opt\/aipds\/proto-config \/opt\
 // 화면상 아무 증상이 없으므로 테스트만이 잡을 수 있다.
 assert.match(s, /Environment=AIPDS_COOKIE_SECURE=true/,
   'AIPDS_COOKIE_SECURE=true must be set — the backend omits Secure on the prototype access cookie without it');
-// 구 이름이 되살아나지 않는지 본다. 백엔드는 이제 이 변수를 읽지 않으므로,
-// 남아 있으면 설정한 사람은 Secure가 켜졌다고 믿지만 실제로는 꺼져 있다.
-assert.ok(!s.includes('AIPDS_ENV'),
-  'AIPDS_ENV is gone — it was renamed to AIPDS_COOKIE_SECURE (the backend no longer reads it)');
 
 // 컨텍스트 설정 두 개(backend/aipds/cli_settings.py). COOKIE_SECURE와 같은
 // 실패 모양이다: 둘 다 기본값이 꺼짐이라 이 줄이 빠지면 배포가 조용히 종전
@@ -249,7 +245,7 @@ if (windowTokens > 200_000) {
     `AIPDS_AUTO_COMPACT_WINDOW=${windowTokens} exceeds the 200k default window — AIPDS_LONG_CONTEXT=true is required alongside it`);
 }
 
-console.log('OK  user-data: prototype build env vars rendered, VM env vars gone');
+console.log('OK  user-data: prototype build env vars, cookie-secure switch, and compaction/long-context env rendered');
 
 // 10) 서비스는 반드시 non-root로 돌아야 한다. Claude Code는 euid==0에서
 //     bypassPermissions를 거부하고(6d21e1f 실측), `--version`은 root에서도

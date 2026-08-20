@@ -270,6 +270,11 @@ cd frontend && npm run dev            # http://localhost:3000
 `http://localhost:3000` → 프로젝트 생성(모델과 **생성물 언어**를 여기서 고른다) → 대시보드 /
 워크스페이스 / 문서 리뷰 / 프로토타입.
 
+이 리네임 전에 만들어 둔 gitignore된 `backend/.env`가 있다면, 그 안의 키를
+`.env.example`에 있는 `AIPDS_*` 이름으로 바꾸세요. 안 바꿔도 증상이 없습니다:
+`AIPDS_S3_BUCKET`이 비어 있으면 앱은 그냥 로컬 전용으로 돌고, `AIPDS_COGNITO_*` 쌍이
+비어 있으면 인증이 전체 바이패스됩니다(문서화된 동작) — 둘 다 경고를 찍지 않습니다.
+
 ### 브라우저가 원격(리버스 프록시 뒤)일 때
 
 브라우저가 `localhost`가 아닌 프록시 호스트명으로 접속하면 클라이언트의 `localhost:8000`
