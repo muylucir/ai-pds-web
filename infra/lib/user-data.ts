@@ -223,7 +223,7 @@ Environment=AIPDS_COOKIE_SECURE=true
 # 이 둘은 **함께** 켠다(cli_settings.py). 윈도우만 올리면 컴팩션 전에 한도에 부딪힌다.
 Environment=AIPDS_AUTO_COMPACT_WINDOW=750000
 Environment=AIPDS_LONG_CONTEXT=true
-ExecStart=${APP}/backend/.venv/bin/uvicorn pathfinder.app:app --host 127.0.0.1 --port 8000
+ExecStart=${APP}/backend/.venv/bin/uvicorn aipds.app:app --host 127.0.0.1 --port 8000
 Restart=always
 [Install]
 WantedBy=multi-user.target

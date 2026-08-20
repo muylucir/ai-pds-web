@@ -193,7 +193,7 @@ assert.match(s, /AIPDS_S3_REGION=ap-northeast-2/, 'backend s3 region env');
 // 8) systemd 유닛
 assert.match(s, /pathfinder-backend\.service/, 'backend unit');
 assert.match(s, /pathfinder-frontend\.service/, 'frontend unit');
-assert.match(s, /uvicorn pathfinder\.app:app --host 127\.0\.0\.1 --port 8000/, 'uvicorn cmd');
+assert.match(s, /uvicorn aipds\.app:app --host 127\.0\.0\.1 --port 8000/, 'uvicorn cmd');
 assert.match(s, /next start -H 127\.0\.0\.1 -p 3000/, 'next start cmd');
 // 9) 시크릿 하드코딩되지 않음 (실제 값은 부팅 시점에만 존재)
 assert.ok(!s.includes('AbCdEf-value'), 'secret value never inlined');
