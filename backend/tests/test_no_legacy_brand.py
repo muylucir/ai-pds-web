@@ -12,24 +12,14 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
-#: 두 허용 모두 **우리 코드 밖의 진짜 이름**을 가리키는 값이다 — 우리 이름과
-#: 우리 코드는 전부 바꾼다; 밖의 것을 가리키는 참조는 밖의 실제 값과 맞아야
-#: 하므로 바꾸지 않는다. 그래서 이 파일이 아니라 여기 이 값 자체를 넓히는
+#: 단 하나 남은 허용은 **우리 코드 밖의 진짜 이름**을 가리키는 값이다 — 우리
+#: 이름과 우리 코드는 전부 바꾼다; 밖의 것을 가리키는 참조는 밖의 실제 값과
+#: 맞아야 하므로 바꾸지 않는다. 그래서 이 파일이 아니라 여기 이 값 자체를 넓히는
 #: 것은 금지다(아래 두 테스트가 목록의 크기와 각 줄의 실재를 함께 고정한다).
 ALLOWED = {
     # GitHub 리포 이름. 리포는 이 계획의 범위 밖이고 이름을 유지하는 것이
     # 결정 사항이다 — 이 값이 바뀌면 부팅의 `git clone`이 깨진다.
     "infra/lib/deploy-source.ts": re.compile(r"ai-plc-pathfinder"),
-    # session_store.py가 트랜스크립트를 S3에 미러링하는 키의 구성요소가 이
-    # uuid5 네임스페이스 씨드다 — 이름이 아니라 **해시 입력**이다. 이미 그
-    # 값으로 파생된 UUID 아래 데이터가 실존하므로(실측: project_id "ship" →
-    # `e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3`, 그 프리픽스 아래 실제
-    # `projects/ship/discovery/transcript/...jsonl`가 있다), 이 문자열을
-    # 바꾸면 씨드가 바뀌어 기존 세션 전부가 조용히 새 대화로 시작된다 — 마이
-    # 그레이션 절차가 지키기로 한 "명세·설문·응답은 살아 있다"를 정확히
-    # 어긴다. 아래 test_the_session_id_seed_derives_the_measured_uuid가 이
-    # 값이 실제로 그 UUID로 이어짐을 고정한다.
-    "backend/aipds/agent/claude_driver.py": re.compile(r'pathfinder:\{raw\}'),
 }
 
 _NAME = re.compile(r"pathfinder", re.IGNORECASE)
@@ -117,20 +107,19 @@ def test_the_path_check_flags_a_resurrected_old_name_path():
         assert _offending_path(rel) is None
 
 
-def test_the_allowances_are_exactly_these_two_lines():
+def test_the_allowance_is_exactly_this_one_line():
     """허용 목록이 소리 없이 늘어나는 것을 막는다.
 
     새 허용을 넣으려면 이 테스트도 고쳐야 하므로, 그 결정이 리뷰에 보인다.
 
     경로만 비교하면 통과하지 못한다 — 패턴까지 값으로 고정한다. ALLOWED의
-    주석은 패턴을 넓히지 말라고 말하지만, 집합 비교는 경로만 보므로 driver의
-    패턴을 맨 `pathfinder`로 넓혀도 이 테스트는 여전히 통과했다 — 그렇게 넓힌
-    순간 그 파일의 나머지 회귀는 이 가드가 더 이상 잡지 못한다. 패턴 문자열까지
-    비교하면 그 넓히기 자체가 여기서 실패한다.
+    주석은 패턴을 넓히지 말라고 말하지만, 집합 비교는 경로만 보므로 그 파일의
+    패턴을 맨 `pathfinder`로 넓혀도 통과해 버린다 — 그렇게 넓힌 순간 그 파일의
+    나머지 회귀는 이 가드가 더 이상 잡지 못한다. 패턴 문자열까지 비교하면 그
+    넓히기 자체가 여기서 실패한다.
     """
     assert {rel: p.pattern for rel, p in ALLOWED.items()} == {
         "infra/lib/deploy-source.ts": r"ai-plc-pathfinder",
-        "backend/aipds/agent/claude_driver.py": r"pathfinder:\{raw\}",
     }
 
 
@@ -141,22 +130,31 @@ def test_every_allowance_still_points_at_a_real_line():
         assert pattern.search(text), f"{rel}의 허용 패턴이 더는 실재를 가리키지 않는다"
 
 
-def test_the_session_id_seed_derives_the_measured_uuid():
-    """uuid5 씨드가 실제 S3 프리픽스와 맞는 UUID를 계속 내야 한다.
+def test_the_session_id_seed_derives_the_migrated_uuid():
+    """uuid5 씨드가 마이그레이션이 옮겨 놓는 S3 프리픽스와 맞는 UUID를 내야 한다.
 
-    이 테스트가 이 허용의 진짜 근거다 — 주석은 무시할 수 있어도 실패하는
-    테스트는 무시할 수 없다. 씨드를 고치는 사람은 이 테스트가 먼저 깨져서
-    무엇을 건드렸는지 보게 된다.
+    **이 값은 자유롭게 고칠 수 없다.** 씨드는 이름이 아니라 해시 입력이고,
+    `session_store._session_prefix`가 그 출력을 S3 키로 쓴다 — 씨드를 바꾸면
+    기존 트랜스크립트가 조용히 도달 불가가 되고 모든 프로젝트의 Discovery
+    대화가 빈 세션으로 시작한다. 이번 개명에서 씨드를 `aipds:`로 바꾼 대가로
+    운영 매뉴얼의 마이그레이션 절차가 프리픽스를 옮기는 단계를 갖는다. 다음에
+    이 값을 건드리는 사람도 같은 이전을 해야 하고, 이 테스트가 먼저 깨져서
+    그것을 알게 된다.
 
-    실측: 배포된 버킷의 `projects/ship/discovery/transcript/
-    e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3/main/00000001.jsonl`가 이 값으로
-    이미 존재한다. `resume`은 `session`에 그 키가 없으므로 `bool(None)` =
-    `False`가 맞다(`_sdk_session_id`의 두 번째 줄).
+    실측 대응(개명 전 → 후):
+
+        ship       e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3 -> 95822f5b-0507-5622-b85e-669f7da9bbe5
+        test1111   7565ab2e-fc2a-5909-9df8-d4dcb5b66661 -> 7a2934e1-45dd-5cf1-9576-fa1c160b8282
+        test2222   bbeda823-6b7e-5612-90cf-f706829a6c41 -> a4650830-9720-554b-83d2-6b1ab127307b
+
+    왼쪽이 배포된 버킷에 실제로 있던 프리픽스이고, 오른쪽이 이전 후의 값이다.
+    `resume`은 `session`에 그 키가 없으므로 `bool(None)` = `False`가 맞다
+    (`_sdk_session_id`의 두 번째 줄).
     """
     from aipds.agent.claude_driver import _sdk_session_id
 
     assert _sdk_session_id({"session_id": "ship"}) == (
-        "e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3", False)
+        "95822f5b-0507-5622-b85e-669f7da9bbe5", False)
 
 
 def test_the_session_prefix_still_lands_on_the_measured_s3_path():
@@ -167,20 +165,21 @@ def test_the_session_prefix_still_lands_on_the_measured_s3_path():
     테스트를 건드리지 않고도 통과시킬 수 있으므로, 이 테스트가 없으면 모든
     프로젝트의 discovery 히스토리가 조용히 사라져도 아무 테스트도 잡지 못한다.
 
-    실측(ALLOWED 정의의 주석과 같은 실측): 배포된 버킷의 실제 경로는
+    실측: 배포된 버킷의 경로는 개명 전
     `projects/ship/discovery/transcript/e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3/main/`
-    이다. 그 `projects/ship/` 부분은 이 모듈 밖(`app.s3_store_factory`가
+    이었고, 마이그레이션 절차가 이것을 아래 씨드 아래로 옮긴다. 그
+    `projects/ship/` 부분은 이 모듈 밖(`app.s3_store_factory`가
     `projects/{project_id}/`로 스코프한 스토어를 `app.driver_factory`가
     `ClaudeDriver`에 넘기고, `ClaudeDriver`가 그 스토어로 `DiscoverySessionStore`를
     만든다)에서 붙으므로, 여기서는 `_session_prefix` 자신이 반환하는 나머지
-    (`discovery/transcript/<uuid>/main/`)만 그 실측값과 이어붙여 맞는지 본다.
+    (`discovery/transcript/<uuid>/main/`)만 이어붙여 맞는지 본다.
     """
     from aipds.agent.session_store import _session_prefix
 
-    seed = "e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3"
+    seed = "95822f5b-0507-5622-b85e-669f7da9bbe5"
     prefix = _session_prefix({"session_id": seed})
     assert prefix == f"discovery/transcript/{seed}/main/"
-    # 프로젝트 스코프("projects/ship/")를 이어붙이면 실측 경로와 정확히 같아야 한다.
+    # 프로젝트 스코프("projects/ship/")를 이어붙이면 이전 후 경로와 정확히 같아야 한다.
     assert f"projects/ship/{prefix}" == (
         "projects/ship/discovery/transcript/"
-        "e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3/main/")
+        "95822f5b-0507-5622-b85e-669f7da9bbe5/main/")

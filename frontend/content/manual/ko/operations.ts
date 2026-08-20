@@ -55,7 +55,7 @@ export const operations: ManualSection = {
       tone: "warn",
       md: `**0. 이 변경이 \`main\`에 올라간 뒤에는 기존 인스턴스에서 \`sudo aipds-update\`를 돌리지
 마십시오.** 기존 인스턴스의 systemd 유닛과 트리 경로는 옛 이름을 그대로 쓰고 있어 갱신
-스크립트가 중간에 실패하고, 그 인스턴스는 아래 8단계로 기존 스택을 지우기 전까지 진행 중인
+스크립트가 중간에 실패하고, 그 인스턴스는 아래 9단계로 기존 스택을 지우기 전까지 진행 중인
 설문 링크를 계속 서빙해야 하는 바로 그 인스턴스입니다. 기존 스택 3개를 지우기 전까지는 그대로
 얼려 두세요.`,
     },
@@ -64,6 +64,7 @@ export const operations: ManualSection = {
       items: [
         "`cdk deploy AipdsDrillStack AipdsAuthStack` — 새 버킷과 사용자 풀",
         "`aws s3 sync s3://<기존 버킷> s3://<새 버킷>` — 산출물을 옮깁니다. 키 접두사에 제품 이름이 없으므로 구조는 그대로 올라갑니다. 동기화 후 `aws s3api list-objects-v2 --bucket <새 버킷> --query 'length(Contents)'`를 같은 명령의 기존 버킷 결과와 비교해 오브젝트 수가 같은지 확인합니다 — 이 뒤로는 삭제가 되돌릴 수 없으므로, 프로젝트 카드가 보인다는 것만으로는 부분 동기화 실패를 잡지 못합니다",
+        "Discovery 대화 기록의 프리픽스를 옮깁니다. 트랜스크립트는 프로젝트 id에서 파생한 UUID 아래 저장되고 그 파생식이 이번 개명으로 바뀌었으므로, 옮기지 않으면 **모든 프로젝트의 Discovery 대화가 빈 세션으로 시작합니다**(산출물·설문·응답은 영향 없습니다). 아래는 이미 있는 디렉터리 이름을 그대로 읽어 새 이름으로 옮기므로, 여러 번 돌려도 안전합니다:\n\n```bash\nfor pid in $(aws s3 ls s3://<새 버킷>/projects/ | awk '{print $2}' | tr -d /); do\n  base=\"s3://<새 버킷>/projects/$pid/discovery/transcript\"\n  cur=$(aws s3 ls \"$base/\" 2>/dev/null | awk '{print $2}' | tr -d / | head -1)\n  want=$(python3 -c \"import uuid,sys;print(uuid.uuid5(uuid.NAMESPACE_URL,'aipds:'+sys.argv[1]))\" \"$pid\")\n  if [ -n \"$cur\" ] && [ \"$cur\" != \"$want\" ]; then\n    aws s3 mv \"$base/$cur/\" \"$base/$want/\" --recursive\n  fi\ndone\n```",
         "`cdk deploy AipdsHostingStack` — 새 EC2와 CloudFront",
         "새 주소로 로그인 확인 (`admin@aipds.local`)",
         "프로젝트 카드 확인 — 명세와 설문은 살아 있고 프로토타입은 **빌드 전**입니다",
@@ -75,13 +76,13 @@ export const operations: ManualSection = {
     {
       kind: "callout",
       tone: "warn",
-      md: `**8단계를 서둘러 하지 마십시오.** 이미 배포된 설문 링크는 기존 주소를 가리키므로,
-기존 스택을 지우면 그 링크가 죽습니다. 진행 중인 설문의 응답 수집이 끝난 뒤 7단계에서 다시
+      md: `**9단계를 서둘러 하지 마십시오.** 이미 배포된 설문 링크는 기존 주소를 가리키므로,
+기존 스택을 지우면 그 링크가 죽습니다. 진행 중인 설문의 응답 수집이 끝난 뒤 8단계에서 다시
 동기화하고, 그 다음에 지웁니다.
 
 기존 Drill 스택은 \`removalPolicy: DESTROY\`와 \`autoDeleteObjects: true\`로 만들어져 있고
 버전관리도 켜져 있지 않습니다 — 지우면 그 버킷의 오브젝트가 전부 즉시 사라지고 복구할 방법이
-없습니다. 7단계의 재동기화를 건너뛰면, 첫 동기화 뒤 기존 링크로 들어온 응답은 이 삭제와 함께
+없습니다. 8단계의 재동기화를 건너뛰면, 첫 동기화 뒤 기존 링크로 들어온 응답은 이 삭제와 함께
 영구히 사라집니다.`,
     },
     {

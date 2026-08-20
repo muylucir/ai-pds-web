@@ -379,7 +379,7 @@ def _sdk_session_id(session: dict) -> tuple[str, bool]:
         # Nothing to derive from: a random id is still better than a value the
         # CLI will reject, but there is no transcript to resume.
         return str(uuid.uuid4()), False
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"pathfinder:{raw}")), resume
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"aipds:{raw}")), resume
 
 
 def _transcript_path(config_dir: str, workspace: str, session_id: str) -> Path:
