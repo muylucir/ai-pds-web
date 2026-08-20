@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from starlette.responses import Response
 
 from pathfinder.survey.builder import build_questionnaire
+from pathfinder.survey.inputs import gather_context
 from pathfinder.survey.store import SurveyStore
 from pathfinder.proto import layout as proto_layout
 
@@ -61,12 +62,17 @@ async def create_survey(pid: str, slug: str):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="prototype spec not found")
 
+    # 스펙 요약이 나온 근거(페인포인트 분석·비즈니스 컨텍스트)를 함께 싣는다.
+    # 없으면 없는 대로 간다 — gather_context는 모든 조회 실패를 None으로
+    # 강등하므로 이 호출이 아래 502 경로를 타지 않는다(survey/inputs.py).
+    context = await gather_context(s3)
+
     token = secrets.token_urlsafe(TOKEN_BYTES)
     try:
         qn = await build_questionnaire(
             prototype_md, app_module.questionnaire_agent_factory(pid),
             token=token, project_id=pid, slug=slug, now=_now(),
-            language=app_module.project_language(pid))
+            language=app_module.project_language(pid), context=context)
     except Exception:
         # Model/AWS detail can carry credentials -- log it, return a sanitized
         # reason (same policy as routes/prototypes.py).

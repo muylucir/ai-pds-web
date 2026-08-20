@@ -1,6 +1,7 @@
 import json
 import pytest
 from pathfinder.survey.builder import build_prompt, build_questionnaire
+from pathfinder.survey.inputs import DiscoveryContext
 
 MD = """# PROTOTYPE-demo
 ## Use Case Overview
@@ -197,6 +198,133 @@ def test_english_prompt_survives_a_korean_spec():
     p = build_prompt(SPEC_IN_KOREAN, language="en")
     body = p.replace(SPEC_IN_KOREAN, "")
     assert not any("가" <= c <= "힣" for c in body), body[:400]
+
+
+# ---- Envision 근거를 함께 싣기 (survey/inputs.py의 DiscoveryContext) ----
+#
+# 왜 스펙만으로 부족한가: 스펙의 `Problem Statement`·`Business Value`는 한두 줄
+# 요약이고, 그 요약을 만든 근거(페인포인트별 심각도·빈도·현재 우회책, 우선순위와
+# 그 이유, 업종과 현행 업무 방식)는 Envision 산출물에만 있다. 설문은 그 근거를
+# 검증하므로, 요약만 보고 만든 문항은 무엇을 검증하는지 모른다.
+
+PAIN_POINTS = """# 범주화 페인 포인트 분석
+## 1. 목표 고객
+심사청구팀 실무자
+## 2. 페인 포인트 범주
+| 페인 포인트 | 심각도 | 빈도 |
+| 조정 사유가 진료과에 전달되지 않는다 | High | Daily |
+## 3. 우선순위 순위
+1. 재발 방지 피드백 부재
+## 5. 시장 평가
+- TAM: 연 120억
+## 6. 경쟁 환경
+| 대체재 | 강점 |
+"""
+
+BUSINESS_CONTEXT = """# 비즈니스 컨텍스트
+## 1. 업종 및 비즈니스 도메인
+400병상 2차 종합병원의 건강보험 심사청구 업무
+## 5. 현재 고객 문제를 해결하는 방식
+엑셀과 메일로 수작업 취합한다
+"""
+
+FULL = DiscoveryContext(pain_points=PAIN_POINTS,
+                        business_context=BUSINESS_CONTEXT)
+
+
+def test_context_documents_reach_the_prompt():
+    p = build_prompt(MD, context=FULL)
+    assert "조정 사유가 진료과에 전달되지 않는다" in p
+    assert "엑셀과 메일로 수작업 취합한다" in p
+
+
+def test_absent_context_adds_nothing():
+    """보조 문서가 없으면 프롬프트는 종전과 같아야 한다.
+
+    없는 문서를 가리키는 지시("아래 페인포인트 분석을 보고…")가 남으면 모델은
+    있지도 않은 절을 찾다가 스펙에서 페인포인트를 지어낸다.
+    """
+    assert build_prompt(MD, context=DiscoveryContext()) == build_prompt(MD)
+    assert build_prompt(MD, context=None) == build_prompt(MD)
+
+
+def test_one_absent_document_does_not_drag_in_the_other_label():
+    """한쪽만 있을 때 다른 쪽 절은 나오지 않는다."""
+    only_pain = build_prompt(MD, context=DiscoveryContext(pain_points=PAIN_POINTS))
+    assert "조정 사유가 진료과에 전달되지 않는다" in only_pain
+    assert "엑셀과 메일로 수작업 취합한다" not in only_pain
+    assert "비즈니스 컨텍스트" not in only_pain
+
+
+@pytest.mark.parametrize("language,market,competition", [
+    ("ko", "시장", "경쟁"),
+    ("en", "market", "competit"),
+])
+def test_context_carries_a_guard_against_the_banned_axes(language, market,
+                                                         competition):
+    """근거 문서를 실으면 **금지 목록을 다시 못 박아야** 한다.
+
+    `pain-point-analysis.md`는 TAM/SAM·지불의향·경쟁 구도를 담는다(실측: 3개
+    프로젝트 3/3에 5·6절로 존재). 그런데 이 프롬프트는 가격·계약·구매 결정을
+    묻지 말라고 이미 명시한다. 가드 없이 그 재료만 넣으면 두 신호가 서로 싸우고,
+    더 가깝고 구체적인 쪽(방금 실린 표)이 이긴다 — 이 모듈이 출력 언어에서 이미
+    겪은 실패와 같은 모양이다(2026-08-05).
+    """
+    p = build_prompt(MD, context=FULL, language=language)
+    tail = p.split(PAIN_POINTS)[-1] + p.split(BUSINESS_CONTEXT)[-1]
+    assert market in tail.lower(), tail[:800]
+    assert competition in tail.lower(), tail[:800]
+
+
+@pytest.mark.parametrize("language,needle", [
+    ("ko", "페인"),
+    ("en", "pain point"),
+])
+def test_pain_point_section_asks_for_question_to_pain_point_mapping(language,
+                                                                   needle):
+    """문항이 어느 페인포인트를 검증하는지 대응시키라고 말해야 한다.
+
+    `prototype-validation.md` Step 6이 프로토타입을 feature-level signal과
+    **pain-point mapping**으로 판정한다. 지금은 스펙 요약만 보고 그 대응을
+    추측하고 있었다.
+    """
+    p = build_prompt(MD, context=FULL, language=language)
+    assert needle in p.lower()
+
+
+@pytest.mark.parametrize("language,needle", [
+    ("ko", "우선순위"),
+    ("en", "top-ranked"),
+])
+def test_pain_point_section_supplies_a_hypothesis_fallback(language, needle):
+    """스펙에 검증 가설이 없으면 페인포인트 1순위를 가설로 쓰라고 말해야 한다.
+
+    프롬프트는 "명세의 검증 가설·성공 기준"을 근거로 문항을 만들라고 하는데,
+    `## Validation Hypothesis`는 Path A.1 `prototype-spec.md`에만 있고
+    (prototype-validation.md:70) Path B의 `PROTOTYPE-{slug}.md` 양식에는
+    없다(prototype-md-format.md). Path B에서는 그 지시가 붙을 데가 없어 모델이
+    가설을 지어낸다.
+    """
+    p = build_prompt(MD, context=FULL, language=language)
+    assert needle in p.lower()
+
+
+def test_english_context_prompt_keeps_its_instructions_in_english():
+    """근거 문서가 한국어여도 지시문은 영어로 남아야 한다.
+
+    이 모듈이 이미 겪은 실패다 — `{md}`로 실린 명세가 더 가깝고 구체적인 신호라
+    모델이 그 언어를 따라갔다(2026-08-05). 문서를 둘 더 실으면 그 압력이 커진다.
+    """
+    p = build_prompt(MD, context=FULL, language="en")
+    body = p.replace(MD, "").replace(PAIN_POINTS, "").replace(BUSINESS_CONTEXT, "")
+    assert not any("가" <= c <= "힣" for c in body), body[:600]
+
+
+async def test_build_questionnaire_passes_the_context_through():
+    agent = FakeAgent(json.dumps(VALID, ensure_ascii=False))
+    await build_questionnaire(MD, agent, token="t", project_id="p", slug="s",
+                              now="n", context=FULL)
+    assert "조정 사유가 진료과에 전달되지 않는다" in agent.prompts[0]
 
 
 @pytest.mark.asyncio

@@ -87,6 +87,59 @@ def test_create_502_sanitized_when_generation_fails(env, monkeypatch):
     assert "AKIA" not in resp.text
 
 
+def _capture_prompts(monkeypatch, replies):
+    """agent_factory를 프롬프트를 기록하는 것으로 갈아끼운다."""
+    seen = []
+
+    def agent_factory(_pid):
+        async def call(prompt):
+            seen.append(prompt)
+            return replies.pop(0)
+        return call
+
+    monkeypatch.setattr(app_module, "questionnaire_agent_factory", agent_factory)
+    return seen
+
+
+ENVISION = "aiplc-docs/discovery/envision/"
+
+
+def test_create_carries_the_envision_evidence_into_the_prompt(env, monkeypatch):
+    """설문 문항은 스펙 요약이 아니라 그 요약이 나온 근거로 만들어야 한다.
+
+    스펙의 Problem Statement·Business Value는 한두 줄이고, 페인포인트별 심각도·
+    빈도·우선순위와 업종·현행 업무 방식은 Envision 산출물에만 있다.
+    """
+    s3 = env["project_s3"]
+    s3.blobs[ENVISION + "pain-point-analysis.md"] = "조정 사유가 전달되지 않는다"
+    s3.blobs[ENVISION + "business-context.md"] = "400병상 2차 종합병원"
+    seen = _capture_prompts(monkeypatch, [GOOD_JSON])
+
+    assert _create(env).status_code == 201
+    assert "조정 사유가 전달되지 않는다" in seen[0]
+    assert "400병상 2차 종합병원" in seen[0]
+
+
+def test_create_succeeds_when_the_envision_evidence_is_absent(env, monkeypatch):
+    """보조 문서가 없어도 설문은 만들어진다 — 스펙만으로도 성립한다."""
+    seen = _capture_prompts(monkeypatch, [GOOD_JSON])
+    assert _create(env).status_code == 201
+    assert "# PROTOTYPE demo" in seen[0]
+
+
+def test_create_ignores_the_business_context_question_file(env, monkeypatch):
+    """질문지는 컨텍스트가 아니다.
+
+    `business-context-questions.md`는 룰이 선언하는 질문지이고 본문이 선택지와
+    `[Answer]:` 태그다 — 실으면 모델이 남의 질문 양식을 베낀다.
+    """
+    env["project_s3"].blobs[ENVISION + "business-context-questions.md"] = (
+        "A) 제조\nB) 금융\nX) Other\n\n[Answer]: A")
+    seen = _capture_prompts(monkeypatch, [GOOD_JSON])
+    assert _create(env).status_code == 201
+    assert "[Answer]: A" not in seen[0]
+
+
 def test_create_after_close_archives_previous(env):
     assert _create(env).status_code == 201
     client.post(f"/projects/{PID}/prototypes/{SLUG}/survey/close")
