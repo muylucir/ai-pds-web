@@ -92,24 +92,32 @@ key: value
 Rules:
 - Allowed keys, and no others: {', '.join(ALLOWED_TOKENS)}
 {_value_rules()}
-- Use only values the document states, and follow the ROLE the document gives
-  them. If it names one colour for headings and another for filled CTAs, the
-  CTA colour is `primary`.
+- **A value that is not already in the accepted form above is omitted, never
+  converted.** The accepted forms are the whole of what this format can carry, so
+  anything else — a colour written some other way, a value built from a function
+  or a variable, a gradient, a list — is simply left out. Do not translate it and
+  do not approximate it.
+- **Follow the ROLE the document gives each value.** Read how the document itself
+  labels and uses a value; its own naming is the authority. A document that calls
+  something its primary colour is telling you `primary`; a document that instead
+  names a colour by where it is used is telling you that use.
+- **Where the document gives one role several values, omit that key.** This is
+  the honest answer whenever the document does not resolve it — several corner
+  radii for different components with none stated as the general rule, two
+  surface colours alternating with neither called the default. Omit rather than
+  pick.
 - Omit any key the document does not answer. Omitted keys keep the shadcn
   default, which is the correct outcome — never invent a value to fill a slot.
-- Values the format cannot express (rgba/hsl colours, several radii, gradients)
-  are omitted, not converted. Pick the radius used by cards and buttons if one
-  of them dominates; otherwise omit `radius`.
-- **Never move a colour from one role into another to fill a gap.** If the value
-  the document gives a role cannot be expressed here — body text stated as
-  `rgba(0,0,0,0.87)`, say — omit that key. Substituting a different colour, such
-  as the brand colour, is worse than omitting: `foreground` is the colour of
+- **Never move a colour from one role into another to fill a gap.** If a role's
+  value cannot be expressed here, omit that key. Substituting a different colour,
+  such as the brand colour, is worse than omitting: `foreground` is the colour of
   every line of text on the screen, so a brand colour there tints the whole UI.
 - Set `font_mono` only if the document names a font for code or monospaced text.
   A display or handwriting font is not a monospace font.
-- If the document names an in-house font that it also gives a substitute for,
-  use the substitute — the prototype runs in a browser that will not have the
-  in-house file.
+- Where a font is named that a browser will not have — an in-house or licensed
+  family — use the fallback the document gives for it. If it gives none, omit.
+- Take a value from a font stack or a variable definition only when it is stated
+  plainly enough to copy; the first named family of a stack is such a value.
 
 The document follows.
 
