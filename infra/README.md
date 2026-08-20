@@ -140,12 +140,3 @@ Six assertion files, each aimed at a regression **you cannot see by looking**:
 | `auth-client-config.assert.ts` | That token validity **outlasts one prototype build** (shorter and the session expires mid-build), plus the seed/group constants and callback/logout URL derivation |
 | `deployed-tree.assert.ts` | What must not be in the tree that becomes `/opt/aipds` (the dev-only `.claude/`, build output, session state) and what must be (rules, both language directives, both config dirs, the lockfile) |
 | `deploy-source.assert.ts` | That the clone URL is public HTTPS, and that the deploy target is a branch rather than a pinned commit |
-
-## PathfinderVmStack is gone (2026-07-25)
-
-Once prototype builds moved into the backend process, the Tokyo MicroVM, its image build, and token
-minting all went away. If you deployed it before, clean it up once:
-
-```bash
-npx cdk destroy PathfinderVmStack --region ap-northeast-1
-```

@@ -12,7 +12,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
-#: 세 허용 모두 **우리 코드 밖의 진짜 이름**을 가리키는 값이다 — 우리 이름과
+#: 두 허용 모두 **우리 코드 밖의 진짜 이름**을 가리키는 값이다 — 우리 이름과
 #: 우리 코드는 전부 바꾼다; 밖의 것을 가리키는 참조는 밖의 실제 값과 맞아야
 #: 하므로 바꾸지 않는다. 그래서 이 파일이 아니라 여기 이 값 자체를 넓히는
 #: 것은 금지다(아래 두 테스트가 목록의 크기와 각 줄의 실재를 함께 고정한다).
@@ -20,14 +20,6 @@ ALLOWED = {
     # GitHub 리포 이름. 리포는 이 계획의 범위 밖이고 이름을 유지하는 것이
     # 결정 사항이다 — 이 값이 바뀌면 부팅의 `git clone`이 깨진다.
     "infra/lib/deploy-source.ts": re.compile(r"ai-plc-pathfinder"),
-    # `PathfinderVmStack`은 이 리네임 계획이 시작되기 전에 코드에서 이미
-    # 삭제된 CloudFormation 스택이다. 그 시절 배포한 인스턴스가 있다면 그
-    # 스택은 지금도 AWS 안에 그 리터럴 이름으로 남아 있다 — 이 절은 그것을
-    # 지우는 방법을 알려 주는 운영 안내문이므로, `AipdsVmStack`으로 고치면
-    # 존재하지 않는 스택을 가리키는 틀린 명령이 된다. 파일 전체가 아니라 이
-    # 문자열 하나만 허용한다 — 같은 파일의 다른 회귀는 여전히 잡혀야 한다.
-    "infra/README.md": re.compile(r"PathfinderVmStack"),
-    "infra/README.ko.md": re.compile(r"PathfinderVmStack"),
     # session_store.py가 트랜스크립트를 S3에 미러링하는 키의 구성요소가 이
     # uuid5 네임스페이스 씨드다 — 이름이 아니라 **해시 입력**이다. 이미 그
     # 값으로 파생된 UUID 아래 데이터가 실존하므로(실측: project_id "ship" →
@@ -125,22 +117,19 @@ def test_the_path_check_flags_a_resurrected_old_name_path():
         assert _offending_path(rel) is None
 
 
-def test_the_allowances_are_exactly_these_four_lines():
+def test_the_allowances_are_exactly_these_two_lines():
     """허용 목록이 소리 없이 늘어나는 것을 막는다.
 
     새 허용을 넣으려면 이 테스트도 고쳐야 하므로, 그 결정이 리뷰에 보인다.
 
     경로만 비교하면 통과하지 못한다 — 패턴까지 값으로 고정한다. ALLOWED의
-    주석은 패턴을 넓히지 말라고 말하지만, 집합 비교는 경로만 보므로
-    "infra/README.md"의 패턴을 `PathfinderVmStack`에서 `Pathfinder`로,
-    또는 driver의 패턴을 맨 `pathfinder`로 넓혀도 이 테스트는 여전히
-    통과했다 — 그렇게 넓힌 순간 두 파일의 나머지 회귀는 이 가드가 더 이상
-    잡지 못한다. 패턴 문자열까지 비교하면 그 넓히기 자체가 여기서 실패한다.
+    주석은 패턴을 넓히지 말라고 말하지만, 집합 비교는 경로만 보므로 driver의
+    패턴을 맨 `pathfinder`로 넓혀도 이 테스트는 여전히 통과했다 — 그렇게 넓힌
+    순간 그 파일의 나머지 회귀는 이 가드가 더 이상 잡지 못한다. 패턴 문자열까지
+    비교하면 그 넓히기 자체가 여기서 실패한다.
     """
     assert {rel: p.pattern for rel, p in ALLOWED.items()} == {
         "infra/lib/deploy-source.ts": r"ai-plc-pathfinder",
-        "infra/README.md": r"PathfinderVmStack",
-        "infra/README.ko.md": r"PathfinderVmStack",
         "backend/aipds/agent/claude_driver.py": r"pathfinder:\{raw\}",
     }
 
