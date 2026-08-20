@@ -4,7 +4,7 @@ import {
 } from "./cognitoUrls";
 
 const ENV: CognitoEnv = {
-  domain: "pathfinder-123-ap-northeast-2.auth.ap-northeast-2.amazoncognito.com",
+  domain: "aipds-123-ap-northeast-2.auth.ap-northeast-2.amazoncognito.com",
   clientId: "client-abc",
   clientSecret: "secret-xyz",
   appUrl: "https://d123.cloudfront.net",

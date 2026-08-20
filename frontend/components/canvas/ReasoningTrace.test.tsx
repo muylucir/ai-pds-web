@@ -5,7 +5,7 @@
 // Read/Bash는 `status` 이벤트에 이름만 실려 `Read`, `Bash`만 떴다 — 무엇을 읽었는지,
 // 무슨 명령을 돌렸는지가 트레이스의 요점인데 그것이 빠져 있었다.
 //
-// 값은 백엔드(`backend/pathfinder/tool_trace.py`)가 만들고 아이콘·구분자만 여기서
+// 값은 백엔드(`backend/aipds/tool_trace.py`)가 만들고 아이콘·구분자만 여기서
 // 붙인다. 도구 이름은 고유명이라 번역하지 않는다.
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -40,8 +40,8 @@ describe("ReasoningTrace", () => {
 
   it("모르는 도구는 아이콘 없이 이름만 (잘못된 아이콘보다 없는 편이 낫다)", () => {
     render(<ReasoningTrace entries={[
-      entry({ text: "mcp__pathfinder__report_stage" })]} />);
-    expect(screen.getByText("mcp__pathfinder__report_stage")).toBeInTheDocument();
+      entry({ text: "mcp__aipds__report_stage" })]} />);
+    expect(screen.getByText("mcp__aipds__report_stage")).toBeInTheDocument();
   });
 
   it("항목이 없으면 아코디언 자체를 그리지 않는다", () => {

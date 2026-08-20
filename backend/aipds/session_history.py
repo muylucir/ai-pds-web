@@ -252,7 +252,7 @@ def transform_cli_transcript(raw: list[dict], *,
                     trace.append(HistoryTraceEntry(kind="file_changed",
                                                    path=path))
                 else:
-                    # Read/Glob/Grep/Bash/mcp__pathfinder__* 등 — 라이브의
+                    # Read/Glob/Grep/Bash/mcp__aipds__* 등 — 라이브의
                     # status 이벤트와 **같은 표현**이어야 한다. 그래서 detail도
                     # 같은 모듈(tool_trace)로 뽑는다: 한쪽만 상세를 보이면
                     # 새로고침 전후로 화면이 달라진다.

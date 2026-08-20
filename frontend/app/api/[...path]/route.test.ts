@@ -212,7 +212,7 @@ describe("GET/POST/DELETE /api/[...path]", () => {
 
 // Finding 1's routing fix merges nginx's /api/ and / locations onto Next, so
 // EVERY method that used to reach FastAPI directly now transits this route
-// handler — including PATCH/HEAD/OPTIONS, which backend/pathfinder/routes/
+// handler — including PATCH/HEAD/OPTIONS, which backend/aipds/routes/
 // proto_public.py's proxy_prototype route accepts for hosted prototype
 // previews. If any of the seven aren't exported as named handlers, Next
 // itself answers with a 405 (or an auto-generated 204 for a bare OPTIONS)

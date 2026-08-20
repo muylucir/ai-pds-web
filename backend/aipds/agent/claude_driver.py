@@ -157,7 +157,7 @@ DEFAULT_PERMISSION_MODE = "bypassPermissions"
 #:
 #: 탈출로: 이 env를 falsy로 두면 옛 경로로 돌아간다. 인스턴스에서는 user-data가
 #: systemd `Environment=`로 값을 주입하므로 그 파일을 고치면 인스턴스 교체가
-#: 필요하다 — 대신 gitignore된 `backend/.env`를 만들면 `pathfinder-update`가
+#: 필요하다 — 대신 gitignore된 `backend/.env`를 만들면 `aipds-update`가
 #: 되돌리지 않으므로(추적되지 않는 파일) 재배포 없이 끌 수 있다.
 FILE_QUESTIONS_ENV = "AIPDS_FILE_QUESTIONS"
 
@@ -171,7 +171,7 @@ def _file_questions_enabled() -> bool:
     import os
     return os.environ.get(FILE_QUESTIONS_ENV, "").strip().lower() not in _FALSY
 
-_MCP_SERVER_NAME = "pathfinder"
+_MCP_SERVER_NAME = "aipds"
 
 
 class _MessageReader:
@@ -531,7 +531,7 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # mechanism the prototype builder already uses (proto/builder.py's
             # session_store), different key prefix.
             session_store=driver._session_store,
-            # Flush once at Pathfinder's explicit turn boundary. `_pump`
+            # Flush once at AI-PDS's explicit turn boundary. `_pump`
             # handles normal/question terminals, while stream finally blocks
             # cover errors and abandoned SSE consumers.
             session_store_flush="batched",

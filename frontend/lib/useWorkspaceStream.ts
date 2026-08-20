@@ -90,7 +90,7 @@ export interface WorkspaceStream {
 // 문서 패널이 따라갈 가치가 있는 산출물 경로인가 — aiplc-docs/ 아래 .md 중
 // 기록성 파일(audit/state/질문)은 제외.
 //
-// 질문 파일(*-questions.md)이 audit/state와 같은 칸에 있는 이유: Pathfinder에서
+// 질문 파일(*-questions.md)이 audit/state와 같은 칸에 있는 이유: AI-PDS에서
 // 질문의 전달 경로는 AskUserQuestion 도구이고, 사용자가 답하는 화면은 우측
 // 패널의 QuestionForm이다(discovery-config/CLAUDE.md의 override 섹션). 마크다운
 // 파일은 상류 룰이 요구하는 기록물로만 남는다.
@@ -215,7 +215,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         if (ev.kind === "status" || ev.kind === "file_changed") {
           // status의 detail은 payload에 실려 온다(리댁션을 지나는 필드여야 하고,
           // path는 구조적 필드로 취급되어 리댁션을 지나지 않는다 —
-          // backend/pathfinder/tool_trace.py의 근거).
+          // backend/aipds/tool_trace.py의 근거).
           const trace: TraceEntry = {
             kind: ev.kind, text: ev.text, path: ev.path,
             detail: safeParse<{ detail?: string }>(ev.payload)?.detail ?? null,

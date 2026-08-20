@@ -77,7 +77,7 @@ console.log('OK  auth-client-config: seed constants + group constants + callback
 // --- usernameForEmail: Cognito가 email-alias 풀에서 이메일 형식 Username을
 // 거부한다("Username cannot be of email format, since user pool is configured
 // for email alias"). 실측: 이 규칙을 몰라 시드 계정 생성이 스택 롤백을 냈다.
-// backend/pathfinder/auth/cognito.py의 username_for_email과 같은 규칙이어야
+// backend/aipds/auth/cognito.py의 username_for_email과 같은 규칙이어야
 // 한다 — 어긋나면 초대 계정과 시드 계정의 Username 규칙이 갈린다.
 assert.strictEqual(usernameForEmail('admin@aipds.local'), 'admin');
 assert.strictEqual(usernameForEmail('pm@aipds.local'), 'pm');

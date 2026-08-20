@@ -5,7 +5,7 @@
 # aws-aiplc-rule-details/common/question-format-guide.md가 "Read the question
 # file / Extract answers after [Answer]: tags"를 지시하고,
 # common/session-continuity.md:31-33은 스테이지를 재개할 때 `strategy-questions.md`
-# 같은 파일을 **읽으라고** 한다. Pathfinder는 질문을 AskUserQuestion으로
+# 같은 파일을 **읽으라고** 한다. AI-PDS는 질문을 AskUserQuestion으로
 # 전달하면서 이 칸을 비워 뒀고, 그래서 재개한 세션은 사용자가 이미 내린 결정을
 # 파일에서 되찾을 수 없었다.
 #

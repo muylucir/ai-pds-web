@@ -91,10 +91,10 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None],
     (claude_driver.py)가 create_sdk_mcp_server(name=..., tools=build_tools(...))로
     감싸 McpSdkServerConfig를 만들고, 그것을 ClaudeAgentOptions에 배선한다:
 
-        server = create_sdk_mcp_server(name="pathfinder", tools=build_tools(workspace, emit))
+        server = create_sdk_mcp_server(name="aipds", tools=build_tools(workspace, emit))
         options = ClaudeAgentOptions(
-            mcp_servers={"pathfinder": server},
-            allowed_tools=["mcp__pathfinder__submit_document"],
+            mcp_servers={"aipds": server},
+            allowed_tools=["mcp__aipds__submit_document"],
             ...
         )
 

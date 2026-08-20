@@ -98,7 +98,7 @@ export class AipdsHostingStack extends cdk.Stack {
     //    재설정·비활성화·삭제)가 쓴다. 실측 배포 버그: 이 묶음이 없어서 로그인은
     //    되는데 /admin/users만 502였고, 백엔드 로그에만
     //    "cognito call failed (AccessDeniedException)"이 남았다.
-    //    목록은 backend/pathfinder/auth/cognito.py의 _call() 호출과 1:1이어야
+    //    목록은 backend/aipds/auth/cognito.py의 _call() 호출과 1:1이어야
     //    한다 — 하나라도 빠지면 그 기능만 502가 되고 화면에서는 원인이 보이지
     //    않는다. cognito-idp:*로 뭉개지 않는다(최소 권한). 두 곳이 어긋나지
     //    않도록 test/hosting-stack.assert.ts가 목록을 고정한다.

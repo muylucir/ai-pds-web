@@ -8,7 +8,7 @@
 const REPLAYABLE_METHODS = new Set(["GET", "HEAD", "DELETE"]);
 
 //: 백엔드로 흘려보내도 되는 쿠키의 접두어. 프로토타입 접근 토큰 쿠키다
-//: (backend/pathfinder/routes/proto_public.py의 COOKIE_PREFIX) — 양쪽이 같은
+//: (backend/aipds/routes/proto_public.py의 COOKIE_PREFIX) — 양쪽이 같은
 //: 문자열이어야 하고, 어긋나면 쿠키가 백엔드에 닿지 않아 모든 프로토타입
 //: 프리뷰가 404가 된다.
 const PROTO_COOKIE_PREFIX = "aipds_proto_";

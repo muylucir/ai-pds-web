@@ -1,8 +1,8 @@
 # backend/aipds/proto/build_guard.py — 빌드 에이전트의 Bash 판정부.
 #
 # **왜 이 파일이 생겼는가(2026-08-01의 사고).** 빌드 에이전트가 브라우저 검증을 위해
-# Playwright chromium을 띄웠고, 그 검증이 포트 3000을 겨냥해 Pathfinder 프론트엔드가
-# SIGKILL로 죽었다. 백엔드·프론트엔드가 빌드 에이전트와 **같은 유저(`pathfinder`)로
+# Playwright chromium을 띄웠고, 그 검증이 포트 3000을 겨냥해 AI-PDS 프론트엔드가
+# SIGKILL로 죽었다. 백엔드·프론트엔드가 빌드 에이전트와 **같은 유저(`aipds`)로
 # 도므로** 신호를 막을 것이 없었고, 워크숍 참가자 화면에는 "연결이 끊겼다"가 떴다.
 #
 # 그때의 완화책 둘은 모두 코드가 아니었다. `skills=["shadcn-design"]`(builder.py)은
@@ -73,7 +73,7 @@ _KILL = re.compile(
     r"|\bfuser\b[^;|&]*\s-k\b"
     r"|\bkill\b[^;|&]*\$\(")
 
-#: Pathfinder 자신의 포트. 3000은 프론트엔드, 8000은 백엔드다.
+#: AI-PDS 자신의 포트. 3000은 프론트엔드, 8000은 백엔드다.
 #:
 #: **hosting이 배정하는 범위와 겹치지 않는다.** `_scan_port`가 쓰는 것은
 #: `range(4000, 8000)`이므로(proto/host.py) 3000·8000은 어느 프로토타입에도
@@ -90,7 +90,7 @@ _PATTERNS = (_BROWSER, _SERVER, _KILL, _PORT)
 
 
 def bash_denial(command: str | None) -> str | None:
-    """브라우저 자동화·서버 기동·타 프로세스 종료·Pathfinder 포트면 거부 대상
+    """브라우저 자동화·서버 기동·타 프로세스 종료·AI-PDS 포트면 거부 대상
     조각을, 아니면 None.
 
     문자열이 아닌 입력과 빈 명령은 **허용**한다. 판단 근거가 없는데 거부하면

@@ -1365,9 +1365,9 @@ def test_the_transcript_path_matches_the_cli_layout(tmp_path):
     from aipds.agent.claude_driver import _transcript_path
 
     p = _transcript_path("/opt/aipds/discovery-config",
-                         "/tmp/pathfinder-workspaces/acme_1.2-x",
+                         "/tmp/aipds-workspaces/acme_1.2-x",
                          "bde34f1e-bdb0-5f78-8ca2-07822c3609a0")
-    assert p.parent.name == "-tmp-pathfinder-workspaces-acme-1-2-x"
+    assert p.parent.name == "-tmp-aipds-workspaces-acme-1-2-x"
     assert p.name == "bde34f1e-bdb0-5f78-8ca2-07822c3609a0.jsonl"
     assert p.parent.parent.name == "projects"
 
@@ -1523,7 +1523,7 @@ def _captured_options(tmp_path, monkeypatch, session):
 
 
 def test_transcript_mirroring_flushes_in_turn_batches(tmp_path, monkeypatch):
-    """프레임별 S3 PUT 대신 명시적인 Pathfinder 턴 경계에서 flush한다."""
+    """프레임별 S3 PUT 대신 명시적인 AI-PDS 턴 경계에서 flush한다."""
     options = _captured_options(tmp_path, monkeypatch,
                                 {"session_id": "p1", "resume": False})
     assert options.session_store is not None, "미러링 자체가 꺼져 있다"
@@ -1534,7 +1534,7 @@ async def test_parking_on_a_question_flushes_the_transcript(tmp_path):
     """질문으로 턴을 마감할 때 미러 배처를 직접 flush해야 한다.
 
     배치 모드는 SDK의 result/close에만 의존할 수 없으므로 질문 terminal 전에
-    Pathfinder가 직접 flush해야 한다.
+    AI-PDS가 직접 flush해야 한다.
     """
     flushed = []
 

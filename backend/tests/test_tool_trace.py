@@ -34,12 +34,12 @@ def test_file_tools_have_no_detail(name):
     assert tool_detail(name, {"file_path": "/ws/x.md"}) is None
 
 
-@pytest.mark.parametrize("name", ["mcp__pathfinder__submit_document",
-                                  "mcp__pathfinder_proto__build_complete"])
+@pytest.mark.parametrize("name", ["mcp__aipds__submit_document",
+                                  "mcp__aipds_proto__build_complete"])
 def test_mcp_tools_have_no_detail(name):
     """전용 이벤트(document/build_complete)가 이미 구조화된 값을 보낸다.
 
-    `mcp__pathfinder__report_stage`가 이 목록에 있었다. 그 도구는 2026-08-18에
+    `mcp__aipds__report_stage`가 이 목록에 있었다. 그 도구는 2026-08-18에
     PostToolUse 훅으로 옮겨 갔으므로 도구 이름으로 나타나지 않는다 —
     `stage` 이벤트는 이제 `aiplc-state.md` 쓰기에서 유도된다(agent/reconcile.py).
     """

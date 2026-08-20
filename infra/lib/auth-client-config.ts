@@ -89,7 +89,7 @@ export function logoutUrls(appUrls: string[]): string[] {
  * (UsernameAttributes)을 쓰지 않는 이유는 README의 "username == 이메일" 절과
  * 같다 — 재배포마다 값을 알 수 없어 시딩이 비결정적이 된다.
  *
- * ⚠️ **backend/pathfinder/auth/cognito.py의 username_for_email과 같은 규칙이어야
+ * ⚠️ **backend/aipds/auth/cognito.py의 username_for_email과 같은 규칙이어야
  * 한다.** 어긋나면 시드 계정과 초대 계정의 Username 규칙이 갈리고, 재배포 시
  * 시드가 기존 사용자를 못 찾아 중복 계정을 만든다.
  *

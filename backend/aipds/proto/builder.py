@@ -153,7 +153,7 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # Swap the config HOME rather than disabling settings entirely
             # (setting_sources=[]): this keeps a place to put OUR skills and
             # subagents later, and keeps the local transcript copy under a
-            # Pathfinder-owned path instead of the operator's home.
+            # AI-PDS-owned path instead of the operator's home.
             "CLAUDE_CONFIG_DIR": builder._config_dir,
         }
         if builder._anthropic_model:
@@ -173,10 +173,10 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # "all"은 CLI에 번들된 스킬까지 함께 켜고, 그 목록에 `run`
             # ("Launch and drive this project's app... browser-driven")이
             # 있다. 실측 사고: 빌드 에이전트가 Playwright chromium을 띄웠고
-            # (코어덤프의 Unit=pathfinder-backend.service로 확인) 그 검증이
-            # 포트 3000을 겨냥해 Pathfinder 프론트엔드가 SIGKILL로 죽었다
+            # (코어덤프의 Unit=aipds-backend.service로 확인) 그 검증이
+            # 포트 3000을 겨냥해 AI-PDS 프론트엔드가 SIGKILL로 죽었다
             # (2026-08-01 16:13/16:18, journalctl status=9/KILL). 백엔드와
-            # 프론트엔드가 같은 유저(pathfinder)로 도므로 막을 것이 없었다.
+            # 프론트엔드가 같은 유저(aipds)로 도므로 막을 것이 없었다.
             #
             # 이름 목록이면 SDK가 `Skill(shadcn-design)` 형태로만 허용하므로
             # (subprocess_cli.py:_apply_skills_defaults) 번들 스킬이 들어오지

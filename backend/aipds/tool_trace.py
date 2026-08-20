@@ -26,7 +26,7 @@ DETAIL_MAX = 120
 #: 있는 값인지 모르는 채로 내부 식별자가 화면에 새어 나온다.
 #:
 #: Write/Edit/MultiEdit이 없는 이유: 이미 `file_changed` 이벤트가 경로를 들고 오므로
-#: 여기서 또 주면 같은 정보가 두 줄로 보인다. `mcp__pathfinder__*`도 없다 —
+#: 여기서 또 주면 같은 정보가 두 줄로 보인다. `mcp__aipds__*`도 없다 —
 #: stage/document/build_complete 전용 이벤트가 구조화된 값을 이미 보낸다.
 _DETAIL_KEYS: dict[str, str] = {
     "Read": "file_path",

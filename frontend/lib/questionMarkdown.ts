@@ -1,7 +1,7 @@
 // 질문 파일 마크다운을 **렌더 직전에만** 손본다. 파일 자체는 건드리지 않는다.
 //
 // **왜 필요한가(2026-08-16의 결함).** 백엔드가 제출된 답변을 질문 파일의
-// `[Answer]:` 칸에 심는데(backend/pathfinder/agent/question_file_answers.py),
+// `[Answer]:` 칸에 심는데(backend/aipds/agent/question_file_answers.py),
 // 화면에는 답변이 하나도 나타나지 않았다. 파일에는 `[Answer]: A`가 들어 있었다.
 //
 // 원인은 CommonMark다. 줄 맨 앞의 `[Answer]: A`는 **링크 참조 정의**(link
@@ -13,7 +13,7 @@
 //
 // **왜 파일 형식을 바꾸지 않는가.** 상류 ai-plc 룰이 `[Answer]:` 태그를 읽으라고
 // 지시하고(aws-aiplc-rule-details/common/question-format-guide.md) 우리 파서도 그
-// 정규식이다(backend/pathfinder/parsers/questions.py). 파일을 바꾸면 그 호환성이
+// 정규식이다(backend/aipds/parsers/questions.py). 파일을 바꾸면 그 호환성이
 // 깨진다. 그래서 **표시 직전에만** 바꾼다.
 //
 // **왜 파서로 렌더하지 않는가.** 질문 파일에는 질문 외의 본문이 많다 — 필수 영역
@@ -44,7 +44,7 @@ export function revealAnswerTags(markdown: string): string {
 
 
 //: 보기 한 줄. 백엔드 파서와 **같은 집합**이어야 한다
-//: (backend/pathfinder/parsers/questions.py의 `_OPTION`: `^([A-F]|X)\)\s+`).
+//: (backend/aipds/parsers/questions.py의 `_OPTION`: `^([A-F]|X)\)\s+`).
 //: 한쪽만 넓히면 화면에는 보기로 보이는데 파싱은 안 되거나 그 반대가 된다.
 const OPTION_LINE = /^([A-FX]\)[ \t]+.*?)[ \t]*$/gm;
 

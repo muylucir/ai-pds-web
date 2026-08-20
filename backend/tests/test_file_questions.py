@@ -236,7 +236,7 @@ async def test_can_be_switched_off(tmp_path, monkeypatch):
 
     인스턴스에서는 user-data가 systemd `Environment=`로 값을 주입하므로 그 파일을
     고치면 인스턴스 교체가 필요하다. 대신 gitignore된 `backend/.env`를 만들면
-    `pathfinder-update`가 되돌리지 않으므로(추적되지 않는 파일) 재배포 없이 끌 수
+    `aipds-update`가 되돌리지 않으므로(추적되지 않는 파일) 재배포 없이 끌 수
     있다."""
     monkeypatch.setenv("AIPDS_FILE_QUESTIONS", "false")
     d, ws = _driver(tmp_path)

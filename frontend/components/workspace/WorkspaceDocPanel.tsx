@@ -42,7 +42,7 @@ export function WorkspaceDocPanel({
   // 재조회한다.
   //
   // `activeDoc?.path`를 키에 넣는 이유(2026-08-18): 백엔드가 이제 쓰기 직후에
-  // 문서를 정본에 게시하므로(backend/pathfinder/workspace_sync.py) 턴 중에도 목록이
+  // 문서를 정본에 게시하므로(backend/aipds/workspace_sync.py) 턴 중에도 목록이
   // 정확할 수 있다. 턴 종료만 기다리면 한 턴에 문서 5개를 쓰는 동안 드롭다운에는
   // 현재 문서 하나(아래 union)만 보이고, 앞서 쓴 것들은 정본에 있는데도 목록에
   // 없다 — 실측한 증상 중 "잠깐 나타났다 사라진다"가 그 모양이다.
