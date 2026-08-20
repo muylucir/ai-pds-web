@@ -437,7 +437,7 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
 // 시 시크릿을 읽는 DescribeUserPoolClient 하나만 있었고, 사용자 관리 API
 // 권한이 전혀 없었다.
 //
-// backend/pathfinder/auth/cognito.py가 실제로 호출하는 액션 전체를 고정한다 —
+// backend/aipds/auth/cognito.py가 실제로 호출하는 액션 전체를 고정한다 —
 // 하나라도 빠지면 그 기능만 502가 되고, 화면에서는 원인이 보이지 않는다.
 {
   const app = new cdk.App();

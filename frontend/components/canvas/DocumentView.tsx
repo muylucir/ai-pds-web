@@ -32,7 +32,7 @@ export function DocumentView({
   const loadError = error !== null && !notFound;
   // The real backend's Workspace.get_document() swallows a missing-file
   // FileNotFoundError and returns {"markdown": ""} with a 200 — it never
-  // 404s (see backend/pathfinder/workspace.py). So an empty string after a
+  // 404s (see backend/aipds/workspace.py). So an empty string after a
   // successful load is itself the "no document yet" state, distinct from
   // the 404 branch above (kept for defensiveness / other backends). Mirrors
   // components/review/DocumentPanel.tsx's markdown.trim() === "" check.

@@ -153,8 +153,8 @@ def test_only_our_own_skills_are_enabled():
     """Never `"all"`: that also enables the CLI's BUNDLED skills, and one of
     them (`run` -- "Launch and drive this project's app... browser-driven") got
     a build agent to start Playwright chromium, whose port-3000 target SIGKILLed
-    the Pathfinder frontend mid-workshop (2026-08-01 16:13/16:18; the coredump's
-    Unit was pathfinder-backend.service, so the browser was ours).
+    the AI-PDS frontend mid-workshop (2026-08-01 16:13/16:18; the coredump's
+    Unit was aipds-backend.service, so the browser was ours).
 
     An explicit name list makes the SDK emit `Skill(shadcn-design)` instead of a
     bare `Skill`, so bundled skills never enter the turn. Adding a skill to
@@ -389,7 +389,7 @@ async def test_a_queued_completion_is_relayed_before_the_terminal_done(tmp_path)
 # ---- Bash 게이트 (PreToolUse) ----
 #
 # 2026-08-01: 빌드 에이전트가 Playwright chromium을 띄웠고 그 검증이 포트 3000을
-# 겨냥해 Pathfinder 프론트엔드가 SIGKILL로 죽었다. 그때의 완화책은 skills 좁히기와
+# 겨냥해 AI-PDS 프론트엔드가 SIGKILL로 죽었다. 그때의 완화책은 skills 좁히기와
 # CLAUDE.md 산문뿐이었고, builder.py의 skills 주석이 스스로 적어 뒀듯 스킬 목록은
 # **컨텍스트 필터이지 샌드박스가 아니다** — Bash는 그대로 열려 있었다.
 

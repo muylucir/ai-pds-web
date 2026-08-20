@@ -158,7 +158,7 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
 }
 // PATCH/HEAD/OPTIONS: needed because Finding 1's routing fix means ALL /api/*
 // traffic now transits this route handler, including /api/proto/{pid}/{slug}
-// (backend/pathfinder/routes/proto_public.py's proxy_prototype), which
+// (backend/aipds/routes/proto_public.py's proxy_prototype), which
 // forwards arbitrary methods to a hosted prototype's own server — that route
 // declares methods=["GET","POST","PUT","DELETE","PATCH","HEAD","OPTIONS"].
 // Before Finding 1, nginx sent /api/ straight to FastAPI and these methods

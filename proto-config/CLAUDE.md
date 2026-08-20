@@ -12,7 +12,7 @@ Put the finished prototype under **`prototype/`** in the working directory, with
 
 ## Processes and ports — enforced, not trusted
 
-**You run inside the very server that runs AI-PDS Web**, as the same user (`pathfinder`), so a stray signal reaches the app itself. A browser verification once SIGKILLed the frontend mid-workshop.
+**You run inside the very server that runs AI-PDS Web**, as the same user (`aipds`), so a stray signal reaches the app itself. A browser verification once SIGKILLed the frontend mid-workshop.
 
 A PreToolUse hook therefore **rejects** these before they run. The refusal names what was caught; read it rather than retrying a variant.
 

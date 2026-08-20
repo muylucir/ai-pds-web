@@ -1,6 +1,6 @@
 // frontend/lib/api/errorMessage.ts — 백엔드 에러 코드 → UI 문구.
 //
-// 백엔드는 UI 언어를 모르므로 안정적 코드(backend/pathfinder/error_codes.py)를
+// 백엔드는 UI 언어를 모르므로 안정적 코드(backend/aipds/error_codes.py)를
 // detail로 보낸다. 문구는 여기가 소유한다.
 //
 // **모르는 코드는 원문을 그대로 돌려준다.** 코드화가 부분적으로 진행된 중간

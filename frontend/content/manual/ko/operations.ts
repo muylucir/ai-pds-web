@@ -44,6 +44,30 @@ export const operations: ManualSection = {
 
 접속 주소는 출력값 \`AipdsHostingStack.DistributionDomain\` 입니다.`,
     },
+    { kind: "heading", id: "migrate", text: "기존 배포에서 옮겨오기" },
+    {
+      kind: "md",
+      md: `스택 이름이 바뀌면 CloudFormation은 기존 스택과의 연결을 잃습니다. 새 스택 3개가
+생기고 기존 스택 3개는 남습니다.`,
+    },
+    {
+      kind: "steps",
+      items: [
+        "`cdk deploy AipdsDrillStack AipdsAuthStack` — 새 버킷과 사용자 풀",
+        "`aws s3 sync s3://<기존 버킷> s3://<새 버킷>` — 산출물을 옮깁니다. 키 접두사에 제품 이름이 없으므로 구조는 그대로 올라갑니다",
+        "`cdk deploy AipdsHostingStack` — 새 EC2와 CloudFront",
+        "새 주소로 로그인 확인 (`admin@aipds.local`)",
+        "프로젝트 카드 확인 — 명세와 설문은 살아 있고 프로토타입은 **빌드 전**입니다",
+        "필요한 프로토타입을 다시 빌드합니다. 빌드 산출물은 인스턴스 디스크에만 있었으므로 함께 오지 않습니다",
+        "기존 스택 3개를 삭제합니다 (Hosting → Auth → Drill 순서)",
+      ],
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**7단계를 서둘러 하지 마십시오.** 이미 배포된 설문 링크는 기존 주소를 가리키므로,
+기존 스택을 지우면 그 링크가 죽습니다. 진행 중인 설문의 응답 수집이 끝난 뒤에 지웁니다.`,
+    },
     {
       kind: "callout",
       tone: "warn",

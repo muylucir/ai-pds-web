@@ -1,9 +1,9 @@
 // These types mirror the backend Pydantic models EXACTLY, including snake_case
 // field names, because the backend serializes JSON with those keys and the
 // client does no key remapping. Sources:
-//   backend/pathfinder/models.py       (QuestionOption, Question, QuestionFile,
+//   backend/aipds/models.py       (QuestionOption, Question, QuestionFile,
 //                                        StageState, ProjectState, AuditEntry)
-//   backend/pathfinder/sandbox/base.py (AgentEvent, TurnResult)
+//   backend/aipds/sandbox/base.py (AgentEvent, TurnResult)
 //   API Completion plan                (GET /projects item shape)
 
 export interface QuestionOption {
@@ -182,7 +182,7 @@ export interface HistoryTraceEntry {
   text: string | null;
   path: string | null;
   // 도구가 무엇을 했는지. 라이브에서는 status payload로 오는 것과 **같은 값**이다
-  // (backend/pathfinder/tool_trace.py가 양쪽을 만든다).
+  // (backend/aipds/tool_trace.py가 양쪽을 만든다).
   detail?: string | null;
 }
 

@@ -128,20 +128,20 @@ def ask_user_question_denied(language: str) -> str:
     """
     if _lang(language) == "en":
         return (
-            "AskUserQuestion is not available in Pathfinder. Ask by **writing the "
+            "AskUserQuestion is not available in AI-PDS. Ask by **writing the "
             "question file** that `common/question-format-guide.md` already "
             "specifies — the numbered questions, their lettered options, and an "
             "`[Answer]:` line under each — anywhere under `aiplc-docs/`. "
-            "Pathfinder reads that file the moment you finish writing it and "
+            "AI-PDS reads that file the moment you finish writing it and "
             "shows the questions to the user exactly as you wrote them, so the "
             "4-question / 4-option limits of this tool do not apply and nothing "
             "has to be shortened. Your turn ends there; the answers arrive in the "
             "file's `[Answer]:` tags and you continue on the next turn.")
     return (
-        "Pathfinder에서는 AskUserQuestion을 쓸 수 없습니다. 질문은 "
+        "AI-PDS에서는 AskUserQuestion을 쓸 수 없습니다. 질문은 "
         "`common/question-format-guide.md`가 이미 규정한 **질문 파일을 쓰는 것**으로 "
         "합니다 — 번호가 붙은 문항, letter가 붙은 보기, 각 문항 아래 `[Answer]:` 줄. "
-        "위치는 `aiplc-docs/` 아래 어디든 됩니다. 파일을 다 쓰는 순간 Pathfinder가 "
+        "위치는 `aiplc-docs/` 아래 어디든 됩니다. 파일을 다 쓰는 순간 AI-PDS가 "
         "그것을 읽어 **적은 그대로** 사용자에게 보여주므로, 이 도구의 4문항·4보기 "
         "제한이 적용되지 않고 무엇도 줄여 쓸 필요가 없습니다. 턴은 거기서 끝나고, "
         "답변은 그 파일의 `[Answer]:` 태그로 들어오며 다음 턴에 이어갑니다.")
@@ -165,7 +165,7 @@ def file_questions_unparsed(language: str, path: str) -> str:
     """
     if _lang(language) == "en":
         return (
-            f"Pathfinder could not read the questions in `{path}`, so nothing was "
+            f"AI-PDS could not read the questions in `{path}`, so nothing was "
             f"shown to the user. The file has `[Answer]:` tags but no question the "
             f"parser recognizes. Each question needs a heading of the form "
             f"`## Question <number>` — ASCII, exactly as "
@@ -173,7 +173,7 @@ def file_questions_unparsed(language: str, path: str) -> str:
             f"sentence, its lettered options, and an `[Answer]:` line. Rewrite the "
             f"file that way; the questions appear as soon as you do.")
     return (
-        f"`{path}`의 질문을 Pathfinder가 읽지 못해 사용자에게 아무것도 표시되지 "
+        f"`{path}`의 질문을 AI-PDS가 읽지 못해 사용자에게 아무것도 표시되지 "
         f"않았습니다. `[Answer]:` 태그는 있는데 파서가 인식하는 문항이 없습니다. "
         f"각 문항에는 `## Question <번호>` 형태의 헤딩이 필요합니다 — "
         f"`common/question-format-guide.md`가 적은 그대로 ASCII로 씁니다(본문과 "
@@ -188,18 +188,18 @@ def file_questions_stop(language: str, path: str) -> str:
     언어를 따른다.
 
     **다시 묻지 말라고 명시하는 것이 요점이다.** 상류 룰은 질문을 만든 뒤 사용자에게
-    물으라고 지시하는데, 이 경로에서는 Pathfinder가 파일을 그대로 화면에 띄운다.
+    물으라고 지시하는데, 이 경로에서는 AI-PDS가 파일을 그대로 화면에 띄운다.
     그 사실을 말해 주지 않으면 다음 턴에 모델이 AskUserQuestion으로 같은 질문을
     다시 만들고 — 그것이 2026-08-17에 문항 79%를 훼손한 바로 그 재생성이다.
     """
     if _lang(language) == "en":
-        return (f"Stopping here: Pathfinder is showing the questions in "
+        return (f"Stopping here: AI-PDS is showing the questions in "
                 f"`{path}` to the user, read from the file exactly as you wrote "
                 f"them. Do NOT ask them again with AskUserQuestion and do not "
                 f"restate them in chat. The user's answers will be written into "
                 f"the file's `[Answer]:` tags; read the file again on the next "
                 f"turn and continue from there.")
-    return (f"여기서 멈춥니다: `{path}`의 질문을 Pathfinder가 **파일에서 그대로 "
+    return (f"여기서 멈춥니다: `{path}`의 질문을 AI-PDS가 **파일에서 그대로 "
             f"읽어** 사용자 화면에 띄웁니다. AskUserQuestion으로 다시 묻지 말고 "
             f"채팅에 옮겨 적지도 마세요. 사용자의 답변은 그 파일의 `[Answer]:` "
             f"태그에 기록되니, 다음 턴에 파일을 다시 읽고 이어가세요.")
@@ -251,13 +251,13 @@ def state_file_missing(language: str) -> str:
                 "the stage badges are empty. Write that file the way "
                 "`common/workflow-changes.md` and your stage's rules specify — a "
                 "`- **Current Stage**: <name>` line and a `## Stage Progress` "
-                "checklist — and keep it updated as you go. Pathfinder reads the "
+                "checklist — and keep it updated as you go. AI-PDS reads the "
                 "file and updates the badges itself; there is no tool to call.")
     return ("그리고 `aiplc-docs/aiplc-state.md`에 현재 스테이지가 아직 없어서 "
             "스테이지 배지가 비어 있습니다. `common/workflow-changes.md`와 지금 "
             "스테이지의 룰이 정한 형태로 그 파일을 써 주세요 — "
             "`- **Current Stage**: <이름>` 줄과 `## Stage Progress` 체크리스트 — "
-            "그리고 진행하면서 계속 갱신해 주세요. Pathfinder가 그 파일을 읽어 "
+            "그리고 진행하면서 계속 갱신해 주세요. AI-PDS가 그 파일을 읽어 "
             "배지를 스스로 갱신합니다. 호출할 도구는 없습니다.")
 
 
@@ -277,7 +277,7 @@ def prototype_handoff_stop(language: str, slug: str) -> str:
     """
     if _lang(language) == "en":
         return (f"Stopping here: '{slug}' is now a card in the Prototypes tab, and "
-                f"Pathfinder put it there when you wrote the build instructions — "
+                f"AI-PDS put it there when you wrote the build instructions — "
                 f"there is no tool to call. **End your turn** and tell the user to "
                 f"build it in that tab. Do not ask for credentials, an API key, a "
                 f"provider or a model; the project already has them. Iteration and "
@@ -285,7 +285,7 @@ def prototype_handoff_stop(language: str, slug: str) -> str:
                 f"when the user comes back with a built prototype or survey "
                 f"results.")
     return (f"여기서 멈춥니다: '{slug}'가 Prototypes 탭의 카드로 준비됐습니다 — "
-            f"빌드 지시를 쓰는 순간 Pathfinder가 등록했으므로 호출할 도구는 "
+            f"빌드 지시를 쓰는 순간 AI-PDS가 등록했으므로 호출할 도구는 "
             f"없습니다. **턴을 끝내고** 사용자에게 그 탭에서 빌드하라고 안내해 "
             f"주세요. 자격증명·API 키·제공자·모델을 묻지 마세요 — 프로젝트가 이미 "
             f"갖고 있습니다. 개선과 검증(Step 4-6)은 버린 것이 아니라 미룬 "

@@ -1,6 +1,6 @@
 # backend/tests/test_question_file_answers.py — 답변이 질문 파일에 되기록되는가.
 #
-# 왜 이 파일이 생겼는가: Pathfinder는 질문을 AskUserQuestion으로 전달하면서
+# 왜 이 파일이 생겼는가: AI-PDS는 질문을 AskUserQuestion으로 전달하면서
 # 질문 파일의 `[Answer]:` 칸을 영구히 비워 뒀다. ai-plc 워크플로우는 그 칸이
 # 채워지는 것을 전제로 돌아간다 — aws-aiplc-rule-details/common/question-format-guide.md
 # 의 "Read the question file / Extract answers after [Answer]: tags"이고,

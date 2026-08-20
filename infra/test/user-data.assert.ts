@@ -228,7 +228,7 @@ assert.match(s, /Environment=AIPDS_COOKIE_SECURE=true/,
 assert.ok(!s.includes('AIPDS_ENV'),
   'AIPDS_ENV is gone — it was renamed to AIPDS_COOKIE_SECURE (the backend no longer reads it)');
 
-// 컨텍스트 설정 두 개(backend/pathfinder/cli_settings.py). COOKIE_SECURE와 같은
+// 컨텍스트 설정 두 개(backend/aipds/cli_settings.py). COOKIE_SECURE와 같은
 // 실패 모양이다: 둘 다 기본값이 꺼짐이라 이 줄이 빠지면 배포가 조용히 종전
 // 동작으로 돌아간다 — 후반 스테이지 문서가 근거가 아니라 컴팩션 요약에서
 // 나오는 그 상태이고, 화면상 증상은 "문서가 좀 얇다"뿐이다.

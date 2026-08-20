@@ -26,10 +26,10 @@ from aipds.proto.session import has_build_output
 
 _log = logging.getLogger("aipds.proto")
 
-#: Discovery의 "pathfinder"와 구분되는 값 — 두 드라이버는 서로 다른 도구
+#: Discovery의 "aipds"와 구분되는 값 — 두 드라이버는 서로 다른 도구
 #: 집합을 노출한다. 같은 이름을 쓰면 어느 쪽 도구가 붙었는지 로그에서
 #: 구분되지 않는다.
-PROTO_MCP_SERVER_NAME = "pathfinder_proto"
+PROTO_MCP_SERVER_NAME = "aipds_proto"
 
 #: allowed_tools에 넣을 정규 이름. SDK가 --mcp-config를 직렬화할 때 이
 #: 형태로 이름을 만들므로, 다른 표기는 조용히 승인 대기로 남는다

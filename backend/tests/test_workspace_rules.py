@@ -22,7 +22,7 @@ _EN_MARK = "# Language convention"
 def _directive(language: str) -> str:
     """언어 지시는 **코드**다(`workspace_rules.LANGUAGE_DIRECTIVES`).
 
-    2026-08-19에 `pathfinder/agent/language/{ko,en}.md`에서 옮겼다. 파일이었기
+    2026-08-19에 `aipds/agent/language/{ko,en}.md`에서 옮겼다. 파일이었기
     때문에만 존재했던 실패 경로가 사라진다 — 문자열 리터럴은 잃어버릴 수 없으므로
     "지시가 없는 채로 조립한다"가 구조적으로 불가능해진다(옛
     `test_raises_when_the_language_directive_is_missing`은 그 상태를 만들려고
@@ -384,7 +384,7 @@ def test_both_language_directives_carry_the_length_calibration_clause():
 def test_upstream_question_rules_are_untouched():
     """상류 룰은 고치지 않는다 — 질문 파일 규약도 예외가 아니다.
 
-    Pathfinder는 `[Answer]:` 칸을 백엔드가 채우고(agent/question_file_answers.py)
+    AI-PDS는 `[Answer]:` 칸을 백엔드가 채우고(agent/question_file_answers.py)
     사용자는 그 파일을 UI에서 편집할 수 없다. 그래서 question-format-guide.md의
     "Missing Answers"(사용자를 그 파일로 보내는 처리)와 Step 3(사용자가 "done"이라고
     말할 때까지 대기)은 이 제품에 맞지 않는다 — 그렇다고 그 파일을 지우거나 고치는
@@ -397,7 +397,7 @@ def test_upstream_question_rules_are_untouched():
     if not guide.is_file():
         pytest.skip("repo rules not present")
     text = guide.read_text(encoding="utf-8")
-    # 상류가 소유하는 두 지시. Pathfinder가 이것을 무력화하는 방법은 파일을
+    # 상류가 소유하는 두 지시. AI-PDS가 이것을 무력화하는 방법은 파일을
     # 고치는 것이 아니라 discovery-config에서 override를 선언하는 것이다.
     assert "If any [Answer]: tag is empty:" in text
     assert "#### Step 3: Wait for Confirmation" in text
@@ -478,7 +478,7 @@ def test_the_turn_ending_writes_are_named_and_ordered():
     # 무엇이 앞에 오는지 지목한다 — 이유만 주면 모델이 즉흥한다(prompts.py 헤더).
     for before in ("submit_document", "audit.md", "aiplc-state.md"):
         assert before in text
-    # 상류 근거를 지목해 둔다. 없으면 다음 사람이 이 조항을 Pathfinder의 변덕으로
+    # 상류 근거를 지목해 둔다. 없으면 다음 사람이 이 조항을 AI-PDS의 변덕으로
     # 읽고 상류 재동기화 때 지운다.
     assert "core-workflow.md" in text
     # 충돌 문구가 돌아오지 않는다. 질문을 **옮겨 적는 것**만 금지여야 한다.
@@ -493,7 +493,7 @@ def test_the_state_file_is_the_agents_job_and_no_tool_is_named():
     상류를 override했다. 그 도구가 훅으로 대체되면서(agent/reconcile.py) override의
     근거가 사라졌다 — 상류 룰은 원래 에이전트가 이 파일을 직접 갱신하라고 요구하고
     (`common/workflow-changes.md`, 각 스테이지의 "Update State Tracking"),
-    Pathfinder는 그것을 읽는다. 즉 이 경로는 로컬 Claude Code와 같아졌다.
+    AI-PDS는 그것을 읽는다. 즉 이 경로는 로컬 Claude Code와 같아졌다.
 
     **없는 도구를 부르라고 적혀 있으면 안 된다.** 이름이 남아 있으면 에이전트가
     존재하지 않는 도구를 찾고, 그 실패는 조용하다(도구 목록에 없으므로 호출 자체가
@@ -579,7 +579,7 @@ def test_both_prototype_layouts_are_documented_as_valid():
 
 
 #: 조립된 워크스페이스 CLAUDE.md에 인코딩 절이 **없어야** 함을 확인하는 앵커.
-_ENCODING_MARKER = "<!-- pathfinder-tool-encoding -->"
+_ENCODING_MARKER = "<!-- aipds-tool-encoding -->"
 
 
 def test_the_assembled_claude_md_does_not_duplicate_the_encoding_rule(tmp_path):
@@ -673,7 +673,7 @@ def test_the_prototype_handoff_and_model_overrides_are_documented():
     """**2026-08-17의 두 결함을 한 절로 닫은 자리다.**
 
     Path A.1의 Step 3은 "Build Prototype"이고 상류 Step 4~11은 돌아가는
-    프로토타입을 전제한다. Pathfinder는 빌드를 Prototypes 탭이 하는데, 금지만 있고
+    프로토타입을 전제한다. AI-PDS는 빌드를 Prototypes 탭이 하는데, 금지만 있고
     멈출 지점·다음 행동이 문서에 없어서 에이전트가 즉흥 대응했다 — 실측
     keumkang-v5: 자격증명 점검 → API 키 요구 → 선행 조건 3건 나열, 탭 안내는 0회.
 

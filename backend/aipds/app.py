@@ -34,7 +34,7 @@ _LOG_LEVEL_ENV = "AIPDS_LOG_LEVEL"
 #: configure_logging이 자기가 붙인 핸들러를 알아보기 위한 표식. 재호출 시
 #: 핸들러가 쌓여 같은 줄이 여러 번 찍히는 것을 막는다(uvicorn --reload,
 #: TestClient가 lifespan을 두 번 도는 경우).
-_HANDLER_TAG = "pathfinder"
+_HANDLER_TAG = "aipds"
 
 
 def configure_logging() -> None:
@@ -44,7 +44,7 @@ def configure_logging() -> None:
     설정하고 루트는 건드리지 않으므로, 핸들러 없는 상태에서 INFO는 조용히
     버려지고 WARNING만 Python의 lastResort로 포맷 없이 새어나온다.
 
-    실측: 워크숍 박스 journald에 `pathfinder` 로거의 산출이 2905줄 중 **0건**
+    실측: 워크숍 박스 journald에 `aipds` 로거의 산출이 2905줄 중 **0건**
     이었다. 그 사이 채팅 내역 복원 버그를 쫓고 있었는데, 원인을 가리키는 로그
     (`_resolve_resume`의 resume 판단, SDK의 "dropping mirror frame" 경고)가
     전부 이 구멍으로 사라져서 프로덕션에서 재현·계측을 반복해야 했다.
@@ -59,17 +59,17 @@ def configure_logging() -> None:
     level = getattr(logging, os.environ.get(_LOG_LEVEL_ENV, "INFO").upper(),
                     logging.INFO)
     root = logging.getLogger()
-    if not any(getattr(h, "_pathfinder_tag", None) == _HANDLER_TAG
+    if not any(getattr(h, "_aipds_tag", None) == _HANDLER_TAG
                for h in root.handlers):
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter(
             "%(levelname)s:    %(name)s: %(message)s"))
-        handler._pathfinder_tag = _HANDLER_TAG  # type: ignore[attr-defined]
+        handler._aipds_tag = _HANDLER_TAG  # type: ignore[attr-defined]
         root.addHandler(handler)
     root.setLevel(min(root.level or level, level) if root.level else level)
     # 두 로거를 명시적으로 연다. 루트 레벨만으로는 부족하다 — 서드파티가 자기
     # 로거 레벨을 올려 두면 루트가 열려 있어도 걸러진다.
-    for name in ("pathfinder", "claude_agent_sdk"):
+    for name in ("aipds", "claude_agent_sdk"):
         logging.getLogger(name).setLevel(level)
 
 
@@ -303,7 +303,7 @@ def _discovery_config_dir() -> Path:
 # 프로젝트가 한국어로 돌고(7f33652가 고친 그 결함), session_store·pending_store·
 # answer_store가 없어 트랜스크립트 미러링과 질문·답변 복원이 전부 빠진다. 그
 # 사실은 실제로 당기는 순간 — 즉 워크숍 중 사고가 났을 때 — 처음 드러난다.
-# 작동하는 롤백은 git revert + `pathfinder-update`다(배포가 브랜치를 가리키므로
+# 작동하는 롤백은 git revert + `aipds-update`다(배포가 브랜치를 가리키므로
 # 인스턴스 교체 없이 되돌아간다).
 #
 # Monkeypatchable in tests: 이 함수 자체를 fake agent_factory로 갈아끼운다.
@@ -561,7 +561,7 @@ def _docs_openapi_url() -> str | None:
 # cognito_config()는 매 요청 호출과 같은 순수 env 읽기이므로 임포트 시점
 # 호출도 안전하다(반쯤 설정된 상태면 여기서 바로 RuntimeError로 죄는 게
 # 오히려 첫 요청까지 기다리는 것보다 낫다).
-app = FastAPI(title="Pathfinder", lifespan=_lifespan,
+app = FastAPI(title="AI-PDS", lifespan=_lifespan,
              openapi_url=_docs_openapi_url())
 
 # CORS: the frontend (:3000 in dev, Playwright e2e) calls this API (:8000)

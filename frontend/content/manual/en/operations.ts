@@ -46,6 +46,30 @@ and frontend, so **a few minutes of 502 responses is normal.**
 
 The address to open is the \`AipdsHostingStack.DistributionDomain\` output.`,
     },
+    { kind: "heading", id: "migrate", text: "Moving from an existing deployment" },
+    {
+      kind: "md",
+      md: `Renaming the stacks makes CloudFormation lose its link to the existing ones. You end up with
+3 new stacks while the 3 existing ones remain.`,
+    },
+    {
+      kind: "steps",
+      items: [
+        "`cdk deploy AipdsDrillStack AipdsAuthStack` — the new bucket and user pool",
+        "`aws s3 sync s3://<existing bucket> s3://<new bucket>` — moves the artifacts over. The key prefixes carry no product name, so the layout comes up unchanged",
+        "`cdk deploy AipdsHostingStack` — the new EC2 instance and CloudFront",
+        "Confirm you can sign in at the new address (`admin@aipds.local`)",
+        "Check the project cards — specs and surveys are intact, and prototypes are **unbuilt**",
+        "Rebuild whichever prototypes you need. Build output lived only on the instance disk, so it does not come along",
+        "Delete the 3 existing stacks (Hosting → Auth → Drill, in that order)",
+      ],
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**Do not rush step 7.** Survey links already handed out point at the old address, so deleting the
+old stacks kills them. Delete only after response collection for any in-flight survey has finished.`,
+    },
     {
       kind: "callout",
       tone: "warn",

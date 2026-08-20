@@ -111,7 +111,7 @@ def test_the_agentic_stack_is_named_and_is_the_typescript_sdk():
     """agentic 프로토타입의 스택이 명시돼 있어야 한다.
 
     상류 룰(`prototype-building.md`)은 Strands를 요구하는데 파이썬으로 쓰여
-    있다. Pathfinder의 대응은 **TypeScript SDK**다 — 실측(2026-08-17):
+    있다. AI-PDS의 대응은 **TypeScript SDK**다 — 실측(2026-08-17):
     `@strands-agents/sdk` 1.13.0이 `@aws-sdk/client-bedrock-runtime`을 직접
     의존하고, Bedrock 기본 자격증명 체인 + 도구 + 스트리밍이 Node 20에서
     동작한다. 이름을 적어 두지 않으면 에이전트가 파이썬 SDK를 찾는다."""
