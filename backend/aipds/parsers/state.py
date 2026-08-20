@@ -1,4 +1,4 @@
-# backend/pathfinder/parsers/state.py
+# backend/aipds/parsers/state.py
 from __future__ import annotations
 import re
 from aipds.models import ProjectState, StageState

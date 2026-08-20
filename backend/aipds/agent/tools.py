@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/tools.py — 에이전트의 UI 접점.
+# backend/aipds/agent/tools.py — 에이전트의 UI 접점.
 #
 # **커스텀 도구는 하나뿐이다: `submit_document`.** 파일 조작(Read/Write/Edit)과
 # 질문(AskUserQuestion)은 Claude Agent SDK 내장 도구가 담당한다 — AI-PLC 룰이
@@ -75,7 +75,7 @@ def build_tools(workspace: str, emit: Callable[[AgentEvent], None],
 
     **`publish` 인자가 없어졌다.** 그것은 `report_stage`만의 요구였다: 그 도구가
     `aiplc-state.md`를 로컬에 직접 쓰면서 PostToolUse 훅을 지나지 않았고, 그래서
-    훅이 지키는 계약("광고하기 전에 게시한다", pathfinder/workspace_sync.py)을
+    훅이 지키는 계약("광고하기 전에 게시한다", aipds/workspace_sync.py)을
     스스로 다시 지켜야 했다. 스테이지가 훅으로 옮겨 간 지금은 상태 파일도 다른
     산출물과 **같은 경로**로 게시된다 — 예외가 사라졌으므로 예외를 위한 인자도
     사라진다. `submit_document`는 파일을 쓰지 않고 이미 쓰인 파일을 선언할 뿐이라

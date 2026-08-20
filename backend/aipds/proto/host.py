@@ -1,4 +1,4 @@
-# backend/pathfinder/proto/host.py — ProtoHost: EC2-local prototype hosting.
+# backend/aipds/proto/host.py — ProtoHost: EC2-local prototype hosting.
 #
 # Task 5's PrototypeSession (the in-process builder) writes the prototype
 # straight into `{root}/{pid}/{slug}/` on this same box, so hosting no longer

@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/surveys.py — validation survey: admin routes.
+# backend/aipds/routes/surveys.py — validation survey: admin routes.
 #
 # The public (token-only) routes live in the same module but are registered
 # without the /projects prefix -- see routes/surveys_public.py in Task 7.

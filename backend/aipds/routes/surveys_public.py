@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/surveys_public.py — PUBLIC survey routes.
+# backend/aipds/routes/surveys_public.py — PUBLIC survey routes.
 #
 # This is the only UNAUTHENTICATED WRITE path in the app, so it is deliberately
 # narrow (spec §7):

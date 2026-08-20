@@ -1,4 +1,4 @@
-# backend/pathfinder/proto/tools.py — 프로토타입 빌더의 커스텀 MCP 도구.
+# backend/aipds/proto/tools.py — 프로토타입 빌더의 커스텀 MCP 도구.
 #
 # 하나뿐이다: build_complete. 파일 조작과 질문은 SDK 내장 도구가 담당한다
 # (Write/Edit/AskUserQuestion). 이것만 자작하는 이유는 Discovery의

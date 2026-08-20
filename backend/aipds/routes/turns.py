@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/turns.py
+# backend/aipds/routes/turns.py
 import json
 import logging
 from fastapi import APIRouter, HTTPException
@@ -25,7 +25,7 @@ def _turn_payload(pid: str, handle: str | None, inline: object,
     """핸들 또는 인라인 쿼리 파라미터에서 턴 입력을 꺼낸다.
 
     핸들 경로가 기본이다: 긴 입력이 URL에 실리면 요청 라인이 커져 프록시가
-    431을 낸다(pathfinder/turn_handles.py 헤더의 실측). 인라인 경로를 남겨
+    431을 낸다(aipds/turn_handles.py 헤더의 실측). 인라인 경로를 남겨
     두는 이유는 배포가 원자적이지 않다는 것 — 백엔드가 먼저 올라간 순간
     구 프론트가 여전히 ?text=/?answers=로 보낸다.
 
@@ -68,7 +68,7 @@ async def create_turn(pid: str, body: MessageBody):
     """턴 텍스트를 **본문**으로 받아 짧은 핸들을 돌려준다.
 
     EventSource는 GET만 지원해 본문을 실을 수 없으므로, 긴 입력을 URL에서
-    빼는 유일한 방법이 이 2단계다(pathfinder/turn_handles.py 헤더 참조).
+    빼는 유일한 방법이 이 2단계다(aipds/turn_handles.py 헤더 참조).
     워크스페이스를 여기서 확인해 없는 프로젝트는 404로 끝낸다 — 핸들만 받고
     스트림에서 404가 나면 사용자는 "연결이 끊어졌습니다"만 본다.
     """

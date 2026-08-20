@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/proto_public.py — PUBLIC prototype preview proxy.
+# backend/aipds/routes/proto_public.py — PUBLIC prototype preview proxy.
 #
 # 이 파일이 prototypes.py에서 분리된 이유는 인증이다: app.py는 라우터 include
 # 시점에 인증 의존성을 붙이는데, 이 라우트들은 Cognito 인증 없이 남아야 한다.

@@ -1,4 +1,4 @@
-# backend/pathfinder/survey/report_labels.py — 설문 리포트 마크다운의 라벨.
+# backend/aipds/survey/report_labels.py — 설문 리포트 마크다운의 라벨.
 #
 # 이것은 UI 문구가 아니라 **문서 생성기**다. 리포트는 aiplc-docs/** 아래에
 # 산출물로 저장되고 문서 리뷰 화면과 개발자 핸드오프에 들어가므로, UI 언어

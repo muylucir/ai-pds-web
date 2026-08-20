@@ -1,4 +1,4 @@
-# backend/pathfinder/turn_handles.py — 긴 턴 입력을 URL에서 빼기 위한 핸들.
+# backend/aipds/turn_handles.py — 긴 턴 입력을 URL에서 빼기 위한 핸들.
 #
 # **왜 있는가.** 채팅 텍스트가 SSE URL의 쿼리스트링으로 가고 있었다
 # (`GET /events?text=...`). EventSource는 GET만 지원해 요청 본문을 실을 수

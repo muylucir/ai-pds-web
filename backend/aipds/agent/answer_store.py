@@ -1,4 +1,4 @@
-# backend/pathfinder/agent/answer_store.py — 제출된 답변의 S3 레코드.
+# backend/aipds/agent/answer_store.py — 제출된 답변의 S3 레코드.
 #
 # 왜 필요한가: 히스토리 복원이 **CLI가 영어로 옮겨 적은 산문**에 의존하고 있었다.
 # SDK AskUserQuestion의 tool_result는 CLI가 만드는 고정 문장이다:

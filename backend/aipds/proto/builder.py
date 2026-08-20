@@ -1,4 +1,4 @@
-# backend/pathfinder/proto/builder.py — the prototype build agent, running
+# backend/aipds/proto/builder.py — the prototype build agent, running
 # IN-PROCESS in the backend (was harness/sdk_driver.py inside a Tokyo MicroVM).
 #
 # One build session = one connected ClaudeSDKClient. Hook/tool callbacks run on

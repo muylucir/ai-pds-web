@@ -1,4 +1,4 @@
-# backend/pathfinder/error_codes.py — HTTP detail로 나가는 안정적 코드.
+# backend/aipds/error_codes.py — HTTP detail로 나가는 안정적 코드.
 #
 # 백엔드는 UI 언어를 모른다: 프록시(frontend/app/api/[...path]/route.ts의
 # filterHeaders)가 Accept-Language를 전달하지 않고, 전달하게 만들어도 브라우저

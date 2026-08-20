@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/deps.py
+# backend/aipds/routes/deps.py
 import asyncio
 import logging
 from fastapi import HTTPException

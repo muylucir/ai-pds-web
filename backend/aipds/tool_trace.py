@@ -1,4 +1,4 @@
-# backend/pathfinder/tool_trace.py — 추론 과정 트레이스에 붙는 "무엇을 했는지".
+# backend/aipds/tool_trace.py — 추론 과정 트레이스에 붙는 "무엇을 했는지".
 #
 # 화면에서 Write는 `📝 파일 변경: aiplc-docs/audit.md`로 보이는데(별도 `file_changed`
 # 이벤트가 `path`를 들고 온다) Read/Bash는 `Read`, `Bash`만 보였다. 무엇을 읽었는지·

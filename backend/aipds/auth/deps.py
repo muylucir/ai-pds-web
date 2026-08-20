@@ -1,4 +1,4 @@
-# backend/pathfinder/auth/deps.py
+# backend/aipds/auth/deps.py
 #
 # FastAPI 의존성 두 개. 라우터 include 시점에 붙여 라우트 본문을 건드리지 않는다.
 from __future__ import annotations

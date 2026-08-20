@@ -1,4 +1,4 @@
-# backend/pathfinder/proto/layout.py — 프로토타입 산출물 레이아웃의 단독 소유자.
+# backend/aipds/proto/layout.py — 프로토타입 산출물 레이아웃의 단독 소유자.
 #
 # **왜 이 모듈이 생겼는가(2026-08-16).** Prototypes 탭이 카드를 만드는 규칙이
 # `prototypes/{slug}/PROTOTYPE-{slug}.md` 한 가지뿐이어서, Path A.1(Envision

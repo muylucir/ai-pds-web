@@ -1,4 +1,4 @@
-# backend/pathfinder/proto/build_guard.py — 빌드 에이전트의 Bash 판정부.
+# backend/aipds/proto/build_guard.py — 빌드 에이전트의 Bash 판정부.
 #
 # **왜 이 파일이 생겼는가(2026-08-01의 사고).** 빌드 에이전트가 브라우저 검증을 위해
 # Playwright chromium을 띄웠고, 그 검증이 포트 3000을 겨냥해 Pathfinder 프론트엔드가

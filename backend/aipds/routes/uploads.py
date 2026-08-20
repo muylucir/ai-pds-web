@@ -1,4 +1,4 @@
-# backend/pathfinder/routes/uploads.py
+# backend/aipds/routes/uploads.py
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from aipds.routes.deps import ensure_workspace
 from aipds.parsers.uploads import convert, upload_key, MAX_UPLOAD_BYTES

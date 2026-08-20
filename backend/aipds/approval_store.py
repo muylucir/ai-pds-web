@@ -1,4 +1,4 @@
-# backend/pathfinder/approval_store.py — 승인 결정의 구조화된 기록.
+# backend/aipds/approval_store.py — 승인 결정의 구조화된 기록.
 #
 # **왜 이 파일이 생겼는가.** 승인 여부를 `audit.md`의 산문에서 정규식으로
 # 복원하고 있었다. 사용자가 게이트 버튼을 누른 사실은 그 순간 확실히 알려져
