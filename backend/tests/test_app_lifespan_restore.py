@@ -1,7 +1,7 @@
 # backend/tests/test_app_lifespan_restore.py
 import json
 from fastapi.testclient import TestClient
-from pathfinder import app as app_module
+from aipds import app as app_module
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 

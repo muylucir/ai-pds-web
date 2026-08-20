@@ -1,7 +1,7 @@
 # backend/tests/test_proto_session_store.py
 from __future__ import annotations
 
-from pathfinder.proto.session_store import S3SessionStore, transcript_prefix
+from aipds.proto.session_store import S3SessionStore, transcript_prefix
 
 from fakes.in_memory_s3 import FakeS3Store
 
@@ -122,7 +122,7 @@ async def test_round_trip_over_the_real_S3Store_shape():
     boto3 client backed by moto."""
     import boto3
     from moto import mock_aws
-    from pathfinder.s3store import S3Store
+    from aipds.s3store import S3Store
 
     with mock_aws():
         client = boto3.client("s3", region_name="ap-northeast-2")

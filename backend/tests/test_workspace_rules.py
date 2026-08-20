@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from pathfinder.agent.workspace_rules import place_rules
+from aipds.agent.workspace_rules import place_rules
 
 
 #: 실제 언어 지시의 첫 헤딩. 픽스처 스텁(옛 `KO-DIRECTIVE`/`EN-DIRECTIVE`)을 쓰지
@@ -33,7 +33,7 @@ def _directive(language: str) -> str:
     있었다 — ko 3,389자 / en 1,310자였고, en은 "번역할 것이 없다"로 끝내
     양식 처리 판단을 아예 담지 않았다.
     """
-    from pathfinder.agent.workspace_rules import LANGUAGE_DIRECTIVES
+    from aipds.agent.workspace_rules import LANGUAGE_DIRECTIVES
     return LANGUAGE_DIRECTIVES[language]
 
 
@@ -144,7 +144,7 @@ def test_the_language_directive_is_code_not_a_file():
     `survey/report_labels.py`가 모두 그 형태이고 `discovery_guard.py` 헤더가
     그것을 규약으로 적어 뒀다. `language/*.md`만 예외였다.
     """
-    from pathfinder.agent.workspace_rules import LANGUAGE_DIRECTIVES
+    from aipds.agent.workspace_rules import LANGUAGE_DIRECTIVES
     assert set(LANGUAGE_DIRECTIVES) == {"ko", "en"}
     assert all(v.strip() for v in LANGUAGE_DIRECTIVES.values())
 

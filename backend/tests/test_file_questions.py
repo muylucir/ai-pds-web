@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from pathfinder.agent.claude_driver import ClaudeDriver
+from aipds.agent.claude_driver import ClaudeDriver
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 QUESTION_MD = """# 페인 포인트 — 명확화 질문
@@ -270,7 +270,7 @@ async def test_can_be_switched_off(tmp_path, monkeypatch):
 async def test_the_hook_records_which_file_is_open(tmp_path):
     d, ws = _driver(tmp_path)
     await _post(d, _write(ws, REL, QUESTION_MD))
-    from pathfinder.agent.pending_store import load_pending_file
+    from aipds.agent.pending_store import load_pending_file
     assert await load_pending_file(d._s3) == REL
 
 
@@ -307,7 +307,7 @@ async def test_pending_survives_a_missing_file(tmp_path):
 
     복원은 편의이므로 500을 내지 않는다 — pending_store의 같은 규율."""
     d, _ = _driver(tmp_path)
-    from pathfinder.agent.pending_store import save_pending_file
+    from aipds.agent.pending_store import save_pending_file
     await save_pending_file(d._s3, file="aiplc-docs/gone.md")
     d._pending_payload = None
     assert await d.pending({"session_id": "s-1"}) is None
@@ -399,7 +399,7 @@ async def test_the_question_file_is_in_s3_before_the_card_is_advertised(tmp_path
     assert await d._s3.get(REL) == QUESTION_MD
     # 그리고 마커보다 먼저 있어야 한다 — 마커가 없는 파일을 가리키는 상태가
     # 되면 위의 두 실패가 그대로 재현된다.
-    from pathfinder.agent.pending_store import load_pending_file
+    from aipds.agent.pending_store import load_pending_file
     assert await load_pending_file(d._s3) == REL
 
 

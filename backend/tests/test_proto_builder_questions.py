@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from pathfinder.proto.builder import PrototypeBuilder
+from aipds.proto.builder import PrototypeBuilder
 from fakes.fake_sdk import FakeSdkClient, ResultMessage
 
 ASK_INPUT = {"questions": [

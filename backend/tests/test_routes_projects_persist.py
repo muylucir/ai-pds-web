@@ -1,7 +1,7 @@
 import json
 from fastapi.testclient import TestClient
-from pathfinder import app as app_module
-from pathfinder.workspace import Workspace
+from aipds import app as app_module
+from aipds.workspace import Workspace
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 client = TestClient(app_module.app)

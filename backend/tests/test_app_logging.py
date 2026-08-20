@@ -9,7 +9,7 @@
 # 로그도 볼 수 없었다.
 import logging
 
-from pathfinder.app import configure_logging
+from aipds.app import configure_logging
 
 
 def _reset(root: logging.Logger, saved):
@@ -45,7 +45,7 @@ def test_pathfinder_and_sdk_loggers_emit_at_info(caplog):
     try:
         configure_logging()
         with caplog.at_level(logging.INFO):
-            logging.getLogger("pathfinder.agent").info("OURS")
+            logging.getLogger("aipds.agent").info("OURS")
             logging.getLogger(
                 "claude_agent_sdk._internal.transcript_mirror_batcher"
             ).warning("THEIRS")

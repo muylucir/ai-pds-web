@@ -1,0 +1,243 @@
+"""브랜드 프로필을 빌드 워크스페이스에 반영한다.
+
+이 모듈은 S3를 모른다(프로필 객체를 받는다) — 그래서 두 호출자가 같은 함수를
+쓴다: 빌드 세션 시작(proto/session.py)과 호스팅 시작(routes/prototypes.py).
+두 지점이 있어야 "이미 테마를 담고 있는 프로토타입은 재호스팅만으로 최신
+프로필로 갱신된다"가 성립한다 — 첫 프로필 업로드 이전에 만들어져 prototype/
+안에 테마 사본이 없는 프로토타입은 재호스팅으로 갱신할 대상이 없어 그대로
+무브랜드로 남고, 개선 세션을 한 번 열어야 한다.
+
+**진실은 build_dir 루트의 파일이고, prototype/ 아래 같은 이름의 파일은 우리가
+관리하는 파생물이다.** 에이전트는 위치를 정하고(프레임워크마다 다르다) 우리는
+이름으로 찾는다.
+"""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from aipds.design_profile import FONT_TOKENS, DesignProfile
+from aipds.proto import prompts
+
+_log = logging.getLogger(__name__)
+
+DESIGN_FILENAME = "DESIGN.md"
+THEME_FILENAME = "pathfinder-theme.css"
+_CLAUDE_FILENAME = "CLAUDE.md"
+
+#: 이 표시가 첫 줄에 있으면 "프로필이 지워진 뒤 남은 스텁"이다. theme_required가
+#: 이걸로 "프로필 있음"과 구분한다 — 게이트가 S3를 보지 않아도 되는 이유다.
+_NO_PROFILE_MARKER = "/* pathfinder-theme: no brand profile */"
+
+_SECTION_START = "<!-- pathfinder:design:start -->"
+_SECTION_END = "<!-- pathfinder:design:end -->"
+
+#: 사내 폰트가 브라우저에 없을 때 떨어질 자리. 웹폰트는 싣지 않는다(비목표) —
+#: 임의의 CDN을 프로토타입에 주입하지 않는다.
+_FALLBACK = {
+    "font_sans": "ui-sans-serif, system-ui, -apple-system, sans-serif",
+    "font_mono": "ui-monospace, SFMono-Regular, Menlo, monospace",
+}
+
+#: 탐색에서 제외한다 — node_modules 안의 우연한 동명 파일을 덮어쓰지 않고,
+#: 매 호스팅에서 수만 개 파일을 걷지 않는다.
+_SKIP_DIRS = {"node_modules", ".next", ".git", "dist", "build", ".turbo"}
+_TEXT_SUFFIXES = {".css", ".scss", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".html"}
+
+
+def _css_var(key: str) -> str:
+    return "--" + key.replace("_", "-")
+
+
+def theme_css(tokens: dict[str, str]) -> str:
+    """토큰에서 :root 블록을 만든다.
+
+    `.dark`는 만들지 않는다 — 다크 값은 토큰에서 유도할 수 없고(밝기 반전은
+    브랜드 결정이다), 만들지 않으면 shadcn 기본 다크 팔레트가 그대로 살아 있어
+    화면이 깨지지 않는다.
+    """
+    lines = [
+        "/* pathfinder-theme: generated from the admin brand profile.",
+        "   Do not edit — it is overwritten on every build and every re-host. */",
+        ":root {",
+    ]
+    for key, value in tokens.items():
+        rendered = (f"{value}, {_FALLBACK[key]}" if key in FONT_TOKENS else value)
+        lines.append(f"  {_css_var(key)}: {rendered};")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def stub_css() -> str:
+    """프로필이 지워진 뒤 남기는 무해한 파일."""
+    return (f"{_NO_PROFILE_MARKER}\n"
+            "/* The brand profile was removed in admin. This file stays so that\n"
+            "   existing imports keep building; shadcn defaults apply. */\n"
+            ":root {\n}\n")
+
+
+def _walk(build_dir: Path):
+    proto = build_dir / "prototype"
+    if not proto.is_dir():
+        return
+    stack = [proto]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir():
+                # 심볼릭 링크 디렉토리는 내려가지 않는다 -- prototype/ 아래는
+                # 에이전트가 자유롭게 쓰는 트리라 순환 심볼릭 링크가 있을 수
+                # 있고, 그러면 이 스택 워크가 끝나지 않는다. 무한 루프는
+                # 예외가 아니라서 session.start()·build_complete 도구·
+                # POST /host 어느 호출부의 try/except도 이걸 못 잡고 그대로
+                # 매달린다(실측 아님 — 방어적 수정).
+                if entry.name not in _SKIP_DIRS and not entry.is_symlink():
+                    stack.append(entry)
+            else:
+                yield entry
+
+
+def theme_copies(build_dir: Path) -> list[Path]:
+    """prototype/ 아래의 테마 사본. 이름으로 찾는다.
+
+    심볼릭 링크는 제외한다 -- 포함시키면 _write_theme_everywhere가 거기에
+    write_text를 호출해, 이름만 같은 심볼릭 링크가 가리키는 임의의 경로에
+    쓰게 된다.
+    """
+    return sorted(p for p in _walk(build_dir)
+                  if p.name == THEME_FILENAME and not p.is_symlink())
+
+
+def theme_required(build_dir: Path) -> bool:
+    """이 워크스페이스에 브랜드 프로필이 적용되어야 하는가.
+
+    S3를 보지 않는다 — 루트 테마 파일의 존재와 그 내용이 답이다. 게이트가
+    도구 호출 경로에서 네트워크를 타지 않게 하려는 것이다.
+    """
+    root = build_dir / THEME_FILENAME
+    if not root.is_file():
+        return False
+    try:
+        return _NO_PROFILE_MARKER not in root.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def theme_imported(build_dir: Path) -> bool:
+    """사본이 있고, prototype/ 안의 어떤 파일이 그것을 참조하는가."""
+    if not theme_copies(build_dir):
+        return False
+    for path in _walk(build_dir):
+        if path.name == THEME_FILENAME or path.suffix not in _TEXT_SUFFIXES:
+            continue
+        try:
+            if THEME_FILENAME in path.read_text(encoding="utf-8", errors="ignore"):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _write_theme_everywhere(build_dir: Path, root_theme: Path, css: str) -> None:
+    """루트 테마 파일과 prototype/ 아래 사본을 전부 같은 내용으로 맞춘다.
+
+    스텁(프로필 없음)이든 실제 테마(프로필 있음)든 "쓸 내용을 무엇으로
+    정했는가"만 다르고 "어디에 쓰는가"는 같다 — 두 분기가 따로 낡지 않게
+    이 시퀀스를 한 곳에 둔다.
+    """
+    root_theme.write_text(css, encoding="utf-8")
+    for copy in theme_copies(build_dir):
+        copy.write_text(css, encoding="utf-8")
+
+
+def _upsert_section(path: Path, body: str) -> None:
+    block = f"{_SECTION_START}\n{body}{_SECTION_END}\n"
+    if not path.is_file():
+        path.write_text(block, encoding="utf-8")
+        return
+    text = path.read_text(encoding="utf-8")
+    if _SECTION_START in text and _SECTION_END in text:
+        head, _, rest = text.partition(_SECTION_START)
+        _, _, tail = rest.partition(_SECTION_END)
+        path.write_text(head + block + tail.lstrip("\n"), encoding="utf-8")
+        return
+    joiner = "" if text.endswith("\n") else "\n"
+    path.write_text(text + joiner + block, encoding="utf-8")
+
+
+def _remove_section(path: Path) -> None:
+    """우리 절만 걷어낸다. 남는 것이 없으면 파일을 지운다 — 남의 내용이 있으면
+    보존한다(이 파일이 우리 것만 담는다는 가정을 코드에 박지 않는다)."""
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    if _SECTION_START in text and _SECTION_END in text:
+        head, _, rest = text.partition(_SECTION_START)
+        _, _, tail = rest.partition(_SECTION_END)
+        text = (head + tail.lstrip("\n"))
+    if text.strip():
+        path.write_text(text, encoding="utf-8")
+    else:
+        path.unlink(missing_ok=True)
+
+
+def sync_design(build_dir: Path, profile: DesignProfile | None,
+                language: str) -> None:
+    """워크스페이스를 프로필과 일치시킨다. 매 빌드·매 호스팅에서 호출된다."""
+    root_theme = build_dir / THEME_FILENAME
+    design_md = build_dir / DESIGN_FILENAME
+    claude_md = build_dir / _CLAUDE_FILENAME
+
+    if profile is None:
+        # 한 번도 없었으면 아무것도 만들지 않는다(기능 전체가 opt-in이다).
+        # 있었다가 지워진 경우에만 스텁으로 덮는다.
+        #
+        # DESIGN.md 삭제도 이 가드 **안에서만** 한다 -- root_theme.is_file()이
+        # 우리가 이 워크스페이스에 흔적을 심었다는 유일한 증거다. 이 조건
+        # 밖에서 지우면, 브랜드 프로필이 한 번도 없었던 프로젝트의 매
+        # POST /host가 빌드 에이전트가 자기 메모로 만들었을 루트
+        # DESIGN.md를(우리 것이 아닌데도) 조용히 지운다 -- _remove_section이
+        # 남의 CLAUDE.md 내용을 보존하는 것과 같은 원칙이다.
+        if root_theme.is_file():
+            _write_theme_everywhere(build_dir, root_theme, stub_css())
+            design_md.unlink(missing_ok=True)
+        _remove_section(claude_md)
+        return
+
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+    # 토큰이 없으면 **스텁**을 쓴다 — `theme_css({})`는 "브랜드 프로필에서
+    # 생성됨"이라는 머리말을 단 변수 0개 파일이고, 그 파일이 거짓말을 한다.
+    #
+    # 2026-08-19 실측: 같은 0토큰 프로필로 돌린 두 프로젝트가 갈렸다. 한
+    # 에이전트는 그 파일을 열어 "비어 있으니 덮을 것이 없다"고 판단하고 shadcn
+    # 기본값을 그대로 뒀고(무브랜드), 다른 하나는 DESIGN.md 산문을 읽어 팔레트를
+    # globals.css에 옮겼다(브랜드 적용). 강제 채널이 비면 결과가 에이전트 자율에
+    # 맡겨진다.
+    #
+    # 스텁에는 no-profile 마커가 있어 theme_required()가 False가 된다 — 즉 빈
+    # 테마가 "브랜드 적용됨"으로 읽히는 경로가 사라진다(proto/tools.py의 게이트).
+    # 파일 자체는 남기므로 사본 갱신 배선은 그대로다: 나중에 토큰이 올라오면
+    # 재호스팅만으로 사본까지 갈린다.
+    has_tokens = bool(profile.tokens)
+    if not has_tokens:
+        _log.warning(
+            "design profile has no tokens; writing the no-profile stub to %s — "
+            "the brand can only reach the screen through the DESIGN.md prose",
+            root_theme)
+    _write_theme_everywhere(build_dir, root_theme,
+                            theme_css(profile.tokens) if has_tokens
+                            else stub_css())
+
+    if profile.prose.strip():
+        design_md.write_text(profile.prose.strip() + "\n", encoding="utf-8")
+    else:
+        design_md.unlink(missing_ok=True)
+
+    # 지시와 옆에 놓인 파일의 내용은 같은 값에서 나온다 — 어긋날 수 없다.
+    _upsert_section(claude_md, prompts.design_rules(language,
+                                                    has_tokens=has_tokens))

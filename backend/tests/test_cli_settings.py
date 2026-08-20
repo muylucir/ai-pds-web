@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-import pathfinder.app as app_module
-from pathfinder.cli_settings import (auto_compact_window, cli_context_env,
+import aipds.app as app_module
+from aipds.cli_settings import (auto_compact_window, cli_context_env,
                                      cli_model_id, long_context_enabled)
 
 _MODEL = "global.anthropic.claude-opus-5"
@@ -135,7 +135,7 @@ def test_builder_factory_applies_the_suffix(monkeypatch, tmp_path):
 
 
 def _discovery_env(tmp_path, monkeypatch) -> dict:
-    from pathfinder.agent.claude_driver import ClaudeDriver, _default_client_factory
+    from aipds.agent.claude_driver import ClaudeDriver, _default_client_factory
     from tests.fakes.in_memory_s3 import FakeS3Store
 
     captured = {}
@@ -153,7 +153,7 @@ def _discovery_env(tmp_path, monkeypatch) -> dict:
 
 
 def _builder_env(tmp_path, monkeypatch) -> dict:
-    from pathfinder.proto.builder import PrototypeBuilder, _default_client_factory
+    from aipds.proto.builder import PrototypeBuilder, _default_client_factory
 
     captured = {}
 

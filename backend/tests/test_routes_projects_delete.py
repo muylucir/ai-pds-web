@@ -3,8 +3,8 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from pathfinder import app as app_module
-from pathfinder.workspace import Workspace
+from aipds import app as app_module
+from aipds.workspace import Workspace
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 client = TestClient(app_module.app)
@@ -242,7 +242,7 @@ def test_delete_cleans_local_prototypes_without_durable_storage(monkeypatch, _pr
     """버킷 미설정(로컬/테스트)에서도 로컬 실체 정리는 돈다 — 빌드 트리와 세션은
     S3와 무관하게 존재한다. 설문 단계만 건너뛴다.
 
-    setenv("")가 필요하다: pathfinder.app이 기동 시 backend/.env를 로드하므로
+    setenv("")가 필요하다: aipds.app이 기동 시 backend/.env를 로드하므로
     개발 박스에서는 PATHFINDER_S3_BUCKET이 이미 채워져 있고, 그러면 이 테스트가
     durable 경로를 타서 검증하려던 분기를 지나친다(실측 — 이 줄이 없어 설문
     인덱스가 지워졌다). test_routes_prototypes.py의 proto_env도 같은 이유로

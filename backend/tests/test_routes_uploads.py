@@ -2,8 +2,8 @@ import asyncio
 import io
 import re
 from fastapi.testclient import TestClient
-import pathfinder.app as app_module
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 
 client = TestClient(app_module.app)

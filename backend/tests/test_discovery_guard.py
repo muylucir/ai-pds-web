@@ -22,7 +22,7 @@
 # agent/prompts.py가 두 벌로 소유한다(그 파일 헤더의 규약).
 from __future__ import annotations
 
-from pathfinder.agent.discovery_guard import bash_denial, write_denial
+from aipds.agent.discovery_guard import bash_denial, write_denial
 
 WS = "/ws"
 

@@ -5,8 +5,8 @@
 # tests/test_agent_reconcile.py로 이동했다 — 옮긴 행동을 옮긴 자리에서 검사한다.
 from pathlib import Path
 import pytest
-from pathfinder.models import AgentEvent
-from pathfinder.agent.tools import build_tools
+from aipds.models import AgentEvent
+from aipds.agent.tools import build_tools
 
 
 def _tool_by_name(tools, name):

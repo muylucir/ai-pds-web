@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from pathfinder.proto.host import ProtoHost
+from aipds.proto.host import ProtoHost
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "proto_npm_stub"
 SLUG = "todo-app"
@@ -318,7 +318,7 @@ async def test_status_does_not_read_the_log(root, monkeypatch):
     `_tail_text` 호출 자체를 세는 이유: `log_tail == ""`만 검사하면 로그를
     읽고 나서 버리는 구현도 통과하는데, 비용은 읽는 데 있지 담는 데 있지
     않다."""
-    import pathfinder.proto.host as host_mod
+    import aipds.proto.host as host_mod
 
     _seed_build_dir(root)
     host = ProtoHost(root=root, port_range=range(4001, 4010))

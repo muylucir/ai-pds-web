@@ -9,10 +9,10 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.auth.deps import require_admin, require_user
-from pathfinder.auth.models import Principal
-from pathfinder.design_profile import DesignProfileStore
+import aipds.app as app_module
+from aipds.auth.deps import require_admin, require_user
+from aipds.auth.models import Principal
+from aipds.design_profile import DesignProfileStore
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 GOOD_MD = "```tokens\nprimary: #5b2ea6\n```\n## 톤\n여백을 넉넉히.\n"
@@ -74,7 +74,7 @@ def test_non_utf8_is_rejected(profiles, client):
 
 
 def test_oversized_upload_is_rejected(profiles, client):
-    from pathfinder.design_profile import MAX_DESIGN_BYTES
+    from aipds.design_profile import MAX_DESIGN_BYTES
     res = client.put("/admin/design", files={
         "file": ("big.md", b"a" * (MAX_DESIGN_BYTES + 1), "text/markdown")})
     assert res.status_code == 413
@@ -88,7 +88,7 @@ def test_spoofed_content_length_rejected_before_body_read(profiles, client):
     # Content-Length 헤더만 위조해서, 본문을 읽기도 전에 사전 체크 단독으로
     # 413이 나오는지를 확인한다(TestClient/httpx는 명시적 Content-Length
     # 오버라이드를 그대로 보낸다).
-    from pathfinder.design_profile import MAX_DESIGN_BYTES
+    from aipds.design_profile import MAX_DESIGN_BYTES
     res = client.put("/admin/design", files={
         "file": ("a.md", b"x", "text/markdown")},
         headers={"Content-Length": str(MAX_DESIGN_BYTES + 20_000)})
@@ -251,7 +251,7 @@ def test_upload_with_tokens_carries_no_warning(profiles, client):
 
 def test_injection_that_would_cross_the_size_limit_is_rejected(profiles, client):
     # 우리가 저장한 파일을 우리가 재업로드에서 거부하는 상태를 만들지 않는다.
-    from pathfinder.design_profile import MAX_DESIGN_BYTES
+    from aipds.design_profile import MAX_DESIGN_BYTES
     body = ("# ACME\n" + "가" * 10).encode("utf-8")
     body += b"x" * (MAX_DESIGN_BYTES - len(body) - 4)
     assert len(body) < MAX_DESIGN_BYTES

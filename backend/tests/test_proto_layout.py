@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 
-from pathfinder.proto.layout import (SINGLE_ID, SINGLE_SPEC_KEY, artifact_dir,
+from aipds.proto.layout import (SINGLE_ID, SINGLE_SPEC_KEY, artifact_dir,
                                      discover, spec_key)
 
 SLUGGED = "aiplc-docs/discovery/prototypes/maint-support/PROTOTYPE-maint-support.md"

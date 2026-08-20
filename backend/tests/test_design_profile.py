@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from pathfinder.design_profile import (
+from aipds.design_profile import (
     ALLOWED_TOKENS, DESIGN_PROFILE_KEY, TEMPLATE_MD, DesignProfileError,
     DesignProfileStore, parse_design_md,
 )

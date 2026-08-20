@@ -1,7 +1,7 @@
 import boto3
 import pytest
 from moto import mock_aws
-from pathfinder.s3store import S3Store
+from aipds.s3store import S3Store
 from fakes.in_memory_s3 import FakeS3Store
 
 # ---- FakeS3Store (the in-memory double used by runner/route tests) ----

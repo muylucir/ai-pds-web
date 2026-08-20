@@ -352,7 +352,7 @@ class SessionIdCheckingSdkClient(FakeSdkClient):
         # DRIVER thinks the CLI looks, so a wrong path in the driver shows up
         # as a failing test rather than as two consistent mistakes. The path
         # builder itself is pinned to the real CLI by its own unit tests.
-        from pathfinder.agent.claude_driver import _sdk_session_id, _transcript_path
+        from aipds.agent.claude_driver import _sdk_session_id, _transcript_path
         session_id, _ = _sdk_session_id(self._session)
         return _transcript_path(self._config_dir, self._workspace, session_id)
 

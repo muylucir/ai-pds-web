@@ -1,7 +1,7 @@
 # backend/tests/test_proto_limits.py
 from __future__ import annotations
 
-from pathfinder.proto.limits import BuildSemaphore
+from aipds.proto.limits import BuildSemaphore
 
 
 def test_acquires_up_to_limit_then_refuses():

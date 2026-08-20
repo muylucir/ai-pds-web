@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from pathfinder.agent.claude_driver import ClaudeDriver
+from aipds.agent.claude_driver import ClaudeDriver
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 STATE_MD = ("# AI-PLC State\n\n"

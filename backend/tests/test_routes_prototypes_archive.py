@@ -7,9 +7,9 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.proto.host import TOKEN_FILENAME
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.proto.host import TOKEN_FILENAME
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 

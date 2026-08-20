@@ -24,10 +24,10 @@ from pathlib import Path
 
 import pytest
 
-from pathfinder.agent import prompts
-from pathfinder.agent.tools import build_tools
-from pathfinder.agent.workspace_rules import place_rules
-from pathfinder.proto import prompts as proto_prompts
+from aipds.agent import prompts
+from aipds.agent.tools import build_tools
+from aipds.agent.workspace_rules import place_rules
+from aipds.proto import prompts as proto_prompts
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -227,7 +227,7 @@ def test_submit_document_description_keeps_the_write_first_order_in_both():
 def test_driver_passes_its_language_to_the_tools(tmp_path):
     """place_rules만 언어를 받고 build_tools는 못 받던 것이 이 결함이었다.
     드라이버가 클라이언트를 조립할 때 두 곳 모두에 같은 값을 보내야 한다."""
-    from pathfinder.agent import claude_driver as mod
+    from aipds.agent import claude_driver as mod
 
     seen: dict = {}
 

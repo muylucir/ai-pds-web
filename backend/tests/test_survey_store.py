@@ -1,7 +1,7 @@
 import json
 import pytest
-from pathfinder.survey.models import Question, Questionnaire
-from pathfinder.survey.store import SurveyStore
+from aipds.survey.models import Question, Questionnaire
+from aipds.survey.store import SurveyStore
 from fakes.in_memory_s3 import FakeS3Store
 
 PID, SLUG, TOKEN = "p1", "demo", "tok-abc"
@@ -108,8 +108,8 @@ def test_public_url_path():
 def test_results_markdown_is_english_for_an_english_survey():
     """리포트는 aiplc-docs/**에 생성되는 산출물이므로 UI 언어가 아니라
     프로젝트 언어를 따른다."""
-    from pathfinder.survey.store import _results_markdown
-    from pathfinder.survey.models import Questionnaire, Rollup
+    from aipds.survey.store import _results_markdown
+    from aipds.survey.models import Questionnaire, Rollup
 
     qn = Questionnaire(
         token="t", status="open", slug="demo", project_id="p1",
@@ -123,8 +123,8 @@ def test_results_markdown_is_english_for_an_english_survey():
 
 
 def test_results_markdown_stays_korean_by_default():
-    from pathfinder.survey.store import _results_markdown
-    from pathfinder.survey.models import Questionnaire, Rollup
+    from aipds.survey.store import _results_markdown
+    from aipds.survey.models import Questionnaire, Rollup
 
     qn = Questionnaire(
         token="t", status="open", slug="demo", project_id="p1",
@@ -139,8 +139,8 @@ def test_results_markdown_stays_korean_by_default():
 def test_results_markdown_keeps_the_rule_headings_in_english_for_both():
     """prototype-validation.md Step 6이 정한 섹션 이름은 양쪽 언어에서 영어다 —
     룰이 그 이름으로 문서를 찾는다."""
-    from pathfinder.survey.store import _results_markdown
-    from pathfinder.survey.models import Questionnaire, Rollup
+    from aipds.survey.store import _results_markdown
+    from aipds.survey.models import Questionnaire, Rollup
 
     qn = Questionnaire(
         token="t", status="open", slug="demo", project_id="p1",
@@ -180,7 +180,7 @@ async def test_questionnaire_markdown_follows_the_stores_language():
     await store.save_questionnaire(_qn(
         language="en", title="Validation survey", hypothesis="H",
         questions=[Question(id="q1", text="Useful?", type="scale")]))
-    from pathfinder.survey.store import questionnaire_md_key
+    from aipds.survey.store import questionnaire_md_key
     md = str(project_s3.blobs[questionnaire_md_key(SLUG)])
     assert "Validation hypothesis" in md
     assert "검증 가설" not in md
@@ -189,7 +189,7 @@ async def test_questionnaire_markdown_follows_the_stores_language():
 def test_report_labels_fall_back_to_korean_for_an_unknown_language():
     """손상된 매니페스트가 임의 문자열을 실어 와도 리포트가 한국어로 나온다 —
     이 기능 이전 모든 프로젝트의 언어가 그것이다."""
-    from pathfinder.survey.report_labels import labels
+    from aipds.survey.report_labels import labels
     assert labels("klingon") == labels("ko")
     assert labels("") == labels("ko")
 
@@ -213,8 +213,8 @@ def test_report_labels_fall_back_to_korean_for_an_unknown_language():
 # 규정하고 product-strategy가 읽는다. `layout.artifact_dir`이 이미 그 분기를
 # 갖고 있어서 한 식으로 둘 다 만족한다.
 
-from pathfinder.proto import layout as _layout          # noqa: E402
-from pathfinder.survey.store import results_md_key      # noqa: E402
+from aipds.proto import layout as _layout          # noqa: E402
+from aipds.survey.store import results_md_key      # noqa: E402
 
 
 def test_results_key_for_a_single_prototype_is_the_rule_declared_path():
@@ -237,7 +237,7 @@ def test_results_key_for_path_b_carries_the_slug():
 def test_results_key_sits_beside_the_questionnaire_copy():
     """설문지 사본과 같은 디렉터리다. 갈라지면 삭제·아카이브 경로가 한쪽을
     잊는다 — `layout.artifact_dir`이 존재하는 이유가 그것이다."""
-    from pathfinder.survey.store import questionnaire_md_key
+    from aipds.survey.store import questionnaire_md_key
     for slug in (_layout.SINGLE_ID, "flight-disruption-notice"):
         assert (results_md_key(slug).rsplit("/", 1)[0]
                 == questionnaire_md_key(slug).rsplit("/", 1)[0])

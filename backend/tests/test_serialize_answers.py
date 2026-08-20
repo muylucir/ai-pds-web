@@ -1,6 +1,6 @@
 # backend/tests/test_serialize_answers.py
 from pathlib import Path
-from pathfinder.parsers.questions import serialize_answers, parse_question_file
+from aipds.parsers.questions import serialize_answers, parse_question_file
 
 FIX = Path(__file__).parent / "fixtures"
 

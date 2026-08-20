@@ -8,10 +8,10 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.auth.deps import require_admin, require_user
-from pathfinder.auth.models import Principal
-from pathfinder.auth.verifier import TokenError
+import aipds.app as app_module
+from aipds.auth.deps import require_admin, require_user
+from aipds.auth.models import Principal
+from aipds.auth.verifier import TokenError
 
 REGION = "ap-northeast-2"
 POOL = "ap-northeast-2_TEST123"
@@ -58,7 +58,7 @@ def with_auth(monkeypatch):
         except KeyError:
             raise TokenError("no such token")
 
-    import pathfinder.auth.deps as deps_module
+    import aipds.auth.deps as deps_module
     monkeypatch.setattr(deps_module, "verify_access_token", fake_verify)
     return state
 

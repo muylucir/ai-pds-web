@@ -9,7 +9,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
+import aipds.app as app_module
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 client = TestClient(app_module.app)
@@ -128,7 +128,7 @@ def test_the_created_projects_driver_gets_the_chosen_model(monkeypatch):
     monkeypatch.setattr(app_module, "_validate_model_id",
                         lambda *a, **k: None, raising=False)
 
-    import pathfinder.routes.projects as routes_projects
+    import aipds.routes.projects as routes_projects
     async def ok(_model_id):
         return None
     monkeypatch.setattr(routes_projects, "_validate_model_id", ok)

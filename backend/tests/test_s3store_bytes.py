@@ -5,7 +5,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from pathfinder.s3store import S3Store
+from aipds.s3store import S3Store
 
 PNG_HEADER = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe\xfd"
 

@@ -1,4 +1,4 @@
-from pathfinder.models import Question, QuestionOption, QuestionFile
+from aipds.models import Question, QuestionOption, QuestionFile
 
 def test_question_multi_select_defaults_false():
     q = Question(number=1, text="누구?", options=[])
@@ -20,7 +20,7 @@ def test_question_file_roundtrips_multiselect_answer():
     assert qf.questions[0].options[0].recommended is True
 
 def test_agent_event_lives_in_models_with_full_kind_literal():
-    from pathfinder.models import AgentEvent, TurnResult
+    from aipds.models import AgentEvent, TurnResult
     e = AgentEvent(kind="questions", payload='{"interrupt_id":"i-1"}')
     assert e.kind == "questions" and e.text is None and e.path is None
     tr = TurnResult(events=[e, AgentEvent(kind="done")])

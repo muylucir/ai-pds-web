@@ -9,9 +9,9 @@ import json
 
 import pytest
 
-from pathfinder.models import AgentEvent
-from pathfinder.proto.limits import BuildSemaphore
-from pathfinder.proto.session import PrototypeSession
+from aipds.models import AgentEvent
+from aipds.proto.limits import BuildSemaphore
+from aipds.proto.session import PrototypeSession
 
 from fakes.in_memory_s3 import FakeS3Store
 
@@ -161,8 +161,8 @@ async def test_start_writes_the_spec_into_the_build_directory(tmp_path):
 # 루트에 있는 스토어다 -- 두 FakeS3Store를 섞으면 안 된다.
 
 async def test_start_plants_the_brand_profile(tmp_path):
-    from pathfinder.design_profile import DesignProfileStore
-    from pathfinder.proto.design_sync import DESIGN_FILENAME, THEME_FILENAME
+    from aipds.design_profile import DesignProfileStore
+    from aipds.proto.design_sync import DESIGN_FILENAME, THEME_FILENAME
 
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
@@ -180,7 +180,7 @@ async def test_start_plants_the_brand_profile(tmp_path):
 
 
 async def test_start_without_a_profile_plants_nothing(tmp_path):
-    from pathfinder.proto.design_sync import DESIGN_FILENAME, THEME_FILENAME
+    from aipds.proto.design_sync import DESIGN_FILENAME, THEME_FILENAME
 
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
@@ -201,8 +201,8 @@ async def test_start_without_a_profile_plants_nothing(tmp_path):
 
 
 async def test_start_refreshes_a_changed_profile(tmp_path):
-    from pathfinder.design_profile import DesignProfileStore
-    from pathfinder.proto.design_sync import THEME_FILENAME
+    from aipds.design_profile import DesignProfileStore
+    from aipds.proto.design_sync import THEME_FILENAME
 
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
@@ -665,7 +665,7 @@ async def test_the_idle_budget_restarts_when_a_question_is_relayed(tmp_path):
 async def test_a_completed_session_closes_itself(tmp_path, monkeypatch):
     """세션 종료는 백엔드가 소유한다 — 프론트가 DELETE /session을 부르는
     방식과의 차이가 요점이다. 새로고침·탭 닫기에도 슬롯이 회수된다."""
-    import pathfinder.proto.session as session_module
+    import aipds.proto.session as session_module
     monkeypatch.setattr(session_module, "_COMPLETION_GRACE_SECONDS", 0.05)
 
     s3 = FakeS3Store()
@@ -691,7 +691,7 @@ async def test_the_done_after_a_completion_does_not_extend_the_grace(tmp_path, m
     """지연 값이 호출자 인자였다면 done이 기본 30분으로 되돌려 세션이 닫히지
     않는다. build_complete 다음에는 반드시 done이 오므로 이것은 가능성이
     아니라 확정된 동작이다 — 지연을 상태에서 파생시켜 그 창을 없앤다."""
-    import pathfinder.proto.session as session_module
+    import aipds.proto.session as session_module
     monkeypatch.setattr(session_module, "_COMPLETION_GRACE_SECONDS", 0.05)
 
     s3 = FakeS3Store()
@@ -713,7 +713,7 @@ async def test_a_completed_session_releases_its_slot_exactly_once(tmp_path, monk
     """사용자의 DELETE /session과 유예 종료가 겹쳐도 release는 한 번이다.
     BuildSemaphore.release()는 0에서 클램프할 뿐 과다 release를 감지하지
     못하므로, 두 번 풀면 다른 세션의 슬롯을 공짜로 내준다."""
-    import pathfinder.proto.session as session_module
+    import aipds.proto.session as session_module
     monkeypatch.setattr(session_module, "_COMPLETION_GRACE_SECONDS", 0.05)
 
     s3 = FakeS3Store()
@@ -1088,7 +1088,7 @@ async def test_purge_session_state_removes_session_transcript_and_bundle():
     non-colliding sibling (`other`) that mutation went unnoticed by 90 tests
     while it deleted a neighbour's real survey answers, so this test seeds the
     one thing that cannot be recovered: a submitted response."""
-    from pathfinder.proto.session import purge_session_state
+    from aipds.proto.session import purge_session_state
     s3 = FakeS3Store()
     s3.blobs[f"prototypes/{SLUG}/session.json"] = '{"session_id": "x"}'
     s3.blobs[f"prototypes/{SLUG}/transcript/00000001.jsonl"] = "{}"
@@ -1113,7 +1113,7 @@ async def test_purge_session_state_leaves_the_spec_alone():
     explicitly: deleting it would remove the card from the list entirely
     (routes/prototypes.py scans specs to build the list), turning a reset into
     a disappearance."""
-    from pathfinder.proto.session import purge_session_state
+    from aipds.proto.session import purge_session_state
     s3 = FakeS3Store()
     spec = f"aiplc-docs/discovery/prototypes/{SLUG}/PROTOTYPE-{SLUG}.md"
     s3.blobs[spec] = "# PROTOTYPE"
@@ -1128,7 +1128,7 @@ async def test_purge_session_state_is_idempotent():
     session state, and the reset route retries after a partial failure — so the
     second pass, which finds even less, must not turn a converged reset into a
     502."""
-    from pathfinder.proto.session import purge_session_state
+    from aipds.proto.session import purge_session_state
     s3 = FakeS3Store()
     await purge_session_state(s3, SLUG)
     await purge_session_state(s3, SLUG)

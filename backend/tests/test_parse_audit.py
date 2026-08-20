@@ -1,7 +1,7 @@
 # backend/tests/test_parse_audit.py
 import re
 from pathlib import Path
-from pathfinder.parsers.audit import parse_audit_file
+from aipds.parsers.audit import parse_audit_file
 
 FIX = Path(__file__).parent / "fixtures"
 

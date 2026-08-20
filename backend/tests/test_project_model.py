@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-import pathfinder.app as app_module
+import aipds.app as app_module
 
 
 @pytest.fixture(autouse=True)
@@ -95,7 +95,7 @@ def test_proto_session_factory_passes_the_projects_language(monkeypatch, tmp_pat
 def test_proto_tools_get_the_builders_language(tmp_path):
     """빌더 → 도구 배선. 이 홉이 끊기면 도구 설명과 반환 문자열이 항상
     한국어로 남는다(둘 다 모델이 읽는 프롬프트다)."""
-    from pathfinder.proto.builder import PrototypeBuilder, _proto_tools_for
+    from aipds.proto.builder import PrototypeBuilder, _proto_tools_for
     builder = PrototypeBuilder(workspace=str(tmp_path), config_dir=str(tmp_path),
                                session_id="s", resume=False, language="en",
                                client_factory=lambda: None)

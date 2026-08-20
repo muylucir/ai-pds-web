@@ -1,5 +1,5 @@
 [project]
-name = "pathfinder"
+name = "aipds"
 version = "0.1.0"
 requires-python = ">=3.11"
 # PEP 639 SPDX 표현식(문자열). 구형 setuptools(<77)는 이 자리에 테이블만 받으므로

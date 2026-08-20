@@ -14,9 +14,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.proto.host import TOKEN_FILENAME, HostInfo, ProtoHost
-from pathfinder.routes.proto_public import (cookie_name, public_base_path)
+import aipds.app as app_module
+from aipds.proto.host import TOKEN_FILENAME, HostInfo, ProtoHost
+from aipds.routes.proto_public import (cookie_name, public_base_path)
 
 client = TestClient(app_module.app)
 
