@@ -73,7 +73,7 @@ const REFRESHED_TOKENS: TokenSet = {
 
 describe("GET/POST/DELETE /api/[...path]", () => {
   it("happy path: injects Bearer from the access cookie, strips Cookie, passes status/body through", async () => {
-    vi.mocked(cookies).mockResolvedValue(makeJar({ pf_access: "tok-1" }) as never);
+    vi.mocked(cookies).mockResolvedValue(makeJar({ aipds_access: "tok-1" }) as never);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), {
         status: 200, headers: { "content-type": "application/json" },
@@ -82,7 +82,7 @@ describe("GET/POST/DELETE /api/[...path]", () => {
     const { GET } = await import("./route");
     const req = new NextRequest("https://app.example.com/api/projects", {
       method: "GET",
-      headers: { cookie: "pf_access=tok-1" },
+      headers: { cookie: "aipds_access=tok-1" },
     });
     const res = await GET(req, ctx(["projects"]));
 
@@ -96,7 +96,7 @@ describe("GET/POST/DELETE /api/[...path]", () => {
 
   it("401 on a GET: refreshes once, retries with the new token, and writes Set-Cookie for access/id only", async () => {
     vi.mocked(cookies).mockResolvedValue(
-      makeJar({ pf_access: "old-tok", pf_refresh: "ref-tok" }) as never);
+      makeJar({ aipds_access: "old-tok", aipds_refresh: "ref-tok" }) as never);
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(null, { status: 401 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), {
@@ -118,9 +118,9 @@ describe("GET/POST/DELETE /api/[...path]", () => {
 
     const setCookies = res.headers.getSetCookie();
     const joined = setCookies.join("\n");
-    expect(joined).toContain("pf_access=new-access");
-    expect(joined).toContain("pf_id=new-id");
-    expect(joined).not.toContain("pf_refresh="); // refresh 토큰 자체는 새로 오지 않으므로 다시 쓰지 않는다
+    expect(joined).toContain("aipds_access=new-access");
+    expect(joined).toContain("aipds_id=new-id");
+    expect(joined).not.toContain("aipds_refresh="); // refresh 토큰 자체는 새로 오지 않으므로 다시 쓰지 않는다
     for (const c of setCookies) {
       expect(c).toMatch(/Path=\//);
       expect(c).toMatch(/Max-Age=3600/);
@@ -131,7 +131,7 @@ describe("GET/POST/DELETE /api/[...path]", () => {
 
   it("401 on a GET: refreshTokens throws (expired/no Cognito env) — original 401 passes through, no Set-Cookie", async () => {
     vi.mocked(cookies).mockResolvedValue(
-      makeJar({ pf_access: "old-tok", pf_refresh: "ref-tok" }) as never);
+      makeJar({ aipds_access: "old-tok", aipds_refresh: "ref-tok" }) as never);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 401 }));
     vi.mocked(refreshTokens).mockRejectedValue(new Error("token endpoint rejected the request"));
@@ -154,7 +154,7 @@ describe("GET/POST/DELETE /api/[...path]", () => {
 
   it("401 on a POST: not retried — a streamed request body cannot be replayed", async () => {
     vi.mocked(cookies).mockResolvedValue(
-      makeJar({ pf_access: "tok-1", pf_refresh: "ref-tok" }) as never);
+      makeJar({ aipds_access: "tok-1", aipds_refresh: "ref-tok" }) as never);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 401 }));
 
@@ -173,7 +173,7 @@ describe("GET/POST/DELETE /api/[...path]", () => {
 
   it("401 -> refresh -> retry: the retried SSE response is re-streamed, not buffered", async () => {
     vi.mocked(cookies).mockResolvedValue(
-      makeJar({ pf_access: "old-tok", pf_refresh: "ref-tok" }) as never);
+      makeJar({ aipds_access: "old-tok", aipds_refresh: "ref-tok" }) as never);
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(null, { status: 401 }))
       .mockResolvedValueOnce(new Response(sseStream(["event: one\n\n", "event: two\n\n"]), {

@@ -55,6 +55,24 @@ def _tracked() -> list[str]:
     return [line for line in out.splitlines() if line and line != _SELF]
 
 
+def _offending_path(rel: str) -> str | None:
+    """`rel` 자신이 옛 이름을 담고 있으면 그 경로를 단정한다.
+
+    이 브랜치의 대부분은 **파일 이름 바꾸기**(83개)였다 — 내용을 훑는
+    `_offending_lines`는 그 카테고리를 전혀 보지 않는다: 되살아난
+    `infra/scripts/pathfinder-update`나 `backend/pathfinder/`가 내용은 전부
+    `aipds`라도 이 검사 없이는 그대로 통과한다. 허용은 경로 자체에도 적용한다
+    — 네 허용 모두 경로 자체는 깨끗하므로(`aipds`만 담고 있다), 이 검사가
+    새 허용을 요구하지는 않는다.
+    """
+    if not _NAME.search(rel):
+        return None
+    allowed = ALLOWED.get(rel)
+    if allowed is not None and allowed.search(rel):
+        return None
+    return f"{rel}: 파일 경로 자체가 옛 제품 이름을 담고 있다"
+
+
 def _offending_lines(rel: str) -> list[str]:
     path = REPO / rel
     try:
@@ -63,6 +81,9 @@ def _offending_lines(rel: str) -> list[str]:
         return []          # 바이너리·읽을 수 없는 파일은 이 검사의 대상이 아니다
     allowed = ALLOWED.get(rel)
     bad = []
+    path_offender = _offending_path(rel)
+    if path_offender is not None:
+        bad.append(path_offender)
     for number, line in enumerate(text.splitlines(), 1):
         if not _NAME.search(line):
             continue
@@ -85,16 +106,42 @@ def test_no_tracked_file_mentions_the_old_product_name():
         + "\n".join(offenders[:40]))
 
 
+def test_the_path_check_flags_a_resurrected_old_name_path():
+    """`_offending_path`가 파일 **내용**이 아니라 **경로 자체**를 본다.
+
+    이 브랜치의 대부분(83개)은 파일 이름 바꾸기였다 — 내용을 훑는
+    `_offending_lines`의 줄 단위 루프는 그 카테고리를 전혀 보지 못한다. 실제
+    파일을 만들지 않고 이 헬퍼를 직접 불러 확인한다: 이렇게 해야 이 검사를
+    지워도(즉 `_offending_path`를 항상 `None`으로 되돌려도) 이 테스트 하나가
+    바로 깨진다 — 리포에 그 경로의 파일이 실재해야 하는 회귀 테스트보다
+    이쪽이 이 검사의 존재 자체를 더 직접적으로 고정한다.
+    """
+    assert _offending_path("infra/scripts/pathfinder-update") is not None
+    assert _offending_path("backend/pathfinder/app.py") is not None
+    # 대조: 이름이 깨끗한 경로는 걸리지 않는다.
+    assert _offending_path("infra/scripts/aipds-update") is None
+    # 대조: 허용 목록에 있는 경로는 (경로 자체가 깨끗하므로) 걸리지 않는다.
+    for rel in ALLOWED:
+        assert _offending_path(rel) is None
+
+
 def test_the_allowances_are_exactly_these_four_lines():
     """허용 목록이 소리 없이 늘어나는 것을 막는다.
 
     새 허용을 넣으려면 이 테스트도 고쳐야 하므로, 그 결정이 리뷰에 보인다.
+
+    경로만 비교하면 통과하지 못한다 — 패턴까지 값으로 고정한다. ALLOWED의
+    주석은 패턴을 넓히지 말라고 말하지만, 집합 비교는 경로만 보므로
+    "infra/README.md"의 패턴을 `PathfinderVmStack`에서 `Pathfinder`로,
+    또는 driver의 패턴을 맨 `pathfinder`로 넓혀도 이 테스트는 여전히
+    통과했다 — 그렇게 넓힌 순간 두 파일의 나머지 회귀는 이 가드가 더 이상
+    잡지 못한다. 패턴 문자열까지 비교하면 그 넓히기 자체가 여기서 실패한다.
     """
-    assert set(ALLOWED) == {
-        "infra/lib/deploy-source.ts",
-        "infra/README.md",
-        "infra/README.ko.md",
-        "backend/aipds/agent/claude_driver.py",
+    assert {rel: p.pattern for rel, p in ALLOWED.items()} == {
+        "infra/lib/deploy-source.ts": r"ai-plc-pathfinder",
+        "infra/README.md": r"PathfinderVmStack",
+        "infra/README.ko.md": r"PathfinderVmStack",
+        "backend/aipds/agent/claude_driver.py": r"pathfinder:\{raw\}",
     }
 
 
@@ -121,3 +168,30 @@ def test_the_session_id_seed_derives_the_measured_uuid():
 
     assert _sdk_session_id({"session_id": "ship"}) == (
         "e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3", False)
+
+
+def test_the_session_prefix_still_lands_on_the_measured_s3_path():
+    """씨드가 맞아도, 그 씨드를 담는 키 모양이 바뀌면 실측 데이터는 여전히 조용히 사라진다.
+
+    위 테스트는 씨드(uuid5의 출력값)만 고정한다 — `_session_prefix`가 그 씨드를
+    어디에 두는지는 보지 않는다. `_session_prefix`를 다시 짜는 사람은 씨드
+    테스트를 건드리지 않고도 통과시킬 수 있으므로, 이 테스트가 없으면 모든
+    프로젝트의 discovery 히스토리가 조용히 사라져도 아무 테스트도 잡지 못한다.
+
+    실측(ALLOWED 정의의 주석과 같은 실측): 배포된 버킷의 실제 경로는
+    `projects/ship/discovery/transcript/e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3/main/`
+    이다. 그 `projects/ship/` 부분은 이 모듈 밖(`app.s3_store_factory`가
+    `projects/{project_id}/`로 스코프한 스토어를 `app.driver_factory`가
+    `ClaudeDriver`에 넘기고, `ClaudeDriver`가 그 스토어로 `DiscoverySessionStore`를
+    만든다)에서 붙으므로, 여기서는 `_session_prefix` 자신이 반환하는 나머지
+    (`discovery/transcript/<uuid>/main/`)만 그 실측값과 이어붙여 맞는지 본다.
+    """
+    from aipds.agent.session_store import _session_prefix
+
+    seed = "e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3"
+    prefix = _session_prefix({"session_id": seed})
+    assert prefix == f"discovery/transcript/{seed}/main/"
+    # 프로젝트 스코프("projects/ship/")를 이어붙이면 실측 경로와 정확히 같아야 한다.
+    assert f"projects/ship/{prefix}" == (
+        "projects/ship/discovery/transcript/"
+        "e23e6c8d-6ddf-559a-b05b-7a0db5c44fa3/main/")

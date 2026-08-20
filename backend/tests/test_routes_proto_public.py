@@ -214,9 +214,9 @@ def test_cookie_secure_env_accepts_truthy_values(env, monkeypatch, value):
 
 @pytest.mark.parametrize("value", ["", "false", "0", "no", "off", "production"])
 def test_cookie_secure_env_rejects_non_truthy_values(env, monkeypatch, value):
-    """켜지지 않는 값들. `production`이 여기 있는 것이 의도다 — 구 이름
-    (`AIPDS_ENV=production`)의 값을 새 변수에 그대로 넣는 실수가 조용히
-    통과하면, 이름을 좁힌 목적이 사라진다."""
+    """켜지지 않는 값들. `production`이 여기 있는 것이 의도다 — 이 변수는
+    스테이지 이름이 아니라 Secure 스위치 하나만 가리키는 불리언이므로, 스테이지
+    값을 그대로 넣는 실수가 조용히 통과하면 이름을 좁힌 목적이 사라진다."""
     monkeypatch.setenv("AIPDS_COOKIE_SECURE", value)
     _running(env)
     token = env["host"].ensure_token(PID, SLUG)

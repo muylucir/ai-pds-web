@@ -1,4 +1,4 @@
-// 인증 seam. 세션은 httpOnly 쿠키(pf_access)에 있고 JS는 읽을 수 없으므로,
+// 인증 seam. 세션은 httpOnly 쿠키(aipds_access)에 있고 JS는 읽을 수 없으므로,
 // 클라이언트가 할 일은 fetch에 쿠키를 실으라고 알리는 것뿐이다. same-origin
 // /api 프록시가 그 쿠키를 Authorization: Bearer로 번역한다(lib/api/proxyAuth.ts).
 //

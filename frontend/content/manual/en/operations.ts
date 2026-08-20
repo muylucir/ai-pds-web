@@ -53,22 +53,37 @@ The address to open is the \`AipdsHostingStack.DistributionDomain\` output.`,
 3 new stacks while the 3 existing ones remain.`,
     },
     {
+      kind: "callout",
+      tone: "warn",
+      md: `**0. Once this change is on \`main\`, do not run \`sudo aipds-update\` on the existing
+instance.** Its systemd units and tree paths still carry the old names, so the update script aborts
+partway through — and that instance is exactly the one that must keep serving in-flight survey links
+until the old stacks are deleted in step 8 below. Leave it frozen until then.`,
+    },
+    {
       kind: "steps",
       items: [
         "`cdk deploy AipdsDrillStack AipdsAuthStack` — the new bucket and user pool",
-        "`aws s3 sync s3://<existing bucket> s3://<new bucket>` — moves the artifacts over. The key prefixes carry no product name, so the layout comes up unchanged",
+        "`aws s3 sync s3://<existing bucket> s3://<new bucket>` — moves the artifacts over. The key prefixes carry no product name, so the layout comes up unchanged. After it finishes, compare object counts: run `aws s3api list-objects-v2 --bucket <new bucket> --query 'length(Contents)'` and the same command against the existing bucket — the deletion below is irreversible, so seeing project cards on screen is not enough to catch a partially failed sync",
         "`cdk deploy AipdsHostingStack` — the new EC2 instance and CloudFront",
         "Confirm you can sign in at the new address (`admin@aipds.local`)",
         "Check the project cards — specs and surveys are intact, and prototypes are **unbuilt**",
         "Rebuild whichever prototypes you need. Build output lived only on the instance disk, so it does not come along",
+        "Once every in-flight survey has closed, re-run `aws s3 sync s3://<existing bucket> s3://<new bucket>` — responses submitted through the old address's links after the first sync exist only in the existing bucket, not the new one",
         "Delete the 3 existing stacks (Hosting → Auth → Drill, in that order)",
       ],
     },
     {
       kind: "callout",
       tone: "warn",
-      md: `**Do not rush step 7.** Survey links already handed out point at the old address, so deleting the
-old stacks kills them. Delete only after response collection for any in-flight survey has finished.`,
+      md: `**Do not rush step 8.** Survey links already handed out point at the old address, so deleting the
+old stacks kills them. Wait until response collection for any in-flight survey has finished, re-sync in
+step 7, and only then delete.
+
+The existing Drill stack was created with \`removalPolicy: DESTROY\` and \`autoDeleteObjects: true\`,
+and it has no versioning — deleting it removes every object in that bucket immediately, with no way to
+recover them. Skip the re-sync in step 7, and any response that arrived through the old links after the
+first sync is gone for good the moment you delete.`,
     },
     {
       kind: "callout",

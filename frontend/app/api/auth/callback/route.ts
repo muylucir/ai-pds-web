@@ -20,7 +20,7 @@ const REFRESH_MAX_AGE = 30 * 24 * 60 * 60; // 풀 클라이언트의 refresh 유
 // Location은 상대 경로다 — req.url로 절대 URL을 조립하면 프록시/CloudFront
 // 뒤에서 내부 주소가 샌다(실측 버그, 이유는 lib/auth/redirectTo.ts 참조).
 //
-// 실패 경로도 왕복용 쿠키(pf_pkce/pf_state/pf_next)를 지운다 — 성공 경로에서만
+// 실패 경로도 왕복용 쿠키(aipds_pkce/aipds_state/aipds_next)를 지운다 — 성공 경로에서만
 // 지우면 실패한 시도의 PKCE 자재가 브라우저에 남아 다음 로그인이 덮어쓸 때까지
 // 방치된다.
 function toLogin(reason: string): NextResponse {

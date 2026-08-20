@@ -12,7 +12,7 @@ describe("withBearer", () => {
     // 백엔드는 세션 쿠키를 모른다. 흘려보내면 세션 토큰이 불필요하게 한 계층 더
     // 노출되고, 로그에 남을 수도 있다.
     const out = withBearer(
-      new Headers({ cookie: "pf_access=secret; pf_refresh=alsosecret" }), "tok-1");
+      new Headers({ cookie: "aipds_access=secret; aipds_refresh=alsosecret" }), "tok-1");
     expect(out.get("cookie")).toBeNull();
   });
 
@@ -22,7 +22,7 @@ describe("withBearer", () => {
     // 백엔드는 그 쿠키로 접근을 판정한다(routes/proto_public.py의 _authorized).
     const out = withBearer(
       new Headers({
-        cookie: "pf_access=secret; aipds_proto_abc123=prototoken; pf_refresh=alsosecret",
+        cookie: "aipds_access=secret; aipds_proto_abc123=prototoken; aipds_refresh=alsosecret",
       }),
       "tok-1");
     expect(out.get("cookie")).toBe("aipds_proto_abc123=prototoken");
@@ -50,14 +50,14 @@ describe("withBearer", () => {
 
 describe("forwardableCookies", () => {
   it("keeps only aipds_proto_* cookies", () => {
-    expect(forwardableCookies("aipds_proto_a=1; pf_access=2; aipds_proto_b=3"))
+    expect(forwardableCookies("aipds_proto_a=1; aipds_access=2; aipds_proto_b=3"))
       .toBe("aipds_proto_a=1; aipds_proto_b=3");
   });
 
   it("returns null when nothing is forwardable", () => {
     // null이어야 한다(빈 문자열이 아니라): 호출부가 이 값으로 헤더를 심을지
     // 결정하므로, 빈 문자열이면 `Cookie: ` 라는 빈 헤더가 붙는다.
-    expect(forwardableCookies("pf_access=1; pf_id=2; pf_refresh=3")).toBeNull();
+    expect(forwardableCookies("aipds_access=1; aipds_id=2; aipds_refresh=3")).toBeNull();
   });
 
   it("handles a missing header", () => {
@@ -75,12 +75,12 @@ describe("forwardableCookies", () => {
 
   it("does not fall for a session cookie whose VALUE mentions the prefix", () => {
     // 접두어 검사는 이름에만 걸려야 한다. 값에 있는 문자열로 통과하면
-    // 공격자가 pf_access 값에 접두어를 심어 세션 토큰을 백엔드로 흘릴 수 있다.
-    expect(forwardableCookies("pf_access=aipds_proto_nope")).toBeNull();
+    // 공격자가 aipds_access 값에 접두어를 심어 세션 토큰을 백엔드로 흘릴 수 있다.
+    expect(forwardableCookies("aipds_access=aipds_proto_nope")).toBeNull();
   });
 
   it("tolerates whitespace between cookie pairs", () => {
-    expect(forwardableCookies("pf_access=1;aipds_proto_a=2;   aipds_proto_b=3"))
+    expect(forwardableCookies("aipds_access=1;aipds_proto_a=2;   aipds_proto_b=3"))
       .toBe("aipds_proto_a=2; aipds_proto_b=3");
   });
 });
