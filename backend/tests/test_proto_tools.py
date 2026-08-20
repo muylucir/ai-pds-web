@@ -127,6 +127,32 @@ async def test_build_complete_passes_once_the_theme_is_imported(tmp_path):
     assert [e.kind for e in seen] == ["build_complete"]
 
 
+async def test_build_complete_skips_the_theme_check_when_the_profile_has_no_tokens(tmp_path):
+    """0토큰 프로필은 테마 import를 강제하지 않는다 — 강제할 값이 없다.
+
+    이것은 **의도된 한계**다: 그 경우 브랜드는 DESIGN.md 산문을 통해서만 가고
+    (design_rules(has_tokens=False)가 globals.css로 옮기라고 지시한다), 우리는
+    "옮겼는지"를 값싸게 검사할 방법이 없다. 검사할 수 없는 것을 통과시키는 대신
+    거짓으로 통과시키지는 않는다 — 루트 테마 파일이 no-profile 스텁이므로
+    "브랜드 적용됨"이라고 주장하는 파일이 워크스페이스에 남지 않는다.
+    """
+    from pathfinder.design_profile import DesignProfile
+    from pathfinder.proto.design_sync import sync_design
+
+    (tmp_path / "prototype").mkdir()
+    (tmp_path / "prototype" / "package.json").write_text("{}", encoding="utf-8")
+    sync_design(tmp_path, DesignProfile(
+        filename="a.md", uploaded_at="t", uploaded_by="x", markdown="(원문)",
+        tokens={}, prose="## 톤\n여백을 넉넉히."), "ko")
+
+    seen: list[AgentEvent] = []
+    handler = _handler(tmp_path, seen.append)
+
+    await handler({"summary": "다 만들었다"})
+
+    assert [e.kind for e in seen] == ["build_complete"]
+
+
 async def test_build_complete_skips_the_theme_check_without_a_profile(tmp_path):
     (tmp_path / "prototype").mkdir()
     (tmp_path / "prototype" / "package.json").write_text("{}", encoding="utf-8")

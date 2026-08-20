@@ -13,10 +13,13 @@
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from pathfinder.design_profile import FONT_TOKENS, DesignProfile
 from pathfinder.proto import prompts
+
+_log = logging.getLogger(__name__)
 
 DESIGN_FILENAME = "DESIGN.md"
 THEME_FILENAME = "pathfinder-theme.css"
@@ -206,11 +209,35 @@ def sync_design(build_dir: Path, profile: DesignProfile | None,
         return
 
     build_dir.mkdir(parents=True, exist_ok=True)
-    _write_theme_everywhere(build_dir, root_theme, theme_css(profile.tokens))
+
+    # 토큰이 없으면 **스텁**을 쓴다 — `theme_css({})`는 "브랜드 프로필에서
+    # 생성됨"이라는 머리말을 단 변수 0개 파일이고, 그 파일이 거짓말을 한다.
+    #
+    # 2026-08-19 실측: 같은 0토큰 프로필로 돌린 두 프로젝트가 갈렸다. 한
+    # 에이전트는 그 파일을 열어 "비어 있으니 덮을 것이 없다"고 판단하고 shadcn
+    # 기본값을 그대로 뒀고(무브랜드), 다른 하나는 DESIGN.md 산문을 읽어 팔레트를
+    # globals.css에 옮겼다(브랜드 적용). 강제 채널이 비면 결과가 에이전트 자율에
+    # 맡겨진다.
+    #
+    # 스텁에는 no-profile 마커가 있어 theme_required()가 False가 된다 — 즉 빈
+    # 테마가 "브랜드 적용됨"으로 읽히는 경로가 사라진다(proto/tools.py의 게이트).
+    # 파일 자체는 남기므로 사본 갱신 배선은 그대로다: 나중에 토큰이 올라오면
+    # 재호스팅만으로 사본까지 갈린다.
+    has_tokens = bool(profile.tokens)
+    if not has_tokens:
+        _log.warning(
+            "design profile has no tokens; writing the no-profile stub to %s — "
+            "the brand can only reach the screen through the DESIGN.md prose",
+            root_theme)
+    _write_theme_everywhere(build_dir, root_theme,
+                            theme_css(profile.tokens) if has_tokens
+                            else stub_css())
 
     if profile.prose.strip():
         design_md.write_text(profile.prose.strip() + "\n", encoding="utf-8")
     else:
         design_md.unlink(missing_ok=True)
 
-    _upsert_section(claude_md, prompts.design_rules(language))
+    # 지시와 옆에 놓인 파일의 내용은 같은 값에서 나온다 — 어긋날 수 없다.
+    _upsert_section(claude_md, prompts.design_rules(language,
+                                                    has_tokens=has_tokens))

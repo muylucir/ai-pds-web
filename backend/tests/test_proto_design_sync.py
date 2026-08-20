@@ -73,10 +73,39 @@ def test_sync_refreshes_changed_tokens(tmp_path):
     assert "#111111" in css and "#5b2ea6" not in css
 
 
-def test_prose_only_profile_writes_theme_without_tokens(tmp_path):
+def test_prose_only_profile_writes_an_honest_stub_not_an_empty_theme(tmp_path):
     sync_design(tmp_path, profile(tokens={}), "ko")
-    # 배선을 미리 깐다 — admin이 나중에 토큰을 넣으면 재호스팅만으로 색이 온다.
+    # 배선은 그대로 깐다 — admin이 나중에 토큰을 넣으면 재호스팅만으로 색이 온다.
     assert (tmp_path / THEME_FILENAME).is_file()
+    # 그러나 "브랜드 프로필에서 생성됨"이라고 적힌 **변수 0개** 파일을 두지
+    # 않는다. 2026-08-19 실측: ship의 빌드 에이전트가 그 파일을 열고 "비어 있으니
+    # 덮을 것이 없다"고 판단해 shadcn 기본값을 그대로 뒀다. 같은 프로필에서
+    # test1111은 DESIGN.md 산문을 읽어 팔레트를 옮겼다 — 강제 채널이 비면
+    # 브랜드가 에이전트 자율에 맡겨진다.
+    assert (tmp_path / THEME_FILENAME).read_text() == stub_css()
+    assert theme_required(tmp_path) is False
+
+
+def test_prose_only_profile_tells_the_agent_to_move_the_values_itself(tmp_path):
+    sync_design(tmp_path, profile(tokens={}), "ko")
+    claude = (tmp_path / "CLAUDE.md").read_text()
+    assert "globals.css" in claude
+    assert "옮겨라" in claude
+    # 값의 출처는 그 문서다 — 산문은 그대로 실린다.
+    assert "여백을 넉넉히" in (tmp_path / DESIGN_FILENAME).read_text()
+
+
+def test_tokens_arriving_later_rebrand_the_copies_laid_by_the_stub_run(tmp_path):
+    # "재호스팅만으로 리브랜딩"이 0토큰 경로를 지나서도 성립해야 한다: 스텁으로
+    # 한 번 돈 뒤 사본이 놓였고, 그 다음 토큰이 들어오면 사본까지 갈린다.
+    app = tmp_path / "prototype" / "app"
+    app.mkdir(parents=True)
+    sync_design(tmp_path, profile(tokens={}), "ko")
+    (app / THEME_FILENAME).write_text(stub_css(), encoding="utf-8")
+
+    sync_design(tmp_path, profile(), "ko")
+
+    assert "--primary: #5b2ea6;" in (app / THEME_FILENAME).read_text()
     assert theme_required(tmp_path) is True
 
 
