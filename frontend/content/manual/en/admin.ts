@@ -73,7 +73,7 @@ There is **one** profile for the whole deployment (you cannot set a different on
     {
       kind: "md",
       md: `There are two ways in. **A design document you already have works as-is** — if it states colours
-and fonts in prose or tables, Pathfinder reads them, shows you the tokens it found, and lets you check
+and fonts in prose or tables, AI-PDS Web reads them, shows you the tokens it found, and lets you check
 and correct them before saving. Starting from scratch is faster with the template.`,
     },
     {

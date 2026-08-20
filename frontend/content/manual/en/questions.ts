@@ -14,7 +14,12 @@ export const questions: ManualSection = {
       kind: "md",
       md: `When the AI needs more from you, **Questions presented** appears in the conversation and a
 question sheet opens. A counter at the top shows how many you have answered, and partial work is
-kept, so you can answer in more than one sitting.`,
+kept, so you can answer in more than one sitting.
+
+A question often carries background explaining **why it is being asked** — sometimes a table or
+several paragraphs. It sits **above** the question sentence, because reading the background before
+the question is the order it was written in. Guidance about the whole round appears once at the very
+top, ahead of the first question.`,
     },
     {
       kind: "steps",
@@ -34,6 +39,7 @@ kept, so you can answer in more than one sitting.`,
 | *Select all that apply* | Checkboxes — as many as fit |
 | **★ AI pick** | The option the AI thinks most likely given the context so far. It is **not a request to agree** — choosing something else is often the more useful answer |
 | Other — write your own | An answer outside the options. What you write becomes the record |
+| *Free answer* | A question with no options at all. Write as much as you need in the box |
 
 The **note** field is where anything the options cannot express goes. "B, but only within this
 budget" survives because of it. If the options alone would be misleading, do not leave it empty.`,

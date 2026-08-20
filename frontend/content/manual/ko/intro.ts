@@ -2,12 +2,12 @@ import type { ManualSection } from "../types";
 
 export const intro: ManualSection = {
   id: "intro",
-  title: "Pathfinder란",
+  title: "AI-PDS Web이란",
   lede: "AI-PLC Discovery를 웹 브라우저에서 대화로 진행하는 도구입니다. 개발 도구를 설치하지 않아도 됩니다.",
   blocks: [
     {
       kind: "md",
-      md: `Pathfinder는 **제품 기획자가 아이디어를 검증 가능한 형태까지 밀어내는 과정**을 돕습니다.
+      md: `AI-PDS Web은 **제품 기획자가 아이디어를 검증 가능한 형태까지 밀어내는 과정**을 돕습니다.
 채팅으로 질문에 답하면 AI가 문서를 쓰고, 그 문서에서 프로토타입을 실제로 만들어 실행하고,
 그 프로토타입에 대한 반응을 설문으로 모아 다시 문서에 반영합니다.
 
@@ -66,9 +66,9 @@ export const intro: ManualSection = {
     },
     {
       kind: "details",
-      summary: "AI-PLC 전체에서 Pathfinder가 담당하는 범위",
+      summary: "AI-PLC 전체에서 AI-PDS Web이 담당하는 범위",
       md: `AI-PLC는 Discovery → Inception → Construction → Operations로 이어집니다.
-Pathfinder는 그중 **Discovery만** 다룹니다. 산출된 Discovery 문서와 \`PROTOTYPE-*.md\`를
+AI-PDS Web은 그중 **Discovery만** 다룹니다. 산출된 Discovery 문서와 \`PROTOTYPE-*.md\`를
 개발팀에 넘기면, 그 뒤 단계는 개발자용 워크스페이스에서 진행됩니다.
 
 프로토타입 빌드 기능이 있는 것은 Discovery 안에서 아이디어를 검증하기 위한 것이고,

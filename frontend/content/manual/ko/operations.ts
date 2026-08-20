@@ -3,12 +3,12 @@ import type { ManualSection } from "../types";
 export const operations: ManualSection = {
   id: "operations",
   title: "설치 · 운영 · 문제 해결",
-  lede: "Pathfinder를 직접 띄우고 관리하는 사람을 위한 절입니다. 쓰는 것만 하려면 여기는 필요 없습니다.",
+  lede: "AI-PDS Web을 직접 띄우고 관리하는 사람을 위한 절입니다. 쓰는 것만 하려면 여기는 필요 없습니다.",
   blocks: [
     {
       kind: "callout",
       tone: "note",
-      md: `이 절은 **AWS 계정에 Pathfinder를 배포하는 사람**을 위한 것입니다. 이미 올라간 주소를
+      md: `이 절은 **AWS 계정에 AI-PDS Web을 배포하는 사람**을 위한 것입니다. 이미 올라간 주소를
 받아 쓰는 사용자는 [시작하기](/manual#getting-started)부터 읽으면 됩니다.`,
     },
     { kind: "heading", id: "deploy", text: "배포" },
@@ -145,6 +145,7 @@ export const operations: ManualSection = {
 | 프로토타입 프리뷰가 404 | 의도된 응답입니다 — [공유 링크](/manual#share)로 들어가야 합니다 |
 | 영어 화면인데 문서가 한국어 | 정상입니다 — [문서 언어](/manual#doc-language)는 화면 언어와 별개입니다 |
 | 긴 메시지를 보내면 연결이 끊어짐 | 한 번에 보내는 양이 너무 큰 것입니다. 나눠서 보내거나 [파일로 첨부](/manual#attach)하세요 |
+| 절전·화면보호기에서 돌아오니 화면이 멈춰 있음 | 잃은 것은 **라이브 뷰뿐**입니다 — AI는 계속 일했고 문서도 저장됐습니다. 자동으로 다시 붙으므로 기다리면 이어서 보이고, 그동안 턴이 끝났으면 새로고침하면 내용이 돌아옵니다 |
 | 채팅 기록이 비어 보임 | 인스턴스가 교체된 뒤일 수 있습니다. 새로고침 후에도 비어 있으면 백엔드 로그를 봅니다 |
 | 특정 기능만 실패하고 화면에 원인이 없음 | 대개 IAM입니다. 백엔드 로그의 \`AccessDenied\`가 어떤 액션인지 알려 줍니다 |
 | SSH로 접속이 안 됨 | 의도된 설계입니다. SSH 포트가 없고 SSM만 열려 있습니다 |

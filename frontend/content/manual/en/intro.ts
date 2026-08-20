@@ -2,12 +2,12 @@ import type { ManualSection } from "../types";
 
 export const intro: ManualSection = {
   id: "intro",
-  title: "What Pathfinder is",
+  title: "What AI-PDS Web is",
   lede: "A tool for running AI-PLC Discovery as a conversation in your browser. No developer tooling to install.",
   blocks: [
     {
       kind: "md",
-      md: `Pathfinder helps a product person **push an idea all the way to something testable**.
+      md: `AI-PDS Web helps a product person **push an idea all the way to something testable**.
 You answer questions in chat, the AI writes the documents, those documents become a prototype
 that actually runs, and reactions to that prototype come back through a survey and into the
 documents.
@@ -68,9 +68,9 @@ say "I want to go back to the previous stage" or "let's skip this" in chat and i
     },
     {
       kind: "details",
-      summary: "Where Pathfinder sits within AI-PLC",
+      summary: "Where AI-PDS Web sits within AI-PLC",
       md: `AI-PLC runs Discovery → Inception → Construction → Operations.
-Pathfinder covers **Discovery only**. Once you hand the Discovery documents and the
+AI-PDS Web covers **Discovery only**. Once you hand the Discovery documents and the
 \`PROTOTYPE-*.md\` files to a build team, the later phases happen in a developer workspace.
 
 The prototype build exists to validate an idea inside Discovery. What it produces is not

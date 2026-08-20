@@ -46,7 +46,11 @@ from this" — the AI works out which path that is.`,
 | Check the reasoning | "Tell me where this conclusion came from" |
 
 While the AI works, a single line tells you what it is doing — *Thinking*,
-*Writing the document*, *Preparing questions*, and so on.`,
+*Writing the document*, *Preparing questions*, and so on.
+
+Expand that line to see the **reasoning**, along with what each tool actually did — the file name
+when it read a file, the command when it ran one. It is where you can retrace "why did this
+conclusion appear" without asking in chat.`,
     },
     { kind: "heading", id: "answer-panel", text: "The question panel (third column)" },
     {

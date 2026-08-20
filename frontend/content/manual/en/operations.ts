@@ -3,12 +3,12 @@ import type { ManualSection } from "../types";
 export const operations: ManualSection = {
   id: "operations",
   title: "Install, operate, troubleshoot",
-  lede: "For whoever stands Pathfinder up and keeps it running. If you only use it, you can skip this.",
+  lede: "For whoever stands AI-PDS Web up and keeps it running. If you only use it, you can skip this.",
   blocks: [
     {
       kind: "callout",
       tone: "note",
-      md: `This section is for **whoever deploys Pathfinder into an AWS account**. If someone handed you a
+      md: `This section is for **whoever deploys AI-PDS Web into an AWS account**. If someone handed you a
 running address, start at [Getting started](/manual#getting-started) instead.`,
     },
     { kind: "heading", id: "deploy", text: "Deploying" },
@@ -149,6 +149,7 @@ plus a Bedrock call per conversation turn) — take it down when it is not in us
 | Prototype preview returns 404 | That is the intended response — enter through the [share link](/manual#share) |
 | English interface but Korean documents | Correct — [document language](/manual#doc-language) is separate from screen language |
 | Long messages drop the connection | Too much in a single message. Split it, or [attach it as a file](/manual#attach) |
+| The screen is frozen after sleep or a screensaver | Only the **live view** was lost — the AI kept working and the documents were saved. It reattaches by itself, so waiting picks the stream back up; if the turn finished meanwhile, a refresh brings the content back |
 | Chat history looks empty | The instance may have been replaced. If a refresh does not bring it back, check the backend log |
 | One feature fails and the screen gives no reason | Usually IAM. \`AccessDenied\` in the backend log names the action |
 | SSH does not connect | By design. There is no SSH port; only SSM is open |

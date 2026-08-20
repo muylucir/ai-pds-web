@@ -34,7 +34,7 @@ The colours and typeface come from whatever the administrator uploaded under
         "**Start build** — a build session opens and the AI reads the spec and starts working.",
         "It asks questions when it needs to. You answer the same way as in the workspace.",
         "When it is done the session closes itself and a **Build complete** card appears.",
-        "**Start hosting** actually runs the app.",
+        "**Start hosting** actually runs the app — the badge moves through *Installing dependencies* → *Building* → *Starting the server*. It can take a few minutes.",
         "**Open preview** to check it, **Copy link** to send it to someone.",
       ],
     },
