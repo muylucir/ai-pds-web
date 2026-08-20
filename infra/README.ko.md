@@ -141,12 +141,3 @@ npm test     # 크리덴셜 불필요 — 순수함수 + 합성된 템플릿 단
 | `auth-client-config.assert.ts` | 토큰 유효기간이 **프로토타입 빌드 1회보다 길다**(짧으면 빌드 중 세션이 만료된다), 시드/그룹 상수와 콜백·로그아웃 URL 파생 |
 | `deployed-tree.assert.ts` | `/opt/aipds`가 될 트리에 있으면 안 되는 것(개발용 `.claude/`, 빌드 산출물, 세션 상태)과 있어야 하는 것(룰, 두 언어 지시, 두 config dir, 락파일) |
 | `deploy-source.assert.ts` | clone URL이 공개 HTTPS인지, 배포 대상이 커밋이 아니라 브랜치인지 |
-
-## PathfinderVmStack은 제거됐다 (2026-07-25)
-
-프로토타입 빌드가 백엔드 프로세스 안에서 돌게 되면서 도쿄 MicroVM·이미지 빌드·토큰
-민팅이 모두 사라졌다. 이전에 배포한 적이 있다면 한 번 정리한다:
-
-```bash
-npx cdk destroy PathfinderVmStack --region ap-northeast-1
-```
