@@ -58,13 +58,14 @@ The address to open is the \`AipdsHostingStack.DistributionDomain\` output.`,
       md: `**0. Once this change is on \`main\`, do not run \`sudo aipds-update\` on the existing
 instance.** Its systemd units and tree paths still carry the old names, so the update script aborts
 partway through — and that instance is exactly the one that must keep serving in-flight survey links
-until the old stacks are deleted in step 8 below. Leave it frozen until then.`,
+until the old stacks are deleted in step 9 below. Leave it frozen until then.`,
     },
     {
       kind: "steps",
       items: [
         "`cdk deploy AipdsDrillStack AipdsAuthStack` — the new bucket and user pool",
         "`aws s3 sync s3://<existing bucket> s3://<new bucket>` — moves the artifacts over. The key prefixes carry no product name, so the layout comes up unchanged. After it finishes, compare object counts: run `aws s3api list-objects-v2 --bucket <new bucket> --query 'length(Contents)'` and the same command against the existing bucket — the deletion below is irreversible, so seeing project cards on screen is not enough to catch a partially failed sync",
+        "Move the Discovery transcript prefixes. Transcripts are stored under a UUID derived from the project id, and this rename changed that derivation — without this step **every project's Discovery conversation starts as an empty session** (artifacts, surveys and responses are unaffected). The loop below reads whatever directory is already there and moves it to the new name, so it is safe to run more than once:\n\n```bash\nfor pid in $(aws s3 ls s3://<new bucket>/projects/ | awk '{print $2}' | tr -d /); do\n  base=\"s3://<new bucket>/projects/$pid/discovery/transcript\"\n  cur=$(aws s3 ls \"$base/\" 2>/dev/null | awk '{print $2}' | tr -d / | head -1)\n  want=$(python3 -c \"import uuid,sys;print(uuid.uuid5(uuid.NAMESPACE_URL,'aipds:'+sys.argv[1]))\" \"$pid\")\n  if [ -n \"$cur\" ] && [ \"$cur\" != \"$want\" ]; then\n    aws s3 mv \"$base/$cur/\" \"$base/$want/\" --recursive\n  fi\ndone\n```",
         "`cdk deploy AipdsHostingStack` — the new EC2 instance and CloudFront",
         "Confirm you can sign in at the new address (`admin@aipds.local`)",
         "Check the project cards — specs and surveys are intact, and prototypes are **unbuilt**",
@@ -76,13 +77,13 @@ until the old stacks are deleted in step 8 below. Leave it frozen until then.`,
     {
       kind: "callout",
       tone: "warn",
-      md: `**Do not rush step 8.** Survey links already handed out point at the old address, so deleting the
+      md: `**Do not rush step 9.** Survey links already handed out point at the old address, so deleting the
 old stacks kills them. Wait until response collection for any in-flight survey has finished, re-sync in
-step 7, and only then delete.
+step 8, and only then delete.
 
 The existing Drill stack was created with \`removalPolicy: DESTROY\` and \`autoDeleteObjects: true\`,
 and it has no versioning — deleting it removes every object in that bucket immediately, with no way to
-recover them. Skip the re-sync in step 7, and any response that arrived through the old links after the
+recover them. Skip the re-sync in step 8, and any response that arrived through the old links after the
 first sync is gone for good the moment you delete.`,
     },
     {

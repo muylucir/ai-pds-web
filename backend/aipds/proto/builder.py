@@ -51,12 +51,12 @@ DEFAULT_PERMISSION_MODE = "bypassPermissions"
 # `_redacted(event).model_dump_json()` is unaffected.
 #
 # `object.__setattr__` is a DEFENSIVE choice, not a required one, and the reason
-# matters because it is easy to get backwards. Plain `ev._pf_delivered = True`
+# matters because it is easy to get backwards. Plain `ev._aipds_delivered = True`
 # also works: pydantic's `_setattr_handler` (pydantic/main.py:1066-1074) routes any
 # non-field name that fails `is_valid_field_name` -- i.e. any LEADING-UNDERSCORE
 # name -- straight to `_object_setattr`. What pydantic rejects is a
-# non-underscore unknown name (`ev.pf_delivered = True` ->
-# ValueError: "AgentEvent" object has no field "pf_delivered"). So the underscore
+# non-underscore unknown name (`ev.aipds_delivered = True` ->
+# ValueError: "AgentEvent" object has no field "aipds_delivered"). So the underscore
 # prefix is what makes assignment legal here; `object.__setattr__` only makes that
 # independent of pydantic's dunder routing. CONSEQUENCE IF YOU RENAME THIS: a name
 # without the leading underscore must become a real model field or the assignment
@@ -76,7 +76,7 @@ DEFAULT_PERMISSION_MODE = "bypassPermissions"
 # copy) back on the queue, that assumption breaks: an event marked by a
 # SERIALIZATION step rather than by a `yield` would become eligible for the
 # answered-card drop. Audit this if you add such a path.
-_DELIVERED_ATTR = "_pf_delivered"
+_DELIVERED_ATTR = "_aipds_delivered"
 
 
 def _mark_delivered(event: AgentEvent) -> None:
