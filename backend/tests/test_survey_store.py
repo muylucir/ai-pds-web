@@ -167,9 +167,8 @@ async def test_synthesize_writes_the_report_in_the_stores_language():
     await store.save_questionnaire(_qn(
         language="en", title="Validation survey", hypothesis="H",
         questions=[Question(id="q1", text="Useful?", type="scale")]))
-    await store.synthesize_results()
-    from pathfinder.survey.store import RESULTS_MD_KEY
-    md = project_s3.blobs[RESULTS_MD_KEY]
+    key, _ = await store.synthesize_results()
+    md = project_s3.blobs[key]
     assert "Prototype" in str(md)
     assert not any("가" <= c <= "힣" for c in str(md)), str(md)[:300]
 
@@ -193,3 +192,74 @@ def test_report_labels_fall_back_to_korean_for_an_unknown_language():
     from pathfinder.survey.report_labels import labels
     assert labels("klingon") == labels("ko")
     assert labels("") == labels("ko")
+
+
+# ---- validation-results.md 를 슬러그별로 쪼갠다 (2026-08-20) ----
+#
+# **왜 바꾸는가.** `RESULTS_MD_KEY`가 슬러그 없는 모듈 상수였다
+# (`aiplc-docs/discovery/prototype/validation-results.md`). Path B는 프로토타입을
+# N개 만드는데(실측 test2222: 3개, 스펙 3개·빌드 3개 완료) 취합 라우트는
+# 슬러그별(`POST .../prototypes/{slug}/survey/synthesize`)이므로, 셋을 취합하면
+# 셋이 같은 키를 덮어쓰고 마지막 것만 남았다 — 오류 없이 틀린 결과다.
+#
+# 단수 경로의 근거는 "prototype-validation.md Step 6이 기대하는 위치이고 이후
+# product-strategy가 거기를 본다"였다. 그런데 그 문서는 제목부터 "Path A.1 -
+# Single Solution"이고 본문이 "ORIGINAL single-prototype flow"라고 명시한다.
+# Path B가 타는 `prototype-building.md`에는 검증 단계가 아예 없고
+# (끝이 "Proceed to: Product Strategy"), `use-case-prioritization.md`에는 검증
+# 언급이 0회다. 즉 3개 프로토타입 프로젝트에 단수 경로를 요구하는 상류가 없다.
+#
+# **A.1의 경로는 반드시 그대로 남아야 한다** — 거기서는 상류가 실제로 그 경로를
+# 규정하고 product-strategy가 읽는다. `layout.artifact_dir`이 이미 그 분기를
+# 갖고 있어서 한 식으로 둘 다 만족한다.
+
+from pathfinder.proto import layout as _layout          # noqa: E402
+from pathfinder.survey.store import results_md_key      # noqa: E402
+
+
+def test_results_key_for_a_single_prototype_is_the_rule_declared_path():
+    """Path A.1은 오늘과 바이트 단위로 같아야 한다.
+
+    `prototype-validation.md`가 선언하는 산출물이고 이후 product-strategy
+    스테이지가 그 경로를 읽는다. 여기가 바뀌면 그 스테이지가 검증 결과를 못 찾고,
+    실패는 조용하다.
+    """
+    assert results_md_key(_layout.SINGLE_ID) == \
+        "aiplc-docs/discovery/prototype/validation-results.md"
+
+
+def test_results_key_for_path_b_carries_the_slug():
+    assert results_md_key("customer-inquiry-triage") == \
+        ("aiplc-docs/discovery/prototypes/customer-inquiry-triage"
+         "/validation-results.md")
+
+
+def test_results_key_sits_beside_the_questionnaire_copy():
+    """설문지 사본과 같은 디렉터리다. 갈라지면 삭제·아카이브 경로가 한쪽을
+    잊는다 — `layout.artifact_dir`이 존재하는 이유가 그것이다."""
+    from pathfinder.survey.store import questionnaire_md_key
+    for slug in (_layout.SINGLE_ID, "flight-disruption-notice"):
+        assert (results_md_key(slug).rsplit("/", 1)[0]
+                == questionnaire_md_key(slug).rsplit("/", 1)[0])
+
+
+async def test_three_prototypes_synthesize_without_overwriting_each_other():
+    """실측 test2222의 모양이다 — 프로토타입 3개, 취합 3번.
+
+    종전에는 셋이 한 키를 덮어써서 마지막 프로토타입의 결과만 남았다.
+    """
+    project_s3, root_s3 = FakeS3Store(), FakeS3Store()
+    slugs = ("customer-inquiry-triage", "flight-disruption-notice",
+             "maintenance-fault-diagnosis")
+    for slug in slugs:
+        store = SurveyStore(project_s3, root_s3, slug=slug, project_id=PID)
+        await store.save_questionnaire(_qn(slug=slug, token=f"tok-{slug}",
+                                           title=f"{slug} 검증"))
+        key, _ = await store.synthesize_results()
+        assert key == results_md_key(slug)
+
+    written = [k for k in project_s3.blobs if k.endswith("validation-results.md")]
+    assert len(written) == 3, written
+    # 각 파일이 자기 프로토타입의 설문 제목을 담아야 한다 — 덮어썼다면 셋이 같다.
+    for slug in slugs:
+        assert f"{slug} 검증" in project_s3.blobs[results_md_key(slug)]

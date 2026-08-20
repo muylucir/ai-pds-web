@@ -84,11 +84,29 @@ def questionnaire_md_key(slug: str) -> str:
     return f"{layout.artifact_dir(slug)}/validation-questionnaire.md"
 
 
-#: Where the rule expects validation synthesis to live
-#: (prototype-validation.md Step 6), and where the later product-strategy
-#: stage looks for it. Singular "prototype/", NOT the per-slug
-#: "prototypes/{slug}/" tree the questionnaire copy uses.
-RESULTS_MD_KEY = "aiplc-docs/discovery/prototype/validation-results.md"
+def results_md_key(slug: str) -> str:
+    """Where this prototype's validation synthesis lives
+    (prototype-validation.md Step 6), and where the later product-strategy
+    stage looks for it.
+
+    **왜 슬러그별인가(2026-08-20 실측).** 종전에는 슬러그 없는 모듈 상수였다
+    (`aiplc-docs/discovery/prototype/validation-results.md`). 그런데 취합
+    라우트는 슬러그별이고(`POST .../prototypes/{slug}/survey/synthesize`) Path B는
+    프로토타입을 N개 만든다 — test2222가 3개였다. 셋을 취합하면 셋이 같은 키를
+    덮어써서 마지막 것만 남았고, 오류는 없었다.
+
+    단수 경로의 근거는 "룰이 그 경로를 규정한다"였는데, 그 룰
+    (`prototype-validation.md`)은 제목부터 "Path A.1 - Single Solution"이고
+    본문이 "ORIGINAL single-prototype flow"라고 명시한다. Path B가 타는
+    `prototype-building.md`에는 검증 단계가 아예 없고(끝이 "Proceed to: Product
+    Strategy"), `use-case-prioritization.md`에는 검증 언급이 0회다. 즉 다중
+    프로토타입 프로젝트에 단수 경로를 요구하는 상류가 없다.
+
+    **A.1에서는 경로가 그대로다.** 그쪽은 상류가 실제로 그 경로를 규정하고
+    product-strategy가 읽는다 — `layout.artifact_dir`이 단수 id를 분기하므로 한
+    식이 둘 다 만족한다(`questionnaire_md_key`와 같은 이유로 같은 모양이다).
+    """
+    return f"{layout.artifact_dir(slug)}/validation-results.md"
 
 
 #: Leading characters a spreadsheet treats as the start of a formula.
@@ -406,10 +424,17 @@ class SurveyStore:
         for token in await self._collect_tokens():
             await self._root.delete_prefix(f"{TOKEN_INDEX_PREFIX}{token}.json")
         await self._s3.delete_prefix(survey_prefix(self.slug))
-        # Outside the survey/ tree: the viewer copy under aiplc-docs/.
-        # RESULTS_MD_KEY is deliberately NOT touched -- it has no slug in it
-        # and is shared across prototypes.
+        # Outside the survey/ tree: the two copies under aiplc-docs/. Both are
+        # this prototype's own — `layout.artifact_dir(slug)` scopes them — so
+        # a sibling prototype's documents are out of reach.
+        #
+        # **정확한 키만 지운다.** 단수 프로토타입에서는 이 디렉터리에 스펙
+        # (`prototype-spec.md`)이 함께 산다. 디렉터리를 프리픽스로 지우면 스펙이
+        # 사라지고, 그러면 리셋이 아니라 삭제가 된다 — 카드가 목록에서 없어진다.
+        # `delete_prefix`에 전체 키를 넘기는 것은 단일 키 삭제의 확립된 관례다
+        # (S3StoreLike에 단일 delete가 없다).
         await self._s3.delete_prefix(questionnaire_md_key(self.slug))
+        await self._s3.delete_prefix(results_md_key(self.slug))
 
     async def _collect_tokens(self) -> set[str]:
         """Every token this prototype has issued, live and archived.
@@ -487,5 +512,6 @@ class SurveyStore:
         rollup = build_rollup(qn.questions, responses, self._now(now))
         md = _results_markdown(qn, responses, rollup, self._now(now),
                                self._language)
-        await self._s3.put(RESULTS_MD_KEY, md)
-        return RESULTS_MD_KEY, rollup.count
+        key = results_md_key(self.slug)
+        await self._s3.put(key, md)
+        return key, rollup.count

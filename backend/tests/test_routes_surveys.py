@@ -203,7 +203,10 @@ def test_synthesize_writes_rule_expected_results_path(env):
     resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/survey/synthesize")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["path"] == "aiplc-docs/discovery/prototype/validation-results.md"
+    # 슬러그별 경로다. 이 테스트의 SLUG("demo")는 Path B 레이아웃이므로
+    # `prototypes/{slug}/` 아래로 간다 — 단수 프로토타입만 `prototype/`을 쓴다.
+    assert body["path"] == \
+        f"aiplc-docs/discovery/prototypes/{SLUG}/validation-results.md"
     assert body["response_count"] == 2
 
     md = env["project_s3"].blobs[body["path"]]

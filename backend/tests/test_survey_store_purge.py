@@ -6,9 +6,10 @@ import json
 import pytest
 
 from fakes.in_memory_s3 import FakeS3Store
-from pathfinder.survey.store import (RESULTS_MD_KEY, SurveyStore,
+from pathfinder.survey.store import (SurveyStore,
                                      purgeable_response_count,
                                      questionnaire_key, questionnaire_md_key,
+                                     results_md_key,
                                      survey_prefix)
 
 pytestmark = pytest.mark.asyncio
@@ -67,16 +68,51 @@ async def test_purge_removes_archived_tokens_too():
     assert "surveys/by-token/tok-current.json" not in root_s3.blobs
 
 
-async def test_purge_keeps_the_shared_results_doc():
-    """RESULTS_MD_KEY has no slug in it ("prototype/", singular) — it is shared
-    across prototypes. Purging one must not destroy another's findings."""
+async def test_purge_removes_this_prototypes_results_doc():
+    """이제 결과 문서에 슬러그가 있으므로 purge가 지운다.
+
+    종전에는 봐줬고 그 근거는 "키에 슬러그가 없어 프로토타입 간 공유"였다. 그
+    전제가 사라졌으니 봐주면 반대 결함이 된다 — 리셋한 프로토타입의 검증 결과가
+    남아, 같은 슬러그로 다시 만든 프로토타입의 결과로 읽힌다.
+    """
     store, project_s3, root_s3 = _store()
     _seed_survey(project_s3, root_s3, "tok-current")
-    project_s3.blobs[RESULTS_MD_KEY] = "# shared findings"
+    project_s3.blobs[results_md_key(SLUG)] = "# findings"
 
     await store.purge()
 
-    assert project_s3.blobs[RESULTS_MD_KEY] == "# shared findings"
+    assert results_md_key(SLUG) not in project_s3.blobs
+
+
+async def test_purge_leaves_another_prototypes_results_doc_alone():
+    """Path B에서 형제 프로토타입의 결과는 남아야 한다 — 이것이 종전 테스트가
+    지키려던 것이고, 슬러그별 경로에서도 그대로 지켜져야 한다."""
+    store, project_s3, root_s3 = _store()
+    _seed_survey(project_s3, root_s3, "tok-current")
+    sibling = results_md_key("flight-disruption-notice")
+    project_s3.blobs[sibling] = "# sibling findings"
+
+    await store.purge()
+
+    assert project_s3.blobs[sibling] == "# sibling findings"
+
+
+async def test_purge_keeps_the_spec_that_shares_the_directory():
+    """단수 프로토타입에서는 결과 문서와 **스펙이 같은 디렉터리**에 있다
+    (`aiplc-docs/discovery/prototype/`). 프리픽스로 지우면 스펙이 사라지고,
+    그러면 카드가 목록에서 사라진다 — 리셋이 아니라 삭제가 된다.
+    """
+    from pathfinder.proto import layout
+    project_s3, root_s3 = FakeS3Store(), FakeS3Store()
+    store = SurveyStore(project_s3, root_s3, slug=layout.SINGLE_ID,
+                        project_id=PID)
+    project_s3.blobs[layout.SINGLE_SPEC_KEY] = "# spec"
+    project_s3.blobs[results_md_key(layout.SINGLE_ID)] = "# findings"
+
+    await store.purge()
+
+    assert project_s3.blobs[layout.SINGLE_SPEC_KEY] == "# spec"
+    assert results_md_key(layout.SINGLE_ID) not in project_s3.blobs
 
 
 async def test_purge_is_idempotent_on_a_prototype_with_no_survey():

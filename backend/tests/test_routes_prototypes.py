@@ -703,7 +703,10 @@ def _seed_everything(proto_env, monkeypatch=None):
     root_s3.blobs["surveys/by-token/tok-1.json"] = json.dumps(
         {"project_id": PID, "slug": SLUG})
     s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/validation-questionnaire.md"] = "# q"
-    s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] = "# shared"
+    s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/validation-results.md"] = "# mine"
+    # 다른 프로토타입(단수 레이아웃)의 결과 문서. 리셋이 남의 것을 지우지
+    # 않는다는 것을 지킨다.
+    s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] = "# other"
     s3.blobs["prototypes/other/session.json"] = '{"session_id": "y"}'
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
@@ -725,10 +728,14 @@ def test_reset_clears_everything_but_keeps_the_spec(proto_env, monkeypatch):
     # failed/misordered purge would strand permanently.
     assert "surveys/by-token/tok-1.json" not in proto_env["root_s3"].blobs
     assert not (proto_env["root"] / PID / SLUG).exists()
-    # Survivors: the spec (or the card disappears), the shared results doc
-    # (no slug in its key), and any other prototype.
+    # 이 프로토타입의 검증 결과는 사라진다 — 리셋한 프로토타입의 결과가 남으면
+    # 같은 슬러그로 다시 만든 프로토타입의 것으로 읽힌다.
+    assert f"aiplc-docs/discovery/prototypes/{SLUG}/validation-results.md" \
+        not in s3.blobs
+    # Survivors: the spec (or the card disappears), ANOTHER prototype's results
+    # doc, and any other prototype's state.
     assert s3.blobs[SPEC_KEY] == "# PROTOTYPE demo"
-    assert s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] == "# shared"
+    assert s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] == "# other"
     assert s3.blobs["prototypes/other/session.json"] == '{"session_id": "y"}'
 
 
