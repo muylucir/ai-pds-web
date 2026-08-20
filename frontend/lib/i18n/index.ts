@@ -16,7 +16,7 @@ export const DEFAULT_LOCALE: Locale = "ko";
 
 // httpOnly가 아니다 — LanguageSwitcher가 클라이언트에서 써야 하고, 보안 값이
 // 아니다. app/layout.tsx가 서버에서 읽어 <html lang>을 첫 페인트에 맞춘다.
-export const LANG_COOKIE = "pf_lang";
+export const LANG_COOKIE = "aipds_lang";
 
 export type Dict = Record<keyof typeof ko, string>;
 

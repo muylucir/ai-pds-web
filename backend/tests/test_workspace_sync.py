@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from pathfinder.workspace_sync import (SYNC_GLOBS, content_for_s3,
+from aipds.workspace_sync import (SYNC_GLOBS, content_for_s3,
                                        is_synced_key, publish_file)
 from tests.fakes.in_memory_s3 import FakeS3Store
 
@@ -114,7 +114,7 @@ async def test_an_unsafe_key_is_refused(tmp_path):
 
 def test_the_glob_set_is_the_one_the_runner_uses():
     """배치 sync와 같은 상수를 쓰는지 — 두 벌로 두면 갈라진다."""
-    from pathfinder.runner import AgentRunner
+    from aipds.runner import AgentRunner
     assert AgentRunner._SYNC_GLOBS == SYNC_GLOBS
 
 
@@ -124,7 +124,7 @@ def test_the_glob_set_is_the_one_the_runner_uses():
 # 내용이 없다. 그래서 이벤트보다 게시가 먼저여야 한다.
 
 async def _driver(tmp_path):
-    from pathfinder.agent.claude_driver import ClaudeDriver
+    from aipds.agent.claude_driver import ClaudeDriver
     ws = tmp_path / "ws"
     ws.mkdir()
     return ClaudeDriver(workspace=str(ws), rules_dir=str(tmp_path / "r"),

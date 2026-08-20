@@ -1,6 +1,6 @@
 # backend/tests/test_workspace.py
 from pathlib import Path
-from pathfinder.workspace import Workspace, ProjectRegistry
+from aipds.workspace import Workspace, ProjectRegistry
 from fakes.in_memory_s3 import FakeS3Store
 
 FIX = Path(__file__).parent / "fixtures"
@@ -19,7 +19,7 @@ class FakeRunner:
         await self._s3.put(rel, content)
 
     async def list_files(self, glob):
-        from pathfinder.globmatch import matches_glob
+        from aipds.globmatch import matches_glob
         keys = await self._s3.list("")
         return sorted(k for k in keys if matches_glob(k, glob))
 

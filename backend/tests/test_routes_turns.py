@@ -1,9 +1,9 @@
 # backend/tests/test_routes_turns.py
 import json
 from fastapi.testclient import TestClient
-import pathfinder.app as app_module
-from pathfinder.workspace import Workspace
-from pathfinder.models import AgentEvent
+import aipds.app as app_module
+from aipds.workspace import Workspace
+from aipds.models import AgentEvent
 
 client = TestClient(app_module.app)
 
@@ -88,7 +88,7 @@ class ScriptRunner:
 
 
 def _install_scripted(monkeypatch, pid, script):
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")  # offline: no durable manifest write
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")  # offline: no durable manifest write
 
     async def make(project_id):
         return Workspace(ScriptRunner(script))
@@ -105,7 +105,7 @@ def _install_default(monkeypatch, pid):
     Returns the runner so a test can assert on what the route did to it
     (the interrupt route has no response body to check).
     """
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     runner = ScriptRunner()
 
     async def make(project_id):
@@ -238,7 +238,7 @@ def test_interrupt_survives_a_raising_runner(monkeypatch):
     """드라이버의 client.interrupt()가 던져도 라우트의 docstring이 약속하는
     202/멱등 계약은 지킨다 — 사용자는 중단이 안 먹혔다고 다시 누를 뿐, 500을
     받을 이유가 없다."""
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     runner = ScriptRunner()
 
     async def boom():

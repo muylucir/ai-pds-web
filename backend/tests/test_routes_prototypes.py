@@ -6,12 +6,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.models import AgentEvent
-from pathfinder.proto.host import TOKEN_FILENAME, HostInfo
-from pathfinder.routes.proto_public import cookie_name
-from pathfinder.proto.limits import BuildSemaphore
-from pathfinder.workspace import Workspace
+import aipds.app as app_module
+from aipds.models import AgentEvent
+from aipds.proto.host import TOKEN_FILENAME, HostInfo
+from aipds.routes.proto_public import cookie_name
+from aipds.proto.limits import BuildSemaphore
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 
@@ -199,7 +199,7 @@ class FakeProtoHost:
 @pytest.fixture()
 def proto_env(monkeypatch, tmp_path):
     """Registered project + fake S3/session/host wiring."""
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     # VM env vars are gone -- the session route's config guard now checks a
     # build slot, not an image ARN.
     #
@@ -223,13 +223,13 @@ def proto_env(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: fake_s3)
     # SurveyStore.purge() (exercised by the reset route) also reads/writes the
     # bucket-root token index via surveys_root_s3_factory(); left unpatched it
-    # falls through to a real boto3 client with PATHFINDER_S3_BUCKET="" and
+    # falls through to a real boto3 client with AIPDS_S3_BUCKET="" and
     # blows up on bucket-name validation before it ever reaches the fake.
     monkeypatch.setattr(app_module, "surveys_root_s3_factory",
                         lambda: fake_root_s3)
     # list_prototypes' "built" signal reads the local build dir straight off
     # disk (app_module._proto_root() / pid / slug) -- point it at tmp_path so
-    # tests never touch the real ~/pathfinder-protos, matching
+    # tests never touch the real ~/aipds-protos, matching
     # test_routes_prototypes_archive.py's fixture.
     monkeypatch.setattr(app_module, "_proto_root", lambda: tmp_path)
 
@@ -833,7 +833,7 @@ def test_reset_502_when_a_purge_fails_and_keeps_local_state(proto_env, monkeypat
         raise RuntimeError("s3 down")
 
     monkeypatch.setattr(
-        "pathfinder.survey.store.SurveyStore.purge", boom, raising=True)
+        "aipds.survey.store.SurveyStore.purge", boom, raising=True)
 
     resp = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
 
@@ -859,7 +859,7 @@ def test_reset_502_survey_failure_also_skips_session_state_and_converges_on_retr
     survey purge is allowed to succeed."""
     _seed_everything(proto_env, monkeypatch)
     s3 = proto_env["s3"]
-    from pathfinder.survey.store import SurveyStore
+    from aipds.survey.store import SurveyStore
     real_purge = SurveyStore.purge
 
     calls = {"n": 0}
@@ -871,7 +871,7 @@ def test_reset_502_survey_failure_also_skips_session_state_and_converges_on_retr
         await real_purge(self)
 
     monkeypatch.setattr(
-        "pathfinder.survey.store.SurveyStore.purge", fail_once_then_real,
+        "aipds.survey.store.SurveyStore.purge", fail_once_then_real,
         raising=True)
 
     first = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
@@ -924,7 +924,7 @@ def test_reset_502_when_the_build_tree_purge_fails(proto_env):
 def test_reset_502_when_the_session_close_fails(proto_env, monkeypatch):
     """The `session` branch. close() releases the build slot, so a swallowed
     failure here reports success over a slot that stays held until the process
-    restarts -- and with PATHFINDER_PROTO_MAX_CONCURRENT capping a workshop box
+    restarts -- and with AIPDS_PROTO_MAX_CONCURRENT capping a workshop box
     at 2, that is a real 429 for another team."""
     _seed_spec(proto_env["s3"])
     session = FakePrototypeSession()
@@ -952,7 +952,7 @@ def test_reset_502_when_the_session_state_purge_fails(proto_env, monkeypatch):
     async def boom(s3, slug):
         raise RuntimeError("s3 down")
 
-    monkeypatch.setattr("pathfinder.routes.prototypes.purge_session_state", boom)
+    monkeypatch.setattr("aipds.routes.prototypes.purge_session_state", boom)
 
     resp = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
 
@@ -1180,7 +1180,7 @@ def test_host_start_base_path_is_the_browser_visible_prefix(proto_env, monkeypat
     /proto/.../_next/static/... -- which CloudFront 404s, the very symptom this
     work is fixing.
 
-    The mount is configuration, not a constant: PATHFINDER_PUBLIC_PATH_PREFIX
+    The mount is configuration, not a constant: AIPDS_PUBLIC_PATH_PREFIX
     carries it, defaulting to "/api" to match the deployed nginx/Next wiring.
     """
     _seed_spec(proto_env["s3"])
@@ -1196,7 +1196,7 @@ def test_host_start_base_path_is_the_browser_visible_prefix(proto_env, monkeypat
 def test_host_start_base_path_honours_an_empty_public_prefix(proto_env, monkeypatch):
     """Local dev calls the backend directly (no /api mount), so the override
     must be able to clear the prefix entirely rather than only replace it."""
-    monkeypatch.setenv("PATHFINDER_PUBLIC_PATH_PREFIX", "")
+    monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "")
     _seed_spec(proto_env["s3"])
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
@@ -1214,7 +1214,7 @@ def test_host_start_passes_the_projects_model(proto_env, monkeypatch):
     (Discovery·빌드 에이전트)에만 적용되고, 빌드된 앱은 에이전트가 자기
     `.env.example`에 박아 둔 모델로 돈다. 출처가 app.project_model() 하나여야
     세 곳이 갈라지지 않는다."""
-    import pathfinder.app as app_module
+    import aipds.app as app_module
     monkeypatch.setattr(app_module, "project_model",
                         lambda pid: "global.anthropic.claude-opus-5")
     _seed_spec(proto_env["s3"])
@@ -1276,8 +1276,8 @@ def test_host_start_refreshes_the_brand_theme_before_building(proto_env, monkeyp
     시점의 내용을 캡처한다."""
     import asyncio
 
-    from pathfinder.design_profile import DesignProfileStore
-    from pathfinder.proto.design_sync import THEME_FILENAME
+    from aipds.design_profile import DesignProfileStore
+    from aipds.proto.design_sync import THEME_FILENAME
 
     _seed_spec(proto_env["s3"])
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
@@ -1338,13 +1338,13 @@ def test_host_start_warns_when_no_theme_copy_exists_to_refresh(
     사본을 심지 않는다."""
     import asyncio
 
-    from pathfinder.design_profile import DesignProfileStore
+    from aipds.design_profile import DesignProfileStore
 
     _seed_spec(proto_env["s3"])
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
     (proto_dir / "package.json").write_text("{}", encoding="utf-8")
-    # 일부러 pathfinder-theme.css 사본을 심지 않는다.
+    # 일부러 aipds-theme.css 사본을 심지 않는다.
 
     profiles = DesignProfileStore(FakeS3Store())
     asyncio.run(profiles.save(filename="acme.md", uploaded_by="admin@x",
@@ -1363,8 +1363,8 @@ def test_host_start_does_not_warn_when_a_theme_copy_exists(
     """반대 경우의 회귀 가드 -- 사본이 있으면(정상 경로) 경고가 뜨지 않는다."""
     import asyncio
 
-    from pathfinder.design_profile import DesignProfileStore
-    from pathfinder.proto.design_sync import THEME_FILENAME
+    from aipds.design_profile import DesignProfileStore
+    from aipds.proto.design_sync import THEME_FILENAME
 
     _seed_spec(proto_env["s3"])
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
@@ -1456,7 +1456,7 @@ def test_proxy_forwards_the_prefix_intact(proto_env, echo_server):
     """
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
-    from pathfinder.routes.proto_public import public_base_path
+    from aipds.routes.proto_public import public_base_path
     resp = client.get(f"/proto/{PID}/{SLUG}/some/page",
                       params={"q": "1"},
                       headers={"X-Origin-Verify": "secret-value",
@@ -1480,7 +1480,7 @@ def test_proxy_forwards_the_same_prefix_the_build_was_given(proto_env, echo_serv
     Pinning the pairing, not the literals, is the point: this is exactly the
     kind of two-places-derive-it-separately gap that produced the original
     404s."""
-    from pathfinder.routes.proto_public import public_base_path
+    from aipds.routes.proto_public import public_base_path
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
 
@@ -1496,7 +1496,7 @@ def test_proxy_forwards_a_public_dir_asset_under_the_prefix(proto_env, echo_serv
     """Covers what `assetPrefix` alone would have missed: a file served straight
     out of public/ (<img src="/logo.png">) carries the basePath too, so it also
     has to arrive prefixed."""
-    from pathfinder.routes.proto_public import public_base_path
+    from aipds.routes.proto_public import public_base_path
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
     resp = client.get(f"/proto/{PID}/{SLUG}/logo.png",
@@ -1580,7 +1580,7 @@ def test_proxy_relative_asset_under_slug_prefix_is_served(proto_env, echo_server
     (.../{slug}/styles.css) must reach the prototype — these were the 502s."""
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=echo_server, log_tail="")
-    from pathfinder.routes.proto_public import public_base_path
+    from aipds.routes.proto_public import public_base_path
     resp = client.get(f"/proto/{PID}/{SLUG}/styles.css",
                       headers=_authorize(proto_env["host"]))
     assert resp.status_code == 200
@@ -1590,7 +1590,7 @@ def test_proxy_relative_asset_under_slug_prefix_is_served(proto_env, echo_server
 def test_proxy_rewrites_upstream_absolute_redirect(proto_env):
     """A prototype redirecting to its own internal origin must be rewritten to
     the public proxy path — otherwise the browser chases 127.0.0.1:<port>."""
-    from pathfinder.routes.proto_public import (_rewritten_location,
+    from aipds.routes.proto_public import (_rewritten_location,
                                                 public_base_path)
     got = _rewritten_location(
         "http://127.0.0.1:4001/login?next=/dash", PID, SLUG)
@@ -1600,7 +1600,7 @@ def test_proxy_rewrites_upstream_absolute_redirect(proto_env):
 
 
 def test_proxy_rewrites_upstream_relative_root_redirect(proto_env):
-    from pathfinder.routes.proto_public import (_rewritten_location,
+    from aipds.routes.proto_public import (_rewritten_location,
                                                 public_base_path)
     assert _rewritten_location("/dashboard", PID, SLUG) == \
         f"{public_base_path(PID, SLUG)}/dashboard"
@@ -1613,7 +1613,7 @@ def test_proxy_does_not_double_prefix_an_already_prefixed_redirect(proto_env):
 
     Covers both shapes a prototype can produce -- a bare path and an absolute
     URL naming its own internal origin."""
-    from pathfinder.routes.proto_public import (_rewritten_location,
+    from aipds.routes.proto_public import (_rewritten_location,
                                                 public_base_path)
     # The app was built with basePath = public_base_path, so THAT is the prefix
     # its own redirects carry -- including the `/api` mount this app never sees
@@ -1634,7 +1634,7 @@ def test_proxy_prefixes_a_sibling_path_that_merely_shares_a_leading_segment(prot
     """The double-prefix guard must match on a path SEGMENT boundary, not a
     string prefix: /proto/{pid}/{slug}-other belongs to a different prototype
     and still needs the prefix prepended (a plain startswith would skip it)."""
-    from pathfinder.routes.proto_public import (_rewritten_location,
+    from aipds.routes.proto_public import (_rewritten_location,
                                                 public_base_path)
     prefix = public_base_path(PID, SLUG)
     assert _rewritten_location(f"{prefix}-other/page", PID, SLUG) == \
@@ -1642,7 +1642,7 @@ def test_proxy_prefixes_a_sibling_path_that_merely_shares_a_leading_segment(prot
 
 
 def test_proxy_leaves_external_redirect_alone(proto_env):
-    from pathfinder.routes.proto_public import _rewritten_location
+    from aipds.routes.proto_public import _rewritten_location
     ext = "https://accounts.google.com/o/oauth2/auth?x=1"
     assert _rewritten_location(ext, PID, SLUG) == ext
 
@@ -1716,7 +1716,7 @@ def test_list_state_built_for_a_completed_session(proto_env, monkeypatch):
 
 # ---- 긴 입력을 URL에서 빼는 2단계 핸들 (HTTP 431 결함) ----
 #
-# 워크스페이스 채팅과 같은 결함이다(pathfinder/turn_handles.py 헤더의 실측):
+# 워크스페이스 채팅과 같은 결함이다(aipds/turn_handles.py 헤더의 실측):
 # 긴 한글 입력이 URL에 실리면 요청 라인이 커져 프록시가 431을 내고,
 # EventSource는 상태 코드를 노출하지 않아 "연결이 끊어졌습니다"만 보인다.
 
@@ -1783,7 +1783,7 @@ def test_session_events_requires_text_or_turn(proto_env, monkeypatch):
 
 def test_list_includes_the_single_prototype_layout(proto_env):
     """**이 테스트가 그 결함의 재현이자 회귀 가드다.**"""
-    from pathfinder.proto.layout import SINGLE_ID, SINGLE_SPEC_KEY
+    from aipds.proto.layout import SINGLE_ID, SINGLE_SPEC_KEY
 
     proto_env["s3"].blobs[SINGLE_SPEC_KEY] = "# 단일 프로토타입 명세"
     body = client.get(f"/projects/{PID}/prototypes").json()
@@ -1796,7 +1796,7 @@ def test_list_includes_the_single_prototype_layout(proto_env):
 def test_list_shows_both_layouts_when_both_exist(proto_env):
     """Path B로 3개를 만든 뒤 Path A.1을 돌린 프로젝트는 명세가 4개다 —
     카드도 그만큼 나오는 것이 맞다."""
-    from pathfinder.proto.layout import SINGLE_ID, SINGLE_SPEC_KEY
+    from aipds.proto.layout import SINGLE_ID, SINGLE_SPEC_KEY
 
     _seed_spec(proto_env["s3"])
     proto_env["s3"].blobs[SINGLE_SPEC_KEY] = "# 단일 프로토타입 명세"

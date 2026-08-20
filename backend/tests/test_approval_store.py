@@ -23,7 +23,7 @@ import json
 
 import pytest
 
-from pathfinder.approval_store import (
+from aipds.approval_store import (
     APPROVALS_PREFIX, ApprovalRecord, load_approvals, save_approval,
 )
 from tests.fakes.in_memory_s3 import FakeS3Store

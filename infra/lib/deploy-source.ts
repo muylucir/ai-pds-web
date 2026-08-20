@@ -24,24 +24,24 @@
 // **대가: `cdk deploy`가 코드 갱신 수단이 아니다.** user-data 문자열에 SHA가 없어
 // 커밋을 밀어도 user-data가 바이트 단위로 같고, 그러면 CloudFormation이 인스턴스를
 // 교체하지 않는다(UserData는 replacement 속성). 그래서 코드 갱신은 인스턴스 위의
-// `pathfinder-update`가 담당한다(lib/user-data.ts가 부팅 시 설치한다) — SSM으로
-// 들어가 `sudo pathfinder-update` 한 줄이면 최신 main을 당겨 필요한 것만 다시
+// `aipds-update`가 담당한다(lib/user-data.ts가 부팅 시 설치한다) — SSM으로
+// 들어가 `sudo aipds-update` 한 줄이면 최신 main을 당겨 필요한 것만 다시
 // 빌드하고 서비스를 재시작한다. 인스턴스 교체(5~10분 502)가 없어 워크숍 중에도
 // 쓸 수 있다는 것이 이 방향의 실질적인 이득이다.
 //
-// 무엇이 도는지는 인스턴스에서 `git -C /opt/pathfinder rev-parse HEAD`로 본다
+// 무엇이 도는지는 인스턴스에서 `git -C /opt/aipds rev-parse HEAD`로 본다
 // (부팅 시점의 커밋은 부트스트랩 로그에도 한 줄로 남는다).
 //
 // 대가 하나 더: 부팅이 GitHub에 도달해야 한다.
 
 /** 공개 리포. HTTPS이므로 인스턴스에 자격증명이 필요 없다. */
-export const REPO_URL = 'https://github.com/muylucir/ai-plc-pathfinder.git';
+export const REPO_URL = 'https://github.com/muylucir/ai-pds-web.git';
 
 /**
- * 배포 대상 브랜치. 인스턴스는 부팅 때, `pathfinder-update`는 실행될 때 이
+ * 배포 대상 브랜치. 인스턴스는 부팅 때, `aipds-update`는 실행될 때 이
  * 브랜치의 원격 최신 커밋으로 맞춘다.
  *
- * 여기에 커밋 SHA를 넣지 말 것 — 그러면 `pathfinder-update`가 갱신할 것이 없는
+ * 여기에 커밋 SHA를 넣지 말 것 — 그러면 `aipds-update`가 갱신할 것이 없는
  * 고정 배포로 되돌아간다. 다른 브랜치를 쓰려면 이 값을 바꾼다(한 줄이다).
  */
 export const DEPLOY_BRANCH = 'main';

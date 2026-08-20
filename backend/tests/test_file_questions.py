@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from pathfinder.agent.claude_driver import ClaudeDriver
+from aipds.agent.claude_driver import ClaudeDriver
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 QUESTION_MD = """# 페인 포인트 — 명확화 질문
@@ -223,7 +223,7 @@ async def test_enabled_by_default(tmp_path, monkeypatch):
     (2026-08-17): 훅이 질문 파일을 읽어 카드를 띄우고 턴이 멈추고, 답변이 파일에
     기록되고, 다음 턴에 모델이 그 답을 읽어 워크플로우를 이어갔다 — 그 마지막
     지점이 유일한 미검증 항목이었다."""
-    monkeypatch.delenv("PATHFINDER_FILE_QUESTIONS", raising=False)
+    monkeypatch.delenv("AIPDS_FILE_QUESTIONS", raising=False)
     d, ws = _driver(tmp_path)
     out = await _post(d, _write(ws, REL, QUESTION_MD))
     assert out.get("continue_") is False
@@ -236,9 +236,9 @@ async def test_can_be_switched_off(tmp_path, monkeypatch):
 
     인스턴스에서는 user-data가 systemd `Environment=`로 값을 주입하므로 그 파일을
     고치면 인스턴스 교체가 필요하다. 대신 gitignore된 `backend/.env`를 만들면
-    `pathfinder-update`가 되돌리지 않으므로(추적되지 않는 파일) 재배포 없이 끌 수
+    `aipds-update`가 되돌리지 않으므로(추적되지 않는 파일) 재배포 없이 끌 수
     있다."""
-    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
+    monkeypatch.setenv("AIPDS_FILE_QUESTIONS", "false")
     d, ws = _driver(tmp_path)
     out = await _post(d, _write(ws, REL, QUESTION_MD))
     assert out == {}
@@ -270,7 +270,7 @@ async def test_can_be_switched_off(tmp_path, monkeypatch):
 async def test_the_hook_records_which_file_is_open(tmp_path):
     d, ws = _driver(tmp_path)
     await _post(d, _write(ws, REL, QUESTION_MD))
-    from pathfinder.agent.pending_store import load_pending_file
+    from aipds.agent.pending_store import load_pending_file
     assert await load_pending_file(d._s3) == REL
 
 
@@ -307,7 +307,7 @@ async def test_pending_survives_a_missing_file(tmp_path):
 
     복원은 편의이므로 500을 내지 않는다 — pending_store의 같은 규율."""
     d, _ = _driver(tmp_path)
-    from pathfinder.agent.pending_store import save_pending_file
+    from aipds.agent.pending_store import save_pending_file
     await save_pending_file(d._s3, file="aiplc-docs/gone.md")
     d._pending_payload = None
     assert await d.pending({"session_id": "s-1"}) is None
@@ -319,7 +319,7 @@ async def test_pending_survives_a_missing_file(tmp_path):
 # "질문 파일을 써라"를 돌려주므로 그 구멍이 생기지 않는다. `write_outside_docs`가
 # 같은 패턴을 쓴다(거부만 하면 모델이 경로만 바꿔 재시도하며 루프에 빠진다).
 #
-# 스위치는 하나다: `PATHFINDER_FILE_QUESTIONS`가 켜지면 파일 경로가 유일한 경로이고,
+# 스위치는 하나다: `AIPDS_FILE_QUESTIONS`가 켜지면 파일 경로가 유일한 경로이고,
 # 꺼지면 옛 가로채기가 그대로 돈다. 두 경로가 동시에 살아 있으면 같은 질문이 화면에
 # 두 번 뜬다.
 
@@ -349,7 +349,7 @@ async def test_ask_user_question_is_denied_when_file_questions_are_on(tmp_path):
 async def test_ask_user_question_still_works_when_file_questions_are_off(
         tmp_path, monkeypatch):
     """스위치가 꺼져 있으면 옛 경로가 그대로다 — 되돌릴 수 있어야 한다."""
-    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
+    monkeypatch.setenv("AIPDS_FILE_QUESTIONS", "false")
     d, _ = _driver(tmp_path)
     # **직접 await하지 않는다.** 꺼진 경로는 답변을 기다리며 future에 파킹되는 것이
     # 정상 동작이라 await하면 영원히 돌아오지 않는다(실제 SDK도 별도 태스크에서
@@ -399,7 +399,7 @@ async def test_the_question_file_is_in_s3_before_the_card_is_advertised(tmp_path
     assert await d._s3.get(REL) == QUESTION_MD
     # 그리고 마커보다 먼저 있어야 한다 — 마커가 없는 파일을 가리키는 상태가
     # 되면 위의 두 실패가 그대로 재현된다.
-    from pathfinder.agent.pending_store import load_pending_file
+    from aipds.agent.pending_store import load_pending_file
     assert await load_pending_file(d._s3) == REL
 
 

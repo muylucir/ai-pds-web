@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-import pathfinder.app as app_module
+import aipds.app as app_module
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +42,7 @@ def test_project_model_for_an_unregistered_project_uses_env(monkeypatch):
 
 def test_driver_factory_passes_the_projects_model(monkeypatch, tmp_path):
     monkeypatch.setenv("ANTHROPIC_MODEL", "global.anthropic.claude-opus-4-8")
-    monkeypatch.setenv("PATHFINDER_DISCOVERY_DRIVER", "claude")
+    monkeypatch.setenv("AIPDS_DISCOVERY_DRIVER", "claude")
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: object())
     app_module.registry.register("pm-test", None,
                                  model_id="global.anthropic.claude-sonnet-5")
@@ -52,9 +52,9 @@ def test_driver_factory_passes_the_projects_model(monkeypatch, tmp_path):
 
 def test_builder_factory_passes_the_projects_model(monkeypatch, tmp_path):
     monkeypatch.setenv("ANTHROPIC_MODEL", "global.anthropic.claude-opus-4-8")
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
-    monkeypatch.setenv("PATHFINDER_PROTO_ROOT", str(tmp_path / "protos"))
-    monkeypatch.setenv("PATHFINDER_PROTO_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
+    monkeypatch.setenv("AIPDS_PROTO_ROOT", str(tmp_path / "protos"))
+    monkeypatch.setenv("AIPDS_PROTO_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: object())
     app_module.registry.register("pm-test", None,
                                  model_id="global.anthropic.claude-sonnet-5")
@@ -81,9 +81,9 @@ def test_proto_session_factory_passes_the_projects_language(monkeypatch, tmp_pat
     둘이 어긋나면 개시 프롬프트와 build_complete 도구 설명의 언어가 갈린다 —
     에러는 없고, 영어 대화 중에 한국어 도구 설명이 섞인다.
     """
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
-    monkeypatch.setenv("PATHFINDER_PROTO_ROOT", str(tmp_path / "protos"))
-    monkeypatch.setenv("PATHFINDER_PROTO_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
+    monkeypatch.setenv("AIPDS_PROTO_ROOT", str(tmp_path / "protos"))
+    monkeypatch.setenv("AIPDS_PROTO_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: object())
     app_module.registry.register("pm-test", None, language="en")
     session = app_module.proto_session_factory("pm-test", "slug")
@@ -95,7 +95,7 @@ def test_proto_session_factory_passes_the_projects_language(monkeypatch, tmp_pat
 def test_proto_tools_get_the_builders_language(tmp_path):
     """빌더 → 도구 배선. 이 홉이 끊기면 도구 설명과 반환 문자열이 항상
     한국어로 남는다(둘 다 모델이 읽는 프롬프트다)."""
-    from pathfinder.proto.builder import PrototypeBuilder, _proto_tools_for
+    from aipds.proto.builder import PrototypeBuilder, _proto_tools_for
     builder = PrototypeBuilder(workspace=str(tmp_path), config_dir=str(tmp_path),
                                session_id="s", resume=False, language="en",
                                client_factory=lambda: None)

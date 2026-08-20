@@ -10,7 +10,7 @@ export interface UserDataOptions {
    *
    * 이 값이 커밋 SHA가 아니라 브랜치라는 것의 결과: user-data가 코드 변경과
    * 무관하게 동일하므로 `cdk deploy`는 인스턴스를 교체하지 않는다. 코드 갱신은
-   * 아래에서 설치하는 `pathfinder-update`가 한다. 근거는 lib/deploy-source.ts.
+   * 아래에서 설치하는 `aipds-update`가 한다. 근거는 lib/deploy-source.ts.
    */
   branch: string;
   // 인증. 이 값들이 비면 백엔드가 인증 바이패스로 돌아 배포가 무인증으로
@@ -27,21 +27,21 @@ export interface UserDataOptions {
 export function renderUserData(opts: UserDataOptions): string {
   const { region, bucketName, model, secretArn, repoUrl, branch,
           userPoolId, userPoolClientId, hostedUiDomain, appUrl } = opts;
-  const APP = '/opt/pathfinder';
+  const APP = '/opt/aipds';
   // 서비스 전용 non-root 유저. 편의가 아니라 필수다: 프로토타입 빌드 에이전트가
   // 띄우는 Claude Code 바이너리는 euid==0에서 bypassPermissions를 거부한다
   // (6d21e1f에서 실측 — `--version`은 root에서도 성공해 이 실패를 가리므로,
   // 부팅은 정상으로 보이고 첫 빌드 턴에서야 502로 드러난다). MicroVM 이미지가
   // non-root 'harness' 유저를 쓴 이유가 이것이고, 빌드가 백엔드 프로세스로
   // 흡수된 지금은 백엔드 자체가 non-root여야 한다.
-  const SVC = 'pathfinder';
+  const SVC = 'aipds';
   // ---------------------------------------------------------------------------
   // 아래 템플릿 문자열의 주석은 **EC2 user-data 16KB 한계를 쓴다.** 한 번 넘겨서
   // 배포가 InvalidRequest로 실패한 적이 있다(18,158바이트, 그중 주석 12KB·한글이
   // 3바이트/자). 그래서 "왜"는 여기(TS 주석 = 바이트 0)에 적고, 템플릿 안에는
   // 인스턴스에서 그 스크립트를 읽는 사람이 **깨뜨리지 않기 위해** 알아야 하는
-  // 한 줄만 남긴다. 긴 절차 하나(pathfinder-update)는 아예 리포 파일로 나가 있다
-  // (infra/scripts/pathfinder-update — 그 파일의 주석은 예산과 무관하다).
+  // 한 줄만 남긴다. 긴 절차 하나(aipds-update)는 아예 리포 파일로 나가 있다
+  // (infra/scripts/aipds-update — 그 파일의 주석은 예산과 무관하다).
   //
   // 부트스트랩 로그를 600으로 잠그는 이유: 644면 서비스 유저가 읽을 수 있고, 그
   // 계정은 프로토타입 빌드 에이전트를 bypassPermissions로 돌리는 계정이다. 아래
@@ -51,7 +51,7 @@ export function renderUserData(opts: UserDataOptions): string {
   // 요지는 (1) 에셋은 gitignore된 파일까지 실어 보정 목록이 필요했고 배포되는 것이
   // 커밋이 아니라 워킹 트리였다, (2) 배포자가 "이 커밋을 푸시했는가"를 신경 쓰지
   // 않아도 되게 한다. 대가는 cdk deploy가 코드를 갱신하지 못하는 것이고, 그 자리를
-  // pathfinder-update가 메운다.
+  // aipds-update가 메운다.
   //
   // `checkout -f -B`가 첫 clone과 cloud-init 재실행에서 같은 결과를 내야 한다. -f가
   // 필요한 쪽은 재실행이다 — 수정된 tracked 파일이 하나라도 있으면 -f 없는 checkout은
@@ -68,7 +68,7 @@ export function renderUserData(opts: UserDataOptions): string {
   // ⚠️ 이 파일은 TS 템플릿 리터럴이다 — **주석에도 백틱을 쓰지 말 것.** 백틱 하나가
   // 리터럴을 닫아 user-data 전체가 파싱 에러가 된다(템플릿 안 주석에도 해당).
   //
-  // PATHFINDER_COOKIE_SECURE: 프로토타입 접근 쿠키의 Secure 스위치
+  // AIPDS_COOKIE_SECURE: 프로토타입 접근 쿠키의 Secure 스위치
   // (routes/proto_public.py의 _cookie_secure). 빼면 기본값(꺼짐)으로 Secure가
   // 생략되고, CloudFront 때문에 실동작은 정상으로 보이지만 쿠키는 평문 HTTP로도
   // 전송될 수 있는 상태로 남는다 — 화면 증상이 없어 눈으로 안 잡히므로
@@ -76,7 +76,7 @@ export function renderUserData(opts: UserDataOptions): string {
   // 로컬 개발에서는 켜지 않는다(localhost에서 브라우저가 Secure 쿠키를 저장하지 않아
   // 프리뷰가 열리지 않는다).
   //
-  // PATHFINDER_AUTO_COMPACT_WINDOW / PATHFINDER_LONG_CONTEXT: 둘은 함께 켠다
+  // AIPDS_AUTO_COMPACT_WINDOW / AIPDS_LONG_CONTEXT: 둘은 함께 켠다
   // (cli_settings.py). 윈도우만 올리고 1M을 켜지 않으면 컴팩션 전에 모델 컨텍스트
   // 한도에 부딪힌다. 왜 켜는가: 실측(2026-08-13)에서 빌드 세션이 264,040 → 53,375
   // 토큰으로 요약됐고, 요약 뒤 후반 스테이지 문서는 근거가 아니라 요약에서 나와
@@ -101,9 +101,9 @@ export function renderUserData(opts: UserDataOptions): string {
   return `#!/bin/bash
 set -euxo pipefail
 # 600: 이 로그는 시크릿 대입을 담을 수 있고, 644면 빌드 에이전트 계정이 읽는다.
-touch /var/log/pathfinder-bootstrap.log
-chmod 600 /var/log/pathfinder-bootstrap.log
-exec > >(tee -a /var/log/pathfinder-bootstrap.log) 2>&1
+touch /var/log/aipds-bootstrap.log
+chmod 600 /var/log/aipds-bootstrap.log
+exec > >(tee -a /var/log/aipds-bootstrap.log) 2>&1
 
 # --- 패키지 (AL2023: awscli2는 기본 탑재). shadow-utils = useradd, git = 코드 배포. ---
 dnf install -y python3.11 python3.11-devel gcc nodejs20 nodejs20-npm nginx tar unzip shadow-utils git
@@ -158,7 +158,7 @@ SECRET=$(aws secretsmanager get-secret-value --secret-id ${secretArn} --query Se
 set -x
 
 # --- nginx: 헤더 검증 + 라우팅 ---
-cat > /etc/nginx/conf.d/pathfinder.conf <<NGINX
+cat > /etc/nginx/conf.d/aipds.conf <<NGINX
 server {
   listen 80 default_server;
   server_name _;
@@ -190,9 +190,9 @@ NGINX
 sed -i '/^    server {/,/^    }/d' /etc/nginx/nginx.conf
 
 # --- systemd 유닛 ---
-cat > /etc/systemd/system/pathfinder-backend.service <<UNIT
+cat > /etc/systemd/system/aipds-backend.service <<UNIT
 [Unit]
-Description=Pathfinder backend (FastAPI/uvicorn)
+Description=AI-PDS backend (FastAPI/uvicorn)
 After=network.target
 [Service]
 # non-root 필수 — Claude Code가 root에서 bypassPermissions를 거부한다(위 주석 참조).
@@ -202,36 +202,36 @@ WorkingDirectory=${APP}/backend
 Environment=HOME=${APP}
 Environment=AWS_REGION=${region}
 Environment=AWS_DEFAULT_REGION=${region}
-Environment=PATHFINDER_S3_REGION=${region}
-Environment=PATHFINDER_S3_BUCKET=${bucketName}
+Environment=AIPDS_S3_REGION=${region}
+Environment=AIPDS_S3_BUCKET=${bucketName}
 Environment=ANTHROPIC_MODEL=${model}
-Environment=PATHFINDER_PROTO_ROOT=${APP}/protos
-Environment=PATHFINDER_WORKSPACES_DIR=${APP}/workspaces
+Environment=AIPDS_PROTO_ROOT=${APP}/protos
+Environment=AIPDS_WORKSPACES_DIR=${APP}/workspaces
 # 프로토타입 빌드: 동시 빌드 상한과 빌드 에이전트 전용 CLAUDE_CONFIG_DIR.
 # 후자를 비우면 번들 Claude Code 바이너리가 서비스 유저의 ~/.claude를 읽는다 —
 # 앱 트리 안에 두어 소유권·백업·정리를 APP 한 경로로 통일한다.
-Environment=PATHFINDER_PROTO_MAX_CONCURRENT=10
-Environment=PATHFINDER_PROTO_CONFIG_DIR=${APP}/proto-config
+Environment=AIPDS_PROTO_MAX_CONCURRENT=10
+Environment=AIPDS_PROTO_CONFIG_DIR=${APP}/proto-config
 # proto-config와 반드시 다른 경로(공유하면 Discovery가 shadcn-design을 켠 채로 돈다).
-Environment=PATHFINDER_DISCOVERY_CONFIG_DIR=${APP}/discovery-config
+Environment=AIPDS_DISCOVERY_CONFIG_DIR=${APP}/discovery-config
 # 이 두 값이 비면 백엔드가 모든 요청을 통과시킨다 — 배포에서는 반드시 채워진다.
-Environment=PATHFINDER_COGNITO_USER_POOL_ID=${userPoolId}
-Environment=PATHFINDER_COGNITO_CLIENT_ID=${userPoolClientId}
-Environment=PATHFINDER_COGNITO_REGION=${region}
+Environment=AIPDS_COGNITO_USER_POOL_ID=${userPoolId}
+Environment=AIPDS_COGNITO_CLIENT_ID=${userPoolClientId}
+Environment=AIPDS_COGNITO_REGION=${region}
 # 빼면 Secure가 생략된다 — 증상이 없어 눈으로 안 잡히므로 assert가 존재를 단정한다.
-Environment=PATHFINDER_COOKIE_SECURE=true
+Environment=AIPDS_COOKIE_SECURE=true
 # 이 둘은 **함께** 켠다(cli_settings.py). 윈도우만 올리면 컴팩션 전에 한도에 부딪힌다.
-Environment=PATHFINDER_AUTO_COMPACT_WINDOW=750000
-Environment=PATHFINDER_LONG_CONTEXT=true
-ExecStart=${APP}/backend/.venv/bin/uvicorn pathfinder.app:app --host 127.0.0.1 --port 8000
+Environment=AIPDS_AUTO_COMPACT_WINDOW=750000
+Environment=AIPDS_LONG_CONTEXT=true
+ExecStart=${APP}/backend/.venv/bin/uvicorn aipds.app:app --host 127.0.0.1 --port 8000
 Restart=always
 [Install]
 WantedBy=multi-user.target
 UNIT
 
-cat > /etc/systemd/system/pathfinder-frontend.service <<UNIT
+cat > /etc/systemd/system/aipds-frontend.service <<UNIT
 [Unit]
-Description=Pathfinder frontend (Next.js)
+Description=AI-PDS frontend (Next.js)
 After=network.target
 [Service]
 User=${SVC}
@@ -250,15 +250,15 @@ Restart=always
 WantedBy=multi-user.target
 UNIT
 
-# 코드 갱신 경로. 스크립트 본문과 그 이유는 infra/scripts/pathfinder-update에 있다.
-cat > /etc/pathfinder-deploy.env <<ENV
+# 코드 갱신 경로. 스크립트 본문과 그 이유는 infra/scripts/aipds-update에 있다.
+cat > /etc/aipds-deploy.env <<ENV
 APP=${APP}
 SVC=${SVC}
 BRANCH=${branch}
 ENV
-install -m 755 ${APP}/infra/scripts/pathfinder-update /usr/local/bin/pathfinder-update
+install -m 755 ${APP}/infra/scripts/aipds-update /usr/local/bin/aipds-update
 
 systemctl daemon-reload
-systemctl enable --now nginx pathfinder-backend pathfinder-frontend
+systemctl enable --now nginx aipds-backend aipds-frontend
 `;
 }

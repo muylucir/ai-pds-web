@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from pathfinder.agent.answer_store import load_answers, save_answers
+from aipds.agent.answer_store import load_answers, save_answers
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 _QFILE = {"name": "discovery-questions", "questions": [{"number": 1}]}

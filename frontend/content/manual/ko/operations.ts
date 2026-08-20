@@ -35,14 +35,55 @@ export const operations: ManualSection = {
 
 | 스택 | 만드는 것 |
 |---|---|
-| \`PathfinderDrillStack\` | 산출물 S3 버킷 + 백엔드 실행 롤 |
-| \`PathfinderAuthStack\` | Cognito User Pool + 로그인 화면 + 역할 그룹 + 시드 계정 |
-| \`PathfinderHostingStack\` | VPC + EC2 + CloudFront |
+| \`AipdsDrillStack\` | 산출물 S3 버킷 + 백엔드 실행 롤 |
+| \`AipdsAuthStack\` | Cognito User Pool + 로그인 화면 + 역할 그룹 + 시드 계정 |
+| \`AipdsHostingStack\` | VPC + EC2 + CloudFront |
 
 **15~20분** 걸립니다. \`cdk deploy\`가 끝난 뒤에도 EC2가 백엔드·프론트를 빌드하고 있을 수 있어
 **몇 분간 502가 나오는 것은 정상입니다.**
 
-접속 주소는 출력값 \`PathfinderHostingStack.DistributionDomain\` 입니다.`,
+접속 주소는 출력값 \`AipdsHostingStack.DistributionDomain\` 입니다.`,
+    },
+    { kind: "heading", id: "migrate", text: "기존 배포에서 옮겨오기" },
+    {
+      kind: "md",
+      md: `스택 이름이 바뀌면 CloudFormation은 기존 스택과의 연결을 잃습니다. 새 스택 3개가
+생기고 기존 스택 3개는 남습니다.`,
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**0. 이 변경이 \`main\`에 올라간 뒤에는 기존 인스턴스에서 \`sudo aipds-update\`를 돌리지
+마십시오.** 기존 인스턴스의 systemd 유닛과 트리 경로는 옛 이름을 그대로 쓰고 있어 갱신
+스크립트가 중간에 실패하고, 그 인스턴스는 아래 9단계로 기존 스택을 지우기 전까지 진행 중인
+설문 링크를 계속 서빙해야 하는 바로 그 인스턴스입니다. 기존 스택 3개를 지우기 전까지는 그대로
+얼려 두세요.`,
+    },
+    {
+      kind: "steps",
+      items: [
+        "`cdk deploy AipdsDrillStack AipdsAuthStack` — 새 버킷과 사용자 풀",
+        "`aws s3 sync s3://<기존 버킷> s3://<새 버킷>` — 산출물을 옮깁니다. 키 접두사에 제품 이름이 없으므로 구조는 그대로 올라갑니다. 동기화 후 `aws s3api list-objects-v2 --bucket <새 버킷> --query 'length(Contents)'`를 같은 명령의 기존 버킷 결과와 비교해 오브젝트 수가 같은지 확인합니다 — 이 뒤로는 삭제가 되돌릴 수 없으므로, 프로젝트 카드가 보인다는 것만으로는 부분 동기화 실패를 잡지 못합니다",
+        "Discovery 대화 기록의 프리픽스를 옮깁니다. 트랜스크립트는 프로젝트 id에서 파생한 UUID 아래 저장되고 그 파생식이 이번 개명으로 바뀌었으므로, 옮기지 않으면 **모든 프로젝트의 Discovery 대화가 빈 세션으로 시작합니다**(산출물·설문·응답은 영향 없습니다). 아래는 이미 있는 디렉터리 이름을 그대로 읽어 새 이름으로 옮기므로, 여러 번 돌려도 안전합니다:\n\n```bash\nfor pid in $(aws s3 ls s3://<새 버킷>/projects/ | awk '{print $2}' | tr -d /); do\n  base=\"s3://<새 버킷>/projects/$pid/discovery/transcript\"\n  cur=$(aws s3 ls \"$base/\" 2>/dev/null | awk '{print $2}' | tr -d / | head -1)\n  want=$(python3 -c \"import uuid,sys;print(uuid.uuid5(uuid.NAMESPACE_URL,'aipds:'+sys.argv[1]))\" \"$pid\")\n  if [ -n \"$cur\" ] && [ \"$cur\" != \"$want\" ]; then\n    aws s3 mv \"$base/$cur/\" \"$base/$want/\" --recursive\n  fi\ndone\n```",
+        "`cdk deploy AipdsHostingStack` — 새 EC2와 CloudFront",
+        "새 주소로 로그인 확인 (`admin@aipds.local`)",
+        "프로젝트 카드 확인 — 명세와 설문은 살아 있고 프로토타입은 **빌드 전**입니다",
+        "필요한 프로토타입을 다시 빌드합니다. 빌드 산출물은 인스턴스 디스크에만 있었으므로 함께 오지 않습니다",
+        "진행 중이던 설문이 모두 닫힌 뒤 `aws s3 sync s3://<기존 버킷> s3://<새 버킷>`를 다시 실행합니다 — 첫 동기화 이후 기존 주소의 설문 링크로 들어온 응답은 기존 버킷에만 있고, 새 버킷에는 없습니다",
+        "기존 스택 3개를 삭제합니다 (Hosting → Auth → Drill 순서)",
+      ],
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**9단계를 서둘러 하지 마십시오.** 이미 배포된 설문 링크는 기존 주소를 가리키므로,
+기존 스택을 지우면 그 링크가 죽습니다. 진행 중인 설문의 응답 수집이 끝난 뒤 8단계에서 다시
+동기화하고, 그 다음에 지웁니다.
+
+기존 Drill 스택은 \`removalPolicy: DESTROY\`와 \`autoDeleteObjects: true\`로 만들어져 있고
+버전관리도 켜져 있지 않습니다 — 지우면 그 버킷의 오브젝트가 전부 즉시 사라지고 복구할 방법이
+없습니다. 8단계의 재동기화를 건너뛰면, 첫 동기화 뒤 기존 링크로 들어온 응답은 이 삭제와 함께
+영구히 사라집니다.`,
     },
     {
       kind: "callout",
@@ -78,7 +119,7 @@ export const operations: ManualSection = {
       kind: "md",
       md: `**\`cdk deploy\`가 아닙니다.** 배포에는 커밋이 고정되어 있지 않아 커밋을 밀어도 인스턴스가
 교체되지 않고, \`cdk deploy\`는 "no changes"로 끝납니다. 갱신은 인스턴스 안의
-\`pathfinder-update\`가 합니다 — **인스턴스 교체가 없으므로 워크숍 중에도 쓸 수 있습니다.**`,
+\`aipds-update\`가 합니다 — **인스턴스 교체가 없으므로 워크숍 중에도 쓸 수 있습니다.**`,
     },
     {
       kind: "cmd",
@@ -86,7 +127,7 @@ export const operations: ManualSection = {
       lines: [
         "git push",
         "aws ssm start-session --target <InstanceId>",
-        "sudo pathfinder-update",
+        "sudo aipds-update",
       ],
     },
     {
@@ -102,12 +143,12 @@ export const operations: ManualSection = {
 
 - 백엔드 재시작은 **진행 중인 대화와 빌드 세션을 끊습니다.** 대화는 다시 열면 이어지지만,
   도는 빌드 세션은 재개 경로를 탑니다. 프론트·백엔드 갱신은 쉬는 시간에 하세요.
-- 무엇이 도는지는 \`git -C /opt/pathfinder rev-parse HEAD\`로 확인합니다.`,
+- 무엇이 도는지는 \`git -C /opt/aipds rev-parse HEAD\`로 확인합니다.`,
     },
     {
       kind: "callout",
       tone: "warn",
-      md: `**인스턴스에서 파일을 직접 고치지 마세요.** \`pathfinder-update\`가 트리를 \`main\`에
+      md: `**인스턴스에서 파일을 직접 고치지 마세요.** \`aipds-update\`가 트리를 \`main\`에
 맞추면서 그 수정을 되돌립니다. 고친 것은 푸시한 뒤 갱신하세요.`,
     },
     { kind: "heading", id: "hotfix", text: "인스턴스를 새로 만들기" },
@@ -119,7 +160,7 @@ export const operations: ManualSection = {
     },
     {
       kind: "cmd",
-      lines: ["cd infra && npx cdk deploy PathfinderHostingStack --require-approval never"],
+      lines: ["cd infra && npx cdk deploy AipdsHostingStack --require-approval never"],
     },
     { kind: "heading", id: "teardown", text: "내리기" },
     {
@@ -140,7 +181,7 @@ export const operations: ManualSection = {
 |---|---|
 | 배포 직후 CloudFront 502 | EC2 첫 빌드가 진행 중입니다(5~10분). 기다립니다 |
 | 첫 대화에서 권한 오류 | 배포 리전에 그 모델의 **Bedrock 모델 액세스**가 꺼져 있습니다 |
-| 로그인 후 리다이렉트 오류 | 콜백 URL 등록이 실패한 것입니다. \`cdk deploy PathfinderHostingStack\` 재실행 |
+| 로그인 후 리다이렉트 오류 | 콜백 URL 등록이 실패한 것입니다. \`cdk deploy AipdsHostingStack\` 재실행 |
 | 스택이 \`ROLLBACK_COMPLETE\`라 재배포 거부 | 최초 생성이 실패한 스택은 업데이트할 수 없습니다. 그 스택만 destroy한 뒤 다시 배포합니다 |
 | 프로토타입 프리뷰가 404 | 의도된 응답입니다 — [공유 링크](/manual#share)로 들어가야 합니다 |
 | 영어 화면인데 문서가 한국어 | 정상입니다 — [문서 언어](/manual#doc-language)는 화면 언어와 별개입니다 |
@@ -157,14 +198,14 @@ export const operations: ManualSection = {
       caption: "백엔드 로그 — 원인이 여기에만 남는 경우가 많습니다",
       lines: [
         "aws ssm start-session --target <InstanceId>",
-        "sudo journalctl -u pathfinder-backend -f",
+        "sudo journalctl -u aipds-backend -f",
       ],
     },
     { kind: "heading", id: "local-dev", text: "로컬에서 띄우기" },
     {
       kind: "md",
       md: `프론트(:3000) → 백엔드(:8000) → 백엔드 안의 에이전트가 Bedrock을 호출합니다.
-S3 버킷과 롤은 필요하므로 \`PathfinderDrillStack\`만 배포해 두면 됩니다.
+S3 버킷과 롤은 필요하므로 \`AipdsDrillStack\`만 배포해 두면 됩니다.
 Python **3.11**과 Node.js 20+가 필요합니다.`,
     },
     {
@@ -175,7 +216,7 @@ Python **3.11**과 Node.js 20+가 필요합니다.`,
         "cd ../frontend && npm install",
         "cp ../backend/.env.example ../backend/.env",
         "",
-        "cd backend && .venv/bin/python -m uvicorn pathfinder.app:app --port 8000 --reload",
+        "cd backend && .venv/bin/python -m uvicorn aipds.app:app --port 8000 --reload",
         "cd frontend && npm run dev",
       ],
     },

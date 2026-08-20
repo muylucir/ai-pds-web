@@ -1,6 +1,6 @@
 # backend/tests/test_parse_state.py
 from pathlib import Path
-from pathfinder.parsers.state import parse_state_file
+from aipds.parsers.state import parse_state_file
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -89,7 +89,7 @@ def test_escaped_current_stage_still_matches_its_checklist_line():
 
 
 def test_normalizes_the_other_xml_entities_and_trims():
-    from pathfinder.parsers.state import normalize_stage_name
+    from aipds.parsers.state import normalize_stage_name
     assert normalize_stage_name("  Go-to-Market  ") == "Go-to-Market"
     assert normalize_stage_name("A &lt;B&gt; C") == "A <B> C"
     assert normalize_stage_name("&quot;X&quot;") == '"X"'

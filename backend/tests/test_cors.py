@@ -1,6 +1,6 @@
 # backend/tests/test_cors.py
 from fastapi.testclient import TestClient
-from pathfinder.app import app
+from aipds.app import app
 
 client = TestClient(app)
 

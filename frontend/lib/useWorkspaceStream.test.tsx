@@ -321,7 +321,7 @@ it("restores tool traces onto AI history items", async () => {
     expect(ai.trace).toEqual([
       // detail은 라이브(status payload)와 복원(HistoryTraceEntry 필드)이 같은
       // shape으로 수렴한다는 요점이다 — 값을 만드는 곳은 백엔드 한 곳이다
-      // (backend/pathfinder/tool_trace.py).
+      // (backend/aipds/tool_trace.py).
       { kind: "status", text: "file_read", path: null, detail: null },
       { kind: "file_changed", text: null, path: "aiplc-docs/audit.md", detail: null },
     ]);

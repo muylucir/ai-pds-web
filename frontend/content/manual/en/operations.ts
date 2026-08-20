@@ -37,14 +37,54 @@ common mistake.`,
 
 | Stack | What it creates |
 |---|---|
-| \`PathfinderDrillStack\` | The artifacts S3 bucket + the backend execution role |
-| \`PathfinderAuthStack\` | Cognito user pool + hosted sign-in + role groups + seed accounts |
-| \`PathfinderHostingStack\` | VPC + EC2 + CloudFront |
+| \`AipdsDrillStack\` | The artifacts S3 bucket + the backend execution role |
+| \`AipdsAuthStack\` | Cognito user pool + hosted sign-in + role groups + seed accounts |
+| \`AipdsHostingStack\` | VPC + EC2 + CloudFront |
 
 It takes **15–20 minutes**. Even after \`cdk deploy\` returns, EC2 may still be building the backend
 and frontend, so **a few minutes of 502 responses is normal.**
 
-The address to open is the \`PathfinderHostingStack.DistributionDomain\` output.`,
+The address to open is the \`AipdsHostingStack.DistributionDomain\` output.`,
+    },
+    { kind: "heading", id: "migrate", text: "Moving from an existing deployment" },
+    {
+      kind: "md",
+      md: `Renaming the stacks makes CloudFormation lose its link to the existing ones. You end up with
+3 new stacks while the 3 existing ones remain.`,
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**0. Once this change is on \`main\`, do not run \`sudo aipds-update\` on the existing
+instance.** Its systemd units and tree paths still carry the old names, so the update script aborts
+partway through — and that instance is exactly the one that must keep serving in-flight survey links
+until the old stacks are deleted in step 9 below. Leave it frozen until then.`,
+    },
+    {
+      kind: "steps",
+      items: [
+        "`cdk deploy AipdsDrillStack AipdsAuthStack` — the new bucket and user pool",
+        "`aws s3 sync s3://<existing bucket> s3://<new bucket>` — moves the artifacts over. The key prefixes carry no product name, so the layout comes up unchanged. After it finishes, compare object counts: run `aws s3api list-objects-v2 --bucket <new bucket> --query 'length(Contents)'` and the same command against the existing bucket — the deletion below is irreversible, so seeing project cards on screen is not enough to catch a partially failed sync",
+        "Move the Discovery transcript prefixes. Transcripts are stored under a UUID derived from the project id, and this rename changed that derivation — without this step **every project's Discovery conversation starts as an empty session** (artifacts, surveys and responses are unaffected). The loop below reads whatever directory is already there and moves it to the new name, so it is safe to run more than once:\n\n```bash\nfor pid in $(aws s3 ls s3://<new bucket>/projects/ | awk '{print $2}' | tr -d /); do\n  base=\"s3://<new bucket>/projects/$pid/discovery/transcript\"\n  cur=$(aws s3 ls \"$base/\" 2>/dev/null | awk '{print $2}' | tr -d / | head -1)\n  want=$(python3 -c \"import uuid,sys;print(uuid.uuid5(uuid.NAMESPACE_URL,'aipds:'+sys.argv[1]))\" \"$pid\")\n  if [ -n \"$cur\" ] && [ \"$cur\" != \"$want\" ]; then\n    aws s3 mv \"$base/$cur/\" \"$base/$want/\" --recursive\n  fi\ndone\n```",
+        "`cdk deploy AipdsHostingStack` — the new EC2 instance and CloudFront",
+        "Confirm you can sign in at the new address (`admin@aipds.local`)",
+        "Check the project cards — specs and surveys are intact, and prototypes are **unbuilt**",
+        "Rebuild whichever prototypes you need. Build output lived only on the instance disk, so it does not come along",
+        "Once every in-flight survey has closed, re-run `aws s3 sync s3://<existing bucket> s3://<new bucket>` — responses submitted through the old address's links after the first sync exist only in the existing bucket, not the new one",
+        "Delete the 3 existing stacks (Hosting → Auth → Drill, in that order)",
+      ],
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**Do not rush step 9.** Survey links already handed out point at the old address, so deleting the
+old stacks kills them. Wait until response collection for any in-flight survey has finished, re-sync in
+step 8, and only then delete.
+
+The existing Drill stack was created with \`removalPolicy: DESTROY\` and \`autoDeleteObjects: true\`,
+and it has no versioning — deleting it removes every object in that bucket immediately, with no way to
+recover them. Skip the re-sync in step 8, and any response that arrived through the old links after the
+first sync is gone for good the moment you delete.`,
     },
     {
       kind: "callout",
@@ -80,7 +120,7 @@ management](/manual#invite) instead of the seed accounts.`,
     {
       kind: "md",
       md: `**Not with \`cdk deploy\`.** No commit is pinned in the deployment, so pushing one does not
-replace the instance and \`cdk deploy\` ends with "no changes". \`pathfinder-update\` on the instance
+replace the instance and \`cdk deploy\` ends with "no changes". \`aipds-update\` on the instance
 does the update — **there is no instance replacement, so it is usable mid-workshop.**`,
     },
     {
@@ -89,7 +129,7 @@ does the update — **there is no instance replacement, so it is usable mid-work
       lines: [
         "git push",
         "aws ssm start-session --target <InstanceId>",
-        "sudo pathfinder-update",
+        "sudo aipds-update",
       ],
     },
     {
@@ -106,12 +146,12 @@ does the update — **there is no instance replacement, so it is usable mid-work
 - Restarting the backend **cuts off conversations and build sessions in progress.** Conversations
   resume when reopened; a running build session goes down the resume path instead. Apply frontend
   and backend updates during a break.
-- Check what is running with \`git -C /opt/pathfinder rev-parse HEAD\`.`,
+- Check what is running with \`git -C /opt/aipds rev-parse HEAD\`.`,
     },
     {
       kind: "callout",
       tone: "warn",
-      md: `**Do not edit files directly on the instance.** \`pathfinder-update\` moves the tree onto
+      md: `**Do not edit files directly on the instance.** \`aipds-update\` moves the tree onto
 \`main\` and reverts those edits. Push your fix, then update.`,
     },
     { kind: "heading", id: "hotfix", text: "Getting a fresh instance" },
@@ -123,7 +163,7 @@ in the meantime — for code-only changes, use the update above.`,
     },
     {
       kind: "cmd",
-      lines: ["cd infra && npx cdk deploy PathfinderHostingStack --require-approval never"],
+      lines: ["cd infra && npx cdk deploy AipdsHostingStack --require-approval never"],
     },
     { kind: "heading", id: "teardown", text: "Tearing it down" },
     {
@@ -144,7 +184,7 @@ plus a Bedrock call per conversation turn) — take it down when it is not in us
 |---|---|
 | CloudFront 502 right after deploying | The first EC2 build is still running (5–10 min). Wait |
 | Permission error on the first conversation | **Bedrock model access** for that model is off in the deployment region |
-| Redirect error after signing in | Callback URL registration failed. Re-run \`cdk deploy PathfinderHostingStack\` |
+| Redirect error after signing in | Callback URL registration failed. Re-run \`cdk deploy AipdsHostingStack\` |
 | Stack refuses to redeploy, stuck in \`ROLLBACK_COMPLETE\` | A stack whose first creation failed cannot be updated. Destroy that stack, then deploy again |
 | Prototype preview returns 404 | That is the intended response — enter through the [share link](/manual#share) |
 | English interface but Korean documents | Correct — [document language](/manual#doc-language) is separate from screen language |
@@ -161,14 +201,14 @@ plus a Bedrock call per conversation turn) — take it down when it is not in us
       caption: "The backend log — often the only place the cause is recorded",
       lines: [
         "aws ssm start-session --target <InstanceId>",
-        "sudo journalctl -u pathfinder-backend -f",
+        "sudo journalctl -u aipds-backend -f",
       ],
     },
     { kind: "heading", id: "local-dev", text: "Running it locally" },
     {
       kind: "md",
       md: `Frontend (:3000) → backend (:8000) → the agent inside the backend calls Bedrock. You still need
-the S3 bucket and the role, so deploying just \`PathfinderDrillStack\` is enough. Python **3.11** and
+the S3 bucket and the role, so deploying just \`AipdsDrillStack\` is enough. Python **3.11** and
 Node.js 20+ are required.`,
     },
     {
@@ -179,7 +219,7 @@ Node.js 20+ are required.`,
         "cd ../frontend && npm install",
         "cp ../backend/.env.example ../backend/.env",
         "",
-        "cd backend && .venv/bin/python -m uvicorn pathfinder.app:app --port 8000 --reload",
+        "cd backend && .venv/bin/python -m uvicorn aipds.app:app --port 8000 --reload",
         "cd frontend && npm run dev",
       ],
     },

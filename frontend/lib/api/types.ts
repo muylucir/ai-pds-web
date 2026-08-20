@@ -1,9 +1,9 @@
 // These types mirror the backend Pydantic models EXACTLY, including snake_case
 // field names, because the backend serializes JSON with those keys and the
 // client does no key remapping. Sources:
-//   backend/pathfinder/models.py       (QuestionOption, Question, QuestionFile,
+//   backend/aipds/models.py       (QuestionOption, Question, QuestionFile,
 //                                        StageState, ProjectState, AuditEntry)
-//   backend/pathfinder/sandbox/base.py (AgentEvent, TurnResult)
+//   backend/aipds/sandbox/base.py (AgentEvent, TurnResult)
 //   API Completion plan                (GET /projects item shape)
 
 export interface QuestionOption {
@@ -148,7 +148,7 @@ export interface ProjectSummary {
   // 이 프로젝트가 도는 Bedrock 모델 id. null = 미지정(서버의 env 기본값으로
   // 돈다 — 프론트는 그 값을 알 수 없다).
   model_id?: string | null;
-  // 이 프로젝트의 생성물 언어. UI 언어(pf_lang 쿠키)와 별개다 — 문서·
+  // 이 프로젝트의 생성물 언어. UI 언어(aipds_lang 쿠키)와 별개다 — 문서·
   // 프로토타입·채팅이 어느 언어로 나오는지. 백엔드는 항상 채워 보내지만
   // (미지정은 "ko"로 확정) 구 백엔드 응답에는 없을 수 있어 옵셔널이다.
   language?: "ko" | "en";
@@ -160,7 +160,7 @@ export interface ProjectDetail {
   name: string | null;
   created_at: string | null;
   model_id: string | null;
-  // 이 프로젝트의 생성물 언어. UI 언어(pf_lang 쿠키)와 별개다 — 문서·
+  // 이 프로젝트의 생성물 언어. UI 언어(aipds_lang 쿠키)와 별개다 — 문서·
   // 프로토타입·채팅이 어느 언어로 나오는지. 백엔드는 항상 채워 보내지만
   // (미지정은 "ko"로 확정) 구 백엔드 응답에는 없을 수 있어 옵셔널이다.
   language?: "ko" | "en";
@@ -182,7 +182,7 @@ export interface HistoryTraceEntry {
   text: string | null;
   path: string | null;
   // 도구가 무엇을 했는지. 라이브에서는 status payload로 오는 것과 **같은 값**이다
-  // (backend/pathfinder/tool_trace.py가 양쪽을 만든다).
+  // (backend/aipds/tool_trace.py가 양쪽을 만든다).
   detail?: string | null;
 }
 

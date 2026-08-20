@@ -30,8 +30,8 @@ import asyncio
 
 import pytest
 
-from pathfinder.models import AgentEvent
-from pathfinder.proto.builder import PrototypeBuilder
+from aipds.models import AgentEvent
+from aipds.proto.builder import PrototypeBuilder
 from fakes.fake_sdk import (AssistantMessage, FakeSdkClient, ResultMessage,
                             TextBlock)
 
@@ -711,7 +711,7 @@ async def test_answering_one_round_does_not_retire_a_different_rounds_card(
     """
     import json
 
-    from pathfinder.proto.builder import _mark_delivered, _was_delivered
+    from aipds.proto.builder import _mark_delivered, _was_delivered
 
     holder = {}
     b = _builder(tmp_path, DetachedQuestionClient(lambda: holder["b"]))
@@ -929,7 +929,7 @@ def test_the_two_facts_that_keep_the_mirror_window_unreachable(tmp_path):
 
     # Fact 1: no `pending` route on the prototype path. Discovery has one
     # (routes/turns.py) -- this router deliberately does not.
-    from pathfinder.routes import prototypes as proto_routes
+    from aipds.routes import prototypes as proto_routes
 
     proto_paths = [r.path for r in proto_routes.router.routes]
     assert not [p for p in proto_paths if "pending" in p], proto_paths

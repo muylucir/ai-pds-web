@@ -2,14 +2,14 @@
 #
 # 이 파일이 있는 이유는 진단 실패 한 건이다. 워크스페이스 채팅 내역이 복원되지
 # 않는 버그를 쫓는 동안, 원인을 가리키는 로그가 하나도 없었다 — 코드에는
-# `_log.info`/`_log.warning`이 있었지만 프로덕션 journald에 `pathfinder` 로거의
+# `_log.info`/`_log.warning`이 있었지만 프로덕션 journald에 `aipds` 로거의
 # 산출이 **0건**이었다. uvicorn은 자기 로거만 설정하고 루트에는 핸들러를 두지
 # 않으므로, INFO는 조용히 사라지고 WARNING만 Python의 lastResort 핸들러로
 # 새어나온다. 그래서 SDK가 내는 미러링 경고도, 우리 드라이버의 resume 판단
 # 로그도 볼 수 없었다.
 import logging
 
-from pathfinder.app import configure_logging
+from aipds.app import configure_logging
 
 
 def _reset(root: logging.Logger, saved):
@@ -32,7 +32,7 @@ def test_configure_logging_gives_the_root_logger_a_handler():
         _reset(root, saved)
 
 
-def test_pathfinder_and_sdk_loggers_emit_at_info(caplog):
+def test_aipds_and_sdk_loggers_emit_at_info(caplog):
     """우리 로거와 SDK 로거가 둘 다 INFO에서 잡혀야 한다.
 
     SDK 쪽이 함께 필요한 이유: 미러링 실패는 그쪽 로거로만 보고된다
@@ -45,7 +45,7 @@ def test_pathfinder_and_sdk_loggers_emit_at_info(caplog):
     try:
         configure_logging()
         with caplog.at_level(logging.INFO):
-            logging.getLogger("pathfinder.agent").info("OURS")
+            logging.getLogger("aipds.agent").info("OURS")
             logging.getLogger(
                 "claude_agent_sdk._internal.transcript_mirror_batcher"
             ).warning("THEIRS")

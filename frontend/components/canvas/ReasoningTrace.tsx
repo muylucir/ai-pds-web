@@ -8,7 +8,7 @@ import { useT } from "@/lib/i18n/provider";
 // frames are progress lines, file_changed frames are touched paths — all
 // arriving over the existing /events SSE.
 // 도구별 아이콘. **UI 관심사이므로 프론트가 소유한다** — 백엔드는 값만 보낸다
-// (backend/pathfinder/tool_trace.py의 "라벨은 여기서 만들지 않는다").
+// (backend/aipds/tool_trace.py의 "라벨은 여기서 만들지 않는다").
 // 모르는 도구는 아이콘 없이 이름만 — 잘못된 아이콘보다 없는 편이 낫다.
 const TOOL_ICON: Record<string, string> = {
   Read: "🔍",

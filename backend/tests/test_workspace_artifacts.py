@@ -1,5 +1,5 @@
 from pathlib import Path
-from pathfinder.workspace import Workspace
+from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 
 

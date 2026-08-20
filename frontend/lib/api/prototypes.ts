@@ -1,5 +1,5 @@
 // frontend/lib/api/prototypes.ts — client for Task 7's prototype build/host
-// REST+SSE contract (backend/pathfinder/routes/prototypes.py).
+// REST+SSE contract (backend/aipds/routes/prototypes.py).
 //
 // client.ts's private `request<T>()` always JSON-decodes 2xx responses ("204
 // bodies aren't used by this contract" per its own comment) — but several
@@ -39,7 +39,7 @@ export interface PrototypeInfo {
   has_survey: boolean;
 }
 
-// Mirrors backend/pathfinder/proto/host.py's HostState Literal exactly.
+// Mirrors backend/aipds/proto/host.py's HostState Literal exactly.
 export type HostState = "installing" | "building" | "running" | "failed" | "stopped";
 
 export interface HostStatus {

@@ -10,8 +10,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.model_catalog import SEED_MODELS, ModelCatalog
+import aipds.app as app_module
+from aipds.model_catalog import SEED_MODELS, ModelCatalog
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 client = TestClient(app_module.app)
@@ -34,7 +34,7 @@ def cleanup():
 
 def test_create_accepts_a_displayed_model_and_records_it(catalog, monkeypatch):
     fake = FakeS3Store()
-    monkeypatch.setenv("PATHFINDER_S3_BUCKET", "some-bucket")
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: fake)
     r = client.post("/projects", json={"project_id": "pm-1", "model_id": CHOSEN})
     assert r.status_code == 200
@@ -44,7 +44,7 @@ def test_create_accepts_a_displayed_model_and_records_it(catalog, monkeypatch):
 
 
 def test_create_without_a_model_id_still_works(catalog, monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     r = client.post("/projects", json={"project_id": "pm-2"})
     assert r.status_code == 200
     assert r.json()["model_id"] is None
@@ -52,7 +52,7 @@ def test_create_without_a_model_id_still_works(catalog, monkeypatch):
 
 
 def test_create_rejects_an_unregistered_model_id(catalog, monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     r = client.post("/projects", json={"project_id": "pm-3",
                                        "model_id": "global.anthropic.claude-nope"})
     assert r.status_code == 400
@@ -62,14 +62,14 @@ def test_create_rejects_an_unregistered_model_id(catalog, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_rejects_a_hidden_model_id(catalog, monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     await catalog.update(CHOSEN, display=False)
     r = client.post("/projects", json={"project_id": "pm-4", "model_id": CHOSEN})
     assert r.status_code == 400
 
 
 def test_get_project_returns_metadata_without_booting_a_workspace(catalog, monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     booted = {"n": 0}
 
     async def _boom(pid):
@@ -94,7 +94,7 @@ def test_get_project_is_404_for_an_unknown_project(catalog):
 
 
 def test_list_includes_model_id(catalog, monkeypatch):
-    monkeypatch.delenv("PATHFINDER_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     client.post("/projects", json={"project_id": "pm-1", "model_id": CHOSEN})
     rows = client.get("/projects?page=1&size=50").json()["projects"]
     row = next(p for p in rows if p["project_id"] == "pm-1")

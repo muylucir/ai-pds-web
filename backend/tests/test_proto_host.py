@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from pathfinder.proto.host import ProtoHost
+from aipds.proto.host import ProtoHost
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "proto_npm_stub"
 SLUG = "todo-app"
@@ -318,7 +318,7 @@ async def test_status_does_not_read_the_log(root, monkeypatch):
     `_tail_text` 호출 자체를 세는 이유: `log_tail == ""`만 검사하면 로그를
     읽고 나서 버리는 구현도 통과하는데, 비용은 읽는 데 있지 담는 데 있지
     않다."""
-    import pathfinder.proto.host as host_mod
+    import aipds.proto.host as host_mod
 
     _seed_build_dir(root)
     host = ProtoHost(root=root, port_range=range(4001, 4010))
@@ -587,7 +587,7 @@ async def test_purge_project_removes_the_parent_shell(root):
     """`purge`는 `{root}/{pid}/{slug}`만 지우므로 부모가 빈 껍데기로 남는다.
 
     실측(2026-08-19, 배포 인스턴스): 존재하지 않는 프로젝트 3개의 빈 디렉터리가
-    `/opt/pathfinder/protos/`에 남아 있었다.
+    `/opt/aipds/protos/`에 남아 있었다.
     """
     _seed_build_dir(root, pid=PID, slug=SLUG)
     host = ProtoHost(root=root, port_range=range(4001, 4010))

@@ -50,7 +50,7 @@ export interface PublicSurvey {
   hypothesis: string;
   questions: SurveyQuestion[];
   // 문항이 쓰인 언어. 응답 화면이 이 값으로 그려진다 — 응답자는 외부인이라
-  // pf_lang 쿠키가 없고, 문항이 영어인데 화면만 한국어인 것은 더 나쁘다.
+  // aipds_lang 쿠키가 없고, 문항이 영어인데 화면만 한국어인 것은 더 나쁘다.
   language?: "ko" | "en";
 }
 

@@ -31,7 +31,7 @@ import { refreshTokens } from "@/lib/auth/tokenExchange";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const BACKEND = process.env.PATHFINDER_BACKEND_URL ?? "http://localhost:8000";
+const BACKEND = process.env.AIPDS_BACKEND_URL ?? "http://localhost:8000";
 
 // Hop-by-hop headers must never cross a proxy boundary (RFC 7230 §6.1) and
 // several are outright illegal over HTTP/2. Strip them from both directions.
@@ -41,7 +41,7 @@ const HOP_BY_HOP = new Set([
   "content-encoding", "host",
   // ⚠️ "cookie"는 여기에 없다 — 일부러다. 쿠키 판정은 withBearer()가 한 곳에서
   // 한다(lib/api/proxyAuth.ts): 세션 JWT는 지우고 Authorization으로 번역하며,
-  // 프로토타입 접근 쿠키(pf_proto_*)만 허용목록으로 통과시킨다.
+  // 프로토타입 접근 쿠키(aipds_proto_*)만 허용목록으로 통과시킨다.
   //
   // 여기서도 지우면 withBearer가 볼 쿠키가 남지 않아 그 허용목록이 항상 빈
   // 값이 되고, /api/proto/* 프리뷰가 전부 404가 된다 — 그 트래픽도 이
@@ -158,7 +158,7 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
 }
 // PATCH/HEAD/OPTIONS: needed because Finding 1's routing fix means ALL /api/*
 // traffic now transits this route handler, including /api/proto/{pid}/{slug}
-// (backend/pathfinder/routes/proto_public.py's proxy_prototype), which
+// (backend/aipds/routes/proto_public.py's proxy_prototype), which
 // forwards arbitrary methods to a hosted prototype's own server — that route
 // declares methods=["GET","POST","PUT","DELETE","PATCH","HEAD","OPTIONS"].
 // Before Finding 1, nginx sent /api/ straight to FastAPI and these methods

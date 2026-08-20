@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from pathfinder.design_profile import ALLOWED_TOKENS, parse_design_md
-from pathfinder.design_tokens import (_prompt, extract_tokens, has_fence,
+from aipds.design_profile import ALLOWED_TOKENS, parse_design_md
+from aipds.design_tokens import (_prompt, extract_tokens, has_fence,
                                       inject_fence, render_fence)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "design-no-fence.md"

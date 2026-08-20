@@ -20,10 +20,10 @@ def _legacy_question_path(monkeypatch):
     경로는 탈출로가 됐고(claude_driver.FILE_QUESTIONS_ENV), 탈출로가 살아 있어야
     하므로 이 계약도 살아 있어야 한다. 기본값에 의존하지 않고 명시적으로 끈다.
     """
-    monkeypatch.setenv("PATHFINDER_FILE_QUESTIONS", "false")
+    monkeypatch.setenv("AIPDS_FILE_QUESTIONS", "false")
 
-from pathfinder.agent.claude_driver import ClaudeDriver
-from pathfinder.agent.pending_store import PENDING_KEY
+from aipds.agent.claude_driver import ClaudeDriver
+from aipds.agent.pending_store import PENDING_KEY
 from tests.driver_contract import assert_driver_contract
 from tests.fakes.fake_sdk_asking import cancel_pending_callbacks, sdk_client_for
 from tests.fakes.in_memory_s3 import FakeS3Store

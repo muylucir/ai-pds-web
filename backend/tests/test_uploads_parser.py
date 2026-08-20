@@ -2,7 +2,7 @@ import io
 import re
 
 import pytest
-from pathfinder.parsers.uploads import convert, upload_key, MAX_CHARS
+from aipds.parsers.uploads import convert, upload_key, MAX_CHARS
 
 _KEY_RE = re.compile(r"^uploads/[0-9a-f]{8}/(.+)$")
 

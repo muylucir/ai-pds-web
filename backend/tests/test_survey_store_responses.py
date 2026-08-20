@@ -1,7 +1,7 @@
 import json
 import pytest
-from pathfinder.survey.models import Question, Questionnaire, SurveyResponse
-from pathfinder.survey.store import SurveyStore, rollup_key, responses_prefix
+from aipds.survey.models import Question, Questionnaire, SurveyResponse
+from aipds.survey.store import SurveyStore, rollup_key, responses_prefix
 from fakes.in_memory_s3 import FakeS3Store
 
 PID, SLUG, NOW = "p1", "demo", "2026-07-25T00:00:00Z"

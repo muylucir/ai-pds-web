@@ -1,8 +1,8 @@
 # backend/tests/conftest.py
 import asyncio
 import pytest
-from pathfinder import app as app_module
-from pathfinder.routes import deps as deps_module
+from aipds import app as app_module
+from aipds.routes import deps as deps_module
 
 
 @pytest.fixture(autouse=True)

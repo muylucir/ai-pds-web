@@ -7,10 +7,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.auth.deps import require_admin, require_user
-from pathfinder.auth.models import Principal
-from pathfinder.model_catalog import SEED_MODELS, ModelCatalog
+import aipds.app as app_module
+from aipds.auth.deps import require_admin, require_user
+from aipds.auth.models import Principal
+from aipds.model_catalog import SEED_MODELS, ModelCatalog
 from tests.fakes.in_memory_s3 import FakeS3Store
 
 
@@ -19,7 +19,7 @@ def catalog(monkeypatch):
     """쓰기 가능한 카탈로그 + 'admin으로 로그인한' 요청자."""
     cat = ModelCatalog(FakeS3Store())
     monkeypatch.setattr(app_module, "model_catalog", lambda: cat)
-    me = Principal(username="admin@pathfinder.local", sub="s-admin", role="admin")
+    me = Principal(username="admin@aipds.local", sub="s-admin", role="admin")
     app_module.app.dependency_overrides[require_admin] = lambda: me
     app_module.app.dependency_overrides[require_user] = lambda: me
     yield cat
@@ -114,7 +114,7 @@ def test_admin_add_rejects_a_whitespace_only_model_id(catalog, client):
     # 공백 전용은 "비었다"는 메시지여야 한다 — 문자셋 위반 메시지가 아니라.
     # 두 검증의 순서를 못박는 핀 테스트다.
     # detail은 안정적 코드다 — 문구는 프론트 딕셔너리가 소유한다
-    # (backend/pathfinder/error_codes.py 헤더 참조).
+    # (backend/aipds/error_codes.py 헤더 참조).
     assert r.json()["detail"] == "model_id_required"
 
 
@@ -211,7 +211,7 @@ def test_admin_delete_unknown_model_is_404(catalog, client):
 
 def test_admin_write_without_a_bucket_is_503(monkeypatch, client):
     monkeypatch.setattr(app_module, "model_catalog", lambda: ModelCatalog(None))
-    me = Principal(username="admin@pathfinder.local", sub="s-admin", role="admin")
+    me = Principal(username="admin@aipds.local", sub="s-admin", role="admin")
     app_module.app.dependency_overrides[require_admin] = lambda: me
     app_module.app.dependency_overrides[require_user] = lambda: me
     try:

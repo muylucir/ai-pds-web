@@ -8,13 +8,13 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import pathfinder.app as app_module
-from pathfinder.auth.cognito import CognitoError, ManagedUser
-from pathfinder.auth.deps import require_admin, require_user
-from pathfinder.auth.models import Principal
+import aipds.app as app_module
+from aipds.auth.cognito import CognitoError, ManagedUser
+from aipds.auth.deps import require_admin, require_user
+from aipds.auth.models import Principal
 
-ADMIN_EMAIL = "admin@pathfinder.local"
-PM_EMAIL = "pm@pathfinder.local"
+ADMIN_EMAIL = "admin@aipds.local"
+PM_EMAIL = "pm@aipds.local"
 
 
 class FakeCognito:
@@ -84,7 +84,7 @@ class FakeCognito:
 
 @pytest.fixture()
 def env(monkeypatch):
-    """가짜 Cognito + '나는 admin@pathfinder.local' 라는 요청자."""
+    """가짜 Cognito + '나는 admin@aipds.local' 라는 요청자."""
     fake = FakeCognito()
     fake.add(ADMIN_EMAIL, role="admin")
     fake.add(PM_EMAIL, role="pm")
@@ -346,7 +346,7 @@ def test_pm_cannot_reach_admin_routes(monkeypatch, client):
     monkeypatch.setattr(app_module, "cognito_config", lambda: {
         "region": "ap-northeast-2", "user_pool_id": "p", "client_id": "c"})
 
-    import pathfinder.auth.deps as deps_module
+    import aipds.auth.deps as deps_module
 
     async def fake_verify(token, **kwargs):
         return Principal(username=PM_EMAIL, sub="s-pm", role="pm")

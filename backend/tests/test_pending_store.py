@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from pathfinder.agent.pending_store import (
+from aipds.agent.pending_store import (
     PENDING_KEY, clear_pending, load_pending, save_pending,
 )
 from tests.fakes.in_memory_s3 import FakeS3Store
