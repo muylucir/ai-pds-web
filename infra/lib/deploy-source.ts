@@ -35,7 +35,7 @@
 // 대가 하나 더: 부팅이 GitHub에 도달해야 한다.
 
 /** 공개 리포. HTTPS이므로 인스턴스에 자격증명이 필요 없다. */
-export const REPO_URL = 'https://github.com/muylucir/ai-plc-pathfinder.git';
+export const REPO_URL = 'https://github.com/muylucir/ai-pds-web.git';
 
 /**
  * 배포 대상 브랜치. 인스턴스는 부팅 때, `aipds-update`는 실행될 때 이
