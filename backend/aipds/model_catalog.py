@@ -1,18 +1,18 @@
-"""모델 카탈로그 — 프로젝트 생성 화면이 고를 수 있는 모델 목록.
+"""The model catalogue -- the list of models the project creation screen can choose from.
 
-버킷 루트의 `models/catalog.json`에 산다. projects/ 밖에 두는 이유는
-카탈로그가 프로젝트보다 먼저 존재해야 하기 때문이다(프로젝트 생성 화면이
-프로젝트가 없는 상태에서 이것을 읽는다) — surveys/by-token/이 프로젝트
-프리픽스 밖에 있는 것과 같은 이유다.
+It lives at `models/catalog.json` at the bucket root. It sits outside projects/ because the
+catalogue has to exist before any project does (the project creation screen reads it with no
+project) -- the same reason surveys/by-token/ is outside the project prefix.
 
-시드 목록은 **읽기 시점의 폴백일 뿐 파일로 쓰지 않는다.** 배포 직후 관리자가
-아무것도 하지 않아도 콤보박스가 채워져야 하고, 반대로 '빈 카탈로그'를 유효
-상태로 두면 첫 프로젝트 생성이 막힌다 — 시드는 편의가 아니라 부트스트랩
-경로다. 관리자가 처음 수정할 때 비로소 파일이 생긴다.
+The seed list is **a read-time fallback only and is never written to the file.** The combobox
+has to be populated right after a deployment without the administrator doing anything, and
+conversely treating an 'empty catalogue' as a valid state would block the first project
+creation -- the seeds are a bootstrap path rather than a convenience. The file only comes into
+existence when the administrator first edits it.
 
-표시 상한(5)은 등록이 아니라 `display`에만 적용된다: 관리자는 여러 모델을
-등록해 두고 그중 5개만 화면에 노출한다. 상한을 등록에 두면 요구사항이
-성립하지 않는다.
+The display cap (5) applies to `display` rather than to registration: an administrator
+registers several models and exposes only 5 of them on screen. Putting the cap on registration
+would not satisfy the requirement.
 """
 from __future__ import annotations
 
@@ -25,10 +25,12 @@ from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
 
-#: 버킷 루트 기준 키. projects/·sessions/·surveys/ 옆의 네 번째 프리픽스다.
+#: A key relative to the bucket root. The fourth prefix alongside projects/, sessions/ and
+#: surveys/.
 CATALOG_KEY = "models/catalog.json"
 
-#: 콤보박스에 동시에 띄울 수 있는 모델 수. 등록 수와는 무관하다.
+#: How many models can appear in the combobox at once. Unrelated to how many are
+#: registered.
 MAX_DISPLAYED = 5
 
 
@@ -39,17 +41,18 @@ class ModelEntry(BaseModel):
 
 
 class CatalogError(Exception):
-    """카탈로그 정책 위반. `code`가 라우트의 HTTP 상태로 번역된다."""
+    """A catalogue policy violation. `code` is translated into the route's HTTP status."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
 
 
-#: ap-northeast-2에서 네 개 모두 ACTIVE인 것을 list-inference-profiles로 실측
-#: 확인했다. 배포 기본값(backend-permissions.ts의 MODEL = opus-4-8)은 여기
-#: 없다 — 의도된 것이다: 이 기능 이전에 만든 프로젝트와 모델 미지정 시의
-#: 폴백으로만 쓰이고 콤보박스에는 뜨지 않는다.
+#: All four were confirmed ACTIVE in ap-northeast-2 by measurement, with
+#: list-inference-profiles. The deployment default (MODEL = opus-4-8 in
+#: backend-permissions.ts) is not here -- deliberately: it is used only as the fallback for
+#: projects created before this feature and for an unspecified model, and it does not appear in
+#: the combobox.
 SEED_MODELS: tuple[ModelEntry, ...] = (
     ModelEntry(name="Opus 5", model_id="global.anthropic.claude-opus-5"),
     ModelEntry(name="Opus 4.6", model_id="global.anthropic.claude-opus-4-6-v1"),
@@ -59,20 +62,23 @@ SEED_MODELS: tuple[ModelEntry, ...] = (
 
 
 class ModelCatalog:
-    """카탈로그의 읽기/쓰기. `s3`가 None이면 읽기 전용(버킷 미설정)."""
+    """Reads and writes for the catalogue. With a None `s3` it is read-only (no bucket\n    configured)."""
 
     def __init__(self, s3: S3StoreLike | None) -> None:
         self._s3 = s3
 
     async def load(self) -> list[ModelEntry]:
-        """등록된 전체 목록. 파일이 없거나 손상됐으면 시드로 떨어진다.
+        """The full registered list. It falls back to the seeds when the file is absent or
+        corrupted.
 
-        손상을 예외로 올리지 않는 이유: 카탈로그를 읽지 못하면 프로젝트 생성이
-        전부 막힌다. 시드로 떨어지면 워크숍은 계속 돌고, 원인은 로그에 남는다.
+        Why corruption does not raise: failing to read the catalogue would block every project
+        creation. Falling back to the seeds keeps the workshop running, and the cause is in the
+        log.
         """
-        # model_copy()로 복사한다 — list(SEED_MODELS)는 리스트만 새로 만들고
-        # ModelEntry 객체는 공유하므로, update()의 제자리 변경이 모듈 전역
-        # 상수를 영구히 오염시킨다(실측: 표시 토글 한 번이 프로세스 내내 남는다).
+        # Copied with model_copy() -- list(SEED_MODELS) creates only a new list while sharing
+        # the ModelEntry objects, so an in-place change in update() would permanently
+        # contaminate the module-global constant (measured: one display toggle persisted for
+        # the life of the process).
         if self._s3 is None:
             return [e.model_copy() for e in SEED_MODELS]
         try:
@@ -91,8 +97,8 @@ class ModelCatalog:
             return [e.model_copy() for e in SEED_MODELS]
 
     async def displayed(self) -> list[ModelEntry]:
-        """콤보박스에 띄울 목록. 상한을 여기서도 자른다 — 파일이 손으로
-        편집되어 6개가 켜져 있어도 화면 계약(최대 5개)은 지켜져야 한다."""
+        """The list for the combobox. The cap is applied here too -- even if the file was
+        hand-edited with 6 enabled, the screen contract (at most 5) has to hold."""
         return [e for e in await self.load() if e.display][:MAX_DISPLAYED]
 
     async def add(self, name: str, model_id: str, display: bool) -> ModelEntry:
@@ -143,7 +149,7 @@ class ModelCatalog:
                 f"(now {shown}) — hide one first")
 
     async def _save(self, entries: list[ModelEntry]) -> None:
-        assert self._s3 is not None  # _writable()이 이미 확인했다
+        assert self._s3 is not None  # _writable() has already checked
         body = json.dumps({"models": [e.model_dump() for e in entries]},
                           ensure_ascii=False)
         await self._s3.put(CATALOG_KEY, body)
