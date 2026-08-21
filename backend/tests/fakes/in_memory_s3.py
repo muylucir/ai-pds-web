@@ -11,6 +11,10 @@ class FakeS3Store:
 
     def __init__(self) -> None:
         self._raw: dict[str, bytes] = {}
+        # 키 -> 쓰기 순번. `list_with_times`의 "시각"이다. 벽시계를 쓰지 않는
+        # 이유: 같은 테스트 안의 연속 쓰기가 같은 밀리초에 들어가 순서가 흔들린다.
+        self._seq: dict[str, int] = {}
+        self._tick = 0
 
     # `blobs` stays the text-facing view the existing tests were written
     # against: `s3.blobs[key] = "..."` and `assert s3.blobs[key] == "..."`.
@@ -38,9 +42,15 @@ class FakeS3Store:
 
     async def put_bytes(self, key: str, content: bytes) -> None:
         self._raw[key] = content
+        self._tick += 1
+        self._seq[key] = self._tick
 
     async def list(self, prefix: str) -> list[str]:
         return sorted(k for k in self._raw if k.startswith(prefix))
+
+    async def list_with_times(self, prefix: str) -> list[tuple[str, float]]:
+        return [(k, float(self._seq.get(k, 0)))
+                for k in sorted(self._raw) if k.startswith(prefix)]
 
     async def list_with_etags(self, prefix: str) -> list[tuple[str, str]]:
         return [(k, self._etag(self._raw[k])) for k in await self.list(prefix)]

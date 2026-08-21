@@ -23,10 +23,26 @@ export function WorkspaceDocPanel({
   projectId,
   activeDoc,
   turnSeq,
+  changedPaths,
 }: {
   projectId: string;
   activeDoc: { path: string; version: string | null } | null;
   turnSeq: number;
+  // 이번 턴에 쓰인 경로들(`file_changed`). **목록 재조회의 트리거다.**
+  //
+  // 종전 키는 `[projectId, turnSeq, activeDoc?.path]`였고 "파일이 바뀌었다"는
+  // 실시간 신호가 없었다 — `turnSeq`는 턴이 끝날 때 오르고 `activeDoc`은 문서
+  // 이벤트에만 바뀐다. 그래서 감사·상태·질문 파일만 쓰는 턴에서는 목록이 마운트
+  // 시점 값(새 프로젝트면 빈 배열)에 머물고, 오른쪽 "최근 산출물"만 채워졌다 —
+  // 드롭다운이 아예 안 뜨는 실측 증상이 그 모양이다.
+  //
+  // 이 신호로 거는 것이 안전한 근거: 훅이 **게시하고 나서 광고한다**
+  // (claude_driver._on_post_tool_use의 publish_file → file_changed). 즉 이 배열에
+  // 경로가 들어온 시점에 그 파일은 이미 정본에 있으므로 재조회가 반드시 찾는다.
+  //
+  // **옵셔널이 아니다.** 기본값 `[]`을 두면 부모가 안 넘겨도 컴파일되고, 그러면 이
+  // 재조회가 프로덕션에서만 조용히 죽는다 — 필수로 두어 타입체크가 배선을 지킨다.
+  changedPaths: string[];
 }) {
   const t = useT();
   // 드롭다운 선택 상태. null = activeDoc 따름. activeDoc이 바뀌면(새 문서
@@ -35,7 +51,6 @@ export function WorkspaceDocPanel({
   useEffect(() => {
     setManualPath(null);
   }, [activeDoc?.path]);
-  const path = manualPath ?? activeDoc?.path ?? null;
   const version = activeDoc?.version ?? null;
 
   // 산출물 목록 — 턴 종료(turnSeq)와 **새 문서가 생길 때마다**(activeDoc.path)
@@ -51,8 +66,18 @@ export function WorkspaceDocPanel({
   // 짧은 창) 현재 path를 항상 union — 드롭다운/본문 미스매치 및 "목록이 비어
   // 있으면 select 자체가 숨겨지는" 문제를 함께 해결한다.
   const artifacts = useAsync(() => listArtifacts(projectId),
-                             [projectId, turnSeq, activeDoc?.path ?? ""]);
+                             [projectId, turnSeq, activeDoc?.path ?? "",
+                              changedPaths.length]);
   const listed = artifacts.data ?? [];
+  // **목록으로 떨어지는 폴백.** 종전에는 `manualPath ?? activeDoc?.path ?? null`이라
+  // `activeDoc`이 없으면 본문이 비었다 — 드롭다운은 `listed`로 채워지므로 "옵션은
+  // 가득한데 본문은 '아직 문서가 없습니다'"가 구조적으로 가능했고, 새로고침 후에는
+  // `activeDoc`이 항상 null이라 늘 그 상태였다.
+  //
+  // 첫 항목을 고르는 것이 의미를 갖는 이유: 백엔드가 최신 순으로 준다
+  // (Workspace.list_artifacts). 알파벳 순이던 동안은 첫 항목이 거의 항상
+  // `aiplc-docs/audit.md`였다.
+  const path = manualPath ?? activeDoc?.path ?? listed[0] ?? null;
   const options = path && !listed.includes(path) ? [...listed, path] : listed;
 
   // 404 → "아직 동기화 안 됨"으로 구분해서 들고 있는다. 턴 중에는 정상(이벤트가
@@ -124,7 +149,13 @@ export function WorkspaceDocPanel({
         )}
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto p-4 text-sm text-slate-700">
-        {path === null ? (
+        {/* 목록 실패를 "문서가 없다"로 뭉개지 않는다 — 화면이 같으면 원인을 영영 못
+            본다(이 파일이 docUnsaved와 docEmpty를 가른 것과 같은 규율). 문서가
+            선택돼 있으면 그 본문이 우선이다: 목록이 실패해도 읽을 수 있는 문서가
+            있으면 그것을 막을 이유가 없다. */}
+        {path === null && artifacts.error !== null ? (
+          <p className="text-rose-600">{t("ws.docListFailed")}</p>
+        ) : path === null ? (
           <p className="text-slate-400">
             {t("ws.noDocsYet")}
           </p>

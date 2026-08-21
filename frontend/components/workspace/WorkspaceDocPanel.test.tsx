@@ -12,7 +12,7 @@ const PRFAQ = { path: "aiplc-docs/discovery/envision/prfaq.md", version: null };
 describe("WorkspaceDocPanel", () => {
   it("shows an empty-state (no fetch) when there is no document yet", async () => {
     await act(async () => {
-      render(<WorkspaceDocPanel projectId="p1" activeDoc={null} turnSeq={0} />);
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={null} changedPaths={[]} turnSeq={0} />);
     });
     expect(screen.getByText(/아직 생성된 문서가 없습니다/)).toBeInTheDocument();
     // No file name / version chip / review link when there's nothing to show.
@@ -26,7 +26,7 @@ describe("WorkspaceDocPanel", () => {
       ),
     );
     await act(async () => {
-      render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} turnSeq={0} />);
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0} />);
     });
     expect(await screen.findByText("제목")).toBeInTheDocument();
     expect(screen.getByText(/discovery-document\.md/)).toBeInTheDocument();
@@ -45,7 +45,7 @@ describe("WorkspaceDocPanel", () => {
       ),
     );
     await act(async () => {
-      render(<WorkspaceDocPanel projectId="p1" activeDoc={PRFAQ} turnSeq={0} />);
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={PRFAQ} changedPaths={[]} turnSeq={0} />);
     });
     expect(await screen.findByText("PR/FAQ")).toBeInTheDocument();
     expect(screen.getByText(/prfaq\.md/)).toBeInTheDocument();
@@ -65,13 +65,13 @@ describe("WorkspaceDocPanel", () => {
         return HttpResponse.json({ content: "# PR/FAQ\n\n둘째 문서" });
       }),
     );
-    const { rerender } = render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} turnSeq={0} />);
+    const { rerender } = render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0} />);
     expect(await screen.findByText("초안")).toBeInTheDocument();
     expect(hits).toBe(1);
 
     // 대화가 다른 문서로 옮겨가면 그 문서를 읽는다.
     await act(async () => {
-      rerender(<WorkspaceDocPanel projectId="p1" activeDoc={PRFAQ} turnSeq={0} />);
+      rerender(<WorkspaceDocPanel projectId="p1" activeDoc={PRFAQ} changedPaths={[]} turnSeq={0} />);
     });
     expect(await screen.findByText("PR/FAQ")).toBeInTheDocument();
     await waitFor(() => expect(hits).toBe(2));
@@ -88,13 +88,13 @@ describe("WorkspaceDocPanel", () => {
         return HttpResponse.json({ content: served });
       }),
     );
-    const { rerender } = render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} turnSeq={0} />);
+    const { rerender } = render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0} />);
     expect(await screen.findByText(/문서 내용이 아직 비어 있습니다/)).toBeInTheDocument();
     expect(hits).toBe(1);
 
     served = "# 동기화 완료\n\n내용 도착";
     await act(async () => {
-      rerender(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} turnSeq={1} />);
+      rerender(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={1} />);
     });
     expect(await screen.findByText("동기화 완료")).toBeInTheDocument();
     await waitFor(() => expect(hits).toBe(2));
@@ -111,7 +111,7 @@ describe("WorkspaceDocPanel", () => {
       ),
     );
     await act(async () => {
-      render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} turnSeq={0} />);
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0} />);
     });
     expect(await screen.findByText(/아직 저장되지 않은 문서입니다/)).toBeInTheDocument();
     expect(screen.queryByText(/문서 내용이 아직 비어 있습니다/)).not.toBeInTheDocument();
@@ -126,7 +126,7 @@ describe("WorkspaceDocPanel", () => {
       ),
     );
     await act(async () => {
-      render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} turnSeq={0} />);
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0} />);
     });
     expect(await screen.findByText(/문서 내용이 아직 비어 있습니다/)).toBeInTheDocument();
     expect(screen.queryByText(/아직 저장되지 않은 문서입니다/)).not.toBeInTheDocument();
@@ -139,7 +139,7 @@ describe("WorkspaceDocPanel", () => {
       ),
     );
     await act(async () => {
-      render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} turnSeq={0} />);
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0} />);
     });
     expect(await screen.findByText(/문서를 불러오지 못했습니다/)).toBeInTheDocument();
   });
@@ -153,7 +153,7 @@ describe("WorkspaceDocPanel — 문서 드롭다운", () => {
       http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/a.md`, () =>
         HttpResponse.json({ content: "# A" })),
     );
-    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: "v1" }} turnSeq={0} />);
+    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: "v1" }} changedPaths={[]} turnSeq={0} />);
     const select = await screen.findByLabelText("문서 선택");
     const options = within(select).getAllByRole("option");
     expect(options.map((o) => o.textContent)).toEqual(["a.md", "b.md"]);
@@ -169,7 +169,7 @@ describe("WorkspaceDocPanel — 문서 드롭다운", () => {
       http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/b.md`, () =>
         HttpResponse.json({ content: "# B-내용" })),
     );
-    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} turnSeq={0} />);
+    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} changedPaths={[]} turnSeq={0} />);
     const select = await screen.findByLabelText("문서 선택");
     await userEvent.setup().selectOptions(select, "aiplc-docs/b.md");
     expect(await screen.findByText("B-내용")).toBeInTheDocument();
@@ -185,12 +185,12 @@ describe("WorkspaceDocPanel — 문서 드롭다운", () => {
         HttpResponse.json({ content: "# B-내용" })),
     );
     const { rerender } = render(
-      <WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} turnSeq={0} />);
+      <WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} changedPaths={[]} turnSeq={0} />);
     const select = await screen.findByLabelText("문서 선택");
     // 사용자가 수동 선택해 두어도…
     await userEvent.setup().selectOptions(select, "aiplc-docs/a.md");
     // …새 문서 이벤트(activeDoc 변경)는 그 문서로 전환한다
-    rerender(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/b.md", version: "v2" }} turnSeq={1} />);
+    rerender(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/b.md", version: "v2" }} changedPaths={[]} turnSeq={1} />);
     expect(await screen.findByText("B-내용")).toBeInTheDocument();
     expect((screen.getByLabelText("문서 선택") as HTMLSelectElement).value).toBe("aiplc-docs/b.md");
   });
@@ -202,7 +202,7 @@ describe("WorkspaceDocPanel — 문서 드롭다운", () => {
       http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/new.md`, () =>
         HttpResponse.json({ content: "# NEW" })),
     );
-    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/new.md", version: null }} turnSeq={0} />);
+    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/new.md", version: null }} changedPaths={[]} turnSeq={0} />);
     const select = await screen.findByLabelText("문서 선택");
     await waitFor(() => expect((select as HTMLSelectElement).value).toBe("aiplc-docs/new.md"));
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toContain("new.md");
@@ -218,7 +218,7 @@ describe("WorkspaceDocPanel — 문서 드롭다운", () => {
       http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/a.md`, () =>
         HttpResponse.json({ content: "# A" })),
     );
-    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} turnSeq={0} />);
+    render(<WorkspaceDocPanel projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} changedPaths={[]} turnSeq={0} />);
     await screen.findByLabelText("문서 선택");
     // artifacts 응답([])이 반영된 뒤에도 select가 남아 있고 현재 문서가 유지되는지
     // 를 검증해야 진짜 회귀 가드가 된다 — fetch가 끝나기 전 단언하면 union 로직이
@@ -249,7 +249,7 @@ describe("WorkspaceDocPanel — 문서 새로고침 버튼", () => {
         <WorkspaceDocPanel
           projectId="p1"
           activeDoc={{ path: "aiplc-docs/a.md", version: null }}
-          turnSeq={0}
+          changedPaths={[]} turnSeq={0}
         />,
       );
     });
@@ -267,8 +267,81 @@ describe("WorkspaceDocPanel — 문서 새로고침 버튼", () => {
 
   it("문서가 없는 빈 상태에서는 새로고침 버튼이 없다", async () => {
     await act(async () => {
-      render(<WorkspaceDocPanel projectId="p1" activeDoc={null} turnSeq={0} />);
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={null} changedPaths={[]} turnSeq={0} />);
     });
     expect(screen.queryByRole("button", { name: "문서 새로고침" })).not.toBeInTheDocument();
+  });
+});
+
+// ---- A/G/I: 목록과 뷰어의 동기화 (2026-08-21) ----
+//
+// **실측한 증상 둘.** (1) 최근 산출물에는 파일 이름들이 보이는데 뷰어 본문은 "아직
+// 생성된 문서가 없습니다"였다. (2) 드롭다운 자체가 안 뜨는 경우도 있었다.
+//
+// 원인이 셋이다:
+//   A 본문 경로가 `manualPath ?? activeDoc?.path ?? null`이라 목록으로 떨어지는
+//     폴백이 없었다 — 드롭다운은 `listed`로 채워지므로 "옵션은 있는데 본문은 빔"이
+//     구조적으로 가능했다. 새로고침하면 `activeDoc`이 null이라 항상 그 상태다.
+//   G 목록 조회 키가 `[projectId, turnSeq, activeDoc?.path]`였다. 파일이 바뀌었다는
+//     실시간 신호(`file_changed` → changedPaths)가 없으므로, 감사·상태·질문 파일만
+//     쓰는 턴에서는 턴이 끝날 때까지 목록이 마운트 시점 값(빈 배열)에 머문다.
+//   I 목록 조회 실패가 무증상이었다 — `artifacts.error`를 아무도 읽지 않아
+//     "문서가 없다"와 화면이 같았다.
+
+describe("WorkspaceDocPanel — 목록과의 동기화", () => {
+  it("activeDoc이 없으면 목록의 첫 항목을 연다 (A)", async () => {
+    // 백엔드가 최신 순으로 준다(Workspace.list_artifacts) — 첫 항목이 곧 최신이다.
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () =>
+        HttpResponse.json({ artifacts: [PRFAQ.path, "aiplc-docs/audit.md"] }),
+      ),
+      http.get(`${API_BASE_URL}/projects/p1/files/${PRFAQ.path}`, () =>
+        HttpResponse.json({ content: "# PRFAQ 제목" }),
+      ),
+    );
+    await act(async () => {
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={null} turnSeq={0}
+                                changedPaths={[]} />);
+    });
+    expect(await screen.findByText("PRFAQ 제목")).toBeInTheDocument();
+    expect(screen.queryByText(/아직 생성된 문서가 없습니다/)).not.toBeInTheDocument();
+  });
+
+  it("changedPaths가 바뀌면 목록을 다시 조회한다 (G)", async () => {
+    let calls = 0;
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () => {
+        calls += 1;
+        return HttpResponse.json({ artifacts: [] });
+      }),
+    );
+    const { rerender } = await act(async () =>
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={null} turnSeq={0}
+                                changedPaths={[]} />));
+    const first = calls;
+
+    // 턴 도중 파일이 쓰였다 — turnSeq는 아직 오르지 않았고 activeDoc도 없다.
+    await act(async () => {
+      rerender(<WorkspaceDocPanel projectId="p1" activeDoc={null} turnSeq={0}
+                                  changedPaths={["aiplc-docs/audit.md"]} />);
+    });
+
+    expect(calls).toBeGreaterThan(first);
+  });
+
+  it("목록 조회가 실패하면 그렇다고 말한다 (I)", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 }),
+      ),
+    );
+    await act(async () => {
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={null} turnSeq={0}
+                                changedPaths={[]} />);
+    });
+    // "문서가 없다"로 뭉개면 원인을 영영 못 본다 — 이 리포가 docUnsaved와 docEmpty를
+    // 가른 것과 같은 규율이다.
+    expect(await screen.findByText(/목록을 불러오지 못했습니다/)).toBeInTheDocument();
+    expect(screen.queryByText(/아직 생성된 문서가 없습니다/)).not.toBeInTheDocument();
   });
 });
