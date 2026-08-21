@@ -165,22 +165,13 @@ def file_questions_stop(language: str, path: str) -> str:
             f"태그에 기록되니, 다음 턴에 파일을 다시 읽고 이어가세요.")
 
 
-def _answer_lines(answers: dict, label: str) -> str:
-    """답변을 `- {label}{n}: {값}` 목록으로. 문항 번호 오름차순.
-
-    번호로 정렬하는 이유: dict 순서는 프론트가 보낸 JSON 키 순서이고, 사용자가
-    문항을 건너뛰며 답하면 그 순서가 화면과 어긋난다.
-    """
-    def order(item):
-        try:
-            return (0, int(item[0]))
-        except (TypeError, ValueError):
-            return (1, str(item[0]))
-    return "\n".join(f"- {label}{n}: {value}"
-                     for n, value in sorted(answers.items(), key=order))
+# `_answer_lines`가 여기 있었다. 답변을 `- 1: A,B`로 줄지어 놓는 함수였고, 그것이
+# 아침 수정(fe6a482)의 한계였다 — 보기 letter를 라벨로 풀지 않으므로 기록이 라이브
+# 화면과 달랐다. 렌더는 이제 `aipds/answer_summary.py`가 한 벌로 소유한다(프론트의
+# 판별까지 그쪽으로 합쳤다). 이 파일은 그 결과를 받아 모델용 지시로 감싸기만 한다.
 
 
-def file_answers_recorded(language: str, path: str, answers: dict) -> str:
+def file_answers_recorded(language: str, path: str, summary: str) -> str:
     """질문 파일에 답변이 기록된 뒤 에이전트를 다시 부르는 턴의 텍스트.
 
     `file_questions_stop`이 끝낸 턴을 이어받는다. 파킹된 future로 같은 턴을
@@ -211,14 +202,19 @@ def file_answers_recorded(language: str, path: str, answers: dict) -> str:
     **파일은 여전히 권위다.** 값은 두 곳(이 문장과 `[Answer]:` 태그)에 있지만 같은
     요청에서 같은 dict로 만들어지므로 드리프트가 불가능하고, 문장은 파일을 정본으로
     지목한다 — 에이전트가 되읽는 대상은 바뀌지 않는다.
+
+    **`summary`는 이미 렌더된 텍스트다(2026-08-21).** 이 함수가 답변을 직접 줄지어
+    놓던 동안은 보기 letter가 그대로 남았고("- 1: A,B") 라이브 화면은 그것을 라벨로
+    풀어 그렸다 — 기록과 화면이 여전히 달랐다. 렌더는 `aipds/answer_summary.py`가
+    한 벌로 소유하고, **프론트도 이 문자열을 그대로 쓴다**(routes/answers.py가
+    응답에 함께 싣는다). 표현이 하나면 갈라질 수 없다.
     """
-    listed = _answer_lines(answers, "Q" if _lang(language) == "en" else "")
     if _lang(language) == "en":
-        return (f"I answered the questions:\n\n{listed}\n\n"
+        return (f"I answered the questions:\n\n{summary}\n\n"
                 f"They are also recorded in the `[Answer]:` tags of `{path}` — "
                 f"read the file and continue from where you stopped. Do not ask "
                 f"them again.")
-    return (f"질문에 답했습니다:\n\n{listed}\n\n"
+    return (f"질문에 답했습니다:\n\n{summary}\n\n"
             f"같은 답변이 `{path}`의 `[Answer]:` 태그에도 기록됐습니다 — 파일을 "
             f"읽고 멈춘 지점부터 이어가 주세요. 다시 묻지 마세요.")
 

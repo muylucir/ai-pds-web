@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
 import { streamEvents, streamAnswers, streamFileAnswers, streamLive } from "@/lib/api/sse";
 import { getPending, getHistory, interruptTurn } from "@/lib/api/client";
-import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
+import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import type { AgentEvent, HistoryItem, QuestionFile, QuestionsPayload, StagePayload, DocumentPayload,
   PrototypeReadyPayload } from "@/lib/api/types";
 import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
@@ -346,28 +346,50 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     (answers: Record<string, string>) => {
       if (stopRef.current) return;
       liveTurnStartedRef.current = true;
-      // Capture the questions BEFORE clearing them: the bubble needs their
-      // text, and setPendingQuestions(null) is what takes it away. A bare
-      // "답변 제출" left the transcript unreadable on scroll-back.
-      const summary = pendingQuestions
-        ? answerSummary(pendingQuestions.questions, answers, t)
-        : t("chat.answersSubmitted");
       // 어느 경로로 보낼지는 **지금** 정한다 — 아래 setPendingQuestions(null)이
       // 판별자를 없애기 때문이다.
       const file = pendingQuestions?.file;
+      // 파킹된 턴 재개 경로(= AskUserQuestion 탈출로)의 폴백 텍스트. 그 라우트는
+      // 질문 파일을 손에 들고 있지 않아 `summary`를 만들 수 없으므로 프론트 렌더러를
+      // 쓴다. 문항을 **지금** 붙잡는 것이 요점이다 — 아래 setPendingQuestions(null)이
+      // 그것을 없앤다.
+      const localSummary = pendingQuestions
+        ? answerSummary(pendingQuestions.questions, answers, t)
+        : t("chat.answersSubmitted");
       setPendingQuestions(null);
 
       const aiId = nextId();
+      const userId = nextId();
       setItems((prev) => [
         ...prev,
-        { id: nextId(), role: "user", text: summary },
+        // 텍스트는 **서버 응답이 도착하면** 채운다(아래 onCreated). 지금 비워 두는
+        // 이유: 이 말풍선을 프론트가 만들던 동안 사용자가 본 것과 트랜스크립트에
+        // 기록된 것이 서로 달랐다 — 렌더가 두 벌이었기 때문이다
+        // (backend/aipds/answer_summary.py 헤더에 실측이 있다). 이제 서버가 만든
+        // 문자열 하나가 화면과 기록 양쪽에 쓰인다.
+        //
+        // 자리를 미리 잡는 것은 순서를 위해서다: AI 말풍선보다 앞에 와야 한다.
+        { id: userId, role: "user", text: "" },
         { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
       ]);
+      const onCreated = (created: { summary?: string }) => {
+        // `summary`가 없으면 파킹된 턴 재개 경로다 — 위 `localSummary`가 그 경로의
+        // 렌더다. 마커로 떨어뜨리면 그 경로만 읽을 수 없게 되고, 복원은
+        // `answer_store` 조인으로 실제 답변을 보여주므로 라이브와 복원이 **반대
+        // 방향으로** 갈라진다(agent/answer_store.py).
+        //
+        // 프론트 렌더러가 남는 것은 이 경로 때문만이 아니다 — 프로토타입 빌더의
+        // 스트림(usePrototypeStream)과 히스토리 복원(ChatTimeline)도 그것을 쓴다.
+        // 그 둘까지 백엔드로 옮기면 이 폴백과 함께 모듈을 지울 수 있다.
+        const text = created.summary || localSummary;
+        setItems((prev) => prev.map((it) =>
+          it.id === userId ? { ...it, text } : it));
+      };
       runTurn(
         (handlers) =>
           file
-            ? streamFileAnswers(projectId, file, answers, handlers)
-            : streamAnswers(projectId, answers, handlers),
+            ? streamFileAnswers(projectId, file, answers, { ...handlers, onCreated })
+            : streamAnswers(projectId, answers, { ...handlers, onCreated }),
         aiId,
       );
     },
