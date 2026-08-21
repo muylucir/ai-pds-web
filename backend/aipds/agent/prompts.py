@@ -205,7 +205,22 @@ def file_questions_stop(language: str, path: str) -> str:
             f"태그에 기록되니, 다음 턴에 파일을 다시 읽고 이어가세요.")
 
 
-def file_answers_recorded(language: str, path: str) -> str:
+def _answer_lines(answers: dict, label: str) -> str:
+    """답변을 `- {label}{n}: {값}` 목록으로. 문항 번호 오름차순.
+
+    번호로 정렬하는 이유: dict 순서는 프론트가 보낸 JSON 키 순서이고, 사용자가
+    문항을 건너뛰며 답하면 그 순서가 화면과 어긋난다.
+    """
+    def order(item):
+        try:
+            return (0, int(item[0]))
+        except (TypeError, ValueError):
+            return (1, str(item[0]))
+    return "\n".join(f"- {label}{n}: {value}"
+                     for n, value in sorted(answers.items(), key=order))
+
+
+def file_answers_recorded(language: str, path: str, answers: dict) -> str:
     """질문 파일에 답변이 기록된 뒤 에이전트를 다시 부르는 턴의 텍스트.
 
     `file_questions_stop`이 끝낸 턴을 이어받는다. 파킹된 future로 같은 턴을
@@ -215,14 +230,37 @@ def file_answers_recorded(language: str, path: str) -> str:
 
     사용자 말풍선으로 남는 대화 텍스트다 — UI 언어가 아니라 프로젝트 언어를
     따른다(`answer_first`가 같은 판단을 기록해 뒀다).
+
+    **답변을 본문에 담는다(2026-08-21).** 예전에는 파일만 지목했고, 그 결과
+    워크스페이스를 새로고침해 대화가 복원되면 **모든 라운드의 사용자 말풍선이 이
+    한 문구로 고정됐다.** 라이브 화면은 실제 답변을 그리므로(프론트의
+    `answerSummary`) 같은 라운드가 새로고침 전후로 다르게 보였다 —
+    `agent/answer_store.py` 헤더가 기록한 그 결함이 파일 질문 경로에서 되살아난
+    것이다.
+
+    그쪽은 `tool_use_id`로 레코드를 조인해 고쳤다. 이 경로에는 그 도구 호출이 아예
+    없다(에이전트가 부르는 것은 `Write`다). 그래서 **트랜스크립트 자체가 진실을
+    갖게 한다** — 조인 키도, 새 저장소도, 순서 의존도 생기지 않는다.
+
+    **불투명 마커로 조인하지 않는 이유**는 `frontend/lib/approvalMarker.ts`가 이
+    부류에 대해 이미 적어 뒀다: "이 텍스트는 기계 신호가 아니다. 그 턴은
+    트랜스크립트와 채팅 히스토리에 **사용자 말풍선으로 남는다.** 에이전트가
+    이해해야 하고 **사람이 읽어야 한다.**" 질문에 답한 사람이 할 말은 자기
+    답변이므로, 답변을 담는 것이 그 원칙과 같은 방향이다.
+
+    **파일은 여전히 권위다.** 값은 두 곳(이 문장과 `[Answer]:` 태그)에 있지만 같은
+    요청에서 같은 dict로 만들어지므로 드리프트가 불가능하고, 문장은 파일을 정본으로
+    지목한다 — 에이전트가 되읽는 대상은 바뀌지 않는다.
     """
+    listed = _answer_lines(answers, "Q" if _lang(language) == "en" else "")
     if _lang(language) == "en":
-        return (f"I answered the questions. My answers are now in the "
-                f"`[Answer]:` tags of `{path}` — read the file and continue from "
-                f"where you stopped. Do not ask them again.")
-    return (f"질문에 답했습니다. 답변은 `{path}`의 `[Answer]:` 태그에 들어 "
-            f"있으니, 파일을 읽고 멈춘 지점부터 이어가 주세요. 다시 묻지 "
-            f"마세요.")
+        return (f"I answered the questions:\n\n{listed}\n\n"
+                f"They are also recorded in the `[Answer]:` tags of `{path}` — "
+                f"read the file and continue from where you stopped. Do not ask "
+                f"them again.")
+    return (f"질문에 답했습니다:\n\n{listed}\n\n"
+            f"같은 답변이 `{path}`의 `[Answer]:` 태그에도 기록됐습니다 — 파일을 "
+            f"읽고 멈춘 지점부터 이어가 주세요. 다시 묻지 마세요.")
 
 
 def state_file_missing(language: str) -> str:

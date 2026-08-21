@@ -401,3 +401,54 @@ async def test_append_across_instances_does_not_overwrite_earlier_batches():
                                "message": {"role": "user", "content": "두 번째 턴"}}])
     items = await list_history(s3, "sess-3")
     assert [i.text for i in items] == ["첫 턴", "두 번째 턴"]
+
+
+def test_cli_a_file_round_restores_the_answers_the_user_gave():
+    """**실측(2026-08-21).** 새로고침으로 대화가 복원되면 파일 질문 라운드의 사용자
+    말풍선이 전부 같은 기계 문구로 고정돼 있었다 — "질문에 답했습니다. 답변은
+    `…-questions.md`의 `[Answer]:` 태그에 들어 있으니…".
+
+    이 경로에는 조인할 것이 없다: 파일 라운드는 `ask_questions` 도구 호출을 만들지
+    않으므로(에이전트가 부르는 것은 `Write`다) `tool_use_id`도, `answer_store`
+    레코드도 없다. 그래서 위 tool_result 분기가 아니라 아래 평문 user 분기로
+    떨어지고, 트랜스크립트에 있는 것이 그대로 말풍선이 된다.
+
+    고친 방향은 **트랜스크립트가 진실을 갖게 하는 것**이다
+    (`prompts.file_answers_recorded`). 그러면 이 함수는 한 줄도 바뀌지 않고 복원이
+    맞아진다 — 이 검사가 그 계약을 양쪽에서 고정한다.
+    """
+    from aipds.agent.prompts import file_answers_recorded
+
+    turn_text = file_answers_recorded(
+        "ko", "aiplc-docs/discovery/envision/pain-point-questions.md",
+        {1: "B", 12: "A,C"})
+    items = transform_cli_transcript([_cli("user", "user", turn_text)])
+
+    assert len(items) == 1 and items[0].role == "user"
+    restored = items[0].text
+    assert "B" in restored and "A,C" in restored, restored
+    # 기계 문구만 남는 상태로 되돌아가지 않게 한다.
+    assert restored.strip() != "질문에 답했습니다."
+
+
+def test_cli_a_file_round_restores_free_text_verbatim():
+    """자유 답변이 복원의 가장 중요한 경우다 — letter는 짧지만 자유 답변은 사용자가
+    쓴 유일한 기록이다.
+
+    **알려진 한계: 보기 letter는 라벨로 풀지 않는다.** 라이브 화면은
+    `frontend/lib/answerSummary.ts`가 letter를 보기 텍스트로 바꿔 그린다. 그 함수의
+    본체는 QuestionCard의 값 계약을 되돌리는 판별이고 — 한 문자열에 네 모양이
+    담긴다(`A`, `A: 부연`, `A,C`, 그리고 letter처럼 보이는 자유 텍스트) — 그 파일이
+    스스로 "telling them apart is the whole job here"라고 적어 뒀다. 파이썬에 다시
+    구현하면 그 판별이 두 벌이 되고, 어긋난 쪽이 조용한 쪽이 된다.
+    그래서 복원은 **제출된 값 그대로**를 담는다: 자유 답변은 온전하고, letter는
+    letter로 남는다. 라벨까지 맞추려면 구조화된 답변을 프론트로 보내 같은 함수를
+    쓰게 해야 하고, 그 조인 키는 별건이다.
+    """
+    from aipds.agent.prompts import file_answers_recorded
+
+    written = "예산은 3분기까지 확정되지 않았습니다. 그 전에는 B로 갑니다."
+    items = transform_cli_transcript([_cli("user", "user", file_answers_recorded(
+        "ko", "aiplc-docs/q.md", {3: written}))])
+
+    assert written in items[0].text
