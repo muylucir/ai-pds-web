@@ -1,7 +1,7 @@
-"""S3 persistence for the project list (spec 2026-07-20-project-persistence-delete).
+"""프로젝트 목록의 S3 영속화 (스펙 2026-07-20-project-persistence-delete).
 
-The manifest lives under the same prefix as the project's data (projects/<pid>/) so that
-deletion is atomic in one prefix. 'root' is an S3StoreLike whose prefix is projects/."""
+매니페스트는 프로젝트 데이터와 같은 prefix(projects/<pid>/)에 산다 — 삭제가
+prefix 하나로 원자적이 되도록. 'root'는 prefix가 projects/ 인 S3StoreLike."""
 from __future__ import annotations
 import asyncio
 import json
@@ -19,19 +19,19 @@ async def write_manifest(root: S3StoreLike, project_id: str, name: str | None,
                          created_at: str | None = None,
                          model_id: str | None = None,
                          language: str | None = None) -> str:
-    """Write the manifest and return the created_at it recorded -- the caller (the creation
-    route) registers the same instant in the registry so the list's sort key agrees.
+    """매니페스트를 쓰고 기록된 created_at을 반환한다 — 호출부(생성 라우트)가
+    같은 시각을 레지스트리에도 등록해 목록 정렬 기준을 일치시킨다.
 
-    model_id is **copied** rather than referenced from the catalogue: this project has to keep
-    running on the same model even if an administrator removes it from the catalogue. Unspecified
-    is recorded as an explicit null -- omitting the key would make 'an old manifest'
-    indistinguishable from 'a new project that chose no model'.
+    model_id는 카탈로그를 참조하지 않고 **복사**한다: 관리자가 그 모델을
+    카탈로그에서 지워도 이 프로젝트는 계속 같은 모델로 돌아야 한다. 미지정은
+    명시적 null로 기록한다 — 키를 빼면 '구 매니페스트'와 '모델을 고르지 않은
+    새 프로젝트'를 구별할 수 없다.
 
-    language ("ko"|"en") is this project's **output language** -- which language its documents,
-    prototypes and chat come out in. It is separate from the UI language (which is a per-user
-    cookie) and is decided once at creation: changing it mid-flight would leave the aiplc-docs/**
-    and transcripts already produced in the previous language, mixing document languages within
-    one project. Unspecified is recorded as an explicit null for the same reason as model_id.
+    language("ko"|"en")는 이 프로젝트의 **생성물 언어**다 — 문서·프로토타입·
+    채팅이 어느 언어로 나오는지. UI 언어와 별개이고(그쪽은 사용자별 쿠키),
+    생성 시점 1회 결정이다: 진행 중에 바꾸면 이미 만들어진 aiplc-docs/**와
+    트랜스크립트가 이전 언어로 남아 한 프로젝트 안에서 문서 언어가 섞인다.
+    model_id와 같은 이유로 미지정도 명시적 null로 기록한다.
     """
     ts = created_at or datetime.now(timezone.utc).isoformat()
     body = json.dumps(
@@ -45,12 +45,12 @@ async def write_manifest(root: S3StoreLike, project_id: str, name: str | None,
 async def restore_projects(
     root: S3StoreLike,
 ) -> list[tuple[str, str | None, str | None, str | None, str | None]]:
-    """Scan projects/ -> GET the manifests in parallel ->
+    """projects/ 스캔 → 매니페스트 병렬 GET →
     [(pid, name, created_at, model_id, language)].
-    A corrupted entry is logged and skipped -- one rotten entry does not block restoring the
-    rest. created_at, model_id and language may be absent from an old manifest and so are
-    nullable (sorted first, the model falls back to env, the language falls back to 'ko' --
-    ProjectRegistry.get_language settles it)."""
+    손상 항목은 로그 후 건너뜀 — 하나가 썩어도 나머지 복원을 막지 않는다.
+    created_at·model_id·language는 구 매니페스트에 없을 수 있어 None 허용
+    (정렬 시 맨 앞, 모델은 env 폴백, 언어는 'ko' 폴백 —
+    ProjectRegistry.get_language가 확정한다)."""
     keys = [k for k in await root.list("") if _MANIFEST.match(k)]
     bodies = await asyncio.gather(*(root.get(k) for k in keys), return_exceptions=True)
     out: list[tuple[str, str | None, str | None, str | None, str | None]] = []
@@ -73,8 +73,7 @@ async def restore_projects(
 
 async def delete_project_data(sessions: S3StoreLike, root: S3StoreLike,
                               project_id: str) -> None:
-    """Delete the sessions and the artifacts (including the manifest) in full. Exceptions
-    propagate -- the caller (the route) turns them into a 500 and keeps the registry so a retry
-    is possible."""
+    """세션 + 산출물(매니페스트 포함) 전량 삭제. 예외는 전파 — 호출부(라우트)가
+    500으로 변환하고 레지스트리를 유지해 재시도를 가능하게 한다."""
     await sessions.delete_prefix(f"session_{project_id}/")
     await root.delete_prefix(f"{project_id}/")

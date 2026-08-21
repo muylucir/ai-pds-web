@@ -1,36 +1,32 @@
-# backend/aipds/agent/workspace_rules.py -- reproduce the upstream AI-PLC layout
-# in the workspace and prepend the language directive to it.
+# backend/aipds/agent/workspace_rules.py — 상류 AI-PLC 레이아웃을
+# 워크스페이스에 재현하고, 언어 지시를 그 앞에 붙인다.
 #
-# Upstream's Claude Code setup (aws-samples/sample-ai-plc) copies core-workflow.md
-# to CLAUDE.md at the project root and puts the detail rules in
-# aws-aiplc-rule-details/. core-workflow.md's
-# `Rule details location: ./aws-aiplc-rule-details/` assumes a CWD-relative path,
-# so the rules have to live in the workspace rather than in CLAUDE_CONFIG_DIR --
-# that is what lets the agent read that path verbatim. This layout is also why the
-# Strands-era `aiplc-rules/` prefix special-case in file_read is no longer needed.
+# 상류(aws-samples/sample-ai-plc)의 Claude Code 셋업은 core-workflow.md를
+# 프로젝트 루트의 CLAUDE.md로 복사하고 상세 룰을 aws-aiplc-rule-details/에 둔다.
+# core-workflow.md의 `Rule details location: ./aws-aiplc-rule-details/`가
+# CWD 상대경로를 전제하므로 룰은 CLAUDE_CONFIG_DIR이 아니라 워크스페이스에 있어야
+# 한다 — 그래야 에이전트가 그 경로를 그대로 읽는다. 이 배치가 있기 때문에
+# Strands 시절 file_read의 `aiplc-rules/` 프리픽스 특수 처리가 필요 없어진다.
 #
-# Why the language directive lives **here** (spec 2026-08-03-bilingual-ko-en §3):
-# CLAUDE_CONFIG_DIR is shared by every project, so it cannot carry a per-project
-# language. With setting_sources=["user", "project"], "user" is that shared
-# directory and "project" is the workspace -- so a per-project language can only
-# flow through the CLAUDE.md this file writes (the project level).
+# 언어 지시가 **여기**로 온 이유(스펙 2026-08-03-bilingual-ko-en §3):
+# CLAUDE_CONFIG_DIR은 전 프로젝트가 공유하므로 프로젝트별 언어를 담을 수 없다.
+# setting_sources=["user", "project"]에서 "user"가 그 공유 디렉토리이고
+# "project"가 워크스페이스이므로, 프로젝트별 언어는 이 파일이 쓰는 CLAUDE.md
+# (=project 레벨)로만 흐를 수 있다.
 #
-# And the language directive **must not exist in two places.** Commit 7f33652 was
-# that failure: core-workflow's "conduct everything in Korean" and the template's
-# `**CRITICAL**: ... exactly as defined` said opposite things, the latter won, and
-# some twenty PR/FAQ questions stayed in English. So the language line was removed
-# from the upstream rule files and from the shared config, making this module's
-# LANGUAGE_DIRECTIVES the single source (test_workspace_rules holds that
-# invariant).
+# 그리고 언어 지시는 **두 곳에 있으면 안 된다.** 커밋 7f33652가 그 실패였다:
+# core-workflow의 "한국어로 진행"과 템플릿의 `**CRITICAL**: ... exactly as
+# defined`가 반대를 말했고, 후자가 이겨서 PR/FAQ 질문 20여 개가 영어로 남았다.
+# 그래서 상류 룰 파일과 공유 config에서 언어 줄을 지우고, 유일한 출처를
+# 이 모듈의 LANGUAGE_DIRECTIVES로 만든다(test_workspace_rules가 그 불변식을 지킨다).
 #
-# **This file assembles exactly two things: the language directive and
-# core-workflow.** It once also prepended the tool-parameter encoding rule
-# (2026-08-16 keumkang-v3), which was a workaround for the AskUserQuestion path.
-# That tool became denied by default (claude_driver.FILE_QUESTIONS_ENV) and the
-# shared config started stating "nothing below narrows it", so the rationale
-# disappeared from both ends and the rule was removed on 2026-08-18. The only case
-# that would need it back is turning that env off to return to the old question
-# path -- and the shared config's clause still applies there.
+# **이 파일이 조립하는 것은 언어 지시 + core-workflow 둘뿐이다.** 한때 툴
+# 파라미터 인코딩 규칙도 맨 앞에 붙였는데(2026-08-16 keumkang-v3), 그것은
+# AskUserQuestion 경로의 워크어라운드였다. 그 도구가 기본 거부로 바뀌고
+# (claude_driver.FILE_QUESTIONS_ENV) 공유 config가 "nothing below narrows it"을
+# 명시하면서 근거가 양쪽에서 사라져 2026-08-18에 떼어냈다. 규칙이 필요해지는
+# 유일한 경우는 그 env를 꺼서 옛 질문 경로로 돌아갈 때이고, 그때도 공유
+# config의 조항이 그대로 적용된다.
 from __future__ import annotations
 
 import logging
@@ -42,48 +38,40 @@ _log = logging.getLogger("aipds.agent")
 _CORE_WORKFLOW = "aws-aiplc-rules/core-workflow.md"
 _DETAILS_DIR = "aws-aiplc-rule-details"
 
-#: The language convention prepended to the workspace `CLAUDE.md`. **Two complete
-#: versions, one per language.**
+#: 워크스페이스 `CLAUDE.md` 맨 앞에 붙는 언어 규약. **언어별 완성본 두 벌이다.**
 #:
-#: **Why not in the ruleset tree (2026-08-18).** Up to 2047ac3 this was
-#: `language/` inside the ruleset tree. Upstream `aiplc-rules/` contains only
-#: `.gitkeep`, `aws-aiplc-rules/` and `aws-aiplc-rule-details/`, so that was our
-#: content mixed into an upstream tree -- and it stopped a ruleset swap from being
-#: "replace the directory wholesale", because doing that would take the directive
-#: with it. The tree is also treated as read-only, so it was a place we could not
-#: edit the directive even when we needed to.
+#: **왜 룰셋 트리가 아닌가(2026-08-18).** 2047ac3까지는 룰셋 트리 안의 `language/`
+#: 였다. 업스트림 `aiplc-rules/`에는 `.gitkeep`·`aws-aiplc-rules/`·
+#: `aws-aiplc-rule-details/`뿐이므로 그것은 업스트림 트리 안에 섞인 우리 콘텐츠였고,
+#: 룰셋 교체가 "디렉터리를 통째로 갈아 끼운다"로 끝날 수 없게 만들었다 — 그렇게 하면
+#: 지시가 함께 사라진다. 읽기 전용으로 다루는 트리라 고칠 수도 없는 자리였다.
 #:
-#: **Why code rather than a file (2026-08-19).** The only production reader was
-#: `place_rules` below. What being a file bought us was a "might be missing" state
-#: plus one raise guarding it -- and a constant cannot have that state: a string
-#: literal cannot be lost, so "assemble without the directive" becomes
-#: structurally impossible. `_LANGUAGES` is derived from this dict too, so there is
-#: nothing to keep in sync with the filesystem by hand.
+#: **왜 파일이 아니라 코드인가(2026-08-19).** 프로덕션 독자는 아래 `place_rules`
+#: 하나뿐이었다. 파일이라는 사실이 사 온 것은 "없을 수 있다"는 상태와 그것을 지키는
+#: raise 하나였는데, 상수는 그 상태를 가질 수 없다 — 문자열 리터럴은 잃어버릴 수
+#: 없으므로 "지시 없이 조립한다"가 구조적으로 불가능해진다. `_LANGUAGES`도 이 dict에서
+#: 파생되므로 파일시스템과 손으로 맞출 것이 없다.
 #:
-#: This is also the existing convention in this repo: text the model reads follows
-#: the project language, and code owns it as two per-language versions
-#: (`agent/prompts.py`, `proto/prompts.py`, `survey/builder.py`,
-#: `survey/report_labels.py`, and `agent/discovery_guard.py`'s header states it as
-#: the convention). `language/*.md` was the only exception.
+#: 그리고 이것이 이 리포의 기존 규약이다: 모델이 읽는 텍스트는 프로젝트 언어를
+#: 따라야 하고 코드가 언어별 두 벌로 소유한다(`agent/prompts.py`,
+#: `proto/prompts.py`, `survey/builder.py`, `survey/report_labels.py`,
+#: 그리고 `agent/discovery_guard.py` 헤더가 그것을 규약으로 적어 뒀다).
+#: `language/*.md`만 예외였다.
 #:
-#: **Why not one template with the language name substituted in.** Then the prose
-#: itself is fixed to one language, and that is a measured defect: on 2026-08-04 an
-#: English project's conversation ran in Korean, and the only cause was that a
-#: shared config file was Korean prose (see that comment in
-#: discovery-config/CLAUDE.md: "The language a document is written in is itself a
-#: language signal"). Implying it is not enough either -- `survey/builder.py` has
-#: the measurement in the opposite direction (2026-08-05: an English prompt
-#: carrying a Korean spec produced questions that were entirely Korean; the closer,
-#: more concrete signal wins). So we do **both**: name the language AND write in
-#: it.
+#: **왜 템플릿 한 벌에 언어 이름만 끼우지 않는가.** 그러면 산문의 언어가 한쪽으로
+#: 고정된다. 그것은 실측된 결함이다 — 2026-08-04, 영어 프로젝트의 대화가 한국어로
+#: 돌았고 원인은 공유 config 파일이 한국어 산문이었다는 것뿐이었다
+#: (discovery-config/CLAUDE.md의 그 주석: "The language a document is written in is
+#: itself a language signal"). 그리고 암시만으로도 부족하다 — `survey/builder.py`가
+#: 반대 방향의 실측을 갖고 있다(2026-08-05: 영어 프롬프트에 한국어 명세를 실었더니
+#: 문항이 전부 한국어로 나왔다, 더 가깝고 구체적인 신호가 이긴다). 그래서 **이름을
+#: 명시하는 것과 그 언어로 쓰는 것을 둘 다** 한다.
 #:
-#: **The two versions must stay symmetric.** While they were two separate files
-#: they drifted: ko 3,389 characters vs en 1,310, and the en one ended with "There
-#: is nothing to translate" and so carried no judgement about handling the
-#: templates at all. An English project needs that judgement too (telling
-#: structural markers from translatable text is language-independent, and a
-#: template can carry literals in another language). test_workspace_rules holds the
-#: two versions against each other.
+#: **두 판은 대칭이어야 한다.** 파일 두 개로 떨어져 있는 동안 갈라져 있었다 —
+#: ko 3,389자 / en 1,310자였고, en은 "There is nothing to translate"로 끝내 양식
+#: 처리 판단을 아예 담지 않았다. 영어 프로젝트에서도 그 판단은 필요하다(구조 마커와
+#: 번역 대상의 구분은 언어와 무관하고, 양식에 다른 언어의 리터럴이 섞일 수 있다).
+#: test_workspace_rules가 두 판의 대조를 지킨다.
 LANGUAGE_DIRECTIVES = {
     "ko": """\
 # 언어 규약 (이 문서 전체의 전제)
@@ -136,37 +124,35 @@ this convention.
 """,
 }
 
-#: Supported languages. Must be the same set as ProjectRegistry._LANGUAGES --
-#: derived from the dict above, so there is nothing to align by hand.
+#: 지원 언어. ProjectRegistry._LANGUAGES와 같은 집합이어야 한다 — 위 dict에서
+#: 파생되므로 두 곳을 손으로 맞출 일은 없다.
 _LANGUAGES = tuple(LANGUAGE_DIRECTIVES)
 _DEFAULT_LANGUAGE = "ko"
 
 
 def _copy_if_changed(src: Path, dst: Path) -> None:
-    """Skip only when size **and** mtime both match.
+    """크기와 mtime이 **둘 다** 같으면 건너뛴다.
 
-    This is a cache that avoids rewriting dozens of files every turn, but a loose
-    test collapses this module's whole reason for existing. Placing the rules every
-    turn is what makes **a ruleset swap reach a project already in progress** (the
-    rules are not in S3, and the workspace is rebuilt each turn). Comparing size
-    alone means that after a ruleset update, any detail rule whose byte count
-    happens to match stays stale -- with no signal at all. It would surface only as
-    the agent following an old procedure, which is close to untraceable.
+    매 턴 수십 개 파일을 다시 쓰지 않기 위한 캐시이지만, 판정이 헐거우면 이
+    모듈의 존재 이유가 그 자리에서 무너진다. 매 턴 배치하는 목적은 **룰셋 교체가
+    진행 중인 프로젝트에 닿는 것**이다(룰은 S3에 없고 워크스페이스는 턴마다
+    재구성된다). 크기만 비교하면 룰셋을 갱신했는데 어떤 상세 룰의 바이트 수가
+    우연히 같을 때 그 파일만 낡은 채로 남고, 아무 신호가 없다 — 에이전트가 옛
+    절차를 따르는 것으로만 드러나므로 추적이 거의 불가능하다.
 
-    Size plus mtime is enough: rules are replaced by a deployment, so changed
-    content also changes the mtime. Hashing would read dozens of files every turn
-    and bring back the very cost this cache removes. `copy2` rather than `copyfile`
-    is for mtime preservation -- without it dst gets a fresh timestamp every time,
-    the comparison never matches, and the cache is effectively off.
+    mtime을 함께 보는 것으로 충분하다: 룰은 배포가 파일을 갈아 끼우므로 내용이
+    바뀌면 mtime도 바뀐다. 해시는 매 턴 수십 개 파일을 읽어야 해서 이 캐시가
+    없애려던 비용을 되살린다. `copyfile`이 아니라 `copy2`인 이유는 mtime 보존이다 —
+    보존하지 않으면 dst가 매번 새 시각을 갖고, 비교가 영원히 불일치해 캐시가
+    사실상 꺼진다.
 
-    **Compare `st_mtime_ns` exactly.** Truncating to seconds (`int(st_mtime)`)
-    misses rules replaced within the same second, which is common because a
-    deployment writes dozens of files at once. Nor is this relaxed to "dst newer
-    than src means current": unpacking an archive can restore the original mtime
-    into the past, and then an updated rule is judged stale forever. Exact equality
-    is the precise meaning of "this is a copy of that file", and the cost of
-    guessing wrong is copying 23 small files one extra time -- no comparison to the
-    cost of missing one.
+    **`st_mtime_ns`로 정확히 비교한다.** 초 단위로 자르면(`int(st_mtime)`) 같은
+    초 안에 갈아 끼운 룰을 놓친다 — 배포는 파일 수십 개를 순식간에 쓰므로 흔한
+    경우다. 그리고 "dst가 src보다 새로우면 최신"으로 완화하지도 않는다: 아카이브를
+    풀어 배포하면 원본 mtime이 과거로 복원될 수 있고, 그러면 갱신된 룰이 영원히
+    낡은 것으로 판정된다. 정확 일치가 "이것은 그 파일의 사본이다"의 정확한 의미고,
+    빗나갈 때의 대가는 작은 파일 23개를 한 번 더 복사하는 것뿐이다 — 놓칠 때의
+    대가와 비교가 되지 않는다.
     """
     if dst.is_file():
         s, d = src.stat(), dst.stat()
@@ -178,24 +164,21 @@ def _copy_if_changed(src: Path, dst: Path) -> None:
 
 def place_rules(workspace: str, rules_dir: str,
                 language: str = _DEFAULT_LANGUAGE) -> None:
-    """`LANGUAGE_DIRECTIVES[lang]` + `core-workflow.md` -> `<workspace>/CLAUDE.md`,
-    and `aws-aiplc-rule-details/` -> `<workspace>/aws-aiplc-rule-details/`.
+    """`LANGUAGE_DIRECTIVES[lang]` + `core-workflow.md` → `<workspace>/CLAUDE.md`,
+    `aws-aiplc-rule-details/` → `<workspace>/aws-aiplc-rule-details/`.
 
-    Idempotent and cheap enough to call every turn. Missing rules raise
-    FileNotFoundError: proceeding quietly would leave the agent running without
-    knowing the workflow, which shows up as an empty conversation and is hard to
-    trace back. **The language directive has no such branch**: it is a constant, so
-    it cannot be missing (a failure path that disappeared when it moved out of a
-    file on 2026-08-19).
+    멱등이며 매 턴 호출해도 싸다. 룰이 없으면 FileNotFoundError — 조용히
+    진행하면 에이전트가 워크플로우를 모르는 채로 돌고, 그건 빈 대화로 나타나서
+    원인 추적이 어렵다. **언어 지시에는 그 분기가 없다**: 상수이므로 없을 수
+    없다(2026-08-19에 파일에서 옮겨 오면서 사라진 실패 경로다).
 
-    **The language directive comes first.** In the earlier failure the template's
-    CRITICAL won because it was "closer in context", so the language is placed at
-    the very top as a premise for the whole document -- and both versions go on to
-    explain how that CRITICAL should be read.
+    **언어 지시가 앞에 온다.** 이전 실패에서 "맥락이 가까운" 템플릿의 CRITICAL이
+    언어 지시를 이겼으므로, 여기서는 언어를 문서 전체의 전제로 맨 앞에 두고,
+    두 판 모두 그 CRITICAL을 어떻게 읽어야 하는지까지 설명한다.
 
-    An unknown language falls back to the default. The create route validates it,
-    so nothing else arrives through the normal path; but running in Korean beats
-    running without rules because of a corrupted manifest.
+    알 수 없는 language는 기본값으로 떨어진다. 라우트가 생성 시점에 검증하므로
+    정상 경로로는 들어올 수 없지만, 손상된 매니페스트 때문에 룰 없이 도는
+    것보다 한국어로 도는 편이 낫다.
     """
     root = Path(rules_dir)
     core = root / _CORE_WORKFLOW
@@ -205,37 +188,31 @@ def place_rules(workspace: str, rules_dir: str,
     lang = language if language in _LANGUAGES else _DEFAULT_LANGUAGE
     if lang != language:
         _log.warning("unknown project language %r — using %s", language, lang)
-    # The language directive comes from this module's constant, not from
-    # `rules_dir` (see LANGUAGE_DIRECTIVES). It used to be a file, which needed a
-    # "raise if missing" branch; a constant cannot be missing, so that branch is
-    # gone.
+    # 언어 지시는 `rules_dir`가 아니라 이 모듈의 상수에서 온다
+    # (LANGUAGE_DIRECTIVES 참고). 예전에는 파일이어서 "없으면 던진다" 분기가
+    # 필요했는데, 상수는 없을 수 없으므로 그 분기가 사라졌다.
     directive = LANGUAGE_DIRECTIVES[lang]
 
     ws = Path(workspace)
     ws.mkdir(parents=True, exist_ok=True)
-    # The assembled result is not a copy of a source file, so _copy_if_changed's
-    # comparison does not apply. If the two language directives happened to share a
-    # size and mtime, switching language would leave the file untouched -- and that
-    # silence is exactly the failure shape this spec exists to remove. Writing one
-    # file is cheap. The same bytes are written every turn, so the prompt cache
-    # still holds.
+    # 조립 결과는 원본 파일이 아니므로 _copy_if_changed의 비교를 쓰지 않는다.
+    # 두 언어 지시의 크기·mtime이 우연히 같으면 언어를 바꿔도 파일이 그대로
+    # 남는데, 그 침묵이 정확히 이 스펙이 없애려는 실패 모양이다. 파일 하나
+    # 쓰기는 싸다. 그리고 매 턴 같은 바이트를 쓰므로 프롬프트 캐시는 유지된다.
     #
-    # **The language directive is the only thing at the front now.** The
-    # tool-parameter encoding rule that used to sit here was removed on
-    # 2026-08-18: it was a workaround for the AskUserQuestion path (file writes
-    # were clean; only that tool's input was mangled -- see
-    # agent/question_file_answers.py), and that tool is now denied by default
-    # (claude_driver.FILE_QUESTIONS_ENV). The rule itself still lives in the shared
-    # config, which explicitly declines to narrow itself
-    # (discovery-config/CLAUDE.md: "nothing below narrows it"), so there is no
-    # reason to duplicate it here -- one rule in two places means nobody can tell
-    # which copy is current, a principle this repository already pins with a test
-    # for the depth bar.
+    # **언어 지시가 1행이다.** 여기 있던 툴 파라미터 인코딩 규칙은 2026-08-18에
+    # 떼어냈다 — 그것은 AskUserQuestion 경로의 워크어라운드였고(파일 쓰기는
+    # 깨끗하고 그 도구의 입력만 깨졌다, agent/question_file_answers.py 참고)
+    # 그 도구는 이제 기본으로 거부된다(claude_driver.FILE_QUESTIONS_ENV).
+    # 규칙 자체는 공유 config에 남아 있고, 그쪽이 스스로를 좁히지 않겠다고
+    # 명시하므로(discovery-config/CLAUDE.md: "nothing below narrows it") 이 자리에
+    # 복제해 둘 이유가 없어졌다 — 한 규칙이 두 곳에 있으면 어느 쪽이 최신인지
+    # 알 수 없다는 것이 이 리포지토리가 깊이 기준에 대해 이미 테스트로 고정한
+    # 원칙이다.
     #
-    # And this position should go to whatever varies per project. The language
-    # directive has lost this fight once (7f33652: the template's CRITICAL won and
-    # some twenty PR/FAQ questions stayed in English). A premise for the whole
-    # document goes at the very top.
+    # 그리고 이 자리는 프로젝트마다 달라지는 것에 주어야 한다. 언어 지시는 한
+    # 번 싸움에서 진 적이 있다(7f33652: 템플릿의 CRITICAL이 이겨 PR/FAQ 질문
+    # 20여 개가 영어로 남았다). 문서 전체의 전제는 맨 앞에 둔다.
     (ws / "CLAUDE.md").write_text(
         directive + "\n\n"
         + core.read_text(encoding="utf-8"),
@@ -243,8 +220,7 @@ def place_rules(workspace: str, rules_dir: str,
 
     details = root / _DETAILS_DIR
     if not details.is_dir():
-        # The workflow can start on core alone (detail rules are read on
-        # demand), so this is a warning rather than an error.
+        # core만으로도 워크플로우는 시작된다(상세 룰은 온디맨드) — 경고만.
         _log.warning("AI-PLC rule details missing: %s", details)
         return
     for src in details.rglob("*"):

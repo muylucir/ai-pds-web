@@ -1,48 +1,45 @@
-# backend/aipds/answer_summary.py -- submitted answers as the chat text a human reads.
+# backend/aipds/answer_summary.py — 제출된 답변을 사람이 읽는 채팅 텍스트로.
 #
-# **Why the backend (2026-08-21).** This logic lived only in
-# `frontend/lib/answerSummary.ts`, and that was the root of the defect: the bubble the user
-# saw on screen was built inside the browser and never went to the server. The server sent
-# a different sentence of its own making to the model, and that was recorded in the
-# transcript as the user's utterance (routes/answers.py). The live screen showed the real
-# answers and the restored screen showed a machine phrase -- measured: 13 of one project's
-# 16 user utterances were "질문에 답했습니다. 답변은 …의 [Answer]: 태그에 들어 있으니…".
+# **왜 백엔드인가(2026-08-21).** 이 판별은 `frontend/lib/answerSummary.ts`에만
+# 있었고, 그것이 결함의 뿌리였다: 사용자가 화면에서 본 말풍선은 브라우저 안에서만
+# 만들어져 서버로 간 적이 없다. 서버는 자기가 만든 다른 문장을 모델에게 보내고
+# 그것이 트랜스크립트에 사용자 발화로 기록됐다(routes/answers.py). 라이브 화면은
+# 실제 답변을, 복원 화면은 기계 문구를 보여줬고 — 실측: 프로젝트 하나의 user 발화
+# 16개 중 13개가 "질문에 답했습니다. 답변은 …의 [Answer]: 태그에 들어 있으니…"였다.
 #
-# Two representations diverge. So the rendering lives here in one place, and the frontend
-# uses the string the server built. The opposite direction -- the frontend building it and
-# sending it up -- is not taken: this text is read by the model too, so it has to follow the
-# project language, and having the frontend manage two languages is the shape of the
-# 2026-08-04 defect (the same judgement in routes/answers.py).
+# 표현이 둘이면 갈라진다. 그래서 렌더를 여기 한 벌로 두고, 프론트는 서버가 만든
+# 문자열을 그대로 쓴다. 프론트가 만들어 서버로 보내는 방향은 택하지 않는다 —
+# 이 텍스트는 모델도 읽으므로 프로젝트 언어를 따라야 하고, 두 언어를 프론트가
+# 관리하게 되는 것이 2026-08-04 결함의 모양이다(routes/answers.py의 같은 판단).
 #
-# One more thing was fixed by the move: while it lived in the frontend, the empty-submission
-# wording followed the **UI language**. A chat bubble has to be in the project language (the
-# agent/prompts.py header; lib/approvalMarker.ts records the same judgement).
+# 옮기면서 고쳐진 것이 하나 더 있다: 프론트에 있던 동안 빈 제출 문구가 **UI 언어**를
+# 따랐다. 채팅 말풍선은 프로젝트 언어여야 한다(agent/prompts.py 헤더,
+# lib/approvalMarker.ts가 같은 판단을 기록해 뒀다).
 #
-# **The contract to invert.** QuestionCard packs four shapes into one string
+# **되돌려야 하는 계약.** QuestionCard가 한 문자열에 네 모양을 담는다
 # (components/questions/QuestionCard.tsx):
 #
-#     "A"                  a bare letter
-#     "A: 부연"             a letter plus free-prose elaboration
-#     "A,C"                a multi-select comma join
-#     "Broker: 큐를 …"      free text that happens to start like a letter
+#     "A"                  맨 letter
+#     "A: 부연"             letter + 자유 서술 부연
+#     "A,C"                복수 선택의 콤마 결합
+#     "Broker: 큐를 …"      letter처럼 시작하는 자유 텍스트
 #
-# Only the first three can be expanded, and **telling them apart is this module's entire
-# job** -- splitting free text on `": "` corrupts the very answer it set out to preserve.
+# 앞의 셋만 펼칠 수 있고 **그것을 가려내는 것이 이 모듈의 일 전부**다 — 자유 텍스트를
+# `": "`로 쪼개면 살리려던 답변을 훼손한다.
 from __future__ import annotations
 
 from aipds.models import QuestionFile, QuestionOption
 
-#: The bubble for an empty submission. An empty string would be an empty bubble, so one
-#: line is left. The same wording as the frontend's `chat.answersSubmitted` -- which now
-#: receives this value instead.
+#: 빈 제출의 말풍선. 빈 문자열이면 빈 말풍선이 되므로 한 줄을 남긴다.
+#: frontend `chat.answersSubmitted`와 같은 문구다 — 그쪽은 이제 이 값을 받는다.
 _SUBMITTED = {"ko": "답변 제출", "en": "Answers submitted"}
 
 
 def _letter_text(options: list[QuestionOption], letter: str) -> str | None:
-    """The text of the **non-Other** option carrying that letter. None when there is none.
+    """그 letter를 가진 **non-Other** 보기의 텍스트. 없으면 None.
 
-    Excluding is_other is deliberate: that letter is an internal notation and its `text` is
-    a placeholder, not the user's answer.
+    is_other를 제외하는 것이 의도다: 그 letter는 내부 표기이고 `text`는
+    플레이스홀더이지 사용자의 답변이 아니다.
     """
     for o in options:
         if not o.is_other and o.letter == letter:
@@ -52,11 +49,10 @@ def _letter_text(options: list[QuestionOption], letter: str) -> str | None:
 
 def _expand_letter_list(options: list[QuestionOption],
                         value: str) -> str | None:
-    """`"A,C"` -> `"A. 자동 생성, C. 이력 관리"`. None when it is not a list.
+    """`"A,C"` → `"A. 자동 생성, C. 이력 관리"`. 목록이 아니면 None.
 
-    If even one token is not a non-Other option's letter, **the whole thing is treated as
-    free text** -- an all-or-nothing rule that keeps a sentence containing a comma from
-    being mistaken for a list of letters.
+    토큰 하나라도 non-Other 보기의 letter가 아니면 **전체를 자유 텍스트로 본다** —
+    쉼표가 들어간 문장을 letter 목록으로 오인하지 않기 위한 전부-또는-전무다.
     """
     parts = [p.strip() for p in value.split(",")]
     if len(parts) < 2:
@@ -71,7 +67,7 @@ def _expand_letter_list(options: list[QuestionOption],
 
 
 def _render_answer(options: list[QuestionOption], value: str) -> str:
-    """The form the reader should see: the option's text when it points at an option, the\n    original when it is free text."""
+    """읽는 사람이 봐야 하는 형태: 보기를 가리키면 보기 텍스트, 자유 텍스트면 원문."""
     multi = _expand_letter_list(options, value)
     if multi is not None:
         return multi
@@ -80,8 +76,8 @@ def _render_answer(options: list[QuestionOption], value: str) -> str:
     if whole is not None:
         return f"{value}. {whole}"
 
-    # "A: 부연" -- this branch is taken **only when the head is a real non-Other letter**.
-    # Everything else ("Broker: …" included) is free text and is left alone.
+    # "A: 부연" — 머리가 **실재하는 non-Other letter일 때만** 이 갈래로 온다.
+    # 그 밖의 모든 것("Broker: …" 포함)은 자유 텍스트이고 손대지 않는다.
     idx = value.find(": ")
     if idx > 0:
         head = value[:idx]
@@ -94,15 +90,13 @@ def _render_answer(options: list[QuestionOption], value: str) -> str:
 
 def answer_summary(qfile: QuestionFile, answers: dict[int, str],
                    language: str) -> str:
-    """The chat text for a submitted bundle of answers.
+    """제출된 답변 묶음의 채팅 텍스트.
 
-    It follows **the question list's order** -- the key order of `answers` is the JSON order
-    the frontend sent, and if the user answered questions out of order that order disagrees
-    with the screen.
+    **문항 목록 순서**를 따른다 — `answers`의 키 순서는 프론트가 보낸 JSON 순서이고,
+    사용자가 문항을 건너뛰며 답하면 그 순서가 화면과 어긋난다.
 
-    A key not present among the questions is appended rather than dropped: with a stale form
-    or a renumbering, the reader losing one line of question is better than losing the answer
-    itself.
+    문항에 없는 키는 버리지 않고 뒤에 붙인다: 낡은 폼이나 번호 재부여가 있으면
+    읽는 사람이 질문 한 줄을 잃는 것이 답변 자체를 잃는 것보다 낫다.
     """
     blocks: list[str] = []
     seen: set[int] = set()

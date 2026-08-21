@@ -62,10 +62,9 @@ async def create_survey(pid: str, slug: str):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="prototype spec not found")
 
-    # Also carry the evidence the spec summary came from (the pain-point analysis
-    # and the business context). Missing is fine: gather_context degrades every
-    # lookup failure to None, so this call never takes the 502 path below
-    # (survey/inputs.py).
+    # 스펙 요약이 나온 근거(페인포인트 분석·비즈니스 컨텍스트)를 함께 싣는다.
+    # 없으면 없는 대로 간다 — gather_context는 모든 조회 실패를 None으로
+    # 강등하므로 이 호출이 아래 502 경로를 타지 않는다(survey/inputs.py).
     context = await gather_context(s3)
 
     token = secrets.token_urlsafe(TOKEN_BYTES)

@@ -153,18 +153,15 @@ async def load_transcript(s3: S3StoreLike, session_id: str) -> list[dict]:
     resolved, _ = _sdk_session_id({"session_id": session_id})
     prefix = _session_prefix({"session_id": resolved})
     keys = sorted(await s3.list(prefix))
-    # **Parallel GETs.** Read sequentially, batch-count x S3 round trip blocks
-    # the screen from loading. Measured (2026-08-17, deployed instance): 30ms per
-    # round trip, 32 batches sequential 0.98s vs parallel 0.11s (8.6x). It scales
-    # linearly with session length, so a workshop session of 200 batches would take
-    # 6s sequentially. `gather` returns results in input order, so the key sort
-    # above still guarantees ordering (project_store.load_manifest uses the same
-    # pattern).
+    # **병렬 GET.** 순차로 읽으면 배치 수 × S3 왕복이 그대로 화면 로딩을 막는다 —
+    # 실측(2026-08-17, 배포 인스턴스): 왕복 1회 30ms, 32배치 순차 0.98초 vs 병렬
+    # 0.11초(8.6배). 세션 길이에 선형이므로 워크숍 하나가 200배치면 순차는 6초다.
+    # `gather`는 입력 순서대로 결과를 돌려주므로 위의 키 정렬이 그대로 순서를
+    # 보장한다(project_store.load_manifest가 같은 패턴을 쓴다).
     #
-    # return_exceptions keeps one failing batch from swallowing the rest. The
-    # transcript is auxiliary data for history restore, and one corrupt object
-    # turning the whole conversation into an empty list would be worse (the same
-    # principle as list_history's degradation).
+    # 한 배치의 실패가 나머지를 못 삼키게 return_exceptions를 쓴다. 트랜스크립트는
+    # 히스토리 복원용 보조 데이터이고, 한 객체가 손상됐을 때 대화 전체가 빈 목록이
+    # 되는 것이 더 나쁘다(list_history의 강등과 같은 원칙).
     bodies = await asyncio.gather(*(s3.get(k) for k in keys),
                                  return_exceptions=True)
     entries: list[dict] = []

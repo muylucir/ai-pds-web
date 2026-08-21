@@ -1,58 +1,47 @@
-# backend/aipds/agent/reconcile.py -- **derive** UI events from the workspace.
+# backend/aipds/agent/reconcile.py — 워크스페이스에서 UI 이벤트를 **유도**한다.
 #
-# **Why this module exists.** The stage sidebar and the Prototypes card were
-# originally produced by MCP tools the model called (`report_stage`,
-# `handoff_prototype`). A tool does nothing at all if the model does not call it,
-# and that silence was measured twice:
+# **왜 이 모듈이 생겼는가.** 스테이지 사이드바와 Prototypes 카드는 원래 모델이
+# 부르는 MCP 도구(`report_stage`, `handoff_prototype`)가 만들었다. 도구는 모델이
+# 부르지 않으면 아무 일도 일어나지 않고, 그 침묵이 두 번 실측됐다:
 #
-#   - 2026-08-18 test123456: the PostToolUse hook ended the turn on the question
-#     file write, so the `report_stage` batched into the same message never ran.
-#     With no `aiplc-state.md` the badge stayed empty for the whole project, and
-#     the resume turn says "continue from where you stopped" -- so nothing ever
-#     prompted a retry.
-#   - 2026-08-17 keumkang-v5: before `handoff_prototype` existed the agent asked
-#     for credentials and listed prerequisites. The tab was pointed at zero times.
+#   - 2026-08-18 test123456: PostToolUse 훅이 질문 파일 쓰기에서 턴을 끝내자 같은
+#     메시지에 배치된 `report_stage`가 실행되지 않았다. `aiplc-state.md`가 없어
+#     배지가 프로젝트 내내 비었고, 재개 턴은 "멈춘 지점부터"라 회수 계기가 없었다.
+#   - 2026-08-17 keumkang-v5: `handoff_prototype`이 없던 시절 에이전트가 자격증명을
+#     묻고 선행 조건을 나열했다. 탭 안내는 0회였다.
 #
-# So the test moves from "did the model declare it" to **"what does the disk
-# say"**. Files do not get lost: a dropped batch, a turn ending, and the model
-# forgetting all fail to delete a file.
+# 그래서 판정 기준을 "모델이 선언했는가"에서 **"디스크가 무엇을 말하는가"**로
+# 옮긴다. 파일은 유실되지 않는다 — 배치 드롭도, 턴 종료도, 모델의 건망증도 파일을
+# 지우지 못한다.
 #
-# **A third tool joined them (2026-08-21).** This section used to justify keeping
-# `submit_document` by saying its `version` and its "ready for review vs
-# intermediate save" were judgement, not parsing. That justification was wrong --
-# **the actual instruction did not ask for that judgement.** discovery-config said
-# "call it after creating or updating a document", and with no judgement in play
-# the signal is 1:1 with "a document was written" -- which PostToolUse already
-# sees.
+# **세 번째 도구도 여기로 왔다(2026-08-21).** 이 절은 `submit_document`가 남는 이유를
+# "그 `version`과 '리뷰 준비됨 vs 중간 저장'은 파싱이 아니라 판단"이라고 적고 있었다.
+# 그 근거가 틀렸다 — **실제 지시가 그 판단을 요구하지 않았다.** discovery-config는
+# "문서를 만들거나 갱신할 때마다 부르라"고 했고, 판단이 없으면 신호는 "문서가 쓰였다"와
+# 1:1이다. 그리고 그것은 PostToolUse가 이미 보는 것이었다.
 #
-# The silence was measured just as plainly. The frontend had recorded it next to
-# its own workaround: "the agent creates most documents with file_write alone,
-# without submit_document (measured: prfaq.md and others)" --
-# useWorkspaceStream.ts:177. The same class of failure as the two above, a third
-# time.
+# 침묵도 똑같이 실측돼 있었다. 프론트가 우회로와 함께 적어 뒀다:
+# "에이전트는 대부분의 문서를 submit_document 없이 file_write로만 만든다(실측:
+# prfaq.md 등)" — useWorkspaceStream.ts:177. 위 두 사례와 같은 부류의 세 번째다.
 #
-# The `version` that remains is not judgement but **counting**: a content hash
-# answers "did it change" and an ordinal answers "which revision is this"
-# (`document_events`). That is more accurate than the string the model invented --
-# the model could declare `v1` twice for the same document and nothing stopped it.
+# 남은 `version`은 판단이 아니라 **셈**이다: 내용 해시로 "바뀌었나"를 답하고 서수로
+# "몇 번째인가"를 센다(`document_events`). 모델이 짓던 문자열보다 정확하다 — 모델은
+# 같은 문서에 `v1`을 두 번 선언할 수 있었고 그것을 막는 장치가 없었다.
 #
-# **What is here and what is not.** Only signals derived from the workspace live
-# here. The one remaining custom tool is `build_complete`, and it passes the same
-# test: a build's last Write is indistinguishable from any other Write, so
-# "finished" cannot be derived from a file (proto/tools.py).
+# **여기 있는 것과 없는 것.** 워크스페이스에서 유도되는 신호만 여기 있다. 남은 커스텀
+# 도구는 `build_complete` 하나이고 그것은 같은 기준을 통과한다 — 빌드의 마지막 Write는
+# 다른 Write와 구별되지 않으므로 "끝났다"가 파일에서 유도되지 않는다(proto/tools.py).
 #
-# **Why a diff.** agent/tools.py's old header worried that "inferring from state
-# file writes makes the UI flicker when a turn updates it several times". The
-# worry was legitimate, but the answer is a diff rather than a tool: the frontend
-# **accumulates** `stage` events (useWorkspaceStream.ts:189 `[...prev, parsed]`),
-# so re-emitting the same state grows the list. Emit only the stages whose status
-# actually changed and the problem disappears -- and it is quieter than the old
-# tool was, which fired twice whenever the model declared the same stage twice.
+# **왜 diff인가.** agent/tools.py의 옛 헤더가 "상태 파일 쓰기에서 역추론하면 한 턴에
+# 여러 번 갱신될 때 UI가 흔들린다"고 걱정했다. 그 걱정은 정당했지만 해법은 도구가
+# 아니라 diff다: 프론트가 `stage` 이벤트를 **누적**하므로(useWorkspaceStream.ts:189
+# `[...prev, parsed]`) 같은 상태를 다시 흘리면 목록이 자란다. 상태가 실제로 바뀐
+# 스테이지만 흘리면 그 문제가 사라지고, 옛 도구보다 오히려 조용하다 — 도구는 모델이
+# 같은 스테이지를 두 번 선언하면 두 번 쐈다.
 #
-# **Pure functions plus an explicit cursor.** The driver holds the cursors
-# (`last`, `announced`); this module takes one and returns the next. There is no
-# module-level state because the driver is per-project and because tests need to
-# inject a cursor directly to exercise the diff paths.
+# **순수 함수 + 명시적 커서.** 드라이버가 커서(`last`, `announced`)를 들고 있고 이
+# 모듈은 그것을 받아 새 커서를 돌려준다. 모듈 전역 상태를 두지 않는 이유는 드라이버가
+# 프로젝트당 하나이고 테스트가 커서를 직접 넣어 diff 경로를 검사해야 하기 때문이다.
 from __future__ import annotations
 
 import hashlib
@@ -66,52 +55,48 @@ from aipds.proto import layout
 
 _log = logging.getLogger("aipds.agent")
 
-#: The artifact root. The name is the upstream ruleset's, and `STATE_KEY` lives
-#: under it too.
+#: 산출물 루트. 상류 룰이 정한 이름이고 `STATE_KEY`도 이 아래에 있다.
 DOCS_ROOT = "aiplc-docs"
 
-#: The state file the upstream ruleset defines. Both `core-workflow.md`'s tree
-#: and `prototype-validation.md` Step 10 use this path.
+#: 상류 룰이 정한 상태 파일. `core-workflow.md`의 트리와
+#: `prototype-validation.md` Step 10이 이 경로를 쓴다.
 STATE_KEY = "aiplc-docs/aiplc-state.md"
 
-#: The name of Step 3's final artifact. `prototype-validation.md:170` declares
-#: it at a singular path (`aiplc-docs/discovery/prototype/build-instructions.md`);
-#: under Path B the same name arrives inside a slug directory. Path assembly is
-#: owned solely by `layout.artifact_dir`, so all this module knows is **the file
-#: name**.
+#: Step 3의 마지막 산출물 이름. `prototype-validation.md:170`이 단수 경로로
+#: 선언하고(`aiplc-docs/discovery/prototype/build-instructions.md`), Path B에서는
+#: 같은 이름이 슬러그 디렉터리 아래 온다 — 경로 조립은 `layout.artifact_dir`이
+#: 단독으로 소유하므로 여기서는 **파일 이름만** 안다.
 BUILD_INSTRUCTIONS = "build-instructions.md"
 
 
 def stage_events(markdown: str | None,
                  last: dict[str, str]) -> tuple[list[AgentEvent], dict[str, str]]:
-    """Full text of `aiplc-state.md` -> `stage` events for the stages whose status
-    **changed**.
+    """`aiplc-state.md` 전문 → 상태가 **바뀐** 스테이지의 `stage` 이벤트.
 
-    `last` is the cursor meaning "this stage has already been emitted in this
-    status". The returned dict is the next cursor, which the caller swaps in.
+    `last`는 "이 스테이지를 이 상태로 이미 흘렸다"는 커서다. 돌려주는 dict가 새
+    커서이고, 호출부가 그것으로 교체한다.
 
-    File order is preserved. The checklist order IS the methodology's stage order
-    (`core-workflow.md`'s Stage Progress), so sorting would stack the sidebar in an
-    order the ruleset never specified.
+    파일 순서를 유지한다. 체크리스트 순서가 곧 방법론의 스테이지 순서이므로
+    (`core-workflow.md`의 Stage Progress), 정렬하면 사이드바가 룰과 다른 순서로
+    쌓인다.
 
-    **No synthetic entry for `current_stage`.** `parse_state_file` already folds it
-    into one checklist line as `in_progress` (exact match first, otherwise the
-    longest partial match). A `current_stage` left outside that fold means a name
-    with no checklist line, and inventing an entry for it would put a stage in the
-    sidebar that the ruleset never defined -- this function does not overturn what
-    the parser already decided.
+    **`current_stage`를 별도로 만들지 않는다.** `parse_state_file`이 이미 그것을
+    체크리스트의 한 줄에 `in_progress`로 접어 넣는다(정확 일치 우선, 없으면 최장
+    부분 일치). 그 접기 밖에 있는 `current_stage`는 체크리스트에 줄이 없는
+    이름이라는 뜻이고, 그때 항목을 하나 만들어 내면 룰이 정하지 않은 스테이지가
+    사이드바에 생긴다 — 파서가 이미 판단한 것을 여기서 뒤집지 않는다.
 
-    An empty file or None means no events. That is the fact "there are no stages",
-    and that fact does not clear the screen (the agent may be mid-way through
-    emptying and rewriting the file).
+    빈 파일/None은 이벤트 없음이다. 그것은 "스테이지가 없다"는 사실이고, 없다는
+    사실로 화면을 지우지는 않는다(에이전트가 파일을 잠깐 비웠다가 다시 쓰는 중일
+    수 있다).
     """
     if not markdown or not markdown.strip():
         return [], last
     try:
         state = parse_state_file(markdown)
     except Exception:
-        # A corrupt state file must not kill the turn: a stale badge beats a
-        # failed turn, and the next write gives another chance.
+        # 손상된 상태 파일로 턴을 죽이지 않는다 — 배지가 낡는 것이 턴 실패보다 낫고,
+        # 다음 쓰기가 다시 기회를 준다.
         _log.exception("could not parse %s — leaving the stage badges as they are",
                        STATE_KEY)
         return [], last
@@ -128,14 +113,12 @@ def stage_events(markdown: str | None,
 
 
 def _discovery_keys(workspace: Path) -> list[str]:
-    """Walk the files under `aiplc-docs/discovery/` as workspace-relative POSIX
-    paths.
+    """`aiplc-docs/discovery/` 아래 파일을 워크스페이스 상대 POSIX 경로로 걷는다.
 
-    `layout.discover` is designed to take exactly this shape (proto/layout.py), so
-    the same function decides here and in the list route. This reads local rather
-    than S3 because it has to judge a file the agent just wrote -- at that moment
-    the disk is the source of truth (the old `tools._discovery_keys` recorded the
-    same reasoning).
+    `layout.discover`가 이 모양을 받도록 설계돼 있어(proto/layout.py) 목록
+    라우트와 **같은 함수**로 판정할 수 있다. S3가 아니라 로컬을 읽는 이유는
+    에이전트가 방금 Write한 파일을 곧바로 판정해야 하기 때문이다 — 그 시점의
+    정본은 디스크다(옛 `tools._discovery_keys`가 같은 판단을 기록해 뒀다).
     """
     base = workspace / layout.DISCOVERY_PREFIX
     if not base.is_dir():
@@ -145,18 +128,14 @@ def _discovery_keys(workspace: Path) -> list[str]:
 
 
 def prototype_id_for(rel: str) -> str | None:
-    """The prototype id if this path is some prototype's `build-instructions.md`,
-    else None.
+    """이 경로가 어떤 프로토타입의 `build-instructions.md`라면 그 id, 아니면 None.
 
-    The inverse of `layout.artifact_dir`. Rather than parsing the path, it
-    **assembles a candidate id and compares**: the layout convention is owned
-    solely by that module, and a second regex here would put the rule in two
-    places (that is the "duplicated in four places" cost layout.py's header
-    describes).
+    `layout.artifact_dir`의 역이다. 경로를 직접 파싱하지 않고 **후보 id로 조립해
+    비교**한다 — 레이아웃 규약은 그 모듈이 단독 소유하고, 여기서 정규식을 한 벌 더
+    쓰면 규칙이 두 곳에 있게 된다(layout.py 헤더의 "네 곳에 복제" 비용이 그것이다).
 
-    The candidate comes from the path: the last directory name is the id candidate
-    (`prototype` for the singular layout, `{slug}` for the slugged one). Feed it to
-    `artifact_dir`; if the original path comes back out, it matches.
+    후보는 경로에서 온다: 마지막 디렉터리 이름이 id 후보다(단수는 `prototype`,
+    슬러그는 `{slug}`). 그것을 `artifact_dir`에 넣어 원래 경로가 나오면 맞다.
     """
     p = Path(rel)
     if p.name != BUILD_INSTRUCTIONS:
@@ -170,12 +149,12 @@ def prototype_id_for(rel: str) -> str | None:
 
 
 def handed_off(workspace: Path) -> dict[str, str]:
-    """Prototypes whose `build-instructions.md` is **on disk** -> their spec path.
+    """`build-instructions.md`가 **디스크에 있는** 프로토타입 → 그 명세 경로.
 
-    A handoff requires **both** the spec and the build instructions. Without the
-    spec the Prototypes tab cannot build a card (routes/prototypes.py assembles the
-    list via `layout.discover`) and the user sees an empty tab -- that is why the
-    old `handoff_prototype` checked for the spec, and that check moved here.
+    명세와 빌드 지시 **둘 다** 있어야 인계로 본다. 명세가 없으면 Prototypes 탭이
+    카드를 만들지 못하므로(routes/prototypes.py가 `layout.discover`로 목록을 만든다)
+    사용자가 빈 탭을 본다 — 옛 `handoff_prototype`이 명세 존재를 확인한 이유가
+    그것이고, 그 검사가 여기로 옮겨 온 것이다.
     """
     keys = _discovery_keys(workspace)
     specs = layout.discover(keys)
@@ -186,10 +165,9 @@ def handed_off(workspace: Path) -> dict[str, str]:
 
 def prototype_events(workspace: Path,
                      announced: set[str]) -> tuple[list[AgentEvent], set[str]]:
-    """Handoffs not yet announced -> `prototype_ready` events.
+    """아직 알리지 않은 인계를 `prototype_ready` 이벤트로.
 
-    `announced` is the cursor: announcing the same prototype twice puts two cards
-    in the chat.
+    `announced`가 커서다 — 같은 프로토타입을 두 번 알리면 채팅에 카드가 두 장 뜬다.
     """
     events: list[AgentEvent] = []
     cursor = set(announced)
@@ -202,24 +180,21 @@ def prototype_events(workspace: Path,
     return events, cursor
 
 
-#: Record-keeping files, not documents. The upstream ruleset requires them, but
-#: they are not artifacts the document panel should follow. The frontend recorded
-#: why the question files belong in this list (useWorkspaceStream.ts): the answer
-#: surface is the QuestionForm in the right panel, so also showing the markdown as
-#: a document puts two versions of the same question on one screen -- and those
-#: two can never agree.
+#: 문서가 아닌 기록물. 상류 룰이 요구하는 파일들이고 문서 패널이 따라갈 산출물이
+#: 아니다 — 질문 파일이 여기 끼는 이유는 프론트가 적어 뒀다(useWorkspaceStream.ts):
+#: 답변 화면은 우측 패널의 QuestionForm이므로, 마크다운까지 문서로 띄우면 한 화면에
+#: 같은 질문의 두 버전이 뜨고 그 둘은 애초에 일치할 수 없다.
 _RECORD_KEEPING = ("audit.md", "aiplc-state.md")
 _QUESTION_SUFFIX = "-questions.md"
 
 
 def is_document(rel: str) -> bool:
-    """Is this path an artifact the document panel should follow?
+    """이 경로가 문서 패널이 따라갈 산출물인가.
 
-    **The same test** as the frontend's `isDocPath`. Having two copies is
-    deliberate: the frontend one remains as a backstop hung off `file_changed` (for
-    writes the hook cannot see, e.g. via Bash), while this one is the primary path
-    for `document` events. Divergence is harmless -- both only ever move activeDoc
-    in the same direction.
+    프론트의 `isDocPath`와 **같은 판정**이다. 두 벌인 것은 의도다: 프론트 쪽은
+    `file_changed`에 걸린 백스톱으로 남아 있고(훅이 못 보는 Bash 경유 쓰기), 이쪽이
+    `document` 이벤트의 주 경로다. 어긋나도 해롭지 않다 — 둘 다 activeDoc을 같은
+    방향으로만 움직인다.
     """
     if not rel.startswith(f"{DOCS_ROOT}/") or not rel.endswith(".md"):
         return False
@@ -230,29 +205,24 @@ def is_document(rel: str) -> bool:
 def document_events(workspace: Path,
                     seen: dict[str, tuple[int, str]],
                     ) -> tuple[list[AgentEvent], dict[str, tuple[int, str]]]:
-    """`document` events for artifacts whose content **changed**. Replaces the old
-    `submit_document`.
+    """내용이 **바뀐** 산출물의 `document` 이벤트. 옛 `submit_document`를 대체한다.
 
-    `seen` is the cursor: path -> (version, content hash). A diff for the same
-    reason `stage_events` uses one -- an agent writing the same document several
-    times in one turn is normal behaviour, and emitting every time would re-raise
-    the update banner that many times.
+    `seen`이 커서다: 경로 → (버전, 내용 해시). `stage_events`와 같은 이유로 diff다 —
+    에이전트가 한 턴에 같은 문서를 여러 번 쓰는 것은 정상 동작이고, 매번 흘리면
+    갱신 배너가 그만큼 다시 뜬다.
 
-    **Why a version is needed.** The banner's close button remembers the `version`
-    (page.tsx's `dismissedDocVersion`), so the value has to differ per update. If
-    it stayed the same, dismissing once would suppress every later update to that
-    document. Hence: the hash decides "did it change", the ordinal counts "which
-    revision".
+    **버전이 왜 필요한가.** 배너의 닫기 버튼이 `version`을 기억하므로
+    (page.tsx의 `dismissedDocVersion`) 갱신마다 값이 달라져야 한다. 값이 같으면 한 번
+    닫은 뒤 그 문서의 어떤 갱신도 다시 알리지 못한다. 그래서 해시로 "바뀌었나"를
+    판정하고 서수로 "몇 번째인가"를 센다.
 
-    **Limit: the ordinal only runs for the life of the process.** The cursor lives
-    on the driver (an in-memory cursor like `_stage_status` and `_handed_off`) and
-    resets to 1 when the backend restarts. The banner's `dismissedDocVersion` is
-    page state and also clears on refresh, so in the common case the two reset
-    together.
+    **한계: 서수는 프로세스 생애 안에서만 이어진다.** 커서는 드라이버가 들고 있고
+    (`_stage_status`·`_handed_off`와 같은 인메모리 커서다) 백엔드 재시작 시 1로
+    돌아간다. 배너의 `dismissedDocVersion`도 페이지 상태라 새로고침에서 함께 비므로
+    흔한 경우에는 둘이 같이 리셋된다.
 
-    Empty files are not announced -- the same reason the old tool refused an empty
-    declaration: the user reads "it has been written" while looking at an empty
-    document panel.
+    빈 파일은 알리지 않는다 — 옛 도구가 빈 선언을 거부한 이유가 그대로다: 사용자가
+    "작성됐습니다"를 읽으면서 빈 문서 패널을 본다.
     """
     events: list[AgentEvent] = []
     cursor = dict(seen)
@@ -282,10 +252,10 @@ def document_events(workspace: Path,
 
 
 def read_state(workspace: Path) -> str | None:
-    """Full text of the workspace's state file, or None if absent.
+    """워크스페이스의 상태 파일 전문. 없으면 None.
 
-    A read failure is also None: reconciliation is a backstop, and a backstop that
-    fails the turn is not a backstop but a new cause of failure.
+    읽기 실패도 None이다 — 재조정은 백스톱이고, 그것이 턴을 실패시키면 백스톱이
+    아니라 새 실패 원인이 된다.
     """
     try:
         p = workspace / STATE_KEY

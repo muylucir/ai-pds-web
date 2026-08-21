@@ -1,65 +1,57 @@
-# backend/aipds/agent/prompts.py -- two per-language versions of every text the
-# Discovery agent **reads**.
+# backend/aipds/agent/prompts.py — Discovery 에이전트가 **읽는** 텍스트의
+# 언어별 두 벌.
 #
-# Everything here enters the model's context: MCP tool descriptions (injected with
-# the tool list every turn), the refusal/confirmation strings tools return, and the
-# prompts the driver builds. These are not screen strings -- UI text is owned by
-# frontend/lib/i18n.
+# 여기 있는 것은 전부 모델 컨텍스트에 들어간다: MCP 도구 설명(매 턴 도구 목록과
+# 함께 주입된다), 도구가 돌려주는 거부/확인 문자열, 그리고 드라이버가 만드는
+# 프롬프트. 화면 문구가 아니다 — UI 문자열은 frontend/lib/i18n이 소유한다.
 #
-# **Why this file exists (the 2026-08-04 defect).** Spec
-# `2026-08-03-bilingual-ko-en` §3 made `place_rules` the single source of the
-# language directive, and that part worked exactly as intended (zero Hangul in the
-# assembled en output). Yet workspace chat in projects that had chosen English kept
-# running in Korean. These were the remaining paths: tool descriptions and tool
-# return values were **not directives**, so they sat outside that spec's field of
-# view -- but to the model they are Korean prompts read on every single turn.
+# **왜 이 파일이 생겼는가(2026-08-04의 결함).** 스펙
+# `2026-08-03-bilingual-ko-en` §3은 "언어 지시의 단일 출처"를 `place_rules`로
+# 만들었고 그 부분은 정확히 동작했다(en 조립물의 한글 0자). 그런데 영어를 고른
+# 프로젝트의 워크스페이스 채팅이 계속 한국어로 진행됐다. 남은 경로가
+# 이것들이었기 때문이다 — 도구 설명과 도구 반환값은 **지시가 아니라서** 그
+# 스펙의 시야에 없었지만, 모델에게는 똑같이 매 턴 읽는 한국어 프롬프트다.
 #
-# So this repo's test for language is not "is there a single language directive"
-# but **"is every text entering the model's context in the project's language"**.
+# 그래서 이 리포의 언어 판정 기준은 "언어 지시가 하나인가"가 아니라
+# **"모델 컨텍스트에 들어가는 모든 텍스트가 프로젝트 언어인가"**다.
 #
-# **Two complete versions, never assembled from fragments.** `proto/prompts.py`
-# records the same judgement: splitting a sentence into pieces and substituting
-# makes it impossible to see in which language an instruction lost its force. The
-# clearest case here was submit_document's ordering instruction, "write the file
-# first, then call this" -- weaken it and the tool accepts a false declaration
-# while the document panel shows an empty screen.
+# **조립하지 않고 두 벌을 완성문으로 유지한다.** `proto/prompts.py`가 같은
+# 판단을 기록해 뒀다: 문장을 조각으로 쪼개 치환하면 어느 언어에서 지시의 강도가
+# 약해졌는지 알 수 없게 된다. 여기서는 특히 submit_document의 "먼저 파일을 쓴
+# 뒤 호출한다"는 순서 지시가 그렇다 — 그 지시가 약해지면 도구가 거짓 선언을
+# 받아들이고 문서 패널이 빈 화면을 보여준다.
 from __future__ import annotations
 
-#: Supported languages. Must be the same set as workspace_rules._LANGUAGES.
+#: 지원 언어. workspace_rules._LANGUAGES와 같은 집합이어야 한다.
 _LANGUAGES = ("ko", "en")
 _DEFAULT = "ko"
 
 
 def _lang(language: str) -> str:
-    """An unknown value falls back to the default: the create route validates it, so
-    nothing else arrives through the normal path, and running in Korean beats
-    running with no prompt at all because of a corrupted manifest (the same
-    discipline as place_rules)."""
+    """알 수 없는 값은 기본값으로 떨어진다 — 라우트가 생성 시점에 검증하므로
+    정상 경로로는 들어올 수 없고, 손상된 매니페스트 때문에 프롬프트 없이 도는
+    것보다 한국어로 도는 편이 낫다(place_rules와 같은 규율)."""
     return language if language in _LANGUAGES else _DEFAULT
 
 
-# ---- The MCP tool description and return strings used to live here ----
+# ---- MCP 도구 설명·반환 문자열이 여기 있었다 ----
 #
-# There were four: `submit_document_description` plus its three refusals (path
-# escape, missing file, empty file). They went with the `submit_document` tool on
-# 2026-08-21 -- Discovery has no custom tools left, so this space being empty is
-# correct.
+# 넷이었다: `submit_document_description`과 그 거부 문자열 셋(경로 탈출·파일 없음·빈
+# 파일). 2026-08-21에 `submit_document` 도구와 함께 사라졌다 — Discovery에는 커스텀
+# 도구가 남아 있지 않으므로 이 자리는 비어 있는 것이 맞다.
 #
-# What those refusals protected ("a tool cannot declare a document that does not
-# exist") became an unrepresentable failure once the decision moved from the tool
-# to the hook: a `document` event is derived **from the fact that a file was
-# written** (agent/reconcile.document_events), so there is no way to announce a
-# document that is not there. Only the empty-file condition remains, and it lives
-# inside that function.
+# 거부 문자열이 지키던 것("도구가 없는 문서를 선언할 수 없다")은 판정을 도구에서
+# 훅으로 옮기면서 성립할 수 없는 실패가 됐다: `document` 이벤트는 **파일이 쓰였다는
+# 사실에서** 유도되므로(agent/reconcile.document_events) 없는 문서를 알릴 방법이
+# 없다. 빈 파일 조건만 남았고 그것은 그 함수 안에 있다.
 
 
-# ---- Texts the driver builds (agent/claude_driver.py) ----
+# ---- 드라이버가 만드는 텍스트 (agent/claude_driver.py) ----
 
 
 def question_payload_rejected(language: str, reason: str) -> str:
-    """The refusal returned to the model (PermissionResultDeny) when an
-    AskUserQuestion payload cannot be turned into a form. The model reads it and
-    has to call again."""
+    """AskUserQuestion 페이로드가 폼으로 성립하지 않을 때 모델에게 돌려주는
+    거부 메시지(PermissionResultDeny). 모델이 읽고 다시 호출해야 한다."""
     if _lang(language) == "en":
         return (f"Cannot build the question form: {reason}\n"
                 "Call AskUserQuestion again with at least one option per "
@@ -69,13 +61,11 @@ def question_payload_rejected(language: str, reason: str) -> str:
 
 
 def answer_first(language: str) -> str:
-    """The notice pushed to the chat when a new turn arrives while a question is
-    still open.
+    """진행 중인 질문이 있는데 새 턴이 들어왔을 때 채팅에 흘리는 안내.
 
-    This is **conversation text**, not screen text: it stays in the chat as agent
-    speech and enters the transcript, so it follows the project language rather
-    than the UI language (lib/startMessage.ts and approvalMarker.ts record the same
-    judgement).
+    화면 문구가 아니라 **대화 텍스트**다 — 채팅 말풍선에 AI 발화로 남고
+    트랜스크립트에도 들어가므로 UI 언어가 아니라 프로젝트 언어를 따른다
+    (lib/startMessage.ts와 approvalMarker.ts가 같은 판단을 기록해 뒀다).
     """
     if _lang(language) == "en":
         return ("Please answer the question that is still open — use the "
@@ -85,20 +75,16 @@ def answer_first(language: str) -> str:
 
 
 def ask_user_question_denied(language: str) -> str:
-    """The reason the model reads when AskUserQuestion is denied, plus what to do
-    instead.
+    """AskUserQuestion을 거부할 때 모델이 읽는 이유 + 대체 행동.
 
-    **A denial, not a removal.** Simply dropping the interception would make the
-    question vanish silently the moment the model called the tool -- absent from the
-    screen and from the chat alike. A denial puts an alternative in the model's
-    hands, so that hole never opens (`write_outside_docs` follows the same pattern,
-    and its docstring records that a refusal alone sends the model into a loop of
-    retrying with a different path).
+    **거부이지 삭제가 아니다.** 가로채기를 그냥 없애면 모델이 이 도구를 부른 순간
+    질문이 조용히 사라진다 — 화면에도 채팅에도 없다. 거부는 대체 행동을 손에
+    쥐여 주므로 그 구멍이 생기지 않는다(`write_outside_docs`가 같은 패턴이고,
+    거부만 하면 모델이 경로만 바꿔 재시도하며 루프에 빠진다는 기록이 그 함수에 있다).
 
-    Why this tool is not used (measured 2026-08-17): rebuilding questions already
-    written to a file as this tool's input mangled 15 of 19 questions (79%) -- 11
-    cases of substituted Hangul characters, 4 answers lost to abbreviation. Reading
-    the file verbatim removes that entire class of failure.
+    왜 이 도구를 쓰지 않는가(2026-08-17 실측): 파일에 이미 쓴 질문을 이 도구의
+    입력으로 다시 만들면서 19문항 중 15개(79%)가 훼손됐다 — 한글 문자 치환 11건,
+    축약으로 답변 유실 4건. 파일을 그대로 읽으면 그 실패 종류가 사라진다.
     """
     if _lang(language) == "en":
         return (
@@ -122,23 +108,20 @@ def ask_user_question_denied(language: str) -> str:
 
 
 def file_questions_unparsed(language: str, path: str) -> str:
-    """The note given to the model when a question file has `[Answer]:` tags but no
-    readable question.
+    """질문 파일에 `[Answer]:`는 있는데 문항을 읽을 수 없을 때 모델에게 주는 노트.
 
-    It goes out as the PostToolUse hook's `additionalContext` -- **it does not stop
-    the turn.** Stopping would deny the model any chance to read this note and fix
-    the file, leaving the user stuck. Measured (2026-08-17): the model reads the
-    note, rewrites the file within the same turn, and that rewrite fires the hook
-    again and produces a correct card.
+    PostToolUse 훅의 `additionalContext`로 간다 — **턴을 멈추지 않는다.** 멈추면
+    모델이 이 노트를 읽고 고칠 기회가 없어 사용자가 막힌다. 실측(2026-08-17):
+    모델은 이 노트를 읽고 같은 턴 안에서 파일을 고쳐 다시 쓰고, 그 재작성이 훅을
+    다시 태워 정상 카드가 뜬다.
 
-    **Why silence is wrong here.** The first version passed quietly, and that was
-    only correct while AskUserQuestion survived as a fallback. Now that the tool is
-    denied, a parse failure is the complete loss of the question -- which is what
-    happened in sarang-hpt: the file was created, no card appeared, and the chat
-    said nothing.
+    **왜 침묵하면 안 되는가.** 처음에는 조용히 지나가게 만들었고, 그 판단은
+    AskUserQuestion이 폴백으로 살아 있을 때만 옳았다. 그 도구가 거부되는 지금
+    파싱 실패는 질문의 완전한 소실이다 — sarang-hpt에서 그렇게 됐다: 파일은
+    만들어졌고 카드는 뜨지 않았고 채팅에도 아무 말이 없었다.
 
-    It **names what to fix**. Given only a reason, the model rewrites the same file
-    (`write_outside_docs` offers an alternative for the same reason).
+    무엇을 고쳐야 하는지 **지목한다**. 이유만 주면 모델이 같은 파일을 다시 쓴다
+    (`write_outside_docs`가 같은 이유로 대안을 함께 준다).
     """
     if _lang(language) == "en":
         return (
@@ -159,16 +142,15 @@ def file_questions_unparsed(language: str, path: str) -> str:
 
 
 def file_questions_stop(language: str, path: str) -> str:
-    """The reason the model reads when the turn stops on a question file write.
+    """질문 파일을 쓰는 순간 턴을 멈출 때 모델이 읽는 이유.
 
-    It goes out as the PostToolUse hook's `stopReason`. It enters the model's
-    context, so it follows the project language.
+    PostToolUse 훅의 `stopReason`으로 간다. 모델 컨텍스트에 들어가므로 프로젝트
+    언어를 따른다.
 
-    **Saying "do not ask them again" explicitly is the point.** The upstream rules
-    tell the agent to ask the user after composing the questions; on this path
-    AI-PDS puts the file itself on screen. Without being told that, the model
-    rebuilds the same questions through AskUserQuestion on the next turn -- and that
-    regeneration is exactly what mangled 79% of the questions on 2026-08-17.
+    **다시 묻지 말라고 명시하는 것이 요점이다.** 상류 룰은 질문을 만든 뒤 사용자에게
+    물으라고 지시하는데, 이 경로에서는 AI-PDS가 파일을 그대로 화면에 띄운다.
+    그 사실을 말해 주지 않으면 다음 턴에 모델이 AskUserQuestion으로 같은 질문을
+    다시 만들고 — 그것이 2026-08-17에 문항 79%를 훼손한 바로 그 재생성이다.
     """
     if _lang(language) == "en":
         return (f"Stopping here: AI-PDS is showing the questions in "
@@ -183,57 +165,49 @@ def file_questions_stop(language: str, path: str) -> str:
             f"태그에 기록되니, 다음 턴에 파일을 다시 읽고 이어가세요.")
 
 
-# `_answer_lines` used to live here. It laid answers out as `- 1: A,B`, and that
-# was the limit of the earlier fix (fe6a482): it did not expand option letters into
-# labels, so the record differed from the live screen. Rendering is now owned in one
-# place by `aipds/answer_summary.py` (the frontend's discrimination was folded in
-# there too). This file only takes that result and wraps it in the instruction for
-# the model.
+# `_answer_lines`가 여기 있었다. 답변을 `- 1: A,B`로 줄지어 놓는 함수였고, 그것이
+# 아침 수정(fe6a482)의 한계였다 — 보기 letter를 라벨로 풀지 않으므로 기록이 라이브
+# 화면과 달랐다. 렌더는 이제 `aipds/answer_summary.py`가 한 벌로 소유한다(프론트의
+# 판별까지 그쪽으로 합쳤다). 이 파일은 그 결과를 받아 모델용 지시로 감싸기만 한다.
 
 
 def file_answers_recorded(language: str, path: str, summary: str) -> str:
-    """The text of the turn that calls the agent back after answers were recorded into
-    a question file.
+    """질문 파일에 답변이 기록된 뒤 에이전트를 다시 부르는 턴의 텍스트.
 
-    It picks up the turn `file_questions_stop` ended. This is a **new turn**, not a
-    parked future being resumed, so this one sentence has to say everything about
-    where to go back to -- hence naming the file (having several question files is
-    normal; one measured project had nine).
+    `file_questions_stop`이 끝낸 턴을 이어받는다. 파킹된 future로 같은 턴을
+    재개하는 것이 아니라 **새 턴**이므로, 어디로 돌아가야 하는지를 이 문장이
+    전부 말해 줘야 한다 — 그래서 파일을 지목한다(질문 파일이 여러 개인 것이
+    정상이다; 실측한 한 프로젝트에 9개였다).
 
-    It is conversation text that stays as the user's bubble, so it follows the
-    project language rather than the UI language (`answer_first` records the same
-    judgement).
+    사용자 말풍선으로 남는 대화 텍스트다 — UI 언어가 아니라 프로젝트 언어를
+    따른다(`answer_first`가 같은 판단을 기록해 뒀다).
 
-    **The answers are carried in the body (2026-08-21).** It used to name only the
-    file, and the result was that refreshing the workspace and restoring the
-    conversation **pinned every round's user bubble to this one sentence.** The live
-    screen draws the real answers (the frontend's `answerSummary`), so the same round
-    looked different before and after a refresh -- the defect recorded in
-    `agent/answer_store.py`'s header, resurfacing on the file-question path.
+    **답변을 본문에 담는다(2026-08-21).** 예전에는 파일만 지목했고, 그 결과
+    워크스페이스를 새로고침해 대화가 복원되면 **모든 라운드의 사용자 말풍선이 이
+    한 문구로 고정됐다.** 라이브 화면은 실제 답변을 그리므로(프론트의
+    `answerSummary`) 같은 라운드가 새로고침 전후로 다르게 보였다 —
+    `agent/answer_store.py` 헤더가 기록한 그 결함이 파일 질문 경로에서 되살아난
+    것이다.
 
-    That side was fixed by joining records on `tool_use_id`. This path has no such
-    tool call at all (what the agent calls is `Write`). So instead **the transcript
-    itself is made to carry the truth** -- no join key, no new store, no ordering
-    dependency.
+    그쪽은 `tool_use_id`로 레코드를 조인해 고쳤다. 이 경로에는 그 도구 호출이 아예
+    없다(에이전트가 부르는 것은 `Write`다). 그래서 **트랜스크립트 자체가 진실을
+    갖게 한다** — 조인 키도, 새 저장소도, 순서 의존도 생기지 않는다.
 
-    **Why not join on an opaque marker**: `frontend/lib/approvalMarker.ts` already
-    wrote this class down: "this text is not a machine signal. That turn **stays as
-    the user's bubble** in the transcript and in the chat history. The agent has to
-    understand it and **a human has to read it**." What a person who answered
-    questions would say is their answers, so carrying the answers runs with that
-    principle rather than against it.
+    **불투명 마커로 조인하지 않는 이유**는 `frontend/lib/approvalMarker.ts`가 이
+    부류에 대해 이미 적어 뒀다: "이 텍스트는 기계 신호가 아니다. 그 턴은
+    트랜스크립트와 채팅 히스토리에 **사용자 말풍선으로 남는다.** 에이전트가
+    이해해야 하고 **사람이 읽어야 한다.**" 질문에 답한 사람이 할 말은 자기
+    답변이므로, 답변을 담는 것이 그 원칙과 같은 방향이다.
 
-    **The file is still authoritative.** The values exist in two places (this
-    sentence and the `[Answer]:` tags), but both are built from the same dict in the
-    same request, so drift is impossible -- and the sentence names the file as the
-    source of record, so what the agent re-reads does not change.
+    **파일은 여전히 권위다.** 값은 두 곳(이 문장과 `[Answer]:` 태그)에 있지만 같은
+    요청에서 같은 dict로 만들어지므로 드리프트가 불가능하고, 문장은 파일을 정본으로
+    지목한다 — 에이전트가 되읽는 대상은 바뀌지 않는다.
 
-    **`summary` arrives already rendered (2026-08-21).** While this function laid
-    the answers out itself, option letters stayed raw ("- 1: A,B") and the live
-    screen expanded them into labels -- record and screen still differed. Rendering
-    is now owned in one place by `aipds/answer_summary.py`, and **the frontend uses
-    this same string** (routes/answers.py returns it alongside). One representation
-    cannot diverge from itself.
+    **`summary`는 이미 렌더된 텍스트다(2026-08-21).** 이 함수가 답변을 직접 줄지어
+    놓던 동안은 보기 letter가 그대로 남았고("- 1: A,B") 라이브 화면은 그것을 라벨로
+    풀어 그렸다 — 기록과 화면이 여전히 달랐다. 렌더는 `aipds/answer_summary.py`가
+    한 벌로 소유하고, **프론트도 이 문자열을 그대로 쓴다**(routes/answers.py가
+    응답에 함께 싣는다). 표현이 하나면 갈라질 수 없다.
     """
     if _lang(language) == "en":
         return (f"I answered the questions:\n\n{summary}\n\n"
@@ -246,28 +220,25 @@ def file_answers_recorded(language: str, path: str, summary: str) -> str:
 
 
 def state_file_missing(language: str) -> str:
-    """The pointer appended to the resume turn when `aiplc-state.md` has no Current
-    Stage.
+    """`aiplc-state.md`에 Current Stage가 없을 때 재개 턴에 덧붙이는 지목.
 
-    It is a **complete paragraph** concatenated after `file_answers_recorded`.
-    Concatenating paragraphs rather than substituting fragments keeps this file's
-    header rule ("two versions, each a complete text").
+    `file_answers_recorded`에 이어 붙는 **완성된 문단**이다. 조각 치환이 아니라
+    문단 연결이므로 이 파일 헤더의 "두 벌을 완성문으로" 규율을 지킨다.
 
-    **Why the backend does not write the file itself.** Only the agent knows the
-    stage **name**. Guessing it from the path (`.../envision/xxx-questions.md` ->
-    "Envision") would create a mapping that duplicates the ruleset's stage names --
-    a second source of truth that goes quietly out of step the moment the ruleset is
-    swapped.
+    **왜 백엔드가 대신 쓰지 않는가.** 스테이지 **이름**을 아는 것은 에이전트뿐이다.
+    경로에서 추측하려면(`.../envision/xxx-questions.md` → "Envision") 룰셋의
+    스테이지 이름을 복제한 매핑이 새로 생기는데, 그것은 룰셋 교체 때 조용히
+    어긋나는 두 번째 진실 공급원이다.
 
-    **It changed from a tool to a file on 2026-08-18.** The old wording told the
-    agent to call `report_stage`. When that tool was replaced by the PostToolUse
-    hook (agent/reconcile.py), the target of this pointer moved from a tool call to
-    **a file write** -- and that is the behaviour the upstream rules ask for anyway
-    (`common/workflow-changes.md`, `discovery/prototype-validation.md` Step 10).
+    **2026-08-18에 도구에서 파일로 바뀌었다.** 옛 문구는 `report_stage`를 부르라고
+    했다. 그 도구가 PostToolUse 훅으로 대체되면서(agent/reconcile.py) 이 지목의
+    대상도 도구 호출에서 **파일 쓰기**로 옮겨 왔다 — 그리고 그것이 상류 룰이
+    원래 요구하는 행동이다(`common/workflow-changes.md`,
+    `discovery/prototype-validation.md` Step 10).
 
-    Why the pointer is still needed: the hook and the turn-boundary reconciliation
-    move the file onto the screen **when it exists**. With no file there is nothing
-    to move, and only the agent can create it.
+    지목이 여전히 필요한 이유: 훅과 턴 경계 재조정은 파일이 **있을 때** 그것을
+    화면으로 옮긴다. 파일 자체가 없으면 옮길 것이 없고, 그것을 만들 수 있는 것은
+    에이전트뿐이다.
     """
     if _lang(language) == "en":
         return ("Also: `aiplc-docs/aiplc-state.md` still has no current stage, so "
@@ -285,22 +256,18 @@ def state_file_missing(language: str) -> str:
 
 
 def prototype_handoff_stop(language: str, slug: str) -> str:
-    """The reason the model reads when the turn stops on a `build-instructions.md`
-    write.
+    """`build-instructions.md`를 쓰는 순간 턴을 멈출 때 모델이 읽는 이유.
 
-    It goes out as the PostToolUse hook's `stopReason` (the same path as
-    `file_questions_stop`).
+    PostToolUse 훅의 `stopReason`으로 간다(`file_questions_stop`과 같은 경로).
 
-    **Naming the next action is the point.** The old `handoff_prototype` tool's
-    success message already recorded this judgement: without it the agent either
-    carries on into upstream Step 4 (Iterate) or asks for credentials -- both
-    measured failures (keumkang-v5: credential check -> demand for an API key ->
-    list of prerequisites, with the tab pointed at zero times).
+    **다음 행동을 지정하는 것이 요점이다.** 옛 `handoff_prototype` 도구의 성공
+    문구가 이미 이 판단을 기록해 뒀다: 지정하지 않으면 에이전트가 상류 Step 4
+    (Iterate)로 계속 가거나 자격증명을 묻는다 — 둘 다 실측된 실패다(keumkang-v5:
+    자격증명 점검 → API 키 요구 → 선행 조건 나열, 탭 안내 0회).
 
-    Turning the tool into a hook changed only **who guarantees the call happens**.
-    What the wording has to carry is unchanged: this is where Discovery ends, the
-    build happens in the tab, do not ask for credentials, and Steps 4-6 are deferred
-    rather than abandoned.
+    도구가 훅이 되면서 달라진 것은 **누가 호출을 보장하는가**뿐이다. 문구가 담아야
+    하는 내용은 그대로다: 여기서 끝난다, 빌드는 탭에서 한다, 자격증명을 묻지 않는다,
+    Step 4-6은 버린 것이 아니라 미룬 것이다.
     """
     if _lang(language) == "en":
         return (f"Stopping here: '{slug}' is now a card in the Prototypes tab, and "
@@ -320,21 +287,18 @@ def prototype_handoff_stop(language: str, slug: str) -> str:
 
 
 def write_outside_docs(language: str, path: str) -> str:
-    """The reason the model reads when the PreToolUse hook refuses a write outside
-    `aiplc-docs/`.
+    """`aiplc-docs/` 밖 파일 쓰기를 PreToolUse 훅이 거부할 때 모델이 읽는 이유.
 
-    It **names the path** that was caught: without that, the model retries the same
-    write with a different path and loops. And it offers an alternative -- given only
-    a refusal the model knows it is blocked but not where the spec should go (see the
-    defect recorded in agent/discovery_guard.py's header).
+    무엇이 걸렸는지 **경로로 지목한다**: 지목이 없으면 모델이 같은 쓰기를 경로만
+    바꿔 재시도하며 루프에 빠진다. 그리고 대안을 함께 준다 — 거부만 하면 모델은
+    "막혔다"만 알고 스펙을 어디에 쓸지는 모른다(agent/discovery_guard.py 헤더의
+    결함 기록 참조).
 
-    **It does not pin a path.** An earlier version told the agent to write
-    `prototypes/{slug}/PROTOTYPE-{slug}.md`, which is Path B's layout (use-case
-    prioritisation, three of them). Path A.1 (derived from Envision, a single
-    prototype) belongs at `prototype/prototype-spec.md` and has no slug
-    (proto/layout.py's header). Pinning either one makes the instruction wrong for an
-    agent on the other path, so this sends the agent back to the location its own
-    stage rules define.
+    **경로를 못박지 않는다.** 예전에는 `prototypes/{slug}/PROTOTYPE-{slug}.md`를
+    쓰라고 안내했는데, 그것은 Path B(use-case 우선순위, 3개)의 레이아웃이다.
+    Path A.1(Envision 파생, 단일)은 `prototype/prototype-spec.md`가 맞고 슬러그가
+    없다(proto/layout.py 헤더). 한쪽을 못박으면 다른 경로의 에이전트에게 틀린
+    지시가 되므로, 자기 스테이지 규칙이 정한 자리로 돌려보낸다.
     """
     if _lang(language) == "en":
         return (f"Refused — Discovery may only write under 'aiplc-docs/', and "
@@ -351,8 +315,7 @@ def write_outside_docs(language: str, path: str) -> str:
 
 
 def build_command_refused(language: str, fragment: str) -> str:
-    """The reason given when a build command, a server start, or a file creation
-    outside the workspace is refused."""
+    """빌드·서버 기동·워크스페이스 밖 파일 생성 명령을 거부할 때의 이유."""
     if _lang(language) == "en":
         return (f"Refused — '{fragment}' builds or serves a prototype, which "
                 "Discovery does not do. Only the Prototypes tab can allocate a "
@@ -366,13 +329,12 @@ def build_command_refused(language: str, fragment: str) -> str:
 
 
 def turn_failed(language: str) -> str:
-    """What the chat says when the CLI reports a failed turn
-    (`ResultMessage.is_error`).
+    """CLI가 실패한 턴을 보고했을 때(`ResultMessage.is_error`) 채팅에 남기는 문구.
 
-    It asks the user to try again because the common cause is transient: Bedrock
-    429/529 under workshop load succeeds on the next attempt. The diagnostic
-    (`api_error_status`) goes to the log -- an HTTP status is not something a
-    workshop participant can act on.
+    다시 시도하라고 말하는 이유는 흔한 원인이 일시적이기 때문이다 — 워크숍
+    부하에서의 Bedrock 429/529는 다음 시도에 성공한다. 진단 정보
+    (`api_error_status`)는 로그로 간다: HTTP 상태는 워크숍 참가자가 할 수 있는
+    일이 아니다.
     """
     if _lang(language) == "en":
         return ("This turn failed — please try again in a moment. If it keeps "
@@ -382,12 +344,11 @@ def turn_failed(language: str) -> str:
 
 
 def answers_resumed(language: str, lines: str, record: str) -> str:
-    """The prompt that delivers answers as a plain text turn after a backend restart.
+    """백엔드 재시작 후 답변을 일반 텍스트 턴으로 전달하는 프롬프트.
 
-    `record` is the machine-readable note of which question round these answers
-    belong to. It is in the prompt rather than the log because the S3 pending record
-    is deleted on the way out after a restart, which leaves the transcript as the
-    only durable trace of that correspondence.
+    `record`는 이 답변이 어느 질문 라운드에 속하는지의 기계 판독 기록이다.
+    로그가 아니라 프롬프트에 있는 이유: 재시작 후 S3 pending 레코드는 나가는
+    길에 삭제되므로, 트랜스크립트가 그 대응의 유일한 영속 흔적이 된다.
     """
     if _lang(language) == "en":
         return ("[Question answered] The user has answered the question you "

@@ -1,21 +1,17 @@
-# backend/aipds/survey/report_labels.py -- the labels in the survey report markdown.
+# backend/aipds/survey/report_labels.py — 설문 리포트 마크다운의 라벨.
 #
-# This is not UI wording but a **document generator**. The report is stored as an artifact
-# under aiplc-docs/** and goes into the document review screen and the developer handoff, so it
-# follows the project language rather than the UI language (a per-user cookie).
+# 이것은 UI 문구가 아니라 **문서 생성기**다. 리포트는 aiplc-docs/** 아래에
+# 산출물로 저장되고 문서 리뷰 화면과 개발자 핸드오프에 들어가므로, UI 언어
+# (사용자별 쿠키)가 아니라 프로젝트 언어를 따른다.
 #
-# It does not contradict error_codes.py's "we do not build a translation system in the
-# backend": that one is error wording shown to a user, and the backend does not know the UI
-# language. This is a document, and the backend already knows the project language.
+# error_codes.py의 "백엔드에 번역 시스템을 만들지 않는다"와 모순되지 않는다:
+# 그쪽은 사용자에게 보이는 에러 문구이고 UI 언어를 백엔드가 모른다. 여기는
+# 문서이고 프로젝트 언어를 백엔드가 이미 안다.
 #
-# Some headings stay English: the section names Step 6 of prototype-validation.md fixes
-# (`## Feedback Sources`, `## Theme Analysis`, `## Pain Point Mapping`, `## Build Decision`)
-# and their table headers are **English in both languages.** The rules find the document by
-# those names, and the upstream workflow presumes that structure.
-
-# NOTE: the Korean strings below are the product itself -- the ko branch of a per-language
-# pair, rendered into a Korean project's report. They must not be translated
-# (tests/test_korean_product_strings.py holds a minimum count for this file).
+# 영어를 그대로 두는 헤딩이 있다: prototype-validation.md Step 6이 정한 섹션
+# 이름(`## Feedback Sources`, `## Theme Analysis`, `## Pain Point Mapping`,
+# `## Build Decision`)과 그 표 헤더는 **양쪽 언어에서 영어다.** 룰이 그 이름으로
+# 문서를 찾고, 상류 워크플로우가 그 구조를 전제하기 때문이다.
 from __future__ import annotations
 
 _LANGUAGES = ("ko", "en")
@@ -94,5 +90,5 @@ _LABELS = {
 
 
 def labels(language: str) -> dict[str, str]:
-    """The report label dictionary. An unknown language falls back to Korean."""
+    """리포트 라벨 사전. 알 수 없는 언어는 한국어로 떨어진다."""
     return _LABELS[language if language in _LANGUAGES else _DEFAULT]
