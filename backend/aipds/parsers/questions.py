@@ -51,10 +51,61 @@ _QUESTION_WORDS = ("Question", "질문")
 _Q_HEADER = re.compile(
     r"^#{2,4}\s+(?:\S+\s+)??(?:" + "|".join(_QUESTION_WORDS) + r")\s+(\d+)\b",
     re.MULTILINE)
+#: 복수 선택 표시. **상류 형식에는 이 개념이 없다** — `question-format-guide.md`는
+#: `[Answer]: C` 단일 선택만 규정하고, 여러 개를 고르라는 표기를 정의하지 않는다.
+#:
+#: **왜 필요한가(2026-08-21 실측).** 문항 본문이 "(복수 선택 가능)"이라고 적혀 있는데
+#: 화면에는 "하나만 선택" 배지와 라디오가 떴고, 사용자는 `Other — 직접 입력` 칸에
+#: "A, B"라고 써서 우회했다 — 구조화된 답변이 자유 텍스트로 격하됐고, 그 값은 다음
+#: 스테이지가 보기 letter로 읽을 수 없다.
+#:
+#: 원인은 `multi_select`가 파일 질문에서 UI까지 오는 경로가 **없었다**는 것이다.
+#: AskUserQuestion 시절에는 도구 인자로 구조화돼 왔는데(agent/questions_payload.py의
+#: `multiSelect`), 질문이 파일로 옮겨가면서 그 값만 남겨졌다. 프론트는 이미 준비돼
+#: 있다 — QuestionCard가 이 플래그로 체크박스를 그리고 letter를 콤마로 잇는다.
+#:
+#: 위 헤딩 관용과 **같은 분담**이다: 관용은 여기, 그렇게 쓰라는 지시는
+#: `discovery-config/CLAUDE.md`, 상류는 건드리지 않는다.
+#:
+#: **괄호를 요구한다.** 복수 선택 자체를 묻는 문항이 실재하므로("복수 선택 UI가
+#: 필요합니까?") 낱말만 보면 그것이 체크박스로 렌더된다. 에이전트가 실제로 쓰는 형태가
+#: 괄호이므로(실측) 괄호가 곧 표시와 화제를 가르는 경계다 — 이 파일의 다른 판정들처럼
+#: 허용목록이고 일반 규칙이 아니다.
+#:
+#: **한국어 문구를 넓게 받는다.** `discovery-config/CLAUDE.md`는 언어 중립이어야 하므로
+#: (전 프로젝트가 공유한다 — 한글 산문 자체가 언어 신호다) 한국어 표현을 지시문에 박을
+#: 수 없다. 지시는 "프로젝트 언어로 '모두 선택' 뜻의 괄호 주석"까지만 말하고 실제 문구는
+#: 모델이 고르므로, 여기서 그 폭을 감당한다 — UI 자신의 배지가 "여러 개 선택 가능"인
+#: 것부터가 그 폭의 증거다(i18n `q.multiSelectBadge`).
+_PAREN = re.compile(r"[(（]([^)）]{0,120})[)）]")
+#: 괄호 안이 이 중 하나면 복수 선택. `all`을 단독으로 받지 않는다 — "(all prices in
+#: KRW)" 같은 무관한 괄호가 걸린다.
+_MULTI_EN = re.compile(
+    r"(?:select|choose|check|pick|mark)\s+all\b|all\s+that\s+apply"
+    r"|multiple\s+(?:selection|selections|answers|choices)", re.IGNORECASE)
+#: 한국어는 "선택" + 복수 한정어의 동시 등장으로 본다.
+_MULTI_KO_QUALIFIER = re.compile(r"복수|중복|여러|모두")
+#: 단일 선택을 **강조**하는 문구. "여러 개 중 하나만 선택"이 위 한정어에 걸리므로
+#: 필요하다 — 그것을 체크박스로 만들면 하나만 골라야 할 문항에서 여러 개가 고를 수
+#: 있게 되고, 그 답변은 다음 스테이지가 단일 값으로 읽는다.
+_SINGLE_ONLY = re.compile(
+    r"하나만|한\s*개만|1\s*개만|only\s+one|pick\s+one|choose\s+one|select\s+one",
+    re.IGNORECASE)
 _CAT_HEADER = re.compile(r"^##\s+(?!Question\b)(.+?)\s*$", re.MULTILINE)
 _OPTION = re.compile(r"^([A-F]|X)\)\s+(.*)$")
 _ANSWER = re.compile(r"^\[Answer\]:\s*(.*)$")
 _RECO = re.compile(r"\s*←\s*(추천|recommended).*$", re.IGNORECASE)
+
+
+def _is_multi_select(text: str) -> bool:
+    for inner in _PAREN.findall(text):
+        if _SINGLE_ONLY.search(inner):
+            continue
+        if _MULTI_EN.search(inner):
+            return True
+        if "선택" in inner and _MULTI_KO_QUALIFIER.search(inner):
+            return True
+    return False
 
 def parse_question_file(name: str, markdown: str) -> QuestionFile:
     try:
@@ -132,12 +183,17 @@ def _parse(name: str, markdown: str) -> QuestionFile:
                     text_blocks.append([])
                 i += 1
             blocks = [b for b in text_blocks if b]
+            text = " ".join(l for b in blocks for l in b).strip()
             questions.append(Question(
                 number=number, category=current_category,
-                text=" ".join(l for b in blocks for l in b).strip(),
+                text=text,
                 ask=" ".join(blocks[-1]).strip() if blocks else "",
                 context=context,
                 options=options, answer=answer,
+                # 표시는 문항 본문에서만 읽는다. `context`(문항 앞의 최상위 산문)까지
+                # 보면 "다음 두 문항은 복수 선택입니다" 한 줄이 뒤따르는 문항 전부에
+                # 적용돼 범위가 불분명해진다 — 문항마다 자기 표시를 갖는 것이 명확하다.
+                multi_select=_is_multi_select(text),
             ))
             continue
         if not seen_first_header and line.strip():
