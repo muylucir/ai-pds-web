@@ -8,90 +8,100 @@ _CURRENT_STAGE = re.compile(r"\*\*Current Stage\*\*:\s*(.+)")
 _CHECK = re.compile(r"^- \[([ xX])\]\s*(.+)$")
 _SPLIT = re.compile(r"\s+[—-]\s+")
 
-#: 스테이지 체크리스트가 사는 섹션. 상류가 정한 이름이다
-#: (`inception/workspace-detection.md`의 상태 파일 템플릿, 각 스테이지의
-#: "Update State Tracking" 단계).
+#: The section the stage checklist lives in. The name is the upstream ruleset's (the
+#: state file template in `inception/workspace-detection.md`, and each stage's
+#: "Update State Tracking" step).
 #:
-#: **정확 일치가 아니라 포함이다.** 처음에는 `^## Stage Progress\s*$`였는데, 그러면
-#: 헤딩이 장식되는 순간(`## Stage Progress (Discovery)`, `## 🟣 Stage Progress`)
-#: 섹션을 못 찾아 아래 폴백이 켜지고 문서 전체를 훑는다 — 즉 이 수정이 없애려던
-#: 증상이 **조용히** 되돌아온다. 에이전트가 헤딩을 장식하는 것은 관측된 습성이다
-#: (`### 🟣 DISCOVERY PHASE`, `## Envision 진행 내역`). 대문자 표기도 마찬가지로
-#: 관대하게 받는다.
+#: **Containment, not an exact match.** This started as `^## Stage Progress\s*$`,
+#: which fails to find the section the moment the heading is decorated
+#: (`## Stage Progress (Discovery)`, `## 🟣 Stage Progress`) -- the fallback below then
+#: kicks in and scans the whole document, **silently** restoring the very symptom this
+#: fix exists to remove. Decorating headings is observed agent behaviour
+#: (`### 🟣 DISCOVERY PHASE`, `## Envision progress log`). Capitalisation is accepted
+#: just as leniently.
 #:
-#: 과하게 물어도(`## Notes on Stage Progress`) 그 섹션의 체크박스가 스테이지로
-#: 읽히는 정도이고, 못 물면 문서 전체가 스테이지가 된다 — 두 실패의 크기가 다르다.
-#: `^## `는 `###`을 자연히 배제한다(세 번째 문자가 공백이어야 한다).
+#: Matching too much (`## Notes on Stage Progress`) only means that section's
+#: checkboxes are read as stages; failing to match means the whole document becomes
+#: stages -- the two failures are not the same size. `^## ` naturally excludes `###`
+#: (the third character has to be a space).
 _PROGRESS_HEADER = re.compile(r"^## .*stage progress", re.IGNORECASE)
 
-#: 그 섹션을 닫는 것: 다음 `##` 헤딩. `###`는 **닫지 않는다** — 상류 템플릿이
-#: 섹션 안에 `### 🟣 DISCOVERY PHASE`를 두기 때문이다(envision.md:420-425).
+#: What closes that section: the next `##` heading. `###` does **not** close it,
+#: because the upstream template puts `### 🟣 DISCOVERY PHASE` inside the section
+#: (envision.md:420-425).
 _H2 = re.compile(r"^## ")
 
-#: 스테이지 이름에 실제로 나타난 이스케이프. XML 사전정의 엔티티 5개로 좁혔다.
+#: The escapes actually observed in stage names. Narrowed to the five predefined
+#: XML entities.
 _ENTITIES = {"&amp;": "&", "&lt;": "<", "&gt;": ">",
              "&quot;": '"', "&#39;": "'", "&apos;": "'"}
 _ENTITY_RE = re.compile("|".join(re.escape(k) for k in _ENTITIES))
 
 
 def normalize_stage_name(raw: str) -> str:
-    """스테이지 이름의 HTML 엔티티를 되돌리고 앞뒤 공백을 다듬는다.
+    """Undo HTML entities in a stage name and trim surrounding whitespace.
 
-    **왜 필요한가(2026-08-18 실측: hpt-sarang).** 모델이 `report_stage`에
-    `"stage": "Prototype &amp; Validation"`을 보냈다. 같은 호출의 `summary`와
-    직전 `Solution Analysis` 호출은 `&`가 정상이었으니, 그 필드 하나에서만
-    일어난 이스케이프다 — 룰셋과 우리 코드에는 `&amp;`가 한 곳도 없다(전수 grep).
+    **Why it is needed (measured 2026-08-18: hpt-sarang).** The model sent
+    `"stage": "Prototype &amp; Validation"` to `report_stage`. The `summary` in the
+    same call and the preceding `Solution Analysis` call both had a plain `&`, so the
+    escaping happened in that one field only -- there is not a single `&amp;` in the
+    ruleset or in our code (checked exhaustively by grep).
 
-    스테이지 이름은 표시 문자열이 아니라 **키**다. 손대지 않으면 셋이 함께
-    깨진다:
+    A stage name is not a display string but a **key**. Left alone, three things break
+    together:
 
-    1. 사이드바에 `Prototype &amp; Validation`이 그대로 뜬다.
-    2. 아래 `parse_state_file`의 이름 매칭이 어긋난다 — `&amp;`가 박힌 줄은
-       다음의 **올바른** 줄과 이름이 다르므로 체크라인이 하나 더 생기고,
-       진행률이 같은 스테이지를 두 번 센다.
-    3. 부분 포함 폴백(`_names_match`)이 엉뚱한 줄을 최장 일치로 고를 수 있다.
+    1. The sidebar shows `Prototype &amp; Validation` verbatim.
+    2. Name matching in `parse_state_file` below goes out of step: a line carrying
+       `&amp;` has a different name from the **correct** line that follows, so an extra
+       check line appears and the progress count counts the same stage twice.
+    3. The partial-containment fallback (`_names_match`) can pick the wrong line as the
+       longest match.
 
-    **읽기 쪽에서 정규화하는 것이 요점이다.** 2026-08-18까지는 쓰기 쪽
-    (`report_stage` 도구)도 이것을 불렀는데, 그 도구는 훅으로 대체됐고 지금
-    `aiplc-state.md`를 쓰는 것은 에이전트다 — 즉 우리가 손댈 쓰기 경로가 아예
-    없다. 이미 `&amp;`가 박혀 저장된 파일도 읽기 쪽 정규화가 파일을 고치지 않고
-    치유한다(hpt-sarang의 상태 파일이 그 경우다).
+    **Normalising on the read side is the point.** Until 2026-08-18 the write side (the
+    `report_stage` tool) called this too, but that tool was replaced by a hook and what
+    writes `aiplc-state.md` now is the agent -- meaning there is no write path left for
+    us to touch. Files already stored with `&amp;` baked in are healed by the read-side
+    normalisation without editing the file (hpt-sarang's state file is that case).
 
-    `html.unescape`를 쓰지 않는 이유: 그쪽은 세미콜론 없는 `&notin` 같은 형태와
-    수백 개의 명명 엔티티까지 관대하게 되돌리므로, `&copy`가 들어간 이름을
-    조용히 `©`로 바꾼다. 스테이지 이름에 필요한 것은 위 다섯 개뿐이고, 좁은
-    치환은 예상 못 한 이름 변형을 만들지 않는다. 한 번의 `re.sub`로 처리하므로
-    치환 순서에 의한 `&amp;lt;` → `<` 같은 사고도 없다.
+    Why not `html.unescape`: it leniently undoes semicolon-less forms like `&notin`
+    plus hundreds of named entities, so it would quietly turn a name containing
+    `&copy` into `©`. A stage name needs only the five above, and a narrow substitution
+    creates no unexpected name variants. It is done in a single `re.sub`, so there is
+    also no ordering accident such as `&amp;lt;` -> `<`.
     """
     return _ENTITY_RE.sub(lambda m: _ENTITIES[m.group(0)], raw).strip()
 
 def parse_state_file(markdown: str) -> ProjectState:
-    """`aiplc-state.md` → 진행률 사이드바가 읽는 상태.
+    """`aiplc-state.md` -> the state the progress sidebar reads.
 
-    **체크박스는 `## Stage Progress` 안에서만 스테이지다(2026-08-18 실측:
-    test12345678).** 그 프로젝트의 사이드바에 14개가 떴다 — 스테이지 6개와,
-    에이전트가 자기 기록용으로 만든 `## Envision 진행 내역`의 하위 단계 8개
-    (`Step 0.1`~`Step 6`)가 섞여 있었다. 진행률이 스테이지 6개가 아니라 14개를
-    세니 화면의 숫자도 뜻을 잃는다.
+    **A checkbox is a stage only inside `## Stage Progress` (measured 2026-08-18:
+    test12345678).** That project's sidebar showed 14 entries -- the 6 stages mixed
+    with 8 sub-steps (`Step 0.1` through `Step 6`) from an
+    `## Envision progress log` section the agent had created for its own records. With
+    the progress count counting 14 rather than 6 stages, the number on screen loses its
+    meaning too.
 
-    왜 이제 드러났는가: 예전에는 `report_stage` 도구가 상태 파일을 우리 손으로
-    upsert했고 그 쓰기 경로(`state_sync.upsert_stage`)는 `## Stage Progress`
-    블록만 건드렸다. 2026-08-18에 그 도구가 훅으로 대체되면서 파일을 쓰는 것은
-    **에이전트 단독**이 됐고, 상류 템플릿은 그 섹션을 `[Will be populated as
-    workflow progresses]`로만 규정한다 — 즉 나머지 문서에 무엇을 적어도 규칙
-    위반이 아니다. 가려 읽던 쪽이 없어졌으니 읽기 쪽이 가려야 한다.
+    Why this only surfaced now: the `report_stage` tool used to upsert the state file
+    with our own code, and that write path (`state_sync.upsert_stage`) touched the
+    `## Stage Progress` block only. When that tool was replaced by a hook on
+    2026-08-18, writing the file became **the agent's alone**, and the upstream template
+    specifies that section merely as `[Will be populated as workflow progresses]` --
+    meaning anything written elsewhere in the document breaks no rule. The side that
+    used to read selectively is gone, so the read side has to select.
 
-    하위 단계 기록을 금지하지 않는 이유: 그것은 에이전트에게 유용한 장부이고,
-    상류가 허용한다. 우리가 할 일은 그것을 스테이지로 **읽지 않는** 것이다.
+    Why sub-step logs are not forbidden: they are a useful ledger for the agent and
+    upstream permits them. Our job is simply **not to read them as stages**.
 
-    섹션이 아예 없으면 문서 전체를 훑는다 — 옛 동작이다. 빈 사이드바는 "질문
-    파싱이 실패했는데 조용히 넘어가 질문이 사라졌다"와 같은 종류의 실패이고,
-    잘못된 항목이 몇 개 섞이는 것보다 나쁘다.
+    With no such section at all it scans the whole document -- the old behaviour. An
+    empty sidebar is the same class of failure as "question parsing failed, was passed
+    over quietly, and the question disappeared", and that is worse than a few wrong
+    entries mixed in.
     """
     project_type = None
     current_stage = None
     stages: list[StageState] = []
-    # 섹션이 없는 문서를 위한 폴백: 헤딩을 한 번도 만나지 못하면 전부 훑는다.
+    # Fallback for a document with no such section: if the heading is never seen,
+    # scan everything.
     has_section = any(_PROGRESS_HEADER.match(ln.rstrip())
                       for ln in markdown.splitlines())
     in_progress_block = not has_section
@@ -109,15 +119,17 @@ def parse_state_file(markdown: str) -> ProjectState:
                 continue
             if in_progress_block and _H2.match(line):
                 in_progress_block = False
-                # 다음 섹션 헤딩 자체는 체크라인이 아니므로 계속 진행해도 된다.
+                # The next section heading is not itself a check line, so continuing
+                # is fine.
         if not in_progress_block:
             continue
         if (m := _CHECK.match(line.strip())):
             checked = m.group(1).lower() == "x"
             body = m.group(2).strip()
             parts = _SPLIT.split(body, maxsplit=1)
-            # 이름만 정규화한다 — note는 자유 서술이고, 그쪽의 엔티티는 키가
-            # 아니라서 매칭을 깨지 않는다(마크다운 렌더가 처리한다).
+            # Only the name is normalised: the note is free prose, and entities there
+            # are not keys and so cannot break matching (the markdown renderer handles
+            # them).
             name = normalize_stage_name(parts[0])
             note = parts[1].strip() if len(parts) > 1 else None
             status = "completed" if checked else "pending"
