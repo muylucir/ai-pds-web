@@ -734,3 +734,29 @@ def test_the_config_says_where_a_document_preface_goes():
     # 잘못 두면 무엇이 일어나는지도 말해야 한다 — 이유 없는 지시는 지켜지지 않는다
     # (agent/prompts.py 헤더의 규율).
     assert "becomes the *first question's* context" in text
+
+
+def test_the_multi_select_marker_is_named():
+    """**실측(2026-08-21).** 문항 본문이 "(복수 선택 가능)"인데 화면에는 "하나만 선택"
+    배지와 라디오가 떴고, 사용자는 `Other — 직접 입력` 칸에 "A, B"를 써서 우회했다 —
+    구조화된 답변이 자유 텍스트로 격하됐고 다음 스테이지가 그것을 보기 letter로 읽을
+    수 없다.
+
+    상류 `question-format-guide.md`에는 복수 선택 개념이 없다(`[Answer]: C` 단일 선택만
+    규정한다). 그러므로 그 규약을 만드는 것은 이 파일의 일이다 — 헤딩(`## Question N`)
+    때와 같은 분담이고, 관용은 `parsers/questions.py`에 있다.
+
+    **왜 지시가 필요한가.** 파서가 괄호 표시를 읽으므로 표시가 있으면 동작한다. 그런데
+    표시를 쓸지 말지가 모델의 즉흥에 남아 있으면 같은 문항이 라운드마다 다른 위젯으로
+    렌더된다 — 그리고 그 실패는 조용하다(라디오가 떠도 화면은 정상으로 보인다).
+    """
+    text = _discovery_config()
+    # 표시의 형태를 지목한다 — 이유만 주면 모델이 즉흥한다(prompts.py 헤더).
+    assert "복수 선택 가능" in text or "select all that apply" in text.lower(), (
+        "discovery-config가 복수 선택 표시의 형태를 지목하지 않는다")
+    # 괄호가 판정 경계라는 것. 없으면 모델이 괄호 없이 산문으로 쓰고 파서가 못 본다.
+    assert "parenthes" in text.lower(), (
+        "표시가 괄호 안에 와야 한다는 것을 적지 않았다 — 파서의 판정 경계다")
+    # 답변 형식. 프론트가 letter를 콤마로 잇고 되기록이 그 값을 그대로 쓴다.
+    assert "comma" in text.lower(), (
+        "복수 선택 답변이 콤마로 이어진 letter라는 것을 적지 않았다")

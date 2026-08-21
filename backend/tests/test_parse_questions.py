@@ -487,3 +487,110 @@ def test_free_text_round_trips_through_a_no_option_file():
     out = serialize_answers(_FREEFORM_MD, {1: "B2B SaaS 물류", 2: "운영 중"})
     again = parse_question_file("x.md", out)
     assert [q.answer for q in again.questions] == ["B2B SaaS 물류", "운영 중"]
+
+
+# ---- 복수 선택: 상류 형식에 없는 개념을 프롬프트 레이어가 규약으로 만든다 ----
+#
+# **실측(2026-08-21, 하나투어 프로젝트).** 문항 본문이 "(복수 선택 가능)"이라고 적혀
+# 있는데 화면에는 "하나만 선택" 배지와 라디오 버튼이 떴다. 사용자는 `Other — 직접 입력`
+# 칸에 "A, B"라고 써서 우회했다 — 구조화된 답변이 자유 텍스트로 격하됐다.
+#
+# 원인: `multi_select`가 파일 질문에서 UI까지 오는 경로가 **아예 없었다.**
+# AskUserQuestion 시절에는 도구 인자로 구조화돼 왔고(agent/questions_payload.py),
+# 질문이 파일로 옮겨가면서 그 값만 남겨졌다. 프론트는 이미 준비돼 있다 —
+# QuestionCard가 `multi_select`로 체크박스를 그리고 letter를 콤마로 잇는다.
+#
+# 상류 `question-format-guide.md`에는 이 개념이 없다(`[Answer]: C` 단일 선택만
+# 규정한다). 그래서 이 파일 상단이 헤딩 관용에 대해 적어 둔 것과 **같은 분담**을
+# 따른다: 관용은 파서에, 그렇게 쓰라는 지시는 `discovery-config/CLAUDE.md`에, 상류는
+# 건드리지 않는다.
+
+_MULTI_MD = """## Question 1
+보유한 콘텐츠 자산은 어디까지입니까? (복수 선택 가능)
+
+A) 패키지 상품 상세
+B) 고객 여행 후기
+X) Other — 직접 입력
+
+[Answer]:
+
+## Question 2
+주력 채널은 무엇입니까?
+
+A) 웹
+B) 앱
+
+[Answer]:
+"""
+
+
+def test_a_parenthesised_multi_select_marker_sets_the_flag():
+    qf = parse_question_file("x.md", _MULTI_MD)
+    assert qf.questions[0].multi_select is True
+
+
+def test_a_question_without_the_marker_stays_single_select():
+    """기본값이 단일 선택이어야 한다 — 반대로 틀리면 모든 문항이 체크박스가 된다."""
+    qf = parse_question_file("x.md", _MULTI_MD)
+    assert qf.questions[1].multi_select is False
+
+
+def test_the_english_marker_is_recognised():
+    md = _MULTI_MD.replace("(복수 선택 가능)", "(select all that apply)")
+    assert parse_question_file("x.md", md).questions[0].multi_select is True
+
+
+def test_the_marker_must_be_parenthesised():
+    """괄호를 요구하는 이유: 복수 선택 **자체를 묻는** 문항이 있다. 괄호가 없으면
+    "복수 선택 UI가 필요합니까?"가 체크박스로 렌더된다."""
+    md = _MULTI_MD.replace("(복수 선택 가능)", "— 복수 선택 UI가 필요합니까?")
+    assert parse_question_file("x.md", md).questions[0].multi_select is False
+
+
+def test_the_marker_survives_answer_round_trip():
+    """되기록이 본문을 건드리지 않으므로 표시가 살아 있어야 한다 — 죽으면 두 번째
+    라운드에서 같은 문항이 라디오로 바뀐다."""
+    out = serialize_answers(_MULTI_MD, {1: "A,B"})
+    again = parse_question_file("x.md", out)
+    assert again.questions[0].multi_select is True
+    assert again.questions[0].answer == "A,B"
+
+
+# `discovery-config/CLAUDE.md`는 **언어 중립**이어야 하므로(전 프로젝트가 공유한다 —
+# 한글 산문 자체가 언어 신호다, test_workspace_rules의
+# `test_shared_config_dirs_have_no_language_directive`) 한국어 표현을 지시문에 박을 수
+# 없다. 지시는 "프로젝트 언어로 '모두 선택' 뜻의 괄호 주석"까지만 말하고, 실제 문구는
+# 모델이 고른다. 그래서 파서가 그 폭을 감당해야 한다 — UI 자신의 배지가
+# "여러 개 선택 가능"인 것부터가 그 폭의 증거다.
+
+def _one_q(marker: str) -> str:
+    return f"## Question 1\n보유 자산은 어디까지입니까? {marker}\n\nA) 가\nB) 나\n\n[Answer]:\n"
+
+
+def test_the_korean_wordings_the_model_actually_picks_are_recognised():
+    for marker in ("(복수 선택 가능)",
+                   "(중복 선택 가능)",
+                   "(여러 개 선택 가능)",
+                   "(여러개 선택 가능)",
+                   "(해당하는 것 모두 선택)",
+                   "(모두 선택)"):
+        qf = parse_question_file("x.md", _one_q(marker))
+        assert qf.questions[0].multi_select is True, marker
+
+
+def test_a_parenthesised_single_select_clarifier_is_not_multi():
+    """"여러 개 중 하나만 선택"은 단일 선택을 **강조**하는 문구다. 낱말만 세면
+    그것이 체크박스가 되고, 사용자는 골라야 할 하나를 여러 개 고를 수 있게 된다."""
+    for marker in ("(여러 개 중 하나만 선택)",
+                   "(하나만 선택)",
+                   "(pick one)"):
+        qf = parse_question_file("x.md", _one_q(marker))
+        assert qf.questions[0].multi_select is False, marker
+
+
+def test_the_english_wordings_are_recognised():
+    for marker in ("(select all that apply)",
+                   "(choose all that apply)",
+                   "(multiple selections allowed)"):
+        qf = parse_question_file("x.md", _one_q(marker))
+        assert qf.questions[0].multi_select is True, marker
