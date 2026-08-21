@@ -53,11 +53,24 @@ The workflows are also fully customizable to your needs — they are defined in 
 you can edit to adjust questions, scoring frameworks, output formats, or add domain-specific
 guidance for your organization.
 
-**Where that workflow lives in this repo.** The ruleset AI-PDS drives is the AI-PLC workflow
-from [aws-samples/sample-ai-plc](https://github.com/aws-samples/sample-ai-plc), and it ships here
-under [`rule/aiplc-rules/`](rule/aiplc-rules) — those markdown files are the ones to edit. The
-backend copies them into the agent's workspace on **every turn**
-(`backend/aipds/agent/workspace_rules.py`), so an edited ruleset takes effect on the next turn:
+**Where that workflow lives in this repo.** The ruleset AI-PDS drives is the AI-PLC workflow from
+[aws-samples/sample-ai-plc](https://github.com/aws-samples/sample-ai-plc), and it is **not copied
+here** — it is a git submodule at [`steering-files/`](steering-files), pinned to an upstream commit
+and carried unmodified. That is deliberate: a copy drifts, and the canonical source is upstream.
+So clone with the submodule, or populate it afterwards:
+
+```bash
+git clone --recurse-submodules https://github.com/muylucir/ai-pds-web.git
+# already cloned?
+git submodule update --init --recursive
+```
+
+To pick up upstream changes, `git submodule update --remote steering-files` and commit the moved
+pointer — the commit is what records which ruleset a deployment runs. If the workflow itself needs
+to change, the change belongs upstream, not in this repo.
+
+The backend copies the ruleset into the agent's workspace on **every turn**
+(`backend/aipds/agent/workspace_rules.py`), so a ruleset update takes effect on the next turn:
 no restart, no redeployment. What AI-PDS adds around the workflow is the part a chat transcript
 cannot do — a browser UI for non-technical roles, live turn rendering, document review, and building
 and hosting the prototype plus its validation survey from the same screen.

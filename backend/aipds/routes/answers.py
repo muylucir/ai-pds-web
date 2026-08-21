@@ -51,14 +51,22 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
     그대로 적용된다(turn_handles.py 헤더).
     """
     ws = await ensure_workspace(pid)
+    numbered = _numbers(body.answers)
     try:
-        qfile = await ws.put_answers(name, _numbers(body.answers))
+        qfile = await ws.put_answers(name, numbered)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="question file not found")
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     language = app_module.project_language(pid)
-    text = prompts.file_answers_recorded(language, name)
+    # 답변을 턴 텍스트에 함께 싣는다. 이 텍스트가 트랜스크립트에 사용자 말풍선으로
+    # 남고 히스토리 복원이 그것을 그대로 그리므로, 답변이 없으면 복원된 대화의 모든
+    # 라운드가 같은 문구로 보인다(prompts.file_answers_recorded의 근거 참조).
+    #
+    # `numbered`를 넘기는 이유: `body.answers`는 프론트가 보낸 문자열 키이고
+    # 정렬이 사전순이 된다("12" < "2"). 문항 번호는 숫자로 정렬해야 화면 순서와
+    # 맞는다.
+    text = prompts.file_answers_recorded(language, name, numbered)
     # 상태 파일이 아직 없으면 재개 턴에 그것을 지목한다.
     #
     # 훅과 턴 경계 재조정(agent/reconcile.py)은 파일이 **있을 때** 그것을 화면으로
