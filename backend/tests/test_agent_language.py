@@ -25,9 +25,9 @@ from pathlib import Path
 import pytest
 
 from aipds.agent import prompts
-from aipds.agent.tools import build_tools
 from aipds.agent.workspace_rules import place_rules
 from aipds.proto import prompts as proto_prompts
+from aipds.proto.tools import build_proto_tools
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -109,60 +109,65 @@ def test_shared_config_dir_claude_md_is_language_neutral(config_dir):
 
 
 # ---- ③ MCP 도구 설명·반환 문자열 (모델이 읽는 프롬프트) ----
+#
+# **대상이 Discovery에서 프로토타입 빌더로 옮겨 왔다(2026-08-21).** 여기 있던 검사들은
+# `agent/tools.py`의 `build_tools`를 봤는데, 그 모듈의 유일한 도구
+# (`submit_document`)가 PostToolUse 훅으로 대체되면서 모듈째 사라졌다. 남은 커스텀
+# 도구는 빌더의 `build_complete` 하나이고, 그것도 같은 실패 경로를 갖는다 — 도구 설명은
+# 모델이 매 턴 도구 목록과 함께 읽는 프롬프트다. 그래서 검사를 지우지 않고 옮긴다
+# (report_stage 검사가 test_agent_reconcile.py로 옮겨 간 것과 같은 규율).
+
+
+def _proto_tools(language: str | None = None):
+    if language is None:
+        return build_proto_tools("/tmp/ws", lambda e: None)
+    return build_proto_tools("/tmp/ws", lambda e: None, language)
 
 
 def test_english_tool_descriptions_have_no_korean():
     """도구 설명은 매 턴 모델 컨텍스트에 들어가는 프롬프트다."""
-    bad = {t.name: t.description for t in build_tools("/tmp/ws", lambda e: None, "en")
+    bad = {t.name: t.description for t in _proto_tools("en")
            if hangul(t.description)}
     assert not bad, f"영어 프로젝트의 도구 설명에 한글이 있다: {bad}"
 
 
 def test_korean_tool_descriptions_are_still_korean():
     """대칭 확인 — 영어를 배선하면서 한국어를 잃지 않는다."""
-    descs = [t.description for t in build_tools("/tmp/ws", lambda e: None, "ko")]
+    descs = [t.description for t in _proto_tools("ko")]
+    # 비어 있으면 all()이 참이 되어 이 검사가 조용히 무의미해진다.
+    assert descs, "커스텀 도구가 하나도 없다 — 이 검사가 공허해졌다"
     assert all(hangul(d) for d in descs), descs
 
 
-def test_build_tools_defaults_to_korean():
+def test_build_proto_tools_defaults_to_korean():
     """인자를 안 주는 호출부(구 코드, 테스트)가 기존 동작을 유지한다."""
-    descs = [t.description for t in build_tools("/tmp/ws", lambda e: None)]
+    descs = [t.description for t in _proto_tools()]
+    assert descs, "커스텀 도구가 하나도 없다 — 이 검사가 공허해졌다"
     assert all(hangul(d) for d in descs), descs
 
 
-async def test_submit_document_refusals_follow_the_project_language(tmp_path):
-    """거부 문자열은 에이전트가 읽고 스스로 고치는 지시다 — 대화 언어와 같아야
-    한다. 세 가지 거부(경로 탈출·파일 없음·빈 파일)를 모두 확인한다: 한 갈래만
-    번역되면 나머지가 조용히 한국어로 남는다."""
+async def test_build_complete_refusals_follow_the_project_language(tmp_path):
+    """거부 문자열은 에이전트가 읽고 스스로 고치는 지시다 — 대화 언어와 같아야 한다.
+
+    `test_submit_document_refusals_follow_the_project_language`가 여기 있었다. 그
+    도구가 사라졌으므로 같은 계약을 가진 도구에서 같은 것을 본다: 산출물 없이 완료를
+    선언하면 사용자는 "빌드 완료" 카드를 보는데 호스팅할 것이 없다.
+    """
     ws = tmp_path / "ws"
     ws.mkdir()
-    tools = {t.name: t for t in build_tools(str(ws), lambda e: None, "en")}
-    submit = tools["submit_document"]
-
-    async def call(**kw):
-        return (await submit.handler(kw))["content"][0]["text"]
-
-    escape = await call(path="../outside.md", version="v1")
-    missing = await call(path="aiplc-docs/nope.md", version="v1")
-    (ws / "empty.md").write_text("   ", encoding="utf-8")
-    empty = await call(path="empty.md", version="v1")
-
-    for label, out in (("escape", escape), ("missing", missing), ("empty", empty)):
-        assert not hangul(out), f"{label} 거부 문구에 한글: {out}"
-        assert "Refused" in out, f"{label}: {out}"
+    tools = {t.name: t for t in build_proto_tools(str(ws), lambda e: None, "en")}
+    out = (await tools["build_complete"].handler(
+        {"summary": "done"}))["content"][0]["text"]
+    assert not hangul(out), out
 
 
 # ---- ④ 드라이버가 만드는 모델·사용자 대상 텍스트 ----
 
 
 @pytest.mark.parametrize("fn,kwargs", [
-    (prompts.submit_document_description, {}),
     (prompts.answer_first, {}),
     (prompts.turn_failed, {}),
     (prompts.question_payload_rejected, {"reason": "no options"}),
-    (prompts.submit_document_escape, {"reason": "path escapes root"}),
-    (prompts.submit_document_missing, {"path": "a.md"}),
-    (prompts.submit_document_empty, {"path": "a.md"}),
     (prompts.state_file_missing, {}),
     (prompts.prototype_handoff_stop, {"slug": "prototype"}),
     (proto_prompts.design_rules, {}),
@@ -181,13 +186,9 @@ def test_every_english_prompt_has_no_korean(fn, kwargs):
 
 
 @pytest.mark.parametrize("fn,kwargs", [
-    (prompts.submit_document_description, {}),
     (prompts.answer_first, {}),
     (prompts.turn_failed, {}),
     (prompts.question_payload_rejected, {"reason": "옵션 없음"}),
-    (prompts.submit_document_escape, {"reason": "탈출"}),
-    (prompts.submit_document_missing, {"path": "a.md"}),
-    (prompts.submit_document_empty, {"path": "a.md"}),
     (prompts.state_file_missing, {}),
     (prompts.prototype_handoff_stop, {"slug": "prototype"}),
     (proto_prompts.design_rules, {}),
@@ -215,43 +216,14 @@ def test_answers_resumed_carries_the_record_in_both_languages():
     assert hangul(ko), ko
 
 
-def test_submit_document_description_keeps_the_write_first_order_in_both():
-    """이 문장의 핵심은 순서 지시다 — 약해지면 도구가 없는 문서를 선언하려 하고
-    사용자는 '생성됐습니다'를 읽으며 빈 문서 패널을 본다. 두 벌을 유지하는 이유가
-    이것이므로(조립하지 않는다), 두 언어 모두 그 지시를 담는지 확인한다."""
-    en = prompts.submit_document_description("en")
-    assert "Write/Edit" in en and "FIRST" in en
-    ko = prompts.submit_document_description("ko")
-    assert "Write/Edit" in ko and "먼저" in ko
+# `test_submit_document_description_keeps_the_write_first_order_in_both`이 여기
+# 있었다. 그 문장의 핵심은 순서 지시("먼저 쓴 뒤 호출")였고, 도구가 사라지면서 지킬
+# 순서 자체가 없어졌다 — 이제 신호가 쓰기에서 유도되므로 순서가 뒤집힐 수 없다.
 
 
-# ---- ⑤ 드라이버 배선: 프로젝트 언어가 도구까지 닿는가 ----
-
-
-def test_driver_passes_its_language_to_the_tools(tmp_path):
-    """place_rules만 언어를 받고 build_tools는 못 받던 것이 이 결함이었다.
-    드라이버가 클라이언트를 조립할 때 두 곳 모두에 같은 값을 보내야 한다."""
-    from aipds.agent import claude_driver as mod
-
-    seen: dict = {}
-
-    def fake_build_tools(workspace, emit, language="ko"):
-        seen["language"] = language
-        return []
-
-    original = mod.build_tools
-    mod.build_tools = fake_build_tools
-    try:
-        d = mod.ClaudeDriver(workspace=str(tmp_path), rules_dir=str(tmp_path),
-                             config_dir=str(tmp_path), s3=None,
-                             language="en", session_store=None)
-        # 실제 팩토리를 부르면 SDK 서브프로세스가 필요하므로, 도구 조립까지만
-        # 확인한다 — create_sdk_mcp_server 호출에서 터지더라도 그 전에
-        # build_tools가 불렸는지가 이 테스트의 관심사다.
-        try:
-            mod._default_client_factory(d)({"session_id": "s"})
-        except Exception:
-            pass
-        assert seen.get("language") == "en"
-    finally:
-        mod.build_tools = original
+# ---- ⑤ 드라이버 배선 ----
+#
+# `test_driver_passes_its_language_to_the_tools`가 여기 있었다. Discovery의 커스텀
+# 도구(`submit_document`)가 2026-08-21에 사라지면서 검사할 대상이 없어졌다 — Discovery는
+# 커스텀 도구를 하나도 배선하지 않으므로 그 채널로 언어가 샐 수 없다
+# (claude_driver의 `mcp_servers` 주석). 남은 도구는 빌더의 것이고 위 ③이 본다.

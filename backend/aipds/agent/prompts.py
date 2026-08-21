@@ -34,56 +34,16 @@ def _lang(language: str) -> str:
     return language if language in _LANGUAGES else _DEFAULT
 
 
-# ---- MCP 도구 설명 (agent/tools.py) ----
-
-
-def submit_document_description(language: str) -> str:
-    """`submit_document` 도구 설명.
-
-    순서 지시("먼저 쓴 뒤 호출")가 이 문장의 핵심이다 — 약해지면 도구가 없는
-    문서를 선언하려 하고, 사용자는 "생성됐습니다"를 읽으면서 빈 문서 패널을
-    본다.
-    """
-    if _lang(language) == "en":
-        return ("Declare that a document is ready for review, or has been "
-                "updated. **You must write the file with Write/Edit FIRST**, "
-                "then call this — the declaration is refused if the file is "
-                "missing or empty.")
-    return ("리뷰 대상 문서가 준비/갱신되었음을 선언한다. **먼저 Write/Edit로 "
-            "파일을 쓴 뒤** 호출해야 한다 — 파일이 없거나 비어 있으면 선언이 "
-            "거부된다.")
-
-
-# ---- 도구 반환 문자열 (agent/tools.py) ----
+# ---- MCP 도구 설명·반환 문자열이 여기 있었다 ----
 #
-# 거부 문자열은 에이전트가 읽고 스스로 고치는 지시다. 무엇이 잘못됐는지와
-# 다음에 무엇을 할지를 둘 다 담아야 한다 — 이유만 주면 같은 호출을 반복한다.
-
-
-def submit_document_escape(language: str, reason: str) -> str:
-    """워크스페이스를 벗어나는 경로를 제출했을 때."""
-    if _lang(language) == "en":
-        return (f"Refused — {reason}. Only workspace-relative paths can be "
-                "submitted.")
-    return f"거부됨 — {reason}. 워크스페이스 상대 경로만 제출할 수 있다."
-
-
-def submit_document_missing(language: str, path: str) -> str:
-    """선언한 파일이 디스크에 없을 때."""
-    if _lang(language) == "en":
-        return (f"Refused — the file '{path}' does not exist. Save the document "
-                "with Write first, then call submit_document again.")
-    return (f"거부됨 — '{path}' 파일이 없다. Write로 문서를 먼저 저장한 뒤 "
-            "submit_document를 다시 호출할 것.")
-
-
-def submit_document_empty(language: str, path: str) -> str:
-    """선언한 파일이 비어 있을 때."""
-    if _lang(language) == "en":
-        return (f"Refused — '{path}' is empty. Fill in the content with Write, "
-                "then call submit_document again.")
-    return (f"거부됨 — '{path}'가 비어 있다. Write로 내용을 채운 뒤 "
-            "submit_document를 다시 호출할 것.")
+# 넷이었다: `submit_document_description`과 그 거부 문자열 셋(경로 탈출·파일 없음·빈
+# 파일). 2026-08-21에 `submit_document` 도구와 함께 사라졌다 — Discovery에는 커스텀
+# 도구가 남아 있지 않으므로 이 자리는 비어 있는 것이 맞다.
+#
+# 거부 문자열이 지키던 것("도구가 없는 문서를 선언할 수 없다")은 판정을 도구에서
+# 훅으로 옮기면서 성립할 수 없는 실패가 됐다: `document` 이벤트는 **파일이 쓰였다는
+# 사실에서** 유도되므로(agent/reconcile.document_events) 없는 문서를 알릴 방법이
+# 없다. 빈 파일 조건만 남았고 그것은 그 함수 안에 있다.
 
 
 # ---- 드라이버가 만드는 텍스트 (agent/claude_driver.py) ----
