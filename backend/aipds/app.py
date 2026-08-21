@@ -247,7 +247,13 @@ def durable_projects_enabled() -> bool:
 
 
 def _rules_dir() -> str:
-    default = str(Path(__file__).resolve().parent.parent.parent / "rule" / "aiplc-rules")
+    #: `steering-files/`는 상류 리포(aws-samples/sample-ai-plc)의 **서브모듈**이고
+    #: `aiplc-rules/`는 그 안의 디렉터리다. 서브모듈이므로 clone만으로는 비어
+    #: 있다 — `git submodule update --init`이 부팅(infra/lib/user-data.ts)과
+    #: 갱신(infra/scripts/aipds-update) 양쪽에 있다. 비어 있으면 place_rules가
+    #: core-workflow.md를 못 찾고 그 실패는 첫 턴에서야 보인다.
+    default = str(Path(__file__).resolve().parent.parent.parent
+                  / "steering-files" / "aiplc-rules")
     return os.environ.get("AIPDS_RULES_DIR", default)
 
 
