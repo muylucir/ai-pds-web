@@ -194,22 +194,22 @@ class ProtoHost:
 
     @staticmethod
     def _info(entry: _HostEntry, *, with_log: bool = True) -> HostInfo:
-        """`with_log=False`는 로그를 읽지 않고 상태만 담는다.
+        """`with_log=False` carries only the state, without reading the log.
 
-        `_tail_text`가 마지막 100줄을 얻으려고 파일을 **전부** 읽고
-        (`read_text()`), `.proto-host.log`는 회전 없이 append로만 자라기
-        때문이다(`_run_npm`의 "ab"). 호스팅을 반복하면 `npm install` +
-        `npm run build` 출력이 계속 쌓인다. 실측한 호출당 비용: 1MB → 1.9ms,
-        20MB → 46ms, 100MB → 237ms.
+        Because `_tail_text` reads the **whole** file (`read_text()`) to get the last 100
+        lines, and `.proto-host.log` grows by append only with no rotation ("ab" in
+        `_run_npm`). Repeated hosting keeps piling up `npm install` and `npm run build`
+        output. The measured cost per call: 1MB -> 1.9ms, 20MB -> 46ms, 100MB -> 237ms.
 
-        그 읽기는 async 함수 안의 **동기 I/O**라 이벤트 루프를 그대로
-        붙잡는다 -- 목록을 새로고침할 때마다 진행 중인 모든 SSE 스트림이 그
-        시간만큼 멈춘다. 목록 라우트는 프로토타입 하나당 `status()`를 부르므로
-        개수만큼 곱해진다. 그래서 `status()`는 로그를 읽지 않는다.
+        That read is **synchronous I/O** inside an async function, so it holds the event loop
+        outright -- every refresh of the list stalls every SSE stream in flight for that
+        long. The list route calls `status()` once per prototype, so it multiplies by their
+        count. That is why `status()` does not read the log.
 
-        로그가 실제로 필요한 두 자리는 그대로 둔다: `start()`의 실패 진단
-        (502 detail로 나간다)과 `log_tail()`(사용자가 "로그 보기"를 누른
-        시점). 둘 다 호출 빈도가 낮고 사용자가 그 내용을 기다린다.
+        The two places that genuinely need the log are left alone: `start()`'s failure
+        diagnosis (which goes out as a 502 detail) and `log_tail()` (the moment the user
+        presses "view log"). Both are called infrequently and the user is waiting for the
+        content.
         """
         return HostInfo(
             state=entry.state, port=entry.port,
@@ -318,11 +318,11 @@ class ProtoHost:
         if base_path:
             base_env = {"NEXT_PUBLIC_BASE_PATH": base_path,
                         "PROTO_BASE_PATH": base_path}
-        # 프로토타입 런타임이 읽을 모델. 에이전트가 `.env.example`에 적어 두는
-        # 이름과 같은 것을 쓴다(BEDROCK_MODEL_ID) -- 이름이 어긋나면 주입해도
-        # 앱이 읽지 않는다. NEXT_PUBLIC_ 접두어는 붙이지 않는다: 모델 id는 서버
-        # 측 호출에만 쓰이고, 그 접두어는 값을 클라이언트 번들에 인라인해
-        # 브라우저로 내보낸다.
+        # The model the prototype runtime will read. It uses the same name the agent writes
+        # into `.env.example` (BEDROCK_MODEL_ID) -- with a mismatched name, injecting it
+        # would not make the app read it. No NEXT_PUBLIC_ prefix: the model id is used only
+        # in server-side calls, and that prefix would inline the value into the client
+        # bundle and ship it to the browser.
         if model_id:
             base_env["BEDROCK_MODEL_ID"] = model_id
 
@@ -513,17 +513,19 @@ class ProtoHost:
         return swept
 
     def slugs(self, pid: str) -> list[str]:
-        """이 프로젝트가 **로컬에** 갖고 있는 슬러그 전부.
+        """Every slug this project holds **locally**.
 
-        세 출처의 합집합이고, 셋 다 필요하다: 디스크 디렉토리(빌드 트리 —
-        재시작 뒤에도 남는 것), 호스팅 레지스트리(도는 프로세스), 토큰
-        캐시(디렉토리가 아직 없는데 토큰만 발급된 경계 상태). 프로젝트 삭제가
-        "이 프로젝트의 모든 슬러그"를 정리할 때 무엇을 돌아야 하는지가 여기서
-        나온다 — S3 기록만 열거하면 기록 없이 로컬에만 남은 트리를 놓친다.
+        The union of three sources, all three of which are needed: disk directories (build
+        trees -- what survives a restart), the hosting registry (running processes), and the
+        token cache (the boundary state where a token has been issued but the directory does
+        not exist yet). What a project deletion has to walk when cleaning up "every slug in
+        this project" comes from here -- enumerating only the S3 record would miss a tree
+        that remains locally with no record.
 
-        읽기 전용이고 실패하지 않는다. 디렉토리를 못 읽으면(권한·경합) 그
-        출처만 비운다 — 목록을 못 만들었다는 사실은 호출부가 다른 출처로
-        판단해야 하고, 열거 실패로 삭제 전체를 막는 것은 과하다.
+        Read-only and it does not fail. If a directory cannot be read (permissions,
+        contention) only that source comes back empty -- the fact that the listing could not
+        be built is for the caller to judge from the other sources, and blocking an entire
+        deletion over an enumeration failure would be excessive.
         """
         reject_unsafe_segment(pid)
         found = {slug for (p, slug) in self._registry if p == pid}
@@ -533,16 +535,17 @@ class ProtoHost:
             if base.is_dir():
                 found |= {child.name for child in base.iterdir() if child.is_dir()}
         except OSError:
-            # 이 모듈은 로거를 두지 않는다(전부 예외 전파 아니면 best-effort).
-            # 호출부(proto/cleanup.py)가 자기 실패 라벨로 기록한다.
+            # This module keeps no logger (everything either propagates an exception or is
+            # best-effort). The caller (proto/cleanup.py) records it under its own failure
+            # label.
             pass
         return sorted(found)
 
     def status(self, pid: str, slug: str) -> HostInfo | None:
-        """`log_tail`은 항상 빈 문자열이다 -- 이 메서드는 목록 라우트가
-        프로토타입마다 부르는 폴링 경로이고, 로그를 읽으면 이벤트 루프가
-        멈춘다(`_info`의 주석에 실측치가 있다). 로그가 필요한 호출자는
-        `log_tail()`을 따로 부른다 -- `/host` 라우트가 이미 그렇게 한다.
+        """`log_tail` is always an empty string -- this method is the polling path the list
+        route calls once per prototype, and reading the log stalls the event loop (the
+        measurements are in `_info`'s comment). A caller that needs the log calls
+        `log_tail()` separately -- the `/host` route already does.
         """
         entry = self._registry.get((pid, slug))
         if entry is None:
