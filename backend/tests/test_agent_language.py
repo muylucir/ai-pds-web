@@ -168,6 +168,10 @@ async def test_build_complete_refusals_follow_the_project_language(tmp_path):
     (prompts.answer_first, {}),
     (prompts.turn_failed, {}),
     (prompts.question_payload_rejected, {"reason": "no options"}),
+    # summary/path는 인용되는 값이다 — 한글 없는 값을 주어 **wrapper의 언어**만
+    # 본다. 실제 본문은 질문 파일의 문장을 인용하므로 프로젝트 언어를 따른다
+    # (aipds/answer_summary.py, 2026-08-21).
+    (prompts.file_answers_recorded, {"path": "a.md", "summary": "Q1.\n-> A"}),
     (prompts.state_file_missing, {}),
     (prompts.prototype_handoff_stop, {"slug": "prototype"}),
     (proto_prompts.design_rules, {}),
@@ -189,6 +193,7 @@ def test_every_english_prompt_has_no_korean(fn, kwargs):
     (prompts.answer_first, {}),
     (prompts.turn_failed, {}),
     (prompts.question_payload_rejected, {"reason": "옵션 없음"}),
+    (prompts.file_answers_recorded, {"path": "a.md", "summary": "Q1.\n-> A"}),
     (prompts.state_file_missing, {}),
     (prompts.prototype_handoff_stop, {"slug": "prototype"}),
     (proto_prompts.design_rules, {}),

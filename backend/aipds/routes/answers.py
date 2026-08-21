@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import aipds.app as app_module
 from aipds.agent import prompts
+from aipds.answer_summary import answer_summary
 from aipds.models import QuestionFile
 from aipds.routes.deps import ensure_workspace
 
@@ -63,10 +64,15 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
     # 남고 히스토리 복원이 그것을 그대로 그리므로, 답변이 없으면 복원된 대화의 모든
     # 라운드가 같은 문구로 보인다(prompts.file_answers_recorded의 근거 참조).
     #
+    # **렌더는 백엔드가 한 벌로 소유한다(2026-08-21).** `qfile`이 보기 목록을 들고
+    # 있으므로 letter를 라벨로 푸는 것은 여기서만 할 수 있고, 그 결과를 응답으로 함께
+    # 돌려주면 프론트가 같은 판별을 두 번째로 구현할 이유가 없어진다 — 화면과 기록이
+    # **같은 문자열**이 된다(aipds/answer_summary.py 헤더에 그 전말이 있다).
+    #
     # `numbered`를 넘기는 이유: `body.answers`는 프론트가 보낸 문자열 키이고
-    # 정렬이 사전순이 된다("12" < "2"). 문항 번호는 숫자로 정렬해야 화면 순서와
-    # 맞는다.
-    text = prompts.file_answers_recorded(language, name, numbered)
+    # 정렬이 사전순이 된다("12" < "2"). 문항 번호는 숫자여야 문항 목록과 맞는다.
+    summary = answer_summary(qfile, numbered, language)
+    text = prompts.file_answers_recorded(language, name, summary)
     # 상태 파일이 아직 없으면 재개 턴에 그것을 지목한다.
     #
     # 훅과 턴 경계 재조정(agent/reconcile.py)은 파일이 **있을 때** 그것을 화면으로
@@ -85,5 +91,9 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
         # 제출했고, 이 노트는 배지를 살리는 보조 지시일 뿐이다.
         logging.getLogger("aipds.agent").exception(
             "state probe for the resume turn failed — continuing without the note")
+    # `summary`는 프론트가 말풍선에 **그대로** 쓰는 문자열이다. `text`(모델이 읽는
+    # 턴 텍스트)는 그것을 포함하고 뒤에 지시를 붙인다 — 사람이 읽을 부분이 앞에 오고
+    # 기계용 지시가 꼬리가 되는 것이 `approvalMarker.ts`가 적어 둔 원칙이다.
     return {"turn_id": app_module.turn_handles.create(pid, {"text": text}),
+            "summary": summary,
             "questions": qfile}

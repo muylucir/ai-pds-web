@@ -75,6 +75,8 @@ function noLiveTurn() {
   });
 }
 
+let createdSummary = "Q1. 질문?\n→ A. 보기 라벨";
+
 function drive(
   events: AgentEvent[],
   impl: "streamEvents" | "streamAnswers" | "streamFileAnswers",
@@ -83,6 +85,9 @@ function drive(
   // 4인자다. 위치를 3번으로 박으면 그 함수에서는 answers를 handlers로 읽는다.
   vi.mocked(sse[impl]).mockImplementation((...args: any[]) => {
     const handlers = args[args.length - 1];
+    // 턴 생성 응답이 먼저 온다 — 말풍선 텍스트가 거기에 실려 온다
+    // (routes/answers.py의 `summary`). 파일 라운드만 이 콜백을 쓴다.
+    handlers.onCreated?.({ summary: createdSummary });
     for (const ev of events) handlers.onEvent(ev);
     handlers.onDone();
     return () => {};
@@ -610,5 +615,70 @@ describe("useWorkspaceStream — 끊긴 턴 재접속", () => {
 
     expect(sse.streamLive).toHaveBeenCalledTimes(1);
     expect(result.current.streaming).toBe(false);
+  });
+});
+
+describe("답변 말풍선은 서버가 만든 텍스트를 그대로 쓴다", () => {
+  // **왜 서버인가(2026-08-21).** 이 판별이 프론트에만 있던 동안 사용자가 본 말풍선은
+  // 브라우저 안에서만 만들어져 서버로 간 적이 없었다. 서버는 자기가 만든 다른 문장을
+  // 트랜스크립트에 기록했고, 새로고침하면 대화가 기계 문구로 보였다 — 실측: 한
+  // 프로젝트의 user 발화 16개 중 13개. 렌더가 백엔드 한 벌이면 갈라질 수 없다
+  // (backend/aipds/answer_summary.py).
+  beforeEach(() => { vi.clearAllMocks(); noLiveTurn(); });
+
+  it("파일 라운드의 말풍선이 서버 응답의 summary다", async () => {
+    createdSummary = "Q1. 어떤 방식이 좋습니까?\n→ B. 플랫폼(Platform)";
+    drive(
+      [
+        { kind: "questions", text: null, path: null, payload: FILE_QUESTIONS_PAYLOAD },
+        { kind: "done", text: null, path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("시작"));
+    drive([{ kind: "done", text: null, path: null, payload: null }], "streamFileAnswers");
+
+    await act(async () => { result.current.submitAnswers({ "1": "B" }); });
+
+    const bubbles = result.current.items.filter((i) => i.role === "user");
+    expect(bubbles[bubbles.length - 1]!.text).toBe(
+      "Q1. 어떤 방식이 좋습니까?\n→ B. 플랫폼(Platform)",
+    );
+  });
+});
+
+describe("도구 경로(AskUserQuestion 탈출로)의 말풍선은 읽을 수 있어야 한다", () => {
+  // 파일 라운드는 서버가 만든 텍스트를 쓴다. 파킹된 턴을 재개하는 경로
+  // (`AIPDS_FILE_QUESTIONS`를 끈 탈출로)에는 서버가 `summary`를 주지 않으므로 —
+  // 그 라우트는 질문 파일을 손에 들고 있지 않다 — 프론트 렌더러를 계속 쓴다.
+  // 마커("답변 제출")로 떨어뜨리면 그 경로만 읽을 수 없게 되고, 복원은
+  // `answer_store` 조인으로 실제 답변을 보여주므로 라이브와 복원이 **반대 방향으로**
+  // 갈라진다.
+  beforeEach(() => { vi.clearAllMocks(); noLiveTurn(); });
+
+  it("summary가 없으면 프론트 렌더러로 문항과 답변을 그린다", async () => {
+    createdSummary = undefined as unknown as string;
+    drive(
+      [
+        { kind: "questions", text: null, path: null, payload: QUESTIONS_PAYLOAD },
+        { kind: "done", text: null, path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("시작"));
+    drive([{ kind: "done", text: null, path: null, payload: null }], "streamAnswers");
+
+    await act(async () => { result.current.submitAnswers({ "1": "A" }); });
+
+    const bubbles = result.current.items.filter((i) => i.role === "user");
+    const text = bubbles[bubbles.length - 1]!.text;
+    // QUESTIONS_PAYLOAD의 문항 1은 "누구?"이고 보기 A는 "PM"이다.
+    expect(text).toContain("누구?");
+    expect(text).toContain("PM");
+    expect(text).not.toBe("답변 제출");
   });
 });

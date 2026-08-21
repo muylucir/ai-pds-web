@@ -161,7 +161,16 @@ def test_the_note_follows_the_project_language(monkeypatch):
     assert "aiplc-state.md" in text
     # 영어 프로젝트의 프롬프트에 한글이 섞이면 그 프로젝트의 대화가 한국어로
     # 샌다 — 2026-08-04 결함의 모양이다.
-    assert not any("가" <= ch <= "힣" for ch in text)
+    #
+    # **"본문에 한글 없음"으로 보지 않는다(2026-08-21).** 이 텍스트는 이제 질문 파일의
+    # 문장을 인용한다(aipds/answer_summary.py). 그 문장은 프로젝트의 콘텐츠이지 우리
+    # 프롬프트가 아니고, 실제 영어 프로젝트의 질문 파일은 영어다 — 이 픽스처만
+    # 한국어다. 그래서 우리가 만드는 **wrapper**가 프로젝트 언어인지를 본다.
+    # 프롬프트 전수 검사는 tests/test_agent_language.py가 담당한다.
+    for korean_wrapper in ("질문에 답했습니다", "다시 묻지 마세요",
+                           "파일을 읽고 멈춘 지점부터"):
+        assert korean_wrapper not in text, korean_wrapper
+    assert "I answered the questions" in text
 
 
 def test_a_failing_state_probe_does_not_break_answer_submission(monkeypatch):
@@ -201,8 +210,11 @@ def test_the_resume_turn_carries_the_answers_the_user_actually_gave(monkeypatch)
     payload = app_module.turn_handles.consume("fqans1", handle)
 
     text = payload["text"]
-    assert "1" in text and "B" in text, text
-    assert "12" in text and "A,C" in text, text
+    # 두 문항의 답변이 **읽을 수 있는 형태로** 온다. letter 리터럴("A,C")을 단정하지
+    # 않는 이유: 2026-08-21에 렌더가 백엔드로 오면서 보기 라벨로 펼쳐진다 — 그
+    # 펼침 자체는 위 두 테스트가 문항별로 고정한다.
+    assert "플랫폼(Platform)" in text, text
+    assert "신규 MD 온보딩 기간 단축률" in text, text
     # 파일 지목은 그대로 남는다 — 파일이 여전히 권위다(`[Answer]:` 태그가 정본).
     assert "strategy-questions.md" in text
 
@@ -225,5 +237,52 @@ def test_the_resume_turn_follows_the_project_language(monkeypatch):
     handle = _submit("fqans3", {"1": "B"}).json()["turn_id"]
     text = app_module.turn_handles.consume("fqans3", handle)["text"]
 
-    assert not any("가" <= c <= "힣" for c in text), text
-    assert "1" in text and "B" in text
+    # wrapper만 본다 — 본문은 질문 파일의 문장을 인용하고 이 픽스처는 한국어다
+    # (fq8의 같은 주석에 근거가 있다).
+    assert "I answered the questions" in text, text
+    assert "질문에 답했습니다" not in text, text
+    assert "Q1." in text
+
+
+# ---- 기록되는 텍스트가 화면과 같아야 한다 (2026-08-21) ----
+#
+# 아침의 `fe6a482`는 답변을 턴 텍스트에 담았지만 **보기 letter 그대로**였다
+# ("- 1: A,B"). 라이브 화면은 letter를 보기 라벨로 풀어 그리므로(당시
+# frontend/lib/answerSummary.ts) 기록과 화면이 여전히 달랐다 — 결함의 절반만 고친
+# 것이다. 이제 렌더가 백엔드 한 벌이고(aipds/answer_summary.py) 그 결과가 곧 턴
+# 텍스트다.
+
+def test_the_resume_turn_renders_option_labels_not_bare_letters(monkeypatch):
+    """letter만으로는 읽는 사람에게 아무 뜻이 없다 — 복원된 대화가 "B"만 보여주면
+    질문 폼을 다시 열어야 무슨 결정이었는지 알 수 있다."""
+    _seed(monkeypatch, "lbl1")
+    handle = _submit("lbl1", {"1": "B"}).json()["turn_id"]
+    text = app_module.turn_handles.consume("lbl1", handle)["text"]
+
+    assert "플랫폼(Platform)" in text, text
+    # 문항 문장도 함께 온다 — 답변만 있으면 무엇에 대한 답인지 알 수 없다.
+    assert "포지셔닝" in text, text
+    assert "Q1." in text, text
+
+
+def test_the_resume_turn_expands_every_letter_of_a_multi_select_answer(monkeypatch):
+    """복수 선택은 콤마로 온다("A,C"). 그대로 기록하면 두 결정이 두 글자로 남는다."""
+    _seed(monkeypatch, "lbl2")
+    handle = _submit("lbl2", {"12": "A,C"}).json()["turn_id"]
+    text = app_module.turn_handles.consume("lbl2", handle)["text"]
+
+    assert "MD 업무 시간 절감률" in text, text
+    assert "신규 MD 온보딩 기간 단축률" in text, text
+
+
+def test_the_submit_response_carries_the_same_text_it_recorded(monkeypatch):
+    """프론트가 말풍선을 다시 만들지 않게 하는 근거. 서버가 기록한 것과 프론트가
+    보여주는 것이 **같은 문자열**이어야 갈라질 수 없다."""
+    _seed(monkeypatch, "lbl3")
+    body = _submit("lbl3", {"1": "B"}).json()
+    recorded = app_module.turn_handles.consume("lbl3", body["turn_id"])["text"]
+
+    assert body["summary"], "응답에 말풍선 텍스트가 없다"
+    # 기록된 턴 텍스트는 모델용 지시가 뒤에 붙으므로 summary를 **포함**한다.
+    assert body["summary"] in recorded, (body["summary"], recorded)
+    assert "플랫폼(Platform)" in body["summary"]
