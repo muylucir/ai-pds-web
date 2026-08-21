@@ -22,21 +22,21 @@ class AnswersBody(BaseModel):
 
 def _turn_payload(pid: str, handle: str | None, inline: object,
                   key: str) -> object:
-    """Take the turn's input from a handle or from inline query parameters.
+    """핸들 또는 인라인 쿼리 파라미터에서 턴 입력을 꺼낸다.
 
-    The handle path is the default: long input in the URL grows the request line
-    until a proxy returns 431 (measured in aipds/turn_handles.py's header). The
-    inline path is kept because deployment is not atomic -- the moment the backend
-    goes up first, an older frontend is still sending ?text= / ?answers=.
+    핸들 경로가 기본이다: 긴 입력이 URL에 실리면 요청 라인이 커져 프록시가
+    431을 낸다(aipds/turn_handles.py 헤더의 실측). 인라인 경로를 남겨
+    두는 이유는 배포가 원자적이지 않다는 것 — 백엔드가 먼저 올라간 순간
+    구 프론트가 여전히 ?text=/?answers=로 보낸다.
 
-    Neither present is a 400. Quietly running an empty turn would leave the user
-    looking at a bubble with no response and no way to tell why.
+    둘 다 없으면 400이다. 조용히 빈 턴을 돌리면 사용자는 아무 응답 없는
+    말풍선을 보고 원인을 알 수 없다.
     """
     if handle is not None:
         payload = app_module.turn_handles.consume(pid, handle)
         if payload is None:
-            # Expired, reused, or belonging to another project -- which one is
-            # not disclosed, so that a handle's existence carries no information.
+            # 만료·재사용·다른 프로젝트 — 어느 쪽인지 구별해 알려주지 않는다
+            # (핸들의 존재 여부가 정보가 되지 않게).
             raise HTTPException(status_code=400,
                                 detail="turn handle is unknown or already used")
         return payload[key]
@@ -65,13 +65,12 @@ async def post_message(pid: str, body: MessageBody):
 
 @router.post("/projects/{pid}/turns")
 async def create_turn(pid: str, body: MessageBody):
-    """Take the turn text in the **body** and return a short handle.
+    """턴 텍스트를 **본문**으로 받아 짧은 핸들을 돌려준다.
 
-    EventSource supports GET only and cannot carry a body, so this two-step is the
-    only way to keep long input out of the URL (see aipds/turn_handles.py's header).
-    The workspace is checked here so an unknown project ends as a 404: if the client
-    got a handle and then hit a 404 on the stream, all the user would see is
-    "the connection dropped".
+    EventSource는 GET만 지원해 본문을 실을 수 없으므로, 긴 입력을 URL에서
+    빼는 유일한 방법이 이 2단계다(aipds/turn_handles.py 헤더 참조).
+    워크스페이스를 여기서 확인해 없는 프로젝트는 404로 끝낸다 — 핸들만 받고
+    스트림에서 404가 나면 사용자는 "연결이 끊어졌습니다"만 본다.
     """
     await ensure_workspace(pid)
     return {"turn_id": app_module.turn_handles.create(pid, {"text": body.text})}
@@ -89,16 +88,15 @@ async def stream_events(pid: str, turn: str | None = None,
 
 @router.get("/projects/{pid}/events/live")
 async def stream_live(pid: str):
-    """Reattach to a turn in progress. **No handle.**
+    """진행 중인 턴에 다시 붙는다. **핸들이 없다.**
 
-    The other stream paths require a single-use 60-second handle created by a `POST`
-    -- that exists to keep long input out of the URL (turn_handles.py), which makes
-    it unusable for reattaching. This path has no input, so there is nothing to
-    carry: it just watches a turn that is already running.
+    다른 스트림 경로는 `POST`가 만든 1회용·60초 핸들을 요구한다 — 긴 입력을
+    URL에서 빼기 위한 것이고(turn_handles.py), 그래서 재접속에는 쓸 수 없다.
+    이 경로는 입력이 없으므로 실을 것도 없다: 이미 돌고 있는 턴을 볼 뿐이다.
 
-    With no turn to attach to it ends with a single `done` (not an error). The
-    frontend then restores the screen from `GET /history` -- a user returning late to
-    a turn that has since finished is the normal path.
+    붙을 턴이 없으면 `done` 하나로 끝난다(에러가 아니다). 프론트는 그때
+    `GET /history`로 화면을 복원한다 — 사용자가 늦게 돌아왔고 턴이 그동안 끝난
+    것이 정상 경로다.
     """
     ws = await ensure_workspace(pid)
     async def gen():
@@ -109,8 +107,8 @@ async def stream_live(pid: str):
 
 @router.post("/projects/{pid}/answers")
 async def create_answers_turn(pid: str, body: AnswersBody):
-    """Issue a handle for an answer submission. Same reason as `/turns`: a long
-    free-text answer runs into the same URL length limit."""
+    """답변 제출의 핸들 발급. `/turns`와 같은 이유다 — 자유 서술 답변이 길면
+    같은 URL 길이 한도에 걸린다."""
     await ensure_workspace(pid)
     return {"turn_id": app_module.turn_handles.create(pid,
                                                       {"answers": body.answers})}
@@ -121,8 +119,7 @@ async def stream_answers(pid: str, turn: str | None = None,
                          answers: str | None = None):
     ws = await ensure_workspace(pid)
     raw = _turn_payload(pid, turn, answers, "answers")
-    # The handle path already holds a dict (the POST body validated it). Only the
-    # inline path needs parsing.
+    # 핸들 경로는 이미 dict다(POST 본문이 검증했다). 인라인 경로만 파싱한다.
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
@@ -146,22 +143,20 @@ async def get_pending(pid: str):
 
 @router.post("/projects/{pid}/interrupt", status_code=202)
 async def interrupt_turn(pid: str):
-    """Interrupt the turn in progress. The same contract as the prototype side
-    (/prototypes/{slug}/interrupt).
+    """진행 중인 턴을 중단한다. 프로토타입 쪽
+    (/prototypes/{slug}/interrupt)과 같은 계약이다.
 
-    202 even with no turn running: interruption is idempotent, and a user pressing
-    again because nothing seemed to happen is the normal path. It is 202 (Accepted)
-    because the actual interruption is a subprocess round trip and is not finished by
-    the time this response goes out -- the outcome is reported by the SSE stream's
-    terminal event.
+    진행 중인 턴이 없어도 202: 중단은 멱등이고, 사용자가 반응이 없다고 다시
+    누르는 것이 정상 경로다. 202(Accepted)인 이유는 실제 중단이 서브프로세스
+    왕복이라 이 응답 시점에 끝나 있지 않다는 것 — 결과는 SSE 스트림이 종결
+    이벤트로 알린다.
     """
-    ws = await ensure_workspace(pid)   # an unknown project is a 404
+    ws = await ensure_workspace(pid)   # 없는 프로젝트는 404
     try:
         await ws.runner.interrupt()
     except Exception:
-        # This means the user asked to interrupt and it did not actually take, so
-        # it is logged -- but the 202/idempotent contract this docstring promises is
-        # still honoured. The frontend simply swallows the failure (the user can
-        # press again), so there is no reason to break with a 500.
+        # 사용자가 중단을 요청했는데 실제로는 안 먹혔다는 뜻이라 로그로는
+        # 남긴다 — 하지만 이 docstring이 약속하는 202/멱등 계약은 지킨다.
+        # 프론트는 실패를 그냥 삼키므로(다시 누르면 됨) 500으로 깨질 이유가 없다.
         _log.exception("interrupt failed for %s", pid)
     return {"status": "interrupting"}

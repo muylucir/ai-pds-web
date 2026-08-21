@@ -1,13 +1,12 @@
 # backend/aipds/auth/cognito.py
 #
-# A wrapper over the Cognito Admin* APIs. The reason boto3 calls are separated from the routes
-# is the same as in s3store.py: the routes deal only with policy (protecting the last
-# administrator, rolling back a partial failure), and this file is verified independently with
-# Stubber.
+# Cognito Admin* API 래퍼. boto3 호출을 라우트에서 분리하는 이유는 s3store.py와
+# 같다: 라우트는 정책(마지막 관리자 보호, 부분 실패 롤백)만 다루고, 이 파일은
+# Stubber로 독립 검증된다.
 #
-# This pool uses AliasAttributes(email), so the caller decides the Username -- we use the
-# email's local part as the Username (see username_for_email). That makes every Admin* call
-# deterministic from the email.
+# 이 풀은 AliasAttributes(email)이므로 Username을 호출자가 정한다 — 우리는
+# 이메일의 로컬파트를 Username으로 쓴다(username_for_email 참조). 그래서 모든
+# Admin* 호출이 이메일로부터 결정적이다.
 from __future__ import annotations
 
 import logging
@@ -21,36 +20,34 @@ from aipds.auth.models import ROLE_ADMIN, ROLE_PM, Role
 
 _log = logging.getLogger(__name__)
 
-# How many users are fetched at a time. Cognito's limit is 60.
+# 한 번에 가져오는 사용자 수. Cognito의 상한은 60이다.
 _PAGE = 60
 
-# The role groups we manage. Groups outside this set are left alone.
+# 우리가 관리하는 역할 그룹. 이 밖의 그룹은 건드리지 않는다.
 _ROLE_GROUPS = (ROLE_ADMIN, ROLE_PM)
 
-# Characters a Cognito Username will not accept are replaced with '-'. The permitted character
-# set is limited (the '+' of a tagged address, for instance), so passing the local part through
-# unchanged raises InvalidParameterException.
+# Cognito Username이 받아주지 않는 문자를 '-'로 치환한다. Username에 허용되는
+# 문자는 제한적이라(예: 태그 주소의 '+') 로컬파트를 그대로 넘기면
+# InvalidParameterException이 난다.
 _USERNAME_UNSAFE = re.compile(r"[^a-z0-9._-]+")
 
 
 def username_for_email(email: str) -> str:
-    """An email -> the Cognito Username (its local part).
+    """이메일 → Cognito Username(로컬파트).
 
-    This pool uses AliasAttributes=[email]. Under that setting Cognito **rejects an
-    email-format Username** ("Username cannot be of email format, since user pool is
-    configured for email alias") -- because email is reserved as an alias and would collide
-    with the username. Measured: not knowing this rule made seed account creation roll the
-    stack back.
+    이 풀은 AliasAttributes=[email]이다. Cognito는 그 설정에서 **이메일 형식
+    Username을 거부한다** ("Username cannot be of email format, since user pool
+    is configured for email alias") — 이메일이 alias로 예약되어 있어 username과
+    충돌하기 때문이다. 실측: 이 규칙을 몰라 시드 계정 생성이 스택 롤백을 냈다.
 
-    So only the part before the '@' is used as the Username. The user logs in with their email
-    either way (the email alias does that job).
+    그래서 '@' 앞부분만 Username으로 쓴다. 사용자는 어느 쪽이든 이메일로
+    로그인한다(email alias가 그 일을 한다).
 
-    ⚠️ Two accounts with the same local part and different domains (kim@a.com / kim@b.com)
-    collide on the same Username -- the second invitation fails with
-    UsernameExistsException. A trade-off accepted at workshop scale (a single domain). To
-    accept multiple domains the rule would have to include the domain, and then the identical
-    rule in infra/lib/seed-users.ts has to change with it (if the two diverge, seeding becomes
-    non-deterministic).
+    ⚠️ 로컬파트가 같고 도메인만 다른 두 계정(kim@a.com / kim@b.com)은 같은
+    Username으로 충돌한다 — 두 번째 초대가 UsernameExistsException으로 실패한다.
+    워크숍 규모(단일 도메인)에서 감수한 트레이드오프다. 다중 도메인을 받아야
+    하면 도메인까지 포함한 규칙으로 바꿔야 하고, 그때는 infra/lib/seed-users.ts의
+    동일 규칙도 함께 고쳐야 한다(두 곳이 어긋나면 시드가 비결정적이 된다).
     """
     local = email.strip().lower().split("@", 1)[0]
     safe = _USERNAME_UNSAFE.sub("-", local).strip("-")
@@ -58,10 +55,9 @@ def username_for_email(email: str) -> str:
         raise ValueError(f"이메일에서 쓸 수 있는 Username을 만들 수 없다: {email!r}")
     return safe
 
-# The character classes for a temporary password. At least one character from each class is
-# guaranteed so the pool policy is satisfied (8+ characters, upper, lower, digit, symbol).
-# Easily confused characters (0/O, 1/l/I) are excluded -- a temporary password is a value a
-# person copies through a messenger.
+# 임시 비밀번호 문자군. 풀 정책(8자+ 대/소/숫자/기호)을 만족시키기 위해 각 군에서
+# 최소 1자를 보장한다. 혼동하기 쉬운 문자(0/O, 1/l/I)는 제외했다 — 임시 비밀번호는
+# 사람이 메신저로 옮겨 적는 값이다.
 _LOWER = "abcdefghijkmnopqrstuvwxyz"
 _UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
 _DIGITS = "23456789"
@@ -69,7 +65,7 @@ _SYMBOLS = "!@#$%^&*_-+=?"
 
 
 class CognitoError(Exception):
-    """Cognito refused. `code` is the original error code (the route translates it into a\n    status code)."""
+    """Cognito가 거부했다. `code`는 원문 오류 코드(라우트가 상태코드로 번역한다)."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
@@ -78,27 +74,26 @@ class CognitoError(Exception):
 
 @dataclass
 class ManagedUser:
-    username: str      # the value used in Admin* API calls
-    email: str         # the value shown on screen
-    role: Role | None  # None when no group is assigned (a half-created account)
+    username: str      # Admin* API 호출에 쓰는 값
+    email: str         # 화면에 보여주는 값
+    role: Role | None  # 그룹 미배정(반쯤 만들어진 계정)이면 None
     status: str        # CONFIRMED / FORCE_CHANGE_PASSWORD / ...
     enabled: bool
     created_at: str    # ISO8601
 
 
 def generate_temp_password(length: int = 16) -> str:
-    """A temporary password that satisfies the policy.
+    """정책을 만족하는 임시 비밀번호.
 
-    One character is picked from each class first, then the rest is filled in and shuffled.
-    Drawing a random string and hoping it passes the policy fails occasionally, and that
-    failure shows up as an InvalidPasswordException after the user has already been
-    created.
+    각 문자군에서 1자를 먼저 고른 뒤 나머지를 채우고 섞는다. 무작위 문자열을
+    뽑아 정책 통과를 기대하는 방식은 드물게 실패하고, 그 실패는 사용자가 이미
+    생성된 뒤에 InvalidPasswordException으로 나타난다.
     """
     pools = (_LOWER, _UPPER, _DIGITS, _SYMBOLS)
     chars = [secrets.choice(p) for p in pools]
     everything = "".join(pools)
     chars += [secrets.choice(everything) for _ in range(length - len(pools))]
-    # Fisher-Yates over secrets -- random.shuffle is not cryptographically secure.
+    # secrets 기반 Fisher-Yates — random.shuffle은 암호학적으로 안전하지 않다.
     for i in range(len(chars) - 1, 0, -1):
         j = secrets.randbelow(i + 1)
         chars[i], chars[j] = chars[j], chars[i]
@@ -110,7 +105,7 @@ class CognitoAdmin:
         self._c = client
         self._pool = user_pool_id
 
-    # ---- Internal ----
+    # ---- 내부 ----
 
     def _call(self, name: str, **params):
         try:
@@ -120,11 +115,11 @@ class CognitoAdmin:
             code = err.get("Code", "Unknown")
             raise CognitoError(code, err.get("Message", str(exc))) from exc
         except BotoCoreError as exc:
-            # A ClientError is a refusal Cognito responded with (it has a code). This is a
-            # failure at an earlier stage -- a dropped network, missing credentials, a
-            # malformed parameter -- and has no code, so the exception class name is used as
-            # the code. The route has to be able to tell "Cognito refused" from "the request
-            # never even reached Cognito".
+            # ClientError는 Cognito가 응답한 거부(코드가 있다). 이건 그 이전
+            # 단계의 실패 — 네트워크 단절, 자격증명 누락, 파라미터 형식 오류 등
+            # — 로 코드가 없으므로 예외 클래스 이름을 코드로 쓴다. 라우트가
+            # "Cognito가 거부했다"와 "요청이 Cognito에 도달하지도 못했다"를
+            # 구분할 수 있어야 한다.
             raise CognitoError(type(exc).__name__, str(exc)) from exc
 
     @staticmethod
@@ -132,20 +127,19 @@ class CognitoAdmin:
         for attr in raw.get("Attributes", []):
             if attr.get("Name") == "email":
                 return attr.get("Value", "")
-        # An account with no email attribute (created by hand, say) still has to be
-        # identifiable on screen.
+        # 이메일 속성이 없는 계정(수동 생성 등)도 화면에서 식별 가능해야 한다.
         return raw.get("Username", "")
 
     @staticmethod
     def _role_of(groups: list[str]) -> Role | None:
-        # The same precedence as verifier: membership in both groups reads as admin.
+        # verifier와 같은 우선순위: 두 그룹에 다 속하면 admin으로 본다.
         if ROLE_ADMIN in groups:
             return ROLE_ADMIN
         if ROLE_PM in groups:
             return ROLE_PM
         return None
 
-    # ---- Reads ----
+    # ---- 조회 ----
 
     def groups_of(self, username: str) -> list[str]:
         resp = self._call("admin_list_groups_for_user", Username=username)
@@ -162,10 +156,10 @@ class CognitoAdmin:
             for raw in resp.get("Users", []):
                 username = raw.get("Username", "")
                 created = raw.get("UserCreateDate")
-                # One user's group lookup failing (deleted after the snapshot, a 429) does
-                # not bring down the whole listing -- that row alone is demoted to role=None
-                # and it continues. role=None is already the value marking "a half-created
-                # account", so the same representation is reused.
+                # 한 사용자의 그룹 조회가 실패해도(스냅샷 이후 삭제, 429 등)
+                # 목록 전체를 무너뜨리지 않는다 — 그 행만 role=None으로 낮춰
+                # 계속한다. role=None이 이미 "반쯤 만들어진 계정"을 표시하는
+                # 값이므로 같은 표현을 재사용한다.
                 try:
                     role = self._role_of(self.groups_of(username))
                 except CognitoError as exc:
@@ -184,7 +178,7 @@ class CognitoAdmin:
                 return users
 
     def admin_count(self) -> int:
-        """The number of members in the admin group -- the input to protecting the last\n    administrator."""
+        """admin 그룹 멤버 수 — 마지막 관리자 보호의 입력."""
         total = 0
         token: str | None = None
         while True:
@@ -197,21 +191,21 @@ class CognitoAdmin:
             if not token:
                 return total
 
-    # ---- Writes ----
+    # ---- 변경 ----
 
     def create_user(self, email: str) -> str:
-        """Create the user and return the Username.
+        """사용자를 만들고 Username을 반환한다.
 
-        MessageAction=SUPPRESS: this app sends no mail (an invitation is the admin page showing
-        the temporary password on screen once).
-        email_verified=true: not a choice but a precondition of alias (email) sign-in.
+        MessageAction=SUPPRESS: 이 앱은 메일을 보내지 않는다(초대는 관리 페이지가
+        임시 비밀번호를 화면에 1회 보여준다).
+        email_verified=true: 선택이 아니라 alias(email) 사인인의 조건이다.
 
-        The Username is the local part rather than the email -- see username_for_email. The
-        user logs in with their email either way (the email alias).
+        Username은 이메일이 아니라 로컬파트다 — username_for_email 참조.
+        사용자는 어느 쪽이든 이메일로 로그인한다(email alias).
         """
         username = username_for_email(email)
-        # The email attribute is trimmed too -- surrounding whitespace left in place would
-        # make alias sign-in demand that whitespace as well, and the user could not log in.
+        # email 속성도 trim한다 — 앞뒤 공백이 남으면 alias 사인인이 그 공백까지
+        # 요구하게 되어 사용자가 로그인할 수 없다.
         resp = self._call(
             "admin_create_user",
             Username=username,
@@ -219,22 +213,21 @@ class CognitoAdmin:
             UserAttributes=[{"Name": "email", "Value": email.strip()},
                             {"Name": "email_verified", "Value": "true"}],
         )
-        # The Username from the response is trusted -- if the pool configuration changes and
-        # Cognito assigns a different value, the subsequent set_temp_password and set_group
-        # have to go to that value.
+        # 응답의 Username을 신뢰한다 — 풀 설정이 바뀌어 Cognito가 다른 값을
+        # 배정하면 이후 set_temp_password/set_group이 그 값으로 가야 한다.
         return resp.get("User", {}).get("Username", username)
 
     def set_temp_password(self, username: str, password: str) -> None:
-        """The temporary password. With Permanent=False the user changes it themselves at first\n        login."""
+        """임시 비밀번호. Permanent=False라 첫 로그인에서 사용자가 직접 바꾼다."""
         self._call("admin_set_user_password", Username=username,
                    Password=password, Permanent=False)
 
     def set_group(self, username: str, role: Role) -> None:
-        """Replace the role -- a replacement, not an addition.
+        """역할을 교체한다 — 추가가 아니라 교체다.
 
-        Without removing the existing role group the user would belong to admin and pm at once
-        and the demotion would be void (verifier gives admin precedence). Groups outside
-        admin/pm are not our concern and are left alone.
+        기존 역할 그룹을 지우지 않으면 사용자가 admin과 pm에 동시에 속해
+        강등이 무효가 된다(verifier가 admin을 우선한다). admin/pm 밖의 그룹은
+        우리 관심사가 아니므로 건드리지 않는다.
         """
         for existing in self.groups_of(username):
             if existing in _ROLE_GROUPS and existing != role:

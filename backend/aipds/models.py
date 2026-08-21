@@ -11,31 +11,26 @@ class QuestionOption(BaseModel):
 class Question(BaseModel):
     number: int
     category: str | None = None
-    #: The whole body before the options (background prose included). This is the value
-    #: shown on screen.
+    #: 옵션 앞의 본문 전체(배경 산문 포함). 화면에 보여주는 값이다.
     text: str
-    #: The **last paragraph** of it -- the sentence that actually asks.
+    #: 그중 **마지막 문단** — 실제로 묻는 문장이다.
     #:
-    #: Why it is kept separate: the file holds background prose together with the
-    #: question, while only the question sentence goes to AskUserQuestion. If the answer
-    #: write-back compared `text` (~200 chars) against the tool's question (~22 chars), the
-    #: length difference would collapse the similarity -- that is how keumkang-v5's
-    #: design-context.md Q4 was lost on 2026-08-16 (0.3721). With a single paragraph this
-    #: equals text.
+    #: 왜 나눠 두는가: 파일은 배경 산문 + 질문을 함께 담는데 AskUserQuestion에는
+    #: 질문 문장만 간다. 답변 되기록이 `text`(~200자)와 도구의 질문(~22자)을
+    #: 비교하면 길이 차이로 유사도가 무너진다 — 2026-08-16 keumkang-v5의
+    #: design-context.md Q4가 그렇게 유실됐다(0.3721). 문단이 하나면 text와 같다.
     ask: str = ""
-    #: The prose that sat **between** the category header and this question's header --
-    #: "why this is being asked".
+    #: 카테고리 헤더와 이 문항의 헤더 **사이**에 있던 산문 — "왜 이걸 묻는가".
     #:
-    #: How it differs from `text`: `text` is the body *after* the question header, while
-    #: this is the explanation *before* it. Upstream's clarification question template
-    #: ("Creating Clarification Questions" in question-format-guide.md) writes the grounds
-    #: for the ambiguity in that position. In test-wf on 2026-08-17, ~470 of
-    #: `pain-point-clarification-questions.md`'s 1,350 characters were this prose, and the
-    #: parser put it nowhere, so it disappeared.
+    #: `text`와 다른 것: `text`는 문항 헤더 *뒤*의 본문이고, 이건 *앞*의 설명이다.
+    #: 상류의 명확화 질문 템플릿(question-format-guide.md의 "Creating Clarification
+    #: Questions")이 그 자리에 모호성의 근거를 쓴다. 2026-08-17 test-wf에서
+    #: `pain-point-clarification-questions.md` 1,350자 중 ~470자가 이 산문이었고
+    #: 파서가 어디에도 담지 않아 사라졌다.
     #:
-    #: Why it is not merged into `text`: the same 0.3721 incident recorded in the `ask`
-    #: comment -- making `text` longer makes that comparison worse. In most files this is
-    #: an empty string (the form where the question follows the header directly).
+    #: `text`에 합치지 않는 이유는 `ask` 주석의 0.3721 사고와 같다 — `text`를 더
+    #: 늘리면 그 비교가 더 나빠진다. 대부분의 파일에서는 빈 문자열이다(문항 헤더
+    #: 바로 뒤에 질문이 오는 형태).
     context: str = ""
     options: list[QuestionOption]
     answer: str | None = None
@@ -66,14 +61,13 @@ class AuditEntry(BaseModel):
     context: str | None = None
 
 class HistoryTraceEntry(BaseModel):
-    """The restore-side trace corresponding to a live AgentEvent's status/file_changed --
-    the minimum shape consumed by the "reasoning" accordion in the frontend's AiMessage."""
+    """라이브 AgentEvent의 status/file_changed에 대응하는 복원용 트레이스 —
+    프론트 AiMessage의 "추론 과정" 아코디언이 소비하는 최소 shape."""
     kind: Literal["status", "file_changed"]
     text: str | None = None
     path: str | None = None
-    #: **What the tool did** (the file read, the command run, ...). Live it arrives as the
-    #: status event's payload and here it is a field -- the place that builds the value is
-    #: one (tool_trace).
+    #: 도구가 **무엇을 했는지**(읽은 파일, 돌린 명령…). 라이브에서는 status 이벤트의
+    #: payload로 오고 여기서는 필드다 — 값을 만드는 곳은 한 곳이다(tool_trace).
     detail: str | None = None
 
 
@@ -82,31 +76,29 @@ class HistoryItem(BaseModel):
     text: str | None = None
     card: Literal["questions"] | None = None
     name: str | None = None
-    # For role=="ai", that turn's tool execution trace (an empty list when there is none)
+    # role=="ai"일 때 그 턴의 도구 실행 트레이스(없으면 빈 리스트)
     trace: list[HistoryTraceEntry] = []
-    # An answer-submission turn's structured answers ({"1": "A", "2": "B,C"}). The wording
-    # a human reads is built by the frontend in the UI language -- the backend does not know
-    # the UI language. A free-prose answer that is not JSON cannot be unpacked into a dict
-    # and is None; then only text is used.
+    # 답변 제출 턴의 구조화된 답변({"1": "A", "2": "B,C"}). 사람이 읽는 문구는
+    # 프론트가 UI 언어로 만든다 — 백엔드는 UI 언어를 모른다. JSON이 아닌 자유
+    # 서술 답변은 dict로 펼 수 없어 None이고, 그때는 text만 쓴다.
     answers: dict[str, str] | None = None
-    # That round's question payload (a QuestionFile). When present, the frontend builds the
-    # wording with the same answerSummary() as live -- the question numbers, option letters
-    # and option texts come from here. It is carried on role=="card" too, to restore "what
-    # was asked".
+    # 그 라운드의 질문 payload(QuestionFile). 있으면 프론트가 라이브와 같은
+    # answerSummary()로 문구를 만든다 — 문항 번호·보기 letter·보기 텍스트가
+    # 여기서 나온다. role=="card"에도 실어 "무엇을 물었는지"를 복원한다.
     questions: dict | None = None
 
 class AgentEvent(BaseModel):
     kind: Literal["message", "questions", "stage", "document",
                   "file_changed", "status", "done", "error",
-                  # The declaration that Discovery has handed the prototype over to the
-                  # build (agent/reconcile.py derives it from the write of
-                  # build-instructions.md). The frontend draws the "go to the Prototypes
-                  # tab" card from this event -- the user has to be left somewhere to click
-                  # even if the agent forgets to say so.
+                  # Discovery가 프로토타입을 빌드로 넘겼다는 선언
+                  # (agent/reconcile.py가 build-instructions.md 쓰기에서
+                  # 유도한다). 프론트가 이 이벤트로
+                  # "Prototypes 탭으로 가기" 카드를 그린다 — 에이전트가 안내
+                  # 문장을 잊어도 사용자에게 클릭할 곳이 남아야 한다.
                   "prototype_ready",
-                  # A prototype build's explicit completion declaration
-                  # (proto/tools.py). This event ends the session's life --
-                  # proto/session.py observes it and moves status to "complete".
+                  # 프로토타입 빌드의 명시적 완료 선언(proto/tools.py). 이
+                  # 이벤트가 세션의 수명을 끝낸다 — proto/session.py가
+                  # 관찰해 status를 "complete"로 바꾼다.
                   "build_complete"]
     text: str | None = None
     path: str | None = None

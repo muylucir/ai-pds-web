@@ -1,17 +1,14 @@
-# backend/aipds/routes/admin_users.py -- user management (admin only).
+# backend/aipds/routes/admin_users.py — 사용자 관리 (admin 전용).
 #
-# New accounts exist only by invitation (the pool is AllowAdminCreateUserOnly), and
-# this router is that invitation desk. The Cognito calls themselves live in
-# auth/cognito.py; only policy lives here:
+# 신규 가입은 초대로만 가능하다(풀은 AllowAdminCreateUserOnly). 이 라우터가 그
+# 초대 창구다. Cognito 호출 자체는 auth/cognito.py가 담당하고, 여기서는 정책만
+# 다룬다:
 #
-#   1) Last-admin protection -- refuse to demote, disable or delete yourself or the
-#      only remaining admin. Without it an admin can lock themselves out, leaving the
-#      AWS console as the only recovery path.
-#   2) Rollback on a partially failed invitation -- never leave a half-built account
-#      (no group = no role) behind. The same discipline as projects.py's rollback on
-#      a failed manifest write.
-#   3) Translate Cognito error codes into HTTP status codes. The original code goes
-#      to the log only.
+#   1) 마지막 관리자 보호 — 자기 자신 또는 유일한 admin의 강등·비활성·삭제를 막는다.
+#      없으면 관리자가 스스로를 잠가내고 복구 경로가 AWS 콘솔밖에 남지 않는다.
+#   2) 초대의 부분 실패 롤백 — 반쯤 만들어진 계정(그룹 없음 = 역할 없음)을
+#      남기지 않는다. projects.py의 매니페스트 실패 롤백과 같은 규율.
+#   3) Cognito 오류 코드 → HTTP 상태코드 번역. 원문 코드는 로그에만 남긴다.
 from __future__ import annotations
 
 import logging
@@ -27,15 +24,13 @@ from aipds.auth.models import Principal, Role
 
 _log = logging.getLogger(__name__)
 
-# The whole router is admin-only, which removes any chance of forgetting it on an
-# individual route.
+# 라우터 전체가 admin 전용이다 — 라우트마다 붙이는 것을 잊을 여지를 없앤다.
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
-# Cognito error code -> HTTP status. Anything not listed is treated as 502 (an
-# upstream fault). InvalidPasswordException is the exception: it is a 500 rather than
-# a 502, because it means the temporary password WE generated server-side failed to
-# satisfy the pool policy -- so the cause is on this side
-# (generate_temp_password), not Cognito's.
+# Cognito 오류 코드 → HTTP 상태. 목록에 없는 코드는 502(업스트림 장애)로 본다.
+# InvalidPasswordException은 예외다: 502(업스트림 장애)가 아니라 500이다 —
+# 우리가 서버에서 생성한 임시 비밀번호가 풀 정책을 만족시키지 못했다는
+# 뜻이므로, 원인이 Cognito가 아니라 이쪽(generate_temp_password)에 있다.
 _ERROR_STATUS = {
     "UsernameExistsException": 409,
     "AliasExistsException": 409,
@@ -47,8 +42,7 @@ _ERROR_STATUS = {
     "TooManyRequestsException": 429,
 }
 
-# status -> a stable error code. The wording is owned by the frontend (see
-# error_codes.py's header).
+# status → 안정적 에러 코드. 문구는 프론트가 소유한다(error_codes.py 헤더 참조).
 _ERROR_DETAIL = {
     409: ec.EMAIL_EXISTS,
     404: ec.USER_NOT_FOUND,
@@ -60,9 +54,9 @@ _ERROR_DETAIL = {
 
 
 def _http_error(exc: CognitoError) -> HTTPException:
-    """Turn a Cognito error into something showable to the user.
+    """Cognito 오류를 사용자에게 보여줄 수 있는 형태로 바꾼다.
 
-    The original code is internal information and goes to the log only.
+    원문 코드는 내부 정보이므로 로그에만 남긴다.
     """
     status = _ERROR_STATUS.get(exc.code, 502)
     _log.warning("cognito call failed (%s) -> %d", exc.code, status)
@@ -85,21 +79,21 @@ def _admin():
 
 
 def _guard_privilege_removal(cognito, username: str, me: Principal) -> None:
-    """Refuse operations that move in the direction of losing admins.
+    """관리자를 잃는 방향의 조작을 막는다.
 
-    Two cases are blocked:
-      - Yourself -- demoting, disabling or deleting all lock you out.
-      - The only admin -- if that account goes, nobody can manage users.
+    두 가지를 막는다:
+      - 자기 자신 — 강등·비활성·삭제 어느 쪽이든 스스로를 잠가낸다.
+      - 유일한 admin — 그 계정이 사라지면 아무도 사용자 관리를 할 수 없다.
 
-    It does not apply to enabling (which widens access).
+    활성화(권한을 넓히는 방향)에는 적용하지 않는다.
 
-    The self-comparison uses casefold(): Cognito interprets Username
-    case-insensitively (this pool uses email as the Username), so a variant differing
-    only in case can name the same account. casefold() rather than lower() because an
-    email can contain arbitrary Unicode and casefold() is the correct choice for
-    case-insensitive comparison. This normalisation is used for the comparison only --
-    the username passed to Cognito is exactly what the caller gave (Cognito
-    interprets it itself, and the stored attribute keeps its original case).
+    자기 자신 비교는 casefold()로 한다 — Cognito는 Username을 대소문자
+    구분 없이 해석하므로(이 풀은 email을 Username으로 쓴다) 대소문자만 다른
+    변형이 같은 계정을 가리킬 수 있다. lower()가 아니라 casefold()를 쓰는
+    이유는 이메일이 임의의 유니코드를 포함할 수 있고, casefold()가 대소문자
+    구분 없는 비교의 올바른 선택이기 때문이다. 이 정규화는 비교에만 쓴다 —
+    Cognito로 넘기는 username은 호출자가 준 그대로다(Cognito가 자체적으로
+    해석하고, 저장된 속성은 원래 대소문자를 유지한다).
     """
     if username.casefold() == me.username.casefold():
         raise HTTPException(
@@ -136,11 +130,10 @@ async def list_users(me: Principal = Depends(require_admin)):
 
 @router.post("/users", status_code=201)
 async def invite_user(body: InviteBody, me: Principal = Depends(require_admin)):
-    """Invitation: create -> temporary password -> group.
+    """초대: 생성 → 임시 비밀번호 → 그룹.
 
-    The temporary password rides in the response exactly once and is stored nowhere.
-    The admin passes it on over an internal messenger, and the Hosted UI requires a
-    change at first login.
+    임시 비밀번호는 응답에 딱 한 번 실리고 어디에도 저장되지 않는다. 관리자가
+    사내 메신저로 전달하고, 사용자는 첫 로그인에서 Hosted UI가 변경을 요구한다.
     """
     cognito = _admin()
     email = str(body.email)
@@ -150,7 +143,7 @@ async def invite_user(body: InviteBody, me: Principal = Depends(require_admin)):
         raise _http_error(exc) from exc
 
     password = generate_temp_password()
-    # From here on the user already exists -- on failure, undo what we just made.
+    # 여기부터는 사용자가 이미 존재한다 — 실패하면 방금 만든 것을 되돌린다.
     try:
         cognito.set_temp_password(username, password)
         cognito.set_group(username, body.role)
@@ -159,8 +152,8 @@ async def invite_user(body: InviteBody, me: Principal = Depends(require_admin)):
         try:
             cognito.delete_user(username)
         except CognitoError:
-            # If the rollback also fails, an account with no role is left behind.
-            # It shows as role=null in the list, so an admin can spot it.
+            # 롤백까지 실패하면 역할 없는 계정이 남는다. 목록에서 role=null로
+            # 보이므로 관리자가 알아볼 수 있다.
             _log.exception("rollback failed; %s may be left without a role", username)
         raise HTTPException(
             status_code=500,
@@ -172,10 +165,10 @@ async def invite_user(body: InviteBody, me: Principal = Depends(require_admin)):
 
 @router.post("/users/{username}/reset-password")
 async def reset_password(username: str, me: Principal = Depends(require_admin)):
-    """Plant a new temporary password and return it once.
+    """새 임시 비밀번호를 심고 1회 반환한다.
 
-    This app sends no mail, so there is no self-service reset path -- an admin does
-    the reset (the pool's accountRecovery is admin_only).
+    이 앱은 메일을 보내지 않으므로 자가 재설정 경로가 없다 — 재설정은 관리자가
+    한다(풀의 accountRecovery는 admin_only).
     """
     cognito = _admin()
     password = generate_temp_password()
@@ -190,7 +183,7 @@ async def reset_password(username: str, me: Principal = Depends(require_admin)):
 async def change_role(username: str, body: RoleBody,
                       me: Principal = Depends(require_admin)):
     cognito = _admin()
-    # Promoting to admin adds an admin, so it is always safe.
+    # admin으로 올리는 것은 관리자를 늘리는 방향이라 언제나 안전하다.
     if body.role != "admin":
         _guard_privilege_removal(cognito, username, me)
     try:
@@ -213,7 +206,7 @@ async def disable_user(username: str, me: Principal = Depends(require_admin)):
 
 @router.post("/users/{username}/enable", status_code=204)
 async def enable_user(username: str, me: Principal = Depends(require_admin)):
-    # Enabling widens access, so last-admin protection does not apply.
+    # 활성화는 권한을 넓히는 방향 — 마지막 관리자 보호와 무관하다.
     cognito = _admin()
     try:
         cognito.set_enabled(username, True)

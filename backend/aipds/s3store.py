@@ -103,12 +103,11 @@ class S3Store:
         return [(key, etag) for key, etag, _ in await self._list_meta(prefix)]
 
     async def list_with_times(self, prefix: str) -> list[tuple[str, float]]:
-        """The keys with their last-modified times (epoch seconds). Used to sort a listing
-        newest-first.
+        """키와 최종 수정 시각(epoch 초). 목록을 최신 순으로 정렬하는 데 쓴다.
 
-        `list_objects_v2` already carries `LastModified` in its response -- that used to be
-        discarded, which is why `Workspace.list_artifacts` could only be alphabetical. There is
-        no extra call, so the cost is zero.
+        `list_objects_v2`가 `LastModified`를 이미 응답에 담아 준다 — 종전에는 그것을
+        버렸고, 그래서 `Workspace.list_artifacts`가 알파벳 순밖에 될 수 없었다.
+        추가 호출이 없으므로 비용은 0이다.
         """
         return [(key, mtime) for key, _, mtime in await self._list_meta(prefix)]
 
@@ -125,18 +124,17 @@ class S3Store:
                         obj.get("ETag", ""),
                         last.timestamp() if last is not None else 0.0,
                     ))
-            # Returned stably sorted by key -- a caller that needs chronological order sorts
-            # again, and the order of entries with the same time does not wobble between
-            # runs.
+            # 키 순으로 안정 정렬해서 돌려준다 — 시간순이 필요한 호출부가 다시
+            # 정렬하고, 같은 시각인 항목의 순서가 실행마다 흔들리지 않는다.
             return sorted(keys, key=lambda item: item[0])
 
         return await asyncio.to_thread(_list)
 
     async def delete_prefix(self, prefix: str) -> int:
-        """Delete every object under a namespace-relative prefix (in batches of 1000).
+        """네임스페이스 내 상대 prefix 이하 오브젝트 전량 삭제(1000개 배치).
 
-        For the project deletion path only -- a list followed by delete_objects is not atomic,
-        but deletion is idempotent so a partial failure converges on a repeat call."""
+        프로젝트 삭제 경로 전용 — list 후 delete_objects라 원자적이진 않지만
+        삭제는 멱등이므로 부분 실패 시 재호출로 수렴한다."""
         def _delete() -> int:
             full = self._full_key(prefix)
             paginator = self._client.get_paginator("list_objects_v2")
@@ -144,7 +142,7 @@ class S3Store:
                     for page in paginator.paginate(Bucket=self._bucket, Prefix=full)
                     for obj in page.get("Contents", [])]
             errors: list[dict] = []
-            for i in range(0, len(keys), 1000):  # S3 delete_objects limit
+            for i in range(0, len(keys), 1000):  # S3 delete_objects 상한
                 resp = self._client.delete_objects(
                     Bucket=self._bucket,
                     Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]],

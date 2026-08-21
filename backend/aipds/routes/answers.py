@@ -35,23 +35,21 @@ async def put_answers(pid: str, name: str, body: AnswersBody):
 
 @router.post("/projects/{pid}/questions/{name:path}/answers")
 async def submit_file_answers(pid: str, name: str, body: AnswersBody):
-    """Answer submission for a file question round: write the file and return **a handle
-    for the turn that continues from it**.
+    """파일 질문 라운드의 답변 제출: 파일에 쓰고 **이어갈 턴의 핸들**을 돌려준다.
 
-    Why a separate endpoint. `POST /answers` wakes a parked `can_use_tool` future and
-    continues **the same turn**. A file question round has no such future -- the
-    PostToolUse hook already ended the turn with `continue_: False`
-    (claude_driver._on_post_tool_use). So what the answers return to is the file, not
-    the turn, and the agent has to be called again in a **new turn**.
+    왜 별 엔드포인트인가. `POST /answers`는 파킹된 `can_use_tool` future를 깨워
+    **같은 턴**을 이어간다. 파일 질문 라운드에는 그 future가 없다 — PostToolUse
+    훅이 `continue_: False`로 턴을 이미 끝냈다(claude_driver._on_post_tool_use).
+    그래서 이어갈 곳이 턴이 아니라 파일이고, 에이전트는 **새 턴**으로 다시 불러야
+    한다.
 
-    Why the backend composes that new turn's text: sentences the agent reads have to
-    follow the project language (agent/prompts.py's header). Having the frontend
-    compose it would put both languages in the frontend's hands, which is the shape of
-    the 2026-08-04 defect.
+    새 턴의 텍스트를 백엔드가 만드는 이유: 에이전트가 읽는 문장은 프로젝트 언어를
+    따라야 한다(agent/prompts.py 헤더). 프론트가 만들면 두 언어를 프론트가
+    관리하게 되고, 그것이 2026-08-04 결함의 모양이다.
 
-    No new stream endpoint is added -- the handle opens through the existing
-    `GET /events?turn=`. The reason that two-step exists (URL length -> HTTP 431)
-    applies to free-text answers just as much (turn_handles.py's header).
+    스트림 엔드포인트를 새로 만들지 않는다 — 핸들을 기존 `GET /events?turn=`로
+    열면 된다. 그 2단계가 존재하는 이유(URL 길이 → HTTP 431)가 자유 서술 답변에도
+    그대로 적용된다(turn_handles.py 헤더).
     """
     ws = await ensure_workspace(pid)
     numbered = _numbers(body.answers)
@@ -62,47 +60,40 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     language = app_module.project_language(pid)
-    # The answers ride in the turn text. That text stays in the transcript as the
-    # user's bubble and history restore draws it verbatim, so without the answers
-    # every round of a restored conversation reads as the same sentence (see the
-    # rationale in prompts.file_answers_recorded).
+    # 답변을 턴 텍스트에 함께 싣는다. 이 텍스트가 트랜스크립트에 사용자 말풍선으로
+    # 남고 히스토리 복원이 그것을 그대로 그리므로, 답변이 없으면 복원된 대화의 모든
+    # 라운드가 같은 문구로 보인다(prompts.file_answers_recorded의 근거 참조).
     #
-    # **Rendering is owned in one place by the backend (2026-08-21).** `qfile` holds
-    # the option list, so expanding letters into labels can only happen here -- and
-    # returning that result in the response removes any reason for the frontend to
-    # implement the same discrimination a second time, making the screen and the
-    # record **the same string** (the full story is in aipds/answer_summary.py's
-    # header).
+    # **렌더는 백엔드가 한 벌로 소유한다(2026-08-21).** `qfile`이 보기 목록을 들고
+    # 있으므로 letter를 라벨로 푸는 것은 여기서만 할 수 있고, 그 결과를 응답으로 함께
+    # 돌려주면 프론트가 같은 판별을 두 번째로 구현할 이유가 없어진다 — 화면과 기록이
+    # **같은 문자열**이 된다(aipds/answer_summary.py 헤더에 그 전말이 있다).
     #
-    # Why `numbered` is passed: `body.answers` has the string keys the frontend sent,
-    # which sort lexicographically ("12" < "2"). Question numbers have to be numeric
-    # to line up with the question list.
+    # `numbered`를 넘기는 이유: `body.answers`는 프론트가 보낸 문자열 키이고
+    # 정렬이 사전순이 된다("12" < "2"). 문항 번호는 숫자여야 문항 목록과 맞는다.
     summary = answer_summary(qfile, numbered, language)
     text = prompts.file_answers_recorded(language, name, summary)
-    # If the state file does not exist yet, point the resume turn at it.
+    # 상태 파일이 아직 없으면 재개 턴에 그것을 지목한다.
     #
-    # The hook and the turn-boundary reconciliation (agent/reconcile.py) move the
-    # file onto the screen **when it exists**. With no file there is nothing to move,
-    # and only the agent can create it -- because only the agent knows the stage
-    # names (the rationale is in prompts.state_file_missing).
+    # 훅과 턴 경계 재조정(agent/reconcile.py)은 파일이 **있을 때** 그것을 화면으로
+    # 옮긴다. 파일 자체가 없으면 옮길 것이 없고, 그것을 만들 수 있는 것은
+    # 에이전트뿐이다 — 스테이지 이름을 아는 것이 에이전트뿐이기 때문이다
+    # (prompts.state_file_missing에 그 근거가 있다).
     #
-    # Why the test is `current_stage is None` rather than "file missing": it is
-    # broader. The shape the upstream rules require always has a Current Stage line,
-    # so the absence of that line means there is **no readable state**, whether the
-    # file is missing or corrupt.
+    # `current_stage is None`으로 판정하는 이유: 파일 부재보다 넓다. 상류 룰이
+    # 요구하는 형태에는 항상 Current Stage 줄이 있으므로, 그 줄이 없다는 것은
+    # 파일이 없든 손상됐든 **읽을 상태가 없다**는 뜻이다.
     try:
         if (await ws.get_state()).current_stage is None:
             text += "\n\n" + prompts.state_file_missing(language)
     except Exception:
-        # Failing to read the state must not block the answer submission: the user
-        # has already submitted the form, and this note is only a secondary
-        # instruction to bring the badges back.
+        # 상태를 읽지 못하는 것으로 답변 제출을 막지 않는다 — 사용자는 폼을 이미
+        # 제출했고, 이 노트는 배지를 살리는 보조 지시일 뿐이다.
         logging.getLogger("aipds.agent").exception(
             "state probe for the resume turn failed — continuing without the note")
-    # `summary` is the string the frontend uses **verbatim** for the bubble.
-    # `text` (the turn text the model reads) contains it and appends the instruction
-    # -- the human-readable part first and the machine instruction as a tail is the
-    # principle `approvalMarker.ts` records.
+    # `summary`는 프론트가 말풍선에 **그대로** 쓰는 문자열이다. `text`(모델이 읽는
+    # 턴 텍스트)는 그것을 포함하고 뒤에 지시를 붙인다 — 사람이 읽을 부분이 앞에 오고
+    # 기계용 지시가 꼬리가 되는 것이 `approvalMarker.ts`가 적어 둔 원칙이다.
     return {"turn_id": app_module.turn_handles.create(pid, {"text": text}),
             "summary": summary,
             "questions": qfile}

@@ -1,4 +1,4 @@
-# backend/aipds/runner.py -- turn orchestration (in-process agent, no VM).
+# backend/aipds/runner.py — 턴 오케스트레이션(in-process 에이전트, VM 없음).
 from __future__ import annotations
 import asyncio
 import hashlib
@@ -35,16 +35,14 @@ def _interrupt_id_from(payload: str | None) -> str | None:
 
 
 class AgentRunner:
-    """One turn executor per project. File-contract ops go straight to durable S3
-    (nothing to boot). A turn restores S3 -> local workspace, runs the in-process
-    agent, then syncs local -> S3 on done/error. There is no VM and no boot state
-    machine: the local directory is disposable and is rebuilt from S3 at the start
-    of every turn (S3 = source of truth)."""
+    """프로젝트당 턴 실행기. 파일 계약 ops는 durable S3 직접(부팅 없음). 턴은
+    S3 → 로컬 워크스페이스 restore, in-process 에이전트 실행, done/error 시
+    로컬 → S3 sync. VM/부팅 상태기계는 없다 — 로컬 디렉토리는 휘발이며 매 턴
+    시작 시 S3에서 재구성된다(S3 = source of truth)."""
 
-    #: Owned by workspace_sync -- the publish-on-write path (claude_driver's
-    #: PostToolUse hook) and this batch sync must upload **the same set**. Two
-    #: copies of the set means a file present in only one of them shows up as a
-    #: "document that appears and then vanishes".
+    #: workspace_sync가 소유한다 — 쓰기 직후 게시(claude_driver의 PostToolUse
+    #: 훅)와 이 배치 sync가 **같은 집합**을 올려야 한다. 두 벌로 두면 한쪽에만
+    #: 있는 파일이 "있다가 없어지는 문서"로 보인다.
     _SYNC_GLOBS = SYNC_GLOBS
     _RESTORE_PREFIXES = ("aiplc-docs/", "prototype/", "uploads/")
 
@@ -55,11 +53,10 @@ class AgentRunner:
         self._local_root = Path(local_root)
         self._session = session
         self._turn_active = False
-        #: Identity of the turn holding the slot. A bare flag is not enough
-        #: because `reattach` can preempt: when the preempted turn's finally runs
-        #: later and clears the flag, a new turn slips in while the reattached
-        #: stream is still going. The driver carries the same discipline for the
-        #: same reason (ClaudeDriver._acquire_turn/_release_turn).
+        #: 슬롯을 쥔 턴의 신원. `reattach`가 선점할 수 있으므로 플래그만으로는
+        #: 부족하다 — 선점된 턴의 finally가 나중에 닫히며 플래그를 내려놓으면
+        #: 재접속이 스트리밍하는 동안 새 턴이 끼어든다. 드라이버가 같은 이유로
+        #: 같은 규율을 갖는다(ClaudeDriver._acquire_turn/_release_turn).
         self._turn_token: object | None = None
         self._pending_interrupt_id: str | None = None
         self._remote_etags: dict[str, str | None] | None = None
@@ -72,7 +69,7 @@ class AgentRunner:
     def set_input_holder(self, holder: str | None) -> None:
         self.input_holder = holder
 
-    # ---- file-as-contract ops: straight to durable S3 ----
+    # ---- file-as-contract ops: durable S3 직접 ----
 
     async def read_file(self, rel_path: str) -> str:
         reject_unsafe(rel_path)
@@ -93,17 +90,15 @@ class AgentRunner:
         return sorted(k for k in keys if matches_glob(k, glob))
 
     async def list_files_newest_first(self, glob: str) -> list[str]:
-        """Same glob as `list_files`, ordered by last-modified descending.
+        """`list_files`와 같은 글롭, 최종 수정 시각 내림차순.
 
-        Uses the `LastModified` that `list_objects_v2` already returns
-        (S3Store.list_with_times) -- no extra call. Callers that need alphabetical
-        order keep using `list_files`.
+        `list_objects_v2`가 이미 주는 `LastModified`를 쓴다(S3Store.list_with_times) —
+        추가 호출이 없다. 알파벳 순이 필요한 호출부는 `list_files`를 그대로 쓴다.
         """
         reject_unsafe(glob)
         pairs = await self._s3.list_with_times(_glob_prefix(glob))
         matched = [(k, t) for k, t in pairs if matches_glob(k, glob)]
-        # Path as the secondary key -- entries sharing a timestamp must not
-        # reorder between runs.
+        # 2차 키로 경로를 쓴다 — 같은 시각인 항목의 순서가 실행마다 흔들리지 않게.
         matched.sort(key=lambda item: (-item[1], item[0]))
         return [k for k, _ in matched]
 
@@ -132,9 +127,8 @@ class AgentRunner:
             self._remote_etags[key] = etag
 
     async def _restore_workspace_from_s3(self) -> None:
-        """Copy the durable workspace (S3 = source of truth) onto the local FS.
-        The first turn downloads everything; later turns download only the files
-        whose ETag changed."""
+        """durable 워크스페이스(S3 = source of truth)를 로컬 FS로 복사한다.
+        첫 턴은 전부 받고, 이후에는 ETag가 달라진 파일만 받는다."""
         started = time.perf_counter()
         cold = self._remote_etags is None
         metadata_groups = await asyncio.gather(
@@ -179,9 +173,8 @@ class AgentRunner:
         )
 
     async def _sync_workspace_to_s3(self) -> None:
-        """Push the turn's output (methodology artifacts plus the prototype source
-        subtree) from local up to durable S3. audit.md is redacted on the way in,
-        so a direct S3 reader cannot see credentials."""
+        """턴 출력(방법론 산출물 + 프로토타입 소스 서브트리)을 로컬에서 durable
+        S3로 끌어올린다. audit.md는 저장 시 redaction(direct S3 reader 노출 차단)."""
         started = time.perf_counter()
         scanned = 0
         changed: list[tuple[str, str]] = []
@@ -251,12 +244,11 @@ class AgentRunner:
     # ---- turn relay ----
 
     def _claim_turn(self, *, preempt: bool = False) -> object | None:
-        """Take the turn slot. Returns None if it is already held (unless `preempt`,
-        which takes it away).
+        """턴 슬롯을 쥔다. 이미 쥐어져 있으면 None(`preempt`면 빼앗는다).
 
-        A token is issued so that only the holder can release: `_finish_turn`
-        checks it, so a preempted turn closing late and trying to release cannot
-        free the new holder's slot.
+        토큰을 발급하는 이유는 해제를 홀더에게만 허용하기 위해서다 —
+        `_finish_turn`이 토큰을 확인하므로, 선점된 턴이 뒤늦게 닫히며 해제를
+        시도해도 새 홀더의 슬롯은 풀리지 않는다.
         """
         if self._turn_active and not preempt:
             return None
@@ -265,8 +257,7 @@ class AgentRunner:
         return self._turn_token
 
     def _finish_turn(self, token: object | None) -> None:
-        """Release the slot if this token is still the holder; otherwise no-op (which
-        is the preempted case)."""
+        """이 토큰이 아직 홀더면 슬롯을 놓는다. 아니면 no-op(선점당한 경우)."""
         if self._turn_token is token:
             self._turn_active = False
             self._turn_token = None
@@ -326,33 +317,29 @@ class AgentRunner:
     async def reattach(self) -> AsyncIterator[AgentEvent]:
         """Relay a turn whose SSE consumer went away (sleep, screensaver, proxy).
 
-        **This does NOT restore the workspace.** The other two paths *start* a
-        turn, so S3 has to win there; here the agent is writing into that
-        directory right now, and restoring would overwrite what it just wrote with
-        S3's older copy. All this path does is watch.
+        **워크스페이스를 복원하지 않는다.** 다른 두 경로는 턴을 **시작**하므로
+        S3가 이겨야 하지만, 여기서는 에이전트가 지금 그 디렉터리에 쓰고 있다 —
+        복원하면 방금 쓴 파일을 S3의 옛 사본으로 덮는다. 이 경로가 하는 일은
+        보는 것뿐이다.
 
-        If the driver has no `run_live` (the Strands-era contract, or a test
-        double) it finishes with a single `done` -- reattaching is a convenience,
-        and its absence must not break the screen. The caller falls back to
-        `GET /history` in that case.
+        드라이버가 `run_live`를 갖고 있지 않으면(Strands 시절 계약, 테스트 더블)
+        `done` 하나로 끝낸다 — 재접속은 편의이고, 없다는 이유로 화면을 깨지
+        않는다. 호출부는 그때 `GET /history`로 떨어진다.
 
-        **It does not refuse on "already in progress".** An
-        `if self._turn_active:` guard copied from the other three methods used to
-        sit at the top. That flag means "a consumer is attached" -- see
-        `ClaudeDriver.has_live_turn`'s docstring, which records both that meaning
-        and the requirement that a reattaching browser must not be bounced -- and
-        that is precisely the condition reattach has to **tolerate**. The guard is
-        correct in the other three methods: those start a turn.
+        **진행 중이라고 거부하지 않는다.** 예전에는 다른 세 메서드에서 복사한
+        `if self._turn_active:` 가드가 맨 앞에 있었는데, 그 플래그의 의미는
+        "소비자가 있다"이고(`ClaudeDriver.has_live_turn`의 docstring이 그 의미와
+        "재접속한 브라우저가 튕기지 않아야 한다"를 함께 적어 뒀다) 그것은 재접속이
+        **견뎌야 하는** 조건이다. 나머지 세 메서드에서는 맞는 가드다 — 그쪽은 턴을
+        시작한다.
 
-        Measured (2026-08-19, deployed instance): that guard put
-        `turn already in progress` on the user's screen as agent speech.
-        Instrumentation showed this guard firing first, with the driver's
-        `has_live_turn()` never even consulted.
+        실측(2026-08-19, 배포 인스턴스): 그 가드 때문에 사용자 화면에 에이전트
+        발화로 `turn already in progress`가 떴다. 계측 결과 이 가드가 가장 먼저
+        발화하고 드라이버의 `has_live_turn()`은 조회조차 되지 않았다.
 
-        **The slot is held by token.** When a preempted `send_message`'s finally
-        runs later and clears the flag, a new turn slips in while the reattached
-        stream is still going. The driver carries the same discipline for the same
-        reason (`_acquire_turn`/`_release_turn`).
+        **토큰으로 슬롯을 쥔다.** 선점된 `send_message`의 finally가 나중에 닫히며
+        플래그를 내려놓으면, 재접속이 스트리밍하는 동안 새 턴이 끼어든다. 드라이버가
+        같은 이유로 같은 규율을 갖는다(`_acquire_turn`/`_release_turn`).
         """
         run_live = getattr(self._driver, "run_live", None)
         if run_live is None:
@@ -368,9 +355,8 @@ class AgentRunner:
                     if got:
                         self._pending_interrupt_id = got
                 if event.kind in ("done", "error"):
-                    # Upload before the terminal event: a client that sees
-                    # `done` reads the document immediately (same discipline as
-                    # send_message).
+                    # 종결 전에 올린다 — `done`을 본 클라이언트가 곧바로 문서를
+                    # 읽으므로(send_message와 같은 규율).
                     await self._sync_workspace_to_s3()
                     synced = True
                 yield event
@@ -429,15 +415,14 @@ class AgentRunner:
                 route="answers", synced=str(synced).lower())
 
     async def interrupt(self) -> None:
-        """Interrupt the turn in progress. Delegated to the driver.
+        """진행 중인 턴을 끊는다. 드라이버로 위임한다.
 
-        The turn slot is left alone: the running run() releases it itself when it
-        emits its terminal event. Releasing here too would be a double release.
+        턴 슬롯은 건드리지 않는다 — 돌고 있는 run()이 종결 이벤트를 내며
+        스스로 놓는다. 여기서 함께 놓으면 이중 해제가 된다.
         """
         interrupt = getattr(self._driver, "interrupt", None)
         if interrupt is None:
-            return  # Optional, outside the contract -- absent means no-op
-                    # (still idempotent)
+            return  # 계약 밖의 선택 메서드다 — 없으면 no-op(여전히 멱등)
         await interrupt()
 
     async def pending(self) -> str | None:
@@ -452,16 +437,15 @@ class AgentRunner:
         return payload
 
     async def stop(self) -> None:
-        """Clean up the local workspace and shut the driver down. Durable S3 is left
-        alone -- deletion is projects.py's delete_project_data.
+        """로컬 워크스페이스 정리 + 드라이버 종료. S3(durable)는 건드리지 않는다
+        — 삭제는 projects.py의 delete_project_data가 담당.
 
-        The driver's disconnect() is **optional**, outside the contract
-        (run/run_answers/pending). ClaudeDriver holds a claude subprocess, so
-        skipping this call leaks that process for the lifetime of the backend
-        (~300-500MB) every time a project is deleted. We probe for it with getattr
-        and skip quietly when absent; the reason for keeping that defence even now
-        that there is only one driver is to avoid mixing the contract (the three
-        methods runner.py uses) with one implementation's convenience."""
+        드라이버의 disconnect()는 계약(run/run_answers/pending) 밖의 **선택적**
+        메서드다. ClaudeDriver는 claude 서브프로세스를 붙들고 있으므로 이걸 안
+        부르면 프로젝트를 삭제할 때마다 그 프로세스가 backend 수명 내내
+        샌다(~300-500MB). getattr로 존재 여부만 확인하고 없으면 조용히
+        건너뛴다 — 드라이버가 하나뿐이 된 뒤에도 이 방어를 남기는 이유는
+        계약(runner.py가 쓰는 세 메서드)과 구현 편의를 섞지 않기 위해서다."""
         disconnect = getattr(self._driver, "disconnect", None)
         if disconnect is not None:
             try:
@@ -472,9 +456,8 @@ class AgentRunner:
 
 
 def _glob_prefix(glob: str) -> str:
-    """The leading static (wildcard-free) directory part of a glob = the S3 list
-    prefix. 'aiplc-docs/**/*-q.md' -> 'aiplc-docs/', 'aiplc-docs/audit.md' ->
-    itself."""
+    """글롭의 선행 정적(와일드카드 없는) 디렉토리 부분 = S3 list prefix.
+    'aiplc-docs/**/*-q.md' -> 'aiplc-docs/', 'aiplc-docs/audit.md' -> 그 자체."""
     parts = PurePosixPath(glob).parts
     static: list[str] = []
     for part in parts:
