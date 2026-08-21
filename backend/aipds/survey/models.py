@@ -34,9 +34,9 @@ class Questionnaire(BaseModel):
     project_id: str
     created_at: str
     closed_at: str | None = None
-    # 문항이 쓰인 언어("ko"|"en"). 공개 응답 페이지가 이 값으로 화면 문구를
-    # 고른다. 기존 설문에는 없어 기본값이 필요하다 — 그 설문들은 모두
-    # 한국어로 만들어졌다.
+    # The language the questions were written in ("ko"|"en"). The public response page picks
+    # its screen wording from this value. Existing surveys do not have it and so need a default
+    # -- all of those were created in Korean.
     language: str = "ko"
     title: str
     hypothesis: str
