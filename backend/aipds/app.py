@@ -28,33 +28,36 @@ from aipds.turn_handles import TurnHandleStore
 
 _log = logging.getLogger(__name__)
 
-#: 애플리케이션 로그 레벨. 기본 INFO — 진단에 필요한 것 대부분이 그 레벨이다.
+#: The application log level. INFO by default -- most of what diagnosis needs is at
+#: that level.
 _LOG_LEVEL_ENV = "AIPDS_LOG_LEVEL"
 
-#: configure_logging이 자기가 붙인 핸들러를 알아보기 위한 표식. 재호출 시
-#: 핸들러가 쌓여 같은 줄이 여러 번 찍히는 것을 막는다(uvicorn --reload,
-#: TestClient가 lifespan을 두 번 도는 경우).
+#: The marker by which configure_logging recognises the handler it attached. It keeps
+#: handlers from stacking up on a second call and printing the same line several times
+#: (uvicorn --reload, or TestClient running the lifespan twice).
 _HANDLER_TAG = "aipds"
 
 
 def configure_logging() -> None:
-    """루트 로거에 핸들러를 붙인다.
+    """Attach a handler to the root logger.
 
-    없으면 애플리케이션 로그가 사실상 사라진다. uvicorn은 자기 로거만
-    설정하고 루트는 건드리지 않으므로, 핸들러 없는 상태에서 INFO는 조용히
-    버려지고 WARNING만 Python의 lastResort로 포맷 없이 새어나온다.
+    Without one the application log effectively disappears. uvicorn configures only its
+    own loggers and does not touch the root, so with no handler an INFO record is dropped
+    silently and only WARNING leaks out unformatted through Python's lastResort.
 
-    실측: 워크숍 박스 journald에 `aipds` 로거의 산출이 2905줄 중 **0건**
-    이었다. 그 사이 채팅 내역 복원 버그를 쫓고 있었는데, 원인을 가리키는 로그
-    (`_resolve_resume`의 resume 판단, SDK의 "dropping mirror frame" 경고)가
-    전부 이 구멍으로 사라져서 프로덕션에서 재현·계측을 반복해야 했다.
+    Measured: the `aipds` logger's output in a workshop box's journald was **0 lines out
+    of 2905**. A chat-history restore bug was being chased at the time, and the log
+    records that pointed at the cause (`_resolve_resume`'s resume decision, the SDK's
+    "dropping mirror frame" warning) all vanished through this hole, forcing repeated
+    reproduction and measurement in production.
 
-    SDK 로거를 함께 여는 이유가 그 경고다: 트랜스크립트 미러링 실패는
-    `claude_agent_sdk` 쪽 로거로만 보고되므로, 우리 로거만 열면 "프레임이
-    버려졌다"와 "프레임이 오지 않았다"를 여전히 구별할 수 없다.
+    That warning is why the SDK logger is opened alongside ours: a transcript mirroring
+    failure is reported only through the `claude_agent_sdk` logger, so opening ours alone
+    still leaves "the frame was dropped" and "the frame never arrived"
+    indistinguishable.
 
-    uvicorn의 설정을 갈아엎지 않고 루트에만 핸들러를 더한다 — 액세스 로그의
-    모양은 그대로 두는 것이 목적이다.
+    A handler is added to the root without overhauling uvicorn's configuration -- the
+    point is to leave the access log's shape alone.
     """
     level = getattr(logging, os.environ.get(_LOG_LEVEL_ENV, "INFO").upper(),
                     logging.INFO)
@@ -67,18 +70,19 @@ def configure_logging() -> None:
         handler._aipds_tag = _HANDLER_TAG  # type: ignore[attr-defined]
         root.addHandler(handler)
     root.setLevel(min(root.level or level, level) if root.level else level)
-    # 두 로거를 명시적으로 연다. 루트 레벨만으로는 부족하다 — 서드파티가 자기
-    # 로거 레벨을 올려 두면 루트가 열려 있어도 걸러진다.
+    # Both loggers are opened explicitly. The root level alone is not enough -- if a
+    # third party has raised its own logger's level, records are filtered even with the
+    # root open.
     for name in ("aipds", "claude_agent_sdk"):
         logging.getLogger(name).setLevel(level)
 
 
 registry = ProjectRegistry()
 
-# 턴 입력 핸들. 긴 채팅 텍스트를 SSE URL에서 빼기 위한 것이다 —
-# turn_handles.py 헤더에 실측한 HTTP 431의 원인과 함께 적어 뒀다.
-# proto_sessions와 같은 성질의 인메모리다: 수초 사는 값이고, 재시작 시
-# 유실되면 그 턴만 실패한다.
+# Turn input handles. They exist to keep long chat text out of the SSE URL -- the
+# turn_handles.py header records the measured cause, an HTTP 431. In-memory with the same
+# character as proto_sessions: a value that lives for seconds, and losing it on a restart
+# fails only that turn.
 turn_handles = TurnHandleStore()
 
 
@@ -101,7 +105,8 @@ def session_s3_factory() -> S3StoreLike:
     return S3Store(bucket=bucket, prefix="sessions/", client=client)
 
 
-# 매니페스트/삭제용 — projects/ 전체를 보는 root 스토어. 테스트에서 monkeypatch.
+# For manifests and deletion -- the root store, which sees all of projects/.
+# Monkeypatched in tests.
 def projects_root_s3_factory() -> S3StoreLike:
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("AIPDS_S3_BUCKET", "")
@@ -109,9 +114,9 @@ def projects_root_s3_factory() -> S3StoreLike:
     return S3Store(bucket=bucket, prefix="projects/", client=client)
 
 
-# 모델 카탈로그용 — 버킷 루트 스토어. 카탈로그는 프로젝트보다 먼저 존재해야
-# 하므로(프로젝트 생성 화면이 프로젝트 없이 읽는다) projects/ 밖에 있다.
-# 테스트에서 monkeypatch.
+# For the model catalogue -- a bucket-root store. The catalogue has to exist before any
+# project does (the project creation screen reads it with no project), so it lives outside
+# projects/. Monkeypatched in tests.
 def models_root_s3_factory() -> S3StoreLike:
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("AIPDS_S3_BUCKET", "")
@@ -119,8 +124,9 @@ def models_root_s3_factory() -> S3StoreLike:
     return S3Store(bucket=bucket, prefix="", client=client)
 
 
-# 브랜드 프로필용 — 버킷 루트 스토어. design/ 아래 profile.json 하나뿐이고
-# 모델 카탈로그와 같은 이유로 projects/ 밖에 있다. 테스트에서 monkeypatch.
+# For the brand profile -- a bucket-root store. It is one profile.json under design/ and
+# sits outside projects/ for the same reason as the model catalogue. Monkeypatched in
+# tests.
 def design_root_s3_factory() -> S3StoreLike:
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("AIPDS_S3_BUCKET", "")
@@ -129,10 +135,11 @@ def design_root_s3_factory() -> S3StoreLike:
 
 
 def design_profile_store():
-    """DesignProfileStore 팩토리 (monkeypatchable in tests).
+    """The DesignProfileStore factory (monkeypatchable in tests).
 
-    버킷이 없으면 읽기 전용(None) 스토어를 준다 -- model_catalog()와 같은
-    이유: 버킷 없는 로컬 개발에서도 빌드 세션의 start()가 막히면 안 된다.
+    With no bucket it returns a read-only (None) store -- the same reason as
+    model_catalog(): a build session's start() must not be blocked in local development
+    without a bucket.
     """
     from aipds.design_profile import DesignProfileStore
     if not durable_projects_enabled():
@@ -141,10 +148,11 @@ def design_profile_store():
 
 
 def model_catalog():
-    """ModelCatalog 팩토리 (monkeypatchable in tests).
+    """The ModelCatalog factory (monkeypatchable in tests).
 
-    버킷이 없으면 읽기 전용 카탈로그(시드만)를 준다 — 로컬 개발이 아무 설정
-    없이 프로젝트를 만들 수 있어야 하고, 그 화면의 콤보박스도 채워져야 한다.
+    With no bucket it returns a read-only catalogue (seeds only) -- local development has
+    to be able to create a project with no configuration at all, and that screen's
+    combobox has to be populated too.
     """
     from aipds.model_catalog import ModelCatalog
     if not durable_projects_enabled():
@@ -153,51 +161,51 @@ def model_catalog():
 
 
 def project_model(project_id: str) -> str | None:
-    """이 프로젝트가 도는 Bedrock 모델 id.
+    """The Bedrock model id this project runs on.
 
-    폴백 순서는 프로젝트 → env → None이고 각 칸에 이유가 있다:
-      - 프로젝트: 생성 시 고른 값(매니페스트에 복사돼 있다).
-      - env(ANTHROPIC_MODEL): 이 기능 이전에 만든 프로젝트가 계속 도는 길.
-        배포에서는 backend-permissions.ts의 MODEL이 이 값을 넣는다.
-      - None: 로컬 개발에서 env도 없는 경우. 드라이버는 None을 받으면
-        ANTHROPIC_MODEL을 넣지 않아 SDK 기본값으로 간다(종전 동작).
+    The fallback order is project -> env -> None, and each slot has a reason:
+      - project: the value chosen at creation (copied into the manifest).
+      - env (ANTHROPIC_MODEL): the path by which a project created before this feature
+        keeps running. In a deployment, MODEL in backend-permissions.ts supplies it.
+      - None: local development with no env either. Given None, the driver does not set
+        ANTHROPIC_MODEL and falls through to the SDK default (the previous behaviour).
     """
     return registry.get_model_id(project_id) or os.environ.get("ANTHROPIC_MODEL")
 
 
 def project_language(project_id: str) -> str:
-    """이 프로젝트의 생성물 언어("ko"|"en"). 항상 값이 있다.
+    """This project's output language ("ko"|"en"). Always has a value.
 
-    project_model과 달리 env 폴백이 없다: 언어는 프로세스 전역 기본값을 가질
-    이유가 없고(모델은 배포가 정하는 것이 자연스럽지만 언어는 프로젝트의
-    성질이다), 레지스트리가 이미 "ko"로 확정한다.
+    Unlike project_model there is no env fallback: a language has no reason to have a
+    process-global default (a model being set by the deployment is natural, but a language
+    is a property of the project), and the registry already settles it to "ko".
 
-    이 함수를 두는 이유는 호출부(driver_factory, proto_session_factory,
-    survey_store_factory)가 registry를 직접 만지지 않게 하는 것이다 —
-    project_model과 같은 모양을 유지한다.
+    This function exists so that its callers (driver_factory, proto_session_factory,
+    survey_store_factory) do not touch the registry directly -- keeping the same shape as
+    project_model.
     """
     return registry.get_language(project_id)
 
 
-# ---- 인증 (routes/*, auth/deps.py) ----
+# ---- Authentication (routes/*, auth/deps.py) ----
 
 _jwks_singleton = None
 
 
 def cognito_config() -> dict | None:
-    """Cognito 설정. 둘 다 미설정이면 None = 인증 바이패스.
+    """The Cognito configuration. With neither set, None = authentication bypass.
 
-    durable_projects_enabled()와 같은 규율이다: 필수 env가 전혀 없으면 그 기능
-    전체를 생략하고 로컬/테스트가 아무 설정 없이 돌게 한다.
+    The same discipline as durable_projects_enabled(): with none of the required env
+    present, the whole feature is skipped so local and tests run with no configuration.
 
-    하지만 풀 id와 client id 중 **하나만** 있는 상태는 "미설정"이 아니라 배포
-    사고다. 예전에는 이 경우도 None(바이패스)으로 취급했는데, 그러면 인증이
-    꺼진 채 모든 요청이 조용히 가상 admin(LOCAL_PRINCIPAL)으로 통과한다 —
-    크래시도, 경고도, 흔적도 없다. 그래서 반쯤 설정된 상태는 예외로 즉시
-    터뜨린다(fail-closed): 이 요청들은 500이 되지만, 아무도 모르게 관리자
-    권한이 새는 것보다는 눈에 보이는 실패가 낫다. cognito_config()는 매 요청
-    호출되므로(require_user), 배포 스크립트가 두 변수 중 하나를 지우는 순간
-    재시작 없이도 즉시 이 예외가 뜬다.
+    But having **only one** of the pool id and the client id is not "unconfigured", it is
+    a deployment accident. This case used to be treated as None (bypass) too, which leaves
+    authentication off while every request quietly passes as a virtual admin
+    (LOCAL_PRINCIPAL) -- no crash, no warning, no trace. So a half-set configuration
+    raises immediately (fail-closed): those requests become 500s, but a visible failure
+    beats admin privileges leaking with nobody aware. cognito_config() is called on every
+    request (require_user), so the moment a deployment script drops one of the two
+    variables this exception appears, without a restart.
     """
     pool = os.environ.get("AIPDS_COGNITO_USER_POOL_ID", "").strip()
     client = os.environ.get("AIPDS_COGNITO_CLIENT_ID", "").strip()
@@ -215,7 +223,7 @@ def cognito_config() -> dict | None:
 
 
 def jwks_cache():
-    """JWKS 캐시 싱글턴 (monkeypatchable in tests)."""
+    """The JWKS cache singleton (monkeypatchable in tests)."""
     global _jwks_singleton
     if _jwks_singleton is None:
         from aipds.auth.verifier import JwksCache
@@ -226,10 +234,10 @@ def jwks_cache():
 
 
 def cognito_admin():
-    """CognitoAdmin 팩토리 (monkeypatchable in tests).
+    """The CognitoAdmin factory (monkeypatchable in tests).
 
-    싱글턴으로 두지 않는 이유: boto3 클라이언트는 스레드 세이프하지만, 테스트가
-    요청마다 가짜로 갈아끼울 수 있어야 하고 생성 비용은 무시할 만하다.
+    Why it is not a singleton: a boto3 client is thread-safe, but tests have to be able to
+    swap in a fake per request, and the construction cost is negligible.
     """
     from aipds.auth.cognito import CognitoAdmin
     cfg = cognito_config()
@@ -242,16 +250,17 @@ def cognito_admin():
 
 
 def durable_projects_enabled() -> bool:
-    """버킷 미설정(로컬/테스트)이면 목록 영속화 전체를 생략한다."""
+    """With no bucket configured (local, tests), list persistence is skipped entirely."""
     return bool(os.environ.get("AIPDS_S3_BUCKET"))
 
 
 def _rules_dir() -> str:
-    #: `steering-files/`는 상류 리포(aws-samples/sample-ai-plc)의 **서브모듈**이고
-    #: `aiplc-rules/`는 그 안의 디렉터리다. 서브모듈이므로 clone만으로는 비어
-    #: 있다 — `git submodule update --init`이 부팅(infra/lib/user-data.ts)과
-    #: 갱신(infra/scripts/aipds-update) 양쪽에 있다. 비어 있으면 place_rules가
-    #: core-workflow.md를 못 찾고 그 실패는 첫 턴에서야 보인다.
+    #: `steering-files/` is a **submodule** of the upstream repo
+    #: (aws-samples/sample-ai-plc) and `aiplc-rules/` is a directory inside it. Being a
+    #: submodule, a clone alone leaves it empty -- `git submodule update --init` is in
+    #: both the boot path (infra/lib/user-data.ts) and the update path
+    #: (infra/scripts/aipds-update). Left empty, place_rules cannot find
+    #: core-workflow.md, and that failure only shows up on the first turn.
     default = str(Path(__file__).resolve().parent.parent.parent
                   / "steering-files" / "aiplc-rules")
     return os.environ.get("AIPDS_RULES_DIR", default)
@@ -263,29 +272,32 @@ def _workspaces_dir() -> Path:
 
 
 async def purge_local_workspace(project_id: str) -> None:
-    """이 프로젝트의 로컬 워크스페이스 디렉터리를 지운다. 멱등.
+    """Delete this project's local workspace directory. Idempotent.
 
-    **왜 `runner.stop()`으로 부족한가.** 그 안에도 rmtree가 있지만 두 조건에
-    걸린다. 첫째, 삭제 라우트가 `registry.has_workspace(pid)`일 때만 stop을
-    부르는데 그 플래그는 `attach()`로만 채워지고, 기동 시 복원은
-    `register()`만 한다(위 lifespan: "프로젝트 '목록'만 복원") — 즉 **재시작 뒤
-    한 번도 열지 않은 프로젝트는 전부 False**이고, 그것이 워크숍마다 재배포가
-    있는 이 제품의 흔한 상태다. 둘째, stop의 실패는 의도적으로 삼켜지므로
-    드라이버 종료가 실패하면 rmtree까지 함께 건너뛴다.
+    **Why `runner.stop()` is not enough.** It contains an rmtree too, but two conditions
+    get in the way. First, the delete route calls stop only when
+    `registry.has_workspace(pid)`, and that flag is set only by `attach()` while the
+    startup restore calls `register()` alone (the lifespan above: "only the project *list*
+    is restored") -- meaning **every project not opened since the restart is False**, and
+    that is the common state for a product redeployed for every workshop. Second, a
+    failure in stop is swallowed deliberately, so a failed driver shutdown skips the
+    rmtree along with it.
 
-    실측(2026-08-19, 배포 인스턴스): `/opt/aipds/workspaces/`에 S3에 없는
-    프로젝트 6개의 디렉터리가 남아 있었다. 사용자에게는 "채팅 기록·문서가 영구
-    삭제된다"고 약속한 상태다(`project.deleteConfirmBody`).
+    Measured (2026-08-19, a deployed instance): `/opt/aipds/workspaces/` still held
+    directories for 6 projects that were not in S3. The user has been promised that "chat
+    history and documents are permanently deleted" (`project.deleteConfirmBody`).
 
-    **잔여물은 raise다.** `ignore_errors=True`는 첫 실패에서 멈추지 않고 갈 수
-    있는 만큼 가게 하는 용도이므로 성공 신호로 쓸 수 없다 — node_modules 깊은
-    곳의 권한 오류가 성공으로 보고되면 문서가 남은 채 "삭제됐다"가 된다.
-    `ProtoHost.purge`가 같은 이유로 같은 모양을 갖는다.
+    **Leftovers raise.** `ignore_errors=True` exists to get as far as possible rather than
+    stopping at the first failure, so it cannot be used as a success signal -- a
+    permission error deep inside node_modules reported as success turns into "deleted"
+    with the documents still there. `ProtoHost.purge` has the same shape for the same
+    reason.
 
-    **`reject_unsafe_segment`가 선행한다.** URL 파라미터 하나가 디렉터리 이름이
-    되는 자리이고, `pathlib`은 정규화하지 않으므로 `".."`는 정말로 부모다 — 검증
-    없이는 한 프로젝트 삭제가 `workspaces/` 전체의 rmtree가 된다. 라우트도 막지만
-    (그쪽이 1차 방어) 위험한 원시 연산이 누가 부르든 무기가 되기를 거부한다.
+    **`reject_unsafe_segment` comes first.** This is a place where one URL parameter
+    becomes a directory name, and `pathlib` does not normalise, so `".."` really is the
+    parent -- without validation, deleting one project becomes an rmtree of all of
+    `workspaces/`. The route blocks it too (that is the first line of defence), but a
+    dangerous primitive refuses to be a weapon whoever calls it.
     """
     reject_unsafe_segment(project_id)
     target = _workspaces_dir() / project_id
@@ -301,27 +313,30 @@ def _discovery_config_dir() -> Path:
                                "~/aipds-discovery-config")).expanduser()
 
 
-# Discovery 드라이버. Claude Agent SDK 한 벌뿐이다 — AI-PLC 룰이 전제한 실행
-# 환경이고, 여기 있던 `strands` 폴백은 삭제했다.
+# The Discovery driver. There is exactly one, the Claude Agent SDK -- it is the execution
+# environment the AI-PLC rules assume, and the `strands` fallback that used to be here was
+# deleted.
 #
-# **왜 폴백을 없앴는가.** 워크숍 중 env 하나로 되돌리는 탈출로로 뒀는데, 실제로는
-# 당길 수 없는 상태로 썩어 있었다: StrandsDriver는 `language`를 받지 않아 영어
-# 프로젝트가 한국어로 돌고(7f33652가 고친 그 결함), session_store·pending_store·
-# answer_store가 없어 트랜스크립트 미러링과 질문·답변 복원이 전부 빠진다. 그
-# 사실은 실제로 당기는 순간 — 즉 워크숍 중 사고가 났을 때 — 처음 드러난다.
-# 작동하는 롤백은 git revert + `aipds-update`다(배포가 브랜치를 가리키므로
-# 인스턴스 교체 없이 되돌아간다).
+# **Why the fallback was removed.** It was kept as an escape route, a single env var to
+# revert during a workshop, but it had in fact rotted into a state that could not be
+# pulled: StrandsDriver does not accept `language`, so an English project would run in
+# Korean (the very defect 7f33652 fixed), and with no session_store, pending_store or
+# answer_store, transcript mirroring and question/answer restore drop out entirely. That
+# fact would first surface at the moment it was actually pulled -- that is, when something
+# went wrong mid-workshop. The rollback that works is git revert plus `aipds-update` (the
+# deployment points at a branch, so it reverts without replacing the instance).
 #
-# Monkeypatchable in tests: 이 함수 자체를 fake agent_factory로 갈아끼운다.
+# Monkeypatchable in tests: this function itself is swapped for a fake agent_factory.
 def driver_factory(project_id: str, local_root: Path):
     return ClaudeDriver(
         workspace=str(local_root),
         rules_dir=_rules_dir(),
         config_dir=str(_discovery_config_dir()),
         s3=s3_store_factory(project_id),
-        # cli_model_id를 여기서 씌운다(project_model 안이 아니다) — `[1m]`은
-        # CLI 별칭이고 Bedrock 모델 id가 아니라서, project_model을 그대로 쓰는
-        # 설문 생성 경로(BedrockModel)에 흘러가면 ValidationException이 된다.
+        # cli_model_id is applied here rather than inside project_model -- `[1m]` is a
+        # CLI alias and not a Bedrock model id, so leaking it into the survey generation
+        # path (BedrockModel), which uses project_model as-is, would be a
+        # ValidationException.
         anthropic_model=cli_model_id(project_model(project_id)),
         language=project_language(project_id),
     )
@@ -329,8 +344,9 @@ def driver_factory(project_id: str, local_root: Path):
 
 # ---- prototype build/hosting wiring (routes/prototypes.py) ----
 
-# 살아있는 빌드 세션 레지스트리 — (pid, slug) → PrototypeSession. 인메모리:
-# 백엔드 재시작 시 소멸(빌드 디렉토리와 transcript는 남아 resume으로 이어진다).
+# The registry of live build sessions -- (pid, slug) -> PrototypeSession. In-memory: it
+# dies with a backend restart (the build directory and transcript survive, and resume
+# picks up from them).
 proto_sessions: dict = {}
 
 _proto_host_singleton = None
@@ -342,21 +358,22 @@ def _proto_root() -> Path:
 
 
 def _proto_config_dir() -> Path:
-    """빌드 에이전트 전용 CLAUDE_CONFIG_DIR. 지정하지 않으면 번들 바이너리가
-    백엔드 유저의 ~/.claude(개인 skills/agents/CLAUDE.md)를 읽는다."""
+    """The CLAUDE_CONFIG_DIR dedicated to the build agent. Unset, the bundled binary reads
+    the backend user's ~/.claude (their personal skills/agents/CLAUDE.md)."""
     return Path(os.environ.get("AIPDS_PROTO_CONFIG_DIR",
                                "~/aipds-proto-config")).expanduser()
 
 
 def _proto_permission_mode() -> str:
-    """빌드는 무인으로 돌아간다 — 승인해 줄 사람이 없으므로 bypassPermissions가
-    기본값이다. 더 조이려면 환경변수로 덮어쓴다(잘못된 값은 즉시 ValueError)."""
+    """A build runs unattended -- with nobody there to approve, bypassPermissions is the
+    default. Tighten it by overriding the environment variable (a bad value is an
+    immediate ValueError)."""
     from aipds.proto.builder import DEFAULT_PERMISSION_MODE
     return os.environ.get("AIPDS_PROTO_PERMISSION_MODE",
                           DEFAULT_PERMISSION_MODE)
 
 
-# 전역 동시 빌드 상한 (monkeypatchable in tests).
+# The global cap on concurrent builds (monkeypatchable in tests).
 from aipds.proto.limits import BuildSemaphore  # noqa: E402
 
 build_semaphore = BuildSemaphore(
@@ -364,7 +381,7 @@ build_semaphore = BuildSemaphore(
 
 
 def proto_host():
-    """ProtoHost 싱글턴 (monkeypatchable in tests)."""
+    """The ProtoHost singleton (monkeypatchable in tests)."""
     global _proto_host_singleton
     if _proto_host_singleton is None:
         from aipds.proto.host import ProtoHost
@@ -373,8 +390,8 @@ def proto_host():
 
 
 def proto_session_factory(project_id: str, slug: str):
-    """PrototypeSession 조립 (monkeypatchable in tests). VM은 없다 — 빌더가
-    백엔드 프로세스 안에서 claude 서브프로세스를 띄운다."""
+    """Assemble a PrototypeSession (monkeypatchable in tests). There is no VM -- the builder
+    spawns a claude subprocess inside the backend process."""
     from aipds.proto.builder import PrototypeBuilder
     from aipds.proto.session import PrototypeSession
     from aipds.proto.session_store import S3SessionStore
@@ -384,8 +401,8 @@ def proto_session_factory(project_id: str, slug: str):
     config_dir = _proto_config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
     store = S3SessionStore(s3, slug=slug) if os.environ.get("AIPDS_S3_BUCKET") else None
-    # 한 번 읽어 빌더와 세션에 같은 값을 준다 — 둘이 어긋나면 프롬프트와 도구
-    # 설명의 언어가 갈린다.
+    # Read once and given to both the builder and the session -- if the two diverge, the
+    # prompt and the tool descriptions end up in different languages.
     language = project_language(project_id)
 
     def builder_factory(session_id: str, resume: bool):
@@ -395,7 +412,8 @@ def proto_session_factory(project_id: str, slug: str):
             session_id=session_id,
             resume=resume,
             session_store=store,
-            # driver_factory와 같은 이유로 CLI용 조립을 여기서 한다.
+            # The CLI-specific assembly happens here for the same reason as in
+            # driver_factory.
             anthropic_model=cli_model_id(project_model(project_id)),
             language=language,
             permission_mode=_proto_permission_mode(),
@@ -431,21 +449,21 @@ def survey_store_factory(project_id: str, slug: str):
 
 
 def questionnaire_agent_factory(project_id: str):
-    """A one-shot `async (prompt) -> str` callable. Deliberately NOT
-    Discovery 드라이버: 그쪽은 AI-PLC 룰 프롬프트·워크스페이스 도구·세션
-    관리를 함께 싣는데, 무상태 생성 호출에는 그중 아무것도 필요 없다.
+    """A one-shot `async (prompt) -> str` callable. Deliberately **not** the Discovery
+    driver: that one carries the AI-PLC rule prompt, the workspace tools and session
+    management, and a stateless generation call needs none of it.
 
-    project_id를 받는 이유: 문항 생성도 그 프로젝트의 모델로 돌아야 한다.
-    종전에는 os.environ["ANTHROPIC_MODEL"]을 직접 읽어, 프로젝트별 모델을
-    골라도 이 경로만 전역 env를 썼다.
+    Why it takes project_id: question generation has to run on that project's model too.
+    It used to read os.environ["ANTHROPIC_MODEL"] directly, so this one path used the
+    global env even when a per-project model had been chosen.
     """
     model_id = project_model(project_id)
 
     async def call(prompt: str) -> str:
         if not model_id:
-            # 여기가 유일하게 모델을 필수로 요구하는 지점이다(다른 둘은 None을
-            # SDK 기본값으로 넘긴다). 라우트가 502로 감싸고 이 문장이 로그에
-            # 남아 원인이 프로젝트 설정임을 말해 준다.
+            # This is the one place a model is mandatory (the other two pass None
+            # through to the SDK default). The route wraps it as a 502, and this sentence
+            # remains in the log to say the cause is the project's configuration.
             raise RuntimeError(
                 f"no model for project {project_id!r}: neither the project's "
                 "model_id nor ANTHROPIC_MODEL is set")
@@ -459,22 +477,24 @@ def questionnaire_agent_factory(project_id: str):
 
 
 def design_token_extractor():
-    """산문뿐인 DESIGN.md에서 토큰을 뽑을 단발 호출자. 모델이 없으면 None.
+    """The one-shot caller that extracts tokens from a prose-only DESIGN.md. None when there
+    is no model.
 
-    `questionnaire_agent_factory`와 같은 모양(Strands + BedrockModel 단발)이지만
-    두 곳이 다른 점이 둘 있다.
+    The same shape as `questionnaire_agent_factory` (a one-shot Strands + BedrockModel),
+    but two things differ.
 
-    1. `project_model()`을 쓸 수 없다 — 브랜드 프로필은 프로젝트 밖의 전역 한
-       장이고(design_profile.py), 업로드 시점에는 프로젝트가 없다. 그래서 배포가
-       내보내는 기본 모델(`ANTHROPIC_MODEL`, infra/lib/backend-permissions.ts의
-       MODEL)을 읽는다.
-    2. 모델이 없을 때 RuntimeError를 올리지 않고 None을 돌려준다. 그쪽은 문항
-       생성이 곧 그 요청의 목적이라 실패해야 하지만, 여기서 실패하면 추출이
-       **업로드 자체를** 막는다 — 토큰 없이 산문만 적용하는 것도 유효한
-       상태다(라우트가 경고로 번역한다).
+    1. `project_model()` cannot be used -- the brand profile is a single global document
+       outside any project (design_profile.py), and at upload time there is no project. So
+       it reads the default model the deployment exports (`ANTHROPIC_MODEL`, MODEL in
+       infra/lib/backend-permissions.ts).
+    2. With no model it returns None rather than raising RuntimeError. There, question
+       generation *is* the purpose of the request and so has to fail; here, failing would
+       let extraction block **the upload itself** -- and applying the prose without tokens
+       is a valid state too (the route translates it into a warning).
 
-    `temperature`는 넘기지 않는다 — Opus 4.7+·Sonnet 5는 샘플링 파라미터를 400으로
-    거부한다. max_tokens가 작은 이유는 출력이 ```tokens 블록 한 개(최대 14줄)라서다.
+    `temperature` is not passed -- Opus 4.7+ and Sonnet 5 reject sampling parameters with
+    a 400. max_tokens is small because the output is a single ```tokens block (at most 14
+    lines).
     """
     model_id = os.environ.get("ANTHROPIC_MODEL")
     if not model_id:
@@ -509,12 +529,13 @@ async def make_workspace(project_id: str) -> Workspace:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    # 가장 먼저. 아래의 모든 것이 실패를 로그로 보고하고, 핸들러가 붙기 전의
-    # 로그는 사라진다(configure_logging 참고 — 실제로 그렇게 잃었다).
+    # First of all. Everything below reports failure through the log, and a log record
+    # from before the handler is attached is gone (see configure_logging -- that is how
+    # records were actually lost).
     configure_logging()
-    # 기동 시 S3 매니페스트에서 프로젝트 '목록'만 복원한다. 워크스페이스는 첫
-    # 요청에서 lazy 초기화(deps.ensure_workspace) — 기동을 빠르게 유지한다.
-    # 복원 실패는 기동을 막지 않는다.
+    # On startup only the project *list* is restored from the S3 manifest. A workspace is
+    # initialised lazily on its first request (deps.ensure_workspace) -- keeping startup
+    # fast. A restore failure does not block startup.
     if durable_projects_enabled():
         try:
             for pid, name, created_at, model_id, language in await restore_projects(
@@ -523,19 +544,21 @@ async def _lifespan(_app: FastAPI):
                                   model_id=model_id, language=language)
         except Exception:
             _log.exception("project-list restore failed; starting with empty registry")
-    # 재시작으로 소멸한 인메모리 세션이 남긴 고아 호스팅 프로세스 정리
-    # (구 고아 VM 스윕의 대체물 — 이제 그 자식들은 우리 프로세스의 자식이다).
+    # Clean up orphaned hosting processes left behind by in-memory sessions that died
+    # with the restart (the replacement for the old orphaned-VM sweep -- those children
+    # are now children of our own process).
     try:
         swept = proto_host().sweep_orphans()
         if swept:
             _log.info("swept %d orphan prototype hosting process(es)", swept)
     except Exception:
         _log.exception("orphan hosting sweep failed; continuing startup")
-    # 프로토타입 접근 토큰을 디스크에서 다시 읽는다. 위 스윕과 짝이지만 방향이
-    # 반대다: 스윕은 재시작으로 의미를 잃은 것(고아 프로세스)을 버리고, 이쪽은
-    # 재시작을 넘어 살아야 하는 것(이미 배포된 링크)을 되살린다. 이것이 없으면
-    # 워크숍 중 백엔드가 재시작될 때 참가자에게 나눠 준 URL이 전부 404가 되고,
-    # 다시 호스팅해도 복구되지 않는다 — 그 URL 안의 토큰은 바뀌지 않으므로.
+    # Re-read prototype access tokens from disk. This pairs with the sweep above but runs
+    # in the opposite direction: the sweep discards what the restart robbed of meaning
+    # (orphaned processes), while this revives what has to survive a restart (links
+    # already handed out). Without it, a backend restart mid-workshop turns every URL
+    # given to participants into a 404, and re-hosting does not recover them -- because
+    # the token inside those URLs does not change.
     try:
         loaded = proto_host().load_tokens()
         if loaded:
@@ -546,27 +569,29 @@ async def _lifespan(_app: FastAPI):
 
 
 def _docs_openapi_url() -> str | None:
-    """스키마/문서 UI(/openapi.json, /docs, /redoc)의 활성화 여부.
+    """Whether the schema and docs UI (/openapi.json, /docs, /redoc) is enabled.
 
-    이 라우트들은 FastAPI가 자체 등록한다 — app.include_router(...,
-    dependencies=_AUTH)를 거치지 않으므로 아래 인증 배선과 무관하게 익명
-    200을 반환한다. 인증이 설정된 배포에서는 그게 이 앱의 전체 라우트
-    표·파라미터·스키마를 익명 방문자에게 넘기는 것과 같으므로 끈다
-    (openapi_url=None이면 /docs·/redoc도 함께 꺼진다 — 둘 다 openapi_url을
-    전제로 등록되기 때문). 로컬 개발(인증 미설정)에서는 유용하니 켜 둔다.
+    FastAPI registers these routes itself -- they do not go through
+    app.include_router(..., dependencies=_AUTH), so they return an anonymous 200
+    regardless of the authentication wiring below. In a deployment with authentication
+    configured that amounts to handing this app's entire route table, parameters and
+    schemas to an anonymous visitor, so it is turned off (openapi_url=None also turns off
+    /docs and /redoc, since both are registered on the premise of openapi_url). In local
+    development (authentication unconfigured) it is useful, so it stays on.
 
-    별도 함수로 뽑은 이유: FastAPI(...)의 openapi_url 인자는 임포트 시점에
-    딱 한 번 평가되므로, 이 로직 자체를 테스트에서 monkeypatch(cognito_config)
-    만으로 검증하려면 app 생성과 분리된 순수 함수여야 한다 — module 전체를
-    importlib.reload()하면 registry 등 다른 모듈 전역 싱글턴이 새로 만들어져
-    이미 그 객체를 참조 중인 다른 테스트 파일들이 깨진다(실측: 대량 KeyError).
+    Why it is extracted as its own function: FastAPI(...)'s openapi_url argument is
+    evaluated exactly once at import time, so verifying this logic in a test with nothing
+    but a monkeypatch of cognito_config requires a pure function separate from app
+    construction -- importlib.reload() of the whole module would rebuild other modules'
+    global singletons such as the registry and break other test files already holding
+    those objects (measured: KeyErrors en masse).
     """
     return None if cognito_config() else "/openapi.json"
 
 
-# cognito_config()는 매 요청 호출과 같은 순수 env 읽기이므로 임포트 시점
-# 호출도 안전하다(반쯤 설정된 상태면 여기서 바로 RuntimeError로 죄는 게
-# 오히려 첫 요청까지 기다리는 것보다 낫다).
+# cognito_config() is the same pure env read as on every request, so calling it at import
+# time is safe too (and if the configuration is half-set, tightening straight into a
+# RuntimeError here is better than waiting for the first request).
 app = FastAPI(title="AI-PDS", lifespan=_lifespan,
              openapi_url=_docs_openapi_url())
 
@@ -595,11 +620,12 @@ app.add_middleware(
     allow_credentials=True,
 )
 
-# ---- 라우터 등록 ----
+# ---- Router registration ----
 #
-# 인증은 라우트 본문이 아니라 여기서 붙인다: 라우터 단위 dependencies로 걸면
-# 라우트 함수를 하나도 건드리지 않고 전부 보호된다. 인증이 설정되지 않은
-# 로컬/테스트에서는 require_user가 전부 통과시킨다(auth/deps.py).
+# Authentication is attached here rather than in the route bodies: applied as
+# router-level dependencies, every route is protected without touching a single route
+# function. Where authentication is not configured (local and tests), require_user passes
+# everything through (auth/deps.py).
 from aipds.auth.deps import require_user  # noqa: E402
 from fastapi import Depends  # noqa: E402
 
@@ -643,12 +669,12 @@ app.include_router(models_routes.admin_router, dependencies=_AUTH)
 from aipds.routes import design as design_routes  # noqa: E402
 app.include_router(design_routes.admin_router, dependencies=_AUTH)
 
-# ---- 공개(무인증) 라우터 — 정확히 둘 (라우터 2개, 경로는 3개 — 아래 참고) ----
+# ---- Public (unauthenticated) routers -- exactly two (2 routers, 3 paths; see below) --
 #
-# 여기에 라우터를 추가하는 것은 인터넷에 공개하는 것과 같다. 두 경로 모두 계정이
-# 없는 최종 사용자를 위한 것이다: 설문 링크를 받아 응답하고(surveys_public),
-# 평가 대상 프로토타입을 실제로 써본다(proto_public).
-# tests/test_auth_route_coverage.py가 이 목록을 강제한다.
+# Adding a router here is the same as publishing it to the internet. Both exist for end
+# users who have no account: receiving a survey link and responding (surveys_public), and
+# actually using the prototype under evaluation (proto_public).
+# tests/test_auth_route_coverage.py enforces this list.
 from aipds.routes import surveys_public  # noqa: E402
 app.include_router(surveys_public.router)
 
