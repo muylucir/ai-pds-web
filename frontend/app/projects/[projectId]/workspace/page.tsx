@@ -250,7 +250,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           busy={streaming}
         />
 
-        <WorkspaceDocPanel projectId={projectId} activeDoc={activeDoc} turnSeq={turnSeq} />
+        <WorkspaceDocPanel projectId={projectId} activeDoc={activeDoc} turnSeq={turnSeq}
+                          changedPaths={changedPaths} />
       </div>
 
       {sheetOpen && pendingQuestions && (

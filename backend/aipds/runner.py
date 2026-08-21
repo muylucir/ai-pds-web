@@ -89,6 +89,19 @@ class AgentRunner:
         keys = await self._s3.list(_glob_prefix(glob))
         return sorted(k for k in keys if matches_glob(k, glob))
 
+    async def list_files_newest_first(self, glob: str) -> list[str]:
+        """`list_files`와 같은 글롭, 최종 수정 시각 내림차순.
+
+        `list_objects_v2`가 이미 주는 `LastModified`를 쓴다(S3Store.list_with_times) —
+        추가 호출이 없다. 알파벳 순이 필요한 호출부는 `list_files`를 그대로 쓴다.
+        """
+        reject_unsafe(glob)
+        pairs = await self._s3.list_with_times(_glob_prefix(glob))
+        matched = [(k, t) for k, t in pairs if matches_glob(k, glob)]
+        # 2차 키로 경로를 쓴다 — 같은 시각인 항목의 순서가 실행마다 흔들리지 않게.
+        matched.sort(key=lambda item: (-item[1], item[0]))
+        return [k for k, _ in matched]
+
     # ---- workspace <-> S3 ----
 
     def _local_path(self, key: str) -> Path:

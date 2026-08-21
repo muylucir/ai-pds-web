@@ -330,6 +330,7 @@ export const en: Record<keyof typeof ko, string> = {
   "review.gateReviseBtn": "✏️ Request a revision",
   "review.gateApproveBtn": "✓ Approve and continue",
   "ws.docLoadFailed": "Could not load the document. Please try again shortly.",
+  "ws.docListFailed": "Could not load the document list",
   "ws.docLoading": "Loading the document…",
   "ws.docEmpty": "The document is still empty.",
   "review.badgeDraft": "Draft under review",

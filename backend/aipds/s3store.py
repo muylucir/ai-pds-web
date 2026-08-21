@@ -11,6 +11,7 @@ class S3StoreLike(Protocol):
     async def put_if_absent(self, key: str, content: str) -> bool: ...
     async def list(self, prefix: str) -> list[str]: ...
     async def list_with_etags(self, prefix: str) -> list[tuple[str, str]]: ...
+    async def list_with_times(self, prefix: str) -> list[tuple[str, float]]: ...
     async def delete_prefix(self, prefix: str) -> int: ...
     # Binary-safe pair, used only by the prototype bundle backup/restore and
     # the handoff zip. The text methods above decode as UTF-8, which mangles
@@ -99,16 +100,32 @@ class S3Store:
         return [key for key, _ in await self.list_with_etags(prefix)]
 
     async def list_with_etags(self, prefix: str) -> list[tuple[str, str]]:
-        def _list() -> list[tuple[str, str]]:
+        return [(key, etag) for key, etag, _ in await self._list_meta(prefix)]
+
+    async def list_with_times(self, prefix: str) -> list[tuple[str, float]]:
+        """키와 최종 수정 시각(epoch 초). 목록을 최신 순으로 정렬하는 데 쓴다.
+
+        `list_objects_v2`가 `LastModified`를 이미 응답에 담아 준다 — 종전에는 그것을
+        버렸고, 그래서 `Workspace.list_artifacts`가 알파벳 순밖에 될 수 없었다.
+        추가 호출이 없으므로 비용은 0이다.
+        """
+        return [(key, mtime) for key, _, mtime in await self._list_meta(prefix)]
+
+    async def _list_meta(self, prefix: str) -> list[tuple[str, str, float]]:
+        def _list() -> list[tuple[str, str, float]]:
             full = self._full_key(prefix)
             paginator = self._client.get_paginator("list_objects_v2")
-            keys: list[tuple[str, str]] = []
+            keys: list[tuple[str, str, float]] = []
             for page in paginator.paginate(Bucket=self._bucket, Prefix=full):
                 for obj in page.get("Contents", []):
+                    last = obj.get("LastModified")
                     keys.append((
                         obj["Key"][len(self._prefix):],
                         obj.get("ETag", ""),
+                        last.timestamp() if last is not None else 0.0,
                     ))
+            # 키 순으로 안정 정렬해서 돌려준다 — 시간순이 필요한 호출부가 다시
+            # 정렬하고, 같은 시각인 항목의 순서가 실행마다 흔들리지 않는다.
             return sorted(keys, key=lambda item: item[0])
 
         return await asyncio.to_thread(_list)
