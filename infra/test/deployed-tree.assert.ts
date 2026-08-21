@@ -30,6 +30,7 @@
 // 실렸으므로 별도의 제외 목록을 사람이 관리해야 했고, 그 목록에서 빠진 것이 사고를 냈다.
 import * as assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
@@ -111,7 +112,11 @@ function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
     'discovery-config/CLAUDE.md',
     'proto-config/CLAUDE.md',
     'proto-config/skills/shadcn-design/SKILL.md',
-    'rule/aiplc-rules/aws-aiplc-rules/core-workflow.md',
+    // 룰셋 자체는 이제 파일이 아니라 서브모듈이다 —
+    // testTheRulesetShipsAsASubmodule()이 본다. 여기서는 그 서브모듈을 되살릴 수
+    // 있게 하는 파일만 본다: .gitmodules가 없으면 `submodule update --init`이
+    // 아무것도 하지 않고 조용히 성공한다.
+    '.gitmodules',
     // 언어 지시는 2026-08-18에 룰셋 트리 밖으로 나왔다 — 업스트림 aiplc-rules/에는
     // language/ 가 없으므로, 룰셋을 통째로 갈아 끼울 때 우리 콘텐츠가 함께
     // 사라지지 않아야 한다.
@@ -135,6 +140,42 @@ function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
   console.log('OK  deployed tree: rules, the language directives, both config dirs and the lockfile ship');
 }
 
+function testTheRulesetShipsAsASubmodule() {
+  // **왜 별도 테스트인가.** 위 목록의 판정은 "tracked인가"이고, 서브모듈에는 그것이
+  // 충분하지 않다. gitlink는 tracked인데도 `git clone`이 내용을 가져오지 않으므로,
+  // tracked만 확인하면 인스턴스에 빈 디렉터리가 올라가는 것을 통과시킨다.
+  //
+  // 룰셋을 서브모듈로 둔 이유(2026-08-21): 종전에는 상류 aiplc-rules/를 리포에
+  // 복사해 두었고, 실제로 세 파일이 갈라졌다(c806343이 모델 ID를 고쳤다). 상류가
+  // 정본이므로 그 갈라짐은 우리 쪽 결함이다 — 사본이 없으면 갈라질 수 없다.
+  const staged = execFileSync('git', ['ls-files', '--stage', '-z', 'steering-files'], {
+    cwd: REPO_ROOT, encoding: 'utf8',
+  }).split('\0').filter(Boolean);
+  assert.strictEqual(staged.length, 1,
+    'steering-files must be exactly one index entry (the submodule gitlink), got: '
+    + JSON.stringify(staged));
+  assert.match(staged[0], /^160000 /,
+    'steering-files must be a gitlink (mode 160000), not ordinary tracked files — mode '
+    + `was ${staged[0].split(' ')[0]}. If the rules got committed as files again, the copy `
+    + 'can drift from aws-samples/sample-ai-plc, which is what the submodule exists to prevent');
+
+  // 사본이 되살아나는 것을 막는다. 이 경로는 2026-08-21까지 룰셋의 자리였고,
+  // 되돌리는 실수의 형태는 "steering-files/를 그대로 두고 rule/도 다시 만드는 것"이다.
+  const revived = trackedFiles().filter((f) => f.startsWith('rule/'));
+  assert.deepStrictEqual(revived, [],
+    'the AI-PLC ruleset must live only in the steering-files/ submodule; a second copy '
+    + `under rule/ is the drift this replaced. Found: ${revived.join(', ')}`);
+
+  // 여기까지는 인덱스만 봤다. 마지막으로 워킹 트리에 내용이 있는지 본다 — 이
+  // 단정이 실패하는 흔한 경우는 서브모듈을 초기화하지 않은 fresh clone이고,
+  // 그 상태는 부팅해도 룰이 없는 상태와 정확히 같다.
+  assert.ok(fs.existsSync(path.join(
+    REPO_ROOT, 'steering-files', 'aiplc-rules', 'aws-aiplc-rules', 'core-workflow.md')),
+    'steering-files/ is empty — run: git submodule update --init --recursive');
+  console.log('OK  deployed tree: the AI-PLC ruleset is an unmodified upstream submodule');
+}
+
 testNoUnexpectedClaudeMdInTheDeployedTree();
 testNoBuiltPrototypesInTheDeployedTree();
 testDeployedTreeStillShipsWhatTheRuntimeNeeds();
+testTheRulesetShipsAsASubmodule();

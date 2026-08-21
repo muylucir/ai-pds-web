@@ -11,7 +11,7 @@ from aipds.agent.workspace_rules import place_rules
 
 
 #: 실제 언어 지시의 첫 헤딩. 픽스처 스텁(옛 `KO-DIRECTIVE`/`EN-DIRECTIVE`)을 쓰지
-#: 않는 이유: 지시가 `rule/aiplc-rules/` 밖(이제 코드 상수)으로 옮겨졌고,
+#: 않는 이유: 지시가 룰셋 트리 밖(이제 코드 상수)으로 옮겨졌고,
 #: 픽스처가 그것을 흉내내려면 모듈 속성을 monkeypatch해야 한다. 실물을
 #: 그대로 쓰면 픽스처와 실물의 드리프트도 함께 사라진다 — 그 드리프트가
 #: `test_works_against_the_real_repo_rules`가 존재하는 이유다.
@@ -38,7 +38,7 @@ def _directive(language: str) -> str:
 
 
 def _rules(tmp_path: Path) -> Path:
-    """리포의 rule/aiplc-rules 레이아웃을 흉내낸 픽스처.
+    """리포의 steering-files/aiplc-rules 레이아웃을 흉내낸 픽스처.
 
     **언어 지시는 여기 없다.** 업스트림 `aiplc-rules/`에는 `.gitkeep`과
     `aws-aiplc-rules/`·`aws-aiplc-rule-details/`뿐이고(실측), 우리 지시는
@@ -125,11 +125,12 @@ def test_the_language_directives_live_outside_the_upstream_ruleset():
     고쳐야 할 때 손댈 수 없는 자리이기도 했다.
 
     되돌아가는 것을 막는 것이 이 검사다: 룰셋 트리에 `language/`가 다시 생기면
-    실패한다. Rachna의 Kiro 리포를 submodule로 참조하게 되면 그 트리는 우리가
-    쓸 수 없는 자리가 되므로, 이 불변식이 그 이행의 선행 조건이기도 하다.
+    실패한다. 이 불변식은 2026-08-21에 상류 리포를 `steering-files/` 서브모듈로
+    참조하게 된 이행의 선행 조건이었다 — 그 트리는 이제 상류 소유이고, 우리
+    콘텐츠를 둘 수 있는 자리가 아니다.
     """
     repo = Path(__file__).resolve().parents[2]
-    assert not (repo / "rule" / "aiplc-rules" / "language").exists()
+    assert not (repo / "steering-files" / "aiplc-rules" / "language").exists()
 
 
 def test_the_language_directive_is_code_not_a_file():
@@ -274,9 +275,11 @@ def test_works_against_the_real_repo_rules():
     # 픽스처가 잘못된 레이아웃을 굳혀 실제 배치가 깨지는 것을 막는 통합 핀
     # (test_agent_tools.py의 test_file_read_reaches_real_rules_layout과 같은 이유).
     import tempfile
-    repo_rules = Path(__file__).resolve().parents[2] / "rule" / "aiplc-rules"
+    repo_rules = (Path(__file__).resolve().parents[2]
+                  / "steering-files" / "aiplc-rules")
     if not (repo_rules / "aws-aiplc-rules" / "core-workflow.md").is_file():
-        pytest.skip("repo rules not present")
+        # steering-files/는 서브모듈이다 — 초기화하지 않았으면 비어 있다.
+        pytest.skip("steering-files/ submodule not initialised")
     for language in ("ko", "en"):
         with tempfile.TemporaryDirectory() as ws:
             place_rules(ws, str(repo_rules), language=language)
@@ -291,10 +294,12 @@ def test_core_workflow_has_no_language_directive_of_its_own():
     영어 프로젝트에서 core-workflow의 '한국어로 진행'과 language/en.md가
     서로 반대를 말하고, 어느 쪽이 이길지 예측할 수 없다(7f33652).
     """
-    repo_rules = Path(__file__).resolve().parents[2] / "rule" / "aiplc-rules"
+    repo_rules = (Path(__file__).resolve().parents[2]
+                  / "steering-files" / "aiplc-rules")
     core = repo_rules / "aws-aiplc-rules" / "core-workflow.md"
     if not core.is_file():
-        pytest.skip("repo rules not present")
+        # steering-files/는 서브모듈이다 — 초기화하지 않았으면 비어 있다.
+        pytest.skip("steering-files/ submodule not initialised")
     text = core.read_text(encoding="utf-8")
     assert "한국어로 진행" not in text
 
@@ -391,11 +396,13 @@ def test_upstream_question_rules_are_untouched():
     것은 금지다. 상류 룰은 데이터이고, 갱신하면 로컬 수정이 조용히 사라진다.
     대신 discovery-config가 어느 쪽이 이기는지 선언한다(아래 테스트).
     """
-    repo_rules = Path(__file__).resolve().parents[2] / "rule" / "aiplc-rules"
+    repo_rules = (Path(__file__).resolve().parents[2]
+                  / "steering-files" / "aiplc-rules")
     guide = (repo_rules / "aws-aiplc-rule-details" / "common"
              / "question-format-guide.md")
     if not guide.is_file():
-        pytest.skip("repo rules not present")
+        # steering-files/는 서브모듈이다 — 초기화하지 않았으면 비어 있다.
+        pytest.skip("steering-files/ submodule not initialised")
     text = guide.read_text(encoding="utf-8")
     # 상류가 소유하는 두 지시. AI-PDS가 이것을 무력화하는 방법은 파일을
     # 고치는 것이 아니라 discovery-config에서 override를 선언하는 것이다.
