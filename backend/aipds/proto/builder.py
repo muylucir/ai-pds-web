@@ -127,12 +127,12 @@ def _validate_permission_mode(mode: str) -> str:
 
 
 def _proto_tools_for(builder: "PrototypeBuilder") -> list:
-    """빌더의 큐에 바인딩된 커스텀 도구.
+    """The custom tools, bound to the builder's queue.
 
-    emit이 `self._queue.append`인 것이 핵심이다 — `_on_post_tool_use`가
-    `file_changed`를 넣는 것과 같은 경로라, `_relay_queue`의 소유권 규율
-    (배달 후 pop, 중간에 소비자가 떠나도 이벤트가 큐에 남는다)을 그대로
-    받는다. 별도 경로를 만들면 그 보장을 잃는다.
+    emit being `self._queue.append` is the crux -- it is the same path by which
+    `_on_post_tool_use` puts in a `file_changed`, so it inherits `_relay_queue`'s ownership
+    discipline (pop after delivery; the event stays in the queue even if the consumer leaves
+    mid-way). A separate path would lose that guarantee.
     """
     from aipds.proto.tools import build_proto_tools
     return build_proto_tools(builder._workspace, builder._queue.append,
@@ -158,8 +158,8 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
         }
         if builder._anthropic_model:
             env["ANTHROPIC_MODEL"] = builder._anthropic_model
-        # Discovery 드라이버와 같은 값을 쓴다 — 한쪽만 켜지면 같은 프로젝트에서
-        # 컴팩션 시점이 갈린다(cli_settings 헤더).
+        # The same values as the Discovery driver -- with only one side switched on, the
+        # compaction point diverges within the same project (the cli_settings header).
         env.update(cli_context_env())
         options = ClaudeAgentOptions(
             permission_mode=builder._permission_mode,
@@ -168,38 +168,39 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # "user" now means OUR config dir, so this is safe -- and it is
             # what `skills` needs open to discover anything.
             setting_sources=["user", "project"],
-            # 우리가 shipping하는 스킬만 이름으로 켠다. 종전 "all"은
-            # CLAUDE_CONFIG_DIR 아래 것만 켜진다는 전제였지만 **틀렸다**:
-            # "all"은 CLI에 번들된 스킬까지 함께 켜고, 그 목록에 `run`
-            # ("Launch and drive this project's app... browser-driven")이
-            # 있다. 실측 사고: 빌드 에이전트가 Playwright chromium을 띄웠고
-            # (코어덤프의 Unit=aipds-backend.service로 확인) 그 검증이
-            # 포트 3000을 겨냥해 AI-PDS 프론트엔드가 SIGKILL로 죽었다
-            # (2026-08-01 16:13/16:18, journalctl status=9/KILL). 백엔드와
-            # 프론트엔드가 같은 유저(aipds)로 도므로 막을 것이 없었다.
+            # Only the skills we ship are enabled, by name. The former "all" rested on the
+            # premise that it enables only what is under CLAUDE_CONFIG_DIR, and that was
+            # **wrong**: "all" also enables the skills bundled with the CLI, and that list
+            # includes `run` ("Launch and drive this project's app... browser-driven"). The
+            # measured incident: the build agent launched Playwright chromium (confirmed by
+            # Unit=aipds-backend.service in the core dump) and that verification targeted
+            # port 3000, so the AI-PDS frontend was killed by SIGKILL (2026-08-01
+            # 16:13/16:18, journalctl status=9/KILL). The backend and frontend run as the
+            # same user (aipds), so there was nothing to stop it.
             #
-            # 이름 목록이면 SDK가 `Skill(shadcn-design)` 형태로만 허용하므로
-            # (subprocess_cli.py:_apply_skills_defaults) 번들 스킬이 들어오지
-            # 않는다. 스킬을 추가할 때 이 목록도 함께 고쳐야 한다 — "all"의
-            # "커밋 한 번으로 추가" 편의를 의도적으로 포기한 자리다.
+            # With a list of names the SDK permits only the `Skill(shadcn-design)` form
+            # (subprocess_cli.py:_apply_skills_defaults), so no bundled skill gets in.
+            # Adding a skill means editing this list too -- deliberately giving up "all"'s
+            # convenience of adding one with a single commit.
             #
-            # 주의: SDK 문서가 명시하듯 이것은 **컨텍스트 필터이지 샌드박스가
-            # 아니다**. 스킬을 숨길 뿐 Bash 자체를 막지는 못하므로, 에이전트가
-            # 직접 브라우저·서버를 띄우는 것은 CLAUDE.md 규약으로 함께 막는다
-            # (proto-config/CLAUDE.md의 "프로세스·포트" 절). 근본 격리는
-            # 빌드 에이전트를 별도 유저로 분리하는 것이고, 그것은 별건이다.
+            # Note: as the SDK documentation states, this is **a context filter and not a
+            # sandbox**. It hides skills but cannot block Bash itself, so the agent
+            # launching a browser or a server directly is also blocked by the CLAUDE.md
+            # convention (the "processes and ports" section of proto-config/CLAUDE.md). Real
+            # isolation means separating the build agent into its own user, and that is a
+            # separate matter.
             skills=["shadcn-design"],
-            # 빌드 완료 선언용 커스텀 도구. Discovery(claude_driver.py:423-439)와
-            # 같은 형태다. allowed_tools의 항목은 반드시
-            # "mcp__<서버 키>__<도구 이름>"이어야 한다 — SDK가 --mcp-config를
-            # 직렬화할 때 그 이름을 만들므로, 다른 표기는 조용히 승인 대기로
-            # 남는다.
+            # The custom tool for declaring build completion. The same shape as Discovery's
+            # (claude_driver.py:423-439). An entry in allowed_tools must be
+            # "mcp__<server key>__<tool name>" -- the SDK builds that name when it
+            # serialises --mcp-config, so any other spelling quietly stays pending
+            # approval.
             #
-            # skills 옵션과 충돌하지 않는다: SDK의 _apply_skills_defaults가
-            # allowed_tools를 복사한 뒤 스킬 항목을 덧붙이므로
-            # (subprocess_cli.py:434-452) 이 도구와 shadcn-design이 함께
-            # 살아 있다. 이름 목록에서는 "Skill" 대신 `Skill(shadcn-design)`이
-            # 붙는다는 점만 다르다.
+            # It does not conflict with the skills option: the SDK's
+            # _apply_skills_defaults copies allowed_tools and then appends the skill entries
+            # (subprocess_cli.py:434-452), so this tool and shadcn-design are both alive.
+            # The only difference with a name list is that `Skill(shadcn-design)` is
+            # appended rather than "Skill".
             mcp_servers={PROTO_MCP_SERVER_NAME: create_sdk_mcp_server(
                 name=PROTO_MCP_SERVER_NAME, tools=_proto_tools_for(builder))},
             allowed_tools=[BUILD_COMPLETE_TOOL],
@@ -221,18 +222,18 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # intercept (it is how a question becomes an SSE `questions` event).
             # Dropping the callback to silence the warning would break that.
             can_use_tool=builder._on_can_use_tool,
-            # PreToolUse가 Bash의 유일한 실효 게이트다. 위 can_use_tool은
-            # bypassPermissions에서 Bash에 대해 호출되지 않는다 — SDK가 그 사실과
-            # 해법을 직접 적어 뒀다(types.py의
-            # _get_can_use_tool_shadowed_warning: "To gate every tool call, use
-            # a PreToolUse hook instead"). 판정부는 proto/build_guard.py.
+            # PreToolUse is Bash's only effective gate. can_use_tool above is not called
+            # for Bash under bypassPermissions -- the SDK states both the fact and the
+            # remedy itself (_get_can_use_tool_shadowed_warning in types.py: "To gate every
+            # tool call, use a PreToolUse hook instead"). The decision logic is in
+            # proto/build_guard.py.
             #
-            # **matcher에 AskUserQuestion을 넣지 않는다.** PreToolUse 훅이
-            # *allow*를 돌려주면 can_use_tool도 건너뛰는데, 질문을 SSE 이벤트로
-            # 바꾸는 가로채기가 그 콜백에 있으므로 질문 왕복 전체가 죽는다.
-            # 같은 이유로 _on_pre_tool_use는 통과할 때 "allow"가 아니라 **빈
-            # dict**를 돌려준다. Discovery가 같은 함정을 같은 방식으로 피한다
-            # (claude_driver.py의 hooks 주석).
+            # **AskUserQuestion is not in the matcher.** If a PreToolUse hook returns
+            # *allow*, can_use_tool is skipped too -- and the interception that turns a
+            # question into an SSE event lives in that callback, so the whole question round
+            # trip dies. For the same reason _on_pre_tool_use returns an **empty dict**
+            # rather than "allow" when it passes. Discovery avoids the same trap the same
+            # way (the hooks comment in claude_driver.py).
             hooks={
                 "PreToolUse": [HookMatcher(matcher="Bash",
                                            hooks=[builder._on_pre_tool_use])],
@@ -274,8 +275,9 @@ class PrototypeBuilder:
         self._resume = resume
         self._session_store = session_store
         self._anthropic_model = anthropic_model
-        # 이 프로젝트의 생성물 언어. build_complete 도구의 설명과 반환 문자열을
-        # 이 값으로 고른다 — 셋 다 모델이 읽는 프롬프트다(proto/prompts.py).
+        # This project's output language. It selects the build_complete tool's description
+        # and its return strings -- all of which are prompts the model reads
+        # (proto/prompts.py).
         self._language = language
         self._permission_mode = _validate_permission_mode(permission_mode)
         self._factory = client_factory or _default_client_factory(self)
@@ -478,7 +480,7 @@ class PrototypeBuilder:
     #                   (`prev.includes(path) ? prev : [...prev, path]`), so
     #                   `changedPaths` is idempotent. The trace entry (line 85-87)
     #                   does append a second row -- cosmetic, in a collapsed
-    #                   "추론 과정" accordion, and it accurately reports that the
+    #                   "reasoning" accordion, and it accurately reports that the
     #                   file was written.
     #   status       -> trace-only, same append-only cosmetic story.
     #   message      -> NOT queued here; messages come from `_translate`, never
@@ -501,25 +503,27 @@ class PrototypeBuilder:
     # to be re-checked -- this tab's reducers are dedupe-by-path or append-only
     # cosmetic, and the one non-idempotent kind is dropped at its death points.
     async def _on_pre_tool_use(self, input_data, tool_use_id, context) -> dict:
-        """빌드 에이전트의 Bash 게이트. 판정은 proto/build_guard.py.
+        """The build agent's Bash gate. The decision is in proto/build_guard.py.
 
-        왜 훅인가: 빌드는 `bypassPermissions`로 돌아 Bash가 자동 승인되고
-        can_use_tool에 도달하지 않는다 — SDK가 지정한 유일한 게이트가
-        PreToolUse다(그 근거는 위 팩토리의 hooks 주석과 build_guard 헤더).
+        Why a hook: the build runs under `bypassPermissions`, so Bash is auto-approved and
+        never reaches can_use_tool -- the only gate the SDK designates is PreToolUse (the
+        grounds are in the factory's hooks comment above and the build_guard header).
 
-        **통과는 빈 dict다.** "allow"를 돌려주면 can_use_tool까지 건너뛰어
-        AskUserQuestion 가로채기가 죽는다(types.py의 can_use_tool 설명).
+        **Passing is an empty dict.** Returning "allow" would skip can_use_tool as well and
+        kill the AskUserQuestion interception (the can_use_tool documentation in
+        types.py).
         """
         name = input_data.get("tool_name", "")
         if name != "Bash":
-            # matcher가 Bash만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
-            # 통과해야 한다 — 알 수 없는 도구를 막으면 빌드가 멈춘다.
+            # The matcher catches only Bash, but even if the hook configuration and this
+            # branch diverge it has to pass quietly -- blocking an unknown tool stops the
+            # build.
             return {}
         offender = bash_denial((input_data.get("tool_input") or {}).get("command"))
         if offender is None:
             return {}
-        # 로그로 남긴다: 거부 이유는 모델에게만 가므로, 무엇이 막혔는지 운영자가
-        # 확인할 경로가 따로 필요하다.
+        # Logged: the refusal reason goes only to the model, so an operator needs a
+        # separate way to see what was blocked.
         _log.warning("build gate denied Bash: %s", offender)
         return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -563,8 +567,9 @@ class PrototypeBuilder:
         if tool_name != "AskUserQuestion":
             return PermissionResultAllow(updated_input=input_data)
         import json as _json, uuid
-        # 문자열로 온 payload 정규화 — claude_driver와 같은 이유이고 같은
-        # 헬퍼다(그쪽 주석과 normalize_sdk_questions의 docstring 참고).
+        # Normalise a payload that arrived as a string -- the same reason and the same
+        # helper as claude_driver (see that comment and normalize_sdk_questions's
+        # docstring).
         sdk_questions = normalize_sdk_questions(input_data.get("questions"))
         # question_file_from_sdk raises ValueError on unusable input (e.g. a
         # question with zero options) -- mirror ask_questions in tools.py:

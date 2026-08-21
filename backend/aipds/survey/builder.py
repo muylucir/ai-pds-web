@@ -74,15 +74,17 @@ QUESTIONNAIRE_PROMPT_KO = """\
 """
 
 
-# 영어 판. 한국어 판과 **같은 제약을 같은 순서로** 담는다 — 조립하지 않고 두
-# 벌을 유지하는 이유는 proto/prompts.py와 같다(제약이 하나 빠지면 그 언어의
-# 설문만 조용히 나빠진다). test_survey_builder가 두 벌의 대조를 지킨다.
+# The English version. It carries **the same constraints in the same order** as the Korean
+# one -- the reason two versions are maintained rather than assembled is the same as in
+# proto/prompts.py (one missing constraint would quietly degrade only that language's
+# surveys). test_survey_builder holds the two against each other.
 #
-# **첫 줄의 언어 지시가 두 판 모두에 있어야 한다.** 프롬프트가 자기 산문의
-# 언어로 출력 언어를 암시하는 것만으로는 부족하다 — 실측(2026-08-05): 영어
-# 프롬프트에 한국어 명세를 실었더니 문항이 전부 한국어로 나왔다. `{md}`로 실린
-# 명세가 더 가깝고 구체적인 신호라 모델이 그것을 따라갔고, ko 프로젝트에서는
-# 명세와 출력이 우연히 일치해 결함이 보이지 않았다.
+# **The language directive on the first line has to be in both versions.** A prompt implying
+# the output language through the language of its own prose is not enough -- measured
+# (2026-08-05): loading a Korean spec into the English prompt produced questions that were
+# entirely Korean. The spec carried in through `{md}` was the closer, more concrete signal and
+# the model followed it, while in a ko project the spec and the output happened to agree so the
+# defect was invisible.
 QUESTIONNAIRE_PROMPT_EN = """\
 **Write every question, title, option, and hypothesis in English.** The spec below
 may be written in another language — translate as needed; the questions themselves
@@ -149,22 +151,23 @@ Spec:
 _PROMPTS = {"ko": QUESTIONNAIRE_PROMPT_KO, "en": QUESTIONNAIRE_PROMPT_EN}
 
 
-# ---- Envision 근거 절 (survey/inputs.py가 찾아온 문서) ----
+# ---- The Envision evidence sections (the documents survey/inputs.py found) ----
 #
-# **왜 절마다 지시가 붙어 있는가.** 문서를 싣는 것과 그 문서로 무엇을 하라는
-# 지시가 떨어져 있으면 지시가 약해진다 — 이 모듈이 출력 언어에서 이미 겪은
-# 실패다(2026-08-05: `{md}`로 실린 명세가 더 가깝고 구체적인 신호라 모델이
-# 프롬프트 산문의 언어가 아니라 명세의 언어를 따랐다). 그래서 각 문서 바로
-# 뒤에 그 문서를 어떻게 쓸지 붙인다.
+# **Why each section carries its own instruction.** When loading a document and the instruction
+# for what to do with it are far apart, the instruction weakens -- a failure this module has
+# already had over the output language (2026-08-05: the spec carried in through `{md}` was the
+# closer, more concrete signal and the model followed the spec's language rather than the
+# prompt prose's). So how to use each document is attached directly after it.
 #
-# **왜 가드가 맨 끝인가.** `pain-point-analysis.md`는 TAM/SAM·지불의향·경쟁
-# 구도를 담는데(실측 3/3), 위의 금지 목록은 바로 그 축들을 묻지 말라고 한다.
-# 두 신호가 부딪치므로 나중에 오는 쪽이 이겨야 한다.
+# **Why the guard comes last.** `pain-point-analysis.md` carries TAM/SAM, willingness to pay
+# and the competitive landscape (measured 3 of 3), while the prohibition list above says not to
+# ask about exactly those axes. The two signals collide, so whichever comes later has to win.
 #
-# **왜 조립하는가.** 문서 조합이 셋(페인포인트만/컨텍스트만/둘 다)이라 언어당
-# 완성본을 세 벌 두면 여섯 벌이 되고, 그중 하나가 낡는 것을 아무도 못 본다.
-# 대신 **조각마다 언어별 완성본 두 벌**을 두고, 문서 유무가 조각의 등장을
-# 결정하게 한다 — 문장을 치환으로 만들지 않는다는 규율은 그대로다.
+# **Why it is assembled.** There are three document combinations (pain points only, context
+# only, both), so complete versions per language would be six, and nobody would see one of them
+# going stale. Instead there are **two complete per-language versions per fragment**, and the
+# presence of a document decides whether its fragment appears -- the discipline of not building
+# sentences by substitution is unchanged.
 
 _CTX_PAIN_KO = """
 참고 — 페인 포인트 분석 (`envision/pain-point-analysis.md`)
@@ -247,11 +250,12 @@ _CTX_PIECES = {
 
 
 def _context_block(language: str, context) -> str:
-    """근거 문서 절. 있는 문서만 등장하고, 하나도 없으면 빈 문자열이다.
+    """The evidence document sections. Only the documents that exist appear, and with none it is
+    an empty string.
 
-    빈 문자열이어야 하는 이유: 없는 문서를 가리키는 지시("아래 페인 포인트
-    분석을 보고…")가 남으면 모델은 있지도 않은 절을 찾다가 스펙에서 페인
-    포인트를 지어낸다.
+    Why it has to be an empty string: an instruction left pointing at a document that is not
+    there ("looking at the pain point analysis below...") has the model hunt for a section that
+    does not exist and then invent pain points from the spec.
     """
     pain_tpl, biz_tpl, guard = _CTX_PIECES[language]
     blocks = []
@@ -266,10 +270,11 @@ def _context_block(language: str, context) -> str:
 
 def build_prompt(prototype_md: str, language: str = "ko", *,
                  context=None) -> str:
-    """설문 문항 생성 프롬프트. 알 수 없는 언어는 한국어로 떨어진다.
+    """The survey question generation prompt. An unknown language falls back to Korean.
 
-    `context`는 `survey/inputs.DiscoveryContext` 또는 None이다. None이면 종전과
-    **완전히 같은** 프롬프트가 나온다 — 보조 문서는 보강이고 전제가 아니다.
+    `context` is a `survey/inputs.DiscoveryContext` or None. With None the prompt is
+    **exactly** what it was before -- a supporting document reinforces, it is not a
+    premise.
     """
     lang = language if language in _PROMPTS else "ko"
     prompt = _PROMPTS[lang].format(md=prototype_md)
@@ -301,9 +306,10 @@ async def build_questionnaire(prototype_md: str, agent, *, token: str,
             return Questionnaire(
                 token=token, status="open", slug=slug, project_id=project_id,
                 created_at=now, closed_at=None,
-                # 문항의 언어를 기록한다 — 공개 응답 페이지가 이 값으로 화면을
-                # 그린다. 응답자는 외부인이라 aipds_lang 쿠키가 없고, 문항이
-                # 영어인데 화면만 한국어인 것은 응답자에게 더 나쁘다.
+                # Record the language of the questions -- the public response page draws its
+                # screen from this value. A respondent is an outsider and has no aipds_lang
+                # cookie, and questions in English with a screen in Korean is worse for
+                # them.
                 language=language,
                 title=data["title"], hypothesis=data["hypothesis"],
                 questions=data["questions"])

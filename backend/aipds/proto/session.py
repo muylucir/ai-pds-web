@@ -26,45 +26,46 @@ from aipds.s3store import S3StoreLike
 from aipds.proto import layout
 
 if TYPE_CHECKING:
-    # 타입 힌트만을 위한 지연 import. design_profile.py는 session.py를 쓰지
-    # 않아 순환은 아니지만, 이 모듈이 굳이 DesignProfileStore를 값으로
-    # 들고 다닐 일은 없다 -- 세션은 저장소를 opaque하게 받아 load()만 부른다.
+    # A deferred import for type hints only. design_profile.py does not use session.py so
+    # there is no cycle, but this module has no reason to carry a DesignProfileStore as a
+    # value -- the session receives the store opaquely and only calls load().
     from aipds.design_profile import DesignProfileStore
 
 _log = logging.getLogger(__name__)
 
 SessionStatus = Literal["starting", "ready", "building", "waiting_input",
-                        # 에이전트가 build_complete로 완료를 선언한 상태.
-                        # "ready"와 다른 이유: ready는 "또 다른 턴을 받을 수
-                        # 있다"이고 complete는 "이 세션은 할 일을 마쳤다"다.
-                        # routes/prototypes.py의 _DEAD_STATUSES가 이 구분에
-                        # 달려 있다.
+                        # The state where the agent declared completion through
+                        # build_complete. Why it differs from "ready": ready means "another
+                        # turn can be accepted" and complete means "this session has
+                        # finished its work". _DEAD_STATUSES in routes/prototypes.py depends
+                        # on that distinction.
                         "complete",
                         "failed", "closed"]
 
-#: first_prompt()가 고르는 세 가지 개시 프롬프트.
-#:   plan    -- 처음부터. 계획만 세우고 빌드하지 않는다.
-#:   resume  -- 완료 선언 없이 죽은 세션을 이어받는다(트랜스크립트 전액).
-#:   handoff -- 완료된 빌드를 개선한다(새 세션 + 요약만).
+#: The three opening prompts first_prompt() chooses between.
+#:   plan    -- from scratch. Plan only, do not build.
+#:   resume  -- pick up a session that died without declaring completion (the whole
+#:              transcript).
+#:   handoff -- improve a completed build (a new session plus the summary only).
 PromptKind = Literal["plan", "resume", "handoff"]
 
 
 def has_build_output(build_dir: Path) -> bool:
-    """빌드 디렉토리 아래 `prototype/`에 산출물이 있는가.
+    """Whether there is output in `prototype/` under the build directory.
 
-    "빌드됐다"의 단일 정의다. 세 곳이 이 질문을 하고, 전부 여기를 거쳐야
-    한다 -- `first_prompt()`(무엇을 지시할지), `build_complete`
-    도구(완료 선언을 받아줄지), 목록 라우트(카드를 built로 보일지). 기준이
-    갈라지면 도구는 완료를 받아들이는데 목록은 built로 보이지 않는(또는 그
-    반대) 상태가 된다.
+    The single definition of "it has been built". Three places ask this question and all of
+    them have to come through here -- `first_prompt()` (what to instruct), the
+    `build_complete` tool (whether to accept a completion declaration), and the list route
+    (whether to show the card as built). If the criteria diverge, you get a state where the
+    tool accepts completion but the list does not show built (or the other way round).
 
-    `prototype/`을 보고 빌드 디렉토리 자체를 보지 않는 것이 요점이다.
-    `start()`가 에이전트보다 먼저 스펙 .md를 심고, 이전 호스팅 시도가
-    `.proto-host.log`/`.pid`를 남길 수 있어서 -- 빌드 디렉토리가 있다는 건
-    세션이 시작됐다는 뜻일 뿐 무언가 만들어졌다는 뜻이 아니다.
+    Looking at `prototype/` rather than at the build directory itself is the point.
+    `start()` plants the spec .md before the agent runs, and a previous hosting attempt can
+    leave `.proto-host.log` and `.pid` behind -- so the build directory existing means only
+    that the session started, not that something was produced.
 
-    직속 자식만 확인하고 재귀하지 않는다: node_modules/.next가 생긴 뒤에도
-    매 목록 호출에서 싸게 유지된다.
+    It checks direct children without recursing: that keeps every list call cheap even after
+    node_modules and .next appear.
     """
     proto_dir = build_dir / "prototype"
     try:
@@ -101,18 +102,18 @@ def _interrupt_id_from(payload: str | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
-#: 완료 선언 뒤 세션이 스스로 닫히기까지의 유예. 0이 아닌 이유: terminal
-#: 이벤트가 제너레이터 체인(_relay_queue -> run -> send_message -> gen)을
-#: 빠져나갈 여유가 필요하다.
+#: The grace period between a completion declaration and the session closing itself. It is
+#: not 0 because the terminal event needs room to make its way out of the generator chain
+#: (_relay_queue -> run -> send_message -> gen).
 _COMPLETION_GRACE_SECONDS = 5
 
 
 def _completion_from(payload: str | None) -> dict | None:
-    """build_complete payload -> {"summary","remaining"} 또는 None.
+    """A build_complete payload -> {"summary","remaining"} or None.
 
-    _interrupt_id_from과 같은 fail-soft 규율이다 — 깨진 payload는 예외가
-    아니라 None으로 강등된다. 완료 처리가 일어나지 않으면 유휴 타이머가
-    평소대로 정리하므로, 잘못 선언된 완료보다 안전한 방향이다.
+    The same fail-soft discipline as _interrupt_id_from -- a broken payload is demoted to
+    None rather than raising. If the completion handling does not happen, the idle timer
+    cleans up as usual, which is the safer direction than a wrongly declared completion.
     """
     if not payload:
         return None
@@ -163,26 +164,27 @@ class PrototypeSession:
         self._build_root = Path(build_root)
         self._builder_factory = builder_factory
         self._semaphore = semaphore
-        # 이 프로젝트의 생성물 언어. 개시 프롬프트와 build_complete 도구
-        # 텍스트를 이 값으로 고른다(proto/prompts.py).
+        # This project's output language. It selects the opening prompt and the
+        # build_complete tool text (proto/prompts.py).
         self._language = language
         self._idle_seconds = idle_seconds
-        # 프로필 저장소는 프로젝트 밖(버킷 루트)에 있어서 self._s3와 다른
-        # 스토어다. None이면 브랜드 없이 돈다 -- 기능 전체가 opt-in이다.
+        # The profile store lives outside the project (at the bucket root), so it is a
+        # different store from self._s3. With None it runs without a brand -- the whole
+        # feature is opt-in.
         self._design_profiles = design_profiles
 
         self.status: SessionStatus = "starting"
         self._builder: BuilderLike | None = None
         self._session_id: str | None = None
-        # first_prompt()가 고를 프롬프트 종류. 종전의 `_resumed` 불리언을
-        # 대체한다 -- 분기가 셋이 되어 불리언으로 표현할 수 없다.
+        # Which kind of prompt first_prompt() will choose. It replaces the former
+        # `_resumed` boolean -- with three branches, a boolean cannot express it.
         self._prompt_kind: PromptKind = "plan"
-        # handoff 분기일 때 프롬프트에 실을 내용({"summary","remaining"}).
+        # What to carry in the prompt on the handoff branch ({"summary","remaining"}).
         self._handoff: dict | None = None
         self._pending_interrupt_id: str | None = None
-        # 완료 선언의 내용({"summary","remaining"}) 또는 None. 두 가지를
-        # 동시에 뜻한다: (1) 이 세션은 할 일을 마쳤다, (2) 유휴 타이머는
-        # 짧은 유예를 써야 한다(_arm_idle_timer 참조).
+        # The completion declaration's content ({"summary","remaining"}) or None. It means
+        # two things at once: (1) this session has finished its work, and (2) the idle timer
+        # should use the short grace period (see _arm_idle_timer).
         self._completion: dict | None = None
         self._idle_handle: asyncio.TimerHandle | None = None
         self._closed = False
@@ -212,24 +214,25 @@ class PrototypeSession:
     # ---- durable session id ----
 
     async def _resolve_session_id(self) -> tuple[str, bool, PromptKind]:
-        """(session_id, resume, prompt_kind)를 돌려준다.
+        """Return (session_id, resume, prompt_kind).
 
-        세 분기가 있고, 각각 다른 사건을 표현한다:
+        There are three branches, each expressing a different event:
 
-          저장 없음          -> 새 id, resume 안 함, "plan"
-          저장 있음, handoff 없음 -> 저장된 id resume, "resume"
-          저장 있음 + handoff    -> 새 id, resume 안 함, "handoff"
+          nothing stored            -> a new id, no resume, "plan"
+          stored, no handoff        -> resume the stored id, "resume"
+          stored plus a handoff     -> a new id, no resume, "handoff"
 
-        세 번째가 이 설계의 요점이다. 완료된 빌드를 개선할 때 전체
-        트랜스크립트를 지고 가면 버튼 색 하나 바꾸는 요청에도 빌드 전체
-        맥락이 실린다. 요약만 싣고 새로 시작한다.
+        The third is the point of this design. Carrying the whole transcript into an
+        improvement of a completed build loads the entire build context onto a request to
+        change one button colour. Carry only the summary and start afresh.
 
-        두 번째가 남는 이유: 완료 선언 **없이** 죽은 세션(유휴 타임아웃,
-        백엔드 재시작)은 여전히 진짜 resume이 맞다. 그 세션은 할 일을
-        마치지 않았고, 이어받을 맥락이 요약으로 대체될 수 없다.
+        Why the second remains: a session that died **without** declaring completion (an
+        idle timeout, a backend restart) really is a resume. That session did not finish its
+        work, and the context to pick up cannot be replaced by a summary.
 
-        비-UUID 저장값은 없는 것으로 취급한다 -- SDK가 non-UUID resume을
-        거부하므로, 레거시/손편집 값이 세션을 영구히 막지 못하게 한다.
+        A stored value that is not a UUID is treated as absent -- the SDK rejects a non-UUID
+        resume, so this keeps a legacy or hand-edited value from blocking the session
+        forever.
         """
         try:
             saved = json.loads(await self._s3.get(self._session_key()))
@@ -246,30 +249,30 @@ class PrototypeSession:
         if handoff is None:
             return saved["session_id"], True, "resume"
 
-        # 개선 세션: 새 id로 갈아타고 handoff를 소비한다.
+        # An improvement session: switch to a new id and consume the handoff.
         #
-        # 순서가 중요하다 -- session.json 쓰기 먼저, handoff 삭제 나중.
-        # 그 사이에서 실패하면 handoff가 남아 다음 시작이 다시 이 분기를
-        # 타는데, session.json에는 이미 새(빈) id가 있으므로 개선
-        # 프롬프트로 새로 시작한다: 같은 결과다. 반대 순서는 handoff를
-        # 지운 뒤 id 쓰기가 실패하면 요약을 잃고 옛 세션을 전액 resume한다.
-        # 손실 있는 방향을 피한다.
+        # The order matters -- write session.json first, delete the handoff second. A
+        # failure in between leaves the handoff, so the next start takes this branch again;
+        # session.json already holds the new (empty) id, so it starts afresh with the
+        # improvement prompt: the same outcome. The reverse order, if the id write fails
+        # after the handoff is deleted, loses the summary and resumes the old session in
+        # full. Avoid the lossy direction.
         self._handoff = handoff
         new_id = str(uuid.uuid4())
         await self._s3.put(self._session_key(),
                            json.dumps({"session_id": new_id}))
-        # 단일 키 삭제에 delete_prefix를 쓴다 -- S3StoreLike에 단일 키
-        # delete가 없고, 이것이 확립된 관례다(agent/pending_store.py:69,
+        # delete_prefix is used to delete a single key -- S3StoreLike has no single-key
+        # delete, and this is the established convention (agent/pending_store.py:69,
         # survey/store.py:334).
         await self._s3.delete_prefix(self._handoff_key())
         return new_id, False, "handoff"
 
     async def _read_handoff(self) -> dict | None:
-        """handoff.json -> {"summary","remaining"} 또는 None.
+        """handoff.json -> {"summary","remaining"} or None.
 
-        _completion_from과 같은 fail-soft 규율이다. 깨진 handoff가 개선
-        경로를 막아서는 안 된다 -- None으로 강등되면 두 번째 분기(전액
-        resume)로 떨어지고, 그것은 무겁지만 정확한 degradation이다.
+        The same fail-soft discipline as _completion_from. A broken handoff must not block
+        the improvement path -- demoted to None it falls to the second branch (a full
+        resume), which is a heavy but accurate degradation.
         """
         try:
             data = json.loads(await self._s3.get(self._handoff_key()))
@@ -287,14 +290,14 @@ class PrototypeSession:
     # ---- idle timer ----
 
     def _arm_idle_timer(self) -> None:
-        """유휴 타이머를 재무장한다. 지연 값은 호출자가 아니라 여기서
-        결정한다 -- 그것이 이 설계에서 가장 틀리기 쉬운 부분이다.
+        """Re-arm the idle timer. The delay is decided here rather than by the caller -- that
+        is the easiest part of this design to get wrong.
 
-        호출자가 인자로 넘기는 형태였다면, 완료 선언이 짧은 유예로 무장한
-        직후 뒤따르는 done이 기본 30분으로 되돌려 세션이 닫히지 않는다.
-        build_complete 다음에는 **반드시** done이 오므로(run()의 terminal
-        held 규율) 이것은 가능성이 아니라 확정된 동작이다. 지연을 상태에서
-        파생시키면 그 창이 존재하지 않는다.
+        Had the caller passed it as an argument, the done that follows a completion
+        declaration armed on the short grace period would put it back to the default 30
+        minutes and the session would never close. done **necessarily** follows
+        build_complete (the terminal-held discipline in run()), so this is not a possibility
+        but a certainty. Deriving the delay from state means that window does not exist.
         """
         delay = (_COMPLETION_GRACE_SECONDS if self._completion is not None
                  else self._idle_seconds)
@@ -307,12 +310,12 @@ class PrototypeSession:
         asyncio.create_task(self.close())
 
     async def _write_handoff(self, completion: dict) -> None:
-        """다음 세션이 읽을 핸드오프. 개선 작업이 전체 트랜스크립트를 지고
-        가지 않아도 되게 하는 유일한 근거다(_resolve_session_id의 세 번째
-        분기).
+        """The handoff the next session will read. It is the only thing that lets an
+        improvement avoid carrying the whole transcript (the third branch of
+        _resolve_session_id).
 
-        completed_at은 진단용이다 -- 어느 분기를 탔는지 로그에서 읽을 수
-        있게 한다.
+        completed_at is for diagnostics -- it makes the branch taken readable from the
+        log.
         """
         await self._s3.put(self._handoff_key(), json.dumps({
             **completion,
@@ -334,15 +337,15 @@ class PrototypeSession:
         spec_path.parent.mkdir(parents=True, exist_ok=True)
         spec_path.write_text(spec_md, encoding="utf-8")
 
-        # 브랜드 프로필을 워크스페이스에 반영한다. spec과 같은 이유로 매
-        # start마다 새로 쓴다 -- admin이 고친 값이 이 세션부터 반영된다.
+        # Apply the brand profile to the workspace. Rewritten on every start for the same
+        # reason as the spec -- a value an admin edited takes effect from this session on.
         #
-        # fail-soft: DesignProfileStore.load()는 이미 모든 S3 예외를 None으로
-        # 강등하지만, 여기서 한 번 더 감싼다 -- 그 약속이 어떤 이유로든 깨져도
-        # 브랜드 반영 실패가 빌드 세션 시작 자체를 막으면 안 된다. 호스팅
-        # 라우트(routes/prototypes.py의 start_host)가 같은 자리를 같은
-        # try/except로 감싸는 것과 짝이다 -- 두 호출부가 이 규율에서
-        # 어긋나면 한쪽만 브랜드 오류에 취약해진다.
+        # fail-soft: DesignProfileStore.load() already demotes every S3 exception to None,
+        # but it is wrapped once more here -- if that promise breaks for any reason, a
+        # failure to apply the brand must not block the build session from starting at all.
+        # This pairs with the hosting route (start_host in routes/prototypes.py) wrapping
+        # the same spot in the same try/except -- if the two callers diverge on this
+        # discipline, only one of them is vulnerable to a brand error.
         try:
             profile = (await self._design_profiles.load()
                        if self._design_profiles is not None else None)
@@ -359,28 +362,29 @@ class PrototypeSession:
 
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
         assert self._builder is not None, "start() must be called before send_message()"
-        # 완료 선언된 세션은 새 턴을 받지 않는다. 오늘은 routes/prototypes.py의
-        # _DEAD_STATUSES가 이 호출 전에 404로 막아주지만, 이 객체가 자기를
-        # 지켜주는 호출자에게 의존해서는 안 된다 -- 라우트 우회(테스트, 미래의
-        # 다른 진입점)가 있으면 아래 turn relay가 그대로 돌아 status를
-        # "building"으로 되돌리고 완료 상태를 짓뭉갠다.
+        # A session that has declared completion accepts no new turn. Today
+        # _DEAD_STATUSES in routes/prototypes.py blocks it with a 404 before this call, but
+        # this object must not depend on a caller to protect it -- with a route bypass (a
+        # test, some future entry point) the turn relay below would run as usual, move
+        # status back to "building" and stamp over the completed state.
         #
-        # self.status가 아니라 self._completion으로 가드하는 이유는 이
-        # 모듈의 다른 모든 곳과 같다 -- _completion은 완료 선언이라는 사실
-        # 자체이고 이 필드 외에는 아무도 되돌리지 않는다. status는 여러
-        # 경로(예: 바로 이 메서드의 turn relay)가 다시 쓰는 가변 값이라 같은
-        # 목적의 가드로 쓰면 이 가드 자신이 지키려는 바로 그 대입에 의해
-        # 무력화된다.
+        # Guarding on self._completion rather than self.status is for the same reason as
+        # everywhere else in this module -- _completion is the fact of the completion
+        # declaration itself, and nothing but this field ever unsets it. status is a mutable
+        # value several paths rewrite (this very method's turn relay, for one), so using it
+        # as a guard for this purpose would let the guard be defeated by the exact
+        # assignment it is trying to prevent.
         #
-        # raise가 아니라 yield로 끝내는 이유: 이 메서드 끝의
-        # `except Exception`은 mid-turn 실패를 세션 "failed"로 만들고 빌드
-        # 슬롯을 놓아준다 -- 즉 그 경로는 "이 세션은 더 못 쓴다"는 뜻이다.
-        # 완료된 세션은 정반대다: 할 일을 다 마친 정상 종료이고, 슬롯은 이미
-        # 완료 처리 때 짧은 유예로 회수 절차에 들어가 있다. 여기서 raise하면
-        # 정상 종료를 실패로 재분류하고 슬롯을 이중 해제(또는 남의 슬롯 해제)
-        # 시도로 몰아간다. 그래서 빌더의 error 이벤트와 같은 모양의
-        # 턴-레벨 오류를 yield하고 그냥 반환한다 -- 호출자(SSE 제너레이터)는
-        # 평소 오류 턴과 똑같이 받고, 세션 상태는 "complete"로 그대로 남는다.
+        # Why it ends with a yield rather than a raise: the `except Exception` at the end of
+        # this method turns a mid-turn failure into a "failed" session and releases the
+        # build slot -- that path means "this session cannot be used any more". A completed
+        # session is the opposite: a normal end with all its work done, and its slot is
+        # already in the reclaim procedure on the short grace period from the completion
+        # handling. Raising here would reclassify a normal end as a failure and drive it
+        # towards a double release (or releasing someone else's slot). So it yields a
+        # turn-level error in the same shape as the builder's error event and simply returns
+        # -- the caller (the SSE generator) receives it exactly like any error turn, and the
+        # session state stays "complete".
         if self._completion is not None:
             yield AgentEvent(
                 kind="error",
@@ -401,49 +405,49 @@ class PrototypeSession:
                     if completion is not None:
                         self._completion = completion
                         self.status = "complete"
-                        # 예외를 반드시 삼킨다. 그러지 않으면 아래의
-                        # `except Exception`이 잡아 status="failed" + 슬롯
-                        # release로 가는데, 그것은 "handoff 실패에도 완료는
-                        # 진행한다"는 결정과 정반대다. S3 실패가 완성된
-                        # 빌드를 실패로 보이게 만들면 안 된다.
+                        # The exception must be swallowed. Otherwise the
+                        # `except Exception` below catches it and goes to status="failed"
+                        # plus a slot release, which is the opposite of the decision that
+                        # "completion proceeds even if the handoff fails". An S3 failure
+                        # must not make a finished build look like a failed one.
                         try:
                             await self._write_handoff(completion)
                         except Exception:
                             _log.exception("handoff write failed: %s/%s",
                                            self.project_id, self.slug)
-                        # 유예로 재무장한다. 인자를 넘기지 않는 것이 요점이다
-                        # -- 지연은 _arm_idle_timer가 self._completion에서
-                        # 파생하므로, 이 호출은 방금 세운 완료 상태를 읽어
-                        # 짧은 유예를 집는다. handoff 쓰기 뒤에 두는 이유:
-                        # 쓰기가 진행 중인 동안 유예 타이머가 먼저 만료돼
-                        # close()가 끼어드는 경쟁을 피한다. 이 호출이 없으면
-                        # send_message 진입 때 무장된 기본 유휴 타이머가
-                        # 그대로 남아 세션이 30분간 닫히지 않는다(실측: 유예
-                        # 테스트 2개 실패).
+                        # Re-arm on the grace period. Passing no argument is the point --
+                        # the delay is derived by _arm_idle_timer from self._completion, so
+                        # this call reads the completion state just set and picks the short
+                        # grace period. Why it goes after the handoff write: it avoids the
+                        # race where the grace timer expires while the write is still in
+                        # flight and close() cuts in. Without this call the default idle
+                        # timer armed on entry to send_message stays in place and the
+                        # session does not close for 30 minutes (measured: 2 grace-period
+                        # tests failing).
                         self._arm_idle_timer()
                 elif event.kind in ("done", "error"):
-                    # 완료를 선언한 세션은 ready로 돌아가지 않는다.
-                    # build_complete 다음에는 반드시 done이 오므로, 이 가드가
-                    # 없으면 status가 되돌아가 _DEAD_STATUSES 기구 전체가
-                    # 무력해진다(호스팅이 다시 409, 개선 세션을 열 수 없다).
+                    # A session that has declared completion does not go back to ready.
+                    # done necessarily follows build_complete, so without this guard status
+                    # would revert and defeat the whole _DEAD_STATUSES mechanism (hosting a
+                    # 409 again, and no way to open an improvement session).
                     #
-                    # error도 같이 묶는 이유: 완료 선언 뒤 error가 온다면
-                    # 그것도 이 세션을 ready로 만들 근거가 아니다. 완료
-                    # 전이라면 종전대로 재시도 가능한 상태로 남는다.
+                    # Why error is bundled in: if an error arrives after a completion
+                    # declaration, that is no grounds for making this session ready either.
+                    # Before completion it stays retryable as before.
                     if self._completion is None:
                         self.status = "ready"
-                # 생존 신호. 타이머의 의미가 "턴 진입 이후"에서 "마지막
-                # 이벤트 이후"로 바뀌는 지점이다. 종전에는 30분을 넘는 빌드
-                # 턴이 진행 중에 죽고, 질문 카드를 띄운 채 30분이 지나면
-                # 답변 제출이 409가 됐다.
+                # A liveness signal. This is where the timer's meaning changes from "since
+                # the turn started" to "since the last event". Before this, a build turn
+                # longer than 30 minutes died mid-flight, and 30 minutes spent with a
+                # question card on screen made the answer submission a 409.
                 #
-                # 완료 유예를 되돌리지 않는다 -- _arm_idle_timer가 지연을
-                # self._completion에서 파생시키므로, 완료 후의 done도 짧은
-                # 유예를 유지한다.
+                # It does not undo the completion grace period -- _arm_idle_timer derives
+                # the delay from self._completion, so a done after completion keeps the
+                # short grace period too.
                 #
-                # 비용: TimerHandle.cancel() + call_later 한 쌍이 빌드 한 번에
-                # 수천 번 일어난다. 둘 다 힙 연산 하나짜리라 실질 비용은
-                # 없지만, 이벤트마다 부르는 형태라는 점은 알고 있어야 한다.
+                # Cost: a TimerHandle.cancel() plus call_later pair happens thousands of
+                # times in one build. Both are a single heap operation so the real cost is
+                # nil, but it is worth knowing that this is called per event.
                 self._arm_idle_timer()
                 yield event
         except Exception:
@@ -508,20 +512,20 @@ class PrototypeSession:
     # ---- first turn's auto-spoken prompt ----
 
     def first_prompt(self) -> str:
-        """자동 발화되는 개시 턴. 세 가지 모양이고 `_prompt_kind`가 고른다.
+        """The opening turn, spoken automatically. Three shapes, chosen by `_prompt_kind`.
 
-        셋 다 같은 방식으로 끝난다 -- AskUserQuestion, 그리고 대기. 그
-        도구만이 permission 콜백을 우리가 가로채는 유일한 도구여서, 질문하는
-        것이 턴을 멈추고 선택지를 UI에 올리는 방법이기도 하다
-        (builder._on_can_use_tool -> `questions` SSE 이벤트). 그리고 이
-        문구가 유일한 브레이크다: 빌더는 bypassPermissions로 돌아 Write/Edit이
-        자동 승인되므로, 그냥 시작해 버리는 에이전트를 이 텍스트 밖에서 막을
-        방법이 없다.
+        All three end the same way -- AskUserQuestion, and then waiting. That tool is the
+        only one whose permission callback we intercept, which makes asking a question also
+        the way to stop the turn and put the options up in the UI
+        (builder._on_can_use_tool -> a `questions` SSE event). And this wording is the only
+        brake: the builder runs under bypassPermissions so Write and Edit are auto-approved,
+        leaving no way outside this text to stop an agent that simply starts building.
 
-        plan    -> 계획만 세워라, 아직 빌드하지 마라.
-        resume  -> 트랜스크립트와 반쯤 만든 파일이 이미 맥락에 있다. 다시
-                   계획하지 말고 무엇을 이어갈지 물어라.
-        handoff -> 빌드는 끝났고 맥락은 요약뿐이다. 무엇을 개선할지 물어라.
+        plan    -> plan only, do not build yet.
+        resume  -> the transcript and the half-built files are already in context. Do not
+                   re-plan; ask what to continue with.
+        handoff -> the build is finished and the only context is a summary. Ask what to
+                   improve.
         """
         if self._prompt_kind == "handoff" and self._handoff is not None:
             return self._handoff_prompt(self._handoff)
@@ -530,7 +534,7 @@ class PrototypeSession:
         return self._plan_prompt()
 
     def _plan_prompt(self) -> str:
-        """문장 자체는 proto/prompts.py가 언어별로 갖고 있다."""
+        """The sentences themselves are held per language by proto/prompts.py."""
         return prompts.plan_prompt(
             self._language,
             spec_key=self._spec_key(),
@@ -545,48 +549,50 @@ class PrototypeSession:
         Unless the build tree is GONE, which the transcript cannot tell it --
         see `_missing_output_prompt`.
 
-        문장 자체는 proto/prompts.py가 언어별로 갖고 있다.
+        The sentences themselves are held per language by proto/prompts.py.
         """
         if not has_build_output(self.build_dir()):
             return self._missing_output_prompt()
         return prompts.resume_prompt(self._language)
 
     def _missing_output_prompt(self) -> str:
-        """산출물이 사라진 뒤의 개시 턴 — 찾지 말고 다시 만들라고 말한다.
+        """The opening turn after the output has disappeared -- it says rebuild, do not search.
 
-        재개·개선 프롬프트는 둘 다 에이전트가 만든 코드가 아직 거기 있다고
-        전제한다. 그 전제가 깨지는 경로가 둘 있고, 둘 다 정상 운영이다:
-        프로토타입 리셋(로컬 트리를 rmtree한다)과 호스팅 인스턴스 교체(빌드
-        트리는 EBS에 있고 S3 세션만 살아남는다).
+        The resume and handoff prompts both presume the code the agent produced is still
+        there. Two paths break that presumption and both are normal operation: a prototype
+        reset (which rmtrees the local tree) and a hosting instance replacement (the build
+        tree is on EBS and only the S3 session survives).
 
-        그때 상태를 알려주지 않으면 에이전트는 트랜스크립트를 믿고 없는 코드를
-        찾아 나선다. 실측: 리셋된 프로토타입에서 작업 디렉토리 → 다른 프로토타입
-        디렉토리 → `/opt/aipds/frontend` → 파일시스템 전체로 탐색을 넓히며
-        19초 이상을 태웠고, 성공할 수 없는 탐색이었다 -- 트리는 삭제됐다.
+        Not told about that state, the agent trusts the transcript and goes looking for code
+        that is not there. Measured: on a reset prototype it burned over 19 seconds widening
+        its search from the working directory to another prototype's directory to
+        `/opt/aipds/frontend` to the whole filesystem -- a search that could not succeed,
+        because the tree was deleted.
 
-        스펙을 다시 읽히는 것이 요점이다. 트랜스크립트의 기억은 요약이 아니라
-        대화 기록이고, 거기서 코드를 복원할 수는 없다. 스펙은 S3에 살아 있고
-        `start()`가 매번 로컬에 새로 심는다 -- 처음 빌드와 같은 입력이다.
+        Having it read the spec again is the point. The transcript's memory is a conversation
+        record rather than a summary, and code cannot be recovered from it. The spec is alive
+        in S3 and `start()` plants it locally afresh every time -- the same input as the
+        first build.
 
-        문장 자체는 proto/prompts.py가 언어별로 갖고 있다.
+        The sentences themselves are held per language by proto/prompts.py.
         """
         return prompts.missing_output_prompt(self._language,
                                              spec_key=self._spec_key())
 
     def _handoff_prompt(self, handoff: dict) -> str:
-        """완료된 빌드를 개선하는 새 세션의 개시 턴.
+        """The opening turn of a new session improving a completed build.
 
-        `_resume_prompt`보다도 짧다. 파일 트리를 넘기지 않는 것이 의도적이다
-        -- 에이전트가 자기 파일 도구로 cwd를 읽는 편이 스냅샷보다 정확하고,
-        그게 이미 스펙을 읽는 방식이다. 여기서 할 일은 이전 빌드가 무엇을
-        남겼는지 알려주고, 마음대로 손대지 않게 막는 것뿐이다.
+        Shorter even than `_resume_prompt`. Not passing a file tree is deliberate -- the
+        agent reading the cwd with its own file tools is more accurate than a snapshot, and
+        that is already how it reads the spec. All this has to do is say what the previous
+        build left behind and stop it from making changes on its own initiative.
 
-        단, 남긴 것이 실제로 없을 수 있다. handoff.json은 S3에 있고 빌드
-        트리는 로컬 디스크에 있어서 -- 인스턴스가 교체되면 요약만 살아남는다.
-        "이미 빌드가 완료됐다"고 말하면서 없는 `prototype/`을 살펴보게 하는
-        것이 정확히 그 탐색을 유발한다(`_missing_output_prompt` 참조).
+        But there may in fact be nothing left. handoff.json is in S3 while the build tree is
+        on local disk -- if the instance is replaced, only the summary survives. Saying "the
+        build is already complete" and having it look over a `prototype/` that is not there
+        is exactly what triggers that search (see `_missing_output_prompt`).
 
-        문장 자체는 proto/prompts.py가 언어별로 갖고 있다.
+        The sentences themselves are held per language by proto/prompts.py.
         """
         if not has_build_output(self.build_dir()):
             return self._missing_output_prompt()

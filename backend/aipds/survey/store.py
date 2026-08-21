@@ -74,31 +74,34 @@ async def purgeable_response_count(project_s3, slug: str) -> int:
 
 @dataclass(frozen=True)
 class SurveySummary:
-    """이 프로토타입의 설문에 대해 목록 라우트가 알아야 하는 전부."""
+    """Everything the list route needs to know about this prototype's survey."""
 
-    #: 지금 응답을 받을 수 있는 설문이 있는가(= 라이브 `questionnaire.json`).
+    #: Whether there is a survey that can take responses right now (= a live
+    #: `questionnaire.json`).
     exists: bool
-    #: 리셋이 파괴할 답변 수 — 라이브 회차와 아카이브된 회차를 합친다.
+    #: How many answers a reset would destroy -- the live round plus the archived ones.
     responses: int
 
 
 async def survey_summary(project_s3, slug: str) -> SurveySummary:
-    """설문 존재 여부와 응답 수. **왕복 하나로 둘 다 답한다.**
+    """Whether a survey exists, and how many responses it has. **Both answered in one round
+    trip.**
 
-    **왜 존재 여부가 따로 필요한가(2026-08-20 실측).** 응답 수만으로는 "설문이
-    없다"와 "설문은 있고 응답이 0건이다"가 구별되지 않는다. 둘 다 0이다. 그래서
-    카드가 "이 프로토타입에는 설문이 없다"를 말할 수 없었고, test2222에서
-    프로토타입 3개 중 1개에만 설문이 있는데 화면에 그 사실이 없었다 — 나머지 둘의
-    설문이 빠진 것을 알아차릴 방법이 없었다.
+    **Why existence has to be separate (measured 2026-08-20).** The response count alone
+    cannot distinguish "there is no survey" from "there is a survey with 0 responses". Both are
+    0. So the card could not say "this prototype has no survey", and in test2222, where only 1
+    of 3 prototypes had one, that fact was nowhere on screen -- there was no way to notice that
+    the other two were missing their surveys.
 
-    **왜 한 번만 list하는가.** 목록 라우트가 카드마다 이 질문을 하므로(그 라우트가
-    `asyncio.gather`로 병렬화하는 이유이기도 하다) 왕복을 하나 늘리면 프로토타입
-    수만큼 늘어난다. 두 사실이 같은 키 목록에 다 들어 있어서 나눌 이유가 없다.
+    **Why it lists only once.** The list route asks this question per card (which is also why
+    that route parallelises with `asyncio.gather`), so adding one round trip multiplies by the
+    number of prototypes. Both facts are in the same key listing, so there is no reason to
+    split them.
 
-    `exists`는 **라이브** questionnaire만 본다. 아카이브만 남은 상태
-    (`archive_current()` 직후 새 문항 생성이 502로 실패한 경우)에서 PM이 할 일은
-    설문을 다시 만드는 것이므로 "없음"이 맞다. 그래도 `responses`는 아카이브를
-    세는데, 리셋이 파괴할 답변이 실재하기 때문이다.
+    `exists` looks only at the **live** questionnaire. In a state where only archives remain
+    (new question generation failed with a 502 right after `archive_current()`), what the PM
+    has to do is create the survey again, so "none" is correct. `responses` still counts the
+    archives, because the answers a reset would destroy really exist.
     """
     keys = await project_s3.list(survey_prefix(slug))
     # Any `.../responses/{id}.json`, in the live round or any archived one.
@@ -114,8 +117,9 @@ async def survey_summary(project_s3, slug: str) -> SurveySummary:
 
 def questionnaire_md_key(slug: str) -> str:
     # aiplc-docs/ so the existing artifacts viewer can serve it (that route is
-    # hard-limited to this subtree). 디렉터리는 layout이 정한다 — 명세와 같은
-    # 곳에 둬야 단수 프로토타입의 설문지가 딴 트리에 홀로 생기지 않는다.
+    # hard-limited to this subtree). The directory is decided by layout -- it has to sit
+    # where the spec does, or a singular prototype's questionnaire ends up alone in another
+    # tree.
     return f"{layout.artifact_dir(slug)}/validation-questionnaire.md"
 
 
@@ -124,22 +128,23 @@ def results_md_key(slug: str) -> str:
     (prototype-validation.md Step 6), and where the later product-strategy
     stage looks for it.
 
-    **왜 슬러그별인가(2026-08-20 실측).** 종전에는 슬러그 없는 모듈 상수였다
-    (`aiplc-docs/discovery/prototype/validation-results.md`). 그런데 취합
-    라우트는 슬러그별이고(`POST .../prototypes/{slug}/survey/synthesize`) Path B는
-    프로토타입을 N개 만든다 — test2222가 3개였다. 셋을 취합하면 셋이 같은 키를
-    덮어써서 마지막 것만 남았고, 오류는 없었다.
+    **Why it is per slug (measured 2026-08-20).** This used to be a module constant with no
+    slug (`aiplc-docs/discovery/prototype/validation-results.md`). But the synthesis route is
+    per slug (`POST .../prototypes/{slug}/survey/synthesize`) and Path B creates N prototypes
+    -- test2222 had 3. Synthesising all three had all three overwrite the same key so only the
+    last survived, with no error.
 
-    단수 경로의 근거는 "룰이 그 경로를 규정한다"였는데, 그 룰
-    (`prototype-validation.md`)은 제목부터 "Path A.1 - Single Solution"이고
-    본문이 "ORIGINAL single-prototype flow"라고 명시한다. Path B가 타는
-    `prototype-building.md`에는 검증 단계가 아예 없고(끝이 "Proceed to: Product
-    Strategy"), `use-case-prioritization.md`에는 검증 언급이 0회다. 즉 다중
-    프로토타입 프로젝트에 단수 경로를 요구하는 상류가 없다.
+    The grounds for the singular path were "the rules specify that path", but that rule
+    (`prototype-validation.md`) is titled "Path A.1 - Single Solution" and its body states
+    "ORIGINAL single-prototype flow". `prototype-building.md`, which Path B follows, has no
+    validation stage at all (it ends with "Proceed to: Product Strategy"), and
+    `use-case-prioritization.md` mentions validation zero times. So there is no upstream
+    requiring the singular path for a multi-prototype project.
 
-    **A.1에서는 경로가 그대로다.** 그쪽은 상류가 실제로 그 경로를 규정하고
-    product-strategy가 읽는다 — `layout.artifact_dir`이 단수 id를 분기하므로 한
-    식이 둘 다 만족한다(`questionnaire_md_key`와 같은 이유로 같은 모양이다).
+    **On A.1 the path is unchanged.** There, upstream really does specify that path and
+    product-strategy reads it -- `layout.artifact_dir` branches on the singular id, so one
+    expression satisfies both (the same shape as `questionnaire_md_key`, for the same
+    reason).
     """
     return f"{layout.artifact_dir(slug)}/validation-results.md"
 
@@ -171,8 +176,8 @@ def _results_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
     point mapping, build decision) are emitted as empty templates rather than
     machine guesses.
 
-    Step 6이 정한 섹션 이름과 표 헤더는 양쪽 언어에서 영어다 — 룰이 그 이름으로
-    문서를 찾는다(report_labels.py 헤더 참조).
+    The section names and table headers Step 6 fixes are English in both languages -- the
+    rules find the document by those names (see the report_labels.py header).
     """
     L = labels(language)
     lines = [
@@ -297,9 +302,10 @@ class SurveyStore:
         self._root = root_s3
         self.slug = slug
         self.project_id = project_id
-        # 리포트 생성 언어. questionnaire.language가 아니라 프로젝트 언어를
-        # 쓰는 이유: 리포트는 산출물 문서이고 문서 언어는 프로젝트가 정한다.
-        # 정상 경로에서는 두 값이 같다(설문도 프로젝트 언어로 생성된다).
+        # The language the report is generated in. Why the project language rather than
+        # questionnaire.language: a report is an artifact document, and a document's language
+        # is decided by the project. On the normal path the two are equal (a survey is
+        # generated in the project language too).
         self._language = language
 
     @staticmethod
@@ -463,11 +469,12 @@ class SurveyStore:
         # this prototype's own — `layout.artifact_dir(slug)` scopes them — so
         # a sibling prototype's documents are out of reach.
         #
-        # **정확한 키만 지운다.** 단수 프로토타입에서는 이 디렉터리에 스펙
-        # (`prototype-spec.md`)이 함께 산다. 디렉터리를 프리픽스로 지우면 스펙이
-        # 사라지고, 그러면 리셋이 아니라 삭제가 된다 — 카드가 목록에서 없어진다.
-        # `delete_prefix`에 전체 키를 넘기는 것은 단일 키 삭제의 확립된 관례다
-        # (S3StoreLike에 단일 delete가 없다).
+        # **Only the exact keys are deleted.** For a singular prototype the spec
+        # (`prototype-spec.md`) lives in this same directory. Deleting the directory as a
+        # prefix would take the spec with it, and then this is a deletion rather than a reset
+        # -- the card disappears from the list. Passing a full key to `delete_prefix` is the
+        # established convention for a single-key delete (S3StoreLike has no single
+        # delete).
         await self._s3.delete_prefix(questionnaire_md_key(self.slug))
         await self._s3.delete_prefix(results_md_key(self.slug))
 

@@ -1,20 +1,22 @@
-# backend/aipds/error_codes.py — HTTP detail로 나가는 안정적 코드.
+# backend/aipds/error_codes.py -- the stable codes that go out as an HTTP detail.
 #
-# 백엔드는 UI 언어를 모른다: 프록시(frontend/app/api/[...path]/route.ts의
-# filterHeaders)가 Accept-Language를 전달하지 않고, 전달하게 만들어도 브라우저
-# 값이 들어와 UI 스위치(aipds_lang 쿠키)와 어긋난다. 그래서 문구를 만들지 않고
-# 코드를 보내며, 문구는 프론트 딕셔너리가 소유한다
-# (frontend/lib/api/errorMessage.ts).
+# The backend does not know the UI language: the proxy (filterHeaders in
+# frontend/app/api/[...path]/route.ts) does not forward Accept-Language, and making it
+# forward would bring in the browser's value, which disagrees with the UI switch (the
+# aipds_lang cookie). So it sends a code rather than building wording, and the wording is
+# owned by the frontend dictionary (frontend/lib/api/errorMessage.ts).
 #
-# 여기에 두 번째 번역 시스템을 만들지 않는 이유가 그것이다 — UI 언어의 단일
-# 출처는 이미 프론트에 있다. 예외는 survey/report_labels.py인데, 그쪽은 UI
-# 문구가 아니라 문서 생성기이고 프로젝트 언어를 이미 백엔드가 안다.
+# That is why no second translation system is built here -- the single source for the UI
+# language is already in the frontend. The exception is survey/report_labels.py, which is a
+# document generator rather than UI wording, and there the backend already knows the
+# project language.
 #
-# 값은 snake_case이고 **바꾸지 않는다** — 프론트 딕셔너리의 키가 이 값에
-# 달려 있다. 새 에러는 여기에 상수를 추가하고 양쪽 딕셔너리에 키를 넣는다.
+# The values are snake_case and **must not change** -- the frontend dictionary's keys
+# depend on them. A new error means adding a constant here and a key to both
+# dictionaries.
 from __future__ import annotations
 
-# 사용자 관리 (routes/admin_users.py)
+# User administration (routes/admin_users.py)
 EMAIL_EXISTS = "email_exists"
 USER_NOT_FOUND = "user_not_found"
 BAD_REQUEST = "bad_request"
@@ -22,28 +24,30 @@ FORBIDDEN = "forbidden"
 TOO_MANY_REQUESTS = "too_many_requests"
 USER_ADMIN_FAILED = "user_admin_failed"
 USER_CREATE_FAILED = "user_create_failed"
-# 자기 계정 / 마지막 관리자 보호. 어떤 조작이었는지(강등·비활성화·삭제)는
-# 코드에 싣지 않는다 — 프론트가 그 어휘를 UI 언어로 갖고 있어야 하는데,
-# 조작 종류는 이미 사용자가 누른 버튼으로 화면에 드러나 있다.
+# Protecting one's own account and the last administrator. Which operation it was
+# (demotion, deactivation, deletion) is not carried in the code -- the frontend would have
+# to hold that vocabulary in the UI language, and the kind of operation is already evident
+# on screen from the button the user pressed.
 SELF_TARGET = "self_target"
 LAST_ADMIN = "last_admin"
 
-# 모델 카탈로그 (routes/models.py)
+# The model catalogue (routes/models.py)
 NAME_REQUIRED = "name_required"
 MODEL_ID_REQUIRED = "model_id_required"
 MODEL_ID_CHARSET = "model_id_charset"
 
-# 프로젝트 (routes/projects.py)
+# Projects (routes/projects.py)
 MODEL_NOT_SELECTABLE = "model_not_selectable"
 LANGUAGE_UNSUPPORTED = "language_unsupported"
 
-# 프로토타입 (routes/prototypes.py)
+# Prototypes (routes/prototypes.py)
 BUILD_SLOTS_BUSY = "build_slots_busy"
 BUILD_SESSION_ACTIVE = "build_session_active"
-# 초기화 실패는 무엇이 실패했는지가 진단에 필요하다. 코드 뒤에 콜론으로 붙여
-# 보내고(`init_incomplete:s3,host`) 프론트는 코드 부분만 번역한다.
+# For an initialisation failure, diagnosis needs to know what failed. It is appended after
+# the code with a colon (`init_incomplete:s3,host`) and the frontend translates only the
+# code part.
 INIT_INCOMPLETE = "init_incomplete"
 
-# 공개 설문 (routes/surveys_public.py)
+# Public surveys (routes/surveys_public.py)
 SURVEY_CLOSED = "survey_closed"
 SURVEY_FULL = "survey_full"

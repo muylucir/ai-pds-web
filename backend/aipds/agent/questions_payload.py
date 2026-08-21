@@ -1,16 +1,22 @@
-# backend/aipds/agent/questions_payload.py — ask_questions 페이로드 정규화.
+# backend/aipds/agent/questions_payload.py -- normalising the ask_questions payload.
 #
-# 왜 필요한가: 마크다운 경로(parsers/questions.py)는 is_other를 코드가 판정한다
-# (letter == "X" 또는 텍스트가 "other"로 시작). 반면 ask_questions는 모델이 만든
-# dict를 그대로 UI로 흘려보내므로, 프롬프트 규약(QUESTIONS_SCHEMA_HINT)을 어긴
-# 페이로드가 그대로 렌더된다. 실측 사고: is_other가 두 개(B와 X) 와서 두 옵션이
-# 모두 "Other — 직접 입력"으로 렌더됐고, 둘이 같은 otherActive 상태를 공유해
-# 선택이 서로를 덮어썼다. 프롬프트를 조여도 근본 해결이 아니다 — 모델은 이미
-# 규약을 받고도 틀렸고, 재전송 왕복은 사용자에게 빈 대기로 보인다.
+# Why it is needed: on the markdown path (parsers/questions.py) our code decides
+# is_other (letter == "X", or the text starting with "other"). ask_questions, by
+# contrast, passes a model-authored dict straight through to the UI, so a payload that
+# violates the prompt contract (QUESTIONS_SCHEMA_HINT) is rendered as-is. A measured
+# incident: two options arrived with is_other (B and X), both rendered as
+# "Other — 직접 입력", and because they shared one otherActive state each selection
+# overwrote the other. Tightening the prompt is not a fix -- the model already had the
+# contract and got it wrong, and a resend round-trip looks to the user like waiting at
+# a blank screen.
 #
-# 방침: 고칠 수 있는 것은 코드가 조용히 교정하고(사용자에게 보이는 화면을
-# 살리는 게 우선), 질문 자체가 성립하지 않는 경우만 ValueError로 거부해 모델이
-# 다시 만들게 한다.
+# The policy: what can be fixed, the code corrects quietly (keeping the screen the user
+# sees alive comes first), and only a question that does not hold up at all is refused
+# with ValueError so the model builds it again.
+
+# NOTE: the Korean in the comments below is intentional and must not be translated.
+# It quotes strings the UI actually renders ("Other — 직접 입력") and text the model
+# actually sent (measured), so it is the evidence for the judgement being recorded.
 from __future__ import annotations
 
 import json
@@ -19,33 +25,35 @@ from typing import Any
 
 _log = logging.getLogger("aipds.agent")
 
-# 마크다운 파서와 동일한 순서(_LETTERS는 builder의 A..J와 별개 — 질문 옵션은
-# 스키마상 A..F + X).
+# The same order as the markdown parser (_LETTERS is separate from builder's A..J --
+# a question's options are A..F + X per the schema).
 _LETTERS = "ABCDEFGHIJ"
 _OTHER_LETTER = "X"
 _OTHER_TEXT = "Other — 직접 입력"
 
 
 def _looks_like_other(letter: str, text: str) -> bool:
-    """마크다운 파서(parsers/questions.py)와 같은 규칙을 쓴다 — 두 경로가
-    갈리면 같은 질문이 입력 형식에 따라 다르게 렌더된다."""
+    """Uses the same rule as the markdown parser (parsers/questions.py) -- if the two
+    paths diverge, the same question renders differently depending on the input
+    format."""
     return letter == _OTHER_LETTER or text.strip().lower().startswith("other")
 
 
 def _normalize_options(raw_options: list[Any], *, guess_other: bool = True) -> list[dict]:
-    """letter 보정 → Other 판정 → Other 1개로 축약.
+    """Repair letters -> decide Other -> reduce to a single Other.
 
-    Other를 마지막 하나만 남기는 이유: 관례상 Other는 목록 끝이고, 앞쪽에
-    is_other=True로 온 것은 모델이 실질 선택지를 잘못 표시한 경우다(실측 사고의
-    B가 그랬다). 강등된 옵션은 텍스트를 살려 되돌린다.
+    Why only the last Other is kept: by convention Other goes at the end of a list, and
+    one arriving earlier with is_other=True is the model mislabelling a substantive
+    option (which is what B did in the measured incident). A demoted option gets its
+    text restored.
 
-    guess_other=False는 SDK AskUserQuestion 경로(question_file_from_sdk)용이다
-    — 그 경로는 모델이 이미 구조화된 options를 주므로 프로즈에서 Other를
-    추측할 이유가 없다("Other database"처럼 실제 옵션 라벨이 "other"로
-    시작하면 _looks_like_other가 오판해 진짜 옵션의 텍스트를 지워버린다).
-    마크다운/Discovery 경로(normalize_questions_payload의 기본값)는 계속
-    휴리스틱을 쓴다 — 모델이 dict를 직접 만들고 실측 사고가 그 경로에서
-    있었기 때문이다.
+    guess_other=False is for the SDK AskUserQuestion path (question_file_from_sdk):
+    there the model supplies already-structured options, so there is no reason to guess
+    an Other from prose (if a real option label starts with "other", as in "Other
+    database", _looks_like_other misjudges it and erases the real option's text). The
+    markdown/Discovery path (normalize_questions_payload's default) keeps using the
+    heuristic -- because there the model builds the dict itself, and the measured
+    incident happened on that path.
     """
     opts: list[dict] = []
     used: set[str] = set()
@@ -54,15 +62,15 @@ def _normalize_options(raw_options: list[Any], *, guess_other: bool = True) -> l
             continue
         text = str(raw.get("text") or "").strip()
         letter = str(raw.get("letter") or "").strip()
-        # letter 누락/중복 보정: 빈 배지가 뜨거나 프론트의 key/라디오 value가
-        # 충돌해 선택이 서로를 덮어쓴다.
+        # Repair a missing or duplicated letter: otherwise an empty badge appears, or
+        # the frontend's key / radio value collide and selections overwrite each other.
         if not letter or letter in used:
             letter = next((c for c in _LETTERS if c not in used), None) or f"Z{i}"
         used.add(letter)
-        # 모델의 is_other는 참고만 하고, 판정은 마크다운 경로와 같은 규칙으로
-        # 다시 한다 — X를 False로 보내 자유 입력창이 사라진 경우도 여기서
-        # 잡힌다. guess_other=False면 텍스트/letter 추측을 끄고 모델이 준
-        # is_other만 믿는다.
+        # The model's is_other is taken as a hint only; the decision is remade with
+        # the same rule as the markdown path -- which also catches the case of X sent
+        # as False, where the free-text box disappears. With guess_other=False the
+        # text/letter guessing is off and only the model's is_other is trusted.
         is_other = bool(raw.get("is_other")) or (
             guess_other and _looks_like_other(letter, text))
         opts.append({
@@ -75,8 +83,9 @@ def _normalize_options(raw_options: list[Any], *, guess_other: bool = True) -> l
     others = [i for i, o in enumerate(opts) if o["is_other"]]
     for i in others[:-1]:
         opts[i]["is_other"] = False
-        # is_other로 온 옵션은 텍스트가 비어 있을 수 있다(UI가 문구를 넣어주므로
-        # 모델이 생략). 강등하면 고를 수 없는 빈 보기가 되므로 라벨을 채운다.
+        # An option that arrived as is_other may have empty text (the UI supplies the
+        # wording, so the model omits it). Demoting it would leave an empty,
+        # unselectable option, so the label is filled in.
         if not opts[i]["text"] or (
                 guess_other and _looks_like_other(opts[i]["letter"], opts[i]["text"])):
             opts[i]["text"] = f"보기 {opts[i]['letter']}"
@@ -89,8 +98,9 @@ def _normalize_question(raw: Any, number: int, *, guess_other: bool = True) -> d
     if not isinstance(raw, dict):
         raise ValueError(f"질문 {number}이 객체가 아니다: {type(raw).__name__}")
     options = _normalize_options(raw.get("options") or [], guess_other=guess_other)
-    # Other 하나만 있는 질문은 객관식이 아니다 — 자유 입력이면 채팅으로 충분하고,
-    # 폼으로 띄우면 사용자는 선택지 없는 빈 카드를 본다.
+    # A question whose only option is Other is not multiple choice -- for free text the
+    # chat is enough, and shown as a form the user sees an empty card with nothing to
+    # choose.
     if not [o for o in options if not o["is_other"]]:
         raise ValueError(
             f"질문 {number}에 고를 수 있는 보기가 없다 — Other 외에 최소 1개의 "
@@ -100,9 +110,10 @@ def _normalize_question(raw: Any, number: int, *, guess_other: bool = True) -> d
         raise ValueError(f"질문 {number}의 text가 비어 있다")
     category = raw.get("category")
     return {
-        # number는 라디오 name(q{number})과 답변 dict 키로 쓰인다. 모델이 준 값을
-        # 믿지 않고 순번을 다시 매긴다 — 중복되면 두 질문의 라디오가 같은 그룹이
-        # 되어 서로를 해제한다.
+        # number is used as the radio name (q{number}) and as the answer dict's key.
+        # The model's value is not trusted and the ordinals are reassigned -- a
+        # duplicate would put two questions' radios in the same group, where each
+        # clears the other.
         "number": number,
         "category": str(category).strip() if category else None,
         "text": text,
@@ -113,21 +124,22 @@ def _normalize_question(raw: Any, number: int, *, guess_other: bool = True) -> d
 
 
 def normalize_questions_payload(payload: Any, *, guess_other: bool = True) -> dict:
-    """모델이 만든 questions_file을 프론트 QuestionsPayload 계약으로 맞춘다.
+    """Fit a model-authored questions_file to the frontend QuestionsPayload contract.
 
-    고칠 수 있는 위반은 조용히 교정하고, 질문이 성립하지 않으면 ValueError를
-    던진다(도구가 그 메시지를 모델에게 돌려줘 다시 만들게 한다).
+    Violations that can be fixed are corrected quietly; a question that does not hold
+    up raises ValueError (the tool returns that message to the model so it builds the
+    question again).
 
-    guess_other: 텍스트가 "other"로 시작하면 Other로 간주하는 휴리스틱을 켤지
-    여부. 기본 True는 마크다운/Discovery 경로(ask_questions)용 — 모델이 만든
-    dict를 그대로 신뢰할 수 없어 생긴 방침이다. question_file_from_sdk는
-    False로 호출한다: SDK가 이미 명시적 options를 주므로 프로즈 추측이
-    필요 없고, 오히려 "Other database"처럼 진짜 옵션의 라벨을 오판해
-    지워버린다. is_other 중복 축약(마지막 하나만 Other로 남기는 로직)은
-    두 경로 모두에서 그대로 적용된다 — 이것을 끄는 것은 아니다."""
-    # 모델이 dict 대신 JSON 문자열을 넘기는 경우가 실제로 있다(실측: "질문 폼
-    # 전송 형식에 오류가 있어 다시 보내겠습니다"). 파싱되면 받아준다 — 재전송
-    # 왕복은 사용자에게 빈 대기로 보인다.
+    guess_other: whether to enable the heuristic that treats text starting with "other"
+    as an Other. The default True is for the markdown/Discovery path (ask_questions) --
+    a policy that exists because a model-authored dict cannot be trusted as-is.
+    question_file_from_sdk calls with False: the SDK already gives explicit options, so
+    guessing from prose is unnecessary and instead misjudges a real option's label such
+    as "Other database" and erases it. The is_other reduction (keeping only the last one
+    as Other) still applies on both paths -- that is not what this switches off."""
+    # The model does sometimes pass a JSON string instead of a dict (measured: "질문 폼
+    # 전송 형식에 오류가 있어 다시 보내겠습니다"). If it parses, we accept it -- a
+    # resend round-trip looks to the user like waiting at a blank screen.
     if isinstance(payload, str):
         try:
             payload = json.loads(payload)
@@ -148,37 +160,42 @@ def normalize_questions_payload(payload: Any, *, guess_other: bool = True) -> di
     return {
         "name": str(payload.get("name") or "questions").strip() or "questions",
         "preamble": str(preamble).strip() if preamble else None,
-        # 프론트 계약: parse_ok=True + raw_markdown=None이어야 RawMarkdownFallback이
-        # 아니라 폼으로 렌더된다.
+        # The frontend contract: it renders as a form rather than a
+        # RawMarkdownFallback only with parse_ok=True and raw_markdown=None.
         "parse_ok": True,
         "raw_markdown": None,
         "questions": questions,
     }
 
 
-# SDK AskUserQuestion의 input을 프론트 QuestionFile 형태로 옮긴다. letter는 SDK
-# 옵션 순서를 그대로 인덱싱한다 — 답변을 SDK 라벨로 되번역할 때(_answer_to_sdk)
-# 그 인덱스가 키이므로 순서가 어긋나면 다른 보기를 고른 것이 된다.
+# Move the SDK AskUserQuestion input into the frontend's QuestionFile shape. The letter
+# indexes the SDK option order directly -- that index is the key when translating an
+# answer back into an SDK label (_answer_to_sdk), so an order that slips means a
+# different option was chosen.
 #
-# builder._to_question_file에서 옮겨온 것이다. 두 경로가 한 함수로 수렴하면
-# is_other 중복 교정(normalize_questions_payload)이 프로토타입 빌드에도 적용된다.
+# Moved here from builder._to_question_file. With both paths converging on one function,
+# the is_other duplicate repair (normalize_questions_payload) applies to prototype
+# builds too.
 def normalize_sdk_questions(raw: object) -> list[dict]:
-    """AskUserQuestion의 `questions` 인자를 list[dict]로 정규화한다.
+    """Normalise AskUserQuestion's `questions` argument into a list[dict].
 
-    모델이 이 인자를 **직렬화된 JSON 문자열**로 넘기는 일이 있다(실측: 한
-    세션의 18라운드 중 3건). 여기서 막지 않으면 question_file_from_sdk가
-    문자열을 문자 단위로 훑다가 AttributeError로 터진다 — 그 예외는 permission
-    콜백 밖으로 새어 턴을 죽인다.
+    The model does sometimes pass this argument as a **serialised JSON string**
+    (measured: 3 of 18 rounds in one session). Without stopping it here,
+    question_file_from_sdk iterates the string character by character and blows up with
+    AttributeError -- and that exception escapes the permission callback and kills the
+    turn.
 
-    ⚠️ **관측된 그 3건은 이 함수로 살아나지 않는다.** CLI가 우리 콜백을 부르기
-    **전에** 스키마 검증으로 거절했다(실측 근거: tool_use와 `InputValidationError`
-    tool_result가 같은 트랜스크립트 파일에 즉시 짝지어 있고, 백엔드 로그에는
-    그 시간대에 관련 경고가 한 줄도 없다). 모델은 그 에러를 읽고 다음 턴에
-    올바른 배열로 재시도하므로 사용자에게 질문이 유실되지는 않는다. 이 함수는
-    같은 shape가 콜백까지 도달하는 경로(SDK/CLI 버전 차이)에 대한 방어다.
+    ⚠️ **The 3 observed cases are not rescued by this function.** The CLI rejected them
+    by schema validation **before** calling our callback (the evidence: the tool_use and
+    the `InputValidationError` tool_result are paired immediately in the same transcript
+    file, and the backend log has not one related warning in that window). The model
+    reads that error and retries with a correct array on the next turn, so no question is
+    lost to the user. This function is a defence for the path where the same shape does
+    reach the callback (an SDK/CLI version difference).
 
-    리스트가 아니거나 파싱이 실패하면 빈 리스트 — 호출부는 옵션 없는 페이로드와
-    같은 경로(ValueError → 모델에게 거부 사유 반환)를 탄다.
+    Anything that is not a list, or that fails to parse, becomes an empty list -- the
+    caller then takes the same path as an option-less payload (ValueError -> refusal
+    reason returned to the model).
     """
     if isinstance(raw, str):
         try:
@@ -203,29 +220,32 @@ def question_file_from_sdk(sdk_questions: list[dict], *, name: str) -> dict:
                 "letter": _LETTERS[j] if j < len(_LETTERS) else f"Z{j}",
                 "text": text, "is_other": False, "recommended": False,
             })
-        # 자유 입력 선택지를 붙인다. AskUserQuestion에는 is_other에 해당하는
-        # 필드가 없고 이 경로는 guess_other=False로 정규화하므로, 이걸 붙이지
-        # 않으면 Other가 생길 수 있는 경로가 하나도 없다 — 사용자는 모델이 제시한
-        # 선택지 밖의 일을 시킬 방법이 없어진다(실측: "다시 빌드" 후 무엇을
-        # 진행할지 묻는 질문에 원하는 항목이 없어 아무것도 지시할 수 없었다).
+        # Append the free-text option. AskUserQuestion has no field corresponding to
+        # is_other and this path normalises with guess_other=False, so without this
+        # there is no route by which an Other can ever appear -- the user loses any way
+        # to ask for something outside the options the model offered (measured: after
+        # "rebuild", a question about what to do next had no matching item and nothing
+        # could be requested at all).
         #
-        # letter는 X다. A/B/C 흐름에 끼우면 안 되는 이유가 계약에 있다 —
-        # builder._answer_to_sdk가 `sdk_options[_LETTERS.find(letter)]`로 답변을
-        # SDK 라벨로 되번역하므로, 실제 옵션의 letter가 한 칸이라도 밀리면 모든
-        # 답변이 엉뚱한 옵션으로 번역된다. X는 _LETTERS(A-J) 밖이라 그 인덱스
-        # 계산에 관여하지 않고, 매칭되지 않는 값은 자유 텍스트로 그대로
-        # 통과한다(builder.py의 `return value  # free text (Other)`).
+        # The letter is X. Why it must not be slotted into the A/B/C run is in the
+        # contract: builder._answer_to_sdk translates an answer back into an SDK label
+        # with `sdk_options[_LETTERS.find(letter)]`, so a real option's letter shifted
+        # by even one position translates every answer into the wrong option. X sits
+        # outside _LETTERS (A-J) and so takes no part in that index arithmetic, and a
+        # value that matches nothing passes through as free text (builder.py's
+        # `return value  # free text (Other)`).
         #
-        # 모델이 "Other" 라벨을 이미 넣었더라도 그대로 하나 더 붙인다. 붙이지
-        # 않는 쪽을 먼저 시도했는데(_looks_like_other로 감지) 더 나빴다: 이 경로는
-        # guess_other=False로 정규화하므로 모델이 넣은 그 옵션의 is_other는 계속
-        # False로 남고, 결과는 **자유 입력창이 하나도 없는** 상태였다(실측). 즉
-        # 감지해서 건너뛰면 고치려던 문제가 그대로 재현된다.
+        # One is appended even when the model already included an "Other" label. Not
+        # appending was tried first (detecting it with _looks_like_other) and was worse:
+        # this path normalises with guess_other=False, so the is_other of the option the
+        # model added stays False, and the result was a state with **no free-text box at
+        # all** (measured). Detecting and skipping simply reproduces the problem this is
+        # here to fix.
         #
-        # 중복으로 보이는 옵션이 하나 생기는 것은 감수한다 — 모델의 "Other"는
-        # 평범한 라디오 항목으로, X는 자유 입력창으로 렌더되므로 사용자가 할 수
-        # 있는 일은 줄지 않는다. 정규화의 is_other 축약(앞의 것을 강등)도 X가
-        # 유일한 is_other라 발동하지 않는다.
+        # One seemingly duplicate option is accepted as a cost -- the model's "Other"
+        # renders as an ordinary radio item and X as the free-text box, so nothing the
+        # user can do is taken away. Normalisation's is_other reduction (demoting the
+        # earlier one) also does not fire, since X is the only is_other.
         if options:
             options.append({"letter": _OTHER_LETTER, "text": _OTHER_TEXT,
                             "is_other": True, "recommended": False})
@@ -237,10 +257,11 @@ def question_file_from_sdk(sdk_questions: list[dict], *, name: str) -> dict:
             "multi_select": bool(q.get("multiSelect")),
             "options": options,
         })
-    # 정규화가 최종 계약을 강제한다 — 옵션 없는 질문은 여기서 ValueError.
-    # guess_other=False: SDK 옵션은 이미 구조화되어 있으니 텍스트로 Other를
-    # 추측하지 않는다("Other database" 같은 실제 옵션 라벨이 오판되는 것을
-    # 막는다). is_other 중복 축약은 그대로 적용된다.
+    # Normalisation enforces the final contract -- a question with no options raises
+    # ValueError here. guess_other=False: SDK options are already structured, so an
+    # Other is not guessed from the text (which keeps a real option label such as
+    # "Other database" from being misread). The is_other duplicate reduction still
+    # applies.
     return normalize_questions_payload(
         {"name": name, "preamble": None, "questions": questions},
         guess_other=False)

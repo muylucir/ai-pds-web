@@ -1,4 +1,11 @@
 # backend/aipds/parsers/audit.py
+#
+# The Korean below is deliberate and must not be translated: `## 최종 승인` and
+# `### 사용자 입력` are heading shapes this parser MATCHES in files the agent wrote
+# in Korean, and "AI 검증 요약"/"승인 게이트 이력" name actual review-page panels so a
+# reader can grep for them. Translating any of them would silently stop real
+# audit.md files from parsing -- the same class of failure as the `## 질문 N` heading
+# in parsers/questions.py.
 from __future__ import annotations
 import re
 from aipds.models import AuditEntry
