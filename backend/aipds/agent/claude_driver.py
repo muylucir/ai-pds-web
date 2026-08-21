@@ -89,9 +89,9 @@ from aipds.workspace_sync import publish_file
 
 _log = logging.getLogger("aipds.agent")
 
-#: 파일 쓰기 도구. discovery_guard가 소유한다 — PostToolUse(관측)와
-#: PreToolUse(차단)가 **같은** 집합을 봐야 한다. 두 벌로 두면 한쪽에만 도구가
-#: 추가되어 "관측되지만 막히지 않는" 구멍이 생긴다.
+#: The file-writing tools. Owned by discovery_guard -- PostToolUse (observing)
+#: and PreToolUse (blocking) must see **the same** set. Two copies means a tool
+#: gets added to only one of them, opening an "observed but not blocked" hole.
 _FILE_TOOLS = WRITE_TOOLS
 _LETTERS = "ABCDEFGHIJ"
 
@@ -110,23 +110,26 @@ _POLL_SECONDS = 0.05
 # error paths use: those are exception paths where the frontend substitutes its
 # own copy, whereas these are ordinary ends of a turn the user watched happen.
 
-# `ResultMessage.terminal_reason` 값 중 "취소됨"을 뜻하는 것들
-# (claude_agent_sdk/types.py:1249-1257): interrupt()로 끊긴 턴은 스트리밍 중이었든
-# 도구 실행 중이었든 이 둘 중 하나로 온다. 리터럴을 분기 안에 박지 않고 여기 모아
-# 두는 이유는 세 번째 값이 SDK에 추가됐을 때 이 목록 하나만 고치면 되게 하려는
-# 것이다.
+# The `ResultMessage.terminal_reason` values that mean "cancelled"
+# (claude_agent_sdk/types.py:1249-1257): a turn cut by interrupt() arrives as one
+# of these two, whether it was mid-stream or mid-tool. They are collected here
+# rather than inlined in the branch so that a third value appearing in the SDK
+# needs one edit in one place.
 _INTERRUPTED_TERMINAL_REASONS = frozenset({"aborted_streaming", "aborted_tools"})
 
-#: 중단된 턴을 표시하는 `status` 이벤트의 text. **기계 신호이고 사람이 읽는
-#: 문구가 아니다** — frontend/lib/useWorkspaceStream.ts가 이 값을 비교해
-#: interrupted 플래그를 세우고, 화면 문구("중단됨"/"Interrupted")는 프론트가
-#: UI 언어로 그린다. proto/builder.py가 같은 값을 쓴다 — 두 드라이버가 어긋나면
-#: 프론트가 경로에 따라 다르게 동작한다.
+#: The `status` event text that marks an interrupted turn. **A machine signal,
+#: not human-facing wording** -- frontend/lib/useWorkspaceStream.ts compares
+#: against this value to set its interrupted flag, and the on-screen wording
+#: ("중단됨"/"Interrupted" -- quoted verbatim so a reader can grep the i18n keys)
+#: is drawn by the frontend in the UI language.
+#: proto/builder.py uses the same value: if the two drivers diverge, the frontend
+#: behaves differently depending on which path produced the turn.
 #:
-#: 언어 중립인 이유가 승인 마커(frontend/lib/approvalMarker.ts)와 다르다는 점에
-#: 주의: 저쪽은 에이전트에게 가고 트랜스크립트에 사용자 말풍선으로 남으므로
-#: 프로젝트 언어의 단어여야 한다. 이 마커는 라이브 SSE 큐에만 있고 아무도
-#: 읽지 않는다.
+#: Note that the reason this one is language-neutral differs from the approval
+#: marker (frontend/lib/approvalMarker.ts): that marker goes to the agent and stays
+#: in the transcript as the user's bubble, so it has to be a word in the project's
+#: language. This marker only ever exists in the live SSE queue and no human reads
+#: it.
 INTERRUPTED_MARKER = "interrupted"
 
 # Discovery runs with a human in the loop watching the chat, unlike the
@@ -138,31 +141,41 @@ INTERRUPTED_MARKER = "interrupted"
 # the turn with no operator to answer the CLI-level prompt.
 DEFAULT_PERMISSION_MODE = "bypassPermissions"
 
-#: 질문 파일을 PostToolUse 훅에서 **파일 그대로** 물을지. **기본 켜짐.**
+#: Whether the PostToolUse hook asks question files **verbatim from the file**.
+#: **On by default.**
 #:
-#: 이것이 유일한 질문 경로다 — 켜지면 AskUserQuestion 호출은 거부되고 거부
-#: 메시지가 질문 파일을 쓰라고 돌려보낸다. 둘을 동시에 켜면 같은 질문이 화면에
-#: 두 번 뜬다(에이전트가 파일을 쓰고, 훅이 카드를 띄우고, 이어서 도구까지 부른다).
+#: This is the only question path: when it is on, AskUserQuestion calls are denied
+#: and the denial sends the model back to writing a question file. Having both on
+#: puts the same question on screen twice (the agent writes the file, the hook
+#: shows the card, and then the tool call follows).
 #:
-#: **왜 기본이 켜짐인가.** 파일에 쓴 질문을 이 도구의 입력으로 다시 만들면서
-#: 실측 19문항 중 15개(79%)가 훼손됐다 — 한글 문자 치환 11건("푸로토하이프가 …
-#: 어느 쉘입니까?"가 화면에 떴다), 축약으로 답변 유실 4건. 파일을 그대로 읽으면
-#: 그 실패 종류가 사라진다.
+#: **Why on by default.** Rebuilding questions already written to a file as this
+#: tool's input mangled 15 of 19 measured questions (79%) -- 11 cases of
+#: substituted Hangul characters, and 4 answers lost to abbreviation. Reading the
+#: file verbatim removes that entire class of failure.
 #:
-#: 2026-08-17에 실제 Discovery 턴으로 한 바퀴 돌려 뒤집었다: 훅이 카드를 띄우고
-#: 턴이 멈추고, 답변이 파일에 기록되고, **다음 턴에 모델이 그 답을 읽어 워크플로우를
-#: 이어갔다**(AskUserQuestion을 다시 부르지 않았다). 그 마지막 지점이 유일한
-#: 미검증 항목이었다.
+#: The garbled text is kept verbatim because it IS the evidence: the screen showed
+#: "푸로토하이프가 … 어느 쉘입니까?" where the original asked which shell the
+#: prototype should use -- the characters themselves were substituted, so
+#: paraphrasing it in English would destroy the very thing being reported.
 #:
-#: 탈출로: 이 env를 falsy로 두면 옛 경로로 돌아간다. 인스턴스에서는 user-data가
-#: systemd `Environment=`로 값을 주입하므로 그 파일을 고치면 인스턴스 교체가
-#: 필요하다 — 대신 gitignore된 `backend/.env`를 만들면 `aipds-update`가
-#: 되돌리지 않으므로(추적되지 않는 파일) 재배포 없이 끌 수 있다.
+#: Flipped on 2026-08-17 after a full pass through a real Discovery turn: the hook
+#: showed the card, the turn stopped, the answers were recorded into the file, and
+#: **on the next turn the model read those answers and carried the workflow on**
+#: (it did not call AskUserQuestion again). That last point was the only unverified
+#: item.
+#:
+#: Escape hatch: set this env to a falsy value to return to the old path. On the
+#: instance, user-data injects the value through systemd `Environment=`, so editing
+#: that file requires an instance replacement -- creating a gitignored
+#: `backend/.env` instead lets you turn it off without a redeployment, because
+#: `aipds-update` will not revert an untracked file.
 FILE_QUESTIONS_ENV = "AIPDS_FILE_QUESTIONS"
 
-#: 불리언 env를 **끄는** 쪽으로 읽을 값. cli_settings.py·routes/proto_public.py의
-#: `_TRUTHY`와 같은 규율의 반대편이다 — 기본이 켜짐인 설정은 "값이 없음"을 켜짐으로
-#: 읽어야 하므로 켜는 목록이 아니라 끄는 목록이 필요하다.
+#: The values that read a boolean env as **off**. The mirror image of
+#: `_TRUTHY` in cli_settings.py and routes/proto_public.py: a setting that
+#: defaults to ON has to read "no value" as on, so it needs a list of what turns
+#: it off rather than a list of what turns it on.
 _FALSY = {"0", "false", "no", "off"}
 
 
@@ -471,9 +484,10 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
         }
         if driver._anthropic_model:
             env["ANTHROPIC_MODEL"] = driver._anthropic_model
-        # 자동 컴팩션 시점. 미설정이면 키가 없고 CLI 기본값으로 간다.
-        # Discovery가 후반 스테이지에서 요약된 컨텍스트로 문서를 쓰는 것을
-        # 늦추는 스위치다(cli_settings 헤더의 실측 264k→53k).
+        # When auto-compaction kicks in. Unset means the key is absent and the
+        # CLI default applies. This is the switch that delays Discovery writing
+        # its late-stage documents from a summarised context (cli_settings'
+        # header records the measurement: 264k -> 53k).
         env.update(cli_context_env())
         session_id, resume = _sdk_session_id(session)
         options = ClaudeAgentOptions(
@@ -487,18 +501,21 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # (skills="all", for shadcn-design), Discovery's upstream AI-PLC
             # setup has no skills of its own -- it is CLAUDE.md plus on-demand
             # rule-file reads (discovery-config/README.md).
-            # **커스텀 도구가 없다.** `mcp_servers`와 `allowed_tools`를 아예 넘기지
-            # 않는다(둘의 SDK 기본값이 `{}`/`[]`이므로 내장 도구는 그대로다).
+            # **There are no custom tools.** `mcp_servers` and `allowed_tools`
+            # are not passed at all (their SDK defaults are `{}`/`[]`, so the
+            # built-in tools are unaffected).
             #
-            # 셋이었다: `report_stage`와 `handoff_prototype`이 2026-08-18에,
-            # `submit_document`가 2026-08-21에 PostToolUse 훅으로 옮겨 갔다. 판정
-            # 기준은 매번 같았다 — **신호가 워크스페이스에서 유도되는가.** 도구는
-            # 모델이 부르지 않으면 침묵하고, 그 침묵이 세 번 실측됐다
-            # (agent/reconcile.py 헤더 + useWorkspaceStream.ts:177).
+            # There were three: `report_stage` and `handoff_prototype` moved to the
+            # PostToolUse hook on 2026-08-18, `submit_document` on 2026-08-21. The
+            # test was the same every time -- **can the signal be derived from the
+            # workspace?** A tool is silent unless the model calls it, and that
+            # silence was measured three times (agent/reconcile.py's header plus
+            # useWorkspaceStream.ts:177).
             #
-            # 도구를 없애면 두 값을 함께 돌려받는다: 호출마다 붙던 추론 왕복과, 매 턴
-            # 컨텍스트에 실리던 도구 설명. 되살릴 때는 그 값을 내는 것이므로,
-            # "신호가 파일에서 유도되지 않는다"를 먼저 보여야 한다.
+            # Removing a tool wins back two things: the inference round trip each
+            # call added, and the tool description carried in the context every
+            # turn. Bringing one back spends those again, so it has to first
+            # demonstrate that its signal cannot be derived from a file.
             # Exactly one of the two, never both: the CLI rejects
             # `--session-id` alongside `--resume` unless `--fork-session` is
             # also passed ("--session-id can only be used with --continue or
@@ -537,17 +554,18 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # SSE `questions` event). Dropping the callback to silence the
             # warning would break that.
             can_use_tool=driver._on_can_use_tool,
-            # PreToolUse가 이 제품의 유일한 실효 게이트다. 위 can_use_tool은
-            # bypassPermissions에서 Write/Bash에 대해 호출되지 않는다 — SDK가
-            # 그 사실과 해법을 직접 적어 뒀다(types.py의
-            # _get_can_use_tool_shadowed_warning: "To gate every tool call, use
-            # a PreToolUse hook instead").
+            # PreToolUse is this product's only gate that actually takes effect.
+            # The can_use_tool above is not invoked for Write/Bash under
+            # bypassPermissions -- the SDK states both the fact and the remedy
+            # itself (types.py's _get_can_use_tool_shadowed_warning: "To gate every
+            # tool call, use a PreToolUse hook instead").
             #
-            # **matcher에 AskUserQuestion을 넣지 않는다.** types.py의 can_use_tool
-            # 설명에 따르면 PreToolUse 훅이 *allow*를 돌려주면 can_use_tool도
-            # 건너뛴다 — 질문 가로채기가 그 콜백에 있으므로 그러면 질문 왕복
-            # 전체가 죽는다. 같은 이유로 _on_pre_tool_use는 통과시킬 때
-            # "allow"가 아니라 **빈 dict**를 돌려준다.
+            # **AskUserQuestion is deliberately absent from the matcher.** Per
+            # types.py's can_use_tool description, a PreToolUse hook returning
+            # *allow* also skips can_use_tool -- and the question interception lives
+            # in that callback, so doing so would kill the whole question round
+            # trip. For the same reason _on_pre_tool_use returns an **empty dict**
+            # rather than "allow" when it lets a call through.
             hooks={
                 "PreToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit|Bash",
                                            hooks=[driver._on_pre_tool_use])],
@@ -603,15 +621,19 @@ class ClaudeDriver:
         self._session_store: Any = (session_store if session_store is not None
                                     else DiscoverySessionStore(s3))
         self._anthropic_model = anthropic_model
-        # 이 프로젝트의 생성물 언어. 두 곳으로 흐른다: place_rules(워크스페이스
-        # CLAUDE.md의 언어 지시)와 이 드라이버가 만드는 모델·사용자 대상
-        # 텍스트(agent/prompts.py). 셋이었던 시절의 세 번째는 커스텀 도구의 설명·반환
-        # 문자열이었고, Discovery의 도구가 2026-08-21에 사라지면서 그 채널도 사라졌다.
+        # This project's output language. It flows to two places: place_rules
+        # (the language directive in the workspace CLAUDE.md) and the
+        # model/user-facing texts this driver builds (agent/prompts.py). Back when
+        # there were three, the third was the custom tools' descriptions and return
+        # strings; that channel disappeared when Discovery's tools did on
+        # 2026-08-21.
         #
-        # 처음에는 place_rules 하나뿐이었고 그것이 결함이었다 — 지시만 영어로
-        # 바꿔도 도구 설명과 거부 메시지가 한국어로 남아 매 턴 모델 컨텍스트에
-        # 들어갔다. 공유 CLAUDE_CONFIG_DIR은 전 프로젝트가 공유하므로 여전히
-        # 프로젝트 언어를 담을 수 없다(그래서 그쪽 문서는 언어 중립이어야 한다).
+        # At first place_rules was the only one, and that was the defect: switching
+        # the directive to English still left tool descriptions and refusals in
+        # Korean, entering the model's context every turn. The shared
+        # CLAUDE_CONFIG_DIR is shared by every project and so still cannot carry a
+        # project language -- which is why the documents there have to be
+        # language-neutral.
         self._language = language
         self._permission_mode = _validate_permission_mode(permission_mode)
         self._client_factory = client_factory or _default_client_factory(self)
@@ -625,36 +647,44 @@ class ClaudeDriver:
         self._pending_question: asyncio.Future | None = None
         self._pending_payload: str | None = None
         self._pending_iid: str | None = None
-        # (도구 이름, detail) — 이름만으로 접으면 파일이 다른 연속 Read가
-        # 한 줄로 뭉개진다. INTERRUPTED_MARKER 비교는 event.text로 하므로
-        # 이 키가 튜플이 되어도 그 경로는 영향받지 않는다.
+        # (tool name, detail) -- collapsing on the name alone would squash
+        # consecutive Reads of *different* files into one line. The
+        # INTERRUPTED_MARKER comparison is done on event.text, so making this key a
+        # tuple does not affect that path.
         self._last_status: tuple[str, str | None] | None = None
-        # rel path → 그 파일에서 **이미 물어본 미답 문항 집합**. 같은 집합을 두 번
-        # 묻지 않는 가드다(_file_question_round 참조). 드라이버 인스턴스가 프로젝트
-        # 수명을 살기 때문에 턴을 넘어 유지된다 — 백엔드 재시작 시 비지만, 그때는
-        # 답변이 이미 파일에 있으므로 "미답 문항 없음" 조건이 재질문을 막는다.
+        # rel path -> the set of **unanswered questions already asked** from that
+        # file. The guard against asking the same set twice (see
+        # _file_question_round). It survives across turns because the driver
+        # instance lives for the life of the project. A backend restart empties it,
+        # but by then the answers are already in the file, so the "no unanswered
+        # questions" condition prevents a re-ask.
         self._asked_question_sets: dict[str, tuple[str, ...]] = {}
-        # rel path → 파싱 실패를 이미 알린 내용. 같은 내용에 같은 노트를 반복하지
-        # 않되, 내용이 달라지면 다시 알린다(_on_post_tool_use 참조).
+        # rel path -> the content whose parse failure has already been reported.
+        # Avoids repeating the same note for the same content, while reporting
+        # again when the content changes (see _on_post_tool_use).
         self._unparsed_noted: dict[str, str] = {}
-        # 스테이지 이름 → 이미 흘린 상태. `aiplc-state.md`에서 유도한 `stage`
-        # 이벤트의 diff 커서다(agent/reconcile.stage_events). 프론트가 이벤트를
-        # 누적하므로 같은 상태를 다시 흘리면 사이드바 목록이 자란다.
+        # Stage name -> the status already emitted for it. The diff cursor for
+        # the `stage` events derived from `aiplc-state.md`
+        # (agent/reconcile.stage_events). The frontend accumulates these events, so
+        # re-emitting the same status grows the sidebar list.
         #
-        # 드라이버 인스턴스가 프로젝트 수명을 사는 것에 의존하지 않는다: 백엔드
-        # 재시작으로 커서가 비면 다음 상태 파일 쓰기에서 전체를 한 번 다시 흘리고,
-        # 프론트는 그 시점에 이미 REST로 상태를 읽어 화면을 세운 뒤다.
+        # This does not depend on the driver instance living for the life of the
+        # project: if a backend restart empties the cursor, the next state file
+        # write re-emits the whole set once -- and by then the frontend has already
+        # built the screen from the REST read.
         self._stage_status: dict[str, str] = {}
-        # 이미 `prototype_ready`를 흘린 프로토타입 id. 두 번 알리면 채팅에 카드가
-        # 두 장 뜬다(agent/reconcile.prototype_events).
+        # The prototype ids already announced via `prototype_ready`. Announcing
+        # twice puts two cards in the chat (agent/reconcile.prototype_events).
         self._handed_off: set[str] = set()
-        # 산출물 경로 → (버전, 내용 해시). `document` 이벤트의 diff 커서다
-        # (agent/reconcile.document_events). 해시가 "바뀌었나"를, 서수가 "몇 번째
-        # 갱신인가"를 답한다 — 배너의 닫기가 버전을 기억하므로 갱신마다 값이
-        # 달라져야 한다. 재시작으로 비면 서수가 1로 돌아가고, 그 대가는
-        # reconcile.document_events가 적어 뒀다.
+        # Artifact path -> (version, content hash). The diff cursor for
+        # `document` events (agent/reconcile.document_events). The hash answers
+        # "did it change" and the ordinal answers "which revision is this" -- the
+        # banner's close button remembers the version, so the value has to differ
+        # per update. A restart empties it and the ordinal returns to 1; the cost of
+        # that is recorded in reconcile.document_events.
         self._doc_versions: dict[str, tuple[int, str]] = {}
-        # 위 커서를 디스크 상태로 한 번 채웠는지. `_seed_document_cursor` 참조.
+        # Whether the cursor above has been seeded once from the disk. See
+        # `_seed_document_cursor`.
         self._docs_seeded = False
         self._current_session_id: str | None = None
         # The task draining the current turn's receive_response(). Outlives the
@@ -668,20 +698,23 @@ class ClaudeDriver:
 
     # ---- plumbing ----
 
-    # `_publish`가 여기 있었다. `report_stage`가 상태 파일을 직접 쓰면서 PostToolUse
-    # 훅을 지나지 않았기 때문에 그 도구에게 게시자를 손에 쥐여 줘야 했다. 그 도구가
-    # 훅으로 옮겨 간 뒤(agent/reconcile.py) 상태 파일도 다른 산출물과 같은 경로로
-    # 게시되므로 예외가 사라졌고, 예외를 위한 게시자도 사라졌다. 게시는
-    # `_on_post_tool_use`가 `publish_file`을 직접 부른다.
+    # `_publish` used to live here. `report_stage` wrote the state file directly
+    # and so bypassed the PostToolUse hook, which meant that tool had to be handed
+    # a publisher of its own. Once it moved to the hook (agent/reconcile.py) the
+    # state file started being published through the same path as every other
+    # artifact -- the exception disappeared, and with it the publisher that existed
+    # for the exception. Publishing is now `_on_post_tool_use` calling
+    # `publish_file` directly.
 
     def _emit(self, event: AgentEvent) -> None:
-        """이벤트를 턴 큐에 넣는다.
+        """Put an event on the turn queue.
 
-        커스텀 도구에게 넘기는 `emit` 싱크였다. 그 도구들이 훅으로 옮겨 간 뒤
-        (마지막이 2026-08-21의 `submit_document`) 프로덕션 호출부가 없어졌지만,
-        `_queue`에 직접 append하는 것보다 의도가 드러나므로 남긴다 — 유도된
-        이벤트는 `_emit_stage_events`·`_emit_document_events`·`_handoff_stop`이
-        각자 append한다.
+        This was the `emit` sink handed to the custom tools. After those tools moved
+        to hooks (the last being `submit_document` on 2026-08-21) it has no
+        production caller, but it is kept because it states intent more clearly than
+        appending to `_queue` directly -- the derived events are appended by
+        `_emit_stage_events`, `_emit_document_events` and `_handoff_stop`
+        themselves.
         """
         self._queue.append(event)
 
@@ -815,32 +848,37 @@ class ClaudeDriver:
         return True
 
     async def interrupt(self) -> None:
-        """진행 중인 턴을 끊는다. 지금까지 한 작업은 살린다.
+        """Interrupt the turn in progress, keeping the work done so far.
 
-        proto/builder.py의 interrupt를 패턴으로 따르되 한 가지가 다르다 —
-        Discovery의 pending 질문은 S3에도 미러링된다(agent/pending_store.py).
-        인메모리만 지우면 `GET /pending`이 답할 수 없는 질문을 복원하고,
-        사용자가 제출한 답변은 아무도 듣지 않는 future를 resolve한다.
+        This follows proto/builder.py's interrupt as its pattern, with one
+        difference: Discovery's pending question is also mirrored to S3
+        (agent/pending_store.py). Clearing only the in-memory copy would let
+        `GET /pending` restore a question nobody can answer, and the answers the user
+        submits would resolve a future nobody is listening on.
 
-        순서가 load-bearing이다: 우리 상태를 먼저 정리하고 마지막에 클라이언트를
-        건드린다. client.interrupt()가 던져도 pending이 남지 않는다.
+        The order is load-bearing: clean up our own state first and touch the client
+        last. That way a throwing client.interrupt() cannot leave a pending question
+        behind.
 
-        멱등: 돌고 있는 턴이 없으면 아무것도 하지 않는다. 라우트는 세션 유무만
-        보고 이 메서드를 부르므로 이미 끝난 턴에 대한 요청이 정상적으로 들어온다.
+        Idempotent: with no turn running it does nothing. The route calls this method
+        based only on whether a session exists, so requests about an
+        already-finished turn arrive as a matter of course.
 
-        `_turn_token`이 아니라 `_turn_active`/`_pending_question`으로 판단한다.
-        질문에서 파킹된 턴은 run()의 제너레이터가 questions -> done으로 끝나며
-        `_release_turn`이 이미 돌아 `_turn_token`이 None이 된 뒤에도 CLI
-        서브프로세스와 `_pending_question` future는 여전히 살아 있다(파일 상단
-        "single-turn slot" 절 참고) — `_turn_token`으로 판단하면 정확히 중단해야
-        할 그 상태(파킹된 질문)를 "중단할 것 없음"으로 오판한다.
+        The decision is made on `_turn_active`/`_pending_question`, not on
+        `_turn_token`. A turn parked on a question ends its run() generator with
+        questions -> done, so `_release_turn` has already run and `_turn_token` is
+        None -- while the CLI subprocess and the `_pending_question` future are still
+        very much alive (see the "single-turn slot" section at the top of this file).
+        Deciding on `_turn_token` would therefore misread exactly the state that
+        needs interrupting (a parked question) as "nothing to interrupt".
 
-        **`has_live_turn`이 그 계열의 세 번째 경우다(2026-08-19).** 소비자가
-        사라진 채 생성 중인 턴은 `_turn_active`가 False이고 파킹된 질문도 없다 —
-        위 두 조건만 보면 "중단할 것 없음"이 되어 아무것도 하지 않았다. `run()`이
-        진행 중인 턴을 덮지 못하게 거부하기 시작한 지금 그것은 **막힘**이다:
-        재접속해서 볼 수는 있지만 끊을 수가 없고, 새 메시지도 거부된다. 절전에서
-        돌아온 사용자에게 유일한 탈출구가 이 경로다.
+        **`has_live_turn` is the third case in that family (2026-08-19).** A turn
+        still generating with its consumer gone has `_turn_active` False and no
+        parked question -- so on the two conditions above it read as "nothing to
+        interrupt" and did nothing. Now that `run()` refuses to overwrite an
+        in-flight turn, that state is **a dead end**: the user can reattach and watch
+        but cannot stop it, and a new message is refused too. This path is their only
+        way out after waking from sleep.
         """
         if self._client is None:
             return
@@ -848,30 +886,35 @@ class ClaudeDriver:
                 and not self.has_live_turn()):
             return
         if self._pending_question is not None and not self._pending_question.done():
-            # 이 future를 기다리던 _on_can_use_tool은 턴과 함께 버려진다.
+            # The _on_can_use_tool awaiting this future is discarded along with
+            # the turn.
             self._pending_question.cancel()
         self._clear_pending_state()
         await self._clear_pending_quietly()
-        # 큐에 남은 questions 이벤트는 답할 수 없는 카드다 — 흘려보내면 화면에
-        # 폼이 뜬다.
+        # A questions event left in the queue is a card nobody can answer --
+        # letting it through puts a form on screen.
         self._queue = [e for e in self._queue if e.kind != "questions"]
-        # 중단 사실을 남긴다. 새 kind를 만들지 않고 기존 status로 흘리는 이유는
-        # 프론트가 이미 다루는 이벤트 모양을 재사용하기 위해서다 — 프론트는 이
-        # 마커를 보고 그 턴에 "중단됨" 한 줄을 UI 언어로 그린다. 이 마커는
-        # 라이브 SSE 큐에만 있다 — 트랜스크립트에 들어가지 않으므로 새로고침 후
-        # 복원되지 않는다.
+        # Record that the turn was interrupted. This rides the existing `status`
+        # kind rather than a new one so it reuses an event shape the frontend
+        # already handles -- the frontend sees this marker and draws a one-line
+        # "interrupted" note on that turn in the UI language. The marker exists only
+        # in the live SSE queue: it never enters the transcript, so it is not
+        # restored after a refresh.
         self._queue.append(AgentEvent(kind="status", text=INTERRUPTED_MARKER))
         await self._client.interrupt()
 
     async def _on_pre_tool_use(self, input_data, tool_use_id, context) -> dict:
-        """Discovery의 쓰기 범위 게이트. 판정은 agent/discovery_guard.py.
+        """Discovery's write-scope gate. The decision itself is in
+        agent/discovery_guard.py.
 
-        왜 훅인가: Discovery는 bypassPermissions로 돌아 Write/Bash가 자동
-        승인되고 can_use_tool에 도달하지 않는다 — SDK가 지정한 유일한 게이트가
-        PreToolUse다(그 근거는 위 팩토리의 hooks 주석과 discovery_guard 헤더).
+        Why a hook: Discovery runs under bypassPermissions, so Write/Bash are
+        auto-approved and never reach can_use_tool -- PreToolUse is the only gate the
+        SDK offers (the rationale is in the factory's hooks comment above and in
+        discovery_guard's header).
 
-        **통과는 빈 dict다.** "allow"를 돌려주면 can_use_tool까지 건너뛰어
-        AskUserQuestion 가로채기가 죽는다(types.py의 can_use_tool 설명).
+        **Passing through returns an empty dict.** Returning "allow" would also skip
+        can_use_tool and kill the AskUserQuestion interception (see types.py's
+        can_use_tool description).
         """
         name = input_data.get("tool_name", "")
         tool_input = input_data.get("tool_input") or {}
@@ -884,13 +927,14 @@ class ClaudeDriver:
             reason = (None if offender is None
                       else prompts.build_command_refused(self._language, offender))
         else:
-            # matcher가 위 셋만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
-            # 통과해야 한다 — 알 수 없는 도구를 막으면 턴이 멈춘다.
+            # The matcher only catches the three above, but if the hook
+            # configuration and this branch ever diverge it must pass through
+            # quietly -- blocking an unknown tool stops the turn.
             return {}
         if reason is None:
             return {}
-        # 로그로 남긴다: 거부 이유는 모델에게만 가므로, 무엇이 막혔는지
-        # 운영자가 확인할 경로가 따로 필요하다.
+        # Log it: the refusal reason goes only to the model, so an operator needs
+        # a separate way to see what was blocked.
         _log.warning("discovery gate denied %s: %s", name, offender)
         return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -899,38 +943,46 @@ class ClaudeDriver:
         }}
 
     def _file_question_round(self, rel: str) -> tuple[Any, str] | None:
-        # 돌려주는 것 셋: None(해당 없음) / ("unparsed", 원문) / (QuestionFile, 원문).
-        # 파싱 실패를 None과 구별하는 이유는 침묵이 곧 질문 소실이기 때문이다.
-        """방금 써진 `rel`이 **물어야 할 질문 라운드**면 `(파싱 결과, 원문)`을 준다.
+        # Three possible returns: None (not applicable), ("unparsed", raw text),
+        # or (QuestionFile, raw text). Parse failure is kept distinct from None
+        # because silence here means the question is lost.
+        """If the just-written `rel` is **a question round that should be asked**, return
+        `(parse result, raw text)`.
 
-        원문을 함께 주는 이유: 호출부가 그 파일을 S3에 올려야 하고(카드를 광고하기
-        전에 정본에 있어야 한다), 같은 파일을 두 번 읽을 이유가 없다.
+        The raw text comes back too because the caller has to upload that file to S3
+        (it must be in the source of record before the card is advertised), and there
+        is no reason to read the same file twice.
 
-        네 가지를 모두 만족해야 한다:
+        All four conditions must hold:
 
-        1. **`looks_like_question_file`이 참이어야 한다** — 줄 맨 앞의 `[Answer]:`
-           슬롯이 있고, 이름이 `NEVER_QUESTION_FILES`가 아니어야 한다.
-           포함은 이름이 아니라 내용으로 판단한다: 상류는 자기 명명규칙
-           (`{phase}-questions.md`)을 어긴 전례가 있다 — `design-context.md`에도
-           질문을 넣었다(question_file_answers.py 헤더). 반대로 audit.md처럼 상류가
-           **용도를 규정한** 파일은 이름으로 제외한다.
+        1. **`looks_like_question_file` must be true** -- there is a line-initial
+           `[Answer]:` slot and the name is not in `NEVER_QUESTION_FILES`.
+           Inclusion is decided by content, not by name: upstream has broken its own
+           naming convention (`{phase}-questions.md`) before -- it also put questions
+           in `design-context.md` (see question_file_answers.py's header).
+           Conversely, files whose **purpose upstream defines**, such as audit.md,
+           are excluded by name.
 
-           2026-08-18까지 이 관문이 되기록과 갈라져 있었다(여기는
-           `"[Answer]:" in md` 단순 포함, 저쪽은 `^` 앵커). 그래서 audit.md가
-           태그를 기록하자 여기에만 걸렸고, 에이전트가 "audit.md는 질문 파일이
-           아니므로 그 표기를 없애겠다"며 **자기 감사 기록을 훼손**했다 —
-           `core-workflow.md:303`이 원문 그대로 남기라고 요구한 그 기록이다.
-        2. `parse_ok`. 파싱이 안 되면 **조용히 지나간다.** 상류 포맷은 안정적이지
-           않으므로(2026-08-17: 8파일 중 1개가 파서를 벗어났다) 여기서 막으면
-           질문이 화면에 아예 뜨지 않는다 — 차단이 아니라 열화여야 한다.
-        3. 답이 비어 있는 문항이 하나라도 있어야 한다. 에이전트가 답변을 되읽고
-           파일을 다시 쓰는 것은 정상 동작이고, 그때 다시 물으면 안 된다.
-        4. **같은 미답 문항 집합을 두 번 묻지 않는다.** 가드를 파일 단위가 아니라
-           미답 문항 집합으로 두는 이유: 답변 뒤 문항이 추가되는 경우
-           (`### Clarification Question 2`)는 물어야 한다.
+           Until 2026-08-18 this gate had drifted from the write-back path (here a
+           plain `"[Answer]:" in md`; there `^`-anchored). So when audit.md recorded a
+           tag it matched only here, and the agent -- reasoning that "audit.md is not
+           a question file, so I will remove that notation" -- **damaged its own audit
+           record**, the very record `core-workflow.md:303` requires to be kept
+           verbatim.
+        2. `parse_ok`. If it does not parse, **pass over quietly.** The upstream
+           format is not stable (2026-08-17: 1 of 8 files fell outside the parser), so
+           blocking here would mean the question never reaches the screen at all --
+           this has to degrade, not block.
+        3. At least one question must have an empty answer. The agent re-reading
+           answers and rewriting the file is normal behaviour, and must not trigger a
+           re-ask.
+        4. **Never ask the same set of unanswered questions twice.** The guard is
+           keyed on the set of unanswered questions rather than on the file, because a
+           question added after answers arrive (`### Clarification Question 2`) does
+           need asking.
 
-        디스크에서 읽는다 — `Edit`/`MultiEdit`의 tool_input에는 전체 내용이 없고,
-        PostToolUse는 쓰기가 끝난 뒤에 돈다.
+        This reads from disk: `Edit`/`MultiEdit`'s tool_input does not carry the
+        full content, and PostToolUse runs after the write has completed.
         """
         from aipds.parsers.questions import parse_question_file
         try:
@@ -941,8 +993,9 @@ class ClaudeDriver:
             return None
         qfile = parse_question_file(rel, md)
         if not qfile.parse_ok:
-            # 조용히 넘기지 않는다 — AskUserQuestion이 거부되는 지금 이것은 질문의
-            # 완전한 소실이다(prompts.file_questions_unparsed의 근거).
+            # Do not pass this over quietly: now that AskUserQuestion is denied,
+            # this is the complete loss of the question (the rationale is in
+            # prompts.file_questions_unparsed).
             return "unparsed", md
         unanswered = tuple(q.ask or q.text for q in qfile.questions
                            if not (q.answer or "").strip())
@@ -954,11 +1007,13 @@ class ClaudeDriver:
         return qfile, md
 
     def _emit_stage_events(self) -> None:
-        """`aiplc-state.md`를 읽어 상태가 바뀐 스테이지만 `stage`로 흘린다.
+        """Read `aiplc-state.md` and emit `stage` only for the stages whose status
+        changed.
 
-        커서(`self._stage_status`)를 갱신하는 유일한 자리다 — 훅 경로와 턴 경계
-        재조정이 **같은 함수**를 지나므로 두 경로가 같은 diff를 본다. 두 벌로 두면
-        한쪽이 흘린 것을 다른 쪽이 다시 흘린다.
+        The only place that updates the cursor (`self._stage_status`) -- the hook path
+        and the turn-boundary reconciliation both go through **the same function**, so
+        both see the same diff. Two copies would mean one re-emitting what the other
+        already emitted.
         """
         events, self._stage_status = reconcile.stage_events(
             reconcile.read_state(Path(self._workspace)), self._stage_status)
@@ -966,11 +1021,13 @@ class ClaudeDriver:
             self._queue.append(ev)
 
     def _emit_document_events(self) -> None:
-        """내용이 바뀐 산출물만 `document`로 흘린다. 옛 `submit_document`를 대체한다.
+        """Emit `document` only for artifacts whose content changed. Replaces the old
+        `submit_document`.
 
-        `_emit_stage_events`와 같은 이유로 함수가 하나다 — 훅 경로와 턴 경계가 **같은
-        커서**를 지나야 한다. 두 벌로 두면 턴 경계가 훅이 이미 알린 문서를 다시
-        알리고, 갱신 배너가 문서마다 두 번 뜬다.
+        One function for the same reason as `_emit_stage_events`: the hook path and
+        the turn boundary must go through **the same cursor**. Two copies would have
+        the turn boundary re-announce a document the hook already announced, raising
+        the update banner twice per document.
         """
         events, self._doc_versions = reconcile.document_events(
             Path(self._workspace), self._doc_versions)
@@ -978,23 +1035,26 @@ class ClaudeDriver:
             self._queue.append(ev)
 
     def _seed_document_cursor(self) -> None:
-        """첫 턴이 시작할 때 **이미 있던** 문서를 "본 것"으로 표시한다.
+        """Mark the documents that **already existed** when the first turn started as
+        "seen".
 
-        `document`는 워크스페이스 스캔에서 유도되므로 커서가 빈 채로 턴이 시작하면
-        기존 문서가 전부 새 문서로 보인다. 커서를 드는 주체가 이 드라이버이므로 그
-        상태는 **새 드라이버의 첫 턴**에서 온다 — 백엔드 재시작이나 재배포 뒤 첫
-        attach가 그것이고, 그때 트리는 이미 채워져 있다(cold restore가 전부 내려받거나
-        로컬 워크스페이스가 이전 턴에서 남아 있다). 문서 열 개짜리 프로젝트라면 열 번
-        알리고, 갱신 배너는 방금 쓴 문서가 아니라 스캔 순서상 마지막 문서를 가리킨다.
+        `document` is derived from a workspace scan, so a turn starting with an empty
+        cursor makes every existing document look new. This driver is what holds the
+        cursor, so that state arrives on **a new driver's first turn** -- the first
+        attach after a backend restart or a redeployment, at which point the tree is
+        already populated (either a cold restore downloaded everything, or the local
+        workspace survived from an earlier turn). A project with ten documents would
+        announce ten times, and the update banner would point at whichever document
+        came last in the scan rather than the one just written.
 
-        **한 번만 한다.** 매 턴 씨딩하면 턴 사이에 바뀐 문서를 조용히 삼킨다(다른
-        인스턴스의 쓰기, 복원된 내용이 다른 경우). 첫 턴 이후로는 모든 변경이 알림
-        대상이다.
+        **It runs once.** Seeding every turn would quietly swallow documents changed
+        between turns (a write from another instance, or restored content that
+        differs). After the first turn, every change is announced.
 
-        **`__init__`이 아니라 여기인 이유**도 그 복원이다: 드라이버가 만들어지는
-        시점의 워크스페이스는 비어 있고, 채워지는 것은 러너가 `run()`을 부르기
-        직전이다. 생성 시점에 씨딩하면 아무것도 못 보고, 그러면 첫 턴이 다시 전부를
-        알린다.
+        **Why here and not in `__init__`** comes down to that restore: the workspace
+        is empty when the driver is constructed and is filled in just before the
+        runner calls `run()`. Seeding at construction time would see nothing, and then
+        the first turn would announce everything all over again.
         """
         if self._docs_seeded:
             return
@@ -1003,14 +1063,16 @@ class ClaudeDriver:
             Path(self._workspace), self._doc_versions)
 
     def _reconcile_turn(self) -> None:
-        """턴이 끝나기 전에 워크스페이스와 UI를 맞춘다. `_pump`가 부른다.
+        """Align the workspace and the UI before the turn ends. Called by `_pump`.
 
-        훅이 못 본 변경(Bash 경유)과 놓친 이벤트(배치 드롭)를 여기서 되찾는다.
-        인계는 알리기만 하고 **턴을 끊지 않는다** — 턴은 이미 끝나는 중이고,
-        여기서 `continue_: False`를 낼 자리도 없다.
+        This recovers the changes the hook could not see (via Bash) and the events it
+        missed (a dropped batch). A handoff is only announced here, **the turn is not
+        cut** -- the turn is already ending, and there is nowhere here to return
+        `continue_: False` from anyway.
 
-        예외를 삼킨다. 재조정은 백스톱이므로 그것이 턴을 실패시키면 백스톱이
-        아니라 새 실패 원인이 된다(runner._sync_abandoned_turn이 같은 판단이다).
+        Exceptions are swallowed. Reconciliation is a backstop, and a backstop that
+        fails the turn is not a backstop but a new cause of failure
+        (runner._sync_abandoned_turn makes the same judgement).
         """
         try:
             self._emit_stage_events()
@@ -1029,25 +1091,28 @@ class ClaudeDriver:
             _log.exception("document reconciliation failed")
 
     def _handoff_stop(self, rel: str) -> dict | None:
-        """`build-instructions.md` 쓰기를 인계로 확정하고 턴을 끝낸다.
+        """Confirm a `build-instructions.md` write as a handoff and end the turn.
 
-        `None`이면 확정하지 않았다는 뜻이고, 그때는 턴이 계속된다. 확정하지 않는
-        경우는 명세가 아직 없을 때다 — Prototypes 탭은 명세에서 카드를 만들므로
-        (`routes/prototypes.py`가 `layout.discover`로 목록을 만든다) 빌드 지시만
-        있으면 사용자가 빈 탭을 본다. 옛 `handoff_prototype`이 명세 존재를 확인한
-        이유가 그것이고, 그 검사는 `reconcile.handed_off`로 옮겨 갔다.
+        `None` means it was not confirmed, and the turn continues. The case where it
+        is not confirmed is a spec that does not exist yet: the Prototypes tab builds
+        its card from the spec (`routes/prototypes.py` assembles the list via
+        `layout.discover`), so build instructions alone leave the user looking at an
+        empty tab. That is why the old `handoff_prototype` checked for the spec, and
+        that check moved into `reconcile.handed_off`.
 
-        **턴을 끝내는 이유는 질문 파일과 같다.** 여기서 Discovery의 일이 끝나고
-        다음 행동은 사용자의 것이다(Prototypes 탭에서 빌드). 끝내지 않으면 상류
-        Step 4(Iterate)로 계속 가거나 자격증명을 묻는다 — 둘 다 실측된 실패다.
-        그래서 `stopReason`이 다음 행동을 **지정한다**: 이유만 주면 모델이
-        즉흥한다는 것이 prompts.py 헤더의 원칙이다.
+        **The turn ends here for the same reason as on a question file.** Discovery's
+        work finishes at this point and the next action belongs to the user (building
+        in the Prototypes tab). Without ending it, the agent carries on into upstream
+        Step 4 (Iterate) or asks for credentials -- both measured failures. So the
+        `stopReason` **names** the next action: prompts.py's header states the
+        principle that given only a reason, the model improvises.
         """
         events, cursor = reconcile.prototype_events(
             Path(self._workspace), self._handed_off)
         if not events:
-            # 이미 알린 인계라면 조용히 지나간다(빌드 지시를 고쳐 쓴 경우) — 카드가
-            # 두 장 뜨지 않고, 턴도 다시 끊지 않는다.
+            # An already-announced handoff passes quietly (the case where the
+            # build instructions were rewritten): no second card, and the turn is
+            # not cut again.
             if reconcile.prototype_id_for(rel) not in self._handed_off:
                 _log.warning("build instructions at %s have no prototype spec "
                              "yet — not handing off", rel)
@@ -1070,43 +1135,50 @@ class ClaudeDriver:
             self._queue.append(AgentEvent(
                 kind="status", text="file outside workspace ignored"))
             return {}
-        # **광고하기 전에 게시한다.** `file_changed`를 받은 UI는 곧바로 그 문서를
-        # 읽으러 오는데(WorkspaceDocPanel), 읽기 경로는 전부 정본(S3)이다. 정본
-        # 게시를 턴 종료까지 미루면 "작성됐다는데 목록에 없다 / 골라도 내용이
-        # 없다 / 잠깐 보이다 사라진다"가 된다 — 2026-08-18에 실제로 그랬고,
-        # 실측한 S3 타임스탬프 16개가 전부 턴 끝 1초 안이었다.
+        # **Publish before advertising.** A UI that receives `file_changed` comes
+        # straight back to read that document (WorkspaceDocPanel), and every read
+        # path goes to the source of record (S3). Deferring that publish to the end
+        # of the turn produces "it says it was written but it is not in the list /
+        # selecting it shows nothing / it appears briefly and vanishes" -- which is
+        # exactly what happened on 2026-08-18, where all 16 measured S3 timestamps
+        # fell within one second of the turn ending.
         #
-        # 실패해도 턴을 죽이지 않는다(publish_file이 삼킨다). 턴 종료 배치 sync가
-        # 여전히 백스톱이다.
+        # A failure here does not kill the turn (publish_file swallows it). The
+        # end-of-turn batch sync is still the backstop.
         await publish_file(
             self._s3,
             Path(self._workspace),
             rel,
             on_published=self._on_file_published,
         )
-        # 질문 파일도 산출물이다 — 문서 패널이 이 이벤트로 갱신되므로 아래 분기와
-        # 무관하게 먼저 흘린다.
+        # A question file is an artifact too: the document panel updates from this
+        # event, so it is emitted first, independently of the branches below.
         self._queue.append(AgentEvent(kind="file_changed", path=rel))
-        # 스테이지 배지: 상태 파일을 **파싱해서** 유도한다(옛 `report_stage` 도구를
-        # 대체한다 — agent/reconcile.py 헤더에 그 전말이 있다). 상류 룰이 에이전트에게
-        # 이 파일을 직접 갱신하라고 요구하므로(common/workflow-changes.md,
-        # discovery/prototype-validation.md Step 10) 신호는 이미 워크스페이스에 있다.
+        # The stage badges are derived by **parsing** the state file (replacing
+        # the old `report_stage` tool -- the full story is in agent/reconcile.py's
+        # header). The upstream rules require the agent to keep this file current
+        # itself (common/workflow-changes.md, discovery/prototype-validation.md
+        # Step 10), so the signal is already in the workspace.
         #
-        # 훅 페이로드가 아니라 **디스크**를 읽는다. Edit는 패치만 담으므로 페이로드로는
-        # 파일 전문을 알 수 없고, `_file_question_round`가 같은 이유로 같은 선택을 했다.
+        # This reads **the disk**, not the hook payload: an Edit carries only a
+        # patch, so the payload cannot tell us the file's full text.
+        # `_file_question_round` made the same choice for the same reason.
         if rel == reconcile.STATE_KEY:
             self._emit_stage_events()
-        # 문서 갱신 배너와 문서 패널의 activeDoc: 산출물 쓰기에서 **유도한다**(옛
-        # `submit_document` 도구를 대체한다 — 그 도구는 매 문서마다 부르라고 지시받고도
-        # 대부분 불리지 않았다. 프론트가 실측을 적어 뒀다:
-        # useWorkspaceStream.ts:177 "대부분의 문서를 submit_document 없이
-        # file_write로만 만든다"). 스테이지·인계와 같은 부류의 침묵이었다.
+        # The document update banner and the document panel's activeDoc are
+        # **derived** from artifact writes (replacing the old `submit_document`
+        # tool, which was instructed to be called for every document and mostly was
+        # not -- the frontend recorded the measurement at
+        # useWorkspaceStream.ts:177: "the agent creates most documents with
+        # file_write alone, without submit_document"). The same class of silence as
+        # the stage badges and the handoff.
         if reconcile.is_document(rel):
             self._emit_document_events()
-        # 프로토타입 인계: Step 3의 마지막 산출물이 쓰이는 순간이다. 옛
-        # `handoff_prototype` 도구와 달리 모델이 잊을 수 없다 — 2026-08-17
-        # keumkang-v5에서 탭 안내가 0회였던 것이 그 도구가 생긴 이유였고, 도구는
-        # "부르지 않으면 침묵"이라는 같은 실패를 한 단계 뒤로 미룬 것이었다.
+        # The prototype handoff: the moment Step 3's final artifact is written.
+        # Unlike the old `handoff_prototype` tool, the model cannot forget this --
+        # the tab being pointed at zero times in keumkang-v5 (2026-08-17) is why
+        # that tool was created, and the tool merely postponed the same "silent
+        # unless called" failure by one step.
         if reconcile.prototype_id_for(rel) is not None:
             stop = self._handoff_stop(rel)
             if stop is not None:
@@ -1118,9 +1190,10 @@ class ClaudeDriver:
             return {}
         qfile, md = round_
         if qfile == "unparsed":
-            # 같은 내용에 같은 노트를 반복하지 않는다(턴 안 무한 왕복 방지). 내용이
-            # **달라지면** 다시 알린다 — 고쳐 썼는데 여전히 틀린 경우가 그것이고,
-            # 그때 침묵하면 다시 질문이 사라진다.
+            # Do not repeat the same note for the same content (which would loop
+            # inside the turn). Report again when the content **changes** -- that is
+            # the case where the file was rewritten and is still wrong, and staying
+            # silent there loses the question again.
             if self._unparsed_noted.get(rel) == md:
                 _log.warning("file questions: %s still does not parse (already "
                              "reported this content)", rel)
@@ -1132,37 +1205,44 @@ class ClaudeDriver:
                 "hookEventName": "PostToolUse",
                 "additionalContext": prompts.file_questions_unparsed(
                     self._language, rel)}}
-        # `interrupt_id`는 빈 문자열이다: 파킹된 can_use_tool future가 없으므로
-        # 되돌아올 곳이 턴이 아니라 **파일**이다. 프론트는 `file`로 그 차이를
-        # 판별해 답변을 PUT /projects/{pid}/questions/{name}으로 보낸다.
+        # `interrupt_id` is the empty string: there is no parked can_use_tool
+        # future, so what the answers return to is **the file**, not the turn. The
+        # frontend tells the two apart by `file` and sends answers to
+        # PUT /projects/{pid}/questions/{name}.
         self._queue.append(AgentEvent(kind="questions", payload=json.dumps(
             {"interrupt_id": "", "file": rel, "questions": qfile},
             ensure_ascii=False, default=lambda o: o.model_dump())))
-        # **파일을 먼저 S3에 올린다 — 턴 종료 sync를 기다리지 않는다.**
+        # **Upload the file to S3 first -- do not wait for the end-of-turn sync.**
         #
-        # 2026-08-17 실측한 실패: 실제 턴에서 카드는 떴는데 `GET /pending`이
-        # `file=None`을, 답변 제출이 404를 돌려줬다. 훅은 로컬 파일을 읽는데 그
-        # 파일이 S3(정본)에 올라가는 것은 러너의 done/error sync 시점이다. 그 사이가
-        # 창이고, 그 창에서 `pending()`은 마커가 가리키는 파일을 못 찾고 답변 제출은
-        # `runner.read_file`이 S3를 읽으므로 404가 된다.
+        # Measured failure, 2026-08-17: in a real turn the card appeared but
+        # `GET /pending` returned `file=None` and submitting answers returned 404.
+        # The hook reads the local file, but that file only reaches S3 (the source of
+        # record) at the runner's done/error sync. The gap between the two is a
+        # window, and inside it `pending()` cannot find the file the marker points
+        # at, while answer submission 404s because `runner.read_file` reads S3.
         #
-        # 카드를 광고하는 순간 그 파일은 이미 정본에 있어야 한다. 내용을 이미 손에
-        # 들고 있으므로 여기서 올리는 것이 가장 싸고 확실하다(라운드당 put 하나).
-        # 러너의 sync가 나중에 같은 내용을 다시 올리는 것은 무해하다.
+        # The moment the card is advertised, the file has to be in the source of
+        # record already. The content is already in hand here, so uploading here is
+        # the cheapest and most certain place (one put per round). The runner's sync
+        # re-uploading the same content later is harmless.
         try:
-            # 파일은 위에서 이미 게시됐다(publish_file) — 모든 산출물이 같은 경로를
-            # 지나므로 질문 파일 전용 업로드는 남기지 않는다. 마커는 그 **다음**이다:
-            # 순서가 뒤집히면 마커가 정본에 없는 파일을 가리키는 창이 남는다.
+            # The file was already published above (publish_file) -- every artifact
+            # goes through the same path, so no question-file-specific upload is
+            # kept here. The marker comes **after** it: reversing the order leaves a
+            # window where the marker points at a file not yet in the source of
+            # record.
             await save_pending_file(self._s3, file=rel)
         except Exception:
-            # 라이브 카드는 이미 큐에 있다 — 실패해도 이 턴의 질문은 화면에 뜨고,
-            # 새로고침 복원과 답변 제출만 못 된다. 턴을 죽이는 것이 더 나쁘다.
+            # The live card is already in the queue: even on failure this turn's
+            # question still appears on screen, and only refresh-restore and answer
+            # submission are lost. Killing the turn would be worse.
             _log.exception("publishing the open question file failed")
-        # 훅은 사람을 기다리지 않는다 — 즉시 턴만 멈춘다. 실측(2026-08-17):
-        # `continue_: False`는 `terminal_reason='hook_stopped'` + `is_error=False`로
-        # 끝나므로 `_translate`가 이미 정상 `done`으로 처리하고, 같은 메시지에
-        # 배치로 온 뒤 도구 호출들은 실행되지 않는다(그것이 의도다 — 모델이
-        # AskUserQuestion으로 같은 질문을 다시 만들지 못한다).
+        # The hook does not wait for a human -- it just stops the turn
+        # immediately. Measured (2026-08-17): `continue_: False` ends with
+        # `terminal_reason='hook_stopped'` and `is_error=False`, so `_translate`
+        # already treats it as a normal `done`, and any tool calls batched after it
+        # in the same message do not run (which is the intent -- it stops the model
+        # rebuilding the same questions through AskUserQuestion).
         _log.info("file questions: asking %d question(s) from %s",
                   len(qfile.questions), rel)
         return {"continue_": False,
@@ -1199,28 +1279,33 @@ class ClaudeDriver:
         from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
         if tool_name != "AskUserQuestion":
             return PermissionResultAllow(updated_input=input_data)
-        # 파일 경로가 켜져 있으면 이 도구는 쓰지 않는다. **거부**이지 삭제가
-        # 아니다 — 가로채기만 없애면 모델이 도구를 부른 순간 질문이 조용히
-        # 사라진다(화면에도 채팅에도 없다). 거부는 대체 행동을 함께 준다.
+        # With the file path enabled, this tool is not used. A **denial**, not a
+        # removal: simply dropping the interception would make the question vanish
+        # silently the moment the model called the tool (absent from the screen and
+        # the chat alike). A denial comes with an alternative.
         #
-        # 스위치가 하나인 이유: 두 경로가 동시에 살아 있으면 에이전트가 파일을
-        # 쓰고(훅이 카드를 띄우고) 이어서 이 도구까지 불러 같은 질문이 두 번 뜬다.
+        # Why there is a single switch: with both paths alive at once the agent
+        # writes the file (the hook shows a card) and then also calls this tool, so
+        # the same question appears twice.
         if _file_questions_enabled():
             _log.info("AskUserQuestion denied — file questions are the only path")
             return PermissionResultDeny(
                 message=prompts.ask_user_question_denied(self._language))
         import uuid
-        # 문자열로 온 payload를 여기서 리스트로 편다 — 정규화 없이 넘기면
-        # question_file_from_sdk가 문자열을 문자 단위로 훑다가 AttributeError로
-        # 터지고, 그 예외는 이 콜백 밖으로 새어 턴을 죽인다. 관측된 거절
-        # 3건은 CLI가 이 콜백 **전에** 막은 것이라 여기서 살아나지 않는다
-        # (normalize_sdk_questions의 docstring에 근거를 적었다).
+        # A payload that arrived as a string is unpacked into a list here: passed
+        # through unnormalised, question_file_from_sdk would iterate the string
+        # character by character and blow up with an AttributeError, and that
+        # exception escapes this callback and kills the turn. The three observed
+        # rejections were blocked by the CLI **before** this callback, so they are
+        # not recoverable here (the rationale is in normalize_sdk_questions'
+        # docstring).
         sdk_questions = normalize_sdk_questions(input_data.get("questions"))
-        # 복원 조인 키. SDK가 이 콜백에 tool_use_id를 주고(비어 있지 않음이 와이어
-        # 프로토콜 보장) 트랜스크립트의 tool_result도 같은 id를 들고 있으므로,
-        # 답변 레코드를 이것으로 키하면 복원이 순서·타임스탬프 추측 없이 정확히
-        # 조인된다(agent/answer_store.py의 헤더 참조). getattr로 읽는 것은 이
-        # 콜백을 직접 부르는 테스트 더블이 컨텍스트를 축약해 넘길 수 있기 때문이다.
+        # The join key for restore. The SDK gives this callback a tool_use_id
+        # (non-empty is a wire-protocol guarantee) and the transcript's tool_result
+        # carries the same id, so keying the answer record on it lets restore join
+        # exactly, with no guessing from order or timestamps (see
+        # agent/answer_store.py's header). It is read through getattr because a test
+        # double calling this callback directly may pass an abbreviated context.
         tool_use_id = getattr(context, "tool_use_id", None) or ""
         # question_file_from_sdk raises ValueError on unusable input (e.g. a
         # question with zero options) -- deny with a message the model can
@@ -1269,16 +1354,19 @@ class ClaudeDriver:
                     v, q.get("options", []))
         finally:
             self._clear_pending_state()
-        # 복원용 레코드. **updated_input을 돌려주기 전에** 쓴다 — 이 반환으로
-        # 턴이 재개되고 곧 다음 도구가 돌기 시작하므로, 뒤에 두면 실패했을 때
-        # 어느 라운드의 기록이 빠졌는지 로그로도 짚기 어려워진다.
+        # The record used by restore. Written **before** returning
+        # updated_input: this return resumes the turn and the next tool starts
+        # running soon after, so putting it later makes it hard even from the logs
+        # to tell which round's record went missing when it fails.
         await self._save_answers_quietly(tool_use_id, iid, qfile, answers)
-        # 답변을 질문 파일의 `[Answer]:` 칸에도 심는다. ai-plc 워크플로우가 그
-        # 칸을 읽기 때문이다 — 근거와 텍스트 매칭의 이유는
-        # agent/question_file_answers.py 헤더에 있다. 여기(반환 직전)인 이유는
-        # _save_answers_quietly와 같다: 이 반환으로 턴이 재개되고 다음 도구가
-        # 곧 돌기 시작하므로, 뒤에 두면 파일이 다음 스테이지의 읽기보다 늦을 수
-        # 있다. record_answers는 어떤 실패도 삼키고 빈 목록을 준다.
+        # The answers are also planted in the question file's `[Answer]:` slots,
+        # because the ai-plc workflow reads those slots -- the rationale, and why the
+        # matching is textual, are in agent/question_file_answers.py's header. Being
+        # here (just before the return) is for the same reason as
+        # _save_answers_quietly: this return resumes the turn and the next tool
+        # starts soon after, so placing it later risks the file landing after the
+        # next stage reads it. record_answers swallows every failure and returns an
+        # empty list.
         for rel in record_answers(self._workspace, sdk_questions, answers):
             await self._mirror_question_file_quietly(rel)
             self._queue.append(AgentEvent(kind="file_changed", path=rel))
@@ -1288,27 +1376,30 @@ class ClaudeDriver:
         })
 
     async def _mirror_question_file_quietly(self, rel: str) -> None:
-        """되기록한 질문 파일을 S3에도 올린다. 턴을 죽이지 않는다.
+        """Also upload the written-back question file to S3. Never kills the turn.
 
-        **왜 필요한가.** record_answers는 로컬 워크스페이스 파일에 쓰는데,
-        `runner.read_file`은 S3에서 읽는다(runner.py:55) — 화면의 산출물 패널과
-        다음 스테이지가 보는 것이 그쪽이다. 로컬만 쓰면 답변은 턴이 끝나
-        `_sync_workspace_to_s3`가 돌 때까지 **보이지 않는다.**
+        **Why it is needed.** record_answers writes the local workspace file, but
+        `runner.read_file` reads from S3 (runner.py:55) -- and S3 is what the
+        artifacts panel on screen and the next stage actually see. Writing only
+        locally leaves the answers **invisible** until the turn ends and
+        `_sync_workspace_to_s3` runs.
 
-        그리고 그 지연은 유실 창이기도 하다: `_restore_workspace_from_s3`가 매 턴
-        시작에 돌고 그 주석이 "S3가 무조건 이긴다"다(runner.py:79). 턴이 종결
-        이벤트 없이 버려지면(`_sync_abandoned_turn`은 베스트에포트다) 다음 턴이
-        S3의 빈 파일로 로컬을 덮어 답변이 사라진다.
+        That delay is also a window for losing them: `_restore_workspace_from_s3` runs
+        at the start of every turn and its comment says S3 wins unconditionally
+        (runner.py:79). If a turn is abandoned without a terminal event
+        (`_sync_abandoned_turn` is best-effort), the next turn overwrites the local
+        copy with S3's empty file and the answers are gone.
 
-        로컬 파일을 되읽어 올리는 이유: 디스크에 있는 것과 정확히 같은 바이트를
-        올린다. 메모리의 사본을 따로 들고 다니면 둘이 어긋날 수 있다.
+        The local file is re-read before uploading so that exactly the bytes on disk
+        go up. Carrying a separate in-memory copy would let the two drift.
         """
         try:
             content = (Path(self._workspace) / rel).read_text(encoding="utf-8")
             await self._s3.put(rel, content)
         except Exception:
-            # 로컬 파일은 이미 갱신됐고 턴 종료 sync가 두 번째 기회를 준다 —
-            # 여기서 턴을 죽이면 방금 제출한 답변이 사라진다.
+            # The local file is already updated and the end-of-turn sync gives a
+            # second chance -- killing the turn here would lose the answers the user
+            # just submitted.
             _log.exception("question-file S3 mirror failed: %s", rel)
 
     def _clear_pending_state(self) -> None:
@@ -1340,14 +1431,16 @@ class ClaudeDriver:
 
     async def _save_answers_quietly(self, tool_use_id: str, iid: str,
                                     qfile: dict, answers: dict) -> None:
-        """제출된 답변을 S3에 기록한다. 절대 턴을 실패시키지 않는다.
+        """Record the submitted answers to S3. Never fails the turn.
 
-        pending 미러와 같은 판단이다 — 이 레코드는 복원 편의이고, S3 딸꾹질
-        때문에 사용자가 방금 답한 턴이 죽는 것이 더 나쁘다. 레코드가 없으면
-        복원은 구 세션과 같은 경로(CLI 산문 문구)로 떨어진다.
+        The same judgement as the pending mirror: this record is a convenience for
+        restore, and killing the turn the user just answered because of an S3 hiccup
+        would be worse. Without the record, restore falls back to the same path as an
+        older session (the CLI's own prose wording).
 
-        tool_use_id가 없으면 건너뛴다: 그 값이 복원 조인 키이므로, 없이 쓴
-        레코드는 어느 라운드의 것인지 알 수 없어 읽는 쪽이 쓸 수 없다.
+        It is skipped when there is no tool_use_id: that value is the join key for
+        restore, so a record written without it cannot be attributed to a round and is
+        unusable by the reader.
         """
         if not tool_use_id:
             _log.warning("no tool_use_id for answer record — skipped")
@@ -1389,12 +1482,15 @@ class ClaudeDriver:
                 if btype == "TextBlock":
                     events.append(AgentEvent(kind="message", text=block.text))
                 elif btype == "ToolUseBlock":
-                    # 무엇을 했는지까지 보낸다 — `Read`만 뜨면 트레이스의 요점이
-                    # 빠진다(tool_trace 모듈 헤더). 값만 보내고 `🔍 Read · …`의
-                    # 아이콘·구분자는 프론트가 UI 언어로 그린다.
+                    # Send what it did, not just that it did something: a bare
+                    # `Read` misses the whole point of the trace (see the tool_trace
+                    # module header). Only the value is sent; the icon and separator
+                    # in `🔍 Read · …` are drawn by the frontend in the UI
+                    # language.
                     detail = tool_detail(block.name, getattr(block, "input", None))
-                    # 중복 접기 키에 detail을 넣는다. 이름만으로 접으면 연속된
-                    # Read 세 번이 `Read` 한 줄로 뭉개진다 — 파일이 달라도 그렇다.
+                    # detail goes into the dedupe key. Collapsing on the name alone
+                    # squashes three consecutive Reads into one `Read` line -- even
+                    # when they are different files.
                     key = (block.name, detail)
                     if key != self._last_status:
                         self._last_status = key
@@ -1429,8 +1525,8 @@ class ClaudeDriver:
                 # (claude_agent_sdk/types.py:1249-1257 documents
                 # "aborted_streaming"/"aborted_tools" as the cancelled-turn
                 # values). Without this check, pressing the interrupt button
-                # showed "중단됨" (Task 5's status line, correct) stacked with
-                # "이번 턴이 실패했습니다" (a lie) -- the real-CLI probe that
+                # showed the interrupted status line (Task 5's, correct) stacked
+                # with "this turn failed" (a lie) -- the real-CLI probe that
                 # unit tests missed, because the fake SDK never scripted
                 # is_error=True together with an aborted terminal_reason.
                 #
@@ -1462,10 +1558,11 @@ class ClaudeDriver:
                     # moment one of them forgot.
                     if reader is not None:
                         reader.failed = True
-                # 중단은 error 로그로 남기지 않는다: 사용자가 방금 누른 버튼의
-                # 정상적인 결과이지 우리가 찾아야 할 실패가 아니다. error로
-                # 남기면 워크숍 로그가 매 중단마다 오염되고, 진짜 실패(429/500/
-                # 529, 교착된 도구)를 찾을 때 잡음이 늘어난다.
+                # An interruption is not logged at error level: it is the normal
+                # result of a button the user just pressed, not a failure we need to
+                # find. Logging it as an error would pollute the workshop logs on
+                # every interruption and add noise when hunting a real failure
+                # (429/500/529, a wedged tool).
             events.append(AgentEvent(kind="done"))
         return events
 
@@ -1547,19 +1644,22 @@ class ClaudeDriver:
         """
         asked = False
         ended = False
-        # 이 pump를 시작한 홀더의 신원. 재접속이 슬롯을 선점하면
-        # (`_acquire_turn(preempt=True)`) 이 값은 더 이상 홀더가 아니고, 아래
-        # 검사가 그것을 **실제 중단**으로 옮긴다.
+        # The identity of the holder that started this pump. If a reattach
+        # preempts the slot (`_acquire_turn(preempt=True)`) this value is no longer
+        # the holder, and the check below turns that into **a real interruption**.
         #
-        # 토큰만 바꾸고 이 루프를 두면 부족하다: 옛 소비자의 제너레이터는 `yield`에
-        # 멈춰 있을 뿐 죽지 않았으므로, 클라이언트의 TCP가 되살아나 다시 읽으면 두
-        # 소비자가 같은 `outbox`를 나눠 읽는다. 실측(테스트): 선점 후 옛 소비자가
-        # `문장 2`·`questions`·`done`을 가져가 재접속한 화면에서 사라졌다.
+        # Swapping the token but leaving this loop running is not enough: the old
+        # consumer's generator is merely paused at a `yield`, not dead, so if the
+        # client's TCP revives and reads again, two consumers split the same
+        # `outbox`. Measured (in tests): after preemption the old consumer took
+        # `sentence 2`, `questions` and `done`, and they vanished from the
+        # reattached screen.
         #
-        # **검사는 `yield` 앞이다.** 위 소유권 규칙("항목은 소비자가 받은 뒤에만
-        # 자기 자리를 떠난다")이 그대로 유지되어야 하므로, 여기서 멈추면 남은
-        # 항목은 pop되지 않고 `outbox`/`_queue`에 소유된 채 남아 다음 pump가
-        # relay한다 — 즉 선점은 프레임을 버리지 않고 **넘긴다.**
+        # **The check goes before the `yield`.** The ownership rule above ("an item
+        # leaves its place only after the consumer has received it") has to keep
+        # holding, so stopping here leaves the remaining items un-popped and owned by
+        # `outbox`/`_queue` for the next pump to relay -- preemption **hands frames
+        # over** rather than dropping them.
         pump_token = self._turn_token
 
         def owns_turn() -> bool:
@@ -1592,7 +1692,8 @@ class ClaudeDriver:
             for queue in (reader.outbox, self._queue):
                 while queue:
                     if not owns_turn():
-                        return          # 선점됨 — 남은 항목은 소유된 채 넘긴다
+                        return          # Preempted -- remaining items stay owned
+                                        # and are handed to the next pump
                     ev = queue[0]
                     yield ev
                     # Reached only if the consumer came back for the next item,
@@ -1603,7 +1704,7 @@ class ClaudeDriver:
 
         while True:
             if not owns_turn():
-                return                  # 선점됨 — 위 pump_token 주석 참조
+                return                  # Preempted -- see the pump_token comment
             # The only cancellable wait in this function, and it waits on an
             # Event -- which carries no payload, so a cancellation here cannot
             # lose anything.
@@ -1620,27 +1721,34 @@ class ClaudeDriver:
             # contract's "agent turn failed" -- messages already relayed above
             # have reached the consumer first.
             raise reader.error
-        # 턴 경계 재조정 — 훅이 놓친 것을 워크스페이스에서 되찾는다.
+        # Turn-boundary reconciliation -- recover from the workspace whatever the
+        # hook missed.
         #
-        # **왜 훅만으로는 부족한가.** PostToolUse는 `Write|Edit|MultiEdit`에만 붙으므로
-        # 에이전트가 Bash로 파일을 고치면(`python3 -c`, `sed`, 리다이렉션) 훅이 그것을
-        # 보지 못한다. discovery_guard.py 헤더가 같은 한계를 이미 기록해 뒀다 — Bash는
-        # 임의 코드 실행이라 거부목록으로 모든 경로를 덮을 수 없고, matcher에 Bash를
-        # 넣어도 명령에서 대상 파일을 알아낼 수 없다.
+        # **Why the hook alone is not enough.** PostToolUse is attached only to
+        # `Write|Edit|MultiEdit`, so if the agent edits a file through Bash
+        # (`python3 -c`, `sed`, a redirection) the hook never sees it.
+        # discovery_guard.py's header already records the same limitation: Bash is
+        # arbitrary code execution, so no denylist covers every path, and adding Bash
+        # to the matcher would still not reveal which file a command targets.
         #
-        # 그래서 매 순간의 선언(도구)도, 매 쓰기의 관측(훅)도 아니라 **경계의 정합성**이
-        # 마지막 근거다. 여기서 디스크를 한 번 읽으면 Bash 우회·훅 유실·배치 드롭이
-        # 전부 덮인다. 2026-08-18 test123456의 유실된 `report_stage`도 여기서 잡힌다.
+        # So the final authority is neither a per-moment declaration (a tool) nor a
+        # per-write observation (the hook) but **consistency at the boundary**. One
+        # read of the disk here covers Bash bypasses, missed hooks and dropped
+        # batches alike. It also catches the lost `report_stage` from test123456 on
+        # 2026-08-18.
         #
-        # **종결 배출 앞이라는 위치가 요점이다.** `frontend/lib/api/sse.ts:29`가 `done`에서
-        # EventSource를 닫으므로 그 뒤의 이벤트는 화면에 닿지 않는다(위 invariant 1).
-        # 여기서 큐에 넣으면 아래 드레인 루프가 그것을 종결 이벤트 앞에 배출한다.
+        # **Being before the terminal emit is the point.**
+        # `frontend/lib/api/sse.ts:29` closes the EventSource on `done`, so events
+        # after it never reach the screen (invariant 1 above). Queuing here lets the
+        # drain loop below emit them ahead of the terminal event.
         #
-        # 이미 흘린 것은 다시 흘리지 않는다 — 두 커서(`_stage_status`, `_handed_off`)가
-        # 훅 경로와 공유되므로 재조정은 대개 아무 일도 하지 않는다. 그것이 정상이다.
+        # Nothing already emitted is emitted again: both cursors (`_stage_status`,
+        # `_handed_off`) are shared with the hook path, so reconciliation usually
+        # does nothing at all. That is the normal case.
         #
-        # `asked`(질문으로 끝난 턴)에서도 돈다. 그 경로가 정확히 유실이 관측된
-        # 경로다: 질문 파일 쓰기가 턴을 끊으면서 같이 배치된 호출이 사라졌다.
+        # It also runs on `asked` (a turn that ended in a question). That path is
+        # exactly where the loss was observed: the question file write cut the turn
+        # and the calls batched alongside it disappeared.
         self._reconcile_turn()
         # Terminal relay. Every `yield` above handed control to the scheduler,
         # which is exactly when the reader can append another message and a tool
@@ -1864,7 +1972,7 @@ class ClaudeDriver:
         # round they belonged to, so a stale tab silently answered the current
         # question with the wrong round's answers AND deleted the real pending
         # record on the way out (reproduced: seeded "i-CURRENT"/"NEW question",
-        # submitted "i-STALE" -> prompt said `- NEW question → 진행`, record
+        # submitted "i-STALE" -> prompt said `- NEW question -> proceed`, record
         # gone). Refuse and leave the record intact so the live form still works.
         if data.get("interrupt_id") != interrupt_id:
             _log.warning("answers for a superseded question round — refused")
@@ -1906,8 +2014,8 @@ class ClaudeDriver:
         empty conversation rather than an error. False means the turn must be
         abandoned.
 
-        매 턴 쓰는 것이 언어에도 유리하다: 언어 지시가 워크스페이스에 남아
-        있지 않아도 다음 턴에 다시 깔린다."""
+        Writing them every turn helps the language directive too: even if it is no
+        longer in the workspace, the next turn puts it back."""
         started = time.perf_counter()
         try:
             place_rules(self._workspace, self._rules_dir, self._language)
@@ -1926,8 +2034,9 @@ class ClaudeDriver:
         if not self._place_rules():
             yield AgentEvent(kind="error", text="agent turn failed")
             return
-        # 이 시점의 워크스페이스에 이미 있는 문서를 "본 것"으로 표시한다 — 새
-        # 드라이버의 첫 턴이 기존 문서 전부를 갱신으로 알리지 않게.
+        # Mark the documents already in the workspace at this moment as "seen", so
+        # a new driver's first turn does not announce every existing document as an
+        # update.
         self._seed_document_cursor()
         # The concurrency guard comes BEFORE the pending-question short-circuit
         # below: if a turn is genuinely still streaming, "turn already in
@@ -1957,16 +2066,18 @@ class ClaudeDriver:
                                      payload=self._pending_payload)
                 yield AgentEvent(kind="done")
                 return
-            # **버려진 턴을 새 턴이 덮지 못하게 한다(2026-08-19).** 슬롯은
-            # 소비자가 사라지면 즉시 풀리므로(위 주석) 여기까지 올 수 있는데,
-            # 그때 `_stream`은 `_retire_reader()`로 **진행 중인 턴의 리더를
-            # 취소하고** 같은 CLI 세션에 `query()`를 겹쳐 넣는다. 그 함수의
-            # 주석이 스스로 "the turn nobody will relay"를 전제로 쓰여 있다 —
-            # 재접속 경로(`run_live`)가 생긴 지금 그 전제가 더 이상 참이 아니다.
+            # **Stop a new turn from overwriting an abandoned one (2026-08-19).**
+            # The slot is released the moment the consumer disappears (see the
+            # comment above), so control can reach here -- and at that point
+            # `_stream` would use `_retire_reader()` to **cancel the in-flight
+            # turn's reader** and overlay a `query()` onto the same CLI session. That
+            # function's own comment is written on the premise of "the turn nobody
+            # will relay" -- a premise that stopped being true once the reattach path
+            # (`run_live`) existed.
             #
-            # 파킹된 질문 short-circuit **뒤에** 두는 것이 중요하다: 그 리더도
-            # 살아 있으므로(has_live_turn 참) 앞에 두면 질문 폼을 다시 띄우는
-            # 경로가 이 거부로 바뀐다.
+            # Placing this **after** the parked-question short circuit matters: that
+            # reader is alive too (has_live_turn is true), so putting it first would
+            # turn the path that re-shows the question form into this refusal.
             if self.has_live_turn():
                 _log.info("refusing a new turn: one is still streaming with no "
                           "consumer — the caller should reattach")
@@ -1980,53 +2091,59 @@ class ClaudeDriver:
     def has_live_turn(self) -> bool:
         """A turn is still streaming with nobody consuming it.
 
-        **왜 `_turn_active`로는 알 수 없는가.** 그 플래그는 *소비자*가 있는지를
-        말한다. SSE가 끊기면 `run()`의 finally가 그것을 즉시 지운다 —
-        의도된 동작이다(재접속한 브라우저가 "turn already in progress"로 튕기지
-        않아야 한다). 하지만 CLI 턴 자체는 계속 돌고 `_MessageReader`가 계속
-        읽는다. 그 둘을 구별하는 것이 이 함수다.
+        **Why `_turn_active` cannot tell you this.** That flag says whether a
+        *consumer* is attached. When the SSE drops, `run()`'s finally clears it
+        immediately -- which is intended (a reattaching browser must not be bounced
+        with "turn already in progress"). But the CLI turn itself keeps running and
+        `_MessageReader` keeps reading. Distinguishing those two is what this function
+        is for.
 
-        `ended`까지 보는 이유: 파킹된 질문의 리더는 살아 있지만 끝나지 않았고
-        (그래서 True), 정상 종료한 턴의 리더는 태스크가 끝났거나 `ended`다.
+        Why `ended` is also consulted: a parked question's reader is alive but not
+        finished (hence True), while a normally completed turn's reader either has a
+        finished task or is `ended`.
         """
         reader = self._reader
         return (reader is not None and not reader.task.done()
                 and not reader.ended)
 
     async def run_live(self) -> AsyncIterator[AgentEvent]:
-        """진행 중인 턴에 다시 붙는다 — 새 `query()` 없이.
+        """Reattach to a turn in progress -- without a new `query()`.
 
-        **왜 필요한가(2026-08-19).** 사용자의 PC가 절전·화면보호기로 들어가면
-        네트워크가 끊기고 SSE가 죽는다. 턴이 2.5~5.6분이므로 화면보호기 기본값
-        (5~10분)과 정면으로 겹친다. 그때 잃는 것은 **화면뿐**이다: 리더는 계속
-        읽고(`has_live_turn`), 파일은 PostToolUse가 쓰는 즉시 S3에 올라가고,
-        포기 경로가 트랜스크립트를 flush한다. 그런데 그 진행 중인 턴을 **다시
-        볼 창구가 없었다** — `GET /pending`은 질문에 파킹된 경우만, `GET /history`
-        는 끝난 뒤만이고, `GET /events?turn=`은 POST가 만든 1회용·60초 핸들을
-        요구한다.
+        **Why it is needed (2026-08-19).** When the user's machine sleeps or the
+        screensaver kicks in, the network drops and the SSE dies. Turns run 2.5-5.6
+        minutes, which collides head-on with default screensaver timeouts (5-10
+        minutes). What is lost in that moment is **only the screen**: the reader keeps
+        reading (`has_live_turn`), files reach S3 the instant PostToolUse writes them,
+        and the abandon path flushes the transcript. But there was **no way to look at
+        that in-flight turn again** -- `GET /pending` only covers a turn parked on a
+        question, `GET /history` only works after it finishes, and
+        `GET /events?turn=` requires a single-use 60-second handle created by a POST.
 
-        **`_continue_after_answers`를 그대로 쓴다.** 그 함수의 본문은 이미
-        "진행 중인 턴의 나머지를 같은 리더로 흘린다"가 전부다 — 답변 해소
-        (`fut.set_result`)는 `run_answers`가 그것을 부르기 **전에** 한다. 즉
-        재접속과 답변 후 재개는 같은 동작이고, 다른 것은 그 앞에 무엇을 하는지뿐이다.
+        **It reuses `_continue_after_answers` as-is.** That function's body already is
+        nothing more than "relay the rest of the in-flight turn through the same
+        reader" -- resolving the answers (`fut.set_result`) happens in `run_answers`
+        **before** it calls that function. So reattaching and resuming-after-answers
+        are the same action, differing only in what happens beforehand.
 
-        붙을 턴이 없으면 `done` 하나만 준다 — 에러가 아니다. 사용자가 늦게
-        돌아왔고 턴이 그동안 끝난 것이 정상 경로이며, 그때 화면은
-        `GET /history`로 복원된다.
+        With no turn to attach to it yields a single `done`, not an error. A user
+        returning late to a turn that has since finished is the normal path, and the
+        screen is restored from `GET /history` in that case.
         """
-        # **선점한다** — 이 경로는 거부하지 않는다.
+        # **This path preempts** -- it does not refuse.
         #
-        # 예전에는 `_acquire_turn()`으로 잡고 실패하면 "turn already in
-        # progress"를 냈고, 근거는 "탭 두 개가 같은 outbox를 읽으면 한쪽이
-        # 메시지를 잃는다"였다. 그 근거는 맞지만 **이 게이트가 막는 것의 대부분은
-        # 두 번째 탭이 아니라 죽은 첫 번째 탭이다**: 절전된 클라이언트는 FIN을
-        # 보내지 않으므로 떠난 소비자의 제너레이터가 슬롯을 쥔 채 살아 있고,
-        # 그것이 정확히 재접속이 필요한 순간이다. 실측(2026-08-19): 거부 문구가
-        # 사용자 화면에 에이전트 발화로 떴다.
+        # It used to take the slot with `_acquire_turn()` and emit "turn already in
+        # progress" on failure, reasoning that "two tabs reading the same outbox
+        # means one of them loses messages". That reasoning is correct, but **most of
+        # what this gate blocked was not a second tab: it was a dead first tab.** A
+        # client that went to sleep never sends a FIN, so the departed consumer's
+        # generator stays alive holding the slot -- which is precisely the moment a
+        # reattach is needed. Measured (2026-08-19): the refusal text appeared on the
+        # user's screen as agent speech.
         #
-        # 정책은 "방금 온 요청이 이긴다"다. 사람은 한 번에 한 화면만 보므로 새
-        # 연결이 진짜 사용자다. 옛 소비자는 새 토큰 발급으로 축출된다(아래
-        # `_owns_turn` 검사가 그것을 실제 중단으로 옮긴다).
+        # The policy is "the request that just arrived wins". A person looks at one
+        # screen at a time, so the new connection is the real user. The old consumer
+        # is evicted by the issuing of a new token (the `_owns_turn` check below turns
+        # that into a real interruption).
         token = self._acquire_turn(preempt=True)
         try:
             if not self.has_live_turn():
@@ -2059,8 +2176,9 @@ class ClaudeDriver:
         if not self._place_rules():
             yield AgentEvent(kind="error", text="agent turn failed")
             return
-        # 이 시점의 워크스페이스에 이미 있는 문서를 "본 것"으로 표시한다 — 새
-        # 드라이버의 첫 턴이 기존 문서 전부를 갱신으로 알리지 않게.
+        # Mark the documents already in the workspace at this moment as "seen", so
+        # a new driver's first turn does not announce every existing document as an
+        # update.
         self._seed_document_cursor()
         token = self._acquire_turn()
         if token is None:
@@ -2102,10 +2220,11 @@ class ClaudeDriver:
         """Contract: runner.py:183 calls this. In-memory first, then S3 --
         covers both a same-process refresh and a backend restart.
 
-        세 번째로 **파일 질문 라운드**를 본다. 그 라운드는 파킹된 future를 남기지
-        않으므로(PostToolUse 훅이 턴을 끝냈다) 위 두 경로에 아무것도 없다.
-        마지막에 두는 이유: 위 둘이 값을 가진 상태는 답을 기다리는 살아 있는
-        future가 있다는 뜻이고, 그때는 그 질문이 답해져야 턴이 재개된다.
+        Third, it looks at the **file question round**. That round leaves no parked
+        future behind (the PostToolUse hook ended the turn), so neither of the two
+        paths above has anything. It comes last because a value in either of those
+        means there is a live future waiting for an answer, and in that case the turn
+        only resumes once that question is answered.
         """
         if self._pending_payload is not None:
             return self._pending_payload
@@ -2117,14 +2236,16 @@ class ClaudeDriver:
         return await self._pending_from_file()
 
     async def _pending_from_file(self) -> str | None:
-        """열려 있는 질문 파일을 S3에서 다시 읽어 카드를 재구성한다.
+        """Re-read the open question file from S3 and rebuild the card.
 
-        **로컬 워크스페이스가 아니라 S3를 읽는다.** 로컬은 턴 시작에만 복원되므로
-        (runner.py의 `_restore_workspace_from_s3`) 재시작 직후의 `GET /pending`은
-        빈 디렉터리를 보게 된다. S3가 유일한 진실이다.
+        **It reads S3, not the local workspace.** The local copy is only restored at
+        the start of a turn (runner.py's `_restore_workspace_from_s3`), so a
+        `GET /pending` right after a restart would look at an empty directory. S3 is
+        the only truth.
 
-        미답 문항이 없으면 None이다 — 그것이 이 라운드의 종료 신호이고, 그래서
-        답변 제출 경로가 무엇도 지우지 않아도 된다.
+        None when there are no unanswered questions -- that is this round's
+        end-of-life signal, and it is why the answer-submission path does not have to
+        delete anything.
         """
         rel = await load_pending_file(self._s3)
         if rel is None:
@@ -2133,7 +2254,8 @@ class ClaudeDriver:
         try:
             md = await self._s3.get(rel)
         except FileNotFoundError:
-            # 파일이 사라졌다(삭제·경로 변경). 복원은 편의이므로 조용히 포기한다.
+            # The file is gone (deleted, or moved). Restore is a convenience, so
+            # give up quietly.
             return None
         qfile = parse_question_file(rel, md)
         if not qfile.parse_ok:
