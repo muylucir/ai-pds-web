@@ -339,6 +339,7 @@ export const ko = {
   "review.gateReviseBtn": "✏️ 수정 요청",
   "review.gateApproveBtn": "✓ 승인하고 다음 단계로",
   "ws.docLoadFailed": "문서를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+  "ws.docListFailed": "문서 목록을 불러오지 못했습니다",
   "ws.docLoading": "문서를 불러오는 중…",
   "ws.docEmpty": "문서 내용이 아직 비어 있습니다.",
   "review.badgeDraft": "초안 검토 중",

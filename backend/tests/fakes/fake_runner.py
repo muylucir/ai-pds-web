@@ -32,6 +32,15 @@ class FakeRunner:
         keys = await self._s3.list("")
         return sorted(k for k in keys if matches_glob(k, glob))
 
+    async def list_files_newest_first(self, glob: str) -> list[str]:
+        # 실물과 같은 계약이다(aipds/runner.py) — 페이크가 이 메서드를 빠뜨리면
+        # `Workspace.list_artifacts`가 테스트에서만 AttributeError로 죽는다.
+        reject_unsafe(glob)
+        pairs = await self._s3.list_with_times("")
+        matched = [(k, t) for k, t in pairs if matches_glob(k, glob)]
+        matched.sort(key=lambda item: (-item[1], item[0]))
+        return [k for k, _ in matched]
+
     def set_input_holder(self, holder):
         self.input_holder = holder
 

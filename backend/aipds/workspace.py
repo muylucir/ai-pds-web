@@ -53,7 +53,12 @@ class Workspace:
         # list_question_files's use of runner.list_files (same traversal guard,
         # no new IO path). runner.list_files already filters to files (not
         # directories), so `**/*` matched directories are excluded automatically.
-        return await self.runner.list_files("aiplc-docs/**/*")
+        #
+        # **최신 순이다(2026-08-21).** 워크스페이스 문서 뷰어가 `activeDoc`이 없을 때
+        # 이 목록의 첫 항목으로 떨어지므로 순서가 의미를 갖는다. 알파벳 순이면 그
+        # 첫 항목이 거의 항상 `aiplc-docs/audit.md`이고, 대화가 방금 만든 문서가
+        # 아니라 감사 로그가 열린다.
+        return await self.runner.list_files_newest_first("aiplc-docs/**/*")
 
 class ProjectRegistry:
     """'아는 프로젝트'(_names)와 '살아있는 워크스페이스'(_workspaces)를 분리.
