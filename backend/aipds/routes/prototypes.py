@@ -29,11 +29,11 @@ from aipds.parsers.redaction import redact_credentials
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.proto.design_sync import sync_design, theme_copies
 from aipds.proto.session import has_build_output, purge_session_state
-# 토큰 게이트의 경로 조립은 그 라우트를 소유한 모듈이 한다 — 여기서 f-string으로
-# 다시 쓰면 브라우저 관점 마운트(`/api`)를 두 곳에서 관리하게 되고, 그것이 이
-# 파일에서 이미 한 번 어긋났던 종류의 버그다(아래 start_host의 public_base_path
-# 주석 참고). proto_public은 aipds.app을 함수 안에서만 import하므로
-# 최상위 import가 순환을 만들지 않는다.
+# Path assembly for the token gate belongs to the module that owns that route --
+# rewriting it here as an f-string would put the browser-facing mount (`/api`) in two
+# places, which is the class of bug that already went out of step once in this file
+# (see start_host's public_base_path comment below). proto_public imports aipds.app
+# only inside functions, so a top-level import here creates no cycle.
 from aipds.routes.proto_public import access_url_path
 from aipds.survey.store import survey_summary
 from aipds.proto import layout as proto_layout
@@ -83,14 +83,15 @@ def _reject_traversal_params(request: Request) -> None:
 
 router = APIRouter(dependencies=[Depends(_reject_traversal_params)])
 
-# 레이아웃 규칙은 proto/layout.py가 단독 소유한다 — 예전에는 이 접두사와
-# 정규식이 카드 탐색을, 그리고 같은 경로를 조립하는 f-string이 세 곳에 더
-# 흩어져 있었다. Path A.1의 단수 레이아웃을 인식하지 못한 결함이 그 복제 때문에
-# 네 곳을 동시에 고쳐야 하는 일이 됐다(그 모듈 헤더 참조).
+# The layout convention is owned solely by proto/layout.py. This prefix and regex
+# used to drive card discovery here, with f-strings assembling the same path scattered
+# across three more places -- and because of that duplication, the defect of not
+# recognising Path A.1's singular layout became a fix in four places at once (see that
+# module's header).
 
 # The frontend opens the first events stream with this sentinel; the route
 # substitutes session.first_prompt() so the build kicks off as a normal
-# SSE-relayed turn (spec §4: 첫 턴 자동 발화).
+# SSE-relayed turn (spec §4: the first turn speaks automatically).
 _FIRST_TURN_SENTINEL = "__first__"
 
 
@@ -99,19 +100,19 @@ class TurnBody(BaseModel):
 
 
 def _handle_scope(pid: str, slug: str) -> str:
-    """턴 핸들의 소유자 키. 프로젝트만으로는 부족하다 — 한 프로젝트의 여러
-    프로토타입이 각자 세션을 갖고, slug를 빼면 다른 프로토타입의 핸들로 이
-    세션의 턴을 열 수 있다."""
+    """The ownership key for a turn handle. The project alone is not enough: several
+    prototypes in one project each have their own session, and without the slug a
+    handle from another prototype could open a turn on this session."""
     return f"{pid}/{slug}"
 
 #: Statuses that mean the agent has work in flight, for the LIST's display
 #: state only. Deliberately excludes "ready": PrototypeSession sets that on the
 #: turn's `done` event, and it means ready for ANOTHER turn -- the session stays
 #: open so the user can ask for changes -- not still building. Including it
-#: pinned the card at 빌드 중 forever, because the "building" branch sits ahead
+#: pinned the card at "building" forever, because the "building" branch sits ahead
 #: of the `built` check and nothing evicts a finished session from
 #: proto_sessions (only a retry or an explicit DELETE does), so every reload
-#: re-derived the same answer and 빌드 완료/실행 were unreachable.
+#: re-derived the same answer and the "built"/"run" states were unreachable.
 #:
 #: NOT the same question as "is a session live" -- a "ready" session IS live and
 #: must still block a second start (409) and serve its event stream. That is
@@ -145,9 +146,9 @@ def _require_registered(pid: str) -> None:
 #:
 #: "complete" belongs here for the same reason and fixes four routes at once:
 #: the agent declared the build finished and stopped touching the build tree,
-#: so POST /host must no longer 409 (the card already says 빌드 완료 —
+#: so POST /host must no longer 409 (the card already says "built" --
 #: "ready" is not in _WORKING_STATUSES), POST /session must be allowed so
-#: "개선 이어서 하기" can open a fresh session, and /answers + /interrupt must
+#: "continue improving" can open a fresh session, and /answers + /interrupt must
 #: 404 because the pending-question future they would resolve is gone.
 #: The session may still be in `proto_sessions` at that moment — it closes
 #: itself a few seconds later via the idle timer (proto/session.py's
@@ -181,7 +182,7 @@ def _prototype_dir(pid: str, slug: str) -> Path:
     `start_host` (what do we run?). They used to spell this path separately and
     drifted: hosting ran the build dir one level up, where the only file is the
     spec .md, so `npm` died with ENOENT on package.json and the route turned
-    that into a 502 while the card said 빌드 완료.
+    that into a 502 while the card said the build was complete.
     """
     import aipds.app as app_module
     return app_module._proto_root() / pid / slug / "prototype"
@@ -210,11 +211,11 @@ async def list_prototypes(pid: str):
 
     host = app_module.proto_host()
     ordered = sorted(slugs.items())
-    # **슬러그별 S3 왕복을 미리 병렬로 걷는다.** 예전에는 루프 안에서 카드마다
-    # `s3.list(bundle)`과 설문 조회를 순차로 await 해서 카드 N개에
-    # 2N번 왕복이었다 — 실측(2026-08-17): 왕복 1회 30ms이므로 카드 10개면 0.6초가
-    # 목록 조회에 그대로 붙는다. gather는 입력 순서대로 돌려주므로 아래 zip이
-    # 안전하다.
+    # **Walk the per-slug S3 round trips in parallel up front.** This used to await
+    # `s3.list(bundle)` and the survey lookup sequentially inside the loop, one card at
+    # a time, which is 2N round trips for N cards -- measured (2026-08-17) at 30ms per
+    # round trip, so ten cards added 0.6s straight onto the list request. gather
+    # returns results in input order, which is what makes the zip below safe.
     bundle_lists, surveys = await asyncio.gather(
         asyncio.gather(*(s3.list(f"prototypes/{slug}/bundle/")
                          for slug, _ in ordered)),
@@ -249,12 +250,13 @@ async def list_prototypes(pid: str):
         # answers about to be destroyed without a second round trip, and so a
         # card can say "no survey" at all.
         #
-        # **`has_survey`가 `response_count > 0`과 다른 질문이다.** 설문이 없을
-        # 때도 0이고 설문이 있는데 응답이 아직 없을 때도 0이라, 카드는 두 상태를
-        # 구별할 수 없었다 — 실측 test2222에서 프로토타입 3개 중 1개에만 설문이
-        # 있었는데 화면에 그 사실이 없어 나머지 둘이 빠진 것을 알아차릴 방법이
-        # 없었다. 두 값이 `survey_summary`의 **한 번의 list**에서 함께 나오므로
-        # 필드가 늘어도 왕복은 그대로다.
+        # **`has_survey` is a different question from `response_count > 0`.** It is
+        # 0 both when there is no survey and when a survey exists with no responses
+        # yet, so the card could not tell the two apart -- measured in test2222, only
+        # 1 of 3 prototypes had a survey, and with the screen not saying so there was
+        # no way to notice the other two were missing one. Both values come out of a
+        # **single list** in `survey_summary`, so the extra field costs no extra round
+        # trip.
         #
         # Delegated to survey/store.py rather than counted here from
         # `responses_prefix`: that prefix is the CURRENT round only, but
@@ -265,14 +267,15 @@ async def list_prototypes(pid: str):
         # no count and no irreversibility warning, then destroyed all 12. The
         # definition of "a response a reset destroys" belongs to the module that
         # owns those keys, so the two cannot drift apart again.
-        # 공유용 접근 URL. **running일 때만** 실어 보낸다 — 그 밖의 상태에서
-        # 이 링크는 게이트가 502를 주므로, 존재하지 않는 것이 프론트가 링크를
-        # 노출할지 판단하는 기준이 된다(기존 shareUrl 조건과 같은 규칙).
+        # The shareable access URL. It rides along **only while running**: in any
+        # other state the gate answers this link with a 502, so its absence is what
+        # tells the frontend whether to surface the link at all (the same rule as the
+        # existing shareUrl condition).
         #
-        # `token_for`이지 `ensure_token`이 아니다: GET이 자격증명을 만드는
-        # 부수효과를 가져서는 안 된다. 발급은 호스팅 시작(start_host) 한 곳에서만
-        # 일어난다 — 목록 조회가 토큰을 만들면, 한 번도 호스팅되지 않은
-        # 프로토타입에도 토큰 파일이 깔린다.
+        # `token_for`, not `ensure_token`: a GET must not have the side effect of
+        # minting a credential. Issuing happens in exactly one place, when hosting
+        # starts (start_host) -- if listing minted tokens, a token file would be laid
+        # down even for a prototype that was never hosted.
         access_url = None
         if state == "running":
             token = host.token_for(pid, slug)
@@ -326,14 +329,15 @@ async def start_session(pid: str, slug: str):
 
 @router.post("/projects/{pid}/prototypes/{slug}/turns")
 async def create_session_turn(pid: str, slug: str, body: TurnBody):
-    """빌드 채팅 텍스트를 **본문**으로 받아 짧은 핸들을 돌려준다.
+    """Take the build chat text in the **body** and return a short handle.
 
-    워크스페이스 채팅(routes/turns.py의 create_turn)과 같은 이유다:
-    EventSource는 GET만 지원해 본문을 실을 수 없고, 긴 입력이 URL에 실리면
-    프록시가 431을 낸다(aipds/turn_handles.py 헤더의 실측).
+    The same reason as the workspace chat (create_turn in routes/turns.py):
+    EventSource supports GET only and cannot carry a body, and long input in the URL
+    makes a proxy return 431 (measured in aipds/turn_handles.py's header).
 
-    세션 존재를 여기서 확인해 없으면 404로 끝낸다 — 핸들만 받고 스트림에서
-    404가 나면 사용자는 "연결이 끊어졌습니다"만 본다.
+    Session existence is checked here so an absent one ends as a 404: if the client got
+    a handle and then hit a 404 on the stream, all the user would see is "the
+    connection dropped".
     """
     import aipds.app as app_module
     _require_registered(pid)
@@ -352,12 +356,14 @@ async def stream_session_events(pid: str, slug: str,
     if turn is not None:
         payload = app_module.turn_handles.consume(_handle_scope(pid, slug), turn)
         if payload is None:
-            # 만료·재사용·다른 세션 — 어느 쪽인지 구별해 알려주지 않는다.
+            # Expired, reused, or from another session -- which one is not
+            # disclosed.
             raise HTTPException(status_code=400,
                                 detail="turn handle is unknown or already used")
         text = payload["text"]
     elif text is None:
-        # 조용히 빈 턴을 돌리면 사용자는 응답 없는 말풍선을 보고 원인을 알 수 없다.
+        # Quietly running an empty turn leaves the user looking at a bubble with no
+        # response and no way to tell why.
         raise HTTPException(status_code=400,
                             detail="either `turn` or `text` is required")
     if text == _FIRST_TURN_SENTINEL:
@@ -620,29 +626,30 @@ async def start_host(pid: str, slug: str):
     # than re-formatted here -- two spellings of a build-time constant is the
     # same class of bug as the cwd/prototype mismatch above.
     from aipds.routes.proto_public import public_base_path
-    # 리빌드 직전에 브랜드 테마를 갱신한다. 호스팅은 rmtree 없이 기존 트리에
-    # `npm run build`를 돌리므로(proto/host.py), 여기서 파일만 새로 쓰면 코드는
-    # 한 줄도 건드리지 않고 색·서체·라운드만 바뀐다 -- 이미 완료된 프로토타입이
-    # 개선 세션 없이 리브랜딩되는 유일한 경로다.
+    # Refresh the brand theme just before the rebuild. Hosting runs `npm run build`
+    # over the existing tree without an rmtree (proto/host.py), so rewriting only the
+    # theme file here changes colours, type and corner radii without touching a line
+    # of code -- the only path by which an already-finished prototype gets rebranded
+    # without an improvement session.
     #
-    # ProtoHost 안이 아니라 이 호출부에 두는 이유: 그 클래스는 S3도 브랜드도
-    # 모르는 범용 호스팅이다.
+    # Why it lives at this call site rather than inside ProtoHost: that class is
+    # general-purpose hosting and knows nothing about S3 or about brands.
     #
-    # 빌드 중인 세션을 여기서 따로 막지 않는다 -- 바로 위 `_live_session` 가드가
-    # starting/building/waiting_input/ready 전부를 이미 409로 걸러낸다. 이
-    # 지점에 도달했다는 것 자체가 "지금 아무도 이 트리에 쓰고 있지 않다"는
-    # 뜻이다.
+    # A session mid-build is not blocked separately here -- the `_live_session` guard
+    # just above already turns starting/building/waiting_input/ready into a 409.
+    # Reaching this point is itself the statement that nobody is writing to this tree
+    # right now.
     build_dir = _prototype_dir(pid, slug).parent
     try:
         profile = await app_module.design_profile_store().load()
         sync_design(build_dir, profile, app_module.project_language(pid))
-        # sync_design은 "갱신"만 한다 -- 프로필 업로드 **이전에** 빌드된
-        # 프로토타입은 prototype/ 아래에 테마 사본이 없어 아무것도 갈지 않고,
-        # 재호스팅해도 그대로 무브랜드로 남는다("재호스팅만으로 리브랜딩"이
-        # 성립하지 않는 유일한 경우). 화면(admin.designSubtitle)이 이 한계를
-        # 이제는 정확히 말하지만, 운영자가 "왜 아무 일도 안 일어났는지"를 이
-        # 요청 시점에도 알 수 있어야 한다 -- 개선 세션을 한 번 열어야
-        # 반영된다는 뜻이다.
+        # sync_design only ever *refreshes*: a prototype built **before** the
+        # profile was uploaded has no theme copy under prototype/, so nothing is
+        # replaced and it stays unbranded even after a rehost (the one case where
+        # "rebrand by rehosting alone" does not hold). The screen
+        # (admin.designSubtitle) now states that limit accurately, but an operator
+        # also has to be able to tell at the time of this request why nothing
+        # happened -- namely that it takes one improvement session to take effect.
         if profile is not None and not theme_copies(build_dir):
             _log.warning(
                 "design profile present but %s/%s has no theme copy under "
@@ -650,33 +657,35 @@ async def start_host(pid: str, slug: str):
                 "session must run once to import aipds-theme.css first",
                 pid, slug)
     except Exception:
-        # 브랜드 반영 실패가 호스팅 자체를 막지는 않는다 -- 화면이 열리는 것이
-        # 색보다 우선이다. 원인은 로그에 남는다.
+        # A failure to apply the brand does not block hosting itself -- the screen
+        # opening matters more than its colours. The cause goes to the log.
         _log.exception("design sync before host failed: %s/%s", pid, slug)
     try:
         info = await app_module.proto_host().start(
             pid, slug, cwd=_prototype_dir(pid, slug),
             base_path=public_base_path(pid, slug),
-            # 빌드 에이전트·Discovery와 같은 출처를 쓴다(app.project_model) —
-            # 프로토타입 앱의 런타임 LLM 호출도 프로젝트가 고른 모델로 돌아야
-            # 한다. 세 곳이 다른 값을 쓰면 사용자가 고른 모델이 어디에
-            # 적용되는지 알 수 없다.
+            # Same source as the build agent and Discovery (app.project_model): the
+            # prototype app's own runtime LLM calls should also run on the model the
+            # project chose. If the three used different values, there would be no way
+            # to say where the user's chosen model actually applies.
             #
-            # 리전은 주입하지 않는다: 백엔드도 Bedrock 리전을 명시적으로
-            # 넘기지 않고 boto3/SDK의 기본 해석(인스턴스 리전·AWS_REGION)에
-            # 맡긴다. 프로토타입은 `{**os.environ, ...}`로 백엔드 env를
-            # 물려받으므로 같은 해석을 그대로 따른다 -- 여기서 별도 규약을
-            # 만들면 백엔드와 프로토타입이 다른 리전을 볼 수 있다.
+            # The region is not injected: the backend does not pass a Bedrock region
+            # explicitly either, leaving it to boto3/SDK's default resolution (the
+            # instance region, AWS_REGION). The prototype inherits the backend env via
+            # `{**os.environ, ...}` and so follows the same resolution -- inventing a
+            # separate convention here would let the backend and the prototype see
+            # different regions.
             model_id=app_module.project_model(pid))
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="prototype bundle not found")
     if info.state == "failed":
         raise HTTPException(status_code=502, detail=info.log_tail)
-    # 접근 토큰은 **여기서만** 발급한다. 프리뷰 링크가 의미를 갖는 것은 호스팅이
-    # 실제로 시작된 뒤이므로, 그보다 먼저 만들면 아무 데도 쓰이지 않는 자격증명이
-    # 디스크에 남는다. `ensure_token`이므로 stop -> start를 반복해도 값이 그대로다
-    # — 워크숍 중 호스팅을 껐다 켜는 것 때문에 이미 나눠 준 링크가 죽으면 안 된다.
-    # 링크를 폐기하는 의도된 경로는 리셋이고, 그쪽은 purge()가 토큰까지 지운다.
+    # The access token is issued **here and nowhere else**. A preview link only
+    # means anything once hosting has actually started, so minting it earlier would
+    # leave a credential on disk that nothing uses. Because it is `ensure_token`, the
+    # value survives repeated stop -> start -- a link already handed out must not die
+    # because hosting was toggled during a workshop. The intended path for revoking a
+    # link is a reset, and there purge() removes the token too.
     token = app_module.proto_host().ensure_token(pid, slug)
     return {"state": info.state, "port": info.port, "log_tail": info.log_tail,
             "access_url": access_url_path(token)}
@@ -689,9 +698,10 @@ async def host_status(pid: str, slug: str):
     info = app_module.proto_host().status(pid, slug)
     if info is None:
         raise HTTPException(status_code=404, detail="not hosted")
-    # GET은 토큰을 만들지 않는다(`token_for`) — 조회가 자격증명을 만드는 부수효과를
-    # 가지면, 호스팅된 적 없는 프로토타입에도 토큰이 깔린다. 아직 없으면 None이고,
-    # 프론트는 그때 링크를 노출하지 않는다.
+    # A GET does not mint a token (`token_for`): if a read had the side effect of
+    # creating a credential, a token would be laid down even for a prototype that was
+    # never hosted. None when there is none yet, and the frontend then does not
+    # surface the link.
     token = app_module.proto_host().token_for(pid, slug)
     return {"state": info.state, "port": info.port,
             "access_url": access_url_path(token) if token else None,
