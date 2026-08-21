@@ -7,6 +7,21 @@ export interface StreamHandlers {
   onEvent: (ev: AgentEvent) => void;
   onDone: () => void;
   onError?: (err: unknown) => void;
+  /** 턴 개시 응답(POST)의 본문. 스트림이 열리기 **전에** 한 번 불린다.
+   *
+   *  답변 제출이 이것을 쓴다: 서버가 만든 말풍선 텍스트(`summary`)가 여기 실려
+   *  온다(backend routes/answers.py). 프론트가 그 텍스트를 다시 만들지 않는 것이
+   *  요점이다 — 렌더가 두 벌이면 화면과 트랜스크립트가 갈라지고, 실제로 갈라졌다
+   *  (backend/aipds/answer_summary.py 헤더). 핸들 경로 전부가 이 콜백을 받지만
+   *  쓰는 곳은 답변 제출뿐이므로 옵셔널이다. */
+  onCreated?: (payload: TurnCreated) => void;
+}
+
+/** 턴 개시 응답. `turn_id` 외의 필드는 경로별로 다르다. */
+export interface TurnCreated {
+  turn_id?: string;
+  /** 답변 제출 경로: 서버가 만든 사용자 말풍선 텍스트. */
+  summary?: string;
 }
 
 // Shared EventSource plumbing: parses each frame's `data` as a JSON-encoded
@@ -70,7 +85,7 @@ export function openStream(url: string, handlers: StreamHandlers): () => void {
  * 실패가 스트림 오류로 뭉개지지 않고 ApiError로 호출부에 닿는다 — 그것이
  * 이 결함이 다시 숨지 않게 하는 장치다.
  */
-async function createTurn(path: string, body: unknown): Promise<string> {
+async function createTurn(path: string, body: unknown): Promise<TurnCreated> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -87,7 +102,9 @@ async function createTurn(path: string, body: unknown): Promise<string> {
     }
     throw new ApiError(res.status, detail);
   }
-  return ((await res.json()) as { turn_id: string }).turn_id;
+  // 본문 전체를 돌려준다 — `turn_id`만 뽑던 동안은 서버가 함께 보낸 말풍선
+  // 텍스트가 여기서 버려졌고, 그래서 프론트가 그것을 다시 만들어야 했다.
+  return (await res.json()) as TurnCreated;
 }
 
 /**
@@ -107,9 +124,10 @@ export function openViaHandle(
   let closeStream: (() => void) | null = null;
 
   void createTurn(createPath, body)
-    .then((turnId) => {
+    .then((created) => {
       if (cancelled) return;
-      closeStream = openStream(streamUrl(turnId), handlers);
+      handlers.onCreated?.(created);
+      closeStream = openStream(streamUrl(created.turn_id ?? ""), handlers);
     })
     .catch((err) => {
       if (cancelled) return;
