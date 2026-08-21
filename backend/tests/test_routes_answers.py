@@ -173,3 +173,57 @@ def test_a_failing_state_probe_does_not_break_answer_submission(monkeypatch):
     r = _submit("fq9", {"1": "B"})
     assert r.status_code == 200, r.text
     assert r.json()["turn_id"]
+
+
+# ---- 복원되는 말풍선이 사용자가 실제로 답한 것이어야 한다 ----
+#
+# **실측(2026-08-21).** 워크스페이스를 새로고침해 대화가 복원되면 사용자 말풍선이
+# 전부 같은 기계 문구로 고정돼 있었다: "질문에 답했습니다. 답변은 `…-questions.md`의
+# `[Answer]:` 태그에 들어 있으니, 파일을 읽고 멈춘 지점부터 이어가 주세요."
+#
+# 라이브 화면은 실제 답변을 그린다(useWorkspaceStream이 `answerSummary(questions,
+# answers, t)`로 만든다). 즉 **같은 라운드가 새로고침 전후로 다르게 보였다** —
+# `agent/answer_store.py` 헤더가 기록한 그 결함이 파일 질문 경로에서 되살아난
+# 것이다. 그쪽은 `tool_use_id`로 조인해 고쳤는데, 파일 라운드에는 그 도구 호출이
+# 아예 없어서(에이전트가 부르는 것은 `Write`다) 조인할 id도, 기록도 없었다.
+#
+# **불투명 마커로 조인하지 않는다.** `frontend/lib/approvalMarker.ts`가 이 부류에
+# 대한 결정을 적어 뒀다 — "이 텍스트는 기계 신호가 아니다. 그 턴은 트랜스크립트와
+# 채팅 히스토리에 사용자 말풍선으로 남는다. 에이전트가 이해해야 하고 사람이 읽어야
+# 한다." 그래서 턴 텍스트 자체가 사람이 읽을 답변을 담는다: 트랜스크립트가 진실을
+# 갖게 되므로 조인도, 새 상태도, 순서 의존도 생기지 않는다.
+
+def test_the_resume_turn_carries_the_answers_the_user_actually_gave(monkeypatch):
+    """말풍선이 될 텍스트에 답변이 있어야 한다 — 파일 포인터만으로는 복원이
+    "질문에 답했습니다"에서 멈춘다."""
+    _seed(monkeypatch, "fqans1")
+    handle = _submit("fqans1", {"1": "B", "12": "A,C"}).json()["turn_id"]
+    payload = app_module.turn_handles.consume("fqans1", handle)
+
+    text = payload["text"]
+    assert "1" in text and "B" in text, text
+    assert "12" in text and "A,C" in text, text
+    # 파일 지목은 그대로 남는다 — 파일이 여전히 권위다(`[Answer]:` 태그가 정본).
+    assert "strategy-questions.md" in text
+
+
+def test_the_resume_turn_keeps_free_text_answers_verbatim(monkeypatch):
+    """자유 답변은 사용자가 쓴 문장 그대로여야 한다 — 요약하거나 자르면 그것이
+    복원된 대화의 기록이 된다."""
+    _seed(monkeypatch, "fqans2")
+    written = "예산은 3분기까지 확정되지 않았습니다. 그 전에는 B로 갑니다."
+    handle = _submit("fqans2", {"1": written}).json()["turn_id"]
+    payload = app_module.turn_handles.consume("fqans2", handle)
+
+    assert written in payload["text"]
+
+
+def test_the_resume_turn_follows_the_project_language(monkeypatch):
+    """말풍선으로 남는 대화 텍스트다 — UI 언어가 아니라 프로젝트 언어다
+    (`answer_first`·`approvalMarker.ts`가 같은 판단을 기록해 뒀다)."""
+    _seed(monkeypatch, "fqans3", language="en")
+    handle = _submit("fqans3", {"1": "B"}).json()["turn_id"]
+    text = app_module.turn_handles.consume("fqans3", handle)["text"]
+
+    assert not any("가" <= c <= "힣" for c in text), text
+    assert "1" in text and "B" in text
