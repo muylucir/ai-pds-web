@@ -8,8 +8,8 @@ Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR` (`AIPDS_DISCOVERY_CONFIG_DIR`)
 지시한다. 이 지시가 Discovery에 들어가면 문서 작성 중 무관한 UI 스킬을 로드한다.
 빌더는 그 스킬을 이름으로 켜므로(`builder.py`의 `skills=["shadcn-design"]`)
 config dir을 공유하면 Discovery도 같은 스킬을 켠 채로 돌게 된다. 역방향도 같다:
-여기의 `submit_document` 규약과 질문 파일·상태 파일 규약이 빌더에 들어가면
-존재하지 않는 도구를 부르거나 빌더에 없는 파일을 찾으려 한다.
+여기의 문서 쓰기 규약과 질문 파일·상태 파일 규약이 빌더에 들어가면
+빌더에 없는 파일을 찾으려 한다.
 
 Discovery는 `skills`를 아예 주지 않는다(아래 "skills를 두지 않는다" 참조).
 빌더가 이름 목록을 쓰는 이유는 `proto-config/README.md`에 있다 — 예전의

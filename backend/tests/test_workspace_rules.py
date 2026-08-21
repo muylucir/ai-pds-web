@@ -483,7 +483,11 @@ def test_the_turn_ending_writes_are_named_and_ordered():
     # 실패는 에러 없이 온다.
     assert "discarded" in text
     # 무엇이 앞에 오는지 지목한다 — 이유만 주면 모델이 즉흥한다(prompts.py 헤더).
-    for before in ("submit_document", "audit.md", "aiplc-state.md"):
+    #
+    # "submit_document"가 이 목록에 있었다. 그 도구는 2026-08-21에 PostToolUse 훅으로
+    # 옮겨 갔으므로(agent/reconcile.document_events) 지목할 호출이 아니라 **쓰기**다 —
+    # 없는 도구를 부르라는 지시가 남으면 모델이 그것을 찾다가 턴을 낭비한다.
+    for before in ("document write", "audit.md", "aiplc-state.md"):
         assert before in text
     # 상류 근거를 지목해 둔다. 없으면 다음 사람이 이 조항을 AI-PDS의 변덕으로
     # 읽고 상류 재동기화 때 지운다.

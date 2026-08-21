@@ -1924,3 +1924,73 @@ async def test_a_preempted_consumer_stops_relaying(tmp_path):
         pass
     assert leftover == [], f"선점된 소비자가 계속 흘렸다: {leftover}"
     await live.aclose()
+
+
+# ---- 커스텀 MCP 도구가 없다 (submit_document 제거, 2026-08-21) ----
+
+
+def test_discovery_advertises_no_custom_mcp_tools(tmp_path, monkeypatch):
+    """`submit_document`가 유일한 커스텀 도구였고, 그것이 사라졌다.
+
+    남긴 근거는 "`version`과 '리뷰 준비됨 vs 중간 저장'은 파싱이 아니라 판단"이었는데
+    실제 지시(discovery-config/CLAUDE.md)는 판단을 요구하지 않았다 — 문서를 만들거나
+    갱신할 때마다 부르라고 했다. 판단이 없으면 신호는 "문서가 쓰였다"와 1:1이고,
+    PostToolUse가 이미 그것을 본다(agent/reconcile.document_events).
+
+    **왜 도구 하나를 지우는 데 테스트가 붙는가.** 도구는 두 값을 낸다: 호출마다 추론
+    왕복 하나, 그리고 **매 턴** 컨텍스트에 실리는 도구 설명. 되살아나면 그 값이 조용히
+    돌아온다 — `report_stage`·`handoff_prototype`이 훅으로 옮겨 간 뒤에도 이 도구가
+    남아 있었던 것이 그 조용함의 증거다.
+    """
+    options = _captured_options(tmp_path, monkeypatch,
+                                {"session_id": "p1", "resume": False})
+    assert not options.mcp_servers, (
+        f"Discovery에 커스텀 MCP 서버가 남아 있다: {options.mcp_servers}")
+    assert not [t for t in (options.allowed_tools or []) if "submit_document" in t], (
+        f"allowed_tools에 submit_document가 남아 있다: {options.allowed_tools}")
+
+
+@pytest.mark.asyncio
+async def test_documents_already_on_disk_are_not_announced_as_new(tmp_path):
+    """재개 턴이 기존 문서 전부를 "갱신됐다"로 알리면 안 된다.
+
+    `document` 이벤트가 워크스페이스 스캔에서 유도되므로(2026-08-21) 커서가 빈 채로
+    턴이 시작하면 **이미 있던 문서가 전부 새 문서로 보인다.** 커서를 드는 주체가
+    드라이버이므로 그것은 새 드라이버의 첫 턴에서 온다 — 백엔드 재시작 뒤 첫 attach가
+    그것이고, 그때 트리는 이미 채워져 있다. 문서 열 개짜리 프로젝트라면 열 번 알리고,
+    갱신 배너는 방금 쓴 문서가 아니라 스캔 순서상 마지막 문서를 가리킨다.
+
+    그래서 턴 시작에 커서를 디스크 상태로 **씨딩**한다: 그 시점에 있던 것은
+    "이미 본 것"이고, 턴 중에 바뀐 것만 알린다.
+    """
+    d, ws, _ = _driver(tmp_path, {"text": ["ok"]})
+    for name in ("prfaq.md", "solution-analysis.md"):
+        p = ws / "aiplc-docs" / "discovery" / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"# {name}\n본문\n", encoding="utf-8")
+
+    events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
+
+    assert [e.payload for e in events if e.kind == "document"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_document_written_during_the_turn_is_still_announced(tmp_path):
+    """씨딩이 과하면 아무것도 알리지 않는다 — 대조군. 새 프로젝트의 첫 문서는
+    씨딩 시점에 디스크에 없으므로 알려야 한다."""
+    d, ws, _ = _driver(tmp_path, {"text": ["ok"]})
+
+    async def write_during_turn():
+        p = ws / "aiplc-docs" / "discovery" / "prfaq.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("# PR/FAQ\n본문\n", encoding="utf-8")
+        return await d._on_post_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": str(p)}}, "t1", None)
+
+    events = []
+    async for ev in d.run("hi", {"session_id": "s-1"}):
+        if not events:
+            await write_during_turn()
+        events.append(ev)
+    docs = [json.loads(e.payload) for e in events if e.kind == "document"]
+    assert [x["path"] for x in docs] == ["aiplc-docs/discovery/prfaq.md"]

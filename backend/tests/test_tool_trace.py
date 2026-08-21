@@ -34,14 +34,15 @@ def test_file_tools_have_no_detail(name):
     assert tool_detail(name, {"file_path": "/ws/x.md"}) is None
 
 
-@pytest.mark.parametrize("name", ["mcp__aipds__submit_document",
-                                  "mcp__aipds_proto__build_complete"])
+@pytest.mark.parametrize("name", ["mcp__aipds_proto__build_complete"])
 def test_mcp_tools_have_no_detail(name):
-    """전용 이벤트(document/build_complete)가 이미 구조화된 값을 보낸다.
+    """전용 이벤트(build_complete)가 이미 구조화된 값을 보낸다.
 
-    `mcp__aipds__report_stage`가 이 목록에 있었다. 그 도구는 2026-08-18에
-    PostToolUse 훅으로 옮겨 갔으므로 도구 이름으로 나타나지 않는다 —
-    `stage` 이벤트는 이제 `aiplc-state.md` 쓰기에서 유도된다(agent/reconcile.py).
+    `mcp__aipds__report_stage`와 `mcp__aipds__submit_document`가 이 목록에 있었다.
+    둘 다 PostToolUse 훅으로 옮겨 갔으므로(2026-08-18, 2026-08-21) 도구 이름으로
+    나타나지 않는다 — `stage`는 `aiplc-state.md` 쓰기에서, `document`는 산출물 쓰기에서
+    유도된다(agent/reconcile.py). 목록이 하나로 줄었지만 parametrize를 남기는 이유는
+    커스텀 도구가 다시 늘 때 여기에 한 줄로 붙기 때문이다.
     """
     assert tool_detail(name, {"path": "x.md", "version": "v1"}) is None
 
