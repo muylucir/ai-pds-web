@@ -77,9 +77,14 @@ export interface WorkspaceStream {
   prototypeReady: PrototypeReadyPayload | null;
   changedPaths: string[];
   historyLoading: boolean;
-  // 문서 패널이 따라가야 할 "지금 대화 중인 문서" — submit_document뿐 아니라
+  // 문서 패널이 따라가야 할 "지금 대화 중인 문서" — `document` 이벤트뿐 아니라
   // doc성 file_changed(아래 isDocPath)도 최신-승리로 추적한다. version은
-  // submit_document에서 온 경우에만 채워진다 (ui-bug2 싱크 수정).
+  // `document` 이벤트에서 온 경우에만 채워진다 (ui-bug2 싱크 수정).
+  //
+  // 2026-08-21 이후 `document`는 모델이 부르던 `submit_document`가 아니라 백엔드가
+  // 산출물 쓰기에서 **유도한다**(agent/reconcile.document_events). 그래서 이제 거의
+  // 항상 도착하고, 아래 isDocPath 분기는 훅이 못 보는 쓰기(Bash 경유)의 백스톱으로
+  // 남는다 — 그것이 이 필드가 처음 생긴 이유였다.
   activeDoc: { path: string; version: string | null } | null;
   // 턴이 끝날 때마다 증가 — 패널이 이 키로 문서를 다시 읽는다. 턴 도중
   // 도착한 document 이벤트 시점에는 VM→S3 동기화 전이라 읽기가 빈 내용/404가

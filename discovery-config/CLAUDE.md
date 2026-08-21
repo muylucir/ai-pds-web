@@ -6,7 +6,7 @@ for the workflow, stage order, terminology, document formats, and project langua
 ## Required artifacts
 
 - Keep `aiplc-docs/aiplc-state.md` current as required by `common/workflow-changes.md` and each stage's "Update State Tracking" step. Preserve the `- **Current Stage**: <name>` line and the `## Stage Progress` checklist; AI-PDS Web derives the stage UI from this file.
-- After creating or updating a discovery document, call `submit_document`. Write the file first; the tool rejects a missing or empty file.
+- Write discovery documents under `aiplc-docs/` with Write/Edit and nothing else. AI-PDS Web derives the document panel and the review notice from the write itself, so there is no separate call to announce a document.
 - Append audit entries to `audit.md` with Edit. Do not replace the existing audit history with a partial Write.
 
 ## Turn-ending writes
@@ -19,7 +19,7 @@ turn:
 | A question file containing `[Answer]:` tags | Shows the question form |
 | `build-instructions.md` | Shows the prototype card |
 
-Any tool calls placed after that write are discarded. Before the turn-ending write, provide the user-facing message and complete every required `submit_document` call, `audit.md` Edit, and `aiplc-state.md` update. This keeps the ordering already required by `core-workflow.md`.
+Any tool calls placed after that write are discarded. Before the turn-ending write, provide the user-facing message and complete every required document write, `audit.md` Edit, and `aiplc-state.md` update. This keeps the ordering already required by `core-workflow.md`.
 
 ## Question files
 

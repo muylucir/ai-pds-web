@@ -233,3 +233,75 @@ def test_prototype_id_for_rejects_everything_else():
                 "aiplc-docs/discovery/envision/build-instructions.md",
                 "build-instructions.md"):
         assert reconcile.prototype_id_for(rel) is None, rel
+
+
+# ---- 문서: aiplc-docs/ 아래 산출물 쓰기에서 유도한다 (옛 submit_document) ----
+#
+# `submit_document`가 2026-08-21에 사라졌다. 남긴 근거는 "`version`과 '리뷰 준비됨
+# vs 중간 저장'은 파싱이 아니라 판단"이었는데, 실제 지시(discovery-config/CLAUDE.md)는
+# 판단을 요구하지 않았다 — 문서를 만들거나 갱신할 때마다 부르라고 했다. 판단이 없으면
+# 신호는 "문서가 쓰였다"와 1:1이고, PostToolUse가 이미 그것을 본다.
+#
+# 게다가 그 도구는 **대부분 불리지 않았다**: 프론트가
+# `useWorkspaceStream.ts:177`에 "에이전트는 대부분의 문서를 submit_document 없이
+# file_write로만 만든다(실측: prfaq.md 등)"고 적고 우회로를 넣어 뒀다. 스테이지·인계와
+# 같은 침묵의 세 번째 사례다.
+
+
+def _doc(root: Path, rel: str, text: str = "# 문서\n본문\n") -> None:
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+
+
+def test_a_document_write_becomes_a_document_event(tmp_path):
+    _doc(tmp_path, "aiplc-docs/discovery/prfaq.md")
+    events, _ = reconcile.document_events(tmp_path, {})
+    assert [e.kind for e in events] == ["document"]
+    assert _payloads(events) == [
+        {"path": "aiplc-docs/discovery/prfaq.md", "version": "1", "summary": ""}]
+
+
+def test_the_record_keeping_files_are_not_documents(tmp_path):
+    """감사·상태·질문 파일은 문서 패널이 따라갈 산출물이 아니다.
+
+    프론트의 `isDocPath`와 같은 판정이다(useWorkspaceStream.ts) — 질문 파일이
+    여기 끼면 한 화면에 같은 질문의 두 버전이 나란히 뜬다.
+    """
+    for rel in ("aiplc-docs/audit.md",
+                "aiplc-docs/aiplc-state.md",
+                "aiplc-docs/discovery/envision/pain-point-questions.md",
+                "aiplc-docs/discovery/notes.txt",
+                "outside/other.md"):
+        _doc(tmp_path, rel)
+    events, cursor = reconcile.document_events(tmp_path, {})
+    assert events == [] and cursor == {}
+
+
+def test_the_same_content_is_announced_once(tmp_path):
+    """커서가 없으면 매 쓰기마다 배너가 다시 뜬다 — 에이전트가 같은 문서를 한 턴에
+    여러 번 쓰는 것은 정상 동작이다(stage_events가 diff를 쓰는 것과 같은 이유)."""
+    _doc(tmp_path, "aiplc-docs/discovery/prfaq.md")
+    first, cursor = reconcile.document_events(tmp_path, {})
+    again, cursor2 = reconcile.document_events(tmp_path, cursor)
+    assert len(first) == 1
+    assert again == [] and cursor2 == cursor
+
+
+def test_a_changed_document_gets_the_next_version(tmp_path):
+    """배너의 닫기가 `version`을 기억하므로(page.tsx의 dismissedDocVersion) 갱신마다
+    값이 달라져야 한다 — 같으면 한 번 닫은 뒤 다시 뜨지 않는다."""
+    _doc(tmp_path, "aiplc-docs/discovery/prfaq.md", "# 문서\n초안\n")
+    _, cursor = reconcile.document_events(tmp_path, {})
+    _doc(tmp_path, "aiplc-docs/discovery/prfaq.md", "# 문서\n고친 본문\n")
+    events, _ = reconcile.document_events(tmp_path, cursor)
+    assert _payloads(events) == [
+        {"path": "aiplc-docs/discovery/prfaq.md", "version": "2", "summary": ""}]
+
+
+def test_an_empty_document_is_not_announced(tmp_path):
+    """옛 도구가 빈 파일 선언을 거부한 이유를 유지한다 — 사용자가 "작성됐습니다"를
+    읽으면서 빈 문서 패널을 본다."""
+    _doc(tmp_path, "aiplc-docs/discovery/prfaq.md", "   \n\n")
+    events, cursor = reconcile.document_events(tmp_path, {})
+    assert events == [] and cursor == {}

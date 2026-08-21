@@ -331,7 +331,7 @@ it("restores tool traces onto AI history items", async () => {
 describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug2)", () => {
   beforeEach(() => { vi.clearAllMocks(); noLiveTurn(); });
 
-  it("doc성 file_changed가 activeDoc을 갱신한다 (submit_document 없이도)", async () => {
+  it("doc성 file_changed가 activeDoc을 갱신한다 (document 이벤트 없이도)", async () => {
     drive(
       [
         { kind: "file_changed", text: null, path: "aiplc-docs/discovery/envision/prfaq.md", payload: null },
@@ -385,7 +385,7 @@ describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug
     expect(result.current.activeDoc).toBeNull();
   });
 
-  it("document 이벤트(submit_document)는 version과 함께 activeDoc을 갱신하고, 이후 doc성 file_changed가 최신-승리한다", async () => {
+  it("document 이벤트는 version과 함께 activeDoc을 갱신하고, 이후 doc성 file_changed가 최신-승리한다", async () => {
     drive(
       [
         {

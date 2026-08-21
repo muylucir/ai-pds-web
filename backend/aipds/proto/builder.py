@@ -490,9 +490,9 @@ class PrototypeBuilder:
     #                   exactly the two points its answerer dies (interrupt,
     #                   disconnect). A card whose future is still LIVE is
     #                   correctly re-shown: it is still answerable.
-    #   stage/document -> never produced on this path at all. The prototype
-    #                   builder has no report_stage/submit_document tools (those
-    #                   are Discovery's, agent/tools.py), and
+    #   stage/document -> never produced on this path at all. Both are derived
+    #                   from Discovery's workspace writes (agent/reconcile.py),
+    #                   which this path never touches, and
     #                   usePrototypeStream has no stage/document branch. So the
     #                   brief's "document panel and artifact list" concern maps
     #                   here to `changedPaths` only, which is dedupe-safe.

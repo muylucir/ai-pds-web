@@ -46,10 +46,9 @@ const ACTIVITY_LABEL_KEYS: Record<string, keyof Dict> = {
   WebFetch: "activity.fetching",
   // 프로토타입 빌드 전용 커스텀 도구(proto/tools.py)
   build_complete: "activity.buildFinishing",
-  // Discovery의 유일한 커스텀 도구(agent/tools.py). `report_stage`가 여기 있었지만
-  // 2026-08-18에 PostToolUse 훅으로 옮겨 갔다 — 도구 호출이 아니므로 이 목록에
-  // 나타날 일이 없다(agent/reconcile.py).
-  submit_document: "activity.submitDocument",
+  // Discovery에는 커스텀 도구가 없다. `report_stage`(2026-08-18)와
+  // `submit_document`(2026-08-21)가 여기 있었고 둘 다 PostToolUse 훅으로 옮겨 갔다 —
+  // 도구 호출이 아니므로 이 목록에 나타날 일이 없다(agent/reconcile.py).
   // Strands 드라이버 (env 폴백 기간 유지)
   ask_questions: "activity.questions",
   file_write: "activity.writing",

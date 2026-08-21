@@ -71,9 +71,14 @@ def build_proto_tools(workspace: str,
                       language: str = "ko") -> list:
     """워크스페이스 + 이벤트 싱크에 바인딩된 SdkMcpTool 리스트.
 
-    Discovery의 build_tools와 같은 계약이다 — 이 리스트 자체는
-    ClaudeAgentOptions에 바로 넣을 수 없고, 호출부(proto/builder.py)가
-    create_sdk_mcp_server(name=PROTO_MCP_SERVER_NAME, tools=...)로 감싼다.
+이 리스트 자체는 ClaudeAgentOptions에 바로 넣을 수 없고, 호출부
+    (proto/builder.py)가 create_sdk_mcp_server(name=PROTO_MCP_SERVER_NAME,
+    tools=...)로 감싼다.
+
+    **이 제품에 남은 유일한 커스텀 도구다.** Discovery의 것들은 전부 PostToolUse
+    훅으로 옮겨 갔다(agent/reconcile.py). `build_complete`가 남는 이유는 같은 판정
+    기준을 통과하기 때문이다 — 빌드의 마지막 Write는 다른 Write와 구별되지 않으므로
+    "끝났다"는 신호가 파일에서 유도되지 않는다.
 
     language는 도구 설명과 반환 문자열의 언어다 — 셋 다 모델이 읽는
     프롬프트이므로 대화 언어와 맞아야 한다(proto/prompts.py).
@@ -87,8 +92,8 @@ def build_proto_tools(workspace: str,
         remaining = args.get("remaining", "")
 
         # 이 이벤트가 세션을 끝낸다. 산출물 없이 선언되면 사용자는 "빌드
-        # 완료" 카드를 보는데 호스팅할 것이 없다 — submit_document가 파일
-        # 존재를 확인하는 것과 같은 이유로 여기서 막는다. 반환 문자열은
+        # 완료" 카드를 보는데 호스팅할 것이 없다 — 도구가 거짓을 선언할 수 없게
+        # 여기서 막는다. 반환 문자열은
         # 에이전트가 읽고 스스로 고칠 수 있도록 무엇을 해야 하는지 알려준다.
         if not _has_output(workspace):
             _log.warning("build_complete refused: prototype/ is empty (%s)",

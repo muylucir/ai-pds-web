@@ -78,7 +78,6 @@ from aipds.agent.question_file_answers import (looks_like_question_file,
 from aipds.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
 from aipds.agent.session_store import DiscoverySessionStore
-from aipds.agent.tools import build_tools
 from aipds.agent.workspace_rules import place_rules
 from aipds.cli_settings import cli_context_env
 from aipds.models import AgentEvent
@@ -171,7 +170,6 @@ def _file_questions_enabled() -> bool:
     import os
     return os.environ.get(FILE_QUESTIONS_ENV, "").strip().lower() not in _FALSY
 
-_MCP_SERVER_NAME = "aipds"
 
 
 class _MessageReader:
@@ -455,7 +453,7 @@ def _transcript_exists(config_dir: str, workspace: str, session_id: str) -> bool
 def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
     def make(session: dict):
         from claude_agent_sdk import (
-            ClaudeAgentOptions, ClaudeSDKClient, create_sdk_mcp_server,
+            ClaudeAgentOptions, ClaudeSDKClient,
         )
         from claude_agent_sdk.types import HookMatcher
 
@@ -478,17 +476,6 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
         # 늦추는 스위치다(cli_settings 헤더의 실측 264k→53k).
         env.update(cli_context_env())
         session_id, resume = _sdk_session_id(session)
-        # Task 5 left create_sdk_mcp_server to the caller so build_tools could
-        # keep a plain `-> list[SdkMcpTool]` contract. allowed_tools' entries
-        # MUST be spelled "mcp__<server key>__<tool name>" -- the SDK builds
-        # that name itself when it serializes --mcp-config, so any other
-        # spelling silently leaves the tool needing approval.
-        # 도구 설명과 반환 문자열도 프로젝트 언어로 간다 — 둘 다 모델이 매 턴
-        # 읽는 프롬프트다(agent/prompts.py 헤더).
-        server = create_sdk_mcp_server(
-            name=_MCP_SERVER_NAME,
-            tools=build_tools(driver._workspace, driver._emit,
-                              driver._language))
         options = ClaudeAgentOptions(
             permission_mode=driver._permission_mode,
             cwd=driver._workspace,
@@ -500,11 +487,18 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # (skills="all", for shadcn-design), Discovery's upstream AI-PLC
             # setup has no skills of its own -- it is CLAUDE.md plus on-demand
             # rule-file reads (discovery-config/README.md).
-            mcp_servers={_MCP_SERVER_NAME: server},
-            # 도구가 하나다. `report_stage`와 `handoff_prototype`은 2026-08-18에
-            # PostToolUse 훅으로 옮겨 갔다 — 도구는 모델이 부르지 않으면 침묵하고,
-            # 그 침묵이 두 번 실측됐다(agent/reconcile.py 헤더).
-            allowed_tools=[f"mcp__{_MCP_SERVER_NAME}__submit_document"],
+            # **커스텀 도구가 없다.** `mcp_servers`와 `allowed_tools`를 아예 넘기지
+            # 않는다(둘의 SDK 기본값이 `{}`/`[]`이므로 내장 도구는 그대로다).
+            #
+            # 셋이었다: `report_stage`와 `handoff_prototype`이 2026-08-18에,
+            # `submit_document`가 2026-08-21에 PostToolUse 훅으로 옮겨 갔다. 판정
+            # 기준은 매번 같았다 — **신호가 워크스페이스에서 유도되는가.** 도구는
+            # 모델이 부르지 않으면 침묵하고, 그 침묵이 세 번 실측됐다
+            # (agent/reconcile.py 헤더 + useWorkspaceStream.ts:177).
+            #
+            # 도구를 없애면 두 값을 함께 돌려받는다: 호출마다 붙던 추론 왕복과, 매 턴
+            # 컨텍스트에 실리던 도구 설명. 되살릴 때는 그 값을 내는 것이므로,
+            # "신호가 파일에서 유도되지 않는다"를 먼저 보여야 한다.
             # Exactly one of the two, never both: the CLI rejects
             # `--session-id` alongside `--resume` unless `--fork-session` is
             # also passed ("--session-id can only be used with --continue or
@@ -609,9 +603,10 @@ class ClaudeDriver:
         self._session_store: Any = (session_store if session_store is not None
                                     else DiscoverySessionStore(s3))
         self._anthropic_model = anthropic_model
-        # 이 프로젝트의 생성물 언어. 세 곳으로 흐른다: place_rules(워크스페이스
-        # CLAUDE.md의 언어 지시), build_tools(도구 설명·반환 문자열), 그리고
-        # 이 드라이버가 만드는 모델·사용자 대상 텍스트(agent/prompts.py).
+        # 이 프로젝트의 생성물 언어. 두 곳으로 흐른다: place_rules(워크스페이스
+        # CLAUDE.md의 언어 지시)와 이 드라이버가 만드는 모델·사용자 대상
+        # 텍스트(agent/prompts.py). 셋이었던 시절의 세 번째는 커스텀 도구의 설명·반환
+        # 문자열이었고, Discovery의 도구가 2026-08-21에 사라지면서 그 채널도 사라졌다.
         #
         # 처음에는 place_rules 하나뿐이었고 그것이 결함이었다 — 지시만 영어로
         # 바꿔도 도구 설명과 거부 메시지가 한국어로 남아 매 턴 모델 컨텍스트에
@@ -653,6 +648,14 @@ class ClaudeDriver:
         # 이미 `prototype_ready`를 흘린 프로토타입 id. 두 번 알리면 채팅에 카드가
         # 두 장 뜬다(agent/reconcile.prototype_events).
         self._handed_off: set[str] = set()
+        # 산출물 경로 → (버전, 내용 해시). `document` 이벤트의 diff 커서다
+        # (agent/reconcile.document_events). 해시가 "바뀌었나"를, 서수가 "몇 번째
+        # 갱신인가"를 답한다 — 배너의 닫기가 버전을 기억하므로 갱신마다 값이
+        # 달라져야 한다. 재시작으로 비면 서수가 1로 돌아가고, 그 대가는
+        # reconcile.document_events가 적어 뒀다.
+        self._doc_versions: dict[str, tuple[int, str]] = {}
+        # 위 커서를 디스크 상태로 한 번 채웠는지. `_seed_document_cursor` 참조.
+        self._docs_seeded = False
         self._current_session_id: str | None = None
         # The task draining the current turn's receive_response(). Outlives the
         # `run()` generator on purpose when a question parks the turn -- that is
@@ -672,10 +675,14 @@ class ClaudeDriver:
     # `_on_post_tool_use`가 `publish_file`을 직접 부른다.
 
     def _emit(self, event: AgentEvent) -> None:
-        """The `emit` sink handed to build_tools -- `submit_document` pushes its
-        `document` event through here. Stage and handoff events no longer arrive
-        this way: they are derived in `_emit_stage_events`/`_handoff_stop` and
-        appended to `_queue` directly."""
+        """이벤트를 턴 큐에 넣는다.
+
+        커스텀 도구에게 넘기는 `emit` 싱크였다. 그 도구들이 훅으로 옮겨 간 뒤
+        (마지막이 2026-08-21의 `submit_document`) 프로덕션 호출부가 없어졌지만,
+        `_queue`에 직접 append하는 것보다 의도가 드러나므로 남긴다 — 유도된
+        이벤트는 `_emit_stage_events`·`_emit_document_events`·`_handoff_stop`이
+        각자 append한다.
+        """
         self._queue.append(event)
 
     def set_file_published_callback(
@@ -958,6 +965,43 @@ class ClaudeDriver:
         for ev in events:
             self._queue.append(ev)
 
+    def _emit_document_events(self) -> None:
+        """내용이 바뀐 산출물만 `document`로 흘린다. 옛 `submit_document`를 대체한다.
+
+        `_emit_stage_events`와 같은 이유로 함수가 하나다 — 훅 경로와 턴 경계가 **같은
+        커서**를 지나야 한다. 두 벌로 두면 턴 경계가 훅이 이미 알린 문서를 다시
+        알리고, 갱신 배너가 문서마다 두 번 뜬다.
+        """
+        events, self._doc_versions = reconcile.document_events(
+            Path(self._workspace), self._doc_versions)
+        for ev in events:
+            self._queue.append(ev)
+
+    def _seed_document_cursor(self) -> None:
+        """첫 턴이 시작할 때 **이미 있던** 문서를 "본 것"으로 표시한다.
+
+        `document`는 워크스페이스 스캔에서 유도되므로 커서가 빈 채로 턴이 시작하면
+        기존 문서가 전부 새 문서로 보인다. 커서를 드는 주체가 이 드라이버이므로 그
+        상태는 **새 드라이버의 첫 턴**에서 온다 — 백엔드 재시작이나 재배포 뒤 첫
+        attach가 그것이고, 그때 트리는 이미 채워져 있다(cold restore가 전부 내려받거나
+        로컬 워크스페이스가 이전 턴에서 남아 있다). 문서 열 개짜리 프로젝트라면 열 번
+        알리고, 갱신 배너는 방금 쓴 문서가 아니라 스캔 순서상 마지막 문서를 가리킨다.
+
+        **한 번만 한다.** 매 턴 씨딩하면 턴 사이에 바뀐 문서를 조용히 삼킨다(다른
+        인스턴스의 쓰기, 복원된 내용이 다른 경우). 첫 턴 이후로는 모든 변경이 알림
+        대상이다.
+
+        **`__init__`이 아니라 여기인 이유**도 그 복원이다: 드라이버가 만들어지는
+        시점의 워크스페이스는 비어 있고, 채워지는 것은 러너가 `run()`을 부르기
+        직전이다. 생성 시점에 씨딩하면 아무것도 못 보고, 그러면 첫 턴이 다시 전부를
+        알린다.
+        """
+        if self._docs_seeded:
+            return
+        self._docs_seeded = True
+        _, self._doc_versions = reconcile.document_events(
+            Path(self._workspace), self._doc_versions)
+
     def _reconcile_turn(self) -> None:
         """턴이 끝나기 전에 워크스페이스와 UI를 맞춘다. `_pump`가 부른다.
 
@@ -979,6 +1023,10 @@ class ClaudeDriver:
                 self._queue.append(ev)
         except Exception:
             _log.exception("prototype handoff reconciliation failed")
+        try:
+            self._emit_document_events()
+        except Exception:
+            _log.exception("document reconciliation failed")
 
     def _handoff_stop(self, rel: str) -> dict | None:
         """`build-instructions.md` 쓰기를 인계로 확정하고 턴을 끝낸다.
@@ -1048,6 +1096,13 @@ class ClaudeDriver:
         # 파일 전문을 알 수 없고, `_file_question_round`가 같은 이유로 같은 선택을 했다.
         if rel == reconcile.STATE_KEY:
             self._emit_stage_events()
+        # 문서 갱신 배너와 문서 패널의 activeDoc: 산출물 쓰기에서 **유도한다**(옛
+        # `submit_document` 도구를 대체한다 — 그 도구는 매 문서마다 부르라고 지시받고도
+        # 대부분 불리지 않았다. 프론트가 실측을 적어 뒀다:
+        # useWorkspaceStream.ts:177 "대부분의 문서를 submit_document 없이
+        # file_write로만 만든다"). 스테이지·인계와 같은 부류의 침묵이었다.
+        if reconcile.is_document(rel):
+            self._emit_document_events()
         # 프로토타입 인계: Step 3의 마지막 산출물이 쓰이는 순간이다. 옛
         # `handoff_prototype` 도구와 달리 모델이 잊을 수 없다 — 2026-08-17
         # keumkang-v5에서 탭 안내가 0회였던 것이 그 도구가 생긴 이유였고, 도구는
@@ -1871,6 +1926,9 @@ class ClaudeDriver:
         if not self._place_rules():
             yield AgentEvent(kind="error", text="agent turn failed")
             return
+        # 이 시점의 워크스페이스에 이미 있는 문서를 "본 것"으로 표시한다 — 새
+        # 드라이버의 첫 턴이 기존 문서 전부를 갱신으로 알리지 않게.
+        self._seed_document_cursor()
         # The concurrency guard comes BEFORE the pending-question short-circuit
         # below: if a turn is genuinely still streaming, "turn already in
         # progress" is the accurate report, and re-surfacing the question
@@ -2001,6 +2059,9 @@ class ClaudeDriver:
         if not self._place_rules():
             yield AgentEvent(kind="error", text="agent turn failed")
             return
+        # 이 시점의 워크스페이스에 이미 있는 문서를 "본 것"으로 표시한다 — 새
+        # 드라이버의 첫 턴이 기존 문서 전부를 갱신으로 알리지 않게.
+        self._seed_document_cursor()
         token = self._acquire_turn()
         if token is None:
             yield AgentEvent(kind="error", text="turn already in progress")
