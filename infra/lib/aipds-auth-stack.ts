@@ -7,7 +7,7 @@ import {
   SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
   callbackUrls, logoutUrls,
 } from './auth-client-config';
-import { seedUser } from './seed-users';
+import { seedProviderRole, seedUser } from './seed-users';
 
 // OAuthScope는 생성자가 private이고 정적 상수(+custom())만 노출한다 —
 // 문자열을 그대로 넘길 수 없어 매핑이 필요하다. 문자열 목록의 출처는
@@ -124,17 +124,24 @@ export class AipdsAuthStack extends cdk.Stack {
     branding.node.addDependency(domain);
 
     // --- 시드 계정: cdk deploy 한 번으로 로그인 가능해야 한다 ---
+    //
+    // 롤을 여기서 한 번 만들어 두 시드가 공유한다. 시드마다 권한을 만들면 IAM 최종
+    // 일관성과 경쟁하고, 실제로 그 경쟁에 져서 첫 배포가 롤백됐다 — 근거는
+    // seed-users.ts의 `seedProviderRole` 주석.
+    const seedRole = seedProviderRole(this, this.userPool);
     seedUser(this, 'SeedAdmin', {
       userPool: this.userPool,
       email: SEED_ADMIN_EMAIL,
       group: GROUP_ADMIN,
       password: SEED_PASSWORD,
+      role: seedRole,
     });
     seedUser(this, 'SeedPm', {
       userPool: this.userPool,
       email: SEED_PM_EMAIL,
       group: GROUP_PM,
       password: SEED_PASSWORD,
+      role: seedRole,
     });
 
     new cdk.CfnOutput(this, 'UserPoolId', { value: this.userPool.userPoolId });
