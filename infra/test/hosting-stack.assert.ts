@@ -504,7 +504,7 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
 //
 // 플래그(`@aws-cdk/aws-ec2:uniqueImdsv2TemplateName`)가 cdk.json에 없으면 이름이
 // `InstanceLaunchTemplate`으로 고정되고, 그것은 **계정·리전 전역 이름공간**이다. 실제로
-// 2026-07-26에 만들어진 태그 없는 고아 LT(Pathfinder 시절 잔재)가 그 이름을 쥐고 있어
+// 2026-07-26에 만들어진 태그 없는 고아 LT(옛 배포의 잔재)가 그 이름을 쥐고 있어
 // 첫 배포가 죽었다. 워크숍에서 계정을 공유하는 이 제품에는 스택별 고유가 요구사항이다.
 {
   // **cdk.json의 context를 실제로 읽어 App에 넣는다.** `new cdk.App()`만으로는 피처
