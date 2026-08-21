@@ -1,4 +1,6 @@
 import * as assert from 'node:assert';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { AipdsDrillStack } from '../lib/aipds-drill-stack';
@@ -486,3 +488,58 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
     'do not grant cognito-idp:* — list the actions the backend actually calls');
   console.log('OK  hosting: instance role has every Cognito Admin action /admin/users calls');
 }
+
+// --- 런치 템플릿 이름은 계정 전역에서 고유해야 한다 ---
+//
+// **실측(2026-08-21, AipdsHostingStack 첫 생성 실패).**
+//
+//   CREATE_FAILED  AWS::EC2::LaunchTemplate  InstanceLaunchTemplate
+//   "Launch template name already in use." (InvalidLaunchTemplateName.AlreadyExistsException)
+//
+// `requireImdsv2: true`가 CDK의 InstanceRequireImdsv2Aspect를 켠다. 그 aspect가 LT를
+// 만들면서 이름을 이렇게 정한다(aws-cdk-lib/aws-ec2/lib/aspects/require-imdsv2-aspect):
+//
+//   피처플래그 있음 -> Names.uniqueId(launchTemplate)   (스택·경로별 고유)
+//   피처플래그 없음 -> `${node.node.id}LaunchTemplate`   (고정!)
+//
+// 플래그(`@aws-cdk/aws-ec2:uniqueImdsv2TemplateName`)가 cdk.json에 없으면 이름이
+// `InstanceLaunchTemplate`으로 고정되고, 그것은 **계정·리전 전역 이름공간**이다. 실제로
+// 2026-07-26에 만들어진 태그 없는 고아 LT(Pathfinder 시절 잔재)가 그 이름을 쥐고 있어
+// 첫 배포가 죽었다. 워크숍에서 계정을 공유하는 이 제품에는 스택별 고유가 요구사항이다.
+{
+  // **cdk.json의 context를 실제로 읽어 App에 넣는다.** `new cdk.App()`만으로는 피처
+  // 플래그가 들어오지 않는다 — 그것을 주입하는 것은 CDK CLI다. 그래서 이 파일의 다른
+  // 블록들은 배포되는 것과 **다른 합성 설정**을 검사하고 있고, 이번 결함이 그 틈으로
+  // 지나갔다. 이 블록은 정본(cdk.json)을 읽으므로 플래그를 지우면 실패한다.
+  const cdkJson = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', 'cdk.json'), 'utf8'));
+  const app = new cdk.App({ context: cdkJson.context });
+  const drill = new AipdsDrillStack(app, 'Drill6', { env: ENV });
+  const auth = new AipdsAuthStack(app, 'Auth6', { env: ENV });
+  const hosting = new AipdsHostingStack(app, 'Hosting6', {
+    env: ENV,
+    artifactsBucket: drill.artifactsBucket,
+    userPool: auth.userPool,
+    userPoolClient: auth.userPoolClient,
+    hostedUiDomain: auth.hostedUiDomain,
+  });
+  const t = Template.fromStack(hosting);
+
+  const lts = Object.entries(t.findResources('AWS::EC2::LaunchTemplate'));
+  assert.strictEqual(lts.length, 1, `expected 1 launch template, got ${lts.length}`);
+  const name = lts[0]![1].Properties?.LaunchTemplateName;
+  assert.ok(typeof name === 'string' && name.length > 0,
+    `LaunchTemplateName must be set, got ${JSON.stringify(name)}`);
+  assert.notStrictEqual(
+    name, 'InstanceLaunchTemplate',
+    'LaunchTemplateName is the collision-prone legacy default — enable the feature flag '
+    + '"@aws-cdk/aws-ec2:uniqueImdsv2TemplateName" in cdk.json. This exact name already '
+    + 'failed a deploy: an orphaned launch template in the account held it.',
+  );
+  // 스택 이름이 들어가야 계정을 공유하는 두 배포가 서로를 막지 않는다.
+  assert.ok(
+    name.includes('Hosting6'),
+    `LaunchTemplateName must be scoped by stack to stay unique per deploy, got ${name}`,
+  );
+}
+console.log('OK  hosting: launch template name is unique per stack (no account-wide collision)');
