@@ -48,9 +48,22 @@ AI-PLC는 프로덕트 매니저·비즈니스 리더 등 **비개발 역할**�
 
 **이 리포에서 그 워크플로가 있는 자리.** AI-PDS가 구동하는 룰셋은
 [aws-samples/sample-ai-plc](https://github.com/aws-samples/sample-ai-plc)의 AI-PLC 워크플로이며,
-여기에는 [`rule/aiplc-rules/`](rule/aiplc-rules)로 들어 있다 — 고칠 대상은 그 마크다운 파일들이다.
-백엔드가 **매 턴** 그것을 에이전트 워크스페이스로 복사하므로(`backend/aipds/agent/workspace_rules.py`),
-룰셋을 고치면 다음 턴부터 반영된다: 재시작도, 재배포도 필요 없다. AI-PDS가 그 워크플로
+**여기에 복사해 두지 않는다** — [`steering-files/`](steering-files) 서브모듈로, 상류의 특정 커밋에
+고정해 무수정으로 가져온다. 의도한 선택이다: 사본은 갈라지고, 정본은 상류에 있다. 그러므로
+서브모듈까지 clone하거나, 이미 clone했다면 뒤늦게 채운다:
+
+```bash
+git clone --recurse-submodules https://github.com/muylucir/ai-pds-web.git
+# 이미 clone했다면
+git submodule update --init --recursive
+```
+
+상류 변경을 받을 때는 `git submodule update --remote steering-files` 후 옮겨진 포인터를 커밋한다 —
+어느 배포가 어느 룰셋으로 도는지를 기록하는 것이 그 커밋이다. 워크플로 자체를 바꿔야 한다면
+그 변경이 있을 자리는 이 리포가 아니라 상류다.
+
+백엔드가 **매 턴** 룰셋을 에이전트 워크스페이스로 복사하므로(`backend/aipds/agent/workspace_rules.py`),
+룰셋이 갱신되면 다음 턴부터 반영된다: 재시작도, 재배포도 필요 없다. AI-PDS가 그 워크플로
 바깥에 더하는 것은 채팅 기록만으로는 안 되는 부분이다 — 비개발 역할이 쓰는 브라우저 UI, 턴의
 실시간 렌더, 문서 리뷰, 그리고 같은 화면에서 프로토타입과 검증 설문까지 빌드·호스팅하는 것.
 

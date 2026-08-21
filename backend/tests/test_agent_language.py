@@ -52,9 +52,11 @@ def test_english_workspace_rules_have_no_korean():
     이므로 그 이상 볼 수 없다). 여기서는 실제 리포 룰로 조립해 글자를 센다 —
     상류 룰이나 language/en.md에 한국어가 섞여 들어오는 것까지 잡는다.
     """
-    rules = REPO / "rule" / "aiplc-rules"
+    rules = REPO / "steering-files" / "aiplc-rules"
     if not (rules / "aws-aiplc-rules" / "core-workflow.md").is_file():
-        pytest.skip("repo rules not present")
+        # steering-files/는 서브모듈이다 — 초기화하지 않은 트리에서는 비어 있고,
+        # 그러면 이 검사가 조용히 건너뛰어진다. `git submodule update --init`.
+        pytest.skip("steering-files/ submodule not initialised")
     with tempfile.TemporaryDirectory() as ws:
         place_rules(ws, str(rules), language="en")
         text = (Path(ws) / "CLAUDE.md").read_text(encoding="utf-8")
@@ -64,9 +66,11 @@ def test_english_workspace_rules_have_no_korean():
 
 def test_korean_workspace_rules_still_carry_the_korean_directive():
     """대칭 확인 — en을 고치면서 ko를 비워버리는 회귀를 막는다."""
-    rules = REPO / "rule" / "aiplc-rules"
+    rules = REPO / "steering-files" / "aiplc-rules"
     if not (rules / "aws-aiplc-rules" / "core-workflow.md").is_file():
-        pytest.skip("repo rules not present")
+        # steering-files/는 서브모듈이다 — 초기화하지 않은 트리에서는 비어 있고,
+        # 그러면 이 검사가 조용히 건너뛰어진다. `git submodule update --init`.
+        pytest.skip("steering-files/ submodule not initialised")
     with tempfile.TemporaryDirectory() as ws:
         place_rules(ws, str(rules), language="ko")
         text = (Path(ws) / "CLAUDE.md").read_text(encoding="utf-8")

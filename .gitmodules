@@ -1,0 +1,3 @@
+[submodule "steering-files"]
+	path = steering-files
+	url = https://github.com/aws-samples/sample-ai-plc.git

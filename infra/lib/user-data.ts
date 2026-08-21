@@ -113,7 +113,12 @@ id -u ${SVC} >/dev/null 2>&1 || useradd --system --create-home --shell /sbin/nol
 
 # --- 코드: 공개 리포 clone → 배포 브랜치 최신 커밋 (근거는 lib/deploy-source.ts) ---
 # -f/safe.directory/분기는 cloud-init 재실행 때문이다. 빼면 부팅이 중단되고 증상은 502뿐.
+# safe.directory가 둘인 이유: steering-files/는 서브모듈이라 **자기 git 디렉터리를
+# 가진 별개의 리포**다. 재실행 때 트리는 이미 ${SVC} 소유이고 이 스크립트는 root로
+# 도는데, git은 리포마다 소유권을 따로 본다 — 앱 트리만 등록하면 서브모듈 쪽이
+# dubious ownership으로 막힌다.
 git config --system --add safe.directory ${APP}
+git config --system --add safe.directory ${APP}/steering-files
 if [ -d ${APP}/.git ]; then
   git -C ${APP} fetch --prune origin
 else
@@ -121,8 +126,16 @@ else
   git clone ${repoUrl} ${APP}
 fi
 git -C ${APP} checkout -f -B ${branch} origin/${branch}
+# AI-PLC 룰셋은 상류 리포(aws-samples/sample-ai-plc)의 서브모듈로 들어 있고
+# **clone은 서브모듈 내용을 가져오지 않는다** — 이 줄을 빼면 steering-files/가 빈
+# 디렉터리로 남고, 부팅은 성공하며 증상은 첫 Discovery 턴에서 룰을 못 찾는 것뿐이다.
+# --remote가 아니라 --init인 것도 의도다: 배포는 리포가 **고정한 커밋**을 쓴다.
+# 상류 갱신을 받는 것은 개발자가 'git submodule update --remote' 후 커밋하는 일이고,
+# 그래야 "지금 도는 룰이 어느 커밋인가"에 답할 수 있다.
+git -C ${APP} submodule update --init --recursive
 # 배포에 SHA가 없으므로 "무엇이 도는가"의 답이 이 한 줄에만 남는다.
 git -C ${APP} --no-pager log -1 --format='booted commit: %H %s'
+git -C ${APP} --no-pager submodule status --recursive
 cd ${APP}
 
 # --- 산출물·설정 디렉토리. 두 config dir은 반드시 서로 다른 경로다 ---

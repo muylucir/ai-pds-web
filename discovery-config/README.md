@@ -26,14 +26,15 @@ CWD 상대경로를 전제하므로, config dir에 두면 그 경로가 맞지 �
 
 | 디렉터리 | 내용 |
 |---|---|
-| `rule/aiplc-rules/` | 상류 룰 원본(읽기 전용 마스터) |
+| `steering-files/aiplc-rules/` | 상류 룰 원본(서브모듈, 읽기 전용 마스터) |
 | 워크스페이스 `{project_id}/` | `CLAUDE.md` + `aws-aiplc-rule-details/` 사본 + 산출물 |
 | `discovery-config/` | 이 파일과 통합 규약 `CLAUDE.md`만 |
 
 ## 상류 룰과 어긋나는 부분은 CLAUDE.md에서 덮는다
 
-`rule/aiplc-rules/`는 읽기 전용 마스터다 — 상류가 갱신되면 사본이 덮이므로 룰
-본문을 직접 고치면 그 수정은 유실된다. AI-PDS의 구조와 맞지 않는 지시는
+`steering-files/aiplc-rules/`는 상류 리포(aws-samples/sample-ai-plc)의 서브모듈이고
+읽기 전용 마스터다 — 룰 본문을 직접 고치면 서브모듈이 dirty가 되고 다음 갱신에서
+그 수정은 유실된다. AI-PDS의 구조와 맞지 않는 지시는
 `CLAUDE.md`에 **무엇을 하지 말라고 명시해** 덮는다.
 
 현재 덮고 있는 것: `prototype-building.md`의 빌드·실행 단계와 포트 지정

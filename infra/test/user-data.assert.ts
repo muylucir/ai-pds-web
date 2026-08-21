@@ -39,6 +39,20 @@ assert.match(s, /dnf install -y [^\n]*\bgit\b/, 'git must be installed — AL202
 // "dubious ownership"으로 거부된다. set -e 아래에서 그것은 부팅 중단이다.
 assert.match(s, /git config --system --add safe\.directory \/opt\/aipds/,
   'safe.directory must be configured before git runs on the service-user-owned tree');
+// 서브모듈은 자기 git 디렉터리를 가진 별개의 리포다 — git은 소유권을 리포마다 본다.
+assert.match(s, /git config --system --add safe\.directory \/opt\/aipds\/steering-files/,
+  'the steering-files submodule needs its own safe.directory entry — it is a separate '
+  + 'repository, so registering only the app tree still fails on a cloud-init re-run');
+// AI-PLC 룰셋은 상류 리포의 서브모듈이고 clone은 서브모듈 내용을 가져오지 않는다.
+// 빼면 부팅은 성공하고 룰만 없다 — 증상은 첫 Discovery 턴에서야 나온다.
+assert.match(s, /git -C \/opt\/aipds submodule update --init --recursive/,
+  'the ruleset submodule must be populated at boot — a clone leaves steering-files/ empty '
+  + 'and the failure only surfaces on the first Discovery turn');
+// --remote면 부팅마다 상류 최신을 당겨 인스턴스가 리포가 고정한 룰과 달라진다.
+// `^\s*git`으로 시작을 묶는 것은 주석(`# ... --remote ...`)을 세지 않기 위한 것이다.
+assert.ok(!/^\s*git[^\n]*submodule update[^\n]*--remote/m.test(s),
+  'boot must use the submodule commit the repo pins, not --remote — otherwise the rules '
+  + 'running on the instance are not the rules the repo records');
 // 멱등: cloud-init 재실행에서 이미 clone된 트리를 다시 clone하려 하면 실패한다.
 assert.match(s, /if \[ -d \/opt\/aipds\/\.git \]; then/,
   're-bootstrap must fetch instead of re-cloning');
@@ -89,6 +103,16 @@ assert.match(s, /if \[ -d \/opt\/aipds\/\.git \]; then/,
     'the script must source the deploy env instead of hardcoding APP/SVC/BRANCH');
   assert.match(update, /checkout -f -B "\$BRANCH" "origin\/\$BRANCH"/,
     'aipds-update must move the tree onto the remote tip of the deploy branch');
+  // checkout은 gitlink만 옮기고 서브모듈 내용은 옮기지 않는다 — 빼면 룰 갱신이
+  // 조용히 반영되지 않는다(브랜치 배포에서 코드 갱신 경로는 이 스크립트뿐이다).
+  assert.match(update, /submodule update --init --recursive/,
+    'aipds-update must populate the ruleset submodule — checkout moves the gitlink but '
+    + 'not its contents, so a rules update would silently not take effect');
+  // 조기 종료 **위**여야 한다: 서브모듈 초기화에 실패한 채 부팅한 인스턴스는 커밋이
+  // 그대로여서 조기 종료로 빠지고, 그러면 고칠 방법이 인스턴스 교체뿐이다.
+  assert.ok(update.indexOf('submodule update --init') < update.indexOf('BEFORE" = "$AFTER'),
+    'the submodule update must run before the up-to-date early exit, so that an instance '
+    + 'which booted with an empty steering-files/ can heal itself without a redeploy');
   // 이 env를 빼고 빌드하면 브라우저가 localhost:8000을 부른다 — 화면은 뜨고 모든
   // API 호출이 죽는다. 손으로 하던 절차를 스크립트로 옮긴 주된 이유가 이 한 줄이다.
   assert.match(update, /env NEXT_PUBLIC_API_BASE_URL=\/api HOME="\$APP" npm run build/,

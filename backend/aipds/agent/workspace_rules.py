@@ -40,7 +40,7 @@ _DETAILS_DIR = "aws-aiplc-rule-details"
 
 #: 워크스페이스 `CLAUDE.md` 맨 앞에 붙는 언어 규약. **언어별 완성본 두 벌이다.**
 #:
-#: **왜 룰셋 트리가 아닌가(2026-08-18).** 2047ac3까지는 `rule/aiplc-rules/language/`
+#: **왜 룰셋 트리가 아닌가(2026-08-18).** 2047ac3까지는 룰셋 트리 안의 `language/`
 #: 였다. 업스트림 `aiplc-rules/`에는 `.gitkeep`·`aws-aiplc-rules/`·
 #: `aws-aiplc-rule-details/`뿐이므로 그것은 업스트림 트리 안에 섞인 우리 콘텐츠였고,
 #: 룰셋 교체가 "디렉터리를 통째로 갈아 끼운다"로 끝날 수 없게 만들었다 — 그렇게 하면
