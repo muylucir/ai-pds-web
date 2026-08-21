@@ -234,3 +234,62 @@ assert.ok(
 );
 
 console.log('OK  auth stack: no-self-signup + alias username + groups + managed login v2 + code-only client + per-account seed pairing (create/suppress, permanent password, correct group)');
+
+// --- 시드 권한은 롤 생성 시점에 인라인으로 붙는다 (IAM 최종 일관성) ---
+//
+// **실측(2026-08-21, AipdsAuthStack 첫 생성 ROLLBACK).** 시드 6개 호출 중
+// `adminAddUserToGroup`(pm) 하나가 AccessDenied로 죽고 스택이 롤백됐다:
+//
+//   01:03:06  PutRolePolicy  SeedPmGroupCustomResourcePolicy    (성공)
+//   01:03:22  AdminAddUserToGroup  pm     -> AccessDenied
+//   01:03:23  AdminAddUserToGroup  admin  -> 성공
+//
+// 같은 롤, 같은 액션, 같은 리소스, 같은 시각에 붙은 같은 모양의 정책인데 1초 차이로
+// 하나는 거부되고 하나는 통과했다 — IAM 인가 경로의 최종 일관성이다. `DependsOn`은
+// API **호출 순서**만 보장하고 IAM이 새 정책을 반영했다는 것은 보장하지 않는다.
+//
+// `AwsCustomResourcePolicy.fromSdkCalls`는 호출마다 별도 `AWS::IAM::Policy`를 만들고
+// 그 각각이 소비 직전(실측 16초 전)에 쓰인다 — 호출이 여섯이면 경쟁도 여섯 번이고,
+// 그중 하나만 져도 스택 전체가 롤백된다. 시드가 늘면 실패 확률이 함께 오른다.
+//
+// 그래서 권한을 **롤의 inline policy**로 옮긴다. 그러면 IAM 쓰기가 `CreateRole`
+// 시점이 되고, 그 롤은 provider Lambda보다 먼저 있어야 하며 Lambda는 어떤 커스텀
+// 리소스보다 먼저 있어야 한다 — 실측 타임라인에서 40~80초의 여유가 생긴다. 경쟁을
+// 여섯에서 0으로 줄이는 것이 아니라, **정책이 존재하는 시점을 리소스 생성 순서로
+// 보장**하는 것이 요점이다.
+{
+  const seedPolicies = Object.entries(t.findResources('AWS::IAM::Policy'))
+    .filter(([id]) => id.startsWith('Seed'));
+  assert.deepStrictEqual(
+    seedPolicies.map(([id]) => id), [],
+    'seed permissions must not come from per-call AWS::IAM::Policy resources — each one '
+    + 'is written moments before its consumer runs and races IAM convergence. Found: '
+    + seedPolicies.map(([id]) => id).join(', '),
+  );
+
+  // 권한은 provider 롤의 inline policy에 있어야 한다. 세 액션 전부 — 하나라도
+  // 빠지면 그 단계에서 같은 롤백이 난다.
+  const roles = Object.values(t.findResources('AWS::IAM::Role'))
+    .filter((r) => JSON.stringify(r.Properties?.Policies ?? '').includes('cognito-idp:'));
+  assert.strictEqual(
+    roles.length, 1,
+    `expected exactly 1 role carrying the seed permissions inline, got ${roles.length}`,
+  );
+  const statements = (roles[0]!.Properties.Policies as any[])
+    .flatMap((p) => p.PolicyDocument.Statement as any[]);
+  for (const action of ['cognito-idp:AdminCreateUser',
+                        'cognito-idp:AdminSetUserPassword',
+                        'cognito-idp:AdminAddUserToGroup']) {
+    const hit = statements.find((s) => {
+      const a = s.Action;
+      return Array.isArray(a) ? a.includes(action) : a === action;
+    });
+    assert.ok(hit, `seed role must allow ${action} inline at role creation`);
+    // 풀 ARN으로 좁혀야 한다 — 와일드카드면 다른 풀의 사용자도 만질 수 있다.
+    assert.ok(
+      JSON.stringify(hit.Resource).includes('UserPool'),
+      `${action} must be scoped to this user pool, got ${JSON.stringify(hit.Resource)}`,
+    );
+  }
+}
+console.log('OK  auth stack: seed permissions are inline on the provider role (no per-call policy racing IAM)');
