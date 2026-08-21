@@ -30,7 +30,6 @@ export const en: Record<keyof typeof ko, string> = {
   "activity.working": "Working",
   "activity.fetching": "Gathering information",
   "activity.buildFinishing": "Finishing the build",
-  "activity.submitDocument": "Submitting the document",
   "activity.genericSuffix": "running",
   "activity.unitSeconds": "s",
   "activity.unitMinutes": "m",

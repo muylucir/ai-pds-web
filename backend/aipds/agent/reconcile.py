@@ -14,10 +14,23 @@
 # 옮긴다. 파일은 유실되지 않는다 — 배치 드롭도, 턴 종료도, 모델의 건망증도 파일을
 # 지우지 못한다.
 #
-# **여기 있는 것과 없는 것.** 파일에서 **파싱**되는 신호만 여기서 유도한다.
-# `submit_document`의 `version`과 "리뷰 준비됨 vs 중간 저장"은 파싱이 아니라
-# 판단이므로 도구로 남아 있고, `build_complete`도 그렇다(빌드의 마지막 Write는
-# 다른 Write와 구별되지 않는다 — proto/tools.py:6-7).
+# **세 번째 도구도 여기로 왔다(2026-08-21).** 이 절은 `submit_document`가 남는 이유를
+# "그 `version`과 '리뷰 준비됨 vs 중간 저장'은 파싱이 아니라 판단"이라고 적고 있었다.
+# 그 근거가 틀렸다 — **실제 지시가 그 판단을 요구하지 않았다.** discovery-config는
+# "문서를 만들거나 갱신할 때마다 부르라"고 했고, 판단이 없으면 신호는 "문서가 쓰였다"와
+# 1:1이다. 그리고 그것은 PostToolUse가 이미 보는 것이었다.
+#
+# 침묵도 똑같이 실측돼 있었다. 프론트가 우회로와 함께 적어 뒀다:
+# "에이전트는 대부분의 문서를 submit_document 없이 file_write로만 만든다(실측:
+# prfaq.md 등)" — useWorkspaceStream.ts:177. 위 두 사례와 같은 부류의 세 번째다.
+#
+# 남은 `version`은 판단이 아니라 **셈**이다: 내용 해시로 "바뀌었나"를 답하고 서수로
+# "몇 번째인가"를 센다(`document_events`). 모델이 짓던 문자열보다 정확하다 — 모델은
+# 같은 문서에 `v1`을 두 번 선언할 수 있었고 그것을 막는 장치가 없었다.
+#
+# **여기 있는 것과 없는 것.** 워크스페이스에서 유도되는 신호만 여기 있다. 남은 커스텀
+# 도구는 `build_complete` 하나이고 그것은 같은 기준을 통과한다 — 빌드의 마지막 Write는
+# 다른 Write와 구별되지 않으므로 "끝났다"가 파일에서 유도되지 않는다(proto/tools.py).
 #
 # **왜 diff인가.** agent/tools.py의 옛 헤더가 "상태 파일 쓰기에서 역추론하면 한 턴에
 # 여러 번 갱신될 때 UI가 흔들린다"고 걱정했다. 그 걱정은 정당했지만 해법은 도구가
@@ -31,6 +44,7 @@
 # 프로젝트당 하나이고 테스트가 커서를 직접 넣어 diff 경로를 검사해야 하기 때문이다.
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -40,6 +54,9 @@ from aipds.parsers.state import parse_state_file
 from aipds.proto import layout
 
 _log = logging.getLogger("aipds.agent")
+
+#: 산출물 루트. 상류 룰이 정한 이름이고 `STATE_KEY`도 이 아래에 있다.
+DOCS_ROOT = "aiplc-docs"
 
 #: 상류 룰이 정한 상태 파일. `core-workflow.md`의 트리와
 #: `prototype-validation.md` Step 10이 이 경로를 쓴다.
@@ -160,6 +177,77 @@ def prototype_events(workspace: Path,
         cursor.add(pid)
         events.append(AgentEvent(kind="prototype_ready", payload=json.dumps(
             {"slug": pid, "spec_path": spec}, ensure_ascii=False)))
+    return events, cursor
+
+
+#: 문서가 아닌 기록물. 상류 룰이 요구하는 파일들이고 문서 패널이 따라갈 산출물이
+#: 아니다 — 질문 파일이 여기 끼는 이유는 프론트가 적어 뒀다(useWorkspaceStream.ts):
+#: 답변 화면은 우측 패널의 QuestionForm이므로, 마크다운까지 문서로 띄우면 한 화면에
+#: 같은 질문의 두 버전이 뜨고 그 둘은 애초에 일치할 수 없다.
+_RECORD_KEEPING = ("audit.md", "aiplc-state.md")
+_QUESTION_SUFFIX = "-questions.md"
+
+
+def is_document(rel: str) -> bool:
+    """이 경로가 문서 패널이 따라갈 산출물인가.
+
+    프론트의 `isDocPath`와 **같은 판정**이다. 두 벌인 것은 의도다: 프론트 쪽은
+    `file_changed`에 걸린 백스톱으로 남아 있고(훅이 못 보는 Bash 경유 쓰기), 이쪽이
+    `document` 이벤트의 주 경로다. 어긋나도 해롭지 않다 — 둘 다 activeDoc을 같은
+    방향으로만 움직인다.
+    """
+    if not rel.startswith(f"{DOCS_ROOT}/") or not rel.endswith(".md"):
+        return False
+    name = rel.rsplit("/", 1)[-1]
+    return name not in _RECORD_KEEPING and not name.endswith(_QUESTION_SUFFIX)
+
+
+def document_events(workspace: Path,
+                    seen: dict[str, tuple[int, str]],
+                    ) -> tuple[list[AgentEvent], dict[str, tuple[int, str]]]:
+    """내용이 **바뀐** 산출물의 `document` 이벤트. 옛 `submit_document`를 대체한다.
+
+    `seen`이 커서다: 경로 → (버전, 내용 해시). `stage_events`와 같은 이유로 diff다 —
+    에이전트가 한 턴에 같은 문서를 여러 번 쓰는 것은 정상 동작이고, 매번 흘리면
+    갱신 배너가 그만큼 다시 뜬다.
+
+    **버전이 왜 필요한가.** 배너의 닫기 버튼이 `version`을 기억하므로
+    (page.tsx의 `dismissedDocVersion`) 갱신마다 값이 달라져야 한다. 값이 같으면 한 번
+    닫은 뒤 그 문서의 어떤 갱신도 다시 알리지 못한다. 그래서 해시로 "바뀌었나"를
+    판정하고 서수로 "몇 번째인가"를 센다.
+
+    **한계: 서수는 프로세스 생애 안에서만 이어진다.** 커서는 드라이버가 들고 있고
+    (`_stage_status`·`_handed_off`와 같은 인메모리 커서다) 백엔드 재시작 시 1로
+    돌아간다. 배너의 `dismissedDocVersion`도 페이지 상태라 새로고침에서 함께 비므로
+    흔한 경우에는 둘이 같이 리셋된다.
+
+    빈 파일은 알리지 않는다 — 옛 도구가 빈 선언을 거부한 이유가 그대로다: 사용자가
+    "작성됐습니다"를 읽으면서 빈 문서 패널을 본다.
+    """
+    events: list[AgentEvent] = []
+    cursor = dict(seen)
+    root = workspace / DOCS_ROOT
+    if not root.is_dir():
+        return events, cursor
+    for path in sorted(root.rglob("*.md")):
+        rel = path.relative_to(workspace).as_posix()
+        if not is_document(rel):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not text.strip():
+            continue
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        previous = cursor.get(rel)
+        if previous is not None and previous[1] == digest:
+            continue
+        version = (previous[0] if previous else 0) + 1
+        cursor[rel] = (version, digest)
+        events.append(AgentEvent(kind="document", payload=json.dumps(
+            {"path": rel, "version": str(version), "summary": ""},
+            ensure_ascii=False)))
     return events, cursor
 
 

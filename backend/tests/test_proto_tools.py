@@ -53,7 +53,7 @@ async def test_remaining_is_optional(tmp_path):
 
 
 async def test_completion_is_refused_when_prototype_dir_is_missing(tmp_path):
-    """도구가 거짓을 선언할 수 없게 막는다 — submit_document와 같은 규율
+    """도구가 거짓을 선언할 수 없게 막는다 — 옛 submit_document와 같은 규율
     (agent/tools.py). 반환 문자열은 에이전트가 읽고 스스로 고칠 수 있어야 한다."""
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)   # prototype/ 없음

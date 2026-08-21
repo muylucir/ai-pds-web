@@ -256,3 +256,87 @@ async def test_a_turn_with_nothing_to_reconcile_is_unchanged(tmp_path):
     events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
     assert [e.kind for e in events if e.kind == "stage"] == []
     assert [e.kind for e in events][-1] == "done"
+
+
+# ---- 훅: 산출물 쓰기가 document 이벤트가 된다 (옛 submit_document) ----
+#
+# 옛 도구의 실패 모양은 판정이 아니라 침묵이었다 — 프론트가 실측을 적어 뒀다:
+# "에이전트는 대부분의 문서를 submit_document 없이 file_write로만 만든다"
+# (useWorkspaceStream.ts:177). 그래서 배선을 검사한다.
+
+
+@pytest.mark.asyncio
+async def test_a_document_write_emits_a_document_event(tmp_path):
+    d, ws = _driver(tmp_path)
+    out = await d._on_post_tool_use(
+        _write(ws, "aiplc-docs/discovery/envision/prfaq.md", "# PR/FAQ\n본문\n"),
+        "t1", None)
+    # 문서 쓰기는 턴을 끊지 않는다 — 작업 도중에 일어나는 일이다.
+    assert out == {}
+    assert _kinds(d, "document") == [
+        {"path": "aiplc-docs/discovery/envision/prfaq.md",
+         "version": "1", "summary": ""}]
+
+
+@pytest.mark.asyncio
+async def test_rewriting_a_document_unchanged_emits_nothing_new(tmp_path):
+    """훅이 매 쓰기에 발동하므로 커서가 훅 경로에서 살아 있어야 한다 — 아니면
+    같은 문서를 두 번 쓰는 정상 턴이 갱신 배너를 두 번 띄운다."""
+    d, ws = _driver(tmp_path)
+    payload = _write(ws, "aiplc-docs/discovery/prfaq.md", "# PR/FAQ\n본문\n")
+    await d._on_post_tool_use(payload, "t1", None)
+    await d._on_post_tool_use(payload, "t2", None)
+    assert len(_kinds(d, "document")) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_record_keeping_write_emits_no_document_event(tmp_path):
+    d, ws = _driver(tmp_path)
+    for rel, text in (("aiplc-docs/aiplc-state.md", STATE_MD),
+                      ("aiplc-docs/audit.md", "- 기록\n"),
+                      ("aiplc-docs/discovery/envision/p-questions.md", "## Q1\n")):
+        await d._on_post_tool_use(_write(ws, rel, text), "t1", None)
+    assert _kinds(d, "document") == []
+
+
+@pytest.mark.asyncio
+async def test_the_turn_boundary_recovers_a_document_the_hook_never_saw(tmp_path):
+    """백스톱. 훅은 `Write|Edit|MultiEdit`에만 붙으므로 Bash로 쓴 문서는 못 본다 —
+    스테이지·인계가 `_reconcile_turn`에 있는 것과 같은 이유다."""
+    d, ws = _driver(tmp_path)
+    p = ws / "aiplc-docs" / "discovery" / "prfaq.md"
+    p.parent.mkdir(parents=True)
+    p.write_text("# PR/FAQ\n본문\n", encoding="utf-8")  # 훅을 거치지 않는다
+    d._reconcile_turn()
+    assert [x["path"] for x in _kinds(d, "document")] == [
+        "aiplc-docs/discovery/prfaq.md"]
+
+
+@pytest.mark.asyncio
+async def test_the_hook_and_the_turn_boundary_share_the_document_cursor(tmp_path):
+    """두 경로가 커서를 공유하지 않으면 턴 경계가 훅이 이미 알린 문서를 다시
+    알린다(스테이지가 `_emit_stage_events` 하나를 지나는 것과 같은 계약)."""
+    d, ws = _driver(tmp_path)
+    await d._on_post_tool_use(
+        _write(ws, "aiplc-docs/discovery/prfaq.md", "# PR/FAQ\n본문\n"), "t1", None)
+    before = len(_kinds(d, "document"))
+    assert before == 1, "훅이 아무것도 흘리지 않았으면 아래 단정이 공허하다"
+    d._reconcile_turn()
+    assert len(_kinds(d, "document")) == before
+
+
+@pytest.mark.asyncio
+async def test_a_document_changed_between_turns_is_still_announced(tmp_path):
+    """씨딩은 **첫 턴에 한 번만** 한다. 매 턴 씨딩하면 턴 사이에 바뀐 문서를 조용히
+    삼킨다 — 다른 인스턴스의 쓰기나, 복원된 내용이 로컬과 다른 경우가 그것이다."""
+    d, ws = _driver(tmp_path)
+    p = ws / "aiplc-docs" / "discovery" / "prfaq.md"
+    p.parent.mkdir(parents=True)
+    p.write_text("# PR/FAQ\n초안\n", encoding="utf-8")
+    d._seed_document_cursor()          # 첫 턴: 있던 것은 본 것으로
+    assert _kinds(d, "document") == []
+
+    p.write_text("# PR/FAQ\n고친 본문\n", encoding="utf-8")
+    d._seed_document_cursor()          # 두 번째 턴: 무동작이어야 한다
+    d._reconcile_turn()
+    assert [x["version"] for x in _kinds(d, "document")] == ["2"]
