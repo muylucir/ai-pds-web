@@ -16,13 +16,22 @@ A conversational canvas for AI-PLC Discovery workshops.
 A Claude Agent SDK agent drives the Discovery methodology inside the backend process, and the
 frontend renders its turns live over SSE. The prototype spec Discovery produces is built and
 hosted as a real app from the same screen, and continues into a validation survey shared through
-an unauthenticated token link. Both the UI and the generated artifacts support Korean and English.
+an unauthenticated token link. Both the UI and the generated artifacts support Korean and English,
+and administrators manage users, the model catalog, and the brand design profile from the same app.
 
 ```
-frontend/  Next.js 15 (App Router) — dashboard · workspace · document review · prototypes
-backend/   FastAPI — Discovery agent · SSE relay · S3 persistence · prototype build/hosting · JWT verification
-infra/     CDK (TypeScript) — S3 + backend role + Cognito + EC2/CloudFront (Seoul by default)
+frontend/          Next.js 15 (App Router) — dashboard · workspace · document review · prototypes · survey · admin · manual
+backend/           FastAPI — Discovery agent · SSE relay · S3 persistence · prototype build/hosting · survey · JWT verification
+infra/             CDK (TypeScript) — S3 + backend role + Cognito + EC2/CloudFront (Seoul by default)
+steering-files/    the AI-PLC ruleset — a submodule of aws-samples/sample-ai-plc, carried unmodified
+discovery-config/  CLAUDE_CONFIG_DIR for the Discovery agent
+proto-config/      CLAUDE_CONFIG_DIR for the build agent (the shadcn-design skill) — must differ from the one above
 ```
+
+**The two config dirs being separate is the design.** Share them and Discovery runs with a UI skill
+loaded while it writes documents; in the other direction the builder starts looking for question and
+state files it does not have. The reasoning is in
+[`discovery-config/README.md`](discovery-config/README.md).
 
 - Inside the stacks (the callback-URL circular dependency, origin protection, and so on):
   [`infra/README.md`](infra/README.md)
@@ -31,6 +40,30 @@ infra/     CDK (TypeScript) — S3 + backend role + Cognito + EC2/CloudFront (Se
 - **The reasoning behind the design decisions lives in the commit messages and code comments.**
   "Why is it like this" is a `git log` question — the rationale is in the body of the commit that
   touched the file.
+
+---
+
+## What is in it — the screens and who can open them
+
+How to operate them is in `/manual`. Below is **the surface that is implemented today** and who can
+reach each screen. The public-path list is asserted from both sides — `frontend/lib/auth/gate.ts`
+and the backend's `tests/test_auth_route_coverage.py` — because the frontend middleware is only a
+UX gate: **the security boundary is the backend's `require_admin` / `require_user`.**
+
+| Screen | What it does | Access |
+|---|---|---|
+| `/` | Project list and creation. **The model and the artifact language are chosen here** | logged in |
+| `/projects/{id}/workspace` | The Discovery conversation. Turns render live over SSE, with question cards, file attachments, and the document panel on one screen | logged in |
+| `/projects/{id}/dashboard` | Stage progress, artifact list, activity feed | logged in |
+| `/projects/{id}/review` | Document review and the **approval gate** — the click is written as a structured record *first*, then the agent turn runs (so an approval survives a failed turn) | logged in |
+| `/projects/{id}/questions` | One question file, expanded to answer. Entered from the workspace's question card and the dashboard timeline | logged in |
+| `/projects/{id}/prototypes` | Build sessions (they run inside the backend process), local hosting, and creating/sharing/aggregating the validation survey | logged in |
+| `/survey/{token}` | The anonymous validation survey — end users with no account try the prototype and answer | **public** (token) |
+| `/proto/{pid}/{slug}` | The built prototype's preview. Without the access cookie planted by the share link, 404 is the correct answer | **public** (token cookie) |
+| `/admin/users` | Inviting users, assigning roles, temporary passwords. Self-signup is blocked | admin |
+| `/admin/models` | The model catalog. Registration is unlimited; **only 5 can be shown** in the project-creation combobox | admin |
+| `/admin/design` | The brand design profile — one `DESIGN.md` (a `tokens` fence plus prose, 64 KB cap). Build sessions and hosting starts apply it to the workspace | admin |
+| `/manual` | The screen-by-screen, admin, and operations manual. **It sits in front of the login** — you have to be able to read what this tool does before you get an account | **public** |
 
 ---
 
@@ -85,7 +118,7 @@ CloudFront goes in front of it.
 
 | Stack | What it creates |
 |---|---|
-| `AipdsDrillStack` | S3 artifact bucket (`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + backend execution role (Bedrock invoke + S3) |
+| `AipdsDrillStack` | S3 artifact bucket (`projects/*` + `sessions/*` + `surveys/*` + `models/*` + `design/*`) + backend execution role (Bedrock invoke + S3) |
 | `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 + role groups (`admin`/`pm`) + 2 seed accounts |
 | `AipdsHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
 
@@ -208,13 +241,24 @@ It moves the tree onto `origin/main` and acts on **only what changed**:
 
 | What changed | What it does | Disruption |
 |---|---|---|
-| `rule/` or a config dir only | updates the tree | none (the next turn reads the new rules) |
-| `backend/` | restarts the backend (reinstalling first only if `pyproject.toml` changed) | in-flight turns and build sessions are cut |
+| the `steering-files/` pointer or a config dir only | updates the tree (submodule contents included) | none (the next turn reads the new rules) |
+| `backend/` | `pip install -U claude-agent-sdk` → restart the backend (reinstalling deps first only if `pyproject.toml` changed) | in-flight turns and build sessions are cut |
 | `frontend/` | `next build` + restart (`npm ci` first only if `package-lock.json` changed) | chunk 404s during the 1–2 min build |
+| `infra/scripts/aipds-update` itself | installs the new script (it takes effect on the next run) | none |
 | nothing (already current) | nothing at all | none |
 
 There is no instance replacement (no 5–10 minutes of 502), so this is usable mid-workshop. The
 disruptions in the table still apply, though — apply frontend and backend changes during a break.
+
+`git checkout` moves a submodule's gitlink but **not its contents**, so the script runs
+`submodule update --init --recursive` **above** the early exit — without that line a ruleset update
+silently does not take effect.
+
+That `claude-agent-sdk` upgrade sits inside the `backend/` gate but outside the `pyproject.toml`
+gate on purpose: the wheel bundles the Claude Code executable, so **upgrading it is an engine
+swap**, and swapping without a restart leaves the running backend on the old engine while newly
+spawned children get the new one. A ruleset-only update never enters that block, so the engine stays
+put.
 
 - Restarting the backend **kills in-flight Discovery turns and build sessions.** Transcripts are
   mirrored to S3 so conversations survive, but a running build session dies without declaring
@@ -271,10 +315,13 @@ sudo journalctl -u aipds-backend --since -1h | grep -v '/proto/'   # drop previe
 | `cdk synth` asks for credentials | The hosting stack's prefix-list lookup. The result is cached in the local `cdk.context.json` (gitignored), so it is only needed once per clone |
 | Cannot SSH in | By design. There is no SSH port; only SSM is open |
 | A prototype preview 404s | **That is the intended response** — the access-token cookie is missing or belongs to a different prototype. You have to enter through the share link (`/api/proto/t/{token}`) for the cookie to be set. The branch conditions are in `backend/aipds/routes/proto_public.py` |
-| An English project produces Korean documents and chat | Two levels of language instruction conflicted, and **this failure raises no error.** A project's language enters through two channels: `backend/aipds/agent/language/{ko,en}.md` and the shared config dirs (`proto-config/CLAUDE.md`, `discovery-config/CLAUDE.md`) — when they disagree, the screen looks fine and only the artifacts come out in the other language |
+| An English project produces Korean documents and chat | Two levels of language instruction conflicted, and **this failure raises no error.** A project's language enters through two channels: `LANGUAGE_DIRECTIVES` in `backend/aipds/agent/workspace_rules.py` and the shared config dirs (`proto-config/CLAUDE.md`, `discovery-config/CLAUDE.md`) — when they disagree, the screen looks fine and only the artifacts come out in the other language |
 | English UI but a few strings are Korean | A literal hardcoded in the source instead of going through the dictionary. `cd frontend && npm test -- noHardcodedKorean` points at the location |
 | Workspace chat history is an empty list | `list_history` downgrades every failure to `[]`. Start by checking whether objects exist under `projects/{pid}/discovery/transcript/` — the mirroring key is derived from the project_id with uuid5 (`agent/session_store.py`, `agent/claude_driver.py`), so putting the raw project_id in the prefix means you are looking in an empty place |
 | "The connection was lost" when sending a long message | The request line exceeded Node's `maxHeaderSize` (HTTP 431) and `EventSource` does not expose the status code, so this is the only message you get. Turn text is now POSTed and only a one-shot handle rides in the URL (`turn_handles.py`) — if it happens again, split the input or attach it as a file |
+| A design profile upload does not show up in an **existing** prototype | Re-hosting refreshes the theme copy under `prototype/`. A prototype built **before** the profile was uploaded has no such copy, so there is nothing to refresh — open one improvement session and it lands (`proto/design_sync.py`) |
+| A registered model is missing from the project-creation combobox | Only the first 5 entries with `display` on are shown (`MAX_DISPLAYED`). Registration itself is unlimited — turn another model's display off in `/admin/models` |
+| `/admin/*` opens but every request on the screen 403s | That is correct. The frontend middleware is a **UX gate** that does not verify the cookie's signature; the security boundary is the backend's `require_admin` (see the header of `frontend/lib/auth/gate.ts`) |
 
 ---
 
@@ -301,6 +348,20 @@ cd frontend && npm run dev            # http://localhost:3000
 
 `http://localhost:3000` → create a project (you pick the model and the **artifact language** here)
 → dashboard / workspace / document review / prototypes.
+
+Two things you have to take care of by hand locally. **Neither raises an error when you miss it.**
+
+- **The submodule.** An empty `steering-files/` means the agent runs with no ruleset, and the
+  conversation simply does not follow the methodology. `git submodule update --init --recursive`.
+- **The two config dirs.** Leave `AIPDS_DISCOVERY_CONFIG_DIR` / `AIPDS_PROTO_CONFIG_DIR` empty and
+  the bundled binary reads **your own `~/.claude`**, mixing your personal skills, agents, and
+  CLAUDE.md into the results. Pointing them at the two directories in the repo is the simplest fix:
+
+  ```bash
+  # backend/.env
+  AIPDS_DISCOVERY_CONFIG_DIR=/abs/path/to/repo/discovery-config
+  AIPDS_PROTO_CONFIG_DIR=/abs/path/to/repo/proto-config
+  ```
 
 If you already have a gitignored `backend/.env` from before this rename, update its keys to the
 `AIPDS_*` names shown in `.env.example`. The failure if you don't is silent: an unset
@@ -341,15 +402,26 @@ reads them (`backend/aipds/app.py`, `backend/aipds/cli_settings.py`).
 | `AIPDS_S3_BUCKET` | — | Artifact bucket (a CDK output) |
 | `AIPDS_S3_REGION` | `ap-northeast-2` | Persistent-storage region. **Match the region the bucket was created in** |
 | `ANTHROPIC_MODEL` | — (EC2 uses `global.anthropic.claude-opus-4-8`) | **Fallback** Bedrock inference profile id. If a project has its own model, that one wins |
+| `AIPDS_RULES_DIR` | `<repo>/steering-files/aiplc-rules` | Where the AI-PLC ruleset is read from (read-only). If the submodule is empty, run `git submodule update --init` first |
+| `AIPDS_WORKSPACES_DIR` | under the system tmp dir | Root for the per-project local workspaces |
+| `AIPDS_DISCOVERY_CONFIG_DIR` | — | `CLAUDE_CONFIG_DIR` for the Discovery agent. **Leave it empty and the backend user's `~/.claude`** (personal skills, agents, CLAUDE.md) mixes in, so results vary with the host's setup. Locally, point it at the repo's `discovery-config/` |
+| `AIPDS_PROTO_CONFIG_DIR` | — | `CLAUDE_CONFIG_DIR` for the build agent. **It must not be the same path as the one above** — sharing makes Discovery run with the shadcn-design skill loaded while it writes documents. Locally, the repo's `proto-config/` |
+| `AIPDS_PROTO_ROOT` | `~/aipds-protos` | Shared root for prototype builds and hosting |
+| `AIPDS_PROTO_MAX_CONCURRENT` | `10` | Global cap on concurrent builds. Over it, starting a session returns 429 |
+| `AIPDS_PROTO_PERMISSION_MODE` | `bypassPermissions` | Builds run unattended, so there is nobody to approve. Override it to tighten (an unknown value raises ValueError immediately) |
 | `AIPDS_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
 | `AIPDS_LOG_LEVEL` | `INFO` | Application log level (`app.configure_logging()`) |
+| `AIPDS_PERFORMANCE_LOGS` | `true` | Whether to log elapsed time for turn and build phases (`performance.py`) |
 | `AIPDS_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **Leave both empty** to bypass authentication entirely (the local default). Leave only one empty and every request raises RuntimeError (fail-closed) |
+| `AIPDS_COGNITO_REGION` | follows `AIPDS_S3_REGION` | User Pool region. Set it only when the User Pool is in a different region from the bucket |
 | `AIPDS_COOKIE_SECURE` | `false` (EC2 uses `true`) | Whether to add `Secure` to the prototype access cookie. Leave it off locally |
-| `AIPDS_AUTO_COMPACT_WINDOW` | — (the CLI default) | The context size (in tokens, 100000–1000000) at which auto-compaction fires. Delaying it lets late stages write documents from the evidence rather than from a summary — the price is per-turn cost |
-| `AIPDS_LONG_CONTEXT` | `false` | Whether to append the CLI's `[1m]` (1M context beta) to the model id. **It is not a strict upgrade** — see `backend/aipds/cli_settings.py` for the cost and quality trade-off |
+| `AIPDS_AUTO_COMPACT_WINDOW` | — (the CLI default; EC2 uses `750000`) | The context size (in tokens, 100000–1000000) at which auto-compaction fires. Delaying it lets late stages write documents from the evidence rather than from a summary — the price is per-turn cost |
+| `AIPDS_LONG_CONTEXT` | `false` (EC2 uses `true`) | Whether to append the CLI's `[1m]` (1M context beta) to the model id. **It is not a strict upgrade** — see `backend/aipds/cli_settings.py` for the cost and quality trade-off |
 | `AIPDS_FILE_QUESTIONS` | `true` | Whether the agent asks by **writing a question file** (AI-PDS reads it and shows the questions verbatim) instead of through the AskUserQuestion tool. Set it falsy to fall back to the tool — that path is kept as an escape hatch. Measured reason for the default: re-emitting a written question through the tool damaged 15 of 19 questions (Korean characters substituted, wording truncated so answers were never recorded). See `backend/aipds/agent/claude_driver.py`'s `FILE_QUESTIONS_ENV` |
 | `AIPDS_PUBLIC_PATH_PREFIX` | `/api` | The preview mount **as the browser sees it**. Use `""` locally when calling the backend directly on :8000 |
-| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | The API base the frontend calls. Behind a remote proxy, `/api` |
+| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | The API base the frontend calls. Behind a remote proxy, `/api`. **It is inlined into the client bundle at `next build` time** — leave it out of the build and the screen renders while every API call dies |
+| `AIPDS_BACKEND_URL` | `http://localhost:8000` | The backend that the `/api` proxy (the Next route handler) calls server-side |
+| `APP_BASE_URL` | `http://localhost:3000` | Frontend server-side. The app's external address, used to assemble the Cognito callback and logout URLs (`lib/auth/cognitoUrls.ts`) |
 | `COGNITO_HOSTED_UI_DOMAIN` / `COGNITO_CLIENT_ID` / `COGNITO_CLIENT_SECRET` | — | Frontend server-side only. **Never `NEXT_PUBLIC_`** for secrets |
 
 ---
@@ -362,6 +434,17 @@ cd frontend && npm test                         # frontend unit (Vitest + MSW)
 cd infra && npm test                            # infra synth + template assertions (no deployment)
 cd frontend && npm run test:e2e                 # e2e (needs a real backend + real Bedrock)
 ```
+
+A few of them **name the regression they catch.** Depending on what you touched, running just one
+is enough:
+
+| Command | What it prevents |
+|---|---|
+| `npm test -- noHardcodedKorean` | Korean literals hardcoded in the source instead of going through the dictionary — the reason Korean shows up in an English UI |
+| `npm test -- parity` | The ko/en manuals drifting in block structure or anchors. Adding a paragraph to the Korean one and forgetting the English is the most common failure |
+| `pytest -q -k no_legacy_brand` | The pre-rename product name coming back into any tracked file (the test itself is the only place the string is allowed) |
+| `pytest -q -k sdk_available` | Drift in the bundled `claude-agent-sdk` (option fields + running the bundled binary). **Run this after bumping the SDK** |
+| `cd infra && npm test` | Stack assertions — the deployed tree (`git ls-files`), user-data, callback URLs, seed accounts |
 
 ---
 
