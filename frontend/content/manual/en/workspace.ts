@@ -15,7 +15,7 @@ export const workspace: ManualSection = {
       md: `- **First column · stages** — the Discovery stages and where you are. Stages can be added or dropped as you go.
 - **Second column · the conversation** — what you and the AI say to each other. This is where you direct the work and where decisions are made.
 - **Third column · answering questions** — where you answer the question sheets the AI raises. When there is no question, the prototype preview or the list of recent artifacts takes its place.
-- **Fourth column · the generated document** — the document just written, rendered in place. The dropdown at the top selects a different one, and ↻ reloads it.
+- **Fourth column · the generated document** — the document just written, rendered in place. The dropdown at the top selects a different one, and ↻ reloads it. The list is ordered **most recently changed first** and the top entry is the one open — after a refresh you still land on the newest document.
 
 On a narrow window (a small laptop, or a screen split in half) the three side columns are hidden and
 only the conversation is left. Questions then arrive as a badge above the chat, and documents lead

@@ -138,7 +138,7 @@ does the update — **there is no instance replacement, so it is usable mid-work
 
 | What changed | What it does | Disruption |
 |---|---|---|
-| Rules or config only | updates the tree | none (the next turn reads the new rules) |
+| Rules (the submodule) or config only | updates the tree | none (the next turn reads the new rules) |
 | Backend | restarts the backend | conversations and build sessions in progress are cut |
 | Frontend | rebuilds and restarts | users already connected may hit errors for 1–2 min |
 | Nothing (already current) | nothing at all | none |
@@ -153,6 +153,41 @@ does the update — **there is no instance replacement, so it is usable mid-work
       tone: "warn",
       md: `**Do not edit files directly on the instance.** \`aipds-update\` moves the tree onto
 \`main\` and reverts those edits. Push your fix, then update.`,
+    },
+    { kind: "heading", id: "ruleset", text: "Where the AI-PLC ruleset lives" },
+    {
+      kind: "md",
+      md: `The methodology that drives the conversation — the questions, the scoring frameworks, the
+output formats — is not code in this repository. It is the **upstream AI-PLC ruleset**, carried as a
+\`steering-files/\` **git submodule** pinned to an upstream commit and used unmodified, rather than
+copied in: a copy drifts, and the canonical source is upstream. The backend copies the ruleset into
+the agent's working folder on **every turn**, so a change to the rules takes effect on the next turn.
+
+That has one consequence: **you have to clone the submodule too.** Clone without
+\`--recurse-submodules\` and \`steering-files/\` stays an empty directory, which means the agent runs
+with no ruleset — and **that raises no error.** The only symptom is a conversation that does not
+follow the methodology.`,
+    },
+    {
+      kind: "cmd",
+      caption: "When cloning, or to fill it in after the fact",
+      lines: [
+        "git clone --recurse-submodules <REPO_URL>",
+        "git submodule update --init --recursive",
+      ],
+    },
+    {
+      kind: "md",
+      md: `To pick up new upstream rules, move the submodule pointer, push that commit, then run
+\`sudo aipds-update\`. That commit is what records which ruleset a deployment runs. **If the workflow
+itself needs to change, the change belongs upstream, not in this repository.**`,
+    },
+    {
+      kind: "cmd",
+      lines: [
+        "git submodule update --remote steering-files",
+        "git add steering-files && git commit -m \"chore: move the ruleset pointer\" && git push",
+      ],
     },
     { kind: "heading", id: "hotfix", text: "Getting a fresh instance" },
     {
@@ -215,6 +250,7 @@ Node.js 20+ are required.`,
       kind: "cmd",
       caption: "Install once, then run in two terminals",
       lines: [
+        "git submodule update --init --recursive",
         "cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e \".[dev]\"",
         "cd ../frontend && npm install",
         "cp ../backend/.env.example ../backend/.env",

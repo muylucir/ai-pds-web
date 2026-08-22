@@ -27,12 +27,29 @@ export const survey: ManualSection = {
     {
       kind: "steps",
       items: [
-        "**Generate questions** — built from the validation hypotheses and feature list in the prototype spec.",
+        "**Generate questions** — built from the validation hypotheses and feature list in the prototype spec, together with the evidence in the Envision artifacts.",
         "**Copy link** and send it to respondents. It opens without an account.",
         "As responses arrive, **Refresh** updates the rollup.",
         "**Synthesize results** — the AI reads the responses and lays out what was confirmed and what was contradicted.",
         "**Export CSV** gives you every individual response.",
       ],
+    },
+    { kind: "heading", id: "questions-source", text: "What the questions are built from" },
+    {
+      kind: "md",
+      md: `The prototype spec is not enough on its own. Its problem statement and business value are a
+one- or two-line summary, and the evidence behind that summary — how severe and how frequent each
+pain point is, the workaround people use today, the industry and how the work is done now — exists
+only in the Envision artifacts. A survey validates that evidence, so questions written from the
+summary alone do not know what they are validating.
+
+So **the pain-point analysis and the business-context document are read along with the spec when
+they exist.** Without them the questions still get generated, but only from the spec summary — it is
+worth checking that the Envision-stage documents are still there before you generate a survey.
+
+Some specs carry no validation hypothesis (the Path B spec format, the one you get when you start
+from use cases, has no such section). In that case the **top-priority** item in the pain-point
+analysis becomes the hypothesis to validate.`,
     },
     { kind: "heading", id: "questions-philosophy", text: "What the questions ask, and what they leave out" },
     {
@@ -74,7 +91,12 @@ it keeps reactions to the new screens out of the same bucket as the old ones.`,
     { kind: "heading", id: "feedback", text: "Feeding it back into Discovery" },
     {
       kind: "md",
-      md: `The survey is not a feature that ends at a results screen. Attach the synthesis or the CSV
+      md: `**Synthesize results** does not only put something on screen. It is saved as
+\`validation-results.md\` in that prototype's document folder, so you can open it in
+[Document Review](/manual#review) and the later stages read it too. **Each prototype gets its own
+file** — build several prototypes, run a survey on each, and the results never overwrite one another.
+
+The survey is not a feature that ends at a results screen. Attach the synthesis or the CSV
 [to the workspace chat](/manual#attach) and ask it to "update the documents with these responses",
 and that evidence lands in the documents.
 
