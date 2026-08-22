@@ -136,7 +136,7 @@ export const operations: ManualSection = {
 
 | 바뀐 것 | 하는 일 | 중단 |
 |---|---|---|
-| 룰셋·설정만 | 트리만 갱신 | 없음 (다음 턴부터 새 룰을 읽습니다) |
+| 룰셋(서브모듈)·설정만 | 트리만 갱신 | 없음 (다음 턴부터 새 룰을 읽습니다) |
 | 백엔드 | 백엔드 재시작 | 진행 중인 대화·빌드 세션이 끊깁니다 |
 | 프론트엔드 | 다시 빌드하고 재시작 | 빌드 1~2분간 접속 중인 사용자에게 오류 |
 | 없음 (이미 최신) | 아무것도 하지 않습니다 | 없음 |
@@ -150,6 +150,39 @@ export const operations: ManualSection = {
       tone: "warn",
       md: `**인스턴스에서 파일을 직접 고치지 마세요.** \`aipds-update\`가 트리를 \`main\`에
 맞추면서 그 수정을 되돌립니다. 고친 것은 푸시한 뒤 갱신하세요.`,
+    },
+    { kind: "heading", id: "ruleset", text: "AI-PLC 룰셋은 어디에 있는가" },
+    {
+      kind: "md",
+      md: `대화를 이끄는 방법론(질문·스코어링·산출물 형식)은 이 리포의 코드가 아니라 **상류
+AI-PLC 룰셋**에 있습니다. 사본을 두지 않고 \`steering-files/\` **git 서브모듈**로, 상류의 특정
+커밋에 고정해 무수정으로 가져옵니다 — 사본을 두면 갈라지고, 정본은 상류이기 때문입니다.
+백엔드가 **매 턴** 룰셋을 에이전트 작업 폴더로 복사하므로, 룰이 바뀌면 다음 턴부터 반영됩니다.
+
+여기서 오는 결과가 하나 있습니다: **서브모듈까지 clone해야 합니다.** \`--recurse-submodules\`
+없이 clone하면 \`steering-files/\`가 빈 디렉터리로 남고, 그러면 룰셋이 없는 채로 도는데
+**에러는 나지 않습니다** — 대화가 방법론을 따르지 않는 것으로만 드러납니다.`,
+    },
+    {
+      kind: "cmd",
+      caption: "clone할 때, 또는 이미 clone했다면 뒤늦게 채우기",
+      lines: [
+        "git clone --recurse-submodules <REPO_URL>",
+        "git submodule update --init --recursive",
+      ],
+    },
+    {
+      kind: "md",
+      md: `상류의 새 룰을 받을 때는 서브모듈 포인터를 옮기고 그 커밋을 푸시한 다음
+\`sudo aipds-update\`를 돌립니다. 어느 배포가 어느 룰셋으로 도는지를 기록하는 것이 그 커밋입니다.
+**워크플로 자체를 바꿔야 한다면 그 변경이 있을 자리는 이 리포가 아니라 상류입니다.**`,
+    },
+    {
+      kind: "cmd",
+      lines: [
+        "git submodule update --remote steering-files",
+        "git add steering-files && git commit -m \"chore: move the ruleset pointer\" && git push",
+      ],
     },
     { kind: "heading", id: "hotfix", text: "인스턴스를 새로 만들기" },
     {
@@ -212,6 +245,7 @@ Python **3.11**과 Node.js 20+가 필요합니다.`,
       kind: "cmd",
       caption: "최초 1회 설치 후, 터미널 두 개로 실행",
       lines: [
+        "git submodule update --init --recursive",
         "cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e \".[dev]\"",
         "cd ../frontend && npm install",
         "cp ../backend/.env.example ../backend/.env",
