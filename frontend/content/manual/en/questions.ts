@@ -51,7 +51,11 @@ budget" survives because of it. If the options alone would be misleading, do not
 something you said earlier, it stops there and asks a **clarifying question**. On screen this
 reads *Conflicting answers were detected, so the gate is on hold*.
 
-All it needs is which one holds. Answer briefly and it continues.`,
+All it needs is which one holds. Answer briefly and it continues.
+
+What you submitted stays in the conversation as **your own message** — the text of the options you
+picked, plus your notes, exactly as you entered them — and a refresh brings back the same thing. What
+you see on screen and what is kept in the record are the same sentence.`,
     },
     {
       kind: "callout",
