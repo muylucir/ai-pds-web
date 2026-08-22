@@ -15,18 +15,50 @@ AI-PLC Discovery 워크숍용 대화형 캔버스.
 Claude Agent SDK 에이전트가 백엔드 프로세스 안에서 Discovery 방법론을 구동하고,
 프론트엔드가 그 턴을 SSE로 실시간 렌더한다. Discovery가 만든 프로토타입 스펙은 같은
 화면에서 실물 앱으로 빌드·호스팅되고, 무인증 토큰 링크로 공유하는 검증 설문까지
-이어진다. 화면과 생성물 모두 한국어·영어를 지원한다.
+이어진다. 화면과 생성물 모두 한국어·영어를 지원하고, 관리자는 사용자·모델 카탈로그·브랜드
+디자인 프로필을 같은 앱에서 관리한다.
 
 ```
-frontend/  Next.js 15 (App Router) — 대시보드 · 워크스페이스 · 문서 리뷰 · 프로토타입
-backend/   FastAPI — Discovery 에이전트 · SSE 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅 · JWT 검증
-infra/     CDK (TypeScript) — S3 + 백엔드 롤 + Cognito + EC2/CloudFront (서울 기본)
+frontend/          Next.js 15 (App Router) — 대시보드 · 워크스페이스 · 문서 리뷰 · 프로토타입 · 설문 · 관리자 · 매뉴얼
+backend/           FastAPI — Discovery 에이전트 · SSE 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅 · 설문 · JWT 검증
+infra/             CDK (TypeScript) — S3 + 백엔드 롤 + Cognito + EC2/CloudFront (서울 기본)
+steering-files/    AI-PLC 룰셋 — aws-samples/sample-ai-plc 서브모듈, 무수정으로 가져온다
+discovery-config/  Discovery 에이전트 전용 CLAUDE_CONFIG_DIR
+proto-config/      빌드 에이전트 전용 CLAUDE_CONFIG_DIR (shadcn-design 스킬) — 위와 반드시 다른 경로
 ```
+
+두 config dir이 **분리되어 있다는 것 자체가 설계**다. 공유하면 Discovery가 문서를 쓰는 중에
+UI 스킬을 켠 채로 돌고, 반대 방향으로는 빌더가 없는 질문·상태 파일을 찾는다. 근거는
+[`discovery-config/README.md`](discovery-config/README.md)에 있다.
 
 - 스택 내부 구조(콜백 URL 순환 의존, 오리진 보호 등): [`infra/README.ko.md`](infra/README.ko.md)
 - 사용 방법(화면별 조작·관리자·운영): 앱의 **`/manual`** — 로그인 없이 열린다
 - **설계 판단의 근거는 커밋 메시지와 코드 주석에 있다.** "왜 이렇게 되어 있는가"는
   `git log`로 찾는다 — 해당 파일을 건드린 커밋 본문에 근거가 있다.
+
+---
+
+## 무엇이 들어 있는가 — 화면과 접근 권한
+
+조작 방법은 `/manual`에 있다. 아래는 **지금 구현되어 있는 표면**과 각 화면을 누가 열 수
+있는지다. 공개 경로 목록은 `frontend/lib/auth/gate.ts`와 백엔드
+`tests/test_auth_route_coverage.py`가 짝으로 단정한다 — 프론트 미들웨어는 UX 게이트이고
+**보안 경계는 백엔드의 `require_admin`·`require_user`다.**
+
+| 화면 | 하는 일 | 접근 |
+|---|---|---|
+| `/` | 프로젝트 목록·생성. **모델과 생성물 언어를 여기서 고른다** | 로그인 |
+| `/projects/{id}/workspace` | Discovery 대화. 턴을 SSE로 실시간 렌더하고, 질문 카드·파일 첨부·문서 패널이 한 화면에 있다 | 로그인 |
+| `/projects/{id}/dashboard` | 스테이지 진행·산출물 목록·활동 피드 | 로그인 |
+| `/projects/{id}/review` | 문서 리뷰와 **승인 게이트** — 누른 사실을 구조화된 레코드로 먼저 남기고 그 다음 턴을 돈다(턴이 실패해도 승인은 남는다) | 로그인 |
+| `/projects/{id}/questions` | 질문 파일 하나를 펼쳐 답하는 화면. 워크스페이스의 질문 카드와 대시보드 타임라인에서 들어온다 | 로그인 |
+| `/projects/{id}/prototypes` | 빌드 세션(백엔드 프로세스 안에서 돈다)·로컬 호스팅·검증 설문 생성/공유/집계 | 로그인 |
+| `/survey/{token}` | 익명 검증 설문 — 계정 없는 최종 사용자가 프로토타입을 써 보고 답한다 | **공개**(토큰) |
+| `/proto/{pid}/{slug}` | 빌드된 프로토타입 프리뷰. 공유 링크로 심긴 접근 쿠키가 없으면 404가 정답이다 | **공개**(토큰 쿠키) |
+| `/admin/users` | 사용자 초대·역할 지정·임시 비밀번호. 셀프 사인업은 막혀 있다 | admin |
+| `/admin/models` | 모델 카탈로그. 등록 수에는 상한이 없고 **프로젝트 생성 콤보박스 노출만 5개**로 제한된다 | admin |
+| `/admin/design` | 브랜드 디자인 프로필 — `DESIGN.md` 한 장(`tokens` 코드펜스 + 산문, 64KB 상한). 빌드 세션과 호스팅 시작이 이걸 워크스페이스에 반영한다 | admin |
+| `/manual` | 화면별 조작·관리자·운영 매뉴얼. **로그인 앞에 있다** — 계정을 받기 전에 이게 뭘 하는 도구인지 읽을 수 있어야 한다 | **공개** |
 
 ---
 
@@ -76,7 +108,7 @@ git submodule update --init --recursive
 
 | 스택 | 만드는 것 |
 |---|---|
-| `AipdsDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
+| `AipdsDrillStack` | S3 아티팩트 버킷(`projects/*` + `sessions/*` + `surveys/*` + `models/*` + `design/*`) + 백엔드 실행 롤(Bedrock invoke + S3) |
 | `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 + 역할 그룹(`admin`/`pm`) + 시드 계정 2개 |
 | `AipdsHostingStack` | VPC + EC2(AL2023 x86_64, m7i.2xlarge, EBS 100GB 암호화) + CloudFront |
 
@@ -191,13 +223,23 @@ sudo aipds-update
 
 | 바뀐 것 | 하는 일 | 중단 |
 |---|---|---|
-| `rule/`·config dir만 | 트리만 갱신 | 없음 (다음 턴부터 새 룰을 읽는다) |
-| `backend/` | (`pyproject.toml`이 바뀐 경우만 재설치 후) 백엔드 재시작 | 진행 중인 턴·빌드 세션이 끊긴다 |
+| `steering-files/` 포인터·config dir만 | 트리만 갱신(서브모듈 내용까지) | 없음 (다음 턴부터 새 룰을 읽는다) |
+| `backend/` | (`pyproject.toml`이 바뀐 경우만 재설치 후) `pip install -U claude-agent-sdk` → 백엔드 재시작 | 진행 중인 턴·빌드 세션이 끊긴다 |
 | `frontend/` | (`package-lock.json`이 바뀐 경우만 `npm ci` 후) `next build` + 재시작 | 빌드 1~2분간 청크 404 |
+| `infra/scripts/aipds-update` 자신 | 새 스크립트를 설치한다(다음 실행부터 적용) | 없음 |
 | 없음 (이미 최신) | 아무것도 하지 않는다 | 없음 |
 
 인스턴스 교체(5~10분 502)가 없으므로 워크숍 중에도 쓸 수 있다. 다만 위 표의 "중단"은
 남아 있으니, 프론트·백엔드 변경은 쉬는 시간에 반영한다.
+
+`git checkout`은 서브모듈의 gitlink만 옮기고 **내용은 옮기지 않으므로**, 스크립트는 조기
+종료보다 **위에서** `submodule update --init --recursive`를 돈다 — 이 줄이 없으면 룰 갱신이
+조용히 반영되지 않는다.
+
+`claude-agent-sdk`가 `backend/` 게이트 안에 있고 `pyproject.toml` 게이트 밖에 있는 것은
+의도다: 이 wheel이 Claude Code 실행 바이너리를 번들하므로 **업그레이드가 곧 엔진 교체**이고,
+재시작 없이 갈면 살아 있는 백엔드와 새로 뜨는 자식 프로세스의 엔진이 섞인다. 룰셋만 바뀐
+무중단 갱신은 이 블록에 들어오지 않아 엔진이 그대로다.
 
 - 백엔드 재시작은 **진행 중인 Discovery 턴과 빌드 세션을 끊는다.** 트랜스크립트는 S3에
   미러링되므로 대화는 이어지지만, 도는 빌드 세션은 완료 선언 없이 죽어 재개 경로를 탄다.
@@ -253,10 +295,13 @@ sudo journalctl -u aipds-backend --since -1h | grep -v '/proto/'   # 프리뷰 �
 | `cdk synth`가 크리덴셜을 요구 | 호스팅 스택의 프리픽스 리스트 lookup. 결과가 로컬 `cdk.context.json`(gitignored)에 캐시되므로 클론당 최초 1회만 필요하다 |
 | SSH 접속 불가 | 의도된 설계다. SSH 포트가 없고 SSM만 열려 있다 |
 | 프로토타입 프리뷰가 404 | **의도된 응답이다** — 접근 토큰 쿠키가 없거나 다른 프로토타입의 것이다. 공유 링크(`/api/proto/t/{token}`)로 들어가야 쿠키가 심긴다. 분기 조건은 `backend/aipds/routes/proto_public.py` |
-| 영어 프로젝트인데 문서·채팅이 한국어로 나옴 | 언어 지시가 두 레벨에서 충돌한 것이고 **이 실패는 에러를 내지 않는다.** 프로젝트 언어는 `backend/aipds/agent/language/{ko,en}.md`와 공유 config dir(`proto-config/CLAUDE.md`·`discovery-config/CLAUDE.md`) 두 채널로 들어간다 — 둘이 어긋나면 화면은 정상인데 산출물만 다른 언어가 된다 |
+| 영어 프로젝트인데 문서·채팅이 한국어로 나옴 | 언어 지시가 두 레벨에서 충돌한 것이고 **이 실패는 에러를 내지 않는다.** 프로젝트 언어는 `backend/aipds/agent/workspace_rules.py`의 `LANGUAGE_DIRECTIVES`와 공유 config dir(`proto-config/CLAUDE.md`·`discovery-config/CLAUDE.md`) 두 채널로 들어간다 — 둘이 어긋나면 화면은 정상인데 산출물만 다른 언어가 된다 |
 | 영어 UI인데 일부 문구만 한국어 | 딕셔너리를 안 타고 소스에 박힌 리터럴이다. `cd frontend && npm test -- noHardcodedKorean`이 위치를 집어 준다 |
 | 워크스페이스 채팅 내역이 빈 목록 | `list_history`가 모든 실패를 `[]`로 강등한다. `projects/{pid}/discovery/transcript/`에 객체가 있는지부터 확인한다 — 미러링 키는 project_id에서 uuid5로 유도하므로(`agent/session_store.py`, `agent/claude_driver.py`) project_id를 그대로 프리픽스에 넣어 찾으면 빈 곳을 뒤진다 |
 | 긴 메시지를 보내면 "연결이 끊어졌습니다" | 요청 라인이 Node `maxHeaderSize`를 넘은 것(HTTP 431)이고 `EventSource`가 상태 코드를 노출하지 않아 이 문구만 뜬다. 지금은 턴 텍스트를 POST로 받아 1회용 핸들만 URL에 싣는다(`turn_handles.py`) — 다시 나면 입력을 나눠 보내거나 파일로 첨부한다 |
+| 디자인 프로필을 올렸는데 **기존** 프로토타입에 반영되지 않음 | 재호스팅은 `prototype/` 안의 테마 사본을 갱신한다. 프로필 업로드 **이전에** 빌드된 프로토타입에는 그 사본이 없어 갱신할 대상이 없다 — 개선 세션을 한 번 열면 반영된다(`proto/design_sync.py`) |
+| 모델을 등록했는데 프로젝트 생성 콤보박스에 없다 | 노출은 `display` 플래그를 켠 것 중 **앞의 5개**뿐이다(`MAX_DISPLAYED`). 등록 수에는 상한이 없다 — `/admin/models`에서 다른 모델의 노출을 끄고 켠다 |
+| `/admin/*`이 열리는데 화면의 모든 요청이 403 | 정상이다. 프론트 미들웨어는 쿠키의 서명을 검증하지 않는 **UX 게이트**이고, 보안 경계는 백엔드의 `require_admin`이다(`frontend/lib/auth/gate.ts` 헤더) |
 
 ---
 
@@ -282,6 +327,20 @@ cd frontend && npm run dev            # http://localhost:3000
 
 `http://localhost:3000` → 프로젝트 생성(모델과 **생성물 언어**를 여기서 고른다) → 대시보드 /
 워크스페이스 / 문서 리뷰 / 프로토타입.
+
+로컬에서 손으로 챙겨야 하는 두 가지가 있다. **둘 다 실패해도 에러가 나지 않는다.**
+
+- **서브모듈**: `steering-files/`가 비어 있으면 룰셋이 없는 채로 돌아 대화가 방법론을
+  따르지 않는다. `git submodule update --init --recursive`.
+- **두 config dir**: `AIPDS_DISCOVERY_CONFIG_DIR`·`AIPDS_PROTO_CONFIG_DIR`를 비워 두면 번들
+  바이너리가 **당신의 `~/.claude`**를 읽어 개인 skills·agents·CLAUDE.md가 결과에 섞인다.
+  리포 안의 두 디렉터리를 절대경로로 가리키는 것이 가장 간단하다:
+
+  ```bash
+  # backend/.env
+  AIPDS_DISCOVERY_CONFIG_DIR=/abs/path/to/repo/discovery-config
+  AIPDS_PROTO_CONFIG_DIR=/abs/path/to/repo/proto-config
+  ```
 
 이 리네임 전에 만들어 둔 gitignore된 `backend/.env`가 있다면, 그 안의 키를
 `.env.example`에 있는 `AIPDS_*` 이름으로 바꾸세요. 안 바꿔도 증상이 없습니다:
@@ -320,15 +379,26 @@ EC2 배포는 user-data가 전부 채운다. 아래는 **로컬에서 손으로 
 | `AIPDS_S3_BUCKET` | — | 아티팩트 버킷(CDK 출력) |
 | `AIPDS_S3_REGION` | `ap-northeast-2` | 영속 스토리지 리전. **버킷이 만들어진 리전과 일치**시킬 것 |
 | `ANTHROPIC_MODEL` | — (EC2는 `global.anthropic.claude-opus-4-8`) | **폴백** Bedrock 추론 프로파일 id. 프로젝트가 자기 모델을 가지면 그것이 이긴다 |
+| `AIPDS_RULES_DIR` | `<repo>/steering-files/aiplc-rules` | AI-PLC 룰셋 위치(읽기 전용). 서브모듈이 비어 있으면 `git submodule update --init`을 먼저 돌린다 |
+| `AIPDS_WORKSPACES_DIR` | 시스템 tmp 하위 | 프로젝트별 로컬 워크스페이스 루트 |
+| `AIPDS_DISCOVERY_CONFIG_DIR` | — | Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR`. **비우면 백엔드 실행 유저의 `~/.claude`(개인 skills·agents·CLAUDE.md)가 섞여** 결과가 호스트 설정에 따라 달라진다. 로컬은 리포의 `discovery-config/`를 가리킨다 |
+| `AIPDS_PROTO_CONFIG_DIR` | — | 빌드 에이전트 전용 `CLAUDE_CONFIG_DIR`. **위와 반드시 다른 경로여야 한다** — 공유하면 Discovery가 문서를 쓰는 중에 shadcn-design 스킬을 켠 채로 돈다. 로컬은 리포의 `proto-config/` |
+| `AIPDS_PROTO_ROOT` | `~/aipds-protos` | 프로토타입 빌드·호스팅 공용 루트 |
+| `AIPDS_PROTO_MAX_CONCURRENT` | `10` | 전역 동시 빌드 상한. 초과하면 세션 시작이 429 |
+| `AIPDS_PROTO_PERMISSION_MODE` | `bypassPermissions` | 빌드는 무인으로 돌아 승인해 줄 사람이 없다. 더 조이려면 덮어쓴다(알 수 없는 값은 즉시 ValueError) |
 | `AIPDS_CORS_ORIGINS` | `http://localhost:3000` | 콤마 구분 허용 origin |
 | `AIPDS_LOG_LEVEL` | `INFO` | 애플리케이션 로그 레벨(`app.configure_logging()`) |
+| `AIPDS_PERFORMANCE_LOGS` | `true` | 턴·빌드 구간 소요 시간을 로그에 남길지(`performance.py`) |
 | `AIPDS_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **둘 다 비우면** 인증 전체 바이패스(로컬 기본). 하나만 비우면 모든 요청이 RuntimeError(fail-closed) |
+| `AIPDS_COGNITO_REGION` | `AIPDS_S3_REGION`을 따른다 | User Pool 리전. 버킷과 다른 리전에 User Pool이 있을 때만 채운다 |
 | `AIPDS_COOKIE_SECURE` | `false` (EC2는 `true`) | 프로토타입 접근 쿠키에 `Secure`를 붙일지. 로컬은 끈 채로 둔다 |
-| `AIPDS_AUTO_COMPACT_WINDOW` | — (CLI 기본값) | 자동 컴팩션이 발동하는 컨텍스트 크기(토큰, 100000~1000000). 늦추면 후반 스테이지가 요약이 아닌 근거로 문서를 쓴다 — 대가는 턴당 비용 |
-| `AIPDS_LONG_CONTEXT` | `false` | 모델 id에 CLI의 `[1m]`(1M 컨텍스트 베타)을 붙일지. **상위호환이 아니다** — 비용·품질 대가는 `backend/aipds/cli_settings.py` 참고 |
+| `AIPDS_AUTO_COMPACT_WINDOW` | — (CLI 기본값. EC2는 `750000`) | 자동 컴팩션이 발동하는 컨텍스트 크기(토큰, 100000~1000000). 늦추면 후반 스테이지가 요약이 아닌 근거로 문서를 쓴다 — 대가는 턴당 비용 |
+| `AIPDS_LONG_CONTEXT` | `false` (EC2는 `true`) | 모델 id에 CLI의 `[1m]`(1M 컨텍스트 베타)을 붙일지. **상위호환이 아니다** — 비용·품질 대가는 `backend/aipds/cli_settings.py` 참고 |
 | `AIPDS_FILE_QUESTIONS` | `true` | 에이전트가 **질문 파일을 써서** 묻게 할지(AI-PDS가 그 파일을 읽어 적은 그대로 보여준다). falsy로 두면 AskUserQuestion 도구 경로로 돌아간다 — 탈출로로 남겨 둔다. 기본값의 실측 근거: 파일에 쓴 질문을 도구로 다시 만들면서 19문항 중 15개가 훼손됐다(한글 문자 치환, 축약으로 답변 유실). `backend/aipds/agent/claude_driver.py`의 `FILE_QUESTIONS_ENV` 참고 |
 | `AIPDS_PUBLIC_PATH_PREFIX` | `/api` | **브라우저가 보는** 프리뷰 마운트. 백엔드를 :8000으로 직접 부르는 로컬은 `""` |
-| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | 프론트가 부를 API base. 원격 프록시 뒤면 `/api` |
+| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | 프론트가 부를 API base. 원격 프록시 뒤면 `/api`. **`next build` 시점에 클라이언트 번들로 인라인된다** — 빌드에서 빼면 화면은 뜨고 모든 API 호출이 죽는다 |
+| `AIPDS_BACKEND_URL` | `http://localhost:8000` | `/api` 프록시(Next route handler)가 서버사이드에서 부를 백엔드 |
+| `APP_BASE_URL` | `http://localhost:3000` | 프론트 server-side. Cognito 콜백·로그아웃 URL을 조립하는 앱의 외부 주소(`lib/auth/cognitoUrls.ts`) |
 | `COGNITO_HOSTED_UI_DOMAIN` / `COGNITO_CLIENT_ID` / `COGNITO_CLIENT_SECRET` | — | 프론트 server-side 전용. 시크릿에 **`NEXT_PUBLIC_` 금지** |
 
 ---
@@ -341,6 +411,16 @@ cd frontend && npm test                         # 프론트 유닛 (Vitest + MSW
 cd infra && npm test                            # 인프라 합성 + 템플릿 단정 (배포 없이)
 cd frontend && npm run test:e2e                 # e2e (실 백엔드 + 실 Bedrock 필요)
 ```
+
+몇 개는 **회귀를 이름으로 집어 준다.** 무엇을 고쳤는지에 따라 이것만 돌려도 된다:
+
+| 명령 | 무엇을 막는가 |
+|---|---|
+| `npm test -- noHardcodedKorean` | 딕셔너리를 안 타고 소스에 박힌 한국어 리터럴 — 영어 UI에 한국어가 섞이는 원인 |
+| `npm test -- parity` | 매뉴얼 ko/en의 블록 구조·앵커 불일치. 한국어에만 문단을 더하는 것이 가장 흔한 실패다 |
+| `pytest -q -k no_legacy_brand` | 개명 전 제품명이 tracked 파일로 되돌아오는 것(그 문자열이 허용된 곳은 테스트 자신뿐이다) |
+| `pytest -q -k sdk_available` | 번들 `claude-agent-sdk`의 드리프트(옵션 필드 + 번들 바이너리 실행). **SDK를 올린 뒤에는 이걸 돌린다** |
+| `cd infra && npm test` | 스택 어서션 — 배포 트리(`git ls-files`)·user-data·콜백 URL·시드 계정 |
 
 ---
 
