@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -65,11 +66,66 @@ _SYMBOLS = "!@#$%^&*_-+=?"
 
 
 class CognitoError(Exception):
-    """Cognito가 거부했다. `code`는 원문 오류 코드(라우트가 상태코드로 번역한다)."""
+    """Cognito가 거부했다. `code`는 원문 오류 코드(라우트가 상태코드로 번역한다).
+
+    `message`도 남기는 이유는 한 코드가 서로 다른 두 상황을 뜻하는 경우가 실제로
+    있기 때문이다: `ChangePassword`의 `NotAuthorizedException`은 "현재 비밀번호가
+    틀렸다"일 수도 있고 "토큰에 셀프서비스 스코프가 없다"일 수도 있으며, 코드는
+    같고 메시지만 다르다. 두 경우에 사용자가 해야 할 일이 정반대이므로
+    (routes/account.py) 라우트가 그 구분을 할 수 있어야 한다. 메시지를 사용자에게
+    보여주지는 않는다 — 분기와 로그에만 쓴다.
+    """
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
+        self.message = message
+
+
+@contextmanager
+def _as_cognito_error():
+    """boto3 예외를 CognitoError로 바꾼다.
+
+    `CognitoAdmin._call`과 셀프서비스 호출(`change_own_password`)이 같은 번역을
+    써야 한다 — 두 벌로 두면 한쪽만 BotoCoreError를 놓쳐 라우트가 "Cognito가
+    거부했다"와 "요청이 Cognito에 닿지도 못했다"를 구분하지 못한다.
+    """
+    try:
+        yield
+    except ClientError as exc:
+        err = exc.response.get("Error", {})
+        raise CognitoError(
+            err.get("Code", "Unknown"),
+            err.get("Message", str(exc))) from exc
+    except BotoCoreError as exc:
+        # ClientError는 Cognito가 응답한 거부(코드가 있다). 이건 그 이전
+        # 단계의 실패 — 네트워크 단절, 자격증명 누락, 파라미터 형식 오류 등
+        # — 로 코드가 없으므로 예외 클래스 이름을 코드로 쓴다.
+        raise CognitoError(type(exc).__name__, str(exc)) from exc
+
+
+def change_own_password(client, access_token: str, previous: str,
+                        proposed: str) -> None:
+    """자기 비밀번호를 바꾼다. **Admin\\* 호출이 아니다.**
+
+    `ChangePassword`는 UserPoolId도 Username도 받지 않는다 — access 토큰이 곧
+    신원이므로, 이 창구로 남의 비밀번호를 바꿀 방법이 구조적으로 없다. 그래서
+    `CognitoAdmin`의 메서드가 아니다(그 클래스의 `_call`은 모든 호출에
+    UserPoolId를 붙인다). 백엔드에 추가 IAM 권한도 필요하지 않다.
+
+    대가: 토큰에 `aws.cognito.signin.user.admin` 스코프가 있어야 한다
+    (infra/lib/auth-client-config.ts의 `COGNITO_ADMIN_SCOPE`). 없으면 Cognito가
+    `NotAuthorizedException`으로 거부한다.
+
+    현재 비밀번호 검증과 정책 검사는 Cognito가 한다 — 여기서 다시 하지 않는다.
+    두 벌의 정책은 반드시 어긋나고, 어긋난 쪽이 사용자에게 거짓말을 한다.
+    """
+    with _as_cognito_error():
+        client.change_password(
+            AccessToken=access_token,
+            PreviousPassword=previous,
+            ProposedPassword=proposed,
+        )
 
 
 @dataclass
@@ -108,19 +164,10 @@ class CognitoAdmin:
     # ---- 내부 ----
 
     def _call(self, name: str, **params):
-        try:
+        # 예외 번역은 _as_cognito_error가 한 곳에서 한다 — 셀프서비스 호출과
+        # 같은 규칙이어야 한다(그 함수의 주석 참조).
+        with _as_cognito_error():
             return getattr(self._c, name)(UserPoolId=self._pool, **params)
-        except ClientError as exc:
-            err = exc.response.get("Error", {})
-            code = err.get("Code", "Unknown")
-            raise CognitoError(code, err.get("Message", str(exc))) from exc
-        except BotoCoreError as exc:
-            # ClientError는 Cognito가 응답한 거부(코드가 있다). 이건 그 이전
-            # 단계의 실패 — 네트워크 단절, 자격증명 누락, 파라미터 형식 오류 등
-            # — 로 코드가 없으므로 예외 클래스 이름을 코드로 쓴다. 라우트가
-            # "Cognito가 거부했다"와 "요청이 Cognito에 도달하지도 못했다"를
-            # 구분할 수 있어야 한다.
-            raise CognitoError(type(exc).__name__, str(exc)) from exc
 
     @staticmethod
     def _email_of(raw: dict) -> str:

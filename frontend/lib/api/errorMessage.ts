@@ -31,6 +31,11 @@ const KEY_BY_CODE: Record<string, keyof Dict> = {
   init_incomplete: "err.initIncomplete",
   survey_closed: "err.surveyClosed",
   survey_full: "err.surveyFull",
+  wrong_password: "err.wrongPassword",
+  password_policy: "err.passwordPolicy",
+  reauth_required: "err.reauthRequired",
+  password_change_failed: "err.passwordChangeFailed",
+  auth_not_configured: "err.authNotConfigured",
 };
 
 export function errorMessage(t: T, detail: string): string {

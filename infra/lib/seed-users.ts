@@ -8,6 +8,10 @@ export interface SeedUserProps {
   userPool: cognito.IUserPool;
   email: string;
   group: string;
+  /**
+   * 배포 시점에 받은 **임시** 비밀번호(AipdsAuthStack의 `SeedPassword` 파라미터).
+   * 사용자가 첫 로그인에서 바꾸므로 이 값은 계정의 영구 비밀번호가 아니다.
+   */
   password: string;
   /** 시드 호출 전부가 공유하는 provider 롤. `seedProviderRole`이 만든다. */
   role: iam.IRole;
@@ -66,10 +70,11 @@ export function seedProviderRole(scope: Construct,
 
 // cdk deploy 한 번으로 '로그인 가능한' 계정을 만든다.
 //
-// 왜 CfnUserPoolUser를 쓰지 않는가: 그 L1은 사용자를 FORCE_CHANGE_PASSWORD
-// 상태로만 만들 수 있고 비밀번호를 확정(Permanent)할 방법이 없다. 첫 로그인에서
-// 비밀번호 변경을 요구하지 않아야 한다는 요구사항 때문에 AdminSetUserPassword가
-// 필요하고, 그건 커스텀 리소스로만 호출할 수 있다.
+// 왜 CfnUserPoolUser를 쓰지 않는가: `AWS::Cognito::UserPoolUser`에는 비밀번호를
+// 지정하는 속성이 아예 없다. Cognito가 임의의 임시 비밀번호를 만들고 그 값은
+// 아무도 알 수 없어, 이메일을 보내지 않는 이 앱에서는 로그인할 방법이 없다.
+// 알려진 임시 비밀번호를 심으려면 AdminSetUserPassword가 필요하고, 그건 커스텀
+// 리소스로만 호출할 수 있다.
 export function seedUser(scope: Construct, id: string, props: SeedUserProps): void {
   const { userPool, email, group, password, role } = props;
   // Username은 이메일이 아니라 로컬파트다 — 이 풀은 AliasAttributes=[email]이고
@@ -102,8 +107,17 @@ export function seedUser(scope: Construct, id: string, props: SeedUserProps): vo
     installLatestAwsSdk: false,
   });
 
-  // 2) 비밀번호를 확정(Permanent)한다 → 상태가 CONFIRMED가 되어 첫 로그인에서
-  // 변경을 요구하지 않는다. onUpdate에도 걸어 재배포마다 알려진 값으로 되돌린다.
+  // 2) **임시** 비밀번호를 심는다(Permanent: false) → 계정이
+  // FORCE_CHANGE_PASSWORD로 남고, Hosted UI가 첫 로그인에서 사용자에게 새
+  // 비밀번호를 정하게 한다. 관리 페이지의 초대와 정확히 같은 규율이다
+  // (backend/aipds/auth/cognito.py의 set_temp_password).
+  //
+  // **`onUpdate`가 없는 것이 이 리소스의 요점이다.** 같은 호출을 onUpdate에도
+  // 걸면 재배포가 배포 시점 값으로 비밀번호를 되돌리는데, 그것은 사용자가 첫
+  // 로그인에서 정한 비밀번호를 다음 `cdk deploy`가 덮어쓴다는 뜻이다 — 각자
+  // 자기 비밀번호를 갖는다는 요구사항과 정면으로 충돌한다. 그래서 이 호출은
+  // 계정이 처음 만들어질 때 한 번만 실행된다. 비밀번호를 다시 발급해야 하면
+  // 관리 페이지의 '비밀번호 재설정'을 쓴다(그쪽이 새 임시 비밀번호를 1회 보여준다).
   //
   // Username에 1단계의 응답이 아니라 위에서 유도한 같은 값을 쓴다: 1단계가
   // UsernameExistsException으로 무시되면 응답 필드가 비어 getResponseField가
@@ -116,18 +130,7 @@ export function seedUser(scope: Construct, id: string, props: SeedUserProps): vo
         UserPoolId: userPool.userPoolId,
         Username: username,
         Password: password,
-        Permanent: true,
-      },
-      physicalResourceId: cr.PhysicalResourceId.of(`${email}-password`),
-    },
-    onUpdate: {
-      service: 'CognitoIdentityServiceProvider',
-      action: 'adminSetUserPassword',
-      parameters: {
-        UserPoolId: userPool.userPoolId,
-        Username: username,
-        Password: password,
-        Permanent: true,
+        Permanent: false,
       },
       physicalResourceId: cr.PhysicalResourceId.of(`${email}-password`),
     },
