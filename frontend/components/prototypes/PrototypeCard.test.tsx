@@ -7,6 +7,7 @@ import type { PrototypeInfo } from "@/lib/api/prototypes";
 function info(overrides: Partial<PrototypeInfo>): PrototypeInfo {
   return {
     slug: "todo-app",
+    name: null,
     spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md",
     state: "none",
     port: null,
@@ -24,6 +25,33 @@ const noop = {
 };
 
 describe("PrototypeCard", () => {
+  it("제목: 명세에서 읽은 이름을 보여준다", () => {
+    render(<PrototypeCard info={info({ name: "기획전 AI 어시스턴트" })} busy={false} {...noop} />);
+    expect(screen.getByText("기획전 AI 어시스턴트")).toBeInTheDocument();
+  });
+
+  it("제목: 이름이 없으면 슬러그로 되돌아간다", () => {
+    // 실측 Path B 산출물에는 이름 줄이 없다. 그때 슬러그는 여전히 읽을 수 있는
+    // 값이므로(`todo-app`) 제목 자리를 비우는 것보다 낫다.
+    render(<PrototypeCard info={info({ name: null })} busy={false} {...noop} />);
+    expect(screen.getByText("todo-app")).toBeInTheDocument();
+  });
+
+  it("제목: 단일 프로토타입의 예약 슬러그를 제목으로 쓰지 않는다", () => {
+    // 이 카드가 고치려는 증상 그 자체다. Path A.1의 슬러그는 상수 "prototype"
+    // 이어서(백엔드 proto/layout.py의 SINGLE_ID) 모든 프로젝트의 카드 제목이
+    // 같은 단어였다.
+    render(
+      <PrototypeCard
+        info={info({ slug: "prototype", name: "재고 예측 어시스턴트" })}
+        busy={false}
+        {...noop}
+      />,
+    );
+    expect(screen.getByText("재고 예측 어시스턴트")).toBeInTheDocument();
+    expect(screen.queryByText("prototype")).not.toBeInTheDocument();
+  });
+
   it("none: shows the spec-only badge and a single 빌드 시작 button", () => {
     render(<PrototypeCard info={info({ state: "none" })} busy={false} {...noop} />);
     expect(screen.getByText("빌드 전")).toBeInTheDocument();
@@ -288,6 +316,7 @@ describe("PrototypeCard", () => {
 
 const BUILT_Q: PrototypeInfo = {
   slug: "prototype",
+  name: null,
   spec_path: "aiplc-docs/discovery/prototype/prototype-spec.md",
   state: "built",
   port: null,

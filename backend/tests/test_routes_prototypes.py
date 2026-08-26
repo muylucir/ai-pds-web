@@ -279,7 +279,8 @@ def test_list_state_none(proto_env):
     body = client.get(f"/projects/{PID}/prototypes").json()
     # access_url이 None인 것이 이 페이로드의 일부다: 호스팅되지 않은 프로토타입에는
     # 공유할 링크가 없고, 프론트는 이 값의 부재로 버튼을 감춘다.
-    assert body["prototypes"] == [{"slug": SLUG, "spec_path": SPEC_KEY,
+    assert body["prototypes"] == [{"slug": SLUG, "name": None,
+                                   "spec_path": SPEC_KEY,
                                    "state": "none", "port": None,
                                    "access_url": None,
                                    "response_count": 0,
@@ -455,6 +456,57 @@ def test_list_reports_build_capacity(proto_env):
     assert body["active_builds"] == 0
     assert body["max_builds"] == 2
     assert [p["slug"] for p in body["prototypes"]] == [SLUG]
+
+
+def test_list_carries_the_human_readable_name_from_the_spec(proto_env):
+    """카드 제목의 출처다. 슬러그만으로는 Path A.1의 제목이 항상 리터럴
+    "prototype"이었다(proto/layout.py의 `SINGLE_ID`) — 제품명은 명세 본문에만
+    있었고 목록 응답에는 실려 오지 않았다."""
+    proto_env["s3"].blobs[SPEC_KEY] = (
+        "# Prototype Specification\n\n- **Product**: 기획전 AI 어시스턴트\n")
+    body = client.get(f"/projects/{PID}/prototypes").json()
+    assert body["prototypes"][0]["name"] == "기획전 AI 어시스턴트"
+
+
+def test_list_name_is_null_when_the_spec_does_not_name_the_prototype(proto_env):
+    """실측 Path B 산출물에는 이름 줄이 없다. 그때 프론트가 슬러그로 되돌아가야
+    하므로, 부재가 값의 부재로 표현되어야 한다."""
+    _seed_spec(proto_env["s3"])
+    assert client.get(f"/projects/{PID}/prototypes").json()[
+        "prototypes"][0]["name"] is None
+
+
+def test_list_survives_a_spec_that_cannot_be_read(proto_env, monkeypatch):
+    """`discover`는 `list`로 키를 찾고 이름은 `get`으로 읽으므로 그 사이에
+    리셋·삭제가 끼어들 수 있다. 이름 하나 때문에 목록 전체가 500이 되면
+    안 된다 — 카드는 이름 없이도 완전히 동작한다."""
+    _seed_spec(proto_env["s3"])
+
+    async def vanished(key):
+        raise FileNotFoundError(key)
+
+    monkeypatch.setattr(proto_env["s3"], "get", vanished)
+
+    resp = client.get(f"/projects/{PID}/prototypes")
+    assert resp.status_code == 200
+    assert resp.json()["prototypes"][0]["name"] is None
+    assert resp.json()["prototypes"][0]["state"] == "none"
+
+
+def test_list_survives_any_failure_to_read_the_spec(proto_env, monkeypatch):
+    """사라진 키만이 실패 모드가 아니다 — S3 5xx, 디코딩 실패도 같은 자리에서
+    난다. 어느 쪽이든 목록은 이름 없이 성공해야 한다: 카드의 상태·버튼은 이 값에
+    의존하지 않으므로, 장식 하나를 위해 탭 전체를 잃는 것이 더 나쁜 결과다."""
+    _seed_spec(proto_env["s3"])
+
+    async def boom(key):
+        raise RuntimeError("s3 is having a day")
+
+    monkeypatch.setattr(proto_env["s3"], "get", boom)
+
+    resp = client.get(f"/projects/{PID}/prototypes")
+    assert resp.status_code == 200
+    assert resp.json()["prototypes"][0]["name"] is None
 
 
 def test_list_reports_survey_response_count(proto_env):
@@ -772,7 +824,8 @@ def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
     client.delete(f"/projects/{PID}/prototypes/{SLUG}")
 
     body = client.get(f"/projects/{PID}/prototypes").json()
-    assert body["prototypes"] == [{"slug": SLUG, "spec_path": SPEC_KEY,
+    assert body["prototypes"] == [{"slug": SLUG, "name": None,
+                                   "spec_path": SPEC_KEY,
                                    "state": "none", "port": None,
                                    "access_url": None,
                                    "response_count": 0,

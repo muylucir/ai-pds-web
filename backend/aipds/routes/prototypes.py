@@ -25,6 +25,7 @@ from starlette.responses import Response
 
 from aipds import error_codes as ec
 from aipds.models import AgentEvent
+from aipds.parsers.proto_spec import spec_name
 from aipds.parsers.redaction import redact_credentials
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.proto.design_sync import sync_design, theme_copies
@@ -200,6 +201,26 @@ def _local_build_exists(pid: str, slug: str) -> bool:
     return has_build_output(_prototype_dir(pid, slug).parent)
 
 
+async def _card_name(s3, spec_path: str) -> str | None:
+    """명세 본문에서 카드에 쓸 이름을 읽는다. 못 읽으면 None.
+
+    **실패를 삼키는 것이 여기서는 옳다.** 이름은 카드의 장식이고 상태·버튼은
+    이 값에 의존하지 않는다 — 이름 하나 때문에 Prototypes 탭 전체가 500이 되면
+    더 나쁜 결과를 고른 것이다. 부재는 호출부에서 슬러그로 되돌아간다.
+    `discover`는 `list`로 키를 찾고 여기서 `get`으로 읽으므로, 그 사이에
+    리셋·삭제가 끼어드는 것만으로도 이 실패는 정상 운영에서 일어난다.
+
+    그래도 **조용히** 삼키지는 않는다: "카드에 이름이 안 나온다"를 로그 한 줄로
+    진단할 수 있어야 한다.
+    """
+    try:
+        return spec_name(await s3.get(spec_path))
+    except Exception:
+        _log.warning("could not read prototype name from %s", spec_path,
+                     exc_info=True)
+        return None
+
+
 @router.get("/projects/{pid}/prototypes")
 async def list_prototypes(pid: str):
     import aipds.app as app_module
@@ -215,14 +236,20 @@ async def list_prototypes(pid: str):
     # 2N번 왕복이었다 — 실측(2026-08-17): 왕복 1회 30ms이므로 카드 10개면 0.6초가
     # 목록 조회에 그대로 붙는다. gather는 입력 순서대로 돌려주므로 아래 zip이
     # 안전하다.
-    bundle_lists, surveys = await asyncio.gather(
+    #
+    # 이름을 읽는 `get`이 카드당 세 번째 왕복이지만 **같은 gather 안**이므로
+    # 벽시계는 그대로다 — 카드 하나의 세 왕복이 서로를 기다리지 않는다. 목록
+    # 응답에 이름을 실어 보내는 대안(카드가 각자 명세를 받아 파싱)은 왕복을
+    # 클라이언트로 옮기고 파싱 규칙을 두 벌로 만든다.
+    bundle_lists, surveys, names = await asyncio.gather(
         asyncio.gather(*(s3.list(f"prototypes/{slug}/bundle/")
                          for slug, _ in ordered)),
         asyncio.gather(*(survey_summary(s3, slug) for slug, _ in ordered)),
+        asyncio.gather(*(_card_name(s3, spec_path) for _, spec_path in ordered)),
     )
     out = []
-    for (slug, spec_path), bundle_keys, survey in zip(
-            ordered, bundle_lists, surveys):
+    for (slug, spec_path), bundle_keys, survey, name in zip(
+            ordered, bundle_lists, surveys, names):
         state = "none"
         port: int | None = None
 
@@ -279,7 +306,11 @@ async def list_prototypes(pid: str):
             if token:
                 access_url = access_url_path(token)
 
-        out.append({"slug": slug, "spec_path": spec_path,
+        # 카드 제목. **`slug`와 별개 필드다** — slug는 여전히 식별자이고(리셋·
+        # 빌드·세션이 그 값으로 키된다) 이름은 표시용이다. 하나로 합치면 Path
+        # A.1의 예약 id `prototype`을 이름으로 덮어쓰게 되어 식별자가 흔들린다.
+        # 없으면 null: 프론트가 슬러그로 되돌아가는 분기가 값의 유무여야 한다.
+        out.append({"slug": slug, "name": name, "spec_path": spec_path,
                     "state": state, "port": port,
                     "access_url": access_url,
                     "response_count": survey.responses,
