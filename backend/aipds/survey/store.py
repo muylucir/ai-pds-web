@@ -24,7 +24,9 @@ from aipds.proto import layout
 
 _log = logging.getLogger(__name__)
 
-TOKEN_INDEX_PREFIX = "surveys/by-token/"
+#: Bucket-root prefix of the token -> survey index. An S3 key prefix, not a
+#: credential -- the `nosec` is for the name, which is all bandit B105 looks at.
+TOKEN_INDEX_PREFIX = "surveys/by-token/"  # nosec B105
 
 
 def survey_prefix(slug: str) -> str:

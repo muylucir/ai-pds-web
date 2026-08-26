@@ -20,9 +20,13 @@ from aipds.auth.deps import require_user
 from aipds.auth.models import Principal
 
 ME = Principal(username="pm", sub="s-pm", role="pm")
-TOKEN = "header.payload.signature"
+# The `nosec` markers in this file all say the same thing: these are fixture
+# strings for a route that forwards passwords to a stubbed Cognito client. The
+# token is three words with dots in it, and the passwords exist to be asserted
+# on. None of them opens anything.
+TOKEN = "header.payload.signature"  # nosec B105
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
-BODY = {"current_password": "OldPass1!", "new_password": "NewPass2@"}
+BODY = {"current_password": "OldPass1!", "new_password": "NewPass2@"}  # nosec B105
 
 
 class FakeIdp:
@@ -151,7 +155,8 @@ def test_an_unknown_cognito_code_is_502(idp, client):
 # ---- 입력 검증 ----
 
 def test_a_missing_new_password_never_reaches_cognito(idp, client):
-    r = client.post("/me/password", json={"current_password": "OldPass1!"},
+    r = client.post("/me/password",
+                    json={"current_password": "OldPass1!"},  # nosec B105
                     headers=AUTH)
     assert r.status_code == 422
     assert idp.calls == []
@@ -159,7 +164,8 @@ def test_a_missing_new_password_never_reaches_cognito(idp, client):
 
 def test_an_empty_new_password_never_reaches_cognito(idp, client):
     r = client.post("/me/password",
-                    json={"current_password": "OldPass1!", "new_password": ""},
+                    json={"current_password": "OldPass1!",  # nosec B105
+                          "new_password": ""},
                     headers=AUTH)
     assert r.status_code == 422
     assert idp.calls == []
