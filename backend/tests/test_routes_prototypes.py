@@ -721,8 +721,9 @@ def _seed_everything(proto_env, monkeypatch=None):
     s3.blobs[f"prototypes/{SLUG}/transcript/00000001.jsonl"] = "{}"
     s3.blobs[f"prototypes/{SLUG}/bundle/package.json"] = "{}"
     s3.blobs[f"prototypes/{SLUG}/survey/questionnaire.json"] = json.dumps(
-        {"slug": SLUG, "project_id": PID, "token": "tok-1", "status": "open",
-         "closed_at": None, "questions": []})
+        {"slug": SLUG, "project_id": PID,
+         "token": "tok-1",  # nosec B105 - a survey share token in a fixture
+         "status": "open", "closed_at": None, "questions": []})
     s3.blobs[f"prototypes/{SLUG}/survey/responses/r1.json"] = "{}"
     root_s3.blobs["surveys/by-token/tok-1.json"] = json.dumps(
         {"project_id": PID, "slug": SLUG})

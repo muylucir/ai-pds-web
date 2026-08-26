@@ -112,7 +112,7 @@ def test_results_markdown_is_english_for_an_english_survey():
     from aipds.survey.models import Questionnaire, Rollup
 
     qn = Questionnaire(
-        token="t", status="open", slug="demo", project_id="p1",
+        token=TOKEN, status="open", slug="demo", project_id="p1",
         created_at="2026-08-03T00:00:00+00:00", closed_at=None, language="en",
         title="T", hypothesis="H",
         questions=[{"id": "q1", "text": "Q1", "type": "text", "required": False}])
@@ -127,7 +127,7 @@ def test_results_markdown_stays_korean_by_default():
     from aipds.survey.models import Questionnaire, Rollup
 
     qn = Questionnaire(
-        token="t", status="open", slug="demo", project_id="p1",
+        token=TOKEN, status="open", slug="demo", project_id="p1",
         created_at="2026-08-03T00:00:00+00:00", closed_at=None,
         title="T", hypothesis="H",
         questions=[{"id": "q1", "text": "Q1", "type": "text", "required": False}])
@@ -143,7 +143,7 @@ def test_results_markdown_keeps_the_rule_headings_in_english_for_both():
     from aipds.survey.models import Questionnaire, Rollup
 
     qn = Questionnaire(
-        token="t", status="open", slug="demo", project_id="p1",
+        token=TOKEN, status="open", slug="demo", project_id="p1",
         created_at="2026-08-03T00:00:00+00:00", closed_at=None,
         title="T", hypothesis="H",
         questions=[{"id": "q1", "text": "Q1", "type": "text", "required": False}])

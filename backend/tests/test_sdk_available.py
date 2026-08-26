@@ -24,7 +24,9 @@ def test_bundled_binary_is_executable():
 
     binary = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
     assert binary.is_file(), f"bundled binary missing at {binary}"
-    proc = subprocess.run([str(binary), "--version"],
+    # No shell; `binary` is a path inside the installed wheel, asserted to be
+    # a file on the line above.
+    proc = subprocess.run([str(binary), "--version"],  # nosemgrep
                           capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stderr
     assert "Claude Code" in proc.stdout
