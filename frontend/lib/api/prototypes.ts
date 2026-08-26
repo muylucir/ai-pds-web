@@ -17,6 +17,15 @@ export type PrototypeState = "none" | "building" | "built" | "running" | "failed
 
 export interface PrototypeInfo {
   slug: string;
+  /** 카드 제목으로 쓰는, 명세 본문에서 읽은 제품명. 명세가 이름을 밝히지
+   *  않으면 null이고, 그때 카드는 `slug`로 되돌아간다.
+   *
+   *  **`slug`와 별개인 이유.** slug는 식별자다(빌드·리셋·설문이 그 값으로
+   *  키된다). 그리고 단일 프로토타입 레이아웃의 slug는 상수 `"prototype"`이라
+   *  (백엔드 proto/layout.py의 `SINGLE_ID`) 제목으로 쓸 수 없다 — 구별할 대상이
+   *  하나뿐이어서 슬러그가 될 것이 없다는 그 판단의 결과이고, 그래서 이름은
+   *  본문에서만 온다. */
+  name: string | null;
   spec_path: string;
   state: PrototypeState;
   port: number | null;
