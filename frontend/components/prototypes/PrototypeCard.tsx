@@ -105,7 +105,11 @@ export function PrototypeCard({
       </span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-sm truncate">{info.slug}</span>
+          {/* 제목은 이름이고, 없을 때만 슬러그다. 단일 프로토타입 레이아웃의
+              슬러그는 상수 `"prototype"`이라(백엔드 proto/layout.py) 이 폴백이
+              모든 Path A.1 프로젝트에서 같은 제목을 만들었다. 슬러그 자체는
+              식별자로 남아 리셋 aria-label과 아래 명세 경로에 계속 나온다. */}
+          <span className="font-medium text-sm truncate">{info.name ?? info.slug}</span>
           <span
             className={`text-[11px] px-2 py-0.5 rounded-full shrink-0 ${
               phaseKey
