@@ -33,7 +33,10 @@ HostState = Literal["installing", "building", "running", "failed", "stopped"]
 #: `_archive_entries` zips for the "download" button -- a token under
 #: `prototype/` would ride out to whoever downloads the bundle, which is
 #: exactly the audience the token exists to gate.
-TOKEN_FILENAME = ".proto-token"
+#:
+#: A filename, not a credential -- the `nosec` is for the name, which is all
+#: bandit B105 looks at.
+TOKEN_FILENAME = ".proto-token"  # nosec B105
 
 #: 32 bytes -> 43 urlsafe chars, the same strength as a survey token
 #: (`routes/surveys.py`'s TOKEN_BYTES). Deliberately identical: two kinds of
@@ -226,7 +229,11 @@ class ProtoHost:
                        env: dict[str, str] | None = None) -> int:
         log_fh = open(log_path, "ab")
         try:
-            proc = await asyncio.create_subprocess_exec(
+            # No shell, and nothing here comes from a request body: the
+            # executable is a literal and every caller passes a literal list
+            # (["install"], ["run", "build"]). `cwd` is derived from a pid/slug
+            # that `reject_unsafe_segment` has already validated.
+            proc = await asyncio.create_subprocess_exec(  # nosemgrep
                 "npm", *args, cwd=str(cwd), stdout=log_fh, stderr=log_fh,
                 env=env,
             )
@@ -352,7 +359,11 @@ class ProtoHost:
 
         log_fh = open(log_path, "ab")
         try:
-            proc = await asyncio.create_subprocess_exec(
+            # No shell, and argv is closed: "npm" plus one of two literal
+            # lists decided above. `env` is this process's environ plus the
+            # base-path variables computed from a validated pid/slug -- no
+            # request body reaches either.
+            proc = await asyncio.create_subprocess_exec(  # nosemgrep
                 "npm", *start_args, cwd=str(target_dir), env=env,
                 stdout=log_fh, stderr=log_fh,
                 # Own process group: stop() can then signal the whole tree,

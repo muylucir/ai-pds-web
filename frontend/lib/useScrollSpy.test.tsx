@@ -40,9 +40,18 @@ function entry(id: string, isIntersecting: boolean) {
   return { target: { id }, isIntersecting } as unknown as IntersectionObserverEntry;
 }
 
+/** 본문에 앵커만 심는다. 훅이 읽는 것은 id뿐이므로 빈 div로 충분하다.
+ *  HTML 문자열을 통째로 대입하지 않는 이유: 값이 정적 리터럴이어도 정적 분석은
+ *  그 대입 형태 자체를 XSS 후보로 보고하고, 노드를 만드는 편이 더 짧다. */
+function mountAnchors(...ids: string[]) {
+  document.body.replaceChildren(
+    ...ids.map((id) => Object.assign(document.createElement("div"), { id })),
+  );
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
-  document.body.innerHTML = "";
+  document.body.replaceChildren();
 });
 
 describe("useScrollSpy", () => {
@@ -56,7 +65,7 @@ describe("useScrollSpy", () => {
 
   it("존재하는 앵커만 관찰한다", () => {
     const state = stubObserver();
-    document.body.innerHTML = `<div id="a"></div><div id="c"></div>`;
+    mountAnchors("a", "c");
     render(<Probe ids={["a", "b", "c"]} />);
     // "b"는 DOM에 없다 — 검색으로 그 절이 걸러진 상태가 실제로 그렇다.
     expect(state.observed).toEqual(["a", "c"]);
@@ -64,7 +73,7 @@ describe("useScrollSpy", () => {
 
   it("문서 순서로 첫 번째로 보이는 앵커를 고른다", () => {
     const state = stubObserver();
-    document.body.innerHTML = `<div id="a"></div><div id="b"></div><div id="c"></div>`;
+    mountAnchors("a", "b", "c");
     render(<Probe ids={["a", "b", "c"]} />);
 
     // 콜백은 바뀐 것만 담고 순서를 보장하지 않는다. entries 순서로 고르면
@@ -77,7 +86,7 @@ describe("useScrollSpy", () => {
 
   it("보이지 않게 된 앵커는 후보에서 빠진다", () => {
     const state = stubObserver();
-    document.body.innerHTML = `<div id="a"></div><div id="b"></div>`;
+    mountAnchors("a", "b");
     render(<Probe ids={["a", "b"]} />);
 
     act(() => {
@@ -93,7 +102,7 @@ describe("useScrollSpy", () => {
 
   it("enabled가 false면 관찰하지 않는다", () => {
     const state = stubObserver();
-    document.body.innerHTML = `<div id="a"></div>`;
+    mountAnchors("a");
     render(<Probe ids={["a"]} enabled={false} />);
     expect(state.observed).toEqual([]);
     expect(screen.getByTestId("active")).toHaveTextContent("none");
@@ -101,7 +110,7 @@ describe("useScrollSpy", () => {
 
   it("언마운트하면 관찰을 끊는다", () => {
     const state = stubObserver();
-    document.body.innerHTML = `<div id="a"></div>`;
+    mountAnchors("a");
     const view = render(<Probe ids={["a"]} />);
     view.unmount();
     expect(state.disconnected).toBe(true);

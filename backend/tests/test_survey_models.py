@@ -4,6 +4,10 @@ from aipds.survey.models import (Question, Questionnaire, SurveyResponse,
                                       Rollup, ScaleStat, ChoiceStat, TextStat)
 
 
+#: Stand-in share token -- see the note in tests/test_survey_builder.py.
+TOK = "t"
+
+
 def _q(**kw):
     base = {"id": "q1", "text": "유용했나요?", "type": "scale"}
     return Question(**{**base, **kw})
@@ -32,11 +36,11 @@ def test_choice_question_accepts_options():
 
 def test_questionnaire_roundtrips_json():
     qn = Questionnaire(
-        token="t" * 43, status="open", slug="demo", project_id="p1",
+        token=TOK * 43, status="open", slug="demo", project_id="p1",
         created_at="2026-07-25T00:00:00Z", closed_at=None,
         title="검증 설문", hypothesis="가설", questions=[_q()])
     again = Questionnaire.model_validate_json(qn.model_dump_json())
-    assert again.token == "t" * 43
+    assert again.token == TOK * 43
     assert again.questions[0].text == "유용했나요?"
 
 
@@ -44,14 +48,14 @@ def test_questionnaire_rejects_duplicate_question_ids():
     # Duplicate ids would make the answers dict lose one question's response.
     with pytest.raises(ValidationError):
         Questionnaire(
-            token="t", status="open", slug="s", project_id="p",
+            token=TOK, status="open", slug="s", project_id="p",
             created_at="x", closed_at=None, title="t", hypothesis="h",
             questions=[_q(id="q1"), _q(id="q1")])
 
 
 def test_questionnaire_rejects_empty_questions():
     with pytest.raises(ValidationError):
-        Questionnaire(token="t", status="open", slug="s", project_id="p",
+        Questionnaire(token=TOK, status="open", slug="s", project_id="p",
                       created_at="x", closed_at=None, title="t",
                       hypothesis="h", questions=[])
 

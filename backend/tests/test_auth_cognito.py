@@ -18,11 +18,17 @@ from aipds.auth.cognito import (CognitoAdmin, CognitoError, ManagedUser,
 
 POOL = "ap-northeast-2_TEST123"
 
+# The `nosec` markers below are all the same fact: botocore insists on
+# credentials to sign a request that Stubber intercepts before it reaches the
+# wire, and the password-shaped strings in the stubbed parameter dicts are the
+# values under test. Nothing here is a credential.
+
 
 @pytest.fixture()
 def admin():
     client = boto3.client("cognito-idp", region_name="ap-northeast-2",
-                          aws_access_key_id="x", aws_secret_access_key="y")
+                          aws_access_key_id="x",
+                          aws_secret_access_key="y")  # nosec B106
     stub = Stubber(client)
     stub.activate()
     yield CognitoAdmin(client, POOL), stub
@@ -240,7 +246,8 @@ def test_set_temp_password_is_not_permanent(admin):
     a, stub = admin
     stub.add_response("admin_set_user_password", {},
                       {"UserPoolId": POOL, "Username": "u@x.io",
-                       "Password": "Tmp!23456789abcd", "Permanent": False})
+                       "Password": "Tmp!23456789abcd",  # nosec B105
+                       "Permanent": False})
     a.set_temp_password("u@x.io", "Tmp!23456789abcd")
 
 
@@ -370,7 +377,8 @@ def test_transport_failure_is_wrapped_as_cognito_error(admin):
 def idp():
     """풀에 묶이지 않은 raw 클라이언트. 셀프서비스 호출은 UserPoolId를 안 쓴다."""
     client = boto3.client("cognito-idp", region_name="ap-northeast-2",
-                          aws_access_key_id="x", aws_secret_access_key="y")
+                          aws_access_key_id="x",
+                          aws_secret_access_key="y")  # nosec B106
     stub = Stubber(client)
     stub.activate()
     yield client, stub

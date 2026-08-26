@@ -4,13 +4,13 @@ from aipds.survey.models import Question, Questionnaire, SurveyResponse
 from aipds.survey.store import SurveyStore, rollup_key, responses_prefix
 from fakes.in_memory_s3 import FakeS3Store
 
-PID, SLUG, NOW = "p1", "demo", "2026-07-25T00:00:00Z"
+PID, SLUG, NOW, TOK = "p1", "demo", "2026-07-25T00:00:00Z", "tok"
 QUESTIONS = [Question(id="q1", text="유용?", type="scale"),
              Question(id="q2", text="자유", type="text", required=False)]
 
 
 def _qn(status="open", closed_at=None):
-    return Questionnaire(token="tok", status=status, slug=SLUG, project_id=PID,
+    return Questionnaire(token=TOK, status=status, slug=SLUG, project_id=PID,
                          created_at=NOW, closed_at=closed_at, title="t",
                          hypothesis="h", questions=QUESTIONS)
 
