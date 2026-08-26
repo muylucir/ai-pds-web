@@ -306,6 +306,15 @@ export const ko = {
   "user.manageModels": "모델 관리",
   "user.manageDesign": "브랜드 디자인",
   "user.signOut": "로그아웃",
+  "user.changePassword": "비밀번호 변경",
+  "account.changePasswordTitle": "비밀번호 변경",
+  "account.currentPassword": "현재 비밀번호",
+  "account.newPassword": "새 비밀번호",
+  "account.confirmPassword": "새 비밀번호 확인",
+  "account.passwordHint": "8자 이상, 대문자·소문자·숫자·기호를 각각 하나 이상 포함해야 합니다.",
+  "account.passwordMismatch": "새 비밀번호와 확인 값이 일치하지 않습니다.",
+  "account.submitPassword": "변경",
+  "account.changingPassword": "변경 중...",
   "ws.contextPanelAria": "컨텍스트 패널",
   "ws.previewAria": "프로토타입 프리뷰",
   "ws.recentArtifacts": "최근 산출물",
@@ -410,6 +419,11 @@ export const ko = {
   "err.initIncomplete": "초기화가 완료되지 않았습니다 — 다시 시도해 주세요.",
   "err.surveyClosed": "이 설문은 마감되었습니다.",
   "err.surveyFull": "응답 수 상한에 도달했습니다. 설문을 마감해 주세요.",
+  "err.wrongPassword": "현재 비밀번호가 맞지 않습니다. 다시 입력해 주세요.",
+  "err.passwordPolicy": "새 비밀번호가 정책을 만족하지 않습니다 — 8자 이상, 대문자·소문자·숫자·기호를 각각 하나 이상 포함해야 합니다.",
+  "err.reauthRequired": "이 세션으로는 비밀번호를 바꿀 수 없습니다. 로그아웃한 뒤 다시 로그인해 주세요.",
+  "err.passwordChangeFailed": "비밀번호를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
+  "err.authNotConfigured": "이 환경에는 인증이 설정되지 않아 비밀번호를 바꿀 수 없습니다.",
 
   // 2026-08-04에 전수 점검으로 찾은 누락분. 스펙 5단계(UI 문자열 65개 파일
   // 치환)에서 빠진 것들이고, 전부 t()를 이미 쓰는 파일 안에 리터럴로 남아

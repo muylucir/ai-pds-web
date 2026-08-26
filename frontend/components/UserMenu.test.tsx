@@ -155,4 +155,24 @@ describe("UserMenu", () => {
     // 클릭 자체가 예외 없이 처리되고, 링크가 여전히 올바른 href를 갖는다.
     expect(link).toHaveAttribute("href", "/admin/users");
   });
+
+  it("offers 비밀번호 변경 to a pm, not just to an admin", async () => {
+    // 자기 계정 조작이므로 역할과 무관하다. admin 링크들과 같은 조건 안에
+    // 들어가면 pm은 자기 비밀번호를 바꿀 방법이 없어지고, 관리자에게 재설정을
+    // 요청하는 것이 유일한 경로로 남는다.
+    mockMe({ authenticated: true, email: "pm@aipds.local", role: "pm" });
+    render(<UserMenu />);
+    await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
+    expect(screen.getByRole("button", { name: "비밀번호 변경" })).toBeInTheDocument();
+  });
+
+  it("opens the change-password dialog from the menu", async () => {
+    mockMe({ authenticated: true, email: "pm@aipds.local", role: "pm" });
+    render(<UserMenu />);
+    await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
+    await userEvent.click(screen.getByRole("button", { name: "비밀번호 변경" }));
+    expect(await screen.findByLabelText("현재 비밀번호")).toBeInTheDocument();
+    // 메뉴는 닫혀야 한다 — 모달 뒤에 열린 메뉴가 남으면 바깥 클릭 처리가 겹친다.
+    expect(screen.queryByRole("button", { name: "로그아웃" })).toBeNull();
+  });
 });

@@ -1,8 +1,11 @@
 import * as assert from 'node:assert';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {
   usernameForEmail,
-  CALLBACK_PATH, GROUP_ADMIN, GROUP_PM, LOCAL_APP_URL, LOGOUT_PATH, OAUTH_SCOPES,
-  SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
+  CALLBACK_PATH, COGNITO_ADMIN_SCOPE, GROUP_ADMIN, GROUP_PM, LOCAL_APP_URL,
+  LOGOUT_PATH, OAUTH_SCOPES,
+  SEED_ADMIN_EMAIL, SEED_PM_EMAIL,
   ACCESS_TOKEN_VALIDITY_MINUTES, ID_TOKEN_VALIDITY_MINUTES,
   REFRESH_TOKEN_VALIDITY_MINUTES,
   callbackUrls, logoutUrls,
@@ -31,9 +34,29 @@ assert.strictEqual(ID_TOKEN_VALIDITY_MINUTES, ACCESS_TOKEN_VALIDITY_MINUTES,
 assert.strictEqual(REFRESH_TOKEN_VALIDITY_MINUTES, 60 * 24 * 30);
 console.log('OK  auth-client-config: token validity outlasts a prototype build');
 
-// 시드 비밀번호는 스펙이 못박은 값이다. 오타가 나면 배포는 성공하고 로그인만
-// 실패하므로(디버깅이 어렵다) 상수 자체를 단정한다.
-assert.strictEqual(SEED_PASSWORD, 'AiPdsWeb2026@!');
+// --- 이 모듈은 어떤 비밀번호도 알지 않는다.
+//
+// 시드 계정의 임시 비밀번호는 배포 시점의 `CfnParameter`(noEcho)에서 온다
+// (AipdsAuthStack). 상수로 두면 값이 리포에 커밋되고 CloudFormation 템플릿과
+// 스택 이벤트에도 평문으로 남는다.
+//
+// 상수의 부재는 import로 검증할 수 없다 — 없는 export를 import하면 컴파일이 깨져
+// 이 파일이 실행조차 되지 않는다. 그래서 소스 텍스트를 직접 본다. 특정 이름
+// 하나가 아니라 이름 **패턴**을 막는 이유는 이 불변식이 지키는 것이 "그 상수가
+// 없다"가 아니라 "비밀번호가 여기 살지 않는다"이기 때문이다.
+{
+  const source = fs.readFileSync(
+    path.join(__dirname, '../lib/auth-client-config.ts'), 'utf8');
+  const declaration = /^[^\n]*\b[A-Za-z_]*PASSWORD[A-Za-z_]*\s*=/mi;
+  const hit = source.match(declaration);
+  assert.ok(
+    hit === null,
+    'auth-client-config.ts must not declare a password — the value comes from a '
+    + 'deploy-time CfnParameter(noEcho) so it never lands in the template or stack '
+    + `events. Found: ${hit?.[0].trim()}`,
+  );
+}
+
 assert.strictEqual(SEED_ADMIN_EMAIL, 'admin@aipds.local');
 assert.strictEqual(SEED_PM_EMAIL, 'pm@aipds.local');
 
@@ -71,7 +94,21 @@ assert.deepStrictEqual(
   ['http://localhost:3000/api/auth/callback'],
 );
 
-assert.deepStrictEqual(OAUTH_SCOPES, ['openid', 'email', 'profile']);
+// `aws.cognito.signin.user.admin`이 없으면 access 토큰으로 Cognito 셀프서비스
+// API를 부를 수 없다 — `ChangePassword`가 "Access Token does not have required
+// scopes"로 거부되고, 자기 비밀번호 변경 화면이 전부 실패한다
+// (backend/aipds/routes/account.py). 목록의 출처가 여기 하나여야 AuthStack의
+// 클라이언트 정의와 HostingStack의 UpdateUserPoolClient 재전송(PUT 시맨틱)이
+// 같은 값을 본다 — 한쪽만 빠지면 재배포 때마다 스코프가 조용히 사라진다.
+assert.deepStrictEqual(
+  OAUTH_SCOPES,
+  ['openid', 'email', 'profile', 'aws.cognito.signin.user.admin'],
+);
+assert.strictEqual(COGNITO_ADMIN_SCOPE, 'aws.cognito.signin.user.admin');
+assert.ok(
+  OAUTH_SCOPES.includes(COGNITO_ADMIN_SCOPE),
+  'the self-service scope constant must be part of the requested scope set',
+);
 console.log('OK  auth-client-config: seed constants + group constants + callback/logout URL derivation');
 
 // --- usernameForEmail: Cognito가 email-alias 풀에서 이메일 형식 Username을
