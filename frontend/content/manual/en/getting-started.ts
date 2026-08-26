@@ -18,7 +18,12 @@ export const gettingStarted: ManualSection = {
       kind: "md",
       md: `Accounts are created **by invitation only** — there is no self-service sign-up.
 If you do not have one, ask an administrator to invite you. They receive a temporary
-password shown exactly once and pass it on to you.`,
+password shown exactly once and pass it on to you. The administrator and PM accounts created
+by the deployment work the same way: each user sets their own password at first login.
+
+Once signed in, you can change your password at any time from **Change password** in the user
+menu at the top right. If you forget it, ask an administrator to reset it — this app sends no
+email, so there is no "forgot password" path.`,
     },
     { kind: "heading", id: "roles", text: "Roles" },
     {

@@ -96,14 +96,23 @@ export const operations: ManualSection = {
     },
     {
       kind: "details",
-      summary: "시드 계정과 비밀번호 교체",
-      md: `배포하면 관리자 계정과 PM 계정이 하나씩 만들어집니다. 그 비밀번호는 CDK 소스의
-상수이므로 **CloudFormation 템플릿과 스택 이벤트에 평문으로 남고, 재배포하면 그 값으로
-되돌아갑니다.**
+      summary: "시드 계정과 임시 비밀번호",
+      md: `배포하면 관리자 계정과 PM 계정이 하나씩 만들어집니다. 두 계정의 비밀번호는
+배포 명령에 넘긴 \`SeedPassword\` 값이고, **임시 비밀번호입니다** — 각 사용자가 첫
+로그인에서 자기 비밀번호를 정하고, 재배포는 그 값을 되돌리지 않습니다.
 
-데모·평가용으로는 그대로 써도 되지만, 실제로 운영할 거라면
-\`infra/lib/auth-client-config.ts\`의 \`SEED_PASSWORD\`를 교체하고,
-시드 계정 대신 [사용자 관리에서 초대한 계정](/manual#invite)을 쓰세요.`,
+\`\`\`
+npx cdk deploy --all --require-approval never \\
+  --parameters AipdsAuthStack:SeedPassword='<임시-비밀번호>'
+\`\`\`
+
+이 파라미터는 필수이며 기본값이 없습니다. 풀 정책(8자 이상, 대문자·소문자·숫자·기호
+각각 하나 이상, 공백 없음)을 만족하지 않으면 CloudFormation이 배포 시작 전에
+거부합니다. \`NoEcho\`이므로 값이 템플릿이나 스택 이벤트에 남지 않습니다.
+
+임시 비밀번호의 유효기간은 30일입니다. 배포와 워크숍 사이가 그보다 길어 만료됐다면
+[사용자 관리](/manual#invite)에서 **비밀번호 재설정**으로 새 임시 비밀번호를
+발급하세요.`,
     },
     { kind: "heading", id: "region", text: "리전 바꾸기" },
     {
