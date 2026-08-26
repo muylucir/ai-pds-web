@@ -8,9 +8,15 @@
 export const SEED_ADMIN_EMAIL = 'admin@aipds.local';
 export const SEED_PM_EMAIL = 'pm@aipds.local';
 
-// 데모/워크숍용 사전 설정 비밀번호. ⚠️ CloudFormation 템플릿과 스택 이벤트에
-// 평문으로 남는다 — 운영 전환 시 반드시 교체한다(스펙 §4.1).
-export const SEED_PASSWORD = 'AiPdsWeb2026@!';
+// 시드 비밀번호는 **여기 없다.** 이 모듈은 어떤 비밀번호도 알지 않는다.
+//
+// 시드 계정의 임시 비밀번호는 AipdsAuthStack의 `SeedPassword` 파라미터(noEcho)가
+// 배포 시점에 받는다. 상수로 두면 값이 리포에 커밋되고 CloudFormation 템플릿과
+// 스택 이벤트에도 평문으로 남는다.
+//
+// 그리고 그 값은 **임시** 비밀번호다: 시드 계정은 초대 계정과 같은
+// 규율(FORCE_CHANGE_PASSWORD)로 만들어지고, 사용자가 첫 로그인에서 직접 정한다.
+// 그래서 이 모듈이 알아야 할 비밀번호가 애초에 없다.
 
 export const GROUP_ADMIN = 'admin';
 export const GROUP_PM = 'pm';
@@ -20,7 +26,21 @@ export const CALLBACK_PATH = '/api/auth/callback';
 export const LOGOUT_PATH = '/login';
 
 export const LOCAL_APP_URL = 'http://localhost:3000';
-export const OAUTH_SCOPES = ['openid', 'email', 'profile'];
+// Cognito 셀프서비스 API(`ChangePassword`, `GetUser`, …)를 access 토큰으로
+// 호출하려면 이 스코프가 토큰에 있어야 한다. 없으면 Cognito가 "Access Token does
+// not have required scopes"로 거부한다 — 자기 비밀번호 변경 화면
+// (backend/aipds/routes/account.py)이 전적으로 여기에 달려 있다.
+//
+// 대가: 이 스코프가 붙은 access 토큰은 다른 셀프서비스 API(속성 변경, 자기 계정
+// 삭제)도 부를 수 있다. 우리가 그 창구를 열지 않으므로 실질 노출은 토큰이 탈취된
+// 경우에 한정된다. 대안(AdminInitiateAuth로 현재 비밀번호를 확인한 뒤
+// AdminSetUserPassword)은 일부러 꺼 둔 비밀번호 인증 플로우를 켜야 하고
+// 클라이언트 시크릿 때문에 SECRET_HASH 계산이 백엔드로 들어온다 — 더 침습적이다.
+export const COGNITO_ADMIN_SCOPE = 'aws.cognito.signin.user.admin';
+
+export const OAUTH_SCOPES = [
+  'openid', 'email', 'profile', COGNITO_ADMIN_SCOPE,
+];
 
 // 앱 클라이언트 이름. 콘솔에 뜨는 이름이라 값 자체는 사소하지만, 다른 PUT
 // 필드들과 같은 이유로 여기 둔다 — AuthStack만 알고 HostingStack의 재전송이

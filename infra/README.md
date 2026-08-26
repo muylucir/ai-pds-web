@@ -89,14 +89,41 @@ It is not exported as a CfnOutput. The EC2 instance reads it at boot with
 Cognito-generated value through CloudFormation, which leaves it in the template in plaintext. The
 price is the `cognito-idp:DescribeUserPoolClient` permission on the instance role.
 
-### Seed password warning
+### The seed password
 
-`SEED_PASSWORD` (`AiPdsWeb2026@!`) is a constant in `lib/auth-client-config.ts`, so it **stays in
-plaintext in the CloudFormation template and stack events, and a redeployment resets accounts to
-it.** It is for demos and workshops only: for anything real, replace it and use accounts invited from
-`/admin/users` instead of the seed accounts. Hiding it behind a `NoEcho` parameter was rejected
-because it would require passing the value on every `cdk deploy`, which conflicts with the
-deploy-in-one-command requirement.
+It is a **required** deploy-time parameter (`AipdsAuthStack:SeedPassword`, no default):
+
+```bash
+npx cdk deploy --all --require-approval never \
+  --parameters AipdsAuthStack:SeedPassword='<temporary-password>'
+```
+
+An `allowedPattern` enforces the pool policy (8+ characters with an uppercase letter, a lowercase
+letter, a digit, a symbol, and no spaces) before the deployment starts. Without that check
+`AdminSetUserPassword` rejects the value with `InvalidPasswordException` and **rolls the whole stack
+back** — minutes into the deployment.
+
+Both seed accounts receive it as a **temporary** password (`Permanent: false`), so they stay in
+`FORCE_CHANGE_PASSWORD` state and the Hosted UI requires a new password at first login. The custom
+resource that seeds the password has **no** `onUpdate`, so a redeployment does not overwrite what the
+user chose. Reissuing goes through **Reset password** in `/admin/users`.
+
+The temporary password is valid for 30 days (`TEMP_PASSWORD_VALIDITY_DAYS`). Cognito's default of 7
+days makes the seed accounts unusable when more time passes between deployment and the workshop, and
+the only symptom is "the password is right but it will not let me in". It is a pool policy, so
+invited accounts' temporary passwords share the window.
+
+**Why not a source constant.** A constant gets committed to the repository, stays in plaintext in the
+CloudFormation template and stack events, and lets a redeployment reset the accounts to it. One
+`NoEcho` parameter closes all three paths — the template carries only a `Ref`, and the only party that
+knows the value is whoever ran the deployment. It does not conflict with the deploy-in-one-command
+requirement either: it is one more flag on one command, and `--previous-parameters` defaults to true,
+so a redeployment does not need it again.
+
+**One exposure remains.** The `AwsCustomResource` provider Lambda logs its incoming event, so the
+value is printed once into that log group (`Logging.withDataHidden()` only hides API responses). That
+is acceptable because the value is a temporary password that must be replaced at first login — it
+would not be acceptable for a standing one.
 
 ### Deletion
 

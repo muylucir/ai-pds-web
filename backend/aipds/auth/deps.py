@@ -50,6 +50,22 @@ async def require_user(request: Request) -> Principal:
         raise _UNAUTHENTICATED from exc
 
 
+async def access_token(request: Request) -> str:
+    """요청의 원문 access 토큰.
+
+    `require_user`는 토큰을 검증한 뒤 `Principal`만 남기고 토큰 자체는 버린다 —
+    라우트가 신원만 알면 되기 때문이다. 예외가 하나 있다: Cognito 셀프서비스
+    API(`ChangePassword`)는 **토큰 자체가 인가 수단**이므로 원문이 필요하다
+    (routes/account.py).
+
+    별도 의존성으로 두는 이유는 그 예외를 눈에 보이게 하기 위해서다 — 라우트
+    시그니처에 `access_token`이 있다는 것이 "이 라우트는 사용자의 토큰을 그대로
+    업스트림에 넘긴다"는 표시가 된다. 토큰이 없으면 `_bearer_token`이 401을
+    낸다(`require_user`와 같은 응답).
+    """
+    return _bearer_token(request)
+
+
 async def require_admin(
         principal: Principal = Depends(require_user)) -> Principal:
     """admin만 통과. pm은 403 — 인증은 됐고 권한이 없는 상태다(401 아님)."""

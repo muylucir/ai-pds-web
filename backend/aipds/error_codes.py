@@ -28,6 +28,22 @@ USER_CREATE_FAILED = "user_create_failed"
 SELF_TARGET = "self_target"
 LAST_ADMIN = "last_admin"
 
+# 자기 비밀번호 변경 (routes/account.py)
+#
+# WRONG_PASSWORD와 PASSWORD_POLICY를 나누는 이유는 사용자가 할 일이 다르기
+# 때문이다 — 앞은 현재 비밀번호를 다시 입력하는 것, 뒤는 새 비밀번호를 다시
+# 고르는 것이다. 하나로 뭉치면 화면이 어느 칸이 틀렸는지 말할 수 없다.
+WRONG_PASSWORD = "wrong_password"
+PASSWORD_POLICY = "password_policy"
+# 이 세션의 토큰으로는 비밀번호를 바꿀 수 없다(셀프서비스 스코프 없음, 관리자가
+# 재설정해 계정이 임시 비밀번호 상태로 돌아감 등). 사용자가 할 일은 입력을 고치는
+# 것이 아니라 다시 로그인하는 것이다.
+REAUTH_REQUIRED = "reauth_required"
+PASSWORD_CHANGE_FAILED = "password_change_failed"
+# Cognito가 아예 설정되지 않은 환경(로컬 개발)에서 이 기능을 부를 수는 없다.
+# 조용히 성공하면 "비밀번호를 바꿨다"는 거짓 확인을 주게 된다.
+AUTH_NOT_CONFIGURED = "auth_not_configured"
+
 # 모델 카탈로그 (routes/models.py)
 NAME_REQUIRED = "name_required"
 MODEL_ID_REQUIRED = "model_id_required"

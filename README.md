@@ -147,8 +147,17 @@ npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2   # once per account/region 
 ```bash
 npm test                              # (optional) stack assertions — no credentials needed
 npx cdk diff --all                    # (optional) diff against the current deployment
-npx cdk deploy --all --require-approval never
+npx cdk deploy --all --require-approval never \
+  --parameters AipdsAuthStack:SeedPassword='<temporary-password>'
 ```
+
+`SeedPassword` is **required** (there is no default). The two seed accounts (`admin`, `pm`) receive
+it as a temporary password, and each user replaces it with their own at first login. The value must
+satisfy the pool policy — at least 8 characters with an uppercase letter, a lowercase letter, a
+digit, a symbol, and no spaces. CloudFormation rejects anything else before the deployment starts;
+without that check a policy violation rolls the whole stack back at the seeding step. The parameter
+is `NoEcho`, so the value never lands in the template or stack events, and you do not need to repeat
+it on a redeployment (`--previous-parameters` defaults to true).
 
 Why `--require-approval never` is needed: all three stacks create IAM or security-group resources,
 so an approval prompt appears every time. If this is not an unattended deployment, drop the flag
@@ -202,14 +211,19 @@ Open `DistributionDomain` and log in with a seed account:
 
 | Account | Role | Password |
 |---|---|---|
-| `admin@aipds.local` | Administrator (can manage users) | `AiPdsWeb2026@!` |
-| `pm@aipds.local` | PM | `AiPdsWeb2026@!` |
+| `admin@aipds.local` | Administrator (can manage users) | the `SeedPassword` you passed (temporary) |
+| `pm@aipds.local` | PM | the `SeedPassword` you passed (temporary) |
 
-> ⚠️ **These passwords are for demos and workshops.** They are constants in the CDK source, so they
-> remain in plaintext in the CloudFormation template and stack events, and a redeployment resets
-> them to these values. For anything real, replace `SEED_PASSWORD` in
-> `infra/lib/auth-client-config.ts` and use accounts invited from `/admin/users` instead of the seed
-> accounts.
+Both accounts are created in `FORCE_CHANGE_PASSWORD` state — **the Hosted UI requires a new password
+at first login**, and from then on only that user knows their own password. A redeployment does not
+reset it (the custom resource that seeds the password has no `onUpdate`).
+
+The temporary password is valid for **30 days** (the pool's `TemporaryPasswordValidityDays`). If more
+time passes between deployment and the workshop and it expires, an administrator issues a fresh one
+with **Reset password** in `/admin/users`.
+
+Once signed in, anyone can change their own password at any time from **Change password** in the user
+menu at the top right — regardless of role, so a PM can too.
 
 ### Changing the region
 

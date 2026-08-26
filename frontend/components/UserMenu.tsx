@@ -6,6 +6,7 @@ import { useT } from "@/lib/i18n/provider";
 // 네임스페이스로 가져온다 — 테스트가 vi.spyOn으로 타이머 시작을 관찰한다
 // (명명 import는 바인딩이 고정되어 스파이가 걸리지 않는다).
 import * as keepAlive from "@/lib/auth/keepSessionAlive";
+import { ChangePasswordModal } from "./ChangePasswordModal";
 
 interface Me {
   authenticated: boolean;
@@ -26,6 +27,9 @@ export function UserMenu() {
   const t = useT();
   const [me, setMe] = useState<Me | null>(null);
   const [open, setOpen] = useState(false);
+  // 모달을 열 때 메뉴는 닫는다 — 열린 메뉴가 모달 뒤에 남으면 바깥 클릭 처리가
+  // 두 겹으로 겹친다.
+  const [changing, setChanging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // access 토큰의 주기 갱신. 이 컴포넌트에 있는 이유는 /api/auth/me를 여기서
@@ -114,6 +118,16 @@ export function UserMenu() {
               </Link>
             </>
           )}
+          {/* 역할 조건 밖에 둔다 — 자기 계정 조작이므로 pm도 할 수 있어야 한다.
+              admin 블록 안에 들어가면 pm에게는 관리자에게 재설정을 요청하는
+              길만 남는다. */}
+          <button
+            type="button"
+            onClick={() => { setOpen(false); setChanging(true); }}
+            className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+          >
+            {t("user.changePassword")}
+          </button>
           {/* POST인 이유: GET 로그아웃은 링크 프리페치에 걸려 의도치 않게
               세션을 끊을 수 있다. */}
           <form action="/api/auth/logout" method="post">
@@ -126,6 +140,7 @@ export function UserMenu() {
           </form>
         </div>
       )}
+      {changing && <ChangePasswordModal onClose={() => setChanging(false)} />}
     </div>
   );
 }

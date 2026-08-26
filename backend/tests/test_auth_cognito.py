@@ -13,6 +13,7 @@ from botocore.exceptions import EndpointConnectionError
 from botocore.stub import Stubber
 
 from aipds.auth.cognito import (CognitoAdmin, CognitoError, ManagedUser,
+                                     change_own_password,
                                      generate_temp_password)
 
 POOL = "ap-northeast-2_TEST123"
@@ -356,4 +357,76 @@ def test_transport_failure_is_wrapped_as_cognito_error(admin):
     a._c.admin_delete_user = _boom
     with pytest.raises(CognitoError) as exc:
         a.delete_user("u@x.io")
+    assert exc.value.code == "EndpointConnectionError"
+
+
+# ---- 셀프서비스: 자기 비밀번호 변경 ----
+#
+# routes/account.py의 테스트는 가짜 클라이언트를 쓰므로 "우리가 무슨 kwargs를
+# 넘기는가"만 본다. 그 kwargs가 실제 Cognito API 모양과 맞는지는 Stubber만
+# 검증할 수 있다 — 파라미터 이름을 하나 틀리면 가짜는 통과하고 실배포가 죽는다.
+
+@pytest.fixture()
+def idp():
+    """풀에 묶이지 않은 raw 클라이언트. 셀프서비스 호출은 UserPoolId를 안 쓴다."""
+    client = boto3.client("cognito-idp", region_name="ap-northeast-2",
+                          aws_access_key_id="x", aws_secret_access_key="y")
+    stub = Stubber(client)
+    stub.activate()
+    yield client, stub
+    stub.assert_no_pending_responses()
+    stub.deactivate()
+
+
+def test_change_own_password_sends_the_token_and_both_passwords(idp):
+    client, stub = idp
+    # Stubber는 파라미터가 정확히 일치할 때만 응답을 내놓는다 — 이 딕셔너리가
+    # 곧 "우리가 Cognito에 보내는 것 전부"라는 단정이다. UserPoolId나 Username이
+    # 섞여 들어가면 여기서 걸린다(그 API는 그것을 받지 않는다).
+    stub.add_response("change_password", {}, {
+        "AccessToken": "the.access.token",
+        "PreviousPassword": "OldPass1!",
+        "ProposedPassword": "NewPass2@",
+    })
+    assert change_own_password(
+        client, "the.access.token", "OldPass1!", "NewPass2@") is None
+
+
+def test_a_wrong_current_password_keeps_cognitos_code_and_message(idp):
+    # 라우트가 code로 상태를 고르고 message로 두 뜻을 가른다
+    # (routes/account.py의 _not_authorized) — 둘 다 살아서 올라와야 한다.
+    client, stub = idp
+    stub.add_client_error(
+        "change_password", service_error_code="NotAuthorizedException",
+        service_message="Incorrect username or password.")
+    with pytest.raises(CognitoError) as exc:
+        change_own_password(client, "t", "wrong", "NewPass2@")
+    assert exc.value.code == "NotAuthorizedException"
+    assert "Incorrect" in exc.value.message
+
+
+def test_a_missing_scope_is_distinguishable_by_message_alone(idp):
+    # 스코프 누락도 같은 코드로 온다. 이 테스트가 지키는 것은 "메시지가
+    # 보존된다"이고, 그것이 없으면 라우트의 재로그인 안내가 불가능해진다.
+    client, stub = idp
+    stub.add_client_error(
+        "change_password", service_error_code="NotAuthorizedException",
+        service_message="Access Token does not have required scopes")
+    with pytest.raises(CognitoError) as exc:
+        change_own_password(client, "t", "OldPass1!", "NewPass2@")
+    assert exc.value.code == "NotAuthorizedException"
+    assert "scope" in exc.value.message.lower()
+
+
+def test_self_service_transport_failure_is_also_wrapped(idp):
+    # _call과 같은 번역을 써야 한다 — 한쪽만 BotoCoreError를 놓치면 라우트가
+    # 본 적 없는 예외 타입으로 500이 난다.
+    client, _ = idp
+
+    def _boom(**kwargs):
+        raise EndpointConnectionError(endpoint_url="https://example.com")
+
+    client.change_password = _boom
+    with pytest.raises(CognitoError) as exc:
+        change_own_password(client, "t", "OldPass1!", "NewPass2@")
     assert exc.value.code == "EndpointConnectionError"

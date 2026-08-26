@@ -20,7 +20,13 @@ describe("authorizeUrl", () => {
     expect(url.searchParams.get("code_challenge")).toBe("challenge-123");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("state")).toBe("state-456");
-    expect(url.searchParams.get("scope")).toBe("openid email profile");
+    // aws.cognito.signin.user.admin이 없으면 발급된 access 토큰으로 Cognito
+    // 셀프서비스 API를 부를 수 없다 — 자기 비밀번호 변경(/me/password)이
+    // "Access Token does not have required scopes"로 전멸한다. 앱 클라이언트가
+    // 허용하는 목록은 infra/lib/auth-client-config.ts의 OAUTH_SCOPES이고, 여기
+    // 요청 목록이 그보다 넓으면 Cognito가 authorize 자체를 거부한다.
+    expect(url.searchParams.get("scope"))
+      .toBe("openid email profile aws.cognito.signin.user.admin");
     expect(url.searchParams.get("redirect_uri"))
       .toBe("https://d123.cloudfront.net/api/auth/callback");
   });

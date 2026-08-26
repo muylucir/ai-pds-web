@@ -3,7 +3,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import {
-  GROUP_ADMIN, GROUP_PM, SEED_ADMIN_EMAIL, SEED_PASSWORD, SEED_PM_EMAIL,
+  COGNITO_ADMIN_SCOPE, GROUP_ADMIN, GROUP_PM, SEED_ADMIN_EMAIL, SEED_PM_EMAIL,
   usernameForEmail,
 } from '../lib/auth-client-config';
 
@@ -42,6 +42,16 @@ t.hasResourceProperties('AWS::Cognito::UserPool', {
       RequireSymbols: true,
     },
   },
+});
+
+// --- 임시 비밀번호 유효기간: 배포와 워크숍 사이를 견뎌야 한다. ---
+//
+// 시드 계정이 이제 임시 비밀번호로 만들어지므로(FORCE_CHANGE_PASSWORD) 이 창이
+// 곧 "배포한 계정으로 로그인할 수 있는 기간"이다. 미설정 시 기본값은 7일인데,
+// 배포와 워크숍 사이가 그보다 길면 시드 계정이 로그인 불가가 되고 증상은
+// "비밀번호가 맞는데 안 들어가진다"로만 보인다.
+t.hasResourceProperties('AWS::Cognito::UserPool', {
+  Policies: { PasswordPolicy: { TemporaryPasswordValidityDays: 30 } },
 });
 
 // --- 계정 복구는 관리자 전용 (메일을 보내지 않으므로 자가 재설정 불가). ---
@@ -91,7 +101,10 @@ t.hasResourceProperties('AWS::Cognito::UserPoolClient', {
   GenerateSecret: true,
   AllowedOAuthFlows: ['code'],
   AllowedOAuthFlowsUserPoolClient: true,
-  AllowedOAuthScopes: Match.arrayWith(['openid', 'email', 'profile']),
+  // 셀프서비스 스코프가 없으면 access 토큰으로 ChangePassword를 부를 수 없다 —
+  // 자기 비밀번호 변경이 "Access Token does not have required scopes"로 전멸한다.
+  AllowedOAuthScopes: Match.arrayWith([
+    'openid', 'email', 'profile', COGNITO_ADMIN_SCOPE]),
   CallbackURLs: ['http://localhost:3000/api/auth/callback'],
   LogoutURLs: ['http://localhost:3000/login'],
 });
@@ -119,6 +132,16 @@ function parseSdkCall(field: any): { action: string; parameters: any } | undefin
   return JSON.parse(joined);
 }
 
+// parseSdkCall이 문자열이 아닌 조각을 ''로 지우므로, 참조로 들어온 값은 파싱된
+// parameters에서 빈 문자열로 보인다. 비밀번호가 **리터럴이 아니라 파라미터
+// 참조**라는 것이 이 변경의 핵심이므로, 그 조각들을 따로 본다.
+function refsIn(field: any): string[] {
+  if (!field) return [];
+  return (field['Fn::Join'][1] as any[])
+    .filter((p) => p && typeof p === 'object' && typeof p.Ref === 'string')
+    .map((p) => p.Ref);
+}
+
 const customResources = t.findResources('Custom::AWS');
 const resourceList = Object.values(customResources);
 assert.strictEqual(
@@ -129,7 +152,71 @@ assert.strictEqual(
 const calls = resourceList.map((r: any) => ({
   create: parseSdkCall(r.Properties.Create),
   update: parseSdkCall(r.Properties.Update),
+  createRefs: refsIn(r.Properties.Create),
+  rawUpdate: r.Properties.Update,
 }));
+
+// --- 시드 비밀번호는 배포 시점 파라미터다 (소스 상수가 아니다) ---
+//
+// 상수로 두면 값이 리포에 커밋되고 CloudFormation 템플릿과 스택 이벤트에도 평문으로
+// 남는다. `noEcho`가 그 노출을 끊는다: 템플릿에는 `Ref`만 남고 GetTemplate·스택
+// 이벤트에 값이 실리지 않는다.
+//
+// `allowedPattern`은 별개의 목적이다 — Cognito 정책을 만족하지 않는 값은
+// `AdminSetUserPassword`가 `InvalidPasswordException`으로 거부하고 **스택 전체가
+// 롤백된다**. 배포가 몇 분 진행된 뒤에 나는 그 실패를 파라미터 검증 단계로 끌어당긴다.
+const SEED_PASSWORD_PARAM = 'SeedPassword';
+{
+  const params = t.findParameters('*');
+  const param = params[SEED_PASSWORD_PARAM];
+  assert.ok(
+    param,
+    `parameter ${SEED_PASSWORD_PARAM} must exist — the seed password comes from the `
+    + 'deploy command, not from source. Found: ' + Object.keys(params).join(', '),
+  );
+  assert.strictEqual(
+    param.NoEcho, true,
+    'the seed password parameter must be NoEcho — otherwise the value returns in '
+    + 'GetTemplate/DescribeStacks and the exposure this change removes comes right back',
+  );
+  assert.ok(
+    param.Default === undefined,
+    'the seed password must have NO default — a default is a hardcoded password with '
+    + 'extra steps, and it would deploy silently',
+  );
+  assert.ok(
+    typeof param.AllowedPattern === 'string' && param.AllowedPattern.length > 0,
+    'the seed password parameter must carry an AllowedPattern so a policy-violating '
+    + 'value fails at parameter validation instead of rolling the stack back',
+  );
+  // 패턴이 실제로 풀 정책을 거르는지 — 문구가 아니라 동작을 확인한다.
+  const pattern = new RegExp(`^(?:${param.AllowedPattern})$`);
+  for (const bad of ['Ab1!de', 'nouppercase1!', 'NOLOWERCASE1!', 'NoDigits!!',
+                     'NoSymbols123']) {
+    assert.ok(
+      !pattern.test(bad),
+      `AllowedPattern must reject '${bad}' — Cognito's policy would, and there the `
+      + 'rejection costs a stack rollback',
+    );
+  }
+  assert.ok(
+    pattern.test('Workshop2026!x'),
+    'AllowedPattern must accept a value that satisfies the pool policy',
+  );
+}
+
+// 파라미터를 두는 것만으로는 노출이 닫히지 않는다 — 어딘가가 리터럴을 그대로
+// 실어 보내면 값은 다시 템플릿에 남는다. 그래서 시드 호출의 `Password`에
+// **문자 하나도** 리터럴로 들어 있지 않다고 단정한다: parseSdkCall이 문자열이
+// 아닌 조각을 ''로 지우므로, 값 전체가 참조에서 온다면 파싱 결과는 빈 문자열이다.
+for (const c of calls) {
+  if (c.create?.action !== 'adminSetUserPassword') continue;
+  assert.strictEqual(
+    c.create.parameters.Password, '',
+    'the seeded password must come entirely from the NoEcho parameter — any literal '
+    + `character here lands in the template in plaintext (got '${c.create.parameters.Password}')`,
+  );
+}
 
 function assertSeeding(email: string, group: string) {
   // Username은 이메일이 아니라 로컬파트다 — Cognito가 email-alias 풀에서 이메일
@@ -166,22 +253,38 @@ function assertSeeding(email: string, group: string) {
     `${email}: the email attribute must keep the full address (alias sign-in target)`,
   );
 
-  // 2) adminSetUserPassword: 이 계정의 Username으로, 시드 비밀번호, Permanent — 아니면
-  // FORCE_CHANGE_PASSWORD 상태로 남아 강제 비밀번호 변경을 요구한다.
-  const passwordCalls = calls
-    .map((c) => c.create)
-    .filter((c) => c?.action === 'adminSetUserPassword' && c?.parameters.Username === username);
+  // 2) adminSetUserPassword: 이 계정의 Username으로, **임시** 비밀번호를 심는다.
+  //
+  // `Permanent: false`가 계정을 FORCE_CHANGE_PASSWORD로 두고, Hosted UI가 첫
+  // 로그인에서 사용자에게 새 비밀번호를 정하게 한다 — 초대 계정과 같은 규율이다
+  // (backend/aipds/auth/cognito.py의 set_temp_password). `true`로 되돌리면 배포한
+  // 값이 그 계정의 영구 비밀번호가 되어, 문서에 적힌 비밀번호로 누구나 들어온다.
+  const passwordResources = calls.filter(
+    (c) => c.create?.action === 'adminSetUserPassword'
+      && c.create?.parameters.Username === username);
   assert.strictEqual(
-    passwordCalls.length, 1,
-    `expected exactly 1 adminSetUserPassword for ${email}, got ${passwordCalls.length}`,
+    passwordResources.length, 1,
+    `expected exactly 1 adminSetUserPassword for ${email}, got ${passwordResources.length}`,
   );
+  const passwordResource = passwordResources[0]!;
   assert.strictEqual(
-    passwordCalls[0]!.parameters.Password, SEED_PASSWORD,
-    `${email}: seed password must be set`,
+    passwordResource.create!.parameters.Permanent, false,
+    `${email}: the seeded password must be TEMPORARY — Permanent:true makes the `
+    + 'deploy-time value that account\'s standing password',
   );
+  // 값은 파라미터 참조여야 한다. 리터럴이면 템플릿에 평문으로 남는다.
+  assert.ok(
+    passwordResource.createRefs.includes(SEED_PASSWORD_PARAM),
+    `${email}: the password must be a Ref to ${SEED_PASSWORD_PARAM}, not a literal. `
+    + `Refs found: ${passwordResource.createRefs.join(', ')}`,
+  );
+  // 재배포가 비밀번호를 되돌리지 않아야 한다. `onUpdate`가 있으면 사용자가 첫
+  // 로그인에서 정한 비밀번호를 다음 `cdk deploy`가 배포 시점 값으로 덮어쓰고,
+  // 계정은 다시 FORCE_CHANGE_PASSWORD가 된다.
   assert.strictEqual(
-    passwordCalls[0]!.parameters.Permanent, true,
-    `${email}: password must be made permanent (no forced change)`,
+    passwordResource.rawUpdate, undefined,
+    `${email}: the password custom resource must have no onUpdate — a redeploy would `
+    + 'otherwise overwrite the password the user chose at first login',
   );
 
   // 3) adminAddUserToGroup: 이 계정의 Username이 정확히 이 그룹과 쌍을 이뤄야
@@ -233,7 +336,7 @@ assert.ok(
   `hostedUiDomain must be the full auth domain, got ${stack.hostedUiDomain}`,
 );
 
-console.log('OK  auth stack: no-self-signup + alias username + groups + managed login v2 + code-only client + per-account seed pairing (create/suppress, permanent password, correct group)');
+console.log('OK  auth stack: no-self-signup + alias username + groups + managed login v2 + code-only client + self-service scope + NoEcho seed password param + per-account seed pairing (create/suppress, temporary password via Ref, no reset-on-redeploy, correct group)');
 
 // --- 시드 권한은 롤 생성 시점에 인라인으로 붙는다 (IAM 최종 일관성) ---
 //

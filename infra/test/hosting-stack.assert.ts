@@ -9,7 +9,7 @@ import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import { MODEL } from '../lib/backend-permissions';
 import {
   ACCESS_TOKEN_VALIDITY_MINUTES, ID_TOKEN_VALIDITY_MINUTES,
-  REFRESH_TOKEN_VALIDITY_MINUTES,
+  OAUTH_SCOPES, REFRESH_TOKEN_VALIDITY_MINUTES,
 } from '../lib/auth-client-config';
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
@@ -295,8 +295,12 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   assert.deepStrictEqual(params.AllowedOAuthFlows, ['code'],
     'UpdateUserPoolClient has PUT semantics — must resend the exact flow, not merely "a" flow');
   assert.strictEqual(params.AllowedOAuthFlowsUserPoolClient, true);
+  // 목록을 여기 다시 적지 않고 상수에서 끌어온다 — 스코프를 추가할 때 이 재전송을
+  // 함께 고치지 않으면 PUT 시맨틱이 재배포마다 그 스코프를 조용히 지운다.
+  // `aws.cognito.signin.user.admin`이 그렇게 사라지면 자기 비밀번호 변경이
+  // "Access Token does not have required scopes"로 죽는데, 원인은 이 재전송이다.
   assert.deepStrictEqual(
-    [...params.AllowedOAuthScopes].sort(), ['email', 'openid', 'profile'],
+    [...params.AllowedOAuthScopes].sort(), [...OAUTH_SCOPES].sort(),
     'OAuth scopes must be resent',
   );
   assert.deepStrictEqual(params.SupportedIdentityProviders, ['COGNITO']);

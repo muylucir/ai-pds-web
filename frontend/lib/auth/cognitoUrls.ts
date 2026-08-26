@@ -19,7 +19,14 @@ export interface CognitoEnv {
 // 어긋나면 로그인이 redirect_mismatch로 실패한다.
 const CALLBACK_PATH = "/api/auth/callback";
 const LOGOUT_PATH = "/login";
-const SCOPES = "openid email profile";
+// ⚠️ infra/lib/auth-client-config.ts의 OAUTH_SCOPES와 같은 집합이어야 한다.
+// 여기가 더 넓으면 Cognito가 authorize 자체를 거부하고(허용 목록 밖의 스코프),
+// 좁으면 발급된 access 토큰에 그 스코프가 없다.
+//
+// `aws.cognito.signin.user.admin`은 Cognito 셀프서비스 API를 부르기 위한 것이다 —
+// 자기 비밀번호 변경(/me/password → ChangePassword)이 여기에 달려 있다. 빼면
+// 그 화면이 "Access Token does not have required scopes"로 전멸한다.
+const SCOPES = "openid email profile aws.cognito.signin.user.admin";
 
 export function cognitoEnv(): CognitoEnv {
   return {

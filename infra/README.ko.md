@@ -92,13 +92,40 @@ CfnOutput으로 내보내지 않는다. EC2가 부팅 시
 만들려면 Cognito가 생성한 값을 CFN 경유로 옮겨야 하고, 그러면 템플릿에 평문으로
 남는다. 대가는 인스턴스 롤의 `cognito-idp:DescribeUserPoolClient` 권한이다.
 
-### 시드 비밀번호 경고
+### 시드 비밀번호
 
-`SEED_PASSWORD`(`AiPdsWeb2026@!`)는 `lib/auth-client-config.ts`의 상수이므로
-**CloudFormation 템플릿과 스택 이벤트에 평문으로 남고, 재배포는 이 값으로
-되돌린다.** 데모/워크숍 전용이며 운영 전환 시 반드시 교체하고 `/admin/users`에서
-초대한 계정을 쓴다. `NoEcho` 파라미터로 가리는 대안은 `cdk deploy`마다 값을 넘겨야
-해서 "한 번에 배포" 요구와 충돌하므로 택하지 않았다.
+배포 시점의 **필수 파라미터**다(`AipdsAuthStack:SeedPassword`, 기본값 없음):
+
+```bash
+npx cdk deploy --all --require-approval never \
+  --parameters AipdsAuthStack:SeedPassword='<임시-비밀번호>'
+```
+
+`allowedPattern`이 풀 정책(8자 이상, 대문자·소문자·숫자·기호 각각 하나 이상, 공백
+없음)을 배포 시작 전에 거른다. 그 검사가 없으면 `AdminSetUserPassword`가
+`InvalidPasswordException`으로 거부하고 **스택 전체가 롤백된다** — 배포가 몇 분
+진행된 뒤에.
+
+두 시드 계정은 이 값을 **임시** 비밀번호로 받는다(`Permanent: false`) →
+`FORCE_CHANGE_PASSWORD` 상태로 남고 Hosted UI가 첫 로그인에서 새 비밀번호를
+요구한다. 비밀번호를 심는 커스텀 리소스에 `onUpdate`가 **없으므로** 재배포가 사용자가
+정한 비밀번호를 되돌리지 않는다. 재발급은 `/admin/users`의 '비밀번호 재설정'이다.
+
+임시 비밀번호 유효기간은 30일(`TEMP_PASSWORD_VALIDITY_DAYS`)이다. Cognito 기본값 7일은
+배포와 워크숍 사이가 그보다 길면 시드 계정을 로그인 불가로 만들고, 증상은 "비밀번호는
+맞는데 안 들어가진다"로만 보인다. 풀 정책이므로 초대 계정의 임시 비밀번호도 같은 창을
+갖는다.
+
+**왜 소스 상수가 아닌가.** 상수로 두면 값이 리포에 커밋되고, CloudFormation 템플릿과
+스택 이벤트에 평문으로 남으며, 재배포가 계정을 그 값으로 되돌린다. 세 경로 전부가
+`NoEcho` 파라미터 하나로 닫힌다 — 템플릿에는 `Ref`만 남고, 값을 아는 것은 배포를 실행한
+사람뿐이다. "한 번에 배포"라는 요구와도 충돌하지 않는다: 명령 하나에 플래그가 하나 늘
+뿐이고, `--previous-parameters`가 기본 true이므로 재배포에는 다시 적지 않아도 된다.
+
+**남는 노출 한 곳.** `AwsCustomResource`의 provider Lambda가 수신 이벤트를 로그에
+남기므로 그 로그 그룹에 값이 한 번 찍힌다(`Logging.withDataHidden()`은 API 응답만
+가린다). 이 값이 첫 로그인에 반드시 교체되는 임시 비밀번호라서 감수하는 노출이다 —
+영구 비밀번호였다면 감수할 수 없다.
 
 ### 삭제
 
