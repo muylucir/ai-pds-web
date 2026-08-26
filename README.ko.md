@@ -135,8 +135,16 @@ npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2   # 계정·리전 조합당
 ```bash
 npm test                              # (선택) 스택 어서션 — 크리덴셜 불필요
 npx cdk diff --all                    # (선택) 기존 배포와의 차이
-npx cdk deploy --all --require-approval never
+npx cdk deploy --all --require-approval never \
+  --parameters AipdsAuthStack:SeedPassword='<임시-비밀번호>'
 ```
+
+`SeedPassword`는 **필수 파라미터다**(기본값 없음). 시드 계정 두 개(`admin`, `pm`)가 이
+값을 임시 비밀번호로 받고, 각 사용자가 첫 로그인에서 자기 비밀번호로 바꾼다. 값은 풀 정책을
+만족해야 한다 — 8자 이상, 대문자·소문자·숫자·기호 각각 하나 이상, 공백 없음. 만족하지 않으면
+CloudFormation이 배포 시작 시점에 거부한다(그 검사가 없으면 시딩 단계에서 스택 전체가
+롤백된다). 파라미터는 `NoEcho`이므로 템플릿과 스택 이벤트에 값이 남지 않으며, 재배포 때는
+다시 적지 않아도 된다(`--previous-parameters`가 기본 true).
 
 `--require-approval never`가 필요한 이유: 세 스택 모두 IAM/보안 그룹을 만들어 매번 승인
 프롬프트가 뜬다. 무인 배포가 아니면 이 플래그를 빼고 직접 확인해도 된다.
@@ -186,13 +194,19 @@ EC2 배포에서는 user-data가 이 값들을 자동으로 백엔드/프론트 
 
 | 계정 | 역할 | 비밀번호 |
 |---|---|---|
-| `admin@aipds.local` | 관리자 (사용자 관리 가능) | `AiPdsWeb2026@!` |
-| `pm@aipds.local` | PM | `AiPdsWeb2026@!` |
+| `admin@aipds.local` | 관리자 (사용자 관리 가능) | 배포 시 지정한 `SeedPassword` (임시) |
+| `pm@aipds.local` | PM | 배포 시 지정한 `SeedPassword` (임시) |
 
-> ⚠️ **이 비밀번호는 데모/워크숍용이다.** CDK 소스의 상수이므로 CloudFormation 템플릿과
-> 스택 이벤트에 평문으로 남고, 재배포하면 이 값으로 되돌아간다. 실제 운영에 쓰려면
-> `infra/lib/auth-client-config.ts`의 `SEED_PASSWORD`를 교체하고, 시드 계정 대신
-> `/admin/users`에서 초대한 계정을 쓴다.
+두 계정 모두 `FORCE_CHANGE_PASSWORD` 상태로 만들어진다 — **첫 로그인에서 Hosted UI가 새
+비밀번호를 정하라고 요구하고**, 그 뒤로 각 계정의 비밀번호는 그 사용자만 안다. 재배포는 그
+값을 되돌리지 않는다(비밀번호를 심는 커스텀 리소스에 `onUpdate`가 없다).
+
+임시 비밀번호의 유효기간은 **30일**이다(풀 정책 `TemporaryPasswordValidityDays`). 배포와
+워크숍 사이가 그보다 길어 만료됐다면 관리자가 `/admin/users`에서 **비밀번호 재설정**으로 새
+임시 비밀번호를 발급한다.
+
+로그인한 뒤에는 우측 상단 사용자 메뉴의 **비밀번호 변경**으로 언제든 스스로 바꿀 수 있다
+(역할과 무관 — PM도 가능).
 
 ### 리전 변경
 

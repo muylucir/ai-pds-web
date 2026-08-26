@@ -98,14 +98,24 @@ the instance, so use [updating the code](/manual#redeploy) instead.`,
     },
     {
       kind: "details",
-      summary: "Seed accounts and replacing their password",
-      md: `Deploying creates one administrator and one PM account. Their password is a constant in the CDK
-source, so it **appears in plaintext in the CloudFormation template and stack events, and a redeploy
-resets it to that value.**
+      summary: "Seed accounts and their temporary password",
+      md: `Deploying creates one administrator and one PM account. Both start with the
+\`SeedPassword\` value you passed to the deploy command, and it is a **temporary** password —
+each user sets their own at first login, and a redeploy does not reset it.
 
-That is fine for a demo or an evaluation. For anything real, replace \`SEED_PASSWORD\` in
-\`infra/lib/auth-client-config.ts\` and use [accounts invited through user
-management](/manual#invite) instead of the seed accounts.`,
+\`\`\`
+npx cdk deploy --all --require-approval never \\
+  --parameters AipdsAuthStack:SeedPassword='<temporary-password>'
+\`\`\`
+
+The parameter is required and has no default. CloudFormation rejects a value that does not
+satisfy the pool policy (8+ characters with an uppercase letter, a lowercase letter, a digit,
+a symbol, and no spaces) before the deployment starts. It is \`NoEcho\`, so the value never
+lands in the template or stack events.
+
+The temporary password is valid for 30 days. If more time passes between deployment and the
+workshop and it expires, issue a fresh one with **Reset password** in [user
+management](/manual#invite).`,
     },
     { kind: "heading", id: "region", text: "Changing the region" },
     {
