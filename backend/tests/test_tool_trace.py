@@ -50,7 +50,9 @@ def test_mcp_tools_have_no_detail(name):
 def test_an_unknown_tool_has_no_detail():
     """모르는 도구에 인자를 아무렇게나 붙여 보여주지 않는다 — 무엇이 의미 있는
     인자인지 모르는 채로 첫 값을 찍으면 내부 식별자가 화면에 새어 나온다."""
-    assert tool_detail("SomeNewTool", {"secret_id": "abc"}) is None
+    # The key is named `secret_id` precisely because that is the shape of
+    # argument that must not be echoed -- hence the nosec, not a rename.
+    assert tool_detail("SomeNewTool", {"secret_id": "abc"}) is None  # nosec B105
 
 
 def test_a_long_command_is_truncated():

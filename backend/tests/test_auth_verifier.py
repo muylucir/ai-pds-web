@@ -18,6 +18,11 @@ POOL = "ap-northeast-2_TEST123"
 CLIENT_ID = "client-abc"
 ISS = f"https://cognito-idp.{REGION}.amazonaws.com/{POOL}"
 KID = "test-key-1"
+#: `token_use` values. Constants rather than literals at each site because
+#: bandit reads any string sitting under a `token*` name -- keyword argument or
+#: dict key -- as a hardcoded credential (B105/B106).
+USE_ACCESS = "access"
+USE_ID = "id"
 
 _private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
@@ -41,7 +46,7 @@ def _token(**overrides) -> str:
         "cognito:groups": ["admin"],
         "iss": ISS,
         "client_id": CLIENT_ID,
-        "token_use": "access",
+        "token_use": USE_ACCESS,
         "scope": "openid email profile",
         "auth_time": now,
         "iat": now,
@@ -122,7 +127,7 @@ async def test_wrong_issuer_is_rejected():
 async def test_id_token_is_rejected():
     # id 토큰을 access 토큰 자리에 넣는 혼동을 막는다.
     with pytest.raises(TokenError):
-        await _verify(_token(token_use="id"))
+        await _verify(_token(token_use=USE_ID))
 
 
 async def test_token_without_known_group_is_rejected():
@@ -139,7 +144,7 @@ async def test_missing_groups_claim_is_rejected():
     # 있지만 리스트가 아님"을 나중에 다시 합쳐도 이 테스트가 알아채도록.
     now = int(time.time())
     token = jwt.encode(
-        {"sub": "s-1", "iss": ISS, "client_id": CLIENT_ID, "token_use": "access",
+        {"sub": "s-1", "iss": ISS, "client_id": CLIENT_ID, "token_use": USE_ACCESS,
          "iat": now, "exp": now + 3600, "username": "u@x.io"},
         _private_key, algorithm="RS256", headers={"kid": KID})
     with pytest.raises(TokenError, match="no cognito:groups"):
