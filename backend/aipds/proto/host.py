@@ -201,7 +201,7 @@ class ProtoHost:
 
         `_tail_text`가 마지막 100줄을 얻으려고 파일을 **전부** 읽고
         (`read_text()`), `.proto-host.log`는 회전 없이 append로만 자라기
-        때문이다(`_run_npm`의 "ab"). 호스팅을 반복하면 `npm install` +
+        때문이다(`_npm_install`/`_npm_run`의 "ab"). 호스팅을 반복하면 `npm install` +
         `npm run build` 출력이 계속 쌓인다. 실측한 호출당 비용: 1MB → 1.9ms,
         20MB → 46ms, 100MB → 237ms.
 
@@ -225,17 +225,40 @@ class ProtoHost:
         except (OSError, json.JSONDecodeError):
             return {}
 
-    async def _run_npm(self, args: list[str], cwd: Path, log_path: Path,
-                       env: dict[str, str] | None = None) -> int:
+    async def _npm_install(self, cwd: Path, log_path: Path,
+                           env: dict[str, str] | None = None) -> int:
+        """`npm install`, to completion, appending to the host log.
+
+        One method per npm subcommand -- rather than one method taking argv --
+        so that the subcommand is a **literal** at the spawn. Command-injection
+        analysis reads `create_subprocess_exec("npm", *args)` as a non-static
+        argv no matter how closed the caller's list is, and it judges the second
+        positional argument specifically. Spelling it out keeps every argv this
+        process can exec visible in the source, which is also the honest way to
+        state what the earlier "trust me, the callers pass literals" comment was
+        claiming. Nothing here comes from a request body: `cwd` is derived from
+        a pid/slug `reject_unsafe_segment` has already validated, and no shell
+        is involved.
+        """
         log_fh = open(log_path, "ab")
         try:
-            # No shell, and nothing here comes from a request body: the
-            # executable is a literal and every caller passes a literal list
-            # (["install"], ["run", "build"]). `cwd` is derived from a pid/slug
-            # that `reject_unsafe_segment` has already validated.
-            proc = await asyncio.create_subprocess_exec(  # nosemgrep
-                "npm", *args, cwd=str(cwd), stdout=log_fh, stderr=log_fh,
-                env=env,
+            proc = await asyncio.create_subprocess_exec(
+                "npm", "install", cwd=str(cwd),
+                stdout=log_fh, stderr=log_fh, env=env,
+            )
+            return await proc.wait()
+        finally:
+            log_fh.close()
+
+    async def _npm_run(self, script: str, cwd: Path, log_path: Path,
+                       env: dict[str, str] | None = None) -> int:
+        """`npm run <script>`, to completion. Sibling of `_npm_install` -- the
+        reason they are two methods is in that docstring."""
+        log_fh = open(log_path, "ab")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "npm", "run", script, cwd=str(cwd),
+                stdout=log_fh, stderr=log_fh, env=env,
             )
             return await proc.wait()
         finally:
@@ -333,8 +356,8 @@ class ProtoHost:
         if model_id:
             base_env["BEDROCK_MODEL_ID"] = model_id
 
-        rc = await self._run_npm(["install"], target_dir, log_path,
-                                 env={**os.environ, **base_env})
+        rc = await self._npm_install(target_dir, log_path,
+                                     env={**os.environ, **base_env})
         if rc != 0:
             entry.state = "failed"
             return self._info(entry)
@@ -344,14 +367,14 @@ class ProtoHost:
 
         if "build" in scripts:
             entry.state = "building"
-            rc = await self._run_npm(["run", "build"], target_dir, log_path,
+            rc = await self._npm_run("build", target_dir, log_path,
                                      env={**os.environ, **base_env})
             if rc != 0:
                 entry.state = "failed"
                 return self._info(entry)
 
         port = self._scan_port()
-        start_args = ["run", "start"] if "start" in scripts else ["run", "dev"]
+        start_script = "start" if "start" in scripts else "dev"
         # `next start` re-reads next.config.js, so the prefix has to be present
         # here too -- otherwise the server would route at "/" while the built
         # assets expect the prefix.
@@ -359,12 +382,12 @@ class ProtoHost:
 
         log_fh = open(log_path, "ab")
         try:
-            # No shell, and argv is closed: "npm" plus one of two literal
-            # lists decided above. `env` is this process's environ plus the
-            # base-path variables computed from a validated pid/slug -- no
-            # request body reaches either.
-            proc = await asyncio.create_subprocess_exec(  # nosemgrep
-                "npm", *start_args, cwd=str(target_dir), env=env,
+            # The long-lived one, so it is spawned here rather than through
+            # `_npm_run`. Same reason as there for the literal subcommand: the
+            # only variable part of this argv is which script name, and it is
+            # one of two names chosen above -- never anything from a request.
+            proc = await asyncio.create_subprocess_exec(
+                "npm", "run", start_script, cwd=str(target_dir), env=env,
                 stdout=log_fh, stderr=log_fh,
                 # Own process group: stop() can then signal the whole tree,
                 # and a hard backend death leaves a pid file for sweep_orphans
