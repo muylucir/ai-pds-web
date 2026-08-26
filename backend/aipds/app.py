@@ -241,6 +241,23 @@ def cognito_admin():
     return CognitoAdmin(client, cfg["user_pool_id"])
 
 
+def cognito_idp_client():
+    """풀에 묶이지 않은 raw cognito-idp 클라이언트 (monkeypatchable in tests).
+
+    `cognito_admin()`과 나누는 이유는 대상이 다르기 때문이다. 그쪽은 Admin* API용이라
+    UserPoolId를 항상 들고 다녀야 하고, 셀프서비스 API(`ChangePassword`)는 그것을
+    받지 않는다 — access 토큰이 곧 신원이다. CognitoAdmin으로 감싸면 쓰지도 않는
+    풀 id를 통과시켜야 하고, 그 클래스의 "모든 호출은 이 풀에 대한 관리 호출"이라는
+    불변식이 흐려진다.
+    """
+    cfg = cognito_config()
+    if cfg is None:
+        raise RuntimeError(
+            "self-service Cognito calls require AIPDS_COGNITO_USER_POOL_ID / "
+            "AIPDS_COGNITO_CLIENT_ID")
+    return boto3.client("cognito-idp", region_name=cfg["region"])
+
+
 def durable_projects_enabled() -> bool:
     """버킷 미설정(로컬/테스트)이면 목록 영속화 전체를 생략한다."""
     return bool(os.environ.get("AIPDS_S3_BUCKET"))
@@ -635,6 +652,11 @@ app.include_router(surveys.router, dependencies=_AUTH)
 
 from aipds.routes import admin_users  # noqa: E402
 app.include_router(admin_users.router, dependencies=_AUTH)
+
+# 자기 계정 조작. admin_users와 달리 admin 전용이 아니다 — pm도 자기 비밀번호를
+# 바꿀 수 있어야 한다. 그래서 _AUTH(require_user)만 붙는다.
+from aipds.routes import account  # noqa: E402
+app.include_router(account.router, dependencies=_AUTH)
 
 from aipds.routes import models as models_routes  # noqa: E402
 app.include_router(models_routes.router, dependencies=_AUTH)
