@@ -447,9 +447,13 @@ async def test_reserved_port_is_released_when_the_start_spawn_raises(root, monke
     real_exec = asyncio.create_subprocess_exec
 
     async def boom(program, *args, **kwargs):
-        if program == "npm" and "env" in kwargs:
-            # Only the final start-spawn passes `env=` (the install/build
-            # calls via _run_npm do not) -- fail exactly that call.
+        if program == "npm" and kwargs.get("start_new_session"):
+            # Only the final start-spawn asks for its own session -- fail
+            # exactly that call, and let install/build through. The earlier
+            # discriminator here was `"env" in kwargs`, which install and build
+            # also pass: the OSError landed on the install spawn, `start()`
+            # returned before a port was ever reserved, and the assertion below
+            # passed without exercising the release path it exists to guard.
             raise OSError("simulated spawn failure")
         return await real_exec(program, *args, **kwargs)
 
