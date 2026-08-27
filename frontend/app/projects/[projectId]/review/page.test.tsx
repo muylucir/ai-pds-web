@@ -278,9 +278,18 @@ describe("Review page — width, download, status badge", () => {
       render(<ReviewPage params={params} />);
     });
     expect(await screen.findByText("초안 검토 중")).toBeInTheDocument();
-    // 승인/수정이 각각 무엇을 하는지 안내 문구가 게이트에 있어야 한다
-    const gate = screen.getByRole("alert");
-    expect(gate.textContent).toMatch(/승인.*Discovery 단계를 완료/);
+    // 승인/수정이 각각 무엇을 하는지 안내 문구가 게이트에 있어야 한다.
+    //
+    // 이름을 가진 region으로 찾는다 — 이 배너는 상주하는 영역이고, 갑자기
+    // 발생한 사건이 아니다(ApprovalGate의 role 주석).
+    const gate = screen.getByRole("region", { name: "승인 게이트" });
+    // **문구가 단계를 특정하지 않아야 한다.** 종전 단정은 "Discovery 단계를
+    // 완료"를 요구했는데, 이 배너는 discovery-document.md가 존재하고 미승인이면
+    // 항상 뜨고 문서는 Envision이 만든다(상류 envision.md:255). 즉 Envision
+    // 승인 시점에도 "Discovery 완료"를 말하고 있었다. 실제로 이 버튼은 에이전트가
+    // 앉아 있는 게이트가 무엇이든 통과시킨다.
+    expect(gate.textContent).toMatch(/승인.*다음 단계로 넘어갑니다/);
+    expect(gate.textContent).not.toMatch(/최종|Discovery 단계를 완료/);
     expect(gate.textContent).toMatch(/수정 요청.*워크스페이스 채팅으로 이동/);
   });
 
@@ -310,7 +319,9 @@ describe("Review page — width, download, status badge", () => {
     // panel, so a bare text query is ambiguous.
     const banner = await screen.findByRole("status");
     expect(banner).toHaveTextContent("승인 완료");
-    expect(banner).toHaveTextContent("수정하면 다시 승인이 필요합니다");
+    // 재승인 조건은 "수정을 요청했는가"가 아니라 "문서가 바뀌었는가"다 —
+    // 판정은 승인 시점 해시와의 비교이고(approval_store.py), 문구도 그렇게 말한다.
+    expect(banner).toHaveTextContent("문서가 바뀌면 다시 승인이 필요합니다");
     // The gate itself is gone — no further approval is pending.
     expect(screen.queryByRole("button", { name: /승인하고 다음 단계로/ })).not.toBeInTheDocument();
     // ...but a way back in remains.
