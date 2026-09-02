@@ -25,6 +25,52 @@ def test_path_b_use_case_label():
     ) == "Customer Support Agent"
 
 
+def test_korean_product_label():
+    """ko 프로젝트는 라벨을 번역해서 쓴다 — 실측(2026-09-02): S3에 있는 실제 명세
+    4개(novadesk, novadesk-2, test1111, travel-friend)가 모두 `- **제품**:`이다.
+
+    그 번역은 설계된 동작이다. `agent/workspace_rules.py`의 ko 언어 규약이
+    "질문 문구·헤딩·**라벨**·선택지는 한국어로 옮긴다"고 지시한다. 영어 라벨만
+    보는 규칙은 ko 프로젝트에서 항상 None을 돌려주고, 그러면 카드는 상수
+    슬러그 `"prototype"`으로 되돌아간다 — ko가 기본값이므로 그것이 곧 전부다.
+    """
+    assert spec_name(
+        "# 프로토타입 명세\n"
+        "\n"
+        "## Envision에서 도출\n"
+        "- **제품**: FeedSight\n"
+        "- **타겟 사용자**: NovaDesk PM (주)\n"
+    ) == "FeedSight"
+
+
+def test_korean_use_case_label():
+    """Path B 템플릿의 ko 라벨. 실측 표본은 없다 — "Use Case"는 기술용어로 남을
+    수도 있고(그러면 기존 영어 패턴이 받는다), 같은 규약이 번역도 지시하므로
+    양쪽을 다 받는다. 표기가 하나로 정해지지 않는 자리라 흔한 세 판을 받는다."""
+    assert spec_name("**유즈케이스**: 재고 예측\n") == "재고 예측"
+    assert spec_name("**유스케이스**: 재고 예측\n") == "재고 예측"
+    assert spec_name("**사용 사례**: 재고 예측\n") == "재고 예측"
+
+
+def test_tagline_after_em_dash_is_dropped():
+    """실측 4개 중 3개가 `제품명 — 한 줄 설명` 형태다. 이 값은 카드 제목 한 줄에
+    실리므로 이름만 남기고 설명은 버린다."""
+    assert spec_name(
+        "- **제품**: 트래블프렌드 — 여행 상품을 권하지 않는 AI 여행 친구\n"
+    ) == "트래블프렌드"
+
+
+def test_tagline_wrapping_to_the_next_line_does_not_leak():
+    """실측(novadesk): 그 설명이 다음 줄로 이어진다. 줄 끝까지만 잡는 규칙으로는
+    제목이 문장 조각(`… PM이 무엇을`)이 되고, 120자 절단은 조각을 조각으로
+    남긴다 — 자를 자리는 길이가 아니라 이름과 설명의 경계다."""
+    assert spec_name(
+        "- **제품**: NovaDesk Signal — 세 채널에 흩어진 고객 피드백을 근거가 "
+        "연결된 테마로 정리해 PM이 무엇을\n"
+        "  먼저 만들지 판단할 수 있게 하는 사내 도구 (PR/FAQ 제목)\n"
+    ) == "NovaDesk Signal"
+
+
 def test_no_name_line_at_all():
     """실측 Path B 산출물(PROTOTYPE-notam-ai-summary.md)에는 두 라벨이 다 없다.
     그때는 호출부가 슬러그로 되돌아가야 하므로 None이지, 빈 문자열이 아니다."""
