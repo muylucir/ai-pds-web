@@ -51,6 +51,13 @@ function isTooLong(err: unknown): boolean {
 // 이 플래그를 받은 AiMessage가 UI 언어로 그린다.
 const INTERRUPTED_MARKER = "interrupted";
 
+// 백엔드 claude_driver.THINKING_MARKER / THINKING_DONE_MARKER와 같은 값이어야
+// 한다. 같은 종류의 기계 신호이므로 트레이스 줄로 새면 접힌 아코디언에
+// "thinking"이라는 영어 단어가 그대로 노출된다 — INTERRUPTED_MARKER가 겪은
+// 회귀와 같다.
+const THINKING_MARKER = "thinking";
+const THINKING_DONE_MARKER = "thinking-done";
+
 // Malformed JSON in a structured payload must not stop the stream — parsing
 // fails closed to `null` and the event is otherwise ignored (spec §4's
 // fallback principle: progress is never blocked by one bad frame).
@@ -216,6 +223,20 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         // 후에는 이 줄이 다시 나타나지 않는다.
         if (ev.kind === "status" && ev.text === INTERRUPTED_MARKER) {
           return { ...it, interrupted: true };
+        }
+        // 사고 구간. 상태(`thinking`)와 기록(trace의 항목)을 함께 세운다 —
+        // 진행 표시는 상태를 읽고, 타임라인은 기록을 읽는다. 시작에서 줄을
+        // 남기는 이유는 순서다: 뒤따르는 도구보다 앞에 있어야 하고, 턴이 사고
+        // 중에 끊겨도 "여기까지 갔다"가 남는다.
+        if (ev.kind === "status" && ev.text === THINKING_MARKER) {
+          return {
+            ...it, thinking: true,
+            trace: [...it.trace,
+                    { kind: "thinking", text: null, path: null, detail: null }],
+          };
+        }
+        if (ev.kind === "status" && ev.text === THINKING_DONE_MARKER) {
+          return { ...it, thinking: false };
         }
         if (ev.kind === "status" || ev.kind === "file_changed") {
           // status의 detail은 payload에 실려 온다(리댁션을 지나는 필드여야 하고,
