@@ -70,7 +70,10 @@ export const ko = {
   "canvas.artifactPanelLabel": "아티팩트 패널",
   "canvas.artifactPanelTabsLabel": "아티팩트 패널 탭",
   "canvas.questionsLoadFailed": "질문을 불러오지 못했습니다.",
-  "canvas.reasoningTrace": "추론 과정",
+  // 아코디언 안에 있는 것은 모델의 추론 텍스트가 아니라 턴의 진행 기록이다 —
+  // 사고 구간, 실행한 도구, 바뀐 파일. "추론 과정"은 없는 것을 약속했다.
+  "canvas.reasoningTrace": "진행 기록",
+  "canvas.thinkingTrace": "생각",
   "canvas.fileChanged": "파일 변경",
   "canvas.clarificationLabel": "명확화 질문",
   "canvas.clarificationTitle": "답변 간 모순 감지 — 게이트 보류",

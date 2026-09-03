@@ -48,9 +48,10 @@ from this" — the AI works out which path that is.`,
 While the AI works, a single line tells you what it is doing — *Thinking*,
 *Writing the document*, *Preparing questions*, and so on.
 
-Expand that line to see the **reasoning**, along with what each tool actually did — the file name
-when it read a file, the command when it ran one. It is where you can retrace "why did this
-conclusion appear" without asking in chat.`,
+Below it, the **activity log** accumulates the order the turn went through — where the model
+thought, which tools ran and on what (the file name when it read a file, the command when it ran
+one), and which files changed. It stays expanded while the AI works and collapses when the turn
+ends. It is where you can retrace "why did this conclusion appear" without asking in chat.`,
     },
     { kind: "heading", id: "answer-panel", text: "The question panel (third column)" },
     {

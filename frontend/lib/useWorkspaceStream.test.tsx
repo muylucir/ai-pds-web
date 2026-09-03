@@ -682,3 +682,51 @@ describe("도구 경로(AskUserQuestion 탈출로)의 말풍선은 읽을 수 �
     expect(text).not.toBe("답변 제출");
   });
 });
+
+describe("useWorkspaceStream — 사고 구간 신호", () => {
+  beforeEach(() => { vi.clearAllMocks(); noLiveTurn(); });
+
+  // 백엔드가 사고 블록의 시작·끝을 status 마커로 보낸다(claude_driver의
+  // THINKING_MARKER / THINKING_DONE_MARKER). 사고 **텍스트**는 이 경로에
+  // 존재하지 않으므로(Bedrock 실측 0자) 우리가 표시하는 것은 구간이다.
+  it("status:thinking은 thinking 플래그를 세우고 트레이스에 사고 줄을 남긴다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    drive(
+      [{ kind: "status", text: "thinking", path: null, payload: null }],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행 중"));
+    const ai = result.current.items.find((i) => i.role === "ai");
+    expect(ai).toBeDefined();
+    if (ai && ai.role === "ai") {
+      expect(ai.thinking).toBe(true);
+      // 마커 문자열이 평범한 status 줄로 새면 접힌 트레이스에 "thinking"이
+      // 그대로 노출된다 — interrupted 마커와 같은 종류의 회귀다.
+      expect(ai.trace).toEqual([
+        { kind: "thinking", text: null, path: null, detail: null }]);
+    }
+  });
+
+  it("status:thinking-done은 플래그를 내리고 줄을 더 만들지 않는다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    drive(
+      [
+        { kind: "status", text: "thinking", path: null, payload: null },
+        { kind: "status", text: "thinking-done", path: null, payload: null },
+        { kind: "done", text: null, path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행 중"));
+    const ai = result.current.items.find((i) => i.role === "ai");
+    if (ai && ai.role === "ai") {
+      expect(ai.thinking).toBe(false);
+      expect(ai.trace).toEqual([
+        { kind: "thinking", text: null, path: null, detail: null }]);
+    }
+  });
+});

@@ -67,6 +67,7 @@ from typing import Any, AsyncIterator, Callable
 
 from aipds.agent import prompts
 from aipds.agent.answer_store import save_answers
+from aipds.agent.delta_buffer import WhitespaceBoundaryBuffer
 from aipds.agent.discovery_guard import (WRITE_TOOLS, bash_denial,
                                               write_denial)
 from aipds.agent.pending_store import (clear_pending, load_pending,
@@ -128,6 +129,22 @@ _INTERRUPTED_TERMINAL_REASONS = frozenset({"aborted_streaming", "aborted_tools"}
 #: 프로젝트 언어의 단어여야 한다. 이 마커는 라이브 SSE 큐에만 있고 아무도
 #: 읽지 않는다.
 INTERRUPTED_MARKER = "interrupted"
+
+#: 모델이 사고 블록에 들어갔다/나왔다는 `status` 이벤트의 text. INTERRUPTED_MARKER와
+#: 같은 종류의 **기계 신호**다 — 프론트가 값을 비교해 상태를 세우고 화면 문구는
+#: 자기가 UI 언어로 그린다. 트레이스 줄로 렌더되면 안 된다.
+#:
+#: **왜 텍스트가 아니라 구간인가(실측 2026-09-04, Bedrock · claude-opus-5).**
+#: `--thinking-display summarized`를 붙여도 `thinking_delta`는 0자로 오고
+#: `signature_delta`만 실린다 — 이 경로에 사고 **텍스트**는 존재하지 않는다.
+#: 존재하는 것은 사고 블록이 열리고 닫히는 시점이고, 그것이 턴에서 가장 길고
+#: 가장 불안한 침묵 구간과 정확히 겹친다. 그래서 신호만 보낸다.
+#:
+#: **왜 새 kind가 아닌가.** 라이브 SSE에만 있는 신호이므로 AgentEvent 계약과
+#: 히스토리 복원(session_history)을 건드릴 이유가 없다. 같은 판단으로 interrupt가
+#: 이미 status를 재사용한다.
+THINKING_MARKER = "thinking"
+THINKING_DONE_MARKER = "thinking-done"
 
 # Discovery runs with a human in the loop watching the chat, unlike the
 # unattended prototype build -- but AskUserQuestion is still routed through
@@ -477,6 +494,12 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
         env.update(cli_context_env())
         session_id, resume = _sdk_session_id(session)
         options = ClaudeAgentOptions(
+            # 토큰 단위 스트리밍. 기본값 False에서는 완성된 AssistantMessage만
+            # 오므로 문단이 한 번에 튀어나오고, 사용자에게는 그 침묵이 "아무 일도
+            # 일어나지 않는다"로 읽힌다(실측: 1,325자가 295개 델타로 온다).
+            # 완성 메시지는 델타 뒤에 **그대로 또** 오므로 `_translate`가 중복을
+            # 접는다 — 그쪽 주석이 그 계약을 갖고 있다.
+            include_partial_messages=True,
             permission_mode=driver._permission_mode,
             cwd=driver._workspace,
             env=env,
@@ -629,6 +652,18 @@ class ClaudeDriver:
         # 한 줄로 뭉개진다. INTERRUPTED_MARKER 비교는 event.text로 하므로
         # 이 키가 튜플이 되어도 그 경로는 영향받지 않는다.
         self._last_status: tuple[str, str | None] | None = None
+        # 토큰 델타 조립. 공백 없는 꼬리를 붙들어 라우트의 레댁션이 쪼개진 토큰을
+        # 보지 않게 한다(agent/delta_buffer.py 헤더가 그 이유를 갖고 있다).
+        self._delta_buf = WhitespaceBoundaryBuffer()
+        # 이 어시스턴트 메시지의 텍스트가 이미 델타로 나갔는가. 부분 메시지를
+        # 켜면 델타 **뒤에** 완성된 AssistantMessage가 또 오므로(실측 2026-09-04),
+        # 이 플래그가 없으면 모든 문단이 두 번 렌더된다. 플래그로 판단하고
+        # 옵션으로 판단하지 않는 이유: 델타가 오지 않는 경로(스크립트된 가짜,
+        # 부분 스트리밍이 없는 세션)가 종전대로 동작해야 한다.
+        self._streamed_text = False
+        # 지금 열려 있는 블록이 사고 블록인가. content_block_stop은 텍스트 블록에도
+        # 오므로, 구분하지 않으면 사고가 없던 턴에도 종료 마커가 나간다.
+        self._in_thinking = False
         # rel path → 그 파일에서 **이미 물어본 미답 문항 집합**. 같은 집합을 두 번
         # 묻지 않는 가드다(_file_question_round 참조). 드라이버 인스턴스가 프로젝트
         # 수명을 살기 때문에 턴을 넘어 유지된다 — 백엔드 재시작 시 비지만, 그때는
@@ -1367,6 +1402,40 @@ class ClaudeDriver:
 
     # ---- message translation + the turn pump ----
 
+    def _translate_stream_event(self, ev: dict) -> list[AgentEvent]:
+        """부분 메시지 프레임 → 이벤트. `event`는 Claude API의 원본 스트리밍 이벤트다.
+
+        **텍스트 델타만 본문이 된다.** `thinking_delta`는 본문 버퍼에 넣지 않는다 —
+        이 경로에서는 내용이 비어 있지만(실측 0자), 값이 생기는 날 모델의 추론이
+        답변에 섞이는 것은 버그다. `signature_delta`는 본문도 트레이스도 아니다.
+
+        **모르는 프레임은 조용히 버린다.** message_start·message_delta·message_stop은
+        화면에 실릴 것이 없고, 새 프레임 종류가 생겨도 여기서 깨지지 않아야 한다.
+        """
+        events: list[AgentEvent] = []
+        etype = ev.get("type")
+        if etype == "content_block_start":
+            block = ev.get("content_block") or {}
+            if block.get("type") == "thinking":
+                self._in_thinking = True
+                events.append(AgentEvent(kind="status", text=THINKING_MARKER))
+        elif etype == "content_block_delta":
+            delta = ev.get("delta") or {}
+            if delta.get("type") == "text_delta":
+                self._streamed_text = True
+                safe = self._delta_buf.feed(delta.get("text") or "")
+                if safe:
+                    events.append(AgentEvent(kind="message", text=safe))
+        elif etype == "content_block_stop":
+            tail = self._delta_buf.flush()
+            if tail:
+                events.append(AgentEvent(kind="message", text=tail))
+            if self._in_thinking:
+                self._in_thinking = False
+                events.append(AgentEvent(kind="status",
+                                         text=THINKING_DONE_MARKER))
+        return events
+
     def _translate(self, msg, reader: "_MessageReader | None" = None) -> list[AgentEvent]:
         events: list[AgentEvent] = []
         tname = type(msg).__name__
@@ -1383,10 +1452,25 @@ class ClaudeDriver:
             _log.warning("transcript mirror failed (history for this turn may "
                          "be lost): %s", getattr(msg, "error", "unknown"))
             return events
+        if tname == "StreamEvent":
+            return self._translate_stream_event(getattr(msg, "event", None) or {})
         if tname == "AssistantMessage":
+            # 이 메시지의 텍스트가 이미 델타로 나갔다면 TextBlock은 중복이다.
+            # 플래그는 **메시지 단위**로 소비한다 — 남겨 두면 델타 없이 온 다음
+            # 답변이 조용히 사라진다.
+            streamed, self._streamed_text = self._streamed_text, False
+            if streamed:
+                # content_block_stop을 못 본 채 메시지가 끝났으면 꼬리가 버퍼에
+                # 갇혀 있다. 아래에서 TextBlock을 건너뛰므로 여기서 내보내지 않으면
+                # 문장의 끝을 잃는다.
+                tail = self._delta_buf.flush()
+                if tail:
+                    events.append(AgentEvent(kind="message", text=tail))
             for block in getattr(msg, "content", []):
                 btype = type(block).__name__
                 if btype == "TextBlock":
+                    if streamed:
+                        continue
                     events.append(AgentEvent(kind="message", text=block.text))
                 elif btype == "ToolUseBlock":
                     # 무엇을 했는지까지 보낸다 — `Read`만 뜨면 트레이스의 요점이
@@ -1742,6 +1826,14 @@ class ClaudeDriver:
         first_text_logged = False
         reader_for_turn: _MessageReader | None = None
         self._last_status = None
+        # 델타 상태는 인스턴스 수명을 사는데(드라이버가 프로젝트 하나를 계속
+        # 맡는다) 턴은 중간에 버려질 수 있다(SSE 끊김·프록시 타임아웃·페이지
+        # 이동 — runner.py:144-152). 씻지 않으면 `_streamed_text`가 True로 남아
+        # **다음 턴의 첫 답변이 중복으로 판정되어 통째로 사라지고**, 버퍼에 갇힌
+        # 꼬리가 그 자리에 대신 나온다.
+        self._delta_buf.flush()
+        self._streamed_text = False
+        self._in_thinking = False
         self._current_session_id = session.get("session_id")
         try:
             # `resume` is only what the CALLER wants; `_resolve_resume` decides

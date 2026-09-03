@@ -21,7 +21,7 @@ describe("AiMessage", () => {
       />,
     );
     expect(screen.getByText("필터를 추가했습니다.")).toBeInTheDocument();
-    expect(screen.getByText("추론 과정")).toBeInTheDocument();
+    expect(screen.getByText("진행 기록")).toBeInTheDocument();
     expect(screen.getByText(/prototype\/src\/App\.tsx/)).toBeInTheDocument();
   });
 
@@ -127,7 +127,7 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
       />,
     );
     expect(screen.queryByTestId("ai-bubble")).not.toBeInTheDocument();
-    expect(screen.getByText("추론 과정")).toBeInTheDocument();
+    expect(screen.getByText("진행 기록")).toBeInTheDocument();
   });
 
   it("텍스트가 있으면 말풍선을 그린다", () => {
