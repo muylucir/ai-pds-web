@@ -28,6 +28,18 @@ function mockAll(pid: string) {
   );
 }
 
+const EMPTY_STATE = { project_type: null, current_stage: null, stages: [] };
+
+/** 아무 워크플로우도 돌지 않은 갓 만든 프로젝트. */
+function mockFresh(pid: string) {
+  server.use(
+    http.get(`${API_BASE_URL}/projects/${pid}/state`, () => HttpResponse.json(EMPTY_STATE)),
+    http.get(`${API_BASE_URL}/projects/${pid}/artifacts`, () => HttpResponse.json({ artifacts: [] })),
+    http.get(`${API_BASE_URL}/projects/${pid}/audit`, () => HttpResponse.json([])),
+    http.get(`${API_BASE_URL}/projects/${pid}/questions`, () => HttpResponse.json({ questions: [] })),
+  );
+}
+
 // App-Router pages receive params as a Promise in Next 15.
 const params = Promise.resolve({ projectId: "pilot1" });
 
@@ -56,5 +68,43 @@ describe("Dashboard page", () => {
       render(<DashboardPage params={Promise.resolve({ projectId: "ghost" })} />);
     });
     expect(await screen.findByText(/프로젝트를 찾을 수 없습니다/)).toBeInTheDocument();
+  });
+
+  it("갓 만든 프로젝트에는 Workspace로 보내는 시작 배너가 뜬다", async () => {
+    mockFresh("test333");
+    await act(async () => {
+      render(<DashboardPage params={Promise.resolve({ projectId: "test333" })} />);
+    });
+    expect(await screen.findByText(/아직 시작하지 않았습니다/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Workspace로 이동/ })).toHaveAttribute(
+      "href",
+      "/projects/test333/workspace",
+    );
+  });
+
+  it("진행 중인 프로젝트에는 시작 배너가 뜨지 않는다", async () => {
+    mockAll("pilot1");
+    await act(async () => {
+      render(<DashboardPage params={params} />);
+    });
+    expect(await screen.findByText("Product Strategy")).toBeInTheDocument();
+    expect(screen.queryByText(/아직 시작하지 않았습니다/)).not.toBeInTheDocument();
+  });
+
+  it("stages가 비어도 audit이 있으면 배너를 띄우지 않는다", async () => {
+    // 상태 파일의 `## Stage Progress`가 어긋나면 진행 중인 프로젝트도 stages가
+    // 빈 배열로 온다(backend parsers/state.py의 실측 기록). 그것만 보고 판단하면
+    // 이미 일하고 있는 사용자에게 "시작하세요"라고 말한다 — audit이 그 오판을 막는다.
+    server.use(
+      http.get(`${API_BASE_URL}/projects/drift/state`, () => HttpResponse.json(EMPTY_STATE)),
+      http.get(`${API_BASE_URL}/projects/drift/artifacts`, () => HttpResponse.json({ artifacts: [] })),
+      http.get(`${API_BASE_URL}/projects/drift/audit`, () => HttpResponse.json(auditEntries)),
+      http.get(`${API_BASE_URL}/projects/drift/questions`, () => HttpResponse.json({ questions: [] })),
+    );
+    await act(async () => {
+      render(<DashboardPage params={Promise.resolve({ projectId: "drift" })} />);
+    });
+    await waitFor(() => expect(screen.getByText("Entry 34")).toBeInTheDocument());
+    expect(screen.queryByText(/아직 시작하지 않았습니다/)).not.toBeInTheDocument();
   });
 });
