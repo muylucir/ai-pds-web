@@ -10,7 +10,12 @@ import type { AgentEvent, QuestionFile } from "@/lib/api/types";
 // projected into the chat timeline. Backend contract types stay in
 // lib/api/types.ts.
 export interface TraceEntry {
-  kind: "status" | "file_changed";
+  // "thinking"은 모델이 사고 블록에 들어간 지점이다. `text`/`path`/`detail`이
+  // 모두 비는 유일한 종류인 이유: 사고 **텍스트**는 이 경로에 존재하지 않는다
+  // (Bedrock 실측 2026-09-04 — `--thinking-display summarized`를 붙여도
+  // thinking_delta가 0자이고 signature만 온다). 남기는 것은 구간의 위치이고,
+  // 그것이 트레이스를 턴의 타임라인으로 만든다: 생각 → Read → 생각 → 작성.
+  kind: "status" | "file_changed" | "thinking";
   text: string | null;
   path: string | null;
   // 도구가 **무엇을 했는지** — 읽은 파일, 돌린 명령, 검색 패턴.
@@ -45,6 +50,11 @@ export interface AiItem {
   // 사용자가 이 턴을 끊었다. trace가 아닌 별도 필드인 이유는 성격이 다르기
   // 때문 — trace는 도구 실행 기록, 이것은 턴의 종결 사유다.
   interrupted?: boolean;
+  // 모델이 지금 사고 블록 안에 있다. trace의 "thinking" 항목과 짝이지만 성격이
+  // 다르다 — trace는 "생각했다"는 기록이고 이것은 "지금 생각 중"이라는 상태다.
+  // 진행 표시가 앞선 도구 이름을 계속 말하지 않게 하는 것이 이 필드의 일이다.
+  // 라이브 스트림에만 있다(복원된 턴에는 없다).
+  thinking?: boolean;
 }
 // C2: structured timeline cards, materialized from file_changed paths seen
 // during a completed turn. Pure filename-suffix mapping (see

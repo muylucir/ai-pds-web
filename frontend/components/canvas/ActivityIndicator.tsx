@@ -133,7 +133,9 @@ function Spinner() {
   );
 }
 
-export function ActivityIndicator({ tool }: { tool: string | null | undefined }) {
+export function ActivityIndicator(
+  { tool, thinking }: { tool: string | null | undefined; thinking?: boolean },
+) {
   const t = useT();
   // 마운트되어 있는 동안이 곧 진행 중인 동안이다 — 호출자(AiMessage)가
   // item.streaming으로 마운트를 제어하므로, 여기서 다시 판단하지 않는다.
@@ -147,7 +149,14 @@ export function ActivityIndicator({ tool }: { tool: string | null | undefined })
       className="mt-2 inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 pl-2.5 pr-3 py-1.5"
     >
       <Spinner />
-      <span className="text-xs font-medium text-violet-700">{activityLabel(tool, t)}</span>
+      {/* 사고 신호가 도구 이름을 이긴다. 앞선 도구의 status는 트레이스에 남아
+          있으므로, 모델이 다시 생각하기 시작해도 lastStatus는 그 도구를 가리킨다 —
+          그대로 쓰면 실제로는 생각만 하는 동안 "자료를 확인하고 있어요"라고
+          말한다. `thinking`이 없을 때(복원된 턴, 신호가 아직 안 온 첫 순간)는
+          activityLabel의 폴백이 종전대로 사고를 추측한다. */}
+      <span className="text-xs font-medium text-violet-700">
+        {thinking ? t("activity.thinking") : activityLabel(tool, t)}
+      </span>
       <span className="text-xs text-violet-400 tabular-nums" aria-hidden="true">
         {formatElapsed(elapsed, t)}
       </span>

@@ -27,6 +27,17 @@ class AssistantMessage:
 
 
 @dataclass
+class StreamEvent:
+    """부분 메시지 스트리밍(`include_partial_messages=True`)이 내는 프레임.
+
+    실제 SDK는 `uuid`/`session_id`도 싣지만 번역이 보는 것은 `event` 하나이고,
+    그 안에는 Claude API의 원본 스트리밍 이벤트가 그대로 들어 있다
+    (content_block_start / content_block_delta / content_block_stop / ...).
+    """
+    event: dict
+
+
+@dataclass
 class ResultMessage:
     subtype: str = "success"
     result: str | None = None
