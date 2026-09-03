@@ -48,4 +48,27 @@ describe("ReasoningTrace", () => {
     const { container } = render(<ReasoningTrace entries={[]} />);
     expect(container.querySelector("details")).toBeNull();
   });
+
+  it("사고 구간은 전용 줄로 보여준다", () => {
+    // 사고 **텍스트**는 이 경로에 없다(Bedrock 실측 0자). 있는 것은 모델이
+    // 생각한 구간이고, 그것이 트레이스를 턴의 타임라인으로 만든다:
+    // 생각 → Read → 생각 → 작성.
+    render(<ReasoningTrace entries={[entry({ kind: "thinking" })]} />);
+    expect(screen.getByText("🧠 생각")).toBeInTheDocument();
+  });
+
+  it("턴이 도는 동안에는 펼쳐져 있다", () => {
+    // 접혀 있으면 실시간으로 쌓이는 줄을 아무도 보지 못한다 — "아무 일도
+    // 일어나지 않는다"는 인상의 절반이 여기서 나온다. 끝난 턴은 다시 접어
+    // 타임라인을 조용하게 둔다.
+    const { container } = render(
+      <ReasoningTrace entries={[entry({ text: "Read" })]} streaming />);
+    expect(container.querySelector("details")).toHaveAttribute("open");
+  });
+
+  it("끝난 턴은 접혀 있다", () => {
+    const { container } = render(
+      <ReasoningTrace entries={[entry({ text: "Read" })]} />);
+    expect(container.querySelector("details")).not.toHaveAttribute("open");
+  });
 });

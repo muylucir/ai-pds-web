@@ -63,11 +63,13 @@ export function AiMessage({ item }: { item: AiItem }) {
             {item.error && <p className="mt-2 text-rose-600">{item.error}</p>}
           </div>
         )}
-        {item.streaming && <ActivityIndicator tool={lastStatus?.text} />}
+        {item.streaming && (
+          <ActivityIndicator tool={lastStatus?.text} thinking={item.thinking} />
+        )}
         {item.interrupted && (
           <p className="mt-1.5 text-xs text-slate-400">{t("canvas.interrupted")}</p>
         )}
-        <ReasoningTrace entries={item.trace} />
+        <ReasoningTrace entries={item.trace} streaming={item.streaming} />
       </div>
     </div>
   );

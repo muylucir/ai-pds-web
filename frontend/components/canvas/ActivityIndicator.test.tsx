@@ -72,3 +72,18 @@ describe("ActivityIndicator — 살아있음의 증거", () => {
     expect(screen.getByText("0초")).toHaveAttribute("aria-hidden", "true");
   });
 });
+
+describe("ActivityIndicator — 사고 구간", () => {
+  it("사고 중이면 도구 라벨보다 사고를 먼저 말한다", () => {
+    // 앞선 도구의 status는 트레이스에 남아 있으므로, 모델이 다시 생각하기
+    // 시작해도 lastStatus는 그 도구를 가리킨다. 사고 신호가 그것을 이긴다 —
+    // 그러지 않으면 "파일을 읽고 있어요"라고 말하면서 실제로는 생각만 한다.
+    render(<ActivityIndicator tool="Read" thinking />);
+    expect(screen.getByText("생각하고 있어요")).toBeInTheDocument();
+  });
+
+  it("사고 중이 아니면 종전대로 도구 라벨을 보여준다", () => {
+    render(<ActivityIndicator tool="Read" />);
+    expect(screen.getByText("자료를 확인하고 있어요")).toBeInTheDocument();
+  });
+});
