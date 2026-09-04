@@ -5,7 +5,7 @@ import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
 // 라벨을 딕셔너리 키로 둔다 — 모듈 상수는 훅을 부를 수 없으므로 렌더에서
-// t(labelKey)로 푼다(ActivityIndicator의 LABEL_KEYS와 같은 규약).
+// t(labelKey)로 푼다(LiveActivityBar의 LABEL_KEYS와 같은 규약).
 const TABS: { key: "document" | "preview"; labelKey: keyof Dict }[] = [
   { key: "document", labelKey: "canvas.tabDocument" },
   { key: "preview", labelKey: "canvas.tabPreview" },

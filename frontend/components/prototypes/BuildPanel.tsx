@@ -7,11 +7,13 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
 import { ChatInput } from "@/components/canvas/ChatInput";
+import { LiveActivityBar } from "@/components/canvas/LiveActivityBar";
 import { QuestionForm } from "@/components/questions/QuestionForm";
 import { Markdown } from "@/components/Markdown";
 import { closeSession, startHost } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import { usePrototypeStream } from "@/lib/usePrototypeStream";
+import { liveActivity } from "@/lib/liveActivity";
 import { useT } from "@/lib/i18n/provider";
 
 export function BuildPanel({
@@ -41,6 +43,7 @@ export function BuildPanel({
   const [restarting, setRestarting] = useState(false);
   const completeCardRef = useRef<HTMLDivElement | null>(null);
   const completed = buildComplete !== null;
+  const live = liveActivity(items);
 
   useEffect(() => {
     if (autoStart) startBuild();
@@ -172,6 +175,10 @@ export function BuildPanel({
                 {t("proto.sessionClosedNotice")}
               </p>
             )}
+            {/* 진행 상황은 대화 흐름이 아니라 화면의 것이다 — 워크스페이스와 같은
+                컴포넌트를 같은 자리(입력창 바로 위)에 놓는다. 빌드 턴은 도구
+                활동이 특히 많이 쏟아지므로 "마지막 하나만"의 이득이 크다. */}
+            {live && <LiveActivityBar activity={live} />}
             <ChatInput
               onSend={send}
               disabled={streaming || buildComplete !== null}

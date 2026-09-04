@@ -84,6 +84,20 @@ describe("usePrototypeStream", () => {
     });
   });
 
+  it("activity는 마지막에 온 이벤트가 확정한다 — 워크스페이스 훅과 같은 규약", () => {
+    // 입력창 위 고정 줄이 읽는 값이다. 트레이스에서 마지막 도구를 뽑아 쓰면 도구가
+    // 끝나고 텍스트가 흐르는 동안에도 그 도구 이름이 남는다. 두 화면이 같은 바를
+    // 쓰므로 두 훅의 규약도 같아야 한다.
+    drive([
+      { kind: "status", text: "Write", path: null, payload: null },
+      { kind: "message", text: "만들었습니다", path: null, payload: null },
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.send("만들어줘"));
+    const ai = result.current.items.filter((i) => i.role === "ai").at(-1);
+    expect(ai).toMatchObject({ activity: { kind: "writing" } });
+  });
+
   it("file_changed accumulates unique paths into changedPaths", () => {
     drive([
       { kind: "file_changed", text: null, path: "prototype/a.tsx", payload: null },

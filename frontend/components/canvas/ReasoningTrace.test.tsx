@@ -57,16 +57,7 @@ describe("ReasoningTrace", () => {
     expect(screen.getByText("🧠 생각")).toBeInTheDocument();
   });
 
-  it("턴이 도는 동안에는 펼쳐져 있다", () => {
-    // 접혀 있으면 실시간으로 쌓이는 줄을 아무도 보지 못한다 — "아무 일도
-    // 일어나지 않는다"는 인상의 절반이 여기서 나온다. 끝난 턴은 다시 접어
-    // 타임라인을 조용하게 둔다.
-    const { container } = render(
-      <ReasoningTrace entries={[entry({ text: "Read" })]} streaming />);
-    expect(container.querySelector("details")).toHaveAttribute("open");
-  });
-
-  it("끝난 턴은 접혀 있다", () => {
+  it("항상 접힌 채로 시작한다 — 도는 동안에는 AiMessage가 아예 렌더하지 않는다", () => {
     const { container } = render(
       <ReasoningTrace entries={[entry({ text: "Read" })]} />);
     expect(container.querySelector("details")).not.toHaveAttribute("open");
