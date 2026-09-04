@@ -381,3 +381,30 @@ describe("프로토타입 인수인계 카드", () => {
     expect(screen.queryByRole("link", { name: /Prototypes/i })).toBeNull();
   });
 });
+
+describe("Workspace page — 입력창 위 고정 진행 줄", () => {
+  // 진행 상황은 대화 흐름 밖에 있어야 한다. 말풍선 옆에서 함께 갱신되던 종전
+  // 방식은 토큰 스트리밍과 겹쳐 산만했고("정신이 없다"), 그것이 이 줄이 생긴
+  // 이유다. 목록이 아니라 **마지막 하나만** 보여준다.
+  const liveItems = [{
+    id: "a1", role: "ai" as const, text: "정리 중", trace: [], streaming: true,
+    error: null, activity: { kind: "tool" as const, tool: "Read",
+                             detail: "aiplc-docs/x.md" },
+  }];
+
+  it("턴이 도는 동안 마지막 활동을 한 줄로 보여준다", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ streaming: true, items: liveItems });
+    await act(async () => { render(<WorkspacePage params={params} />); });
+    const bar = screen.getByTestId("live-what");
+    expect(bar).toHaveTextContent("자료를 확인하고 있어요");
+    expect(bar).toHaveTextContent("aiplc-docs/x.md");
+  });
+
+  it("도는 턴이 없으면 그리지 않는다 — 입력창 위가 상시 점유되면 안 된다", async () => {
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ streaming: false, items: [] });
+    await act(async () => { render(<WorkspacePage params={params} />); });
+    expect(screen.queryByTestId("live-what")).not.toBeInTheDocument();
+  });
+});

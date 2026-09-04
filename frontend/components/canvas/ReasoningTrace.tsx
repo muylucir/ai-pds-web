@@ -31,21 +31,15 @@ function traceLine(e: TraceEntry, fileChangedLabel: string,
   return e.detail ? `${head} · ${e.detail}` : head;
 }
 
-export function ReasoningTrace(
-  { entries, streaming }: { entries: TraceEntry[]; streaming?: boolean },
-) {
+export function ReasoningTrace({ entries }: { entries: TraceEntry[] }) {
   const t = useT();
   if (entries.length === 0) return null;
   return (
-    // **턴이 도는 동안에는 펼친다.** 접혀 있으면 실시간으로 쌓이는 줄을 아무도
-    // 보지 못하고, 그것이 "아무 일도 일어나지 않는다"는 인상의 절반이었다 —
-    // 사용자가 펼쳐야 비로소 무슨 일이 있었는지 보였다. 끝난 턴은 다시 접어
-    // 대화 기록을 조용하게 둔다(`open`은 초기 상태일 뿐이므로 사용자가 직접
-    // 접거나 펼친 것을 뒤집지 않는다).
-    <details
-      open={streaming}
-      className="mt-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px]"
-    >
+    // 항상 접힌 채로 시작한다. **도는 동안에는 이 컴포넌트가 아예 렌더되지 않는다**
+    // (AiMessage가 `!item.streaming`으로 막는다) — 진행 상황은 입력창 위 고정 줄이
+    // 맡고, 여기는 끝난 턴의 기록이다. 펼침 상태를 자동으로 만들면 옮긴 이유가
+    // 없어진다.
+    <details className="mt-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px]">
       <summary className="cursor-pointer text-slate-500 font-medium">{t("canvas.reasoningTrace")}</summary>
       <ul className="mt-1.5 space-y-1 text-slate-500">
         {entries.map((e, i) => (

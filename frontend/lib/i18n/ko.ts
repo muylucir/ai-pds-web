@@ -23,7 +23,7 @@ export const ko = {
   "stream.tooLong": "입력이 너무 깁니다. 내용을 나눠서 보내 주세요.",
   "stream.disconnected": "연결이 끊어졌습니다. 다시 시도해 주세요.",
   "stream.answersFailed": "답변을 제출하지 못했습니다. 다시 시도해 주세요.",
-  // 진행 표시(ActivityIndicator). 도구명 → 활동 문구.
+  // 진행 표시(LiveActivityBar). 도구명 → 활동 문구.
   "activity.thinking": "생각하고 있어요",
   "activity.questions": "질문을 준비하고 있어요",
   "activity.writing": "문서를 작성하고 있어요",

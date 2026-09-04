@@ -383,3 +383,27 @@ describe("BuildPanel", () => {
     });
   });
 });
+
+describe("BuildPanel — 입력창 위 고정 진행 줄", () => {
+  // 워크스페이스와 **같은 컴포넌트를 같은 자리**에 놓는다. 빌드 턴은 도구 활동이
+  // 특히 많이 쏟아지므로 "마지막 하나만"의 이득이 크고, 두 화면이 갈리면 같은
+  // 바가 화면에 따라 다르게 동작한다.
+  it("빌드가 도는 동안 마지막 활동을 한 줄로 보여준다", () => {
+    mockStream({
+      streaming: true,
+      items: [{
+        id: "a1", role: "ai", text: "만들고 있습니다", trace: [],
+        streaming: true, error: null,
+        activity: { kind: "tool", tool: "Write", detail: null },
+      }],
+    });
+    render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+    expect(screen.getByTestId("live-what")).toHaveTextContent("문서를 작성하고 있어요");
+  });
+
+  it("도는 턴이 없으면 그리지 않는다", () => {
+    mockStream({ streaming: false, items: [] });
+    render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+    expect(screen.queryByTestId("live-what")).not.toBeInTheDocument();
+  });
+});
