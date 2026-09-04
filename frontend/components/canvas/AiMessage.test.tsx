@@ -65,7 +65,7 @@ describe("AiMessage", () => {
   });
 });
 
-describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문제)", () => {
+describe("AiMessage — 진행 상황은 여기가 아니다", () => {
   it("스트리밍 중 빈 텍스트면 타이핑 애니메이션 인디케이터를 렌더한다", () => {
     render(<AiMessage item={{ ...base, streaming: true }} />);
     const indicator = screen.getByLabelText("AI가 작성 중");
@@ -74,8 +74,10 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
     expect(indicator.querySelectorAll(".animate-bounce")).toHaveLength(3);
   });
 
-  it("스트리밍 중 status trace가 있으면 마지막 도구 활동을 한글 라벨로 상시 표시한다", () => {
-    render(
+  it("스트리밍 중에는 진행 표시도 진행 기록도 그리지 않는다", () => {
+    // 진행 상황은 입력창 위 고정 줄(LiveActivityBar)로 옮겼다. 말풍선 옆에서
+    // 함께 갱신되던 것이 텍스트 스트리밍과 겹쳐 산만했던 것이 이유다.
+    const { container } = render(
       <AiMessage
         item={{
           ...base,
@@ -88,26 +90,29 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
         }}
       />,
     );
-    expect(screen.getByText("질문을 준비하고 있어요")).toBeInTheDocument();
-    // 마지막 status만 — 이전 활동(file_read)은 라이브 라인에 없음
-    expect(screen.queryByText("자료를 확인하고 있어요")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("질문을 준비하고 있어요")).not.toBeInTheDocument();
+    expect(container.querySelector("details")).toBeNull();
   });
 
-  it("file_changed는 활동 라인 대상이 아니다 — 마지막 status가 유지된다", () => {
-    render(
+  it("턴이 끝나면 같은 기록이 접힌 채로 붙는다", () => {
+    const { container } = render(
       <AiMessage
         item={{
           ...base,
-          streaming: true,
-          text: "작성 중",
+          streaming: false,
+          text: "정리했습니다.",
           trace: [
-            { kind: "status", text: "file_write", path: null },
-            { kind: "file_changed", text: null, path: "aiplc-docs/x.md" },
+            { kind: "thinking", text: null, path: null },
+            { kind: "status", text: "Read", path: null },
           ],
         }}
       />,
     );
-    expect(screen.getByText("문서를 작성하고 있어요")).toBeInTheDocument();
+    const acc = container.querySelector("details");
+    expect(acc).not.toBeNull();
+    expect(acc).not.toHaveAttribute("open");
+    expect(screen.getByText("진행 기록")).toBeInTheDocument();
   });
 
   it("복원된 턴에 텍스트가 없으면 빈 말풍선을 그리지 않는다", () => {
@@ -135,7 +140,7 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
     expect(screen.getByTestId("ai-bubble")).toBeInTheDocument();
   });
 
-  it("스트리밍이 끝나면 활동 라인이 사라진다", () => {
+  it("끝난 턴에는 활동 문구가 남지 않는다 — 진행 표시는 화면의 고정 줄이 갖는다", () => {
     render(
       <AiMessage
         item={{
@@ -147,79 +152,5 @@ describe("AiMessage — 활동 인디케이터 (멈춘 것처럼 보이는 문�
       />,
     );
     expect(screen.queryByText("질문을 준비하고 있어요")).not.toBeInTheDocument();
-  });
-
-  it("도구가 아직 하나도 안 돌았어도 진행 표시가 뜬다 — 그 구간이 가장 불안하다", () => {
-    // 종전에는 status trace가 있어야만 활동 라인이 나왔다. 턴 시작 직후
-    // 모델이 생각만 하는 구간(가장 길다)에 아무 표시도 없던 것이 "멈춘 것
-    // 같다"의 주된 원인이었다.
-    render(<AiMessage item={{ ...base, streaming: true, text: "분석을 시작합니다." }} />);
-    expect(screen.getByRole("status")).toHaveTextContent("생각하고 있어요");
-  });
-
-  it("경과 시간을 함께 보여준다 — 3초짜리와 40초짜리를 구분할 근거", () => {
-    render(<AiMessage item={{ ...base, streaming: true, text: "작업 중" }} />);
-    expect(screen.getByRole("status")).toHaveTextContent("0초");
-  });
-
-  it("알 수 없는 도구명은 폴백 문구로 표시한다", () => {
-    render(
-      <AiMessage
-        item={{
-          ...base,
-          streaming: true,
-          text: "…",
-          trace: [{ kind: "status", text: "custom_tool", path: null }],
-        }}
-      />,
-    );
-    expect(screen.getByText("custom_tool 실행 중")).toBeInTheDocument();
-  });
-});
-
-describe("Claude Agent SDK 도구명 라벨 (regression)", () => {
-  // 드라이버가 바뀌면 status 이벤트의 도구 이름이 SDK 내장 이름으로 온다.
-  // 매핑에 없으면 폴백이 발동해 사용자에게 "Write 실행 중…" 같은 영어 도구명이
-  // 노출된다 — 크래시는 아니지만 UX가 조용히 나빠진다.
-  const CASES: Array<[string, RegExp]> = [
-    ["AskUserQuestion", /질문을 준비하고 있어요/],
-    ["Write", /문서를 작성하고 있어요/],
-    ["Edit", /문서를 작성하고 있어요/],
-    ["MultiEdit", /문서를 작성하고 있어요/],
-    ["Read", /자료를 확인하고 있어요/],
-    ["Glob", /자료를 찾고 있어요/],
-    // CLI 기본 도구 (tools=None이므로 사용 가능; envision.md의 URL 분석 모드 B/C와 workspace 탐색 필요)
-    ["Grep", /자료를 찾고 있어요/],
-    ["WebFetch", /정보를 수집하고 있어요/],
-    ["Bash", /작업을 진행하고 있어요/],
-  ];
-
-  for (const [tool, label] of CASES) {
-    it(`maps ${tool} to a Korean activity label`, () => {
-      render(
-        <AiMessage
-          item={{
-            id: "a1", role: "ai", text: "", streaming: true, error: null,
-            trace: [{ kind: "status", text: tool, path: null }],
-          }}
-        />,
-      );
-      expect(screen.getByText(label)).toBeInTheDocument();
-      // 영어 도구명이 그대로 보이면 안 된다.
-      expect(screen.queryByText(new RegExp(`${tool} 실행 중`))).toBeNull();
-    });
-  }
-
-  it("keeps the Strands tool names working during the env-toggle period", () => {
-    // 두 드라이버가 공존하는 기간에는 양쪽 다 올바른 라벨이 나와야 한다.
-    render(
-      <AiMessage
-        item={{
-          id: "a1", role: "ai", text: "", streaming: true, error: null,
-          trace: [{ kind: "status", text: "file_write", path: null }],
-        }}
-      />,
-    );
-    expect(screen.getByText(/문서를 작성하고 있어요/)).toBeInTheDocument();
   });
 });

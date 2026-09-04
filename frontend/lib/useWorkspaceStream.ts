@@ -8,7 +8,7 @@ import { answerSummary } from "@/lib/answerSummary";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import type { AgentEvent, HistoryItem, QuestionFile, QuestionsPayload, StagePayload, DocumentPayload,
   PrototypeReadyPayload } from "@/lib/api/types";
-import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
+import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/useTurnStream";
 
 // This is a NEW hook cloned+extended from useTurnStream for the Task 11
 // three-pane workspace screen. useTurnStream itself is left untouched — the
@@ -215,7 +215,15 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         return;
       }
       patchAi(aiId, (it) => {
-        if (ev.kind === "message") return { ...it, text: it.text + (ev.text ?? "") };
+        // **`activity`는 마지막에 온 이벤트가 덮는다.** 텍스트가 흐르기 시작하면
+        // 앞선 도구는 더 이상 "지금 하는 일"이 아니다 — 트레이스에서 마지막 도구를
+        // 뽑아 쓰던 방식이 그 어긋남을 만들었다(도구가 끝나고 답변을 쓰는 동안에도
+        // "자료를 확인하고 있어요"가 남았다). 여기가 이벤트를 순서대로 보는 유일한
+        // 지점이므로, 순서를 그대로 상태에 옮기면 어긋날 수 없다.
+        if (ev.kind === "message") {
+          return { ...it, text: it.text + (ev.text ?? ""),
+                   activity: { kind: "writing" } };
+        }
         // 중단은 turn의 종결 사유라 trace가 아니라 전용 필드로 간다.
         // 드라이버가 새 kind 대신 status로 흘리는 이유는 이미 다루는 이벤트
         // 모양을 재사용하기 위해서다(claude_driver.interrupt). 이 마커는
@@ -224,29 +232,32 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         if (ev.kind === "status" && ev.text === INTERRUPTED_MARKER) {
           return { ...it, interrupted: true };
         }
-        // 사고 구간. 상태(`thinking`)와 기록(trace의 항목)을 함께 세운다 —
-        // 진행 표시는 상태를 읽고, 타임라인은 기록을 읽는다. 시작에서 줄을
-        // 남기는 이유는 순서다: 뒤따르는 도구보다 앞에 있어야 하고, 턴이 사고
+        // 사고 구간. 고정 줄이 읽는 `activity`와 타임라인이 읽는 trace 줄을 함께
+        // 세운다 — 앞의 것은 "지금" 하나, 뒤의 것은 "지금까지"의 목록이다. 시작에서
+        // 줄을 남기는 이유는 순서다: 뒤따르는 도구보다 앞에 있어야 하고, 턴이 사고
         // 중에 끊겨도 "여기까지 갔다"가 남는다.
         if (ev.kind === "status" && ev.text === THINKING_MARKER) {
           return {
-            ...it, thinking: true,
+            ...it, activity: { kind: "thinking" },
             trace: [...it.trace,
                     { kind: "thinking", text: null, path: null, detail: null }],
           };
         }
-        if (ev.kind === "status" && ev.text === THINKING_DONE_MARKER) {
-          return { ...it, thinking: false };
-        }
+        // 종료 마커는 `activity`를 건드리지 않는다. 다음 이벤트(거의 항상 텍스트
+        // 델타)가 곧 덮으므로, 여기서 비우면 그 사이에 빈 줄이 한 번 깜빡인다.
+        if (ev.kind === "status" && ev.text === THINKING_DONE_MARKER) return it;
         if (ev.kind === "status" || ev.kind === "file_changed") {
           // status의 detail은 payload에 실려 온다(리댁션을 지나는 필드여야 하고,
           // path는 구조적 필드로 취급되어 리댁션을 지나지 않는다 —
           // backend/aipds/tool_trace.py의 근거).
+          const detail = safeParse<{ detail?: string }>(ev.payload)?.detail ?? null;
           const trace: TraceEntry = {
-            kind: ev.kind, text: ev.text, path: ev.path,
-            detail: safeParse<{ detail?: string }>(ev.payload)?.detail ?? null,
+            kind: ev.kind, text: ev.text, path: ev.path, detail,
           };
-          return { ...it, trace: [...it.trace, trace] };
+          const activity: LiveActivity = ev.kind === "file_changed"
+            ? { kind: "file", path: ev.path }
+            : { kind: "tool", tool: ev.text, detail };
+          return { ...it, trace: [...it.trace, trace], activity };
         }
         if (ev.kind === "error") return { ...it, error: ev.text ?? t("stream.turnError") };
         return it; // "done" is handled by onDone

@@ -13,7 +13,7 @@ import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
 import type { AgentEvent } from "@/lib/api/types";
 import type { QuestionsPayload, BuildCompletePayload } from "@/lib/api/types";
-import type { UserItem, AiItem, TraceEntry } from "@/lib/useTurnStream";
+import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/useTurnStream";
 
 // A NEW hook modeled on useWorkspaceStream (the workspace's CURRENT stream
 // pattern — useTurnStream itself is retired-canvas-only) for the prototype
@@ -104,8 +104,10 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     splitArmedRef.current = false;
     hasTextRef.current = false;
     setItems((prev) => [
-      // The sealed bubble stops streaming, which moves the typing dots and the
-      // live activity line (AiMessage.tsx) onto the new one.
+      // The sealed bubble stops streaming, which moves the typing dots onto the
+      // new one (and reveals the sealed bubble's collapsed 진행 기록). The live
+      // activity line is no longer per-bubble — it is the screen's pinned bar
+      // (LiveActivityBar), fed by `activity` on whichever bubble is streaming.
       ...prev.map((it) => (it.id === prevId && it.role === "ai" ? { ...it, streaming: false } : it)),
       ...between,
       { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
@@ -162,10 +164,20 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         if (hasTextRef.current) splitArmedRef.current = true;
       }
       patchAi(target, (it) => {
-        if (ev.kind === "message") return { ...it, text: it.text + (ev.text ?? "") };
+        // `activity`는 입력창 위 고정 줄이 읽는 "지금 하는 일" 하나다. 마지막에 온
+        // 이벤트가 덮으므로 도구가 끝나고 텍스트가 흐르면 자동으로 작성으로 넘어간다 —
+        // 워크스페이스 훅과 같은 규약이고(useWorkspaceStream), 어긋나면 두 화면의
+        // 같은 바가 다르게 동작한다.
+        if (ev.kind === "message") {
+          return { ...it, text: it.text + (ev.text ?? ""),
+                   activity: { kind: "writing" } };
+        }
         if (ev.kind === "status" || ev.kind === "file_changed") {
           const trace: TraceEntry = { kind: ev.kind, text: ev.text, path: ev.path };
-          return { ...it, trace: [...it.trace, trace] };
+          const activity: LiveActivity = ev.kind === "file_changed"
+            ? { kind: "file", path: ev.path }
+            : { kind: "tool", tool: ev.text, detail: null };
+          return { ...it, trace: [...it.trace, trace], activity };
         }
         if (ev.kind === "error") return { ...it, error: ev.text ?? t("stream.buildError") };
         return it; // "done" is handled by onDone

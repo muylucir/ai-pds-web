@@ -45,13 +45,15 @@ from this" — the AI works out which path that is.`,
 | Skip | "Let's skip this stage" |
 | Check the reasoning | "Tell me where this conclusion came from" |
 
-While the AI works, a single line tells you what it is doing — *Thinking*,
-*Writing the document*, *Preparing questions*, and so on.
+While the AI works, a single line **just above the message box** tells you what it is doing right
+now — *Thinking*, *Reading the material · file name*, *Writing the document* — along with the
+elapsed time. That line always shows only the **most recent** thing and never pushes the
+conversation around. While the number keeps climbing, nothing is stuck.
 
-Below it, the **activity log** accumulates the order the turn went through — where the model
-thought, which tools ran and on what (the file name when it read a file, the command when it ran
-one), and which files changed. It stays expanded while the AI works and collapses when the turn
-ends. It is where you can retrace "why did this conclusion appear" without asking in chat.`,
+When the turn ends, the order it went through is collected into an **activity log** that attaches
+below the answer, collapsed. Expand it to see where the model thought, which tools ran and on what
+(the file name when it read a file, the command when it ran one), and which files changed. It is
+where you can retrace "why did this conclusion appear" without asking in chat.`,
     },
     { kind: "heading", id: "answer-panel", text: "The question panel (third column)" },
     {

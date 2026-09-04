@@ -689,7 +689,7 @@ describe("useWorkspaceStream — 사고 구간 신호", () => {
   // 백엔드가 사고 블록의 시작·끝을 status 마커로 보낸다(claude_driver의
   // THINKING_MARKER / THINKING_DONE_MARKER). 사고 **텍스트**는 이 경로에
   // 존재하지 않으므로(Bedrock 실측 0자) 우리가 표시하는 것은 구간이다.
-  it("status:thinking은 thinking 플래그를 세우고 트레이스에 사고 줄을 남긴다", async () => {
+  it("status:thinking은 activity를 사고로 두고 트레이스에 사고 줄을 남긴다", async () => {
     vi.mocked(client.getHistory).mockResolvedValue([]);
     drive(
       [{ kind: "status", text: "thinking", path: null, payload: null }],
@@ -701,7 +701,7 @@ describe("useWorkspaceStream — 사고 구간 신호", () => {
     const ai = result.current.items.find((i) => i.role === "ai");
     expect(ai).toBeDefined();
     if (ai && ai.role === "ai") {
-      expect(ai.thinking).toBe(true);
+      expect(ai.activity).toEqual({ kind: "thinking" });
       // 마커 문자열이 평범한 status 줄로 새면 접힌 트레이스에 "thinking"이
       // 그대로 노출된다 — interrupted 마커와 같은 종류의 회귀다.
       expect(ai.trace).toEqual([
@@ -709,7 +709,7 @@ describe("useWorkspaceStream — 사고 구간 신호", () => {
     }
   });
 
-  it("status:thinking-done은 플래그를 내리고 줄을 더 만들지 않는다", async () => {
+  it("status:thinking-done은 줄을 더 만들지 않는다", async () => {
     vi.mocked(client.getHistory).mockResolvedValue([]);
     drive(
       [
@@ -724,9 +724,65 @@ describe("useWorkspaceStream — 사고 구간 신호", () => {
     act(() => result.current.send("진행 중"));
     const ai = result.current.items.find((i) => i.role === "ai");
     if (ai && ai.role === "ai") {
-      expect(ai.thinking).toBe(false);
       expect(ai.trace).toEqual([
         { kind: "thinking", text: null, path: null, detail: null }]);
     }
+  });
+});
+
+describe("useWorkspaceStream — activity는 마지막에 온 이벤트가 확정한다", () => {
+  beforeEach(() => { vi.clearAllMocks(); noLiveTurn(); });
+
+  // 고정 줄은 "가장 마지막에 일어난 일" 하나를 보여준다. 트레이스에서 마지막
+  // 도구를 뽑아 쓰면 도구가 끝나고 답변이 흐르는 동안에도 그 도구 이름이 남아
+  // "자료를 확인하고 있어요"라고 거짓말한다 — 이벤트 순서로 덮어써야 그 어긋남이
+  // 생기지 않는다. 이 테스트가 고정하는 것이 그 순서다.
+  const liveAi = (result: { current: { items: unknown[] } }) =>
+    (result.current.items as { role: string }[]).find((i) => i.role === "ai") as
+      { role: "ai"; activity?: unknown } | undefined;
+
+  it("도구 status 뒤에 message가 오면 activity는 작성으로 넘어간다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    drive(
+      [
+        { kind: "status", text: "Read", path: null, payload: null },
+        { kind: "message", text: "정리했습니다", path: null, payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행 중"));
+    expect(liveAi(result)?.activity).toEqual({ kind: "writing" });
+  });
+
+  it("도구 status는 이름과 대상을 함께 싣는다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    drive(
+      [{ kind: "status", text: "Read", path: null,
+         payload: JSON.stringify({ detail: "aiplc-docs/x.md" }) }],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행 중"));
+    expect(liveAi(result)?.activity).toEqual(
+      { kind: "tool", tool: "Read", detail: "aiplc-docs/x.md" });
+  });
+
+  it("file_changed도 activity를 덮는다 — 마지막 일이 그것이면 그것을 보여준다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    drive(
+      [
+        { kind: "status", text: "Write", path: null, payload: null },
+        { kind: "file_changed", text: null, path: "aiplc-docs/audit.md", payload: null },
+      ],
+      "streamEvents",
+    );
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행 중"));
+    expect(liveAi(result)?.activity).toEqual(
+      { kind: "file", path: "aiplc-docs/audit.md" });
   });
 });
