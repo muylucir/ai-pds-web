@@ -26,6 +26,21 @@ export interface TraceEntry {
   // 화면이 달라진다. 아이콘과 구분자만 여기서 붙인다.
   detail?: string | null;
 }
+/** 입력창 위 고정 줄이 보여주는 **가장 마지막에 일어난 일** 하나.
+ *
+ *  **왜 이벤트 순서로 확정하는가.** 트레이스에서 "마지막 도구"를 뽑아 쓰면 도구가
+ *  끝나고 답변 텍스트가 흐르는 동안에도 그 도구 이름이 남는다 — 실제로는 쓰고
+ *  있는데 "자료를 확인하고 있어요"라고 말한다. 스트림 훅은 이벤트를 순서대로
+ *  보므로, 마지막에 온 이벤트가 이 값을 덮어쓰게 하면 그 어긋남이 구조적으로
+ *  생기지 않는다.
+ *
+ *  라이브 전용이다 — 복원된 턴에는 없다(고정 줄은 도는 턴에만 뜬다). */
+export type LiveActivity =
+  | { kind: "thinking" }
+  | { kind: "writing" }
+  | { kind: "tool"; tool: string | null; detail: string | null }
+  | { kind: "file"; path: string | null };
+
 export interface UserItem {
   id: string;
   role: "user";
@@ -50,11 +65,10 @@ export interface AiItem {
   // 사용자가 이 턴을 끊었다. trace가 아닌 별도 필드인 이유는 성격이 다르기
   // 때문 — trace는 도구 실행 기록, 이것은 턴의 종결 사유다.
   interrupted?: boolean;
-  // 모델이 지금 사고 블록 안에 있다. trace의 "thinking" 항목과 짝이지만 성격이
-  // 다르다 — trace는 "생각했다"는 기록이고 이것은 "지금 생각 중"이라는 상태다.
-  // 진행 표시가 앞선 도구 이름을 계속 말하지 않게 하는 것이 이 필드의 일이다.
-  // 라이브 스트림에만 있다(복원된 턴에는 없다).
-  thinking?: boolean;
+  // 지금 무슨 일이 일어나고 있는가 — 입력창 위 고정 줄이 읽는 값이다.
+  // trace와 짝이지만 성격이 다르다: trace는 "지금까지"의 목록이고 이것은
+  // "지금" 하나다. 라이브 스트림에만 있다(복원된 턴에는 없다).
+  activity?: LiveActivity;
 }
 // C2: structured timeline cards, materialized from file_changed paths seen
 // during a completed turn. Pure filename-suffix mapping (see

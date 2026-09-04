@@ -1,5 +1,16 @@
-// frontend/components/canvas/ActivityIndicator.tsx — 턴이 도는 동안 "지금
-// 살아있다"를 보여주는 진행 표시.
+// frontend/components/canvas/LiveActivityBar.tsx — 입력창 바로 위에 고정되는
+// 진행 줄. 턴이 도는 동안 "지금 무엇을 하고 있고 얼마나 됐는지"를 **한 줄로만**
+// 보여준다.
+//
+// **왜 대화 흐름 밖인가(2026-09-04 사용자 피드백).** 종전에는 이 표시가 AI 말풍선
+// 아래에 붙어 있었고 그 옆에서 진행 기록 아코디언이 펼쳐진 채로 계속 자랐다. 토큰
+// 스트리밍이 들어오면서 말풍선의 텍스트까지 동시에 흐르자 화면에서 움직이는 것이
+// 세 개가 되어 산만해졌다("정신이 없다"). 그래서 진행 상황은 대화 흐름에서 빼고
+// 입력창 위 고정 줄로 옮겼다 — 목록은 턴이 끝난 뒤 접힌 진행 기록이 갖는다.
+//
+// 그 결과 이 컴포넌트는 **메시지의 것이 아니라 화면의 것**이다. 워크스페이스와
+// 프로토타입 빌드 패널이 각자 자기 입력창 위에 놓는다(AiMessage는 더 이상 이것을
+// 모른다). 그것이 모드 플래그를 `ChatTimeline`을 통해 내리지 않아도 되는 이유다.
 //
 // 종전에는 AiMessage 안에 12px 텍스트 한 줄 + 맥동하는 점 하나였다. 그것이
 // 답답했던 이유는 정보량이 아니라 **살아있음의 증거가 없다**는 것이다:
@@ -17,6 +28,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { Dict } from "@/lib/i18n";
+import type { LiveActivity } from "@/lib/useTurnStream";
 import { useT } from "@/lib/i18n/provider";
 
 type T = (key: keyof Dict) => string;
@@ -133,31 +145,54 @@ function Spinner() {
   );
 }
 
-export function ActivityIndicator(
-  { tool, thinking }: { tool: string | null | undefined; thinking?: boolean },
-) {
+/** 활동 종류 → 사람이 읽는 라벨과, 그 활동의 **대상**(파일·명령). 순수 함수다.
+ *
+ *  대상을 라벨과 나눠 돌려주는 이유: 한 줄 안에서 넘칠 수 있는 것은 대상뿐이므로
+ *  잘림(truncate)이 거기만 걸려야 한다. 라벨까지 함께 잘리면 무슨 일을 하는지가
+ *  먼저 사라진다. */
+export function activityText(
+  activity: LiveActivity, t: T,
+): { label: string; target: string | null } {
+  switch (activity.kind) {
+    case "thinking":
+      return { label: t("activity.thinking"), target: null };
+    case "writing":
+      return { label: t("activity.writing"), target: null };
+    case "file":
+      return { label: t("canvas.fileChanged"), target: activity.path };
+    case "tool":
+      return { label: activityLabel(activity.tool, t), target: activity.detail };
+  }
+}
+
+export function LiveActivityBar({ activity }: { activity: LiveActivity }) {
   const t = useT();
-  // 마운트되어 있는 동안이 곧 진행 중인 동안이다 — 호출자(AiMessage)가
-  // item.streaming으로 마운트를 제어하므로, 여기서 다시 판단하지 않는다.
+  // 마운트되어 있는 동안이 곧 진행 중인 동안이다 — 호출자(화면)가 streaming으로
+  // 마운트를 제어하므로, 여기서 다시 판단하지 않는다.
   const elapsed = useElapsedSeconds(true);
+  const { label, target } = activityText(activity, t);
 
   return (
     // role="status"로 스크린리더에 활동 변화를 알린다. 경과 시간은
     // aria-hidden으로 제외한다 — 1초마다 읽어주면 라벨 변화를 덮어버린다.
+    //
+    // 입력창 위에 붙는 줄이므로 전폭이고 위쪽 경계선만 갖는다 — 대화 영역과
+    // 작성 영역 사이의 띠로 읽혀야 하고, 말풍선처럼 보이면 다시 대화의 일부가 된다.
     <div
       role="status"
-      className="mt-2 inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 pl-2.5 pr-3 py-1.5"
+      className="flex items-center gap-2 border-t border-violet-200 bg-violet-50 px-4 py-2"
     >
       <Spinner />
-      {/* 사고 신호가 도구 이름을 이긴다. 앞선 도구의 status는 트레이스에 남아
-          있으므로, 모델이 다시 생각하기 시작해도 lastStatus는 그 도구를 가리킨다 —
-          그대로 쓰면 실제로는 생각만 하는 동안 "자료를 확인하고 있어요"라고
-          말한다. `thinking`이 없을 때(복원된 턴, 신호가 아직 안 온 첫 순간)는
-          activityLabel의 폴백이 종전대로 사고를 추측한다. */}
-      <span className="text-xs font-medium text-violet-700">
-        {thinking ? t("activity.thinking") : activityLabel(tool, t)}
+      <span
+        data-testid="live-what"
+        className="flex-1 min-w-0 truncate text-xs font-medium text-violet-700"
+      >
+        {label}
+        {target && (
+          <span className="ml-1.5 font-normal font-mono text-violet-500">· {target}</span>
+        )}
       </span>
-      <span className="text-xs text-violet-400 tabular-nums" aria-hidden="true">
+      <span className="shrink-0 text-xs text-violet-400 tabular-nums" aria-hidden="true">
         {formatElapsed(elapsed, t)}
       </span>
     </div>

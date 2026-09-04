@@ -6,6 +6,7 @@ import { StageSidebar } from "@/components/workspace/StageSidebar";
 import { ChatTimeline } from "@/components/canvas/ChatTimeline";
 import { HistorySkeleton } from "@/components/canvas/HistorySkeleton";
 import { ChatInput } from "@/components/canvas/ChatInput";
+import { LiveActivityBar } from "@/components/canvas/LiveActivityBar";
 import { WorkspaceRightPanel } from "@/components/workspace/WorkspaceRightPanel";
 import { WorkspaceDocPanel } from "@/components/workspace/WorkspaceDocPanel";
 import { WelcomeCard } from "@/components/workspace/WelcomeCard";
@@ -15,6 +16,7 @@ import { getState, uploadFile } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
 import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
+import { liveActivity } from "@/lib/liveActivity";
 import { useT } from "@/lib/i18n/provider";
 
 // The 4-pane workspace screen — grid ratio 1:3.5:3.5:4 (좌 스테이지 : 채팅 :
@@ -39,6 +41,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // the timeline is genuinely empty — a pending interrupt or an in-flight
   // turn means the conversation has already started, so the welcome card
   // must not reappear over it.
+  const live = liveActivity(items);
   const showWelcome = !historyLoading && items.length === 0 && !pendingQuestions && !streaming;
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -230,6 +233,11 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             paths={attachments}
             onRemove={(p) => setAttachments((prev) => prev.filter((x) => x !== p))}
           />
+          {/* 진행 상황은 대화 흐름이 아니라 **화면**의 것이다 — 스크롤 밖, 입력창
+              바로 위에 마지막 활동 한 줄만. 말풍선 옆에서 함께 갱신되던 종전
+              방식은 토큰 스트리밍과 겹쳐 산만했다. 목록은 턴이 끝난 뒤 말풍선
+              아래에 접힌 진행 기록이 갖는다. */}
+          {live && <LiveActivityBar activity={live} />}
           <ChatInput
             key={draft ?? "no-draft"}
             onSend={sendWithAttachments}
