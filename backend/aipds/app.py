@@ -626,6 +626,13 @@ from aipds.routes import projects, artifacts  # noqa: E402
 app.include_router(projects.router, dependencies=_AUTH)
 app.include_router(artifacts.router, dependencies=_AUTH)
 
+# 프로젝트 이관(export/import). projects.router와 나누는 이유는 파일 크기가 아니라
+# 계약이다 — 그쪽은 프로젝트의 생명주기(생성·목록·삭제)이고 이쪽은 번들 포맷과
+# S3 스테이징이라는 다른 관심사다. 등록 순서는 무관하다: `/projects/import`는
+# `/projects/{pid}`와 메서드가 다르고(POST vs GET) 세그먼트 수도 같지 않다.
+from aipds.routes import transfer  # noqa: E402
+app.include_router(transfer.router, dependencies=_AUTH)
+
 from aipds.routes import answers  # noqa: E402
 app.include_router(answers.router, dependencies=_AUTH)
 
