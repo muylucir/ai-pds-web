@@ -15,7 +15,7 @@ import io
 import logging
 import re
 import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -30,6 +30,7 @@ from aipds.parsers.redaction import redact_credentials
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.proto.design_sync import sync_design, theme_copies
 from aipds.proto.session import has_build_output, purge_session_state
+from aipds.proto.source import source_entries
 # 토큰 게이트의 경로 조립은 그 라우트를 소유한 모듈이 한다 — 여기서 f-string으로
 # 다시 쓰면 브라우저 관점 마운트(`/api`)를 두 곳에서 관리하게 되고, 그것이 이
 # 파일에서 이미 한 번 어긋났던 종류의 버그다(아래 start_host의 public_base_path
@@ -559,15 +560,12 @@ async def reset_prototype(pid: str, slug: str):
 # `_archive_entries` walks -- so leaving it out of this set would mail the live
 # access token to everyone who clicks "download", which is precisely the
 # audience the token exists to gate.
-_ARCHIVE_EXCLUDED_DIRS = {"node_modules", ".next", ".git"}
-_ARCHIVE_EXCLUDED_FILES = {".proto-host.log", ".proto-host.pid", ".proto-token"}
-
-
-def _archive_excluded(rel: str) -> bool:
-    parts = PurePosixPath(rel).parts
-    if any(p in _ARCHIVE_EXCLUDED_DIRS for p in parts):
-        return True
-    return parts[-1] in _ARCHIVE_EXCLUDED_FILES if parts else True
+#
+# The set itself lives in project_bundle.py, and the walk that applies it lives
+# in proto/source.py, because the project bundle asks this exact question too.
+# This is the one exclusion list whose failure modes are asymmetric: forgetting a
+# build artifact makes a zip bigger, forgetting the token leaks a live
+# credential. Two copies is one chance for the copy that matters to drift.
 
 
 def _archive_filename_header(slug: str) -> str:
@@ -580,33 +578,12 @@ def _archive_filename_header(slug: str) -> str:
 
 
 async def _archive_entries(pid: str, slug: str) -> list[tuple[str, bytes]]:
-    """Prefer the local build directory -- it is the authoritative copy the
-    agent wrote and hosting serves. The S3 bundle is the fallback for a box
-    whose disk was wiped by a redeploy."""
+    """이 프로젝트/슬러그의 소스. 수집 규칙은 proto/source.py가 소유한다."""
     import aipds.app as app_module
 
-    build_dir = app_module._proto_root() / pid / slug
-    if build_dir.is_dir():
-        entries = []
-        for path in sorted(build_dir.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(build_dir).as_posix()
-            if _archive_excluded(rel):
-                continue
-            entries.append((rel, path.read_bytes()))
-        if entries:
-            return entries
-
-    s3 = app_module.s3_store_factory(pid)
-    bundle_prefix = f"prototypes/{slug}/bundle/"
-    entries = []
-    for key in await s3.list(bundle_prefix):
-        rel = key[len(bundle_prefix):]
-        if _archive_excluded(rel):
-            continue
-        entries.append((rel, await s3.get_bytes(key)))
-    return entries
+    return await source_entries(
+        build_dir=app_module._proto_root() / pid / slug,
+        s3=app_module.s3_store_factory(pid), slug=slug)
 
 
 @router.get("/projects/{pid}/prototypes/{slug}/archive")

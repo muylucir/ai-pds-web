@@ -63,6 +63,27 @@ def _session_prefix(key: dict) -> str:
     return f"{base}sub/{subpath}/" if subpath else f"{base}main/"
 
 
+def project_transcript_prefix(project_id: str) -> str:
+    """이 프로젝트의 **활성** 세션 트랜스크립트 prefix (프로젝트 상대).
+
+    `load_transcript`와 프로젝트 번들(project_bundle.py)이 같은 질문을 한다 —
+    "이 프로젝트의 대화는 어느 prefix에 있는가". 두 곳이 각자
+    `_sdk_session_id` + `_session_prefix`를 조립하면 그중 하나가 세션 세그먼트를
+    빠뜨릴 수 있고, 그 실패는 조용하다: 히스토리는 빈 목록이 되고(list_history가
+    모든 실패를 `[]`로 강등한다) 번들은 대화 없이 산출물만 담긴다. 그래서 조립을
+    이 모듈이 소유한다 — 키 레이아웃의 소유자가 여기이기 때문이다.
+
+    `session_id`가 아니라 project_id를 받는다: 미러의 쓰는 쪽은 프로젝트 id를
+    본 적이 없다(CLI가 non-UUID `--session-id`를 거부하므로 드라이버가 uuid5를
+    유도한다). 이미 UUID인 값은 그대로 통과하므로 진짜 세션 id를 건네는 호출부가
+    덮어써지지 않는다.
+    """
+    from aipds.agent.claude_driver import _sdk_session_id
+
+    resolved, _ = _sdk_session_id({"session_id": project_id})
+    return f"{transcript_prefix()}{resolved}/"
+
+
 class DiscoverySessionStore:
     """SDK SessionStore over S3, scoped to one project's session store.
 
@@ -148,10 +169,7 @@ async def load_transcript(s3: S3StoreLike, session_id: str) -> list[dict]:
     project id from the route. A value that is already a UUID passes through,
     so a caller that hands over a real session id is not overridden.
     """
-    from aipds.agent.claude_driver import _sdk_session_id
-
-    resolved, _ = _sdk_session_id({"session_id": session_id})
-    prefix = _session_prefix({"session_id": resolved})
+    prefix = f"{project_transcript_prefix(session_id)}main/"
     keys = sorted(await s3.list(prefix))
     # **병렬 GET.** 순차로 읽으면 배치 수 × S3 왕복이 그대로 화면 로딩을 막는다 —
     # 실측(2026-08-17, 배포 인스턴스): 왕복 1회 30ms, 32배치 순차 0.98초 vs 병렬
