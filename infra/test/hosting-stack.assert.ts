@@ -3,7 +3,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { AipdsDrillStack } from '../lib/aipds-drill-stack';
+import {
+  AipdsDrillStack, IMPORT_STAGING_EXPIRY_DAYS, LOCAL_UPLOAD_ORIGIN,
+} from '../lib/aipds-drill-stack';
 import { AipdsHostingStack } from '../lib/aipds-hosting-stack';
 import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import { MODEL } from '../lib/backend-permissions';
@@ -21,7 +23,10 @@ const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 // 프로젝트 프리픽스 밖에 있는 모델 카탈로그(models/catalog.json) 때문이다.
 // design/*는 관리자가 올린 브랜드 프로필(design/profile.json)이다 — models/*와
 // 같은 이유로 프로젝트 프리픽스 밖에 있다(프로젝트가 없어도 관리된다).
-const BUCKET_PREFIXES = ['projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*'];
+// imports/*는 프로젝트 가져오기의 스테이징이다. 이것이 빠지면 백엔드가 서명한
+// presigned PUT이 브라우저에서 403이 되고, 그 거절은 S3가 브라우저에게 하므로
+// 백엔드 로그에 아무 흔적이 없다 — surveys/*가 빠졌을 때보다 더 조용한 실패다.
+const BUCKET_PREFIXES = ['projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*', 'imports/*'];
 
 /** 객체 권한(Get/Put/Delete)과 목록 권한(ListBucket)이 BUCKET_PREFIXES를
  *  빠짐없이 덮는지 확인한다. 액션 존재만 보는 단정은 프리픽스 누락을 놓치고,
@@ -67,7 +72,7 @@ function testDrillUnchanged() {
       ]),
     },
   });
-  // S3 ListBucket 문 + projects/*·sessions/*·surveys/*·models/*·design/* prefix 조건 존재.
+  // S3 ListBucket 문 + BUCKET_PREFIXES prefix 조건 존재.
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
       Statement: Match.arrayWith([
@@ -76,14 +81,14 @@ function testDrillUnchanged() {
           Action: 's3:ListBucket',
           Condition: {
             StringLike: {
-              's3:prefix': Match.arrayWith(['projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*']),
+              's3:prefix': Match.arrayWith([...BUCKET_PREFIXES]),
             },
           },
         }),
       ]),
     },
   });
-  // 다섯 프리픽스가 객체 권한과 목록 권한 양쪽에 다 있어야 한다.
+  // 모든 프리픽스가 객체 권한과 목록 권한 양쪽에 다 있어야 한다.
   //
   // 위의 arrayWith 단정만으로는 부족했다 — 그건 "이 액션이 있다"만 보고
   // 리소스는 아예 보지 않아서, surveys/*가 객체 문에서 빠진 채로도 통과했다.
@@ -95,10 +100,67 @@ function testDrillUnchanged() {
   // 버킷 1개 노출.
   assert.ok(drill.artifactsBucket, 'artifactsBucket must be exposed');
   t.resourceCountIs('AWS::S3::Bucket', 1);
-  console.log('OK  drill stack: bedrock + s3 object/list on projects+sessions+surveys+models+design + bucket exposed');
+  console.log('OK  drill stack: bedrock + s3 object/list on every backend prefix + bucket exposed');
+}
+
+/** 가져오기 업로드가 브라우저에서 성립하는 조건: 버킷 CORS와 스테이징 수명.
+ *
+ *  CORS가 없으면 preflight에서 막히고, 그 실패는 브라우저 콘솔에만 보인다 —
+ *  백엔드는 서명을 발급했으므로 자기 몫을 다 했다고 믿는다. */
+function testImportUploadWiring() {
+  const app = new cdk.App();
+  const drill = new AipdsDrillStack(app, 'DrillCors', {
+    env: ENV,
+    uploadOrigins: ['https://d111111abcdef8.cloudfront.net'],
+  });
+  const t = Template.fromStack(drill);
+
+  t.hasResourceProperties('AWS::S3::Bucket', {
+    CorsConfiguration: {
+      CorsRules: [Match.objectLike({
+        AllowedMethods: ['PUT'],
+        AllowedOrigins: [LOCAL_UPLOAD_ORIGIN, 'https://d111111abcdef8.cloudfront.net'],
+        // 서명에 포함되는 헤더다 — 허용목록에 없으면 preflight가 막는다.
+        AllowedHeaders: ['content-type'],
+      })],
+    },
+  });
+
+  // 와일드카드 출처는 사고다: 다른 사이트의 스크립트가 사용자의 유효한 presigned
+  // URL을 재사용할 표면이 된다.
+  const rendered = JSON.stringify(t.findResources('AWS::S3::Bucket'));
+  assert.ok(!rendered.includes('"*"'),
+    'bucket CORS must never allow a wildcard origin');
+
+  // 방치된 스테이징이 사라진다. 없으면 프로젝트 하나 크기의 객체가 조용히 쌓인다.
+  t.hasResourceProperties('AWS::S3::Bucket', {
+    LifecycleConfiguration: {
+      Rules: Match.arrayWith([Match.objectLike({
+        Prefix: 'imports/',
+        Status: 'Enabled',
+        ExpirationInDays: IMPORT_STAGING_EXPIRY_DAYS,
+      })]),
+    },
+  });
+  console.log('OK  drill stack: bucket CORS (PUT, no wildcard) + imports/ lifecycle');
+}
+
+/** 배포 도메인을 넘기지 않아도 합성이 되고 localhost만 허용된다 — 첫 배포의 상태다. */
+function testUploadOriginsDefaultToLocalOnly() {
+  const app = new cdk.App();
+  const t = Template.fromStack(new AipdsDrillStack(app, 'DrillLocal', { env: ENV }));
+
+  t.hasResourceProperties('AWS::S3::Bucket', {
+    CorsConfiguration: {
+      CorsRules: [Match.objectLike({ AllowedOrigins: [LOCAL_UPLOAD_ORIGIN] })],
+    },
+  });
+  console.log('OK  drill stack: upload origins default to localhost only');
 }
 
 testDrillUnchanged();
+testImportUploadWiring();
+testUploadOriginsDefaultToLocalOnly();
 
 function makeHosting() {
   const app = new cdk.App();
