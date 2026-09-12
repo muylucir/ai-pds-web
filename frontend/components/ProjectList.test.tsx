@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -230,5 +230,70 @@ describe("ProjectList table + pagination", () => {
     render(<ProjectList data={{ projects: [], total: 0, page: 1, size: 10 }}
                         onDeleted={vi.fn()} onPageChange={vi.fn()} />);
     expect(screen.getByText(/아직 생성된 프로젝트가 없습니다/)).toBeInTheDocument();
+  });
+});
+
+describe("ProjectList export", () => {
+  /** jsdom은 오브젝트 URL과 앵커 클릭을 구현하지 않는다. */
+  function stubDownload() {
+    const clicked: HTMLAnchorElement[] = [];
+    (URL as unknown as { createObjectURL: unknown }).createObjectURL =
+      vi.fn(() => "blob:fake");
+    (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clicked.push(this);
+    });
+    return clicked;
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("행마다 내보내기 버튼이 있고 그 프로젝트의 번들을 받는다", async () => {
+    const clicked = stubDownload();
+    let requested = "";
+    server.use(http.get(`${API_BASE_URL}/projects/:pid/export`, ({ params }) => {
+      requested = params.pid as string;
+      return new HttpResponse(new Blob(["PK"]), {
+        headers: { "Content-Disposition": 'attachment; filename="p2.zip"' },
+      });
+    }));
+    render(<ProjectList data={PAGE} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    const buttons = screen.getAllByRole("button", { name: /프로젝트 내보내기/ });
+    expect(buttons).toHaveLength(2);
+
+    await userEvent.setup().click(buttons[1]);
+
+    await waitFor(() => expect(clicked).toHaveLength(1));
+    // 이름이 없는 행은 id로 라벨을 만든다 — 두 번째 행이 p2다.
+    expect(requested).toBe("p2");
+    expect(clicked[0].download).toBe("p2.zip");
+  });
+
+  it("빌드 세션 중이면 그 이유를 문구로 보여준다", async () => {
+    stubDownload();
+    server.use(http.get(`${API_BASE_URL}/projects/p1/export`, () =>
+      HttpResponse.json({ detail: "build_session_active" }, { status: 409 })));
+    render(<ProjectList data={PAGE} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+
+    await userEvent.setup().click(
+      screen.getAllByRole("button", { name: /프로젝트 내보내기/ })[0]);
+
+    await screen.findByText(/빌드 세션이 진행 중입니다/);
+  });
+
+  it("내보내기 버튼은 카드 링크를 타지 않는다", async () => {
+    stubDownload();
+    server.use(http.get(`${API_BASE_URL}/projects/:pid/export`, () =>
+      new HttpResponse(new Blob(["PK"]))));
+    render(<ProjectList data={PAGE} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+
+    await userEvent.setup().click(
+      screen.getAllByRole("button", { name: /프로젝트 내보내기/ })[0]);
+
+    // 스트레치드 링크가 위에 깔려 있으므로 z-10과 stopPropagation이 아니라
+    // 버튼이 실제로 눌렸는지로 확인한다 — 삭제 버튼과 같은 규율이다.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
