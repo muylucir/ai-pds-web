@@ -67,3 +67,18 @@ INIT_INCOMPLETE = "init_incomplete"
 # 공개 설문 (routes/surveys_public.py)
 SURVEY_CLOSED = "survey_closed"
 SURVEY_FULL = "survey_full"
+
+# 프로젝트 이관 (routes/transfer.py)
+#
+# EXPORT_INVALID와 UPLOAD_MISSING을 나누는 이유는 사용자가 할 일이 다르기
+# 때문이다 — 앞은 다른 파일을 고르는 것, 뒤는 업로드를 다시 하는 것이다
+# (스테이징 서명이 만료됐거나 PUT이 조용히 실패한 상태).
+EXPORT_INVALID = "export_invalid"
+EXPORT_TOO_LARGE = "export_too_large"
+UPLOAD_MISSING = "upload_missing"
+# 대상 id가 이미 있다. 화면은 이 코드를 받아 id 입력 칸을 열고 **같은 업로드로**
+# 다시 부른다 — 그래서 이 응답은 스테이징을 지우지 않는다.
+PROJECT_EXISTS = "project_exists"
+# 버킷이 설정되지 않아 스테이징이 없다(로컬 개발). 내보내기는 되고 가져오기만 막힌다.
+IMPORT_UNAVAILABLE = "import_unavailable"
+IMPORT_FAILED = "import_failed"
