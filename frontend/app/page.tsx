@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { CreateProjectForm } from "@/components/CreateProjectForm";
-import { ImportProjectForm } from "@/components/ImportProjectForm";
+import { ImportProjectButton } from "@/components/ImportProjectButton";
 import { ProjectList } from "@/components/ProjectList";
 import { listProjects } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
@@ -18,21 +18,25 @@ export default function Home() {
     <>
       <AppHeader activeTab="projects" />
       <main className="max-w-7xl mx-auto px-6 py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold">{t("list.title")}</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            {t("list.subtitle")}
-          </p>
+        {/* 제목 줄의 오른쪽이 가져오기 자리다. 생성 폼과 나란히 두면 드문
+            조작(다른 인스턴스에서 옮겨 오기)이 흔한 조작(새 프로젝트)과 같은
+            무게를 갖는다 — 그래서 버튼 하나로 접고 모달에서 처리한다. */}
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold">{t("list.title")}</h1>
+            <p className="text-sm text-slate-500 mt-1">
+              {t("list.subtitle")}
+            </p>
+          </div>
+          {/* 가져오기도 생성과 같은 흐름이다 — 되살린 프로젝트의 대시보드로
+              곧바로 간다. */}
+          <ImportProjectButton
+            onImported={(r) => router.push(`/projects/${r.project_id}/dashboard`)}
+          />
         </div>
         {/* 생성 성공 = 곧바로 그 프로젝트의 대시보드로 — 목록에 추가만 되는
             것보다 워크숍 시작 흐름이 자연스럽다. */}
         <CreateProjectForm onCreated={(p) => router.push(`/projects/${p.project_id}/dashboard`)} />
-        {/* 가져오기도 같은 흐름이다 — 되살린 프로젝트의 대시보드로 곧바로 간다.
-            생성 폼 아래에 두는 이유: 새 프로젝트를 만드는 것이 흔한 경우이고,
-            가져오기는 다른 인스턴스에서 옮겨 올 때만 쓴다. */}
-        <ImportProjectForm
-          onImported={(r) => router.push(`/projects/${r.project_id}/dashboard`)}
-        />
         {loading && <p className="text-sm text-slate-400">{t("page.loading")}</p>}
         {error && (
           <p className="text-sm text-rose-600">
