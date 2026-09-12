@@ -52,7 +52,7 @@ UX gate: **the security boundary is the backend's `require_admin` / `require_use
 
 | Screen | What it does | Access |
 |---|---|---|
-| `/` | Project list and creation. **The model and the artifact language are chosen here** | logged in |
+| `/` | Project list, creation and **transfer** (export a bundle, import it on another instance). The model and the artifact language are chosen here | logged in |
 | `/projects/{id}/workspace` | The Discovery conversation. Turns render live over SSE, with question cards, file attachments, and the document panel on one screen | logged in |
 | `/projects/{id}/dashboard` | Stage progress, artifact list, activity feed | logged in |
 | `/projects/{id}/review` | Document review and the **approval gate** — the click is written as a structured record *first*, then the agent turn runs (so an approval survives a failed turn) | logged in |
@@ -225,6 +225,20 @@ with **Reset password** in `/admin/users`.
 Once signed in, anyone can change their own password at any time from **Change password** in the user
 menu at the top right — regardless of role, so a PM can too.
 
+### 6. Enable project import
+
+Import has the **browser upload the bundle straight to S3**, so the bucket has to know that origin.
+Once `DistributionDomain` exists, pass it in and redeploy **the drill stack only**:
+
+```bash
+AIPDS_UPLOAD_ORIGINS=https://dxxxx.cloudfront.net \
+  npx cdk deploy AipdsDrillStack --require-approval never
+```
+
+That stack holds only the bucket and the role, so it **does not replace the EC2 instance** — projects
+in flight and prototype build trees stay where they are. Skip this step and export still works while
+import fails at the upload (a CORS error in the browser console).
+
 ### Changing the region
 
 The default is **Seoul (`ap-northeast-2`)**. Override it with an environment variable:
@@ -339,6 +353,38 @@ sudo journalctl -u aipds-backend --since -1h | grep -v '/proto/'   # drop previe
 
 ---
 
+## Moving a project to another instance
+
+The **⬇** button in the project list downloads one project as a single zip. Upload that file under
+**Import a project** on another instance and work continues from the same point.
+
+What travels: every artifact (`aiplc-docs/**`), the Discovery **conversation**, question answers and
+the approval record, uploaded reference material, prototype **source code**, and survey questions,
+responses and rollups.
+
+What does not, and why:
+
+| Left behind | Why |
+|---|---|
+| Prototype access token and public preview link | It is a credential. Pressing **Host** after the import issues a fresh one |
+| Survey links | Reissued with new tokens for the same reason — share the new links with your respondents |
+| `node_modules` and build output | Reproducible and large. Hosting fills it in with `npm install` |
+| The model's conversation context | The next turn starts a fresh session. The full scrollback is there, and the workflow resumes from `aiplc-state.md` and the artifacts |
+| A question that was in flight | There is no turn left to receive the answer. Just continue the conversation |
+| Brand profile and model catalog | They belong to the instance, not to a project |
+
+The project ID defaults to the source's own. If that ID is taken, the screen asks for a new one — and
+**does not re-upload the bundle**. Importing the same bundle twice to fork one starting point into two
+branches goes through the same path.
+
+If the source project's model is not in the importing instance's catalog, the project starts on the
+default model and the screen says so.
+
+A project cannot be exported while a build session is running (409) — a zip holding a half-written
+tree the agent is still writing to is not an honest snapshot.
+
+---
+
 ## Running locally
 
 Frontend (:3000) → backend (:8000) → the Discovery agent running inside the backend calls Bedrock.
@@ -424,6 +470,7 @@ reads them (`backend/aipds/app.py`, `backend/aipds/cli_settings.py`).
 | `AIPDS_PROTO_MAX_CONCURRENT` | `10` | Global cap on concurrent builds. Over it, starting a session returns 429 |
 | `AIPDS_PROTO_PERMISSION_MODE` | `bypassPermissions` | Builds run unattended, so there is nobody to approve. Override it to tighten (an unknown value raises ValueError immediately) |
 | `AIPDS_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
+| `AIPDS_UPLOAD_ORIGINS` | — | Read at **CDK deploy time** only (not at runtime). Origins allowed to PUT a bundle directly to the bucket, i.e. the bucket's CORS rule. See [step 6](#6-enable-project-import) |
 | `AIPDS_LOG_LEVEL` | `INFO` | Application log level (`app.configure_logging()`) |
 | `AIPDS_PERFORMANCE_LOGS` | `true` | Whether to log elapsed time for turn and build phases (`performance.py`) |
 | `AIPDS_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **Leave both empty** to bypass authentication entirely (the local default). Leave only one empty and every request raises RuntimeError (fail-closed) |
