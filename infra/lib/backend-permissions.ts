@@ -50,8 +50,14 @@ const INVOKABLE_MODEL_ARNS = (account: string) => [
 // design/profile.json은 관리자가 올린 브랜드 디자인 프로필이다. 프로젝트가
 // 없어도 관리되므로 models/catalog.json과 같은 이유로 프로젝트 프리픽스 밖에
 // 있다 (backend/aipds/design_profile.py의 DESIGN_PROFILE_KEY).
+// imports/*는 프로젝트 가져오기의 스테이징이다. 브라우저가 presigned PUT으로
+// 번들을 **직접** 올리는 자리이고, 그 URL은 이 롤의 자격증명으로 서명되므로 여기에
+// 없으면 서명은 성공하고 S3가 브라우저에게 403을 준다 — 백엔드 로그에는 아무것도
+// 남지 않는다. 프로젝트 데이터와 섞이지 않게 projects/ 밖에 둔다:
+// restore_projects의 스캔과 프로젝트 삭제의 delete_prefix가 그 안의 키를 자기
+// 것으로 착각할 여지를 남기지 않는다(backend/aipds/import_staging.py).
 const BACKEND_BUCKET_PREFIXES = [
-  'projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*',
+  'projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*', 'imports/*',
 ] as const;
 
 // 백엔드(드릴 롤 또는 EC2 인스턴스 롤)가 필요로 하는 공통 권한:

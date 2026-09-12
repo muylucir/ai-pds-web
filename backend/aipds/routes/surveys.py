@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import logging
-import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
@@ -13,14 +12,12 @@ from starlette.responses import Response
 
 from aipds.survey.builder import build_questionnaire
 from aipds.survey.inputs import gather_context
-from aipds.survey.store import SurveyStore
+from aipds.survey.store import SurveyStore, new_token
 from aipds.proto import layout as proto_layout
 
 _log = logging.getLogger(__name__)
 
 router = APIRouter()
-
-TOKEN_BYTES = 32
 
 
 def _now() -> str:
@@ -67,7 +64,7 @@ async def create_survey(pid: str, slug: str):
     # 강등하므로 이 호출이 아래 502 경로를 타지 않는다(survey/inputs.py).
     context = await gather_context(s3)
 
-    token = secrets.token_urlsafe(TOKEN_BYTES)
+    token = new_token()
     try:
         qn = await build_questionnaire(
             prototype_md, app_module.questionnaire_agent_factory(pid),

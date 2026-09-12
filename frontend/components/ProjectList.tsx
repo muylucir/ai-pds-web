@@ -2,7 +2,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { ProjectPage, ProjectProgress, ProjectSummary } from "@/lib/api/types";
-import { deleteProject } from "@/lib/api/client";
+import { ApiError, deleteProject } from "@/lib/api/client";
+import { errorMessage } from "@/lib/api/errorMessage";
+import { exportProject } from "@/lib/api/transfer";
 import { listModels } from "@/lib/api/models";
 import { isLocale, LANGUAGE_LABEL } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
@@ -33,6 +35,10 @@ export function ProjectList({
   const [target, setTarget] = useState<ProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 내보내기 중인 프로젝트 id. 행마다 상태를 두는 대신 하나만 갖는다 — 번들
+  // 조립은 서버의 CPU와 임시 디스크를 쓰므로 동시에 여러 개를 시작할 이유가 없다.
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   // model_id → 표시 이름. 목록 전체에 한 번만 부른다(행마다 부르면 페이지당
   // 최대 50회다). 실패는 이름을 못 붙이는 것으로 끝나고 행은 id를 보여준다 —
   // useProjectMeta가 헤더 배지에서 하는 것과 같은 판단이다.
@@ -48,6 +54,20 @@ export function ProjectList({
       .catch(() => { /* id 원문으로 떨어진다 */ });
     return () => { alive = false; };
   }, []);
+
+  async function runExport(p: ProjectSummary) {
+    setExportError(null);
+    setExporting(p.project_id);
+    try {
+      await exportProject(p.project_id);
+    } catch (err) {
+      // 진행 중인 빌드 세션(409)이 흔한 실패다 — 그 사실이 문구로 나와야 한다.
+      setExportError(err instanceof ApiError
+        ? errorMessage(t, err.detail) : t("transfer.exportFailed"));
+    } finally {
+      setExporting(null);
+    }
+  }
 
   useEffect(() => {
     if (!target) return;
@@ -95,7 +115,7 @@ export function ProjectList({
               <th scope="col" className="px-4 py-3 font-medium">{t("project.colModel")}</th>
               <th scope="col" className="px-4 py-3 font-medium">{t("project.colLanguage")}</th>
               <th scope="col" className="px-4 py-3 font-medium">{t("project.colCreatedAt")}</th>
-              <th scope="col" className="px-4 py-3 w-12">
+              <th scope="col" className="px-4 py-3 w-28">
                 <span className="sr-only">{t("project.delete")}</span>
               </th>
             </tr>
@@ -126,7 +146,17 @@ export function ProjectList({
                 <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
                   {createdLabel(p.created_at)}
                 </td>
-                <td className="px-4 py-3 text-right">
+                <td className="px-4 py-3 text-right whitespace-nowrap">
+                  <button
+                    type="button"
+                    aria-label={`${p.name ?? p.project_id} ${t("transfer.exportAria")}`}
+                    title={t("transfer.export")}
+                    disabled={exporting !== null}
+                    onClick={() => void runExport(p)}
+                    className="relative z-10 w-8 h-8 rounded-lg text-slate-300 hover:text-violet-700 hover:bg-violet-50 inline-flex items-center justify-center disabled:opacity-40 disabled:pointer-events-none"
+                  >
+                    {exporting === p.project_id ? "⏳" : "⬇"}
+                  </button>
                   <button
                     type="button"
                     aria-label={`${p.name ?? p.project_id} ${t("project.deleteAria")}`}
@@ -144,6 +174,11 @@ export function ProjectList({
           </tbody>
         </table>
       </div>
+
+      {exportError && <p className="text-sm text-rose-600 mt-3">{exportError}</p>}
+      {exporting !== null && !exportError && (
+        <p className="text-sm text-slate-500 mt-3">{t("transfer.exporting")}</p>
+      )}
 
       <div className="flex items-center justify-between mt-4 text-sm text-slate-500">
         <span>{t("project.totalCount").replace("{n}", String(data.total))}</span>

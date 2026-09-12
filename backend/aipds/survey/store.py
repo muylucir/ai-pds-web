@@ -14,6 +14,7 @@ import csv
 import io
 import json
 import logging
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -27,6 +28,20 @@ _log = logging.getLogger(__name__)
 #: Bucket-root prefix of the token -> survey index. An S3 key prefix, not a
 #: credential -- the `nosec` is for the name, which is all bandit B105 looks at.
 TOKEN_INDEX_PREFIX = "surveys/by-token/"  # nosec B105
+
+#: 설문 토큰의 엔트로피(바이트). `secrets.token_urlsafe`에 넘긴다.
+TOKEN_BYTES = 32
+
+
+def new_token() -> str:
+    """새 설문 토큰.
+
+    토큰을 만드는 곳이 둘이다 — 설문 생성(routes/surveys.py)과 프로젝트 임포트
+    (project_import.py, 원본의 토큰을 그대로 쓰면 같은 버킷에서 원본 프로젝트의
+    링크를 가로챈다). 이 모듈이 토큰 인덱스를 소유하므로 토큰의 모양도 여기서
+    정한다: 길이가 두 벌이면 한쪽이 조용히 약해진다.
+    """
+    return secrets.token_urlsafe(TOKEN_BYTES)
 
 
 def survey_prefix(slug: str) -> str:

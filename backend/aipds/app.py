@@ -258,6 +258,26 @@ def cognito_idp_client():
     return boto3.client("cognito-idp", region_name=cfg["region"])
 
 
+def import_staging():
+    """ImportStaging 팩토리 (monkeypatchable in tests).
+
+    다른 팩토리들과 달리 버킷이 없으면 **던진다**. model_catalog()·
+    design_profile_store()가 None 스토어로 강등하는 것은 그 기능이 없어도 화면이
+    돌아야 하기 때문인데, 여기서 조용히 강등하면 "업로드 URL을 받았는데 임포트가
+    아무것도 못 찾는" 상태가 된다 — 사용자는 수백 MB를 올린 뒤에 그것을 알게 된다.
+    라우트가 이 예외를 503으로 번역한다.
+    """
+    from aipds.import_staging import ImportStaging
+    bucket = os.environ.get("AIPDS_S3_BUCKET", "")
+    if not bucket:
+        raise RuntimeError(
+            "project import requires AIPDS_S3_BUCKET — the bundle is staged in "
+            "S3 so the browser can upload it directly")
+    region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
+    return ImportStaging(bucket=bucket,
+                         client=boto3.client("s3", region_name=region))
+
+
 def durable_projects_enabled() -> bool:
     """버킷 미설정(로컬/테스트)이면 목록 영속화 전체를 생략한다."""
     return bool(os.environ.get("AIPDS_S3_BUCKET"))
@@ -625,6 +645,13 @@ _AUTH = [Depends(require_user)]
 from aipds.routes import projects, artifacts  # noqa: E402
 app.include_router(projects.router, dependencies=_AUTH)
 app.include_router(artifacts.router, dependencies=_AUTH)
+
+# 프로젝트 이관(export/import). projects.router와 나누는 이유는 파일 크기가 아니라
+# 계약이다 — 그쪽은 프로젝트의 생명주기(생성·목록·삭제)이고 이쪽은 번들 포맷과
+# S3 스테이징이라는 다른 관심사다. 등록 순서는 무관하다: `/projects/import`는
+# `/projects/{pid}`와 메서드가 다르고(POST vs GET) 세그먼트 수도 같지 않다.
+from aipds.routes import transfer  # noqa: E402
+app.include_router(transfer.router, dependencies=_AUTH)
 
 from aipds.routes import answers  # noqa: E402
 app.include_router(answers.router, dependencies=_AUTH)

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { CreateProjectForm } from "@/components/CreateProjectForm";
+import { ImportProjectForm } from "@/components/ImportProjectForm";
 import { ProjectList } from "@/components/ProjectList";
 import { listProjects } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
@@ -26,6 +27,12 @@ export default function Home() {
         {/* 생성 성공 = 곧바로 그 프로젝트의 대시보드로 — 목록에 추가만 되는
             것보다 워크숍 시작 흐름이 자연스럽다. */}
         <CreateProjectForm onCreated={(p) => router.push(`/projects/${p.project_id}/dashboard`)} />
+        {/* 가져오기도 같은 흐름이다 — 되살린 프로젝트의 대시보드로 곧바로 간다.
+            생성 폼 아래에 두는 이유: 새 프로젝트를 만드는 것이 흔한 경우이고,
+            가져오기는 다른 인스턴스에서 옮겨 올 때만 쓴다. */}
+        <ImportProjectForm
+          onImported={(r) => router.push(`/projects/${r.project_id}/dashboard`)}
+        />
         {loading && <p className="text-sm text-slate-400">{t("page.loading")}</p>}
         {error && (
           <p className="text-sm text-rose-600">

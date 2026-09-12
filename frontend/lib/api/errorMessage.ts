@@ -36,6 +36,12 @@ const KEY_BY_CODE: Record<string, keyof Dict> = {
   reauth_required: "err.reauthRequired",
   password_change_failed: "err.passwordChangeFailed",
   auth_not_configured: "err.authNotConfigured",
+  export_invalid: "err.exportInvalid",
+  export_too_large: "err.exportTooLarge",
+  upload_missing: "err.uploadMissing",
+  project_exists: "err.projectExists",
+  import_unavailable: "err.importUnavailable",
+  import_failed: "err.importFailed",
 };
 
 export function errorMessage(t: T, detail: string): string {
