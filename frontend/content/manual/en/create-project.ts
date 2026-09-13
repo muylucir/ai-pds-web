@@ -54,9 +54,9 @@ afterwards — you would have to create a new project. Check this value before y
     { kind: "heading", id: "transfer-project", text: "Moving a project" },
     {
       kind: "md",
-      md: `**⬇** on a project row downloads that whole project as a single \`.zip\`. Upload it
-under **Import a project** on another server's list screen and you can carry on from the same
-point.
+      md: `**⬇** on a project row downloads that whole project as a single \`.zip\`. On the other
+server, press **Import** at the top right of the project list and upload that file — you carry
+on from the same point.
 
 Use it when you swap workshop machines, move into a customer environment, or want to fork one
 starting point into two branches.

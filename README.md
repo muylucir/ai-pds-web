@@ -355,8 +355,9 @@ sudo journalctl -u aipds-backend --since -1h | grep -v '/proto/'   # drop previe
 
 ## Moving a project to another instance
 
-The **⬇** button in the project list downloads one project as a single zip. Upload that file under
-**Import a project** on another instance and work continues from the same point.
+The **⬇** button in the project list downloads one project as a single zip. On another instance,
+press **Import** at the top right of the project list and upload that file — work continues from the
+same point.
 
 What travels: every artifact (`aiplc-docs/**`), the Discovery **conversation**, question answers and
 the approval record, uploaded reference material, prototype **source code**, and survey questions,
