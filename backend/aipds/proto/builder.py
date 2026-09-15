@@ -23,12 +23,15 @@ import logging
 from aipds.pathsafe import workspace_relative as _rel
 from typing import Any, AsyncIterator, Callable
 
+from aipds.agent_activity import (AGENT_ACTIVITY, TERMINAL_TASK_STATUSES,
+                                  activity_payload)
 from aipds.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
 from aipds.cli_settings import cli_context_env
 from aipds.models import AgentEvent
 from aipds.proto import prompts
-from aipds.proto.build_guard import bash_denial
+from aipds.proto.build_guard import background_agent_denial, bash_denial
+from aipds.tool_trace import tool_detail
 
 _log = logging.getLogger(__name__)
 
@@ -234,7 +237,11 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # dict**를 돌려준다. Discovery가 같은 함정을 같은 방식으로 피한다
             # (claude_driver.py의 hooks 주석).
             hooks={
-                "PreToolUse": [HookMatcher(matcher="Bash",
+                # Bash와 Agent. Agent를 거는 이유는 **백그라운드 서브에이전트가
+                # 턴보다 오래 살기 때문**이다 — 그 순간 화면은 진행 표시를 닫고
+                # 남은 일이 보이지 않는 작업이 된다(build_guard의
+                # background_agent_denial에 실측 근거). 병렬 자체는 막지 않는다.
+                "PreToolUse": [HookMatcher(matcher="Bash|Agent",
                                            hooks=[builder._on_pre_tool_use])],
                 "PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
                                             hooks=[builder._on_post_tool_use])],
@@ -288,6 +295,26 @@ class PrototypeBuilder:
         self._pending_question: asyncio.Future | None = None
         self._pending_payload: str | None = None
         self._pending_iid: str | None = None
+        # 지금 살아 있는 서브에이전트: Agent 도구 호출의 id → 그 태스크의 id.
+        #
+        # **두 스트림을 잇는 표다.** 에이전트별 하트비트는 `Task*` 메시지로
+        # (`task_id`로) 오고, 그 에이전트가 무슨 파일을 만지는지는 서브에이전트의
+        # `AssistantMessage`로 (`parent_tool_use_id`로) 온다. `TaskStarted`가 두
+        # 값을 함께 들고 오는 유일한 메시지이므로 거기서 표를 채운다 — 실측으로
+        # 5개 메시지 전부 조인됐다(test_proto_builder_subagents 헤더).
+        #
+        # 수명은 **한 턴**이다: `run`이 매 턴 비운다(그 이유는 그쪽 주석).
+        self._agent_tasks: dict[str, str] = {}
+        # 종료를 이미 알린 태스크 → 그때 **요약까지** 실어 보냈는가.
+        #
+        # `task_updated`와 `task_notification`이 둘 다 terminal status를 보내고,
+        # 실측 순서는 updated → notification인데 **요약은 뒤쪽에만 있다**. 첫
+        # 종료로 막아 버리면 에이전트가 남긴 요약이 언제나 버려지므로(트레이스에서
+        # 가장 쓸모 있는 줄이 그것이다), "요약을 아직 못 보냈다"를 구분해서 한 번
+        # 더 내보낸다. 종료를 두 번 세지 않는 책임은 프론트의 upsert에 있다 —
+        # 어느 종료 메시지가 마지막인지 백엔드가 알 수 없기 때문이다(SDK는 둘 중
+        # 하나만 오는 경우도 있다고 명시한다).
+        self._agent_closed: dict[str, bool] = {}
 
     # There is deliberately NO `drain_queue()` batch pop here anymore. A batch
     # pop moves events out of the queue that OWNS them and into the caller's
@@ -511,21 +538,37 @@ class PrototypeBuilder:
         AskUserQuestion 가로채기가 죽는다(types.py의 can_use_tool 설명).
         """
         name = input_data.get("tool_name", "")
+        tool_input = input_data.get("tool_input") or {}
+        if name == "Agent":
+            # 백그라운드 서브에이전트는 턴보다 오래 산다 — 그 순간 화면은 진행
+            # 표시를 닫고(sse.ts가 `done`에서 스트림을 닫는다) 남은 일은 보이지
+            # 않는 작업이 된다. 근거와 실측은 build_guard.background_agent_denial.
+            offender = background_agent_denial(tool_input)
+            if offender is None:
+                return {}
+            _log.warning("build gate denied a background Agent call: %s", offender)
+            return self._deny(prompts.background_agent_refused(self._language))
         if name != "Bash":
-            # matcher가 Bash만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
+            # matcher가 Bash·Agent만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
             # 통과해야 한다 — 알 수 없는 도구를 막으면 빌드가 멈춘다.
             return {}
-        offender = bash_denial((input_data.get("tool_input") or {}).get("command"))
+        offender = bash_denial(tool_input.get("command"))
         if offender is None:
             return {}
         # 로그로 남긴다: 거부 이유는 모델에게만 가므로, 무엇이 막혔는지 운영자가
         # 확인할 경로가 따로 필요하다.
         _log.warning("build gate denied Bash: %s", offender)
+        return self._deny(prompts.unsafe_command_refused(self._language, offender))
+
+    @staticmethod
+    def _deny(reason: str) -> dict:
+        """PreToolUse 거부 응답의 모양. 문구는 proto/prompts.py가 소유한다 —
+        모델이 읽는 텍스트는 프로젝트 언어여야 하고, 걸린 조각을 지목하는 것도
+        그쪽 책임이다(지목이 없으면 모델이 형태만 바꿔 재시도하며 루프에 빠진다)."""
         return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "permissionDecisionReason": prompts.unsafe_command_refused(
-                self._language, offender),
+            "permissionDecisionReason": reason,
         }}
 
     async def _on_post_tool_use(self, input_data, tool_use_id, context) -> dict:
@@ -616,18 +659,125 @@ class PrototypeBuilder:
             "answers": sdk_answers,
         })
 
+    def _agent_row(self, **fields) -> AgentEvent:
+        return AgentEvent(kind=AGENT_ACTIVITY, payload=activity_payload(**fields))
+
+    def _close_agent_row(self, task_id: str, *, status: str,
+                         summary: str | None = None) -> list[AgentEvent]:
+        """행을 닫는다. 새로 말할 것이 없으면 아무것도 내보내지 않는다.
+
+        `task_updated`와 `task_notification`이 둘 다 종료를 보고하고 **둘 중 하나만
+        오는 경우가 실재하므로**(SDK가 명시한다: 백그라운드 태스크나 TaskStop으로
+        죽은 태스크는 notification이 생략될 수 있다) 양쪽을 다 듣는다.
+
+        그런데 실측 순서는 updated → notification이고 **요약은 뒤쪽에만 있다**. 그래서
+        "이미 닫혔으면 무조건 무시"는 요약을 언제나 버린다. 규칙은 두 가지뿐이다:
+
+          - 아직 안 닫혔으면 → 닫는다
+          - 닫혔지만 요약을 못 보냈고 이번에 요약이 있으면 → 한 번 더 내보낸다
+
+        그 밖에는 조용히 넘긴다. 두 번째 `done`을 트레이스 줄 하나로 접는 것은
+        프론트의 몫이다(`task_id`로 upsert) — 어느 종료가 마지막인지 여기서는 알 수 없다.
+        """
+        if not task_id:
+            return []
+        has_summary = bool(summary and summary.strip())
+        summary_sent = self._agent_closed.get(task_id)
+        if summary_sent is not None and (summary_sent or not has_summary):
+            return []
+        self._agent_closed[task_id] = has_summary
+        # 조인 표에서도 지운다: 끝난 에이전트의 tool_use_id로 뒤늦게 도착한
+        # 도구 호출이 죽은 행을 되살리면 안 된다.
+        self._agent_tasks = {tuid: tid for tuid, tid in self._agent_tasks.items()
+                             if tid != task_id}
+        return [self._agent_row(task_id=task_id, state="done", status=status,
+                                summary=summary)]
+
     def _translate(self, msg) -> list[AgentEvent]:
         events: list[AgentEvent] = []
         tname = type(msg).__name__
+        # ---- 서브에이전트 하트비트 ----
+        #
+        # 네 종류 모두 실제 SDK에서는 `SystemMessage`의 서브클래스이므로
+        # `type(msg).__name__`이 각자의 클래스 이름으로 온다. 이 분기들이 없던
+        # 동안 전부 조용히 버려졌고, 그것이 빌드 화면이 멈춘 듯 보인 원인이다.
+        if tname == "TaskStartedMessage":
+            task_id = getattr(msg, "task_id", "") or ""
+            tool_use_id = getattr(msg, "tool_use_id", None)
+            if task_id:
+                if tool_use_id:
+                    self._agent_tasks[tool_use_id] = task_id
+                events.append(self._agent_row(
+                    task_id=task_id, state="started",
+                    label=getattr(msg, "description", None) or None))
+            return events
+        if tname == "TaskProgressMessage":
+            task_id = getattr(msg, "task_id", "") or ""
+            tool = getattr(msg, "last_tool_name", None)
+            # 도구 이름이 없는 하트비트는 화면에 실을 것이 없다. `description`은
+            # 일부러 쓰지 않는다 — CLI가 만든 영어 산문이라 ko 프로젝트에서
+            # 화면 언어와 어긋난다(agent_activity 헤더).
+            if task_id and tool and task_id not in self._agent_closed:
+                events.append(self._agent_row(task_id=task_id, state="progress",
+                                              tool=tool))
+            return events
+        if tname == "TaskNotificationMessage":
+            status = str(getattr(msg, "status", "") or "")
+            if status in TERMINAL_TASK_STATUSES:
+                return self._close_agent_row(
+                    getattr(msg, "task_id", "") or "", status=status,
+                    summary=getattr(msg, "summary", None))
+            return events
+        if tname == "TaskUpdatedMessage":
+            status = str(getattr(msg, "status", "") or "")
+            # 비종료 전이(pending/running/paused)로 행을 닫으면 뜨자마자 사라진다.
+            if status in TERMINAL_TASK_STATUSES:
+                return self._close_agent_row(
+                    getattr(msg, "task_id", "") or "", status=status)
+            return events
         if tname == "AssistantMessage":
+            # 서브에이전트가 보낸 메시지면 어느 행의 것인지 여기서 정해진다.
+            # 표에 없는 부모(TaskStarted를 못 봤거나 이미 끝난 에이전트)는
+            # **버린다** — 총괄 `status`로 흘려보내면 서브에이전트의 일이 총괄의
+            # 일로 보이고, 그것이 고정 줄을 이름들 사이에서 깜빡이게 만든 종전
+            # 동작이다.
+            parent = getattr(msg, "parent_tool_use_id", None)
+            task_id = self._agent_tasks.get(parent) if parent else None
             for block in getattr(msg, "content", []):
                 btype = type(block).__name__
                 if btype == "TextBlock":
+                    if parent is not None:
+                        # `forward_subagent_text`는 끄고 간다 — 서사 셋이 말풍선에
+                        # 섞이면 진행 표시를 대화 흐름 밖으로 옮긴 이유가 없어진다
+                        # (LiveActivityBar 헤더). 지금 SDK는 보내지도 않지만, 그
+                        # 옵션을 켜는 날 이 규율이 코드에 있어야 한다.
+                        continue
                     events.append(AgentEvent(kind="message", text=block.text))
                 elif btype == "ToolUseBlock":
-                    if block.name != self._last_status:
-                        self._last_status = block.name
-                        events.append(AgentEvent(kind="status", text=block.name))
+                    if parent is not None:
+                        if task_id is not None:
+                            events.append(self._agent_row(
+                                task_id=task_id, state="progress",
+                                tool=block.name,
+                                detail=tool_detail(block.name,
+                                                   getattr(block, "input", None),
+                                                   file_tools=True)))
+                        continue
+                    # 무엇을 했는지까지 보낸다 — 맨 `Bash`만 뜨면 트레이스의 요점이
+                    # 빠진다(tool_trace 모듈 헤더). 값만 보내고 아이콘·구분자는
+                    # 프론트가 UI 언어로 그린다.
+                    detail = tool_detail(block.name, getattr(block, "input", None))
+                    # 중복 접기 키에 detail을 넣는다. 이름만으로 접으면 서로 다른
+                    # 파일을 읽는 연속된 Read 세 번이 `Read` 한 줄로 뭉개진다 —
+                    # claude_driver가 이미 이 키를 쓴다.
+                    key = (block.name, detail)
+                    if key != self._last_status:
+                        self._last_status = key
+                        events.append(AgentEvent(
+                            kind="status", text=block.name,
+                            payload=(json.dumps({"detail": detail},
+                                                ensure_ascii=False)
+                                     if detail else None)))
         elif tname == "ResultMessage":
             events.append(AgentEvent(kind="done"))
         return events
@@ -638,7 +788,12 @@ class PrototypeBuilder:
             return
         self._turn_active = True
         self._interrupted = False
-        self._last_status: str | None = None
+        self._last_status: tuple[str, str | None] | None = None
+        # 서브에이전트의 수명은 그것을 띄운 턴의 수명이다. 표를 턴을 넘겨 들고
+        # 있으면 재활용된 tool_use_id가 이미 끝난 에이전트의 행으로 귀속되어
+        # 화면에 죽은 에이전트가 되살아난다.
+        self._agent_tasks = {}
+        self._agent_closed = {}
         next_msg: asyncio.Future | None = None
         # The turn's ONE terminal event, held rather than yielded the moment
         # `_translate` produces it -- see the terminal harvest after the loop.

@@ -23,6 +23,12 @@ A PreToolUse hook therefore **rejects** these before they run. The refusal names
 
 **Verify the build with `npm run build`.** That is the whole runtime check you need, and it is not blocked.
 
+## Subagents — parallel yes, background no
+
+Splitting a build across subagents is encouraged: launch several **Agent** calls in one message and let them work at once. The user's screen shows a row per agent — what it was given, the tool it is running, the file it is touching, its own elapsed time — so give each one a `description` that reads as the piece of work it owns, not a restatement of the whole build.
+
+**Do not pass `run_in_background`.** The same PreToolUse hook rejects it. That screen follows a turn, and it stops the moment the turn ends: a task outliving its turn becomes invisible work, and the user's next message lands on top of agents still editing the working directory. Wait for your subagents' results inside the turn that started them.
+
 ## Bedrock calls
 
 Reach Bedrock through the **default credential chain** (the instance/execution role). Never hardcode an API key, and read the region from the environment.

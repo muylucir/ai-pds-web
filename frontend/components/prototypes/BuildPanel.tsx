@@ -33,7 +33,7 @@ export function BuildPanel({
 }) {
   const t = useT();
   const {
-    items, streaming, pendingQuestions, buildComplete, changedPaths,
+    items, streaming, agents, pendingQuestions, buildComplete, changedPaths,
     startBuild, send, submitAnswers, interrupt, restartForImprovement,
   } = usePrototypeStream(projectId, slug);
   const [closing, setClosing] = useState(false);
@@ -178,7 +178,11 @@ export function BuildPanel({
             {/* 진행 상황은 대화 흐름이 아니라 화면의 것이다 — 워크스페이스와 같은
                 컴포넌트를 같은 자리(입력창 바로 위)에 놓는다. 빌드 턴은 도구
                 활동이 특히 많이 쏟아지므로 "마지막 하나만"의 이득이 크다. */}
-            {live && <LiveActivityBar activity={live} />}
+            {/* `agents`가 비어 있지 않은 동안 그 바는 에이전트별 행으로 펼쳐진다.
+                병렬 구간에서 "마지막 하나만"이 정확히 실패하기 때문이다 — 한 줄이
+                에이전트 셋 사이에서 깜빡이고 어느 것도 진행으로 읽히지 않았다
+                (lib/protoAgents.ts 헤더). */}
+            {live && <LiveActivityBar activity={live} agents={agents} />}
             <ChatInput
               onSend={send}
               disabled={streaming || buildComplete !== null}

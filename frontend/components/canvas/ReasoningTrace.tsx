@@ -19,12 +19,27 @@ const TOOL_ICON: Record<string, string> = {
   WebFetch: "🌐",
 };
 
+// 종료한 서브에이전트가 성공했는지 실패했는지는 아이콘으로 갈라진다 — 실패가
+// 완료와 같은 줄로 보이면 트레이스가 무엇이 잘못됐는지 말하지 못한다.
+// `completed`만 성공이다(`failed`/`stopped`/`killed`는 전부 그렇지 않다).
+const AGENT_ICON = { done: "✅", failed: "⚠️" } as const;
+
 // 한 트레이스 줄. 도구 이름은 **고유명이라 번역하지 않는다**(`Read`는 어느 언어에서도
 // Read다) — 번역되는 것은 "파일 변경" 같은 라벨뿐이고 그것은 사전에서 온다.
 function traceLine(e: TraceEntry, fileChangedLabel: string,
-                   thinkingLabel: string): string {
+                   thinkingLabel: string, agentDoneLabel: string,
+                   agentFailedLabel: string): string {
   if (e.kind === "thinking") return `🧠 ${thinkingLabel}`;
   if (e.kind === "file_changed") return `📝 ${fileChangedLabel}: ${e.path ?? ""}`;
+  if (e.kind === "agent") {
+    const ok = e.status === "completed";
+    // 이름은 그 에이전트에 맡긴 일이다(백엔드가 Agent 도구의 description을
+    // 그대로 싣는다). 못 받았으면 라벨만 남긴다 — 빈 이름보다 낫다.
+    const head = `${ok ? AGENT_ICON.done : AGENT_ICON.failed} ${
+      ok ? agentDoneLabel : agentFailedLabel}`;
+    const name = e.text ? `: ${e.text}` : "";
+    return e.detail ? `${head}${name} · ${e.detail}` : `${head}${name}`;
+  }
   const name = e.text ?? "";
   const icon = TOOL_ICON[name];
   const head = icon ? `${icon} ${name}` : name;
@@ -44,7 +59,8 @@ export function ReasoningTrace({ entries }: { entries: TraceEntry[] }) {
       <ul className="mt-1.5 space-y-1 text-slate-500">
         {entries.map((e, i) => (
           <li key={i} className="font-mono">
-            {traceLine(e, t("canvas.fileChanged"), t("canvas.thinkingTrace"))}
+            {traceLine(e, t("canvas.fileChanged"), t("canvas.thinkingTrace"),
+                       t("canvas.agentDone"), t("canvas.agentFailed"))}
           </li>
         ))}
       </ul>
