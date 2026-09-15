@@ -50,6 +50,13 @@ class HostInfo:
     state: HostState
     port: int | None
     log_tail: str
+    #: 이 서버가 소스를 읽은 시각(epoch 초). 뜬 적이 없으면 None.
+    #:
+    #: **무엇에 쓰는가.** 실행 중인 프로토타입을 수정할 수 있게 되면서, 서버는
+    #: 그대로 뜬 채 소스만 바뀌는 구간이 생겼다. 이 값과 빌드 트리의 최신 mtime을
+    #: 비교하면 "떠 있는 것이 이전 버전"임을 말할 수 있다 — 그것 없이는 카드가
+    #: "실행 :4007"만 말하고 사용자는 수정이 반영됐다고 읽는다.
+    built_at: float | None = None
 
 
 @dataclass
@@ -60,6 +67,8 @@ class _HostEntry:
     state: HostState
     port: int | None = None
     proc: "asyncio.subprocess.Process | None" = None
+    #: HostInfo.built_at의 출처 — 근거는 그쪽 주석.
+    built_at: float | None = None
 
 
 def _tail_text(path: Path, lines: int) -> str:
@@ -216,6 +225,7 @@ class ProtoHost:
         """
         return HostInfo(
             state=entry.state, port=entry.port,
+            built_at=entry.built_at,
             log_tail=_tail_text(entry.log_path, 100) if with_log else "")
 
     @staticmethod
@@ -364,6 +374,13 @@ class ProtoHost:
 
         pkg = self._read_package_json(target_dir)
         scripts = pkg.get("scripts", {}) if isinstance(pkg, dict) else {}
+
+        # 소스를 읽기 **직전**의 시각. 뒤로 잡으면 빌드 도중에 바뀐 파일이 반영된
+        # 것으로 잘못 판정되고(빌드는 그것을 읽지 못했다), npm install 앞으로 잡으면
+        # 설치에 걸린 수 분 사이의 변경이 낡은 것으로 잘못 판정된다(뒤이은 빌드가
+        # 실제로 읽는다). build 스크립트가 없는 프로토타입도 여기서 잡는다 —
+        # 그때는 `npm start`/`dev`가 소스를 읽는 시점이 바로 다음이다.
+        entry.built_at = time.time()
 
         if "build" in scripts:
             entry.state = "building"

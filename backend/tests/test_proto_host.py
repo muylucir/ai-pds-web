@@ -637,3 +637,59 @@ async def test_purge_project_refuses_an_unsafe_pid(root, bad_pid):
         await host.purge_project(bad_pid)
 
     assert (root / "victim" / "theirs").is_dir()
+
+
+# ---- 떠 있는 서버가 소스보다 오래됐는가 ----
+#
+# **왜 시각이 필요한가.** 실행 중인 프로토타입을 수정할 수 있게 되면서, 서버는 그대로
+# 뜬 채 소스만 바뀌는 구간이 생겼다. 그때 카드는 "실행 :4007"만 말하므로 사용자는
+# 자기 수정이 반영됐다고 읽는다 — 실제로 참가자에게 나간 링크가 보여 주는 것은
+# 이전 버전이고, 다시 호스팅해야 바뀐다.
+#
+# 그 판정을 하려면 "이 서버가 언제 소스를 읽었는가"가 필요한데 레지스트리에 시각이
+# 아예 없었다. 세션이 열려 있는지로 대신하는 것은 틀렸다: 세션이 닫히는 순간 그
+# 신호가 사라지고, 정작 그때가 사용자가 오해하기 가장 쉬운 시점이다.
+
+async def test_a_started_host_records_when_it_read_the_source(root):
+    host = ProtoHost(root=root)
+    _seed_build_dir(root)
+    try:
+        info = await host.start(PID, SLUG)
+        assert info.state == "running"
+        assert info.built_at is not None
+        # status()로도 같은 값이 나와야 한다 — 목록 라우트가 읽는 경로다.
+        assert host.status(PID, SLUG).built_at == info.built_at
+    finally:
+        await host.stop(PID, SLUG)
+
+
+async def test_the_timestamp_precedes_the_build_step(root):
+    """빌드가 소스를 **읽기 전**의 시각이어야 한다. 빌드가 끝난 뒤로 잡으면, 빌드
+    도중에 바뀐 파일이 반영된 것으로 잘못 판정된다(빌드는 그 변경을 읽지 못했다).
+
+    반대로 npm install 앞으로 잡는 것도 틀리다: 설치는 실측 수 분이고, 그 사이에
+    바뀐 파일은 뒤이은 빌드가 실제로 읽으므로 낡지 않았다."""
+    import time
+
+    host = ProtoHost(root=root)
+    target = _seed_build_dir(root)
+    before = time.time()
+    try:
+        info = await host.start(PID, SLUG)
+        after = time.time()
+        assert info.built_at is not None
+        assert before <= info.built_at <= after
+        # 그리고 빌드 트리의 **소스**가 그보다 오래됐다 — 즉 방금 뜬 서버는 낡지
+        # 않았다. 제외 규칙을 타는 것이 정답의 일부다: 호스팅 자신이 `built_at`
+        # 뒤에 `.proto-host.log`/`.pid`를 쓰므로, 생 mtime으로 비교하면 방금 뜬
+        # 서버가 언제나 낡은 것으로 나온다(이 테스트가 처음 그렇게 실패했다).
+        from aipds.proto.source import newest_source_mtime
+        newest = newest_source_mtime(target)
+        assert newest is not None and newest <= info.built_at
+    finally:
+        await host.stop(PID, SLUG)
+
+
+async def test_an_unstarted_host_has_no_timestamp(root):
+    host = ProtoHost(root=root)
+    assert host.status(PID, SLUG) is None

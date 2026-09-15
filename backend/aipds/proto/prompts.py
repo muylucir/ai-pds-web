@@ -20,8 +20,22 @@ def _lang(language: str) -> str:
     return language if language in _LANGUAGES else _DEFAULT
 
 
-def plan_prompt(language: str, *, spec_key: str, proxy_path: str) -> str:
-    """처음부터 시작하는 세션의 개시 턴. 계획만 세우고 빌드하지 않는다."""
+def plan_prompt(language: str, *, spec_key: str, proxy_path: str,
+                request: str | None = None) -> str:
+    """처음부터 시작하는 세션의 개시 턴. 계획만 세우고 빌드하지 않는다.
+
+    **`request`는 실제로 이 분기에 닿지 않는다** — 첫 빌드에서는 카드가 입력을 주기
+    전에 `__first__`가 자동 발화하기 때문이다. 그래도 받아서 덧붙이는 이유는, 도달할
+    경로가 생기는 날 사용자가 타이핑한 말이 조용히 사라지는 것이 가장 나쁜 결과이기
+    때문이다. handoff·resume과 달리 되묻기를 없애지는 않는다: 계획 승인 왕복은 첫
+    빌드의 핵심 규율이고, 요청 한 줄이 그것을 대체하지 않는다.
+    """
+    return _with_request(
+        _plan_prompt_base(language, spec_key=spec_key, proxy_path=proxy_path),
+        language, request)
+
+
+def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str) -> str:
     if _lang(language) == "en":
         return (
             f"Read `{spec_key}` and draw up a plan for building this prototype.\n"
@@ -86,13 +100,34 @@ def plan_prompt(language: str, *, spec_key: str, proxy_path: str) -> str:
     )
 
 
-def resume_prompt(language: str) -> str:
+def resume_prompt(language: str, *, request: str | None = None) -> str:
     """죽은 세션을 이어받는 개시 턴.
 
     의도적으로 짧다. 에이전트는 이전 트랜스크립트와 만든 것을 이미 갖고 있어서,
     스펙이나 빌드 규칙을 다시 말하면 그가 이미 보는 것과 경쟁만 한다. 이 턴이
     할 일은 그가 혼자 방향을 정하지 않게 막는 것뿐이다.
+
+    `request`가 있으면 되묻지 않는다 — 근거는 `handoff_prompt`와 같다.
     """
+    if request:
+        if _lang(language) == "en":
+            return (
+                "Continuing the previous build session. This is what I want done:\n\n"
+                f"{request}\n\n"
+                "Get your bearings first (the transcript and the working directory "
+                "are already yours to read), then do it. Do not ask me what to work "
+                "on — I just told you. Ask only if something in the request is "
+                "genuinely ambiguous.\n"
+                "Declare completion with `build_complete` when it is done.\n"
+            )
+        return (
+            "이전 빌드 세션을 이어서 진행한다. 내가 원하는 것은 이것이다:\n\n"
+            f"{request}\n\n"
+            "먼저 상황을 파악하고(트랜스크립트와 작업 디렉토리는 이미 네가 읽을 수 "
+            "있다) 그다음 진행해줘. 무엇을 할지 되묻지 마 — 방금 말했다. 요청 자체가 "
+            "정말 모호할 때만 물어봐.\n"
+            "끝나면 `build_complete`로 완료를 선언해줘.\n"
+        )
     if _lang(language) == "en":
         return (
             "Continuing the previous build session.\n"
@@ -114,14 +149,26 @@ def resume_prompt(language: str) -> str:
     )
 
 
-def missing_output_prompt(language: str, *, spec_key: str) -> str:
+def missing_output_prompt(language: str, *, spec_key: str,
+                         request: str | None = None) -> str:
     """산출물이 사라진 뒤의 개시 턴 — 찾지 말고 다시 만들라고 말한다.
+
+    **`request`는 되묻기를 없애지 않는다** (handoff·resume과 다른 점이다): 없는
+    것을 고칠 수는 없으므로 여기서 할 일은 재빌드이고 그 승인 왕복은 남아야 한다.
+    그래도 사용자가 타이핑한 말은 덧붙인다 — 조용히 버리면 그 요청은 어디에도
+    남지 않는다.
 
     이 지시가 없으면 에이전트는 트랜스크립트를 믿고 없는 코드를 찾아 나선다.
     실측: 리셋된 프로토타입에서 작업 디렉토리 → 다른 프로토타입 디렉토리 →
     `/opt/aipds/frontend` → 파일시스템 전체로 탐색을 넓히며 19초 이상을
     태웠고, 성공할 수 없는 탐색이었다.
     """
+    return _with_request(
+        _missing_output_prompt_base(language, spec_key=spec_key),
+        language, request)
+
+
+def _missing_output_prompt_base(language: str, *, spec_key: str) -> str:
     if _lang(language) == "en":
         return (
             "The record of the previous build session is still here, but "
@@ -156,14 +203,63 @@ def missing_output_prompt(language: str, *, spec_key: str) -> str:
     )
 
 
+def _with_request(text: str, language: str, request: str | None) -> str:
+    """개시 프롬프트 뒤에 사용자 요청을 덧붙인다 — 되묻기를 유지하는 분기 전용.
+
+    `plan`과 `missing_output`이 쓴다. 두 분기는 승인 왕복이 규율이라 요청 한 줄로
+    대체할 수 없지만, 그렇다고 사용자가 타이핑한 말을 버려도 되는 것은 아니다.
+    """
+    if not request:
+        return text
+    if _lang(language) == "en":
+        return f"{text}\nI also asked for this up front:\n{request}\n"
+    return f"{text}\n내가 미리 덧붙인 요청:\n{request}\n"
+
+
 def handoff_prompt(language: str, *, spec_key: str, summary: str,
-                   remaining: str) -> str:
+                   remaining: str, request: str | None = None) -> str:
     """완료된 빌드를 개선하는 새 세션의 개시 턴.
 
     파일 트리를 넘기지 않는 것이 의도적이다 — 에이전트가 자기 파일 도구로 cwd를
     읽는 편이 스냅샷보다 정확하다. 여기서 할 일은 이전 빌드가 무엇을 남겼는지
     알려주고 마음대로 손대지 않게 막는 것뿐이다.
+
+    **`request`가 있으면 되묻지 않는다.** "수정하기"를 누른 사람은 이미 무엇을
+    고칠지 알고 있다 — 프리뷰에서 봤으니까. 그런데 되묻는 분기에서는 질문이 떠 있는
+    동안 입력창이 비활성이라(BuildPanel의 `disabled={streaming || …}`) 사용자가
+    **자기 요청을 타이핑할 수조차 없었다**: 남의 객관식에 먼저 답해야 자기 말을 할 수
+    있는 흐름이었고, 그 왕복이 의도를 선택지로 좁혔다.
+
+    요약과 "먼저 `prototype/`을 봐라"는 **요청이 있어도 함께 간다.** 이 분기는 새
+    세션이라 트랜스크립트가 없어서(proto/session의 _resolve_session_id), 그 둘이
+    빠지면 에이전트가 이전 빌드가 무엇을 남겼는지 모르는 채로 시작한다.
     """
+    if request:
+        if _lang(language) == "en":
+            return (
+                "This prototype has already been built once. This session is for "
+                "improvements, and this is what I want changed:\n\n"
+                f"{request}\n\n"
+                f"Summary of the previous build:\n{summary}\n\n"
+                f"Recorded as remaining work:\n{remaining}\n\n"
+                "1. First look at `prototype/` in the working directory to see where "
+                f"things stand. Re-read `{spec_key}` if you need to.\n"
+                "2. Then make the change I asked for. Do not ask me what to improve "
+                "— I just told you. Ask only if my request is genuinely ambiguous.\n"
+                "3. Declare completion with `build_complete` when it is done.\n"
+            )
+        return (
+            "이 프로토타입은 이미 한 번 빌드가 완료됐다. 이번 세션은 개선 작업이고, "
+            "내가 고치고 싶은 것은 이것이다:\n\n"
+            f"{request}\n\n"
+            f"이전 빌드 요약:\n{summary}\n\n"
+            f"남은 작업으로 기록된 것:\n{remaining}\n\n"
+            f"1. 먼저 작업 디렉토리의 `prototype/`을 살펴보고 현재 상태를 파악해줘. "
+            f"필요하면 `{spec_key}`도 다시 읽어줘.\n"
+            "2. 그다음 내가 말한 것을 반영해줘. 무엇을 개선할지 되묻지 마 — 방금 "
+            "말했다. 내 요청 자체가 정말 모호할 때만 물어봐.\n"
+            "3. 끝나면 `build_complete`로 완료를 선언해줘.\n"
+        )
     if _lang(language) == "en":
         return (
             "This prototype has already been built once. This session is for "

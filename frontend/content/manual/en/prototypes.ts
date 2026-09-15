@@ -24,9 +24,9 @@ The colours and typeface come from whatever the administrator uploaded under
 |---|---|---|
 | Not built | Nothing has been built yet | **Start build** |
 | Building | It is being built right now | **Open session** to watch |
-| Built | It exists but is not running | **Start hosting** |
-| Running | The preview is live | **Open preview** · **Copy link** |
-| Failed | The build did not finish | Check **Logs**, then **Rebuild** |`,
+| Built | It exists but is not running | **Start hosting** · **Modify** |
+| Running | The preview is live | **Open preview** · **Copy link** · **Modify** |
+| Failed | The build did not finish | Check **Logs**, then **Continue** |`,
     },
     {
       kind: "md",
@@ -46,7 +46,25 @@ for every prototype you want to validate.`,
         "When it is done the session closes itself and a **Build complete** card appears.",
         "**Start hosting** actually runs the app — the badge moves through *Installing dependencies* → *Building* → *Starting the server*. It can take a few minutes.",
         "**Open preview** to check it, **Copy link** to send it to someone.",
+        "See something to fix? **Modify** — you do not have to stop hosting first.",
       ],
+    },
+    { kind: "heading", id: "modify", text: "Changing a prototype you already built" },
+    {
+      kind: "md",
+      md: `**Modify** does **not** throw away what was built. A build session opens empty and
+**you say what to change first** — write it plainly ("move the cart button to the top right",
+"make this screen mobile-first") and the AI gets on with it instead of asking you to pick from a
+list. A finished build hands over **only a summary**, not the whole earlier conversation, so
+changing one button's colour does not drag the entire build's context with it.
+
+You can press it while the prototype is running. The server stays up and the link you sent to
+participants keeps working, but what that link shows is the **previous version** — the card says
+*Preview shows the previous version* and offers a **Re-host** button there. Re-hosting closes the
+participant link for a few minutes, so during a workshop pick your moment.
+
+**To start over from nothing**, the button is **Reset**, not Modify. That is the only one that
+discards what was built; the design document stays, so you can build again right away.`,
     },
     { kind: "heading", id: "session", text: "The build session" },
     {
@@ -106,7 +124,7 @@ survey and its responses.
 Kept — the design document (\`PROTOTYPE-*.md\`), which is why you can build again.
 
 Use it when the direction changed enough that starting over is cleaner. For smaller changes,
-**Continue improving** is the right button, not Reset.`,
+**Modify** is the right button, not Reset — it keeps what was built.`,
     },
     {
       kind: "callout",

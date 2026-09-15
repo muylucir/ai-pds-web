@@ -384,3 +384,59 @@ describe("reset confirmation", () => {
     await waitFor(() => expect(calls.get).toBeGreaterThan(getsBeforeConfirm));
   });
 });
+
+
+// ---- 수정은 자동 발화하지 않는다 ----
+//
+// 이미 만들어진 것을 고칠 때 자동 개시는 에이전트가 되묻는 왕복을 먼저 태우고, 그
+// 질문이 떠 있는 동안 입력창이 잠겨 사용자가 자기 요청을 타이핑할 수조차 없었다
+// (backend prompts.handoff_prompt의 근거). 첫 빌드는 반대다 — 사용자가 아직 할 말이
+// 없고 에이전트가 명세를 먼저 읽어야 한다.
+
+describe("Prototypes page — 수정 진입", () => {
+  const BUILT = [{ slug: "todo-app", name: null,
+                   spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md",
+                   state: "built", port: null, session_open: false,
+                   preview_stale: false, access_url: null,
+                   response_count: 0, has_survey: false }];
+
+  function seed(prototypes: unknown[]) {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`,
+               () => HttpResponse.json(listing(prototypes as never))),
+      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/session`, () =>
+        HttpResponse.json({ status: "starting" }, { status: 202 })),
+    );
+  }
+
+  it("빌드 완료된 프로토타입은 개시 턴을 자동 발화하지 않는다", async () => {
+    // 사용자가 먼저 말하고, 그 첫 메시지가 개시 턴이 된다(백엔드의 session.opened).
+    const user = userEvent.setup();
+    seed(BUILT);
+    const startBuild = vi.fn();
+    mockStream({ startBuild });
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+
+    await user.click(await screen.findByRole("button", { name: "수정하기" }));
+
+    await waitFor(() => expect(screen.getByText("무엇을 고칠지 알려주세요."))
+      .toBeInTheDocument());
+    expect(startBuild).not.toHaveBeenCalled();
+  });
+
+  it("첫 빌드는 그대로 자동 발화한다", async () => {
+    const user = userEvent.setup();
+    seed([{ ...BUILT[0], state: "none" }]);
+    const startBuild = vi.fn();
+    mockStream({ startBuild });
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+
+    await user.click(await screen.findByRole("button", { name: "빌드 시작" }));
+
+    await waitFor(() => expect(startBuild).toHaveBeenCalled());
+  });
+});

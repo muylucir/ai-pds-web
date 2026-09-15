@@ -177,6 +177,11 @@ class PrototypeSession:
         # first_prompt()가 고를 프롬프트 종류. 종전의 `_resumed` 불리언을
         # 대체한다 -- 분기가 셋이 되어 불리언으로 표현할 수 없다.
         self._prompt_kind: PromptKind = "plan"
+        # 개시 턴이 이미 돌았는가. **UI 플래그가 아니라 세션이 아는 사실이어야
+        # 한다**: 라우트가 첫 메시지를 개시 프롬프트로 감쌀지 판단하는 기준이고,
+        # 프론트가 추측하면 새로고침·경합·이미 열린 세션에서 어긋난다
+        # (`first_prompt`의 request 설명 참고).
+        self._opened = False
         # handoff 분기일 때 프롬프트에 실을 내용({"summary","remaining"}).
         self._handoff: dict | None = None
         self._pending_interrupt_id: str | None = None
@@ -357,6 +362,16 @@ class PrototypeSession:
 
     # ---- turn relay ----
 
+    @property
+    def opened(self) -> bool:
+        """개시 턴이 이미 돌았는가. False면 다음 메시지가 개시 턴이다.
+
+        라우트가 이 값으로 사용자의 첫 메시지를 개시 프롬프트로 감쌀지 정한다
+        (`first_prompt`의 request 설명). 읽기 전용인 것이 요점이다 — 이 사실을
+        바꿀 수 있는 곳은 `send_message` 하나여야 한다.
+        """
+        return self._opened
+
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
         assert self._builder is not None, "start() must be called before send_message()"
         # 완료 선언된 세션은 새 턴을 받지 않는다. 오늘은 routes/prototypes.py의
@@ -388,6 +403,9 @@ class PrototypeSession:
             )
             return
         self._arm_idle_timer()
+        # 이 메시지가 개시 턴을 소비한다. 완료 가드(위)를 **지난 뒤** 세우는 것이
+        # 의도다: 완료된 세션이 되돌려보내는 오류 턴은 개시 턴이 아니다.
+        self._opened = True
         self.status = "building"
         try:
             async for event in self._builder.run(text):
@@ -507,7 +525,7 @@ class PrototypeSession:
 
     # ---- first turn's auto-spoken prompt ----
 
-    def first_prompt(self) -> str:
+    def first_prompt(self, request: str | None = None) -> str:
         """자동 발화되는 개시 턴. 세 가지 모양이고 `_prompt_kind`가 고른다.
 
         셋 다 같은 방식으로 끝난다 -- AskUserQuestion, 그리고 대기. 그
@@ -522,21 +540,29 @@ class PrototypeSession:
         resume  -> 트랜스크립트와 반쯤 만든 파일이 이미 맥락에 있다. 다시
                    계획하지 말고 무엇을 이어갈지 물어라.
         handoff -> 빌드는 끝났고 맥락은 요약뿐이다. 무엇을 개선할지 물어라.
+
+        `request`는 사용자가 세션의 **첫 메시지로 이미 말한 요청**이다. 있으면
+        resume·handoff가 되묻기를 건너뛰고 바로 그것을 한다 — 근거는
+        proto/prompts.handoff_prompt에 있다(되묻는 동안 입력창이 비활성이라
+        사용자가 자기 요청을 타이핑할 수조차 없었다). 맥락(요약·"prototype/을
+        먼저 봐라")은 요청이 있어도 함께 간다: handoff는 새 세션이라 그것 말고는
+        이전 빌드를 알 방법이 없다.
         """
         if self._prompt_kind == "handoff" and self._handoff is not None:
-            return self._handoff_prompt(self._handoff)
+            return self._handoff_prompt(self._handoff, request=request)
         if self._prompt_kind == "resume":
-            return self._resume_prompt()
-        return self._plan_prompt()
+            return self._resume_prompt(request=request)
+        return self._plan_prompt(request=request)
 
-    def _plan_prompt(self) -> str:
+    def _plan_prompt(self, request: str | None = None) -> str:
         """문장 자체는 proto/prompts.py가 언어별로 갖고 있다."""
         return prompts.plan_prompt(
             self._language,
+            request=request,
             spec_key=self._spec_key(),
             proxy_path=f"/api/proto/{self.project_id}/{self.slug}/")
 
-    def _resume_prompt(self) -> str:
+    def _resume_prompt(self, request: str | None = None) -> str:
         """Deliberately short. The agent already has the prior transcript and
         whatever it built, so restating the spec or the build rules would only
         compete with what it can already see. All this turn has to do is stop
@@ -548,10 +574,10 @@ class PrototypeSession:
         문장 자체는 proto/prompts.py가 언어별로 갖고 있다.
         """
         if not has_build_output(self.build_dir()):
-            return self._missing_output_prompt()
-        return prompts.resume_prompt(self._language)
+            return self._missing_output_prompt(request)
+        return prompts.resume_prompt(self._language, request=request)
 
-    def _missing_output_prompt(self) -> str:
+    def _missing_output_prompt(self, request: str | None = None) -> str:
         """산출물이 사라진 뒤의 개시 턴 — 찾지 말고 다시 만들라고 말한다.
 
         재개·개선 프롬프트는 둘 다 에이전트가 만든 코드가 아직 거기 있다고
@@ -569,11 +595,18 @@ class PrototypeSession:
         `start()`가 매번 로컬에 새로 심는다 -- 처음 빌드와 같은 입력이다.
 
         문장 자체는 proto/prompts.py가 언어별로 갖고 있다.
+
+        **`request`는 되묻기를 없애지 않는다.** 없는 것을 고칠 수는 없으므로 여기서
+        할 일은 재빌드이고, 그 승인 왕복은 남아야 한다. 그래도 사용자가 타이핑한
+        말은 덧붙인다 — 조용히 버리면 그 요청은 어디에도 남지 않고, 사용자는
+        자기 말이 무시된 것을 알 방법이 없다.
         """
         return prompts.missing_output_prompt(self._language,
-                                             spec_key=self._spec_key())
+                                             spec_key=self._spec_key(),
+                                             request=request)
 
-    def _handoff_prompt(self, handoff: dict) -> str:
+    def _handoff_prompt(self, handoff: dict, *,
+                        request: str | None = None) -> str:
         """완료된 빌드를 개선하는 새 세션의 개시 턴.
 
         `_resume_prompt`보다도 짧다. 파일 트리를 넘기지 않는 것이 의도적이다
@@ -589,10 +622,11 @@ class PrototypeSession:
         문장 자체는 proto/prompts.py가 언어별로 갖고 있다.
         """
         if not has_build_output(self.build_dir()):
-            return self._missing_output_prompt()
+            return self._missing_output_prompt(request)
         return prompts.handoff_prompt(
             self._language,
             spec_key=self._spec_key(),
+            request=request,
             summary=handoff["summary"],
             remaining=handoff.get("remaining")
             or prompts.missing_remaining_note(self._language))

@@ -30,7 +30,7 @@ from aipds.parsers.redaction import redact_credentials
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.proto.design_sync import sync_design, theme_copies
 from aipds.proto.session import has_build_output, purge_session_state
-from aipds.proto.source import source_entries
+from aipds.proto.source import newest_source_mtime, source_entries
 # 토큰 게이트의 경로 조립은 그 라우트를 소유한 모듈이 한다 — 여기서 f-string으로
 # 다시 쓰면 브라우저 관점 마운트(`/api`)를 두 곳에서 관리하게 되고, 그것이 이
 # 파일에서 이미 한 번 어긋났던 종류의 버그다(아래 start_host의 public_base_path
@@ -263,11 +263,24 @@ async def list_prototypes(pid: str):
         # local dir.
         built = _local_build_exists(pid, slug) or bool(bundle_keys)
 
-        if session is not None and session.status in _WORKING_STATUSES:
-            state = "building"
-        elif host_info is not None and host_info.state == "running":
+        # 빌드 세션이 열려 있는가. **`state`와 별개 필드인 이유**가 이 블록의
+        # 요점이다: 서버가 떠 있는지와 세션이 열려 있는지는 서로 독립적인
+        # 사실인데, 열거형 하나가 둘을 실어 나르면서 세션이 호스팅을 가렸다.
+        # 실행 중인 프로토타입을 수정하기 시작하면 카드가 `building`으로 바뀌어
+        # 프리뷰·공유 링크가 사라졌고 — 서버는 계속 떠 있었으므로 화면만
+        # 거짓말을 했다. 프리뷰를 본 직후가 수정하고 싶어지는 순간인데, 바로 그
+        # 순간에 방금 보던 것을 잃는 화면이었다.
+        session_open = session is not None and session.status in _WORKING_STATUSES
+
+        # `running`이 `building`보다 먼저다. 세션을 여는 것은 호스팅을 건드리지
+        # 않으므로(어느 라우트도 stop을 부르지 않는다) 서버는 실제로 살아 있고,
+        # 그 사실을 먼저 말해야 카드가 프리뷰·링크·중지를 계속 그릴 수 있다.
+        # 첫 빌드에는 뜬 서버가 없으므로 그때는 여전히 `building`이다.
+        if host_info is not None and host_info.state == "running":
             state = "running"
             port = host_info.port
+        elif session_open:
+            state = "building"
         elif built:
             state = "built"
         elif session is not None and session.status == "failed":
@@ -307,12 +320,30 @@ async def list_prototypes(pid: str):
             if token:
                 access_url = access_url_path(token)
 
+        # 떠 있는 서버가 소스보다 오래됐는가. 실행 중에 수정할 수 있게 되면서 생긴
+        # 구간이다 — 서버는 그대로 뜬 채 소스만 바뀐다. 그때 카드가 "실행 :4007"만
+        # 말하면 사용자는 자기 수정이 반영됐다고 읽지만, 참가자에게 나간 링크가
+        # 보여 주는 것은 이전 버전이고 다시 호스팅해야 바뀐다.
+        #
+        # **세션이 열려 있는지로 대신하지 않는다.** 그러면 세션이 닫히는 순간 신호가
+        # 사라지고, 정작 그때가 사용자가 오해하기 가장 쉬운 시점이다.
+        #
+        # `running`일 때만 묻는다: 호스팅되지 않은 프로토타입에는 낡을 프리뷰가 없고,
+        # 트리를 걷는 비용도 그만큼 아낀다(이 라우트는 폴링된다 —
+        # `newest_source_mtime`이 제외 디렉토리를 잘라내는 이유와 같은 자리다).
+        preview_stale = False
+        if state == "running" and host_info is not None and host_info.built_at:
+            newest = newest_source_mtime(app_module._proto_root() / pid / slug)
+            preview_stale = newest is not None and newest > host_info.built_at
+
         # 카드 제목. **`slug`와 별개 필드다** — slug는 여전히 식별자이고(리셋·
         # 빌드·세션이 그 값으로 키된다) 이름은 표시용이다. 하나로 합치면 Path
         # A.1의 예약 id `prototype`을 이름으로 덮어쓰게 되어 식별자가 흔들린다.
         # 없으면 null: 프론트가 슬러그로 되돌아가는 분기가 값의 유무여야 한다.
         out.append({"slug": slug, "name": name, "spec_path": spec_path,
                     "state": state, "port": port,
+                    "session_open": session_open,
+                    "preview_stale": preview_stale,
                     "access_url": access_url,
                     "response_count": survey.responses,
                     "has_survey": survey.exists})
@@ -392,8 +423,26 @@ async def stream_session_events(pid: str, slug: str,
         # 조용히 빈 턴을 돌리면 사용자는 응답 없는 말풍선을 보고 원인을 알 수 없다.
         raise HTTPException(status_code=400,
                             detail="either `turn` or `text` is required")
+    # 세션의 **첫 메시지는 곧 개시 턴**이다. 센티넬이면 사용자가 아무 말도 하지
+    # 않은 자동 개시이므로 기본 개시 프롬프트를 쓰고, 아니면 그 메시지가 사용자의
+    # 요청이므로 개시 프롬프트에 실어 보낸다.
+    #
+    # **왜 사용자 요청을 개시 턴에 싣는가.** "수정하기"를 누른 사람은 이미 무엇을
+    # 고칠지 알고 있는데(프리뷰에서 봤다), 개시 프롬프트가 되묻고 그 질문이 떠 있는
+    # 동안 입력창이 비활성이라(BuildPanel) 자기 요청을 타이핑할 수조차 없었다.
+    #
+    # **생 텍스트를 그대로 보내면 안 된다.** handoff 분기는 새 session_id로 시작해
+    # 트랜스크립트가 없으므로(proto/session의 _resolve_session_id), 개시 프롬프트가
+    # 지고 오는 요약과 "먼저 prototype/을 봐라"가 빠지면 에이전트가 맥락 없이
+    # 시작한다.
+    #
+    # 판정 기준이 `session.opened`인 것이 요점이다 — UI 플래그가 아니다. 그것은
+    # 세션이 아는 사실이고, 프론트가 추측하면 새로고침·경합·이미 열린 세션에서
+    # 어긋난다. 핸들 경로(긴 요청)도 같은 분기를 탄다: 위에서 이미 text로 풀렸다.
     if text == _FIRST_TURN_SENTINEL:
         text = session.first_prompt()
+    elif not session.opened:
+        text = session.first_prompt(request=text)
 
     async def gen():
         async for event in session.send_message(text):

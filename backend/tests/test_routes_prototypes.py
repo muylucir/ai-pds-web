@@ -1,5 +1,6 @@
 # backend/tests/test_routes_prototypes.py — prototype session/host/proxy routes.
 import json
+import time
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -33,12 +34,21 @@ class FakePrototypeSession:
         self.messages: list[str] = []
         self.answers_calls: list[dict] = []
         self.answers_result = True
+        self._opened = False
         self._events = events or [AgentEvent(kind="message", text="building"),
                                   AgentEvent(kind="done")]
         self._start_exc = start_exc
 
-    def first_prompt(self) -> str:
-        return "FIRST_PROMPT_TEXT"
+    #: 실물과 같은 사실을 갖는다: 개시 턴이 이미 돌았는가. 라우트가 이 값으로
+    #: 사용자의 첫 메시지를 개시 프롬프트로 감쌀지 정하므로, 가짜가 이것을
+    #: 갖지 않으면 그 분기를 검증할 수 없다.
+    @property
+    def opened(self) -> bool:
+        return self._opened
+
+    def first_prompt(self, request=None) -> str:
+        # 요청이 실렸는지를 단정할 수 있게 인자를 반환값에 노출한다.
+        return f"FIRST({request})" if request is not None else "FIRST(None)"
 
     async def start(self):
         if self._start_exc is not None:
@@ -48,6 +58,7 @@ class FakePrototypeSession:
 
     async def send_message(self, text):
         self.messages.append(text)
+        self._opened = True
         self.status = "building"
         for ev in self._events:
             yield ev
@@ -282,6 +293,8 @@ def test_list_state_none(proto_env):
     assert body["prototypes"] == [{"slug": SLUG, "name": None,
                                    "spec_path": SPEC_KEY,
                                    "state": "none", "port": None,
+                                   "session_open": False,
+                                   "preview_stale": False,
                                    "access_url": None,
                                    "response_count": 0,
                                    "has_survey": False}]
@@ -430,6 +443,155 @@ def test_list_state_running_wins_over_built(proto_env):
 
     assert body["prototypes"][0]["state"] == "running"
     assert body["prototypes"][0]["port"] == 4007
+
+
+# ---- 호스팅 상태와 세션 상태는 서로 다른 사실이다 ----
+#
+# `state` 하나가 두 가지를 실어 나르고 있었다: 산출물·서버가 어떤 상태인가, 그리고
+# 빌드 세션이 열려 있는가. 그 둘은 독립적인데 열거형이 하나뿐이라 세션이 호스팅을
+# 가렸다 — 실행 중인 프로토타입을 수정하기 시작하면 카드가 `building`으로 바뀌어
+# 프리뷰·공유 링크 버튼이 사라졌고, 정작 서버는 계속 떠 있었다. 그래서 사용자는
+# 프리뷰를 본 직후(수정하고 싶어지는 그 순간) 수정을 시작하면 방금 보던 것을 잃었다.
+#
+# 이제 `state`는 산출물과 서버만 말하고, 세션이 열려 있는지는 `session_open`이
+# 따로 말한다.
+
+def test_a_running_host_is_not_hidden_by_an_open_build_session(proto_env, monkeypatch):
+    """실행 중인 프로토타입을 수정하는 동안에도 카드가 실행 중임을 알아야 한다.
+
+    세션을 여는 것은 호스팅을 건드리지 않는다(어느 라우트도 stop을 부르지 않는다)
+    — 서버는 실제로 계속 떠 있으므로, 화면이 아니라고 말하는 것이 틀린 것이다.
+    프리뷰와 공유 링크는 참가자에게 이미 나가 있는 주소이고 그 링크는 계속 산다."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="running", port=4007,
+                                                    log_tail="")
+    session = FakePrototypeSession()
+    session.status = "building"
+    app_module.proto_sessions[(PID, SLUG)] = session
+
+    entry = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+
+    assert entry["state"] == "running"
+    assert entry["port"] == 4007
+    # 그러면서 세션이 열려 있다는 사실도 잃지 않는다 — 카드의 빌드 버튼이 이
+    # 값으로 "수정하기"와 "세션 열기"를 가른다.
+    assert entry["session_open"] is True
+
+
+def test_the_share_url_survives_a_modify_session(proto_env, monkeypatch):
+    """`access_url`은 `state == "running"`일 때만 실린다. 세션이 호스팅을 가리던
+    동안에는 수정을 시작하는 순간 참가자용 링크가 카드에서 사라졌다 — 서버는 그
+    링크로 계속 응답하고 있었으므로 화면만 거짓말을 했다."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(state="running", port=4007,
+                                                    log_tail="")
+    proto_env["host"].ensure_token(PID, SLUG)
+    session = FakePrototypeSession()
+    session.status = "building"
+    app_module.proto_sessions[(PID, SLUG)] = session
+
+    entry = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+
+    assert entry["access_url"] is not None
+
+
+def test_session_open_is_false_without_a_working_session(proto_env):
+    """완료·실패한 세션은 열려 있는 것이 아니다. `_WORKING_STATUSES`와 같은
+    질문이어야 한다 — 그렇지 않으면 끝난 세션이 카드의 버튼을 영구히
+    "세션 열기"로 붙들어 둔다(그 결함이 이 파일 위쪽에 이미 기록돼 있다)."""
+    _seed_spec(proto_env["s3"])
+    body = client.get(f"/projects/{PID}/prototypes").json()
+    assert body["prototypes"][0]["session_open"] is False
+
+    for status in ("complete", "failed", "ready"):
+        session = FakePrototypeSession()
+        session.status = status
+        app_module.proto_sessions[(PID, SLUG)] = session
+        entry = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+        assert entry["session_open"] is False, status
+
+
+def test_session_open_is_true_while_work_is_in_flight(proto_env):
+    _seed_spec(proto_env["s3"])
+    for status in ("starting", "building", "waiting_input"):
+        session = FakePrototypeSession()
+        session.status = status
+        app_module.proto_sessions[(PID, SLUG)] = session
+        entry = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+        assert entry["session_open"] is True, status
+
+
+# ---- 떠 있는 프리뷰가 이전 버전인가 ----
+#
+# 실행 중에 수정할 수 있게 되면서, 서버는 그대로 뜬 채 소스만 바뀌는 구간이 생겼다.
+# 그때 카드가 "실행 :4007"만 말하면 사용자는 자기 수정이 반영됐다고 읽는다 — 참가자
+# 링크가 보여 주는 것은 이전 버전이고, 다시 호스팅해야 바뀐다.
+#
+# **세션이 열려 있는지로 대신하면 안 된다**: 세션이 닫히는 순간 그 신호가 사라지고,
+# 정작 그때가 오해하기 가장 쉬운 시점이다. 그래서 서버가 소스를 읽은 시각과 빌드
+# 트리의 최신 소스 mtime을 비교한다.
+
+def test_a_freshly_hosted_preview_is_not_stale(proto_env):
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(
+        state="running", port=4007, log_tail="", built_at=time.time() + 5)
+
+    entry = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+
+    assert entry["preview_stale"] is False
+
+
+def test_a_source_change_after_hosting_makes_the_preview_stale(proto_env):
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+    # 서버는 소스보다 먼저 떴다.
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(
+        state="running", port=4007, log_tail="", built_at=time.time() - 60)
+
+    entry = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+
+    assert entry["preview_stale"] is True
+
+
+def test_only_a_running_preview_can_be_stale(proto_env):
+    """호스팅되지 않은 프로토타입에는 낡을 프리뷰가 없다 — 거기에 경고를 띄우면
+    사용자가 무엇을 해야 하는지 알 수 없다(다시 호스팅할 대상이 없다)."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+
+    entry = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+
+    assert entry["state"] == "built"
+    assert entry["preview_stale"] is False
+
+
+def test_staleness_survives_the_session_closing(proto_env):
+    """이것이 이 필드가 존재하는 이유다. 세션이 닫힌 뒤에도 프리뷰는 여전히 이전
+    버전이고, 바로 그때 사용자가 "반영됐다"고 오해한다."""
+    _seed_spec(proto_env["s3"])
+    proto_dir = proto_env["root"] / PID / SLUG / "prototype"
+    proto_dir.mkdir(parents=True)
+    (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(
+        state="running", port=4007, log_tail="", built_at=time.time() - 60)
+    # 세션은 없다(닫혔다).
+    entry = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
+
+    assert entry["session_open"] is False
+    assert entry["preview_stale"] is True
 
 
 def test_list_state_building(proto_env, monkeypatch):
@@ -686,7 +848,9 @@ def test_events_streams_and_redacts(proto_env):
     events = _sse_events(text)
     assert [e["kind"] for e in events] == ["message", "done"]
     assert "AKIAIOSFODNN7EXAMPLE1" not in text
-    assert session.messages == ["build please"]
+    # 세션의 첫 메시지이므로 개시 프롬프트로 감싸진다(그 분기는 아래 전용
+    # 테스트들이 검증한다). 이 테스트의 대상은 스트리밍과 리댁션이다.
+    assert session.messages == ["FIRST(build please)"]
 
 
 def test_events_first_sentinel_uses_first_prompt(proto_env):
@@ -696,7 +860,7 @@ def test_events_first_sentinel_uses_first_prompt(proto_env):
     with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
                        params={"text": "__first__"}) as resp:
         "".join(resp.iter_text())
-    assert session.messages == ["FIRST_PROMPT_TEXT"]
+    assert session.messages == ["FIRST(None)"]
 
 
 def test_answers_204_and_409(proto_env):
@@ -827,6 +991,8 @@ def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):
     assert body["prototypes"] == [{"slug": SLUG, "name": None,
                                    "spec_path": SPEC_KEY,
                                    "state": "none", "port": None,
+                                   "session_open": False,
+                                   "preview_stale": False,
                                    "access_url": None,
                                    "response_count": 0,
                                    "has_survey": False}]
@@ -1791,7 +1957,9 @@ def test_session_turn_handle_carries_text_out_of_the_url(proto_env, monkeypatch)
                        params={"turn": handle}) as resp:
         list(resp.iter_lines())
     # 에이전트는 원문 전체를 받았다 — 핸들이 텍스트를 잘라먹지 않는다.
-    assert session.messages == [long_text]
+    # 첫 메시지이므로 감싸진다 — 이 테스트가 지키는 것은 긴 텍스트가 URL이
+    # 아니라 핸들로 왔다는 것이다.
+    assert session.messages == [f"FIRST({long_text})"]
 
 
 def test_session_turn_handle_is_single_use(proto_env, monkeypatch):
@@ -1818,7 +1986,7 @@ def test_session_events_still_accepts_the_first_turn_sentinel(proto_env, monkeyp
                        params={"text": "__first__"}) as r:
         list(r.iter_lines())
     # 센티널은 서버가 first_prompt()로 치환한다.
-    assert session.messages == ["FIRST_PROMPT_TEXT"]
+    assert session.messages == ["FIRST(None)"]
 
 
 def test_session_events_requires_text_or_turn(proto_env, monkeypatch):
@@ -1866,3 +2034,77 @@ def test_list_ignores_other_files_in_the_single_prototype_dir(proto_env):
     proto_env["s3"].blobs["aiplc-docs/discovery/prototype/build-instructions.md"] = "y"
     body = client.get(f"/projects/{PID}/prototypes").json()
     assert body["prototypes"] == []
+
+
+# ---- 사용자의 첫 메시지가 개시 턴이 된다 ----
+#
+# "수정하기"를 누른 사람은 이미 무엇을 고칠지 알고 있는데, 개시 프롬프트가 되묻고
+# 그 질문이 떠 있는 동안 입력창이 비활성이라 자기 요청을 타이핑할 수조차 없었다
+# (근거는 aipds/proto/prompts.handoff_prompt).
+#
+# 판정 기준이 `session.opened`인 것이 요점이다 — UI 플래그가 아니다. "개시 턴이
+# 아직 안 돌았다"는 세션이 아는 사실이고, 프론트가 추측하면 새로고침·경합·이미
+# 열린 세션에서 어긋난다.
+
+def test_the_first_user_message_is_wrapped_as_the_opening_turn(proto_env, monkeypatch):
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+
+    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events"
+                              "?text=장바구니 버튼을 오른쪽 위로") as resp:
+        assert resp.status_code == 200
+        list(resp.iter_lines())
+
+    # 세션이 받은 것은 사용자의 생 문장이 아니라 그 요청이 실린 개시 프롬프트다.
+    assert session.messages == ["FIRST(장바구니 버튼을 오른쪽 위로)"]
+
+
+def test_a_later_message_is_an_ordinary_turn(proto_env, monkeypatch):
+    """개시 턴이 한 번 돌면 그 뒤 메시지는 감싸지 않는다 — 감싸면 매 턴이
+    "먼저 prototype/을 봐라"로 다시 시작한다."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+
+    for text in ("첫 요청", "두 번째 요청"):
+        with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events"
+                                  f"?text={text}") as resp:
+            list(resp.iter_lines())
+
+    assert session.messages == ["FIRST(첫 요청)", "두 번째 요청"]
+
+
+def test_the_sentinel_still_opens_without_a_request(proto_env, monkeypatch):
+    """자동 개시에는 사용자가 아무 말도 하지 않았다 — 그때는 되묻는 개시
+    프롬프트가 맞는 동작이고, 이 변경이 그것을 없애서는 안 된다."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+
+    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events"
+                              "?text=__first__") as resp:
+        list(resp.iter_lines())
+
+    assert session.messages == ["FIRST(None)"]
+
+
+def test_a_long_request_rides_the_turn_handle(proto_env, monkeypatch):
+    """긴 요청은 URL에 실을 수 없다(프록시 431 — turn_handles.py 헤더). 핸들
+    경로도 개시 턴 판정을 똑같이 타야 한다."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+
+    long_text = "이 화면을 " + "아주 " * 500 + "크게"
+    turn = client.post(f"/projects/{PID}/prototypes/{SLUG}/turns",
+                       json={"text": long_text}).json()["turn_id"]
+    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events"
+                              f"?turn={turn}") as resp:
+        list(resp.iter_lines())
+
+    assert session.messages == [f"FIRST({long_text})"]
