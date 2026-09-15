@@ -89,6 +89,39 @@ _PORT = re.compile(r"(?<![0-9])(?:3000|8000)(?![0-9])")
 _PATTERNS = (_BROWSER, _SERVER, _KILL, _PORT)
 
 
+#: 서브에이전트를 백그라운드로 띄우는 인자(`Agent` 도구의 input 키). 실측으로
+#: 확인한 이름이다(claude_agent_sdk 0.2.143: description/prompt/subagent_type/
+#: run_in_background).
+_BACKGROUND_KEY = "run_in_background"
+
+
+def background_agent_denial(tool_input: object) -> str | None:
+    """`Agent` 호출이 백그라운드면 거부 대상 키를, 아니면 None.
+
+    **왜 막는가(2026-09-15 실측).** 같은 프롬프트로 두 번 돌렸는데 한 번은 모델이
+    `run_in_background: true`를 골랐고, 그러자 총괄 에이전트가 ResultMessage로
+    턴을 끝내면서 서브에이전트는 계속 돌았다. 그 결과가 셋이다:
+
+      - 프론트가 `done`에서 EventSource를 닫으므로(sse.ts) 그 뒤의 진행 상황은
+        **화면에 닿을 수 없다** — 서브에이전트 행이 열린 채로 사라진다.
+      - `builder.run`도 terminal에서 루프를 벗어나므로 종료 메시지를 번역조차 못 한다.
+      - 그리고 가장 나쁜 것은 UI가 아니다: 사용자의 다음 메시지가, 워크스페이스를
+        아직 고치고 있는 에이전트들 위로 간다.
+
+    턴의 수명이 그 턴이 시킨 일의 수명을 덮는다는 것이 이 화면 전체의 전제다.
+    산문으로 두지 않는 이유는 이 모듈 헤더가 이미 적어 뒀다 — CLAUDE.md의 금지는
+    우회 레시피까지 가르쳤다.
+
+    **참·거짓은 truthiness로 본다.** `tool_input`은 모델이 만든 값이라 모양이
+    어긋날 수 있고(`"true"` 문자열), 타입이 정확할 때만 막으면 게이트가 이름만
+    남는다. 반대로 판단 근거가 아예 없는 입력(dict가 아님)은 **통과**시킨다 —
+    `bash_denial`과 같은 실패 방향이다.
+    """
+    if not isinstance(tool_input, dict):
+        return None
+    return _BACKGROUND_KEY if tool_input.get(_BACKGROUND_KEY) else None
+
+
 def bash_denial(command: str | None) -> str | None:
     """브라우저 자동화·서버 기동·타 프로세스 종료·AI-PDS 포트면 거부 대상
     조각을, 아니면 None.

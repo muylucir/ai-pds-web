@@ -543,3 +543,158 @@ describe("build_complete", () => {
     );
   });
 });
+
+// ---- 서브에이전트 행 ----
+//
+// 이 블록이 지키는 것: 빌드 에이전트가 Agent 도구로 일을 병렬로 넘기는 동안
+// 화면이 무엇이 도는지 말할 수 있다. 종전에는 SDK의 `Task*` 메시지가 백엔드
+// 번역부에서 버려져 이 값이 존재하지도 않았다(backend/aipds/agent_activity.py).
+
+/** onDone을 부르지 않는 드라이버 — 도는 턴의 상태를 봐야 하는 테스트용.
+ *  기본 `drive`는 프레임을 넣고 즉시 턴을 닫으므로 행이 이미 비워져 있다. */
+function driveOpen(events: AgentEvent[]) {
+  vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+    (_pid: any, _slug: any, _text: any, handlers: any) => {
+      for (const ev of events) handlers.onEvent(ev);
+      return () => {};
+    },
+  );
+}
+
+const activity = (payload: Record<string, unknown>): AgentEvent =>
+  ({ kind: "agent_activity", text: null, path: null, payload: JSON.stringify(payload) });
+
+describe("usePrototypeStream — 서브에이전트 행", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("도는 에이전트를 행으로 내보낸다", () => {
+    driveOpen([
+      activity({ task_id: "a1", state: "started", label: "화면 골격" }),
+      activity({ task_id: "a2", state: "started", label: "데이터 모델" }),
+      activity({ task_id: "a1", state: "progress", tool: "Write", detail: "app/page.tsx" }),
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    expect(result.current.agents.map((a) => a.label)).toEqual(["화면 골격", "데이터 모델"]);
+    expect(result.current.agents[0]).toMatchObject({ tool: "Write", detail: "app/page.tsx" });
+  });
+
+  it("끝난 에이전트는 행에서 빠지고 트레이스에 남는다", () => {
+    // 행은 "지금 도는 것"이고 트레이스는 "일어난 일"이다. 끝난 에이전트가 행에
+    // 남으면 턴이 끝난 뒤에도 도는 스피너가 남는다.
+    driveOpen([
+      activity({ task_id: "a1", state: "started", label: "화면 골격" }),
+      activity({ task_id: "a1", state: "done", status: "completed", summary: "만들었다" }),
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    expect(result.current.agents).toEqual([]);
+    const ai = result.current.items.find((it) => it.role === "ai")!;
+    expect(ai.trace).toEqual([
+      { kind: "agent", text: "화면 골격", path: null, detail: "만들었다",
+        status: "completed", taskId: "a1" },
+    ]);
+  });
+
+  it("늦게 온 요약이 완료 줄을 갱신한다 — 두 줄이 되지 않는다", () => {
+    // 실측: task_updated(요약 없음) → task_notification(요약 있음). 백엔드는 어느
+    // 종료가 마지막인지 모르므로 요약을 한 번 더 보내고, 접는 것은 여기 몫이다.
+    driveOpen([
+      activity({ task_id: "a1", state: "started", label: "화면 골격" }),
+      activity({ task_id: "a1", state: "done", status: "completed" }),
+      activity({ task_id: "a1", state: "done", status: "completed", summary: "만들었다" }),
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    const ai = result.current.items.find((it) => it.role === "ai")!;
+    expect(ai.trace).toEqual([
+      { kind: "agent", text: "화면 골격", path: null, detail: "만들었다",
+        status: "completed", taskId: "a1" },
+    ]);
+  });
+
+  it("에이전트가 여럿이면 각자 자기 완료 줄을 갖는다", () => {
+    driveOpen([
+      activity({ task_id: "a1", state: "started", label: "화면 골격" }),
+      activity({ task_id: "a2", state: "started", label: "데이터 모델" }),
+      activity({ task_id: "a1", state: "done", status: "completed", summary: "A" }),
+      activity({ task_id: "a2", state: "done", status: "failed", summary: "B" }),
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    const ai = result.current.items.find((it) => it.role === "ai")!;
+    expect(ai.trace.map((e) => [e.taskId, e.status, e.detail])).toEqual([
+      ["a1", "completed", "A"],
+      ["a2", "failed", "B"],
+    ]);
+  });
+
+  it("서브에이전트 활동이 총괄 고정 줄을 덮지 않는다", () => {
+    // 고정 줄은 총괄 에이전트의 일을 말한다. 서브에이전트의 도구 이름이 그 자리를
+    // 덮으면 총괄이 무엇을 기다리는지가 지워지고, 그 줄이 에이전트들 사이에서
+    // 깜빡이던 종전 동작이 그대로 돌아온다.
+    driveOpen([
+      { kind: "status", text: "Agent", path: null,
+        payload: JSON.stringify({ detail: "화면 골격 만들기" }) },
+      activity({ task_id: "a1", state: "progress", tool: "Bash", detail: "npm i" }),
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    const ai = result.current.items.find((it) => it.role === "ai")!;
+    expect(ai.activity).toEqual({ kind: "tool", tool: "Agent", detail: "화면 골격 만들기" });
+  });
+
+  it("턴이 끝나면 행이 비워진다", () => {
+    drive([
+      activity({ task_id: "a1", state: "started", label: "화면 골격" }),
+      { kind: "done", text: null, path: null, payload: null },
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+    expect(result.current.agents).toEqual([]);
+  });
+
+  it("깨진 payload가 스트림을 멈추지 않는다", () => {
+    // 진행 표시는 부수 정보다 — 그것 때문에 빌드가 죽으면 안 된다(safeParse의 계약).
+    driveOpen([
+      { kind: "agent_activity", text: null, path: null, payload: "{not json" },
+      activity({ task_id: "a1", state: "started", label: "화면 골격" }),
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+    expect(result.current.agents.map((a) => a.label)).toEqual(["화면 골격"]);
+  });
+});
+
+describe("usePrototypeStream — 도구가 무엇을 했는지", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("status의 detail을 트레이스와 고정 줄에 함께 싣는다", () => {
+    // 종전에는 이 값을 버려서 빌드 화면이 Discovery와 달리 맨 `Bash`만 보였다 —
+    // 무슨 명령이 도는지 알 수 없는 것이 화면이 멈춘 듯 보인 이유 중 하나다.
+    driveOpen([
+      { kind: "status", text: "Bash", path: null,
+        payload: JSON.stringify({ detail: "npm run build" }) },
+    ]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    const ai = result.current.items.find((it) => it.role === "ai")!;
+    expect(ai.trace[0]).toMatchObject({ kind: "status", text: "Bash", detail: "npm run build" });
+    expect(ai.activity).toEqual({ kind: "tool", tool: "Bash", detail: "npm run build" });
+  });
+
+  it("detail이 없는 status도 그대로 동작한다", () => {
+    driveOpen([{ kind: "status", text: "Write", path: null, payload: null }]);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+
+    const ai = result.current.items.find((it) => it.role === "ai")!;
+    expect(ai.trace[0]).toMatchObject({ kind: "status", text: "Write", detail: null });
+  });
+});

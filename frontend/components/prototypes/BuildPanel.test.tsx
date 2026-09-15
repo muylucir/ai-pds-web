@@ -36,6 +36,7 @@ function mockStream(overrides: Partial<prototypeStream.PrototypeStream> = {}) {
   const base: prototypeStream.PrototypeStream = {
     items: [],
     streaming: false,
+    agents: [],
     pendingQuestions: null,
     buildComplete: null,
     changedPaths: [],

@@ -28,6 +28,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { Dict } from "@/lib/i18n";
+import type { AgentRow } from "@/lib/protoAgents";
 import type { LiveActivity } from "@/lib/useTurnStream";
 import { useT } from "@/lib/i18n/provider";
 
@@ -56,6 +57,10 @@ const ACTIVITY_LABEL_KEYS: Record<string, keyof Dict> = {
   Grep: "activity.searching",
   Bash: "activity.working",
   WebFetch: "activity.fetching",
+  // 서브에이전트를 띄우는 도구(실측: 이름은 `Agent`, 구 `Task`가 아니다). 총괄
+  // 에이전트가 이것을 부르면 그 자신은 서브에이전트를 기다리는 것이 전부다 —
+  // 폴백에 맡기면 "Agent 실행 중"이 되어 무슨 일인지 오히려 흐려진다.
+  Agent: "activity.delegating",
   // 프로토타입 빌드 전용 커스텀 도구(proto/tools.py)
   build_complete: "activity.buildFinishing",
   // Discovery에는 커스텀 도구가 없다. `report_stage`(2026-08-18)와
@@ -95,30 +100,28 @@ export function formatElapsed(totalSeconds: number, t: T): string {
   return seconds === 0 ? `${minutes}${min}` : `${minutes}${min} ${seconds}${sec}`;
 }
 
-/** `active`인 동안 1초마다 올라가는 경과 초. 비활성이 되면 0으로 되돌린다.
+/** `startedAt`(ms)부터 1초마다 올라가는 경과 초.
+ *
+ *  **시작 시각을 인자로 받는 이유.** 종전에는 마운트 시점부터 셌다 — 바가 하나일
+ *  때는 그것이 곧 턴의 시작이라 맞았다. 서브에이전트 행이 생기면서 더는 맞지
+ *  않는다: 행마다 뜬 순간이 다르고, 각 행이 **자기** 경과를 보여야 그 숫자가
+ *  살아있음의 증거가 된다(모듈 헤더). 마운트 기준이면 늦게 뜬 에이전트가 이미
+ *  1분을 일한 것처럼 보인다.
  *
  *  `Date.now()` 차이로 계산하는 이유: setInterval의 호출 횟수를 세면 탭이
  *  백그라운드로 갔을 때 브라우저가 타이머를 늦춰(throttle) 실제 경과보다 적게
  *  센다. 사용자가 다른 탭을 보다 돌아왔을 때 "12초"라고 우기면 안 된다. */
-function useElapsedSeconds(active: boolean): number {
-  const [seconds, setSeconds] = useState(0);
-  const startedAt = useRef<number | null>(null);
+function useElapsedSeconds(startedAt: number): number {
+  const [seconds, setSeconds] = useState(() =>
+    Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
 
   useEffect(() => {
-    if (!active) {
-      startedAt.current = null;
-      setSeconds(0);
-      return;
-    }
-    startedAt.current = Date.now();
-    setSeconds(0);
+    setSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
     const id = setInterval(() => {
-      if (startedAt.current !== null) {
-        setSeconds(Math.floor((Date.now() - startedAt.current) / 1000));
-      }
+      setSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
     }, 1000);
     return () => clearInterval(id);
-  }, [active]);
+  }, [startedAt]);
 
   return seconds;
 }
@@ -165,27 +168,34 @@ export function activityText(
   }
 }
 
-export function LiveActivityBar({ activity }: { activity: LiveActivity }) {
+/** 한 줄. 스피너 · 무슨 일 · 대상 · 경과 시간.
+ *
+ *  총괄 줄과 에이전트 행이 **같은 컴포넌트**인 것이 의도다: 행이 총괄 줄과 다르게
+ *  움직이면(스피너가 없거나 경과가 안 올라가면) 그 행은 진행으로 읽히지 않고,
+ *  그것이 정확히 이 기능이 고치려는 증상이다. */
+function ActivityLine({
+  label, target, startedAt, nested = false, testId,
+}: {
+  label: string;
+  target: string | null;
+  startedAt: number;
+  nested?: boolean;
+  testId?: string;
+}) {
   const t = useT();
-  // 마운트되어 있는 동안이 곧 진행 중인 동안이다 — 호출자(화면)가 streaming으로
-  // 마운트를 제어하므로, 여기서 다시 판단하지 않는다.
-  const elapsed = useElapsedSeconds(true);
-  const { label, target } = activityText(activity, t);
-
+  const elapsed = useElapsedSeconds(startedAt);
   return (
-    // role="status"로 스크린리더에 활동 변화를 알린다. 경과 시간은
-    // aria-hidden으로 제외한다 — 1초마다 읽어주면 라벨 변화를 덮어버린다.
-    //
-    // 입력창 위에 붙는 줄이므로 전폭이고 위쪽 경계선만 갖는다 — 대화 영역과
-    // 작성 영역 사이의 띠로 읽혀야 하고, 말풍선처럼 보이면 다시 대화의 일부가 된다.
-    <div
-      role="status"
-      className="flex items-center gap-2 border-t border-violet-200 bg-violet-50 px-4 py-2"
-    >
+    <div className={`flex items-center gap-2 ${nested ? "pl-4" : ""}`}>
+      {/* `⎿`는 이 행이 위 줄에 딸린 일이라는 것을 글자 하나로 말한다 —
+          클로드코드의 트리와 같은 표기이고, 들여쓰기만으로는 목록과 구분되지 않는다. */}
+      {nested && (
+        <span className="shrink-0 text-xs text-violet-300" aria-hidden="true">⎿</span>
+      )}
       <Spinner />
       <span
-        data-testid="live-what"
-        className="flex-1 min-w-0 truncate text-xs font-medium text-violet-700"
+        data-testid={testId}
+        className={`flex-1 min-w-0 truncate text-xs ${
+          nested ? "text-violet-600" : "font-medium text-violet-700"}`}
       >
         {label}
         {target && (
@@ -195,6 +205,56 @@ export function LiveActivityBar({ activity }: { activity: LiveActivity }) {
       <span className="shrink-0 text-xs text-violet-400 tabular-nums" aria-hidden="true">
         {formatElapsed(elapsed, t)}
       </span>
+    </div>
+  );
+}
+
+export function LiveActivityBar({
+  activity, agents = [],
+}: { activity: LiveActivity; agents?: readonly AgentRow[] }) {
+  const t = useT();
+  // 마운트되어 있는 동안이 곧 진행 중인 동안이다 — 호출자(화면)가 streaming으로
+  // 마운트를 제어하므로, 여기서 다시 판단하지 않는다. 첫 렌더에 한 번만 읽힌다.
+  const mountedAt = useRef(Date.now());
+
+  // 서브에이전트가 도는 동안 총괄 줄은 **개수**를 말한다. 그 구간에 총괄
+  // 에이전트가 하는 일은 서브에이전트를 기다리는 것이 전부이고, 사용자가 알고
+  // 싶은 것은 "몇 개가 일하고 있나"다 — 종전에는 그 한 줄이 서브에이전트들의
+  // 도구 이름 사이에서 깜빡였고, 그것이 화면이 멈춘 듯 보인 이유다.
+  const head = agents.length > 0
+    ? { label: `${agents.length}${t("activity.agentsWorkingSuffix")}`, target: null }
+    : activityText(activity, t);
+
+  return (
+    // role="status"로 스크린리더에 활동 변화를 알린다. 경과 시간은
+    // aria-hidden으로 제외한다 — 1초마다 읽어주면 라벨 변화를 덮어버린다.
+    //
+    // 입력창 위에 붙는 띠이므로 전폭이고 위쪽 경계선만 갖는다 — 대화 영역과
+    // 작성 영역 사이의 띠로 읽혀야 하고, 말풍선처럼 보이면 다시 대화의 일부가 된다.
+    <div
+      role="status"
+      className="border-t border-violet-200 bg-violet-50 px-4 py-2 space-y-1"
+    >
+      <ActivityLine
+        label={head.label}
+        target={head.target}
+        startedAt={mountedAt.current}
+        testId="live-what"
+      />
+      {agents.map((agent) => (
+        <ActivityLine
+          key={agent.id}
+          nested
+          // 이름이 곧 그 에이전트에 맡긴 일이다(백엔드가 Agent 도구의
+          // description을 그대로 싣는다). 라벨을 못 받은 행은 대체 이름을 쓴다 —
+          // 이름 없는 행이라도 도는 것이 보이는 편이 낫다.
+          label={agent.label ?? t("activity.agentUnnamed")}
+          // 대상이 있으면 그것이 가장 구체적이다(어느 파일을 만지는지). 없으면
+          // 무슨 도구를 돌리는지라도 말한다.
+          target={agent.detail ?? (agent.tool ? activityLabel(agent.tool, t) : null)}
+          startedAt={agent.startedAt}
+        />
+      ))}
     </div>
   );
 }

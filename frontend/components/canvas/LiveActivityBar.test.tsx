@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { LiveActivityBar, activityLabel, formatElapsed } from "./LiveActivityBar";
+import type { AgentRow } from "@/lib/protoAgents";
 import type { LiveActivity } from "@/lib/useTurnStream";
 
 const tool = (t: string, detail: string | null = null): LiveActivity =>
@@ -128,6 +129,97 @@ describe("LiveActivityBar — 살아있음의 기본값", () => {
   it("알 수 없는 도구명은 폴백 문구로 표시한다", () => {
     render(<LiveActivityBar activity={tool("custom_tool")} />);
     expect(screen.getByText(/custom_tool 실행 중/)).toBeInTheDocument();
+  });
+});
+
+describe("LiveActivityBar — 서브에이전트 행", () => {
+  // 이 블록이 지키는 것: 병렬 작업이 화면에서 진행으로 읽힌다. 한 줄짜리 바는
+  // 에이전트 셋 사이에서 깜빡이고 어느 것도 진행으로 읽히지 않았다.
+  const row = (over: Partial<AgentRow> = {}): AgentRow => ({
+    id: "a040",
+    label: "화면 골격",
+    tool: "Write",
+    detail: "app/page.tsx",
+    startedAt: Date.now(),
+    status: null,
+    summary: null,
+    ...over,
+  });
+
+  it("에이전트마다 한 행씩 그린다", () => {
+    render(
+      <LiveActivityBar
+        activity={tool("Agent")}
+        agents={[
+          row({ id: "a1", label: "화면 골격", detail: "app/page.tsx" }),
+          row({ id: "a2", label: "데이터 모델", detail: "prisma/schema.prisma" }),
+          row({ id: "a3", label: "스타일", detail: "tailwind.config.ts" }),
+        ]}
+      />,
+    );
+    expect(screen.getByText("화면 골격")).toBeInTheDocument();
+    expect(screen.getByText("데이터 모델")).toBeInTheDocument();
+    expect(screen.getByText("스타일")).toBeInTheDocument();
+    expect(screen.getByText(/app\/page\.tsx/)).toBeInTheDocument();
+  });
+
+  it("총괄 줄이 몇 개가 일하는지 말한다", () => {
+    // 그 구간에 총괄이 하는 일은 기다리는 것이 전부다. 사용자가 알고 싶은 것은
+    // 개수이고, 종전에는 그 자리에서 서브에이전트들의 도구 이름이 깜빡였다.
+    render(<LiveActivityBar activity={tool("Agent")} agents={[row({ id: "a1" }), row({ id: "a2" })]} />);
+    expect(screen.getByTestId("live-what")).toHaveTextContent("2개 에이전트가 일하고 있어요");
+  });
+
+  it("행마다 자기 경과 시간을 센다", () => {
+    // 마운트 기준으로 세면 늦게 뜬 에이전트가 이미 오래 일한 것처럼 보인다.
+    vi.useFakeTimers();
+    const now = Date.now();
+    render(
+      <LiveActivityBar
+        activity={tool("Agent")}
+        agents={[row({ id: "a1", startedAt: now - 5_000 }), row({ id: "a2", startedAt: now - 40_000 })]}
+      />,
+    );
+    // 총괄 줄은 마운트 기준(0초), 두 행은 각자 뜬 시각 기준.
+    expect(screen.getByText("0초")).toBeInTheDocument();
+    expect(screen.getByText("5초")).toBeInTheDocument();
+    expect(screen.getByText("40초")).toBeInTheDocument();
+  });
+
+  it("행마다 스피너가 돈다 — 정지 화면과 구분되는 유일한 신호다", () => {
+    const { container } = render(
+      <LiveActivityBar activity={tool("Agent")} agents={[row({ id: "a1" }), row({ id: "a2" })]} />);
+    // 총괄 줄 1개 + 행 2개.
+    expect(container.querySelectorAll(".animate-spin")).toHaveLength(3);
+  });
+
+  it("대상이 없으면 무슨 도구를 돌리는지라도 말한다", () => {
+    render(<LiveActivityBar activity={tool("Agent")} agents={[row({ detail: null, tool: "Bash" })]} />);
+    expect(screen.getByText(/작업을 진행하고 있어요/)).toBeInTheDocument();
+  });
+
+  it("라벨을 못 받은 행도 그린다 — 도는 것이 안 보이는 것보다 낫다", () => {
+    render(<LiveActivityBar activity={tool("Agent")} agents={[row({ label: null })]} />);
+    expect(screen.getByText("에이전트")).toBeInTheDocument();
+  });
+
+  it("에이전트가 없으면 종전과 똑같은 한 줄이다", () => {
+    // 병렬이 아닌 빌드(그리고 워크스페이스 화면)의 동작이 바뀌면 안 된다.
+    const { container } = render(<LiveActivityBar activity={tool("Read", "x.md")} />);
+    expect(container.querySelectorAll(".animate-spin")).toHaveLength(1);
+    expect(screen.getByTestId("live-what")).toHaveTextContent("자료를 확인하고 있어요");
+  });
+
+  it("긴 대상이 행을 넘치게 하지 않는다", () => {
+    const { container } = render(
+      <LiveActivityBar
+        activity={tool("Agent")}
+        agents={[row({ detail: "a/".repeat(80) + "deep.tsx" })]}
+      />,
+    );
+    for (const line of container.querySelectorAll("span.flex-1")) {
+      expect(line).toHaveClass("truncate");
+    }
   });
 });
 

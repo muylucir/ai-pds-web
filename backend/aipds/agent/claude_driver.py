@@ -1439,7 +1439,17 @@ class ClaudeDriver:
     def _translate(self, msg, reader: "_MessageReader | None" = None) -> list[AgentEvent]:
         events: list[AgentEvent] = []
         tname = type(msg).__name__
-        if tname == "SystemMessage" and getattr(msg, "subtype", "") == "mirror_error":
+        # `MirrorErrorMessage`는 `SystemMessage`의 **서브클래스**이고, 파서는
+        # mirror_error에 대해 언제나 그 서브클래스를 만든다
+        # (`_internal/message_parser.py`). 그래서 `tname == "SystemMessage"`만
+        # 보던 종전 조건은 **한 번도 참이 되지 않았다** — 이 주석이 "유일한
+        # 신호"라고 적어 둔 그 경고가 실제로는 찍히지 않았다. 이름으로 분기하는
+        # 코드가 서브클래스에 걸려 죽는 자리이고, 같은 함정이 프로토타입 빌드의
+        # `Task*` 메시지에서도 반복됐다(aipds/agent_activity.py 헤더).
+        #
+        # 두 이름을 다 받는다: 상류가 이 클래스를 되돌려도 조용히 다시 죽지 않는다.
+        if (tname in ("SystemMessage", "MirrorErrorMessage")
+                and getattr(msg, "subtype", "") == "mirror_error"):
             # A transcript batch failed to reach S3. The SDK does NOT retry it
             # (at-most-once), so this message is the only signal there is -- and
             # we were dropping it whole. That is what made the empty-history bug

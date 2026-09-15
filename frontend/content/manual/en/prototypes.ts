@@ -55,6 +55,11 @@ for every prototype you want to validate.`,
 it exactly as in the workspace. You can direct it mid-build — "do the sign-in screen first",
 "make this one mobile-first".
 
+The AI splits a large build across several agents. When it does, the progress line above the input
+expands into **one row per agent**, each showing the piece of work it owns, the file it is touching
+and its own elapsed time, with a count such as *3 agents working*. Several rows moving at once is
+normal; a finished agent leaves the rows and stays in the **activity log** under the message.
+
 A session lasts **one build**. When the AI declares it finished, the session closes itself — that
 is a normal ending, not a dropped connection.`,
     },
