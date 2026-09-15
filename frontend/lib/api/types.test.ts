@@ -10,7 +10,7 @@ import type {
   BuildCompletePayload,
 } from "./types";
 
-// Mirror guard (E1): AgentEventKind must cover EXACTLY the same 9 kinds as
+// Mirror guard (E1): AgentEventKind must cover EXACTLY the same kinds as
 // backend/aipds/models.py's AgentEvent.kind Literal -- a drift here
 // would silently break the SSE contract.
 //
@@ -30,6 +30,7 @@ const AGENT_EVENT_KIND_EXHAUSTIVENESS: Record<AgentEventKind, true> = {
   done: true,
   prototype_ready: true,
   build_complete: true,
+  agent_activity: true,
   error: true,
 };
 
@@ -71,12 +72,13 @@ describe("api types mirror the backend models", () => {
     expect(st.stages.map((s) => s.status)).toEqual(["completed", "in_progress", "pending"]);
   });
 
-  it("AgentEventKind covers exactly the 10 backend/harness kinds", () => {
+  it("AgentEventKind covers exactly the 11 backend/harness kinds", () => {
     // Runtime witness of the compile-time exhaustiveness map above -- keeps
     // this file self-contained even if the `Record` trick above is refactored.
     expect(Object.keys(AGENT_EVENT_KIND_EXHAUSTIVENESS).sort()).toEqual(
       ["message", "questions", "stage", "document", "file_changed", "status",
-       "done", "prototype_ready", "build_complete", "error"].sort(),
+       "done", "prototype_ready", "build_complete", "agent_activity",
+       "error"].sort(),
     );
   });
 

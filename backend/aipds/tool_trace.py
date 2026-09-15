@@ -35,10 +35,27 @@ _DETAIL_KEYS: dict[str, str] = {
     "Grep": "pattern",
     "ToolSearch": "query",
     "WebFetch": "url",
+    # 서브에이전트를 띄우는 도구(claude_agent_sdk 0.2.143 실측: 이름은 `Agent`,
+    # 구 `Task`가 아니다). `description`이 그 에이전트에 맡긴 일이다 — 이것이
+    # 없으면 트레이스에 "에이전트를 띄웠다"만 남고 무엇을 맡겼는지가 없다.
+    # `prompt`는 쓰지 않는다: 수천 자라 한 줄에 들어가지 않는다.
+    "Agent": "description",
+}
+
+#: 파일 도구의 경로 — **서브에이전트 행에서만** 쓴다(`file_tools=True`).
+#:
+#: 총괄 트레이스에서 일부러 빼 온 값이다: `file_changed` 이벤트가 이미 경로를
+#: 들고 오므로 같은 정보가 두 줄로 보인다(위 허용목록 주석). 행에는 그 논리가
+#: 성립하지 않는다 — `file_changed`는 어느 에이전트가 쓴 파일인지 말해 주지
+#: 않으므로, 행이 대상을 보여주려면 도구 호출에서 와야 한다.
+_FILE_DETAIL_KEYS: dict[str, str] = {
+    "Write": "file_path",
+    "Edit": "file_path",
+    "MultiEdit": "file_path",
 }
 
 #: 값이 경로인 도구 — 워크스페이스 아래 부분만 남긴다.
-_PATH_TOOLS = frozenset({"Read"})
+_PATH_TOOLS = frozenset({"Read", "Write", "Edit", "MultiEdit"})
 
 #: 워크스페이스 최상위 산출물 디렉터리. 절대 경로를 여기서부터 자른다.
 #:
@@ -60,8 +77,12 @@ def _shorten_path(value: str) -> str:
     return value
 
 
-def tool_detail(name: str, tool_input: object) -> str | None:
+def tool_detail(name: str, tool_input: object, *,
+                file_tools: bool = False) -> str | None:
     """`name` 도구 호출에서 화면에 보일 한 줄. 보일 것이 없으면 None.
+
+    `file_tools`는 Write/Edit/MultiEdit의 경로까지 포함시킨다 — 서브에이전트 행
+    전용이다(근거는 `_FILE_DETAIL_KEYS`). 총괄 트레이스는 기본값으로 부른다.
 
     `tool_input`은 **모델이 만든 값**이다 — 모양이 어긋나도 예외를 던지지 않는다.
     트레이스는 부수 정보이고, 그것 때문에 턴이 죽으면 안 된다.
@@ -72,6 +93,8 @@ def tool_detail(name: str, tool_input: object) -> str | None:
     지나지 않고, Bash 명령은 자격증명이 나타나는 대표적인 자리다.
     """
     key = _DETAIL_KEYS.get(name)
+    if key is None and file_tools:
+        key = _FILE_DETAIL_KEYS.get(name)
     if key is None or not isinstance(tool_input, dict):
         return None
     raw = tool_input.get(key)

@@ -74,6 +74,10 @@ export type AgentEventKind =
   | "prototype_ready"
   // 프로토타입 빌드의 완료 선언. 백엔드 models.py의 Literal과 한 쌍이다.
   | "build_complete"
+  // 서브에이전트 한 명의 진행 상황. payload가 `task_id`로 **어느** 에이전트인지
+  // 말하고, 그 하나가 병렬 작업을 한 줄이 아니라 여러 행으로 그릴 수 있게 한다
+  // (근거는 백엔드 aipds/agent_activity.py 헤더).
+  | "agent_activity"
   | "error";
 
 export interface AgentEvent {
@@ -109,6 +113,28 @@ export interface QuestionsPayload {
 export interface BuildCompletePayload {
   summary: string;
   remaining: string;
+}
+
+// 서브에이전트 행 하나의 갱신. 백엔드 aipds/agent_activity.activity_payload와
+// 한 쌍이다.
+//
+// **없는 필드는 undefined로 온다(null이 아니다).** 백엔드가 None인 키를 아예
+// 빼고 보내는 것이 의도이고, 병합 규칙이 그 부재에 의존한다: `detail`이 없는
+// 갱신은 "대상을 지워라"가 아니라 "이전 값을 유지해라"로 읽힌다(protoAgents.ts).
+export interface AgentActivityPayload {
+  /** 행의 키. 같은 값이면 같은 에이전트다. */
+  task_id: string;
+  state: "started" | "progress" | "done";
+  /** started에만. 그 에이전트가 맡은 일. */
+  label?: string;
+  /** progress에만. 도구 이름 — 라벨은 프론트가 UI 언어로 만든다. */
+  tool?: string;
+  /** progress에만. 그 도구의 대상(파일 경로 등). */
+  detail?: string;
+  /** done에만. completed | failed | stopped | killed. */
+  status?: string;
+  /** done에만. 그 에이전트가 남긴 한 줄. */
+  summary?: string;
 }
 
 export interface StagePayload {

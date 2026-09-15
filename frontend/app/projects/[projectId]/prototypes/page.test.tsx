@@ -24,6 +24,7 @@ function mockStream(overrides: Partial<prototypeStream.PrototypeStream> = {}) {
   vi.spyOn(prototypeStream, "usePrototypeStream").mockReturnValue({
     items: [],
     streaming: false,
+    agents: [],
     pendingQuestions: null,
     buildComplete: null,
     changedPaths: [],

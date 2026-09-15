@@ -436,3 +436,33 @@ def unsafe_command_refused(language: str, fragment: str) -> str:
             "라이브 프리뷰가 하는 일이므로 브라우저를 열 필요가 없고, 서버는 "
             "hosting이 직접 띄운다."
             )
+
+
+def background_agent_refused(language: str) -> str:
+    """PreToolUse 훅이 백그라운드 `Agent` 호출을 거부할 때 모델이 읽는 이유.
+    판정은 proto/build_guard.background_agent_denial.
+
+    **대안이 핵심이다.** 거부만 하면 모델은 병렬로 일하는 방법 자체가 막힌 줄
+    알고 순차로 후퇴한다 — 병렬은 막는 것이 아니고, 막는 것은 턴보다 오래 사는
+    것뿐이다. 그래서 "같은 메시지에서 여러 개를 띄우고 결과를 기다려라"를 함께
+    적는다(unsafe_command_refused가 `npm run build`를 함께 주는 것과 같은 이유).
+
+    금지의 근거를 한 줄로 적는다: 사용자 화면이 이 턴이 끝나는 순간 진행 표시를
+    닫기 때문이다. 이유 없이 금지하면 모델이 예외를 합리화한다.
+    """
+    if _lang(language) == "en":
+        return ("Refused — `run_in_background` is not available during a build. "
+                "The user's screen stops following progress the moment this turn "
+                "ends, so a task that outlives the turn becomes invisible work "
+                "and the user's next message would land on top of agents still "
+                "editing the workspace.\n"
+                "Running agents in parallel is fine and encouraged: launch "
+                "several Agent calls in ONE message with `run_in_background` "
+                "unset, and wait for their results in this turn.")
+    return ("거부됨 — `run_in_background`는 빌드 중에 쓸 수 없다. 사용자 화면은 "
+            "이 턴이 끝나는 순간 진행 표시를 닫으므로, 턴보다 오래 사는 태스크는 "
+            "보이지 않는 작업이 되고 사용자의 다음 메시지가 워크스페이스를 아직 "
+            "고치고 있는 에이전트들 위로 간다.\n"
+            "병렬로 돌리는 것 자체는 괜찮고 권장된다: `run_in_background`를 "
+            "빼고 **한 메시지에서** Agent를 여러 번 호출한 뒤, 이 턴 안에서 "
+            "그 결과를 기다려라.")

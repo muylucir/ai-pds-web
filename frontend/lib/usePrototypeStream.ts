@@ -1,6 +1,6 @@
 // frontend/lib/usePrototypeStream.ts
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
 import {
   streamPrototypeEvents,
@@ -12,7 +12,12 @@ import {
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
 import type { AgentEvent } from "@/lib/api/types";
-import type { QuestionsPayload, BuildCompletePayload } from "@/lib/api/types";
+import type {
+  QuestionsPayload,
+  BuildCompletePayload,
+  AgentActivityPayload,
+} from "@/lib/api/types";
+import { applyAgentActivity, runningAgents, type AgentRow } from "@/lib/protoAgents";
 import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/useTurnStream";
 
 // A NEW hook modeled on useWorkspaceStream (the workspace's CURRENT stream
@@ -50,6 +55,10 @@ function safeParse<T>(payload: string | null): T | null {
 export interface PrototypeStream {
   items: ChatItem[];
   streaming: boolean;
+  /** 지금 도는 서브에이전트들. 빌드 에이전트가 Agent 도구로 일을 병렬로 넘기는
+   *  동안 화면이 멈춘 듯 보이지 않게 하는 값이다 — 고정 줄이 이것을 행으로
+   *  그린다(protoAgents.ts 헤더). 병렬 구간이 아니면 빈 배열이다. */
+  agents: AgentRow[];
   pendingQuestions: QuestionsPayload | null;
   /** 에이전트가 빌드 완료를 선언했을 때의 요약. 이 값이 있으면 세션은 이미
    *  닫혔거나 몇 초 안에 닫힌다(백엔드가 유예 타이머로 닫는다). */
@@ -71,6 +80,17 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   const [pendingQuestions, setPendingQuestions] = useState<QuestionsPayload | null>(null);
   const [buildComplete, setBuildComplete] = useState<BuildCompletePayload | null>(null);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
+  // **행은 화면의 것이고 말풍선의 것이 아니다** — 고정 줄이 읽으므로 `activity`와
+  // 같은 자리에 있어야 하지만, `activity`처럼 말풍선에 얹으면 병렬 구간에서
+  // 어느 말풍선의 것인지가 애매해진다(한 턴이 여러 말풍선으로 쪼개진다).
+  // 턴 단위 값이므로 훅이 직접 들고 있고, 매 턴 시작에 비운다.
+  const [agents, setAgents] = useState<AgentRow[]>([]);
+  // 같은 값의 ref 미러. **읽기가 필요해서 있다**: `done` 프레임에는 라벨이 없고
+  // (started가 유일한 출처다) 트레이스 줄은 그 라벨을 써야 하므로, 병합 **결과**를
+  // 같은 프레임 안에서 읽어야 한다. setState 업데이터 안에서 트레이스를 쓰면
+  // StrictMode의 이중 호출에 줄이 두 번 붙는다 — 그래서 병합을 ref로 하고
+  // 상태는 그 결과를 받는다. 이 파일의 다른 ref들과 같은 규율이다.
+  const agentsRef = useRef<AgentRow[]>([]);
   const stopRef = useRef<null | (() => void)>(null);
   // The AI bubble that events are landing in RIGHT NOW — not the bubble the
   // turn started with. A "questions" event does NOT close the stream (the
@@ -141,6 +161,45 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         if (parsed) setBuildComplete(parsed);
         return;
       }
+      if (ev.kind === "agent_activity") {
+        const parsed = safeParse<AgentActivityPayload>(ev.payload);
+        if (!parsed) return;
+        const next = applyAgentActivity(agentsRef.current, parsed, Date.now());
+        agentsRef.current = next;
+        setAgents(next);
+        // 끝난 에이전트만 트레이스에 남긴다. 시작은 이미 `Agent` 도구의 status가
+        // 무엇을 맡겼는지까지 기록하므로(tool_trace의 `Agent → description`),
+        // 여기서 또 남기면 같은 사실이 두 줄이 된다.
+        if (parsed.state === "done") {
+          // 라벨과 요약은 **병합된 행**에서 읽는다 — 두 값이 서로 다른 프레임에서
+          // 온다(라벨은 started, 요약은 늦게 오는 종료). payload만 보면 완료 줄이
+          // 이름이나 요약을 잃는다.
+          const row = next.find((r) => r.id === parsed.task_id);
+          const line: TraceEntry = {
+            kind: "agent",
+            text: row?.label ?? null,
+            path: null,
+            detail: row?.summary ?? null,
+            status: row?.status ?? null,
+            taskId: parsed.task_id,
+          };
+          patchAi(aiId, (it) => {
+            // **덧붙이지 않고 갱신한다.** 한 에이전트의 종료는 두 번 올 수 있고
+            // (task_updated → task_notification) 요약은 늦은 쪽에만 실린다. 그냥
+            // 붙이면 완료가 두 줄로 보인다.
+            const at = it.trace.findIndex(
+              (e) => e.kind === "agent" && e.taskId === parsed.task_id);
+            if (at === -1) return { ...it, trace: [...it.trace, line] };
+            const trace = [...it.trace];
+            trace[at] = line;
+            return { ...it, trace };
+          });
+        }
+        // 고정 줄의 `activity`는 **건드리지 않는다**: 그 줄은 총괄 에이전트의
+        // 일을 말하고, 서브에이전트의 일은 아래 행들이 말한다. 여기서 덮으면
+        // 총괄이 무엇을 기다리는지가 서브에이전트의 도구 이름으로 지워진다.
+        return;
+      }
       if (ev.kind === "error") {
         // A pending question can never be answered once the turn itself has
         // errored out — mirror the harness's own interrupt-clears-pending
@@ -173,10 +232,15 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
                    activity: { kind: "writing" } };
         }
         if (ev.kind === "status" || ev.kind === "file_changed") {
-          const trace: TraceEntry = { kind: ev.kind, text: ev.text, path: ev.path };
+          // 백엔드가 `{"detail": "…"}`로 무엇을 했는지 보낸다(tool_trace.py).
+          // 종전에는 이 값을 버리고 있어서 빌드 화면의 트레이스와 고정 줄이
+          // Discovery와 달리 맨 도구 이름만 보였다 — `Bash`만 뜨면 무슨 명령이
+          // 도는지 알 수 없고, 그것이 화면이 멈춘 듯 보인 이유 중 하나다.
+          const detail = safeParse<{ detail?: string }>(ev.payload)?.detail ?? null;
+          const trace: TraceEntry = { kind: ev.kind, text: ev.text, path: ev.path, detail };
           const activity: LiveActivity = ev.kind === "file_changed"
             ? { kind: "file", path: ev.path }
-            : { kind: "tool", tool: ev.text, detail: null };
+            : { kind: "tool", tool: ev.text, detail };
           return { ...it, trace: [...it.trace, trace], activity };
         }
         if (ev.kind === "error") return { ...it, error: ev.text ?? t("stream.buildError") };
@@ -197,6 +261,11 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     ) => {
       currentAiIdRef.current = aiId;
       setStreaming(true);
+      // 서브에이전트의 수명은 그것을 띄운 턴의 수명이다(백엔드도 매 턴 조인 표를
+      // 비운다 — builder.run). 남겨 두면 두 번째 턴의 첫 프레임에 이미 죽은
+      // 에이전트의 행이 붙는다.
+      agentsRef.current = [];
+      setAgents([]);
       // A stream can finish SYNCHRONOUSLY inside `opener(...)` (e.g. a test
       // double that drives every frame before returning) — before the
       // assignment below runs. Track that with a local flag rather than
@@ -206,6 +275,11 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         finished = true;
         setStreaming(false);
         stopRef.current = null;
+        // 턴이 끝나면 행은 사라진다 — 끝난 에이전트의 기록은 이미 말풍선의
+        // 접힌 트레이스가 갖는다(applyEvent의 agent_activity 분기). 여기서
+        // 비우지 않으면 턴이 끝난 뒤에도 도는 스피너가 남는다.
+        agentsRef.current = [];
+        setAgents([]);
         // Drop a bubble the turn never filled. submitAnswers opens one eagerly
         // for the reply, and a turn that ends first (done right after the
         // answers, or an interrupt) would otherwise leave a blank white box
@@ -362,9 +436,13 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   // Close the stream if the component unmounts mid-turn.
   useEffect(() => () => stopRef.current?.(), []);
 
+  // 도는 행만 내보낸다: 끝난 에이전트는 고정 줄에서 빠지고 트레이스로 넘어간다.
+  const running = useMemo(() => runningAgents(agents), [agents]);
+
   return {
     items,
     streaming,
+    agents: running,
     pendingQuestions,
     buildComplete,
     changedPaths,

@@ -15,7 +15,11 @@ export interface TraceEntry {
   // (Bedrock 실측 2026-09-04 — `--thinking-display summarized`를 붙여도
   // thinking_delta가 0자이고 signature만 온다). 남기는 것은 구간의 위치이고,
   // 그것이 트레이스를 턴의 타임라인으로 만든다: 생각 → Read → 생각 → 작성.
-  kind: "status" | "file_changed" | "thinking";
+  // "agent"는 서브에이전트 한 명이 **끝난** 지점이다. 시작을 남기지 않는 이유:
+  // Agent 도구 호출 자체가 이미 총괄의 status로 트레이스에 들어오고, 거기에
+  // 무엇을 맡겼는지까지 실려 있다(tool_trace의 `Agent → description`) — 시작을
+  // 또 남기면 같은 사실이 두 줄이 된다.
+  kind: "status" | "file_changed" | "thinking" | "agent";
   text: string | null;
   path: string | null;
   // 도구가 **무엇을 했는지** — 읽은 파일, 돌린 명령, 검색 패턴.
@@ -24,7 +28,19 @@ export interface TraceEntry {
   // HistoryTraceEntry의 필드로 온다. 값을 만드는 곳은 백엔드 한 곳이다
   // (backend/aipds/tool_trace.py) — 라이브와 복원이 갈라지면 새로고침 전후로
   // 화면이 달라진다. 아이콘과 구분자만 여기서 붙인다.
+  //
+  // kind "agent"에서는 그 에이전트가 남긴 요약이다.
   detail?: string | null;
+  // kind "agent"에만. completed | failed | stopped | killed — 완료와 실패가
+  // 트레이스에서 같은 줄로 보이면 안 된다.
+  status?: string | null;
+  // kind "agent"에만. 그 에이전트의 task_id — **줄을 갱신하기 위한 키다.**
+  //
+  // 한 에이전트의 종료가 두 번 올 수 있고 요약이 늦은 쪽에만 실린다(백엔드
+  // builder._close_agent_row의 근거). 그때 줄을 하나 더 붙이면 트레이스에 완료가
+  // 두 번 나타나므로, 같은 키의 줄을 제자리에서 갱신한다. 어느 종료가 마지막인지
+  // 백엔드가 알 수 없으므로 접는 책임이 이쪽에 있다.
+  taskId?: string | null;
 }
 /** 입력창 위 고정 줄이 보여주는 **가장 마지막에 일어난 일** 하나.
  *

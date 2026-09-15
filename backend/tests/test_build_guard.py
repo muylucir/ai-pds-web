@@ -171,3 +171,52 @@ def test_a_number_that_merely_contains_the_port_is_allowed():
     """`13000`·`80000`이 걸리면 오탐이다."""
     assert bash_denial("curl -s http://localhost:13000/") is None
     assert bash_denial("echo 80000 > /tmp/n") is None
+
+
+# ---- 백그라운드 서브에이전트 (Agent 도구) ----
+#
+# **실측으로 드러난 자리다(2026-09-15 integration 프로브).** 같은 프롬프트로 두 번
+# 돌렸는데 한 번은 모델이 `run_in_background: true`를 골랐고, 그러자 총괄 에이전트가
+# ResultMessage로 턴을 끝내면서 서브에이전트는 계속 돌았다. 그 결과:
+#
+#   - `done`에서 프론트가 EventSource를 닫으므로(sse.ts) 그 뒤의 진행 상황은
+#     **화면에 닿을 수 없다** — 서브에이전트 행이 열린 채 사라진다.
+#   - `builder.run`도 terminal에서 루프를 벗어나므로 종료 메시지를 번역조차 못 한다.
+#   - 더 나쁜 것은 UI가 아니다: 사용자의 다음 메시지가, 워크스페이스를 아직 고치고
+#     있는 에이전트들 위로 간다.
+#
+# 턴의 수명이 그 턴이 시킨 일의 수명을 덮는다는 것이 이 화면 전체의 전제이므로,
+# 산문이 아니라 게이트로 지킨다(이 모듈 헤더의 "산문은 우회 레시피까지 가르쳤다").
+
+def test_a_background_agent_is_denied():
+    from aipds.proto.build_guard import background_agent_denial
+
+    assert background_agent_denial(
+        {"description": "화면 골격", "run_in_background": True}) == "run_in_background"
+
+
+def test_a_foreground_agent_passes():
+    from aipds.proto.build_guard import background_agent_denial
+
+    assert background_agent_denial(
+        {"description": "화면 골격", "run_in_background": False}) is None
+    # 기본값(키 없음)은 포그라운드다 — 실측 확인.
+    assert background_agent_denial({"description": "화면 골격"}) is None
+
+
+def test_a_non_boolean_background_flag_is_judged_by_truthiness():
+    """모델이 만든 값이므로 모양이 어긋날 수 있다. `"true"` 문자열이 통과하면
+    게이트가 이름만 남는다."""
+    from aipds.proto.build_guard import background_agent_denial
+
+    assert background_agent_denial({"run_in_background": "true"}) == "run_in_background"
+    assert background_agent_denial({"run_in_background": ""}) is None
+
+
+def test_an_unusable_input_passes():
+    """판단 근거가 없는데 거부하면 우리가 모르는 호출 모양 하나가 빌드 전체를
+    막는다 — bash_denial과 같은 실패 방향이다."""
+    from aipds.proto.build_guard import background_agent_denial
+
+    assert background_agent_denial(None) is None
+    assert background_agent_denial("not a dict") is None

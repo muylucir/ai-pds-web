@@ -24,6 +24,60 @@ class ToolUseBlock:
 @dataclass
 class AssistantMessage:
     content: list
+    # 서브에이전트가 보낸 메시지면 그것을 띄운 Agent 도구 호출의 id가 들어온다
+    # (실측 2026-09-15: 기본 옵션에서도 서브에이전트의 tool_use 블록은 이 필드를
+    # 달고 온다 — claude_agent_sdk 0.2.143 types.py의 forward_subagent_text 설명).
+    # None이면 총괄 에이전트의 메시지다.
+    parent_tool_use_id: str | None = None
+
+
+@dataclass
+class TaskStartedMessage:
+    """서브에이전트가 떴다. `tool_use_id`가 Agent 도구 호출의 id이고, 그 값이
+    서브에이전트 메시지의 `parent_tool_use_id`와 같다 — 두 스트림의 조인 키다.
+
+    실제 SDK에서는 SystemMessage의 **서브클래스**라서 `type(msg).__name__`이
+    `"SystemMessage"`가 아니라 `"TaskStartedMessage"`다. 이름으로 매칭하는
+    번역부가 이것을 모르면 조용히 버려진다(그것이 바로 이 기능이 없던 이유)."""
+    task_id: str
+    description: str
+    tool_use_id: str | None = None
+    task_type: str | None = "local_agent"
+    subtype: str = "task_started"
+
+
+@dataclass
+class TaskProgressMessage:
+    """서브에이전트의 하트비트. `last_tool_name`이 그 에이전트가 방금 돌린 도구다."""
+    task_id: str
+    description: str = ""
+    last_tool_name: str | None = None
+    tool_use_id: str | None = None
+    usage: dict | None = None
+    subtype: str = "task_progress"
+
+
+@dataclass
+class TaskNotificationMessage:
+    """서브에이전트가 끝났다(완료·실패·중단)."""
+    task_id: str
+    status: str = "completed"
+    summary: str = ""
+    output_file: str = ""
+    tool_use_id: str | None = None
+    usage: dict | None = None
+    subtype: str = "task_notification"
+
+
+@dataclass
+class TaskUpdatedMessage:
+    """상태 전이. **종료가 이쪽으로만 오는 경우가 있다** — SDK가 명시한다:
+    백그라운드 태스크나 TaskStop으로 죽은 태스크는 TaskNotification 없이
+    여기서 terminal status만 보고할 수 있다(types.py의 TaskUpdatedMessage)."""
+    task_id: str
+    patch: dict
+    status: str | None = None
+    subtype: str = "task_updated"
 
 
 @dataclass
