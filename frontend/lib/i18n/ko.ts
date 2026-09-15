@@ -36,6 +36,14 @@ export const ko = {
   "activity.genericSuffix": "실행 중",
   "activity.unitSeconds": "초",
   "activity.unitMinutes": "분",
+  // 서브에이전트 행(LiveActivityBar). 총괄 에이전트가 Agent 도구로 일을 넘기면
+  // 그 자신은 서브에이전트를 기다리는 것이 전부다 — 그 사실을 말한다.
+  "activity.delegating": "에이전트에게 일을 맡기고 있어요",
+  // 개수 + 접미사로 조립한다(formatElapsed와 같은 방식). 어순이 다른 언어를
+  // 넣게 되면 그때 문장 템플릿으로 바꾼다.
+  "activity.agentsWorkingSuffix": "개 에이전트가 일하고 있어요",
+  // 라벨이 없는 행(started를 못 본 경우)의 대체 이름.
+  "activity.agentUnnamed": "에이전트",
   // canvas 컴포넌트
   "canvas.aiWriting": "AI가 작성 중",
   "canvas.interrupted": "중단됨",
@@ -75,6 +83,10 @@ export const ko = {
   "canvas.reasoningTrace": "진행 기록",
   "canvas.thinkingTrace": "생각",
   "canvas.fileChanged": "파일 변경",
+  // 서브에이전트가 끝났음을 트레이스에 남기는 줄. 시작은 이미 `Agent` 도구
+  // status가 기록하므로(무엇을 맡겼는지까지) 종료만 남긴다.
+  "canvas.agentDone": "에이전트 완료",
+  "canvas.agentFailed": "에이전트 실패",
   "canvas.clarificationLabel": "명확화 질문",
   "canvas.clarificationTitle": "답변 간 모순 감지 — 게이트 보류",
   "canvas.openArtifactAria": "을 우측 패널에서 열기",

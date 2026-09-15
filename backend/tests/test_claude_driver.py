@@ -1565,18 +1565,24 @@ async def test_a_mirror_error_is_logged(tmp_path, caplog):
     S3에 트랜스크립트가 없을 때 "쓰기가 실패했다"와 "쓰기가 시도되지 않았다"를
     구별할 방법이 없었다. 사용자에게는 보이지 않는다: 히스토리 내구성은 보조
     데이터이고, 진행 중인 턴을 깨뜨릴 이유가 없다.
+
+    **메시지를 SDK의 실제 파서로 만든다.** 종전 이 테스트는 가짜의 `__name__`을
+    `"SystemMessage"`로 덮어써서 통과했고, 그것이 이 분기가 **죽은 채로** 초록불을
+    유지한 이유다: 파서는 `mirror_error`에 대해 항상 `MirrorErrorMessage`를 만들고
+    (`_internal/message_parser.py`), 그 클래스 이름은 `"SystemMessage"`가 아니다.
+    가짜가 클래스 이름에 대해 거짓말을 하면, 이름으로 분기하는 코드를 검증할 수
+    없다 — 그래서 파서 출력을 그대로 넣는다.
     """
     import logging
 
-    class FakeSystemMessage:
-        subtype = "mirror_error"
-        error = "S3 PutObject denied"
+    from claude_agent_sdk._internal.message_parser import parse_message
 
-    FakeSystemMessage.__name__ = "SystemMessage"
+    msg = parse_message({"type": "system", "subtype": "mirror_error",
+                         "error": "S3 PutObject denied"})
 
     d, _, _ = _driver(tmp_path, {})
     with caplog.at_level(logging.WARNING, logger="aipds.agent"):
-        events = d._translate(FakeSystemMessage())
+        events = d._translate(msg)
 
     assert events == [], "미러링 실패를 사용자 이벤트로 만들면 안 된다"
     assert "mirror" in caplog.text.lower()

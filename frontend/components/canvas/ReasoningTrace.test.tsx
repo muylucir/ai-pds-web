@@ -63,3 +63,41 @@ describe("ReasoningTrace", () => {
     expect(container.querySelector("details")).not.toHaveAttribute("open");
   });
 });
+
+describe("ReasoningTrace — 서브에이전트", () => {
+  // 시작은 남기지 않는다: Agent 도구 호출이 이미 총괄의 status로 들어오고 거기에
+  // 무엇을 맡겼는지까지 실려 있다(`🤖`가 아니라 그 status 줄이 그 사실을 갖는다).
+  // 여기 오는 것은 종료뿐이다.
+  it("완료한 에이전트를 이름과 요약으로 남긴다", () => {
+    render(<ReasoningTrace entries={[entry({
+      kind: "agent", text: "화면 골격", detail: "app/page.tsx를 만들었다",
+      status: "completed" })]} />);
+    expect(screen.getByText("✅ 에이전트 완료: 화면 골격 · app/page.tsx를 만들었다"))
+      .toBeInTheDocument();
+  });
+
+  it("실패는 완료와 다른 줄로 보인다", () => {
+    // 같은 아이콘·같은 라벨이면 트레이스가 무엇이 잘못됐는지 말하지 못한다.
+    render(<ReasoningTrace entries={[entry({
+      kind: "agent", text: "데이터 모델", detail: "스키마를 못 만들었다",
+      status: "failed" })]} />);
+    expect(screen.getByText(/⚠️ 에이전트 실패: 데이터 모델/)).toBeInTheDocument();
+  });
+
+  it("중단·강제종료도 성공으로 보이지 않는다", () => {
+    // `completed`만 성공이다 — stopped/killed를 성공으로 그리면 사용자가 끊은
+    // 빌드가 정상 완료로 읽힌다.
+    for (const status of ["stopped", "killed"]) {
+      const { unmount } = render(<ReasoningTrace entries={[entry({
+        kind: "agent", text: "스타일", status })]} />);
+      expect(screen.getByText(/⚠️/)).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("이름이나 요약이 없어도 줄이 성립한다", () => {
+    render(<ReasoningTrace entries={[entry({
+      kind: "agent", text: null, detail: null, status: "completed" })]} />);
+    expect(screen.getByText("✅ 에이전트 완료")).toBeInTheDocument();
+  });
+});

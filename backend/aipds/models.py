@@ -99,7 +99,12 @@ class AgentEvent(BaseModel):
                   # 프로토타입 빌드의 명시적 완료 선언(proto/tools.py). 이
                   # 이벤트가 세션의 수명을 끝낸다 — proto/session.py가
                   # 관찰해 status를 "complete"로 바꾼다.
-                  "build_complete"]
+                  "build_complete",
+                  # 서브에이전트 한 명의 진행 상황. `status`와 나뉘어 있는 이유는
+                  # payload가 **어느** 에이전트의 것인지(`task_id`) 말한다는 것뿐이고,
+                  # 그 하나가 병렬 작업을 한 줄이 아니라 여러 행으로 그릴 수 있게
+                  # 한다 — 근거는 agent_activity.py 헤더.
+                  "agent_activity"]
     text: str | None = None
     path: str | None = None
     # Structured payload (JSON string) for questions/stage/document — the
