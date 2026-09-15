@@ -17,7 +17,7 @@ import {
   absoluteShareUrl,
   resetPrototype,
 } from "@/lib/api/prototypes";
-import type { HostState } from "@/lib/api/prototypes";
+import type { HostState, PrototypeState } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
@@ -74,10 +74,19 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [resetTarget, busySlug]);
 
-  async function handleBuild(slug: string) {
+  async function handleBuild(slug: string, state: PrototypeState) {
     setBusySlug(slug);
     try {
-      let autoStart = true;
+      // **이미 만들어진 것을 고칠 때는 자동 발화하지 않는다.** "수정하기"를 누른
+      // 사람은 이미 무엇을 고칠지 알고 있는데(프리뷰에서 봤다), 자동 개시는
+      // 에이전트가 "무엇을 개선할지" 되묻는 왕복을 먼저 태우고 그 질문이 떠 있는
+      // 동안 입력창이 잠긴다 — 사용자가 자기 요청을 타이핑할 수조차 없었다.
+      //
+      // 대신 빈 패널에서 사용자가 먼저 말하고, 그 첫 메시지가 개시 턴이 된다
+      // (백엔드 routes/prototypes의 `session.opened` 분기). 첫 빌드(`none`)와
+      // 실패한 빌드는 그대로 자동 발화한다: 그때는 사용자가 아직 할 말이 없고,
+      // 에이전트가 먼저 명세를 읽거나 무엇이 어긋났는지 봐야 한다.
+      let autoStart = !(state === "built" || state === "running");
       try {
         await startSession(projectId, slug);
       } catch (err) {
@@ -227,7 +236,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 key={info.slug}
                 info={info}
                 busy={busySlug === info.slug}
-                onBuild={() => handleBuild(info.slug)}
+                onBuild={() => handleBuild(info.slug, info.state)}
                 onStartHost={() => handleStartHost(info.slug)}
                 startingPhase={hostPhase?.slug === info.slug ? hostPhase.state : null}
                 onStopHost={() => handleStopHost(info.slug)}
