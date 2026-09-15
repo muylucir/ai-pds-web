@@ -11,6 +11,8 @@ function info(overrides: Partial<PrototypeInfo>): PrototypeInfo {
     spec_path: "aiplc-docs/discovery/prototypes/todo-app/PROTOTYPE-todo-app.md",
     state: "none",
     port: null,
+    session_open: false,
+    preview_stale: false,
     access_url: null,
     response_count: 0,
     has_survey: false,
@@ -75,7 +77,11 @@ describe("PrototypeCard", () => {
     expect(screen.getByRole("button", { name: "세션 열기" })).toBeInTheDocument();
   });
 
-  it("built: shows 빌드 완료 badge plus 호스팅 시작 and 다시 빌드 buttons", async () => {
+  it("built: shows 빌드 완료 badge plus 호스팅 시작 and 수정하기 buttons", async () => {
+    // **"다시 빌드"가 아니다.** 이 버튼은 무엇도 버리지 않는다 — 완료된 빌드에는
+    // 요약만 실은 개선 세션이 열린다(백엔드 proto/session의 handoff 분기). 종전
+    // 이름은 실제와 정반대였고, `초기화` 바로 옆이라 안전한 동작이 파괴적으로
+    // 읽혔다 — 수정하려는 사용자가 누를 것이 화면에 없었다.
     const user = userEvent.setup();
     const onStartHost = vi.fn();
     const onBuild = vi.fn();
@@ -85,8 +91,9 @@ describe("PrototypeCard", () => {
     expect(screen.getByText("빌드 완료")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "호스팅 시작" }));
     expect(onStartHost).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByRole("button", { name: "다시 빌드" }));
+    await user.click(screen.getByRole("button", { name: "수정하기" }));
     expect(onBuild).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "다시 빌드" })).toBeNull();
   });
 
   it("running: shows the port in the badge, a preview link, 호스팅 중지, and 로그", async () => {
@@ -222,11 +229,13 @@ describe("PrototypeCard", () => {
     });
   });
 
-  it("failed: shows a rose 실패 badge plus 다시 빌드 and 로그", () => {
+  it("failed: shows a rose 실패 badge plus 이어서 하기 and 로그", () => {
+    // 실패한 빌드에 "수정"은 어색하다 — 아직 수정할 것이 없고 마치는 것이
+    // 필요하다. 백엔드도 그때 resume 분기로 "무엇을 이어갈지" 묻는다.
     render(<PrototypeCard info={info({ state: "failed" })} busy={false} {...noop} onShowLogs={vi.fn()} />);
     const badge = screen.getByText("실패");
     expect(badge.className).toContain("rose");
-    expect(screen.getByRole("button", { name: "다시 빌드" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "이어서 하기" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "로그" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "호스팅 시작" })).not.toBeInTheDocument();
   });
@@ -308,6 +317,149 @@ describe("PrototypeCard", () => {
   });
 });
 
+// ---- 이미 만들어진 프로토타입을 수정한다 ----
+//
+// 최초 빌드는 편했지만 한 번 만들어진 것을 고치기가 불편했다. 원인이 둘이다.
+//
+// 하나는 이름이었다: `built`의 버튼이 "다시 빌드"였는데 그 동작은 무엇도 버리지
+// 않는다(백엔드가 요약만 실은 개선 세션을 연다). 이름이 실제와 정반대인 데다
+// `초기화` 바로 옆이라, 안전한 동작이 파괴적으로 읽혔다.
+//
+// 다른 하나는 더 컸다: `running`에 빌드 관련 버튼이 **아예 없었다**. 고치고
+// 싶어지는 순간은 프리뷰를 본 직후인데 그 순간 화면에 길이 없었고, 호스팅을 먼저
+// 중지해야 버튼이 돌아왔다.
+
+describe("PrototypeCard — 수정 경로", () => {
+  it("실행 중에도 수정할 수 있다", () => {
+    // 프리뷰를 본 직후가 고치고 싶어지는 순간이다. 그 순간 화면에 길이 있어야 한다.
+    const onBuild = vi.fn();
+    render(
+      <PrototypeCard
+        info={info({ state: "running", port: 4007 })}
+        busy={false}
+        {...noop}
+        onBuild={onBuild}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "수정하기" })).toBeInTheDocument();
+    // 호스팅을 중지하지 않고도 눌린다.
+    expect(screen.getByRole("button", { name: "호스팅 중지" })).toBeInTheDocument();
+  });
+
+  it("수정 세션이 열려 있으면 그 세션으로 돌아가는 버튼이 된다", () => {
+    // 이미 열린 세션에 대고 "수정하기"라고 하면 새로 여는 것처럼 읽힌다.
+    render(
+      <PrototypeCard
+        info={info({ state: "running", port: 4007, session_open: true })}
+        busy={false}
+        {...noop}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "세션 열기" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "수정하기" })).toBeNull();
+  });
+
+  it("수정 중에도 프리뷰와 공유 링크를 잃지 않는다", () => {
+    // 세션을 여는 것은 호스팅을 건드리지 않는다 — 서버는 계속 떠 있고 참가자에게
+    // 나간 링크도 살아 있다. 종전에는 카드가 building으로 바뀌며 둘 다 사라졌다.
+    render(
+      <PrototypeCard
+        info={info({ state: "running", port: 4007, session_open: true })}
+        busy={false}
+        {...noop}
+        onOpenPreview={vi.fn()}
+        shareUrl="https://example.com/api/proto/t/tok"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "프리뷰 열기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "링크 복사" })).toBeInTheDocument();
+  });
+
+  it("낡은 프리뷰임을 말하고, 고치는 대가까지 함께 말한다", () => {
+    // 호스팅은 기존 트리에 npm install → build → 서버 시작을 다시 돌린다(실측 최대
+    // 13분). 그 동안 참가자 링크까지 닫히므로, 누르기 전에 알아야 하는 사실이다.
+    render(
+      <PrototypeCard
+        info={info({ state: "running", port: 4007, preview_stale: true })}
+        busy={false}
+        {...noop}
+      />,
+    );
+    expect(screen.getByText(/프리뷰는 이전 버전입니다/)).toBeInTheDocument();
+    expect(screen.getByText(/참가자 링크까지 몇 분간 닫힙니다/)).toBeInTheDocument();
+  });
+
+  it("낡았을 때만 다시 호스팅 버튼이 나온다", () => {
+    const onStartHost = vi.fn();
+    const { rerender } = render(
+      <PrototypeCard info={info({ state: "running", port: 4007 })} busy={false} {...noop} />,
+    );
+    expect(screen.queryByRole("button", { name: "다시 호스팅" })).toBeNull();
+
+    rerender(
+      <PrototypeCard
+        info={info({ state: "running", port: 4007, preview_stale: true })}
+        busy={false}
+        {...noop}
+        onStartHost={onStartHost}
+      />,
+    );
+    screen.getByRole("button", { name: "다시 호스팅" }).click();
+    expect(onStartHost).toHaveBeenCalledTimes(1);
+  });
+
+  it("경고가 세션 수명에 매이지 않는다", () => {
+    // **이것이 판정 기준을 바꾼 이유다.** 세션 기준이면 세션이 닫히는 순간 경고가
+    // 사라지는데, 정작 그때가 사용자가 "반영됐다"고 오해하기 가장 쉬운 시점이다.
+    render(
+      <PrototypeCard
+        info={info({ state: "running", port: 4007,
+                     session_open: false, preview_stale: true })}
+        busy={false}
+        {...noop}
+      />,
+    );
+    expect(screen.getByText(/프리뷰는 이전 버전입니다/)).toBeInTheDocument();
+  });
+
+  it("낡지 않았으면 그 경고를 띄우지 않는다", () => {
+    render(
+      <PrototypeCard
+        info={info({ state: "running", port: 4007, session_open: true })}
+        busy={false}
+        {...noop}
+      />,
+    );
+    expect(screen.queryByText(/프리뷰는 이전 버전입니다/)).toBeNull();
+  });
+
+  it("아직 빌드하지 않은 프로토타입에는 수정 버튼이 없다", () => {
+    // 수정할 것이 없는 단계에서 그 버튼은 무엇을 하는지 알 수 없다.
+    render(<PrototypeCard info={info({ state: "none" })} busy={false} {...noop} />);
+    expect(screen.getByRole("button", { name: "빌드 시작" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "수정하기" })).toBeNull();
+  });
+
+  it("버튼이 여덟까지 늘어나도 카드 밖으로 넘치지 않는다", () => {
+    // running은 프리뷰·링크·수정·중지·로그·다운로드·초기화·설문로 가장 붐빈다.
+    const { container } = render(
+      <PrototypeCard
+        info={info({ state: "running", port: 4007 })}
+        busy={false}
+        {...noop}
+        onOpenPreview={vi.fn()}
+        onShowLogs={vi.fn()}
+        onOpenSurvey={vi.fn()}
+        onReset={vi.fn()}
+        shareUrl="https://example.com/api/proto/t/tok"
+        archiveUrl="/archive.zip"
+      />,
+    );
+    const row = container.querySelector("div.flex.flex-wrap");
+    expect(row).not.toBeNull();
+  });
+});
+
 // ---- 호스팅 시작 중의 진행 표시 (2026-08-19) ----
 // `POST /host`가 npm install → npm run build → 포트 대기(최대 60초)를 전부
 // await한 뒤 응답한다. 그동안 카드는 "빌드 완료 + 비활성 버튼"으로 멈춰 있었고,
@@ -320,6 +472,8 @@ const BUILT_Q: PrototypeInfo = {
   spec_path: "aiplc-docs/discovery/prototype/prototype-spec.md",
   state: "built",
   port: null,
+  session_open: false,
+  preview_stale: false,
   access_url: null,
   response_count: 0,
   has_survey: false,

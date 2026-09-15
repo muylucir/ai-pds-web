@@ -1162,3 +1162,91 @@ def test_first_prompt_defaults_to_korean(tmp_path):
         semaphore=BuildSemaphore(max_concurrent=2),
     )
     assert "빌드는 시작하지 마" in session.first_prompt()
+
+
+# ---- 개시 턴에 사용자 요청을 실어 보낸다 ----
+#
+# "수정하기"를 누른 사람은 이미 무엇을 고칠지 알고 있는데, 개시 프롬프트가 되묻고
+# 그 질문이 떠 있는 동안 입력창이 비활성이라 자기 요청을 타이핑할 수조차 없었다
+# (근거는 proto/prompts.handoff_prompt). 그래서 **세션의 첫 메시지는 곧 개시 턴**
+# 이고, 그 메시지가 사용자 요청이면 개시 프롬프트에 실려 간다.
+#
+# 판정 기준을 UI 플래그가 아니라 `opened`로 두는 것이 요점이다: "개시 턴이 아직
+# 안 돌았다"는 것은 세션이 아는 사실이고, 프론트가 추측하면 새로고침·경합·이미
+# 열린 세션에서 어긋난다.
+
+async def test_a_fresh_session_has_not_opened_yet(tmp_path):
+    session = await _started(tmp_path)
+    assert session.opened is False
+
+
+async def test_the_first_message_marks_the_session_opened(tmp_path):
+    session = await _started(tmp_path)
+    session._builder.script([AgentEvent(kind="done")])
+
+    async for _ in session.send_message("아무 말"):
+        pass
+
+    assert session.opened is True
+
+
+async def test_a_handoff_session_carries_the_users_request_into_its_opening_turn(tmp_path):
+    """개선 세션은 **새 session_id**로 시작하므로 트랜스크립트가 없다. 요청만
+    보내면 에이전트가 이전 빌드가 무엇을 남겼는지 모르는 채로 시작한다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps(
+        {"summary": "투두 앱을 만들었다", "remaining": "정렬"}, ensure_ascii=False)
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    _build_output(session)   # 산출물이 없으면 "다시 만들어라" 분기다(아래 테스트)
+
+    prompt = session.first_prompt(request="장바구니 버튼을 오른쪽 위로")
+
+    assert "장바구니 버튼을 오른쪽 위로" in prompt
+    assert "투두 앱을 만들었다" in prompt      # 새 세션이 이것 말고는 맥락이 없다
+    assert "AskUserQuestion" not in prompt     # 되묻지 않는다
+
+
+async def test_a_request_survives_the_output_is_gone_branch(tmp_path):
+    """산출물이 사라졌으면 개선이 아니라 재빌드가 맞고(`_missing_output_prompt`),
+    그 분기는 되묻기를 유지한다 — 없는 것을 고칠 수는 없다.
+
+    그래도 사용자가 타이핑한 말은 실려야 한다. 조용히 버리면 그 요청은 어디에도
+    남지 않고, 사용자는 자기가 말한 것이 무시된 것을 알 방법이 없다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps(
+        {"summary": "투두 앱", "remaining": "정렬"}, ensure_ascii=False)
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    # 산출물을 만들지 않는다.
+
+    prompt = session.first_prompt(request="장바구니 버튼을 오른쪽 위로")
+
+    assert "장바구니 버튼을 오른쪽 위로" in prompt
+    assert "찾지 마" in prompt   # 재빌드 분기가 그대로 살아 있다
+
+
+async def test_no_request_keeps_the_asking_behaviour(tmp_path):
+    """자동 개시(`__first__`)에는 사용자가 아무 말도 하지 않았다 — 그때 묻는 것은
+    맞는 동작이고, 이 변경이 그것을 없애서는 안 된다."""
+    session = await _started(tmp_path,
+                             saved_session_id="99999999-8888-7777-6666-555555555555")
+    _build_output(session)
+    assert "AskUserQuestion" in session.first_prompt()
+
+
+async def test_a_resumed_session_carries_the_request_too(tmp_path):
+    session = await _started(tmp_path,
+                             saved_session_id="99999999-8888-7777-6666-555555555555")
+    _build_output(session)
+
+    prompt = session.first_prompt(request="로그인 화면부터 마쳐줘")
+
+    assert "로그인 화면부터 마쳐줘" in prompt
+    assert "AskUserQuestion" not in prompt

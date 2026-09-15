@@ -408,3 +408,39 @@ describe("BuildPanel — 입력창 위 고정 진행 줄", () => {
     expect(screen.queryByTestId("live-what")).not.toBeInTheDocument();
   });
 });
+
+
+// ---- 수정 세션은 사용자가 먼저 말한다 ----
+//
+// 자동 개시는 에이전트가 "무엇을 개선할지" 되묻는 왕복을 먼저 태우고, 그 질문이 떠
+// 있는 동안 입력창이 잠겨 사용자가 자기 요청을 타이핑할 수조차 없었다
+// (backend prompts.handoff_prompt의 근거). 그래서 built/running에서는 자동 발화를
+// 하지 않고 빈 패널로 열리며, 그 첫 메시지가 개시 턴이 된다.
+
+describe("BuildPanel — 빈 수정 세션", () => {
+  it("무엇을 고칠지 물어보는 안내를 보여준다", () => {
+    // 화면에 아무것도 없는 순간이 생기는 것이 이 설계의 대가다. 그때 무엇을
+    // 해야 하는지 말하지 않으면 "아무 일도 일어나지 않았다"로 읽힌다.
+    mockStream({ items: [], streaming: false });
+    render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
+    expect(screen.getByText("무엇을 고칠지 알려주세요.")).toBeInTheDocument();
+    expect(screen.getByText(/장바구니 버튼을 오른쪽 위로/)).toBeInTheDocument();
+  });
+
+  it("대화가 시작되면 안내가 사라진다", () => {
+    mockStream({
+      items: [{ id: "a", role: "ai", text: "고쳤습니다", trace: [], streaming: false, error: null }],
+      streaming: false,
+    });
+    render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
+    expect(screen.queryByText("무엇을 고칠지 알려주세요.")).toBeNull();
+  });
+
+  it("턴이 도는 동안에는 안내를 띄우지 않는다", () => {
+    // 자동 개시(첫 빌드)는 items가 빈 채로 스트리밍이 시작된다 — 그때 "무엇을
+    // 고칠지"는 틀린 안내다.
+    mockStream({ items: [], streaming: true });
+    render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
+    expect(screen.queryByText("무엇을 고칠지 알려주세요.")).toBeNull();
+  });
+});
