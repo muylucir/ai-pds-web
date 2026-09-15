@@ -214,3 +214,82 @@ def test_the_unsafe_command_refusal_offers_the_alternative(language):
     """
     out = prompts.unsafe_command_refused(language, "npm run dev")
     assert "npm run build" in out
+
+
+# ---- 사용자가 이미 무엇을 고칠지 말했을 때 ----
+#
+# **왜 이 분기가 있는가.** "수정하기"를 누른 사람은 이미 무엇을 고칠지 알고 있다 —
+# 프리뷰에서 봤으니까. 그런데 개시 프롬프트가 "아직 아무것도 수정하지 마 …
+# AskUserQuestion으로 무엇을 개선할지 물어보고 답을 기다려줘"라고 지시하고, 질문이
+# 떠 있는 동안 입력창이 비활성이라(BuildPanel의 `disabled={streaming || …}`)
+# 사용자는 **자기 요청을 타이핑할 수조차 없었다.** 남의 객관식에 먼저 답해야
+# 자기 말을 할 수 있는 흐름이었다.
+#
+# 요청이 실려 오면 그 왕복을 건너뛴다. 요청이 없으면(자동 개시) 종전대로 묻는다 —
+# 그때는 사용자가 아무 말도 하지 않았으므로 묻는 것이 맞다.
+
+def test_the_handoff_prompt_still_asks_when_no_request_was_given():
+    from aipds.proto.prompts import handoff_prompt
+
+    text = handoff_prompt("ko", spec_key="spec.md", summary="요약", remaining="남은 것")
+
+    assert "AskUserQuestion" in text
+    assert "아직 아무것도 수정하지 마" in text
+
+
+def test_a_handoff_request_replaces_the_question_round_trip():
+    from aipds.proto.prompts import handoff_prompt
+
+    text = handoff_prompt("ko", spec_key="spec.md", summary="요약",
+                          remaining="남은 것", request="장바구니 버튼을 오른쪽 위로")
+
+    # 사용자의 말이 그대로 실린다 — 요약해 옮기면 의도가 깎인다.
+    assert "장바구니 버튼을 오른쪽 위로" in text
+    # 그리고 되묻지 않는다.
+    assert "AskUserQuestion" not in text
+
+
+def test_a_handoff_request_keeps_the_context_the_new_session_has_no_other_way_to_get():
+    """handoff 분기는 **새 세션**이라 트랜스크립트가 없다(proto/session의
+    _resolve_session_id). 요청만 보내면 에이전트가 이전 빌드가 무엇을 남겼는지
+    모르는 채로 시작한다 — 요약과 "먼저 prototype/을 봐라"가 함께 가야 한다."""
+    from aipds.proto.prompts import handoff_prompt
+
+    text = handoff_prompt("ko", spec_key="spec.md", summary="투두 앱을 만들었다",
+                          remaining="정렬 기능", request="색을 바꿔줘")
+
+    assert "투두 앱을 만들었다" in text
+    assert "prototype/" in text
+    assert "spec.md" in text
+
+
+def test_a_resume_request_also_skips_the_question():
+    from aipds.proto.prompts import resume_prompt
+
+    asked = resume_prompt("ko")
+    assert "AskUserQuestion" in asked
+
+    told = resume_prompt("ko", request="로그인 화면부터 마쳐줘")
+    assert "로그인 화면부터 마쳐줘" in told
+    assert "AskUserQuestion" not in told
+
+
+def test_the_english_prompts_carry_the_request_too():
+    from aipds.proto.prompts import handoff_prompt, resume_prompt
+
+    assert "move the cart button" in handoff_prompt(
+        "en", spec_key="spec.md", summary="s", remaining="r",
+        request="move the cart button")
+    assert "AskUserQuestion" not in resume_prompt("en", request="finish sign-in")
+
+
+def test_a_plan_request_is_never_silently_dropped():
+    """`plan`(첫 빌드)에는 이 흐름이 닿지 않는다 — 카드가 입력을 주기 전에
+    `__first__`가 자동 발화하기 때문이다. 그래도 요청이 도달하면 실어야 한다:
+    사용자가 타이핑한 말이 조용히 사라지는 것이 가장 나쁘다."""
+    from aipds.proto.prompts import plan_prompt
+
+    text = plan_prompt("ko", spec_key="spec.md", proxy_path="/p/",
+                       request="로그인 화면을 먼저 만들어줘")
+
+    assert "로그인 화면을 먼저 만들어줘" in text

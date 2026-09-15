@@ -140,10 +140,30 @@ export function PrototypeCard({
                 : t("proto.surveyNone")}
             </span>
           )}
+          {/* 떠 있는 서버가 소스보다 오래된 구간. 참가자에게 나간 링크는 계속
+              살아 있지만 보여 주는 것은 **이전 버전**이다 — 새 코드는 다시
+              호스팅해야 반영된다.
+
+              **`session_open`이 아니라 `preview_stale`로 판정한다.** 세션 기준이면
+              세션이 닫히는 순간 경고가 사라지는데, 정작 그때가 사용자가 "반영됐다"고
+              오해하기 가장 쉬운 시점이다(서버는 여전히 이전 버전을 서빙한다).
+
+              고치는 방법의 **대가를 함께 말한다**: 다시 호스팅은 npm install →
+              build → 서버 시작을 전부 기다리므로(실측 최대 13분) 그 동안 참가자
+              링크까지 닫힌다. 확인 대화상자를 하나 더 만들지 않고 버튼 옆에 두는
+              이유는, 누르기 전에 읽히는 자리가 여기이기 때문이다. */}
+          {info.preview_stale && (
+            <span className="text-[11px] shrink-0 text-amber-600">
+              {t("proto.previewStale")} · {t("proto.rehostDowntime")}
+            </span>
+          )}
         </div>
         <span className="block text-[11px] text-slate-400 mt-0.5 truncate">{info.spec_path}</span>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
+      {/* flex-wrap: `running`은 프리뷰·링크·중지·로그·다운로드·수정·초기화·설문로
+          버튼이 여덟까지 간다. shrink-0인 버튼들이 감싸지 않으면 좁은 화면에서
+          카드 밖으로 넘친다. */}
+      <div className="flex flex-wrap justify-end items-center gap-2 shrink-0">
         {info.state === "none" && (
           <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onBuild}>
             {t("proto.startBuild")}
@@ -159,9 +179,7 @@ export function PrototypeCard({
             <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onStartHost}>
               {t("proto.startHosting")}
             </button>
-            <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onBuild}>
-              {t("proto.rebuild")}
-            </button>
+            <BuildButton info={info} busy={busy} onBuild={onBuild} />
             {archiveUrl && <ArchiveLink href={archiveUrl} />}
           </>
         )}
@@ -173,6 +191,20 @@ export function PrototypeCard({
               </button>
             )}
             {shareUrl && <CopyLinkButton url={shareUrl} disabled={busy} />}
+            {/* 낡았을 때만 나온다. 항상 두면 "다시 호스팅"이 무엇을 바꾸는지 알 수
+                없는 버튼이 되고(이미 최신이면 몇 분간 프리뷰만 닫는다), 낡았을 때는
+                반대로 그것이 유일하게 필요한 동작이다. 위 경고 줄이 그 대가를 말한다. */}
+            {info.preview_stale && (
+              <button type="button" className={SECONDARY_BTN} disabled={busy}
+                      onClick={onStartHost}>
+                {t("proto.rehost")}
+              </button>
+            )}
+            {/* 실행 중에도 수정할 수 있다. **여기 있어야 하는 이유**는 이것이
+                고치고 싶어지는 순간이기 때문이다 — 프리뷰를 방금 본 직후. 종전에는
+                이 상태에 빌드 관련 버튼이 아예 없어서, 호스팅을 먼저 중지해야
+                수정 버튼이 돌아왔다. */}
+            <BuildButton info={info} busy={busy} onBuild={onBuild} />
             <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onStopHost}>
               {t("proto.stopHosting")}
             </button>
@@ -187,7 +219,7 @@ export function PrototypeCard({
         {info.state === "failed" && (
           <>
             <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onBuild}>
-              {t("proto.rebuild")}
+              {t("proto.continueBuild")}
             </button>
             {onShowLogs && (
               <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onShowLogs}>
@@ -217,6 +249,28 @@ export function PrototypeCard({
         )}
       </div>
     </div>
+  );
+}
+
+/** 이미 만들어진 프로토타입에 손을 대는 버튼. **하나의 동작에 두 이름**이다.
+ *
+ *  세션이 이미 열려 있으면 할 일은 그 세션으로 돌아가는 것이므로 "세션 열기"다.
+ *  아니면 새 세션을 여는 것이고, 그 세션이 무엇을 물을지는 백엔드가 이미 갈라
+ *  놓았다 — 완료된 빌드에는 "무엇을 개선할지", 완료 없이 죽은 빌드에는 "무엇을
+ *  이어갈지"(proto/session의 handoff·resume 분기). 사용자 쪽 의도로는 둘 다
+ *  수정이므로 한 이름으로 부른다.
+ *
+ *  `failed`가 이 컴포넌트를 쓰지 않는 이유: 그 상태에서 필요한 것은 수정이 아니라
+ *  마치는 것이고("이어서 하기"), 버튼이 primary여야 한다 — 그 카드에는 다른
+ *  주된 동작이 없다. */
+function BuildButton({
+  info, busy, onBuild,
+}: { info: PrototypeInfo; busy: boolean; onBuild: () => void }) {
+  const t = useT();
+  return (
+    <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onBuild}>
+      {t(info.session_open ? "proto.openSession" : "proto.modify")}
+    </button>
   );
 }
 
