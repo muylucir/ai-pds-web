@@ -1169,7 +1169,7 @@ class ClaudeDriver:
                     self._language, rel)}}
         # `interrupt_id`는 빈 문자열이다: 파킹된 can_use_tool future가 없으므로
         # 되돌아올 곳이 턴이 아니라 **파일**이다. 프론트는 `file`로 그 차이를
-        # 판별해 답변을 PUT /projects/{pid}/questions/{name}으로 보낸다.
+        # 판별해 답변을 POST /projects/{pid}/questions/{name}/answers로 보낸다.
         self._queue.append(AgentEvent(kind="questions", payload=json.dumps(
             {"interrupt_id": "", "file": rel, "questions": qfile},
             ensure_ascii=False, default=lambda o: o.model_dump())))

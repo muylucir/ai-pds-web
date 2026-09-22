@@ -1,40 +1,24 @@
 // frontend/components/canvas/ChatTimeline.tsx
 "use client";
 import { useEffect, useRef } from "react";
-import type { ChatItem as CanvasChatItem } from "@/lib/useTurnStream";
-import type { ChatItem as WorkspaceChatItem } from "@/lib/useWorkspaceStream";
+import type { ChatItem } from "@/lib/useWorkspaceStream";
 import { useT } from "@/lib/i18n/provider";
 import { UserMessage } from "./UserMessage";
 import { AiMessage } from "./AiMessage";
-import { QuestionCardSlot } from "./QuestionCardSlot";
-import { ArtifactCard } from "./ArtifactCard";
 import { HistoryQuestionsCard } from "./HistoryQuestionsCard";
 import { answerSummary } from "@/lib/answerSummary";
 
-// The canvas-era page (useTurnStream) and the Task 11 workspace page
-// (useWorkspaceStream) both render through this ONE component, each with its
-// own ChatItem union — they share "user"/"ai" but diverge on the card shape
-// ("card" with a path vs. "history-card" with a name). Rather than forcing
-// one hook's type onto the other, the prop is declared as the union of BOTH,
-// and each branch below discriminates on `role` (a plain string switch, not
-// an `in` shape-check) so TS narrows correctly regardless of which hook
-// produced the item.
-export type ChatTimelineItem = CanvasChatItem | WorkspaceChatItem;
+// The workspace page (useWorkspaceStream) and the prototype build panel
+// (usePrototypeStream) both render through this ONE component. The build
+// panel's ChatItem is user/ai only, a subset of the workspace union, so the
+// workspace union is the prop type.
 
 export function ChatTimeline({
   items,
-  projectId,
-  onChoose,
-  onOpenArtifact,
-  busy,
   stickSignal,
   historyLoading,
 }: {
-  items: ChatTimelineItem[];
-  projectId: string;
-  onChoose: (text: string) => void;
-  onOpenArtifact: () => void;
-  busy: boolean;
+  items: ChatItem[];
   stickSignal?: number;
   historyLoading?: boolean;
 }) {
@@ -116,26 +100,13 @@ export function ChatTimeline({
               return <UserMessage key={item.id} text={text} />;
             }
             if (item.role === "ai") return <AiMessage key={item.id} item={item} />;
-            if (item.role === "history-card") {
-              // A questions file presented in a PAST turn (Task 5's history
-              // restore) — a static summary marker, never the live
-              // interactive QuestionCardSlot form (mockup 04's ml-11 idiom).
-              // payload가 함께 복원되면 펼쳐서 질문·보기를 읽을 수 있다.
-              return (
-                <div key={item.id} className="ml-11 max-w-[85%]">
-                  <HistoryQuestionsCard name={item.name} file={item.file} />
-                </div>
-              );
-            }
-            // role === "card" — inline widget, indented under the AI avatar
-            // column (mockup 04's ml-11 idiom for its submitted/artifact cards).
+            // role === "history-card" — a questions file presented in a PAST
+            // turn (Task 5's history restore), a static summary marker
+            // (mockup 04's ml-11 idiom). payload가 함께 복원되면 펼쳐서
+            // 질문·보기를 읽을 수 있다.
             return (
               <div key={item.id} className="ml-11 max-w-[85%]">
-                {item.card === "questions" ? (
-                  <QuestionCardSlot projectId={projectId} path={item.path} onChoose={onChoose} busy={busy} />
-                ) : (
-                  <ArtifactCard path={item.path} onOpen={onOpenArtifact} />
-                )}
+                <HistoryQuestionsCard name={item.name} file={item.file} />
               </div>
             );
           })

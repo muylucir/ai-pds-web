@@ -7,7 +7,6 @@ import pytest
 
 from fakes.in_memory_s3 import FakeS3Store
 from aipds.survey.store import (SurveyStore,
-                                     purgeable_response_count,
                                      questionnaire_key, questionnaire_md_key,
                                      results_md_key, survey_summary,
                                      survey_prefix)
@@ -123,9 +122,9 @@ async def test_purge_is_idempotent_on_a_prototype_with_no_survey():
     await store.purge()  # twice: the second call has even less to find
 
 
-# ---- purgeable_response_count: what the reset dialog warns about ----
+# ---- survey_summary().responses: what the reset dialog warns about ----
 
-async def test_purgeable_response_count_includes_archived_rounds():
+async def test_summary_responses_includes_archived_rounds():
     """The regression this guards: the reset dialog said "0 responses" over a
     dozen real submissions.
 
@@ -147,10 +146,10 @@ async def test_purgeable_response_count_includes_archived_rounds():
         ] = "{}"
     # The current round has none yet -- exactly the shape that reported 0.
 
-    assert await purgeable_response_count(project_s3, SLUG) == 12
+    assert (await survey_summary(project_s3, SLUG)).responses == 12
 
 
-async def test_purgeable_response_count_sums_live_and_archived():
+async def test_summary_responses_sums_live_and_archived():
     store, project_s3, root_s3 = _store()
     _seed_survey(project_s3, root_s3, "tok-current")
     project_s3.blobs[f"{survey_prefix(SLUG)}responses/r1.json"] = "{}"
@@ -158,10 +157,10 @@ async def test_purgeable_response_count_sums_live_and_archived():
     project_s3.blobs[
         f"{survey_prefix(SLUG)}archive/2026-01-01T00:00:00Z/responses/a1.json"] = "{}"
 
-    assert await purgeable_response_count(project_s3, SLUG) == 3
+    assert (await survey_summary(project_s3, SLUG)).responses == 3
 
 
-async def test_purgeable_response_count_counts_only_responses():
+async def test_summary_responses_counts_only_responses():
     """The questionnaire, its archived copy and the rollup are all inside the
     tree purge deletes, but none of them is a respondent's answer -- counting
     them would inflate the warning and make "응답 3건" mean nothing."""
@@ -172,15 +171,15 @@ async def test_purgeable_response_count_counts_only_responses():
     project_s3.blobs[
         f"{survey_prefix(SLUG)}archive/2026-01-01T00:00:00Z/rollup.json"] = "{}"
 
-    assert await purgeable_response_count(project_s3, SLUG) == 0
+    assert (await survey_summary(project_s3, SLUG)).responses == 0
 
 
-async def test_purgeable_response_count_is_zero_without_a_survey():
+async def test_summary_responses_is_zero_without_a_survey():
     store, project_s3, root_s3 = _store()
-    assert await purgeable_response_count(project_s3, SLUG) == 0
+    assert (await survey_summary(project_s3, SLUG)).responses == 0
 
 
-async def test_purge_destroys_exactly_what_purgeable_response_count_reported():
+async def test_purge_destroys_exactly_what_the_summary_reported():
     """The pairing is the point: the number shown to the user has to be the
     number that disappears. Asserted together so a change to either side that
     breaks the correspondence fails here rather than in the dialog."""
@@ -191,7 +190,7 @@ async def test_purge_destroys_exactly_what_purgeable_response_count_reported():
     project_s3.blobs[
         f"{survey_prefix(SLUG)}archive/2026-01-01T00:00:00Z/responses/a1.json"] = "{}"
 
-    reported = await purgeable_response_count(project_s3, SLUG)
+    reported = (await survey_summary(project_s3, SLUG)).responses
     before = [k for k in project_s3.blobs if "/responses/" in k]
     await store.purge()
 
@@ -259,12 +258,12 @@ async def test_purge_raises_on_an_unreadable_archived_questionnaire_too():
 
 # ---- survey_summary: 카드가 "설문 없음"을 표시할 수 있게 하는 신호 ----
 #
-# **왜 `purgeable_response_count`만으로는 안 되는가.** 그 값은 설문이 없을 때도
+# **왜 응답 수만으로는 안 되는가.** 그 값은 설문이 없을 때도
 # 0이고, 설문이 있는데 응답이 아직 없을 때도 0이다. 두 상태가 구별되지 않아서
 # 카드가 "이 프로토타입에는 설문이 없다"를 말할 수 없었다 — 실측 test2222에서
 # 프로토타입 3개 중 1개만 설문이 있었는데 화면에 그 사실이 없었다.
 #
-# **추가 S3 호출 없이 얻는다.** 이 함수는 종전과 똑같이 `survey_prefix(slug)`를
+# **추가 S3 호출 없이 얻는다.** 이 함수는 `survey_prefix(slug)`를
 # 한 번 list하고, 그 결과에서 두 사실을 같이 읽는다. 목록 라우트는 카드마다 이
 # 조회를 하므로 왕복을 늘리면 프로토타입 수만큼 늘어난다.
 
@@ -322,13 +321,3 @@ async def test_summary_uses_one_listing():
     project_s3.list = counting
     await survey_summary(project_s3, SLUG)
     assert calls == [survey_prefix(SLUG)]
-
-
-async def test_purgeable_count_agrees_with_the_summary():
-    """두 값이 갈라지면 리셋 경고와 카드 표시가 서로 다른 수를 말한다."""
-    project_s3, root_s3 = FakeS3Store(), FakeS3Store()
-    _seed_survey(project_s3, root_s3, "tok-current")
-    for i in range(3):
-        project_s3.blobs[f"{survey_prefix(SLUG)}responses/r{i}.json"] = "{}"
-    assert (await survey_summary(project_s3, SLUG)).responses == \
-        await purgeable_response_count(project_s3, SLUG)

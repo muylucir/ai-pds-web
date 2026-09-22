@@ -56,13 +56,3 @@ def test_list_artifacts_unknown_project_404():
     r = client.get("/projects/nope-disc2/artifacts")
     assert r.status_code == 404
 
-
-def test_list_questions_route_does_not_collide_with_single_question_route(monkeypatch):
-    # /projects/{pid}/questions/{name:path} (routes/artifacts.py, Phase 1) must
-    # keep working once the no-argument /projects/{pid}/questions route exists.
-    _seed(monkeypatch, "disc-collide")
-    r = client.get(
-        "/projects/disc-collide/questions/aiplc-docs/discovery-mode-selection-questions.md"
-    )
-    assert r.status_code == 200
-    assert r.json()["parse_ok"] is False  # seeded content "x" is not valid question markdown

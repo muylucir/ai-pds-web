@@ -52,12 +52,6 @@ def test_get_state_route(monkeypatch):
     assert r.status_code == 200
     assert r.json()["project_type"] == "Greenfield"
 
-def test_get_questions_route(monkeypatch):
-    _create_and_seed(monkeypatch, "proj-q")
-    r = client.get("/projects/proj-q/questions/aiplc-docs/strategy-questions.md")
-    assert r.status_code == 200
-    assert len(r.json()["questions"]) == 13
-
 def test_unknown_project_404():
     assert client.get("/projects/nope/state").status_code == 404
 

@@ -530,7 +530,7 @@ async def make_workspace(project_id: str) -> Workspace:
     s3 = s3_store_factory(project_id)
     local_root = _workspaces_dir() / project_id
     # Session descriptor the in-process driver's S3SessionManager needs to
-    # resume conversation state across /message, /answers, and /pending. The
+    # resume conversation state across /turns, /answers, and /pending. The
     # durable store's bucket/region, keyed by project_id.
     session = {
         "session_id": project_id,

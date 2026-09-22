@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { LiveActivityBar, activityLabel, formatElapsed } from "./LiveActivityBar";
 import type { AgentRow } from "@/lib/protoAgents";
-import type { LiveActivity } from "@/lib/useTurnStream";
+import type { LiveActivity } from "@/lib/chatItems";
 
 const tool = (t: string, detail: string | null = null): LiveActivity =>
   ({ kind: "tool", tool: t, detail });
