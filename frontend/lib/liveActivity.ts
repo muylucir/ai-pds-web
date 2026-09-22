@@ -8,7 +8,7 @@
 // 화면(워크스페이스·프로토타입 빌드)이 각자 자기 입력창 위에 바를 놓으므로 이
 // 함수도 화면이 부른다 — 진행 상황은 **메시지**의 속성이 아니라 **화면**의
 // 속성이다.
-import type { LiveActivity } from "@/lib/useTurnStream";
+import type { LiveActivity } from "@/lib/chatItems";
 
 /** 이 함수가 필요한 최소 형태.
  *

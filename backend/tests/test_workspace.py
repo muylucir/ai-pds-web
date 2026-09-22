@@ -10,7 +10,6 @@ class FakeRunner:
     """Workspace가 의존하는 파일 계약 ops만 가진 최소 러너 (S3 backed)."""
     def __init__(self, s3=None):
         self._s3 = s3 or FakeS3Store()
-        self.input_holder = None
 
     async def read_file(self, rel):
         return await self._s3.get(rel)
@@ -32,10 +31,8 @@ async def _seeded():
                        (FIX / "aiplc-state.md").read_text(encoding="utf-8"))
     return Workspace(r)
 
-async def test_get_questions_and_put_answers():
+async def test_put_answers():
     ws = await _seeded()
-    qf = await ws.get_questions("aiplc-docs/strategy-questions.md")
-    assert len(qf.questions) == 13
     updated = await ws.put_answers("aiplc-docs/strategy-questions.md", {1: "B"})
     assert next(q for q in updated.questions if q.number == 1).answer == "B"
 
@@ -43,10 +40,6 @@ async def test_get_state():
     ws = await _seeded()
     st = await ws.get_state()
     assert st.project_type == "Greenfield"
-
-async def test_missing_document_returns_empty():
-    ws = await _seeded()
-    assert await ws.get_document() == ""
 
 async def test_registry_create_and_get():
     reg = ProjectRegistry()

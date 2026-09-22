@@ -10,7 +10,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ReasoningTrace } from "./ReasoningTrace";
-import type { TraceEntry } from "@/lib/useTurnStream";
+import type { TraceEntry } from "@/lib/chatItems";
 
 function entry(p: Partial<TraceEntry>): TraceEntry {
   return { kind: "status", text: null, path: null, detail: null, ...p };

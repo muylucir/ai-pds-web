@@ -64,31 +64,6 @@ def archive_prefix(slug: str, closed_at: str) -> str:
     return f"{survey_prefix(slug)}archive/{closed_at}/"
 
 
-async def purgeable_response_count(project_s3, slug: str) -> int:
-    """How many submitted answers a `SurveyStore.purge()` would destroy — the
-    number the reset confirmation warns about.
-
-    NOT the same question as `SurveyStore.response_count()`, which counts the
-    CURRENT round only (`responses/`) because that is what the live rollup, the
-    CSV and the MAX_RESPONSES cap are about. `purge()` deletes the whole
-    `survey/` tree, and `archive_current()` MOVES each previous round's answers
-    to `archive/{closed_at}/responses/` rather than deleting them --
-    regenerating a survey after a first round is the documented normal flow. So
-    a prototype with 12 archived answers and none in the current round reported
-    0, and the dialog then rendered neither the count nor the irreversibility
-    warning before destroying all 12.
-
-    Lives in this module, next to the purge whose scope it describes, because "a
-    response a reset destroys" is a fact about the key layout owned here -- the
-    route assembling it from `responses_prefix` is what let the two definitions
-    drift apart. A module function, not a `SurveyStore` method: the LIST route
-    needs this per prototype and building a store per slug would also build a
-    bucket-root boto3 client per slug, which this question does not need (only
-    the project store).
-    """
-    return (await survey_summary(project_s3, slug)).responses
-
-
 @dataclass(frozen=True)
 class SurveySummary:
     """이 프로토타입의 설문에 대해 목록 라우트가 알아야 하는 전부."""

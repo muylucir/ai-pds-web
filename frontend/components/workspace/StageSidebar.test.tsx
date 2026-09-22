@@ -61,8 +61,7 @@ describe("StageSidebar", () => {
 
   // 이 카운터는 딕셔너리를 거치지 않고 "스테이지"를 리터럴로 박고 있었다 —
   // 영어 UI에서 헤딩과 힌트는 영어인데 그 줄만 한국어로 남았다(2026-08-04의
-  // 스크린샷에 "0 / 0 스테이지"로 찍혀 있다). CanvasSidebar는 같은 자리에서
-  // 이미 t("canvas.stageUnit")을 쓰므로, 두 사이드바가 어긋나 있었다.
+  // 스크린샷에 "0 / 0 스테이지"로 찍혀 있다).
   it("renders the stage-count unit in the UI locale, not a hardcoded Korean literal", () => {
     render(
       <LocaleProvider locale="en">

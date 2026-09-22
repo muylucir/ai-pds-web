@@ -1,6 +1,6 @@
 "use client";
 // frontend/components/canvas/ReasoningTrace.tsx
-import type { TraceEntry } from "@/lib/useTurnStream";
+import type { TraceEntry } from "@/lib/chatItems";
 import { useT } from "@/lib/i18n/provider";
 
 // 턴의 진행 기록 아코디언. 안에 있는 것은 모델의 추론 텍스트가 **아니다** —

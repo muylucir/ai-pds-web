@@ -5,17 +5,12 @@ from aipds.parsers.questions import parse_question_file, serialize_answers
 from aipds.parsers.state import parse_state_file
 from aipds.parsers.audit import parse_audit_file
 
-_DOC_PATH = "aiplc-docs/discovery/discovery-document.md"
 _STATE_PATH = "aiplc-docs/aiplc-state.md"
 _AUDIT_PATH = "aiplc-docs/audit.md"
 
 class Workspace:
     def __init__(self, runner):
         self.runner = runner
-
-    async def get_questions(self, name: str) -> QuestionFile:
-        md = await self.runner.read_file(name)
-        return parse_question_file(name.split("/")[-1], md)
 
     async def put_answers(self, name: str, answers: dict[int, str]) -> QuestionFile:
         md = await self.runner.read_file(name)
@@ -36,12 +31,6 @@ class Workspace:
         except FileNotFoundError:
             return []
         return parse_audit_file(md)
-
-    async def get_document(self) -> str:
-        try:
-            return await self.runner.read_file(_DOC_PATH)
-        except FileNotFoundError:
-            return ""
 
     async def list_question_files(self) -> list[str]:
         return await self.runner.list_files("aiplc-docs/**/*-questions.md")

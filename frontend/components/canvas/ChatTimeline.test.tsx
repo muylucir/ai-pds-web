@@ -1,30 +1,18 @@
 // frontend/components/canvas/ChatTimeline.test.tsx  (full replacement)
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, act, fireEvent } from "@testing-library/react";
+import { describe, it, expect } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
-import { server } from "@/test/msw/server";
-import { API_BASE_URL } from "@/lib/api/client";
 import { ChatTimeline } from "./ChatTimeline";
-import type { ChatTimelineItem } from "./ChatTimeline";
-import type { ChatItem } from "@/lib/useTurnStream";
-import { strategyQuestions } from "@/test/fixtures/strategyQuestions";
+import type { ChatItem } from "@/lib/useWorkspaceStream";
 import { LocaleProvider } from "@/lib/i18n/provider";
-
-const STRAT = "aiplc-docs/discovery/product-strategy/strategy-questions.md";
-const DOC = "aiplc-docs/discovery/discovery-document.md";
 
 // Shared render helper for the stick-to-bottom suite below: a thin wrapper
 // over ChatTimeline with sensible defaults so each test only varies `items`
 // and `stickSignal`.
-function Harness({ items, stickSignal }: { items: ChatTimelineItem[]; stickSignal?: number }) {
+function Harness({ items, stickSignal }: { items: ChatItem[]; stickSignal?: number }) {
   return (
     <ChatTimeline
       items={items}
-      projectId="pilot1"
-      onChoose={vi.fn()}
-      onOpenArtifact={vi.fn()}
-      busy={false}
       stickSignal={stickSignal}
     />
   );
@@ -42,14 +30,14 @@ describe("ChatTimeline", () => {
       { id: "a1", role: "ai", text: "추가했습니다.", trace: [], streaming: false, error: null },
     ];
     render(
-      <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />,
+      <ChatTimeline items={items} />,
     );
     expect(screen.getByText("필터 추가해줘")).toBeInTheDocument();
     expect(screen.getByText("추가했습니다.")).toBeInTheDocument();
   });
 
   it("renders an empty state with no items", () => {
-    render(<ChatTimeline items={[]} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />);
+    render(<ChatTimeline items={[]} />);
     expect(screen.getByText(/대화를 시작해 보세요/)).toBeInTheDocument();
   });
 
@@ -57,10 +45,6 @@ describe("ChatTimeline", () => {
     render(
       <ChatTimeline
         items={[]}
-        projectId="pilot1"
-        onChoose={vi.fn()}
-        onOpenArtifact={vi.fn()}
-        busy={false}
         historyLoading
       />,
     );
@@ -70,49 +54,26 @@ describe("ChatTimeline", () => {
   it("renders the verbatim typing-hint chrome once there is at least one item, but not on the empty state", () => {
     const items: ChatItem[] = [{ id: "u1", role: "user", text: "필터 추가해줘" }];
     const { rerender } = render(
-      <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />,
+      <ChatTimeline items={items} />,
     );
     expect(screen.getByText(/버튼 대신 채팅으로 답해도 됩니다/)).toBeInTheDocument();
-    rerender(<ChatTimeline items={[]} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />);
+    rerender(<ChatTimeline items={[]} />);
     expect(screen.queryByText(/버튼 대신 채팅으로 답해도 됩니다/)).not.toBeInTheDocument();
   });
 
-  it("renders a questions card item via QuestionCardSlot", async () => {
-    server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/questions/${STRAT}`, () => HttpResponse.json(strategyQuestions)),
-    );
-    const items: ChatItem[] = [{ id: "c1", role: "card", card: "questions", path: STRAT }];
-    await act(async () => {
-      render(
-        <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />,
-      );
-    });
-    expect(await screen.findByText(/13개 답변 완료/)).toBeInTheDocument();
-  });
-
-  it("renders an artifact card item that calls onOpenArtifact when clicked", async () => {
-    const onOpenArtifact = vi.fn();
-    const items: ChatItem[] = [{ id: "c2", role: "card", card: "artifact", path: DOC }];
-    render(
-      <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={onOpenArtifact} busy={false} />,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /우측 패널에서 열기/ }));
-    expect(onOpenArtifact).toHaveBeenCalledTimes(1);
-  });
-
   it("renders a history-card item (from useWorkspaceStream) as a static summary, naming the questions file", () => {
-    const items: ChatTimelineItem[] = [{ id: "h1", role: "history-card", name: "mode-selection" }];
+    const items: ChatItem[] = [{ id: "h1", role: "history-card", name: "mode-selection" }];
     render(
-      <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />,
+      <ChatTimeline items={items} />,
     );
     expect(screen.getByText(/질문지 제시됨/)).toBeInTheDocument();
     expect(screen.getByText(/mode-selection/)).toBeInTheDocument();
   });
 
   it("renders a history-card item with no name without the trailing dash", () => {
-    const items: ChatTimelineItem[] = [{ id: "h2", role: "history-card", name: null }];
+    const items: ChatItem[] = [{ id: "h2", role: "history-card", name: null }];
     render(
-      <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />,
+      <ChatTimeline items={items} />,
     );
     expect(screen.getByText("📋 질문지 제시됨")).toBeInTheDocument();
   });
@@ -121,7 +82,7 @@ describe("ChatTimeline", () => {
     // 종전에는 "질문지 제시됨" 한 줄뿐이어서 스크롤백에서 무엇을 물었는지 알
     // 수 없었다 — payload는 트랜스크립트의 tool_use.input에 구조화된 채로
     // 남아 있는데 복원 코드가 버리고 있었다.
-    const items: ChatTimelineItem[] = [{
+    const items: ChatItem[] = [{
       id: "h3", role: "history-card", name: "discovery-questions",
       file: {
         name: "discovery-questions", preamble: null, parse_ok: true,
@@ -137,7 +98,7 @@ describe("ChatTimeline", () => {
       } as never,
     }];
     render(
-      <ChatTimeline items={items} projectId="pilot1" onChoose={vi.fn()} onOpenArtifact={vi.fn()} busy={false} />,
+      <ChatTimeline items={items} />,
     );
     expect(screen.getByText(/1문항/)).toBeInTheDocument();
     // 접힌 상태에서는 질문이 보이지 않는다(카드가 타임라인을 잡아먹지 않게).
@@ -194,7 +155,7 @@ describe("ChatTimeline — stick-to-bottom", () => {
 describe("답변 제출 말풍선", () => {
   // answers는 UserItem에 실려 온다(useWorkspaceStream.historyItemToChatItem이
   // GET /history의 HistoryItem.answers를 그대로 옮긴다).
-  const answerItem: ChatTimelineItem = {
+  const answerItem: ChatItem = {
     id: "a1",
     role: "user",
     text: "답변 제출 — 1: A · 2: B",

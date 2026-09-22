@@ -78,7 +78,7 @@ describe("Review page", () => {
   });
 
   it("clicking Approve POSTs to /approve, not a chat message", async () => {
-    // POST /message로 "승인" 텍스트를 보내던 것을 대체한다. 그 경로에서는
+    // 채팅 턴으로 "승인" 텍스트를 보내던 것을 대체한다. 그 경로에서는
     // 승인의 유일한 기록이 에이전트가 쓰는 audit.md였고, 에이전트가 문구를
     // 달리 옮겨 적으면 사용자가 누른 사실이 사라졌다 — 실측으로 승인 게이트
     // 5건 중 3건이 인식되지 않았다(lib/approvalState.ts 헤더).
@@ -93,9 +93,9 @@ describe("Review page", () => {
         approveCalls += 1;
         return HttpResponse.json({ approved: true });
       }),
-      http.post(`${API_BASE_URL}/projects/pilot1/message`, () => {
+      http.post(`${API_BASE_URL}/projects/pilot1/turns`, () => {
         messageCalls += 1;
-        return HttpResponse.json({ events: [] });
+        return HttpResponse.json({ turn_id: "t-1" });
       }),
     );
     render(<ReviewPage params={params} />);

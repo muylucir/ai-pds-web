@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  decodeJwtPayload, emailFromClaims, isExpired, roleFromClaims,
+  decodeJwtPayload, emailFromClaims, roleFromClaims,
 } from "./claims";
 
 function fakeJwt(payload: Record<string, unknown>): string {
@@ -74,19 +74,5 @@ describe("emailFromClaims", () => {
   it("returns null when neither is present", () => {
     expect(emailFromClaims({})).toBeNull();
     expect(emailFromClaims(null)).toBeNull();
-  });
-});
-
-describe("isExpired", () => {
-  it("compares exp against the given time", () => {
-    expect(isExpired({ exp: 1000 }, 999)).toBe(false);
-    expect(isExpired({ exp: 1000 }, 1001)).toBe(true);
-  });
-
-  it("treats a missing or malformed exp as expired", () => {
-    // fail-closed: exp를 못 읽으면 만료로 본다(리프레시를 유발할 뿐 위험하지 않다).
-    expect(isExpired({}, 0)).toBe(true);
-    expect(isExpired({ exp: "soon" }, 0)).toBe(true);
-    expect(isExpired(null, 0)).toBe(true);
   });
 });

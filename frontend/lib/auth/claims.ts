@@ -44,10 +44,3 @@ export function emailFromClaims(c: Claims | null): string | null {
   const email = c?.email ?? c?.username;
   return typeof email === "string" && email ? email : null;
 }
-
-export function isExpired(c: Claims | null, nowSeconds: number): boolean {
-  const exp = c?.exp;
-  // fail-closed: exp를 못 읽으면 만료로 본다(리프레시를 유발할 뿐이다).
-  if (typeof exp !== "number") return true;
-  return nowSeconds > exp;
-}
