@@ -179,6 +179,18 @@ server {
   # JWT 쿠키 3개가 기본 버퍼(4k/8k)를 넘겨 400이 난다 — 응답 쪽 버퍼와 짝이다.
   large_client_header_buffers 4 32k;
 
+  # /api/* 응답은 여기서 압축한다. Next의 /api 프록시는 fetch가 풀어 준 본문을
+  # content-encoding 없이 다시 내보내고, CloudFront는 CACHING_DISABLED라 압축하지
+  # 않는다 -- 그대로 두면 프로토타입 프리뷰의 JS·HTML·RSC가 3~10배로 불어나
+  # 첫 진입 동안 링크 클릭이 그 다운로드 뒤에 줄을 선다.
+  # proxied any: CloudFront가 Via를 붙이므로 기본값(off)이면 아무것도 압축하지 않는다.
+  # text/event-stream은 일부러 목록에 없다 -- 압축하면 SSE 이벤트가 버퍼에 갇힌다.
+  gzip on;
+  gzip_proxied any;
+  gzip_vary on;
+  gzip_min_length 1024;
+  gzip_types text/css text/plain text/javascript application/javascript application/json text/x-component image/svg+xml;
+
   # CloudFront 비밀 헤더 불일치(직접 스캔·타인 배포)는 무조건 차단.
   if (\\$http_x_origin_verify != "\${SECRET}") { return 403; }
 
