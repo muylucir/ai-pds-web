@@ -198,6 +198,15 @@ assert.ok(!/proxy_pass http:\/\/127\.0\.0\.1:8000/.test(s),
   // nginx -> Next -> FastAPI 경로 전체가 이 location을 지나간다.
   assert.match(nginxBlock, /proxy_buffering off/, 'SSE: buffering off must be present on the location that now carries /api traffic');
   assert.match(nginxBlock, /proxy_read_timeout 3600s/, 'SSE: long read timeout must be present on that same location');
+  // 압축은 nginx만 할 수 있다 — Next /api 프록시는 본문을 풀어서 내보내고
+  // CloudFront(CACHING_DISABLED)는 압축하지 않는다. CloudFront가 Via를 붙이므로
+  // gzip_proxied가 없으면 gzip on은 아무것도 하지 않는다.
+  assert.match(nginxBlock, /gzip on;/, 'nginx must gzip — nothing else in the chain compresses /api responses');
+  assert.match(nginxBlock, /gzip_proxied any;/, 'gzip_proxied any: CloudFront requests carry Via, so the default (off) compresses nothing');
+  const gzipTypes = nginxBlock.match(/gzip_types ([^;]+);/);
+  assert.ok(gzipTypes, 'gzip_types must be set');
+  assert.ok(!gzipTypes[1].includes('text/event-stream'),
+    'SSE must never be gzipped — compression buffers events and stalls the stream');
   // 이 설계가 요구하는 방향으로 이 이음매를 못박는다: /api/auth/*(로그인·콜백·
   // /auth/me — 백엔드에는 이 라우트가 전혀 없다)는 반드시 프론트(Next)가
   // 받아야 한다. location이 하나뿐이고 그게 "/"이자 :3000으로 가므로, 이는
