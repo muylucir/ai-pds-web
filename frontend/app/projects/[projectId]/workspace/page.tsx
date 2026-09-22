@@ -215,10 +215,6 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               {historyLoading && <HistorySkeleton />}
               <ChatTimeline
                 items={items}
-                projectId={projectId}
-                onChoose={sendAndStick}
-                onOpenArtifact={() => {}}
-                busy={streaming}
                 stickSignal={stickSignal}
                 historyLoading={historyLoading}
               />

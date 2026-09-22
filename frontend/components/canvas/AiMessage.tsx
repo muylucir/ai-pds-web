@@ -1,6 +1,6 @@
 "use client";
 // frontend/components/canvas/AiMessage.tsx
-import type { AiItem } from "@/lib/useTurnStream";
+import type { AiItem } from "@/lib/chatItems";
 import { Markdown } from "@/components/Markdown";
 import { ReasoningTrace } from "./ReasoningTrace";
 import { useT } from "@/lib/i18n/provider";

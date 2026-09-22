@@ -8,21 +8,15 @@ import { answerSummary } from "@/lib/answerSummary";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import type { AgentEvent, HistoryItem, QuestionFile, QuestionsPayload, StagePayload, DocumentPayload,
   PrototypeReadyPayload } from "@/lib/api/types";
-import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/useTurnStream";
+import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
 
-// This is a NEW hook cloned+extended from useTurnStream for the Task 11
-// three-pane workspace screen. useTurnStream itself is left untouched — the
-// canvas/questions pages still use it until Task 11 removes them. Unlike
-// useTurnStream, this hook has no CardItem derivation: cards were a
-// file-contract workaround for the old flow, and the workspace consumes the
-// new structured events (questions/stage/document) directly instead — so this
-// hook's own ChatItem union is user/ai plus a HISTORY-ONLY card marker (below)
-// restored from GET /history, never re-derived from live file_changed paths.
-export type { UserItem, AiItem } from "@/lib/useTurnStream";
-// A questions file presented in a PAST turn (Task 5's history restore) —
-// deliberately NOT the same shape as useTurnStream's QuestionsCardItem: this
-// is a static summary marker (role "history-card"), never rendered as the
-// live interactive QuestionCardSlot form.
+// Drives the three-pane workspace screen. It consumes the structured events
+// (questions/stage/document) directly, so its ChatItem union is user/ai plus a
+// HISTORY-ONLY card marker (below) restored from GET /history, never derived
+// from live file_changed paths.
+export type { UserItem, AiItem } from "@/lib/chatItems";
+// A questions file presented in a PAST turn (Task 5's history restore) — a
+// static summary marker (role "history-card"), not an interactive form.
 export interface HistoryCardItem {
   id: string;
   role: "history-card";
@@ -30,7 +24,7 @@ export interface HistoryCardItem {
   // 그 라운드에서 실제로 물은 질문들(GET /history의 HistoryItem.questions).
   // 트랜스크립트의 tool_use.input에 구조화된 채로 남아 있어 복원할 수 있다 —
   // 종전에는 이것을 버려서 카드가 "질문 제시됨" 한 줄뿐이었다. 여전히
-  // **읽기 전용**이다: 라이브 폼(QuestionCardSlot)이 아니다.
+  // **읽기 전용**이다: 라이브 폼이 아니다.
   file?: QuestionFile | null;
 }
 export type ChatItem = UserItem | AiItem | HistoryCardItem;

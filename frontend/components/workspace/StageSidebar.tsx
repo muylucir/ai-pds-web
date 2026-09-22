@@ -10,8 +10,8 @@ import { useT } from "@/lib/i18n/provider";
 // override by stage-name match: an event's status always wins, and its
 // summary becomes the row's `note` UNLESS the summary is empty, in which
 // case the previous note is kept (an empty summary isn't "no note", it's
-// "no update to report" — see CanvasSidebar's StageRow, which renders `note`
-// under an in_progress row). A stage the server didn't know about yet is
+// "no update to report" — StageRow below renders `note` under an
+// in_progress row). A stage the server didn't know about yet is
 // synthesized starting from "pending" so it still renders.
 export function mergeStages(server: StageState[], events: StagePayload[]): StageState[] {
   const byName = new Map(server.map((s) => [s.name, { ...s }]));
@@ -22,9 +22,8 @@ export function mergeStages(server: StageState[], events: StagePayload[]): Stage
   return [...byName.values()];
 }
 
-// Visual pattern ported verbatim from CanvasSidebar's StageRow (same
-// completed/in_progress/pending row chrome) — kept private to this module
-// since the workspace sidebar is now the only consumer of the merged list.
+// Completed/in_progress/pending row chrome — kept private to this module
+// since the workspace sidebar is the only consumer of the merged list.
 function StageRow({ stage, index }: { stage: StageState; index: number }) {
   if (stage.status === "completed") {
     return (

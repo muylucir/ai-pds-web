@@ -159,10 +159,6 @@ export function BuildPanel({
           <div className="flex-1 md:flex-none md:basis-1/2 md:min-w-0 min-h-0 flex flex-col">
             <ChatTimeline
               items={items}
-              projectId={projectId}
-              onChoose={send}
-              onOpenArtifact={() => {}}
-              busy={streaming}
             />
             {/* 수정 세션이 빈 채로 열린 순간. **자동 발화를 하지 않는 것이
                 의도다** — "수정하기"를 누른 사람은 이미 무엇을 고칠지 알고 있는데,

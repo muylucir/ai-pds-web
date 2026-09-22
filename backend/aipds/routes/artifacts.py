@@ -29,17 +29,6 @@ async def get_state(pid: str):
 async def get_audit(pid: str):
     return await (await ensure_workspace(pid)).get_audit()
 
-@router.get("/projects/{pid}/document")
-async def get_document(pid: str):
-    return {"markdown": await (await ensure_workspace(pid)).get_document()}
-
-@router.get("/projects/{pid}/questions/{name:path}")
-async def get_questions(pid: str, name: str):
-    try:
-        return await (await ensure_workspace(pid)).get_questions(name)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="question file not found")
-
 @router.get("/projects/{pid}/files/{path:path}")
 async def read_artifact(pid: str, path: str):
     # Review-screen-only general-purpose file viewer — outputs (aiplc-docs/)

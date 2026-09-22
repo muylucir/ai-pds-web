@@ -18,15 +18,15 @@ import type {
   AgentActivityPayload,
 } from "@/lib/api/types";
 import { applyAgentActivity, runningAgents, type AgentRow } from "@/lib/protoAgents";
-import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/useTurnStream";
+import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
 
-// A NEW hook modeled on useWorkspaceStream (the workspace's CURRENT stream
-// pattern — useTurnStream itself is retired-canvas-only) for the prototype
+// A NEW hook modeled on useWorkspaceStream (the workspace's stream pattern)
+// for the prototype
 // build chat panel. Simpler than useWorkspaceStream: no stage/document/
 // history/activeDoc/turnSeq branches — a build session has no multi-document
 // sidebar and Task 7's routes expose no history-restore endpoint for
 // prototype sessions, so `items` always starts empty on mount.
-export type { UserItem, AiItem } from "@/lib/useTurnStream";
+export type { UserItem, AiItem } from "@/lib/chatItems";
 export type ChatItem = UserItem | AiItem;
 
 let counter = 0;

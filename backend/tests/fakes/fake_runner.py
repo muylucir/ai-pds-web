@@ -9,11 +9,10 @@ class FakeRunner:
     """File-backed test double for AgentRunner: the file-as-contract ops
     (read_file/write_file/list_files) resolve against an in-memory S3 store,
     exactly like the real runner's durable-S3-direct ops — no AWS, no boot.
-    stop() is a no-op; input_holder mirrors the real attribute."""
+    stop() is a no-op."""
 
     def __init__(self, s3: FakeS3Store | None = None):
         self._s3 = s3 or FakeS3Store()
-        self.input_holder = None
 
     async def read_file(self, rel: str) -> str:
         reject_unsafe(rel)
@@ -40,9 +39,6 @@ class FakeRunner:
         matched = [(k, t) for k, t in pairs if matches_glob(k, glob)]
         matched.sort(key=lambda item: (-item[1], item[0]))
         return [k for k, _ in matched]
-
-    def set_input_holder(self, holder):
-        self.input_holder = holder
 
     async def stop(self) -> None:
         pass

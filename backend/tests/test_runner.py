@@ -364,13 +364,6 @@ async def test_interrupt_tolerates_a_driver_with_no_interrupt(tmp_path):
     await r.interrupt()  # must not raise
 
 
-async def test_input_holder_settable(tmp_path):
-    r = _runner(tmp_path)
-    assert r.input_holder is None
-    r.set_input_holder("facilitator-1")
-    assert r.input_holder == "facilitator-1"
-
-
 # ---- sync must survive a consumer that walks away (real-world SSE disconnect) ----
 
 async def test_sync_runs_when_the_consumer_abandons_the_stream(tmp_path):

@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { AiMessage } from "./AiMessage";
-import type { AiItem } from "@/lib/useTurnStream";
+import type { AiItem } from "@/lib/chatItems";
 
 const base: AiItem = { id: "a1", role: "ai", text: "", trace: [], streaming: false, error: null };
 

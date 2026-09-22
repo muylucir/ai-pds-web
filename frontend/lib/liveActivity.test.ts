@@ -5,7 +5,7 @@
 // 아니다.
 import { describe, it, expect } from "vitest";
 import { liveActivity } from "./liveActivity";
-import type { ChatItem } from "./useTurnStream";
+import type { ChatItem } from "./useWorkspaceStream";
 
 function ai(over: Partial<Extract<ChatItem, { role: "ai" }>> = {}) {
   return {
@@ -43,7 +43,7 @@ describe("liveActivity", () => {
     const items: ChatItem[] = [
       { id: "u1", role: "user", text: "안녕" },
       ai({ activity: { kind: "writing" } }),
-      { id: "c1", role: "card", card: "artifact", path: "x.md" },
+      { id: "c1", role: "history-card", name: "x" },
     ];
     expect(liveActivity(items)).toEqual({ kind: "writing" });
   });

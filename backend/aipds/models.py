@@ -110,6 +110,3 @@ class AgentEvent(BaseModel):
     # Structured payload (JSON string) for questions/stage/document — the
     # event IS the UI contract; files stay as records only.
     payload: str | None = None
-
-class TurnResult(BaseModel):
-    events: list[AgentEvent]

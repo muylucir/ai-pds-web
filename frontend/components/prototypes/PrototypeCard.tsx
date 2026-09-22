@@ -1,6 +1,6 @@
 // frontend/components/prototypes/PrototypeCard.tsx — one prototype's status +
-// action buttons, following ArtifactCard's visual idiom (rounded-xl border,
-// icon tile, violet primary / slate neutral) with StageTimeline's badge
+// action buttons (rounded-xl border, icon tile, violet primary / slate
+// neutral) with StageTimeline's badge
 // pattern (rounded-full pill, per-status color, pulsing while active).
 //
 // State machine mirrors Task 7's list_prototypes contract exactly:

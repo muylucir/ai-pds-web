@@ -75,9 +75,8 @@ export function QuestionCard({
   // 입력할 칸도 없어서 사용자가 답을 낼 방법이 아예 없었다. 배지는 "하나만
   // 선택"이라고 말하고 있었다(고를 것이 0개인데).
   //
-  // 자유 텍스트 자체는 이미 두 곳에서 지원한다 — `X) Other` 보기와 파싱 실패
-  // 폴백(RawMarkdownFallback). 빠져 있던 것은 "정상 파싱된 0-보기 문항"이라는
-  // 가운데 경우다.
+  // 자유 텍스트 자체는 `X) Other` 보기로 이미 지원한다. 빠져 있던 것은 "정상
+  // 파싱된 0-보기 문항"이라는 경우다.
   const freeform = options.length === 0;
 
   // Value contract stays a plain string (QuestionForm's answers dict/submit

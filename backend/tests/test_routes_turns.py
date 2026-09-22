@@ -41,7 +41,6 @@ class ScriptRunner:
     questions 이벤트로 pending을 무장하고, send_answers가 document+done을 낸다."""
     def __init__(self, script=None):
         self._script = script or _structured_first_turn
-        self.input_holder = None
         self._pending_payload = None
         self.interrupts = 0
 
@@ -116,63 +115,6 @@ def _install_default(monkeypatch, pid):
     return runner
 
 
-def test_message_returns_events(monkeypatch):
-    def script(text):
-        return [AgentEvent(kind="message", text=f"got {text}"), AgentEvent(kind="done")]
-    _install_scripted(monkeypatch, "turn1", script)
-    r = client.post("/projects/turn1/message", json={"text": "승인"})
-    assert r.status_code == 200
-    kinds = [e["kind"] for e in r.json()["events"]]
-    assert kinds == ["message", "done"]
-    assert "승인" in r.json()["events"][0]["text"]
-
-def test_message_folds_streamed_deltas_into_one_event(monkeypatch):
-    """이 경로는 스트리밍이 아니다 — 전체 턴을 배열로 모아 한 번에 돌려준다.
-
-    토큰 델타가 켜진 뒤로 한 문단이 수백 개의 `message` 이벤트로 오므로
-    (실측 2026-09-04: 1,325자 → 295개), 그것을 그대로 실으면 응답이 프레임
-    수만큼 부풀고 소비자는 이어 붙이는 일을 떠안는다. SSE 소비자는 붙이는
-    것이 본업이지만 이쪽은 아니다.
-
-    이어 붙이기는 **인접한 것끼리만** 한다. 사이에 다른 종류가 끼면 순서가
-    바뀌므로(도구 실행 전후의 텍스트가 한 덩어리가 된다) 그 경계는 지킨다.
-    """
-    def script(text):
-        return [AgentEvent(kind="message", text="안녕"),
-                AgentEvent(kind="message", text="하세요 "),
-                AgentEvent(kind="status", text="Read"),
-                AgentEvent(kind="message", text="다시"),
-                AgentEvent(kind="done")]
-    _install_scripted(monkeypatch, "turnfold1", script)
-    r = client.post("/projects/turnfold1/message", json={"text": "go"})
-    assert r.status_code == 200
-    events = r.json()["events"]
-    assert [(e["kind"], e.get("text")) for e in events] == [
-        ("message", "안녕하세요 "),
-        ("status", "Read"),
-        ("message", "다시"),
-        ("done", None),
-    ]
-
-
-def test_message_redacts_a_credential_split_across_deltas(monkeypatch):
-    """델타를 접기 전에 레댁션을 돌리면 쪼개진 자격증명이 매칭에 실패한다.
-
-    드라이버가 공백 경계까지만 내보내므로(agent/delta_buffer.py) 실전에서는
-    이런 조각이 나오지 않지만, 이 경로의 안전이 그 상류 동작에만 의존하면
-    상류가 바뀌는 날 조용히 샌다. 접은 뒤에 레댁션한다.
-    """
-    def script(text):
-        return [AgentEvent(kind="message", text="key AKIA"),
-                AgentEvent(kind="message", text="IOSFODNN7EXAMPLE here"),
-                AgentEvent(kind="done")]
-    _install_scripted(monkeypatch, "turnfold2", script)
-    r = client.post("/projects/turnfold2/message", json={"text": "go"})
-    joined = " ".join(e.get("text") or "" for e in r.json()["events"])
-    assert "AKIA" not in joined, joined
-    assert "[CREDENTIAL REDACTED]" in joined
-
-
 def test_sse_stream_emits_frames(monkeypatch):
     def script(text):
         return [AgentEvent(kind="status", text="working"),
@@ -184,17 +126,6 @@ def test_sse_stream_emits_frames(monkeypatch):
     assert "working" in body
     assert "ok" in body
     assert '"kind":"done"' in body.replace(" ", "")
-
-def test_message_redacts_credentials_in_event_text(monkeypatch):
-    def script(text):
-        return [AgentEvent(kind="message", text="key AKIAIOSFODNN7EXAMPLE here"),
-                AgentEvent(kind="done")]
-    _install_scripted(monkeypatch, "turnred1", script)
-    r = client.post("/projects/turnred1/message", json={"text": "go"})
-    assert r.status_code == 200
-    joined = " ".join(e.get("text") or "" for e in r.json()["events"])
-    assert "AKIA" not in joined
-    assert "[CREDENTIAL REDACTED]" in joined
 
 def test_sse_redacts_credentials_in_event_text(monkeypatch):
     def script(text):

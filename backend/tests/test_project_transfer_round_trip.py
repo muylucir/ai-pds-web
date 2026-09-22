@@ -148,8 +148,9 @@ def test_the_conversation_survives_a_new_project_id(env):
 def test_artifacts_and_documents_come_across(env):
     _round_trip(env)
 
-    assert client.get(f"/projects/{TARGET}/document").json()["markdown"] == \
-        "# 발견 문서\n\n본문"
+    doc = client.get(
+        f"/projects/{TARGET}/files/aiplc-docs/discovery/discovery-document.md")
+    assert doc.json()["content"] == "# 발견 문서\n\n본문"
     audit = client.get(f"/projects/{TARGET}/files/aiplc-docs/audit.md")
     assert audit.json()["content"] == "# 감사\n\n- 1. 시작"
 

@@ -6,7 +6,6 @@ from pydantic import BaseModel
 import aipds.app as app_module
 from aipds.agent import prompts
 from aipds.answer_summary import answer_summary
-from aipds.models import QuestionFile
 from aipds.routes.deps import ensure_workspace
 
 router = APIRouter()
@@ -21,17 +20,6 @@ def _numbers(answers: dict[str, str]) -> dict[int, str]:
     except ValueError:
         raise HTTPException(status_code=400,
                             detail="question numbers must be integers")
-
-@router.put("/projects/{pid}/questions/{name:path}", response_model=QuestionFile)
-async def put_answers(pid: str, name: str, body: AnswersBody):
-    try:
-        return await (await ensure_workspace(pid)).put_answers(
-            name, _numbers(body.answers))
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="question file not found")
-    except KeyError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
 
 @router.post("/projects/{pid}/questions/{name:path}/answers")
 async def submit_file_answers(pid: str, name: str, body: AnswersBody):

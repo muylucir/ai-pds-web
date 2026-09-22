@@ -97,7 +97,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
 
   /** 승인 버튼. POST /approve가 레코드를 먼저 쓰고 그 다음 에이전트 턴을 돈다.
    *
-   *  postMessage("승인")로 보내지 않는 이유가 이 기능의 핵심이다: 그 경로에서는
+   *  채팅 턴으로 "승인"을 보내지 않는 이유가 이 기능의 핵심이다: 그 경로에서는
    *  승인의 유일한 기록이 에이전트가 쓰는 audit.md였고, 에이전트가 문구를 달리
    *  옮겨 적으면 사용자가 누른 사실이 사라졌다(lib/approvalState.ts 헤더).
    */

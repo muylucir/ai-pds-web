@@ -1,12 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { approvalTurnText, isApprovalText } from "./approvalMarker";
-
-describe("approvalTurnText", () => {
-  it("프로젝트 언어의 승인 단어를 준다", () => {
-    expect(approvalTurnText("ko")).toBe("승인");
-    expect(approvalTurnText("en")).toBe("Approved");
-  });
-});
+import { isApprovalText } from "./approvalMarker";
 
 describe("isApprovalText", () => {
   it("두 언어를 다 인식한다", () => {
@@ -34,12 +27,5 @@ describe("isApprovalText", () => {
   it("빈 문자열은 아니다", () => {
     expect(isApprovalText("")).toBe(false);
     expect(isApprovalText("   ")).toBe(false);
-  });
-
-  it("두 함수가 어긋나지 않는다 — 보낼 단어는 반드시 판정을 통과한다", () => {
-    // 한쪽만 바뀌면 게이트가 조용히 안 열린다. 이 단정이 그 회귀를 막는다.
-    for (const lang of ["ko", "en"] as const) {
-      expect(isApprovalText(approvalTurnText(lang))).toBe(true);
-    }
   });
 });

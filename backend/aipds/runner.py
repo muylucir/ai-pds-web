@@ -61,13 +61,9 @@ class AgentRunner:
         self._pending_interrupt_id: str | None = None
         self._remote_etags: dict[str, str | None] | None = None
         self._synced_hashes: dict[str, str] = {}
-        self.input_holder: str | None = None
         set_callback = getattr(driver, "set_file_published_callback", None)
         if set_callback is not None:
             set_callback(self._record_published_file)
-
-    def set_input_holder(self, holder: str | None) -> None:
-        self.input_holder = holder
 
     # ---- file-as-contract ops: durable S3 직접 ----
 

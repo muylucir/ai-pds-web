@@ -8,13 +8,9 @@ import {
   createProject,
   listProjects,
   getState,
-  getDocument,
   listQuestionFiles,
-  getQuestionFile,
-  putAnswers,
   listArtifacts,
   readArtifact,
-  postMessage,
   getPending,
   getHistory,
   uploadFile,
@@ -112,13 +108,6 @@ describe("api client request shaping + response typing", () => {
     expect((await getState("p1")).project_type).toBe("Greenfield");
   });
 
-  it("getDocument unwraps {markdown}", async () => {
-    server.use(
-      http.get(`${API_BASE_URL}/projects/p1/document`, () => HttpResponse.json({ markdown: "# Doc" })),
-    );
-    expect(await getDocument("p1")).toBe("# Doc");
-  });
-
   it("listApprovals returns the history and the backend's current doc hash", async () => {
     // 현재 해시는 백엔드가 계산한다 — 프론트가 따로 계산하면 알고리즘이 두
     // 곳에 생기고, 어긋나면 승인이 조용히 인식되지 않는다.
@@ -189,72 +178,6 @@ describe("api client request shaping + response typing", () => {
       ),
     );
     await expect(readArtifact("p1", "uploads/x.md")).rejects.toMatchObject({ status: 403 });
-  });
-
-  it("getQuestionFile encodes a slash-bearing name path but keeps separators", async () => {
-    const name = "aiplc-docs/discovery/product-strategy/strategy-questions.md";
-    server.use(
-      http.get(`${API_BASE_URL}/projects/p1/questions/${name}`, () =>
-        HttpResponse.json({
-          name: "strategy-questions.md",
-          preamble: null,
-          questions: [],
-          parse_ok: true,
-          raw_markdown: null,
-        }),
-      ),
-    );
-    const qf = await getQuestionFile("p1", name);
-    expect(qf.parse_ok).toBe(true);
-  });
-
-  it("getQuestionFile maps 404 to ApiError(404)", async () => {
-    server.use(
-      http.get(`${API_BASE_URL}/projects/p1/questions/missing.md`, () =>
-        HttpResponse.json({ detail: "question file not found" }, { status: 404 }),
-      ),
-    );
-    await expect(getQuestionFile("p1", "missing.md")).rejects.toMatchObject({ status: 404 });
-  });
-
-  it("putAnswers PUTs {answers} and returns reparsed QuestionFile; 400 → ApiError(400)", async () => {
-    const name = "aiplc-docs/strategy-questions.md";
-    let seenBody: unknown;
-    server.use(
-      http.put(`${API_BASE_URL}/projects/p1/questions/${name}`, async ({ request }) => {
-        seenBody = await request.json();
-        return HttpResponse.json({
-          name: "strategy-questions.md",
-          preamble: null,
-          questions: [{ number: 1, category: null, text: "?", options: [], answer: "B" }],
-          parse_ok: true,
-          raw_markdown: null,
-        });
-      }),
-    );
-    const qf = await putAnswers("p1", name, { "1": "B" });
-    expect(seenBody).toEqual({ answers: { "1": "B" } });
-    expect(qf.questions[0].answer).toBe("B");
-
-    server.use(
-      http.put(`${API_BASE_URL}/projects/p1/questions/${name}`, () =>
-        HttpResponse.json({ detail: "bad key" }, { status: 400 }),
-      ),
-    );
-    await expect(putAnswers("p1", name, { "99": "A" })).rejects.toMatchObject({ status: 400 });
-  });
-
-  it("postMessage POSTs {text} and returns TurnResult", async () => {
-    let seenBody: unknown;
-    server.use(
-      http.post(`${API_BASE_URL}/projects/p1/message`, async ({ request }) => {
-        seenBody = await request.json();
-        return HttpResponse.json({ events: [{ kind: "message", text: "ok", path: null }, { kind: "done", text: null, path: null }] });
-      }),
-    );
-    const tr = await postMessage("p1", "승인");
-    expect(seenBody).toEqual({ text: "승인" });
-    expect(tr.events.map((e) => e.kind)).toEqual(["message", "done"]);
   });
 
   it("getPending unwraps {pending} to the raw JSON string (or null)", async () => {
