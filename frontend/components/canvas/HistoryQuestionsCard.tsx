@@ -8,7 +8,7 @@
 // 문맥이 없었다. payload가 있으면 문항 수를 보여주고 펼쳐서 질문과 보기를 읽게
 // 한다.
 //
-// 라이브 폼(QuestionCardSlot)이 **아니다**: 여기서 다시 답할 수는 없다. 그
+// 라이브 폼이 **아니다**: 여기서 다시 답할 수는 없다. 그
 // 라운드는 이미 끝났고, 답변은 바로 아래 말풍선에 있다.
 import { useState } from "react";
 import type { QuestionFile } from "@/lib/api/types";

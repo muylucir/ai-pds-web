@@ -69,7 +69,7 @@ DEFAULT_PERMISSION_MODE = "bypassPermissions"
 # The mark lives in the event's `__dict__`, so it PROPAGATES THROUGH COPIES:
 # measured, `_redacted()` returns a distinct object that DOES carry the mark
 # (`model_copy` copies `__dict__` wholesale), as do `model_copy(deep=True)`,
-# `model_copy(update=...)`, pickle, and nesting in `TurnResult`. Only
+# `model_copy(update=...)`, and pickle. Only
 # `model_validate(model_dump())` drops it, since the mark is not a field.
 #
 # That propagation is harmless TODAY for one specific reason -- not because copies

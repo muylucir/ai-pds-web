@@ -7,7 +7,7 @@ from sse_starlette.sse import EventSourceResponse
 from aipds.parsers.redaction import redact_credentials
 import aipds.app as app_module
 from aipds.routes.deps import ensure_workspace
-from aipds.models import AgentEvent, TurnResult
+from aipds.models import AgentEvent
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
@@ -56,40 +56,6 @@ def _redacted(event: AgentEvent) -> AgentEvent:
     if event.payload is not None:
         updates["payload"] = redact_credentials(event.payload)
     return event.model_copy(update=updates) if updates else event
-
-def _folded(events: list[AgentEvent]) -> list[AgentEvent]:
-    """인접한 `message` 이벤트를 하나로 잇는다.
-
-    **왜 이 경로에만 있는가.** 토큰 델타가 켜진 뒤로 한 문단이 수백 개의 `message`
-    로 온다(실측 2026-09-04: 1,325자 → 295개). SSE 소비자는 그것을 이어 붙이는 것이
-    본업이지만(프론트의 `it.text + ev.text`), 이 경로는 턴 전체를 배열로 모아 한 번에
-    돌려주므로 델타를 그대로 실으면 응답만 프레임 수만큼 부풀고 소비자가 붙이는 일을
-    떠안는다.
-
-    **인접한 것끼리만 잇는다.** 사이에 다른 종류가 끼면 순서가 바뀌므로(도구 실행
-    전후의 텍스트가 한 덩어리가 된다) 그 경계는 지킨다.
-    """
-    out: list[AgentEvent] = []
-    for ev in events:
-        prev = out[-1] if out else None
-        if (ev.kind == "message" and prev is not None
-                and prev.kind == "message"):
-            out[-1] = prev.model_copy(
-                update={"text": (prev.text or "") + (ev.text or "")})
-            continue
-        out.append(ev)
-    return out
-
-
-@router.post("/projects/{pid}/message")
-async def post_message(pid: str, body: MessageBody):
-    ws = await ensure_workspace(pid)
-    # **접은 뒤에 레댁션한다.** 순서가 뒤바뀌면 델타 경계에 걸친 자격증명이
-    # 조각마다 매칭에 실패해 그대로 나간다 — 드라이버가 공백 경계까지만
-    # 내보내므로(agent/delta_buffer.py) 실전에서는 그런 조각이 오지 않지만,
-    # 이 경로의 안전이 상류 동작에만 의존하면 상류가 바뀌는 날 조용히 샌다.
-    raw = [e async for e in ws.runner.send_message(body.text)]
-    return TurnResult(events=[_redacted(e) for e in _folded(raw)])
 
 @router.post("/projects/{pid}/turns")
 async def create_turn(pid: str, body: MessageBody):

@@ -2,8 +2,8 @@
 // field names, because the backend serializes JSON with those keys and the
 // client does no key remapping. Sources:
 //   backend/aipds/models.py       (QuestionOption, Question, QuestionFile,
-//                                        StageState, ProjectState, AuditEntry)
-//   backend/aipds/sandbox/base.py (AgentEvent, TurnResult)
+//                                        StageState, ProjectState, AuditEntry,
+//                                        AgentEvent)
 //   API Completion plan                (GET /projects item shape)
 
 export interface QuestionOption {
@@ -85,10 +85,6 @@ export interface AgentEvent {
   text: string | null;
   path: string | null;
   payload: string | null;
-}
-
-export interface TurnResult {
-  events: AgentEvent[];
 }
 
 // Structured payload shapes carried as a JSON string in AgentEvent.payload for

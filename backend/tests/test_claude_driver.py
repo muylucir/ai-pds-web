@@ -340,8 +340,7 @@ async def test_a_message_arriving_during_the_post_done_sync_is_not_destroyed(tmp
 async def test_a_question_turn_yields_exactly_one_terminal_event(tmp_path):
     # 마지막 훑기가 ResultMessage를 소비하면 _translate이 done을 만들고, 그 뒤
     # 종결 yield가 두 번째 done을 낸다. 그러면 runner.py:134가 워크스페이스
-    # 전체를 S3로 두 번 올리고, POST /message(turns.py:29-31) 클라이언트는
-    # 종결 이벤트를 두 개 받는다.
+    # 전체를 S3로 두 번 올리고, SSE 클라이언트는 종결 이벤트를 두 개 받는다.
     d, _, _ = _driver(tmp_path, {"questions": True,
                                  "result_with_question": True})
     kinds = [e.kind async for e in d.run("hi", {"session_id": "s-1"})]

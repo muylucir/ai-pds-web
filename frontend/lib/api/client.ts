@@ -7,8 +7,6 @@ import type {
   ProjectPage,
   ProjectState,
   ProjectSummary,
-  QuestionFile,
-  TurnResult,
 } from "./types";
 
 // The ONE place the base URL lives. No trailing slash.
@@ -121,29 +119,9 @@ export async function approveDocument(pid: string): Promise<void> {
     `/projects/${encodeURIComponent(pid)}/approve`, { method: "POST" });
 }
 
-export async function getDocument(pid: string): Promise<string> {
-  const r = await request<{ markdown: string }>(`/projects/${encodeURIComponent(pid)}/document`);
-  return r.markdown;
-}
-
 export async function listQuestionFiles(pid: string): Promise<string[]> {
   const r = await request<{ questions: string[] }>(`/projects/${encodeURIComponent(pid)}/questions`);
   return r.questions;
-}
-
-export async function getQuestionFile(pid: string, name: string): Promise<QuestionFile> {
-  return request<QuestionFile>(`/projects/${encodeURIComponent(pid)}/questions/${encodePath(name)}`);
-}
-
-export async function putAnswers(
-  pid: string,
-  name: string,
-  answers: Record<string, string>,
-): Promise<QuestionFile> {
-  return request<QuestionFile>(`/projects/${encodeURIComponent(pid)}/questions/${encodePath(name)}`, {
-    method: "PUT",
-    body: JSON.stringify({ answers }),
-  });
 }
 
 export async function listArtifacts(pid: string): Promise<string[]> {
@@ -159,13 +137,6 @@ export async function readArtifact(pid: string, path: string): Promise<string> {
     `/projects/${encodeURIComponent(pid)}/files/${encodePath(path)}`,
   );
   return r.content;
-}
-
-export async function postMessage(pid: string, text: string): Promise<TurnResult> {
-  return request<TurnResult>(`/projects/${encodeURIComponent(pid)}/message`, {
-    method: "POST",
-    body: JSON.stringify({ text }),
-  });
 }
 
 // POST /projects/{pid}/interrupt → 202. 진행 중인 턴을 끊는다. 응답 시점에

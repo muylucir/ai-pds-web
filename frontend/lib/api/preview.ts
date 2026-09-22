@@ -2,7 +2,7 @@
 //
 // There is NO backend route today that returns a running prototype's preview
 // URL: the prototype build/preview/publish pipeline is spec Phase 2/3 and is
-// NOT implemented (the generic POST /message + GET /events SSE relay is all
+// NOT implemented (the generic POST /turns + GET /events SSE relay is all
 // that exists). Until a build backend lands and exposes a /preview/* reverse
 // proxy (spec §2), this returns null and the canvas renders the
 // "프로토타입 빌드 대기 중" placeholder. When the build backend is present it

@@ -29,7 +29,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { Dict } from "@/lib/i18n";
 import type { AgentRow } from "@/lib/protoAgents";
-import type { LiveActivity } from "@/lib/useTurnStream";
+import type { LiveActivity } from "@/lib/chatItems";
 import { useT } from "@/lib/i18n/provider";
 
 type T = (key: keyof Dict) => string;

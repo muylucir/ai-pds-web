@@ -26,28 +26,6 @@ def _seed(monkeypatch, pid, language=None):
         ws.runner.write_file("aiplc-docs/strategy-questions.md",
             (FIX / "strategy-questions.md").read_text(encoding="utf-8")))
 
-def test_put_answers_updates_file(monkeypatch):
-    _seed(monkeypatch, "ans1")
-    r = client.put("/projects/ans1/questions/aiplc-docs/strategy-questions.md",
-                   json={"answers": {"1": "B", "12": "A,C"}})
-    assert r.status_code == 200
-    by_num = {q["number"]: q["answer"] for q in r.json()["questions"]}
-    assert by_num[1] == "B"
-    assert by_num[12] == "A,C"
-
-def test_put_unknown_question_400(monkeypatch):
-    _seed(monkeypatch, "ans2")
-    r = client.put("/projects/ans2/questions/aiplc-docs/strategy-questions.md",
-                   json={"answers": {"99": "A"}})
-    assert r.status_code == 400
-
-def test_put_non_numeric_key_400(monkeypatch):
-    _seed(monkeypatch, "ans3")
-    r = client.put("/projects/ans3/questions/aiplc-docs/strategy-questions.md",
-                   json={"answers": {"abc": "A"}})
-    assert r.status_code == 400
-
-
 # ---- 파일 질문 라운드의 답변 제출 ----
 # 이 경로는 파킹된 턴으로 돌아가지 않는다. PostToolUse 훅이 질문 파일을 보고 턴을
 # **끝냈으므로**(claude_driver._on_post_tool_use) 이어갈 턴이 없다 — 답변을 파일에
