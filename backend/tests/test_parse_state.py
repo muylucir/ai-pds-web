@@ -213,3 +213,44 @@ def test_a_decorated_section_heading_is_still_the_section():
             "- [ ] Step 1 — b\n"
         )
         assert [s.name for s in st.stages] == ["Workspace Detection", "Envision"], heading
+
+
+def test_indented_sub_steps_under_a_stage_are_not_stages():
+    """에이전트가 스테이지 아래에 단계를 들여 적는다(실측: 스테이지 5개가 18개로
+    읽혔다). 들여쓴 체크박스는 그 스테이지의 장부이지 스테이지가 아니다."""
+    md = """# State
+- **Current Stage**: Product Strategy
+
+## Stage Progress
+### DISCOVERY PHASE
+- [x] Envision
+  - [x] Step 0: Business Context Gathering
+  - [x] Step 1: Pain Point Input Mode Selection
+- [x] Solution Analysis
+- [ ] Product Strategy
+    - [ ] Step 1: Strategy Questions
+"""
+    state = parse_state_file(md)
+    assert [s.name for s in state.stages] == ["Envision", "Solution Analysis",
+                                             "Product Strategy"]
+    assert state.stages[-1].status == "in_progress"
+
+
+def test_a_fully_indented_list_keeps_its_stages():
+    md = """## Stage Progress
+  - [x] Envision
+  - [ ] Solution Analysis
+"""
+    assert [s.name for s in parse_state_file(md).stages] == ["Envision",
+                                                            "Solution Analysis"]
+
+
+def test_a_status_emoji_starts_the_note_not_the_name():
+    md = """## Stage Progress
+- [x] Envision ✅ 승인 완료
+- [x] Solution Analysis ✅ Branch A.1 (단일 솔루션)
+"""
+    stages = parse_state_file(md).stages
+    assert [(s.name, s.note) for s in stages] == [
+        ("Envision", "✅ 승인 완료"),
+        ("Solution Analysis", "✅ Branch A.1 (단일 솔루션)")]

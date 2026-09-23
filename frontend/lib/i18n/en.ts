@@ -363,6 +363,8 @@ export const en: Record<keyof typeof ko, string> = {
   "review.verificationSummary": "AI verification summary",
   "review.gateHistory": "Approval gate history",
   "review.noGateHistory": "No approval history recorded.",
+  "review.auditUnreadable": "The audit log's records could not be read as entries.",
+  "review.viewRawAudit": "View the original",
   "review.auditTrail": "🔒 Audit trail (audit.md)",
   "review.noDocYet": "No document has been written yet.",
   "review.docTreeAria": "Artifact documents",
