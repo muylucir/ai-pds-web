@@ -98,6 +98,28 @@ class ScriptRunner:
         pass
 
 
+def _watch(pid: str, turn_id: str, after: int = 0) -> list[str]:
+    """턴 하나의 SSE 줄 전부 — 턴이 끝날 때까지 본다."""
+    with client.stream("GET", f"/projects/{pid}/events",
+                       params={"turn": turn_id, "after": after}) as r:
+        assert r.status_code == 200, r.read()
+        return list(r.iter_lines())
+
+
+def _say(pid: str, text: str) -> list[str]:
+    """메시지 턴을 시작하고 끝까지 본다."""
+    r = client.post(f"/projects/{pid}/turns", json={"text": text})
+    assert r.status_code == 200, r.text
+    return _watch(pid, r.json()["turn_id"])
+
+
+def _answer(pid: str, answers: dict) -> list[str]:
+    """답변 턴을 시작하고 끝까지 본다."""
+    r = client.post(f"/projects/{pid}/answers", json={"answers": answers})
+    assert r.status_code == 200, r.text
+    return _watch(pid, r.json()["turn_id"])
+
+
 def _install_scripted(monkeypatch, pid, script):
     monkeypatch.setenv("AIPDS_S3_BUCKET", "")  # offline: no durable manifest write
 
@@ -133,8 +155,7 @@ def test_sse_stream_emits_frames(monkeypatch):
                 AgentEvent(kind="message", text="ok"),
                 AgentEvent(kind="done")]
     _install_scripted(monkeypatch, "turn2", script)
-    with client.stream("GET", "/projects/turn2/events", params={"text": "go"}) as r:
-        body = "".join(chunk for chunk in r.iter_text())
+    body = "\n".join(_say("turn2", "go"))
     assert "working" in body
     assert "ok" in body
     assert '"kind":"done"' in body.replace(" ", "")
@@ -144,39 +165,25 @@ def test_sse_redacts_credentials_in_event_text(monkeypatch):
         return [AgentEvent(kind="message", text="key AKIAIOSFODNN7EXAMPLE here"),
                 AgentEvent(kind="done")]
     _install_scripted(monkeypatch, "turnred2", script)
-    with client.stream("GET", "/projects/turnred2/events", params={"text": "go"}) as resp:
-        body = "".join(chunk for chunk in resp.iter_text())
+    body = "\n".join(_say("turnred2", "go"))
     assert "AKIA" not in body
     assert "[CREDENTIAL REDACTED]" in body
 
 def test_answers_stream_relays_events(monkeypatch):
     _install_default(monkeypatch, "turnans1")
     # arm the pending interrupt via the default structured-demo script
-    with client.stream("GET", "/projects/turnans1/events", params={"text": "시작"}) as r:
-        list(r.iter_lines())
-    answers = json.dumps({"1": "A", "2": "B"})
-    with client.stream("GET", "/projects/turnans1/answers/stream",
-                       params={"answers": answers}) as r:
-        lines = [l for l in r.iter_lines() if l.startswith("data:")]
+    _say("turnans1", "시작")
+    lines = [l for l in _answer("turnans1", {"1": "A", "2": "B"})
+             if l.startswith("data:")]
     kinds = [json.loads(l[len("data:"):].strip())["kind"] for l in lines]
     assert "document" in kinds and kinds[-1] == "done"
 
 def test_pending_endpoint(monkeypatch):
     _install_default(monkeypatch, "turnpend1")
     assert client.get("/projects/turnpend1/pending").json() == {"pending": None}
-    with client.stream("GET", "/projects/turnpend1/events", params={"text": "시작"}) as r:
-        list(r.iter_lines())
+    _say("turnpend1", "시작")
     body = client.get("/projects/turnpend1/pending").json()
     assert body["pending"] is not None
-
-def test_answers_stream_bad_json_400(monkeypatch):
-    _install_default(monkeypatch, "turnbad1")
-    r = client.get("/projects/turnbad1/answers/stream", params={"answers": "not-json"})
-    assert r.status_code == 400
-
-def test_answers_stream_unknown_project_404():
-    r = client.get("/projects/does-not-exist/answers/stream", params={"answers": "{}"})
-    assert r.status_code == 404
 
 def test_pending_unknown_project_404():
     r = client.get("/projects/does-not-exist/pending")
@@ -190,8 +197,7 @@ def test_payload_is_redacted(monkeypatch):
     def script(text):
         return [AgentEvent(kind="questions", payload=leak), AgentEvent(kind="done")]
     _install_scripted(monkeypatch, "turnredpayload", script)
-    with client.stream("GET", "/projects/turnredpayload/events", params={"text": "hi"}) as r:
-        lines = [l for l in r.iter_lines() if l.startswith("data:")]
+    lines = [l for l in _say("turnredpayload", "hi") if l.startswith("data:")]
     body = "".join(lines)
     assert "AKIA" not in body
     assert "[CREDENTIAL REDACTED]" in body
@@ -316,21 +322,13 @@ def test_an_unknown_turn_is_404(monkeypatch):
     assert r.status_code == 404
 
 
-def test_events_requires_text_or_turn(monkeypatch):
-    """둘 다 없으면 무엇을 보낼지 알 수 없다 — 조용히 빈 턴을 돌리지 않는다."""
+def test_events_only_watches_a_turn(monkeypatch):
+    """`/events`는 턴을 **보기만** 한다 — 턴은 POST가 시작한다. URL에 입력을 실어
+    시작하는 길이 없으므로 긴 입력이 요청 라인에 실릴 일도 없다(431)."""
     _install_default(monkeypatch, "turnh4")
-    r = client.get("/projects/turnh4/events")
-    assert r.status_code == 400
-
-
-def test_text_query_param_still_works(monkeypatch):
-    """짧은 입력의 기존 경로는 유지한다 — 프론트 배포와 백엔드 배포가 원자적이
-    아니므로, 구 프론트가 보내는 ?text=가 계속 동작해야 한다."""
-    _install_default(monkeypatch, "turnh5")
-    with client.stream("GET", "/projects/turnh5/events",
-                       params={"text": "짧은 입력"}) as r:
-        lines = [l for l in r.iter_lines() if l.startswith("data:")]
-    assert lines
+    assert client.get("/projects/turnh4/events").status_code == 422
+    assert client.get("/projects/turnh4/events",
+                      params={"text": "go"}).status_code == 422
 
 
 def test_a_turn_is_scoped_to_its_project(monkeypatch):
@@ -351,36 +349,15 @@ def test_turns_unknown_project_404():
 def test_answers_handle_carries_answers_out_of_the_url(monkeypatch):
     """답변 제출도 같은 배관을 쓴다 — 자유 서술이 길면 같은 한도에 걸린다."""
     _install_default(monkeypatch, "turnh8")
-    with client.stream("GET", "/projects/turnh8/events",
-                       params={"text": "시작"}) as r:
-        list(r.iter_lines())
+    _say("turnh8", "시작")
     long_answers = {"1": "A", "2": "긴 자유 서술 " * 400}
     r = client.post("/projects/turnh8/answers", json={"answers": long_answers})
     assert r.status_code == 200
     handle = r.json()["turn_id"]
     assert len(handle) <= 64
-    with client.stream("GET", "/projects/turnh8/answers/stream",
-                       params={"turn": handle}) as resp:
-        lines = [l for l in resp.iter_lines() if l.startswith("data:")]
+    lines = [l for l in _watch("turnh8", handle) if l.startswith("data:")]
     kinds = [json.loads(l[len("data:"):].strip())["kind"] for l in lines]
     assert kinds[-1] == "done"
-
-
-def test_answers_stream_still_accepts_the_answers_query_param(monkeypatch):
-    _install_default(monkeypatch, "turnh9")
-    with client.stream("GET", "/projects/turnh9/events",
-                       params={"text": "시작"}) as r:
-        list(r.iter_lines())
-    with client.stream("GET", "/projects/turnh9/answers/stream",
-                       params={"answers": json.dumps({"1": "A"})}) as r:
-        lines = [l for l in r.iter_lines() if l.startswith("data:")]
-    assert lines
-
-
-def test_answers_stream_requires_answers_or_turn(monkeypatch):
-    _install_default(monkeypatch, "turnh10")
-    r = client.get("/projects/turnh10/answers/stream")
-    assert r.status_code == 400
 
 
 # ---- 턴은 서버 작업이다 ----
@@ -498,24 +475,3 @@ def test_a_finished_marker_is_not_reported_as_interrupted(monkeypatch):
     assert _turn_state("own5") is None
 
 
-def test_live_stream_follows_the_running_turn_from_now(monkeypatch):
-    """`/events/live`는 **지금부터**다 — 이미 채워진 말풍선에 이어 붙이는 화면이 쓴다."""
-    runner = _install_gated(monkeypatch, "live1")
-    client.post("/projects/live1/turns", json={"text": "go"})
-    _wait_for(lambda: _turn_state("live1")["last_seq"] >= 1)
-    _open_gate(runner, delay=0.05)
-    with client.stream("GET", "/projects/live1/events/live") as r:
-        assert r.status_code == 200
-        texts = [e.get("text") for e in _data(list(r.iter_lines()))]
-    assert texts == ["자리를 비운 동안 온 문장", None]
-
-
-def test_live_stream_ends_quietly_when_nothing_is_running(monkeypatch):
-    """늦게 돌아와 턴이 끝난 경우 — 에러가 아니라 `done`이어야 프론트가
-    `GET /history`로 복원한다."""
-    _install_scripted(monkeypatch, "live2", _structured_first_turn)
-    with client.stream("GET", "/projects/live2/events/live") as r:
-        assert r.status_code == 200
-        body = "".join(r.iter_text())
-    assert '"kind":"error"' not in body.replace(" ", "")
-    assert '"kind":"done"' in body.replace(" ", "")
