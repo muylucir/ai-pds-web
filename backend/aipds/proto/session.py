@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import AsyncIterator, Callable, Literal, Protocol, TYPE_CHECKING
 
 from aipds.models import AgentEvent
+from aipds.turn_job import TurnJobs
 from aipds.proto import prompts
 from aipds.proto.design_sync import sync_design
 from aipds.s3store import S3StoreLike
@@ -191,6 +192,11 @@ class PrototypeSession:
         self._completion: dict | None = None
         self._idle_handle: asyncio.TimerHandle | None = None
         self._closed = False
+        #: 이 세션의 턴 작업들. 턴은 요청이 아니라 세션에 속한다(aipds/turn_job.py
+        #: 헤더) — 빌드 화면이 새로고침돼도 턴은 끝까지 돌고, 다시 열린 화면은
+        #: 이 세션의 턴을 처음부터 재생해 대화를 되살린다. 그래서 보존 기한이 없다:
+        #: 세션이 닫히면(유휴 30분, 완료 유예) 함께 사라진다.
+        self.turns = TurnJobs(retention=float("inf"))
         # A mid-turn raise releases the slot immediately in send_message's
         # except below (nothing else would -- the caller sees the exception
         # and abandons the session without ever calling close()). This flag
@@ -480,6 +486,14 @@ class PrototypeSession:
         if self._pending_interrupt_id is None:
             return False
         interrupt_id, self._pending_interrupt_id = self._pending_interrupt_id, None
+        # 답을 **먼저** 턴 로그에 남긴다. 빌드 턴은 질문에서 끊기지 않고 이어지므로
+        # 답은 턴 안의 사건이다 — 기록해 두어야 다시 붙은 화면이 질문 카드 다음에
+        # 답 말풍선을 되살리고 카드를 닫는다. 빌더를 깨운 뒤에 남기면 그 사이
+        # 에이전트가 낸 이벤트가 답보다 앞에 기록될 수 있다.
+        job = self.turns.current()
+        if job is not None:
+            job.log.append(AgentEvent(kind="answers", payload=json.dumps(
+                {"answers": answers}, ensure_ascii=False)))
         ok = await self._builder.submit_answers(interrupt_id, answers)
         if not ok:
             return False
@@ -503,6 +517,7 @@ class PrototypeSession:
             self._idle_handle = None
 
         ok = True
+        builder_gone = self._builder is None
         if self._builder is not None:
             try:
                 await self._builder.disconnect()
@@ -513,6 +528,18 @@ class PrototypeSession:
                                self.project_id, self.slug)
                 ok = False
             self._builder = None
+
+        # 도는 턴은 빌더가 내려가면 스스로 끝난다 — 잠깐 기다려 정상 경로로 닫히게
+        # 하고, 그래도 돌면 취소한다. 곧바로 취소하지 않는 이유: 완료 유예로 닫히는
+        # 경우 턴은 build_complete 뒤의 `done`만 남았고, 취소하면 완료 선언 뒤에
+        # "중단됨"이 붙는다.
+        job = self.turns.current()
+        if job is not None and job.task is not None and not builder_gone:
+            try:
+                await asyncio.wait_for(asyncio.shield(job.task), timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                pass
+        await self.turns.cancel()
 
         # A prior mid-turn failure in send_message already released this
         # session's slot -- releasing again would free a slot that belongs to

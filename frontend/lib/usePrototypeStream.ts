@@ -7,8 +7,13 @@ import {
   submitPrototypeAnswers,
   interruptSession,
   startSession,
+  watchBuildTurn,
+  getBuildSession,
   FIRST_TURN_SENTINEL,
 } from "@/lib/api/prototypes";
+import { ApiError } from "@/lib/api/client";
+import type { StreamHandlers, TurnCreated } from "@/lib/api/sse";
+import { RECONNECT_DELAYS_MS } from "@/lib/useWorkspaceStream";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import { answerSummary } from "@/lib/answerSummary";
 import type { AgentEvent } from "@/lib/api/types";
@@ -21,11 +26,14 @@ import { applyAgentActivity, runningAgents, type AgentRow } from "@/lib/protoAge
 import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
 
 // A NEW hook modeled on useWorkspaceStream (the workspace's stream pattern)
-// for the prototype
-// build chat panel. Simpler than useWorkspaceStream: no stage/document/
-// history/activeDoc/turnSeq branches — a build session has no multi-document
-// sidebar and Task 7's routes expose no history-restore endpoint for
-// prototype sessions, so `items` always starts empty on mount.
+// for the prototype build chat panel. Simpler than useWorkspaceStream: no
+// stage/document/history/activeDoc/turnSeq branches — a build session has no
+// multi-document sidebar.
+//
+// **대화는 세션의 턴 로그에서 되살린다.** 빌드 턴은 요청이 아니라 세션의 서버
+// 작업이고(backend aipds/turn_job.py), 세션은 자기 턴을 전부 보존한다. 그래서 패널이
+// 다시 열리면(새로고침, 닫았다 엶) `resume()`이 그 턴들을 처음부터 재생해 말풍선·
+// 질문 카드·답·완료 카드를 순서대로 되살리고, 도는 턴에는 그대로 붙는다.
 export type { UserItem, AiItem } from "@/lib/chatItems";
 export type ChatItem = UserItem | AiItem;
 
@@ -71,6 +79,8 @@ export interface PrototypeStream {
   /** 완료된 빌드를 개선한다: 새 세션을 열고 개시 턴을 발화한다. 서버가
    *  `__first__`를 핸드오프 프롬프트로 치환하므로 새 API가 필요 없다. */
   restartForImprovement: () => Promise<void>;
+  /** 이미 열린 세션의 대화를 되살리고 도는 턴에 붙는다(패널이 다시 열릴 때). */
+  resume: () => Promise<void>;
 }
 
 export function usePrototypeStream(projectId: string, slug: string): PrototypeStream {
@@ -92,6 +102,14 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   // 상태는 그 결과를 받는다. 이 파일의 다른 ref들과 같은 규율이다.
   const agentsRef = useRef<AgentRow[]>([]);
   const stopRef = useRef<null | (() => void)>(null);
+  // 마지막으로 받은 질문. 답 말풍선의 문구가 그 질문의 보기 라벨로 만들어지므로
+  // (answerSummary) 폼을 닫은 뒤에도 쥐고 있어야 한다 — 답은 턴 로그의 `answers`
+  // 이벤트로 **나중에** 도착한다.
+  const lastQuestionsRef = useRef<QuestionsPayload | null>(null);
+  // 도는 턴에 붙는 함수. runTurn이 409(다른 턴이 돌고 있음)를 받았을 때 그 턴을
+  // 보여 주려고 부르는데, 둘이 서로를 참조하므로 ref로 잇는다.
+  const attachRef = useRef<(turnId: string) => void>(() => {});
+  const resumingRef = useRef(false);
   // The AI bubble that events are landing in RIGHT NOW — not the bubble the
   // turn started with. A "questions" event does NOT close the stream (the
   // harness parks on its pending-answer future, builder.py's
@@ -150,7 +168,23 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       }
       if (ev.kind === "questions") {
         const parsed = safeParse<QuestionsPayload>(ev.payload);
-        if (parsed) setPendingQuestions(parsed);
+        if (parsed) {
+          lastQuestionsRef.current = parsed;
+          setPendingQuestions(parsed);
+        }
+        return;
+      }
+      if (ev.kind === "answers") {
+        // 사용자가 답했다(서버가 턴 로그에 남긴다 — proto/session.send_answers). 답은
+        // 질문 **다음**, 에이전트의 응답 **앞**에 온다: 새 말풍선을 열고 그 사이에 답
+        // 말풍선을 둔다. 라이브와 재생이 같은 길이라 새로고침 뒤에도 같은 대화가 된다.
+        const answers = safeParse<{ answers?: Record<string, string> }>(ev.payload)?.answers ?? {};
+        const questions = lastQuestionsRef.current;
+        const summary = questions
+          ? answerSummary(questions.questions, answers, t)
+          : t("chat.answersSubmitted");
+        openAiBubble([{ id: nextId(), role: "user", text: summary }]);
+        setPendingQuestions(null);
         return;
       }
       if (ev.kind === "build_complete") {
@@ -250,14 +284,15 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     [patchAi, openAiBubble, t],
   );
 
+  // 턴 하나를 화면에 흘린다. `opener`가 첫 연결을 열고, 끊기면 **같은 턴**에
+  // 마지막으로 받은 seq부터 다시 붙는다(useWorkspaceStream의 runTurn과 같은 규약).
+  // `onFinished`는 재생이 턴을 하나씩 순서대로 흘리기 위해 쓴다.
   const runTurn = useCallback(
     (
-      opener: (handlers: {
-        onEvent: (ev: AgentEvent) => void;
-        onDone: () => void;
-        onError?: (err: unknown) => void;
-      }) => () => void,
+      opener: (handlers: StreamHandlers) => () => void,
       aiId: string,
+      knownTurnId: string | null = null,
+      onFinished?: () => void,
     ) => {
       currentAiIdRef.current = aiId;
       setStreaming(true);
@@ -271,8 +306,15 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       // assignment below runs. Track that with a local flag rather than
       // relying on assignment order (same guard as useWorkspaceStream).
       let finished = false;
+      let turnId = knownTurnId;
+      let lastSeq = 0;
+      let attempt = 0;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let closeCurrent: (() => void) | null = null;
       const finish = () => {
         finished = true;
+        if (timer) clearTimeout(timer);
+        timer = null;
         setStreaming(false);
         stopRef.current = null;
         // 턴이 끝나면 행은 사라진다 — 끝난 에이전트의 기록은 이미 말풍선의
@@ -280,7 +322,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         // 비우지 않으면 턴이 끝난 뒤에도 도는 스피너가 남는다.
         agentsRef.current = [];
         setAgents([]);
-        // Drop a bubble the turn never filled. submitAnswers opens one eagerly
+        // Drop a bubble the turn never filled. An answers roundtrip opens one
         // for the reply, and a turn that ends first (done right after the
         // answers, or an interrupt) would otherwise leave a blank white box
         // under the answer. Anything at all in it — text, an error, a tool
@@ -301,36 +343,134 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
           );
         }
         currentAiIdRef.current = null;
+        onFinished?.();
       };
       // Every handler resolves the target bubble through the ref (falling back
       // to the id this turn opened with) rather than closing over `aiId`: an
       // answers roundtrip repoints it mid-stream, and `done`/`error` must end
       // the bubble the user is actually watching.
       const liveId = () => currentAiIdRef.current ?? aiId;
-      const stop = opener({
-        onEvent: (ev) => applyEvent(liveId(), ev),
-        onDone: () => {
-          patchAi(liveId(), (it) => ({ ...it, streaming: false }));
-          finish();
-        },
-        onError: (err) => {
-          // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
-          // 세션을 확인해 만료면 로그인으로 보낸다. 살아 있으면 아래 메시지가 맞다.
-          void redirectIfSessionExpired(undefined, window.location.pathname);
-          patchAi(liveId(), (it) => ({
-            ...it,
-            streaming: false,
-            error: it.error ?? t(isTooLong(err) ? "stream.tooLong" : "stream.disconnected"),
-          }));
-          setPendingQuestions(null); // same defensive clear as the error-kind path above
-          finish();
-        },
-      });
+      const giveUp = (message: string) => {
+        patchAi(liveId(), (it) => ({ ...it, streaming: false, error: it.error ?? message }));
+        setPendingQuestions(null); // same defensive clear as the error-kind path
+        finish();
+      };
+      // 연결이 끊겼다. `err`에 HTTP 상태가 있으면 턴을 **시작하는** POST가 거절된
+      // 것이다 — 붙을 턴이 만들어지지 않았다.
+      const onDrop = (err: unknown) => {
+        if (finished) return;
+        // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
+        // 세션을 확인해 만료면 로그인으로 보낸다.
+        void redirectIfSessionExpired(undefined, window.location.pathname);
+        if (err instanceof ApiError) {
+          if (err.status === 409 && err.turnId) {
+            giveUp(t("stream.turnInProgress"));
+            attachRef.current(err.turnId);
+            return;
+          }
+          return giveUp(t(isTooLong(err) ? "stream.tooLong" : "stream.disconnected"));
+        }
+        if (turnId === null || attempt >= RECONNECT_DELAYS_MS.length) {
+          return giveUp(t(turnId === null ? "stream.disconnected" : "stream.lost"));
+        }
+        const id = turnId;
+        timer = setTimeout(() => {
+          timer = null;
+          if (finished) return;
+          // 붙기 전에 그 턴이 아직 세션에 있는지 본다. 세션이 닫혔으면(유휴, 완료
+          // 유예) 다시 붙을 곳이 없다.
+          getBuildSession(projectId, slug)
+            .then((sess) => {
+              if (finished) return;
+              if (!sess?.turns.some((x) => x.turn_id === id)) {
+                return giveUp(t("stream.lost"));
+              }
+              closeCurrent = watchBuildTurn(projectId, slug, id, lastSeq, connection());
+            })
+            .catch(() => onDrop(null));
+        }, RECONNECT_DELAYS_MS[attempt++]);
+      };
+      // 연결 하나의 핸들러. 연결마다 새로 만든다 — `terminal`과 `dropped`는 그 연결의 것이다.
+      const connection = (): StreamHandlers => {
+        let terminal = false;
+        let dropped = false;
+        return {
+          onCreated: (created: TurnCreated) => {
+            if (created.turn_id) turnId = created.turn_id;
+          },
+          onEvent: (ev, seq) => {
+            if (seq !== undefined) lastSeq = seq;
+            if (ev.kind === "done" || ev.kind === "error") terminal = true;
+            attempt = 0;
+            applyEvent(liveId(), ev);
+          },
+          onError: (err) => {
+            dropped = true;
+            onDrop(err);
+          },
+          onDone: () => {
+            if (terminal) {
+              patchAi(liveId(), (it) => ({ ...it, streaming: false }));
+              finish();
+            } else if (!dropped) {
+              onDrop(null);   // 종결 이벤트 없이 닫혔다 = 끊김
+            }
+          },
+        };
+      };
+      closeCurrent = opener(connection());
+      const stop = () => {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        closeCurrent?.();
+      };
       if (finished) stop();
       else stopRef.current = stop;
     },
-    [applyEvent, patchAi, t],
+    [applyEvent, patchAi, projectId, slug, t],
   );
+
+  // 도는 턴에 붙는다 — 처음부터 재생해 말풍선을 채운다.
+  const attach = useCallback(
+    (turnId: string) => {
+      if (stopRef.current) return;
+      const aiId = openAiBubble();
+      runTurn((handlers) => watchBuildTurn(projectId, slug, turnId, 0, handlers), aiId, turnId);
+    },
+    [projectId, slug, runTurn, openAiBubble],
+  );
+  attachRef.current = attach;
+
+  // 이미 열린 세션의 대화를 되살린다. 턴을 하나씩 **순서대로** 처음부터 재생하고
+  // (앞 턴이 끝나야 다음 턴을 연다 — 말풍선 순서가 곧 대화 순서다), 도는 턴에는
+  // 그대로 붙어 이어 받는다.
+  const resume = useCallback(async () => {
+    if (resumingRef.current || stopRef.current) return;
+    resumingRef.current = true;
+    try {
+      const sess = await getBuildSession(projectId, slug);
+      if (!sess) return;
+      for (const turn of sess.turns) {
+        if (stopRef.current) return;
+        const between: ChatItem[] = turn.input
+          ? [{ id: nextId(), role: "user", text: turn.input }] : [];
+        const aiId = openAiBubble(between);
+        const open = (handlers: StreamHandlers) =>
+          watchBuildTurn(projectId, slug, turn.turn_id, 0, handlers);
+        if (turn.state === "running") {
+          // 도는 턴은 마지막이다(세션에 도는 턴은 하나). 붙어 두고 돌아간다 — 그 턴의
+          // 끝을 기다리면 resume이 빌드 내내 끝나지 않는다.
+          runTurn(open, aiId, turn.turn_id);
+          return;
+        }
+        await new Promise<void>((resolve) => runTurn(open, aiId, turn.turn_id, resolve));
+      }
+    } catch {
+      /* 되살리지 못해도 패널은 쓸 수 있다 — 빈 대화에서 이어서 말하면 된다 */
+    } finally {
+      resumingRef.current = false;
+    }
+  }, [projectId, slug, runTurn, openAiBubble]);
 
   // The auto first-build turn: opens the events stream with the "__first__"
   // sentinel (routes.py substitutes session.first_prompt() server-side) and
@@ -364,11 +504,11 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       const ok = await submitPrototypeAnswers(projectId, slug, answers);
       if (ok) {
         // No new STREAM here, unlike `send` — events keep flowing on the one
-        // already open. But a new BUBBLE, because the reply belongs after the
-        // user's answer: folding it into the pre-question bubble grew a single
-        // bubble for the whole build and printed the agent's post-approval
-        // text above the answer that triggered it (files/proto.png).
-        openAiBubble([{ id: nextId(), role: "user", text: summary }]);
+        // already open. The answer bubble is NOT drawn here either: the server
+        // records the answers in the turn log (proto/session.send_answers) and
+        // the `answers` event opens it in applyEvent, between the question and
+        // the reply. One path for live and replay keeps a refreshed panel
+        // showing the same conversation.
         setPendingQuestions(null);
         return;
       }
@@ -451,5 +591,6 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     submitAnswers,
     interrupt,
     restartForImprovement,
+    resume,
   };
 }

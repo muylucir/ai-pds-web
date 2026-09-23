@@ -236,6 +236,7 @@ plus a Bedrock call per conversation turn) — take it down when it is not in us
 | English interface but Korean documents | Correct — [document language](/manual#doc-language) is separate from screen language |
 | Long messages drop the connection | Too much in a single message. Split it, or [attach it as a file](/manual#attach) |
 | The screen is frozen after sleep or a screensaver | Only the **live view** was lost — the AI kept working on the server and the documents were saved. The screen reattaches by itself and picks up from what it missed. If "The connection dropped" appears, refresh — a task still in progress refills from the start, and a finished one comes back as chat history |
+| I refreshed during a prototype build | The build keeps going on the server. Press **Open session** on the card — the session's conversation (questions and answers included) comes back from the start and the panel reattaches to the build in progress |
 | I refreshed while the AI was working | That is fine. The workspace reattaches to the task in progress as it opens, and the input stays locked until the task finishes. Opening the same project in another tab shows the same task |
 | Chat history looks empty | The instance may have been replaced. If a refresh does not bring it back, check the backend log |
 | One feature fails and the screen gives no reason | Usually IAM. \`AccessDenied\` in the backend log names the action |

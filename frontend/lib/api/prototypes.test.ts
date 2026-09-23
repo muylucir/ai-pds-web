@@ -16,6 +16,7 @@ import {
   getHost,
   absoluteShareUrl,
   streamPrototypeEvents,
+  watchBuildTurn,
   resetPrototype,
 } from "./prototypes";
 
@@ -284,11 +285,25 @@ async function protoOpened(): Promise<FakeEventSource> {
 }
 
 describe("streamPrototypeEvents", () => {
-  it("첫 턴 센티널은 URL로 그대로 간다 (9바이트라 길이 문제가 없다)", () => {
-    streamPrototypeEvents("p1", "todo-app", "__first__", { onEvent: () => {}, onDone: () => {} });
-    expect(FakeEventSource.last!.url).toBe(
-      `${API_BASE_URL}/projects/p1/prototypes/todo-app/events?text=${encodeURIComponent("__first__")}`,
+  it("첫 턴 센티널도 턴을 시작하는 POST로 간다 — 턴 id가 있어야 다시 붙는다", async () => {
+    let posted: unknown = null;
+    server.use(
+      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/turns`,
+        async ({ request }) => {
+          posted = await request.json();
+          return HttpResponse.json({ turn_id: "pt-first" });
+        }),
     );
+    streamPrototypeEvents("p1", "todo-app", "__first__", { onEvent: () => {}, onDone: () => {} });
+    const es = await protoOpened();
+    expect(es.url).toBe(`${API_BASE_URL}/projects/p1/prototypes/todo-app/events?turn=pt-first`);
+    expect(posted).toEqual({ text: "__first__" });
+  });
+
+  it("watchBuildTurn opens a build turn from the given seq, with no start request", () => {
+    watchBuildTurn("p1", "todo-app", "pt-9", 4, { onEvent: () => {}, onDone: () => {} });
+    expect(FakeEventSource.last!.url).toBe(
+      `${API_BASE_URL}/projects/p1/prototypes/todo-app/events?turn=pt-9&after=4`);
   });
 
   it("긴 입력은 본문으로 가고 URL에는 핸들만 실린다", async () => {

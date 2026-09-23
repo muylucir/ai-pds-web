@@ -104,7 +104,12 @@ class AgentEvent(BaseModel):
                   # payload가 **어느** 에이전트의 것인지(`task_id`) 말한다는 것뿐이고,
                   # 그 하나가 병렬 작업을 한 줄이 아니라 여러 행으로 그릴 수 있게
                   # 한다 — 근거는 agent_activity.py 헤더.
-                  "agent_activity"]
+                  "agent_activity",
+                  # 프로토타입 빌드에서 사용자가 질문에 답했다는 기록. 빌드 턴은
+                  # 질문에서 끊기지 않고 이어지므로(proto/builder.py) 답은 턴 **안의**
+                  # 사건이고, 턴 로그에 남아야 다시 붙은 화면이 질문 카드와 답
+                  # 말풍선을 순서대로 되살린다. payload = {"answers": {...}}.
+                  "answers"]
     text: str | None = None
     path: str | None = None
     # Structured payload (JSON string) for questions/stage/document — the
