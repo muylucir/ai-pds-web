@@ -430,6 +430,7 @@ export const en: Record<keyof typeof ko, string> = {
   "err.languageUnsupported": "That language is not supported.",
   "err.buildSlotsBusy": "Another team is building a prototype — please try again shortly.",
   "err.buildSessionActive": "A build session is running — close it first.",
+  "err.sandboxUnavailable": "Hosting did not start because the prototype sandbox is unavailable — please tell the operator.",
   "err.initIncomplete": "Initialization did not finish — please try again.",
   "err.surveyClosed": "This survey is closed.",
   "err.surveyFull": "The response limit has been reached. Please close the survey.",

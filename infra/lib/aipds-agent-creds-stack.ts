@@ -1,7 +1,9 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { INVOKABLE_MODEL_ARNS } from './backend-permissions';
+import { INSTANCE_PARAMS } from './instance-params';
 
 // 샌드박스 프로세스(Discovery·빌드 에이전트, 호스팅된 프로토타입)가 받는 자격증명의 롤.
 //
@@ -15,6 +17,10 @@ import { INVOKABLE_MODEL_ARNS } from './backend-permissions';
 // 같은 사정). 이 스택은 인스턴스 롤을 ARN으로 참조만 한다. AssumeRole 권한은 인스턴스 롤에
 // 붙는 별도 정책(AWS::IAM::Policy)이라 HostingStack 템플릿은 그대로다 — 신뢰 정책만으로
 // 충분한지(같은 계정)에 기대지 않는다.
+//
+// **인스턴스가 이 롤을 아는 법.** ARN을 SSM 파라미터로 쓴다(lib/instance-params.ts). 새 인스턴스는
+// 부팅 때 그것을 읽어 래퍼를 켜고 IMDS를 막는다 — 교체된 인스턴스가 운영자를 기다리는 동안
+// 격리 없이 도는 틈이 없다.
 
 export interface AgentCredsStackProps extends cdk.StackProps {
   /** HostingStack의 인스턴스 롤. 이 롤이 AgentRole을 AssumeRole한다. */
@@ -40,6 +46,13 @@ export class AipdsAgentCredsStack extends cdk.Stack {
       mutable: true,
     });
     agentRole.grantAssumeRole(instanceRole);
+
+    const param = new ssm.StringParameter(this, 'AgentRoleArnParam', {
+      parameterName: INSTANCE_PARAMS.agentRoleArn,
+      stringValue: agentRole.roleArn,
+      description: 'AI-PDS AgentRole; read at boot by infra/scripts/aipds-harden.',
+    });
+    param.grantRead(instanceRole);
 
     new cdk.CfnOutput(this, 'AgentRoleArn', { value: agentRole.roleArn });
   }

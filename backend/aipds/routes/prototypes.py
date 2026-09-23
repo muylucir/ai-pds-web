@@ -27,6 +27,7 @@ from aipds import error_codes as ec
 from aipds.models import AgentEvent
 from aipds.parsers.proto_spec import spec_name
 from aipds.parsers.redaction import redact_credentials
+from aipds.launcher import LauncherUnavailable
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.proto.session import has_build_output, purge_session_state
 from aipds.turn_job import TurnBusy, subscribe
@@ -717,6 +718,8 @@ async def start_host(pid: str, slug: str):
         info, token = await host_prototype(pid, slug)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="prototype bundle not found")
+    except LauncherUnavailable:
+        raise HTTPException(status_code=503, detail=ec.SANDBOX_UNAVAILABLE)
     if info.state == "failed" or token is None:
         raise HTTPException(status_code=502, detail=info.log_tail)
     return {"state": info.state, "port": info.port, "log_tail": info.log_tail,

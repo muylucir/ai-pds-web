@@ -2,6 +2,7 @@ import * as assert from 'node:assert';
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { AipdsPreviewStack, PREVIEW_PATH_PATTERN } from '../lib/aipds-preview-stack';
+import { INSTANCE_PARAMS } from '../lib/instance-params';
 
 // 프리뷰 오리진의 계약(lib/aipds-preview-stack.ts 머리말):
 //   - 프로토타입 경로만 오리진으로 가고 나머지는 404다.
@@ -55,6 +56,17 @@ t.hasResourceProperties('AWS::SecretsManager::ResourcePolicy', {
   },
 });
 
+// 새 인스턴스가 부팅 때 읽는 두 값(lib/instance-params.ts, scripts/aipds-harden boot).
+const params = Object.values(t.findResources('AWS::SSM::Parameter')) as any[];
+assert.deepStrictEqual(params.map((p) => p.Properties.Name).sort(),
+  [INSTANCE_PARAMS.previewOrigin, INSTANCE_PARAMS.previewSecretArn].sort());
+const readActions = Object.values(t.findResources('AWS::IAM::Policy'))
+  .filter((p: any) => JSON.stringify(p.Properties.Roles).includes('AipdsHostingStack-InstanceRole'))
+  .flatMap((p: any) => p.Properties.PolicyDocument.Statement)
+  .flatMap((st: any) => ([] as string[]).concat(st.Action));
+assert.ok(readActions.includes('ssm:GetParameter'), 'the instance role reads them at boot');
+assert.ok(readActions.every((a: string) => a.startsWith('ssm:')), 'and nothing else');
+
 t.hasOutput('PreviewOrigin', {});
 t.hasOutput('PreviewSecretArn', {});
-console.log('OK  preview stack: proto-only behaviors, both verify headers, role can read its secret, no instance resources');
+console.log('OK  preview stack: proto-only behaviors, both verify headers, role can read its secret, boot parameters, no instance resources');
