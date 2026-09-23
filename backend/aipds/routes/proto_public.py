@@ -55,16 +55,22 @@ from starlette.background import BackgroundTask
 from starlette.responses import (PlainTextResponse, RedirectResponse,
                                  StreamingResponse)
 
+from aipds import preview_surface
 from aipds.proto.store import resolve_token as resolve_preview_token
 
 _log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Hop-by-hop request headers never forwarded upstream; x-origin-verify is the
-# CloudFront->nginx shared secret and must not leak into prototype processes.
-_STRIP_REQUEST_HEADERS = {"host", "x-origin-verify", "connection",
-                          "keep-alive", "transfer-encoding"}
+# Hop-by-hop request headers never forwarded upstream; x-origin-verify and
+# x-preview-verify are the CloudFront->nginx shared secrets and must not leak into
+# prototype processes. `authorization` is the Next proxy's Cognito bearer — on the
+# preview origin there is no app session to translate, and on a deployment without
+# one (aipds/preview_surface.py) this is what keeps the viewer's token out of code
+# nobody reviewed.
+_STRIP_REQUEST_HEADERS = {"host", "x-origin-verify", "x-preview-verify",
+                          "authorization", "connection", "keep-alive",
+                          "transfer-encoding"}
 # Hop-by-hop response headers: the proxy re-frames the body itself.
 _STRIP_RESPONSE_HEADERS = {"transfer-encoding", "connection", "keep-alive"}
 
@@ -200,7 +206,7 @@ async def _resolve_from_index(token: str) -> tuple[str, str] | None:
 
 
 @router.get("/proto/t/{token}")
-async def enter_prototype(token: str):
+async def enter_prototype(token: str, request: Request):
     """토큰 링크의 진입점. 쿠키를 심고 실제 프리뷰 경로로 보낸다.
 
     이 라우트가 GET 하나뿐인 것은 의도된 것이다: 참가자가 채팅에서 클릭하는
@@ -213,6 +219,13 @@ async def enter_prototype(token: str):
     그러면 게이트는 200처럼 동작하는데 그다음 요청이 전부 404가 된다.
     """
     import aipds.app as app_module
+    if not preview_surface.on_preview_surface(request.headers):
+        # 앱 도메인으로 온 링크(프리뷰 표면이 생기기 전에 나눠 준 것)는 같은 경로의
+        # 프리뷰 도메인으로 보낸다. 쿠키는 심지 않는다 — 앱 오리진에 프로토타입 쿠키가
+        # 생길 이유가 없다. 토큰을 검증하지 않고 보내는 것은 정보가 새지 않기 때문이다:
+        # 무엇이 오든 같은 리다이렉트다.
+        return RedirectResponse(
+            f"{preview_surface.preview_origin()}{_access_path(token)}", status_code=307)
     target = app_module.proto_host().resolve_token(token)
     if target is None:
         target = await _resolve_from_index(token)
@@ -252,6 +265,12 @@ async def enter_prototype(token: str):
     return response
 
 
+def _access_path(token: str) -> str:
+    """토큰 게이트의 **브라우저 관점 경로**(도메인 없이)."""
+    mount = os.environ.get(_PUBLIC_PREFIX_ENV, _PUBLIC_PREFIX_DEFAULT).rstrip("/")
+    return f"{mount}/proto/t/{quote(token)}"
+
+
 def access_url_path(token: str) -> str:
     """토큰 게이트의 경로 — **브라우저 관점**이다.
 
@@ -264,8 +283,11 @@ def access_url_path(token: str) -> str:
     토큰이 링크가 아닌 곳(목록 응답의 별도 필드, 그리고 그것을 담은 클라이언트
     상태)에도 존재하게 된다.
     """
-    mount = os.environ.get(_PUBLIC_PREFIX_ENV, _PUBLIC_PREFIX_DEFAULT).rstrip("/")
-    return f"{mount}/proto/t/{quote(token)}"
+    path = _access_path(token)
+    # 프리뷰 표면이 있으면 링크는 **그 도메인의 절대 URL**이다 — 앱 도메인의 상대
+    # 경로를 주면 참가자가 앱 오리진에서 프로토타입을 연다(aipds/preview_surface.py).
+    origin = preview_surface.preview_origin() if preview_surface.enabled() else None
+    return f"{origin}{path}" if origin else path
 
 
 def _rewritten_location(value: str, pid: str, slug: str) -> str:
@@ -320,6 +342,10 @@ def _rewritten_location(value: str, pid: str, slug: str) -> str:
 @router.api_route("/proto/{pid}/{slug}",
                   methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy_prototype_root(pid: str, slug: str, request: Request):
+    # 프리뷰 표면이 있으면 앱 오리진은 프로토타입을 서빙하지 않는다 — 인증 여부와
+    # 무관하게 같은 404다(aipds/preview_surface.py).
+    if not preview_surface.on_preview_surface(request.headers):
+        return _not_found()
     # 리다이렉트보다 먼저 검증한다. 순서를 뒤집으면 인증 없는 요청도 307을
     # 받으므로, 그 응답만으로 "이 pid/slug가 존재한다"를 알 수 있다 —
     # 404로 감추려는 것이 바로 그 사실이다.
@@ -339,6 +365,8 @@ async def proxy_prototype_root(pid: str, slug: str, request: Request):
 @router.api_route("/proto/{pid}/{slug}/{path:path}",
                   methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
+    if not preview_surface.on_preview_surface(request.headers):
+        return _not_found()
     # 호스팅 상태 확인보다 먼저 검증한다: 502와 404가 갈리는 것만으로도
     # 프로토타입의 존재를 알 수 있으므로, 인증되지 않은 요청은 그 분기에
     # 닿기 전에 404로 끝나야 한다.

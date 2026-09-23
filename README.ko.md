@@ -222,6 +222,31 @@ AIPDS_UPLOAD_ORIGINS=https://dxxxx.cloudfront.net \
 빌드 트리는 그대로 남는다. 이 단계를 건너뛰면 내보내기는 되고 가져오기만 업로드에서
 막힌다(브라우저 콘솔에 CORS 오류가 뜬다).
 
+### 7. 프로토타입 프리뷰 오리진
+
+프로토타입은 빌드 에이전트가 쓴 코드라 **앱과 다른 오리진**에서 서빙한다 — 같은 오리진이면
+로그인한 사람의 세션 쿠키와 토큰이 프로토타입 코드에 닿는다(`backend/aipds/preview_surface.py`).
+프리뷰 전용 CloudFront는 **별도 스택**이다. HostingStack의 것을 참조만 하므로 EC2를 교체하지 않는다:
+
+```bash
+cd infra
+AIPDS_PREVIEW_ORIGIN_DNS=ec2-<a-b-c-d>.<region>.compute.amazonaws.com \
+AIPDS_ORIGIN_VERIFY_SECRET_ARN=<HostingStack의 OriginVerifyHeader 시크릿 ARN> \
+AIPDS_INSTANCE_ROLE_ARN=<HostingStack의 InstanceRole ARN> \
+  npx cdk deploy AipdsPreviewStack --require-approval never
+```
+
+출력의 `PreviewOrigin`과 `PreviewSecretArn`을 인스턴스에 알린다(백엔드가 재시작된다):
+
+```bash
+sudo /opt/aipds/infra/scripts/aipds-preview-configure <PreviewOrigin> <PreviewSecretArn>
+```
+
+그 뒤로 공유 링크는 프리뷰 도메인의 URL이 되고, 앱 도메인으로 들어온 옛 링크는 같은 경로의
+프리뷰 도메인으로 넘어간다. 앱 도메인은 프로토타입을 서빙하지 않는다. 이 단계를 건너뛰거나
+인스턴스가 교체된 뒤 아직 다시 돌리지 않았다면 프로토타입은 앱 도메인에서 서빙된다 — 기능은
+그대로이고 격리만 없다.
+
 ### 리전 변경
 
 기본은 **서울(`ap-northeast-2`)**. 다른 리전은 환경변수로 오버라이드한다:

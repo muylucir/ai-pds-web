@@ -1733,6 +1733,25 @@ def test_proxy_forwards_the_prefix_intact(proto_env, echo_server):
     assert not any(k.lower() == "x-origin-verify" for k in forwarded)
 
 
+def test_the_viewers_bearer_and_the_preview_secret_never_reach_the_prototype(
+        proto_env, echo_server, monkeypatch):
+    """Next의 `/api` 프록시가 붙인 Cognito 토큰과 프리뷰 배포의 비밀 헤더는 프로토타입
+    프로세스(아무도 검토하지 않은 코드)에 닿지 않는다."""
+    monkeypatch.setenv("AIPDS_PREVIEW_ORIGIN", "https://preview.example")
+    monkeypatch.setenv("AIPDS_PREVIEW_VERIFY", "pv-secret")
+    proto_env["host"].infos[(PID, SLUG)] = HostInfo(
+        state="running", port=echo_server, log_tail="")
+    _EchoHandler.seen_headers.clear()
+    resp = client.get(f"/proto/{PID}/{SLUG}/x",
+                      headers={"Authorization": "Bearer admin-token",
+                               "X-Preview-Verify": "pv-secret",
+                               **_authorize(proto_env["host"])})
+    assert resp.status_code == 200
+    forwarded = {k.lower() for k in _EchoHandler.seen_headers[0]}
+    assert "authorization" not in forwarded
+    assert "x-preview-verify" not in forwarded
+
+
 def test_proxy_forwards_the_same_prefix_the_build_was_given(proto_env, echo_server):
     """The two halves must agree: whatever prefix is baked into the build
     (`public_base_path`) is what the app matches on, so that is what the proxy
