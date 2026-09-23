@@ -21,6 +21,7 @@ from typing import AsyncIterator, Callable, Literal, Protocol, TYPE_CHECKING
 
 from aipds.models import AgentEvent
 from aipds.turn_job import TurnJobs
+from aipds.proto.store import PrototypeStore, has_build_output  # noqa: F401 — re-export
 from aipds.proto import prompts
 from aipds.proto.design_sync import sync_design
 from aipds.s3store import S3StoreLike
@@ -48,30 +49,6 @@ SessionStatus = Literal["starting", "ready", "building", "waiting_input",
 #:   resume  -- 완료 선언 없이 죽은 세션을 이어받는다(트랜스크립트 전액).
 #:   handoff -- 완료된 빌드를 개선한다(새 세션 + 요약만).
 PromptKind = Literal["plan", "resume", "handoff"]
-
-
-def has_build_output(build_dir: Path) -> bool:
-    """빌드 디렉토리 아래 `prototype/`에 산출물이 있는가.
-
-    "빌드됐다"의 단일 정의다. 세 곳이 이 질문을 하고, 전부 여기를 거쳐야
-    한다 -- `first_prompt()`(무엇을 지시할지), `build_complete`
-    도구(완료 선언을 받아줄지), 목록 라우트(카드를 built로 보일지). 기준이
-    갈라지면 도구는 완료를 받아들이는데 목록은 built로 보이지 않는(또는 그
-    반대) 상태가 된다.
-
-    `prototype/`을 보고 빌드 디렉토리 자체를 보지 않는 것이 요점이다.
-    `start()`가 에이전트보다 먼저 스펙 .md를 심고, 이전 호스팅 시도가
-    `.proto-host.log`/`.pid`를 남길 수 있어서 -- 빌드 디렉토리가 있다는 건
-    세션이 시작됐다는 뜻일 뿐 무언가 만들어졌다는 뜻이 아니다.
-
-    직속 자식만 확인하고 재귀하지 않는다: node_modules/.next가 생긴 뒤에도
-    매 목록 호출에서 싸게 유지된다.
-    """
-    proto_dir = build_dir / "prototype"
-    try:
-        return proto_dir.is_dir() and any(proto_dir.iterdir())
-    except OSError:
-        return False
 
 
 class BuilderLike(Protocol):
@@ -197,6 +174,8 @@ class PrototypeSession:
         #: 이 세션의 턴을 처음부터 재생해 대화를 되살린다. 그래서 보존 기한이 없다:
         #: 세션이 닫히면(유휴 30분, 완료 유예) 함께 사라진다.
         self.turns = TurnJobs(retention=float("inf"))
+        #: 빌드 소스의 정본(S3). 세션은 시작할 때 되살리고, 완료·종료 때 스냅샷한다.
+        self._store = PrototypeStore(s3, project_id=project_id)
         # A mid-turn raise releases the slot immediately in send_message's
         # except below (nothing else would -- the caller sees the exception
         # and abandons the session without ever calling close()). This flag
@@ -317,6 +296,15 @@ class PrototypeSession:
     def _on_idle_timeout(self) -> None:
         asyncio.create_task(self.close())
 
+    async def _snapshot_quietly(self, reason: str) -> None:
+        """빌드 소스를 S3 세대로 올린다(proto/store.py). 실패해도 빌드를 막지 않는다 —
+        로컬 트리는 그대로 있고, 다음 스냅샷 시점(호스팅, 종료)이 다시 시도한다."""
+        try:
+            await self._store.snapshot(self.slug, self.build_dir(), reason)
+        except Exception:
+            _log.exception("prototype source snapshot failed: %s/%s (%s)",
+                           self.project_id, self.slug, reason)
+
     async def _write_handoff(self, completion: dict) -> None:
         """다음 세션이 읽을 핸드오프. 개선 작업이 전체 트랜스크립트를 지고
         가지 않아도 되게 하는 유일한 근거다(_resolve_session_id의 세 번째
@@ -341,6 +329,15 @@ class PrototypeSession:
         # to exist on local disk (the VM era pushed it over HTTP instead).
         # Refreshed on every start so a spec edited in Discovery is picked up.
         build_dir = self.build_dir()
+        # 로컬에 빌드 산출물이 없으면 S3의 현재 세대로 되살린다(proto/store.py).
+        # 인스턴스가 교체된 뒤 연 개선 세션이 이전 빌드를 모르고 명세부터 다시 만들면,
+        # 설문을 받았던 그 프로토타입이 아니라 다른 물건이 나온다. 개시 프롬프트가
+        # "빌드됐는가"로 분기하므로(`first_prompt`) 이 복원이 그보다 먼저여야 한다.
+        try:
+            await self._store.restore(self.slug, build_dir)
+        except Exception:
+            _log.exception("prototype source restore failed: %s/%s",
+                           self.project_id, self.slug)
         spec_path = build_dir / self._spec_key()
         spec_path.parent.mkdir(parents=True, exist_ok=True)
         spec_path.write_text(spec_md, encoding="utf-8")
@@ -435,6 +432,7 @@ class PrototypeSession:
                         except Exception:
                             _log.exception("handoff write failed: %s/%s",
                                            self.project_id, self.slug)
+                        await self._snapshot_quietly("build_complete")
                         # 유예로 재무장한다. 인자를 넘기지 않는 것이 요점이다
                         # -- 지연은 _arm_idle_timer가 self._completion에서
                         # 파생하므로, 이 호출은 방금 세운 완료 상태를 읽어
@@ -540,6 +538,9 @@ class PrototypeSession:
             except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
                 pass
         await self.turns.cancel()
+        # 완료 선언 없이 끝난 빌드(유휴 종료, 사용자가 닫음)도 잃지 않는다. 내용이
+        # 현재 세대와 같으면 새 세대를 만들지 않는다.
+        await self._snapshot_quietly("session_close")
 
         # A prior mid-turn failure in send_message already released this
         # session's slot -- releasing again would free a slot that belongs to

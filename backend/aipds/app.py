@@ -565,6 +565,13 @@ async def _lifespan(_app: FastAPI):
             _log.exception("project-list restore failed; starting with empty registry")
     # 재시작으로 소멸한 인메모리 세션이 남긴 고아 호스팅 프로세스 정리
     # (구 고아 VM 스윕의 대체물 — 이제 그 자식들은 우리 프로세스의 자식이다).
+    # 직전 백엔드가 호스팅하던 것. 아래 스윕이 pid 파일을 지우기 **전에** 읽는다 —
+    # 재호스팅(아래 _rehost)이 이것을 원하는 상태로 옮긴다(proto/hosting.py).
+    try:
+        previously_running = proto_host().previously_running()
+    except Exception:
+        _log.exception("reading previously hosted prototypes failed")
+        previously_running = []
     try:
         swept = proto_host().sweep_orphans()
         if swept:
@@ -582,7 +589,27 @@ async def _lifespan(_app: FastAPI):
             _log.info("loaded %d prototype access token(s)", loaded)
     except Exception:
         _log.exception("prototype token load failed; continuing startup")
+    # 호스팅 중이어야 하는 프로토타입을 다시 띄운다(proto/hosting.rehost_desired).
+    # 토큰만 되살리면 링크는 살아 있는데 그 링크가 가리키는 서버가 없다 — 재시작이
+    # 곧 "참가자가 502를 보다가 PM이 카드마다 호스팅 시작을 다시 누르는" 일이었다.
+    # 기동을 막지 않도록 백그라운드로 돌리고, 하나씩 올린다(그 이유는 함수 docstring).
+    rehost_task = None
+    if durable_projects_enabled():
+        from aipds.proto.hosting import adopt_local_state, rehost_desired
+
+        async def _rehost() -> None:
+            try:
+                await adopt_local_state(previously_running)
+                count = await rehost_desired()
+                if count:
+                    _log.info("re-hosted %d prototype(s) after startup", count)
+            except Exception:
+                _log.exception("re-hosting prototypes after startup failed")
+
+        rehost_task = asyncio.create_task(_rehost())
     yield
+    if rehost_task is not None and not rehost_task.done():
+        rehost_task.cancel()
 
 
 def _docs_openapi_url() -> str | None:

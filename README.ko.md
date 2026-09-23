@@ -252,7 +252,7 @@ sudo aipds-update
 | 바뀐 것 | 하는 일 | 중단 |
 |---|---|---|
 | `steering-files/` 포인터·config dir만 | 트리만 갱신(서브모듈 내용까지) | 없음 (다음 턴부터 새 룰을 읽는다) |
-| `backend/` | (`pyproject.toml`이 바뀐 경우만 재설치 후) `pip install -U claude-agent-sdk` → 백엔드 재시작 | 진행 중인 턴·빌드 세션이 끊긴다 |
+| `backend/` | (`pyproject.toml`이 바뀐 경우만 재설치 후) `pip install -U claude-agent-sdk` → 백엔드 재시작 | 진행 중인 턴·빌드 세션이 끊긴다. 호스팅 중이던 프로토타입은 하나씩 다시 뜬다 |
 | `frontend/` | (`package-lock.json`이 바뀐 경우만 `npm ci` 후) `next build` + 재시작 | 빌드 1~2분간 청크 404 |
 | `infra/scripts/aipds-update` 자신 | 새 스크립트를 설치한다(다음 실행부터 적용) | 없음 |
 | 없음 (이미 최신) | 아무것도 하지 않는다 | 없음 |
@@ -289,6 +289,11 @@ cd infra && npx cdk deploy AipdsHostingStack --require-approval never
 
 부팅해 빌드를 마칠 때까지 5~10분이 걸리고 그 사이 502가 난다. 코드만 바뀐 경우에는 이
 경로가 필요 없다 — 위의 `aipds-update`를 쓴다.
+
+프로토타입의 빌드 소스·접근 토큰·호스팅 상태는 S3가 정본이다(`backend/aipds/proto/store.py`).
+새 인스턴스는 로컬 트리가 비어 있어도 카드를 "빌드됨"으로 보이고, 이미 나눠 준 링크를 S3의
+토큰 색인으로 푼다. 호스팅 중이던 프로토타입은 부팅 뒤 하나씩 다시 호스팅된다
+(`proto/hosting.rehost_desired`) — 동시에 올리면 `next build`가 겹쳐 메모리가 모자란다.
 
 ### 삭제
 

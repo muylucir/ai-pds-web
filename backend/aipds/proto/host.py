@@ -175,6 +175,18 @@ class ProtoHost:
         self._tokens[token] = (pid, slug)
         return token
 
+    def adopt_token(self, token: str, pid: str, slug: str) -> None:
+        """다른 곳(S3 색인, proto/store.py)에서 찾은 토큰을 캐시와 토큰 파일에 심는다.
+
+        교체된 인스턴스에는 토큰 파일이 없어 캐시도 비어 있다. 링크가 들어왔을 때
+        색인에서 찾은 값을 여기 심어 두면 그 뒤로는 디스크 경로(`token_for`,
+        `ensure_token`)가 그대로 동작한다 — 같은 값이므로 나눠 준 링크가 바뀌지 않는다.
+        """
+        path = self._token_path(pid, slug)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(token, encoding="utf-8")
+        self._tokens[token] = (pid, slug)
+
     def token_for(self, pid: str, slug: str) -> str | None:
         """This prototype's token if it has one, WITHOUT minting one.
 
@@ -538,6 +550,30 @@ class ProtoHost:
         if target.exists():
             raise RuntimeError(f"project purge left residue: {target}")
 
+    def _pid_files(self) -> list[tuple[Path, str, str]]:
+        """(pid 파일, project_id, slug). 호스팅은 빌드 트리 **안의** `prototype/`에서
+        돌므로(routes/prototypes의 `_prototype_dir`) pid 파일이 그 깊이에 생긴다. 옛
+        레이아웃(빌드 트리 바로 아래)도 함께 본다."""
+        if not self._root.is_dir():
+            return []
+        out = []
+        for pid_file in self._root.glob("*/*/prototype/.proto-host.pid"):
+            slug_dir = pid_file.parent.parent
+            out.append((pid_file, slug_dir.parent.name, slug_dir.name))
+        for pid_file in self._root.glob("*/*/.proto-host.pid"):
+            slug_dir = pid_file.parent
+            out.append((pid_file, slug_dir.parent.name, slug_dir.name))
+        return out
+
+    def previously_running(self) -> list[tuple[str, str]]:
+        """직전 백엔드가 떠나기 전에 호스팅 중이던 (project_id, slug).
+
+        pid 파일은 호스팅이 뜰 때 쓰이고 `stop()`이 지운다 — 그러니 재시작 뒤 남아
+        있는 파일은 "멈추라고 한 적 없이 끊긴 호스팅"이다. `sweep_orphans`가 파일을
+        지우기 **전에** 읽어야 한다.
+        """
+        return sorted({(pid, slug) for _, pid, slug in self._pid_files()})
+
     def sweep_orphans(self) -> int:
         """Kill hosting processes left over from a previous backend run and
         clean up their pid files. Replaces the orphan-VM sweep that went away
@@ -547,9 +583,7 @@ class ProtoHost:
         Best effort -- a pid that no longer exists (or was recycled onto
         something we don't own) only costs a stale file."""
         swept = 0
-        if not self._root.is_dir():
-            return 0
-        for pid_file in self._root.glob("*/*/.proto-host.pid"):
+        for pid_file, _, _ in self._pid_files():
             try:
                 target = int(pid_file.read_text(encoding="utf-8").strip())
             except (OSError, ValueError):

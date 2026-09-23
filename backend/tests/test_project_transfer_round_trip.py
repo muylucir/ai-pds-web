@@ -192,6 +192,37 @@ def test_prototype_source_lands_byte_for_byte(env):
         assert (dst / rel).read_bytes() == (src / rel).read_bytes()
 
 
+def test_the_imported_source_is_also_a_generation_in_s3(env):
+    """정본은 S3다(proto/store.py) — 로컬 트리에만 놓으면 가져온 프로젝트가 다음
+    인스턴스 교체에서 소스를 잃는다."""
+    _round_trip(env)
+
+    import asyncio
+    from aipds.proto.store import PrototypeStore
+    files = dict(asyncio.run(PrototypeStore(env["stores"][TARGET]).entries(SLUG)))
+    src = env["proto_root"] / SOURCE / SLUG / "prototype"
+    assert files["prototype/public/logo.png"] == (src / "public/logo.png").read_bytes()
+
+
+def test_instance_only_prototype_keys_do_not_travel(env):
+    """토큰(자격증명)과 호스팅 의도(이 인스턴스의 사정)와 소스 세대(번들이 소스를 따로
+    담는다)는 옮기지 않는다."""
+    src = env["stores"][SOURCE]
+    import asyncio
+    asyncio.run(src.put(f"prototypes/{SLUG}/access-token", "tok-secret"))
+    asyncio.run(src.put(f"prototypes/{SLUG}/hosting.json", '{"desired": "running"}'))
+    asyncio.run(src.put(f"prototypes/{SLUG}/source/current.json", '{"gen": 9}'))
+
+    _round_trip(env)
+
+    dst = env["stores"][TARGET]
+    assert f"prototypes/{SLUG}/access-token" not in dst.blobs
+    assert f"prototypes/{SLUG}/hosting.json" not in dst.blobs
+    # 세대는 가져오기가 **새로** 만든다 — 옛 세대 번호를 들고 오지 않는다.
+    import json
+    assert json.loads(dst.blobs[f"prototypes/{SLUG}/source/current.json"])["gen"] == 1
+
+
 def test_the_survey_keeps_its_answers_and_gets_a_live_link(env):
     before = client.get(f"/projects/{SOURCE}/prototypes").json()["prototypes"][0]
 
