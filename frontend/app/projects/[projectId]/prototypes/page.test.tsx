@@ -33,6 +33,7 @@ function mockStream(overrides: Partial<prototypeStream.PrototypeStream> = {}) {
     submitAnswers: vi.fn().mockResolvedValue(undefined),
     interrupt: vi.fn().mockResolvedValue(undefined),
     restartForImprovement: vi.fn().mockResolvedValue(undefined),
+    resume: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   });
 }

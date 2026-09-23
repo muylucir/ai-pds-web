@@ -45,6 +45,7 @@ function mockStream(overrides: Partial<prototypeStream.PrototypeStream> = {}) {
     submitAnswers: vi.fn().mockResolvedValue(undefined),
     interrupt: vi.fn().mockResolvedValue(undefined),
     restartForImprovement: vi.fn().mockResolvedValue(undefined),
+    resume: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   vi.spyOn(prototypeStream, "usePrototypeStream").mockReturnValue(base);
@@ -140,16 +141,22 @@ describe("BuildPanel", () => {
 
   it("calls startBuild on mount only when autoStart is true", () => {
     const startBuild = vi.fn();
-    mockStream({ startBuild });
+    const resume = vi.fn().mockResolvedValue(undefined);
+    mockStream({ startBuild, resume });
     render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} autoStart />);
     expect(startBuild).toHaveBeenCalledTimes(1);
+    expect(resume).not.toHaveBeenCalled();
   });
 
-  it("does not call startBuild on mount when autoStart is false/omitted", () => {
+  it("resumes the already-open session instead of starting when autoStart is false/omitted", () => {
+    // 새로고침·다시 열기: 세션은 살아 있고 턴이 돌고 있을 수 있다 — 빈 패널이 아니라
+    // 그 세션의 대화를 되살리고 도는 턴에 붙는다.
     const startBuild = vi.fn();
-    mockStream({ startBuild });
+    const resume = vi.fn().mockResolvedValue(undefined);
+    mockStream({ startBuild, resume });
     render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
     expect(startBuild).not.toHaveBeenCalled();
+    expect(resume).toHaveBeenCalledTimes(1);
   });
 
   it("submitting an answer calls submitAnswers with the form's values", async () => {

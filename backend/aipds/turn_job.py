@@ -93,6 +93,8 @@ class TurnJob:
     started_at: float
     state: TurnState = "running"
     finished_at: float | None = None
+    #: 사용자가 보낸 말(화면에 사용자 말풍선으로 되살릴 것). 자동 개시 턴은 None.
+    input_text: str | None = None
     task: asyncio.Task | None = field(default=None, repr=False)
 
     def summary(self) -> dict:
@@ -151,8 +153,14 @@ class TurnJobs:
         self._prune()
         return self._jobs.get(turn_id)
 
+    def all(self) -> list[TurnJob]:
+        """보존 중인 턴 전부, 시작 순서대로."""
+        self._prune()
+        return list(self._jobs.values())   # dict는 넣은 순서를 지킨다
+
     def start(self, kind: str,
-              events: Callable[[], AsyncIterator[AgentEvent]]) -> TurnJob:
+              events: Callable[[], AsyncIterator[AgentEvent]],
+              input_text: str | None = None) -> TurnJob:
         """턴을 시작한다. `events`는 턴의 이벤트를 내는 generator를 만드는 함수다.
 
         함수로 받는 이유: 도는 턴이 있으면 generator를 **만들지도 않고** 거절해야
@@ -164,7 +172,7 @@ class TurnJobs:
             raise TurnBusy(running)
         self._prune()
         job = TurnJob(id=uuid.uuid4().hex, kind=kind, log=TurnLog(),
-                      started_at=self._clock())
+                      started_at=self._clock(), input_text=input_text)
         self._jobs[job.id] = job
         self._latest = job
         job.task = asyncio.create_task(self._consume(job, events()),
