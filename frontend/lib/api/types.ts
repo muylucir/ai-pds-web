@@ -195,6 +195,16 @@ export interface ProjectPage {
   size: number;
 }
 
+// GET /projects/{pid}/turn → { turn: TurnSummary | null }. 턴은 요청이 아니라 서버
+// 작업이다(backend aipds/turn_job.py) — 화면은 `turn_id`로 붙고 `last_seq`까지 받은
+// 것을 `after`로 돌려주며 다시 붙는다.
+export interface TurnSummary {
+  turn_id: string;
+  kind: "message" | "answers";
+  state: "running" | "done" | "error" | "interrupted";
+  last_seq: number;
+}
+
 // GET /projects/{pid}/history → { items: HistoryItem[] } (Task 1). Restores
 // the chat timeline on workspace mount — a "card" role item marks a
 // previously-presented questions file (by `name`), never re-rendered as the

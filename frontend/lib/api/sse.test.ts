@@ -2,14 +2,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
-import { API_BASE_URL } from "./client";
-import { streamEvents, streamAnswers } from "./sse";
+import { API_BASE_URL, ApiError } from "./client";
+import { streamEvents, streamAnswers, watchTurn } from "./sse";
 
 // Minimal fake EventSource: records the URL, lets the test push data/error.
 class FakeEventSource {
   static last: FakeEventSource | null = null;
   url: string;
-  onmessage: ((ev: { data: string }) => void) | null = null;
+  onmessage: ((ev: { data: string; lastEventId?: string }) => void) | null = null;
   onerror: ((ev: unknown) => void) | null = null;
   closed = false;
   constructor(url: string) {
@@ -19,8 +19,9 @@ class FakeEventSource {
   close() {
     this.closed = true;
   }
-  emit(obj: unknown) {
-    this.onmessage?.({ data: JSON.stringify(obj) });
+  emit(obj: unknown, id?: number) {
+    this.onmessage?.({ data: JSON.stringify(obj),
+                       lastEventId: id === undefined ? "" : String(id) });
   }
 }
 
@@ -66,9 +67,36 @@ describe("streamEvents", () => {
     es.emit({ kind: "message", text: "ok", path: null });
     es.emit({ kind: "done", text: null, path: null });
     expect(onEvent).toHaveBeenCalledTimes(3);
-    expect(onEvent).toHaveBeenNthCalledWith(1, { kind: "status", text: "working", path: null });
+    expect(onEvent).toHaveBeenNthCalledWith(1, { kind: "status", text: "working", path: null },
+                                            undefined);
     expect(onDone).toHaveBeenCalledTimes(1);
     expect(es.closed).toBe(true);
+  });
+
+  it("passes each frame's SSE id through as its seq", async () => {
+    // 다시 붙을 때 `after`로 돌려줄 값이다(watchTurn).
+    mockTurns();
+    const onEvent = vi.fn();
+    streamEvents("p1", "go", { onEvent, onDone: () => {} });
+    const es = await opened();
+    es.emit({ kind: "message", text: "ok", path: null }, 7);
+    expect(onEvent).toHaveBeenCalledWith({ kind: "message", text: "ok", path: null }, 7);
+  });
+
+  it("a 409 carries the id of the turn that is already running", async () => {
+    server.use(
+      http.post(`${API_BASE_URL}/projects/p1/turns`, () =>
+        HttpResponse.json({ detail: { code: "turn_in_progress", turn_id: "t-run" } },
+                          { status: 409 })),
+    );
+    const onError = vi.fn();
+    streamEvents("p1", "go", { onEvent: () => {}, onDone: () => {}, onError });
+    await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+    const err = onError.mock.calls[0][0];
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(409);
+    expect(err.detail).toBe("turn_in_progress");
+    expect(err.turnId).toBe("t-run");
   });
 
   it("unsubscribe closes the stream", async () => {
@@ -190,5 +218,14 @@ describe("긴 입력은 URL이 아니라 본문으로 간다", () => {
     resolvePost(null);
     await new Promise((r) => setTimeout(r, 10));
     expect(FakeEventSource.last).toBeNull();
+  });
+});
+
+describe("watchTurn", () => {
+  it("opens the turn's stream from the given seq, with no start request", () => {
+    // 이미 도는 턴을 본다 — 턴을 시작하지 않으므로 POST가 없다.
+    watchTurn("p1", "t-9", 4, { onEvent: () => {}, onDone: () => {} });
+    expect(FakeEventSource.last?.url)
+      .toBe(`${API_BASE_URL}/projects/p1/events?turn=t-9&after=4`);
   });
 });
