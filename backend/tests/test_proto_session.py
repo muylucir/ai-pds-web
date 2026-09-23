@@ -1250,3 +1250,78 @@ async def test_a_resumed_session_carries_the_request_too(tmp_path):
 
     assert "로그인 화면부터 마쳐줘" in prompt
     assert "AskUserQuestion" not in prompt
+
+
+# ---- 빌드 턴은 세션의 서버 작업이다 (aipds/turn_job.py) ----
+
+class GatedBuilder(FakeBuilder):
+    """질문을 낸 뒤 답이 올 때까지 멈추고, 답을 받으면 이어서 끝나는 빌더 —
+    실물처럼 **한 턴이 질문을 넘어 이어진다**(proto/builder.py)."""
+
+    def __init__(self):
+        super().__init__()
+        self.answered = asyncio.Event()
+
+    async def run(self, text: str):
+        self.queries.append(text)
+        yield AgentEvent(kind="questions", payload=json.dumps(
+            {"interrupt_id": "iid-1", "questions": {"name": "q"}}))
+        await self.answered.wait()
+        yield AgentEvent(kind="message", text="반영했습니다")
+        yield AgentEvent(kind="done")
+
+    async def submit_answers(self, interrupt_id, answers):
+        await super().submit_answers(interrupt_id, answers)
+        self.answered.set()
+        return True
+
+
+async def test_an_answer_is_recorded_in_the_turn_between_the_question_and_the_reply(tmp_path):
+    """다시 붙은 화면이 질문 카드 다음에 답 말풍선을 되살리고 카드를 닫는 근거다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = GatedBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+    job = session.turns.start("message", lambda: session.send_message("go"))
+    await asyncio.sleep(0.01)
+    assert session.status == "waiting_input"
+    assert await session.send_answers({"1": "A"}) is True
+    await job.task
+    kinds = [e.kind for _, e in job.log.events_after(0)]
+    assert kinds == ["questions", "answers", "message", "done"]
+    answers = job.log.events_after(0)[1][1]
+    assert json.loads(answers.payload) == {"answers": {"1": "A"}}
+
+
+async def test_a_turn_nobody_watches_still_reaches_completion(tmp_path):
+    """보던 화면이 떠나도 턴은 끝까지 돌아 세션이 완료를 안다 — 소비자가 곧 실행
+    주체이던 동안은 새로고침하면 build_complete를 아무도 읽지 않아 세션이 "building"에
+    멈춰 있었다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    builder.script([AgentEvent(kind="message", text="만드는 중"),
+                    _complete_event(), AgentEvent(kind="done")])
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+    job = session.turns.start("message", lambda: session.send_message("go"))
+    await job.task
+    assert session.status == "complete"
+    assert job.state == "done"
+
+
+async def test_close_lets_a_finishing_turn_end_on_its_own(tmp_path):
+    """완료 유예로 닫힐 때 턴에 남은 것은 `done`뿐이다 — 곧바로 취소하면 완료 선언
+    뒤에 "중단됨"이 붙는다. 빌더가 내려가면 턴은 스스로 끝나므로 잠깐 기다린다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    builder.script([AgentEvent(kind="message", text="끝"), AgentEvent(kind="done")])
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+    job = session.turns.start("message", lambda: session.send_message("go"))
+    await asyncio.sleep(0)          # 턴이 돌기 시작한 뒤에 닫힌다
+    await session.close()
+    assert job.state == "done"
+    assert all(e.text != "turn interrupted" for _, e in job.log.events_after(0))

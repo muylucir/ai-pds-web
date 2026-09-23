@@ -34,7 +34,7 @@ export function BuildPanel({
   const t = useT();
   const {
     items, streaming, agents, pendingQuestions, buildComplete, changedPaths,
-    startBuild, send, submitAnswers, interrupt, restartForImprovement,
+    startBuild, send, submitAnswers, interrupt, restartForImprovement, resume,
   } = usePrototypeStream(projectId, slug);
   const [closing, setClosing] = useState(false);
   const [submittingAnswers, setSubmittingAnswers] = useState(false);
@@ -46,7 +46,11 @@ export function BuildPanel({
   const live = liveActivity(items);
 
   useEffect(() => {
+    // 새로 연 세션이면 자동 개시, 이미 열린 세션이면(새로고침·다시 열기) 그 세션의
+    // 대화를 되살리고 도는 턴에 붙는다 — 빈 패널에서 멈춘 턴을 볼 수 없던 것이 이
+    // 분기의 이유다.
     if (autoStart) startBuild();
+    else void resume();
     // Mount-only — startBuild must fire at most once per panel lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -1,7 +1,8 @@
 // frontend/lib/usePrototypeStream.test.tsx
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { usePrototypeStream } from "./usePrototypeStream";
+import { RECONNECT_DELAYS_MS } from "./useWorkspaceStream";
 import * as prototypesApi from "@/lib/api/prototypes";
 import * as sessionRecovery from "@/lib/auth/sessionRecovery";
 import type { AgentEvent } from "@/lib/api/types";
@@ -9,6 +10,8 @@ import type { AgentEvent } from "@/lib/api/types";
 vi.mock("@/lib/api/prototypes", async (orig) => ({
   ...(await orig<typeof import("@/lib/api/prototypes")>()),
   streamPrototypeEvents: vi.fn(),
+  watchBuildTurn: vi.fn(),
+  getBuildSession: vi.fn(),
   submitPrototypeAnswers: vi.fn(),
   interruptSession: vi.fn(),
   startSession: vi.fn(),
@@ -39,6 +42,8 @@ const QUESTIONS_PAYLOAD = JSON.stringify({
     ],
   },
 });
+
+const ANSWERS_EVENT: AgentEvent = { kind: "answers", text: null, path: null, payload: JSON.stringify({ answers: { "1": "A" } }) };
 
 function drive(events: AgentEvent[]) {
   vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
@@ -166,8 +171,10 @@ describe("usePrototypeStream", () => {
     // agent's next message, so scrolling back gave no hint what was chosen.
     // The letter alone ("A") is not enough — the option text is what makes the
     // bubble legible.
+    let captured: any = null;
     vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
       (_pid: any, _slug: any, _text: any, handlers: any) => {
+        captured = handlers;
         handlers.onEvent({ kind: "questions", text: null, path: null, payload: QUESTIONS_PAYLOAD });
         return () => {};
       },
@@ -180,6 +187,10 @@ describe("usePrototypeStream", () => {
     await act(async () => {
       await result.current.submitAnswers({ "1": "A" });
     });
+    // 답 말풍선은 서버가 턴 로그에 남긴 `answers` 이벤트로 그려진다 — 새로고침 뒤
+    // 재생도 같은 길을 타므로 같은 대화가 된다(proto/session.send_answers).
+    expect(result.current.pendingQuestions).toBeNull();
+    act(() => captured.onEvent(ANSWERS_EVENT));
 
     const bubbles = result.current.items.filter((i) => i.role === "user").map((i) => i.text);
     expect(bubbles).toContain("Q1. 누구?\n→ A. PM");
@@ -210,6 +221,7 @@ describe("usePrototypeStream", () => {
       await result.current.submitAnswers({ "1": "A" });
     });
     act(() => {
+      captured.onEvent(ANSWERS_EVENT);
       captured.onEvent({ kind: "message", text: "승인 감사합니다. 빌드를 시작합니다", path: null, payload: null });
       captured.onEvent({ kind: "done", text: null, path: null, payload: null });
     });
@@ -289,6 +301,7 @@ describe("usePrototypeStream", () => {
     });
     // The real client relays the frame and THEN calls onDone (prototypes.ts).
     act(() => {
+      captured.onEvent(ANSWERS_EVENT);
       captured.onEvent({ kind: "done", text: null, path: null, payload: null });
       captured.onDone();
     });
@@ -696,5 +709,137 @@ describe("usePrototypeStream — 도구가 무엇을 했는지", () => {
 
     const ai = result.current.items.find((it) => it.role === "ai")!;
     expect(ai.trace[0]).toMatchObject({ kind: "status", text: "Write", detail: null });
+  });
+});
+
+
+// ---- 빌드 화면이 다시 열릴 때 (새로고침, 닫았다 엶) ----
+// 빌드 턴은 세션의 서버 작업이고 세션은 자기 턴을 전부 보존한다(backend
+// aipds/turn_job.py, proto/session.py). 다시 열린 화면은 그 턴들을 재생한다.
+const ev = (kind: AgentEvent["kind"], text: string | null = null,
+            payload: string | null = null): AgentEvent =>
+  ({ kind, text, path: null, payload });
+
+describe("usePrototypeStream — resume", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("replays the session's turns in order and attaches to the running one", async () => {
+    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue({
+      status: "building",
+      turns: [
+        { turn_id: "t1", state: "done", last_seq: 2, input: null },
+        { turn_id: "t2", state: "running", last_seq: 1, input: "버튼 색 바꿔 줘" },
+      ],
+    });
+    vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
+      (_pid: any, _slug: any, turnId: any, after: any, handlers: any) => {
+        expect(after).toBe(0);                    // 처음부터 재생한다
+        if (turnId === "t1") {
+          handlers.onEvent(ev("message", "계획을 세웠습니다"), 1);
+          handlers.onEvent(ev("done"), 2);
+          handlers.onDone();
+        } else {
+          handlers.onEvent(ev("message", "바꾸는 중"), 1);   // 아직 도는 턴
+        }
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+
+    expect(result.current.items.map((i) => [i.role, i.text])).toEqual([
+      ["ai", "계획을 세웠습니다"],
+      ["user", "버튼 색 바꿔 줘"],
+      ["ai", "바꾸는 중"],
+    ]);
+    expect(result.current.streaming).toBe(true);
+  });
+
+  it("restores a question and its answer in the order they happened", async () => {
+    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue({
+      status: "building",
+      turns: [{ turn_id: "t1", state: "running", last_seq: 4, input: null }],
+    });
+    vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
+      (_pid: any, _slug: any, _turn: any, _after: any, handlers: any) => {
+        handlers.onEvent(ev("message", "진행할까요?"), 1);
+        handlers.onEvent(ev("questions", null, QUESTIONS_PAYLOAD), 2);
+        handlers.onEvent(ANSWERS_EVENT, 3);
+        handlers.onEvent(ev("message", "진행합니다"), 4);
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+
+    expect(result.current.items.map((i) => [i.role, i.text])).toEqual([
+      ["ai", "진행할까요?"],
+      ["user", "Q1. 누구?\n→ A. PM"],
+      ["ai", "진행합니다"],
+    ]);
+    // 이미 답한 질문의 카드는 다시 뜨지 않는다.
+    expect(result.current.pendingQuestions).toBeNull();
+  });
+
+  it("an unanswered question comes back as an open card", async () => {
+    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue({
+      status: "waiting_input",
+      turns: [{ turn_id: "t1", state: "running", last_seq: 2, input: null }],
+    });
+    vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
+      (_pid: any, _slug: any, _turn: any, _after: any, handlers: any) => {
+        handlers.onEvent(ev("questions", null, QUESTIONS_PAYLOAD), 1);
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+    expect(result.current.pendingQuestions?.interrupt_id).toBe("i-1");
+  });
+
+  it("does nothing when there is no session", async () => {
+    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue(null);
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+    expect(result.current.items).toEqual([]);
+    expect(prototypesApi.watchBuildTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe("usePrototypeStream — reconnect", () => {
+  beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("reattaches to the same build turn from the last seq it received", async () => {
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        handlers.onCreated?.({ turn_id: "t1" });
+        handlers.onEvent(ev("message", "만드는 중"), 1);
+        handlers.onError?.(new Event("error"));
+        handlers.onDone();
+        return () => {};
+      },
+    );
+    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue({
+      status: "building",
+      turns: [{ turn_id: "t1", state: "running", last_seq: 3, input: null }],
+    });
+    vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
+      (_pid: any, _slug: any, _turn: any, _after: any, handlers: any) => {
+        handlers.onEvent(ev("message", " 계속"), 2);
+        handlers.onEvent(ev("done"), 3);
+        handlers.onDone();
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+    expect(result.current.streaming).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(RECONNECT_DELAYS_MS[0]); });
+
+    expect(prototypesApi.watchBuildTurn).toHaveBeenCalledWith(
+      "p1", "todo-app", "t1", 1, expect.anything());
+    expect(result.current.items.map((i) => i.text)).toEqual(["만드는 중 계속"]);
+    expect(result.current.streaming).toBe(false);
   });
 });

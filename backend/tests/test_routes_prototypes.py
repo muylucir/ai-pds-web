@@ -1,4 +1,5 @@
 # backend/tests/test_routes_prototypes.py — prototype session/host/proxy routes.
+import asyncio
 import json
 import time
 import threading
@@ -16,7 +17,20 @@ from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 
-client = TestClient(app_module.app)
+from aipds.turn_job import TurnJobs
+
+client: TestClient
+
+
+@pytest.fixture(autouse=True)
+def _live_client():
+    """요청 사이에 이벤트 루프를 유지하는 클라이언트 — 빌드 턴은 요청이 아니라 세션의
+    서버 작업이다(aipds/turn_job.py). `with` 없는 TestClient는 요청마다 루프를 새로
+    열고 닫아, POST가 시작한 턴이 다음 요청 전에 루프와 함께 사라진다."""
+    global client
+    with TestClient(app_module.app) as live:
+        client = live
+        yield
 
 PID = "proto-route-test"
 SLUG = "demo"
@@ -38,6 +52,7 @@ class FakePrototypeSession:
         self._events = events or [AgentEvent(kind="message", text="building"),
                                   AgentEvent(kind="done")]
         self._start_exc = start_exc
+        self.turns = TurnJobs(retention=float("inf"))
 
     #: 실물과 같은 사실을 갖는다: 개시 턴이 이미 돌았는가. 라우트가 이 값으로
     #: 사용자의 첫 메시지를 개시 프롬프트로 감쌀지 정하므로, 가짜가 이것을
@@ -1962,18 +1977,84 @@ def test_session_turn_handle_carries_text_out_of_the_url(proto_env, monkeypatch)
     assert session.messages == [f"FIRST({long_text})"]
 
 
-def test_session_turn_handle_is_single_use(proto_env, monkeypatch):
+def _data(lines):
+    return [json.loads(l[len("data:"):].strip()) for l in lines
+            if l.startswith("data:")]
+
+
+def test_a_build_turn_can_be_watched_again(proto_env, monkeypatch):
+    """턴 id는 1회용 핸들이 아니라 **다시 보는** 이름이다 — 빌드 화면이 새로고침돼도
+    같은 턴을 처음부터(`after=0`) 또는 마지막으로 받은 곳부터 본다."""
     _seed_spec(proto_env["s3"])
     _install_session_factory(monkeypatch, FakePrototypeSession())
     client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
-    handle = client.post(f"/projects/{PID}/prototypes/{SLUG}/turns",
-                         json={"text": "한 번만"}).json()["turn_id"]
-    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
-                       params={"turn": handle}) as r:
-        list(r.iter_lines())
-    again = client.get(f"/projects/{PID}/prototypes/{SLUG}/events",
-                       params={"turn": handle})
-    assert again.status_code == 400
+    turn = client.post(f"/projects/{PID}/prototypes/{SLUG}/turns",
+                       json={"text": "고쳐 줘"}).json()["turn_id"]
+    url = f"/projects/{PID}/prototypes/{SLUG}/events"
+    with client.stream("GET", url, params={"turn": turn}) as r:
+        first = _data(list(r.iter_lines()))
+    with client.stream("GET", url, params={"turn": turn}) as r:
+        again = _data(list(r.iter_lines()))
+    assert first == again and first[-1]["kind"] == "done"
+    with client.stream("GET", url, params={"turn": turn, "after": 1}) as r:
+        assert [e["kind"] for e in _data(list(r.iter_lines()))] == ["done"]
+    assert client.get(url, params={"turn": "nope"}).status_code == 404
+
+
+def test_the_session_lists_its_turns_for_a_reopened_panel(proto_env, monkeypatch):
+    """다시 열린 빌드 화면이 대화를 되살리는 근거다: 이 세션의 턴들과 각 턴에서
+    사용자가 한 말(자동 개시는 None)."""
+    _seed_spec(proto_env["s3"])
+    fake = FakePrototypeSession()
+    _install_session_factory(monkeypatch, fake)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    base = f"/projects/{PID}/prototypes/{SLUG}"
+    first = client.post(f"{base}/turns", json={"text": "__first__"}).json()["turn_id"]
+    _wait_until(lambda: client.get(f"{base}/session").json()["turns"][0]["state"] == "done")
+    second = client.post(f"{base}/turns", json={"text": "버튼 색을 바꿔 줘"}).json()["turn_id"]
+    _wait_until(lambda: client.get(f"{base}/session").json()["turns"][-1]["state"] == "done")
+    body = client.get(f"{base}/session").json()
+    assert [(t["turn_id"], t["input"]) for t in body["turns"]] == [
+        (first, None), (second, "버튼 색을 바꿔 줘")]
+    assert client.get(f"/projects/{PID}/prototypes/other/session").status_code == 404
+
+
+def test_a_second_build_turn_while_one_runs_is_409_with_its_id(proto_env, monkeypatch):
+    _seed_spec(proto_env["s3"])
+    gate = {}
+
+    class Gated(FakePrototypeSession):
+        async def send_message(self, text):
+            self.messages.append(text)
+            gate["event"] = asyncio.Event()
+            yield AgentEvent(kind="message", text="building")
+            await gate["event"].wait()
+            yield AgentEvent(kind="done")
+
+    fake = Gated()
+    _install_session_factory(monkeypatch, fake)
+    base = f"/projects/{PID}/prototypes/{SLUG}"
+    client.post(f"{base}/session")
+    turn = client.post(f"{base}/turns", json={"text": "__first__"}).json()["turn_id"]
+    r = client.post(f"{base}/turns", json={"text": "또"})
+    assert r.status_code == 409
+    assert r.json()["detail"] == {"code": "turn_in_progress", "turn_id": turn}
+    _wait_until(lambda: "event" in gate)
+    client.portal.call(_release, gate["event"])
+    _wait_until(lambda: client.get(f"{base}/session").json()["turns"][0]["state"] == "done")
+
+
+async def _release(event):
+    event.set()
+
+
+def _wait_until(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError("condition not reached")
 
 
 def test_session_events_still_accepts_the_first_turn_sentinel(proto_env, monkeypatch):

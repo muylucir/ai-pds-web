@@ -30,6 +30,7 @@ from aipds.parsers.redaction import redact_credentials
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.proto.design_sync import sync_design, theme_copies
 from aipds.proto.session import has_build_output, purge_session_state
+from aipds.turn_job import TurnBusy, subscribe
 from aipds.proto.source import newest_source_mtime, source_entries
 # 토큰 게이트의 경로 조립은 그 라우트를 소유한 모듈이 한다 — 여기서 f-string으로
 # 다시 쓰면 브라우저 관점 마운트(`/api`)를 두 곳에서 관리하게 되고, 그것이 이
@@ -99,12 +100,6 @@ _FIRST_TURN_SENTINEL = "__first__"
 class TurnBody(BaseModel):
     text: str
 
-
-def _handle_scope(pid: str, slug: str) -> str:
-    """턴 핸들의 소유자 키. 프로젝트만으로는 부족하다 — 한 프로젝트의 여러
-    프로토타입이 각자 세션을 갖고, slug를 빼면 다른 프로토타입의 핸들로 이
-    세션의 턴을 열 수 있다."""
-    return f"{pid}/{slug}"
 
 #: Statuses that mean the agent has work in flight, for the LIST's display
 #: state only. Deliberately excludes "ready": PrototypeSession sets that on the
@@ -387,67 +382,100 @@ async def start_session(pid: str, slug: str):
     return {"status": session.status}
 
 
+def _opening_text(session, text: str) -> str:
+    """사용자가 보낸 말을 에이전트에게 갈 턴 텍스트로 바꾼다.
+
+    세션의 **첫 메시지는 곧 개시 턴**이다. 센티넬이면 사용자가 아무 말도 하지
+    않은 자동 개시이므로 기본 개시 프롬프트를 쓰고, 아니면 그 메시지가 사용자의
+    요청이므로 개시 프롬프트에 실어 보낸다.
+
+    **왜 사용자 요청을 개시 턴에 싣는가.** "수정하기"를 누른 사람은 이미 무엇을
+    고칠지 알고 있는데(프리뷰에서 봤다), 개시 프롬프트가 되묻고 그 질문이 떠 있는
+    동안 입력창이 비활성이라(BuildPanel) 자기 요청을 타이핑할 수조차 없었다.
+
+    **생 텍스트를 그대로 보내면 안 된다.** handoff 분기는 새 session_id로 시작해
+    트랜스크립트가 없으므로(proto/session의 _resolve_session_id), 개시 프롬프트가
+    지고 오는 요약과 "먼저 prototype/을 봐라"가 빠지면 에이전트가 맥락 없이
+    시작한다.
+
+    판정 기준이 `session.opened`인 것이 요점이다 — UI 플래그가 아니다. 그것은
+    세션이 아는 사실이고, 프론트가 추측하면 새로고침·경합·이미 열린 세션에서
+    어긋난다.
+    """
+    if text == _FIRST_TURN_SENTINEL:
+        return session.first_prompt()
+    if not session.opened:
+        return session.first_prompt(request=text)
+    return text
+
+
+def _start_build_turn(session, text: str):
+    """빌드 턴을 서버 작업으로 시작한다(aipds/turn_job.py). 도는 턴이 있으면 409 —
+    본문에 그 턴의 id가 있다(Discovery의 routes/turns.start_turn과 같은 모양)."""
+    turn_text = _opening_text(session, text)
+    shown = None if text == _FIRST_TURN_SENTINEL else text
+    try:
+        return session.turns.start(
+            "message", lambda: session.send_message(turn_text), input_text=shown)
+    except TurnBusy as busy:
+        raise HTTPException(status_code=409, detail={
+            "code": "turn_in_progress", "turn_id": busy.job.id})
+
+
+def _build_turn_response(job, after: int = 0) -> EventSourceResponse:
+    """턴 로그를 `after` 뒤부터 흘린다. 프레임의 `id`가 seq다. 보던 화면이 끊겨도
+    턴은 계속 돈다 — 다시 붙을 때 마지막으로 받은 seq를 `after`로 준다."""
+    async def gen():
+        async for seq, event in subscribe(job, after):
+            yield {"id": str(seq), "data": _redacted(event).model_dump_json()}
+    return EventSourceResponse(gen())
+
+
 @router.post("/projects/{pid}/prototypes/{slug}/turns")
 async def create_session_turn(pid: str, slug: str, body: TurnBody):
-    """빌드 채팅 텍스트를 **본문**으로 받아 짧은 핸들을 돌려준다.
+    """빌드 턴을 **시작**하고 id를 돌려준다. 스트림은 `GET /events?turn=<id>`로 본다.
 
-    워크스페이스 채팅(routes/turns.py의 create_turn)과 같은 이유다:
-    EventSource는 GET만 지원해 본문을 실을 수 없고, 긴 입력이 URL에 실리면
-    프록시가 431을 낸다(aipds/turn_handles.py 헤더의 실측).
-
-    세션 존재를 여기서 확인해 없으면 404로 끝낸다 — 핸들만 받고 스트림에서
-    404가 나면 사용자는 "연결이 끊어졌습니다"만 본다.
+    텍스트를 본문으로 받는 이유는 워크스페이스 채팅(routes/turns.py)과 같다:
+    EventSource는 GET만 지원하고, 긴 입력이 URL에 실리면 프록시가 431을 낸다
+    (aipds/turn_handles.py 헤더의 실측). 자동 개시는 센티넬(`__first__`)을 보낸다.
     """
-    import aipds.app as app_module
     _require_registered(pid)
-    _require_session(pid, slug)
-    return {"turn_id": app_module.turn_handles.create(
-        _handle_scope(pid, slug), {"text": body.text})}
+    session = _require_session(pid, slug)
+    return {"turn_id": _start_build_turn(session, body.text).id}
 
 
 @router.get("/projects/{pid}/prototypes/{slug}/events")
 async def stream_session_events(pid: str, slug: str,
-                                turn: str | None = None,
+                                turn: str | None = None, after: int = 0,
                                 text: str | None = None):
-    import aipds.app as app_module
+    """빌드 턴 하나를 본다. `?text=`는 시작과 구독을 한 요청으로 하는 경로다."""
     _require_registered(pid)
     session = _require_session(pid, slug)
     if turn is not None:
-        payload = app_module.turn_handles.consume(_handle_scope(pid, slug), turn)
-        if payload is None:
-            # 만료·재사용·다른 세션 — 어느 쪽인지 구별해 알려주지 않는다.
-            raise HTTPException(status_code=400,
-                                detail="turn handle is unknown or already used")
-        text = payload["text"]
-    elif text is None:
+        job = session.turns.get(turn)
+        if job is None:
+            raise HTTPException(status_code=404, detail="unknown turn")
+        return _build_turn_response(job, after)
+    if text is None:
         # 조용히 빈 턴을 돌리면 사용자는 응답 없는 말풍선을 보고 원인을 알 수 없다.
         raise HTTPException(status_code=400,
                             detail="either `turn` or `text` is required")
-    # 세션의 **첫 메시지는 곧 개시 턴**이다. 센티넬이면 사용자가 아무 말도 하지
-    # 않은 자동 개시이므로 기본 개시 프롬프트를 쓰고, 아니면 그 메시지가 사용자의
-    # 요청이므로 개시 프롬프트에 실어 보낸다.
-    #
-    # **왜 사용자 요청을 개시 턴에 싣는가.** "수정하기"를 누른 사람은 이미 무엇을
-    # 고칠지 알고 있는데(프리뷰에서 봤다), 개시 프롬프트가 되묻고 그 질문이 떠 있는
-    # 동안 입력창이 비활성이라(BuildPanel) 자기 요청을 타이핑할 수조차 없었다.
-    #
-    # **생 텍스트를 그대로 보내면 안 된다.** handoff 분기는 새 session_id로 시작해
-    # 트랜스크립트가 없으므로(proto/session의 _resolve_session_id), 개시 프롬프트가
-    # 지고 오는 요약과 "먼저 prototype/을 봐라"가 빠지면 에이전트가 맥락 없이
-    # 시작한다.
-    #
-    # 판정 기준이 `session.opened`인 것이 요점이다 — UI 플래그가 아니다. 그것은
-    # 세션이 아는 사실이고, 프론트가 추측하면 새로고침·경합·이미 열린 세션에서
-    # 어긋난다. 핸들 경로(긴 요청)도 같은 분기를 탄다: 위에서 이미 text로 풀렸다.
-    if text == _FIRST_TURN_SENTINEL:
-        text = session.first_prompt()
-    elif not session.opened:
-        text = session.first_prompt(request=text)
+    return _build_turn_response(_start_build_turn(session, text))
 
-    async def gen():
-        async for event in session.send_message(text):
-            yield {"data": _redacted(event).model_dump_json()}
-    return EventSourceResponse(gen())
+
+@router.get("/projects/{pid}/prototypes/{slug}/session")
+async def get_session(pid: str, slug: str):
+    """열린 빌드 세션과 그 세션의 턴들. 빌드 화면이 다시 열릴 때(새로고침, 패널을
+    닫았다 엶) 이것으로 대화를 처음부터 재생하고 도는 턴에 붙는다."""
+    import aipds.app as app_module
+    _require_registered(pid)
+    session = app_module.proto_sessions.get((pid, slug))
+    if session is None:
+        raise HTTPException(status_code=404, detail="no build session")
+    return {"status": session.status,
+            "turns": [{"turn_id": j.id, "state": j.state,
+                       "last_seq": j.log.last_seq, "input": j.input_text}
+                      for j in session.turns.all()]}
 
 
 class AnswersBody(BaseModel):
