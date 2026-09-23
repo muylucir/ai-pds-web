@@ -43,7 +43,7 @@ DISCOVERY_PREFIX = "aiplc-docs/discovery/"
 #: 단일 프로토타입의 id.
 #:
 #: **왜 디렉터리 이름을 그대로 쓰는가.** id ↔ 경로 대응이 자명해야 한다 — 로그나
-#: S3 키에서 `prototypes/prototype/bundle/`(빌드 상태)을 보면 곧바로
+#: S3 키에서 `prototypes/prototype/source/`(빌드 소스)를 보면 곧바로
 #: `discovery/prototype/`의 그 프로토타입이라고 읽힌다. 외울 매핑이 없다.
 #:
 #: **왜 `_prototype` 같은 예약어를 쓰지 않는가.** 밑줄이 슬러그 문자 클래스

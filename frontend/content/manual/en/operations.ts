@@ -149,7 +149,7 @@ does the update — **there is no instance replacement, so it is usable mid-work
 | What changed | What it does | Disruption |
 |---|---|---|
 | Rules (the submodule) or config only | updates the tree | none (the next turn reads the new rules) |
-| Backend | restarts the backend | conversations and build sessions in progress are cut |
+| Backend | restarts the backend | conversations and build sessions in progress are cut. Prototypes that were hosted come back one at a time (a few minutes each) |
 | Frontend | rebuilds and restarts | users already connected may hit errors for 1–2 min |
 | Nothing (already current) | nothing at all | none |
 
@@ -205,7 +205,11 @@ itself needs to change, the change belongs upstream, not in this repository.**`,
       kind: "md",
       md: `Only needed when you change infrastructure. \`cdk deploy\` replaces the instance, and the new one
 picks up the latest \`main\` as it boots. It takes 5–10 minutes to boot and finish building, with 502s
-in the meantime — for code-only changes, use the update above.`,
+in the meantime — for code-only changes, use the update above.
+
+Prototype source, share links and hosting state live in S3, so they come back on the new instance —
+cards still read built and links already handed out still open. Prototypes that were hosted come
+back one at a time after boot (a few minutes each); until then their links answer "prototype not running".`,
     },
     {
       kind: "cmd",

@@ -270,7 +270,7 @@ It moves the tree onto `origin/main` and acts on **only what changed**:
 | What changed | What it does | Disruption |
 |---|---|---|
 | the `steering-files/` pointer or a config dir only | updates the tree (submodule contents included) | none (the next turn reads the new rules) |
-| `backend/` | `pip install -U claude-agent-sdk` → restart the backend (reinstalling deps first only if `pyproject.toml` changed) | in-flight turns and build sessions are cut |
+| `backend/` | `pip install -U claude-agent-sdk` → restart the backend (reinstalling deps first only if `pyproject.toml` changed) | in-flight turns and build sessions are cut; hosted prototypes come back one at a time |
 | `frontend/` | `next build` + restart (`npm ci` first only if `package-lock.json` changed) | chunk 404s during the 1–2 min build |
 | `infra/scripts/aipds-update` itself | installs the new script (it takes effect on the next run) | none |
 | nothing (already current) | nothing at all | none |
@@ -309,6 +309,11 @@ cd infra && npx cdk deploy AipdsHostingStack --require-approval never
 
 It takes 5–10 minutes to boot and finish the build, with 502s in the meantime. Code-only changes do
 not need this path — use `aipds-update` above.
+
+Prototype build source, access tokens and hosting state are kept in S3 (`backend/aipds/proto/store.py`).
+A new instance shows cards as built even with an empty local tree, and resolves links already handed out
+through the S3 token index. Prototypes that were hosted are re-hosted one at a time after boot
+(`proto/hosting.rehost_desired`) — starting them together would overlap `next build`s and run out of memory.
 
 ### Teardown
 

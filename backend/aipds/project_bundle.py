@@ -18,11 +18,13 @@
 # 만들고, 받는 쪽에서는 "그 기능이 없던 프로젝트"와 구별되지 않는다. 제외 목록은
 # 반대로 잊으면 **더 담긴다** — 그 실패는 zip이 커지는 것으로 눈에 보인다.
 #
-# **프로토타입 소스가 S3 밖에 있는 이유.** 인프로세스 빌더가 로컬 빌드 트리에 직접
-# 쓰고 ProtoHost가 그 자리에서 서빙한다(routes/prototypes.py의 `_local_build_exists`).
-# `prototypes/{slug}/bundle/`은 삭제된 MicroVM 시절의 백업이고 지금 그것을 쓰는
-# 코드는 핸드오프 zip의 폴백 하나뿐이다. 그래서 번들은 로컬 디스크를 반드시 읽어야
-# 하고, 그 경로는 S3 키와 섞이지 않도록 `prototypes/{slug}/source/` 아래 따로 산다.
+# **프로토타입 소스를 S3 키로 담지 않는 이유.** 인프로세스 빌더가 로컬 빌드 트리에
+# 직접 쓰고 ProtoHost가 그 자리에서 서빙하므로 가장 새로운 소스는 디스크에 있다.
+# S3의 소스 세대(`prototypes/{slug}/source/NNNNNN/`, proto/store.py)는 그 스냅샷이다.
+# 번들은 `proto/source.source_entries`(로컬 우선, 없으면 현재 세대)로 한 벌만 담고,
+# 그 경로는 S3 키와 섞이지 않도록 번들 안 `prototypes/{slug}/source/` 아래 따로
+# 산다. 그래서 S3 쪽 세대 키는 아래에서 뺀다 — 담으면 같은 소스가 두 번, 그것도
+# 과거 세대까지 실린다.
 from __future__ import annotations
 
 import json
@@ -68,6 +70,13 @@ TRANSCRIPT_ROOT = "discovery/transcript/"
 #: 새 빌드 세션으로 시작한다(로컬 CLI 트랜스크립트가 없다). 핸드오프 zip이 같은
 #: 이유로 같은 것을 뺀다(routes/prototypes.py의 `_ARCHIVE_*` 주석).
 _PROTO_TRANSCRIPT_RE = re.compile(r"^prototypes/[^/]+/transcript/")
+
+#: 이 인스턴스의 사정이라 옮기지 않는 프로토타입 키(proto/store.py).
+#:   source/        소스 세대 — 소스는 번들이 따로 한 벌 담는다(위 머리말).
+#:   access-token   공개 프리뷰의 자격증명. 로컬 `.proto-token`을 빼는 것과 같은 이유다
+#:                  (SOURCE_EXCLUDED_FILES) — 받는 쪽은 호스팅할 때 새로 발급한다.
+#:   hosting.json   "여기서 호스팅 중이어야 한다" — 받는 인스턴스에서 저절로 뜨면 안 된다.
+_PROTO_INSTANCE_RE = re.compile(r"^prototypes/[^/]+/(?:source/|access-token$|hosting\.json$)")
 
 
 class BundleError(ValueError):
@@ -156,6 +165,8 @@ def s3_key_to_bundle_path(key: str, *, transcript_prefix: str) -> str | None:
         return None
     if _PROTO_TRANSCRIPT_RE.match(key):
         return None
+    if _PROTO_INSTANCE_RE.match(key):
+        return None
     if key.startswith(TRANSCRIPT_ROOT):
         if not key.startswith(transcript_prefix):
             # 다른 세션 id 아래의 트랜스크립트. 활성 세션이 아니므로 히스토리가
@@ -177,6 +188,11 @@ def bundle_path_to_s3_key(path: str, *, transcript_prefix: str) -> str | None:
         return None
     key = path[len(PROJECT_DIR):]
     if not key:
+        return None
+    # 내보내기가 담지 않는 키는 들여오지도 않는다 — 손으로 만든 번들이 `hosting.json`을
+    # 실으면 받는 인스턴스에서 프로토타입이 저절로 뜨고, `access-token`을 실으면 보낸
+    # 사람이 아는 토큰으로 프리뷰가 열린다.
+    if _PROTO_INSTANCE_RE.match(key):
         return None
     if key.startswith(TRANSCRIPT_ROOT):
         return transcript_prefix + key[len(TRANSCRIPT_ROOT):]
