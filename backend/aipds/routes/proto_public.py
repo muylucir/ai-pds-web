@@ -55,6 +55,8 @@ from starlette.background import BackgroundTask
 from starlette.responses import (PlainTextResponse, RedirectResponse,
                                  StreamingResponse)
 
+from aipds.proto.store import resolve_token as resolve_preview_token
+
 _log = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -175,6 +177,28 @@ def _not_found() -> PlainTextResponse:
     return PlainTextResponse("not found", status_code=404)
 
 
+async def _resolve_from_index(token: str) -> tuple[str, str] | None:
+    """캐시에 없는 토큰을 S3의 루트 색인에서 찾는다(proto/store.py).
+
+    교체된 인스턴스에는 토큰 파일이 없어 캐시가 비어 있다 — 그래도 이미 나눠 준 링크는
+    살아야 한다. 찾으면 캐시와 토큰 파일에 심어(`adopt_token`) 이 뒤의 쿠키 검사
+    (`_authorized`)가 같은 값을 보게 한다. 등록되지 않은 프로젝트의 토큰(삭제 중,
+    다른 인스턴스)은 받지 않는다.
+    """
+    import aipds.app as app_module
+    if not app_module.durable_projects_enabled():
+        return None
+    try:
+        target = await resolve_preview_token(app_module.surveys_root_s3_factory(), token)
+    except Exception:
+        _log.exception("preview token index lookup failed")
+        return None
+    if target is None or not app_module.registry.is_registered(target[0]):
+        return None
+    app_module.proto_host().adopt_token(token, *target)
+    return target
+
+
 @router.get("/proto/t/{token}")
 async def enter_prototype(token: str):
     """토큰 링크의 진입점. 쿠키를 심고 실제 프리뷰 경로로 보낸다.
@@ -190,6 +214,8 @@ async def enter_prototype(token: str):
     """
     import aipds.app as app_module
     target = app_module.proto_host().resolve_token(token)
+    if target is None:
+        target = await _resolve_from_index(token)
     if target is None:
         _log.debug("proto gate 404: unknown token")
         return _not_found()

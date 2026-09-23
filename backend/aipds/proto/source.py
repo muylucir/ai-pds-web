@@ -7,9 +7,8 @@
 # (project_bundle.SOURCE_EXCLUDED_FILES의 `.proto-token`).
 #
 # **로컬 우선, S3 폴백.** 인프로세스 빌더가 로컬 빌드 트리에 직접 쓰고 ProtoHost가
-# 그 자리에서 서빙하므로 정본은 디스크다. `prototypes/{slug}/bundle/`은 삭제된
-# MicroVM 시절의 백업이고 지금 아무도 쓰지 않지만, 재배포로 디스크가 날아간 박스에는
-# 그것만 남아 있을 수 있어 폴백으로 남긴다.
+# 그 자리에서 서빙하므로 가장 새로운 것은 디스크다. 디스크에 없으면(교체된 인스턴스)
+# S3의 현재 소스 세대가 정본이다(proto/store.py).
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,12 +16,8 @@ from pathlib import Path
 import os
 
 from aipds.project_bundle import SOURCE_EXCLUDED_DIRS, source_excluded
+from aipds.proto.store import PrototypeStore, local_entries
 from aipds.s3store import S3StoreLike
-
-
-def bundle_prefix(slug: str) -> str:
-    """구 MicroVM 백업의 위치(프로젝트 상대). 폴백 전용."""
-    return f"prototypes/{slug}/bundle/"
 
 
 async def source_entries(*, build_dir: Path, s3: S3StoreLike,
@@ -32,26 +27,11 @@ async def source_entries(*, build_dir: Path, s3: S3StoreLike,
     바이트로 돌려주는 것이 요점이다 — 텍스트로 디코드하면 이미지와 폰트가
     U+FFFD로 망가진다(s3store.py의 get_bytes/put_bytes가 존재하는 이유).
     """
-    if build_dir.is_dir():
-        entries: list[tuple[str, bytes]] = []
-        for path in sorted(build_dir.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(build_dir).as_posix()
-            if source_excluded(rel):
-                continue
-            entries.append((rel, path.read_bytes()))
-        if entries:
-            return entries
-
-    prefix = bundle_prefix(slug)
-    entries = []
-    for key in await s3.list(prefix):
-        rel = key[len(prefix):]
-        if source_excluded(rel):
-            continue
-        entries.append((rel, await s3.get_bytes(key)))
-    return entries
+    entries = local_entries(build_dir)
+    if entries:
+        return entries
+    return [(rel, data) for rel, data in await PrototypeStore(s3).entries(slug)
+            if not source_excluded(rel)]
 
 
 def newest_source_mtime(build_dir: Path) -> float | None:
