@@ -2,6 +2,7 @@
 from __future__ import annotations
 from aipds.globmatch import matches_glob
 from aipds.pathsafe import reject_unsafe
+from aipds.models import AgentEvent
 from fakes.in_memory_s3 import FakeS3Store
 
 
@@ -13,6 +14,22 @@ class FakeRunner:
 
     def __init__(self, s3: FakeS3Store | None = None):
         self._s3 = s3 or FakeS3Store()
+        #: `send_message`로 시작된 턴의 텍스트 — 라우트가 에이전트에게 보낸 문장을
+        #: 테스트가 읽는 자리다.
+        self.sent: list[str] = []
+
+    def send_message(self, text: str):
+        """턴 하나: 텍스트를 기록하고 곧바로 끝난다.
+
+        async generator 함수가 아니라 generator를 **돌려주는** 함수인 이유: 턴
+        작업(turn_job.py)은 이것을 요청 안에서 부르고 소비는 태스크가 한다. 기록을
+        부르는 시점에 해 두면 태스크가 언제 도는지와 무관하게 읽을 수 있다.
+        """
+        self.sent.append(text)
+
+        async def events():
+            yield AgentEvent(kind="done")
+        return events()
 
     async def read_file(self, rel: str) -> str:
         reject_unsafe(rel)

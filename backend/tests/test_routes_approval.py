@@ -4,8 +4,9 @@
 # 에이전트의 산문에서 **우리가 쓰는 레코드**로 옮긴다.
 #
 # 이 파일이 지키는 가장 중요한 불변식은 **순서**다. 레코드를 먼저 쓰고 그 다음
-# 에이전트 턴을 돌린다. 종전 구조에서는 턴이 200이어도 에이전트가 문구를 달리
-# 쓰면 승인이 사라졌다 — 사용자는 버튼을 눌렀는데 게이트가 그대로였다.
+# 에이전트 턴을 시작한다. 승인의 기록이 에이전트의 산문뿐이면 턴이 200이어도
+# 에이전트가 문구를 달리 쓸 때 승인이 사라진다 — 사용자는 버튼을 눌렀는데 게이트가
+# 그대로다.
 import asyncio
 
 from fastapi.testclient import TestClient
@@ -49,48 +50,93 @@ def test_approve_records_the_decision(monkeypatch):
     assert records[0].doc_hash  # 무효화 판정에 쓰인다 — 비어 있으면 의미가 없다
 
 
-def test_approve_records_before_running_the_agent_turn(monkeypatch):
+def test_approve_records_before_starting_the_agent_turn(monkeypatch):
     """레코드가 먼저다 — 이 순서가 이 기능의 핵심이다.
 
-    턴이 실패해도 승인 사실은 남아야 한다. 종전에는 승인의 유일한 기록이
-    에이전트가 쓰는 audit.md였으므로, 턴이 실패하거나 에이전트가 문구를 달리
-    쓰면 사용자가 누른 사실 자체가 사라졌다.
+    턴이 실패해도 승인 사실은 남아야 한다. 승인의 기록이 에이전트가 쓰는
+    audit.md뿐이면, 턴이 실패하거나 에이전트가 문구를 달리 쓸 때 사용자가 누른
+    사실 자체가 사라진다.
     """
     s3 = _seed(monkeypatch, "ap2")
     ws = registry.get("ap2")
+    seen_at_start = []
 
-    async def failing_send(text):
-        # 레코드가 이미 저장돼 있어야 한다 — 이 시점에 조회해서 확인한다.
-        assert len(await load_approvals(s3)) == 1, "턴 이전에 레코드가 있어야 한다"
-        raise RuntimeError("agent turn blew up")
-        yield  # pragma: no cover — async generator로 만들기 위해
+    def send_message(text):
+        # 턴이 **시작되는** 순간 레코드가 이미 있어야 한다.
+        seen_at_start.append(any(k.startswith("approvals/") for k in s3.blobs))
 
-    monkeypatch.setattr(ws.runner, "send_message", failing_send, raising=False)
+        async def events():
+            raise RuntimeError("agent turn blew up")
+            yield  # pragma: no cover — async generator로 만들기 위해
+        return events()
 
-    client.post("/projects/ap2/approve")
+    monkeypatch.setattr(ws.runner, "send_message", send_message)
 
+    assert client.post("/projects/ap2/approve").status_code == 200
+    assert seen_at_start == [True], "턴 이전에 레코드가 있어야 한다"
     # 턴이 터졌어도 승인은 남는다.
     assert len(asyncio.run(load_approvals(s3))) == 1
 
 
-def test_approve_still_sends_the_approval_turn(monkeypatch):
+def test_approve_starts_the_approval_turn_and_returns_its_id(monkeypatch):
     # 레코드만 쓰고 끝내면 에이전트가 다음 단계로 진행하지 않는다 — 게이트의
     # 목적은 기록이 아니라 워크플로 진행이다. audit.md 기록도 그 턴이 만든다.
     _seed(monkeypatch, "ap3")
-    ws = registry.get("ap3")
-    sent = []
+    body = client.post("/projects/ap3/approve").json()
+    assert registry.get("ap3").runner.sent == ["승인"]
+    # 화면은 이 id로 턴을 본다 — 승인 요청은 턴을 기다리지 않는다.
+    assert body["approved"] is True and body["turn_id"]
 
-    # FakeRunner에는 send_message가 없다(파일 IO만 흉내낸다) — 실제 러너의
-    # 그 메서드를 여기서 주입한다. raising=False가 필요한 이유가 그것이다.
-    async def spy(text):
-        sent.append(text)
-        return
-        yield  # pragma: no cover — async generator로 만들기 위해
 
-    monkeypatch.setattr(ws.runner, "send_message", spy, raising=False)
+def test_approve_does_not_wait_for_the_turn(monkeypatch):
+    """승인 응답은 턴이 끝나기 전에 온다.
 
-    assert client.post("/projects/ap3/approve").status_code == 200
-    assert sent, "승인 턴이 에이전트에게 전달되어야 한다"
+    다음 단계로 넘어가는 턴은 몇 분이고, 요청이 그동안 열려 있으면 프록시
+    타임아웃(CloudFront 60초)이 승인 응답을 504로 바꾼다.
+    """
+    _seed(monkeypatch, "ap11")
+    ws = registry.get("ap11")
+
+    def send_message(text):
+        async def events():
+            await asyncio.Event().wait()     # 영원히 끝나지 않는 턴
+            yield  # pragma: no cover
+        return events()
+
+    monkeypatch.setattr(ws.runner, "send_message", send_message)
+    with TestClient(app) as live:
+        r = live.post("/projects/ap11/approve")
+        assert r.status_code == 200
+        turn = live.get("/projects/ap11/turn").json()["turn"]
+        assert turn["turn_id"] == r.json()["turn_id"]
+        assert turn["state"] == "running"
+        live.portal.call(ws.turns.cancel)
+
+
+def test_approve_while_a_turn_is_running_is_409_and_records_nothing(monkeypatch):
+    """에이전트가 문서를 고치는 중에 받은 승인은 곧 해시가 어긋난다.
+
+    레코드만 남기면 사용자는 "승인됨"을 보는데 에이전트는 그 사실을 전달받지
+    못한다 — 그래서 레코드 **전에** 거절하고, 도는 턴의 id를 알려 준다.
+    """
+    s3 = _seed(monkeypatch, "ap12")
+    ws = registry.get("ap12")
+
+    def send_message(text):
+        async def events():
+            await asyncio.Event().wait()
+            yield  # pragma: no cover
+        return events()
+
+    monkeypatch.setattr(ws.runner, "send_message", send_message)
+    with TestClient(app) as live:
+        running = live.post("/projects/ap12/turns", json={"text": "go"}).json()
+        r = live.post("/projects/ap12/approve")
+        assert r.status_code == 409
+        assert r.json()["detail"] == {"code": "turn_in_progress",
+                                      "turn_id": running["turn_id"]}
+        assert not any(k.startswith("approvals/") for k in s3.blobs)
+        live.portal.call(ws.turns.cancel)
 
 
 def test_approvals_are_listable(monkeypatch):
