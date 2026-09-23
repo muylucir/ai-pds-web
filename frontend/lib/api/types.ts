@@ -78,6 +78,9 @@ export type AgentEventKind =
   // 말하고, 그 하나가 병렬 작업을 한 줄이 아니라 여러 행으로 그릴 수 있게 한다
   // (근거는 백엔드 aipds/agent_activity.py 헤더).
   | "agent_activity"
+  // 프로토타입 빌드에서 사용자가 질문에 답했다는 턴 로그의 기록. payload =
+  // {"answers": {...}}. 백엔드 models.py의 Literal과 한 쌍이다.
+  | "answers"
   | "error";
 
 export interface AgentEvent {

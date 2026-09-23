@@ -11,7 +11,6 @@
 import { CREDENTIALS } from "@/lib/auth";
 import { API_BASE_URL, ApiError } from "./client";
 import { openStream, openViaHandle, type StreamHandlers } from "./sse";
-import type { AgentEvent } from "./types";
 
 export type PrototypeState = "none" | "building" | "built" | "running" | "failed";
 
@@ -206,14 +205,16 @@ export function absoluteShareUrl(accessUrl: string,
 //: 하므로 호출부가 리터럴을 쓰지 않게 여기서 이름을 준다.
 export const FIRST_TURN_SENTINEL = "__first__";
 
-// Opens the prototype build stream for one turn. Text rides in the POST body,
-// not the URL: a long Korean message becomes a ~9-byte-per-char query string
-// that pushed the request line past Node's 16KB maxHeaderSize and came back as
-// HTTP 431 (lib/api/sse.ts's openViaHandle documents the measurement).
+// Opens the prototype build stream for one turn: POST the text (starts the turn
+// as a server job — backend aipds/turn_job.py), then watch it by id. Text rides
+// in the POST body, not the URL: a long Korean message becomes a
+// ~9-byte-per-char query string that pushed the request line past Node's 16KB
+// maxHeaderSize and came back as HTTP 431 (lib/api/sse.ts's openViaHandle
+// documents the measurement).
 //
-// The first turn keeps using the `?text=__first__` sentinel — it is 9 bytes and
-// the server substitutes session.first_prompt() for it
-// (backend routes/prototypes.py's _FIRST_TURN_SENTINEL).
+// 자동 개시(`__first__` 센티넬)도 같은 길로 간다 — 턴 id를 받아야 끊겼을 때 같은
+// 턴에 다시 붙을 수 있다. 서버가 센티넬을 session.first_prompt()로 바꾼다
+// (backend routes/prototypes.py의 _opening_text).
 export function streamPrototypeEvents(
   pid: string,
   slug: string,
@@ -221,13 +222,45 @@ export function streamPrototypeEvents(
   handlers: StreamHandlers,
 ): () => void {
   const base = `${API_BASE_URL}${sessionPath(pid, slug, "/events")}`;
-  if (text === FIRST_TURN_SENTINEL) {
-    return openStream(`${base}?text=${encodeURIComponent(text)}`, handlers);
-  }
   return openViaHandle(
     sessionPath(pid, slug, "/turns"),
     { text },
     (turnId) => `${base}?turn=${encodeURIComponent(turnId)}`,
     handlers,
   );
+}
+
+/** 빌드 턴 하나를 `after` 뒤부터 본다 — 다시 붙기(끊김, 새로고침)와 재생에 쓴다. */
+export function watchBuildTurn(
+  pid: string,
+  slug: string,
+  turnId: string,
+  after: number,
+  handlers: StreamHandlers,
+): () => void {
+  const base = `${API_BASE_URL}${sessionPath(pid, slug, "/events")}`;
+  return openStream(
+    `${base}?turn=${encodeURIComponent(turnId)}&after=${after}`, handlers);
+}
+
+export interface BuildTurnSummary {
+  turn_id: string;
+  state: "running" | "done" | "error" | "interrupted";
+  last_seq: number;
+  /** 사용자가 보낸 말. 자동 개시 턴은 null. */
+  input: string | null;
+}
+
+/** 열린 빌드 세션과 그 턴들. 세션이 없으면 null. 빌드 화면이 다시 열릴 때 이것으로
+ *  대화를 처음부터 재생하고 도는 턴에 붙는다. */
+export async function getBuildSession(
+  pid: string, slug: string,
+): Promise<{ status: string; turns: BuildTurnSummary[] } | null> {
+  try {
+    return await request<{ status: string; turns: BuildTurnSummary[] }>(
+      sessionPath(pid, slug, "/session"));
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
 }
