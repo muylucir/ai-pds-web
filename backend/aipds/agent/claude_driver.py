@@ -1641,24 +1641,6 @@ class ClaudeDriver:
         """
         asked = False
         ended = False
-        # 이 pump를 시작한 홀더의 신원. 재접속이 슬롯을 선점하면
-        # (`_acquire_turn(preempt=True)`) 이 값은 더 이상 홀더가 아니고, 아래
-        # 검사가 그것을 **실제 중단**으로 옮긴다.
-        #
-        # 토큰만 바꾸고 이 루프를 두면 부족하다: 옛 소비자의 제너레이터는 `yield`에
-        # 멈춰 있을 뿐 죽지 않았으므로, 클라이언트의 TCP가 되살아나 다시 읽으면 두
-        # 소비자가 같은 `outbox`를 나눠 읽는다. 실측(테스트): 선점 후 옛 소비자가
-        # `문장 2`·`questions`·`done`을 가져가 재접속한 화면에서 사라졌다.
-        #
-        # **검사는 `yield` 앞이다.** 위 소유권 규칙("항목은 소비자가 받은 뒤에만
-        # 자기 자리를 떠난다")이 그대로 유지되어야 하므로, 여기서 멈추면 남은
-        # 항목은 pop되지 않고 `outbox`/`_queue`에 소유된 채 남아 다음 pump가
-        # relay한다 — 즉 선점은 프레임을 버리지 않고 **넘긴다.**
-        pump_token = self._turn_token
-
-        def owns_turn() -> bool:
-            return self._turn_token is pump_token
-
         def translate_into_outbox() -> None:
             """Move messages inbox -> outbox, translating. Never yields.
 
@@ -1685,8 +1667,6 @@ class ClaudeDriver:
             nonlocal asked
             for queue in (reader.outbox, self._queue):
                 while queue:
-                    if not owns_turn():
-                        return          # 선점됨 — 남은 항목은 소유된 채 넘긴다
                     ev = queue[0]
                     yield ev
                     # Reached only if the consumer came back for the next item,
@@ -1696,8 +1676,6 @@ class ClaudeDriver:
                     asked = asked or ev.kind == "questions"
 
         while True:
-            if not owns_turn():
-                return                  # 선점됨 — 위 pump_token 주석 참조
             # The only cancellable wait in this function, and it waits on an
             # Event -- which carries no payload, so a cancellation here cannot
             # lose anything.
@@ -1787,37 +1765,18 @@ class ClaudeDriver:
     # still True immediately after `await agen.aclose()` and only cleared after
     # two bare `await asyncio.sleep(0)`.
     #
-    # Why that mattered: runner.py:144-152 routinely abandons this generator
-    # (SSE disconnect, proxy timeout, user navigating away) and clears its own
-    # `_turn_active` synchronously in the same `finally`. So a browser that
-    # reconnects on the very next tick passed runner's guard and was then
-    # rejected by ours with "turn already in progress" -- the user's retry
-    # bounced off a turn that no longer existed.
+    # Why that matters: when the consumer is cancelled (the turn job's task —
+    # project delete, backend shutdown), runner.py clears its own slot
+    # synchronously in the same `finally`. A turn that starts on the very next
+    # tick must not bounce off ours with "turn already in progress" for a turn
+    # that no longer exists.
 
-    def _acquire_turn(self, *, preempt: bool = False) -> object | None:
+    def _acquire_turn(self) -> object | None:
         """Claim the turn slot; None if one is already running. The token
         identifies THIS turn so a rejected caller cannot release the slot the
         live turn is holding.
-
-        `preempt=True` takes the slot regardless and **never returns None**. Only
-        the reattach path uses it, and the policy it implements is "the request
-        that just arrived wins": a person watches one screen at a time, so a new
-        connection is the real user and whatever held the slot is presumed
-        stale.
-
-        This is what makes reattach possible at all. The flag says "a consumer
-        exists" (see `has_live_turn`), and a suspended laptop never sends a FIN
-        -- so the generator of the consumer that went away is still alive at its
-        `yield`, still holding the slot, exactly when reattach is needed. Before
-        preemption the reattach request was refused with "turn already in
-        progress" (measured on the deployed instance 2026-08-19, where that text
-        reached the user as agent speech).
-
-        Issuing a NEW token is the whole eviction mechanism: `_release_turn` is
-        token-guarded, so when the stale holder finally closes, its release is a
-        no-op and cannot free the slot underneath the reattached consumer.
         """
-        if self._turn_active and not preempt:
+        if self._turn_active:
             return None
         self._turn_active = True
         self._turn_token = object()
@@ -2059,19 +2018,18 @@ class ClaudeDriver:
                                      payload=self._pending_payload)
                 yield AgentEvent(kind="done")
                 return
-            # **버려진 턴을 새 턴이 덮지 못하게 한다(2026-08-19).** 슬롯은
-            # 소비자가 사라지면 즉시 풀리므로(위 주석) 여기까지 올 수 있는데,
-            # 그때 `_stream`은 `_retire_reader()`로 **진행 중인 턴의 리더를
-            # 취소하고** 같은 CLI 세션에 `query()`를 겹쳐 넣는다. 그 함수의
-            # 주석이 스스로 "the turn nobody will relay"를 전제로 쓰여 있다 —
-            # 재접속 경로(`run_live`)가 생긴 지금 그 전제가 더 이상 참이 아니다.
+            # **버려진 턴을 새 턴이 덮지 못하게 한다.** 턴의 소비자는 턴 작업
+            # (aipds/turn_job.py)이고 떠나지 않지만, 그 작업이 취소되면(프로젝트
+            # 삭제, 백엔드 종료) CLI 턴은 계속 돌고 리더도 계속 읽는다. 그때 여기
+            # 도달한 새 턴이 `_stream`에 들어가면 `_retire_reader()`가 **진행 중인
+            # 턴의 리더를 취소하고** 같은 CLI 세션에 `query()`를 겹쳐 넣는다.
             #
             # 파킹된 질문 short-circuit **뒤에** 두는 것이 중요하다: 그 리더도
             # 살아 있으므로(has_live_turn 참) 앞에 두면 질문 폼을 다시 띄우는
             # 경로가 이 거부로 바뀐다.
             if self.has_live_turn():
                 _log.info("refusing a new turn: one is still streaming with no "
-                          "consumer — the caller should reattach")
+                          "consumer")
                 yield AgentEvent(kind="error", text="turn already in progress")
                 return
             async for ev in self._stream(text, session):
@@ -2083,10 +2041,9 @@ class ClaudeDriver:
         """A turn is still streaming with nobody consuming it.
 
         **왜 `_turn_active`로는 알 수 없는가.** 그 플래그는 *소비자*가 있는지를
-        말한다. SSE가 끊기면 `run()`의 finally가 그것을 즉시 지운다 —
-        의도된 동작이다(재접속한 브라우저가 "turn already in progress"로 튕기지
-        않아야 한다). 하지만 CLI 턴 자체는 계속 돌고 `_MessageReader`가 계속
-        읽는다. 그 둘을 구별하는 것이 이 함수다.
+        말한다. 소비자(턴 작업)가 취소되면 `run()`의 finally가 그것을 지우지만,
+        CLI 턴 자체는 계속 돌고 `_MessageReader`가 계속 읽는다. 그 둘을 구별하는
+        것이 이 함수다.
 
         `ended`까지 보는 이유: 파킹된 질문의 리더는 살아 있지만 끝나지 않았고
         (그래서 True), 정상 종료한 턴의 리더는 태스크가 끝났거나 `ended`다.
@@ -2094,50 +2051,6 @@ class ClaudeDriver:
         reader = self._reader
         return (reader is not None and not reader.task.done()
                 and not reader.ended)
-
-    async def run_live(self) -> AsyncIterator[AgentEvent]:
-        """진행 중인 턴에 다시 붙는다 — 새 `query()` 없이.
-
-        **왜 필요한가(2026-08-19).** 사용자의 PC가 절전·화면보호기로 들어가면
-        네트워크가 끊기고 SSE가 죽는다. 턴이 2.5~5.6분이므로 화면보호기 기본값
-        (5~10분)과 정면으로 겹친다. 그때 잃는 것은 **화면뿐**이다: 리더는 계속
-        읽고(`has_live_turn`), 파일은 PostToolUse가 쓰는 즉시 S3에 올라가고,
-        포기 경로가 트랜스크립트를 flush한다. 그런데 그 진행 중인 턴을 **다시
-        볼 창구가 없었다** — `GET /pending`은 질문에 파킹된 경우만, `GET /history`
-        는 끝난 뒤만이고, `GET /events?turn=`은 POST가 만든 1회용·60초 핸들을
-        요구한다.
-
-        **`_continue_after_answers`를 그대로 쓴다.** 그 함수의 본문은 이미
-        "진행 중인 턴의 나머지를 같은 리더로 흘린다"가 전부다 — 답변 해소
-        (`fut.set_result`)는 `run_answers`가 그것을 부르기 **전에** 한다. 즉
-        재접속과 답변 후 재개는 같은 동작이고, 다른 것은 그 앞에 무엇을 하는지뿐이다.
-
-        붙을 턴이 없으면 `done` 하나만 준다 — 에러가 아니다. 사용자가 늦게
-        돌아왔고 턴이 그동안 끝난 것이 정상 경로이며, 그때 화면은
-        `GET /history`로 복원된다.
-        """
-        # **선점한다** — 이 경로는 거부하지 않는다.
-        #
-        # 예전에는 `_acquire_turn()`으로 잡고 실패하면 "turn already in
-        # progress"를 냈고, 근거는 "탭 두 개가 같은 outbox를 읽으면 한쪽이
-        # 메시지를 잃는다"였다. 그 근거는 맞지만 **이 게이트가 막는 것의 대부분은
-        # 두 번째 탭이 아니라 죽은 첫 번째 탭이다**: 절전된 클라이언트는 FIN을
-        # 보내지 않으므로 떠난 소비자의 제너레이터가 슬롯을 쥔 채 살아 있고,
-        # 그것이 정확히 재접속이 필요한 순간이다. 실측(2026-08-19): 거부 문구가
-        # 사용자 화면에 에이전트 발화로 떴다.
-        #
-        # 정책은 "방금 온 요청이 이긴다"다. 사람은 한 번에 한 화면만 보므로 새
-        # 연결이 진짜 사용자다. 옛 소비자는 새 토큰 발급으로 축출된다(아래
-        # `_owns_turn` 검사가 그것을 실제 중단으로 옮긴다).
-        token = self._acquire_turn(preempt=True)
-        try:
-            if not self.has_live_turn():
-                yield AgentEvent(kind="done")
-                return
-            async for ev in self._continue_after_answers():
-                yield ev
-        finally:
-            self._release_turn(token)
 
     async def run_answers(self, interrupt_id: str, answers: dict[str, str],
                           session: dict) -> AsyncIterator[AgentEvent]:

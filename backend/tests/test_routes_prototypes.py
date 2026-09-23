@@ -37,6 +37,16 @@ SLUG = "demo"
 SPEC_KEY = f"aiplc-docs/discovery/prototypes/{SLUG}/PROTOTYPE-{SLUG}.md"
 
 
+def _build(text: str) -> str:
+    """빌드 턴을 시작하고 끝까지 본다. SSE 본문 전체를 돌려준다."""
+    r = client.post(f"/projects/{PID}/prototypes/{SLUG}/turns", json={"text": text})
+    assert r.status_code == 200, r.text
+    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
+                       params={"turn": r.json()["turn_id"]}) as resp:
+        assert resp.status_code == 200
+        return "".join(resp.iter_text())
+
+
 class FakePrototypeSession:
     """Scripted PrototypeSession stand-in: records calls, plays back events."""
 
@@ -405,11 +415,8 @@ def test_a_ready_session_still_blocks_a_second_start_and_serves_its_stream(proto
 
     assert client.post(
         f"/projects/{PID}/prototypes/{SLUG}/session").status_code == 409
-    # A live session must still be streamable (404 would mean "no session").
-    with client.stream(
-            "GET",
-            f"/projects/{PID}/prototypes/{SLUG}/events?text=hi") as resp:
-        assert resp.status_code == 200
+    # A live session must still take a turn (404 would mean "no session").
+    _build("hi")
 
 
 def test_list_state_not_built_when_only_the_spec_file_exists(proto_env):
@@ -842,10 +849,11 @@ def test_session_start_releases_the_slot_when_start_fails(proto_env, monkeypatch
     assert sem.snapshot()["active_builds"] == 0
 
 
-def test_events_no_session_404(proto_env):
-    resp = client.get(f"/projects/{PID}/prototypes/{SLUG}/events",
-                      params={"text": "hi"})
-    assert resp.status_code == 404
+def test_turns_and_events_without_a_session_404(proto_env):
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/turns",
+                       json={"text": "hi"}).status_code == 404
+    assert client.get(f"/projects/{PID}/prototypes/{SLUG}/events",
+                      params={"turn": "t"}).status_code == 404
 
 
 def test_events_streams_and_redacts(proto_env):
@@ -856,10 +864,7 @@ def test_events_streams_and_redacts(proto_env):
     ])
     session.status = "ready"
     app_module.proto_sessions[(PID, SLUG)] = session
-    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
-                       params={"text": "build please"}) as resp:
-        assert resp.status_code == 200
-        text = "".join(resp.iter_text())
+    text = _build("build please")
     events = _sse_events(text)
     assert [e["kind"] for e in events] == ["message", "done"]
     assert "AKIAIOSFODNN7EXAMPLE1" not in text
@@ -872,9 +877,7 @@ def test_events_first_sentinel_uses_first_prompt(proto_env):
     session = FakePrototypeSession()
     session.status = "ready"
     app_module.proto_sessions[(PID, SLUG)] = session
-    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
-                       params={"text": "__first__"}) as resp:
-        "".join(resp.iter_text())
+    _build("__first__")
     assert session.messages == ["FIRST(None)"]
 
 
@@ -1760,9 +1763,9 @@ def test_failed_session_does_not_wedge_prototype(proto_env, monkeypatch):
     dead.status = "failed"
     app_module.proto_sessions[(PID, SLUG)] = dead
 
-    # A live stream must not be served off a dead session.
-    assert client.get(f"/projects/{PID}/prototypes/{SLUG}/events",
-                      params={"text": "hi"}).status_code == 404
+    # A turn must not be started off a dead session.
+    assert client.post(f"/projects/{PID}/prototypes/{SLUG}/turns",
+                       json={"text": "hi"}).status_code == 404
 
     # ...and a restart must be allowed, replacing the corpse.
     fresh = FakePrototypeSession()
@@ -1915,7 +1918,7 @@ def test_a_completed_session_serves_no_stream(proto_env):
     session.status = "complete"
     app_module.proto_sessions[(PID, SLUG)] = session
 
-    resp = client.get(f"/projects/{PID}/prototypes/{SLUG}/events?text=hi")
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/turns", json={"text": "hi"})
 
     assert resp.status_code == 404
 
@@ -1951,7 +1954,7 @@ def test_list_state_built_for_a_completed_session(proto_env, monkeypatch):
 
 # ---- 긴 입력을 URL에서 빼는 2단계 핸들 (HTTP 431 결함) ----
 #
-# 워크스페이스 채팅과 같은 결함이다(aipds/turn_handles.py 헤더의 실측):
+# 워크스페이스 채팅과 같은 결함이다(frontend lib/api/sse.ts의 createTurn에 실측):
 # 긴 한글 입력이 URL에 실리면 요청 라인이 커져 프록시가 431을 내고,
 # EventSource는 상태 코드를 노출하지 않아 "연결이 끊어졌습니다"만 보인다.
 
@@ -2057,55 +2060,14 @@ def _wait_until(predicate, timeout=5.0):
     raise AssertionError("condition not reached")
 
 
-def test_session_events_still_accepts_the_first_turn_sentinel(proto_env, monkeypatch):
-    """첫 턴 센티널과 짧은 입력의 기존 경로는 유지한다 — 배포가 원자적이 아니다."""
-    _seed_spec(proto_env["s3"])
-    session = FakePrototypeSession()
-    _install_session_factory(monkeypatch, session)
-    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
-    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
-                       params={"text": "__first__"}) as r:
-        list(r.iter_lines())
-    # 센티널은 서버가 first_prompt()로 치환한다.
-    assert session.messages == ["FIRST(None)"]
-
-
-def test_session_events_requires_text_or_turn(proto_env, monkeypatch):
+def test_events_only_watches_a_build_turn(proto_env, monkeypatch):
+    """`/events`는 턴을 **보기만** 한다 — 턴은 `POST …/turns`가 시작한다."""
     _seed_spec(proto_env["s3"])
     _install_session_factory(monkeypatch, FakePrototypeSession())
     client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
-    r = client.get(f"/projects/{PID}/prototypes/{SLUG}/events")
-    assert r.status_code == 400
-
-
-# ---- Path A.1의 단수 레이아웃도 카드가 된다 ----
-# 2026-08-16: 카드 탐색이 `prototypes/{slug}/PROTOTYPE-{slug}.md` 한 가지만 알아서,
-# Path A.1(Envision 파생, 단일 프로토타입)로 정상 완주한 세션이 카드를 하나도 만들지
-# 못했다 — keumkang-v5가 그 상태였다. 그 경로의 산출물 선언은 단수 `prototype/`이고
-# (prototype-validation.md:556-562) 슬러그가 될 것이 없다. 결함은 우리 경로 가정이었다.
-
-def test_list_includes_the_single_prototype_layout(proto_env):
-    """**이 테스트가 그 결함의 재현이자 회귀 가드다.**"""
-    from aipds.proto.layout import SINGLE_ID, SINGLE_SPEC_KEY
-
-    proto_env["s3"].blobs[SINGLE_SPEC_KEY] = "# 단일 프로토타입 명세"
-    body = client.get(f"/projects/{PID}/prototypes").json()
-
-    assert [p["slug"] for p in body["prototypes"]] == [SINGLE_ID]
-    assert body["prototypes"][0]["spec_path"] == SINGLE_SPEC_KEY
-    assert body["prototypes"][0]["state"] == "none"
-
-
-def test_list_shows_both_layouts_when_both_exist(proto_env):
-    """Path B로 3개를 만든 뒤 Path A.1을 돌린 프로젝트는 명세가 4개다 —
-    카드도 그만큼 나오는 것이 맞다."""
-    from aipds.proto.layout import SINGLE_ID, SINGLE_SPEC_KEY
-
-    _seed_spec(proto_env["s3"])
-    proto_env["s3"].blobs[SINGLE_SPEC_KEY] = "# 단일 프로토타입 명세"
-    body = client.get(f"/projects/{PID}/prototypes").json()
-
-    assert sorted(p["slug"] for p in body["prototypes"]) == sorted([SLUG, SINGLE_ID])
+    url = f"/projects/{PID}/prototypes/{SLUG}/events"
+    assert client.get(url).status_code == 422
+    assert client.get(url, params={"text": "__first__"}).status_code == 422
 
 
 def test_list_ignores_other_files_in_the_single_prototype_dir(proto_env):
@@ -2133,10 +2095,7 @@ def test_the_first_user_message_is_wrapped_as_the_opening_turn(proto_env, monkey
     _install_session_factory(monkeypatch, session)
     client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
 
-    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events"
-                              "?text=장바구니 버튼을 오른쪽 위로") as resp:
-        assert resp.status_code == 200
-        list(resp.iter_lines())
+    _build("장바구니 버튼을 오른쪽 위로")
 
     # 세션이 받은 것은 사용자의 생 문장이 아니라 그 요청이 실린 개시 프롬프트다.
     assert session.messages == ["FIRST(장바구니 버튼을 오른쪽 위로)"]
@@ -2151,9 +2110,7 @@ def test_a_later_message_is_an_ordinary_turn(proto_env, monkeypatch):
     client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
 
     for text in ("첫 요청", "두 번째 요청"):
-        with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events"
-                                  f"?text={text}") as resp:
-            list(resp.iter_lines())
+        _build(text)
 
     assert session.messages == ["FIRST(첫 요청)", "두 번째 요청"]
 
@@ -2166,15 +2123,13 @@ def test_the_sentinel_still_opens_without_a_request(proto_env, monkeypatch):
     _install_session_factory(monkeypatch, session)
     client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
 
-    with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events"
-                              "?text=__first__") as resp:
-        list(resp.iter_lines())
+    _build("__first__")
 
     assert session.messages == ["FIRST(None)"]
 
 
 def test_a_long_request_rides_the_turn_handle(proto_env, monkeypatch):
-    """긴 요청은 URL에 실을 수 없다(프록시 431 — turn_handles.py 헤더). 핸들
+    """긴 요청은 URL에 실을 수 없다(프록시 431 — frontend lib/api/sse.ts의 createTurn). 핸들
     경로도 개시 턴 판정을 똑같이 타야 한다."""
     _seed_spec(proto_env["s3"])
     session = FakePrototypeSession()

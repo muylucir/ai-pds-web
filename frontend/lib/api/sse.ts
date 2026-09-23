@@ -209,8 +209,7 @@ export function streamAnswers(
   return openViaHandle(
     `/projects/${p}/answers`,
     { answers },
-    (turnId) =>
-      `${API_BASE_URL}/projects/${p}/answers/stream?turn=${encodeURIComponent(turnId)}`,
+    (turnId) => `${API_BASE_URL}/projects/${p}/events?turn=${encodeURIComponent(turnId)}`,
     handlers,
   );
 }
