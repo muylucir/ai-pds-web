@@ -50,3 +50,15 @@ def _ensure_event_loop():
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
     yield
+
+
+@pytest.fixture(autouse=True)
+def _agent_home_in_tmp(tmp_path_factory, monkeypatch):
+    """에이전트 홈(aipds/agent_home.py)의 기본값은 `~/aipds-agent-home`이다. 드라이버·빌더
+    팩토리가 그 아래에 디렉터리를 만들므로 테스트가 실제 홈을 건드리지 않게 옮긴다. 실행
+    래퍼는 테스트마다 꺼진 상태에서 시작한다(켜는 테스트가 스스로 set_current한다)."""
+    from aipds import launcher
+    monkeypatch.setenv("AIPDS_AGENT_HOME_DIR", str(tmp_path_factory.mktemp("agent-home")))
+    launcher.set_current(None)
+    yield
+    launcher.set_current(None)

@@ -27,11 +27,15 @@ from aipds.agent_activity import (AGENT_ACTIVITY, TERMINAL_TASK_STATUSES,
                                   activity_payload)
 from aipds.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
+from aipds.agent.claude_driver import _transcript_path
+from aipds.agent_home import copy_config
 from aipds.cli_settings import cli_context_env
 from aipds.models import AgentEvent
 from aipds.proto import prompts
 from aipds.proto.build_guard import background_agent_denial, bash_denial
 from aipds.tool_trace import tool_detail
+from aipds.transcript_restore import MirrorOnlyStore
+from aipds.transcript_restore import restore as restore_transcript
 
 _log = logging.getLogger(__name__)
 
@@ -157,14 +161,25 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # (setting_sources=[]): this keeps a place to put OUR skills and
             # subagents later, and keeps the local transcript copy under a
             # AI-PDS-owned path instead of the operator's home.
+            #
+            # 프로토타입별 디렉터리다(aipds/agent_home.py). 공유 proto-config는
+            # 내용(CLAUDE.md, skills/, agents/)의 출처로만 남아 연결마다 복사된다.
             "CLAUDE_CONFIG_DIR": builder._config_dir,
         }
+        if builder._shared_config_dir:
+            copy_config(builder._shared_config_dir, builder._config_dir)
         if builder._anthropic_model:
             env["ANTHROPIC_MODEL"] = builder._anthropic_model
         # Discovery 드라이버와 같은 값을 쓴다 — 한쪽만 켜지면 같은 프로젝트에서
         # 컴팩션 시점이 갈린다(cli_settings 헤더).
         env.update(cli_context_env())
+        # 실행 래퍼(aipds/launcher.py) — Discovery 드라이버와 같다.
+        cli_path = None
+        if builder._launch is not None:
+            cli_path, launch_env = builder._launch.claude()
+            env.update(launch_env)
         options = ClaudeAgentOptions(
+            cli_path=cli_path,
             permission_mode=builder._permission_mode,
             cwd=builder._workspace,
             env=env,
@@ -216,7 +231,11 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # the session on that same id, which is all session_id bought us.
             session_id=None if builder._resume else builder._session_id,
             resume=builder._session_id if builder._resume else None,
-            session_store=builder._session_store,
+            # 쓰기만 미러로. 재개는 로컬 사본에서 — 없으면 `_ensure_client`가 연결 전에
+            # S3에서 되살린다. SDK에 load를 맡기면 CLAUDE.md와 스킬이 없는 임시 config
+            # dir에서 재개한다(aipds/transcript_restore.py 헤더의 실측).
+            session_store=(MirrorOnlyStore(builder._session_store)
+                           if builder._session_store is not None else None),
             # Kept even under bypassPermissions, which the SDK warns shadows
             # this callback entirely. The warning overstates our case: probed
             # against the real CLI, Bash/Write do skip the callback, but
@@ -274,9 +293,15 @@ class PrototypeBuilder:
                  anthropic_model: str | None = None,
                  language: str = "ko",
                  permission_mode: str = DEFAULT_PERMISSION_MODE,
-                 client_factory: Callable[[], Any] | None = None):
+                 client_factory: Callable[[], Any] | None = None,
+                 shared_config_dir: str | None = None,
+                 launch: Any = None):
         self._workspace = workspace
         self._config_dir = config_dir
+        #: 연결마다 config_dir로 복사할 내용의 출처(proto-config/). None이면 복사하지 않는다.
+        self._shared_config_dir = shared_config_dir
+        #: aipds.launcher.Launch, 또는 None(= 백엔드 uid로 직접 실행).
+        self._launch = launch
         self._session_id = session_id
         self._resume = resume
         self._session_store = session_store
@@ -488,10 +513,30 @@ class PrototypeBuilder:
 
     async def _ensure_client(self):
         if self._client is None:
+            await self._restore_transcript()
             _suppress_shadowed_callback_warning()
             self._client = self._factory()
             await self._client.connect()
         return self._client
+
+    async def _restore_transcript(self) -> None:
+        """재개할 세션의 로컬 트랜스크립트가 없으면 S3 미러에서 되살린다.
+
+        재개 여부는 세션(proto/session.py)이 S3 기록으로 이미 정했다. 여기는 CLI가 그
+        기록을 로컬에서 찾을 수 있게만 한다. 실패하면 되살리지 못한 채 연결하고, CLI가
+        "No conversation found"로 끝난다 — SDK에 복원을 맡기던 때와 같은 실패다.
+        """
+        if not self._resume or self._session_store is None:
+            return
+        if _transcript_path(self._config_dir, self._workspace,
+                            self._session_id).is_file():
+            return
+        try:
+            await restore_transcript(self._session_store, self._config_dir,
+                                     self._workspace, self._session_id)
+        except Exception:
+            _log.exception("transcript restore failed for build session %s",
+                           self._session_id)
 
     # DUPLICATE-DELIVERY SAFETY for the prototype path, checked against these
     # consumers rather than inherited from the Discovery ruling.

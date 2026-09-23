@@ -19,9 +19,13 @@ import socket
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
+from aipds import agent_home
 from aipds.pathsafe import reject_unsafe_segment
+
+if TYPE_CHECKING:
+    from aipds.launcher import Launcher
 
 HostState = Literal["installing", "building", "running", "failed", "stopped"]
 
@@ -69,6 +73,9 @@ class _HostEntry:
     proc: "asyncio.subprocess.Process | None" = None
     #: HostInfo.built_at의 출처 — 근거는 그쪽 주석.
     built_at: float | None = None
+    #: 실행 래퍼로 띄웠는가. 그러면 `proc`은 sudo(→ systemd-run 클라이언트)이고, 신호로는
+    #: 서버가 멈추지 않는다 — `stop`이 래퍼에 unit 정지를 시킨다.
+    launched: bool = False
 
 
 def _tail_text(path: Path, lines: int) -> str:
@@ -93,13 +100,17 @@ class ProtoHost:
     # AIPDS_PROTO_MAX_CONCURRENT caps live builds at 2 -- `_scan_port`
     # probes sequentially and skips anything already bound, so leftovers from a
     # previous process cost a few probes, not a wedged start.
-    def __init__(self, root: Path, port_range: range = range(4000, 8000)):
+    def __init__(self, root: Path, port_range: range = range(4000, 8000),
+                 launcher: "Launcher | None" = None):
         # No `s3`: the build directory IS the served tree now (the builder
         # writes straight into it), so hosting no longer round-trips a bundle
         # through S3 -- which also means binary assets stop being mangled by
         # the text-only store.
         self._root = Path(root)
         self._port_range = port_range
+        #: 실행 래퍼(aipds/launcher.py). 있으면 npm이 aipds-proto uid로, 이 프로토타입의
+        #: `prototype/` 트리만 보이는 샌드박스에서 돈다. 없으면 백엔드 uid로 직접.
+        self._launcher = launcher
         self._registry: dict[tuple[str, str], _HostEntry] = {}
         # Ports handed out but whose subprocess may not be listening yet. The
         # scanner's bind probe releases its socket before the spawn, so two
@@ -222,7 +233,7 @@ class ProtoHost:
 
         `_tail_text`가 마지막 100줄을 얻으려고 파일을 **전부** 읽고
         (`read_text()`), `.proto-host.log`는 회전 없이 append로만 자라기
-        때문이다(`_npm_install`/`_npm_run`의 "ab"). 호스팅을 반복하면 `npm install` +
+        때문이다(`_npm_install`/`_npm_run_build`의 "ab"). 호스팅을 반복하면 `npm install` +
         `npm run build` 출력이 계속 쌓인다. 실측한 호출당 비용: 1MB → 1.9ms,
         20MB → 46ms, 100MB → 237ms.
 
@@ -247,8 +258,14 @@ class ProtoHost:
         except (OSError, json.JSONDecodeError):
             return {}
 
-    async def _npm_install(self, cwd: Path, log_path: Path,
-                           env: dict[str, str] | None = None) -> int:
+    def _env(self, kind: str, pid: str, slug: str,
+             extra: dict[str, str]) -> dict[str, str]:
+        if self._launcher is not None:
+            return self._launcher.npm_env(kind, pid, slug, extra)
+        return {**os.environ, **extra}
+
+    async def _npm_install(self, pid: str, slug: str, cwd: Path, log_path: Path,
+                           extra: dict[str, str]) -> int:
         """`npm install`, to completion, appending to the host log.
 
         One method per npm subcommand -- rather than one method taking argv --
@@ -262,26 +279,40 @@ class ProtoHost:
         a pid/slug `reject_unsafe_segment` has already validated, and no shell
         is involved.
         """
+        env = self._env("host-build", pid, slug, extra)
         log_fh = open(log_path, "ab")
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "npm", "install", cwd=str(cwd),
-                stdout=log_fh, stderr=log_fh, env=env,
-            )
+            if self._launcher is not None:
+                proc = await asyncio.create_subprocess_exec(
+                    *self._launcher.npm_argv("host-build", pid, slug, "install"),
+                    cwd=str(cwd), stdout=log_fh, stderr=log_fh, env=env,
+                )
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    "npm", "install", cwd=str(cwd),
+                    stdout=log_fh, stderr=log_fh, env=env,
+                )
             return await proc.wait()
         finally:
             log_fh.close()
 
-    async def _npm_run(self, script: str, cwd: Path, log_path: Path,
-                       env: dict[str, str] | None = None) -> int:
-        """`npm run <script>`, to completion. Sibling of `_npm_install` -- the
-        reason they are two methods is in that docstring."""
+    async def _npm_run_build(self, pid: str, slug: str, cwd: Path, log_path: Path,
+                             extra: dict[str, str]) -> int:
+        """`npm run build`, to completion. Sibling of `_npm_install` -- the
+        reason they are separate methods is in that docstring."""
+        env = self._env("host-build", pid, slug, extra)
         log_fh = open(log_path, "ab")
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "npm", "run", script, cwd=str(cwd),
-                stdout=log_fh, stderr=log_fh, env=env,
-            )
+            if self._launcher is not None:
+                proc = await asyncio.create_subprocess_exec(
+                    *self._launcher.npm_argv("host-build", pid, slug, "run", "build"),
+                    cwd=str(cwd), stdout=log_fh, stderr=log_fh, env=env,
+                )
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    "npm", "run", "build", cwd=str(cwd),
+                    stdout=log_fh, stderr=log_fh, env=env,
+                )
             return await proc.wait()
         finally:
             log_fh.close()
@@ -357,6 +388,13 @@ class ProtoHost:
         # directory, so wiping it would delete a live build.
         if not target_dir.is_dir():
             raise FileNotFoundError(str(target_dir))
+        if self._launcher is not None:
+            # 래퍼는 트리를 스스로 계산한다(`<root>/<pid>/<slug>/prototype`). 다른 곳을 돌라고
+            # 하면 래퍼는 여전히 계산한 곳을 돌므로, 어긋남을 여기서 드러낸다.
+            expected = self._root / pid / slug / "prototype"
+            if target_dir != expected:
+                raise ValueError(f"launcher hosts {expected}, not {target_dir}")
+            agent_home.proto(pid, slug).prepare(with_config=False)
         log_path = target_dir / ".proto-host.log"
         log_path.touch()
 
@@ -378,8 +416,7 @@ class ProtoHost:
         if model_id:
             base_env["BEDROCK_MODEL_ID"] = model_id
 
-        rc = await self._npm_install(target_dir, log_path,
-                                     env={**os.environ, **base_env})
+        rc = await self._npm_install(pid, slug, target_dir, log_path, base_env)
         if rc != 0:
             entry.state = "failed"
             return self._info(entry)
@@ -396,8 +433,7 @@ class ProtoHost:
 
         if "build" in scripts:
             entry.state = "building"
-            rc = await self._npm_run("build", target_dir, log_path,
-                                     env={**os.environ, **base_env})
+            rc = await self._npm_run_build(pid, slug, target_dir, log_path, base_env)
             if rc != 0:
                 entry.state = "failed"
                 return self._info(entry)
@@ -407,16 +443,20 @@ class ProtoHost:
         # `next start` re-reads next.config.js, so the prefix has to be present
         # here too -- otherwise the server would route at "/" while the built
         # assets expect the prefix.
-        env = {**os.environ, **base_env, "PORT": str(port)}
+        env = self._env("proto", pid, slug, {**base_env, "PORT": str(port)})
 
         log_fh = open(log_path, "ab")
         try:
             # The long-lived one, so it is spawned here rather than through
-            # `_npm_run`. Same reason as there for the literal subcommand: the
+            # `_npm_run_build`. Same reason as there for the literal subcommand: the
             # only variable part of this argv is which script name, and it is
             # one of two names chosen above -- never anything from a request.
+            if self._launcher is not None:
+                argv = self._launcher.npm_argv("proto", pid, slug, "run", start_script)
+            else:
+                argv = ["npm", "run", start_script]
             proc = await asyncio.create_subprocess_exec(
-                "npm", "run", start_script, cwd=str(target_dir), env=env,
+                *argv, cwd=str(target_dir), env=env,
                 stdout=log_fh, stderr=log_fh,
                 # Own process group: stop() can then signal the whole tree,
                 # and a hard backend death leaves a pid file for sweep_orphans
@@ -437,6 +477,7 @@ class ProtoHost:
 
         entry.port = port
         entry.proc = proc
+        entry.launched = self._launcher is not None
         (target_dir / ".proto-host.pid").write_text(str(proc.pid), encoding="utf-8")
 
         if not await self._wait_for_port(proc, port, timeout=60.0):
@@ -451,6 +492,16 @@ class ProtoHost:
         if entry is None:
             return  # unknown (pid, slug) -- idempotent no-op
         proc = entry.proc
+        if proc is not None and proc.returncode is None and entry.launched:
+            # 래퍼 아래의 서버는 우리 자식이 아니다(systemd unit). 클라이언트에 신호를 보내면
+            # 클라이언트만 죽고 서버는 포트를 쥔 채 남는다(실측) — unit을 멈추면 클라이언트도
+            # 끝난다. 끝나지 않으면 아래 경로가 클라이언트라도 거둔다.
+            await self._launcher.stop("proto", pid, slug)
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=15.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
         if proc is not None and proc.returncode is None:
             # npm spawns the real server as a child, so signal the GROUP --
             # terminating npm alone orphans the listener and leaks the port.
@@ -518,6 +569,9 @@ class ProtoHost:
         for known, target_ids in list(self._tokens.items()):
             if target_ids == (pid, slug):
                 del self._tokens[known]
+        # 빌드 에이전트의 트랜스크립트와 호스팅 npm 캐시(aipds/agent_home.py). 남기면 리셋한
+        # 프로토타입의 다음 빌드가 옛 세션 파일을 본다.
+        await agent_home.purge_prototype(pid, slug)
         target = self._root / pid / slug
         if not target.is_dir():
             return
@@ -583,6 +637,13 @@ class ProtoHost:
         Best effort -- a pid that no longer exists (or was recycled onto
         something we don't own) only costs a stale file."""
         swept = 0
+        if self._launcher is not None:
+            # pid 파일이 가리키는 것은 sudo였고 이미 없다. 서버는 unit으로 남아 있다.
+            self._launcher.sweep()
+            for pid_file, _, _ in self._pid_files():
+                pid_file.unlink(missing_ok=True)
+                swept += 1
+            return swept
         for pid_file, _, _ in self._pid_files():
             try:
                 target = int(pid_file.read_text(encoding="utf-8").strip())
