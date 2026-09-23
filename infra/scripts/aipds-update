@@ -74,6 +74,16 @@ if changed infra/scripts/aipds-update; then
   echo "aipds-update: self-updated — the next run uses the new script"
 fi
 
+# 실행 래퍼가 설치된 인스턴스(aipds-harden install)면 root 소유 사본을 새 것으로 바꾼다.
+# sudoers가 가리키는 것은 그 사본이라 리포만 바뀌면 옛 래퍼가 돈다. 백엔드 재시작보다
+# 먼저 — 새 백엔드가 새 래퍼를 전제할 수 있다.
+if [ -d /usr/local/libexec/aipds ] \
+    && { changed infra/scripts/aipds-launch || changed infra/scripts/aipds-claude; }; then
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-launch" /usr/local/libexec/aipds/launch
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-claude" /usr/local/libexec/aipds/claude
+  echo "aipds-update: launcher reinstalled"
+fi
+
 if changed backend/; then
   # 의존성이 바뀐 경우만 다시 설치한다. 코드는 pip install -e 라 그대로 반영된다.
   if changed backend/pyproject.toml; then

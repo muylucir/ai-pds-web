@@ -17,6 +17,7 @@ from fastapi import FastAPI
 # before, and a missing file is a silent no-op (local mode needs no config).
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from fastapi.middleware.cors import CORSMiddleware
+from aipds import agent_home, launcher
 from aipds.workspace import ProjectRegistry, Workspace
 from aipds.runner import AgentRunner
 from aipds.agent.claude_driver import ClaudeDriver
@@ -319,14 +320,20 @@ async def purge_local_workspace(project_id: str) -> None:
     되는 자리이고, `pathlib`은 정규화하지 않으므로 `".."`는 정말로 부모다 — 검증
     없이는 한 프로젝트 삭제가 `workspaces/` 전체의 rmtree가 된다. 라우트도 막지만
     (그쪽이 1차 방어) 위험한 원시 연산이 누가 부르든 무기가 되기를 거부한다.
+
+    에이전트 홈(프로젝트별 CLI config dir — 트랜스크립트와 세션 상태)도 여기서 지운다.
+    남기면 같은 id로 다시 만든 프로젝트의 첫 턴이 옛 대화를 `--resume`한다.
     """
     reject_unsafe_segment(project_id)
     target = _workspaces_dir() / project_id
-    if not target.is_dir():
-        return
-    await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
-    if target.exists():
-        raise RuntimeError(f"workspace purge left residue: {target}")
+    if target.is_dir():
+        await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
+        if target.exists():
+            raise RuntimeError(f"workspace purge left residue: {target}")
+    await agent_home.purge_project(project_id)
+    active = launcher.current()
+    if active is not None:
+        active.revoke_project(project_id)
 
 
 def _discovery_config_dir() -> Path:
@@ -350,7 +357,11 @@ def driver_factory(project_id: str, local_root: Path):
     return ClaudeDriver(
         workspace=str(local_root),
         rules_dir=_rules_dir(),
-        config_dir=str(_discovery_config_dir()),
+        # 프로젝트별 config dir(aipds/agent_home.py). 공유 discovery-config는 내용의
+        # 출처로 넘기고, 드라이버가 연결마다 복사한다.
+        config_dir=str(agent_home.discovery(project_id).prepare().config),
+        shared_config_dir=str(_discovery_config_dir()),
+        launch=launcher.launch_for("discovery", project_id),
         s3=s3_store_factory(project_id),
         # cli_model_id를 여기서 씌운다(project_model 안이 아니다) — `[1m]`은
         # CLI 별칭이고 Bedrock 모델 id가 아니라서, project_model을 그대로 쓰는
@@ -401,7 +412,9 @@ def proto_host():
     global _proto_host_singleton
     if _proto_host_singleton is None:
         from aipds.proto.host import ProtoHost
-        _proto_host_singleton = ProtoHost(root=_proto_root())
+        # 래퍼는 기동 점검(lifespan)이 정한다. 이 싱글턴이 그보다 먼저 만들어지지 않게
+        # lifespan이 점검을 가장 먼저 한다.
+        _proto_host_singleton = ProtoHost(root=_proto_root(), launcher=launcher.current())
     return _proto_host_singleton
 
 
@@ -424,7 +437,10 @@ def proto_session_factory(project_id: str, slug: str):
     def builder_factory(session_id: str, resume: bool):
         return PrototypeBuilder(
             workspace=str(build_root / project_id / slug),
-            config_dir=str(config_dir),
+            # Discovery와 같은 배치 — 프로토타입별 config dir, 공유 proto-config는 출처.
+            config_dir=str(agent_home.build(project_id, slug).prepare().config),
+            shared_config_dir=str(config_dir),
+            launch=launcher.launch_for("build", project_id, slug),
             session_id=session_id,
             resume=resume,
             session_store=store,
@@ -552,6 +568,21 @@ async def _lifespan(_app: FastAPI):
     # 가장 먼저. 아래의 모든 것이 실패를 로그로 보고하고, 핸들러가 붙기 전의
     # 로그는 사라진다(configure_logging 참고 — 실제로 그렇게 잃었다).
     configure_logging()
+    # 실행 래퍼(aipds/launcher.py). 프로세스를 띄우는 모든 것(proto_host 싱글턴, 드라이버·
+    # 빌더 팩토리)이 이 결과를 읽으므로 그것들보다 먼저 정한다.
+    active_launcher = launcher.probe()
+    launcher.set_current(active_launcher)
+    if active_launcher is None:
+        launcher.sweep_if_installed()
+    broker = active_launcher.broker if active_launcher is not None else None
+    if broker is not None:
+        try:
+            await broker.start()
+        except Exception:
+            # 포트를 못 열면 샌드박스 프로세스는 자격증명을 받지 못한다. 기동은 막지 않는다 —
+            # IMDS가 아직 열려 있으면 그쪽으로 동작한다(launcher.probe의 경고와 같은 성질).
+            _log.exception("credential endpoint failed to start")
+            broker = None
     # 기동 시 S3 매니페스트에서 프로젝트 '목록'만 복원한다. 워크스페이스는 첫
     # 요청에서 lazy 초기화(deps.ensure_workspace) — 기동을 빠르게 유지한다.
     # 복원 실패는 기동을 막지 않는다.
@@ -610,6 +641,8 @@ async def _lifespan(_app: FastAPI):
     yield
     if rehost_task is not None and not rehost_task.done():
         rehost_task.cancel()
+    if broker is not None:
+        await broker.close()
 
 
 def _docs_openapi_url() -> str | None:
