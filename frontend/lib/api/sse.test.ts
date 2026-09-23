@@ -109,11 +109,11 @@ describe("streamEvents", () => {
 });
 
 describe("streamAnswers", () => {
-  it("opens the answers/stream URL with the turn handle", async () => {
+  it("opens the events URL with the answers turn id", async () => {
     mockTurns("t-ans");
     streamAnswers("p1", { "1": "A" }, { onEvent: () => {}, onDone: () => {} });
     const url = (await opened()).url;
-    expect(url).toBe(`${API_BASE_URL}/projects/p1/answers/stream?turn=t-ans`);
+    expect(url).toBe(`${API_BASE_URL}/projects/p1/events?turn=t-ans`);
     // 답변 JSON이 URL에 남아 있으면 이 수정의 목적이 무의미해진다.
     expect(url).not.toContain("answers=");
   });
@@ -181,7 +181,7 @@ describe("긴 입력은 URL이 아니라 본문으로 간다", () => {
     const stop = streamAnswers("p1", answers, { onEvent: () => {}, onDone: () => {} });
     await vi.waitFor(() => expect(FakeEventSource.last).not.toBeNull());
     expect(FakeEventSource.last!.url).toBe(
-      `${API_BASE_URL}/projects/p1/answers/stream?turn=def456`);
+      `${API_BASE_URL}/projects/p1/events?turn=def456`);
     expect(posted).toEqual({ answers });
     stop();
   });

@@ -437,7 +437,8 @@ async def create_session_turn(pid: str, slug: str, body: TurnBody):
 
     텍스트를 본문으로 받는 이유는 워크스페이스 채팅(routes/turns.py)과 같다:
     EventSource는 GET만 지원하고, 긴 입력이 URL에 실리면 프록시가 431을 낸다
-    (aipds/turn_handles.py 헤더의 실측). 자동 개시는 센티넬(`__first__`)을 보낸다.
+    (frontend lib/api/sse.ts의 createTurn에 실측이 있다). 자동 개시는
+    센티넬(`__first__`)을 보낸다.
     """
     _require_registered(pid)
     session = _require_session(pid, slug)
@@ -445,22 +446,14 @@ async def create_session_turn(pid: str, slug: str, body: TurnBody):
 
 
 @router.get("/projects/{pid}/prototypes/{slug}/events")
-async def stream_session_events(pid: str, slug: str,
-                                turn: str | None = None, after: int = 0,
-                                text: str | None = None):
-    """빌드 턴 하나를 본다. `?text=`는 시작과 구독을 한 요청으로 하는 경로다."""
+async def stream_session_events(pid: str, slug: str, turn: str, after: int = 0):
+    """빌드 턴 하나를 본다. 턴은 `POST …/turns`가 시작한다 — 이 경로는 보기만 한다."""
     _require_registered(pid)
     session = _require_session(pid, slug)
-    if turn is not None:
-        job = session.turns.get(turn)
-        if job is None:
-            raise HTTPException(status_code=404, detail="unknown turn")
-        return _build_turn_response(job, after)
-    if text is None:
-        # 조용히 빈 턴을 돌리면 사용자는 응답 없는 말풍선을 보고 원인을 알 수 없다.
-        raise HTTPException(status_code=400,
-                            detail="either `turn` or `text` is required")
-    return _build_turn_response(_start_build_turn(session, text))
+    job = session.turns.get(turn)
+    if job is None:
+        raise HTTPException(status_code=404, detail="unknown turn")
+    return _build_turn_response(job, after)
 
 
 @router.get("/projects/{pid}/prototypes/{slug}/session")
