@@ -92,7 +92,11 @@ _SINGLE_ONLY = re.compile(
     r"하나만|한\s*개만|1\s*개만|only\s+one|pick\s+one|choose\s+one|select\s+one",
     re.IGNORECASE)
 _CAT_HEADER = re.compile(r"^##\s+(?!Question\b)(.+?)\s*$", re.MULTILINE)
-_OPTION = re.compile(r"^([A-F]|X)\)\s+(.*)$")
+#: 보기 글자는 A-J까지 받는다. 상류 형식 가이드는 F까지라고 하지만 모델은 실제로
+#: `G)`를 쓴다(실측: 한 프로젝트의 질문 파일 두 개). F까지만 받던 동안 그 줄은 보기로도
+#: 본문으로도 잡히지 않고 버려져, 카드에 보기 하나가 빠진 채 떴다. 받는 범위를
+#: SDK 쪽 번역 테이블(`claude_driver._LETTERS`, A-J)과 맞춘다.
+_OPTION = re.compile(r"^([A-J]|X)\)\s+(.*)$")
 _ANSWER = re.compile(r"^\[Answer\]:\s*(.*)$")
 _RECO = re.compile(r"\s*←\s*(추천|recommended).*$", re.IGNORECASE)
 

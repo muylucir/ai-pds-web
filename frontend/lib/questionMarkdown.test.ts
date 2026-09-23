@@ -91,8 +91,9 @@ describe("breakOptionLines", () => {
     // 질문 본문, 표, 제목이 그대로 남아야 한다 — 파서로 렌더하지 않는 이유다.
     const md = "## Question 1\n통관 단계에서 …?\n\n| # | 필수 영역 |\n|---|---|";
     expect(breakOptionLines(md)).toBe(md);
-    // "G)"는 상류 형식에 없는 letter다 — 넓히면 산문의 괄호가 걸린다.
-    expect(breakOptionLines("G) 아님")).toBe("G) 아님");
+    // 백엔드 `_OPTION`과 같은 A-J다 — 모델이 실제로 쓰는 `G)`까지 받고, 그 밖의
+    // 글자는 산문의 괄호일 수 있으므로 받지 않는다.
+    expect(breakOptionLines("K) 아님")).toBe("K) 아님");
   });
 
   it("letter 뒤에 공백이 없으면 보기가 아니다", () => {

@@ -594,3 +594,27 @@ def test_the_english_wordings_are_recognised():
                    "(multiple selections allowed)"):
         qf = parse_question_file("x.md", _one_q(marker))
         assert qf.questions[0].multi_select is True, marker
+
+
+def test_options_past_f_are_kept():
+    """상류 가이드는 F까지지만 모델은 `G)`를 쓴다(실측). F까지만 받던 동안 그 줄은
+    보기로도 본문으로도 잡히지 않고 사라졌다."""
+    md = """# Questions
+
+## Question 1
+어떤 방식으로 해결하고 있습니까? (해당하는 것을 모두 선택하세요)
+
+A) 하나
+B) 둘
+C) 셋
+D) 넷
+E) 다섯
+F) 여섯
+G) 일곱
+X) Other (please describe after [Answer]: tag below)
+
+[Answer]:
+"""
+    q = parse_question_file("q.md", md).questions[0]
+    assert [o.letter for o in q.options] == ["A", "B", "C", "D", "E", "F", "G", "X"]
+    assert q.multi_select

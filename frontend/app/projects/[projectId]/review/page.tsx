@@ -91,6 +91,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   );
 
   const contentLoadError = selected !== null && content.error !== null;
+  const auditPath = tree.data?.find((p) => p.endsWith("aiplc-docs/audit.md")) ?? null;
   const isDiscoveryDocument = selected?.endsWith("discovery-document.md") ?? false;
 
   // 수정 요청 링크의 목적지 — 워크스페이스 채팅으로 이동하며 문서명이 포함된 초안을 ?draft=로 전달한다.
@@ -211,7 +212,10 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
               {isDiscoveryDocument ? (
                 <div className="grid lg:grid-cols-3 gap-6">
                   <DocumentPanel markdown={content.data ?? ""} />
-                  <VerificationSummary entries={audit.data ?? []} />
+                  <VerificationSummary
+                    entries={audit.data ?? []}
+                    onViewRaw={auditPath ? () => setSelected(auditPath) : undefined}
+                  />
                 </div>
               ) : (
                 <article className="bg-white rounded-xl border border-slate-200 p-6">
