@@ -221,3 +221,109 @@ def test_subheading_shape_feeds_the_gate_history_filter():
     assert len(entries) == 1
     haystack = f"{entries[0].context or ''} {entries[0].ai_response}"
     assert re.search(r"gate|approv|승인|게이트", haystack, re.I)
+
+
+# ---- 실제 로그의 라벨 모양들 (tests/fixtures/real 코퍼스에서 관측) ----
+# 라벨 목록을 정확히 맞추지 않고 "굵은 라벨 + 콜론"을 라벨로 본다 — 템플릿 라벨은
+# ko 프로젝트에서 번역되고, 번역이 아니어도 모델이 꾸민다.
+
+def test_a_label_with_a_parenthetical_and_a_trailing_descriptor():
+    md = """## 초기 사용자 요청
+**Timestamp**: 2026-09-04T04:40:48Z
+**User Input (COMPLETE RAW INPUT)** — 세션 앞부분에서 제공된 원본 요청:
+"영작 학습 앱을 만들고 싶어"
+
+**AI Response**: "Discovery 시작"
+"""
+    e = parse_audit_file(md)[0]
+    assert e.user_input == "영작 학습 앱을 만들고 싶어"
+    assert e.ai_response == "Discovery 시작"
+
+
+def test_a_korean_label_with_the_colon_inside_the_bold_and_a_fenced_value():
+    md = """## 2026-08-19T08:00:19Z — 워크플로우 시작 (사용자 최초 요청)
+
+**사용자 원문 입력 (raw input, 그대로 보존):**
+
+```
+워크플로우를 시작하고 싶어
+```
+
+**AI 해석:**
+- 요청 내용: Discovery 시작
+"""
+    e = parse_audit_file(md)[0]
+    # 타임스탬프가 헤딩에 있고, 제목이 맥락이 된다.
+    assert e.timestamp == "2026-08-19T08:00:19Z"
+    assert e.context == "워크플로우 시작 (사용자 최초 요청)"
+    assert e.user_input == "워크플로우를 시작하고 싶어"
+    assert "Discovery 시작" in e.ai_response
+
+
+def test_bullet_labels():
+    md = """## 2026-09-03T00:03:00Z — Pain Point Input Mode Selection
+- **Event**: User answered mode-selection-questions.md
+- **Answer**: Q1 → A (Interactive Discovery)
+- **Next Step**: Step 2
+"""
+    e = parse_audit_file(md)[0]
+    assert e.user_input == "Q1 → A (Interactive Discovery)"
+    assert e.ai_response == "User answered mode-selection-questions.md"
+
+
+def test_ai_response_outranks_ai_action():
+    md = """## Step
+**Timestamp**: 2026-09-04T00:00:00Z
+**AI Action**: 파일 작성
+**AI Response**: 진행합니다
+"""
+    assert parse_audit_file(md)[0].ai_response == "진행합니다"
+
+
+def test_untimestamped_sub_sections_belong_to_the_previous_entry():
+    """항목 안의 질문별 답을 `## Question N`으로 적은 로그가 있다. 타임스탬프 헤딩을
+    쓰는 로그에서 그것은 새 항목이 아니라 앞 항목의 하위 절이다."""
+    md = """## 2026-08-19T08:07:00Z — 후속 질문 답변 수신
+
+**사용자 원문 답변 (raw):**
+## Question 1
+답 하나
+## Question 2
+답 둘
+
+## 2026-08-19T08:10:00Z — 다음 단계
+- 진행
+"""
+    entries = parse_audit_file(md)
+    assert [e.context for e in entries] == ["후속 질문 답변 수신", "다음 단계"]
+
+
+def test_a_heading_inside_a_fence_is_not_a_heading():
+    md = """## 2026-08-19T08:03:52Z — 입력 방식 선택 답변 수신
+
+**사용자 원문 답변 (raw, 그대로 보존):**
+
+```
+## Question 1
+어떤 방식으로 제공하시겠습니까?
+
+[Answer]: A
+```
+
+**해석 및 결정:**
+- 선택: A
+"""
+    entries = parse_audit_file(md)
+    assert len(entries) == 1
+    assert "[Answer]: A" in entries[0].user_input
+    assert entries[0].ai_response == "- 선택: A"
+
+
+def test_emphasis_inside_prose_is_not_a_label():
+    md = """## 2026-08-19T08:00:00Z — 정리
+- **차별성은 P4·P5에 있다.**
+- 나머지 서술
+"""
+    e = parse_audit_file(md)[0]
+    assert e.user_input == ""
+    assert "차별성은" in e.ai_response

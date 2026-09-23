@@ -1,0 +1,2413 @@
+{
+ "en-1/aiplc-state.md": {
+  "has_current": true,
+  "stages": [
+   "completed",
+   "pending",
+   "completed",
+   "pending",
+   "in_progress",
+   "pending"
+  ]
+ },
+ "en-1/audit.md": {
+  "entries": 16,
+  "with_input": 11,
+  "with_response": 16,
+  "with_timestamp": 16
+ },
+ "en-1/discovery/envision/business-context-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "en-1/discovery/envision/mode-selection-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "en-1/discovery/envision/pain-point-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 7,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 8,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 9,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "en-1/discovery/envision/prfaq-clarifying-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "en-1/discovery/product-strategy/strategy-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": false,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": true,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 7,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 8,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 9,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": true,
+    "n": 10,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 11,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-1/aiplc-state.md": {
+  "has_current": true,
+  "stages": [
+   "completed",
+   "completed",
+   "in_progress",
+   "pending",
+   "pending",
+   "pending",
+   "pending",
+   "pending",
+   "pending",
+   "pending",
+   "pending"
+  ]
+ },
+ "ko-1/audit.md": {
+  "entries": 17,
+  "with_input": 9,
+  "with_response": 17,
+  "with_timestamp": 17
+ },
+ "ko-1/discovery/envision/business-context-detail-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F",
+     "G",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-1/discovery/envision/mode-selection-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-1/discovery/envision/pain-point-clarification-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-1/discovery/envision/pain-point-confirmation-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-1/discovery/envision/pain-point-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": true,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F",
+     "G",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 7,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 8,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 9,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 10,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 11,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 12,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 13,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-1/discovery/envision/prfaq-clarifying-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": false,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-2/aiplc-state.md": {
+  "has_current": true,
+  "stages": [
+   "completed",
+   "completed",
+   "completed",
+   "completed",
+   "completed"
+  ]
+ },
+ "ko-2/audit.md": {
+  "entries": 20,
+  "with_input": 19,
+  "with_response": 20,
+  "with_timestamp": 20
+ },
+ "ko-2/discovery/envision/business-context-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-2/discovery/envision/mode-selection-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-2/discovery/envision/pain-point-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 7,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-2/discovery/envision/prfaq-clarifying-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-2/discovery/go-to-market/gtm-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 7,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 8,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 9,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 10,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-2/discovery/product-strategy/strategy-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 7,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 8,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 9,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 10,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-2/discovery/prototype/build-decision-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/aiplc-state.md": {
+  "has_current": true,
+  "stages": [
+   "completed",
+   "completed",
+   "completed",
+   "completed",
+   "completed"
+  ]
+ },
+ "ko-3/audit.md": {
+  "entries": 24,
+  "with_input": 22,
+  "with_response": 24,
+  "with_timestamp": 24
+ },
+ "ko-3/discovery/envision/business-context-clarification-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/envision/business-context-followup-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 7,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 8,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/envision/business-context-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/envision/envision-approval-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/envision/mode-selection-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/envision/pain-point-confirmation-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/envision/pain-point-followup-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/envision/pain-point-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 7,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 8,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 9,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 10,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 11,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 12,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 13,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/go-to-market/discovery-completion-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/go-to-market/gtm-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 7,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 8,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 9,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 10,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 11,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 12,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 13,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 14,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 15,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 16,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/product-strategy/strategy-approval-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/product-strategy/strategy-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 6,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 7,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 8,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 9,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 10,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 11,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 12,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 13,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 14,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 15,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": true,
+    "n": 16,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/prototype/build-decision-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/prototype/part2-approval-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/prototype/prototype-review-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/prototype/prototype-spec-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": false,
+    "multi": false,
+    "n": 3,
+    "options": []
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 5,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-3/discovery/prototype/validation-completion-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 2,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 3,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   },
+   {
+    "answered": true,
+    "multi": false,
+    "n": 4,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ },
+ "ko-4/aiplc-state.md": {
+  "has_current": true,
+  "stages": [
+   "in_progress",
+   "pending",
+   "pending",
+   "pending",
+   "pending"
+  ]
+ },
+ "ko-4/audit.md": {
+  "entries": 5,
+  "with_input": 3,
+  "with_response": 5,
+  "with_timestamp": 5
+ },
+ "ko-4/discovery/envision/business-context-questions.md": {
+  "parse_ok": true,
+  "questions": [
+   {
+    "answered": true,
+    "multi": false,
+    "n": 1,
+    "options": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "X"
+    ]
+   }
+  ]
+ }
+}
