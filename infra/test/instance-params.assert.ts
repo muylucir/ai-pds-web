@@ -43,6 +43,9 @@ assert.match(harden, /\n  boot\)\n    install_all --no-restart\n    boot_apply\n
 // 프리뷰 값이 잘못돼도 부팅이 멈추면 안 된다 — user-data는 set -e이고, 멈추면 앱 전체가 502다.
 assert.match(bootApply, /--no-restart "\$origin" "\$secret" \\\n\s*\|\| echo/,
   'a rejected preview parameter must not abort the boot');
+// sudo는 AWS_REGION을 지운다 — 운영자가 `sudo aipds-harden boot`로 돌리면 늘 비어 있다.
+assert.match(bootApply, /REGION=\$\{AWS_REGION:-\$\{AWS_DEFAULT_REGION:-\$\(instance_region\)\}\}/,
+  'boot must fall back to the instance region from IMDS when sudo strips AWS_REGION');
 assert.match(preview, /if \[ "\$\{1:-\}" = "--no-restart" \]; then/,
   'aipds-preview-configure must accept --no-restart');
 
