@@ -60,6 +60,8 @@ LANGUAGE_UNSUPPORTED = "language_unsupported"
 # 프로토타입 (routes/prototypes.py)
 BUILD_SLOTS_BUSY = "build_slots_busy"
 BUILD_SESSION_ACTIVE = "build_session_active"
+# 샌드박스 래퍼가 켜져 있는데 쓸 수 없다(aipds/launcher.py) — 운영자가 고칠 일이다.
+SANDBOX_UNAVAILABLE = "sandbox_unavailable"
 # 초기화 실패는 무엇이 실패했는지가 진단에 필요하다. 코드 뒤에 콜론으로 붙여
 # 보내고(`init_incomplete:s3,host`) 프론트는 코드 부분만 번역한다.
 INIT_INCOMPLETE = "init_incomplete"

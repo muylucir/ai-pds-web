@@ -283,8 +283,8 @@ BRANCH=${branch}
 ENV
 install -m 755 ${APP}/infra/scripts/aipds-update /usr/local/bin/aipds-update
 
-# 샌드박스 기반: 유저·래퍼·sudoers·트리 권한, unit·nginx의 평문 시크릿. 래퍼는 꺼진 채(scripts/aipds-harden).
-${APP}/infra/scripts/aipds-harden install --no-restart
+# 샌드박스: 설치 + SSM에 값이 있으면 래퍼·IMDS 차단·프리뷰까지. 서비스 기동 전이어야 한다(scripts/aipds-harden boot).
+AWS_REGION=${region} ${APP}/infra/scripts/aipds-harden boot
 
 systemctl daemon-reload
 systemctl enable --now nginx aipds-backend aipds-frontend

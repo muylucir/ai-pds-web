@@ -2,6 +2,7 @@
 # 에이전트·프로토타입을 백엔드와 다른 uid의 샌드박스에서 돌리기 위한 인스턴스 설정.
 #
 #   sudo /opt/aipds/infra/scripts/aipds-harden install [--no-restart]
+#   sudo AWS_REGION=<region> /opt/aipds/infra/scripts/aipds-harden boot
 #   sudo /opt/aipds/infra/scripts/aipds-harden enable <AgentRoleArn>
 #   sudo /opt/aipds/infra/scripts/aipds-harden disable
 #   sudo /opt/aipds/infra/scripts/aipds-harden imds block|allow
@@ -12,9 +13,14 @@
 # enable   래퍼를 켠다(AIPDS_LAUNCHER=1 + AgentRole). AgentRole은 AipdsAgentCredsStack의 출력.
 # imds     래퍼가 띄운 프로세스의 IMDS 접근. **enable 뒤 Bedrock 호출이 되는 것을 확인하고
 #          block한다** — 거꾸로 하면 에이전트와 프로토타입의 LLM 호출이 함께 끊긴다.
+# boot     새 인스턴스의 user-data가 서비스 기동 **전에** 부른다. install에 더해, 별도 스택이
+#          SSM에 남긴 값(infra/lib/instance-params.ts)이 있으면 enable + imds block, 프리뷰
+#          설정까지 한다. 첫 롤아웃의 "확인 뒤 block" 순서는 이미 검증된 구성을 다시 까는
+#          교체에는 필요 없다 — 교체된 인스턴스가 운영자를 기다리며 격리 없이 도는 틈이 더 크다.
+#          값이 없으면(스택 미배포) 그 기능은 꺼진 채다. 재시작하지 않는다.
 #
 # 왜 user-data가 아니라 이 스크립트인가: user-data를 바꾸면 HostingStack 배포가 EC2를
-# 교체한다(aipds-preview-configure와 같은 사정). user-data는 새 인스턴스에서 `install`을
+# 교체한다(aipds-preview-configure와 같은 사정). user-data는 새 인스턴스에서 `boot`를
 # 부르고, 실행 중인 인스턴스에는 SSM으로 이것을 돌린다.
 #
 # enable·disable·imds·install은 백엔드를 재시작한다 — 진행 중인 턴과 빌드가 끊긴다.
@@ -46,11 +52,74 @@ DROPIN=/etc/systemd/system/aipds-backend.service.d
 FRONT_UNIT=/etc/systemd/system/aipds-frontend.service
 FRONT_DROPIN=/etc/systemd/system/aipds-frontend.service.d
 FRONT_ENV=$CONF_DIR/frontend.env
+# infra/lib/instance-params.ts와 같은 이름(test/instance-params.assert.ts).
+PARAM_AGENT_ROLE=/aipds/agent-role-arn
+PARAM_PREVIEW_ORIGIN=/aipds/preview-origin
+PARAM_PREVIEW_SECRET=/aipds/preview-secret-arn
 
 restart_backend() {
   systemctl daemon-reload
   systemctl restart aipds-backend
   echo "aipds-harden: backend restarted"
+}
+
+write_launcher() {
+  mkdir -p "$DROPIN"
+  cat > "$DROPIN/launcher.conf" <<UNIT
+[Service]
+Environment=AIPDS_LAUNCHER=1
+Environment=AIPDS_AGENT_ROLE_ARN=$1
+UNIT
+  chmod 644 "$DROPIN/launcher.conf"
+}
+
+write_imds() {
+  printf 'imds_block=%s\n' "$1" > "$LAUNCH_CONF"
+  chmod 644 "$LAUNCH_CONF"
+}
+
+# 파라미터 값. 없으면 빈 문자열(스택 미배포). 그 밖의 실패(권한, 네트워크)는 몇 번 다시 묻고
+# 그래도 안 되면 빈 문자열 — 부팅을 막지는 않되 로그에 크게 남긴다.
+get_param() {
+  local out i
+  for i in 1 2 3; do
+    if out=$(aws ssm get-parameter --region "$AWS_REGION" --name "$1" \
+        --query Parameter.Value --output text 2>&1); then
+      printf '%s' "$out"
+      return 0
+    fi
+    case "$out" in *ParameterNotFound*) return 0 ;; esac
+    sleep $((i * 5))
+  done
+  echo "aipds-harden: WARNING cannot read $1: $out" >&2
+}
+
+boot_apply() {
+  if [ -z "${AWS_REGION:-}" ]; then
+    echo "aipds-harden: WARNING AWS_REGION unset — launcher and preview stay off" >&2
+    return 0
+  fi
+  local arn origin secret
+  arn=$(get_param "$PARAM_AGENT_ROLE")
+  case "$arn" in
+    arn:aws:iam::*:role/*)
+      write_launcher "$arn"
+      write_imds 1
+      echo "aipds-harden: launcher on, IMDS blocked ($arn)"
+      ;;
+    *) echo "aipds-harden: WARNING no $PARAM_AGENT_ROLE — agents and prototypes run unsandboxed" \
+         "until 'aipds-harden enable' (deploy AipdsAgentCredsStack)" >&2 ;;
+  esac
+  origin=$(get_param "$PARAM_PREVIEW_ORIGIN")
+  secret=$(get_param "$PARAM_PREVIEW_SECRET")
+  if [ -n "$origin" ] && [ -n "$secret" ]; then
+    # 값이 잘못돼도 부팅을 멈추지 않는다 — user-data는 set -e이고, 멈추면 앱 전체가 502다.
+    "$APP/infra/scripts/aipds-preview-configure" --no-restart "$origin" "$secret" \
+      || echo "aipds-harden: WARNING preview parameters rejected — served from the app origin" >&2
+  else
+    echo "aipds-harden: no preview parameters — prototypes are served from the app origin" >&2
+  fi
+  systemctl daemon-reload
 }
 
 install_all() {
@@ -139,6 +208,10 @@ case "${1:-}" in
   install)
     install_all "${2:-}"
     ;;
+  boot)
+    install_all --no-restart
+    boot_apply
+    ;;
   enable)
     ARN="${2:-}"
     case "$ARN" in
@@ -146,13 +219,7 @@ case "${1:-}" in
       *) echo "usage: aipds-harden enable <AgentRoleArn>" >&2; exit 1 ;;
     esac
     [ -x "$LIBEXEC/launch" ] || { echo "aipds-harden: run 'install' first" >&2; exit 1; }
-    mkdir -p "$DROPIN"
-    cat > "$DROPIN/launcher.conf" <<UNIT
-[Service]
-Environment=AIPDS_LAUNCHER=1
-Environment=AIPDS_AGENT_ROLE_ARN=$ARN
-UNIT
-    chmod 644 "$DROPIN/launcher.conf"
+    write_launcher "$ARN"
     restart_backend
     ;;
   disable)
@@ -161,11 +228,10 @@ UNIT
     ;;
   imds)
     case "${2:-}" in
-      block) printf 'imds_block=1\n' > "$LAUNCH_CONF" ;;
-      allow) printf 'imds_block=0\n' > "$LAUNCH_CONF" ;;
+      block) write_imds 1 ;;
+      allow) write_imds 0 ;;
       *) echo "usage: aipds-harden imds block|allow" >&2; exit 1 ;;
     esac
-    chmod 644 "$LAUNCH_CONF"
     # 상주 Discovery CLI는 기동할 때의 설정으로 계속 돈다. 재시작하면 기동 스윕이 그 unit을
     # 멈추고 다음 턴에 새 설정으로 뜬다.
     restart_backend
@@ -179,7 +245,7 @@ UNIT
     systemctl list-units --no-legend 'aipds-run-*' 2>/dev/null || true
     ;;
   *)
-    echo "usage: aipds-harden install|enable <arn>|disable|imds block|allow|status" >&2
+    echo "usage: aipds-harden install|boot|enable <arn>|disable|imds block|allow|status" >&2
     exit 1
     ;;
 esac

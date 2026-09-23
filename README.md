@@ -261,9 +261,10 @@ sudo /opt/aipds/infra/scripts/aipds-preview-configure <PreviewOrigin> <PreviewSe
 ```
 
 From then on share links are preview-domain URLs, and old links opened on the app domain move to the same
-path on the preview domain. The app domain no longer serves prototypes. If this step is skipped — or not yet
-re-run after the instance is replaced — prototypes are served from the app domain: everything works, only
-the isolation is missing.
+path on the preview domain. The app domain no longer serves prototypes. The stack also writes both values to
+SSM Parameter Store (`/aipds/preview-origin`, `/aipds/preview-secret-arn`), and a new instance applies them
+at boot (`aipds-harden boot`), so this command is only for the instance that is already running. Without
+the stack, prototypes are served from the app domain: everything works, only the isolation is missing.
 
 ### 8. Sandboxed agents and prototypes
 
@@ -291,10 +292,19 @@ sudo /opt/aipds/infra/scripts/aipds-harden imds block
 
 `imds block` must come last — blocking before the sandboxed processes are confirmed to reach
 Bedrock through the credential endpoint cuts the agents' and prototypes' LLM calls. To roll back,
-`aipds-harden disable` (back to running directly). A new instance runs `install` at boot, so only
-`enable` and `imds block` need re-running. `aipds-harden status` shows the state. If the launcher
-is on but its startup check (sudoers, paths, bundled CLI) fails, the backend logs a warning and runs
-directly (`probe` in `backend/aipds/launcher.py`).
+`aipds-harden disable` (back to running directly). `aipds-harden status` shows the state.
+
+These steps are for the instance that is already running. The stack also writes the AgentRole ARN to
+SSM Parameter Store (`/aipds/agent-role-arn`), and a new instance runs `aipds-harden boot` from
+user-data before its services start: it installs, and if the parameter exists it turns the launcher
+on and blocks IMDS in one go. Without the stack the instance boots with the launcher off (the boot log
+says so).
+
+If the launcher is on but its startup check (sudoers, paths, bundled CLI) fails, the backend does
+**not** fall back to running directly — that would hand the agents and prototypes the whole instance
+role without anyone noticing. It logs an error, agent turns fail, and starting a prototype answers
+`503 sandbox_unavailable` (`probe` in `backend/aipds/launcher.py`). Fix the cause, or run
+`aipds-harden disable` to run directly on purpose.
 
 ### Changing the region
 

@@ -42,20 +42,37 @@ def test_probe_is_off_without_the_switch(monkeypatch):
     assert launcher.probe(run=lambda *a, **k: pytest.fail("must not call sudo")) is None
 
 
-def test_probe_falls_back_when_sudo_fails(monkeypatch):
+def test_probe_refuses_when_sudo_fails(monkeypatch):
+    """켜졌는데 쓸 수 없으면 직접 실행으로 돌아가지 않는다 — 격리가 조용히 빠진다."""
     monkeypatch.setenv(launcher.SWITCH_ENV, "1")
 
     def run(argv, **kwargs):
         raise subprocess.CalledProcessError(1, argv, stderr="sudo: a password is required")
-    assert launcher.probe(run=run) is None
+    active = launcher.probe(run=run)
+    assert active is not None and active.refused and active.broker is None
 
 
-def test_probe_falls_back_on_a_layout_mismatch(monkeypatch):
+def test_probe_refuses_on_a_layout_mismatch(monkeypatch):
     """경로가 다르면 CLI는 백엔드가 보지 않는 곳에 트랜스크립트를 쓴다."""
     monkeypatch.setenv(launcher.SWITCH_ENV, "1")
     report = _layout_report(agent_home="/opt/aipds/agent-home-elsewhere")
-    assert launcher.probe(run=_check_ok(report)) is None
-    assert launcher.probe(run=_check_ok(_layout_report(claude=None))) is None
+    assert launcher.probe(run=_check_ok(report)).refused
+    assert launcher.probe(run=_check_ok(_layout_report(claude=None))).refused
+
+
+def test_a_refused_launcher_starts_nothing_but_still_sweeps(monkeypatch):
+    refused = Launcher(broker=None, refused="no sudoers")
+    with pytest.raises(launcher.LauncherUnavailable):
+        refused.claude("discovery", "p1", None)
+    with pytest.raises(launcher.LauncherUnavailable):
+        refused.npm_argv("proto", "p1", "todo", "run", "start")
+    with pytest.raises(launcher.LauncherUnavailable):
+        refused.npm_env("proto", "p1", "todo", {})
+    # 스윕은 거부하지 않는다 — 직전 백엔드가 래퍼로 띄운 unit을 치워야 한다.
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **k: calls.append(argv))
+    refused.sweep()
+    assert calls == [["sudo", "-n", launcher.LAUNCH, "sweep"]]
 
 
 def test_probe_turns_on_with_a_credential_broker(monkeypatch):
@@ -316,6 +333,21 @@ async def test_the_launcher_refuses_a_tree_it_would_not_serve(tmp_path):
     host = ProtoHost(root=root, launcher=FakeLauncher())
     with pytest.raises(ValueError):
         await host.start("p1", "todo", cwd=elsewhere)
+
+
+async def test_hosting_is_refused_before_touching_what_runs(tmp_path):
+    """거부 중이면 떠 있는 호스팅을 멈추지도 않는다 — 멈추고 못 띄우면 링크까지 죽는다."""
+    from aipds.proto.host import ProtoHost
+
+    root = tmp_path / "protos"
+    served = root / "p1" / "todo" / "prototype"
+    served.mkdir(parents=True)
+    fake = FakeLauncher()
+    fake.refused = "no sudoers"
+    host = ProtoHost(root=root, launcher=fake)
+    with pytest.raises(launcher.LauncherUnavailable):
+        await host.start("p1", "todo", cwd=served)
+    assert fake.stopped == [] and fake.argvs == []
 
 
 def test_sweep_goes_through_the_launcher(tmp_path):
