@@ -3,6 +3,7 @@ import * as cdk from 'aws-cdk-lib';
 import { AipdsDrillStack } from '../lib/aipds-drill-stack';
 import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import { AipdsHostingStack } from '../lib/aipds-hosting-stack';
+import { AipdsPreviewStack } from '../lib/aipds-preview-stack';
 
 const app = new cdk.App();
 
@@ -44,3 +45,18 @@ new AipdsHostingStack(app, 'AipdsHostingStack', {
   userPoolClient: auth.userPoolClient,
   hostedUiDomain: auth.hostedUiDomain,
 });
+
+// 프로토타입 프리뷰 전용 오리진(lib/aipds-preview-stack.ts). HostingStack이 만든 것을
+// **참조만** 하므로 그 스택을 다시 배포하지 않는다(EC2 교체를 피한다). 세 값은 HostingStack의
+// 출력과 리소스에서 읽어 넘긴다 — 없으면 이 스택을 만들지 않으므로 `--all`은 예전과 같다.
+const previewOriginDns = process.env.AIPDS_PREVIEW_ORIGIN_DNS;
+const originVerifySecretArn = process.env.AIPDS_ORIGIN_VERIFY_SECRET_ARN;
+const instanceRoleArn = process.env.AIPDS_INSTANCE_ROLE_ARN;
+if (previewOriginDns && originVerifySecretArn && instanceRoleArn) {
+  new AipdsPreviewStack(app, 'AipdsPreviewStack', {
+    env,
+    originDnsName: previewOriginDns,
+    originVerifySecretArn,
+    instanceRoleArn,
+  });
+}

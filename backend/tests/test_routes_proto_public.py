@@ -364,3 +364,70 @@ def test_an_indexed_token_of_an_unregistered_project_is_404(env, monkeypatch):
     """삭제 중이거나 이 인스턴스가 모르는 프로젝트의 토큰은 받지 않는다."""
     token = _index(monkeypatch, pid="not-registered")
     assert client.get(f"/proto/t/{token}", follow_redirects=False).status_code == 404
+
+
+# ---- 프리뷰 표면: 프로토타입은 앱과 다른 오리진에서만 서빙된다 (aipds/preview_surface.py) ----
+
+PREVIEW = "https://dpreview.cloudfront.net"
+
+
+@pytest.fixture()
+def preview(monkeypatch):
+    monkeypatch.setenv("AIPDS_PREVIEW_ORIGIN", PREVIEW)
+    monkeypatch.setenv("AIPDS_PREVIEW_VERIFY", "pv-secret")
+    return {"X-Preview-Verify": "pv-secret"}
+
+
+def test_a_link_opened_on_the_app_domain_moves_to_the_preview_domain(env, preview):
+    """프리뷰 표면이 생기기 전에 나눠 준 링크도 산다 — 같은 경로의 프리뷰 도메인으로
+    보낸다. 앱 오리진에는 프로토타입 쿠키를 심지 않는다."""
+    token = env["host"].ensure_token(PID, SLUG)
+    _running(env)
+    resp = client.get(f"/proto/t/{token}", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == f"{PREVIEW}/api/proto/t/{token}"
+    assert "set-cookie" not in resp.headers
+
+
+def test_the_app_domain_does_not_serve_prototypes(env, preview):
+    """쿠키가 맞아도 앱 오리진에서는 404다 — 프로토타입 JS가 앱 쿠키와 같은 오리진에서
+    돌 길이 없어야 한다."""
+    token = env["host"].ensure_token(PID, SLUG)
+    _running(env)
+    cookies = {cookie_name(PID, SLUG): token}
+    assert client.get(f"/proto/{PID}/{SLUG}/", cookies=cookies).status_code == 404
+    assert client.get(f"/proto/{PID}/{SLUG}", cookies=cookies,
+                      follow_redirects=False).status_code == 404
+
+
+def test_the_preview_domain_opens_the_link(env, preview):
+    token = env["host"].ensure_token(PID, SLUG)
+    _running(env)
+    gate = client.get(f"/proto/t/{token}", headers=preview, follow_redirects=False)
+    assert gate.status_code == 307
+    assert gate.headers["location"] == f"/api/proto/{PID}/{SLUG}/"
+    assert cookie_name(PID, SLUG) in gate.headers["set-cookie"]
+
+
+def test_a_wrong_preview_secret_is_the_app_domain(env, preview):
+    """비밀 헤더 값을 모르면 앱 도메인으로 흉내낼 수 없다."""
+    token = env["host"].ensure_token(PID, SLUG)
+    _running(env)
+    resp = client.get(f"/proto/t/{token}", headers={"X-Preview-Verify": "guess"},
+                      follow_redirects=False)
+    assert resp.headers["location"].startswith(PREVIEW)
+
+
+def test_share_links_point_at_the_preview_domain(preview):
+    from aipds.routes.proto_public import access_url_path
+    assert access_url_path("tok") == f"{PREVIEW}/api/proto/t/tok"
+
+
+def test_without_a_preview_surface_the_app_domain_still_serves(env, monkeypatch):
+    """프리뷰 스택을 올리지 않은 배포·로컬 개발 — 기능이 사라지는 것보다 낫다."""
+    monkeypatch.delenv("AIPDS_PREVIEW_ORIGIN", raising=False)
+    from aipds.routes.proto_public import access_url_path
+    assert access_url_path("tok") == "/api/proto/t/tok"
+    token = env["host"].ensure_token(PID, SLUG)
+    _running(env)
+    assert client.get(f"/proto/t/{token}", follow_redirects=False).status_code == 307
