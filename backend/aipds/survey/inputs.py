@@ -69,7 +69,7 @@ def _clip(text: str, key: str) -> str:
 
 
 #: 질문지의 선택지 줄. `parsers/questions.py`의 `_OPTION`과 같은 형태다.
-_OPTION_LINE = re.compile(r"^([A-F]|X)\)\s")
+_OPTION_LINE = re.compile(r"^([A-J]|X)\)\s")
 
 #: 답변 태그. `^` 앵커는 `looks_like_question_file`의 `_ANSWER_SLOT`과 같은
 #: 이유로 필수다 — audit 문서는 이 태그를 문장 안에 **인용**한다.

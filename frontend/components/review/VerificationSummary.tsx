@@ -6,7 +6,14 @@ import { useT } from "@/lib/i18n/provider";
 // the most recent AI responses as check lines; "승인 게이트 이력" shows entries
 // whose context/response reference a gate or approval. The frontend applies no
 // methodology judgment; it just surfaces what audit.md recorded.
-export function VerificationSummary({ entries }: { entries: AuditEntry[] }) {
+//
+// `onViewRaw`: audit.md가 있는데 항목이 하나도 읽히지 않았을 때 원문으로 가는 길.
+// 빈 패널은 "기록이 없다"와 구별되지 않는다 — 파서가 모르는 모양의 로그라도 사용자는
+// 원문을 읽을 수 있어야 한다.
+export function VerificationSummary({ entries, onViewRaw }: {
+  entries: AuditEntry[];
+  onViewRaw?: () => void;
+}) {
   const t = useT();
   const recent = [...entries].sort((a, b) => b.index - a.index);
   const gateHistory = recent.filter((e) =>
@@ -20,6 +27,15 @@ export function VerificationSummary({ entries }: { entries: AuditEntry[] }) {
           <h2 id="check-heading" className="font-bold">{t("review.verificationSummary")}</h2>
         </div>
         <ul className="p-5 space-y-3 text-sm">
+          {recent.length === 0 && onViewRaw && (
+            <li className="text-slate-500">
+              {t("review.auditUnreadable")}{" "}
+              <button type="button" onClick={onViewRaw}
+                      className="text-violet-600 hover:underline font-medium">
+                {t("review.viewRawAudit")}
+              </button>
+            </li>
+          )}
           {recent.slice(0, 5).map((e) => (
             <li key={e.index} className="flex gap-2.5">
               <span className="text-emerald-500" aria-hidden="true">✓</span>

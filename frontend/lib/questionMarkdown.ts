@@ -44,9 +44,9 @@ export function revealAnswerTags(markdown: string): string {
 
 
 //: 보기 한 줄. 백엔드 파서와 **같은 집합**이어야 한다
-//: (backend/aipds/parsers/questions.py의 `_OPTION`: `^([A-F]|X)\)\s+`).
+//: (backend/aipds/parsers/questions.py의 `_OPTION`: `^([A-J]|X)\)\s+`).
 //: 한쪽만 넓히면 화면에는 보기로 보이는데 파싱은 안 되거나 그 반대가 된다.
-const OPTION_LINE = /^([A-FX]\)[ \t]+.*?)[ \t]*$/gm;
+const OPTION_LINE = /^([A-JX]\)[ \t]+.*?)[ \t]*$/gm;
 
 /**
  * 보기 줄 끝에 마크다운 하드 브레이크(공백 2개)를 붙인다.

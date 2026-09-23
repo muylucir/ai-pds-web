@@ -5,8 +5,12 @@ from aipds.models import ProjectState, StageState
 
 _PROJECT_TYPE = re.compile(r"\*\*Project Type\*\*:\s*(.+)")
 _CURRENT_STAGE = re.compile(r"\*\*Current Stage\*\*:\s*(.+)")
-_CHECK = re.compile(r"^- \[([ xX])\]\s*(.+)$")
-_SPLIT = re.compile(r"\s+[—-]\s+")
+_CHECK = re.compile(r"^(?P<indent>[ \t]*)- \[([ xX])\]\s*(.+)$")
+#: 이름과 메모의 경계: ` — ` 또는 상태 이모지. 이모지로 나누는 이유는 에이전트가
+#: `Envision ✅ 승인 완료`처럼 대시 없이 상태를 이름 뒤에 붙이기 때문이다(실측). 그대로
+#: 두면 이모지와 메모가 이름(=키)이 되어 사이드바에 그대로 뜨고 Current Stage와의 매칭이
+#: 어긋난다. 이모지는 메모 쪽에 남긴다.
+_SPLIT = re.compile(r"\s+[—-]\s+|\s+(?=[✅⏳🔄❌⚠])")
 
 #: 스테이지 체크리스트가 사는 섹션. 상류가 정한 이름이다
 #: (`inception/workspace-detection.md`의 상태 파일 템플릿, 각 스테이지의
@@ -65,6 +69,30 @@ def normalize_stage_name(raw: str) -> str:
     """
     return _ENTITY_RE.sub(lambda m: _ENTITIES[m.group(0)], raw).strip()
 
+def _top_indent(markdown: str, has_section: bool) -> int:
+    """스테이지 체크박스의 들여쓰기 — 섹션 안 체크박스 가운데 가장 얕은 것.
+
+    **들여쓴 체크박스는 스테이지가 아니라 그 스테이지의 하위 단계다.** 에이전트가
+    스테이지 아래에 `  - [x] Step 0: …`처럼 단계를 적는 것은 관측된 습성이고(실측:
+    두 프로젝트에서 스테이지 5개가 18개·20개로 읽혔다), 들여쓰기를 지우고 읽던 동안
+    그 단계들이 사이드바와 진행률에 스테이지로 섞였다. 0이 아니라 "가장 얕은 것"인
+    이유: 목록 전체를 들여 쓴 문서도 스테이지를 잃지 않게.
+    """
+    depths = []
+    inside = not has_section
+    for line in markdown.splitlines():
+        line = line.rstrip()
+        if has_section:
+            if _PROGRESS_HEADER.match(line):
+                inside = True
+                continue
+            if inside and _H2.match(line):
+                inside = False
+        if inside and (m := _CHECK.match(line)):
+            depths.append(len(m.group("indent").expandtabs(4)))
+    return min(depths) if depths else 0
+
+
 def parse_state_file(markdown: str) -> ProjectState:
     """`aiplc-state.md` → 진행률 사이드바가 읽는 상태.
 
@@ -95,6 +123,7 @@ def parse_state_file(markdown: str) -> ProjectState:
     has_section = any(_PROGRESS_HEADER.match(ln.rstrip())
                       for ln in markdown.splitlines())
     in_progress_block = not has_section
+    top_indent = _top_indent(markdown, has_section)
     for line in markdown.splitlines():
         line = line.rstrip()
         if project_type is None and (m := _PROJECT_TYPE.search(line)):
@@ -112,9 +141,10 @@ def parse_state_file(markdown: str) -> ProjectState:
                 # 다음 섹션 헤딩 자체는 체크라인이 아니므로 계속 진행해도 된다.
         if not in_progress_block:
             continue
-        if (m := _CHECK.match(line.strip())):
-            checked = m.group(1).lower() == "x"
-            body = m.group(2).strip()
+        m = _CHECK.match(line)
+        if m and len(m.group("indent").expandtabs(4)) == top_indent:
+            checked = m.group(2).lower() == "x"
+            body = m.group(3).strip()
             parts = _SPLIT.split(body, maxsplit=1)
             # 이름만 정규화한다 — note는 자유 서술이고, 그쪽의 엔티티는 키가
             # 아니라서 매칭을 깨지 않는다(마크다운 렌더가 처리한다).

@@ -407,6 +407,8 @@ export const ko = {
   "review.verificationSummary": "AI 검증 요약",
   "review.gateHistory": "승인 게이트 이력",
   "review.noGateHistory": "기록된 승인 이력이 없습니다.",
+  "review.auditUnreadable": "감사 로그의 기록을 항목으로 읽지 못했습니다.",
+  "review.viewRawAudit": "원문 보기",
   "review.auditTrail": "🔒 감사 추적 (audit.md)",
   "review.noDocYet": "아직 작성된 문서가 없습니다.",
   "review.docTreeAria": "산출물 문서",
