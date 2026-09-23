@@ -45,6 +45,7 @@ async def purge_project_prototypes(
     sessions: dict,
     s3: Any | None = None,
     survey_store_factory: Callable[[str, str], Any] | None = None,
+    preview_store: Any | None = None,
 ) -> list[str]:
     """이 프로젝트의 **모든** 슬러그에 리셋 경로를 돌린다.
 
@@ -104,6 +105,18 @@ async def purge_project_prototypes(
                 # 이 슬러그는 더 진행하지 않는다 — 리셋 경로의 게이트와 같은
                 # 판단이다. 설문이 남은 채 빌드 트리를 지우면 재시도가 회수할
                 # 문항은 그대로인데 호스팅할 실체가 없는 상태가 된다.
+                continue
+
+        # 프리뷰 토큰의 루트 색인(proto/store.py). 설문 토큰 색인과 같은 사정이다 —
+        # 토큰을 읽을 곳이 S3 프로젝트 프리픽스 안이라 그것이 지워지기 **전에**
+        # 회수해야 하고, 실패하면 호출부가 프리픽스를 지우지 않게 실패로 보고한다.
+        if preview_store is not None:
+            try:
+                await preview_store.forget_token(slug)
+            except Exception:
+                _log.exception("delete: preview token purge failed: %s/%s",
+                               project_id, slug)
+                failures.append(f"preview-token:{slug}")
                 continue
 
         try:

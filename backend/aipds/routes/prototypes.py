@@ -28,9 +28,10 @@ from aipds.models import AgentEvent
 from aipds.parsers.proto_spec import spec_name
 from aipds.parsers.redaction import redact_credentials
 from aipds.pathsafe import reject_unsafe_segment
-from aipds.proto.design_sync import sync_design, theme_copies
 from aipds.proto.session import has_build_output, purge_session_state
 from aipds.turn_job import TurnBusy, subscribe
+from aipds.proto.hosting import host_prototype, prototype_store, stop_prototype
+from aipds.proto.store import PrototypeStore
 from aipds.proto.source import newest_source_mtime, source_entries
 # 토큰 게이트의 경로 조립은 그 라우트를 소유한 모듈이 한다 — 여기서 f-string으로
 # 다시 쓰면 브라우저 관점 마운트(`/api`)를 두 곳에서 관리하게 되고, 그것이 이
@@ -217,6 +218,18 @@ async def _card_name(s3, spec_path: str) -> str | None:
         return None
 
 
+async def _has_s3_source(store: PrototypeStore, slug: str) -> bool:
+    """S3에 소스 세대가 있는가. 읽지 못하면 없는 것으로 본다 — 목록은 한 카드의
+    S3 오류로 깨지지 않는다(`_card_name`과 같은 규율). 로컬 트리가 있으면 카드는
+    어차피 그쪽으로 `built`가 된다."""
+    try:
+        return await store.has_source(slug)
+    except Exception:
+        _log.warning("could not read prototype source generation for %s", slug,
+                     exc_info=True)
+        return False
+
+
 @router.get("/projects/{pid}/prototypes")
 async def list_prototypes(pid: str):
     import aipds.app as app_module
@@ -237,26 +250,24 @@ async def list_prototypes(pid: str):
     # 벽시계는 그대로다 — 카드 하나의 세 왕복이 서로를 기다리지 않는다. 목록
     # 응답에 이름을 실어 보내는 대안(카드가 각자 명세를 받아 파싱)은 왕복을
     # 클라이언트로 옮기고 파싱 규칙을 두 벌로 만든다.
-    bundle_lists, surveys, names = await asyncio.gather(
-        asyncio.gather(*(s3.list(f"prototypes/{slug}/bundle/")
-                         for slug, _ in ordered)),
+    store = PrototypeStore(s3)
+    s3_built, surveys, names = await asyncio.gather(
+        asyncio.gather(*(_has_s3_source(store, slug) for slug, _ in ordered)),
         asyncio.gather(*(survey_summary(s3, slug) for slug, _ in ordered)),
         asyncio.gather(*(_card_name(s3, spec_path) for _, spec_path in ordered)),
     )
     out = []
-    for (slug, spec_path), bundle_keys, survey, name in zip(
-            ordered, bundle_lists, surveys, names):
+    for (slug, spec_path), has_s3_source, survey, name in zip(
+            ordered, s3_built, surveys, names):
         state = "none"
         port: int | None = None
 
         session = app_module.proto_sessions.get((pid, slug))
         host_info = host.status(pid, slug)
-        # The local build dir is the primary signal now -- hosting serves it
-        # in place and nothing writes the S3 bundle/ prefix anymore (that was
-        # the deleted MicroVM's job). Keep the S3 check too as a fallback: a
-        # redeployed box could in principle have only a bundle backup and no
-        # local dir.
-        built = _local_build_exists(pid, slug) or bool(bundle_keys)
+        # 로컬 빌드 트리가 1차 신호이고(호스팅이 그 자리에서 서빙한다), S3의 소스
+        # 세대가 정본이다(proto/store.py) — 교체된 인스턴스에는 로컬 트리가 없지만
+        # 빌드는 여전히 "됐다". 호스팅·세션 시작이 그 세대에서 트리를 되살린다.
+        built = _local_build_exists(pid, slug) or has_s3_source
 
         # 빌드 세션이 열려 있는가. **`state`와 별개 필드인 이유**가 이 블록의
         # 요점이다: 서버가 떠 있는지와 세션이 열려 있는지는 서로 독립적인
@@ -591,6 +602,19 @@ async def reset_prototype(pid: str, slug: str):
         _log.exception("reset: survey purge failed: %s/%s", pid, slug)
         failures.append("survey")
 
+    # 프리뷰 토큰의 루트 색인(proto/store.py)도 같은 사정이다: 토큰을 읽을 곳이
+    # prototypes/{slug}/access-token이라, 아래 session-state가 그 트리를 지우기
+    # **전에** 회수해야 한다. 남기면 리셋 뒤에도 옛 링크가 새 빌드로 풀린다.
+    if not failures:
+        store = prototype_store(pid)
+        if store is not None:
+            try:
+                await store.forget_token(slug)
+            except Exception:
+                _log.exception("reset: preview token index purge failed: %s/%s",
+                               pid, slug)
+                failures.append("preview-token")
+
     # session-state deletes prototypes/{slug}/ wholesale -- a superset of the
     # survey tree survey.purge() just read from. Running it after a failed
     # survey purge would destroy the questionnaires a retry needs to reclaim
@@ -680,7 +704,6 @@ async def download_prototype_archive(pid: str, slug: str):
 
 @router.post("/projects/{pid}/prototypes/{slug}/host")
 async def start_host(pid: str, slug: str):
-    import aipds.app as app_module
     _require_registered(pid)
     # Hosting serves the build directory IN PLACE now, so starting it under a
     # live build session would race the agent writing into that same tree.
@@ -688,74 +711,14 @@ async def start_host(pid: str, slug: str):
         raise HTTPException(
             status_code=409,
             detail=ec.BUILD_SESSION_ACTIVE)
-    # Pass cwd explicitly: ProtoHost's default is {root}/{pid}/{slug}, one level
-    # ABOVE the served tree. That dir exists as soon as a session starts (it
-    # holds the spec .md), so the host's own is_dir() guard passes and the miss
-    # only surfaces as `npm error ENOENT ... package.json` -> 502.
-    # `public_base_path`, NOT `proxy_prefix`: basePath is baked into asset URLs
-    # that the BROWSER resolves, and the browser's path carries the `/api` mount
-    # that Next's route handler strips before this app sees it. Imported rather
-    # than re-formatted here -- two spellings of a build-time constant is the
-    # same class of bug as the cwd/prototype mismatch above.
-    from aipds.routes.proto_public import public_base_path
-    # 리빌드 직전에 브랜드 테마를 갱신한다. 호스팅은 rmtree 없이 기존 트리에
-    # `npm run build`를 돌리므로(proto/host.py), 여기서 파일만 새로 쓰면 코드는
-    # 한 줄도 건드리지 않고 색·서체·라운드만 바뀐다 -- 이미 완료된 프로토타입이
-    # 개선 세션 없이 리브랜딩되는 유일한 경로다.
-    #
-    # ProtoHost 안이 아니라 이 호출부에 두는 이유: 그 클래스는 S3도 브랜드도
-    # 모르는 범용 호스팅이다.
-    #
-    # 빌드 중인 세션을 여기서 따로 막지 않는다 -- 바로 위 `_live_session` 가드가
-    # starting/building/waiting_input/ready 전부를 이미 409로 걸러낸다. 이
-    # 지점에 도달했다는 것 자체가 "지금 아무도 이 트리에 쓰고 있지 않다"는
-    # 뜻이다.
-    build_dir = _prototype_dir(pid, slug).parent
+    # 되살리기 → 브랜드 동기화 → npm → 스냅샷 → 토큰 → 원하는 상태. 기동 뒤
+    # 재호스팅과 같은 절차여야 하므로 한 함수다(proto/hosting.py).
     try:
-        profile = await app_module.design_profile_store().load()
-        sync_design(build_dir, profile, app_module.project_language(pid))
-        # sync_design은 "갱신"만 한다 -- 프로필 업로드 **이전에** 빌드된
-        # 프로토타입은 prototype/ 아래에 테마 사본이 없어 아무것도 갈지 않고,
-        # 재호스팅해도 그대로 무브랜드로 남는다("재호스팅만으로 리브랜딩"이
-        # 성립하지 않는 유일한 경우). 화면(admin.designSubtitle)이 이 한계를
-        # 이제는 정확히 말하지만, 운영자가 "왜 아무 일도 안 일어났는지"를 이
-        # 요청 시점에도 알 수 있어야 한다 -- 개선 세션을 한 번 열어야
-        # 반영된다는 뜻이다.
-        if profile is not None and not theme_copies(build_dir):
-            _log.warning(
-                "design profile present but %s/%s has no theme copy under "
-                "prototype/ -- re-hosting cannot re-brand it; an improvement "
-                "session must run once to import aipds-theme.css first",
-                pid, slug)
-    except Exception:
-        # 브랜드 반영 실패가 호스팅 자체를 막지는 않는다 -- 화면이 열리는 것이
-        # 색보다 우선이다. 원인은 로그에 남는다.
-        _log.exception("design sync before host failed: %s/%s", pid, slug)
-    try:
-        info = await app_module.proto_host().start(
-            pid, slug, cwd=_prototype_dir(pid, slug),
-            base_path=public_base_path(pid, slug),
-            # 빌드 에이전트·Discovery와 같은 출처를 쓴다(app.project_model) —
-            # 프로토타입 앱의 런타임 LLM 호출도 프로젝트가 고른 모델로 돌아야
-            # 한다. 세 곳이 다른 값을 쓰면 사용자가 고른 모델이 어디에
-            # 적용되는지 알 수 없다.
-            #
-            # 리전은 주입하지 않는다: 백엔드도 Bedrock 리전을 명시적으로
-            # 넘기지 않고 boto3/SDK의 기본 해석(인스턴스 리전·AWS_REGION)에
-            # 맡긴다. 프로토타입은 `{**os.environ, ...}`로 백엔드 env를
-            # 물려받으므로 같은 해석을 그대로 따른다 -- 여기서 별도 규약을
-            # 만들면 백엔드와 프로토타입이 다른 리전을 볼 수 있다.
-            model_id=app_module.project_model(pid))
+        info, token = await host_prototype(pid, slug)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="prototype bundle not found")
-    if info.state == "failed":
+    if info.state == "failed" or token is None:
         raise HTTPException(status_code=502, detail=info.log_tail)
-    # 접근 토큰은 **여기서만** 발급한다. 프리뷰 링크가 의미를 갖는 것은 호스팅이
-    # 실제로 시작된 뒤이므로, 그보다 먼저 만들면 아무 데도 쓰이지 않는 자격증명이
-    # 디스크에 남는다. `ensure_token`이므로 stop -> start를 반복해도 값이 그대로다
-    # — 워크숍 중 호스팅을 껐다 켜는 것 때문에 이미 나눠 준 링크가 죽으면 안 된다.
-    # 링크를 폐기하는 의도된 경로는 리셋이고, 그쪽은 purge()가 토큰까지 지운다.
-    token = app_module.proto_host().ensure_token(pid, slug)
     return {"state": info.state, "port": info.port, "log_tail": info.log_tail,
             "access_url": access_url_path(token)}
 
@@ -778,7 +741,7 @@ async def host_status(pid: str, slug: str):
 
 @router.delete("/projects/{pid}/prototypes/{slug}/host", status_code=204)
 async def stop_host(pid: str, slug: str):
-    import aipds.app as app_module
     _require_registered(pid)
-    await app_module.proto_host().stop(pid, slug)
+    # 원하는 상태도 지운다 — 사용자가 멈춘 프로토타입이 재시작 뒤 다시 뜨면 안 된다.
+    await stop_prototype(pid, slug)
     return Response(status_code=204)

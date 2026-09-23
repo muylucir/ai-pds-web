@@ -9,6 +9,7 @@ from aipds import error_codes as ec
 from aipds.parsers.state import parse_state_file
 from aipds.project_store import write_manifest, delete_project_data
 from aipds.proto.cleanup import purge_project_prototypes
+from aipds.proto.hosting import prototype_store
 
 _log = logging.getLogger(__name__)
 
@@ -223,6 +224,7 @@ async def delete_project(pid: str):
         sessions=app_module.proto_sessions,
         s3=app_module.s3_store_factory(pid) if durable else None,
         survey_store_factory=app_module.survey_store_factory if durable else None,
+        preview_store=prototype_store(pid),
     )
     if failures:
         _log.error("prototype cleanup failed for %s: %s", pid, ",".join(failures))

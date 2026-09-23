@@ -693,3 +693,17 @@ async def test_the_timestamp_precedes_the_build_step(root):
 async def test_an_unstarted_host_has_no_timestamp(root):
     host = ProtoHost(root=root)
     assert host.status(PID, SLUG) is None
+
+
+def test_sweep_finds_pid_files_where_hosting_actually_writes_them(root):
+    """호스팅은 빌드 트리 **안의** `prototype/`에서 돈다 — pid 파일도 그 깊이에 있다.
+    한 단계 위만 보던 동안 스윕은 아무것도 찾지 못했다."""
+    host = ProtoHost(root=root)
+    served = root / "p1" / "demo" / "prototype"
+    served.mkdir(parents=True)
+    (served / ".proto-host.pid").write_text("99999999", encoding="utf-8")
+
+    assert host.previously_running() == [("p1", "demo")]
+    assert host.sweep_orphans() == 1
+    assert not (served / ".proto-host.pid").exists()
+    assert host.previously_running() == []

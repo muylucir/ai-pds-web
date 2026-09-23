@@ -325,9 +325,20 @@ def test_list_state_none(proto_env):
                                    "has_survey": False}]
 
 
+def _seed_source_generation(s3, files=None):
+    """S3에 소스 세대 하나를 심는다(proto/store.py) — 로컬 트리가 없는 교체된
+    인스턴스의 모양."""
+    s3.blobs[f"prototypes/{SLUG}/source/current.json"] = json.dumps(
+        {"gen": 1, "hash": "h", "files": 1})
+    for rel, body in (files or {"prototype/package.json": "{}"}).items():
+        s3.blobs[f"prototypes/{SLUG}/source/000001/{rel}"] = body
+
+
 def test_list_state_built(proto_env):
+    """로컬 트리가 없어도 S3에 소스 세대가 있으면 빌드된 것이다 — 교체된 인스턴스의
+    카드가 `none`으로 돌아가면 안 된다. 호스팅·세션 시작이 그 세대에서 되살린다."""
     _seed_spec(proto_env["s3"])
-    proto_env["s3"].blobs[f"prototypes/{SLUG}/bundle/package.json"] = "{}"
+    _seed_source_generation(proto_env["s3"])
     body = client.get(f"/projects/{PID}/prototypes").json()
     assert body["prototypes"][0]["state"] == "built"
 
@@ -996,6 +1007,22 @@ def test_reset_clears_everything_but_keeps_the_spec(proto_env, monkeypatch):
     assert s3.blobs[SPEC_KEY] == "# PROTOTYPE demo"
     assert s3.blobs["aiplc-docs/discovery/prototype/validation-results.md"] == "# other"
     assert s3.blobs["prototypes/other/session.json"] == '{"session_id": "y"}'
+
+
+def test_reset_unlinks_the_preview_token_before_wiping_the_prefix(proto_env, monkeypatch):
+    """프리뷰 토큰의 루트 색인(proto/store.py)은 토큰을 prototypes/{slug}/access-token
+    에서 읽어야 찾을 수 있다 — 그 트리가 지워지기 **전에** 회수하지 않으면 리셋 뒤에도
+    옛 링크가 같은 슬러그로 다시 만든 프로토타입으로 풀린다."""
+    from aipds.proto.store import PrototypeStore, resolve_token
+    _seed_everything(proto_env, monkeypatch)
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "bucket")
+    store = PrototypeStore(proto_env["s3"], root=proto_env["root_s3"], project_id=PID)
+    client.portal.call(store.save_token, SLUG, "preview-tok")
+    assert client.portal.call(resolve_token, proto_env["root_s3"], "preview-tok")
+
+    assert client.delete(f"/projects/{PID}/prototypes/{SLUG}").status_code == 204
+
+    assert client.portal.call(resolve_token, proto_env["root_s3"], "preview-tok") is None
 
 
 def test_reset_leaves_the_card_listable_as_none(proto_env, monkeypatch):

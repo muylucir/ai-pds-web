@@ -46,6 +46,9 @@ class StubHost:
     def resolve_token(self, token):
         return self._real.resolve_token(token)
 
+    def adopt_token(self, token, pid, slug):
+        return self._real.adopt_token(token, pid, slug)
+
     def load_tokens(self):
         return self._real.load_tokens()
 
@@ -326,3 +329,38 @@ def test_load_tokens_skips_an_empty_token_file(env):
     host = ProtoHost(root=env["root"])
     assert host.load_tokens() == 0
     assert host.resolve_token("") is None
+
+
+# ---- 교체된 인스턴스: 로컬 토큰이 없어도 링크가 산다 (proto/store.py) ----
+
+def _index(monkeypatch, pid=PID, slug=SLUG, token="tok-from-s3"):
+    from aipds.proto.store import PrototypeStore
+    from fakes.in_memory_s3 import FakeS3Store
+    import asyncio
+    root = FakeS3Store()
+    asyncio.run(PrototypeStore(FakeS3Store(), root=root, project_id=pid)
+                .save_token(slug, token))
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "bucket")
+    monkeypatch.setattr(app_module, "surveys_root_s3_factory", lambda: root)
+    return token
+
+
+def test_a_link_opens_on_a_replaced_instance_through_the_s3_index(env, monkeypatch):
+    """인스턴스가 교체되면 `.proto-token`과 캐시가 비어 있다. 이미 나눠 준 링크는
+    S3의 루트 색인으로 풀려야 하고, 그 값이 로컬에 심겨 쿠키 검사가 같은 값을 본다."""
+    token = _index(monkeypatch)
+    app_module.registry.register(PID, "p")
+    try:
+        _running(env)
+        gate = client.get(f"/proto/t/{token}", follow_redirects=False)
+        assert gate.status_code == 307
+        assert (env["root"] / PID / SLUG / TOKEN_FILENAME).read_text() == token
+        assert env["host"].token_for(PID, SLUG) == token
+    finally:
+        app_module.registry.remove(PID)
+
+
+def test_an_indexed_token_of_an_unregistered_project_is_404(env, monkeypatch):
+    """삭제 중이거나 이 인스턴스가 모르는 프로젝트의 토큰은 받지 않는다."""
+    token = _index(monkeypatch, pid="not-registered")
+    assert client.get(f"/proto/t/{token}", follow_redirects=False).status_code == 404

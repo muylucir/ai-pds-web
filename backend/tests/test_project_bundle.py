@@ -63,6 +63,21 @@ def test_prototype_build_transcript_is_excluded(tp):
         "project/prototypes/demo/survey/questionnaire.json"
 
 
+def test_instance_only_prototype_keys_are_excluded_both_ways(tp):
+    """소스 세대·접근 토큰·호스팅 의도는 이 인스턴스의 사정이다(proto/store.py).
+    내보내지 않고, 손으로 만든 번들이 실어 와도 들여오지 않는다 — 들여오면 받는 쪽에서
+    프로토타입이 저절로 뜨거나 보낸 사람이 아는 토큰으로 프리뷰가 열린다."""
+    for key in ("prototypes/demo/source/current.json",
+                "prototypes/demo/source/000003/prototype/app.js",
+                "prototypes/demo/access-token",
+                "prototypes/demo/hosting.json"):
+        assert s3_key_to_bundle_path(key, transcript_prefix=tp) is None, key
+        assert bundle_path_to_s3_key("project/" + key, transcript_prefix=tp) is None, key
+    # 같은 트리의 다른 것은 그대로 옮긴다.
+    assert s3_key_to_bundle_path("prototypes/demo/session.json", transcript_prefix=tp) == \
+        "project/prototypes/demo/session.json"
+
+
 def test_discovery_transcript_loses_its_session_segment(tp):
     key = f"{tp}main/00000007.jsonl"
 

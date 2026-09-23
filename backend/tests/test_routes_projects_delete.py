@@ -145,10 +145,17 @@ def test_delete_purges_prototype_runtime_state_and_root_token_index(monkeypatch,
     pid = "del-proto"
     _seed_project(pid, sessions, root)
     session = _seed_prototype(env, pid, "checkout", "tok-checkout")
+    # 프리뷰 토큰의 루트 색인(proto/store.py) — 설문 토큰 색인과 같은 루트에 산다.
+    import asyncio
+    from aipds.proto.store import PrototypeStore, resolve_token
+    asyncio.run(PrototypeStore(app_module.s3_store_factory(pid),
+                               root=env["surveys_root"], project_id=pid)
+                .save_token("checkout", "preview-x"))
 
     r = client.delete(f"/projects/{pid}")
 
     assert r.status_code == 200
+    assert asyncio.run(resolve_token(env["surveys_root"], "preview-x")) is None
     assert session.closed == 1
     assert (pid, "checkout") not in app_module.proto_sessions
     assert env["host"].purged == [(pid, "checkout")]

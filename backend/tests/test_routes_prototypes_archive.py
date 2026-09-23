@@ -97,9 +97,10 @@ def test_archive_never_ships_the_access_token(env):
 def test_archive_excludes_survey_and_transcript_from_the_s3_fallback(env):
     """Survey responses are anonymous respondents' words and the transcript is
     build chatter -- neither belongs in a zip handed to the dev team, and both
-    live under the same prototypes/{slug}/ prefix as the bundle."""
+    live under the same prototypes/{slug}/ prefix as the source generations."""
     s3 = env["s3"]
-    s3.blobs[f"prototypes/{SLUG}/bundle/app.js"] = "console.log(1)"
+    s3.blobs[f"prototypes/{SLUG}/source/current.json"] = '{"gen": 1, "hash": "h"}'
+    s3.blobs[f"prototypes/{SLUG}/source/000001/app.js"] = "console.log(1)"
     s3.blobs[f"prototypes/{SLUG}/survey/responses/r1.json"] = '{"a":"secret"}'
     s3.blobs[f"prototypes/{SLUG}/transcript/main/00000001.jsonl"] = '{"type":"user"}'
 

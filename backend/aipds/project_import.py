@@ -32,6 +32,7 @@ from aipds.project_bundle import (
     parse_proto_source_path,
     safe_entry_name,
 )
+from aipds.proto.store import PrototypeStore, source_prefix
 from aipds.s3store import S3StoreLike
 from aipds.survey.store import TOKEN_INDEX_PREFIX, new_token
 
@@ -96,6 +97,13 @@ async def apply_bundle(bundle: Path, *, project_id: str, s3: S3StoreLike,
             await _write_s3(zf, plan.s3, s3=s3, written=written_keys)
             await _write_source(zf, plan.source, project_id=project_id,
                                 proto_root=proto_root, written=written_paths)
+            # 가져온 소스를 S3 세대로도 올린다 — 정본은 S3다(proto/store.py). 로컬에만
+            # 두면 가져온 프로젝트가 다음 인스턴스 교체에서 소스를 잃는다. 세대 키도
+            # `written_keys`에 넣어 실패하면 함께 되돌린다.
+            store = PrototypeStore(s3, project_id=project_id)
+            for slug in sorted({slug for slug, _, _ in plan.source}):
+                await store.snapshot(slug, proto_root / project_id / slug, "import")
+                written_keys.extend(await s3.list(source_prefix(slug)))
             reissued = await _reissue_survey_tokens(
                 written_keys, project_id=project_id, s3=s3,
                 surveys_root=surveys_root, registered=registered_tokens)
