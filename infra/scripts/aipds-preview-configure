@@ -1,0 +1,47 @@
+#!/bin/bash
+# 백엔드에 프로토타입 프리뷰 오리진을 알린다(backend/aipds/preview_surface.py).
+#
+#   sudo /opt/aipds/infra/scripts/aipds-preview-configure <PreviewOrigin> <PreviewSecretArn>
+#
+# 두 값은 AipdsPreviewStack의 출력이다(infra/lib/aipds-preview-stack.ts). 둘 다 비밀이
+# 아니다 — 비밀 헤더 값 자체는 백엔드가 기동 뒤 Secrets Manager에서 읽는다(인스턴스 롤이
+# 그 시크릿의 리소스 정책으로 허용돼 있다). 그래서 unit 파일에 시크릿 평문이 남지 않는다.
+#
+# 왜 user-data가 아니라 이 스크립트인가: user-data를 바꾸면 HostingStack 배포가 EC2를
+# 교체한다. 이 설정은 systemd drop-in 하나라 실행 중 인스턴스에 그대로 얹을 수 있고,
+# 인스턴스가 교체되면 이 명령을 다시 돌리면 된다(돌리기 전까지 프로토타입은 앱 오리진에서
+# 서빙된다 — 기능이 사라지지는 않는다).
+#
+# 끄려면: sudo rm /etc/systemd/system/aipds-backend.service.d/preview.conf
+#         && sudo systemctl daemon-reload && sudo systemctl restart aipds-backend
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  echo "aipds-preview-configure: run as root" >&2
+  exit 1
+fi
+if [ $# -ne 2 ]; then
+  echo "usage: aipds-preview-configure <PreviewOrigin> <PreviewSecretArn>" >&2
+  exit 1
+fi
+ORIGIN="${1%/}"
+ARN="$2"
+case "$ORIGIN" in
+  https://*.cloudfront.net) ;;
+  *) echo "aipds-preview-configure: origin must be https://<id>.cloudfront.net" >&2; exit 1 ;;
+esac
+case "$ARN" in
+  arn:aws:secretsmanager:*:*:secret:*) ;;
+  *) echo "aipds-preview-configure: not a Secrets Manager ARN" >&2; exit 1 ;;
+esac
+
+DIR=/etc/systemd/system/aipds-backend.service.d
+mkdir -p "$DIR"
+cat > "$DIR/preview.conf" <<CONF
+[Service]
+Environment=AIPDS_PREVIEW_ORIGIN=$ORIGIN
+Environment=AIPDS_PREVIEW_SECRET_ARN=$ARN
+CONF
+chmod 644 "$DIR/preview.conf"
+systemctl daemon-reload
+systemctl restart aipds-backend
+echo "aipds-preview-configure: backend restarted with preview origin $ORIGIN"
