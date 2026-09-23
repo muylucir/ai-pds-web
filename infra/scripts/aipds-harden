@@ -2,14 +2,15 @@
 # 에이전트·프로토타입을 백엔드와 다른 uid의 샌드박스에서 돌리기 위한 인스턴스 설정.
 #
 #   sudo /opt/aipds/infra/scripts/aipds-harden install [--no-restart]
-#   sudo AWS_REGION=<region> /opt/aipds/infra/scripts/aipds-harden boot
+#   sudo /opt/aipds/infra/scripts/aipds-harden boot
 #   sudo /opt/aipds/infra/scripts/aipds-harden enable <AgentRoleArn>
 #   sudo /opt/aipds/infra/scripts/aipds-harden disable
 #   sudo /opt/aipds/infra/scripts/aipds-harden imds block|allow
 #   sudo /opt/aipds/infra/scripts/aipds-harden status
 #
 # install  유저(aipds-agent, aipds-proto)·그룹(aipds-work), 래퍼 설치와 sudoers, 트리 권한,
-#          평문 시크릿의 권한. **래퍼는 꺼진 채다** — 동작은 그대로이고 기반만 깐다. 멱등.
+#          평문 시크릿의 권한. **래퍼 설정(enable·imds)은 건드리지 않는다** — 새 인스턴스라면 꺼진
+#          채이고, 실행 중인 인스턴스라면 켜 둔 그대로다. 기반만 깐다. 멱등.
 # enable   래퍼를 켠다(AIPDS_LAUNCHER=1 + AgentRole). AgentRole은 AipdsAgentCredsStack의 출력.
 # imds     래퍼가 띄운 프로세스의 IMDS 접근. **enable 뒤 Bedrock 호출이 되는 것을 확인하고
 #          block한다** — 거꾸로 하면 에이전트와 프로토타입의 LLM 호출이 함께 끊긴다.
@@ -83,7 +84,7 @@ write_imds() {
 get_param() {
   local out i
   for i in 1 2 3; do
-    if out=$(aws ssm get-parameter --region "$AWS_REGION" --name "$1" \
+    if out=$(aws ssm get-parameter --region "$REGION" --name "$1" \
         --query Parameter.Value --output text 2>&1); then
       printf '%s' "$out"
       return 0
@@ -94,9 +95,20 @@ get_param() {
   echo "aipds-harden: WARNING cannot read $1: $out" >&2
 }
 
+# sudo는 AWS_REGION을 지운다 — 없으면 IMDS에서 읽는다(호스트 root는 닿는다. 막는 것은 샌드박스 unit뿐).
+instance_region() {
+  local token
+  token=$(curl -sf -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+    http://169.254.169.254/latest/api/token) || return 0
+  curl -sf -m 3 -H "X-aws-ec2-metadata-token: $token" \
+    http://169.254.169.254/latest/meta-data/placement/region || true
+}
+
 boot_apply() {
-  if [ -z "${AWS_REGION:-}" ]; then
-    echo "aipds-harden: WARNING AWS_REGION unset — launcher and preview stay off" >&2
+  REGION=${AWS_REGION:-${AWS_DEFAULT_REGION:-$(instance_region)}}
+  if [ -z "$REGION" ]; then
+    echo "aipds-harden: WARNING no region (AWS_REGION unset, IMDS unreachable) — launcher and" \
+      "preview settings not applied (existing ones unchanged)" >&2
     return 0
   fi
   local arn origin secret
@@ -107,8 +119,9 @@ boot_apply() {
       write_imds 1
       echo "aipds-harden: launcher on, IMDS blocked ($arn)"
       ;;
-    *) echo "aipds-harden: WARNING no $PARAM_AGENT_ROLE — agents and prototypes run unsandboxed" \
-         "until 'aipds-harden enable' (deploy AipdsAgentCredsStack)" >&2 ;;
+    *) echo "aipds-harden: WARNING no $PARAM_AGENT_ROLE — launcher settings not applied (existing" \
+         "ones unchanged; on a new instance agents and prototypes run unsandboxed until" \
+         "'aipds-harden enable' — deploy AipdsAgentCredsStack)" >&2 ;;
   esac
   origin=$(get_param "$PARAM_PREVIEW_ORIGIN")
   secret=$(get_param "$PARAM_PREVIEW_SECRET")
@@ -117,7 +130,7 @@ boot_apply() {
     "$APP/infra/scripts/aipds-preview-configure" --no-restart "$origin" "$secret" \
       || echo "aipds-harden: WARNING preview parameters rejected — served from the app origin" >&2
   else
-    echo "aipds-harden: no preview parameters — prototypes are served from the app origin" >&2
+    echo "aipds-harden: no preview parameters — preview settings not applied (existing ones unchanged)" >&2
   fi
   systemctl daemon-reload
 }
@@ -198,9 +211,9 @@ UNIT
   if [ "$restart" = 1 ]; then
     systemctl restart aipds-backend
     [ "$front_restart" = 1 ] && systemctl restart aipds-frontend
-    echo "aipds-harden: installed; backend restarted (launcher still off)"
+    echo "aipds-harden: installed; backend restarted (launcher and IMDS settings unchanged)"
   else
-    echo "aipds-harden: installed (launcher off, services not restarted)"
+    echo "aipds-harden: installed (launcher and IMDS settings unchanged, services not restarted)"
   fi
 }
 
