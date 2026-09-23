@@ -1,0 +1,9 @@
+#!/bin/sh
+# SDK의 `cli_path`(backend/aipds/launcher.py). SDK는 이 경로 뒤에 CLI 인자만 붙이므로 어느
+# 프로젝트의 무엇인지는 백엔드가 env로 건넨다. 실제 판정은 전부 래퍼(aipds-launch)가 한다 —
+# 이 파일은 인자 모양만 바꾼다.
+#
+# 설치: `aipds-harden install`이 /usr/local/libexec/aipds/claude(root 0755)로 복사한다.
+exec /usr/bin/sudo -n /usr/local/libexec/aipds/launch run \
+  "$AIPDS_LAUNCH_KIND" "$AIPDS_LAUNCH_PROJECT" ${AIPDS_LAUNCH_SLUG:+"$AIPDS_LAUNCH_SLUG"} \
+  -- "$@"

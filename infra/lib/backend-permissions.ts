@@ -22,7 +22,8 @@ export const MODEL = 'global.anthropic.claude-opus-4-8';
 // inference-profile은 global.* 프리픽스, foundation-model은 없는 형태 —
 // 둘 다 필요하다(프로파일 경유 호출이 내부적으로 후자를 참조한다).
 // test/hosting-stack.assert.ts가 이 두 패턴과 MODEL의 포함 여부를 단정한다.
-const INVOKABLE_MODEL_ARNS = (account: string) => [
+// 샌드박스 프로세스의 AgentRole(lib/aipds-agent-creds-stack.ts)도 같은 목록을 쓴다.
+export const INVOKABLE_MODEL_ARNS = (account: string) => [
   `arn:aws:bedrock:*:${account}:inference-profile/global.anthropic.claude-*`,
   `arn:aws:bedrock:*::foundation-model/anthropic.claude-*`,
 ];
