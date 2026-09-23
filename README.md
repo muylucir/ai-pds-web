@@ -239,6 +239,32 @@ That stack holds only the bucket and the role, so it **does not replace the EC2 
 in flight and prototype build trees stay where they are. Skip this step and export still works while
 import fails at the upload (a CORS error in the browser console).
 
+### 7. Prototype preview origin
+
+Prototypes are code the build agent wrote, so they are served from **a different origin than the app** —
+on the same origin, the signed-in viewer's session cookie and token reach that code
+(`backend/aipds/preview_surface.py`). The preview CloudFront is a **separate stack**; it only references
+what HostingStack created, so deploying it does not replace the EC2 instance:
+
+```bash
+cd infra
+AIPDS_PREVIEW_ORIGIN_DNS=ec2-<a-b-c-d>.<region>.compute.amazonaws.com \
+AIPDS_ORIGIN_VERIFY_SECRET_ARN=<HostingStack OriginVerifyHeader secret ARN> \
+AIPDS_INSTANCE_ROLE_ARN=<HostingStack InstanceRole ARN> \
+  npx cdk deploy AipdsPreviewStack --require-approval never
+```
+
+Then tell the instance about the outputs `PreviewOrigin` and `PreviewSecretArn` (this restarts the backend):
+
+```bash
+sudo /opt/aipds/infra/scripts/aipds-preview-configure <PreviewOrigin> <PreviewSecretArn>
+```
+
+From then on share links are preview-domain URLs, and old links opened on the app domain move to the same
+path on the preview domain. The app domain no longer serves prototypes. If this step is skipped — or not yet
+re-run after the instance is replaced — prototypes are served from the app domain: everything works, only
+the isolation is missing.
+
 ### Changing the region
 
 The default is **Seoul (`ap-northeast-2`)**. Override it with an environment variable:
