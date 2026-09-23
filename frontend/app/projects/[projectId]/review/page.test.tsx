@@ -10,8 +10,9 @@ import { auditEntries } from "@/test/fixtures/auditEntries";
 // AppHeader가 그리는 LanguageSwitcher가 useRouter()를 부른다 — 앱 라우터가
 // 마운트되지 않은 단위 테스트에서 그 훅은 던진다. 스위치의 동작은
 // components/LanguageSwitcher.test.tsx가 검증하므로 여기서는 마운트만 되게 한다.
+const pushMock = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), push: pushMock }),
 }));
 
 import ReviewPage from "./page";
@@ -91,7 +92,7 @@ describe("Review page", () => {
     server.use(
       http.post(`${API_BASE_URL}/projects/pilot1/approve`, () => {
         approveCalls += 1;
-        return HttpResponse.json({ approved: true });
+        return HttpResponse.json({ approved: true, turn_id: "t-approve" });
       }),
       http.post(`${API_BASE_URL}/projects/pilot1/turns`, () => {
         messageCalls += 1;
@@ -104,6 +105,24 @@ describe("Review page", () => {
 
     await waitFor(() => expect(approveCalls).toBe(1));
     expect(messageCalls).toBe(0);
+    // 다음 단계의 턴은 워크스페이스가 보여 준다 — 승인은 그 턴을 기다리지 않는다.
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/projects/pilot1/workspace"));
+  });
+
+  it("AI가 아직 작업 중이면 승인을 거절하고 그 이유를 말한다", async () => {
+    mockTreeAndAudit();
+    pushMock.mockClear();
+    server.use(
+      http.post(`${API_BASE_URL}/projects/pilot1/approve`, () =>
+        HttpResponse.json({ detail: { code: "turn_in_progress", turn_id: "t-run" } },
+                          { status: 409 })),
+    );
+    render(<ReviewPage params={params} />);
+    await screen.findByText("Press Release");
+    await userEvent.click(screen.getByRole("button", { name: /승인하고 다음 단계로/ }));
+
+    expect(await screen.findByText(/작업이 끝난 뒤 승인/)).toBeInTheDocument();
+    expect(pushMock).not.toHaveBeenCalled();
   });
 
   it("승인 레코드가 있고 해시가 일치하면 게이트가 뜨지 않는다", async () => {
