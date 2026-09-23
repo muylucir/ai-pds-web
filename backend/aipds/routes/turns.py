@@ -1,6 +1,7 @@
 # backend/aipds/routes/turns.py
 import json
 import logging
+from typing import AsyncIterator, Callable
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -8,6 +9,9 @@ from aipds.parsers.redaction import redact_credentials
 import aipds.app as app_module
 from aipds.routes.deps import ensure_workspace
 from aipds.models import AgentEvent
+from aipds.turn_job import TurnBusy, TurnJob, subscribe
+from aipds.turn_marker import load_marker
+from aipds.workspace import Workspace
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
@@ -19,31 +23,6 @@ class MessageBody(BaseModel):
 class AnswersBody(BaseModel):
     answers: dict[str, str]
 
-
-def _turn_payload(pid: str, handle: str | None, inline: object,
-                  key: str) -> object:
-    """핸들 또는 인라인 쿼리 파라미터에서 턴 입력을 꺼낸다.
-
-    핸들 경로가 기본이다: 긴 입력이 URL에 실리면 요청 라인이 커져 프록시가
-    431을 낸다(aipds/turn_handles.py 헤더의 실측). 인라인 경로를 남겨
-    두는 이유는 배포가 원자적이지 않다는 것 — 백엔드가 먼저 올라간 순간
-    구 프론트가 여전히 ?text=/?answers=로 보낸다.
-
-    둘 다 없으면 400이다. 조용히 빈 턴을 돌리면 사용자는 아무 응답 없는
-    말풍선을 보고 원인을 알 수 없다.
-    """
-    if handle is not None:
-        payload = app_module.turn_handles.consume(pid, handle)
-        if payload is None:
-            # 만료·재사용·다른 프로젝트 — 어느 쪽인지 구별해 알려주지 않는다
-            # (핸들의 존재 여부가 정보가 되지 않게).
-            raise HTTPException(status_code=400,
-                                detail="turn handle is unknown or already used")
-        return payload[key]
-    if inline is None:
-        raise HTTPException(status_code=400,
-                            detail=f"either `turn` or `{key}` is required")
-    return inline
 
 def _redacted(event: AgentEvent) -> AgentEvent:
     """Return a copy of event with credential-bearing content redacted.
@@ -57,75 +36,167 @@ def _redacted(event: AgentEvent) -> AgentEvent:
         updates["payload"] = redact_credentials(event.payload)
     return event.model_copy(update=updates) if updates else event
 
+
+def start_turn(ws: Workspace, kind: str,
+               events: Callable[[], AsyncIterator[AgentEvent]]) -> TurnJob:
+    """턴을 서버 작업으로 시작한다. 도는 턴이 있으면 409 — 본문에 그 턴의 id가 있다.
+
+    409에 id를 싣는 이유: 거절된 쪽이 할 일은 "다시 보내기"가 아니라 **이미 도는
+    턴을 보기**다. 이 프로젝트의 턴은 하나뿐이므로 그것이 사용자가 기다리던 턴이다.
+
+    다른 라우트(답변 파일, 승인)도 이것으로 턴을 연다 — 409의 모양이 경로마다
+    달라지지 않게.
+    """
+    try:
+        return ws.turns.start(kind, events)
+    except TurnBusy as busy:
+        raise HTTPException(status_code=409, detail={
+            "code": "turn_in_progress", "turn_id": busy.job.id})
+
+
+def ensure_idle(ws: Workspace) -> None:
+    """도는 턴이 있으면 `start_turn`과 같은 409를 **부수 효과 전에** 낸다.
+
+    답변 파일 쓰기나 승인 레코드처럼 턴 앞에 기록이 있는 경로가 쓴다 — 기록만 남고
+    턴은 거절되면, 사용자는 반영된 것처럼 보이는 답이 에이전트에 닿지 않은 상태를
+    보게 된다.
+    """
+    running = ws.turns.current()
+    if running is not None:
+        raise HTTPException(status_code=409, detail={
+            "code": "turn_in_progress", "turn_id": running.id})
+
+
+def turn_response(job: TurnJob, after: int = 0) -> EventSourceResponse:
+    """턴 로그를 `after` 뒤부터 SSE로 흘린다. 프레임의 `id`가 seq다.
+
+    구독자가 끊겨도 턴은 계속 돈다 — 이 generator는 읽기만 한다. 다시 붙을 때는
+    마지막으로 받은 seq를 `after`로 준다.
+    """
+    async def gen():
+        async for seq, event in subscribe(job, after):
+            yield {"id": str(seq),
+                   "data": _redacted(event).model_dump_json()}
+    return EventSourceResponse(gen())
+
+
+def _job_or_404(ws: Workspace, turn: str) -> TurnJob:
+    job = ws.turns.get(turn)
+    if job is None:
+        # 끝난 지 오래됐거나(보존 시간), 재시작 전의 턴이거나, 다른 프로젝트의 id다.
+        # 화면은 이때 `GET /history`로 떨어진다.
+        raise HTTPException(status_code=404, detail="unknown turn")
+    return job
+
+
 @router.post("/projects/{pid}/turns")
 async def create_turn(pid: str, body: MessageBody):
-    """턴 텍스트를 **본문**으로 받아 짧은 핸들을 돌려준다.
+    """턴을 **시작**하고 id를 돌려준다. 스트림은 `GET /events?turn=<id>`로 본다.
 
-    EventSource는 GET만 지원해 본문을 실을 수 없으므로, 긴 입력을 URL에서
-    빼는 유일한 방법이 이 2단계다(aipds/turn_handles.py 헤더 참조).
-    워크스페이스를 여기서 확인해 없는 프로젝트는 404로 끝낸다 — 핸들만 받고
-    스트림에서 404가 나면 사용자는 "연결이 끊어졌습니다"만 본다.
+    텍스트를 본문으로 받는 이유: EventSource는 GET만 지원하고, 긴 입력(특히 한글)을
+    URL에 실으면 요청 라인이 커져 프록시가 431을 낸다(aipds/turn_handles.py 헤더의
+    실측). 워크스페이스를 여기서 확인해 없는 프로젝트는 404로 끝낸다.
     """
-    await ensure_workspace(pid)
-    return {"turn_id": app_module.turn_handles.create(pid, {"text": body.text})}
+    ws = await ensure_workspace(pid)
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(body.text))
+    return {"turn_id": job.id}
 
 
 @router.get("/projects/{pid}/events")
-async def stream_events(pid: str, turn: str | None = None,
+async def stream_events(pid: str, turn: str | None = None, after: int = 0,
                         text: str | None = None):
+    """턴 하나를 본다. `after`는 이미 받은 마지막 seq다(처음이면 0).
+
+    `?text=`는 시작과 구독을 한 요청으로 하는 경로다 — 핸들 이전 프론트의 모양이고,
+    긴 입력에는 쓸 수 없다(위 431).
+    """
     ws = await ensure_workspace(pid)
-    resolved = _turn_payload(pid, turn, text, "text")
-    async def gen():
-        async for event in ws.runner.send_message(resolved):
-            yield {"data": _redacted(event).model_dump_json()}
-    return EventSourceResponse(gen())
+    if turn is not None:
+        return turn_response(_job_or_404(ws, turn), after)
+    if text is None:
+        raise HTTPException(status_code=400,
+                            detail="either `turn` or `text` is required")
+    return turn_response(start_turn(ws, "message",
+                                    lambda: ws.runner.send_message(text)))
+
+
+@router.get("/projects/{pid}/turn")
+async def get_turn(pid: str):
+    """이 프로젝트의 현재(또는 마지막) 턴. 화면은 열릴 때 이것으로 붙을지 정한다.
+
+    메모리에 턴이 없는데 S3 표식이 `running`이면 그 턴은 백엔드 재시작으로 끊긴
+    것이다 — `interrupted`로 알린다(turn_marker.py 헤더).
+    """
+    ws = await ensure_workspace(pid)
+    job = ws.turns.latest()
+    if job is not None:
+        return {"turn": job.summary()}
+    marker = await _load_marker_quietly(pid)
+    if marker is not None and marker.get("state") == "running":
+        return {"turn": {"turn_id": marker["turn_id"],
+                         "kind": marker.get("kind", "message"),
+                         "state": "interrupted", "last_seq": 0}}
+    return {"turn": None}
+
+
+async def _load_marker_quietly(pid: str) -> dict | None:
+    if not app_module.durable_projects_enabled():
+        return None     # 로컬 개발: 표식을 쓰는 S3가 없다
+    try:
+        return await load_marker(app_module.s3_store_factory(pid))
+    except Exception:
+        _log.exception("turn marker read failed")
+        return None
+
 
 @router.get("/projects/{pid}/events/live")
 async def stream_live(pid: str):
-    """진행 중인 턴에 다시 붙는다. **핸들이 없다.**
+    """도는 턴의 **지금부터**를 본다. 도는 턴이 없으면 `done` 하나로 끝난다.
 
-    다른 스트림 경로는 `POST`가 만든 1회용·60초 핸들을 요구한다 — 긴 입력을
-    URL에서 빼기 위한 것이고(turn_handles.py), 그래서 재접속에는 쓸 수 없다.
-    이 경로는 입력이 없으므로 실을 것도 없다: 이미 돌고 있는 턴을 볼 뿐이다.
-
-    붙을 턴이 없으면 `done` 하나로 끝난다(에러가 아니다). 프론트는 그때
-    `GET /history`로 화면을 복원한다 — 사용자가 늦게 돌아왔고 턴이 그동안 끝난
-    것이 정상 경로다.
+    재생하지 않는 이유: 이 경로를 쓰는 화면은 이미 채워진 말풍선에 이어 붙인다 —
+    처음부터 흘리면 텍스트가 두 번 쌓인다. 처음부터 봐야 하는 화면은
+    `GET /events?turn=&after=0`을 쓴다.
     """
     ws = await ensure_workspace(pid)
-    async def gen():
-        async for event in ws.runner.reattach():
-            yield {"data": _redacted(event).model_dump_json()}
-    return EventSourceResponse(gen())
+    job = ws.turns.current()
+    if job is None:
+        async def done():
+            yield {"data": AgentEvent(kind="done").model_dump_json()}
+        return EventSourceResponse(done())
+    return turn_response(job, job.log.last_seq)
 
 
 @router.post("/projects/{pid}/answers")
 async def create_answers_turn(pid: str, body: AnswersBody):
-    """답변 제출의 핸들 발급. `/turns`와 같은 이유다 — 자유 서술 답변이 길면
-    같은 URL 길이 한도에 걸린다."""
-    await ensure_workspace(pid)
-    return {"turn_id": app_module.turn_handles.create(pid,
-                                                      {"answers": body.answers})}
+    """답변 제출로 턴을 시작한다. `/turns`와 같은 이유로 본문으로 받는다 — 자유 서술
+    답변이 길면 같은 URL 길이 한도에 걸린다."""
+    ws = await ensure_workspace(pid)
+    job = start_turn(ws, "answers", lambda: ws.runner.send_answers(body.answers))
+    return {"turn_id": job.id}
 
 
 @router.get("/projects/{pid}/answers/stream")
-async def stream_answers(pid: str, turn: str | None = None,
+async def stream_answers(pid: str, turn: str | None = None, after: int = 0,
                          answers: str | None = None):
+    """답변 턴을 본다. `turn`이 있으면 `/events`와 같다.
+
+    `?answers=`는 시작과 구독을 한 요청으로 하는 경로다(`/events?text=`와 같은 사정).
+    """
     ws = await ensure_workspace(pid)
-    raw = _turn_payload(pid, turn, answers, "answers")
-    # 핸들 경로는 이미 dict다(POST 본문이 검증했다). 인라인 경로만 파싱한다.
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400,
-                                detail="answers must be a JSON object")
+    if turn is not None:
+        return turn_response(_job_or_404(ws, turn), after)
+    if answers is None:
+        raise HTTPException(status_code=400,
+                            detail="either `turn` or `answers` is required")
+    try:
+        raw = json.loads(answers)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400,
+                            detail="answers must be a JSON object")
     if not isinstance(raw, dict):
         raise HTTPException(status_code=400, detail="answers must be a JSON object")
-    async def gen():
-        async for event in ws.runner.send_answers(raw):
-            yield {"data": _redacted(event).model_dump_json()}
-    return EventSourceResponse(gen())
+    return turn_response(start_turn(ws, "answers",
+                                    lambda: ws.runner.send_answers(raw)))
 
 @router.get("/projects/{pid}/pending")
 async def get_pending(pid: str):

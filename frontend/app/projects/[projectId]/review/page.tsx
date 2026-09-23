@@ -1,6 +1,7 @@
 "use client";
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { DocTree } from "@/components/review/DocTree";
 import { DocumentPanel } from "@/components/review/DocumentPanel";
@@ -51,6 +52,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const [actionError, setActionError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const t = useT();
+  const router = useRouter();
   const { modelLabel, language } = useProjectMeta(projectId);
 
   const tree = useAsync(() => listArtifacts(projectId), [projectId]);
@@ -95,24 +97,26 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const docName = selected ? selected.slice(selected.lastIndexOf("/") + 1) : "discovery-document.md";
   const reviseHref = `/projects/${projectId}/workspace?draft=${encodeURIComponent(`${docName} ${t("page.reviseDraftSuffix")}`)}`;
 
-  /** 승인 버튼. POST /approve가 레코드를 먼저 쓰고 그 다음 에이전트 턴을 돈다.
+  /** 승인 버튼. POST /approve가 레코드를 먼저 쓰고 그 다음 에이전트 턴을 **시작한다.**
    *
    *  채팅 턴으로 "승인"을 보내지 않는 이유가 이 기능의 핵심이다: 그 경로에서는
    *  승인의 유일한 기록이 에이전트가 쓰는 audit.md였고, 에이전트가 문구를 달리
    *  옮겨 적으면 사용자가 누른 사실이 사라졌다(lib/approvalState.ts 헤더).
+   *
+   *  승인 요청은 턴을 기다리지 않는다. 다음 단계로 넘어가는 턴은 몇 분이므로, 그것을
+   *  보는 자리인 워크스페이스로 곧바로 옮긴다 — 워크스페이스가 열리면서 도는 턴에
+   *  붙는다(useWorkspaceStream의 `GET /turn`). AI가 아직 다른 작업 중이면 서버가
+   *  레코드 전에 409로 거절한다.
    */
   async function approve() {
     setBusy(true);
     setActionError(null);
     try {
       await approveDocument(projectId);
-      tree.reload();
-      content.reload();
-      audit.reload();
-      approvals.reload();
-    } catch {
-      setActionError(t("page.turnFailed"));
-    } finally {
+      router.push(`/projects/${encodeURIComponent(projectId)}/workspace`);
+    } catch (e) {
+      setActionError(t(e instanceof ApiError && e.status === 409
+        && e.detail === "turn_in_progress" ? "page.approveBusy" : "page.turnFailed"));
       setBusy(false);
     }
   }

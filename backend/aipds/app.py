@@ -25,6 +25,8 @@ from aipds.s3store import S3Store, S3StoreLike
 from aipds.project_store import restore_projects
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.turn_handles import TurnHandleStore
+from aipds.turn_job import TurnJobs
+from aipds.turn_marker import save_marker
 
 _log = logging.getLogger(__name__)
 
@@ -541,7 +543,14 @@ async def make_workspace(project_id: str) -> Workspace:
     driver = driver_factory(project_id, local_root)
     runner = AgentRunner(project_id=project_id, driver=driver, s3=s3,
                          local_root=local_root, session=session)
-    return Workspace(runner)
+
+    async def mark(job) -> None:
+        await save_marker(s3, job)
+
+    # 표식은 재시작 뒤 "중단됨"을 알리기 위한 것이라(turn_marker.py) 버킷이 없으면
+    # 쓸 곳도 읽을 사람도 없다.
+    on_state = mark if durable_projects_enabled() else None
+    return Workspace(runner, turns=TurnJobs(on_state=on_state))
 
 
 @asynccontextmanager

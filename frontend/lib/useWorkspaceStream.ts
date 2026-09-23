@@ -2,13 +2,15 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
-import { streamEvents, streamAnswers, streamFileAnswers, streamLive } from "@/lib/api/sse";
-import { getPending, getHistory, interruptTurn } from "@/lib/api/client";
+import { streamEvents, streamAnswers, streamFileAnswers, watchTurn } from "@/lib/api/sse";
+import type { StreamHandlers, TurnCreated } from "@/lib/api/sse";
+import { ApiError, getPending, getHistory, getTurn, interruptTurn } from "@/lib/api/client";
 import { answerSummary } from "@/lib/answerSummary";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import type { AgentEvent, HistoryItem, QuestionFile, QuestionsPayload, StagePayload, DocumentPayload,
   PrototypeReadyPayload } from "@/lib/api/types";
 import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
+import type { Dict } from "@/lib/i18n";
 
 // Drives the three-pane workspace screen. It consumes the structured events
 // (questions/stage/document) directly, so its ChatItem union is user/ai plus a
@@ -39,6 +41,21 @@ function isTooLong(err: unknown): boolean {
   const status = (err as { status?: number } | null)?.status;
   return status === 431 || status === 413;
 }
+
+// 끊긴 스트림에 다시 붙기 전의 대기(ms). 시도마다 다음 값을 쓰고, 다 쓰면 포기한다
+// (누적 약 48초). 무한히 재시도하지 않는 이유: 진짜 오프라인에서는 화면이 "진행 중"으로
+// 영구히 잠긴다. 포기해도 턴은 서버에서 계속 돌고, 새로고침하면 `GET /turn`으로 다시
+// 붙는다.
+export const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000];
+
+// 백엔드가 종결 이벤트에 싣는 기계 문구 → 화면 문구. 여기 없는 문구는 드라이버가 이미
+// 프로젝트 언어로 만든 문장이므로(agent/prompts.turn_failed) 그대로 쓴다.
+const ERROR_KEYS: Record<string, keyof Dict> = {
+  "agent turn failed": "stream.turnError",
+  "turn interrupted": "stream.interrupted",
+  "no pending questions": "stream.noPendingQuestions",
+  "turn already in progress": "stream.turnInProgress",
+};
 
 // 백엔드 claude_driver.INTERRUPTED_MARKER와 같은 값이어야 한다(proto/builder.py도
 // 같은 값을 쓴다). 기계 신호이고 사람이 읽는 문구가 아니다 — 화면의 "중단됨"은
@@ -253,21 +270,33 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
             : { kind: "tool", tool: ev.text, detail };
           return { ...it, trace: [...it.trace, trace], activity };
         }
-        if (ev.kind === "error") return { ...it, error: ev.text ?? t("stream.turnError") };
+        if (ev.kind === "error") {
+          const key: keyof Dict | undefined =
+            ev.text ? ERROR_KEYS[ev.text] : "stream.turnError";
+          return { ...it, error: key ? t(key) : ev.text };
+        }
         return it; // "done" is handled by onDone
       });
     },
     [patchAi, t],
   );
 
+  // 도는 턴에 붙는 함수. runTurn이 409(다른 턴이 돌고 있음)를 받았을 때 그 턴을 보여
+  // 주려고 부르는데, 둘이 서로를 참조하므로 ref로 잇는다.
+  const attachRef = useRef<(turnId: string) => void>(() => {});
+
+  // 턴 하나를 화면에 흘린다. `opener`가 첫 연결을 열고, 끊기면 **같은 턴**에 마지막으로
+  // 받은 seq부터 다시 붙는다.
+  //
+  // 턴은 서버 작업이다(backend aipds/turn_job.py) — 화면이 끊겨도 턴은 계속 돌고, 같은
+  // id로 다시 붙으면 놓친 이벤트부터 이어 받는다. 그래서 끊김은 턴의 실패가 아니고, 이
+  // 함수가 할 일은 조용히 다시 붙는 것이다. 절전·화면보호기(턴은 2.5~5.6분이고 화면보호기
+  // 기본값은 5~10분이다)가 이 경로를 예외가 아니라 일상으로 만든다.
   const runTurn = useCallback(
     (
-      opener: (handlers: {
-        onEvent: (ev: AgentEvent) => void;
-        onDone: () => void;
-        onError?: (err: unknown) => void;
-      }) => () => void,
+      opener: (handlers: StreamHandlers) => () => void,
       aiId: string,
+      knownTurnId: string | null = null,
     ) => {
       setStreaming(true);
       // A stream can finish SYNCHRONOUSLY inside `opener(...)` (e.g. a test
@@ -276,11 +305,15 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       // relying on assignment order, so `finish()`'s `stopRef.current = null`
       // never gets clobbered by the stale closer being stored afterwards.
       let finished = false;
-      // 재접속을 이 턴에서 이미 시도했는지. 턴 지역 변수인 것이 요점이다 —
-      // 턴마다 한 번씩 기회를 주고, 한 턴 안에서는 루프가 되지 않는다.
-      let reattempted = false;
+      let turnId = knownTurnId;
+      let lastSeq = 0;
+      let attempt = 0;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let closeCurrent: (() => void) | null = null;
       const finish = () => {
         finished = true;
+        if (timer) clearTimeout(timer);
+        timer = null;
         setStreaming(false);
         stopRef.current = null;
         // 턴 종료 신호 — 문서 패널이 이 시퀀스로 재읽기한다. 턴 중간의
@@ -288,66 +321,107 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         // 빈 값일 수 있다; 동기화는 턴 완료 후 끝나므로 여기서 올린다.
         setTurnSeq((n) => n + 1);
       };
-      const stop = opener({
-        onEvent: (ev) => applyEvent(aiId, ev),
-        onDone: () => {
-          patchAi(aiId, (it) => ({ ...it, streaming: false }));
-          finish();
-        },
-        onError: (err) => {
-          // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
-          // 세션을 확인해 만료면 로그인으로 보낸다. 살아 있으면 아래 메시지가 맞다.
-          void redirectIfSessionExpired(undefined, window.location.pathname);
-          const giveUp = () => {
-            patchAi(aiId, (it) => ({
-              ...it,
-              streaming: false,
-              error: it.error ?? t(isTooLong(err) ? "stream.tooLong" : "stream.disconnected"),
-            }));
-            finish();
-          };
-          // **한 번은 다시 붙어 본다(2026-08-19).** 절전·화면보호기로 끊긴
-          // 경우 서버에서는 아무것도 잃지 않는다 — 에이전트는 계속 쓰고
-          // `_MessageReader`가 계속 읽는다. 화면만 잃은 것이므로 이어서 볼 수
-          // 있다. 턴이 2.5~5.6분이라 화면보호기 기본값(5~10분)과 정면으로
-          // 겹치고, 그래서 이 경로가 예외가 아니라 일상이다.
-          //
-          // 한 번만 시도한다: 재시도 루프는 진짜 오프라인에서 스트림을 무한히
-          // 다시 여는 것이 되고, 그때 화면은 "진행 중"으로 영구히 잠긴다.
-          //
-          // **개시 실패에는 시도하지 않는다.** `err`에 HTTP 상태가 있으면
-          // `POST /turns`가 거절된 것이므로(431/413 등, openViaHandle의 catch)
-          // 애초에 붙을 턴이 만들어지지 않았다. 시도해도 빈손으로 돌아오지만
-          // 그 사이 원인 문구("입력이 너무 깁니다")가 늦어진다 — 431이
-          // "연결이 끊어졌습니다"로 뭉개졌던 것이 이 파일이 이미 고친 버그다.
-          const hasHttpStatus =
-            typeof (err as { status?: unknown } | null)?.status === "number";
-          if (reattempted || hasHttpStatus) return giveUp();
-          reattempted = true;
-          let sawFrame = false;
-          stopRef.current = streamLive(projectId, {
-            onEvent: (ev) => {
-              sawFrame = true;
-              applyEvent(aiId, ev);
-            },
-            onDone: () => {
-              // 프레임이 하나도 없었다 = 붙을 턴이 없다(늦게 돌아왔고 그동안
-              // 턴이 끝났다). 그때는 원래 메시지가 맞다 — 라이브 뷰는 실제로
-              // 잃었고, `finish()`가 올리는 turnSeq가 문서 패널을 다시 읽게
-              // 하므로 산출물은 화면에 돌아온다.
-              if (!sawFrame) return giveUp();
+      const giveUp = (message: string) => {
+        patchAi(aiId, (it) => ({ ...it, streaming: false, error: it.error ?? message }));
+        finish();
+      };
+
+      // 연결이 끊겼다(onError, 또는 종결 이벤트 없이 닫힘). `err`에 HTTP 상태가 있으면
+      // 턴을 **시작하는** POST가 거절된 것이다 — 붙을 턴이 만들어지지 않았다.
+      const onDrop = (err: unknown) => {
+        if (finished) return;
+        // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
+        // 세션을 확인해 만료면 로그인으로 보낸다.
+        void redirectIfSessionExpired(undefined, window.location.pathname);
+        if (err instanceof ApiError) {
+          if (err.status === 409 && err.turnId) {
+            // 다른 턴이 이미 돌고 있다 — 이 입력은 에이전트에 닿지 않았다. 그 턴을 보여
+            // 준다(두 번째 탭, 또는 화면이 모르던 턴).
+            giveUp(t("stream.turnInProgress"));
+            attachRef.current(err.turnId);
+            return;
+          }
+          return giveUp(t(isTooLong(err) ? "stream.tooLong" : "stream.disconnected"));
+        }
+        if (turnId === null || attempt >= RECONNECT_DELAYS_MS.length) {
+          return giveUp(t(turnId === null ? "stream.disconnected" : "stream.lost"));
+        }
+        const id = turnId;
+        timer = setTimeout(() => {
+          timer = null;
+          if (finished) return;
+          // 붙기 전에 그 턴이 아직 있는지 본다. 보존 시간이 지났거나 재시작으로 사라졌으면
+          // 다시 붙을 곳이 없다 — 산출물은 finish()가 올리는 turnSeq로 문서 패널에 돌아온다.
+          getTurn(projectId)
+            .then((turn) => {
+              if (finished) return;
+              if (!turn || turn.turn_id !== id || turn.state === "interrupted") {
+                return giveUp(t(turn?.state === "interrupted"
+                  ? "stream.interrupted" : "stream.lost"));
+              }
+              closeCurrent = watchTurn(projectId, id, lastSeq, connection());
+            })
+            .catch(() => onDrop(null));
+        }, RECONNECT_DELAYS_MS[attempt++]);
+      };
+
+      // 연결 하나의 핸들러. 연결마다 새로 만든다 — `terminal`과 `dropped`는 그 연결의 것이다.
+      const connection = (): StreamHandlers => {
+        let terminal = false;
+        let dropped = false;
+        return {
+          onCreated: (created: TurnCreated) => {
+            if (created.turn_id) turnId = created.turn_id;
+          },
+          onEvent: (ev, seq) => {
+            if (seq !== undefined) lastSeq = seq;
+            if (ev.kind === "done" || ev.kind === "error") terminal = true;
+            // 이어 받기 시작했으니 다음 끊김은 다시 첫 대기부터 센다.
+            attempt = 0;
+            applyEvent(aiId, ev);
+          },
+          onError: (err) => {
+            dropped = true;
+            onDrop(err);
+          },
+          onDone: () => {
+            if (terminal) {
               patchAi(aiId, (it) => ({ ...it, streaming: false }));
               finish();
-            },
-            onError: () => giveUp(),
-          });
-        },
-      });
+            } else if (!dropped) {
+              onDrop(null);   // 종결 이벤트 없이 닫혔다 = 끊김
+            }
+          },
+        };
+      };
+
+      closeCurrent = opener(connection());
+      const stop = () => {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        closeCurrent?.();
+      };
       if (finished) stop();
       else stopRef.current = stop;
     },
-    [applyEvent, patchAi, t],
+    [applyEvent, patchAi, projectId, t],
   );
+
+  // 도는 턴에 붙는다 — 처음부터(`after=0`) 재생해 말풍선을 다시 채운다.
+  const attach = useCallback(
+    (turnId: string) => {
+      if (stopRef.current) return;
+      liveTurnStartedRef.current = true;
+      const aiId = nextId();
+      setItems((prev) => [
+        ...prev,
+        { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
+      ]);
+      runTurn((handlers) => watchTurn(projectId, turnId, 0, handlers), aiId, turnId);
+    },
+    [projectId, runTurn],
+  );
+  attachRef.current = attach;
 
   const send = useCallback(
     (text: string) => {
@@ -468,6 +542,33 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       .finally(() => {
         if (!cancelled) setHistoryLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  // 화면이 열릴 때 도는 턴이 있으면 붙는다(새로고침, 다른 화면에서 돌아옴, 리뷰
+  // 화면의 승인). 재시작으로 끊긴 턴이면 그 사실을 대화 끝에 남긴다 — 그렇지 않으면
+  // 사용자는 끝나지 않은 대화를 설명 없이 보게 된다.
+  const tRef = useRef(t);
+  tRef.current = t;
+  useEffect(() => {
+    let cancelled = false;
+    getTurn(projectId)
+      .then((turn) => {
+        if (cancelled || !turn || stopRef.current) return;
+        if (turn.state === "running") {
+          attachRef.current(turn.turn_id);
+        } else if (turn.state === "interrupted") {
+          liveTurnStartedRef.current = true;
+          setItems((prev) => [
+            ...prev,
+            { id: nextId(), role: "ai", text: "", trace: [], streaming: false,
+              error: tRef.current("stream.interrupted") },
+          ]);
+        }
+      })
+      .catch(() => {}); // degraded, not broken: 붙지 못하면 히스토리만 보인다
     return () => {
       cancelled = true;
     };

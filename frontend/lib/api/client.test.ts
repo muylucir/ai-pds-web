@@ -17,6 +17,7 @@ import {
   getProject,
   listApprovals,
   approveDocument,
+  getTurn,
 } from "./client";
 
 describe("Content-Type header behavior", () => {
@@ -141,11 +142,25 @@ describe("api client request shaping + response typing", () => {
     server.use(
       http.post(`${API_BASE_URL}/projects/p1/approve`, ({ request }) => {
         method = request.method;
-        return HttpResponse.json({ approved: true });
+        return HttpResponse.json({ approved: true, turn_id: "t-approve" });
       }),
     );
-    await approveDocument("p1");
+    // 승인은 다음 단계의 턴을 시작만 한다 — 그 턴의 id를 돌려준다.
+    expect(await approveDocument("p1")).toEqual({ turnId: "t-approve" });
     expect(method).toBe("POST");
+  });
+
+  it("getTurn unwraps the current turn (or null)", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/turn`, () =>
+        HttpResponse.json({ turn: { turn_id: "t1", kind: "message",
+                                    state: "running", last_seq: 3 } })),
+      http.get(`${API_BASE_URL}/projects/p2/turn`, () =>
+        HttpResponse.json({ turn: null })),
+    );
+    expect(await getTurn("p1")).toEqual(
+      { turn_id: "t1", kind: "message", state: "running", last_seq: 3 });
+    expect(await getTurn("p2")).toBeNull();
   });
 
   it("listQuestionFiles / listArtifacts unwrap their arrays", async () => {

@@ -7,6 +7,7 @@ import aipds.app as app_module
 from aipds.agent import prompts
 from aipds.answer_summary import answer_summary
 from aipds.routes.deps import ensure_workspace
+from aipds.routes.turns import ensure_idle, start_turn
 
 router = APIRouter()
 
@@ -23,7 +24,7 @@ def _numbers(answers: dict[str, str]) -> dict[int, str]:
 
 @router.post("/projects/{pid}/questions/{name:path}/answers")
 async def submit_file_answers(pid: str, name: str, body: AnswersBody):
-    """파일 질문 라운드의 답변 제출: 파일에 쓰고 **이어갈 턴의 핸들**을 돌려준다.
+    """파일 질문 라운드의 답변 제출: 파일에 쓰고 **이어갈 턴을 시작해** 그 id를 돌려준다.
 
     왜 별 엔드포인트인가. `POST /answers`는 파킹된 `can_use_tool` future를 깨워
     **같은 턴**을 이어간다. 파일 질문 라운드에는 그 future가 없다 — PostToolUse
@@ -35,11 +36,11 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
     따라야 한다(agent/prompts.py 헤더). 프론트가 만들면 두 언어를 프론트가
     관리하게 되고, 그것이 2026-08-04 결함의 모양이다.
 
-    스트림 엔드포인트를 새로 만들지 않는다 — 핸들을 기존 `GET /events?turn=`로
-    열면 된다. 그 2단계가 존재하는 이유(URL 길이 → HTTP 431)가 자유 서술 답변에도
-    그대로 적용된다(turn_handles.py 헤더).
+    스트림 엔드포인트를 새로 만들지 않는다 — 돌려준 id를 기존 `GET /events?turn=`로
+    보면 된다. 도는 턴이 있으면 파일에 쓰기 **전에** 409로 거절한다(`ensure_idle`).
     """
     ws = await ensure_workspace(pid)
+    ensure_idle(ws)
     numbered = _numbers(body.answers)
     try:
         qfile = await ws.put_answers(name, numbered)
@@ -82,6 +83,7 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
     # `summary`는 프론트가 말풍선에 **그대로** 쓰는 문자열이다. `text`(모델이 읽는
     # 턴 텍스트)는 그것을 포함하고 뒤에 지시를 붙인다 — 사람이 읽을 부분이 앞에 오고
     # 기계용 지시가 꼬리가 되는 것이 `approvalMarker.ts`가 적어 둔 원칙이다.
-    return {"turn_id": app_module.turn_handles.create(pid, {"text": text}),
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(text))
+    return {"turn_id": job.id,
             "summary": summary,
             "questions": qfile}
