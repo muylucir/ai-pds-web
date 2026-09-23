@@ -6,7 +6,7 @@
 # 실측으로 승인 게이트 5건 중 3건이 인식되지 않았다(approval_store.py 헤더).
 #
 # 이 라우트는 사용자가 누른 사실을 **먼저 구조화된 레코드로 남기고**, 그 다음
-# 에이전트 턴을 돌린다. 순서가 계약이다: 턴이 실패해도 승인은 남는다.
+# 에이전트 턴을 시작한다. 순서가 계약이다: 턴이 실패해도 승인은 남는다.
 from __future__ import annotations
 
 import hashlib
@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException
 import aipds.app as app_module
 from aipds.approval_store import load_approvals, save_approval
 from aipds.routes.deps import ensure_workspace
+from aipds.routes.turns import ensure_idle, start_turn
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
@@ -40,8 +41,19 @@ def _hash(text: str) -> str:
 
 @router.post("/projects/{pid}/approve")
 async def approve_document(pid: str):
-    """문서를 승인한다. 레코드를 먼저 쓰고, 그 다음 에이전트 턴을 돌린다."""
+    """문서를 승인한다. 레코드를 먼저 쓰고, 그 다음 에이전트 턴을 **시작한다.**
+
+    턴을 이 요청 안에서 기다리지 않는다 — 다음 단계로 넘어가는 턴은 몇 분이고,
+    요청이 그동안 열려 있으면 프록시 타임아웃(CloudFront 60초)이 승인 응답을 504로
+    바꾼다. 턴은 서버 작업으로 돌고(turn_job.py), 화면은 돌려준 `turn_id`나
+    `GET /turn`으로 그것을 본다.
+
+    도는 턴이 있으면 레코드 **전에** 409다. 에이전트가 문서를 고치는 중에 받은
+    승인은 곧 해시가 어긋나 무효가 되고, 레코드만 남기면 사용자는 "승인됨"을 보는데
+    에이전트는 그 사실을 전달받지 못한다.
+    """
     ws = await ensure_workspace(pid)
+    ensure_idle(ws)
     try:
         text = await ws.runner.read_file(_DOC_PATH)
     except (FileNotFoundError, ValueError):
@@ -64,15 +76,8 @@ async def approve_document(pid: str):
     # approvalMarker.ts가 같은 판단을 기록해 뒀다).
     language = app_module.project_language(pid)
     turn_text = "Approved" if language == "en" else "승인"
-    try:
-        async for _ in ws.runner.send_message(turn_text):
-            pass
-    except Exception:
-        # 승인은 이미 기록됐다. 턴 실패는 사용자가 다시 시도할 수 있는 일이고,
-        # 여기서 500을 내면 "승인이 안 됐다"고 오해하게 만든다.
-        _log.exception("approval turn failed after the record was saved")
-
-    return {"approved": True}
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(turn_text))
+    return {"approved": True, "turn_id": job.id}
 
 
 @router.get("/projects/{pid}/approvals")

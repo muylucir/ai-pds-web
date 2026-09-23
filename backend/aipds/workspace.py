@@ -4,13 +4,25 @@ from aipds.models import QuestionFile, ProjectState, AuditEntry
 from aipds.parsers.questions import parse_question_file, serialize_answers
 from aipds.parsers.state import parse_state_file
 from aipds.parsers.audit import parse_audit_file
+from aipds.turn_job import TurnJobs
 
 _STATE_PATH = "aiplc-docs/aiplc-state.md"
 _AUDIT_PATH = "aiplc-docs/audit.md"
 
 class Workspace:
-    def __init__(self, runner):
+    def __init__(self, runner, turns: TurnJobs | None = None):
         self.runner = runner
+        #: 이 프로젝트의 턴 작업. 턴은 요청이 아니라 여기에 속한다(turn_job.py 헤더).
+        self.turns = turns or TurnJobs()
+
+    async def stop(self) -> None:
+        """도는 턴을 먼저 끊고 러너를 멈춘다(프로젝트 삭제 경로).
+
+        순서가 요점이다: 러너가 먼저 드라이버를 내리면 도는 턴은 죽은 서브프로세스를
+        기다리다 오류로 끝난다. 턴을 먼저 취소하면 그 generator가 정상 경로로 닫힌다.
+        """
+        await self.turns.cancel()
+        await self.runner.stop()
 
     async def put_answers(self, name: str, answers: dict[int, str]) -> QuestionFile:
         md = await self.runner.read_file(name)

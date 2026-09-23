@@ -1,11 +1,31 @@
 # backend/tests/test_routes_turns.py
+import asyncio
 import json
+import time
+
+import pytest
 from fastapi.testclient import TestClient
 import aipds.app as app_module
 from aipds.workspace import Workspace
 from aipds.models import AgentEvent
+from aipds.turn_marker import TURN_MARKER_KEY
+from fakes.in_memory_s3 import FakeS3Store
 
-client = TestClient(app_module.app)
+client: TestClient
+
+
+@pytest.fixture(autouse=True)
+def _live_client():
+    """요청 사이에 이벤트 루프를 유지하는 클라이언트.
+
+    턴은 요청이 아니라 서버 작업이다(aipds/turn_job.py). `with` 없는 TestClient는
+    요청마다 루프를 새로 열고 닫으므로, POST가 시작한 턴이 다음 요청 전에 루프와
+    함께 사라진다 — 배포에서는 일어나지 않는 일이다.
+    """
+    global client
+    with TestClient(app_module.app) as live:
+        client = live
+        yield
 
 # Demo questions payload — a structured-demo shape so the answers/pending route
 # tests can arm a pending interrupt with no AWS.
@@ -70,14 +90,6 @@ class ScriptRunner:
 
     async def pending(self):
         return self._pending_payload
-
-    #: `GET /events/live`가 부르는 것. 기본은 "붙을 턴이 없음"이고, 테스트가
-    #: `live_script`를 채우면 그것을 흘린다.
-    live_script = None
-
-    async def reattach(self):
-        for e in (self.live_script or [AgentEvent(kind="done")]):
-            yield e
 
     async def interrupt(self):
         self.interrupts += 1
@@ -263,22 +275,45 @@ def test_turn_handle_carries_text_out_of_the_url(monkeypatch):
     assert seen["text"] == _LONG_KO
 
 
-def test_a_turn_handle_is_single_use(monkeypatch):
-    _install_default(monkeypatch, "turnh2")
-    handle = client.post("/projects/turnh2/turns",
-                         json={"text": "한 번만"}).json()["turn_id"]
+def _data(lines):
+    return [json.loads(l[len("data:"):].strip()) for l in lines
+            if l.startswith("data:")]
+
+
+def test_a_turn_can_be_watched_again_from_any_seq(monkeypatch):
+    """턴 id는 1회용 핸들이 아니라 **다시 보는** 이름이다.
+
+    새로고침·절전 복귀·두 번째 탭이 모두 같은 턴을 처음부터(`after=0`) 또는 마지막으로
+    받은 곳부터(`after=n`) 본다.
+    """
+    def script(text):
+        return [AgentEvent(kind="message", text="하나"),
+                AgentEvent(kind="message", text="둘"),
+                AgentEvent(kind="done")]
+    _install_scripted(monkeypatch, "turnh2", script)
+    turn = client.post("/projects/turnh2/turns",
+                       json={"text": "go"}).json()["turn_id"]
     with client.stream("GET", "/projects/turnh2/events",
-                       params={"turn": handle}) as r:
-        list(r.iter_lines())
-    # URL에 남은 핸들로 같은 턴을 다시 돌릴 수 없다.
-    again = client.get("/projects/turnh2/events", params={"turn": handle})
-    assert again.status_code == 400
+                       params={"turn": turn}) as r:
+        first = list(r.iter_lines())
+    with client.stream("GET", "/projects/turnh2/events",
+                       params={"turn": turn}) as r:
+        again = list(r.iter_lines())
+    assert _data(first) == _data(again)
+    assert [e["text"] for e in _data(first)[:2]] == ["하나", "둘"]
+    # 프레임의 id가 seq다 — 다시 붙을 때 `after`로 돌려준다.
+    assert "id: 1" in first
+    with client.stream("GET", "/projects/turnh2/events",
+                       params={"turn": turn, "after": 1}) as r:
+        tail = _data(list(r.iter_lines()))
+    assert [e.get("text") for e in tail] == ["둘", None]
+    assert tail[-1]["kind"] == "done"
 
 
-def test_an_unknown_turn_handle_is_400(monkeypatch):
+def test_an_unknown_turn_is_404(monkeypatch):
     _install_default(monkeypatch, "turnh3")
     r = client.get("/projects/turnh3/events", params={"turn": "deadbeef"})
-    assert r.status_code == 400
+    assert r.status_code == 404
 
 
 def test_events_requires_text_or_turn(monkeypatch):
@@ -298,14 +333,14 @@ def test_text_query_param_still_works(monkeypatch):
     assert lines
 
 
-def test_turns_handle_is_scoped_to_its_project(monkeypatch):
+def test_a_turn_is_scoped_to_its_project(monkeypatch):
     _install_default(monkeypatch, "turnh6")
     _install_default(monkeypatch, "turnh7")
-    handle = client.post("/projects/turnh6/turns",
-                         json={"text": "p6의 입력"}).json()["turn_id"]
-    # 다른 프로젝트에서 같은 핸들을 쓸 수 없다.
-    r = client.get("/projects/turnh7/events", params={"turn": handle})
-    assert r.status_code == 400
+    turn = client.post("/projects/turnh6/turns",
+                       json={"text": "p6의 입력"}).json()["turn_id"]
+    # 다른 프로젝트에서 같은 id로 볼 수 없다.
+    r = client.get("/projects/turnh7/events", params={"turn": turn})
+    assert r.status_code == 404
 
 
 def test_turns_unknown_project_404():
@@ -348,20 +383,131 @@ def test_answers_stream_requires_answers_or_turn(monkeypatch):
     assert r.status_code == 400
 
 
-def test_live_stream_relays_an_in_flight_turn(monkeypatch):
-    """절전에서 돌아온 브라우저가 붙는 경로. **핸들이 없다** — 다른 스트림들은
-    POST가 만든 1회용·60초 핸들을 요구해서 재접속에 쓸 수 없다."""
-    # 러너는 요청마다 새로 만들어지므로(_install_scripted의 make) 클래스 속성에
-    # 심는다. monkeypatch가 테스트 뒤 되돌린다.
-    monkeypatch.setattr(ScriptRunner, "live_script",
-                        [AgentEvent(kind="message", text="자리를 비운 동안 온 문장"),
-                         AgentEvent(kind="done")])
-    _install_scripted(monkeypatch, "live1", _structured_first_turn)
+# ---- 턴은 서버 작업이다 ----
+#
+# 턴의 수명은 요청의 것이 아니다(aipds/turn_job.py 헤더). 아래 테스트는 러너가
+# `gate`에서 멈추는 턴으로 "도는 중"을 만든다.
+
+class GatedRunner(ScriptRunner):
+    """첫 메시지를 낸 뒤 `gate`가 열릴 때까지 멈추는 턴. 끝까지 돌았는지 기록한다."""
+
+    def __init__(self):
+        super().__init__()
+        self.gate = None
+        self.finished = False
+        self.sent = []
+
+    async def send_message(self, text):
+        self.sent.append(text)
+        self.gate = self.gate or asyncio.Event()
+        try:
+            yield AgentEvent(kind="message", text="첫 문장")
+            await self.gate.wait()
+            yield AgentEvent(kind="message", text="자리를 비운 동안 온 문장")
+            yield AgentEvent(kind="done")
+        finally:
+            # 러너의 종결 sync가 도는 자리 — 여기까지 와야 산출물이 S3에 오른다.
+            self.finished = True
+
+
+def _install_gated(monkeypatch, pid) -> GatedRunner:
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "")
+    runner = GatedRunner()
+
+    async def make(project_id):
+        return Workspace(runner)
+
+    monkeypatch.setattr(app_module, "make_workspace", make)
+    client.post("/projects", json={"project_id": pid})
+    return runner
+
+
+def _turn_state(pid):
+    return client.get(f"/projects/{pid}/turn").json()["turn"]
+
+
+def _wait_for(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError("condition not reached")
+
+
+def _open_gate(runner, delay: float = 0.0):
+    """턴을 이어 가게 한다. `delay`가 있으면 그만큼 뒤에 연다.
+
+    TestClient는 스트림 요청도 앱이 응답을 끝낼 때까지 붙잡으므로, 스트림을 여는
+    쪽에서 문을 열 수 없다 — 미리 예약해 둔다. 보던 화면이 **도중에** 떠나는 경우는
+    같은 이유로 여기서 만들 수 없어 tests/test_turn_job.py가 맡는다.
+    """
+    client.portal.start_task_soon(_set, runner, delay)
+
+
+async def _set(runner, delay):
+    await asyncio.sleep(delay)
+    runner.gate.set()
+
+
+def test_a_second_turn_while_one_runs_is_409_with_the_running_id(monkeypatch):
+    """거절된 쪽이 할 일은 다시 보내기가 아니라 도는 턴을 보는 것이다."""
+    runner = _install_gated(monkeypatch, "own2")
+    turn = client.post("/projects/own2/turns", json={"text": "go"}).json()["turn_id"]
+    r = client.post("/projects/own2/turns", json={"text": "또"})
+    assert r.status_code == 409
+    assert r.json()["detail"] == {"code": "turn_in_progress", "turn_id": turn}
+    assert runner.sent == ["go"]    # 두 번째 입력은 에이전트에 닿지 않았다
+    _open_gate(runner)
+    _wait_for(lambda: _turn_state("own2")["state"] == "done")
+    # 끝난 뒤에는 다시 받는다.
+    assert client.post("/projects/own2/turns", json={"text": "또"}).status_code == 200
+
+
+def test_turn_reports_the_running_turn_then_its_end(monkeypatch):
+    runner = _install_gated(monkeypatch, "own3")
+    assert _turn_state("own3") is None
+    turn = client.post("/projects/own3/turns", json={"text": "go"}).json()["turn_id"]
+    _wait_for(lambda: _turn_state("own3")["last_seq"] >= 1)
+    state = _turn_state("own3")
+    assert state["turn_id"] == turn and state["state"] == "running"
+    _open_gate(runner)
+    _wait_for(lambda: _turn_state("own3")["state"] == "done")
+
+
+def test_turn_reports_a_turn_the_restart_cut_off(monkeypatch):
+    """메모리에 턴이 없는데 표식이 `running`이면 재시작으로 끊긴 턴이다."""
+    _install_default(monkeypatch, "own4")
+    s3 = FakeS3Store()
+    s3.blobs[TURN_MARKER_KEY] = json.dumps(
+        {"turn_id": "t-before", "kind": "message", "state": "running"})
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "bucket")
+    monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: s3)
+    state = _turn_state("own4")
+    assert state == {"turn_id": "t-before", "kind": "message",
+                     "state": "interrupted", "last_seq": 0}
+
+
+def test_a_finished_marker_is_not_reported_as_interrupted(monkeypatch):
+    _install_default(monkeypatch, "own5")
+    s3 = FakeS3Store()
+    s3.blobs[TURN_MARKER_KEY] = json.dumps(
+        {"turn_id": "t-before", "kind": "message", "state": "done"})
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "bucket")
+    monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: s3)
+    assert _turn_state("own5") is None
+
+
+def test_live_stream_follows_the_running_turn_from_now(monkeypatch):
+    """`/events/live`는 **지금부터**다 — 이미 채워진 말풍선에 이어 붙이는 화면이 쓴다."""
+    runner = _install_gated(monkeypatch, "live1")
+    client.post("/projects/live1/turns", json={"text": "go"})
+    _wait_for(lambda: _turn_state("live1")["last_seq"] >= 1)
+    _open_gate(runner, delay=0.05)
     with client.stream("GET", "/projects/live1/events/live") as r:
         assert r.status_code == 200
-        body = "".join(r.iter_text())
-    assert "자리를 비운 동안 온 문장" in body
-    assert '"kind":"done"' in body.replace(" ", "")
+        texts = [e.get("text") for e in _data(list(r.iter_lines()))]
+    assert texts == ["자리를 비운 동안 온 문장", None]
 
 
 def test_live_stream_ends_quietly_when_nothing_is_running(monkeypatch):

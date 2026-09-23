@@ -33,13 +33,20 @@ def _seed(monkeypatch, pid, language=None):
 # 에이전트가 읽는 문장이므로 UI 언어가 아니라 프로젝트 언어를 따라야 하고
 # (agent/prompts.py의 규율), 프론트에 그 문구를 두면 두 언어를 프론트가 관리하게 된다.
 
+def _turn(pid: str) -> dict:
+    """라우트가 시작한 턴의 입력 — 러너가 받은 마지막 텍스트."""
+    sent = registry.get(pid).runner.sent
+    assert sent, "the route started no turn"
+    return {"text": sent[-1]}
+
+
 def _submit(pid: str, answers: dict):
     return client.post(
         f"/projects/{pid}/questions/aiplc-docs/strategy-questions.md/answers",
         json={"answers": answers})
 
 
-def test_submitting_file_answers_writes_them_and_returns_a_turn_handle(monkeypatch):
+def test_submitting_file_answers_writes_them_and_starts_the_resume_turn(monkeypatch):
     _seed(monkeypatch, "fq1")
     r = _submit("fq1", {"1": "B"})
     assert r.status_code == 200, r.text
@@ -47,19 +54,20 @@ def test_submitting_file_answers_writes_them_and_returns_a_turn_handle(monkeypat
     # 파일에 기록됐다 — 번호로 쓰므로 퍼지 매칭이 없다(serialize_answers).
     by_num = {q["number"]: q["answer"] for q in body["questions"]["questions"]}
     assert by_num[1] == "B"
-    # 그리고 이어갈 턴의 핸들을 돌려준다. 프론트는 기존 GET /events?turn=로 연다 —
-    # 새 스트림 엔드포인트를 만들지 않는다.
+    # 그리고 이어갈 턴을 시작해 그 id를 돌려준다. 프론트는 기존 GET /events?turn=로
+    # 본다 — 새 스트림 엔드포인트를 만들지 않는다.
     assert body["turn_id"]
+    assert registry.get("fq1").runner.sent
 
 
-def test_the_handle_carries_a_prompt_that_names_the_file(monkeypatch):
-    """핸들에 담긴 텍스트가 에이전트에게 갈 문장이다.
+def test_the_resume_turn_carries_a_prompt_that_names_the_file(monkeypatch):
+    """재개 턴의 텍스트가 에이전트에게 갈 문장이다.
 
     파일을 지목하지 않으면 에이전트가 어느 파일을 되읽어야 하는지 모른다 —
     질문 파일이 여러 개 있는 것이 정상이다(실측: 한 프로젝트에 9개)."""
     _seed(monkeypatch, "fq2")
     handle = _submit("fq2", {"1": "B"}).json()["turn_id"]
-    payload = app_module.turn_handles.consume("fq2", handle)
+    payload = _turn("fq2")
     assert payload is not None
     assert "strategy-questions.md" in payload["text"]
 
@@ -94,7 +102,7 @@ def _state(pid: str, markdown: str):
 
 def _resume_text(pid: str) -> str:
     handle = _submit(pid, {"1": "B"}).json()["turn_id"]
-    payload = app_module.turn_handles.consume(pid, handle)
+    payload = _turn(pid)
     assert payload is not None
     return payload["text"]
 
@@ -185,7 +193,7 @@ def test_the_resume_turn_carries_the_answers_the_user_actually_gave(monkeypatch)
     "질문에 답했습니다"에서 멈춘다."""
     _seed(monkeypatch, "fqans1")
     handle = _submit("fqans1", {"1": "B", "12": "A,C"}).json()["turn_id"]
-    payload = app_module.turn_handles.consume("fqans1", handle)
+    payload = _turn("fqans1")
 
     text = payload["text"]
     # 두 문항의 답변이 **읽을 수 있는 형태로** 온다. letter 리터럴("A,C")을 단정하지
@@ -203,7 +211,7 @@ def test_the_resume_turn_keeps_free_text_answers_verbatim(monkeypatch):
     _seed(monkeypatch, "fqans2")
     written = "예산은 3분기까지 확정되지 않았습니다. 그 전에는 B로 갑니다."
     handle = _submit("fqans2", {"1": written}).json()["turn_id"]
-    payload = app_module.turn_handles.consume("fqans2", handle)
+    payload = _turn("fqans2")
 
     assert written in payload["text"]
 
@@ -213,7 +221,7 @@ def test_the_resume_turn_follows_the_project_language(monkeypatch):
     (`answer_first`·`approvalMarker.ts`가 같은 판단을 기록해 뒀다)."""
     _seed(monkeypatch, "fqans3", language="en")
     handle = _submit("fqans3", {"1": "B"}).json()["turn_id"]
-    text = app_module.turn_handles.consume("fqans3", handle)["text"]
+    text = _turn("fqans3")["text"]
 
     # wrapper만 본다 — 본문은 질문 파일의 문장을 인용하고 이 픽스처는 한국어다
     # (fq8의 같은 주석에 근거가 있다).
@@ -235,7 +243,7 @@ def test_the_resume_turn_renders_option_labels_not_bare_letters(monkeypatch):
     질문 폼을 다시 열어야 무슨 결정이었는지 알 수 있다."""
     _seed(monkeypatch, "lbl1")
     handle = _submit("lbl1", {"1": "B"}).json()["turn_id"]
-    text = app_module.turn_handles.consume("lbl1", handle)["text"]
+    text = _turn("lbl1")["text"]
 
     assert "플랫폼(Platform)" in text, text
     # 문항 문장도 함께 온다 — 답변만 있으면 무엇에 대한 답인지 알 수 없다.
@@ -247,7 +255,7 @@ def test_the_resume_turn_expands_every_letter_of_a_multi_select_answer(monkeypat
     """복수 선택은 콤마로 온다("A,C"). 그대로 기록하면 두 결정이 두 글자로 남는다."""
     _seed(monkeypatch, "lbl2")
     handle = _submit("lbl2", {"12": "A,C"}).json()["turn_id"]
-    text = app_module.turn_handles.consume("lbl2", handle)["text"]
+    text = _turn("lbl2")["text"]
 
     assert "MD 업무 시간 절감률" in text, text
     assert "신규 MD 온보딩 기간 단축률" in text, text
@@ -258,7 +266,7 @@ def test_the_submit_response_carries_the_same_text_it_recorded(monkeypatch):
     보여주는 것이 **같은 문자열**이어야 갈라질 수 없다."""
     _seed(monkeypatch, "lbl3")
     body = _submit("lbl3", {"1": "B"}).json()
-    recorded = app_module.turn_handles.consume("lbl3", body["turn_id"])["text"]
+    recorded = _turn("lbl3")["text"]
 
     assert body["summary"], "응답에 말풍선 텍스트가 없다"
     # 기록된 턴 텍스트는 모델용 지시가 뒤에 붙으므로 summary를 **포함**한다.
