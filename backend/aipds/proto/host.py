@@ -379,6 +379,10 @@ class ProtoHost:
         framework may inline `process.env.*` at build time, and a value that
         only appears at start would be baked as undefined.
         """
+        if self._launcher is not None:
+            # 래퍼가 거부 중이면(aipds/launcher.py 머리말) 직접 실행으로 돌지 않는다. 떠 있는 것을
+            # 멈추기 전에 거부한다 — 멈추고 나서 못 띄우면 살아 있던 링크까지 죽는다.
+            self._launcher.require()
         # If this (pid, slug) is already running/started, tear down its
         # previous process first.
         await self.stop(pid, slug)

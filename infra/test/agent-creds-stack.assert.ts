@@ -2,6 +2,7 @@ import * as assert from 'node:assert';
 import * as cdk from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { AipdsAgentCredsStack } from '../lib/aipds-agent-creds-stack';
+import { INSTANCE_PARAMS } from '../lib/instance-params';
 
 // AgentRole의 계약(lib/aipds-agent-creds-stack.ts 머리말):
 //   - 인스턴스 롤만 AssumeRole한다. 그 권한은 인스턴스 롤에 붙는 별도 정책이다.
@@ -29,13 +30,22 @@ assert.strictEqual(roles[0].Properties.MaxSessionDuration, 3600);
 const policies = Object.values(t.findResources('AWS::IAM::Policy')) as any[];
 const byTarget = (pred: (p: any) => boolean) =>
   policies.filter(pred).flatMap((p) => p.Properties.PolicyDocument.Statement)
-    .flatMap((s: any) => [].concat(s.Action));
+    .flatMap((s: any) => ([] as string[]).concat(s.Action));
 const agentActions = byTarget((p) => JSON.stringify(p.Properties.Roles).includes('AgentRole'));
 assert.deepStrictEqual([...new Set(agentActions)].sort(),
   ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream']);
 const instanceActions = byTarget((p) =>
   JSON.stringify(p.Properties.Roles).includes('AipdsHostingStack-InstanceRole3CCE2F1D-QYiZURiI2lpO'));
-assert.deepStrictEqual(instanceActions, ['sts:AssumeRole'], 'the instance role gets AssumeRole on AgentRole');
+assert.deepStrictEqual([...new Set(instanceActions)].filter((a) => !a.startsWith('ssm:')),
+  ['sts:AssumeRole'], 'the instance role gets AssumeRole on AgentRole');
+assert.ok(instanceActions.includes('ssm:GetParameter'),
+  'the instance role reads the AgentRole ARN parameter at boot');
+
+// 새 인스턴스가 부팅 때 읽는 값(lib/instance-params.ts, scripts/aipds-harden boot).
+t.hasResourceProperties('AWS::SSM::Parameter', {
+  Name: INSTANCE_PARAMS.agentRoleArn,
+  Value: { 'Fn::GetAtt': [Match.stringLikeRegexp('^AgentRole'), 'Arn'] },
+});
 
 t.hasResourceProperties('AWS::IAM::Policy', {
   PolicyDocument: { Statement: Match.arrayWith([Match.objectLike({
