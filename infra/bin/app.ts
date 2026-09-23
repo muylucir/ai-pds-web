@@ -4,6 +4,7 @@ import { AipdsDrillStack } from '../lib/aipds-drill-stack';
 import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import { AipdsHostingStack } from '../lib/aipds-hosting-stack';
 import { AipdsPreviewStack } from '../lib/aipds-preview-stack';
+import { AipdsAgentCredsStack } from '../lib/aipds-agent-creds-stack';
 
 const app = new cdk.App();
 
@@ -59,4 +60,12 @@ if (previewOriginDns && originVerifySecretArn && instanceRoleArn) {
     originVerifySecretArn,
     instanceRoleArn,
   });
+}
+
+// 샌드박스 프로세스용 Bedrock 전용 롤(lib/aipds-agent-creds-stack.ts). 프리뷰 스택과 같이
+// HostingStack의 인스턴스 롤을 참조만 한다 — 값이 없으면 만들지 않는다.
+//
+//   AIPDS_INSTANCE_ROLE_ARN=<HostingStack InstanceRole ARN> npx cdk deploy AipdsAgentCredsStack
+if (instanceRoleArn) {
+  new AipdsAgentCredsStack(app, 'AipdsAgentCredsStack', { env, instanceRoleArn });
 }

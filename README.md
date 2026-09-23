@@ -265,6 +265,37 @@ path on the preview domain. The app domain no longer serves prototypes. If this 
 re-run after the instance is replaced — prototypes are served from the app domain: everything works, only
 the isolation is missing.
 
+### 8. Sandboxed agents and prototypes
+
+The Discovery and build agents and hosted prototypes run as **different uids from the backend**
+(`aipds-agent`, `aipds-proto`) in a systemd sandbox that only sees their own project's tree
+(`infra/scripts/aipds-launch`). They cannot write the app tree, see other projects' trees, or read
+the backend's env and secrets, and instead of the instance role they get short-lived credentials
+for an **AgentRole that can only invoke Bedrock** (`backend/aipds/credentials.py`). That role is a
+separate stack that only references HostingStack:
+
+```bash
+cd infra
+AIPDS_INSTANCE_ROLE_ARN=<HostingStack InstanceRole ARN> \
+  npx cdk deploy AipdsAgentCredsStack --require-approval never
+```
+
+Then turn it on step by step on the instance (each step restarts the backend):
+
+```bash
+sudo /opt/aipds/infra/scripts/aipds-harden install            # users, launcher, permissions; launcher stays off
+sudo /opt/aipds/infra/scripts/aipds-harden enable <AgentRoleArn>
+# after checking a Discovery turn and a prototype build and hosting
+sudo /opt/aipds/infra/scripts/aipds-harden imds block
+```
+
+`imds block` must come last — blocking before the sandboxed processes are confirmed to reach
+Bedrock through the credential endpoint cuts the agents' and prototypes' LLM calls. To roll back,
+`aipds-harden disable` (back to running directly). A new instance runs `install` at boot, so only
+`enable` and `imds block` need re-running. `aipds-harden status` shows the state. If the launcher
+is on but its startup check (sudoers, paths, bundled CLI) fails, the backend logs a warning and runs
+directly (`probe` in `backend/aipds/launcher.py`).
+
 ### Changing the region
 
 The default is **Seoul (`ap-northeast-2`)**. Override it with an environment variable:
@@ -498,6 +529,10 @@ reads them (`backend/aipds/app.py`, `backend/aipds/cli_settings.py`).
 | `AIPDS_WORKSPACES_DIR` | under the system tmp dir | Root for the per-project local workspaces |
 | `AIPDS_DISCOVERY_CONFIG_DIR` | — | `CLAUDE_CONFIG_DIR` for the Discovery agent. **Leave it empty and the backend user's `~/.claude`** (personal skills, agents, CLAUDE.md) mixes in, so results vary with the host's setup. Locally, point it at the repo's `discovery-config/` |
 | `AIPDS_PROTO_CONFIG_DIR` | — | `CLAUDE_CONFIG_DIR` for the build agent. **It must not be the same path as the one above** — sharing makes Discovery run with the shadcn-design skill loaded while it writes documents. Locally, the repo's `proto-config/` |
+| `AIPDS_AGENT_HOME_DIR` | `~/aipds-agent-home` (EC2: `/opt/aipds/agent-home`) | Root of the per-project CLI config dir and HOME (`backend/aipds/agent_home.py`). Transcripts live here. The two shared config dirs are the **source of the content** copied into it |
+| `AIPDS_LAUNCHER` | `false` | Whether agents and prototypes start through the sandbox launcher. Turned on by `aipds-harden enable` (step [8](#8-sandboxed-agents-and-prototypes) above) |
+| `AIPDS_AGENT_ROLE_ARN` | — | The Bedrock-only role handed to sandboxed processes. Empty means no credential endpoint |
+| `AIPDS_CREDENTIALS_PORT` | `8001` | Loopback port of the credential endpoint. Must be a port nginx does not proxy |
 | `AIPDS_PROTO_ROOT` | `~/aipds-protos` | Shared root for prototype builds and hosting |
 | `AIPDS_PROTO_MAX_CONCURRENT` | `10` | Global cap on concurrent builds. Over it, starting a session returns 429 |
 | `AIPDS_PROTO_PERMISSION_MODE` | `bypassPermissions` | Builds run unattended, so there is nobody to approve. Override it to tighten (an unknown value raises ValueError immediately) |

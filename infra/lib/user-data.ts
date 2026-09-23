@@ -283,6 +283,9 @@ BRANCH=${branch}
 ENV
 install -m 755 ${APP}/infra/scripts/aipds-update /usr/local/bin/aipds-update
 
+# 샌드박스 기반: 유저·래퍼·sudoers·트리 권한, unit·nginx의 평문 시크릿. 래퍼는 꺼진 채(scripts/aipds-harden).
+${APP}/infra/scripts/aipds-harden install --no-restart
+
 systemctl daemon-reload
 systemctl enable --now nginx aipds-backend aipds-frontend
 `;

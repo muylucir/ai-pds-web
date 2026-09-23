@@ -247,6 +247,36 @@ sudo /opt/aipds/infra/scripts/aipds-preview-configure <PreviewOrigin> <PreviewSe
 인스턴스가 교체된 뒤 아직 다시 돌리지 않았다면 프로토타입은 앱 도메인에서 서빙된다 — 기능은
 그대로이고 격리만 없다.
 
+### 8. 에이전트·프로토타입 샌드박스
+
+Discovery·빌드 에이전트와 호스팅된 프로토타입은 **백엔드와 다른 uid**(`aipds-agent`,
+`aipds-proto`)로, 자기 프로젝트 트리만 보이는 systemd 샌드박스에서 돈다
+(`infra/scripts/aipds-launch`). 앱 트리 쓰기, 다른 프로젝트의 트리, 백엔드의 env와 시크릿이 닿지
+않고, 인스턴스 롤 대신 **Bedrock 호출만 되는 AgentRole**의 단기 자격증명을 받는다
+(`backend/aipds/credentials.py`). 이 롤도 HostingStack을 참조만 하는 별도 스택이다:
+
+```bash
+cd infra
+AIPDS_INSTANCE_ROLE_ARN=<HostingStack의 InstanceRole ARN> \
+  npx cdk deploy AipdsAgentCredsStack --require-approval never
+```
+
+인스턴스에서 차례로 켠다(단계마다 백엔드가 재시작된다):
+
+```bash
+sudo /opt/aipds/infra/scripts/aipds-harden install            # 유저·래퍼·권한. 래퍼는 꺼진 채
+sudo /opt/aipds/infra/scripts/aipds-harden enable <AgentRoleArn>
+# Discovery 한 턴, 프로토타입 빌드·호스팅이 되는지 확인한 뒤
+sudo /opt/aipds/infra/scripts/aipds-harden imds block
+```
+
+`imds block`은 반드시 마지막이다 — 샌드박스 프로세스가 자격증명 엔드포인트로 Bedrock을 부르는 것을
+확인하기 전에 막으면 에이전트와 프로토타입의 LLM 호출이 함께 끊긴다. 되돌리기는
+`aipds-harden disable`(직접 실행으로 돌아간다). 새 인스턴스는 부팅 때 `install`까지 하므로
+`enable`과 `imds block`만 다시 돌린다. 상태는 `aipds-harden status`로 본다. 래퍼를 켰는데 기동
+점검(sudoers, 경로, 번들 CLI)이 실패하면 백엔드는 경고를 남기고 직접 실행으로 돈다
+(`backend/aipds/launcher.py`의 `probe`).
+
 ### 리전 변경
 
 기본은 **서울(`ap-northeast-2`)**. 다른 리전은 환경변수로 오버라이드한다:
@@ -472,6 +502,10 @@ EC2 배포는 user-data가 전부 채운다. 아래는 **로컬에서 손으로 
 | `AIPDS_WORKSPACES_DIR` | 시스템 tmp 하위 | 프로젝트별 로컬 워크스페이스 루트 |
 | `AIPDS_DISCOVERY_CONFIG_DIR` | — | Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR`. **비우면 백엔드 실행 유저의 `~/.claude`(개인 skills·agents·CLAUDE.md)가 섞여** 결과가 호스트 설정에 따라 달라진다. 로컬은 리포의 `discovery-config/`를 가리킨다 |
 | `AIPDS_PROTO_CONFIG_DIR` | — | 빌드 에이전트 전용 `CLAUDE_CONFIG_DIR`. **위와 반드시 다른 경로여야 한다** — 공유하면 Discovery가 문서를 쓰는 중에 shadcn-design 스킬을 켠 채로 돈다. 로컬은 리포의 `proto-config/` |
+| `AIPDS_AGENT_HOME_DIR` | `~/aipds-agent-home` (EC2는 `/opt/aipds/agent-home`) | 프로젝트별 CLI config dir과 HOME의 루트(`backend/aipds/agent_home.py`). 트랜스크립트가 여기 쌓인다. 두 공유 config dir은 그 안으로 복사되는 **내용의 출처**다 |
+| `AIPDS_LAUNCHER` | `false` | 에이전트·프로토타입을 샌드박스 래퍼로 띄울지. 켜는 것은 `aipds-harden enable`이다(위 [8단계](#8-에이전트프로토타입-샌드박스)) |
+| `AIPDS_AGENT_ROLE_ARN` | — | 샌드박스 프로세스에 줄 Bedrock 전용 롤. 비우면 자격증명 엔드포인트가 없다 |
+| `AIPDS_CREDENTIALS_PORT` | `8001` | 자격증명 엔드포인트의 루프백 포트. nginx가 모르는 포트여야 한다 |
 | `AIPDS_PROTO_ROOT` | `~/aipds-protos` | 프로토타입 빌드·호스팅 공용 루트 |
 | `AIPDS_PROTO_MAX_CONCURRENT` | `10` | 전역 동시 빌드 상한. 초과하면 세션 시작이 429 |
 | `AIPDS_PROTO_PERMISSION_MODE` | `bypassPermissions` | 빌드는 무인으로 돌아 승인해 줄 사람이 없다. 더 조이려면 덮어쓴다(알 수 없는 값은 즉시 ValueError) |

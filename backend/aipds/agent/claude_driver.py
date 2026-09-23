@@ -80,12 +80,15 @@ from aipds.agent.questions_payload import (normalize_sdk_questions,
                                                  question_file_from_sdk)
 from aipds.agent.session_store import DiscoverySessionStore
 from aipds.agent.workspace_rules import place_rules
+from aipds.agent_home import copy_config
 from aipds.cli_settings import cli_context_env
 from aipds.models import AgentEvent
 from aipds.pathsafe import workspace_relative as _rel
 from aipds.performance import log_performance
 from aipds.s3store import S3StoreLike
 from aipds.tool_trace import tool_detail
+from aipds.transcript_restore import MirrorOnlyStore
+from aipds.transcript_restore import restore as restore_transcript
 from aipds.workspace_sync import publish_file
 
 _log = logging.getLogger("aipds.agent")
@@ -484,16 +487,29 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # prototype builder's proto-config: sharing would leave the
             # prototype's shadcn-design skill instruction active while
             # Discovery writes documents (discovery-config/README.md).
+            #
+            # 프로젝트별 디렉터리다(aipds/agent_home.py) — CLI가 여기 트랜스크립트와
+            # 세션 상태를 쓰므로 공유하면 프로젝트끼리 서로의 대화가 보인다. 공유
+            # discovery-config는 내용(CLAUDE.md)의 출처로만 남아 연결마다 복사된다.
             "CLAUDE_CONFIG_DIR": driver._config_dir,
         }
+        if driver._shared_config_dir:
+            copy_config(driver._shared_config_dir, driver._config_dir)
         if driver._anthropic_model:
             env["ANTHROPIC_MODEL"] = driver._anthropic_model
         # 자동 컴팩션 시점. 미설정이면 키가 없고 CLI 기본값으로 간다.
         # Discovery가 후반 스테이지에서 요약된 컨텍스트로 문서를 쓰는 것을
         # 늦추는 스위치다(cli_settings 헤더의 실측 264k→53k).
         env.update(cli_context_env())
+        # 실행 래퍼(aipds/launcher.py). 켜져 있으면 CLI가 다른 uid로, 이 프로젝트의
+        # 워크스페이스와 에이전트 홈만 보이는 샌드박스에서 돈다.
+        cli_path = None
+        if driver._launch is not None:
+            cli_path, launch_env = driver._launch.claude()
+            env.update(launch_env)
         session_id, resume = _sdk_session_id(session)
         options = ClaudeAgentOptions(
+            cli_path=cli_path,
             # 토큰 단위 스트리밍. 기본값 False에서는 완성된 AssistantMessage만
             # 오므로 문단이 한 번에 튀어나오고, 사용자에게는 그 침묵이 "아무 일도
             # 일어나지 않는다"로 읽힌다(실측: 1,325자가 295개 델타로 온다).
@@ -547,7 +563,11 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # strands' S3 layout, which this driver never writes). Same
             # mechanism the prototype builder already uses (proto/builder.py's
             # session_store), different key prefix.
-            session_store=driver._session_store,
+            # 쓰기만 미러로 흘린다. SDK가 재개 때 임시 config dir을 만들지 않게
+            # load를 비운다 — 재개는 로컬 사본에서, 없을 때는 연결 전에
+            # `_restore_transcript`가 S3에서 되살린다(aipds/transcript_restore.py 헤더).
+            session_store=(MirrorOnlyStore(driver._session_store)
+                           if driver._session_store is not None else None),
             # Flush once at AI-PDS's explicit turn boundary. `_pump`
             # handles normal/question terminals, while stream finally blocks
             # cover errors and abandoned SSE consumers.
@@ -614,10 +634,16 @@ class ClaudeDriver:
                  language: str = "ko",
                  permission_mode: str = DEFAULT_PERMISSION_MODE,
                  client_factory: Callable[[dict], Any] | None = None,
-                 session_store: Any = None):
+                 session_store: Any = None,
+                 shared_config_dir: str | None = None,
+                 launch: Any = None):
         self._workspace = workspace
         self._rules_dir = rules_dir
         self._config_dir = config_dir
+        #: 연결마다 config_dir로 복사할 내용의 출처(discovery-config/). None이면 복사하지 않는다.
+        self._shared_config_dir = shared_config_dir
+        #: aipds.launcher.Launch, 또는 None(= 백엔드 uid로 직접 실행).
+        self._launch = launch
         self._s3 = s3
         # Transcript mirror. Built here rather than per-turn so the sequence
         # counter it seeds from S3 is reused across turns of one process
@@ -786,6 +812,25 @@ class ClaudeDriver:
         out = dict(session)
         out["resume"] = resume
         return out
+
+    async def _restore_transcript(self, session: dict) -> None:
+        """연결하기 전, 로컬 트랜스크립트가 없으면 S3 미러에서 되살린다.
+
+        `_resolve_resume`이 로컬 파일로 `--resume`/`--session-id`를 가르므로 그보다 먼저
+        돌아야 한다. 인스턴스가 교체됐거나 에이전트 홈이 새것이면 여기서 대화가 이어진다 —
+        예전에는 그 경우 조용히 새 세션으로 시작했다. 실패는 새 세션으로 떨어진다.
+        """
+        if self._client is not None or self._session_store is None:
+            return
+        session_id, _ = _sdk_session_id(session)
+        if _transcript_exists(self._config_dir, self._workspace, session_id):
+            return
+        try:
+            await restore_transcript(self._session_store, self._config_dir,
+                                     self._workspace, session_id)
+        except Exception:
+            _log.exception("transcript restore failed for session %s — "
+                           "starting a fresh session", session_id)
 
     async def _ensure_client(self, session: dict):
         if self._client is None:
@@ -1811,6 +1856,7 @@ class ClaudeDriver:
             # inside _ensure_client) keeps the client factory's contract
             # unchanged: it still receives a session dict with `resume`
             # already settled.
+            await self._restore_transcript(session)
             connect_session = self._resolve_resume(dict(session,
                                                        resume=resume))
             client = await self._ensure_client(connect_session)
