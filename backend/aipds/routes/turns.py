@@ -1,5 +1,4 @@
 # backend/aipds/routes/turns.py
-import json
 import logging
 from typing import AsyncIterator, Callable
 from fastapi import APIRouter, HTTPException
@@ -94,8 +93,9 @@ async def create_turn(pid: str, body: MessageBody):
     """턴을 **시작**하고 id를 돌려준다. 스트림은 `GET /events?turn=<id>`로 본다.
 
     텍스트를 본문으로 받는 이유: EventSource는 GET만 지원하고, 긴 입력(특히 한글)을
-    URL에 실으면 요청 라인이 커져 프록시가 431을 낸다(aipds/turn_handles.py 헤더의
-    실측). 워크스페이스를 여기서 확인해 없는 프로젝트는 404로 끝낸다.
+    URL에 실으면 요청 라인이 커져 프록시가 431을 낸다(frontend lib/api/sse.ts의
+    createTurn에 실측이 있다). 워크스페이스를 여기서 확인해 없는 프로젝트는 404로
+    끝낸다.
     """
     ws = await ensure_workspace(pid)
     job = start_turn(ws, "message", lambda: ws.runner.send_message(body.text))
@@ -103,21 +103,14 @@ async def create_turn(pid: str, body: MessageBody):
 
 
 @router.get("/projects/{pid}/events")
-async def stream_events(pid: str, turn: str | None = None, after: int = 0,
-                        text: str | None = None):
+async def stream_events(pid: str, turn: str, after: int = 0):
     """턴 하나를 본다. `after`는 이미 받은 마지막 seq다(처음이면 0).
 
-    `?text=`는 시작과 구독을 한 요청으로 하는 경로다 — 핸들 이전 프론트의 모양이고,
-    긴 입력에는 쓸 수 없다(위 431).
+    턴은 `POST /turns`·`POST /answers`·파일 질문 답변·승인이 시작한다 — 이 경로는
+    보기만 한다. 답변 턴도 같은 경로로 본다: 턴은 종류가 아니라 id로 구별된다.
     """
     ws = await ensure_workspace(pid)
-    if turn is not None:
-        return turn_response(_job_or_404(ws, turn), after)
-    if text is None:
-        raise HTTPException(status_code=400,
-                            detail="either `turn` or `text` is required")
-    return turn_response(start_turn(ws, "message",
-                                    lambda: ws.runner.send_message(text)))
+    return turn_response(_job_or_404(ws, turn), after)
 
 
 @router.get("/projects/{pid}/turn")
@@ -149,23 +142,6 @@ async def _load_marker_quietly(pid: str) -> dict | None:
         return None
 
 
-@router.get("/projects/{pid}/events/live")
-async def stream_live(pid: str):
-    """도는 턴의 **지금부터**를 본다. 도는 턴이 없으면 `done` 하나로 끝난다.
-
-    재생하지 않는 이유: 이 경로를 쓰는 화면은 이미 채워진 말풍선에 이어 붙인다 —
-    처음부터 흘리면 텍스트가 두 번 쌓인다. 처음부터 봐야 하는 화면은
-    `GET /events?turn=&after=0`을 쓴다.
-    """
-    ws = await ensure_workspace(pid)
-    job = ws.turns.current()
-    if job is None:
-        async def done():
-            yield {"data": AgentEvent(kind="done").model_dump_json()}
-        return EventSourceResponse(done())
-    return turn_response(job, job.log.last_seq)
-
-
 @router.post("/projects/{pid}/answers")
 async def create_answers_turn(pid: str, body: AnswersBody):
     """답변 제출로 턴을 시작한다. `/turns`와 같은 이유로 본문으로 받는다 — 자유 서술
@@ -174,29 +150,6 @@ async def create_answers_turn(pid: str, body: AnswersBody):
     job = start_turn(ws, "answers", lambda: ws.runner.send_answers(body.answers))
     return {"turn_id": job.id}
 
-
-@router.get("/projects/{pid}/answers/stream")
-async def stream_answers(pid: str, turn: str | None = None, after: int = 0,
-                         answers: str | None = None):
-    """답변 턴을 본다. `turn`이 있으면 `/events`와 같다.
-
-    `?answers=`는 시작과 구독을 한 요청으로 하는 경로다(`/events?text=`와 같은 사정).
-    """
-    ws = await ensure_workspace(pid)
-    if turn is not None:
-        return turn_response(_job_or_404(ws, turn), after)
-    if answers is None:
-        raise HTTPException(status_code=400,
-                            detail="either `turn` or `answers` is required")
-    try:
-        raw = json.loads(answers)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400,
-                            detail="answers must be a JSON object")
-    if not isinstance(raw, dict):
-        raise HTTPException(status_code=400, detail="answers must be a JSON object")
-    return turn_response(start_turn(ws, "answers",
-                                    lambda: ws.runner.send_answers(raw)))
 
 @router.get("/projects/{pid}/pending")
 async def get_pending(pid: str):
