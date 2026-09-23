@@ -153,8 +153,9 @@ does the update — **there is no instance replacement, so it is usable mid-work
 | Frontend | rebuilds and restarts | users already connected may hit errors for 1–2 min |
 | Nothing (already current) | nothing at all | none |
 
-- Restarting the backend **cuts off conversations and build sessions in progress.** Conversations
-  resume when reopened; a running build session goes down the resume path instead. Apply frontend
+- Restarting the backend **cuts off conversations and build sessions in progress.** A cut-off
+  conversation shows "The server restarted and this task was interrupted" when the workspace is
+  reopened, and asking again continues it. A running build session goes down the resume path instead. Apply frontend
   and backend updates during a break.
 - Check what is running with \`git -C /opt/aipds rev-parse HEAD\`.`,
     },
@@ -234,7 +235,8 @@ plus a Bedrock call per conversation turn) — take it down when it is not in us
 | Prototype preview returns 404 | That is the intended response — enter through the [share link](/manual#share) |
 | English interface but Korean documents | Correct — [document language](/manual#doc-language) is separate from screen language |
 | Long messages drop the connection | Too much in a single message. Split it, or [attach it as a file](/manual#attach) |
-| The screen is frozen after sleep or a screensaver | Only the **live view** was lost — the AI kept working and the documents were saved. It reattaches by itself, so waiting picks the stream back up; if the turn finished meanwhile, a refresh brings the content back |
+| The screen is frozen after sleep or a screensaver | Only the **live view** was lost — the AI kept working on the server and the documents were saved. The screen reattaches by itself and picks up from what it missed. If "The connection dropped" appears, refresh — a task still in progress refills from the start, and a finished one comes back as chat history |
+| I refreshed while the AI was working | That is fine. The workspace reattaches to the task in progress as it opens, and the input stays locked until the task finishes. Opening the same project in another tab shows the same task |
 | Chat history looks empty | The instance may have been replaced. If a refresh does not bring it back, check the backend log |
 | One feature fails and the screen gives no reason | Usually IAM. \`AccessDenied\` in the backend log names the action |
 | SSH does not connect | By design. There is no SSH port; only SSM is open |

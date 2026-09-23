@@ -200,7 +200,7 @@ async def delete_project(pid: str):
     if app_module.registry.has_workspace(pid):
         already_stopped = app_module.registry.get(pid)
         try:
-            await already_stopped.runner.stop()
+            await already_stopped.stop()
         except Exception:
             _log.exception("runner stop failed for %s during delete (continuing)", pid)
     # 프로토타입의 **실체**는 S3 프리픽스 밖에 있다: 로컬 빌드 트리, 도는
@@ -256,7 +256,7 @@ async def delete_project(pid: str):
     # 피하고, 다른 객체면(늦게 attach된 워크스페이스) stop해 VM이 새지 않게 한다.
     if removed is not None and removed is not already_stopped:
         try:
-            await removed.runner.stop()
+            await removed.stop()
         except Exception:
             _log.exception("runner stop failed for %s during final registry removal (continuing)", pid)
     return {"deleted": True}

@@ -7,6 +7,7 @@ import type {
   ProjectPage,
   ProjectState,
   ProjectSummary,
+  TurnSummary,
 } from "./types";
 
 // The ONE place the base URL lives. No trailing slash.
@@ -17,12 +18,36 @@ export const API_BASE_URL = (
 export class ApiError extends Error {
   status: number;
   detail: string;
-  constructor(status: number, detail: string) {
+  /** 409 `turn_in_progress`가 알려 주는 **이미 도는 턴**의 id. 거절된 쪽이 할 일은
+   *  다시 보내기가 아니라 그 턴을 보는 것이다(backend routes/turns.py의 start_turn). */
+  turnId?: string;
+  constructor(status: number, detail: string, turnId?: string) {
     super(`API ${status}: ${detail}`);
     this.name = "ApiError";
     this.status = status;
     this.detail = detail;
+    this.turnId = turnId;
   }
+}
+
+/** 실패 응답을 ApiError로 옮긴다. `detail`은 문자열이거나 `{code, turn_id}`다 —
+ *  후자는 코드를 `detail`로, 턴 id를 `turnId`로 싣는다. JSON이 아니면(프록시가 낸
+ *  431 등) statusText를 유지한다. */
+export async function apiErrorFrom(res: Response): Promise<ApiError> {
+  let detail = res.statusText;
+  let turnId: string | undefined;
+  try {
+    const body = await res.json();
+    const d = body?.detail;
+    if (typeof d === "string") detail = d;
+    else if (d && typeof d.code === "string") {
+      detail = d.code;
+      if (typeof d.turn_id === "string") turnId = d.turn_id;
+    }
+  } catch {
+    // non-JSON error body — keep statusText
+  }
+  return new ApiError(res.status, detail, turnId);
 }
 
 // Encode a {name:path} value segment-by-segment: escape each segment but keep
@@ -45,16 +70,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers,
     credentials: CREDENTIALS,
   });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      if (body && typeof body.detail === "string") detail = body.detail;
-    } catch {
-      // non-JSON error body — keep statusText
-    }
-    throw new ApiError(res.status, detail);
-  }
+  if (!res.ok) throw await apiErrorFrom(res);
   // 204/empty bodies aren't used by this contract; every 2xx here returns JSON.
   return (await res.json()) as T;
 }
@@ -114,9 +130,12 @@ export async function listApprovals(pid: string): Promise<ApprovalEvidence> {
  *  본문이 없는 이유: 승인 대상 문서와 그 해시를 **백엔드가** 정한다. 화면이
  *  보낸 값을 믿으면 사용자가 보고 있던 것과 다른(낡은) 내용을 승인할 수 있다.
  */
-export async function approveDocument(pid: string): Promise<void> {
-  await request<{ approved: boolean }>(
+/** 승인한다. 레코드를 남기고 다음 단계의 턴을 **시작만** 한다 — 그 턴은 워크스페이스가
+ *  `GET /turn`으로 붙어 본다. 도는 턴이 있으면 409 `turn_in_progress`다. */
+export async function approveDocument(pid: string): Promise<{ turnId: string }> {
+  const r = await request<{ approved: boolean; turn_id: string }>(
     `/projects/${encodeURIComponent(pid)}/approve`, { method: "POST" });
+  return { turnId: r.turn_id };
 }
 
 export async function listQuestionFiles(pid: string): Promise<string[]> {
@@ -153,6 +172,14 @@ export async function interruptTurn(pid: string): Promise<void> {
 export async function getPending(pid: string): Promise<string | null> {
   const r = await request<{ pending: string | null }>(`/projects/${encodeURIComponent(pid)}/pending`);
   return r.pending;
+}
+
+/** 이 프로젝트의 현재(또는 방금 끝난) 턴. 워크스페이스가 열릴 때 이것으로 붙을지
+ *  정한다. `interrupted`는 백엔드 재시작으로 끊긴 턴이다(backend turn_marker.py). */
+export async function getTurn(pid: string): Promise<TurnSummary | null> {
+  const r = await request<{ turn: TurnSummary | null }>(
+    `/projects/${encodeURIComponent(pid)}/turn`);
+  return r.turn;
 }
 
 // GET /projects/{pid}/history → { items: HistoryItem[] } (Task 1) — restores

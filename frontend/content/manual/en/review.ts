@@ -21,6 +21,8 @@ The badge above it tells you its state — *Draft under review* or *✓ Approved
       md: `When a document is waiting to be finalized, the gate appears below it. You have two choices.
 
 - **✓ Approve and continue** — the stage is settled with this document and the work moves on.
+  Pressing it takes you to the workspace, where the AI works through the next stage. If the AI is
+  still busy with another task, the approval is refused — press it again once that task is done.
 - **✏️ Request a revision** — takes you to the workspace chat with a revision draft prefilled in
   the input. You describe there what should change and how.
 

@@ -1,10 +1,12 @@
 // frontend/lib/api/sse.ts
-import { API_BASE_URL, ApiError } from "./client";
+import { API_BASE_URL, apiErrorFrom } from "./client";
 import { CREDENTIALS } from "@/lib/auth";
 import type { AgentEvent } from "./types";
 
 export interface StreamHandlers {
-  onEvent: (ev: AgentEvent) => void;
+  /** `seq`는 프레임의 SSE `id` — 턴 로그 안의 위치다. 다시 붙을 때 마지막으로 받은
+   *  값을 `watchTurn`의 `after`로 준다(backend routes/turns.py의 turn_response). */
+  onEvent: (ev: AgentEvent, seq?: number) => void;
   onDone: () => void;
   onError?: (err: unknown) => void;
   /** 턴 개시 응답(POST)의 본문. 스트림이 열리기 **전에** 한 번 불린다.
@@ -45,7 +47,8 @@ export function openStream(url: string, handlers: StreamHandlers): () => void {
       handlers.onError?.(err);
       return;
     }
-    handlers.onEvent(parsed);
+    const seq = ev.lastEventId ? Number(ev.lastEventId) : undefined;
+    handlers.onEvent(parsed, Number.isFinite(seq) ? seq : undefined);
     if (parsed.kind === "done" || parsed.kind === "error") {
       close();
       handlers.onDone();
@@ -62,7 +65,7 @@ export function openStream(url: string, handlers: StreamHandlers): () => void {
 }
 
 /**
- * 턴 입력을 **본문으로** 보내고 짧은 핸들을 받는다.
+ * 턴 입력을 **본문으로** 보내 턴을 시작하고, 그 id를 받는다.
  *
  * **왜 2단계인가.** 종전에는 텍스트가 SSE URL의 쿼리스트링으로 갔다
  * (`?text=...`). EventSource는 GET만 지원해 본문을 실을 수 없기 때문이다.
@@ -92,27 +95,20 @@ async function createTurn(path: string, body: unknown): Promise<TurnCreated> {
     credentials: CREDENTIALS,
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const parsed = await res.json();
-      if (parsed && typeof parsed.detail === "string") detail = parsed.detail;
-    } catch {
-      // 비-JSON 본문(프록시가 낸 431 등) — statusText를 유지한다.
-    }
-    throw new ApiError(res.status, detail);
-  }
+  // 409 `turn_in_progress`면 ApiError가 도는 턴의 id를 싣는다(apiErrorFrom).
+  if (!res.ok) throw await apiErrorFrom(res);
   // 본문 전체를 돌려준다 — `turn_id`만 뽑던 동안은 서버가 함께 보낸 말풍선
   // 텍스트가 여기서 버려졌고, 그래서 프론트가 그것을 다시 만들어야 했다.
   return (await res.json()) as TurnCreated;
 }
 
 /**
- * 핸들을 받아 스트림을 여는 공통 배관.
+ * 턴을 시작하고 그 id로 스트림을 여는 공통 배관.
  *
  * 반환된 unsubscribe는 **개시 요청이 아직 진행 중일 때도** 유효하다: 취소
- * 플래그를 세워 뒤늦게 도착한 핸들로 스트림을 열지 않는다. 없으면 사용자가
- * 곧바로 화면을 떠난 경우 고아 스트림이 남는다.
+ * 플래그를 세워 뒤늦게 도착한 id로 스트림을 열지 않는다. 없으면 사용자가
+ * 곧바로 화면을 떠난 경우 고아 스트림이 남는다. 스트림을 닫아도 턴은 서버에서
+ * 계속 돈다 — 닫는 것은 보는 것뿐이다.
  */
 export function openViaHandle(
   createPath: string,
@@ -144,25 +140,29 @@ export function openViaHandle(
 }
 
 /**
- * 진행 중인 턴에 다시 붙는다. **핸들이 없다.**
+ * 턴 하나를 본다 — 처음이면 `after=0`, 다시 붙을 때는 마지막으로 받은 seq.
  *
- * 다른 스트림은 전부 `POST`로 1회용·60초 핸들을 받아 그것으로 연다 — 긴 입력을
- * URL에서 빼기 위한 것이고(turn_handles.py), 그래서 재접속에는 쓸 수 없다. 이
- * 경로는 실을 입력이 없다: 이미 돌고 있는 턴을 볼 뿐이다.
+ * 턴은 요청이 아니라 서버 작업이다(backend aipds/turn_job.py). 보는 화면이 끊겨도
+ * 턴은 계속 돌고, 같은 id로 다시 붙으면 놓친 이벤트부터 이어서 받는다. 새로고침,
+ * 절전 복귀, 두 번째 탭이 모두 이 경로다.
  *
- * **왜 필요한가.** PC가 절전·화면보호기로 들어가면 네트워크가 끊겨 EventSource가
- * 죽는다. 턴이 2.5~5.6분이라 화면보호기 기본값과 정면으로 겹친다. 서버 쪽에서
- * 잃는 것은 없다(에이전트는 계속 쓰고, 파일은 즉시 S3로 간다) — 화면만 잃었다.
- *
- * 붙을 턴이 없으면 프레임 없이 `done`만 온다. 호출부가 그것으로 "이어볼 것이
- * 없다"를 판단한다.
+ * `Last-Event-ID` 헤더가 아니라 쿼리를 쓰는 이유: EventSource의 자동 재연결은
+ * `openStream`이 onerror에서 닫아 막는다(401과 끊김을 구별해야 한다). 재연결은
+ * 호출부가 명시적으로 하고, 그때 위치를 URL로 준다.
  */
-export function streamLive(pid: string, handlers: StreamHandlers): () => void {
+export function watchTurn(
+  pid: string,
+  turnId: string,
+  after: number,
+  handlers: StreamHandlers,
+): () => void {
   const p = encodeURIComponent(pid);
-  return openStream(`${API_BASE_URL}/projects/${p}/events/live`, handlers);
+  const t = encodeURIComponent(turnId);
+  return openStream(
+    `${API_BASE_URL}/projects/${p}/events?turn=${t}&after=${after}`, handlers);
 }
 
-// Opens the events stream for one turn: POST the text, then stream by handle.
+// Opens the events stream for one turn: POST the text (starts the turn), then watch it by id.
 export function streamEvents(pid: string, text: string, handlers: StreamHandlers): () => void {
   const p = encodeURIComponent(pid);
   return openViaHandle(
@@ -176,9 +176,9 @@ export function streamEvents(pid: string, text: string, handlers: StreamHandlers
 // 질문 파일에서 온 라운드의 답변 제출.
 //
 // streamAnswers와 무엇이 다른가: 저쪽은 파킹된 `can_use_tool` future를 깨워 **같은
-// 턴**을 이어가므로 `/answers/stream`으로 연다. 이 라운드에는 그 future가 없다 —
-// PostToolUse 훅이 질문 파일을 보고 턴을 이미 끝냈다. 그래서 백엔드가 답변을 파일에
-// 쓰고 **새 턴**의 핸들을 주고, 그 핸들은 보통 턴과 똑같이 `/events`로 연다.
+// CLI 턴**을 이어간다. 이 라운드에는 그 future가 없다 — PostToolUse 훅이 질문 파일을
+// 보고 턴을 이미 끝냈다. 그래서 백엔드가 답변을 파일에 쓰고 **새 턴**을 시작해 그
+// id를 주고, 화면은 보통 턴과 똑같이 `/events`로 본다.
 //
 // 이어갈 턴의 문장은 백엔드가 만든다(agent/prompts.py의 file_answers_recorded):
 // 에이전트가 읽는 텍스트는 UI 언어가 아니라 프로젝트 언어를 따라야 한다.

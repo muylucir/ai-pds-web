@@ -22,6 +22,10 @@ export const ko = {
   "stream.buildError": "빌드 중 오류가 발생했습니다.",
   "stream.tooLong": "입력이 너무 깁니다. 내용을 나눠서 보내 주세요.",
   "stream.disconnected": "연결이 끊어졌습니다. 다시 시도해 주세요.",
+  "stream.lost": "연결이 끊어졌습니다. AI는 서버에서 계속 작업하고 있을 수 있어요 — 잠시 뒤 페이지를 새로고침하면 이어서 볼 수 있습니다.",
+  "stream.interrupted": "서버가 다시 시작되어 이 작업이 중단되었습니다. 이어서 진행하려면 다시 요청해 주세요.",
+  "stream.turnInProgress": "AI가 이미 다른 작업을 하고 있어 이 메시지는 보내지 않았습니다. 진행 중인 작업을 아래에 이어서 보여 드립니다.",
+  "stream.noPendingQuestions": "답할 질문이 없습니다. 이미 답했거나 새 질문으로 바뀌었습니다.",
   "stream.answersFailed": "답변을 제출하지 못했습니다. 다시 시도해 주세요.",
   // 진행 표시(LiveActivityBar). 도구명 → 활동 문구.
   "activity.thinking": "생각하고 있어요",
@@ -268,6 +272,7 @@ export const ko = {
   "page.answerSheetLabel": "질문 답변 시트",
   "page.closeWithMark": "닫기 ✕",
   "page.turnFailed": "요청 처리에 실패했습니다. 다시 시도해 주세요.",
+  "page.approveBusy": "AI가 아직 작업 중입니다. 작업이 끝난 뒤 승인해 주세요.",
   "page.aiWorking": "AI가 요청을 처리하고 있습니다…",
   "page.approvedBanner": "✓ 승인 완료",
   "page.approvedBannerBody": "— 지금 내용으로 승인되었습니다. 문서가 바뀌면 다시 승인이 필요합니다.",
