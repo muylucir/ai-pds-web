@@ -28,6 +28,7 @@ const KEY_BY_CODE: Record<string, keyof Dict> = {
   language_unsupported: "err.languageUnsupported",
   build_slots_busy: "err.buildSlotsBusy",
   build_session_active: "err.buildSessionActive",
+  sandbox_unavailable: "err.sandboxUnavailable",
   init_incomplete: "err.initIncomplete",
   survey_closed: "err.surveyClosed",
   survey_full: "err.surveyFull",

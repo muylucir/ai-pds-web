@@ -72,6 +72,17 @@ assert.match(s, /if \[ -d \/opt\/aipds\/\.git \]; then/,
     + 'Trim before adding more.');
   console.log(`OK  user-data: ${bytes} bytes (limit 16384, headroom ${16384 - bytes})`);
 }
+// 2a') 샌드박스는 서비스 기동 **전에** 깔고 켠다(scripts/aipds-harden boot). 뒤에 오면 백엔드가
+//      래퍼 없이 먼저 떠서 에이전트·프로토타입을 인스턴스 롤로 띄운다. region이 없으면 boot는
+//      SSM을 읽지 못해 격리를 끈 채로 둔다.
+{
+  const boot = s.indexOf('AWS_REGION=ap-northeast-2 /opt/aipds/infra/scripts/aipds-harden boot');
+  assert.ok(boot >= 0, 'user-data must run aipds-harden boot with the region');
+  assert.ok(!s.includes('aipds-harden install'),
+    'install alone leaves the launcher and the IMDS block off on a new instance');
+  assert.ok(boot < s.indexOf('systemctl enable --now nginx aipds-backend aipds-frontend'),
+    'aipds-harden boot must run before the backend starts');
+}
 // 2b) 코드 갱신 경로. 배포에 SHA가 없으므로 cdk deploy는 인스턴스를 교체하지 않고
 //     코드를 갱신하지 않는다 — 이 스크립트가 **유일한** 갱신 수단이다. 없거나
 //     망가져도 배포는 성공하고, 그 사실은 갱신을 시도할 때에야 드러난다.

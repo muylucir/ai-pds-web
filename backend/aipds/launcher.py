@@ -4,9 +4,13 @@
 # 넣는다. 이 모듈은 그 래퍼를 부르는 argv와 넘길 env를 만든다. 래퍼는 이 쪽을 믿지 않으므로
 # (경로를 스스로 계산하고 env를 다시 거른다) 여기는 "무엇을 띄울지"만 말한다.
 #
-# **스위치.** `AIPDS_LAUNCHER=1`일 때만 켠다. 꺼져 있으면 지금처럼 백엔드 uid로 직접 띄운다
-# (로컬 개발, 단계적 롤아웃, 되돌리기). 켜져 있어도 기동 점검(`probe`)이 실패하면 경고를 남기고
-# 직접 실행으로 돌아간다 — 권한 전환의 실패는 기능 정지로 드러나기 때문이다.
+# **스위치.** `AIPDS_LAUNCHER=1`일 때만 켠다. 꺼져 있으면 백엔드 uid로 직접 띄운다(로컬 개발,
+# 되돌리기 — `aipds-harden disable`).
+#
+# **켜져 있는데 기동 점검(`probe`)이 실패하면 띄우지 않는다.** 직접 실행으로 돌아가면 에이전트와
+# 프로토타입이 인스턴스 롤 전체를 쥐고 도는데, 겉으로는 아무 일도 없어 보인다. 스위치는 새
+# 인스턴스에서 부팅 때 켜지므로(`aipds-harden boot`) 그 실패를 사람이 지켜보고 있지 않다 — 조용히
+# 격리가 빠지는 것보다 에이전트 턴과 호스팅이 멈추는 편이 드러난다. 되돌리는 길은 `disable`이다.
 from __future__ import annotations
 
 import asyncio
@@ -35,17 +39,29 @@ def switch_on() -> bool:
     return os.environ.get(SWITCH_ENV, "").strip().lower() in _TRUTHY
 
 
+class LauncherUnavailable(RuntimeError):
+    """스위치는 켜졌는데 래퍼를 쓸 수 없다. 직접 실행으로 돌아가지 않는다(머리말)."""
+
+
 @dataclass
 class Launcher:
     broker: CredentialBroker | None
     launch: str = LAUNCH
     claude_wrapper: str = CLAUDE_WRAPPER
+    #: 기동 점검이 실패한 이유. 있으면 띄우는 것은 전부 거부하고, 멈추기·스윕만 한다 —
+    #: 직전 백엔드가 래퍼로 띄운 unit은 여전히 치워야 한다.
+    refused: str | None = None
+
+    def require(self) -> None:
+        if self.refused is not None:
+            raise LauncherUnavailable(self.refused)
 
     def _sudo(self, *args: str) -> list[str]:
         return ["sudo", "-n", self.launch, *args]
 
     def claude(self, kind: str, project_id: str, slug: str | None) -> tuple[str, dict[str, str]]:
         """(cli_path, 더할 env). SDK 옵션에 그대로 넣는다."""
+        self.require()
         env = {"AIPDS_LAUNCH_KIND": kind, "AIPDS_LAUNCH_PROJECT": project_id}
         if slug is not None:
             env["AIPDS_LAUNCH_SLUG"] = slug
@@ -54,12 +70,14 @@ class Launcher:
         return self.claude_wrapper, env
 
     def npm_argv(self, kind: str, project_id: str, slug: str, *npm_args: str) -> list[str]:
+        self.require()
         return self._sudo("run", kind, project_id, slug, "--", *npm_args)
 
     def npm_env(self, kind: str, project_id: str, slug: str,
                 extra: dict[str, str]) -> dict[str, str]:
         """호스팅 npm의 env. 백엔드 env 전체(`os.environ`)를 넘기지 않는다 — 래퍼가 어차피
         거르지만, sudo까지 가는 프로세스에도 백엔드 설정을 싣지 않는다."""
+        self.require()
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
         for key in ("AWS_REGION", "AWS_DEFAULT_REGION"):
             if key in os.environ:
@@ -111,7 +129,7 @@ _current: Launcher | None = None
 
 
 def current() -> Launcher | None:
-    """켜진 래퍼, 또는 None(= 직접 실행)."""
+    """켜진 래퍼(거부 중일 수 있다 — `Launcher.refused`), 또는 None(= 스위치 꺼짐, 직접 실행)."""
     return _current
 
 
@@ -145,7 +163,8 @@ def _expected_layout() -> dict[str, str]:
 
 
 def probe(run=subprocess.run) -> Launcher | None:
-    """기동 점검. 스위치가 켜져 있고 래퍼가 실제로 쓸 수 있을 때만 Launcher를 돌려준다.
+    """기동 점검. 스위치가 꺼져 있으면 None(직접 실행). 켜져 있으면 늘 Launcher를 돌려준다 —
+    래퍼를 실제로 쓸 수 없으면 `refused`가 채워진 것을(머리말).
 
     래퍼에 `check`를 시켜 sudoers·설치·번들 CLI를 한 번에 확인하고, 래퍼가 계산하는 경로가
     백엔드의 경로와 같은지 본다 — 다르면 CLI는 백엔드가 보지 않는 곳에 트랜스크립트를 쓰고
@@ -158,15 +177,12 @@ def probe(run=subprocess.run) -> Launcher | None:
                   timeout=30, check=True).stdout
         report = json.loads(out)
     except Exception as exc:
-        _log.warning("%s=1 but the launcher is not usable (%s) — running agents and "
-                     "prototypes directly as the backend user", SWITCH_ENV, exc)
-        return None
+        return _refuse(f"the launcher is not usable ({exc})")
     expected = _expected_layout()
     mismatch = {k: (report.get(k), v) for k, v in expected.items() if report.get(k) != v}
     if mismatch or not report.get("claude") or not report.get("npm"):
-        _log.warning("launcher layout does not match the backend (%s; claude=%s npm=%s) — "
-                     "running directly", mismatch, report.get("claude"), report.get("npm"))
-        return None
+        return _refuse(f"launcher layout does not match the backend ({mismatch}; "
+                       f"claude={report.get('claude')} npm={report.get('npm')})")
     broker = None
     role = os.environ.get(credentials.ROLE_ENV, "").strip()
     if role:
@@ -182,3 +198,9 @@ def probe(run=subprocess.run) -> Launcher | None:
     _log.info("launcher on (imds_block=%s, credentials=%s)", report.get("imds_block"),
               "on" if broker else "off")
     return Launcher(broker=broker)
+
+
+def _refuse(reason: str) -> Launcher:
+    _log.error("%s=1 but %s — agent turns and prototype hosting are refused until it is "
+               "fixed (or `aipds-harden disable` runs them directly)", SWITCH_ENV, reason)
+    return Launcher(broker=None, refused=reason)

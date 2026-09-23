@@ -4,6 +4,8 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
+import { INSTANCE_PARAMS } from './instance-params';
 
 // 프로토타입 프리뷰 전용 오리진.
 //
@@ -24,6 +26,9 @@ import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 //
 // **요청이 어느 표면으로 왔는지.** 이 배포만 `X-Preview-Verify`를 붙인다. 기존 배포가 붙이는
 // `X-Origin-Verify`도 함께 붙인다 — nginx가 그것으로 CloudFront 밖의 직접 접근을 막는다.
+//
+// **인스턴스가 이 값을 아는 법.** 두 출력을 SSM 파라미터로도 쓴다(lib/instance-params.ts). 새
+// 인스턴스는 부팅 때 그것을 읽어 백엔드에 프리뷰 오리진을 알린다(aipds-harden `boot`).
 
 export interface PreviewStackProps extends cdk.StackProps {
   /** EC2의 퍼블릭 DNS(EIP). CloudFront 오리진은 IP를 받지 않는다. */
@@ -99,9 +104,24 @@ export class AipdsPreviewStack extends cdk.Stack {
       },
     });
 
-    new cdk.CfnOutput(this, 'PreviewOrigin', {
-      value: `https://${distribution.distributionDomainName}`,
+    const previewOrigin = `https://${distribution.distributionDomainName}`;
+    // id는 AgentCredsStack의 것('InstanceRole')과 달라야 한다 — 가져온 롤에 붙는 인라인 정책의
+    // 이름이 이 경로에서 나오므로, 같으면 두 스택이 같은 롤에 같은 이름의 정책을 만들려다 충돌한다.
+    const instanceRole = iam.Role.fromRoleArn(this, 'PreviewInstanceRole', props.instanceRoleArn, {
+      mutable: true,
     });
+    for (const [id, name, value] of [
+      ['PreviewOriginParam', INSTANCE_PARAMS.previewOrigin, previewOrigin],
+      ['PreviewSecretArnParam', INSTANCE_PARAMS.previewSecretArn, previewSecret.secretArn],
+    ] as const) {
+      new ssm.StringParameter(this, id, {
+        parameterName: name,
+        stringValue: value,
+        description: 'AI-PDS preview; read at boot by infra/scripts/aipds-harden.',
+      }).grantRead(instanceRole);
+    }
+
+    new cdk.CfnOutput(this, 'PreviewOrigin', { value: previewOrigin });
     new cdk.CfnOutput(this, 'PreviewSecretArn', { value: previewSecret.secretArn });
   }
 }

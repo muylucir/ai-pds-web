@@ -469,6 +469,7 @@ export const ko = {
   "err.languageUnsupported": "지원하지 않는 언어입니다.",
   "err.buildSlotsBusy": "다른 팀이 프로토타입을 빌드하고 있습니다 — 잠시 후 다시 시도해 주세요.",
   "err.buildSessionActive": "빌드 세션이 진행 중입니다 — 세션을 먼저 종료해 주세요.",
+  "err.sandboxUnavailable": "프로토타입 실행 환경(샌드박스)을 쓸 수 없어 호스팅을 시작하지 않았습니다 — 운영자에게 알려 주세요.",
   "err.initIncomplete": "초기화가 완료되지 않았습니다 — 다시 시도해 주세요.",
   "err.surveyClosed": "이 설문은 마감되었습니다.",
   "err.surveyFull": "응답 수 상한에 도달했습니다. 설문을 마감해 주세요.",

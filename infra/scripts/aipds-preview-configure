@@ -1,7 +1,7 @@
 #!/bin/bash
 # 백엔드에 프로토타입 프리뷰 오리진을 알린다(backend/aipds/preview_surface.py).
 #
-#   sudo /opt/aipds/infra/scripts/aipds-preview-configure <PreviewOrigin> <PreviewSecretArn>
+#   sudo /opt/aipds/infra/scripts/aipds-preview-configure [--no-restart] <PreviewOrigin> <PreviewSecretArn>
 #
 # 두 값은 AipdsPreviewStack의 출력이다(infra/lib/aipds-preview-stack.ts). 둘 다 비밀이
 # 아니다 — 비밀 헤더 값 자체는 백엔드가 기동 뒤 Secrets Manager에서 읽는다(인스턴스 롤이
@@ -19,8 +19,13 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "aipds-preview-configure: run as root" >&2
   exit 1
 fi
+RESTART=1
+if [ "${1:-}" = "--no-restart" ]; then
+  RESTART=0
+  shift
+fi
 if [ $# -ne 2 ]; then
-  echo "usage: aipds-preview-configure <PreviewOrigin> <PreviewSecretArn>" >&2
+  echo "usage: aipds-preview-configure [--no-restart] <PreviewOrigin> <PreviewSecretArn>" >&2
   exit 1
 fi
 ORIGIN="${1%/}"
@@ -43,5 +48,9 @@ Environment=AIPDS_PREVIEW_SECRET_ARN=$ARN
 CONF
 chmod 644 "$DIR/preview.conf"
 systemctl daemon-reload
-systemctl restart aipds-backend
-echo "aipds-preview-configure: backend restarted with preview origin $ORIGIN"
+if [ "$RESTART" = 1 ]; then
+  systemctl restart aipds-backend
+  echo "aipds-preview-configure: backend restarted with preview origin $ORIGIN"
+else
+  echo "aipds-preview-configure: preview origin $ORIGIN (applies when the backend starts)"
+fi

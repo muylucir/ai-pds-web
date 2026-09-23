@@ -1413,6 +1413,15 @@ def test_host_start_ok(proto_env):
     assert body["state"] == "running" and body["port"] == 4001
 
 
+def test_host_start_says_the_sandbox_is_unavailable(proto_env):
+    """래퍼가 거부 중이면(aipds/launcher.py) 로그 꼬리가 아니라 운영자가 고칠 일이라고 말한다."""
+    from aipds.launcher import LauncherUnavailable
+    proto_env["host"].start_exc = LauncherUnavailable("no sudoers")
+    resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "sandbox_unavailable"
+
+
 def test_host_start_targets_the_prototype_subtree_not_the_build_dir(proto_env):
     """The regression this guards: hosting must be pointed at the SAME
     directory `_local_build_exists` calls built -- {root}/{pid}/{slug}/prototype
