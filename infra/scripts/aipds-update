@@ -66,7 +66,18 @@ fi
 echo "aipds-update: $BEFORE -> $AFTER"
 gitsvc --no-pager log --oneline "$BEFORE..$AFTER"
 
-changed() { ! gitsvc diff --quiet "$BEFORE" "$AFTER" -- "$1"; }
+changed() { ! gitsvc diff --quiet "$BEFORE" "$AFTER" -- "$@"; }
+
+# 재시작·재빌드를 부르는 경로. 테스트만 바뀐 갱신으로 진행 중인 턴을 끊거나(백엔드) 접속 중인
+# 사용자에게 청크 404를 내지(프론트) 않는다. 테스트 파일은 런타임이 import하지 않는다 —
+# backend/tests/, 프론트의 *.test.ts(x)·test/(fixtures, msw)·e2e/·테스트 러너 설정.
+# backend/tests/test_update_script.py가 이 목록을 실제 git 저장소에서 돌려 본다.
+BACKEND_PATHS=(backend/ ':(exclude)backend/tests/')
+FRONTEND_PATHS=(frontend/
+  ':(exclude,glob)frontend/**/*.test.ts' ':(exclude,glob)frontend/**/*.test.tsx'
+  ':(exclude)frontend/test/' ':(exclude)frontend/e2e/'
+  ':(exclude)frontend/vitest.config.ts' ':(exclude)frontend/vitest.setup.ts'
+  ':(exclude)frontend/playwright.config.ts')
 
 # 이 스크립트 자신이 바뀌었으면 새 것을 깔아 둔다(다음 실행부터 적용된다).
 if changed infra/scripts/aipds-update; then
@@ -89,7 +100,7 @@ if [ -d /usr/local/libexec/aipds ] \
   echo "aipds-update: launcher reinstalled"
 fi
 
-if changed backend/; then
+if changed "${BACKEND_PATHS[@]}"; then
   # 의존성이 바뀐 경우만 다시 설치한다. 코드는 pip install -e 라 그대로 반영된다.
   if changed backend/pyproject.toml; then
     runuser -u "$SVC" -- "$APP/backend/.venv/bin/pip" install -e "$APP/backend"
@@ -108,7 +119,7 @@ if changed backend/; then
   echo "aipds-update: backend restarted (in-flight turns and build sessions were cut)"
 fi
 
-if changed frontend/; then
+if changed "${FRONTEND_PATHS[@]}"; then
   cd "$APP/frontend"
   if changed frontend/package-lock.json; then
     runuser -u "$SVC" -- env NEXT_PUBLIC_API_BASE_URL=/api HOME="$APP" npm ci
