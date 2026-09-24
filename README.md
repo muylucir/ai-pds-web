@@ -121,9 +121,11 @@ CloudFront goes in front of it.
 | `AipdsDrillStack` | S3 artifact bucket (`projects/*` + `sessions/*` + `surveys/*` + `models/*` + `design/*`) + backend execution role (Bedrock invoke + S3) |
 | `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 + role groups (`admin`/`pm`) + 2 seed accounts |
 | `AipdsHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
+| `AipdsPreviewStack` | Separate CloudFront for prototype previews (step [7](#7-prototype-preview-origin)) |
+| `AipdsAgentCredsStack` | Bedrock-only AgentRole for the sandboxed agents and prototypes (step [8](#8-sandboxed-agents-and-prototypes)) |
 
-The three stacks depend on each other, so **deploy them together with `--all`** (`app.ts` passes
-the bucket and User Pool references into the hosting stack). CDK decides the order.
+The stacks depend on each other, so **deploy them together with `--all`** (`app.ts` passes
+the bucket, User Pool and instance references between them). CDK decides the order.
 
 ### 1. Prerequisites
 
@@ -243,68 +245,75 @@ import fails at the upload (a CORS error in the browser console).
 
 Prototypes are code the build agent wrote, so they are served from **a different origin than the app** —
 on the same origin, the signed-in viewer's session cookie and token reach that code
-(`backend/aipds/preview_surface.py`). The preview CloudFront is a **separate stack**; it only references
-what HostingStack created, so deploying it does not replace the EC2 instance:
-
-```bash
-cd infra
-AIPDS_PREVIEW_ORIGIN_DNS=ec2-<a-b-c-d>.<region>.compute.amazonaws.com \
-AIPDS_ORIGIN_VERIFY_SECRET_ARN=<HostingStack OriginVerifyHeader secret ARN> \
-AIPDS_INSTANCE_ROLE_ARN=<HostingStack InstanceRole ARN> \
-  npx cdk deploy AipdsPreviewStack --require-approval never
-```
-
-Then tell the instance about the outputs `PreviewOrigin` and `PreviewSecretArn` (this restarts the backend):
-
-```bash
-sudo /opt/aipds/infra/scripts/aipds-preview-configure <PreviewOrigin> <PreviewSecretArn>
-```
-
-From then on share links are preview-domain URLs, and old links opened on the app domain move to the same
-path on the preview domain. The app domain no longer serves prototypes. The stack also writes both values to
-SSM Parameter Store (`/aipds/preview-origin`, `/aipds/preview-secret-arn`), and a new instance applies them
-at boot (`aipds-harden boot`), so this command is only for the instance that is already running. Without
-the stack, prototypes are served from the app domain: everything works, only the isolation is missing.
+(`backend/aipds/preview_surface.py`). The preview CloudFront is a **separate stack** (`AipdsPreviewStack`)
+that only references what HostingStack created. `cdk deploy --all` creates it; there is nothing to run
+by hand. Share links are preview-domain URLs, links opened on the app domain move to the same path on the
+preview domain, and the app domain does not serve prototypes.
 
 ### 8. Sandboxed agents and prototypes
 
 The Discovery and build agents and hosted prototypes run as **different uids from the backend**
 (`aipds-agent`, `aipds-proto`) in a systemd sandbox that only sees their own project's tree
-(`infra/scripts/aipds-launch`). They cannot write the app tree, see other projects' trees, or read
-the backend's env and secrets, and instead of the instance role they get short-lived credentials
-for an **AgentRole that can only invoke Bedrock** (`backend/aipds/credentials.py`). That role is a
-separate stack that only references HostingStack:
+(`infra/scripts/aipds-launch`), with IMDS blocked. They cannot write the app tree, see other projects'
+trees, or read the backend's env and secrets, and instead of the instance role they get short-lived
+credentials for an **AgentRole that can only invoke Bedrock** (`backend/aipds/credentials.py`). That
+role is a separate stack (`AipdsAgentCredsStack`) that only references HostingStack; `cdk deploy --all`
+creates it too.
 
-```bash
-cd infra
-AIPDS_INSTANCE_ROLE_ARN=<HostingStack InstanceRole ARN> \
-  npx cdk deploy AipdsAgentCredsStack --require-approval never
-```
+**How the instance turns it on.** Both separate stacks write their values to SSM Parameter Store
+(`/aipds/agent-role-arn`, `/aipds/preview-origin`, `/aipds/preview-secret-arn`,
+`infra/lib/instance-params.ts`). The instance applies them itself with `aipds-harden sync`: once at
+boot before the services start, and then every 2 minutes from a systemd timer — the instance boots with
+HostingStack, before the two stacks exist, so a few minutes after `cdk deploy --all` finishes the
+backend restarts once with the launcher on, IMDS blocked and the preview origin set. After that the
+timer changes nothing unless a stack value changes. It never turns anything off: a missing or
+unreadable value leaves the current settings as they are.
 
-Then turn it on step by step on the instance (each step restarts the backend):
+On the instance (`sudo /opt/aipds/infra/scripts/aipds-harden …`):
 
-```bash
-sudo /opt/aipds/infra/scripts/aipds-harden install            # users, launcher, permissions; launcher stays off
-sudo /opt/aipds/infra/scripts/aipds-harden enable <AgentRoleArn>
-# after checking a Discovery turn and a prototype build and hosting
-sudo /opt/aipds/infra/scripts/aipds-harden imds block
-```
+| Command | What it does |
+|---|---|
+| `status` | Current state: users, launcher, `imds_block`, drop-ins, the sync timer, running sandbox units |
+| `sync` | Apply the stack values now (the timer does this every 2 minutes) |
+| `disable` | Run agents and prototypes directly as the backend user — the rollback. **Holds the sync** (`/etc/aipds/hold`) so the timer does not turn it back on |
+| `imds allow` | Let sandboxed processes reach IMDS again. Also holds the sync |
+| `enable <AgentRoleArn>` / `imds block` | Turn it back on by hand; releases the hold |
 
-`imds block` must come last — blocking before the sandboxed processes are confirmed to reach
-Bedrock through the credential endpoint cuts the agents' and prototypes' LLM calls. To roll back,
-`aipds-harden disable` (back to running directly). `aipds-harden status` shows the state.
-
-These steps are for the instance that is already running. The stack also writes the AgentRole ARN to
-SSM Parameter Store (`/aipds/agent-role-arn`), and a new instance runs `aipds-harden boot` from
-user-data before its services start: it installs, and if the parameter exists it turns the launcher
-on and blocks IMDS in one go. Without the stack the instance boots with the launcher off (the boot log
-says so).
+Each of these restarts the backend (in-flight turns and builds are cut); `sync` only when something
+changed.
 
 If the launcher is on but its startup check (sudoers, paths, bundled CLI) fails, the backend does
 **not** fall back to running directly — that would hand the agents and prototypes the whole instance
 role without anyone noticing. It logs an error, agent turns fail, and starting a prototype answers
 `503 sandbox_unavailable` (`probe` in `backend/aipds/launcher.py`). Fix the cause, or run
 `aipds-harden disable` to run directly on purpose.
+
+### 9. Protecting a running instance
+
+A HostingStack deploy can **replace the EC2 instance**: the AMI is not pinned
+(`latestAmazonLinux2023()`), and the instance's user-data is part of the template
+(`userDataCausesReplacement`). Once an environment is in use, set a stack policy that refuses any
+replacement or deletion in HostingStack, and turn on termination protection:
+
+```bash
+aws cloudformation set-stack-policy --stack-name AipdsHostingStack --stack-policy-body \
+  '{"Statement":[{"Effect":"Deny","Principal":"*","Action":["Update:Replace","Update:Delete"],"Resource":"*"},
+                 {"Effect":"Allow","Principal":"*","Action":"Update:Modify","Resource":"*"}]}'
+aws cloudformation update-termination-protection --stack-name AipdsHostingStack \
+  --enable-termination-protection
+```
+
+A deploy that would replace the instance then fails and rolls back instead. To update the two separate
+stacks in such an environment without touching HostingStack, pin HostingStack's values with env — then
+the two stacks do not depend on HostingStack and deploy alone (`infra/lib/sandbox-stacks.ts`):
+
+```bash
+cd infra
+AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> \
+AIPDS_PREVIEW_ORIGIN_DNS=ec2-<a-b-c-d>.<region>.compute.amazonaws.com \
+AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader secret ARN> \
+  npx cdk deploy AipdsAgentCredsStack AipdsPreviewStack --require-approval never
+```
 
 ### Changing the region
 
@@ -540,7 +549,7 @@ reads them (`backend/aipds/app.py`, `backend/aipds/cli_settings.py`).
 | `AIPDS_DISCOVERY_CONFIG_DIR` | — | `CLAUDE_CONFIG_DIR` for the Discovery agent. **Leave it empty and the backend user's `~/.claude`** (personal skills, agents, CLAUDE.md) mixes in, so results vary with the host's setup. Locally, point it at the repo's `discovery-config/` |
 | `AIPDS_PROTO_CONFIG_DIR` | — | `CLAUDE_CONFIG_DIR` for the build agent. **It must not be the same path as the one above** — sharing makes Discovery run with the shadcn-design skill loaded while it writes documents. Locally, the repo's `proto-config/` |
 | `AIPDS_AGENT_HOME_DIR` | `~/aipds-agent-home` (EC2: `/opt/aipds/agent-home`) | Root of the per-project CLI config dir and HOME (`backend/aipds/agent_home.py`). Transcripts live here. The two shared config dirs are the **source of the content** copied into it |
-| `AIPDS_LAUNCHER` | `false` | Whether agents and prototypes start through the sandbox launcher. Turned on by `aipds-harden enable` (step [8](#8-sandboxed-agents-and-prototypes) above) |
+| `AIPDS_LAUNCHER` | `false` | Whether agents and prototypes start through the sandbox launcher. Turned on by `aipds-harden sync` from the `AipdsAgentCredsStack` value (step [8](#8-sandboxed-agents-and-prototypes) above) |
 | `AIPDS_AGENT_ROLE_ARN` | — | The Bedrock-only role handed to sandboxed processes. Empty means no credential endpoint |
 | `AIPDS_CREDENTIALS_PORT` | `8001` | Loopback port of the credential endpoint. Must be a port nginx does not proxy |
 | `AIPDS_PROTO_ROOT` | `~/aipds-protos` | Shared root for prototype builds and hosting |
