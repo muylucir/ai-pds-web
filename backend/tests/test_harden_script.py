@@ -9,6 +9,7 @@
 # `set -e` 아래에서 없는 파일 하나가 부팅을 멈추는 종류의 결함을 못 잡는다(실제로 한 번 그랬다).
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -21,8 +22,18 @@ SECRET = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:Preview-AbCd
 
 FAKE_AWS = """#!/bin/bash
 # aws ssm get-parameter --region R --name N --query ... --output text
-while [ $# -gt 0 ]; do [ "$1" = --name ] && name=$2; shift; done
+# aws s3api get-bucket-cors|put-bucket-cors --region R --bucket B [--cors-configuration JSON]
+op=$2
+while [ $# -gt 0 ]; do
+  case "$1" in --name) name=$2 ;; --cors-configuration) cors=$2 ;; esac; shift
+done
 [ -e "$FAKE/aws-broken" ] && { echo "Could not connect to the endpoint URL" >&2; exit 255; }
+if [ "$op" = get-bucket-cors ] || [ "$op" = put-bucket-cors ]; then
+  [ -e "$FAKE/cors-denied" ] && { echo "An error occurred (AccessDenied)" >&2; exit 254; }
+  if [ "$op" = put-bucket-cors ]; then printf '%s' "$cors" > "$FAKE/cors.json"; exit 0; fi
+  [ -e "$FAKE/cors.json" ] && { cat "$FAKE/cors.json"; exit 0; }
+  echo "An error occurred (NoSuchCORSConfiguration)" >&2; exit 254
+fi
 f="$FAKE/params$name"
 if [ -e "$f" ]; then cat "$f"; else
   echo "An error occurred (ParameterNotFound) when calling the GetParameter operation:" >&2; exit 254
@@ -31,6 +42,7 @@ fi
 FAKE_SYSTEMCTL = """#!/bin/bash
 echo "$*" >> "$FAKE/systemctl.log"
 if [ "$1" = is-active ]; then [ -e "$FAKE/backend-active" ]; exit; fi
+if [ "$1" = show ]; then [ -e "$FAKE/env-$2" ] && cat "$FAKE/env-$2"; exit 0; fi
 exit 0
 """
 FAKE_CURL = """#!/bin/bash
@@ -74,6 +86,15 @@ def host(tmp_path):
 
         def param(self, name, value):
             (fake / "params" / name.lstrip("/")).write_text(value)
+
+        fake_dir = fake
+
+        def unit_env(self, unit, text):
+            (fake / f"env-{unit}").write_text(text + "\n")
+
+        def cors(self):
+            path = fake / "cors.json"
+            return json.loads(path.read_text()) if path.exists() else None
 
         def flag(self, name, on=True):
             (fake / name).touch() if on else (fake / name).unlink(missing_ok=True)
@@ -191,3 +212,66 @@ def test_a_rejected_preview_value_does_not_fail_the_run(host):
     assert "preview parameters rejected" in proc.stderr
     assert (host.dropin / "launcher.conf").exists()
     assert not (host.dropin / "preview.conf").exists()
+
+
+# ---- 버킷 CORS(프로젝트 가져오기의 브라우저 직접 업로드, infra/lib/aipds-upload-cors-stack.ts) ----
+
+APP = "https://d2example.cloudfront.net"
+DRILL_RULE = {"AllowedHeaders": ["content-type"], "AllowedMethods": ["PUT"],
+              "AllowedOrigins": ["http://localhost:3000"], "ExposeHeaders": ["ETag"],
+              "MaxAgeSeconds": 3000}
+
+
+@pytest.fixture
+def cors_host(host):
+    host.unit_env("aipds-backend", "HOME=/opt/aipds AIPDS_S3_BUCKET=artifacts-bkt AWS_REGION=ap-northeast-2")
+    host.unit_env("aipds-frontend", f"NODE_ENV=production APP_BASE_URL={APP}/")
+    return host
+
+
+def test_the_app_origin_is_added_to_the_drill_rule(cors_host):
+    """DrillStack을 AIPDS_UPLOAD_ORIGINS 없이 배포한 상태(localhost만) — 새 환경의 첫 배포가 이렇다."""
+    (cors_host.fake_dir / "cors.json").write_text(json.dumps({"CORSRules": [DRILL_RULE]}))
+    proc, calls = cors_host.run("sync")
+    assert proc.returncode == 0, proc.stderr
+    rules = cors_host.cors()["CORSRules"]
+    assert rules == [{**DRILL_RULE, "AllowedOrigins": ["http://localhost:3000", APP]}]
+    assert f"added {APP}" in proc.stdout
+    # CORS는 백엔드 설정이 아니다 — 재시작하지 않는다.
+    assert _restarts(calls) == []
+
+    before = cors_host.cors()
+    proc, _ = cors_host.run("sync")
+    assert "added" not in proc.stdout and cors_host.cors() == before
+
+
+def test_a_bucket_without_cors_gets_the_drill_shaped_rule(cors_host):
+    proc, _ = cors_host.run("sync")
+    assert proc.returncode == 0, proc.stderr
+    assert cors_host.cors() == {"CORSRules": [{**DRILL_RULE, "AllowedOrigins": [APP]}]}
+
+
+def test_without_the_permission_nothing_fails(cors_host):
+    """AipdsUploadCorsStack 전 — 경고만 하고, 나머지 동기화(래퍼·프리뷰)는 그대로 한다."""
+    cors_host.flag("cors-denied")
+    cors_host.param("/aipds/agent-role-arn", ARN)
+    proc, _ = cors_host.run("sync")
+    assert proc.returncode == 0, proc.stderr
+    assert "AipdsUploadCorsStack" in proc.stderr
+    assert (cors_host.dropin / "launcher.conf").exists()
+
+
+def test_a_held_instance_still_keeps_uploads_working(cors_host):
+    """hold는 샌드박스 롤백이다 — 가져오기 업로드와는 무관하다."""
+    cors_host.conf.mkdir(parents=True, exist_ok=True)
+    (cors_host.conf / "hold").write_text("disable at 2026-09-24T00:00:00Z\n")
+    proc, _ = cors_host.run("sync")
+    assert proc.returncode == 0 and "held" in proc.stdout
+    assert APP in cors_host.cors()["CORSRules"][0]["AllowedOrigins"]
+
+
+def test_a_non_https_app_origin_is_not_written(cors_host):
+    cors_host.unit_env("aipds-frontend", "APP_BASE_URL=http://example.com")
+    proc, _ = cors_host.run("sync")
+    assert proc.returncode == 0 and "not https" in proc.stderr
+    assert cors_host.cors() is None

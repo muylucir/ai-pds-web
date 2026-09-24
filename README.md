@@ -123,6 +123,7 @@ CloudFront goes in front of it.
 | `AipdsHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
 | `AipdsPreviewStack` | Separate CloudFront for prototype previews (step [7](#7-prototype-preview-origin)) |
 | `AipdsAgentCredsStack` | Bedrock-only AgentRole for the sandboxed agents and prototypes (step [8](#8-sandboxed-agents-and-prototypes)) |
+| `AipdsUploadCorsStack` | Lets the instance keep the bucket's CORS on its app origin (step [6](#6-project-import)) |
 
 The stacks depend on each other, so **deploy them together with `--all`** (`app.ts` passes
 the bucket, User Pool and instance references between them). CDK decides the order.
@@ -227,19 +228,16 @@ with **Reset password** in `/admin/users`.
 Once signed in, anyone can change their own password at any time from **Change password** in the user
 menu at the top right — regardless of role, so a PM can too.
 
-### 6. Enable project import
+### 6. Project import
 
-Import has the **browser upload the bundle straight to S3**, so the bucket has to know that origin.
-Once `DistributionDomain` exists, pass it in and redeploy **the drill stack only**:
-
-```bash
-AIPDS_UPLOAD_ORIGINS=https://dxxxx.cloudfront.net \
-  npx cdk deploy AipdsDrillStack --require-approval never
-```
-
-That stack holds only the bucket and the role, so it **does not replace the EC2 instance** — projects
-in flight and prototype build trees stay where they are. Skip this step and export still works while
-import fails at the upload (a CORS error in the browser console).
+Import has the **browser upload the bundle straight to S3**, so the bucket's CORS has to allow the app
+origin. That origin is HostingStack's CloudFront, and HostingStack depends on the bucket — so the
+instance sets it itself: `aipds-harden sync` (step [8](#8-sandboxed-agents-and-prototypes)) adds its own
+`APP_BASE_URL` to the bucket's PUT rule whenever it is missing, with the permission
+`AipdsUploadCorsStack` grants (`infra/lib/aipds-upload-cors-stack.ts`). There is nothing to run by hand;
+if the drill stack is redeployed and rewrites the CORS, the origin is back within a few minutes.
+`AIPDS_UPLOAD_ORIGINS` (comma-separated) adds further origins to the drill stack's rule, for example a
+custom domain.
 
 ### 7. Prototype preview origin
 
@@ -303,16 +301,18 @@ aws cloudformation update-termination-protection --stack-name AipdsHostingStack 
   --enable-termination-protection
 ```
 
-A deploy that would replace the instance then fails and rolls back instead. To update the two separate
-stacks in such an environment without touching HostingStack, pin HostingStack's values with env — then
-the two stacks do not depend on HostingStack and deploy alone (`infra/lib/sandbox-stacks.ts`):
+A deploy that would replace the instance then fails and rolls back instead. To update the three
+instance-side stacks in such an environment without touching HostingStack or the drill stack, pin their
+values with env — then the three stacks depend on neither and deploy alone (`infra/lib/sandbox-stacks.ts`):
 
 ```bash
 cd infra
 AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> \
 AIPDS_PREVIEW_ORIGIN_DNS=ec2-<a-b-c-d>.<region>.compute.amazonaws.com \
 AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader secret ARN> \
-  npx cdk deploy AipdsAgentCredsStack AipdsPreviewStack --require-approval never
+AIPDS_ARTIFACTS_BUCKET=<artifacts bucket name> \
+  npx cdk deploy --exclusively AipdsAgentCredsStack AipdsPreviewStack AipdsUploadCorsStack \
+  --require-approval never
 ```
 
 ### Changing the region
@@ -556,7 +556,7 @@ reads them (`backend/aipds/app.py`, `backend/aipds/cli_settings.py`).
 | `AIPDS_PROTO_MAX_CONCURRENT` | `10` | Global cap on concurrent builds. Over it, starting a session returns 429 |
 | `AIPDS_PROTO_PERMISSION_MODE` | `bypassPermissions` | Builds run unattended, so there is nobody to approve. Override it to tighten (an unknown value raises ValueError immediately) |
 | `AIPDS_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
-| `AIPDS_UPLOAD_ORIGINS` | — | Read at **CDK deploy time** only (not at runtime). Origins allowed to PUT a bundle directly to the bucket, i.e. the bucket's CORS rule. See [step 6](#6-enable-project-import) |
+| `AIPDS_UPLOAD_ORIGINS` | — | Read at **CDK deploy time** only (not at runtime). Origins allowed to PUT a bundle directly to the bucket **in addition to** the app origin, which the instance adds itself. See [step 6](#6-project-import) |
 | `AIPDS_LOG_LEVEL` | `INFO` | Application log level (`app.configure_logging()`) |
 | `AIPDS_PERFORMANCE_LOGS` | `true` | Whether to log elapsed time for turn and build phases (`performance.py`) |
 | `AIPDS_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **Leave both empty** to bypass authentication entirely (the local default). Leave only one empty and every request raises RuntimeError (fail-closed) |
