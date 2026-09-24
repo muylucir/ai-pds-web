@@ -151,6 +151,18 @@ def test_imds_is_blocked_only_when_configured(launch):
     assert "IPAddressDeny=169.254.169.254/32 fd00:ec2::254/128" in _props(argv)
 
 
+@pytest.mark.parametrize("kind, slug", [("discovery", None), ("build", "todo"),
+                                        ("host-build", "todo"), ("proto", "todo")])
+def test_the_agent_home_is_handed_back_to_the_group_when_the_unit_stops(launch, kind, slug):
+    """번들 CLI는 config dir과 트랜스크립트를 0700/0600으로 명시해 만든다(버전에 따라) — 그러면
+    백엔드가 그 프로젝트를 재개하지도 지우지도 못한다. 경로는 계산한 자기 agent-home뿐이다."""
+    _, home = _tree(launch, kind, slug=slug)
+    args = {"host-build": ["install"], "proto": ["run", "start"]}.get(kind, [])
+    argv, _ = _run(launch, kind, slug=slug, args=args)
+    stops = [p for p in _props(argv) if p.startswith("ExecStopPost=")]
+    assert stops == [f"ExecStopPost=+/usr/bin/chmod -R g+rwX {home}"]
+
+
 def test_proto_serves_only_the_prototype_subtree_with_allowed_npm_args(launch):
     work, home = _tree(launch, "proto", slug="todo")
     argv, env = _run(launch, "proto", slug="todo", args=["run", "start"],

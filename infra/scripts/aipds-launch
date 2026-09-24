@@ -47,6 +47,7 @@ SYSTEMD_RUN = "/usr/bin/systemd-run"
 SYSTEMCTL = "/usr/bin/systemctl"
 UNSHARE = "/usr/bin/unshare"
 SETPRIV = "/usr/bin/setpriv"
+CHMOD = "/usr/bin/chmod"
 GROUP = "aipds-work"
 UNIT_PREFIX = "aipds-run-"
 
@@ -239,6 +240,14 @@ def build_run(kind: str, project_id: str, slug: str | None, args: list[str],
     ]
     if conf.get("imds_block") == "1":
         props.append("IPAddressDeny=169.254.169.254/32 fd00:ec2::254/128")
+    # agent-home은 백엔드와 그룹으로 함께 쓰는 트리다(백엔드가 트랜스크립트를 되살리고, 프로젝트를
+    # 지운다). UMask=0007이면 충분할 것 같지만, 번들 CLI는 버전에 따라 자기 config dir과 트랜스크립트를
+    # 0700/0600으로 **명시해** 만든다(운영에서 확인: SDK 0.2.157의 번들은 umask를 따랐고 0.2.159의
+    # 번들은 아니다). 그 순간 백엔드는 그 프로젝트를 재개하지도 지우지도 못한다. 그래서 unit이 끝날
+    # 때마다 그룹 권한을 되돌린다. `+`: root로, 샌드박스 네임스페이스 밖에서 — 경로는 여기서 계산한
+    # 값이고 이때 unit의 프로세스는 모두 끝나 있다. chmod -R은 재귀 중의 심볼릭 링크를 따라가지 않는다.
+    # ExecStopPost는 unit이 어떻게 멈추든(정상 종료, stop, 백엔드 재시작 뒤 sweep) 돈다.
+    props.append(f"ExecStopPost=+{CHMOD} -R g+rwX {home}")
 
     trampoline = [
         UNSHARE, "--pid", "--fork", "--mount-proc", "--kill-child", "--",
