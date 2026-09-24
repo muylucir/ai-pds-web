@@ -3,28 +3,37 @@
 #
 #   sudo /opt/aipds/infra/scripts/aipds-harden install [--no-restart]
 #   sudo /opt/aipds/infra/scripts/aipds-harden boot
+#   sudo /opt/aipds/infra/scripts/aipds-harden sync
 #   sudo /opt/aipds/infra/scripts/aipds-harden enable <AgentRoleArn>
 #   sudo /opt/aipds/infra/scripts/aipds-harden disable
 #   sudo /opt/aipds/infra/scripts/aipds-harden imds block|allow
 #   sudo /opt/aipds/infra/scripts/aipds-harden status
 #
 # install  유저(aipds-agent, aipds-proto)·그룹(aipds-work), 래퍼 설치와 sudoers, 트리 권한,
-#          평문 시크릿의 권한. **래퍼 설정(enable·imds)은 건드리지 않는다** — 새 인스턴스라면 꺼진
+#          평문 시크릿의 권한, sync 타이머. **래퍼 설정(enable·imds)은 건드리지 않는다** — 새 인스턴스라면 꺼진
 #          채이고, 실행 중인 인스턴스라면 켜 둔 그대로다. 기반만 깐다. 멱등.
 # enable   래퍼를 켠다(AIPDS_LAUNCHER=1 + AgentRole). AgentRole은 AipdsAgentCredsStack의 출력.
 # imds     래퍼가 띄운 프로세스의 IMDS 접근. **enable 뒤 Bedrock 호출이 되는 것을 확인하고
 #          block한다** — 거꾸로 하면 에이전트와 프로토타입의 LLM 호출이 함께 끊긴다.
-# boot     새 인스턴스의 user-data가 서비스 기동 **전에** 부른다. install에 더해, 별도 스택이
-#          SSM에 남긴 값(infra/lib/instance-params.ts)이 있으면 enable + imds block, 프리뷰
-#          설정까지 한다. 첫 롤아웃의 "확인 뒤 block" 순서는 이미 검증된 구성을 다시 까는
-#          교체에는 필요 없다 — 교체된 인스턴스가 운영자를 기다리며 격리 없이 도는 틈이 더 크다.
-#          값이 없으면(스택 미배포) 그 기능은 꺼진 채다. 재시작하지 않는다.
+# sync     별도 스택이 SSM에 남긴 값(infra/lib/instance-params.ts)을 인스턴스에 반영한다: AgentRole이
+#          있으면 enable + imds block, 프리뷰 값이 있으면 프리뷰 설정. 바뀐 것이 있고 백엔드가 떠
+#          있으면 재시작한다. **타이머(aipds-harden-sync.timer)가 2분마다 돌린다** — 새 환경의
+#          `cdk deploy --all`에서 인스턴스는 HostingStack과 함께 먼저 부팅하고, 두 스택은 그 뒤에
+#          값을 쓴다. 부팅 때 한 번 읽는 것으로는 그 값을 못 본다.
+#          값이 없거나 읽지 못하면 아무것도 바꾸지 않는다(끄지 않는다). `disable`·`imds allow`는
+#          운영자의 선택이라 동기화를 멈춘다(`/etc/aipds/hold`) — `enable`·`imds block`이 푼다.
+#          첫 롤아웃의 "확인 뒤 block" 순서는 이미 검증된 구성을 다시 까는 데는 필요 없다.
+# boot     새 인스턴스의 user-data가 서비스 기동 **전에** 부른다. install + sync(재시작 없음).
 #
 # 왜 user-data가 아니라 이 스크립트인가: user-data를 바꾸면 HostingStack 배포가 EC2를
 # 교체한다(aipds-preview-configure와 같은 사정). user-data는 새 인스턴스에서 `boot`를
 # 부르고, 실행 중인 인스턴스에는 SSM으로 이것을 돌린다.
 #
-# enable·disable·imds·install은 백엔드를 재시작한다 — 진행 중인 턴과 빌드가 끊긴다.
+# enable·disable·imds·install은 백엔드를 재시작한다 — 진행 중인 턴과 빌드가 끊긴다. sync는 값이
+# 바뀌었을 때만.
+#
+# 타이머가 root로 돌리는 것은 root 소유 사본(/usr/local/libexec/aipds/harden)이다. 리포 안의 이
+# 파일은 aipds가 쓸 수 있으므로, 타이머가 이것을 직접 돌리면 aipds가 root를 얻는다(래퍼와 같은 이유).
 set -euo pipefail
 if [ "$(id -u)" -ne 0 ]; then
   echo "aipds-harden: run as root" >&2
@@ -57,6 +66,8 @@ FRONT_ENV=$CONF_DIR/frontend.env
 PARAM_AGENT_ROLE=/aipds/agent-role-arn
 PARAM_PREVIEW_ORIGIN=/aipds/preview-origin
 PARAM_PREVIEW_SECRET=/aipds/preview-secret-arn
+HOLD=$CONF_DIR/hold
+SYNC_UNIT=aipds-harden-sync
 
 restart_backend() {
   systemctl daemon-reload
@@ -72,6 +83,12 @@ Environment=AIPDS_LAUNCHER=1
 Environment=AIPDS_AGENT_ROLE_ARN=$1
 UNIT
   chmod 644 "$DROPIN/launcher.conf"
+}
+
+# 운영자가 고른 상태를 동기화가 되돌리지 않게.
+hold() {
+  mkdir -p "$CONF_DIR"
+  printf '%s at %s\n' "$1" "$(date -u +%FT%TZ)" > "$HOLD"
 }
 
 write_imds() {
@@ -104,35 +121,68 @@ instance_region() {
     http://169.254.169.254/latest/meta-data/placement/region || true
 }
 
-boot_apply() {
+# 동기화가 쓰는 세 파일. 없는 파일이 있어도(새 인스턴스) 실패하지 않는다 — set -e/pipefail이다.
+settings_digest() {
+  local f
+  for f in "$DROPIN/launcher.conf" "$DROPIN/preview.conf" "$LAUNCH_CONF"; do
+    printf '%s\n' "$f"
+    if [ -e "$f" ]; then cat "$f"; fi
+  done | sha256sum
+}
+
+settings_summary() {
+  local launcher=off imds preview=off
+  [ -e "$DROPIN/launcher.conf" ] && launcher=on
+  imds=$(sed -n 's/^imds_block=//p' "$LAUNCH_CONF" 2>/dev/null || true)
+  [ -e "$DROPIN/preview.conf" ] && preview=on
+  echo "launcher=$launcher imds_block=${imds:-?} preview=$preview"
+}
+
+# 스택이 남긴 값을 반영한다. $1=1이면 바뀐 것이 있을 때 백엔드를 재시작한다(떠 있을 때만).
+sync_apply() {
+  local restart=$1
+  if [ -e "$HOLD" ]; then
+    echo "aipds-harden: sync held ($HOLD — 'enable' or 'imds block' releases it)"
+    return 0
+  fi
   REGION=${AWS_REGION:-${AWS_DEFAULT_REGION:-$(instance_region)}}
   if [ -z "$REGION" ]; then
     echo "aipds-harden: WARNING no region (AWS_REGION unset, IMDS unreachable) — launcher and" \
       "preview settings not applied (existing ones unchanged)" >&2
     return 0
   fi
-  local arn origin secret
+  local before after arn origin secret
+  before=$(settings_digest)
   arn=$(get_param "$PARAM_AGENT_ROLE")
   case "$arn" in
+    # 래퍼 없이 IMDS만 막으면 아무것도 막지 않는다(IPAddressDeny는 래퍼가 띄운 unit에만 걸린다).
     arn:aws:iam::*:role/*)
       write_launcher "$arn"
       write_imds 1
-      echo "aipds-harden: launcher on, IMDS blocked ($arn)"
       ;;
     *) echo "aipds-harden: WARNING no $PARAM_AGENT_ROLE — launcher settings not applied (existing" \
-         "ones unchanged; on a new instance agents and prototypes run unsandboxed until" \
-         "'aipds-harden enable' — deploy AipdsAgentCredsStack)" >&2 ;;
+         "ones unchanged; until AipdsAgentCredsStack is deployed a new instance runs agents and" \
+         "prototypes unsandboxed)" >&2 ;;
   esac
   origin=$(get_param "$PARAM_PREVIEW_ORIGIN")
   secret=$(get_param "$PARAM_PREVIEW_SECRET")
   if [ -n "$origin" ] && [ -n "$secret" ]; then
-    # 값이 잘못돼도 부팅을 멈추지 않는다 — user-data는 set -e이고, 멈추면 앱 전체가 502다.
-    "$APP/infra/scripts/aipds-preview-configure" --no-restart "$origin" "$secret" \
+    # 값이 잘못돼도 멈추지 않는다 — boot는 user-data(set -e) 안이고, 멈추면 앱 전체가 502다.
+    "$LIBEXEC/preview-configure" --no-restart "$origin" "$secret" >/dev/null \
       || echo "aipds-harden: WARNING preview parameters rejected — served from the app origin" >&2
   else
     echo "aipds-harden: no preview parameters — preview settings not applied (existing ones unchanged)" >&2
   fi
+  after=$(settings_digest)
+  if [ "$before" = "$after" ]; then
+    echo "aipds-harden: sync — no change"
+    return 0
+  fi
   systemctl daemon-reload
+  echo "aipds-harden: sync — applied: $(settings_summary)"
+  if [ "$restart" = 1 ] && systemctl is-active --quiet aipds-backend; then
+    restart_backend
+  fi
 }
 
 install_all() {
@@ -152,6 +202,8 @@ install_all() {
   install -d -o root -g root -m 0755 "$LIBEXEC"
   install -o root -g root -m 0755 "$APP/infra/scripts/aipds-launch" "$LIBEXEC/launch"
   install -o root -g root -m 0755 "$APP/infra/scripts/aipds-claude" "$LIBEXEC/claude"
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-harden" "$LIBEXEC/harden"
+  install -o root -g root -m 0755 "$APP/infra/scripts/aipds-preview-configure" "$LIBEXEC/preview-configure"
 
   # env_keep은 래퍼의 PASS_EXACT/PASS_PREFIX/PASS_CHECKED와 같은 목록이다. 래퍼가 다시 거른다.
   # !log_allowed: 호출마다 CLI 인자 전체(시스템 프롬프트, MCP 설정)가 syslog에 남지 않게.
@@ -207,7 +259,26 @@ UNIT
   # nginx 마스터는 root로 설정을 읽는다. X-Origin-Verify 값이 이 파일에 평문으로 있다.
   [ -e /etc/nginx/conf.d/aipds.conf ] && chmod 600 /etc/nginx/conf.d/aipds.conf
 
+  # --- 스택이 남긴 값의 동기화(sync). 첫 실행은 켜고 2분 뒤 — boot는 이미 한 번 반영했다. ---
+  cat > "/etc/systemd/system/$SYNC_UNIT.service" <<UNIT
+[Unit]
+Description=AI-PDS: apply sandbox and preview settings from SSM (aipds-harden sync)
+[Service]
+Type=oneshot
+ExecStart=$LIBEXEC/harden sync
+UNIT
+  cat > "/etc/systemd/system/$SYNC_UNIT.timer" <<UNIT
+[Unit]
+Description=AI-PDS: aipds-harden sync every 2 minutes
+[Timer]
+OnActiveSec=2min
+OnUnitActiveSec=2min
+[Install]
+WantedBy=timers.target
+UNIT
+
   systemctl daemon-reload
+  systemctl enable --now "$SYNC_UNIT.timer" >/dev/null 2>&1
   if [ "$restart" = 1 ]; then
     systemctl restart aipds-backend
     [ "$front_restart" = 1 ] && systemctl restart aipds-frontend
@@ -223,7 +294,11 @@ case "${1:-}" in
     ;;
   boot)
     install_all --no-restart
-    boot_apply
+    sync_apply 0
+    ;;
+  sync)
+    [ -x "$LIBEXEC/preview-configure" ] || { echo "aipds-harden: run 'install' first" >&2; exit 1; }
+    sync_apply 1
     ;;
   enable)
     ARN="${2:-}"
@@ -233,16 +308,18 @@ case "${1:-}" in
     esac
     [ -x "$LIBEXEC/launch" ] || { echo "aipds-harden: run 'install' first" >&2; exit 1; }
     write_launcher "$ARN"
+    rm -f "$HOLD"
     restart_backend
     ;;
   disable)
     rm -f "$DROPIN/launcher.conf"
+    hold "disable"
     restart_backend
     ;;
   imds)
     case "${2:-}" in
-      block) write_imds 1 ;;
-      allow) write_imds 0 ;;
+      block) write_imds 1; rm -f "$HOLD" ;;
+      allow) write_imds 0; hold "imds allow" ;;
       *) echo "usage: aipds-harden imds block|allow" >&2; exit 1 ;;
     esac
     # 상주 Discovery CLI는 기동할 때의 설정으로 계속 돈다. 재시작하면 기동 스윕이 그 unit을
@@ -253,12 +330,14 @@ case "${1:-}" in
     id aipds-agent aipds-proto 2>&1 || true
     ls -l "$LIBEXEC" "$SUDOERS" 2>&1 || true
     cat "$LAUNCH_CONF" 2>/dev/null || echo "no $LAUNCH_CONF"
+    [ -e "$HOLD" ] && echo "sync held: $(cat "$HOLD")"
+    systemctl list-timers --no-legend "$SYNC_UNIT.timer" 2>/dev/null || true
     ls "$DROPIN" 2>/dev/null || true
     runuser -u "$SVC" -- sudo -n "$LIBEXEC/launch" check 2>&1 || true
     systemctl list-units --no-legend 'aipds-run-*' 2>/dev/null || true
     ;;
   *)
-    echo "usage: aipds-harden install|boot|enable <arn>|disable|imds block|allow|status" >&2
+    echo "usage: aipds-harden install|boot|sync|enable <arn>|disable|imds block|allow|status" >&2
     exit 1
     ;;
 esac

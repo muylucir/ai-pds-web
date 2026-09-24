@@ -30,6 +30,13 @@ export interface HostingStackProps extends cdk.StackProps {
 }
 
 export class AipdsHostingStack extends cdk.Stack {
+  /** 인스턴스 롤. 별도 스택(AgentCreds·Preview)이 여기에 권한을 붙인다. */
+  public readonly instanceRole: iam.IRole;
+  /** `X-Origin-Verify` 시크릿. 프리뷰 배포도 같은 값을 붙인다. */
+  public readonly originVerifySecret: secretsmanager.ISecret;
+  /** EIP의 퍼블릭 DNS 이름. CloudFront 오리진은 IP를 받지 않는다. */
+  public readonly originDnsName: string;
+
   constructor(scope: Construct, id: string, props: HostingStackProps) {
     super(scope, id, props);
 
@@ -200,6 +207,9 @@ export class AipdsHostingStack extends cdk.Stack {
       region === 'us-east-1' ? 'compute-1.amazonaws.com' : `${region}.compute.amazonaws.com`;
     const originDnsName =
       `ec2-${cdk.Fn.join('-', cdk.Fn.split('.', eip.attrPublicIp))}.${computeDomain}`;
+    this.instanceRole = role;
+    this.originVerifySecret = headerSecret;
+    this.originDnsName = originDnsName;
 
     // 비밀 헤더 값: CFN dynamic reference({{resolve:secretsmanager:...}})로 주입.
     // 배포 시 CloudFormation이 해석 → 템플릿에는 평문이 남지 않음.

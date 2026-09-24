@@ -3,8 +3,7 @@ import * as cdk from 'aws-cdk-lib';
 import { AipdsDrillStack } from '../lib/aipds-drill-stack';
 import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import { AipdsHostingStack } from '../lib/aipds-hosting-stack';
-import { AipdsPreviewStack } from '../lib/aipds-preview-stack';
-import { AipdsAgentCredsStack } from '../lib/aipds-agent-creds-stack';
+import { addSandboxStacks, pinnedFromEnv } from '../lib/sandbox-stacks';
 
 const app = new cdk.App();
 
@@ -39,7 +38,7 @@ const auth = new AipdsAuthStack(app, 'AipdsAuthStack', { env });
 // 호스팅 스택은 CloudFront origin-facing 프리픽스 리스트를 배포 리전에서
 // 자동 조회한다(fromLookup) — synth/deploy 시 크리덴셜 필요, 결과는
 // cdk.context.json에 캐시된다(커밋 대상).
-new AipdsHostingStack(app, 'AipdsHostingStack', {
+const hosting = new AipdsHostingStack(app, 'AipdsHostingStack', {
   env,
   artifactsBucket: drill.artifactsBucket,
   userPool: auth.userPool,
@@ -47,25 +46,10 @@ new AipdsHostingStack(app, 'AipdsHostingStack', {
   hostedUiDomain: auth.hostedUiDomain,
 });
 
-// 프로토타입 프리뷰 전용 오리진(lib/aipds-preview-stack.ts). HostingStack이 만든 것을
-// **참조만** 하므로 그 스택을 다시 배포하지 않는다(EC2 교체를 피한다). 세 값은 HostingStack의
-// 출력과 리소스에서 읽어 넘긴다 — 없으면 이 스택을 만들지 않으므로 `--all`은 예전과 같다.
-const previewOriginDns = process.env.AIPDS_PREVIEW_ORIGIN_DNS;
-const originVerifySecretArn = process.env.AIPDS_ORIGIN_VERIFY_SECRET_ARN;
-const instanceRoleArn = process.env.AIPDS_INSTANCE_ROLE_ARN;
-if (previewOriginDns && originVerifySecretArn && instanceRoleArn) {
-  new AipdsPreviewStack(app, 'AipdsPreviewStack', {
-    env,
-    originDnsName: previewOriginDns,
-    originVerifySecretArn,
-    instanceRoleArn,
-  });
-}
-
-// 샌드박스 프로세스용 Bedrock 전용 롤(lib/aipds-agent-creds-stack.ts). 프리뷰 스택과 같이
-// HostingStack의 인스턴스 롤을 참조만 한다 — 값이 없으면 만들지 않는다.
+// 프리뷰 오리진과 샌드박스용 Bedrock 전용 롤. 새 환경은 HostingStack에서 참조로, 떠 있는 환경은
+// env로 고정한 값으로 만든다(lib/sandbox-stacks.ts — 고정하지 않으면 HostingStack까지 배포된다).
 //
-//   AIPDS_INSTANCE_ROLE_ARN=<HostingStack InstanceRole ARN> npx cdk deploy AipdsAgentCredsStack
-if (instanceRoleArn) {
-  new AipdsAgentCredsStack(app, 'AipdsAgentCredsStack', { env, instanceRoleArn });
-}
+//   AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> AIPDS_PREVIEW_ORIGIN_DNS=<EIP DNS> \
+//   AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader ARN> \
+//     npx cdk deploy AipdsAgentCredsStack AipdsPreviewStack
+addSandboxStacks(app, env, hosting, pinnedFromEnv(process.env));
