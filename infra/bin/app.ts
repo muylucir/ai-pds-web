@@ -13,16 +13,12 @@ const region =
 const account = process.env.CDK_DEFAULT_ACCOUNT;
 const env = { region, account };
 
-// 브라우저가 아티팩트 버킷으로 직접 PUT할 출처(프로젝트 가져오기의 presigned
-// 업로드). 실제 값은 호스팅 스택의 CloudFront 도메인인데 그 스택이 이미 이 버킷에
-// 의존하므로 상호 참조가 순환이다 — 그래서 배포자가 값을 건넨다.
+// 브라우저가 아티팩트 버킷으로 직접 PUT할 출처(프로젝트 가져오기의 presigned 업로드) 중
+// **추가로 허용할 것**(예: 커스텀 도메인). 앱 자신의 오리진(호스팅 스택의 CloudFront)은 여기서
+// 넘기지 않는다 — 그 스택이 이 버킷에 의존하므로 순환이고, 인스턴스가 스스로 버킷 CORS에
+// 더한다(lib/aipds-upload-cors-stack.ts, infra/scripts/aipds-harden sync).
 //
-// 첫 배포에는 값이 없다(도메인이 아직 없다): localhost만 허용된 채 배포되고,
-// AipdsHostingStack의 DistributionDomain 출력이 나온 뒤 그 값으로 이 스택만 다시
-// 배포한다. **버킷 전용 스택이므로 EC2를 교체하지 않는다** — 프로토타입 데이터가
-// 사라지는 재배포와 다르다.
-//
-//   AIPDS_UPLOAD_ORIGINS=https://d111111abcdef8.cloudfront.net npm run deploy -- AipdsDrillStack
+//   AIPDS_UPLOAD_ORIGINS=https://pds.example.com npx cdk deploy --all
 const uploadOrigins = (process.env.AIPDS_UPLOAD_ORIGINS ?? '')
   .split(',')
   .map((o) => o.trim())
@@ -50,6 +46,6 @@ const hosting = new AipdsHostingStack(app, 'AipdsHostingStack', {
 // env로 고정한 값으로 만든다(lib/sandbox-stacks.ts — 고정하지 않으면 HostingStack까지 배포된다).
 //
 //   AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> AIPDS_PREVIEW_ORIGIN_DNS=<EIP DNS> \
-//   AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader ARN> \
-//     npx cdk deploy AipdsAgentCredsStack AipdsPreviewStack
-addSandboxStacks(app, env, hosting, pinnedFromEnv(process.env));
+//   AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader ARN> AIPDS_ARTIFACTS_BUCKET=<bucket> \
+//     npx cdk deploy AipdsAgentCredsStack AipdsPreviewStack AipdsUploadCorsStack
+addSandboxStacks(app, env, drill, hosting, pinnedFromEnv(process.env));

@@ -7,6 +7,8 @@ import { Template } from 'aws-cdk-lib/assertions';
 import { INSTANCE_PARAMS } from '../lib/instance-params';
 import { AipdsAgentCredsStack } from '../lib/aipds-agent-creds-stack';
 import { AipdsPreviewStack } from '../lib/aipds-preview-stack';
+import { AipdsUploadCorsStack } from '../lib/aipds-upload-cors-stack';
+import { AipdsDrillStack } from '../lib/aipds-drill-stack';
 
 // 스택이 쓰는 파라미터 이름(lib/instance-params.ts)과 인스턴스가 읽는 이름(scripts/aipds-harden)이
 // 같아야 한다. 어긋나면 스택 테스트도 스크립트도 각각 통과하고, 새 인스턴스는 "스택 미배포"로
@@ -66,12 +68,29 @@ assert.match(preview, /if \[ "\$\{1:-\}" = "--no-restart" \]; then/,
       env, instanceRoleArn: role, originDnsName: 'ec2-1-2-3-4.compute.amazonaws.com',
       originVerifySecretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:h-AbCdEf',
     }),
+    new AipdsUploadCorsStack(app, 'UploadCors', {
+      env, instanceRoleArn: role, bucketArn: 'arn:aws:s3:::aipdsdrillstack-artifacts-x',
+    }),
   ];
   const names = stacks.flatMap((st) =>
     Object.values(Template.fromStack(st).findResources('AWS::IAM::Policy'))
       .map((p: any) => p.Properties.PolicyName));
   assert.strictEqual(new Set(names).size, names.length,
     `policies on the shared instance role must have distinct names: ${names}`);
+}
+
+// 버킷에 CORS가 없을 때 harden이 만드는 규칙은 DrillStack의 것과 같은 모양이어야 한다 — 다르면
+// 둘 중 누가 마지막에 썼느냐에 따라 업로드 헤더 허용이 달라진다.
+{
+  const app = new cdk.App();
+  const bucket = Object.values(Template.fromStack(new AipdsDrillStack(app, 'D', {
+    env: { account: '123456789012', region: 'ap-northeast-2' } })).findResources('AWS::S3::Bucket'))[0] as any;
+  const rule = bucket.Properties.CorsConfiguration.CorsRules[0];
+  const mergeRule = harden.slice(harden.indexOf('CORS_MERGE='), harden.indexOf('sync_cors() {'));
+  assert.ok(mergeRule.includes(`"AllowedMethods": ${JSON.stringify(rule.AllowedMethods)}`), 'methods');
+  assert.ok(mergeRule.includes(`"AllowedHeaders": ${JSON.stringify(rule.AllowedHeaders)}`), 'headers');
+  assert.ok(mergeRule.includes(`"ExposeHeaders": ${JSON.stringify(rule.ExposedHeaders)}`), 'exposed');
+  assert.ok(mergeRule.includes(`"MaxAgeSeconds": ${rule.MaxAge}`), 'max age');
 }
 
 console.log('OK  instance params: stacks and aipds-harden agree; boot applies without restarting');

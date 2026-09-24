@@ -2,10 +2,13 @@ import * as cdk from 'aws-cdk-lib';
 import { AipdsHostingStack } from './aipds-hosting-stack';
 import { AipdsPreviewStack } from './aipds-preview-stack';
 import { AipdsAgentCredsStack } from './aipds-agent-creds-stack';
+import { AipdsDrillStack } from './aipds-drill-stack';
+import { AipdsUploadCorsStack } from './aipds-upload-cors-stack';
 
-// 프로토타입 프리뷰 전용 오리진(aipds-preview-stack.ts)과 샌드박스 프로세스용 Bedrock 전용 롤
-// (aipds-agent-creds-stack.ts). 둘 다 HostingStack의 것(인스턴스 롤, 헤더 시크릿, EIP DNS)을
-// 참조만 하고, 인스턴스는 그 값을 SSM에서 읽어 스스로 켠다(infra/scripts/aipds-harden sync).
+// 인스턴스가 부팅 뒤에 스스로 켜는 것들의 스택: 프로토타입 프리뷰 전용 오리진
+// (aipds-preview-stack.ts), 샌드박스 프로세스용 Bedrock 전용 롤(aipds-agent-creds-stack.ts), 버킷
+// CORS를 맞출 권한(aipds-upload-cors-stack.ts). 셋 다 HostingStack의 것(인스턴스 롤, 헤더 시크릿,
+// EIP DNS)을 참조만 하고, 인스턴스가 infra/scripts/aipds-harden sync로 반영한다.
 //
 // 값을 어디서 받는가가 두 가지다.
 //   - **새 환경(기본):** HostingStack에서 스택 간 참조로 받는다. `cdk deploy --all` 한 번이면 된다 —
@@ -20,26 +23,32 @@ export interface PinnedHosting {
   instanceRoleArn: string;
   originDnsName: string;
   originVerifySecretArn: string;
+  /** 아티팩트 버킷 이름. 참조로 받으면 DrillStack에 묶인다 — 같은 이유로 고정한다. */
+  artifactsBucket: string;
 }
 
-/** env의 세 값. 하나라도 있으면 셋 다 있어야 한다 — 섞으면 한 스택만 HostingStack에 묶인다. */
+const PINNED_ENV = {
+  instanceRoleArn: 'AIPDS_INSTANCE_ROLE_ARN',
+  originDnsName: 'AIPDS_PREVIEW_ORIGIN_DNS',
+  originVerifySecretArn: 'AIPDS_ORIGIN_VERIFY_SECRET_ARN',
+  artifactsBucket: 'AIPDS_ARTIFACTS_BUCKET',
+} as const;
+
+/** env의 고정 값. 하나라도 있으면 전부 있어야 한다 — 섞으면 일부 스택만 다른 스택에 묶인다. */
 export function pinnedFromEnv(e: NodeJS.ProcessEnv): PinnedHosting | undefined {
-  const values = {
-    instanceRoleArn: e.AIPDS_INSTANCE_ROLE_ARN,
-    originDnsName: e.AIPDS_PREVIEW_ORIGIN_DNS,
-    originVerifySecretArn: e.AIPDS_ORIGIN_VERIFY_SECRET_ARN,
-  };
+  const values = Object.fromEntries(
+    Object.entries(PINNED_ENV).map(([key, name]) => [key, e[name]])) as Record<string, string | undefined>;
   const set = Object.values(values).filter((v) => v);
   if (set.length === 0) return undefined;
-  if (set.length !== 3) {
-    throw new Error('AIPDS_INSTANCE_ROLE_ARN, AIPDS_PREVIEW_ORIGIN_DNS and '
-      + 'AIPDS_ORIGIN_VERIFY_SECRET_ARN pin a running environment together — set all three or none');
+  if (set.length !== Object.keys(PINNED_ENV).length) {
+    throw new Error(`${Object.values(PINNED_ENV).join(', ')} pin a running environment together `
+      + '— set all or none');
   }
-  return values as PinnedHosting;
+  return values as unknown as PinnedHosting;
 }
 
-export function addSandboxStacks(app: cdk.App, env: cdk.Environment, hosting: AipdsHostingStack,
-                                 pinned?: PinnedHosting) {
+export function addSandboxStacks(app: cdk.App, env: cdk.Environment, drill: AipdsDrillStack,
+                                 hosting: AipdsHostingStack, pinned?: PinnedHosting) {
   const instanceRoleArn = pinned?.instanceRoleArn ?? hosting.instanceRole.roleArn;
   const preview = new AipdsPreviewStack(app, 'AipdsPreviewStack', {
     env,
@@ -48,5 +57,10 @@ export function addSandboxStacks(app: cdk.App, env: cdk.Environment, hosting: Ai
     instanceRoleArn,
   });
   const agentCreds = new AipdsAgentCredsStack(app, 'AipdsAgentCredsStack', { env, instanceRoleArn });
-  return { preview, agentCreds };
+  const uploadCors = new AipdsUploadCorsStack(app, 'AipdsUploadCorsStack', {
+    env,
+    instanceRoleArn,
+    bucketArn: pinned ? `arn:aws:s3:::${pinned.artifactsBucket}` : drill.artifactsBucket.bucketArn,
+  });
+  return { preview, agentCreds, uploadCors };
 }
