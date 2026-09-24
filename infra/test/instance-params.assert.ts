@@ -28,24 +28,29 @@ for (const file of ['aipds-harden', 'aipds-preview-configure']) {
   execFileSync('bash', ['-n', path.join(scripts, file)]);
 }
 
-// boot는 서비스가 뜨기 **전에** 돈다(user-data) — 재시작하면 아직 없는 unit을 띄우거나, 부팅 순서를
-// 어긴다. 그리고 격리를 켤 때는 둘 다 켠다: 래퍼 없이 IMDS만 막으면 아무것도 막지 않는다
-// (IPAddressDeny는 래퍼가 띄운 unit에만 걸린다).
-const bootApply = harden.slice(harden.indexOf('boot_apply() {'), harden.indexOf('install_all() {'));
-assert.ok(bootApply.length > 0, 'aipds-harden must define boot_apply before install_all');
-assert.ok(!/restart_backend|systemctl restart/.test(bootApply), 'boot must not restart services');
-assert.match(bootApply, /write_launcher "\$arn"\n\s*write_imds 1/,
-  'boot must turn the launcher on and block IMDS together');
-assert.match(bootApply, /aipds-preview-configure" --no-restart/,
-  'boot must configure the preview origin without restarting');
-assert.match(harden, /\n  boot\)\n    install_all --no-restart\n    boot_apply\n/,
-  'boot = install (no restart) + boot_apply');
-// 프리뷰 값이 잘못돼도 부팅이 멈추면 안 된다 — user-data는 set -e이고, 멈추면 앱 전체가 502다.
-assert.match(bootApply, /--no-restart "\$origin" "\$secret" \\\n\s*\|\| echo/,
-  'a rejected preview parameter must not abort the boot');
-// sudo는 AWS_REGION을 지운다 — 운영자가 `sudo aipds-harden boot`로 돌리면 늘 비어 있다.
-assert.match(bootApply, /REGION=\$\{AWS_REGION:-\$\{AWS_DEFAULT_REGION:-\$\(instance_region\)\}\}/,
-  'boot must fall back to the instance region from IMDS when sudo strips AWS_REGION');
+// sync의 동작(값이 늦게 생겨도 반영, 못 읽으면 끄지 않음, hold, set -e 안전)은
+// backend/tests/test_harden_script.py가 스크립트를 실제로 돌려 본다. 여기는 배선만 본다.
+//
+// boot는 서비스가 뜨기 **전에** 돈다(user-data) — 재시작하면 안 된다. 타이머의 sync는 바뀐 것이
+// 있으면 재시작한다.
+assert.match(harden, /\n  boot\)\n    install_all --no-restart\n    sync_apply 0\n/,
+  'boot = install (no restart) + sync without restart');
+assert.match(harden, /\n  sync\)\n[^\n]*\n    sync_apply 1\n/, 'sync may restart the backend');
+// 타이머는 root로 돈다 — 리포 파일(aipds가 쓸 수 있다)이 아니라 root 소유 사본을 돌려야 한다.
+// sync가 부르는 preview-configure도 마찬가지다.
+assert.match(harden, /ExecStart=\$LIBEXEC\/harden sync/, 'the timer must run the root-owned copy');
+assert.match(harden, /"\$LIBEXEC\/preview-configure" --no-restart/,
+  'sync must call the root-owned preview-configure');
+assert.ok(!/"\$APP\/infra\/scripts\/aipds-preview-configure" --no-restart/.test(harden),
+  'sync must not run the repo copy of preview-configure as root');
+for (const copy of ['harden', 'preview-configure']) {
+  assert.ok(harden.includes(`"$LIBEXEC/${copy}"`), `install must place the ${copy} copy`);
+}
+const update = fs.readFileSync(path.join(scripts, 'aipds-update'), 'utf8');
+assert.ok(update.includes('/usr/local/libexec/aipds/harden'),
+  'aipds-update must refresh the harden copy the timer runs');
+assert.match(harden, /OnUnitActiveSec=2min/, 'sync runs periodically');
+assert.match(harden, /systemctl enable --now "\$SYNC_UNIT\.timer"/, 'install enables the timer');
 assert.match(preview, /if \[ "\$\{1:-\}" = "--no-restart" \]; then/,
   'aipds-preview-configure must accept --no-restart');
 
