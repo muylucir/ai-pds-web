@@ -16,6 +16,7 @@ const PINNED = {
   instanceRoleArn: 'arn:aws:iam::123456789012:role/AipdsHostingStack-InstanceRole-X',
   originDnsName: 'ec2-1-2-3-4.ap-northeast-2.compute.amazonaws.com',
   originVerifySecretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:hdr-AbCdEf',
+  artifactsBucket: 'aipdsdrillstack-artifacts-x',
 };
 
 function build(pinned?: typeof PINNED) {
@@ -30,17 +31,21 @@ function build(pinned?: typeof PINNED) {
     userPoolClient: auth.userPoolClient,
     hostedUiDomain: auth.hostedUiDomain,
   });
-  const stacks = addSandboxStacks(app, ENV, hosting, pinned);
+  const stacks = addSandboxStacks(app, ENV, drill, hosting, pinned);
   // 스택 간 참조가 만드는 의존성은 synth에서 해석된다.
   const asm = app.synth();
-  const dependsOnHosting = (stack: cdk.Stack) =>
-    asm.getStackArtifact(stack.artifactId).dependencies.some((d) => d.id === hosting.artifactId);
-  return { ...stacks, dependsOnHosting };
+  const dependsOn = (stack: cdk.Stack, on: cdk.Stack) =>
+    asm.getStackArtifact(stack.artifactId).dependencies.some((d) => d.id === on.artifactId);
+  return { ...stacks, drill, dependsOnHosting: (st: cdk.Stack) => dependsOn(st, hosting),
+           dependsOnDrill: (st: cdk.Stack) => dependsOn(st, drill) };
 }
 
 {
-  const { preview, agentCreds, dependsOnHosting } = build(PINNED);
-  for (const stack of [preview, agentCreds]) {
+  const { preview, agentCreds, uploadCors, dependsOnHosting, dependsOnDrill } = build(PINNED);
+  for (const stack of [preview, agentCreds, uploadCors]) {
+    assert.ok(!dependsOnDrill(stack),
+      `${stack.stackName} must not depend on DrillStack when pinned — deploying it would redeploy `
+      + 'the bucket stack (and its CORS) too');
     assert.ok(!dependsOnHosting(stack),
       `${stack.stackName} must not depend on HostingStack when pinned — deploying it would deploy `
       + 'HostingStack too');
@@ -50,8 +55,8 @@ function build(pinned?: typeof PINNED) {
 }
 
 {
-  const { preview, agentCreds, dependsOnHosting } = build();
-  for (const stack of [preview, agentCreds]) {
+  const { preview, agentCreds, uploadCors, dependsOnHosting } = build();
+  for (const stack of [preview, agentCreds, uploadCors]) {
     assert.ok(dependsOnHosting(stack),
       `${stack.stackName} takes HostingStack's values in a new environment — deploy --all orders it after`);
   }
@@ -66,8 +71,20 @@ assert.deepStrictEqual(pinnedFromEnv({
   AIPDS_INSTANCE_ROLE_ARN: PINNED.instanceRoleArn,
   AIPDS_PREVIEW_ORIGIN_DNS: PINNED.originDnsName,
   AIPDS_ORIGIN_VERIFY_SECRET_ARN: PINNED.originVerifySecretArn,
+  AIPDS_ARTIFACTS_BUCKET: PINNED.artifactsBucket,
 }), PINNED);
-// 롤만 고정하면 프리뷰 스택만 HostingStack에 묶인다 — 그 배포가 HostingStack을 끌고 온다.
-assert.throws(() => pinnedFromEnv({ AIPDS_INSTANCE_ROLE_ARN: PINNED.instanceRoleArn }), /all three/);
+// 일부만 고정하면 나머지 스택이 HostingStack에 묶인다 — 그 배포가 HostingStack을 끌고 온다.
+assert.throws(() => pinnedFromEnv({ AIPDS_INSTANCE_ROLE_ARN: PINNED.instanceRoleArn }), /all or none/);
 
-console.log('OK  sandbox stacks: new env references HostingStack, pinned env never depends on it');
+// 버킷 CORS 권한: 그 버킷의 CORS 읽기·쓰기뿐, 인스턴스 롤에.
+{
+  const { uploadCors } = build(PINNED);
+  const t = Template.fromStack(uploadCors);
+  assert.deepStrictEqual(t.findResources('AWS::IAM::Role'), {}, 'no new role');
+  const statements = Object.values(t.findResources('AWS::IAM::Policy'))
+    .flatMap((p: any) => p.Properties.PolicyDocument.Statement);
+  assert.deepStrictEqual(statements.map((st: any) => [[].concat(st.Action).sort(), st.Resource]),
+    [[['s3:GetBucketCORS', 's3:PutBucketCORS'], `arn:aws:s3:::${PINNED.artifactsBucket}`]]);
+}
+
+console.log('OK  sandbox stacks: new env references HostingStack/DrillStack, pinned env depends on neither; upload CORS grant is bucket-CORS only');

@@ -23,6 +23,9 @@
 #          값이 없거나 읽지 못하면 아무것도 바꾸지 않는다(끄지 않는다). `disable`·`imds allow`는
 #          운영자의 선택이라 동기화를 멈춘다(`/etc/aipds/hold`) — `enable`·`imds block`이 푼다.
 #          첫 롤아웃의 "확인 뒤 block" 순서는 이미 검증된 구성을 다시 까는 데는 필요 없다.
+#          그리고 아티팩트 버킷의 CORS에 이 인스턴스의 앱 오리진이 있게 한다(프로젝트 가져오기의
+#          브라우저 직접 업로드 — infra/lib/aipds-upload-cors-stack.ts). 이것은 재시작과 무관하고
+#          hold와도 무관하다.
 # boot     새 인스턴스의 user-data가 서비스 기동 **전에** 부른다. install + sync(재시작 없음).
 #
 # 왜 user-data가 아니라 이 스크립트인가: user-data를 바꾸면 HostingStack 배포가 EC2를
@@ -138,17 +141,73 @@ settings_summary() {
   echo "launcher=$launcher imds_block=${imds:-?} preview=$preview"
 }
 
+# systemd unit의 Environment= 값 하나. 여기 쓰는 값(버킷 이름, URL)에는 공백이 없다.
+unit_env() {
+  systemctl show "$1" -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n "s/^$2=//p" | head -1
+}
+
+# 버킷 CORS의 PUT 규칙에 오리진을 더한 설정(JSON). 이미 있으면 빈 출력. 규칙이 없으면 DrillStack의
+# 것(lib/aipds-drill-stack.ts `cors`)과 같은 모양으로 만든다 — test/instance-params.assert.ts가 맞춘다.
+CORS_MERGE='
+import json, sys
+origin = sys.argv[1]
+rules = json.load(sys.stdin).get("CORSRules", [])
+put = [r for r in rules if "PUT" in r.get("AllowedMethods", [])]
+if any(origin in r.get("AllowedOrigins", []) for r in put):
+    sys.exit(0)
+if put:
+    put[0].setdefault("AllowedOrigins", []).append(origin)
+else:
+    rules.append({"AllowedOrigins": [origin], "AllowedMethods": ["PUT"],
+                  "AllowedHeaders": ["content-type"], "ExposeHeaders": ["ETag"],
+                  "MaxAgeSeconds": 3000})
+print(json.dumps({"CORSRules": rules}))
+'
+
+sync_cors() {
+  local bucket origin current merged
+  bucket=$(unit_env aipds-backend AIPDS_S3_BUCKET)
+  origin=$(unit_env aipds-frontend APP_BASE_URL)
+  origin=${origin%/}
+  [ -n "$bucket" ] && [ -n "$origin" ] || return 0
+  case "$origin" in
+    https://*) ;;
+    *) echo "aipds-harden: WARNING app origin '$origin' is not https — bucket CORS not changed" >&2
+       return 0 ;;
+  esac
+  if ! current=$(aws s3api get-bucket-cors --region "$REGION" --bucket "$bucket" --output json 2>&1); then
+    case "$current" in
+      *NoSuchCORSConfiguration*) current='{}' ;;
+      *) echo "aipds-harden: WARNING cannot read the CORS of $bucket — project import uploads from" \
+           "$origin fail until AipdsUploadCorsStack is deployed: $current" >&2
+         return 0 ;;
+    esac
+  fi
+  if ! merged=$(printf '%s' "$current" | python3 -I -c "$CORS_MERGE" "$origin"); then
+    echo "aipds-harden: WARNING could not merge the CORS of $bucket" >&2
+    return 0
+  fi
+  [ -n "$merged" ] || return 0
+  if aws s3api put-bucket-cors --region "$REGION" --bucket "$bucket" \
+      --cors-configuration "$merged" >/dev/null 2>&1; then
+    echo "aipds-harden: cors — added $origin to $bucket"
+  else
+    echo "aipds-harden: WARNING cannot write the CORS of $bucket" >&2
+  fi
+}
+
 # 스택이 남긴 값을 반영한다. $1=1이면 바뀐 것이 있을 때 백엔드를 재시작한다(떠 있을 때만).
 sync_apply() {
   local restart=$1
-  if [ -e "$HOLD" ]; then
-    echo "aipds-harden: sync held ($HOLD — 'enable' or 'imds block' releases it)"
-    return 0
-  fi
   REGION=${AWS_REGION:-${AWS_DEFAULT_REGION:-$(instance_region)}}
   if [ -z "$REGION" ]; then
     echo "aipds-harden: WARNING no region (AWS_REGION unset, IMDS unreachable) — launcher and" \
       "preview settings not applied (existing ones unchanged)" >&2
+    return 0
+  fi
+  sync_cors
+  if [ -e "$HOLD" ]; then
+    echo "aipds-harden: sync held ($HOLD — 'enable' or 'imds block' releases it)"
     return 0
   fi
   local before after arn origin secret
