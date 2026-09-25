@@ -31,6 +31,13 @@ _ERROR_STATUS = {
     "too_many_displayed": 400,
     "not_found": 404,
     "readonly": 503,
+    "stale": 409,
+}
+
+# 카탈로그 오류 중 프론트 딕셔너리가 문구를 가진 것. 나머지는 카탈로그의 영어
+# 문장이 그대로 나간다(ModelTable이 서버 문장을 그대로 보여준다).
+_ERROR_DETAIL = {
+    "stale": ec.MODEL_ORDER_STALE,
 }
 
 
@@ -61,7 +68,8 @@ def _http_error(exc: CatalogError) -> HTTPException:
         _log.warning("model catalog error (%s) -> %d", exc.code, status)
     # 이 메시지들은 전부 우리가 쓴 문장이고 자격증명이나 내부 경로를 담지
     # 않는다 — 관리자가 무엇을 해야 하는지 알아야 하므로 그대로 보여준다.
-    return HTTPException(status_code=status, detail=str(exc))
+    return HTTPException(status_code=status,
+                         detail=_ERROR_DETAIL.get(exc.code, str(exc)))
 
 
 class AddModel(BaseModel):
@@ -73,6 +81,10 @@ class AddModel(BaseModel):
 class PatchModel(BaseModel):
     name: str | None = Field(default=None, min_length=1)
     display: bool | None = None
+
+
+class ModelOrder(BaseModel):
+    model_ids: list[str]
 
 
 def _catalog():
@@ -111,6 +123,16 @@ async def admin_add_model(body: AddModel):
     except CatalogError as exc:
         raise _http_error(exc) from exc
     return entry.model_dump()
+
+
+# `{model_id}` 라우트와 메서드가 달라(PUT) 이름이 `order`인 모델과도 겹치지 않는다.
+@admin_router.put("/models/order")
+async def admin_reorder_models(body: ModelOrder):
+    try:
+        entries = await _catalog().reorder(body.model_ids)
+    except CatalogError as exc:
+        raise _http_error(exc) from exc
+    return {"models": [e.model_dump() for e in entries]}
 
 
 @admin_router.patch("/models/{model_id}")

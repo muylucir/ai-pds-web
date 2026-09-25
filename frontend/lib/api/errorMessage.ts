@@ -24,6 +24,7 @@ const KEY_BY_CODE: Record<string, keyof Dict> = {
   name_required: "err.nameRequired",
   model_id_required: "err.modelIdRequired",
   model_id_charset: "err.modelIdCharset",
+  model_order_stale: "err.modelOrderStale",
   model_not_selectable: "err.modelNotSelectable",
   language_unsupported: "err.languageUnsupported",
   build_slots_busy: "err.buildSlotsBusy",

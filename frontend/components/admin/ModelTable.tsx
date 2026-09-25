@@ -3,7 +3,9 @@ import { useState } from "react";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errorMessage";
 import { useT } from "@/lib/i18n/provider";
-import { deleteModel, patchModel, type AdminModel } from "@/lib/api/models";
+import {
+  deleteModel, patchModel, reorderModels, type AdminModel,
+} from "@/lib/api/models";
 
 export function ModelTable({
   models, onChanged,
@@ -31,6 +33,17 @@ export function ModelTable({
     }
   }
 
+  // 이웃과 자리를 바꾼 전체 순서를 보낸다. 서버가 전체 순열만 받으므로 한 칸
+  // 이동도 목록 전체를 싣는다.
+  function move(index: number, delta: -1 | 1) {
+    const ids = models.map((m) => m.model_id);
+    const target = index + delta;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    void run("order", () => reorderModels(ids).then(() => undefined));
+  }
+
+  const arrow = "rounded px-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent";
+
   return (
     <div>
       {error && (
@@ -41,6 +54,7 @@ export function ModelTable({
       <table className="w-full text-sm">
         <thead className="text-left text-xs text-slate-500">
           <tr className="border-b border-slate-200">
+            <th className="w-16 py-2 font-medium">{t("admin.colOrder")}</th>
             <th className="py-2 font-medium">{t("admin.colName")}</th>
             <th className="py-2 font-medium">{t("admin.modelId")}</th>
             <th className="py-2 font-medium">{t("admin.colDisplay")}</th>
@@ -48,8 +62,28 @@ export function ModelTable({
           </tr>
         </thead>
         <tbody>
-          {models.map((m) => (
+          {models.map((m, i) => (
             <tr key={m.model_id} className="border-b border-slate-100">
+              <td className="py-3">
+                <button
+                  type="button"
+                  aria-label={`${m.name} ${t("admin.moveUp")}`}
+                  disabled={i === 0 || busy !== null}
+                  onClick={() => move(i, -1)}
+                  className={arrow}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  aria-label={`${m.name} ${t("admin.moveDown")}`}
+                  disabled={i === models.length - 1 || busy !== null}
+                  onClick={() => move(i, 1)}
+                  className={arrow}
+                >
+                  ↓
+                </button>
+              </td>
               <td className="py-3">{m.name}</td>
               {/* 관리자는 무엇을 등록했는지 확인해야 하므로 id를 보여준다 —
                   콤보박스가 이름만 보여주는 것과 다른 이유다. */}
