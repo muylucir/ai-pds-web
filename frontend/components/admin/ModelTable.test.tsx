@@ -53,6 +53,36 @@ describe("ModelTable", () => {
       .toHaveTextContent("at most 5 models can be displayed");
   });
 
+  it("moving a model sends the whole list in the new order and reloads", async () => {
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    let body: any;
+    server.use(http.put(`${API_BASE_URL}/admin/models/order`, async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json({ models: [MODELS[1], MODELS[0]] });
+    }));
+    render(<ModelTable models={MODELS} onChanged={onChanged} />);
+    await user.click(screen.getByRole("button", { name: "Opus 4.8 위로" }));
+    expect(body).toEqual({ model_ids: [MODELS[1].model_id, MODELS[0].model_id] });
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("cannot move the first row up or the last row down", () => {
+    render(<ModelTable models={MODELS} onChanged={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Opus 5 위로" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Opus 4.8 아래로" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Opus 5 아래로" })).toBeEnabled();
+  });
+
+  it("explains a stale list instead of showing the code", async () => {
+    const user = userEvent.setup();
+    server.use(http.put(`${API_BASE_URL}/admin/models/order`,
+      () => HttpResponse.json({ detail: "model_order_stale" }, { status: 409 })));
+    render(<ModelTable models={MODELS} onChanged={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Opus 5 아래로" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("새로고침");
+  });
+
   it("deletes after a confirmation", async () => {
     const user = userEvent.setup();
     const onChanged = vi.fn();
