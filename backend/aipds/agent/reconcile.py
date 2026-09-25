@@ -62,11 +62,9 @@ DOCS_ROOT = "aiplc-docs"
 #: `prototype-validation.md` Step 10이 이 경로를 쓴다.
 STATE_KEY = "aiplc-docs/aiplc-state.md"
 
-#: Step 3의 마지막 산출물 이름. `prototype-validation.md:170`이 단수 경로로
-#: 선언하고(`aiplc-docs/discovery/prototype/build-instructions.md`), Path B에서는
-#: 같은 이름이 슬러그 디렉터리 아래 온다 — 경로 조립은 `layout.artifact_dir`이
-#: 단독으로 소유하므로 여기서는 **파일 이름만** 안다.
-BUILD_INSTRUCTIONS = "build-instructions.md"
+#: Step 3의 마지막 산출물 이름. 이름과 경로 조립은 `layout`이 단독으로 소유한다
+#: — 빌드 세션(proto/session.py)이 같은 파일을 빌더에게 넘기므로 두 벌이면 안 된다.
+BUILD_INSTRUCTIONS = layout.BUILD_INSTRUCTIONS
 
 
 def stage_events(markdown: str | None,
@@ -143,7 +141,7 @@ def prototype_id_for(rel: str) -> str | None:
     candidate = p.parent.name
     if not candidate:
         return None
-    if f"{layout.artifact_dir(candidate)}/{BUILD_INSTRUCTIONS}" != rel:
+    if layout.build_instructions_key(candidate) != rel:
         return None
     return candidate
 
@@ -160,7 +158,7 @@ def handed_off(workspace: Path) -> dict[str, str]:
     specs = layout.discover(keys)
     present = {k for k in keys if prototype_id_for(k) is not None}
     return {pid: spec for pid, spec in specs.items()
-            if f"{layout.artifact_dir(pid)}/{BUILD_INSTRUCTIONS}" in present}
+            if layout.build_instructions_key(pid) in present}
 
 
 def prototype_events(workspace: Path,
