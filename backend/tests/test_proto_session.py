@@ -155,6 +155,68 @@ async def test_start_writes_the_spec_into_the_build_directory(tmp_path):
     assert (session.build_dir() / SPEC_KEY).read_text(encoding="utf-8") == "# spec body"
 
 
+# ---- start(): 빌드 지시서(Path A.1) ----
+#
+# Path A.1의 Discovery는 명세 옆에 build-instructions.md를 남긴다 — 명세와
+# design-context 답변을 합친 빌더의 입력이다. 명세만 심던 시절에는 Step 2의 디자인
+# 방향과 기기 답변이 빌더에 닿지 않았고, 에이전트가 그 파일을 찾아도 cwd에 없었다.
+
+SINGLE_SPEC_KEY = "aiplc-docs/discovery/prototype/prototype-spec.md"
+SINGLE_INSTRUCTIONS_KEY = "aiplc-docs/discovery/prototype/build-instructions.md"
+
+
+def _single_session(s3, tmp_path):
+    return PrototypeSession(
+        project_id=PROJECT_ID, slug="prototype", s3=s3,
+        build_root=tmp_path / "protos",
+        builder_factory=lambda session_id, resume: FakeBuilder(),
+        semaphore=BuildSemaphore(max_concurrent=2),
+    )
+
+
+async def test_start_plants_the_build_instructions_and_the_plan_names_them(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs[SINGLE_SPEC_KEY] = "# spec"
+    s3.blobs[SINGLE_INSTRUCTIONS_KEY] = "# build instructions"
+    session = _single_session(s3, tmp_path)
+
+    await session.start()
+
+    assert (session.build_dir() / SINGLE_INSTRUCTIONS_KEY).read_text(
+        encoding="utf-8") == "# build instructions"
+    prompt = session.first_prompt()
+    assert SINGLE_SPEC_KEY in prompt
+    assert SINGLE_INSTRUCTIONS_KEY in prompt
+
+
+async def test_start_without_build_instructions_names_only_the_spec(tmp_path):
+    """Path B(와 Step 3 이전의 A.1)에는 지시서가 없다. 없는 파일을 가리키면
+    에이전트가 그것을 찾아 cwd 밖을 훑는다(`_missing_output_prompt`의 실측)."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    session = _session(s3, tmp_path, FakeBuilder())
+
+    await session.start()
+
+    assert "build-instructions.md" not in session.first_prompt()
+
+
+async def test_start_removes_a_build_instructions_copy_gone_from_s3(tmp_path):
+    """명세처럼 매 start마다 S3가 정본이다 — 지워진 지시서의 낡은 사본이 cwd에
+    남으면 프롬프트는 말하지 않는데 에이전트가 그것을 읽을 수 있다."""
+    s3 = FakeS3Store()
+    s3.blobs[SINGLE_SPEC_KEY] = "# spec"
+    session = _single_session(s3, tmp_path)
+    stale = session.build_dir() / SINGLE_INSTRUCTIONS_KEY
+    stale.parent.mkdir(parents=True)
+    stale.write_text("# old", encoding="utf-8")
+
+    await session.start()
+
+    assert not stale.exists()
+    assert "build-instructions.md" not in session.first_prompt()
+
+
 # ---- start(): brand profile sync (design_profiles) ----
 #
 # 프로필 저장소는 세션이 spec을 읽는 프로젝트 스토어(s3)와는 별개의, 버킷
