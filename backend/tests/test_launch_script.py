@@ -155,12 +155,19 @@ def test_imds_is_blocked_only_when_configured(launch):
                                         ("host-build", "todo"), ("proto", "todo")])
 def test_the_agent_home_is_handed_back_to_the_group_when_the_unit_stops(launch, kind, slug):
     """번들 CLI는 config dir과 트랜스크립트를 0700/0600으로 명시해 만든다(버전에 따라) — 그러면
-    백엔드가 그 프로젝트를 재개하지도 지우지도 못한다. 경로는 계산한 자기 agent-home뿐이다."""
+    백엔드가 그 프로젝트를 재개하지도 지우지도 못한다. 경로는 계산한 자기 agent-home뿐이다.
+
+    **접두사가 없어야 한다.** `+` 등이 붙으면 systemd-run이 ExecStopPostEx로 올리고, systemd 252는
+    그것을 다음 daemon-reload에서 버린다(운영 실측) — 그러면 이 chmod는 한 번도 돌지 않는다. 샌드박스
+    안의 root가 남의 트리를 순회·chmod하려면 두 capability가 bounding set에 있어야 한다."""
     _, home = _tree(launch, kind, slug=slug)
     args = {"host-build": ["install"], "proto": ["run", "start"]}.get(kind, [])
     argv, _ = _run(launch, kind, slug=slug, args=args)
-    stops = [p for p in _props(argv) if p.startswith("ExecStopPost=")]
-    assert stops == [f"ExecStopPost=+/usr/bin/chmod -R g+rwX {home}"]
+    props = _props(argv)
+    stops = [p for p in props if p.startswith("ExecStopPost")]
+    assert stops == [f"ExecStopPost=/usr/bin/chmod -R g+rwX {home}"]
+    caps = next(p for p in props if p.startswith("CapabilityBoundingSet=")).split("=", 1)[1].split()
+    assert {"CAP_FOWNER", "CAP_DAC_READ_SEARCH"} <= set(caps)
 
 
 def test_proto_serves_only_the_prototype_subtree_with_allowed_npm_args(launch):
