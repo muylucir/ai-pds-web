@@ -62,6 +62,7 @@ function testDrillUnchanged() {
       ]),
     },
   });
+  assertFirstCallSubscription(t);  // 드릴 백엔드 롤
   // S3 객체 Get/Put/Delete 문 존재.
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
@@ -244,6 +245,7 @@ function testComputeAndRole() {
   const allActions = JSON.stringify(policies);
   assert.match(allActions, /secretsmanager:GetSecretValue/, 'instance role reads header secret');
   assert.match(allActions, /bedrock:InvokeModel/, 'instance role invokes bedrock');
+  assertFirstCallSubscription(t);  // 인스턴스 롤
   // 인스턴스 롤이 실제로 배포에서 AccessDenied를 낸 롤이다 — 드릴 롤과 같은
   // 헬퍼를 쓰지만 여기서도 프리픽스를 확인한다. 두 스택 중 한쪽만 검사하면
   // 호출부가 갈라지는 순간 다시 조용히 놓친다.
@@ -609,3 +611,17 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   );
 }
 console.log('OK  hosting: launch template name is unique per stack (no account-wide collision)');
+
+// Anthropic 모델의 첫 호출은 Bedrock이 Marketplace 구독을 자동으로 만든다 — 호출한 롤에 권한이 없으면
+// 403이다(lib/backend-permissions.ts bedrockSubscribeStatement). 구독은 Bedrock을 거칠 때만.
+function assertFirstCallSubscription(t: Template) {
+  t.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([Match.objectLike({
+        Action: ['aws-marketplace:Subscribe', 'aws-marketplace:Unsubscribe',
+                 'aws-marketplace:ViewSubscriptions'],
+        Condition: { StringEquals: { 'aws:CalledViaLast': 'bedrock.amazonaws.com' } },
+      })]),
+    },
+  });
+}
