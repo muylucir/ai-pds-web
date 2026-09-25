@@ -162,6 +162,9 @@ class PrototypeSession:
         self._opened = False
         # handoff 분기일 때 프롬프트에 실을 내용({"summary","remaining"}).
         self._handoff: dict | None = None
+        # 이번 start()가 cwd에 심은 빌드 지시서의 키. None이면 없다(Path B, 또는
+        # Discovery가 아직 Step 3에 닿지 않았다). 개시 프롬프트가 이것을 가리킨다.
+        self._instructions_key: str | None = None
         self._pending_interrupt_id: str | None = None
         # 완료 선언의 내용({"summary","remaining"}) 또는 None. 두 가지를
         # 동시에 뜻한다: (1) 이 세션은 할 일을 마쳤다, (2) 유휴 타이머는
@@ -341,6 +344,22 @@ class PrototypeSession:
         spec_path = build_dir / self._spec_key()
         spec_path.parent.mkdir(parents=True, exist_ok=True)
         spec_path.write_text(spec_md, encoding="utf-8")
+
+        # Path A.1은 명세 옆에 빌드 지시서를 남긴다 — 명세와 design-context 답변을
+        # 합친, 상류가 정한 빌더의 입력이다(layout.BUILD_INSTRUCTIONS). 명세만 심으면
+        # Step 2에서 사용자가 고른 디자인 방향과 기기 컨텍스트가 빌더에 닿지 않는다.
+        # 명세와 같은 이유로 매 start마다 새로 쓰고, S3에서 사라졌으면 로컬 사본도
+        # 지운다 — 남겨 두면 프롬프트는 말하지 않는데 낡은 지시가 cwd에 있다.
+        instructions_key = layout.build_instructions_key(self.slug)
+        instructions_path = build_dir / instructions_key
+        try:
+            instructions_md = await self._s3.get(instructions_key)
+        except FileNotFoundError:
+            instructions_path.unlink(missing_ok=True)
+            self._instructions_key = None
+        else:
+            instructions_path.write_text(instructions_md, encoding="utf-8")
+            self._instructions_key = instructions_key
 
         # 브랜드 프로필을 워크스페이스에 반영한다. spec과 같은 이유로 매
         # start마다 새로 쓴다 -- admin이 고친 값이 이 세션부터 반영된다.
@@ -588,6 +607,7 @@ class PrototypeSession:
             self._language,
             request=request,
             spec_key=self._spec_key(),
+            instructions_key=self._instructions_key,
             proxy_path=f"/api/proto/{self.project_id}/{self.slug}/")
 
     def _resume_prompt(self, request: str | None = None) -> str:
@@ -629,9 +649,9 @@ class PrototypeSession:
         말은 덧붙인다 — 조용히 버리면 그 요청은 어디에도 남지 않고, 사용자는
         자기 말이 무시된 것을 알 방법이 없다.
         """
-        return prompts.missing_output_prompt(self._language,
-                                             spec_key=self._spec_key(),
-                                             request=request)
+        return prompts.missing_output_prompt(
+            self._language, spec_key=self._spec_key(),
+            instructions_key=self._instructions_key, request=request)
 
     def _handoff_prompt(self, handoff: dict, *,
                         request: str | None = None) -> str:
@@ -654,6 +674,7 @@ class PrototypeSession:
         return prompts.handoff_prompt(
             self._language,
             spec_key=self._spec_key(),
+            instructions_key=self._instructions_key,
             request=request,
             summary=handoff["summary"],
             remaining=handoff.get("remaining")

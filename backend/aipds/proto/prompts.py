@@ -20,7 +20,37 @@ def _lang(language: str) -> str:
     return language if language in _LANGUAGES else _DEFAULT
 
 
+def _sources(language: str, spec_key: str, instructions_key: str | None) -> str:
+    """에이전트가 읽을 입력 — 명세, 그리고 있으면 빌드 지시서.
+
+    빌드 지시서가 없으면(Path B) 명세 경로 하나만 돌려줘 문장이 종전과 같다.
+    """
+    if not instructions_key:
+        return f"`{spec_key}`"
+    if _lang(language) == "en":
+        return f"`{spec_key}` and `{instructions_key}`"
+    return f"`{spec_key}`, `{instructions_key}`"
+
+
+def _instructions_note(language: str, instructions_key: str | None) -> str:
+    """빌드 지시서가 무엇이고 어느 쪽이 이기는지. 없으면 빈 문자열이다.
+
+    이 한 줄이 없으면 에이전트는 두 파일을 같은 무게로 읽는다. 지시서에만 있는
+    것은 Step 2의 design-context 답변(디자인 방향·기기)이고, 그것이 빌더에 닿게
+    하려고 지시서를 심는 것이다(proto/session.start).
+    """
+    if not instructions_key:
+        return ""
+    if _lang(language) == "en":
+        return (f" `{instructions_key}` is the build instructions Discovery wrote "
+                "from the approved spec and the design-context answers; follow its "
+                "design and device requirements.")
+    return (f" `{instructions_key}`는 승인된 명세와 design-context 답변을 합친 "
+            "빌드 지시서야 — 디자인·기기 요구사항은 이 파일을 따라줘.")
+
+
 def plan_prompt(language: str, *, spec_key: str, proxy_path: str,
+                instructions_key: str | None = None,
                 request: str | None = None) -> str:
     """처음부터 시작하는 세션의 개시 턴. 계획만 세우고 빌드하지 않는다.
 
@@ -31,17 +61,21 @@ def plan_prompt(language: str, *, spec_key: str, proxy_path: str,
     빌드의 핵심 규율이고, 요청 한 줄이 그것을 대체하지 않는다.
     """
     return _with_request(
-        _plan_prompt_base(language, spec_key=spec_key, proxy_path=proxy_path),
+        _plan_prompt_base(language, spec_key=spec_key, proxy_path=proxy_path,
+                          instructions_key=instructions_key),
         language, request)
 
 
-def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str) -> str:
+def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str,
+                      instructions_key: str | None) -> str:
+    src = _sources(language, spec_key, instructions_key)
+    note = _instructions_note(language, instructions_key)
     if _lang(language) == "en":
         return (
-            f"Read `{spec_key}` and draw up a plan for building this prototype.\n"
+            f"Read {src} and draw up a plan for building this prototype.\n"
             "**In this turn, plan only — do not start building.**\n\n"
             "How to proceed:\n"
-            f"1. First read `{spec_key}` and get the requirements exactly right.\n"
+            f"1. First read {src} and get the requirements exactly right.{note}\n"
             "2. Then present your implementation plan. Include the tech stack, the "
             "list of screens and features you will build, the file structure, and "
             "the order of work; also state what was ambiguous in the spec and what "
@@ -70,10 +104,10 @@ def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str) -> str:
             "it — keep going.\n"
         )
     return (
-        f"`{spec_key}` 파일을 읽고, 프로토타입 구현 계획을 세워줘.\n"
+        f"{src} 파일을 읽고, 프로토타입 구현 계획을 세워줘.\n"
         "**이번 턴에서는 계획만 세우고 빌드는 시작하지 마.**\n\n"
         "진행 방식:\n"
-        f"1. 먼저 `{spec_key}`를 읽고 요구사항을 정확히 파악해줘.\n"
+        f"1. 먼저 {src}를 읽고 요구사항을 정확히 파악해줘.{note}\n"
         "2. 그다음 구현 계획을 제시해줘. 기술 스택, 만들 화면/기능 목록, "
         "파일 구조, 작업 순서를 포함하고, 스펙에서 애매했던 부분과 네가 임의로 "
         "가정한 내용도 함께 밝혀줘.\n"
@@ -150,6 +184,7 @@ def resume_prompt(language: str, *, request: str | None = None) -> str:
 
 
 def missing_output_prompt(language: str, *, spec_key: str,
+                         instructions_key: str | None = None,
                          request: str | None = None) -> str:
     """산출물이 사라진 뒤의 개시 턴 — 찾지 말고 다시 만들라고 말한다.
 
@@ -164,19 +199,23 @@ def missing_output_prompt(language: str, *, spec_key: str,
     태웠고, 성공할 수 없는 탐색이었다.
     """
     return _with_request(
-        _missing_output_prompt_base(language, spec_key=spec_key),
+        _missing_output_prompt_base(language, spec_key=spec_key,
+                                    instructions_key=instructions_key),
         language, request)
 
 
-def _missing_output_prompt_base(language: str, *, spec_key: str) -> str:
+def _missing_output_prompt_base(language: str, *, spec_key: str,
+                                instructions_key: str | None) -> str:
+    src = _sources(language, spec_key, instructions_key)
+    note = _instructions_note(language, instructions_key)
     if _lang(language) == "en":
         return (
             "The record of the previous build session is still here, but "
             "**there is no output under `prototype/`** in the working directory. "
             "It was reset, or the build environment was replaced.\n\n"
             "**Do not look for the old code.** It is nowhere in this environment. "
-            f"Read `{spec_key}` again and **just build it from scratch.** Reuse the "
-            "direction and the decisions from the earlier conversation.\n\n"
+            f"Read {src} again and **just build it from scratch.** Reuse the "
+            f"direction and the decisions from the earlier conversation.{note}\n\n"
             "**Do not start building yet.**\n"
             "1. Read the spec and give me a short implementation plan that reflects "
             "what we agreed on earlier.\n"
@@ -191,8 +230,8 @@ def _missing_output_prompt_base(language: str, *, spec_key: str) -> str:
         "`prototype/`에 **산출물이 없다.** 초기화됐거나 빌드 환경이 "
         "교체된 것이다.\n\n"
         "**이전 코드를 찾지 마.** 이 환경 어디에도 남아 있지 않다. "
-        f"`{spec_key}`를 다시 읽고 **처음부터 다시 만들면 된다.** "
-        "이전 대화에서 정한 방향과 결정사항은 그대로 활용해줘.\n\n"
+        f"{src}를 다시 읽고 **처음부터 다시 만들면 된다.** "
+        f"이전 대화에서 정한 방향과 결정사항은 그대로 활용해줘.{note}\n\n"
         "**아직 빌드는 시작하지 마.**\n"
         "1. 스펙을 읽고, 이전 대화에서 합의된 내용을 반영한 구현 계획을 "
         "짧게 제시해줘.\n"
@@ -217,7 +256,8 @@ def _with_request(text: str, language: str, request: str | None) -> str:
 
 
 def handoff_prompt(language: str, *, spec_key: str, summary: str,
-                   remaining: str, request: str | None = None) -> str:
+                   remaining: str, instructions_key: str | None = None,
+                   request: str | None = None) -> str:
     """완료된 빌드를 개선하는 새 세션의 개시 턴.
 
     파일 트리를 넘기지 않는 것이 의도적이다 — 에이전트가 자기 파일 도구로 cwd를
@@ -234,6 +274,8 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
     세션이라 트랜스크립트가 없어서(proto/session의 _resolve_session_id), 그 둘이
     빠지면 에이전트가 이전 빌드가 무엇을 남겼는지 모르는 채로 시작한다.
     """
+    src = _sources(language, spec_key, instructions_key)
+    note = _instructions_note(language, instructions_key)
     if request:
         if _lang(language) == "en":
             return (
@@ -243,7 +285,7 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
                 f"Summary of the previous build:\n{summary}\n\n"
                 f"Recorded as remaining work:\n{remaining}\n\n"
                 "1. First look at `prototype/` in the working directory to see where "
-                f"things stand. Re-read `{spec_key}` if you need to.\n"
+                f"things stand. Re-read {src} if you need to.{note}\n"
                 "2. Then make the change I asked for. Do not ask me what to improve "
                 "— I just told you. Ask only if my request is genuinely ambiguous.\n"
                 "3. Declare completion with `build_complete` when it is done.\n"
@@ -255,7 +297,7 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
             f"이전 빌드 요약:\n{summary}\n\n"
             f"남은 작업으로 기록된 것:\n{remaining}\n\n"
             f"1. 먼저 작업 디렉토리의 `prototype/`을 살펴보고 현재 상태를 파악해줘. "
-            f"필요하면 `{spec_key}`도 다시 읽어줘.\n"
+            f"필요하면 {src}도 다시 읽어줘.{note}\n"
             "2. 그다음 내가 말한 것을 반영해줘. 무엇을 개선할지 되묻지 마 — 방금 "
             "말했다. 내 요청 자체가 정말 모호할 때만 물어봐.\n"
             "3. 끝나면 `build_complete`로 완료를 선언해줘.\n"
@@ -268,7 +310,7 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
             f"Recorded as remaining work:\n{remaining}\n\n"
             "**Do not modify anything yet.**\n"
             "1. First look at `prototype/` in the working directory to see where "
-            f"things stand. Re-read `{spec_key}` if you need to.\n"
+            f"things stand. Re-read {src} if you need to.{note}\n"
             "2. Then **use AskUserQuestion to ask what to improve this time, and "
             "wait for my answer.** Offer options so I can choose between the "
             "remaining work recorded above and something else.\n"
@@ -282,7 +324,7 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
         f"남은 작업으로 기록된 것:\n{remaining}\n\n"
         "**아직 아무것도 수정하지 마.**\n"
         f"1. 먼저 작업 디렉토리의 `prototype/`을 살펴보고 현재 상태를 파악해줘. "
-        f"필요하면 `{spec_key}`도 다시 읽어줘.\n"
+        f"필요하면 {src}도 다시 읽어줘.{note}\n"
         "2. 그다음 **AskUserQuestion으로 이번에 무엇을 개선할지 물어보고 내 "
         "답을 기다려줘.** 위에 기록된 남은 작업을 할지, 다른 것을 할지 내가 "
         "고를 수 있게 선택지를 제시해줘.\n"

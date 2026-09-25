@@ -131,3 +131,15 @@ def artifact_dir(prototype_id: str) -> str:
     if prototype_id == SINGLE_ID:
         return "aiplc-docs/discovery/prototype"
     return f"aiplc-docs/discovery/prototypes/{prototype_id}"
+
+
+#: Step 3의 빌드 지시서 이름. `prototype-validation.md:170`이 단수 경로로
+#: 선언하고, 명세(Step 1)와 design-context 답변(Step 2)을 합친 **빌더의 입력**이다
+#: (같은 문서 244행 "The AI agent reads `build-instructions.md`"). Path B의 룰은
+#: 이 파일을 쓰지 않는다 — `PROTOTYPE-{slug}.md`가 그 자체로 빌드 컨텍스트다.
+BUILD_INSTRUCTIONS = "build-instructions.md"
+
+
+def build_instructions_key(prototype_id: str) -> str:
+    """id → 빌드 지시서 경로. 명세와 같은 디렉터리다."""
+    return f"{artifact_dir(prototype_id)}/{BUILD_INSTRUCTIONS}"
