@@ -61,8 +61,30 @@ const BACKEND_BUCKET_PREFIXES = [
   'projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*', 'imports/*',
 ] as const;
 
+// Anthropic 모델은 계정에서 **처음** 호출될 때 Bedrock이 AWS Marketplace 구독을 자동으로 만든다 —
+// 호출한 롤에 이 권한이 없으면 403("not authorized to perform the required AWS Marketplace actions")이다.
+// 새 계정의 첫 호출이, 또는 새 모델을 추가한 뒤의 첫 호출이 어느 롤에서 나올지 모르므로 Bedrock을
+// 부르는 롤 전부(백엔드·인스턴스 롤, 샌드박스의 AgentRole)에 준다. 한 번 구독되면 계정의 모든 롤이
+// 이 권한 없이 호출한다.
+//
+// CalledViaLast: 구독은 **Bedrock 호출을 거쳐서만** 일어난다 — Marketplace API를 직접 불러 다른
+// 상품을 구독할 수 없고, 거쳐 가는 Bedrock 호출은 INVOKABLE_MODEL_ARNS로 묶여 있다. 제품 ID는 모델마다
+// 달라 새 모델마다 고쳐야 하므로 걸지 않는다.
+export function bedrockSubscribeStatement(): iam.PolicyStatement {
+  return new iam.PolicyStatement({
+    actions: [
+      'aws-marketplace:Subscribe',
+      'aws-marketplace:Unsubscribe',
+      'aws-marketplace:ViewSubscriptions',
+    ],
+    resources: ['*'],
+    conditions: { StringEquals: { 'aws:CalledViaLast': 'bedrock.amazonaws.com' } },
+  });
+}
+
 // 백엔드(드릴 롤 또는 EC2 인스턴스 롤)가 필요로 하는 공통 권한:
-// Bedrock invoke + 아티팩트 버킷 projects/*·sessions/*·surveys/*·models/*·design/* 읽기/쓰기/목록.
+// Bedrock invoke(+ 첫 호출의 Marketplace 자동 구독) + 아티팩트 버킷 projects/*·sessions/*·surveys/*·
+// models/*·design/* 읽기/쓰기/목록.
 export function backendPolicyStatements(
   bucket: s3.IBucket,
   account: string,
@@ -72,6 +94,7 @@ export function backendPolicyStatements(
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
       resources: INVOKABLE_MODEL_ARNS(account),
     }),
+    bedrockSubscribeStatement(),
     new iam.PolicyStatement({
       actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
       resources: BACKEND_BUCKET_PREFIXES.map((p) => `${bucket.bucketArn}/${p}`),
