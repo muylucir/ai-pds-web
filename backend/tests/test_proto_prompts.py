@@ -293,3 +293,46 @@ def test_a_plan_request_is_never_silently_dropped():
                        request="로그인 화면을 먼저 만들어줘")
 
     assert "로그인 화면을 먼저 만들어줘" in text
+
+
+INSTRUCTIONS = "aiplc-docs/discovery/prototype/build-instructions.md"
+
+
+def _every_opening(language: str, instructions_key: str | None) -> list[str]:
+    """명세를 가리키는 개시 프롬프트 전부(resume은 명세를 다시 말하지 않는다)."""
+    return [
+        plan_prompt(language, spec_key=SPEC, proxy_path=PROXY,
+                    instructions_key=instructions_key),
+        missing_output_prompt(language, spec_key=SPEC,
+                              instructions_key=instructions_key),
+        handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r",
+                       instructions_key=instructions_key),
+        handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r",
+                       instructions_key=instructions_key, request="버튼 색"),
+    ]
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_openings_name_the_build_instructions_when_present(language):
+    """Path A.1의 빌드 지시서는 design-context 답변이 빌더에 닿는 유일한 길이다.
+    명세만 가리키면 에이전트는 그 파일이 있다는 것을 모른다."""
+    for p in _every_opening(language, INSTRUCTIONS):
+        assert SPEC in p
+        assert INSTRUCTIONS in p
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_openings_without_instructions_are_unchanged(language):
+    """지시서가 없으면(Path B) 인자를 안 준 것과 한 글자도 다르지 않다."""
+    assert _every_opening(language, None) == [
+        plan_prompt(language, spec_key=SPEC, proxy_path=PROXY),
+        missing_output_prompt(language, spec_key=SPEC),
+        handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r"),
+        handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r",
+                       request="버튼 색"),
+    ]
+
+
+def test_english_openings_with_instructions_stay_english():
+    for p in _every_opening("en", INSTRUCTIONS)[:3]:     # 마지막은 한국어 요청을 싣는다
+        assert not any("가" <= c <= "힣" for c in p), p
