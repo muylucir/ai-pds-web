@@ -52,6 +52,8 @@ AUTH_NOT_CONFIGURED = "auth_not_configured"
 NAME_REQUIRED = "name_required"
 MODEL_ID_REQUIRED = "model_id_required"
 MODEL_ID_CHARSET = "model_id_charset"
+# 순서 저장 시 관리자 화면의 목록이 저장된 목록과 다르다(다른 탭에서 바뀌었다).
+MODEL_ORDER_STALE = "model_order_stale"
 
 # 프로젝트 (routes/projects.py)
 MODEL_NOT_SELECTABLE = "model_not_selectable"

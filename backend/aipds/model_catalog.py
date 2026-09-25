@@ -13,6 +13,10 @@
 표시 상한(5)은 등록이 아니라 `display`에만 적용된다: 관리자는 여러 모델을
 등록해 두고 그중 5개만 화면에 노출한다. 상한을 등록에 두면 요구사항이
 성립하지 않는다.
+
+**목록 순서가 곧 콤보박스 순서다.** 별도의 정렬 키를 두지 않는다 — 파일의
+배열 순서 하나만 있으면 "순서"와 "정렬 키"가 어긋날 자리가 없다. 첫 항목은
+프로젝트 생성 화면의 기본 선택이기도 하다(CreateProjectForm이 `list[0]`을 고른다).
 """
 from __future__ import annotations
 
@@ -118,6 +122,22 @@ class ModelCatalog:
         self._check_display_cap(entries)
         await self._save(entries)
         return entry
+
+    async def reorder(self, model_ids: list[str]) -> list[ModelEntry]:
+        """등록된 모델 전체를 `model_ids` 순서로 다시 저장한다.
+
+        **전체 순열만 받는다.** 관리자 화면이 본 목록과 저장된 목록이 다르면
+        (다른 탭에서 추가·삭제했다) 거부한다 — 모르는 id를 버리거나 빠진 id를
+        끝에 붙이면, 관리자가 본 적 없는 순서가 조용히 저장된다.
+        """
+        entries = await self._writable()
+        by_id = {e.model_id: e for e in entries}
+        if len(model_ids) != len(entries) or set(model_ids) != set(by_id):
+            raise CatalogError(
+                "stale", "the model list changed since it was loaded — reload it")
+        ordered = [by_id[i] for i in model_ids]
+        await self._save(ordered)
+        return ordered
 
     async def remove(self, model_id: str) -> None:
         entries = await self._writable()

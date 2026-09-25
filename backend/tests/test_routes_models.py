@@ -194,6 +194,24 @@ def test_admin_patch_unknown_model_is_404(catalog, client):
     assert r.status_code == 404
 
 
+# ---- PUT /admin/models/order ----
+
+def test_admin_reorder_returns_the_new_order(catalog, client):
+    ids = [e.model_id for e in SEED_MODELS][::-1]
+    r = client.put("/admin/models/order", json={"model_ids": ids})
+    assert r.status_code == 200
+    assert [m["model_id"] for m in r.json()["models"]] == ids
+    assert [m["model_id"] for m in client.get("/models").json()["models"]] == ids
+
+
+def test_admin_reorder_with_a_stale_list_is_409_with_a_code(catalog, client):
+    ids = [e.model_id for e in SEED_MODELS][1:]
+    r = client.put("/admin/models/order", json={"model_ids": ids})
+    assert r.status_code == 409
+    # 문구는 프론트 딕셔너리가 소유한다(error_codes.py 헤더).
+    assert r.json()["detail"] == "model_order_stale"
+
+
 # ---- DELETE /admin/models/{model_id} ----
 
 def test_admin_delete_removes_the_entry(catalog, client):
