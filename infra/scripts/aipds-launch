@@ -225,7 +225,10 @@ def build_run(kind: str, project_id: str, slug: str | None, args: list[str],
         "LockPersonality=yes",
         # unshare에 필요한 둘만. 사용자 네임스페이스를 막아 권한을 되찾는 길을 닫는다.
         "RestrictNamespaces=pid mnt",
-        "CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP",
+        # 앞의 넷은 트램펄린(unshare → setpriv)용, 뒤의 둘은 ExecStopPost의 chmod용(아래). 둘 다 root로
+        # 도는 우리 고정 명령만 쓴다 — 에이전트는 setpriv의 --bounding-set=-all로 전부 잃는다.
+        "CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP"
+        " CAP_FOWNER CAP_DAC_READ_SEARCH",
         f"TemporaryFileSystem={WORKSPACES}",
         f"TemporaryFileSystem={PROTOS}",
         f"TemporaryFileSystem={AGENT_HOME}",
@@ -244,10 +247,17 @@ def build_run(kind: str, project_id: str, slug: str | None, args: list[str],
     # 지운다). UMask=0007이면 충분할 것 같지만, 번들 CLI는 버전에 따라 자기 config dir과 트랜스크립트를
     # 0700/0600으로 **명시해** 만든다(운영에서 확인: SDK 0.2.157의 번들은 umask를 따랐고 0.2.159의
     # 번들은 아니다). 그 순간 백엔드는 그 프로젝트를 재개하지도 지우지도 못한다. 그래서 unit이 끝날
-    # 때마다 그룹 권한을 되돌린다. `+`: root로, 샌드박스 네임스페이스 밖에서 — 경로는 여기서 계산한
-    # 값이고 이때 unit의 프로세스는 모두 끝나 있다. chmod -R은 재귀 중의 심볼릭 링크를 따라가지 않는다.
-    # ExecStopPost는 unit이 어떻게 멈추든(정상 종료, stop, 백엔드 재시작 뒤 sweep) 돈다.
-    props.append(f"ExecStopPost=+{CHMOD} -R g+rwX {home}")
+    # 때마다 그룹 권한을 되돌린다 — 경로는 여기서 계산한 값이고, 이때 unit의 프로세스는 모두 끝나 있으며,
+    # chmod -R은 재귀 중의 심볼릭 링크를 따라가지 않는다. ExecStopPost는 unit이 어떻게 멈추든(정상 종료,
+    # stop, 백엔드 재시작 뒤 sweep) 돈다.
+    #
+    # **접두사(`+`·`!`·`:`)를 붙이지 않는다.** 붙이면 systemd-run이 속성을 ExecStopPostEx로 올리고,
+    # systemd 252는 transient unit 파일에 그 이름으로 적는데 unit 파일 파서는 그 키를 모른다 — 다음
+    # daemon-reload에서 "Unknown key name 'ExecStopPostEx'"로 버려지고 chmod는 돌지 않는다(운영에서
+    # 실측: 빌드 시작 2초 뒤의 reload로 사라졌다. 이 인스턴스는 수 분마다 reload한다). 그래서 chmod는
+    # 샌드박스 안에서 root로 돈다: BindPaths로 보이는 자기 트리만 만지고, 남의 0700 디렉터리를 순회하고
+    # (CAP_DAC_READ_SEARCH) 남의 파일 모드를 바꾸는(CAP_FOWNER) 두 capability를 위의 bounding set이 준다.
+    props.append(f"ExecStopPost={CHMOD} -R g+rwX {home}")
 
     trampoline = [
         UNSHARE, "--pid", "--fork", "--mount-proc", "--kill-child", "--",
