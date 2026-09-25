@@ -165,3 +165,42 @@ async def test_update_does_not_mutate_the_module_level_seed():
     cat = ModelCatalog(FakeS3Store())
     await cat.update(SEED_MODELS[0].model_id, name="바뀐 이름", display=False)
     assert [(e.name, e.model_id, e.display) for e in SEED_MODELS] == before
+
+
+# ---- reorder ----
+
+@pytest.mark.asyncio
+async def test_reorder_stores_the_new_order_and_the_combo_follows_it():
+    s3 = FakeS3Store()
+    cat = ModelCatalog(s3)
+    ids = [e.model_id for e in SEED_MODELS]
+    new = list(reversed(ids))
+    await cat.reorder(new)
+    assert [e["model_id"] for e in json.loads(s3.blobs[CATALOG_KEY])["models"]] == new
+    # 콤보박스 순서와 기본 선택(첫 항목)이 이 순서에서 나온다.
+    assert [e.model_id for e in await cat.displayed()] == new
+
+
+@pytest.mark.asyncio
+async def test_reorder_keeps_name_and_display():
+    cat = ModelCatalog(FakeS3Store())
+    await cat.update(SEED_MODELS[0].model_id, name="오퍼스", display=False)
+    ids = [e.model_id for e in SEED_MODELS]
+    await cat.reorder(ids[1:] + ids[:1])
+    last = (await cat.load())[-1]
+    assert (last.model_id, last.name, last.display) == (ids[0], "오퍼스", False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutate", [
+    lambda ids: ids[:-1],                        # 다른 탭에서 추가된 모델을 모른다
+    lambda ids: ids + ["global.anthropic.x"],    # 다른 탭에서 지운 모델을 보낸다
+    lambda ids: ids[:-1] + ids[:1],              # 중복
+])
+async def test_reorder_rejects_anything_but_a_permutation(mutate):
+    s3 = FakeS3Store()
+    cat = ModelCatalog(s3)
+    with pytest.raises(CatalogError) as exc:
+        await cat.reorder(mutate([e.model_id for e in SEED_MODELS]))
+    assert exc.value.code == "stale"
+    assert CATALOG_KEY not in s3.blobs

@@ -46,6 +46,16 @@ export async function patchModel(
   return body as AdminModel;
 }
 
+// 등록된 모델 전체의 새 순서. 일부만 보내면 서버가 409로 거부한다
+// (model_catalog.reorder — 관리자가 본 적 없는 순서를 저장하지 않는다).
+export async function reorderModels(modelIds: string[]): Promise<AdminModel[]> {
+  const body = await apiFetch<{ models: AdminModel[] }>("/admin/models/order", {
+    method: "PUT",
+    body: JSON.stringify({ model_ids: modelIds }),
+  });
+  return body?.models ?? [];
+}
+
 export async function deleteModel(modelId: string): Promise<void> {
   await apiFetch<null>(`/admin/models/${modelId}`, { method: "DELETE" });
 }
