@@ -53,10 +53,16 @@ the project list.`,
 [project creation screen](/manual#model).
 
 - **Display name** — what people see.
-- **Model ID** — a Bedrock inference profile id. **Model access must be enabled** for that model in
-  the deployment region for calls to work. If it is not, the project is created and the first
-  conversation fails.
+- **Model ID** — a Bedrock inference profile id. It must be one that can be invoked in the
+  deployment region. For a model the account has never called, Bedrock creates the model's
+  subscription automatically on the first call — for those few minutes the first conversation may
+  fail with a permission error; send it again shortly after.
 - **Show in the picker** — you can register many models but expose **at most five** as choices.
+- **Order** — the picker follows **the order of this table**, and the topmost shown model is the
+  **default choice** on the project creation screen. **↑ / ↓** in the order column moves a model one
+  row and saves at once. If a model was added or removed elsewhere in the meantime, nothing is saved
+  and *The model list was changed elsewhere* appears — refresh to see the current list, then move it
+  again.
 
 Removing a model from the list does **not** move projects off it: **projects already created keep
 running on the same model.** The list only governs projects created from now on.`,

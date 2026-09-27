@@ -211,23 +211,25 @@ function PrototypeCard() {
     <Frame>
       <div className="space-y-2">
         <Panel>
-          <div className="flex items-center justify-between">
-            <span className="font-semibold text-slate-600">PROTOTYPE-*.md</span>
-            <span className="flex items-center gap-2">
-              <Badge tone="emerald">{t("proto.statusRunning")}</Badge>
-              <span className="text-[11px] text-slate-500">
-                {t("proto.surveyResponses").replace("{n}", "3")}
-              </span>
+          {/* 제목 자리는 명세의 제품명이다 — 프로젝트마다 다른 값이라 막대로
+              그리고, 그 아래 줄에 명세 경로를 둔다(실제 카드와 같은 배치). */}
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-24 rounded bg-slate-300" />
+            <Badge tone="emerald">{t("proto.statusRunning")}</Badge>
+            <span className="text-[11px] text-slate-500">
+              {t("proto.surveyResponses").replace("{n}", "3")}
             </span>
           </div>
+          <p className="mt-0.5 text-[11px] text-slate-400">PROTOTYPE-*.md</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Btn tone="primary">{t("proto.openPreview")}</Btn>
             <Btn tone="ghost">{t("proto.copyLink")}</Btn>
-            <Btn tone="ghost">{t("proto.survey")}</Btn>
-            <Btn tone="ghost">{t("proto.download")}</Btn>
-            <Btn tone="ghost">{t("proto.logs")}</Btn>
+            <Btn tone="ghost">{t("proto.modify")}</Btn>
             <Btn tone="quiet">{t("proto.stopHosting")}</Btn>
+            <Btn tone="ghost">{t("proto.logs")}</Btn>
+            <Btn tone="ghost">{t("proto.download")}</Btn>
             <Btn tone="danger">{t("proto.reset")}</Btn>
+            <Btn tone="ghost">{t("proto.survey")}</Btn>
           </div>
         </Panel>
         <Panel className="border-emerald-300 bg-emerald-50/40">

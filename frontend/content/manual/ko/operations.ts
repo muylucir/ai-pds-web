@@ -15,9 +15,13 @@ export const operations: ManualSection = {
     {
       kind: "md",
       md: `필요한 것: Node.js 20+, 관리자급 AWS 자격증명(IAM 롤·Cognito·VPC를 만듭니다),
-그리고 **배포 리전에서 사용할 Claude 모델의 Bedrock 모델 액세스**.
+그리고 **Claude 모델을 부를 수 있는 계정**입니다.
 
-마지막 항목을 빼먹으면 배포는 성공하고 첫 대화에서 실패합니다 — 가장 흔한 실수입니다.`,
+Bedrock의 Claude 모델은 계정에서 처음 호출될 때 AWS Marketplace 구독이 자동으로 만들어지고,
+배포되는 롤은 그 구독에 필요한 권한을 이미 갖고 있습니다. 사람이 미리 해 둘 것은 두 가지입니다 —
+**Anthropic 첫 사용 양식(use case 제출)**을 계정(또는 조직의 관리 계정)에서 한 번 제출해 두는 것,
+그리고 계정에 Marketplace 결제 수단이 있는 것. 이것이 빠지면 배포는 성공하고 첫 대화에서
+실패합니다 — 가장 흔한 실수입니다.`,
     },
     {
       kind: "cmd",
@@ -31,18 +35,23 @@ export const operations: ManualSection = {
     },
     {
       kind: "md",
-      md: `세 스택이 서로를 참조하므로 **\`--all\`로 함께** 배포합니다.
+      md: `스택들이 서로를 참조하므로 **\`--all\`로 함께** 배포합니다. 순서는 CDK가 정합니다.
 
 | 스택 | 만드는 것 |
 |---|---|
 | \`AipdsDrillStack\` | 산출물 S3 버킷 + 백엔드 실행 롤 |
 | \`AipdsAuthStack\` | Cognito User Pool + 로그인 화면 + 역할 그룹 + 시드 계정 |
 | \`AipdsHostingStack\` | VPC + EC2 + CloudFront |
+| \`AipdsPreviewStack\` | 프로토타입 프리뷰 전용 CloudFront ([프리뷰 공유하기](/manual#share)) |
+| \`AipdsAgentCredsStack\` | 샌드박스의 에이전트·프로토타입이 받는, Bedrock 호출만 되는 롤 ([샌드박스](/manual#sandbox)) |
+| \`AipdsUploadCorsStack\` | 인스턴스가 버킷 CORS에 자기 앱 주소를 유지하는 권한 — [프로젝트 가져오기](/manual#transfer-project)의 업로드가 이것으로 동작합니다 |
 
 **15~20분** 걸립니다. \`cdk deploy\`가 끝난 뒤에도 EC2가 백엔드·프론트를 빌드하고 있을 수 있어
-**몇 분간 502가 나오는 것은 정상입니다.**
+**몇 분간 502가 나오는 것은 정상입니다.** 그 뒤 몇 분 안에 인스턴스가 샌드박스와 프리뷰 설정을
+스스로 적용하면서 백엔드가 한 번 재시작됩니다. 손으로 돌릴 것은 없습니다.
 
-접속 주소는 출력값 \`AipdsHostingStack.DistributionDomain\` 입니다.`,
+접속 주소는 출력값 \`AipdsHostingStack.DistributionDomain\` 이고, 프로토타입 공유 링크는
+\`AipdsPreviewStack.PreviewOrigin\` 주소로 나갑니다.`,
     },
     { kind: "heading", id: "migrate", text: "기존 배포에서 옮겨오기" },
     {
@@ -146,6 +155,7 @@ npx cdk deploy --all --require-approval never \\
 | 바뀐 것 | 하는 일 | 중단 |
 |---|---|---|
 | 룰셋(서브모듈)·설정만 | 트리만 갱신 | 없음 (다음 턴부터 새 룰을 읽습니다) |
+| 테스트 파일만 (\`backend/tests/\`, \`*.test.ts(x)\` 등) | 트리만 갱신 | 없음 — 실행 중인 코드가 읽지 않는 파일이라 재시작도 재빌드도 하지 않습니다 |
 | 백엔드 | 백엔드 재시작 | 진행 중인 대화·빌드 세션이 끊깁니다. 호스팅 중이던 프로토타입은 하나씩 다시 뜹니다(각 수 분) |
 | 프론트엔드 | 다시 빌드하고 재시작 | 빌드 1~2분간 접속 중인 사용자에게 오류 |
 | 없음 (이미 최신) | 아무것도 하지 않습니다 | 없음 |
@@ -153,7 +163,9 @@ npx cdk deploy --all --require-approval never \\
 - 백엔드 재시작은 **진행 중인 대화와 빌드 세션을 끊습니다.** 끊긴 대화는 워크스페이스를 다시
   열면 "서버가 다시 시작되어 이 작업이 중단되었습니다"로 표시되고, 다시 요청하면 이어집니다.
   도는 빌드 세션은 재개 경로를 탑니다. 프론트·백엔드 갱신은 쉬는 시간에 하세요.
-- 무엇이 도는지는 \`git -C /opt/aipds rev-parse HEAD\`로 확인합니다.`,
+- 무엇이 도는지는 \`git -C /opt/aipds rev-parse HEAD\`로 확인합니다. 앱이 응답하는지는
+  \`curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:3000/\`로 직접 봅니다 — nginx는 CloudFront의
+  비밀 헤더가 없는 요청에 403을 주므로 우회합니다.`,
     },
     {
       kind: "callout",
@@ -194,6 +206,37 @@ AI-PLC 룰셋**에 있습니다. 사본을 두지 않고 \`steering-files/\` **g
         "git add steering-files && git commit -m \"chore: move the ruleset pointer\" && git push",
       ],
     },
+    { kind: "heading", id: "sandbox", text: "샌드박스와 IMDS 차단" },
+    {
+      kind: "md",
+      md: `Discovery·빌드 에이전트와 호스팅된 프로토타입은 **백엔드와 다른 사용자**(\`aipds-agent\`,
+\`aipds-proto\`)로, 자기 프로젝트의 폴더만 보이는 systemd 샌드박스 안에서 돕니다. 인스턴스
+메타데이터(IMDS)도 막혀 있어 인스턴스 롤을 얻을 수 없고, 대신 **Bedrock 호출만 되는 롤**
+(\`AipdsAgentCredsStack\`)의 짧은 자격증명을 받습니다. 업로드된 문서나 AI가 쓴 코드가 앱 폴더,
+다른 프로젝트, 백엔드의 비밀 값에 닿지 않게 하는 경계입니다.
+
+인스턴스가 이것을 **스스로 켭니다.** 두 별도 스택이 SSM Parameter Store에 값을 쓰고, 인스턴스의
+\`aipds-harden sync\`가 부팅 때 한 번, 그 뒤 2분마다 그 값을 적용합니다 — 값이 바뀌었을 때만
+백엔드를 재시작하고, 값을 못 읽으면 지금 설정을 끄지 않고 그대로 둡니다.
+
+| 명령 (\`sudo /opt/aipds/infra/scripts/aipds-harden …\`) | 하는 일 |
+|---|---|
+| \`status\` | 현재 상태 — 사용자, 실행 래퍼, IMDS 차단, 동기화 타이머, 돌고 있는 샌드박스 |
+| \`sync\` | 스택 값을 지금 적용합니다 (타이머가 2분마다 하는 일) |
+| \`disable\` | 에이전트·프로토타입을 백엔드 사용자로 직접 돌립니다(되돌리기). 타이머가 다시 켜지 않도록 **동기화를 멈춥니다** |
+| \`imds allow\` | 샌드박스에서 IMDS를 다시 엽니다. 이것도 동기화를 멈춥니다 |
+| \`enable <AgentRoleArn>\` / \`imds block\` | 손으로 다시 켭니다. 멈춘 동기화가 풀립니다 |
+
+이 명령들은 백엔드를 재시작합니다 — 진행 중인 대화와 빌드가 끊기므로 쉬는 시간에 쓰세요.`,
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**샌드박스가 켜져 있는데 쓸 수 없으면 직접 실행으로 물러나지 않습니다.** 그러면 에이전트와
+프로토타입이 아무도 모르게 인스턴스 롤 전체를 쥐게 되기 때문입니다. 대신 대화 턴이 실패하고, 호스팅
+시작은 *프로토타입 실행 환경(샌드박스)을 쓸 수 없어…* 로 거부됩니다. 백엔드 로그의 원인을 고치거나,
+의도적으로 직접 실행하려면 \`aipds-harden disable\`을 씁니다.`,
+    },
     { kind: "heading", id: "hotfix", text: "인스턴스를 새로 만들기" },
     {
       kind: "md",
@@ -209,6 +252,43 @@ AI-PLC 룰셋**에 있습니다. 사본을 두지 않고 \`steering-files/\` **g
       kind: "cmd",
       lines: ["cd infra && npx cdk deploy AipdsHostingStack --require-approval never"],
     },
+    {
+      kind: "md",
+      md: `반대로, **이미 쓰고 있는 환경에서는 인스턴스가 뜻하지 않게 교체되지 않게 막아 두세요.**
+AMI가 고정되어 있지 않고 user-data가 템플릿의 일부라서, 인프라와 무관한 이유로 HostingStack을
+배포해도 인스턴스가 교체될 수 있습니다. 교체·삭제를 거부하는 스택 정책과 종료 보호를 걸면,
+교체가 따르는 배포는 실패하고 롤백됩니다 — 위 명령도 이 정책이 걸려 있는 동안에는 거부됩니다.
+정말 교체해야 할 때만 정책을 풀고 배포합니다.`,
+    },
+    {
+      kind: "cmd",
+      caption: "HostingStack의 교체·삭제를 거부하고 종료 보호를 켭니다",
+      lines: [
+        "aws cloudformation set-stack-policy --stack-name AipdsHostingStack --stack-policy-body \\",
+        "  '{\"Statement\":[{\"Effect\":\"Deny\",\"Principal\":\"*\",\"Action\":[\"Update:Replace\",\"Update:Delete\"],\"Resource\":\"*\"},",
+        "                 {\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"Update:Modify\",\"Resource\":\"*\"}]}'",
+        "aws cloudformation update-termination-protection --stack-name AipdsHostingStack \\",
+        "  --enable-termination-protection",
+      ],
+    },
+    {
+      kind: "md",
+      md: `그런 환경에서 인스턴스 쪽 세 스택(\`AipdsAgentCredsStack\`·\`AipdsPreviewStack\`·
+\`AipdsUploadCorsStack\`)만 갱신하려면 그 값을 환경변수로 고정해 HostingStack을 건드리지 않고
+배포합니다. 네 값은 모두 함께 주거나 모두 비워야 합니다.`,
+    },
+    {
+      kind: "cmd",
+      lines: [
+        "cd infra",
+        "AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> \\",
+        "AIPDS_PREVIEW_ORIGIN_DNS=ec2-<a-b-c-d>.<region>.compute.amazonaws.com \\",
+        "AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader secret ARN> \\",
+        "AIPDS_ARTIFACTS_BUCKET=<artifacts bucket name> \\",
+        "  npx cdk deploy --exclusively AipdsAgentCredsStack AipdsPreviewStack AipdsUploadCorsStack \\",
+        "  --require-approval never",
+      ],
+    },
     { kind: "heading", id: "teardown", text: "내리기" },
     {
       kind: "cmd",
@@ -219,17 +299,23 @@ AI-PLC 룰셋**에 있습니다. 사본을 두지 않고 \`steering-files/\` **g
       tone: "warn",
       md: `**User Pool이 함께 삭제되므로 사용자 계정이 전원 사라집니다.** S3에 남기고 싶은
 산출물이 있으면 먼저 내려받으세요. 그리고 배포된 상태는 **비용이 계속 발생합니다**
-(EC2 상시 가동 + 저장소 + 대화 턴마다 Bedrock 호출) — 쓰지 않을 때는 내리는 편이 낫습니다.`,
+(EC2 상시 가동 + 저장소 + 대화 턴마다 Bedrock 호출) — 쓰지 않을 때는 내리는 편이 낫습니다.
+
+HostingStack에 [종료 보호](/manual#hotfix)를 걸어 두었다면 삭제가 거부됩니다. 내리기 전에
+\`aws cloudformation update-termination-protection --stack-name AipdsHostingStack --no-enable-termination-protection\`
+으로 먼저 풉니다.`,
     },
     { kind: "heading", id: "troubleshooting", text: "문제 해결" },
     {
       kind: "md",
       md: `| 증상 | 원인과 대처 |
 |---|---|
-| 배포 직후 CloudFront 502 | EC2 첫 빌드가 진행 중입니다(5~10분). 기다립니다 |
-| 첫 대화에서 권한 오류 | 배포 리전에 그 모델의 **Bedrock 모델 액세스**가 꺼져 있습니다 |
+| 배포 직후 CloudFront 502 | EC2 첫 빌드가 진행 중입니다(5~10분). 기다립니다. 진행은 SSM으로 들어가 \`sudo tail -f /var/log/cloud-init-output.log\`로 봅니다 |
+| 첫 대화에서 권한 오류 (\`AccessDeniedException\`) | 계정에서 처음 부르는 모델이면 구독이 만들어지는 몇 분 동안 생깁니다 — 잠시 뒤 다시 보냅니다. 계속되면 **Anthropic 첫 사용 양식**이 제출되지 않았거나 Marketplace 결제 수단이 없는 것입니다 ([배포](/manual#deploy)) |
+| 대화가 매번 실패하고, 호스팅 시작이 *실행 환경(샌드박스)을 쓸 수 없어* 로 거부됨 | 샌드박스가 켜져 있는데 기동 점검이 실패했습니다. \`aipds-harden status\`와 백엔드 로그로 원인을 봅니다 ([샌드박스](/manual#sandbox)) |
 | 로그인 후 리다이렉트 오류 | 콜백 URL 등록이 실패한 것입니다. \`cdk deploy AipdsHostingStack\` 재실행 |
-| 스택이 \`ROLLBACK_COMPLETE\`라 재배포 거부 | 최초 생성이 실패한 스택은 업데이트할 수 없습니다. 그 스택만 destroy한 뒤 다시 배포합니다 |
+| 스택이 \`ROLLBACK_COMPLETE\`라 재배포 거부 | 최초 생성이 실패한 스택은 업데이트할 수 없습니다. 그 스택만 destroy한 뒤 다시 배포합니다. \`UPDATE_ROLLBACK_COMPLETE\`(기존 스택의 갱신 실패)는 그냥 다시 배포하면 됩니다 |
+| \`cdk synth\`가 자격증명을 요구함 | HostingStack이 배포 리전의 CloudFront 프리픽스 리스트를 조회합니다. 결과가 로컬 \`cdk.context.json\`에 캐시되므로 클론당 처음 한 번만 필요합니다 |
 | 프로토타입 프리뷰가 404 | 의도된 응답입니다 — [공유 링크](/manual#share)로 들어가야 합니다 |
 | 영어 화면인데 문서가 한국어 | 정상입니다 — [문서 언어](/manual#doc-language)는 화면 언어와 별개입니다 |
 | 긴 메시지를 보내면 연결이 끊어짐 | 한 번에 보내는 양이 너무 큰 것입니다. 나눠서 보내거나 [파일로 첨부](/manual#attach)하세요 |
@@ -248,6 +334,7 @@ AI-PLC 룰셋**에 있습니다. 사본을 두지 않고 \`steering-files/\` **g
       lines: [
         "aws ssm start-session --target <InstanceId>",
         "sudo journalctl -u aipds-backend -f",
+        "sudo journalctl -u aipds-backend --since -1h | grep -v '/proto/'",
       ],
     },
     { kind: "heading", id: "local-dev", text: "로컬에서 띄우기" },
@@ -273,7 +360,7 @@ Python **3.11**과 Node.js 20+가 필요합니다.`,
     {
       kind: "md",
       md: `환경변수 전체 목록은 \`infra/lib/user-data.ts\`의 systemd 유닛에 주석과 함께 있고,
-그 밖의 배포 절차는 리포의 \`README.ko.md\`에 있습니다. **설계 판단의 근거는 커밋 메시지와
+스택이 왜 그렇게 생겼는지는 리포의 \`infra/README.ko.md\`에 있습니다. **설계 판단의 근거는 커밋 메시지와
 코드 주석에 있습니다** — "왜 이렇게 되어 있는가"는 \`git log\`로 찾습니다.`,
     },
   ],

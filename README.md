@@ -13,563 +13,159 @@ A conversational canvas for AI-PLC Discovery workshops.
 > only. It demonstrates concepts and techniques but is not intended for direct use in production
 > environments.
 
-A Claude Agent SDK agent drives the Discovery methodology inside the backend process, and the
-frontend renders its turns live over SSE. The prototype spec Discovery produces is built and
-hosted as a real app from the same screen, and continues into a validation survey shared through
-an unauthenticated token link. Both the UI and the generated artifacts support Korean and English,
-and administrators manage users, the model catalog, and the brand design profile from the same app.
+A Claude Agent SDK agent drives the Discovery methodology, and the frontend renders its turns live
+over SSE. The prototype spec Discovery produces is built and hosted as a real app from the same
+screen, and continues into a validation survey shared through an unauthenticated link. The UI and the
+generated artifacts both support Korean and English, and administrators manage users, the model
+catalog and the brand design profile from the same app.
 
 ```
 frontend/          Next.js 15 (App Router) — dashboard · workspace · document review · prototypes · survey · admin · manual
 backend/           FastAPI — Discovery agent · SSE relay · S3 persistence · prototype build/hosting · survey · JWT verification
-infra/             CDK (TypeScript) — S3 + backend role + Cognito + EC2/CloudFront (Seoul by default)
+infra/             CDK (TypeScript) — six stacks, Seoul by default
 steering-files/    the AI-PLC ruleset — a submodule of aws-samples/sample-ai-plc, carried unmodified
 discovery-config/  CLAUDE_CONFIG_DIR for the Discovery agent
-proto-config/      CLAUDE_CONFIG_DIR for the build agent (the shadcn-design skill) — must differ from the one above
+proto-config/      CLAUDE_CONFIG_DIR for the build agent — must differ from the one above
 ```
 
-**The two config dirs being separate is the design.** Share them and Discovery runs with a UI skill
-loaded while it writes documents; in the other direction the builder starts looking for question and
-state files it does not have. The reasoning is in
-[`discovery-config/README.md`](discovery-config/README.md).
-
-- Inside the stacks (the callback-URL circular dependency, origin protection, and so on):
-  [`infra/README.md`](infra/README.md)
-- How to use it (screen-by-screen operation, admin, operations): the app's **`/manual`** — it opens
-  without a login
-- **The reasoning behind the design decisions lives in the commit messages and code comments.**
-  "Why is it like this" is a `git log` question — the rationale is in the body of the commit that
-  touched the file.
+| To find | Look in |
+|---|---|
+| How to use each screen, administration, **operating a deployment and troubleshooting** | The app's **`/manual`** (opens without a login). Source: [`frontend/content/manual/`](frontend/content/manual) |
+| Why the stacks are shaped the way they are | [`infra/README.md`](infra/README.md) |
+| Why the two config dirs are separate | [`discovery-config/README.md`](discovery-config/README.md) |
+| Why anything else is the way it is | The commit that touched it (`git log`) and the code comments |
 
 ---
 
-## What is in it — the screens and who can open them
+## Screens and who can open them
 
-How to operate them is in `/manual`. Below is **the surface that is implemented today** and who can
-reach each screen. The public-path list is asserted from both sides — `frontend/lib/auth/gate.ts`
-and the backend's `tests/test_auth_route_coverage.py` — because the frontend middleware is only a
-UX gate: **the security boundary is the backend's `require_admin` / `require_user`.**
+The frontend middleware is only a UX gate — **the security boundary is the backend's `require_admin` /
+`require_user`.** The public-path list is asserted from both sides (`frontend/lib/auth/gate.ts` and
+`backend/tests/test_auth_route_coverage.py`).
 
 | Screen | What it does | Access |
 |---|---|---|
-| `/` | Project list, creation and **transfer** (export a bundle, import it on another instance). The model and the artifact language are chosen here | logged in |
-| `/projects/{id}/workspace` | The Discovery conversation. Turns render live over SSE, with question cards, file attachments, and the document panel on one screen | logged in |
-| `/projects/{id}/dashboard` | Stage progress, artifact list, activity feed | logged in |
-| `/projects/{id}/review` | Document review and the **approval gate** — the click is written as a structured record *first*, then the agent turn runs (so an approval survives a failed turn) | logged in |
-| `/projects/{id}/questions` | One question file, expanded to answer. Entered from the workspace's question card and the dashboard timeline | logged in |
-| `/projects/{id}/prototypes` | Build sessions (they run inside the backend process), local hosting, and creating/sharing/aggregating the validation survey | logged in |
-| `/survey/{token}` | The anonymous validation survey — end users with no account try the prototype and answer | **public** (token) |
-| `/proto/{pid}/{slug}` | The built prototype's preview. Without the access cookie planted by the share link, 404 is the correct answer | **public** (token cookie) |
-| `/admin/users` | Inviting users, assigning roles, temporary passwords. Self-signup is blocked | admin |
-| `/admin/models` | The model catalog. Registration is unlimited; **only 5 can be shown** in the project-creation combobox | admin |
-| `/admin/design` | The brand design profile — one `DESIGN.md` (a `tokens` fence plus prose, 64 KB cap). Build sessions and hosting starts apply it to the workspace | admin |
-| `/manual` | The screen-by-screen, admin, and operations manual. **It sits in front of the login** — you have to be able to read what this tool does before you get an account | **public** |
+| `/` | Project list, creation, export and import | logged in |
+| `/projects/{id}/workspace` | The Discovery conversation — live turns, question sheets, attachments, the document panel | logged in |
+| `/projects/{id}/dashboard` | Stage progress, artifacts, activity | logged in |
+| `/projects/{id}/review` | Document review and the approval gate | logged in |
+| `/projects/{id}/questions` | One question file, expanded to answer | logged in |
+| `/projects/{id}/prototypes` | Build sessions, hosting, and the validation survey | logged in |
+| `/survey/{token}` | The anonymous validation survey | **public** (token) |
+| `/api/proto/{pid}/{slug}` | The built prototype, served **only on the preview domain** (`AipdsPreviewStack`). The share link plants the access cookie; without it, 404 is the correct answer | **public** (token cookie) |
+| `/admin/users` · `/admin/models` · `/admin/design` | Users and roles, the model catalog, the brand design profile | admin |
+| `/manual` | The manual. It sits in front of the login so you can read what the tool does before you have an account | **public** |
 
 ---
 
-## AI-PLC — AI-Driven Product Life Cycle with Product Discovery, Strategy and Prototyping
+## The AI-PLC ruleset
 
-AI-PLC is a AI-guided workflow that helps Product Managers, business leaders, and other
-non-technical roles define product strategy and determine what applications should be built for
-their business. Workflow experience is natural language conversation with agentic AI tools. It takes
-you from customer insights to validated prototypes — all within a single AI-assisted session. It
-covers pain point analysis, use case prioritization, PR/FAQ creation (Working Backwards), product
-strategy, go to market strategy and prototype generation.
+[AI-PLC](https://github.com/aws-samples/sample-ai-plc) is an AI-guided workflow that takes product
+managers and other non-technical roles from customer insight to a validated prototype — pain point
+analysis, use case prioritization, PR/FAQ (Working Backwards), product strategy, go-to-market, and the
+prototype spec. AI-PDS adds what a chat transcript cannot: a browser UI, live turns, document review,
+and building and hosting the prototype and its survey from the same screen.
 
-The workflow is flexible — you can start from wherever you are. Whether you're exploring customer
-pain points for the first time, already have a list of use cases to evaluate and priortize, or want
-to jump straight into building prototypes from existing specifications. You can complete the entire
-journey in one session, or generate portable PROTOTYPE-*.md files and share them with other teams to
-build prototypes in their own workspace.
-
-The workflows are also fully customizable to your needs — they are defined in markdown files that
-you can edit to adjust questions, scoring frameworks, output formats, or add domain-specific
-guidance for your organization.
-
-**Where that workflow lives in this repo.** The ruleset AI-PDS drives is the AI-PLC workflow from
-[aws-samples/sample-ai-plc](https://github.com/aws-samples/sample-ai-plc), and it is **not copied
-here** — it is a git submodule at [`steering-files/`](steering-files), pinned to an upstream commit
-and carried unmodified. That is deliberate: a copy drifts, and the canonical source is upstream.
-So clone with the submodule, or populate it afterwards:
+The ruleset is **not copied here.** It is the `steering-files/` submodule, pinned to an upstream commit
+and used unmodified — a copy drifts, and the canonical source is upstream. Clone with it:
 
 ```bash
 git clone --recurse-submodules https://github.com/muylucir/ai-pds-web.git
-# already cloned?
-git submodule update --init --recursive
+git submodule update --init --recursive      # if you already cloned without it
 ```
 
-To pick up upstream changes, `git submodule update --remote steering-files` and commit the moved
-pointer — the commit is what records which ruleset a deployment runs. If the workflow itself needs
-to change, the change belongs upstream, not in this repo.
-
-The backend copies the ruleset into the agent's workspace on **every turn**
-(`backend/aipds/agent/workspace_rules.py`), so a ruleset update takes effect on the next turn:
-no restart, no redeployment. What AI-PDS adds around the workflow is the part a chat transcript
-cannot do — a browser UI for non-technical roles, live turn rendering, document review, and building
-and hosting the prototype plus its validation survey from the same screen.
+An empty `steering-files/` raises no error; the agent just stops following the methodology. The backend
+copies the ruleset into the agent's workspace on every turn, so moving the submodule pointer
+(`git submodule update --remote steering-files`, commit, push, `sudo aipds-update`) takes effect on the
+next turn. Changes to the workflow itself belong upstream.
 
 ---
 
-## Deploying with CDK
+## Deploying
 
-A single `cdk deploy --all` brings up an app you can log into — it does not just create
-infrastructure: the EC2 instance fetches the repo, builds and starts the backend and frontend, and
-CloudFront goes in front of it.
+A single `cdk deploy --all` brings up an app you can sign in to: the EC2 instance clones this repo, builds
+and starts the backend and frontend, and CloudFront goes in front of it.
 
-| Stack | What it creates |
-|---|---|
-| `AipdsDrillStack` | S3 artifact bucket (`projects/*` + `sessions/*` + `surveys/*` + `models/*` + `design/*`) + backend execution role (Bedrock invoke + S3) |
-| `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 + role groups (`admin`/`pm`) + 2 seed accounts |
-| `AipdsHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
-| `AipdsPreviewStack` | Separate CloudFront for prototype previews (step [7](#7-prototype-preview-origin)) |
-| `AipdsAgentCredsStack` | Bedrock-only AgentRole for the sandboxed agents and prototypes (step [8](#8-sandboxed-agents-and-prototypes)) |
-| `AipdsUploadCorsStack` | Lets the instance keep the bucket's CORS on its app origin (step [6](#6-project-import)) |
+**Prerequisites**
 
-The stacks depend on each other, so **deploy them together with `--all`** (`app.ts` passes
-the bucket, User Pool and instance references between them). CDK decides the order.
-
-### 1. Prerequisites
-
-- Node.js 20+
-- AWS credentials (profile or instance role) — administrator-level permissions are required
-  (creating IAM roles, Cognito, VPC)
-- **Enable Bedrock model access** — turn on the Claude models you intend to use in the deployment
-  region's console. Skip this and the deployment succeeds, then the first conversation turn fails
-  with `AccessDeniedException`.
-
-### 2. Bootstrap
+- Node.js 20+ and administrator-level AWS credentials (it creates IAM roles, Cognito and a VPC).
+- An account that can call Claude on Bedrock. Bedrock creates the Marketplace subscription on a model's
+  first call and the deployed roles already hold the permissions for it; what you must do yourself is
+  submit the **Anthropic first-time-use form** once for the account (or the organization's management
+  account) and have a Marketplace payment method. Without them, the deployment succeeds and the first
+  conversation fails with `AccessDeniedException`.
 
 ```bash
 cd infra
 npm ci
-npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2   # once per account/region pair
-```
-
-### 3. Deploy
-
-```bash
-npm test                              # (optional) stack assertions — no credentials needed
-npx cdk diff --all                    # (optional) diff against the current deployment
+npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2        # once per account/region
 npx cdk deploy --all --require-approval never \
   --parameters AipdsAuthStack:SeedPassword='<temporary-password>'
 ```
 
-`SeedPassword` is **required** (there is no default). The two seed accounts (`admin`, `pm`) receive
-it as a temporary password, and each user replaces it with their own at first login. The value must
-satisfy the pool policy — at least 8 characters with an uppercase letter, a lowercase letter, a
-digit, a symbol, and no spaces. CloudFormation rejects anything else before the deployment starts;
-without that check a policy violation rolls the whole stack back at the seeding step. The parameter
-is `NoEcho`, so the value never lands in the template or stack events, and you do not need to repeat
-it on a redeployment (`--previous-parameters` defaults to true).
-
-Why `--require-approval never` is needed: all three stacks create IAM or security-group resources,
-so an approval prompt appears every time. If this is not an unattended deployment, drop the flag
-and review them yourself.
-
-**It takes 15–20 minutes.** The CloudFront distribution and the EC2 first-boot build (backend venv
-+ frontend `next build`) account for most of it. The EC2 build may still be running after
-`cdk deploy` returns, so **CloudFront returning 502 for a few minutes is normal**.
-
-> ⚠️ **What gets deployed is the latest commit on `main` — anything unpushed is not deployed.** On
-> boot the EC2 instance clones the public repo and moves onto `origin/main` as it is at that moment.
-> No commit SHA is pinned, so there is nothing to check about whether you pushed first — only what
-> is pushed can be deployed.
->
-> **The price: `cdk deploy` does not update code.** With no SHA in user-data, pushing a commit
-> leaves user-data byte-identical, and CloudFormation therefore does not replace the instance.
-> Updating code is [`aipds-update`](#updating-the-code)'s job.
->
-> To see what is actually running on the instance: `git -C /opt/aipds rev-parse HEAD` (the
-> commit it booted on is also in the bootstrap log, on the `booted commit:` line).
->
-> Previously the repo root was uploaded as a zip asset. The reason for switching to a clone is that
-> the asset **shipped gitignored files too** — that meant a human had to maintain a separate
-> exclusion list, and what fell off that list caused two incidents (a dev box's `proto-type/` got
-> shipped, making a prototype nobody built look "build complete"; and the development
-> `.claude/CLAUDE.md` became an **ancestor** of the agent cwd, injecting one Korean line into every
-> turn of an English project's context). A clone only takes tracked files, so that class of failure
-> is gone, and the remaining invariant is asserted by `infra/test/deployed-tree.assert.ts` via
-> `git ls-files`.
-
-### 4. Outputs
-
-```
-AipdsHostingStack.DistributionDomain → access URL (https://dxxxx.cloudfront.net)
-AipdsHostingStack.InstanceId         → aws ssm start-session --target <id>
-AipdsDrillStack.ArtifactsBucketName  → AIPDS_S3_BUCKET
-AipdsDrillStack.BackendRoleArn       → the backend must run with this role (or an equivalent policy)
-AipdsDrillStack.Region               → AWS_REGION / AIPDS_S3_REGION
-AipdsAuthStack.UserPoolId            → AIPDS_COGNITO_USER_POOL_ID
-AipdsAuthStack.UserPoolClientId      → AIPDS_COGNITO_CLIENT_ID / COGNITO_CLIENT_ID
-AipdsAuthStack.HostedUiDomain        → COGNITO_HOSTED_UI_DOMAIN
-```
-
-In an EC2 deployment, user-data puts these values into the backend and frontend env automatically —
-there is nothing to set by hand. The mapping above is for reference **when you use the same
-infrastructure from local development**.
-
-### 5. Access
-
-Open `DistributionDomain` and log in with a seed account:
-
-| Account | Role | Password |
-|---|---|---|
-| `admin@aipds.local` | Administrator (can manage users) | the `SeedPassword` you passed (temporary) |
-| `pm@aipds.local` | PM | the `SeedPassword` you passed (temporary) |
-
-Both accounts are created in `FORCE_CHANGE_PASSWORD` state — **the Hosted UI requires a new password
-at first login**, and from then on only that user knows their own password. A redeployment does not
-reset it (the custom resource that seeds the password has no `onUpdate`).
-
-The temporary password is valid for **30 days** (the pool's `TemporaryPasswordValidityDays`). If more
-time passes between deployment and the workshop and it expires, an administrator issues a fresh one
-with **Reset password** in `/admin/users`.
-
-Once signed in, anyone can change their own password at any time from **Change password** in the user
-menu at the top right — regardless of role, so a PM can too.
-
-### 6. Project import
-
-Import has the **browser upload the bundle straight to S3**, so the bucket's CORS has to allow the app
-origin. That origin is HostingStack's CloudFront, and HostingStack depends on the bucket — so the
-instance sets it itself: `aipds-harden sync` (step [8](#8-sandboxed-agents-and-prototypes)) adds its own
-`APP_BASE_URL` to the bucket's PUT rule whenever it is missing, with the permission
-`AipdsUploadCorsStack` grants (`infra/lib/aipds-upload-cors-stack.ts`). There is nothing to run by hand;
-if the drill stack is redeployed and rewrites the CORS, the origin is back within a few minutes.
-`AIPDS_UPLOAD_ORIGINS` (comma-separated) adds further origins to the drill stack's rule, for example a
-custom domain.
-
-### 7. Prototype preview origin
-
-Prototypes are code the build agent wrote, so they are served from **a different origin than the app** —
-on the same origin, the signed-in viewer's session cookie and token reach that code
-(`backend/aipds/preview_surface.py`). The preview CloudFront is a **separate stack** (`AipdsPreviewStack`)
-that only references what HostingStack created. `cdk deploy --all` creates it; there is nothing to run
-by hand. Share links are preview-domain URLs, links opened on the app domain move to the same path on the
-preview domain, and the app domain does not serve prototypes.
-
-### 8. Sandboxed agents and prototypes
-
-The Discovery and build agents and hosted prototypes run as **different uids from the backend**
-(`aipds-agent`, `aipds-proto`) in a systemd sandbox that only sees their own project's tree
-(`infra/scripts/aipds-launch`), with IMDS blocked. They cannot write the app tree, see other projects'
-trees, or read the backend's env and secrets, and instead of the instance role they get short-lived
-credentials for an **AgentRole that can only invoke Bedrock** (`backend/aipds/credentials.py`). That
-role is a separate stack (`AipdsAgentCredsStack`) that only references HostingStack; `cdk deploy --all`
-creates it too.
-
-**How the instance turns it on.** Both separate stacks write their values to SSM Parameter Store
-(`/aipds/agent-role-arn`, `/aipds/preview-origin`, `/aipds/preview-secret-arn`,
-`infra/lib/instance-params.ts`). The instance applies them itself with `aipds-harden sync`: once at
-boot before the services start, and then every 2 minutes from a systemd timer — the instance boots with
-HostingStack, before the two stacks exist, so a few minutes after `cdk deploy --all` finishes the
-backend restarts once with the launcher on, IMDS blocked and the preview origin set. After that the
-timer changes nothing unless a stack value changes. It never turns anything off: a missing or
-unreadable value leaves the current settings as they are.
-
-On the instance (`sudo /opt/aipds/infra/scripts/aipds-harden …`):
-
-| Command | What it does |
+| Stack | What it creates |
 |---|---|
-| `status` | Current state: users, launcher, `imds_block`, drop-ins, the sync timer, running sandbox units |
-| `sync` | Apply the stack values now (the timer does this every 2 minutes) |
-| `disable` | Run agents and prototypes directly as the backend user — the rollback. **Holds the sync** (`/etc/aipds/hold`) so the timer does not turn it back on |
-| `imds allow` | Let sandboxed processes reach IMDS again. Also holds the sync |
-| `enable <AgentRoleArn>` / `imds block` | Turn it back on by hand; releases the hold |
+| `AipdsDrillStack` | S3 artifact bucket + backend execution role |
+| `AipdsAuthStack` | Cognito User Pool + hosted sign-in + `admin`/`pm` groups + two seed accounts |
+| `AipdsHostingStack` | VPC + EC2 (AL2023, m7i.2xlarge) + CloudFront |
+| `AipdsPreviewStack` | A separate CloudFront distribution that serves only prototypes |
+| `AipdsAgentCredsStack` | The Bedrock-only role the sandboxed agents and prototypes run with |
+| `AipdsUploadCorsStack` | Lets the instance keep its app origin in the bucket's CORS (project import uploads straight to S3) |
 
-Each of these restarts the backend (in-flight turns and builds are cut); `sync` only when something
-changed.
+- **It takes 15–20 minutes**, and CloudFront may answer 502 for a few minutes after `cdk deploy`
+  returns while the instance finishes its first build. A few minutes later the instance turns on the
+  sandbox, the IMDS block and the preview origin by itself (`aipds-harden sync`) and restarts the
+  backend once. Nothing needs to be run by hand.
+- **What gets deployed is pushed `main`.** The instance clones `origin/main` at boot; nothing unpushed is
+  deployed, and for the same reason `cdk deploy` never updates code — that is `sudo aipds-update`.
+- **Outputs**: `AipdsHostingStack.DistributionDomain` is the app, `AipdsPreviewStack.PreviewOrigin` is
+  where share links point, `AipdsHostingStack.InstanceId` is the SSM target.
+- **Sign in** as `admin@aipds.local` or `pm@aipds.local` with the `SeedPassword` value. It is a temporary
+  password (valid 30 days) that each user replaces at first login. It must satisfy the pool policy —
+  8+ characters with an uppercase letter, a lowercase letter, a digit and a symbol — or CloudFormation
+  rejects it before the deployment starts.
+- **Another region**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. No code changes.
+- **Another upload origin** (a custom domain, say): `AIPDS_UPLOAD_ORIGINS` (comma-separated) at deploy
+  time. The app's own origin is added by the instance.
 
-If the launcher is on but its startup check (sudoers, paths, bundled CLI) fails, the backend does
-**not** fall back to running directly — that would hand the agents and prototypes the whole instance
-role without anyone noticing. It logs an error, agent turns fail, and starting a prototype answers
-`503 sandbox_unavailable` (`probe` in `backend/aipds/launcher.py`). Fix the cause, or run
-`aipds-harden disable` to run directly on purpose.
-
-### 9. Protecting a running instance
-
-A HostingStack deploy can **replace the EC2 instance**: the AMI is not pinned
-(`latestAmazonLinux2023()`), and the instance's user-data is part of the template
-(`userDataCausesReplacement`). Once an environment is in use, set a stack policy that refuses any
-replacement or deletion in HostingStack, and turn on termination protection:
-
-```bash
-aws cloudformation set-stack-policy --stack-name AipdsHostingStack --stack-policy-body \
-  '{"Statement":[{"Effect":"Deny","Principal":"*","Action":["Update:Replace","Update:Delete"],"Resource":"*"},
-                 {"Effect":"Allow","Principal":"*","Action":"Update:Modify","Resource":"*"}]}'
-aws cloudformation update-termination-protection --stack-name AipdsHostingStack \
-  --enable-termination-protection
-```
-
-A deploy that would replace the instance then fails and rolls back instead. To update the three
-instance-side stacks in such an environment without touching HostingStack or the drill stack, pin their
-values with env — then the three stacks depend on neither and deploy alone (`infra/lib/sandbox-stacks.ts`):
-
-```bash
-cd infra
-AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> \
-AIPDS_PREVIEW_ORIGIN_DNS=ec2-<a-b-c-d>.<region>.compute.amazonaws.com \
-AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader secret ARN> \
-AIPDS_ARTIFACTS_BUCKET=<artifacts bucket name> \
-  npx cdk deploy --exclusively AipdsAgentCredsStack AipdsPreviewStack AipdsUploadCorsStack \
-  --require-approval never
-```
-
-### Changing the region
-
-The default is **Seoul (`ap-northeast-2`)**. Override it with an environment variable:
-
-```bash
-CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all --require-approval never
-```
-
-No code changes are needed — Bedrock inference profiles are global, the IAM ARNs use a region
-wildcard, and the CloudFront prefix list is looked up in the deployment region automatically by
-`PrefixList.fromLookup` (the lookup result is cached in the local `infra/cdk.context.json` — the
-cache key contains the account ID, so it is not committed, and synth/deploy regenerates it by
-looking it up again when credentials are present).
-
-### Updating the code
-
-**Not with `cdk deploy`.** The deployment carries no commit SHA, so pushing a commit does not
-change user-data, and CloudFormation therefore does not replace the instance — `cdk deploy` ends
-with "no changes". Updating code is what `aipds-update` on the instance is for:
-
-```bash
-git push                                       # what gets deployed is pushed main
-aws ssm start-session --target <InstanceId>
-sudo aipds-update
-```
-
-It moves the tree onto `origin/main` and acts on **only what changed**:
-
-| What changed | What it does | Disruption |
-|---|---|---|
-| the `steering-files/` pointer or a config dir only | updates the tree (submodule contents included) | none (the next turn reads the new rules) |
-| `backend/` | `pip install -U claude-agent-sdk` → restart the backend (reinstalling deps first only if `pyproject.toml` changed) | in-flight turns and build sessions are cut; hosted prototypes come back one at a time |
-| `frontend/` | `next build` + restart (`npm ci` first only if `package-lock.json` changed) | chunk 404s during the 1–2 min build |
-| `infra/scripts/aipds-update` itself | installs the new script (it takes effect on the next run) | none |
-| nothing (already current) | nothing at all | none |
-
-There is no instance replacement (no 5–10 minutes of 502), so this is usable mid-workshop. The
-disruptions in the table still apply, though — apply frontend and backend changes during a break.
-
-`git checkout` moves a submodule's gitlink but **not its contents**, so the script runs
-`submodule update --init --recursive` **above** the early exit — without that line a ruleset update
-silently does not take effect.
-
-That `claude-agent-sdk` upgrade sits inside the `backend/` gate but outside the `pyproject.toml`
-gate on purpose: the wheel bundles the Claude Code executable, so **upgrading it is an engine
-swap**, and swapping without a restart leaves the running backend on the old engine while newly
-spawned children get the new one. A ruleset-only update never enters that block, so the engine stays
-put.
-
-- Restarting the backend **kills in-flight Discovery turns and build sessions.** Transcripts are
-  mirrored to S3 so conversations survive, but a running build session dies without declaring
-  completion and takes the resume path.
-- Tracked files you edited by hand on the instance are **reverted** (`checkout -f`). The judgment
-  is that one such file blocking every future update is worse — do not edit on the instance, push
-  instead. `protos/`, `workspaces/` and session state are untracked and are not touched.
-- Verify: `git -C /opt/aipds rev-parse HEAD` tells you what is running, and
-  `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/` hits the app directly (nginx
-  returns 403 without CloudFront's secret header, so bypass it).
-
-### Getting a fresh instance
-
-When you change infrastructure (user-data, instance type, nginx config, …), `cdk deploy` replaces
-the instance, and the new one picks up the latest `main` as it boots:
-
-```bash
-cd infra && npx cdk deploy AipdsHostingStack --require-approval never
-```
-
-It takes 5–10 minutes to boot and finish the build, with 502s in the meantime. Code-only changes do
-not need this path — use `aipds-update` above.
-
-Prototype build source, access tokens and hosting state are kept in S3 (`backend/aipds/proto/store.py`).
-A new instance shows cards as built even with an empty local tree, and resolves links already handed out
-through the S3 token index. Prototypes that were hosted are re-hosted one at a time after boot
-(`proto/hosting.rehost_desired`) — starting them together would overlap `next build`s and run out of memory.
-
-### Teardown
-
-```bash
-cd infra && npx cdk destroy --all
-```
-
-> ⚠️ The deployed resources (S3 · IAM · Cognito · EC2/CloudFront) **cost money** (storage + a
-> Bedrock call per turn + EC2 running continuously). Tear them down when the workshop is over.
->
-> ⚠️ The User Pool is `RemovalPolicy.DESTROY`, so **every user account disappears with it.** If
-> there are artifacts in the S3 bucket you want to keep, download them first.
-
-### Troubleshooting
-
-**Look at the backend log first.** Most symptoms show up on screen only as a blank page or a
-generic failure, and the cause is recorded here and nowhere else:
-
-```bash
-aws ssm start-session --target <InstanceId>
-sudo journalctl -u aipds-backend -f            # live
-sudo journalctl -u aipds-backend --since -1h | grep -v '/proto/'   # drop preview-proxy noise
-```
-
-| Symptom | Cause / what to do |
-|---|---|
-| CloudFront 502 right after deploying | The EC2 first build is still running (5–10 min). Over SSM: `sudo tail -f /var/log/cloud-init-output.log` |
-| A stack is `ROLLBACK_COMPLETE` and refuses to redeploy | **A stack whose initial creation failed cannot be updated.** Destroy it first, then deploy again: `npx cdk destroy AipdsAuthStack` → `npx cdk deploy --all`. `UPDATE_ROLLBACK_COMPLETE` (a failed update of an existing stack) just needs a redeploy |
-| `AccessDeniedException` on the first conversation turn | **Bedrock model access** for that model is off in the deployment region. IAM allows all of `global.anthropic.claude-*`, so IAM is an unlikely cause |
-| One feature 500s and the screen shows no reason | Usually IAM. The `AccessDenied` in the backend log names the action and resource |
-| `redirect_mismatch` after login | The hosting stack's callback-URL registration (`UpdateUserPoolClient`) failed. Re-run `cdk deploy AipdsHostingStack` |
-| `cdk synth` asks for credentials | The hosting stack's prefix-list lookup. The result is cached in the local `cdk.context.json` (gitignored), so it is only needed once per clone |
-| Cannot SSH in | By design. There is no SSH port; only SSM is open |
-| A prototype preview 404s | **That is the intended response** — the access-token cookie is missing or belongs to a different prototype. You have to enter through the share link (`/api/proto/t/{token}`) for the cookie to be set. The branch conditions are in `backend/aipds/routes/proto_public.py` |
-| An English project produces Korean documents and chat | Two levels of language instruction conflicted, and **this failure raises no error.** A project's language enters through two channels: `LANGUAGE_DIRECTIVES` in `backend/aipds/agent/workspace_rules.py` and the shared config dirs (`proto-config/CLAUDE.md`, `discovery-config/CLAUDE.md`) — when they disagree, the screen looks fine and only the artifacts come out in the other language |
-| English UI but a few strings are Korean | A literal hardcoded in the source instead of going through the dictionary. `cd frontend && npm test -- noHardcodedKorean` points at the location |
-| Workspace chat history is an empty list | `list_history` downgrades every failure to `[]`. Start by checking whether objects exist under `projects/{pid}/discovery/transcript/` — the mirroring key is derived from the project_id with uuid5 (`agent/session_store.py`, `agent/claude_driver.py`), so putting the raw project_id in the prefix means you are looking in an empty place |
-| "The connection was lost" when sending a long message | The request line exceeded Node's `maxHeaderSize` (HTTP 431) and `EventSource` does not expose the status code, so this is the only message you get. Turn text is now POSTed and only a one-shot handle rides in the URL (`turn_handles.py`) — if it happens again, split the input or attach it as a file |
-| A design profile upload does not show up in an **existing** prototype | Re-hosting refreshes the theme copy under `prototype/`. A prototype built **before** the profile was uploaded has no such copy, so there is nothing to refresh — open one improvement session and it lands (`proto/design_sync.py`) |
-| A registered model is missing from the project-creation combobox | Only the first 5 entries with `display` on are shown (`MAX_DISPLAYED`). Registration itself is unlimited — turn another model's display off in `/admin/models` |
-| `/admin/*` opens but every request on the screen 403s | That is correct. The frontend middleware is a **UX gate** that does not verify the cookie's signature; the security boundary is the backend's `require_admin` (see the header of `frontend/lib/auth/gate.ts`) |
-
----
-
-## Moving a project to another instance
-
-The **⬇** button in the project list downloads one project as a single zip. On another instance,
-press **Import** at the top right of the project list and upload that file — work continues from the
-same point.
-
-What travels: every artifact (`aiplc-docs/**`), the Discovery **conversation**, question answers and
-the approval record, uploaded reference material, prototype **source code**, and survey questions,
-responses and rollups.
-
-What does not, and why:
-
-| Left behind | Why |
-|---|---|
-| Prototype access token and public preview link | It is a credential. Pressing **Host** after the import issues a fresh one |
-| Survey links | Reissued with new tokens for the same reason — share the new links with your respondents |
-| `node_modules` and build output | Reproducible and large. Hosting fills it in with `npm install` |
-| The model's conversation context | The next turn starts a fresh session. The full scrollback is there, and the workflow resumes from `aiplc-state.md` and the artifacts |
-| A question that was in flight | There is no turn left to receive the answer. Just continue the conversation |
-| Brand profile and model catalog | They belong to the instance, not to a project |
-
-The project ID defaults to the source's own. If that ID is taken, the screen asks for a new one — and
-**does not re-upload the bundle**. Importing the same bundle twice to fork one starting point into two
-branches goes through the same path.
-
-If the source project's model is not in the importing instance's catalog, the project starts on the
-default model and the screen says so.
-
-A project cannot be exported while a build session is running (409) — a zip holding a half-written
-tree the agent is still writing to is not an honest snapshot.
+Updating the code, the sandbox commands, protecting a running instance from replacement, getting a
+fresh instance, teardown, and troubleshooting are in **`/manual` → Install, operate, troubleshoot**.
 
 ---
 
 ## Running locally
 
-Frontend (:3000) → backend (:8000) → the Discovery agent running inside the backend calls Bedrock.
-The bucket and role are still required, so deploying just
-`npx cdk deploy AipdsDrillStack` is enough.
-
-**Requirements**: Python **3.11** (3.9 will not work), Node.js 20+, credentials with Bedrock access.
+Frontend (:3000) → backend (:8000) → the agent calls Bedrock. You still need the bucket and role, so
+deploy `AipdsDrillStack` first. Python **3.11** and Node.js 20+.
 
 ```bash
-# once
+git submodule update --init --recursive
 cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd ../frontend && npm install
-cp ../backend/.env.example ../backend/.env      # take the values from the CfnOutputs above
+cp ../backend/.env.example ../backend/.env           # fill in from the DrillStack outputs
 
-# terminal 1 — backend
 cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
-
-# terminal 2 — frontend
-cd frontend && npm run dev            # http://localhost:3000
+cd frontend && npm run dev                           # http://localhost:3000
 ```
 
-`http://localhost:3000` → create a project (you pick the model and the **artifact language** here)
-→ dashboard / workspace / document review / prototypes.
+Locally, agents run directly as your user — the sandbox is an instance feature.
 
-Two things you have to take care of by hand locally. **Neither raises an error when you miss it.**
+| Variable | Set it to |
+|---|---|
+| `AIPDS_S3_BUCKET` / `AIPDS_S3_REGION` | `AipdsDrillStack.ArtifactsBucketName` and its region. Unset, the app silently runs local-only |
+| `AIPDS_DISCOVERY_CONFIG_DIR` / `AIPDS_PROTO_CONFIG_DIR` | Absolute paths to the repo's `discovery-config/` and `proto-config/`. Unset, the agent reads **your own `~/.claude`** and your personal skills leak into the results |
+| `ANTHROPIC_MODEL` | Fallback Bedrock inference profile id, used when a project has none |
+| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | Leave **both** empty to skip authentication (the local default). Setting only one fails every request |
+| `AIPDS_PUBLIC_PATH_PREFIX` | `""` when the browser calls the backend directly on :8000 |
 
-- **The submodule.** An empty `steering-files/` means the agent runs with no ruleset, and the
-  conversation simply does not follow the methodology. `git submodule update --init --recursive`.
-- **The two config dirs.** Leave `AIPDS_DISCOVERY_CONFIG_DIR` / `AIPDS_PROTO_CONFIG_DIR` empty and
-  the bundled binary reads **your own `~/.claude`**, mixing your personal skills, agents, and
-  CLAUDE.md into the results. Pointing them at the two directories in the repo is the simplest fix:
+Every other variable, with the value a deployment uses and why, is commented in the systemd units in
+[`infra/lib/user-data.ts`](infra/lib/user-data.ts); defaults live in the code that reads them
+(`backend/aipds/app.py`, `backend/aipds/cli_settings.py`).
 
-  ```bash
-  # backend/.env
-  AIPDS_DISCOVERY_CONFIG_DIR=/abs/path/to/repo/discovery-config
-  AIPDS_PROTO_CONFIG_DIR=/abs/path/to/repo/proto-config
-  ```
-
-If you already have a gitignored `backend/.env` from before this rename, update its keys to the
-`AIPDS_*` names shown in `.env.example`. The failure if you don't is silent: an unset
-`AIPDS_S3_BUCKET` just makes the app run local-only, and an unset `AIPDS_COGNITO_*` pair is a
-documented full auth bypass — neither prints a warning.
-
-### When the browser is remote (behind a reverse proxy)
-
-If the browser reaches the app through a proxy hostname rather than `localhost`, the client's calls
-to `localhost:8000` point at **the browser's own localhost** and fail with
-`ERR_CONNECTION_REFUSED`. Make the frontend call the same origin at `/api/*` instead, and the Next
-route handler (`app/api/[...path]/route.ts`) proxies to the backend server-side:
-
-```bash
-# frontend/.env.local
-NEXT_PUBLIC_API_BASE_URL=/api
-# (if the backend is on another host/port) AIPDS_BACKEND_URL=http://localhost:8000
-```
-
-To silence the dev cross-origin warning, add that hostname to `allowedDevOrigins` in
-`next.config.mjs`. **This `/api` proxy is a dev/demo convenience; in production it is replaced by a
-real reverse proxy.**
-
----
-
-## Environment variables
-
-In an EC2 deployment, user-data fills all of these in. Below are the ones **you set by hand
-locally**.
-
-For the full list, look in two places: the values that actually go into a deployment and the reason
-for each are in the systemd units in [`infra/lib/user-data.ts`](infra/lib/user-data.ts) (every
-`Environment=` line carries a comment), and the defaults and accepted ranges are in the code that
-reads them (`backend/aipds/app.py`, `backend/aipds/cli_settings.py`).
-
-| Variable | Default | Description |
-|---|---|---|
-| `AIPDS_S3_BUCKET` | — | Artifact bucket (a CDK output) |
-| `AIPDS_S3_REGION` | `ap-northeast-2` | Persistent-storage region. **Match the region the bucket was created in** |
-| `ANTHROPIC_MODEL` | — (EC2 uses `global.anthropic.claude-opus-4-8`) | **Fallback** Bedrock inference profile id. If a project has its own model, that one wins |
-| `AIPDS_RULES_DIR` | `<repo>/steering-files/aiplc-rules` | Where the AI-PLC ruleset is read from (read-only). If the submodule is empty, run `git submodule update --init` first |
-| `AIPDS_WORKSPACES_DIR` | under the system tmp dir | Root for the per-project local workspaces |
-| `AIPDS_DISCOVERY_CONFIG_DIR` | — | `CLAUDE_CONFIG_DIR` for the Discovery agent. **Leave it empty and the backend user's `~/.claude`** (personal skills, agents, CLAUDE.md) mixes in, so results vary with the host's setup. Locally, point it at the repo's `discovery-config/` |
-| `AIPDS_PROTO_CONFIG_DIR` | — | `CLAUDE_CONFIG_DIR` for the build agent. **It must not be the same path as the one above** — sharing makes Discovery run with the shadcn-design skill loaded while it writes documents. Locally, the repo's `proto-config/` |
-| `AIPDS_AGENT_HOME_DIR` | `~/aipds-agent-home` (EC2: `/opt/aipds/agent-home`) | Root of the per-project CLI config dir and HOME (`backend/aipds/agent_home.py`). Transcripts live here. The two shared config dirs are the **source of the content** copied into it |
-| `AIPDS_LAUNCHER` | `false` | Whether agents and prototypes start through the sandbox launcher. Turned on by `aipds-harden sync` from the `AipdsAgentCredsStack` value (step [8](#8-sandboxed-agents-and-prototypes) above) |
-| `AIPDS_AGENT_ROLE_ARN` | — | The Bedrock-only role handed to sandboxed processes. Empty means no credential endpoint |
-| `AIPDS_CREDENTIALS_PORT` | `8001` | Loopback port of the credential endpoint. Must be a port nginx does not proxy |
-| `AIPDS_PROTO_ROOT` | `~/aipds-protos` | Shared root for prototype builds and hosting |
-| `AIPDS_PROTO_MAX_CONCURRENT` | `10` | Global cap on concurrent builds. Over it, starting a session returns 429 |
-| `AIPDS_PROTO_PERMISSION_MODE` | `bypassPermissions` | Builds run unattended, so there is nobody to approve. Override it to tighten (an unknown value raises ValueError immediately) |
-| `AIPDS_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed origins |
-| `AIPDS_UPLOAD_ORIGINS` | — | Read at **CDK deploy time** only (not at runtime). Origins allowed to PUT a bundle directly to the bucket **in addition to** the app origin, which the instance adds itself. See [step 6](#6-project-import) |
-| `AIPDS_LOG_LEVEL` | `INFO` | Application log level (`app.configure_logging()`) |
-| `AIPDS_PERFORMANCE_LOGS` | `true` | Whether to log elapsed time for turn and build phases (`performance.py`) |
-| `AIPDS_COGNITO_USER_POOL_ID` / `_CLIENT_ID` | — | **Leave both empty** to bypass authentication entirely (the local default). Leave only one empty and every request raises RuntimeError (fail-closed) |
-| `AIPDS_COGNITO_REGION` | follows `AIPDS_S3_REGION` | User Pool region. Set it only when the User Pool is in a different region from the bucket |
-| `AIPDS_COOKIE_SECURE` | `false` (EC2 uses `true`) | Whether to add `Secure` to the prototype access cookie. Leave it off locally |
-| `AIPDS_AUTO_COMPACT_WINDOW` | — (the CLI default; EC2 uses `750000`) | The context size (in tokens, 100000–1000000) at which auto-compaction fires. Delaying it lets late stages write documents from the evidence rather than from a summary — the price is per-turn cost |
-| `AIPDS_LONG_CONTEXT` | `false` (EC2 uses `true`) | Whether to append the CLI's `[1m]` (1M context beta) to the model id. **It is not a strict upgrade** — see `backend/aipds/cli_settings.py` for the cost and quality trade-off |
-| `AIPDS_FILE_QUESTIONS` | `true` | Whether the agent asks by **writing a question file** (AI-PDS reads it and shows the questions verbatim) instead of through the AskUserQuestion tool. Set it falsy to fall back to the tool — that path is kept as an escape hatch. Measured reason for the default: re-emitting a written question through the tool damaged 15 of 19 questions (Korean characters substituted, wording truncated so answers were never recorded). See `backend/aipds/agent/claude_driver.py`'s `FILE_QUESTIONS_ENV` |
-| `AIPDS_PUBLIC_PATH_PREFIX` | `/api` | The preview mount **as the browser sees it**. Use `""` locally when calling the backend directly on :8000 |
-| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | The API base the frontend calls. Behind a remote proxy, `/api`. **It is inlined into the client bundle at `next build` time** — leave it out of the build and the screen renders while every API call dies |
-| `AIPDS_BACKEND_URL` | `http://localhost:8000` | The backend that the `/api` proxy (the Next route handler) calls server-side |
-| `APP_BASE_URL` | `http://localhost:3000` | Frontend server-side. The app's external address, used to assemble the Cognito callback and logout URLs (`lib/auth/cognitoUrls.ts`) |
-| `COGNITO_HOSTED_UI_DOMAIN` / `COGNITO_CLIENT_ID` / `COGNITO_CLIENT_SECRET` | — | Frontend server-side only. **Never `NEXT_PUBLIC_`** for secrets |
+**If the browser is remote** (behind a proxy hostname rather than `localhost`), calls to
+`localhost:8000` hit the browser's own machine. Put `NEXT_PUBLIC_API_BASE_URL=/api` in
+`frontend/.env.local` so the Next route handler proxies to the backend (`AIPDS_BACKEND_URL`, default
+`http://localhost:8000`), and add the hostname to `allowedDevOrigins` in `next.config.mjs`.
 
 ---
 
@@ -578,29 +174,20 @@ reads them (`backend/aipds/app.py`, `backend/aipds/cli_settings.py`).
 ```bash
 cd backend && .venv/bin/python -m pytest -q     # backend unit (no AWS needed)
 cd frontend && npm test                         # frontend unit (Vitest + MSW)
-cd infra && npm test                            # infra synth + template assertions (no deployment)
-cd frontend && npm run test:e2e                 # e2e (needs a real backend + real Bedrock)
+cd infra && npm test                            # synth + template assertions (no deployment)
+cd frontend && npm run test:e2e                 # e2e (needs a real backend and Bedrock)
 ```
 
-A few of them **name the regression they catch.** Depending on what you touched, running just one
-is enough:
-
-| Command | What it prevents |
+| Run this | When you touched |
 |---|---|
-| `npm test -- noHardcodedKorean` | Korean literals hardcoded in the source instead of going through the dictionary — the reason Korean shows up in an English UI |
-| `npm test -- parity` | The ko/en manuals drifting in block structure or anchors. Adding a paragraph to the Korean one and forgetting the English is the most common failure |
-| `pytest -q -k no_legacy_brand` | The pre-rename product name coming back into any tracked file (the test itself is the only place the string is allowed) |
-| `pytest -q -k sdk_available` | Drift in the bundled `claude-agent-sdk` (option fields + running the bundled binary). **Run this after bumping the SDK** |
-| `cd infra && npm test` | Stack assertions — the deployed tree (`git ls-files`), user-data, callback URLs, seed accounts |
+| `npm test -- noHardcodedKorean` | UI strings — catches Korean literals that bypass the dictionary |
+| `npm test -- parity` | The manual — catches ko/en drifting apart in structure or anchors |
+| `pytest -q -k sdk_available` | The `claude-agent-sdk` version — checks the option fields and the bundled binary |
+| `pytest -q -k no_legacy_brand` | Anything with the product name in it |
 
 ---
 
 ## License
 
-[MIT-0](LICENSE) (MIT No Attribution). The same as MIT except that **there is no obligation to
-preserve the copyright notice** — whoever picks this up does not have to carry the LICENSE file
-along, and the way this repo is used (copying it during a workshop to become the customer's repo)
-does not come with an attribution requirement.
-
-The SPDX identifier is in each package's metadata as well: `backend/pyproject.toml`,
-`frontend/package.json`, `infra/package.json`.
+[MIT-0](LICENSE) (MIT No Attribution) — MIT without the obligation to keep the copyright notice, so a
+workshop copy of this repo can become the customer's own.
