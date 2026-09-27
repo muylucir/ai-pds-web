@@ -15,10 +15,13 @@ running address, start at [Getting started](/manual#getting-started) instead.`,
     {
       kind: "md",
       md: `You need Node.js 20+, administrator-level AWS credentials (it creates IAM roles, Cognito and a
-VPC), and **Bedrock model access enabled in the deployment region** for the Claude model you intend
-to use.
+VPC), and **an account that can call Claude models**.
 
-Skip that last one and the deployment succeeds while the first conversation fails — it is the most
+Bedrock creates the AWS Marketplace subscription for a Claude model automatically the first time the
+account calls it, and the deployed roles already hold the permissions that subscription needs. Two
+things are up to you: submit the **Anthropic first-time-use form (use case details)** once in the
+account (or the organization's management account), and have a Marketplace payment method on the
+account. Miss either and the deployment succeeds while the first conversation fails — it is the most
 common mistake.`,
     },
     {
@@ -33,18 +36,25 @@ common mistake.`,
     },
     {
       kind: "md",
-      md: `The three stacks reference one another, so deploy them **together with \`--all\`**.
+      md: `The stacks reference one another, so deploy them **together with \`--all\`**. CDK decides the
+order.
 
 | Stack | What it creates |
 |---|---|
 | \`AipdsDrillStack\` | The artifacts S3 bucket + the backend execution role |
 | \`AipdsAuthStack\` | Cognito user pool + hosted sign-in + role groups + seed accounts |
 | \`AipdsHostingStack\` | VPC + EC2 + CloudFront |
+| \`AipdsPreviewStack\` | A CloudFront distribution just for prototype previews ([sharing the preview](/manual#share)) |
+| \`AipdsAgentCredsStack\` | A Bedrock-only role for the sandboxed agents and prototypes ([sandbox](/manual#sandbox)) |
+| \`AipdsUploadCorsStack\` | Lets the instance keep its app address in the bucket's CORS — this is what makes the upload in [project import](/manual#transfer-project) work |
 
 It takes **15–20 minutes**. Even after \`cdk deploy\` returns, EC2 may still be building the backend
-and frontend, so **a few minutes of 502 responses is normal.**
+and frontend, so **a few minutes of 502 responses is normal.** Within a few minutes after that, the
+instance applies the sandbox and preview settings by itself and restarts the backend once. There is
+nothing to run by hand.
 
-The address to open is the \`AipdsHostingStack.DistributionDomain\` output.`,
+The address to open is the \`AipdsHostingStack.DistributionDomain\` output; prototype share links go
+out on the \`AipdsPreviewStack.PreviewOrigin\` address.`,
     },
     { kind: "heading", id: "migrate", text: "Moving from an existing deployment" },
     {
@@ -149,6 +159,7 @@ does the update — **there is no instance replacement, so it is usable mid-work
 | What changed | What it does | Disruption |
 |---|---|---|
 | Rules (the submodule) or config only | updates the tree | none (the next turn reads the new rules) |
+| Test files only (\`backend/tests/\`, \`*.test.ts(x)\` and the like) | updates the tree | none — running code never reads them, so nothing restarts or rebuilds |
 | Backend | restarts the backend | conversations and build sessions in progress are cut. Prototypes that were hosted come back one at a time (a few minutes each) |
 | Frontend | rebuilds and restarts | users already connected may hit errors for 1–2 min |
 | Nothing (already current) | nothing at all | none |
@@ -157,7 +168,9 @@ does the update — **there is no instance replacement, so it is usable mid-work
   conversation shows "The server restarted and this task was interrupted" when the workspace is
   reopened, and asking again continues it. A running build session goes down the resume path instead. Apply frontend
   and backend updates during a break.
-- Check what is running with \`git -C /opt/aipds rev-parse HEAD\`.`,
+- Check what is running with \`git -C /opt/aipds rev-parse HEAD\`. To check the app answers, hit it
+  directly with \`curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:3000/\` — nginx returns 403
+  to requests without CloudFront's secret header, so go around it.`,
     },
     {
       kind: "callout",
@@ -200,6 +213,40 @@ itself needs to change, the change belongs upstream, not in this repository.**`,
         "git add steering-files && git commit -m \"chore: move the ruleset pointer\" && git push",
       ],
     },
+    { kind: "heading", id: "sandbox", text: "The sandbox and the IMDS block" },
+    {
+      kind: "md",
+      md: `The Discovery and build agents and hosted prototypes run **as different users from the backend**
+(\`aipds-agent\`, \`aipds-proto\`), inside a systemd sandbox that only sees their own project's folder.
+Instance metadata (IMDS) is blocked, so they cannot obtain the instance role; they get short-lived
+credentials for a **role that can only invoke Bedrock** (\`AipdsAgentCredsStack\`) instead. This is the
+boundary that keeps uploaded documents and AI-written code away from the app's folder, other projects,
+and the backend's secrets.
+
+**The instance turns this on by itself.** The two separate stacks write their values to SSM Parameter
+Store, and \`aipds-harden sync\` on the instance applies them once at boot and every 2 minutes after —
+restarting the backend only when a value changed, and leaving the current settings alone when it cannot
+read a value.
+
+| Command (\`sudo /opt/aipds/infra/scripts/aipds-harden …\`) | What it does |
+|---|---|
+| \`status\` | Current state — users, the launcher, the IMDS block, the sync timer, running sandboxes |
+| \`sync\` | Apply the stack values now (what the timer does every 2 minutes) |
+| \`disable\` | Run agents and prototypes directly as the backend user (the rollback). **Holds the sync** so the timer does not turn it back on |
+| \`imds allow\` | Let the sandbox reach IMDS again. Also holds the sync |
+| \`enable <AgentRoleArn>\` / \`imds block\` | Turn it back on by hand; releases the hold |
+
+These commands restart the backend — conversations and builds in progress are cut, so use them during
+a break.`,
+    },
+    {
+      kind: "callout",
+      tone: "warn",
+      md: `**When the sandbox is on but unusable, it does not fall back to running directly.** That would
+quietly hand the agents and prototypes the whole instance role. Instead conversation turns fail, and
+starting a prototype is refused with *Hosting did not start because the prototype sandbox is unavailable…*. Fix the cause
+shown in the backend log, or run \`aipds-harden disable\` to run directly on purpose.`,
+    },
     { kind: "heading", id: "hotfix", text: "Getting a fresh instance" },
     {
       kind: "md",
@@ -215,6 +262,44 @@ back one at a time after boot (a few minutes each); until then their links answe
       kind: "cmd",
       lines: ["cd infra && npx cdk deploy AipdsHostingStack --require-approval never"],
     },
+    {
+      kind: "md",
+      md: `The flip side: **once an environment is in use, keep the instance from being replaced by
+accident.** The AMI is not pinned and user-data is part of the template, so a HostingStack deploy made
+for an unrelated reason can still replace the instance. With a stack policy that refuses replacement
+and deletion, plus termination protection, a deploy that would replace it fails and rolls back instead
+— the command above is refused too while the policy is in place. Lift the policy only when you really
+mean to replace it.`,
+    },
+    {
+      kind: "cmd",
+      caption: "Refuse HostingStack replacement and deletion, and turn on termination protection",
+      lines: [
+        "aws cloudformation set-stack-policy --stack-name AipdsHostingStack --stack-policy-body \\",
+        "  '{\"Statement\":[{\"Effect\":\"Deny\",\"Principal\":\"*\",\"Action\":[\"Update:Replace\",\"Update:Delete\"],\"Resource\":\"*\"},",
+        "                 {\"Effect\":\"Allow\",\"Principal\":\"*\",\"Action\":\"Update:Modify\",\"Resource\":\"*\"}]}'",
+        "aws cloudformation update-termination-protection --stack-name AipdsHostingStack \\",
+        "  --enable-termination-protection",
+      ],
+    },
+    {
+      kind: "md",
+      md: `To update just the three instance-side stacks (\`AipdsAgentCredsStack\`, \`AipdsPreviewStack\`,
+\`AipdsUploadCorsStack\`) in such an environment, pin their values with environment variables and
+deploy them without touching HostingStack. Give all four values or none.`,
+    },
+    {
+      kind: "cmd",
+      lines: [
+        "cd infra",
+        "AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> \\",
+        "AIPDS_PREVIEW_ORIGIN_DNS=ec2-<a-b-c-d>.<region>.compute.amazonaws.com \\",
+        "AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader secret ARN> \\",
+        "AIPDS_ARTIFACTS_BUCKET=<artifacts bucket name> \\",
+        "  npx cdk deploy --exclusively AipdsAgentCredsStack AipdsPreviewStack AipdsUploadCorsStack \\",
+        "  --require-approval never",
+      ],
+    },
     { kind: "heading", id: "teardown", text: "Tearing it down" },
     {
       kind: "cmd",
@@ -225,17 +310,23 @@ back one at a time after boot (a few minutes each); until then their links answe
       tone: "warn",
       md: `**The user pool goes with it, so every user account disappears.** Download anything in S3 you
 want to keep first. And a deployed stack **keeps costing money** (EC2 running continuously, storage,
-plus a Bedrock call per conversation turn) — take it down when it is not in use.`,
+plus a Bedrock call per conversation turn) — take it down when it is not in use.
+
+If HostingStack has [termination protection](/manual#hotfix) on, the deletion is refused. Turn it off
+first with
+\`aws cloudformation update-termination-protection --stack-name AipdsHostingStack --no-enable-termination-protection\`.`,
     },
     { kind: "heading", id: "troubleshooting", text: "Troubleshooting" },
     {
       kind: "md",
       md: `| Symptom | Cause and what to do |
 |---|---|
-| CloudFront 502 right after deploying | The first EC2 build is still running (5–10 min). Wait |
-| Permission error on the first conversation | **Bedrock model access** for that model is off in the deployment region |
+| CloudFront 502 right after deploying | The first EC2 build is still running (5–10 min). Wait. To watch it, open an SSM session and run \`sudo tail -f /var/log/cloud-init-output.log\` |
+| Permission error on the first conversation (\`AccessDeniedException\`) | For a model the account has never called, this happens during the few minutes its subscription is being created — send it again shortly after. If it persists, the **Anthropic first-time-use form** has not been submitted or the account has no Marketplace payment method ([deploying](/manual#deploy)) |
+| Every conversation fails, and starting hosting is refused with *the prototype sandbox is unavailable* | The sandbox is on but its startup check failed. Look at \`aipds-harden status\` and the backend log ([sandbox](/manual#sandbox)) |
 | Redirect error after signing in | Callback URL registration failed. Re-run \`cdk deploy AipdsHostingStack\` |
-| Stack refuses to redeploy, stuck in \`ROLLBACK_COMPLETE\` | A stack whose first creation failed cannot be updated. Destroy that stack, then deploy again |
+| Stack refuses to redeploy, stuck in \`ROLLBACK_COMPLETE\` | A stack whose first creation failed cannot be updated. Destroy that stack, then deploy again. \`UPDATE_ROLLBACK_COMPLETE\` (a failed update of an existing stack) just needs a redeploy |
+| \`cdk synth\` asks for credentials | HostingStack looks up the deployment region's CloudFront prefix list. The result is cached in the local \`cdk.context.json\`, so it is only needed once per clone |
 | Prototype preview returns 404 | That is the intended response — enter through the [share link](/manual#share) |
 | English interface but Korean documents | Correct — [document language](/manual#doc-language) is separate from screen language |
 | Long messages drop the connection | Too much in a single message. Split it, or [attach it as a file](/manual#attach) |
@@ -254,6 +345,7 @@ plus a Bedrock call per conversation turn) — take it down when it is not in us
       lines: [
         "aws ssm start-session --target <InstanceId>",
         "sudo journalctl -u aipds-backend -f",
+        "sudo journalctl -u aipds-backend --since -1h | grep -v '/proto/'",
       ],
     },
     { kind: "heading", id: "local-dev", text: "Running it locally" },
@@ -279,7 +371,7 @@ Node.js 20+ are required.`,
     {
       kind: "md",
       md: `The full environment-variable list is in the systemd units in \`infra/lib/user-data.ts\`, each
-line commented, and the rest of the deployment procedure is in the repository's \`README.md\`.
+line commented, and why the stacks are shaped the way they are is in the repository's \`infra/README.md\`.
 **The reasoning behind the design decisions lives in the commit messages and code comments** —
 "why is it like this" is a \`git log\` question.`,
     },

@@ -72,7 +72,9 @@ together with the responses collected.
 - **The context the AI was holding** — the past conversation is all still on screen, but from the
   next question on the AI reads the documents and the progress state to continue. In practice
   "how far we got" is written in the documents, so it does carry on.
-- **A question that was waiting for an answer** — just continue the conversation after importing.`,
+- **A question that was waiting for an answer** — just continue the conversation after importing.
+- **Brand design and the model list** — they belong to the server, not the project. The importing
+  server's own apply.`,
     },
     {
       kind: "callout",
