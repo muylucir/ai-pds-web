@@ -49,7 +49,7 @@ export class AipdsAgentCredsStack extends cdk.Stack {
     });
     agentRole.grantAssumeRole(instanceRole);
     // 인스턴스 롤도 Bedrock을 직접 부른다(설문 생성 등). HostingStack이 backendPolicyStatements로 이미
-    // 주지만, 그 스택을 다시 배포하지 않는 환경(README 9단계)의 인스턴스 롤은 이 스택이 아니면 받을 길이
+    // 주지만, 그 스택을 다시 배포하지 않는 환경(고정 모드, lib/sandbox-stacks.ts)의 인스턴스 롤은 이 스택이 아니면 받을 길이
     // 없다. 같은 문장이 두 번 붙어도 권한은 같다.
     instanceRole.addToPrincipalPolicy(bedrockSubscribeStatement());
 

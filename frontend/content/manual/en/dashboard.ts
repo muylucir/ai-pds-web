@@ -20,7 +20,12 @@ export const dashboard: ManualSection = {
 | Generated artifacts | How many documents and specs exist |
 
 The timeline on the left is the state of each stage — *Done* / *In progress* / (unmarked = not yet).
-When questions are waiting, **Continue answering →** appears and takes you to the workspace.`,
+When questions are waiting, **Continue answering →** appears and takes you to the workspace.
+
+On a project you have just created, a *Nothing has started yet* notice sits above the cards and the
+timeline reads *No stages have run yet.* Press **Go to Workspace →** in the notice, enter your
+business context and answer the first questions, and Discovery begins. There is nothing to dismiss —
+the notice goes away by itself once the first conversation has run.`,
     },
     { kind: "heading", id: "progress-meaning", text: "Do not read the percentage too literally" },
     {

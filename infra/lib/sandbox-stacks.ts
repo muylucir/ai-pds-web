@@ -17,7 +17,7 @@ import { AipdsUploadCorsStack } from './aipds-upload-cors-stack';
 //   - **이미 떠 있는 환경(pinned):** 값을 env로 고정한다. 스택 간 참조는 두 스택을 HostingStack에
 //     묶어 `cdk deploy AipdsAgentCredsStack`이 HostingStack까지 배포하게 만든다 — 그 배포는 EC2를
 //     교체할 수 있다(AMI 미고정, userDataCausesReplacement). 고정하면 두 스택만 배포된다.
-//     (운영 중인 HostingStack에는 교체·삭제를 거부하는 스택 정책도 건다 — README.)
+//     (운영 중인 HostingStack에는 교체·삭제를 거부하는 스택 정책도 건다 — /manual의 "인스턴스를 새로 만들기".)
 
 export interface PinnedHosting {
   instanceRoleArn: string;

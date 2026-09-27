@@ -2,168 +2,164 @@
 
 [한국어](README.ko.md) | **English**
 
-The deployment walkthrough — bootstrap, `cdk deploy`, outputs, access, changing the region, updating
-the code, teardown, troubleshooting — is in the root [`README.md`](../README.md). This document is
-about **why the stacks are shaped the way they are**: the decisions that break silently, with no
-error, when someone misses them.
+How to deploy is in the root [`README.md`](../README.md); how to operate a deployment is in the app's
+`/manual`. This document is about **why the stacks are shaped the way they are** — the decisions that
+break silently, with no error, when someone misses them.
 
-## The three stacks
+## Six stacks, in two groups
 
 | Stack | What it creates |
 |---|---|
-| `AipdsDrillStack` | S3 artifact bucket (`projects/*` + `sessions/*` + `surveys/*` + `models/*`) + backend execution role (Bedrock invoke + S3) |
-| `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 (managed login) + 2 role groups (`admin`/`pm`) + 2 seed accounts |
+| `AipdsDrillStack` | S3 artifact bucket + backend execution role (Bedrock invoke + S3) |
+| `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 + `admin`/`pm` groups + two seed accounts |
 | `AipdsHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
+| `AipdsPreviewStack` | The preview-only CloudFront distribution |
+| `AipdsAgentCredsStack` | The Bedrock-only `AgentRole` for sandboxed processes |
+| `AipdsUploadCorsStack` | The instance role's permission to read and write the bucket's CORS |
 
-The three reference each other, so **deploy them together with `--all`** (`bin/app.ts` passes the
-bucket and User Pool references into the hosting stack). CDK decides the order.
+The **first three** reference each other (`bin/app.ts` passes the bucket and User Pool into the hosting
+stack), so they deploy together with `--all` and CDK decides the order.
 
-**Why there are four bucket prefixes** is written out in `lib/backend-permissions.ts`. They hold
-project data, session transcripts, surveys, and the model catalog — and the last two have to live
-**outside** the project prefix (a survey token is looked up before anyone knows which project it
-belongs to, and the model catalog is read when no project exists yet). The reasoning in that comment
-comes from a real bug: `surveys/*` was missing from the list and every survey creation returned 500.
-On screen it was a generic error; the cause was a single `AccessDenied` line in the backend log.
+The **last three** exist because of one fact: **a HostingStack deploy can replace the EC2 instance.**
+The AMI is not pinned (`latestAmazonLinux2023()`) and user-data is part of the template
+(`userDataCausesReplacement`), so anything that changes HostingStack risks a new instance. Features
+the instance turns on after boot therefore live in separate stacks that only *reference* what
+HostingStack created (the instance role, the origin secret, the EIP's DNS name) and never modify it.
 
-Prototype builds (a Claude Agent SDK agent) run **inside the backend process** — there is no separate
-VM or MicroVM layer.
+- **How their values reach the instance.** Not through user-data: user-data referencing their outputs
+  is a cycle (they reference the instance role), and breaking it by editing user-data replaces the
+  instance. Instead the stacks write SSM parameters (`lib/instance-params.ts`) and the instance reads
+  them at run time — `aipds-harden sync` at boot and every 2 minutes after. A missing parameter leaves
+  the feature off; it never turns a running one off.
+- **Two ways to deploy them** (`lib/sandbox-stacks.ts`). In a new environment they take HostingStack's
+  values as cross-stack references, so one `cdk deploy --all` does everything. In a running
+  environment the four values are pinned with env (`AIPDS_INSTANCE_ROLE_ARN`,
+  `AIPDS_PREVIEW_ORIGIN_DNS`, `AIPDS_ORIGIN_VERIFY_SECRET_ARN`, `AIPDS_ARTIFACTS_BUCKET` — all or none):
+  a cross-stack reference would make `cdk deploy AipdsAgentCredsStack` deploy HostingStack too.
+- **Protecting a running HostingStack.** A stack policy that denies `Update:Replace` and
+  `Update:Delete`, plus termination protection, turns an accidental replacement into a failed,
+  rolled-back deploy. The commands are in `/manual` (*Getting a fresh instance*).
+
+## What the separate stacks isolate
+
+**Prototypes are served from another origin.** A prototype is code the build agent wrote. On the app's
+origin, a signed-in viewer's session cookie would reach the prototype's server through the `/api`
+proxy, and the prototype's own JavaScript could call the app API with the viewer's rights. The preview
+distribution passes only `/api/proto/*` (a CloudFront Function answers 404 to everything else) and adds
+a second secret header, `X-Preview-Verify`, which the backend checks before serving a prototype
+(`backend/aipds/preview_surface.py`). `*.cloudfront.net` is on the public suffix list, so the two
+distributions are different sites to the browser.
+
+**Agents and prototypes run as other users with other credentials.** The Discovery and build agents
+read uploaded documents and prototypes run agent-written code and its npm dependencies, so neither runs
+as the backend. `scripts/aipds-launch` (root, via sudo) starts them as `aipds-agent` / `aipds-proto` in
+systemd units that see only their own project's tree, with IMDS blocked per unit. They get short-lived
+`AgentRole` credentials from a loopback endpoint (`backend/aipds/credentials.py`), and that role can
+invoke Bedrock and nothing else. If the launcher is switched on but its startup check fails, the backend
+refuses agent turns and hosting rather than falling back to running directly.
+
+**The instance keeps its own origin in the bucket's CORS.** Project import has the browser PUT the
+bundle straight to S3, so the bucket's CORS must allow the app origin — HostingStack's CloudFront. The
+bucket (DrillStack) cannot reference that without a cycle, so `aipds-harden sync` adds `APP_BASE_URL` to
+the PUT rule whenever it is missing, with the permission `AipdsUploadCorsStack` grants. A DrillStack
+redeploy that rewrites the CORS is repaired within minutes.
+
+## The backend role
+
+**Six bucket prefixes** (`lib/backend-permissions.ts`): `projects/*`, `sessions/*`, `surveys/*`,
+`models/*`, `design/*`, `imports/*`. The permission is an allowlist, and a missing prefix shows up as a
+generic error on screen with a single `AccessDenied` line in the backend log. Four of them sit
+**outside** the project prefix for a reason: a survey token is looked up before anyone knows its project,
+the model catalog and the design profile exist with no project at all, and import staging must not be
+mistaken for project data by the project scan or by a project's `delete_prefix`.
+
+**Bedrock invoke is a wildcard** over `global.anthropic.claude-*` inference profiles and the matching
+foundation models. Administrators add models from `/admin/models`; an explicit list would let them
+register a model that then fails on its first turn. The roles also carry
+`aws-marketplace:Subscribe`/`Unsubscribe`/`ViewSubscriptions`, conditioned on
+`aws:CalledViaLast = bedrock.amazonaws.com`: Bedrock creates a model's Marketplace subscription on the
+account's first call, and the condition means the subscription can only happen through a Bedrock call.
 
 ## What gets deployed: pushed `main`, not your working tree
 
-user-data clones the public repo, moves onto the latest `origin/main` commit as of boot, then builds
-and starts the backend and frontend. The reasoning is spelled out in `lib/deploy-source.ts`; it comes
-down to two things.
+user-data clones the public repo, moves onto `origin/main` as of boot, then builds and starts the
+backend and frontend (`lib/deploy-source.ts`).
 
-- **A clone only takes tracked files.** The previous CDK asset (zip) approach shipped gitignored
-  files too, which had to be corrected with a human-maintained exclusion list. What fell off that
-  list caused two incidents: the repo's development `.claude/CLAUDE.md` became an **ancestor** of the
-  agent's cwd and injected one Korean line into every turn of an English project, and a dev box's
-  `proto-type/` shipped, making a prototype nobody had built look "build complete".
-  `test/deployed-tree.assert.ts` pins that invariant using `git ls-files`.
-- **No commit SHA is pinned.** That means the deployer is never asked "did you push this commit?",
-  but the price is that **`cdk deploy` is not how you update code** — if the user-data string is
-  byte-identical, CloudFormation does not replace the instance. Updating code is the job of
-  `aipds-update`, which is installed at boot (see "Updating the code" in the root README).
+- **A clone only takes tracked files.** Uploading the working tree would also carry gitignored files —
+  a development `.claude/CLAUDE.md`, for instance, becomes an *ancestor* of the agent's cwd and is
+  injected into every turn. `test/deployed-tree.assert.ts` pins the invariant with `git ls-files`.
+- **No commit SHA is pinned.** The deployer is never asked whether they pushed; the price is that
+  `cdk deploy` does not update code, since byte-identical user-data does not replace the instance.
+  `aipds-update` on the instance does (its own comments explain its steps).
 
 ## AipdsAuthStack
 
-- **Self-signup blocked** — `selfSignUpEnabled: false` renders as CFN
-  `AdminCreateUserConfig.AllowAdminCreateUserOnly: true`. The Hosted UI shows no sign-up link, and
-  new accounts exist only by invitation from `/admin/users`.
-- **Roles** — `admin` (precedence 0) / `pm` (precedence 10) groups. Role is not a custom attribute.
-- **username == email** — `signInAliases: { username: true, email: true }` becomes CFN
-  `AliasAttributes: ['email']`, which lets the caller choose the Username. With `{ email: true }`
-  alone it becomes `UsernameAttributes` and Cognito auto-generates a UUID username — and then the CDK
-  custom resource cannot know that value across redeployments, making seeding non-deterministic.
-- **Seed accounts** — `AdminCreateUser` (SUPPRESS) → `AdminSetUserPassword` (Permanent) →
-  `AdminAddUserToGroup`. The `CfnUserPoolUser` L1 construct cannot set a final password, so it would
-  demand a change on every first login; hence the custom resource.
+- **Self-signup blocked** — `selfSignUpEnabled: false` renders as
+  `AdminCreateUserConfig.AllowAdminCreateUserOnly: true`. Accounts exist only by invitation.
+- **Roles** are the `admin` (precedence 0) and `pm` (precedence 10) groups, not a custom attribute.
+- **username == email** — `signInAliases: { username: true, email: true }` becomes
+  `AliasAttributes: ['email']`, which lets the caller choose the Username. `{ email: true }` alone
+  becomes `UsernameAttributes`, and Cognito then generates a UUID the seeding custom resource cannot
+  know across redeployments.
+- **Seed accounts** — `AdminCreateUser` (SUPPRESS) → `AdminSetUserPassword` (`Permanent: false`) →
+  `AdminAddUserToGroup` (`lib/seed-users.ts`). The accounts stay in `FORCE_CHANGE_PASSWORD`, so the Hosted
+  UI demands a new password at first login. The custom resource has no `onUpdate`, so a redeploy never
+  overwrites what a user chose.
 
-### One source of truth for the app client config
+**One source of truth for the app client.** Token validity, auth flows and the client name live in
+`lib/auth-client-config.ts`. AuthStack creates the app client with them and HostingStack resends them
+(below); if the two disagreed, every redeploy would silently reset them.
 
-Token validity (`ACCESS_TOKEN_VALIDITY_MINUTES` / `ID_TOKEN_VALIDITY_MINUTES` /
-`REFRESH_TOKEN_VALIDITY_MINUTES`), the permitted auth flows (`EXPLICIT_AUTH_FLOWS`), and the client
-name (`CLIENT_NAME`) live in `lib/auth-client-config.ts` alongside the seed-account constants. Both
-writers must use the same values: AuthStack when it creates the app client, and HostingStack when it
-resends the config with `UpdateUserPoolClient` at the end of the deployment (see below). If the two
-disagree, every redeployment silently resets validity and auth flows.
+**The callback-URL circular dependency.** Cognito accepts only exact callback URLs, and the real one
+depends on HostingStack's CloudFront domain. AuthStack deploys with localhost callbacks, and HostingStack
+registers the real domain with `UpdateUserPoolClient` at the end of its deployment. ⚠️ **That API has PUT
+semantics** — any field left out is cleared — so the call resends the entire client config. **A field
+added to AuthStack's app client must be mirrored in HostingStack's resend**, or the next deploy wipes it.
+`test/hosting-stack.assert.ts` compares the two.
 
-### The callback-URL circular dependency
+**The client secret** is not a CfnOutput. The instance reads it at boot with
+`describe-user-pool-client`; copying it into Secrets Manager would route a Cognito-generated value
+through CloudFormation in plaintext.
 
-Cognito only accepts exact-match callback URLs (no wildcards), and the real URL depends on the
-CloudFront domain that HostingStack creates. So AuthStack deploys with localhost callbacks only, and
-HostingStack registers the real domain via `UpdateUserPoolClient` at the end of its deployment.
+**The seed password** is a required `NoEcho` parameter, not a source constant — a constant would be
+committed, sit in plaintext in the template and stack events, and let a redeploy reset the accounts.
+`allowedPattern` enforces the pool policy before the deployment starts; otherwise
+`AdminSetUserPassword` rejects the value minutes in and rolls the whole stack back. Temporary passwords
+last 30 days (`TEMP_PASSWORD_VALIDITY_DAYS`) instead of Cognito's 7, so seed accounts survive the gap
+between deployment and a workshop. One exposure remains: the `AwsCustomResource` provider Lambda logs its
+incoming event once. That is acceptable only because the value must be replaced at first login.
 
-⚠️ **That API has PUT semantics** — it clears any field you do not specify. So the call resends the
-*entire* client config (callback/logout URLs, OAuth scopes, token validity, auth flows), not just the
-callbacks. Because the values come from `lib/auth-client-config.ts` and nowhere else, they cannot
-drift from AuthStack. **If you add a field to AuthStack's app client, you must mirror it in
-HostingStack's resend** — miss it and that field is silently wiped on the next deployment. A drift
-detection test (`test/hosting-stack.assert.ts`) compares the two definitions so CI catches what a
-human misses.
-
-### The client secret
-
-It is not exported as a CfnOutput. The EC2 instance reads it at boot with
-`aws cognito-idp describe-user-pool-client` — making a Secrets Manager copy would mean routing a
-Cognito-generated value through CloudFormation, which leaves it in the template in plaintext. The
-price is the `cognito-idp:DescribeUserPoolClient` permission on the instance role.
-
-### The seed password
-
-It is a **required** deploy-time parameter (`AipdsAuthStack:SeedPassword`, no default):
-
-```bash
-npx cdk deploy --all --require-approval never \
-  --parameters AipdsAuthStack:SeedPassword='<temporary-password>'
-```
-
-An `allowedPattern` enforces the pool policy (8+ characters with an uppercase letter, a lowercase
-letter, a digit, a symbol, and no spaces) before the deployment starts. Without that check
-`AdminSetUserPassword` rejects the value with `InvalidPasswordException` and **rolls the whole stack
-back** — minutes into the deployment.
-
-Both seed accounts receive it as a **temporary** password (`Permanent: false`), so they stay in
-`FORCE_CHANGE_PASSWORD` state and the Hosted UI requires a new password at first login. The custom
-resource that seeds the password has **no** `onUpdate`, so a redeployment does not overwrite what the
-user chose. Reissuing goes through **Reset password** in `/admin/users`.
-
-The temporary password is valid for 30 days (`TEMP_PASSWORD_VALIDITY_DAYS`). Cognito's default of 7
-days makes the seed accounts unusable when more time passes between deployment and the workshop, and
-the only symptom is "the password is right but it will not let me in". It is a pool policy, so
-invited accounts' temporary passwords share the window.
-
-**Why not a source constant.** A constant gets committed to the repository, stays in plaintext in the
-CloudFormation template and stack events, and lets a redeployment reset the accounts to it. One
-`NoEcho` parameter closes all three paths — the template carries only a `Ref`, and the only party that
-knows the value is whoever ran the deployment. It does not conflict with the deploy-in-one-command
-requirement either: it is one more flag on one command, and `--previous-parameters` defaults to true,
-so a redeployment does not need it again.
-
-**One exposure remains.** The `AwsCustomResource` provider Lambda logs its incoming event, so the
-value is printed once into that log group (`Logging.withDataHidden()` only hides API responses). That
-is acceptable because the value is a temporary password that must be replaced at first login — it
-would not be acceptable for a standing one.
-
-### Deletion
-
-On `cdk destroy --all` the User Pool is `RemovalPolicy.DESTROY`, so **every user account disappears
-with it.**
+**Deletion** — the User Pool is `RemovalPolicy.DESTROY`; `cdk destroy --all` removes every account.
 
 ## Origin protection
 
-EC2 accepts port 80 only from the CloudFront origin-facing managed prefix list (looked up
-automatically for the deployment region), and nginx verifies the secret `X-Origin-Verify` header
-CloudFront attaches. No SSH port is opened — access is `aws ssm start-session`. There are two layers
-because the prefix list only narrows traffic down to "came from CloudFront": **someone else's**
-CloudFront distribution is in that list too, so only the header distinguishes our distribution.
+EC2 accepts port 80 only from the CloudFront origin-facing managed prefix list, and nginx checks the
+secret `X-Origin-Verify` header CloudFront attaches. There are two layers because the prefix list only
+proves "came from *a* CloudFront distribution" — someone else's is in it too. No SSH port is open;
+access is `aws ssm start-session`.
 
 ## Region lookup and cdk.context.json
 
-The default is Seoul (`ap-northeast-2`), overridden with `CDK_DEPLOY_REGION`. Prefix list IDs differ
-per region, but `PrefixList.fromLookup` resolves the deployment region's ID automatically, so no code
-changes are needed. The price is that **the hosting stack's first synth/deploy needs account
-credentials** (`npx cdk synth AipdsDrillStack` does not).
-
-The lookup result is cached in `cdk.context.json`, which is **not committed** (gitignored) — the
-entry key contains the account ID, so the cache is invalid for any other account, and it is
-regenerated with the same value whenever credentials are present. That is why the first synth in a
-fresh clone needs credentials.
+`CDK_DEPLOY_REGION` overrides Seoul. `PrefixList.fromLookup` resolves the region's prefix list ID, so no
+code changes, but the hosting stack's first synth needs account credentials. The result is cached in
+`cdk.context.json`, which is gitignored: its key contains the account ID.
 
 ## What the tests guard
 
 ```bash
 npm ci
-npm test     # no credentials needed — pure functions + assertions on the synthesized template
+npm test     # no credentials needed — pure functions + assertions on the synthesized templates
 ```
-
-Six assertion files, each aimed at a regression **you cannot see by looking**:
 
 | File | What it guards |
 |---|---|
-| `user-data.assert.ts` | Every element of the boot script — nginx-var vs shell-var escaping, non-root execution (Claude Code refuses `bypassPermissions` at euid 0), the proxy buffer sizes that JWT cookies have to fit, the two config dirs being distinct paths, the two context switches, and that `aipds-update` ships |
-| `hosting-stack.assert.ts` | The SG being prefix-list-only (no SSH), EC2/EBS/EIP/instance role, CloudFront's origin header and HTTPS redirect, and the **app client drift detection** described above |
-| `auth-stack.assert.ts` | No-self-signup, alias username, groups, managed login v2, code-only client, and the pairing of the three seed-account steps |
-| `auth-client-config.assert.ts` | That token validity **outlasts one prototype build** (shorter and the session expires mid-build), plus the seed/group constants and callback/logout URL derivation |
-| `deployed-tree.assert.ts` | What must not be in the tree that becomes `/opt/aipds` (the dev-only `.claude/`, build output, session state) and what must be (rules, both language directives, both config dirs, the lockfile) |
-| `deploy-source.assert.ts` | That the clone URL is public HTTPS, and that the deploy target is a branch rather than a pinned commit |
+| `user-data.assert.ts` | The boot script — nginx-vs-shell escaping, non-root execution (Claude Code refuses `bypassPermissions` at euid 0), proxy buffers large enough for JWT cookies, two distinct config dirs, `aipds-update` shipping, and `aipds-harden boot` running before the services start |
+| `hosting-stack.assert.ts` | Prefix-list-only security group (no SSH), EC2/EBS/EIP/instance role, CloudFront's origin header and HTTPS redirect, and the **app client drift check** |
+| `auth-stack.assert.ts` | No self-signup, alias username, groups, managed login v2, code-only client, the three seeding steps |
+| `auth-client-config.assert.ts` | Token validity that **outlasts one prototype build**, seed and group constants, callback/logout URLs |
+| `preview-stack.assert.ts` | Only prototype paths reach the origin, both secret headers are attached, the instance role can read the preview secret, and no instance-side resource is created |
+| `agent-creds-stack.assert.ts` | `AgentRole` is assumable only by the instance role and can do nothing but invoke Bedrock (plus the Marketplace subscription through Bedrock) |
+| `sandbox-stacks.assert.ts` | The two deploy modes — references in a new environment, **no dependency on HostingStack** when pinned |
+| `instance-params.assert.ts` | The SSM parameter names the stacks write match the ones `aipds-harden` reads. A mismatch passes every other test and boots a replaced instance with isolation off |
+| `deployed-tree.assert.ts` | What must and must not be in the tree that becomes `/opt/aipds` |
+| `deploy-source.assert.ts` | The clone URL is public HTTPS, and the target is a branch, not a pinned commit |

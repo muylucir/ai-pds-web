@@ -9,6 +9,8 @@ export const prototypes: ManualSection = {
       kind: "md",
       md: `Once Discovery has written a prototype spec, it shows up as a card in the
 Prototypes tab. One card is one prototype, and the status badge tells you how far it has got.
+The card's title is the product name written in the spec, with the spec's file path beneath it; a
+spec that names no product shows its identifier instead.
 
 The colours and typeface come from whatever the administrator uploaded under
 [Brand design](/manual#brand-design). With nothing uploaded, prototypes use the default look.`,
@@ -97,6 +99,12 @@ seconds later.`,
       md: `**Copy link** produces a **share link that opens without an account**. Whoever receives it can
 try the prototype without signing in — send it straight to the customers or colleagues whose
 reactions you want.
+
+The link's address is **not the app's address.** A prototype is code the AI wrote, so it opens only
+on a separate preview address — that keeps the code away from the viewer's sign-in and from the app
+itself. A link on the app's address still works: it moves on to the same prototype's preview
+address. If a customer network only lets people reach allowlisted addresses, give them **both the
+app address and the preview address**.
 
 When you are done, **Stop hosting** takes it down. After that the share link stops opening too.`,
     },
