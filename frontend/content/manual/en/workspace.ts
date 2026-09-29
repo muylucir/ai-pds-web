@@ -53,7 +53,12 @@ conversation around. While the number keeps climbing, nothing is stuck.
 When the turn ends, the order it went through is collected into an **activity log** that attaches
 below the answer, collapsed. Expand it to see where the model thought, which tools ran and on what
 (the file name when it read a file, the command when it ran one), and which files changed. It is
-where you can retrace "why did this conclusion appear" without asking in chat.`,
+where you can retrace "why did this conclusion appear" without asking in chat.
+
+**N% context left**, above the message box on the right, is how much room the AI has left to hold
+the conversation. At 0% the AI summarises the earlier conversation to make room and carries on —
+from then on it remembers earlier details only as far as the summary kept them. It turns amber
+below 25% and red below 10%; hover to see the token counts.`,
     },
     { kind: "heading", id: "answer-panel", text: "The question panel (third column)" },
     {

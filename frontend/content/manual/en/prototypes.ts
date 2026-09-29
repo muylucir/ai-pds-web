@@ -83,7 +83,11 @@ normal; a finished agent leaves the rows and stays in the **activity log** under
 A session lasts **one build**. When the AI declares it finished, the session closes itself — that
 is a normal ending, not a dropped connection. The conversation does not close with it: reopen the
 panel (after a refresh, the next day, even after a server replacement) and everything from the
-first build on is there, in order. **Reset** clears that conversation too.`,
+first build on is there, in order. **Reset** clears that conversation too.
+
+**N% context left** above the message box is the same indicator as in the workspace. A build runs
+many tools, so it drops quickly. Opening a finished build with **Modify** starts a fresh
+conversation, so the indicator is blank until the first reply brings it back.`,
     },
     { kind: "heading", id: "complete-card", text: "The completion card" },
     {

@@ -2228,6 +2228,17 @@ def test_history_without_a_session_is_the_whole_transcript(proto_env):
     assert [(i["role"], i["text"]) for i in body["items"]] == [
         ("user", "만들어줘"), ("ai", "만들었습니다")]
     assert body["turns"] == []
+    assert body["context"] is None
+
+
+def test_history_carries_the_last_context_usage_of_the_current_conversation(proto_env):
+    from aipds.proto.history import context_key
+    proto_env["s3"].blobs[f"prototypes/{SLUG}/session.json"] = json.dumps({"session_id": "s1"})
+    proto_env["s3"].blobs[context_key(SLUG)] = json.dumps({"left_pct": 40, "session_id": "s1"})
+
+    body = client.get(f"/projects/{PID}/prototypes/{SLUG}/history").json()
+
+    assert body["context"]["left_pct"] == 40
 
 
 def test_history_leaves_the_open_sessions_turns_to_the_replay(proto_env, monkeypatch):

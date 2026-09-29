@@ -30,6 +30,7 @@ from aipds.agent.questions_payload import (normalize_sdk_questions,
 from aipds.agent.claude_driver import _transcript_path
 from aipds.agent_home import copy_config
 from aipds.cli_settings import cli_context_env
+from aipds.context_usage import ContextMeter, wants_sample
 from aipds.models import AgentEvent
 from aipds.proto import prompts
 from aipds.proto.build_guard import background_agent_denial, bash_denial
@@ -310,6 +311,9 @@ class PrototypeBuilder:
         #: 히스토리 복원용으로 남긴다 — 트랜스크립트에는 CLI가 옮겨 적은 영어 문장만
         #: 남기 때문이다(agent/answer_store.py 헤더).
         self._answer_log = answer_log
+        #: 메인 에이전트의 컨텍스트 사용량을 잰다(aipds/context_usage.py). 빌더 하나가
+        #: SDK 세션 하나이므로 턴을 넘어 들고 간다 — 바뀐 값만 낸다.
+        self._context = ContextMeter()
         self._anthropic_model = anthropic_model
         # 이 프로젝트의 생성물 언어. build_complete 도구의 설명과 반환 문자열을
         # 이 값으로 고른다 — 셋 다 모델이 읽는 프롬프트다(proto/prompts.py).
@@ -895,6 +899,13 @@ class PrototypeBuilder:
                         terminal = ev
                         continue
                     yield ev
+                # 컨텍스트 사용량. 턴 끝(ResultMessage)의 값도 여기서 나간다 —
+                # terminal을 붙잡아 둔 뒤이므로 `done`보다 앞선다(sse.ts가 `done`에서
+                # 스트림을 닫는다).
+                if wants_sample(msg):
+                    usage = await self._context.sample(client)
+                    if usage is not None:
+                        yield usage
                 if terminal is not None:
                     # The SDK's receive_response() returns right after the
                     # ResultMessage, so re-arming would only buy a

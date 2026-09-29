@@ -57,6 +57,7 @@ function mockWorkspaceStream(overrides: Partial<workspaceStream.WorkspaceStream>
     lastDocument: null,
     changedPaths: [],
     historyLoading: false,
+    context: null,
     activeDoc: null,
     turnSeq: 0,
     interrupt: vi.fn(),

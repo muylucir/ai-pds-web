@@ -30,7 +30,7 @@ from aipds.parsers.redaction import redact_credentials
 from aipds.launcher import LauncherUnavailable
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.proto.session import has_build_output, purge_session_state
-from aipds.proto.history import load_history, record_opening
+from aipds.proto.history import load_context, load_history, record_opening
 from aipds.turn_job import TurnBusy, subscribe
 from aipds.proto.hosting import host_prototype, prototype_store, stop_prototype
 from aipds.proto.store import PrototypeStore
@@ -517,6 +517,10 @@ async def get_history(pid: str, slug: str):
 
     닫힌 세션도 `proto_sessions`에 남아 있는 동안은 재생한다 — 완료 선언 뒤 유예로
     닫힌 세션의 완료 카드가 그렇게 되살아난다(GET /session과 같은 대상).
+
+    `context`는 마지막 턴의 컨텍스트 사용량이다(다음 대화에도 맞을 때만 —
+    proto/history.load_context). 재생하는 턴이 `context` 이벤트를 다시 흘리면 화면은
+    그 값으로 덮는다.
     """
     import aipds.app as app_module
     _require_registered(pid)
@@ -528,10 +532,12 @@ async def get_history(pid: str, slug: str):
     except Exception:
         # Discovery의 /history와 같은 강등: 스토어가 없으면 히스토리가 빌 뿐이다.
         _log.exception("project store unavailable for %s", pid)
-        items = []
+        items, context = [], None
     else:
-        items = await load_history(s3, slug, before=before)
+        items, context = await asyncio.gather(load_history(s3, slug, before=before),
+                                              load_context(s3, slug))
     return {"items": [i.model_dump() for i in items],
+            "context": context,
             "turns": [{"turn_id": j.id, "state": j.state,
                        "last_seq": j.log.last_seq, "input": j.input_text}
                       for j in jobs]}

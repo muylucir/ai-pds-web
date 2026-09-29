@@ -84,3 +84,31 @@ def test_history_degrades_when_the_project_store_raises(monkeypatch):
     monkeypatch.setattr(app_module, "s3_store_factory", boom)
     r = client.get("/projects/h7/history")
     assert r.status_code == 200 and r.json() == {"items": []}
+
+
+# ---- GET /context: 마지막 턴의 컨텍스트 사용량 ----
+
+def test_context_is_the_last_turns_record(monkeypatch):
+    from aipds.context_usage import DISCOVERY_KEY
+    _local_project(monkeypatch, "c1")
+    s3 = FakeS3Store()
+    s3.blobs[DISCOVERY_KEY] = json.dumps({"left_pct": 62, "total_tokens": 285000,
+                                          "max_tokens": 750000, "compact_at_tokens": 717000})
+    monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: s3)
+
+    assert client.get("/projects/c1/context").json()["context"]["left_pct"] == 62
+
+
+def test_context_is_null_before_any_turn(monkeypatch):
+    _local_project(monkeypatch, "c2")
+    monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: FakeS3Store())
+    assert client.get("/projects/c2/context").json() == {"context": None}
+
+
+def test_context_degrades_when_factory_raises(monkeypatch):
+    _local_project(monkeypatch, "c3")
+    def boom(pid):
+        raise RuntimeError("aws profile broken")
+    monkeypatch.setattr(app_module, "s3_store_factory", boom)
+    r = client.get("/projects/c3/context")
+    assert r.status_code == 200 and r.json() == {"context": None}

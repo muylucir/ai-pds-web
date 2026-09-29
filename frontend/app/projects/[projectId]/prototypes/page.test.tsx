@@ -29,6 +29,7 @@ function mockStream(overrides: Partial<prototypeStream.PrototypeStream> = {}) {
     buildComplete: null,
     changedPaths: [],
     historyLoading: false,
+    context: null,
     startBuild: vi.fn(),
     restoreHistory: vi.fn().mockResolvedValue(undefined),
     send: vi.fn(),

@@ -464,6 +464,8 @@ export const en: Record<keyof typeof ko, string> = {
   "chat.emptyTimeline": "Start the conversation — type a message below.",
   "chat.questionsPresented": "Questions presented",
   "chat.auditNotice": "Every input is recorded verbatim in audit.md · credentials are never recorded",
+  "chat.contextLeft": "{n}% context left",
+  "chat.contextDetail": "{used} / {limit} tokens used · at 0% the AI summarises the earlier conversation to make room",
   "chat.questionCountSuffix": " questions",
   "review.exportMd": "Export .md",
   "review.auditBody": "Every input is recorded verbatim with a timestamp. API keys and credentials are never recorded. Approvals and revision requests made at this gate are recorded immediately too.",
