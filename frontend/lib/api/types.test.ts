@@ -31,6 +31,7 @@ const AGENT_EVENT_KIND_EXHAUSTIVENESS: Record<AgentEventKind, true> = {
   build_complete: true,
   agent_activity: true,
   answers: true,
+  context: true,
   error: true,
 };
 
@@ -72,13 +73,13 @@ describe("api types mirror the backend models", () => {
     expect(st.stages.map((s) => s.status)).toEqual(["completed", "in_progress", "pending"]);
   });
 
-  it("AgentEventKind covers exactly the 12 backend/harness kinds", () => {
+  it("AgentEventKind covers exactly the 13 backend/harness kinds", () => {
     // Runtime witness of the compile-time exhaustiveness map above -- keeps
     // this file self-contained even if the `Record` trick above is refactored.
     expect(Object.keys(AGENT_EVENT_KIND_EXHAUSTIVENESS).sort()).toEqual(
       ["message", "questions", "stage", "document", "file_changed", "status",
        "done", "prototype_ready", "build_complete", "agent_activity",
-       "answers", "error"].sort(),
+       "answers", "context", "error"].sort(),
     );
   });
 

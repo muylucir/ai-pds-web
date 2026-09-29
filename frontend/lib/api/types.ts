@@ -81,7 +81,22 @@ export type AgentEventKind =
   // 프로토타입 빌드에서 사용자가 질문에 답했다는 턴 로그의 기록. payload =
   // {"answers": {...}}. 백엔드 models.py의 Literal과 한 쌍이다.
   | "answers"
+  // 메인 에이전트의 컨텍스트 창 사용량. payload = ContextUsage(JSON). 값이 바뀔 때만
+  // 온다(백엔드 aipds/context_usage.py).
+  | "context"
   | "error";
+
+/** 에이전트의 컨텍스트 창 사용량 — 백엔드 context_usage.summarize의 모양.
+ *  `left_pct`는 **자동 압축까지** 남은 몫이다: 0%가 되면 CLI가 지난 대화를 요약해
+ *  컨텍스트를 비운다. 창 끝이 아니라 그 지점으로 재는 이유는 그 순간이 사용자에게
+ *  의미 있는 사건이기 때문이다(에이전트가 앞의 세부를 잊기 시작한다). */
+export interface ContextUsage {
+  total_tokens: number;
+  max_tokens: number;
+  /** 압축이 일어나는 사용량. 압축 버퍼가 없으면 창 크기와 같다. */
+  compact_at_tokens: number;
+  left_pct: number;
+}
 
 export interface AgentEvent {
   kind: AgentEventKind;

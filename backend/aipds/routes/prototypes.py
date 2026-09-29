@@ -30,6 +30,7 @@ from aipds.parsers.redaction import redact_credentials
 from aipds.launcher import LauncherUnavailable
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.proto.session import has_build_output, purge_session_state
+from aipds.proto.history import load_context, load_history, record_opening
 from aipds.turn_job import TurnBusy, subscribe
 from aipds.proto.hosting import host_prototype, prototype_store, stop_prototype
 from aipds.proto.store import PrototypeStore
@@ -421,14 +422,36 @@ def _opening_text(session, text: str) -> str:
     return text
 
 
-def _start_build_turn(session, text: str):
+def _start_build_turn(pid: str, slug: str, session, text: str):
     """빌드 턴을 서버 작업으로 시작한다(aipds/turn_job.py). 도는 턴이 있으면 409 —
     본문에 그 턴의 id가 있다(Discovery의 routes/turns.start_turn과 같은 모양)."""
+    import aipds.app as app_module
     turn_text = _opening_text(session, text)
     shown = None if text == _FIRST_TURN_SENTINEL else text
+
+    async def events():
+        # 개시 턴은 사용자가 한 말과 에이전트에게 간 말이 다르다. 그 짝을 남겨야
+        # 히스토리가 개시 프롬프트 대신 사용자의 말을 보인다(proto/history.py 헤더 2).
+        # 턴 **안에서** 쓰는 이유: 시작을 409로 거절당한 턴은 레코드도 남기지 않는다.
+        if turn_text != text:
+            try:
+                s3 = app_module.s3_store_factory(pid)
+            except Exception:
+                _log.exception("project store unavailable for %s", pid)
+            else:
+                await record_opening(s3, slug, prompt=turn_text, shown=shown)
+        # 안쪽 generator를 **명시적으로** 닫는다. 턴이 취소되면 TurnJobs가 이
+        # generator를 aclose하는데, `async for`로 감싸기만 하면 안쪽은 GC가 거둘 때에야
+        # 닫혀 세션의 정리(finally)가 그만큼 늦어진다.
+        inner = session.send_message(turn_text)
+        try:
+            async for ev in inner:
+                yield ev
+        finally:
+            await inner.aclose()
+
     try:
-        return session.turns.start(
-            "message", lambda: session.send_message(turn_text), input_text=shown)
+        return session.turns.start("message", events, input_text=shown)
     except TurnBusy as busy:
         raise HTTPException(status_code=409, detail={
             "code": "turn_in_progress", "turn_id": busy.job.id})
@@ -454,7 +477,7 @@ async def create_session_turn(pid: str, slug: str, body: TurnBody):
     """
     _require_registered(pid)
     session = _require_session(pid, slug)
-    return {"turn_id": _start_build_turn(session, body.text).id}
+    return {"turn_id": _start_build_turn(pid, slug, session, body.text).id}
 
 
 @router.get("/projects/{pid}/prototypes/{slug}/events")
@@ -481,6 +504,43 @@ async def get_session(pid: str, slug: str):
             "turns": [{"turn_id": j.id, "state": j.state,
                        "last_seq": j.log.last_seq, "input": j.input_text}
                       for j in session.turns.all()]}
+
+
+@router.get("/projects/{pid}/prototypes/{slug}/history")
+async def get_history(pid: str, slug: str):
+    """지난 빌드 대화(트랜스크립트)와, 그 뒤를 이어 재생할 열린 세션의 턴들.
+
+    둘을 **한 응답**으로 주는 것이 요점이다. 열린 세션의 턴은 화면이 턴 로그로
+    재생하므로(완료 카드와 진행 중인 질문 폼이 그 경로에만 있다) 히스토리는 그 첫 턴의
+    시작 앞에서 자른다. 자르는 기준과 재생할 턴 목록을 따로 물으면 그 사이에 시작된
+    턴이 양쪽에 다 나오거나 어느 쪽에도 나오지 않는다.
+
+    닫힌 세션도 `proto_sessions`에 남아 있는 동안은 재생한다 — 완료 선언 뒤 유예로
+    닫힌 세션의 완료 카드가 그렇게 되살아난다(GET /session과 같은 대상).
+
+    `context`는 마지막 턴의 컨텍스트 사용량이다(다음 대화에도 맞을 때만 —
+    proto/history.load_context). 재생하는 턴이 `context` 이벤트를 다시 흘리면 화면은
+    그 값으로 덮는다.
+    """
+    import aipds.app as app_module
+    _require_registered(pid)
+    session = app_module.proto_sessions.get((pid, slug))
+    jobs = session.turns.all() if session is not None else []
+    before = min((j.started_wall for j in jobs), default=None)
+    try:
+        s3 = app_module.s3_store_factory(pid)
+    except Exception:
+        # Discovery의 /history와 같은 강등: 스토어가 없으면 히스토리가 빌 뿐이다.
+        _log.exception("project store unavailable for %s", pid)
+        items, context = [], None
+    else:
+        items, context = await asyncio.gather(load_history(s3, slug, before=before),
+                                              load_context(s3, slug))
+    return {"items": [i.model_dump() for i in items],
+            "context": context,
+            "turns": [{"turn_id": j.id, "state": j.state,
+                       "last_seq": j.log.last_seq, "input": j.input_text}
+                      for j in jobs]}
 
 
 class AnswersBody(BaseModel):

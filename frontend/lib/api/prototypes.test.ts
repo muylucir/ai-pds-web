@@ -18,6 +18,7 @@ import {
   streamPrototypeEvents,
   watchBuildTurn,
   resetPrototype,
+  getBuildHistory,
 } from "./prototypes";
 
 describe("listPrototypes", () => {
@@ -93,6 +94,20 @@ describe("startSession / closeSession / interruptSession", () => {
       ),
     );
     expect(await interruptSession("p1", "todo-app")).toEqual({ status: "interrupting" });
+  });
+});
+
+describe("getBuildHistory", () => {
+  it("GETs /history and returns the past items with the turns to replay", async () => {
+    const body = {
+      items: [{ role: "user", text: "만들어줘", card: null, name: null, trace: [] }],
+      turns: [{ turn_id: "t1", state: "running", last_seq: 3, input: null }],
+    };
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/history`, () =>
+        HttpResponse.json(body)),
+    );
+    expect(await getBuildHistory("p1", "todo-app")).toEqual(body);
   });
 });
 

@@ -1,7 +1,7 @@
 // frontend/lib/usePrototypeStream.test.tsx
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { usePrototypeStream } from "./usePrototypeStream";
+import { usePrototypeStream, type ChatItem } from "./usePrototypeStream";
 import { RECONNECT_DELAYS_MS } from "./useWorkspaceStream";
 import * as prototypesApi from "@/lib/api/prototypes";
 import * as sessionRecovery from "@/lib/auth/sessionRecovery";
@@ -12,6 +12,7 @@ vi.mock("@/lib/api/prototypes", async (orig) => ({
   streamPrototypeEvents: vi.fn(),
   watchBuildTurn: vi.fn(),
   getBuildSession: vi.fn(),
+  getBuildHistory: vi.fn(),
   submitPrototypeAnswers: vi.fn(),
   interruptSession: vi.fn(),
   startSession: vi.fn(),
@@ -42,6 +43,9 @@ const QUESTIONS_PAYLOAD = JSON.stringify({
     ],
   },
 });
+
+// 타임라인 항목의 글. 복원된 질문 카드(history-card)에는 글이 없다.
+const textOf = (i: ChatItem) => ("text" in i ? i.text : null);
 
 const ANSWERS_EVENT: AgentEvent = { kind: "answers", text: null, path: null, payload: JSON.stringify({ answers: { "1": "A" } }) };
 
@@ -226,7 +230,7 @@ describe("usePrototypeStream", () => {
       captured.onEvent({ kind: "done", text: null, path: null, payload: null });
     });
 
-    expect(result.current.items.map((i) => [i.role, i.text])).toEqual([
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "이 계획대로 진행할까요?"],
       ["user", "Q1. 누구?\n→ A. PM"],
       ["ai", "승인 감사합니다. 빌드를 시작합니다"],
@@ -248,7 +252,7 @@ describe("usePrototypeStream", () => {
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     act(() => result.current.startBuild());
 
-    expect(result.current.items.map((i) => [i.role, i.text])).toEqual([
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "빌드를 시작합니다"],
       ["ai", "Task #1을 시작합니다"],
     ]);
@@ -272,7 +276,7 @@ describe("usePrototypeStream", () => {
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     act(() => result.current.startBuild());
 
-    expect(result.current.items.map((i) => [i.role, i.text])).toEqual([
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "먼저 구조를 잡고 파일을 만듭니다"],
     ]);
   });
@@ -724,8 +728,8 @@ describe("usePrototypeStream — resume", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("replays the session's turns in order and attaches to the running one", async () => {
-    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue({
-      status: "building",
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({
+      items: [],
       turns: [
         { turn_id: "t1", state: "done", last_seq: 2, input: null },
         { turn_id: "t2", state: "running", last_seq: 1, input: "버튼 색 바꿔 줘" },
@@ -747,7 +751,7 @@ describe("usePrototypeStream — resume", () => {
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
 
-    expect(result.current.items.map((i) => [i.role, i.text])).toEqual([
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "계획을 세웠습니다"],
       ["user", "버튼 색 바꿔 줘"],
       ["ai", "바꾸는 중"],
@@ -756,8 +760,8 @@ describe("usePrototypeStream — resume", () => {
   });
 
   it("restores a question and its answer in the order they happened", async () => {
-    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue({
-      status: "building",
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({
+      items: [],
       turns: [{ turn_id: "t1", state: "running", last_seq: 4, input: null }],
     });
     vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
@@ -772,7 +776,7 @@ describe("usePrototypeStream — resume", () => {
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
 
-    expect(result.current.items.map((i) => [i.role, i.text])).toEqual([
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "진행할까요?"],
       ["user", "Q1. 누구?\n→ A. PM"],
       ["ai", "진행합니다"],
@@ -782,8 +786,8 @@ describe("usePrototypeStream — resume", () => {
   });
 
   it("an unanswered question comes back as an open card", async () => {
-    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue({
-      status: "waiting_input",
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({
+      items: [],
       turns: [{ turn_id: "t1", state: "running", last_seq: 2, input: null }],
     });
     vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
@@ -797,12 +801,154 @@ describe("usePrototypeStream — resume", () => {
     expect(result.current.pendingQuestions?.interrupt_id).toBe("i-1");
   });
 
-  it("does nothing when there is no session", async () => {
-    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue(null);
+  it("does nothing when there is no session and no past conversation", async () => {
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({ items: [], turns: [] });
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
     expect(result.current.items).toEqual([]);
     expect(prototypesApi.watchBuildTurn).not.toHaveBeenCalled();
+  });
+
+  it("lays the past conversation under the open session's turns", async () => {
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({
+      items: [
+        { role: "user", text: "만들어줘", card: null, name: null, trace: [] },
+        { role: "ai", text: "만들었습니다", card: null, name: null,
+          trace: [{ kind: "file_changed", text: null, path: "app/page.tsx" }] },
+        { role: "card", text: null, card: "questions", name: "prototype-questions", trace: [] },
+      ],
+      turns: [{ turn_id: "t1", state: "running", last_seq: 1, input: "버튼 색 바꿔 줘" }],
+    });
+    vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
+      (_pid: any, _slug: any, _turn: any, _after: any, handlers: any) => {
+        handlers.onEvent(ev("message", "바꾸는 중"), 1);
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
+      ["user", "만들어줘"],
+      ["ai", "만들었습니다"],
+      ["history-card", null],
+      ["user", "버튼 색 바꿔 줘"],
+      ["ai", "바꾸는 중"],
+    ]);
+    // 복원된 말풍선은 끝난 것이다 — 타이핑 표시는 도는 턴에만.
+    const restored = result.current.items[1];
+    expect(restored.role === "ai" && restored.streaming).toBe(false);
+    // 지난 대화의 파일 변경은 이 세션의 "변경 파일" 목록이 아니다.
+    expect(result.current.changedPaths).toEqual([]);
+    expect(result.current.historyLoading).toBe(false);
+  });
+
+  it("still attaches to the open session when the history cannot be read", async () => {
+    vi.mocked(prototypesApi.getBuildHistory).mockRejectedValue(new Error("500"));
+    vi.mocked(prototypesApi.getBuildSession).mockResolvedValue({
+      status: "building",
+      turns: [{ turn_id: "t1", state: "running", last_seq: 1, input: null }],
+    });
+    vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
+      (_pid: any, _slug: any, _turn: any, _after: any, handlers: any) => {
+        handlers.onEvent(ev("message", "만드는 중"), 1);
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([["ai", "만드는 중"]]);
+    expect(result.current.streaming).toBe(true);
+  });
+});
+
+describe("usePrototypeStream — context usage", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const usage = (left: number) => ({ total_tokens: 1000, max_tokens: 750000,
+                                     compact_at_tokens: 717000, left_pct: left });
+
+  it("takes the last turn's value from the history, then the replayed turn's events", async () => {
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({
+      items: [], context: usage(70),
+      turns: [{ turn_id: "t1", state: "running", last_seq: 1, input: null }],
+    });
+    vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
+      (_pid: any, _slug: any, _turn: any, _after: any, handlers: any) => {
+        handlers.onEvent(ev("context", null, JSON.stringify(usage(55))), 1);
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+
+    // 히스토리의 값(70) 위에 재생된 턴의 값이 덮였다.
+    expect(result.current.context?.left_pct).toBe(55);
+    // 말풍선을 만들지도, 가르지도 않는다.
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([["ai", ""]]);
+  });
+
+  it("a closed session's panel shows the last turn's value from the history", async () => {
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({
+      items: [], turns: [], context: usage(70) });
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+    expect(result.current.context?.left_pct).toBe(70);
+  });
+
+  it("an improvement session starts without the previous session's value", async () => {
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        handlers.onEvent(ev("context", null, JSON.stringify(usage(20))), 1);
+        handlers.onEvent(ev("done"), 2);
+        handlers.onDone();
+        return () => {};
+      },
+    );
+    vi.mocked(prototypesApi.startSession).mockResolvedValue({ status: "starting" });
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+    expect(result.current.context?.left_pct).toBe(20);
+
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(() => () => {});
+    await act(async () => { await result.current.restartForImprovement(); });
+    expect(result.current.context).toBeNull();
+  });
+});
+
+describe("usePrototypeStream — restoreHistory", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("puts the past conversation BEFORE a turn that already started", async () => {
+    // 새로 연 세션: 개시 턴이 히스토리 응답보다 먼저 화면에 생긴다. 교체하면 방금
+    // 시작한 턴이 지워진다.
+    let resolveHistory!: (v: { items: any[]; turns: any[] }) => void;
+    vi.mocked(prototypesApi.getBuildHistory).mockReturnValue(
+      new Promise((r) => { resolveHistory = r; }));
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        handlers.onEvent(ev("message", "다시 만듭니다"), 1);
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    let pending!: Promise<void>;
+    act(() => {
+      result.current.startBuild();
+      pending = result.current.restoreHistory();
+    });
+    expect(result.current.historyLoading).toBe(true);
+    await act(async () => {
+      resolveHistory({ items: [{ role: "ai", text: "지난 빌드는 실패했습니다",
+                                 card: null, name: null, trace: [] }], turns: [] });
+      await pending;
+    });
+
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
+      ["ai", "지난 빌드는 실패했습니다"],
+      ["ai", "다시 만듭니다"],
+    ]);
+    expect(result.current.historyLoading).toBe(false);
   });
 });
 
@@ -839,7 +985,7 @@ describe("usePrototypeStream — reconnect", () => {
 
     expect(prototypesApi.watchBuildTurn).toHaveBeenCalledWith(
       "p1", "todo-app", "t1", 1, expect.anything());
-    expect(result.current.items.map((i) => i.text)).toEqual(["만드는 중 계속"]);
+    expect(result.current.items.map(textOf)).toEqual(["만드는 중 계속"]);
     expect(result.current.streaming).toBe(false);
   });
 });

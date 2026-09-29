@@ -11,6 +11,7 @@
 import { CREDENTIALS } from "@/lib/auth";
 import { API_BASE_URL, ApiError } from "./client";
 import { openStream, openViaHandle, type StreamHandlers } from "./sse";
+import type { ContextUsage, HistoryItem } from "./types";
 
 export type PrototypeState = "none" | "building" | "built" | "running" | "failed";
 
@@ -249,6 +250,24 @@ export interface BuildTurnSummary {
   last_seq: number;
   /** 사용자가 보낸 말. 자동 개시 턴은 null. */
   input: string | null;
+}
+
+/** 지난 빌드 대화(트랜스크립트)와, 그 뒤를 이어 재생할 열린 세션의 턴들.
+ *
+ *  `items`는 열린 세션의 첫 턴 **앞**에서 끊겨 있다 — 그 뒤는 `turns`를 턴 로그로
+ *  재생해 채운다(완료 카드와 진행 중인 질문 폼이 그 경로에만 있다). 둘을 한 응답으로
+ *  받으므로 사이에 시작된 턴이 두 번 보이거나 빠지지 않는다(backend
+ *  routes/prototypes.get_history). 세션이 없으면 `turns`가 빈 배열이다. */
+export interface BuildHistory {
+  items: HistoryItem[];
+  turns: BuildTurnSummary[];
+  /** 마지막 턴의 컨텍스트 사용량. 다음 대화가 새 세션(개선)이면 null이다 — 닫힌
+   *  세션의 값은 그 대화에 대해 틀린 값이다(backend proto/history.load_context). */
+  context?: ContextUsage | null;
+}
+
+export async function getBuildHistory(pid: string, slug: string): Promise<BuildHistory> {
+  return request<BuildHistory>(sessionPath(pid, slug, "/history"));
 }
 
 /** 열린 빌드 세션과 그 턴들. 세션이 없으면 null. 빌드 화면이 다시 열릴 때 이것으로

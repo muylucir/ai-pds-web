@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator, Callable, Literal, Protocol, TYPE_CHECKING
 
+from aipds.context_usage import ContextRecord
+from aipds.proto.history import context_key
 from aipds.models import AgentEvent
 from aipds.turn_job import TurnJobs
 from aipds.proto.store import PrototypeStore, has_build_output  # noqa: F401 — re-export
@@ -118,6 +120,17 @@ def _is_uuid(value: object) -> bool:
     return True
 
 
+def session_key(slug: str) -> str:
+    """이 프로토타입의 SDK 세션 id(durable). 모듈 함수인 이유: 세션 밖에서도 "지금의
+    대화가 무엇인가"를 묻는 곳이 있다(proto/history.load_context)."""
+    return f"prototypes/{slug}/session.json"
+
+
+def handoff_key(slug: str) -> str:
+    """완료된 빌드가 남긴 요약. 있으면 다음 start()는 새 대화다(_resolve_session_id)."""
+    return f"prototypes/{slug}/handoff.json"
+
+
 class PrototypeSession:
     """One prototype's build session: owns the durable session id, the build
     directory, the turn relay, the questions interrupt id, and the idle timer.
@@ -179,6 +192,9 @@ class PrototypeSession:
         self.turns = TurnJobs(retention=float("inf"))
         #: 빌드 소스의 정본(S3). 세션은 시작할 때 되살리고, 완료·종료 때 스냅샷한다.
         self._store = PrototypeStore(s3, project_id=project_id)
+        #: 턴의 마지막 컨텍스트 사용량(aipds/context_usage.py). 세션이 닫힌 뒤 패널이
+        #: 보일 값이다 — SDK 세션 id를 함께 실어 개선 세션에서 낡은 값을 걸러낸다.
+        self._context = ContextRecord(s3, context_key(slug))
         # A mid-turn raise releases the slot immediately in send_message's
         # except below (nothing else would -- the caller sees the exception
         # and abandons the session without ever calling close()). This flag
@@ -194,10 +210,10 @@ class PrototypeSession:
         return layout.spec_key(self.slug)
 
     def _session_key(self) -> str:
-        return f"prototypes/{self.slug}/session.json"
+        return session_key(self.slug)
 
     def _handoff_key(self) -> str:
-        return f"prototypes/{self.slug}/handoff.json"
+        return handoff_key(self.slug)
 
     def build_dir(self) -> Path:
         return self._build_root / self.project_id / self.slug
@@ -463,6 +479,7 @@ class PrototypeSession:
                         # 테스트 2개 실패).
                         self._arm_idle_timer()
                 elif event.kind in ("done", "error"):
+                    await self._context.flush(session_id=self._session_id)
                     # 완료를 선언한 세션은 ready로 돌아가지 않는다.
                     # build_complete 다음에는 반드시 done이 오므로, 이 가드가
                     # 없으면 status가 되돌아가 _DEAD_STATUSES 기구 전체가
@@ -486,6 +503,7 @@ class PrototypeSession:
                 # 수천 번 일어난다. 둘 다 힙 연산 하나짜리라 실질 비용은
                 # 없지만, 이벤트마다 부르는 형태라는 점은 알고 있어야 한다.
                 self._arm_idle_timer()
+                self._context.observe(event)
                 yield event
         except Exception:
             self.status = "failed"

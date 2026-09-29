@@ -54,11 +54,11 @@ for every prototype you want to validate.`,
     { kind: "heading", id: "modify", text: "Changing a prototype you already built" },
     {
       kind: "md",
-      md: `**Modify** does **not** throw away what was built. A build session opens empty and
-**you say what to change first** — write it plainly ("move the cart button to the top right",
-"make this screen mobile-first") and the AI gets on with it instead of asking you to pick from a
-list. A finished build hands over **only a summary**, not the whole earlier conversation, so
-changing one button's colour does not drag the entire build's context with it.
+      md: `**Modify** does **not** throw away what was built. A build session opens with the AI
+waiting, and **you say what to change first** — write it plainly ("move the cart button to the top
+right", "make this screen mobile-first") and the AI gets on with it instead of asking you to pick
+from a list. The earlier builds' conversation stays on screen above, but the AI is handed **only a
+summary** of it, so changing one button's colour does not drag the entire build's context with it.
 
 You can press it while the prototype is running. The server stays up and the link you sent to
 participants keeps working, but what that link shows is the **previous version** — the card says
@@ -81,7 +81,13 @@ and its own elapsed time, with a count such as *3 agents working*. Several rows 
 normal; a finished agent leaves the rows and stays in the **activity log** under the message.
 
 A session lasts **one build**. When the AI declares it finished, the session closes itself — that
-is a normal ending, not a dropped connection.`,
+is a normal ending, not a dropped connection. The conversation does not close with it: reopen the
+panel (after a refresh, the next day, even after a server replacement) and everything from the
+first build on is there, in order. **Reset** clears that conversation too.
+
+**N% context left** above the message box is the same indicator as in the workspace. A build runs
+many tools, so it drops quickly. Opening a finished build with **Modify** starts a fresh
+conversation, so the indicator is blank until the first reply brings it back.`,
     },
     { kind: "heading", id: "complete-card", text: "The completion card" },
     {

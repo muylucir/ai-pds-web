@@ -424,12 +424,16 @@ def proto_session_factory(project_id: str, slug: str):
     from aipds.proto.builder import PrototypeBuilder
     from aipds.proto.session import PrototypeSession
     from aipds.proto.session_store import S3SessionStore
+    from aipds.proto.history import AnswerLog
 
     s3 = s3_store_factory(project_id)
     build_root = _proto_root()
     config_dir = _proto_config_dir()
     config_dir.mkdir(parents=True, exist_ok=True)
-    store = S3SessionStore(s3, slug=slug) if os.environ.get("AIPDS_S3_BUCKET") else None
+    durable = bool(os.environ.get("AIPDS_S3_BUCKET"))
+    store = S3SessionStore(s3, slug=slug) if durable else None
+    # 트랜스크립트와 같은 조건이다 — 답 레코드는 트랜스크립트와 조인할 때만 뜻이 있다.
+    answer_log = AnswerLog(s3, slug) if durable else None
     # 한 번 읽어 빌더와 세션에 같은 값을 준다 — 둘이 어긋나면 프롬프트와 도구
     # 설명의 언어가 갈린다.
     language = project_language(project_id)
@@ -444,6 +448,7 @@ def proto_session_factory(project_id: str, slug: str):
             session_id=session_id,
             resume=resume,
             session_store=store,
+            answer_log=answer_log,
             # driver_factory와 같은 이유로 CLI용 조립을 여기서 한다.
             anthropic_model=cli_model_id(project_model(project_id)),
             language=language,

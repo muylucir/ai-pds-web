@@ -4,31 +4,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
 import { streamEvents, streamAnswers, streamFileAnswers, watchTurn } from "@/lib/api/sse";
 import type { StreamHandlers, TurnCreated } from "@/lib/api/sse";
-import { ApiError, getPending, getHistory, getTurn, interruptTurn } from "@/lib/api/client";
+import { ApiError, getContext, getPending, getHistory, getTurn, interruptTurn } from "@/lib/api/client";
 import { answerSummary } from "@/lib/answerSummary";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
-import type { AgentEvent, HistoryItem, QuestionFile, QuestionsPayload, StagePayload, DocumentPayload,
+import type { AgentEvent, ContextUsage, QuestionsPayload, StagePayload, DocumentPayload,
   PrototypeReadyPayload } from "@/lib/api/types";
-import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
+import { historyItemToChatItem } from "@/lib/chatItems";
+import type { UserItem, AiItem, HistoryCardItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
 import type { Dict } from "@/lib/i18n";
 
 // Drives the three-pane workspace screen. It consumes the structured events
 // (questions/stage/document) directly, so its ChatItem union is user/ai plus a
-// HISTORY-ONLY card marker (below) restored from GET /history, never derived
-// from live file_changed paths.
-export type { UserItem, AiItem } from "@/lib/chatItems";
-// A questions file presented in a PAST turn (Task 5's history restore) — a
-// static summary marker (role "history-card"), not an interactive form.
-export interface HistoryCardItem {
-  id: string;
-  role: "history-card";
-  name: string | null;
-  // 그 라운드에서 실제로 물은 질문들(GET /history의 HistoryItem.questions).
-  // 트랜스크립트의 tool_use.input에 구조화된 채로 남아 있어 복원할 수 있다 —
-  // 종전에는 이것을 버려서 카드가 "질문 제시됨" 한 줄뿐이었다. 여전히
-  // **읽기 전용**이다: 라이브 폼이 아니다.
-  file?: QuestionFile | null;
-}
+// HISTORY-ONLY card marker (lib/chatItems.ts) restored from GET /history, never
+// derived from live file_changed paths.
+export type { UserItem, AiItem, HistoryCardItem } from "@/lib/chatItems";
 export type ChatItem = UserItem | AiItem | HistoryCardItem;
 
 let counter = 0;
@@ -95,6 +84,9 @@ export interface WorkspaceStream {
   prototypeReady: PrototypeReadyPayload | null;
   changedPaths: string[];
   historyLoading: boolean;
+  /** 에이전트의 컨텍스트 사용량(입력창 위 표시). 화면이 열릴 때 마지막 턴의 값을
+   *  되살리고, 턴이 도는 동안 `context` 이벤트로 갱신한다. 없으면 null. */
+  context: ContextUsage | null;
   // 문서 패널이 따라가야 할 "지금 대화 중인 문서" — `document` 이벤트뿐 아니라
   // doc성 file_changed(아래 isDocPath)도 최신-승리로 추적한다. version은
   // `document` 이벤트에서 온 경우에만 채워진다 (ui-bug2 싱크 수정).
@@ -137,32 +129,6 @@ function isDocPath(path: string): boolean {
   );
 }
 
-function historyItemToChatItem(it: HistoryItem): ChatItem {
-  if (it.role === "card") {
-    return { id: nextId(), role: "history-card", name: it.name,
-             file: it.questions ?? null };
-  }
-  // answers와 questions를 그대로 옮긴다 — ChatTimeline이 UI 언어로 문구를
-  // 만드는 데 쓴다. 여기서 버리면 백엔드의 한국어 폴백 문구가 영어 UI에 그대로
-  // 뜨고, questions를 버리면 라이브와 같은 answerSummary를 부를 수 없어
-  // "1: A" 나열로 떨어진다.
-  if (it.role === "user") {
-    return { id: nextId(), role: "user", text: it.text ?? "",
-             answers: it.answers ?? null, questions: it.questions ?? null };
-  }
-  return {
-    id: nextId(),
-    role: "ai",
-    text: it.text ?? "",
-    // 복원된 도구 트레이스 — 라이브 턴의 status/file_changed 이벤트와 같은
-    // shape이라 AiMessage의 "추론 과정" 아코디언이 그대로 렌더한다.
-    trace: (it.trace ?? []).map((t) => ({
-      kind: t.kind, text: t.text, path: t.path, detail: t.detail ?? null })),
-    streaming: false,
-    error: null,
-  };
-}
-
 export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []): WorkspaceStream {
   const t = useT();
   const [items, setItems] = useState<ChatItem[]>(initial);
@@ -174,6 +140,10 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     useState<PrototypeReadyPayload | null>(null);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [context, setContext] = useState<ContextUsage | null>(null);
+  // 라이브 값이 한 번이라도 왔는가. 마운트 때 불러온 기록(GET /context)이 늦게 도착해
+  // 방금 받은 라이브 값을 덮지 않게 한다 — 기록은 언제나 그보다 앞선 턴의 것이다.
+  const liveContextRef = useRef(false);
   const [activeDoc, setActiveDoc] = useState<{ path: string; version: string | null } | null>(null);
   const [turnSeq, setTurnSeq] = useState(0);
   const stopRef = useRef<null | (() => void)>(null);
@@ -205,6 +175,14 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       if (ev.kind === "questions") {
         const parsed = safeParse<QuestionsPayload>(ev.payload);
         if (parsed) setPendingQuestions(parsed);
+        return;
+      }
+      if (ev.kind === "context") {
+        const parsed = safeParse<ContextUsage>(ev.payload);
+        if (parsed) {
+          liveContextRef.current = true;
+          setContext(parsed);
+        }
         return;
       }
       if (ev.kind === "stage") {
@@ -522,6 +500,19 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     };
   }, [projectId]);
 
+  // 마지막 턴의 컨텍스트 사용량. 실패하면 표시가 없을 뿐이다.
+  useEffect(() => {
+    let cancelled = false;
+    getContext(projectId)
+      .then((c) => {
+        if (!cancelled && !liveContextRef.current) setContext(c);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
   // Restore the chat timeline itself (Task 5) from GET /history — a SEPARATE
   // mount effect from the /pending restore above: independent endpoints,
   // independent failure domains. Degrades to an empty timeline (not a thrown
@@ -532,7 +523,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       .then((h) => {
         if (cancelled) return;
         setItems((prev) => {
-          const restored = h.map(historyItemToChatItem);
+          const restored = h.map((it) => historyItemToChatItem(it, nextId()));
           // A live turn may have started while history was in flight — history
           // strictly precedes it chronologically, so prepend rather than replace.
           return liveTurnStartedRef.current ? [...restored, ...prev] : restored;
@@ -589,6 +580,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     prototypeReady,
     changedPaths,
     historyLoading,
+    context,
     activeDoc,
     turnSeq,
   };

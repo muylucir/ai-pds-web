@@ -84,6 +84,43 @@ async def test_question_roundtrip(tmp_path):
     assert b._pending_payload is None
 
 
+async def test_an_answered_round_is_recorded_for_the_history(tmp_path):
+    """트랜스크립트의 tool_result는 CLI가 옮겨 적은 영어 문장이라 답을 펼 수 없다.
+    받은 그대로의 답과 그 순간의 질문을 tool_use_id로 남겨야 히스토리가 라이브와 같은
+    답 말풍선을 되살린다(proto/history.py의 AnswerLog)."""
+    from types import SimpleNamespace
+    from aipds.agent.answer_store import load_answers
+    from aipds.proto.history import AnswerLog, answers_prefix
+    from fakes.in_memory_s3 import FakeS3Store
+
+    class ContextClient(QuestionScriptClient):
+        async def receive_response(self):
+            self.answer_result = await self.builder_ref()._on_can_use_tool(
+                "AskUserQuestion", ASK_INPUT, SimpleNamespace(tool_use_id="toolu_9"))
+            yield ResultMessage()
+
+    s3 = FakeS3Store()
+    holder = {}
+    client = ContextClient(lambda: holder["b"])
+    b = _builder(tmp_path, client, answer_log=AnswerLog(s3, "demo"))
+    holder["b"] = b
+
+    async def consume():
+        return [ev async for ev in b.run("build")]
+    turn = asyncio.create_task(consume())
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if b._pending_payload is not None:
+            break
+    payload = json.loads(b._pending_payload)
+    assert await b.submit_answers(payload["interrupt_id"], {"1": "B"})
+    await turn
+
+    records = await load_answers(s3, prefix=answers_prefix("demo"))
+    assert records["toolu_9"]["answers"] == {"1": "B"}
+    assert records["toolu_9"]["questions"] == payload["questions"]
+
+
 async def test_zero_option_question_is_denied_not_raised(tmp_path):
     """리뷰 finding 2: question_file_from_sdk는 옵션 없는 질문에 ValueError를
     던진다(정규화 계약). 옛 _to_question_file은 절대 그러지 않았으므로

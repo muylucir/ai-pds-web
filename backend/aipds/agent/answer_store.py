@@ -34,8 +34,8 @@ _log = logging.getLogger("aipds.agent")
 ANSWERS_PREFIX = "answers/"
 
 
-def _key(tool_use_id: str) -> str:
-    return f"{ANSWERS_PREFIX}{tool_use_id}.json"
+def _key(tool_use_id: str, prefix: str) -> str:
+    return f"{prefix}{tool_use_id}.json"
 
 
 def _is_valid(data: dict) -> bool:
@@ -54,7 +54,8 @@ def _is_valid(data: dict) -> bool:
 
 
 async def save_answers(s3: S3StoreLike, *, tool_use_id: str, interrupt_id: str,
-                       questions: dict, answers: dict[str, str]) -> None:
+                       questions: dict, answers: dict[str, str],
+                       prefix: str = ANSWERS_PREFIX) -> None:
     """한 라운드의 질문 payload + 답변을 기록한다.
 
     questions를 함께 저장하는 것이 load-bearing이다: 답변 값은 letter("A",
@@ -62,8 +63,13 @@ async def save_answers(s3: S3StoreLike, *, tool_use_id: str, interrupt_id: str,
     필요하다. 트랜스크립트의 tool_use.input에도 SDK 원형이 남지만, 그걸로
     다시 조립하면 letter 부여가 question_file_from_sdk의 그 시점 동작에
     의존하게 된다 — 사용자가 실제로 본 letter를 그대로 남기는 편이 정확하다.
+
+    `prefix`는 레코드를 누가 소유하는가다. Discovery는 프로젝트 루트의
+    `answers/`, 프로토타입 빌드는 `prototypes/{slug}/history/answers/`에 둔다
+    (proto/history.py) — 프로토타입 초기화가 그 prefix째 지우므로 대화와 함께
+    사라져야 하는 레코드가 그 아래에 있어야 한다.
     """
-    await s3.put(_key(tool_use_id), json.dumps({
+    await s3.put(_key(tool_use_id, prefix), json.dumps({
         "tool_use_id": tool_use_id,
         "interrupt_id": interrupt_id,
         "questions": questions,
@@ -71,7 +77,8 @@ async def save_answers(s3: S3StoreLike, *, tool_use_id: str, interrupt_id: str,
     }, ensure_ascii=False))
 
 
-async def load_answers(s3: S3StoreLike) -> dict[str, dict]:
+async def load_answers(s3: S3StoreLike,
+                       prefix: str = ANSWERS_PREFIX) -> dict[str, dict]:
     """tool_use_id → 레코드. 어떤 실패도 그 레코드만 건너뛴다.
 
     히스토리는 보조 데이터이고(list_history의 강등과 같은 원칙) 손상된 한 건이
@@ -79,7 +86,7 @@ async def load_answers(s3: S3StoreLike) -> dict[str, dict]:
     호출부는 레코드 없는 구 세션과 같은 경로로 떨어진다(현재 문구 유지).
     """
     try:
-        keys = await s3.list(ANSWERS_PREFIX)
+        keys = await s3.list(prefix)
     except Exception:
         _log.exception("answer record listing failed")
         return {}
