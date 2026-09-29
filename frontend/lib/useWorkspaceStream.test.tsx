@@ -14,6 +14,7 @@ vi.mock("@/lib/api/client", async (orig) => ({
   getPending: vi.fn().mockResolvedValue(null),
   getHistory: vi.fn().mockResolvedValue([]),
   getTurn: vi.fn().mockResolvedValue(null),
+  getContext: vi.fn().mockResolvedValue(null),
 }));
 
 // onError의 세션 확인 호출을 검증하기 위한 모킹 — 실제 fetch/navigate 부작용은
@@ -205,6 +206,38 @@ describe("useWorkspaceStream", () => {
     } finally {
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
     }
+  });
+
+  it("restores the last turn's context usage on mount", async () => {
+    const usage = { total_tokens: 285000, max_tokens: 750000,
+                    compact_at_tokens: 717000, left_pct: 60 };
+    vi.mocked(client.getContext).mockResolvedValueOnce(usage);
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    expect(result.current.context).toEqual(usage);
+  });
+
+  it("a context event updates the usage, and a late record does not overwrite it", async () => {
+    // 기록(GET /context)은 언제나 지금 턴보다 앞선 턴의 것이다.
+    let resolveRecord!: (v: any) => void;
+    vi.mocked(client.getContext).mockReturnValueOnce(
+      new Promise((r) => { resolveRecord = r; }));
+    drive([
+      { kind: "context", text: null, path: null,
+        payload: JSON.stringify({ total_tokens: 30000, max_tokens: 200000,
+                                  compact_at_tokens: 200000, left_pct: 85 }) },
+      { kind: "done", text: null, path: null, payload: null },
+    ], "streamEvents");
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    act(() => result.current.send("안녕"));
+    await act(async () => {
+      resolveRecord({ total_tokens: 1, max_tokens: 200000, compact_at_tokens: 200000, left_pct: 99 });
+    });
+
+    expect(result.current.context?.left_pct).toBe(85);
+    // 사용량은 말풍선의 것이 아니다.
+    const ai = result.current.items.find((i) => i.role === "ai");
+    expect(ai && "text" in ai ? ai.text : null).toBe("");
   });
 
   it("loads history into items on mount", async () => {

@@ -42,6 +42,7 @@ import logging
 from datetime import datetime
 
 from aipds.agent.answer_store import load_answers, save_answers
+from aipds.context_usage import load_record
 from aipds.models import HistoryItem
 from aipds.proto.session_store import transcript_prefix
 from aipds.s3store import S3StoreLike
@@ -63,6 +64,11 @@ def _inputs_prefix(slug: str) -> str:
 
 def answers_prefix(slug: str) -> str:
     return f"{history_prefix(slug)}answers/"
+
+
+def context_key(slug: str) -> str:
+    """턴의 마지막 컨텍스트 사용량(proto/session.py가 쓴다)."""
+    return f"{history_prefix(slug)}context.json"
 
 
 def _prompt_digest(prompt: str) -> str:
@@ -253,3 +259,30 @@ async def load_history(s3: S3StoreLike, slug: str, *,
     except Exception:
         _log.exception("prototype history read failed for %s", slug)
         return []
+
+
+async def load_context(s3: S3StoreLike, slug: str) -> dict | None:
+    """세션이 닫힌 뒤 보일 컨텍스트 사용량. **다음 대화에 대해서도 맞을 때만** 준다.
+
+    완료된 빌드를 개선하면 새 SDK 세션으로 시작하므로(handoff) 사용량이 거의 0에서
+    다시 시작한다 — 닫힌 세션의 85%를 보이면 그 사실과 반대로 읽힌다. 그래서 레코드의
+    세션 id가 지금의 session.json과 같고, 다음 start()를 새 대화로 만드는 handoff가
+    없을 때만 돌려준다.
+    """
+    from aipds.proto.session import handoff_key, session_key
+    record = await load_record(s3, context_key(slug))
+    if record is None:
+        return None
+    try:
+        current = json.loads(await s3.get(session_key(slug))).get("session_id")
+    except Exception:
+        return None
+    if record.get("session_id") != current:
+        return None
+    try:
+        await s3.get(handoff_key(slug))
+    except FileNotFoundError:
+        return record
+    except Exception:
+        return None
+    return None

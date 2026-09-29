@@ -4,10 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
 import { streamEvents, streamAnswers, streamFileAnswers, watchTurn } from "@/lib/api/sse";
 import type { StreamHandlers, TurnCreated } from "@/lib/api/sse";
-import { ApiError, getPending, getHistory, getTurn, interruptTurn } from "@/lib/api/client";
+import { ApiError, getContext, getPending, getHistory, getTurn, interruptTurn } from "@/lib/api/client";
 import { answerSummary } from "@/lib/answerSummary";
 import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
-import type { AgentEvent, QuestionsPayload, StagePayload, DocumentPayload,
+import type { AgentEvent, ContextUsage, QuestionsPayload, StagePayload, DocumentPayload,
   PrototypeReadyPayload } from "@/lib/api/types";
 import { historyItemToChatItem } from "@/lib/chatItems";
 import type { UserItem, AiItem, HistoryCardItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
@@ -84,6 +84,9 @@ export interface WorkspaceStream {
   prototypeReady: PrototypeReadyPayload | null;
   changedPaths: string[];
   historyLoading: boolean;
+  /** 에이전트의 컨텍스트 사용량(입력창 위 표시). 화면이 열릴 때 마지막 턴의 값을
+   *  되살리고, 턴이 도는 동안 `context` 이벤트로 갱신한다. 없으면 null. */
+  context: ContextUsage | null;
   // 문서 패널이 따라가야 할 "지금 대화 중인 문서" — `document` 이벤트뿐 아니라
   // doc성 file_changed(아래 isDocPath)도 최신-승리로 추적한다. version은
   // `document` 이벤트에서 온 경우에만 채워진다 (ui-bug2 싱크 수정).
@@ -137,6 +140,10 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     useState<PrototypeReadyPayload | null>(null);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [context, setContext] = useState<ContextUsage | null>(null);
+  // 라이브 값이 한 번이라도 왔는가. 마운트 때 불러온 기록(GET /context)이 늦게 도착해
+  // 방금 받은 라이브 값을 덮지 않게 한다 — 기록은 언제나 그보다 앞선 턴의 것이다.
+  const liveContextRef = useRef(false);
   const [activeDoc, setActiveDoc] = useState<{ path: string; version: string | null } | null>(null);
   const [turnSeq, setTurnSeq] = useState(0);
   const stopRef = useRef<null | (() => void)>(null);
@@ -168,6 +175,14 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       if (ev.kind === "questions") {
         const parsed = safeParse<QuestionsPayload>(ev.payload);
         if (parsed) setPendingQuestions(parsed);
+        return;
+      }
+      if (ev.kind === "context") {
+        const parsed = safeParse<ContextUsage>(ev.payload);
+        if (parsed) {
+          liveContextRef.current = true;
+          setContext(parsed);
+        }
         return;
       }
       if (ev.kind === "stage") {
@@ -485,6 +500,19 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     };
   }, [projectId]);
 
+  // 마지막 턴의 컨텍스트 사용량. 실패하면 표시가 없을 뿐이다.
+  useEffect(() => {
+    let cancelled = false;
+    getContext(projectId)
+      .then((c) => {
+        if (!cancelled && !liveContextRef.current) setContext(c);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
   // Restore the chat timeline itself (Task 5) from GET /history — a SEPARATE
   // mount effect from the /pending restore above: independent endpoints,
   // independent failure domains. Degrades to an empty timeline (not a thrown
@@ -552,6 +580,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     prototypeReady,
     changedPaths,
     historyLoading,
+    context,
     activeDoc,
     turnSeq,
   };

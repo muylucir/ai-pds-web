@@ -82,6 +82,7 @@ from aipds.agent.session_store import DiscoverySessionStore
 from aipds.agent.workspace_rules import place_rules
 from aipds.agent_home import copy_config
 from aipds.cli_settings import cli_context_env
+from aipds.context_usage import ContextMeter, wants_sample
 from aipds.models import AgentEvent
 from aipds.pathsafe import workspace_relative as _rel
 from aipds.performance import log_performance
@@ -665,6 +666,9 @@ class ClaudeDriver:
         self._permission_mode = _validate_permission_mode(permission_mode)
         self._client_factory = client_factory or _default_client_factory(self)
         self._client: Any = None
+        #: 메인 에이전트의 컨텍스트 사용량(aipds/context_usage.py). 프로젝트의 대화는
+        #: 하나이므로(세션 id가 프로젝트에서 유도된다) 턴을 넘어 들고 간다.
+        self._context = ContextMeter()
         # A plain list, not collections.deque -- same as builder.py, for the
         # same reason: everything here runs on one event loop, and a per-turn
         # queue is never long enough for deque's O(1) popleft to matter.
@@ -1686,6 +1690,9 @@ class ClaudeDriver:
         """
         asked = False
         ended = False
+        # 컨텍스트 사용량을 잴 차례인가. 번역 안에서는 **표시만** 한다 — 번역은
+        # 동기여야 하고(아래 docstring), 조회는 await다.
+        sample_due = False
         def translate_into_outbox() -> None:
             """Move messages inbox -> outbox, translating. Never yields.
 
@@ -1694,9 +1701,11 @@ class ClaudeDriver:
             `outbox` lives on the reader, so anything still there when this
             generator dies belongs to the next pump over the same reader.
             """
-            nonlocal ended
+            nonlocal ended, sample_due
             while reader.inbox and not ended:
-                for ev in self._translate(reader.inbox.pop(0), reader):
+                msg = reader.inbox.pop(0)
+                sample_due = sample_due or wants_sample(msg)
+                for ev in self._translate(msg, reader):
                     if ev.kind == "done":
                         ended = True   # terminal event comes from the exit below
                         continue
@@ -1728,6 +1737,16 @@ class ClaudeDriver:
             translate_into_outbox()
             async for ev in relay():
                 yield ev
+            if sample_due:
+                # 배출 **뒤**에 잰다 — 첫 조회는 ~650ms라(aipds/context_usage.py의
+                # 실측) 앞에 두면 그만큼 첫 답변이 늦게 보인다. 이 await가 취소돼도
+                # 잃는 것이 없다: 조회가 돌아오기 전에는 이벤트가 존재하지 않는다.
+                # 결과는 outbox가 쥐고, 다음 배출이나 아래 종결 수확이 `done` 앞에
+                # 내보낸다(소유 규칙 그대로).
+                sample_due = False
+                usage = await self._context.sample(self._client)
+                if usage is not None:
+                    reader.outbox.append(usage)
             if reader.ended and not reader.inbox:
                 ended = True
             if asked or ended:

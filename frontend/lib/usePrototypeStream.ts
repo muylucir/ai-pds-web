@@ -23,6 +23,7 @@ import type {
   QuestionsPayload,
   BuildCompletePayload,
   AgentActivityPayload,
+  ContextUsage,
 } from "@/lib/api/types";
 import { applyAgentActivity, runningAgents, type AgentRow } from "@/lib/protoAgents";
 import { historyItemToChatItem } from "@/lib/chatItems";
@@ -81,6 +82,9 @@ export interface PrototypeStream {
   /** 지난 대화를 불러오는 중. 빈 패널의 안내 문구가 히스토리보다 먼저 떴다가
    *  사라지지 않게 한다. */
   historyLoading: boolean;
+  /** 빌드 에이전트의 컨텍스트 사용량(입력창 위 표시). 히스토리가 마지막 턴의 값을
+   *  주고(다음 대화가 새 세션이면 null), 턴이 도는 동안 `context` 이벤트가 갱신한다. */
+  context: ContextUsage | null;
   startBuild: () => void;
   /** 지난 대화를 지금 대화 **앞에** 깐다. 새로 연 세션(자동 개시)이 쓴다 — 이미 열린
    *  세션은 `resume()`이 같은 일을 한다. */
@@ -103,6 +107,10 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   const [buildComplete, setBuildComplete] = useState<BuildCompletePayload | null>(null);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [context, setContext] = useState<ContextUsage | null>(null);
+  // 라이브 값이 이미 왔는가 — 늦게 도착한 히스토리의 기록이 그것을 덮지 않게 한다
+  // (useWorkspaceStream의 같은 ref와 같은 이유).
+  const liveContextRef = useRef(false);
   // **행은 화면의 것이고 말풍선의 것이 아니다** — 고정 줄이 읽으므로 `activity`와
   // 같은 자리에 있어야 하지만, `activity`처럼 말풍선에 얹으면 병렬 구간에서
   // 어느 말풍선의 것인지가 애매해진다(한 턴이 여러 말풍선으로 쪼개진다).
@@ -198,6 +206,15 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
           : t("chat.answersSubmitted");
         openAiBubble([{ id: nextId(), role: "user", text: summary }]);
         setPendingQuestions(null);
+        return;
+      }
+      if (ev.kind === "context") {
+        // 말풍선의 것이 아니라 화면의 것이다 — 말풍선 분할 판단에도 끼지 않는다.
+        const parsed = safeParse<ContextUsage>(ev.payload);
+        if (parsed) {
+          liveContextRef.current = true;
+          setContext(parsed);
+        }
         return;
       }
       if (ev.kind === "build_complete") {
@@ -467,6 +484,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       const h = await getBuildHistory(projectId, slug);
       const restored = h.items.map((it) => historyItemToChatItem(it, nextId()));
       setItems((prev) => [...restored, ...prev]);
+      if (!liveContextRef.current) setContext(h.context ?? null);
       return h.turns;
     } catch {
       return null;
@@ -610,6 +628,9 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     await startSession(projectId, slug);
     setBuildComplete(null);
     setChangedPaths([]);
+    // 개선 세션은 새 대화다 — 이전 세션의 사용량은 이 대화의 것이 아니다. 첫 응답이
+    // 새 값을 준다.
+    setContext(null);
     startBuild();
   }, [projectId, slug, startBuild]);
 
@@ -627,6 +648,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     buildComplete,
     changedPaths,
     historyLoading,
+    context,
     startBuild,
     restoreHistory,
     send,

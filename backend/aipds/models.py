@@ -109,7 +109,11 @@ class AgentEvent(BaseModel):
                   # 질문에서 끊기지 않고 이어지므로(proto/builder.py) 답은 턴 **안의**
                   # 사건이고, 턴 로그에 남아야 다시 붙은 화면이 질문 카드와 답
                   # 말풍선을 순서대로 되살린다. payload = {"answers": {...}}.
-                  "answers"]
+                  "answers",
+                  # 메인 에이전트의 컨텍스트 창 사용량(aipds/context_usage.py).
+                  # payload = {total_tokens, max_tokens, compact_at_tokens, left_pct}.
+                  # 값이 바뀔 때만 흐른다 — 화면의 "남은 %" 표시가 읽는다.
+                  "context"]
     text: str | None = None
     path: str | None = None
     # Structured payload (JSON string) for questions/stage/document — the

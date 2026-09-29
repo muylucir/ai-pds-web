@@ -34,7 +34,7 @@ export function BuildPanel({
   const t = useT();
   const {
     items, streaming, agents, pendingQuestions, buildComplete, changedPaths,
-    historyLoading, startBuild, restoreHistory, send, submitAnswers, interrupt,
+    historyLoading, context, startBuild, restoreHistory, send, submitAnswers, interrupt,
     restartForImprovement, resume,
   } = usePrototypeStream(projectId, slug);
   const [closing, setClosing] = useState(false);
@@ -204,6 +204,7 @@ export function BuildPanel({
               disabled={streaming || buildComplete !== null}
               onInterrupt={() => void interrupt()}
               interrupting={streaming}
+              context={context}
             />
           </div>
 

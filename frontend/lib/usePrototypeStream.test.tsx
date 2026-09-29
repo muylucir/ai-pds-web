@@ -863,6 +863,59 @@ describe("usePrototypeStream — resume", () => {
   });
 });
 
+describe("usePrototypeStream — context usage", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const usage = (left: number) => ({ total_tokens: 1000, max_tokens: 750000,
+                                     compact_at_tokens: 717000, left_pct: left });
+
+  it("takes the last turn's value from the history, then the replayed turn's events", async () => {
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({
+      items: [], context: usage(70),
+      turns: [{ turn_id: "t1", state: "running", last_seq: 1, input: null }],
+    });
+    vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
+      (_pid: any, _slug: any, _turn: any, _after: any, handlers: any) => {
+        handlers.onEvent(ev("context", null, JSON.stringify(usage(55))), 1);
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+
+    // 히스토리의 값(70) 위에 재생된 턴의 값이 덮였다.
+    expect(result.current.context?.left_pct).toBe(55);
+    // 말풍선을 만들지도, 가르지도 않는다.
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([["ai", ""]]);
+  });
+
+  it("a closed session's panel shows the last turn's value from the history", async () => {
+    vi.mocked(prototypesApi.getBuildHistory).mockResolvedValue({
+      items: [], turns: [], context: usage(70) });
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    await act(async () => { await result.current.resume(); });
+    expect(result.current.context?.left_pct).toBe(70);
+  });
+
+  it("an improvement session starts without the previous session's value", async () => {
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        handlers.onEvent(ev("context", null, JSON.stringify(usage(20))), 1);
+        handlers.onEvent(ev("done"), 2);
+        handlers.onDone();
+        return () => {};
+      },
+    );
+    vi.mocked(prototypesApi.startSession).mockResolvedValue({ status: "starting" });
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+    expect(result.current.context?.left_pct).toBe(20);
+
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(() => () => {});
+    await act(async () => { await result.current.restartForImprovement(); });
+    expect(result.current.context).toBeNull();
+  });
+});
+
 describe("usePrototypeStream — restoreHistory", () => {
   beforeEach(() => vi.clearAllMocks());
 
