@@ -295,7 +295,8 @@ class PrototypeBuilder:
                  permission_mode: str = DEFAULT_PERMISSION_MODE,
                  client_factory: Callable[[], Any] | None = None,
                  shared_config_dir: str | None = None,
-                 launch: Any = None):
+                 launch: Any = None,
+                 answer_log: Any = None):
         self._workspace = workspace
         self._config_dir = config_dir
         #: 연결마다 config_dir로 복사할 내용의 출처(proto-config/). None이면 복사하지 않는다.
@@ -305,6 +306,10 @@ class PrototypeBuilder:
         self._session_id = session_id
         self._resume = resume
         self._session_store = session_store
+        #: aipds.proto.history.AnswerLog, 또는 None(= 기록하지 않는다). 받은 답을
+        #: 히스토리 복원용으로 남긴다 — 트랜스크립트에는 CLI가 옮겨 적은 영어 문장만
+        #: 남기 때문이다(agent/answer_store.py 헤더).
+        self._answer_log = answer_log
         self._anthropic_model = anthropic_model
         # 이 프로젝트의 생성물 언어. build_complete 도구의 설명과 반환 문자열을
         # 이 값으로 고른다 — 셋 다 모델이 읽는 프롬프트다(proto/prompts.py).
@@ -668,6 +673,8 @@ class PrototypeBuilder:
             return PermissionResultDeny(
                 message=f"질문을 만들 수 없다: {e}\n"
                         "각 질문에 옵션을 최소 1개 넣어 AskUserQuestion을 다시 호출해라.")
+        # 복원 조인 키 — claude_driver와 같은 값을 같은 방식으로 읽는다(그쪽 주석).
+        tool_use_id = getattr(context, "tool_use_id", None) or ""
         iid = uuid.uuid4().hex
         payload = _json.dumps({"interrupt_id": iid, "questions": qfile},
                               ensure_ascii=False)
@@ -699,6 +706,11 @@ class PrototypeBuilder:
         finally:
             self._pending_payload = None
             self._pending_question = None
+        # updated_input을 돌려주기 **전에** 쓴다 — 이 반환으로 턴이 재개된다
+        # (claude_driver의 같은 자리와 같은 이유). save는 실패를 삼킨다.
+        if self._answer_log is not None:
+            await self._answer_log.save(tool_use_id=tool_use_id, interrupt_id=iid,
+                                        questions=qfile, answers=answers)
         return PermissionResultAllow(updated_input={
             "questions": sdk_questions,
             "answers": sdk_answers,

@@ -65,11 +65,13 @@ PENDING_PREFIX = "pending/"
 #: Discovery 트랜스크립트의 루트(프로젝트 상대). 아래 세션 세그먼트 변환을 보라.
 TRANSCRIPT_ROOT = "discovery/transcript/"
 
-#: 프로토타입 빌드 에이전트의 트랜스크립트. 대부분 빌드 잡담이고 용량이 크다 —
-#: 프로토타입을 **개선**하는 세션의 컨텍스트지만, 임포트한 인스턴스에서는 어차피
-#: 새 빌드 세션으로 시작한다(로컬 CLI 트랜스크립트가 없다). 핸드오프 zip이 같은
-#: 이유로 같은 것을 뺀다(routes/prototypes.py의 `_ARCHIVE_*` 주석).
-_PROTO_TRANSCRIPT_RE = re.compile(r"^prototypes/[^/]+/transcript/")
+#: 프로토타입 빌드 에이전트의 트랜스크립트와, 그것을 빌드 대화로 복원할 때 쓰는
+#: 레코드(proto/history.py). 대부분 빌드 잡담이고 용량이 크다 — 프로토타입을
+#: **개선**하는 세션의 컨텍스트지만, 임포트한 인스턴스에서는 어차피 새 빌드 세션으로
+#: 시작한다(로컬 CLI 트랜스크립트가 없다). 레코드는 트랜스크립트와 조인할 때만 뜻이
+#: 있으므로 함께 뺀다. 핸드오프 zip이 같은 이유로 같은 것을 뺀다
+#: (routes/prototypes.py의 `_ARCHIVE_*` 주석).
+_PROTO_CONVERSATION_RE = re.compile(r"^prototypes/[^/]+/(?:transcript|history)/")
 
 #: 이 인스턴스의 사정이라 옮기지 않는 프로토타입 키(proto/store.py).
 #:   source/        소스 세대 — 소스는 번들이 따로 한 벌 담는다(위 머리말).
@@ -163,7 +165,7 @@ def s3_key_to_bundle_path(key: str, *, transcript_prefix: str) -> str | None:
         return None
     if key.startswith(PENDING_PREFIX):
         return None
-    if _PROTO_TRANSCRIPT_RE.match(key):
+    if _PROTO_CONVERSATION_RE.match(key):
         return None
     if _PROTO_INSTANCE_RE.match(key):
         return None
@@ -239,6 +241,7 @@ def build_manifest(*, exported_at: str, source_project_id: str,
             *sorted(SOURCE_EXCLUDED_FILES),
             PENDING_PREFIX,
             "prototypes/*/transcript/",
+            "prototypes/*/history/",
         ],
     }, ensure_ascii=False, indent=2)
 
