@@ -2,6 +2,7 @@ import { CREDENTIALS } from "@/lib/auth";
 import type { ApprovalEvidence, ApprovalRecord } from "@/lib/approvalState";
 import type {
   AuditEntry,
+  ContextUsage,
   HistoryItem,
   ProjectDetail,
   ProjectPage,
@@ -188,6 +189,14 @@ export async function getTurn(pid: string): Promise<TurnSummary | null> {
 export async function getHistory(pid: string): Promise<HistoryItem[]> {
   const r = await request<{ items: HistoryItem[] }>(`/projects/${encodeURIComponent(pid)}/history`);
   return r.items;
+}
+
+// GET /projects/{pid}/context → 마지막 턴의 컨텍스트 사용량(없으면 null). 화면이
+// 열릴 때 되살린다 — 도는 턴은 `context` 이벤트로 덮는다.
+export async function getContext(pid: string): Promise<ContextUsage | null> {
+  const r = await request<{ context: ContextUsage | null }>(
+    `/projects/${encodeURIComponent(pid)}/context`);
+  return r.context;
 }
 
 // POST /projects/{pid}/uploads (multipart `file`) → the stored workspace path

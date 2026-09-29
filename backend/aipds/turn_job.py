@@ -95,6 +95,10 @@ class TurnJob:
     finished_at: float | None = None
     #: 사용자가 보낸 말(화면에 사용자 말풍선으로 되살릴 것). 자동 개시 턴은 None.
     input_text: str | None = None
+    #: 시작한 벽시계 시각(epoch 초). `started_at`은 단조 시계라 트랜스크립트의
+    #: 타임스탬프와 비교할 수 없다 — 프로토타입 히스토리가 "이 턴부터는 세션이
+    #: 재생한다"를 자르는 기준이 이것이다(proto/history.py).
+    started_wall: float = field(default_factory=time.time)
     task: asyncio.Task | None = field(default=None, repr=False)
 
     def summary(self) -> dict:

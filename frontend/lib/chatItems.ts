@@ -1,5 +1,5 @@
 // frontend/lib/chatItems.ts
-import type { QuestionFile } from "@/lib/api/types";
+import type { HistoryItem, QuestionFile } from "@/lib/api/types";
 
 // UI VIEW-STATE (not a backend contract): how streamed AgentEvent frames are
 // projected into the chat timeline. Backend contract types stay in
@@ -80,4 +80,47 @@ export interface AiItem {
   // trace와 짝이지만 성격이 다르다: trace는 "지금까지"의 목록이고 이것은
   // "지금" 하나다. 라이브 스트림에만 있다(복원된 턴에는 없다).
   activity?: LiveActivity;
+}
+
+// A questions file presented in a PAST turn (a history restore) — a static
+// summary marker (role "history-card"), not an interactive form.
+export interface HistoryCardItem {
+  id: string;
+  role: "history-card";
+  name: string | null;
+  // 그 라운드에서 실제로 물은 질문들(GET /history의 HistoryItem.questions).
+  // 트랜스크립트의 tool_use.input에 구조화된 채로 남아 있어 복원할 수 있다 —
+  // 종전에는 이것을 버려서 카드가 "질문 제시됨" 한 줄뿐이었다. 여전히
+  // **읽기 전용**이다: 라이브 폼이 아니다.
+  file?: QuestionFile | null;
+}
+
+/** GET /history의 항목 하나 → 타임라인 항목. 워크스페이스와 빌드 패널이 같은
+ *  변환을 쓴다 — 두 화면이 같은 ChatTimeline으로 그리므로 복원 표현이 갈라지면
+ *  같은 대화가 화면마다 다르게 보인다. id는 호출하는 훅의 것을 받는다. */
+export function historyItemToChatItem(
+  it: HistoryItem, id: string,
+): UserItem | AiItem | HistoryCardItem {
+  if (it.role === "card") {
+    return { id, role: "history-card", name: it.name, file: it.questions ?? null };
+  }
+  // answers와 questions를 그대로 옮긴다 — ChatTimeline이 UI 언어로 문구를
+  // 만드는 데 쓴다. 여기서 버리면 백엔드의 한국어 폴백 문구가 영어 UI에 그대로
+  // 뜨고, questions를 버리면 라이브와 같은 answerSummary를 부를 수 없어
+  // "1: A" 나열로 떨어진다.
+  if (it.role === "user") {
+    return { id, role: "user", text: it.text ?? "",
+             answers: it.answers ?? null, questions: it.questions ?? null };
+  }
+  return {
+    id,
+    role: "ai",
+    text: it.text ?? "",
+    // 복원된 도구 트레이스 — 라이브 턴의 status/file_changed 이벤트와 같은
+    // shape이라 AiMessage의 "추론 과정" 아코디언이 그대로 렌더한다.
+    trace: (it.trace ?? []).map((t) => ({
+      kind: t.kind, text: t.text, path: t.path, detail: t.detail ?? null })),
+    streaming: false,
+    error: null,
+  };
 }

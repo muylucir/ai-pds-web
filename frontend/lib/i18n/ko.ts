@@ -506,6 +506,10 @@ export const ko = {
   "chat.emptyTimeline": "대화를 시작해 보세요 — 아래에 메시지를 입력하세요.",
   "chat.questionsPresented": "질문지 제시됨",
   "chat.auditNotice": "모든 입력은 원문 그대로 audit.md에 기록됩니다 · 크리덴셜은 절대 기록되지 않습니다",
+  // 입력창 위의 컨텍스트 사용량. {n}은 자동 압축까지 남은 %.
+  "chat.contextLeft": "컨텍스트 {n}% 남음",
+  // 마우스를 올리면 보이는 설명. {used}·{limit}은 "285K" 같은 토큰 수.
+  "chat.contextDetail": "{used} / {limit} 토큰 사용 · 0%가 되면 AI가 지난 대화를 요약해 공간을 비웁니다",
   "chat.questionCountSuffix": "문항",
   "review.exportMd": ".md 내보내기",
   "review.auditBody": "모든 입력은 원문 그대로 타임스탬프와 함께 기록됩니다. API 키·크리덴셜은 절대 기록되지 않습니다. 이 게이트에서의 승인/수정요청 결정도 즉시 기록됩니다.",

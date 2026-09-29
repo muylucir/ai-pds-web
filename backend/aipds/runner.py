@@ -9,6 +9,7 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import AsyncIterator
 
+from aipds.context_usage import DISCOVERY_KEY, ContextRecord
 from aipds.models import AgentEvent
 from aipds.globmatch import matches_glob
 from aipds.pathsafe import reject_unsafe
@@ -57,6 +58,9 @@ class AgentRunner:
         #: 규율을 갖는다(ClaudeDriver._acquire_turn/_release_turn).
         self._turn_token: object | None = None
         self._pending_interrupt_id: str | None = None
+        #: 턴의 마지막 컨텍스트 사용량. 연결된 클라이언트가 없을 때(백엔드 재시작 뒤)
+        #: 화면이 보일 값이다(aipds/context_usage.py).
+        self._context = ContextRecord(s3, DISCOVERY_KEY)
         self._remote_etags: dict[str, str | None] | None = None
         self._synced_hashes: dict[str, str] = {}
         set_callback = getattr(driver, "set_file_published_callback", None)
@@ -284,6 +288,7 @@ class AgentRunner:
                     got = _interrupt_id_from(event.payload)
                     if got:
                         self._pending_interrupt_id = got
+                self._context.observe(event)
                 if event.kind in ("done", "error"):
                     # Sync BEFORE yielding the terminal event: a client that
                     # reads a doc the moment it sees `done` must not race the
@@ -291,6 +296,7 @@ class AgentRunner:
                     # the terminal event).
                     await self._sync_workspace_to_s3()
                     synced = True
+                    await self._context.flush()
                 yield event
         finally:
             self._finish_turn(token)
@@ -340,9 +346,11 @@ class AgentRunner:
                     got = _interrupt_id_from(event.payload)
                     if got:
                         self._pending_interrupt_id = got
+                self._context.observe(event)
                 if event.kind in ("done", "error"):
                     await self._sync_workspace_to_s3()
                     synced = True
+                    await self._context.flush()
                 yield event
         finally:
             self._finish_turn(token)

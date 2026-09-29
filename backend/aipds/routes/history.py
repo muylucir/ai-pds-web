@@ -9,6 +9,7 @@ import logging
 from fastapi import APIRouter
 from aipds import app as app_module
 from aipds.routes.deps import ensure_workspace
+from aipds.context_usage import DISCOVERY_KEY, load_record
 from aipds.session_history import list_history
 
 _log = logging.getLogger(__name__)
@@ -25,3 +26,20 @@ async def get_history(pid: str):
         _log.exception("project store unavailable for %s", pid)
         return {"items": []}
     return {"items": await list_history(project_s3, pid)}
+
+
+@router.get("/projects/{pid}/context")
+async def get_context(pid: str):
+    """마지막 턴의 컨텍스트 사용량(aipds/context_usage.py). 없으면 null.
+
+    히스토리와 같은 자리에 있는 이유: 둘 다 "화면이 열릴 때 되살리는 보조 데이터"이고
+    같은 강등 규칙을 따른다 — 읽지 못하면 표시가 없을 뿐 화면은 막지 않는다. 도는 턴은
+    `context` 이벤트로 이 값을 덮는다.
+    """
+    await ensure_workspace(pid)
+    try:
+        project_s3 = app_module.s3_store_factory(pid)
+    except Exception:
+        _log.exception("project store unavailable for %s", pid)
+        return {"context": None}
+    return {"context": await load_record(project_s3, DISCOVERY_KEY)}

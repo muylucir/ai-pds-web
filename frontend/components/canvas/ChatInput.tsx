@@ -3,6 +3,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/provider";
+import type { ContextUsage } from "@/lib/api/types";
+import { ContextMeter } from "./ContextMeter";
 
 export function ChatInput({
   onSend,
@@ -11,6 +13,7 @@ export function ChatInput({
   initialText,
   onInterrupt,
   interrupting,
+  context,
 }: {
   onSend: (text: string) => void;
   disabled: boolean;
@@ -25,6 +28,8 @@ export function ChatInput({
   // `streaming || buildComplete !== null`) 그 값으로 판단하면 중단할 것이
   // 없는데 ■이 뜬다.
   interrupting?: boolean;
+  // 에이전트의 컨텍스트 사용량. 없으면(첫 턴 전, 새 대화 직전) 표시하지 않는다.
+  context?: ContextUsage | null;
 }) {
   const t = useT();
   const [text, setText] = useState(initialText ?? "");
@@ -47,6 +52,7 @@ export function ChatInput({
   return (
     <div className="shrink-0 border-t border-slate-200 bg-white px-4 md:px-8 py-3">
       <div className="max-w-2xl mx-auto">
+        {context && <ContextMeter usage={context} />}
         <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white focus-within:ring-2 focus-within:ring-violet-400 px-4 py-2.5">
           {onAttach && (
             <>

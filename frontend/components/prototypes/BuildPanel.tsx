@@ -34,7 +34,8 @@ export function BuildPanel({
   const t = useT();
   const {
     items, streaming, agents, pendingQuestions, buildComplete, changedPaths,
-    startBuild, send, submitAnswers, interrupt, restartForImprovement, resume,
+    historyLoading, context, startBuild, restoreHistory, send, submitAnswers, interrupt,
+    restartForImprovement, resume,
   } = usePrototypeStream(projectId, slug);
   const [closing, setClosing] = useState(false);
   const [submittingAnswers, setSubmittingAnswers] = useState(false);
@@ -48,9 +49,12 @@ export function BuildPanel({
   useEffect(() => {
     // 새로 연 세션이면 자동 개시, 이미 열린 세션이면(새로고침·다시 열기) 그 세션의
     // 대화를 되살리고 도는 턴에 붙는다 — 빈 패널에서 멈춘 턴을 볼 수 없던 것이 이
-    // 분기의 이유다.
-    if (autoStart) startBuild();
-    else void resume();
+    // 분기의 이유다. 어느 쪽이든 지난 세션들의 대화가 그 앞에 깔린다(resume은 스스로
+    // 깐다).
+    if (autoStart) {
+      startBuild();
+      void restoreHistory();
+    } else void resume();
     // Mount-only — startBuild must fire at most once per panel lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -163,13 +167,14 @@ export function BuildPanel({
           <div className="flex-1 md:flex-none md:basis-1/2 md:min-w-0 min-h-0 flex flex-col">
             <ChatTimeline
               items={items}
+              historyLoading={historyLoading}
             />
             {/* 수정 세션이 빈 채로 열린 순간. **자동 발화를 하지 않는 것이
                 의도다** — "수정하기"를 누른 사람은 이미 무엇을 고칠지 알고 있는데,
                 자동 개시는 에이전트가 되묻는 왕복을 먼저 태우고 그 질문이 떠 있는
                 동안 입력창이 잠긴다(prompts.handoff_prompt의 근거). 그 대가로
                 화면에 아무것도 없는 순간이 생기므로, 무엇을 해야 하는지 말한다. */}
-            {items.length === 0 && !streaming && (
+            {items.length === 0 && !streaming && !historyLoading && (
               <div className="shrink-0 px-4 md:px-8 pb-2 text-center">
                 <p className="text-sm text-slate-500">{t("proto.modifyPrompt")}</p>
                 <p className="mt-1 text-xs text-slate-400">{t("proto.modifyExample")}</p>
@@ -199,6 +204,7 @@ export function BuildPanel({
               disabled={streaming || buildComplete !== null}
               onInterrupt={() => void interrupt()}
               interrupting={streaming}
+              context={context}
             />
           </div>
 

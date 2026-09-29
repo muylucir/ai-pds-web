@@ -57,6 +57,11 @@ def test_pending_is_excluded(tp):
 def test_prototype_build_transcript_is_excluded(tp):
     assert s3_key_to_bundle_path("prototypes/demo/transcript/abc/main/00000001.jsonl",
                                  transcript_prefix=tp) is None
+    # 빌드 대화 복원 레코드(proto/history.py)는 트랜스크립트와 조인할 때만 뜻이 있다.
+    assert s3_key_to_bundle_path("prototypes/demo/history/inputs/ab.json",
+                                 transcript_prefix=tp) is None
+    assert s3_key_to_bundle_path("prototypes/demo/history/answers/toolu_1.json",
+                                 transcript_prefix=tp) is None
     # 설문은 남는다 — 같은 prototypes/{slug}/ prefix를 공유하지만 옮기는 대상이다.
     assert s3_key_to_bundle_path("prototypes/demo/survey/questionnaire.json",
                                  transcript_prefix=tp) == \
@@ -231,6 +236,7 @@ def test_manifest_documents_what_was_left_out():
     assert TOKEN_FILENAME in excluded
     assert "pending/" in excluded
     assert "prototypes/*/transcript/" in excluded
+    assert "prototypes/*/history/" in excluded
 
 
 def test_wrong_kind_is_reported_before_version():

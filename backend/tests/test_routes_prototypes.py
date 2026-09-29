@@ -2199,3 +2199,97 @@ def test_a_long_request_rides_the_turn_handle(proto_env, monkeypatch):
         list(resp.iter_lines())
 
     assert session.messages == [f"FIRST({long_text})"]
+
+
+# ---- GET /history: 지난 빌드 대화 + 이어서 재생할 턴 ----
+#
+# 빌드 패널이 다시 열리면 지난 대화(트랜스크립트)를 먼저 보이고, 열린 세션의 턴은
+# 턴 로그로 재생한다(proto/history.py 헤더 3). 둘을 한 응답으로 주는 것이 요점이다.
+
+def _transcript(s3, session_id, lines):
+    from aipds.proto.session_store import S3SessionStore
+    asyncio.run(S3SessionStore(s3, slug=SLUG).append({"session_id": session_id}, lines))
+
+
+def _line(role, text, when):
+    return {"type": role, "timestamp": when,
+            "message": {"role": role, "content": text if role == "user"
+                        else [{"type": "text", "text": text}]}}
+
+
+def test_history_without_a_session_is_the_whole_transcript(proto_env):
+    _transcript(proto_env["s3"], "s1", [_line("user", "만들어줘", "2026-09-27T15:00:00Z"),
+                                        _line("assistant", "만들었습니다", "2026-09-27T15:01:00Z")])
+
+    r = client.get(f"/projects/{PID}/prototypes/{SLUG}/history")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert [(i["role"], i["text"]) for i in body["items"]] == [
+        ("user", "만들어줘"), ("ai", "만들었습니다")]
+    assert body["turns"] == []
+    assert body["context"] is None
+
+
+def test_history_carries_the_last_context_usage_of_the_current_conversation(proto_env):
+    from aipds.proto.history import context_key
+    proto_env["s3"].blobs[f"prototypes/{SLUG}/session.json"] = json.dumps({"session_id": "s1"})
+    proto_env["s3"].blobs[context_key(SLUG)] = json.dumps({"left_pct": 40, "session_id": "s1"})
+
+    body = client.get(f"/projects/{PID}/prototypes/{SLUG}/history").json()
+
+    assert body["context"]["left_pct"] == 40
+
+
+def test_history_leaves_the_open_sessions_turns_to_the_replay(proto_env, monkeypatch):
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+    # 이 세션의 턴보다 **앞선** 대화와, 턴이 시작된 뒤에 쓰인 줄.
+    _transcript(proto_env["s3"], "old", [_line("user", "첫 빌드", "2020-01-01T00:00:00Z")])
+    _build("버튼 고쳐줘")
+    _transcript(proto_env["s3"], "live", [_line("user", "FIRST(버튼 고쳐줘)", "2999-01-01T00:00:00Z")])
+
+    body = client.get(f"/projects/{PID}/prototypes/{SLUG}/history").json()
+
+    assert [(i["role"], i["text"]) for i in body["items"]] == [("user", "첫 빌드")]
+    assert [(t["state"], t["input"]) for t in body["turns"]] == [("done", "버튼 고쳐줘")]
+
+
+def test_an_opening_turn_records_what_the_user_typed(proto_env, monkeypatch):
+    """개시 턴은 에이전트에게 간 말(개시 프롬프트)과 사용자가 한 말이 다르다. 그 짝이
+    남아야 히스토리가 프롬프트 대신 사용자의 말을 보인다."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+
+    _build("장바구니 버튼을 오른쪽 위로")
+    _build("두 번째 요청")   # 감싸지 않은 턴 — 레코드가 필요 없다
+
+    records = {k: json.loads(v) for k, v in proto_env["s3"].blobs.items()
+               if k.startswith(f"prototypes/{SLUG}/history/inputs/")}
+    assert list(records.values()) == [{"shown": "장바구니 버튼을 오른쪽 위로"}]
+    _transcript(proto_env["s3"], "s1", [
+        _line("user", "FIRST(장바구니 버튼을 오른쪽 위로)", "2020-01-01T00:00:00Z")])
+    app_module.proto_sessions.clear()   # 재생할 턴이 없게 — 히스토리만 본다
+    items = client.get(f"/projects/{PID}/prototypes/{SLUG}/history").json()["items"]
+    assert [(i["role"], i["text"]) for i in items] == [("user", "장바구니 버튼을 오른쪽 위로")]
+
+
+def test_an_auto_start_turn_records_that_there_was_nothing_to_show(proto_env, monkeypatch):
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+
+    _build("__first__")
+
+    records = [json.loads(v) for k, v in proto_env["s3"].blobs.items()
+               if k.startswith(f"prototypes/{SLUG}/history/inputs/")]
+    assert records == [{"shown": None}]
+
+
+def test_history_for_an_unknown_project_is_404(proto_env):
+    assert client.get(f"/projects/nope/prototypes/{SLUG}/history").status_code == 404

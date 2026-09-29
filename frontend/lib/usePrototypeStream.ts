@@ -9,7 +9,9 @@ import {
   startSession,
   watchBuildTurn,
   getBuildSession,
+  getBuildHistory,
   FIRST_TURN_SENTINEL,
+  type BuildTurnSummary,
 } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
 import type { StreamHandlers, TurnCreated } from "@/lib/api/sse";
@@ -21,21 +23,26 @@ import type {
   QuestionsPayload,
   BuildCompletePayload,
   AgentActivityPayload,
+  ContextUsage,
 } from "@/lib/api/types";
 import { applyAgentActivity, runningAgents, type AgentRow } from "@/lib/protoAgents";
-import type { UserItem, AiItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
+import { historyItemToChatItem } from "@/lib/chatItems";
+import type { UserItem, AiItem, HistoryCardItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
 
 // A NEW hook modeled on useWorkspaceStream (the workspace's stream pattern)
 // for the prototype build chat panel. Simpler than useWorkspaceStream: no
-// stage/document/history/activeDoc/turnSeq branches — a build session has no
+// stage/document/activeDoc/turnSeq branches — a build session has no
 // multi-document sidebar.
 //
-// **대화는 세션의 턴 로그에서 되살린다.** 빌드 턴은 요청이 아니라 세션의 서버
-// 작업이고(backend aipds/turn_job.py), 세션은 자기 턴을 전부 보존한다. 그래서 패널이
-// 다시 열리면(새로고침, 닫았다 엶) `resume()`이 그 턴들을 처음부터 재생해 말풍선·
-// 질문 카드·답·완료 카드를 순서대로 되살리고, 도는 턴에는 그대로 붙는다.
-export type { UserItem, AiItem } from "@/lib/chatItems";
-export type ChatItem = UserItem | AiItem;
+// **대화는 두 곳에서 되살린다.** 지난 세션들의 대화는 트랜스크립트에서(GET
+// /history — backend proto/history.py), 열린 세션의 턴은 그 세션의 턴 로그에서다.
+// 빌드 턴은 요청이 아니라 세션의 서버 작업이고(backend aipds/turn_job.py) 세션은 자기
+// 턴을 전부 보존한다. 그래서 패널이 다시 열리면(새로고침, 닫았다 엶) `resume()`이
+// 히스토리를 깔고 그 뒤에 열린 세션의 턴들을 처음부터 재생해 말풍선·질문 카드·답·
+// 완료 카드를 순서대로 되살리고, 도는 턴에는 그대로 붙는다. 히스토리는 그 턴들 앞에서
+// 끊겨 오므로 같은 턴이 두 번 보이지 않는다.
+export type { UserItem, AiItem, HistoryCardItem } from "@/lib/chatItems";
+export type ChatItem = UserItem | AiItem | HistoryCardItem;
 
 let counter = 0;
 const nextId = () => `proto-item-${counter++}`;
@@ -72,7 +79,16 @@ export interface PrototypeStream {
    *  닫혔거나 몇 초 안에 닫힌다(백엔드가 유예 타이머로 닫는다). */
   buildComplete: BuildCompletePayload | null;
   changedPaths: string[];
+  /** 지난 대화를 불러오는 중. 빈 패널의 안내 문구가 히스토리보다 먼저 떴다가
+   *  사라지지 않게 한다. */
+  historyLoading: boolean;
+  /** 빌드 에이전트의 컨텍스트 사용량(입력창 위 표시). 히스토리가 마지막 턴의 값을
+   *  주고(다음 대화가 새 세션이면 null), 턴이 도는 동안 `context` 이벤트가 갱신한다. */
+  context: ContextUsage | null;
   startBuild: () => void;
+  /** 지난 대화를 지금 대화 **앞에** 깐다. 새로 연 세션(자동 개시)이 쓴다 — 이미 열린
+   *  세션은 `resume()`이 같은 일을 한다. */
+  restoreHistory: () => Promise<void>;
   send: (text: string) => void;
   submitAnswers: (answers: Record<string, string>) => Promise<void>;
   interrupt: () => Promise<void>;
@@ -90,6 +106,11 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   const [pendingQuestions, setPendingQuestions] = useState<QuestionsPayload | null>(null);
   const [buildComplete, setBuildComplete] = useState<BuildCompletePayload | null>(null);
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [context, setContext] = useState<ContextUsage | null>(null);
+  // 라이브 값이 이미 왔는가 — 늦게 도착한 히스토리의 기록이 그것을 덮지 않게 한다
+  // (useWorkspaceStream의 같은 ref와 같은 이유).
+  const liveContextRef = useRef(false);
   // **행은 화면의 것이고 말풍선의 것이 아니다** — 고정 줄이 읽으므로 `activity`와
   // 같은 자리에 있어야 하지만, `activity`처럼 말풍선에 얹으면 병렬 구간에서
   // 어느 말풍선의 것인지가 애매해진다(한 턴이 여러 말풍선으로 쪼개진다).
@@ -185,6 +206,15 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
           : t("chat.answersSubmitted");
         openAiBubble([{ id: nextId(), role: "user", text: summary }]);
         setPendingQuestions(null);
+        return;
+      }
+      if (ev.kind === "context") {
+        // 말풍선의 것이 아니라 화면의 것이다 — 말풍선 분할 판단에도 끼지 않는다.
+        const parsed = safeParse<ContextUsage>(ev.payload);
+        if (parsed) {
+          liveContextRef.current = true;
+          setContext(parsed);
+        }
         return;
       }
       if (ev.kind === "build_complete") {
@@ -441,16 +471,44 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   );
   attachRef.current = attach;
 
-  // 이미 열린 세션의 대화를 되살린다. 턴을 하나씩 **순서대로** 처음부터 재생하고
-  // (앞 턴이 끝나야 다음 턴을 연다 — 말풍선 순서가 곧 대화 순서다), 도는 턴에는
-  // 그대로 붙어 이어 받는다.
+  // 지난 대화를 불러와 지금 대화 앞에 깐다. 이어서 재생할 턴 목록을 돌려준다 —
+  // 히스토리가 그 턴들 앞에서 끊겨 오므로 둘은 한 응답에서 나와야 한다(getBuildHistory).
+  // 못 불러오면 null: 패널은 빈 대화로도 쓸 수 있다.
+  //
+  // **앞에 붙인다.** 새로 연 세션은 개시 턴이 히스토리 응답보다 먼저 화면에 생길 수
+  // 있고, 히스토리는 언제나 그보다 앞선 대화다 — 교체하면 방금 시작한 턴이 지워진다
+  // (useWorkspaceStream의 liveTurnStartedRef와 같은 판단).
+  const loadHistory = useCallback(async (): Promise<BuildTurnSummary[] | null> => {
+    setHistoryLoading(true);
+    try {
+      const h = await getBuildHistory(projectId, slug);
+      const restored = h.items.map((it) => historyItemToChatItem(it, nextId()));
+      setItems((prev) => [...restored, ...prev]);
+      if (!liveContextRef.current) setContext(h.context ?? null);
+      return h.turns;
+    } catch {
+      return null;
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [projectId, slug]);
+
+  const restoreHistory = useCallback(async () => {
+    await loadHistory();
+  }, [loadHistory]);
+
+  // 이미 열린 세션의 대화를 되살린다. 지난 대화를 먼저 깔고, 열린 세션의 턴을 하나씩
+  // **순서대로** 처음부터 재생하고(앞 턴이 끝나야 다음 턴을 연다 — 말풍선 순서가 곧
+  // 대화 순서다), 도는 턴에는 그대로 붙어 이어 받는다.
   const resume = useCallback(async () => {
     if (resumingRef.current || stopRef.current) return;
     resumingRef.current = true;
     try {
-      const sess = await getBuildSession(projectId, slug);
-      if (!sess) return;
-      for (const turn of sess.turns) {
+      // 히스토리를 못 불러와도 열린 세션의 턴은 되살린다 — 도는 턴에 붙는 것이
+      // 지난 대화를 보이는 것보다 급하다(붙지 못하면 보내기가 409로 막힌다).
+      const turns = (await loadHistory())
+        ?? (await getBuildSession(projectId, slug))?.turns ?? [];
+      for (const turn of turns) {
         if (stopRef.current) return;
         const between: ChatItem[] = turn.input
           ? [{ id: nextId(), role: "user", text: turn.input }] : [];
@@ -470,7 +528,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     } finally {
       resumingRef.current = false;
     }
-  }, [projectId, slug, runTurn, openAiBubble]);
+  }, [projectId, slug, runTurn, openAiBubble, loadHistory]);
 
   // The auto first-build turn: opens the events stream with the "__first__"
   // sentinel (routes.py substitutes session.first_prompt() server-side) and
@@ -570,6 +628,9 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     await startSession(projectId, slug);
     setBuildComplete(null);
     setChangedPaths([]);
+    // 개선 세션은 새 대화다 — 이전 세션의 사용량은 이 대화의 것이 아니다. 첫 응답이
+    // 새 값을 준다.
+    setContext(null);
     startBuild();
   }, [projectId, slug, startBuild]);
 
@@ -586,7 +647,10 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     pendingQuestions,
     buildComplete,
     changedPaths,
+    historyLoading,
+    context,
     startBuild,
+    restoreHistory,
     send,
     submitAnswers,
     interrupt,
