@@ -36,6 +36,23 @@ def test_cli_bookkeeping_lines_are_skipped():
     assert [(i.role, i.text) for i in items] == [("user", "시작해줘")]
 
 
+def test_cli_injected_user_lines_are_not_user_bubbles():
+    # 스킬 본문(isMeta)과 압축 요약(isCompactSummary)은 user 역할로 오지만 사람이 한
+    # 말이 아니다. 말풍선이 되면 실제 턴 경계가 아닌 곳에서 한 턴이 둘로 쪼개진다.
+    raw = [
+        _cli("user", "user", "시작해줘"),
+        _cli("assistant", "assistant", [{"type": "text", "text": "스킬을 씁니다"}]),
+        _cli("user", "user", [{"type": "text", "text": "Base directory for this skill: …"}],
+             isMeta=True),
+        _cli("user", "user", "This session is being continued from a previous conversation…",
+             isCompactSummary=True),
+        _cli("assistant", "assistant", [{"type": "text", "text": "계속합니다"}]),
+    ]
+    items = transform_cli_transcript(raw)
+    assert [(i.role, i.text) for i in items] == [
+        ("user", "시작해줘"), ("ai", "스킬을 씁니다\n계속합니다")]
+
+
 def test_cli_plain_string_content_is_not_iterated_per_character():
     # 실측: 첫 user 줄의 content는 리스트가 아니라 평문 문자열이다. 정규화하지
     # 않으면 블록 루프가 문자열을 문자 단위로 훑어 아무것도 남지 않는다.

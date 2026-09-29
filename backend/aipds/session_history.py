@@ -99,7 +99,24 @@ def _is_error_result(block: dict) -> bool:
     return "<tool_use_error>" in text
 
 
-def _sdk_questions_to_file(raw_input: object) -> dict | None:
+def _is_injected(line: dict) -> bool:
+    """CLI가 대화에 **끼워 넣은** 줄인가 — 사용자가 한 말이 아니다.
+
+    user 역할로 오지만 사람이 쓴 적이 없는 줄이 두 종류 있다:
+      isMeta            스킬 본문 주입. 모델이 Skill 도구를 부르면 CLI가
+                        "Base directory for this skill: …"로 시작하는 스킬 전문을
+                        user 텍스트로 넣는다(실측: 프로토타입 빌드 트랜스크립트,
+                        shadcn-design 스킬).
+      isCompactSummary  컨텍스트 압축 뒤의 요약. "This session is being
+                        continued from a previous conversation…"
+    걸러내지 않으면 둘 다 사용자 말풍선이 되고, 실제 턴 경계가 아니므로 한
+    턴의 말풍선을 둘로 쪼갠다.
+    """
+    return line.get("isMeta") is True or line.get("isCompactSummary") is True
+
+
+def _sdk_questions_to_file(raw_input: object,
+                           name: str = "discovery-questions") -> dict | None:
     """tool_use.input → 프론트 QuestionFile. 실패하면 None(복원을 막지 않는다).
 
     라이브에서 카드를 만든 그 함수를 그대로 쓴다 — letter 부여와 Other 옵션
@@ -112,13 +129,15 @@ def _sdk_questions_to_file(raw_input: object) -> dict | None:
     if not questions:
         return None
     try:
-        return question_file_from_sdk(questions, name="discovery-questions")
+        return question_file_from_sdk(questions, name=name)
     except ValueError:
         return None
 
 
 def transform_cli_transcript(raw: list[dict], *,
-                             answer_records: dict[str, dict] | None = None) -> list[HistoryItem]:
+                             answer_records: dict[str, dict] | None = None,
+                             question_name: str = "discovery-questions",
+                             ) -> list[HistoryItem]:
     """CLI 트랜스크립트(Anthropic Messages 모양) → 채팅 히스토리.
 
     라이브 스트림(claude_driver._translate)과 같은 표현을 만드는 것이 목표다 —
@@ -139,8 +158,13 @@ def transform_cli_transcript(raw: list[dict], *,
     턴 경계는 **실제 사용자 발화**다. `tool_result`만 담은 user 줄은 사용자가 한
     말이 아니라 도구 실행 결과이고, 라이브는 그 줄을 아무것도 렌더하지 않는다 —
     경계로 취급하면 도구 호출 하나하나가 다시 턴이 되어 원래 문제로 돌아간다.
+
+    `question_name`은 복원한 질문 카드의 이름이다. 라이브에서 카드를 만든 쪽이
+    붙인 이름과 같아야 한다 — Discovery는 "discovery-questions", 프로토타입
+    빌더는 "prototype-questions"(proto/builder.py의 _on_can_use_tool).
     """
     records = answer_records or {}
+    raw = [m for m in raw if not _is_injected(m)]
     # 1패스: AskUserQuestion tool_use id 수집. 실제 트랜스크립트에는 Write/Read 등
     # 다른 tool_result가 섞여 있어, 답변 결과만 골라내려면 id 매칭이 필수다.
     #
@@ -167,7 +191,7 @@ def transform_cli_transcript(raw: list[dict], *,
                     and block.get("name") == "AskUserQuestion"):
                 tid = str(block.get("id", ""))
                 ask_ids.add(tid)
-                qfile = _sdk_questions_to_file(block.get("input"))
+                qfile = _sdk_questions_to_file(block.get("input"), question_name)
                 if qfile is not None:
                     ask_files[tid] = qfile
             elif block.get("type") == "tool_result" and _is_error_result(block):

@@ -40,7 +40,9 @@ function mockStream(overrides: Partial<prototypeStream.PrototypeStream> = {}) {
     pendingQuestions: null,
     buildComplete: null,
     changedPaths: [],
+    historyLoading: false,
     startBuild: vi.fn(),
+    restoreHistory: vi.fn().mockResolvedValue(undefined),
     send: vi.fn(),
     submitAnswers: vi.fn().mockResolvedValue(undefined),
     interrupt: vi.fn().mockResolvedValue(undefined),
@@ -142,10 +144,20 @@ describe("BuildPanel", () => {
   it("calls startBuild on mount only when autoStart is true", () => {
     const startBuild = vi.fn();
     const resume = vi.fn().mockResolvedValue(undefined);
-    mockStream({ startBuild, resume });
+    const restoreHistory = vi.fn().mockResolvedValue(undefined);
+    mockStream({ startBuild, resume, restoreHistory });
     render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} autoStart />);
     expect(startBuild).toHaveBeenCalledTimes(1);
     expect(resume).not.toHaveBeenCalled();
+    // 새로 연 세션도 지난 대화(이전 세션들)를 앞에 깐다. resume은 스스로 깐다.
+    expect(restoreHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask what to change while the past conversation is still loading", () => {
+    // 안내가 먼저 떴다가 히스토리가 도착하면 사라지는 깜빡임을 막는다.
+    mockStream({ historyLoading: true });
+    render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
+    expect(screen.queryByText("무엇을 고칠지 알려주세요.")).toBeNull();
   });
 
   it("resumes the already-open session instead of starting when autoStart is false/omitted", () => {
