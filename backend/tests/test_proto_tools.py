@@ -33,13 +33,15 @@ async def test_complete_emits_a_build_complete_event(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    await handler({"summary": "할 일 앱을 만들었다", "remaining": "다크 모드"})
+    await handler({"summary": "할 일 앱을 만들었다", "remaining": "다크 모드",
+                   "changes": "로그인 화면 제외"})
 
     assert len(seen) == 1
     ev = seen[0]
     assert ev.kind == "build_complete"
     payload = json.loads(ev.payload)
-    assert payload == {"summary": "할 일 앱을 만들었다", "remaining": "다크 모드"}
+    assert payload == {"summary": "할 일 앱을 만들었다", "remaining": "다크 모드",
+                       "changes": "로그인 화면 제외"}
 
 
 async def test_remaining_is_optional(tmp_path):
@@ -47,7 +49,7 @@ async def test_remaining_is_optional(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    await handler({"summary": "완성"})
+    await handler({"summary": "완성", "changes": "없음"})
 
     assert json.loads(seen[0].payload)["remaining"] == ""
 
@@ -58,7 +60,7 @@ async def test_completion_is_refused_when_prototype_dir_is_missing(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)   # prototype/ 없음
 
-    result = await handler({"summary": "다 했다"})
+    result = await handler({"summary": "다 했다", "changes": "없음"})
 
     assert seen == []                            # 이벤트가 나가지 않는다
     text = result["content"][0]["text"]
@@ -70,7 +72,7 @@ async def test_completion_is_refused_when_prototype_dir_is_empty(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    result = await handler({"summary": "다 했다"})
+    result = await handler({"summary": "다 했다", "changes": "없음"})
 
     assert seen == []
     assert "prototype/" in result["content"][0]["text"]
@@ -80,7 +82,7 @@ async def test_a_successful_completion_returns_text_for_the_agent(tmp_path):
     _prototype_dir(tmp_path).joinpath("index.html").write_text("x")
     handler = _handler(tmp_path, lambda ev: None)
 
-    result = await handler({"summary": "완성"})
+    result = await handler({"summary": "완성", "changes": "없음"})
 
     assert result["content"][0]["type"] == "text"
 
@@ -98,7 +100,7 @@ async def test_build_complete_is_refused_without_the_brand_theme(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    result = await handler({"summary": "다 만들었다"})
+    result = await handler({"summary": "다 만들었다", "changes": "없음"})
 
     assert "aipds-theme.css" in result["content"][0]["text"]
     # 거부는 세션을 끝내지 않는다 — 이벤트가 나가지 않아야 한다.
@@ -122,7 +124,7 @@ async def test_build_complete_passes_once_the_theme_is_imported(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    await handler({"summary": "다 만들었다"})
+    await handler({"summary": "다 만들었다", "changes": "없음"})
 
     assert [e.kind for e in seen] == ["build_complete"]
 
@@ -148,7 +150,7 @@ async def test_build_complete_skips_the_theme_check_when_the_profile_has_no_toke
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    await handler({"summary": "다 만들었다"})
+    await handler({"summary": "다 만들었다", "changes": "없음"})
 
     assert [e.kind for e in seen] == ["build_complete"]
 
@@ -160,6 +162,20 @@ async def test_build_complete_skips_the_theme_check_without_a_profile(tmp_path):
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
-    await handler({"summary": "다 만들었다"})
+    await handler({"summary": "다 만들었다", "changes": "없음"})
 
     assert [e.kind for e in seen] == ["build_complete"]
+
+
+async def test_completion_is_refused_without_changes(tmp_path):
+    """changes를 비우면 '바뀐 것 없음'과 '기록 안 함'이 구별되지 않는다 -- 거부하고,
+    에이전트가 고칠 수 있게 무엇을 적어야 하는지 알려준다."""
+    _prototype_dir(tmp_path).joinpath("index.html").write_text("x")
+    seen: list[AgentEvent] = []
+    handler = _handler(tmp_path, seen.append)
+
+    for blank in ({"summary": "완성"}, {"summary": "완성", "changes": "  "}):
+        result = await handler(blank)
+        assert "changes" in result["content"][0]["text"]
+
+    assert seen == []

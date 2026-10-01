@@ -349,7 +349,7 @@ async def test_the_tool_queues_a_build_complete_event(tmp_path):
     b = _builder(tmp_path, FakeSdkClient(script=[]))
     handler = {t.name: t.handler for t in _proto_tools_for(b)}["build_complete"]
 
-    await handler({"summary": "만들었다"})
+    await handler({"summary": "만들었다", "changes": "없음"})
 
     assert [e.kind for e in b._queue] == ["build_complete"]
 
@@ -376,7 +376,7 @@ async def test_a_queued_completion_is_relayed_before_the_terminal_done(tmp_path)
     # 턴이 시작되기 전에 도구가 호출된 것처럼 큐에 넣는다 — 실제로는
     # ResultMessage 직전에 호출된다.
     handler = {t.name: t.handler for t in _proto_tools_for(b)}["build_complete"]
-    await handler({"summary": "만들었다"})
+    await handler({"summary": "만들었다", "changes": "없음"})
 
     events = await collect(b)
 

@@ -44,8 +44,9 @@ _BUILD_COMPLETE_SCHEMA: dict[str, Any] = {
     "properties": {
         "summary": {"type": "string"},
         "remaining": {"type": "string"},
+        "changes": {"type": "string"},
     },
-    "required": ["summary"],
+    "required": ["summary", "changes"],
 }
 
 
@@ -90,6 +91,15 @@ def build_proto_tools(workspace: str,
     async def build_complete(args: dict[str, Any]) -> dict[str, Any]:
         summary = args["summary"]
         remaining = args.get("remaining", "")
+        changes = str(args.get("changes", "")).strip()
+
+        # 명세 대비 변경을 비워 두고 끝낼 수 없다. 이 기록이 다음 개선 세션과
+        # 재빌드의 입력이고, 침묵은 "바뀐 것 없음"이 아니라 "기록 안 함"과
+        # 구별되지 않는다. 바뀐 게 없으면 그렇게 적으면 된다.
+        if not changes:
+            _log.warning("build_complete refused: changes missing (%s)",
+                         workspace)
+            return _text_result(prompts.build_complete_changes_missing(language))
 
         # 이 이벤트가 세션을 끝낸다. 산출물 없이 선언되면 사용자는 "빌드
         # 완료" 카드를 보는데 호스팅할 것이 없다 — 도구가 거짓을 선언할 수 없게
@@ -111,7 +121,8 @@ def build_proto_tools(workspace: str,
             return _text_result(prompts.build_complete_theme_rejection(language))
 
         emit(AgentEvent(kind="build_complete", payload=json.dumps(
-            {"summary": summary, "remaining": remaining}, ensure_ascii=False)))
+            {"summary": summary, "remaining": remaining, "changes": changes},
+            ensure_ascii=False)))
         return _text_result(prompts.build_complete_recorded(language))
 
     return [build_complete]

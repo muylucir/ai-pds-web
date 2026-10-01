@@ -32,6 +32,48 @@ def _sources(language: str, spec_key: str, instructions_key: str | None) -> str:
     return f"`{spec_key}`, `{instructions_key}`"
 
 
+def _history_note(language: str, history_key: str | None) -> str:
+    """수정 이력이 무엇이고 어느 쪽이 이기는지. 없으면 빈 문자열이다.
+
+    명세는 승인 시점에 고정되고 이후의 변경은 이 파일에만 쌓인다. 그 우선순위를
+    말하지 않으면 에이전트는 명세와 코드가 어긋난 자리에서 명세가 맞다고 보고
+    이미 뺀 기능을 되살린다.
+    """
+    if not history_key:
+        return ""
+    if _lang(language) == "en":
+        return (f" `{history_key}` is the running record of what earlier build "
+                "sessions changed after the spec was approved. The spec is fixed "
+                "at approval; where the two disagree, this history wins — do not "
+                "restore anything it says was dropped or changed.")
+    return (f" `{history_key}`는 명세 승인 이후 이전 빌드 세션들이 바꾼 것을 쌓은 "
+            "기록이야. 명세는 승인 시점에 고정돼 있으니, 둘이 어긋나면 이 기록이 "
+            "이겨 — 여기서 빼거나 바꿨다고 한 것을 명세대로 되돌리지 마.")
+
+
+def change_history_header(language: str) -> str:
+    """수정 이력 파일의 머리말 — 파일이 스스로를 설명한다."""
+    if _lang(language) == "en":
+        return ("# Change history\n\n"
+                "What each build session changed relative to the approved spec, "
+                "oldest first. The spec is fixed at approval; where it disagrees "
+                "with this history, the history wins.\n")
+    return ("# 수정 이력\n\n"
+            "승인된 명세 대비 각 빌드 세션이 바꾼 것을 오래된 순으로 쌓는다. "
+            "명세는 승인 시점에 고정되고, 이 이력과 어긋나면 이력이 이긴다.\n")
+
+
+def change_history_entry(language: str, *, at: str, gen: int | None,
+                         summary: str, changes: str) -> str:
+    """수정 이력 한 항목. 세션 하나(= build_complete 한 번)가 한 항목이다."""
+    where = f" · gen {gen}" if gen is not None else ""
+    if _lang(language) == "en":
+        return (f"\n## {at}{where}\n\n**Changes**\n{changes}\n\n"
+                f"**Summary**\n{summary}\n")
+    return (f"\n## {at}{where}\n\n**변경**\n{changes}\n\n"
+            f"**요약**\n{summary}\n")
+
+
 def _instructions_note(language: str, instructions_key: str | None) -> str:
     """빌드 지시서가 무엇이고 어느 쪽이 이기는지. 없으면 빈 문자열이다.
 
@@ -98,8 +140,11 @@ def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str,
             "reads. The prototype is a single-language demo; do not build an i18n "
             "layer into it.\n"
             "- When the prototype is finished, **declare completion with the "
-            "`build_complete` tool.** Summarize what you built in `summary`, and put "
-            "any remaining work or known limitations in `remaining`. The build "
+            "`build_complete` tool.** Summarize what you built in `summary`, put "
+            "any remaining work or known limitations in `remaining`, and in "
+            "`changes` list where what you built differs from the spec — "
+            "assumptions you made, features added or dropped (write 'none' if it "
+            "matches). The build "
             "session ends after this declaration, so if work is left, do not declare "
             "it — keep going.\n"
         )
@@ -129,7 +174,8 @@ def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str,
         "단일 언어 데모이니 i18n 계층을 만들지는 마.\n"
         "- 프로토타입이 완성되면 **`build_complete` 도구로 완료를 선언해줘.** "
         "무엇을 만들었는지 요약(summary)과, 남은 작업이나 알려진 한계가 있으면 "
-        "remaining에 적어줘. 이 선언 뒤 빌드 세션이 종료되니, 아직 작업이 "
+        "remaining에, 스펙과 다르게 만든 것(임의로 가정한 것, 더하거나 뺀 기능)을 "
+        "changes에 적어줘 — 스펙대로면 '없음'이라고 적어줘. 이 선언 뒤 빌드 세션이 종료되니, 아직 작업이 "
         "남았으면 선언하지 말고 계속 진행해줘.\n"
     )
 
@@ -185,6 +231,7 @@ def resume_prompt(language: str, *, request: str | None = None) -> str:
 
 def missing_output_prompt(language: str, *, spec_key: str,
                          instructions_key: str | None = None,
+                         history_key: str | None = None,
                          request: str | None = None) -> str:
     """산출물이 사라진 뒤의 개시 턴 — 찾지 말고 다시 만들라고 말한다.
 
@@ -200,14 +247,17 @@ def missing_output_prompt(language: str, *, spec_key: str,
     """
     return _with_request(
         _missing_output_prompt_base(language, spec_key=spec_key,
-                                    instructions_key=instructions_key),
+                                    instructions_key=instructions_key,
+                                    history_key=history_key),
         language, request)
 
 
 def _missing_output_prompt_base(language: str, *, spec_key: str,
-                                instructions_key: str | None) -> str:
+                                instructions_key: str | None,
+                                history_key: str | None = None) -> str:
     src = _sources(language, spec_key, instructions_key)
-    note = _instructions_note(language, instructions_key)
+    note = (_instructions_note(language, instructions_key)
+            + _history_note(language, history_key))
     if _lang(language) == "en":
         return (
             "The record of the previous build session is still here, but "
@@ -257,6 +307,7 @@ def _with_request(text: str, language: str, request: str | None) -> str:
 
 def handoff_prompt(language: str, *, spec_key: str, summary: str,
                    remaining: str, instructions_key: str | None = None,
+                   history_key: str | None = None,
                    request: str | None = None) -> str:
     """완료된 빌드를 개선하는 새 세션의 개시 턴.
 
@@ -275,7 +326,8 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
     빠지면 에이전트가 이전 빌드가 무엇을 남겼는지 모르는 채로 시작한다.
     """
     src = _sources(language, spec_key, instructions_key)
-    note = _instructions_note(language, instructions_key)
+    note = (_instructions_note(language, instructions_key)
+            + _history_note(language, history_key))
     if request:
         if _lang(language) == "en":
             return (
@@ -340,10 +392,16 @@ def build_complete_description(language: str) -> str:
                 "**after you have produced real output under `prototype/`** — an "
                 "empty directory means the declaration is rejected. The build "
                 "session ends after this declaration, so do not call it while work "
-                "remains.")
+                "remains. `changes` is required: what this session changed in "
+                "features, flows or the data model relative to the spec and the "
+                "earlier change history (for a first build: where you deviated "
+                "from the spec). Write 'none' if nothing changed.")
     return ("프로토타입 빌드가 완료되었음을 선언한다. **prototype/ 아래에 실제 "
             "산출물을 만든 뒤** 호출해야 한다 — 비어 있으면 선언이 거부된다. "
-            "이 선언 뒤 빌드 세션이 종료되므로, 아직 작업이 남았으면 호출하지 마라.")
+            "이 선언 뒤 빌드 세션이 종료되므로, 아직 작업이 남았으면 호출하지 마라. "
+            "`changes`는 필수다: 이번 세션이 명세와 이전 수정 이력 대비 바꾼 "
+            "기능·흐름·데이터 모델(첫 빌드라면 명세와 다르게 만든 것)을 적는다. "
+            "바뀐 것이 없으면 '없음'이라고 적는다.")
 
 
 def build_complete_rejection(language: str) -> str:
@@ -354,6 +412,18 @@ def build_complete_rejection(language: str) -> str:
                 "completion again.")
     return ("거부됨 — 작업 디렉토리의 `prototype/` 아래에 산출물이 없다. "
             "완성물을 `prototype/`에 쓴 뒤 다시 선언해라.")
+
+
+def build_complete_changes_missing(language: str) -> str:
+    """`changes` 없이 완료를 선언했을 때의 거부 메시지."""
+    if _lang(language) == "en":
+        return ("Rejected — `changes` is empty. List what this session changed in "
+                "features, flows or the data model relative to the spec and the "
+                "change history (or where a first build deviated from the spec); "
+                "write 'none' if nothing changed. Then declare completion again.")
+    return ("거부됨 — `changes`가 비어 있다. 이번 세션이 명세와 수정 이력 대비 바꾼 "
+            "기능·흐름·데이터 모델(첫 빌드라면 명세와 다르게 만든 것)을 적어라. "
+            "바뀐 것이 없으면 '없음'이라고 적은 뒤 다시 선언해라.")
 
 
 def build_complete_recorded(language: str) -> str:
