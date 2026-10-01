@@ -143,3 +143,18 @@ BUILD_INSTRUCTIONS = "build-instructions.md"
 def build_instructions_key(prototype_id: str) -> str:
     """id → 빌드 지시서 경로. 명세와 같은 디렉터리다."""
     return f"{artifact_dir(prototype_id)}/{BUILD_INSTRUCTIONS}"
+
+
+#: 수정 이력 파일 이름. 웹이 소유하는 산출물이다 — 상류 룰에는 없다. 빌드 세션이
+#: `build_complete`로 남긴 "명세 대비 바뀐 것"이 누적된다(proto/session).
+CHANGE_HISTORY = "change-history.md"
+
+
+def change_history_key(prototype_id: str) -> str:
+    """id → 빌드 디렉터리 안의 수정 이력 사본 경로. 명세와 같은 디렉터리다.
+
+    S3 정본은 `prototypes/{slug}/change-history.md`(proto/session.change_history_s3_key)
+    이고 이 경로는 에이전트가 자기 파일 도구로 읽는 cwd 사본이다 — 빌드 지시서와
+    같은 방식으로 매 start마다 심는다.
+    """
+    return f"{artifact_dir(prototype_id)}/{CHANGE_HISTORY}"
