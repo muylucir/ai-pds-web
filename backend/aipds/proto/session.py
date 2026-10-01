@@ -133,12 +133,6 @@ def handoff_key(slug: str) -> str:
     return f"prototypes/{slug}/handoff.json"
 
 
-def change_history_s3_key(slug: str) -> str:
-    """이 프로토타입의 수정 이력 정본. `prototypes/{slug}/` 아래라 리셋이 함께 지운다
-    -- 빌드가 사라졌는데 "명세 이후 바뀐 것"만 남으면 다음 빌드가 없는 변경을 전제한다."""
-    return f"prototypes/{slug}/{layout.CHANGE_HISTORY}"
-
-
 class PrototypeSession:
     """One prototype's build session: owns the durable session id, the build
     directory, the turn relay, the questions interrupt id, and the idle timer.
@@ -348,7 +342,7 @@ class PrototypeSession:
         동시에 하나뿐이라(상위 세마포어·세션 맵) 경합이 없다.
         """
         try:
-            existing = await self._s3.get(change_history_s3_key(self.slug))
+            existing = await self._s3.get(layout.change_history_key(self.slug))
         except FileNotFoundError:
             existing = prompts.change_history_header(self._language)
         entry = prompts.change_history_entry(
@@ -357,7 +351,7 @@ class PrototypeSession:
             gen=gen,
             summary=completion["summary"],
             changes=completion.get("changes") or "")
-        await self._s3.put(change_history_s3_key(self.slug), existing + entry)
+        await self._s3.put(layout.change_history_key(self.slug), existing + entry)
 
     async def _write_handoff(self, completion: dict) -> None:
         """다음 세션이 읽을 핸드오프. 개선 작업이 전체 트랜스크립트를 지고
@@ -418,7 +412,7 @@ class PrototypeSession:
         history_key = layout.change_history_key(self.slug)
         history_path = build_dir / history_key
         try:
-            history_md = await self._s3.get(change_history_s3_key(self.slug))
+            history_md = await self._s3.get(layout.change_history_key(self.slug))
         except FileNotFoundError:
             history_path.unlink(missing_ok=True)
             self._history_key = None
@@ -773,5 +767,12 @@ async def purge_session_state(s3, slug: str) -> None:
     Callers MUST run SurveyStore.purge() BEFORE this: the survey tree lives
     under this same prefix, and reclaiming its token indexes requires reading
     the questionnaires that this call would delete.
+
+    The change history is the one exception to that scope: it lives next to the
+    spec (layout.change_history_key) so Discovery can read it, and it describes
+    the build this reset throws away -- a history of changes to a build that no
+    longer exists would have the next build assume them. Exact key, for the same
+    reason as SurveyStore.purge: the directory also holds the spec.
     """
     await s3.delete_prefix(f"prototypes/{slug}/")
+    await s3.delete_prefix(layout.change_history_key(slug))

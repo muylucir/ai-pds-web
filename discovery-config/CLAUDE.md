@@ -52,6 +52,17 @@ Discovery writes specifications; the Prototypes tab builds and runs them.
 - **The model and credentials are already provisioned. Never ask for them.** Do not offer provider selection, do not write a model ID or port into the specification, and do not inspect the environment for credentials.
 - **The hosted runtime is Node.** Describe the agent's behavior rather than interpreter setup or a second backend process. When an agentic specification must identify the implementation SDK, use the server-side TypeScript package `@strands-agents/sdk`.
 
+## Spec reconciliation before the Living Document
+
+The approved spec is fixed at its gate, but the Prototypes tab keeps changing the prototype afterwards. Each build session appends what it changed to `change-history.md` next to the spec (Path A.1: `aiplc-docs/discovery/prototype/`, Path B: `aiplc-docs/discovery/prototypes/{slug}/`). Nobody downstream reads that file, so without this step the spec a developer receives describes a prototype that no longer exists.
+
+- **When:** the Build Decision is Proceed, before Step 8 (Write to Living Document). Do this only if `change-history.md` exists; if it does not, the spec was never changed after approval and nothing is reconciled.
+- **Write `spec-as-built.md` in the same directory.** Start from the approved spec and apply `change-history.md` on top of it, oldest entry first. Do not edit the approved spec itself; it stays as the record of what was approved. Where the two disagree, the history wins.
+- **Classify every feature, flow and data-model item** as unchanged, changed, dropped or added, and say which history entry (date and gen) made the change.
+- **Mark what validation covered.** Compare the validation window in `validation-results.md` with the dates of the history entries. A feature changed after the window was not validated in its final form; say so instead of counting it as validated. Mark anything that exists only to make the prototype run (mock data, stubbed integrations) as prototype-only so it does not pass as a product requirement.
+- **Do not read or guess from source code.** You cannot see it and must not try; the history is the evidence. If an entry is too vague to classify an item, list it under open questions rather than inventing the detail.
+- **Gate.** Explain what changed, then present it through a question file (approve / revise) and wait. Step 8 and Product Strategy treat `spec-as-built.md` as the spec of record once it is approved.
+
 ## Depth of what you write
 
 <!-- depth-bar-items: derive, prose, unknowns, brackets, defaults -->

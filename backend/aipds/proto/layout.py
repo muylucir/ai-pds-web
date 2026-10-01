@@ -151,10 +151,12 @@ CHANGE_HISTORY = "change-history.md"
 
 
 def change_history_key(prototype_id: str) -> str:
-    """id → 빌드 디렉터리 안의 수정 이력 사본 경로. 명세와 같은 디렉터리다.
+    """id → 수정 이력 경로. 명세와 같은 디렉터리다.
 
-    S3 정본은 `prototypes/{slug}/change-history.md`(proto/session.change_history_s3_key)
-    이고 이 경로는 에이전트가 자기 파일 도구로 읽는 cwd 사본이다 — 빌드 지시서와
-    같은 방식으로 매 start마다 심는다.
+    S3 정본이자 빌드 디렉터리의 사본 경로가 같은 문자열이다(지시서와 같다). 정본을
+    `aiplc-docs/` 아래에 두는 이유: Discovery 워크스페이스가 이 트리를 복원하므로,
+    Proceed 직전의 명세 정합성 패스(discovery-config/CLAUDE.md)가 코드를 보지 않고도
+    이 이력을 읽는다. 설문 결과(`validation-results.md`)가 product-strategy에 닿는
+    것과 같은 경로다. 리셋은 정확한 키를 지운다(proto/session.purge_session_state).
     """
     return f"{artifact_dir(prototype_id)}/{CHANGE_HISTORY}"
