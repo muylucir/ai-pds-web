@@ -22,8 +22,8 @@ SESSION_KEY = f"prototypes/{SLUG}/session.json"
 HANDOFF_KEY = f"prototypes/{SLUG}/handoff.json"
 
 
-HISTORY_KEY = f"prototypes/{SLUG}/change-history.md"
-HISTORY_LOCAL = f"aiplc-docs/discovery/prototypes/{SLUG}/change-history.md"
+HISTORY_KEY = f"aiplc-docs/discovery/prototypes/{SLUG}/change-history.md"
+HISTORY_LOCAL = HISTORY_KEY
 
 
 def _complete_event(summary="할 일 앱", remaining="다크 모드", changes="없음"):
@@ -1499,3 +1499,18 @@ async def test_without_a_history_the_prompt_mentions_none(tmp_path):
 
     assert "change-history" not in session.first_prompt()
     assert not (session.build_dir() / HISTORY_LOCAL).exists()
+
+
+async def test_reset_removes_the_change_history_but_not_the_spec(tmp_path):
+    """이력은 명세 옆에 산다 -- 리셋이 디렉터리를 프리픽스로 지우면 카드가 사라진다."""
+    from aipds.proto.session import purge_session_state
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[HISTORY_KEY] = "# 수정 이력\n"
+    s3.blobs[HANDOFF_KEY] = "{}"
+
+    await purge_session_state(s3, SLUG)
+
+    assert HISTORY_KEY not in s3.blobs
+    assert HANDOFF_KEY not in s3.blobs
+    assert SPEC_KEY in s3.blobs
