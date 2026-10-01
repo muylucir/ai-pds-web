@@ -1057,19 +1057,64 @@ async def test_a_handoff_starts_a_fresh_session_id(tmp_path):
     assert saved != old_id                            # 새 id로 갈아탔다
 
 
-async def test_a_handoff_is_deleted_after_it_is_consumed(tmp_path):
+async def test_a_handoff_survives_start_and_is_deleted_once_the_first_turn_runs(tmp_path):
     """한 번 쓴 handoff가 남으면 다음 시작도 개선 프롬프트를 받아, 세션 B의
-    대화를 이어받지 못한다."""
+    대화를 이어받지 못한다. 그러나 start()에서 지우면 안 된다 -- 턴이 돌기 전에 세션이
+    닫히면 저장된 새 id는 트랜스크립트가 없고 handoff도 없어, 다음 시작이 없는 대화를
+    --resume한다(실측: "No conversation found", 영구)."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps({"summary": "할 일 앱", "remaining": ""})
+    builder = FakeBuilder()
+
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+    assert HANDOFF_KEY in s3.blobs           # 아직 턴이 돌지 않았다
+
+    builder.script([AgentEvent(kind="message", payload="hi"),
+                    AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    assert HANDOFF_KEY not in s3.blobs
+
+
+async def test_a_session_closed_before_its_first_turn_leaves_the_next_start_a_handoff(tmp_path):
+    """위 실패의 재현: start() -> (턴 없이) close() -> start(). 두 번째 시작이 resume이
+    아니라 다시 handoff여야 한다."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
         {"session_id": "99999999-8888-7777-6666-555555555555"})
     s3.blobs[HANDOFF_KEY] = json.dumps({"summary": "할 일 앱", "remaining": ""})
 
-    session = _session(s3, tmp_path, FakeBuilder())
+    first = _session(s3, tmp_path, FakeBuilder())
+    await first.start()
+    await first.close()
+
+    second = _session(s3, tmp_path, FakeBuilder())
+    await second.start()
+
+    assert second._prompt_kind == "handoff"
+    assert second._test_resume_calls == [False]
+
+
+async def test_an_error_as_the_first_event_does_not_consume_the_handoff(tmp_path):
+    """연결조차 못 한 턴은 새 id의 트랜스크립트를 만들지 못했다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps({"summary": "할 일 앱", "remaining": ""})
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
     await session.start()
 
-    assert HANDOFF_KEY not in s3.blobs
+    builder.script([AgentEvent(kind="error", payload="boom")])
+    [ev async for ev in session.send_message("go")]
+
+    assert HANDOFF_KEY in s3.blobs
 
 
 async def test_the_handoff_prompt_carries_the_summary(tmp_path):
