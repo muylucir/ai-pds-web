@@ -22,9 +22,14 @@ SESSION_KEY = f"prototypes/{SLUG}/session.json"
 HANDOFF_KEY = f"prototypes/{SLUG}/handoff.json"
 
 
-def _complete_event(summary="할 일 앱", remaining="다크 모드"):
+HISTORY_KEY = f"aiplc-docs/discovery/prototypes/{SLUG}/change-history.md"
+HISTORY_LOCAL = HISTORY_KEY
+
+
+def _complete_event(summary="할 일 앱", remaining="다크 모드", changes="없음"):
     return AgentEvent(kind="build_complete", payload=json.dumps(
-        {"summary": summary, "remaining": remaining}, ensure_ascii=False))
+        {"summary": summary, "remaining": remaining, "changes": changes},
+        ensure_ascii=False))
 
 
 class FakeBuilder:
@@ -1387,3 +1392,125 @@ async def test_close_lets_a_finishing_turn_end_on_its_own(tmp_path):
     await session.close()
     assert job.state == "done"
     assert all(e.text != "turn interrupted" for _, e in job.log.events_after(0))
+
+
+# ---- 수정 이력: 명세 이후의 변경이 세션을 건너 누적된다 ----
+
+async def test_build_complete_appends_to_the_change_history(tmp_path):
+    """handoff.json은 소비되면 사라지는 직전 한 번분이다. 이력은 지워지지 않고
+    쌓여야 N번째 개선 세션이 N-1번째의 변경을 안다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    builder.script([_complete_event(changes="로그인 화면 제외"),
+                    AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    history = s3.blobs[HISTORY_KEY]
+    assert history.startswith("# ")                 # 머리말이 한 번
+    assert "로그인 화면 제외" in history
+
+
+async def test_the_change_history_accumulates_across_sessions(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    for changes in ("A 기능 제거", "B 기능 추가"):
+        builder = FakeBuilder()
+        session = _session(s3, tmp_path, builder)
+        await session.start()
+        builder.script([_complete_event(changes=changes), AgentEvent(kind="done")])
+        [ev async for ev in session.send_message("go")]
+
+    history = s3.blobs[HISTORY_KEY]
+    assert history.index("A 기능 제거") < history.index("B 기능 추가")
+    assert history.count("# 수정 이력") == 1
+
+
+async def test_a_change_history_write_failure_does_not_fail_the_session(tmp_path):
+    """handoff와 같은 규율 -- 이력 쓰기 실패가 완성된 빌드를 실패로 보이게 하지 않는다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    builder = FakeBuilder()
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    real_put = s3.put
+
+    async def put(key, *a, **kw):
+        if key == HISTORY_KEY:
+            raise RuntimeError("s3 down")
+        return await real_put(key, *a, **kw)
+
+    s3.put = put
+    builder.script([_complete_event(), AgentEvent(kind="done")])
+    [ev async for ev in session.send_message("go")]
+
+    assert session.status == "complete"
+
+
+async def test_start_plants_the_history_and_the_prompt_says_it_wins(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps({"summary": "요약", "remaining": "없음"})
+    s3.blobs[HISTORY_KEY] = "# 수정 이력\n\n## x\n\n**변경**\nA 기능 제거\n"
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    _build_output(session)
+    prompt = session.first_prompt()
+
+    assert (session.build_dir() / HISTORY_LOCAL).read_text(
+        encoding="utf-8").endswith("A 기능 제거\n")
+    assert HISTORY_LOCAL in prompt
+    assert "이겨" in prompt
+
+
+async def test_rebuild_from_scratch_also_points_at_the_history(tmp_path):
+    """산출물이 사라진 재빌드는 명세만으로는 이전 변경을 되살리지 못한다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps({"summary": "요약", "remaining": "없음"})
+    s3.blobs[HISTORY_KEY] = "# 수정 이력\n"
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    prompt = session.first_prompt()        # 로컬 산출물 없음
+
+    assert HISTORY_LOCAL in prompt
+
+
+async def test_without_a_history_the_prompt_mentions_none(tmp_path):
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps({"summary": "요약", "remaining": "없음"})
+
+    session = _session(s3, tmp_path, FakeBuilder())
+    await session.start()
+    _build_output(session)
+
+    assert "change-history" not in session.first_prompt()
+    assert not (session.build_dir() / HISTORY_LOCAL).exists()
+
+
+async def test_reset_removes_the_change_history_but_not_the_spec(tmp_path):
+    """이력은 명세 옆에 산다 -- 리셋이 디렉터리를 프리픽스로 지우면 카드가 사라진다."""
+    from aipds.proto.session import purge_session_state
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[HISTORY_KEY] = "# 수정 이력\n"
+    s3.blobs[HANDOFF_KEY] = "{}"
+
+    await purge_session_state(s3, SLUG)
+
+    assert HISTORY_KEY not in s3.blobs
+    assert HANDOFF_KEY not in s3.blobs
+    assert SPEC_KEY in s3.blobs

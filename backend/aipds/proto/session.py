@@ -106,8 +106,10 @@ def _completion_from(payload: str | None) -> dict | None:
     if not isinstance(summary, str) or not summary:
         return None
     remaining = data.get("remaining")
+    changes = data.get("changes")
     return {"summary": summary,
-            "remaining": remaining if isinstance(remaining, str) else ""}
+            "remaining": remaining if isinstance(remaining, str) else "",
+            "changes": changes if isinstance(changes, str) else ""}
 
 
 def _is_uuid(value: object) -> bool:
@@ -178,6 +180,8 @@ class PrototypeSession:
         # 이번 start()가 cwd에 심은 빌드 지시서의 키. None이면 없다(Path B, 또는
         # Discovery가 아직 Step 3에 닿지 않았다). 개시 프롬프트가 이것을 가리킨다.
         self._instructions_key: str | None = None
+        # 이번 start()가 cwd에 심은 수정 이력의 키. None이면 없다(첫 빌드, 또는 리셋 뒤).
+        self._history_key: str | None = None
         self._pending_interrupt_id: str | None = None
         # 완료 선언의 내용({"summary","remaining"}) 또는 None. 두 가지를
         # 동시에 뜻한다: (1) 이 세션은 할 일을 마쳤다, (2) 유휴 타이머는
@@ -315,14 +319,39 @@ class PrototypeSession:
     def _on_idle_timeout(self) -> None:
         asyncio.create_task(self.close())
 
-    async def _snapshot_quietly(self, reason: str) -> None:
+    async def _snapshot_quietly(self, reason: str) -> int | None:
         """빌드 소스를 S3 세대로 올린다(proto/store.py). 실패해도 빌드를 막지 않는다 —
-        로컬 트리는 그대로 있고, 다음 스냅샷 시점(호스팅, 종료)이 다시 시도한다."""
+        로컬 트리는 그대로 있고, 다음 스냅샷 시점(호스팅, 종료)이 다시 시도한다.
+        올라간 세대 번호를 돌려준다(실패하면 None)."""
         try:
-            await self._store.snapshot(self.slug, self.build_dir(), reason)
+            return await self._store.snapshot(self.slug, self.build_dir(), reason)
         except Exception:
             _log.exception("prototype source snapshot failed: %s/%s (%s)",
                            self.project_id, self.slug, reason)
+            return None
+
+    async def _append_change_history(self, completion: dict,
+                                     gen: int | None) -> None:
+        """완료 선언의 `changes`를 수정 이력에 쌓는다.
+
+        handoff.json과 달리 **소비 후에도 지우지 않는다** -- handoff는 직전 빌드 한 번분
+        요약이고 다음 세션이 읽으면 사라지지만, 이 파일은 명세 이후의 모든 변경이라
+        N번째 개선 세션이 N-1번째의 변경을 알 수 있는 유일한 근거다.
+
+        S3에는 추가 쓰기가 없어서 읽고-이어붙이고-쓴다. 한 프로토타입의 빌드 세션은
+        동시에 하나뿐이라(상위 세마포어·세션 맵) 경합이 없다.
+        """
+        try:
+            existing = await self._s3.get(layout.change_history_key(self.slug))
+        except FileNotFoundError:
+            existing = prompts.change_history_header(self._language)
+        entry = prompts.change_history_entry(
+            self._language,
+            at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            gen=gen,
+            summary=completion["summary"],
+            changes=completion.get("changes") or "")
+        await self._s3.put(layout.change_history_key(self.slug), existing + entry)
 
     async def _write_handoff(self, completion: dict) -> None:
         """다음 세션이 읽을 핸드오프. 개선 작업이 전체 트랜스크립트를 지고
@@ -376,6 +405,20 @@ class PrototypeSession:
         else:
             instructions_path.write_text(instructions_md, encoding="utf-8")
             self._instructions_key = instructions_key
+
+        # 수정 이력도 명세 옆에 심는다. 명세는 승인 시점에 고정돼 있고 이후의 변경은
+        # 이 파일에만 있다 -- 개선 세션과 재빌드가 이것을 읽어야 명세가 이미 뺀 기능을
+        # 되살리지 않는다. 지시서와 같은 이유로 매 start마다 새로 쓰고, 없으면 지운다.
+        history_key = layout.change_history_key(self.slug)
+        history_path = build_dir / history_key
+        try:
+            history_md = await self._s3.get(layout.change_history_key(self.slug))
+        except FileNotFoundError:
+            history_path.unlink(missing_ok=True)
+            self._history_key = None
+        else:
+            history_path.write_text(history_md, encoding="utf-8")
+            self._history_key = history_key
 
         # 브랜드 프로필을 워크스페이스에 반영한다. spec과 같은 이유로 매
         # start마다 새로 쓴다 -- admin이 고친 값이 이 세션부터 반영된다.
@@ -467,7 +510,14 @@ class PrototypeSession:
                         except Exception:
                             _log.exception("handoff write failed: %s/%s",
                                            self.project_id, self.slug)
-                        await self._snapshot_quietly("build_complete")
+                        gen = await self._snapshot_quietly("build_complete")
+                        # handoff와 같은 규율 -- 이력 쓰기 실패가 완성된 빌드를
+                        # 실패로 보이게 해선 안 된다.
+                        try:
+                            await self._append_change_history(completion, gen)
+                        except Exception:
+                            _log.exception("change history write failed: %s/%s",
+                                           self.project_id, self.slug)
                         # 유예로 재무장한다. 인자를 넘기지 않는 것이 요점이다
                         # -- 지연은 _arm_idle_timer가 self._completion에서
                         # 파생하므로, 이 호출은 방금 세운 완료 상태를 읽어
@@ -669,7 +719,8 @@ class PrototypeSession:
         """
         return prompts.missing_output_prompt(
             self._language, spec_key=self._spec_key(),
-            instructions_key=self._instructions_key, request=request)
+            instructions_key=self._instructions_key,
+            history_key=self._history_key, request=request)
 
     def _handoff_prompt(self, handoff: dict, *,
                         request: str | None = None) -> str:
@@ -693,6 +744,7 @@ class PrototypeSession:
             self._language,
             spec_key=self._spec_key(),
             instructions_key=self._instructions_key,
+            history_key=self._history_key,
             request=request,
             summary=handoff["summary"],
             remaining=handoff.get("remaining")
@@ -715,5 +767,12 @@ async def purge_session_state(s3, slug: str) -> None:
     Callers MUST run SurveyStore.purge() BEFORE this: the survey tree lives
     under this same prefix, and reclaiming its token indexes requires reading
     the questionnaires that this call would delete.
+
+    The change history is the one exception to that scope: it lives next to the
+    spec (layout.change_history_key) so Discovery can read it, and it describes
+    the build this reset throws away -- a history of changes to a build that no
+    longer exists would have the next build assume them. Exact key, for the same
+    reason as SurveyStore.purge: the directory also holds the spec.
     """
     await s3.delete_prefix(f"prototypes/{slug}/")
+    await s3.delete_prefix(layout.change_history_key(slug))
