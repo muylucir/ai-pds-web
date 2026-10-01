@@ -177,6 +177,8 @@ class PrototypeSession:
         self._opened = False
         # handoff 분기일 때 프롬프트에 실을 내용({"summary","remaining"}).
         self._handoff: dict | None = None
+        # 읽은 handoff를 지웠는가. handoff 분기가 아니면 지울 것이 없으므로 True다.
+        self._handoff_consumed = True
         # 이번 start()가 cwd에 심은 빌드 지시서의 키. None이면 없다(Path B, 또는
         # Discovery가 아직 Step 3에 닿지 않았다). 개시 프롬프트가 이것을 가리킨다.
         self._instructions_key: str | None = None
@@ -259,23 +261,39 @@ class PrototypeSession:
         if handoff is None:
             return saved["session_id"], True, "resume"
 
-        # 개선 세션: 새 id로 갈아타고 handoff를 소비한다.
+        # 개선 세션: 새 id로 갈아타고, handoff는 **남겨 둔다.**
         #
-        # 순서가 중요하다 -- session.json 쓰기 먼저, handoff 삭제 나중.
-        # 그 사이에서 실패하면 handoff가 남아 다음 시작이 다시 이 분기를
-        # 타는데, session.json에는 이미 새(빈) id가 있으므로 개선
-        # 프롬프트로 새로 시작한다: 같은 결과다. 반대 순서는 handoff를
-        # 지운 뒤 id 쓰기가 실패하면 요약을 잃고 옛 세션을 전액 resume한다.
-        # 손실 있는 방향을 피한다.
+        # 여기서 지우면 안 된다. 새 id는 CLI가 첫 메시지를 받을 때에야 트랜스크립트로
+        # 실체가 생기는데, start()와 그 턴 사이에 세션이 닫히면(화면이 떠났다 돌아온
+        # 경우, 배포 직후 재접속) 저장된 id는 실체가 없고 handoff는 이미 사라진 상태가
+        # 된다. 다음 시작은 "저장 있음, handoff 없음" = resume 분기를 타서 없는 대화를
+        # --resume하고("No conversation found"), 그 상태는 수동 복구 전까지 영구적이다.
+        # 그래서 소비는 턴이 실제로 시작된 뒤에 한다(`_consume_handoff`). 그 전에 죽으면
+        # 다음 시작이 이 분기를 다시 타고 또 새 id를 쓸 뿐이다 -- 빈 id가 하나 더
+        # 생기는 것이 손실의 전부다.
         self._handoff = handoff
+        self._handoff_consumed = False
         new_id = str(uuid.uuid4())
         await self._s3.put(self._session_key(),
                            json.dumps({"session_id": new_id}))
-        # 단일 키 삭제에 delete_prefix를 쓴다 -- S3StoreLike에 단일 키
-        # delete가 없고, 이것이 확립된 관례다(agent/pending_store.py:69,
-        # survey/store.py:334).
-        await self._s3.delete_prefix(self._handoff_key())
         return new_id, False, "handoff"
+
+    async def _consume_handoff(self) -> None:
+        """개선 세션의 첫 턴이 시작됐으니 handoff를 지운다(`_resolve_session_id` 참조).
+
+        실패는 삼킨다. handoff가 남으면 다음 시작이 handoff 분기를 다시 탈 뿐이고,
+        그것은 트랜스크립트를 잃는 방향이지 세션을 막는 방향이 아니다. 완료 선언이 새
+        handoff를 쓴 뒤에는 호출되지 않는다 -- 첫 이벤트에서 소비하므로 더 이르다.
+
+        단일 키 삭제에 delete_prefix를 쓴다 -- S3StoreLike에 단일 키 delete가 없고,
+        이것이 확립된 관례다(agent/pending_store.py:69, survey/store.py:334).
+        """
+        self._handoff_consumed = True
+        try:
+            await self._s3.delete_prefix(self._handoff_key())
+        except Exception:
+            _log.exception("handoff consume failed: %s/%s",
+                           self.project_id, self.slug)
 
     async def _read_handoff(self) -> dict | None:
         """handoff.json -> {"summary","remaining"} 또는 None.
@@ -490,6 +508,10 @@ class PrototypeSession:
         self.status = "building"
         try:
             async for event in self._builder.run(text):
+                # 에이전트가 연결돼 턴이 돌기 시작했다 -- 새 id의 트랜스크립트가 이제
+                # 생긴다. 오류가 첫 이벤트면 연결조차 못 한 것이라 소비하지 않는다.
+                if not self._handoff_consumed and event.kind != "error":
+                    await self._consume_handoff()
                 if event.kind == "questions":
                     got = _interrupt_id_from(event.payload)
                     if got:
