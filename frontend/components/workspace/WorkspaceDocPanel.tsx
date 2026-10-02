@@ -2,7 +2,7 @@
 // frontend/components/workspace/WorkspaceDocPanel.tsx
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { listArtifacts, readArtifact, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { Markdown } from "@/components/Markdown";
@@ -19,7 +19,9 @@ import { useT } from "@/lib/i18n/provider";
 //
 // Hidden below `lg` — the same responsive posture as StageSidebar and
 // WorkspaceRightPanel; on narrow screens the review route is the fallback.
-export function WorkspaceDocPanel({
+// `memo`: 스트리밍 중 워크스페이스 페이지는 프레임마다 다시 그려지지만(채팅 말풍선이
+// 자란다) 이 패널의 props는 그동안 그대로다.
+export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   projectId,
   activeDoc,
   turnSeq,
@@ -186,4 +188,4 @@ export function WorkspaceDocPanel({
       )}
     </aside>
   );
-}
+});

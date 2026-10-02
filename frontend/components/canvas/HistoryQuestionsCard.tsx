@@ -10,12 +10,14 @@
 //
 // 라이브 폼이 **아니다**: 여기서 다시 답할 수는 없다. 그
 // 라운드는 이미 끝났고, 답변은 바로 아래 말풍선에 있다.
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { QuestionFile } from "@/lib/api/types";
 import { useT } from "@/lib/i18n/provider";
 import { InlineMarkdown } from "@/components/Markdown";
 
-export function HistoryQuestionsCard({
+// `memo`: 복원된 카드는 바뀌지 않는다 — 스트리밍 중 타임라인이 다시 그려질 때 보기마다
+// InlineMarkdown을 다시 파싱하지 않게 한다.
+export const HistoryQuestionsCard = memo(function HistoryQuestionsCard({
   name,
   file,
 }: {
@@ -70,4 +72,4 @@ export function HistoryQuestionsCard({
       )}
     </div>
   );
-}
+});

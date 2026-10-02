@@ -59,6 +59,10 @@ function drive(events: AgentEvent[]) {
   );
 }
 
+
+// 한 프레임을 흘린다 — 텍스트 델타가 그때 붙는다(lib/useTextDeltas.ts).
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
 describe("usePrototypeStream", () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -263,6 +267,29 @@ describe("usePrototypeStream", () => {
       trace: [{ kind: "status", text: "TodoWrite", path: null }],
     });
     expect(result.current.items[1]).toMatchObject({ streaming: false, trace: [] });
+  });
+
+  it("lands batched text on the bubble it was written to when a tool splits mid-frame", async () => {
+    // 텍스트 델타는 프레임마다 붙는다(useTextDeltas). 프레임이 오기 전에 도구가
+    // 말풍선을 가르면, 앞 텍스트는 앞 말풍선에, 뒤 텍스트는 새 말풍선에 붙어야
+    // 한다 — 턴이 아직 돌고 있어 종결 이벤트가 대신 비워 주지 않는 경우다.
+    vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
+      (_pid: any, _slug: any, _text: any, handlers: any) => {
+        handlers.onEvent({ kind: "message", text: "빌드를 ", path: null, payload: null });
+        handlers.onEvent({ kind: "message", text: "시작합니다", path: null, payload: null });
+        handlers.onEvent({ kind: "status", text: "TodoWrite", path: null, payload: null });
+        handlers.onEvent({ kind: "message", text: "Task #1", path: null, payload: null });
+        return () => {};
+      },
+    );
+    const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
+    act(() => result.current.startBuild());
+    await act(nextFrame);
+
+    expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
+      ["ai", "빌드를 시작합니다"],
+      ["ai", "Task #1"],
+    ]);
   });
 
   it("keeps consecutive text blocks with no tool between them in ONE bubble", () => {
@@ -750,6 +777,7 @@ describe("usePrototypeStream — resume", () => {
     );
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
+    await act(nextFrame);   // 도는 턴의 마지막 텍스트는 다음 프레임에 붙는다
 
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "계획을 세웠습니다"],
@@ -775,6 +803,7 @@ describe("usePrototypeStream — resume", () => {
     );
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
+    await act(nextFrame);   // 도는 턴의 마지막 텍스트는 다음 프레임에 붙는다
 
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "진행할까요?"],
@@ -827,6 +856,7 @@ describe("usePrototypeStream — resume", () => {
     );
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
+    await act(nextFrame);   // 도는 턴의 마지막 텍스트는 다음 프레임에 붙는다
 
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["user", "만들어줘"],
@@ -857,6 +887,7 @@ describe("usePrototypeStream — resume", () => {
     );
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
+    await act(nextFrame);   // 도는 턴의 마지막 텍스트는 다음 프레임에 붙는다
 
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([["ai", "만드는 중"]]);
     expect(result.current.streaming).toBe(true);
@@ -943,6 +974,7 @@ describe("usePrototypeStream — restoreHistory", () => {
                                  card: null, name: null, trace: [] }], turns: [] });
       await pending;
     });
+    await act(nextFrame);   // 도는 턴의 텍스트는 다음 프레임에 붙는다(useTextDeltas)
 
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "지난 빌드는 실패했습니다"],
