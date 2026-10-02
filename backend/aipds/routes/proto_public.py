@@ -43,10 +43,12 @@
 # 않는다는 전제는 계속 유효하다.
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
 import secrets
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -61,6 +63,51 @@ from aipds.proto.store import resolve_token as resolve_preview_token
 _log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 프록시 업스트림 클라이언트는 프로세스(이벤트 루프)당 하나다. 요청마다 만들면
+# 생성 비용(SSL 컨텍스트·CA 번들 로드, 실측 ~16ms)이 루프 위에서 동기로 들고
+# keep-alive도 없다 — 페이지 하나가 asset 수십 개를 부르므로 그 곱이 모든 SSE
+# 스트림을 함께 멈춘다.
+#
+# 공유하면서 지켜야 하는 것 둘:
+#   - **쿠키 잼을 끈다.** httpx 클라이언트는 응답의 Set-Cookie를 자기 잼에 담아
+#     이후 요청에 붙인다. 요청마다 새 클라이언트일 때는 무해했지만, 공유하면 한
+#     관람자에게 프로토타입이 심은 쿠키가 다음 관람자의 요청에 실린다. 브라우저의
+#     쿠키는 Cookie 헤더로 그대로 전달되므로 잼은 필요 없다.
+#   - **연결 수에 상한을 두지 않는다.** 스트리밍 응답(HMR·SSE)은 연결을 오래 쥔다.
+#     상한이 있으면 그것들이 풀을 채운 뒤 asset 요청이 줄을 선다 — 종전(요청마다
+#     클라이언트)에도 상한은 없었다.
+_proxy_client: httpx.AsyncClient | None = None
+_proxy_client_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _proxy_http() -> httpx.AsyncClient:
+    """현재 이벤트 루프의 공유 업스트림 클라이언트.
+
+    루프가 바뀌면 새로 만든다 — 연결 풀은 만든 루프에 묶여 있다. 운영에서는 루프가
+    하나라 한 번만 만들어지고, 루프를 매번 새로 띄우는 테스트(TestClient)에서도
+    죽은 루프의 연결을 재사용하지 않는다.
+    """
+    global _proxy_client, _proxy_client_loop
+    loop = asyncio.get_running_loop()
+    if _proxy_client is None or _proxy_client_loop is not loop:
+        _proxy_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(None, connect=5.0),
+            limits=httpx.Limits(max_connections=None,
+                                max_keepalive_connections=20),
+            cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])))
+        _proxy_client_loop = loop
+    return _proxy_client
+
+
+async def aclose_proxy_http() -> None:
+    """lifespan 종료에서 부른다 — 열린 keep-alive 연결을 닫는다."""
+    global _proxy_client, _proxy_client_loop
+    if _proxy_client is not None:
+        await _proxy_client.aclose()
+    _proxy_client = None
+    _proxy_client_loop = None
+
 
 # Hop-by-hop request headers never forwarded upstream; x-origin-verify and
 # x-preview-verify are the CloudFront->nginx shared secrets and must not leak into
@@ -393,7 +440,7 @@ async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
     # alone would fix only /_next/ URLs, leaving public/ files and
     # client-router hrefs pointing at the root.)
     url = f"http://127.0.0.1:{info.port}{public_base_path(pid, slug)}/{path}"
-    client = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=5.0))
+    client = _proxy_http()
     headers = {k: v for k, v in request.headers.items()
                if k.lower() not in _STRIP_REQUEST_HEADERS}
     req = client.build_request(request.method, url,
@@ -403,14 +450,9 @@ async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
     try:
         upstream = await client.send(req, stream=True)
     except httpx.HTTPError:
-        await client.aclose()
         _log.debug("proto proxy 502: upstream not responding (%s/%s)", pid, slug)
         return PlainTextResponse(
             "prototype not responding — check hosting logs", status_code=502)
-
-    async def _close() -> None:
-        await upstream.aclose()
-        await client.aclose()
 
     resp_headers = {k: v for k, v in upstream.headers.items()
                     if k.lower() not in _STRIP_RESPONSE_HEADERS}
@@ -423,4 +465,4 @@ async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
     return StreamingResponse(upstream.aiter_raw(),
                              status_code=upstream.status_code,
                              headers=resp_headers,
-                             background=BackgroundTask(_close))
+                             background=BackgroundTask(upstream.aclose))

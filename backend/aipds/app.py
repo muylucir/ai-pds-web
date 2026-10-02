@@ -1,6 +1,7 @@
 # backend/aipds/app.py
 from __future__ import annotations
 import asyncio
+import functools
 import logging
 import os
 import shutil
@@ -8,6 +9,7 @@ import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 import boto3
+from botocore.config import Config as BotoConfig
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
@@ -79,13 +81,31 @@ registry = ProjectRegistry()
 
 
 
+@functools.lru_cache(maxsize=None)
+def s3_client(region: str):
+    """리전별 S3 클라이언트 하나를 프로세스 전체가 같이 쓴다.
+
+    아래 팩토리들은 요청마다 불린다(`GET /projects` 한 번에 열 번). 거기서 매번
+    `boto3.client`를 만들면 생성 비용보다 커넥션 풀이 문제다 — 풀이 클라이언트에
+    딸려 있어서, 요청마다 S3와 TCP·TLS를 새로 맺는다. boto3 클라이언트는 스레드
+    세이프하고 인스턴스 역할 자격증명도 스스로 갱신하므로 공유해도 잃는 것이 없다.
+
+    풀 크기는 `to_thread` 기본 풀(코어+4)과 동시 gather보다 넉넉하게 잡는다 —
+    기본값 10이면 병렬 GET이 풀 대기열에서 다시 직렬이 된다.
+
+    팩토리 함수들은 그대로 남긴다: 테스트가 갈아끼우는 지점이 그 함수들이다.
+    """
+    return boto3.client("s3", region_name=region,
+                        config=BotoConfig(max_pool_connections=50))
+
+
 # Monkeypatchable in tests to inject a FakeS3Store (no AWS). Durable store keeps
 # the project's aiplc-docs/prototype/uploads subtree (S3 = source of truth); the
 # in-process AgentRunner restores it to a local workspace at the start of a turn.
 def s3_store_factory(project_id: str) -> S3StoreLike:
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("AIPDS_S3_BUCKET", "")
-    client = boto3.client("s3", region_name=region)
+    client = s3_client(region)
     return S3Store(bucket=bucket, prefix=f"projects/{project_id}/", client=client)
 
 
@@ -94,7 +114,7 @@ def s3_store_factory(project_id: str) -> S3StoreLike:
 def session_s3_factory() -> S3StoreLike:
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("AIPDS_S3_BUCKET", "")
-    client = boto3.client("s3", region_name=region)
+    client = s3_client(region)
     return S3Store(bucket=bucket, prefix="sessions/", client=client)
 
 
@@ -102,7 +122,7 @@ def session_s3_factory() -> S3StoreLike:
 def projects_root_s3_factory() -> S3StoreLike:
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("AIPDS_S3_BUCKET", "")
-    client = boto3.client("s3", region_name=region)
+    client = s3_client(region)
     return S3Store(bucket=bucket, prefix="projects/", client=client)
 
 
@@ -112,7 +132,7 @@ def projects_root_s3_factory() -> S3StoreLike:
 def models_root_s3_factory() -> S3StoreLike:
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("AIPDS_S3_BUCKET", "")
-    client = boto3.client("s3", region_name=region)
+    client = s3_client(region)
     return S3Store(bucket=bucket, prefix="", client=client)
 
 
@@ -121,7 +141,7 @@ def models_root_s3_factory() -> S3StoreLike:
 def design_root_s3_factory() -> S3StoreLike:
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("AIPDS_S3_BUCKET", "")
-    client = boto3.client("s3", region_name=region)
+    client = s3_client(region)
     return S3Store(bucket=bucket, prefix="", client=client)
 
 
@@ -272,7 +292,7 @@ def import_staging():
             "S3 so the browser can upload it directly")
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     return ImportStaging(bucket=bucket,
-                         client=boto3.client("s3", region_name=region))
+                         client=s3_client(region))
 
 
 def durable_projects_enabled() -> bool:
@@ -473,7 +493,7 @@ def surveys_root_s3_factory() -> S3StoreLike:
     which project a token belongs to."""
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     bucket = os.environ.get("AIPDS_S3_BUCKET", "")
-    client = boto3.client("s3", region_name=region)
+    client = s3_client(region)
     return S3Store(bucket=bucket, prefix="", client=client)
 
 
@@ -648,6 +668,8 @@ async def _lifespan(_app: FastAPI):
         rehost_task.cancel()
     if broker is not None:
         await broker.close()
+    from aipds.routes.proto_public import aclose_proxy_http
+    await aclose_proxy_http()
 
 
 def _docs_openapi_url() -> str | None:
