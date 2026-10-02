@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+from collections import OrderedDict
 from typing import Protocol
 
 from botocore.exceptions import ClientError
@@ -18,6 +19,44 @@ class S3StoreLike(Protocol):
     # images and fonts (U+FFFD) -- fine for markdown, wrong for a bundle.
     async def get_bytes(self, key: str) -> bytes: ...
     async def put_bytes(self, key: str, content: bytes) -> None: ...
+
+
+class _BodyCache:
+    """(버킷, 전체 키, ETag) → 본문. 바이트 예산을 넘으면 오래 안 쓴 것부터 버린다.
+
+    ETag는 객체 내용의 식별자다 — 같은 키에 다시 쓰면 ETag가 바뀌므로, 이 키로
+    찾은 본문은 덮어쓰기·삭제·임포트 뒤에도 틀릴 수 없다(틀린 것은 그냥 안 맞는다).
+    그래서 무효화가 필요 없다.
+
+    이벤트 루프 스레드에서만 만진다 — `get_cached`가 스레드 밖에서 읽고 쓴다.
+    """
+
+    def __init__(self, max_bytes: int) -> None:
+        self._max = max_bytes
+        self._size = 0
+        self._items: OrderedDict[tuple[str, str, str], str] = OrderedDict()
+
+    def get(self, key: tuple[str, str, str]) -> str | None:
+        body = self._items.get(key)
+        if body is not None:
+            self._items.move_to_end(key)
+        return body
+
+    def put(self, key: tuple[str, str, str], body: str) -> None:
+        cost = len(body)
+        if cost > self._max or key in self._items:
+            return
+        self._items[key] = body
+        self._size += cost
+        while self._size > self._max:
+            _, dropped = self._items.popitem(last=False)
+            self._size -= len(dropped)
+
+
+#: 히스토리 복원이 여는 트랜스크립트 배치·답변 레코드용. 워크스페이스를 열 때마다
+#: 수백 개를 다시 GET하던 것을, 바뀐 것(=ETag가 다른 것)만 받게 한다. 예산은 문자
+#: 수 기준이고, 넘치면 오래 안 열린 프로젝트부터 다시 받게 될 뿐이다.
+_body_cache = _BodyCache(64 * 1024 * 1024)
 
 
 class S3Store:
@@ -47,6 +86,31 @@ class S3Store:
             return resp["Body"].read().decode("utf-8")
 
         return await asyncio.to_thread(_get)
+
+    async def get_cached(self, key: str, etag: str) -> str:
+        """`get`과 같되, 목록이 알려 준 ETag의 본문을 이미 받았으면 S3에 가지 않는다.
+
+        받은 본문은 **GET 응답의 ETag**로 담는다 — 목록과 GET 사이에 객체가 바뀌었으면
+        목록의 ETag는 이미 낡았고, 그 이름으로 새 본문을 담으면 캐시가 거짓말을 한다.
+        """
+        full = self._full_key(key)
+        hit = _body_cache.get((self._bucket, full, etag))
+        if hit is not None:
+            return hit
+
+        def _get() -> tuple[str, str]:
+            try:
+                resp = self._client.get_object(Bucket=self._bucket, Key=full)
+            except ClientError as e:
+                if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+                    raise FileNotFoundError(key) from e
+                raise
+            return resp["Body"].read().decode("utf-8"), resp.get("ETag", "")
+
+        body, actual = await asyncio.to_thread(_get)
+        if actual:
+            _body_cache.put((self._bucket, full, actual), body)
+        return body
 
     async def put(self, key: str, content: str) -> str | None:
         def _put() -> str | None:
@@ -155,3 +219,23 @@ class S3Store:
             return len(keys)
 
         return await asyncio.to_thread(_delete)
+
+
+# ---- 프로토콜의 선택 기능을 쓰는 헬퍼 ----
+#
+# 테스트와 작은 어댑터는 `list`/`get`만 구현하기도 한다(`AgentRunner._list_with_etags`
+# 가 같은 이유로 같은 폴백을 둔다). ETag가 없으면 매번 GET한다 — 느릴 뿐 틀리지 않는다.
+
+async def list_with_etags(store: S3StoreLike,
+                          prefix: str) -> list[tuple[str, str | None]]:
+    listing = getattr(store, "list_with_etags", None)
+    if listing is not None:
+        return await listing(prefix)
+    return [(key, None) for key in await store.list(prefix)]
+
+
+async def get_by_etag(store: S3StoreLike, key: str, etag: str | None) -> str:
+    cached = getattr(store, "get_cached", None)
+    if cached is None or not etag:
+        return await store.get(key)
+    return await cached(key, etag)

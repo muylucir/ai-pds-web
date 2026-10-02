@@ -148,3 +148,86 @@ async def test_s3store_list_with_etags_still_works_after_the_split_moto():
 
         assert first["aiplc-docs/audit.md"], "ETag가 비었다"
         assert first["aiplc-docs/audit.md"] != second["aiplc-docs/audit.md"]
+
+
+# ---- get_cached: ETag로 찾은 본문은 다시 받지 않는다 ----
+
+class _CountingClient:
+    """boto3 클라이언트를 감싸 get_object 호출만 센다."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.gets = 0
+
+    def get_object(self, **kw):
+        self.gets += 1
+        return self._inner.get_object(**kw)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _moto_store():
+    client = boto3.client("s3", region_name="ap-northeast-2")
+    client.create_bucket(
+        Bucket="cache-bucket",
+        CreateBucketConfiguration={"LocationConstraint": "ap-northeast-2"},
+    )
+    counting = _CountingClient(client)
+    return S3Store(bucket="cache-bucket", prefix="sessions/", client=counting), counting
+
+
+async def test_get_cached_skips_s3_for_a_known_etag_moto():
+    with mock_aws():
+        store, counting = _moto_store()
+        await store.put("t/main/0001.jsonl", '{"a": 1}')
+        [(key, etag)] = await store.list_with_etags("t/main/")
+
+        assert await store.get_cached(key, etag) == '{"a": 1}'
+        assert await store.get_cached(key, etag) == '{"a": 1}'
+        assert counting.gets == 1
+
+
+async def test_get_cached_never_serves_an_overwritten_body_moto():
+    """같은 키에 다시 쓰면 ETag가 바뀐다 — 옛 본문은 새 ETag로 찾히지 않는다.
+    프로젝트 삭제 뒤 같은 id로 임포트하는 경우가 이 모양이다."""
+    with mock_aws():
+        store, counting = _moto_store()
+        await store.put("t/main/0001.jsonl", "old")
+        [(key, old_etag)] = await store.list_with_etags("t/main/")
+        assert await store.get_cached(key, old_etag) == "old"
+
+        await store.put("t/main/0001.jsonl", "new")
+        [(_, new_etag)] = await store.list_with_etags("t/main/")
+        assert new_etag != old_etag
+        assert await store.get_cached(key, new_etag) == "new"
+        assert counting.gets == 2
+
+
+async def test_get_cached_files_the_body_under_the_etag_s3_returned_moto():
+    """목록과 GET 사이에 객체가 바뀌면 목록의 ETag는 낡았다. 새 본문을 낡은 ETag
+    이름으로 담으면, 그 ETag를 다시 묻는 호출이 틀린 본문을 받는다."""
+    with mock_aws():
+        store, counting = _moto_store()
+        await store.put("t/main/0001.jsonl", "v1")
+        [(key, stale)] = await store.list_with_etags("t/main/")
+        await store.put("t/main/0001.jsonl", "v2")      # races the reader
+
+        assert await store.get_cached(key, stale) == "v2"
+        # 낡은 ETag로 다시 물으면 캐시가 아니라 S3로 간다.
+        await store.get_cached(key, stale)
+        assert counting.gets == 2
+
+
+def test_body_cache_evicts_least_recently_used_over_budget():
+    from aipds.s3store import _BodyCache
+    cache = _BodyCache(max_bytes=10)
+    cache.put(("b", "k1", "e"), "aaaa")
+    cache.put(("b", "k2", "e"), "bbbb")
+    assert cache.get(("b", "k1", "e")) == "aaaa"     # k1이 최근으로
+    cache.put(("b", "k3", "e"), "cccc")              # 12 > 10 → k2가 나간다
+    assert cache.get(("b", "k2", "e")) is None
+    assert cache.get(("b", "k1", "e")) == "aaaa"
+    assert cache.get(("b", "k3", "e")) == "cccc"
+    cache.put(("b", "huge", "e"), "x" * 11)          # 예산보다 큰 것은 담지 않는다
+    assert cache.get(("b", "huge", "e")) is None
