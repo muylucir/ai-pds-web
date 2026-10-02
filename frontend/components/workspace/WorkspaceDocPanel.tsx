@@ -19,6 +19,19 @@ import { useT } from "@/lib/i18n/provider";
 //
 // Hidden below `lg` — the same responsive posture as StageSidebar and
 // WorkspaceRightPanel; on narrow screens the review route is the fallback.
+// 연달아 쓰인 파일을 목록 재조회 한 번으로 묶는 대기(ms).
+const CHANGE_SETTLE_MS = 400;
+
+// `value`가 `ms` 동안 바뀌지 않았을 때의 값. 바뀌는 동안에는 직전에 가라앉은 값을 준다.
+function useSettled<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(id);
+  }, [value, ms]);
+  return settled;
+}
+
 // `memo`: 스트리밍 중 워크스페이스 페이지는 프레임마다 다시 그려지지만(채팅 말풍선이
 // 자란다) 이 패널의 props는 그동안 그대로다.
 export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
@@ -67,9 +80,15 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   // 목록이 아직 path를 포함하지 않을 수 있으므로(이벤트가 게시보다 먼저 도착하는
   // 짧은 창) 현재 path를 항상 union — 드롭다운/본문 미스매치 및 "목록이 비어
   // 있으면 select 자체가 숨겨지는" 문제를 함께 해결한다.
+  //
+  // `changedPaths.length`는 **잠시 기다렸다** 건다(useSettled). 에이전트는 한 번에
+  // 파일 여러 개를 연달아 쓰고, 그때마다 목록을 다시 받으면 왕복이 쓰기 수만큼
+  // 생긴다 — 연달아 온 것은 한 번으로 묶는다. 나머지 둘은 묶지 않는다: 턴 종료는
+  // 턴당 한 번이고, 새 문서는 본문과 드롭다운이 바로 따라가야 한다.
+  const settledChanges = useSettled(changedPaths.length, CHANGE_SETTLE_MS);
   const artifacts = useAsync(() => listArtifacts(projectId),
                              [projectId, turnSeq, activeDoc?.path ?? "",
-                              changedPaths.length]);
+                              settledChanges]);
   const listed = artifacts.data ?? [];
   // **목록으로 떨어지는 폴백.** 종전에는 `manualPath ?? activeDoc?.path ?? null`이라
   // `activeDoc`이 없으면 본문이 비었다 — 드롭다운은 `listed`로 채워지므로 "옵션은
