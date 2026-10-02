@@ -37,7 +37,7 @@ import asyncio
 import json
 import logging
 
-from aipds.s3store import S3StoreLike
+from aipds.s3store import S3StoreLike, get_by_etag, list_with_etags
 
 _log = logging.getLogger("aipds.agent")
 
@@ -170,7 +170,8 @@ async def load_transcript(s3: S3StoreLike, session_id: str) -> list[dict]:
     so a caller that hands over a real session id is not overridden.
     """
     prefix = f"{project_transcript_prefix(session_id)}main/"
-    keys = sorted(await s3.list(prefix))
+    listed = sorted(await list_with_etags(s3, prefix))
+    keys = [k for k, _ in listed]
     # **병렬 GET.** 순차로 읽으면 배치 수 × S3 왕복이 그대로 화면 로딩을 막는다 —
     # 실측(2026-08-17, 배포 인스턴스): 왕복 1회 30ms, 32배치 순차 0.98초 vs 병렬
     # 0.11초(8.6배). 세션 길이에 선형이므로 워크숍 하나가 200배치면 순차는 6초다.
@@ -180,7 +181,11 @@ async def load_transcript(s3: S3StoreLike, session_id: str) -> list[dict]:
     # 한 배치의 실패가 나머지를 못 삼키게 return_exceptions를 쓴다. 트랜스크립트는
     # 히스토리 복원용 보조 데이터이고, 한 객체가 손상됐을 때 대화 전체가 빈 목록이
     # 되는 것이 더 나쁘다(list_history의 강등과 같은 원칙).
-    bodies = await asyncio.gather(*(s3.get(k) for k in keys),
+    #
+    # **ETag로 캐시한다(`s3store.get_cached`).** 배치는 seq 키로 붙여 쓰기만 하므로
+    # 워크스페이스를 다시 열 때 새로 받을 것은 새 배치뿐이다 — 캐시 없이는 열 때마다
+    # 세션 전체를 다시 받는다.
+    bodies = await asyncio.gather(*(get_by_etag(s3, k, etag) for k, etag in listed),
                                  return_exceptions=True)
     entries: list[dict] = []
     for k, body in zip(keys, bodies):
