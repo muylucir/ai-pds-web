@@ -1,4 +1,6 @@
 # backend/aipds/routes/uploads.py
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from aipds.routes.deps import ensure_workspace
 from aipds.parsers.uploads import convert, upload_key, MAX_UPLOAD_BYTES
@@ -18,8 +20,11 @@ async def upload_file(pid: str, file: UploadFile, request: Request):
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="file exceeds 5MB limit")
+    # PDF·엑셀 파싱(최대 5MB)은 CPU를 쓴다 — 루프 위에서 돌리면 그동안 모든
+    # SSE 스트림이 멈춘다.
     try:
-        content, truncated = convert(file.filename or "", data)
+        content, truncated = await asyncio.to_thread(
+            convert, file.filename or "", data)
     except ValueError as e:
         raise HTTPException(status_code=415, detail=str(e))
     # No list-then-name step: the key carries a fresh uuid, so there is no

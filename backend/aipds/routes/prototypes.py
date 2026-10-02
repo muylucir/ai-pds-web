@@ -741,6 +741,16 @@ async def _archive_entries(pid: str, slug: str) -> list[tuple[str, bytes]]:
         s3=app_module.s3_store_factory(pid), slug=slug)
 
 
+def _zip_entries(entries: list[tuple[str, bytes]]) -> bytes:
+    """압축은 CPU를 쓴다 — 이벤트 루프에서 돌리면 그동안 모든 SSE 스트림이 멈춘다.
+    그래서 호출부가 `asyncio.to_thread`로 부른다(project_export와 같은 이유)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel, content in entries:
+            zf.writestr(rel, content)
+    return buf.getvalue()
+
+
 @router.get("/projects/{pid}/prototypes/{slug}/archive")
 async def download_prototype_archive(pid: str, slug: str):
     """The dev-team handoff: prototype source as a zip. Binary-safe (bytes
@@ -750,12 +760,8 @@ async def download_prototype_archive(pid: str, slug: str):
     if not entries:
         raise HTTPException(status_code=404, detail="prototype bundle not found")
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for rel, content in entries:
-            zf.writestr(rel, content)
     return Response(
-        content=buf.getvalue(),
+        content=await asyncio.to_thread(_zip_entries, entries),
         media_type="application/zip",
         headers={"Content-Disposition": _archive_filename_header(slug)},
     )
