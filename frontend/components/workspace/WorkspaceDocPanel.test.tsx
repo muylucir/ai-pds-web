@@ -326,7 +326,37 @@ describe("WorkspaceDocPanel — 목록과의 동기화", () => {
                                   changedPaths={["aiplc-docs/audit.md"]} />);
     });
 
-    expect(calls).toBeGreaterThan(first);
+    // 연달아 오는 쓰기를 묶느라 잠시 기다렸다 조회한다.
+    await waitFor(() => expect(calls).toBeGreaterThan(first));
+  });
+
+  it("연달아 쓰인 파일은 목록 재조회 한 번으로 묶인다", async () => {
+    let calls = 0;
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () => {
+        calls += 1;
+        return HttpResponse.json({ artifacts: [] });
+      }),
+    );
+    const { rerender } = await act(async () =>
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={null} turnSeq={0}
+                                changedPaths={[]} />));
+    const first = calls;
+
+    const written: string[] = [];
+    for (const p of ["aiplc-docs/audit.md", "aiplc-docs/aiplc-state.md",
+                     "aiplc-docs/x-questions.md"]) {
+      written.push(p);
+      await act(async () => {
+        rerender(<WorkspaceDocPanel projectId="p1" activeDoc={null} turnSeq={0}
+                                    changedPaths={[...written]} />);
+      });
+    }
+
+    await waitFor(() => expect(calls).toBe(first + 1));
+    // 더 기다려도 늘지 않는다.
+    await new Promise((r) => setTimeout(r, 600));
+    expect(calls).toBe(first + 1);
   });
 
   it("목록 조회가 실패하면 그렇다고 말한다 (I)", async () => {
