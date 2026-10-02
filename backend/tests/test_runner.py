@@ -207,6 +207,43 @@ async def test_turn_end_sync_uploads_only_changed_files(tmp_path):
     assert s3.put_calls == ["aiplc-docs/a.md"]
 
 
+async def test_turn_end_sync_uploads_only_the_synced_subtrees(tmp_path):
+    """턴 종료 sync는 `_SYNC_GLOBS`의 서브트리만 올린다 — 루트의 룰 사본·CLI 상태는
+    아니다. 걷는 범위를 그 서브트리로 좁혀도 올리는 집합은 같아야 한다."""
+    s3 = FakeS3Store()
+    r = _runner(tmp_path, s3=s3)
+    root = r._local_root
+    for rel in ("aiplc-docs/inception/a.md", "prototype/app/page.tsx",
+                "uploads/u.md", ".claude/settings.json", "rules/core.md",
+                "notes.md"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(rel)
+
+    await r._sync_workspace_to_s3()
+
+    assert sorted(s3.blobs) == ["aiplc-docs/inception/a.md",
+                                "prototype/app/page.tsx", "uploads/u.md"]
+
+
+async def test_turn_end_sync_does_not_follow_a_symlinked_subtree(tmp_path):
+    """`aiplc-docs`가 워크스페이스 밖을 가리키는 링크면 바깥 파일을 올리지 않는다.
+
+    루트에서 걸을 때는 디렉토리 링크를 따라가지 않았다. 서브트리를 시작점으로
+    주면 따라가므로, 그 차이를 명시적으로 막는다.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("host file")
+    s3 = FakeS3Store()
+    r = _runner(tmp_path, s3=s3)
+    r._local_root.mkdir(parents=True, exist_ok=True)
+    (r._local_root / "aiplc-docs").symlink_to(outside, target_is_directory=True)
+
+    await r._sync_workspace_to_s3()
+
+    assert list(s3.blobs) == []
+
+
 async def test_immediate_publish_is_not_uploaded_again_at_turn_end(tmp_path):
     class CountingS3(FakeS3Store):
         def __init__(self):

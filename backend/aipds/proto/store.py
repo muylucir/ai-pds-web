@@ -35,11 +35,12 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 from aipds.pathsafe import reject_unsafe
-from aipds.project_bundle import source_excluded
+from aipds.project_bundle import SOURCE_EXCLUDED_DIRS, source_excluded
 from aipds.proto.host import TOKEN_FILENAME
 from aipds.s3store import S3StoreLike
 
@@ -83,18 +84,34 @@ def _now() -> str:
 def local_entries(build_dir: Path) -> list[tuple[str, bytes]]:
     """빌드 트리의 (상대 경로, 바이트). 제외 규칙은 번들·아카이브와 같은 집합이다
     (`project_bundle.source_excluded`) — `node_modules`·`.next`·호스팅 로그·토큰은
-    세대에 담지 않는다."""
+    세대에 담지 않는다.
+
+    **제외 디렉토리는 걸어 들어가지 않고 잘라낸다.** `node_modules`는 실측 수만 개
+    파일이라, 다 걸은 뒤 거르면 답은 같아도 걷기만으로 초 단위가 든다.
+    `source_excluded`는 경로의 어느 조각이든 제외 디렉토리면 빼므로, 그 디렉토리를
+    잘라내는 것과 답이 같다. 디렉토리 심볼릭 링크는 따라가지 않는다(`os.walk`의
+    기본값).
+
+    **순서는 경로 조각 순이다.** 세대 해시(`_hash_entries`)가 이 순서로 계산되므로,
+    문자열 정렬로 바꾸면(`a.b`와 `a/b`의 앞뒤가 뒤집힌다) 소스가 그대로인데 새
+    세대가 생긴다.
+
+    동기 함수다 — 파일을 전부 읽으므로 호출부가 `asyncio.to_thread`로 부른다.
+    """
     if not build_dir.is_dir():
         return []
-    out: list[tuple[str, bytes]] = []
-    for path in sorted(build_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(build_dir).as_posix()
-        if source_excluded(rel):
-            continue
-        out.append((rel, path.read_bytes()))
-    return out
+    found: list[tuple[str, Path]] = []
+    for dirpath, dirnames, filenames in os.walk(build_dir):
+        dirnames[:] = [d for d in dirnames if d not in SOURCE_EXCLUDED_DIRS]
+        rel_dir = Path(dirpath).relative_to(build_dir)
+        for name in filenames:
+            path = Path(dirpath) / name
+            rel = (rel_dir / name).as_posix()
+            if source_excluded(rel) or not path.is_file():
+                continue
+            found.append((rel, path))
+    found.sort(key=lambda item: item[0].split("/"))
+    return [(rel, path.read_bytes()) for rel, path in found]
 
 
 def _hash_entries(entries: list[tuple[str, bytes]]) -> str:
