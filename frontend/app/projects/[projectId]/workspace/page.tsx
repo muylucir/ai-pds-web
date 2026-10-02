@@ -1,5 +1,5 @@
 "use client";
-import { use, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import { StageSidebar } from "@/components/workspace/StageSidebar";
@@ -120,10 +120,12 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     send(text);
   }
 
-  function submitAnswersAndStick(answers: Record<string, string>) {
+  // useCallback: 우측 패널(memo)에 내려가는 유일한 콜백이다. 렌더마다 새 함수면
+  // 스트리밍 중 프레임마다 그 패널이 다시 그려진다.
+  const submitAnswersAndStick = useCallback((answers: Record<string, string>) => {
     setStickSignal((n) => n + 1);
     submitAnswers(answers);
-  }
+  }, [submitAnswers]);
 
   // Minimal accessibility for the mobile bottom-sheet: move focus into the
   // dialog when it opens (so screen-reader/keyboard users land inside it,

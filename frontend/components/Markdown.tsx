@@ -12,26 +12,35 @@
 // 호출부가 추가될 때 조용히 빠지고, 그 실패는 "답변이 기록되지 않았다"로 보인다 —
 // 이번에 실제로 그렇게 보였다. 같은 이유로 보기 줄(`A) …`)에 하드 브레이크를
 // 붙인다 — 그것 없이는 보기가 한 줄로 쭉 이어진다. 두 변환 모두 멱등이다.
-import ReactMarkdown from "react-markdown";
+//
+// **두 렌더러 모두 `memo`이고, 플러그인·컴포넌트 표는 모듈 상수다.** 마크다운 파싱은
+// 이 앱에서 가장 비싼 렌더 작업인데, 스트리밍 중에는 화면이 프레임마다 다시 그려진다.
+// memo가 없으면 그때마다 지난 대화의 모든 말풍선과 문서 패널의 긴 문서가 처음부터 다시
+// 파싱된다. 표를 렌더 안에서 만들면 매번 새 객체라 ReactMarkdown 쪽 비교도 소용없다.
+import { memo } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { prepareQuestionMarkdown } from "@/lib/questionMarkdown";
 
-export function Markdown({ text, className }: { text: string; className?: string }) {
+const REMARK_PLUGINS = [remarkGfm];
+
+const BLOCK_COMPONENTS: Components = {
+  a: ({ children, href }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+  ),
+};
+
+export const Markdown = memo(function Markdown(
+  { text, className }: { text: string; className?: string },
+) {
   return (
     <div className={"prose prose-sm prose-slate max-w-none [&_table]:text-xs " + (className ?? "")}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ children, href }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
-          ),
-        }}
-      >
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={BLOCK_COMPONENTS}>
         {prepareQuestionMarkdown(text)}
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 // 인라인 전용 렌더러 — 질문 문장과 보기 라벨.
 //
@@ -56,22 +65,24 @@ const BLOCK_ELEMENTS = ["h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li",
                         "table", "thead", "tbody", "tr", "th", "td",
                         "blockquote", "pre", "hr", "img"];
 
-export function InlineMarkdown({ text }: { text: string }) {
+const INLINE_COMPONENTS: Components = {
+  // 문단을 감싸지 않는다 — 라벨/헤딩 안에서 인라인으로 흐르게 한다.
+  p: ({ children }) => <>{children}</>,
+  a: ({ children, href }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer"
+       className="underline">{children}</a>
+  ),
+};
+
+export const InlineMarkdown = memo(function InlineMarkdown({ text }: { text: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      // 문단을 감싸지 않는다 — 라벨/헤딩 안에서 인라인으로 흐르게 한다.
-      components={{
-        p: ({ children }) => <>{children}</>,
-        a: ({ children, href }) => (
-          <a href={href} target="_blank" rel="noopener noreferrer"
-             className="underline">{children}</a>
-        ),
-      }}
+      remarkPlugins={REMARK_PLUGINS}
+      components={INLINE_COMPONENTS}
       disallowedElements={BLOCK_ELEMENTS}
       unwrapDisallowed
     >
       {text}
     </ReactMarkdown>
   );
-}
+});

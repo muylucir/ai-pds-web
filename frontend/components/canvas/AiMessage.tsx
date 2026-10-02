@@ -1,5 +1,6 @@
 "use client";
 // frontend/components/canvas/AiMessage.tsx
+import { memo } from "react";
 import type { AiItem } from "@/lib/chatItems";
 import { Markdown } from "@/components/Markdown";
 import { ReasoningTrace } from "./ReasoningTrace";
@@ -20,7 +21,10 @@ function TypingDots() {
   );
 }
 
-export function AiMessage({ item }: { item: AiItem }) {
+// `memo`: 스트리밍 중 타임라인은 프레임마다 다시 그려지지만 바뀌는 것은 도는 말풍선
+// 하나다. 훅의 patchAi가 바뀌지 않은 항목의 참조를 그대로 두므로, 지난 말풍선은
+// 여기서 멈추고 마크다운을 다시 파싱하지 않는다.
+export const AiMessage = memo(function AiMessage({ item }: { item: AiItem }) {
   const t = useT();
   // **진행 상황은 이 컴포넌트의 일이 아니다(2026-09-04).** 진행 표시는 입력창 위
   // 고정 줄(LiveActivityBar)로, 화면이 소유한다. 말풍선 옆에서 진행 표시와 펼쳐진
@@ -60,4 +64,4 @@ export function AiMessage({ item }: { item: AiItem }) {
       </div>
     </div>
   );
-}
+});
