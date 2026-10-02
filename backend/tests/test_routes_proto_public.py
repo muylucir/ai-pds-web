@@ -431,3 +431,34 @@ def test_without_a_preview_surface_the_app_domain_still_serves(env, monkeypatch)
     token = env["host"].ensure_token(PID, SLUG)
     _running(env)
     assert client.get(f"/proto/t/{token}", follow_redirects=False).status_code == 307
+
+
+# ---- 공유 업스트림 클라이언트 ----
+
+async def test_the_proxy_reuses_one_upstream_client_per_loop():
+    """요청마다 클라이언트를 만들면 keep-alive가 없고 생성 비용이 루프를 막는다."""
+    from aipds.routes.proto_public import _proxy_http, aclose_proxy_http
+    try:
+        assert _proxy_http() is _proxy_http()
+    finally:
+        await aclose_proxy_http()
+
+
+async def test_the_shared_upstream_client_keeps_no_cookies():
+    """공유 클라이언트의 쿠키 잼은 관람자 사이의 누수 통로다.
+
+    httpx는 응답마다 `cookies.extract_cookies`로 Set-Cookie를 잼에 담고 이후
+    요청에 붙인다. 프로토타입이 한 관람자에게 심은 쿠키가 다음 관람자의 요청에
+    실리면 안 된다 — 브라우저의 쿠키는 Cookie 헤더로 따로 전달된다.
+    """
+    import httpx
+    from aipds.routes.proto_public import _proxy_http, aclose_proxy_http
+    try:
+        http = _proxy_http()
+        upstream = httpx.Response(
+            200, headers={"set-cookie": "session=viewer-a; Path=/"},
+            request=httpx.Request("GET", "http://127.0.0.1:4001/proto/x/"))
+        http.cookies.extract_cookies(upstream)
+        assert not http.cookies
+    finally:
+        await aclose_proxy_http()
