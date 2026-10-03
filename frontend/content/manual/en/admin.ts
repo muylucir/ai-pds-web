@@ -57,6 +57,11 @@ the project list.`,
   deployment region. For a model the account has never called, Bedrock creates the model's
   subscription automatically on the first call — for those few minutes the first conversation may
   fail with a permission error; send it again shortly after.
+- **Effort** — how deeply the model thinks and how much it writes (low · medium · high · xhigh ·
+  max). Higher is slower and costs more. The same model can take very different time per turn
+  depending on effort, so it is set together with the model. **CLI default** differs by model
+  (medium for Opus 5.5, high for the others). The default list is Opus 5.5 · medium,
+  Sonnet 5.5 · high, Opus 5.0 · high and Sonnet 5.0 · high.
 - **Show in the picker** — you can register many models but expose **at most five** as choices.
 - **Order** — the picker follows **the order of this table**, and the topmost shown model is the
   **default choice** on the project creation screen. **↑ / ↓** in the order column moves a model one
@@ -64,8 +69,9 @@ the project list.`,
   and *The model list was changed elsewhere* appears — refresh to see the current list, then move it
   again.
 
-Removing a model from the list does **not** move projects off it: **projects already created keep
-running on the same model.** The list only governs projects created from now on.`,
+Removing a model or changing its effort does **not** move existing projects: **projects already
+created keep running on the model and effort they were created with.** The list only governs
+projects created from now on.`,
     },
     { kind: "heading", id: "brand-design", text: "Brand design" },
     {

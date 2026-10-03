@@ -40,6 +40,25 @@ describe("ModelTable", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
+  it("changing effort patches only effort, and the CLI default sends null", async () => {
+    const user = userEvent.setup();
+    const onChanged = vi.fn();
+    const bodies: any[] = [];
+    server.use(http.patch(
+      `${API_BASE_URL}/admin/models/global.anthropic.claude-opus-5`,
+      async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json({ ...MODELS[0] });
+      }));
+    render(<ModelTable models={[{ ...MODELS[0], effort: "medium" }]} onChanged={onChanged} />);
+    const select = screen.getByRole("combobox", { name: "Opus 5 effort" });
+    expect(select).toHaveValue("medium");
+    await user.selectOptions(select, "high");
+    await user.selectOptions(select, "CLI 기본값");
+    expect(bodies).toEqual([{ effort: "high" }, { effort: null }]);
+    expect(onChanged).toHaveBeenCalledTimes(2);
+  });
+
   it("shows the server's message when a sixth display is rejected", async () => {
     const user = userEvent.setup();
     server.use(http.patch(
