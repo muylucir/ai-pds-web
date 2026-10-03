@@ -163,6 +163,12 @@ def test_only_our_own_skills_are_enabled():
     assert _real_options().skills == ["shadcn-design"]
 
 
+def test_the_projects_effort_reaches_the_build_cli():
+    """빌드도 Discovery와 같은 모델·effort 쌍으로 돈다. None이면 CLI 기본값."""
+    assert _real_options(effort="medium").effort == "medium"
+    assert _real_options().effort is None
+
+
 def test_setting_sources_stay_open_so_skills_can_be_discovered():
     """`skills` cannot find anything if the filesystem sources are closed;
     "user" here means our config dir, not the operator's home."""

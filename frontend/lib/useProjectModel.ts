@@ -15,6 +15,8 @@ import { useEffect, useState } from "react";
 import { getProject } from "@/lib/api/client";
 import { listModels } from "@/lib/api/models";
 import { isLocale, type Locale } from "@/lib/i18n";
+import { useT } from "@/lib/i18n/provider";
+import { modelLabel } from "@/lib/modelLabel";
 
 export interface ProjectMeta {
   /** 모델 표시 이름. null = 미지정(서버 env 기본값) 또는 조회 실패. */
@@ -27,6 +29,7 @@ const EMPTY: ProjectMeta = { modelLabel: null, language: null };
 
 export function useProjectMeta(projectId: string | undefined): ProjectMeta {
   const [meta, setMeta] = useState<ProjectMeta>(EMPTY);
+  const t = useT();
 
   useEffect(() => {
     if (!projectId) {
@@ -44,7 +47,11 @@ export function useProjectMeta(projectId: string | undefined): ProjectMeta {
         const id = project.model_id;
         setMeta({
           // 미지정: 서버가 env 기본값으로 도는데 그 값을 프론트는 알 수 없다.
-          modelLabel: id ? models.find((m) => m.model_id === id)?.name ?? id : null,
+          // effort는 프로젝트가 복사해 둔 값이다 — 카탈로그의 현재 값과 다를 수 있고,
+          // 실제로 도는 것은 이쪽이다.
+          modelLabel: id
+            ? modelLabel(models.find((m) => m.model_id === id)?.name ?? id, project.effort, t)
+            : null,
           // isLocale로 좁힌다 — 구 백엔드는 이 필드가 없고, 손상된 응답이
           // 임의 문자열을 실어 올 수도 있다. 그때는 배지를 그리지 않는다.
           language: isLocale(project.language) ? project.language : null,
@@ -54,7 +61,7 @@ export function useProjectMeta(projectId: string | undefined): ProjectMeta {
         if (alive) setMeta(EMPTY);
       });
     return () => { alive = false; };
-  }, [projectId]);
+  }, [projectId, t]);
 
   return meta;
 }

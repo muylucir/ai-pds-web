@@ -24,6 +24,19 @@ describe("useProjectMeta", () => {
     expect(await screen.findByText("Opus 5")).toBeInTheDocument();
   });
 
+  it("shows the effort the project copied, not the catalog's current one", async () => {
+    // 프로젝트는 만들 때의 effort를 복사해 끝까지 쓴다 — 실제로 도는 것은 그 값이다.
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1`, () => HttpResponse.json({
+        project_id: "p1", name: null, created_at: null,
+        model_id: "global.anthropic.claude-opus-5-5", effort: "medium" })),
+      http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [
+        { name: "Opus 5.5", model_id: "global.anthropic.claude-opus-5-5", effort: "high" }] })),
+    );
+    render(<Probe pid="p1" />);
+    expect(await screen.findByText("Opus 5.5 · effort medium")).toBeInTheDocument();
+  });
+
   it("falls back to the raw model id when the catalog no longer has it", async () => {
     // 값을 복사해 두는 설계의 결과가 화면에서도 정직하게 드러나야 한다:
     // 관리자가 카탈로그에서 지운 모델로 도는 프로젝트가 있을 수 있다.

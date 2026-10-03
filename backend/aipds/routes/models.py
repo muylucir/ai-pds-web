@@ -17,7 +17,7 @@ from starlette.responses import Response
 
 from aipds import error_codes as ec
 from aipds.auth.deps import require_admin
-from aipds.model_catalog import CatalogError
+from aipds.model_catalog import CatalogError, Effort
 
 _log = logging.getLogger(__name__)
 
@@ -76,11 +76,16 @@ class AddModel(BaseModel):
     name: str = Field(min_length=1)
     model_id: str = Field(min_length=1)
     display: bool = True
+    #: None = CLI 기본값. 허용값 밖은 422다(Effort가 CLI의 `--effort` 값 집합이다).
+    effort: Effort | None = None
 
 
 class PatchModel(BaseModel):
     name: str | None = Field(default=None, min_length=1)
     display: bool | None = None
+    #: 보내지 않으면 그대로, null을 보내면 CLI 기본값으로 비운다 — 둘을 구별하려고
+    #: `model_fields_set`을 본다(admin_patch_model).
+    effort: Effort | None = None
 
 
 class ModelOrder(BaseModel):
@@ -94,13 +99,15 @@ def _catalog():
 
 @router.get("/models")
 async def list_displayed_models():
-    """콤보박스가 부르는 곳. display가 켜진 것만, 최대 5개, 이름과 id만.
+    """콤보박스가 부르는 곳. display가 켜진 것만, 최대 5개, 이름·id·effort.
 
     display 플래그 자체는 보내지 않는다 — 일반 사용자에게 의미가 없고,
-    프론트가 필터링을 잊는 경로를 없앤다.
+    프론트가 필터링을 잊는 경로를 없앤다. effort는 보낸다: 같은 모델이라도
+    effort에 따라 속도가 크게 다르므로 고르는 사람이 알아야 한다.
     """
     entries = await _catalog().displayed()
-    return {"models": [{"name": e.name, "model_id": e.model_id} for e in entries]}
+    return {"models": [{"name": e.name, "model_id": e.model_id, "effort": e.effort}
+                       for e in entries]}
 
 
 @admin_router.get("/models")
@@ -119,7 +126,7 @@ async def admin_add_model(body: AddModel):
         raise HTTPException(status_code=422, detail=ec.MODEL_ID_CHARSET)
     try:
         entry = await _catalog().add(body.name.strip(), body.model_id.strip(),
-                                     display=body.display)
+                                     display=body.display, effort=body.effort)
     except CatalogError as exc:
         raise _http_error(exc) from exc
     return entry.model_dump()
@@ -140,8 +147,10 @@ async def admin_patch_model(model_id: str, body: PatchModel):
     name = body.name.strip() if body.name is not None else None
     if name is not None and not name:
         raise HTTPException(status_code=422, detail=ec.NAME_REQUIRED)
+    effort = ({"effort": body.effort} if "effort" in body.model_fields_set else {})
     try:
-        entry = await _catalog().update(model_id, name=name, display=body.display)
+        entry = await _catalog().update(model_id, name=name, display=body.display,
+                                        **effort)
     except CatalogError as exc:
         raise _http_error(exc) from exc
     return entry.model_dump()

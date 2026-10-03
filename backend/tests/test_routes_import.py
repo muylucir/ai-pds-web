@@ -313,6 +313,33 @@ def test_a_model_this_instance_cannot_select_is_dropped_with_a_warning(env):
     assert app_module.registry.get_model_id(target) is None
 
 
+def test_the_source_projects_effort_comes_with_its_model(env):
+    """effort는 원본에서 모델과 짝으로 복사된 값이다 — 임포트가 그대로 가져온다."""
+    target = env["track"]("with-effort")
+    body = _bundle(project={"name": "n", "created_at": "c", "model_id": SEED_MODEL,
+                            "language": "ko", "effort": "high"})
+    resp = _import(env, body, project_id=target)
+    assert resp.status_code == 201
+    assert resp.json()["effort"] == "high"
+    assert app_module.registry.get_effort(target) == "high"
+
+
+def test_a_bundle_from_before_effort_keeps_the_cli_default(env):
+    """이 필드 이전의 번들은 키가 없다 — 원본이 실제로 돌던 방식(CLI 기본값) 그대로다."""
+    target = env["track"]("no-effort")
+    resp = _import(env, _bundle(), project_id=target)
+    assert resp.json()["effort"] is None
+
+
+def test_effort_is_dropped_with_an_unavailable_model(env):
+    """모델을 비웠는데 effort만 남기면 다른 모델에 붙어 고른 적 없는 조합이 된다."""
+    target = env["track"]("foreign-effort")
+    body = _bundle(project={"name": "n", "created_at": "c", "model_id": "some.other.model",
+                            "language": "ko", "effort": "max"})
+    resp = _import(env, body, project_id=target)
+    assert resp.json()["model_id"] is None and resp.json()["effort"] is None
+
+
 def test_a_selectable_model_is_kept_without_a_warning(env):
     resp = _import(env, _bundle())
 

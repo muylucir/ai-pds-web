@@ -26,23 +26,36 @@ async def test_write_manifest_records_the_model_id():
 
 
 @pytest.mark.asyncio
+async def test_write_manifest_records_the_effort_and_null_when_unset():
+    """effort는 모델과 짝으로 복사된다. 미지정은 키를 빼지 않고 명시적 null이다."""
+    root = FakeS3Store()
+    await write_manifest(root, "p1", None, model_id="global.anthropic.claude-opus-5-5",
+                         effort="medium")
+    await write_manifest(root, "p2", None)
+    assert json.loads(root.blobs["p1/project.json"])["effort"] == "medium"
+    d2 = json.loads(root.blobs["p2/project.json"])
+    assert "effort" in d2 and d2["effort"] is None
+
+
+@pytest.mark.asyncio
 async def test_restore_reads_manifests_and_skips_garbage():
     root = FakeS3Store()
     root.blobs["pa/project.json"] = json.dumps(
         {"project_id": "pa", "name": "A", "created_at": "2026-07-22T01:00:00+00:00",
-         "model_id": "global.anthropic.claude-opus-5", "language": "en"})
+         "model_id": "global.anthropic.claude-opus-5", "language": "en",
+         "effort": "high"})
     root.blobs["pb/project.json"] = json.dumps({"project_id": "pb", "name": None})
     root.blobs["pc/project.json"] = "{{{ not json"           # 손상 → 건너뜀
     root.blobs["pd/project.json"] = "[1,2,3]"                # JSON but not dict → 건너뜀
     root.blobs["pa/aiplc-docs/audit.md"] = "# not a manifest"  # 매니페스트 아님 → 무시
-    restored = {pid: (name, created_at, model_id, language)
-                for pid, name, created_at, model_id, language
+    restored = {pid: (name, created_at, model_id, language, effort)
+                for pid, name, created_at, model_id, language, effort
                 in await restore_projects(root)}
-    # created_at·model_id·language는 매니페스트에서 승계, 없으면(구 매니페스트) None.
+    # created_at·model_id·language·effort는 매니페스트에서 승계, 없으면(구 매니페스트) None.
     assert restored == {
         "pa": ("A", "2026-07-22T01:00:00+00:00",
-               "global.anthropic.claude-opus-5", "en"),
-        "pb": (None, None, None, None),
+               "global.anthropic.claude-opus-5", "en", "high"),
+        "pb": (None, None, None, None, None),
     }
 
 

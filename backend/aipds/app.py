@@ -196,6 +196,16 @@ def project_language(project_id: str) -> str:
     return registry.get_language(project_id)
 
 
+def project_effort(project_id: str) -> str | None:
+    """이 프로젝트의 effort. None이면 드라이버가 `--effort`를 넘기지 않아 CLI 기본값으로
+    돈다(Opus 5.5는 medium, 그 밖의 현 세대 모델은 high).
+
+    env 폴백이 없는 이유는 project_language와 같다: effort는 모델과 짝으로 고른
+    프로젝트의 성질이다. 배포 단위 기본값은 카탈로그(model_catalog.SEED_MODELS)가 갖는다.
+    """
+    return registry.get_effort(project_id)
+
+
 # ---- 인증 (routes/*, auth/deps.py) ----
 
 _jwks_singleton = None
@@ -387,6 +397,7 @@ def driver_factory(project_id: str, local_root: Path):
         # CLI 별칭이고 Bedrock 모델 id가 아니라서, project_model을 그대로 쓰는
         # 설문 생성 경로(BedrockModel)에 흘러가면 ValidationException이 된다.
         anthropic_model=cli_model_id(project_model(project_id)),
+        effort=project_effort(project_id),
         language=project_language(project_id),
     )
 
@@ -471,6 +482,8 @@ def proto_session_factory(project_id: str, slug: str):
             answer_log=answer_log,
             # driver_factory와 같은 이유로 CLI용 조립을 여기서 한다.
             anthropic_model=cli_model_id(project_model(project_id)),
+            # 빌드도 Discovery와 같은 모델·effort 쌍으로 돈다 — 프로젝트에서 고른 값이다.
+            effort=project_effort(project_id),
             language=language,
             permission_mode=_proto_permission_mode(),
         )
@@ -613,10 +626,10 @@ async def _lifespan(_app: FastAPI):
     # 복원 실패는 기동을 막지 않는다.
     if durable_projects_enabled():
         try:
-            for pid, name, created_at, model_id, language in await restore_projects(
+            for pid, name, created_at, model_id, language, effort in await restore_projects(
                     projects_root_s3_factory()):
                 registry.register(pid, name, created_at=created_at,
-                                  model_id=model_id, language=language)
+                                  model_id=model_id, language=language, effort=effort)
         except Exception:
             _log.exception("project-list restore failed; starting with empty registry")
     # 재시작으로 소멸한 인메모리 세션이 남긴 고아 호스팅 프로세스 정리

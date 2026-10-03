@@ -18,7 +18,8 @@ _MANIFEST = re.compile(r"^([^/]+)/project\.json$")
 async def write_manifest(root: S3StoreLike, project_id: str, name: str | None,
                          created_at: str | None = None,
                          model_id: str | None = None,
-                         language: str | None = None) -> str:
+                         language: str | None = None,
+                         effort: str | None = None) -> str:
     """매니페스트를 쓰고 기록된 created_at을 반환한다 — 호출부(생성 라우트)가
     같은 시각을 레지스트리에도 등록해 목록 정렬 기준을 일치시킨다.
 
@@ -32,11 +33,15 @@ async def write_manifest(root: S3StoreLike, project_id: str, name: str | None,
     생성 시점 1회 결정이다: 진행 중에 바꾸면 이미 만들어진 aiplc-docs/**와
     트랜스크립트가 이전 언어로 남아 한 프로젝트 안에서 문서 언어가 섞인다.
     model_id와 같은 이유로 미지정도 명시적 null로 기록한다.
+
+    effort는 생성 시점 카탈로그 항목의 effort를 model_id와 함께 **복사**한 것이다 —
+    관리자가 카탈로그의 effort를 바꿔도 진행 중인 프로젝트의 속도·출력량이 중간에
+    달라지지 않는다. null = CLI 기본값(이 필드 이전의 프로젝트가 모두 그렇다).
     """
     ts = created_at or datetime.now(timezone.utc).isoformat()
     body = json.dumps(
         {"project_id": project_id, "name": name, "created_at": ts,
-         "model_id": model_id, "language": language},
+         "model_id": model_id, "language": language, "effort": effort},
         ensure_ascii=False)
     await root.put(f"{project_id}/project.json", body)
     return ts
@@ -44,16 +49,16 @@ async def write_manifest(root: S3StoreLike, project_id: str, name: str | None,
 
 async def restore_projects(
     root: S3StoreLike,
-) -> list[tuple[str, str | None, str | None, str | None, str | None]]:
+) -> list[tuple[str, str | None, str | None, str | None, str | None, str | None]]:
     """projects/ 스캔 → 매니페스트 병렬 GET →
-    [(pid, name, created_at, model_id, language)].
+    [(pid, name, created_at, model_id, language, effort)].
     손상 항목은 로그 후 건너뜀 — 하나가 썩어도 나머지 복원을 막지 않는다.
     created_at·model_id·language는 구 매니페스트에 없을 수 있어 None 허용
     (정렬 시 맨 앞, 모델은 env 폴백, 언어는 'ko' 폴백 —
     ProjectRegistry.get_language가 확정한다)."""
     keys = [k for k in await root.list("") if _MANIFEST.match(k)]
     bodies = await asyncio.gather(*(root.get(k) for k in keys), return_exceptions=True)
-    out: list[tuple[str, str | None, str | None, str | None, str | None]] = []
+    out: list[tuple[str, str | None, str | None, str | None, str | None, str | None]] = []
     for key, body in zip(keys, bodies):
         if isinstance(body, BaseException):
             _log.warning("manifest read failed for %s: %r", key, body)
@@ -65,7 +70,7 @@ async def restore_projects(
                 continue
             pid = d.get("project_id") or _MANIFEST.match(key).group(1)  # type: ignore[union-attr]
             out.append((pid, d.get("name"), d.get("created_at"),
-                        d.get("model_id"), d.get("language")))
+                        d.get("model_id"), d.get("language"), d.get("effort")))
         except (json.JSONDecodeError, TypeError):
             _log.warning("corrupt manifest skipped: %s", key)
     return out
