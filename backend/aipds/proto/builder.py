@@ -184,6 +184,8 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             permission_mode=builder._permission_mode,
             cwd=builder._workspace,
             env=env,
+            # Discovery 드라이버와 같다 — None이면 CLI 기본값.
+            effort=builder._effort,
             # "user" now means OUR config dir, so this is safe -- and it is
             # what `skills` needs open to discover anything.
             setting_sources=["user", "project"],
@@ -292,6 +294,7 @@ class PrototypeBuilder:
     def __init__(self, workspace: str, config_dir: str, session_id: str,
                  resume: bool, session_store: Any = None,
                  anthropic_model: str | None = None,
+                 effort: str | None = None,
                  language: str = "ko",
                  permission_mode: str = DEFAULT_PERMISSION_MODE,
                  client_factory: Callable[[], Any] | None = None,
@@ -315,6 +318,7 @@ class PrototypeBuilder:
         #: SDK 세션 하나이므로 턴을 넘어 들고 간다 — 바뀐 값만 낸다.
         self._context = ContextMeter()
         self._anthropic_model = anthropic_model
+        self._effort = effort
         # 이 프로젝트의 생성물 언어. build_complete 도구의 설명과 반환 문자열을
         # 이 값으로 고른다 — 셋 다 모델이 읽는 프롬프트다(proto/prompts.py).
         self._language = language

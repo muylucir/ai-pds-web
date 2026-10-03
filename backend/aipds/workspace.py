@@ -81,15 +81,20 @@ class ProjectRegistry:
         # 매니페스트에서 복사돼 온다. None = 미지정(구 매니페스트 포함) —
         # get_language가 "ko"로 확정한다.
         self._language: dict[str, str | None] = {}
+        # 이 프로젝트의 effort. model_id와 짝으로 생성 시점 카탈로그에서 복사된다.
+        # None = CLI 기본값.
+        self._effort: dict[str, str | None] = {}
 
     def register(self, project_id: str, name: str | None = None,
                  created_at: str | None = None,
                  model_id: str | None = None,
-                 language: str | None = None) -> None:
+                 language: str | None = None,
+                 effort: str | None = None) -> None:
         self._names[project_id] = name
         self._created_at[project_id] = created_at
         self._model_id[project_id] = model_id
         self._language[project_id] = language
+        self._effort[project_id] = effort
 
     def attach(self, project_id: str, workspace: Workspace) -> Workspace:
         if project_id not in self._names:
@@ -112,6 +117,7 @@ class ProjectRegistry:
         self._created_at.pop(project_id, None)
         self._model_id.pop(project_id, None)
         self._language.pop(project_id, None)
+        self._effort.pop(project_id, None)
         return self._workspaces.pop(project_id, None)
 
     def list_ids(self) -> list[str]:
@@ -136,6 +142,16 @@ class ProjectRegistry:
         '모델 없음'으로 다루는 것이 호출부를 단순하게 만든다.
         """
         return self._model_id.get(project_id)
+
+    def get_effort(self, project_id: str) -> str | None:
+        """이 프로젝트의 effort, 없으면 None(CLI 기본값).
+
+        알 수 없는 값도 None이다 — 손상된 매니페스트가 임의 문자열을 실어 오면
+        CLI가 `--effort`를 거부해 턴이 시작되지 않는다. 기본값으로 도는 편이 낫다.
+        """
+        from aipds.model_catalog import EFFORTS
+        value = self._effort.get(project_id)
+        return value if value in EFFORTS else None
 
     #: 생성물 언어의 허용값. place_rules가 이 값으로 언어별 지시 블록을 고르므로
     #: 그 밖의 값은 존재할 수 없다.
