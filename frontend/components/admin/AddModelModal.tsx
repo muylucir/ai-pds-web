@@ -3,7 +3,7 @@ import { useState } from "react";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errorMessage";
 import { useT } from "@/lib/i18n/provider";
-import { addModel } from "@/lib/api/models";
+import { addModel, EFFORTS, type Effort } from "@/lib/api/models";
 
 export function AddModelModal({
   onAdded, onClose,
@@ -14,6 +14,8 @@ export function AddModelModal({
   const [name, setName] = useState("");
   const [modelId, setModelId] = useState("");
   const [display, setDisplay] = useState(true);
+  // "" = CLI 기본값(null로 보낸다). 모델마다 기본값이 달라 프론트가 대신 정하지 않는다.
+  const [effort, setEffort] = useState<Effort | "">("");
   const [busy, setBusy] = useState(false);
   const t = useT();
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +26,7 @@ export function AddModelModal({
     setBusy(true);
     setError(null);
     try {
-      await addModel(name.trim(), modelId.trim(), display);
+      await addModel(name.trim(), modelId.trim(), display, effort || null);
       onAdded();
       onClose();
     } catch (err) {
@@ -66,6 +68,21 @@ export function AddModelModal({
             <p className="mt-1 text-xs text-slate-500">
               {t("admin.modelIdHelp")}
             </p>
+          </div>
+          <div>
+            <label htmlFor="model-effort" className="block text-sm font-medium">
+              {t("admin.modelEffort")}
+            </label>
+            <select
+              id="model-effort"
+              value={effort}
+              onChange={(e) => setEffort(e.target.value as Effort | "")}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm"
+            >
+              <option value="">{t("admin.effortDefault")}</option>
+              {EFFORTS.map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+            <p className="mt-1 text-xs text-slate-500">{t("admin.effortHelp")}</p>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input

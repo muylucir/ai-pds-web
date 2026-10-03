@@ -6,9 +6,16 @@
 // 필터링하지 않는다.
 import { apiFetch } from "./http";
 
+// Claude Code CLI의 `--effort` 값. 백엔드 model_catalog.Effort와 같은 집합이어야 한다 —
+// 밖의 값은 서버가 422로 거부한다.
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
 export interface ModelOption {
   name: string;
   model_id: string;
+  // 모델과 짝으로 정한 effort. null = CLI 기본값. 구 백엔드 응답에는 없을 수 있다.
+  effort?: Effort | null;
 }
 
 export interface AdminModel extends ModelOption {
@@ -27,17 +34,18 @@ export async function listAdminModels(): Promise<AdminModel[]> {
   return body?.models ?? [];
 }
 
-export async function addModel(name: string, modelId: string,
-                               display: boolean): Promise<AdminModel> {
+export async function addModel(name: string, modelId: string, display: boolean,
+                               effort: Effort | null = null): Promise<AdminModel> {
   const body = await apiFetch<AdminModel>("/admin/models", {
     method: "POST",
-    body: JSON.stringify({ name, model_id: modelId, display }),
+    body: JSON.stringify({ name, model_id: modelId, display, effort }),
   });
   return body as AdminModel;
 }
 
+// `effort: null`은 CLI 기본값으로 비운다. 키를 빼면 서버가 그대로 둔다.
 export async function patchModel(
-  modelId: string, patch: { name?: string; display?: boolean },
+  modelId: string, patch: { name?: string; display?: boolean; effort?: Effort | null },
 ): Promise<AdminModel> {
   const body = await apiFetch<AdminModel>(`/admin/models/${modelId}`, {
     method: "PATCH",
