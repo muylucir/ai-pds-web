@@ -520,6 +520,9 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             permission_mode=driver._permission_mode,
             cwd=driver._workspace,
             env=env,
+            # 카탈로그에서 모델과 짝으로 고른 effort(`--effort`). None이면 플래그를 넘기지
+            # 않아 CLI 기본값으로 돈다 — 이 필드 이전의 프로젝트가 그 경로다.
+            effort=driver._effort,
             # "user" now means OUR config dir (discovery-config/), so this is
             # safe -- and it is what lets the CLAUDE.md there be discovered.
             setting_sources=["user", "project"],
@@ -632,6 +635,7 @@ class ClaudeDriver:
 
     def __init__(self, workspace: str, rules_dir: str, config_dir: str,
                  s3: S3StoreLike, anthropic_model: str | None = None,
+                 effort: str | None = None,
                  language: str = "ko",
                  permission_mode: str = DEFAULT_PERMISSION_MODE,
                  client_factory: Callable[[dict], Any] | None = None,
@@ -653,6 +657,7 @@ class ClaudeDriver:
         self._session_store: Any = (session_store if session_store is not None
                                     else DiscoverySessionStore(s3))
         self._anthropic_model = anthropic_model
+        self._effort = effort
         # 이 프로젝트의 생성물 언어. 두 곳으로 흐른다: place_rules(워크스페이스
         # CLAUDE.md의 언어 지시)와 이 드라이버가 만드는 모델·사용자 대상
         # 텍스트(agent/prompts.py). 셋이었던 시절의 세 번째는 커스텀 도구의 설명·반환

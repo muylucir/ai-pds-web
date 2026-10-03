@@ -51,6 +51,19 @@ describe("CreateProjectForm", () => {
     expect(screen.queryByText(/global\.anthropic/)).toBeNull();
   });
 
+  it("shows each model's effort next to its name", async () => {
+    // 같은 모델이라도 effort에 따라 속도가 크게 다르다 — 고르는 사람이 알아야 한다.
+    // effort가 없는 항목(CLI 기본값)은 이름만 보인다.
+    server.use(http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [
+      { name: "Opus 5.5", model_id: "global.anthropic.claude-opus-5-5", effort: "medium" },
+      { name: "Opus 4.6", model_id: "global.anthropic.claude-opus-4-6-v1", effort: null },
+    ] })));
+    render(<CreateProjectForm onCreated={vi.fn()} />);
+    expect(await screen.findByRole("option", { name: "Opus 5.5 · effort medium" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Opus 4.6" })).toBeInTheDocument();
+    expect(screen.queryByText(/global\.anthropic/)).toBeNull();
+  });
+
   it("defaults to the first model in the list", async () => {
     const user = userEvent.setup();
     let body: any;

@@ -38,7 +38,7 @@ describe("models API", () => {
     const created = await addModel("Opus 4.8", "global.anthropic.claude-opus-4-8", true);
     expect(body).toEqual({ name: "Opus 4.8",
                            model_id: "global.anthropic.claude-opus-4-8",
-                           display: true });
+                           display: true, effort: null });
     expect(created.display).toBe(true);
   });
 

@@ -8,6 +8,7 @@ import { exportProject } from "@/lib/api/transfer";
 import { listModels } from "@/lib/api/models";
 import { isLocale, LANGUAGE_LABEL } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
+import { modelLabel } from "@/lib/modelLabel";
 
 function progressLabel(p: ProjectProgress | null | undefined): string {
   if (!p) return "—";
@@ -136,9 +137,10 @@ export function ProjectList({
                 </td>
                 <td className="px-4 py-3 text-slate-600">{progressLabel(p.progress)}</td>
                 {/* 카탈로그에 없는 모델은 id 원문 — 관리자가 지운 모델로 도는
-                    프로젝트는 정상 경로이고, 그 사실이 화면에서 정직해야 한다. */}
+                    프로젝트는 정상 경로이고, 그 사실이 화면에서 정직해야 한다.
+                    effort는 프로젝트가 복사해 둔 값이다(카탈로그의 현재 값이 아니다). */}
                 <td className="px-4 py-3 text-slate-600">
-                  {p.model_id ? modelNames[p.model_id] ?? p.model_id : "—"}
+                  {p.model_id ? modelLabel(modelNames[p.model_id] ?? p.model_id, p.effort, t) : "—"}
                 </td>
                 <td className="px-4 py-3 text-slate-600">
                   {isLocale(p.language) ? LANGUAGE_LABEL[p.language] : "—"}

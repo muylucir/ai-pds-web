@@ -29,8 +29,11 @@ name field and keep the ID short.`,
     {
       kind: "md",
       md: `What appears in this list is up to your administrator ([model management](/manual#manage-models)).
-The model you pick is **pinned to that project** — if the administrator later removes it from the
-list, projects already created keep running on it.
+Each entry shows the model name together with its **effort** — how deeply it thinks and how much it
+writes — for example *Opus 5.5 · effort medium*. Higher effort makes each turn slower.
+
+The model and effort you pick are **pinned to that project** — if the administrator later removes
+the model or changes its effort, projects already created keep running as they were created.
 
 The badge in the header tells you which model the project you are looking at runs on.`,
     },

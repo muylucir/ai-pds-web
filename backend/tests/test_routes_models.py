@@ -33,10 +33,11 @@ def client():
 
 # ---- GET /models (일반) ----
 
-def test_models_returns_name_and_id_only(catalog, client):
+def test_models_returns_name_id_and_effort_only(catalog, client):
     body = client.get("/models").json()
+    # effort는 보낸다 — 같은 모델이라도 effort에 따라 속도가 크게 달라 고르는 사람이 알아야 한다.
     assert body["models"] == [
-        {"name": e.name, "model_id": e.model_id} for e in SEED_MODELS]
+        {"name": e.name, "model_id": e.model_id, "effort": e.effort} for e in SEED_MODELS]
     # display는 화면에 보내지 않는다 — 일반 사용자에게 의미가 없고, 프론트가
     # 필터링을 잊는 경로를 없앤다.
     assert all("display" not in m for m in body["models"])
@@ -56,7 +57,7 @@ def test_admin_list_includes_display_flag(catalog, client):
     body = client.get("/admin/models").json()
     assert body["models"][0] == {"name": SEED_MODELS[0].name,
                                  "model_id": SEED_MODELS[0].model_id,
-                                 "display": True}
+                                 "display": True, "effort": SEED_MODELS[0].effort}
 
 
 # ---- POST /admin/models ----
@@ -69,7 +70,31 @@ def test_admin_add_returns_201_and_the_entry(catalog, client):
     assert r.status_code == 201
     assert r.json() == {"name": "Opus 4.8",
                         "model_id": "global.anthropic.claude-opus-4-8",
-                        "display": False}
+                        "display": False, "effort": None}
+
+
+def test_admin_add_records_the_effort(catalog, client):
+    r = client.post("/admin/models", json={"name": "Opus 4.8",
+                                           "model_id": "global.anthropic.claude-opus-4-8",
+                                           "effort": "xhigh"})
+    assert r.status_code == 201 and r.json()["effort"] == "xhigh"
+
+
+def test_admin_add_rejects_an_effort_the_cli_does_not_know(catalog, client):
+    r = client.post("/admin/models", json={"name": "Opus 4.8",
+                                           "model_id": "global.anthropic.claude-opus-4-8",
+                                           "effort": "turbo"})
+    assert r.status_code == 422
+
+
+def test_admin_patch_sets_clears_and_keeps_effort(catalog, client):
+    mid = SEED_MODELS[0].model_id
+    assert client.patch(f"/admin/models/{mid}", json={"effort": "high"}).json()["effort"] == "high"
+    # effort를 보내지 않으면 그대로다.
+    assert client.patch(f"/admin/models/{mid}", json={"display": True}).json()["effort"] == "high"
+    # null은 CLI 기본값으로 비운다.
+    assert client.patch(f"/admin/models/{mid}", json={"effort": None}).json()["effort"] is None
+    assert client.patch(f"/admin/models/{mid}", json={"effort": "turbo"}).status_code == 422
 
 
 def test_admin_add_duplicate_is_409(catalog, client):

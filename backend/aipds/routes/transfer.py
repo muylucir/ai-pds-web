@@ -33,6 +33,7 @@ from aipds.import_staging import (
     PRESIGN_EXPIRES_IN,
     new_upload_id,
 )
+from aipds.model_catalog import EFFORTS
 from aipds.pathsafe import reject_unsafe_segment
 from aipds.project_bundle import MANIFEST_NAME, BundleError, parse_manifest
 from aipds.project_export import write_bundle
@@ -104,6 +105,7 @@ async def export_project(pid: str):
         "name": app_module.registry.get_name(pid),
         "created_at": app_module.registry.get_created_at(pid),
         "model_id": app_module.registry.get_model_id(pid),
+        "effort": app_module.registry.get_effort(pid),
         "language": app_module.registry.get_language(pid),
     }
     # delete=False + BackgroundTask: FileResponse가 본문을 다 흘린 **뒤에** 지운다.
@@ -238,6 +240,13 @@ async def import_project(body: ImportRequest):
 
         project = manifest["project"]
         model_id, warnings = await _resolve_model(project.get("model_id"))
+        # effort는 원본 프로젝트의 것을 그대로 가져온다(모델과 짝으로 복사된 값이다).
+        # 모델을 쓸 수 없어 비웠으면 effort도 비운다 — 다른 모델에 붙이면 고른 적
+        # 없는 조합이 된다. 이 필드 이전의 번들은 키가 없어 None(CLI 기본값)이고,
+        # 그것이 원본이 실제로 돌던 방식이다.
+        effort = project.get("effort") if model_id is not None else None
+        if effort not in EFFORTS:
+            effort = None
         language = project.get("language")
         if language not in ("ko", "en"):
             language = None  # 레지스트리가 "ko"로 확정한다
@@ -262,7 +271,7 @@ async def import_project(body: ImportRequest):
             await write_manifest(app_module.projects_root_s3_factory(), pid,
                                  project.get("name"),
                                  created_at=project.get("created_at"),
-                                 model_id=model_id, language=language)
+                                 model_id=model_id, language=language, effort=effort)
         except Exception:
             # 매니페스트가 없으면 재시작 후 사라지는 프로젝트다. 생성 라우트가
             # 같은 이유로 같은 판단을 한다(routes/projects.py).
@@ -271,7 +280,7 @@ async def import_project(body: ImportRequest):
             raise HTTPException(status_code=500, detail=ec.IMPORT_FAILED)
         app_module.registry.register(pid, project.get("name"),
                                     created_at=project.get("created_at"),
-                                    model_id=model_id, language=language)
+                                    model_id=model_id, language=language, effort=effort)
     finally:
         _cleanup(bundle)
 
@@ -280,6 +289,7 @@ async def import_project(body: ImportRequest):
             "name": project.get("name"),
             "language": app_module.registry.get_language(pid),
             "model_id": model_id,
+            "effort": app_module.registry.get_effort(pid),
             "source_project_id": manifest["source_project_id"],
             "counts": data.counts,
             "warnings": warnings + data.warnings}

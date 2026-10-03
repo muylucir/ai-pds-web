@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errorMessage";
 import { useT } from "@/lib/i18n/provider";
 import {
-  deleteModel, patchModel, reorderModels, type AdminModel,
+  deleteModel, EFFORTS, patchModel, reorderModels, type AdminModel, type Effort,
 } from "@/lib/api/models";
 
 export function ModelTable({
@@ -57,6 +57,7 @@ export function ModelTable({
             <th className="w-16 py-2 font-medium">{t("admin.colOrder")}</th>
             <th className="py-2 font-medium">{t("admin.colName")}</th>
             <th className="py-2 font-medium">{t("admin.modelId")}</th>
+            <th className="py-2 font-medium" title={t("admin.effortHelp")}>{t("admin.colEffort")}</th>
             <th className="py-2 font-medium">{t("admin.colDisplay")}</th>
             <th className="py-2" />
           </tr>
@@ -88,6 +89,24 @@ export function ModelTable({
               {/* 관리자는 무엇을 등록했는지 확인해야 하므로 id를 보여준다 —
                   콤보박스가 이름만 보여주는 것과 다른 이유다. */}
               <td className="py-3 font-mono text-xs text-slate-500">{m.model_id}</td>
+              <td className="py-3">
+                {/* 바꾸면 새로 만드는 프로젝트부터 적용된다 — 기존 프로젝트는 만들 때의
+                    값을 복사해 두었다. "" = CLI 기본값(null로 비운다). */}
+                <select
+                  aria-label={`${m.name} ${t("admin.colEffort")}`}
+                  value={m.effort ?? ""}
+                  disabled={busy === m.model_id}
+                  onChange={(e) => {
+                    const next = (e.target.value || null) as Effort | null;
+                    void run(m.model_id,
+                      () => patchModel(m.model_id, { effort: next }).then(() => undefined));
+                  }}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs disabled:opacity-50"
+                >
+                  <option value="">{t("admin.effortDefault")}</option>
+                  {EFFORTS.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </td>
               <td className="py-3">
                 <button
                   type="button"

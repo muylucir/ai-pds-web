@@ -5,6 +5,7 @@ import { listModels, type ModelOption } from "@/lib/api/models";
 import type { ProjectSummary } from "@/lib/api/types";
 import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
+import { modelLabel } from "@/lib/modelLabel";
 
 // 프로젝트 id에서 허용하지 않는 문자. id는 S3 키 프리픽스이자 로컬 워크스페이스
 // 디렉토리 이름이고 URL 경로 세그먼트로도 들어가므로, 공백·슬래시·한글 같은
@@ -109,11 +110,12 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
           className="w-full text-sm rounded-lg border border-slate-200 p-2.5 focus:outline-none focus:ring-2 focus:ring-violet-400"
         />
       </div>
-      <div className="sm:w-44">
+      <div className="sm:w-56">
         <label htmlFor="pmodel" className="block text-xs text-slate-500 mb-1">
           {t("header.modelBadgeTitleShort")}
         </label>
-        {/* 이름만 보여준다 — 모델 id는 value로만 간다. */}
+        {/* 이름과 effort를 보여준다 — 모델 id는 value로만 간다. effort는 카탈로그가
+            정한 값이고, 생성 시 서버가 같은 값을 프로젝트에 복사한다. */}
         <select
           id="pmodel"
           value={modelId}
@@ -123,7 +125,7 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
         >
           {models.length === 0 && <option value="">{t("project.defaultModel")}</option>}
           {models.map((m) => (
-            <option key={m.model_id} value={m.model_id}>{m.name}</option>
+            <option key={m.model_id} value={m.model_id}>{modelLabel(m.name, m.effort, t)}</option>
           ))}
         </select>
       </div>
