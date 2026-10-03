@@ -14,6 +14,11 @@
 등록해 두고 그중 5개만 화면에 노출한다. 상한을 등록에 두면 요구사항이
 성립하지 않는다.
 
+**항목은 모델과 effort의 쌍이다.** effort는 모델의 사고 깊이와 출력량을 정하고, 실측으로
+턴 시간을 모델 선택만큼 바꾼다(Opus 5.5 medium → high: 턴 시간 +53%, 출력 +50%). 그래서
+"어느 모델을 쓰나"와 같은 자리에서 정한다. None은 CLI 기본값이다 — Opus 5.5는 medium,
+그 밖의 현 세대 모델은 high다. 프로젝트는 생성 시점에 이 값을 모델 id와 함께 복사한다.
+
 **목록 순서가 곧 콤보박스 순서다.** 별도의 정렬 키를 두지 않는다 — 파일의
 배열 순서 하나만 있으면 "순서"와 "정렬 키"가 어긋날 자리가 없다. 첫 항목은
 프로젝트 생성 화면의 기본 선택이기도 하다(CreateProjectForm이 `list[0]`을 고른다).
@@ -22,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Literal, get_args
 
 from pydantic import BaseModel
 
@@ -36,10 +42,17 @@ CATALOG_KEY = "models/catalog.json"
 MAX_DISPLAYED = 5
 
 
+#: Claude Code CLI의 `--effort` 값(SDK 옵션 `effort`). 이 밖의 값은 CLI가 거부한다.
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORTS: tuple[str, ...] = get_args(Effort)
+
+
 class ModelEntry(BaseModel):
     name: str
     model_id: str
     display: bool = True
+    #: None = CLI 기본값. 이 필드가 없던 카탈로그 파일도 그대로 읽힌다.
+    effort: Effort | None = None
 
 
 class CatalogError(Exception):
@@ -51,15 +64,24 @@ class CatalogError(Exception):
 
 
 #: ap-northeast-2에서 네 개 모두 ACTIVE인 것을 list-inference-profiles로 실측
-#: 확인했다. 배포 기본값(backend-permissions.ts의 MODEL = opus-4-8)은 여기
-#: 없다 — 의도된 것이다: 이 기능 이전에 만든 프로젝트와 모델 미지정 시의
+#: 확인했다(2026-10-03). 배포 기본값(backend-permissions.ts의 MODEL = opus-4-8)은
+#: 여기 없다 — 의도된 것이다: 이 기능 이전에 만든 프로젝트와 모델 미지정 시의
 #: 폴백으로만 쓰이고 콤보박스에는 뜨지 않는다.
+#:
+#: effort의 근거(2026-10-03 Discovery 실험, 108턴): Opus 5.5는 medium이 high와
+#: 품질이 비슷하면서 턴 시간이 2/3이다. Sonnet 5.5 medium은 방법론 준수에서
+#: 일관되게 밀렸으므로 high를 쓴다. 5.0 세대는 CLI 기본값과 같은 high다.
+#: Sonnet 5.5는 번들 CLI 2.1.286(claude-agent-sdk 0.2.163) 이상이 필요하다 —
+#: 그 아래는 `unrecognized_model`로 턴이 시작되지 않는다(pyproject.toml의 하한).
 SEED_MODELS: tuple[ModelEntry, ...] = (
-    ModelEntry(name="Opus 5", model_id="global.anthropic.claude-opus-5"),
-    ModelEntry(name="Opus 4.6", model_id="global.anthropic.claude-opus-4-6-v1"),
-    ModelEntry(name="Sonnet 5", model_id="global.anthropic.claude-sonnet-5"),
-    ModelEntry(name="Sonnet 4.6", model_id="global.anthropic.claude-sonnet-4-6"),
+    ModelEntry(name="Opus 5.5", model_id="global.anthropic.claude-opus-5-5", effort="medium"),
+    ModelEntry(name="Sonnet 5.5", model_id="global.anthropic.claude-sonnet-5-5", effort="high"),
+    ModelEntry(name="Opus 5.0", model_id="global.anthropic.claude-opus-5", effort="high"),
+    ModelEntry(name="Sonnet 5.0", model_id="global.anthropic.claude-sonnet-5", effort="high"),
 )
+
+#: update()에서 "effort를 건드리지 않음"과 "effort를 비움(None)"을 구별한다.
+_UNSET: object = object()
 
 
 class ModelCatalog:
@@ -94,23 +116,31 @@ class ModelCatalog:
                            CATALOG_KEY)
             return [e.model_copy() for e in SEED_MODELS]
 
+    async def effort_of(self, model_id: str) -> str | None:
+        """이 모델의 effort. 카탈로그에 없거나 미지정이면 None(CLI 기본값)."""
+        entry = next((e for e in await self.load() if e.model_id == model_id), None)
+        return entry.effort if entry else None
+
     async def displayed(self) -> list[ModelEntry]:
         """콤보박스에 띄울 목록. 상한을 여기서도 자른다 — 파일이 손으로
         편집되어 6개가 켜져 있어도 화면 계약(최대 5개)은 지켜져야 한다."""
         return [e for e in await self.load() if e.display][:MAX_DISPLAYED]
 
-    async def add(self, name: str, model_id: str, display: bool) -> ModelEntry:
+    async def add(self, name: str, model_id: str, display: bool,
+                  effort: str | None = None) -> ModelEntry:
         entries = await self._writable()
         if any(e.model_id == model_id for e in entries):
             raise CatalogError("duplicate", f"{model_id} is already registered")
-        entry = ModelEntry(name=name, model_id=model_id, display=display)
+        entry = ModelEntry(name=name, model_id=model_id, display=display, effort=effort)
         entries.append(entry)
         self._check_display_cap(entries)
         await self._save(entries)
         return entry
 
     async def update(self, model_id: str, *, name: str | None = None,
-                     display: bool | None = None) -> ModelEntry:
+                     display: bool | None = None,
+                     effort: object = _UNSET) -> ModelEntry:
+        """`effort`를 넘기지 않으면 그대로 두고, None을 넘기면 CLI 기본값으로 비운다."""
         entries = await self._writable()
         entry = next((e for e in entries if e.model_id == model_id), None)
         if entry is None:
@@ -119,6 +149,8 @@ class ModelCatalog:
             entry.name = name
         if display is not None:
             entry.display = display
+        if effort is not _UNSET:
+            entry.effort = effort  # type: ignore[assignment]  # 허용값은 라우트가 검증한다
         self._check_display_cap(entries)
         await self._save(entries)
         return entry

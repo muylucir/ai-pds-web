@@ -96,6 +96,11 @@ async def create_project(body: CreateProject):
     # 러너를 만들고 되돌리는 것은 낭비다.
     await _validate_model_id(body.model_id)
     _validate_language(body.language)
+    # effort는 요청이 아니라 카탈로그에서 가져온다 — 모델과 짝으로 관리자가 정한 값이고,
+    # 클라이언트가 보낸 값을 믿으면 카탈로그 밖의 조합이 매니페스트에 들어간다.
+    # 모델과 같이 **복사**한다(write_manifest의 근거).
+    effort = (await app_module.model_catalog().effort_of(body.model_id)
+              if body.model_id else None)
     # 매니페스트와 레지스트리가 같은 created_at을 갖도록 여기서 확정 —
     # 목록 정렬(생성일 오름차순) 기준이 재시작 전후로 달라지지 않는다.
     created_at = datetime.now(timezone.utc).isoformat()
@@ -121,7 +126,7 @@ async def create_project(body: CreateProject):
     # 읽는다. 읽는 쪽을 그대로 두고 순서를 맞추는 편이 좁은 수정이다.
     app_module.registry.register(body.project_id, body.name,
                                  created_at=created_at, model_id=body.model_id,
-                                 language=body.language)
+                                 language=body.language, effort=effort)
     try:
         workspace = await app_module.make_workspace(body.project_id)
     except Exception:
@@ -134,7 +139,7 @@ async def create_project(body: CreateProject):
             await write_manifest(app_module.projects_root_s3_factory(),
                                  body.project_id, body.name,
                                  created_at=created_at, model_id=body.model_id,
-                                 language=body.language)
+                                 language=body.language, effort=effort)
         except Exception:
             # 스펙 결정: 재시작하면 사라질 프로젝트를 조용히 만들지 않는다.
             _log.exception("manifest write failed for %s", body.project_id)
@@ -148,6 +153,7 @@ async def create_project(body: CreateProject):
     app_module.registry.attach(body.project_id, workspace)
     return {"project_id": body.project_id, "name": body.name,
             "model_id": body.model_id,
+            "effort": app_module.registry.get_effort(body.project_id),
             # 실제로 돌게 될 언어를 돌려준다(미지정 → "ko"). null을 돌려주면
             # 프론트가 폴백 규칙을 또 알아야 한다.
             "language": app_module.registry.get_language(body.project_id)}
@@ -165,6 +171,7 @@ async def list_projects(page: int = Query(1, ge=1), size: int = Query(10, ge=1, 
             {"project_id": pid, "name": app_module.registry.get_name(pid),
              "created_at": app_module.registry.get_created_at(pid),
              "model_id": app_module.registry.get_model_id(pid),
+             "effort": app_module.registry.get_effort(pid),
              "language": app_module.registry.get_language(pid),
              "progress": prog}
             for pid, prog in zip(page_ids, progresses)
@@ -188,6 +195,7 @@ async def get_project(pid: str):
             "name": app_module.registry.get_name(pid),
             "created_at": app_module.registry.get_created_at(pid),
             "model_id": app_module.registry.get_model_id(pid),
+            "effort": app_module.registry.get_effort(pid),
             "language": app_module.registry.get_language(pid)}
 
 @router.delete("/projects/{pid}")

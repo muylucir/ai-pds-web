@@ -1475,7 +1475,7 @@ async def test_a_refresh_mid_question_can_still_submit_the_answer(tmp_path):
 
 # ---- 트랜스크립트 미러링: 질문에서 파킹된 턴도 S3에 남아야 한다 ----
 
-def _captured_options(tmp_path, monkeypatch, session):
+def _captured_options(tmp_path, monkeypatch, session, **driver_kw):
     """실제 _default_client_factory가 조립한 ClaudeAgentOptions를 붙잡는다.
 
     이 파일의 다른 테스트는 전부 client_factory를 주입하므로 이 경로를 타지
@@ -1495,9 +1495,23 @@ def _captured_options(tmp_path, monkeypatch, session):
     monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClient)
 
     driver = ClaudeDriver(workspace=str(tmp_path), rules_dir=str(tmp_path),
-                          config_dir=str(tmp_path / "cfg"), s3=FakeS3Store())
+                          config_dir=str(tmp_path / "cfg"), s3=FakeS3Store(), **driver_kw)
     _default_client_factory(driver)(session)
     return captured["options"]
+
+
+def test_the_projects_effort_reaches_the_cli(tmp_path, monkeypatch):
+    """카탈로그에서 모델과 짝으로 고른 effort가 SDK 옵션(`--effort`)까지 간다."""
+    options = _captured_options(tmp_path, monkeypatch,
+                                {"session_id": "p1", "resume": False}, effort="high")
+    assert options.effort == "high"
+
+
+def test_no_effort_leaves_the_cli_default(tmp_path, monkeypatch):
+    """effort가 없는 프로젝트(이 필드 이전)는 플래그를 넘기지 않는다 — CLI 기본값으로 돈다."""
+    options = _captured_options(tmp_path, monkeypatch,
+                                {"session_id": "p1", "resume": False})
+    assert options.effort is None
 
 
 def test_transcript_mirroring_flushes_in_turn_batches(tmp_path, monkeypatch):

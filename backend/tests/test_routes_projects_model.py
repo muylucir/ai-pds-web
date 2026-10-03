@@ -43,6 +43,46 @@ def test_create_accepts_a_displayed_model_and_records_it(catalog, monkeypatch):
     assert app_module.registry.get_model_id("pm-1") == CHOSEN
 
 
+def test_create_copies_the_catalog_effort_with_the_model(catalog, monkeypatch):
+    """effort는 요청이 아니라 카탈로그에서 온다 — 관리자가 모델과 짝으로 정한 값이다.
+    클라이언트가 effort를 실어 보내도 무시된다."""
+    fake = FakeS3Store()
+    monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
+    monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: fake)
+    sonnet = SEED_MODELS[1]
+    r = client.post("/projects", json={"project_id": "pm-1", "model_id": sonnet.model_id,
+                                       "effort": "max"})
+    assert r.status_code == 200
+    assert r.json()["effort"] == sonnet.effort == "high"
+    assert json.loads(fake.blobs["pm-1/project.json"])["effort"] == "high"
+    assert app_module.registry.get_effort("pm-1") == "high"
+    assert app_module.project_effort("pm-1") == "high"
+
+
+@pytest.mark.asyncio
+async def test_a_later_catalog_change_does_not_move_an_existing_project(catalog, monkeypatch):
+    """복사이지 참조가 아니다 — 진행 중인 프로젝트의 속도·출력량이 중간에 바뀌지 않는다."""
+    monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
+    client.post("/projects", json={"project_id": "pm-2", "model_id": CHOSEN})
+    await catalog.update(CHOSEN, effort="max")
+    assert app_module.registry.get_effort("pm-2") == SEED_MODELS[0].effort == "medium"
+
+
+def test_the_driver_is_built_with_the_projects_effort(catalog, monkeypatch, tmp_path):
+    """driver_factory가 레지스트리의 effort를 드라이버에 넘긴다(생성 라우트의 등록 순서가
+    이 읽기를 성립시킨다)."""
+    app_module.registry.register("pm-3", None, model_id=CHOSEN, effort="medium")
+    monkeypatch.setattr(app_module, "_discovery_config_dir", lambda: tmp_path)
+    driver = app_module.driver_factory("pm-3", tmp_path / "ws")
+    assert driver._effort == "medium"
+
+
+def test_an_unknown_effort_in_a_manifest_falls_back_to_the_cli_default(catalog):
+    """손상된 매니페스트의 임의 값은 CLI가 `--effort`로 거부한다 — 기본값으로 도는 편이 낫다."""
+    app_module.registry.register("pm-4", None, model_id=CHOSEN, effort="turbo")
+    assert app_module.registry.get_effort("pm-4") is None
+
+
 def test_create_without_a_model_id_still_works(catalog, monkeypatch):
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     r = client.post("/projects", json={"project_id": "pm-2"})
@@ -84,6 +124,8 @@ def test_get_project_returns_metadata_without_booting_a_workspace(catalog, monke
     assert body == {"project_id": "pm-5", "name": "이름",
                     "created_at": "2026-08-01T00:00:00+00:00",
                     "model_id": CHOSEN,
+                    # effort 없이 register된 프로젝트(이 필드 이전) — CLI 기본값(None).
+                    "effort": None,
                     # language 없이 register된 프로젝트 — get_language가 "ko"로 확정한다.
                     "language": "ko"}
     assert booted["n"] == 0
