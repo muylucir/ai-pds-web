@@ -10,6 +10,7 @@ import { redirectIfSessionExpired } from "@/lib/auth/sessionRecovery";
 import type { AgentEvent, ContextUsage, QuestionsPayload, StagePayload, DocumentPayload,
   PrototypeReadyPayload } from "@/lib/api/types";
 import { historyItemToChatItem } from "@/lib/chatItems";
+import { useTextDeltas } from "@/lib/useTextDeltas";
 import type { UserItem, AiItem, HistoryCardItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
 import type { Dict } from "@/lib/i18n";
 
@@ -155,9 +156,19 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   // the user just started.
   const liveTurnStartedRef = useRef(false);
 
+  // 텍스트 델타는 프레임마다 한 번 붙는다(useTextDeltas). 그 밖의 말풍선 갱신은
+  // 전부 patchAi를 지나므로, 여기서 먼저 비워 두면 이벤트 순서가 그대로 보존된다.
+  const deltas = useTextDeltas((aiId, text) => {
+    setItems((prev) => prev.map((it) => (it.id === aiId && it.role === "ai"
+      ? { ...it, text: it.text + text, activity: { kind: "writing" } } : it)));
+  });
+  const flushText = deltas.flush;
+  const pushText = deltas.push;
+
   const patchAi = useCallback((aiId: string, fn: (it: AiItem) => AiItem) => {
+    flushText();
     setItems((prev) => prev.map((it) => (it.id === aiId && it.role === "ai" ? fn(it) : it)));
-  }, []);
+  }, [flushText]);
 
   // Shared per-frame projection for both streamEvents and streamAnswers: folds
   // message text into the AI bubble, files status/file_changed into its
@@ -165,6 +176,17 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   // sidebar/panel state (stage history, latest document, pending questions).
   const applyEvent = useCallback(
     (aiId: string, ev: AgentEvent) => {
+      // **`activity`는 마지막에 온 이벤트가 덮는다.** 텍스트가 흐르기 시작하면
+      // 앞선 도구는 더 이상 "지금 하는 일"이 아니다 — 트레이스에서 마지막 도구를
+      // 뽑아 쓰던 방식이 그 어긋남을 만들었다(도구가 끝나고 답변을 쓰는 동안에도
+      // "자료를 확인하고 있어요"가 남았다). 여기가 이벤트를 순서대로 보는 유일한
+      // 지점이므로, 순서를 그대로 상태에 옮기면 어긋날 수 없다 — 텍스트는 프레임
+      // 단위로 묶여 붙지만, 그 밖의 이벤트가 모두 먼저 그것을 비운다(patchAi).
+      if (ev.kind === "message") {
+        pushText(aiId, ev.text ?? "");
+        return;
+      }
+      flushText();
       if (ev.kind === "file_changed" && ev.path) {
         setChangedPaths((prev) => (prev.includes(ev.path as string) ? prev : [...prev, ev.path as string]));
         // 에이전트는 대부분의 문서를 submit_document 없이 file_write로만
@@ -204,15 +226,6 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         return;
       }
       patchAi(aiId, (it) => {
-        // **`activity`는 마지막에 온 이벤트가 덮는다.** 텍스트가 흐르기 시작하면
-        // 앞선 도구는 더 이상 "지금 하는 일"이 아니다 — 트레이스에서 마지막 도구를
-        // 뽑아 쓰던 방식이 그 어긋남을 만들었다(도구가 끝나고 답변을 쓰는 동안에도
-        // "자료를 확인하고 있어요"가 남았다). 여기가 이벤트를 순서대로 보는 유일한
-        // 지점이므로, 순서를 그대로 상태에 옮기면 어긋날 수 없다.
-        if (ev.kind === "message") {
-          return { ...it, text: it.text + (ev.text ?? ""),
-                   activity: { kind: "writing" } };
-        }
         // 중단은 turn의 종결 사유라 trace가 아니라 전용 필드로 간다.
         // 드라이버가 새 kind 대신 status로 흘리는 이유는 이미 다루는 이벤트
         // 모양을 재사용하기 위해서다(claude_driver.interrupt). 이 마커는
@@ -256,7 +269,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         return it; // "done" is handled by onDone
       });
     },
-    [patchAi, t],
+    [patchAi, pushText, flushText, t],
   );
 
   // 도는 턴에 붙는 함수. runTurn이 409(다른 턴이 돌고 있음)를 받았을 때 그 턴을 보여

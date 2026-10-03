@@ -87,3 +87,56 @@ def test_it_does_not_walk_into_excluded_directories(tmp_path):
         os_mod.scandir = orig
 
     assert not any("node_modules" in p for p in walked), walked
+
+
+# ---- local_entries: 잘라내며 걸어도 답이 같다 ----
+
+def _rglob_entries(build_dir):
+    """다 걸은 뒤 거르는 기준 구현. local_entries는 이것과 같은 답을 내야 한다."""
+    from aipds.project_bundle import source_excluded
+    out = []
+    for path in sorted(build_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(build_dir).as_posix()
+        if not source_excluded(rel):
+            out.append((rel, path.read_bytes()))
+    return out
+
+
+def test_local_entries_prunes_without_changing_the_answer(tmp_path):
+    """같은 파일, 같은 바이트, **같은 순서**.
+
+    순서까지 보는 이유: 세대 해시(`store._hash_entries`)가 이 순서로 계산된다.
+    `a.b`와 `a/b`는 문자열 정렬과 경로 조각 정렬에서 앞뒤가 뒤집히므로 일부러 둘 다
+    둔다 — 문자열로 정렬하는 구현은 소스가 그대로인데 새 세대를 만든다.
+    """
+    import os
+    from aipds.proto.host import TOKEN_FILENAME
+    from aipds.proto.store import local_entries
+
+    root = tmp_path / "build"
+    _write(root / "prototype" / "app" / "page.tsx", "page")
+    _write(root / "a.b", "dot")
+    _write(root / "a" / "b", "slash")
+    _write(root / "a-b", "dash")
+    _write(root / "node_modules" / "react" / "index.js", "dep")
+    _write(root / "prototype" / "node_modules" / "x" / "y.js", "nested dep")
+    _write(root / "prototype" / ".next" / "cache" / "z", "build")
+    _write(root / ".git" / "HEAD", "ref")
+    _write(root / ".proto-host.log", "log")
+    _write(root / "prototype" / TOKEN_FILENAME, "secret")
+    (root / "img.png").write_bytes(b"\x89PNG\x00\xff")
+    os.symlink(root / "prototype", root / "linked-dir")
+    os.symlink(root / "a.b", root / "linked-file")
+
+    got = local_entries(root)
+    assert got == _rglob_entries(root)
+    rels = [rel for rel, _ in got]
+    assert "a/b" in rels and "a.b" in rels and "linked-file" in rels
+    assert not any("node_modules" in r or ".next" in r for r in rels)
+
+
+def test_local_entries_of_a_missing_tree_is_empty(tmp_path):
+    from aipds.proto.store import local_entries
+    assert local_entries(tmp_path / "nope") == []

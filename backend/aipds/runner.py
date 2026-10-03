@@ -153,11 +153,10 @@ class AgentRunner:
             or not self._local_path(key).is_file()
         ]
         bodies = await asyncio.gather(*(self._s3.get(key) for key in keys))
-        for key, body in zip(keys, bodies):
-            p = self._local_path(key)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(body, encoding="utf-8")
-            self._synced_hashes[key] = _content_hash(body)
+        # 첫 턴은 워크스페이스 전체를 쓴다 — 디스크 쓰기는 루프 밖에서.
+        hashes = await asyncio.to_thread(
+            self._write_restored, list(zip(keys, bodies)))
+        self._synced_hashes.update(hashes)
         self._remote_etags = remote
         log_performance(
             _log,
@@ -170,24 +169,66 @@ class AgentRunner:
             removed=len(removed),
         )
 
+    def _write_restored(self, items: list[tuple[str, str]]) -> dict[str, str]:
+        """복원한 본문을 로컬에 쓰고 키별 해시를 돌려준다. 동기 — 스레드에서 돈다.
+
+        해시는 돌려주기만 하고 `_synced_hashes`에 직접 넣지 않는다: 그 dict는 루프
+        쪽(쓰기 직후 게시)도 만지므로, 갱신은 루프에서 한 번에 한다.
+        """
+        hashes: dict[str, str] = {}
+        for key, body in items:
+            p = self._local_path(key)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(body, encoding="utf-8")
+            hashes[key] = _content_hash(body)
+        return hashes
+
+    def _scan_sync_candidates(self) -> list[tuple[str, str, str]]:
+        """정본에 올릴 후보 (키, 올릴 내용, 해시). 동기 — 스레드에서 돈다.
+
+        대상 파일을 전부 읽고 해시하므로 루프 위에서 돌리면 턴이 끝날 때마다 다른
+        프로젝트의 스트림이 그만큼 멈춘다.
+
+        걷는 것은 `_SYNC_GLOBS`의 맨 앞 디렉토리뿐이다. 그 밖의 키는 어느 glob에도
+        맞을 수 없으므로 답은 같고, 워크스페이스 루트에는 턴마다 복사되는 룰과 CLI
+        상태가 함께 산다. 맨 앞 조각에 와일드카드가 있는 glob이 생기면 루트 전체를
+        걷는다.
+
+        **심볼릭 링크인 맨 앞 디렉토리는 걷지 않는다.** 루트에서 `rglob`하면 디렉토리
+        링크를 따라가지 않는데, 그 디렉토리를 시작점으로 주면 따라간다. 에이전트가
+        `aiplc-docs`를 워크스페이스 밖으로 거는 링크로 만들면 바깥 파일이 정본에
+        올라간다.
+        """
+        tops = {glob.split("/", 1)[0] for glob in self._SYNC_GLOBS}
+        if any(ch in top for top in tops for ch in "*?["):
+            roots = [self._local_root]
+        else:
+            roots = [self._local_root / top for top in sorted(tops)]
+        found: list[tuple[str, str, str]] = []
+        for root in roots:
+            if root.is_symlink() or not root.is_dir():
+                continue
+            for path in root.rglob("*"):
+                if not path.is_file():
+                    continue
+                key = path.relative_to(self._local_root).as_posix()
+                if not any(matches_glob(key, glob) for glob in self._SYNC_GLOBS):
+                    continue
+                reject_unsafe(key)
+                content = content_for_s3(
+                    key, path.read_text(encoding="utf-8", errors="replace"))
+                found.append((key, content, _content_hash(content)))
+        return found
+
     async def _sync_workspace_to_s3(self) -> None:
         """턴 출력(방법론 산출물 + 프로토타입 소스 서브트리)을 로컬에서 durable
         S3로 끌어올린다. audit.md는 저장 시 redaction(direct S3 reader 노출 차단)."""
         started = time.perf_counter()
-        scanned = 0
-        changed: list[tuple[str, str]] = []
-        for path in self._local_root.rglob("*"):
-            if not path.is_file():
-                continue
-            key = path.relative_to(self._local_root).as_posix()
-            if not any(matches_glob(key, glob) for glob in self._SYNC_GLOBS):
-                continue
-            scanned += 1
-            reject_unsafe(key)
-            content = content_for_s3(
-                key, path.read_text(encoding="utf-8", errors="replace"))
-            if self._synced_hashes.get(key) != _content_hash(content):
-                changed.append((key, content))
+        found = await asyncio.to_thread(self._scan_sync_candidates)
+        scanned = len(found)
+        changed: list[tuple[str, str]] = [
+            (key, content) for key, content, digest in found
+            if self._synced_hashes.get(key) != digest]
 
         semaphore = asyncio.Semaphore(_SYNC_CONCURRENCY)
         uploaded = 0

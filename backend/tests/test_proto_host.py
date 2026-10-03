@@ -309,11 +309,39 @@ async def test_log_tail_returns_last_n_lines(root):
         await host.stop(PID, SLUG)
 
 
+@pytest.mark.parametrize("block", [1, 7, 64, 64 * 1024])
+def test_tail_text_matches_reading_the_whole_file(tmp_path, monkeypatch, block):
+    """끝에서 거꾸로 읽어도 답은 파일 전체를 읽고 자른 것과 같아야 한다.
+
+    블록 크기를 줄여 경계 사례를 강제한다 — 블록이 줄 한가운데·멀티바이트 문자
+    한가운데·개행 바로 앞뒤에서 끊기는 경우. 운영 블록(64KB)에서는 작은 로그가
+    한 블록에 다 들어와 이 경로들이 드러나지 않는다.
+    """
+    import random
+    import aipds.proto.host as host_mod
+
+    monkeypatch.setattr(host_mod, "_TAIL_BLOCK", block)
+    rng = random.Random(block)
+    # 단독 `\r`은 npm 진행 표시줄이 실제로 쓴다 — splitlines는 그것도 줄로 본다.
+    alphabet = ["a", "b", "한", "글", " ", "\n", "\n", "\r\n", "\r"]
+    log = tmp_path / ".proto-host.log"
+    for _ in range(200):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randrange(0, 80)))
+        log.write_bytes(text.encode("utf-8"))
+        n = rng.randrange(1, 12)
+        expected = "\n".join(text.splitlines()[-n:])
+        assert host_mod._tail_text(log, n) == expected, (text, n)
+
+
+def test_tail_text_of_a_missing_log_is_empty(tmp_path):
+    from aipds.proto.host import _tail_text
+    assert _tail_text(tmp_path / "absent.log", 100) == ""
+
+
 async def test_status_does_not_read_the_log(root, monkeypatch):
     """`status()`는 로그 파일을 **열지 않는다**. 목록 라우트가 프로토타입마다
-    이걸 부르는데, `_tail_text`는 마지막 100줄을 얻으려고 파일을 전부 읽고
-    (`read_text()`) `.proto-host.log`는 회전이 없다. 실측: 100MB에서 호출당
-    237ms, 그것도 async 함수 안의 동기 I/O라 그동안 모든 SSE 스트림이 멈춘다.
+    이걸 부르고 그 목록은 폴링된다. `_tail_text`는 파일 끝만 읽지만 async 함수
+    안의 동기 디스크 I/O이고, 상태만 필요한 자리에서 읽을 이유가 없다.
 
     `_tail_text` 호출 자체를 세는 이유: `log_tail == ""`만 검사하면 로그를
     읽고 나서 버리는 구현도 통과하는데, 비용은 읽는 데 있지 담는 데 있지

@@ -143,17 +143,31 @@ def test_post_429_when_response_cap_reached(env, monkeypatch):
     assert resp.status_code == 429
 
 
-def test_rollup_failure_does_not_fail_the_response(env, monkeypatch):
-    # The response PUT is what commits; a rollup write failure must not lose
-    # the respondent's submission (spec §3 cache contract).
-    async def boom(*a, **k):
-        raise RuntimeError("s3 down")
-    monkeypatch.setattr(SurveyStore, "refresh_rollup", boom)
+def test_submitting_does_not_rebuild_the_rollup(env, monkeypatch):
+    """제출은 응답 PUT 하나로 끝난다. 집계 재계산은 응답 전부를 다시 읽으므로
+    제출마다 하면 N번째 제출이 GET N회가 된다 — 인증 없는 경로에서."""
+    calls = []
+
+    async def counting(self, *a, **k):
+        calls.append(1)
+        raise AssertionError("submit must not rebuild the rollup")
+    monkeypatch.setattr(SurveyStore, "refresh_rollup", counting)
     resp = client.post(f"/survey/{TOKEN}", json={"answers": {"q1": 4, "q2": "A"}})
     assert resp.status_code == 204
+    assert calls == []
     keys = [k for k in env["project_s3"].blobs
             if k.startswith(responses_prefix(SLUG))]
     assert len(keys) == 1
+
+
+def test_the_dashboard_rollup_counts_a_fresh_submission(env):
+    """제출이 집계를 갱신하지 않아도 대시보드가 읽는 집계는 맞아야 한다 —
+    `get_rollup`이 응답 수가 어긋난 캐시를 다시 만든다."""
+    client.post(f"/survey/{TOKEN}", json={"answers": {"q1": 4, "q2": "A"}})
+    client.post(f"/survey/{TOKEN}", json={"answers": {"q1": 5, "q2": "A"}})
+    import asyncio
+    rollup = asyncio.get_event_loop().run_until_complete(env["store"].get_rollup())
+    assert rollup.count == 2
 
 
 def test_post_rejects_oversized_body_before_parsing(env):

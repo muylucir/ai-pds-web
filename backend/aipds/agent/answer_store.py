@@ -27,7 +27,7 @@ import asyncio
 import json
 import logging
 
-from aipds.s3store import S3StoreLike
+from aipds.s3store import S3StoreLike, get_by_etag, list_with_etags
 
 _log = logging.getLogger("aipds.agent")
 
@@ -86,14 +86,16 @@ async def load_answers(s3: S3StoreLike,
     호출부는 레코드 없는 구 세션과 같은 경로로 떨어진다(현재 문구 유지).
     """
     try:
-        keys = await s3.list(prefix)
+        listed = await list_with_etags(s3, prefix)
     except Exception:
         _log.exception("answer record listing failed")
         return {}
+    keys = [k for k, _ in listed]
     # **병렬 GET.** 라운드 수에 선형이므로 순차로 읽으면 히스토리 로딩이 그만큼
     # 늦어진다(실측 2026-08-17: S3 왕복 1회 30ms). session_store.load_transcript와
     # 같은 판단이고, project_store.load_manifest가 이 리포의 선례다.
-    bodies = await asyncio.gather(*(s3.get(k) for k in keys),
+    # 트랜스크립트와 같은 ETag 캐시를 쓴다 — 레코드는 라운드마다 하나씩 늘 뿐이다.
+    bodies = await asyncio.gather(*(get_by_etag(s3, k, etag) for k, etag in listed),
                                  return_exceptions=True)
     out: dict[str, dict] = {}
     for key, body in zip(keys, bodies):

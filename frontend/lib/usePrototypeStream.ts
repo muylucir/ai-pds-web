@@ -27,6 +27,7 @@ import type {
 } from "@/lib/api/types";
 import { applyAgentActivity, runningAgents, type AgentRow } from "@/lib/protoAgents";
 import { historyItemToChatItem } from "@/lib/chatItems";
+import { useTextDeltas } from "@/lib/useTextDeltas";
 import type { UserItem, AiItem, HistoryCardItem, TraceEntry, LiveActivity } from "@/lib/chatItems";
 
 // A NEW hook modeled on useWorkspaceStream (the workspace's stream pattern)
@@ -148,15 +149,28 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   // common "status → first message" opening of every turn).
   const hasTextRef = useRef(false);
 
+  // 텍스트 델타는 프레임마다 한 번 붙는다(useTextDeltas). 말풍선을 만지는 다른 길 —
+  // patchAi, 말풍선 분할(openAiBubble), 턴 종료의 빈 말풍선 정리 — 은 전부 먼저
+  // 비운다. 그래야 순서가 보존되고, 아직 붙지 않은 텍스트가 있는 말풍선이 "빈
+  // 말풍선"으로 지워지지 않는다.
+  const deltas = useTextDeltas((aiId, text) => {
+    setItems((prev) => prev.map((it) => (it.id === aiId && it.role === "ai"
+      ? { ...it, text: it.text + text, activity: { kind: "writing" } } : it)));
+  });
+  const flushText = deltas.flush;
+  const pushText = deltas.push;
+
   const patchAi = useCallback((aiId: string, fn: (it: AiItem) => AiItem) => {
+    flushText();
     setItems((prev) => prev.map((it) => (it.id === aiId && it.role === "ai" ? fn(it) : it)));
-  }, []);
+  }, [flushText]);
 
   // Seal whatever bubble is current and open a fresh one, optionally with
   // items (a user bubble) between them. The single place a bubble is born:
   // turn start, an answers roundtrip, and a mid-turn tool boundary all go
   // through here, so the ref/flag bookkeeping can't drift between them.
   const openAiBubble = useCallback((between: ChatItem[] = []): string => {
+    flushText();
     const prevId = currentAiIdRef.current;
     const aiId = nextId();
     currentAiIdRef.current = aiId;
@@ -172,7 +186,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
     ]);
     return aiId;
-  }, []);
+  }, [flushText]);
 
   // Shared per-frame projection: folds message text into the AI bubble,
   // status/file_changed into its trace + the changedPaths list, and mirrors
@@ -184,6 +198,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   // an answers roundtrip) land in the bubble that split opened.
   const applyEvent = useCallback(
     (aiId: string, ev: AgentEvent) => {
+      if (ev.kind !== "message") flushText();
       if (ev.kind === "file_changed" && ev.path) {
         setChangedPaths((prev) => (prev.includes(ev.path as string) ? prev : [...prev, ev.path as string]));
       }
@@ -279,6 +294,8 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         // produced the run-on bubble in files/proto.png.
         if (splitArmedRef.current) target = openAiBubble();
         if (ev.text) hasTextRef.current = true;
+        pushText(target, ev.text ?? "");
+        return;
       } else if (ev.kind === "status" || ev.kind === "file_changed") {
         // Arm only once the bubble has said something — a tool before the
         // first word (every turn opens that way) must not split off an empty
@@ -290,11 +307,8 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         // `activity`는 입력창 위 고정 줄이 읽는 "지금 하는 일" 하나다. 마지막에 온
         // 이벤트가 덮으므로 도구가 끝나고 텍스트가 흐르면 자동으로 작성으로 넘어간다 —
         // 워크스페이스 훅과 같은 규약이고(useWorkspaceStream), 어긋나면 두 화면의
-        // 같은 바가 다르게 동작한다.
-        if (ev.kind === "message") {
-          return { ...it, text: it.text + (ev.text ?? ""),
-                   activity: { kind: "writing" } };
-        }
+        // 같은 바가 다르게 동작한다. 텍스트(`message`)는 위에서 pushText로 갔다 —
+        // 붙을 때 `activity`를 작성으로 넘긴다(useTextDeltas의 apply).
         if (ev.kind === "status" || ev.kind === "file_changed") {
           // 백엔드가 `{"detail": "…"}`로 무엇을 했는지 보낸다(tool_trace.py).
           // 종전에는 이 값을 버리고 있어서 빌드 화면의 트레이스와 고정 줄이
@@ -311,7 +325,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         return it; // "done" is handled by onDone
       });
     },
-    [patchAi, openAiBubble, t],
+    [patchAi, openAiBubble, pushText, flushText, t],
   );
 
   // 턴 하나를 화면에 흘린다. `opener`가 첫 연결을 열고, 끊기면 **같은 턴**에
@@ -343,6 +357,8 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       let closeCurrent: (() => void) | null = null;
       const finish = () => {
         finished = true;
+        // 아래 빈 말풍선 정리가 아직 붙지 않은 텍스트를 "빈 것"으로 보지 않게.
+        flushText();
         if (timer) clearTimeout(timer);
         timer = null;
         setStreaming(false);
@@ -457,7 +473,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       if (finished) stop();
       else stopRef.current = stop;
     },
-    [applyEvent, patchAi, projectId, slug, t],
+    [applyEvent, patchAi, flushText, projectId, slug, t],
   );
 
   // 도는 턴에 붙는다 — 처음부터 재생해 말풍선을 채운다.

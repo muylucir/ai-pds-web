@@ -1,5 +1,6 @@
 "use client";
 // frontend/components/workspace/WorkspaceRightPanel.tsx
+import { memo } from "react";
 import { QuestionForm } from "@/components/questions/QuestionForm";
 import { PreviewPanelBody } from "@/components/canvas/PreviewPanel";
 import type { QuestionsPayload, StagePayload } from "@/lib/api/types";
@@ -51,7 +52,9 @@ export function deriveMode(
   return "artifacts";
 }
 
-export function WorkspaceRightPanel({
+// `memo`: 스트리밍 중 워크스페이스 페이지는 프레임마다 다시 그려지지만(채팅 말풍선이
+// 자란다) 이 패널의 props는 그동안 그대로다.
+export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
   projectId,
   pendingQuestions,
   stages,
@@ -101,4 +104,4 @@ export function WorkspaceRightPanel({
       )}
     </aside>
   );
-}
+});

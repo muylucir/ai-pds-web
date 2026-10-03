@@ -1,5 +1,6 @@
 "use client";
 // frontend/components/workspace/StageSidebar.tsx
+import { memo } from "react";
 import type { ProjectState, StageState, StagePayload } from "@/lib/api/types";
 import { progressPercent, stageCounts } from "@/lib/stageProgress";
 import { useT } from "@/lib/i18n/provider";
@@ -67,7 +68,9 @@ function StageRow({ stage, index }: { stage: StageState; index: number }) {
   );
 }
 
-export function StageSidebar({
+// `memo`: 스트리밍 중 워크스페이스 페이지는 프레임마다 다시 그려지지만(채팅 말풍선이
+// 자란다) 이 패널의 props는 그동안 그대로다.
+export const StageSidebar = memo(function StageSidebar({
   state,
   events,
 }: {
@@ -110,4 +113,4 @@ export function StageSidebar({
       </div>
     </aside>
   );
-}
+});

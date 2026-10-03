@@ -11,9 +11,9 @@
 # S3의 현재 소스 세대가 정본이다(proto/store.py).
 from __future__ import annotations
 
-from pathlib import Path
-
+import asyncio
 import os
+from pathlib import Path
 
 from aipds.project_bundle import SOURCE_EXCLUDED_DIRS, source_excluded
 from aipds.proto.store import PrototypeStore, local_entries
@@ -27,7 +27,7 @@ async def source_entries(*, build_dir: Path, s3: S3StoreLike,
     바이트로 돌려주는 것이 요점이다 — 텍스트로 디코드하면 이미지와 폰트가
     U+FFFD로 망가진다(s3store.py의 get_bytes/put_bytes가 존재하는 이유).
     """
-    entries = local_entries(build_dir)
+    entries = await asyncio.to_thread(local_entries, build_dir)
     if entries:
         return entries
     return [(rel, data) for rel, data in await PrototypeStore(s3).entries(slug)
@@ -50,8 +50,8 @@ def newest_source_mtime(build_dir: Path) -> float | None:
 
     **디렉토리는 걸어 들어가지 않고 잘라낸다.** 목록 라우트가 카드마다 이것을 부르고
     그 목록은 폴링된다. `node_modules`는 실측 수만 개 파일이라, 걸으면서 필터하면
-    정답은 같지만 목록 응답이 느려진다 — 그래서 `rglob`(`source_entries`가 쓰는
-    형태)이 아니라 `os.walk`로 `dirnames`를 잘라낸다.
+    정답은 같지만 목록 응답이 느려진다 — 그래서 `os.walk`로 `dirnames`를
+    잘라낸다(`store.local_entries`와 같은 걷기).
     """
     if not build_dir.is_dir():
         return None

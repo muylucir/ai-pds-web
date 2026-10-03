@@ -130,10 +130,34 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   // and DocTree doesn't gate on `tree.loading`, so a reload never flashes the
   // pane empty. Paused while a turn is in flight — sendTurn reloads the tree
   // itself on completion, so polling during `busy` would only add races.
+  //
+  // Also paused while the tab is hidden: a review tab left open behind the
+  // workspace would otherwise list the bucket every 5s for nobody. Coming back
+  // reloads once immediately, so the list is never a full interval stale.
   useEffect(() => {
     if (busy) return;
-    const id = setInterval(() => tree.reload(), 5000);
-    return () => clearInterval(id);
+    let id: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (id === null) id = setInterval(() => tree.reload(), 5000);
+    };
+    const stop = () => {
+      if (id !== null) clearInterval(id);
+      id = null;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        stop();
+      } else {
+        tree.reload();
+        start();
+      }
+    };
+    if (document.visibilityState !== "hidden") start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [busy, tree.reload]);
 
   return (

@@ -409,4 +409,46 @@ describe("Review page — document list auto-refresh", () => {
       "true",
     );
   }, 12000); // > the 5s poll interval + render/settle margin
+
+  it("does not poll while the tab is hidden, and reloads at once when it comes back", async () => {
+    let listCalls = 0;
+    let artifacts = [DISCOVERY_PATH];
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () => {
+        listCalls += 1;
+        return HttpResponse.json({ artifacts });
+      }),
+      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+        HttpResponse.json({ content: discoveryDocument }),
+      ),
+      http.get(`${API_BASE_URL}/projects/pilot1/files/${FAQ_PATH}`, () =>
+        HttpResponse.json({ content: "# FAQ" }),
+      ),
+      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
+    );
+    let visibility: DocumentVisibilityState = "visible";
+    const spy = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    try {
+      await act(async () => {
+        render(<ReviewPage params={params} />);
+      });
+      expect(await screen.findByRole("button", { name: /discovery-document\.md/ })).toBeInTheDocument();
+
+      visibility = "hidden";
+      act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+      const before = listCalls;
+      artifacts = [DISCOVERY_PATH, FAQ_PATH];
+      await act(async () => { await new Promise((r) => setTimeout(r, 5500)); });
+      expect(listCalls).toBe(before);           // a full interval passed, no poll
+
+      visibility = "visible";
+      act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+      // Well under the 5s interval: the return itself reloads.
+      expect(
+        await screen.findByRole("button", { name: /faq\.md/ }, { timeout: 1500 }),
+      ).toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  }, 12000);
 });

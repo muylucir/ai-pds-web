@@ -9,6 +9,7 @@
 # 에이전트 턴을 시작한다. 순서가 계약이다: 턴이 실패해도 승인은 남는다.
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone
@@ -93,9 +94,17 @@ async def list_approvals(pid: str):
     그때는 프론트가 감사 로그 폴백으로 판정한다.
     """
     ws = await ensure_workspace(pid)
-    records = await load_approvals(app_module.s3_store_factory(pid))
+    # 이력과 문서는 서로 기다릴 이유가 없다 — 함께 읽는다.
+    records, doc = await asyncio.gather(
+        load_approvals(app_module.s3_store_factory(pid)),
+        ws.runner.read_file(_DOC_PATH),
+        return_exceptions=True)
+    if isinstance(records, BaseException):
+        raise records
     try:
-        current = _hash(await ws.runner.read_file(_DOC_PATH))
+        if isinstance(doc, BaseException):
+            raise doc
+        current = _hash(doc)
     except (FileNotFoundError, ValueError):
         # 문서가 없으면 비교할 것이 없다. 빈 문자열이 아니라 null이어야 한다 —
         # 프론트가 "해시가 있다"고 오해하면 승인 여부를 잘못 판정한다.
