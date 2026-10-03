@@ -21,6 +21,7 @@
 # 사본이며, 둘의 역할이 다르므로 둘 다 남는다.
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -95,16 +96,20 @@ def _parse(raw: str) -> ApprovalRecord | None:
 async def load_approvals(s3: S3StoreLike) -> list[ApprovalRecord]:
     """승인 이력을 시간순으로. 없으면 빈 리스트 — 이 기능 이전의 모든
     프로젝트가 그 상태이고, 그때는 감사 로그 폴백이 판정한다."""
-    keys = await s3.list(APPROVALS_PREFIX)
-    records: list[ApprovalRecord] = []
     # 키가 타임스탬프로 시작하므로 사전순 == 시간순이다(ISO 8601의 성질,
     # ProjectRegistry.list_ids가 created_at에 쓰는 것과 같은 규율).
-    for key in sorted(keys):
-        try:
-            raw = await s3.get(key)
-        except FileNotFoundError:
+    keys = sorted(await s3.list(APPROVALS_PREFIX))
+    # 병렬 GET — `gather`는 입력 순서대로 돌려주므로 위 정렬이 곧 결과 순서다
+    # (session_store.load_transcript와 같은 패턴).
+    bodies = await asyncio.gather(*(s3.get(k) for k in keys),
+                                 return_exceptions=True)
+    records: list[ApprovalRecord] = []
+    for body in bodies:
+        if isinstance(body, FileNotFoundError):
             continue  # list와 get 사이에 삭제됐다
-        record = _parse(raw)
+        if isinstance(body, BaseException):
+            raise body
+        record = _parse(body)
         if record is not None:
             records.append(record)
     return records

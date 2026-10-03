@@ -78,11 +78,38 @@ class _HostEntry:
     launched: bool = False
 
 
+#: 꼬리를 읽는 단위. 한 블록이면 npm 출력 100줄이 대개 들어간다.
+_TAIL_BLOCK = 64 * 1024
+
+
 def _tail_text(path: Path, lines: int) -> str:
-    if not path.exists():
+    """로그의 마지막 `lines`줄. 파일 끝에서 필요한 만큼만 거꾸로 읽는다.
+
+    `.proto-host.log`는 회전 없이 append로만 자란다(`_npm_install`/
+    `_npm_run_build`의 "ab") — 호스팅을 반복하면 수십~수백 MB가 된다. 전부 읽으면
+    호출당 비용이 파일 크기에 비례하고(실측 100MB → 237ms), 이 함수는 async
+    라우트 안에서 동기로 불리므로 그 시간 동안 모든 SSE 스트림이 멈춘다.
+
+    바이트 단위로 자른 뒤 디코드하므로 블록 경계에서 잘린 멀티바이트 문자는 첫 줄에만
+    생길 수 있고, 그 줄은 버린다(파일 맨 앞까지 읽은 경우는 예외 — 잘린 것이 없다).
+    """
+    try:
+        f = path.open("rb")
+    except FileNotFoundError:
         return ""
-    content = path.read_text(encoding="utf-8", errors="replace")
-    all_lines = content.splitlines()
+    with f:
+        end = f.seek(0, 2)
+        pos = end
+        data = b""
+        # 줄 수 +1개의 개행을 볼 때까지 — 맨 앞 조각은 잘린 줄일 수 있다.
+        while pos > 0 and data.count(b"\n") <= lines:
+            step = min(_TAIL_BLOCK, pos)
+            pos -= step
+            f.seek(pos)
+            data = f.read(step) + data
+    all_lines = data.decode("utf-8", errors="replace").splitlines()
+    if pos > 0:
+        all_lines = all_lines[1:]
     return "\n".join(all_lines[-lines:])
 
 
@@ -231,16 +258,10 @@ class ProtoHost:
     def _info(entry: _HostEntry, *, with_log: bool = True) -> HostInfo:
         """`with_log=False`는 로그를 읽지 않고 상태만 담는다.
 
-        `_tail_text`가 마지막 100줄을 얻으려고 파일을 **전부** 읽고
-        (`read_text()`), `.proto-host.log`는 회전 없이 append로만 자라기
-        때문이다(`_npm_install`/`_npm_run_build`의 "ab"). 호스팅을 반복하면 `npm install` +
-        `npm run build` 출력이 계속 쌓인다. 실측한 호출당 비용: 1MB → 1.9ms,
-        20MB → 46ms, 100MB → 237ms.
-
-        그 읽기는 async 함수 안의 **동기 I/O**라 이벤트 루프를 그대로
-        붙잡는다 -- 목록을 새로고침할 때마다 진행 중인 모든 SSE 스트림이 그
-        시간만큼 멈춘다. 목록 라우트는 프로토타입 하나당 `status()`를 부르므로
-        개수만큼 곱해진다. 그래서 `status()`는 로그를 읽지 않는다.
+        `_tail_text`는 파일 끝만 읽지만 그래도 async 함수 안의 **동기 디스크
+        I/O**이고, 목록 라우트는 프로토타입 하나당 `status()`를 부르며 그 목록은
+        폴링된다. 상태만 필요한 자리에서 로그를 읽을 이유가 없으므로 `status()`는
+        로그를 읽지 않는다.
 
         로그가 실제로 필요한 두 자리는 그대로 둔다: `start()`의 실패 진단
         (502 detail로 나간다)과 `log_tail()`(사용자가 "로그 보기"를 누른
@@ -690,8 +711,8 @@ class ProtoHost:
 
     def status(self, pid: str, slug: str) -> HostInfo | None:
         """`log_tail`은 항상 빈 문자열이다 -- 이 메서드는 목록 라우트가
-        프로토타입마다 부르는 폴링 경로이고, 로그를 읽으면 이벤트 루프가
-        멈춘다(`_info`의 주석에 실측치가 있다). 로그가 필요한 호출자는
+        프로토타입마다 부르는 폴링 경로이고, 상태만 필요하다(`_info`의
+        주석). 로그가 필요한 호출자는
         `log_tail()`을 따로 부른다 -- `/host` 라우트가 이미 그렇게 한다.
         """
         entry = self._registry.get((pid, slug))

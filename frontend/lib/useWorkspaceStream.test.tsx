@@ -72,6 +72,9 @@ function noRunningTurn() {
   vi.mocked(client.getTurn).mockResolvedValue(null);
 }
 
+// 한 프레임을 흘린다 — 텍스트 델타가 그때 붙는다(lib/useTextDeltas.ts).
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
 let createdSummary = "Q1. 질문?\n→ A. 보기 라벨";
 
 function drive(
@@ -721,6 +724,9 @@ describe("useWorkspaceStream — 화면이 열릴 때 도는 턴", () => {
     );
     const { result } = renderHook(() => useWorkspaceStream("p1"));
     await act(async () => {});
+    // 텍스트는 프레임 단위로 붙는다(useTextDeltas) — 턴이 아직 돌고 있으니 종결
+    // 이벤트가 비워 주지 않는다.
+    await act(nextFrame);
 
     expect(sse.watchTurn).toHaveBeenCalledWith("p1", "t-live", 0, expect.anything());
     expect(result.current.streaming).toBe(true);
@@ -902,6 +908,43 @@ describe("useWorkspaceStream — activity는 마지막에 온 이벤트가 확�
     await act(async () => {});
     act(() => result.current.send("진행 중"));
     expect(liveAi(result)?.activity).toEqual({ kind: "writing" });
+  });
+
+  it("묶인 텍스트는 뒤따른 도구보다 먼저 붙는다 — 프레임을 기다리지 않아도", async () => {
+    // 텍스트 델타는 프레임마다 한 번 붙는다(useTextDeltas). 도구 이벤트가 그 사이에
+    // 오면 앞선 텍스트가 먼저 반영돼야 한다 — 늦게 붙은 텍스트가 activity를
+    // "작성"으로 되돌리면 도구가 도는 동안 고정 줄이 거짓말을 한다.
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    vi.mocked(sse.streamEvents).mockImplementation((_p: any, _t: any, handlers: any) => {
+      handlers.onEvent({ kind: "message", text: "자료를 ", path: null, payload: null });
+      handlers.onEvent({ kind: "message", text: "봅니다", path: null, payload: null });
+      handlers.onEvent({ kind: "status", text: "Read", path: null, payload: null });
+      return () => {};   // 턴은 아직 돈다 — 종결 이벤트가 대신 비워 주지 않는다
+    });
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행 중"));
+    const ai = liveAi(result) as { text?: string; activity?: unknown } | undefined;
+    expect(ai?.text).toBe("자료를 봅니다");
+    expect(ai?.activity).toEqual({ kind: "tool", tool: "Read", detail: null });
+  });
+
+  it("도는 턴의 텍스트 델타는 다음 프레임에 한꺼번에 붙는다", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    vi.mocked(sse.streamEvents).mockImplementation((_p: any, _t: any, handlers: any) => {
+      for (const piece of ["한 ", "번에 ", "붙는다"]) {
+        handlers.onEvent({ kind: "message", text: piece, path: null, payload: null });
+      }
+      return () => {};
+    });
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행 중"));
+    expect((liveAi(result) as { text?: string }).text).toBe("");
+    await act(nextFrame);
+    const ai = liveAi(result) as { text?: string; activity?: unknown };
+    expect(ai.text).toBe("한 번에 붙는다");
+    expect(ai.activity).toEqual({ kind: "writing" });
   });
 
   it("도구 status는 이름과 대상을 함께 싣는다", async () => {

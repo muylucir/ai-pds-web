@@ -405,15 +405,22 @@ class SurveyStore:
         dest = archive_prefix(self.slug, qn.closed_at)
 
         await self._s3.put(f"{dest}questionnaire.json", qn.model_dump_json())
-        for key in await self._s3.list(responses_prefix(self.slug)):
+        response_keys = await self._s3.list(responses_prefix(self.slug))
+        for key in response_keys:
             body = await self._s3.get(key)
             name = key.rsplit("/", 1)[-1]
             await self._s3.put(f"{dest}responses/{name}", body)
-        try:
-            await self._s3.put(f"{dest}rollup.json",
-                               await self._s3.get(rollup_key(self.slug)))
-        except FileNotFoundError:
-            pass  # never aggregated; nothing to preserve
+        if response_keys:
+            # 제출은 집계를 갱신하지 않으므로(routes/surveys_public.py) 캐시는 없거나
+            # 낡았을 수 있다 — 보존하는 집계는 보존하는 응답과 맞춘다.
+            rollup = await self.get_rollup()
+            await self._s3.put(f"{dest}rollup.json", rollup.model_dump_json())
+        else:
+            try:
+                await self._s3.put(f"{dest}rollup.json",
+                                   await self._s3.get(rollup_key(self.slug)))
+            except FileNotFoundError:
+                pass  # never aggregated; nothing to preserve
         await self._s3.delete_prefix(responses_prefix(self.slug))
         await self._s3.delete_prefix(rollup_key(self.slug))
 

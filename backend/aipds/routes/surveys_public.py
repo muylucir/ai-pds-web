@@ -8,7 +8,6 @@
 #   - size and count caps bound S3 growth
 from __future__ import annotations
 
-import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -20,8 +19,6 @@ from aipds import error_codes as ec
 from aipds.survey.models import (SCALE_MAX, SCALE_MIN, Questionnaire,
                                       SurveyResponse)
 from aipds.survey.store import SurveyStore
-
-_log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -131,10 +128,8 @@ async def public_submit_survey(token: str, body: AnswersBody, request: Request):
                           submitted_at=datetime.now(timezone.utc).isoformat(),
                           answers=clean)
     await store.append_response(resp)   # this PUT is what commits the response
-    try:
-        await store.refresh_rollup()
-    except Exception:
-        # The rollup is only a cache: a failure here must not lose a
-        # respondent's submission. The next dashboard read rebuilds it.
-        _log.exception("rollup refresh failed after response append")
+    # 집계는 여기서 갱신하지 않는다. 갱신은 응답 전부를 다시 읽으므로 제출 한 번이
+    # O(N)이 되고(1000번째 제출이 GET 1000회), 이 경로는 인증 없이 열려 있다.
+    # 집계는 캐시일 뿐이고 `get_rollup`이 응답 수가 어긋나면 다시 만든다 — 그
+    # 비용은 대시보드를 여는 사람이 한 번 치른다.
     return Response(status_code=204)
