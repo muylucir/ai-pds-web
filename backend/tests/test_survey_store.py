@@ -164,6 +164,27 @@ def test_aggregate_markdown_carries_no_step6_sections():
         assert "validation-results.md" in md, language
 
 
+def test_aggregate_markdown_carries_the_survey_window():
+    """검증 기간의 양 끝이 집계에 있어야 한다. 없으면 에이전트가 PM에게 설문
+    시작 시각을 묻는다 — 2026-10-06 chicken의 확인 질문 Q3이 그것이었다."""
+    from aipds.survey.store import _aggregate_markdown
+    from aipds.survey.models import Rollup
+
+    rollup = Rollup(count=0, per_question={}, rebuilt_at="2026-10-06T16:18:49+00:00")
+    open_md = _aggregate_markdown(
+        _qn(created_at="2026-10-06T16:16:07+00:00"), [], rollup,
+        "2026-10-06T16:18:49+00:00", "ko")
+    assert "**설문 시작 시각**: 2026-10-06T16:16:07+00:00" in open_md
+    assert "설문 마감 시각" not in open_md  # 열린 설문에는 마감 시각이 없다
+
+    closed_md = _aggregate_markdown(
+        _qn(status="closed", created_at="2026-10-06T16:16:07+00:00",
+            closed_at="2026-10-08T09:00:00+00:00"), [], rollup,
+        "2026-10-08T09:01:00+00:00", "en")
+    assert "**Survey started at**: 2026-10-06T16:16:07+00:00" in closed_md
+    assert "**Survey closed at**: 2026-10-08T09:00:00+00:00" in closed_md
+
+
 async def test_synthesize_writes_the_report_in_the_stores_language():
     """스토어 → 리포트 배선. 이 홉이 끊기면 영어 프로젝트도 한국어 리포트를
     받는다 — 에러는 없고, aiplc-docs/**에 잘못된 언어의 산출물이 남는다."""

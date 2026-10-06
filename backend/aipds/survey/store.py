@@ -170,6 +170,12 @@ def _aggregate_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
         f"- **{L['response_count']}**: {rollup.count}",
         f"- **{L['survey_status']}**: "
         f"{L['status_closed'] if qn.status == 'closed' else L['status_open']}",
+        # 검증 기간의 양 끝. Step 6의 Duration과, 수정 이력과 비교해 응답자가 어느
+        # 빌드를 봤는지 가리는 데 쓰인다(discovery-config/CLAUDE.md "Mark what
+        # validation covered"). 이것이 없으면 에이전트가 PM에게 시작 시각을 묻고,
+        # PM은 대개 기억하지 못한다(2026-10-06 chicken).
+        f"- **{L['started_at']}**: {qn.created_at}",
+        *([f"- **{L['closed_at']}**: {qn.closed_at}"] if qn.closed_at else []),
         f"- **{L['collected_at']}**: {now}",
         "",
         L["note"],
