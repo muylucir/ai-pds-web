@@ -34,6 +34,7 @@ import re
 from pathlib import PurePosixPath
 
 from aipds.pathsafe import workspace_relative
+from aipds.proto import layout
 
 #: Discovery가 쓸 수 있는 유일한 루트. 산출물 정의 자체다(Workspace.list_artifacts가
 #: 같은 서브트리를 프로젝트 산출물로 본다).
@@ -62,6 +63,31 @@ def write_denial(path: str | None, workspace: str) -> str | None:
     if PurePosixPath(rel).parts[:1] == (DOCS_ROOT,):
         return None
     return rel
+
+
+#: `aiplc-docs/` 안이지만 웹이 소유하는 파일 이름. 웹이 매번 다시 만들어 덮어쓰므로
+#: 에이전트가 거기 쓴 내용은 다음 재생성에서 사라진다 — 프로토타입 쪽 게이트와 같은
+#: 이유로 산문이 아니라 훅으로 막는다. 이름으로 판정하는 것은 이 이름들이 웹만 쓰는
+#: 이름이라서다(상류 룰에 없다). 이름이 겹칠 수 있는 파일은 여기 넣지 않는다.
+WEB_OWNED_NAMES = frozenset({layout.SURVEY_AGGREGATE})
+
+
+def web_owned_denial(path: str | None, workspace: str) -> str | None:
+    """웹이 소유하는 `aiplc-docs/` 파일이면 거부 대상 경로를, 아니면 None.
+
+    `write_denial`과 문구가 달라야 해서 따로 판정한다: 그쪽은 "aiplc-docs/ 안에
+    써라"이고, 여기는 이미 aiplc-docs/ 안이다 — 같은 문구를 주면 모델이 같은
+    경로로 재시도한다(agent/prompts.write_outside_docs의 결함 기록).
+    """
+    if not path or not isinstance(path, str):
+        return None
+    rel = workspace_relative(path, workspace)
+    if rel is None:
+        return None
+    parts = PurePosixPath(rel).parts
+    if parts[:1] == (DOCS_ROOT,) and parts[-1] in WEB_OWNED_NAMES:
+        return rel
+    return None
 
 
 #: 인용부호 안의 내용. 리다이렉션·명령 탐지 전에 지운다 — `echo "a > b"`의 `>`를

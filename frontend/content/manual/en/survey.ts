@@ -92,13 +92,17 @@ it keeps reactions to the new screens out of the same bucket as the old ones.`,
     {
       kind: "md",
       md: `**Synthesize results** does not only put something on screen. It is saved as
-\`validation-results.md\` in that prototype's document folder, so you can open it in
-[Document Review](/manual#review) and the later stages read it too. **Each prototype gets its own
-file** — build several prototypes, run a survey on each, and the results never overwrite one another.
+\`survey-aggregate.md\` in that prototype's document folder, so you can open it in
+[Document Review](/manual#review). **Each prototype gets its own file** — build several prototypes,
+run a survey on each, and the results never overwrite one another. Synthesize again after more
+responses arrive and only this file is refreshed with the latest numbers.
 
-The survey is not a feature that ends at a results screen. Attach the synthesis or the CSV
-[to the workspace chat](/manual#attach) and ask it to "update the documents with these responses",
-and that evidence lands in the documents.
+The survey is not a feature that ends at a results screen. Go back to the workspace chat and ask it to
+"reflect the survey results": the agent uses this aggregate to write the theme analysis, pain point
+validation and build decision into \`validation-results.md\` and carries them into the Discovery
+document. That synthesis is the agent's document, so synthesizing again or resetting the prototype
+never erases it. If you heard feedback outside the survey or have interview notes,
+[attach](/manual#attach) them too.
 
 If a hypothesis was contradicted, the point of the loop is not to stop at editing the document —
 change the prototype too ([continue improving](/manual#complete-card)) and ask again.`,
