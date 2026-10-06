@@ -88,11 +88,11 @@ describe("synthesizeSurvey", () => {
     server.use(http.post(
       `${API_BASE_URL}/projects/${PID}/prototypes/${SLUG}/survey/synthesize`,
       () => HttpResponse.json({
-        path: "aiplc-docs/discovery/prototype/validation-results.md",
+        path: "aiplc-docs/discovery/prototype/survey-aggregate.md",
         response_count: 4,
       })));
     const out = await synthesizeSurvey(PID, SLUG);
-    expect(out.path).toBe("aiplc-docs/discovery/prototype/validation-results.md");
+    expect(out.path).toBe("aiplc-docs/discovery/prototype/survey-aggregate.md");
     expect(out.response_count).toBe(4);
   });
 

@@ -111,29 +111,21 @@ def questionnaire_md_key(slug: str) -> str:
     return f"{layout.artifact_dir(slug)}/validation-questionnaire.md"
 
 
-def results_md_key(slug: str) -> str:
-    """Where this prototype's validation synthesis lives
-    (prototype-validation.md Step 6), and where the later product-strategy
-    stage looks for it.
+def aggregate_md_key(slug: str) -> str:
+    """Where "Synthesize results" writes this prototype's survey aggregate —
+    the feedback file Step 6 of prototype-validation.md imports.
 
-    **왜 슬러그별인가(2026-08-20 실측).** 종전에는 슬러그 없는 모듈 상수였다
-    (`aiplc-docs/discovery/prototype/validation-results.md`). 그런데 취합
-    라우트는 슬러그별이고(`POST .../prototypes/{slug}/survey/synthesize`) Path B는
-    프로토타입을 N개 만든다 — test2222가 3개였다. 셋을 취합하면 셋이 같은 키를
-    덮어써서 마지막 것만 남았고, 오류는 없었다.
+    **룰의 `validation-results.md`가 아니다.** 그 파일은 에이전트가 Step 6에서
+    이 집계를 읽어 직접 만들고, Part 2가 근거로 인용한다. 웹은 그 파일을 쓰지도
+    지우지도 않는다 — 왜 두 파일이어야 하는지는 `layout.SURVEY_AGGREGATE`.
 
-    단수 경로의 근거는 "룰이 그 경로를 규정한다"였는데, 그 룰
-    (`prototype-validation.md`)은 제목부터 "Path A.1 - Single Solution"이고
-    본문이 "ORIGINAL single-prototype flow"라고 명시한다. Path B가 타는
-    `prototype-building.md`에는 검증 단계가 아예 없고(끝이 "Proceed to: Product
-    Strategy"), `use-case-prioritization.md`에는 검증 언급이 0회다. 즉 다중
-    프로토타입 프로젝트에 단수 경로를 요구하는 상류가 없다.
-
-    **A.1에서는 경로가 그대로다.** 그쪽은 상류가 실제로 그 경로를 규정하고
-    product-strategy가 읽는다 — `layout.artifact_dir`이 단수 id를 분기하므로 한
-    식이 둘 다 만족한다(`questionnaire_md_key`와 같은 이유로 같은 모양이다).
+    **왜 슬러그별인가(2026-08-20 실측).** 취합 라우트는 슬러그별이고
+    (`POST .../prototypes/{slug}/survey/synthesize`) Path B는 프로토타입을 N개
+    만든다 — test2222가 3개였다. 슬러그 없는 키였을 때는 셋을 취합하면 셋이 같은
+    키를 덮어써서 마지막 것만 남았고, 오류는 없었다. `layout.artifact_dir`이 단수
+    id를 분기하므로 Path A.1은 명세 옆(`prototype/`)에 놓인다.
     """
-    return f"{layout.artifact_dir(slug)}/validation-results.md"
+    return layout.survey_aggregate_key(slug)
 
 
 #: Leading characters a spreadsheet treats as the start of a formula.
@@ -156,35 +148,31 @@ def _csv_safe(value):
     return value
 
 
-def _results_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
-                      now: str, language: str = "ko") -> str:
-    """Render the survey aggregate under prototype-validation.md's Step 6
-    headings. Sections the rule expects the PM to judge (theme analysis, pain
-    point mapping, build decision) are emitted as empty templates rather than
-    machine guesses.
+def _aggregate_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
+                        now: str, language: str = "ko") -> str:
+    """Render the survey aggregate: counts, means and every free-text answer.
 
-    Step 6이 정한 섹션 이름과 표 헤더는 양쪽 언어에서 영어다 — 룰이 그 이름으로
-    문서를 찾는다(report_labels.py 헤더 참조).
+    Deliberately **only** the collected data. Theme analysis, pain-point
+    verdicts and the build decision are Step 6 judgments, and they belong in the
+    rule's `validation-results.md`, which the agent writes from this file. A
+    machine-written guess here would be indistinguishable from a real finding,
+    and an empty template of those sections invites the agent to fill it in
+    here -- in a file the next synthesis overwrites.
     """
     L = labels(language)
     lines = [
-        "# Validation Results",
+        f"# {L['title']}",
         "",
         f"- **{L['prototype']}**: {qn.slug}",
         f"- **{L['survey']}**: {qn.title}",
         f"- **{L['hypothesis']}**: {qn.hypothesis}",
+        f"- **{L['source']}**: {L['source_name']}",
         f"- **{L['response_count']}**: {rollup.count}",
         f"- **{L['survey_status']}**: "
         f"{L['status_closed'] if qn.status == 'closed' else L['status_open']}",
         f"- **{L['collected_at']}**: {now}",
         "",
         L["note"],
-        "",
-        "## Feedback Sources",
-        "",
-        "| Source | Type | Users | Feedback Items |",
-        "|---|---|---|---|",
-        f"| {L['source_name']} | Survey | {rollup.count} | {rollup.count} |",
         "",
         f"## {L['quantitative']}",
         "",
@@ -225,8 +213,8 @@ def _results_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
                 continue
             lines.append(f"### Q{idx}. {q.text}")
             lines.append("")
-            # Every answer, not the rollup's 20-sample cap: this file is the
-            # PM's synthesis input, so truncating it would hide evidence.
+            # Every answer, not the rollup's 20-sample cap: this file is Step
+            # 6's input, so truncating it would hide evidence.
             answers = [str(r.answers[q.id]).strip() for r in
                        sorted(responses, key=lambda x: x.submitted_at)
                        if isinstance(r.answers.get(q.id), str)
@@ -237,26 +225,6 @@ def _results_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
                 lines.extend(f"- {a}" for a in answers)
             lines.append("")
 
-    lines.extend([
-        "## Theme Analysis",
-        "",
-        "| Theme | Frequency | Severity | Representative Quote |",
-        "|---|---|---|---|",
-        f"| {L['theme_placeholder']} | | | |",
-        "",
-        "## Pain Point Mapping",
-        "",
-        "| Original Pain Point | Validated? | Evidence |",
-        "|---|---|---|",
-        f"| {L['pain_placeholder']} | | |",
-        "",
-        "## Build Decision",
-        "",
-        f"- [ ] {L['decision_proceed']}",
-        f"- [ ] {L['decision_iterate']}",
-        f"- [ ] {L['decision_pivot']}",
-        "",
-    ])
     return "\n".join(lines)
 
 
@@ -458,9 +426,13 @@ class SurveyStore:
         for token in await self._collect_tokens():
             await self._root.delete_prefix(f"{TOKEN_INDEX_PREFIX}{token}.json")
         await self._s3.delete_prefix(survey_prefix(self.slug))
-        # Outside the survey/ tree: the two copies under aiplc-docs/. Both are
-        # this prototype's own — `layout.artifact_dir(slug)` scopes them — so
-        # a sibling prototype's documents are out of reach.
+        # Outside the survey/ tree: the two files we write under aiplc-docs/.
+        # Both are this prototype's own — `layout.artifact_dir(slug)` scopes
+        # them — so a sibling prototype's documents are out of reach. The rule's
+        # `validation-results.md` beside them is NOT ours and stays: the agent
+        # wrote it, and once Step 8 has run, Part 2 cites it as the evidence of
+        # a build decision already made. A rebuilt prototype gets new results
+        # when Step 6 runs again, exactly as the rule's Iterate path does.
         #
         # **정확한 키만 지운다.** 단수 프로토타입에서는 이 디렉터리에 스펙
         # (`prototype-spec.md`)이 함께 산다. 디렉터리를 프리픽스로 지우면 스펙이
@@ -468,7 +440,7 @@ class SurveyStore:
         # `delete_prefix`에 전체 키를 넘기는 것은 단일 키 삭제의 확립된 관례다
         # (S3StoreLike에 단일 delete가 없다).
         await self._s3.delete_prefix(questionnaire_md_key(self.slug))
-        await self._s3.delete_prefix(results_md_key(self.slug))
+        await self._s3.delete_prefix(aggregate_md_key(self.slug))
 
     async def _collect_tokens(self) -> set[str]:
         """Every token this prototype has issued, live and archived.
@@ -528,24 +500,22 @@ class SurveyStore:
                              for q in qn.questions])
         return buf.getvalue()
 
-    # ---- synthesis into the rule's validation-results.md ----
+    # ---- the survey aggregate Step 6 imports ----
 
-    async def synthesize_results(self, now: str | None = None) -> tuple[str, int]:
-        """Render the aggregate as the rule's validation-results.md and store
-        it. Returns (key, response_count).
+    async def synthesize_aggregate(self, now: str | None = None) -> tuple[str, int]:
+        """Render the aggregate and store it. Returns (key, response_count).
 
-        Deliberately mechanical: it lays out counts, means and every free-text
-        answer under the rule's headings so the PM has the evidence in one
-        place. It does NOT invent theme analysis or pain-point verdicts — those
-        are the PM's judgment calls in prototype-validation.md Step 6, and a
-        machine-written guess there would be indistinguishable from a real
-        finding. Placeholder rows are left for the PM to fill.
+        Re-runnable on an open survey -- reading an interim aggregate and then
+        collecting more answers is the common flow -- and each run overwrites
+        the previous aggregate with fresh numbers. That is safe only because the
+        file is ours alone: the agent's Step 6 synthesis lives in the rule's
+        `validation-results.md`, which this never touches.
         """
         qn = await self.load_questionnaire()
         responses = await self.load_responses()
         rollup = build_rollup(qn.questions, responses, self._now(now))
-        md = _results_markdown(qn, responses, rollup, self._now(now),
-                               self._language)
-        key = results_md_key(self.slug)
+        md = _aggregate_markdown(qn, responses, rollup, self._now(now),
+                                 self._language)
+        key = aggregate_md_key(self.slug)
         await self._s3.put(key, md)
         return key, rollup.count

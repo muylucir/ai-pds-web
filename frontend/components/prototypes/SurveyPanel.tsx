@@ -137,8 +137,9 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
             )}
 
             {/* 취합은 열린 설문에서도 가능하다: 중간 집계를 문서로 확인한 뒤
-                응답을 더 받는 흐름이 실제로 흔하다. 재실행하면 최신 수치로
-                덮어쓴다. */}
+                응답을 더 받는 흐름이 실제로 흔하다. 재실행하면 집계 파일만
+                최신 수치로 덮어쓴다 — 에이전트의 Step 6 종합은 다른 파일
+                (validation-results.md)이라 건드리지 않는다. */}
             <div className="flex flex-wrap gap-2 items-center pt-1">
               <button type="button" onClick={() => void handleSynthesize()} disabled={busy}
                       className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-medium disabled:opacity-50">
@@ -147,6 +148,7 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
               {synthesized && (
                 <span className="text-xs text-slate-500 break-all">
                   {t("survey.savedPrefix")} {synthesized.response_count} {t("survey.savedSuffix")} <code>{synthesized.path}</code>
+                  {" "}{t("survey.savedNext")}
                 </span>
               )}
             </div>

@@ -46,7 +46,12 @@ lists straight back as a revision request usually resolves the document in one p
 
 For a handoff to a build team, the \`.zip\` is the convenient one. If only the prototype specs are
 wanted, pulling out the \`PROTOTYPE-*.md\` files is enough — a build can start from those files
-alone in another environment.`,
+alone in another environment.
+
+If the Discovery document cites a file as evidence (for example \`prototype/validation-results.md\`)
+that is not among the artifacts, a yellow warning listing those files appears above the download
+buttons. Before handing off, ask the Discovery chat to fix the references or rewrite the missing
+documents.`,
     },
     {
       kind: "callout",

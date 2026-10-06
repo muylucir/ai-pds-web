@@ -288,6 +288,8 @@ export const ko = {
   "page.pickDocument": "좌측에서 문서를 선택하세요.",
   "page.zipDownloadFailed": "압축 다운로드에 실패했습니다.",
   "page.downloadAllZip": "⬇ 전체 다운로드 (.zip)",
+  "page.missingRefsTitle": "이 문서가 근거로 가리키는 파일 {n}개가 산출물에 없습니다.",
+  "page.missingRefsBody": "개발 조직에 넘기기 전에 확인하세요. Discovery 대화에서 참조를 고치거나 빠진 문서를 다시 써 달라고 요청할 수 있습니다.",
   "page.downloadMd": "⬇ .md 다운로드",
   "page.reviseDraftSuffix": "수정 요청: ",
   "page.resetIncomplete": "초기화가 완료되지 않았습니다. 다시 시도해 주세요.",
@@ -520,6 +522,7 @@ export const ko = {
   "review.auditBody": "모든 입력은 원문 그대로 타임스탬프와 함께 기록됩니다. API 키·크리덴셜은 절대 기록되지 않습니다. 이 게이트에서의 승인/수정요청 결정도 즉시 기록됩니다.",
   "survey.savedPrefix": "건을",
   "survey.savedSuffix": "에 저장했습니다.",
+  "survey.savedNext": "Discovery 대화로 돌아가 설문 결과를 반영해 달라고 하면, 에이전트가 이 집계를 근거로 validation-results.md를 작성합니다.",
   "app.description": "AI-PLC Discovery 웹 서비스",
 
   // 사용 매뉴얼(/manual)의 **껍데기**. 본문은 여기가 아니라

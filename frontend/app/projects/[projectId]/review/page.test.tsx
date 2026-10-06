@@ -63,6 +63,37 @@ describe("Review page", () => {
     expect(screen.getByRole("button", { name: /승인하고 다음 단계로/ })).toBeInTheDocument();
   });
 
+  it("warns before download when the discovery document cites files that are missing", async () => {
+    // 실측 novadesk-2의 모양: Part 2가 근거 파일을 가리키는데 산출물에 없다.
+    mockTreeAndAudit();
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1/artifacts/missing-references`, () =>
+        HttpResponse.json({ document: DISCOVERY_PATH,
+                            missing: ["prototype/validation-results.md"] }),
+      ),
+    );
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("1");
+    expect(alert).toHaveTextContent("prototype/validation-results.md");
+
+    // 다른 문서를 보면 경고를 걷는다 — 이 검사는 입구 문서에 대한 것이다.
+    await userEvent.click(screen.getByRole("button", { name: /audit\.md/ }));
+    await screen.findByText("Audit Log");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows no warning when every cited file exists", async () => {
+    mockTreeAndAudit();
+    await act(async () => {
+      render(<ReviewPage params={params} />);
+    });
+    await screen.findByText("Press Release");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("selecting a non-discovery-document file hides the gate and drops the DocumentPanel/VerificationSummary chrome", async () => {
     mockTreeAndAudit();
     await act(async () => {

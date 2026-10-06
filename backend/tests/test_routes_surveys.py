@@ -188,9 +188,10 @@ def test_unknown_project_404(env):
     assert client.post("/projects/nope/prototypes/x/survey").status_code == 404
 
 
-def test_synthesize_writes_rule_expected_results_path(env):
-    """The aggregate must land at the path the rule defines (Step 6) and the
-    later product-strategy stage reads — not the per-slug questionnaire tree."""
+def test_synthesize_writes_the_aggregate_beside_the_spec(env):
+    """The aggregate lands next to the spec as the web's own file -- the
+    feedback Step 6 imports -- and never as the rule's validation-results.md,
+    which the agent writes from it."""
     _create(env)
     store = app_module.survey_store_factory(PID, SLUG)
     asyncio.run(store.append_response(SurveyResponse(
@@ -206,19 +207,20 @@ def test_synthesize_writes_rule_expected_results_path(env):
     # 슬러그별 경로다. 이 테스트의 SLUG("demo")는 Path B 레이아웃이므로
     # `prototypes/{slug}/` 아래로 간다 — 단수 프로토타입만 `prototype/`을 쓴다.
     assert body["path"] == \
-        f"aiplc-docs/discovery/prototypes/{SLUG}/validation-results.md"
+        f"aiplc-docs/discovery/prototypes/{SLUG}/survey-aggregate.md"
     assert body["response_count"] == 2
 
     md = env["project_s3"].blobs[body["path"]]
-    assert "# Validation Results" in md
+    assert "# 설문 집계" in md
     assert f"**응답 수**: 2" in md
     # Quantitative aggregate present
     assert "평균 **4.0** / 5" in md
     # EVERY free-text answer verbatim (not the rollup's 20-sample cap)
     assert "속도가 인상적입니다" in md and "정확도가 아쉽다" in md
-    # Judgment sections left for the PM, not machine-guessed
-    assert "## Theme Analysis" in md and "## Pain Point Mapping" in md
-    assert "## Build Decision" in md
+    # Judgment sections are the agent's, in validation-results.md -- not here
+    assert "## Theme Analysis" not in md and "## Build Decision" not in md
+    assert not any(k.endswith("validation-results.md")
+                   for k in env["project_s3"].blobs)
 
 
 def test_synthesize_404_without_survey(env):

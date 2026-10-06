@@ -52,6 +52,14 @@ Discovery writes specifications; the Prototypes tab builds and runs them.
 - **The model and credentials are already provisioned. Never ask for them.** Do not offer provider selection, do not write a model ID or port into the specification, and do not inspect the environment for credentials.
 - **The hosted runtime is Node.** Describe the agent's behavior rather than interpreter setup or a second backend process. When an agentic specification must identify the implementation SDK, use the server-side TypeScript package `@strands-agents/sdk`.
 
+## Survey results
+
+The Prototypes tab runs validation surveys. **Synthesize results** writes the aggregate next to the spec as `survey-aggregate.md` (Path A.1: `aiplc-docs/discovery/prototype/`, Path B: `aiplc-docs/discovery/prototypes/{slug}/`).
+
+- **It is the feedback file Step 6 imports.** When the user returns after a survey, read it as the file `prototype-validation.md` Step 5 lets the user provide, together with whatever else the user reports.
+- **AI-PDS Web owns it. Do not write to it.** It is rebuilt from the responses on every synthesis, so anything written there would be lost; hooks reject the write.
+- **Write the Step 6 synthesis to `validation-results.md` yourself,** in the same directory, as the rule specifies. AI-PDS Web never writes or deletes that file, so it stays the evidence Step 8 and Product Strategy cite. Record the aggregate's response count and aggregation time there, because the aggregate itself will change as more responses arrive.
+
 ## Spec reconciliation before the Living Document
 
 The approved spec is fixed at its gate, but the Prototypes tab keeps changing the prototype afterwards. Each build session appends what it changed to `change-history.md` next to the spec (Path A.1: `aiplc-docs/discovery/prototype/`, Path B: `aiplc-docs/discovery/prototypes/{slug}/`). Nobody downstream reads that file, so without this step the spec a developer receives describes a prototype that no longer exists.
