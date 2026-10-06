@@ -12,6 +12,8 @@ export const handlers = [
     return HttpResponse.json({ project_id: body.project_id, name: body.name ?? null });
   }),
   http.get(`${API_BASE_URL}/projects/:pid/artifacts`, () => HttpResponse.json({ artifacts: [] })),
+  http.get(`${API_BASE_URL}/projects/:pid/artifacts/missing-references`, () =>
+    HttpResponse.json({ document: null, missing: [] })),
   // 문서 리뷰 화면이 승인 게이트 판정을 위해 부른다. 기본은 "아직 승인 안 함"
   // (빈 이력) — 그 상태에서 게이트가 떠 있는 것이 정상이다.
   http.get(`${API_BASE_URL}/projects/:pid/approvals`, () =>

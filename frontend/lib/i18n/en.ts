@@ -250,6 +250,8 @@ export const en: Record<keyof typeof ko, string> = {
   "page.pickDocument": "Select a document on the left.",
   "page.zipDownloadFailed": "The archive download failed.",
   "page.downloadAllZip": "⬇ Download all (.zip)",
+  "page.missingRefsTitle": "{n} file(s) this document cites as evidence are missing from the artifacts.",
+  "page.missingRefsBody": "Check them before handing the documents to the development team. In the Discovery chat you can ask it to fix the references or rewrite the missing documents.",
   "page.downloadMd": "⬇ Download .md",
   "page.reviseDraftSuffix": "revision request: ",
   "page.resetIncomplete": "The reset did not finish. Please try again.",

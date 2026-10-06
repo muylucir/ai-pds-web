@@ -122,3 +122,31 @@ def test_archive_quote_and_crlf_in_pid_yields_safe_header():
     assert "\r" not in cd and "\n" not in cd
     fallback = cd.split('filename="')[1].split('"')[0]
     assert '"' not in fallback
+
+
+# ---- 핸드오프 문서의 깨진 참조 (parsers/doc_references) ----
+
+def test_missing_references_lists_what_the_handoff_doc_cites_but_lacks(monkeypatch):
+    pid = "refs1"
+    _seeded_project(monkeypatch, pid, {
+        "aiplc-docs/discovery/discovery-document.md":
+            "전체 명세: `prototype/prototype-spec.md`\n"
+            "전체 결과: `prototype/validation-results.md`\n",
+        "aiplc-docs/discovery/prototype/prototype-spec.md": "# spec",
+    })
+    r = client.get(f"/projects/{pid}/artifacts/missing-references")
+    assert r.status_code == 200
+    assert r.json() == {"document": "aiplc-docs/discovery/discovery-document.md",
+                        "missing": ["prototype/validation-results.md"]}
+
+
+def test_missing_references_is_empty_before_the_handoff_doc_exists(monkeypatch):
+    pid = "refs-none"
+    _seeded_project(monkeypatch, pid, {"aiplc-docs/audit.md": "# Audit"})
+    r = client.get(f"/projects/{pid}/artifacts/missing-references")
+    assert r.status_code == 200
+    assert r.json() == {"document": None, "missing": []}
+
+
+def test_missing_references_404_unknown_project():
+    assert client.get("/projects/refs-ghost/artifacts/missing-references").status_code == 404
