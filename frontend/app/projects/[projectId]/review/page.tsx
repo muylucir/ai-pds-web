@@ -15,6 +15,7 @@ import {
   listApprovals,
   approveDocument,
   downloadArtifactsArchive,
+  getMissingReferences,
   ApiError,
 } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
@@ -93,6 +94,17 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const contentLoadError = selected !== null && content.error !== null;
   const auditPath = tree.data?.find((p) => p.endsWith("aiplc-docs/audit.md")) ?? null;
   const isDiscoveryDocument = selected?.endsWith("discovery-document.md") ?? false;
+
+  // 개발 조직에 넘기는 입구 문서가 근거로 가리키는데 없는 파일. 전체 다운로드
+  // 직전에 드러낸다 — 상류 템플릿은 파일이 있든 없든 참조를 쓰게 하므로, 아무도
+  // 확인하지 않으면 링크가 깨진 채로 넘어간다(backend parsers/doc_references).
+  // 목록이 바뀔 때만 다시 묻는다: tree.data는 5초 폴링마다 새 배열이다.
+  const artifactsKey = (tree.data ?? []).join("\n");
+  const missingRefs = useAsync(
+    () => isDiscoveryDocument ? getMissingReferences(projectId) : Promise.resolve(null),
+    [projectId, isDiscoveryDocument, artifactsKey, content.data],
+  );
+  const missing = missingRefs.data?.missing ?? [];
 
   // 수정 요청 링크의 목적지 — 워크스페이스 채팅으로 이동하며 문서명이 포함된 초안을 ?draft=로 전달한다.
   const docName = selected ? selected.slice(selected.lastIndexOf("/") + 1) : "discovery-document.md";
@@ -216,6 +228,16 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
             </div>
           ) : (
             <div>
+              {isDiscoveryDocument && missing.length > 0 && (
+                <div role="alert"
+                     className="rounded-xl border border-amber-200 bg-amber-50 p-4 mb-3 text-sm text-amber-900">
+                  <p className="font-bold">{t("page.missingRefsTitle").replace("{n}", String(missing.length))}</p>
+                  <ul className="list-disc pl-5 my-2">
+                    {missing.map((ref) => <li key={ref}><code>{ref}</code></li>)}
+                  </ul>
+                  <p>{t("page.missingRefsBody")}</p>
+                </div>
+              )}
               <div className="flex justify-end mb-3">
                 <button
                   type="button"

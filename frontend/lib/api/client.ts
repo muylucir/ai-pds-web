@@ -149,6 +149,19 @@ export async function listArtifacts(pid: string): Promise<string[]> {
   return r.artifacts;
 }
 
+// GET /projects/{pid}/artifacts/missing-references → the files the Discovery
+// Document cites as evidence but the artifacts do not contain. `document` is
+// null until that document exists (nothing to cite yet).
+export interface MissingReferences {
+  document: string | null;
+  missing: string[];
+}
+
+export async function getMissingReferences(pid: string): Promise<MissingReferences> {
+  return request<MissingReferences>(
+    `/projects/${encodeURIComponent(pid)}/artifacts/missing-references`);
+}
+
 // GET /projects/{pid}/files/{path} → { content } — general-purpose reader for
 // the review page's document tree. Backend only allows aiplc-docs/ paths
 // (403 otherwise); this is a display-only viewer, not a generic file API.
