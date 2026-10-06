@@ -108,14 +108,14 @@ async def close_survey(pid: str, slug: str):
 
 
 @router.post("/projects/{pid}/prototypes/{slug}/survey/synthesize")
-async def synthesize_results(pid: str, slug: str):
-    """Write the aggregate into the rule's validation-results.md so the PM's
-    Discovery flow (and the later product-strategy stage, which reads that
-    exact path) picks it up."""
+async def synthesize_aggregate(pid: str, slug: str):
+    """Write the survey aggregate next to the spec, where Discovery's Step 6
+    imports it (layout.SURVEY_AGGREGATE). The rule's validation-results.md is
+    the agent's to write from it."""
     _require_registered(pid)
     store = _store(pid, slug)
     try:
-        key, count = await store.synthesize_results()
+        key, count = await store.synthesize_aggregate()
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="no survey")
     return {"path": key, "response_count": count}

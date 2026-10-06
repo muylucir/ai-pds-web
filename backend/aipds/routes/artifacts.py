@@ -6,6 +6,7 @@ import zipfile
 from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Response
 from aipds.routes.deps import ensure_workspace
+from aipds.parsers.doc_references import missing_references
 from aipds.parsers.redaction import redact_credentials
 
 router = APIRouter()
@@ -42,6 +43,23 @@ async def read_artifact(pid: str, path: str):
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="not found")
     return {"content": redact_credentials(content)}
+
+#: 개발 조직에 넘기는 입구 문서. AI-DLC Inception이 이 한 장을 읽는다.
+_HANDOFF_DOC = "aiplc-docs/discovery/discovery-document.md"
+
+
+@router.get("/projects/{pid}/artifacts/missing-references")
+async def get_missing_references(pid: str):
+    """Discovery Document가 근거로 가리키는데 산출물에 없는 파일들 — 문서 리뷰가
+    '전체 다운로드' 옆에 경고로 띄운다(parsers/doc_references 헤더). 문서가 아직
+    없으면 빈 목록이다: 가리킬 것이 없다."""
+    ws = await ensure_workspace(pid)
+    paths = await ws.runner.list_files("aiplc-docs/**/*")
+    if _HANDOFF_DOC not in paths:
+        return {"document": None, "missing": []}
+    text = await ws.runner.read_file(_HANDOFF_DOC)
+    return {"document": _HANDOFF_DOC, "missing": missing_references(text, paths)}
+
 
 @router.get("/projects/{pid}/artifacts/archive")
 async def download_artifacts_archive(pid: str):

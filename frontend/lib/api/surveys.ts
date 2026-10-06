@@ -97,8 +97,9 @@ export interface SynthesisResult {
   response_count: number;
 }
 
-/** Write the aggregate into the rule's validation-results.md so the PM's
- *  Discovery flow picks it up. Re-runnable: it overwrites with fresh numbers. */
+/** Write the survey aggregate next to the spec, where Discovery's Step 6
+ *  imports it. Re-runnable: it overwrites the aggregate with fresh numbers and
+ *  never touches the agent's validation-results.md. */
 export async function synthesizeSurvey(
   pid: string, slug: string,
 ): Promise<SynthesisResult> {

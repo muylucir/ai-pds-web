@@ -69,7 +69,7 @@ from aipds.agent import prompts
 from aipds.agent.answer_store import save_answers
 from aipds.agent.delta_buffer import WhitespaceBoundaryBuffer
 from aipds.agent.discovery_guard import (WRITE_TOOLS, bash_denial,
-                                              write_denial)
+                                              web_owned_denial, write_denial)
 from aipds.agent.pending_store import (clear_pending, load_pending,
                                               load_pending_file, save_pending,
                                               save_pending_file)
@@ -965,9 +965,14 @@ class ClaudeDriver:
         name = input_data.get("tool_name", "")
         tool_input = input_data.get("tool_input") or {}
         if name in _FILE_TOOLS:
-            offender = write_denial(tool_input.get("file_path"), self._workspace)
+            path = tool_input.get("file_path")
+            offender = write_denial(path, self._workspace)
             reason = (None if offender is None
                       else prompts.write_outside_docs(self._language, offender))
+            if offender is None:
+                offender = web_owned_denial(path, self._workspace)
+                reason = (None if offender is None
+                          else prompts.web_owned_doc(self._language, offender))
         elif name == "Bash":
             offender = bash_denial(tool_input.get("command"))
             reason = (None if offender is None

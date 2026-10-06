@@ -22,7 +22,8 @@
 # agent/prompts.py가 두 벌로 소유한다(그 파일 헤더의 규약).
 from __future__ import annotations
 
-from aipds.agent.discovery_guard import bash_denial, write_denial
+from aipds.agent.discovery_guard import (bash_denial, web_owned_denial,
+                                         write_denial)
 
 WS = "/ws"
 
@@ -75,6 +76,31 @@ def test_a_missing_path_is_not_denied():
     거부하면 알 수 없는 도구 모양 하나가 턴을 막는다."""
     assert write_denial("", WS) is None
     assert write_denial(None, WS) is None
+
+
+# ---- Write/Edit/MultiEdit: aiplc-docs/ 안의 웹 소유 파일 거부 ----
+# 설문 집계는 "결과 취합"이 매번 다시 만든다. 에이전트가 거기 쓴 Step 6 분석은
+# 다음 취합에서 사라진다(proto/layout.SURVEY_AGGREGATE).
+
+def test_the_survey_aggregate_is_denied_for_both_layouts():
+    for rel in ("aiplc-docs/discovery/prototype/survey-aggregate.md",
+                "aiplc-docs/discovery/prototypes/maint/survey-aggregate.md"):
+        assert web_owned_denial(rel, WS) == rel
+        assert web_owned_denial(f"/ws/{rel}", WS) == rel
+
+
+def test_the_rules_results_file_is_allowed():
+    """Step 6 종합이 갈 자리다. 이것까지 막으면 에이전트가 쓸 곳이 없다."""
+    rel = "aiplc-docs/discovery/prototype/validation-results.md"
+    assert web_owned_denial(rel, WS) is None
+    assert write_denial(rel, WS) is None
+
+
+def test_the_web_owned_name_outside_aiplc_docs_is_not_this_gates_call():
+    """aiplc-docs/ 밖은 write_denial이 이미 거부한다 — 이 판정은 끼어들지 않는다."""
+    assert web_owned_denial("prototype/survey-aggregate.md", WS) is None
+    assert web_owned_denial("../survey-aggregate.md", WS) is None
+    assert web_owned_denial(None, WS) is None
 
 
 # ---- Bash: 빌드·서버·워크스페이스 밖 리다이렉션 거부 ----

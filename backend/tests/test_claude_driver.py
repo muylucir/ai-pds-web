@@ -1721,6 +1721,26 @@ async def test_the_gate_denies_the_html_that_caused_it(tmp_path):
     assert "PROTOTYPE-" not in decision["permissionDecisionReason"]
 
 
+async def test_the_gate_denies_writing_the_survey_aggregate(tmp_path):
+    """웹 소유 파일은 aiplc-docs/ 안이어도 막는다. 거부 이유가 "aiplc-docs/ 안에
+    써라"이면 모델은 같은 경로로 재시도한다 — 그래서 Step 6 종합이 갈 자리를
+    지목해야 한다."""
+    d, _, _ = _driver(tmp_path, {"text": ["ok"]})
+    rel = "aiplc-docs/discovery/prototype/survey-aggregate.md"
+    for tool in ("Write", "Edit"):
+        out = await _pre(d, tool, {"file_path": rel})
+        decision = out["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny", tool
+        assert rel in decision["permissionDecisionReason"]
+        assert "validation-results.md" in decision["permissionDecisionReason"]
+    d._language = "en"
+    reason = (await _pre(d, "Write", {"file_path": rel})
+              )["hookSpecificOutput"]["permissionDecisionReason"]
+    assert not {c for c in reason if "가" <= c <= "힣"}, reason
+    assert await _pre(d, "Write", {"file_path":
+        "aiplc-docs/discovery/prototype/validation-results.md"}) == {}
+
+
 async def test_the_gate_denies_build_and_serve_commands(tmp_path):
     d, _, _ = _driver(tmp_path, {"text": ["ok"]})
     for command in ("npm run dev", "cd prototype && python3 -m http.server 8000"):
