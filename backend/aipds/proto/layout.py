@@ -156,7 +156,26 @@ def change_history_key(prototype_id: str) -> str:
     S3 정본이자 빌드 디렉터리의 사본 경로가 같은 문자열이다(지시서와 같다). 정본을
     `aiplc-docs/` 아래에 두는 이유: Discovery 워크스페이스가 이 트리를 복원하므로,
     Proceed 직전의 명세 정합성 패스(discovery-config/CLAUDE.md)가 코드를 보지 않고도
-    이 이력을 읽는다. 설문 결과(`validation-results.md`)가 product-strategy에 닿는
-    것과 같은 경로다. 리셋은 정확한 키를 지운다(proto/session.purge_session_state).
+    이 이력을 읽는다. 설문 집계(`SURVEY_AGGREGATE`)가 Step 6에 닿는 것과 같은
+    경로다. 리셋은 정확한 키를 지운다(proto/session.purge_session_state).
     """
     return f"{artifact_dir(prototype_id)}/{CHANGE_HISTORY}"
+
+
+#: 설문 집계 파일 이름. 웹이 소유하는 산출물이다 — 상류 룰에는 없다. "결과 취합"이
+#: 응답에서 다시 만들어 매번 덮어쓰고, 리셋이 지운다(survey/store).
+#:
+#: **룰의 `validation-results.md`와 다른 파일이어야 한다.** 그 파일은 Step 6에서
+#: 에이전트가 분석을 써넣고 Step 8의 Part 2가 근거로 인용하는 **룰의 산출물**이다.
+#: 웹이 같은 파일에 집계를 쓰면 주인이 둘이 된다: 재취합이 에이전트의 분석을 빈
+#: 템플릿으로 덮어쓰고, 리셋이 Part 2가 인용하는 근거를 지운다(2026-10-06 실측
+#: tobacco — 웹 집계 아래 에이전트 분석이 붙은 채로 설문이 열려 있었다). 이 파일은
+#: Step 5가 허용하는 "가져올 피드백 파일"이고, `validation-results.md`는 에이전트가
+#: 이것을 읽어 직접 만든다. 그래서 Discovery 게이트가 이 파일 쓰기를 막는다
+#: (agent/discovery_guard.web_owned_denial).
+SURVEY_AGGREGATE = "survey-aggregate.md"
+
+
+def survey_aggregate_key(prototype_id: str) -> str:
+    """id → 설문 집계 경로. 명세와 같은 디렉터리다(설문지 사본과 같은 이유)."""
+    return f"{artifact_dir(prototype_id)}/{SURVEY_AGGREGATE}"

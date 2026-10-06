@@ -314,6 +314,28 @@ def write_outside_docs(language: str, path: str) -> str:
             "쓰고, 사용자에게 Prototypes 탭에서 빌드하라고 안내할 것.")
 
 
+def web_owned_doc(language: str, path: str) -> str:
+    """웹이 소유하는 `aiplc-docs/` 파일(discovery_guard.WEB_OWNED_NAMES) 쓰기를
+    거부할 때의 이유.
+
+    대안을 함께 준다(`write_outside_docs`와 같은 이유): 지금 이 파일이 걸리는
+    것은 설문 집계뿐이고, 모델이 거기 쓰려던 것은 Step 6 종합이다. 그 자리는
+    룰의 `validation-results.md`다(proto/layout.SURVEY_AGGREGATE).
+    """
+    if _lang(language) == "en":
+        return (f"Refused — '{path}' is maintained by AI-PDS Web and is "
+                "rewritten from the survey responses on every 'Synthesize "
+                "results', so anything written there is lost. Read it as the "
+                "feedback Step 6 imports, and write your synthesis to "
+                "'validation-results.md' in the same directory, as "
+                "prototype-validation.md specifies.")
+    return (f"거부됨 — '{path}'는 AI-PDS Web이 관리하는 파일이고 '결과 취합'을 "
+            "누를 때마다 설문 응답으로 다시 만들어지므로, 여기 쓴 내용은 사라진다. "
+            "이 파일은 Step 6이 가져오는 피드백으로 읽고, 종합은 "
+            "prototype-validation.md가 정한 대로 같은 디렉터리의 "
+            "'validation-results.md'에 쓸 것.")
+
+
 def build_command_refused(language: str, fragment: str) -> str:
     """빌드·서버 기동·워크스페이스 밖 파일 생성 명령을 거부할 때의 이유."""
     if _lang(language) == "en":

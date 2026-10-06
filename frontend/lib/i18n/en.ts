@@ -476,6 +476,7 @@ export const en: Record<keyof typeof ko, string> = {
   "review.auditBody": "Every input is recorded verbatim with a timestamp. API keys and credentials are never recorded. Approvals and revision requests made at this gate are recorded immediately too.",
   "survey.savedPrefix": "Saved",
   "survey.savedSuffix": "responses to",
+  "survey.savedNext": "Back in the Discovery chat, ask it to reflect the survey results — the agent writes validation-results.md from this aggregate.",
   "app.description": "AI-PLC Discovery web service",
 
   // The chrome of the user manual (/manual). Its body lives in

@@ -8,7 +8,7 @@ import pytest
 from fakes.in_memory_s3 import FakeS3Store
 from aipds.survey.store import (SurveyStore,
                                      questionnaire_key, questionnaire_md_key,
-                                     results_md_key, survey_summary,
+                                     aggregate_md_key, survey_summary,
                                      survey_prefix)
 
 pytestmark = pytest.mark.asyncio
@@ -67,37 +67,48 @@ async def test_purge_removes_archived_tokens_too():
     assert "surveys/by-token/tok-current.json" not in root_s3.blobs
 
 
-async def test_purge_removes_this_prototypes_results_doc():
-    """이제 결과 문서에 슬러그가 있으므로 purge가 지운다.
-
-    종전에는 봐줬고 그 근거는 "키에 슬러그가 없어 프로토타입 간 공유"였다. 그
-    전제가 사라졌으니 봐주면 반대 결함이 된다 — 리셋한 프로토타입의 검증 결과가
-    남아, 같은 슬러그로 다시 만든 프로토타입의 결과로 읽힌다.
-    """
+async def test_purge_removes_this_prototypes_aggregate():
+    """집계는 웹의 파일이고 응답에서 다시 만든 것이다 — 응답이 사라지면 함께
+    사라져야 한다. 남으면 같은 슬러그로 다시 만든 프로토타입의 집계로 읽힌다."""
     store, project_s3, root_s3 = _store()
     _seed_survey(project_s3, root_s3, "tok-current")
-    project_s3.blobs[results_md_key(SLUG)] = "# findings"
+    project_s3.blobs[aggregate_md_key(SLUG)] = "# aggregate"
 
     await store.purge()
 
-    assert results_md_key(SLUG) not in project_s3.blobs
+    assert aggregate_md_key(SLUG) not in project_s3.blobs
 
 
-async def test_purge_leaves_another_prototypes_results_doc_alone():
-    """Path B에서 형제 프로토타입의 결과는 남아야 한다 — 이것이 종전 테스트가
-    지키려던 것이고, 슬러그별 경로에서도 그대로 지켜져야 한다."""
+async def test_purge_keeps_the_rules_results_doc():
+    """룰의 `validation-results.md`는 에이전트가 썼고, Step 8 뒤에는 Part 2가
+    이미 내려진 빌드 결정의 근거로 인용한다. 리셋이 그것을 지우면 결론만 남고
+    근거가 사라진다. 다시 빌드한 프로토타입의 결과는 Step 6이 다시 돌 때
+    갱신된다 — 룰의 Iterate 경로가 그렇다."""
+    from aipds.proto import layout
     store, project_s3, root_s3 = _store()
     _seed_survey(project_s3, root_s3, "tok-current")
-    sibling = results_md_key("flight-disruption-notice")
-    project_s3.blobs[sibling] = "# sibling findings"
+    results = f"{layout.artifact_dir(SLUG)}/validation-results.md"
+    project_s3.blobs[results] = "# findings"
 
     await store.purge()
 
-    assert project_s3.blobs[sibling] == "# sibling findings"
+    assert project_s3.blobs[results] == "# findings"
+
+
+async def test_purge_leaves_another_prototypes_aggregate_alone():
+    """Path B에서 형제 프로토타입의 집계는 남아야 한다."""
+    store, project_s3, root_s3 = _store()
+    _seed_survey(project_s3, root_s3, "tok-current")
+    sibling = aggregate_md_key("flight-disruption-notice")
+    project_s3.blobs[sibling] = "# sibling aggregate"
+
+    await store.purge()
+
+    assert project_s3.blobs[sibling] == "# sibling aggregate"
 
 
 async def test_purge_keeps_the_spec_that_shares_the_directory():
-    """단수 프로토타입에서는 결과 문서와 **스펙이 같은 디렉터리**에 있다
+    """단수 프로토타입에서는 집계와 **스펙이 같은 디렉터리**에 있다
     (`aiplc-docs/discovery/prototype/`). 프리픽스로 지우면 스펙이 사라지고,
     그러면 카드가 목록에서 사라진다 — 리셋이 아니라 삭제가 된다.
     """
@@ -106,12 +117,12 @@ async def test_purge_keeps_the_spec_that_shares_the_directory():
     store = SurveyStore(project_s3, root_s3, slug=layout.SINGLE_ID,
                         project_id=PID)
     project_s3.blobs[layout.SINGLE_SPEC_KEY] = "# spec"
-    project_s3.blobs[results_md_key(layout.SINGLE_ID)] = "# findings"
+    project_s3.blobs[aggregate_md_key(layout.SINGLE_ID)] = "# aggregate"
 
     await store.purge()
 
     assert project_s3.blobs[layout.SINGLE_SPEC_KEY] == "# spec"
-    assert results_md_key(layout.SINGLE_ID) not in project_s3.blobs
+    assert aggregate_md_key(layout.SINGLE_ID) not in project_s3.blobs
 
 
 async def test_purge_is_idempotent_on_a_prototype_with_no_survey():
