@@ -140,3 +140,38 @@ def cli_context_env() -> dict[str, str]:
     """
     window = auto_compact_window()
     return {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": window} if window else {}
+
+
+#: 번들 CLI 디버그 로그 스위치. 기본 꺼짐 — 진단할 때만 켠다.
+CLI_DEBUG_ENV = "AIPDS_SDK_CLI_DEBUG"
+
+
+def cli_debug_args(config_dir: str) -> dict[str, str | None]:
+    """번들 CLI에 붙일 `--debug-file` 인자. 꺼져 있으면 빈 dict. SDK `extra_args`로 간다.
+
+    **어느 프로세스의 로그인가.** 우리가 쓰는 것은 Claude Agent SDK(Python)지만, SDK는
+    에이전트 루프를 Python 안에서 돌리지 않는다 — 패키지에 든 Claude Code CLI
+    바이너리(`claude_agent_sdk/_bundled/claude`)를 서브프로세스로 띄우고 stdio로
+    대화한다. 모델 호출과 도구 실행(Bash 포함)은 그 프로세스가 하고, `extra_args`는 SDK가
+    그 프로세스를 띄울 때 붙이는 명령줄 인자다. 이 로그는 그 프로세스의 것이다.
+
+    **왜 있는가(2026-10-07).** 실행 래퍼 도입 이후 새 프로젝트의 첫 턴마다 처음 두 개의
+    복잡한 Bash가 실행 **전**에 정확히 12초씩 멈춘다(industry-safe-law·chicken·
+    TestRachnaCostcoDelivery·test3). 운영 인스턴스에서 샌드박스·트램펄린·SDK 훅까지
+    맞춘 재현은 모두 빨랐다. 번들 CLI는 그 구간을 디버그 로그에 따로 남긴다
+    (`[Stall] tool_dispatch_start … permissionDecisionMs=`, `Slow PreToolUse hooks`,
+    `Slow permission decision`) — 실제 세션의 그 로그가 원인을 가른다.
+
+    **기본 꺼짐인 이유.** 디버그 로그는 장황하고 세션 내용 일부를 담는다. 진단할 때 켜고,
+    끝나면 끄고 파일을 지운다.
+
+    **위치는 이 프로젝트의 config dir이다.** 실행 래퍼의 샌드박스에서 쓸 수 있는 곳이
+    그 트리(BindPaths)이고, 프로젝트를 지우면 함께 지워진다. 파일 이름에 시각을 넣는
+    이유: 연결마다 CLI 프로세스가 새로 뜨고, 같은 파일에 덧쓰면 어느 세션의 줄인지
+    가를 수 없다.
+    """
+    if os.environ.get(CLI_DEBUG_ENV, "").strip().lower() not in _TRUTHY:
+        return {}
+    import time
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    return {"debug-file": f"{config_dir}/cli-debug-{stamp}.log"}
