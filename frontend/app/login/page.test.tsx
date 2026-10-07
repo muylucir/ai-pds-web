@@ -5,11 +5,14 @@ import LoginPage from "./page";
 // useSearchParams를 쓰는 화면이라 next/navigation을 목한다. suspend는 파라미터가
 // 아직 안 풀린 상태(빌드 시 프리렌더)를 재현하기 위한 스위치다.
 const searchParams = { value: new URLSearchParams(), suspend: false };
+const refresh = vi.fn();
 vi.mock("next/navigation", () => ({
   useSearchParams: () => {
     if (searchParams.suspend) throw new Promise<void>(() => {});
     return searchParams.value;
   },
+  // 언어 전환이 고른 언어로 다시 그리려고 부른다(LanguageSwitcher).
+  useRouter: () => ({ refresh }),
 }));
 
 function withParams(query: string) {
@@ -83,5 +86,17 @@ describe("/login", () => {
     expect(document.body.innerHTML).not.toContain("onerror");
     // 그냥 아무것도 안 그려서 통과하는 게 아니라, 일반 문구로 대체되는지 확인한다.
     expect(screen.getByRole("alert")).toHaveTextContent(/로그인에 실패했습니다/);
+  });
+
+  it("offers a language choice before signing in", async () => {
+    // 로그인하기 전에 자기 언어를 고를 길이 이것뿐이다 — 좁은 화면에서도 숨지 않는다.
+    withParams("");
+    render(<LoginPage />);
+    const group = screen.getByRole("group", { name: /Language/ });
+    expect(group.className).not.toMatch(/(^|\s)hidden(\s|$)/);
+    const english = screen.getByRole("button", { name: "English" });
+    english.click();
+    expect(document.cookie).toMatch(/aipds_lang=en/);
+    expect(refresh).toHaveBeenCalled();
   });
 });
