@@ -1,5 +1,5 @@
 "use client";
-// frontend/components/LanguageSwitcher.tsx — 헤더의 UI 언어 전환.
+// frontend/components/LanguageSwitcher.tsx — UI 언어 전환(헤더와 로그인 화면).
 //
 // AppHeader에서 분리한 이유: AppHeader 자체도 클라이언트 컴포넌트지만, 쿠키
 // 쓰기와 router.refresh()는 별개 책임이다(UserMenu가 같은 형태로 분리돼 있다).
@@ -20,7 +20,9 @@ const OPTIONS: Array<{ locale: Locale; label: string }> = [
 // 사용자가 선택을 다시 하게 만든다.
 const MAX_AGE = 60 * 60 * 24 * 365;
 
-export function LanguageSwitcher() {
+// 헤더에서는 좁은 화면에서 숨긴다 — 헤더의 자리가 모자라고, 언어는 자주 바꾸는 값이 아니다.
+// 로그인 화면은 다르다: 로그인하기 전에 자기 언어를 고를 길이 그것뿐이므로 늘 보여야 한다.
+export function LanguageSwitcher({ alwaysVisible = false }: { alwaysVisible?: boolean } = {}) {
   const current = useLocale();
   const router = useRouter();
 
@@ -40,7 +42,7 @@ export function LanguageSwitcher() {
 
   return (
     <div
-      className="hidden sm:inline-flex items-center rounded-full border border-slate-200 p-0.5"
+      className={`${alwaysVisible ? "inline-flex" : "hidden sm:inline-flex"} items-center rounded-full border border-slate-200 p-0.5`}
       role="group"
       aria-label="Language / 언어"
     >
