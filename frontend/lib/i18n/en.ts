@@ -30,7 +30,6 @@ export const en: Record<keyof typeof ko, string> = {
   "activity.draftingQuestions": "Writing the questions",
   "activity.recording": "Recording",
   "activity.charsCount": "{n} chars",
-  "ws.draftBadge": "Writing…",
   "activity.thinking": "Thinking",
   "activity.questions": "Preparing questions",
   "activity.writing": "Writing the document",

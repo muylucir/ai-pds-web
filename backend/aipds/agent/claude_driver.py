@@ -994,11 +994,7 @@ class ClaudeDriver:
         # 로그로 남긴다: 거부 이유는 모델에게만 가므로, 무엇이 막혔는지
         # 운영자가 확인할 경로가 따로 필요하다.
         _log.warning("discovery gate denied %s: %s", name, offender)
-        if name in _FILE_TOOLS:
-            # 화면은 이 파일의 초안을 이미 그리고 있다 — 쓰이지 않을 내용이다.
-            self._queue.append(tool_input_draft.discarded(
-                tool_use_id or "", name, _rel(tool_input.get("file_path") or "",
-                                              self._workspace)))
+
         return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",

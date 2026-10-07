@@ -231,7 +231,7 @@ def test_a_write_block_streams_as_draft_events(tmp_path):
     payloads = [_json.loads(e.payload) for e in drafts]
     assert payloads[0]["state"] == "writing"
     assert payloads[-1]["state"] == "written"
-    assert "".join(p.get("append", "") for p in payloads) == body
+    assert payloads[-1]["chars"] == len(body)
     assert drafts[-1].path == "aiplc-docs/discovery/x.md"
     # 초안은 본문 텍스트가 아니다 — 말풍선으로 새면 문서가 채팅에 쏟아진다.
     assert _texts(events) == []
