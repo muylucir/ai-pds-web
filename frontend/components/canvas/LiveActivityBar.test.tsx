@@ -1,7 +1,7 @@
 // frontend/components/canvas/LiveActivityBar.test.tsx
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
-import { LiveActivityBar, activityLabel, formatElapsed } from "./LiveActivityBar";
+import { LiveActivityBar, activityLabel, activityText, formatElapsed } from "./LiveActivityBar";
 import type { AgentRow } from "@/lib/protoAgents";
 import type { LiveActivity } from "@/lib/chatItems";
 
@@ -253,5 +253,23 @@ describe("Claude Agent SDK 도구명 라벨 (regression)", () => {
     // 두 드라이버가 공존하는 기간에는 양쪽 다 올바른 라벨이 나와야 한다.
     render(<LiveActivityBar activity={tool("file_write")} />);
     expect(screen.getByText(/문서를 작성하고 있어요/)).toBeInTheDocument();
+  });
+});
+
+describe("activityText — 쓰고 있는 파일", () => {
+  const drafting = (path: string | null, chars: number): LiveActivity =>
+    ({ kind: "drafting", path, chars });
+
+  it("문서·질문지·기록을 가르고, 파일 이름과 글자 수를 대상으로 단다", () => {
+    expect(activityText(drafting("aiplc-docs/discovery/discovery-document.md", 1234), t))
+      .toEqual({ label: "문서 작성 중", target: "discovery-document.md · 1,234자" });
+    expect(activityText(drafting("aiplc-docs/discovery/envision/pain-point-questions.md", 50), t).label)
+      .toBe("질문지 작성 중");
+    expect(activityText(drafting("aiplc-docs/audit.md", 10), t).label).toBe("기록 중");
+    expect(activityText(drafting("aiplc-docs/aiplc-state.md", 10), t).label).toBe("기록 중");
+  });
+
+  it("경로가 확정되기 전에는 쓰기 시작만 알린다", () => {
+    expect(activityText(drafting(null, 0), t)).toEqual({ label: t("activity.writing"), target: null });
   });
 });

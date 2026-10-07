@@ -198,3 +198,62 @@ def test_partial_messages_are_enabled_on_the_real_options(tmp_path, monkeypatch)
                           config_dir=str(tmp_path / "cfg"), s3=FakeS3Store())
     _default_client_factory(driver)({"session_id": "p1", "resume": False})
     assert captured["options"].include_partial_messages is True
+
+
+# ---- 쓰기 도구의 입력이 초안 이벤트가 된다 (agent/tool_input_draft.py) ----
+# 2026-10-07 실측: 턴 시간의 약 60%가 파일 내용을 생성하는 시간이었고 그동안 화면에
+# 아무 신호가 없었다. 판정 표는 tests/test_tool_input_draft.py가 덮고, 여기서는 **배선**을
+# 고정한다.
+import json as _json  # noqa: E402
+
+
+def _tool_start(index: int, name: str, tid: str) -> StreamEvent:
+    return StreamEvent({"type": "content_block_start", "index": index,
+                        "content_block": {"type": "tool_use", "id": tid, "name": name,
+                                          "input": {}}})
+
+
+def _json_delta(index: int, partial: str) -> StreamEvent:
+    return StreamEvent({"type": "content_block_delta", "index": index,
+                        "delta": {"type": "input_json_delta", "partial_json": partial}})
+
+
+def test_a_write_block_streams_as_draft_events(tmp_path):
+    d = _driver(tmp_path)
+    body = "# 문서\n\n본문"
+    raw = _json.dumps({"file_path": f"{tmp_path}/aiplc-docs/discovery/x.md", "content": body})
+    events = d._translate(_tool_start(1, "Write", "toolu_1"))
+    for i in range(0, len(raw), 4):
+        events += d._translate(_json_delta(1, raw[i:i + 4]))
+    events += d._translate(StreamEvent({"type": "content_block_stop", "index": 1}))
+
+    drafts = [e for e in events if e.kind == "draft"]
+    payloads = [_json.loads(e.payload) for e in drafts]
+    assert payloads[0]["state"] == "writing"
+    assert payloads[-1]["state"] == "written"
+    assert "".join(p.get("append", "") for p in payloads) == body
+    assert drafts[-1].path == "aiplc-docs/discovery/x.md"
+    # 초안은 본문 텍스트가 아니다 — 말풍선으로 새면 문서가 채팅에 쏟아진다.
+    assert _texts(events) == []
+
+
+def test_a_non_file_tool_block_is_not_a_draft(tmp_path):
+    d = _driver(tmp_path)
+    events = d._translate(_tool_start(0, "Bash", "toolu_2"))
+    events += d._translate(_json_delta(0, '{"command": "ls"}'))
+    events += d._translate(StreamEvent({"type": "content_block_stop", "index": 0}))
+    assert not [e for e in events if e.kind == "draft"]
+
+
+def test_text_blocks_and_drafts_do_not_cross(tmp_path):
+    """index가 다른 텍스트 블록이 초안 사이에 와도 각자의 길로 간다."""
+    d = _driver(tmp_path)
+    raw = _json.dumps({"file_path": f"{tmp_path}/aiplc-docs/audit.md", "content": "기록"})
+    events = d._translate(_tool_start(2, "Write", "toolu_3"))
+    events += d._translate(_json_delta(2, raw[:10]))
+    events += d._translate(StreamEvent({"type": "content_block_delta", "index": 0,
+                                        "delta": {"type": "text_delta", "text": "안내 "}}))
+    events += d._translate(_json_delta(2, raw[10:]))
+    events += d._translate(StreamEvent({"type": "content_block_stop", "index": 2}))
+    assert _texts(events) == ["안내 "]
+    assert [_json.loads(e.payload)["state"] for e in events if e.kind == "draft"][-1] == "written"

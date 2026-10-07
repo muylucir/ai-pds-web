@@ -2,7 +2,7 @@
 // frontend/components/workspace/WorkspaceDocPanel.tsx
 "use client";
 import Link from "next/link";
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { listArtifacts, readArtifact, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { Markdown } from "@/components/Markdown";
@@ -22,6 +22,10 @@ import { useT } from "@/lib/i18n/provider";
 // 연달아 쓰인 파일을 목록 재조회 한 번으로 묶는 대기(ms).
 const CHANGE_SETTLE_MS = 400;
 
+// 초안을 따라 내려갈지 정하는 여유(px). 사용자가 이보다 위로 올라가 있으면 읽고 있는
+// 것이므로 끌어내리지 않는다.
+const FOLLOW_SLACK_PX = 80;
+
 // `value`가 `ms` 동안 바뀌지 않았을 때의 값. 바뀌는 동안에는 직전에 가라앉은 값을 준다.
 function useSettled<T>(value: T, ms: number): T {
   const [settled, setSettled] = useState(value);
@@ -39,10 +43,16 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   activeDoc,
   turnSeq,
   changedPaths,
+  draft,
 }: {
   projectId: string;
   activeDoc: { path: string; version: string | null } | null;
   turnSeq: number;
+  // 모델이 지금 쓰고 있는 문서(useWorkspaceStream의 `draft`). 지금 보는 문서와 같으면
+  // 정본 대신 이것을 그린다 — 문서 하나를 생성하는 데 1~2분이 걸리고 그동안 정본에는
+  // 아직 아무것도 없다. changedPaths와 같은 이유로 옵셔널이 아니다: 배선을 빠뜨리면
+  // 미리보기가 조용히 사라진다.
+  draft: { path: string; text: string } | null;
   // 이번 턴에 쓰인 경로들(`file_changed`). **목록 재조회의 트리거다.**
   //
   // 종전 키는 `[projectId, turnSeq, activeDoc?.path]`였고 "파일이 바뀌었다"는
@@ -121,6 +131,17 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   const text = missing ? "" : (content.data ?? "");
 
   const loadError = path !== null && content.error !== null;
+  const drafting = draft !== null && path === draft.path;
+
+  // 초안이 자라는 동안 끝을 따라간다 — 단, 사용자가 위로 올라가 읽고 있지 않을 때만.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const draftLength = drafting ? draft.text.length : 0;
+  const followRef = useRef(true);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!drafting || !el) return;
+    if (followRef.current) el.scrollTop = el.scrollHeight;
+  }, [drafting, draftLength]);
   // Version strings from the backend may already carry a "v" prefix (e.g.
   // "v2") or not (e.g. "2"); normalize to a single leading "v".
   const versionLabel = version ? (/^v/i.test(version) ? version : `v${version}`) : null;
@@ -163,18 +184,33 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
             ↻
           </button>
         )}
-        {versionLabel && manualPath === null && (
+        {drafting && (
+          <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 animate-pulse">
+            {t("ws.draftBadge")}
+          </span>
+        )}
+        {versionLabel && manualPath === null && !drafting && (
           <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-violet-50 text-violet-600">
             {versionLabel}
           </span>
         )}
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 text-sm text-slate-700">
+      <div
+        ref={bodyRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_SLACK_PX;
+        }}
+        className="flex-1 min-h-0 overflow-y-auto p-4 text-sm text-slate-700"
+      >
         {/* 목록 실패를 "문서가 없다"로 뭉개지 않는다 — 화면이 같으면 원인을 영영 못
             본다(이 파일이 docUnsaved와 docEmpty를 가른 것과 같은 규율). 문서가
             선택돼 있으면 그 본문이 우선이다: 목록이 실패해도 읽을 수 있는 문서가
             있으면 그것을 막을 이유가 없다. */}
-        {path === null && artifacts.error !== null ? (
+        {drafting ? (
+          // 정본보다 앞선다: 쓰고 있는 동안 정본은 아직 없거나(새 문서) 이전 판이다.
+          <Markdown text={draft.text} />
+        ) : path === null && artifacts.error !== null ? (
           <p className="text-rose-600">{t("ws.docListFailed")}</p>
         ) : path === null ? (
           <p className="text-slate-400">

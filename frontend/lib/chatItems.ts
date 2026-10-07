@@ -50,7 +50,9 @@ export type LiveActivity =
   | { kind: "thinking" }
   | { kind: "writing" }
   | { kind: "tool"; tool: string | null; detail: string | null }
-  | { kind: "file"; path: string | null };
+  | { kind: "file"; path: string | null }
+  // 쓰기 도구의 입력이 흐르는 중 — 무엇을(경로가 확정되기 전에는 null) 몇 자째.
+  | { kind: "drafting"; path: string | null; chars: number };
 
 export interface UserItem {
   id: string;
