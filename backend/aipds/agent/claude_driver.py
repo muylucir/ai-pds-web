@@ -81,7 +81,7 @@ from aipds.agent.questions_payload import (normalize_sdk_questions,
 from aipds.agent.session_store import DiscoverySessionStore
 from aipds.agent.workspace_rules import place_rules
 from aipds.agent_home import copy_config
-from aipds.cli_settings import cli_context_env
+from aipds.cli_settings import cli_context_env, cli_debug_args
 from aipds.context_usage import ContextMeter, wants_sample
 from aipds.models import AgentEvent
 from aipds.pathsafe import workspace_relative as _rel
@@ -524,6 +524,9 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # 카탈로그에서 모델과 짝으로 고른 effort(`--effort`). None이면 플래그를 넘기지
             # 않아 CLI 기본값으로 돈다 — 이 필드 이전의 프로젝트가 그 경로다.
             effort=driver._effort,
+            # 진단용 디버그 로그 — SDK가 띄우는 번들 CLI 프로세스의 `--debug-file`.
+            # 스위치(AIPDS_SDK_CLI_DEBUG)가 꺼져 있으면 빈 dict다(cli_settings).
+            extra_args=cli_debug_args(driver._config_dir),
             # "user" now means OUR config dir (discovery-config/), so this is
             # safe -- and it is what lets the CLAUDE.md there be discovered.
             setting_sources=["user", "project"],
