@@ -81,7 +81,7 @@ class FakePrototypeSession:
         self.started = True
         self.status = "ready"
 
-    async def send_message(self, text):
+    async def send_message(self, text, record=None):
         self.messages.append(text)
         self._opened = True
         self.status = "building"
@@ -89,7 +89,7 @@ class FakePrototypeSession:
             yield ev
         self.status = "ready"
 
-    async def send_answers(self, answers):
+    async def send_answers(self, answers, record=None):
         self.answers_calls.append(answers)
         return self.answers_result
 
@@ -2087,7 +2087,7 @@ def test_a_second_build_turn_while_one_runs_is_409_with_its_id(proto_env, monkey
     gate = {}
 
     class Gated(FakePrototypeSession):
-        async def send_message(self, text):
+        async def send_message(self, text, record=None):
             self.messages.append(text)
             gate["event"] = asyncio.Event()
             yield AgentEvent(kind="message", text="building")

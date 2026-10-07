@@ -30,6 +30,7 @@
 # 그것은 별도 판단이므로 하지 않았다.
 from __future__ import annotations
 
+import os
 import re
 from pathlib import PurePosixPath
 
@@ -88,6 +89,27 @@ def web_owned_denial(path: str | None, workspace: str) -> str | None:
     if parts[:1] == (DOCS_ROOT,) and parts[-1] in WEB_OWNED_NAMES:
         return rel
     return None
+
+
+#: 웹이 사용자 입력을 원문 그대로 남기는 감사 로그(aipds/audit_log). 첫 턴에서도 웹이
+#: 에이전트보다 먼저 쓴다.
+AUDIT_KEY = f"{DOCS_ROOT}/audit.md"
+
+
+def audit_overwrite_denial(tool: str, path: str | None, workspace: str) -> str | None:
+    """이미 있는 audit.md를 Write로 통째로 쓰면 거부 대상 경로를, 아니면 None.
+
+    에이전트는 첫 턴에 audit.md를 Write로 새로 만들어 왔다(TestRachnaCostcoDelivery·
+    test5 실측). 이제 그 파일은 웹이 먼저 만들고 사용자 입력을 원문 그대로 적어 두므로,
+    통째로 쓰면 그 기록이 사라진다 — 계약(discovery-config/CLAUDE.md)이 이미 "Edit로
+    덧붙이라"고 하지만 산문이 아니라 훅으로 지킨다. Edit는 막지 않는다.
+    """
+    if tool != "Write" or not path or not isinstance(path, str):
+        return None
+    rel = workspace_relative(path, workspace)
+    if rel != AUDIT_KEY:
+        return None
+    return rel if os.path.isfile(os.path.join(workspace, rel)) else None
 
 
 #: 인용부호 안의 내용. 리다이렉션·명령 탐지 전에 지운다 — `echo "a > b"`의 `>`를

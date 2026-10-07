@@ -106,8 +106,9 @@ Interview notes, requirement lists and market research go here, and the AI write
     { kind: "heading", id: "audit", text: "What gets recorded" },
     {
       kind: "md",
-      md: `What you type is kept **verbatim** in \`audit.md\` with a timestamp. It is not summarized or
-tidied up. Decisions such as approvals and revision requests are recorded as they happen. Values
+      md: `What you type, and the answers you pick in a question form, are kept **verbatim** in \`audit.md\`
+with the real time. AI-PDS records them itself rather than having the AI copy them, so nothing is
+summarized or tidied up; the AI then appends its own reasoning and decisions. Decisions such as approvals and revision requests are recorded as they happen. Values
 that look like API keys or passwords are never recorded.
 
 You can read this record in the Document Review tab — it is what you go back to when someone

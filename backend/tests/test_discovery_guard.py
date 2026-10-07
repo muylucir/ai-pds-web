@@ -22,8 +22,8 @@
 # agent/prompts.py가 두 벌로 소유한다(그 파일 헤더의 규약).
 from __future__ import annotations
 
-from aipds.agent.discovery_guard import (bash_denial, web_owned_denial,
-                                         write_denial)
+from aipds.agent.discovery_guard import (audit_overwrite_denial, bash_denial,
+                                         web_owned_denial, write_denial)
 
 WS = "/ws"
 
@@ -101,6 +101,24 @@ def test_the_web_owned_name_outside_aiplc_docs_is_not_this_gates_call():
     assert web_owned_denial("prototype/survey-aggregate.md", WS) is None
     assert web_owned_denial("../survey-aggregate.md", WS) is None
     assert web_owned_denial(None, WS) is None
+
+
+# ---- Write: 이미 있는 audit.md를 통째로 덮어쓰지 않는다 ----
+# 웹이 사용자 입력을 원문 그대로 먼저 적어 둔다(aipds/audit_log). 덮어쓰면 그 기록이 사라진다.
+
+def test_writing_over_an_existing_audit_log_is_denied_but_edit_is_not(tmp_path):
+    ws = str(tmp_path)
+    (tmp_path / "aiplc-docs").mkdir()
+    (tmp_path / "aiplc-docs" / "audit.md").write_text("# AI-PLC Audit Log\n", encoding="utf-8")
+    assert audit_overwrite_denial("Write", f"{ws}/aiplc-docs/audit.md", ws) == "aiplc-docs/audit.md"
+    assert audit_overwrite_denial("Edit", f"{ws}/aiplc-docs/audit.md", ws) is None
+    assert audit_overwrite_denial("Write", f"{ws}/aiplc-docs/aiplc-state.md", ws) is None
+
+
+def test_creating_the_audit_log_when_it_does_not_exist_is_allowed(tmp_path):
+    """웹이 기록하지 않는 경로(예: 웹 이전의 세션 재개)에서 에이전트가 처음 만드는 것은 막지 않는다."""
+    ws = str(tmp_path)
+    assert audit_overwrite_denial("Write", f"{ws}/aiplc-docs/audit.md", ws) is None
 
 
 # ---- Bash: 빌드·서버·워크스페이스 밖 리다이렉션 거부 ----

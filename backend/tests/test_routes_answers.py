@@ -60,6 +60,18 @@ def test_submitting_file_answers_writes_them_and_starts_the_resume_turn(monkeypa
     assert registry.get("fq1").runner.sent
 
 
+def test_the_audit_log_gets_what_the_user_chose_not_the_agent_directives(monkeypatch):
+    """턴 텍스트는 답 뒤에 에이전트용 지시를 붙인다. 감사 로그의 "사용자 입력"은 사용자가
+    고른 것뿐이어야 한다 — 화면 말풍선과 같은 문자열(summary)이다(aipds/audit_log)."""
+    _seed(monkeypatch, "fq-audit")
+    body = _submit("fq-audit", {"1": "B"}).json()
+    runner = registry.get("fq-audit").runner
+    record = runner.records[-1]
+    assert record.text == body["summary"]
+    assert record.text != runner.sent[-1] and record.text in runner.sent[-1]
+    assert (record.source, record.detail) == ("answers", "strategy-questions.md")
+
+
 def test_the_resume_turn_carries_a_prompt_that_names_the_file(monkeypatch):
     """재개 턴의 텍스트가 에이전트에게 갈 문장이다.
 

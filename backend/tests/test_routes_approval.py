@@ -61,7 +61,7 @@ def test_approve_records_before_starting_the_agent_turn(monkeypatch):
     ws = registry.get("ap2")
     seen_at_start = []
 
-    def send_message(text):
+    def send_message(text, record=None):
         # 턴이 **시작되는** 순간 레코드가 이미 있어야 한다.
         seen_at_start.append(any(k.startswith("approvals/") for k in s3.blobs))
 
@@ -84,6 +84,9 @@ def test_approve_starts_the_approval_turn_and_returns_its_id(monkeypatch):
     _seed(monkeypatch, "ap3")
     body = client.post("/projects/ap3/approve").json()
     assert registry.get("ap3").runner.sent == ["승인"]
+    # 감사 로그에는 웹이 "문서 승인"으로 남긴다(aipds/audit_log).
+    record = registry.get("ap3").runner.records[-1]
+    assert (record.source, record.text) == ("approval", "승인")
     # 화면은 이 id로 턴을 본다 — 승인 요청은 턴을 기다리지 않는다.
     assert body["approved"] is True and body["turn_id"]
 
@@ -97,7 +100,7 @@ def test_approve_does_not_wait_for_the_turn(monkeypatch):
     _seed(monkeypatch, "ap11")
     ws = registry.get("ap11")
 
-    def send_message(text):
+    def send_message(text, record=None):
         async def events():
             await asyncio.Event().wait()     # 영원히 끝나지 않는 턴
             yield  # pragma: no cover
@@ -122,7 +125,7 @@ def test_approve_while_a_turn_is_running_is_409_and_records_nothing(monkeypatch)
     s3 = _seed(monkeypatch, "ap12")
     ws = registry.get("ap12")
 
-    def send_message(text):
+    def send_message(text, record=None):
         async def events():
             await asyncio.Event().wait()
             yield  # pragma: no cover
