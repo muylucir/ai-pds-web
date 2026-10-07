@@ -10,24 +10,18 @@
 #
 # Bedrock은 도구 입력을 `input_json_delta`로 잘게 보낸다(실측: 한국어 문서 하나에
 # 583조각, 40초에 걸쳐 고르게). 그 조각은 JSON **문자열의 중간**에서 끊기므로 그대로
-# 보여 줄 수 없다 — 이 모듈이 그것을 풀어 `file_path`와 본문을 조금씩 꺼낸다.
+# 읽을 수 없다 — 이 모듈이 그것을 풀어 `file_path`와 본문 길이를 조금씩 얻는다.
 #
-# **본문은 문서에만 싣는다(`reconcile.is_document`).** 감사·상태·질문 파일은 글자 수만
-# 보낸다. `audit.md`는 정본에 올릴 때 자격증명을 지우는 파일이고(workspace_sync), 그
-# 내용을 실시간으로 흘리면 조각마다 하는 리댁션이 조각 경계에 걸친 값을 놓친다. 질문
-# 파일은 폼으로 그려질 원문이라 미리 보여 줄 것이 아니다(useWorkspaceStream의
-# isDocPath가 같은 이유로 문서 패널에서 뺀다). Edit/MultiEdit도 글자 수만 보낸다 —
-# `new_string`은 문서의 조각이라 미리보기로 띄우면 문서가 사라진 것처럼 보인다.
-#
-# 미리보기는 임시다. 트랜스크립트에도 정본에도 남지 않고, 화면은 턴이 끝나면 정본을
-# 다시 읽는다. 쓰기 게이트가 거부한 초안은 드라이버가 `discarded`로 알린다.
+# **화면에 싣는 것은 경로와 글자 수뿐이다.** "문서 작성 중 · business-context.md · 1,234자"
+# 면 기다려도 되는지가 판단된다 — 글자 수가 올라가는 것이 살아 있음의 증거다. 본문을
+# 실시간으로 미리 보여 주는 것은 필요하지 않다고 판단했다(2026-10-07). 본문을 싣지 않으므로
+# 감사 로그 같은, 정본에 올릴 때 자격증명을 지우는 파일의 내용이 실시간으로 새는 경로도 없다.
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
 from typing import Callable
 
-from aipds.agent.reconcile import is_document
 from aipds.models import AgentEvent
 
 #: 이벤트 kind. `models.AgentEvent.kind`의 Literal과 같은 값이어야 한다.
@@ -151,9 +145,7 @@ class ToolInputDraft:
     """쓰기 도구 블록 하나. 드라이버가 블록 시작에 만들고 조각마다 `feed`한다.
 
     `to_rel`은 도구 입력의 절대 경로를 워크스페이스 상대 경로로 바꾼다(밖이면
-    None) — 드라이버의 `_rel`이다. 경로가 확정되기 전에 온 본문은 붙잡아 두었다가
-    문서로 판정되면 그때 흘린다(모델은 거의 항상 경로를 먼저 쓰지만 순서는 보장되지
-    않는다).
+    None) — 드라이버의 `_rel`이다.
     """
     tool_use_id: str
     tool: str
@@ -162,7 +154,6 @@ class ToolInputDraft:
     chars: int = 0
     _fields: JsonStringFields = field(init=False)
     _body_key: str | None = field(init=False)
-    _pending: str = field(default="", init=False)
     _last_emit: float | None = field(default=None, init=False)
     _emitted_chars: int = field(default=-1, init=False)
 
@@ -171,11 +162,6 @@ class ToolInputDraft:
         keys = {_PATH_KEY} | ({self._body_key} if self._body_key else set())
         self._fields = JsonStringFields(keys)
 
-    @property
-    def streams_body(self) -> bool:
-        """본문을 화면에 싣는가 — 문서를 통째로 쓰는 Write뿐이다(머리말)."""
-        return self.tool == "Write" and self.path is not None and is_document(self.path)
-
     def start(self, now: float) -> list[AgentEvent]:
         """블록이 열렸다. 무엇을 쓰는지 모르는 채로도 "쓰기 시작"은 바로 알린다."""
         return [self._event("writing", now)]
@@ -183,9 +169,7 @@ class ToolInputDraft:
     def feed(self, partial_json: str, now: float) -> list[AgentEvent]:
         fresh = self._fields.feed(partial_json)
         if self._body_key and self._body_key in fresh:
-            body = fresh[self._body_key]
-            self.chars += len(body)
-            self._pending += body
+            self.chars += len(fresh[self._body_key])
         announced = False
         if self.path is None and _PATH_KEY in self._fields.complete:
             self.path = self.to_rel(self._fields.values[_PATH_KEY])
@@ -196,25 +180,12 @@ class ToolInputDraft:
         return []
 
     def finish(self, now: float) -> list[AgentEvent]:
-        """블록이 닫혔다. 남은 본문을 흘리고 입력이 완성됐다고 알린다."""
+        """블록이 닫혔다. 입력이 완성됐다고 알린다."""
         return [self._event("written", now)]
 
     def _event(self, state: str, now: float) -> AgentEvent:
-        payload: dict = {"id": self.tool_use_id, "tool": self.tool,
-                         "state": state, "chars": self.chars}
-        if self.path is not None:
-            if self.streams_body and self._pending:
-                payload["append"] = self._pending
-            # 경로가 정해졌으면 붙잡아 둔 본문은 실렸거나(문서) 버려진다(그 밖) —
-            # 어느 쪽이든 다시 보내지 않는다.
-            self._pending = ""
         self._last_emit = now
         self._emitted_chars = self.chars
-        return AgentEvent(kind=DRAFT, path=self.path,
-                          payload=json.dumps(payload, ensure_ascii=False))
-
-
-def discarded(tool_use_id: str, tool: str, path: str | None) -> AgentEvent:
-    """쓰기 게이트가 거부한 초안. 화면은 그 미리보기를 걷는다."""
-    return AgentEvent(kind=DRAFT, path=path, payload=json.dumps(
-        {"id": tool_use_id, "tool": tool, "state": "discarded"}))
+        payload = {"id": self.tool_use_id, "tool": self.tool,
+                   "state": state, "chars": self.chars}
+        return AgentEvent(kind=DRAFT, path=self.path, payload=json.dumps(payload))

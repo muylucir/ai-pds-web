@@ -32,7 +32,6 @@ export const ko = {
   "activity.draftingQuestions": "질문지 작성 중",
   "activity.recording": "기록 중",
   "activity.charsCount": "{n}자",
-  "ws.draftBadge": "작성 중",
   "activity.thinking": "생각하고 있어요",
   "activity.questions": "질문을 준비하고 있어요",
   "activity.writing": "문서를 작성하고 있어요",
