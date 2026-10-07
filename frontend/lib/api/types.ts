@@ -84,6 +84,9 @@ export type AgentEventKind =
   // 메인 에이전트의 컨텍스트 창 사용량. payload = ContextUsage(JSON). 값이 바뀔 때만
   // 온다(백엔드 aipds/context_usage.py).
   | "context"
+  // 모델이 지금 쓰고 있는 파일. payload = DraftPayload(JSON). 라이브 스트림에만 있다
+  // (백엔드 agent/tool_input_draft.py).
+  | "draft"
   | "error";
 
 /** 에이전트의 컨텍스트 창 사용량 — 백엔드 context_usage.summarize의 모양.
@@ -155,6 +158,17 @@ export interface StagePayload {
   stage: string;
   status: StageStatus;
   summary: string;
+}
+
+/** 쓰기 도구의 입력이 흐르는 동안의 초안 — 백엔드 agent/tool_input_draft.py의 모양.
+ *  `append`는 문서 Write에만 온다(감사·상태·질문 파일과 Edit은 글자 수만). `id`가 같은
+ *  이벤트의 `append`를 이어 붙이면 지금까지의 본문이다. */
+export interface DraftPayload {
+  id: string;
+  tool: string;
+  state: "writing" | "written" | "discarded";
+  chars?: number;
+  append?: string;
 }
 
 export interface DocumentPayload {

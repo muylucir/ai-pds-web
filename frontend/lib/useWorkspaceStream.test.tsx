@@ -977,3 +977,86 @@ describe("useWorkspaceStream — activity는 마지막에 온 이벤트가 확�
       { kind: "file", path: "aiplc-docs/audit.md" });
   });
 });
+
+// ---- 쓰고 있는 문서의 초안(`draft` 이벤트, 백엔드 agent/tool_input_draft.py) ----
+// 2026-10-07 실측: 문서 하나를 생성하는 데 1~2분이 걸리고 그동안 화면에 신호가 없었다.
+describe("useWorkspaceStream — 초안", () => {
+  beforeEach(() => { vi.clearAllMocks(); noRunningTurn(); });
+
+  // 턴을 열어 둔 채 이벤트를 하나씩 흘린다 — `drive`는 끝에 onDone을 불러 초안을 비운다.
+  function openTurn() {
+    let handlers: any = null;
+    vi.mocked(sse.streamEvents).mockImplementation((...args: any[]) => {
+      handlers = args[args.length - 1];
+      return () => {};
+    });
+    return {
+      emit: (ev: AgentEvent) => act(() => handlers.onEvent(ev)),
+      end: () => act(() => {
+        handlers.onEvent({ kind: "done", text: null, path: null, payload: null });
+        handlers.onDone();
+      }),
+    };
+  }
+  const draftEv = (path: string | null, payload: object): AgentEvent =>
+    ({ kind: "draft", text: null, path, payload: JSON.stringify(payload) });
+  const DOC = "aiplc-docs/discovery/discovery-document.md";
+
+  it("문서 본문을 이어 붙이고, 패널이 그 문서를 따라가며, 턴이 끝나면 비운다", async () => {
+    const turn = openTurn();
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("Part 1 써줘"));
+
+    turn.emit(draftEv(null, { id: "t1", tool: "Write", state: "writing", chars: 0 }));
+    turn.emit(draftEv(DOC, { id: "t1", tool: "Write", state: "writing", chars: 6, append: "# Part" }));
+    turn.emit(draftEv(DOC, { id: "t1", tool: "Write", state: "writing", chars: 9, append: " 1\n" }));
+
+    expect(result.current.draft).toMatchObject({ path: DOC, text: "# Part 1\n" });
+    expect(result.current.activeDoc).toEqual({ path: DOC, version: null });
+    const ai = result.current.items.find((it) => it.role === "ai") as any;
+    expect(ai.activity).toEqual({ kind: "drafting", path: DOC, chars: 9 });
+
+    turn.end();
+    expect(result.current.draft).toBeNull();
+  });
+
+  it("기록·질문 파일은 진행만 알리고 패널을 끌어오지 않는다", async () => {
+    const turn = openTurn();
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행"));
+
+    turn.emit(draftEv("aiplc-docs/audit.md", { id: "t2", tool: "Edit", state: "writing", chars: 120 }));
+    expect(result.current.draft).toBeNull();
+    expect(result.current.activeDoc).toBeNull();
+    const ai = result.current.items.find((it) => it.role === "ai") as any;
+    expect(ai.activity).toEqual({ kind: "drafting", path: "aiplc-docs/audit.md", chars: 120 });
+  });
+
+  it("쓰기가 거부되면 초안을 걷고 보던 문서로 돌아간다", async () => {
+    const turn = openTurn();
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행"));
+
+    turn.emit({ kind: "file_changed", text: null, path: "aiplc-docs/discovery/a.md", payload: null });
+    turn.emit(draftEv(DOC, { id: "t3", tool: "Write", state: "writing", chars: 3, append: "abc" }));
+    expect(result.current.activeDoc?.path).toBe(DOC);
+
+    turn.emit(draftEv(DOC, { id: "t3", tool: "Write", state: "discarded" }));
+    expect(result.current.draft).toBeNull();
+    expect(result.current.activeDoc).toEqual({ path: "aiplc-docs/discovery/a.md", version: null });
+  });
+
+  it("다른 초안의 폐기는 지금 초안을 건드리지 않는다", async () => {
+    const turn = openTurn();
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    act(() => result.current.send("진행"));
+
+    turn.emit(draftEv(DOC, { id: "t4", tool: "Write", state: "writing", chars: 1, append: "x" }));
+    turn.emit(draftEv("aiplc-docs/audit.md", { id: "other", tool: "Write", state: "discarded" }));
+    expect(result.current.draft).toMatchObject({ path: DOC, text: "x" });
+  });
+});

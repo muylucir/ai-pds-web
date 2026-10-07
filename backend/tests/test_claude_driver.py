@@ -1741,6 +1741,19 @@ async def test_the_gate_denies_writing_the_survey_aggregate(tmp_path):
         "aiplc-docs/discovery/prototype/validation-results.md"}) == {}
 
 
+async def test_a_denied_write_discards_its_draft(tmp_path):
+    """화면은 이 파일의 초안을 이미 그리고 있다 — 쓰이지 않을 내용이니 걷게 한다."""
+    d, _, _ = _driver(tmp_path, {"text": ["ok"]})
+    rel = "aiplc-docs/discovery/prototype/survey-aggregate.md"
+    out = await d._on_pre_tool_use(
+        {"tool_name": "Write", "tool_input": {"file_path": rel}}, "toolu_x", None)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    drafts = [e for e in d._queue if e.kind == "draft"]
+    assert len(drafts) == 1
+    assert json.loads(drafts[0].payload) == {"id": "toolu_x", "tool": "Write",
+                                             "state": "discarded"}
+
+
 async def test_the_gate_denies_build_and_serve_commands(tmp_path):
     d, _, _ = _driver(tmp_path, {"text": ["ok"]})
     for command in ("npm run dev", "cd prototype && python3 -m http.server 8000"):
