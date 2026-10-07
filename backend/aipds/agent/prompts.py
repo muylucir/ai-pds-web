@@ -336,6 +336,22 @@ def web_owned_doc(language: str, path: str) -> str:
             "'validation-results.md'에 쓸 것.")
 
 
+def audit_overwrite(language: str, path: str) -> str:
+    """이미 있는 audit.md를 Write로 덮어쓰려 할 때의 이유(discovery_guard.audit_overwrite_denial).
+
+    대안을 함께 준다: 같은 내용을 Edit로 끝에 덧붙이면 된다. 사용자 입력은 다시 적지
+    않는다 — 웹이 이미 원문 그대로 남겼다(aipds/audit_log).
+    """
+    if _lang(language) == "en":
+        return (f"Refused — '{path}' already exists and AI-PDS Web has recorded the user's "
+                "input in it verbatim with the real time. Writing the whole file would "
+                "erase that record. Append your entry at the end with Edit instead, and do "
+                "not copy the user's input again.")
+    return (f"거부됨 — '{path}'는 이미 있고, AI-PDS Web이 사용자 입력을 원문 그대로 실제 "
+            "시각과 함께 기록해 두었다. 파일 전체를 쓰면 그 기록이 지워진다. 대신 Edit로 "
+            "파일 끝에 항목을 덧붙이고, 사용자 입력은 다시 적지 말 것.")
+
+
 def build_command_refused(language: str, fragment: str) -> str:
     """빌드·서버 기동·워크스페이스 밖 파일 생성 명령을 거부할 때의 이유."""
     if _lang(language) == "en":

@@ -1756,6 +1756,17 @@ async def test_the_gate_denies_writing_the_survey_aggregate(tmp_path):
         "aiplc-docs/discovery/prototype/validation-results.md"}) == {}
 
 
+async def test_the_gate_denies_overwriting_the_audit_log(tmp_path):
+    d, ws, _ = _driver(tmp_path, {"text": ["ok"]})
+    (ws / "aiplc-docs").mkdir()
+    (ws / "aiplc-docs" / "audit.md").write_text("# AI-PLC Audit Log\n", encoding="utf-8")
+    out = await _pre(d, "Write", {"file_path": str(ws / "aiplc-docs" / "audit.md")})
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    assert "Edit" in decision["permissionDecisionReason"]
+    assert await _pre(d, "Edit", {"file_path": str(ws / "aiplc-docs" / "audit.md")}) == {}
+
+
 async def test_the_gate_denies_build_and_serve_commands(tmp_path):
     d, _, _ = _driver(tmp_path, {"text": ["ok"]})
     for command in ("npm run dev", "cd prototype && python3 -m http.server 8000"):

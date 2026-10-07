@@ -2,6 +2,7 @@
 from __future__ import annotations
 import logging
 import re
+from aipds.audit_log import WEB_INPUT_HEADINGS
 from aipds.models import AuditEntry
 from aipds.parsers.redaction import redact_credentials
 
@@ -221,9 +222,40 @@ def _sections(markdown: str) -> list[tuple[str, str]]:
     return merged
 
 
+def _is_web_input(heading: str) -> bool:
+    """웹이 쓴 사용자 입력 항목인가(aipds/audit_log). 헤딩 머리로 알아본다."""
+    return any(heading.startswith(h) for h in WEB_INPUT_HEADINGS.values())
+
+
+def _pair_web_inputs(rows: list[tuple[AuditEntry, bool]]) -> list[AuditEntry]:
+    """웹의 사용자 입력 항목과 바로 뒤 에이전트 항목을 한 상호작용으로 합친다.
+
+    상류 룰의 항목은 상호작용 하나에 입력과 응답이 함께 있다. 입력을 웹이 쓰면서 그것이
+    두 항목으로 나뉘었고, 화면(검증 요약·게이트 이력·활동 피드)은 여전히 "입력 → 응답"
+    한 줄을 기대한다. 원문은 언제나 웹의 것을 쓴다 — 에이전트가 습관대로 입력을 다시
+    적었더라도 그쪽은 요약일 수 있다(audit_log 헤더의 실측). 시각도 웹의 것이다.
+    뒤따르는 에이전트 항목이 없으면(턴이 끊겼다) 입력만 있는 항목으로 남는다.
+    """
+    out: list[AuditEntry] = []
+    i = 0
+    while i < len(rows):
+        entry, web = rows[i]
+        nxt = rows[i + 1] if i + 1 < len(rows) else None
+        if web and nxt is not None and not nxt[1]:
+            agent = nxt[0]
+            out.append(agent.model_copy(update={
+                "timestamp": entry.timestamp or agent.timestamp,
+                "user_input": entry.user_input}))
+            i += 2
+            continue
+        out.append(entry)
+        i += 1
+    return out
+
+
 def parse_audit_file(markdown: str) -> list[AuditEntry]:
     sections = _sections(markdown)
-    entries: list[AuditEntry] = []
+    rows: list[tuple[AuditEntry, bool]] = []
     position = 0
     for heading, body in sections:
         block = _split_inline_markers(body)
@@ -243,7 +275,11 @@ def parse_audit_file(markdown: str) -> list[AuditEntry]:
             fields.setdefault("user_input", raw.strip())
             if not fields.get("ai_response"):
                 fields["ai_response"] = _strip_sub_headings(block[sub_input.end():])
-        if not fields.get("ai_response"):
+        web = _is_web_input(heading)
+        if web:
+            # 웹의 항목은 입력만 담는다 — 남은 줄(시각 라벨)을 응답으로 읽지 않는다.
+            fields["ai_response"] = ""
+        elif not fields.get("ai_response"):
             # 라벨이 붙은 AI 쪽 필드가 없으면 섹션의 서술이 곧 AI의 기록이다 —
             # 사용자 입력 줄은 빼고 읽는다.
             lines = block.splitlines()
@@ -262,13 +298,18 @@ def parse_audit_file(markdown: str) -> list[AuditEntry]:
         position += 1
         index = int(legacy.group(1)) if legacy else position
 
-        entries.append(AuditEntry(
+        rows.append((AuditEntry(
             index=index,
             timestamp=fields.get("timestamp", ""),
             user_input=redact_credentials(fields.get("user_input", "")),
             ai_response=redact_credentials(fields.get("ai_response", "")),
             context=redact_credentials(fields.get("context", "")) or None,
-        ))
+        ), web))
+    entries = _pair_web_inputs(rows)
+    if any(web for _, web in rows):
+        # 짝지은 만큼 번호가 비므로 다시 센다. 레거시 `## Entry N:` 로그에는 웹 항목이 없다.
+        entries = [e.model_copy(update={"index": n})
+                   for n, e in enumerate(entries, start=1)]
     if not entries and len(sections) > 1:
         # 헤딩이 여럿인데 하나도 못 읽었다면 파서가 모르는 모양이다. 빈 패널은 "기록이
         # 없다"와 구별되지 않으므로 여기서 드러낸다.

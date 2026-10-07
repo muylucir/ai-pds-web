@@ -7,6 +7,7 @@ from sse_starlette.sse import EventSourceResponse
 from aipds.parsers.redaction import redact_credentials
 import aipds.app as app_module
 from aipds.routes.deps import ensure_workspace
+from aipds.audit_log import UserInput
 from aipds.models import AgentEvent
 from aipds.turn_job import TurnBusy, TurnJob, subscribe
 from aipds.turn_marker import load_marker
@@ -98,7 +99,9 @@ async def create_turn(pid: str, body: MessageBody):
     끝낸다.
     """
     ws = await ensure_workspace(pid)
-    job = start_turn(ws, "message", lambda: ws.runner.send_message(body.text))
+    record = UserInput(text=body.text, source="chat",
+                       language=app_module.project_language(pid))
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(body.text, record))
     return {"turn_id": job.id}
 
 
@@ -147,7 +150,11 @@ async def create_answers_turn(pid: str, body: AnswersBody):
     """답변 제출로 턴을 시작한다. `/turns`와 같은 이유로 본문으로 받는다 — 자유 서술
     답변이 길면 같은 URL 길이 한도에 걸린다."""
     ws = await ensure_workspace(pid)
-    job = start_turn(ws, "answers", lambda: ws.runner.send_answers(body.answers))
+    # 질문 → 답 그대로. 이 경로의 질문은 SDK 질문 도구에서 왔고 키가 곧 질문 문장이다.
+    text = "\n".join(f"{question} → {answer}" for question, answer in body.answers.items())
+    record = UserInput(text=text, source="answers",
+                       language=app_module.project_language(pid))
+    job = start_turn(ws, "answers", lambda: ws.runner.send_answers(body.answers, record))
     return {"turn_id": job.id}
 
 

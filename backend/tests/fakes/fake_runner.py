@@ -17,8 +17,11 @@ class FakeRunner:
         #: `send_message`로 시작된 턴의 텍스트 — 라우트가 에이전트에게 보낸 문장을
         #: 테스트가 읽는 자리다.
         self.sent: list[str] = []
+        #: 라우트가 넘긴 사용자 입력 기록(aipds/audit_log.UserInput) — 감사 로그에 무엇이
+        #: 남을지를 테스트가 읽는 자리다.
+        self.records: list = []
 
-    def send_message(self, text: str):
+    def send_message(self, text: str, record=None):
         """턴 하나: 텍스트를 기록하고 곧바로 끝난다.
 
         async generator 함수가 아니라 generator를 **돌려주는** 함수인 이유: 턴
@@ -26,6 +29,15 @@ class FakeRunner:
         부르는 시점에 해 두면 태스크가 언제 도는지와 무관하게 읽을 수 있다.
         """
         self.sent.append(text)
+        self.records.append(record)
+
+        async def events():
+            yield AgentEvent(kind="done")
+        return events()
+
+    def send_answers(self, answers: dict, record=None):
+        """SDK 질문 답변 턴. `send_message`와 같은 이유로 generator를 돌려준다."""
+        self.records.append(record)
 
         async def events():
             yield AgentEvent(kind="done")
