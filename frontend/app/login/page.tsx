@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
@@ -59,11 +60,16 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-6">
       <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-sm">
-        <div className="flex items-center gap-2 text-lg font-bold text-violet-700">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 text-sm font-bold text-white">
-            WEB
-          </span>
-          AI-PDS
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-lg font-bold text-violet-700">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600 text-sm font-bold text-white">
+              WEB
+            </span>
+            AI-PDS
+          </div>
+          {/* 로그인 전에 언어를 고를 길이다. 고른 값은 쿠키로 남아 로그인 뒤 화면에도
+              이어진다(LanguageSwitcher). */}
+          <LanguageSwitcher alwaysVisible />
         </div>
         <h1 className="mt-6 text-xl font-bold">{t("login.signIn")}</h1>
         <p className="mt-1 text-sm text-slate-500">
