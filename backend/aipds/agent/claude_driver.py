@@ -85,6 +85,7 @@ from aipds.cli_settings import cli_context_env
 from aipds.context_usage import ContextMeter, wants_sample
 from aipds.models import AgentEvent
 from aipds.pathsafe import workspace_relative as _rel
+from aipds.agent import tool_input_draft
 from aipds.performance import log_performance
 from aipds.s3store import S3StoreLike
 from aipds.tool_trace import tool_detail
@@ -699,6 +700,10 @@ class ClaudeDriver:
         # 지금 열려 있는 블록이 사고 블록인가. content_block_stop은 텍스트 블록에도
         # 오므로, 구분하지 않으면 사고가 없던 턴에도 종료 마커가 나간다.
         self._in_thinking = False
+        # 열려 있는 쓰기 도구 블록 — (부모 tool_use_id, 블록 index) → 초안.
+        # index는 메시지마다 0부터 다시 세고, 서브에이전트의 부분 메시지도 같은
+        # 스트림으로 오므로 부모까지 함께 키로 쓴다(agent/tool_input_draft.py).
+        self._drafts: dict[tuple[str | None, int], tool_input_draft.ToolInputDraft] = {}
         # rel path → 그 파일에서 **이미 물어본 미답 문항 집합**. 같은 집합을 두 번
         # 묻지 않는 가드다(_file_question_round 참조). 드라이버 인스턴스가 프로젝트
         # 수명을 살기 때문에 턴을 넘어 유지된다 — 백엔드 재시작 시 비지만, 그때는
@@ -986,6 +991,11 @@ class ClaudeDriver:
         # 로그로 남긴다: 거부 이유는 모델에게만 가므로, 무엇이 막혔는지
         # 운영자가 확인할 경로가 따로 필요하다.
         _log.warning("discovery gate denied %s: %s", name, offender)
+        if name in _FILE_TOOLS:
+            # 화면은 이 파일의 초안을 이미 그리고 있다 — 쓰이지 않을 내용이다.
+            self._queue.append(tool_input_draft.discarded(
+                tool_use_id or "", name, _rel(tool_input.get("file_path") or "",
+                                              self._workspace)))
         return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
@@ -1461,31 +1471,51 @@ class ClaudeDriver:
 
     # ---- message translation + the turn pump ----
 
-    def _translate_stream_event(self, ev: dict) -> list[AgentEvent]:
+    def _translate_stream_event(self, ev: dict,
+                                parent: str | None = None) -> list[AgentEvent]:
         """부분 메시지 프레임 → 이벤트. `event`는 Claude API의 원본 스트리밍 이벤트다.
 
         **텍스트 델타만 본문이 된다.** `thinking_delta`는 본문 버퍼에 넣지 않는다 —
         이 경로에서는 내용이 비어 있지만(실측 0자), 값이 생기는 날 모델의 추론이
         답변에 섞이는 것은 버그다. `signature_delta`는 본문도 트레이스도 아니다.
 
+        **쓰기 도구의 입력은 초안이 된다.** Write/Edit 블록이 열리면 그 입력 조각을
+        `tool_input_draft`가 풀어 `draft` 이벤트로 흘린다 — 파일 전문을 생성하는 동안
+        화면이 비지 않게(그 모듈 헤더의 실측).
+
         **모르는 프레임은 조용히 버린다.** message_start·message_delta·message_stop은
         화면에 실릴 것이 없고, 새 프레임 종류가 생겨도 여기서 깨지지 않아야 한다.
         """
         events: list[AgentEvent] = []
         etype = ev.get("type")
+        key = (parent, ev.get("index", 0))
         if etype == "content_block_start":
             block = ev.get("content_block") or {}
             if block.get("type") == "thinking":
                 self._in_thinking = True
                 events.append(AgentEvent(kind="status", text=THINKING_MARKER))
+            elif block.get("type") == "tool_use" and block.get("name") in _FILE_TOOLS:
+                draft = tool_input_draft.ToolInputDraft(
+                    tool_use_id=block.get("id") or "", tool=block["name"],
+                    to_rel=lambda fp: _rel(fp, self._workspace))
+                self._drafts[key] = draft
+                events.extend(draft.start(time.monotonic()))
         elif etype == "content_block_delta":
             delta = ev.get("delta") or {}
-            if delta.get("type") == "text_delta":
+            if delta.get("type") == "input_json_delta":
+                draft = self._drafts.get(key)
+                if draft is not None:
+                    events.extend(draft.feed(delta.get("partial_json") or "",
+                                             time.monotonic()))
+            elif delta.get("type") == "text_delta":
                 self._streamed_text = True
                 safe = self._delta_buf.feed(delta.get("text") or "")
                 if safe:
                     events.append(AgentEvent(kind="message", text=safe))
         elif etype == "content_block_stop":
+            draft = self._drafts.pop(key, None)
+            if draft is not None:
+                events.extend(draft.finish(time.monotonic()))
             tail = self._delta_buf.flush()
             if tail:
                 events.append(AgentEvent(kind="message", text=tail))
@@ -1522,7 +1552,9 @@ class ClaudeDriver:
                          "be lost): %s", getattr(msg, "error", "unknown"))
             return events
         if tname == "StreamEvent":
-            return self._translate_stream_event(getattr(msg, "event", None) or {})
+            return self._translate_stream_event(
+                getattr(msg, "event", None) or {},
+                parent=getattr(msg, "parent_tool_use_id", None))
         if tname == "AssistantMessage":
             # 이 메시지의 텍스트가 이미 델타로 나갔다면 TextBlock은 중복이다.
             # 플래그는 **메시지 단위**로 소비한다 — 남겨 두면 델타 없이 온 다음

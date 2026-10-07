@@ -28,6 +28,11 @@ export const ko = {
   "stream.noPendingQuestions": "답할 질문이 없습니다. 이미 답했거나 새 질문으로 바뀌었습니다.",
   "stream.answersFailed": "답변을 제출하지 못했습니다. 다시 시도해 주세요.",
   // 진행 표시(LiveActivityBar). 도구명 → 활동 문구.
+  "activity.draftingDoc": "문서 작성 중",
+  "activity.draftingQuestions": "질문지 작성 중",
+  "activity.recording": "기록 중",
+  "activity.charsCount": "{n}자",
+  "ws.draftBadge": "작성 중",
   "activity.thinking": "생각하고 있어요",
   "activity.questions": "질문을 준비하고 있어요",
   "activity.writing": "문서를 작성하고 있어요",
