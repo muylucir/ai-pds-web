@@ -64,13 +64,13 @@ class ScriptRunner:
         self._pending_payload = None
         self.interrupts = 0
 
-    async def send_message(self, text):
+    async def send_message(self, text, record=None):
         for e in self._script(text):
             if e.kind == "questions":
                 self._pending_payload = e.payload
             yield e
 
-    async def send_answers(self, answers):
+    async def send_answers(self, answers, record=None):
         if self._pending_payload is None:
             yield AgentEvent(kind="error", text="no pending questions")
             return
@@ -374,7 +374,7 @@ class GatedRunner(ScriptRunner):
         self.finished = False
         self.sent = []
 
-    async def send_message(self, text):
+    async def send_message(self, text, record=None):
         self.sent.append(text)
         self.gate = self.gate or asyncio.Event()
         try:

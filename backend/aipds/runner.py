@@ -9,13 +9,15 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import AsyncIterator
 
+from aipds import audit_log
+from aipds.audit_log import UserInput
 from aipds.context_usage import DISCOVERY_KEY, ContextRecord
 from aipds.models import AgentEvent
 from aipds.globmatch import matches_glob
 from aipds.pathsafe import reject_unsafe
 from aipds.performance import log_performance
 from aipds.s3store import S3StoreLike
-from aipds.workspace_sync import SYNC_GLOBS, content_for_s3
+from aipds.workspace_sync import SYNC_GLOBS, content_for_s3, publish_file
 
 _log = logging.getLogger(__name__)
 _SYNC_CONCURRENCY = 8
@@ -301,7 +303,21 @@ class AgentRunner:
             self._turn_active = False
             self._turn_token = None
 
-    async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
+    async def _record_user_input(self, record: UserInput | None) -> None:
+        """턴을 연 사용자 입력을 audit.md에 원문 그대로, 실제 시각으로 남긴다(audit_log 헤더).
+
+        **복원 뒤, 에이전트 앞이다.** 복원이 로컬 audit.md를 정본으로 덮으므로 그 전에 쓰면
+        사라지고, 에이전트가 첫 도구를 부르기 전에 써야 자기 항목을 그 뒤에 붙인다. 정본에도
+        바로 올린다 — 턴이 중간에 끊겨도 사용자가 무엇을 입력했는지는 남아야 한다.
+        """
+        if record is None:
+            return
+        key = audit_log.append(self._local_root, record)
+        await publish_file(self._s3, self._local_root, key,
+                           on_published=self._record_published_file)
+
+    async def send_message(self, text: str,
+                           record: UserInput | None = None) -> AsyncIterator[AgentEvent]:
         token = self._claim_turn()
         if token is None:
             yield AgentEvent(kind="error", text="turn already in progress")
@@ -313,6 +329,7 @@ class AgentRunner:
         try:
             self._local_root.mkdir(parents=True, exist_ok=True)
             await self._restore_workspace_from_s3()
+            await self._record_user_input(record)
             async for event in self._driver.run(text, self._session):
                 if not first_event:
                     log_performance(
@@ -355,7 +372,8 @@ class AgentRunner:
                 str(self.project_id), "turn_total", turn_started,
                 route="message", synced=str(synced).lower())
 
-    async def send_answers(self, answers: dict[str, str]) -> AsyncIterator[AgentEvent]:
+    async def send_answers(self, answers: dict[str, str],
+                           record: UserInput | None = None) -> AsyncIterator[AgentEvent]:
         if self._pending_interrupt_id is None:
             yield AgentEvent(kind="error", text="no pending questions")
             return
@@ -370,6 +388,7 @@ class AgentRunner:
         try:
             self._local_root.mkdir(parents=True, exist_ok=True)
             await self._restore_workspace_from_s3()
+            await self._record_user_input(record)
             interrupt_id, self._pending_interrupt_id = self._pending_interrupt_id, None
             async for event in self._driver.run_answers(interrupt_id, answers, self._session):
                 if not first_event:

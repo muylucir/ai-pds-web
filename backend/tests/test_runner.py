@@ -485,3 +485,50 @@ async def test_answers_turn_also_syncs_when_abandoned(tmp_path):
             break
 
     assert r._s3.blobs["aiplc-docs/discovery/discovery-document.md"] == "# 답변 반영"
+
+
+# ---- 사용자 입력은 웹이 감사 로그에 남긴다(aipds/audit_log) ----
+
+class _SeesAuditAtStart(FakeDriver):
+    """에이전트가 시작하는 순간의 audit.md를 붙잡는다 — 로컬과 정본 둘 다."""
+    def __init__(self, s3, **kw):
+        super().__init__(**kw)
+        self._s3 = s3
+        self.local_at_start = None
+        self.remote_at_start = None
+
+    def run(self, text, session):
+        async def go():
+            path = Path(self._workspace) / "aiplc-docs/audit.md"
+            self.local_at_start = path.read_text(encoding="utf-8") if path.exists() else None
+            try:
+                self.remote_at_start = await self._s3.get("aiplc-docs/audit.md")
+            except FileNotFoundError:
+                self.remote_at_start = None
+            async for e in self._emit(self._events):
+                yield e
+        return go()
+
+
+async def test_the_users_input_is_in_the_audit_log_before_the_agent_starts(tmp_path):
+    """복원 뒤·에이전트 앞이다: 복원이 이전 기록을 돌려놓고, 그 뒤에 붙는다. 정본에도 바로
+    올라간다 — 턴이 끊겨도 사용자가 무엇을 입력했는지는 남아야 한다."""
+    from aipds.audit_log import UserInput
+    s3 = FakeS3Store()
+    await s3.put("aiplc-docs/audit.md", "# AI-PLC Audit Log\n\n## 이전 항목\n**AI Response**: 지난 턴\n")
+    driver = _SeesAuditAtStart(s3)
+    runner = _runner(tmp_path, driver=driver, s3=s3)
+
+    await _collect(runner.send_message("Path A", UserInput(text="Path A", source="chat")))
+
+    for text in (driver.local_at_start, driver.remote_at_start):
+        assert text is not None
+        assert text.index("## 이전 항목") < text.index("> Path A")
+
+
+async def test_no_record_means_no_audit_write(tmp_path):
+    s3 = FakeS3Store()
+    driver = _SeesAuditAtStart(s3)
+    runner = _runner(tmp_path, driver=driver, s3=s3)
+    await _collect(runner.send_message("x"))
+    assert driver.local_at_start is None and driver.remote_at_start is None
