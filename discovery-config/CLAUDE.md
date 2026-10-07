@@ -7,7 +7,9 @@ for the workflow, stage order, terminology, document formats, and project langua
 
 - Keep `aiplc-docs/aiplc-state.md` current as required by `common/workflow-changes.md` and each stage's "Update State Tracking" step. Preserve the `- **Current Stage**: <name>` line and the `## Stage Progress` checklist; AI-PDS Web derives the stage UI from this file.
 - Write discovery documents under `aiplc-docs/` with Write/Edit and nothing else. AI-PDS Web derives the document panel and the review notice from the write itself, so there is no separate call to announce a document.
-- Append audit entries to `audit.md` with Edit. Do not replace the existing audit history with a partial Write.
+- **AI-PDS Web records the user's input in `audit.md`.** Before each turn starts, it appends the input exactly as the user gave it — a chat message, the answers submitted through a question form, or a document approval — with the real time, under a `## User Input (recorded by AI-PDS Web)` heading (written in the project language). This covers the upstream rule's "complete raw input, never summarized, with timestamp" for the user's side: the web receives the input, so the web records it.
+- **Append only your side, with Edit, right after that entry.** Your entry carries **Timestamp**, **AI Response** and **Context** as the upstream template shows, but no **User Input** — do not copy, quote or summarize the user's input again. Get the timestamp from `date -u +%Y-%m-%dT%H:%M:%SZ`; never estimate it.
+- **Never replace `audit.md` with Write.** It already exists from the first turn and holds the web's records; hooks reject a Write to it.
 
 ## Turn-ending writes
 

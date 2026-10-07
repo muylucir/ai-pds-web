@@ -6,6 +6,7 @@ from pydantic import BaseModel
 import aipds.app as app_module
 from aipds.agent import prompts
 from aipds.answer_summary import answer_summary
+from aipds.audit_log import UserInput
 from aipds.routes.deps import ensure_workspace
 from aipds.routes.turns import ensure_idle, start_turn
 
@@ -83,7 +84,10 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
     # `summary`는 프론트가 말풍선에 **그대로** 쓰는 문자열이다. `text`(모델이 읽는
     # 턴 텍스트)는 그것을 포함하고 뒤에 지시를 붙인다 — 사람이 읽을 부분이 앞에 오고
     # 기계용 지시가 꼬리가 되는 것이 `approvalMarker.ts`가 적어 둔 원칙이다.
-    job = start_turn(ws, "message", lambda: ws.runner.send_message(text))
+    # 감사 로그에는 사용자가 고른 것만 남긴다 — `text`의 뒤쪽은 에이전트용 지시다.
+    record = UserInput(text=summary, source="answers", language=language,
+                       detail=name.rsplit("/", 1)[-1])
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(text, record))
     return {"turn_id": job.id,
             "summary": summary,
             "questions": qfile}

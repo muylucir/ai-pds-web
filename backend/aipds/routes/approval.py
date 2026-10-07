@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException
 
 import aipds.app as app_module
 from aipds.approval_store import load_approvals, save_approval
+from aipds.audit_log import UserInput
 from aipds.routes.deps import ensure_workspace
 from aipds.routes.turns import ensure_idle, start_turn
 
@@ -77,7 +78,8 @@ async def approve_document(pid: str):
     # approvalMarker.ts가 같은 판단을 기록해 뒀다).
     language = app_module.project_language(pid)
     turn_text = "Approved" if language == "en" else "승인"
-    job = start_turn(ws, "message", lambda: ws.runner.send_message(turn_text))
+    record = UserInput(text=turn_text, source="approval", language=language)
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(turn_text, record))
     return {"approved": True, "turn_id": job.id}
 
 
