@@ -160,15 +160,13 @@ export interface StagePayload {
   summary: string;
 }
 
-/** 쓰기 도구의 입력이 흐르는 동안의 초안 — 백엔드 agent/tool_input_draft.py의 모양.
- *  `append`는 문서 Write에만 온다(감사·상태·질문 파일과 Edit은 글자 수만). `id`가 같은
- *  이벤트의 `append`를 이어 붙이면 지금까지의 본문이다. */
+/** 쓰기 도구의 입력이 흐르는 동안의 진행 — 백엔드 agent/tool_input_draft.py의 모양.
+ *  경로는 이벤트의 `path`에 온다(확정 전에는 null). 본문은 싣지 않는다. */
 export interface DraftPayload {
   id: string;
   tool: string;
-  state: "writing" | "written" | "discarded";
-  chars?: number;
-  append?: string;
+  state: "writing" | "written";
+  chars: number;
 }
 
 export interface DocumentPayload {

@@ -97,11 +97,6 @@ export interface WorkspaceStream {
   // 항상 도착하고, 아래 isDocPath 분기는 훅이 못 보는 쓰기(Bash 경유)의 백스톱으로
   // 남는다 — 그것이 이 필드가 처음 생긴 이유였다.
   activeDoc: { path: string; version: string | null } | null;
-  // 모델이 지금 쓰고 있는 문서의 본문(`draft` 이벤트). 문서 패널이 정본 대신 이것을
-  // 그린다 — 문서 하나를 생성하는 데 1~2분이 걸리고(백엔드 agent/tool_input_draft.py
-  // 헤더의 실측) 그동안 정본에는 아직 아무것도 없다. 턴이 끝나면 비운다: 그때 패널이
-  // 정본을 다시 읽는다(turnSeq).
-  draft: { path: string; text: string } | null;
   // 턴이 끝날 때마다 증가 — 패널이 이 키로 문서를 다시 읽는다. 턴 도중
   // 도착한 document 이벤트 시점에는 VM→S3 동기화 전이라 읽기가 빈 내용/404가
   // 될 수 있고, 그대로 두면 재읽기가 영영 없다 (ui-bug2의 "비어 있음" 수정).
@@ -151,14 +146,6 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   // 방금 받은 라이브 값을 덮지 않게 한다 — 기록은 언제나 그보다 앞선 턴의 것이다.
   const liveContextRef = useRef(false);
   const [activeDoc, setActiveDoc] = useState<{ path: string; version: string | null } | null>(null);
-  const [draft, setDraft] = useState<{ id: string; path: string; text: string } | null>(null);
-  // 이어 붙이기는 ref에서 한다 — 상태 갱신 함수 안에서 다른 상태를 건드리면 strict mode가
-  // 갱신 함수를 두 번 부를 때 "돌아갈 문서"가 방금 바꾼 문서로 덮인다.
-  const draftRef = useRef<{ id: string; path: string; text: string } | null>(null);
-  // 초안이 패널을 끌어오기 직전에 보던 문서. 쓰기가 거부되면(쓰이지 않을 문서) 돌아간다.
-  const draftPrevDocRef = useRef<{ path: string; version: string | null } | null>(null);
-  const activeDocRef = useRef<{ path: string; version: string | null } | null>(null);
-  useEffect(() => { activeDocRef.current = activeDoc; }, [activeDoc]);
   const [turnSeq, setTurnSeq] = useState(0);
   const stopRef = useRef<null | (() => void)>(null);
   // Set the instant a live turn (send/submitAnswers) starts. GET /history can
@@ -208,31 +195,11 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         if (isDocPath(ev.path)) setActiveDoc({ path: ev.path, version: null });
       }
       if (ev.kind === "draft") {
+        // 쓰고 있는 파일과 글자 수만 진행 줄에 올린다(백엔드 agent/tool_input_draft.py).
         const parsed = safeParse<DraftPayload>(ev.payload);
         if (!parsed) return;
-        if (parsed.state === "discarded") {
-          if (draftRef.current?.id === parsed.id) {
-            draftRef.current = null;
-            setDraft(null);
-            setActiveDoc(draftPrevDocRef.current);
-          }
-          return;
-        }
-        const path = ev.path ?? null;
-        if (path !== null && parsed.append) {
-          const current = draftRef.current;
-          if (current && current.id === parsed.id) {
-            draftRef.current = { ...current, text: current.text + parsed.append };
-          } else {
-            // 새 문서를 쓰기 시작했다 — 패널이 따라간다. 거부되면 돌아갈 곳을 기억한다.
-            draftPrevDocRef.current = activeDocRef.current;
-            setActiveDoc({ path, version: null });
-            draftRef.current = { id: parsed.id, path, text: parsed.append };
-          }
-          setDraft(draftRef.current);
-        }
         patchAi(aiId, (it) => ({
-          ...it, activity: { kind: "drafting", path, chars: parsed.chars ?? 0 },
+          ...it, activity: { kind: "drafting", path: ev.path ?? null, chars: parsed.chars ?? 0 },
         }));
         return;
       }
@@ -349,8 +316,6 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         timer = null;
         setStreaming(false);
         stopRef.current = null;
-        draftRef.current = null;
-        setDraft(null);
         // 턴 종료 신호 — 문서 패널이 이 시퀀스로 재읽기한다. 턴 중간의
         // document/file_changed 시점에는 VM→S3 동기화 전이라 S3 읽기가
         // 빈 값일 수 있다; 동기화는 턴 완료 후 끝나므로 여기서 올린다.
@@ -639,8 +604,6 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     historyLoading,
     context,
     activeDoc,
-    // 그대로 넘긴다 — 여기서 새 객체를 만들면 memo된 문서 패널이 매 프레임 다시 그려진다.
-    draft,
     turnSeq,
   };
 }
