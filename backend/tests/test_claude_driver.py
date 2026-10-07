@@ -1500,6 +1500,21 @@ def _captured_options(tmp_path, monkeypatch, session, **driver_kw):
     return captured["options"]
 
 
+def test_the_cli_debug_log_is_off_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("AIPDS_SDK_CLI_DEBUG", raising=False)
+    options = _captured_options(tmp_path, monkeypatch, {"session_id": "p1", "resume": False})
+    assert "debug-file" not in (options.extra_args or {})
+
+
+def test_the_cli_debug_switch_writes_into_the_projects_config_dir(tmp_path, monkeypatch):
+    """래퍼의 샌드박스에서 쓸 수 있는 곳이 그 트리다(cli_settings.cli_debug_args)."""
+    monkeypatch.setenv("AIPDS_SDK_CLI_DEBUG", "1")
+    options = _captured_options(tmp_path, monkeypatch, {"session_id": "p1", "resume": False})
+    path = options.extra_args["debug-file"]
+    assert path.startswith(str(tmp_path / "cfg") + "/cli-debug-")
+    assert path.endswith(".log")
+
+
 def test_the_projects_effort_reaches_the_cli(tmp_path, monkeypatch):
     """카탈로그에서 모델과 짝으로 고른 effort가 SDK 옵션(`--effort`)까지 간다."""
     options = _captured_options(tmp_path, monkeypatch,
