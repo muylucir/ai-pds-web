@@ -34,7 +34,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const state = useAsync(() => getState(projectId), [projectId]);
   const t = useT();
   const { modelLabel, language } = useProjectMeta(projectId);
-  const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, prototypeReady, changedPaths, historyLoading, context, activeDoc, draft: docDraft, turnSeq } =
+  const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, prototypeReady, changedPaths, historyLoading, context, activeDoc, turnSeq } =
     useWorkspaceStream(projectId);
   // Show the Path A/B welcome starter only once history has finished loading
   // (avoids a flash of the welcome card before restored history arrives) AND
@@ -258,7 +258,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
         />
 
         <WorkspaceDocPanel projectId={projectId} activeDoc={activeDoc} turnSeq={turnSeq}
-                          changedPaths={changedPaths} draft={docDraft} />
+                          changedPaths={changedPaths} />
       </div>
 
       {sheetOpen && pendingQuestions && (
