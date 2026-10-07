@@ -148,6 +148,16 @@ function Spinner() {
   );
 }
 
+/** 쓰는 파일의 종류 → 라벨. 문서 패널(useWorkspaceStream의 isDocPath)과 같은 경계다:
+ *  질문 파일은 폼이 되고, 감사·상태 파일은 기록이며, 그 밖이 문서다. */
+function draftingLabel(path: string | null, t: T): string {
+  if (path === null) return t("activity.writing");
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  if (name.endsWith("-questions.md")) return t("activity.draftingQuestions");
+  if (name === "audit.md" || name === "aiplc-state.md") return t("activity.recording");
+  return t("activity.draftingDoc");
+}
+
 /** 활동 종류 → 사람이 읽는 라벨과, 그 활동의 **대상**(파일·명령). 순수 함수다.
  *
  *  대상을 라벨과 나눠 돌려주는 이유: 한 줄 안에서 넘칠 수 있는 것은 대상뿐이므로
@@ -165,6 +175,16 @@ export function activityText(
       return { label: t("canvas.fileChanged"), target: activity.path };
     case "tool":
       return { label: activityLabel(activity.tool, t), target: activity.detail };
+    case "drafting": {
+      // 글자 수가 진행의 증거다 — 경과 시간만으로는 1분 넘게 쓰는 문서가 멈춘 것과
+      // 구분되지 않는다(백엔드 agent/tool_input_draft.py 헤더의 실측).
+      const name = activity.path ? activity.path.slice(activity.path.lastIndexOf("/") + 1) : null;
+      const count = activity.chars > 0
+        ? t("activity.charsCount").replace("{n}", activity.chars.toLocaleString())
+        : null;
+      const target = [name, count].filter(Boolean).join(" · ") || null;
+      return { label: draftingLabel(activity.path, t), target };
+    }
   }
 }
 

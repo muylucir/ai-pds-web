@@ -113,7 +113,12 @@ class AgentEvent(BaseModel):
                   # 메인 에이전트의 컨텍스트 창 사용량(aipds/context_usage.py).
                   # payload = {total_tokens, max_tokens, compact_at_tokens, left_pct}.
                   # 값이 바뀔 때만 흐른다 — 화면의 "남은 %" 표시가 읽는다.
-                  "context"]
+                  "context",
+                  # 모델이 지금 쓰고 있는 파일(agent/tool_input_draft.py). 도구 입력이
+                  # 흐르는 동안 무엇을 몇 자째 쓰는지, 문서면 그 본문 조각까지 싣는다.
+                  # payload = {id, tool, state, chars, append?}. 라이브 스트림에만
+                  # 있다 — 트랜스크립트에도 정본에도 남지 않는다.
+                  "draft"]
     text: str | None = None
     path: str | None = None
     # Structured payload (JSON string) for questions/stage/document — the
