@@ -68,9 +68,12 @@ def test_discovery_runs_the_bundled_cli_as_the_agent_uid_in_its_own_tree(launch)
     props = _props(argv)
     assert f"WorkingDirectory={work}" in props
     assert f"BindPaths={work}" in props and f"BindPaths={home}" in props
-    # 다른 프로젝트 트리는 빈 tmpfs 아래로 사라진다.
-    for hidden in (launch.WORKSPACES, launch.PROTOS, launch.AGENT_HOME):
-        assert f"TemporaryFileSystem={hidden}" in props
+    # 앱 트리 전체가 빈 tmpfs 아래로 사라진다 — 다른 프로젝트의 트리도, 앱 소스와 git
+    # 체크아웃도. 다시 보이는 것은 자기 트리와 CLI 바이너리(읽기 전용)뿐이다.
+    assert f"TemporaryFileSystem={launch.APP}" in props
+    assert f"BindReadOnlyPaths={CLAUDE}" in props
+    assert not [p for p in props if p.startswith("TemporaryFileSystem=")
+                and p != f"TemporaryFileSystem={launch.APP}"]
     cmd = _command(argv)
     # PID 네임스페이스 → uid 전환 → CLI. 같은 uid의 다른 unit이 /proc/<pid>/root로 보이지 않게.
     assert cmd[:2] == ["/usr/bin/unshare", "--pid"]
@@ -181,6 +184,15 @@ def test_proto_serves_only_the_prototype_subtree_with_allowed_npm_args(launch):
     assert cmd[-3:] == ["/usr/bin/npm", "run", "start"]
     assert env["PORT"] == "4001"
     assert "CLAUDE_CONFIG_DIR" not in env
+
+
+def test_npm_kinds_see_no_app_tree_and_bind_no_binary(launch):
+    """npm은 /usr/bin에 있다 — 앱 트리에서 더 붙일 것이 없다."""
+    work, home = _tree(launch, "proto", slug="s1")
+    props = _props(_run(launch, "proto", slug="s1", args=["run", "start"])[0])
+    assert f"TemporaryFileSystem={launch.APP}" in props
+    assert not [p for p in props if p.startswith("BindReadOnlyPaths=")]
+    assert f"BindPaths={work}" in props and f"BindPaths={home}" in props
 
 
 @pytest.mark.parametrize("kind,args", [

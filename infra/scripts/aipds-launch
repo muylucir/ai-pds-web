@@ -22,7 +22,9 @@
 # - unit은 root로 시작해 `unshare --pid --mount-proc`로 PID 네임스페이스를 만든 뒤
 #   `setpriv`로 kind의 uid로 내린다. 같은 uid의 다른 unit이 `/proc/<pid>/root`로 서로의
 #   마운트 네임스페이스를 읽을 수 있기 때문이다(ProtectProc=invisible은 다른 uid만 숨긴다).
-# - workspaces/·protos/·agent-home/ 전체를 빈 tmpfs로 덮고 자기 트리만 다시 bind한다.
+# - 앱 트리(/opt/aipds) 전체를 빈 tmpfs로 덮고 자기 트리만 다시 bind한다. CLI kind는 번들
+#   바이너리 하나만 읽기 전용으로 더 붙인다. 앱 트리에는 다른 프로젝트(workspaces/·protos/·
+#   agent-home/)뿐 아니라 앱의 소스와 git 체크아웃이 있다 — 아래 build_run의 설명.
 # - IMDS 차단은 unit별 IPAddressDeny(cgroup BPF) — 인스턴스에 iptables가 없다.
 #   /etc/aipds/launch.conf의 `imds_block=1`일 때만(`aipds-harden imds block`).
 from __future__ import annotations
@@ -229,9 +231,16 @@ def build_run(kind: str, project_id: str, slug: str | None, args: list[str],
         # 도는 우리 고정 명령만 쓴다 — 에이전트는 setpriv의 --bounding-set=-all로 전부 잃는다.
         "CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_SETPCAP"
         " CAP_FOWNER CAP_DAC_READ_SEARCH",
-        f"TemporaryFileSystem={WORKSPACES}",
-        f"TemporaryFileSystem={PROTOS}",
-        f"TemporaryFileSystem={AGENT_HOME}",
+        # 앱 트리 전체를 가린다. 다른 프로젝트의 트리뿐 아니라 앱 소스와 git 체크아웃이 여기
+        # 있다. 종전에는 workspaces/·protos/·agent-home/만 덮었고 나머지가 읽기 전용으로
+        # 보였다 — 두 가지가 실측됐다(2026-10-07):
+        # - 워크스페이스에서 git이 위로 올라가 앱 저장소(/opt/aipds)를 자기 저장소로 잡는다.
+        #   번들 CLI는 파일을 바꿀 수 있는 Bash 앞에서 그 저장소에 `git update-index`를 돌리고,
+        #   읽기 전용·남의 uid 소유라 매번 ~12초 뒤 실패한다(`bashEditDiff: update-index
+        #   exit 1`). 새 프로젝트 첫 턴마다 Bash 두 개가 그렇게 멈췄다.
+        # - 에이전트가 앱 소스와 커밋 이력을 읽는다(빌드 에이전트가 /opt/aipds/frontend를
+        #   뒤졌고, Discovery의 `git log`가 앱 이력을 보였다).
+        f"TemporaryFileSystem={APP}",
         # 시크릿이 평문으로 있는 곳(unit 파일, nginx 설정, 백엔드 설정). 파일 권한이 1차 방어이고
         # 이것은 겹쳐 두는 것이다.
         "InaccessiblePaths=-/etc/aipds",
@@ -241,6 +250,10 @@ def build_run(kind: str, project_id: str, slug: str | None, args: list[str],
         f"BindPaths={work}",
         f"BindPaths={home}",
     ]
+    if exe_kind == "claude":
+        # 앱 트리 안에서 이 kind가 실행하는 유일한 파일. 단일 실행 파일이다(ripgrep도 내장 —
+        # 디버그 로그의 `Ripgrep … mode=embedded`).
+        props.append(f"BindReadOnlyPaths={command[0]}")
     if conf.get("imds_block") == "1":
         props.append("IPAddressDeny=169.254.169.254/32 fd00:ec2::254/128")
     # agent-home은 백엔드와 그룹으로 함께 쓰는 트리다(백엔드가 트랜스크립트를 되살리고, 프로젝트를
