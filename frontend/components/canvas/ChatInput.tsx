@@ -51,7 +51,8 @@ export function ChatInput({
 
   return (
     <div className="shrink-0 border-t border-slate-200 bg-white px-4 md:px-8 py-3">
-      <div className="max-w-2xl mx-auto">
+      {/* ChatTimeline과 같은 상한 — 입력창이 버블 영역과 같은 폭이다. */}
+      <div className="max-w-4xl mx-auto">
         {context && <ContextMeter usage={context} />}
         <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white focus-within:ring-2 focus-within:ring-violet-400 px-4 py-2.5">
           {onAttach && (

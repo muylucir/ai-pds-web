@@ -188,43 +188,64 @@ export function activityText(
   }
 }
 
-/** 한 줄. 스피너 · 무슨 일 · 대상 · 경과 시간.
+/** 한 행. 첫 줄은 스피너 · 무슨 일 · 경과 시간, 둘째 줄은 대상(명령·파일).
+ *
+ *  대상을 둘째 줄로 내린 이유: 한 줄에 함께 두던 동안 대상은 라벨 뒤에서 잘려
+ *  거의 읽히지 않았다. 대상이 이 바에서 가장 구체적인 정보다.
  *
  *  총괄 줄과 에이전트 행이 **같은 컴포넌트**인 것이 의도다: 행이 총괄 줄과 다르게
  *  움직이면(스피너가 없거나 경과가 안 올라가면) 그 행은 진행으로 읽히지 않고,
  *  그것이 정확히 이 기능이 고치려는 증상이다. */
 function ActivityLine({
-  label, target, startedAt, nested = false, testId,
+  label, target, startedAt, nested = false, twoLine = true, testId,
 }: {
   label: string;
   target: string | null;
   startedAt: number;
   nested?: boolean;
+  // 대상(명령·파일)을 둘째 줄에 둔다. 대상이 없어도 그 줄의 높이를 비워 둔다 —
+  // 단계가 바뀔 때마다 바가 1줄↔2줄을 오가면 아래 입력창이 위아래로 흔들린다.
+  // 끄는 것은 서브에이전트가 도는 동안의 총괄 행뿐이다(그 행은 개수만 말하고,
+  // 구체적인 일은 바로 아래 행들이 말한다).
+  twoLine?: boolean;
   testId?: string;
 }) {
   const t = useT();
   const elapsed = useElapsedSeconds(startedAt);
   return (
-    <div className={`flex items-center gap-2 ${nested ? "pl-4" : ""}`}>
-      {/* `⎿`는 이 행이 위 줄에 딸린 일이라는 것을 글자 하나로 말한다 —
-          클로드코드의 트리와 같은 표기이고, 들여쓰기만으로는 목록과 구분되지 않는다. */}
-      {nested && (
-        <span className="shrink-0 text-xs text-violet-300" aria-hidden="true">⎿</span>
-      )}
-      <Spinner />
-      <span
-        data-testid={testId}
-        className={`flex-1 min-w-0 truncate text-xs ${
-          nested ? "text-violet-600" : "font-medium text-violet-700"}`}
-      >
-        {label}
-        {target && (
-          <span className="ml-1.5 font-normal font-mono text-violet-500">· {target}</span>
+    <div className={nested ? "pl-4" : ""}>
+      <div className="flex items-center gap-2">
+        {/* `⎿`는 이 행이 위 줄에 딸린 일이라는 것을 글자 하나로 말한다 —
+            클로드코드의 트리와 같은 표기이고, 들여쓰기만으로는 목록과 구분되지 않는다.
+            칸의 폭을 고정하는 이유: 둘째 줄이 라벨 첫 글자와 같은 자리에서 시작하게. */}
+        {nested && (
+          <span className="shrink-0 w-3 text-xs text-violet-300" aria-hidden="true">⎿</span>
         )}
-      </span>
-      <span className="shrink-0 text-xs text-violet-400 tabular-nums" aria-hidden="true">
-        {formatElapsed(elapsed, t)}
-      </span>
+        <Spinner />
+        <span
+          data-testid={testId}
+          className={`flex-1 min-w-0 truncate text-xs ${
+            nested ? "text-violet-600" : "font-medium text-violet-700"}`}
+        >
+          {label}
+          {!twoLine && target && (
+            <span className="ml-1.5 font-normal font-mono text-violet-500">· {target}</span>
+          )}
+        </span>
+        <span className="shrink-0 text-xs text-violet-400 tabular-nums" aria-hidden="true">
+          {formatElapsed(elapsed, t)}
+        </span>
+      </div>
+      {twoLine && (
+        // 넘치면 이 줄만 잘린다 — 무엇을 하는지(첫 줄)는 남는다. 전체는 title로.
+        <p
+          data-testid={testId ? `${testId}-target` : undefined}
+          title={target ?? undefined}
+          className={`${nested ? "pl-[2.625rem]" : "pl-[1.375rem]"} min-h-4 truncate text-xs leading-4 font-mono text-violet-500`}
+        >
+          {target ?? "\u00a0"}
+        </p>
+      )}
     </div>
   );
 }
@@ -253,12 +274,15 @@ export function LiveActivityBar({
     // 작성 영역 사이의 띠로 읽혀야 하고, 말풍선처럼 보이면 다시 대화의 일부가 된다.
     <div
       role="status"
-      className="border-t border-violet-200 bg-violet-50 px-4 py-2 space-y-1"
+      // max-h: 서브에이전트가 이례적으로 많아도 대화 영역을 다 먹지 않는다 — 평소(3개
+      // 안팎)에는 전부 보이고, 넘칠 때만 바 안에서 스크롤한다.
+      className="shrink-0 max-h-[40vh] overflow-y-auto border-t border-violet-200 bg-violet-50 px-4 py-2 space-y-1.5"
     >
       <ActivityLine
         label={head.label}
         target={head.target}
         startedAt={mountedAt.current}
+        twoLine={agents.length === 0}
         testId="live-what"
       />
       {agents.map((agent) => (
