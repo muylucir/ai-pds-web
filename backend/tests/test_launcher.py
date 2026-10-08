@@ -23,7 +23,8 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "proto_npm_stub"
 def _check_ok(report):
     def run(argv, **kwargs):
         assert argv == ["sudo", "-n", launcher.LAUNCH, "check"]
-        return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(report), stderr="")
+        return subprocess.CompletedProcess(["sudo", "-n", launcher.LAUNCH, "check"], 0,
+                                           stdout=json.dumps(report), stderr="")
     return run
 
 
@@ -60,12 +61,12 @@ def test_probe_refuses_on_a_layout_mismatch(monkeypatch):
     assert launcher.probe(run=_check_ok(_layout_report(claude=None))).refused
 
 
-def test_a_refused_launcher_starts_nothing_but_still_sweeps(monkeypatch):
+async def test_a_refused_launcher_starts_nothing_but_still_sweeps(monkeypatch):
     refused = Launcher(broker=None, refused="no sudoers")
     with pytest.raises(launcher.LauncherUnavailable):
         refused.claude("discovery", "p1", None)
     with pytest.raises(launcher.LauncherUnavailable):
-        refused.npm_argv("proto", "p1", "todo", "run", "start")
+        await refused.exec_npm("proto", "p1", "todo", "run", "start")
     with pytest.raises(launcher.LauncherUnavailable):
         refused.npm_env("proto", "p1", "todo", {})
     # 스윕은 거부하지 않는다 — 직전 백엔드가 래퍼로 띄운 unit을 치워야 한다.
@@ -268,9 +269,10 @@ class FakeLauncher(Launcher):
         self.swept = 0
         self.procs = []
 
-    def npm_argv(self, kind, project_id, slug, *npm_args):
+    async def exec_npm(self, kind, project_id, slug, *npm_args, **spawn):
+        self.require()
         self.argvs.append((kind, project_id, slug, npm_args))
-        return ["npm", *npm_args]
+        return await asyncio.create_subprocess_exec("env", "npm", *npm_args, **spawn)
 
     def npm_env(self, kind, project_id, slug, extra):
         env = super().npm_env(kind, project_id, slug, extra)
@@ -322,6 +324,54 @@ async def test_hosting_goes_through_the_launcher(tmp_path, monkeypatch):
         await host.stop("p1", "todo")
     assert fake.stopped == [("proto", "p1", "todo")]
     assert host.status("p1", "todo").state == "stopped"
+
+
+async def test_hosting_hands_the_wrapper_exactly_this_argv(tmp_path, monkeypatch):
+    """FakeLauncher는 sudo를 건너뛰므로 래퍼가 받는 argv는 위 테스트가 보지 못한다. 여기서는 진짜
+    Launcher를 쓰고 spawn 직전에서 가로챈다 — 래퍼(aipds-launch)의 `run`/`stop` 파서와 sudoers가
+    기대하는 모양이 이것이고, 바뀌면 인스턴스에서만 드러난다."""
+    from aipds.proto.host import ProtoHost
+
+    root = tmp_path / "protos"
+    served = root / "p1" / "todo" / "prototype"
+    served.mkdir(parents=True)
+    for path in FIXTURE_DIR.iterdir():
+        (served / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    (served / "package.json").write_text(json.dumps(
+        {"name": "stub", "scripts": {"build": "node -e 0", "start": "node server.js"}}),
+        encoding="utf-8")
+    host = ProtoHost(root=root, port_range=range(4111, 4120), launcher=Launcher(broker=None))
+
+    real_exec = asyncio.create_subprocess_exec
+    argvs: list[list[str]] = []
+    procs = []
+
+    async def wrapper(*argv, **kwargs):
+        # 래퍼 대신: `run`은 `--` 뒤를 npm에 넘기고, `stop`은 띄운 트리를 끝낸다.
+        argvs.append(list(argv))
+        if argv[3] == "stop":
+            for proc in procs:
+                if proc.returncode is None:
+                    os.killpg(os.getpgid(proc.pid), 15)
+            return await real_exec("true", **kwargs)
+        sep = argv.index("--")
+        proc = await real_exec("env", "npm", *argv[sep + 1:], **kwargs)
+        procs.append(proc)
+        return proc
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", wrapper)
+
+    info = await host.start("p1", "todo", cwd=served)
+    try:
+        assert info.state == "running"
+    finally:
+        await host.stop("p1", "todo")
+    prefix = ["sudo", "-n", launcher.LAUNCH]
+    assert argvs == [
+        prefix + ["run", "host-build", "p1", "todo", "--", "install"],
+        prefix + ["run", "host-build", "p1", "todo", "--", "run", "build"],
+        prefix + ["run", "proto", "p1", "todo", "--", "run", "start"],
+        prefix + ["stop", "proto", "p1", "todo"],
+    ]
 
 
 async def test_the_launcher_refuses_a_tree_it_would_not_serve(tmp_path):
