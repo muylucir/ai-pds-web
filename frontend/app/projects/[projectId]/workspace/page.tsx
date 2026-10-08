@@ -160,7 +160,11 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     <div className="relative h-screen flex flex-col overflow-hidden">
       <AppHeader activeTab="workspace" projectId={projectId} modelLabel={modelLabel}
                  projectLanguage={language} />
-      <div className="relative flex-1 grid min-h-0 grid-cols-1 pr-9 lg:grid-cols-[1fr_5fr_5fr]">
+      {/* overflow-clip: 닫힌 드로어는 translate-x-full로 화면 오른쪽 밖에 있다. 그것이
+          스크롤 가능한 넘침이 되면 포커스 이동 하나로 화면 전체가 옆으로 밀린다(실측 —
+          WorkspaceDocPanel의 preventScroll 주석). hidden이 아니라 clip인 이유: hidden은
+          코드 스크롤(focus·scrollIntoView)을 허용하고, clip은 스크롤 상자 자체를 만들지 않는다. */}
+      <div className="relative flex-1 grid min-h-0 grid-cols-1 pr-9 overflow-clip lg:grid-cols-[1fr_5fr_5fr]">
         <StageSidebar state={state.data} events={stages} />
 
         <main className="relative flex flex-col min-w-0 min-h-0 bg-slate-50">
