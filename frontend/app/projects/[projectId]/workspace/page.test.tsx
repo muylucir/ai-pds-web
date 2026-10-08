@@ -434,13 +434,12 @@ describe("Workspace page — 입력창 위 고정 진행 줄", () => {
                              detail: "aiplc-docs/x.md" },
   }];
 
-  it("턴이 도는 동안 마지막 활동을 한 줄로 보여준다", async () => {
+  it("턴이 도는 동안 마지막 활동을 보여준다 — 무슨 일과 그 대상을 두 줄로", async () => {
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
     mockWorkspaceStream({ streaming: true, items: liveItems });
     await act(async () => { render(<WorkspacePage params={params} />); });
-    const bar = screen.getByTestId("live-what");
-    expect(bar).toHaveTextContent("자료를 확인하고 있어요");
-    expect(bar).toHaveTextContent("aiplc-docs/x.md");
+    expect(screen.getByTestId("live-what")).toHaveTextContent("자료를 확인하고 있어요");
+    expect(screen.getByTestId("live-what-target")).toHaveTextContent("aiplc-docs/x.md");
   });
 
   it("도는 턴이 없으면 그리지 않는다 — 입력창 위가 상시 점유되면 안 된다", async () => {
