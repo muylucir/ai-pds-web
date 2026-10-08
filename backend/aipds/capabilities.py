@@ -10,6 +10,10 @@
 # 공식 문서(docs/ai-pds-faq-ko.html Q1)는 6개 capability를 이 순서로 든다.
 # Envision · Use Case Intake · Prioritize · Prototype · Product Strategy · Go-to-Market.
 #
+# **화면에서는 "phase"다**(en; ko는 "단계"). AI-PDS 팀이 이 6개를 phase라고 부르고,
+# 화면은 프레임워크 팀의 용어를 따른다. 코드의 이름(capability)은 FAQ를 따른 것이고
+# API 필드(`ProjectState.capabilities`)이기도 해서 그대로 둔다.
+#
 # **룰을 고치지 않고 읽는 쪽에서 묶는다.** 상태 파일은 그대로이고, 원래 목록은
 # `ProjectState.stages`에 남는다(프로토타입 모드 판정 등이 원래 이름을 본다).
 from __future__ import annotations

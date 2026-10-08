@@ -73,7 +73,7 @@ describe("StageSidebar", () => {
         <StageSidebar state={projectState} events={[]} />
       </LocaleProvider>,
     );
-    expect(screen.getByText(/2 \/ 4 capabilities/)).toBeInTheDocument();
+    expect(screen.getByText(/2 \/ 4 phases/)).toBeInTheDocument();
     expect(screen.getAllByText("Not on this path")).toHaveLength(2);
     expect(screen.queryByText(/스테이지/)).toBeNull();
   });
