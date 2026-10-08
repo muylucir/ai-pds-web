@@ -162,13 +162,20 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   const unseen = !open && docKey !== null && docKey !== seenKey;
 
   // 열면 포커스를 드로어 안(✕)으로, 닫으면 손잡이로 돌려준다. Esc로 닫는다.
+  //
+  // **preventScroll이 필수다.** 여는 순간의 ✕는 아직 화면 오른쪽 밖에서 미끄러져
+  // 들어오는 중이고, 그냥 focus()하면 브라우저가 그것을 보이려고 조상을 스크롤한다 —
+  // overflow-hidden도 코드 스크롤은 막지 않는다. 실측(1440px): 페이지 루트의
+  // scrollLeft가 648까지 튀었다가 드로어가 들어오며 0으로 돌아와, 화면 전체가 왼쪽으로
+  // 밀렸다 튕겨 오는 것처럼 보였다. 그리드의 overflow-clip(workspace/page.tsx)이 같은
+  // 부류를 한 겹 더 막는다.
   const drawerId = useId();
   const tabRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(open);
   useEffect(() => {
-    if (open && !wasOpen.current) closeRef.current?.focus();
-    if (!open && wasOpen.current) tabRef.current?.focus();
+    if (open && !wasOpen.current) closeRef.current?.focus({ preventScroll: true });
+    if (!open && wasOpen.current) tabRef.current?.focus({ preventScroll: true });
     wasOpen.current = open;
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
