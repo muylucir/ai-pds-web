@@ -304,8 +304,8 @@ class ProtoHost:
         log_fh = open(log_path, "ab")
         try:
             if self._launcher is not None:
-                proc = await asyncio.create_subprocess_exec(
-                    *self._launcher.npm_argv("host-build", pid, slug, "install"),
+                proc = await self._launcher.exec_npm(
+                    "host-build", pid, slug, "install",
                     cwd=str(cwd), stdout=log_fh, stderr=log_fh, env=env,
                 )
             else:
@@ -325,8 +325,8 @@ class ProtoHost:
         log_fh = open(log_path, "ab")
         try:
             if self._launcher is not None:
-                proc = await asyncio.create_subprocess_exec(
-                    *self._launcher.npm_argv("host-build", pid, slug, "run", "build"),
+                proc = await self._launcher.exec_npm(
+                    "host-build", pid, slug, "run", "build",
                     cwd=str(cwd), stdout=log_fh, stderr=log_fh, env=env,
                 )
             else:
@@ -476,18 +476,21 @@ class ProtoHost:
             # `_npm_run_build`. Same reason as there for the literal subcommand: the
             # only variable part of this argv is which script name, and it is
             # one of two names chosen above -- never anything from a request.
+            #
+            # Own process group (start_new_session): stop() can then signal the
+            # whole tree, and a hard backend death leaves a pid file for
+            # sweep_orphans instead of an untracked child.
             if self._launcher is not None:
-                argv = self._launcher.npm_argv("proto", pid, slug, "run", start_script)
+                proc = await self._launcher.exec_npm(
+                    "proto", pid, slug, "run", start_script,
+                    cwd=str(target_dir), env=env, stdout=log_fh, stderr=log_fh,
+                    start_new_session=True,
+                )
             else:
-                argv = ["npm", "run", start_script]
-            proc = await asyncio.create_subprocess_exec(
-                *argv, cwd=str(target_dir), env=env,
-                stdout=log_fh, stderr=log_fh,
-                # Own process group: stop() can then signal the whole tree,
-                # and a hard backend death leaves a pid file for sweep_orphans
-                # instead of an untracked child.
-                start_new_session=True,
-            )
+                proc = await asyncio.create_subprocess_exec(
+                    "npm", "run", start_script, cwd=str(target_dir), env=env,
+                    stdout=log_fh, stderr=log_fh, start_new_session=True,
+                )
         except Exception:
             # The spawn itself failed (e.g. npm missing from PATH, EMFILE) --
             # entry.port never gets assigned on this path, so stop() (whose
