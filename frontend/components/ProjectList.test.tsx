@@ -280,7 +280,8 @@ describe("ProjectList export", () => {
     await userEvent.setup().click(
       screen.getAllByRole("button", { name: /프로젝트 내보내기/ })[0]);
 
-    await screen.findByText(/빌드 세션이 진행 중입니다/);
+    // 프로젝트 목록에는 그 카드가 없다 — 어느 탭으로 가야 하는지부터 말한다.
+    await screen.findByText(/“프로토타입” 탭에서 해당 카드의 “세션 열기”/);
   });
 
   it("내보내기 버튼은 카드 링크를 타지 않는다", async () => {

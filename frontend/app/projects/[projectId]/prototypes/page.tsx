@@ -19,6 +19,8 @@ import {
 } from "@/lib/api/prototypes";
 import type { HostState, PrototypeState } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
+import { knownErrorMessage } from "@/lib/api/errorMessage";
+import type { Dict } from "@/lib/i18n";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
 import { useT } from "@/lib/i18n/provider";
@@ -64,6 +66,11 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   // 돌려준다. 즉 **이미 관측 가능한 상태**를 폴링해서 보여주기만 하면 된다.
   const [hostPhase, setHostPhase] =
     useState<{ slug: string; state: HostState } | null>(null);
+  // 호스팅 시작·중지가 거부된 이유. 그 카드에 붙는다 — 거부는 대개 사용자가 할 일이
+  // 있다는 뜻이고(409 `build_session_active`: 열린 빌드 세션을 닫아야 한다), 보이지
+  // 않으면 버튼이 아무 반응 없이 돌아온 것으로 읽힌다.
+  const [hostError, setHostError] =
+    useState<{ slug: string; message: string } | null>(null);
 
   useEffect(() => {
     if (!resetTarget) return;
@@ -105,8 +112,14 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
     }
   }
 
+  function hostErrorText(err: unknown, fallback: keyof Dict): string {
+    return err instanceof ApiError
+      ? knownErrorMessage(t, err.detail, t(fallback)) : t(fallback);
+  }
+
   async function handleStartHost(slug: string) {
     setBusySlug(slug);
+    setHostError(null);
     // 서버가 `installing`을 기록하기 전(start가 먼저 stop을 호출한다)에는 404가
     // 정상이다 — getHost가 그것을 null로 접어 주므로 그대로 두고 다음 폴링을
     // 기다린다. 폴링 자체의 실패로 호스팅을 중단시키지 않는다: 이 값은 표시용이다.
@@ -120,6 +133,8 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
     }, 1500);
     try {
       await startHost(projectId, slug);
+    } catch (err) {
+      setHostError({ slug, message: hostErrorText(err, "proto.hostStartFailed") });
     } finally {
       clearInterval(poll);
       setHostPhase(null);
@@ -130,8 +145,11 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
 
   async function handleStopHost(slug: string) {
     setBusySlug(slug);
+    setHostError(null);
     try {
       await stopHost(projectId, slug);
+    } catch (err) {
+      setHostError({ slug, message: hostErrorText(err, "proto.hostStopFailed") });
     } finally {
       setBusySlug(null);
       list.reload();
@@ -205,6 +223,8 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   }
 
   function closeBuildPanel() {
+    // 패널을 다녀왔으면 세션 상태가 바뀌었을 수 있다 — 낡은 거부 사유를 남기지 않는다.
+    setHostError(null);
     setOpenSlug(null);
     list.reload();
   }
@@ -239,6 +259,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 onBuild={() => handleBuild(info.slug, info.state)}
                 onStartHost={() => handleStartHost(info.slug)}
                 startingPhase={hostPhase?.slug === info.slug ? hostPhase.state : null}
+                hostError={hostError?.slug === info.slug ? hostError.message : null}
                 onStopHost={() => handleStopHost(info.slug)}
                 // 판정 기준이 state에서 **access_url의 존재**로 바뀌었다. 서버가
                 // running일 때만 이 값을 실어 보내므로 조건은 사실상 같지만, 이

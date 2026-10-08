@@ -141,6 +141,49 @@ describe("Prototypes page", () => {
     expect(await screen.findByText("listening on 4021")).toBeInTheDocument();
   });
 
+  it("Start hosting refused by an open build session tells the user what to press, on that card", async () => {
+    // 409 `build_session_active`. 이 거부가 화면에 없으면 버튼이 아무 반응 없이
+    // 돌아온 것으로 읽힌다(fvr-master, 2026-10-08).
+    const built = [{ ...PROTOTYPES[0], state: "built", session_open: true }];
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(built))),
+      http.get(`${API_BASE_URL}/projects/p1/prototypes/todo-app/host`, () =>
+        HttpResponse.json({ detail: "not hosted" }, { status: 404 })),
+      http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/host`, () =>
+        HttpResponse.json({ detail: "build_session_active" }, { status: 409 })),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    await screen.findByText("todo-app");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "호스팅 시작" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("“완료”를 눌러");
+    expect(alert).toHaveTextContent("“세션 열기”");
+  });
+
+  it("Stop hosting failure is shown on the card", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing())),
+      http.delete(`${API_BASE_URL}/projects/p1/prototypes/chat-widget/host`, () =>
+        HttpResponse.json({ detail: "boom" }, { status: 500 })),
+    );
+    mockStream();
+    await act(async () => {
+      render(<PrototypesPage params={params} />);
+    });
+    await screen.findByText("chat-widget");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "호스팅 중지" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("호스팅을 중지하지 못했습니다");
+  });
+
   it("warns when the concurrent-build cap is reached", async () => {
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(PROTOTYPES, 2, 2))),
