@@ -91,7 +91,7 @@ describe("Workspace page", () => {
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
-    expect(await screen.findByLabelText("스테이지 진행 상황")).toBeInTheDocument();
+    expect(await screen.findByLabelText("단계 진행 상황")).toBeInTheDocument();
     expect(screen.getByLabelText("대화 타임라인")).toBeInTheDocument();
     expect(screen.getByLabelText("컨텍스트 패널")).toBeInTheDocument();
   });
@@ -103,7 +103,7 @@ describe("Workspace page", () => {
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
-    await screen.findByLabelText("스테이지 진행 상황");
+    await screen.findByLabelText("단계 진행 상황");
 
     // No pending questions → no badge (covered implicitly by the first test's
     // default mock); with pending questions, the badge appears and opens the
@@ -129,7 +129,7 @@ describe("Workspace page", () => {
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
-    await screen.findByLabelText("스테이지 진행 상황");
+    await screen.findByLabelText("단계 진행 상황");
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /답변 대기 중인 질문/ }));
@@ -145,7 +145,7 @@ describe("Workspace page", () => {
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
-    await screen.findByLabelText("스테이지 진행 상황");
+    await screen.findByLabelText("단계 진행 상황");
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /답변 대기 중인 질문/ }));
@@ -161,7 +161,7 @@ describe("Workspace page", () => {
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
-    await screen.findByLabelText("스테이지 진행 상황");
+    await screen.findByLabelText("단계 진행 상황");
     expect(screen.queryByRole("button", { name: /답변 대기 중인 질문/ })).not.toBeInTheDocument();
   });
 
@@ -179,7 +179,7 @@ describe("Workspace page", () => {
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
-    await screen.findByLabelText("스테이지 진행 상황");
+    await screen.findByLabelText("단계 진행 상황");
 
     const banner = screen.getByRole("status");
     expect(within(banner).getByText(/v2/)).toBeInTheDocument();
@@ -193,7 +193,7 @@ describe("Workspace page", () => {
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
-    await screen.findByLabelText("스테이지 진행 상황");
+    await screen.findByLabelText("단계 진행 상황");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
@@ -205,7 +205,7 @@ describe("Workspace page", () => {
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
-    await screen.findByLabelText("스테이지 진행 상황");
+    await screen.findByLabelText("단계 진행 상황");
     await user.click(screen.getByRole("button", { name: "중단" }));
     expect(interrupt).toHaveBeenCalledTimes(1);
   });
@@ -225,7 +225,7 @@ describe("Workspace page", () => {
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
-    await screen.findByLabelText("스테이지 진행 상황");
+    await screen.findByLabelText("단계 진행 상황");
     expect(screen.queryByText(/어떻게 시작할까요/)).toBeNull();
   });
 
@@ -264,7 +264,7 @@ describe("Workspace page", () => {
       vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", chars: 10, truncated: false });
 
       const { container } = render(<WorkspacePage params={params} />);
-      await screen.findByLabelText("스테이지 진행 상황");
+      await screen.findByLabelText("단계 진행 상황");
 
       const file = new File(["내용"], "의견.md", { type: "text/markdown" });
       const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
@@ -293,7 +293,7 @@ describe("Workspace page", () => {
       vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", chars: 10, truncated: false });
 
       const { container } = render(<WorkspacePage params={params} />);
-      await screen.findByLabelText("스테이지 진행 상황");
+      await screen.findByLabelText("단계 진행 상황");
 
       const file = new File(["내용"], "의견.md", { type: "text/markdown" });
       const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
@@ -317,7 +317,7 @@ describe("Workspace page", () => {
       vi.mocked(client.uploadFile).mockRejectedValue(new Error("nope"));
 
       const { container } = render(<WorkspacePage params={params} />);
-      await screen.findByLabelText("스테이지 진행 상황");
+      await screen.findByLabelText("단계 진행 상황");
 
       const file = new File(["x".repeat(6_000_000)], "big.md");
       const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
@@ -336,7 +336,7 @@ describe("Workspace page", () => {
       vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", chars: 10, truncated: false });
 
       const { container } = render(<WorkspacePage params={params} />);
-      await screen.findByLabelText("스테이지 진행 상황");
+      await screen.findByLabelText("단계 진행 상황");
 
       const file = new File(["내용"], "의견.md", { type: "text/markdown" });
       const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;

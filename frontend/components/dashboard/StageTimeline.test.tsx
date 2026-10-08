@@ -4,10 +4,10 @@ import { StageTimeline } from "./StageTimeline";
 import { projectState } from "@/test/fixtures/projectState";
 
 describe("StageTimeline", () => {
-  it("renders every stage name from the backend state (nothing hardcoded)", () => {
+  it("renders every capability name from the backend state (nothing hardcoded)", () => {
     render(<StageTimeline state={projectState} projectId="pilot1" />);
-    for (const s of projectState.stages) {
-      expect(screen.getByText(s.name)).toBeInTheDocument();
+    for (const c of projectState.capabilities) {
+      expect(screen.getByText(c.name)).toBeInTheDocument();
     }
   });
 
@@ -24,17 +24,27 @@ describe("StageTimeline", () => {
     // 모두 빈 상태 문구를 갖고 있다.
     render(
       <StageTimeline
-        state={{ project_type: null, current_stage: null, stages: [] }}
+        state={{ project_type: null, current_stage: null, stages: [], capabilities: [] }}
         projectId="test333"
       />,
     );
     expect(screen.getByText("아직 실행된 단계가 없습니다.")).toBeInTheDocument();
   });
 
-  it("marks completed stages with 완료", () => {
+  it("marks completed capabilities with 완료", () => {
     render(<StageTimeline state={projectState} projectId="pilot1" />);
     expect(screen.getAllByText("완료").length).toBe(
-      projectState.stages.filter((s) => s.status === "completed").length,
+      projectState.capabilities.filter((c) => c.status === "completed").length,
     );
+  });
+
+  // 에이전트가 쓴 스테이지 목록(8개)이 아니라 공식 6개를 보인다.
+  it("lists the six official capabilities, marking the ones this path skips", () => {
+    render(<StageTimeline state={projectState} projectId="pilot1" />);
+    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
+      "Envision", "Use Case Intake", "Prioritize", "Prototype", "Product Strategy", "Go-to-Market",
+    ]);
+    expect(screen.queryByText("Workspace Detection")).toBeNull();
+    expect(screen.getAllByText("이 경로에 없음")).toHaveLength(2);
   });
 });

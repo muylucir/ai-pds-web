@@ -1,62 +1,67 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { StageSidebar, mergeStages } from "./StageSidebar";
+import { StageSidebar, latestCapabilities } from "./StageSidebar";
 import { LocaleProvider } from "@/lib/i18n/provider";
 import { projectState } from "@/test/fixtures/projectState";
-import type { StageState } from "@/lib/api/types";
+import type { CapabilityState } from "@/lib/api/types";
 
-describe("mergeStages", () => {
-  it("returns the server stages unchanged when there are no events", () => {
-    const server: StageState[] = [{ name: "Envision", status: "pending", note: null }];
-    expect(mergeStages(server, [])).toEqual(server);
+const allDone: CapabilityState[] = projectState.capabilities.map((c) =>
+  c.status === "not_applicable" ? c : { ...c, status: "completed", note: null },
+);
+
+describe("latestCapabilities", () => {
+  it("uses the server snapshot when no live event carried one", () => {
+    expect(latestCapabilities(projectState, [])).toBe(projectState.capabilities);
   });
 
-  it("overrides an existing stage's status/note (summary→note) by stage-name match", () => {
-    const server: StageState[] = [{ name: "Envision", status: "pending", note: "old note" }];
-    const merged = mergeStages(server, [{ stage: "Envision", status: "in_progress", summary: "새 진행 상황" }]);
-    expect(merged).toEqual([{ name: "Envision", status: "in_progress", note: "새 진행 상황" }]);
+  it("the newest event snapshot replaces the server's", () => {
+    const events = [
+      { stage: "Product Strategy", status: "completed" as const, summary: "", capabilities: projectState.capabilities },
+      { stage: "Go-to-Market", status: "completed" as const, summary: "", capabilities: allDone },
+    ];
+    expect(latestCapabilities(projectState, events)).toBe(allDone);
   });
 
-  it("keeps the previous note when an event's summary is empty", () => {
-    const server: StageState[] = [{ name: "Envision", status: "pending", note: "old note" }];
-    const merged = mergeStages(server, [{ stage: "Envision", status: "in_progress", summary: "" }]);
-    expect(merged[0].note).toBe("old note");
+  it("skips events without a snapshot instead of blanking the list", () => {
+    const events = [
+      { stage: "Go-to-Market", status: "completed" as const, summary: "", capabilities: allDone },
+      { stage: "Go-to-Market", status: "completed" as const, summary: "" },
+    ];
+    expect(latestCapabilities(projectState, events)).toBe(allDone);
   });
 
-  it("appends a stage the server didn't know about yet, defaulting from 'pending'", () => {
-    const merged = mergeStages([], [{ stage: "New Stage", status: "in_progress", summary: "시작" }]);
-    expect(merged).toEqual([{ name: "New Stage", status: "in_progress", note: "시작" }]);
-  });
-
-  it("the latest event for a stage wins when multiple events target the same stage", () => {
-    const merged = mergeStages(
-      [{ name: "Envision", status: "pending", note: null }],
-      [
-        { stage: "Envision", status: "in_progress", summary: "1차" },
-        { stage: "Envision", status: "completed", summary: "2차" },
-      ],
-    );
-    expect(merged).toEqual([{ name: "Envision", status: "completed", note: "2차" }]);
+  it("is empty before anything has loaded", () => {
+    expect(latestCapabilities(null, [])).toEqual([]);
   });
 });
 
 describe("StageSidebar", () => {
-  it("renders every merged stage name (server state, no events yet)", () => {
+  // 에이전트가 쓴 스테이지는 8개지만 사이드바는 공식 6개를 보인다
+  // (Rachna 피드백: PDS는 6개인데 화면의 숫자가 달랐다).
+  it("renders the six official capabilities, not the agent's raw stage list", () => {
     render(<StageSidebar state={projectState} events={[]} />);
-    expect(screen.getByLabelText("스테이지 진행 상황")).toBeInTheDocument();
-    for (const s of projectState.stages) {
-      expect(screen.getByText(s.name)).toBeInTheDocument();
+    expect(screen.getByLabelText("단계 진행 상황")).toBeInTheDocument();
+    for (const c of projectState.capabilities) {
+      expect(screen.getByText(c.name)).toBeInTheDocument();
     }
+    expect(screen.queryByText("Workspace Detection")).toBeNull();
+    expect(screen.queryByText("Discovery Mode Selection")).toBeNull();
+    expect(screen.getAllByText("이 경로에 없음")).toHaveLength(2);
   });
 
-  it("reflects a stage event's status override over the server's initial state", () => {
+  it("shows the in-progress capability's note", () => {
+    render(<StageSidebar state={projectState} events={[]} />);
+    expect(screen.getByText(/13개 질문 대기/)).toBeInTheDocument();
+  });
+
+  it("follows a live event's snapshot over the server's initial state", () => {
     render(
       <StageSidebar
         state={projectState}
-        events={[{ stage: "Go-to-Market", status: "in_progress", summary: "마케팅 전략 초안" }]}
+        events={[{ stage: "Go-to-Market", status: "completed", summary: "", capabilities: allDone }]}
       />,
     );
-    expect(screen.getByText("마케팅 전략 초안")).toBeInTheDocument();
+    expect(screen.getByText(/4 \/ 4/)).toBeInTheDocument();
   });
 
   // 이 카운터는 딕셔너리를 거치지 않고 "스테이지"를 리터럴로 박고 있었다 —
@@ -68,11 +73,8 @@ describe("StageSidebar", () => {
         <StageSidebar state={projectState} events={[]} />
       </LocaleProvider>,
     );
-    const { completed, total } = {
-      completed: projectState.stages.filter((s) => s.status === "completed").length,
-      total: projectState.stages.length,
-    };
-    expect(screen.getByText(new RegExp(`${completed} / ${total} stages`))).toBeInTheDocument();
+    expect(screen.getByText(/2 \/ 4 capabilities/)).toBeInTheDocument();
+    expect(screen.getAllByText("Not on this path")).toHaveLength(2);
     expect(screen.queryByText(/스테이지/)).toBeNull();
   });
 });

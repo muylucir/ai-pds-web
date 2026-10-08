@@ -100,13 +100,19 @@ def stage_events(markdown: str | None,
         return [], last
     events: list[AgentEvent] = []
     cursor = dict(last)
+    # 사이드바가 세는 6개 capability의 **스냅샷**. 매 이벤트에 같은 값을 싣는다 —
+    # 프론트는 마지막 것만 쓰면 되고, 묶는 규칙(aipds/capabilities.py)을 두 벌로 두지
+    # 않는다. 새 이벤트 종류가 아닌 이유: 스냅샷이 바뀌는 때는 정확히 어떤 스테이지의
+    # 상태가 바뀌는 때다.
+    capabilities = [c.model_dump() for c in state.capabilities]
     for stage in state.stages:
         if cursor.get(stage.name) == stage.status:
             continue
         cursor[stage.name] = stage.status
         events.append(AgentEvent(kind="stage", payload=json.dumps(
             {"stage": stage.name, "status": stage.status,
-             "summary": stage.note or ""}, ensure_ascii=False)))
+             "summary": stage.note or "", "capabilities": capabilities},
+            ensure_ascii=False)))
     return events, cursor
 
 

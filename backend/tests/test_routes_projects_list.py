@@ -93,8 +93,10 @@ def test_progress_read_from_s3_state(monkeypatch):
     _register("pg-state")
     r = client.get("/projects", params={"size": 50})
     row = next(p for p in r.json()["projects"] if p["project_id"] == "pg-state")
+    # 진행용 단계(Workspace Detection·Mode Selection)는 세지 않고 6개 capability로 센다.
+    # Envision 뒤의 것은 아직 목록에 없을 뿐이므로 분모에 남는다.
     assert row["progress"] == {
-        "current_stage": "DISCOVERY - Envision", "completed": 2, "total": 4}
+        "current_stage": "Envision", "completed": 0, "total": 6}
 
 
 def test_progress_null_when_state_missing(monkeypatch):

@@ -14,10 +14,33 @@ from aipds.agent import reconcile
 
 
 def _payloads(events):
-    return [json.loads(e.payload) for e in events]
+    """스테이지 diff를 본다 — 함께 실리는 capability 스냅샷은 아래 전용 테스트가 본다."""
+    out = [json.loads(e.payload) for e in events]
+    for p in out:
+        p.pop("capabilities", None)
+    return out
 
 
 # ---- 스테이지: aiplc-state.md에서 유도한다 (옛 report_stage) ----
+
+
+def test_every_stage_event_carries_the_same_capability_snapshot():
+    md = ("- **Current Stage**: Prototype & Validation\n\n"
+          "## Stage Progress\n"
+          "- [x] Envision\n"
+          "- [x] Solution Analysis\n"
+          "- [ ] Prototype & Validation\n")
+    events, _ = reconcile.stage_events(md, {})
+    snaps = [json.loads(e.payload)["capabilities"] for e in events]
+    assert len(events) == 3 and all(s == snaps[0] for s in snaps)
+    assert [(c["key"], c["status"]) for c in snaps[0]] == [
+        ("envision", "completed"),
+        ("use_case_intake", "not_applicable"),
+        ("prioritize", "not_applicable"),
+        ("prototype", "in_progress"),
+        ("product_strategy", "pending"),
+        ("go_to_market", "pending"),
+    ]
 
 
 def test_a_state_file_becomes_stage_events():
