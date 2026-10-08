@@ -416,6 +416,31 @@ describe("WorkspaceDocPanel — 드로어", () => {
     expect(onOpenChange.mock.calls).toEqual([[false], [false], [false], [false]]);
   });
 
+  // 여는 순간의 ✕는 아직 화면 밖에서 들어오는 중이다. 그냥 focus()하면 브라우저가
+  // 페이지 루트를 옆으로 스크롤해 화면 전체가 밀렸다 튕겨 왔다(실측: scrollLeft 648).
+  // jsdom은 레이아웃이 없으므로 원인 쪽 — preventScroll — 을 고정한다.
+  it("포커스를 옮길 때 화면을 스크롤하지 않는다 (열 때·닫을 때 모두)", async () => {
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    try {
+      const { rerender } = render(
+        <WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0}
+                           {...closed()} />,
+      );
+      await act(async () => {
+        rerender(<WorkspaceDocPanel {...OPEN} projectId="p1" activeDoc={DOC} changedPaths={[]}
+                                    turnSeq={0} />);
+      });
+      await act(async () => {
+        rerender(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0}
+                                    {...closed()} />);
+      });
+      expect(focus).toHaveBeenCalledTimes(2);
+      for (const call of focus.mock.calls) expect(call[0]).toEqual({ preventScroll: true });
+    } finally {
+      focus.mockRestore();
+    }
+  });
+
   // 답하는 중에 덮는 드로어가 저절로 열리면 질문 폼을 가린다 — 탭만 바뀐다.
   it("닫힌 동안 새 문서가 오면 탭이 '새 문서'로 바뀌고 저절로 열지 않는다", async () => {
     const onOpenChange = vi.fn();
