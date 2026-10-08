@@ -96,6 +96,35 @@ describe("Workspace page", () => {
     expect(screen.getByLabelText("컨텍스트 패널")).toBeInTheDocument();
   });
 
+  // Rachna 피드백(2026-10): 문서 패널이 열려 있으면 질문 열이 3.5/12로 좁다.
+  // 접으면 그 폭이 질문 열로 가고, 다음에 와도 접혀 있다.
+  it("folds the document panel into a rail, widens the question column, and remembers it", async () => {
+    window.localStorage.removeItem("aipds.docPanelCollapsed");
+    server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
+    mockWorkspaceStream({ historyLoading: true });
+    let view!: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<WorkspacePage params={params} />);
+    });
+    await screen.findByLabelText("단계 진행 상황");
+    const grid = () => screen.getByLabelText("컨텍스트 패널").parentElement!;
+    expect(grid().className).toContain("lg:grid-cols-[1fr_3.5fr_3.5fr_4fr]");
+
+    await userEvent.click(screen.getByRole("button", { name: "문서 패널 접기" }));
+    expect(grid().className).toContain("lg:grid-cols-[1fr_3.5fr_7.5fr_2.5rem]");
+    expect(window.localStorage.getItem("aipds.docPanelCollapsed")).toBe("1");
+
+    view.unmount();
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    await screen.findByLabelText("단계 진행 상황");
+    expect(screen.getByRole("button", { name: "문서 패널 펼치기" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "문서 패널 펼치기" }));
+    expect(grid().className).toContain("lg:grid-cols-[1fr_3.5fr_3.5fr_4fr]");
+    expect(window.localStorage.getItem("aipds.docPanelCollapsed")).toBe("0");
+  });
+
   it("shows a pending-questions badge over the chat that opens a bottom-sheet QuestionForm (mobile fallback for the hidden right panel)", async () => {
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
     const submitAnswers = vi.fn();

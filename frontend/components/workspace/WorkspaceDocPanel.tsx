@@ -39,6 +39,8 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   activeDoc,
   turnSeq,
   changedPaths,
+  collapsed,
+  onToggleCollapsed,
 }: {
   projectId: string;
   activeDoc: { path: string; version: string | null } | null;
@@ -58,6 +60,11 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   // **옵셔널이 아니다.** 기본값 `[]`을 두면 부모가 안 넘겨도 컴파일되고, 그러면 이
   // 재조회가 프로덕션에서만 조용히 죽는다 — 필수로 두어 타입체크가 배선을 지킨다.
   changedPaths: string[];
+  // 접힘 상태는 부모가 든다 — 그리드의 열 폭이 이 값을 따라가야 하기 때문이다
+  // (workspace/page.tsx). 접혀도 아래 훅들은 그대로 돈다: 펼치는 순간 지금 문서가
+  // 바로 보여야 하고, 접힌 동안 새 문서가 왔는지도 여기서 알아야 한다.
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   const t = useT();
   // 드롭다운 선택 상태. null = activeDoc 따름. activeDoc이 바뀌면(새 문서
@@ -125,6 +132,42 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   // "v2") or not (e.g. "2"); normalize to a single leading "v".
   const versionLabel = version ? (/^v/i.test(version) ? version : `v${version}`) : null;
 
+  // 접힌 동안 대화가 새 문서(또는 새 판)를 쓰면 레일에 점을 찍는다. **저절로 펼치지
+  // 않는다** — 패널을 접는 이유가 질문에 답할 폭이고, 답하는 중에 화면이 바뀌면
+  // 질문 패널이 혼자 프로토타입으로 넘어가던 버그(WorkspaceRightPanel의
+  // question2.png)와 같은 불만이 된다.
+  const docKey = activeDoc ? `${activeDoc.path}@${activeDoc.version ?? ""}` : null;
+  const [seenKey, setSeenKey] = useState(docKey);
+  useEffect(() => {
+    if (!collapsed) setSeenKey(docKey);
+  }, [collapsed, docKey]);
+  const unseen = collapsed && docKey !== null && docKey !== seenKey;
+
+  if (collapsed) {
+    return (
+      <aside
+        aria-label={t("ws.generatedDocsAria")}
+        className="hidden lg:flex flex-col min-h-0 bg-white border-l border-slate-200"
+      >
+        <button
+          type="button"
+          aria-label={t("ws.expandDocAria")}
+          aria-expanded={false}
+          onClick={onToggleCollapsed}
+          className="flex-1 flex flex-col items-center gap-3 py-3 text-slate-400 hover:text-violet-600 hover:bg-violet-50"
+        >
+          <span aria-hidden="true">‹</span>
+          <span className="[writing-mode:vertical-rl] text-xs font-bold tracking-wide" aria-hidden="true">
+            {t("ws.generatedDocs")}
+          </span>
+          {unseen && (
+            <span className="w-2 h-2 rounded-full bg-violet-500" role="status" aria-label={t("ws.docUpdatedWhileHidden")} />
+          )}
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside
       aria-label={t("ws.generatedDocsAria")}
@@ -168,6 +211,15 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
             {versionLabel}
           </span>
         )}
+        <button
+          type="button"
+          aria-label={t("ws.collapseDocAria")}
+          aria-expanded={true}
+          onClick={onToggleCollapsed}
+          className="shrink-0 w-7 h-7 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center"
+        >
+          ›
+        </button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto p-4 text-sm text-slate-700">
         {/* 목록 실패를 "문서가 없다"로 뭉개지 않는다 — 화면이 같으면 원인을 영영 못
