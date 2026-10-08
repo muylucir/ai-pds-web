@@ -70,6 +70,7 @@ describe("api types mirror the backend models", () => {
         { name: "Product Strategy", status: "in_progress", note: null },
         { name: "Go-to-Market", status: "pending", note: null },
       ],
+      capabilities: [],
     };
     expect(st.stages.map((s) => s.status)).toEqual(["completed", "in_progress", "pending"]);
   });

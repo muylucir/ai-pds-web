@@ -1,9 +1,9 @@
 "use client";
 import Link from "next/link";
-import type { ProjectState, StageState } from "@/lib/api/types";
+import type { CapabilityState, ProjectState } from "@/lib/api/types";
 import { useT } from "@/lib/i18n/provider";
 
-function StageIcon({ stage, index }: { stage: StageState; index: number }) {
+function StageIcon({ stage, index }: { stage: CapabilityState; index: number }) {
   if (stage.status === "completed") {
     return (
       <span className="shrink-0 w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center" aria-hidden="true">
@@ -15,6 +15,13 @@ function StageIcon({ stage, index }: { stage: StageState; index: number }) {
     return (
       <span className="shrink-0 w-10 h-10 rounded-full bg-violet-600 text-white flex items-center justify-center ring-4 ring-violet-100 font-bold text-sm" aria-hidden="true">
         {index + 1}
+      </span>
+    );
+  }
+  if (stage.status === "not_applicable") {
+    return (
+      <span className="shrink-0 w-10 h-10 rounded-full border border-dashed border-slate-200 text-slate-300 flex items-center justify-center" aria-hidden="true">
+        –
       </span>
     );
   }
@@ -36,22 +43,26 @@ export function StageTimeline({ state, projectId }: { state: ProjectState; proje
       {/* 갓 만든 프로젝트의 `stages`는 빈 배열이고, 그때 빈 <ol>만 남으면 이 큰
           패널이 흰 박스가 되어 고장으로 읽힌다. 자매 패널(ArtifactsPanel·
           ActivityFeed)과 같은 형태의 한 줄로 채운다 — 무엇을 해야 하는지는
-          위쪽 GetStartedBanner가 말하므로 여기서는 사실만 적는다. */}
+          위쪽 GetStartedBanner가 말하므로 여기서는 사실만 적는다.
+          목록은 `stages`(에이전트가 쓴 원래 목록)가 아니라 그것을 묶은 6개
+          capability다 — 사이드바·프로젝트 목록과 같은 단위로 센다. */}
       {state.stages.length === 0 ? (
         <p className="p-5 text-sm text-slate-400">{t("dash.noStages")}</p>
       ) : (
         <ol className="p-6 space-y-2">
-          {state.stages.map((stage, i) => {
+          {state.capabilities.map((stage, i) => {
             const active = stage.status === "in_progress";
             const done = stage.status === "completed";
+            const skipped = stage.status === "not_applicable";
             return (
-              <li key={stage.name} className="stage-line relative flex gap-4 pb-6">
+              <li key={stage.key} className="stage-line relative flex gap-4 pb-6">
                 <StageIcon stage={stage} index={i} />
                 <div className="pt-1 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className={active ? "font-bold text-violet-800" : done ? "font-medium" : "font-medium text-slate-400"}>
+                    <h3 className={active ? "font-bold text-violet-800" : done ? "font-medium" : skipped ? "font-medium text-slate-300" : "font-medium text-slate-400"}>
                       {stage.name}
                     </h3>
+                    {skipped && <span className="text-[11px] text-slate-300">{t("canvas.capabilityNotApplicable")}</span>}
                     {done && <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{t("dash.stageDone")}</span>}
                     {active && (
                       <span className="text-[11px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 animate-pulse">{t("dash.stageInProgress")}</span>

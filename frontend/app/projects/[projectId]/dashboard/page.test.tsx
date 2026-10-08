@@ -28,7 +28,7 @@ function mockAll(pid: string) {
   );
 }
 
-const EMPTY_STATE = { project_type: null, current_stage: null, stages: [] };
+const EMPTY_STATE = { project_type: null, current_stage: null, stages: [], capabilities: [] };
 
 /** 아무 워크플로우도 돌지 않은 갓 만든 프로젝트. */
 function mockFresh(pid: string) {
