@@ -1,6 +1,11 @@
 export interface UserDataOptions {
   region: string;
   bucketName: string;
+  /**
+   * ANTHROPIC_MODEL로 내려가는 Bedrock 추론 프로파일 ID. 모델 호출은 Anthropic API가
+   * 아니라 Amazon Bedrock을 거친다 — `CLAUDE_CODE_USE_BEDROCK=1`은 백엔드가 Claude Code를
+   * 띄울 때 주입한다(aipds/agent/claude_driver.py, aipds/proto/builder.py).
+   */
   model: string;
   secretArn: string;
   /** 공개 리포의 HTTPS clone URL. */

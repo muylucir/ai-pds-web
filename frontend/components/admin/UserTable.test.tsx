@@ -14,7 +14,7 @@ const USERS: AdminUser[] = [
   { username: "pm@aipds.local", email: "pm@aipds.local",
     role: "pm", status: "FORCE_CHANGE_PASSWORD", enabled: true,
     created_at: "2026-07-25T01:00:00+00:00" },
-  { username: "off@x.io", email: "off@x.io", role: "pm",
+  { username: "off@example.com", email: "off@example.com", role: "pm",
     status: "CONFIRMED", enabled: false, created_at: "2026-07-25T02:00:00+00:00" },
 ];
 
@@ -30,7 +30,7 @@ describe("UserTable", () => {
     expect(within(row("pm@aipds.local")).getByText("PM")).toBeInTheDocument();
     // 초대 직후 상태는 "비밀번호 변경 필요"로 읽혀야 한다.
     expect(within(row("pm@aipds.local")).getByText(/변경 필요/)).toBeInTheDocument();
-    expect(within(row("off@x.io")).getByText("비활성")).toBeInTheDocument();
+    expect(within(row("off@example.com")).getByText("비활성")).toBeInTheDocument();
   });
 
   it("marks the current user so they know which row is theirs", () => {
@@ -68,7 +68,7 @@ describe("UserTable", () => {
       `${API_BASE_URL}/admin/users/admin@aipds.local/role`, () =>
         // 백엔드가 실제로 보내는 것을 목이 흉내내야 한다 — 문구가 아니라 코드다.
         HttpResponse.json({ detail: "last_admin" }, { status: 400 })));
-    render(<UserTable users={USERS} currentEmail="other@x.io" onChanged={() => {}} />);
+    render(<UserTable users={USERS} currentEmail="other@example.com" onChanged={() => {}} />);
     await userEvent.selectOptions(
       within(row("admin@aipds.local")).getByLabelText(/역할 변경/), "pm");
     // 단정은 한국어 문구다 — Provider 없이 렌더하므로 기본 로케일(ko)이 걸린다.
@@ -153,11 +153,11 @@ describe("UserTable", () => {
   });
 
   it("offers 활성화 for a disabled user", async () => {
-    server.use(http.post(`${API_BASE_URL}/admin/users/off@x.io/enable`, () =>
+    server.use(http.post(`${API_BASE_URL}/admin/users/off@example.com/enable`, () =>
       new HttpResponse(null, { status: 204 })));
     render(<UserTable users={USERS} currentEmail="admin@aipds.local"
                       onChanged={() => {}} />);
-    expect(within(row("off@x.io")).getByRole("button", { name: "활성화" }))
+    expect(within(row("off@example.com")).getByRole("button", { name: "활성화" }))
       .toBeInTheDocument();
   });
 
