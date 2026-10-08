@@ -3,6 +3,7 @@
 import { memo } from "react";
 import { QuestionForm } from "@/components/questions/QuestionForm";
 import { PreviewPanelBody } from "@/components/canvas/PreviewPanel";
+import { OpenDocButton } from "@/components/workspace/OpenDocButton";
 import type { QuestionsPayload, StagePayload } from "@/lib/api/types";
 import { useT } from "@/lib/i18n/provider";
 
@@ -61,6 +62,8 @@ export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
   changedPaths,
   onSubmitAnswers,
   busy,
+  currentDocName,
+  onOpenDoc,
 }: {
   projectId: string;
   pendingQuestions: QuestionsPayload | null;
@@ -68,6 +71,10 @@ export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
   changedPaths: string[];
   onSubmitAnswers: (answers: Record<string, string>) => void;
   busy: boolean;
+  // 문서 드로어가 지금 열 문서의 이름(없으면 버튼을 그리지 않는다)과 여는 함수.
+  // `onOpenDoc`은 부모가 useCallback으로 고정한다 — 이 패널은 memo다.
+  currentDocName: string | null;
+  onOpenDoc: () => void;
 }) {
   const t = useT();
   const mode = deriveMode(pendingQuestions, stages, busy);
@@ -78,6 +85,7 @@ export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
     >
       {mode === "questions" && pendingQuestions && (
         <div className="flex-1 min-h-0 overflow-y-auto p-6">
+          {currentDocName && <OpenDocButton name={currentDocName} onClick={onOpenDoc} />}
           <QuestionForm file={pendingQuestions.questions} onSubmit={onSubmitAnswers} submitting={busy} />
         </div>
       )}

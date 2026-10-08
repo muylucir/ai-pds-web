@@ -96,33 +96,43 @@ describe("Workspace page", () => {
     expect(screen.getByLabelText("컨텍스트 패널")).toBeInTheDocument();
   });
 
-  // Rachna 피드백(2026-10): 문서 패널이 열려 있으면 질문 열이 3.5/12로 좁다.
-  // 접으면 그 폭이 질문 열로 가고, 다음에 와도 접혀 있다.
-  it("folds the document panel into a rail, widens the question column, and remembers it", async () => {
-    window.localStorage.removeItem("aipds.docPanelCollapsed");
+  // Rachna 피드백(2026-10): 문서가 4번째 열이던 동안 질문 열이 3.5/12로 좁았다.
+  // 이제 채팅·질문이 5:5이고 문서는 덮는 드로어로 연다.
+  it("splits chat and questions 5:5 and keeps the document in a closed drawer", async () => {
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
     mockWorkspaceStream({ historyLoading: true });
-    let view!: ReturnType<typeof render>;
-    await act(async () => {
-      view = render(<WorkspacePage params={params} />);
-    });
-    await screen.findByLabelText("단계 진행 상황");
-    const grid = () => screen.getByLabelText("컨텍스트 패널").parentElement!;
-    expect(grid().className).toContain("lg:grid-cols-[1fr_3.5fr_3.5fr_4fr]");
-
-    await userEvent.click(screen.getByRole("button", { name: "문서 패널 접기" }));
-    expect(grid().className).toContain("lg:grid-cols-[1fr_3.5fr_7.5fr_2.5rem]");
-    expect(window.localStorage.getItem("aipds.docPanelCollapsed")).toBe("1");
-
-    view.unmount();
     await act(async () => {
       render(<WorkspacePage params={params} />);
     });
     await screen.findByLabelText("단계 진행 상황");
-    expect(screen.getByRole("button", { name: "문서 패널 펼치기" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "문서 패널 펼치기" }));
-    expect(grid().className).toContain("lg:grid-cols-[1fr_3.5fr_3.5fr_4fr]");
-    expect(window.localStorage.getItem("aipds.docPanelCollapsed")).toBe("0");
+    const grid = screen.getByLabelText("컨텍스트 패널").parentElement!;
+    expect(grid.className).toContain("lg:grid-cols-[1fr_5fr_5fr]");
+    const tab = screen.getByRole("button", { name: "생성된 문서 열기" });
+    expect(tab).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(tab);
+    expect(screen.getByRole("button", { name: "생성된 문서 닫기", expanded: true })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "생성된 문서 열기" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  // 승인 게이트처럼 문서를 읽고 답해야 하는 라운드 — 질문 폼 위에서 바로 연다.
+  it("offers a 'View {document}' button above the question form that opens the drawer", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)),
+      http.get(`${API_BASE_URL}/projects/p1/artifacts`, () =>
+        HttpResponse.json({ artifacts: ["aiplc-docs/discovery/envision/prfaq.md"] })),
+      http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/discovery/envision/prfaq.md`, () =>
+        HttpResponse.json({ content: "# PR/FAQ" })),
+    );
+    mockWorkspaceStream({ pendingQuestions: QP });
+    await act(async () => {
+      render(<WorkspacePage params={params} />);
+    });
+    const panel = screen.getByLabelText("컨텍스트 패널");
+    const view = await within(panel).findByRole("button", { name: /prfaq\.md 보기/ });
+    await userEvent.click(view);
+    expect(screen.getByRole("button", { name: "생성된 문서 닫기", expanded: true })).toBeInTheDocument();
   });
 
   it("shows a pending-questions badge over the chat that opens a bottom-sheet QuestionForm (mobile fallback for the hidden right panel)", async () => {
@@ -194,10 +204,10 @@ describe("Workspace page", () => {
     expect(screen.queryByRole("button", { name: /답변 대기 중인 질문/ })).not.toBeInTheDocument();
   });
 
-  it("shows a document-update banner linking to the review route when lastDocument is set", async () => {
+  it("shows a document-update banner that opens the document drawer in place", async () => {
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)),
-      // The inline doc panel (4th column) reads lastDocument.path on mount.
+      // The document drawer reads lastDocument.path on mount (even closed).
       http.get(`${API_BASE_URL}/projects/p1/files/aiplc-docs/discovery/discovery-document.md`, () =>
         HttpResponse.json({ content: "# 문서\n\n본문" }),
       ),
@@ -212,8 +222,10 @@ describe("Workspace page", () => {
 
     const banner = screen.getByRole("status");
     expect(within(banner).getByText(/v2/)).toBeInTheDocument();
-    const link = within(banner).getByRole("link", { name: /문서 리뷰/ });
-    expect(link).toHaveAttribute("href", "/projects/p1/review");
+    // 리뷰 화면으로 떠나지 않는다 — 드로어가 이 문서(activeDoc)를 연다.
+    await userEvent.click(within(banner).getByRole("button", { name: "문서 열기" }));
+    expect(screen.getByRole("button", { name: "생성된 문서 닫기", expanded: true })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();   // 연 배너는 닫힌다
   });
 
   it("does not show the document-update banner when lastDocument is null", async () => {
