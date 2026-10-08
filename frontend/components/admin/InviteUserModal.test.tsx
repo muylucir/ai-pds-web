@@ -11,16 +11,16 @@ describe("InviteUserModal", () => {
   it("invites a user and reveals the temp password once", async () => {
     server.use(http.post(`${API_BASE_URL}/admin/users`, async ({ request }) => {
       const body = (await request.json()) as { email: string; role: string };
-      expect(body).toEqual({ email: "new@x.io", role: "pm" });
+      expect(body).toEqual({ email: "new@example.com", role: "pm" });
       return HttpResponse.json({
-        username: "new@x.io", email: "new@x.io", role: "pm",
+        username: "new@example.com", email: "new@example.com", role: "pm",
         temp_password: "Tmp!2345678abcd",
       }, { status: 201 });
     }));
 
     const onInvited = vi.fn();
     render(<InviteUserModal onInvited={onInvited} onClose={() => {}} />);
-    await userEvent.type(screen.getByLabelText("이메일"), "new@x.io");
+    await userEvent.type(screen.getByLabelText("이메일"), "new@example.com");
     await userEvent.click(screen.getByRole("button", { name: "초대" }));
 
     expect(await screen.findByText("Tmp!2345678abcd")).toBeInTheDocument();
@@ -40,12 +40,12 @@ describe("InviteUserModal", () => {
   it("removes the password from the document once the host closes on 확인", async () => {
     server.use(http.post(`${API_BASE_URL}/admin/users`, () =>
       HttpResponse.json({
-        username: "new@x.io", email: "new@x.io", role: "pm",
+        username: "new@example.com", email: "new@example.com", role: "pm",
         temp_password: "Tmp!2345678abcd",
       }, { status: 201 })));
 
     render(<ModalHost />);
-    await userEvent.type(screen.getByLabelText("이메일"), "new@x.io");
+    await userEvent.type(screen.getByLabelText("이메일"), "new@example.com");
     await userEvent.click(screen.getByRole("button", { name: "초대" }));
     expect(await screen.findByText("Tmp!2345678abcd")).toBeInTheDocument();
 
@@ -63,7 +63,7 @@ describe("InviteUserModal", () => {
       // 백엔드가 실제로 보내는 것을 목이 흉내내야 한다 — 문구가 아니라 코드다.
       HttpResponse.json({ detail: "email_exists" }, { status: 409 })));
     render(<InviteUserModal onInvited={() => {}} onClose={() => {}} />);
-    await userEvent.type(screen.getByLabelText("이메일"), "dup@x.io");
+    await userEvent.type(screen.getByLabelText("이메일"), "dup@example.com");
     await userEvent.click(screen.getByRole("button", { name: "초대" }));
     expect(await screen.findByText("이미 등록된 이메일입니다.")).toBeInTheDocument();
   });

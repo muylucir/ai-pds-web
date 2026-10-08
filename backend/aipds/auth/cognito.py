@@ -44,7 +44,7 @@ def username_for_email(email: str) -> str:
     그래서 '@' 앞부분만 Username으로 쓴다. 사용자는 어느 쪽이든 이메일로
     로그인한다(email alias가 그 일을 한다).
 
-    ⚠️ 로컬파트가 같고 도메인만 다른 두 계정(kim@a.com / kim@b.com)은 같은
+    ⚠️ 로컬파트가 같고 도메인만 다른 두 계정(kim@example.com / kim@example.org)은 같은
     Username으로 충돌한다 — 두 번째 초대가 UsernameExistsException으로 실패한다.
     워크숍 규모(단일 도메인)에서 감수한 트레이드오프다. 다중 도메인을 받아야
     하면 도메인까지 포함한 규칙으로 바꿔야 하고, 그때는 infra/lib/seed-users.ts의
