@@ -313,6 +313,7 @@ export const en: Record<keyof typeof ko, string> = {
   "transfer.exportAria": "Export project",
   "transfer.exporting": "Building the bundle...",
   "transfer.exportFailed": "Export failed.",
+  "transfer.buildSessionActive": "This project has an open build session, so it can’t be exported yet. In the project’s “Prototypes” tab, choose “Open session” on that card, press “Done” to close it, then export again.",
   "transfer.importTitle": "Import a project",
   "transfer.importHint": "Upload a bundle (.zip) exported from another instance to restore its conversation, artifacts and prototypes.",
   "transfer.pickFile": "Choose a bundle file",

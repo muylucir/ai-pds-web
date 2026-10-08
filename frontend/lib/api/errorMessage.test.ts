@@ -50,6 +50,10 @@ describe("errorMessage", () => {
       const dict = dictFor(locale);
       expect(dict["err.buildSessionActive"]).toContain(`“${dict["proto.done"]}”`);
       expect(dict["err.buildSessionActive"]).toContain(`“${dict["proto.openSession"]}”`);
+      // 내보내기(프로젝트 목록)의 같은 거부는 탭 이름부터 부른다.
+      for (const key of ["nav.prototypes", "proto.openSession", "proto.done"] as const) {
+        expect(dict["transfer.buildSessionActive"]).toContain(`“${dict[key]}”`);
+      }
     }
   });
 });
