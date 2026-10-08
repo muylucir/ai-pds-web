@@ -2,23 +2,33 @@
 // frontend/components/workspace/WorkspaceDocPanel.tsx
 "use client";
 import Link from "next/link";
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useId, useRef, useState } from "react";
 import { listArtifacts, readArtifact, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { Markdown } from "@/components/Markdown";
 import { useT } from "@/lib/i18n/provider";
+import { DocIcon } from "@/components/workspace/OpenDocButton";
 
-// The workspace's 4th column. Renders the document the CONVERSATION is
+// The workspace's document drawer. Renders the document the CONVERSATION is
 // currently about (activeDoc — submit_document 이벤트뿐 아니라 doc성
-// file_changed도 추적, ui-bug2 싱크 수정) inline so the user reads it
-// without leaving the workspace.
+// file_changed도 추적, ui-bug2 싱크 수정) so the user reads it without leaving
+// the workspace.
+//
+// **열이 아니라 덮는 드로어다.** 4번째 열로 상시 펼쳐 두던 동안 질문 폼은
+// 1440px에서 412px였다(Rachna 피드백, 2026-10). 이제 채팅·질문이 5:5로 폭을
+// 갖고, 문서는 필요할 때 위에 덮어 연다. 덮는 동안 가리는 것은 질문 폼이므로
+// 닫는 길을 셋 둔다 — 손잡이 탭, ✕, Esc·바깥 클릭.
+//
+// 손잡이 탭은 드로어 왼쪽 가장자리에 붙어 함께 움직인다 — 닫혀 있을 때는 화면
+// 오른쪽 끝(그리드가 비워 둔 여백)에, 열리면 드로어 옆에 있다. 여는 것과 닫는
+// 것이 같은 자리의 같은 버튼이다. 아이콘만 두지 않고 글자와 개수를 쓴다.
 //
 // turnSeq: 턴이 끝날 때마다 증가하는 시퀀스. 문서 이벤트가 도착한 시점에는
 // VM→S3 동기화 전이라 읽기가 비거나 404일 수 있으므로, 턴 종료 시점에
 // 다시 읽는다 (fetch 키에 포함).
 //
-// Hidden below `lg` — the same responsive posture as StageSidebar and
-// WorkspaceRightPanel; on narrow screens the review route is the fallback.
+// 모든 폭에서 열린다 — 좁은 화면에서는 전체 폭을 덮는다. 열이던 시절에는
+// `lg` 아래에서 숨겨졌고 리뷰 화면이 유일한 대안이었다.
 // 연달아 쓰인 파일을 목록 재조회 한 번으로 묶는 대기(ms).
 const CHANGE_SETTLE_MS = 400;
 
@@ -39,8 +49,9 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   activeDoc,
   turnSeq,
   changedPaths,
-  collapsed,
-  onToggleCollapsed,
+  open,
+  onOpenChange,
+  onCurrentDocChange,
 }: {
   projectId: string;
   activeDoc: { path: string; version: string | null } | null;
@@ -60,11 +71,14 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   // **옵셔널이 아니다.** 기본값 `[]`을 두면 부모가 안 넘겨도 컴파일되고, 그러면 이
   // 재조회가 프로덕션에서만 조용히 죽는다 — 필수로 두어 타입체크가 배선을 지킨다.
   changedPaths: string[];
-  // 접힘 상태는 부모가 든다 — 그리드의 열 폭이 이 값을 따라가야 하기 때문이다
-  // (workspace/page.tsx). 접혀도 아래 훅들은 그대로 돈다: 펼치는 순간 지금 문서가
-  // 바로 보여야 하고, 접힌 동안 새 문서가 왔는지도 여기서 알아야 한다.
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
+  // 열림 상태는 부모가 든다 — 채팅 배너와 질문 폼의 "문서 열기"도 같은 드로어를
+  // 연다(workspace/page.tsx). 닫혀도 아래 훅들은 그대로 돈다: 여는 순간 지금 문서가
+  // 바로 보여야 하고, 닫힌 동안 새 문서가 왔는지도 여기서 알아야 한다.
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  // 드로어가 지금 보여 줄 문서 경로. 질문 폼의 "{이름} 보기" 버튼이 쓴다 —
+  // 무엇이 열릴지는 목록 폴백까지 아는 이 컴포넌트만 정확히 안다.
+  onCurrentDocChange: (path: string | null) => void;
 }) {
   const t = useT();
   // 드롭다운 선택 상태. null = activeDoc 따름. activeDoc이 바뀌면(새 문서
@@ -132,131 +146,177 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   // "v2") or not (e.g. "2"); normalize to a single leading "v".
   const versionLabel = version ? (/^v/i.test(version) ? version : `v${version}`) : null;
 
-  // 접힌 동안 대화가 새 문서(또는 새 판)를 쓰면 레일에 점을 찍는다. **저절로 펼치지
-  // 않는다** — 패널을 접는 이유가 질문에 답할 폭이고, 답하는 중에 화면이 바뀌면
-  // 질문 패널이 혼자 프로토타입으로 넘어가던 버그(WorkspaceRightPanel의
-  // question2.png)와 같은 불만이 된다.
+  useEffect(() => {
+    onCurrentDocChange(path);
+  }, [path, onCurrentDocChange]);
+
+  // 닫힌 동안 대화가 새 문서(또는 새 판)를 쓰면 탭이 "새 문서"로 바뀌고 한 번
+  // 출렁인다. **저절로 열지 않는다** — 덮는 드로어가 저절로 열리면 답하던 질문
+  // 폼을 가린다(질문 패널이 혼자 프로토타입으로 넘어가던 question2.png와 같은 불만).
+  // 계속 깜박이지 않는 것도 같은 이유다.
   const docKey = activeDoc ? `${activeDoc.path}@${activeDoc.version ?? ""}` : null;
   const [seenKey, setSeenKey] = useState(docKey);
   useEffect(() => {
-    if (!collapsed) setSeenKey(docKey);
-  }, [collapsed, docKey]);
-  const unseen = collapsed && docKey !== null && docKey !== seenKey;
+    if (open) setSeenKey(docKey);
+  }, [open, docKey]);
+  const unseen = !open && docKey !== null && docKey !== seenKey;
 
-  if (collapsed) {
-    return (
-      <aside
-        aria-label={t("ws.generatedDocsAria")}
-        className="hidden lg:flex flex-col min-h-0 bg-white border-l border-slate-200"
-      >
-        <button
-          type="button"
-          aria-label={t("ws.expandDocAria")}
-          aria-expanded={false}
-          onClick={onToggleCollapsed}
-          className="flex-1 flex flex-col items-center gap-3 py-3 text-slate-400 hover:text-violet-600 hover:bg-violet-50"
-        >
-          <span aria-hidden="true">‹</span>
-          <span className="[writing-mode:vertical-rl] text-xs font-bold tracking-wide" aria-hidden="true">
-            {t("ws.generatedDocs")}
-          </span>
-          {unseen && (
-            <span className="w-2 h-2 rounded-full bg-violet-500" role="status" aria-label={t("ws.docUpdatedWhileHidden")} />
-          )}
-        </button>
-      </aside>
-    );
-  }
+  // 열면 포커스를 드로어 안(✕)으로, 닫으면 손잡이로 돌려준다. Esc로 닫는다.
+  const drawerId = useId();
+  const tabRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    if (open && !wasOpen.current) closeRef.current?.focus();
+    if (!open && wasOpen.current) tabRef.current?.focus();
+    wasOpen.current = open;
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onOpenChange(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, onOpenChange]);
 
   return (
-    <aside
-      aria-label={t("ws.generatedDocsAria")}
-      className="hidden lg:flex flex-col min-w-0 min-h-0 bg-white border-l border-slate-200"
-    >
-      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
-        {options.length > 0 ? (
-          <select
-            aria-label={t("ws.selectDocAria")}
-            value={path ?? ""}
-            onChange={(e) => setManualPath(e.target.value)}
-            className="min-w-0 flex-1 text-xs font-bold text-slate-600 bg-transparent border border-slate-200 rounded-lg px-2 py-1.5 truncate focus:outline-none focus:ring-2 focus:ring-violet-300"
-          >
-            {options.map((p) => (
-              <option key={p} value={p}>
-                {p.slice(p.lastIndexOf("/") + 1)}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide truncate">{t("ws.generatedDocs")}</p>
-        )}
-        {path !== null && (
-          <button
-            type="button"
-            aria-label={t("ws.refreshDocAria")}
-            disabled={content.loading}
-            onClick={() => {
-              // 현재 문서와 산출물 목록을 함께 재조회 — 문서만 갱신하면 방금
-              // 생성된 다른 문서가 드롭다운에 반영되지 않는다.
-              content.reload();
-              artifacts.reload();
-            }}
-            className="shrink-0 w-7 h-7 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 disabled:opacity-40 flex items-center justify-center"
-          >
-            ↻
-          </button>
-        )}
-        {versionLabel && manualPath === null && (
-          <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-violet-50 text-violet-600">
-            {versionLabel}
-          </span>
-        )}
-        <button
-          type="button"
-          aria-label={t("ws.collapseDocAria")}
-          aria-expanded={true}
-          onClick={onToggleCollapsed}
-          className="shrink-0 w-7 h-7 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center"
-        >
-          ›
-        </button>
-      </div>
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 text-sm text-slate-700">
-        {/* 목록 실패를 "문서가 없다"로 뭉개지 않는다 — 화면이 같으면 원인을 영영 못
-            본다(이 파일이 docUnsaved와 docEmpty를 가른 것과 같은 규율). 문서가
-            선택돼 있으면 그 본문이 우선이다: 목록이 실패해도 읽을 수 있는 문서가
-            있으면 그것을 막을 이유가 없다. */}
-        {path === null && artifacts.error !== null ? (
-          <p className="text-rose-600">{t("ws.docListFailed")}</p>
-        ) : path === null ? (
-          <p className="text-slate-400">
-            {t("ws.noDocsYet")}
-          </p>
-        ) : loadError ? (
-          <p className="text-rose-600">{t("ws.docLoadFailed")}</p>
-        ) : content.loading ? (
-          <p className="text-slate-400">{t("ws.docLoading")}</p>
-        ) : missing ? (
-          // 저장 자체가 안 된 상태 — "비어 있음"과 구분해서 알린다. 이걸 빈
-          // 문서로 뭉개면 사용자는 문서가 만들어졌다고 믿고, 새로고침하면
-          // 목록에서 사라진 이유를 알 수 없다.
-          <p className="text-amber-700">{t("ws.docUnsaved")}</p>
-        ) : text.trim() === "" ? (
-          <p className="text-slate-400">{t("ws.docEmpty")}</p>
-        ) : (
-          <Markdown text={text} />
-        )}
-      </div>
-      {path !== null && (
-        <div className="p-3 border-t border-slate-100">
-          <Link
-            href={`/projects/${projectId}/review`}
-            className="text-xs font-medium text-violet-700 underline hover:text-violet-900"
-          >
-            {t("ws.toFullReview")}
-          </Link>
-        </div>
+    <>
+      {open && (
+        <div
+          aria-hidden="true"
+          data-testid="doc-drawer-backdrop"
+          className="absolute inset-0 z-20 bg-slate-900/10"
+          onClick={() => onOpenChange(false)}
+        />
       )}
-    </aside>
+      <div
+        className={`absolute inset-y-0 right-0 z-30 w-full sm:w-[min(36rem,90vw)] lg:w-[45%] transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}
+      >
+        <button
+          ref={tabRef}
+          type="button"
+          aria-expanded={open}
+          aria-controls={drawerId}
+          aria-label={open ? t("ws.closeDocAria") : t("ws.openDocAria")}
+          onClick={() => onOpenChange(!open)}
+          className={`absolute top-6 left-0 -translate-x-full w-9 py-3 flex flex-col items-center gap-2 rounded-l-xl border border-r-0 shadow-md text-xs font-bold ${
+            unseen
+              ? "bg-violet-600 border-violet-600 text-white"
+              : "bg-white border-violet-200 text-violet-700 hover:bg-violet-50"
+          }`}
+        >
+          {unseen && (
+            // key: 새 문서마다 다시 마운트해 출렁임을 한 번 더 — 그 뒤로는 가만히 있는다.
+            <span key={docKey} className="relative flex w-2 h-2" aria-hidden="true">
+              <span className="absolute inset-0 rounded-full bg-white motion-safe:animate-nudge" />
+              <span className="relative w-2 h-2 rounded-full bg-white" />
+            </span>
+          )}
+          {open ? <span aria-hidden="true">›</span> : <DocIcon className="w-4 h-4" />}
+          <span className="[writing-mode:vertical-rl] tracking-wide" aria-hidden="true">
+            {unseen ? t("ws.docTabNew") : t("ws.generatedDocs")}
+          </span>
+          {options.length > 0 && (
+            <span
+              aria-hidden="true"
+              className={`min-w-5 px-1 rounded-full text-[10px] ${unseen ? "bg-white text-violet-700" : "bg-violet-100 text-violet-700"}`}
+            >
+              {options.length}
+            </span>
+          )}
+        </button>
+        <aside
+          id={drawerId}
+          aria-label={t("ws.generatedDocsAria")}
+          aria-hidden={!open}
+          inert={!open}
+          className="h-full flex flex-col min-w-0 min-h-0 bg-white border-l border-slate-200 shadow-2xl"
+        >
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
+            {options.length > 0 ? (
+              <select
+                aria-label={t("ws.selectDocAria")}
+                value={path ?? ""}
+                onChange={(e) => setManualPath(e.target.value)}
+                className="min-w-0 flex-1 text-xs font-bold text-slate-600 bg-transparent border border-slate-200 rounded-lg px-2 py-1.5 truncate focus:outline-none focus:ring-2 focus:ring-violet-300"
+              >
+                {options.map((p) => (
+                  <option key={p} value={p}>
+                    {p.slice(p.lastIndexOf("/") + 1)}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide truncate">{t("ws.generatedDocs")}</p>
+            )}
+            {path !== null && (
+              <button
+                type="button"
+                aria-label={t("ws.refreshDocAria")}
+                disabled={content.loading}
+                onClick={() => {
+                  // 현재 문서와 산출물 목록을 함께 재조회 — 문서만 갱신하면 방금
+                  // 생성된 다른 문서가 드롭다운에 반영되지 않는다.
+                  content.reload();
+                  artifacts.reload();
+                }}
+                className="shrink-0 w-7 h-7 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 disabled:opacity-40 flex items-center justify-center"
+              >
+                ↻
+              </button>
+            )}
+            {versionLabel && manualPath === null && (
+              <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-violet-50 text-violet-600">
+                {versionLabel}
+              </span>
+            )}
+            <button
+              ref={closeRef}
+              type="button"
+              aria-label={t("ws.closeDocAria")}
+              onClick={() => onOpenChange(false)}
+              className="shrink-0 w-7 h-7 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 text-sm text-slate-700">
+            {/* 목록 실패를 "문서가 없다"로 뭉개지 않는다 — 화면이 같으면 원인을 영영 못
+                본다(이 파일이 docUnsaved와 docEmpty를 가른 것과 같은 규율). 문서가
+                선택돼 있으면 그 본문이 우선이다: 목록이 실패해도 읽을 수 있는 문서가
+                있으면 그것을 막을 이유가 없다. */}
+            {path === null && artifacts.error !== null ? (
+              <p className="text-rose-600">{t("ws.docListFailed")}</p>
+            ) : path === null ? (
+              <p className="text-slate-400">
+                {t("ws.noDocsYet")}
+              </p>
+            ) : loadError ? (
+              <p className="text-rose-600">{t("ws.docLoadFailed")}</p>
+            ) : content.loading ? (
+              <p className="text-slate-400">{t("ws.docLoading")}</p>
+            ) : missing ? (
+              // 저장 자체가 안 된 상태 — "비어 있음"과 구분해서 알린다. 이걸 빈
+              // 문서로 뭉개면 사용자는 문서가 만들어졌다고 믿고, 새로고침하면
+              // 목록에서 사라진 이유를 알 수 없다.
+              <p className="text-amber-700">{t("ws.docUnsaved")}</p>
+            ) : text.trim() === "" ? (
+              <p className="text-slate-400">{t("ws.docEmpty")}</p>
+            ) : (
+              <Markdown text={text} />
+            )}
+          </div>
+          {path !== null && (
+            <div className="p-3 border-t border-slate-100">
+              <Link
+                href={`/projects/${projectId}/review`}
+                className="text-xs font-medium text-violet-700 underline hover:text-violet-900"
+              >
+                {t("ws.toFullReview")}
+              </Link>
+            </div>
+          )}
+        </aside>
+      </div>
+    </>
   );
 });
