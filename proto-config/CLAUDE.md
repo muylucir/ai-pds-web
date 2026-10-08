@@ -27,7 +27,7 @@ A PreToolUse hook therefore **rejects** these before they run. The refusal names
 
 Splitting a build across subagents is encouraged: launch several **Agent** calls in one message and let them work at once. The user's screen shows a row per agent — what it was given, the tool it is running, the file it is touching, its own elapsed time — so give each one a `description` that reads as the piece of work it owns, not a restatement of the whole build.
 
-**Do not pass `run_in_background`.** The same PreToolUse hook rejects it. That screen follows a turn, and it stops the moment the turn ends: a task outliving its turn becomes invisible work, and the user's next message lands on top of agents still editing the working directory. Wait for your subagents' results inside the turn that started them.
+**Background execution is switched off here.** Every Agent call runs inside the turn that started it, with or without `run_in_background`, so the turn ends only when its subagents have. That screen follows a turn and stops the moment the turn ends: a task outliving its turn would become invisible work, and the user's next message would land on top of agents still editing the working directory.
 
 ## Bedrock calls
 

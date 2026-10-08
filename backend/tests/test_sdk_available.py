@@ -90,3 +90,23 @@ def test_forwarding_subagent_text_stays_an_option_we_can_choose():
     field = ClaudeAgentOptions.__dataclass_fields__.get("forward_subagent_text")
     assert field is not None, "옵션이 사라졌다 — 서브에이전트 텍스트 정책을 재확인할 것"
     assert field.default is False
+
+
+def test_the_bundled_cli_still_knows_the_background_switch():
+    """`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`(cli_settings.cli_context_env)는 번들 CLI가
+    읽는 env다. 이름이 바뀌거나 사라지면 CLI는 모르는 env를 조용히 무시하고, 서브에이전트는
+    다시 기본값인 백그라운드로 돈다 — 화면이 진행을 놓치는 것으로만 드러난다.
+
+    바이너리 안의 문자열을 본다. 동작 자체(키가 없어도, `true`여도 포그라운드)는 실측으로
+    확인했고(SDK 0.2.164), 여기서는 그 스위치가 아직 존재하는지만 지킨다.
+    """
+    import mmap
+
+    import claude_agent_sdk
+    from aipds.cli_settings import DISABLE_BACKGROUND_TASKS_ENV
+
+    binary = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
+    with binary.open("rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
+        assert m.find(DISABLE_BACKGROUND_TASKS_ENV.encode()) != -1, (
+            f"번들 CLI가 {DISABLE_BACKGROUND_TASKS_ENV}를 모른다 — 백그라운드 실행을 끄는 "
+            "방법을 다시 확인할 것")
