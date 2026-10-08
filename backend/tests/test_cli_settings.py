@@ -9,6 +9,8 @@
 #   2. 두 에이전트(Discovery, 프로토타입 빌더)가 **같은** 컴팩션 윈도우를 받는다.
 #      한쪽만 받으면 같은 프로젝트에서 컴팩션 시점이 갈리고, 그 비대칭은 에러
 #      없이 산출물 품질 차이로만 나타난다.
+#   3. 두 에이전트 모두 백그라운드 실행이 꺼진 CLI로 돈다. 켜져 있으면 턴이 그
+#      턴이 시킨 일보다 먼저 끝나고, 남은 진행은 화면에 닿지 못한다.
 from __future__ import annotations
 
 import pytest
@@ -68,12 +70,12 @@ def test_no_window_means_no_env_key():
     """미설정이면 키를 아예 넣지 않는다. 빈 문자열을 넣으면 CLI가 그것을 값으로
     읽는다."""
     assert auto_compact_window() is None
-    assert cli_context_env() == {}
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in cli_context_env()
 
 
 def test_a_valid_window_reaches_the_env(monkeypatch):
     monkeypatch.setenv("AIPDS_AUTO_COMPACT_WINDOW", "800000")
-    assert cli_context_env() == {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "800000"}
+    assert cli_context_env()["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "800000"
 
 
 @pytest.mark.parametrize("value", ["50", "2000000", "0", "-1"])
@@ -82,12 +84,12 @@ def test_a_window_outside_the_cli_range_is_dropped(monkeypatch, value):
     설정을 거부하는데 그 거부는 우리 로그에 남지 않는다 — 여기서 떨어뜨리고
     경고를 남기는 편이 추적 가능하다."""
     monkeypatch.setenv("AIPDS_AUTO_COMPACT_WINDOW", value)
-    assert cli_context_env() == {}
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in cli_context_env()
 
 
 def test_a_non_numeric_window_is_dropped(monkeypatch):
     monkeypatch.setenv("AIPDS_AUTO_COMPACT_WINDOW", "8oo000")
-    assert cli_context_env() == {}
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in cli_context_env()
 
 
 # ---- ③ 배선: project_model은 깨끗하게 남는다 ----
@@ -183,3 +185,15 @@ def test_neither_agent_gets_the_key_when_unset(tmp_path, monkeypatch):
     builder = _builder_env(tmp_path / "b", monkeypatch)
     assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in discovery
     assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in builder
+
+
+# ---- ⑤ 백그라운드 실행 ----
+
+
+def test_background_tasks_are_off_for_both_agents(tmp_path, monkeypatch):
+    """스위치는 설정이 아니라 고정값이다 — 두 화면 모두 턴 하나를 따라가다 `done`에서
+    스트림을 닫으므로, 어느 배포에서도 턴보다 오래 사는 작업은 보이지 않는다."""
+    discovery = _discovery_env(tmp_path / "d", monkeypatch)
+    builder = _builder_env(tmp_path / "b", monkeypatch)
+    assert discovery["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
+    assert builder["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"

@@ -331,34 +331,23 @@ async def test_rows_do_not_leak_into_the_next_turn(tmp_path):
     assert _activity(second) == []
 
 
-# ---- 백그라운드 서브에이전트는 게이트가 막는다 ----
+# ---- 백그라운드는 훅이 아니라 CLI 스위치가 막는다 ----
 
-async def test_the_gate_denies_a_background_agent(tmp_path):
-    """실측(2026-09-15): 모델이 `run_in_background: true`를 고르면 총괄이 턴을
-    끝내고 서브에이전트는 계속 돈다. `done`에서 SSE가 닫히므로 그 뒤의 행 갱신은
-    화면에 닿지 못하고, 사용자의 다음 메시지는 워크스페이스를 아직 고치고 있는
-    에이전트들 위로 간다. 턴의 수명이 그 턴이 시킨 일의 수명을 덮어야 한다."""
+async def test_the_gate_leaves_agent_calls_alone(tmp_path):
+    """서브에이전트가 턴보다 오래 사는 것은 CLI 스위치가 막는다
+    (cli_settings.cli_context_env). 스위치는 `run_in_background: true`도 포그라운드로
+    돌리므로, 훅이 그것을 거부하면 모델에게 쓸모없는 왕복 한 번만 더해진다."""
     b = _builder(tmp_path, None)
     out = await b._on_pre_tool_use(
         {"tool_name": "Agent",
          "tool_input": {"description": "화면 골격", "run_in_background": True}},
         "t1", None)
-    decision = out["hookSpecificOutput"]
-    assert decision["permissionDecision"] == "deny"
-    assert "run_in_background" in decision["permissionDecisionReason"]
-
-
-async def test_the_gate_passes_a_foreground_agent_with_an_empty_dict(tmp_path):
-    """통과는 빈 dict다 — "allow"는 can_use_tool까지 건너뛰어 질문 왕복을 죽인다."""
-    b = _builder(tmp_path, None)
-    out = await b._on_pre_tool_use(
-        {"tool_name": "Agent", "tool_input": {"description": "화면 골격"}}, "t1", None)
     assert out == {}
 
 
-def test_the_agent_tool_is_wired_into_the_pretooluse_matcher(tmp_path, monkeypatch):
-    """판정부가 있어도 matcher가 `Agent`를 걸지 않으면 훅이 불리지 않는다 —
-    게이트가 이름만 남는다."""
+def test_the_build_cli_runs_with_background_tasks_off(tmp_path, monkeypatch):
+    """client_factory를 주입하는 다른 테스트들은 이 경로를 타지 않으므로, 배선이
+    빠져도 전부 통과한다 — 실제 팩토리가 만드는 env를 본다."""
     from aipds.proto.builder import _default_client_factory
 
     captured = {}
@@ -375,8 +364,4 @@ def test_the_agent_tool_is_wired_into_the_pretooluse_matcher(tmp_path, monkeypat
         session_id="11111111-2222-3333-4444-555555555555", resume=False)
     _default_client_factory(b)()
 
-    matchers = captured["options"].hooks["PreToolUse"]
-    assert any("Agent" in m.matcher for m in matchers)
-    # AskUserQuestion은 여전히 걸리지 않아야 한다(질문 왕복이 그 콜백에 있다).
-    for m in matchers:
-        assert "AskUserQuestion" not in m.matcher
+    assert captured["options"].env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"

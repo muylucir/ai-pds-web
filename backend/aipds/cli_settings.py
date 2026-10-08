@@ -1,4 +1,4 @@
-# backend/aipds/cli_settings.py — 번들 CLI에 넘기는 컨텍스트 설정.
+# backend/aipds/cli_settings.py — 번들 CLI에 넘기는 공통 설정(컨텍스트·턴의 수명).
 #
 # 두 에이전트(Discovery 드라이버, 프로토타입 빌더)가 같은 CLI를 서브프로세스로
 # 띄우므로 두 곳이 같은 값을 쓴다. 그래서 값을 만드는 곳을 여기 하나로 둔다 —
@@ -131,15 +131,35 @@ def auto_compact_window() -> str | None:
     return str(value)
 
 
+#: 번들 CLI의 백그라운드 실행 스위치. 켜면 서브에이전트(`Agent`)와 Bash의
+#: `run_in_background`, 자동 백그라운드 전환이 모두 꺼지고 일이 그것을 시킨 턴 안에서 끝난다.
+DISABLE_BACKGROUND_TASKS_ENV = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
+
+
 def cli_context_env() -> dict[str, str]:
-    """CLI 서브프로세스에 더할 컨텍스트 관련 env. 없으면 빈 dict.
+    """CLI 서브프로세스에 더할 공통 env.
 
     두 클라이언트 팩토리가 이것을 `env`에 병합한다. dict를 돌려주는 이유는
     "미설정이면 키를 아예 넣지 않는다"를 호출부가 매번 다시 쓰지 않게 하는
     것이다 — 빈 문자열을 넣으면 CLI가 그것을 값으로 읽는다.
+
+    **백그라운드 실행은 항상 끈다.** 두 화면 모두 턴 하나를 따라가다 `done`에서
+    스트림을 닫으므로(frontend/lib/api/sse.ts의 openStream), 턴이 그 턴이 시킨 일보다 먼저 끝나면
+    남은 진행은 화면에 닿지 못하고 사용자의 다음 메시지는 아직 워크스페이스를
+    고치고 있는 에이전트들 위로 간다. 병렬은 그대로다 — 한 메시지의 여러 `Agent`
+    호출은 포그라운드에서도 동시에 돈다.
+
+    도구 입력을 보는 게이트가 아니라 엔진 스위치인 이유: 번들 CLI(2.1.292)의 `Agent`는
+    `run_in_background`를 **생략하면 백그라운드**이고, 그 기본값은 SDK 버전과 함께
+    바뀐다(pyproject의 하한만 둔 의존성). 이 스위치는 키가 없을 때도, 모델이
+    `true`를 넘길 때도 포그라운드로 돌린다(실측, SDK 0.2.164). 스위치 이름이 번들에서
+    사라지는 드리프트는 tests/test_sdk_available.py가 잡는다.
     """
+    env = {DISABLE_BACKGROUND_TASKS_ENV: "1"}
     window = auto_compact_window()
-    return {"CLAUDE_CODE_AUTO_COMPACT_WINDOW": window} if window else {}
+    if window:
+        env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = window
+    return env
 
 
 #: 번들 CLI 디버그 로그 스위치. 기본 꺼짐 — 진단할 때만 켠다.
