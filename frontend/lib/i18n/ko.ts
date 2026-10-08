@@ -352,6 +352,7 @@ export const ko = {
   "transfer.exportAria": "프로젝트 내보내기",
   "transfer.exporting": "번들을 만들고 있습니다...",
   "transfer.exportFailed": "내보내기에 실패했습니다.",
+  "transfer.buildSessionActive": "이 프로젝트에 열린 빌드 세션이 있어 내보낼 수 없습니다. 프로젝트의 “프로토타입” 탭에서 해당 카드의 “세션 열기”로 패널을 열고 “완료”를 눌러 닫은 뒤 다시 내보내 주세요.",
   "transfer.importTitle": "프로젝트 가져오기",
   "transfer.importHint": "다른 인스턴스에서 내보낸 번들(.zip)을 올리면 대화·산출물·프로토타입이 그대로 복원됩니다.",
   "transfer.pickFile": "번들 파일 선택",
