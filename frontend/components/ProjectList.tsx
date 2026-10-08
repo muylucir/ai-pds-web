@@ -63,8 +63,13 @@ export function ProjectList({
       await exportProject(p.project_id);
     } catch (err) {
       // 진행 중인 빌드 세션(409)이 흔한 실패다 — 그 사실이 문구로 나와야 한다.
-      setExportError(err instanceof ApiError
-        ? errorMessage(t, err.detail) : t("transfer.exportFailed"));
+      // 이 화면의 문구는 따로 둔다: 공통 문구는 프로토타입 카드 곁에서 읽히도록 쓰여 있어
+      // "카드의 세션 열기"가 어느 화면의 것인지 말하지 않는다. 여기서는 그 탭부터 부른다.
+      setExportError(!(err instanceof ApiError)
+        ? t("transfer.exportFailed")
+        : err.detail === "build_session_active"
+          ? t("transfer.buildSessionActive")
+          : errorMessage(t, err.detail));
     } finally {
       setExporting(null);
     }
