@@ -23,12 +23,22 @@ import { useT } from "@/lib/i18n/provider";
 // 컨텍스트 : 생성 문서). The 4th column (WorkspaceDocPanel) renders the latest
 // generated document INLINE so the user reviews it without leaving the
 // workspace for the review route; the chat + question panel narrow to make
-// room. Below the `lg` breakpoint every side panel is hidden
+// room. The user can fold that column into a thin rail, and its width goes to
+// the question panel — answering is what gets squeezed at 3.5/12 (Rachna's
+// feedback, 2026-10). Below the `lg` breakpoint every side panel is hidden
 // (StageSidebar/WorkspaceRightPanel/WorkspaceDocPanel are `hidden lg:flex`
 // internally), leaving a single-column chat; a pending-questions badge over
 // the chat opens a bottom-sheet that reuses the SAME QuestionForm widget the
 // right panel would otherwise show (mode priority: questions > preview >
 // artifacts), and the document-update banner links out to the review route.
+// 문서 패널 접힘은 프로젝트가 아니라 사람의 화면 취향이라 브라우저 하나에 하나다.
+const DOC_COLLAPSED_KEY = "aipds.docPanelCollapsed";
+
+// 펼침이 4fr, 접힘이 레일 하나. 접어서 남는 폭은 전부 질문 열(3.5 → 7.5)로 간다.
+// 두 문자열 모두 리터럴로 둔다 — Tailwind는 소스에 그대로 적힌 클래스만 만든다.
+const GRID_DOC_OPEN = "lg:grid-cols-[1fr_3.5fr_3.5fr_4fr]";
+const GRID_DOC_COLLAPSED = "lg:grid-cols-[1fr_3.5fr_7.5fr_2.5rem]";
+
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
@@ -45,6 +55,24 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const showWelcome = !historyLoading && items.length === 0 && !pendingQuestions && !streaming;
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
+  // 첫 렌더는 펼친 상태다 — localStorage는 서버 렌더에 없으므로 마운트 뒤에 읽는다.
+  const [docCollapsed, setDocCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      setDocCollapsed(window.localStorage.getItem(DOC_COLLAPSED_KEY) === "1");
+    } catch {
+      // 저장소를 막은 브라우저 — 기억하지 못할 뿐 토글은 동작한다.
+    }
+  }, []);
+  const toggleDocCollapsed = useCallback(() => {
+    const next = !docCollapsed;
+    setDocCollapsed(next);
+    try {
+      window.localStorage.setItem(DOC_COLLAPSED_KEY, next ? "1" : "0");
+    } catch {
+      // 위와 같다.
+    }
+  }, [docCollapsed]);
   // Dismissible document-update notice (spec §5): track which version the
   // user has already dismissed so a LATER update (new version) re-shows the
   // banner even if an earlier one was dismissed.
@@ -150,7 +178,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     <div className="relative h-screen flex flex-col overflow-hidden">
       <AppHeader activeTab="workspace" projectId={projectId} modelLabel={modelLabel}
                  projectLanguage={language} />
-      <div className="flex-1 grid min-h-0 grid-cols-1 lg:grid-cols-[1fr_3.5fr_3.5fr_4fr]">
+      <div className={`flex-1 grid min-h-0 grid-cols-1 ${docCollapsed ? GRID_DOC_COLLAPSED : GRID_DOC_OPEN}`}>
         <StageSidebar state={state.data} events={stages} />
 
         <main className="relative flex flex-col min-w-0 min-h-0 bg-slate-50">
@@ -258,7 +286,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
         />
 
         <WorkspaceDocPanel projectId={projectId} activeDoc={activeDoc} turnSeq={turnSeq}
-                          changedPaths={changedPaths} />
+                          changedPaths={changedPaths}
+                          collapsed={docCollapsed} onToggleCollapsed={toggleDocCollapsed} />
       </div>
 
       {sheetOpen && pendingQuestions && (

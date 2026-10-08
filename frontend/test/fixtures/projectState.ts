@@ -16,4 +16,15 @@ export const projectState: ProjectState = {
     { name: "Go-to-Market", status: "pending", note: "마케팅 전략 · 사내 확산 · 런칭 계획" },
     { name: "Discovery Document", status: "pending", note: "개발자 워크스페이스(Inception) 핸드오프" },
   ],
+  // What the backend's rollup (aipds/capabilities.py) makes of `stages` above:
+  // Path A, so Intake/Prioritize are off the path; Discovery Document folds
+  // into Go-to-Market.
+  capabilities: [
+    { key: "envision", name: "Envision", status: "completed", note: null },
+    { key: "use_case_intake", name: "Use Case Intake", status: "not_applicable", note: null },
+    { key: "prioritize", name: "Prioritize", status: "not_applicable", note: null },
+    { key: "prototype", name: "Prototype", status: "completed", note: null },
+    { key: "product_strategy", name: "Product Strategy", status: "in_progress", note: "포지셔닝 · 차별화 · 비즈니스 모델 — 13개 질문 대기" },
+    { key: "go_to_market", name: "Go-to-Market", status: "pending", note: null },
+  ],
 };

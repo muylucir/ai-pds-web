@@ -31,10 +31,13 @@ async def _progress(pid: str) -> dict | None:
         return None
     if not state.stages:          # 파일은 있지만 스테이지 파싱 결과가 비면 표시할 게 없다
         return None
+    # 사이드바와 같은 단위(6개 capability)로 센다 — 이 경로가 거치지 않는 것은 분모에서 뺀다.
+    caps = [c for c in state.capabilities if c.status != "not_applicable"]
+    current = next((c.name for c in caps if c.status == "in_progress"), None)
     return {
-        "current_stage": state.current_stage,
-        "completed": sum(1 for s in state.stages if s.status == "completed"),
-        "total": len(state.stages),
+        "current_stage": current,
+        "completed": sum(1 for c in caps if c.status == "completed"),
+        "total": len(caps),
     }
 
 class CreateProject(BaseModel):

@@ -47,10 +47,25 @@ export interface StageState {
   note: string | null;
 }
 
+// AI-PDS 공식 6개 capability 중 하나 — 백엔드(aipds/capabilities.py)가 `stages`를
+// 묶어 만든다. 화면이 세는 단위는 이것이다. `not_applicable`은 이 프로젝트의 경로가
+// 거치지 않는 capability다(Path A의 Intake·Prioritize 등).
+export type CapabilityStatus = StageStatus | "not_applicable";
+
+export interface CapabilityState {
+  key: string;
+  name: string;
+  status: CapabilityStatus;
+  note: string | null;
+}
+
 export interface ProjectState {
   project_type: string | null;
   current_stage: string | null;
+  // 에이전트가 `aiplc-state.md`에 쓴 원래 목록. 길이가 프로젝트마다 다르다.
   stages: StageState[];
+  // 항상 6개, 공식 순서.
+  capabilities: CapabilityState[];
 }
 
 export interface AuditEntry {
@@ -158,6 +173,9 @@ export interface StagePayload {
   stage: string;
   status: StageStatus;
   summary: string;
+  // 이 이벤트를 만든 상태 파일에서 묶은 6개 capability의 스냅샷. 사이드바는 마지막
+  // 스냅샷만 쓴다.
+  capabilities?: CapabilityState[];
 }
 
 /** 쓰기 도구의 입력이 흐르는 동안의 진행 — 백엔드 agent/tool_input_draft.py의 모양.
