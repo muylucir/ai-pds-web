@@ -5,17 +5,28 @@ import type { ProjectState } from "@/lib/api/types";
 
 const STATE: ProjectState = {
   project_type: "discovery",
-  current_stage: "Solution Analysis",
+  current_stage: "Prototype & Validation",
   stages: [
     { name: "Envision", status: "completed", note: null },
-    { name: "Solution Analysis", status: "in_progress", note: null },
+    { name: "Solution Analysis", status: "completed", note: null },
+    { name: "Prototype & Validation", status: "in_progress", note: null },
+  ],
+  capabilities: [
+    { key: "envision", name: "Envision", status: "completed", note: null },
+    { key: "use_case_intake", name: "Use Case Intake", status: "not_applicable", note: null },
+    { key: "prioritize", name: "Prioritize", status: "not_applicable", note: null },
+    { key: "prototype", name: "Prototype", status: "in_progress", note: null },
+    { key: "product_strategy", name: "Product Strategy", status: "pending", note: null },
+    { key: "go_to_market", name: "Go-to-Market", status: "pending", note: null },
   ],
 };
 
 describe("ProgressCards", () => {
   it("shows overall progress and completed-stage counts", () => {
     render(<ProgressCards state={STATE} questionFileCount={3} artifactCount={7} />);
-    expect(screen.getByText("1")).toBeInTheDocument();   // completed stages
+    expect(screen.getByText("1")).toBeInTheDocument();   // completed capabilities
+    // 분모는 스테이지 수(3)가 아니라 이 경로가 거치는 capability 수다.
+    expect(screen.getByText("/ 4")).toBeInTheDocument();
     expect(screen.getByText("7")).toBeInTheDocument();   // artifacts
   });
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 class QuestionOption(BaseModel):
     letter: str
@@ -48,10 +48,23 @@ class StageState(BaseModel):
     status: Literal["pending", "in_progress", "completed"]
     note: str | None = None
 
+class CapabilityState(BaseModel):
+    key: str
+    name: str
+    status: Literal["pending", "in_progress", "completed", "not_applicable"]
+    note: str | None = None
+
 class ProjectState(BaseModel):
     project_type: str | None = None
     current_stage: str | None = None
     stages: list[StageState]
+
+    #: 화면이 세는 단위. `stages`는 에이전트가 쓴 원래 목록이다(aipds/capabilities.py).
+    @computed_field
+    @property
+    def capabilities(self) -> list[CapabilityState]:
+        from aipds.capabilities import rollup
+        return rollup(self.stages)
 
 class AuditEntry(BaseModel):
     index: int
