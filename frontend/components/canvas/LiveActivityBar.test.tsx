@@ -107,11 +107,28 @@ describe("LiveActivityBar — 종류별 문구", () => {
     expect(screen.getByText(/aiplc-docs\/audit\.md/)).toBeInTheDocument();
   });
 
-  it("한 줄을 넘기지 않는다 — 긴 경로가 입력창을 밀어내면 안 된다", () => {
-    const { container } = render(
-      <LiveActivityBar activity={tool("Read", "a/".repeat(80) + "deep.md")} />);
-    const line = container.querySelector("[data-testid='live-what']");
-    expect(line).toHaveClass("truncate");
+  it("각 줄이 넘치지 않는다 — 긴 경로가 입력창을 밀어내면 안 된다", () => {
+    const long = "a/".repeat(80) + "deep.md";
+    render(<LiveActivityBar activity={tool("Read", long)} />);
+    expect(screen.getByTestId("live-what")).toHaveClass("truncate");
+    const target = screen.getByTestId("live-what-target");
+    expect(target).toHaveClass("truncate");
+    expect(target).toHaveAttribute("title", long);   // 잘린 부분은 마우스를 올려 본다
+  });
+
+  // 대상이 라벨 뒤에 붙어 있던 동안 잘려서 거의 읽히지 않았다 — 둘째 줄로 내린다.
+  it("대상(명령·파일)은 라벨과 다른 둘째 줄에 있다", () => {
+    render(<LiveActivityBar activity={tool("Read", "aiplc-docs/x.md")} />);
+    expect(screen.getByTestId("live-what")).not.toHaveTextContent("aiplc-docs/x.md");
+    expect(screen.getByTestId("live-what-target")).toHaveTextContent("aiplc-docs/x.md");
+  });
+
+  // 생각하는 중 → 파일 읽기로 바뀔 때 바가 1줄↔2줄을 오가면 입력창이 흔들린다.
+  it("대상이 없어도 둘째 줄 자리를 비워 둔다", () => {
+    render(<LiveActivityBar activity={{ kind: "thinking" }} />);
+    const target = screen.getByTestId("live-what-target");
+    expect(target.textContent).toBe("\u00a0");
+    expect(target).toHaveClass("min-h-4");
   });
 });
 
@@ -144,6 +161,23 @@ describe("LiveActivityBar — 서브에이전트 행", () => {
     status: null,
     summary: null,
     ...over,
+  });
+
+  // 서브에이전트 행은 모두 2줄(맡은 일 / 만지는 파일), 총괄 행은 개수만 말하므로 1줄.
+  it("에이전트 행은 대상을 둘째 줄에 두고, 총괄 행은 둘째 줄을 두지 않는다", () => {
+    const { container } = render(
+      <LiveActivityBar
+        activity={tool("Agent")}
+        agents={[row({ id: "a1", label: "화면 골격", detail: "app/page.tsx" })]}
+      />,
+    );
+    expect(screen.queryByTestId("live-what-target")).toBeNull();
+    const target = screen.getByText("app/page.tsx");
+    expect(target.tagName).toBe("P");
+    expect(target).toHaveClass("truncate");
+    expect(screen.getByText("화면 골격")).not.toHaveTextContent("app/page.tsx");
+    // 바 자체는 높이 상한 안에서만 자란다 — 대화 영역을 다 먹지 않는다.
+    expect(container.querySelector("[role='status']")).toHaveClass("max-h-[40vh]", "overflow-y-auto");
   });
 
   it("에이전트마다 한 행씩 그린다", () => {

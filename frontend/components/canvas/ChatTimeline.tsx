@@ -65,7 +65,10 @@ export function ChatTimeline({
       className="chat-scroll flex-1 min-h-0 overflow-y-auto px-4 md:px-8 py-6"
       aria-label={t("canvas.timelineLabel")}
     >
-      <div className="max-w-2xl mx-auto space-y-5">
+      {/* 상한 896px(max-w-4xl) — ChatInput과 같은 값이라 입력창 좌우가 버블 영역과
+          맞는다. 채팅 열이 5:5로 넓어진 화면에서 버블이 열을 따라가되, 아주 넓은
+          화면에서 AI 답변 한 줄이 끝없이 길어지지는 않게 한다. */}
+      <div className="max-w-4xl mx-auto space-y-5">
         {items.length === 0 ? (
           // historyLoading 중에는 이 문구를 숨긴다 — 부모(WorkspacePage)가
           // 같은 자리에 HistorySkeleton을 겹쳐 그린다. 숨기지 않으면 "이전
