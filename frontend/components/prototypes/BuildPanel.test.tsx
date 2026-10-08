@@ -325,6 +325,32 @@ describe("BuildPanel", () => {
       expect(screen.getByText(/호스팅을 시작하지 못했습니다/)).toBeInTheDocument();
     });
 
+    it("호스팅 시작의 502는 로그 꼬리를 싣지 않고 실패 문구를 보여준다", async () => {
+      // 502의 detail은 npm 로그 꼬리다(backend routes/prototypes의 start_host).
+      vi.mocked(prototypesApi.startHost).mockRejectedValueOnce(
+        new ApiError(502, "npm ERR! code ELIFECYCLE\nnpm ERR! errno 1"));
+      mockStream({ buildComplete: { summary: "완성", remaining: "" } });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "호스팅 시작" }));
+
+      expect(screen.getByText(/호스팅을 시작하지 못했습니다/)).toBeInTheDocument();
+      expect(screen.queryByText(/ELIFECYCLE/)).not.toBeInTheDocument();
+    });
+
+    it("호스팅 시작이 열린 세션에 막히면 무엇을 누를지 보여준다", async () => {
+      vi.mocked(prototypesApi.startHost).mockRejectedValueOnce(
+        new ApiError(409, "build_session_active"));
+      mockStream({ buildComplete: { summary: "완성", remaining: "" } });
+      render(<BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "호스팅 시작" }));
+
+      expect(screen.getByText(/빌드 패널에서 “완료”를 눌러/)).toBeInTheDocument();
+    });
+
     it("개선 이어서 하기가 restartForImprovement를 부른다", async () => {
       const restart = vi.fn().mockResolvedValue(undefined);
       mockStream({
@@ -342,8 +368,7 @@ describe("BuildPanel", () => {
     it("개선 시작이 429면 상한 메시지를 보여주고 카드를 남긴다", async () => {
       // 동시 빌드 상한에 걸린 경우. 카드를 지우면 사용자는 완료 요약과 다른
       // 선택지(호스팅)를 모두 잃는다 — 재시도할 수 있게 남긴다.
-      const restart = vi.fn().mockRejectedValueOnce(
-        new ApiError(429, "다른 팀이 프로토타입을 빌드하고 있습니다 — 잠시 후 다시 시도해 주세요"));
+      const restart = vi.fn().mockRejectedValueOnce(new ApiError(429, "build_slots_busy"));
       mockStream({
         buildComplete: { summary: "완성", remaining: "" },
         restartForImprovement: restart,

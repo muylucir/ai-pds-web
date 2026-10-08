@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { errorMessage } from "./errorMessage";
+import { errorMessage, knownErrorMessage } from "./errorMessage";
 import { dictFor, type Dict } from "@/lib/i18n";
 
 function tFor(locale: "ko" | "en") {
@@ -34,5 +34,22 @@ describe("errorMessage", () => {
     expect(errorMessage(tFor("en"), "init_incomplete:s3,host")).toBe(
       "Initialization did not finish — please try again. (s3,host)",
     );
+  });
+
+  it("knownErrorMessage는 아는 코드만 번역하고 나머지는 대체 문구다", () => {
+    // 호스팅 시작의 502 detail은 npm 로그 꼬리다 — 한 줄 오류 자리에 원문을 싣지 않는다.
+    expect(knownErrorMessage(tFor("en"), "build_session_active", "fallback"))
+      .toBe(dictFor("en")["err.buildSessionActive"]);
+    expect(knownErrorMessage(tFor("en"), "npm ERR! code ELIFECYCLE", "fallback")).toBe("fallback");
+    expect(knownErrorMessage(tFor("en"), "constructor", "fallback")).toBe("fallback");
+  });
+
+  it("열린 세션 안내는 실제 버튼 이름을 부른다", () => {
+    // 문구가 지목하는 버튼 라벨이 바뀌면 안내가 없는 버튼을 가리킨다.
+    for (const locale of ["ko", "en"] as const) {
+      const dict = dictFor(locale);
+      expect(dict["err.buildSessionActive"]).toContain(`“${dict["proto.done"]}”`);
+      expect(dict["err.buildSessionActive"]).toContain(`“${dict["proto.openSession"]}”`);
+    }
   });
 });

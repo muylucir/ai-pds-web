@@ -46,6 +46,7 @@ export function PrototypeCard({
   onOpenSurvey,
   onReset,
   startingPhase,
+  hostError,
   archiveUrl,
   shareUrl,
   busy,
@@ -65,6 +66,8 @@ export function PrototypeCard({
    *  버튼밖에 없어 "아무 반응 없음"으로 읽혔다. 호출부가 `GET /host`를 폴링해
    *  넘겨준다 — 서버가 이미 기록하는 상태다. */
   startingPhase?: HostState | null;
+  /** 호스팅 시작·중지가 거부된 이유. 버튼 바로 옆 카드 안에 보인다. */
+  hostError?: string | null;
   archiveUrl?: string;
   /** 공유용 절대 URL(`absoluteShareUrl`이 서버의 `access_url`을 절대화한 값).
    *  주어지고 호스팅 중일 때만 복사 버튼이 뜬다 — 그 밖의 상태에서는 링크가
@@ -159,6 +162,9 @@ export function PrototypeCard({
           )}
         </div>
         <span className="block text-[11px] text-slate-400 mt-0.5 truncate">{info.spec_path}</span>
+        {hostError && (
+          <p role="alert" className="text-xs text-rose-600 mt-1">{hostError}</p>
+        )}
       </div>
       {/* flex-wrap: `running`은 프리뷰·링크·중지·로그·다운로드·수정·초기화·설문로
           버튼이 여덟까지 간다. shrink-0인 버튼들이 감싸지 않으면 좁은 화면에서

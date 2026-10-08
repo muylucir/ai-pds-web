@@ -280,7 +280,7 @@ describe("ProjectList export", () => {
     await userEvent.setup().click(
       screen.getAllByRole("button", { name: /프로젝트 내보내기/ })[0]);
 
-    await screen.findByText(/빌드 세션이 진행 중입니다/);
+    await screen.findByText(/빌드 세션이 아직 열려 있습니다/);
   });
 
   it("내보내기 버튼은 카드 링크를 타지 않는다", async () => {
