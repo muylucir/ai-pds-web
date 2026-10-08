@@ -213,7 +213,9 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
           </div>
         )}
 
-        <div className="grid lg:grid-cols-[240px_1fr] gap-6">
+        {/* 폭: 최대 폭(1720px)에서 파일 목록 ≈330 · 본문 ≈1015 · 검증 요약 ≈275px.
+            비율에 최소폭을 걸어, 좁은 lg 화면에서는 240px·220px로 내려가지 않는다. */}
+        <div className="grid lg:grid-cols-[minmax(240px,20%)_1fr] gap-6">
           <aside className="bg-white rounded-xl border border-slate-200 p-4">
             <DocTree paths={tree.data ?? []} selected={selected} onSelect={setSelected} />
           </aside>
@@ -256,7 +258,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
                 </button>
               </div>
               {isDiscoveryDocument ? (
-                <div className="grid lg:grid-cols-3 gap-6">
+                <div className="grid lg:grid-cols-[1fr_minmax(220px,21%)] gap-6">
                   <DocumentPanel markdown={content.data ?? ""} />
                   <VerificationSummary
                     entries={audit.data ?? []}

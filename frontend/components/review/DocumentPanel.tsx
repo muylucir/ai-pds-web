@@ -5,7 +5,7 @@ import { useT } from "@/lib/i18n/provider";
 export function DocumentPanel({ markdown }: { markdown: string }) {
   const t = useT();
   return (
-    <article className="lg:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <article className="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <h2 className="font-bold">📕 discovery-document.md</h2>
