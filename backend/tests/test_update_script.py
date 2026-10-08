@@ -61,7 +61,8 @@ changed() {{ ! git -C "{repo}" diff --quiet {before} {after} -- "$@"; }}
 changed "${{BACKEND_PATHS[@]}}" && echo backend
 changed "${{FRONTEND_PATHS[@]}}" && echo frontend
 true"""
-    out = subprocess.run(["bash", "-c", script], check=True, capture_output=True, text=True).stdout
+    out = subprocess.run(["bash", "-s"], input=script, check=True, capture_output=True,
+                         text=True).stdout
     return "backend" in out, "frontend" in out
 
 

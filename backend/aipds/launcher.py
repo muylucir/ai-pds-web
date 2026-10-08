@@ -19,6 +19,7 @@ import logging
 import os
 import subprocess
 from dataclasses import dataclass
+from typing import Any
 
 from aipds import agent_home
 from aipds import credentials
@@ -56,9 +57,6 @@ class Launcher:
         if self.refused is not None:
             raise LauncherUnavailable(self.refused)
 
-    def _sudo(self, *args: str) -> list[str]:
-        return ["sudo", "-n", self.launch, *args]
-
     def claude(self, kind: str, project_id: str, slug: str | None) -> tuple[str, dict[str, str]]:
         """(cli_path, 더할 env). SDK 옵션에 그대로 넣는다."""
         self.require()
@@ -69,9 +67,17 @@ class Launcher:
             env.update(self.broker.env_for(kind, project_id, slug))
         return self.claude_wrapper, env
 
-    def npm_argv(self, kind: str, project_id: str, slug: str, *npm_args: str) -> list[str]:
+    async def exec_npm(self, kind: str, project_id: str, slug: str, *npm_args: str,
+                       **spawn: Any) -> asyncio.subprocess.Process:
+        """`npm *npm_args`를 래퍼 아래에서 띄운다. `spawn`은 create_subprocess_exec의 kwargs.
+
+        래퍼를 부르는 곳(여기·stop·sweep·probe)은 모두 argv를 spawn 자리에 리터럴로 적는다 —
+        리스트를 만들어 펼쳐 넘기면 명령 주입 분석이 정적이지 않은 argv로 읽는다(이유는
+        proto/host.py `_npm_install`). 변하는 것은 kind·project·slug와 npm 인자뿐이고, 래퍼가
+        kind·project·slug를 다시 검사한다."""
         self.require()
-        return self._sudo("run", kind, project_id, slug, "--", *npm_args)
+        return await asyncio.create_subprocess_exec(
+            "sudo", "-n", self.launch, "run", kind, project_id, slug, "--", *npm_args, **spawn)
 
     def npm_env(self, kind: str, project_id: str, slug: str,
                 extra: dict[str, str]) -> dict[str, str]:
@@ -91,7 +97,7 @@ class Launcher:
         """호스팅 unit을 멈춘다. systemd-run 클라이언트에 신호를 보내도 unit은 멈추지 않는다
         (실측) — 그래서 이름으로 멈춘다."""
         proc = await asyncio.create_subprocess_exec(
-            *self._sudo("stop", kind, project_id, slug),
+            "sudo", "-n", self.launch, "stop", kind, project_id, slug,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         _, err = await proc.communicate()
         if proc.returncode != 0:
@@ -100,7 +106,7 @@ class Launcher:
 
     def sweep(self) -> None:
         """직전 백엔드가 띄운 unit 전부. 백엔드가 재시작하면 클라이언트는 함께 죽지만 unit은 남는다."""
-        subprocess.run(self._sudo("sweep"), check=False, timeout=60,
+        subprocess.run(["sudo", "-n", self.launch, "sweep"], check=False, timeout=60,
                        stdout=subprocess.DEVNULL)
 
     def revoke_project(self, project_id: str) -> None:
