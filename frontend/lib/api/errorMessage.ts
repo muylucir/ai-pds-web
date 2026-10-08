@@ -46,6 +46,16 @@ const KEY_BY_CODE: Record<string, keyof Dict> = {
   import_failed: "err.importFailed",
 };
 
+/** 아는 코드면 `errorMessage`와 같은 번역, 그 밖에는 `fallback`.
+ *
+ *  `errorMessage`는 모르는 detail을 원문 그대로 보이지만, 그 원문이 문장이 아닌 자리가
+ *  있다: 호스팅 시작의 502는 detail이 npm 로그 꼬리다(backend routes/prototypes의
+ *  start_host). 한 줄 오류 자리에 여러 줄 로그를 싣지 않는다 — 로그는 로그 버튼이 보여 준다. */
+export function knownErrorMessage(t: T, detail: string, fallback: string): string {
+  const code = detail.trim().split(":")[0];
+  return Object.hasOwn(KEY_BY_CODE, code) ? errorMessage(t, detail) : fallback;
+}
+
 export function errorMessage(t: T, detail: string): string {
   const raw = detail.trim();
   if (raw === "") return t("err.generic");

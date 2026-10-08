@@ -12,6 +12,7 @@ import { QuestionForm } from "@/components/questions/QuestionForm";
 import { Markdown } from "@/components/Markdown";
 import { closeSession, startHost } from "@/lib/api/prototypes";
 import { ApiError } from "@/lib/api/client";
+import { knownErrorMessage } from "@/lib/api/errorMessage";
 import { usePrototypeStream } from "@/lib/usePrototypeStream";
 import { liveActivity } from "@/lib/liveActivity";
 import { useT } from "@/lib/i18n/provider";
@@ -109,8 +110,8 @@ export function BuildPanel({
       // 패널을 닫지 않는다 — 닫으면 사용자는 그리드에서 이유 없이 실패한
       // 카드를 보게 된다. 여기서 오류를 보여주고 재시도할 수 있게 둔다.
       setActionError(
-        err instanceof ApiError && err.message
-          ? err.message
+        err instanceof ApiError
+          ? knownErrorMessage(t, err.detail, t("proto.hostStartFailed"))
           : t("proto.hostStartFailed"));
     } finally {
       setHosting(false);
@@ -128,8 +129,8 @@ export function BuildPanel({
       // actionError를 호스팅과 공유한다: 이 카드에 오류 줄은 하나뿐이고, 두
       // 동작이 동시에 실패할 수는 없다(둘 다 서로를 disabled로 막는다).
       setActionError(
-        err instanceof ApiError && err.message
-          ? err.message
+        err instanceof ApiError
+          ? knownErrorMessage(t, err.detail, t("proto.improveStartFailed"))
           : t("proto.improveStartFailed"));
     } finally {
       setRestarting(false);
