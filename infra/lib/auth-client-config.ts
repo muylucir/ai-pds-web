@@ -113,7 +113,7 @@ export function logoutUrls(appUrls: string[]): string[] {
  * 한다.** 어긋나면 시드 계정과 초대 계정의 Username 규칙이 갈리고, 재배포 시
  * 시드가 기존 사용자를 못 찾아 중복 계정을 만든다.
  *
- * ⚠️ 로컬파트가 같고 도메인만 다른 두 계정(kim@a.com / kim@b.com)은 같은
+ * ⚠️ 로컬파트가 같고 도메인만 다른 두 계정(kim@example.com / kim@example.org)은 같은
  * Username으로 충돌한다 — 워크숍 규모(단일 도메인)에서 감수한 트레이드오프다.
  */
 export function usernameForEmail(email: string): string {
