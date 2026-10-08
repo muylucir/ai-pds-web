@@ -33,7 +33,7 @@ from aipds.cli_settings import cli_context_env
 from aipds.context_usage import ContextMeter, wants_sample
 from aipds.models import AgentEvent
 from aipds.proto import prompts
-from aipds.proto.build_guard import background_agent_denial, bash_denial
+from aipds.proto.build_guard import bash_denial
 from aipds.tool_trace import tool_detail
 from aipds.transcript_restore import MirrorOnlyStore
 from aipds.transcript_restore import restore as restore_transcript
@@ -259,11 +259,9 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # dict**를 돌려준다. Discovery가 같은 함정을 같은 방식으로 피한다
             # (claude_driver.py의 hooks 주석).
             hooks={
-                # Bash와 Agent. Agent를 거는 이유는 **백그라운드 서브에이전트가
-                # 턴보다 오래 살기 때문**이다 — 그 순간 화면은 진행 표시를 닫고
-                # 남은 일이 보이지 않는 작업이 된다(build_guard의
-                # background_agent_denial에 실측 근거). 병렬 자체는 막지 않는다.
-                "PreToolUse": [HookMatcher(matcher="Bash|Agent",
+                # Bash만. 서브에이전트가 턴보다 오래 사는 것은 도구 입력이 아니라
+                # CLI 스위치로 막는다(cli_settings.cli_context_env).
+                "PreToolUse": [HookMatcher(matcher="Bash",
                                            hooks=[builder._on_pre_tool_use])],
                 "PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
                                             hooks=[builder._on_post_tool_use])],
@@ -597,17 +595,8 @@ class PrototypeBuilder:
         """
         name = input_data.get("tool_name", "")
         tool_input = input_data.get("tool_input") or {}
-        if name == "Agent":
-            # 백그라운드 서브에이전트는 턴보다 오래 산다 — 그 순간 화면은 진행
-            # 표시를 닫고(sse.ts가 `done`에서 스트림을 닫는다) 남은 일은 보이지
-            # 않는 작업이 된다. 근거와 실측은 build_guard.background_agent_denial.
-            offender = background_agent_denial(tool_input)
-            if offender is None:
-                return {}
-            _log.warning("build gate denied a background Agent call: %s", offender)
-            return self._deny(prompts.background_agent_refused(self._language))
         if name != "Bash":
-            # matcher가 Bash·Agent만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
+            # matcher가 Bash만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
             # 통과해야 한다 — 알 수 없는 도구를 막으면 빌드가 멈춘다.
             return {}
         offender = bash_denial(tool_input.get("command"))
