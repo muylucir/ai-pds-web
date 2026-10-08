@@ -7,9 +7,12 @@ const QP = { interrupt_id: "i-1", questions: {
   questions: [{ number: 1, category: null, text: "누구?", answer: null,
     options: [{ letter: "A", text: "PM", is_other: false, recommended: true }] }] } };
 
+// 문서 드로어가 열 문서가 없는 기본값 — "{이름} 보기"를 보는 테스트가 아닌 곳.
+const NO_DOC = { currentDocName: null, onOpenDoc: () => {} };
+
 describe("WorkspaceRightPanel mode switching", () => {
   it("renders QuestionForm when pendingQuestions is set", () => {
-    render(<WorkspaceRightPanel projectId="p1" pendingQuestions={QP}
+    render(<WorkspaceRightPanel {...NO_DOC} projectId="p1" pendingQuestions={QP}
       stages={[]} changedPaths={[]} onSubmitAnswers={vi.fn()} busy={false} />);
     // QuestionCard renders "Q{number}. {text}" as sibling text nodes (see
     // QuestionCard.tsx), so the question text isn't its own exact text node —
@@ -21,14 +24,14 @@ describe("WorkspaceRightPanel mode switching", () => {
   });
 
   it("renders preview when the prototype stage is active and no questions pend", () => {
-    render(<WorkspaceRightPanel projectId="p1" pendingQuestions={null}
+    render(<WorkspaceRightPanel {...NO_DOC} projectId="p1" pendingQuestions={null}
       stages={[{ stage: "Prototype & Validation", status: "in_progress", summary: "" }]}
       changedPaths={[]} onSubmitAnswers={vi.fn()} busy={false} />);
     expect(screen.getByLabelText("프로토타입 프리뷰")).toBeInTheDocument();
   });
 
   it("renders recent artifacts otherwise", () => {
-    render(<WorkspaceRightPanel projectId="p1" pendingQuestions={null} stages={[]}
+    render(<WorkspaceRightPanel {...NO_DOC} projectId="p1" pendingQuestions={null} stages={[]}
       changedPaths={["aiplc-docs/audit.md"]} onSubmitAnswers={vi.fn()} busy={false} />);
     expect(screen.getByText("aiplc-docs/audit.md")).toBeInTheDocument();
   });
@@ -92,10 +95,26 @@ describe("deriveMode — 답변 제출 직후 프리뷰로 튀지 않는다 (reg
 
 describe("WorkspaceRightPanel — 스트리밍 중 프로토타입 스테이지", () => {
   it("keeps showing artifacts instead of flipping to the prototype viewer", () => {
-    render(<WorkspaceRightPanel projectId="p1" pendingQuestions={null}
+    render(<WorkspaceRightPanel {...NO_DOC} projectId="p1" pendingQuestions={null}
       stages={[{ stage: "Prototype & Validation", status: "in_progress", summary: "" }]}
       changedPaths={["aiplc-docs/audit.md"]} onSubmitAnswers={vi.fn()} busy={true} />);
     expect(screen.queryByLabelText("프로토타입 프리뷰")).toBeNull();
     expect(screen.getByText("aiplc-docs/audit.md")).toBeInTheDocument();
+  });
+});
+
+describe("WorkspaceRightPanel 문서 보기", () => {
+  it("질문 폼 위에 드로어가 열 문서의 이름으로 버튼을 둔다", async () => {
+    const onOpenDoc = vi.fn();
+    render(<WorkspaceRightPanel projectId="p1" pendingQuestions={QP} stages={[]} changedPaths={[]}
+      onSubmitAnswers={vi.fn()} busy={false} currentDocName="prfaq.md" onOpenDoc={onOpenDoc} />);
+    screen.getByRole("button", { name: /prfaq\.md 보기/ }).click();
+    expect(onOpenDoc).toHaveBeenCalledOnce();
+  });
+
+  it("열 문서가 없으면 버튼을 그리지 않는다", () => {
+    render(<WorkspaceRightPanel {...NO_DOC} projectId="p1" pendingQuestions={QP} stages={[]}
+      changedPaths={[]} onSubmitAnswers={vi.fn()} busy={false} />);
+    expect(screen.queryByRole("button", { name: /보기/ })).toBeNull();
   });
 });

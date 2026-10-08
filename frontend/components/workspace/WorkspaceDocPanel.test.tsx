@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, act, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -8,8 +8,8 @@ import { WorkspaceDocPanel } from "./WorkspaceDocPanel";
 
 const DOC = { path: "aiplc-docs/discovery/discovery-document.md", version: "v2" };
 const PRFAQ = { path: "aiplc-docs/discovery/envision/prfaq.md", version: null };
-// 펼친 패널 — 접힘을 보는 테스트가 아닌 곳의 기본값.
-const OPEN = { collapsed: false, onToggleCollapsed: () => {} };
+// 열린 드로어 — 열고 닫기를 보는 테스트가 아닌 곳의 기본값.
+const OPEN = { open: true, onOpenChange: () => {}, onCurrentDocChange: () => {} };
 
 describe("WorkspaceDocPanel", () => {
   it("shows an empty-state (no fetch) when there is no document yet", async () => {
@@ -376,56 +376,82 @@ describe("WorkspaceDocPanel — 목록과의 동기화", () => {
     expect(await screen.findByText(/목록을 불러오지 못했습니다/)).toBeInTheDocument();
     expect(screen.queryByText(/아직 생성된 문서가 없습니다/)).not.toBeInTheDocument();
   });
+});
 
-  describe("접기", () => {
-    it("펼친 헤더의 접기 버튼이 부모에게 토글을 알린다", async () => {
-      let toggled = 0;
-      await act(async () => {
-        render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0}
-                                  collapsed={false} onToggleCollapsed={() => { toggled++; }} />);
-      });
-      await userEvent.click(screen.getByRole("button", { name: "문서 패널 접기" }));
-      expect(toggled).toBe(1);
+describe("WorkspaceDocPanel — 드로어", () => {
+  const closed = (onOpenChange = () => {}) =>
+    ({ open: false, onOpenChange, onCurrentDocChange: () => {} });
+
+  it("닫혀 있으면 본문은 보조 기술에서 숨고 손잡이 탭만 남는다", async () => {
+    const onOpenChange = vi.fn();
+    await act(async () => {
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0}
+                                {...closed(onOpenChange)} />);
     });
+    expect(screen.queryByRole("combobox")).toBeNull();
+    const tab = screen.getByRole("button", { name: "생성된 문서 열기" });
+    expect(tab).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(tab);
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+  });
 
-    it("접히면 본문 대신 펼치기 레일만 남는다", async () => {
-      let toggled = 0;
-      await act(async () => {
-        render(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0}
-                                  collapsed={true} onToggleCollapsed={() => { toggled++; }} />);
-      });
-      expect(screen.queryByRole("combobox")).toBeNull();
-      expect(screen.queryByRole("button", { name: "문서 패널 접기" })).toBeNull();
-      const expand = screen.getByRole("button", { name: "문서 패널 펼치기" });
-      expect(expand).toHaveAttribute("aria-expanded", "false");
-      await userEvent.click(expand);
-      expect(toggled).toBe(1);
+  it("열리면 ✕·Esc·바깥 클릭·손잡이 모두 닫는다", async () => {
+    const onOpenChange = vi.fn();
+    const { rerender } = render(
+      <WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0}
+                         {...closed(onOpenChange)} />,
+    );
+    await act(async () => {
+      rerender(<WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0}
+                                  open={true} onOpenChange={onOpenChange} onCurrentDocChange={() => {}} />);
     });
+    const [tab, close] = screen.getAllByRole("button", { name: "생성된 문서 닫기" });
+    expect(tab).toHaveAttribute("aria-expanded", "true");
+    // 닫힘 → 열림이면 포커스가 드로어 안(✕)으로 간다.
+    expect(close).toHaveFocus();
+    await userEvent.click(close);
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByTestId("doc-drawer-backdrop"));
+    await userEvent.click(tab);
+    expect(onOpenChange.mock.calls).toEqual([[false], [false], [false], [false]]);
+  });
 
-    // 질문에 답하려고 접은 패널을 대화가 멋대로 펼치면 접은 의미가 없다 — 점만 찍는다.
-    it("접힌 동안 새 문서가 오면 점만 찍고 펼치지 않는다", async () => {
-      const { rerender } = render(
-        <WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0}
-                           collapsed={true} onToggleCollapsed={() => {}} />,
-      );
-      expect(screen.queryByRole("status", { name: "새 문서가 작성됨" })).toBeNull();
-      await act(async () => {
-        rerender(<WorkspaceDocPanel projectId="p1" activeDoc={PRFAQ} changedPaths={[]} turnSeq={0}
-                                    collapsed={true} onToggleCollapsed={() => {}} />);
-      });
-      expect(screen.getByRole("status", { name: "새 문서가 작성됨" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "문서 패널 펼치기" })).toBeInTheDocument();
-
-      // 펼쳐서 본 뒤 다시 접으면 점은 사라진다.
-      await act(async () => {
-        rerender(<WorkspaceDocPanel projectId="p1" activeDoc={PRFAQ} changedPaths={[]} turnSeq={0}
-                                    collapsed={false} onToggleCollapsed={() => {}} />);
-      });
-      await act(async () => {
-        rerender(<WorkspaceDocPanel projectId="p1" activeDoc={PRFAQ} changedPaths={[]} turnSeq={0}
-                                    collapsed={true} onToggleCollapsed={() => {}} />);
-      });
-      expect(screen.queryByRole("status", { name: "새 문서가 작성됨" })).toBeNull();
+  // 답하는 중에 덮는 드로어가 저절로 열리면 질문 폼을 가린다 — 탭만 바뀐다.
+  it("닫힌 동안 새 문서가 오면 탭이 '새 문서'로 바뀌고 저절로 열지 않는다", async () => {
+    const onOpenChange = vi.fn();
+    const { rerender } = render(
+      <WorkspaceDocPanel projectId="p1" activeDoc={DOC} changedPaths={[]} turnSeq={0}
+                         {...closed(onOpenChange)} />,
+    );
+    const tab = () => screen.getByRole("button", { name: "생성된 문서 열기" });
+    expect(tab()).not.toHaveTextContent("새 문서");
+    await act(async () => {
+      rerender(<WorkspaceDocPanel projectId="p1" activeDoc={PRFAQ} changedPaths={[]} turnSeq={0}
+                                  {...closed(onOpenChange)} />);
     });
+    expect(tab()).toHaveTextContent("새 문서");
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    // 열어 본 뒤 다시 닫으면 평소 탭으로 돌아간다.
+    await act(async () => {
+      rerender(<WorkspaceDocPanel {...OPEN} projectId="p1" activeDoc={PRFAQ} changedPaths={[]}
+                                  turnSeq={0} />);
+    });
+    await act(async () => {
+      rerender(<WorkspaceDocPanel projectId="p1" activeDoc={PRFAQ} changedPaths={[]} turnSeq={0}
+                                  {...closed(onOpenChange)} />);
+    });
+    expect(tab()).not.toHaveTextContent("새 문서");
+    expect(tab()).toHaveTextContent("생성된 문서");
+  });
+
+  it("지금 보여 줄 문서 경로를 부모에게 알린다 (질문 폼의 '{이름} 보기')", async () => {
+    const onCurrentDocChange = vi.fn();
+    await act(async () => {
+      render(<WorkspaceDocPanel projectId="p1" activeDoc={PRFAQ} changedPaths={[]} turnSeq={0}
+                                open={false} onOpenChange={() => {}}
+                                onCurrentDocChange={onCurrentDocChange} />);
+    });
+    expect(onCurrentDocChange).toHaveBeenLastCalledWith(PRFAQ.path);
   });
 });
