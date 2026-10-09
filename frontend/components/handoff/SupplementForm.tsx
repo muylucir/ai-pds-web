@@ -68,11 +68,57 @@ export function SupplementForm({
   const total = view.questions.length;
   const done = view.questions.filter((q) => draft[q.id]?.unknown || draft[q.id]?.text.trim()).length;
 
+  // 패키지가 있으면 PRD에 실제로 들어간 결정이 먼저다 — 개발자가 다시 물을 수 있는 것은 그것뿐이다
+  // (실측 industry-safe-law: 40개 중 19개). 나머지는 단계별로 접어 둔다.
+  const inPrd = view.has_package ? view.confirmations.filter((c) => c.in_prd.length) : [];
   const stages = useMemo(() => {
     const byStage = new Map<string, Confirmation[]>();
-    for (const c of view.confirmations) byStage.set(c.stage, [...(byStage.get(c.stage) ?? []), c]);
+    for (const c of view.confirmations) {
+      if (view.has_package && c.in_prd.length) continue;
+      byStage.set(c.stage, [...(byStage.get(c.stage) ?? []), c]);
+    }
     return STAGE_ORDER.filter((st) => byStage.has(st)).map((st) => [st, byStage.get(st)!] as const);
-  }, [view.confirmations]);
+  }, [view.confirmations, view.has_package]);
+  const restCount = stages.reduce((n, [, items]) => n + items.length, 0);
+
+  // 확인 항목 하나. 질문, 고른 결정, (패키지가 있으면) 그 결정이 된 PRD 항목, 부연, AI 근거.
+  // 컴포넌트가 아니라 함수로 그린다 — 렌더 안에서 정의한 컴포넌트는 매번 새 타입이라 목록이 다시
+  // 마운트된다.
+  const renderItem = (c: Confirmation) => {
+    const on = confirmed.has(c.key);
+    return (
+      <li key={c.key} className="px-4 py-3 border-t border-slate-100 first:border-t-0">
+        <p className="text-[13px] font-semibold text-slate-900">{c.ask}</p>
+        <p className="mt-1 text-[13px] text-slate-800">
+          <span className="mr-1.5 text-xs text-slate-400">{t("handoff.supp.confirm.chosen")}</span>
+          {c.choices.length ? c.choices.join(" / ") : c.answer}
+        </p>
+        {c.remark && (
+          <p className="mt-0.5 text-xs text-slate-600">
+            <span className="mr-1.5 text-slate-400">{t("handoff.supp.confirm.remark")}</span>{c.remark}
+          </p>
+        )}
+        {view.has_package && c.in_prd.map((line) => (
+          <p key={line} className="mt-0.5 text-xs text-violet-800">
+            <span className="mr-1.5 text-violet-400">{t("handoff.supp.confirm.prdLine")}</span>{line}
+          </p>
+        ))}
+        {c.note && (
+          <p className="mt-0.5 text-[11px] text-slate-400">{t("handoff.supp.confirm.note")}: {c.note}</p>
+        )}
+        <div className="mt-2 flex gap-1.5">
+          <button type="button" aria-pressed={on} onClick={() => toggle(c.key)}
+                  className={`px-2.5 py-1 rounded-lg border text-xs ${
+                    on ? "bg-sky-50 border-sky-200 text-sky-700 font-bold" : "border-slate-300 text-slate-600"}`}>
+            {on ? t("handoff.supp.confirm.confirmed") : t("handoff.supp.confirm.yes")}
+          </button>
+          <Link href={workspaceHref} className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
+            {t("handoff.supp.confirm.revise")}
+          </Link>
+        </div>
+      </li>
+    );
+  };
 
   const set = (id: string, patch: Partial<Draft[string]>) =>
     setDraft((d) => ({ ...d, [id]: { ...(d[id] ?? { text: "", unknown: false }), ...patch } }));
@@ -139,6 +185,27 @@ export function SupplementForm({
             <span className="text-xs font-normal text-slate-500">{t("handoff.supp.confirm.optional")}</span>
           </h4>
           <p className="mb-2.5 text-xs text-slate-500">{t("handoff.supp.confirm.hint")}</p>
+          {view.has_package ? (
+            <>
+              <h5 className="mt-1 mb-1.5 text-[13px] font-semibold text-slate-900">
+                {t("handoff.supp.confirm.inPrd").replace("{n}", String(inPrd.length))}
+              </h5>
+              {inPrd.length > 0 ? (
+                <ul className="mb-3 bg-white border border-violet-200 rounded-xl">
+                  {inPrd.map(renderItem)}
+                </ul>
+              ) : (
+                <p className="mb-3 text-xs text-slate-500">{t("handoff.supp.confirm.inPrdNone")}</p>
+              )}
+              {restCount > 0 && (
+                <h5 className="mb-1.5 text-[13px] font-semibold text-slate-700">
+                  {t("handoff.supp.confirm.rest").replace("{n}", String(restCount))}
+                </h5>
+              )}
+            </>
+          ) : (
+            <p className="mb-2 text-xs text-violet-700">{t("handoff.supp.confirm.noPackage")}</p>
+          )}
           {/* 단계별로 접어 둔다. 확인은 할 일이 아니라, 들여다보고 싶은 결정을 고르는 곳이다. */}
           {stages.map(([stage, items]) => (
             <details key={stage} className="mb-2 bg-white border border-slate-200 rounded-xl">
@@ -150,38 +217,7 @@ export function SupplementForm({
                 </span>
               </summary>
               <ul>
-                {items.map((c) => {
-                  const on = confirmed.has(c.key);
-                  return (
-                    <li key={c.key} className="px-4 py-3 border-t border-slate-100">
-                      <p className="text-[13px] font-semibold text-slate-900">{c.ask}</p>
-                      <p className="mt-1 text-[13px] text-slate-800">
-                        <span className="mr-1.5 text-xs text-slate-400">{t("handoff.supp.confirm.chosen")}</span>
-                        {c.choices.length ? c.choices.join(" / ") : c.answer}
-                      </p>
-                      {c.remark && (
-                        <p className="mt-0.5 text-xs text-slate-600">
-                          <span className="mr-1.5 text-slate-400">{t("handoff.supp.confirm.remark")}</span>{c.remark}
-                        </p>
-                      )}
-                      {c.note && (
-                        <p className="mt-0.5 text-[11px] text-slate-400">
-                          {t("handoff.supp.confirm.note")}: {c.note}
-                        </p>
-                      )}
-                      <div className="mt-2 flex gap-1.5">
-                        <button type="button" aria-pressed={on} onClick={() => toggle(c.key)}
-                                className={`px-2.5 py-1 rounded-lg border text-xs ${
-                                  on ? "bg-sky-50 border-sky-200 text-sky-700 font-bold" : "border-slate-300 text-slate-600"}`}>
-                          {on ? t("handoff.supp.confirm.confirmed") : t("handoff.supp.confirm.yes")}
-                        </button>
-                        <Link href={workspaceHref} className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
-                          {t("handoff.supp.confirm.revise")}
-                        </Link>
-                      </div>
-                    </li>
-                  );
-                })}
+                {items.map(renderItem)}
               </ul>
             </details>
           ))}

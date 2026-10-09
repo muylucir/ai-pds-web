@@ -316,6 +316,60 @@ def clean_output(text: str) -> str:
     return body + "\n"
 
 
+# ---- PRD가 인용한 AI 제안 ----
+
+_QUESTION_FILE = re.compile(r"[A-Za-z0-9_-]+-questions\.md")
+_QUESTION_NO = re.compile(r"Q(\d+)")
+#: 파일 이름 뒤의 번호 구간이 끝나는 곳 — 근거 표기는 `[등급 · 경로 Q1·Q2]`나 표 칸으로 닫힌다.
+_REF_END = re.compile(r"[\]\)|]")
+_SNIPPET_CHARS = 140
+#: 목록 기호. 본문이 숫자로 시작할 수 있으므로("2027년 …") 기호와 그 뒤 공백만 지운다.
+_LIST_MARK = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
+
+
+def cited_suggestions(prd: str, readiness: Readiness, language: str) -> dict[str, list[str]]:
+    """PRD에서 "AI 제안 수락" 등급이 붙은 줄이 가리키는 질문 → 그 줄의 요지.
+
+    저장하지 않고 조회 때마다 계산한다 — PRD 파일과 판정만 있으면 결정적으로 나오고, 저장하면
+    이 기능 이전에 만든 패키지에는 값이 없어 "인용 없음"으로 잘못 보인다.
+
+    모델을 다시 부르지 않는다. 근거 표기(`[AI 제안 수락 · …/strategy-questions.md Q14]`)는
+    합성 지시가 정한 모양이고, 실측(industry-safe-law) PRD에서 그 줄 26개가 질문 19개를
+    가리켰다. 판정의 수락 목록에 없는 질문은 버린다 — 등급을 잘못 붙인 줄이 확인 대상을 늘리지
+    않게.
+    """
+    label = _LABELS.get(language, _LABELS["ko"])["grades"][2]
+    by_ref: dict[tuple[str, int], list[str]] = {}
+    for item in readiness.ai_defaults.items:
+        by_ref.setdefault((item.file.rsplit("/", 1)[-1], item.number), []).append(
+            supplement_mod.confirmation_key(item.file, item.number))
+    cited: dict[str, list[str]] = {}
+    for line in prd.splitlines():
+        if label not in line:
+            continue
+        hits = list(_QUESTION_FILE.finditer(line))
+        for i, hit in enumerate(hits):
+            end = hits[i + 1].start() if i + 1 < len(hits) else len(line)
+            segment = _REF_END.split(line[hit.end():end], maxsplit=1)[0]
+            for number in _QUESTION_NO.findall(segment):
+                for key in by_ref.get((hit.group(0), int(number)), []):
+                    snippet = _snippet(line, label)
+                    if snippet and snippet not in cited.setdefault(key, []):
+                        cited[key].append(snippet)
+    return cited
+
+
+def _snippet(line: str, label: str) -> str:
+    """PRD 한 줄의 요지 — 표 행이면 앞의 두 칸(ID·내용), 목록이면 근거 표기를 뺀 본문."""
+    text = line.strip()
+    if text.startswith("|"):
+        cells = [c.strip() for c in text.strip("|").split("|")]
+        text = " ".join(c for c in cells[:2] if c and label not in c)
+    else:
+        text = re.sub(r"\[[^\]]*\]", "", _LIST_MARK.sub("", text)).strip()
+    return text if len(text) <= _SNIPPET_CHARS else text[:_SNIPPET_CHARS - 1] + "…"
+
+
 # ---- 검사 ----
 
 #: ASCII 단어 경계로 찾는 기술어. 프로젝트마다 넓힐 수 있게 데이터로 둔다.

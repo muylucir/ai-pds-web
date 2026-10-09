@@ -106,9 +106,14 @@ class ConfirmationView(BaseModel):
     note: str
     remark: str
     confirmed_at: str | None
+    #: 이 결정이 된 PRD 항목들. 비어 있으면 PRD가 이 결정을 "AI 제안 수락"으로 인용하지 않았다
+    #: (또는 아직 패키지가 없다).
+    in_prd: list[str] = []
 
 
 class SupplementView(BaseModel):
+    #: 마지막 패키지가 있어서 `in_prd`를 믿을 수 있는가. 없으면 화면이 단계별로만 묶는다.
+    has_package: bool = False
     questions: list[QuestionView]
     #: 답이 있는데 그 섹션의 재료가 이제 AI-PLC 산출물에 있다. 그쪽이 이긴다.
     superseded: list[QuestionView]
@@ -123,7 +128,8 @@ def confirmation_key(file: str, number: int) -> str:
     return f"{file}#{number}"
 
 
-def view(readiness: Readiness, record: Supplement) -> SupplementView:
+def view(readiness: Readiness, record: Supplement,
+         cited: dict[str, list[str]] | None = None) -> SupplementView:
     open_sections = {s.key for s in readiness.sections if s.status in ("partial", "missing")}
     active: list[QuestionView] = []
     superseded: list[QuestionView] = []
@@ -139,8 +145,9 @@ def view(readiness: Readiness, record: Supplement) -> SupplementView:
         confirmations.append(ConfirmationView(
             key=key, file=item.file, number=item.number, ask=item.ask,
             answer=item.answer, stage=item.stage, choices=item.choices, note=item.note,
-            remark=item.remark, confirmed_at=record.confirmed.get(key)))
-    return SupplementView(questions=active, superseded=superseded,
+            remark=item.remark, confirmed_at=record.confirmed.get(key),
+            in_prd=(cited or {}).get(key, [])))
+    return SupplementView(has_package=cited is not None, questions=active, superseded=superseded,
                           confirmations=confirmations)
 
 
