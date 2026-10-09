@@ -10,6 +10,7 @@ import zipfile
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Response
+from pydantic import BaseModel
 
 import aipds.app as app_module
 from aipds.handoff import package, readiness, supplement
@@ -60,9 +61,15 @@ async def put_handoff_supplement(pid: str, body: supplement.SupplementUpdate):
     return supplement.view(state, record)
 
 
+class GenerateRequest(BaseModel):
+    #: 실패·중단된 지난 시도의 끝난 단계를 두고 나머지만 한다. 원본이 그사이 바뀌었으면
+    #: 서버가 처음부터 한다(handoff/package.run).
+    resume: bool = False
+
+
 @router.post("/projects/{pid}/handoff/package", status_code=202,
              response_model=package.Manifest)
-async def generate_handoff_package(pid: str):
+async def generate_handoff_package(pid: str, body: GenerateRequest | None = None):
     """생성을 시작하고 곧바로 돌아온다. 화면은 GET으로 진행을 본다(handoff/package 헤더)."""
     paths = await _paths(pid)
     state = await _readiness(pid, paths)
@@ -72,7 +79,7 @@ async def generate_handoff_package(pid: str):
         raise HTTPException(status_code=409, detail="already generating")
     s3 = app_module.s3_store_factory(pid)
     ws = await ensure_workspace(pid)
-    started = await package.start(s3, state)
+    started = await package.start(s3, state, resume=bool(body and body.resume))
     package.jobs.spawn(pid, package.run(
         s3, read=ws.runner.read_file, paths=paths, readiness=state, language=app_module.project_language(pid),
         call=app_module.handoff_writer_factory(pid), started=started))

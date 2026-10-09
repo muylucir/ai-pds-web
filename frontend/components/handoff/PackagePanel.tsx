@@ -34,20 +34,8 @@ export function PackagePanel({
   const [selected, setSelected] = useState("PRD.md");
   const current = names.includes(selected) ? selected : names[0];
 
+  // 생성 중·실패·중단은 GenerationProgress가 보여 준다. 여기는 만든 패키지만.
   if (!m) return null;
-  if (m.status === "failed" || m.status === "interrupted") {
-    const reason = t(`handoff.pkg.error.${m.error ?? "generation_failed"}` as keyof Dict)
-      ?? t("handoff.pkg.error.generation_failed");
-    return (
-      <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900 flex items-center justify-between gap-3">
-        <span>{m.status === "interrupted" ? t("handoff.pkg.interrupted") : t("handoff.pkg.failed").replace("{reason}", reason)}</span>
-        <button type="button" onClick={onRegenerate} disabled={generating}
-                className="px-3 py-1.5 rounded-lg border border-rose-300 bg-white text-xs disabled:opacity-45">
-          {t("handoff.regenerate")}
-        </button>
-      </div>
-    );
-  }
   if (m.status !== "ready") return null;
 
   const stale = pkg.stale.length > 0 || pkg.supplement_changed;

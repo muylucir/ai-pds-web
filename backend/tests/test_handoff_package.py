@@ -19,20 +19,52 @@ from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 from test_handoff_readiness import B, D, QUESTIONS
 
-OUTPUT = """여기부터 문서입니다.
-===== PRD.md =====
-# 매장 고객 상담 에이전트
+DOCS = {
+    "prd": "# 매장 고객 상담 에이전트\n\n## 5. 요구사항과 수용 기준\n- R-01 상담원은 고객의 최근 주문 상태를 본다\n",
+    "validation": "# 검증 보고\n설문 3명. R-01 증명됨.\n",
+    "scope": "# 남은 작업\n- B-01 프로토타입에서는 고정된 주문 목록을 보여 줬다.\n",
+}
 
-## 5. 요구사항과 수용 기준
-- R-01 상담원은 고객의 최근 주문 상태를 본다 — 사용자 검증됨
-===== validation-report.md =====
-# 검증 보고
-설문 3명.
-===== build-scope.md =====
-# 남은 작업
-- B-01 프로토타입에서는 고정된 주문 목록을 보여 줬다.
-"""
 
+def _step_of(prompt: str) -> str:
+    for name, file in package.STEPS:
+        if f"## Write {file}" in prompt:
+            return name
+    raise AssertionError("prompt names no step")
+
+
+def _writer(calls: list | None = None, *, fail_at: str | None = None, error=None):
+    """단계마다 그 문서를 돌려주는 가짜 모델. `fail_at` 단계에서 실패한다."""
+    async def call(prompt, progress=None):
+        step = _step_of(prompt)
+        if calls is not None:
+            calls.append((step, prompt))
+        if step == fail_at:
+            raise error or RuntimeError("AccessDenied: arn:aws:iam::123:role/x")
+        return "머리말은 버려진다.\n" + DOCS[step]
+    return call
+
+
+def _workspace_reader(files):
+    async def read(path):
+        if path not in files:
+            raise FileNotFoundError(path)
+        return files[path]
+    return read
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+async def _generate(s3, files, call, *, resume=False, paths=B):
+    state = assess(paths, {})
+    started = await package.start(s3, state, resume=resume)
+    return await package.run(s3, read=_workspace_reader(files), paths=paths, readiness=state,
+                             language="ko", call=call, started=started)
+
+
+# ---- 재료와 프롬프트 ----
 
 def test_sources_skip_build_instructions_design_and_survey_forms_and_lead_with_the_document():
     paths = [D + "prototype/build-instructions.md", D + "prototype/design-context.md",
@@ -51,41 +83,43 @@ def test_prompt_carries_files_facts_and_confirmations():
         answers={"problem.evidence": supplement.Answer(text="인터뷰 5명"),
                  "assumptions.failure_reasons": supplement.Answer(unknown=True)},
         confirmed={path + "#1": "t"})
-    prompt = package.build_prompt(language="ko", readiness=state, record=record,
+    prompt = package.build_prompt("prd", language="ko", readiness=state, record=record,
                                   sources={D + "use-case-intake/use-cases.md": "UC1 고객 문의"})
     assert "<<<FILE aiplc-docs/discovery/use-case-intake/use-cases.md>>>" in prompt
     assert "UC1 고객 문의" in prompt
     assert '"재료 없음"' in prompt and "Write in Korean" in prompt
+    assert "## Write PRD.md" in prompt and "9. 열린 질문" in prompt
     facts = json.loads(prompt.split("```json\n", 1)[1].split("\n```", 1)[0])
     assert facts["origin"] == "B"
     assert facts["handoff_answers"] == {"problem.evidence": {"text": "인터뷰 5명"},
                                         "assumptions.failure_reasons": {"unknown": True}}
     assert [a["confirmed_by_pm"] for a in facts["ai_suggestions_accepted"]] == [True, False, False]
-    for name in package.WRITTEN:
-        assert f"===== {name} =====" in prompt
+
+
+def test_later_steps_get_the_prd_so_ids_match():
+    prompt = package.build_prompt("scope", language="ko", readiness=assess(B, {}),
+                                  record=supplement.Supplement(), sources={}, prd=DOCS["prd"])
+    assert "## Write build-scope.md" in prompt
+    assert "<<<PRD>>>\n# 매장 고객 상담 에이전트" in prompt
+    first = package.build_prompt("prd", language="ko", readiness=assess(B, {}),
+                                 record=supplement.Supplement(), sources={})
+    assert "<<<PRD>>>" not in first
 
 
 def test_english_projects_get_english_labels():
-    prompt = package.build_prompt(language="en", readiness=assess(B, {}),
+    prompt = package.build_prompt("prd", language="en", readiness=assess(B, {}),
                                   record=supplement.Supplement(), sources={})
     assert '"No source material"' in prompt and "Write in English" in prompt
 
 
-def test_split_output_cuts_on_markers():
-    files = package.split_output(OUTPUT)
-    assert list(files) == list(package.WRITTEN)
-    assert files["PRD.md"].startswith("# 매장 고객 상담 에이전트")
-    assert "여기부터" not in files["PRD.md"]
-
-
-@pytest.mark.parametrize("text", [
-    OUTPUT.replace("===== build-scope.md =====", ""),
-    OUTPUT.split("===== build-scope.md =====")[0] + "===== build-scope.md =====\n  \n",
-])
-def test_split_output_rejects_a_missing_or_empty_document(text):
+def test_clean_output_drops_a_preface_and_refuses_an_empty_document():
+    assert package.clean_output("네, 작성했습니다.\n\n# 제목\n본문\n") == "# 제목\n본문\n"
+    assert package.clean_output("제목 없는 본문\n") == "제목 없는 본문\n"
     with pytest.raises(ValueError):
-        package.split_output(text)
+        package.clean_output("   \n ")
 
+
+# ---- 검사 ----
 
 def test_lint_finds_technology_and_vague_words():
     files = {"PRD.md": "\n".join([
@@ -116,84 +150,138 @@ def test_lint_leaves_ordinary_product_language_alone():
     assert package.lint(files) == []
 
 
-def _workspace_reader(files):
-    async def read(path):
-        if path not in files:
-            raise FileNotFoundError(path)
-        return files[path]
-    return read
+# ---- 단계별 생성 ----
 
-
-def _run(coro):
-    return asyncio.run(coro)
-
-
-def test_run_writes_the_package_and_records_what_it_was_built_from():
+def test_steps_run_in_order_and_each_document_is_saved():
     s3 = FakeS3Store()
     files = {p: f"# {p}\n" for p in B}
-    state = assess(B, {})
-    prompts = []
-
-    async def call(prompt):
-        prompts.append(prompt)
-        return OUTPUT
-
-    async def go():
-        started = await package.start(s3, state, now="t0")
-        return await package.run(s3, read=_workspace_reader(files), paths=B, readiness=state,
-                                 language="ko", call=call, started=started)
-    done = _run(go())
+    calls: list = []
+    done = _run(_generate(s3, files, _writer(calls)))
     assert done.status == "ready" and done.origin == "B"
+    assert [step for step, _ in calls] == ["prd", "validation", "scope"]
+    assert [s.status for s in done.steps] == ["done", "done", "done"]
     assert done.files == list(package.FILES)
     assert set(done.sources) == set(package.select_sources(B))
+    assert s3.blobs[package.PACKAGE_PREFIX + "PRD.md"].startswith("# 매장")  # 머리말 제거
     assert s3.blobs[package.PACKAGE_PREFIX + "README.md"].startswith("# 개발 인계 패키지")
-    assert s3.blobs[package.PACKAGE_PREFIX + "PRD.md"].startswith("# 매장")
-    assert json.loads(s3.blobs[package.MANIFEST_KEY])["status"] == "ready"
+    # 뒤의 두 단계는 앞에서 쓴 PRD를 받는다.
+    assert "<<<PRD>>>" not in calls[0][1]
+    assert all(DOCS["prd"].strip() in prompt for _, prompt in calls[1:])
     # 빌드 지시서는 재료가 아니다.
-    assert "build-instructions" not in prompts[0]
+    assert all("build-instructions" not in prompt for _, prompt in calls)
 
 
-@pytest.mark.parametrize("call_result, reason", [
+@pytest.mark.parametrize("error, reason", [
     (RuntimeError("AccessDenied: arn:aws:iam::123:role/x"), "generation_failed"),
-    ("이것은 구분선이 없는 응답", "malformed_output"),
+    (ValueError("empty document"), "malformed_output"),
 ])
-def test_a_failed_generation_leaves_a_failed_manifest_without_the_raw_error(call_result, reason):
-    s3 = FakeS3Store()
-    state = assess(B, {})
-
-    async def call(prompt):
-        if isinstance(call_result, Exception):
-            raise call_result
-        return call_result
-
-    async def go():
-        started = await package.start(s3, state)
-        return await package.run(s3, read=_workspace_reader({}), paths=B, readiness=state,
-                                 language="ko", call=call, started=started)
-    failed = _run(go())
-    assert failed.status == "failed" and failed.error == reason
-    assert "arn:aws" not in s3.blobs[package.MANIFEST_KEY]
-    assert not any(k.endswith("PRD.md") for k in s3.blobs)
-
-
-def test_view_reports_interrupted_stale_and_supplement_changes():
+def test_a_failed_step_keeps_the_finished_ones_and_hides_the_raw_error(error, reason):
     s3 = FakeS3Store()
     files = {p: f"# {p}\n" for p in B}
-    state = assess(B, {})
+    failed = _run(_generate(s3, files, _writer(fail_at="validation", error=error)))
+    assert failed.status == "failed" and failed.error == reason
+    assert [(s.status, s.error) for s in failed.steps] == [
+        ("done", None), ("failed", reason), ("pending", None)]
+    assert package.PACKAGE_PREFIX + "PRD.md" in s3.blobs
+    assert package.PACKAGE_PREFIX + "validation-report.md" not in s3.blobs
+    assert "arn:aws" not in s3.blobs[package.MANIFEST_KEY]
 
-    async def call(prompt):
-        return OUTPUT
+
+def test_resuming_runs_only_the_steps_that_did_not_finish():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+    _run(_generate(s3, files, _writer(fail_at="validation")))
+    calls: list = []
+    done = _run(_generate(s3, files, _writer(calls), resume=True))
+    assert done.status == "ready"
+    assert [step for step, _ in calls] == ["validation", "scope"]
+    # 이어서 쓰는 단계도 저장돼 있던 PRD를 받는다.
+    assert DOCS["prd"].strip() in calls[0][1]
+
+
+def test_resuming_after_the_sources_changed_starts_over():
+    """바뀐 원본으로 쓴 문서와 옛 원본으로 쓴 문서가 한 패키지에 섞이면 안 된다."""
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+    _run(_generate(s3, files, _writer(fail_at="scope")))
+    files[D + "use-case-intake/use-cases.md"] = "# 바뀜\n"
+    calls: list = []
+    _run(_generate(s3, files, _writer(calls), resume=True))
+    assert [step for step, _ in calls] == ["prd", "validation", "scope"]
+
+
+def test_starting_without_resume_discards_the_finished_steps():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+    _run(_generate(s3, files, _writer(fail_at="scope")))
+    calls: list = []
+    _run(_generate(s3, files, _writer(calls)))
+    assert [step for step, _ in calls] == ["prd", "validation", "scope"]
+
+
+def test_a_running_step_reports_thinking_then_received_characters(monkeypatch):
+    monkeypatch.setattr(package, "_PROGRESS_EVERY_S", 0.01)
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+    snapshots: list = []
+    put = s3.put
+
+    async def recording_put(key, content):
+        if key == package.MANIFEST_KEY:
+            snapshots.append(json.loads(content))
+        return await put(key, content)
+    s3.put = recording_put
+
+    async def call(prompt, progress):
+        if _step_of(prompt) == "prd":
+            progress(0, True)
+            await asyncio.sleep(0.05)
+            progress(500, False)
+            await asyncio.sleep(0.05)
+        return DOCS[_step_of(prompt)]
+
+    _run(_generate(s3, files, call))
+    prd = [m["steps"][0] for m in snapshots if m["steps"] and m["steps"][0]["status"] == "running"]
+    assert any(s["thinking"] and s["chars"] == 0 for s in prd)
+    assert any(s["chars"] == 500 and not s["thinking"] for s in prd)
+    # 진행 기록이 늦게 도착해 "완료"를 덮지 않는다.
+    assert snapshots[-1]["status"] == "ready"
+    assert [s["status"] for s in snapshots[-1]["steps"]] == ["done", "done", "done"]
+
+
+def test_view_reports_an_interrupted_run_as_resumable():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
 
     async def go():
-        started = await package.start(s3, state)
-        assert (await package.view(s3, read=_workspace_reader(files), paths=B,
-                                   running=False)).manifest.status == "interrupted"
-        await package.run(s3, read=_workspace_reader(files), paths=B, readiness=state,
-                          language="ko", call=call, started=started)
+        started = await package.start(s3, assess(B, {}))
+        # 재시작이 두 번째 단계 도중을 끊은 모양을 만든다.
+        steps = package.fresh_steps()
+        steps[0] = steps[0].model_copy(update={"status": "done"})
+        steps[1] = steps[1].model_copy(update={"status": "running"})
+        await s3.put(package.PACKAGE_PREFIX + "PRD.md", DOCS["prd"])
+        sources = await package.read_sources(_workspace_reader(files), package.select_sources(B))
+        record = await supplement.load(s3)
+        await s3.put(package.MANIFEST_KEY, started.model_copy(update={
+            "steps": steps, "sources": {p: package.digest(t) for p, t in sources.items()},
+            "supplement": package.digest(record.model_dump_json())}).model_dump_json())
+        return await package.view(s3, read=_workspace_reader(files), paths=B, running=False)
+    v = _run(go())
+    assert v.manifest.status == "interrupted"
+    assert [(s.status, s.error) for s in v.manifest.steps] == [
+        ("done", None), ("failed", "interrupted"), ("pending", None)]
+    assert v.resumable
+
+
+def test_view_reports_stale_and_supplement_changes_after_ready():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+
+    async def go():
+        await _generate(s3, files, _writer())
         fresh = await package.view(s3, read=_workspace_reader(files), paths=B, running=False)
         assert fresh.stale == [] and not fresh.supplement_changed
         assert set(fresh.files) == set(package.FILES)
-
         files[D + "use-case-intake/use-cases.md"] = "# 바뀜\n"
         added = D + "product-strategy/strategy-questions.md"
         files[added] = "# 새 원본\n"
@@ -206,6 +294,20 @@ def test_view_reports_interrupted_stale_and_supplement_changes():
     _run(go())
 
 
+def test_a_failed_run_whose_sources_changed_is_not_resumable():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+
+    async def go():
+        await _generate(s3, files, _writer(fail_at="scope"))
+        assert (await package.view(s3, read=_workspace_reader(files), paths=B,
+                                   running=False)).resumable
+        files[D + "use-case-intake/use-cases.md"] = "# 바뀜\n"
+        return await package.view(s3, read=_workspace_reader(files), paths=B, running=False)
+    v = _run(go())
+    assert not v.resumable and v.stale
+
+
 def test_the_package_lives_outside_the_agent_workspace():
     from aipds.runner import AgentRunner
     from aipds.workspace_sync import is_synced_key
@@ -213,6 +315,70 @@ def test_the_package_lives_outside_the_agent_workspace():
         key = package.PACKAGE_PREFIX + name
         assert not is_synced_key(key)
         assert not key.startswith(AgentRunner._RESTORE_PREFIXES)
+
+
+def _read_timeout():
+    from botocore.exceptions import ReadTimeoutError
+    return ReadTimeoutError(endpoint_url="https://bedrock-runtime.ap-northeast-2.amazonaws.com")
+
+
+def _chain(outer: Exception, cause: Exception) -> Exception:
+    outer.__cause__ = cause
+    return outer
+
+
+@pytest.mark.parametrize("make", [
+    _read_timeout,
+    # 실측 모양: 스트림 읽기 시간 초과가 다른 예외의 원인으로 감싸져 올라온다.
+    lambda: _chain(RuntimeError("stream failed"), _read_timeout()),
+    lambda: TimeoutError("The read operation timed out"),
+])
+def test_a_wrapped_read_timeout_is_reported_as_a_timeout(make):
+    s3 = FakeS3Store()
+    failed = _run(_generate(s3, {}, _writer(fail_at="prd", error=make())))
+    assert failed.error == "timeout"
+    assert failed.steps[0].error == "timeout"
+
+
+def test_the_handoff_writer_waits_long_and_reports_stream_progress(monkeypatch):
+    """Strands 기본 읽기 제한(120초)으로는 큰 프로젝트의 첫 출력을 기다리지 못한다(실측).
+    진행은 Strands 콜백의 본문 조각(data)과 생각(reasoningText)에서 온다."""
+    import sys
+    import types
+
+    made = []
+
+    class FakeModel:
+        def __init__(self, **kwargs):
+            made.append(kwargs)
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.callback = kwargs.get("callback_handler")
+
+        async def invoke_async(self, prompt):
+            if self.callback:
+                self.callback(reasoningText="음")
+                self.callback(data="안녕")
+                self.callback(data="하세요")
+            return "ok"
+
+    strands = types.ModuleType("strands")
+    strands.Agent = FakeAgent
+    models = types.ModuleType("strands.models")
+    models.BedrockModel = FakeModel
+    monkeypatch.setitem(sys.modules, "strands", strands)
+    monkeypatch.setitem(sys.modules, "strands.models", models)
+    monkeypatch.setattr(app_module, "project_model", lambda pid: "model-x")
+
+    events = []
+    asyncio.run(app_module.handoff_writer_factory("p")("hi", lambda n, t: events.append((n, t))))
+    asyncio.run(app_module.questionnaire_agent_factory("p")("hi"))
+    handoff, questionnaire = made
+    assert handoff["max_tokens"] == 32000
+    assert handoff["boto_client_config"].read_timeout == package.CALL_TIMEOUT_S
+    assert "boto_client_config" not in questionnaire
+    assert events == [(0, True), (2, False), (3, False)]
 
 
 # ---- routes ----
@@ -226,12 +392,10 @@ def env(monkeypatch):
     async def make(project_id):
         return Workspace(FakeRunner())
     monkeypatch.setattr(app_module, "make_workspace", make)
-
-    async def call(prompt):
-        return OUTPUT
-    monkeypatch.setattr(app_module, "handoff_writer_factory", lambda pid: call)
+    writer = {"call": _writer()}
+    monkeypatch.setattr(app_module, "handoff_writer_factory", lambda pid: writer["call"])
     with TestClient(app) as client:
-        yield client, s3
+        yield client, s3, writer
 
 
 def _seed(client, pid, files):
@@ -244,7 +408,7 @@ def _seed(client, pid, files):
     client.portal.call(seed)
 
 
-def _wait_ready(client, pid):
+def _wait_settled(client, pid):
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         body = client.get(f"/projects/{pid}/handoff/package").json()
@@ -255,13 +419,14 @@ def _wait_ready(client, pid):
 
 
 def test_route_generates_views_and_downloads(env):
-    client, _ = env
+    client, _, _ = env
     files = {p: f"# {p}\n" for p in B} | {"prototype/src/index.ts": "export {}\n"}
     _seed(client, "pkg-b", files)
 
     r = client.post("/projects/pkg-b/handoff/package")
     assert r.status_code == 202 and r.json()["status"] == "generating"
-    body = _wait_ready(client, "pkg-b")
+    assert [s["status"] for s in r.json()["steps"]] == ["pending", "pending", "pending"]
+    body = _wait_settled(client, "pkg-b")
     assert body["manifest"]["status"] == "ready"
     assert body["files"]["PRD.md"].startswith("# 매장")
     assert body["stale"] == []
@@ -276,8 +441,24 @@ def test_route_generates_views_and_downloads(env):
     assert not any(n.startswith("prototype/") or n.endswith("audit.md") for n in names)
 
 
+def test_route_resumes_from_the_failed_step(env):
+    client, _, writer = env
+    _seed(client, "pkg-resume", {p: f"# {p}\n" for p in B})
+    writer["call"] = _writer(fail_at="scope")
+    client.post("/projects/pkg-resume/handoff/package")
+    failed = _wait_settled(client, "pkg-resume")
+    assert failed["manifest"]["status"] == "failed" and failed["resumable"]
+
+    calls: list = []
+    writer["call"] = _writer(calls)
+    r = client.post("/projects/pkg-resume/handoff/package", json={"resume": True})
+    assert [s["status"] for s in r.json()["steps"]] == ["done", "done", "pending"]
+    assert _wait_settled(client, "pkg-resume")["manifest"]["status"] == "ready"
+    assert [step for step, _ in calls] == ["scope"]
+
+
 def test_route_refuses_to_generate_without_a_spec(env):
-    client, _ = env
+    client, _, _ = env
     _seed(client, "pkg-empty", {D + "envision/pain-point-analysis.md": "# x\n"})
     r = client.post("/projects/pkg-empty/handoff/package")
     assert r.status_code == 409
@@ -285,71 +466,7 @@ def test_route_refuses_to_generate_without_a_spec(env):
 
 
 def test_route_archive_is_404_before_a_package_exists(env):
-    client, _ = env
+    client, _, _ = env
     _seed(client, "pkg-none", {p: "# x\n" for p in B})
     assert client.get("/projects/pkg-none/handoff/package/archive").status_code == 404
     assert client.get("/projects/pkg-none/handoff/package").json()["manifest"] is None
-
-
-def _read_timeout():
-    from botocore.exceptions import ReadTimeoutError
-    return ReadTimeoutError(endpoint_url="https://bedrock-runtime.ap-northeast-2.amazonaws.com")
-
-
-@pytest.mark.parametrize("make", [
-    _read_timeout,
-    # 실측 모양: 스트림 읽기 시간 초과가 다른 예외의 원인으로 감싸져 올라온다.
-    lambda: _chain(RuntimeError("stream failed"), _read_timeout()),
-    lambda: TimeoutError("The read operation timed out"),
-])
-def test_a_wrapped_read_timeout_is_reported_as_a_timeout(make):
-    s3 = FakeS3Store()
-    state = assess(B, {})
-
-    async def call(prompt):
-        raise make()
-
-    async def go():
-        started = await package.start(s3, state)
-        return await package.run(s3, read=_workspace_reader({}), paths=B, readiness=state,
-                                 language="ko", call=call, started=started)
-    assert _run(go()).error == "timeout"
-
-
-def _chain(outer: Exception, cause: Exception) -> Exception:
-    outer.__cause__ = cause
-    return outer
-
-
-def test_the_handoff_writer_waits_as_long_as_the_generation_limit(monkeypatch):
-    """Strands 기본 읽기 제한(120초)으로는 큰 프로젝트의 첫 출력을 기다리지 못한다(실측)."""
-    import sys
-    import types
-
-    made = []
-
-    class FakeModel:
-        def __init__(self, **kwargs):
-            made.append(kwargs)
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        async def invoke_async(self, prompt):
-            return "ok"
-
-    strands = types.ModuleType("strands")
-    strands.Agent = FakeAgent
-    models = types.ModuleType("strands.models")
-    models.BedrockModel = FakeModel
-    monkeypatch.setitem(sys.modules, "strands", strands)
-    monkeypatch.setitem(sys.modules, "strands.models", models)
-    monkeypatch.setattr(app_module, "project_model", lambda pid: "model-x")
-
-    asyncio.run(app_module.handoff_writer_factory("p")("hi"))
-    asyncio.run(app_module.questionnaire_agent_factory("p")("hi"))
-    handoff, questionnaire = made
-    assert handoff["max_tokens"] == 32000
-    assert handoff["boto_client_config"].read_timeout == package.CALL_TIMEOUT_S
-    assert "boto_client_config" not in questionnaire

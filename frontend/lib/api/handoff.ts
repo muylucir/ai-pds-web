@@ -87,6 +87,22 @@ export interface SupplementUpdate {
 }
 
 export type PackageStatus = "generating" | "ready" | "failed" | "interrupted";
+export type StepStatus = "pending" | "running" | "done" | "failed";
+/** 생성 단계, 실행 순서대로. 서버 handoff/package.STEPS와 같다. */
+export type StepName = "prd" | "validation" | "scope";
+
+export interface Step {
+  name: StepName;
+  file: string;
+  status: StepStatus;
+  started_at: string | null;
+  finished_at: string | null;
+  /** 지금까지 받은 본문 글자 수. running인데 0이면 첫 출력을 기다리는 중이다. */
+  chars: number;
+  /** 본문 전에 모델이 생각을 내보내는 중. */
+  thinking: boolean;
+  error: string | null;
+}
 
 export interface Finding {
   file: string;
@@ -102,6 +118,7 @@ export interface Manifest {
   error: string | null;
   origin: Origin | null;
   files: string[];
+  steps: Step[];
   findings: Finding[];
   truncated: string[];
 }
@@ -111,6 +128,8 @@ export interface PackageView {
   files: Record<string, string>;
   stale: string[];
   supplement_changed: boolean;
+  /** 실패·중단된 생성을 끝난 단계는 두고 이어서 할 수 있는가. */
+  resumable: boolean;
 }
 
 const base = (pid: string) => `/projects/${encodeURIComponent(pid)}/handoff`;
@@ -130,8 +149,13 @@ export async function putSupplement(pid: string, update: SupplementUpdate): Prom
   }))!;
 }
 
-export async function startPackage(pid: string): Promise<Manifest> {
-  return (await apiFetch<Manifest>(`${base(pid)}/package`, { method: "POST" }))!;
+/** 생성을 시작한다. `resume`이면 지난 시도의 끝난 단계를 두고 나머지만 한다 — 원본이 그사이
+ *  바뀌었으면 서버가 처음부터 한다. */
+export async function startPackage(pid: string, resume = false): Promise<Manifest> {
+  return (await apiFetch<Manifest>(`${base(pid)}/package`, {
+    method: "POST",
+    body: JSON.stringify({ resume }),
+  }))!;
 }
 
 export async function getPackage(pid: string): Promise<PackageView> {
