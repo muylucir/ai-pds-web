@@ -19,7 +19,59 @@
 # 넘겨서 배포가 실패한 적이 있다), user-data를 편집하면 EC2가 인스턴스 교체를
 # 요구해서 protos/·workspaces/의 로컬 산출물이 날아간다. 리포 파일이면 이 스크립트를
 # 고치는 것 자체가 `aipds-update`로 반영된다.
+#
+# **시험 브랜치(개발자용).** `sudo aipds-update <브랜치>`는 배포 브랜치 대신 그 브랜치의
+# 원격 최신 커밋으로 맞춘다 — 큰 변경을 운영 전에 이 인스턴스에서 확인하려는 것이다.
+# 인자 없이 다시 돌리면 배포 브랜치(/etc/aipds-deploy.env의 BRANCH)로 돌아간다. 같은
+# 인스턴스이므로 실제 사용자와 실제 데이터 위에서 도는 시험이다: 시험 브랜치가 S3에 쓴
+# 것과 새로 깐 pip 패키지는 돌아와도 남는다. 문서에는 적지 않는 모드라서 안전장치를
+# 이 스크립트의 출력에 둔다 — 실행할 때마다 "지금 브랜치 -> 대상"을 찍고, 시험 중이면
+# 끝에서 다시 알리고, 돌아올 때는 빠지는 커밋과 시험 직전 커밋을 보여 준다.
+#
+# 시험 브랜치로 갈 때는 자기 갱신을 하지 않는다. 시험 브랜치의 aipds-update가 옛
+# 것이거나 고장 나 있어도, 돌아오는 일은 늘 배포 브랜치의 스크립트가 한다.
 set -euo pipefail
+
+# 브랜치 이름의 허용목록. root로 도는 스크립트라 git의 규칙(check-ref-format)보다 좁게
+# 받는다 — git은 `$`, `;`, 따옴표 같은 문자도 브랜치 이름으로 허용한다.
+valid_branch() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] \
+    && git check-ref-format --branch "$1" >/dev/null 2>&1
+}
+
+# 무엇을 할지 정한다. 부작용이 없다(backend/tests/test_update_script.py가 직접 돌린다).
+#   인자: 배포 브랜치, 지금 브랜치, 대상 브랜치, 기록된 시험 직전 커밋(없으면 ""), 지금 커밋
+#   출력: mode=normal|enter|switch|leave, self_update=yes|no, record=<남길 시험 직전 커밋>
+# 시험 직전 커밋은 처음 시험에 들어갈 때 한 번 남기고, 시험 브랜치끼리 옮겨 다녀도 유지하며,
+# 배포 브랜치로 돌아오면 지운다.
+plan_switch() {
+  local deploy=$1 current=$2 target=$3 recorded=$4 head=$5
+  if [ "$target" = "$deploy" ]; then
+    if [ -n "$recorded" ] || [ "$current" != "$deploy" ]; then
+      echo "mode=leave"
+    else
+      echo "mode=normal"
+    fi
+    echo "self_update=yes"
+    echo "record="
+  elif [ -n "$recorded" ]; then
+    echo "mode=switch"
+    echo "self_update=no"
+    echo "record=$recorded"
+  else
+    echo "mode=enter"
+    echo "self_update=no"
+    echo "record=$head"
+  fi
+}
+
+# 직접 실행할 때만 아래가 돈다. 테스트는 이 파일을 source해서 위 두 함수만 쓴다.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
+if [ $# -gt 1 ]; then
+  echo "usage: aipds-update [branch]" >&2
+  exit 2
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "aipds-update: run as root (sudo aipds-update)" >&2
@@ -40,16 +92,42 @@ fi
 : "${SVC:?SVC missing in $ENV_FILE}"
 : "${BRANCH:?BRANCH missing in $ENV_FILE}"
 
+TARGET=${1:-$BRANCH}
+if ! valid_branch "$TARGET"; then
+  echo "aipds-update: not an allowed branch name: $TARGET" >&2
+  exit 2
+fi
+# 시험 직전 커밋의 기록. 돌아올 때 "어디서 떠났는가"를 보여 주려고 남긴다.
+STATE_DIR=/var/lib/aipds-update
+PRETEST_FILE=$STATE_DIR/pre-test-commit
+
 # git을 SVC로 도는 이유: 트리는 SVC 소유이고, root로 fetch하면 새 오브젝트가 root
 # 소유로 섞여 **다음** 갱신이 권한으로 막힌다 — 그 실패는 갱신할 때만 보인다.
 gitsvc() { runuser -u "$SVC" -- git -C "$APP" "$@"; }
 
 BEFORE=$(gitsvc rev-parse HEAD)
+CURRENT=$(gitsvc symbolic-ref --quiet --short HEAD || echo "(detached)")
+RECORDED=$(cat "$PRETEST_FILE" 2>/dev/null || true)
 gitsvc fetch --prune origin
+if ! gitsvc rev-parse --verify --quiet "origin/$TARGET^{commit}" >/dev/null; then
+  echo "aipds-update: origin/$TARGET not found — push the branch first" >&2
+  exit 1
+fi
+
+MODE=normal SELF_UPDATE=yes RECORD=
+while IFS='=' read -r key value; do
+  case $key in
+    mode) MODE=$value ;;
+    self_update) SELF_UPDATE=$value ;;
+    record) RECORD=$value ;;
+  esac
+done < <(plan_switch "$BRANCH" "$CURRENT" "$TARGET" "$RECORDED" "$BEFORE")
+
+echo "aipds-update: branch $CURRENT -> $TARGET"
 # -f: 인스턴스에서 손으로 고친 tracked 파일은 **되돌아간다.** 그것 없이는 그런 파일
 # 하나가 갱신 전체를 거부시킨다 — 워크숍 중에 그 상태로 멈추는 것이 더 나쁘다.
 # untracked(protos/·workspaces/·세션 상태)는 이 명령으로 지워지지 않는다.
-gitsvc checkout -f -B "$BRANCH" "origin/$BRANCH"
+gitsvc checkout -f -B "$TARGET" "origin/$TARGET"
 # AI-PLC 룰셋(steering-files/)은 상류 리포의 서브모듈이고, checkout은 gitlink만
 # 옮기고 **내용은 옮기지 않는다.** 이 줄을 빼면 룰 갱신이 조용히 반영되지 않는다.
 #
@@ -59,12 +137,47 @@ gitsvc checkout -f -B "$BRANCH" "origin/$BRANCH"
 gitsvc submodule update --init --recursive
 AFTER=$(gitsvc rev-parse HEAD)
 
+# 기록은 checkout이 성공한 **뒤**에 바꾼다 — 실패한 전환이 "시험 중"으로 남으면 안 된다.
+if [ -n "$RECORD" ]; then
+  mkdir -p "$STATE_DIR"
+  printf '%s\n' "$RECORD" > "$PRETEST_FILE"
+else
+  rm -f "$PRETEST_FILE"
+fi
+
+test_mode_notice() {
+  if [ "$TARGET" != "$BRANCH" ]; then
+    echo "aipds-update: TEST BRANCH — this instance runs '$TARGET', not '$BRANCH'." \
+         "Run 'sudo aipds-update' to go back."
+  fi
+}
+
+case $MODE in
+  enter)
+    echo "aipds-update: entering test branch '$TARGET' from $CURRENT at $BEFORE" ;;
+  switch)
+    echo "aipds-update: switching test branch $CURRENT -> $TARGET" \
+         "(before testing it was at $RECORDED)" ;;
+  leave)
+    echo "aipds-update: leaving test branch '$CURRENT' — back to '$BRANCH'"
+    if [ -n "$RECORDED" ]; then
+      echo "aipds-update: before testing it was at $RECORDED; '$BRANCH' is now $AFTER"
+    fi ;;
+esac
+
 if [ "$BEFORE" = "$AFTER" ]; then
   echo "aipds-update: already at $AFTER — nothing to do, services untouched"
+  test_mode_notice
   exit 0
 fi
 echo "aipds-update: $BEFORE -> $AFTER"
 gitsvc --no-pager log --oneline "$BEFORE..$AFTER"
+# 브랜치를 옮기면 들어오는 커밋만이 아니라 **빠지는** 커밋도 있다(시험 브랜치에서 돌아올
+# 때가 그렇다). 그것을 보여 주지 않으면 무엇이 사라졌는지 모른다.
+if [ -n "$(gitsvc rev-list "$AFTER..$BEFORE")" ]; then
+  echo "aipds-update: leaving these commits:"
+  gitsvc --no-pager log --oneline "$AFTER..$BEFORE"
+fi
 
 changed() { ! gitsvc diff --quiet "$BEFORE" "$AFTER" -- "$@"; }
 
@@ -79,8 +192,9 @@ FRONTEND_PATHS=(frontend/
   ':(exclude)frontend/vitest.config.ts' ':(exclude)frontend/vitest.setup.ts'
   ':(exclude)frontend/playwright.config.ts')
 
-# 이 스크립트 자신이 바뀌었으면 새 것을 깔아 둔다(다음 실행부터 적용된다).
-if changed infra/scripts/aipds-update; then
+# 이 스크립트 자신이 바뀌었으면 새 것을 깔아 둔다(다음 실행부터 적용된다). 배포 브랜치로
+# 갈 때만이다 — 시험 브랜치의 사본을 깔면 돌아오는 일을 그 사본이 하게 된다(헤더 참조).
+if [ "$SELF_UPDATE" = yes ] && changed infra/scripts/aipds-update; then
   install -m 755 "$APP/infra/scripts/aipds-update" /usr/local/bin/aipds-update
   echo "aipds-update: self-updated — the next run uses the new script"
 fi
@@ -130,4 +244,5 @@ if changed "${FRONTEND_PATHS[@]}"; then
   echo "aipds-update: frontend rebuilt and restarted"
 fi
 
-echo "aipds-update: now at $AFTER"
+echo "aipds-update: now at $AFTER on $TARGET"
+test_mode_notice
