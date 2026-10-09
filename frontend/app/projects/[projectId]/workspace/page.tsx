@@ -13,6 +13,7 @@ import { OpenDocButton } from "@/components/workspace/OpenDocButton";
 import { WelcomeCard } from "@/components/workspace/WelcomeCard";
 import { AttachmentChips } from "@/components/workspace/AttachmentChips";
 import { QuestionForm } from "@/components/questions/QuestionForm";
+import { HandoffReadyBanner } from "@/components/handoff/HandoffReadyBanner";
 import { getState, uploadFile } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
@@ -40,6 +41,12 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const { modelLabel, language } = useProjectMeta(projectId);
   const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, prototypeReady, changedPaths, historyLoading, context, activeDoc, turnSeq } =
     useWorkspaceStream(projectId);
+  // 스테이지가 바뀌면 상태 파일을 다시 읽는다 — GTM이 끝나는 순간 인계 배너가 떠야 하고,
+  // 그 판정은 라이브 이벤트가 아니라 상태 파일(capability)이 한다(HandoffReadyBanner 헤더).
+  const reloadState = state.reload;
+  useEffect(() => {
+    if (stages.length) reloadState();
+  }, [stages.length, reloadState]);
   // Show the Path A/B welcome starter only once history has finished loading
   // (avoids a flash of the welcome card before restored history arrives) AND
   // the timeline is genuinely empty — a pending interrupt or an in-flight
@@ -173,6 +180,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               문장이 나오지 않아 사용자가 Discovery에서 막혔다(실측 keumkang-v5:
               Prototypes 탭 안내 0회). 닫기 버튼을 두지 않은 것도 의도다: 다음
               단계로 가는 유일한 문이므로 실수로 닫으면 다시 막힌다. */}
+          <HandoffReadyBanner projectId={projectId} state={state.data} className="m-3" />
           {prototypeReady && (
             <div
               role="status"

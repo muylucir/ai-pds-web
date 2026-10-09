@@ -2,6 +2,7 @@
 import { use } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { GetStartedBanner } from "@/components/dashboard/GetStartedBanner";
+import { HandoffReadyBanner } from "@/components/handoff/HandoffReadyBanner";
 import { ProgressCards } from "@/components/dashboard/ProgressCards";
 import { StageTimeline } from "@/components/dashboard/StageTimeline";
 import { ArtifactsPanel } from "@/components/dashboard/ArtifactsPanel";
@@ -61,6 +62,7 @@ export default function DashboardPage({ params }: { params: Promise<{ projectId:
             </div>
 
             {notStarted && <GetStartedBanner projectId={projectId} />}
+            <HandoffReadyBanner projectId={projectId} state={state.data} className="mb-6" />
 
             <ProgressCards
               state={state.data}

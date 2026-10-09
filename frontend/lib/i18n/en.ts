@@ -518,6 +518,8 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.title": "Development handoff",
   "handoff.lead": "Turns the Discovery results into a package any coding assistant can take as input. It holds what to build, not technology choices (languages, databases, infrastructure).",
   "handoff.loadFailed": "Could not load the handoff status.",
+  "handoff.ready.banner": "Go-to-Market is done — build the development handoff package in the Handoff tab.",
+  "handoff.ready.cta": "Go to Handoff",
   "handoff.readiness.title": "Handoff readiness",
   "handoff.origin.A.1": "Started from pain points · single solution (Path A.1)",
   "handoff.origin.A.2": "Started from pain points · several solutions (Path A.2)",

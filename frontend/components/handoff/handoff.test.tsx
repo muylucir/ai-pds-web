@@ -9,6 +9,7 @@ import type { PackageView, Readiness, SupplementView } from "@/lib/api/handoff";
 import { PackagePanel } from "./PackagePanel";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { SupplementForm, toUpdate } from "./SupplementForm";
+import { HandoffReadyBanner, discoveryFinished } from "./HandoffReadyBanner";
 
 const D = "aiplc-docs/discovery/";
 
@@ -200,5 +201,32 @@ describe("handoff api", () => {
     server.use(http.get(`${base}/package`, () => HttpResponse.json(
       { manifest: null, files: {}, stale: [], supplement_changed: false })));
     expect((await getPackage("p1")).manifest).toBeNull();
+  });
+});
+
+describe("HandoffReadyBanner", () => {
+  const state = (gtm: "completed" | "in_progress" | "pending") => ({
+    project_type: "Greenfield", current_stage: null, stages: [],
+    capabilities: [
+      { key: "prototype", name: "Prototype", status: "completed" as const, note: null },
+      { key: "go_to_market", name: "Go-to-Market", status: gtm, note: null },
+    ],
+  });
+
+  it("opens the door to the handoff tab once Go-to-Market is completed", () => {
+    render(<HandoffReadyBanner projectId="p1" state={state("completed")} />);
+    expect(screen.getByRole("link", { name: "인계 탭으로 가기" })).toHaveAttribute("href", "/projects/p1/handoff");
+    expect(screen.getByRole("status")).toHaveTextContent("Go-to-Market까지 끝났습니다");
+  });
+
+  it("stays hidden while Go-to-Market is unfinished — e.g. only an interim Discovery Document", () => {
+    // test2222: "Discovery Document 중간 통합"은 끝났지만 GTM은 남아 capability가 in_progress다.
+    render(<HandoffReadyBanner projectId="p1" state={state("in_progress")} />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("tolerates a state without capabilities", () => {
+    expect(discoveryFinished({ project_type: null, current_stage: null, stages: [] } as never)).toBe(false);
+    expect(discoveryFinished(null)).toBe(false);
   });
 });
