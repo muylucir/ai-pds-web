@@ -83,8 +83,12 @@ const VIEW: SupplementView = {
       answer: { text: "처리 시간 절반", unknown: false, updated_at: "t" } },
   ],
   confirmations: [
-    { key: `${STRATEGY}#1`, file: STRATEGY, number: 1, ask: "수익 모델은?", answer: "A",
-      confirmed_at: null },
+    { key: `${STRATEGY}#1`, file: STRATEGY, number: 1, ask: "수익 모델은?", answer: "A: 첫 해는 할인",
+      stage: "product_strategy", choices: ["구독형 — 매장 수 기준 월 과금"],
+      note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null },
+    { key: `${D}envision/prfaq-clarifying-questions.md#1`, file: `${D}envision/prfaq-clarifying-questions.md`,
+      number: 1, ask: "제품명은?", answer: "A", stage: "envision",
+      choices: ["메가마트 안전ON"], note: "페인 포인트 분석 기반 제안", remark: "", confirmed_at: "t" },
   ],
 };
 
@@ -111,15 +115,36 @@ describe("SupplementForm", () => {
         "assumptions.failure_reasons": { text: "", unknown: true },
         "goals.success": { text: "처리 시간 절반", unknown: false },
       },
-      confirmed: [`${STRATEGY}#1`],
+      confirmed: [`${D}envision/prfaq-clarifying-questions.md#1`, `${STRATEGY}#1`],
     });
+  });
+
+  it("shows the decision itself, grouped by Discovery stage", () => {
+    // 실측(industry-safe-law): 확인 항목 40개가 "고른 답: A · strategy-questions.md"로만 보였다.
+    render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
+                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    expect(screen.getByText("구독형 — 매장 수 기준 월 과금")).toBeInTheDocument();
+    expect(screen.getByText("첫 해는 할인")).toBeInTheDocument();
+    expect(screen.getByText("AI 제안 근거: Discovery 결과 기반 제안")).toBeInTheDocument();
+    const summaries = [...document.querySelectorAll("summary")].map((el) => el.textContent);
+    // 단계 순서(PR/FAQ가 제품 전략보다 앞)와 단계별 확인 수.
+    expect(summaries).toEqual(["PR/FAQ · 문제 정의 1건 · 확인 1", "제품 전략 1건 · 확인 0"]);
+    expect(screen.queryByText(/strategy-questions\.md/)).not.toBeInTheDocument();
+  });
+
+  it("counts only the gap questions as progress — confirming is optional", () => {
+    render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
+                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    expect(screen.getByText(/^1 \/ 3 답함/)).toBeInTheDocument();
+    expect(screen.getByText("선택")).toBeInTheDocument();
   });
 
   it("sends the workspace as the only way to change content", () => {
     render(<SupplementForm view={VIEW} workspaceHref="/projects/p/workspace" busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
-    expect(screen.getByRole("link", { name: "워크스페이스에서 고치기 →" }))
-      .toHaveAttribute("href", "/projects/p/workspace");
+    for (const link of screen.getAllByRole("link", { name: "워크스페이스에서 고치기 →" })) {
+      expect(link).toHaveAttribute("href", "/projects/p/workspace");
+    }
   });
 
   it("drops blank answers from the update", () => {

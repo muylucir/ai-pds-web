@@ -189,6 +189,7 @@ def _facts(readiness: Readiness, record: supplement_mod.Supplement) -> dict:
     confirmed = set(record.confirmed)
     accepted = [
         {"file": i.file, "question": i.number, "ask": i.ask, "answer": i.answer,
+         "chosen": i.choices,
          "confirmed_by_pm": supplement_mod.confirmation_key(i.file, i.number) in confirmed}
         for i in readiness.ai_defaults.items
     ]

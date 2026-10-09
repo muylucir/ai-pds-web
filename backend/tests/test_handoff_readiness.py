@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 import aipds.app as app_module
@@ -260,3 +261,27 @@ def test_route_reads_the_workspace(monkeypatch):
 
 def test_route_unknown_project_is_404():
     assert client.get("/projects/nope/handoff/readiness").status_code == 404
+
+
+def test_accepted_suggestions_carry_the_decision_not_just_the_letter():
+    """실측(industry-safe-law): 확인 항목 40개가 전부 "고른 답: A"로 보여 무엇을 확인하는지 알 수 없었다."""
+    path = D + "product-strategy/strategy-questions.md"
+    first, second, fourth = assess([path], {path: QUESTIONS}).ai_defaults.items
+    assert first.stage == "product_strategy"
+    assert first.choices == ["Subscription"]
+    assert first.note == "제안: 페인 포인트 분석에서 도출"
+    assert first.remark == ""
+    assert second.choices == ["Premium"] and second.remark == "단, 첫 해는 할인"
+    assert fourth.choices == ["Seoul", "Daegu"] and fourth.note == "Suggested"
+
+
+@pytest.mark.parametrize("path, stage", [
+    (D + "envision/prfaq-clarifying-questions.md", "envision"),
+    (D + "go-to-market/gtm-clarification-questions.md", "go_to_market"),
+    (D + "prototype/build-decision-questions.md", "prototype"),
+    (D + "prototypes/a/prototype-context-questions.md", "prototype"),
+    (D + "discovery-mode-selection-questions.md", "other"),
+])
+def test_question_files_are_grouped_by_discovery_stage(path, stage):
+    from aipds.handoff.readiness import stage_of
+    assert stage_of(path) == stage
