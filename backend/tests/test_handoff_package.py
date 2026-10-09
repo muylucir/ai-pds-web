@@ -106,6 +106,14 @@ def test_later_steps_get_the_prd_so_ids_match():
     assert "<<<PRD>>>" not in first
 
 
+def test_each_step_is_told_its_length_budget():
+    """상한 없이 쓴 PRD가 25,000자를 넘어 출력 상한에 잘렸다(실측 industry-safe-law)."""
+    for step, budget in (("prd", "12,000"), ("validation", "5,000"), ("scope", "6,000")):
+        prompt = package.build_prompt(step, language="ko", readiness=assess(B, {}),
+                                      record=supplement.Supplement(), sources={})
+        assert f"At most about {budget} characters" in prompt
+
+
 def test_english_projects_get_english_labels():
     prompt = package.build_prompt("prd", language="en", readiness=assess(B, {}),
                                   record=supplement.Supplement(), sources={})
@@ -340,6 +348,15 @@ def test_a_wrapped_read_timeout_is_reported_as_a_timeout(make):
     assert failed.steps[0].error == "timeout"
 
 
+def test_hitting_the_output_cap_is_reported_as_too_long():
+    class MaxTokensReachedException(Exception):
+        pass
+    s3 = FakeS3Store()
+    failed = _run(_generate(s3, {}, _writer(fail_at="prd", error=_chain(
+        RuntimeError("agent loop"), MaxTokensReachedException("Model stopped generating")))))
+    assert failed.error == "too_long" and failed.steps[0].error == "too_long"
+
+
 def test_the_handoff_writer_waits_long_and_reports_stream_progress(monkeypatch):
     """Strands 기본 읽기 제한(120초)으로는 큰 프로젝트의 첫 출력을 기다리지 못한다(실측).
     진행은 Strands 콜백의 본문 조각(data)과 생각(reasoningText)에서 온다."""
@@ -358,7 +375,8 @@ def test_the_handoff_writer_waits_long_and_reports_stream_progress(monkeypatch):
 
         async def invoke_async(self, prompt):
             if self.callback:
-                self.callback(reasoningText="음")
+                # Opus 5.5의 생각은 기본으로 내용 없이 온다(display "omitted") — 표시만 있다.
+                self.callback(reasoningText="", delta={}, reasoning=True)
                 self.callback(data="안녕")
                 self.callback(data="하세요")
             return "ok"
@@ -375,7 +393,7 @@ def test_the_handoff_writer_waits_long_and_reports_stream_progress(monkeypatch):
     asyncio.run(app_module.handoff_writer_factory("p")("hi", lambda n, t: events.append((n, t))))
     asyncio.run(app_module.questionnaire_agent_factory("p")("hi"))
     handoff, questionnaire = made
-    assert handoff["max_tokens"] == 32000
+    assert handoff["max_tokens"] == 64000
     assert handoff["boto_client_config"].read_timeout == package.CALL_TIMEOUT_S
     assert "boto_client_config" not in questionnaire
     assert events == [(0, True), (2, False), (3, False)]
