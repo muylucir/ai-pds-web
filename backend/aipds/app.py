@@ -546,13 +546,14 @@ def handoff_writer_factory(project_id: str):
 
 def one_shot_agent_factory(project_id: str, *, max_tokens: int,
                            read_timeout: int | None = None):
-    """그 프로젝트의 모델로 도는 `async (prompt) -> str`. 도구도 세션도 없다.
+    """그 프로젝트의 모델로 도는 `async (prompt, progress=None) -> str`. 도구도 세션도 없다.
 
-    `read_timeout`이 None이면 Strands 기본값(120초)이다.
+    `read_timeout`이 None이면 Strands 기본값(120초)이다. `progress(글자 수, 생각 중)`를 주면
+    스트림 조각마다 부른다 — 인계 패키지가 단계의 진행을 화면에 보이는 데 쓴다.
     """
     model_id = project_model(project_id)
 
-    async def call(prompt: str) -> str:
+    async def call(prompt: str, progress=None) -> str:
         if not model_id:
             # 여기가 유일하게 모델을 필수로 요구하는 지점이다(다른 둘은 None을
             # SDK 기본값으로 넘긴다). 라우트가 502로 감싸고 이 문장이 로그에
@@ -569,7 +570,15 @@ def one_shot_agent_factory(project_id: str, *, max_tokens: int,
                 read_timeout=read_timeout, connect_timeout=10,
                 retries={"max_attempts": 3, "mode": "standard"})
         model = BedrockModel(model_id=model_id, max_tokens=max_tokens, **client)
-        agent = Agent(model=model, tools=[], callback_handler=None)
+
+        def on_event(**event) -> None:
+            text = event.get("data")
+            if isinstance(text, str) and text:
+                progress(len(text), False)
+            elif event.get("reasoningText"):
+                progress(0, True)
+        agent = Agent(model=model, tools=[],
+                      callback_handler=on_event if progress is not None else None)
         result = await agent.invoke_async(prompt)
         return str(result)
     return call

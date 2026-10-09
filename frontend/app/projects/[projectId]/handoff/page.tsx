@@ -7,6 +7,7 @@
 "use client";
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
+import { GenerationProgress } from "@/components/handoff/GenerationProgress";
 import { PackagePanel } from "@/components/handoff/PackagePanel";
 import { ReadinessPanel } from "@/components/handoff/ReadinessPanel";
 import { SupplementForm } from "@/components/handoff/SupplementForm";
@@ -65,14 +66,13 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
   }, [status]);
 
   // 첫 화면: 패키지가 있으면 그것을, 없으면 준비 상태를. 사용자가 고른 뒤에는 따라간다.
-  const shown: Mode = mode ?? (status === "ready" || status === "failed" || status === "interrupted"
-    ? "package" : "status");
+  const shown: Mode = mode ?? (status === "ready" ? "package" : "status");
 
-  const generate = async () => {
+  const generate = async (resume = false) => {
     setActionError(null);
     try {
-      const manifest = await startPackage(projectId);
-      setPkg({ manifest, files: {}, stale: [], supplement_changed: false });
+      const manifest = await startPackage(projectId, resume);
+      setPkg({ manifest, files: {}, stale: [], supplement_changed: false, resumable: false });
       setMode("status");
     } catch {
       setActionError(t("handoff.generateFailed"));
@@ -125,6 +125,12 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
         </div>
 
         {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
+
+        {/* 생성 중이거나 실패·중단됐으면 단계별 진행을 먼저 보인다. 보완 질문을 쓰는 중에는 가리지 않는다. */}
+        {pkg?.manifest && status !== "ready" && shown !== "supplement" && (
+          <GenerationProgress pkg={pkg} busy={busy || generating}
+                              onResume={() => void generate(true)} onRestart={() => void generate(false)} />
+        )}
 
         {readiness.error ? (
           <p className="text-sm text-rose-600">{t("handoff.loadFailed")}</p>
