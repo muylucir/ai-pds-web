@@ -563,6 +563,8 @@ export const ko = {
   "handoff.title": "개발 인계",
   "handoff.lead": "Discovery 결과를 어떤 코딩 어시스턴트에도 넣을 수 있는 패키지로 만듭니다. 기술 선택(언어·DB·인프라)은 담지 않고, 무엇을 만들지만 담습니다.",
   "handoff.loadFailed": "인계 상태를 불러오지 못했습니다.",
+  "handoff.ready.banner": "Go-to-Market까지 끝났습니다 — 개발 인계 패키지는 인계 탭에서 만듭니다.",
+  "handoff.ready.cta": "인계 탭으로 가기",
   "handoff.readiness.title": "인계 준비 상태",
   "handoff.origin.A.1": "pain point에서 출발 · 단일 해법(Path A.1)",
   "handoff.origin.A.2": "pain point에서 출발 · 여러 해법(Path A.2)",
