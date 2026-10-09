@@ -72,6 +72,7 @@ describe("ReadinessPanel", () => {
 
 const STRATEGY = `${D}product-strategy/strategy-questions.md`;
 const VIEW: SupplementView = {
+  has_package: false,
   questions: [
     { id: "problem.evidence", section: "problem",
       answer: { text: "인터뷰 5명", unknown: false, updated_at: "t" } },
@@ -85,10 +86,11 @@ const VIEW: SupplementView = {
   confirmations: [
     { key: `${STRATEGY}#1`, file: STRATEGY, number: 1, ask: "수익 모델은?", answer: "A: 첫 해는 할인",
       stage: "product_strategy", choices: ["구독형 — 매장 수 기준 월 과금"],
-      note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null },
+      note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null, in_prd: [] },
     { key: `${D}envision/prfaq-clarifying-questions.md#1`, file: `${D}envision/prfaq-clarifying-questions.md`,
       number: 1, ask: "제품명은?", answer: "A", stage: "envision",
-      choices: ["메가마트 안전ON"], note: "페인 포인트 분석 기반 제안", remark: "", confirmed_at: "t" },
+      choices: ["메가마트 안전ON"], note: "페인 포인트 분석 기반 제안", remark: "", confirmed_at: "t",
+      in_prd: [] },
   ],
 };
 
@@ -130,6 +132,28 @@ describe("SupplementForm", () => {
     // 단계 순서(PR/FAQ가 제품 전략보다 앞)와 단계별 확인 수.
     expect(summaries).toEqual(["PR/FAQ · 문제 정의 1건 · 확인 1", "제품 전략 1건 · 확인 0"]);
     expect(screen.queryByText(/strategy-questions\.md/)).not.toBeInTheDocument();
+  });
+
+  it("puts the decisions the PRD actually used first, with the PRD line they became", () => {
+    const view: SupplementView = {
+      ...VIEW, has_package: true,
+      confirmations: VIEW.confirmations.map((c) => c.number === 1 && c.stage === "product_strategy"
+        ? { ...c, in_prd: ["G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상"] } : c),
+    };
+    render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
+                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    expect(screen.getByText("PRD에 들어간 AI 제안 1건")).toBeInTheDocument();
+    expect(screen.getByText("G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상")).toBeInTheDocument();
+    expect(screen.getByText("PRD에 직접 쓰이지 않은 결정 1건")).toBeInTheDocument();
+    // PRD에 들어간 것은 접히지 않고, 나머지만 단계별로 접힌다.
+    const summaries = [...document.querySelectorAll("summary")].map((el) => el.textContent);
+    expect(summaries).toEqual(["PR/FAQ · 문제 정의 1건 · 확인 1"]);
+  });
+
+  it("explains that a package moves the used decisions up when there is none yet", () => {
+    render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
+                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    expect(screen.getByText(/패키지를 한 번 만들면/)).toBeInTheDocument();
   });
 
   it("counts only the gap questions as progress — confirming is optional", () => {

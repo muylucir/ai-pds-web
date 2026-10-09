@@ -488,3 +488,82 @@ def test_route_archive_is_404_before_a_package_exists(env):
     _seed(client, "pkg-none", {p: "# x\n" for p in B})
     assert client.get("/projects/pkg-none/handoff/package/archive").status_code == 404
     assert client.get("/projects/pkg-none/handoff/package").json()["manifest"] is None
+
+
+# ---- PRD가 인용한 AI 제안 ----
+
+_PRD_WITH_CITATIONS = """# 메가마트 안전ON PRD
+
+## 3. 목표와 성공 지표
+
+| ID | 목표 | 등급 · 출처 |
+|---|---|---|
+| G-01 | 담당자 투입 시간 절감: 파일럿 90일 30% 이상 | AI 제안 수락 · aiplc-docs/discovery/product-strategy/strategy-questions.md Q1 |
+| G-02 | 건별 완료율 95% 이상 | PM 결정 · aiplc-docs/discovery/product-strategy/strategy-questions.md Q3 |
+
+## 5. 요구사항과 수용 기준
+
+- 2027년 상반기 3개 지점 파일럿 [AI 제안 수락 · aiplc-docs/discovery/product-strategy/strategy-questions.md Q2·Q4]
+- R-03 엑셀 명단 업로드 [AI 제안 수락 · strategy-questions.md Q99]
+"""
+
+
+def test_the_prd_citations_pick_out_which_ai_suggestions_became_requirements():
+    """실측(industry-safe-law): PRD의 "AI 제안 수락" 26줄이 40개 중 19개 질문을 가리켰다."""
+    path = D + "product-strategy/strategy-questions.md"
+    state = assess([path], {path: QUESTIONS})
+    cited = package.cited_suggestions(_PRD_WITH_CITATIONS, state, "ko")
+    assert cited == {
+        path + "#1": ["G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상"],
+        path + "#2": ["2027년 상반기 3개 지점 파일럿"],
+        path + "#4": ["2027년 상반기 3개 지점 파일럿"],
+    }
+    # Q3은 PM 결정으로 인용됐고, Q99는 수락 목록에 없다 — 둘 다 확인 대상이 아니다.
+
+
+def test_the_form_lists_the_citations_of_the_saved_prd():
+    s3 = FakeS3Store()
+    path = D + "product-strategy/strategy-questions.md"
+    paths = B + [path]
+    files = {p: f"# {p}\n" for p in B} | {path: QUESTIONS}
+
+    async def call(prompt, progress=None):
+        step = _step_of(prompt)
+        return _PRD_WITH_CITATIONS if step == "prd" else DOCS[step]
+
+    async def go():
+        state = assess(paths, {path: QUESTIONS})
+        started = await package.start(s3, state)
+        return await package.run(s3, read=_workspace_reader(files), paths=paths, readiness=state,
+                                 language="ko", call=call, started=started), state
+    done, state = _run(go())
+    assert done.status == "ready"
+    cited = package.cited_suggestions(s3.blobs[package.PACKAGE_PREFIX + "PRD.md"], state, "ko")
+    assert set(cited) == {path + "#1", path + "#2", path + "#4"}
+
+    view = supplement.view(state, supplement.Supplement(), cited)
+    assert view.has_package
+    by_number = {c.number: c.in_prd for c in view.confirmations}
+    assert by_number == {1: ["G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상"],
+                         2: ["2027년 상반기 3개 지점 파일럿"],
+                         4: ["2027년 상반기 3개 지점 파일럿"]}
+    assert not supplement.view(state, supplement.Supplement()).has_package
+
+
+def test_route_supplement_reads_citations_from_the_saved_prd(env):
+    """이 기능 이전에 만든 패키지도 PRD 파일만 있으면 인용을 보인다 — 저장된 값에 기대지 않는다."""
+    client, s3, writer = env
+    path = D + "product-strategy/strategy-questions.md"
+    _seed(client, "pkg-cited", {p: f"# {p}\n" for p in B} | {path: QUESTIONS})
+    assert client.get("/projects/pkg-cited/handoff/supplement").json()["has_package"] is False
+
+    async def call(prompt, progress=None):
+        step = _step_of(prompt)
+        return _PRD_WITH_CITATIONS if step == "prd" else DOCS[step]
+    writer["call"] = call
+    client.post("/projects/pkg-cited/handoff/package")
+    assert _wait_settled(client, "pkg-cited")["manifest"]["status"] == "ready"
+
+    body = client.get("/projects/pkg-cited/handoff/supplement").json()
+    assert body["has_package"] is True
+    assert {c["number"]: bool(c["in_prd"]) for c in body["confirmations"]} == {1: True, 2: True, 4: True}

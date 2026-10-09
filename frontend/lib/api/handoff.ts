@@ -90,9 +90,13 @@ export interface Confirmation {
   /** `"A: 부연"`의 부연. */
   remark: string;
   confirmed_at: string | null;
+  /** 이 결정이 된 PRD 항목들. 비어 있으면 PRD가 이 결정을 "AI 제안 수락"으로 인용하지 않았다. */
+  in_prd: string[];
 }
 
 export interface SupplementView {
+  /** 마지막 패키지가 있어서 `in_prd`를 믿을 수 있는가. */
+  has_package: boolean;
   questions: SupplementQuestion[];
   superseded: SupplementQuestion[];
   confirmations: Confirmation[];
