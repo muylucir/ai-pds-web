@@ -526,6 +526,20 @@ def questionnaire_agent_factory(project_id: str):
     종전에는 os.environ["ANTHROPIC_MODEL"]을 직접 읽어, 프로젝트별 모델을
     골라도 이 경로만 전역 env를 썼다.
     """
+    return one_shot_agent_factory(project_id, max_tokens=8000)
+
+
+def handoff_writer_factory(project_id: str):
+    """인계 패키지(PRD·검증 보고·남은 작업)를 한 번에 쓰는 단발 호출자.
+
+    문항 생성과 같은 모양이고 출력 상한만 다르다 — 세 문서를 한 응답에 담으므로 8000으로는
+    PRD 중간에서 잘린다. 호출은 요청 밖의 백그라운드 작업에서 돈다(handoff/package.py).
+    """
+    return one_shot_agent_factory(project_id, max_tokens=32000)
+
+
+def one_shot_agent_factory(project_id: str, *, max_tokens: int):
+    """그 프로젝트의 모델로 도는 `async (prompt) -> str`. 도구도 세션도 없다."""
     model_id = project_model(project_id)
 
     async def call(prompt: str) -> str:
@@ -538,7 +552,7 @@ def questionnaire_agent_factory(project_id: str):
                 "model_id nor ANTHROPIC_MODEL is set")
         from strands import Agent
         from strands.models import BedrockModel
-        model = BedrockModel(model_id=model_id, max_tokens=8000)
+        model = BedrockModel(model_id=model_id, max_tokens=max_tokens)
         agent = Agent(model=model, tools=[], callback_handler=None)
         result = await agent.invoke_async(prompt)
         return str(result)
