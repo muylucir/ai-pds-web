@@ -756,6 +756,11 @@ app.include_router(artifacts.router, dependencies=_AUTH)
 from aipds.routes import transfer  # noqa: E402
 app.include_router(transfer.router, dependencies=_AUTH)
 
+# 인계 탭. 산출물을 읽기만 하는 판정이라 artifacts와 성격이 같지만, 인계 패키지(PRD·
+# 보완 질문·내려받기)가 이 접두사 아래로 자란다(plans/2026-10-09-handoff-package.md).
+from aipds.routes import handoff  # noqa: E402
+app.include_router(handoff.router, dependencies=_AUTH)
+
 from aipds.routes import answers  # noqa: E402
 app.include_router(answers.router, dependencies=_AUTH)
 
