@@ -697,6 +697,7 @@ export const ko = {
   "handoff.progress.resume": "실패한 단계부터 다시",
   "handoff.progress.restart": "처음부터 다시",
   "handoff.progress.staleNote": "원본이나 보완 답이 바뀌어 처음부터 다시 만들어야 합니다.",
+  "handoff.pkg.error.too_long": "문서가 출력 상한을 넘어 끝까지 쓰지 못했습니다",
   "handoff.pkg.error.interrupted": "서버가 다시 시작되어 중단됐습니다",
   "handoff.pkg.view": "패키지 보기 →",
   "handoff.pkg.lint.tech": "기술어 검사",

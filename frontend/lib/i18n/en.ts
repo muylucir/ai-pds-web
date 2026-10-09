@@ -652,6 +652,7 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.progress.resume": "Resume from the failed step",
   "handoff.progress.restart": "Start over",
   "handoff.progress.staleNote": "Sources or gap answers changed, so the package must be generated from the start.",
+  "handoff.pkg.error.too_long": "the document hit the output limit before it was finished",
   "handoff.pkg.error.interrupted": "the server restarted",
   "handoff.pkg.view": "View package →",
   "handoff.pkg.lint.tech": "Technology terms",
