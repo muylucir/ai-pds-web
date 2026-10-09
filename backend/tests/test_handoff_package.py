@@ -289,3 +289,67 @@ def test_route_archive_is_404_before_a_package_exists(env):
     _seed(client, "pkg-none", {p: "# x\n" for p in B})
     assert client.get("/projects/pkg-none/handoff/package/archive").status_code == 404
     assert client.get("/projects/pkg-none/handoff/package").json()["manifest"] is None
+
+
+def _read_timeout():
+    from botocore.exceptions import ReadTimeoutError
+    return ReadTimeoutError(endpoint_url="https://bedrock-runtime.ap-northeast-2.amazonaws.com")
+
+
+@pytest.mark.parametrize("make", [
+    _read_timeout,
+    # 실측 모양: 스트림 읽기 시간 초과가 다른 예외의 원인으로 감싸져 올라온다.
+    lambda: _chain(RuntimeError("stream failed"), _read_timeout()),
+    lambda: TimeoutError("The read operation timed out"),
+])
+def test_a_wrapped_read_timeout_is_reported_as_a_timeout(make):
+    s3 = FakeS3Store()
+    state = assess(B, {})
+
+    async def call(prompt):
+        raise make()
+
+    async def go():
+        started = await package.start(s3, state)
+        return await package.run(s3, read=_workspace_reader({}), paths=B, readiness=state,
+                                 language="ko", call=call, started=started)
+    assert _run(go()).error == "timeout"
+
+
+def _chain(outer: Exception, cause: Exception) -> Exception:
+    outer.__cause__ = cause
+    return outer
+
+
+def test_the_handoff_writer_waits_as_long_as_the_generation_limit(monkeypatch):
+    """Strands 기본 읽기 제한(120초)으로는 큰 프로젝트의 첫 출력을 기다리지 못한다(실측)."""
+    import sys
+    import types
+
+    made = []
+
+    class FakeModel:
+        def __init__(self, **kwargs):
+            made.append(kwargs)
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        async def invoke_async(self, prompt):
+            return "ok"
+
+    strands = types.ModuleType("strands")
+    strands.Agent = FakeAgent
+    models = types.ModuleType("strands.models")
+    models.BedrockModel = FakeModel
+    monkeypatch.setitem(sys.modules, "strands", strands)
+    monkeypatch.setitem(sys.modules, "strands.models", models)
+    monkeypatch.setattr(app_module, "project_model", lambda pid: "model-x")
+
+    asyncio.run(app_module.handoff_writer_factory("p")("hi"))
+    asyncio.run(app_module.questionnaire_agent_factory("p")("hi"))
+    handoff, questionnaire = made
+    assert handoff["max_tokens"] == 32000
+    assert handoff["boto_client_config"].read_timeout == package.CALL_TIMEOUT_S
+    assert "boto_client_config" not in questionnaire

@@ -534,12 +534,22 @@ def handoff_writer_factory(project_id: str):
 
     문항 생성과 같은 모양이고 출력 상한만 다르다 — 세 문서를 한 응답에 담으므로 8000으로는
     PRD 중간에서 잘린다. 호출은 요청 밖의 백그라운드 작업에서 돈다(handoff/package.py).
+
+    읽기 제한도 다르다. Strands BedrockModel은 스트림에서 120초 동안 아무것도 오지 않으면
+    끊는다 — 실측(industry-safe-law, 원본 25개·154KB)에서 첫 출력이 그보다 늦게 나와
+    `The read operation timed out`으로 두 번 실패했다. 생성 상한(package.CALL_TIMEOUT_S)과
+    같은 값을 준다. 요청이 아니라 백그라운드 작업이라 오래 기다려도 막히는 것이 없다.
     """
-    return one_shot_agent_factory(project_id, max_tokens=32000)
+    from aipds.handoff.package import CALL_TIMEOUT_S
+    return one_shot_agent_factory(project_id, max_tokens=32000, read_timeout=CALL_TIMEOUT_S)
 
 
-def one_shot_agent_factory(project_id: str, *, max_tokens: int):
-    """그 프로젝트의 모델로 도는 `async (prompt) -> str`. 도구도 세션도 없다."""
+def one_shot_agent_factory(project_id: str, *, max_tokens: int,
+                           read_timeout: int | None = None):
+    """그 프로젝트의 모델로 도는 `async (prompt) -> str`. 도구도 세션도 없다.
+
+    `read_timeout`이 None이면 Strands 기본값(120초)이다.
+    """
     model_id = project_model(project_id)
 
     async def call(prompt: str) -> str:
@@ -552,7 +562,13 @@ def one_shot_agent_factory(project_id: str, *, max_tokens: int):
                 "model_id nor ANTHROPIC_MODEL is set")
         from strands import Agent
         from strands.models import BedrockModel
-        model = BedrockModel(model_id=model_id, max_tokens=max_tokens)
+        client: dict = {}
+        if read_timeout is not None:
+            from botocore.config import Config
+            client["boto_client_config"] = Config(
+                read_timeout=read_timeout, connect_timeout=10,
+                retries={"max_attempts": 3, "mode": "standard"})
+        model = BedrockModel(model_id=model_id, max_tokens=max_tokens, **client)
         agent = Agent(model=model, tools=[], callback_handler=None)
         result = await agent.invoke_async(prompt)
         return str(result)
