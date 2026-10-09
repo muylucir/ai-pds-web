@@ -47,7 +47,7 @@ README = "README.md"
 FILES = WRITTEN + (README,)
 
 #: 모델 호출 상한. 세 문서·32k 토큰이면 수 분이다. 그보다 오래 걸리면 걸린 것이다.
-_CALL_TIMEOUT_S = 900
+CALL_TIMEOUT_S = 900
 
 #: 재료로 싣지 않는 파일. 빌드 지시서는 프로토타입의 기술 선택을 담고(기술어가 새는 첫 경로),
 #: 디자인 컨텍스트는 화면의 생김새이고, 설문지는 답이 아니라 문항이다.
@@ -436,13 +436,14 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
         fitted, truncated = _fit(sources)
         prompt = build_prompt(language=language, readiness=readiness, record=record,
                               sources=fitted)
-        output = await asyncio.wait_for(call(prompt), timeout=_CALL_TIMEOUT_S)
+        output = await asyncio.wait_for(call(prompt), timeout=CALL_TIMEOUT_S)
         written = split_output(output)
     except Exception as exc:
         # 모델·AWS 메시지는 자격증명을 실을 수 있다 — 로그에만 남긴다(routes/surveys와 같은 정책).
         _log.exception("handoff package generation failed")
-        reason = "timeout" if isinstance(exc, asyncio.TimeoutError) else (
-            "malformed_output" if isinstance(exc, ValueError) else "generation_failed")
+        reason = ("timeout" if _is_timeout(exc)
+                  else "malformed_output" if isinstance(exc, ValueError)
+                  else "generation_failed")
         failed = started.model_copy(update={"status": "failed", "finished_at": _now(),
                                             "error": reason})
         await _save_manifest(s3, failed)
@@ -458,6 +459,23 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
     })
     await _save_manifest(s3, done)
     return done
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    """원인 사슬 어디에든 시간 초과가 있는가.
+
+    Bedrock 스트림의 읽기 시간 초과는 urllib3 → botocore 예외로 감싸져 올라온다(실측
+    industry-safe-law). 맨 위만 보면 "모델 호출 실패"로 보여 원인을 가린다.
+    """
+    from botocore.exceptions import ConnectTimeoutError, ReadTimeoutError
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, (TimeoutError, ReadTimeoutError, ConnectTimeoutError)):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
 
 
 async def view(s3: S3StoreLike, *, read: Reader, paths: Sequence[str],
