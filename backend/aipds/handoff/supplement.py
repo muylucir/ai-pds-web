@@ -100,6 +100,11 @@ class ConfirmationView(BaseModel):
     number: int
     ask: str
     answer: str
+    stage: str
+    #: 고른 보기의 문장 — PM이 확인하는 대상이다.
+    choices: list[str]
+    note: str
+    remark: str
     confirmed_at: str | None
 
 
@@ -133,7 +138,8 @@ def view(readiness: Readiness, record: Supplement) -> SupplementView:
         key = confirmation_key(item.file, item.number)
         confirmations.append(ConfirmationView(
             key=key, file=item.file, number=item.number, ask=item.ask,
-            answer=item.answer, confirmed_at=record.confirmed.get(key)))
+            answer=item.answer, stage=item.stage, choices=item.choices, note=item.note,
+            remark=item.remark, confirmed_at=record.confirmed.get(key)))
     return SupplementView(questions=active, superseded=superseded,
                           confirmations=confirmations)
 

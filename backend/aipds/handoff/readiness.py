@@ -85,11 +85,40 @@ class Section(BaseModel):
     sources: list[str]
 
 
+#: 질문 파일이 속한 Discovery 단계. 화면이 파일 이름 대신 단계로 묶는다 — PM에게
+#: `strategy-questions.md`는 의미가 없다.
+Stage = Literal["envision", "solution_analysis", "use_case_intake", "prioritization",
+                "prototype", "product_strategy", "go_to_market", "other"]
+_STAGE_DIRS: tuple[tuple[str, Stage], ...] = (
+    ("envision/", "envision"), ("solution-analysis/", "solution_analysis"),
+    ("use-case-intake/", "use_case_intake"), ("prioritization/", "prioritization"),
+    ("prototypes/", "prototype"), ("prototype/", "prototype"),
+    ("product-strategy/", "product_strategy"), ("go-to-market/", "go_to_market"),
+)
+
+
+def stage_of(path: str) -> Stage:
+    rest = path[len(_DISCOVERY):] if path.startswith(_DISCOVERY) else path
+    for prefix, stage in _STAGE_DIRS:
+        if rest.startswith(prefix):
+            return stage
+    return "other"
+
+
 class AcceptedSuggestion(BaseModel):
     file: str
     number: int
     ask: str
+    #: 답의 원문(`"A"`, `"A: 부연"`, `"A,C"`).
     answer: str
+    stage: Stage = "other"
+    #: 고른 보기의 문장 — 실제 결정이다. 여럿이면 순서대로. `answer`의 글자만으로는 PM이 무엇을
+    #: 확인하는지 알 수 없다(실측: 확인 항목 40개가 전부 "고른 답: A"로 보였다).
+    choices: list[str] = []
+    #: 보기의 `←` 뒤에 AI가 붙인 메모(예: "페인 포인트 분석 기반 제안").
+    note: str = ""
+    #: `"A: 부연"`의 부연 — PM이 보기에 덧붙인 말.
+    remark: str = ""
 
 
 class AiDefaults(BaseModel):
@@ -242,10 +271,14 @@ def _ai_defaults(contents: Mapping[str, str]) -> AiDefaults:
             if not marked:
                 continue
             suggested += 1
-            if _chosen_letters(question) & marked:
+            chosen = _chosen_letters(question)
+            if chosen & marked:
+                choices, note = _chosen_texts(question, chosen)
                 items.append(AcceptedSuggestion(
                     file=path, number=question.number,
-                    ask=question.ask or question.text, answer=question.answer))
+                    ask=question.ask or question.text, answer=question.answer,
+                    stage=stage_of(path), choices=choices, note=note,
+                    remark=_remark(question.answer or "")))
     return AiDefaults(answered=answered, suggested=suggested,
                       accepted=len(items), items=items)
 
@@ -253,6 +286,28 @@ def _ai_defaults(contents: Mapping[str, str]) -> AiDefaults:
 def _suggested_letters(question: Question) -> set[str]:
     return {o.letter for o in question.options
             if not o.is_other and (o.recommended or _SUGGESTION_MARK in o.text)}
+
+
+def _chosen_texts(question: Question, chosen: set[str]) -> tuple[list[str], str]:
+    """고른 보기의 문장들과, 그 보기에 AI가 붙인 `←` 메모(처음 것)."""
+    choices: list[str] = []
+    note = ""
+    for option in question.options:
+        if option.letter not in chosen or option.is_other:
+            continue
+        text, _, mark = option.text.partition(_SUGGESTION_MARK)
+        choices.append(text.strip())
+        if mark.strip() and not note:
+            note = mark.strip()
+    return choices, note
+
+
+def _remark(answer: str) -> str:
+    match = _SINGLE_LETTER.match(answer.strip())
+    if not match:
+        return ""
+    _, _, rest = answer.partition(":")
+    return rest.strip()
 
 
 def _chosen_letters(question: Question) -> set[str]:

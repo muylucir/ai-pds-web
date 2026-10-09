@@ -66,12 +66,29 @@ export interface SupplementQuestion {
   answer: SupplementAnswer | null;
 }
 
+/** 질문 파일이 속한 Discovery 단계. 서버 handoff/readiness.Stage와 같다. */
+export type Stage =
+  | "envision" | "solution_analysis" | "use_case_intake" | "prioritization"
+  | "prototype" | "product_strategy" | "go_to_market" | "other";
+export const STAGE_ORDER: Stage[] = [
+  "envision", "solution_analysis", "use_case_intake", "prioritization",
+  "prototype", "product_strategy", "go_to_market", "other",
+];
+
 export interface Confirmation {
   key: string;
   file: string;
   number: number;
   ask: string;
+  /** 답의 원문(`"A"`, `"A: 부연"`, `"A,C"`). 화면에는 `choices`를 보인다. */
   answer: string;
+  stage: Stage;
+  /** 고른 보기의 문장 — PM이 확인하는 대상이다. */
+  choices: string[];
+  /** 보기의 `←` 뒤에 AI가 붙인 메모. */
+  note: string;
+  /** `"A: 부연"`의 부연. */
+  remark: string;
   confirmed_at: string | null;
 }
 

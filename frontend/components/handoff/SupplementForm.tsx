@@ -8,8 +8,9 @@
 "use client";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { STAGE_ORDER } from "@/lib/api/handoff";
 import type {
-  SupplementQuestion, SupplementQuestionId, SupplementUpdate, SupplementView,
+  Confirmation, SupplementQuestion, SupplementQuestionId, SupplementUpdate, SupplementView,
 } from "@/lib/api/handoff";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
@@ -62,9 +63,16 @@ export function SupplementForm({
     return [...bySection.entries()];
   }, [view.questions]);
 
-  const total = view.questions.length + view.confirmations.length;
-  const done = view.questions.filter((q) => draft[q.id]?.unknown || draft[q.id]?.text.trim()).length
-    + view.confirmations.filter((c) => confirmed.has(c.key)).length;
+  // 진행률은 빈칸 질문만 센다. 확인은 선택 사항이다 — 분모에 넣으면 질문을 다 채워도 "아직 40개
+  // 남음"으로 보였다(실측 industry-safe-law).
+  const total = view.questions.length;
+  const done = view.questions.filter((q) => draft[q.id]?.unknown || draft[q.id]?.text.trim()).length;
+
+  const stages = useMemo(() => {
+    const byStage = new Map<string, Confirmation[]>();
+    for (const c of view.confirmations) byStage.set(c.stage, [...(byStage.get(c.stage) ?? []), c]);
+    return STAGE_ORDER.filter((st) => byStage.has(st)).map((st) => [st, byStage.get(st)!] as const);
+  }, [view.confirmations]);
 
   const set = (id: string, patch: Partial<Draft[string]>) =>
     setDraft((d) => ({ ...d, [id]: { ...(d[id] ?? { text: "", unknown: false }), ...patch } }));
@@ -126,33 +134,57 @@ export function SupplementForm({
 
       {view.confirmations.length > 0 && (
         <div className="mb-[18px]">
-          <h4 className="text-[15px] font-semibold text-slate-900">{t("handoff.supp.confirm.title")}</h4>
-          <p className="mb-2 text-[11px] text-slate-400">{t("handoff.supp.confirm.hint")}</p>
-          <div className="bg-white border border-slate-200 rounded-xl px-4 py-2">
-            {view.confirmations.map((c) => {
-              const on = confirmed.has(c.key);
-              return (
-                <div key={c.key} className="flex items-center justify-between gap-3 py-2 border-b border-slate-100 last:border-0 text-[13px]">
-                  <span>
-                    {c.ask}
-                    <small className="block text-[11px] text-slate-400">
-                      {t("handoff.supp.confirm.answer").replace("{answer}", c.answer)} · {c.file.split("/").pop()}
-                    </small>
-                  </span>
-                  <span className="flex gap-1.5 shrink-0">
-                    <button type="button" aria-pressed={on} onClick={() => toggle(c.key)}
-                            className={`px-2.5 py-1 rounded-lg border text-xs ${
-                              on ? "bg-sky-50 border-sky-200 text-sky-700 font-bold" : "border-slate-300 text-slate-600"}`}>
-                      {on ? t("handoff.supp.confirm.confirmed") : t("handoff.supp.confirm.yes")}
-                    </button>
-                    <Link href={workspaceHref} className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
-                      {t("handoff.supp.confirm.revise")}
-                    </Link>
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+          <h4 className="text-[15px] font-semibold text-slate-900">
+            {t("handoff.supp.confirm.title")}{" "}
+            <span className="text-xs font-normal text-slate-500">{t("handoff.supp.confirm.optional")}</span>
+          </h4>
+          <p className="mb-2.5 text-xs text-slate-500">{t("handoff.supp.confirm.hint")}</p>
+          {/* 단계별로 접어 둔다. 확인은 할 일이 아니라, 들여다보고 싶은 결정을 고르는 곳이다. */}
+          {stages.map(([stage, items]) => (
+            <details key={stage} className="mb-2 bg-white border border-slate-200 rounded-xl">
+              <summary className="px-4 py-2.5 cursor-pointer text-[13px] font-semibold text-slate-900">
+                {t(`handoff.stage.${stage}` as keyof Dict)}{" "}
+                <span className="font-normal text-slate-500">
+                  {t("handoff.supp.confirm.count").replace("{n}", String(items.length))
+                    .replace("{done}", String(items.filter((c) => confirmed.has(c.key)).length))}
+                </span>
+              </summary>
+              <ul>
+                {items.map((c) => {
+                  const on = confirmed.has(c.key);
+                  return (
+                    <li key={c.key} className="px-4 py-3 border-t border-slate-100">
+                      <p className="text-[13px] font-semibold text-slate-900">{c.ask}</p>
+                      <p className="mt-1 text-[13px] text-slate-800">
+                        <span className="mr-1.5 text-xs text-slate-400">{t("handoff.supp.confirm.chosen")}</span>
+                        {c.choices.length ? c.choices.join(" / ") : c.answer}
+                      </p>
+                      {c.remark && (
+                        <p className="mt-0.5 text-xs text-slate-600">
+                          <span className="mr-1.5 text-slate-400">{t("handoff.supp.confirm.remark")}</span>{c.remark}
+                        </p>
+                      )}
+                      {c.note && (
+                        <p className="mt-0.5 text-[11px] text-slate-400">
+                          {t("handoff.supp.confirm.note")}: {c.note}
+                        </p>
+                      )}
+                      <div className="mt-2 flex gap-1.5">
+                        <button type="button" aria-pressed={on} onClick={() => toggle(c.key)}
+                                className={`px-2.5 py-1 rounded-lg border text-xs ${
+                                  on ? "bg-sky-50 border-sky-200 text-sky-700 font-bold" : "border-slate-300 text-slate-600"}`}>
+                          {on ? t("handoff.supp.confirm.confirmed") : t("handoff.supp.confirm.yes")}
+                        </button>
+                        <Link href={workspaceHref} className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
+                          {t("handoff.supp.confirm.revise")}
+                        </Link>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </details>
+          ))}
         </div>
       )}
 
