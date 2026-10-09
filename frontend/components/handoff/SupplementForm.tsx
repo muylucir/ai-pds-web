@@ -96,7 +96,7 @@ export function SupplementForm({
       </div>
 
       {total === 0 ? (
-        <p className="text-sm text-slate-500">{t("handoff.supp.none")}</p>
+        <p className="mb-4 text-sm text-slate-500">{t("handoff.supp.none")}</p>
       ) : (
         <p className="mb-3.5 text-[13px] text-slate-500">
           {t("handoff.supp.progress").replace("{done}", String(done)).replace("{total}", String(total))}
