@@ -8,10 +8,10 @@ import { LanguageSwitcher } from "./LanguageSwitcher";
 import { UserMenu } from "./UserMenu";
 
 export type HeaderTab =
-  | "dashboard" | "workspace" | "review" | "prototypes" | "projects"
+  | "dashboard" | "workspace" | "review" | "prototypes" | "handoff" | "projects"
   // 매뉴얼은 프로젝트에 속하지 않는다. 탭 줄(대시보드·워크스페이스·문서
-  // 리뷰·프로토타입)에 넣지 않고 오른쪽 링크로 두는 이유가 그것이다 —
-  // 그 네 개는 프로젝트가 없으면 눌리지 않는 항목이고, 매뉴얼은 그 반대다.
+  // 리뷰·프로토타입·인계)에 넣지 않고 오른쪽 링크로 두는 이유가 그것이다 —
+  // 그 다섯 개는 프로젝트가 없으면 눌리지 않는 항목이고, 매뉴얼은 그 반대다.
   | "manual";
 
 
@@ -81,6 +81,7 @@ export function AppHeader({
             {tab("workspace", t("nav.workspace"), `${base}/workspace`)}
             {tab("review", t("nav.review"), `${base}/review`)}
             {tab("prototypes", t("nav.prototypes"), `${base}/prototypes`)}
+            {tab("handoff", t("nav.handoff"), `${base}/handoff`)}
           </nav>
         </div>
         <div className="flex items-center gap-3">
