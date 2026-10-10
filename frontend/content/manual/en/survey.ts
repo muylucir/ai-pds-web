@@ -68,7 +68,13 @@ this were adopted for real work**.
 
 Feature questions include a **"did not use it / not applicable"** option. Without it, respondents
 guess at features they never reached, and the rollup can no longer separate signal from noise. The
-notice respondents see says the same thing — judge the direction, not the polish.`,
+notice respondents see says the same thing — judge the direction, not the polish.
+
+When the spec lists target users, **the first question asks for the respondent's role**. The options
+are the spec's target users plus **"None of these / Other"**, and the question is required. Synthesizing
+results splits every other question by that answer — scores and choices into per-persona tables, and
+each free response tagged with the respondent's role, such as \`[store manager]\`. This is where a
+good overall average hiding a low score from the actual users shows up.`,
     },
     { kind: "heading", id: "limits-survey", text: "Limits" },
     {

@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 from aipds.survey.models import Questionnaire, Rollup, SurveyResponse
 from aipds.survey.report_labels import labels
-from aipds.survey.rollup import build_rollup
+from aipds.survey.rollup import build_rollup, persona_groups
 from aipds.proto import layout
 
 _log = logging.getLogger(__name__)
@@ -160,6 +160,14 @@ def _aggregate_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
     here -- in a file the next synthesis overwrites.
     """
     L = labels(language)
+    # 페르소나 문항이 있으면 다른 문항을 그 답으로 나눈다. 전체 평균만으로는
+    # "관리자는 5점, 실제 사용자인 담당자는 2점"이 3.5점 하나로 뭉개진다.
+    split = persona_groups(qn.questions, responses)
+    persona_q = split[0] if split else None
+    groups = [(name, build_rollup(qn.questions, rs, now).per_question)
+              for name, rs in split[1]] if split else []
+    persona_of = {r.response_id: r.answers.get(persona_q.id)
+                  for r in responses} if persona_q else {}
     lines = [
         f"# {L['title']}",
         "",
@@ -177,12 +185,17 @@ def _aggregate_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
         f"- **{L['started_at']}**: {qn.created_at}",
         *([f"- **{L['closed_at']}**: {qn.closed_at}"] if qn.closed_at else []),
         f"- **{L['collected_at']}**: {now}",
-        "",
-        L["note"],
-        "",
-        f"## {L['quantitative']}",
-        "",
     ]
+    if persona_q:
+        # 응답 0인 페르소나까지 적는다 — 대상 사용자 중 누구에게 닿지 않았는지가
+        # 여기서만 보인다.
+        counts = rollup.per_question[persona_q.id].counts
+        lines.append(f"- **{L['respondents']}**: "
+                     + " · ".join(f"{opt} {n}" for opt, n in counts.items()))
+    lines += ["", L["note"], ""]
+    if persona_q:
+        lines += [L["persona_note"], ""]
+    lines += [f"## {L['quantitative']}", ""]
 
     for idx, q in enumerate(qn.questions, start=1):
         stat = rollup.per_question.get(q.id)
@@ -190,22 +203,38 @@ def _aggregate_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
             continue
         lines.append(f"### Q{idx}. {q.text}")
         lines.append("")
+        # 페르소나 문항 자신은 나누지 않는다 — 나누면 대각선만 찬 표가 된다.
+        by_persona = [(name, per[q.id]) for name, per in groups] \
+            if groups and q.id != persona_q.id else []
         if stat.type == "scale":
             lines.append(f"{L['mean']} **{stat.mean}** {L['of_5']} "
                          f"({L['responses_n'].format(n=stat.n)})")
             lines.append("")
-            lines.append(f"| {L['score']} | {L['count']} |")
-            lines.append("|---|---|")
-            for score in ("5", "4", "3", "2", "1"):
-                lines.append(f"| {score} | {stat.distribution.get(score, 0)} |")
+            if by_persona:
+                lines.append(f"| {L['persona']} | {L['count']} | {L['mean']} "
+                             "| 5 | 4 | 3 | 2 | 1 |")
+                lines.append("|---|---|---|---|---|---|---|---|")
+                for name, st in [(L["overall"], stat)] + by_persona:
+                    dist = " | ".join(str(st.distribution.get(sc, 0))
+                                      for sc in ("5", "4", "3", "2", "1"))
+                    mean = st.mean if st.n else "-"
+                    lines.append(f"| {name} | {st.n} | {mean} | {dist} |")
+            else:
+                lines.append(f"| {L['score']} | {L['count']} |")
+                lines.append("|---|---|")
+                for score in ("5", "4", "3", "2", "1"):
+                    lines.append(f"| {score} | {stat.distribution.get(score, 0)} |")
         elif stat.type == "choice":
             lines.append(L["responses_n"].format(n=stat.n))
             lines.append("")
-            lines.append(f"| {L['option']} | {L['count']} | {L['ratio']} |")
-            lines.append("|---|---|---|")
+            extra = "".join(f" {name} ({L['responses_n'].format(n=st.n)}) |"
+                            for name, st in by_persona)
+            lines.append(f"| {L['option']} | {L['count']} | {L['ratio']} |{extra}")
+            lines.append("|---|---|---|" + "---|" * len(by_persona))
             for opt, n in stat.counts.items():
                 pct = f"{round(n / stat.n * 100)}%" if stat.n else "-"
-                lines.append(f"| {opt} | {n} | {pct} |")
+                cells = "".join(f" {st.counts.get(opt, 0)} |" for _, st in by_persona)
+                lines.append(f"| {opt} | {n} | {pct} |{cells}")
         else:
             lines.append(L["free_n"].format(n=stat.n))
         lines.append("")
@@ -221,7 +250,10 @@ def _aggregate_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
             lines.append("")
             # Every answer, not the rollup's 20-sample cap: this file is Step
             # 6's input, so truncating it would hide evidence.
-            answers = [str(r.answers[q.id]).strip() for r in
+            # 페르소나가 있으면 답마다 붙인다. 누구의 목소리인지가 이 답들을
+            # 근거로 쓸 때 가장 먼저 필요한 정보다.
+            answers = [(f"[{persona_of[r.response_id]}] " if persona_q else "")
+                       + str(r.answers[q.id]).strip() for r in
                        sorted(responses, key=lambda x: x.submitted_at)
                        if isinstance(r.answers.get(q.id), str)
                        and str(r.answers[q.id]).strip()]
