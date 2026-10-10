@@ -54,6 +54,12 @@ QUESTIONNAIRE_PROMPT_KO = """\
   feature" 행이 있다), 그 선택지가 없으면 응답자가 써 보지 않은 기능을
   추측으로 평가해 집계가 실제 신호와 잡음을 구별할 수 없게 된다.
 - 유도 질문(원하는 답을 암시하는 질문)을 쓰지 않는다.
+- `personas`에 응답자가 고를 대상 사용자 역할을 2~5개 넣는다. 명세의
+  `Target Users`에서 가져오고, 없으면 대상 고객 세그먼트에서 가져온다.
+  응답자가 자기 역할로 알아볼 수 있는 짧은 이름으로 쓴다(예: "점포 관리자").
+  "기타"는 넣지 마라 — 따로 붙는다. 이 목록으로 AI-PDS가 역할 문항을 직접
+  만들어 네 문항 앞에 두고, 집계가 그 답으로 다른 문항을 나눈다. 그러므로
+  `questions`에서 응답자의 역할을 묻지 마라 — 두 번 묻게 된다.
 
 문항 타입은 정확히 다음 3종만 사용한다:
 - "scale": 1~5 척도. options를 넣지 않는다.
@@ -61,7 +67,7 @@ QUESTIONNAIRE_PROMPT_KO = """\
 - "text": 자유 응답. options를 넣지 않는다.
 
 출력은 아래 형태의 JSON **하나만** 출력한다(설명·머리말·코드펜스 금지):
-{{"title": "...", "hypothesis": "...", "questions": [
+{{"title": "...", "hypothesis": "...", "personas": ["...", "..."], "questions": [
   {{"id": "q1", "text": "...", "type": "scale", "required": true}},
   {{"id": "q2", "text": "...", "type": "choice", "options": ["...", "..."], "required": true}},
   {{"id": "q3", "text": "...", "type": "text", "required": false}}
@@ -126,6 +132,13 @@ Requirements:
   features they never tried, which leaves the aggregate unable to tell signal
   from noise.
 - Do not write leading questions (questions that hint at the answer you want).
+- Put 2 to 5 target user roles for the respondent to pick from in `personas`.
+  Take them from the spec's `Target Users`, or from the target customer segment
+  if it has none. Use short names a respondent recognizes as their own role
+  (e.g. "store manager"). Do not include "other" — it is added separately.
+  AI-PDS itself puts a role question built from this list ahead of your
+  questions, and the aggregate splits every other question by its answer. So
+  `questions` must not ask for the respondent's role; that would ask it twice.
 
 Use exactly these three question types:
 - "scale": a 1-5 scale. Do not include options.
@@ -134,7 +147,7 @@ Use exactly these three question types:
 
 Output **only** one JSON object in the shape below (no explanation, no preamble,
 no code fence):
-{{"title": "...", "hypothesis": "...", "questions": [
+{{"title": "...", "hypothesis": "...", "personas": ["...", "..."], "questions": [
   {{"id": "q1", "text": "...", "type": "scale", "required": true}},
   {{"id": "q2", "text": "...", "type": "choice", "options": ["...", "..."], "required": true}},
   {{"id": "q3", "text": "...", "type": "text", "required": false}}
@@ -278,6 +291,55 @@ def build_prompt(prototype_md: str, language: str = "ko", *,
     return prompt + _context_block(lang, context)
 
 
+# ---- 페르소나 문항 ----
+#
+# **왜 모델이 아니라 여기서 만드는가.** 집계는 이 문항의 답으로 다른 문항을
+# 모두 나눈다. 그러려면 이 문항이 반드시 있고, 어느 것인지 알 수 있고, 명세의
+# 대상 사용자가 아닌 응답자가 고를 선택지가 있어야 한다. 셋 다 모델에게
+# 맡기면 하나씩 빠진다 — 그래서 모델에게는 역할 이름만 받고 문항은 짓는다.
+#
+# **왜 "해당 없음/기타"가 꼭 있는가.** 링크는 대상 사용자가 아닌 사람에게도
+# 간다. 그 선택지가 없으면 그들은 가장 가까운 역할을 골라 그 페르소나의
+# 신호를 흐린다. 그 선택지에 응답이 몰리면 그것 자체가 링크가 엉뚱한 곳으로
+# 갔다는 신호다.
+#
+# **왜 프롬프트가 "AI-PDS가 직접 만든다"고 주어를 밝히는가.** 실측(2026-10-10,
+# Opus 4.8): 영어 판이 "the first question is built from this list"라고만
+# 했을 때 4/4가 역할 문항을 `questions`에 직접 만들어 역할을 두 번 물었다 —
+# 수동태를 "네가 첫 문항으로 만들어라"로 읽었다. 한국어 판은 0/4였다. 주어를
+# 밝힌 뒤 두 언어 모두 0/3이다.
+
+#: 문항 id. 모델이 짓는 문항은 q1, q2, …라 겹치지 않는다.
+PERSONA_ID = "persona"
+
+#: 역할 이름 개수 상한. 프롬프트는 2~5개를 요구한다 — 넘치면 자른다.
+MAX_PERSONAS = 6
+
+_PERSONA_QUESTION = {
+    "ko": ("다음 중 본인의 역할에 가장 가까운 것은 무엇입니까?", "해당 없음 / 기타"),
+    "en": ("Which of these is closest to your role?", "None of these / Other"),
+}
+
+
+def _persona_question(raw, language: str) -> dict | None:
+    """모델이 준 역할 이름으로 첫 문항을 짓는다. 이름이 없으면 None이다.
+
+    None이면 설문은 이 기능 이전과 같다 — 명세에 대상 사용자가 없는 것은
+    설문을 못 만들 이유가 아니다.
+    """
+    text, other = _PERSONA_QUESTION[language if language in _PERSONA_QUESTION else "ko"]
+    names: list[str] = []
+    for item in raw if isinstance(raw, list) else []:
+        name = item.strip() if isinstance(item, str) else ""
+        if name and name != other and name not in names:
+            names.append(name)
+    if not names:
+        return None
+    return {"id": PERSONA_ID, "text": text, "type": "choice",
+            "options": names[:MAX_PERSONAS] + [other], "required": True,
+            "persona": True}
+
+
 def _extract_json(reply: str) -> dict:
     fenced = _FENCE_RE.search(reply)
     candidate = fenced.group(1) if fenced else reply
@@ -298,6 +360,10 @@ async def build_questionnaire(prototype_md: str, agent, *, token: str,
         reply = await agent(prompt)
         try:
             data = _extract_json(reply)
+            persona = _persona_question(data.get("personas"), language)
+            # 모델이 지시를 어기고 persona 표시를 단 문항은 믿지 않는다.
+            questions = [{**q, "persona": False} if isinstance(q, dict) else q
+                         for q in data["questions"]]
             return Questionnaire(
                 token=token, status="open", slug=slug, project_id=project_id,
                 created_at=now, closed_at=None,
@@ -306,7 +372,7 @@ async def build_questionnaire(prototype_md: str, agent, *, token: str,
                 # 영어인데 화면만 한국어인 것은 응답자에게 더 나쁘다.
                 language=language,
                 title=data["title"], hypothesis=data["hypothesis"],
-                questions=data["questions"])
+                questions=([persona] if persona else []) + questions)
         except Exception as exc:  # noqa: BLE001 — retry on any malformed reply
             last_error = exc
             _log.warning("questionnaire generation attempt %d failed: %s",

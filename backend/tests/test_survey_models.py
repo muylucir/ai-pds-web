@@ -1,3 +1,4 @@
+import json
 import pytest
 from pydantic import ValidationError
 from aipds.survey.models import (Question, Questionnaire, SurveyResponse,
@@ -76,3 +77,26 @@ def test_rollup_model():
     assert ru.per_question["q1"].type == "scale"
     assert ru.per_question["q2"].type == "choice"
     assert ru.per_question["q3"].type == "text"
+
+
+def test_persona_question_must_be_a_choice():
+    with pytest.raises(ValidationError):
+        _q(persona=True)
+    assert _q(type="choice", options=["A", "기타"], persona=True).persona
+
+
+def test_questionnaire_allows_one_persona_question_at_most():
+    # 응답을 나누는 기준이 둘이면 어느 쪽으로 나눌지 정할 수 없다.
+    pq = dict(type="choice", options=["A", "기타"], persona=True)
+    with pytest.raises(ValidationError):
+        Questionnaire(token=TOK, status="open", slug="s", project_id="p",
+                      created_at="n", title="T", hypothesis="H",
+                      questions=[_q(id="a", **pq), _q(id="b", **pq)])
+
+
+def test_a_questionnaire_saved_before_personas_loads_without_one():
+    qn = Questionnaire.model_validate_json(json.dumps({
+        "token": TOK, "status": "open", "slug": "s", "project_id": "p",
+        "created_at": "n", "title": "T", "hypothesis": "H",
+        "questions": [{"id": "q1", "text": "Q", "type": "scale", "required": True}]}))
+    assert not qn.questions[0].persona

@@ -295,3 +295,93 @@ async def test_three_prototypes_synthesize_without_overwriting_each_other():
     # 각 파일이 자기 프로토타입의 설문 제목을 담아야 한다 — 덮어썼다면 셋이 같다.
     for slug in slugs:
         assert f"{slug} 검증" in project_s3.blobs[aggregate_md_key(slug)]
+
+
+# ---- 페르소나로 나눈 집계 ----
+
+def _persona_md(language="ko"):
+    from aipds.survey.models import SurveyResponse
+    from aipds.survey.rollup import build_rollup
+    from aipds.survey.store import _aggregate_markdown
+
+    other = "해당 없음 / 기타" if language == "ko" else "None of these / Other"
+    qn = _qn(language=language, questions=[
+        Question(id="persona", text="역할?", type="choice",
+                 options=["점포 관리자", "본사 MD", other], persona=True),
+        Question(id="q1", text="시간이 줄까?", type="scale"),
+        Question(id="q2", text="유용한 기능?", type="choice",
+                 options=["대시보드", "알림", "사용하지 않았다"]),
+        Question(id="q3", text="개선점", type="text", required=False),
+    ])
+    rows = [("1", "점포 관리자", 3, "알림", "승인 단계가 없다"),
+            ("2", "점포 관리자", 2, "사용하지 않았다", ""),
+            ("3", "본사 MD", 5, "대시보드", "깔끔하다"),
+            ("4", "점포 관리자", 3, "알림", "매장별 보기")]
+    responses = [SurveyResponse(response_id=rid, submitted_at=f"2026-07-25T00:00:0{rid}Z",
+                                answers={"persona": p, "q1": s, "q2": c,
+                                         **({"q3": t} if t else {})})
+                 for rid, p, s, c, t in rows]
+    rollup = build_rollup(qn.questions, responses, "now")
+    return _aggregate_markdown(qn, responses, rollup, "now", language)
+
+
+def test_aggregate_lists_every_persona_even_those_who_did_not_respond():
+    # 응답 0인 페르소나는 대상 사용자 중 누구에게 닿지 않았는지를 보여 준다.
+    md = _persona_md()
+    assert "- **응답자 구성**: 점포 관리자 3 · 본사 MD 1 · 해당 없음 / 기타 0" in md
+
+
+def test_aggregate_splits_a_scale_question_by_persona():
+    """전체 평균만으로는 '관리자 5점, 실제 사용자 2점'이 한 숫자로 뭉개진다."""
+    md = _persona_md()
+    section = md.split("### Q2.")[1].split("###")[0]
+    assert "| 전체 | 4 | 3.25 | 1 | 0 | 2 | 1 | 0 |" in section
+    assert "| 점포 관리자 | 3 | 2.67 | 0 | 0 | 2 | 1 | 0 |" in section
+    assert "| 본사 MD | 1 | 5.0 | 1 | 0 | 0 | 0 | 0 |" in section
+    # 응답이 없는 페르소나는 행을 만들지 않는다 — 헤더의 구성이 이미 보여 준다.
+    assert "| 해당 없음 / 기타 |" not in section
+
+
+def test_aggregate_splits_a_choice_question_by_persona():
+    md = _persona_md()
+    section = md.split("### Q3.")[1].split("###")[0]
+    assert "| 선택지 | 응답 수 | 비율 | 점포 관리자 (응답 3건) | 본사 MD (응답 1건) |" in section
+    assert "| 알림 | 2 | 50% | 2 | 0 |" in section
+    assert "| 대시보드 | 1 | 25% | 0 | 1 |" in section
+
+
+def test_aggregate_does_not_split_the_persona_question_by_itself():
+    md = _persona_md()
+    section = md.split("### Q1.")[1].split("###")[0]
+    assert "| 선택지 | 응답 수 | 비율 |\n" in section
+
+
+def test_aggregate_tags_each_free_response_with_its_persona():
+    md = _persona_md()
+    free = md.split("## 자유 응답 전문")[1]
+    assert "- [점포 관리자] 승인 단계가 없다" in free
+    assert "- [본사 MD] 깔끔하다" in free
+    assert "- [점포 관리자] 매장별 보기" in free
+
+
+def test_english_persona_aggregate_has_no_korean_labels():
+    md = _persona_md("en")
+    for label in ("응답자 구성", "전체", "페르소나", "선택지"):
+        assert label not in md
+    assert "**Respondents**" in md and "| All |" in md
+
+
+def test_aggregate_without_a_persona_question_is_not_split():
+    from aipds.survey.models import SurveyResponse
+    from aipds.survey.rollup import build_rollup
+    from aipds.survey.store import _aggregate_markdown
+
+    qn = _qn(questions=[Question(id="q1", text="유용?", type="scale"),
+                        Question(id="q2", text="개선점", type="text")])
+    responses = [SurveyResponse(response_id="1", submitted_at="t",
+                                answers={"q1": 4, "q2": "좋다"})]
+    md = _aggregate_markdown(qn, responses, build_rollup(qn.questions, responses, "now"),
+                             "now", "ko")
+    assert "응답자 구성" not in md and "페르소나" not in md
+    assert "| 점수 | 응답 수 |" in md
+    assert "- 좋다" in md

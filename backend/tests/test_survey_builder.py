@@ -346,3 +346,65 @@ async def test_build_questionnaire_records_the_language(language):
                                    language=language)
     # 언어를 questionnaire에 기록해야 공개 응답 페이지가 그 언어로 그릴 수 있다.
     assert qn.language == language
+
+
+# ---- 페르소나 문항 ----
+#
+# 집계가 이 문항의 답으로 다른 문항을 모두 나눈다(store._aggregate_markdown).
+# 그래서 문항은 생성기가 짓고, 모델에게는 역할 이름만 받는다.
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_prompt_asks_for_personas_from_the_target_users(language):
+    p = build_prompt("# spec", language=language)
+    assert '"personas"' in p                  # 출력 스키마
+    assert "Target Users" in p                # 어디서 가져오는지
+    # 역할을 묻는 문항을 따로 만들면 페르소나 문항이 둘이 된다.
+    assert ("역할을 묻지 마라" in p or "must not ask for the respondent's role" in p)
+
+
+async def test_personas_become_a_required_first_question_with_an_out():
+    reply = {**VALID, "personas": ["점포 관리자", "본사 MD"]}
+    qn = await build_questionnaire(MD, FakeAgent(json.dumps(reply, ensure_ascii=False)),
+                                   token=TOK, project_id="p", slug="s", now="n")
+    first = qn.questions[0]
+    assert first.persona and first.type == "choice" and first.required
+    # 대상 사용자가 아닌 응답자가 고를 자리가 없으면 가장 가까운 역할을 골라
+    # 그 페르소나의 신호를 흐린다.
+    assert first.options == ["점포 관리자", "본사 MD", "해당 없음 / 기타"]
+    assert [q.id for q in qn.questions[1:]] == ["q1", "q2", "q3"]
+
+
+async def test_english_persona_question_is_english():
+    reply = {**VALID, "personas": ["store manager"]}
+    qn = await build_questionnaire(MD, FakeAgent(json.dumps(reply)), token=TOK,
+                                   project_id="p", slug="s", now="n", language="en")
+    first = qn.questions[0]
+    assert first.options == ["store manager", "None of these / Other"]
+    assert not any("가" <= c <= "힣" for c in first.text)
+
+
+async def test_no_personas_means_the_survey_is_as_before():
+    """명세에 대상 사용자가 없는 것은 설문을 못 만들 이유가 아니다."""
+    for personas in (None, [], ["", "  "], "점포 관리자"):
+        reply = dict(VALID) if personas is None else {**VALID, "personas": personas}
+        qn = await build_questionnaire(MD, FakeAgent(json.dumps(reply, ensure_ascii=False)),
+                                       token=TOK, project_id="p", slug="s", now="n")
+        assert [q.id for q in qn.questions] == ["q1", "q2", "q3"], personas
+        assert not any(q.persona for q in qn.questions)
+
+
+async def test_persona_names_are_cleaned():
+    reply = {**VALID, "personas": [" 점포 관리자 ", "점포 관리자", "해당 없음 / 기타",
+                                   7, "A", "B", "C", "D", "E", "F"]}
+    qn = await build_questionnaire(MD, FakeAgent(json.dumps(reply, ensure_ascii=False)),
+                                   token=TOK, project_id="p", slug="s", now="n")
+    # 중복·빈 값·"기타"를 걸러내고, 상한(6)으로 자른 뒤 "기타"를 하나만 붙인다.
+    assert qn.questions[0].options == ["점포 관리자", "A", "B", "C", "D", "E",
+                                       "해당 없음 / 기타"]
+
+
+async def test_a_model_question_cannot_claim_to_be_the_persona_question():
+    reply = {**VALID, "questions": [{**VALID["questions"][1], "persona": True}]}
+    qn = await build_questionnaire(MD, FakeAgent(json.dumps(reply, ensure_ascii=False)),
+                                   token=TOK, project_id="p", slug="s", now="n")
+    assert not any(q.persona for q in qn.questions)
