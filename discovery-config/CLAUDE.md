@@ -60,6 +60,7 @@ The Prototypes tab runs validation surveys. **Synthesize results** writes the ag
 
 - **It is the feedback file Step 6 imports.** When the user returns after a survey, read it as the file `prototype-validation.md` Step 5 lets the user provide, together with whatever else the user reports.
 - **AI-PDS Web owns it. Do not write to it.** It is rebuilt from the responses on every synthesis, so anything written there would be lost; hooks reject the write.
+- **Keep the persona split when the aggregate has one.** A survey built from a spec with target users asks each respondent's role first, and the aggregate splits every other question by that answer. Where personas disagree, report each persona's signal instead of the overall figure, and weigh the personas the spec targets. Respondents who chose "None of these / Other" are outside the target users: report how many there were and what they said, but do not count them as validating or refuting the hypothesis.
 - **Write the Step 6 synthesis to `validation-results.md` yourself,** in the same directory, as the rule specifies. AI-PDS Web never writes or deletes that file, so it stays the evidence Step 8 and Product Strategy cite. Record the aggregate's response count, survey start time and aggregation time there, because the aggregate itself will change as more responses arrive. The start time is the validation window to compare with `change-history.md`; do not ask the user for it.
 
 ## Spec reconciliation before the Living Document
