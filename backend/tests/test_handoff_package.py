@@ -90,10 +90,15 @@ def test_prompt_carries_files_facts_and_confirmations():
     assert '"재료 없음"' in prompt and "Write in Korean" in prompt
     assert "## Write PRD.md" in prompt and "9. 열린 질문" in prompt
     facts = json.loads(prompt.split("```json\n", 1)[1].split("\n```", 1)[0])
-    assert facts["origin"] == "B"
-    assert facts["handoff_answers"] == {"problem.evidence": {"text": "인터뷰 5명"},
-                                        "assumptions.failure_reasons": {"unknown": True}}
-    assert [a["confirmed_by_pm"] for a in facts["ai_suggestions_accepted"]] == [True, False, False]
+    assert facts["PM answers given at handoff"] == [
+        {"topic": package._SUPPLEMENT_TOPICS["problem.evidence"], "answer": "인터뷰 5명"}]
+    assert facts["topics the PM said they cannot answer yet"] == [
+        package._SUPPLEMENT_TOPICS["assumptions.failure_reasons"]]
+    # 등급은 판정이 정해 문장으로 준다 — 모델이 해석할 불리언을 주면 그 필드명을 문서에 옮긴다.
+    decisions = facts["decisions where the PM picked the option the AI suggested"]
+    assert [d["grade"] for d in decisions] == ["PM 결정", "AI 제안 수락", "AI 제안 수락"]
+    assert decisions[0]["cite"] == "use-case-intake/use-case-intake-questions.md Q1"
+    assert "confirmed_by_pm" not in prompt and "handoff_answers" not in prompt
 
 
 def test_later_steps_get_the_prd_so_ids_match():
@@ -513,10 +518,10 @@ def test_the_prd_citations_pick_out_which_ai_suggestions_became_requirements():
     path = D + "product-strategy/strategy-questions.md"
     state = assess([path], {path: QUESTIONS})
     cited = package.cited_suggestions(_PRD_WITH_CITATIONS, state, "ko")
-    assert cited == {
-        path + "#1": ["G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상"],
-        path + "#2": ["2027년 상반기 3개 지점 파일럿"],
-        path + "#4": ["2027년 상반기 3개 지점 파일럿"],
+    assert {k: [(c.text, c.section) for c in v] for k, v in cited.items()} == {
+        path + "#1": [("G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상", 3)],
+        path + "#2": [("2027년 상반기 3개 지점 파일럿", 5)],
+        path + "#4": [("2027년 상반기 3개 지점 파일럿", 5)],
     }
     # Q3은 PM 결정으로 인용됐고, Q99는 수락 목록에 없다 — 둘 다 확인 대상이 아니다.
 
@@ -547,6 +552,8 @@ def test_the_form_lists_the_citations_of_the_saved_prd():
     assert by_number == {1: ["G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상"],
                          2: ["2027년 상반기 3개 지점 파일럿"],
                          4: ["2027년 상반기 3개 지점 파일럿"]}
+    # 성공 지표가 된 AI 제안은 따로 표시된다.
+    assert {c.number: c.in_goals for c in view.confirmations} == {1: True, 2: False, 4: False}
     assert not supplement.view(state, supplement.Supplement()).has_package
 
 
@@ -567,3 +574,133 @@ def test_route_supplement_reads_citations_from_the_saved_prd(env):
     body = client.get("/projects/pkg-cited/handoff/supplement").json()
     assert body["has_package"] is True
     assert {c["number"]: bool(c["in_prd"]) for c in body["confirmations"]} == {1: True, 2: True, 4: True}
+
+
+# ---- PRD의 모양 검사(실측 industry-safe-law PRD 평가의 다섯 가지) ----
+
+_PRD_SHAPES = """# 메가마트 안전ON PRD
+
+## 3. 목표와 성공 지표
+
+| ID | 목표 | 등급·출처 |
+|---|---|---|
+| G-01 | 담당자 투입 시간 60% 절감 | AI 제안 수락 (envision/prfaq-clarifying-questions.md Q8) |
+| G-02 | 건별 완료율 95% 이상 | PM 결정 (product-strategy/strategy-questions.md Q3) |
+
+## 5. 요구사항과 수용 기준
+
+- **R-01 발송 만들기** [S-01, G-01]: 대상 지정 → 기한 → 발송. 수용 기준: 발송 직후 대상자 전원의
+  할 일 목록에 그 건이 나타난다. — 사용자 검증됨 (prototype/validation-results.md)
+- **R-04 개인 링크** [S-03]: 링크를 보낸다. 수용 기준: 앱 설치 없이 완료한다. — PM 결정 (envision/prfaq-clarifying-questions.md Q3, confirmed_by_pm=true)
+- **R-10 본사 템플릿 관리** [S-07]: 본사가 템플릿을 등록·수정한다. — AI 제안 수락 (envision/prfaq-clarifying-questions.md Q5)
+- **R-15 검증 후 개선** [S-02]: 확인 문제 문구를 개선한다. 목표값은 재료 없음.
+
+## 8. 가정과 실패 요인
+
+| A-05 | AI 초안 검수 부담이 직접 작성보다 작다 | 사용자 검증됨 (prototype/validation-results.md, H3) |
+
+## 9. 열린 질문
+
+| # | 질문 | 답할 사람 |
+|---|---|---|
+| 1 | 법무 결론: 증빙 효력, 보존 기간(R-08, C-01) | PM |
+| 3 | 수신자 화면 세부값. 프로토타입에서 추출 필요(R-16) | 개발팀 |
+| 6 | 자동 재알림 규칙(시점, 횟수, 채널)(R-05) | PM |
+"""
+
+
+def _kinds(findings, kind):
+    return [(f.line, f.term) for f in findings if f.kind == kind]
+
+
+def test_a_requirement_without_acceptance_criteria_is_flagged():
+    """실측: 요구사항 17개 중 6개(R-10/11/13/14/15/16)에 시험할 수 있는 수용 기준이 없었다."""
+    found = package.lint({"PRD.md": _PRD_SHAPES})
+    assert [term for _, term in _kinds(found, "acceptance")] == ["R-10", "R-15"]
+
+
+def test_a_success_metric_from_an_unconfirmed_ai_suggestion_is_flagged():
+    """실측: 성공 지표 G-01~05가 전부 AI 제안 수락이었다. PM 결정인 목표는 그대로 둔다."""
+    found = package.lint({"PRD.md": _PRD_SHAPES})
+    assert [term for _, term in _kinds(found, "ai_goal")] == ["G-01"]
+
+
+def test_prompt_field_names_and_foreign_ids_are_flagged():
+    """실측: `confirmed_by_pm=true`와 정의 없는 `H3`가 PRD에 그대로 나왔다. 질문 번호(Q3)와
+    PRD 자신의 ID(R-01, S-03)는 근거 표기라 두고, 검증 보고서의 가설 번호는 검사하지 않는다."""
+    found = package.lint({"PRD.md": _PRD_SHAPES,
+                          "validation-report.md": "- **H1 수신자 무도움 완료**: 통과\n"})
+    terms = [term for _, term in _kinds(found, "internal")]
+    assert "confirmed_by_pm=true" in terms
+    assert "H3" in terms
+    assert not any(t.startswith(("Q", "R-", "S-", "G-")) for t in terms)
+    assert all(f.file == "PRD.md" for f in found if f.kind == "internal")
+
+
+def test_validation_grades_without_validation_results_are_flagged():
+    files = {"PRD.md": _PRD_SHAPES}
+    assert _kinds(package.lint(files, validated=True), "grade") == []
+    flagged = package.lint(files, validated=False)
+    assert {term for _, term in _kinds(flagged, "grade")} == {"사용자 검증됨"}
+
+
+def test_open_questions_for_the_pm_come_back_from_section_nine():
+    """실측 PRD의 표 모양(`| # | 질문 | 답할 사람 |`)과 지시한 모양(`| ID | 질문 | 답할 사람 |`)을
+    둘 다 읽고, 개발팀 몫은 PM에게 묻지 않는다."""
+    old = package.open_questions(_PRD_SHAPES, "ko")
+    assert [(q.id, q.question) for q in old] == [
+        ("1", "법무 결론: 증빙 효력, 보존 기간(R-08, C-01)"),
+        ("6", "자동 재알림 규칙(시점, 횟수, 채널)(R-05)")]
+    new = package.open_questions(
+        "# P\n\n## 9. Open questions\n\n| ID | Question | Who answers |\n|---|---|---|\n"
+        "| O-01 | Retention period (R-08) | PM |\n| O-02 | Storage volume | Development team |\n",
+        "en")
+    assert [(q.id, q.question) for q in new] == [("O-01", "Retention period (R-08)")]
+    assert package.open_questions("# P\n\n## 5. 요구사항\n| 1 | x | PM |\n", "ko") == []
+
+
+def test_the_prd_prompt_fixes_the_shapes_the_checks_read():
+    prompt = package.build_prompt("prd", language="ko", readiness=assess(B, {}),
+                                  record=supplement.Supplement(), sources={})
+    assert "수용 기준: <criteria>" in prompt
+    assert "| ID | 질문 | 답할 사람 |" in prompt and '"개발팀"' in prompt
+    assert '"내부 검증됨(대리 사용자)"' in prompt
+    assert "hypothesis numbers like H3" in prompt
+
+
+def test_answers_to_open_questions_go_back_into_the_next_prd():
+    known = supplement.OpenAnswer(question="자동 재알림 규칙", text="기한 2일 전, 1회, 문자")
+    unknown = supplement.OpenAnswer(question="개인 링크 유효기간", unknown=True)
+    record = supplement.Supplement(open_answers={
+        supplement.open_key(known.question): known, supplement.open_key(unknown.question): unknown})
+    prompt = package.build_prompt("prd", language="ko", readiness=assess(B, {}),
+                                  record=record, sources={})
+    facts = json.loads(prompt.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert {"question": "자동 재알림 규칙", "answer": "기한 2일 전, 1회, 문자"} in facts[
+        "PM answers given at handoff"]
+    assert facts["open questions the PM said they cannot answer yet"] == ["개인 링크 유효기간"]
+
+
+def test_route_supplement_asks_the_open_pm_questions_of_the_saved_prd(env):
+    client, s3, writer = env
+    _seed(client, "pkg-open", {p: f"# {p}\n" for p in B})
+    assert client.get("/projects/pkg-open/handoff/supplement").json()["open_questions"] == []
+
+    async def call(prompt, progress=None):
+        step = _step_of(prompt)
+        return _PRD_SHAPES if step == "prd" else DOCS[step]
+    writer["call"] = call
+    client.post("/projects/pkg-open/handoff/package")
+    done = _wait_settled(client, "pkg-open")["manifest"]
+    assert {f["kind"] for f in done["findings"]} >= {"acceptance", "ai_goal", "internal"}
+
+    body = client.get("/projects/pkg-open/handoff/supplement").json()
+    asked = body["open_questions"]
+    assert [q["id"] for q in asked] == ["1", "6"]
+
+    r = client.put("/projects/pkg-open/handoff/supplement", json={"open_answers": {
+        asked[1]["key"]: {"question": asked[1]["question"], "text": "기한 2일 전, 1회"}}})
+    assert r.status_code == 200
+    assert r.json()["open_questions"][1]["answer"]["text"] == "기한 2일 전, 1회"
+    # 답하면 패키지가 낡는다 — 다음 생성이 그 답을 PRD에 넣는다.
+    assert client.get("/projects/pkg-open/handoff/package").json()["supplement_changed"] is True

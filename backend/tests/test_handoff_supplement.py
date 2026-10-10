@@ -162,3 +162,46 @@ def test_route_rejects_an_oversized_answer(monkeypatch):
     r = client.put("/projects/supp-long/handoff/supplement", json={
         "answers": {"problem.evidence": {"text": "x" * (supplement.MAX_ANSWER_CHARS + 1)}}})
     assert r.status_code == 422
+
+
+# ---- PRD에 남은 PM 결정 ----
+
+def _open(*questions):
+    return [supplement.OpenQuestion(id=f"O-{i:02d}", question=q) for i, q in enumerate(questions, 1)]
+
+
+def test_open_pm_questions_of_the_prd_are_asked_even_when_every_section_is_sourced():
+    """실측(industry-safe-law): 9개 섹션이 모두 sourced라 보완 질문이 0개였는데, PRD 9번에는 구현을
+    막는 PM 결정이 열려 있었다."""
+    v = supplement.view(assess(A1, {}), supplement.Supplement(), {},
+                        _open("보존 기간", "본인 확인 수준", "보존 기간"))
+    assert v.questions == []
+    assert [(q.id, q.question) for q in v.open_questions] == [("O-01", "보존 기간"),
+                                                             ("O-02", "본인 확인 수준")]
+    assert all(q.key == supplement.open_key(q.question) for q in v.open_questions)
+
+
+def test_an_answered_question_that_left_the_prd_stays_on_record():
+    answer = supplement.OpenAnswer(question="보존 기간", text="5년", updated_at="t")
+    record = supplement.Supplement(open_answers={supplement.open_key("보존 기간"): answer})
+    v = supplement.view(assess(A1, {}), record, {}, _open("본인 확인 수준"))
+    assert [q.question for q in v.open_questions] == ["본인 확인 수준"]
+    assert [(q.question, q.answer.text) for q in v.open_answered] == [("보존 기간", "5년")]
+
+
+def test_apply_keeps_open_answers_and_their_time():
+    key = supplement.open_key("보존 기간")
+    first = supplement.apply(supplement.Supplement(), supplement.SupplementUpdate(open_answers={
+        key: supplement.OpenAnswerIn(question="보존  기간", text=" 5년 ")}), now="t1")
+    assert first.open_answers[key].model_dump() == {
+        "text": "5년", "unknown": False, "updated_at": "t1", "question": "보존 기간"}
+    again = supplement.apply(first, supplement.SupplementUpdate(open_answers={
+        key: supplement.OpenAnswerIn(question="보존 기간", text="5년")}), now="t2")
+    assert again.open_answers[key].updated_at == "t1"
+
+
+def test_apply_rejects_an_open_answer_whose_key_is_not_its_question():
+    """키가 질문 문장에서 나오지 않으면 다른 질문의 답을 덮어쓸 수 있다."""
+    with pytest.raises(supplement.InvalidSupplement):
+        supplement.apply(supplement.Supplement(), supplement.SupplementUpdate(open_answers={
+            supplement.open_key("보존 기간"): supplement.OpenAnswerIn(question="권한", text="x")}))

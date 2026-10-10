@@ -40,24 +40,30 @@ async def get_handoff_readiness(pid: str):
     return await _readiness(pid)
 
 
-async def _cited(pid: str, s3, state: readiness.Readiness) -> dict[str, list[str]] | None:
-    """마지막으로 만든 패키지의 PRD가 인용한 AI 제안. 만든 패키지가 없으면 None."""
+async def _view(pid: str, s3, state: readiness.Readiness,
+                record: supplement.Supplement) -> supplement.SupplementView:
+    """보완 화면. 마지막으로 만든 PRD가 있으면 그 PRD가 인용한 AI 제안과 PM 몫의 열린 질문을
+    함께 싣는다 — 둘 다 저장하지 않고 PRD에서 그때마다 읽는다."""
     manifest = await package.load_manifest(s3)
-    if manifest is None or manifest.status != "ready":
-        return None
-    try:
-        prd = await s3.get(package.PACKAGE_PREFIX + "PRD.md")
-    except FileNotFoundError:
-        return None
-    return package.cited_suggestions(prd, state, app_module.project_language(pid))
+    prd = None
+    if manifest is not None and manifest.status == "ready":
+        try:
+            prd = await s3.get(package.PACKAGE_PREFIX + "PRD.md")
+        except FileNotFoundError:
+            pass
+    if prd is None:
+        return supplement.view(state, record)
+    language = app_module.project_language(pid)
+    return supplement.view(state, record, package.cited_suggestions(prd, state, language),
+                           package.open_questions(prd, language))
 
 
 @router.get("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)
 async def get_handoff_supplement(pid: str):
-    """재료가 없는 섹션의 보완 문항과 그 답, AI 제안 수락 항목의 확인 상태."""
+    """보완 문항(빈 섹션 · PRD에 남은 PM 결정)과 그 답, AI 제안 수락 항목의 확인 상태."""
     state = await _readiness(pid)
     s3 = app_module.s3_store_factory(pid)
-    return supplement.view(state, await supplement.load(s3), await _cited(pid, s3, state))
+    return await _view(pid, s3, state, await supplement.load(s3))
 
 
 @router.put("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)
@@ -70,7 +76,7 @@ async def put_handoff_supplement(pid: str, body: supplement.SupplementUpdate):
     except supplement.InvalidSupplement as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await supplement.save(s3, record)
-    return supplement.view(state, record, await _cited(pid, s3, state))
+    return await _view(pid, s3, state, record)
 
 
 class GenerateRequest(BaseModel):

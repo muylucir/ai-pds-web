@@ -109,7 +109,10 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
   };
 
   const supplementView = supplement.data;
-  const questionCount = (supplementView?.questions.length ?? 0) + (supplementView?.confirmations.length ?? 0);
+  const questionCount = (supplementView?.questions.length ?? 0) + (supplementView?.confirmations.length ?? 0)
+    + (supplementView?.open_questions.length ?? 0);
+  const openDecisions = supplementView?.has_package
+    ? supplementView.open_questions.filter((q) => !q.answer).length : null;
 
   return (
     <>
@@ -158,6 +161,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
           <ReadinessPanel
             readiness={readiness.data}
             questionCount={questionCount}
+            openDecisions={openDecisions}
             generating={generating}
             hasPackage={status === "ready"}
             onSupplement={() => setMode("supplement")}

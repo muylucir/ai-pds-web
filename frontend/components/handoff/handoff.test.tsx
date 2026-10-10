@@ -86,12 +86,15 @@ const VIEW: SupplementView = {
   confirmations: [
     { key: `${STRATEGY}#1`, file: STRATEGY, number: 1, ask: "수익 모델은?", answer: "A: 첫 해는 할인",
       stage: "product_strategy", choices: ["구독형 — 매장 수 기준 월 과금"],
-      note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null, in_prd: [] },
+      note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null, in_prd: [],
+      in_goals: false },
     { key: `${D}envision/prfaq-clarifying-questions.md#1`, file: `${D}envision/prfaq-clarifying-questions.md`,
       number: 1, ask: "제품명은?", answer: "A", stage: "envision",
       choices: ["메가마트 안전ON"], note: "페인 포인트 분석 기반 제안", remark: "", confirmed_at: "t",
-      in_prd: [] },
+      in_prd: [], in_goals: false },
   ],
+  open_questions: [],
+  open_answered: [],
 };
 
 describe("SupplementForm", () => {
@@ -118,6 +121,7 @@ describe("SupplementForm", () => {
         "goals.success": { text: "처리 시간 절반", unknown: false },
       },
       confirmed: [`${D}envision/prfaq-clarifying-questions.md#1`, `${STRATEGY}#1`],
+      open_answers: {},
     });
   });
 
@@ -178,6 +182,78 @@ describe("SupplementForm", () => {
   });
 });
 
+describe("SupplementForm — what the last PRD left open", () => {
+  // 실측(industry-safe-law): 섹션이 모두 sourced라 보완 질문이 0개였는데, PRD 9번에는 보존 기간·
+  // 권한·재알림 규칙처럼 구현을 막는 PM 결정이 열려 있었다.
+  const OPEN: SupplementView = {
+    ...VIEW, has_package: true, questions: [], superseded: [],
+    open_questions: [
+      { key: "open:aaaaaaaaaaaa", id: "1", question: "법무 결론: 보존 기간(R-08)", answer: null },
+      { key: "open:bbbbbbbbbbbb", id: "6", question: "자동 재알림 규칙(R-05)",
+        answer: { question: "자동 재알림 규칙(R-05)", text: "기한 2일 전 1회", unknown: false, updated_at: "t" } },
+    ],
+    open_answered: [
+      { key: "open:cccccccccccc", id: "", question: "개인 링크 유효기간",
+        answer: { question: "개인 링크 유효기간", text: "7일", unknown: false, updated_at: "t" } },
+    ],
+  };
+
+  it("asks the PRD's open PM decisions with no prefilled answer and counts them as progress", () => {
+    render(<SupplementForm view={OPEN} workspaceHref="/w" busy={false} message={null}
+                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    expect(screen.getByText("PRD에 남은 PM 결정 2개")).toBeInTheDocument();
+    expect(screen.getByLabelText(/법무 결론: 보존 기간/)).toHaveValue("");
+    expect(screen.getByLabelText(/자동 재알림 규칙/)).toHaveValue("기한 2일 전 1회");
+    expect(screen.getByText(/^1 \/ 2 답함/)).toBeInTheDocument();
+    expect(screen.getByText("앞서 답한 질문 1개")).toBeInTheDocument();
+  });
+
+  it("saves open answers with their question, and keeps the earlier ones on record", async () => {
+    const onSave = vi.fn();
+    render(<SupplementForm view={OPEN} workspaceHref="/w" busy={false} message={null}
+                           onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    await userEvent.click(within(screen.getByLabelText(/법무 결론/).closest("div")!).getByRole("checkbox"));
+    await userEvent.click(screen.getByRole("button", { name: "저장" }));
+    expect(onSave.mock.calls[0][0].open_answers).toEqual({
+      "open:aaaaaaaaaaaa": { question: "법무 결론: 보존 기간(R-08)", text: "", unknown: true },
+      "open:bbbbbbbbbbbb": { question: "자동 재알림 규칙(R-05)", text: "기한 2일 전 1회", unknown: false },
+      "open:cccccccccccc": { question: "개인 링크 유효기간", text: "7일", unknown: false },
+    });
+  });
+
+  it("puts the AI suggestions that became success metrics first", () => {
+    // 실측: 성공 지표 G-01~05가 전부 확인되지 않은 AI 제안이었다.
+    const view: SupplementView = {
+      ...OPEN,
+      confirmations: VIEW.confirmations.map((c) => c.stage === "product_strategy"
+        ? { ...c, in_prd: ["G-01 투입 시간 60% 절감"], in_goals: true } : c),
+    };
+    render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
+                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    expect(screen.getByText("성공 지표가 된 AI 제안 1건")).toBeInTheDocument();
+    expect(screen.getByText("G-01 투입 시간 60% 절감")).toBeInTheDocument();
+    expect(screen.getByText("PRD에 들어간 AI 제안 0건")).toBeInTheDocument();
+  });
+});
+
+describe("ReadinessPanel — open PM decisions", () => {
+  it("shows PM decisions the last PRD left open even when no section is empty", async () => {
+    const full: Readiness = { ...PATH_B, sections: PATH_B.sections.map((s) =>
+      s.key === "open_questions" ? s : { ...s, status: "sourced" }) };
+    const h = readiness({ readiness: full, questionCount: 17, openDecisions: 17, hasPackage: true });
+    expect(screen.getByText("9개 섹션의 재료가 모두 있습니다")).toBeInTheDocument();
+    expect(screen.getByText(/^17개가 아직 열려 있습니다/)).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole("button", { name: "보완 질문 답하기 →" })[0]);
+    expect(h.onSupplement).toHaveBeenCalled();
+  });
+
+  it("has no open-decision row before a package exists", () => {
+    readiness();
+    expect(screen.queryByText("PRD에 남은 PM 결정")).not.toBeInTheDocument();
+  });
+});
+
+
 const READY: PackageView = {
   manifest: {
     status: "ready", started_at: "2026-10-09T10:38:00Z", finished_at: "2026-10-09T10:40:12Z", error: null, origin: "B",
@@ -201,7 +277,7 @@ describe("PackagePanel", () => {
   it("shows the PRD first, findings, and what changed since it was built", async () => {
     render(<PackagePanel pkg={READY} generating={false} {...handlers()} />);
     expect(screen.getByRole("heading", { name: "PRD 제목" })).toBeInTheDocument();
-    expect(screen.getByText("기술어 1건 · 모호어 1건이 섞였습니다")).toBeInTheDocument();
+    expect(screen.getByText("검사에 걸린 줄 2건")).toBeInTheDocument();
     expect(screen.getByText("패키지를 만든 뒤 원본 1건이 바뀌었습니다")).toBeInTheDocument();
     expect(screen.getByText("패키지를 만든 뒤 보완 답이 바뀌었습니다")).toBeInTheDocument();
     expect(screen.getByText("원본이 바뀜")).toBeInTheDocument();
@@ -209,6 +285,20 @@ describe("PackagePanel", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "build-scope.md" }));
     expect(screen.getByRole("heading", { name: "남은 작업" })).toBeInTheDocument();
+  });
+
+  it("says how to fix each kind of finding — success metrics are not fixed by regenerating", () => {
+    const pkg: PackageView = { ...READY, manifest: { ...READY.manifest!, findings: [
+      { file: "PRD.md", line: 23, term: "G-01", kind: "ai_goal" },
+      { file: "PRD.md", line: 54, term: "R-10", kind: "acceptance" },
+      { file: "PRD.md", line: 48, term: "confirmed_by_pm=true", kind: "internal" },
+    ] } };
+    render(<PackagePanel pkg={pkg} generating={false} {...handlers()} />);
+    const alert = screen.getByRole("alert");
+    expect(within(alert).getByText("검사에 걸린 줄 3건")).toBeInTheDocument();
+    expect(within(alert).getByText(/다시 생성해도 그대로입니다/)).toBeInTheDocument();
+    expect(within(alert).getByText("수용 기준 없음 1")).toBeInTheDocument();
+    expect(screen.getByText("L54 · 수용 기준 없음 ·", { exact: false })).toBeInTheDocument();
   });
 
   it("has no edit control — only regenerate and download", () => {
@@ -240,10 +330,13 @@ describe("handoff api", () => {
     let body: unknown = null;
     server.use(http.put(`${base}/supplement`, async ({ request }) => {
       body = await request.json();
-      return HttpResponse.json({ questions: [], superseded: [], confirmations: [] });
+      return HttpResponse.json({ questions: [], superseded: [], confirmations: [],
+                                 open_questions: [], open_answered: [] });
     }));
-    await putSupplement("p1", { answers: { "problem.evidence": { text: "x", unknown: false } }, confirmed: [] });
-    expect(body).toEqual({ answers: { "problem.evidence": { text: "x", unknown: false } }, confirmed: [] });
+    await putSupplement("p1", { answers: { "problem.evidence": { text: "x", unknown: false } }, confirmed: [],
+                                open_answers: {} });
+    expect(body).toEqual({ answers: { "problem.evidence": { text: "x", unknown: false } }, confirmed: [],
+                           open_answers: {} });
   });
 
   it("reads an absent package as an empty view", async () => {
