@@ -276,7 +276,8 @@ def _step_section(step: str, lab: dict) -> str:
         oid, question, who = lab["open_columns"]
         return f"""## Write PRD.md
 
-Title line, then exactly these sections in this order, each as a "## " heading:
+Title line, then exactly these sections in this order, each as a "## " heading written
+exactly as listed, number included (e.g. "## {lab["sections"][2]}"):
 {sections}
 Give items IDs and link them: requirements R-01.., usage scenarios S-01.., goals G-01..,
 constraints C-01.., assumptions A-01.., open questions O-01... Each requirement lists the
@@ -448,7 +449,7 @@ def cited_suggestions(prd: str, readiness: Readiness,
         by_ref.setdefault((item.file.rsplit("/", 1)[-1], item.number), []).append(
             supplement_mod.confirmation_key(item.file, item.number))
     cited: dict[str, list[supplement_mod.Citation]] = {}
-    for section, line in _numbered_lines(prd):
+    for section, line in _numbered_lines(prd, _labels(language)):
         if label not in line:
             continue
         hits = list(_QUESTION_FILE.finditer(line))
@@ -464,17 +465,25 @@ def cited_suggestions(prd: str, readiness: Readiness,
     return cited
 
 
-#: PRD 섹션 제목. 번호로 찾는다 — 제목 문구는 언어마다 다르고 모델이 조금씩 바꿔 쓴다.
-_SECTION_HEADING = re.compile(r"^#{2,3}\s*(\d{1,2})\s*[.)]")
+#: PRD 섹션 제목: `## 3. 목표와 성공 지표`. 번호가 있으면 번호로, 없으면 제목 문구로 찾는다 —
+#: 실측(industry-safe-law 두 번째 생성)에서 모델이 번호를 빼고 `## 목표와 성공 지표`로 썼고,
+#: 번호로만 찾았을 때 성공 지표 검사와 열린 질문 읽기가 모두 비었다.
+_SECTION_HEADING = re.compile(r"^#{2,3}\s+(?:(\d{1,2})\s*[.)]\s*)?(.*)$")
 
 
-def _numbered_lines(prd: str) -> list[tuple[int, str]]:
+def _numbered_lines(prd: str, lab: dict) -> list[tuple[int, str]]:
     """PRD의 줄마다 (그 줄이 속한 섹션 번호, 줄). 첫 섹션 앞은 0."""
+    titles = [label.split(". ", 1)[1] for label in lab["sections"]]
     section = 0
     out: list[tuple[int, str]] = []
     for line in prd.splitlines():
         if match := _SECTION_HEADING.match(line):
-            section = int(match.group(1))
+            number, title = match.groups()
+            if number:
+                section = int(number)
+            else:
+                section = next((i for i, t in enumerate(titles, start=1)
+                                if title.strip().lower().startswith(t.lower())), 0)
         out.append((section, line))
     return out
 
@@ -495,7 +504,7 @@ def open_questions(prd: str, language: str) -> list[supplement_mod.OpenQuestion]
     """
     lab = _labels(language)
     _, question_label, who_label = lab["open_columns"]
-    rows = [line for section, line in _numbered_lines(prd)
+    rows = [line for section, line in _numbered_lines(prd, lab)
             if section == 9 and line.lstrip().startswith("|")]
     if not rows:
         return []
@@ -594,7 +603,7 @@ def lint(files: dict[str, str], *, language: str = "ko",
 def _lint_prd(prd: str, lab: dict) -> list[Finding]:
     """PRD에만 있는 모양: 수용 기준, 확인되지 않은 AI 제안의 성공 지표, 원본의 내부 번호."""
     findings: list[Finding] = []
-    numbered = _numbered_lines(prd)
+    numbered = _numbered_lines(prd, lab)
     acceptance = re.compile(re.escape(lab["acceptance"]) + r"\**\s*[:：]")
     ai = lab["grades"]["ai"]
     # 요구사항 하나는 그 시작 줄부터 다음 요구사항·제목 앞까지다(목록 항목이 줄을 넘길 수 있다).
