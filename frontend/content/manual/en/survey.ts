@@ -97,8 +97,9 @@ it keeps reactions to the new screens out of the same bucket as the old ones.`,
 run a survey on each, and the results never overwrite one another. Synthesize again after more
 responses arrive and only this file is refreshed with the latest numbers.
 
-The survey is not a feature that ends at a results screen. Go back to the workspace chat and ask it to
-"reflect the survey results": the agent uses this aggregate to write the theme analysis, pain point
+The survey is not a feature that ends at a results screen. After synthesizing, **Ask to reflect results**
+takes you to the workspace chat with a request naming the aggregate file already in the input.
+Send it and the agent uses this aggregate to write the theme analysis, pain point
 validation and build decision into \`validation-results.md\` and carries them into the Discovery
 document. That synthesis is the agent's document, so synthesizing again or resetting the prototype
 never erases it. If you heard feedback outside the survey or have interview notes,
