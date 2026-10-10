@@ -70,3 +70,20 @@ def test_empty_responses_yield_zeroed_stats():
     assert ru.per_question["q1"].n == 0 and ru.per_question["q1"].mean == 0.0
     assert ru.per_question["q2"].counts == {"A": 0, "B": 0}
     assert ru.per_question["q3"].samples == []
+
+
+def test_persona_groups_follow_option_order_and_skip_empty_personas():
+    from aipds.survey.rollup import persona_groups
+    pq = Question(id="persona", text="역할?", type="choice",
+                  options=["관리자", "MD", "기타"], persona=True)
+    responses = [_r("1", {"persona": "MD"}), _r("2", {"persona": "관리자"}),
+                 _r("3", {"persona": "MD"})]
+    q, groups = persona_groups([pq] + QUESTIONS, responses)
+    assert q is pq
+    assert [(name, [r.response_id for r in rs]) for name, rs in groups] == \
+        [("관리자", ["2"]), ("MD", ["1", "3"])]
+
+
+def test_persona_groups_is_none_without_a_persona_question():
+    from aipds.survey.rollup import persona_groups
+    assert persona_groups(QUESTIONS, [_r("1", {"q1": 3})]) is None
