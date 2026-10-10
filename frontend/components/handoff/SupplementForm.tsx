@@ -1,4 +1,5 @@
-// 보완 질문 — 재료가 없는 섹션만 묻는다(서버 handoff/supplement 헤더의 조건).
+// 보완 질문 — 재료가 없는 곳만 묻는다(서버 handoff/supplement 헤더의 조건). 빈 섹션의 고정
+// 문항과, 마지막 PRD가 열린 질문으로 남긴 PM 결정이다.
 //
 // 문항에 AI 기본값을 채워 두지 않는다. 실측에서 표시된 기본값을 PM이 고른 비율이 89%였다 —
 // 기본값을 주면 이 답도 다시 "AI 제안 수락"이 된다. 빈 칸과 "모름"만 있다.
@@ -7,10 +8,11 @@
 // 결정이 Discovery 산출물과 보완 답 두 곳에 다르게 남는다.
 "use client";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { STAGE_ORDER } from "@/lib/api/handoff";
 import type {
-  Confirmation, SupplementQuestion, SupplementQuestionId, SupplementUpdate, SupplementView,
+  Confirmation, OpenQuestion, SupplementQuestion, SupplementQuestionId, SupplementUpdate,
+  SupplementView,
 } from "@/lib/api/handoff";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
@@ -23,20 +25,31 @@ function initialDraft(view: SupplementView): Draft {
   for (const q of view.questions) {
     out[q.id] = { text: q.answer?.text ?? "", unknown: q.answer?.unknown ?? false };
   }
+  for (const q of [...view.open_questions, ...view.open_answered]) {
+    out[q.key] = { text: q.answer?.text ?? "", unknown: q.answer?.unknown ?? false };
+  }
   return out;
 }
+
+const filled = (d: Draft[string] | undefined) => !!d && (d.unknown || !!d.text.trim());
 
 export function toUpdate(view: SupplementView, draft: Draft, confirmed: Set<string>): SupplementUpdate {
   const answers: SupplementUpdate["answers"] = {};
   for (const q of view.questions) {
     const d = draft[q.id];
-    if (d && (d.unknown || d.text.trim())) answers[q.id as SupplementQuestionId] = d;
+    if (filled(d)) answers[q.id as SupplementQuestionId] = d;
   }
   // 이미 대체된 답도 함께 보낸다. 저장은 교체라서, 빠뜨리면 기록에서 지워진다.
   for (const q of view.superseded) {
     if (q.answer) answers[q.id] = { text: q.answer.text, unknown: q.answer.unknown };
   }
-  return { answers, confirmed: [...confirmed] };
+  // 앞서 답해 PRD에서 빠진 질문도 같은 이유로 보낸다. 고친 것은 고친 대로.
+  const open_answers: SupplementUpdate["open_answers"] = {};
+  for (const q of [...view.open_questions, ...view.open_answered]) {
+    const d = draft[q.key];
+    if (filled(d)) open_answers[q.key] = { question: q.question, ...d };
+  }
+  return { answers, confirmed: [...confirmed], open_answers };
 }
 
 export function SupplementForm({
@@ -65,12 +78,15 @@ export function SupplementForm({
 
   // 진행률은 빈칸 질문만 센다. 확인은 선택 사항이다 — 분모에 넣으면 질문을 다 채워도 "아직 40개
   // 남음"으로 보였다(실측 industry-safe-law).
-  const total = view.questions.length;
-  const done = view.questions.filter((q) => draft[q.id]?.unknown || draft[q.id]?.text.trim()).length;
+  const total = view.questions.length + view.open_questions.length;
+  const done = view.questions.filter((q) => filled(draft[q.id])).length
+    + view.open_questions.filter((q) => filled(draft[q.key])).length;
 
-  // 패키지가 있으면 PRD에 실제로 들어간 결정이 먼저다 — 개발자가 다시 물을 수 있는 것은 그것뿐이다
-  // (실측 industry-safe-law: 40개 중 19개). 나머지는 단계별로 접어 둔다.
-  const inPrd = view.has_package ? view.confirmations.filter((c) => c.in_prd.length) : [];
+  // 패키지가 있으면 PRD에 실제로 들어간 결정이 먼저고, 그중에서도 성공 지표가 된 것이 맨 앞이다 —
+  // 개발이 무엇을 위해 만드는지를 정하는데, 실측(industry-safe-law)에서 전부 확인되지 않은 AI
+  // 제안이었다. 나머지는 단계별로 접어 둔다.
+  const goals = view.has_package ? view.confirmations.filter((c) => c.in_goals) : [];
+  const inPrd = view.has_package ? view.confirmations.filter((c) => c.in_prd.length && !c.in_goals) : [];
   const stages = useMemo(() => {
     const byStage = new Map<string, Confirmation[]>();
     for (const c of view.confirmations) {
@@ -120,6 +136,31 @@ export function SupplementForm({
     );
   };
 
+  // 답 칸 하나. 고정 문항과 PRD 열린 질문이 같은 모양이다 — 빈 칸과 "모름"뿐이다.
+  const renderAnswer = (id: string, label: ReactNode, hint: string | null) => {
+    const d = draft[id] ?? { text: "", unknown: false };
+    const domId = `q-${id.replace(/[^\w-]/g, "-")}`;
+    return (
+      <div key={id} className={`bg-white border rounded-xl px-4 py-3.5 mb-2.5 ${
+        d.unknown ? "border-dashed border-slate-300" : d.text.trim() ? "border-sky-200" : "border-slate-200"}`}>
+        <label htmlFor={domId} className="block text-sm font-semibold text-slate-900">{label}</label>
+        {hint && <p className="mb-2 text-xs text-slate-400">{hint}</p>}
+        <textarea id={domId} value={d.unknown ? "" : d.text} disabled={d.unknown}
+                  maxLength={4000} rows={3}
+                  onChange={(e) => set(id, { text: e.target.value })}
+                  className={`w-full rounded-lg border border-slate-300 px-2.5 py-2 text-[13px] disabled:bg-slate-50 ${hint ? "" : "mt-2"}`} />
+        <label className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+          <input type="checkbox" checked={d.unknown}
+                 onChange={(e) => set(id, { unknown: e.target.checked })} />
+          {t("handoff.supp.unknown")}
+        </label>
+      </div>
+    );
+  };
+  const openLabel = (q: OpenQuestion) => (
+    <>{q.id && <span className="mr-1.5 text-xs font-normal text-slate-400">{q.id}</span>}{q.question}</>
+  );
+
   const set = (id: string, patch: Partial<Draft[string]>) =>
     setDraft((d) => ({ ...d, [id]: { ...(d[id] ?? { text: "", unknown: false }), ...patch } }));
   const toggle = (key: string) => setConfirmed((s) => {
@@ -142,7 +183,10 @@ export function SupplementForm({
       </div>
 
       {total === 0 ? (
-        <p className="mb-4 text-sm text-slate-500">{t("handoff.supp.none")}</p>
+        <p className="mb-4 text-sm text-slate-500">
+          {t("handoff.supp.none")}
+          {!view.has_package && <span className="block mt-0.5 text-xs">{t("handoff.supp.open.noPackage")}</span>}
+        </p>
       ) : (
         <p className="mb-3.5 text-[13px] text-slate-500">
           {t("handoff.supp.progress").replace("{done}", String(done)).replace("{total}", String(total))}
@@ -154,29 +198,30 @@ export function SupplementForm({
           <h4 className="mb-2 text-[15px] font-semibold text-slate-900">
             {sectionLabel(t, section as SupplementQuestion["section"])}
           </h4>
-          {questions.map((q) => {
-            const d = draft[q.id] ?? { text: "", unknown: false };
-            return (
-              <div key={q.id} className={`bg-white border rounded-xl px-4 py-3.5 mb-2.5 ${
-                d.unknown ? "border-dashed border-slate-300" : d.text.trim() ? "border-sky-200" : "border-slate-200"}`}>
-                <label htmlFor={`q-${q.id}`} className="block text-sm font-semibold text-slate-900">
-                  {t(`handoff.q.${q.id}` as keyof Dict)}
-                </label>
-                <p className="mb-2 text-xs text-slate-400">{t(`handoff.q.${q.id}.hint` as keyof Dict)}</p>
-                <textarea id={`q-${q.id}`} value={d.unknown ? "" : d.text} disabled={d.unknown}
-                          maxLength={4000} rows={3}
-                          onChange={(e) => set(q.id, { text: e.target.value })}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-2 text-[13px] disabled:bg-slate-50" />
-                <label className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-                  <input type="checkbox" checked={d.unknown}
-                         onChange={(e) => set(q.id, { unknown: e.target.checked })} />
-                  {t("handoff.supp.unknown")}
-                </label>
-              </div>
-            );
-          })}
+          {questions.map((q) => renderAnswer(q.id, t(`handoff.q.${q.id}` as keyof Dict),
+                                              t(`handoff.q.${q.id}.hint` as keyof Dict)))}
         </div>
       ))}
+
+      {view.open_questions.length > 0 && (
+        <div className="mb-[18px]">
+          <h4 className="text-[15px] font-semibold text-slate-900">
+            {t("handoff.supp.open.title").replace("{n}", String(view.open_questions.length))}
+          </h4>
+          <p className="mb-2.5 text-xs text-slate-500">{t("handoff.supp.open.hint")}</p>
+          {view.open_questions.map((q) => renderAnswer(q.key, openLabel(q), null))}
+        </div>
+      )}
+
+      {view.open_answered.length > 0 && (
+        <details className="mb-[18px]">
+          <summary className="cursor-pointer text-[13px] font-semibold text-slate-700">
+            {t("handoff.supp.open.answered").replace("{n}", String(view.open_answered.length))}
+          </summary>
+          <p className="mt-1 mb-2.5 text-xs text-slate-500">{t("handoff.supp.open.answeredHint")}</p>
+          {view.open_answered.map((q) => renderAnswer(q.key, openLabel(q), null))}
+        </details>
+      )}
 
       {view.confirmations.length > 0 && (
         <div className="mb-[18px]">
@@ -187,6 +232,17 @@ export function SupplementForm({
           <p className="mb-2.5 text-xs text-slate-500">{t("handoff.supp.confirm.hint")}</p>
           {view.has_package ? (
             <>
+              {goals.length > 0 && (
+                <>
+                  <h5 className="mt-1 text-[13px] font-semibold text-amber-800">
+                    {t("handoff.supp.confirm.goals").replace("{n}", String(goals.length))}
+                  </h5>
+                  <p className="mb-1.5 text-xs text-amber-800">{t("handoff.supp.confirm.goalsHint")}</p>
+                  <ul className="mb-3 bg-white border border-amber-300 rounded-xl">
+                    {goals.map(renderItem)}
+                  </ul>
+                </>
+              )}
               <h5 className="mt-1 mb-1.5 text-[13px] font-semibold text-slate-900">
                 {t("handoff.supp.confirm.inPrd").replace("{n}", String(inPrd.length))}
               </h5>

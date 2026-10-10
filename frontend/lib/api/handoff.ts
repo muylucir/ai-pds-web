@@ -92,6 +92,22 @@ export interface Confirmation {
   confirmed_at: string | null;
   /** 이 결정이 된 PRD 항목들. 비어 있으면 PRD가 이 결정을 "AI 제안 수락"으로 인용하지 않았다. */
   in_prd: string[];
+  /** PRD 3번(목표와 성공 지표)이 이 결정을 인용했다. */
+  in_goals: boolean;
+}
+
+export interface OpenAnswer extends SupplementAnswer {
+  question: string;
+}
+
+/** PRD 9번(열린 질문)에서 PM이 답할 것으로 적힌 질문. 서버 handoff/supplement.OpenQuestionView. */
+export interface OpenQuestion {
+  /** `open:` + 질문 문장 해시. 저장할 때 그대로 돌려준다. */
+  key: string;
+  /** 지금 PRD의 번호(O-03). 앞서 답해 PRD에서 빠진 질문은 비어 있다. */
+  id: string;
+  question: string;
+  answer: OpenAnswer | null;
 }
 
 export interface SupplementView {
@@ -100,11 +116,16 @@ export interface SupplementView {
   questions: SupplementQuestion[];
   superseded: SupplementQuestion[];
   confirmations: Confirmation[];
+  /** 마지막 PRD의 열린 질문 중 PM 몫. 패키지가 없으면 비어 있다. */
+  open_questions: OpenQuestion[];
+  /** 답했는데 지금 PRD의 열린 질문에는 없는 것 — 반영됐거나 문장이 바뀌었다. */
+  open_answered: OpenQuestion[];
 }
 
 export interface SupplementUpdate {
   answers: Partial<Record<SupplementQuestionId, { text: string; unknown: boolean }>>;
   confirmed: string[];
+  open_answers: Record<string, { question: string; text: string; unknown: boolean }>;
 }
 
 export type PackageStatus = "generating" | "ready" | "failed" | "interrupted";
@@ -129,8 +150,12 @@ export interface Finding {
   file: string;
   line: number;
   term: string;
-  kind: "tech" | "vague";
+  kind: FindingKind;
 }
+
+/** 서버 handoff/package.Finding.kind. 화면의 검사 목록 순서이기도 하다. */
+export const FINDING_KINDS = ["tech", "vague", "acceptance", "grade", "ai_goal", "internal"] as const;
+export type FindingKind = (typeof FINDING_KINDS)[number];
 
 export interface Manifest {
   status: PackageStatus;

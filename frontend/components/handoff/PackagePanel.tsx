@@ -5,7 +5,8 @@
 "use client";
 import { useState } from "react";
 import { Markdown } from "@/components/Markdown";
-import type { PackageView } from "@/lib/api/handoff";
+import { FINDING_KINDS } from "@/lib/api/handoff";
+import type { FindingKind, PackageView } from "@/lib/api/handoff";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
@@ -39,8 +40,8 @@ export function PackagePanel({
   if (m.status !== "ready") return null;
 
   const stale = pkg.stale.length > 0 || pkg.supplement_changed;
-  const tech = m.findings.filter((f) => f.kind === "tech");
-  const vague = m.findings.filter((f) => f.kind === "vague");
+  const count = (kind: FindingKind) => m.findings.filter((f) => f.kind === kind).length;
+  const present = FINDING_KINDS.filter((k) => count(k) > 0);
   const inFile = m.findings.filter((f) => f.file === current);
 
   return (
@@ -78,12 +79,19 @@ export function PackagePanel({
           <b>{t("handoff.pkg.supplementChanged")}</b> {t("handoff.pkg.regenerateHint")}
         </div>
       )}
-      {m.findings.length > 0 && (
+      {/* 검사마다 고치는 길이 다르다. 대부분은 다시 생성이지만, AI 제안이 된 성공 지표는 PM이
+          확인하거나 원본을 고쳐야 하고 다시 생성해도 그대로다. */}
+      {present.length > 0 && (
         <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 mb-3 text-[13px] text-rose-900">
-          <b className="block">
-            {t("handoff.pkg.findings").replace("{tech}", String(tech.length)).replace("{vague}", String(vague.length))}
-          </b>
-          {t("handoff.pkg.findingsHint")}
+          <b className="block">{t("handoff.pkg.findings").replace("{n}", String(m.findings.length))}</b>
+          <ul className="mt-1 space-y-0.5">
+            {present.map((k) => (
+              <li key={k}>
+                <b>{t(`handoff.pkg.findingKind.${k}` as keyof Dict)} {count(k)}</b>
+                {" · "}{t(`handoff.pkg.findingFix.${k}` as keyof Dict)}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {m.truncated.length > 0 && (
@@ -107,18 +115,14 @@ export function PackagePanel({
             ))}
           </ul>
           <div className="border-t border-slate-100 pt-3 text-[13px] space-y-1.5">
-            <div className="flex justify-between">
-              <span>{t("handoff.pkg.lint.tech")}</span>
-              <span className={tech.length ? "text-rose-700 font-semibold" : "text-emerald-700 font-semibold"}>
-                {tech.length ? `! ${tech.length}` : "✓ 0"}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>{t("handoff.pkg.lint.vague")}</span>
-              <span className={vague.length ? "text-rose-700 font-semibold" : "text-emerald-700 font-semibold"}>
-                {vague.length ? `! ${vague.length}` : "✓ 0"}
-              </span>
-            </div>
+            {FINDING_KINDS.map((k) => (
+              <div key={k} className="flex justify-between">
+                <span>{t(`handoff.pkg.lint.${k}` as keyof Dict)}</span>
+                <span className={count(k) ? "text-rose-700 font-semibold" : "text-emerald-700 font-semibold"}>
+                  {count(k) ? `! ${count(k)}` : "✓ 0"}
+                </span>
+              </div>
+            ))}
           </div>
           <button type="button" onClick={onSupplement} className="mt-4 text-xs text-violet-700 hover:underline">
             {t("handoff.check.answerSupplement")}

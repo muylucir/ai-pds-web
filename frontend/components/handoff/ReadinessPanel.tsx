@@ -50,11 +50,15 @@ export function sectionLabel(t: (k: keyof Dict) => string, key: SectionKey): str
 }
 
 export function ReadinessPanel({
-  readiness, questionCount, generating, hasPackage, onSupplement, onGenerate, onViewPackage,
+  readiness, questionCount, openDecisions = null, generating, hasPackage, onSupplement, onGenerate,
+  onViewPackage,
 }: {
   readiness: Readiness;
   /** 보완 문항 수. 0이면 보완 질문으로 가는 길을 내지 않는다. */
   questionCount: number;
+  /** 마지막 PRD의 열린 질문 중 PM이 아직 답하지 않은 것의 수. 패키지가 없으면 null.
+   *  섹션 판정은 파일의 존재로 보므로 "빈 섹션 0곳"이어도 구현을 막는 결정이 열려 있을 수 있다. */
+  openDecisions?: number | null;
   generating: boolean;
   hasPackage: boolean;
   onSupplement: () => void;
@@ -101,6 +105,16 @@ export function ReadinessPanel({
             : t("handoff.check.sections.none")}
           action={questionCount > 0 ? { label: t("handoff.check.answerSupplement"), onClick: onSupplement } : undefined}
         />
+        {openDecisions !== null && (
+          <Row
+            tone={openDecisions ? "warn" : "ok"}
+            name={t("handoff.check.open")}
+            hint={t("handoff.check.open.hint")}
+            value={openDecisions ? t("handoff.check.open.some").replace("{n}", String(openDecisions))
+              : t("handoff.check.open.none")}
+            action={openDecisions ? { label: t("handoff.check.answerSupplement"), onClick: onSupplement } : undefined}
+          />
+        )}
         <Row tone={validationTone} name={t("handoff.check.validation")}
              hint={t("handoff.check.validation.hint")} value={validation} />
         <Row
