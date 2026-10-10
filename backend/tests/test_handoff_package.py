@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import time
 import zipfile
 
@@ -704,3 +705,14 @@ def test_route_supplement_asks_the_open_pm_questions_of_the_saved_prd(env):
     assert r.json()["open_questions"][1]["answer"]["text"] == "기한 2일 전, 1회"
     # 답하면 패키지가 낡는다 — 다음 생성이 그 답을 PRD에 넣는다.
     assert client.get("/projects/pkg-open/handoff/package").json()["supplement_changed"] is True
+
+
+def test_sections_are_found_by_title_when_the_model_drops_the_numbers():
+    """실측(industry-safe-law 두 번째 생성): 제목이 `## 목표와 성공 지표`로 번호 없이 나왔고, 번호로만
+    찾을 때 성공 지표 검사와 열린 질문 읽기가 모두 비었다."""
+    unnumbered = re.sub(r"^## \d+\. ", "## ", _PRD_SHAPES, flags=re.MULTILINE)
+    assert "## 목표와 성공 지표" in unnumbered
+    found = package.lint({"PRD.md": unnumbered})
+    assert [term for _, term in _kinds(found, "ai_goal")] == ["G-01"]
+    assert [term for _, term in _kinds(found, "acceptance")] == ["R-10", "R-15"]
+    assert [q.id for q in package.open_questions(unnumbered, "ko")] == ["1", "6"]
