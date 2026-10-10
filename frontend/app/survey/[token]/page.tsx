@@ -5,7 +5,7 @@ import {
   getPublicSurvey, submitPublicSurvey, SurveyClosedError,
   type AnswerValue, type PublicSurvey,
 } from "@/lib/api/surveys";
-import { DEFAULT_LOCALE, isLocale } from "@/lib/i18n";
+import { DEFAULT_LOCALE, isLocale, type Locale } from "@/lib/i18n";
 import { LocaleProvider, useT } from "@/lib/i18n/provider";
 
 type State =
@@ -83,11 +83,19 @@ export default function SurveyPage({ params }: { params: Promise<{ token: string
   const { token } = use(params);
   const [state, setState] = useState<State>({ kind: "loading" });
   const [submitting, setSubmitting] = useState(false);
+  // 설문 언어는 state와 따로 둔다. 제출하면 state가 done(또는 제출 순간
+  // 마감됐으면 closed)으로 바뀌어 survey가 사라지는데, 언어를 state.survey에서
+  // 읽으면 그 순간 ko로 떨어져 영어 설문의 감사 문구가 한국어로 나온다.
+  const [surveyLocale, setSurveyLocale] = useState<Locale>(DEFAULT_LOCALE);
 
   useEffect(() => {
     let alive = true;
     getPublicSurvey(token)
-      .then((survey) => { if (alive) setState({ kind: "ready", survey }); })
+      .then((survey) => {
+        if (!alive) return;
+        if (isLocale(survey.language)) setSurveyLocale(survey.language);
+        setState({ kind: "ready", survey });
+      })
       .catch((err) => {
         if (!alive) return;
         setState({ kind: err instanceof SurveyClosedError ? "closed" : "error" });
@@ -113,10 +121,6 @@ export default function SurveyPage({ params }: { params: Promise<{ token: string
   //
   // 언어를 모르는 설문(구 데이터)과 로딩 중에는 ko로 떨어진다 — 그것이 이
   // 기능 이전 모든 설문의 언어다.
-  const surveyLocale =
-    state.kind === "ready" && isLocale(state.survey.language)
-      ? state.survey.language
-      : DEFAULT_LOCALE;
 
   return (
     <LocaleProvider locale={surveyLocale}>
