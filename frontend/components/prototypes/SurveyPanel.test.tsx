@@ -99,6 +99,36 @@ describe("SurveyPanel — 결과 취합", () => {
     expect(screen.getByText(/\b7\b/)).toBeInTheDocument();
   });
 
+  it("한국어 안내는 한국어 어순으로 쓴다", async () => {
+    // 앞말·뒷말을 영어 어순으로 끼우면 "건을 7 에 저장했습니다. …경로"가 된다.
+    vi.spyOn(api, "getSurvey").mockResolvedValue(OPEN_VIEW);
+    vi.spyOn(api, "synthesizeSurvey").mockResolvedValue({
+      path: "aiplc-docs/discovery/prototype/survey-aggregate.md",
+      response_count: 7,
+    });
+    render(<SurveyPanel projectId={PID} slug={SLUG} />);
+    await userEvent.click(await screen.findByRole("button", { name: /결과 취합/ }));
+    const code = await screen.findByText("aiplc-docs/discovery/prototype/survey-aggregate.md");
+    expect(code.parentElement!.textContent).toBe(
+      "응답 7건을 aiplc-docs/discovery/prototype/survey-aggregate.md에 저장했습니다.");
+  });
+
+  it("취합 뒤 반영 요청 버튼은 집계 경로를 담은 초안으로 워크스페이스에 간다", async () => {
+    // 바로 보내지 않고 초안만 채운다 — 사용자가 설문 밖 의견을 덧붙일 수 있게.
+    // 경로가 초안에 있어야 프로토타입이 여러 개일 때 에이전트가 맞는 집계를 읽는다.
+    const path = `aiplc-docs/discovery/prototypes/${SLUG}/survey-aggregate.md`;
+    vi.spyOn(api, "getSurvey").mockResolvedValue(OPEN_VIEW);
+    vi.spyOn(api, "synthesizeSurvey").mockResolvedValue({ path, response_count: 7 });
+    render(<SurveyPanel projectId={PID} slug={SLUG} />);
+    expect(screen.queryByRole("link", { name: /반영 요청/ })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: /결과 취합/ }));
+
+    const link = await screen.findByRole("link", { name: /반영 요청/ });
+    const url = new URL(link.getAttribute("href")!, "http://x");
+    expect(url.pathname).toBe(`/projects/${PID}/workspace`);
+    expect(url.searchParams.get("draft")).toBe(`설문 결과를 반영해 주세요: ${path}`);
+  });
+
   it("offers 취합 while the survey is still open (interim aggregate)", async () => {
     vi.spyOn(api, "getSurvey").mockResolvedValue(OPEN_VIEW);
     render(<SurveyPanel projectId={PID} slug={SLUG} />);

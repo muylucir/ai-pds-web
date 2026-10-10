@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   closeSurvey, createSurvey, getSurvey, surveyCsvUrl, synthesizeSurvey,
@@ -145,17 +146,44 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
                       className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-medium disabled:opacity-50">
                 {busy ? t("survey.synthesizing") : t("survey.synthesize")}
               </button>
-              {synthesized && (
-                <span className="text-xs text-slate-500 break-all">
-                  {t("survey.savedPrefix")} {synthesized.response_count} {t("survey.savedSuffix")} <code>{synthesized.path}</code>
-                  {" "}{t("survey.savedNext")}
-                </span>
-              )}
             </div>
+            {synthesized && <SynthesisNotice projectId={projectId} result={synthesized} />}
           </div>
           <SurveyDashboard questions={qn.questions} rollup={view!.rollup} />
         </>
       )}
     </section>
+  );
+}
+
+/** 취합이 끝났다는 안내와, 그 집계를 Discovery 대화로 가져가는 버튼.
+ *
+ *  리뷰 화면의 "수정 요청"과 같은 방식이다: 바로 보내지 않고 워크스페이스
+ *  입력창에 ?draft=로 초안만 채운다. 에이전트는 Step 6에서 집계와 함께
+ *  사용자가 따로 보고한 내용도 읽으므로(discovery-config/CLAUDE.md), 인터뷰
+ *  메모 같은 것을 덧붙일 틈을 남긴다. 초안에 집계 경로를 적는 이유는
+ *  프로토타입마다 집계 파일이 따로 있어서다 — 경로가 없으면 에이전트가 어느
+ *  프로토타입의 설문인지 되묻거나 엉뚱한 것을 읽는다.
+ *
+ *  문장은 {n}·{path} 자리를 가진 한 덩어리로 번역한다. 앞말·뒷말을 따로 두고
+ *  영어 어순으로 끼우면 한국어가 "건을 5 에 저장했습니다. …"가 된다. */
+function SynthesisNotice({ projectId, result }: { projectId: string; result: SynthesisResult }) {
+  const t = useT();
+  const [before, after] = t("survey.saved")
+    .replace("{n}", String(result.response_count))
+    .split("{path}");
+  const draft = t("survey.reflectDraft").replace("{path}", result.path);
+  const href = `/projects/${projectId}/workspace?draft=${encodeURIComponent(draft)}`;
+  return (
+    <div className="rounded-lg bg-violet-50 p-3 space-y-2">
+      <p className="text-xs text-slate-600 break-all">
+        {before}<code>{result.path}</code>{after}
+      </p>
+      <p className="text-xs text-slate-500">{t("survey.savedNext")}</p>
+      <Link href={href}
+            className="inline-block px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium">
+        {t("survey.reflect")}
+      </Link>
+    </div>
   );
 }

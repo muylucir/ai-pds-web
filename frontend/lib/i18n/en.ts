@@ -487,9 +487,10 @@ export const en: Record<keyof typeof ko, string> = {
   "chat.questionCountSuffix": " questions",
   "review.exportMd": "Export .md",
   "review.auditBody": "Every input is recorded verbatim with a timestamp. API keys and credentials are never recorded. Approvals and revision requests made at this gate are recorded immediately too.",
-  "survey.savedPrefix": "Saved",
-  "survey.savedSuffix": "responses to",
-  "survey.savedNext": "Back in the Discovery chat, ask it to reflect the survey results — the agent writes validation-results.md from this aggregate.",
+  "survey.saved": "Saved {n} responses to {path}.",
+  "survey.savedNext": "Ask to reflect them and the agent writes validation-results.md from this aggregate. The chat input is prefilled with a draft — add any feedback you heard outside the survey before sending.",
+  "survey.reflect": "Ask to reflect results",
+  "survey.reflectDraft": "Please reflect the survey results: {path}",
   "app.description": "AI-PLC Discovery web service",
 
   // The chrome of the user manual (/manual). Its body lives in

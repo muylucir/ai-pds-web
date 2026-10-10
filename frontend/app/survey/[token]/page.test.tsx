@@ -78,6 +78,32 @@ describe("설문 언어가 화면 언어를 정한다", () => {
     expect(intro.textContent).not.toMatch(/[가-힣]/);
   });
 
+  it("영어 설문은 제출 뒤 감사 화면도 영어다", async () => {
+    // 제출하면 화면 상태에서 설문이 빠진다. 언어를 거기서 읽으면 감사 화면만
+    // 한국어로 떨어진다.
+    vi.spyOn(api, "getPublicSurvey").mockResolvedValue({
+      title: "Validation survey", hypothesis: "H", language: "en",
+      questions: QUESTIONS });
+    vi.spyOn(api, "submitPublicSurvey").mockResolvedValue();
+    await renderPage();
+    await userEvent.click(await screen.findByRole("radio", { name: "4" }));
+    await userEvent.click(screen.getByRole("button", { name: /Submit/i }));
+    expect(await screen.findByText(/Thank/i)).toBeInTheDocument();
+    expect(document.querySelector("main")!.textContent).not.toMatch(/[가-힣]/);
+  });
+
+  it("영어 설문이 제출 순간 마감되면 마감 안내도 영어다", async () => {
+    vi.spyOn(api, "getPublicSurvey").mockResolvedValue({
+      title: "Validation survey", hypothesis: "H", language: "en",
+      questions: QUESTIONS });
+    vi.spyOn(api, "submitPublicSurvey").mockRejectedValue(new api.SurveyClosedError());
+    await renderPage();
+    await userEvent.click(await screen.findByRole("radio", { name: "4" }));
+    await userEvent.click(screen.getByRole("button", { name: /Submit/i }));
+    await screen.findByText(/closed/i);
+    expect(document.querySelector("main")!.textContent).not.toMatch(/[가-힣]/);
+  });
+
   it("언어를 모르는 설문(구 데이터)은 한국어로 그려진다", async () => {
     vi.spyOn(api, "getPublicSurvey").mockResolvedValue({
       title: "검증 설문", hypothesis: "가설", questions: QUESTIONS });
