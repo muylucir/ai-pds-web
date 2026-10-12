@@ -222,7 +222,26 @@ async def test_turn_end_sync_uploads_only_the_synced_subtrees(tmp_path):
     await r._sync_workspace_to_s3()
 
     assert sorted(s3.blobs) == ["aiplc-docs/inception/a.md",
-                                "prototype/app/page.tsx", "uploads/u.md"]
+                                "prototype/app/page.tsx"]
+
+
+async def test_uploaded_originals_survive_a_turn_byte_for_byte(tmp_path):
+    """이미지·PDF 원본은 바이트 그대로 로컬에 복원되고, 턴 종료 sync가 정본을
+    덮지 않는다. 텍스트 경로를 타면 둘 다 U+FFFD로 깨진다 — 복원에서 한 번,
+    깨진 사본이 정본으로 올라가며 또 한 번."""
+    png = b"\x89PNG\r\n\x1a\n\xff\xfe\x00\x80binary"
+    s3 = FakeS3Store()
+    await s3.put_bytes("uploads/ab12cd34/screen.png", png)
+    s3.blobs["uploads/ab12cd34/spec.pdf.md"] = "# 변환본"
+    d = FakeDriver(workspace=tmp_path / "ws")
+    r = _runner(tmp_path, driver=d, s3=s3)
+
+    await _collect(r.send_message("go"))
+
+    root = tmp_path / "ws"
+    assert (root / "uploads/ab12cd34/screen.png").read_bytes() == png
+    assert (root / "uploads/ab12cd34/spec.pdf.md").read_text(encoding="utf-8") == "# 변환본"
+    assert await s3.get_bytes("uploads/ab12cd34/screen.png") == png
 
 
 async def test_turn_end_sync_does_not_follow_a_symlinked_subtree(tmp_path):

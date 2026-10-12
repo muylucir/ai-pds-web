@@ -1,11 +1,11 @@
 # backend/aipds/import_staging.py — 업로드된 번들이 임포트되기 전까지 사는 곳.
 #
-# **왜 브라우저가 S3로 직접 PUT하는가.** 번들은 프로젝트 하나의 전부이므로 5MB
-# 업로드 상한 안에 들어오지 않는다. 그런데 그 상한은 우리 코드가 아니라 nginx의
-# `client_max_body_size 6m`이고(infra/lib/user-data.ts), 그 값은 **인스턴스
-# user-data 안에** 있다 — 고치는 것이 곧 EC2 교체이고, 교체는 그 박스에 있는 모든
-# 프로토타입 빌드 트리를 가져간다. presigned PUT은 번들이 nginx도 Next 프록시도
-# 이 프로세스도 지나지 않게 해서 그 상한을 무관하게 만든다.
+# **왜 브라우저가 S3로 직접 PUT하는가.** 번들은 프로젝트 하나의 전부라 크기에
+# 위가 없다. 우리 서버를 지나는 요청에는 상한이 있다 — nginx의
+# `client_max_body_size`(첨부 업로드 상한에 맞춘 값, infra/lib/user-data.ts)와 Next
+# 미들웨어의 바디 상한(넘으면 잘라서 넘긴다, frontend/next.config.mjs). presigned
+# PUT은 번들이 nginx도 Next 프록시도 이 프로세스도 지나지 않게 해서 그 상한들을
+# 무관하게 만든다.
 #
 # **왜 `S3StoreLike`가 아닌 별도 클래스인가.** presign은 blob 연산이 아니다. 그
 # 프로토콜에 넣으면 모든 테스트 페이크가 URL을 흉내내야 하고(현재 12개 파일이 그

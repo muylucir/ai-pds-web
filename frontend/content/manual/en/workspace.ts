@@ -94,12 +94,22 @@ wrong way, stopping and re-directing is faster than waiting for it to finish.`,
     { kind: "heading", id: "attach", text: "Attaching files" },
     {
       kind: "md",
-      md: `The clip button in the input area attaches source material.
+      md: `The clip button (📎) in the input area opens the attach dialog. It lists the supported types and how the AI
+receives each, and takes several files at once; a file that fails shows why, right there. If you already know
+the types, drop files straight onto the conversation instead.
 
-- Types: \`.md\` · \`.txt\` · \`.csv\` · \`.xlsx\` · \`.pdf\`
-- Size: up to 5MB per file
-- Attachments are **converted to text** before they reach the conversation. Images and
-  formatting do not survive, so if the tables matter, \`.csv\` or \`.xlsx\` beats \`.pdf\`.
+- Documents, sheets and slides: \`.md\` · \`.txt\` · \`.csv\` · \`.xlsx\` · \`.docx\` · \`.pptx\` · \`.hwpx\` · \`.pdf\`
+- Web pages: \`.html\` · \`.htm\` (a page saved with the browser's "Save as")
+- Meeting transcripts: \`.vtt\` · \`.srt\` (captions downloaded from Teams, Zoom or Chime)
+- Images: \`.png\` · \`.jpg\` · \`.gif\` · \`.webp\` — screenshots, whiteboard photos, sketches
+- Size: up to 10MB per file
+
+Documents are **converted to text** before they reach the conversation. Formatting and
+pictures inside a document are dropped, and anything past 50,000 characters is cut. Images
+reach the AI as pictures. A PDF is both — the AI reads the converted text, and looks at the
+original when it needs a chart or a scanned page.
+
+Legacy formats (\`.doc\` · \`.ppt\` · \`.xls\` · \`.hwp\`) are not accepted. Save them in the newer format first.
 
 Interview notes, requirement lists and market research go here, and the AI writes from them.`,
     },
