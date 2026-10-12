@@ -298,27 +298,68 @@ describe("Workspace page", () => {
   });
 
   describe("file attachments", () => {
-    it("uploads a file via the clip button, shows a chip, and prepends the attachment mention to the next message", async () => {
+    function setup(send = vi.fn()) {
+      vi.mocked(client.uploadFile).mockReset();
       server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
-      const send = vi.fn();
       mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false, send });
-      vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", chars: 10, truncated: false });
+      return send;
+    }
 
-      const { container } = render(<WorkspacePage params={params} />);
+    // 📎 → 모달 → 파일 고르기 → 결과가 나올 때까지.
+    async function attachViaModal(...files: File[]) {
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "파일 첨부" }));
+      const dialog = screen.getByRole("dialog", { name: "파일 첨부" });
+      const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        fireEvent.change(input, { target: { files } });
+      });
+      return dialog;
+    }
+
+    async function closeModal() {
+      await userEvent.setup().click(screen.getByRole("button", { name: "닫기" }));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    }
+
+    it("opens a modal that explains what can be attached before any file is picked", async () => {
+      setup();
+      render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("단계 진행 상황");
+
+      await userEvent.setup().click(screen.getByRole("button", { name: "파일 첨부" }));
+      const dialog = screen.getByRole("dialog", { name: "파일 첨부" });
+      expect(dialog).toHaveFocus();
+      for (const text of ["문서·표·발표자료", "웹 페이지", "회의 녹취록", "이미지"]) {
+        expect(within(dialog).getByText(text)).toBeInTheDocument();
+      }
+      expect(within(dialog).getByText(/\.docx/)).toBeInTheDocument();
+      expect(within(dialog).getByText(/파일당 10MB까지/)).toBeInTheDocument();
+      expect(within(dialog).getByText(/PDF는 텍스트와 원본이 함께/)).toBeInTheDocument();
+      const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+      expect(input.multiple).toBe(true);
+      expect(input.accept).toContain(".hwpx");
+      expect(client.uploadFile).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("uploads from the modal, shows a chip, and prepends the attachment mention to the next message", async () => {
+      const send = setup();
+      vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", original: null, chars: 10, truncated: false });
+      render(<WorkspacePage params={params} />);
       await screen.findByLabelText("단계 진행 상황");
 
       const file = new File(["내용"], "의견.md", { type: "text/markdown" });
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-      const user = userEvent.setup();
-      await act(async () => {
-        fireEvent.change(fileInput, { target: { files: [file] } });
-      });
-
+      const dialog = await attachViaModal(file);
       expect(client.uploadFile).toHaveBeenCalledWith("p1", file);
-      expect(await screen.findByText("의견.md")).toBeInTheDocument();
+      expect(await within(dialog).findByText(/첨부됨/)).toBeInTheDocument();
+      await closeModal();
+      expect(screen.getByText("의견.md")).toBeInTheDocument();   // 칩
 
-      const box = screen.getByLabelText("채팅 메시지 입력");
-      await user.type(box, "이 파일 기반으로 진행해줘");
+      const user = userEvent.setup();
+      await user.type(screen.getByLabelText("채팅 메시지 입력"), "이 파일 기반으로 진행해줘");
       await user.click(screen.getByRole("button", { name: "전송" }));
 
       expect(send).toHaveBeenCalledWith(
@@ -327,21 +368,79 @@ describe("Workspace page", () => {
       expect(screen.queryByText("의견.md")).not.toBeInTheDocument();
     });
 
-    it("removes a chip when its remove button is clicked, without sending an upload", async () => {
-      server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
-      const send = vi.fn();
-      mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false, send });
-      vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", chars: 10, truncated: false });
-
-      const { container } = render(<WorkspacePage params={params} />);
+    it("uploads several files in the order they were picked", async () => {
+      setup();
+      vi.mocked(client.uploadFile).mockImplementation(async (_pid, f) =>
+        ({ path: `uploads/${f.name}.md`, original: null, chars: 1, truncated: false }));
+      render(<WorkspacePage params={params} />);
       await screen.findByLabelText("단계 진행 상황");
 
-      const file = new File(["내용"], "의견.md", { type: "text/markdown" });
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-      await act(async () => {
-        fireEvent.change(fileInput, { target: { files: [file] } });
+      const dialog = await attachViaModal(new File(["a"], "a.md"), new File(["b"], "b.txt"));
+      expect(await within(dialog).findAllByText(/첨부됨/)).toHaveLength(2);
+      await closeModal();
+      const chips = screen.getAllByText(/^[ab]\.(md|txt)\.md$/).map((el) => el.textContent);
+      expect(chips).toEqual(["a.md.md", "b.txt.md"]);
+    });
+
+    it("points the agent at a PDF's original next to its converted text", async () => {
+      const send = setup();
+      vi.mocked(client.uploadFile).mockResolvedValue({
+        path: "uploads/ab12cd34/요구사항.pdf.md", original: "uploads/ab12cd34/요구사항.pdf",
+        chars: 10, truncated: false,
       });
-      await screen.findByText("의견.md");
+      render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("단계 진행 상황");
+
+      const dialog = await attachViaModal(new File(["%PDF"], "요구사항.pdf"));
+      await within(dialog).findByText(/첨부됨/);
+      await closeModal();
+
+      const user = userEvent.setup();
+      await user.type(screen.getByLabelText("채팅 메시지 입력"), "정리해줘");
+      await user.click(screen.getByRole("button", { name: "전송" }));
+
+      expect(send).toHaveBeenCalledWith(
+        "[첨부 파일: uploads/ab12cd34/요구사항.pdf.md — 사용자가 컨텍스트로 제공한 파일을 텍스트로 변환한 것입니다. 필요 시 이 파일을 읽어보세요. 도표·그림·스캔 페이지는 원본 uploads/ab12cd34/요구사항.pdf에 있습니다.]\n\n정리해줘",
+      );
+    });
+
+    it("refuses legacy formats and oversized files before uploading, and says why", async () => {
+      setup();
+      render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("단계 진행 상황");
+
+      const big = new File(["x"], "big.pdf");
+      Object.defineProperty(big, "size", { value: 10 * 1024 * 1024 + 1 });
+      const dialog = await attachViaModal(new File(["x"], "기획서.hwp"), big, new File(["x"], "a.exe"));
+
+      expect(await within(dialog).findByText(/예전 형식이라 받을 수 없습니다/)).toBeInTheDocument();
+      expect(within(dialog).getByText("10MB를 넘습니다.")).toBeInTheDocument();
+      expect(within(dialog).getByText(/지원하지 않는 형식입니다/)).toBeInTheDocument();
+      expect(client.uploadFile).not.toHaveBeenCalled();
+    });
+
+    it("shows the server's reason when an upload fails, and adds no chip", async () => {
+      setup();
+      vi.mocked(client.uploadFile).mockRejectedValue(
+        new client.ApiError(415, '{"detail":"cannot parse .pdf file: corrupted or invalid"}'));
+      render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("단계 진행 상황");
+
+      const dialog = await attachViaModal(new File(["x"], "broken.pdf"));
+      expect(await within(dialog).findByText(/파일을 읽을 수 없습니다/)).toBeInTheDocument();
+      await closeModal();
+      expect(screen.queryByText("broken.pdf")).not.toBeInTheDocument();
+    });
+
+    it("removes a chip when its remove button is clicked", async () => {
+      const send = setup();
+      vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", original: null, chars: 10, truncated: false });
+      render(<WorkspacePage params={params} />);
+      await screen.findByLabelText("단계 진행 상황");
+
+      const dialog = await attachViaModal(new File(["내용"], "의견.md"));
+      await within(dialog).findByText(/첨부됨/);
+      await closeModal();
 
       const user = userEvent.setup();
       await user.click(screen.getByRole("button", { name: /제거/ }));
@@ -352,43 +451,39 @@ describe("Workspace page", () => {
       expect(send).toHaveBeenCalledWith("안녕");
     });
 
-    it("shows an error message when upload fails and does not add a chip", async () => {
-      server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
-      mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false });
-      vi.mocked(client.uploadFile).mockRejectedValue(new Error("nope"));
-
-      const { container } = render(<WorkspacePage params={params} />);
+    it("attaches files dropped on the chat area without opening the modal", async () => {
+      setup();
+      vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", original: null, chars: 10, truncated: false });
+      render(<WorkspacePage params={params} />);
       await screen.findByLabelText("단계 진행 상황");
 
-      const file = new File(["x".repeat(6_000_000)], "big.md");
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      const main = screen.getByRole("main");
+      const good = new File(["내용"], "의견.md");
+      const dataTransfer = { types: ["Files"], files: [good, new File(["x"], "old.doc")] };
+      fireEvent.dragEnter(main, { dataTransfer });
+      expect(screen.getByText("여기에 놓으면 첨부됩니다")).toBeInTheDocument();
       await act(async () => {
-        fireEvent.change(fileInput, { target: { files: [file] } });
+        fireEvent.drop(main, { dataTransfer });
       });
 
-      expect(await screen.findByText(/업로드에 실패했습니다/)).toBeInTheDocument();
-      expect(screen.queryByText("big.md")).not.toBeInTheDocument();
+      expect(screen.queryByText("여기에 놓으면 첨부됩니다")).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(client.uploadFile).toHaveBeenCalledWith("p1", good);
+      expect(await screen.findByText("의견.md")).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(/old\.doc: 예전 형식이라 받을 수 없습니다/);
     });
 
     it("does not prepend an attachment mention to the WelcomeCard starter message", async () => {
-      server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
-      const send = vi.fn();
-      mockWorkspaceStream({ items: [], historyLoading: false, pendingQuestions: null, streaming: false, send });
-      vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", chars: 10, truncated: false });
-
-      const { container } = render(<WorkspacePage params={params} />);
+      const send = setup();
+      vi.mocked(client.uploadFile).mockResolvedValue({ path: "uploads/의견.md", original: null, chars: 10, truncated: false });
+      render(<WorkspacePage params={params} />);
       await screen.findByLabelText("단계 진행 상황");
 
-      const file = new File(["내용"], "의견.md", { type: "text/markdown" });
-      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-      await act(async () => {
-        fireEvent.change(fileInput, { target: { files: [file] } });
-      });
-      await screen.findByText("의견.md");
+      const dialog = await attachViaModal(new File(["내용"], "의견.md"));
+      await within(dialog).findByText(/첨부됨/);
+      await closeModal();
 
-      const user = userEvent.setup();
-      await user.click(screen.getByRole("button", { name: /Path A/ }));
-
+      await userEvent.setup().click(screen.getByRole("button", { name: /Path A/ }));
       expect(send).toHaveBeenCalledWith(
         "AI-PLC를 시작해줘. Path A(고객 페인 포인트에서 시작)로 진행하고 싶어.",
       );

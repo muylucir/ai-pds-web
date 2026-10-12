@@ -48,6 +48,10 @@ class AgentRunner:
     #: 있는 파일이 "있다가 없어지는 문서"로 보인다.
     _SYNC_GLOBS = SYNC_GLOBS
     _RESTORE_PREFIXES = ("aiplc-docs/", "prototype/", "uploads/")
+    #: 바이트 그대로 복원하는 서브트리. `uploads/`에는 이미지·PDF 원본이 있다 —
+    #: 텍스트 경로(UTF-8 디코드)를 타면 U+FFFD로 깨진다. 업로드 라우트만 쓰는
+    #: 입력이라 정본으로 올리지 않으므로(SYNC_GLOBS 밖) 해시도 기록하지 않는다.
+    _BYTE_PREFIXES = ("uploads/",)
 
     def __init__(self, project_id, driver, s3: S3StoreLike, local_root: Path, session: dict):
         self.project_id = project_id
@@ -83,6 +87,11 @@ class AgentRunner:
         """Upload path only: never silently replace an existing key."""
         reject_unsafe(rel_path)
         return await self._s3.put_if_absent(rel_path, content)
+
+    async def write_bytes_if_absent(self, rel_path: str, content: bytes) -> bool:
+        """`write_file_if_absent` for an upload's original (an image, a PDF)."""
+        reject_unsafe(rel_path)
+        return await self._s3.put_bytes_if_absent(rel_path, content)
 
     async def list_files(self, glob: str) -> list[str]:
         reject_unsafe(glob)
@@ -154,7 +163,10 @@ class AgentRunner:
             or previous.get(key) != etag
             or not self._local_path(key).is_file()
         ]
-        bodies = await asyncio.gather(*(self._s3.get(key) for key in keys))
+        bodies = await asyncio.gather(*(
+            self._s3.get_bytes(key) if key.startswith(self._BYTE_PREFIXES)
+            else self._s3.get(key)
+            for key in keys))
         # 첫 턴은 워크스페이스 전체를 쓴다 — 디스크 쓰기는 루프 밖에서.
         hashes = await asyncio.to_thread(
             self._write_restored, list(zip(keys, bodies)))
@@ -171,8 +183,11 @@ class AgentRunner:
             removed=len(removed),
         )
 
-    def _write_restored(self, items: list[tuple[str, str]]) -> dict[str, str]:
+    def _write_restored(
+        self, items: list[tuple[str, str | bytes]],
+    ) -> dict[str, str]:
         """복원한 본문을 로컬에 쓰고 키별 해시를 돌려준다. 동기 — 스레드에서 돈다.
+        바이트 본문(`_BYTE_PREFIXES`)은 그대로 쓰고 해시를 남기지 않는다.
 
         해시는 돌려주기만 하고 `_synced_hashes`에 직접 넣지 않는다: 그 dict는 루프
         쪽(쓰기 직후 게시)도 만지므로, 갱신은 루프에서 한 번에 한다.
@@ -181,6 +196,9 @@ class AgentRunner:
         for key, body in items:
             p = self._local_path(key)
             p.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(body, bytes):
+                p.write_bytes(body)
+                continue
             p.write_text(body, encoding="utf-8")
             hashes[key] = _content_hash(body)
         return hashes
