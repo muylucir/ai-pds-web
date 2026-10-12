@@ -17,7 +17,8 @@ export function ChatInput({
 }: {
   onSend: (text: string) => void;
   disabled: boolean;
-  onAttach?: (file: File) => void;
+  // 📎을 눌렀을 때. 파일 고르기는 부르는 쪽의 몫이다(워크스페이스는 첨부 모달을 연다).
+  onAttach?: () => void;
   // 마운트 시 1회 프리필 + 포커스(예: 리뷰 화면의 수정 요청 링크에서 넘어온 초안).
   initialText?: string;
   // 진행 중인 턴을 끊는다. 이 두 값은 짝이다 — 핸들러가 없으면 버튼을 띄우지
@@ -33,7 +34,6 @@ export function ChatInput({
 }) {
   const t = useT();
   const [text, setText] = useState(initialText ?? "");
-  const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -56,28 +56,15 @@ export function ChatInput({
         {context && <ContextMeter usage={context} />}
         <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white focus-within:ring-2 focus-within:ring-violet-400 px-4 py-2.5">
           {onAttach && (
-            <>
-              <button
-                type="button"
-                aria-label={t("canvas.attachFile")}
-                disabled={disabled}
-                onClick={() => fileRef.current?.click()}
-                className="shrink-0 text-slate-400 hover:text-violet-600 disabled:opacity-50"
-              >
-                📎
-              </button>
-              <input
-                ref={fileRef}
-                type="file"
-                hidden
-                accept=".md,.txt,.csv,.xlsx,.pdf"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) onAttach(f);
-                  e.target.value = ""; // allow re-selecting the same file
-                }}
-              />
-            </>
+            <button
+              type="button"
+              aria-label={t("canvas.attachFile")}
+              disabled={disabled}
+              onClick={onAttach}
+              className="shrink-0 text-slate-400 hover:text-violet-600 disabled:opacity-50"
+            >
+              📎
+            </button>
           )}
           <textarea
             ref={inputRef}

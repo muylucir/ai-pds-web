@@ -8,8 +8,8 @@ export interface AipdsDrillStackProps extends cdk.StackProps {
   /** 브라우저가 이 버킷으로 직접 PUT할 때 허용되는 출처.
    *
    *  프로젝트 가져오기는 번들을 presigned PUT으로 S3에 **직접** 올린다 —
-   *  nginx의 client_max_body_size(인스턴스 user-data 안의 값이므로 고치는 것이 곧
-   *  EC2 교체다)를 무관하게 만드는 유일한 길이다. 그 요청은 크로스 오리진이므로
+   *  nginx의 client_max_body_size와 Next 미들웨어의 바디 상한(둘 다 첨부 업로드에
+   *  맞춘 값)을 무관하게 만드는 유일한 길이다. 그 요청은 크로스 오리진이므로
    *  버킷에 CORS 규칙이 있어야 하고, 없으면 preflight에서 막힌다.
    *
    *  **값을 prop으로 받는 이유.** 실제 출처는 호스팅 스택의 CloudFront 도메인인데
