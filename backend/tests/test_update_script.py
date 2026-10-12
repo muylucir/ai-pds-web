@@ -142,3 +142,104 @@ def test_nginx_step_restores_the_conf_when_nginx_rejects_it(tmp_path):
     assert conf.read_text() == _CONF
     assert "reload" not in (tmp_path / "calls").read_text()
     assert "kept the previous conf" in r.stderr
+
+
+# ---- 끝까지 가지 못한 갱신은 다음 실행이 다시 한다 -----------------------------
+
+def _install_stubs(tmp_path: Path, pip_ok: bool) -> Path:
+    """root·runuser·systemctl·install·pip·npm 없이 스크립트 전체를 돌리는 스텁."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = tmp_path / "calls"
+    stubs = {
+        "id": 'echo 0',
+        # `runuser -u SVC -- cmd…` → 작업 디렉터리를 바꾸지 않고 cmd를 그대로 돌린다.
+        "runuser": 'shift 3; exec "$@"',
+        "systemctl": f'echo "systemctl $*" >> "{log}"',
+        "install": f'echo "install $*" >> "{log}"',
+        "npm": f'echo "npm $*" >> "{log}"',
+    }
+    for name, body in stubs.items():
+        stub = bin_dir / name
+        stub.write_text(f"#!/bin/bash\n{body}\n")
+        stub.chmod(0o755)
+    return bin_dir
+
+
+def _deployed(tmp_path: Path):
+    """origin(bare) + 그것을 추적하는 앱 트리 + 경로를 임시로 바꾼 스크립트 사본."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+    _git(work, "config", "user.email", "t@example.com")
+    _git(work, "config", "user.name", "t")
+    for path in ("backend/pyproject.toml", "backend/aipds/app.py", "README.md"):
+        (work / path).parent.mkdir(parents=True, exist_ok=True)
+        (work / path).write_text("v1\n")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "v1")
+    _git(work, "push", "-q", "origin", "HEAD:main")
+    app = tmp_path / "app"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(origin), str(app)], check=True)
+    env_file = tmp_path / "deploy.env"
+    env_file.write_text(f"APP={app}\nSVC=svc\nBRANCH=main\n")
+    applied = tmp_path / "state" / "update-applied"
+    script = tmp_path / "aipds-update"
+    script.write_text(SCRIPT.read_text(encoding="utf-8")
+                      .replace("ENV_FILE=/etc/aipds-deploy.env", f"ENV_FILE={env_file}")
+                      .replace("APPLIED_FILE=/var/lib/aipds/update-applied",
+                               f"APPLIED_FILE={applied}")
+                      .replace("NGINX_CONF=/etc/nginx/conf.d/aipds.conf",
+                               f"NGINX_CONF={tmp_path / 'absent.conf'}"))
+    return work, app, script, applied
+
+
+def _run_update(tmp_path: Path, app: Path, script: Path, pip_ok: bool):
+    pip = app / "backend/.venv/bin/pip"
+    pip.parent.mkdir(parents=True, exist_ok=True)
+    pip.write_text(f'#!/bin/bash\necho "pip $*" >> "{tmp_path / "calls"}"\nexit {0 if pip_ok else 1}\n')
+    pip.chmod(0o755)
+    bin_dir = _install_stubs(tmp_path, pip_ok)
+    return subprocess.run(["bash", str(script)], capture_output=True, text=True, cwd="/",
+                          env={"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)})
+
+
+def test_an_update_that_failed_midway_is_redone_by_the_next_run(tmp_path):
+    work, app, script, applied = _deployed(tmp_path)
+    (work / "backend/pyproject.toml").write_text("v2\n")
+    _git(work, "commit", "-qam", "deps")
+    _git(work, "push", "-q", "origin", "HEAD:main")
+
+    first = _run_update(tmp_path, app, script, pip_ok=False)
+    assert first.returncode != 0
+    assert not applied.exists()                  # 끝까지 가지 못했다 — 기록하지 않는다
+    assert "restart aipds-backend" not in (tmp_path / "calls").read_text()
+
+    # checkout은 이미 끝났다. HEAD를 기준으로 삼으면 여기서 "already at"으로 끝난다.
+    (tmp_path / "calls").unlink()
+    applied.parent.mkdir(parents=True, exist_ok=True)
+    head_before = _git(work, "rev-parse", "HEAD~1")
+    applied.write_text(head_before + "\n")       # 실패 전 기록(첫 실행 이후라면 있었을 값)
+    second = _run_update(tmp_path, app, script, pip_ok=True)
+    assert second.returncode == 0, second.stderr
+    calls = (tmp_path / "calls").read_text()
+    assert "pip install -e" in calls and "systemctl restart aipds-backend" in calls
+    assert applied.read_text().strip() == _git(work, "rev-parse", "HEAD")
+
+
+def test_a_run_with_nothing_new_records_nothing(tmp_path):
+    """조기 종료는 기록하지 않는다 — 기록 전에 반쯤 적용된 HEAD를 "다 적용됨"으로 굳히지 않게."""
+    _work, app, script, applied = _deployed(tmp_path)
+    r = _run_update(tmp_path, app, script, pip_ok=True)
+    assert r.returncode == 0, r.stderr
+    assert "already at" in r.stdout
+    assert not applied.exists()
+
+
+def test_svc_commands_run_inside_the_app_tree(tmp_path):
+    """sudo를 부른 자리(/root, 700인 홈)를 SVC가 못 읽으면 pip이 EACCES로 멈춘다."""
+    code = [line for line in SCRIPT.read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith("#")]
+    first_runuser = next(i for i, line in enumerate(code) if "runuser" in line)
+    assert 'cd "$APP"' in code[:first_runuser]
