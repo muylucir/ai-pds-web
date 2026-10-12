@@ -102,6 +102,11 @@ export function renderUserData(opts: UserDataOptions): string {
   // app/api/[...path]/route.ts가 서버사이드에서 FastAPI로 넘기며 쿠키를 Bearer로
   // 번역하는 지점이고, nginx가 FastAPI를 직접 가리키면 그 번역이 사라져 로그인과
   // 모든 API 호출이 깨진다.
+  //
+  // nginx `client_max_body_size 11m`: 첨부 업로드 상한(10MB,
+  // backend/aipds/parsers/uploads.py) + multipart 여유. 이 conf는 부팅 때만 쓰이므로
+  // 떠 있는 인스턴스는 infra/scripts/aipds-update가 같은 값으로 맞춘다 — 두 값은
+  // 같아야 한다(test/user-data.assert.ts가 대조한다).
   // ---------------------------------------------------------------------------
   return `#!/bin/bash
 set -euxo pipefail
@@ -180,7 +185,7 @@ cat > /etc/nginx/conf.d/aipds.conf <<NGINX
 server {
   listen 80 default_server;
   server_name _;
-  client_max_body_size 6m;
+  client_max_body_size 11m;
   # JWT 쿠키 3개가 기본 버퍼(4k/8k)를 넘겨 400이 난다 — 응답 쪽 버퍼와 짝이다.
   large_client_header_buffers 4 32k;
 

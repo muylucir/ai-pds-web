@@ -1,9 +1,9 @@
 // frontend/lib/api/transfer.ts — 프로젝트 이관(내보내기·가져오기) 클라이언트.
 //
 // 가져오기는 세 단계다: presign 요청 → **브라우저가 S3로 직접 PUT** → 임포트 요청.
-// 두 번째 단계가 우리 서버를 지나지 않는 것이 요점이다 — nginx의
-// `client_max_body_size`(6m)를 올리려면 인스턴스를 교체해야 하고, 교체는 그 박스의
-// 프로토타입 빌드 트리를 가져간다.
+// 두 번째 단계가 우리 서버를 지나지 않는 것이 요점이다 — 번들은 크기에 위가 없고,
+// 서버를 지나는 요청은 nginx와 Next 미들웨어의 바디 상한(첨부 업로드에 맞춘 값)에
+// 걸린다.
 import { API_BASE_URL, ApiError } from "./client";
 import { CREDENTIALS } from "@/lib/auth";
 import { apiFetch } from "./http";

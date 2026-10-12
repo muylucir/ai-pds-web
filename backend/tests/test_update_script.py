@@ -86,3 +86,59 @@ def test_test_only_updates_restart_nothing(repo, edits):
 ])
 def test_runtime_changes_still_restart(repo, edits, expected):
     assert _changed(repo, *edits) == expected
+
+
+# ---- nginx 바디 상한 맞추기 ------------------------------------------------------
+
+def _nginx_step(conf: Path, bin_dir: Path) -> subprocess.CompletedProcess:
+    """스크립트의 nginx 단계만 꺼내 임시 conf에 돌린다. nginx·systemctl은 스텁이다."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    m = re.search(r"^NGINX_CONF=.*?^fi$", text, re.M | re.S)
+    assert m, "aipds-update must keep the nginx body-limit step"
+    step = m.group(0).replace("NGINX_CONF=/etc/nginx/conf.d/aipds.conf",
+                              f"NGINX_CONF={conf}", 1)
+    return subprocess.run(["bash", "-euo", "pipefail", "-c", step], capture_output=True,
+                          text=True, env={"PATH": f"{bin_dir}:/usr/bin:/bin"})
+
+
+def _stubs(tmp_path: Path, nginx_ok: bool) -> Path:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls"
+    for name, code in (("nginx", 0 if nginx_ok else 1), ("systemctl", 0)):
+        stub = bin_dir / name
+        stub.write_text(f'#!/bin/bash\necho "{name} $*" >> "{log}"\nexit {code}\n')
+        stub.chmod(0o755)
+    return bin_dir
+
+
+_CONF = ("server {\n  client_max_body_size 6m;\n"
+         '  if ($http_x_origin_verify != "s3cr3t") { return 403; }\n}\n')
+
+
+def test_nginx_step_raises_the_body_limit_and_keeps_the_rest(tmp_path):
+    conf = tmp_path / "aipds.conf"
+    conf.write_text(_CONF)
+    r = _nginx_step(conf, _stubs(tmp_path, nginx_ok=True))
+    assert r.returncode == 0, r.stderr
+    assert conf.read_text() == _CONF.replace("6m;", "11m;")
+    assert "systemctl reload nginx" in (tmp_path / "calls").read_text()
+    assert not (tmp_path / "aipds.conf.prev").exists()
+
+
+def test_nginx_step_is_a_no_op_when_already_right(tmp_path):
+    conf = tmp_path / "aipds.conf"
+    conf.write_text(_CONF.replace("6m;", "11m;"))
+    r = _nginx_step(conf, _stubs(tmp_path, nginx_ok=True))
+    assert r.returncode == 0, r.stderr
+    assert not (tmp_path / "calls").exists()        # 검사도 reload도 하지 않았다
+
+
+def test_nginx_step_restores_the_conf_when_nginx_rejects_it(tmp_path):
+    conf = tmp_path / "aipds.conf"
+    conf.write_text(_CONF)
+    r = _nginx_step(conf, _stubs(tmp_path, nginx_ok=False))
+    assert r.returncode == 0, r.stderr
+    assert conf.read_text() == _CONF
+    assert "reload" not in (tmp_path / "calls").read_text()
+    assert "kept the previous conf" in r.stderr
