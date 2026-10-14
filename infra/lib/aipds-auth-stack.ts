@@ -115,6 +115,11 @@ export class AipdsAuthStack extends cdk.Stack {
         requireSymbols: true,
         tempPasswordValidity: cdk.Duration.days(TEMP_PASSWORD_VALIDITY_DAYS),
       },
+      // **보안 경고: MFA가 꺼져 있다.** 이 스택은 워크숍용 실험·교육 샘플이고(README의 Note)
+      // 로그인은 비밀번호 하나다. 비밀번호가 새면 그 계정이 그대로 넘어가고, 관리자 계정이면
+      // 사용자·역할 관리까지 넘어간다. 워크숍 밖에서 쓰거나 실제 고객 자료를 다룬다면 MFA를
+      // 켠다 — `mfa: cognito.Mfa.REQUIRED`와 `mfaSecondFactor: { otp: true, sms: false }`
+      // (TOTP 인증 앱). SMS는 켜지 않는다: 이 앱은 문자·메일을 보내는 경로를 두지 않았다.
       mfa: cognito.Mfa.OFF,
       // 이 앱은 메일을 전혀 보내지 않으므로 자가 재설정 코드를 전달할 경로가
       // 없다. 재설정은 관리 페이지에서 관리자가 한다.
