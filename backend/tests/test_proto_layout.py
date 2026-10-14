@@ -3,7 +3,7 @@
 # **왜 이 모듈이 생겼는가(2026-08-16의 오판).** Prototypes 탭이 카드를 만드는
 # 규칙이 `prototypes/{slug}/PROTOTYPE-{slug}.md` **한 가지**뿐이었다. 그래서
 # Path A.1(Envision 파생, 단일 프로토타입)로 정상 완주한 세션이 카드를 하나도
-# 만들지 못했다 — keumkang-v5가 그 상태다.
+# 만들지 못했다 — ws-a-v5가 그 상태다.
 #
 # 처음에는 "상류 Path A.1이 슬러그 파일 생성을 빠뜨렸다"고 판단해 에이전트가 그
 # 파일을 쓰게 하려 했다. **그 판단이 틀렸다.** `prototype-validation.md`가
@@ -39,7 +39,7 @@ def test_discovers_the_slugged_layout():
 
 
 def test_discovers_the_single_prototype_layout():
-    """**이 케이스가 이 모듈의 존재 이유다.** keumkang-v5가 이 상태였고 카드가 0개였다."""
+    """**이 케이스가 이 모듈의 존재 이유다.** ws-a-v5가 이 상태였고 카드가 0개였다."""
     assert discover([SINGLE_SPEC_KEY]) == {SINGLE_ID: SINGLE_SPEC_KEY}
 
 

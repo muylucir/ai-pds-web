@@ -54,7 +54,7 @@ def test_in_progress_longest_match_when_no_exact():
     assert in_prog == ["Discovery Mode Selection Extended Review"]  # longest/most-specific, only one
 
 
-# ---- HTML 엔티티 (2026-08-18 실측: hpt-sarang) ----
+# ---- HTML 엔티티 (2026-08-18 실측: ws-d) ----
 # 모델이 report_stage에 `"stage": "Prototype &amp; Validation"`을 보냈고, 그것이
 # 그대로 aiplc-state.md에 저장돼 사이드바에 `&amp;`로 떴다. 룰셋·우리 코드에는
 # `&amp;`가 없다 — 모델 쪽 이스케이프다. 이름은 키이므로 표시만이 아니라 매칭도

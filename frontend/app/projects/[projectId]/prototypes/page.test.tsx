@@ -143,7 +143,7 @@ describe("Prototypes page", () => {
 
   it("Start hosting refused by an open build session tells the user what to press, on that card", async () => {
     // 409 `build_session_active`. 이 거부가 화면에 없으면 버튼이 아무 반응 없이
-    // 돌아온 것으로 읽힌다(fvr-master, 2026-10-08).
+    // 돌아온 것으로 읽힌다(ws-f, 2026-10-08).
     const built = [{ ...PROTOTYPES[0], state: "built", session_open: true }];
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(built))),

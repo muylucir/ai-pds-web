@@ -1213,7 +1213,7 @@ class ClaudeDriver:
             self._emit_document_events()
         # 프로토타입 인계: Step 3의 마지막 산출물이 쓰이는 순간이다. 옛
         # `handoff_prototype` 도구와 달리 모델이 잊을 수 없다 — 2026-08-17
-        # keumkang-v5에서 탭 안내가 0회였던 것이 그 도구가 생긴 이유였고, 도구는
+        # ws-a-v5에서 탭 안내가 0회였던 것이 그 도구가 생긴 이유였고, 도구는
         # "부르지 않으면 침묵"이라는 같은 실패를 한 단계 뒤로 미룬 것이었다.
         if reconcile.prototype_id_for(rel) is not None:
             stop = self._handoff_stop(rel)

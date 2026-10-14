@@ -40,13 +40,13 @@ _log = logging.getLogger("aipds.agent")
 #: 후보 파일. **이름이 아니라 내용으로 고른다.**
 #:
 #: 예전에는 `*-questions.md`였고, 그래서 `design-context.md`의 답변이 통째로
-#: 유실됐다(2026-08-16 keumkang-v5: 문항 3개·슬롯 3개인데 0건 기록). 이름에
+#: 유실됐다(2026-08-16 ws-a-v5: 문항 3개·슬롯 3개인데 0건 기록). 이름에
 #: 의존할 수 없는 이유는 **상류가 자기 명명 규칙을 스스로 안 지킨다**는 것이다 —
 #: question-format-guide.md는 `{phase-name}-questions.md`를 규정하는데
 #: prototype-validation.md는 Step 2의 산출물을 `design-context.md`로 지정하면서
 #: 그 안에 질문 형식을 쓰라고 한다.
 #:
-#: 넓혀도 안전하다는 것은 실측으로 확인했다(keumkang-v5의 aiplc-docs 15개 파일):
+#: 넓혀도 안전하다는 것은 실측으로 확인했다(ws-a-v5의 aiplc-docs 15개 파일):
 #: 추가되는 것은 design-context.md 하나뿐이고 audit.md·discovery-document.md·
 #: prototype-spec.md 등 8개는 아래 두 관문에서 전부 걸러진다.
 #:
@@ -157,7 +157,7 @@ def _record(workspace: str, sdk_questions: list[dict],
         # **조용히 실패하지 않는다.** 2026-08-16에 되기록이 안 됐는데 로그가 텅
         # 비어 있어서 원인을 찾는 데 오래 걸렸다.
         #
-        # 다만 두 종류를 **레벨로 가른다.** keumkang-v5의 실패 5건 중 3건은 결함이
+        # 다만 두 종류를 **레벨로 가른다.** ws-a-v5의 실패 5건 중 3건은 결함이
         # 아니었다 — 게이트/승인 질문이라 질문 파일이 애초에 없고 audit.md에만
         # 기록된다(기록할 곳이 없으니 빈 칸도 없다). 그걸 진짜 결함과 같은 경고로
         # 묶으면 잡음에 묻힌다. 최선 점수가 둘을 가른다: 근처까지 온 후보가 있으면
@@ -195,7 +195,7 @@ def _record(workspace: str, sdk_questions: list[dict],
 #: 턴에 파일(Write)은 깨끗하고 질문(AskUserQuestion)만 깨질 수 있다. 상류는 공식
 #: 미해결이고(모델 팀 이관, CLI로는 복원 불가) hex 오타가 무작위라 역변환도 없다.
 #:
-#: **왜 이 숫자인가.** keumkang-v3 6라운드 21문항 실측:
+#: **왜 이 숫자인가.** ws-a-v3 6라운드 21문항 실측:
 #:   맞는 쌍 0.9677 / 가장 비슷한 오답 0.5806 / 그 외 ≤0.375 /
 #:   한 라운드 내 최대 0.32~0.40.
 #: 0.97과 0.58 사이가 비어 있다. 60자에 3음절이 깨져도 약 0.95, 20자에 1음절이
@@ -213,7 +213,7 @@ _FUZZY_MARGIN = 0.10
 #: 대상이다(경고). 미만이면 어느 후보도 근처에 없었던 것 — 게이트/승인 질문처럼
 #: 질문 파일 자체가 없는 경우이고 정상이다(info).
 #:
-#: 실측이 이 선을 뒷받침한다: keumkang-v5의 실패 5건은 전부 0.345~0.552였고 모두
+#: 실측이 이 선을 뒷받침한다: ws-a-v5의 실패 5건은 전부 0.345~0.552였고 모두
 #: "파일에 없는 질문"이었다. 반대로 깨진 한글의 맞는 쌍은 0.9677이었다.
 _NEAR_MISS_MIN = 0.70
 
@@ -276,7 +276,7 @@ def _assign(questions, wanted: dict[str, str],
     #
     # 파일은 배경 산문 + 질문을 함께 담는데 AskUserQuestion에는 질문 문장만 간다
     # (models.Question.ask 참조). text만 비교하면 길이 차이로 유사도가 무너진다 —
-    # keumkang-v5의 design-context.md Q4가 0.3721로 유실됐다. 둘 중 더 잘 맞는
+    # ws-a-v5의 design-context.md Q4가 0.3721로 유실됐다. 둘 중 더 잘 맞는
     # 쪽을 쓴다. 문단이 하나면 두 값이 같아 비용도 없다.
     norms = [(q.number, _norm(q.text), _norm(q.ask)) for q in questions]
     mapping: dict[int, str] = {}

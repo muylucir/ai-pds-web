@@ -37,7 +37,7 @@ describe("latestCapabilities", () => {
 
 describe("StageSidebar", () => {
   // 에이전트가 쓴 스테이지는 8개지만 사이드바는 공식 6개를 보인다
-  // (Rachna 피드백: PDS는 6개인데 화면의 숫자가 달랐다).
+  // (AI-PDS 팀 피드백: PDS는 6개인데 화면의 숫자가 달랐다).
   it("renders the six official capabilities, not the agent's raw stage list", () => {
     render(<StageSidebar state={projectState} events={[]} />);
     expect(screen.getByLabelText("단계 진행 상황")).toBeInTheDocument();
