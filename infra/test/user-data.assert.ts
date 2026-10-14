@@ -114,8 +114,11 @@ assert.match(s, /if \[ -d \/opt\/aipds\/\.git \]; then/,
 
   assert.match(update, /\. "\$ENV_FILE"/,
     'the script must source the deploy env instead of hardcoding APP/SVC/BRANCH');
-  assert.match(update, /checkout -f -B "\$BRANCH" "origin\/\$BRANCH"/,
-    'aipds-update must move the tree onto the remote tip of the deploy branch');
+  // 인자가 없으면 배포 브랜치, 있으면 그 시험 브랜치(개발자용 — 스크립트 머리말)의 원격 최신.
+  assert.match(update, /TARGET=\$\{1:-\$BRANCH\}/,
+    'aipds-update must default to the deploy branch when no branch is given');
+  assert.match(update, /checkout -f -B "\$TARGET" "origin\/\$TARGET"/,
+    'aipds-update must move the tree onto the remote tip of the deploy (or test) branch');
   // checkout은 gitlink만 옮기고 서브모듈 내용은 옮기지 않는다 — 빼면 룰 갱신이
   // 조용히 반영되지 않는다(브랜치 배포에서 코드 갱신 경로는 이 스크립트뿐이다).
   assert.match(update, /submodule update --init --recursive/,
