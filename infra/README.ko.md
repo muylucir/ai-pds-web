@@ -145,7 +145,7 @@ npm test     # 자격증명 불필요 — 순수 함수 + 합성된 템플릿에
 
 | 파일 | 지키는 것 |
 |---|---|
-| `user-data.assert.ts` | 부팅 스크립트 — nginx 변수와 셸 변수의 이스케이프, 비루트 실행(Claude Code는 euid 0에서 `bypassPermissions`를 거부한다), JWT 쿠키가 들어갈 프록시 버퍼, 서로 다른 두 config dir, `aipds-update` 설치, 서비스 기동 전 `aipds-harden boot` |
+| `user-data.assert.ts` | 부팅 스크립트 — nginx 변수와 셸 변수의 이스케이프, 비루트 실행(Claude Code는 euid 0에서 `bypassPermissions`를 거부한다), JWT 쿠키가 들어갈 프록시 버퍼, 서로 다른 두 config dir, `aipds-update`가 떠 있는 인스턴스에 맞추는 값과 같은 nginx 요청 바디 상한, `aipds-update` 설치, 서비스 기동 전 `aipds-harden boot` |
 | `hosting-stack.assert.ts` | 프리픽스 리스트 전용 SG(SSH 없음), EC2/EBS/EIP/인스턴스 롤, CloudFront 오리진 헤더와 HTTPS 리다이렉트, **앱 클라이언트 드리프트 검사** |
 | `auth-stack.assert.ts` | 셀프 사인업 차단, 별칭 username, 그룹, managed login v2, 코드 전용 클라이언트, 시딩 3단계 |
 | `auth-client-config.assert.ts` | **프로토타입 빌드 한 번보다 긴** 토큰 유효기간, 시드·그룹 상수, 콜백/로그아웃 URL |

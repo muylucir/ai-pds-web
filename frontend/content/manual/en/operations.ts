@@ -31,7 +31,7 @@ common mistake.`,
         "cd infra",
         "npm ci",
         "npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2",
-        "npx cdk deploy --all --require-approval never",
+        "npx cdk deploy --all --require-approval never --parameters AipdsAuthStack:SeedPassword='<SEED_PASSWORD>'",
       ],
     },
     {
@@ -55,46 +55,6 @@ nothing to run by hand.
 
 The address to open is the \`AipdsHostingStack.DistributionDomain\` output; prototype share links go
 out on the \`AipdsPreviewStack.PreviewOrigin\` address.`,
-    },
-    { kind: "heading", id: "migrate", text: "Moving from an existing deployment" },
-    {
-      kind: "md",
-      md: `Renaming the stacks makes CloudFormation lose its link to the existing ones. You end up with
-3 new stacks while the 3 existing ones remain.`,
-    },
-    {
-      kind: "callout",
-      tone: "warn",
-      md: `**0. Once this change is on \`main\`, do not run \`sudo aipds-update\` on the existing
-instance.** Its systemd units and tree paths still carry the old names, so the update script aborts
-partway through — and that instance is exactly the one that must keep serving in-flight survey links
-until the old stacks are deleted in step 9 below. Leave it frozen until then.`,
-    },
-    {
-      kind: "steps",
-      items: [
-        "`cdk deploy AipdsDrillStack AipdsAuthStack` — the new bucket and user pool",
-        "`aws s3 sync s3://<existing bucket> s3://<new bucket>` — moves the artifacts over. The key prefixes carry no product name, so the layout comes up unchanged. After it finishes, compare object counts: run `aws s3api list-objects-v2 --bucket <new bucket> --query 'length(Contents)'` and the same command against the existing bucket — the deletion below is irreversible, so seeing project cards on screen is not enough to catch a partially failed sync",
-        "Move the Discovery transcript prefixes. Transcripts are stored under a UUID derived from the project id, and this rename changed that derivation — without this step **every project's Discovery conversation starts as an empty session** (artifacts, surveys and responses are unaffected). The loop below reads whatever directory is already there and moves it to the new name, so it is safe to run more than once:\n\n```bash\nfor pid in $(aws s3 ls s3://<new bucket>/projects/ | awk '{print $2}' | tr -d /); do\n  base=\"s3://<new bucket>/projects/$pid/discovery/transcript\"\n  cur=$(aws s3 ls \"$base/\" 2>/dev/null | awk '{print $2}' | tr -d / | head -1)\n  want=$(python3 -c \"import uuid,sys;print(uuid.uuid5(uuid.NAMESPACE_URL,'aipds:'+sys.argv[1]))\" \"$pid\")\n  if [ -n \"$cur\" ] && [ \"$cur\" != \"$want\" ]; then\n    aws s3 mv \"$base/$cur/\" \"$base/$want/\" --recursive\n  fi\ndone\n```",
-        "`cdk deploy AipdsHostingStack` — the new EC2 instance and CloudFront",
-        "Confirm you can sign in at the new address (`admin@aipds.local`)",
-        "Check the project cards — specs and surveys are intact, and prototypes are **unbuilt**",
-        "Rebuild whichever prototypes you need. Build output lived only on the instance disk, so it does not come along",
-        "Once every in-flight survey has closed, re-run `aws s3 sync s3://<existing bucket> s3://<new bucket>` — responses submitted through the old address's links after the first sync exist only in the existing bucket, not the new one",
-        "Delete the 3 existing stacks (Hosting → Auth → Drill, in that order)",
-      ],
-    },
-    {
-      kind: "callout",
-      tone: "warn",
-      md: `**Do not rush step 9.** Survey links already handed out point at the old address, so deleting the
-old stacks kills them. Wait until response collection for any in-flight survey has finished, re-sync in
-step 8, and only then delete.
-
-The existing Drill stack was created with \`removalPolicy: DESTROY\` and \`autoDeleteObjects: true\`,
-and it has no versioning — deleting it removes every object in that bucket immediately, with no way to
-recover them. Skip the re-sync in step 8, and any response that arrived through the old links after the
-first sync is gone for good the moment you delete.`,
     },
     {
       kind: "callout",
@@ -134,7 +94,7 @@ management](/manual#invite).`,
     },
     {
       kind: "cmd",
-      lines: ["CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all --require-approval never"],
+      lines: ["CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all --require-approval never --parameters AipdsAuthStack:SeedPassword='<SEED_PASSWORD>'"],
     },
     { kind: "heading", id: "redeploy", text: "Updating the code" },
     {
@@ -170,7 +130,12 @@ does the update — **there is no instance replacement, so it is usable mid-work
   and backend updates during a break.
 - Check what is running with \`git -C /opt/aipds rev-parse HEAD\`. To check the app answers, hit it
   directly with \`curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:3000/\` — nginx returns 403
-  to requests without CloudFront's secret header, so go around it.`,
+  to requests without CloudFront's secret header, so go around it.
+- If an update stops partway — a failed install, say — fix the cause and run it again. It compares
+  against the last commit it **finished** applying, not the commit the tree is on, so the next run
+  redoes the remaining steps instead of reporting that it is already current.
+- nginx's request-size limit follows the attachment limit (10MB per file). An update sets it on a
+  running instance and reloads nginx only when the value changed.`,
     },
     {
       kind: "callout",
@@ -332,6 +297,7 @@ first with
 | Long messages drop the connection | Too much in a single message. Split it, or [attach it as a file](/manual#attach) |
 | The screen is frozen after sleep or a screensaver | Only the **live view** was lost — the AI kept working on the server and the documents were saved. The screen reattaches by itself and picks up from what it missed. If "The connection dropped" appears, refresh — a task still in progress refills from the start, and a finished one comes back as chat history |
 | I refreshed during a prototype build | The build keeps going on the server. Press **Open session** on the card — the session's conversation (questions and answers included) comes back from the start and the panel reattaches to the build in progress |
+| Start hosting, Stop hosting or export is refused because a build session is open | The AI has not declared that build finished, so its session is still open. Press **Open session** on the card, then **Done** in the panel, and try again ([the build session](/manual#session)) |
 | I refreshed while the AI was working | That is fine. The workspace reattaches to the task in progress as it opens, and the input stays locked until the task finishes. Opening the same project in another tab shows the same task |
 | Chat history looks empty | The instance may have been replaced. If a refresh does not bring it back, check the backend log |
 | One feature fails and the screen gives no reason | Usually IAM. \`AccessDenied\` in the backend log names the action |

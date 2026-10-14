@@ -7,18 +7,21 @@ export const review: ManualSection = {
   blocks: [
     {
       kind: "md",
-      md: `Documents are listed as a tree on the left, and the one you select renders on the right.
-The badge above it tells you its state — *Draft under review* or *✓ Approved*.`,
+      md: `Documents are listed as a tree on the left and the one you select renders in the middle. For
+the Discovery document (\`discovery-document.md\`), the AI verification summary sits in a column to its
+right, and the approval state is shown across the top of the screen — the **Approval gate** marked
+*Draft under review* until you approve it, then *✓ Approved*.`,
     },
     {
       kind: "mockup",
       id: "approval-gate",
-      caption: "The approval gate — two buttons decide this document's next state",
+      caption: "The approval gate at the top, with the file list · the document · the AI verification summary below",
     },
     { kind: "heading", id: "gate", text: "The approval gate" },
     {
       kind: "md",
-      md: `When a document is waiting to be finalized, the gate appears below it. You have two choices.
+      md: `While the Discovery document is not yet approved, the gate sits at the top of the screen whenever
+that document is open. You have two choices.
 
 - **✓ Approve and continue** — the stage is settled with this document and the work moves on.
   Pressing it takes you to the workspace, where the AI works through the next stage. If the AI is
@@ -27,12 +30,15 @@ The badge above it tells you its state — *Draft under review* or *✓ Approved
   the input. You describe there what should change and how.
 
 Both decisions are recorded in \`audit.md\` immediately, and everything that passed through the
-gate accumulates under **Approval gate history**.`,
+gate accumulates under **Approval gate history**, below the verification summary.
+
+Once approved, the gate gives way to a green *✓ Approved* notice. Its **✏️ Request a revision**
+button is still there — use it to reopen the document.`,
     },
     { kind: "heading", id: "verification", text: "The AI verification summary" },
     {
       kind: "md",
-      md: `Above the gate, the AI's own check of the document appears — missing items, claims with thin
+      md: `Next to the document, the AI's own check of it appears — missing items, claims with thin
 support, places that contradict earlier answers. **Read this before approving.** Sending what it
 lists straight back as a revision request usually resolves the document in one pass.`,
     },
@@ -46,7 +52,9 @@ lists straight back as a revision request usually resolves the document in one p
 
 For a handoff to a build team, the \`.zip\` is the convenient one. If only the prototype specs are
 wanted, pulling out the \`PROTOTYPE-*.md\` files is enough — a build can start from those files
-alone in another environment.
+alone in another environment. If Discovery has written \`spec-as-built.md\` next to a spec (the
+approved spec with every later prototype change applied — see
+[changing a prototype](/manual#modify)), hand that over too: once approved, it is the spec of record.
 
 If the Discovery document cites a file as evidence (for example \`prototype/validation-results.md\`)
 that is not among the artifacts, a yellow warning listing those files appears above the download

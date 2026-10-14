@@ -46,7 +46,7 @@ The frontend middleware is only a UX gate — **the security boundary is the bac
 | Screen | What it does | Access |
 |---|---|---|
 | `/` | Project list, creation, export and import | logged in |
-| `/projects/{id}/workspace` | The Discovery conversation — live turns, question sheets, attachments, the document panel | logged in |
+| `/projects/{id}/workspace` | The Discovery conversation — live turns, question sheets, attachments, the generated-document drawer | logged in |
 | `/projects/{id}/dashboard` | Stage progress, artifacts, activity | logged in |
 | `/projects/{id}/review` | Document review and the approval gate | logged in |
 | `/projects/{id}/questions` | One question file, expanded to answer | logged in |
