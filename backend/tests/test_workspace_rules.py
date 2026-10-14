@@ -596,7 +596,7 @@ _ENCODING_MARKER = "<!-- aipds-tool-encoding -->"
 def test_the_assembled_claude_md_does_not_duplicate_the_encoding_rule(tmp_path):
     """**2026-08-18에 뒤집은 검사다.** 전에는 이 절이 있어야 한다고 요구했다.
 
-    원래 근거(2026-08-16 keumkang-v3): 모델이 툴 파라미터의 한글을 `\\uXXXX`로
+    원래 근거(2026-08-16 ws-a-v3): 모델이 툴 파라미터의 한글을 `\\uXXXX`로
     쓰면서 hex를 오타내면 "유효하지만 틀린" 음절이 된다 — 파일은
     `제공하시겠습니까`(U+ACA0)인데 물어본 질문은 `제공하시겜습니까`(U+AC9C)였다.
     지시는 `discovery-config/CLAUDE.md`에 이미 있었는데도 결함이 났고, 그 파일이
@@ -686,7 +686,7 @@ def test_the_prototype_handoff_and_model_overrides_are_documented():
     Path A.1의 Step 3은 "Build Prototype"이고 상류 Step 4~11은 돌아가는
     프로토타입을 전제한다. AI-PDS는 빌드를 Prototypes 탭이 하는데, 금지만 있고
     멈출 지점·다음 행동이 문서에 없어서 에이전트가 즉흥 대응했다 — 실측
-    keumkang-v5: 자격증명 점검 → API 키 요구 → 선행 조건 3건 나열, 탭 안내는 0회.
+    ws-a-v5: 자격증명 점검 → API 키 요구 → 선행 조건 3건 나열, 탭 안내는 0회.
 
     같은 공백이 모델 문제로도 나타났다. `llm-model-configuration.md`가 제공자
     선택과 API 키를 요구하고 모델 ID 세 개를 서로 다르게 적어 두는데, 그것을
