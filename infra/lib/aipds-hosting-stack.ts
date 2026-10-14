@@ -219,6 +219,8 @@ export class AipdsHostingStack extends cdk.Stack {
     // 하나로 바꾼다: 자체 도메인 + 인증서로 오리진을 HTTPS_ONLY(443)로, 또는 인스턴스를
     // 프라이빗 서브넷으로 옮기고 CloudFront VPC 오리진을 쓴다. 이 스택의 배포는 EC2를 교체할 수
     // 있으므로(AMI 미고정) 계획된 교체 때 한다. 프리뷰 배포(aipds-preview-stack.ts)도 같다.
+    // 이 샘플이 도메인 없이 배포되도록 한 선택이다 — README "CloudFront → instance is HTTP by
+    // design"에 범위·완화·전환 방법을 적었다.
     //
     // 비밀 헤더 값: CFN dynamic reference({{resolve:secretsmanager:...}})로 주입.
     // 배포 시 CloudFormation이 해석 → 템플릿에는 평문이 남지 않음.

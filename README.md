@@ -134,16 +134,45 @@ npx cdk deploy --all --require-approval never \
     the Plus feature plan (`aipds-auth-stack.ts`).
   - `cdk destroy` deletes the user pool and the artifacts bucket with everything in it, and the bucket
     has no versioning or access logs (`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
-  - CloudFront reaches the instance over plain HTTP, carrying session cookies; the security group and a
-    secret header block direct access, but not eavesdropping on the path. Fixing it needs your own
-    domain and certificate, or a CloudFront VPC origin (`aipds-hosting-stack.ts`,
-    `aipds-preview-stack.ts`).
+  - CloudFront reaches the instance over plain HTTP — see
+    [CloudFront → instance is HTTP by design](#cloudfront--instance-is-http-by-design).
 - **Another region**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. No code changes.
 - **Another upload origin** (a custom domain, say): `AIPDS_UPLOAD_ORIGINS` (comma-separated) at deploy
   time. The app's own origin is added by the instance.
 
 Updating the code, the sandbox commands, protecting a running instance from replacement, getting a
 fresh instance, teardown, and troubleshooting are in **`/manual` → Install, operate, troubleshoot**.
+
+### CloudFront → instance is HTTP by design
+
+This is a workshop and sample workload, and it deliberately uses no domain of its own, so it deploys
+into any account with nothing to register first. Browsers reach CloudFront over HTTPS only (HTTP is
+redirected), but CloudFront reaches the instance over HTTP on port 80 — in both the app distribution
+(`aipds-hosting-stack.ts`) and the preview distribution (`aipds-preview-stack.ts`). HTTPS on that leg
+needs a publicly trusted certificate for the origin's name, and no certificate authority issues one for
+the instance's `ec2-….compute.amazonaws.com` name.
+
+**What travels on that leg:** session cookies (Cognito tokens), prototype access cookies, and the
+`X-Origin-Verify` / `X-Preview-Verify` secret headers.
+
+**What limits it:**
+
+- The security group accepts port 80 only from the CloudFront origin-facing prefix list. There is no
+  SSH; access is through SSM.
+- nginx rejects any request without the secret header, so the instance cannot be reached around
+  CloudFront.
+- The secret header values come from Secrets Manager at deploy time; no template holds them in
+  plaintext.
+
+**What it does not cover:** anyone able to observe traffic on the path between a CloudFront edge and
+the instance can read those cookies and headers.
+
+**Before using it beyond a workshop, or with real customer data,** make the origin leg HTTPS with a
+domain you own: point a record (say `origin.example.com`) at the instance's Elastic IP, serve a
+publicly trusted certificate for that name from nginx on port 443, and set the origin in both stacks
+to `OriginProtocolPolicy.HTTPS_ONLY` on 443. Moving the instance to a private subnet behind a
+CloudFront VPC origin takes the leg off the public internet, and with the same domain and certificate
+it can be HTTPS too. Either change replaces the instance, so make it at a planned replacement.
 
 ---
 
