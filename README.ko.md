@@ -119,6 +119,10 @@ npx cdk deploy --all --require-approval never \
 - **로그인**은 `admin@aipds.local` 또는 `pm@aipds.local`에 `SeedPassword` 값으로 한다. 30일 동안 유효한
   임시 비밀번호이고 각자 첫 로그인에서 바꾼다. 풀 정책(8자 이상, 대문자·소문자·숫자·기호 각각
   하나 이상)을 만족하지 않으면 CloudFormation이 배포 시작 전에 거부한다.
+- **MFA는 꺼져 있다.** 로그인은 비밀번호 하나다. 워크숍 샘플로는 충분하지만 실제 고객 자료에는
+  부족하다 — 관리자 비밀번호가 새면 사용자·역할 관리까지 넘어간다. 워크숍 밖에서 쓰려면
+  `infra/lib/aipds-auth-stack.ts`에서 MFA를 필수로 켠다(`mfa: cognito.Mfa.REQUIRED`와
+  `mfaSecondFactor: { otp: true, sms: false }` — 인증 앱).
 - **다른 리전**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. 코드 수정은 필요 없다.
 - **추가 업로드 오리진**(커스텀 도메인 등): 배포 시 `AIPDS_UPLOAD_ORIGINS`(쉼표 구분). 앱 자신의
   오리진은 인스턴스가 더한다.

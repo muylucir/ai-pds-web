@@ -124,6 +124,10 @@ npx cdk deploy --all --require-approval never \
   password (valid 30 days) that each user replaces at first login. It must satisfy the pool policy —
   8+ characters with an uppercase letter, a lowercase letter, a digit and a symbol — or CloudFormation
   rejects it before the deployment starts.
+- **MFA is off.** Sign-in is a password alone, which is enough for a workshop sample but not for real
+  customer material: a leaked admin password hands over user and role management too. Before using it
+  beyond a workshop, require MFA in `infra/lib/aipds-auth-stack.ts` (`mfa: cognito.Mfa.REQUIRED` with
+  `mfaSecondFactor: { otp: true, sms: false }` — an authenticator app).
 - **Another region**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. No code changes.
 - **Another upload origin** (a custom domain, say): `AIPDS_UPLOAD_ORIGINS` (comma-separated) at deploy
   time. The app's own origin is added by the instance.
