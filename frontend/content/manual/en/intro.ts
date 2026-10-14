@@ -53,7 +53,7 @@ strategy and go-to-market.`,
       kind: "md",
       md: `| Tab | What it is for |
 |---|---|
-| Dashboard | See where you are — progress, completed stages, artifacts produced |
+| Dashboard | See where you are — progress, completed phases, artifacts produced |
 | Workspace | Where the work happens — talk to the AI and answer its questions |
 | Document Review | Read what was written and approve it or ask for a revision |
 | Prototypes | Build a spec into a real app, host it, and validate it with a survey |

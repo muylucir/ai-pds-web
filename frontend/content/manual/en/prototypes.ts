@@ -60,6 +60,12 @@ right", "make this screen mobile-first") and the AI gets on with it instead of a
 from a list. The earlier builds' conversation stays on screen above, but the AI is handed **only a
 summary** of it, so changing one button's colour does not drag the entire build's context with it.
 
+What each finished build changed against the spec is kept as well, in \`change-history.md\` next to the
+spec, and every later session reads it first. Where it disagrees with the spec the history wins, so a
+feature you had taken out does not come back. When the Discovery conversation decides to proceed past
+validation, it applies that history to the approved spec as \`spec-as-built.md\` — the approved spec
+itself stays as it was — and asks you to approve it before carrying on.
+
 You can press it while the prototype is running. The server stays up and the link you sent to
 participants keeps working, but what that link shows is the **previous version** — the card says
 *Preview shows the previous version* and offers a **Re-host** button there. Re-hosting closes the
@@ -84,6 +90,11 @@ A session lasts **one build**. When the AI declares it finished, the session clo
 is a normal ending, not a dropped connection. The conversation does not close with it: reopen the
 panel (after a refresh, the next day, even after a server replacement) and everything from the
 first build on is there, in order. **Reset** clears that conversation too.
+
+A session the AI has not declared finished stays open, and while it does, **Start hosting**,
+**Stop hosting** and [exporting the project](/manual#transfer-project) are refused. The reason appears
+on the card itself. Press **Open session** on that card, then **Done** in the panel to close the
+session, and try again.
 
 **N% context left** above the message box is the same indicator as in the workspace. A build runs
 many tools, so it drops quickly. Opening a finished build with **Modify** starts a fresh

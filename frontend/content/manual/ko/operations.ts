@@ -30,7 +30,7 @@ Bedrock의 Claude 모델은 계정에서 처음 호출될 때 AWS Marketplace �
         "cd infra",
         "npm ci",
         "npx cdk bootstrap aws://<ACCOUNT_ID>/ap-northeast-2",
-        "npx cdk deploy --all --require-approval never",
+        "npx cdk deploy --all --require-approval never --parameters AipdsAuthStack:SeedPassword='<SEED_PASSWORD>'",
       ],
     },
     {
@@ -52,47 +52,6 @@ Bedrock의 Claude 모델은 계정에서 처음 호출될 때 AWS Marketplace �
 
 접속 주소는 출력값 \`AipdsHostingStack.DistributionDomain\` 이고, 프로토타입 공유 링크는
 \`AipdsPreviewStack.PreviewOrigin\` 주소로 나갑니다.`,
-    },
-    { kind: "heading", id: "migrate", text: "기존 배포에서 옮겨오기" },
-    {
-      kind: "md",
-      md: `스택 이름이 바뀌면 CloudFormation은 기존 스택과의 연결을 잃습니다. 새 스택 3개가
-생기고 기존 스택 3개는 남습니다.`,
-    },
-    {
-      kind: "callout",
-      tone: "warn",
-      md: `**0. 이 변경이 \`main\`에 올라간 뒤에는 기존 인스턴스에서 \`sudo aipds-update\`를 돌리지
-마십시오.** 기존 인스턴스의 systemd 유닛과 트리 경로는 옛 이름을 그대로 쓰고 있어 갱신
-스크립트가 중간에 실패하고, 그 인스턴스는 아래 9단계로 기존 스택을 지우기 전까지 진행 중인
-설문 링크를 계속 서빙해야 하는 바로 그 인스턴스입니다. 기존 스택 3개를 지우기 전까지는 그대로
-얼려 두세요.`,
-    },
-    {
-      kind: "steps",
-      items: [
-        "`cdk deploy AipdsDrillStack AipdsAuthStack` — 새 버킷과 사용자 풀",
-        "`aws s3 sync s3://<기존 버킷> s3://<새 버킷>` — 산출물을 옮깁니다. 키 접두사에 제품 이름이 없으므로 구조는 그대로 올라갑니다. 동기화 후 `aws s3api list-objects-v2 --bucket <새 버킷> --query 'length(Contents)'`를 같은 명령의 기존 버킷 결과와 비교해 오브젝트 수가 같은지 확인합니다 — 이 뒤로는 삭제가 되돌릴 수 없으므로, 프로젝트 카드가 보인다는 것만으로는 부분 동기화 실패를 잡지 못합니다",
-        "Discovery 대화 기록의 프리픽스를 옮깁니다. 트랜스크립트는 프로젝트 id에서 파생한 UUID 아래 저장되고 그 파생식이 이번 개명으로 바뀌었으므로, 옮기지 않으면 **모든 프로젝트의 Discovery 대화가 빈 세션으로 시작합니다**(산출물·설문·응답은 영향 없습니다). 아래는 이미 있는 디렉터리 이름을 그대로 읽어 새 이름으로 옮기므로, 여러 번 돌려도 안전합니다:\n\n```bash\nfor pid in $(aws s3 ls s3://<새 버킷>/projects/ | awk '{print $2}' | tr -d /); do\n  base=\"s3://<새 버킷>/projects/$pid/discovery/transcript\"\n  cur=$(aws s3 ls \"$base/\" 2>/dev/null | awk '{print $2}' | tr -d / | head -1)\n  want=$(python3 -c \"import uuid,sys;print(uuid.uuid5(uuid.NAMESPACE_URL,'aipds:'+sys.argv[1]))\" \"$pid\")\n  if [ -n \"$cur\" ] && [ \"$cur\" != \"$want\" ]; then\n    aws s3 mv \"$base/$cur/\" \"$base/$want/\" --recursive\n  fi\ndone\n```",
-        "`cdk deploy AipdsHostingStack` — 새 EC2와 CloudFront",
-        "새 주소로 로그인 확인 (`admin@aipds.local`)",
-        "프로젝트 카드 확인 — 명세와 설문은 살아 있고 프로토타입은 **빌드 전**입니다",
-        "필요한 프로토타입을 다시 빌드합니다. 빌드 산출물은 인스턴스 디스크에만 있었으므로 함께 오지 않습니다",
-        "진행 중이던 설문이 모두 닫힌 뒤 `aws s3 sync s3://<기존 버킷> s3://<새 버킷>`를 다시 실행합니다 — 첫 동기화 이후 기존 주소의 설문 링크로 들어온 응답은 기존 버킷에만 있고, 새 버킷에는 없습니다",
-        "기존 스택 3개를 삭제합니다 (Hosting → Auth → Drill 순서)",
-      ],
-    },
-    {
-      kind: "callout",
-      tone: "warn",
-      md: `**9단계를 서둘러 하지 마십시오.** 이미 배포된 설문 링크는 기존 주소를 가리키므로,
-기존 스택을 지우면 그 링크가 죽습니다. 진행 중인 설문의 응답 수집이 끝난 뒤 8단계에서 다시
-동기화하고, 그 다음에 지웁니다.
-
-기존 Drill 스택은 \`removalPolicy: DESTROY\`와 \`autoDeleteObjects: true\`로 만들어져 있고
-버전관리도 켜져 있지 않습니다 — 지우면 그 버킷의 오브젝트가 전부 즉시 사라지고 복구할 방법이
-없습니다. 8단계의 재동기화를 건너뛰면, 첫 동기화 뒤 기존 링크로 들어온 응답은 이 삭제와 함께
-영구히 사라집니다.`,
     },
     {
       kind: "callout",
@@ -130,7 +89,7 @@ npx cdk deploy --all --require-approval never \\
     },
     {
       kind: "cmd",
-      lines: ["CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all --require-approval never"],
+      lines: ["CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all --require-approval never --parameters AipdsAuthStack:SeedPassword='<SEED_PASSWORD>'"],
     },
     { kind: "heading", id: "redeploy", text: "코드 갱신하기" },
     {
@@ -165,7 +124,12 @@ npx cdk deploy --all --require-approval never \\
   도는 빌드 세션은 재개 경로를 탑니다. 프론트·백엔드 갱신은 쉬는 시간에 하세요.
 - 무엇이 도는지는 \`git -C /opt/aipds rev-parse HEAD\`로 확인합니다. 앱이 응답하는지는
   \`curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:3000/\`로 직접 봅니다 — nginx는 CloudFront의
-  비밀 헤더가 없는 요청에 403을 주므로 우회합니다.`,
+  비밀 헤더가 없는 요청에 403을 주므로 우회합니다.
+- 갱신이 중간에 멈췄다면(설치 실패 등) 원인을 고친 뒤 다시 돌리면 됩니다. 트리가 가리키는 커밋이 아니라
+  **끝까지 적용한** 마지막 커밋과 비교하므로, 다음 실행이 "이미 최신"으로 넘어가지 않고 남은 단계를
+  다시 합니다.
+- nginx의 요청 크기 상한은 첨부 상한(파일당 10MB)을 따릅니다. 갱신이 떠 있는 인스턴스에 그 값을 맞추고,
+  값이 바뀐 때에만 nginx를 다시 읽힙니다.`,
     },
     {
       kind: "callout",
@@ -321,6 +285,7 @@ HostingStack에 [종료 보호](/manual#hotfix)를 걸어 두었다면 삭제가
 | 긴 메시지를 보내면 연결이 끊어짐 | 한 번에 보내는 양이 너무 큰 것입니다. 나눠서 보내거나 [파일로 첨부](/manual#attach)하세요 |
 | 절전·화면보호기에서 돌아오니 화면이 멈춰 있음 | 잃은 것은 **라이브 뷰뿐**입니다 — AI는 서버에서 계속 일했고 문서도 저장됐습니다. 화면이 스스로 다시 붙어 놓친 부분부터 이어서 보여 줍니다. "연결이 끊어졌습니다"가 떴다면 새로고침하세요 — 작업이 아직 진행 중이면 처음부터 다시 채워지고, 끝났으면 대화 기록으로 돌아옵니다 |
 | 프로토타입 빌드 중에 새로고침했음 | 빌드는 서버에서 계속됩니다. 카드의 **세션 열기**를 누르면 그 세션의 대화(질문과 답 포함)가 처음부터 되살아나고 진행 중인 빌드에 다시 붙습니다 |
+| 빌드 세션이 열려 있다며 호스팅 시작·중지나 내보내기가 거부됨 | AI가 그 빌드의 완성을 선언하지 않아 세션이 아직 열려 있습니다. 카드의 **세션 열기** → 패널의 **완료** 로 닫은 뒤 다시 시도하세요([빌드 세션](/manual#session)) |
 | AI가 작업하는 중에 새로고침했음 | 괜찮습니다. 워크스페이스가 열리면서 진행 중인 작업에 다시 붙고, 입력창은 작업이 끝날 때까지 잠깁니다. 다른 탭에서 같은 프로젝트를 열어도 같은 작업을 봅니다 |
 | 채팅 기록이 비어 보임 | 인스턴스가 교체된 뒤일 수 있습니다. 새로고침 후에도 비어 있으면 백엔드 로그를 봅니다 |
 | 특정 기능만 실패하고 화면에 원인이 없음 | 대개 IAM입니다. 백엔드 로그의 \`AccessDenied\`가 어떤 액션인지 알려 줍니다 |
