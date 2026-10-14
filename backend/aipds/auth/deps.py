@@ -37,6 +37,7 @@ async def require_user(request: Request) -> Principal:
 
     cfg = app_module.cognito_config()
     if cfg is None:
+        request.state.principal = LOCAL_PRINCIPAL
         return LOCAL_PRINCIPAL
 
     token = _bearer_token(request)
@@ -54,6 +55,8 @@ async def require_user(request: Request) -> Principal:
     if app_module.revocations().is_revoked(principal.username, principal.issued_at):
         _log.info("token rejected: issued before %s was revoked", principal.username)
         raise _UNAUTHENTICATED
+    # 요청자를 접근 기록에 남긴다(aipds/access_log.py).
+    request.state.principal = principal
     return principal
 
 
