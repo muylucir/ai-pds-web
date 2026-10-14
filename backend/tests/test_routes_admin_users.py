@@ -337,6 +337,34 @@ def test_unexpected_cognito_error_is_502(env, client):
     assert "InternalErrorException" not in r.text
 
 
+# ---- 기존 세션 끊기 (auth/revocation.py) ----
+
+@pytest.mark.parametrize("call", [
+    lambda c: c.post(f"/admin/users/{PM_EMAIL}/disable"),
+    lambda c: c.delete(f"/admin/users/{PM_EMAIL}"),
+    lambda c: c.post(f"/admin/users/{PM_EMAIL}/reset-password"),
+    lambda c: c.put(f"/admin/users/{PM_EMAIL}/role", json={"role": "pm"}),
+])
+def test_cutting_access_ends_the_sessions_already_issued(env, client, call):
+    """비활성화·삭제·재설정·강등 뒤에도 이미 받은 access 토큰은 만료까지 통과한다 —
+    그 사용자의 기존 토큰을 거부하게 기록한다."""
+    assert call(client).status_code in (200, 204)
+    assert app_module.revocations().is_revoked(PM_EMAIL, issued_at=0)
+
+
+def test_promotion_and_enabling_keep_the_sessions(env, client):
+    """승격·활성화는 권한을 넓힌다 — 기존 토큰이 권한이 더 적을 뿐이라 끊지 않는다."""
+    client.put(f"/admin/users/{PM_EMAIL}/role", json={"role": "admin"})
+    client.post(f"/admin/users/{PM_EMAIL}/enable")
+    assert not app_module.revocations().is_revoked(PM_EMAIL, issued_at=0)
+
+
+def test_a_failed_change_does_not_end_the_sessions(env, client):
+    env.fail_on["set_enabled"] = CognitoError("InternalErrorException", "boom")
+    assert client.post(f"/admin/users/{PM_EMAIL}/disable").status_code >= 500
+    assert not app_module.revocations().is_revoked(PM_EMAIL, issued_at=0)
+
+
 # ---- 권한 (require_admin 우회 불가) ----
 
 def test_pm_cannot_reach_admin_routes(monkeypatch, client):

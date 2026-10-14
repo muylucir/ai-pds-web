@@ -263,6 +263,18 @@ def jwks_cache():
     return _jwks_singleton
 
 
+_revocations_singleton = None
+
+
+def revocations():
+    """관리자가 끊은 세션의 기록(auth/revocation.py) 싱글턴 (monkeypatchable in tests)."""
+    global _revocations_singleton
+    if _revocations_singleton is None:
+        from aipds.auth.revocation import Revocations, default_path
+        _revocations_singleton = Revocations(default_path())
+    return _revocations_singleton
+
+
 def cognito_admin():
     """CognitoAdmin 팩토리 (monkeypatchable in tests).
 

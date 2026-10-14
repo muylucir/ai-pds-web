@@ -42,6 +42,16 @@ def _reset_registry_and_boot_locks():
 
 
 @pytest.fixture(autouse=True)
+def _isolated_revocations(monkeypatch, tmp_path):
+    """세션 폐기 기록(auth/revocation.py)은 파일에 남는다 — 테스트마다 따로 둔다. 공유하면
+    한 테스트가 끊은 사용자가 다음 테스트에서 401이 되고, 기본 경로는 개발자 홈이다."""
+    from aipds.auth.revocation import Revocations
+    store = Revocations(tmp_path / "revoked.json")
+    monkeypatch.setattr(app_module, "revocations", lambda: store)
+    return store
+
+
+@pytest.fixture(autouse=True)
 def _ensure_event_loop():
     """pytest-asyncio's auto mode calls asyncio.set_event_loop(None) during
     teardown of async tests, which leaves the thread's event-loop policy with
