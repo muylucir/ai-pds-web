@@ -212,3 +212,22 @@ def test_the_denial_names_what_was_refused():
     않으면 모델이 같은 명령을 형태만 바꿔 재시도하며 루프에 빠진다."""
     assert "npm" in bash_denial("npm run dev")
     assert "prototype/index.html" in bash_denial("echo x > prototype/index.html")
+
+
+# ---- CLI 설정 파일·노트북 ----
+
+def test_bash_touching_cli_settings_is_denied():
+    """리다이렉션은 bash_denial이 막지만 cp·sed -i·인터프리터는 보지 않는다 — 설정
+    파일은 이름이 고정이라 이름으로 막는다."""
+    from aipds.agent.discovery_guard import settings_denial
+    assert settings_denial("cp /tmp/x .claude/settings.json") == ".claude/settings.json"
+    assert settings_denial("sed -i s/a/b/ .mcp.json") == ".mcp.json"
+    assert settings_denial("grep -rn Stage aiplc-docs/") is None
+
+
+def test_notebook_edit_is_judged_like_a_write():
+    from aipds.agent.discovery_guard import tool_write_path
+    assert tool_write_path("NotebookEdit", {"notebook_path": "/ws/x.ipynb"}) == "/ws/x.ipynb"
+    assert write_denial(tool_write_path("NotebookEdit", {"notebook_path": "/ws/x.ipynb"}),
+                        WS) == "x.ipynb"
+    assert tool_write_path("Read", {"file_path": "/ws/a"}) is None

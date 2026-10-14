@@ -171,3 +171,15 @@ def test_a_number_that_merely_contains_the_port_is_allowed():
     """`13000`·`80000`이 걸리면 오탐이다."""
     assert bash_denial("curl -s http://localhost:13000/") is None
     assert bash_denial("echo 80000 > /tmp/n") is None
+
+
+# ---- CLI 설정 파일 ----
+
+def test_touching_cli_settings_from_bash_is_denied():
+    assert bash_denial("echo x > .claude/settings.json") == ".claude/settings.json"
+    assert bash_denial("cp evil.json .mcp.json") == ".mcp.json"
+
+
+def test_ordinary_json_files_are_allowed():
+    assert bash_denial("cat package.json tsconfig.json") is None
+    assert bash_denial("cat app/settings.json") is None

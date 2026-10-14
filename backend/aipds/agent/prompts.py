@@ -382,6 +382,18 @@ def build_command_refused(language: str, fragment: str) -> str:
             "것은 어느 화면에도 나타나지 않는다. 스펙 작성까지만 할 것.")
 
 
+def cli_settings_refused(language: str, fragment: str) -> str:
+    """Bash가 CLI 설정 파일을 건드릴 때의 이유(discovery_guard.settings_denial)."""
+    if _lang(language) == "en":
+        return (f"Refused — '{fragment}' is a Claude Code settings file. AI-PDS Web "
+                "provides the settings Discovery needs and resets them on every "
+                "launch; there is nothing to change there. Continue with the "
+                "documents under aiplc-docs/.")
+    return (f"거부됨 — '{fragment}'는 Claude Code 설정 파일이다. Discovery에 필요한 "
+            "설정은 AI-PDS Web이 주고 실행할 때마다 다시 맞춘다 — 바꿀 것이 없다. "
+            "aiplc-docs/ 아래 문서 작업을 계속할 것.")
+
+
 def turn_failed(language: str) -> str:
     """CLI가 실패한 턴을 보고했을 때(`ResultMessage.is_error`) 채팅에 남기는 문구.
 

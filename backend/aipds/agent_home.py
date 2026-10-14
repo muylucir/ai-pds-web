@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,11 @@ CONFIG_CONTENT = ("CLAUDE.md", "agents", "skills")
 #: user·project다). 정상 흐름에서 이 파일들을 쓰는 곳은 없다 — 공유 config에도 없다.
 USER_SETTINGS = "settings.json"
 WORKSPACE_SETTINGS = (".claude/settings.json", ".claude/settings.local.json", ".mcp.json")
+
+#: 명령 안에서 위 파일(과 CLI 상태 `.claude.json`)을 가리키는 조각. 두 에이전트의 Bash
+#: 게이트(agent/discovery_guard, proto/build_guard)가 쓴다 — 띄울 때마다 비우지만, 세션
+#: 안에서 쓰면 그 세션의 이후 도구 호출에 hook이 걸린다.
+SETTINGS_IN_COMMAND = re.compile(r"\.claude/settings[\w.-]*|\.mcp\.json|\.claude\.json")
 
 
 def root() -> Path:
