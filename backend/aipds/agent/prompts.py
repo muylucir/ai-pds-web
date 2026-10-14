@@ -22,6 +22,10 @@
 # 받아들이고 문서 패널이 빈 화면을 보여준다.
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
+from aipds.proto.layout import CHANGE_HISTORY
+
 #: 지원 언어. workspace_rules._LANGUAGES와 같은 집합이어야 한다.
 _LANGUAGES = ("ko", "en")
 _DEFAULT = "ko"
@@ -318,10 +322,22 @@ def web_owned_doc(language: str, path: str) -> str:
     """웹이 소유하는 `aiplc-docs/` 파일(discovery_guard.WEB_OWNED_NAMES) 쓰기를
     거부할 때의 이유.
 
-    대안을 함께 준다(`write_outside_docs`와 같은 이유): 지금 이 파일이 걸리는
-    것은 설문 집계뿐이고, 모델이 거기 쓰려던 것은 Step 6 종합이다. 그 자리는
-    룰의 `validation-results.md`다(proto/layout.SURVEY_AGGREGATE).
+    대안을 함께 준다(`write_outside_docs`와 같은 이유) — 모델이 그 파일에 쓰려던
+    것이 갈 자리가 따로 있다. 설문 집계에 쓰려던 것은 Step 6 종합이고 그 자리는
+    룰의 `validation-results.md`다(proto/layout.SURVEY_AGGREGATE). 수정 이력에
+    쓰려던 것은 명세 정합성 패스의 결론이고 그 자리는 `spec-as-built.md`다
+    (discovery-config/CLAUDE.md의 "Spec reconciliation" 절).
     """
+    if PurePosixPath(path).name == CHANGE_HISTORY:
+        if _lang(language) == "en":
+            return (f"Refused — '{path}' is maintained by AI-PDS Web: each build "
+                    "session appends what it changed, and the next build session "
+                    "reads it as its input. Read it as the evidence for the spec "
+                    "reconciliation, and write your conclusions to "
+                    "'spec-as-built.md' in the same directory.")
+        return (f"거부됨 — '{path}'는 AI-PDS Web이 관리하는 파일이다. 빌드 세션마다 "
+                "바꾼 것을 덧붙이고, 다음 빌드 세션이 입력으로 읽는다. 명세 정합성 "
+                "패스의 근거로 읽고, 결론은 같은 디렉터리의 'spec-as-built.md'에 쓸 것.")
     if _lang(language) == "en":
         return (f"Refused — '{path}' is maintained by AI-PDS Web and is "
                 "rewritten from the survey responses on every 'Synthesize "
