@@ -183,7 +183,7 @@ AI-PLC 룰셋**에 있습니다. 사본을 두지 않고 \`steering-files/\` **g
 \`aipds-harden sync\`가 부팅 때 한 번, 그 뒤 2분마다 그 값을 적용합니다 — 값이 바뀌었을 때만
 백엔드를 재시작하고, 값을 못 읽으면 지금 설정을 끄지 않고 그대로 둡니다.
 
-| 명령 (\`sudo /opt/aipds/infra/scripts/aipds-harden …\`) | 하는 일 |
+| 명령 (\`sudo /usr/local/libexec/aipds/harden …\`) | 하는 일 |
 |---|---|
 | \`status\` | 현재 상태 — 사용자, 실행 래퍼, IMDS 차단, 동기화 타이머, 돌고 있는 샌드박스 |
 | \`sync\` | 스택 값을 지금 적용합니다 (타이머가 2분마다 하는 일) |

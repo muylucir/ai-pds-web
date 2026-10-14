@@ -95,6 +95,13 @@ async def test_valid_token_yields_principal_with_role_from_groups():
     assert principal.role == "admin"
 
 
+async def test_the_principal_carries_the_issue_time():
+    """세션 폐기(auth/revocation.py)가 `iat`로 기존 토큰을 가려낸다."""
+    issued = int(time.time()) - 60
+    principal = await _verify(_token(iat=issued))
+    assert principal.issued_at == issued
+
+
 async def test_pm_group_yields_pm_role():
     principal = await _verify(_token(**{"cognito:groups": ["pm"]}))
     assert principal.role == "pm"

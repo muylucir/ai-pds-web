@@ -68,9 +68,10 @@ from typing import Any, AsyncIterator, Callable
 from aipds.agent import prompts
 from aipds.agent.answer_store import save_answers
 from aipds.agent.delta_buffer import WhitespaceBoundaryBuffer
-from aipds.agent.discovery_guard import (WRITE_TOOLS, audit_overwrite_denial,
-                                              bash_denial, web_owned_denial,
-                                              write_denial)
+from aipds.agent.discovery_guard import (NOTEBOOK_TOOL, WRITE_TOOLS,
+                                              audit_overwrite_denial, bash_denial,
+                                              settings_denial, tool_write_path,
+                                              web_owned_denial, write_denial)
 from aipds.agent.pending_store import (clear_pending, load_pending,
                                               load_pending_file, save_pending,
                                               save_pending_file)
@@ -497,7 +498,8 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             "CLAUDE_CONFIG_DIR": driver._config_dir,
         }
         if driver._shared_config_dir:
-            copy_config(driver._shared_config_dir, driver._config_dir)
+            copy_config(driver._shared_config_dir, driver._config_dir,
+                        driver._workspace)
         if driver._anthropic_model:
             env["ANTHROPIC_MODEL"] = driver._anthropic_model
         # 자동 컴팩션 시점. 미설정이면 키가 없고 CLI 기본값으로 간다.
@@ -601,8 +603,9 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             # 전체가 죽는다. 같은 이유로 _on_pre_tool_use는 통과시킬 때
             # "allow"가 아니라 **빈 dict**를 돌려준다.
             hooks={
-                "PreToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit|Bash",
-                                           hooks=[driver._on_pre_tool_use])],
+                "PreToolUse": [HookMatcher(
+                    matcher="Write|Edit|MultiEdit|NotebookEdit|Bash",
+                    hooks=[driver._on_pre_tool_use])],
                 "PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
                                             hooks=[driver._on_post_tool_use])],
             },
@@ -973,8 +976,8 @@ class ClaudeDriver:
         """
         name = input_data.get("tool_name", "")
         tool_input = input_data.get("tool_input") or {}
-        if name in _FILE_TOOLS:
-            path = tool_input.get("file_path")
+        if name in _FILE_TOOLS or name == NOTEBOOK_TOOL:
+            path = tool_write_path(name, tool_input)
             offender = write_denial(path, self._workspace)
             reason = (None if offender is None
                       else prompts.write_outside_docs(self._language, offender))
@@ -990,6 +993,10 @@ class ClaudeDriver:
             offender = bash_denial(tool_input.get("command"))
             reason = (None if offender is None
                       else prompts.build_command_refused(self._language, offender))
+            if offender is None:
+                offender = settings_denial(tool_input.get("command"))
+                reason = (None if offender is None
+                          else prompts.cli_settings_refused(self._language, offender))
         else:
             # matcher가 위 셋만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
             # 통과해야 한다 — 알 수 없는 도구를 막으면 턴이 멈춘다.

@@ -23,3 +23,6 @@ class Principal:
     username: str
     sub: str
     role: Role
+    #: 토큰의 `iat`(epoch 초). 관리자가 끊은 세션의 토큰을 가려낸다(auth/revocation.py).
+    #: 토큰에서 오지 않은 요청자(로컬 개발)는 None.
+    issued_at: float | None = None

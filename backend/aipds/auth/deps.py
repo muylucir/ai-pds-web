@@ -37,17 +37,27 @@ async def require_user(request: Request) -> Principal:
 
     cfg = app_module.cognito_config()
     if cfg is None:
+        request.state.principal = LOCAL_PRINCIPAL
         return LOCAL_PRINCIPAL
 
     token = _bearer_token(request)
     try:
-        return await verify_access_token(
+        principal = await verify_access_token(
             token, region=cfg["region"], user_pool_id=cfg["user_pool_id"],
             client_id=cfg["client_id"], jwks=app_module.jwks_cache())
     except TokenError as exc:
         # 사유는 로그에만 — 클라이언트에게 어떤 검증이 실패했는지 알려주지 않는다.
         _log.info("token rejected: %s", exc)
         raise _UNAUTHENTICATED from exc
+    # 관리자가 끊은 사용자의, 그 전에 발급된 토큰(auth/revocation.py). 같은 401이다 —
+    # 프록시가 refresh를 시도하고, 강등된 사용자는 새 그룹으로, 비활성·삭제된 사용자는
+    # 로그인 화면으로 간다.
+    if app_module.revocations().is_revoked(principal.username, principal.issued_at):
+        _log.info("token rejected: issued before %s was revoked", principal.username)
+        raise _UNAUTHENTICATED
+    # 요청자를 접근 기록에 남긴다(aipds/access_log.py).
+    request.state.principal = principal
+    return principal
 
 
 async def access_token(request: Request) -> str:

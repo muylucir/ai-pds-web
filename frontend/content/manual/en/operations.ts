@@ -193,7 +193,7 @@ Store, and \`aipds-harden sync\` on the instance applies them once at boot and e
 restarting the backend only when a value changed, and leaving the current settings alone when it cannot
 read a value.
 
-| Command (\`sudo /opt/aipds/infra/scripts/aipds-harden …\`) | What it does |
+| Command (\`sudo /usr/local/libexec/aipds/harden …\`) | What it does |
 |---|---|
 | \`status\` | Current state — users, the launcher, the IMDS block, the sync timer, running sandboxes |
 | \`sync\` | Apply the stack values now (what the timer does every 2 minutes) |

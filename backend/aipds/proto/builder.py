@@ -33,7 +33,8 @@ from aipds.cli_settings import cli_context_env
 from aipds.context_usage import ContextMeter, wants_sample
 from aipds.models import AgentEvent
 from aipds.proto import prompts
-from aipds.proto.build_guard import bash_denial
+from aipds.proto.build_guard import (FETCH_HOSTS, WRITE_TOOLS, bash_denial, fetch_denial,
+                                     settings_write_denial)
 from aipds.tool_trace import tool_detail
 from aipds.transcript_restore import MirrorOnlyStore
 from aipds.transcript_restore import restore as restore_transcript
@@ -168,7 +169,8 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             "CLAUDE_CONFIG_DIR": builder._config_dir,
         }
         if builder._shared_config_dir:
-            copy_config(builder._shared_config_dir, builder._config_dir)
+            copy_config(builder._shared_config_dir, builder._config_dir,
+                        builder._workspace)
         if builder._anthropic_model:
             env["ANTHROPIC_MODEL"] = builder._anthropic_model
         # Discovery 드라이버와 같은 값을 쓴다 — 한쪽만 켜지면 같은 프로젝트에서
@@ -224,6 +226,9 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             mcp_servers={PROTO_MCP_SERVER_NAME: create_sdk_mcp_server(
                 name=PROTO_MCP_SERVER_NAME, tools=_proto_tools_for(builder))},
             allowed_tools=[BUILD_COMPLETE_TOOL],
+            # 웹 검색은 빌드에 필요가 없고, 검색어에 워크스페이스 내용을 실어 내보내는
+            # 길이다. 문서는 WebFetch(허용 호스트만, build_guard.fetch_denial)로 연다.
+            disallowed_tools=["WebSearch"],
             # Exactly one of the two, never both: the CLI rejects
             # `--session-id` alongside `--resume` unless `--fork-session` is
             # also passed ("--session-id can only be used with --continue or
@@ -259,10 +264,12 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # dict**를 돌려준다. Discovery가 같은 함정을 같은 방식으로 피한다
             # (claude_driver.py의 hooks 주석).
             hooks={
-                # Bash만. 서브에이전트가 턴보다 오래 사는 것은 도구 입력이 아니라
-                # CLI 스위치로 막는다(cli_settings.cli_context_env).
-                "PreToolUse": [HookMatcher(matcher="Bash",
-                                           hooks=[builder._on_pre_tool_use])],
+                # Bash, 파일 쓰기(CLI 설정 파일만 막는다), WebFetch(문서 호스트만).
+                # 서브에이전트가 턴보다 오래 사는 것은 도구 입력이 아니라 CLI
+                # 스위치로 막는다(cli_settings.cli_context_env).
+                "PreToolUse": [HookMatcher(
+                    matcher="Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch",
+                    hooks=[builder._on_pre_tool_use])],
                 "PostToolUse": [HookMatcher(matcher="Write|Edit|MultiEdit",
                                             hooks=[builder._on_post_tool_use])],
             },
@@ -584,7 +591,7 @@ class PrototypeBuilder:
     # to be re-checked -- this tab's reducers are dedupe-by-path or append-only
     # cosmetic, and the one non-idempotent kind is dropped at its death points.
     async def _on_pre_tool_use(self, input_data, tool_use_id, context) -> dict:
-        """빌드 에이전트의 Bash 게이트. 판정은 proto/build_guard.py.
+        """빌드 에이전트의 Bash·설정 파일·WebFetch 게이트. 판정은 proto/build_guard.py.
 
         왜 훅인가: 빌드는 `bypassPermissions`로 돌아 Bash가 자동 승인되고
         can_use_tool에 도달하지 않는다 — SDK가 지정한 유일한 게이트가
@@ -595,17 +602,29 @@ class PrototypeBuilder:
         """
         name = input_data.get("tool_name", "")
         tool_input = input_data.get("tool_input") or {}
-        if name != "Bash":
-            # matcher가 Bash만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
+        if name == "Bash":
+            offender = bash_denial(tool_input.get("command"))
+            reason = (None if offender is None
+                      else prompts.unsafe_command_refused(self._language, offender))
+        elif name in WRITE_TOOLS:
+            path = tool_input.get("file_path") or tool_input.get("notebook_path")
+            offender = settings_write_denial(path, self._workspace)
+            reason = (None if offender is None
+                      else prompts.settings_write_refused(self._language, offender))
+        elif name == "WebFetch":
+            offender = fetch_denial(tool_input.get("url"))
+            reason = (None if offender is None
+                      else prompts.fetch_refused(self._language, offender, FETCH_HOSTS))
+        else:
+            # matcher가 위 도구만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
             # 통과해야 한다 — 알 수 없는 도구를 막으면 빌드가 멈춘다.
             return {}
-        offender = bash_denial(tool_input.get("command"))
-        if offender is None:
+        if reason is None:
             return {}
         # 로그로 남긴다: 거부 이유는 모델에게만 가므로, 무엇이 막혔는지 운영자가
         # 확인할 경로가 따로 필요하다.
-        _log.warning("build gate denied Bash: %s", offender)
-        return self._deny(prompts.unsafe_command_refused(self._language, offender))
+        _log.warning("build gate denied %s: %s", name, offender)
+        return self._deny(reason)
 
     @staticmethod
     def _deny(reason: str) -> dict:

@@ -22,25 +22,37 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from aipds import agent_home
-from aipds.pathsafe import reject_unsafe_segment
+from aipds.pathsafe import read_text_beneath, reject_unsafe_segment, stat_beneath
 
 if TYPE_CHECKING:
     from aipds.launcher import Launcher
 
 HostState = Literal["installing", "building", "running", "failed", "stopped"]
 
-#: The access token file, in the build directory's PARENT -- a sibling of
-#: `.proto-host.pid`/`.proto-host.log`, NOT inside the served `prototype/` tree.
+#: 호스팅의 부기(접근 토큰·로그·pid)는 빌드 트리가 아니라 **상태 트리**에 둔다:
+#: `{state_root}/{pid}/{slug}/`. 상태 트리는 어떤 샌드박스에도 bind되지 않는다.
 #:
-#: That placement is load-bearing twice over. The served tree is what a
-#: prototype's own dev server can hand out, and it is also what
-#: `_archive_entries` zips for the "download" button -- a token under
-#: `prototype/` would ride out to whoever downloads the bundle, which is
-#: exactly the audience the token exists to gate.
+#: 빌드 트리(`{root}/{pid}/{slug}/`)는 빌드 에이전트가, 그 아래 `prototype/`은
+#: 프로토타입의 npm 스크립트가 쓴다. 거기 두면 두 가지가 열린다:
+#:
+#: - 로그를 바깥을 가리키는 링크로 바꾸면, 백엔드가 npm 출력을 그 너머에 백엔드 uid로
+#:   덧붙인다(npm 스크립트가 출력을 고르므로 임의 내용 쓰기다).
+#: - 토큰 파일을 다른 프로젝트의 토큰 파일로 거는 링크로 바꾸면, 백엔드가 그 토큰을 이
+#:   프로토타입의 것으로 읽어 남의 공유 링크가 이 프로토타입을 가리킨다.
+#:
+#: 토큰을 `prototype/` 밖에 두는 것은 그 전에도 필요했다 — 서빙되는 트리이고 "다운로드"가
+#: 묶는 트리라, 토큰이 거기 있으면 토큰이 막으려는 바로 그 사람에게 나간다.
+#:
+#: `TOKEN_FILENAME`은 옛 위치(빌드 트리 바로 아래)의 이름이다. 내보내기·다운로드는
+#: 아직 그 이름이 남은 트리를 묶을 수 있으므로 계속 제외하고(project_bundle), 기동 때
+#: 상태 트리로 옮긴다(`load_tokens`).
 #:
 #: A filename, not a credential -- the `nosec` is for the name, which is all
 #: bandit B105 looks at.
 TOKEN_FILENAME = ".proto-token"  # nosec B105
+_STATE_TOKEN = "token"  # nosec B105
+_STATE_LOG = "host.log"
+_STATE_PID = "host.pid"
 
 #: 32 bytes -> 43 urlsafe chars, the same strength as a survey token
 #: (`routes/surveys.py`'s TOKEN_BYTES). Deliberately identical: two kinds of
@@ -85,7 +97,7 @@ _TAIL_BLOCK = 64 * 1024
 def _tail_text(path: Path, lines: int) -> str:
     """로그의 마지막 `lines`줄. 파일 끝에서 필요한 만큼만 거꾸로 읽는다.
 
-    `.proto-host.log`는 회전 없이 append로만 자란다(`_npm_install`/
+    호스팅 로그는 회전 없이 append로만 자란다(`_npm_install`/
     `_npm_run_build`의 "ab") — 호스팅을 반복하면 수십~수백 MB가 된다. 전부 읽으면
     호출당 비용이 파일 크기에 비례하고(실측 100MB → 237ms), 이 함수는 async
     라우트 안에서 동기로 불리므로 그 시간 동안 모든 SSE 스트림이 멈춘다.
@@ -128,12 +140,17 @@ class ProtoHost:
     # probes sequentially and skips anything already bound, so leftovers from a
     # previous process cost a few probes, not a wedged start.
     def __init__(self, root: Path, port_range: range = range(4000, 8000),
-                 launcher: "Launcher | None" = None):
+                 launcher: "Launcher | None" = None,
+                 state_root: Path | None = None):
         # No `s3`: the build directory IS the served tree now (the builder
         # writes straight into it), so hosting no longer round-trips a bundle
         # through S3 -- which also means binary assets stop being mangled by
         # the text-only store.
         self._root = Path(root)
+        #: 부기 트리(TOKEN_FILENAME 위의 설명). 기본은 빌드 루트 옆 — 배포에서는
+        #: `/opt/aipds/protos-state`이고, 샌드박스는 `/opt/aipds` 전체를 가린다.
+        self._state_root = (Path(state_root) if state_root is not None
+                            else self._root.with_name(self._root.name + "-state"))
         self._port_range = port_range
         #: 실행 래퍼(aipds/launcher.py). 있으면 npm이 aipds-proto uid로, 이 프로토타입의
         #: `prototype/` 트리만 보이는 샌드박스에서 돈다. 없으면 백엔드 uid로 직접.
@@ -154,10 +171,39 @@ class ProtoHost:
 
     # ---- access tokens ----
 
-    def _token_path(self, pid: str, slug: str) -> Path:
+    def _state_dir(self, pid: str, slug: str) -> Path:
         reject_unsafe_segment(pid)
         reject_unsafe_segment(slug)
-        return self._root / pid / slug / TOKEN_FILENAME
+        return self._state_root / pid / slug
+
+    def _token_path(self, pid: str, slug: str) -> Path:
+        return self._state_dir(pid, slug) / _STATE_TOKEN
+
+    def _write_state(self, path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path.write_text(text, encoding="utf-8")
+
+    def _adopt_legacy_tokens(self) -> None:
+        """옛 위치(빌드 트리 바로 아래)의 토큰 파일을 상태 트리로 옮긴다.
+
+        옛 파일은 빌드 에이전트가 쓸 수 있는 자리에 있었으므로 링크를 따라가지 않고
+        읽는다 — 링크면 다른 프로젝트의 토큰을 이 프로토타입의 것으로 들여오게 된다.
+        """
+        if not self._root.is_dir():
+            return
+        for legacy in self._root.glob(f"*/*/{TOKEN_FILENAME}"):
+            slug_dir = legacy.parent
+            pid, slug = slug_dir.parent.name, slug_dir.name
+            rel = f"{pid}/{slug}/{TOKEN_FILENAME}"
+            try:
+                target = self._token_path(pid, slug)
+                if stat_beneath(self._root, rel) is not None and not target.exists():
+                    token = read_text_beneath(self._root, rel).strip()
+                    if token:
+                        self._write_state(target, token)
+                legacy.unlink()
+            except (OSError, ValueError):
+                continue
 
     def load_tokens(self) -> int:
         """Rebuild the token cache from disk. Returns how many were found.
@@ -174,9 +220,10 @@ class ProtoHost:
         prototype's broken link.
         """
         self._tokens.clear()
-        if not self._root.is_dir():
+        self._adopt_legacy_tokens()
+        if not self._state_root.is_dir():
             return 0
-        for token_file in self._root.glob(f"*/*/{TOKEN_FILENAME}"):
+        for token_file in self._state_root.glob(f"*/*/{_STATE_TOKEN}"):
             try:
                 token = token_file.read_text(encoding="utf-8").strip()
             except OSError:
@@ -208,8 +255,7 @@ class ProtoHost:
             self._tokens[existing] = (pid, slug)
             return existing
         token = secrets.token_urlsafe(TOKEN_BYTES)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(token, encoding="utf-8")
+        self._write_state(path, token)
         self._tokens[token] = (pid, slug)
         return token
 
@@ -220,9 +266,7 @@ class ProtoHost:
         색인에서 찾은 값을 여기 심어 두면 그 뒤로는 디스크 경로(`token_for`,
         `ensure_token`)가 그대로 동작한다 — 같은 값이므로 나눠 준 링크가 바뀌지 않는다.
         """
-        path = self._token_path(pid, slug)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(token, encoding="utf-8")
+        self._write_state(self._token_path(pid, slug), token)
         self._tokens[token] = (pid, slug)
 
     def token_for(self, pid: str, slug: str) -> str | None:
@@ -274,9 +318,10 @@ class ProtoHost:
 
     @staticmethod
     def _read_package_json(target_dir: Path) -> dict:
+        # 프로토타입이 쓰는 트리다 — 링크를 따라가지 않는다(pathsafe).
         try:
-            return json.loads((target_dir / "package.json").read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            return json.loads(read_text_beneath(target_dir, "package.json"))
+        except (OSError, ValueError):
             return {}
 
     def _env(self, kind: str, pid: str, slug: str,
@@ -420,7 +465,8 @@ class ProtoHost:
             if target_dir != expected:
                 raise ValueError(f"launcher hosts {expected}, not {target_dir}")
             agent_home.proto(pid, slug).prepare(with_config=False)
-        log_path = target_dir / ".proto-host.log"
+        log_path = self._state_dir(pid, slug) / _STATE_LOG
+        log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         log_path.touch()
 
         entry = _HostEntry(dir=target_dir, log_path=log_path, state="installing")
@@ -506,7 +552,7 @@ class ProtoHost:
         entry.port = port
         entry.proc = proc
         entry.launched = self._launcher is not None
-        (target_dir / ".proto-host.pid").write_text(str(proc.pid), encoding="utf-8")
+        self._write_state(self._state_dir(pid, slug) / _STATE_PID, str(proc.pid))
 
         if not await self._wait_for_port(proc, port, timeout=60.0):
             entry.state = "failed"
@@ -547,7 +593,7 @@ class ProtoHost:
                 await proc.wait()
         if entry.port is not None:
             self._reserved.discard(entry.port)
-        (entry.dir / ".proto-host.pid").unlink(missing_ok=True)
+        (self._state_dir(pid, slug) / _STATE_PID).unlink(missing_ok=True)
         entry.proc = None
         entry.state = "stopped"
 
@@ -600,6 +646,8 @@ class ProtoHost:
         # 빌드 에이전트의 트랜스크립트와 호스팅 npm 캐시(aipds/agent_home.py). 남기면 리셋한
         # 프로토타입의 다음 빌드가 옛 세션 파일을 본다.
         await agent_home.purge_prototype(pid, slug)
+        await asyncio.to_thread(shutil.rmtree, self._state_dir(pid, slug),
+                                ignore_errors=True)
         target = self._root / pid / slug
         if not target.is_dir():
             return
@@ -625,6 +673,8 @@ class ProtoHost:
         one ordinary path segment -- same reasoning as `purge`.
         """
         reject_unsafe_segment(pid)
+        await asyncio.to_thread(shutil.rmtree, self._state_root / pid,
+                                ignore_errors=True)
         target = self._root / pid
         if not target.is_dir():
             return
@@ -633,12 +683,16 @@ class ProtoHost:
             raise RuntimeError(f"project purge left residue: {target}")
 
     def _pid_files(self) -> list[tuple[Path, str, str]]:
-        """(pid 파일, project_id, slug). 호스팅은 빌드 트리 **안의** `prototype/`에서
-        돌므로(routes/prototypes의 `_prototype_dir`) pid 파일이 그 깊이에 생긴다. 옛
-        레이아웃(빌드 트리 바로 아래)도 함께 본다."""
-        if not self._root.is_dir():
-            return []
+        """(pid 파일, project_id, slug). 상태 트리의 것과, 옛 위치(빌드 트리의
+        `prototype/` 안과 빌드 트리 바로 아래)의 것을 함께 본다 — 옛 위치의 파일은
+        상태 트리로 옮기기 전의 백엔드가 남긴 것이고, 정리(`sweep_orphans`)가 지운다."""
         out = []
+        if self._state_root.is_dir():
+            for pid_file in self._state_root.glob(f"*/*/{_STATE_PID}"):
+                slug_dir = pid_file.parent
+                out.append((pid_file, slug_dir.parent.name, slug_dir.name))
+        if not self._root.is_dir():
+            return out
         for pid_file in self._root.glob("*/*/prototype/.proto-host.pid"):
             slug_dir = pid_file.parent.parent
             out.append((pid_file, slug_dir.parent.name, slug_dir.name))
@@ -702,14 +756,14 @@ class ProtoHost:
         reject_unsafe_segment(pid)
         found = {slug for (p, slug) in self._registry if p == pid}
         found |= {slug for (p, slug) in self._tokens.values() if p == pid}
-        base = self._root / pid
-        try:
-            if base.is_dir():
-                found |= {child.name for child in base.iterdir() if child.is_dir()}
-        except OSError:
-            # 이 모듈은 로거를 두지 않는다(전부 예외 전파 아니면 best-effort).
-            # 호출부(proto/cleanup.py)가 자기 실패 라벨로 기록한다.
-            pass
+        for base in (self._root / pid, self._state_root / pid):
+            try:
+                if base.is_dir():
+                    found |= {child.name for child in base.iterdir() if child.is_dir()}
+            except OSError:
+                # 이 모듈은 로거를 두지 않는다(전부 예외 전파 아니면 best-effort).
+                # 호출부(proto/cleanup.py)가 자기 실패 라벨로 기록한다.
+                pass
         return sorted(found)
 
     def status(self, pid: str, slug: str) -> HostInfo | None:
@@ -730,4 +784,4 @@ class ProtoHost:
         entry = self._registry.get((pid, slug))
         if entry is not None:
             return _tail_text(entry.log_path, lines)
-        return _tail_text(self._root / pid / slug / ".proto-host.log", lines)
+        return _tail_text(self._state_dir(pid, slug) / _STATE_LOG, lines)

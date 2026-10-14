@@ -26,6 +26,8 @@ from aipds.turn_job import TurnJobs
 from aipds.proto.store import PrototypeStore, has_build_output  # noqa: F401 — re-export
 from aipds.proto import prompts
 from aipds.proto.design_sync import sync_design
+from aipds.proto.hosting import restore_local
+from aipds.pathsafe import unlink_beneath, write_beneath
 from aipds.s3store import S3StoreLike
 from aipds.proto import layout
 
@@ -400,13 +402,13 @@ class PrototypeSession:
         # 설문을 받았던 그 프로토타입이 아니라 다른 물건이 나온다. 개시 프롬프트가
         # "빌드됐는가"로 분기하므로(`first_prompt`) 이 복원이 그보다 먼저여야 한다.
         try:
-            await self._store.restore(self.slug, build_dir)
+            await restore_local(self.project_id, self.slug, build_dir, self._store)
         except Exception:
             _log.exception("prototype source restore failed: %s/%s",
                            self.project_id, self.slug)
-        spec_path = build_dir / self._spec_key()
-        spec_path.parent.mkdir(parents=True, exist_ok=True)
-        spec_path.write_text(spec_md, encoding="utf-8")
+        # 빌드 에이전트가 쓰는 트리다 — 심는 파일은 링크를 따라가지 않는다(pathsafe).
+        build_dir.mkdir(parents=True, exist_ok=True)
+        write_beneath(build_dir, self._spec_key(), spec_md)
 
         # Path A.1은 명세 옆에 빌드 지시서를 남긴다 — 명세와 design-context 답변을
         # 합친, 상류가 정한 빌더의 입력이다(layout.BUILD_INSTRUCTIONS). 명세만 심으면
@@ -414,28 +416,26 @@ class PrototypeSession:
         # 명세와 같은 이유로 매 start마다 새로 쓰고, S3에서 사라졌으면 로컬 사본도
         # 지운다 — 남겨 두면 프롬프트는 말하지 않는데 낡은 지시가 cwd에 있다.
         instructions_key = layout.build_instructions_key(self.slug)
-        instructions_path = build_dir / instructions_key
         try:
             instructions_md = await self._s3.get(instructions_key)
         except FileNotFoundError:
-            instructions_path.unlink(missing_ok=True)
+            unlink_beneath(build_dir, instructions_key)
             self._instructions_key = None
         else:
-            instructions_path.write_text(instructions_md, encoding="utf-8")
+            write_beneath(build_dir, instructions_key, instructions_md)
             self._instructions_key = instructions_key
 
         # 수정 이력도 명세 옆에 심는다. 명세는 승인 시점에 고정돼 있고 이후의 변경은
         # 이 파일에만 있다 -- 개선 세션과 재빌드가 이것을 읽어야 명세가 이미 뺀 기능을
         # 되살리지 않는다. 지시서와 같은 이유로 매 start마다 새로 쓰고, 없으면 지운다.
         history_key = layout.change_history_key(self.slug)
-        history_path = build_dir / history_key
         try:
             history_md = await self._s3.get(layout.change_history_key(self.slug))
         except FileNotFoundError:
-            history_path.unlink(missing_ok=True)
+            unlink_beneath(build_dir, history_key)
             self._history_key = None
         else:
-            history_path.write_text(history_md, encoding="utf-8")
+            write_beneath(build_dir, history_key, history_md)
             self._history_key = history_key
 
         # 브랜드 프로필을 워크스페이스에 반영한다. spec과 같은 이유로 매

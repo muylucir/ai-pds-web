@@ -119,6 +119,18 @@ npx cdk deploy --all --require-approval never \
 - **로그인**은 `admin@aipds.local` 또는 `pm@aipds.local`에 `SeedPassword` 값으로 한다. 30일 동안 유효한
   임시 비밀번호이고 각자 첫 로그인에서 바꾼다. 풀 정책(8자 이상, 대문자·소문자·숫자·기호 각각
   하나 이상)을 만족하지 않으면 CloudFormation이 배포 시작 전에 거부한다.
+- **MFA는 꺼져 있다.** 로그인은 비밀번호 하나다. 워크숍 샘플로는 충분하지만 실제 고객 자료에는
+  부족하다 — 관리자 비밀번호가 새면 사용자·역할 관리까지 넘어간다. 워크숍 밖에서 쓰려면
+  `infra/lib/aipds-auth-stack.ts`에서 MFA를 필수로 켠다(`mfa: cognito.Mfa.REQUIRED`와
+  `mfaSecondFactor: { otp: true, sms: false }` — 인증 앱).
+- **그 밖에도 프로덕션이 아니라 워크숍에 맞춘 설정이 있다.** 각 줄에 바꿀 설정을 적은 경고 주석이 있다.
+  - Cognito에 위협 방지(유출된 자격증명 탐지, 위험 기반 인증)가 없다 — Plus 등급이 필요하다
+    (`aipds-auth-stack.ts`).
+  - `cdk destroy`가 사용자 풀과 아티팩트 버킷을 내용째 지운다. 버킷에는 버전 관리와 액세스 로그도
+    없다(`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
+  - CloudFront는 인스턴스에 평문 HTTP로 붙고 그 구간에 세션 쿠키가 실린다. 보안 그룹과 비밀 헤더가
+    직접 접근은 막지만 경로상의 도청은 막지 못한다. 고치려면 자체 도메인과 인증서, 또는 CloudFront
+    VPC 오리진이 필요하다(`aipds-hosting-stack.ts`, `aipds-preview-stack.ts`).
 - **다른 리전**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. 코드 수정은 필요 없다.
 - **추가 업로드 오리진**(커스텀 도메인 등): 배포 시 `AIPDS_UPLOAD_ORIGINS`(쉼표 구분). 앱 자신의
   오리진은 인스턴스가 더한다.
@@ -139,18 +151,18 @@ cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd ../frontend && npm install
 cp ../backend/.env.example ../backend/.env           # DrillStack 출력값으로 채운다
 
-cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
+cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 127.0.0.1 --port 8000 --reload
 cd frontend && npm run dev                           # http://localhost:3000
 ```
 
-로컬에서는 에이전트가 내 사용자로 직접 돈다 — 샌드박스는 인스턴스의 기능이다.
+로컬에서는 에이전트가 내 사용자로 직접 돈다 — 샌드박스는 인스턴스의 기능이다. 인증을 끈 백엔드는 모든 요청을 admin으로 받으므로 `127.0.0.1`에만 연다.
 
 | 변수 | 넣을 값 |
 |---|---|
 | `AIPDS_S3_BUCKET` / `AIPDS_S3_REGION` | `AipdsDrillStack.ArtifactsBucketName`과 그 리전. 비우면 조용히 로컬 전용으로 돈다 |
 | `AIPDS_DISCOVERY_CONFIG_DIR` / `AIPDS_PROTO_CONFIG_DIR` | 리포의 `discovery-config/`·`proto-config/` 절대 경로. 비우면 에이전트가 **내 `~/.claude`**를 읽어 개인 스킬이 결과에 섞인다 |
 | `ANTHROPIC_MODEL` | 프로젝트에 모델이 없을 때 쓰는 대체 Bedrock 추론 프로파일 id |
-| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | **둘 다** 비우면 인증을 건너뛴다(로컬 기본). 하나만 채우면 모든 요청이 실패한다 |
+| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | **둘 다** 비우고 `AIPDS_AUTH_DISABLED=1`을 주면 인증을 건너뛴다(`.env.example`의 로컬 기본). 그 스위치 없이 둘 다 비거나 하나만 채우면 백엔드가 뜨지 않는다 |
 | `AIPDS_PUBLIC_PATH_PREFIX` | 브라우저가 :8000의 백엔드를 직접 부를 때 `""` |
 
 나머지 변수 전부와, 배포가 쓰는 값과 그 이유는 [`infra/lib/user-data.ts`](infra/lib/user-data.ts)의

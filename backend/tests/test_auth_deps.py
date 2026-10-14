@@ -158,8 +158,8 @@ def test_config_requires_both_client_and_pool(monkeypatch):
 
 
 def test_both_unset_still_bypasses(monkeypatch):
-    # 둘 다 아예 설정되지 않은 것(로컬 개발의 기본 상태)은 여전히 바이패스다 —
-    # 반쯤 설정된 상태와 혼동하면 안 된다.
+    # 둘 다 아예 설정되지 않은 것(로컬 개발의 기본 상태, 스위치가 켜져 있다 — conftest)은
+    # 여전히 바이패스다 — 반쯤 설정된 상태와 혼동하면 안 된다.
     monkeypatch.delenv("AIPDS_COGNITO_USER_POOL_ID", raising=False)
     monkeypatch.delenv("AIPDS_COGNITO_CLIENT_ID", raising=False)
     assert app_module.cognito_config() is None
@@ -171,6 +171,28 @@ def test_both_empty_strings_still_bypasses(monkeypatch):
     monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", "")
     monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", "")
     assert app_module.cognito_config() is None
+
+
+@pytest.mark.parametrize("flag", [None, "", "0", "false"])
+def test_both_unset_without_the_switch_refuses_to_run(monkeypatch, flag):
+    """두 줄이 함께 빠진 배포는 "미설정"이 아니라 사고다 — 바이패스로 읽으면 인증이 꺼진
+    채 인터넷에 열린다. 바이패스는 AIPDS_AUTH_DISABLED로만 켜진다."""
+    monkeypatch.delenv("AIPDS_COGNITO_USER_POOL_ID", raising=False)
+    monkeypatch.delenv("AIPDS_COGNITO_CLIENT_ID", raising=False)
+    if flag is None:
+        monkeypatch.delenv("AIPDS_AUTH_DISABLED", raising=False)
+    else:
+        monkeypatch.setenv("AIPDS_AUTH_DISABLED", flag)
+    with pytest.raises(RuntimeError, match="AIPDS_AUTH_DISABLED"):
+        app_module.cognito_config()
+
+
+def test_the_switch_does_not_override_a_configured_pool(monkeypatch):
+    """스위치가 남아 있어도 값이 있으면 인증은 켜진다 — 끄는 쪽으로만 읽지 않는다."""
+    monkeypatch.setenv("AIPDS_AUTH_DISABLED", "1")
+    monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", POOL)
+    monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", CLIENT_ID)
+    assert app_module.cognito_config()["user_pool_id"] == POOL
 
 
 async def test_require_user_raises_on_half_configured_env(monkeypatch):

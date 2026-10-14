@@ -18,6 +18,21 @@ from aipds.proto.store import PrototypeStore
 _log = logging.getLogger(__name__)
 
 
+async def restore_local(pid: str, slug: str, build_dir, store: PrototypeStore) -> None:
+    """로컬에 없는 것을 정본에서 되살린다 — 빌드 산출물과 접근 토큰.
+
+    토큰은 호스팅의 상태 트리에 심는다(`ProtoHost.adopt_token`). 교체된 인스턴스에서
+    목록이 공유 링크를 만들고, 다음 호스팅이 새 토큰을 만들지 않으려면 로컬 사본이
+    있어야 한다 — 새로 만들면 이미 나눠 준 링크가 죽는다.
+    """
+    import aipds.app as app_module
+    await store.restore(slug, build_dir)
+    token = await store.load_token(slug)
+    host = app_module.proto_host()
+    if token and host.token_for(pid, slug) is None:
+        host.adopt_token(token, pid, slug)
+
+
 def prototype_store(pid: str) -> PrototypeStore | None:
     """이 프로젝트의 프로토타입 정본. 버킷이 없으면(로컬 개발) None."""
     import aipds.app as app_module
@@ -43,7 +58,7 @@ async def host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:
     # 로컬 트리가 없으면(교체된 인스턴스) S3의 현재 세대로 되살린다.
     if store is not None:
         try:
-            await store.restore(slug, build_dir)
+            await restore_local(pid, slug, build_dir, store)
         except Exception:
             _log.exception("prototype source restore before host failed: %s/%s",
                            pid, slug)

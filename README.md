@@ -124,6 +124,20 @@ npx cdk deploy --all --require-approval never \
   password (valid 30 days) that each user replaces at first login. It must satisfy the pool policy —
   8+ characters with an uppercase letter, a lowercase letter, a digit and a symbol — or CloudFormation
   rejects it before the deployment starts.
+- **MFA is off.** Sign-in is a password alone, which is enough for a workshop sample but not for real
+  customer material: a leaked admin password hands over user and role management too. Before using it
+  beyond a workshop, require MFA in `infra/lib/aipds-auth-stack.ts` (`mfa: cognito.Mfa.REQUIRED` with
+  `mfaSecondFactor: { otp: true, sms: false }` — an authenticator app).
+- **Other settings chosen for a workshop, not for production.** Each line carries a warning comment
+  with the setting to change:
+  - Cognito has no threat protection (compromised-credential detection, risk-based sign-in) — that needs
+    the Plus feature plan (`aipds-auth-stack.ts`).
+  - `cdk destroy` deletes the user pool and the artifacts bucket with everything in it, and the bucket
+    has no versioning or access logs (`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
+  - CloudFront reaches the instance over plain HTTP, carrying session cookies; the security group and a
+    secret header block direct access, but not eavesdropping on the path. Fixing it needs your own
+    domain and certificate, or a CloudFront VPC origin (`aipds-hosting-stack.ts`,
+    `aipds-preview-stack.ts`).
 - **Another region**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. No code changes.
 - **Another upload origin** (a custom domain, say): `AIPDS_UPLOAD_ORIGINS` (comma-separated) at deploy
   time. The app's own origin is added by the instance.
@@ -144,18 +158,18 @@ cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd ../frontend && npm install
 cp ../backend/.env.example ../backend/.env           # fill in from the DrillStack outputs
 
-cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
+cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 127.0.0.1 --port 8000 --reload
 cd frontend && npm run dev                           # http://localhost:3000
 ```
 
-Locally, agents run directly as your user — the sandbox is an instance feature.
+Locally, agents run directly as your user — the sandbox is an instance feature. With authentication off, the backend treats every request as an admin, so keep it on `127.0.0.1`.
 
 | Variable | Set it to |
 |---|---|
 | `AIPDS_S3_BUCKET` / `AIPDS_S3_REGION` | `AipdsDrillStack.ArtifactsBucketName` and its region. Unset, the app silently runs local-only |
 | `AIPDS_DISCOVERY_CONFIG_DIR` / `AIPDS_PROTO_CONFIG_DIR` | Absolute paths to the repo's `discovery-config/` and `proto-config/`. Unset, the agent reads **your own `~/.claude`** and your personal skills leak into the results |
 | `ANTHROPIC_MODEL` | Fallback Bedrock inference profile id, used when a project has none |
-| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | Leave **both** empty to skip authentication (the local default). Setting only one fails every request |
+| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | Leave **both** empty and set `AIPDS_AUTH_DISABLED=1` to skip authentication (the local default in `.env.example`). Both empty without that switch, or only one set, and the backend refuses to start |
 | `AIPDS_PUBLIC_PATH_PREFIX` | `""` when the browser calls the backend directly on :8000 |
 
 Every other variable, with the value a deployment uses and why, is commented in the systemd units in
