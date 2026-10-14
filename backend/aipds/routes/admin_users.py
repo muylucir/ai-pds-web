@@ -73,6 +73,20 @@ class RoleBody(BaseModel):
     role: Role
 
 
+def _end_sessions(username: str) -> None:
+    """이 사용자가 이미 받은 토큰을 거부한다(auth/revocation.py).
+
+    Cognito 호출이 성공한 **뒤에** 부른다 — 실패한 변경으로 사용자를 내쫓지 않는다. 기록
+    실패는 변경 자체를 되돌리지 않는다(이미 Cognito에 반영됐다). 남는 것은 그 사용자의 기존
+    토큰이 만료까지 통과하는 것이고, 그것이 이 기록이 없던 상태다 — 그래서 로그로 남긴다.
+    """
+    import aipds.app as app_module
+    try:
+        app_module.revocations().revoke(username)
+    except Exception:
+        _log.exception("could not record the session revocation for %s", username)
+
+
 def _admin():
     import aipds.app as app_module
     return app_module.cognito_admin()
@@ -176,6 +190,8 @@ async def reset_password(username: str, me: Principal = Depends(require_admin)):
         cognito.set_temp_password(username, password)
     except CognitoError as exc:
         raise _http_error(exc) from exc
+    # 재설정은 계정 탈취를 의심할 때 하는 일이다 — 기존 세션이 남으면 의미가 없다.
+    _end_sessions(username)
     return {"username": username, "temp_password": password}
 
 
@@ -190,6 +206,10 @@ async def change_role(username: str, body: RoleBody,
         cognito.set_group(username, body.role)
     except CognitoError as exc:
         raise _http_error(exc) from exc
+    if body.role != "admin":
+        # 강등만. 기존 토큰은 옛 그룹(admin)을 담고 있다 — 승격은 기존 토큰이 권한이 더
+        # 적을 뿐이라 끊지 않는다(다음 refresh에서 새 그룹을 받는다).
+        _end_sessions(username)
     return {"username": username, "role": body.role}
 
 
@@ -201,6 +221,7 @@ async def disable_user(username: str, me: Principal = Depends(require_admin)):
         cognito.set_enabled(username, False)
     except CognitoError as exc:
         raise _http_error(exc) from exc
+    _end_sessions(username)
     return Response(status_code=204)
 
 
@@ -223,4 +244,5 @@ async def delete_user(username: str, me: Principal = Depends(require_admin)):
         cognito.delete_user(username)
     except CognitoError as exc:
         raise _http_error(exc) from exc
+    _end_sessions(username)
     return Response(status_code=204)
