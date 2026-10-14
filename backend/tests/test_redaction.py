@@ -25,3 +25,39 @@ def test_does_not_over_redact_hyphenated_words():
 def test_still_redacts_real_sk_key_at_token_start():
     assert redact_credentials("key sk-proj-abc123def456 here") == "key [CREDENTIAL REDACTED] here"
     assert redact_credentials("sk-abc123def456ghi789") == "[CREDENTIAL REDACTED]"
+
+
+def test_redacts_temporary_sts_credentials():
+    """에이전트가 받는 것은 STS 임시 자격증명이다(ASIA 키, 세션 토큰) — AKIA만 보면
+    `env`나 브로커 응답이 그대로 스트림·audit.md·S3로 나간다."""
+    assert redact_credentials("id ASIAIOSFODNN7EXAMPLE x") == "id [CREDENTIAL REDACTED] x"
+    token = "IQoJb3JpZ2luX2VjEJr" + "A" * 120 + "=="
+    assert redact_credentials(f"t {token} x") == "t [CREDENTIAL REDACTED] x"
+    for line in ("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+                 "aws_session_token=abc/def+ghi==",
+                 "AWS_CONTAINER_AUTHORIZATION_TOKEN=Zm9vYmFyYmF6"):
+        assert redact_credentials(line) == "[CREDENTIAL REDACTED]", line
+
+
+def test_redacts_jwts():
+    jwt = ("eyJraWQiOiJhYmMiLCJhbGciOiJSUzI1NiJ9"
+           ".eyJzdWIiOiIxMjM0NTY3ODkwIiwidG9rZW5fdXNlIjoiYWNjZXNzIn0"
+           ".c2lnbmF0dXJlLXZhbHVlLWhlcmU")
+    assert redact_credentials(f"Bearer {jwt}") == "Bearer [CREDENTIAL REDACTED]"
+
+
+def test_new_patterns_leave_ordinary_text_alone():
+    for text in ("ASIA-Pacific rollout", "the ASIAN market", "eyJ is a prefix",
+                 "set AWS_REGION=ap-northeast-2"):
+        assert redact_credentials(text) == text
+
+
+def test_no_pattern_matches_across_whitespace():
+    """스트리밍이 기대는 불변식(agent/delta_buffer.py): 매칭이 공백을 넘지 않는다."""
+    from aipds.parsers.redaction import _PATTERNS
+    samples = ["AWS_SESSION_TOKEN= abc", "AKIA IOSFODNN7EXAMPLE",
+               "eyJabcdefgh .eyJabcdefgh.abcdefgh"]
+    for pat in _PATTERNS:
+        for sample in samples:
+            for m in pat.finditer(sample):
+                assert not any(ch.isspace() for ch in m.group(0)), (pat.pattern, sample)
