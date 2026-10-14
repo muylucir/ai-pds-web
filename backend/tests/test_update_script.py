@@ -249,9 +249,12 @@ def test_svc_commands_run_inside_the_app_tree(tmp_path):
 # `aipds-update <브랜치>`는 문서에 적지 않는 모드라 안전장치가 스크립트 안에만 있다. 판정 두
 # 함수는 부작용이 없게 분리돼 있고, 스크립트를 source하면 그 둘만 정의되고 멈춘다.
 
-def _source(snippet: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["bash", "-c", f'source "{SCRIPT}"; {snippet}'],
-                          capture_output=True, text=True)
+def _call(*argv: str, check: bool = False) -> subprocess.CompletedProcess:
+    """스크립트를 source한 셸에서 argv를 그대로 실행한다. 셸 문자열은 고정이고 경로와 값은 모두
+    위치 인자로 넘긴다 — 테스트 자신이 주입 경로가 되면 안 된다. $0을 스크립트 경로로 두면
+    source 가드가 직접 실행으로 보고 끝까지 돌기 때문에 경로는 $1로 넘긴다."""
+    return subprocess.run(["bash", "-c", 'source "$1"; shift; "$@"', "_", str(SCRIPT), *argv],
+                          capture_output=True, text=True, check=check)
 
 
 def test_the_script_parses():
@@ -260,7 +263,7 @@ def test_the_script_parses():
 
 def test_sourcing_defines_the_planners_and_runs_nothing_else():
     """source가 root 검사·git·systemctl까지 내려가면 테스트가 운영 절차를 돌리게 된다."""
-    r = _source("type -t valid_branch plan_switch")
+    r = _call("type", "-t", "valid_branch", "plan_switch")
     assert r.returncode == 0, r.stderr
     assert r.stdout.split() == ["function", "function"]
     assert "run as root" not in r.stderr
@@ -269,24 +272,18 @@ def test_sourcing_defines_the_planners_and_runs_nothing_else():
 @pytest.mark.parametrize("name", [
     "main", "handoff-package", "feat/handoff", "release-1.2", "user.name/x_y"])
 def test_ordinary_branch_names_are_allowed(name):
-    assert _source(f"valid_branch '{name}'").returncode == 0
+    assert _call("valid_branch", name).returncode == 0
 
 
 @pytest.mark.parametrize("name", [
     "", "-h", "--help", "a b", "x;id", "$(id)", "`id`", "a'b", "a..b", "x.lock", "x/", "@",
     "../main", "a//b"])
 def test_dangerous_or_invalid_branch_names_are_refused(name):
-    # 값은 셸을 거치지 않게 위치 인자로 넘긴다 — 테스트 자신이 주입 경로가 되면 안 된다.
-    r = subprocess.run(["bash", "-c", f'source "{SCRIPT}"; valid_branch "$1"', "_", name],
-                       capture_output=True, text=True)
-    assert r.returncode != 0, name
+    assert _call("valid_branch", name).returncode != 0, name
 
 
 def _plan(deploy: str, current: str, target: str, recorded: str, head: str) -> dict[str, str]:
-    r = subprocess.run(
-        ["bash", "-c", f'source "{SCRIPT}"; plan_switch "$@"', "_",
-         deploy, current, target, recorded, head],
-        capture_output=True, text=True, check=True)
+    r = _call("plan_switch", deploy, current, target, recorded, head, check=True)
     return dict(line.split("=", 1) for line in r.stdout.splitlines())
 
 
