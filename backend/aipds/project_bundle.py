@@ -193,10 +193,14 @@ def bundle_path_to_s3_key(path: str, *, transcript_prefix: str) -> str | None:
     key = path[len(PROJECT_DIR):]
     if not key:
         return None
-    # 내보내기가 담지 않는 키는 들여오지도 않는다 — 손으로 만든 번들이 `hosting.json`을
-    # 실으면 받는 인스턴스에서 프로토타입이 저절로 뜨고, `access-token`을 실으면 보낸
-    # 사람이 아는 토큰으로 프리뷰가 열린다.
-    if _PROTO_INSTANCE_RE.match(key):
+    # 내보내기가 담지 않는 키는 들여오지도 않는다(`s3_key_to_bundle_path`와 같은 집합) —
+    # 손으로 만든 번들이 `hosting.json`을 실으면 받는 인스턴스에서 프로토타입이 저절로
+    # 뜨고, `access-token`을 실으면 보낸 사람이 아는 토큰으로 프리뷰가 열린다. 빌드
+    # 트랜스크립트·`pending/`을 실으면 빌드 에이전트와 Discovery가 보낸 사람이 쓴 대화·
+    # 질문을 자기 것으로 알고 재개한다. 매니페스트는 라우트가 마지막에 쓴다.
+    if key == PROJECT_MANIFEST_KEY or key.startswith(PENDING_PREFIX):
+        return None
+    if _PROTO_CONVERSATION_RE.match(key) or _PROTO_INSTANCE_RE.match(key):
         return None
     if key.startswith(TRANSCRIPT_ROOT):
         return transcript_prefix + key[len(TRANSCRIPT_ROOT):]
