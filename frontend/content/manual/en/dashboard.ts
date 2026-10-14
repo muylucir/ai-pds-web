@@ -8,18 +8,19 @@ export const dashboard: ManualSection = {
     {
       kind: "mockup",
       id: "dashboard",
-      caption: "The dashboard — summary cards and the stage timeline",
+      caption: "The dashboard — summary cards and the phase timeline",
     },
     {
       kind: "md",
       md: `| Card | Meaning |
 |---|---|
-| Overall progress | Stages marked completed ÷ all stages |
-| Completed stages | How many stages are settled |
+| Overall progress | Phases marked completed ÷ the phases on this project's path |
+| Completed phases | How many phases are settled |
 | Question records | Question sheets presented so far. You answer them in the workspace |
 | Generated artifacts | How many documents and specs exist |
 
-The timeline on the left is the state of each stage — *Done* / *In progress* / (unmarked = not yet).
+The timeline on the left is the state of each of the six phases — *Done* / *In progress* / *Not on
+this path* / (unmarked = not yet). The same six appear in the workspace's left column.
 When questions are waiting, **Continue answering →** appears and takes you to the workspace.
 
 On a project you have just created, a *Nothing has started yet* notice sits above the cards and the
@@ -30,12 +31,16 @@ the notice goes away by itself once the first conversation has run.`,
     { kind: "heading", id: "progress-meaning", text: "Do not read the percentage too literally" },
     {
       kind: "md",
-      md: `Progress is only **the share of stages marked completed**. It is not a measure of how complete
+      md: `Progress is only **the share of phases marked completed**. It is not a measure of how complete
 the methodology is.
 
-Because the workflow adapts to the work, the stage list itself changes as you go — skip a stage and
-Discovery can finish without ever reaching 100%, and going back makes the percentage drop. Both are
-normal. **Judge whether you are finished by the approval state in the Document Review tab.**`,
+The AI tracks its work in finer steps than the six phases, and the screen rolls those steps up into
+the phase they belong to — a phase is *Done* only when every step under it is. A phase the path does
+not pass through is *Not on this path* and is left out of the total: starting from pain points (Path
+A) skips Use Case Intake and Prioritize, and starting from use cases (Path B) or from an existing spec
+skips Envision. Because the workflow adapts to the work, skipping a step can leave Discovery finished
+short of 100%, and going back makes the percentage drop. Both are normal. **Judge whether you are
+finished by the approval state in the Document Review tab.**`,
     },
     { kind: "heading", id: "recent", text: "Artifacts and recent activity" },
     {

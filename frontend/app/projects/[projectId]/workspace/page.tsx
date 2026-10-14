@@ -31,12 +31,12 @@ import {
 // right gutter (`lg:pr-9`) for the drawer's handle tab so the tab never sits on
 // top of the question form. Three openers share one `docOpen` state: the tab,
 // the chat's document-update banner, and the question form's "View {name}".
-// Below the `lg` breakpoint every side panel is hidden
-// (StageSidebar/WorkspaceRightPanel/WorkspaceDocPanel are `hidden lg:flex`
-// internally), leaving a single-column chat; a pending-questions badge over
-// the chat opens a bottom-sheet that reuses the SAME QuestionForm widget the
-// right panel would otherwise show (mode priority: questions > preview >
-// artifacts), and the document-update banner links out to the review route.
+// Below the `lg` breakpoint both side columns are hidden
+// (StageSidebar/WorkspaceRightPanel are `hidden lg:flex` internally), leaving
+// a single-column chat; a pending-questions badge over the chat opens a
+// bottom-sheet that reuses the SAME QuestionForm widget the right panel would
+// otherwise show (mode priority: questions > preview > artifacts). The drawer
+// opens at every width — full width on a narrow screen.
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);

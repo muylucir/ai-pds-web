@@ -101,7 +101,9 @@ it keeps reactions to the new screens out of the same bucket as the old ones.`,
 \`survey-aggregate.md\` in that prototype's document folder, so you can open it in
 [Document Review](/manual#review). **Each prototype gets its own file** — build several prototypes,
 run a survey on each, and the results never overwrite one another. Synthesize again after more
-responses arrive and only this file is refreshed with the latest numbers.
+responses arrive and only this file is refreshed with the latest numbers. It also records when the
+survey started — and, once closed, when it closed — so the AI can place the responses against the
+prototype's change history without asking you.
 
 The survey is not a feature that ends at a results screen. After synthesizing, **Ask to reflect results**
 takes you to the workspace chat with a request naming the aggregate file already in the input.
