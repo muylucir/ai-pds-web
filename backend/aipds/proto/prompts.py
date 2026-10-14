@@ -644,3 +644,35 @@ def unsafe_command_refused(language: str, fragment: str) -> str:
             "라이브 프리뷰가 하는 일이므로 브라우저를 열 필요가 없고, 서버는 "
             "hosting이 직접 띄운다."
             )
+
+
+def settings_write_refused(language: str, path: str) -> str:
+    """빌드 에이전트가 CLI 설정 파일을 쓰려 할 때의 이유(proto/build_guard.py).
+
+    정당한 용도가 없으므로 대안 대신 "할 일이 없다"를 말한다 — 빌드에 필요한 설정은
+    이미 주어져 있다.
+    """
+    if _lang(language) == "en":
+        return (f"Refused — `{path}` is a Claude Code settings file. AI-PDS Web "
+                "provides the settings this build needs and resets them on every "
+                "launch; a build has no reason to change them. Continue with the "
+                "prototype's own files.")
+    return (f"거부됨 — `{path}`는 Claude Code 설정 파일이다. 빌드에 필요한 설정은 "
+            "AI-PDS Web이 주고 실행할 때마다 다시 맞춘다 — 빌드가 바꿀 이유가 없다. "
+            "프로토타입 파일 작업을 계속해라.")
+
+
+def fetch_refused(language: str, host: str, allowed: tuple[str, ...]) -> str:
+    """빌드 에이전트의 WebFetch가 허용 호스트 밖일 때의 이유(proto/build_guard.py).
+
+    열 수 있는 곳을 함께 준다 — 지목만 하면 모델이 다른 호스트로 같은 시도를 한다.
+    """
+    hosts = ", ".join(f"`{h}`" for h in allowed)
+    if _lang(language) == "en":
+        return (f"Refused — WebFetch to `{host}` is not available during a build. "
+                f"It can open the component documentation the skill points to "
+                f"({hosts}). For a package's API, read its installed source under "
+                "`node_modules/` or use `npx shadcn@latest docs <name>`.")
+    return (f"거부됨 — 빌드 중에는 `{host}`로 WebFetch할 수 없다. 스킬이 가리키는 "
+            f"컴포넌트 문서({hosts})만 열 수 있다. 패키지 API는 `node_modules/` 아래 "
+            "설치본 소스를 읽거나 `npx shadcn@latest docs <이름>`을 써라.")

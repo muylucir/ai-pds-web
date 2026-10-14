@@ -241,5 +241,7 @@ async def verify_access_token(token: str, *, region: str, user_pool_id: str,
     if not username or not sub:
         raise TokenError("token is missing username/sub")
 
+    iat = claims.get("iat")
     return Principal(username=str(username), sub=str(sub),
-                     role=_role_from_groups(claims.get(_GROUPS_CLAIM)))
+                     role=_role_from_groups(claims.get(_GROUPS_CLAIM)),
+                     issued_at=float(iat) if isinstance(iat, (int, float)) else None)

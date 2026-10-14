@@ -10,6 +10,9 @@
 **진실은 build_dir 루트의 파일이고, prototype/ 아래 같은 이름의 파일은 우리가
 관리하는 파생물이다.** 에이전트는 위치를 정하고(프레임워크마다 다르다) 우리는
 이름으로 찾는다.
+
+build_dir은 빌드 에이전트가 쓰는 트리라, 여기서 읽고 쓰는 것은 전부 링크를 따라가지
+않는다(`pathsafe`의 `*_beneath`).
 """
 from __future__ import annotations
 
@@ -17,6 +20,8 @@ import logging
 from pathlib import Path
 
 from aipds.design_profile import FONT_TOKENS, DesignProfile
+from aipds.pathsafe import (read_text_beneath, stat_beneath, unlink_beneath,
+                            write_beneath)
 from aipds.proto import prompts
 
 _log = logging.getLogger(__name__)
@@ -118,12 +123,9 @@ def theme_required(build_dir: Path) -> bool:
     S3를 보지 않는다 — 루트 테마 파일의 존재와 그 내용이 답이다. 게이트가
     도구 호출 경로에서 네트워크를 타지 않게 하려는 것이다.
     """
-    root = build_dir / THEME_FILENAME
-    if not root.is_file():
-        return False
     try:
-        return _NO_PROFILE_MARKER not in root.read_text(encoding="utf-8")
-    except OSError:
+        return _NO_PROFILE_MARKER not in read_text_beneath(build_dir, THEME_FILENAME)
+    except (OSError, ValueError):
         return False
 
 
@@ -135,77 +137,75 @@ def theme_imported(build_dir: Path) -> bool:
         if path.name == THEME_FILENAME or path.suffix not in _TEXT_SUFFIXES:
             continue
         try:
-            if THEME_FILENAME in path.read_text(encoding="utf-8", errors="ignore"):
-                return True
+            text = read_text_beneath(build_dir, path.relative_to(build_dir).as_posix(),
+                                     errors="ignore")
         except OSError:
             continue
+        if THEME_FILENAME in text:
+            return True
     return False
 
 
-def _write_theme_everywhere(build_dir: Path, root_theme: Path, css: str) -> None:
+def _write_theme_everywhere(build_dir: Path, css: str) -> None:
     """루트 테마 파일과 prototype/ 아래 사본을 전부 같은 내용으로 맞춘다.
 
     스텁(프로필 없음)이든 실제 테마(프로필 있음)든 "쓸 내용을 무엇으로
     정했는가"만 다르고 "어디에 쓰는가"는 같다 — 두 분기가 따로 낡지 않게
     이 시퀀스를 한 곳에 둔다.
     """
-    root_theme.write_text(css, encoding="utf-8")
+    write_beneath(build_dir, THEME_FILENAME, css)
     for copy in theme_copies(build_dir):
-        copy.write_text(css, encoding="utf-8")
+        write_beneath(build_dir, copy.relative_to(build_dir).as_posix(), css)
 
 
-def _upsert_section(path: Path, body: str) -> None:
+def _upsert_section(build_dir: Path, rel: str, body: str) -> None:
     block = f"{_SECTION_START}\n{body}{_SECTION_END}\n"
-    if not path.is_file():
-        path.write_text(block, encoding="utf-8")
+    if stat_beneath(build_dir, rel) is None:
+        write_beneath(build_dir, rel, block)
         return
-    text = path.read_text(encoding="utf-8")
+    text = read_text_beneath(build_dir, rel)
     if _SECTION_START in text and _SECTION_END in text:
         head, _, rest = text.partition(_SECTION_START)
         _, _, tail = rest.partition(_SECTION_END)
-        path.write_text(head + block + tail.lstrip("\n"), encoding="utf-8")
+        write_beneath(build_dir, rel, head + block + tail.lstrip("\n"))
         return
     joiner = "" if text.endswith("\n") else "\n"
-    path.write_text(text + joiner + block, encoding="utf-8")
+    write_beneath(build_dir, rel, text + joiner + block)
 
 
-def _remove_section(path: Path) -> None:
+def _remove_section(build_dir: Path, rel: str) -> None:
     """우리 절만 걷어낸다. 남는 것이 없으면 파일을 지운다 — 남의 내용이 있으면
     보존한다(이 파일이 우리 것만 담는다는 가정을 코드에 박지 않는다)."""
-    if not path.is_file():
+    if stat_beneath(build_dir, rel) is None:
         return
-    text = path.read_text(encoding="utf-8")
+    text = read_text_beneath(build_dir, rel)
     if _SECTION_START in text and _SECTION_END in text:
         head, _, rest = text.partition(_SECTION_START)
         _, _, tail = rest.partition(_SECTION_END)
         text = (head + tail.lstrip("\n"))
     if text.strip():
-        path.write_text(text, encoding="utf-8")
+        write_beneath(build_dir, rel, text)
     else:
-        path.unlink(missing_ok=True)
+        unlink_beneath(build_dir, rel)
 
 
 def sync_design(build_dir: Path, profile: DesignProfile | None,
                 language: str) -> None:
     """워크스페이스를 프로필과 일치시킨다. 매 빌드·매 호스팅에서 호출된다."""
-    root_theme = build_dir / THEME_FILENAME
-    design_md = build_dir / DESIGN_FILENAME
-    claude_md = build_dir / _CLAUDE_FILENAME
-
     if profile is None:
         # 한 번도 없었으면 아무것도 만들지 않는다(기능 전체가 opt-in이다).
         # 있었다가 지워진 경우에만 스텁으로 덮는다.
         #
-        # DESIGN.md 삭제도 이 가드 **안에서만** 한다 -- root_theme.is_file()이
+        # DESIGN.md 삭제도 이 가드 **안에서만** 한다 -- 루트 테마 파일이 있다는 것이
         # 우리가 이 워크스페이스에 흔적을 심었다는 유일한 증거다. 이 조건
         # 밖에서 지우면, 브랜드 프로필이 한 번도 없었던 프로젝트의 매
         # POST /host가 빌드 에이전트가 자기 메모로 만들었을 루트
         # DESIGN.md를(우리 것이 아닌데도) 조용히 지운다 -- _remove_section이
         # 남의 CLAUDE.md 내용을 보존하는 것과 같은 원칙이다.
-        if root_theme.is_file():
-            _write_theme_everywhere(build_dir, root_theme, stub_css())
-            design_md.unlink(missing_ok=True)
-        _remove_section(claude_md)
+        if stat_beneath(build_dir, THEME_FILENAME) is not None:
+            _write_theme_everywhere(build_dir, stub_css())
+            unlink_beneath(build_dir, DESIGN_FILENAME)
+        _remove_section(build_dir, _CLAUDE_FILENAME)
         return
 
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -228,16 +228,16 @@ def sync_design(build_dir: Path, profile: DesignProfile | None,
         _log.warning(
             "design profile has no tokens; writing the no-profile stub to %s — "
             "the brand can only reach the screen through the DESIGN.md prose",
-            root_theme)
-    _write_theme_everywhere(build_dir, root_theme,
+            build_dir / THEME_FILENAME)
+    _write_theme_everywhere(build_dir,
                             theme_css(profile.tokens) if has_tokens
                             else stub_css())
 
     if profile.prose.strip():
-        design_md.write_text(profile.prose.strip() + "\n", encoding="utf-8")
+        write_beneath(build_dir, DESIGN_FILENAME, profile.prose.strip() + "\n")
     else:
-        design_md.unlink(missing_ok=True)
+        unlink_beneath(build_dir, DESIGN_FILENAME)
 
     # 지시와 옆에 놓인 파일의 내용은 같은 값에서 나온다 — 어긋날 수 없다.
-    _upsert_section(claude_md, prompts.design_rules(language,
-                                                    has_tokens=has_tokens))
+    _upsert_section(build_dir, _CLAUDE_FILENAME,
+                    prompts.design_rules(language, has_tokens=has_tokens))

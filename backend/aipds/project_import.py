@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aipds.agent.session_store import project_transcript_prefix
-from aipds.pathsafe import reject_unsafe_segment
+from aipds.pathsafe import reject_unsafe_segment, write_beneath
 from aipds.project_bundle import (
     MANIFEST_NAME,
     MAX_ENTRIES,
@@ -208,10 +208,10 @@ async def _write_source(zf: zipfile.ZipFile, entries: list[tuple[str, str, str]]
     def _write(batch: list[tuple[str, str, str]]) -> list[Path]:
         out: list[Path] = []
         for slug, name, rel in batch:
-            dest = proto_root / project_id / slug / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(zf.read(name))
-            out.append(dest)
+            # 같은 pid의 잔재(실패한 임포트, 지운 프로젝트)에 에이전트가 남긴 링크가 있을 수
+            # 있다 — 따라가지 않는다(pathsafe).
+            write_beneath(proto_root, f"{project_id}/{slug}/{rel}", zf.read(name))
+            out.append(proto_root / project_id / slug / rel)
         return out
 
     for start in range(0, len(entries), _WRITE_BATCH):

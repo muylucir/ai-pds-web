@@ -34,6 +34,10 @@
 from __future__ import annotations
 
 import re
+from pathlib import PurePosixPath
+from urllib.parse import urlsplit
+
+from aipds.agent_home import SETTINGS_IN_COMMAND
 
 #: 인용부호 안의 내용. 판정 전에 지운다 — `echo "npm run dev는 금지"`처럼 규약을
 #: 적거나 로그를 남기는 정상 명령이 막히면 오탐이다(discovery_guard._QUOTED와 같은
@@ -83,10 +87,14 @@ _KILL = re.compile(
 #: 오탐은 무해한 명령을 막는다.
 _PORT = re.compile(r"(?<![0-9])(?:3000|8000)(?![0-9])")
 
+#: CLI 설정 파일(agent_home.SETTINGS_IN_COMMAND). 빌드 에이전트가 만질 이유가 없다.
+#: 읽기(`cat`)도 함께 걸리지만 그것도 정당한 용도가 없다.
+_SETTINGS = SETTINGS_IN_COMMAND
+
 #: 판정 순서. 먼저 걸린 것을 지목한다 — 한 명령이 여러 조항을 어길 수 있고
 #: (`fuser -k 3000/tcp`는 종료와 포트 둘 다), 그때 무엇을 이름으로 부를지는
 #: 결정적이어야 한다(테스트가 그 순서를 고정한다).
-_PATTERNS = (_BROWSER, _SERVER, _KILL, _PORT)
+_PATTERNS = (_BROWSER, _SERVER, _KILL, _PORT, _SETTINGS)
 
 
 def bash_denial(command: str | None) -> str | None:
@@ -105,3 +113,49 @@ def bash_denial(command: str | None) -> str | None:
         if match:
             return match.group(0).strip()
     return None
+
+
+#: Write 계열 도구. 빌드 에이전트는 작업 디렉터리 어디든 쓴다 — 막는 것은 CLI 설정뿐이다.
+WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+
+#: CLI가 설정으로 읽는 파일 이름. `.claude/` 아래의 `settings*.json`은 프로젝트 설정,
+#: 작업 디렉터리 밖의 `settings*.json`은 config dir(사용자 설정)이다.
+_SETTINGS_NAMES = frozenset({".mcp.json", ".claude.json"})
+
+
+def settings_write_denial(path: str | None, workspace: str) -> str | None:
+    """CLI 설정 파일이면 그 경로를, 아니면 None. 경로를 알 수 없으면 통과한다."""
+    if not path or not isinstance(path, str):
+        return None
+    p = PurePosixPath(path)
+    if p.name in _SETTINGS_NAMES:
+        return path
+    if p.name.startswith("settings") and p.suffix == ".json":
+        inside = not p.is_absolute() or p.is_relative_to(workspace)
+        if p.parent.name == ".claude" or not inside:
+            return path
+    return None
+
+
+#: WebFetch로 열 수 있는 호스트(와 그 하위 도메인). 빌드 스킬이 가리키는 문서다
+#: (proto-config/skills/shadcn-design: 컴포넌트·블록은 ui.shadcn.com, AI 채팅 요소는
+#: ai-sdk.dev). 그 밖으로 나가는 WebFetch는 URL에 워크스페이스 내용을 실어 내보내는
+#: 길이고, 빌드에 필요한 것은 위 문서와 npm(Bash)뿐이다.
+FETCH_HOSTS = ("ui.shadcn.com", "ai-sdk.dev")
+
+
+def fetch_denial(url: str | None) -> str | None:
+    """허용 호스트 밖이면 그 호스트(또는 URL)를, 아니면 None.
+
+    URL이 없거나 문자열이 아니면 **거부**한다 — 이 도구의 입력은 URL 하나이고, 알 수
+    없는 모양을 통과시키면 그것이 우회로다(Bash 판정과 실패 방향이 다른 이유).
+    """
+    if not url or not isinstance(url, str):
+        return str(url)
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ("http", "https") or not host:
+        return url
+    if any(host == h or host.endswith("." + h) for h in FETCH_HOSTS):
+        return None
+    return host

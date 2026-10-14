@@ -34,6 +34,7 @@ import os
 import re
 from pathlib import PurePosixPath
 
+from aipds.agent_home import SETTINGS_IN_COMMAND
 from aipds.pathsafe import workspace_relative
 from aipds.proto import layout
 
@@ -44,6 +45,20 @@ DOCS_ROOT = "aiplc-docs"
 #: 이 게이트가 보는 파일 쓰기 도구. claude_driver._FILE_TOOLS와 같은 집합이어야
 #: 한다 — 한쪽에만 도구가 추가되면 그 도구는 관측되면서 막히지 않는다.
 WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit"})
+
+#: 노트북 편집. 쓰기 도구지만 경로 키가 다르고(`notebook_path`) 산출물을 만들지 않으므로
+#: 게시(PostToolUse)는 하지 않는다 — 쓰기 범위 판정만 같게 받는다. 빠지면 `aiplc-docs/`
+#: 밖에 쓰는 우회로다.
+NOTEBOOK_TOOL = "NotebookEdit"
+
+
+def tool_write_path(name: str, tool_input: dict) -> str | None:
+    """쓰기 도구가 겨냥한 경로. 쓰기 도구가 아니면 None."""
+    if name in WRITE_TOOLS:
+        return tool_input.get("file_path")
+    if name == NOTEBOOK_TOOL:
+        return tool_input.get("notebook_path")
+    return None
 
 
 def write_denial(path: str | None, workspace: str) -> str | None:
@@ -171,3 +186,15 @@ def bash_denial(command: str | None) -> str | None:
                 continue
             return target
     return None
+
+
+def settings_denial(command: str | None) -> str | None:
+    """명령이 CLI 설정 파일을 건드리면 그 조각을, 아니면 None.
+
+    워크스페이스 밖 리다이렉션은 `bash_denial`이 이미 막지만 `cp`·`sed -i`·인터프리터는
+    보지 않는다. 설정 파일은 이름이 고정이라 이름으로 막는다(agent_home.SETTINGS_IN_COMMAND).
+    """
+    if not command or not isinstance(command, str):
+        return None
+    match = SETTINGS_IN_COMMAND.search(_QUOTED.sub(" ", command))
+    return match.group(0) if match else None
