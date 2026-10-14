@@ -285,7 +285,7 @@ async def test_restore_does_not_write_through_a_symlink_the_agent_planted(tmp_pa
     백엔드 uid로 그 너머에 쓴다(임의 파일 쓰기). 링크를 실제 디렉토리·파일로 바꾸고 쓴다."""
     outside_dir = tmp_path / "outside"
     outside_dir.mkdir()
-    outside_file = tmp_path / "victim.txt"
+    outside_file = tmp_path / "outside.txt"
     outside_file.write_text("untouched")
     s3 = FakeS3Store()
     s3.blobs["aiplc-docs/a.md"] = "from s3"

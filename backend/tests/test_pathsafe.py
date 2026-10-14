@@ -82,15 +82,15 @@ def test_write_beneath_replaces_links_instead_of_writing_through_them(tmp_path):
 
 
 def test_reads_refuse_links_and_non_regular_files(tmp_path):
-    outside = tmp_path / "secret"
-    outside.write_text("secret")
+    outside = tmp_path / "outside-file"
+    outside.write_text("outside")
     root = tmp_path / "root"
     (root / "d").mkdir(parents=True)
     (root / "link").symlink_to(outside)
     (root / "dlink").symlink_to(tmp_path, target_is_directory=True)
     os.mkfifo(root / "d" / "fifo")
 
-    for rel in ("link", "dlink/secret", "d/fifo"):
+    for rel in ("link", "dlink/outside-file", "d/fifo"):
         with pytest.raises(OSError):
             read_text_beneath(root, rel)
         assert stat_beneath(root, rel) is None

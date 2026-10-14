@@ -177,7 +177,7 @@ def test_a_number_that_merely_contains_the_port_is_allowed():
 
 def test_touching_cli_settings_from_bash_is_denied():
     assert bash_denial("echo x > .claude/settings.json") == ".claude/settings.json"
-    assert bash_denial("cp evil.json .mcp.json") == ".mcp.json"
+    assert bash_denial("cp planted.json .mcp.json") == ".mcp.json"
 
 
 def test_ordinary_json_files_are_allowed():

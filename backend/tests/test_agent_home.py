@@ -84,14 +84,14 @@ def test_copy_config_does_not_write_through_links(tmp_path):
     config = agent_home.discovery("p1").prepare().config
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / "victim").write_text("untouched", encoding="utf-8")
-    (config / "settings.json").symlink_to(outside / "victim")
+    (outside / "other-file").write_text("untouched", encoding="utf-8")
+    (config / "settings.json").symlink_to(outside / "other-file")
     (config / "skills").symlink_to(outside, target_is_directory=True)
 
     agent_home.copy_config(shared, config)
 
-    assert (outside / "victim").read_text(encoding="utf-8") == "untouched"
-    assert sorted(p.name for p in outside.iterdir()) == ["victim"]
+    assert (outside / "other-file").read_text(encoding="utf-8") == "untouched"
+    assert sorted(p.name for p in outside.iterdir()) == ["other-file"]
     assert (config / "skills" / "a" / "SKILL.md").is_file()
 
 

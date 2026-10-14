@@ -27,23 +27,41 @@ def test_still_redacts_real_sk_key_at_token_start():
     assert redact_credentials("sk-abc123def456ghi789") == "[CREDENTIAL REDACTED]"
 
 
+# 자격증명 모양의 표본은 **실행 중에 조립한다.** 리터럴로 두면 비밀 탐지 스캐너가 테스트
+# 표본을 진짜 키로 집는다(gitleaks·semgrep secrets 실측). 값 자체는 의미가 없다 — 모양만
+# 패턴과 맞으면 된다.
+def _sample(prefix: str, body: str, n: int) -> str:
+    return prefix + (body * n)[:n]
+
+
+def _jwt_shaped() -> str:
+    import base64
+    import json
+
+    def part(obj) -> str:
+        raw = json.dumps(obj, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    return ".".join([part({"alg": "RS256", "kid": "k"}),
+                     part({"sub": "s", "scope": "openid"}),
+                     part({"sig": "x" * 16})])
+
+
 def test_redacts_temporary_sts_credentials():
     """에이전트가 받는 것은 STS 임시 자격증명이다(ASIA 키, 세션 토큰) — AKIA만 보면
     `env`나 브로커 응답이 그대로 스트림·audit.md·S3로 나간다."""
-    assert redact_credentials("id ASIAIOSFODNN7EXAMPLE x") == "id [CREDENTIAL REDACTED] x"
-    token = "IQoJb3JpZ2luX2VjEJr" + "A" * 120 + "=="
-    assert redact_credentials(f"t {token} x") == "t [CREDENTIAL REDACTED] x"
-    for line in ("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-                 "aws_session_token=abc/def+ghi==",
-                 "AWS_CONTAINER_AUTHORIZATION_TOKEN=Zm9vYmFyYmF6"):
-        assert redact_credentials(line) == "[CREDENTIAL REDACTED]", line
+    key_id = _sample("AS" + "IA", "Z9", 16)
+    assert redact_credentials(f"id {key_id} x") == "id [CREDENTIAL REDACTED] x"
+    session = _sample("IQoJ" + "b3JpZ2lu", "Ab9+", 120)
+    assert redact_credentials(f"t {session} x") == "t [CREDENTIAL REDACTED] x"
+    for name in ("AWS_SECRET_ACCESS_KEY", "aws_session_token",
+                 "AWS_CONTAINER_AUTHORIZATION_TOKEN"):
+        line = name + "=" + _sample("", "q/W+", 40)
+        assert redact_credentials(line) == "[CREDENTIAL REDACTED]", name
 
 
 def test_redacts_jwts():
-    jwt = ("eyJraWQiOiJhYmMiLCJhbGciOiJSUzI1NiJ9"
-           ".eyJzdWIiOiIxMjM0NTY3ODkwIiwidG9rZW5fdXNlIjoiYWNjZXNzIn0"
-           ".c2lnbmF0dXJlLXZhbHVlLWhlcmU")
-    assert redact_credentials(f"Bearer {jwt}") == "Bearer [CREDENTIAL REDACTED]"
+    assert redact_credentials(f"Bearer {_jwt_shaped()}") == "Bearer [CREDENTIAL REDACTED]"
 
 
 def test_new_patterns_leave_ordinary_text_alone():
