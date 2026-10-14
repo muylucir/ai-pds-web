@@ -128,15 +128,42 @@ npx cdk deploy --all --require-approval never \
     (`aipds-auth-stack.ts`).
   - `cdk destroy`가 사용자 풀과 아티팩트 버킷을 내용째 지운다. 버킷에는 버전 관리와 액세스 로그도
     없다(`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
-  - CloudFront는 인스턴스에 평문 HTTP로 붙고 그 구간에 세션 쿠키가 실린다. 보안 그룹과 비밀 헤더가
-    직접 접근은 막지만 경로상의 도청은 막지 못한다. 고치려면 자체 도메인과 인증서, 또는 CloudFront
-    VPC 오리진이 필요하다(`aipds-hosting-stack.ts`, `aipds-preview-stack.ts`).
+  - CloudFront는 인스턴스에 평문 HTTP로 붙는다 —
+    [CloudFront → 인스턴스 구간은 의도적으로 HTTP다](#cloudfront--인스턴스-구간은-의도적으로-http다) 참고.
 - **다른 리전**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. 코드 수정은 필요 없다.
 - **추가 업로드 오리진**(커스텀 도메인 등): 배포 시 `AIPDS_UPLOAD_ORIGINS`(쉼표 구분). 앱 자신의
   오리진은 인스턴스가 더한다.
 
 코드 갱신, 샌드박스 명령, 떠 있는 인스턴스의 교체 방지, 인스턴스 새로 만들기, 내리기, 문제 해결은
 **`/manual` → 설치 · 운영 · 문제 해결**에 있다.
+
+### CloudFront → 인스턴스 구간은 의도적으로 HTTP다
+
+이 저장소는 워크숍과 샘플 워크로드를 위한 코드이고, 먼저 등록할 것 없이 어느 계정에나 배포되도록
+일부러 자체 도메인을 쓰지 않는다. 브라우저 → CloudFront는 HTTPS만 받지만(HTTP는 리다이렉트),
+CloudFront → 인스턴스는 포트 80의 HTTP다 — 앱 배포(`aipds-hosting-stack.ts`)와 프리뷰
+배포(`aipds-preview-stack.ts`) 둘 다다. 이 구간을 HTTPS로 하려면 오리진 이름에 맞는 공인 인증서가
+필요한데, 인스턴스의 `ec2-….compute.amazonaws.com` 이름으로는 어느 인증 기관도 인증서를 발급하지 않는다.
+
+**이 구간에 실리는 것:** 세션 쿠키(Cognito 토큰), 프로토타입 접근 쿠키, `X-Origin-Verify` /
+`X-Preview-Verify` 비밀 헤더.
+
+**막아 두는 것:**
+
+- 보안 그룹은 CloudFront 오리진 대역(프리픽스 리스트)에서 오는 포트 80만 받는다. SSH는 없고 접속은
+  SSM으로 한다.
+- nginx는 비밀 헤더가 없는 요청을 거부한다 — CloudFront를 우회해 인스턴스에 닿을 수 없다.
+- 비밀 헤더 값은 배포 때 Secrets Manager에서 해석된다. 어느 템플릿에도 평문으로 남지 않는다.
+
+**막지 못하는 것:** CloudFront 엣지와 인스턴스 사이 경로의 트래픽을 볼 수 있는 쪽은 위 쿠키와
+헤더를 읽을 수 있다.
+
+**워크숍 밖에서 쓰거나 실제 고객 자료를 다루기 전에는** 소유한 도메인으로 오리진 구간을 HTTPS로
+바꾼다: 레코드(예: `origin.example.com`)를 인스턴스의 Elastic IP에 연결하고, 그 이름의 공인 인증서를
+nginx가 443에서 서빙하게 한 뒤, 두 스택의 오리진을 443의 `OriginProtocolPolicy.HTTPS_ONLY`로 바꾼다.
+인스턴스를 프라이빗 서브넷으로 옮기고 CloudFront VPC 오리진을 쓰면 이 구간이 공용 인터넷에서
+빠지고, 같은 도메인과 인증서가 있으면 HTTPS로도 할 수 있다. 어느 쪽이든 인스턴스가 교체되므로
+계획된 교체 때 한다.
 
 ---
 
