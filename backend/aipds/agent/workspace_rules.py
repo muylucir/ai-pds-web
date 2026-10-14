@@ -21,7 +21,7 @@
 # 이 모듈의 LANGUAGE_DIRECTIVES로 만든다(test_workspace_rules가 그 불변식을 지킨다).
 #
 # **이 파일이 조립하는 것은 언어 지시 + core-workflow 둘뿐이다.** 한때 툴
-# 파라미터 인코딩 규칙도 맨 앞에 붙였는데(2026-08-16 keumkang-v3), 그것은
+# 파라미터 인코딩 규칙도 맨 앞에 붙였는데(2026-08-16 ws-a-v3), 그것은
 # AskUserQuestion 경로의 워크어라운드였다. 그 도구가 기본 거부로 바뀌고
 # (claude_driver.FILE_QUESTIONS_ENV) 공유 config가 "nothing below narrows it"을
 # 명시하면서 근거가 양쪽에서 사라져 2026-08-18에 떼어냈다. 규칙이 필요해지는

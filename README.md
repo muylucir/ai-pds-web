@@ -187,6 +187,49 @@ cd frontend && npm run test:e2e                 # e2e (needs a real backend and 
 
 ---
 
+## Responsible AI
+
+AI-PDS Web drafts product documents, prototypes and survey syntheses with Claude models on Amazon
+Bedrock. Everything it produces is a draft for a person to judge, and the tool is built around that.
+
+**People decide.** The AI does not settle a stage on its own: a stage closes when a person answers its
+question sheet or approves the Discovery document at the approval gate, and approving or asking for a
+revision is always the person's call. Options marked *★ AI pick* are a suggestion, not a default the
+form submits for you.
+
+**What the AI did is visible.** Everything a user types and every answer submitted is written to
+`audit.md` verbatim with the real time, by the app rather than by the AI; the AI appends its own
+reasoning after it. Each turn's tool calls and changed files stay in a collapsed activity log under
+the answer, and the Document Review screen shows the AI's own verification summary next to the
+document.
+
+**Evidence and assumptions are kept apart.** The agent contract requires documents to state material
+unknowns and never to present an assumption as customer evidence. Survey syntheses report each
+respondent persona separately, so a good overall average cannot hide a poor score from the users the
+spec targets, and respondents outside the target users are not counted as validating a hypothesis.
+A survey is still a small, self-selected sample — read its synthesis as a signal, and check it
+against the CSV of individual responses.
+
+**Limits to plan for.**
+
+- Model output can be wrong, incomplete or invented. Verify figures, market facts and quotes before
+  they leave the workshop.
+- Prototypes are throwaway code for validating an idea, not production software, and they are shared
+  through links that open without an account. Do not put real personal or confidential data into a
+  prototype or a survey.
+- Uploaded material is sent to the model. Upload only what the workshop needs; values that look like
+  credentials are redacted from the audit record, but nothing else is filtered.
+- Amazon Bedrock Guardrails are not configured. Add them if your use requires content filtering —
+  for example, a prototype that calls Bedrock itself can pass a guardrail with its Converse calls.
+- The deployed roles invoke Claude through **global** cross-Region inference profiles, which can
+  process a request in any supported commercial AWS Region; data at rest stays in your account and
+  Region. If you have data residency requirements, use a geographic profile and narrow the Bedrock
+  permissions in `infra/lib/backend-permissions.ts` to match.
+
+See the [AWS Responsible AI Policy](https://aws.amazon.com/ai/responsible-ai/policy/).
+
+---
+
 ## License
 
 [MIT-0](LICENSE) (MIT No Attribution) — MIT without the obligation to keep the copyright notice, so a

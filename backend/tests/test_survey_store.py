@@ -141,7 +141,7 @@ def test_aggregate_markdown_carries_no_step6_sections():
     `validation-results.md`에 에이전트가 쓴다(proto/layout.SURVEY_AGGREGATE).
 
     빈 템플릿으로라도 여기 두면 에이전트가 이 파일을 채우고, 다음 취합이 그
-    분석을 덮어쓴다 — 2026-10-06 tobacco에서 열린 설문 위에 에이전트 분석이
+    분석을 덮어쓴다 — 2026-10-06 ws-b에서 열린 설문 위에 에이전트 분석이
     붙어 있던 모양이 그것이다.
     """
     from aipds.survey.store import _aggregate_markdown
@@ -166,7 +166,7 @@ def test_aggregate_markdown_carries_no_step6_sections():
 
 def test_aggregate_markdown_carries_the_survey_window():
     """검증 기간의 양 끝이 집계에 있어야 한다. 없으면 에이전트가 PM에게 설문
-    시작 시각을 묻는다 — 2026-10-06 chicken의 확인 질문 Q3이 그것이었다."""
+    시작 시각을 묻는다 — 2026-10-06 ws-c의 확인 질문 Q3이 그것이었다."""
     from aipds.survey.store import _aggregate_markdown
     from aipds.survey.models import Rollup
 
@@ -229,7 +229,7 @@ def test_report_labels_fall_back_to_korean_for_an_unknown_language():
 # 라우트는 슬러그별이다. 슬러그 없는 키였을 때는 셋을 취합하면 셋이 같은 키를
 # 덮어써 마지막 것만 남았다 — 오류 없이 틀린 결과다.
 #
-# **룰의 파일과 분리(2026-10-06 실측 tobacco).** 집계를 `validation-results.md`에
+# **룰의 파일과 분리(2026-10-06 실측 ws-b).** 집계를 `validation-results.md`에
 # 쓰면 그 파일의 주인이 둘이 된다: 재취합이 에이전트의 Step 6 분석을 덮어쓰고,
 # 리셋이 Part 2가 인용하는 근거를 지운다.
 

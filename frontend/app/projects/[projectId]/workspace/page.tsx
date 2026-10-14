@@ -27,7 +27,7 @@ import {
 // The workspace screen — grid ratio 1:5:5 (좌 스테이지 : 채팅 : 컨텍스트). The
 // generated document opens in a drawer (WorkspaceDocPanel) laid OVER the grid
 // rather than taking a column: as a 4th column (1:3.5:3.5:4) it left the
-// question form 412px at 1440px (Rachna's feedback, 2026-10). The grid keeps a
+// question form 412px at 1440px (AI-PDS team feedback, 2026-10). The grid keeps a
 // right gutter (`lg:pr-9`) for the drawer's handle tab so the tab never sits on
 // top of the question form. Three openers share one `docOpen` state: the tab,
 // the chat's document-update banner, and the question form's "View {name}".
@@ -236,7 +236,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           )}
           {/* Discovery가 프로토타입을 빌드로 넘겼을 때의 어포던스.
               **에이전트의 안내 문장에 의존하지 않는다** — 2026-08-17까지는 그
-              문장이 나오지 않아 사용자가 Discovery에서 막혔다(실측 keumkang-v5:
+              문장이 나오지 않아 사용자가 Discovery에서 막혔다(실측 ws-a-v5:
               Prototypes 탭 안내 0회). 닫기 버튼을 두지 않은 것도 의도다: 다음
               단계로 가는 유일한 문이므로 실수로 닫으면 다시 막힌다. */}
           {prototypeReady && (

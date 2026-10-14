@@ -176,8 +176,8 @@ def cli_debug_args(config_dir: str) -> dict[str, str | None]:
     그 프로세스를 띄울 때 붙이는 명령줄 인자다. 이 로그는 그 프로세스의 것이다.
 
     **왜 있는가(2026-10-07).** 실행 래퍼 도입 이후 새 프로젝트의 첫 턴마다 처음 두 개의
-    복잡한 Bash가 실행 **전**에 정확히 12초씩 멈춘다(industry-safe-law·chicken·
-    TestRachnaCostcoDelivery·test3). 운영 인스턴스에서 샌드박스·트램펄린·SDK 훅까지
+    복잡한 Bash가 실행 **전**에 정확히 12초씩 멈춘다(ws-g·ws-c·
+    ws-e·test3). 운영 인스턴스에서 샌드박스·트램펄린·SDK 훅까지
     맞춘 재현은 모두 빨랐다. 번들 CLI는 그 구간을 디버그 로그에 따로 남긴다
     (`[Stall] tool_dispatch_start … permissionDecisionMs=`, `Slow PreToolUse hooks`,
     `Slow permission decision`) — 실제 세션의 그 로그가 원인을 가른다.

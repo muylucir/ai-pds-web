@@ -96,7 +96,7 @@ describe("Workspace page", () => {
     expect(screen.getByLabelText("컨텍스트 패널")).toBeInTheDocument();
   });
 
-  // Rachna 피드백(2026-10): 문서가 4번째 열이던 동안 질문 열이 3.5/12로 좁았다.
+  // AI-PDS 팀 피드백(2026-10): 문서가 4번째 열이던 동안 질문 열이 3.5/12로 좁았다.
   // 이제 채팅·질문이 5:5이고 문서는 덮는 드로어로 연다.
   it("splits chat and questions 5:5 and keeps the document in a closed drawer", async () => {
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
@@ -493,7 +493,7 @@ describe("Workspace page", () => {
 
 // 2026-08-17: Discovery가 프로토타입을 빌드로 넘겨도 화면에 그 문이 없었다.
 // 에이전트가 "Prototypes 탭에서 빌드하세요"를 말해 주기를 기대했는데, 실측
-// keumkang-v5에서 그 안내는 0회였고 사용자가 막혔다. 그래서 이벤트 기반 어포던스를
+// ws-a-v5에서 그 안내는 0회였고 사용자가 막혔다. 그래서 이벤트 기반 어포던스를
 // 둔다 — 에이전트의 문장에 의존하지 않는다.
 describe("프로토타입 인수인계 카드", () => {
   it("prototype_ready가 오면 Prototypes 탭으로 가는 링크가 뜬다", async () => {
