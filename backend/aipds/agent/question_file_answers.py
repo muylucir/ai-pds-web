@@ -34,6 +34,7 @@ from difflib import SequenceMatcher
 from pathlib import Path, PurePosixPath
 
 from aipds.parsers.questions import parse_question_file, serialize_answers
+from aipds.pathsafe import read_text_beneath, write_beneath
 
 _log = logging.getLogger("aipds.agent")
 
@@ -133,7 +134,8 @@ def record_answers(workspace: str, sdk_questions: list[dict],
 
 def _record(workspace: str, sdk_questions: list[dict],
             answers: dict[str, str]) -> list[str]:
-    docs = Path(workspace) / _DOCS_DIR
+    ws = Path(workspace)
+    docs = ws / _DOCS_DIR
     if not docs.is_dir():
         # 첫 턴에는 아직 아무 산출물도 없다. 정상 상태다.
         return []
@@ -147,7 +149,9 @@ def _record(workspace: str, sdk_questions: list[dict],
     # rglob은 순서를 보장하지 않는다 — 동점 처리를 재현 가능하게 하려면 정렬이
     # 필요하다(mtime까지 같은 경우 경로 순서로 결정된다).
     for path in sorted(docs.rglob(_GLOB)):
-        found = _match_file(path, wanted, miss)
+        if path.is_symlink():
+            continue  # 에이전트가 쓰는 트리다 — 링크 너머는 질문 파일이 아니다
+        found = _match_file(ws, path, wanted, miss)
         if found is None:
             continue
         if best is None or found.score() > best.score():
@@ -169,12 +173,12 @@ def _record(workspace: str, sdk_questions: list[dict],
         else:
             _log.info("question-file write-back: " + detail[0], *detail[1:])
         return []
+    rel = best.path.relative_to(ws).as_posix()
     try:
-        best.path.write_text(best.new_md, encoding="utf-8")
+        write_beneath(ws, rel, best.new_md)
     except OSError:
         _log.exception("question file not writable: %s", best.path)
         return []
-    rel = best.path.relative_to(Path(workspace)).as_posix()
     if best.fuzzy:
         # 유사 매칭이 일어났다 = **이 라운드의 한글이 깨졌다**(claude-code#83033).
         # 리터럴 UTF-8 지시가 억제에 듣고 있는지를 알 수 있는 유일한 신호이므로
@@ -359,11 +363,15 @@ def _wanted_by_text(sdk_questions: list[dict],
     return out
 
 
-def _match_file(path: Path, wanted: dict[str, str],
+def _match_file(ws: Path, path: Path, wanted: dict[str, str],
                 miss: _Miss) -> _FileMatch | None:
-    """이 파일에 답을 심은 결과. 심을 것이 없으면 None(최선 후보는 _miss에 남는다)."""
+    """이 파일에 답을 심은 결과. 심을 것이 없으면 None(최선 후보는 _miss에 남는다).
+
+    링크를 따라가지 않고 읽는다(`pathsafe`) — 걷고 나서 읽기 전에 링크로 바꿔 끼우면
+    바깥 파일의 내용이 이 질문 파일에 실려 정본으로 올라간다.
+    """
     try:
-        md = path.read_text(encoding="utf-8")
+        md = read_text_beneath(ws, path.relative_to(ws).as_posix())
     except OSError:
         _log.warning("unreadable question file skipped: %s", path)
         return None

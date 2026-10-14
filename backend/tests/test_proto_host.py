@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from aipds.proto.host import ProtoHost
+from aipds.proto.host import TOKEN_FILENAME, ProtoHost
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "proto_npm_stub"
 SLUG = "todo-app"
@@ -29,6 +29,11 @@ def _seed_build_dir(root: Path, pid: str = PID, slug: str = SLUG,
 @pytest.fixture
 def root(tmp_path):
     return tmp_path / "proto-host-root"
+
+
+def _state(root: Path) -> Path:
+    """ProtoHost의 기본 상태 트리 — 빌드 루트 옆."""
+    return root.with_name(root.name + "-state")
 
 
 def _seed_env_probe_dir(root: Path, base_path: str,
@@ -418,13 +423,63 @@ async def test_start_writes_a_pid_file_and_removes_it_on_stop(root):
     target = _seed_build_dir(root)
     host = ProtoHost(root=root, port_range=range(4001, 4010))
 
-    await host.start(PID, SLUG)
-    pid_file = target / ".proto-host.pid"
-    assert pid_file.is_file()
-    assert pid_file.read_text(encoding="utf-8").strip().isdigit()
-
-    await host.stop(PID, SLUG)
+    try:
+        await host.start(PID, SLUG)
+        pid_file = _state(root) / PID / SLUG / "host.pid"
+        assert pid_file.is_file()
+        assert pid_file.read_text(encoding="utf-8").strip().isdigit()
+    finally:
+        await host.stop(PID, SLUG)
     assert not pid_file.exists()
+    assert not (target / ".proto-host.pid").exists()
+
+
+async def test_hosting_bookkeeping_stays_out_of_the_trees_the_sandbox_writes(root):
+    """로그·pid·토큰은 상태 트리에만 생긴다. 빌드 트리는 빌드 에이전트가, 그 아래
+    `prototype/`은 npm 스크립트가 쓴다 — 거기 있으면 링크로 바꿔 끼워 백엔드가 그 너머에
+    쓰고(로그) 남의 토큰을 읽게(토큰) 만들 수 있다."""
+    target = _seed_build_dir(root)
+    host = ProtoHost(root=root, port_range=range(4001, 4010))
+    try:
+        await host.start(PID, SLUG)
+        token = host.ensure_token(PID, SLUG)
+    finally:
+        await host.stop(PID, SLUG)
+
+    state = _state(root) / PID / SLUG
+    assert (state / "host.log").is_file()
+    assert (state / "token").read_text(encoding="utf-8") == token
+    sandbox_written = {p.name for p in root.rglob("*")}
+    assert not sandbox_written & {".proto-host.log", ".proto-host.pid", TOKEN_FILENAME,
+                                  "host.log", "host.pid", "token"}
+    assert target.is_dir()
+
+
+def test_a_legacy_token_file_moves_to_the_state_tree(root):
+    """옛 위치(빌드 트리 바로 아래)의 토큰은 기동 때 상태 트리로 옮긴다 — 이미 나눠 준
+    링크가 죽지 않는다."""
+    _seed_build_dir(root)
+    (root / PID / SLUG / TOKEN_FILENAME).write_text("legacy-tok", encoding="utf-8")
+    host = ProtoHost(root=root)
+
+    assert host.load_tokens() == 1
+    assert host.resolve_token("legacy-tok") == (PID, SLUG)
+    assert (_state(root) / PID / SLUG / "token").read_text(encoding="utf-8") == "legacy-tok"
+    assert not (root / PID / SLUG / TOKEN_FILENAME).exists()
+
+
+def test_a_legacy_token_symlink_is_not_followed(root):
+    """옛 위치의 토큰 파일이 다른 프로젝트의 토큰을 가리키는 링크면 들여오지 않는다 —
+    들여오면 남의 공유 링크가 이 프로토타입으로 열린다."""
+    _seed_build_dir(root)
+    _seed_build_dir(root, pid="victim", slug="app")
+    (root / "victim" / "app" / TOKEN_FILENAME).write_text("victim-tok", encoding="utf-8")
+    (root / PID / SLUG / TOKEN_FILENAME).symlink_to(root / "victim" / "app" / TOKEN_FILENAME)
+    host = ProtoHost(root=root)
+
+    host.load_tokens()
+    assert host.resolve_token("victim-tok") == ("victim", "app")
+    assert host.token_for(PID, SLUG) is None
 
 
 def test_slugs_unions_dirs_registry_and_token_cache(root):

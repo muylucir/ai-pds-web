@@ -168,7 +168,8 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             "CLAUDE_CONFIG_DIR": builder._config_dir,
         }
         if builder._shared_config_dir:
-            copy_config(builder._shared_config_dir, builder._config_dir)
+            copy_config(builder._shared_config_dir, builder._config_dir,
+                        builder._workspace)
         if builder._anthropic_model:
             env["ANTHROPIC_MODEL"] = builder._anthropic_model
         # Discovery 드라이버와 같은 값을 쓴다 — 한쪽만 켜지면 같은 프로젝트에서

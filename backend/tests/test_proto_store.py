@@ -123,10 +123,26 @@ async def test_a_token_survives_the_local_tree_through_the_root_index(store, tmp
     assert await resolve_token(store._root, "tok-abc") == ("p1", SLUG)
     # 색인 키는 해시다 — 목록이 토큰 평문을 드러내지 않는다.
     assert all("tok-abc" not in k for k in await store._root.list(""))
+    assert await store.load_token(SLUG) == "tok-abc"
 
-    fresh = tmp_path / SLUG
-    await store.restore(SLUG, fresh)
-    assert (fresh / ".proto-token").read_text() == "tok-abc"
+
+async def test_restore_does_not_follow_a_symlink_the_agent_planted(store, tmp_path):
+    """빌드 트리는 빌드 에이전트가 쓴다. `prototype`을 바깥을 가리키는 링크로 바꿔 두면
+    되살리기가 S3 본문을 그 너머에 쓰게 된다 — 링크를 실제 디렉토리로 바꾸고 거기 쓴다."""
+    build = tmp_path / SLUG
+    _tree(build, {"prototype/a.js": "v1"})
+    await store.snapshot(SLUG, build, "test")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    (fresh / "prototype").symlink_to(outside)
+    # has_build_output이 링크 너머를 보지 않도록 바깥은 비어 있다.
+    assert await store.restore(SLUG, fresh) is True
+    assert not (fresh / "prototype").is_symlink()
+    assert (fresh / "prototype/a.js").read_text() == "v1"
+    assert list(outside.iterdir()) == []
 
 
 async def test_forgetting_a_token_unlinks_it(store):
