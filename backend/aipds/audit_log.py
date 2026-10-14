@@ -19,11 +19,13 @@
 # 파서는 그 표시를 떼어 원문을 돌려준다.
 from __future__ import annotations
 
+import errno
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from aipds.parsers.redaction import redact_credentials
+from aipds.pathsafe import read_text_beneath, write_beneath
 
 AUDIT_KEY = "aiplc-docs/audit.md"
 
@@ -82,9 +84,19 @@ def entry(record: UserInput, now: datetime | None = None) -> str:
 
 
 def append(local_root: Path, record: UserInput, now: datetime | None = None) -> str:
-    """워크스페이스의 audit.md에 항목을 붙이고 그 키를 돌려준다. 없으면 만든다."""
-    path = Path(local_root) / AUDIT_KEY
-    path.parent.mkdir(parents=True, exist_ok=True)
-    existing = path.read_text(encoding="utf-8") if path.exists() else f"{_TITLE}\n"
-    path.write_text(existing.rstrip("\n") + "\n" + entry(record, now), encoding="utf-8")
+    """워크스페이스의 audit.md에 항목을 붙이고 그 키를 돌려준다. 없으면 만든다.
+
+    링크를 따라가지 않는다(`pathsafe`) — 에이전트가 쓰는 트리다. 링크였다면 링크 너머를
+    읽지 않고 새 파일로 시작한다.
+    """
+    try:
+        existing = read_text_beneath(Path(local_root), AUDIT_KEY)
+    except FileNotFoundError:
+        existing = f"{_TITLE}\n"
+    except OSError as exc:
+        if exc.errno != errno.ELOOP:
+            raise
+        existing = f"{_TITLE}\n"
+    write_beneath(Path(local_root), AUDIT_KEY,
+                  existing.rstrip("\n") + "\n" + entry(record, now))
     return AUDIT_KEY

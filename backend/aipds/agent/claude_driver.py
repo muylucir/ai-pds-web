@@ -497,7 +497,8 @@ def _default_client_factory(driver: "ClaudeDriver") -> Callable[[dict], Any]:
             "CLAUDE_CONFIG_DIR": driver._config_dir,
         }
         if driver._shared_config_dir:
-            copy_config(driver._shared_config_dir, driver._config_dir)
+            copy_config(driver._shared_config_dir, driver._config_dir,
+                        driver._workspace)
         if driver._anthropic_model:
             env["ANTHROPIC_MODEL"] = driver._anthropic_model
         # 자동 컴팩션 시점. 미설정이면 키가 없고 CLI 기본값으로 간다.

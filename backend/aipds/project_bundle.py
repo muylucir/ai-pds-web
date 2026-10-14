@@ -94,7 +94,9 @@ class BundleError(ValueError):
 # 바로 그 zip을 받는 사람일 수 있다.
 SOURCE_EXCLUDED_DIRS = frozenset({"node_modules", ".next", ".git"})
 
-#: `.proto-host.*`는 이 박스의 부기(로그·pid)이고 다른 인스턴스에서 의미가 없다.
+#: `.proto-host.*`는 이 박스의 부기(로그·pid)이고 다른 인스턴스에서 의미가 없다. 호스팅은
+#: 부기를 빌드 트리 밖(상태 트리, proto/host.py)에 두지만, 그 이름의 파일이 트리에 남아
+#: 있을 수 있으므로 계속 뺀다.
 #: `TOKEN_FILENAME`은 리터럴을 복사하지 않고 그 파일명을 소유한 모듈에서 가져온다 —
 #: 복사본은 이름이 바뀌는 날 조용히 제외를 멈춘다.
 SOURCE_EXCLUDED_FILES = frozenset({

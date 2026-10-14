@@ -710,11 +710,12 @@ async def reset_prototype(pid: str, slug: str):
 # anonymous respondents' words and build chatter respectively.
 #
 # `.proto-token` is a CREDENTIAL, not bookkeeping: it is the access token that
-# gates this prototype's public preview (proto/host.py's TOKEN_FILENAME). It
-# sits in this exact directory -- a sibling of the .proto-host.* files that
-# `_archive_entries` walks -- so leaving it out of this set would mail the live
-# access token to everyone who clicks "download", which is precisely the
-# audience the token exists to gate.
+# gates this prototype's public preview (proto/host.py's TOKEN_FILENAME). Hosting
+# keeps its copy in the state tree, outside the build directory, but a build
+# tree can still carry a file under that name (written before hosting moved it,
+# or by the agent) -- leaving it out of this set would mail a live access token
+# to everyone who clicks "download", which is precisely the audience the token
+# exists to gate.
 #
 # The set itself lives in project_bundle.py, and the walk that applies it lives
 # in proto/source.py, because the project bundle asks this exact question too.

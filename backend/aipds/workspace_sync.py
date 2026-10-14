@@ -31,7 +31,7 @@ from typing import Callable
 
 from aipds.globmatch import matches_glob
 from aipds.parsers.redaction import redact_credentials
-from aipds.pathsafe import reject_unsafe
+from aipds.pathsafe import read_text_beneath, reject_unsafe
 from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger("aipds.workspace")
@@ -83,11 +83,11 @@ async def publish_file(
         return False
     if not is_synced_key(key):
         return False
-    path = local_root / key
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_beneath(local_root, key, errors="replace")
     except OSError:
-        # 이미 지워졌거나 디렉터리다 — 배치 sync가 최종 상태를 올린다.
+        # 이미 지워졌거나 디렉터리거나 링크다 — 배치 sync가 최종 상태를 올린다
+        # (링크는 거기서도 건너뛴다).
         return False
     canonical = content_for_s3(key, text)
     try:
