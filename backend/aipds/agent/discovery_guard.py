@@ -66,11 +66,13 @@ def write_denial(path: str | None, workspace: str) -> str | None:
     return rel
 
 
-#: `aiplc-docs/` 안이지만 웹이 소유하는 파일 이름. 웹이 매번 다시 만들어 덮어쓰므로
-#: 에이전트가 거기 쓴 내용은 다음 재생성에서 사라진다 — 프로토타입 쪽 게이트와 같은
-#: 이유로 산문이 아니라 훅으로 막는다. 이름으로 판정하는 것은 이 이름들이 웹만 쓰는
+#: `aiplc-docs/` 안이지만 웹이 소유하는 파일 이름. 설문 집계는 웹이 매번 다시 만들어
+#: 덮어쓰므로 에이전트가 거기 쓴 내용은 다음 재생성에서 사라지고, 수정 이력은 빌드
+#: 세션이 덧붙이고 다음 빌드 세션이 입력으로 읽으므로 에이전트가 고치면 빌더가 믿는
+#: "무엇이 만들어졌는가"가 바뀐다 — 프로토타입 쪽 게이트와 같은 이유로 산문이 아니라
+#: 훅으로 막는다. 이름으로 판정하는 것은 이 이름들이 웹만 쓰는
 #: 이름이라서다(상류 룰에 없다). 이름이 겹칠 수 있는 파일은 여기 넣지 않는다.
-WEB_OWNED_NAMES = frozenset({layout.SURVEY_AGGREGATE})
+WEB_OWNED_NAMES = frozenset({layout.SURVEY_AGGREGATE, layout.CHANGE_HISTORY})
 
 
 def web_owned_denial(path: str | None, workspace: str) -> str | None:

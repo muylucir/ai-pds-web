@@ -22,6 +22,8 @@
 # agent/prompts.py가 두 벌로 소유한다(그 파일 헤더의 규약).
 from __future__ import annotations
 
+import pytest
+
 from aipds.agent.discovery_guard import (audit_overwrite_denial, bash_denial,
                                          web_owned_denial, write_denial)
 
@@ -87,6 +89,35 @@ def test_the_survey_aggregate_is_denied_for_both_layouts():
                 "aiplc-docs/discovery/prototypes/maint/survey-aggregate.md"):
         assert web_owned_denial(rel, WS) == rel
         assert web_owned_denial(f"/ws/{rel}", WS) == rel
+
+
+def test_the_change_history_is_denied_for_both_layouts():
+    """수정 이력은 빌드 세션이 덧붙이고 다음 빌드 세션이 입력으로 읽는다
+    (proto/layout.CHANGE_HISTORY). Discovery가 고치면 빌더가 믿는 "무엇이
+    만들어졌는가"가 바뀐다 — 정합성 패스의 결론은 spec-as-built.md로 간다."""
+    for rel in ("aiplc-docs/discovery/prototype/change-history.md",
+                "aiplc-docs/discovery/prototypes/maint/change-history.md"):
+        assert web_owned_denial(rel, WS) == rel
+        assert web_owned_denial(f"/ws/{rel}", WS) == rel
+
+
+def test_the_reconciled_spec_is_allowed():
+    """정합성 패스가 쓸 자리다. 이것까지 막으면 이력을 반영할 곳이 없다."""
+    rel = "aiplc-docs/discovery/prototype/spec-as-built.md"
+    assert web_owned_denial(rel, WS) is None
+    assert write_denial(rel, WS) is None
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_each_web_owned_file_names_where_the_work_goes_instead(language):
+    """거부 문구가 대안을 준다 — 같은 문구면 모델이 같은 경로로 재시도한다.
+    파일마다 갈 자리가 다르다: 설문 집계 → validation-results.md, 수정 이력 →
+    spec-as-built.md."""
+    from aipds.agent import prompts
+    agg = prompts.web_owned_doc(language, "aiplc-docs/discovery/prototype/survey-aggregate.md")
+    hist = prompts.web_owned_doc(language, "aiplc-docs/discovery/prototype/change-history.md")
+    assert "validation-results.md" in agg and "spec-as-built.md" not in agg
+    assert "spec-as-built.md" in hist and "validation-results.md" not in hist
 
 
 def test_the_rules_results_file_is_allowed():
