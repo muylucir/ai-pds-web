@@ -145,7 +145,7 @@ async def test_missing_groups_claim_is_rejected():
     now = int(time.time())
     token = jwt.encode(
         {"sub": "s-1", "iss": ISS, "client_id": CLIENT_ID, "token_use": USE_ACCESS,
-         "iat": now, "exp": now + 3600, "username": "u@x.io"},
+         "iat": now, "exp": now + 3600, "username": "u@example.com"},
         _private_key, algorithm="RS256", headers={"kid": KID})
     with pytest.raises(TokenError, match="no cognito:groups"):
         await _verify(token)

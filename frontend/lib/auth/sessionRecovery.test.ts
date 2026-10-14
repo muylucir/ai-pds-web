@@ -17,7 +17,7 @@ describe("redirectIfSessionExpired", () => {
 
   it("does nothing when the session is still valid", async () => {
     // 진짜 네트워크 끊김 — 훅의 기존 "연결이 끊어졌습니다" 메시지가 맞는 상황이다.
-    mockMe({ authenticated: true, email: "a@b.io", role: "pm" }, 200);
+    mockMe({ authenticated: true, email: "a@example.com", role: "pm" }, 200);
     const navigate = vi.fn();
     await expect(redirectIfSessionExpired(navigate)).resolves.toBe(false);
     expect(navigate).not.toHaveBeenCalled();

@@ -93,24 +93,24 @@ def test_list_users_maps_attributes_and_groups(admin):
 def test_list_users_follows_pagination(admin):
     a, stub = admin
     stub.add_response("list_users",
-                      {"Users": [_user("a@x.io", "a@x.io")], "PaginationToken": "t1"},
+                      {"Users": [_user("a@example.com", "a@example.com")], "PaginationToken": "t1"},
                       {"UserPoolId": POOL, "Limit": 60})
     stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "pm"}]},
-                      {"UserPoolId": POOL, "Username": "a@x.io"})
-    stub.add_response("list_users", {"Users": [_user("b@x.io", "b@x.io")]},
+                      {"UserPoolId": POOL, "Username": "a@example.com"})
+    stub.add_response("list_users", {"Users": [_user("b@example.com", "b@example.com")]},
                       {"UserPoolId": POOL, "Limit": 60, "PaginationToken": "t1"})
     stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "pm"}]},
-                      {"UserPoolId": POOL, "Username": "b@x.io"})
-    assert [u.email for u in a.list_users()] == ["a@x.io", "b@x.io"]
+                      {"UserPoolId": POOL, "Username": "b@example.com"})
+    assert [u.email for u in a.list_users()] == ["a@example.com", "b@example.com"]
 
 
 def test_user_with_no_group_has_role_none(admin):
     # 그룹 배정 전에 실패한 반쯤 만들어진 계정을 화면에서 알아볼 수 있어야 한다.
     a, stub = admin
-    stub.add_response("list_users", {"Users": [_user("x@x.io", "x@x.io")]},
+    stub.add_response("list_users", {"Users": [_user("x@example.com", "x@example.com")]},
                       {"UserPoolId": POOL, "Limit": 60})
     stub.add_response("admin_list_groups_for_user", {"Groups": []},
-                      {"UserPoolId": POOL, "Username": "x@x.io"})
+                      {"UserPoolId": POOL, "Username": "x@example.com"})
     assert a.list_users()[0].role is None
 
 
@@ -130,17 +130,17 @@ def test_list_users_degrades_a_row_when_its_group_lookup_fails(admin):
     a, stub = admin
     stub.add_response(
         "list_users",
-        {"Users": [_user("a@x.io", "a@x.io"), _user("b@x.io", "b@x.io")]},
+        {"Users": [_user("a@example.com", "a@example.com"), _user("b@example.com", "b@example.com")]},
         {"UserPoolId": POOL, "Limit": 60},
     )
     stub.add_client_error(
         "admin_list_groups_for_user", service_error_code="UserNotFoundException",
-        expected_params={"UserPoolId": POOL, "Username": "a@x.io"},
+        expected_params={"UserPoolId": POOL, "Username": "a@example.com"},
     )
     stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "pm"}]},
-                      {"UserPoolId": POOL, "Username": "b@x.io"})
+                      {"UserPoolId": POOL, "Username": "b@example.com"})
     users = a.list_users()
-    assert [u.email for u in users] == ["a@x.io", "b@x.io"]
+    assert [u.email for u in users] == ["a@example.com", "b@example.com"]
     assert users[0].role is None
     assert users[1].role == "pm"
 
@@ -155,12 +155,12 @@ def test_create_user_suppresses_email_and_marks_it_verified(admin):
     # email format, since user pool is configured for email alias").
     stub.add_response(
         "admin_create_user",
-        {"User": _user("new", "new@x.io", status="FORCE_CHANGE_PASSWORD")},
+        {"User": _user("new", "new@example.com", status="FORCE_CHANGE_PASSWORD")},
         {"UserPoolId": POOL, "Username": "new", "MessageAction": "SUPPRESS",
-         "UserAttributes": [{"Name": "email", "Value": "new@x.io"},
+         "UserAttributes": [{"Name": "email", "Value": "new@example.com"},
                             {"Name": "email_verified", "Value": "true"}]},
     )
-    assert a.create_user("new@x.io") == "new"
+    assert a.create_user("new@example.com") == "new"
 
 
 def test_create_user_never_sends_an_email_shaped_username(admin):
@@ -184,28 +184,28 @@ def test_create_user_lowercases_and_trims_the_local_part(admin):
     a, stub = admin
     stub.add_response(
         "admin_create_user",
-        {"User": _user("mixed", "Mixed@X.IO")},
+        {"User": _user("mixed", "Mixed@EXAMPLE.COM")},
         # email 속성도 trim된다 — 공백이 남으면 alias 사인인이 그 공백까지
         # 요구해 사용자가 로그인할 수 없다.
         {"UserPoolId": POOL, "Username": "mixed", "MessageAction": "SUPPRESS",
-         "UserAttributes": [{"Name": "email", "Value": "Mixed@X.IO"},
+         "UserAttributes": [{"Name": "email", "Value": "Mixed@EXAMPLE.COM"},
                             {"Name": "email_verified", "Value": "true"}]},
     )
-    assert a.create_user("  Mixed@X.IO  ") == "mixed"
+    assert a.create_user("  Mixed@EXAMPLE.COM  ") == "mixed"
 
 
 def test_create_user_strips_characters_cognito_rejects(admin):
     # Cognito Username은 제한된 문자만 받는다. 로컬파트에 그 밖의 문자가 있으면
-    # (예: 태그 주소 "a+tag@x.io") 그대로 넘기면 InvalidParameterException이 난다.
+    # (예: 태그 주소 "a+tag@example.com") 그대로 넘기면 InvalidParameterException이 난다.
     a, stub = admin
     stub.add_response(
         "admin_create_user",
-        {"User": _user("a-tag", "a+tag@x.io")},
+        {"User": _user("a-tag", "a+tag@example.com")},
         {"UserPoolId": POOL, "Username": "a-tag", "MessageAction": "SUPPRESS",
-         "UserAttributes": [{"Name": "email", "Value": "a+tag@x.io"},
+         "UserAttributes": [{"Name": "email", "Value": "a+tag@example.com"},
                             {"Name": "email_verified", "Value": "true"}]},
     )
-    assert a.create_user("a+tag@x.io") == "a-tag"
+    assert a.create_user("a+tag@example.com") == "a-tag"
 
 
 def test_create_user_returns_the_username_cognito_reports(admin):
@@ -214,19 +214,19 @@ def test_create_user_returns_the_username_cognito_reports(admin):
     a, stub = admin
     stub.add_response(
         "admin_create_user",
-        {"User": _user("server-side-id", "x@y.io")},
+        {"User": _user("server-side-id", "x@example.org")},
         {"UserPoolId": POOL, "Username": "x", "MessageAction": "SUPPRESS",
-         "UserAttributes": [{"Name": "email", "Value": "x@y.io"},
+         "UserAttributes": [{"Name": "email", "Value": "x@example.org"},
                             {"Name": "email_verified", "Value": "true"}]},
     )
-    assert a.create_user("x@y.io") == "server-side-id"
+    assert a.create_user("x@example.org") == "server-side-id"
 
 
 def test_duplicate_email_raises_cognito_error_with_code(admin):
     a, stub = admin
     stub.add_client_error("admin_create_user", service_error_code="UsernameExistsException")
     with pytest.raises(CognitoError) as exc:
-        a.create_user("dup@x.io")
+        a.create_user("dup@example.com")
     assert exc.value.code == "UsernameExistsException"
 
 
@@ -235,7 +235,7 @@ def test_alias_exists_is_also_surfaced_by_code(admin):
     a, stub = admin
     stub.add_client_error("admin_create_user", service_error_code="AliasExistsException")
     with pytest.raises(CognitoError) as exc:
-        a.create_user("alias@x.io")
+        a.create_user("alias@example.com")
     assert exc.value.code == "AliasExistsException"
 
 
@@ -245,10 +245,10 @@ def test_set_temp_password_is_not_permanent(admin):
     # Permanent=False여야 첫 로그인에서 사용자가 직접 바꾼다(초대 흐름).
     a, stub = admin
     stub.add_response("admin_set_user_password", {},
-                      {"UserPoolId": POOL, "Username": "u@x.io",
+                      {"UserPoolId": POOL, "Username": "u@example.com",
                        "Password": "Tmp!23456789abcd",  # nosec B105
                        "Permanent": False})
-    a.set_temp_password("u@x.io", "Tmp!23456789abcd")
+    a.set_temp_password("u@example.com", "Tmp!23456789abcd")
 
 
 def test_invalid_password_raises_with_code(admin):
@@ -256,7 +256,7 @@ def test_invalid_password_raises_with_code(admin):
     stub.add_client_error("admin_set_user_password",
                          service_error_code="InvalidPasswordException")
     with pytest.raises(CognitoError) as exc:
-        a.set_temp_password("u@x.io", "weak")
+        a.set_temp_password("u@example.com", "weak")
     assert exc.value.code == "InvalidPasswordException"
 
 
@@ -267,12 +267,12 @@ def test_set_group_removes_existing_roles_before_adding(admin):
     # 속해 강등이 무효가 된다(verifier가 admin을 우선하므로).
     a, stub = admin
     stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "admin"}]},
-                      {"UserPoolId": POOL, "Username": "u@x.io"})
+                      {"UserPoolId": POOL, "Username": "u@example.com"})
     stub.add_response("admin_remove_user_from_group", {},
-                      {"UserPoolId": POOL, "Username": "u@x.io", "GroupName": "admin"})
+                      {"UserPoolId": POOL, "Username": "u@example.com", "GroupName": "admin"})
     stub.add_response("admin_add_user_to_group", {},
-                      {"UserPoolId": POOL, "Username": "u@x.io", "GroupName": "pm"})
-    a.set_group("u@x.io", "pm")
+                      {"UserPoolId": POOL, "Username": "u@example.com", "GroupName": "pm"})
+    a.set_group("u@example.com", "pm")
 
 
 def test_set_group_leaves_unrelated_groups_alone(admin):
@@ -280,43 +280,43 @@ def test_set_group_leaves_unrelated_groups_alone(admin):
     a, stub = admin
     stub.add_response("admin_list_groups_for_user",
                       {"Groups": [{"GroupName": "some-other-group"}]},
-                      {"UserPoolId": POOL, "Username": "u@x.io"})
+                      {"UserPoolId": POOL, "Username": "u@example.com"})
     stub.add_response("admin_add_user_to_group", {},
-                      {"UserPoolId": POOL, "Username": "u@x.io", "GroupName": "admin"})
-    a.set_group("u@x.io", "admin")
+                      {"UserPoolId": POOL, "Username": "u@example.com", "GroupName": "admin"})
+    a.set_group("u@example.com", "admin")
 
 
 def test_set_group_is_a_noop_add_when_already_correct(admin):
     # 이미 맞는 그룹이면 제거하지 않고 추가만 한다(멱등).
     a, stub = admin
     stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "pm"}]},
-                      {"UserPoolId": POOL, "Username": "u@x.io"})
+                      {"UserPoolId": POOL, "Username": "u@example.com"})
     stub.add_response("admin_add_user_to_group", {},
-                      {"UserPoolId": POOL, "Username": "u@x.io", "GroupName": "pm"})
-    a.set_group("u@x.io", "pm")
+                      {"UserPoolId": POOL, "Username": "u@example.com", "GroupName": "pm"})
+    a.set_group("u@example.com", "pm")
 
 
 # ---- 활성/비활성/삭제 ----
 
 def test_disable_and_enable(admin):
     a, stub = admin
-    stub.add_response("admin_disable_user", {}, {"UserPoolId": POOL, "Username": "u@x.io"})
-    a.set_enabled("u@x.io", False)
-    stub.add_response("admin_enable_user", {}, {"UserPoolId": POOL, "Username": "u@x.io"})
-    a.set_enabled("u@x.io", True)
+    stub.add_response("admin_disable_user", {}, {"UserPoolId": POOL, "Username": "u@example.com"})
+    a.set_enabled("u@example.com", False)
+    stub.add_response("admin_enable_user", {}, {"UserPoolId": POOL, "Username": "u@example.com"})
+    a.set_enabled("u@example.com", True)
 
 
 def test_delete_user(admin):
     a, stub = admin
-    stub.add_response("admin_delete_user", {}, {"UserPoolId": POOL, "Username": "u@x.io"})
-    a.delete_user("u@x.io")
+    stub.add_response("admin_delete_user", {}, {"UserPoolId": POOL, "Username": "u@example.com"})
+    a.delete_user("u@example.com")
 
 
 def test_unknown_user_raises_with_code(admin):
     a, stub = admin
     stub.add_client_error("admin_delete_user", service_error_code="UserNotFoundException")
     with pytest.raises(CognitoError) as exc:
-        a.delete_user("ghost@x.io")
+        a.delete_user("ghost@example.com")
     assert exc.value.code == "UserNotFoundException"
 
 
@@ -325,7 +325,7 @@ def test_unknown_user_raises_with_code(admin):
 def test_admin_count_reads_the_admin_group(admin):
     a, stub = admin
     stub.add_response("list_users_in_group",
-                      {"Users": [_user("a@x.io", "a@x.io"), _user("b@x.io", "b@x.io")]},
+                      {"Users": [_user("a@example.com", "a@example.com"), _user("b@example.com", "b@example.com")]},
                       {"UserPoolId": POOL, "GroupName": "admin", "Limit": 60})
     assert a.admin_count() == 2
 
@@ -333,9 +333,9 @@ def test_admin_count_reads_the_admin_group(admin):
 def test_admin_count_follows_pagination(admin):
     a, stub = admin
     stub.add_response("list_users_in_group",
-                      {"Users": [_user("a@x.io", "a@x.io")], "NextToken": "n1"},
+                      {"Users": [_user("a@example.com", "a@example.com")], "NextToken": "n1"},
                       {"UserPoolId": POOL, "GroupName": "admin", "Limit": 60})
-    stub.add_response("list_users_in_group", {"Users": [_user("b@x.io", "b@x.io")]},
+    stub.add_response("list_users_in_group", {"Users": [_user("b@example.com", "b@example.com")]},
                       {"UserPoolId": POOL, "GroupName": "admin", "Limit": 60,
                        "NextToken": "n1"})
     assert a.admin_count() == 2
@@ -345,8 +345,8 @@ def test_groups_of_returns_names(admin):
     a, stub = admin
     stub.add_response("admin_list_groups_for_user",
                       {"Groups": [{"GroupName": "admin"}, {"GroupName": "pm"}]},
-                      {"UserPoolId": POOL, "Username": "u@x.io"})
-    assert a.groups_of("u@x.io") == ["admin", "pm"]
+                      {"UserPoolId": POOL, "Username": "u@example.com"})
+    assert a.groups_of("u@example.com") == ["admin", "pm"]
 
 
 # ---- 전송 계층 실패 (Cognito가 거부한 것이 아니라 요청이 도달조차 못한 경우) ----
@@ -363,7 +363,7 @@ def test_transport_failure_is_wrapped_as_cognito_error(admin):
 
     a._c.admin_delete_user = _boom
     with pytest.raises(CognitoError) as exc:
-        a.delete_user("u@x.io")
+        a.delete_user("u@example.com")
     assert exc.value.code == "EndpointConnectionError"
 
 
