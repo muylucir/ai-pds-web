@@ -472,13 +472,13 @@ def test_a_legacy_token_symlink_is_not_followed(root):
     """옛 위치의 토큰 파일이 다른 프로젝트의 토큰을 가리키는 링크면 들여오지 않는다 —
     들여오면 남의 공유 링크가 이 프로토타입으로 열린다."""
     _seed_build_dir(root)
-    _seed_build_dir(root, pid="victim", slug="app")
-    (root / "victim" / "app" / TOKEN_FILENAME).write_text("victim-tok", encoding="utf-8")
-    (root / PID / SLUG / TOKEN_FILENAME).symlink_to(root / "victim" / "app" / TOKEN_FILENAME)
+    _seed_build_dir(root, pid="other-proj", slug="app")
+    (root / "other-proj" / "app" / TOKEN_FILENAME).write_text("other-tok", encoding="utf-8")
+    (root / PID / SLUG / TOKEN_FILENAME).symlink_to(root / "other-proj" / "app" / TOKEN_FILENAME)
     host = ProtoHost(root=root)
 
     host.load_tokens()
-    assert host.resolve_token("victim-tok") == ("victim", "app")
+    assert host.resolve_token("other-tok") == ("other-proj", "app")
     assert host.token_for(PID, SLUG) is None
 
 

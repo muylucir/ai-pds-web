@@ -47,7 +47,7 @@ def test_state_changes_and_downloads_are_recorded_with_the_requester(caplog, mon
     caplog.set_level(logging.INFO, logger="aipds.access")
     client = _probe()
 
-    client.post("/projects/p1/things?token=secret")
+    client.post("/projects/p1/things?t=query-value")
     client.get("/projects/p1")                 # 폴링 — 남기지 않는다
     client.get("/projects/p1/export")          # 첨부 파일 — 남긴다
     client.post("/public/answer")              # 신원이 없다 — 남기지 않는다
@@ -56,4 +56,4 @@ def test_state_changes_and_downloads_are_recorded_with_the_requester(caplog, mon
     assert [(r["method"], r["path"]) for r in records] == [
         ("POST", "/projects/p1/things"), ("GET", "/projects/p1/export")]
     assert records[0]["user"] == "local-dev" and records[0]["status"] == 200
-    assert all("secret" not in json.dumps(r) for r in records)
+    assert all("query-value" not in json.dumps(r) for r in records)
