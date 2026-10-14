@@ -750,6 +750,11 @@ _cors_origins = [
     for o in os.environ.get("AIPDS_CORS_ORIGINS", "http://localhost:3000").split(",")
     if o.strip()
 ]
+# 인증된 요청의 신원을 남긴다(aipds/access_log.py). require_user가 요청 상태에 심은
+# 요청자를 응답 시작 때 읽는다.
+from aipds.access_log import AccessLogMiddleware  # noqa: E402
+app.add_middleware(AccessLogMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
