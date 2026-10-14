@@ -7,6 +7,7 @@
 //
 // 실촬 스크린샷을 넣게 되면 각 목업을 <figure> 안에서 <img>로 바꾸면 된다.
 // 블록 종류(`{kind:"mockup"}`)와 캡션은 그대로 쓸 수 있다.
+import { formatElapsed } from "@/components/canvas/LiveActivityBar";
 import { LANGUAGE_LABEL } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 import type { MockupId } from "@/content/manual";
@@ -38,92 +39,132 @@ function ProjectCreate() {
   );
 }
 
+// 6개 phase의 이름은 백엔드 상수(aipds/capabilities.py)이고 ko 화면도 번역하지
+// 않는다 — 그래서 여기서도 딕셔너리가 아니라 그 이름을 그대로 쓴다. 상태는 Path A
+// (PR/FAQ에서 시작)가 Prototype까지 온 모양이다: Intake·Prioritize를 건너뛴다.
+const PHASES: { name: string; status: "done" | "active" | "skipped" | "pending" }[] = [
+  { name: "Envision", status: "done" },
+  { name: "Use Case Intake", status: "skipped" },
+  { name: "Prioritize", status: "skipped" },
+  { name: "Prototype", status: "active" },
+  { name: "Product Strategy", status: "pending" },
+  { name: "Go-to-Market", status: "pending" },
+];
+
+function PhaseList({ withBadges = false }: { withBadges?: boolean }) {
+  const t = useT();
+  return (
+    <ul className="space-y-1">
+      {PHASES.map((p, i) => (
+        <li key={p.name} className="flex items-center gap-1.5">
+          <span
+            className={
+              p.status === "done" ? "text-emerald-600"
+                : p.status === "active" ? "text-violet-600"
+                  : "text-slate-300"
+            }
+          >
+            {p.status === "done" ? "✓" : p.status === "active" ? "●" : p.status === "skipped" ? "–" : i + 1}
+          </span>
+          <span
+            className={`min-w-0 flex-1 truncate ${
+              p.status === "active" ? "font-semibold text-violet-800"
+                : p.status === "skipped" ? "text-slate-300" : "text-slate-500"
+            }`}
+          >
+            {p.name}
+          </span>
+          {p.status === "skipped" && (
+            <span className="shrink-0 text-[8px] text-slate-300">{t("canvas.capabilityNotApplicable")}</span>
+          )}
+          {withBadges && p.status === "done" && <Badge tone="emerald">{t("dash.stageDone")}</Badge>}
+          {withBadges && p.status === "active" && <Badge tone="violet">{t("dash.stageInProgress")}</Badge>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function Workspace() {
   const t = useT();
   return (
     <Frame>
-      {/* 실제 화면의 4분할(1fr_3.5fr_3.5fr_4fr)을 줄인 비율 —
-          스테이지 / 대화 / 질문·컨텍스트 / 생성된 문서. */}
-      <div className="grid grid-cols-[0.8fr_1.5fr_1.2fr_1.4fr] gap-2">
-        <Panel>
-          <PanelTitle>{t("canvas.discoveryProgress")}</PanelTitle>
-          <ul className="space-y-1">
-            <li className="flex items-center gap-1">
-              <span className="text-emerald-600">✓</span>
-              <span className="h-1.5 flex-1 rounded bg-slate-200" />
-            </li>
-            <li className="flex items-center gap-1">
-              <span className="text-violet-600">●</span>
-              <span className="h-1.5 flex-1 rounded bg-violet-200" />
-            </li>
-            <li className="flex items-center gap-1">
-              <span className="text-slate-300">○</span>
-              <span className="h-1.5 flex-1 rounded bg-slate-100" />
-            </li>
-          </ul>
-          <p className="mt-2 text-[9px] text-slate-400">{t("canvas.sidebarAdaptive")}</p>
-        </Panel>
+      {/* 실제 화면의 1:5:5 그리드 — phase / 대화 / 질문·컨텍스트. 생성된 문서는 열이
+          아니라 오른쪽 끝 손잡이 탭으로 여는 드로어다(그리드가 탭 자리를 비워 둔다). */}
+      <div className="relative pr-6">
+        <div className="grid grid-cols-[1fr_1.6fr_1.6fr] gap-2">
+          <Panel>
+            <PanelTitle>{t("canvas.discoveryProgress")}</PanelTitle>
+            <PhaseList />
+            <p className="mt-1.5 text-[9px] text-slate-400">1 / 4 {t("canvas.stageUnit")}</p>
+          </Panel>
 
-        <Panel>
-          <PanelTitle>{t("canvas.timelineLabel")}</PanelTitle>
-          <div className="space-y-1.5">
-            <div className="ml-6 rounded-md bg-violet-50 p-1.5">
-              <Lines n={1} />
+          <Panel>
+            <PanelTitle>{t("canvas.timelineLabel")}</PanelTitle>
+            <div className="space-y-1.5">
+              <div className="ml-6 rounded-md bg-violet-50 p-1.5">
+                <Lines n={1} />
+              </div>
+              <div className="mr-6 rounded-md bg-slate-50 p-1.5">
+                <Lines n={3} />
+              </div>
+              <Badge tone="violet">{t("chat.questionsPresented")}</Badge>
             </div>
-            <div className="mr-6 rounded-md bg-slate-50 p-1.5">
-              <Lines n={3} />
+            {/* 입력창 위 진행 줄 — 첫 줄 무슨 일·경과, 둘째 줄 대상. */}
+            <div className="mt-2 text-[9px] text-violet-700">
+              <div className="flex items-center justify-between">
+                <span className="font-medium">{t("activity.draftingDoc")}</span>
+                <span className="text-violet-400">{formatElapsed(42, t)}</span>
+              </div>
+              <p className="font-mono text-violet-500">
+                PR-FAQ.md · {t("activity.charsCount").replace("{n}", "1,234")}
+              </p>
             </div>
-            <Badge tone="violet">{t("chat.questionsPresented")}</Badge>
-          </div>
-          <div className="mt-2 flex items-center gap-1 rounded-md border border-slate-300 px-1.5 py-1">
-            <span className="text-slate-400">🖇</span>
-            <span className="flex-1 truncate text-[9px] text-slate-400">
-              {t("canvas.messagePlaceholder")}
-            </span>
-            <Btn tone="quiet">■</Btn>
-            <Btn tone="primary">{t("canvas.send")}</Btn>
-          </div>
-          <p className="mt-1 text-[9px] text-slate-400">{t("chat.auditNotice")}</p>
-        </Panel>
+            <div className="mt-1 flex items-center gap-1 rounded-md border border-slate-300 px-1.5 py-1">
+              <span className="text-slate-400">🖇</span>
+              <span className="flex-1 truncate text-[9px] text-slate-400">
+                {t("canvas.messagePlaceholder")}
+              </span>
+              <Btn tone="quiet">■</Btn>
+              <Btn tone="primary">{t("canvas.send")}</Btn>
+            </div>
+            <p className="mt-1 text-[9px] text-slate-400">{t("chat.auditNotice")}</p>
+          </Panel>
 
-        {/* 셋째 칸 — 질문이 오면 답변 시트, 없으면 프리뷰나 최근 산출물. */}
-        <Panel>
-          <PanelTitle>{t("ws.contextPanelAria")}</PanelTitle>
-          <div className="mb-1.5 flex flex-wrap items-center gap-1">
-            <Badge tone="violet">{t("q.legend")} 3</Badge>
-            <Badge tone="slate">{t("q.singleSelectBadge")}</Badge>
-          </div>
-          <ul className="space-y-1">
-            <li className="flex items-center gap-1.5 rounded border border-violet-300 bg-violet-50 px-1.5 py-1">
-              <span className="text-violet-600">◉</span>
-              <span className="h-1.5 flex-1 rounded bg-violet-200" />
-            </li>
-            <li className="flex items-center gap-1.5 rounded border border-slate-200 px-1.5 py-1">
-              <span className="text-slate-300">○</span>
-              <span className="h-1.5 flex-1 rounded bg-slate-100" />
-            </li>
-          </ul>
-          <div className="mt-1.5 text-right">
-            <Btn tone="primary">{t("q.submitAnswers")}</Btn>
-          </div>
-          <p className="mt-1.5 text-[9px] text-slate-400">
-            {t("canvas.previewTitle")} · {t("ws.recentArtifacts")}
-          </p>
-        </Panel>
+          {/* 오른쪽 칸 — 질문이 오면 답변 시트, 없으면 프리뷰나 최근 산출물. */}
+          <Panel>
+            <PanelTitle>{t("ws.contextPanelAria")}</PanelTitle>
+            <p className="mb-1.5 inline-block rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] text-violet-700">
+              {t("ws.openDocNamed").replace("{name}", "PR-FAQ.md")}
+            </p>
+            <div className="mb-1.5 flex flex-wrap items-center gap-1">
+              <Badge tone="violet">{t("q.legend")} 3</Badge>
+              <Badge tone="slate">{t("q.singleSelectBadge")}</Badge>
+            </div>
+            <ul className="space-y-1">
+              <li className="flex items-center gap-1.5 rounded border border-violet-300 bg-violet-50 px-1.5 py-1">
+                <span className="text-violet-600">◉</span>
+                <span className="h-1.5 flex-1 rounded bg-violet-200" />
+              </li>
+              <li className="flex items-center gap-1.5 rounded border border-slate-200 px-1.5 py-1">
+                <span className="text-slate-300">○</span>
+                <span className="h-1.5 flex-1 rounded bg-slate-100" />
+              </li>
+            </ul>
+            <div className="mt-1.5 text-right">
+              <Btn tone="primary">{t("q.submitAnswers")}</Btn>
+            </div>
+            <p className="mt-1.5 text-[9px] text-slate-400">
+              {t("canvas.previewTitle")} · {t("ws.recentArtifacts")}
+            </p>
+          </Panel>
+        </div>
 
-        {/* 넷째 칸 — 방금 만들어진 문서를 그 자리에서 읽는다. */}
-        <Panel>
-          <PanelTitle>{t("ws.generatedDocs")}</PanelTitle>
-          <div className="flex items-center gap-1">
-            <span className="min-w-0 flex-1 truncate rounded border border-slate-300 px-1.5 py-1 text-[9px] text-slate-500">
-              PR-FAQ.md ▾
-            </span>
-            <span className="text-slate-400">↻</span>
-            <Badge tone="violet">v2</Badge>
-          </div>
-          <Lines n={4} className="mt-1.5" />
-          <p className="mt-1.5 text-[9px] text-violet-700 underline">{t("ws.toFullReview")}</p>
-        </Panel>
+        {/* 드로어 손잡이 — 닫힌 동안 새 문서가 쓰이면 "새 문서"로 채워진다. */}
+        <div className="absolute right-0 top-3 flex w-5 flex-col items-center gap-1 rounded-l-md bg-violet-600 py-2 text-[9px] font-bold text-white">
+          <span className="[writing-mode:vertical-rl]">{t("ws.docTabNew")}</span>
+          <span className="rounded-full bg-white px-1 text-[8px] text-violet-700">3</span>
+        </div>
       </div>
     </Frame>
   );
@@ -177,28 +218,38 @@ function ApprovalGate() {
   return (
     <Frame>
       <div className="space-y-2">
-        <div className="flex items-center gap-1.5">
-          <Badge tone="amber">{t("review.badgeDraft")}</Badge>
-          <span className="text-[10px] text-slate-400">discovery-document.md</span>
-        </div>
-        <Panel>
-          <Lines n={4} />
-        </Panel>
-        <Panel className="border-violet-200 bg-violet-50/40">
-          <PanelTitle>{t("review.verificationSummary")}</PanelTitle>
-          <Lines n={2} />
-        </Panel>
-        <Panel className="border-violet-300">
-          <p className="mb-1 font-semibold text-slate-700">{t("review.gateTitle")}</p>
-          <p className="mb-2 text-[9px] text-slate-500">{t("review.gateIntro")}</p>
-          <div className="flex gap-1.5">
+        {/* 게이트는 discovery-document.md를 열었고 아직 승인 전일 때 화면 맨 위에 뜬다. */}
+        <Panel className="border-amber-200 bg-amber-50">
+          <div className="flex items-center gap-1.5">
+            <p className="font-semibold text-amber-900">{t("review.gateTitle")}</p>
+            <Badge tone="amber">{t("review.badgeDraft")}</Badge>
+          </div>
+          <p className="mb-2 mt-0.5 text-[9px] text-amber-900">{t("review.gateIntro")}</p>
+          <div className="flex justify-end gap-1.5">
             <Btn tone="ghost">{t("review.gateReviseBtn")}</Btn>
             <Btn tone="primary">{t("review.gateApproveBtn")}</Btn>
           </div>
         </Panel>
-        <div className="flex gap-1.5">
-          <Btn tone="quiet">{t("page.downloadMd")}</Btn>
+        <div className="flex justify-end gap-1.5">
           <Btn tone="quiet">{t("page.downloadAllZip")}</Btn>
+          <Btn tone="quiet">{t("page.downloadMd")}</Btn>
+        </div>
+        {/* 파일 목록 / 본문 / 검증 요약 — 실제 화면의 세 칸. */}
+        <div className="grid grid-cols-[0.8fr_2fr_1fr] gap-2">
+          <Panel>
+            <p className="text-[9px] text-slate-500">aiplc-docs/</p>
+            <p className="mt-1 truncate rounded bg-violet-50 px-1 text-[9px] text-violet-700">discovery-document.md</p>
+            <Lines n={2} className="mt-1" />
+          </Panel>
+          <Panel>
+            <Lines n={5} />
+          </Panel>
+          <Panel className="border-violet-200 bg-violet-50/40">
+            <PanelTitle>{t("review.verificationSummary")}</PanelTitle>
+            <Lines n={2} />
+            <PanelTitle>{t("review.gateHistory")}</PanelTitle>
+            <Lines n={1} />
+          </Panel>
         </div>
       </div>
     </Frame>
@@ -324,22 +375,7 @@ function Dashboard() {
         <div className="grid grid-cols-[1.4fr_1fr] gap-2">
           <Panel>
             <PanelTitle>{t("dash.stageProgressTitle")}</PanelTitle>
-            <ul className="space-y-1.5">
-              <li className="flex items-center gap-1.5">
-                <span className="text-emerald-600">✓</span>
-                <span className="h-1.5 flex-1 rounded bg-slate-200" />
-                <Badge tone="emerald">{t("dash.stageDone")}</Badge>
-              </li>
-              <li className="flex items-center gap-1.5">
-                <span className="text-violet-600">●</span>
-                <span className="h-1.5 flex-1 rounded bg-violet-200" />
-                <Badge tone="violet">{t("dash.stageInProgress")}</Badge>
-              </li>
-              <li className="flex items-center gap-1.5">
-                <span className="text-slate-300">○</span>
-                <span className="h-1.5 flex-1 rounded bg-slate-100" />
-              </li>
-            </ul>
+            <PhaseList withBadges />
             <p className="mt-1.5 text-[9px] text-slate-400">{t("dash.adaptiveNote")}</p>
           </Panel>
           <Panel>

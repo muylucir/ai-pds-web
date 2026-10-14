@@ -44,7 +44,7 @@ proto-config/      빌드 에이전트 전용 CLAUDE_CONFIG_DIR — 위와 반�
 | 화면 | 하는 일 | 접근 |
 |---|---|---|
 | `/` | 프로젝트 목록·생성·내보내기·가져오기 | 로그인 |
-| `/projects/{id}/workspace` | Discovery 대화 — 실시간 턴, 질문 시트, 첨부, 문서 패널 | 로그인 |
+| `/projects/{id}/workspace` | Discovery 대화 — 실시간 턴, 질문 시트, 첨부, 생성 문서 드로어 | 로그인 |
 | `/projects/{id}/dashboard` | 스테이지 진행·산출물·활동 | 로그인 |
 | `/projects/{id}/review` | 문서 리뷰와 승인 게이트 | 로그인 |
 | `/projects/{id}/questions` | 질문 파일 하나를 펼쳐 답하는 화면 | 로그인 |

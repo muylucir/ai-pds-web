@@ -11,7 +11,7 @@
 export type MockupId =
   /** 프로젝트 생성 폼 — ID·이름·모델·문서 언어 */
   | "project-create"
-  /** 워크스페이스 4분할 — 스테이지 / 채팅 / 질문·컨텍스트 / 생성된 문서 */
+  /** 워크스페이스 — phase / 채팅 / 질문·컨텍스트, 생성된 문서는 오른쪽 끝 탭으로 여는 드로어 */
   | "workspace"
   /** 질문 시트 — 단일·복수 선택, Other, AI 추천, 부연 설명 */
   | "question-sheet"
@@ -21,7 +21,7 @@ export type MockupId =
   | "prototype-card"
   /** 검증 설문 패널 — 링크 공유와 집계 */
   | "survey-panel"
-  /** 대시보드 — 진행률 카드와 스테이지 타임라인 */
+  /** 대시보드 — 진행률 카드와 6개 phase 타임라인 */
   | "dashboard";
 
 export type DiagramId =
