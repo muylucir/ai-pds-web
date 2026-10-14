@@ -123,6 +123,14 @@ npx cdk deploy --all --require-approval never \
   부족하다 — 관리자 비밀번호가 새면 사용자·역할 관리까지 넘어간다. 워크숍 밖에서 쓰려면
   `infra/lib/aipds-auth-stack.ts`에서 MFA를 필수로 켠다(`mfa: cognito.Mfa.REQUIRED`와
   `mfaSecondFactor: { otp: true, sms: false }` — 인증 앱).
+- **그 밖에도 프로덕션이 아니라 워크숍에 맞춘 설정이 있다.** 각 줄에 바꿀 설정을 적은 경고 주석이 있다.
+  - Cognito에 위협 방지(유출된 자격증명 탐지, 위험 기반 인증)가 없다 — Plus 등급이 필요하다
+    (`aipds-auth-stack.ts`).
+  - `cdk destroy`가 사용자 풀과 아티팩트 버킷을 내용째 지운다. 버킷에는 버전 관리와 액세스 로그도
+    없다(`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
+  - CloudFront는 인스턴스에 평문 HTTP로 붙고 그 구간에 세션 쿠키가 실린다. 보안 그룹과 비밀 헤더가
+    직접 접근은 막지만 경로상의 도청은 막지 못한다. 고치려면 자체 도메인과 인증서, 또는 CloudFront
+    VPC 오리진이 필요하다(`aipds-hosting-stack.ts`, `aipds-preview-stack.ts`).
 - **다른 리전**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. 코드 수정은 필요 없다.
 - **추가 업로드 오리진**(커스텀 도메인 등): 배포 시 `AIPDS_UPLOAD_ORIGINS`(쉼표 구분). 앱 자신의
   오리진은 인스턴스가 더한다.

@@ -128,6 +128,16 @@ npx cdk deploy --all --require-approval never \
   customer material: a leaked admin password hands over user and role management too. Before using it
   beyond a workshop, require MFA in `infra/lib/aipds-auth-stack.ts` (`mfa: cognito.Mfa.REQUIRED` with
   `mfaSecondFactor: { otp: true, sms: false }` — an authenticator app).
+- **Other settings chosen for a workshop, not for production.** Each line carries a warning comment
+  with the setting to change:
+  - Cognito has no threat protection (compromised-credential detection, risk-based sign-in) — that needs
+    the Plus feature plan (`aipds-auth-stack.ts`).
+  - `cdk destroy` deletes the user pool and the artifacts bucket with everything in it, and the bucket
+    has no versioning or access logs (`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
+  - CloudFront reaches the instance over plain HTTP, carrying session cookies; the security group and a
+    secret header block direct access, but not eavesdropping on the path. Fixing it needs your own
+    domain and certificate, or a CloudFront VPC origin (`aipds-hosting-stack.ts`,
+    `aipds-preview-stack.ts`).
 - **Another region**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. No code changes.
 - **Another upload origin** (a custom domain, say): `AIPDS_UPLOAD_ORIGINS` (comma-separated) at deploy
   time. The app's own origin is added by the instance.
