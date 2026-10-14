@@ -144,18 +144,18 @@ cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd ../frontend && npm install
 cp ../backend/.env.example ../backend/.env           # fill in from the DrillStack outputs
 
-cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
+cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 127.0.0.1 --port 8000 --reload
 cd frontend && npm run dev                           # http://localhost:3000
 ```
 
-Locally, agents run directly as your user — the sandbox is an instance feature.
+Locally, agents run directly as your user — the sandbox is an instance feature. With authentication off, the backend treats every request as an admin, so keep it on `127.0.0.1`.
 
 | Variable | Set it to |
 |---|---|
 | `AIPDS_S3_BUCKET` / `AIPDS_S3_REGION` | `AipdsDrillStack.ArtifactsBucketName` and its region. Unset, the app silently runs local-only |
 | `AIPDS_DISCOVERY_CONFIG_DIR` / `AIPDS_PROTO_CONFIG_DIR` | Absolute paths to the repo's `discovery-config/` and `proto-config/`. Unset, the agent reads **your own `~/.claude`** and your personal skills leak into the results |
 | `ANTHROPIC_MODEL` | Fallback Bedrock inference profile id, used when a project has none |
-| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | Leave **both** empty to skip authentication (the local default). Setting only one fails every request |
+| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | Leave **both** empty and set `AIPDS_AUTH_DISABLED=1` to skip authentication (the local default in `.env.example`). Both empty without that switch, or only one set, and the backend refuses to start |
 | `AIPDS_PUBLIC_PATH_PREFIX` | `""` when the browser calls the backend directly on :8000 |
 
 Every other variable, with the value a deployment uses and why, is commented in the systemd units in
