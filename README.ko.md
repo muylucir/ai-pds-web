@@ -139,18 +139,18 @@ cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd ../frontend && npm install
 cp ../backend/.env.example ../backend/.env           # DrillStack 출력값으로 채운다
 
-cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
+cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 127.0.0.1 --port 8000 --reload
 cd frontend && npm run dev                           # http://localhost:3000
 ```
 
-로컬에서는 에이전트가 내 사용자로 직접 돈다 — 샌드박스는 인스턴스의 기능이다.
+로컬에서는 에이전트가 내 사용자로 직접 돈다 — 샌드박스는 인스턴스의 기능이다. 인증을 끈 백엔드는 모든 요청을 admin으로 받으므로 `127.0.0.1`에만 연다.
 
 | 변수 | 넣을 값 |
 |---|---|
 | `AIPDS_S3_BUCKET` / `AIPDS_S3_REGION` | `AipdsDrillStack.ArtifactsBucketName`과 그 리전. 비우면 조용히 로컬 전용으로 돈다 |
 | `AIPDS_DISCOVERY_CONFIG_DIR` / `AIPDS_PROTO_CONFIG_DIR` | 리포의 `discovery-config/`·`proto-config/` 절대 경로. 비우면 에이전트가 **내 `~/.claude`**를 읽어 개인 스킬이 결과에 섞인다 |
 | `ANTHROPIC_MODEL` | 프로젝트에 모델이 없을 때 쓰는 대체 Bedrock 추론 프로파일 id |
-| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | **둘 다** 비우면 인증을 건너뛴다(로컬 기본). 하나만 채우면 모든 요청이 실패한다 |
+| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | **둘 다** 비우고 `AIPDS_AUTH_DISABLED=1`을 주면 인증을 건너뛴다(`.env.example`의 로컬 기본). 그 스위치 없이 둘 다 비거나 하나만 채우면 백엔드가 뜨지 않는다 |
 | `AIPDS_PUBLIC_PATH_PREFIX` | 브라우저가 :8000의 백엔드를 직접 부를 때 `""` |
 
 나머지 변수 전부와, 배포가 쓰는 값과 그 이유는 [`infra/lib/user-data.ts`](infra/lib/user-data.ts)의

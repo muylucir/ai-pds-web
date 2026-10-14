@@ -210,12 +210,18 @@ def project_effort(project_id: str) -> str | None:
 
 _jwks_singleton = None
 
+#: 인증을 끄는 명시적 스위치. 로컬 개발과 테스트만 켠다(.env.example, tests/conftest.py).
+AUTH_DISABLED_ENV = "AIPDS_AUTH_DISABLED"
+_TRUTHY = {"1", "true", "yes", "on"}
+
 
 def cognito_config() -> dict | None:
-    """Cognito 설정. 둘 다 미설정이면 None = 인증 바이패스.
+    """Cognito 설정. None = 인증 바이패스(모든 요청이 가상 admin).
 
-    durable_projects_enabled()와 같은 규율이다: 필수 env가 전혀 없으면 그 기능
-    전체를 생략하고 로컬/테스트가 아무 설정 없이 돌게 한다.
+    **바이패스는 스위치로만 켜진다.** 두 값이 모두 비어 있는 것만으로는 켜지지 않는다 —
+    배포 설정에서 두 줄이 함께 빠지면(유닛 파일 재생성 실수, 수동 편집) 인증이 꺼진 채
+    인터넷에 열린다. 그래서 둘 다 비었는데 `AIPDS_AUTH_DISABLED`도 없으면 예외로
+    터뜨린다. 임포트 시점에도 불리므로(`_docs_openapi_url`) 백엔드가 아예 뜨지 않는다.
 
     하지만 풀 id와 client id 중 **하나만** 있는 상태는 "미설정"이 아니라 배포
     사고다. 예전에는 이 경우도 None(바이패스)으로 취급했는데, 그러면 인증이
@@ -229,7 +235,12 @@ def cognito_config() -> dict | None:
     pool = os.environ.get("AIPDS_COGNITO_USER_POOL_ID", "").strip()
     client = os.environ.get("AIPDS_COGNITO_CLIENT_ID", "").strip()
     if not pool and not client:
-        return None
+        if os.environ.get(AUTH_DISABLED_ENV, "").strip().lower() in _TRUTHY:
+            return None
+        raise RuntimeError(
+            "AIPDS_COGNITO_USER_POOL_ID and AIPDS_COGNITO_CLIENT_ID are both unset. "
+            "Set them to enable authentication, or set AIPDS_AUTH_DISABLED=1 to "
+            "run without it (local development only — every request becomes admin)")
     if not pool or not client:
         raise RuntimeError(
             "AIPDS_COGNITO_USER_POOL_ID and AIPDS_COGNITO_CLIENT_ID "
