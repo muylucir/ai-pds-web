@@ -3,7 +3,7 @@
 # **왜 이 모듈이 생겼는가(2026-08-16).** Prototypes 탭이 카드를 만드는 규칙이
 # `prototypes/{slug}/PROTOTYPE-{slug}.md` 한 가지뿐이어서, Path A.1(Envision
 # 파생, 단일 프로토타입)로 정상 완주한 세션이 카드를 하나도 만들지 못했다
-# (keumkang-v5가 그 상태였다).
+# (ws-a-v5가 그 상태였다).
 #
 # 상류에 두 레이아웃이 있고, 둘 다 정당하다:
 #
@@ -169,7 +169,7 @@ def change_history_key(prototype_id: str) -> str:
 #: 에이전트가 분석을 써넣고 Step 8의 Part 2가 근거로 인용하는 **룰의 산출물**이다.
 #: 웹이 같은 파일에 집계를 쓰면 주인이 둘이 된다: 재취합이 에이전트의 분석을 빈
 #: 템플릿으로 덮어쓰고, 리셋이 Part 2가 인용하는 근거를 지운다(2026-10-06 실측
-#: tobacco — 웹 집계 아래 에이전트 분석이 붙은 채로 설문이 열려 있었다). 이 파일은
+#: ws-b — 웹 집계 아래 에이전트 분석이 붙은 채로 설문이 열려 있었다). 이 파일은
 #: Step 5가 허용하는 "가져올 피드백 파일"이고, `validation-results.md`는 에이전트가
 #: 이것을 읽어 직접 만든다. 그래서 Discovery 게이트가 이 파일 쓰기를 막는다
 #: (agent/discovery_guard.web_owned_denial).

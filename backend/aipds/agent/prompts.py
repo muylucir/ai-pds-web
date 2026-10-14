@@ -262,7 +262,7 @@ def prototype_handoff_stop(language: str, slug: str) -> str:
 
     **다음 행동을 지정하는 것이 요점이다.** 옛 `handoff_prototype` 도구의 성공
     문구가 이미 이 판단을 기록해 뒀다: 지정하지 않으면 에이전트가 상류 Step 4
-    (Iterate)로 계속 가거나 자격증명을 묻는다 — 둘 다 실측된 실패다(keumkang-v5:
+    (Iterate)로 계속 가거나 자격증명을 묻는다 — 둘 다 실측된 실패다(ws-a-v5:
     자격증명 점검 → API 키 요구 → 선행 조건 나열, 탭 안내 0회).
 
     도구가 훅이 되면서 달라진 것은 **누가 호출을 보장하는가**뿐이다. 문구가 담아야

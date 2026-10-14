@@ -99,7 +99,7 @@ AUDIT_KEY = f"{DOCS_ROOT}/audit.md"
 def audit_overwrite_denial(tool: str, path: str | None, workspace: str) -> str | None:
     """이미 있는 audit.md를 Write로 통째로 쓰면 거부 대상 경로를, 아니면 None.
 
-    에이전트는 첫 턴에 audit.md를 Write로 새로 만들어 왔다(TestRachnaCostcoDelivery·
+    에이전트는 첫 턴에 audit.md를 Write로 새로 만들어 왔다(ws-e·
     test5 실측). 이제 그 파일은 웹이 먼저 만들고 사용자 입력을 원문 그대로 적어 두므로,
     통째로 쓰면 그 기록이 사라진다 — 계약(discovery-config/CLAUDE.md)이 이미 "Edit로
     덧붙이라"고 하지만 산문이 아니라 훅으로 지킨다. Edit는 막지 않는다.

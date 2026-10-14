@@ -30,7 +30,7 @@ _PLACEHOLDER = re.compile(r"[{}*<>]")
 
 #: 없는 것이 정상인 파일. `change-history.md`는 승인 뒤 변경이 없으면 생기지 않고, 그
 #: 부재가 "명세가 그대로"라는 뜻이다(discovery-config/CLAUDE.md의 Spec reconciliation 절).
-#: 실측 tobacco의 문장이 그것이었다: "변경 이력(`change-history.md`)이 없으므로".
+#: 실측 ws-b의 문장이 그것이었다: "변경 이력(`change-history.md`)이 없으므로".
 _ABSENCE_IS_MEANINGFUL = frozenset({layout.CHANGE_HISTORY})
 
 _DOCS_PREFIX = "aiplc-docs/"
