@@ -121,9 +121,19 @@ export class AipdsAuthStack extends cdk.Stack {
       // 켠다 — `mfa: cognito.Mfa.REQUIRED`와 `mfaSecondFactor: { otp: true, sms: false }`
       // (TOTP 인증 앱). SMS는 켜지 않는다: 이 앱은 문자·메일을 보내는 경로를 두지 않았다.
       mfa: cognito.Mfa.OFF,
+      // **보안 경고: 위협 방지가 없다.** `featurePlan`을 주지 않으므로 기본 등급(Lite 또는 Essentials)이고,
+      // 유출된 자격증명 탐지·위험 기반 인증 같은 위협 방지는 Plus 등급에만 있다. Hosted UI의
+      // 로그인 시도는 Cognito의 기본 잠금 말고는 막히지 않는다(앞단 WAF도 없다). 워크숍 밖에서
+      // 쓴다면 `featurePlan: cognito.FeaturePlan.PLUS`와
+      // `standardThreatProtectionMode: cognito.StandardThreatProtectionMode.AUDIT_ONLY`로
+      // 시작해 탐지 결과를 본 뒤 `FULL_FUNCTION`으로 올린다. Plus는 MAU 단위로 과금된다.
+      //
       // 이 앱은 메일을 전혀 보내지 않으므로 자가 재설정 코드를 전달할 경로가
       // 없다. 재설정은 관리 페이지에서 관리자가 한다.
       accountRecovery: cognito.AccountRecovery.NONE,
+      // **보안 경고: 스택을 지우면 사용자 풀도 지워진다.** 계정과 역할이 함께 사라지고 되살릴 수
+      // 없다. 실습 환경을 깨끗이 내리기 위한 선택이다. 지속해서 쓸 환경이라면
+      // `cdk.RemovalPolicy.RETAIN`과 `deletionProtection: true`로 바꾼다.
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
