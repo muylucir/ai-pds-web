@@ -1,7 +1,7 @@
 # backend/aipds/handoff/package.py — Discovery 산출물을 AI-DLC가 받는 입력으로 옮긴 인계 패키지를 만든다.
 #
 # **소비자의 입력 계약을 따른다.** AI-PLC의 출력은 Discovery 문서이고, AI-DLC의 입력은 vision
-# document다(AI-DLC 문서 "Writing a Vision Document": Executive Summary · Business Context · Full
+# document다(AI-DLC 2.11.0 문서 "Writing a Vision Document": Executive Summary · Business Context · Full
 # Scope Vision · MVP Scope · Risks/Dependencies/Open Questions, 기술은 넣지 않고 별도 문서로).
 # 룰을 고치지 않고 둘을 잇는 것이 이 모듈이다. 형식을 지어내지 않는다 — 실측(ws-g)에서 우리가 정한
 # 9섹션 PRD는 원본과 어긋났고, 소비자가 섹션을 어디에 쓰는지도 정해져 있지 않았다.
@@ -816,7 +816,8 @@ _RULES: tuple[tuple[Kind, re.Pattern[str]], ...] = (
 
 
 #: AI-DLC 가이드가 섹션별 쓰임을 정한 제목. 없으면 그 단계가 읽을 곳이 없다(가이드 "Where each
-#: section is used": Features In/Out → Requirements Analysis·Units·Code Generation 등).
+#: section is used": Features In/Out → Requirements Analysis·Units·Code Generation 등). AI-DLC 2.11.0
+#: 기준이다 — 가이드가 바뀌면 이 목록과 `build_prompt`의 섹션 제목을 함께 맞춘다.
 REQUIRED_SECTIONS = ("Executive Summary", "Business Context", "Success Metrics",
                      "Full Scope Vision", "MVP Scope", "Features In Scope", "Features Out of Scope",
                      "Assumptions and Accepted Limits", "Risks and Dependencies", "Open Questions")
