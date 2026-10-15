@@ -714,3 +714,45 @@ def test_route_supplement_asks_the_open_pm_decisions_with_options(env):
     assert r.json()["open_questions"][1]["answer"]["text"] == "7일"
     # 답하면 패키지가 낡는다 — 다음 생성이 그 답을 쓴다.
     assert client.get("/projects/pkg-open/handoff/package").json()["supplement_changed"] is True
+
+
+# ---- 초기화 ----
+
+def test_route_reset_wipes_the_package_the_old_prd_and_the_answers_but_not_discovery(env):
+    """다시 생성은 직전 판과 보완 답을 이어받는다. 초기화는 그 둘까지 지워 처음 상태로 돌린다."""
+    client, s3, _ = env
+    files = {p: f"# {p}\n" for p in B}
+    _seed(client, "pkg-reset", files)
+    client.post("/projects/pkg-reset/handoff/package")
+    assert _wait_settled(client, "pkg-reset")["manifest"]["status"] == "ready"
+    client.portal.call(s3.put, package.PACKAGE_PREFIX + "PRD.md", _LEGACY_PRD)
+    q = "상담 이력의 보존 기간은?"
+    r = client.put("/projects/pkg-reset/handoff/supplement", json={"open_answers": {
+        supplement.open_key(q): {"question": q, "text": "3년"}}})
+    assert r.status_code == 200
+
+    r = client.delete("/projects/pkg-reset/handoff")
+    assert r.status_code == 200 and r.json()["deleted"] >= 6
+    assert not [k for k in s3.blobs if k.startswith(package.HANDOFF_PREFIX)]
+    assert client.get("/projects/pkg-reset/handoff/package").json()["manifest"] is None
+    body = client.get("/projects/pkg-reset/handoff/supplement").json()
+    assert body["has_package"] is False and body["open_answered"] == []
+    # Discovery 산출물은 그대로다.
+    ws = registry.get("pkg-reset")
+    assert client.portal.call(ws.runner.read_file, B[0]) == files[B[0]]
+
+    # 다음 생성은 이어받을 직전 판이 없다.
+    calls: list = []
+    env[2]["call"] = _writer(calls)
+    client.post("/projects/pkg-reset/handoff/package")
+    _wait_settled(client, "pkg-reset")
+    assert "open decisions in the previous version" not in _facts(dict(calls)["open"])
+
+
+def test_route_reset_is_refused_while_generating(env, monkeypatch):
+    client, s3, _ = env
+    _seed(client, "pkg-busy", {p: f"# {p}\n" for p in B})
+    client.portal.call(s3.put, package.PACKAGE_PREFIX + "open-decisions.md", _OPEN)
+    monkeypatch.setattr(package.jobs, "running", lambda pid: True)
+    assert client.delete("/projects/pkg-busy/handoff").status_code == 409
+    assert package.PACKAGE_PREFIX + "open-decisions.md" in s3.blobs

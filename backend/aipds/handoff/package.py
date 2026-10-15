@@ -1149,6 +1149,21 @@ async def _changes(s3: S3StoreLike, read: Reader, paths: Sequence[str],
     return stale, _supplement_digest(record) != manifest.supplement
 
 
+#: 인계 탭이 프로젝트 접두사 안에 두는 모든 것 — 패키지(`handoff/package/`)와 보완 답
+#: (`handoff/supplement.json`). 워크스페이스 밖이라 Discovery 산출물은 여기 없다.
+HANDOFF_PREFIX = "handoff/"
+
+
+async def reset(s3: S3StoreLike) -> int:
+    """인계 탭을 처음 상태로 — 지운 객체 수.
+
+    다시 생성과 다른 점: 다시 생성은 직전 판의 열린 결정을 이어받고(`stored_decisions`) 보완 답을
+    재료로 쓴다. 초기화는 그 둘까지 지운다. 이전 구성의 PRD도 직전 판이므로 함께 지운다 — 남기면
+    다음 생성이 그 열린 질문을 다시 옮겨 온다.
+    """
+    return await s3.delete_prefix(HANDOFF_PREFIX)
+
+
 async def read_package(s3: S3StoreLike, manifest: Manifest) -> dict[str, str]:
     """만든 파일 이름 → 내용. 패키지는 워크스페이스 밖이라 S3 저장소로 직접 읽는다."""
     contents = await read_sources(s3.get, [PACKAGE_PREFIX + n for n in manifest.files])

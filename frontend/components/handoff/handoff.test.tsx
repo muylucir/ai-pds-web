@@ -4,13 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
-import { FINDING_KINDS, getPackage, putSupplement, startPackage } from "@/lib/api/handoff";
+import { FINDING_KINDS, getPackage, putSupplement, resetHandoff, startPackage } from "@/lib/api/handoff";
 import { en } from "@/lib/i18n/en";
 import { ko } from "@/lib/i18n/ko";
 import type { PackageView, Readiness, SupplementView } from "@/lib/api/handoff";
 import { GenerationProgress } from "./GenerationProgress";
 import { PackagePanel } from "./PackagePanel";
 import { ReadinessPanel } from "./ReadinessPanel";
+import { ResetDialog, savedAnswers } from "./ResetDialog";
 import { SupplementForm, toUpdate } from "./SupplementForm";
 import { HandoffReadyBanner, discoveryFinished } from "./HandoffReadyBanner";
 
@@ -391,6 +392,16 @@ describe("handoff api", () => {
                            open_answers: {} });
   });
 
+  it("resets the whole handoff with one DELETE", async () => {
+    let method = "";
+    server.use(http.delete(base, ({ request }) => {
+      method = request.method;
+      return HttpResponse.json({ deleted: 7 });
+    }));
+    expect(await resetHandoff("p1")).toEqual({ deleted: 7 });
+    expect(method).toBe("DELETE");
+  });
+
   it("reads an absent package as an empty view", async () => {
     server.use(http.get(`${base}/package`, () => HttpResponse.json(
       { manifest: null, files: {}, stale: [], supplement_changed: false })));
@@ -499,5 +510,40 @@ describe("finding kinds", () => {
         }
       }
     }
+  });
+});
+
+describe("ResetDialog", () => {
+  it("says what stays and what goes, and warns only when answers would be lost", async () => {
+    const onConfirm = vi.fn();
+    const { rerender } = render(<ResetDialog answers={3} busy={false} error={null}
+                                             onCancel={() => {}} onConfirm={onConfirm} />);
+    const dialog = screen.getByRole("dialog", { name: "인계 초기화 확인" });
+    expect(within(dialog).getByText(/Discovery 산출물은 그대로 남습니다/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/이어받던 열린 결정과 이전 PRD/)).toBeInTheDocument();
+    expect(within(dialog).getByText("보완 답과 확인 3건은 되돌릴 수 없습니다.")).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "초기화" }));
+    expect(onConfirm).toHaveBeenCalled();
+
+    rerender(<ResetDialog answers={0} busy={false} error={null} onCancel={() => {}} onConfirm={() => {}} />);
+    expect(screen.queryByText(/되돌릴 수 없습니다/)).not.toBeInTheDocument();
+  });
+
+  it("closes on Escape unless it is busy", async () => {
+    const onCancel = vi.fn();
+    const { rerender } = render(<ResetDialog answers={0} busy={true} error={null}
+                                             onCancel={onCancel} onConfirm={() => {}} />);
+    await userEvent.keyboard("{Escape}");
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "초기화" })).toBeDisabled();
+    rerender(<ResetDialog answers={0} busy={false} error={null} onCancel={onCancel} onConfirm={() => {}} />);
+    await userEvent.keyboard("{Escape}");
+    expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("counts every answer and confirmation the PM left in the tab", () => {
+    // VIEW: 고정 문항 답 1 + 대체된 답 1 + 확인 1.
+    expect(savedAnswers(VIEW)).toBe(3);
+    expect(savedAnswers(null)).toBe(0);
   });
 });

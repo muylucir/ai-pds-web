@@ -111,6 +111,20 @@ async def get_handoff_package(pid: str):
                               paths=paths, running=package.jobs.running(pid))
 
 
+class ResetResult(BaseModel):
+    deleted: int
+
+
+@router.delete("/projects/{pid}/handoff", response_model=ResetResult)
+async def reset_handoff(pid: str):
+    """인계 탭을 완전히 초기화한다: 패키지, 이전 판, 보완 답과 AI 제안 확인. Discovery 산출물은
+    건드리지 않는다. 생성 중에는 거절한다 — 돌던 작업이 지운 뒤에 manifest를 다시 쓴다."""
+    await ensure_workspace(pid)
+    if package.jobs.running(pid):
+        raise HTTPException(status_code=409, detail="generating")
+    return ResetResult(deleted=await package.reset(app_module.s3_store_factory(pid)))
+
+
 def _content_disposition(pid: str) -> str:
     """artifacts의 같은 이름 함수와 같은 이유 — pid는 비-ASCII일 수 있다."""
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", pid).strip("-") or "project"
