@@ -645,7 +645,7 @@ export const ko = {
   "handoff.contains.document": "discovery/discovery-document.md: 본문. 무엇을·왜·누구를 위해 만드는가 — 다시 쓰지 않고 그대로 넣습니다",
   "handoff.contains.open": "open-decisions.md: 아직 열린 결정. 빌드 전/빌드 중, 누가 답하나, 답이 나올 때까지 어떻게 만드나, 원본 위치",
   "handoff.contains.ledger": "decisions.md: 결정 장부. 질문 파일의 답마다 PM이 골랐는지 AI 제안을 그대로 받았는지 — 모델 없이 그대로 옮깁니다",
-  "handoff.contains.originals": "Discovery 원본과 업로드 원자료(있는 것만 그대로, 빌드 지시서·디자인 컨텍스트 제외) · README.md: 읽는 순서와 규칙",
+  "handoff.contains.originals": "Discovery 원본 중 근거 문서와 업로드 원자료(있는 것만 그대로) — 단계별 질문 파일은 결정 장부로 대신하고, 빌드 지시서·디자인 컨텍스트·설문지는 넣지 않습니다 · README.md: 읽는 순서와 규칙",
   "handoff.contains.noSource": "프로토타입 소스 코드는 넣지 않습니다. 코딩 어시스턴트가 목업 위에 그대로 살을 붙이기 때문입니다.",
   "handoff.section.problem": "문제와 근거",
   "handoff.section.audience": "대상 사용자",
