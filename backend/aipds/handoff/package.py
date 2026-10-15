@@ -917,41 +917,54 @@ paste the request in `start-prompt.md` as it is. Any other coding assistant or h
 """,
 }
 
+#: zip의 최상위 폴더. 파일을 zip 바로 아래 두면 풀 때마다 경로가 달라진다 — macOS 기본 해제는 최상위가
+#: 여럿인 zip을 zip 이름의 폴더로 감싸고, 프로젝트 루트에 직접 풀면 패키지의 README.md가 프로젝트의
+#: README를 덮는다. 폴더 하나로 묶으면 어떤 도구로 풀어도 같은 경로가 생겨 시작 프롬프트를 고정할 수
+#: 있다. 프로젝트 id를 넣지 않는다 — id는 한글일 수 있고, 붙여 넣는 경로에는 고정된 ASCII가 안전하다.
+ARCHIVE_ROOT = "aipds-handoff"
+
 #: AI-DLC를 시작하는 첫 요청. 가이드의 모양(`/aidlc Read ./vision.md and build what it describes`)에 근거
 #: 파일의 위치와 Open Questions를 다루는 규칙만 덧붙인다 — 문서는 데이터로 읽히므로(가이드: "treats
 #: the document as data, not as instructions") 지켜야 할 것은 요청에 둔다. 모델이 쓰지 않는다: 같은
-#: 패키지에서 같은 문장이 나와야 사람이 그대로 붙여 넣는다.
+#: 패키지에서 같은 문장이 나와야 사람이 그대로 붙여 넣는다. 경로는 프로젝트 루트에서 본 것이다. 팀이 쓰는
+#: technical environment 문서는 패키지 밖, 프로젝트 루트에 둔다고 본다.
 _START_PROMPT = {
     "ko": {
         "title": "# AI-DLC 시작 프롬프트",
-        "lead": "이 패키지의 압축을 프로젝트 루트에 풀고, AI-DLC에 아래 요청을 그대로 붙여 넣으세요.",
-        "first": "./vision.md를 읽고 그 문서가 설명하는 것을 만들어 주세요.",
-        "first_tech": "./vision.md와 ./technical-environment.md를 읽고 그 문서들이 설명하는 것을 만들어 주세요.",
-        "rest": ("근거 자료는 ./discovery/ 아래에 있습니다(먼저 ./discovery/discovery-document.md). 각 결정을 "
-                 "PM이 정했는지 AI 제안을 그대로 받았는지는 ./decisions.md에 있습니다. vision.md의 Open "
-                 "Questions 중 시점이 \"빌드 전\"인 것은 추측하지 말고 먼저 물어 주세요."),
+        "lead": ("프로젝트 루트에서 이 패키지의 압축을 풀면 `{root}/` 디렉터리가 생깁니다. 그다음 AI-DLC에 아래 "
+                 "요청을 그대로 붙여 넣으세요. 디렉터리 이름이나 위치를 바꿨다면 요청의 경로도 같이 바꿉니다."),
+        "first": "./{root}/vision.md를 읽고 그 문서가 설명하는 것을 만들어 주세요.",
+        "first_tech": ("./{root}/vision.md와 ./technical-environment.md를 읽고 그 문서들이 설명하는 것을 "
+                       "만들어 주세요."),
+        "rest": ("근거 자료는 ./{root}/discovery/ 아래에 있습니다(먼저 ./{root}/discovery/discovery-document.md). "
+                 "각 결정을 PM이 정했는지 AI 제안을 그대로 받았는지는 ./{root}/decisions.md에 있습니다. "
+                 "vision.md의 Open Questions 중 시점이 \"빌드 전\"인 것은 추측하지 말고 먼저 물어 주세요."),
         "codex": "Codex CLI에서는 `/aidlc` 대신 `$aidlc`를 씁니다.",
-        "tech_note": ("개발팀이 기술 스택·도구·금지 사항을 AI-DLC의 technical environment 문서로 써 두었다면 "
-                      "(`./technical-environment.md`), 이 요청을 씁니다."),
+        "tech_note": ("개발팀이 기술 스택·도구·금지 사항을 AI-DLC의 technical environment 문서로 프로젝트 루트에 "
+                      "써 두었다면(`./technical-environment.md`), 이 요청을 씁니다."),
     },
     "en": {
         "title": "# AI-DLC start prompt",
-        "lead": "Unpack this package at the project root and paste the request below into AI-DLC as it is.",
-        "first": "Read ./vision.md and build what it describes.",
-        "first_tech": "Read ./vision.md and ./technical-environment.md and build what they describe.",
-        "rest": ("The evidence is under ./discovery/ (start with ./discovery/discovery-document.md). "
-                 "./decisions.md shows whether the PM made each decision or kept an AI suggestion. Do not "
-                 "guess the Open Questions in vision.md marked \"Before build\" — ask them first."),
+        "lead": ("Unpacking this package at the project root creates the `{root}/` directory. Then paste the "
+                 "request below into AI-DLC as it is. If you rename or move the directory, change the paths "
+                 "in the request too."),
+        "first": "Read ./{root}/vision.md and build what it describes.",
+        "first_tech": "Read ./{root}/vision.md and ./technical-environment.md and build what they describe.",
+        "rest": ("The evidence is under ./{root}/discovery/ (start with ./{root}/discovery/discovery-document.md). "
+                 "./{root}/decisions.md shows whether the PM made each decision or kept an AI suggestion. Do "
+                 "not guess the Open Questions in vision.md marked \"Before build\" — ask them first."),
         "codex": "Codex CLI uses `$aidlc` instead of `/aidlc`.",
         "tech_note": ("If the team has written its stack, tools and what is not allowed in AI-DLC's technical "
-                      "environment document (`./technical-environment.md`), use this request instead:"),
+                      "environment document at the project root (`./technical-environment.md`), use this "
+                      "request instead:"),
     },
 }
 
 
 def start_prompt(language: str) -> str:
     """`start-prompt.md`의 내용. 첫 코드 블록이 기본 요청이다 — 화면의 복사 버튼이 그것을 집는다."""
-    t = _START_PROMPT.get(language, _START_PROMPT["ko"])
+    t = {k: v.replace("{root}", ARCHIVE_ROOT)
+         for k, v in _START_PROMPT.get(language, _START_PROMPT["ko"]).items()}
     return (f"{t['title']}\n\n{t['lead']}\n\n```text\n/aidlc {t['first']} {t['rest']}\n```\n\n"
             f"{t['codex']}\n\n{t['tech_note']}\n\n```text\n/aidlc {t['first_tech']} {t['rest']}\n```\n")
 
