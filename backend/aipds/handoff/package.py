@@ -917,16 +917,24 @@ paste the request in `start-prompt.md` as it is. Any other coding assistant or h
 """,
 }
 
-#: zip의 최상위 폴더. 파일을 zip 바로 아래 두면 풀 때마다 경로가 달라진다 — macOS 기본 해제는 최상위가
-#: 여럿인 zip을 zip 이름의 폴더로 감싸고, 프로젝트 루트에 직접 풀면 패키지의 README.md가 프로젝트의
-#: README를 덮는다. 폴더 하나로 묶으면 어떤 도구로 풀어도 같은 경로가 생겨 시작 프롬프트를 고정할 수
-#: 있다. 프로젝트 id를 넣지 않는다 — id는 한글일 수 있고, 붙여 넣는 경로에는 고정된 ASCII가 안전하다.
-ARCHIVE_ROOT = "aipds-handoff"
+def archive_folder(pid: str) -> str:
+    """zip의 이름이자 그 안의 최상위 폴더 이름(`.zip`을 뺀 것). 둘을 한 함수가 정한다 — 시작 프롬프트의
+    경로가 이 폴더를 가리키므로 셋이 어긋나면 붙여 넣은 요청이 파일을 찾지 못한다.
+
+    파일을 zip 바로 아래 두면 풀 때마다 경로가 달라졌다: macOS 기본 해제는 최상위가 여럿인 zip을 zip
+    이름의 폴더로 감싸고, 프로젝트 루트에 직접 풀면 패키지의 README.md가 프로젝트의 README를 덮었다.
+    id는 생성 화면이 영문·숫자·`_`·`-`로 받지만 가져온 프로젝트는 아닐 수 있어, 내려받기 파일 이름의
+    ASCII 폴백과 같은 규칙으로 고친다.
+    """
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", pid).strip("-") or "project"
+    return f"{safe}-handoff"
+
 
 #: AI-DLC를 시작하는 첫 요청. 가이드의 모양(`/aidlc Read ./vision.md and build what it describes`)에 근거
 #: 파일의 위치와 Open Questions를 다루는 규칙만 덧붙인다 — 문서는 데이터로 읽히므로(가이드: "treats
 #: the document as data, not as instructions") 지켜야 할 것은 요청에 둔다. 모델이 쓰지 않는다: 같은
-#: 패키지에서 같은 문장이 나와야 사람이 그대로 붙여 넣는다. 경로는 프로젝트 루트에서 본 것이다. 팀이 쓰는
+#: 패키지에서 같은 문장이 나와야 사람이 그대로 붙여 넣는다. 경로는 프로젝트 루트에서 본 것이고 `{root}`는
+#: `archive_folder`다. 팀이 쓰는
 #: technical environment 문서는 패키지 밖, 프로젝트 루트에 둔다고 본다.
 _START_PROMPT = {
     "ko": {
@@ -961,9 +969,10 @@ _START_PROMPT = {
 }
 
 
-def start_prompt(language: str) -> str:
-    """`start-prompt.md`의 내용. 첫 코드 블록이 기본 요청이다 — 화면의 복사 버튼이 그것을 집는다."""
-    t = {k: v.replace("{root}", ARCHIVE_ROOT)
+def start_prompt(language: str, folder: str) -> str:
+    """`start-prompt.md`의 내용. 첫 코드 블록이 기본 요청이다 — 화면의 복사 버튼이 그것을 집는다.
+    `folder`는 `archive_folder(pid)`다."""
+    t = {k: v.replace("{root}", folder)
          for k, v in _START_PROMPT.get(language, _START_PROMPT["ko"]).items()}
     return (f"{t['title']}\n\n{t['lead']}\n\n```text\n/aidlc {t['first']} {t['rest']}\n```\n\n"
             f"{t['codex']}\n\n{t['tech_note']}\n\n```text\n/aidlc {t['first_tech']} {t['rest']}\n```\n")
@@ -1064,7 +1073,8 @@ Caller = Callable[[str, Callable[[int, bool], None]], Awaitable[str]]
 
 
 async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness: Readiness,
-              language: str, call: Caller, started: Manifest) -> Manifest:
+              language: str, call: Caller, started: Manifest,
+              folder: str = archive_folder("project")) -> Manifest:
     """원본을 읽고, 단계마다 모델로 문서를 쓰고 저장하고, 끝에 검사한다.
 
     실패해도 manifest가 남는다 — 실패한 단계와 사유, 그 전에 끝난 단계가 그대로 보인다.
@@ -1131,7 +1141,7 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
     # 결정 장부·README·시작 프롬프트는 모델 없이 만든다 — 같은 원본·기록에서 같은 파일이 나온다.
     await s3.put(PACKAGE_PREFIX + LEDGER, ledger_mod.build(sources, record, language))
     await s3.put(PACKAGE_PREFIX + README, readme(language))
-    await s3.put(PACKAGE_PREFIX + START_PROMPT, start_prompt(language))
+    await s3.put(PACKAGE_PREFIX + START_PROMPT, start_prompt(language, folder))
     return await state.save(state.manifest.model_copy(update={
         "status": "ready", "finished_at": _now(), "files": list(FILES), "error": None,
         "findings": lint(written[VISION], language=language, sources=list(fitted),

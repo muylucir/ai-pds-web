@@ -289,8 +289,8 @@ def test_steps_write_the_open_decisions_then_the_ledger_and_readme():
     assert set(done.sources) == set(package.select_sources(B))
     assert s3.blobs[package.PACKAGE_PREFIX + "vision.md"].startswith("# 샘플몰 안전ON — Vision")
     prompt = s3.blobs[package.PACKAGE_PREFIX + "start-prompt.md"]
-    assert "/aidlc ./aipds-handoff/vision.md를 읽고" in prompt and "$aidlc" in prompt
-    assert "./aipds-handoff/discovery/discovery-document.md" in prompt
+    assert "/aidlc ./project-handoff/vision.md를 읽고" in prompt and "$aidlc" in prompt
+    assert "./project-handoff/discovery/discovery-document.md" in prompt
     assert s3.blobs[package.PACKAGE_PREFIX + "decisions.md"].startswith("# 결정 장부")
     readme = s3.blobs[package.PACKAGE_PREFIX + "README.md"]
     assert readme.startswith("# 개발 인계 패키지")
@@ -708,15 +708,20 @@ def test_route_generates_views_and_downloads(env):
 
     r = client.get("/projects/pkg-b/handoff/package/archive")
     assert r.status_code == 200
-    assert "pkg-b-handoff.zip" in r.headers["content-disposition"]
+    assert r.headers["content-disposition"] == 'attachment; filename="pkg-b-handoff.zip"'
     zf = zipfile.ZipFile(io.BytesIO(r.content))
-    # 모든 항목이 폴더 하나 아래다 — 어떤 도구로 풀어도 시작 프롬프트의 경로(./aipds-handoff/…)가
-    # 맞고, 프로젝트 루트에 풀어도 패키지의 README가 프로젝트의 README를 덮지 않는다.
-    assert {n.split("/", 1)[0] for n in zf.namelist()} == {package.ARCHIVE_ROOT}
+    # 모든 항목이 zip 이름과 같은 폴더 하나 아래다 — 어떤 도구로 풀어도 시작 프롬프트의 경로가 맞고,
+    # 프로젝트 루트에 풀어도 패키지의 README가 프로젝트의 README를 덮지 않는다.
+    assert {n.split("/", 1)[0] for n in zf.namelist()} == {"pkg-b-handoff"}
+    prompt = zf.read("pkg-b-handoff/start-prompt.md").decode()
+    assert "/aidlc ./pkg-b-handoff/vision.md를 읽고" in prompt
+    assert "./pkg-b-handoff/decisions.md" in prompt
+    # 화면이 보이는 시작 프롬프트도 같은 폴더를 가리킨다.
+    assert "./pkg-b-handoff/vision.md" in body["files"]["start-prompt.md"]
     names = [n.split("/", 1)[1] for n in zf.namelist()]
     assert {"README.md", "start-prompt.md", "vision.md", "decisions.md"} <= set(names)
     assert "discovery/use-case-intake/use-cases.md" in names
-    assert zf.read("aipds-handoff/uploads/ab12cd34/동의서.pdf") == b"%PDF-1.7 bytes"   # 바이트 그대로
+    assert zf.read("pkg-b-handoff/uploads/ab12cd34/동의서.pdf") == b"%PDF-1.7 bytes"   # 바이트 그대로
     # 질문 파일·빌드 지시서·디자인 컨텍스트·프로토타입 소스·감사 로그·보기·이전 구성의 문서는 넣지 않는다.
     assert not any(n.endswith(("-questions.md", "build-instructions.md", "design-context.md",
                                "audit.md")) or n.startswith("prototype/") for n in names)
@@ -822,3 +827,12 @@ def test_route_reset_is_refused_while_generating(env, monkeypatch):
     monkeypatch.setattr(package.jobs, "running", lambda pid: True)
     assert client.delete("/projects/pkg-busy/handoff").status_code == 409
     assert package.PACKAGE_PREFIX + "vision.md" in s3.blobs
+
+
+def test_the_zip_and_its_folder_share_one_name():
+    """zip 이름, 그 안의 폴더, 시작 프롬프트의 경로가 한 함수에서 나온다. 가져온 프로젝트의 id는
+    생성 화면의 규칙(영문·숫자·_·-)을 따르지 않을 수 있다."""
+    assert package.archive_folder("industry-safe-law") == "industry-safe-law-handoff"
+    assert package.archive_folder("안전 프로젝트") == "project-handoff"
+    assert package.archive_folder("ws_a.v2 (copy)") == "ws_a.v2-copy-handoff"
+    assert "./ws-x-handoff/vision.md" in package.start_prompt("en", package.archive_folder("ws-x"))

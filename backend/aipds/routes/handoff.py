@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import io
-import re
 import zipfile
-from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
@@ -98,7 +96,8 @@ async def generate_handoff_package(pid: str, body: GenerateRequest | None = None
     started = await package.start(s3, state, resume=bool(body and body.resume))
     package.jobs.spawn(pid, package.run(
         s3, read=ws.runner.read_file, paths=paths, readiness=state, language=app_module.project_language(pid),
-        call=app_module.handoff_writer_factory(pid), started=started))
+        call=app_module.handoff_writer_factory(pid), started=started,
+        folder=package.archive_folder(pid)))
     return started
 
 
@@ -107,8 +106,18 @@ async def get_handoff_package(pid: str):
     """마지막으로 만든 패키지: 상태, 파일 내용, 검사 결과, 만든 뒤 바뀐 원본."""
     paths = await _paths(pid)
     ws = await ensure_workspace(pid)
-    return await package.view(app_module.s3_store_factory(pid), read=ws.runner.read_file,
+    view = await package.view(app_module.s3_store_factory(pid), read=ws.runner.read_file,
                               paths=paths, running=package.jobs.running(pid))
+    _fresh_start_prompt(pid, view.files)
+    return view
+
+
+def _fresh_start_prompt(pid: str, files: dict[str, str]) -> None:
+    """시작 프롬프트를 지금의 폴더 이름으로 다시 쓴다. 저장된 것은 만들 때의 이름이라, 이름 규칙이
+    바뀌기 전에 만든 패키지도 내려받는 zip과 경로가 맞는다 — 모델 없이 언어와 폴더만으로 정해진다."""
+    if package.START_PROMPT in files:
+        files[package.START_PROMPT] = package.start_prompt(
+            app_module.project_language(pid), package.archive_folder(pid))
 
 
 class ResetResult(BaseModel):
@@ -126,15 +135,14 @@ async def reset_handoff(pid: str):
 
 
 def _content_disposition(pid: str) -> str:
-    """artifacts의 같은 이름 함수와 같은 이유 — pid는 비-ASCII일 수 있다."""
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", pid).strip("-") or "project"
-    utf8 = quote(f"{pid}-handoff.zip", safe="")
-    return f'attachment; filename="{safe}-handoff.zip"; filename*=UTF-8\'\'{utf8}'
+    """zip 이름은 그 안의 최상위 폴더 이름과 같다(package.archive_folder). 둘 다 ASCII로 고친 이름이라
+    UTF-8 이름을 따로 줄 필요가 없다."""
+    return f'attachment; filename="{package.archive_folder(pid)}.zip"'
 
 
 @router.get("/projects/{pid}/handoff/package/archive")
 async def download_handoff_package(pid: str):
-    """`aipds-handoff/` 아래에 패키지 파일 + Discovery 원본(`discovery/`, 근거만) + 업로드 원자료
+    """`{pid}-handoff/` 아래에 패키지 파일 + Discovery 원본(`discovery/`, 근거만) + 업로드 원자료
     (`uploads/`). 프로토타입 소스는 넣지 않는다."""
     s3 = app_module.s3_store_factory(pid)
     manifest = await package.load_manifest(s3)
@@ -143,12 +151,12 @@ async def download_handoff_package(pid: str):
     paths = await _paths(pid)
     ws = await ensure_workspace(pid)
     built = await package.read_package(s3, manifest)
+    _fresh_start_prompt(pid, built)
     raw = await package.read_sources(ws.runner.read_file, package.archive_originals(paths))
     uploads = await s3.list(_UPLOADS)
     buf = io.BytesIO()
-    # 모든 항목을 최상위 폴더 하나 아래 둔다 — 시작 프롬프트의 경로가 그것을 가리킨다
-    # (package.ARCHIVE_ROOT).
-    root = package.ARCHIVE_ROOT + "/"
+    # 모든 항목을 zip 이름과 같은 폴더 하나 아래 둔다 — 시작 프롬프트의 경로가 그것을 가리킨다.
+    root = package.archive_folder(pid) + "/"
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, text in built.items():
             zf.writestr(root + name, text)

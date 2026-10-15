@@ -710,7 +710,7 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.pkg.truncated": "{n} large source file(s) were included only in part",
   "handoff.pkg.toStatus": "← Handoff readiness",
   "handoff.pkg.startPrompt": "AI-DLC start prompt",
-  "handoff.pkg.startPromptHint": "Unpacking at the project root creates aipds-handoff/; then paste this as it is",
+  "handoff.pkg.startPromptHint": "Unpacking at the project root creates a directory named like the zip; then paste this as it is",
   "handoff.pkg.copy": "Copy",
   "handoff.pkg.copied": "Copied",
   "handoff.progress.title": "Package generation",
