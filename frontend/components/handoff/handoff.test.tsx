@@ -308,14 +308,15 @@ describe("ReadinessPanel — open PM decisions", () => {
 const READY: PackageView = {
   manifest: {
     status: "ready", started_at: "2026-10-09T10:38:00Z", finished_at: "2026-10-09T10:40:12Z", error: null, origin: "B",
-    files: ["README.md", "open-decisions.md", "decisions.md"],
+    files: ["README.md", "start-prompt.md", "vision.md", "decisions.md"],
     steps: [],
-    findings: [{ file: "open-decisions.md", line: 3, term: "PostgreSQL", kind: "tech" },
-               { file: "open-decisions.md", line: 5, term: "빠르게", kind: "vague" }],
+    findings: [{ file: "vision.md", line: 3, term: "PostgreSQL", kind: "tech" },
+               { file: "vision.md", line: 5, term: "빠르게", kind: "vague" }],
     truncated: [],
   },
-  files: { "open-decisions.md": "# 열린 결정\n", "README.md": "# 개발 인계 패키지\n",
-           "decisions.md": "# 결정 장부\n" },
+  files: { "vision.md": "# 샘플몰 — Vision\n", "README.md": "# 개발 인계 패키지\n",
+           "decisions.md": "# 결정 장부\n",
+           "start-prompt.md": "# AI-DLC 시작 프롬프트\n\n```text\n/aidlc ./vision.md를 읽고 만들어 주세요.\n```\n\n```text\n/aidlc 다른 변형\n```\n" },
   stale: [`${D}use-case-intake/use-cases.md`],
   supplement_changed: true,
   resumable: false,
@@ -325,9 +326,9 @@ describe("PackagePanel", () => {
   const handlers = () => ({ onRegenerate: vi.fn(), onDownload: vi.fn(), onSupplement: vi.fn(),
                              onStatus: vi.fn() });
 
-  it("opens on the open decisions, with findings and what changed since it was built", async () => {
+  it("opens on the vision document, with findings and what changed since it was built", async () => {
     render(<PackagePanel pkg={READY} generating={false} {...handlers()} />);
-    expect(screen.getByRole("heading", { name: "열린 결정" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "샘플몰 — Vision" })).toBeInTheDocument();
     expect(screen.getByText("검사에 걸린 줄 2건")).toBeInTheDocument();
     expect(screen.getByText("패키지를 만든 뒤 원본 1건이 바뀌었습니다")).toBeInTheDocument();
     expect(screen.getByText("패키지를 만든 뒤 보완 답이 바뀌었습니다")).toBeInTheDocument();
@@ -340,9 +341,9 @@ describe("PackagePanel", () => {
 
   it("says how to fix each kind of finding and ignores kinds an older package had", () => {
     const pkg: PackageView = { ...READY, manifest: { ...READY.manifest!, findings: [
-      { file: "open-decisions.md", line: 4, term: "개인 링크의 유효 기간은?", kind: "dropped" },
-      { file: "open-decisions.md", line: 9, term: "O-05", kind: "triage" },
-      { file: "open-decisions.md", line: 12, term: "confirmed_by_pm=true", kind: "internal" },
+      { file: "vision.md", line: 4, term: "개인 링크의 유효 기간은?", kind: "dropped" },
+      { file: "vision.md", line: 9, term: "O-05", kind: "triage" },
+      { file: "vision.md", line: 12, term: "confirmed_by_pm=true", kind: "internal" },
       { file: "PRD.md", line: 54, term: "R-10", kind: "acceptance" },
     ] } };
     render(<PackagePanel pkg={pkg} generating={false} {...handlers()} />);
@@ -350,8 +351,19 @@ describe("PackagePanel", () => {
     expect(within(alert).getByText("검사에 걸린 줄 3건")).toBeInTheDocument();
     expect(within(alert).getByText(/원본에 이제 답이 있는지 확인하고/)).toBeInTheDocument();
     expect(within(alert).getByText("빠진 PM 결정 1")).toBeInTheDocument();
-    expect(screen.getByText("L9 · 열린 결정 분류 ·", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("L9 · 열린 질문 분류 ·", { exact: false })).toBeInTheDocument();
     expect(screen.queryByText(/acceptance/)).not.toBeInTheDocument();
+  });
+
+  it("shows the AI-DLC start request on top and copies exactly its first code block", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<PackagePanel pkg={READY} generating={false} {...handlers()} />);
+    expect(screen.getByText("AI-DLC 시작 프롬프트")).toBeInTheDocument();
+    expect(screen.getByText("/aidlc ./vision.md를 읽고 만들어 주세요.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "복사" }));
+    expect(writeText).toHaveBeenCalledWith("/aidlc ./vision.md를 읽고 만들어 주세요.");
+    expect(screen.getByRole("button", { name: "복사됨" })).toBeInTheDocument();
   });
 
   it("has no edit control — only regenerate and download", () => {
@@ -436,8 +448,8 @@ describe("HandoffReadyBanner", () => {
   });
 });
 
-const step = (name: "open" | "options", patch: Record<string, unknown>) => ({
-  name, file: name === "open" ? "open-decisions.md" : "options.json", status: "pending" as const, started_at: null, finished_at: null,
+const step = (name: "vision" | "options", patch: Record<string, unknown>) => ({
+  name, file: name === "vision" ? "vision.md" : "options.json", status: "pending" as const, started_at: null, finished_at: null,
   chars: 0, thinking: false, error: null, ...patch,
 });
 
@@ -455,11 +467,11 @@ function progress(manifest: Record<string, unknown>, extra: Partial<PackageView>
 describe("GenerationProgress", () => {
   it("shows each step — waiting for the first response, thinking, receiving", () => {
     progress({ status: "generating", steps: [
-      step("open", { status: "done", chars: 9000, started_at: "2026-10-09T14:16:39Z",
+      step("vision", { status: "done", chars: 9000, started_at: "2026-10-09T14:16:39Z",
                      finished_at: "2026-10-09T14:19:00Z" }),
       step("options", { status: "running", started_at: new Date().toISOString() }),
     ] });
-    expect(screen.getByText("열린 결정 정리")).toBeInTheDocument();
+    expect(screen.getByText("vision 문서 작성")).toBeInTheDocument();
     expect(screen.getByText(/^완료 · 9,000자 · 2분 21초/)).toBeInTheDocument();
     expect(screen.getByText(/^첫 응답을 기다리는 중 ·/)).toBeInTheDocument();
     // 생성 중에는 다시 하기 버튼이 없다.
@@ -468,7 +480,7 @@ describe("GenerationProgress", () => {
 
   it("tells thinking apart from receiving", () => {
     progress({ status: "generating", steps: [
-      step("open", { status: "running", thinking: true, started_at: new Date().toISOString() }),
+      step("vision", { status: "running", thinking: true, started_at: new Date().toISOString() }),
       step("options", {}),
     ] });
     expect(screen.getByText(/^생각하는 중 ·/)).toBeInTheDocument();
@@ -477,7 +489,7 @@ describe("GenerationProgress", () => {
 
   it("offers to resume from the failed step when the server says it can", async () => {
     const h = progress({ status: "failed", error: "timeout", steps: [
-      step("open", { status: "failed", error: "timeout" }),
+      step("vision", { status: "failed", error: "timeout" }),
       step("options", {}),
     ] }, { resumable: true });
     expect(screen.getByRole("alert")).toHaveTextContent("모델 응답이 너무 오래 걸렸습니다");
@@ -488,7 +500,7 @@ describe("GenerationProgress", () => {
 
   it("only offers to start over when the sources changed", async () => {
     const h = progress({ status: "interrupted", steps: [
-      step("open", { status: "done" }),
+      step("vision", { status: "done" }),
       step("options", { status: "failed", error: "interrupted" }),
     ] }, { resumable: false });
     expect(screen.getByRole("alert")).toHaveTextContent("생성이 중단됐습니다");
