@@ -618,3 +618,58 @@ X) Other (please describe after [Answer]: tag below)
     q = parse_question_file("q.md", md).questions[0]
     assert [o.letter for o in q.options] == ["A", "B", "C", "D", "E", "F", "G", "X"]
     assert q.multi_select
+
+
+# ---- 번역된 자유 입력 보기 ----
+#
+# 상류 템플릿의 `X) Other (please describe after [Answer]: tag below)`를 ko 프로젝트의 에이전트는
+# 라벨과 글자까지 바꿔 쓴다. 실측(ap-idp-project-v1): 기타 보기 61개가 전부
+# `D) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)` 모양이었고, 일반 보기로 읽혀 다중 선택에서는
+# "기타"를 골라도 쓸 칸이 없었다.
+
+_KO_OTHER = """# Questions
+
+## Question 1
+현재 쓰는 도구는 무엇입니까? (해당하는 항목 모두 선택)
+
+A) 엑셀
+B) 그룹웨어 결재
+C) 기타 행정 업무 시스템
+D) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)
+
+[Answer]:
+
+## Question 2
+제품 이름은?
+
+A) 안전ON
+B) 기타
+C) 수정이 필요하다 (아래 [Answer]: 태그 뒤에 고칠 부분을 적어 주세요)
+
+[Answer]:
+"""
+
+
+def test_a_translated_other_option_is_a_write_in_even_without_the_letter_x():
+    qf = parse_question_file("x.md", _KO_OTHER)
+    first, second = qf.questions
+    assert first.multi_select is True
+    assert [(o.letter, o.is_other) for o in first.options] == [
+        ("A", False), ("B", False),
+        ("C", False),   # "기타 행정 업무 시스템"은 실제 보기다 — 낱말 "기타"로 시작할 뿐
+        ("D", True)]
+    # "기타" 낱말 하나도 자유 입력이다. [Answer]에 부연을 쓰라는 보기는 고르는 것이 결정이다 —
+    # 자유 입력으로 바꾸면 답에서 무엇을 골랐는지가 사라진다.
+    assert [(o.letter, o.is_other) for o in second.options] == [
+        ("A", False), ("B", True), ("C", False)]
+
+
+def test_the_payload_path_uses_the_same_rule():
+    """두 경로가 갈리면 같은 질문이 입력 형식(파일·ask_questions)에 따라 다르게 렌더된다."""
+    from aipds.agent.questions_payload import normalize_questions_payload
+    out = normalize_questions_payload({"name": "x", "questions": [{
+        "number": 1, "text": "도구는?", "multi_select": True,
+        "options": [{"letter": "A", "text": "엑셀"},
+                    {"letter": "D", "text": "기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)"},
+                    {"letter": "E", "text": "수정하겠다 ([Answer]: 뒤에 적어 주세요)"}]}]})
+    assert [o["is_other"] for o in out["questions"][0]["options"]] == [False, True, False]
