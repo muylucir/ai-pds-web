@@ -88,12 +88,11 @@ const VIEW: SupplementView = {
   confirmations: [
     { key: `${STRATEGY}#1`, file: STRATEGY, number: 1, ask: "수익 모델은?", answer: "A: 첫 해는 할인",
       stage: "product_strategy", choices: ["구독형 — 매장 수 기준 월 과금"],
-      note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null, in_prd: [],
-      in_goals: false },
+      note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null },
     { key: `${D}envision/prfaq-clarifying-questions.md#1`, file: `${D}envision/prfaq-clarifying-questions.md`,
       number: 1, ask: "제품명은?", answer: "A", stage: "envision",
       choices: ["샘플몰 안전ON"], note: "페인 포인트 분석 기반 제안", remark: "", confirmed_at: "t",
-      in_prd: [], in_goals: false },
+    },
   ],
   open_questions: [],
   open_deferred: [],
@@ -141,28 +140,6 @@ describe("SupplementForm", () => {
     expect(screen.queryByText(/strategy-questions\.md/)).not.toBeInTheDocument();
   });
 
-  it("puts the decisions the PRD actually used first, with the PRD line they became", () => {
-    const view: SupplementView = {
-      ...VIEW, has_package: true,
-      confirmations: VIEW.confirmations.map((c) => c.number === 1 && c.stage === "product_strategy"
-        ? { ...c, in_prd: ["G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상"] } : c),
-    };
-    render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
-                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
-    expect(screen.getByText("PRD에 들어간 AI 제안 1건")).toBeInTheDocument();
-    expect(screen.getByText("G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상")).toBeInTheDocument();
-    expect(screen.getByText("PRD에 직접 쓰이지 않은 결정 1건")).toBeInTheDocument();
-    // PRD에 들어간 것은 접히지 않고, 나머지만 단계별로 접힌다.
-    const summaries = [...document.querySelectorAll("summary")].map((el) => el.textContent);
-    expect(summaries).toEqual(["PR/FAQ · 문제 정의 1건 · 확인 1"]);
-  });
-
-  it("explains that a package moves the used decisions up when there is none yet", () => {
-    render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
-                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
-    expect(screen.getByText(/패키지를 한 번 만들면/)).toBeInTheDocument();
-  });
-
   it("counts only the gap questions as progress — confirming is optional", () => {
     render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
@@ -185,7 +162,7 @@ describe("SupplementForm", () => {
   });
 });
 
-describe("SupplementForm — what the last PRD left open", () => {
+describe("SupplementForm — what the last open decisions left to the PM", () => {
   // 실측(ws-g): 섹션이 모두 sourced라 보완 질문이 0개였는데, PRD 9번에는 보존 기간·
   // 권한·재알림 규칙처럼 구현을 막는 PM 결정이 열려 있었다.
   const OPEN: SupplementView = {
@@ -204,7 +181,7 @@ describe("SupplementForm — what the last PRD left open", () => {
     ],
   };
 
-  it("asks the PRD's open PM decisions with no prefilled answer and counts them as progress", () => {
+  it("asks the open PM decisions with no prefilled answer and counts them as progress", () => {
     render(<SupplementForm view={OPEN} workspaceHref="/w" busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     expect(screen.getByText("빌드 전에 정할 PM 결정 2개")).toBeInTheDocument();
@@ -307,27 +284,14 @@ describe("SupplementForm — what the last PRD left open", () => {
     });
   });
 
-  it("puts the AI suggestions that became success metrics first", () => {
-    // 실측: 성공 지표 G-01~05가 전부 확인되지 않은 AI 제안이었다.
-    const view: SupplementView = {
-      ...OPEN,
-      confirmations: VIEW.confirmations.map((c) => c.stage === "product_strategy"
-        ? { ...c, in_prd: ["G-01 투입 시간 60% 절감"], in_goals: true } : c),
-    };
-    render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
-                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
-    expect(screen.getByText("성공 지표가 된 AI 제안 1건")).toBeInTheDocument();
-    expect(screen.getByText("G-01 투입 시간 60% 절감")).toBeInTheDocument();
-    expect(screen.getByText("PRD에 들어간 AI 제안 0건")).toBeInTheDocument();
-  });
 });
 
 describe("ReadinessPanel — open PM decisions", () => {
-  it("shows PM decisions the last PRD left open even when no section is empty", async () => {
+  it("shows open PM decisions even when no topic lacks material", async () => {
     const full: Readiness = { ...PATH_B, sections: PATH_B.sections.map((s) =>
       s.key === "open_questions" ? s : { ...s, status: "sourced" }) };
     const h = readiness({ readiness: full, questionCount: 17, openDecisions: 17, hasPackage: true });
-    expect(screen.getByText("9개 섹션의 재료가 모두 있습니다")).toBeInTheDocument();
+    expect(screen.getByText("9개 주제의 재료가 모두 있습니다")).toBeInTheDocument();
     expect(screen.getByText(/^17개가 아직 열려 있습니다/)).toBeInTheDocument();
     await userEvent.click(screen.getAllByRole("button", { name: "보완 질문 답하기 →" })[0]);
     expect(h.onSupplement).toHaveBeenCalled();
@@ -335,7 +299,7 @@ describe("ReadinessPanel — open PM decisions", () => {
 
   it("has no open-decision row before a package exists", () => {
     readiness();
-    expect(screen.queryByText("PRD에 남은 PM 결정")).not.toBeInTheDocument();
+    expect(screen.queryByText("빌드 전에 정할 PM 결정")).not.toBeInTheDocument();
   });
 });
 
@@ -343,14 +307,14 @@ describe("ReadinessPanel — open PM decisions", () => {
 const READY: PackageView = {
   manifest: {
     status: "ready", started_at: "2026-10-09T10:38:00Z", finished_at: "2026-10-09T10:40:12Z", error: null, origin: "B",
-    files: ["PRD.md", "validation-report.md", "build-scope.md", "README.md"],
+    files: ["README.md", "open-decisions.md", "decisions.md"],
     steps: [],
-    findings: [{ file: "PRD.md", line: 3, term: "PostgreSQL", kind: "tech" },
-               { file: "PRD.md", line: 5, term: "빠르게", kind: "vague" }],
+    findings: [{ file: "open-decisions.md", line: 3, term: "PostgreSQL", kind: "tech" },
+               { file: "open-decisions.md", line: 5, term: "빠르게", kind: "vague" }],
     truncated: [],
   },
-  files: { "PRD.md": "# PRD 제목\n", "README.md": "# 개발 인계 패키지\n",
-           "validation-report.md": "# 검증\n", "build-scope.md": "# 남은 작업\n" },
+  files: { "open-decisions.md": "# 열린 결정\n", "README.md": "# 개발 인계 패키지\n",
+           "decisions.md": "# 결정 장부\n" },
   stale: [`${D}use-case-intake/use-cases.md`],
   supplement_changed: true,
   resumable: false,
@@ -360,31 +324,33 @@ describe("PackagePanel", () => {
   const handlers = () => ({ onRegenerate: vi.fn(), onDownload: vi.fn(), onSupplement: vi.fn(),
                              onStatus: vi.fn() });
 
-  it("shows the PRD first, findings, and what changed since it was built", async () => {
+  it("opens on the open decisions, with findings and what changed since it was built", async () => {
     render(<PackagePanel pkg={READY} generating={false} {...handlers()} />);
-    expect(screen.getByRole("heading", { name: "PRD 제목" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "열린 결정" })).toBeInTheDocument();
     expect(screen.getByText("검사에 걸린 줄 2건")).toBeInTheDocument();
     expect(screen.getByText("패키지를 만든 뒤 원본 1건이 바뀌었습니다")).toBeInTheDocument();
     expect(screen.getByText("패키지를 만든 뒤 보완 답이 바뀌었습니다")).toBeInTheDocument();
     expect(screen.getByText("원본이 바뀜")).toBeInTheDocument();
     expect(screen.getByText(/생성 2026-10-09 10:40 UTC/)).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "build-scope.md" }));
-    expect(screen.getByRole("heading", { name: "남은 작업" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "decisions.md" }));
+    expect(screen.getByRole("heading", { name: "결정 장부" })).toBeInTheDocument();
   });
 
-  it("says how to fix each kind of finding — success metrics are not fixed by regenerating", () => {
+  it("says how to fix each kind of finding and ignores kinds an older package had", () => {
     const pkg: PackageView = { ...READY, manifest: { ...READY.manifest!, findings: [
-      { file: "PRD.md", line: 23, term: "G-01", kind: "ai_goal" },
+      { file: "open-decisions.md", line: 4, term: "개인 링크의 유효 기간은?", kind: "dropped" },
+      { file: "open-decisions.md", line: 9, term: "O-05", kind: "triage" },
+      { file: "open-decisions.md", line: 12, term: "confirmed_by_pm=true", kind: "internal" },
       { file: "PRD.md", line: 54, term: "R-10", kind: "acceptance" },
-      { file: "PRD.md", line: 48, term: "confirmed_by_pm=true", kind: "internal" },
     ] } };
     render(<PackagePanel pkg={pkg} generating={false} {...handlers()} />);
     const alert = screen.getByRole("alert");
     expect(within(alert).getByText("검사에 걸린 줄 3건")).toBeInTheDocument();
-    expect(within(alert).getByText(/다시 생성해도 그대로입니다/)).toBeInTheDocument();
-    expect(within(alert).getByText("수용 기준 없음 1")).toBeInTheDocument();
-    expect(screen.getByText("L54 · 수용 기준 없음 ·", { exact: false })).toBeInTheDocument();
+    expect(within(alert).getByText(/원본에 이제 답이 있는지 확인하고/)).toBeInTheDocument();
+    expect(within(alert).getByText("빠진 PM 결정 1")).toBeInTheDocument();
+    expect(screen.getByText("L9 · 열린 결정 분류 ·", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText(/acceptance/)).not.toBeInTheDocument();
   });
 
   it("has no edit control — only regenerate and download", () => {
@@ -459,8 +425,8 @@ describe("HandoffReadyBanner", () => {
   });
 });
 
-const step = (name: "prd" | "validation" | "scope", patch: Record<string, unknown>) => ({
-  name, file: `${name}.md`, status: "pending" as const, started_at: null, finished_at: null,
+const step = (name: "open" | "options", patch: Record<string, unknown>) => ({
+  name, file: name === "open" ? "open-decisions.md" : "options.json", status: "pending" as const, started_at: null, finished_at: null,
   chars: 0, thinking: false, error: null, ...patch,
 });
 
@@ -478,31 +444,30 @@ function progress(manifest: Record<string, unknown>, extra: Partial<PackageView>
 describe("GenerationProgress", () => {
   it("shows each step — waiting for the first response, thinking, receiving", () => {
     progress({ status: "generating", steps: [
-      step("prd", { status: "done", chars: 12000, started_at: "2026-10-09T14:16:39Z",
-                    finished_at: "2026-10-09T14:19:00Z" }),
-      step("validation", { status: "running", started_at: new Date().toISOString() }),
-      step("scope", {}),
+      step("open", { status: "done", chars: 9000, started_at: "2026-10-09T14:16:39Z",
+                     finished_at: "2026-10-09T14:19:00Z" }),
+      step("options", { status: "running", started_at: new Date().toISOString() }),
     ] });
-    expect(screen.getByText(/^완료 · 12,000자 · 2분 21초/)).toBeInTheDocument();
+    expect(screen.getByText("열린 결정 정리")).toBeInTheDocument();
+    expect(screen.getByText(/^완료 · 9,000자 · 2분 21초/)).toBeInTheDocument();
     expect(screen.getByText(/^첫 응답을 기다리는 중 ·/)).toBeInTheDocument();
-    expect(screen.getByText("대기")).toBeInTheDocument();
     // 생성 중에는 다시 하기 버튼이 없다.
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("tells thinking apart from receiving", () => {
     progress({ status: "generating", steps: [
-      step("prd", { status: "running", thinking: true, started_at: new Date().toISOString() }),
-      step("validation", {}), step("scope", {}),
+      step("open", { status: "running", thinking: true, started_at: new Date().toISOString() }),
+      step("options", {}),
     ] });
     expect(screen.getByText(/^생각하는 중 ·/)).toBeInTheDocument();
+    expect(screen.getByText("대기")).toBeInTheDocument();
   });
 
   it("offers to resume from the failed step when the server says it can", async () => {
     const h = progress({ status: "failed", error: "timeout", steps: [
-      step("prd", { status: "done", chars: 9000 }),
-      step("validation", { status: "failed", error: "timeout" }),
-      step("scope", {}),
+      step("open", { status: "failed", error: "timeout" }),
+      step("options", {}),
     ] }, { resumable: true });
     expect(screen.getByRole("alert")).toHaveTextContent("모델 응답이 너무 오래 걸렸습니다");
     expect(screen.getByText("실패: 모델 응답이 너무 오래 걸렸습니다")).toBeInTheDocument();
@@ -512,9 +477,8 @@ describe("GenerationProgress", () => {
 
   it("only offers to start over when the sources changed", async () => {
     const h = progress({ status: "interrupted", steps: [
-      step("prd", { status: "done" }),
-      step("validation", { status: "failed", error: "interrupted" }),
-      step("scope", {}),
+      step("open", { status: "done" }),
+      step("options", { status: "failed", error: "interrupted" }),
     ] }, { resumable: false });
     expect(screen.getByRole("alert")).toHaveTextContent("생성이 중단됐습니다");
     expect(screen.getByText("실패: 서버가 다시 시작되어 중단됐습니다")).toBeInTheDocument();

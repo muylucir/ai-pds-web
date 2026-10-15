@@ -156,9 +156,9 @@ export function ReadinessPanel({
       <div className="mt-6 text-[13px] text-slate-500">
         <b className="text-slate-700">{t("handoff.contains.title")}</b>
         <ul className="mt-1.5 pl-5 list-disc space-y-0.5">
-          <li>{t("handoff.contains.prd")}</li>
-          <li>{t("handoff.contains.validation")}</li>
-          <li>{t("handoff.contains.scope")}</li>
+          <li>{t("handoff.contains.document")}</li>
+          <li>{t("handoff.contains.open")}</li>
+          <li>{t("handoff.contains.ledger")}</li>
           <li>{t("handoff.contains.originals")}</li>
         </ul>
         <p className="mt-1">{t("handoff.contains.noSource")}</p>

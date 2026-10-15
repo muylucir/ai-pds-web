@@ -1,6 +1,6 @@
 # backend/aipds/handoff/supplement.py — 인계 시점에 PM에게 받는 보완 답.
 #
-# **왜 있는가.** 출발점에 따라 PRD 섹션의 재료가 없다(handoff/readiness). Path B와 EP1은
+# **왜 있는가.** 출발점에 따라 어떤 주제의 재료가 없다(handoff/readiness). Path B와 EP1은
 # Envision을 거치지 않아 문제의 근거·가정·하지 않을 것이 비고, 그것은 PM만 답할 수 있다.
 # 지어내면 하네스가 사실과 구별하지 못하므로, 인계 탭이 그 빈칸만 묻는다
 # (plans/2026-10-09-handoff-package.md §1).
@@ -8,14 +8,14 @@
 # **룰을 해치지 않는 조건이 이 모듈의 모양을 정한다.**
 #
 #   - 재료가 없는 곳에만 묻는다. 문항은 두 군데서 결정적으로 나온다. 하나는 판정 결과의
-#     빈 섹션이고(고정 문항), 다른 하나는 마지막 PRD의 열린 질문 중 PM이 답할 것이다
+#     빈 섹션이고(고정 문항), 다른 하나는 마지막 열린 결정 중 PM이 답할 것이다
 #     (`OpenQuestion`). 뒤의 것이 필요한 이유: 판정은 파일의 존재로 보므로 섹션이 모두
 #     sourced여도 내용의 빈칸은 남는다 — 실측(ws-g)에서 보존 기간·본인 확인
 #     수준·권한처럼 구현을 막는 PM 결정 7개가 열려 있었는데 보완 질문은 0개였다. 모델이
-#     질문을 새로 짓는 것이 아니라 PRD가 이미 "PM에게 묻는다"고 적은 줄을 그대로 되돌린다.
+#     질문을 새로 짓는 것이 아니라 열린 결정이 이미 "PM에게 묻는다"고 적은 줄을 그대로 되돌린다.
 #     그중에서도 시점이 "빌드 전"인 줄만 묻는다. 실측(ws-g)에서 PRD가 열린 질문
 #     22개 중 18개를 PM 몫으로 적었는데 구현을 막는 것은 7개였다 — 지원 외국어 목록이나 버튼
-#     형태까지 인계 전에 서술형으로 받으면 PM이 넘지 못한다. "빌드 중" 줄은 PRD에 "답이 나올
+#     형태까지 인계 전에 서술형으로 받으면 PM이 넘지 못한다. "빌드 중" 줄은 "답이 나올
 #     때까지" 어떻게 만들지가 적혀 있어 접어 두고, 답하고 싶으면 답할 수 있다.
 #   - "PM(외부 확인)" 줄은 PM이 고르는 결정이 아니라 법무·감독기관·협력사에서 받아 올 사실이다.
 #     보기를 주면 원하는 결론을 고르는 모양이 된다(실측 ws-g: "증빙 효력을 갖는가?"에 "인정한다"가
@@ -71,16 +71,14 @@ QUESTIONS: tuple[tuple[str, str], ...] = (
     ("assumptions.failure_reasons", "assumptions"),
 )
 _QUESTION_IDS = frozenset(qid for qid, _ in QUESTIONS)
-#: PRD 섹션 번호(readiness.SECTIONS의 순서). 성공 지표가 인용한 AI 제안을 따로 묶는다.
-_GOALS_SECTION = 3
 
 #: 답 하나의 상한. 화면은 여러 줄 입력이고, 이 이상은 붙여 넣은 문서다 — 그것은 업로드의 일이다.
 MAX_ANSWER_CHARS = 4000
 #: 확인 키: `aiplc-docs/…-questions.md#<문항 번호>`.
 _CONFIRM_KEY = re.compile(r"^aiplc-docs/[^#\s]+-questions\.md#\d{1,4}$")
 _MAX_CONFIRMATIONS = 500
-#: 열린 질문 답의 키: `open:` + 질문 문장 해시. PRD를 다시 만들면 번호(O-03)는 바뀌므로
-#: 문장으로 잇는다 — 다시 만든 PRD가 문장을 바꾸면 새 질문으로 보이고, 답은 기록에 남는다.
+#: 열린 질문 답의 키: `open:` + 질문 문장 해시. 다시 만들면 번호(O-03)는 바뀌므로
+#: 문장으로 잇는다 — 다시 만든 판이 문장을 바꾸면 새 질문으로 보이고, 답은 기록에 남는다.
 _OPEN_KEY = re.compile(r"^open:[0-9a-f]{12}$")
 _MAX_OPEN_ANSWERS = 200
 MAX_QUESTION_CHARS = 1000
@@ -89,13 +87,13 @@ MAX_PENDING_CHARS = 200
 
 class Answer(BaseModel):
     text: str = Field(default="", max_length=MAX_ANSWER_CHARS)
-    #: "모름". 답한 것으로 세고, 그 내용은 PRD의 열린 질문으로 간다.
+    #: "모름". 답한 것으로 세고, 그 내용은 열린 결정으로 간다.
     unknown: bool = False
     updated_at: str = ""
 
 
 class OpenAnswer(Answer):
-    #: 답한 질문의 문장. 질문은 PRD에서 왔고 PRD는 다시 만들어진다 — 기록만으로 무엇에 답했는지
+    #: 답한 질문의 문장. 질문은 열린 결정에서 왔고 그것은 다시 만들어진다 — 기록만으로 무엇에 답했는지
     #: 알 수 있어야 다음 생성이 그 답을 쓴다.
     question: str = Field(max_length=MAX_QUESTION_CHARS)
     #: 외부 확인 질문을 지금 누구에게 확인 중인가. 답(text)이 없어도 이것만으로 답한 것으로 센다.
@@ -106,7 +104,7 @@ class Supplement(BaseModel):
     answers: dict[str, Answer] = {}
     #: 확인 키 → 확인 시각. AI 제안 수락 항목을 PM이 "맞다"고 한 기록이다.
     confirmed: dict[str, str] = {}
-    #: PRD 열린 질문 중 PM 몫에 대한 답. 키는 `open_key(질문)`.
+    #: 열린 결정 중 PM 몫에 대한 답. 키는 `open_key(질문)`.
     open_answers: dict[str, OpenAnswer] = {}
 
 
@@ -128,11 +126,11 @@ class SupplementUpdate(BaseModel):
 
 
 class OpenQuestion(BaseModel):
-    """PRD 9번(열린 질문)에서 PM이 답할 것으로 적힌 줄 하나."""
-    #: PRD 안의 번호(O-03). 다시 만들면 바뀐다 — 화면 표시용이다.
+    """열린 결정에서 PM이 답할 것으로 적힌 줄 하나."""
+    #: 문서 안의 번호(O-03). 다시 만들면 바뀐다 — 화면 표시용이다.
     id: str
     question: str
-    #: 시점이 "빌드 전"인가. 시점 열이 없는 PRD(이 구분 이전)나 알 수 없는 값은 빌드 전으로
+    #: 시점이 "빌드 전"인가. 시점 열이 없는 표(이 구분 이전)나 알 수 없는 값은 빌드 전으로
     #: 본다 — 묻지 않아서 놓치는 쪽보다 한 번 더 묻는 쪽이 싸다.
     blocking: bool = True
     #: "답이 나올 때까지" 칸. 빌드 중 결정이 그동안 어떻게 만들어지는지다.
@@ -146,14 +144,6 @@ class Option(BaseModel):
     text: str
     #: 근거 — `discovery/` 아래 상대 경로(질문 파일이면 문항 번호까지).
     source: str
-
-
-class Citation(BaseModel):
-    """PRD에서 "AI 제안 수락"으로 어떤 결정을 인용한 줄."""
-    #: 그 줄의 요지.
-    text: str
-    #: 그 줄이 있던 PRD 섹션 번호(1~9). 0이면 섹션 밖.
-    section: int = 0
 
 
 class QuestionView(BaseModel):
@@ -174,17 +164,11 @@ class ConfirmationView(BaseModel):
     note: str
     remark: str
     confirmed_at: str | None
-    #: 이 결정이 된 PRD 항목들. 비어 있으면 PRD가 이 결정을 "AI 제안 수락"으로 인용하지 않았다
-    #: (또는 아직 패키지가 없다).
-    in_prd: list[str] = []
-    #: PRD 3번(목표와 성공 지표)이 이 결정을 인용했다. 성공 지표는 개발이 무엇을 위해 만드는지를
-    #: 정하는데, 실측(ws-g)에서 G-01~05가 전부 확인되지 않은 AI 제안이었다.
-    in_goals: bool = False
 
 
 class OpenQuestionView(BaseModel):
     key: str
-    #: 지금 PRD의 번호. 앞서 답해 PRD에서 빠진 질문은 비어 있다.
+    #: 지금 판의 번호. 앞서 답해 열린 결정에서 빠진 질문은 비어 있다.
     id: str
     question: str
     answer: OpenAnswer | None
@@ -195,17 +179,17 @@ class OpenQuestionView(BaseModel):
 
 
 class SupplementView(BaseModel):
-    #: 마지막 패키지가 있어서 `in_prd`를 믿을 수 있는가. 없으면 화면이 단계별로만 묶는다.
+    #: 마지막 패키지가 있는가. 없으면 열린 결정을 아직 읽을 수 없다.
     has_package: bool = False
     questions: list[QuestionView]
     #: 답이 있는데 그 섹션의 재료가 이제 AI-PLC 산출물에 있다. 그쪽이 이긴다.
     superseded: list[QuestionView]
     confirmations: list[ConfirmationView]
-    #: 마지막 PRD의 열린 질문 중 PM 몫이고 시점이 빌드 전인 것. 패키지가 없으면 비어 있다.
+    #: 마지막 열린 결정 중 PM 몫이고 시점이 빌드 전인 것. 패키지가 없으면 비어 있다.
     open_questions: list[OpenQuestionView] = []
     #: PM 몫이지만 빌드 중에 정해도 되는 것. 묻지 않고 접어 둔다 — 답해도 된다.
     open_deferred: list[OpenQuestionView] = []
-    #: 답했는데 지금 PRD의 열린 질문에는 없는 것 — 답이 PRD에 반영됐거나 질문 문장이 바뀌었다.
+    #: 답했는데 지금 열린 결정에는 없는 것 — 답이 반영됐거나 질문 문장이 바뀌었다.
     #: 지우지 않는다(`superseded`와 같은 판단).
     open_answered: list[OpenQuestionView] = []
 
@@ -231,9 +215,9 @@ def open_key(question: str) -> str:
 
 
 def view(readiness: Readiness, record: Supplement,
-         cited: dict[str, list[Citation]] | None = None,
          open_questions: list[OpenQuestion] | None = None,
-         options: dict[str, list[Option]] | None = None) -> SupplementView:
+         options: dict[str, list[Option]] | None = None, *,
+         has_package: bool = False) -> SupplementView:
     open_sections = {s.key for s in readiness.sections if s.status in ("partial", "missing")}
     active: list[QuestionView] = []
     superseded: list[QuestionView] = []
@@ -246,13 +230,10 @@ def view(readiness: Readiness, record: Supplement,
     confirmations: list[ConfirmationView] = []
     for item in readiness.ai_defaults.items:
         key = confirmation_key(item.file, item.number)
-        citations = (cited or {}).get(key, [])
         confirmations.append(ConfirmationView(
             key=key, file=item.file, number=item.number, ask=item.ask,
             answer=item.answer, stage=item.stage, choices=item.choices, note=item.note,
-            remark=item.remark, confirmed_at=record.confirmed.get(key),
-            in_prd=[c.text for c in citations],
-            in_goals=any(c.section == _GOALS_SECTION for c in citations)))
+            remark=item.remark, confirmed_at=record.confirmed.get(key)))
     asked: dict[str, OpenQuestionView] = {}
     deferred: dict[str, OpenQuestionView] = {}
     for q in open_questions or []:
@@ -266,7 +247,7 @@ def view(readiness: Readiness, record: Supplement,
         (asked if q.blocking else deferred)[key] = entry
     answered = [OpenQuestionView(key=key, id="", question=a.question, answer=a)
                 for key, a in record.open_answers.items() if key not in asked and key not in deferred]
-    return SupplementView(has_package=cited is not None, questions=active, superseded=superseded,
+    return SupplementView(has_package=has_package, questions=active, superseded=superseded,
                           confirmations=confirmations, open_questions=list(asked.values()),
                           open_deferred=list(deferred.values()), open_answered=answered)
 

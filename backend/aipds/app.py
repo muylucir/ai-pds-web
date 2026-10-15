@@ -553,7 +553,7 @@ def questionnaire_agent_factory(project_id: str):
 
 
 def handoff_writer_factory(project_id: str):
-    """인계 패키지(PRD·검증 보고·남은 작업)를 한 번에 쓰는 단발 호출자.
+    """인계 패키지(열린 결정·보기)를 쓰는 단발 호출자.
 
     문항 생성과 같은 모양이고 출력 상한이 다르다. Opus 5.5 이후 모델은 생각을 끌 수 없고 생각
     토큰도 max_tokens에 든다 — 실측(ws-g, Opus 5.5)에서 32000으로는 PRD 본문
@@ -826,7 +826,7 @@ app.include_router(artifacts.router, dependencies=_AUTH)
 from aipds.routes import transfer  # noqa: E402
 app.include_router(transfer.router, dependencies=_AUTH)
 
-# 인계 탭. 산출물을 읽기만 하는 판정이라 artifacts와 성격이 같지만, 인계 패키지(PRD·
+# 인계 탭. 산출물을 읽기만 하는 판정이라 artifacts와 성격이 같지만, 인계 패키지(열린 결정·
 # 보완 질문·내려받기)가 이 접두사 아래로 자란다(plans/2026-10-09-handoff-package.md).
 from aipds.routes import handoff  # noqa: E402
 app.include_router(handoff.router, dependencies=_AUTH)
