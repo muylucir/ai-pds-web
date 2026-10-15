@@ -42,7 +42,7 @@ _GLOBAL_VALIDATION_PLAN = _DISCOVERY + "validation-plan.md"
 _QUESTION_SUFFIX = "-questions.md"
 
 #: pain point 분석의 두 모양: 대화형(`pain-point-analysis.md`)과 URL·보고서형
-#: (`pain-points-from-url.md`, 실측 tobacco `pain-points-from-report.md`).
+#: (`pain-points-from-url.md`, 실측 ws-b `pain-points-from-report.md`).
 _PAIN_POINTS = re.compile(
     r"^aiplc-docs/discovery/envision/(?:pain-point-analysis|pain-points-from-[^/]+)\.md$")
 _PAIN_POINT_ANALYSIS = _ENVISION + "pain-point-analysis.md"

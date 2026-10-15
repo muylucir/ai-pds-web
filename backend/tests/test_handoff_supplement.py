@@ -1,6 +1,6 @@
 # backend/tests/test_handoff_supplement.py — handoff/supplement와 그 라우트
 #
-# 판정 입력은 test_handoff_readiness의 실측 모양(A1: industry-safe-law, B: test2222)을 쓴다.
+# 판정 입력은 test_handoff_readiness의 실측 모양(A1: ws-g, B: test2222)을 쓴다.
 from __future__ import annotations
 
 import asyncio
@@ -171,7 +171,7 @@ def _open(*questions):
 
 
 def test_open_pm_questions_of_the_prd_are_asked_even_when_every_section_is_sourced():
-    """실측(industry-safe-law): 9개 섹션이 모두 sourced라 보완 질문이 0개였는데, PRD 9번에는 구현을
+    """실측(ws-g): 9개 섹션이 모두 sourced라 보완 질문이 0개였는데, PRD 9번에는 구현을
     막는 PM 결정이 열려 있었다."""
     v = supplement.view(assess(A1, {}), supplement.Supplement(), {},
                         _open("보존 기간", "본인 확인 수준", "보존 기간"))

@@ -2,7 +2,7 @@
 //
 // **에이전트의 문장에 기대지 않는다.** GTM의 마지막 지시는 "Inception으로 진행"이고
 // (상류 go-to-market.md Step 6), 그것은 이 웹에 없는 단계다. 프로토타입 배너가
-// keumkang-v5 이후 같은 이유로 에이전트 문장이 아니라 디스크에서 유도되듯, 여기서는
+// ws-a-v5 이후 같은 이유로 에이전트 문장이 아니라 디스크에서 유도되듯, 여기서는
 // `aiplc-state.md`를 정규화한 capability(backend capabilities.py)의 go_to_market이
 // completed인지를 본다. 스테이지 이름을 한국어로 쓴 프로젝트도 그쪽이 이미 묶는다.
 //

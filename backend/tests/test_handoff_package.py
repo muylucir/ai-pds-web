@@ -113,7 +113,7 @@ def test_later_steps_get_the_prd_so_ids_match():
 
 
 def test_each_step_is_told_its_length_budget():
-    """상한 없이 쓴 PRD가 25,000자를 넘어 출력 상한에 잘렸다(실측 industry-safe-law)."""
+    """상한 없이 쓴 PRD가 25,000자를 넘어 출력 상한에 잘렸다(실측 ws-g)."""
     for step, budget in (("prd", "12,000"), ("validation", "5,000"), ("scope", "6,000")):
         prompt = package.build_prompt(step, language="ko", readiness=assess(B, {}),
                                       record=supplement.Supplement(), sources={})
@@ -157,7 +157,7 @@ def test_lint_finds_technology_and_vague_words():
 
 def test_lint_leaves_ordinary_product_language_alone():
     files = {"PRD.md": "\n".join([
-        "생성 10/08 14:20 · Express delivery 고객",
+        "생성 10/08 14:20 · Express 배송 고객",
         "매장 300곳의 상담원이 질문 후 3초 안에 첫 답을 본다",
         "근거: `aiplc-docs/discovery/prototypes/a/PROTOTYPE-a.md`",
     ])}
@@ -498,7 +498,7 @@ def test_route_archive_is_404_before_a_package_exists(env):
 
 # ---- PRD가 인용한 AI 제안 ----
 
-_PRD_WITH_CITATIONS = """# 메가마트 안전ON PRD
+_PRD_WITH_CITATIONS = """# 샘플몰 안전ON PRD
 
 ## 3. 목표와 성공 지표
 
@@ -515,7 +515,7 @@ _PRD_WITH_CITATIONS = """# 메가마트 안전ON PRD
 
 
 def test_the_prd_citations_pick_out_which_ai_suggestions_became_requirements():
-    """실측(industry-safe-law): PRD의 "AI 제안 수락" 26줄이 40개 중 19개 질문을 가리켰다."""
+    """실측(ws-g): PRD의 "AI 제안 수락" 26줄이 40개 중 19개 질문을 가리켰다."""
     path = D + "product-strategy/strategy-questions.md"
     state = assess([path], {path: QUESTIONS})
     cited = package.cited_suggestions(_PRD_WITH_CITATIONS, state, "ko")
@@ -577,9 +577,9 @@ def test_route_supplement_reads_citations_from_the_saved_prd(env):
     assert {c["number"]: bool(c["in_prd"]) for c in body["confirmations"]} == {1: True, 2: True, 4: True}
 
 
-# ---- PRD의 모양 검사(실측 industry-safe-law PRD 평가의 다섯 가지) ----
+# ---- PRD의 모양 검사(실측 ws-g PRD 평가의 다섯 가지) ----
 
-_PRD_SHAPES = """# 메가마트 안전ON PRD
+_PRD_SHAPES = """# 샘플몰 안전ON PRD
 
 ## 3. 목표와 성공 지표
 
@@ -708,7 +708,7 @@ def test_route_supplement_asks_the_open_pm_questions_of_the_saved_prd(env):
 
 
 def test_sections_are_found_by_title_when_the_model_drops_the_numbers():
-    """실측(industry-safe-law 두 번째 생성): 제목이 `## 목표와 성공 지표`로 번호 없이 나왔고, 번호로만
+    """실측(ws-g 두 번째 생성): 제목이 `## 목표와 성공 지표`로 번호 없이 나왔고, 번호로만
     찾을 때 성공 지표 검사와 열린 질문 읽기가 모두 비었다."""
     unnumbered = re.sub(r"^## \d+\. ", "## ", _PRD_SHAPES, flags=re.MULTILINE)
     assert "## 목표와 성공 지표" in unnumbered

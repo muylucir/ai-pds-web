@@ -77,13 +77,13 @@ export function SupplementForm({
   }, [view.questions]);
 
   // 진행률은 빈칸 질문만 센다. 확인은 선택 사항이다 — 분모에 넣으면 질문을 다 채워도 "아직 40개
-  // 남음"으로 보였다(실측 industry-safe-law).
+  // 남음"으로 보였다(실측 ws-g).
   const total = view.questions.length + view.open_questions.length;
   const done = view.questions.filter((q) => filled(draft[q.id])).length
     + view.open_questions.filter((q) => filled(draft[q.key])).length;
 
   // 패키지가 있으면 PRD에 실제로 들어간 결정이 먼저고, 그중에서도 성공 지표가 된 것이 맨 앞이다 —
-  // 개발이 무엇을 위해 만드는지를 정하는데, 실측(industry-safe-law)에서 전부 확인되지 않은 AI
+  // 개발이 무엇을 위해 만드는지를 정하는데, 실측(ws-g)에서 전부 확인되지 않은 AI
   // 제안이었다. 나머지는 단계별로 접어 둔다.
   const goals = view.has_package ? view.confirmations.filter((c) => c.in_goals) : [];
   const inPrd = view.has_package ? view.confirmations.filter((c) => c.in_prd.length && !c.in_goals) : [];

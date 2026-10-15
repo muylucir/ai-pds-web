@@ -23,7 +23,7 @@
 #
 # **지시로 정한 모양은 결정적으로 검사한다.** 기술어·모호어, 수용 기준이 없는 요구사항,
 # 검증 기록 없이 붙은 검증 등급, 확인되지 않은 AI 제안이 성공 지표가 된 줄, 프롬프트의 필드명과
-# 원본의 내부 번호가 새어 나온 줄. 지시만으로는 새어 나온다(실측 industry-safe-law PRD가 다섯
+# 원본의 내부 번호가 새어 나온 줄. 지시만으로는 새어 나온다(실측 ws-g PRD가 다섯
 # 모양을 다 보였다). 검사는 막지 않고 보여 준다 — 어느 줄이 틀렸는지는 사람이 판단한다.
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ README = "README.md"
 
 #: 모델이 쓰는 단계, 실행 순서대로. 뒤의 둘은 먼저 쓴 PRD를 받아 같은 ID(R-01…)를 쓴다.
 #:
-#: 한 응답에 세 문서를 쓰게 했을 때는 호출 하나가 수 분이었고, 실측(industry-safe-law)에서
+#: 한 응답에 세 문서를 쓰게 했을 때는 호출 하나가 수 분이었고, 실측(ws-g)에서
 #: 첫 출력이 120초를 넘겨 끊겼으며, 실패하면 전부를 다시 써야 했다. 단계로 나누면 호출이
 #: 작아지고, 끝난 문서는 남고, 실패한 단계부터 다시 한다.
 STEPS: tuple[tuple[str, str], ...] = (
@@ -170,7 +170,7 @@ def _supplement_digest(record: supplement_mod.Supplement) -> str:
 
 #: 근거 등급. 키는 코드가, 값은 문서가 쓴다.
 #:
-#: 검증 등급이 둘인 이유: 실측(industry-safe-law)에서 "사용자 검증됨"이 사내 동료가 역할을 대신한
+#: 검증 등급이 둘인 이유: 실측(ws-g)에서 "사용자 검증됨"이 사내 동료가 역할을 대신한
 #: 내부 시연에도 붙었다. 등급이 하나면 모델은 "검증 파일이 있다"만 보고 붙이고, 개발자는 실제
 #: 대상자가 확인한 것으로 읽는다.
 _LABELS = {
@@ -439,7 +439,7 @@ def cited_suggestions(prd: str, readiness: Readiness,
     이 기능 이전에 만든 패키지에는 값이 없어 "인용 없음"으로 잘못 보인다.
 
     모델을 다시 부르지 않는다. 근거 표기(`[AI 제안 수락 · …/strategy-questions.md Q14]`)는
-    합성 지시가 정한 모양이고, 실측(industry-safe-law) PRD에서 그 줄 26개가 질문 19개를
+    합성 지시가 정한 모양이고, 실측(ws-g) PRD에서 그 줄 26개가 질문 19개를
     가리켰다. 판정의 수락 목록에 없는 질문은 버린다 — 등급을 잘못 붙인 줄이 확인 대상을 늘리지
     않게.
     """
@@ -466,7 +466,7 @@ def cited_suggestions(prd: str, readiness: Readiness,
 
 
 #: PRD 섹션 제목: `## 3. 목표와 성공 지표`. 번호가 있으면 번호로, 없으면 제목 문구로 찾는다 —
-#: 실측(industry-safe-law 두 번째 생성)에서 모델이 번호를 빼고 `## 목표와 성공 지표`로 썼고,
+#: 실측(ws-g 두 번째 생성)에서 모델이 번호를 빼고 `## 목표와 성공 지표`로 썼고,
 #: 번호로만 찾았을 때 성공 지표 검사와 열린 질문 읽기가 모두 비었다.
 _SECTION_HEADING = re.compile(r"^#{2,3}\s+(?:(\d{1,2})\s*[.)]\s*)?(.*)$")
 
@@ -499,7 +499,7 @@ def open_questions(prd: str, language: str) -> list[supplement_mod.OpenQuestion]
     """PRD 9번 표에서 PM이 답할 줄. 인계 탭이 이것을 보완 질문으로 되돌린다.
 
     표의 모양은 합성 지시가 정한다(`| ID | 질문 | 답할 사람 |`). 머리 줄에서 열을 찾고, 못
-    찾으면 둘째·셋째 열로 본다 — 이 지시 이전의 PRD(실측 industry-safe-law: `| # | 질문 | 답할
+    찾으면 둘째·셋째 열로 본다 — 이 지시 이전의 PRD(실측 ws-g: `| # | 질문 | 답할
     사람 |`)도 같은 모양이다. "답할 사람" 칸에 PM이 있고 개발 쪽 표시가 없는 줄만 PM 몫이다.
     """
     lab = _labels(language)
@@ -938,7 +938,7 @@ def _is_timeout(exc: BaseException) -> bool:
     """원인 사슬 어디에든 시간 초과가 있는가.
 
     Bedrock 스트림의 읽기 시간 초과는 urllib3 → botocore 예외로 감싸져 올라온다(실측
-    industry-safe-law). 맨 위만 보면 "모델 호출 실패"로 보여 원인을 가린다.
+    ws-g). 맨 위만 보면 "모델 호출 실패"로 보여 원인을 가린다.
     """
     from botocore.exceptions import ConnectTimeoutError, ReadTimeoutError
     seen: set[int] = set()
