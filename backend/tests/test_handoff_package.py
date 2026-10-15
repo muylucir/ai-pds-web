@@ -19,20 +19,63 @@ from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 from test_handoff_readiness import B, D, QUESTIONS
 
-#: 실은 원본(B)의 근거 경로를 대는 열린 결정.
-_OPEN = """# 열린 결정
+def _vision(open_table: str) -> str:
+    """AI-DLC 가이드의 필수 섹션을 다 갖춘 vision.md. Open Questions 표만 바꿔 끼운다. 다른 섹션에도
+    표가 있다 — 열린 결정은 Open Questions 아래 표만이다."""
+    return f"""# 샘플몰 안전ON — Vision
 
-| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |
+## Executive Summary
+지점 안전 서명을 전자로 바꾼다. [discovery-document.md · Press Release]
+
+## Business Context
+### Problem Statement
+종이 서명을 모으는 데 월 30~60시간이 든다. [envision/pain-point-questions.md Q6]
+### Target Users and Stakeholders
+| User Type | Description | Primary Need |
+|---|---|---|
+| 지점 담당자 | 21명 | 누락자 추적 [envision/pain-point-questions.md Q1] |
+### Success Metrics
+| Metric | Today | Target | How it is measured |
+|---|---|---|---|
+| 완료율 | 재료 없음 | 95% | 건별 집계 (AI 제안, PM 미확인) [go-to-market/gtm-questions.md Q13] |
+
+## Full Scope Vision
+### Product Vision Statement
+모든 안전 서류가 전자로 남는다. [discovery-document.md · Positioning]
+
+## MVP Scope
+### Features In Scope
+| Feature | Description | Why it cannot wait |
+|---|---|---|
+| 발송 | 대상 지정 후 발송 | 첫 사용 장면 [discovery-document.md · Launch Plan] |
+### Features Out of Scope
+| Feature | Why it can wait | Target phase |
+|---|---|---|
+| HR 연동 | 파일 업로드로 시작 | 2단계 [discovery-document.md · Launch Plan] |
+### Assumptions and Accepted Limits
+- **Accepted limit**: 검증은 사내 동료가 역할을 대신했다. [prototype/validation-results.md]
+
+## Risks and Dependencies
+### Key Risks
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| 법무 불인정 | Medium | High | 범위 재설계 [discovery-document.md · Build Decision] |
+### Open Questions
+{open_table}"""
+
+
+#: 실은 원본(B)의 근거 경로를 대는 열린 결정.
+_OPEN = _vision("""| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |
 |---|---|---|---|---|---|
 | O-01 | 상담 이력의 보존 기간은? | PM | 빌드 전 | — | use-case-intake/use-cases.md |
-"""
+""")
 
 
 def _step_of(prompt: str) -> str:
     if "Write the options" in prompt:
         return "options"
-    if f"## Write {package.OPEN_DECISIONS}" in prompt:
-        return "open"
+    if f"## Write {package.VISION}" in prompt:
+        return "vision"
     raise AssertionError("prompt names no step")
 
 
@@ -66,6 +109,11 @@ async def _generate(s3, files, call, *, resume=False, paths=B):
     started = await package.start(s3, state, resume=resume)
     return await package.run(s3, read=_workspace_reader(files), paths=paths, readiness=state,
                              language="ko", call=call, started=started)
+
+
+def _flat(text: str) -> str:
+    """프롬프트의 줄바꿈을 지운 문장 — 문구를 찾을 때 줄 끝 위치에 기대지 않게."""
+    return " ".join(text.split())
 
 
 def _facts(prompt: str) -> dict:
@@ -107,11 +155,12 @@ def test_the_prompt_asks_only_for_what_the_files_do_not_give():
     prompt = package.build_prompt(language="ko", readiness=state, record=record,
                                   sources={D + "use-case-intake/use-cases.md": "UC1 고객 문의"})
     assert "<<<FILE aiplc-docs/discovery/use-case-intake/use-cases.md>>>" in prompt
-    assert "UC1 고객 문의" in prompt and "Write it in Korean" in prompt
-    assert "do not restate them" in prompt
+    assert "UC1 고객 문의" in prompt and "Write in Korean" in prompt
+    assert "cite them instead of copying" in _flat(prompt)
+    assert "## Features Out of Scope" in prompt and "### Open Questions" in prompt
     assert "| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |" in prompt
     assert '"빌드 전"' in prompt and '"빌드 중"' in prompt and '"PM(외부 확인)"' in prompt
-    assert "At most about 9,000 characters" in prompt
+    assert "At most about 16,000 characters" in prompt
     facts = _facts(prompt)
     assert facts["PM answers given at handoff"] == [
         {"topic": package._SUPPLEMENT_TOPICS["problem.evidence"], "answer": "인터뷰 5명"}]
@@ -124,7 +173,7 @@ def test_english_projects_get_english_labels():
     prompt = package.build_prompt(language="en", readiness=assess(B, {}),
                                   record=supplement.Supplement(), sources={})
     assert "| ID | Question | Who answers | When | Until answered | Source |" in prompt
-    assert "Write it in English" in prompt
+    assert "Write in English" in prompt
 
 
 def test_clean_output_drops_a_preface_and_refuses_an_empty_document():
@@ -169,12 +218,18 @@ def test_lint_leaves_ordinary_product_language_and_citations_alone():
         "매장 300곳의 상담원이 질문 후 3초 안에 첫 답을 보는가?",
         "근거: go-to-market/gtm-questions.md Q14 · discovery-document.md",
     ])
-    assert package.lint(doc) == []
+    assert [f for f in package.lint(doc) if f.kind != "structure"] == []
 
 
-_TRIAGED = """# 열린 결정
+def test_a_missing_vision_section_is_flagged():
+    """가이드는 섹션마다 쓰는 단계를 정한다(Features In/Out → Requirements Analysis·Code Generation).
+    섹션이 없으면 그 단계가 읽을 곳이 없다."""
+    assert _kinds(package.lint(_OPEN), "structure") == []
+    cut = _OPEN.replace("### Features Out of Scope", "### Later")
+    assert [term for _, term in _kinds(package.lint(cut), "structure")] == ["Features Out of Scope"]
 
-| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |
+
+_TRIAGED = _vision("""| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |
 |---|---|---|---|---|---|
 | O-01 | 증빙 기록의 보존 기간은 얼마인가? | PM(외부 확인) | 빌드 전 | — | discovery-document.md · Build Decision |
 | O-02 | 개인 링크의 유효 기간은? | PM | **빌드 전** | — | envision/prfaq-clarifying-questions.md Q3 |
@@ -183,7 +238,7 @@ _TRIAGED = """# 열린 결정
 | O-05 | 만족도 버튼의 형태는? | PM | 빌드 중 | — | go-to-market/gtm-questions.md Q15 |
 | O-06 | 확인 문제의 통과 기준은? | PM | 빌드 전 | — | legal/somewhere.md |
 | O-07 | 지점당 단말 대수는? | PM | 나중에 | — | discovery-document.md |
-"""
+""")
 _SRC = [D + "discovery-document.md", D + "envision/prfaq-clarifying-questions.md",
         D + "prototype/prototype-spec.md", D + "go-to-market/gtm-questions.md"]
 
@@ -203,7 +258,7 @@ def test_a_triage_without_grounds_is_flagged():
     found = package.lint(_TRIAGED, sources=_SRC)
     assert [term for _, term in _kinds(found, "triage")] == ["O-05", "O-06", "나중에"]
     # 시점·근거 열이 없는 표는 머리 줄로 알린다.
-    old = "# 열린 결정\n\n| ID | 질문 | 답할 사람 |\n|---|---|---|\n| O-01 | 보존 기간 | PM |\n"
+    old = _vision("| ID | 질문 | 답할 사람 |\n|---|---|---|\n| O-01 | 보존 기간 | PM |\n")
     assert [term for _, term in _kinds(package.lint(old), "triage")] == ["시점", "근거"]
 
 
@@ -212,9 +267,9 @@ def test_the_previous_prd_is_read_from_its_ninth_section():
     prd = ("# P\n\n## 5. 요구사항\n| 1 | x | PM |\n\n## 열린 질문\n\n"
            "| # | 질문 | 답할 사람 |\n|---|---|---|\n| 1 | 보존 기간(R-08) | PM |\n"
            "| 2 | 저장 용량 | 개발팀 |\n")
-    assert [(q.id, q.question) for q in package.open_questions(prd, "ko", prd=True)] == [
+    assert [(q.id, q.question) for q in package.open_questions(prd, "ko", kind="prd")] == [
         ("1", "보존 기간(R-08)")]
-    assert package.previous_rows(prd, "ko", prd=True) == [
+    assert package.previous_rows(prd, "ko", kind="prd") == [
         {"질문": "보존 기간(R-08)", "답할 사람": "PM", "시점": ""},
         {"질문": "저장 용량", "답할 사람": "개발팀", "시점": ""}]
 
@@ -228,15 +283,17 @@ def test_steps_write_the_open_decisions_then_the_ledger_and_readme():
     done = _run(_generate(s3, files, _writer(calls)))
     assert done.status == "ready" and done.origin == "B"
     # 열린 결정에 빌드 전 PM 결정이 있으면 보기를 만든다.
-    assert [step for step, _ in calls] == ["open", "options"]
+    assert [step for step, _ in calls] == ["vision", "options"]
     assert [s.status for s in done.steps] == ["done", "done"]
-    assert done.files == ["README.md", "open-decisions.md", "decisions.md"]
+    assert done.files == ["README.md", "start-prompt.md", "vision.md", "decisions.md"]
     assert set(done.sources) == set(package.select_sources(B))
-    assert s3.blobs[package.PACKAGE_PREFIX + "open-decisions.md"].startswith("# 열린 결정")
+    assert s3.blobs[package.PACKAGE_PREFIX + "vision.md"].startswith("# 샘플몰 안전ON — Vision")
+    prompt = s3.blobs[package.PACKAGE_PREFIX + "start-prompt.md"]
+    assert "/aidlc ./vision.md를 읽고" in prompt and "$aidlc" in prompt
     assert s3.blobs[package.PACKAGE_PREFIX + "decisions.md"].startswith("# 결정 장부")
     readme = s3.blobs[package.PACKAGE_PREFIX + "README.md"]
     assert readme.startswith("# 개발 인계 패키지")
-    assert readme.index("discovery-document.md") < readme.index("open-decisions.md")
+    assert readme.index("start-prompt.md") < readme.index("1. `vision.md`") < readme.index("2. `decisions.md`")
     assert all("build-instructions" not in prompt for _, prompt in calls)
     assert done.findings == []
 
@@ -248,7 +305,7 @@ def test_steps_write_the_open_decisions_then_the_ledger_and_readme():
 def test_a_failed_step_is_reported_without_the_raw_error(error, reason):
     s3 = FakeS3Store()
     files = {p: f"# {p}\n" for p in B}
-    failed = _run(_generate(s3, files, _writer(fail_at="open", error=error)))
+    failed = _run(_generate(s3, files, _writer(fail_at="vision", error=error)))
     assert failed.status == "failed" and failed.error == reason
     assert [(s.status, s.error) for s in failed.steps] == [("failed", reason), ("pending", None)]
     assert "arn:aws" not in s3.blobs[package.MANIFEST_KEY]
@@ -269,7 +326,7 @@ async def _interrupted_after_open_async(s3, files):
     steps = package.fresh_steps()
     steps[0] = steps[0].model_copy(update={"status": "done"})
     steps[1] = steps[1].model_copy(update={"status": "running"})
-    await s3.put(package.PACKAGE_PREFIX + package.OPEN_DECISIONS, _OPEN)
+    await s3.put(package.PACKAGE_PREFIX + package.VISION, _OPEN)
     sources = await package.read_sources(_workspace_reader(files), package.select_sources(B))
     record = await supplement.load(s3)
     await s3.put(package.MANIFEST_KEY, started.model_copy(update={
@@ -306,7 +363,7 @@ def test_resuming_after_the_sources_changed_starts_over():
     assert not v.resumable and v.stale
     calls: list = []
     _run(_generate(s3, files, _writer(calls), resume=True))
-    assert [step for step, _ in calls] == ["open", "options"]
+    assert [step for step, _ in calls] == ["vision", "options"]
 
 
 def test_a_running_step_reports_thinking_then_received_characters(monkeypatch):
@@ -323,7 +380,7 @@ def test_a_running_step_reports_thinking_then_received_characters(monkeypatch):
     s3.put = recording_put
 
     async def call(prompt, progress):
-        if _step_of(prompt) == "open":
+        if _step_of(prompt) == "vision":
             progress(0, True)
             await asyncio.sleep(0.05)
             progress(500, False)
@@ -397,7 +454,7 @@ def _chain(outer: Exception, cause: Exception) -> Exception:
 ])
 def test_a_wrapped_read_timeout_is_reported_as_a_timeout(make):
     s3 = FakeS3Store()
-    failed = _run(_generate(s3, {}, _writer(fail_at="open", error=make())))
+    failed = _run(_generate(s3, {}, _writer(fail_at="vision", error=make())))
     assert failed.error == "timeout"
     assert failed.steps[0].error == "timeout"
 
@@ -406,7 +463,7 @@ def test_hitting_the_output_cap_is_reported_as_too_long():
     class MaxTokensReachedException(Exception):
         pass
     s3 = FakeS3Store()
-    failed = _run(_generate(s3, {}, _writer(fail_at="open", error=_chain(
+    failed = _run(_generate(s3, {}, _writer(fail_at="vision", error=_chain(
         RuntimeError("agent loop"), MaxTokensReachedException("Model stopped generating")))))
     assert failed.error == "too_long" and failed.steps[0].error == "too_long"
 
@@ -574,12 +631,12 @@ def test_the_first_version_carries_over_the_old_prd_questions_and_flags_a_lost_o
         supplement.open_key(answered): supplement.OpenAnswer(question=answered, text="5점 척도")})))
     calls: list = []
     done = _run(_generate(s3, files, _writer(calls, doc=_TRIAGED), paths=B + _SRC))
-    previous = _facts(dict(calls)["open"])["open decisions in the previous version"]
+    previous = _facts(dict(calls)["vision"])["open decisions in the previous version"]
     assert [r["질문"] for r in previous] == [
         "증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)", "개인 링크의 유효 기간은? (R-04)",
         "만족도 버튼의 형태는? (R-14)", "파일럿 개발 규모는? (C-08)"]
     assert previous[2]["시점"] == "빌드 중" and previous[3]["답할 사람"] == "개발팀"
-    assert "Carry every one of them over" in dict(calls)["open"]
+    assert "Carry every one of them over" in _flat(dict(calls)["vision"])
     assert done.carried == ["증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)",
                             "개인 링크의 유효 기간은? (R-04)", "만족도 버튼의 형태는? (R-14)"]
     # 보존 기간·링크 유효 기간은 새 판에 있고(관련 ID는 보지 않는다), 만족도 버튼은 답했다.
@@ -645,7 +702,7 @@ def test_route_generates_views_and_downloads(env):
     assert [s["status"] for s in r.json()["steps"]] == ["pending"] * len(package.STEPS)
     body = _wait_settled(client, "pkg-b")
     assert body["manifest"]["status"] == "ready"
-    assert body["files"]["open-decisions.md"].startswith("# 열린 결정")
+    assert body["files"]["vision.md"].startswith("# 샘플몰 안전ON")
     assert body["stale"] == []
 
     r = client.get("/projects/pkg-b/handoff/package/archive")
@@ -653,7 +710,7 @@ def test_route_generates_views_and_downloads(env):
     assert "pkg-b-handoff.zip" in r.headers["content-disposition"]
     zf = zipfile.ZipFile(io.BytesIO(r.content))
     names = zf.namelist()
-    assert {"README.md", "open-decisions.md", "decisions.md"} <= set(names)
+    assert {"README.md", "start-prompt.md", "vision.md", "decisions.md"} <= set(names)
     assert "discovery/use-case-intake/use-cases.md" in names
     assert zf.read("uploads/ab12cd34/동의서.pdf") == b"%PDF-1.7 bytes"   # 업로드는 바이트 그대로
     # 질문 파일·빌드 지시서·디자인 컨텍스트·프로토타입 소스·감사 로그·보기·이전 구성의 문서는 넣지 않는다.
@@ -751,13 +808,13 @@ def test_route_reset_wipes_the_package_the_old_prd_and_the_answers_but_not_disco
     env[2]["call"] = _writer(calls)
     client.post("/projects/pkg-reset/handoff/package")
     _wait_settled(client, "pkg-reset")
-    assert "open decisions in the previous version" not in _facts(dict(calls)["open"])
+    assert "open decisions in the previous version" not in _facts(dict(calls)["vision"])
 
 
 def test_route_reset_is_refused_while_generating(env, monkeypatch):
     client, s3, _ = env
     _seed(client, "pkg-busy", {p: f"# {p}\n" for p in B})
-    client.portal.call(s3.put, package.PACKAGE_PREFIX + "open-decisions.md", _OPEN)
+    client.portal.call(s3.put, package.PACKAGE_PREFIX + "vision.md", _OPEN)
     monkeypatch.setattr(package.jobs, "running", lambda pid: True)
     assert client.delete("/projects/pkg-busy/handoff").status_code == 409
-    assert package.PACKAGE_PREFIX + "open-decisions.md" in s3.blobs
+    assert package.PACKAGE_PREFIX + "vision.md" in s3.blobs

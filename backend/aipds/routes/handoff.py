@@ -46,13 +46,13 @@ async def _view(pid: str, s3, state: readiness.Readiness,
     """보완 화면. 마지막 패키지가 있으면 그 열린 결정 중 PM 몫과 그 보기를 함께 싣는다 — 열린
     결정은 저장하지 않고 문서에서 그때마다 읽는다."""
     manifest = await package.load_manifest(s3)
-    doc, prd = (None, False)
+    doc, kind = None, "vision"
     if manifest is not None and manifest.status == "ready":
-        doc, prd = await package.stored_decisions(s3)
+        doc, kind = await package.stored_decisions(s3)
     if doc is None:
         return supplement.view(state, record)
     language = app_module.project_language(pid)
-    return supplement.view(state, record, package.open_questions(doc, language, prd=prd),
+    return supplement.view(state, record, package.open_questions(doc, language, kind=kind),
                            await package.load_options(s3), has_package=True)
 
 

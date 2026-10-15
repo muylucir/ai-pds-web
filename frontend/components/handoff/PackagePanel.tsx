@@ -11,7 +11,13 @@ import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
 /** 파일 목록의 순서. 읽는 순서와 같다(README 참조). */
-const ORDER = ["README.md", "open-decisions.md", "decisions.md"];
+const ORDER = ["README.md", "start-prompt.md", "vision.md", "decisions.md"];
+
+/** `start-prompt.md`의 첫 코드 블록 — AI-DLC에 붙여 넣는 기본 요청(서버 package.start_prompt). */
+export function startRequest(markdown: string | undefined): string | null {
+  const m = markdown && /```[a-z]*\n([\s\S]*?)\n```/.exec(markdown);
+  return m ? m[1].trim() : null;
+}
 
 /** `2026-10-09T10:40:12Z` → `2026-10-09 10:40 UTC`. 서버는 UTC ISO로 찍는다. */
 export function stamp(iso: string): string {
@@ -32,7 +38,18 @@ export function PackagePanel({
   const t = useT();
   const m = pkg.manifest;
   const names = ORDER.filter((n) => n in pkg.files);
-  const [selected, setSelected] = useState("open-decisions.md");
+  const [selected, setSelected] = useState("vision.md");
+  const [copied, setCopied] = useState(false);
+  const request = startRequest(pkg.files["start-prompt.md"]);
+  const copy = async () => {
+    if (!request) return;
+    try {
+      await navigator.clipboard.writeText(request);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
   const current = names.includes(selected) ? selected : names[0];
 
   // 생성 중·실패·중단은 GenerationProgress가 보여 준다. 여기는 만든 패키지만.
@@ -69,6 +86,21 @@ export function PackagePanel({
         </button>
       </div>
 
+      {/* AI-DLC를 시작하는 첫 요청. 패키지를 받는 사람이 할 첫 일이라 맨 위에 둔다. */}
+      {request && (
+        <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 mb-3">
+          <div className="flex items-center gap-2">
+            <b className="text-[13px] text-violet-900">{t("handoff.pkg.startPrompt")}</b>
+            <span className="text-xs text-violet-700">{t("handoff.pkg.startPromptHint")}</span>
+            <span className="flex-1" />
+            <button type="button" onClick={() => void copy()}
+                    className="px-2.5 py-1 rounded-lg border border-violet-300 bg-white text-xs text-violet-700 hover:bg-violet-100">
+              {copied ? t("handoff.pkg.copied") : t("handoff.pkg.copy")}
+            </button>
+          </div>
+          <pre className="mt-2 whitespace-pre-wrap break-words text-[12px] text-slate-800 font-mono">{request}</pre>
+        </div>
+      )}
       {pkg.stale.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-3 text-[13px] text-amber-900">
           <b className="block">{t("handoff.pkg.stale").replace("{n}", String(pkg.stale.length))}</b>

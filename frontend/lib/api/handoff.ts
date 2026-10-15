@@ -144,7 +144,7 @@ export interface SupplementUpdate {
 export type PackageStatus = "generating" | "ready" | "failed" | "interrupted";
 export type StepStatus = "pending" | "running" | "done" | "failed";
 /** 생성 단계, 실행 순서대로. 서버 handoff/package.STEPS와 같다. */
-export type StepName = "open" | "options";
+export type StepName = "vision" | "options";
 
 export interface Step {
   name: StepName;
@@ -168,7 +168,7 @@ export interface Finding {
 }
 
 /** 서버 handoff/package.Finding.kind. 화면의 검사 목록 순서이기도 하다. */
-export const FINDING_KINDS = ["tech", "vague", "triage", "dropped", "internal"] as const;
+export const FINDING_KINDS = ["structure", "tech", "vague", "triage", "dropped", "internal"] as const;
 export type FindingKind = (typeof FINDING_KINDS)[number];
 
 export interface Manifest {
