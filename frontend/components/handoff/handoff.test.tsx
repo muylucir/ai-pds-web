@@ -94,6 +94,7 @@ const VIEW: SupplementView = {
       in_prd: [], in_goals: false },
   ],
   open_questions: [],
+  open_deferred: [],
   open_answered: [],
 };
 
@@ -188,20 +189,23 @@ describe("SupplementForm — what the last PRD left open", () => {
   const OPEN: SupplementView = {
     ...VIEW, has_package: true, questions: [], superseded: [],
     open_questions: [
-      { key: "open:aaaaaaaaaaaa", id: "1", question: "법무 결론: 보존 기간(R-08)", answer: null },
+      { key: "open:aaaaaaaaaaaa", id: "1", question: "법무 결론: 보존 기간(R-08)", answer: null,
+        until: "", options: [] },
       { key: "open:bbbbbbbbbbbb", id: "6", question: "자동 재알림 규칙(R-05)",
-        answer: { question: "자동 재알림 규칙(R-05)", text: "기한 2일 전 1회", unknown: false, updated_at: "t" } },
+        answer: { question: "자동 재알림 규칙(R-05)", text: "기한 2일 전 1회", unknown: false, updated_at: "t" },
+        until: "", options: [] },
     ],
     open_answered: [
       { key: "open:cccccccccccc", id: "", question: "개인 링크 유효기간",
-        answer: { question: "개인 링크 유효기간", text: "7일", unknown: false, updated_at: "t" } },
+        answer: { question: "개인 링크 유효기간", text: "7일", unknown: false, updated_at: "t" },
+        until: "", options: [] },
     ],
   };
 
   it("asks the PRD's open PM decisions with no prefilled answer and counts them as progress", () => {
     render(<SupplementForm view={OPEN} workspaceHref="/w" busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
-    expect(screen.getByText("PRD에 남은 PM 결정 2개")).toBeInTheDocument();
+    expect(screen.getByText("빌드 전에 정할 PM 결정 2개")).toBeInTheDocument();
     expect(screen.getByLabelText(/법무 결론: 보존 기간/)).toHaveValue("");
     expect(screen.getByLabelText(/자동 재알림 규칙/)).toHaveValue("기한 2일 전 1회");
     expect(screen.getByText(/^1 \/ 2 답함/)).toBeInTheDocument();
@@ -219,6 +223,66 @@ describe("SupplementForm — what the last PRD left open", () => {
       "open:bbbbbbbbbbbb": { question: "자동 재알림 규칙(R-05)", text: "기한 2일 전 1회", unknown: false },
       "open:cccccccccccc": { question: "개인 링크 유효기간", text: "7일", unknown: false },
     });
+  });
+
+  // 실측(ws-g): PM 몫 18개가 전부 서술형이었고, 구현을 막는 것은 7개였다.
+  const TRIAGED: SupplementView = {
+    ...OPEN,
+    open_questions: [
+      { key: "open:dddddddddddd", id: "O-01", question: "보존 기간은? (R-08)", answer: null, until: "",
+        options: [{ text: "3년", source: "go-to-market/gtm-questions.md Q4" },
+                  { text: "5년", source: "envision/business-context.md" }] },
+      { key: "open:eeeeeeeeeeee", id: "O-02", question: "권한 범위는? (R-16)", answer: null, until: "",
+        options: [{ text: "지점은 자기 지점만", source: "envision/business-context.md" },
+                  { text: "본사는 전체", source: "envision/business-context.md" }] },
+    ],
+    open_deferred: [
+      { key: "open:ffffffffffff", id: "O-03", question: "지원 외국어 목록은?", answer: null,
+        until: "목록을 바꿀 수 있게 두고 영어·베트남어로 시작", options: [] },
+    ],
+    open_answered: [],
+  };
+
+  it("offers grounded options with nothing preselected, and folds decisions that can wait", async () => {
+    const onSave = vi.fn();
+    render(<SupplementForm view={TRIAGED} workspaceHref="/w" busy={false} message={null}
+                           onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    const retention = screen.getByRole("radiogroup", { name: /보존 기간은/ });
+    const radios = within(retention).getAllByRole("radio");
+    expect(radios).toHaveLength(3);                       // 보기 둘 + 직접 입력
+    expect(radios.every((r) => !(r as HTMLInputElement).checked)).toBe(true);
+    expect(within(retention).getByText(/go-to-market\/gtm-questions.md Q4/)).toBeInTheDocument();
+    // 진행률은 빌드 전 결정만 센다.
+    expect(screen.getByText(/^0 \/ 2 답함/)).toBeInTheDocument();
+    expect(screen.getByText("빌드 중에 정해도 되는 PM 결정 1개")).toBeInTheDocument();
+    expect(screen.getByText(/답이 나올 때까지: 목록을 바꿀 수 있게/)).toBeInTheDocument();
+
+    await userEvent.click(within(retention).getByRole("radio", { name: /5년/ }));
+    const scope = screen.getByRole("radiogroup", { name: /권한 범위는/ });
+    await userEvent.click(within(scope).getByRole("radio", { name: "직접 입력" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "직접 입력" }), "본사 안전팀만 전체");
+    expect(screen.getByText(/^2 \/ 2 답함/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "저장" }));
+    expect(onSave.mock.calls[0][0].open_answers).toEqual({
+      "open:dddddddddddd": { question: "보존 기간은? (R-08)", text: "5년", unknown: false },
+      "open:eeeeeeeeeeee": { question: "권한 범위는? (R-16)", text: "본사 안전팀만 전체", unknown: false },
+    });
+  });
+
+  it("reopens a typed answer as its own entry and an answer that matches an option as that option", () => {
+    const view: SupplementView = { ...TRIAGED, open_questions: [
+      { ...TRIAGED.open_questions[0],
+        answer: { question: "보존 기간은? (R-08)", text: "5년", unknown: false, updated_at: "t" } },
+      { ...TRIAGED.open_questions[1],
+        answer: { question: "권한 범위는? (R-16)", text: "본사 안전팀만", unknown: false, updated_at: "t" } },
+    ] };
+    render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
+                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    expect(within(screen.getByRole("radiogroup", { name: /보존 기간은/ }))
+      .getByRole("radio", { name: /5년/ })).toBeChecked();
+    expect(within(screen.getByRole("radiogroup", { name: /권한 범위는/ }))
+      .getByRole("radio", { name: "직접 입력" })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: "직접 입력" })).toHaveValue("본사 안전팀만");
   });
 
   it("puts the AI suggestions that became success metrics first", () => {
@@ -331,7 +395,7 @@ describe("handoff api", () => {
     server.use(http.put(`${base}/supplement`, async ({ request }) => {
       body = await request.json();
       return HttpResponse.json({ questions: [], superseded: [], confirmations: [],
-                                 open_questions: [], open_answered: [] });
+                                 open_questions: [], open_deferred: [], open_answered: [] });
     }));
     await putSupplement("p1", { answers: { "problem.evidence": { text: "x", unknown: false } }, confirmed: [],
                                 open_answers: {} });

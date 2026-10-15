@@ -42,8 +42,8 @@ async def get_handoff_readiness(pid: str):
 
 async def _view(pid: str, s3, state: readiness.Readiness,
                 record: supplement.Supplement) -> supplement.SupplementView:
-    """보완 화면. 마지막으로 만든 PRD가 있으면 그 PRD가 인용한 AI 제안과 PM 몫의 열린 질문을
-    함께 싣는다 — 둘 다 저장하지 않고 PRD에서 그때마다 읽는다."""
+    """보완 화면. 마지막으로 만든 PRD가 있으면 그 PRD가 인용한 AI 제안과 PM 몫의 열린 질문,
+    그 질문의 보기를 함께 싣는다 — 앞의 둘은 저장하지 않고 PRD에서 그때마다 읽는다."""
     manifest = await package.load_manifest(s3)
     prd = None
     if manifest is not None and manifest.status == "ready":
@@ -55,7 +55,7 @@ async def _view(pid: str, s3, state: readiness.Readiness,
         return supplement.view(state, record)
     language = app_module.project_language(pid)
     return supplement.view(state, record, package.cited_suggestions(prd, state, language),
-                           package.open_questions(prd, language))
+                           package.open_questions(prd, language), await package.load_options(s3))
 
 
 @router.get("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)

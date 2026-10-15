@@ -13,10 +13,17 @@
 #     sourced여도 내용의 빈칸은 남는다 — 실측(ws-g)에서 보존 기간·본인 확인
 #     수준·권한처럼 구현을 막는 PM 결정 7개가 열려 있었는데 보완 질문은 0개였다. 모델이
 #     질문을 새로 짓는 것이 아니라 PRD가 이미 "PM에게 묻는다"고 적은 줄을 그대로 되돌린다.
+#     그중에서도 시점이 "빌드 전"인 줄만 묻는다. 실측(ws-g)에서 PRD가 열린 질문
+#     22개 중 18개를 PM 몫으로 적었는데 구현을 막는 것은 7개였다 — 지원 외국어 목록이나 버튼
+#     형태까지 인계 전에 서술형으로 받으면 PM이 넘지 못한다. "빌드 중" 줄은 PRD에 "답이 나올
+#     때까지" 어떻게 만들지가 적혀 있어 접어 두고, 답하고 싶으면 답할 수 있다.
 #   - 기존 내용은 바꾸지 않는다. 바꾸는 길은 워크스페이스다. 여기서 받는 것은 빈칸의 답과,
 #     이미 있는 AI 제안 수락 항목에 대한 "맞다" 확인뿐이다.
 #   - AI 기본값을 주지 않는다. 실측에서 표시된 기본값을 PM이 고른 비율이 89%였다 —
 #     기본값을 주면 이 답도 "AI 제안 수락"이 된다. 대신 "모름"을 둔다(→ 열린 질문).
+#     보기는 준다(`Option`). 빈칸 서술형은 문항 하나가 작은 글쓰기 과제였다. 89%를 만든 것은
+#     보기가 아니라 추천 표시였으므로, 보기는 원본에 근거가 있는 것만, 추천 없이, 모델이
+#     매긴 순서를 지우고 보인다(handoff/package.parse_options).
 #   - 나중에 그 섹션의 재료가 AI-PLC 산출물로 생기면 그쪽이 이긴다. 답은 지우지 않고
 #     "대체됨"으로 돌려준다 — 사람이 쓴 것을 조용히 버리지 않는다.
 #
@@ -118,6 +125,18 @@ class OpenQuestion(BaseModel):
     #: PRD 안의 번호(O-03). 다시 만들면 바뀐다 — 화면 표시용이다.
     id: str
     question: str
+    #: 시점이 "빌드 전"인가. 시점 열이 없는 PRD(이 구분 이전)나 알 수 없는 값은 빌드 전으로
+    #: 본다 — 묻지 않아서 놓치는 쪽보다 한 번 더 묻는 쪽이 싸다.
+    blocking: bool = True
+    #: "답이 나올 때까지" 칸. 빌드 중 결정이 그동안 어떻게 만들어지는지다.
+    until: str = ""
+
+
+class Option(BaseModel):
+    """빌드 전 결정 하나의 보기. 원본에 근거가 있는 것만 남는다(handoff/package.parse_options)."""
+    text: str
+    #: 근거 — `discovery/` 아래 상대 경로(질문 파일이면 문항 번호까지).
+    source: str
 
 
 class Citation(BaseModel):
@@ -160,6 +179,9 @@ class OpenQuestionView(BaseModel):
     id: str
     question: str
     answer: OpenAnswer | None
+    until: str = ""
+    #: 고를 수 있는 보기. 비어 있으면 서술형으로 묻는다.
+    options: list[Option] = []
 
 
 class SupplementView(BaseModel):
@@ -169,8 +191,10 @@ class SupplementView(BaseModel):
     #: 답이 있는데 그 섹션의 재료가 이제 AI-PLC 산출물에 있다. 그쪽이 이긴다.
     superseded: list[QuestionView]
     confirmations: list[ConfirmationView]
-    #: 마지막 PRD의 열린 질문 중 PM 몫. 패키지가 없으면 비어 있다.
+    #: 마지막 PRD의 열린 질문 중 PM 몫이고 시점이 빌드 전인 것. 패키지가 없으면 비어 있다.
     open_questions: list[OpenQuestionView] = []
+    #: PM 몫이지만 빌드 중에 정해도 되는 것. 묻지 않고 접어 둔다 — 답해도 된다.
+    open_deferred: list[OpenQuestionView] = []
     #: 답했는데 지금 PRD의 열린 질문에는 없는 것 — 답이 PRD에 반영됐거나 질문 문장이 바뀌었다.
     #: 지우지 않는다(`superseded`와 같은 판단).
     open_answered: list[OpenQuestionView] = []
@@ -191,7 +215,8 @@ def open_key(question: str) -> str:
 
 def view(readiness: Readiness, record: Supplement,
          cited: dict[str, list[Citation]] | None = None,
-         open_questions: list[OpenQuestion] | None = None) -> SupplementView:
+         open_questions: list[OpenQuestion] | None = None,
+         options: dict[str, list[Option]] | None = None) -> SupplementView:
     open_sections = {s.key for s in readiness.sections if s.status in ("partial", "missing")}
     active: list[QuestionView] = []
     superseded: list[QuestionView] = []
@@ -212,15 +237,20 @@ def view(readiness: Readiness, record: Supplement,
             in_prd=[c.text for c in citations],
             in_goals=any(c.section == _GOALS_SECTION for c in citations)))
     asked: dict[str, OpenQuestionView] = {}
+    deferred: dict[str, OpenQuestionView] = {}
     for q in open_questions or []:
         key = open_key(q.question)
-        asked.setdefault(key, OpenQuestionView(key=key, id=q.id, question=q.question,
-                                               answer=record.open_answers.get(key)))
+        if key in asked or key in deferred:
+            continue
+        entry = OpenQuestionView(key=key, id=q.id, question=q.question, until=q.until,
+                                 answer=record.open_answers.get(key),
+                                 options=(options or {}).get(key, []) if q.blocking else [])
+        (asked if q.blocking else deferred)[key] = entry
     answered = [OpenQuestionView(key=key, id="", question=a.question, answer=a)
-                for key, a in record.open_answers.items() if key not in asked]
+                for key, a in record.open_answers.items() if key not in asked and key not in deferred]
     return SupplementView(has_package=cited is not None, questions=active, superseded=superseded,
                           confirmations=confirmations, open_questions=list(asked.values()),
-                          open_answered=answered)
+                          open_deferred=list(deferred.values()), open_answered=answered)
 
 
 def apply(previous: Supplement, update: SupplementUpdate, *, now: str | None = None) -> Supplement:

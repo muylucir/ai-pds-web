@@ -100,6 +100,13 @@ export interface OpenAnswer extends SupplementAnswer {
   question: string;
 }
 
+/** 빌드 전 결정의 보기. 원본에 근거가 있는 것만, 추천 없이 온다(서버 package.parse_options). */
+export interface OpenOption {
+  text: string;
+  /** 근거 — `discovery/` 아래 상대 경로(질문 파일이면 문항 번호까지). */
+  source: string;
+}
+
 /** PRD 9번(열린 질문)에서 PM이 답할 것으로 적힌 질문. 서버 handoff/supplement.OpenQuestionView. */
 export interface OpenQuestion {
   /** `open:` + 질문 문장 해시. 저장할 때 그대로 돌려준다. */
@@ -108,6 +115,10 @@ export interface OpenQuestion {
   id: string;
   question: string;
   answer: OpenAnswer | null;
+  /** 빌드 중 결정이 답이 나올 때까지 어떻게 만들어지는가(PRD 9번 "답이 나올 때까지"). */
+  until: string;
+  /** 비어 있으면 서술형으로 묻는다. */
+  options: OpenOption[];
 }
 
 export interface SupplementView {
@@ -116,8 +127,10 @@ export interface SupplementView {
   questions: SupplementQuestion[];
   superseded: SupplementQuestion[];
   confirmations: Confirmation[];
-  /** 마지막 PRD의 열린 질문 중 PM 몫. 패키지가 없으면 비어 있다. */
+  /** 마지막 PRD의 열린 질문 중 PM 몫이고 시점이 빌드 전인 것. 패키지가 없으면 비어 있다. */
   open_questions: OpenQuestion[];
+  /** PM 몫이지만 빌드 중에 정해도 되는 것. 접어 두고, 답해도 된다. */
+  open_deferred: OpenQuestion[];
   /** 답했는데 지금 PRD의 열린 질문에는 없는 것 — 반영됐거나 문장이 바뀌었다. */
   open_answered: OpenQuestion[];
 }
@@ -131,7 +144,7 @@ export interface SupplementUpdate {
 export type PackageStatus = "generating" | "ready" | "failed" | "interrupted";
 export type StepStatus = "pending" | "running" | "done" | "failed";
 /** 생성 단계, 실행 순서대로. 서버 handoff/package.STEPS와 같다. */
-export type StepName = "prd" | "validation" | "scope";
+export type StepName = "prd" | "validation" | "scope" | "options";
 
 export interface Step {
   name: StepName;
@@ -154,7 +167,7 @@ export interface Finding {
 }
 
 /** 서버 handoff/package.Finding.kind. 화면의 검사 목록 순서이기도 하다. */
-export const FINDING_KINDS = ["tech", "vague", "acceptance", "grade", "ai_goal", "internal"] as const;
+export const FINDING_KINDS = ["tech", "vague", "acceptance", "grade", "ai_goal", "triage", "internal"] as const;
 export type FindingKind = (typeof FINDING_KINDS)[number];
 
 export interface Manifest {

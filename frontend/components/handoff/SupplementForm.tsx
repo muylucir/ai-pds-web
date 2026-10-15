@@ -1,8 +1,11 @@
 // 보완 질문 — 재료가 없는 곳만 묻는다(서버 handoff/supplement 헤더의 조건). 빈 섹션의 고정
-// 문항과, 마지막 PRD가 열린 질문으로 남긴 PM 결정이다.
+// 문항과, 마지막 PRD가 열린 질문으로 남긴 PM 결정 중 빌드 전에 정할 것이다. 빌드 중에 정해도
+// 되는 결정은 접어 둔다 — PRD가 그동안 어떻게 만들지를 적어 두었다.
 //
 // 문항에 AI 기본값을 채워 두지 않는다. 실측에서 표시된 기본값을 PM이 고른 비율이 89%였다 —
-// 기본값을 주면 이 답도 다시 "AI 제안 수락"이 된다. 빈 칸과 "모름"만 있다.
+// 기본값을 주면 이 답도 다시 "AI 제안 수락"이 된다. 빌드 전 결정에는 서버가 원본에 근거가 있는
+// 보기를 추천 없이 주고, 화면은 아무것도 미리 고르지 않는다. 보기가 없으면 빈 칸이다. 어느
+// 쪽이든 "직접 입력"과 "모름"이 있다.
 //
 // 확인은 내용을 바꾸지 않는다. 바꾸는 길은 워크스페이스뿐이다 — 여기서 고치게 하면 같은
 // 결정이 Discovery 산출물과 보완 답 두 곳에 다르게 남는다.
@@ -11,25 +14,31 @@ import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 import { STAGE_ORDER } from "@/lib/api/handoff";
 import type {
-  Confirmation, OpenQuestion, SupplementQuestion, SupplementQuestionId, SupplementUpdate,
+  Confirmation, OpenOption, OpenQuestion, SupplementQuestion, SupplementQuestionId, SupplementUpdate,
   SupplementView,
 } from "@/lib/api/handoff";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 import { sectionLabel } from "./ReadinessPanel";
 
-type Draft = Record<string, { text: string; unknown: boolean }>;
+/** `custom`은 화면 상태다 — 보기가 있는 질문에서 "직접 입력"을 골랐다. 저장하지 않는다. */
+type Draft = Record<string, { text: string; unknown: boolean; custom?: boolean }>;
 
 function initialDraft(view: SupplementView): Draft {
   const out: Draft = {};
   for (const q of view.questions) {
     out[q.id] = { text: q.answer?.text ?? "", unknown: q.answer?.unknown ?? false };
   }
-  for (const q of [...view.open_questions, ...view.open_answered]) {
-    out[q.key] = { text: q.answer?.text ?? "", unknown: q.answer?.unknown ?? false };
+  for (const q of openAll(view)) {
+    const text = q.answer?.text ?? "";
+    out[q.key] = { text, unknown: q.answer?.unknown ?? false,
+                   custom: !!text && !q.options.some((o) => o.text === text) };
   }
   return out;
 }
+
+const openAll = (view: SupplementView) =>
+  [...view.open_questions, ...view.open_deferred, ...view.open_answered];
 
 const filled = (d: Draft[string] | undefined) => !!d && (d.unknown || !!d.text.trim());
 
@@ -45,9 +54,9 @@ export function toUpdate(view: SupplementView, draft: Draft, confirmed: Set<stri
   }
   // 앞서 답해 PRD에서 빠진 질문도 같은 이유로 보낸다. 고친 것은 고친 대로.
   const open_answers: SupplementUpdate["open_answers"] = {};
-  for (const q of [...view.open_questions, ...view.open_answered]) {
+  for (const q of openAll(view)) {
     const d = draft[q.key];
-    if (filled(d)) open_answers[q.key] = { question: q.question, ...d };
+    if (filled(d)) open_answers[q.key] = { question: q.question, text: d.text, unknown: d.unknown };
   }
   return { answers, confirmed: [...confirmed], open_answers };
 }
@@ -136,19 +145,49 @@ export function SupplementForm({
     );
   };
 
-  // 답 칸 하나. 고정 문항과 PRD 열린 질문이 같은 모양이다 — 빈 칸과 "모름"뿐이다.
-  const renderAnswer = (id: string, label: ReactNode, hint: string | null) => {
+  // 답 칸 하나. 보기가 있으면 보기 중 하나 · 직접 입력 · 모름이고, 없으면 빈 칸과 모름이다.
+  const renderAnswer = (id: string, label: ReactNode, hint: string | null,
+                        options: OpenOption[] = []) => {
     const d = draft[id] ?? { text: "", unknown: false };
     const domId = `q-${id.replace(/[^\w-]/g, "-")}`;
+    const typing = !options.length || !!d.custom;
     return (
       <div key={id} className={`bg-white border rounded-xl px-4 py-3.5 mb-2.5 ${
         d.unknown ? "border-dashed border-slate-300" : d.text.trim() ? "border-sky-200" : "border-slate-200"}`}>
-        <label htmlFor={domId} className="block text-sm font-semibold text-slate-900">{label}</label>
+        {options.length ? (
+          <p id={domId} className="text-sm font-semibold text-slate-900">{label}</p>
+        ) : (
+          <label htmlFor={domId} className="block text-sm font-semibold text-slate-900">{label}</label>
+        )}
         {hint && <p className="mb-2 text-xs text-slate-400">{hint}</p>}
-        <textarea id={domId} value={d.unknown ? "" : d.text} disabled={d.unknown}
-                  maxLength={4000} rows={3}
-                  onChange={(e) => set(id, { text: e.target.value })}
-                  className={`w-full rounded-lg border border-slate-300 px-2.5 py-2 text-[13px] disabled:bg-slate-50 ${hint ? "" : "mt-2"}`} />
+        {options.length > 0 && (
+          <div role="radiogroup" aria-labelledby={domId} className={`space-y-1 ${hint ? "" : "mt-2"}`}>
+            {options.map((o) => (
+              <label key={o.text} className="flex items-start gap-2 text-[13px] text-slate-800 cursor-pointer">
+                <input type="radio" name={domId} className="mt-0.5" disabled={d.unknown}
+                       checked={!d.unknown && !d.custom && d.text === o.text}
+                       onChange={() => set(id, { text: o.text, custom: false })} />
+                <span>
+                  {o.text}
+                  <span className="ml-1.5 text-[11px] text-slate-400">{t("handoff.supp.option.source")}: {o.source}</span>
+                </span>
+              </label>
+            ))}
+            <label className="flex items-start gap-2 text-[13px] text-slate-800 cursor-pointer">
+              <input type="radio" name={domId} className="mt-0.5" disabled={d.unknown}
+                     checked={!d.unknown && !!d.custom}
+                     onChange={() => set(id, { text: "", custom: true })} />
+              {t("handoff.supp.option.custom")}
+            </label>
+          </div>
+        )}
+        {typing && (
+          <textarea id={options.length ? undefined : domId} aria-label={options.length ? t("handoff.supp.option.custom") : undefined}
+                    value={d.unknown ? "" : d.text} disabled={d.unknown}
+                    maxLength={4000} rows={options.length ? 2 : 3}
+                    onChange={(e) => set(id, { text: e.target.value })}
+                    className={`w-full rounded-lg border border-slate-300 px-2.5 py-2 text-[13px] disabled:bg-slate-50 ${hint && !options.length ? "" : "mt-2"}`} />
+        )}
         <label className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
           <input type="checkbox" checked={d.unknown}
                  onChange={(e) => set(id, { unknown: e.target.checked })} />
@@ -209,8 +248,19 @@ export function SupplementForm({
             {t("handoff.supp.open.title").replace("{n}", String(view.open_questions.length))}
           </h4>
           <p className="mb-2.5 text-xs text-slate-500">{t("handoff.supp.open.hint")}</p>
-          {view.open_questions.map((q) => renderAnswer(q.key, openLabel(q), null))}
+          {view.open_questions.map((q) => renderAnswer(q.key, openLabel(q), null, q.options))}
         </div>
+      )}
+
+      {view.open_deferred.length > 0 && (
+        <details className="mb-[18px]">
+          <summary className="cursor-pointer text-[13px] font-semibold text-slate-700">
+            {t("handoff.supp.open.deferred").replace("{n}", String(view.open_deferred.length))}
+          </summary>
+          <p className="mt-1 mb-2.5 text-xs text-slate-500">{t("handoff.supp.open.deferredHint")}</p>
+          {view.open_deferred.map((q) => renderAnswer(q.key, openLabel(q),
+            q.until ? `${t("handoff.supp.open.until")}: ${q.until}` : null))}
+        </details>
       )}
 
       {view.open_answered.length > 0 && (

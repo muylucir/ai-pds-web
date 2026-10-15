@@ -205,3 +205,25 @@ def test_apply_rejects_an_open_answer_whose_key_is_not_its_question():
     with pytest.raises(supplement.InvalidSupplement):
         supplement.apply(supplement.Supplement(), supplement.SupplementUpdate(open_answers={
             supplement.open_key("보존 기간"): supplement.OpenAnswerIn(question="권한", text="x")}))
+
+
+def test_only_decisions_needed_before_build_are_asked():
+    """실측(ws-g): PM 몫 18개 중 구현을 막는 것은 7개였다. 빌드 중 결정은 접어 두고,
+    보기는 빌드 전 결정에만 붙인다."""
+    questions = [
+        supplement.OpenQuestion(id="O-01", question="보존 기간 (R-08)"),
+        supplement.OpenQuestion(id="O-02", question="지원 외국어 목록 (R-02)", blocking=False,
+                                until="목록을 바꿀 수 있게 만들고 영어·베트남어로 시작"),
+    ]
+    options = {supplement.open_key(q.question): [supplement.Option(text="3년", source="a.md"),
+                                                 supplement.Option(text="5년", source="a.md")]
+               for q in questions}
+    answer = supplement.OpenAnswer(question="지원 외국어 목록 (R-02)", text="영어만")
+    record = supplement.Supplement(open_answers={supplement.open_key(answer.question): answer})
+    v = supplement.view(assess(A1, {}), record, {}, questions, options)
+    assert [(q.id, [o.text for o in q.options]) for q in v.open_questions] == [
+        ("O-01", ["3년", "5년"])]
+    assert [(q.id, q.until, q.options) for q in v.open_deferred] == [
+        ("O-02", "목록을 바꿀 수 있게 만들고 영어·베트남어로 시작", [])]
+    # 빌드 중 결정에 한 답은 그 질문 옆에 남는다 — "앞서 답한 질문"으로 빠지지 않는다.
+    assert v.open_deferred[0].answer.text == "영어만" and v.open_answered == []
