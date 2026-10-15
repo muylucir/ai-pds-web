@@ -59,3 +59,20 @@ def build_rollup(questions: list[Question], responses: list[SurveyResponse],
             per_question[q.id] = _text_stat(values)
     return Rollup(count=len(responses), rebuilt_at=now,
                   per_question=per_question)
+
+
+def persona_groups(questions: list[Question], responses: list[SurveyResponse]
+                   ) -> tuple[Question, list[tuple[str, list[SurveyResponse]]]] | None:
+    """페르소나 문항과, 그 답으로 나눈 응답 묶음. 페르소나 문항이 없으면 None이다.
+
+    묶음은 선택지 순서이고 응답이 있는 페르소나만 담는다 — 응답 0인 페르소나는
+    페르소나 문항 자신의 집계가 이미 보여 준다. 페르소나 문항은 필수이고 공개
+    제출이 선택지 밖의 답을 거절하므로(routes/surveys_public) 어느 묶음에도
+    들지 않는 응답은 없다.
+    """
+    pq = next((q for q in questions if q.persona), None)
+    if pq is None:
+        return None
+    groups = [(opt, [r for r in responses if r.answers.get(pq.id) == opt])
+              for opt in pq.options]
+    return pq, [(opt, rs) for opt, rs in groups if rs]

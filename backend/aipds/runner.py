@@ -14,7 +14,8 @@ from aipds.audit_log import UserInput
 from aipds.context_usage import DISCOVERY_KEY, ContextRecord
 from aipds.models import AgentEvent
 from aipds.globmatch import matches_glob
-from aipds.pathsafe import reject_unsafe
+from aipds.pathsafe import (read_text_beneath, reject_unsafe, stat_beneath,
+                             unlink_beneath, write_beneath)
 from aipds.performance import log_performance
 from aipds.s3store import S3StoreLike
 from aipds.workspace_sync import SYNC_GLOBS, content_for_s3, publish_file
@@ -48,6 +49,10 @@ class AgentRunner:
     #: 있는 파일이 "있다가 없어지는 문서"로 보인다.
     _SYNC_GLOBS = SYNC_GLOBS
     _RESTORE_PREFIXES = ("aiplc-docs/", "prototype/", "uploads/")
+    #: 바이트 그대로 복원하는 서브트리. `uploads/`에는 이미지·PDF 원본이 있다 —
+    #: 텍스트 경로(UTF-8 디코드)를 타면 U+FFFD로 깨진다. 업로드 라우트만 쓰는
+    #: 입력이라 정본으로 올리지 않으므로(SYNC_GLOBS 밖) 해시도 기록하지 않는다.
+    _BYTE_PREFIXES = ("uploads/",)
 
     def __init__(self, project_id, driver, s3: S3StoreLike, local_root: Path, session: dict):
         self.project_id = project_id
@@ -84,6 +89,11 @@ class AgentRunner:
         reject_unsafe(rel_path)
         return await self._s3.put_if_absent(rel_path, content)
 
+    async def write_bytes_if_absent(self, rel_path: str, content: bytes) -> bool:
+        """`write_file_if_absent` for an upload's original (an image, a PDF)."""
+        reject_unsafe(rel_path)
+        return await self._s3.put_bytes_if_absent(rel_path, content)
+
     async def list_files(self, glob: str) -> list[str]:
         reject_unsafe(glob)
         keys = await self._s3.list(_glob_prefix(glob))
@@ -103,10 +113,6 @@ class AgentRunner:
         return [k for k, _ in matched]
 
     # ---- workspace <-> S3 ----
-
-    def _local_path(self, key: str) -> Path:
-        reject_unsafe(key)
-        return self._local_root / key
 
     async def _list_with_etags(
         self, prefix: str,
@@ -142,9 +148,8 @@ class AgentRunner:
         previous = self._remote_etags or {}
         removed = set(previous) - set(remote)
         for key in removed:
-            path = self._local_path(key)
-            if path.is_file():
-                path.unlink()
+            reject_unsafe(key)
+            unlink_beneath(self._local_root, key)
             self._synced_hashes.pop(key, None)
 
         keys = [
@@ -152,9 +157,12 @@ class AgentRunner:
             if cold
             or etag is None
             or previous.get(key) != etag
-            or not self._local_path(key).is_file()
+            or stat_beneath(self._local_root, key) is None
         ]
-        bodies = await asyncio.gather(*(self._s3.get(key) for key in keys))
+        bodies = await asyncio.gather(*(
+            self._s3.get_bytes(key) if key.startswith(self._BYTE_PREFIXES)
+            else self._s3.get(key)
+            for key in keys))
         # 첫 턴은 워크스페이스 전체를 쓴다 — 디스크 쓰기는 루프 밖에서.
         hashes = await asyncio.to_thread(
             self._write_restored, list(zip(keys, bodies)))
@@ -171,18 +179,25 @@ class AgentRunner:
             removed=len(removed),
         )
 
-    def _write_restored(self, items: list[tuple[str, str]]) -> dict[str, str]:
+    def _write_restored(
+        self, items: list[tuple[str, str | bytes]],
+    ) -> dict[str, str]:
         """복원한 본문을 로컬에 쓰고 키별 해시를 돌려준다. 동기 — 스레드에서 돈다.
+        바이트 본문(`_BYTE_PREFIXES`)은 그대로 쓰고 해시를 남기지 않는다.
 
         해시는 돌려주기만 하고 `_synced_hashes`에 직접 넣지 않는다: 그 dict는 루프
         쪽(쓰기 직후 게시)도 만지므로, 갱신은 루프에서 한 번에 한다.
+
+        링크를 따라가지 않는다(`pathsafe.write_beneath`). 이 트리는 에이전트가 쓰므로,
+        따라가면 에이전트가 고른 곳에 백엔드 uid로 정본 본문을 쓰게 된다.
         """
         hashes: dict[str, str] = {}
+        if items:
+            self._local_root.mkdir(parents=True, exist_ok=True)
         for key, body in items:
-            p = self._local_path(key)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(body, encoding="utf-8")
-            hashes[key] = _content_hash(body)
+            write_beneath(self._local_root, key, body)
+            if isinstance(body, str):
+                hashes[key] = _content_hash(body)
         return hashes
 
     def _scan_sync_candidates(self) -> list[tuple[str, str, str]]:
@@ -196,10 +211,11 @@ class AgentRunner:
         상태가 함께 산다. 맨 앞 조각에 와일드카드가 있는 glob이 생기면 루트 전체를
         걷는다.
 
-        **심볼릭 링크인 맨 앞 디렉토리는 걷지 않는다.** 루트에서 `rglob`하면 디렉토리
-        링크를 따라가지 않는데, 그 디렉토리를 시작점으로 주면 따라간다. 에이전트가
-        `aiplc-docs`를 워크스페이스 밖으로 거는 링크로 만들면 바깥 파일이 정본에
-        올라간다.
+        **심볼릭 링크는 따라가지 않는다.** 루트에서 `rglob`하면 디렉토리 링크를
+        따라가지 않는데, 그 디렉토리를 시작점으로 주면 따라간다 — 그래서 링크인 맨 앞
+        디렉토리는 걷지 않는다. 파일 링크는 `rglob`이 돌려주므로 건너뛰고, 읽기도
+        `read_text_beneath`로 한다(걷고 나서 읽기 전에 바꿔 끼운 링크). 에이전트가
+        바깥을 가리키는 링크를 두면 바깥 파일이 정본에 올라간다.
         """
         tops = {glob.split("/", 1)[0] for glob in self._SYNC_GLOBS}
         if any(ch in top for top in tops for ch in "*?["):
@@ -211,14 +227,17 @@ class AgentRunner:
             if root.is_symlink() or not root.is_dir():
                 continue
             for path in root.rglob("*"):
-                if not path.is_file():
+                if path.is_symlink() or not path.is_file():
                     continue
                 key = path.relative_to(self._local_root).as_posix()
                 if not any(matches_glob(key, glob) for glob in self._SYNC_GLOBS):
                     continue
                 reject_unsafe(key)
-                content = content_for_s3(
-                    key, path.read_text(encoding="utf-8", errors="replace"))
+                try:
+                    text = read_text_beneath(self._local_root, key, errors="replace")
+                except OSError:
+                    continue  # 걷는 사이에 링크로 바뀌었거나 사라졌다
+                content = content_for_s3(key, text)
                 found.append((key, content, _content_hash(content)))
         return found
 

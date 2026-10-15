@@ -211,6 +211,17 @@ export class AipdsHostingStack extends cdk.Stack {
     this.originVerifySecret = headerSecret;
     this.originDnsName = originDnsName;
 
+    // **보안 경고: CloudFront → 오리진 구간은 암호화되지 않는다(HTTP_ONLY, 포트 80).** 브라우저
+    // → CloudFront는 HTTPS지만, CloudFront가 EC2 공인 DNS로 보내는 요청은 평문이고 그 안에
+    // 세션 쿠키(Cognito 토큰)와 아래 비밀 헤더가 실린다. 보안 그룹이 CloudFront 오리진 대역만
+    // 받고 nginx가 비밀 헤더를 확인하므로 직접 접근은 막히지만, 경로상의 도청은 막지 못한다.
+    // EC2 공인 DNS에는 공인 인증서를 받을 수 없어서 생긴 제약이다. 워크숍 밖에서 쓴다면 둘 중
+    // 하나로 바꾼다: 자체 도메인 + 인증서로 오리진을 HTTPS_ONLY(443)로, 또는 인스턴스를
+    // 프라이빗 서브넷으로 옮기고 CloudFront VPC 오리진을 쓴다. 이 스택의 배포는 EC2를 교체할 수
+    // 있으므로(AMI 미고정) 계획된 교체 때 한다. 프리뷰 배포(aipds-preview-stack.ts)도 같다.
+    // 이 샘플이 도메인 없이 배포되도록 한 선택이다 — README "CloudFront → instance is HTTP by
+    // design"에 범위·완화·전환 방법을 적었다.
+    //
     // 비밀 헤더 값: CFN dynamic reference({{resolve:secretsmanager:...}})로 주입.
     // 배포 시 CloudFormation이 해석 → 템플릿에는 평문이 남지 않음.
     const origin = new origins.HttpOrigin(originDnsName, {

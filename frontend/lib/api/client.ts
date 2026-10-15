@@ -213,7 +213,7 @@ export async function getContext(pid: string): Promise<ContextUsage | null> {
 }
 
 // POST /projects/{pid}/uploads (multipart `file`) → the stored workspace path
-// + char count/truncation flag (Task 2, backend). Deliberately bypasses the
+// (+ the original kept beside a converted PDF) + char count/truncation flag. Deliberately bypasses the
 // shared `request()` helper: FormData needs the browser to set its own
 // multipart Content-Type (with boundary) — setting it manually would break
 // the request.
@@ -231,7 +231,7 @@ export async function downloadArtifactsArchive(pid: string): Promise<Blob> {
 export async function uploadFile(
   pid: string,
   file: File,
-): Promise<{ path: string; chars: number; truncated: boolean }> {
+): Promise<{ path: string; original: string | null; chars: number; truncated: boolean }> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(pid)}/uploads`, {

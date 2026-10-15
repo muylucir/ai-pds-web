@@ -55,6 +55,10 @@ class FakeRunner:
         reject_unsafe(rel)
         return await self._s3.put_if_absent(rel, content)
 
+    async def write_bytes_if_absent(self, rel: str, content: bytes) -> bool:
+        reject_unsafe(rel)
+        return await self._s3.put_bytes_if_absent(rel, content)
+
     async def list_files(self, glob: str) -> list[str]:
         reject_unsafe(glob)
         keys = await self._s3.list("")

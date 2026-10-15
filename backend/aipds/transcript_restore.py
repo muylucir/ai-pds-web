@@ -24,9 +24,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
 from pathlib import Path
 from typing import Any
+
+from aipds.pathsafe import stat_beneath, write_beneath
 
 _log = logging.getLogger("aipds.agent")
 
@@ -87,11 +88,18 @@ async def restore(store: Any, config_dir: str | Path, cwd: str,
 
 
 def _merge_tree(src: Path, dst: Path) -> None:
+    """`src` 아래 파일을 `dst`에 없는 것만 쓴다.
+
+    `dst`는 config dir 아래이고 에이전트가 쓰는 트리다 — 링크를 따라가지 않는다
+    (`pathsafe`). 따라가면 트랜스크립트가 에이전트가 고른 곳에 백엔드 uid로 쓰인다.
+    """
+    root, base = dst.parent, dst.name
+    root.mkdir(parents=True, exist_ok=True)
     for path in sorted(src.rglob("*")):
-        target = dst / path.relative_to(src)
-        if path.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-        elif not target.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            # 임시 사본은 0600이다(SDK). 그룹이 읽어야 실행 래퍼 아래의 CLI가 연다.
-            shutil.copyfile(path, target)
+        if not path.is_file():
+            continue
+        rel = f"{base}/{path.relative_to(src).as_posix()}"
+        if stat_beneath(root, rel) is None:
+            # 임시 사본은 0600이다(SDK). 새로 써서 umask를 따르게 한다 — 그룹이 읽어야
+            # 실행 래퍼 아래의 CLI가 연다.
+            write_beneath(root, rel, path.read_bytes())

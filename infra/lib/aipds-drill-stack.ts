@@ -8,8 +8,8 @@ export interface AipdsDrillStackProps extends cdk.StackProps {
   /** 브라우저가 이 버킷으로 직접 PUT할 때 허용되는 출처.
    *
    *  프로젝트 가져오기는 번들을 presigned PUT으로 S3에 **직접** 올린다 —
-   *  nginx의 client_max_body_size(인스턴스 user-data 안의 값이므로 고치는 것이 곧
-   *  EC2 교체다)를 무관하게 만드는 유일한 길이다. 그 요청은 크로스 오리진이므로
+   *  nginx의 client_max_body_size와 Next 미들웨어의 바디 상한(둘 다 첨부 업로드에
+   *  맞춘 값)을 무관하게 만드는 유일한 길이다. 그 요청은 크로스 오리진이므로
    *  버킷에 CORS 규칙이 있어야 하고, 없으면 preflight에서 막힌다.
    *
    *  **값을 prop으로 받는 이유.** 실제 출처는 호스팅 스택의 CloudFront 도메인인데
@@ -50,6 +50,16 @@ export class AipdsDrillStack extends cdk.Stack {
 
     // Artifacts bucket — 프로젝트 산출물(projects/*), strands 세션(sessions/*),
     // 그리고 가져오기 스테이징(imports/*).
+    //
+    // **보안 경고: 이 버킷은 데이터를 지키도록 설정돼 있지 않다.** 실습 환경을 깨끗이 내리기 위한
+    // 선택이고, 워크숍 자료(고객 인터뷰, 전략 문서)가 여기 모인다는 것을 알고 써야 한다.
+    // - 스택을 지우면(`cdk destroy`) 버킷과 그 안의 모든 객체가 지워진다(DESTROY +
+    //   autoDeleteObjects). 되살릴 수 없다.
+    // - 버전 관리가 없다. 덮어쓰기·삭제(실수, 또는 인스턴스 롤을 얻은 공격자)를 되돌릴 수 없다.
+    // - 서버 액세스 로그가 없다. 누가 무엇을 읽었는지 버킷 쪽 기록이 남지 않는다.
+    // 지속해서 쓸 환경이라면 `removalPolicy: cdk.RemovalPolicy.RETAIN`(autoDeleteObjects 제거),
+    // `versioned: true`와 noncurrent 버전 만료 규칙, 서버 액세스 로그(별도 로그 버킷)를 켠다.
+    // 버전 관리를 켜면 프로젝트를 지워도 이전 버전이 만료 기간만큼 남는다는 점도 함께 정한다.
     const bucket = new s3.Bucket(this, 'Artifacts', {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,

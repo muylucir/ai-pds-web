@@ -19,8 +19,12 @@
 # `X-Preview-Verify`를 붙인다(앱 배포가 붙이는 `X-Origin-Verify`와 별개). nginx와 Next
 # 프록시는 이 헤더를 그대로 넘긴다. 값을 모르면 앱 도메인으로 흉내낼 수 없다.
 #
-# 설정이 없으면(로컬 개발, 프리뷰 스택을 아직 올리지 않은 배포) 예전처럼 앱 오리진이
-# 프로토타입을 서빙한다 — 기능이 사라지는 것보다 낫다.
+# 설정이 없을 때 앱 오리진이 프로토타입을 서빙하는 것은 **인증이 꺼진 로컬 개발에서만**
+# 이다(`same_origin_allowed`). 그때는 훔칠 세션 쿠키가 없다. 인증이 켜진 배포에서 설정이
+# 없거나 비밀 값을 읽지 못하면 프리뷰를 닫는다 — 그 상태로 앱 오리진에서 서빙하면, 프리뷰를
+# 연 사람(관리자 포함)의 세션으로 프로토타입 코드가 앱 API를 부른다. 프리뷰 스택은
+# `cdk deploy --all`에 늘 포함되므로 정상 배포에서 이 상태는 harden 동기화 전 몇 분과
+# Secrets Manager 일시 장애(최대 `_RETRY_AFTER`초)뿐이다.
 from __future__ import annotations
 
 import logging
@@ -63,8 +67,8 @@ def _secret_from_arn(arn: str) -> str | None:
             _secret_cache[arn] = value
         return value or None
     except Exception:
-        # 읽지 못하면 프리뷰 표면을 끈 것과 같다(앱 오리진이 계속 서빙한다). 조용히
-        # 넘기면 "왜 링크가 앱 도메인인가"를 알 수 없으므로 남긴다.
+        # 읽지 못하면 프리뷰 표면이 없는 것과 같다(인증이 켜져 있으면 프리뷰가 닫힌다).
+        # 조용히 넘기면 "왜 프리뷰가 열리지 않는가"를 알 수 없으므로 남긴다.
         _log.exception("reading the preview verify secret failed")
         _failed_at[arn] = time.monotonic()
         return None
@@ -82,10 +86,16 @@ def enabled() -> bool:
     return preview_origin() is not None and preview_verify() is not None
 
 
+def same_origin_allowed() -> bool:
+    """프리뷰 표면이 없을 때 앱 오리진이 프로토타입을 서빙해도 되는가 — 인증이 꺼졌을 때만."""
+    import aipds.app as app_module
+    return app_module.cognito_config() is None
+
+
 def on_preview_surface(headers) -> bool:
-    """이 요청이 프리뷰 배포로 왔는가. 프리뷰가 꺼져 있으면 True(앱 오리진이 서빙한다)."""
+    """이 요청이 프리뷰 배포로 왔는가. 프리뷰가 꺼져 있으면 `same_origin_allowed()`."""
     expected = preview_verify()
     if preview_origin() is None or expected is None:
-        return True
+        return same_origin_allowed()
     presented = headers.get(HEADER, "")
     return bool(presented) and secrets.compare_digest(presented, expected)

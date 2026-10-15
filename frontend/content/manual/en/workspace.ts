@@ -8,18 +8,41 @@ export const workspace: ManualSection = {
     {
       kind: "mockup",
       id: "workspace",
-      caption: "The workspace has four columns — stage progress · the conversation · answering questions · the generated document",
+      caption: "The workspace — phase progress · the conversation · answering questions, with the generated document in a drawer at the right edge",
     },
     {
       kind: "md",
-      md: `- **First column · stages** — the Discovery stages and where you are. Stages can be added or dropped as you go.
-- **Second column · the conversation** — what you and the AI say to each other. This is where you direct the work and where decisions are made.
-- **Third column · answering questions** — where you answer the question sheets the AI raises. When there is no question, the prototype preview or the list of recent artifacts takes its place.
-- **Fourth column · the generated document** — the document just written, rendered in place. While the AI is writing a document, the progress line above the input box shows **which file and how many characters so far** (e.g. *Writing the document · business-context.md · 1,234 chars*). A long document takes one to two minutes and appears here once it is written. The dropdown at the top selects a different one, and ↻ reloads it. The list is ordered **most recently changed first** and the top entry is the one open — after a refresh you still land on the newest document.
+      md: `- **Left column · phases** — the six AI-PDS phases (Envision · Use Case Intake · Prioritize · Prototype · Product Strategy · Go-to-Market) and where you are. A phase the path you took does not pass through reads *Not on this path* and is left out of the count.
+- **Middle column · the conversation** — what you and the AI say to each other. This is where you direct the work and where decisions are made.
+- **Right column · answering questions** — where you answer the question sheets the AI raises. When there is no question, the prototype preview or the list of recent artifacts takes its place.
+- **The generated document** — not a column. It opens in a drawer that slides over the right side when you press the **Generated documents** tab at the right edge of the screen ([below](/manual#doc-drawer)).
 
-On a narrow window (a small laptop, or a screen split in half) the three side columns are hidden and
-only the conversation is left. Questions then arrive as a badge above the chat, and documents lead
-out to the Document Review screen.`,
+On a narrow window (a small laptop, or a screen split in half) the phase and question columns are
+hidden and only the conversation is left. Questions then arrive as a badge above the chat, and the
+document drawer covers the full width when it opens.`,
+    },
+    { kind: "heading", id: "doc-drawer", text: "The generated document" },
+    {
+      kind: "md",
+      md: `The document just written is rendered in a drawer that covers the right side of the screen. It
+starts closed, so the question sheet keeps its width. Three things open it:
+
+- The **Generated documents** tab at the right edge, which also shows how many documents there are
+- **Open document** in the *The document was updated (vN)* notice in the conversation
+- **View {document}** above the question sheet — for rounds where you read the document before answering, such as an approval gate
+
+When a new document is written while the drawer is closed, the tab fills in and reads **New
+document**. It does not open by itself, because it would cover the sheet you were answering. Close
+it with the same tab, ✕, Esc, or a click outside.
+
+Inside, the dropdown at the top selects a different document and ↻ reloads it. The list is ordered
+**most recently changed first** and the top entry is the one open — after a refresh you still land
+on the newest document. **Go to the full document review →** at the bottom takes you to
+[Document Review](/manual#review).
+
+While the AI is writing a document, the progress line above the input box shows **which file and
+how many characters so far** (*Writing the document*, with *business-context.md · 1,234 chars* on the
+line below). A long document takes one to two minutes and appears in the drawer once it is written.`,
     },
     { kind: "heading", id: "start", text: "Starting the conversation" },
     {
@@ -45,10 +68,11 @@ from this" — the AI works out which path that is.`,
 | Skip | "Let's skip this stage" |
 | Check the reasoning | "Tell me where this conclusion came from" |
 
-While the AI works, a single line **just above the message box** tells you what it is doing right
-now — *Thinking*, *Reading the material · file name*, *Writing the document* — along with the
-elapsed time. That line always shows only the **most recent** thing and never pushes the
-conversation around. While the number keeps climbing, nothing is stuck.
+While the AI works, the progress line **just above the message box** tells you what it is doing
+right now — *Thinking*, *Reading source material*, *Writing the document* — with the elapsed time,
+and on the line below, what it is working on (the file it reads or writes, the command it runs). It
+always shows only the **most recent** thing and never pushes the conversation around. While the
+number keeps climbing, nothing is stuck.
 
 When the turn ends, the order it went through is collected into an **activity log** that attaches
 below the answer, collapsed. Expand it to see where the model thought, which tools ran and on what
@@ -60,15 +84,15 @@ the conversation. At 0% the AI summarises the earlier conversation to make room 
 from then on it remembers earlier details only as far as the summary kept them. It turns amber
 below 25% and red below 10%; hover to see the token counts.`,
     },
-    { kind: "heading", id: "answer-panel", text: "The question panel (third column)" },
+    { kind: "heading", id: "answer-panel", text: "The question panel (right column)" },
     {
       kind: "md",
-      md: `The third column shows one of three things, in this order of priority.
+      md: `The right column shows one of three things, in this order of priority.
 
-| When | The third column shows |
+| When | The right column shows |
 |---|---|
 | The AI has raised a question sheet | **The answer sheet** — pick the options, then **Submit answers → AI review** |
-| The prototype stage is in progress | **The prototype preview** — the built screen, right there |
+| The Prototype phase is in progress | **The prototype preview** — the built screen, right there |
 | Anything else | **Recent artifacts** — the files changed in this conversation |
 
 Questions come before everything else. When *Questions presented* appears in the conversation this
@@ -94,12 +118,22 @@ wrong way, stopping and re-directing is faster than waiting for it to finish.`,
     { kind: "heading", id: "attach", text: "Attaching files" },
     {
       kind: "md",
-      md: `The clip button in the input area attaches source material.
+      md: `The clip button (📎) in the input area opens the attach dialog. It lists the supported types and how the AI
+receives each, and takes several files at once; a file that fails shows why, right there. If you already know
+the types, drop files straight onto the conversation instead.
 
-- Types: \`.md\` · \`.txt\` · \`.csv\` · \`.xlsx\` · \`.pdf\`
-- Size: up to 5MB per file
-- Attachments are **converted to text** before they reach the conversation. Images and
-  formatting do not survive, so if the tables matter, \`.csv\` or \`.xlsx\` beats \`.pdf\`.
+- Documents, sheets and slides: \`.md\` · \`.txt\` · \`.csv\` · \`.xlsx\` · \`.docx\` · \`.pptx\` · \`.hwpx\` · \`.pdf\`
+- Web pages: \`.html\` · \`.htm\` (a page saved with the browser's "Save as")
+- Meeting transcripts: \`.vtt\` · \`.srt\` (captions downloaded from Teams, Zoom or Chime)
+- Images: \`.png\` · \`.jpg\` · \`.gif\` · \`.webp\` — screenshots, whiteboard photos, sketches
+- Size: up to 10MB per file
+
+Documents are **converted to text** before they reach the conversation. Formatting and
+pictures inside a document are dropped, and anything past 50,000 characters is cut. Images
+reach the AI as pictures. A PDF is both — the AI reads the converted text, and looks at the
+original when it needs a chart or a scanned page.
+
+Legacy formats (\`.doc\` · \`.ppt\` · \`.xls\` · \`.hwp\`) are not accepted. Save them in the newer format first.
 
 Interview notes, requirement lists and market research go here, and the AI writes from them.`,
     },
@@ -117,7 +151,7 @@ asks why a decision was made.`,
     {
       kind: "callout",
       tone: "note",
-      md: `You may see *"This document has not been saved yet"* in the fourth column. Documents are saved
+      md: `You may see *"This document has not been saved yet"* in the document drawer. Documents are saved
 **when the turn ends**, so that is expected. If the message is still there after the turn
 finishes, reload it with ↻.`,
     },

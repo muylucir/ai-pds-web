@@ -48,7 +48,7 @@ def test_a_name_matches_whole_segments_only():
 
 
 def test_a_change_history_said_to_be_absent_is_not_a_broken_link():
-    """tobacco의 문장. 이 파일은 없는 것이 "변경 없음"이라는 뜻이다."""
+    """ws-b의 문장. 이 파일은 없는 것이 "변경 없음"이라는 뜻이다."""
     text = "승인 이후 변경 이력(`change-history.md`)이 없으므로 승인된 명세가 그대로 기준이다."
     assert missing_references(text, DOCS) == []
 

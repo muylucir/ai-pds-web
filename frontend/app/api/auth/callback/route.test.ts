@@ -24,8 +24,8 @@ function fakeJwt(payload: Record<string, unknown>): string {
 function mockTokenEndpoint() {
   return vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response(JSON.stringify({
-      access_token: fakeJwt({ "cognito:groups": ["admin"], username: "a@b.io" }),
-      id_token: fakeJwt({ email: "a@b.io" }),
+      access_token: fakeJwt({ "cognito:groups": ["admin"], username: "a@example.com" }),
+      id_token: fakeJwt({ email: "a@example.com" }),
       refresh_token: "rt",
       expires_in: 3600,
     }), { status: 200, headers: { "Content-Type": "application/json" } }),

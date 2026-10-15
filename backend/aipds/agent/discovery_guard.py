@@ -34,6 +34,7 @@ import os
 import re
 from pathlib import PurePosixPath
 
+from aipds.agent_home import SETTINGS_IN_COMMAND
 from aipds.pathsafe import workspace_relative
 from aipds.proto import layout
 
@@ -44,6 +45,20 @@ DOCS_ROOT = "aiplc-docs"
 #: 이 게이트가 보는 파일 쓰기 도구. claude_driver._FILE_TOOLS와 같은 집합이어야
 #: 한다 — 한쪽에만 도구가 추가되면 그 도구는 관측되면서 막히지 않는다.
 WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit"})
+
+#: 노트북 편집. 쓰기 도구지만 경로 키가 다르고(`notebook_path`) 산출물을 만들지 않으므로
+#: 게시(PostToolUse)는 하지 않는다 — 쓰기 범위 판정만 같게 받는다. 빠지면 `aiplc-docs/`
+#: 밖에 쓰는 우회로다.
+NOTEBOOK_TOOL = "NotebookEdit"
+
+
+def tool_write_path(name: str, tool_input: dict) -> str | None:
+    """쓰기 도구가 겨냥한 경로. 쓰기 도구가 아니면 None."""
+    if name in WRITE_TOOLS:
+        return tool_input.get("file_path")
+    if name == NOTEBOOK_TOOL:
+        return tool_input.get("notebook_path")
+    return None
 
 
 def write_denial(path: str | None, workspace: str) -> str | None:
@@ -66,11 +81,13 @@ def write_denial(path: str | None, workspace: str) -> str | None:
     return rel
 
 
-#: `aiplc-docs/` 안이지만 웹이 소유하는 파일 이름. 웹이 매번 다시 만들어 덮어쓰므로
-#: 에이전트가 거기 쓴 내용은 다음 재생성에서 사라진다 — 프로토타입 쪽 게이트와 같은
-#: 이유로 산문이 아니라 훅으로 막는다. 이름으로 판정하는 것은 이 이름들이 웹만 쓰는
+#: `aiplc-docs/` 안이지만 웹이 소유하는 파일 이름. 설문 집계는 웹이 매번 다시 만들어
+#: 덮어쓰므로 에이전트가 거기 쓴 내용은 다음 재생성에서 사라지고, 수정 이력은 빌드
+#: 세션이 덧붙이고 다음 빌드 세션이 입력으로 읽으므로 에이전트가 고치면 빌더가 믿는
+#: "무엇이 만들어졌는가"가 바뀐다 — 프로토타입 쪽 게이트와 같은 이유로 산문이 아니라
+#: 훅으로 막는다. 이름으로 판정하는 것은 이 이름들이 웹만 쓰는
 #: 이름이라서다(상류 룰에 없다). 이름이 겹칠 수 있는 파일은 여기 넣지 않는다.
-WEB_OWNED_NAMES = frozenset({layout.SURVEY_AGGREGATE})
+WEB_OWNED_NAMES = frozenset({layout.SURVEY_AGGREGATE, layout.CHANGE_HISTORY})
 
 
 def web_owned_denial(path: str | None, workspace: str) -> str | None:
@@ -99,7 +116,7 @@ AUDIT_KEY = f"{DOCS_ROOT}/audit.md"
 def audit_overwrite_denial(tool: str, path: str | None, workspace: str) -> str | None:
     """이미 있는 audit.md를 Write로 통째로 쓰면 거부 대상 경로를, 아니면 None.
 
-    에이전트는 첫 턴에 audit.md를 Write로 새로 만들어 왔다(TestRachnaCostcoDelivery·
+    에이전트는 첫 턴에 audit.md를 Write로 새로 만들어 왔다(ws-e·
     test5 실측). 이제 그 파일은 웹이 먼저 만들고 사용자 입력을 원문 그대로 적어 두므로,
     통째로 쓰면 그 기록이 사라진다 — 계약(discovery-config/CLAUDE.md)이 이미 "Edit로
     덧붙이라"고 하지만 산문이 아니라 훅으로 지킨다. Edit는 막지 않는다.
@@ -169,3 +186,15 @@ def bash_denial(command: str | None) -> str | None:
                 continue
             return target
     return None
+
+
+def settings_denial(command: str | None) -> str | None:
+    """명령이 CLI 설정 파일을 건드리면 그 조각을, 아니면 None.
+
+    워크스페이스 밖 리다이렉션은 `bash_denial`이 이미 막지만 `cp`·`sed -i`·인터프리터는
+    보지 않는다. 설정 파일은 이름이 고정이라 이름으로 막는다(agent_home.SETTINGS_IN_COMMAND).
+    """
+    if not command or not isinstance(command, str):
+        return None
+    match = SETTINGS_IN_COMMAND.search(_QUOTED.sub(" ", command))
+    return match.group(0) if match else None

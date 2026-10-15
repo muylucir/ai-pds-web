@@ -21,17 +21,29 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from aipds.pathsafe import reject_unsafe_segment
+from aipds.pathsafe import reject_unsafe_segment, unlink_beneath, write_beneath
 
 ROOT_ENV = "AIPDS_AGENT_HOME_DIR"
 
 #: 공유 config dir에서 프로젝트별 config dir로 옮기는 것. CLI의 런타임 상태(트랜스크립트,
 #: `.claude.json` …)는 여기 넣지 않는다 — 그것이 프로젝트마다 갈라야 하는 것이다.
 CONFIG_CONTENT = ("CLAUDE.md", "agents", "skills")
+
+#: 띄울 때마다 비워 두는 CLI 설정. 에이전트는 config dir과 워크스페이스에 쓸 수 있으므로,
+#: 여기 hook·env·권한·MCP 서버를 심으면 다음 실행부터 그것이 돈다(`setting_sources`가
+#: user·project다). 정상 흐름에서 이 파일들을 쓰는 곳은 없다 — 공유 config에도 없다.
+USER_SETTINGS = "settings.json"
+WORKSPACE_SETTINGS = (".claude/settings.json", ".claude/settings.local.json", ".mcp.json")
+
+#: 명령 안에서 위 파일(과 CLI 상태 `.claude.json`)을 가리키는 조각. 두 에이전트의 Bash
+#: 게이트(agent/discovery_guard, proto/build_guard)가 쓴다 — 띄울 때마다 비우지만, 세션
+#: 안에서 쓰면 그 세션의 이후 도구 호출에 hook이 걸린다.
+SETTINGS_IN_COMMAND = re.compile(r"\.claude/settings[\w.-]*|\.mcp\.json|\.claude\.json")
 
 
 def root() -> Path:
@@ -58,11 +70,18 @@ class AgentHome:
         return self
 
 
-def copy_config(shared_config: str | Path, config_dir: str | Path) -> None:
+def copy_config(shared_config: str | Path, config_dir: str | Path,
+                workspace: str | Path | None = None) -> None:
     """공유 config dir의 내용(CONFIG_CONTENT)을 프로젝트별 config dir에 새로 복사한다.
 
     CLI를 띄울 때마다 부른다. 매번 지우고 다시 복사한다 — 공유 쪽에서 스킬 하나가 빠졌는데
     사본에 남아 있으면 그 스킬이 계속 켜진다. 런타임 상태는 건드리지 않는다.
+
+    CLI 설정은 비운다: config dir의 `settings.json`을 빈 설정으로 쓰고, `workspace`를
+    주면 그 아래의 프로젝트 설정(WORKSPACE_SETTINGS)을 지운다. 이전 실행의 에이전트가
+    심은 것이 다음 실행에 이어지지 않게 하기 위해서다.
+
+    두 트리 모두 에이전트가 쓰므로 링크를 따라가지 않는다(`pathsafe`).
     """
     shared, config = Path(shared_config), Path(config_dir)
     config.mkdir(parents=True, exist_ok=True)
@@ -73,9 +92,16 @@ def copy_config(shared_config: str | Path, config_dir: str | Path) -> None:
         elif dst.exists() or dst.is_symlink():
             dst.unlink()
         if src.is_dir():
-            shutil.copytree(src, dst)
+            for path in sorted(src.rglob("*")):
+                if path.is_file():
+                    rel = f"{name}/{path.relative_to(src).as_posix()}"
+                    write_beneath(config, rel, path.read_bytes())
         elif src.is_file():
-            shutil.copyfile(src, dst)
+            write_beneath(config, name, src.read_bytes())
+    write_beneath(config, USER_SETTINGS, "{}\n")
+    if workspace is not None:
+        for rel in WORKSPACE_SETTINGS:
+            unlink_beneath(Path(workspace), rel)
 
 
 def discovery(project_id: str) -> AgentHome:

@@ -102,7 +102,7 @@ def test_the_note_becomes_the_summary():
 
 
 def test_an_escaped_stage_name_is_unescaped():
-    """2026-08-18 hpt-sarang: 모델이 `Prototype &amp; Validation`을 보냈다. 스테이지
+    """2026-08-18 ws-d: 모델이 `Prototype &amp; Validation`을 보냈다. 스테이지
     이름은 표시 문자열이 아니라 **키**이므로, `&amp;`가 박힌 줄은 다음의 올바른 줄과
     이름이 달라 체크라인이 하나 더 생긴다.
 

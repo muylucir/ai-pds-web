@@ -1,8 +1,14 @@
 # backend/tests/conftest.py
 import asyncio
-import pytest
-from aipds import app as app_module
-from aipds.routes import deps as deps_module
+import os
+
+# 인증 바이패스는 명시적 스위치로만 켜진다(app.cognito_config). 테스트는 로컬 개발과 같은
+# 상태로 돈다 — app을 임포트하기 전이어야 한다(임포트 시점에 한 번 평가된다).
+os.environ.setdefault("AIPDS_AUTH_DISABLED", "1")
+
+import pytest  # noqa: E402
+from aipds import app as app_module  # noqa: E402
+from aipds.routes import deps as deps_module  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +39,16 @@ def _reset_registry_and_boot_locks():
     for pid in set(app_module.registry._model_id) - model_id_before:
         app_module.registry._model_id.pop(pid, None)
     deps_module._boot_locks.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_revocations(monkeypatch, tmp_path):
+    """세션 폐기 기록(auth/revocation.py)은 파일에 남는다 — 테스트마다 따로 둔다. 공유하면
+    한 테스트가 끊은 사용자가 다음 테스트에서 401이 되고, 기본 경로는 개발자 홈이다."""
+    from aipds.auth.revocation import Revocations
+    store = Revocations(tmp_path / "revoked.json")
+    monkeypatch.setattr(app_module, "revocations", lambda: store)
+    return store
 
 
 @pytest.fixture(autouse=True)

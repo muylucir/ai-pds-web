@@ -153,7 +153,7 @@ npm test     # no credentials needed — pure functions + assertions on the synt
 
 | File | What it guards |
 |---|---|
-| `user-data.assert.ts` | The boot script — nginx-vs-shell escaping, non-root execution (Claude Code refuses `bypassPermissions` at euid 0), proxy buffers large enough for JWT cookies, two distinct config dirs, `aipds-update` shipping, and `aipds-harden boot` running before the services start |
+| `user-data.assert.ts` | The boot script — nginx-vs-shell escaping, non-root execution (Claude Code refuses `bypassPermissions` at euid 0), proxy buffers large enough for JWT cookies, two distinct config dirs, an nginx request-body limit equal to the one `aipds-update` applies to running instances, `aipds-update` shipping, and `aipds-harden boot` running before the services start |
 | `hosting-stack.assert.ts` | Prefix-list-only security group (no SSH), EC2/EBS/EIP/instance role, CloudFront's origin header and HTTPS redirect, and the **app client drift check** |
 | `auth-stack.assert.ts` | No self-signup, alias username, groups, managed login v2, code-only client, the three seeding steps |
 | `auth-client-config.assert.ts` | Token validity that **outlasts one prototype build**, seed and group constants, callback/logout URLs |

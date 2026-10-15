@@ -30,9 +30,12 @@ class FakeS3Store:
         return self._etag(self._raw[key])
 
     async def put_if_absent(self, key: str, content: str) -> bool:
+        return await self.put_bytes_if_absent(key, content.encode("utf-8"))
+
+    async def put_bytes_if_absent(self, key: str, content: bytes) -> bool:
         if key in self._raw:
             return False
-        await self.put(key, content)
+        await self.put_bytes(key, content)
         return True
 
     async def get_bytes(self, key: str) -> bytes:

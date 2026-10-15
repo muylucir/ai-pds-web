@@ -46,7 +46,7 @@ The frontend middleware is only a UX gate — **the security boundary is the bac
 | Screen | What it does | Access |
 |---|---|---|
 | `/` | Project list, creation, export and import | logged in |
-| `/projects/{id}/workspace` | The Discovery conversation — live turns, question sheets, attachments, the document panel | logged in |
+| `/projects/{id}/workspace` | The Discovery conversation — live turns, question sheets, attachments, the generated-document drawer | logged in |
 | `/projects/{id}/dashboard` | Stage progress, artifacts, activity | logged in |
 | `/projects/{id}/review` | Document review and the approval gate | logged in |
 | `/projects/{id}/questions` | One question file, expanded to answer | logged in |
@@ -124,12 +124,55 @@ npx cdk deploy --all --require-approval never \
   password (valid 30 days) that each user replaces at first login. It must satisfy the pool policy —
   8+ characters with an uppercase letter, a lowercase letter, a digit and a symbol — or CloudFormation
   rejects it before the deployment starts.
+- **MFA is off.** Sign-in is a password alone, which is enough for a workshop sample but not for real
+  customer material: a leaked admin password hands over user and role management too. Before using it
+  beyond a workshop, require MFA in `infra/lib/aipds-auth-stack.ts` (`mfa: cognito.Mfa.REQUIRED` with
+  `mfaSecondFactor: { otp: true, sms: false }` — an authenticator app).
+- **Other settings chosen for a workshop, not for production.** Each line carries a warning comment
+  with the setting to change:
+  - Cognito has no threat protection (compromised-credential detection, risk-based sign-in) — that needs
+    the Plus feature plan (`aipds-auth-stack.ts`).
+  - `cdk destroy` deletes the user pool and the artifacts bucket with everything in it, and the bucket
+    has no versioning or access logs (`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
+  - CloudFront reaches the instance over plain HTTP — see
+    [CloudFront → instance is HTTP by design](#cloudfront--instance-is-http-by-design).
 - **Another region**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. No code changes.
 - **Another upload origin** (a custom domain, say): `AIPDS_UPLOAD_ORIGINS` (comma-separated) at deploy
   time. The app's own origin is added by the instance.
 
 Updating the code, the sandbox commands, protecting a running instance from replacement, getting a
 fresh instance, teardown, and troubleshooting are in **`/manual` → Install, operate, troubleshoot**.
+
+### CloudFront → instance is HTTP by design
+
+This is a workshop and sample workload, and it deliberately uses no domain of its own, so it deploys
+into any account with nothing to register first. Browsers reach CloudFront over HTTPS only (HTTP is
+redirected), but CloudFront reaches the instance over HTTP on port 80 — in both the app distribution
+(`aipds-hosting-stack.ts`) and the preview distribution (`aipds-preview-stack.ts`). HTTPS on that leg
+needs a publicly trusted certificate for the origin's name, and no certificate authority issues one for
+the instance's `ec2-….compute.amazonaws.com` name.
+
+**What travels on that leg:** session cookies (Cognito tokens), prototype access cookies, and the
+`X-Origin-Verify` / `X-Preview-Verify` secret headers.
+
+**What limits it:**
+
+- The security group accepts port 80 only from the CloudFront origin-facing prefix list. There is no
+  SSH; access is through SSM.
+- nginx rejects any request without the secret header, so the instance cannot be reached around
+  CloudFront.
+- The secret header values come from Secrets Manager at deploy time; no template holds them in
+  plaintext.
+
+**What it does not cover:** anyone able to observe traffic on the path between a CloudFront edge and
+the instance can read those cookies and headers.
+
+**Before using it beyond a workshop, or with real customer data,** make the origin leg HTTPS with a
+domain you own: point a record (say `origin.example.com`) at the instance's Elastic IP, serve a
+publicly trusted certificate for that name from nginx on port 443, and set the origin in both stacks
+to `OriginProtocolPolicy.HTTPS_ONLY` on 443. Moving the instance to a private subnet behind a
+CloudFront VPC origin takes the leg off the public internet, and with the same domain and certificate
+it can be HTTPS too. Either change replaces the instance, so make it at a planned replacement.
 
 ---
 
@@ -144,18 +187,18 @@ cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd ../frontend && npm install
 cp ../backend/.env.example ../backend/.env           # fill in from the DrillStack outputs
 
-cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
+cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 127.0.0.1 --port 8000 --reload
 cd frontend && npm run dev                           # http://localhost:3000
 ```
 
-Locally, agents run directly as your user — the sandbox is an instance feature.
+Locally, agents run directly as your user — the sandbox is an instance feature. With authentication off, the backend treats every request as an admin, so keep it on `127.0.0.1`.
 
 | Variable | Set it to |
 |---|---|
 | `AIPDS_S3_BUCKET` / `AIPDS_S3_REGION` | `AipdsDrillStack.ArtifactsBucketName` and its region. Unset, the app silently runs local-only |
 | `AIPDS_DISCOVERY_CONFIG_DIR` / `AIPDS_PROTO_CONFIG_DIR` | Absolute paths to the repo's `discovery-config/` and `proto-config/`. Unset, the agent reads **your own `~/.claude`** and your personal skills leak into the results |
 | `ANTHROPIC_MODEL` | Fallback Bedrock inference profile id, used when a project has none |
-| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | Leave **both** empty to skip authentication (the local default). Setting only one fails every request |
+| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | Leave **both** empty and set `AIPDS_AUTH_DISABLED=1` to skip authentication (the local default in `.env.example`). Both empty without that switch, or only one set, and the backend refuses to start |
 | `AIPDS_PUBLIC_PATH_PREFIX` | `""` when the browser calls the backend directly on :8000 |
 
 Every other variable, with the value a deployment uses and why, is commented in the systemd units in
@@ -184,6 +227,49 @@ cd frontend && npm run test:e2e                 # e2e (needs a real backend and 
 | `npm test -- parity` | The manual — catches ko/en drifting apart in structure or anchors |
 | `pytest -q -k sdk_available` | The `claude-agent-sdk` version — checks the option fields and the bundled binary |
 | `pytest -q -k no_legacy_brand` | Anything with the product name in it |
+
+---
+
+## Responsible AI
+
+AI-PDS Web drafts product documents, prototypes and survey syntheses with Claude models on Amazon
+Bedrock. Everything it produces is a draft for a person to judge, and the tool is built around that.
+
+**People decide.** The AI does not settle a stage on its own: a stage closes when a person answers its
+question sheet or approves the Discovery document at the approval gate, and approving or asking for a
+revision is always the person's call. Options marked *★ AI pick* are a suggestion, not a default the
+form submits for you.
+
+**What the AI did is visible.** Everything a user types and every answer submitted is written to
+`audit.md` verbatim with the real time, by the app rather than by the AI; the AI appends its own
+reasoning after it. Each turn's tool calls and changed files stay in a collapsed activity log under
+the answer, and the Document Review screen shows the AI's own verification summary next to the
+document.
+
+**Evidence and assumptions are kept apart.** The agent contract requires documents to state material
+unknowns and never to present an assumption as customer evidence. Survey syntheses report each
+respondent persona separately, so a good overall average cannot hide a poor score from the users the
+spec targets, and respondents outside the target users are not counted as validating a hypothesis.
+A survey is still a small, self-selected sample — read its synthesis as a signal, and check it
+against the CSV of individual responses.
+
+**Limits to plan for.**
+
+- Model output can be wrong, incomplete or invented. Verify figures, market facts and quotes before
+  they leave the workshop.
+- Prototypes are throwaway code for validating an idea, not production software, and they are shared
+  through links that open without an account. Do not put real personal or confidential data into a
+  prototype or a survey.
+- Uploaded material is sent to the model. Upload only what the workshop needs; values that look like
+  credentials are redacted from the audit record, but nothing else is filtered.
+- Amazon Bedrock Guardrails are not configured. Add them if your use requires content filtering —
+  for example, a prototype that calls Bedrock itself can pass a guardrail with its Converse calls.
+- The deployed roles invoke Claude through **global** cross-Region inference profiles, which can
+  process a request in any supported commercial AWS Region; data at rest stays in your account and
+  Region. If you have data residency requirements, use a geographic profile and narrow the Bedrock
+  permissions in `infra/lib/backend-permissions.ts` to match.
+
+See the [AWS Responsible AI Policy](https://aws.amazon.com/ai/responsible-ai/policy/).
 
 ---
 

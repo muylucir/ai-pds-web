@@ -38,9 +38,10 @@ Only administrators can change roles, and no one can change their own role.`,
     { kind: "heading", id: "ui-language", text: "Screen language" },
     {
       kind: "md",
-      md: `The **한국어 / English** buttons at the right of the header switch the screen language.
-Your choice is remembered in the browser for a year, so you only pick it once. This manual
-follows the same buttons.
+      md: `The **한국어 / English** buttons switch the screen language — at the right of the header, and at
+the top of the sign-in card, so you can pick it before you sign in. Your choice is remembered in the
+browser for a year and carries over past sign-in, so you only pick it once. This manual follows the
+same buttons.
 
 The screen language is separate from the language a project **writes its documents in** —
 see [document language](/manual#doc-language).`,

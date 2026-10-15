@@ -88,14 +88,173 @@ def test_runtime_changes_still_restart(repo, edits, expected):
     assert _changed(repo, *edits) == expected
 
 
+# ---- nginx 바디 상한 맞추기 ------------------------------------------------------
+
+def _nginx_step(conf: Path, bin_dir: Path) -> subprocess.CompletedProcess:
+    """스크립트의 nginx 단계만 꺼내 임시 conf에 돌린다. nginx·systemctl은 스텁이다."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    m = re.search(r"^NGINX_CONF=.*?^fi$", text, re.M | re.S)
+    assert m, "aipds-update must keep the nginx body-limit step"
+    step = m.group(0).replace("NGINX_CONF=/etc/nginx/conf.d/aipds.conf",
+                              f"NGINX_CONF={conf}", 1)
+    return subprocess.run(["bash", "-euo", "pipefail", "-c", step], capture_output=True,
+                          text=True, env={"PATH": f"{bin_dir}:/usr/bin:/bin"})
+
+
+def _stubs(tmp_path: Path, nginx_ok: bool) -> Path:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls"
+    for name, code in (("nginx", 0 if nginx_ok else 1), ("systemctl", 0)):
+        stub = bin_dir / name
+        stub.write_text(f'#!/bin/bash\necho "{name} $*" >> "{log}"\nexit {code}\n')
+        stub.chmod(0o755)
+    return bin_dir
+
+
+_CONF = ("server {\n  client_max_body_size 6m;\n"
+         '  if ($http_x_origin_verify != "s3cr3t") { return 403; }\n}\n')
+
+
+def test_nginx_step_raises_the_body_limit_and_keeps_the_rest(tmp_path):
+    conf = tmp_path / "aipds.conf"
+    conf.write_text(_CONF)
+    r = _nginx_step(conf, _stubs(tmp_path, nginx_ok=True))
+    assert r.returncode == 0, r.stderr
+    assert conf.read_text() == _CONF.replace("6m;", "11m;")
+    assert "systemctl reload nginx" in (tmp_path / "calls").read_text()
+    assert not (tmp_path / "aipds.conf.prev").exists()
+
+
+def test_nginx_step_is_a_no_op_when_already_right(tmp_path):
+    conf = tmp_path / "aipds.conf"
+    conf.write_text(_CONF.replace("6m;", "11m;"))
+    r = _nginx_step(conf, _stubs(tmp_path, nginx_ok=True))
+    assert r.returncode == 0, r.stderr
+    assert not (tmp_path / "calls").exists()        # 검사도 reload도 하지 않았다
+
+
+def test_nginx_step_restores_the_conf_when_nginx_rejects_it(tmp_path):
+    conf = tmp_path / "aipds.conf"
+    conf.write_text(_CONF)
+    r = _nginx_step(conf, _stubs(tmp_path, nginx_ok=False))
+    assert r.returncode == 0, r.stderr
+    assert conf.read_text() == _CONF
+    assert "reload" not in (tmp_path / "calls").read_text()
+    assert "kept the previous conf" in r.stderr
+
+
+# ---- 끝까지 가지 못한 갱신은 다음 실행이 다시 한다 -----------------------------
+
+def _install_stubs(tmp_path: Path, pip_ok: bool) -> Path:
+    """root·runuser·systemctl·install·pip·npm 없이 스크립트 전체를 돌리는 스텁."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    log = tmp_path / "calls"
+    stubs = {
+        "id": 'echo 0',
+        # `runuser -u SVC -- cmd…` → 작업 디렉터리를 바꾸지 않고 cmd를 그대로 돌린다.
+        "runuser": 'shift 3; exec "$@"',
+        "systemctl": f'echo "systemctl $*" >> "{log}"',
+        "install": f'echo "install $*" >> "{log}"',
+        "npm": f'echo "npm $*" >> "{log}"',
+    }
+    for name, body in stubs.items():
+        stub = bin_dir / name
+        stub.write_text(f"#!/bin/bash\n{body}\n")
+        stub.chmod(0o755)
+    return bin_dir
+
+
+def _deployed(tmp_path: Path):
+    """origin(bare) + 그것을 추적하는 앱 트리 + 경로를 임시로 바꾼 스크립트 사본."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+    _git(work, "config", "user.email", "t@example.com")
+    _git(work, "config", "user.name", "t")
+    for path in ("backend/pyproject.toml", "backend/aipds/app.py", "README.md"):
+        (work / path).parent.mkdir(parents=True, exist_ok=True)
+        (work / path).write_text("v1\n")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "v1")
+    _git(work, "push", "-q", "origin", "HEAD:main")
+    app = tmp_path / "app"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(origin), str(app)], check=True)
+    env_file = tmp_path / "deploy.env"
+    env_file.write_text(f"APP={app}\nSVC=svc\nBRANCH=main\n")
+    applied = tmp_path / "state" / "update-applied"
+    script = tmp_path / "aipds-update"
+    script.write_text(SCRIPT.read_text(encoding="utf-8")
+                      .replace("ENV_FILE=/etc/aipds-deploy.env", f"ENV_FILE={env_file}")
+                      .replace("/var/lib/aipds", str(applied.parent))
+                      .replace("NGINX_CONF=/etc/nginx/conf.d/aipds.conf",
+                               f"NGINX_CONF={tmp_path / 'absent.conf'}"))
+    return work, app, script, applied
+
+
+def _run_update(tmp_path: Path, app: Path, script: Path, pip_ok: bool):
+    pip = app / "backend/.venv/bin/pip"
+    pip.parent.mkdir(parents=True, exist_ok=True)
+    pip.write_text(f'#!/bin/bash\necho "pip $*" >> "{tmp_path / "calls"}"\nexit {0 if pip_ok else 1}\n')
+    pip.chmod(0o755)
+    bin_dir = _install_stubs(tmp_path, pip_ok)
+    return subprocess.run(["bash", str(script)], capture_output=True, text=True, cwd="/",
+                          env={"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)})
+
+
+def test_an_update_that_failed_midway_is_redone_by_the_next_run(tmp_path):
+    work, app, script, applied = _deployed(tmp_path)
+    (work / "backend/pyproject.toml").write_text("v2\n")
+    _git(work, "commit", "-qam", "deps")
+    _git(work, "push", "-q", "origin", "HEAD:main")
+
+    first = _run_update(tmp_path, app, script, pip_ok=False)
+    assert first.returncode != 0
+    assert not applied.exists()                  # 끝까지 가지 못했다 — 기록하지 않는다
+    assert "restart aipds-backend" not in (tmp_path / "calls").read_text()
+
+    # checkout은 이미 끝났다. HEAD를 기준으로 삼으면 여기서 "already at"으로 끝난다.
+    (tmp_path / "calls").unlink()
+    applied.parent.mkdir(parents=True, exist_ok=True)
+    head_before = _git(work, "rev-parse", "HEAD~1")
+    applied.write_text(head_before + "\n")       # 실패 전 기록(첫 실행 이후라면 있었을 값)
+    second = _run_update(tmp_path, app, script, pip_ok=True)
+    assert second.returncode == 0, second.stderr
+    calls = (tmp_path / "calls").read_text()
+    assert "pip install -e" in calls and "systemctl restart aipds-backend" in calls
+    assert applied.read_text().strip() == _git(work, "rev-parse", "HEAD")
+
+
+def test_a_run_with_nothing_new_records_nothing(tmp_path):
+    """조기 종료는 기록하지 않는다 — 기록 전에 반쯤 적용된 HEAD를 "다 적용됨"으로 굳히지 않게."""
+    _work, app, script, applied = _deployed(tmp_path)
+    r = _run_update(tmp_path, app, script, pip_ok=True)
+    assert r.returncode == 0, r.stderr
+    assert "already at" in r.stdout
+    assert not applied.exists()
+
+
+def test_svc_commands_run_inside_the_app_tree(tmp_path):
+    """sudo를 부른 자리(/root, 700인 홈)를 SVC가 못 읽으면 pip이 EACCES로 멈춘다."""
+    code = [line for line in SCRIPT.read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith("#")]
+    first_runuser = next(i for i, line in enumerate(code) if "runuser" in line)
+    assert 'cd "$APP"' in code[:first_runuser]
+
+
 # ---- 시험 브랜치(개발자용 모드) ----
 #
 # `aipds-update <브랜치>`는 문서에 적지 않는 모드라 안전장치가 스크립트 안에만 있다. 판정 두
 # 함수는 부작용이 없게 분리돼 있고, 스크립트를 source하면 그 둘만 정의되고 멈춘다.
 
-def _source(snippet: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["bash", "-c", f'source "{SCRIPT}"; {snippet}'],
-                          capture_output=True, text=True)
+def _call(*argv: str, check: bool = False) -> subprocess.CompletedProcess:
+    """스크립트를 source한 셸에서 argv를 그대로 실행한다. 셸 문자열은 고정이고 경로와 값은 모두
+    위치 인자로 넘긴다 — 테스트 자신이 주입 경로가 되면 안 된다. $0을 스크립트 경로로 두면
+    source 가드가 직접 실행으로 보고 끝까지 돌기 때문에 경로는 $1로 넘긴다."""
+    return subprocess.run(["bash", "-c", 'source "$1"; shift; "$@"', "_", str(SCRIPT), *argv],
+                          capture_output=True, text=True, check=check)
 
 
 def test_the_script_parses():
@@ -104,7 +263,7 @@ def test_the_script_parses():
 
 def test_sourcing_defines_the_planners_and_runs_nothing_else():
     """source가 root 검사·git·systemctl까지 내려가면 테스트가 운영 절차를 돌리게 된다."""
-    r = _source("type -t valid_branch plan_switch")
+    r = _call("type", "-t", "valid_branch", "plan_switch")
     assert r.returncode == 0, r.stderr
     assert r.stdout.split() == ["function", "function"]
     assert "run as root" not in r.stderr
@@ -113,24 +272,18 @@ def test_sourcing_defines_the_planners_and_runs_nothing_else():
 @pytest.mark.parametrize("name", [
     "main", "handoff-package", "feat/handoff", "release-1.2", "user.name/x_y"])
 def test_ordinary_branch_names_are_allowed(name):
-    assert _source(f"valid_branch '{name}'").returncode == 0
+    assert _call("valid_branch", name).returncode == 0
 
 
 @pytest.mark.parametrize("name", [
     "", "-h", "--help", "a b", "x;id", "$(id)", "`id`", "a'b", "a..b", "x.lock", "x/", "@",
     "../main", "a//b"])
 def test_dangerous_or_invalid_branch_names_are_refused(name):
-    # 값은 셸을 거치지 않게 위치 인자로 넘긴다 — 테스트 자신이 주입 경로가 되면 안 된다.
-    r = subprocess.run(["bash", "-c", f'source "{SCRIPT}"; valid_branch "$1"', "_", name],
-                       capture_output=True, text=True)
-    assert r.returncode != 0, name
+    assert _call("valid_branch", name).returncode != 0, name
 
 
 def _plan(deploy: str, current: str, target: str, recorded: str, head: str) -> dict[str, str]:
-    r = subprocess.run(
-        ["bash", "-c", f'source "{SCRIPT}"; plan_switch "$@"', "_",
-         deploy, current, target, recorded, head],
-        capture_output=True, text=True, check=True)
+    r = _call("plan_switch", deploy, current, target, recorded, head, check=True)
     return dict(line.split("=", 1) for line in r.stdout.splitlines())
 
 
@@ -214,8 +367,10 @@ def deployed(tmp_path):
     script = tmp_path / "aipds-update"
     script.write_text(SCRIPT.read_text(encoding="utf-8")
                       .replace("/etc/aipds-deploy.env", str(env_file))
-                      .replace("/var/lib/aipds-update", str(state))
-                      .replace("/usr/local/bin/aipds-update", str(tmp_path / "installed")))
+                      .replace("/var/lib/aipds", str(state))
+                      .replace("/usr/local/bin/aipds-update", str(tmp_path / "installed"))
+                      .replace("NGINX_CONF=/etc/nginx/conf.d/aipds.conf",
+                               f"NGINX_CONF={tmp_path / 'absent.conf'}"))
     shims = tmp_path / "shims"
     shims.mkdir()
     for name, body in _SHIMS.items():
@@ -287,3 +442,20 @@ def test_a_plain_update_at_the_same_commit_says_nothing_changed(deployed):
     r = deployed["run"]()
     assert r.returncode == 0, r.stderr
     assert "already at" in r.stdout and "TEST BRANCH" not in r.stdout
+
+
+def test_more_than_one_argument_is_refused(deployed):
+    """인자를 조용히 무시하면 시험했다고 착각한다 — 옛 스크립트가 실제로 그랬다."""
+    app = deployed["app"]
+    before = _git(app, "rev-parse", "HEAD")
+    r = deployed["run"]("feature", "extra")
+    assert r.returncode == 2
+    assert "usage: aipds-update [branch]" in r.stderr
+    assert _git(app, "rev-parse", "HEAD") == before
+
+
+def test_the_test_branch_record_lives_next_to_the_applied_record():
+    """두 기록이 같은 root 소유 디렉터리에 있다(/var/lib/aipds)."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "STATE_DIR=/var/lib/aipds\n" in text
+    assert "APPLIED_FILE=/var/lib/aipds/update-applied" in text

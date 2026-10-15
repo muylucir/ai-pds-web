@@ -68,7 +68,13 @@ this were adopted for real work**.
 
 Feature questions include a **"did not use it / not applicable"** option. Without it, respondents
 guess at features they never reached, and the rollup can no longer separate signal from noise. The
-notice respondents see says the same thing — judge the direction, not the polish.`,
+notice respondents see says the same thing — judge the direction, not the polish.
+
+When the spec lists target users, **the first question asks for the respondent's role**. The options
+are the spec's target users plus **"None of these / Other"**, and the question is required. Synthesizing
+results splits every other question by that answer — scores and choices into per-persona tables, and
+each free response tagged with the respondent's role, such as \`[store manager]\`. This is where a
+good overall average hiding a low score from the actual users shows up.`,
     },
     { kind: "heading", id: "limits-survey", text: "Limits" },
     {
@@ -95,10 +101,13 @@ it keeps reactions to the new screens out of the same bucket as the old ones.`,
 \`survey-aggregate.md\` in that prototype's document folder, so you can open it in
 [Document Review](/manual#review). **Each prototype gets its own file** — build several prototypes,
 run a survey on each, and the results never overwrite one another. Synthesize again after more
-responses arrive and only this file is refreshed with the latest numbers.
+responses arrive and only this file is refreshed with the latest numbers. It also records when the
+survey started — and, once closed, when it closed — so the AI can place the responses against the
+prototype's change history without asking you.
 
-The survey is not a feature that ends at a results screen. Go back to the workspace chat and ask it to
-"reflect the survey results": the agent uses this aggregate to write the theme analysis, pain point
+The survey is not a feature that ends at a results screen. After synthesizing, **Ask to reflect results**
+takes you to the workspace chat with a request naming the aggregate file already in the input.
+Send it and the agent uses this aggregate to write the theme analysis, pain point
 validation and build decision into \`validation-results.md\` and carries them into the Discovery
 document. That synthesis is the agent's document, so synthesizing again or resetting the prototype
 never erases it. If you heard feedback outside the survey or have interview notes,

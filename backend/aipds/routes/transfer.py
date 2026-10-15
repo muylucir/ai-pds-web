@@ -5,10 +5,9 @@
 # project_bundle.py가 소유하고, 이 파일은 HTTP 계약만 갖는다.
 #
 # **업로드가 이 프로세스를 지나지 않는다.** 가져오기는 3단계다 —
-# presign 요청 → 브라우저가 S3로 직접 PUT → 임포트 요청. nginx의
-# `client_max_body_size`(6m, 5MB 업로드 상한에 맞춰 둔 값)를 올리지 않고 큰 번들을
-# 받는 유일한 길이고, 그 값을 올리려면 EC2를 교체하는 배포가 필요하다
-# (infra/lib/user-data.ts는 인스턴스 user-data이므로 변경이 곧 교체다).
+# presign 요청 → 브라우저가 S3로 직접 PUT → 임포트 요청. 번들은 크기에 위가 없고,
+# 서버를 지나는 요청은 nginx의 `client_max_body_size`와 Next 미들웨어의 바디 상한
+# (둘 다 첨부 업로드 상한에 맞춘 값)에 걸린다 — 큰 번들을 받는 유일한 길이다.
 from __future__ import annotations
 
 import asyncio

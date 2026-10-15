@@ -41,7 +41,7 @@ _ENTITY_RE = re.compile("|".join(re.escape(k) for k in _ENTITIES))
 def normalize_stage_name(raw: str) -> str:
     """스테이지 이름의 HTML 엔티티를 되돌리고 앞뒤 공백을 다듬는다.
 
-    **왜 필요한가(2026-08-18 실측: hpt-sarang).** 모델이 `report_stage`에
+    **왜 필요한가(2026-08-18 실측: ws-d).** 모델이 `report_stage`에
     `"stage": "Prototype &amp; Validation"`을 보냈다. 같은 호출의 `summary`와
     직전 `Solution Analysis` 호출은 `&`가 정상이었으니, 그 필드 하나에서만
     일어난 이스케이프다 — 룰셋과 우리 코드에는 `&amp;`가 한 곳도 없다(전수 grep).
@@ -59,7 +59,7 @@ def normalize_stage_name(raw: str) -> str:
     (`report_stage` 도구)도 이것을 불렀는데, 그 도구는 훅으로 대체됐고 지금
     `aiplc-state.md`를 쓰는 것은 에이전트다 — 즉 우리가 손댈 쓰기 경로가 아예
     없다. 이미 `&amp;`가 박혀 저장된 파일도 읽기 쪽 정규화가 파일을 고치지 않고
-    치유한다(hpt-sarang의 상태 파일이 그 경우다).
+    치유한다(ws-d의 상태 파일이 그 경우다).
 
     `html.unescape`를 쓰지 않는 이유: 그쪽은 세미콜론 없는 `&notin` 같은 형태와
     수백 개의 명명 엔티티까지 관대하게 되돌리므로, `&copy`가 들어간 이름을

@@ -15,6 +15,8 @@ from aipds.proto.store import PrototypeStore
 from fakes.in_memory_s3 import FakeS3Store
 
 PID = "host-proj"
+#: 이미 나눠 준 링크의 값(S3 정본). 이름에 token을 넣지 않는다 — bandit B105가 이름을 본다.
+HANDED_OUT = "tok-handed-out"
 
 
 class FakeHost:
@@ -47,6 +49,12 @@ class FakeHost:
 
     def ensure_token(self, pid, slug):
         return self.tokens.setdefault((pid, slug), f"tok-{slug}")
+
+    def token_for(self, pid, slug):
+        return self.tokens.get((pid, slug))
+
+    def adopt_token(self, token, pid, slug):
+        self.tokens[(pid, slug)] = token
 
     def status(self, pid, slug):
         return self.infos.get((pid, slug))
@@ -96,6 +104,17 @@ async def test_hosting_restores_the_tree_then_records_token_and_intent(env):
     store = env["store"]
     assert await store.load_token("a") == "tok-a"
     assert await store.desired_running() == ["a"]
+
+
+async def test_a_replaced_instance_keeps_the_token_it_already_handed_out(env):
+    """로컬 토큰이 없는 인스턴스(교체 직후)에서 호스팅하면 S3의 토큰을 심는다 — 새로
+    만들면 이미 나눠 준 링크가 죽는다."""
+    await _seed(env, "a")
+    await env["store"].save_token("a", HANDED_OUT)
+    info, token = await host_prototype(PID, "a")
+
+    assert info.state == "running" and token == HANDED_OUT
+    assert env["host"].token_for(PID, "a") == HANDED_OUT
 
 
 async def test_a_failed_host_records_neither_token_nor_intent(env):

@@ -14,11 +14,13 @@ class S3StoreLike(Protocol):
     async def list_with_etags(self, prefix: str) -> list[tuple[str, str]]: ...
     async def list_with_times(self, prefix: str) -> list[tuple[str, float]]: ...
     async def delete_prefix(self, prefix: str) -> int: ...
-    # Binary-safe pair, used only by the prototype bundle backup/restore and
-    # the handoff zip. The text methods above decode as UTF-8, which mangles
-    # images and fonts (U+FFFD) -- fine for markdown, wrong for a bundle.
+    # Binary-safe methods, for what is not markdown: the prototype bundle
+    # backup/restore, the handoff zip, project export/import and uploaded
+    # originals (images, PDFs). The text methods above decode as UTF-8, which
+    # mangles images and fonts (U+FFFD).
     async def get_bytes(self, key: str) -> bytes: ...
     async def put_bytes(self, key: str, content: bytes) -> None: ...
+    async def put_bytes_if_absent(self, key: str, content: bytes) -> bool: ...
 
 
 class _BodyCache:
@@ -128,11 +130,15 @@ class S3Store:
         already exists instead of replacing it. Used by the upload path as a
         backstop behind its uuid keys -- a silent overwrite there costs a
         user's file."""
+        return await self.put_bytes_if_absent(key, content.encode("utf-8"))
+
+    async def put_bytes_if_absent(self, key: str, content: bytes) -> bool:
+        """`put_if_absent` for an upload's original (an image, a PDF)."""
         def _put() -> bool:
             try:
                 self._client.put_object(
                     Bucket=self._bucket, Key=self._full_key(key),
-                    Body=content.encode("utf-8"), IfNoneMatch="*")
+                    Body=content, IfNoneMatch="*")
             except ClientError as e:
                 if e.response["Error"]["Code"] in ("PreconditionFailed", "412"):
                     return False

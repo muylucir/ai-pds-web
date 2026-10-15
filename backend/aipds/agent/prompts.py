@@ -22,6 +22,10 @@
 # 받아들이고 문서 패널이 빈 화면을 보여준다.
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
+from aipds.proto.layout import CHANGE_HISTORY
+
 #: 지원 언어. workspace_rules._LANGUAGES와 같은 집합이어야 한다.
 _LANGUAGES = ("ko", "en")
 _DEFAULT = "ko"
@@ -262,7 +266,7 @@ def prototype_handoff_stop(language: str, slug: str) -> str:
 
     **다음 행동을 지정하는 것이 요점이다.** 옛 `handoff_prototype` 도구의 성공
     문구가 이미 이 판단을 기록해 뒀다: 지정하지 않으면 에이전트가 상류 Step 4
-    (Iterate)로 계속 가거나 자격증명을 묻는다 — 둘 다 실측된 실패다(keumkang-v5:
+    (Iterate)로 계속 가거나 자격증명을 묻는다 — 둘 다 실측된 실패다(ws-a-v5:
     자격증명 점검 → API 키 요구 → 선행 조건 나열, 탭 안내 0회).
 
     도구가 훅이 되면서 달라진 것은 **누가 호출을 보장하는가**뿐이다. 문구가 담아야
@@ -318,10 +322,22 @@ def web_owned_doc(language: str, path: str) -> str:
     """웹이 소유하는 `aiplc-docs/` 파일(discovery_guard.WEB_OWNED_NAMES) 쓰기를
     거부할 때의 이유.
 
-    대안을 함께 준다(`write_outside_docs`와 같은 이유): 지금 이 파일이 걸리는
-    것은 설문 집계뿐이고, 모델이 거기 쓰려던 것은 Step 6 종합이다. 그 자리는
-    룰의 `validation-results.md`다(proto/layout.SURVEY_AGGREGATE).
+    대안을 함께 준다(`write_outside_docs`와 같은 이유) — 모델이 그 파일에 쓰려던
+    것이 갈 자리가 따로 있다. 설문 집계에 쓰려던 것은 Step 6 종합이고 그 자리는
+    룰의 `validation-results.md`다(proto/layout.SURVEY_AGGREGATE). 수정 이력에
+    쓰려던 것은 명세 정합성 패스의 결론이고 그 자리는 `spec-as-built.md`다
+    (discovery-config/CLAUDE.md의 "Spec reconciliation" 절).
     """
+    if PurePosixPath(path).name == CHANGE_HISTORY:
+        if _lang(language) == "en":
+            return (f"Refused — '{path}' is maintained by AI-PDS Web: each build "
+                    "session appends what it changed, and the next build session "
+                    "reads it as its input. Read it as the evidence for the spec "
+                    "reconciliation, and write your conclusions to "
+                    "'spec-as-built.md' in the same directory.")
+        return (f"거부됨 — '{path}'는 AI-PDS Web이 관리하는 파일이다. 빌드 세션마다 "
+                "바꾼 것을 덧붙이고, 다음 빌드 세션이 입력으로 읽는다. 명세 정합성 "
+                "패스의 근거로 읽고, 결론은 같은 디렉터리의 'spec-as-built.md'에 쓸 것.")
     if _lang(language) == "en":
         return (f"Refused — '{path}' is maintained by AI-PDS Web and is "
                 "rewritten from the survey responses on every 'Synthesize "
@@ -364,6 +380,18 @@ def build_command_refused(language: str, fragment: str) -> str:
             "명령이고, Discovery는 그 일을 하지 않는다. 포트를 받아 프리뷰 "
             "프록시에 등록할 수 있는 것은 Prototypes 탭뿐이므로 여기서 띄운 "
             "것은 어느 화면에도 나타나지 않는다. 스펙 작성까지만 할 것.")
+
+
+def cli_settings_refused(language: str, fragment: str) -> str:
+    """Bash가 CLI 설정 파일을 건드릴 때의 이유(discovery_guard.settings_denial)."""
+    if _lang(language) == "en":
+        return (f"Refused — '{fragment}' is a Claude Code settings file. AI-PDS Web "
+                "provides the settings Discovery needs and resets them on every "
+                "launch; there is nothing to change there. Continue with the "
+                "documents under aiplc-docs/.")
+    return (f"거부됨 — '{fragment}'는 Claude Code 설정 파일이다. Discovery에 필요한 "
+            "설정은 AI-PDS Web이 주고 실행할 때마다 다시 맞춘다 — 바꿀 것이 없다. "
+            "aiplc-docs/ 아래 문서 작업을 계속할 것.")
 
 
 def turn_failed(language: str) -> str:

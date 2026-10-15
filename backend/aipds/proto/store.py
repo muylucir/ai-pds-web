@@ -39,9 +39,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from aipds.pathsafe import reject_unsafe
+from aipds.pathsafe import read_bytes_beneath, reject_unsafe, write_beneath
 from aipds.project_bundle import SOURCE_EXCLUDED_DIRS, source_excluded
-from aipds.proto.host import TOKEN_FILENAME
 from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
@@ -89,8 +88,12 @@ def local_entries(build_dir: Path) -> list[tuple[str, bytes]]:
     **제외 디렉토리는 걸어 들어가지 않고 잘라낸다.** `node_modules`는 실측 수만 개
     파일이라, 다 걸은 뒤 거르면 답은 같아도 걷기만으로 초 단위가 든다.
     `source_excluded`는 경로의 어느 조각이든 제외 디렉토리면 빼므로, 그 디렉토리를
-    잘라내는 것과 답이 같다. 디렉토리 심볼릭 링크는 따라가지 않는다(`os.walk`의
-    기본값).
+    잘라내는 것과 답이 같다.
+
+    **심볼릭 링크는 담지 않는다.** 빌드 에이전트와 프로토타입이 쓰는 트리라, 파일
+    링크를 따라 읽으면 링크 너머(다른 프로젝트, 백엔드 설정)가 세대·다운로드·내보내기에
+    실린다. 디렉토리 링크는 `os.walk`가 따라가지 않고, 파일 링크는 건너뛰며, 읽기도
+    `read_bytes_beneath`로 한다(걷고 나서 읽기 전에 바꿔 끼운 링크).
 
     **순서는 경로 조각 순이다.** 세대 해시(`_hash_entries`)가 이 순서로 계산되므로,
     문자열 정렬로 바꾸면(`a.b`와 `a/b`의 앞뒤가 뒤집힌다) 소스가 그대로인데 새
@@ -100,18 +103,24 @@ def local_entries(build_dir: Path) -> list[tuple[str, bytes]]:
     """
     if not build_dir.is_dir():
         return []
-    found: list[tuple[str, Path]] = []
+    found: list[str] = []
     for dirpath, dirnames, filenames in os.walk(build_dir):
         dirnames[:] = [d for d in dirnames if d not in SOURCE_EXCLUDED_DIRS]
         rel_dir = Path(dirpath).relative_to(build_dir)
         for name in filenames:
             path = Path(dirpath) / name
             rel = (rel_dir / name).as_posix()
-            if source_excluded(rel) or not path.is_file():
+            if source_excluded(rel) or path.is_symlink() or not path.is_file():
                 continue
-            found.append((rel, path))
-    found.sort(key=lambda item: item[0].split("/"))
-    return [(rel, path.read_bytes()) for rel, path in found]
+            found.append(rel)
+    found.sort(key=lambda rel: rel.split("/"))
+    out: list[tuple[str, bytes]] = []
+    for rel in found:
+        try:
+            out.append((rel, read_bytes_beneath(build_dir, rel)))
+        except OSError:
+            continue  # 걷는 사이에 링크로 바뀌었거나 사라졌다
+    return out
 
 
 def _hash_entries(entries: list[tuple[str, bytes]]) -> str:
@@ -226,28 +235,23 @@ class PrototypeStore:
         """로컬에 빌드 산출물이 없으면 현재 세대로 되살린다. 되살렸으면 True.
 
         로컬에 산출물이 있으면 건드리지 않는다 — 그쪽이 더 새로울 수 있다(아직 스냅샷
-        되지 않은 편집). 토큰 파일도 함께 되살린다: 호스팅이 뜨면 목록이 그 토큰으로
-        공유 링크를 만든다.
+        되지 않은 편집). 접근 토큰은 여기서 되살리지 않는다 — 로컬 사본은 호스팅의
+        상태 트리에 있고, 그쪽이 소유한다(proto/hosting.restore_local).
         """
         restored = False
         if not has_build_output(build_dir):
             files = await self.entries(slug)
             if files:
                 def write() -> None:
+                    build_dir.mkdir(parents=True, exist_ok=True)
                     for rel, data in files:
                         reject_unsafe(rel)       # 키는 우리가 썼지만 경로로 쓰기 전에 본다
-                        dest = build_dir / rel
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        dest.write_bytes(data)
+                        # 에이전트가 쓰는 트리다 — 링크를 따라가지 않는다(pathsafe).
+                        write_beneath(build_dir, rel, data)
                 await asyncio.to_thread(write)
                 restored = True
                 _log.info("restored prototype source %s/%s from S3 (%d files)",
                           self._project_id, slug, len(files))
-        token = await self.load_token(slug)
-        token_file = build_dir / TOKEN_FILENAME
-        if token and not token_file.exists():
-            build_dir.mkdir(parents=True, exist_ok=True)
-            token_file.write_text(token, encoding="utf-8")
         return restored
 
     # ---- 접근 토큰 ----

@@ -17,6 +17,10 @@ class Question(BaseModel):
     type: QuestionType
     options: list[str] = Field(default_factory=list)
     required: bool = True
+    # 응답자가 명세의 어느 대상 사용자(Target Users)인지 묻는 문항. 집계가 이
+    # 답으로 다른 문항을 나눈다(store._aggregate_markdown). 생성기가 직접 만드는
+    # 문항이고 모델이 만든 문항에는 없다. 이 필드가 생기기 전 설문에는 없다.
+    persona: bool = False
 
     @model_validator(mode="after")
     def _options_match_type(self) -> "Question":
@@ -24,6 +28,8 @@ class Question(BaseModel):
             raise ValueError("choice question needs at least 2 options")
         if self.type in ("scale", "text") and self.options:
             raise ValueError(f"{self.type} question must not carry options")
+        if self.persona and self.type != "choice":
+            raise ValueError("persona question must be a choice question")
         return self
 
 
@@ -51,6 +57,9 @@ class Questionnaire(BaseModel):
             # Duplicate ids collapse in the answers dict, silently dropping a
             # question's responses.
             raise ValueError("question ids must be unique")
+        if sum(q.persona for q in self.questions) > 1:
+            # 응답을 나누는 기준은 하나여야 한다.
+            raise ValueError("at most one persona question")
         return self
 
 

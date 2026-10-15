@@ -1,5 +1,5 @@
 "use client";
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import { StageSidebar } from "@/components/workspace/StageSidebar";
@@ -12,6 +12,7 @@ import { WorkspaceDocPanel } from "@/components/workspace/WorkspaceDocPanel";
 import { OpenDocButton } from "@/components/workspace/OpenDocButton";
 import { WelcomeCard } from "@/components/workspace/WelcomeCard";
 import { AttachmentChips } from "@/components/workspace/AttachmentChips";
+import { AttachFilesModal } from "@/components/workspace/AttachFilesModal";
 import { QuestionForm } from "@/components/questions/QuestionForm";
 import { HandoffReadyBanner } from "@/components/handoff/HandoffReadyBanner";
 import { getState, uploadFile } from "@/lib/api/client";
@@ -20,20 +21,23 @@ import { useProjectMeta } from "@/lib/useProjectModel";
 import { useWorkspaceStream } from "@/lib/useWorkspaceStream";
 import { liveActivity } from "@/lib/liveActivity";
 import { useT } from "@/lib/i18n/provider";
+import {
+  checkUpload, problemFromError, uploadProblemText, type UploadProblem,
+} from "@/lib/uploads";
 
 // The workspace screen — grid ratio 1:5:5 (좌 스테이지 : 채팅 : 컨텍스트). The
 // generated document opens in a drawer (WorkspaceDocPanel) laid OVER the grid
 // rather than taking a column: as a 4th column (1:3.5:3.5:4) it left the
-// question form 412px at 1440px (Rachna's feedback, 2026-10). The grid keeps a
+// question form 412px at 1440px (AI-PDS team feedback, 2026-10). The grid keeps a
 // right gutter (`lg:pr-9`) for the drawer's handle tab so the tab never sits on
 // top of the question form. Three openers share one `docOpen` state: the tab,
 // the chat's document-update banner, and the question form's "View {name}".
-// Below the `lg` breakpoint every side panel is hidden
-// (StageSidebar/WorkspaceRightPanel/WorkspaceDocPanel are `hidden lg:flex`
-// internally), leaving a single-column chat; a pending-questions badge over
-// the chat opens a bottom-sheet that reuses the SAME QuestionForm widget the
-// right panel would otherwise show (mode priority: questions > preview >
-// artifacts), and the document-update banner links out to the review route.
+// Below the `lg` breakpoint both side columns are hidden
+// (StageSidebar/WorkspaceRightPanel are `hidden lg:flex` internally), leaving
+// a single-column chat; a pending-questions badge over the chat opens a
+// bottom-sheet that reuses the SAME QuestionForm widget the right panel would
+// otherwise show (mode priority: questions > preview > artifacts). The drawer
+// opens at every width — full width on a narrow screen.
 export default function WorkspacePage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
@@ -69,8 +73,15 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const showDocBanner = lastDocument != null && lastDocument.version !== dismissedDocVersion;
   // File-attachment state (Task 8): uploaded paths waiting to be mentioned in
   // the NEXT outgoing message, and any upload-failure notice to surface.
-  const [attachments, setAttachments] = useState<string[]>([]);
+  // `original` is set when the upload kept its original next to the converted
+  // text (a PDF) — the mention points the agent at both.
+  const [attachments, setAttachments] = useState<{ path: string; original: string | null }[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
+  // 채팅 영역에 파일을 끌어 온 동안. dragenter/leave는 자식 요소를 지날 때마다
+  // 짝으로 오므로 깊이를 센다 — 불리언 하나면 자식 위에서 오버레이가 깜빡인다.
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepth = useRef(0);
   // Bumped right before every send/submitAnswers call site — ChatTimeline
   // watches this to force an unconditional scroll-to-bottom on send, even if
   // the user had scrolled up and stick-to-bottom was off.
@@ -106,14 +117,36 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     setSheetOpen(false);
   }
 
-  async function handleAttach(file: File) {
-    setUploadError(null);
+  // 파일 하나를 올려 칩에 넣는다. 첨부 모달과 채팅 영역 드롭이 같은 길을 쓴다.
+  // 올리기 전에 알 수 있는 문제(형식·크기)는 보내지 않고 바로 돌려준다.
+  const attach = useCallback(async (file: File): Promise<UploadProblem | null> => {
+    const problem = checkUpload(file);
+    if (problem) return problem;
     try {
       const r = await uploadFile(projectId, file);
-      setAttachments((prev) => [...prev, r.path]);
-    } catch {
-      setUploadError(t("page.uploadFailed"));
+      setAttachments((prev) => [...prev, { path: r.path, original: r.original }]);
+      return null;
+    } catch (err) {
+      return problemFromError(err);
     }
+  }, [projectId]);
+
+  // 드롭은 모달을 거치지 않는다 — 형식을 아는 사람의 지름길이다. 실패한 파일만
+  // 이유와 함께 입력창 위에 남긴다.
+  async function attachDropped(files: File[]) {
+    setUploadError(null);
+    const failures: string[] = [];
+    for (const file of files) {
+      const problem = await attach(file);
+      if (problem) failures.push(`${file.name}: ${uploadProblemText(t, problem)}`);
+    }
+    if (failures.length) setUploadError(failures.join("\n"));
+  }
+
+  const closeAttach = useCallback(() => setAttachOpen(false), []);
+
+  function hasFiles(e: DragEvent) {
+    return Array.from(e.dataTransfer.types).includes("Files");
   }
 
   // Prepends a "[첨부 파일: ...]" mention line per pending attachment ahead of
@@ -121,8 +154,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // one-shot mention on the NEXT message, not a standing context.
   function sendWithAttachments(text: string) {
     setStickSignal((n) => n + 1);
-    const mentions = attachments.map(
-      (p) => `[첨부 파일: ${p} — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 이 파일을 읽어보세요.]`,
+    const mentions = attachments.map(({ path, original }) => original
+      ? `[첨부 파일: ${path} — 사용자가 컨텍스트로 제공한 파일을 텍스트로 변환한 것입니다. 필요 시 이 파일을 읽어보세요. 도표·그림·스캔 페이지는 원본 ${original}에 있습니다.]`
+      : `[첨부 파일: ${path} — 사용자가 컨텍스트로 제공한 파일입니다. 필요 시 이 파일을 읽어보세요.]`,
     );
     send(mentions.length ? `${mentions.join("\n")}\n\n${text}` : text);
     setAttachments([]);
@@ -174,10 +208,42 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
       <div className="relative flex-1 grid min-h-0 grid-cols-1 pr-9 overflow-clip lg:grid-cols-[1fr_5fr_5fr]">
         <StageSidebar state={state.data} events={stages} />
 
-        <main className="relative flex flex-col min-w-0 min-h-0 bg-slate-50">
+        <main
+          className="relative flex flex-col min-w-0 min-h-0 bg-slate-50"
+          onDragEnter={(e) => {
+            if (!hasFiles(e)) return;
+            dragDepth.current += 1;
+            setDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            if (!hasFiles(e)) return;
+            dragDepth.current = Math.max(0, dragDepth.current - 1);
+            if (dragDepth.current === 0) setDragOver(false);
+          }}
+          // 파일을 끄는 동안은 늘 막는다 — 막지 않으면 놓는 순간 브라우저가 그 파일을
+          // 열어 워크스페이스를 떠난다. 턴 중에는 📎처럼 받지 않는다.
+          onDragOver={(e) => {
+            if (hasFiles(e)) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            dragDepth.current = 0;
+            setDragOver(false);
+            if (!streaming) void attachDropped(Array.from(e.dataTransfer.files));
+          }}
+        >
+          {dragOver && !streaming && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-2 z-20 rounded-2xl border-2 border-dashed border-violet-500 bg-violet-50/80 flex items-center justify-center text-sm font-bold text-violet-700"
+            >
+              {t("upload.dropOverlay")}
+            </div>
+          )}
           {/* Discovery가 프로토타입을 빌드로 넘겼을 때의 어포던스.
               **에이전트의 안내 문장에 의존하지 않는다** — 2026-08-17까지는 그
-              문장이 나오지 않아 사용자가 Discovery에서 막혔다(실측 keumkang-v5:
+              문장이 나오지 않아 사용자가 Discovery에서 막혔다(실측 ws-a-v5:
               Prototypes 탭 안내 0회). 닫기 버튼을 두지 않은 것도 의도다: 다음
               단계로 가는 유일한 문이므로 실수로 닫으면 다시 막힌다. */}
           <HandoffReadyBanner projectId={projectId} state={state.data} className="m-3" />
@@ -251,13 +317,13 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             </>
           )}
           {uploadError && (
-            <p role="alert" className="px-4 md:px-8 pb-1 text-xs text-red-600">
+            <p role="alert" className="px-4 md:px-8 pb-1 text-xs text-red-600 whitespace-pre-line">
               {uploadError}
             </p>
           )}
           <AttachmentChips
-            paths={attachments}
-            onRemove={(p) => setAttachments((prev) => prev.filter((x) => x !== p))}
+            paths={attachments.map((a) => a.path)}
+            onRemove={(p) => setAttachments((prev) => prev.filter((x) => x.path !== p))}
           />
           {/* 진행 상황은 대화 흐름이 아니라 **화면**의 것이다 — 스크롤 밖, 입력창
               바로 위에 마지막 활동 한 줄만. 말풍선 옆에서 함께 갱신되던 종전
@@ -267,7 +333,10 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           <ChatInput
             key={draft ?? "no-draft"}
             onSend={sendWithAttachments}
-            onAttach={handleAttach}
+            onAttach={() => {
+              setUploadError(null);
+              setAttachOpen(true);
+            }}
             disabled={streaming}
             initialText={draft}
             onInterrupt={() => void interrupt()}
@@ -292,6 +361,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
                           open={docOpen} onOpenChange={setDocOpen}
                           onCurrentDocChange={setCurrentDocPath} />
       </div>
+
+      {attachOpen && <AttachFilesModal onClose={closeAttach} onUpload={attach} />}
 
       {sheetOpen && pendingQuestions && (
         <div

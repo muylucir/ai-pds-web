@@ -1,4 +1,6 @@
 import * as assert from 'node:assert';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { renderUserData } from '../lib/user-data';
 
 const s = renderUserData({
@@ -112,8 +114,11 @@ assert.match(s, /if \[ -d \/opt\/aipds\/\.git \]; then/,
 
   assert.match(update, /\. "\$ENV_FILE"/,
     'the script must source the deploy env instead of hardcoding APP/SVC/BRANCH');
-  assert.match(update, /checkout -f -B "\$BRANCH" "origin\/\$BRANCH"/,
-    'aipds-update must move the tree onto the remote tip of the deploy branch');
+  // 인자가 없으면 배포 브랜치, 있으면 그 시험 브랜치(개발자용 — 스크립트 머리말)의 원격 최신.
+  assert.match(update, /TARGET=\$\{1:-\$BRANCH\}/,
+    'aipds-update must default to the deploy branch when no branch is given');
+  assert.match(update, /checkout -f -B "\$TARGET" "origin\/\$TARGET"/,
+    'aipds-update must move the tree onto the remote tip of the deploy (or test) branch');
   // checkout은 gitlink만 옮기고 서브모듈 내용은 옮기지 않는다 — 빼면 룰 갱신이
   // 조용히 반영되지 않는다(브랜치 배포에서 코드 갱신 경로는 이 스크립트뿐이다).
   assert.match(update, /submodule update --init --recursive/,
@@ -241,8 +246,13 @@ assert.match(s, /uvicorn aipds\.app:app --host 127\.0\.0\.1 --port 8000/, 'uvico
 assert.match(s, /next start -H 127\.0\.0\.1 -p 3000/, 'next start cmd');
 // 9) 시크릿 하드코딩되지 않음 (실제 값은 부팅 시점에만 존재)
 assert.ok(!s.includes('AbCdEf-value'), 'secret value never inlined');
-// 10) 업로드 5MB 기능이 nginx 기본 1m 바디 제한에 막히지 않도록 여유치 설정.
-assert.ok(s.includes('client_max_body_size 6m;'), 'nginx must allow up to 6m request bodies (5MB upload feature)');
+// 10) 첨부 업로드(10MB)가 nginx 기본 1m 바디 제한에 막히지 않도록 여유치 설정.
+//     떠 있는 인스턴스를 맞추는 aipds-update의 값과 같아야 한다.
+assert.ok(s.includes('client_max_body_size 11m;'), 'nginx must allow up to 11m request bodies (10MB upload feature)');
+{
+  const update = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'aipds-update'), 'utf8');
+  assert.ok(update.includes('NGINX_BODY_LIMIT=11m'), 'aipds-update must keep live instances at the same nginx body limit as user-data');
+}
 // 11) AL2023 기본 nginx.conf의 server 블록 제거용 sed는 반드시 앵커링되어야 함.
 //     비앵커 형태(`/server {/`)는 주석 처리된 TLS 예시 블록(`#    server {`)에도
 //     매칭되어 range-delete가 EOF까지 이어지며 http{} 를 닫는 `}` 를 삭제,

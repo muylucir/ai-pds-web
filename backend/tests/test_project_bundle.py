@@ -83,6 +83,17 @@ def test_instance_only_prototype_keys_are_excluded_both_ways(tp):
         "project/prototypes/demo/session.json"
 
 
+def test_keys_the_export_leaves_out_are_not_imported_either(tp):
+    """손으로 만든 번들이 빌드 트랜스크립트·질문 대기열을 실으면, 받는 쪽 에이전트가 보낸
+    사람이 쓴 대화를 자기 것으로 알고 재개한다. 내보내기가 빼는 키는 들여오지도 않는다."""
+    for key in ("prototypes/demo/transcript/main/00000001.jsonl",
+                "prototypes/demo/history/0001.json",
+                "pending/interrupt.json",
+                "project.json"):
+        assert s3_key_to_bundle_path(key, transcript_prefix=tp) is None, key
+        assert bundle_path_to_s3_key("project/" + key, transcript_prefix=tp) is None, key
+
+
 def test_discovery_transcript_loses_its_session_segment(tp):
     key = f"{tp}main/00000007.jsonl"
 
