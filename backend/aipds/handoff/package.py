@@ -100,8 +100,10 @@ class Finding(BaseModel):
     #: tech·vague 기술어·모호어 · internal 프롬프트 필드명이나 원본의 내부 번호 ·
     #: acceptance 수용 기준이 없는 요구사항 · grade 검증 결과 없이 붙은 검증 등급 ·
     #: ai_goal 확인되지 않은 AI 제안이 된 성공 지표 · triage 열린 질문의 시점이 없거나, 빌드 전인데
-    #: 막는 요구사항이 없거나, 빌드 중인데 그동안 어떻게 만들지가 없는 줄
-    kind: Literal["tech", "vague", "internal", "acceptance", "grade", "ai_goal", "triage"]
+    #: 막는 요구사항이 없거나, 빌드 중인데 그동안 어떻게 만들지가 없는 줄 · dropped 직전 PRD에 있던
+    #: PM 질문이 답 없이 이번 PRD에서 사라졌다
+    kind: Literal["tech", "vague", "internal", "acceptance", "grade", "ai_goal", "triage",
+                  "dropped"]
 
 
 class Step(BaseModel):
@@ -136,6 +138,8 @@ class Manifest(BaseModel):
     findings: list[Finding] = []
     #: 크기 상한 때문에 싣지 못하거나 잘라 실은 원본.
     truncated: list[str] = []
+    #: 직전 PRD의 PM 몫 열린 질문. 이번 PRD에 넘겨 옮기게 했고, 답 없이 사라지면 검사가 알린다.
+    carried: list[str] = []
 
 
 class PackageView(BaseModel):
@@ -191,6 +195,7 @@ _LABELS = {
         "acceptance": "수용 기준",
         "open_columns": ("ID", "질문", "답할 사람", "시점", "답이 나올 때까지"),
         "pm": "PM", "dev": "개발팀", "before": "빌드 전", "during": "빌드 중",
+        "external": "PM(외부 확인)", "external_mark": "외부 확인", "checking": "확인 중",
         "proto": "프로토타입에서는", "real": "실제로는", "open": "열린 질문",
     },
     "en": {
@@ -205,6 +210,8 @@ _LABELS = {
         "acceptance": "Acceptance",
         "open_columns": ("ID", "Question", "Who answers", "When", "Until answered"),
         "pm": "PM", "dev": "Development team", "before": "Before build", "during": "During build",
+        "external": "PM (external check)", "external_mark": "external check",
+        "checking": "Being checked with",
         "proto": "In the prototype", "real": "In the product", "open": "Open question",
     },
 }
@@ -231,7 +238,8 @@ def _cite(path: str) -> str:
     return path.removeprefix("aiplc-docs/discovery/")
 
 
-def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict) -> dict:
+def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict,
+           previous: Sequence[dict] = ()) -> dict:
     """프롬프트에 싣는 판정 사실. 등급은 여기서 정해 문장으로 넘긴다.
 
     판정 값(불리언·상태 코드)을 넘기고 모델에게 해석을 맡기면, 모델은 그 값을 근거로 문서에
@@ -249,7 +257,10 @@ def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict) -
     answered = [{"topic": _SUPPLEMENT_TOPICS.get(qid, qid), "answer": a.text}
                 for qid, a in record.answers.items() if not a.unknown]
     answered += [{"question": a.question, "answer": a.text}
-                 for a in record.open_answers.values() if not a.unknown]
+                 for a in record.open_answers.values() if a.text and not a.unknown]
+    checking = [{"question": a.question, "checking with": a.pending_with}
+                for a in record.open_answers.values()
+                if a.pending_with and not a.text and not a.unknown]
     # 둘을 나눈다: 열린 질문은 PRD 문장 그대로 다시 실어야 다음 화면에서 같은 질문(같은 키)으로
     # 보이고, 고정 문항의 주제는 영어 설명이라 그대로 베끼면 ko PRD에 영어가 들어간다.
     unknown_topics = [_SUPPLEMENT_TOPICS.get(qid, qid)
@@ -258,7 +269,7 @@ def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict) -
     by_status = {status: [lab["sections"][s.number - 1] for s in readiness.sections
                           if s.status == status]
                  for status in ("partial", "missing")}
-    return {
+    facts = {
         "PRD sections with only partial source material": by_status["partial"],
         "PRD sections with no source material": by_status["missing"],
         "prototypes": [{"spec": _cite(p.spec), "validation records": [_cite(e) for e in p.evidence],
@@ -268,7 +279,11 @@ def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict) -
         "PM answers given at handoff": answered,
         "topics the PM said they cannot answer yet": unknown_topics,
         "open questions the PM said they cannot answer yet": unknown_open,
+        "open questions being checked with someone else": checking,
     }
+    if previous:
+        facts["open questions in the previous version of this PRD"] = list(previous)
+    return facts
 
 
 #: 검증 등급을 붙일 수 있는 검증 상태(readiness.ValidationStatus). 계획만 있으면 검증이 아니다.
@@ -280,7 +295,7 @@ def _step_section(step: str, lab: dict) -> str:
         sections = "\n".join(f"   {s}" for s in lab["sections"])
         acceptance, missing = lab["acceptance"], lab["missing"]
         oid, question, who, when, until = lab["open_columns"]
-        before, during = lab["before"], lab["during"]
+        before, during, external = lab["before"], lab["during"], lab["external"]
         return f"""## Write PRD.md
 
 Title line, then exactly these sections in this order, each as a "## " heading written
@@ -310,18 +325,29 @@ success and the most likely reasons it would fail.
 Section 9 is exactly one table with these columns:
    | {oid} | {question} | {who} | {when} | {until} |
 One row per gap or open question, IDs O-01.., the related IDs in parentheses at the end of
-the question. "{who}" is exactly "{lab["pm"]}" (a product decision) or "{lab["dev"]}" (an
-estimate or a technical finding) — nothing else. Every decision that blocks implementation
-and that no one has made (retention periods, identity checks, permissions, reminder rules,
-validity rules, pass marks …) is a {lab["pm"]} row. Do not list a question the PM already
-answered at handoff. Copy each of "open questions the PM said they cannot answer yet"
-verbatim as a {lab["pm"]} row; write each of "topics the PM said they cannot answer yet" as
-a {lab["pm"]} row in the document's language.
+the question. "{who}" is exactly one of:
+   - "{lab["pm"]}": a product decision the PM makes.
+   - "{external}": a fact the PM must obtain from someone else rather than decide — legal
+     counsel, a regulator, a partner company, another department (what a law requires,
+     whether a record is legally valid, what a partner will provide).
+   - "{lab["dev"]}": an estimate or a technical finding.
+Every decision that blocks implementation and that no one has made (retention periods,
+identity checks, permissions, reminder rules, validity rules, pass marks …) is a
+{lab["pm"]} or {external} row. Do not list a question the PM already answered at handoff.
+Copy each of "open questions the PM said they cannot answer yet" verbatim as a {lab["pm"]}
+row; write each of "topics the PM said they cannot answer yet" as a {lab["pm"]} row in the
+document's language. Keep each of "open questions being checked with someone else" as a row,
+question verbatim, with "{lab["checking"]}: <who>" in "{until}".
+"Open questions in the previous version of this PRD", when given, are the rows of the last
+version. Carry every one of them over: copy the question verbatim (update only the IDs in
+parentheses if requirement IDs moved) and keep its "{who}" and "{when}" unless a rule
+below says otherwise. Drop a row only when the PM answered it at handoff or the source
+material now answers it. Add new rows as needed.
 "{when}" is exactly "{before}" or "{during}" — nothing else:
    - "{before}": building on a guess means rework or exposure, because the answer decides
      what data is kept and for how long, who may see or do what, whether a record counts as
      valid, or whether an acceptance criterion passes. The question names the R- or C- IDs it
-     blocks. "{until}" is "—".
+     blocks. "{until}" is "—" unless the row is being checked with someone else.
    - "{during}": work can start without the answer and the answer drops in later without
      rework (a list of values, a wording, a count, a threshold kept as a setting). "{until}"
      says how to build in the meantime so that it does — e.g. keep it changeable and start
@@ -346,7 +372,7 @@ requirement IDs of the PRD below where an entry serves one."""
 
 def build_prompt(step: str, *, language: str, readiness: Readiness,
                  record: supplement_mod.Supplement, sources: dict[str, str],
-                 prd: str | None = None) -> str:
+                 prd: str | None = None, previous: Sequence[dict] = ()) -> str:
     """한 단계의 프롬프트. 규칙·판정 사실·원본은 단계마다 같고 쓰는 문서만 다르다."""
     lab = _labels(language)
     g = lab["grades"]
@@ -416,7 +442,8 @@ closing remarks.
 ## Readiness facts
 
 ```json
-{json.dumps(_facts(readiness, record, lab), ensure_ascii=False, indent=1)}
+{json.dumps(_facts(readiness, record, lab, previous if step == "prd" else ()),
+            ensure_ascii=False, indent=1)}
 ```
 
 ## Source files
@@ -575,8 +602,17 @@ def open_questions(prd: str, language: str) -> list[supplement_mod.OpenQuestion]
         until = "" if blocking or _empty(row.until) else row.until
         found.append(supplement_mod.OpenQuestion(
             id=row.id, question=row.question[:supplement_mod.MAX_QUESTION_CHARS],
-            blocking=blocking, until=until))
+            blocking=blocking, until=until,
+            external=lab["external_mark"].lower() in row.who.lower()))
     return found
+
+
+def previous_rows(prd: str, language: str) -> list[dict]:
+    """직전 PRD 9번의 줄들 — 다음 PRD가 옮겨 쓸 재료. 시점 열이 없던 PRD면 시점은 비운다."""
+    lab = _labels(language)
+    _, question, who, when, _until = lab["open_columns"]
+    return [{question: row.question, who: row.who, when: row.when or ""}
+            for row in _open_table(prd, lab)[2]]
 
 
 def _is(cell: str, label: str) -> bool:
@@ -617,6 +653,19 @@ def _lint_open(prd: str, lab: dict) -> list[Finding]:
             findings.append(Finding(file="PRD.md", line=row.line, term=when or row.id,
                                     kind="triage"))
     return findings
+
+
+def _lint_dropped(prd: str, language: str, carried: Sequence[str],
+                  answered: Sequence[str]) -> list[Finding]:
+    """직전 PRD의 PM 질문이 답 없이 사라졌는가. 실측(ws-g): 앞 PRD에 있던 "개인 링크의 유효
+    기간"이 다음 생성의 열린 질문에서 빠졌고, 아무도 알 수 없었다. 이번 생성에는 옮기라고
+    지시했으므로 사라졌다면 원본이 답하게 됐거나 모델이 빠뜨린 것이다 — 어느 쪽인지는 사람이 본다.
+    같은 질문인지는 관련 ID를 뺀 문장으로 본다(supplement.open_key)."""
+    now = {supplement_mod.open_key(q.question) for q in open_questions(prd, language)}
+    skip = now | set(answered)
+    line = _open_table(prd, _labels(language))[0]
+    return [Finding(file="PRD.md", line=line, term=q[:80], kind="dropped")
+            for q in dict.fromkeys(carried) if supplement_mod.open_key(q) not in skip]
 
 
 # ---- 보완 질문의 보기 ----
@@ -796,16 +845,18 @@ _FOREIGN_ID = re.compile(r"(?<![\w-])(?!Q\d)[A-Z]{1,2}\d{1,3}(?![\w-])")
 #: PRD 요구사항 항목의 시작(목록 또는 표).
 _REQUIREMENT = re.compile(r"^\s*(?:[-*+]\s+|\|\s*)(?:\*\*)?(R-\d+)")
 
-Kind = Literal["tech", "vague", "internal", "acceptance", "grade", "ai_goal", "triage"]
+Kind = Literal["tech", "vague", "internal", "acceptance", "grade", "ai_goal", "triage",
+               "dropped"]
 _RULES: tuple[tuple[Kind, re.Pattern[str]], ...] = (
     ("tech", _TECH_ASCII), ("tech", _TECH_PATTERNS), ("tech", _TECH_KO),
     ("vague", _VAGUE_KO), ("vague", _VAGUE_EN), ("internal", _INTERNAL_FIELD),
 )
 
 
-def lint(files: dict[str, str], *, language: str = "ko",
-         validated: bool = True) -> list[Finding]:
-    """`validated`: 검증 결과(validation-results·설문 집계)가 있는 프로토타입이 하나라도 있는가."""
+def lint(files: dict[str, str], *, language: str = "ko", validated: bool = True,
+         carried: Sequence[str] = (), answered: Sequence[str] = ()) -> list[Finding]:
+    """`validated`: 검증 결과(validation-results·설문 집계)가 있는 프로토타입이 하나라도 있는가.
+    `carried`: 직전 PRD의 PM 몫 열린 질문. `answered`: 인계 탭에서 답한 열린 질문의 키."""
     lab = _labels(language)
     validation_grades = (lab["grades"]["users"], lab["grades"]["internal"])
     findings: list[Finding] = []
@@ -821,7 +872,7 @@ def lint(files: dict[str, str], *, language: str = "ko",
                         findings.append(Finding(file=name, line=number, term=grade, kind="grade"))
     prd = files.get("PRD.md")
     if prd is not None:
-        findings += _lint_prd(prd, lab)
+        findings += _lint_prd(prd, lab) + _lint_dropped(prd, language, carried, answered)
     return sorted(findings, key=lambda f: (FILES.index(f.file) if f.file in FILES else 99, f.line))
 
 
@@ -880,6 +931,8 @@ Discovery에서 정한 "무엇을 만드는가"를 담았습니다. 어떤 코�
 - PRD 6번(하지 않을 것)은 만들지 마세요. 필요해 보이면 먼저 PM에게 묻습니다.
 - PRD 9번에서 시점이 "빌드 전"인 질문은 추측하지 말고 구현 전에 PM에게 묻습니다. "빌드 중"인
   질문은 "답이 나올 때까지"에 적힌 대로 만들어 두고, 답이 나오면 반영합니다.
+- 답할 사람이 "PM(외부 확인)"인 질문은 법무·감독기관·협력사 등에서 확인받을 사실입니다. 확인된 답을
+  PM에게 받으세요. "확인 중: …"은 지금 누구에게 확인하고 있는지입니다.
 - 근거 등급:
   - "사용자 검증됨": 실제 대상 사용자가 프로토타입으로 확인했습니다.
   - "내부 검증됨(대리 사용자)": 사내 인원이 사용자 역할을 대신해 확인했습니다. 실제 사용자에게는 다를 수 있습니다.
@@ -910,6 +963,8 @@ harness can take this directory as its input as is.
 - Do not build what PRD section 6 (non-goals) lists. If it seems needed, ask the PM first.
 - Questions in PRD section 9 marked "Before build" are not yours to guess. Ask the PM before
   implementing. Build "During build" questions as "Until answered" says, and apply the answer when it comes.
+- Questions for "PM (external check)" are facts to be confirmed by legal counsel, a regulator, a partner
+  or another department. Get the confirmed answer from the PM. "Being checked with: …" says who is checking.
 - Evidence grades:
   - "Validated with users": actual target users confirmed it with a prototype.
   - "Validated internally (proxy users)": internal staff confirmed it while playing the users. Real users may differ.
@@ -985,14 +1040,15 @@ async def start(s3: S3StoreLike, readiness: Readiness, *, resume: bool = False,
     `resume`이면 지난 시도의 끝난 단계를 그대로 두고 나머지만 대기로 돌린다. 그 사이 원본이
     바뀌었는지는 `run`이 원본을 읽은 뒤 판정한다 — 바뀌었으면 처음부터다.
     """
-    steps, sources, supplement = fresh_steps(), {}, ""
+    steps, sources, supplement, carried = fresh_steps(), {}, "", []
     previous = await load_manifest(s3) if resume else None
     if previous and previous.status != "ready" and _same_steps(previous.steps):
         steps = [step if step.status == "done" else Step(name=step.name, file=step.file)
                  for step in previous.steps]
         sources, supplement = previous.sources, previous.supplement
+        carried = previous.carried
     manifest = Manifest(status="generating", started_at=now or _now(), origin=readiness.origin,
-                        steps=steps, sources=sources, supplement=supplement)
+                        steps=steps, sources=sources, supplement=supplement, carried=carried)
     await _save_manifest(s3, manifest)
     return manifest
 
@@ -1037,6 +1093,14 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
         await state.save(manifest.model_copy(update={
             "sources": digests, "supplement": supplement, "truncated": truncated}))
         written = await _finished_documents(s3, state)
+        previous: list[dict] = []
+        if "PRD.md" not in written:
+            # 다시 쓰기 직전의 PRD(마지막 패키지)가 옮겨 쓸 열린 질문이다. 이어서 하는 시도에서 PRD가
+            # 이미 끝났다면 그때 넘긴 질문이 manifest에 있다.
+            old = await _stored_prd(s3)
+            previous = previous_rows(old, language) if old else []
+            carried = [q.question for q in open_questions(old, language)] if old else []
+            await state.save(state.manifest.model_copy(update={"carried": carried}))
     except Exception as exc:
         return await state.fail(None, exc)
 
@@ -1053,7 +1117,8 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
                                                 prd=written["PRD.md"], sources=fitted)
             else:
                 prompt = build_prompt(name, language=language, readiness=readiness,
-                                      record=record, sources=fitted, prd=written.get("PRD.md"))
+                                      record=record, sources=fitted, prd=written.get("PRD.md"),
+                                      previous=previous)
                 text = await asyncio.wait_for(call(prompt, progress.update),
                                               timeout=CALL_TIMEOUT_S)
                 document = clean_output(text)
@@ -1077,14 +1142,18 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
     return await state.save(state.manifest.model_copy(update={
         "status": "ready", "finished_at": _now(), "files": list(FILES), "error": None,
         "findings": lint(documents, language=language,
-                         validated=any(p.validation in _VALIDATED for p in readiness.prototypes)),
+                         validated=any(p.validation in _VALIDATED for p in readiness.prototypes),
+                         carried=state.manifest.carried,
+                         answered=[k for k, a in record.open_answers.items()
+                                   if a.text and not a.unknown]),
     }))
 
 
 async def _write_options(call: Caller, progress: "_Progress", *, language: str, prd: str,
                          sources: dict[str, str]) -> str:
-    """빌드 전 PM 결정의 보기 → `options.json`의 내용. 물을 것이 없으면 모델을 부르지 않는다."""
-    asked = [q for q in open_questions(prd, language) if q.blocking]
+    """빌드 전 PM 결정의 보기 → `options.json`의 내용. 물을 것이 없으면 모델을 부르지 않는다.
+    외부 확인 질문은 뺀다 — 받아 올 사실에 보기를 주면 원하는 결론을 고르게 된다."""
+    asked = [q for q in open_questions(prd, language) if q.blocking and not q.external]
     if not asked:
         return "{}"
     prompt = build_options_prompt(language=language, questions=asked, sources=sources, prd=prd)
@@ -1092,6 +1161,13 @@ async def _write_options(call: Caller, progress: "_Progress", *, language: str, 
     options = parse_options(text, asked, list(sources))
     return json.dumps({key: [o.model_dump() for o in opts] for key, opts in options.items()},
                       ensure_ascii=False)
+
+
+async def _stored_prd(s3: S3StoreLike) -> str | None:
+    try:
+        return await s3.get(PACKAGE_PREFIX + "PRD.md")
+    except FileNotFoundError:
+        return None
 
 
 async def _finished_documents(s3: S3StoreLike, state: "_State") -> dict[str, str]:

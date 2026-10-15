@@ -4,7 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
-import { getPackage, putSupplement, startPackage } from "@/lib/api/handoff";
+import { FINDING_KINDS, getPackage, putSupplement, startPackage } from "@/lib/api/handoff";
+import { en } from "@/lib/i18n/en";
+import { ko } from "@/lib/i18n/ko";
 import type { PackageView, Readiness, SupplementView } from "@/lib/api/handoff";
 import { GenerationProgress } from "./GenerationProgress";
 import { PackagePanel } from "./PackagePanel";
@@ -190,15 +192,15 @@ describe("SupplementForm — what the last PRD left open", () => {
     ...VIEW, has_package: true, questions: [], superseded: [],
     open_questions: [
       { key: "open:aaaaaaaaaaaa", id: "1", question: "법무 결론: 보존 기간(R-08)", answer: null,
-        until: "", options: [] },
+        until: "", external: false, options: [] },
       { key: "open:bbbbbbbbbbbb", id: "6", question: "자동 재알림 규칙(R-05)",
-        answer: { question: "자동 재알림 규칙(R-05)", text: "기한 2일 전 1회", unknown: false, updated_at: "t" },
-        until: "", options: [] },
+        answer: { question: "자동 재알림 규칙(R-05)", text: "기한 2일 전 1회", unknown: false, updated_at: "t", pending_with: "" },
+        until: "", external: false, options: [] },
     ],
     open_answered: [
       { key: "open:cccccccccccc", id: "", question: "개인 링크 유효기간",
-        answer: { question: "개인 링크 유효기간", text: "7일", unknown: false, updated_at: "t" },
-        until: "", options: [] },
+        answer: { question: "개인 링크 유효기간", text: "7일", unknown: false, updated_at: "t", pending_with: "" },
+        until: "", external: false, options: [] },
     ],
   };
 
@@ -219,9 +221,9 @@ describe("SupplementForm — what the last PRD left open", () => {
     await userEvent.click(within(screen.getByLabelText(/법무 결론/).closest("div")!).getByRole("checkbox"));
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
     expect(onSave.mock.calls[0][0].open_answers).toEqual({
-      "open:aaaaaaaaaaaa": { question: "법무 결론: 보존 기간(R-08)", text: "", unknown: true },
-      "open:bbbbbbbbbbbb": { question: "자동 재알림 규칙(R-05)", text: "기한 2일 전 1회", unknown: false },
-      "open:cccccccccccc": { question: "개인 링크 유효기간", text: "7일", unknown: false },
+      "open:aaaaaaaaaaaa": { question: "법무 결론: 보존 기간(R-08)", text: "", unknown: true, pending_with: "" },
+      "open:bbbbbbbbbbbb": { question: "자동 재알림 규칙(R-05)", text: "기한 2일 전 1회", unknown: false, pending_with: "" },
+      "open:cccccccccccc": { question: "개인 링크 유효기간", text: "7일", unknown: false, pending_with: "" },
     });
   });
 
@@ -229,16 +231,16 @@ describe("SupplementForm — what the last PRD left open", () => {
   const TRIAGED: SupplementView = {
     ...OPEN,
     open_questions: [
-      { key: "open:dddddddddddd", id: "O-01", question: "보존 기간은? (R-08)", answer: null, until: "",
+      { key: "open:dddddddddddd", id: "O-01", question: "보존 기간은? (R-08)", answer: null, until: "", external: false,
         options: [{ text: "3년", source: "go-to-market/gtm-questions.md Q4" },
                   { text: "5년", source: "envision/business-context.md" }] },
-      { key: "open:eeeeeeeeeeee", id: "O-02", question: "권한 범위는? (R-16)", answer: null, until: "",
+      { key: "open:eeeeeeeeeeee", id: "O-02", question: "권한 범위는? (R-16)", answer: null, until: "", external: false,
         options: [{ text: "지점은 자기 지점만", source: "envision/business-context.md" },
                   { text: "본사는 전체", source: "envision/business-context.md" }] },
     ],
     open_deferred: [
       { key: "open:ffffffffffff", id: "O-03", question: "지원 외국어 목록은?", answer: null,
-        until: "목록을 바꿀 수 있게 두고 영어·베트남어로 시작", options: [] },
+        until: "목록을 바꿀 수 있게 두고 영어·베트남어로 시작", external: false, options: [] },
     ],
     open_answered: [],
   };
@@ -264,17 +266,17 @@ describe("SupplementForm — what the last PRD left open", () => {
     expect(screen.getByText(/^2 \/ 2 답함/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
     expect(onSave.mock.calls[0][0].open_answers).toEqual({
-      "open:dddddddddddd": { question: "보존 기간은? (R-08)", text: "5년", unknown: false },
-      "open:eeeeeeeeeeee": { question: "권한 범위는? (R-16)", text: "본사 안전팀만 전체", unknown: false },
+      "open:dddddddddddd": { question: "보존 기간은? (R-08)", text: "5년", unknown: false, pending_with: "" },
+      "open:eeeeeeeeeeee": { question: "권한 범위는? (R-16)", text: "본사 안전팀만 전체", unknown: false, pending_with: "" },
     });
   });
 
   it("reopens a typed answer as its own entry and an answer that matches an option as that option", () => {
     const view: SupplementView = { ...TRIAGED, open_questions: [
       { ...TRIAGED.open_questions[0],
-        answer: { question: "보존 기간은? (R-08)", text: "5년", unknown: false, updated_at: "t" } },
+        answer: { question: "보존 기간은? (R-08)", text: "5년", unknown: false, updated_at: "t", pending_with: "" } },
       { ...TRIAGED.open_questions[1],
-        answer: { question: "권한 범위는? (R-16)", text: "본사 안전팀만", unknown: false, updated_at: "t" } },
+        answer: { question: "권한 범위는? (R-16)", text: "본사 안전팀만", unknown: false, updated_at: "t", pending_with: "" } },
     ] };
     render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
@@ -283,6 +285,26 @@ describe("SupplementForm — what the last PRD left open", () => {
     expect(within(screen.getByRole("radiogroup", { name: /권한 범위는/ }))
       .getByRole("radio", { name: "직접 입력" })).toBeChecked();
     expect(screen.getByRole("textbox", { name: "직접 입력" })).toHaveValue("본사 안전팀만");
+  });
+
+  it("asks an external check for the answer or who is checking, with no options", async () => {
+    // 실측(ws-g): "증빙 효력을 갖는가?"에 "인정한다"가 보기로 나왔다 — 법무가 답할 사실이다.
+    const onSave = vi.fn();
+    const view: SupplementView = { ...TRIAGED, open_deferred: [], open_questions: [
+      { key: "open:gggggggggggg", id: "O-01", question: "전자 기록의 증빙 효력은? (C-01)", answer: null,
+        until: "", external: true, options: [] },
+    ] };
+    render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
+                           onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    expect(screen.getByText("외부 확인")).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    await userEvent.type(screen.getByRole("textbox", { name: /확인 중인 곳/ }), "법무팀");
+    expect(screen.getByText(/^1 \/ 1 답함/)).toBeInTheDocument();   // 확인 중인 곳만으로도 답한 것이다
+    await userEvent.click(screen.getByRole("button", { name: "저장" }));
+    expect(onSave.mock.calls[0][0].open_answers).toEqual({
+      "open:gggggggggggg": { question: "전자 기록의 증빙 효력은? (C-01)", text: "", unknown: false,
+                             pending_with: "법무팀" },
+    });
   });
 
   it("puts the AI suggestions that became success metrics first", () => {
@@ -500,5 +522,18 @@ describe("GenerationProgress", () => {
     expect(screen.getByText(/처음부터 다시 만들어야 합니다/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "처음부터 다시" }));
     expect(h.onRestart).toHaveBeenCalled();
+  });
+});
+
+describe("finding kinds", () => {
+  // triage를 더할 때 사이드바 문구(lint.*)를 빠뜨려 키가 그대로 보였다.
+  it("has every label and fix for every kind in both languages", () => {
+    for (const dict of [ko, en] as Record<string, string>[]) {
+      for (const k of FINDING_KINDS) {
+        for (const prefix of ["handoff.pkg.lint.", "handoff.pkg.findingKind.", "handoff.pkg.findingFix."]) {
+          expect(dict[prefix + k], prefix + k).toBeTruthy();
+        }
+      }
+    }
   });
 });

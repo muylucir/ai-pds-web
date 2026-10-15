@@ -17,6 +17,9 @@
 #     22개 중 18개를 PM 몫으로 적었는데 구현을 막는 것은 7개였다 — 지원 외국어 목록이나 버튼
 #     형태까지 인계 전에 서술형으로 받으면 PM이 넘지 못한다. "빌드 중" 줄은 PRD에 "답이 나올
 #     때까지" 어떻게 만들지가 적혀 있어 접어 두고, 답하고 싶으면 답할 수 있다.
+#   - "PM(외부 확인)" 줄은 PM이 고르는 결정이 아니라 법무·감독기관·협력사에서 받아 올 사실이다.
+#     보기를 주면 원하는 결론을 고르는 모양이 된다(실측 ws-g: "증빙 효력을 갖는가?"에 "인정한다"가
+#     보기로 나왔다). 그래서 받은 답이나, 아직이면 확인 중인 곳만 받는다(`pending_with`).
 #   - 기존 내용은 바꾸지 않는다. 바꾸는 길은 워크스페이스다. 여기서 받는 것은 빈칸의 답과,
 #     이미 있는 AI 제안 수락 항목에 대한 "맞다" 확인뿐이다.
 #   - AI 기본값을 주지 않는다. 실측에서 표시된 기본값을 PM이 고른 비율이 89%였다 —
@@ -81,6 +84,7 @@ _MAX_CONFIRMATIONS = 500
 _OPEN_KEY = re.compile(r"^open:[0-9a-f]{12}$")
 _MAX_OPEN_ANSWERS = 200
 MAX_QUESTION_CHARS = 1000
+MAX_PENDING_CHARS = 200
 
 
 class Answer(BaseModel):
@@ -94,6 +98,8 @@ class OpenAnswer(Answer):
     #: 답한 질문의 문장. 질문은 PRD에서 왔고 PRD는 다시 만들어진다 — 기록만으로 무엇에 답했는지
     #: 알 수 있어야 다음 생성이 그 답을 쓴다.
     question: str = Field(max_length=MAX_QUESTION_CHARS)
+    #: 외부 확인 질문을 지금 누구에게 확인 중인가. 답(text)이 없어도 이것만으로 답한 것으로 센다.
+    pending_with: str = Field(default="", max_length=MAX_PENDING_CHARS)
 
 
 class Supplement(BaseModel):
@@ -111,6 +117,7 @@ class AnswerIn(BaseModel):
 
 class OpenAnswerIn(AnswerIn):
     question: str = Field(max_length=MAX_QUESTION_CHARS)
+    pending_with: str = Field(default="", max_length=MAX_PENDING_CHARS)
 
 
 class SupplementUpdate(BaseModel):
@@ -130,6 +137,8 @@ class OpenQuestion(BaseModel):
     blocking: bool = True
     #: "답이 나올 때까지" 칸. 빌드 중 결정이 그동안 어떻게 만들어지는지다.
     until: str = ""
+    #: 답할 사람이 "PM(외부 확인)"이다 — 고를 결정이 아니라 받아 올 사실이다.
+    external: bool = False
 
 
 class Option(BaseModel):
@@ -180,7 +189,8 @@ class OpenQuestionView(BaseModel):
     question: str
     answer: OpenAnswer | None
     until: str = ""
-    #: 고를 수 있는 보기. 비어 있으면 서술형으로 묻는다.
+    external: bool = False
+    #: 고를 수 있는 보기. 비어 있으면 서술형으로 묻는다. 외부 확인 질문에는 없다.
     options: list[Option] = []
 
 
@@ -208,8 +218,15 @@ def confirmation_key(file: str, number: int) -> str:
     return f"{file}#{number}"
 
 
+#: 질문 끝의 관련 ID(`(R-08, C-05)`). 요구사항 번호는 다시 만들 때마다 바뀌므로 같은 질문인지
+#: 볼 때는 뺀다 — 빼지 않으면 R-08이 R-09가 된 것만으로 답이 질문을 잃는다.
+_ID_REF = re.compile(r"(?<![\w-])[A-Z]-\d+")
+_EMPTY_PARENS = re.compile(r"[(（][\s,·、/]*[)）]")
+
+
 def open_key(question: str) -> str:
-    normalized = " ".join(question.split())
+    """열린 질문의 키. 문장으로 정하되 공백과 관련 ID는 보지 않는다."""
+    normalized = " ".join(_EMPTY_PARENS.sub("", _ID_REF.sub("", question)).split())
     return "open:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
 
 
@@ -242,9 +259,10 @@ def view(readiness: Readiness, record: Supplement,
         key = open_key(q.question)
         if key in asked or key in deferred:
             continue
+        offered = q.blocking and not q.external
         entry = OpenQuestionView(key=key, id=q.id, question=q.question, until=q.until,
-                                 answer=record.open_answers.get(key),
-                                 options=(options or {}).get(key, []) if q.blocking else [])
+                                 external=q.external, answer=record.open_answers.get(key),
+                                 options=(options or {}).get(key, []) if offered else [])
         (asked if q.blocking else deferred)[key] = entry
     answered = [OpenQuestionView(key=key, id="", question=a.question, answer=a)
                 for key, a in record.open_answers.items() if key not in asked and key not in deferred]
@@ -274,21 +292,27 @@ def apply(previous: Supplement, update: SupplementUpdate, *, now: str | None = N
             answers[qid] = Answer(**kept)
     open_answers: dict[str, OpenAnswer] = {}
     for key, given in update.open_answers.items():
-        if (kept := _kept(previous.open_answers.get(key), given, stamp)) is not None:
+        pending = " ".join(given.pending_with.split())
+        if (kept := _kept(previous.open_answers.get(key), given, stamp, pending)) is not None:
             open_answers[key] = OpenAnswer(question=" ".join(given.question.split()), **kept)
     confirmed = {key: previous.confirmed.get(key, stamp)
                  for key in dict.fromkeys(update.confirmed)}
     return Supplement(answers=answers, confirmed=confirmed, open_answers=open_answers)
 
 
-def _kept(old: Answer | None, given: AnswerIn, stamp: str) -> dict | None:
-    """답 하나를 기록의 필드로. 비운 칸은 답이 아니다(None)."""
+def _kept(old: Answer | None, given: AnswerIn, stamp: str,
+          pending_with: str | None = None) -> dict | None:
+    """답 하나를 기록의 필드로. 비운 칸은 답이 아니다(None). `pending_with`는 열린 질문만 갖는다."""
     text = given.text.strip()
-    if not text and not given.unknown:
+    if not text and not given.unknown and not pending_with:
         return None
-    same = old is not None and old.text == text and old.unknown == given.unknown
-    return {"text": text, "unknown": given.unknown,
+    same = (old is not None and old.text == text and old.unknown == given.unknown
+            and getattr(old, "pending_with", "") == (pending_with or ""))
+    kept = {"text": text, "unknown": given.unknown,
             "updated_at": old.updated_at if same and old else stamp}
+    if pending_with is not None:
+        kept["pending_with"] = pending_with
+    return kept
 
 
 async def load(s3: S3StoreLike) -> Supplement:
