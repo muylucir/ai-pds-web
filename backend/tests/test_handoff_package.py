@@ -874,3 +874,74 @@ def test_route_supplement_offers_options_and_folds_decisions_for_later(env):
         ("O-01", 2), ("O-02", 0), ("O-06", 0), ("O-07", 0)]
     assert [(q["id"], bool(q["until"])) for q in body["open_deferred"]] == [
         ("O-03", True), ("O-05", False)]
+
+
+# ---- 외부 확인 질문과 직전 PRD의 열린 질문 ----
+
+_PRD_V2 = """# 샘플몰 안전ON PRD
+
+## 9. 열린 질문
+
+| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 |
+|---|---|---|---|---|
+| O-01 | 전자 기록이 종이와 같은 증빙 효력을 갖는가? (C-01, R-11) | PM(외부 확인) | 빌드 전 | — |
+| O-02 | 확인 문제의 통과 기준은? (R-07) | PM | 빌드 전 | — |
+"""
+
+
+def test_an_external_check_is_a_pm_row_without_options():
+    found = package.open_questions(_PRD_V2, "ko")
+    assert [(q.id, q.external) for q in found] == [("O-01", True), ("O-02", False)]
+    prompt = package.build_prompt("prd", language="ko", readiness=assess(B, {}),
+                                  record=supplement.Supplement(), sources={})
+    assert '"PM(외부 확인)"' in prompt and "a fact the PM must obtain from someone else" in prompt
+
+
+def test_a_question_being_checked_goes_to_the_prd_as_still_open():
+    q = "전자 기록이 종이와 같은 증빙 효력을 갖는가? (C-01, R-10)"
+    record = supplement.Supplement(open_answers={supplement.open_key(q): supplement.OpenAnswer(
+        question=q, pending_with="법무팀")})
+    prompt = package.build_prompt("prd", language="ko", readiness=assess(B, {}), record=record,
+                                  sources={})
+    facts = json.loads(prompt.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert facts["open questions being checked with someone else"] == [
+        {"question": q, "checking with": "법무팀"}]
+    assert facts["PM answers given at handoff"] == []   # 확인 중은 답이 아니다
+    assert '"확인 중: <who>"' in prompt
+
+
+def test_the_next_prd_is_given_the_last_open_questions_and_a_lost_one_is_flagged():
+    """실측(ws-g): 앞 PRD의 "개인 링크의 유효 기간"이 다음 생성에서 아무 표시 없이 사라졌다."""
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+    answered_q = "만족도 버튼의 형태는? (R-14)"   # 번호가 달라도 같은 질문이다
+
+    def writer(prd, calls):
+        async def call(prompt, progress=None):
+            if "Write the options" in prompt:
+                return '{"questions": []}'
+            step = _step_of(prompt)
+            calls.append((step, prompt))
+            return prd if step == "prd" else DOCS[step]
+        return call
+
+    _run(_generate(s3, files, writer(_PRD_TRIAGED, [])))
+    # 인계 탭에서 하나에 답했다 — 그 질문이 빠지는 것은 정상이다.
+    _run(supplement.save(s3, supplement.Supplement(open_answers={
+        supplement.open_key(answered_q): supplement.OpenAnswer(question=answered_q, text="5점 척도")})))
+    calls: list = []
+    done = _run(_generate(s3, files, writer(_PRD_V2, calls)))
+    facts = json.loads(dict(calls)["prd"].split("```json\n", 1)[1].split("\n```", 1)[0])
+    previous = facts["open questions in the previous version of this PRD"]
+    assert [r["질문"] for r in previous][:2] == ["증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)",
+                                              "개인 링크의 유효 기간은? (R-04)"]
+    assert previous[0]["시점"] == "빌드 전" and previous[3]["답할 사람"] == "개발팀"
+    assert "Carry every one of them over" in dict(calls)["prd"]
+    # 다른 단계에는 싣지 않는다.
+    assert "previous version" not in json.dumps(
+        json.loads(dict(calls)["validation"].split("```json\n", 1)[1].split("\n```", 1)[0]))
+    dropped = [f.term for f in done.findings if f.kind == "dropped"]
+    assert dropped == ["증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)", "개인 링크의 유효 기간은? (R-04)",
+                       "지원 외국어의 최종 목록은? (R-02)", "지점당 단말 대수는? (A-07)"]
+    # 만족도 버튼은 답했고, 통과 기준은 새 PRD에 있으며, 파일럿 규모는 개발팀 몫이다.
+    assert done.carried and all(f.line == 5 for f in done.findings if f.kind == "dropped")

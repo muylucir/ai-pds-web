@@ -21,8 +21,9 @@ import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 import { sectionLabel } from "./ReadinessPanel";
 
-/** `custom`은 화면 상태다 — 보기가 있는 질문에서 "직접 입력"을 골랐다. 저장하지 않는다. */
-type Draft = Record<string, { text: string; unknown: boolean; custom?: boolean }>;
+/** `custom`은 화면 상태다 — 보기가 있는 질문에서 "직접 입력"을 골랐다. 저장하지 않는다.
+ *  `pending_with`는 외부 확인 질문의 "확인 중인 곳"이다. */
+type Draft = Record<string, { text: string; unknown: boolean; custom?: boolean; pending_with?: string }>;
 
 function initialDraft(view: SupplementView): Draft {
   const out: Draft = {};
@@ -32,7 +33,8 @@ function initialDraft(view: SupplementView): Draft {
   for (const q of openAll(view)) {
     const text = q.answer?.text ?? "";
     out[q.key] = { text, unknown: q.answer?.unknown ?? false,
-                   custom: !!text && !q.options.some((o) => o.text === text) };
+                   custom: !!text && !q.options.some((o) => o.text === text),
+                   pending_with: q.answer?.pending_with ?? "" };
   }
   return out;
 }
@@ -40,7 +42,8 @@ function initialDraft(view: SupplementView): Draft {
 const openAll = (view: SupplementView) =>
   [...view.open_questions, ...view.open_deferred, ...view.open_answered];
 
-const filled = (d: Draft[string] | undefined) => !!d && (d.unknown || !!d.text.trim());
+const filled = (d: Draft[string] | undefined) =>
+  !!d && (d.unknown || !!d.text.trim() || !!d.pending_with?.trim());
 
 export function toUpdate(view: SupplementView, draft: Draft, confirmed: Set<string>): SupplementUpdate {
   const answers: SupplementUpdate["answers"] = {};
@@ -56,7 +59,10 @@ export function toUpdate(view: SupplementView, draft: Draft, confirmed: Set<stri
   const open_answers: SupplementUpdate["open_answers"] = {};
   for (const q of openAll(view)) {
     const d = draft[q.key];
-    if (filled(d)) open_answers[q.key] = { question: q.question, text: d.text, unknown: d.unknown };
+    if (filled(d)) {
+      open_answers[q.key] = { question: q.question, text: d.text, unknown: d.unknown,
+                              pending_with: d.pending_with ?? "" };
+    }
   }
   return { answers, confirmed: [...confirmed], open_answers };
 }
@@ -147,7 +153,7 @@ export function SupplementForm({
 
   // 답 칸 하나. 보기가 있으면 보기 중 하나 · 직접 입력 · 모름이고, 없으면 빈 칸과 모름이다.
   const renderAnswer = (id: string, label: ReactNode, hint: string | null,
-                        options: OpenOption[] = []) => {
+                        options: OpenOption[] = [], external = false) => {
     const d = draft[id] ?? { text: "", unknown: false };
     const domId = `q-${id.replace(/[^\w-]/g, "-")}`;
     const typing = !options.length || !!d.custom;
@@ -188,6 +194,15 @@ export function SupplementForm({
                     onChange={(e) => set(id, { text: e.target.value })}
                     className={`w-full rounded-lg border border-slate-300 px-2.5 py-2 text-[13px] disabled:bg-slate-50 ${hint && !options.length ? "" : "mt-2"}`} />
         )}
+        {external && (
+          <label className="block mt-2 text-xs text-slate-600">
+            {t("handoff.supp.external.pending")}
+            <input type="text" value={d.unknown ? "" : d.pending_with ?? ""} disabled={d.unknown}
+                   maxLength={200} placeholder={t("handoff.supp.external.pendingPlaceholder")}
+                   onChange={(e) => set(id, { pending_with: e.target.value })}
+                   className="mt-1 block w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13px] disabled:bg-slate-50" />
+          </label>
+        )}
         <label className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
           <input type="checkbox" checked={d.unknown}
                  onChange={(e) => set(id, { unknown: e.target.checked })} />
@@ -197,7 +212,15 @@ export function SupplementForm({
     );
   };
   const openLabel = (q: OpenQuestion) => (
-    <>{q.id && <span className="mr-1.5 text-xs font-normal text-slate-400">{q.id}</span>}{q.question}</>
+    <>
+      {q.id && <span className="mr-1.5 text-xs font-normal text-slate-400">{q.id}</span>}
+      {q.external && (
+        <span className="mr-1.5 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-[11px] font-normal text-amber-800">
+          {t("handoff.supp.external.badge")}
+        </span>
+      )}
+      {q.question}
+    </>
   );
 
   const set = (id: string, patch: Partial<Draft[string]>) =>
@@ -248,7 +271,8 @@ export function SupplementForm({
             {t("handoff.supp.open.title").replace("{n}", String(view.open_questions.length))}
           </h4>
           <p className="mb-2.5 text-xs text-slate-500">{t("handoff.supp.open.hint")}</p>
-          {view.open_questions.map((q) => renderAnswer(q.key, openLabel(q), null, q.options))}
+          {view.open_questions.map((q) => renderAnswer(q.key, openLabel(q),
+            q.external ? t("handoff.supp.external.hint") : null, q.options, q.external))}
         </div>
       )}
 

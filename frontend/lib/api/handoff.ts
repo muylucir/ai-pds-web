@@ -98,6 +98,8 @@ export interface Confirmation {
 
 export interface OpenAnswer extends SupplementAnswer {
   question: string;
+  /** 외부 확인 질문을 지금 누구에게 확인 중인가. */
+  pending_with: string;
 }
 
 /** 빌드 전 결정의 보기. 원본에 근거가 있는 것만, 추천 없이 온다(서버 package.parse_options). */
@@ -117,6 +119,8 @@ export interface OpenQuestion {
   answer: OpenAnswer | null;
   /** 빌드 중 결정이 답이 나올 때까지 어떻게 만들어지는가(PRD 9번 "답이 나올 때까지"). */
   until: string;
+  /** 답할 사람이 "PM(외부 확인)" — 고를 결정이 아니라 받아 올 사실이다. 보기가 없다. */
+  external: boolean;
   /** 비어 있으면 서술형으로 묻는다. */
   options: OpenOption[];
 }
@@ -138,7 +142,7 @@ export interface SupplementView {
 export interface SupplementUpdate {
   answers: Partial<Record<SupplementQuestionId, { text: string; unknown: boolean }>>;
   confirmed: string[];
-  open_answers: Record<string, { question: string; text: string; unknown: boolean }>;
+  open_answers: Record<string, { question: string; text: string; unknown: boolean; pending_with?: string }>;
 }
 
 export type PackageStatus = "generating" | "ready" | "failed" | "interrupted";
@@ -167,7 +171,9 @@ export interface Finding {
 }
 
 /** 서버 handoff/package.Finding.kind. 화면의 검사 목록 순서이기도 하다. */
-export const FINDING_KINDS = ["tech", "vague", "acceptance", "grade", "ai_goal", "triage", "internal"] as const;
+export const FINDING_KINDS = [
+  "tech", "vague", "acceptance", "grade", "ai_goal", "triage", "dropped", "internal",
+] as const;
 export type FindingKind = (typeof FINDING_KINDS)[number];
 
 export interface Manifest {

@@ -194,7 +194,8 @@ def test_apply_keeps_open_answers_and_their_time():
     first = supplement.apply(supplement.Supplement(), supplement.SupplementUpdate(open_answers={
         key: supplement.OpenAnswerIn(question="보존  기간", text=" 5년 ")}), now="t1")
     assert first.open_answers[key].model_dump() == {
-        "text": "5년", "unknown": False, "updated_at": "t1", "question": "보존 기간"}
+        "text": "5년", "unknown": False, "updated_at": "t1", "question": "보존 기간",
+        "pending_with": ""}
     again = supplement.apply(first, supplement.SupplementUpdate(open_answers={
         key: supplement.OpenAnswerIn(question="보존 기간", text="5년")}), now="t2")
     assert again.open_answers[key].updated_at == "t1"
@@ -227,3 +228,28 @@ def test_only_decisions_needed_before_build_are_asked():
         ("O-02", "목록을 바꿀 수 있게 만들고 영어·베트남어로 시작", [])]
     # 빌드 중 결정에 한 답은 그 질문 옆에 남는다 — "앞서 답한 질문"으로 빠지지 않는다.
     assert v.open_deferred[0].answer.text == "영어만" and v.open_answered == []
+
+
+def test_the_key_of_an_open_question_ignores_the_ids_it_points_at():
+    """요구사항 번호는 다시 만들 때마다 바뀐다. R-08이 R-09가 된 것만으로 답이 질문을 잃으면 안 된다."""
+    assert (supplement.open_key("보존 기간은? (R-08, C-05)") == supplement.open_key("보존 기간은? (R-09)")
+            == supplement.open_key("보존  기간은?"))
+    assert supplement.open_key("보존 기간은?") != supplement.open_key("링크 유효 기간은?")
+
+
+def test_an_external_check_has_no_options_and_can_be_answered_with_who_is_checking():
+    """실측(ws-g): "증빙 효력을 갖는가?"에 "인정한다"가 보기로 나왔다 — 법무가 답할 사실을 PM이
+    고르는 모양이 된다."""
+    q = supplement.OpenQuestion(id="O-01", question="전자 기록의 증빙 효력은? (C-01)", external=True)
+    key = supplement.open_key(q.question)
+    options = {key: [supplement.Option(text="인정", source="a.md"),
+                     supplement.Option(text="불인정", source="a.md")]}
+    v = supplement.view(assess(A1, {}), supplement.Supplement(), {}, [q], options)
+    assert v.open_questions[0].external and v.open_questions[0].options == []
+
+    record = supplement.apply(supplement.Supplement(), supplement.SupplementUpdate(open_answers={
+        key: supplement.OpenAnswerIn(question=q.question, pending_with=" 법무팀 ")}), now="t1")
+    assert record.open_answers[key].pending_with == "법무팀" and record.open_answers[key].text == ""
+    again = supplement.apply(record, supplement.SupplementUpdate(open_answers={
+        key: supplement.OpenAnswerIn(question=q.question, pending_with="법무팀(10/20 회신)")}), now="t2")
+    assert again.open_answers[key].updated_at == "t2"
