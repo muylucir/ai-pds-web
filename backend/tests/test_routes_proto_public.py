@@ -32,8 +32,8 @@ class StubHost:
     dict로 대체하면 이 파일이 단정하려는 것이 전부 스텁의 동작이 된다.
     """
 
-    def __init__(self, root):
-        self._real = ProtoHost(root=root)
+    def __init__(self, root, state_root=None):
+        self._real = ProtoHost(root=root, state_root=state_root)
         self.infos: dict[tuple[str, str], HostInfo] = {}
 
     # --- 토큰: 실물에 위임 ---
@@ -67,12 +67,13 @@ class StubHost:
 
 @pytest.fixture()
 def env(monkeypatch, tmp_path):
-    host = StubHost(root=tmp_path)
+    state = tmp_path.with_name(tmp_path.name + "-state")
+    host = StubHost(root=tmp_path, state_root=state)
     monkeypatch.setattr(app_module, "proto_host", lambda: host)
     monkeypatch.setattr(app_module, "_proto_root", lambda: tmp_path)
     # 게이트/프록시가 계산하는 브라우저 관점 프리픽스를 배포와 같게 고정한다.
     monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "/api")
-    return {"host": host, "root": tmp_path}
+    return {"host": host, "root": tmp_path, "state": state}
 
 
 def _running(env, pid=PID, slug=SLUG, port=4001):
@@ -294,7 +295,7 @@ def test_tokens_survive_a_restart(env):
     """
     token = env["host"].ensure_token(PID, SLUG)
 
-    reborn = ProtoHost(root=env["root"])
+    reborn = ProtoHost(root=env["root"], state_root=env["state"])
     assert reborn.resolve_token(token) is None   # 아직 읽지 않았다
     assert reborn.load_tokens() == 1
     assert reborn.resolve_token(token) == (PID, SLUG)
@@ -314,7 +315,7 @@ async def test_purge_revokes_the_token(env):
     await real.purge(PID, SLUG)
 
     assert real.resolve_token(token) is None
-    assert not (env["root"] / PID / SLUG / TOKEN_FILENAME).exists()
+    assert not (env["state"] / PID / SLUG / "token").exists()
 
 
 def test_load_tokens_skips_an_empty_token_file(env):
@@ -322,11 +323,12 @@ def test_load_tokens_skips_an_empty_token_file(env):
 
     등록되면 `resolve_token("")`이 성공하고, 빈 쿠키를 보내는 요청이 통과한다.
     """
-    target = env["root"] / PID / SLUG
-    target.mkdir(parents=True, exist_ok=True)
-    (target / TOKEN_FILENAME).write_text("", encoding="utf-8")
+    for target, name in ((env["state"] / PID / SLUG, "token"),
+                         (env["root"] / PID / "legacy", TOKEN_FILENAME)):
+        target.mkdir(parents=True, exist_ok=True)
+        (target / name).write_text("", encoding="utf-8")
 
-    host = ProtoHost(root=env["root"])
+    host = ProtoHost(root=env["root"], state_root=env["state"])
     assert host.load_tokens() == 0
     assert host.resolve_token("") is None
 
@@ -354,7 +356,7 @@ def test_a_link_opens_on_a_replaced_instance_through_the_s3_index(env, monkeypat
         _running(env)
         gate = client.get(f"/proto/t/{token}", follow_redirects=False)
         assert gate.status_code == 307
-        assert (env["root"] / PID / SLUG / TOKEN_FILENAME).read_text() == token
+        assert (env["state"] / PID / SLUG / "token").read_text() == token
         assert env["host"].token_for(PID, SLUG) == token
     finally:
         app_module.registry.remove(PID)
@@ -424,13 +426,43 @@ def test_share_links_point_at_the_preview_domain(preview):
 
 
 def test_without_a_preview_surface_the_app_domain_still_serves(env, monkeypatch):
-    """프리뷰 스택을 올리지 않은 배포·로컬 개발 — 기능이 사라지는 것보다 낫다."""
+    """인증이 꺼진 로컬 개발 — 훔칠 세션 쿠키가 없으므로 앱 오리진이 서빙해도 된다."""
     monkeypatch.delenv("AIPDS_PREVIEW_ORIGIN", raising=False)
     from aipds.routes.proto_public import access_url_path
     assert access_url_path("tok") == "/api/proto/t/tok"
     token = env["host"].ensure_token(PID, SLUG)
     _running(env)
     assert client.get(f"/proto/t/{token}", follow_redirects=False).status_code == 307
+
+
+def _auth_on(monkeypatch):
+    monkeypatch.setattr(app_module, "cognito_config", lambda: {
+        "region": "ap-northeast-2", "user_pool_id": "pool", "client_id": "client"})
+
+
+def test_with_auth_on_a_missing_preview_surface_closes_the_preview(env, monkeypatch):
+    """인증이 켜진 배포에서 프리뷰 표면이 없으면(설정 누락, 비밀 값 읽기 실패) 앱 오리진이
+    서빙하지 않는다 — 서빙하면 프리뷰를 연 사람의 세션으로 프로토타입 JS가 앱 API를 부른다."""
+    monkeypatch.delenv("AIPDS_PREVIEW_ORIGIN", raising=False)
+    _auth_on(monkeypatch)
+    token = env["host"].ensure_token(PID, SLUG)
+    _running(env)
+    cookies = {cookie_name(PID, SLUG): token}
+
+    gate = client.get(f"/proto/t/{token}", follow_redirects=False)
+    assert gate.status_code == 503
+    assert "set-cookie" not in gate.headers
+    assert client.get(f"/proto/{PID}/{SLUG}/", cookies=cookies).status_code == 404
+
+
+def test_with_auth_on_an_unreadable_preview_secret_closes_the_preview(env, monkeypatch):
+    monkeypatch.setenv("AIPDS_PREVIEW_ORIGIN", PREVIEW)
+    monkeypatch.delenv("AIPDS_PREVIEW_VERIFY", raising=False)
+    monkeypatch.delenv("AIPDS_PREVIEW_SECRET_ARN", raising=False)
+    _auth_on(monkeypatch)
+    token = env["host"].ensure_token(PID, SLUG)
+    _running(env)
+    assert client.get(f"/proto/t/{token}", follow_redirects=False).status_code == 503
 
 
 # ---- 공유 업스트림 클라이언트 ----

@@ -82,8 +82,9 @@ together with the responses collected.
     {
       kind: "callout",
       tone: "warn",
-      md: `**A project cannot be exported while a prototype is building.** Capturing the middle of
-the AI writing code gives you half a file — press it again once the build finishes.`,
+      md: `**A project cannot be exported while a prototype build session is open.** Capturing the
+middle of the AI writing code gives you half a file. The message says where to go: in the project's
+**Prototypes** tab, press **Open session** on that card, then **Done** to close it, and export again.`,
     },
     {
       kind: "md",

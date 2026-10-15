@@ -235,13 +235,13 @@ def test_duplicate_question_text_across_rounds_is_idempotent(tmp_path):
 # 모델이 툴 파라미터의 한글을 `\uXXXX` 이스케이프로 쓰면서 hex를 오타내면, 그
 # 코드포인트가 "유효하지만 틀린" 음절로 디코드된다. 밀도는 음절의 3~5%이고
 # 간헐적이라, 같은 턴에 파일(Write)은 깨끗한데 질문(AskUserQuestion)만 깨질 수
-# 있다 — keumkang-v3 실측: 파일 `제공하시겠습니까`(U+ACA0) vs 물어본
+# 있다 — ws-a-v3 실측: 파일 `제공하시겠습니까`(U+ACA0) vs 물어본
 # `제공하시겜습니까`(U+AC9C). 정확 일치만 보면 되기록이 조용히 실패한다.
 #
 # 상류는 공식 미해결이고(모델 팀 이관, CLI로는 복원 불가) hex 오타가 무작위라
 # 역변환도 없다. 그래서 매칭에 허용 범위를 둔다.
 #
-# 임계값 근거(keumkang-v3 6라운드 21문항 실측):
+# 임계값 근거(ws-a-v3 6라운드 21문항 실측):
 #   맞는 쌍            0.9677
 #   가장 비슷한 오답    0.5806   ← 같은 "정보를 … 제공하시겠습니까?" 문형
 #   그 외 모든 쌍       ≤ 0.375
@@ -362,7 +362,7 @@ def test_a_fuzzy_match_is_logged_so_suppression_can_be_measured(tmp_path, caplog
 
 
 # ---- 후보 선정: 이름이 아니라 내용으로 ----
-# 2026-08-16 keumkang-v5: `design-context.md`가 완전한 질문 파일인데(문항 3개,
+# 2026-08-16 ws-a-v5: `design-context.md`가 완전한 질문 파일인데(문항 3개,
 # `[Answer]:` 슬롯 3개) 답변이 하나도 기록되지 않았다. 후보 glob이
 # `*-questions.md`였고 그 이름에 걸리지 않았기 때문이다.
 #
@@ -371,7 +371,7 @@ def test_a_fuzzy_match_is_logged_so_suppression_can_be_measured(tmp_path, caplog
 # prototype-validation.md는 Step 2의 산출물을 `design-context.md`로 지정하면서 그
 # 안에 질문 형식을 쓰라고 한다.
 #
-# 실측으로 넓혀도 안전하다(keumkang-v5의 aiplc-docs 15개 파일): 추가되는 것은
+# 실측으로 넓혀도 안전하다(ws-a-v5의 aiplc-docs 15개 파일): 추가되는 것은
 # design-context.md 하나뿐이고 audit.md·discovery-document.md·prototype-spec.md 등
 # 8개는 전부 걸리지 않는다.
 
@@ -422,7 +422,7 @@ def test_a_document_with_no_answer_slot_is_not_even_parsed(tmp_path, caplog):
 
 
 # ---- 실패 로그를 두 종류로 나눈다 ----
-# keumkang-v5의 `no match` 5건 중 **3건은 결함이 아니었다** — 게이트/승인 질문이라
+# ws-a-v5의 `no match` 5건 중 **3건은 결함이 아니었다** — 게이트/승인 질문이라
 # 질문 파일이 애초에 없고 audit.md에만 기록된다. 진짜 결함(파일에 있는데 못 찾음)과
 # 같은 경고로 묶으면 잡음에 묻힌다. 최선 점수가 그 둘을 가른다.
 
@@ -460,7 +460,7 @@ def test_a_near_miss_is_a_warning(tmp_path, caplog):
 # ---- 배경 산문이 붙은 문항도 매칭된다 ----
 # 파일은 배경 + 질문을 함께 담고 AskUserQuestion에는 질문 문장만 간다. 그래서
 # `q.text`(~200자)와 도구의 질문(~22자)을 비교하면 길이 차이로 유사도가 무너진다 —
-# keumkang-v5의 design-context.md Q4가 0.3721로 유실됐다. `q.ask`(마지막 문단)와도
+# ws-a-v5의 design-context.md Q4가 0.3721로 유실됐다. `q.ask`(마지막 문단)와도
 # 비교해 해결한다. 구조적 관계이므로 특수 케이스가 아니다.
 
 _WITH_BACKGROUND = """## Question 4 (모호성 해소 — Question 3 답변에 따른 후속)

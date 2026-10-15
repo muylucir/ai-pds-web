@@ -112,7 +112,7 @@ async def test_writing_build_instructions_hands_off_and_stops_the_turn(tmp_path)
     assert out["continue_"] is False
     reason = out["stopReason"]
     # 다음 행동을 **지정한다** — 없으면 상류 Step 4로 계속 가거나 자격증명을 묻는다
-    # (실측 keumkang-v5).
+    # (실측 ws-a-v5).
     assert "Prototypes" in reason
     assert "prototype" in reason
 

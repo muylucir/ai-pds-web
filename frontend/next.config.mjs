@@ -21,5 +21,12 @@ const nextConfig = {
   // (/api/proto/{pid}/styles.css — slug lost → 502). The prototype's own
   // server is what should decide about trailing slashes, not this proxy.
   skipTrailingSlashRedirect: true,
+  experimental: {
+    // middleware.ts가 /api/*에도 걸리므로 요청 바디는 미들웨어를 한 번 지난다. Next는
+    // 이 값을 넘는 바디를 **거부하지 않고 잘라서** 넘긴다(기본 10MB) — 첨부 업로드
+    // 상한(10MB, lib/uploads.ts의 MAX_UPLOAD_BYTES)에 multipart 머리를 더하면 넘으므로,
+    // 그대로 두면 큰 파일이 깨진 채 백엔드에 도착한다. nginx의 상한(11m)과 같게 둔다.
+    middlewareClientMaxBodySize: "11mb",
+  },
 };
 export default nextConfig;

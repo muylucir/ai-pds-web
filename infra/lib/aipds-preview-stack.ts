@@ -61,6 +61,9 @@ export class AipdsPreviewStack extends cdk.Stack {
     const originVerify = secretsmanager.Secret.fromSecretCompleteArn(
       this, 'OriginVerifyHeader', props.originVerifySecretArn);
 
+    // **보안 경고: 오리진 구간은 평문 HTTP다** — 앱 배포와 같은 제약과 같은 해법이다
+    // (aipds-hosting-stack.ts의 오리진 주석, README "CloudFront → instance is HTTP by design").
+    // 이 구간에는 프로토타입 접근 쿠키와 두 비밀 헤더가 실린다.
     const origin = new origins.HttpOrigin(props.originDnsName, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
       httpPort: 80,

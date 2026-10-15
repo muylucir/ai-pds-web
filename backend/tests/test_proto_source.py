@@ -96,7 +96,7 @@ def _rglob_entries(build_dir):
     from aipds.project_bundle import source_excluded
     out = []
     for path in sorted(build_dir.rglob("*")):
-        if not path.is_file():
+        if path.is_symlink() or not path.is_file():
             continue
         rel = path.relative_to(build_dir).as_posix()
         if not source_excluded(rel):
@@ -133,7 +133,9 @@ def test_local_entries_prunes_without_changing_the_answer(tmp_path):
     got = local_entries(root)
     assert got == _rglob_entries(root)
     rels = [rel for rel, _ in got]
-    assert "a/b" in rels and "a.b" in rels and "linked-file" in rels
+    assert "a/b" in rels and "a.b" in rels
+    # 링크는 담지 않는다 — 빌드 에이전트가 쓰는 트리라 링크 너머가 세대·다운로드에 실린다.
+    assert "linked-file" not in rels
     assert not any("node_modules" in r or ".next" in r for r in rels)
 
 

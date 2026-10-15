@@ -82,3 +82,23 @@ async def test_the_sdk_does_not_materialize_through_a_mirror_only_store(tmp_path
     options = ClaudeAgentOptions(cwd=str(tmp_path), resume=sid,
                                  session_store=MirrorOnlyStore(inner))
     assert await materialize_resume_session(options) is None
+
+
+async def test_restore_does_not_write_through_a_planted_link(tmp_path):
+    """config dir은 에이전트가 쓴다. `projects`를 바깥을 가리키는 링크로 바꿔 두면
+    트랜스크립트가 그 너머에 백엔드 uid로 쓰인다."""
+    cwd = tmp_path / "ws"
+    cwd.mkdir()
+    config = tmp_path / "config"
+    config.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (config / "projects").symlink_to(outside, target_is_directory=True)
+    sid = str(uuid.uuid4())
+    store = InMemorySessionStore()
+    await _seed(store, str(cwd), sid, _entries(1))
+
+    assert await restore(store, config, str(cwd), sid) is True
+
+    assert list(outside.iterdir()) == []
+    assert _transcript_path(str(config), str(cwd), sid).is_file()

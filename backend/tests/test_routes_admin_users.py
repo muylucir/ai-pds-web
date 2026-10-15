@@ -119,10 +119,10 @@ def test_list_returns_users_with_role_and_status(env, client):
 # ---- 초대 ----
 
 def test_invite_creates_sets_password_and_assigns_group_in_order(env, client):
-    r = client.post("/admin/users", json={"email": "new@x.io", "role": "pm"})
+    r = client.post("/admin/users", json={"email": "new@example.com", "role": "pm"})
     assert r.status_code == 201
     body = r.json()
-    assert body["email"] == "new@x.io"
+    assert body["email"] == "new@example.com"
     assert body["role"] == "pm"
     # 임시 비밀번호는 응답에 1회만 실린다 — 서버는 저장하지 않는다.
     assert len(body["temp_password"]) == 16
@@ -131,7 +131,7 @@ def test_invite_creates_sets_password_and_assigns_group_in_order(env, client):
 
 
 def test_invite_rejects_an_unknown_role(env, client):
-    r = client.post("/admin/users", json={"email": "new@x.io", "role": "superuser"})
+    r = client.post("/admin/users", json={"email": "new@example.com", "role": "superuser"})
     assert r.status_code == 422
     assert env.calls == [], "잘못된 역할로 사용자를 만들어서는 안 된다"
 
@@ -150,13 +150,13 @@ def test_duplicate_email_is_409(env, client):
     # fail_on이 설정되면 이메일 값과 무관하게 실패하므로, 일반 도메인으로 바꿔도
     # 테스트 의도는 그대로다.
     env.fail_on["create_user"] = CognitoError("UsernameExistsException", "exists")
-    r = client.post("/admin/users", json={"email": "dup@x.io", "role": "pm"})
+    r = client.post("/admin/users", json={"email": "dup@example.com", "role": "pm"})
     assert r.status_code == 409
 
 
 def test_alias_exists_is_also_409(env, client):
     env.fail_on["create_user"] = CognitoError("AliasExistsException", "alias")
-    r = client.post("/admin/users", json={"email": "x@x.io", "role": "pm"})
+    r = client.post("/admin/users", json={"email": "x@example.com", "role": "pm"})
     assert r.status_code == 409
 
 
@@ -164,23 +164,23 @@ def test_password_failure_rolls_back_the_created_user(env, client):
     # 반쯤 만들어진 계정(비밀번호 없음 / 그룹 없음)을 남기지 않는다 —
     # projects.py의 매니페스트 실패 롤백과 같은 규율.
     env.fail_on["set_temp_password"] = CognitoError("InvalidPasswordException", "weak")
-    r = client.post("/admin/users", json={"email": "new@x.io", "role": "pm"})
+    r = client.post("/admin/users", json={"email": "new@example.com", "role": "pm"})
     assert r.status_code == 500
-    assert env.deleted == ["new@x.io"], f"rollback did not delete the user: {env.deleted}"
+    assert env.deleted == ["new@example.com"], f"rollback did not delete the user: {env.deleted}"
 
 
 def test_group_failure_rolls_back_the_created_user(env, client):
     env.fail_on["set_group"] = CognitoError("ResourceNotFoundException", "no group")
-    r = client.post("/admin/users", json={"email": "new@x.io", "role": "pm"})
+    r = client.post("/admin/users", json={"email": "new@example.com", "role": "pm"})
     assert r.status_code == 500
-    assert env.deleted == ["new@x.io"]
+    assert env.deleted == ["new@example.com"]
 
 
 def test_rollback_failure_still_returns_500(env, client):
     # 롤백까지 실패하면 우리가 할 수 있는 것이 없다 — 500을 내고 로그에 남긴다.
     env.fail_on["set_group"] = CognitoError("ResourceNotFoundException", "no group")
     env.fail_on["delete_user"] = CognitoError("UserNotFoundException", "gone")
-    r = client.post("/admin/users", json={"email": "new@x.io", "role": "pm"})
+    r = client.post("/admin/users", json={"email": "new@example.com", "role": "pm"})
     assert r.status_code == 500
 
 
@@ -195,7 +195,7 @@ def test_reset_password_returns_a_new_temp_password(env, client):
 
 def test_reset_password_on_unknown_user_is_404(env, client):
     env.fail_on["set_temp_password"] = CognitoError("UserNotFoundException", "gone")
-    r = client.post("/admin/users/ghost@x.io/reset-password")
+    r = client.post("/admin/users/ghost@example.com/reset-password")
     assert r.status_code == 404
 
 
@@ -240,16 +240,16 @@ def test_cannot_demote_yourself_by_a_case_variant_of_your_own_username(env, clie
 def test_cannot_demote_the_last_admin(env, client):
     # 요청자가 아닌 다른 계정이지만 유일한 admin인 경우.
     env.users.pop(ADMIN_EMAIL)
-    env.add("other-admin@x.io", role="admin")
-    r = client.put("/admin/users/other-admin@x.io/role", json={"role": "pm"})
+    env.add("other-admin@example.com", role="admin")
+    r = client.put("/admin/users/other-admin@example.com/role", json={"role": "pm"})
     assert r.status_code == 400
     assert r.json()["detail"] == "last_admin"
     assert "set_group" not in [c[0] for c in env.calls]
 
 
 def test_can_demote_an_admin_when_another_admin_remains(env, client):
-    env.add("second-admin@x.io", role="admin")
-    r = client.put("/admin/users/second-admin@x.io/role", json={"role": "pm"})
+    env.add("second-admin@example.com", role="admin")
+    r = client.put("/admin/users/second-admin@example.com/role", json={"role": "pm"})
     assert r.status_code == 200
 
 
@@ -279,15 +279,15 @@ def test_cannot_disable_yourself_by_a_case_variant_of_your_own_username(env, cli
 
 def test_cannot_disable_the_last_admin(env, client):
     env.users.pop(ADMIN_EMAIL)
-    env.add("other-admin@x.io", role="admin")
-    assert client.post("/admin/users/other-admin@x.io/disable").status_code == 400
+    env.add("other-admin@example.com", role="admin")
+    assert client.post("/admin/users/other-admin@example.com/disable").status_code == 400
     assert "set_enabled" not in [c[0] for c in env.calls]
 
 
 def test_enable_is_never_blocked(env, client):
     # 활성화는 권한을 넓히는 방향이므로 마지막 관리자 보호와 무관하다.
-    env.add("disabled@x.io", role="admin", enabled=False)
-    assert client.post("/admin/users/disabled@x.io/enable").status_code == 204
+    env.add("disabled@example.com", role="admin", enabled=False)
+    assert client.post("/admin/users/disabled@example.com/enable").status_code == 204
 
 
 def test_enabling_yourself_is_allowed(env, client):
@@ -317,14 +317,14 @@ def test_cannot_delete_yourself_by_a_case_variant_of_your_own_username(env, clie
 
 def test_cannot_delete_the_last_admin(env, client):
     env.users.pop(ADMIN_EMAIL)
-    env.add("other-admin@x.io", role="admin")
-    assert client.delete("/admin/users/other-admin@x.io").status_code == 400
+    env.add("other-admin@example.com", role="admin")
+    assert client.delete("/admin/users/other-admin@example.com").status_code == 400
     assert "delete_user" not in [c[0] for c in env.calls]
 
 
 def test_delete_unknown_user_is_404(env, client):
     env.fail_on["delete_user"] = CognitoError("UserNotFoundException", "gone")
-    assert client.delete("/admin/users/ghost@x.io").status_code == 404
+    assert client.delete("/admin/users/ghost@example.com").status_code == 404
 
 
 # ---- 오류 번역 ----
@@ -335,6 +335,34 @@ def test_unexpected_cognito_error_is_502(env, client):
     assert r.status_code == 502
     # 내부 세부사항을 사용자에게 노출하지 않는다.
     assert "InternalErrorException" not in r.text
+
+
+# ---- 기존 세션 끊기 (auth/revocation.py) ----
+
+@pytest.mark.parametrize("call", [
+    lambda c: c.post(f"/admin/users/{PM_EMAIL}/disable"),
+    lambda c: c.delete(f"/admin/users/{PM_EMAIL}"),
+    lambda c: c.post(f"/admin/users/{PM_EMAIL}/reset-password"),
+    lambda c: c.put(f"/admin/users/{PM_EMAIL}/role", json={"role": "pm"}),
+])
+def test_cutting_access_ends_the_sessions_already_issued(env, client, call):
+    """비활성화·삭제·재설정·강등 뒤에도 이미 받은 access 토큰은 만료까지 통과한다 —
+    그 사용자의 기존 토큰을 거부하게 기록한다."""
+    assert call(client).status_code in (200, 204)
+    assert app_module.revocations().is_revoked(PM_EMAIL, issued_at=0)
+
+
+def test_promotion_and_enabling_keep_the_sessions(env, client):
+    """승격·활성화는 권한을 넓힌다 — 기존 토큰이 권한이 더 적을 뿐이라 끊지 않는다."""
+    client.put(f"/admin/users/{PM_EMAIL}/role", json={"role": "admin"})
+    client.post(f"/admin/users/{PM_EMAIL}/enable")
+    assert not app_module.revocations().is_revoked(PM_EMAIL, issued_at=0)
+
+
+def test_a_failed_change_does_not_end_the_sessions(env, client):
+    env.fail_on["set_enabled"] = CognitoError("InternalErrorException", "boom")
+    assert client.post(f"/admin/users/{PM_EMAIL}/disable").status_code >= 500
+    assert not app_module.revocations().is_revoked(PM_EMAIL, issued_at=0)
 
 
 # ---- 권한 (require_admin 우회 불가) ----

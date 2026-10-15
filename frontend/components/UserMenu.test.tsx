@@ -75,7 +75,7 @@ describe("UserMenu", () => {
     // 프로토타입 화면만 감싸면 워크스페이스의 긴 디스커버리 턴이 빠진다.
     const stop = vi.fn();
     const start = vi.spyOn(keepAlive, "keepSessionAlive").mockReturnValue(stop);
-    mockMe({ authenticated: true, email: "a@b.io", role: "pm" });
+    mockMe({ authenticated: true, email: "a@example.com", role: "pm" });
 
     const { unmount } = render(<UserMenu />);
     await screen.findByRole("button", { name: /사용자 메뉴/ });
@@ -88,7 +88,7 @@ describe("UserMenu", () => {
   });
 
   it("logs out via POST so a prefetch cannot end the session", async () => {
-    mockMe({ authenticated: true, email: "a@b.io", role: "pm" });
+    mockMe({ authenticated: true, email: "a@example.com", role: "pm" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
     const form = screen.getByRole("button", { name: "로그아웃" }).closest("form");
@@ -108,7 +108,7 @@ describe("UserMenu", () => {
   });
 
   it("closes when Escape is pressed", async () => {
-    mockMe({ authenticated: true, email: "a@b.io", role: "pm" });
+    mockMe({ authenticated: true, email: "a@example.com", role: "pm" });
     render(<UserMenu />);
     const toggle = await screen.findByRole("button", { name: /사용자 메뉴/ });
     await userEvent.click(toggle);
@@ -119,7 +119,7 @@ describe("UserMenu", () => {
   });
 
   it("closes when clicking outside the menu", async () => {
-    mockMe({ authenticated: true, email: "a@b.io", role: "pm" });
+    mockMe({ authenticated: true, email: "a@example.com", role: "pm" });
     render(
       <div>
         <UserMenu />
@@ -135,7 +135,7 @@ describe("UserMenu", () => {
   });
 
   it("still toggles open and closed by clicking the avatar button", async () => {
-    mockMe({ authenticated: true, email: "a@b.io", role: "pm" });
+    mockMe({ authenticated: true, email: "a@example.com", role: "pm" });
     render(<UserMenu />);
     const toggle = await screen.findByRole("button", { name: /사용자 메뉴/ });
 

@@ -49,6 +49,12 @@ _LABELS = {
         "optional_suffix": " (선택)",
         "scale_hint": "1(전혀 아니다) ~ 5(매우 그렇다) 중 선택",
         "free_response": "(자유 응답)",
+        "respondents": "응답자 구성",
+        "persona": "페르소나",
+        "overall": "전체",
+        "persona_note": ("> 페르소나 문항의 답으로 다른 문항을 모두 나눴다. 페르소나별 표는\n"
+                         "> 응답이 있는 페르소나만 담는다. 자유 응답 앞의 [ ]는 그 응답자의\n"
+                         "> 페르소나다."),
     },
     "en": {
         "title": "Survey Aggregate",
@@ -84,6 +90,13 @@ _LABELS = {
         "optional_suffix": " (optional)",
         "scale_hint": "Pick from 1 (not at all) to 5 (very much)",
         "free_response": "(free response)",
+        "respondents": "Respondents",
+        "persona": "Persona",
+        "overall": "All",
+        "persona_note": ("> Every other question is split by the answer to the persona\n"
+                         "> question. Per-persona tables include only personas that\n"
+                         "> responded. The [ ] before a free response is that\n"
+                         "> respondent's persona."),
     },
 }
 

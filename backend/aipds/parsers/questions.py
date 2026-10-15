@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 #:
 #: 예전에는 `(\d+)\s*$`로 줄 끝을 요구해서 그런 문항을 **아예 못 봤다**. 그러면
 #: 답변이 기록되지 않고(question_file_answers가 그 번호를 모른다) 화면의 문항 수·
-#: answeredCount·진행률도 함께 어긋난다 — 2026-08-16 keumkang-v5의 결함이다.
+#: answeredCount·진행률도 함께 어긋난다 — 2026-08-16 ws-a-v5의 결함이다.
 #:
 #: `\b`가 경계다: 번호가 있어야 문항이므로 `## Questions 개요`나 `## Questionnaire`
 #: 는 걸리지 않는다. 그것까지 삼키면 카테고리 헤더가 한 문항으로 뭉개진다.

@@ -122,11 +122,11 @@ assert.strictEqual(usernameForEmail('pm@aipds.local'), 'pm');
 assert.strictEqual(usernameForEmail(SEED_ADMIN_EMAIL), 'admin');
 assert.strictEqual(usernameForEmail(SEED_PM_EMAIL), 'pm');
 // 불변식: 결과에 '@'가 절대 없어야 한다(Cognito가 거부하는 유일한 조건).
-for (const email of [SEED_ADMIN_EMAIL, SEED_PM_EMAIL, 'a+tag@x.io', 'Mixed@X.IO']) {
+for (const email of [SEED_ADMIN_EMAIL, SEED_PM_EMAIL, 'a+tag@example.com', 'Mixed@EXAMPLE.COM']) {
   assert.ok(!usernameForEmail(email).includes('@'),
     `usernameForEmail(${email}) must not be email-shaped`);
 }
 // 대소문자·공백 정규화, Cognito가 안 받는 문자 치환.
-assert.strictEqual(usernameForEmail('  Mixed@X.IO  '), 'mixed');
-assert.strictEqual(usernameForEmail('a+tag@x.io'), 'a-tag');
+assert.strictEqual(usernameForEmail('  Mixed@EXAMPLE.COM  '), 'mixed');
+assert.strictEqual(usernameForEmail('a+tag@example.com'), 'a-tag');
 console.log('OK  usernameForEmail: local-part rule, no email-shaped username, normalization');

@@ -267,6 +267,13 @@ async def enter_prototype(token: str, request: Request):
     """
     import aipds.app as app_module
     if not preview_surface.on_preview_surface(request.headers):
+        if not preview_surface.enabled():
+            # 인증이 켜진 배포인데 프리뷰 표면이 없다(설정 누락, 비밀 값 읽기 실패).
+            # 앱 오리진에서 서빙하지 않는다(aipds/preview_surface.py 머리말).
+            _log.warning("proto gate 503: preview surface is not configured")
+            return PlainTextResponse(
+                "prototype preview is not available right now — try again shortly",
+                status_code=503)
         # 앱 도메인으로 온 링크(프리뷰 표면이 생기기 전에 나눠 준 것)는 같은 경로의
         # 프리뷰 도메인으로 보낸다. 쿠키는 심지 않는다 — 앱 오리진에 프로토타입 쿠키가
         # 생길 이유가 없다. 토큰을 검증하지 않고 보내는 것은 정보가 새지 않기 때문이다:

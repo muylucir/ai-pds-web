@@ -222,7 +222,26 @@ async def test_turn_end_sync_uploads_only_the_synced_subtrees(tmp_path):
     await r._sync_workspace_to_s3()
 
     assert sorted(s3.blobs) == ["aiplc-docs/inception/a.md",
-                                "prototype/app/page.tsx", "uploads/u.md"]
+                                "prototype/app/page.tsx"]
+
+
+async def test_uploaded_originals_survive_a_turn_byte_for_byte(tmp_path):
+    """이미지·PDF 원본은 바이트 그대로 로컬에 복원되고, 턴 종료 sync가 정본을
+    덮지 않는다. 텍스트 경로를 타면 둘 다 U+FFFD로 깨진다 — 복원에서 한 번,
+    깨진 사본이 정본으로 올라가며 또 한 번."""
+    png = b"\x89PNG\r\n\x1a\n\xff\xfe\x00\x80binary"
+    s3 = FakeS3Store()
+    await s3.put_bytes("uploads/ab12cd34/screen.png", png)
+    s3.blobs["uploads/ab12cd34/spec.pdf.md"] = "# 변환본"
+    d = FakeDriver(workspace=tmp_path / "ws")
+    r = _runner(tmp_path, driver=d, s3=s3)
+
+    await _collect(r.send_message("go"))
+
+    root = tmp_path / "ws"
+    assert (root / "uploads/ab12cd34/screen.png").read_bytes() == png
+    assert (root / "uploads/ab12cd34/spec.pdf.md").read_text(encoding="utf-8") == "# 변환본"
+    assert await s3.get_bytes("uploads/ab12cd34/screen.png") == png
 
 
 async def test_turn_end_sync_does_not_follow_a_symlinked_subtree(tmp_path):
@@ -242,6 +261,50 @@ async def test_turn_end_sync_does_not_follow_a_symlinked_subtree(tmp_path):
     await r._sync_workspace_to_s3()
 
     assert list(s3.blobs) == []
+
+
+async def test_turn_end_sync_does_not_follow_a_symlinked_file(tmp_path):
+    """파일 링크도 따라가지 않는다. `rglob`은 서브트리 안의 파일 링크를 돌려준다 —
+    읽으면 링크 너머(백엔드 설정, 다른 프로젝트)가 정본에 올라간다."""
+    outside = tmp_path / "outside.md"
+    outside.write_text("host file")
+    s3 = FakeS3Store()
+    r = _runner(tmp_path, s3=s3)
+    docs = r._local_root / "aiplc-docs"
+    docs.mkdir(parents=True)
+    (docs / "real.md").write_text("mine")
+    (docs / "leak.md").symlink_to(outside)
+
+    await r._sync_workspace_to_s3()
+
+    assert list(s3.blobs) == ["aiplc-docs/real.md"]
+
+
+async def test_restore_does_not_write_through_a_symlink_the_agent_planted(tmp_path):
+    """에이전트가 `aiplc-docs`나 파일을 바깥을 가리키는 링크로 바꿔 두면, 복원이 S3 본문을
+    백엔드 uid로 그 너머에 쓴다(임의 파일 쓰기). 링크를 실제 디렉토리·파일로 바꾸고 쓴다."""
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = tmp_path / "outside.txt"
+    outside_file.write_text("untouched")
+    s3 = FakeS3Store()
+    s3.blobs["aiplc-docs/a.md"] = "from s3"
+    s3.blobs["prototype/b.md"] = "from s3 too"
+    r = _runner(tmp_path, s3=s3)
+    root = r._local_root
+    root.mkdir(parents=True)
+    (root / "aiplc-docs").symlink_to(outside_dir, target_is_directory=True)
+    (root / "prototype").mkdir()
+    (root / "prototype/b.md").symlink_to(outside_file)
+
+    await r._restore_workspace_from_s3()
+
+    assert list(outside_dir.iterdir()) == []
+    assert outside_file.read_text() == "untouched"
+    assert not (root / "aiplc-docs").is_symlink()
+    assert (root / "aiplc-docs/a.md").read_text() == "from s3"
+    assert not (root / "prototype/b.md").is_symlink()
+    assert (root / "prototype/b.md").read_text() == "from s3 too"
 
 
 async def test_immediate_publish_is_not_uploaded_again_at_turn_end(tmp_path):

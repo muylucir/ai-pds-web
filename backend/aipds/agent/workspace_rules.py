@@ -21,7 +21,7 @@
 # 이 모듈의 LANGUAGE_DIRECTIVES로 만든다(test_workspace_rules가 그 불변식을 지킨다).
 #
 # **이 파일이 조립하는 것은 언어 지시 + core-workflow 둘뿐이다.** 한때 툴
-# 파라미터 인코딩 규칙도 맨 앞에 붙였는데(2026-08-16 keumkang-v3), 그것은
+# 파라미터 인코딩 규칙도 맨 앞에 붙였는데(2026-08-16 ws-a-v3), 그것은
 # AskUserQuestion 경로의 워크어라운드였다. 그 도구가 기본 거부로 바뀌고
 # (claude_driver.FILE_QUESTIONS_ENV) 공유 config가 "nothing below narrows it"을
 # 명시하면서 근거가 양쪽에서 사라져 2026-08-18에 떼어냈다. 규칙이 필요해지는
@@ -30,8 +30,9 @@
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
+
+from aipds.pathsafe import stat_beneath, write_beneath
 
 _log = logging.getLogger("aipds.agent")
 
@@ -130,7 +131,7 @@ _LANGUAGES = tuple(LANGUAGE_DIRECTIVES)
 _DEFAULT_LANGUAGE = "ko"
 
 
-def _copy_if_changed(src: Path, dst: Path) -> None:
+def _copy_if_changed(src: Path, ws: Path, rel: str) -> None:
     """크기와 mtime이 **둘 다** 같으면 건너뛴다.
 
     매 턴 수십 개 파일을 다시 쓰지 않기 위한 캐시이지만, 판정이 헐거우면 이
@@ -153,13 +154,16 @@ def _copy_if_changed(src: Path, dst: Path) -> None:
     낡은 것으로 판정된다. 정확 일치가 "이것은 그 파일의 사본이다"의 정확한 의미고,
     빗나갈 때의 대가는 작은 파일 23개를 한 번 더 복사하는 것뿐이다 — 놓칠 때의
     대가와 비교가 되지 않는다.
+
+    **워크스페이스 쪽은 링크를 따라가지 않는다**(`pathsafe`). 에이전트가 쓰는 트리라
+    `ws/rel`이나 그 상위 조각이 바깥을 가리키는 링크일 수 있고, 따라가면 룰 파일로 그
+    너머를 덮어쓴다.
     """
-    if dst.is_file():
-        s, d = src.stat(), dst.stat()
-        if s.st_size == d.st_size and s.st_mtime_ns == d.st_mtime_ns:
-            return
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    s = src.stat()
+    d = stat_beneath(ws, rel)
+    if d is not None and s.st_size == d.st_size and s.st_mtime_ns == d.st_mtime_ns:
+        return
+    write_beneath(ws, rel, src.read_bytes(), mtime_ns=s.st_mtime_ns)
 
 
 def place_rules(workspace: str, rules_dir: str,
@@ -213,10 +217,8 @@ def place_rules(workspace: str, rules_dir: str,
     # 그리고 이 자리는 프로젝트마다 달라지는 것에 주어야 한다. 언어 지시는 한
     # 번 싸움에서 진 적이 있다(7f33652: 템플릿의 CRITICAL이 이겨 PR/FAQ 질문
     # 20여 개가 영어로 남았다). 문서 전체의 전제는 맨 앞에 둔다.
-    (ws / "CLAUDE.md").write_text(
-        directive + "\n\n"
-        + core.read_text(encoding="utf-8"),
-        encoding="utf-8")
+    write_beneath(ws, "CLAUDE.md",
+                  directive + "\n\n" + core.read_text(encoding="utf-8"))
 
     details = root / _DETAILS_DIR
     if not details.is_dir():
@@ -225,4 +227,4 @@ def place_rules(workspace: str, rules_dir: str,
         return
     for src in details.rglob("*"):
         if src.is_file():
-            _copy_if_changed(src, ws / _DETAILS_DIR / src.relative_to(details))
+            _copy_if_changed(src, ws, f"{_DETAILS_DIR}/{src.relative_to(details).as_posix()}")

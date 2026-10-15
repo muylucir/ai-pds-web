@@ -42,7 +42,9 @@ def _ws(tmp_path: Path, rel: str, body: str) -> Path:
     ("aiplc-docs/audit.md", True),
     ("aiplc-docs/discovery/envision/pain-point-analysis.md", True),
     ("prototype/src/app/page.tsx", True),
-    ("uploads/spec.pdf", True),
+    # 업로드 라우트가 정본에 직접 쓰는 입력이다. 텍스트로 올리면 원본(이미지·PDF)이
+    # 깨진 사본으로 덮인다.
+    ("uploads/spec.pdf", False),
     ("CLAUDE.md", False),                    # 조립물 — 정본이 아니다
     (".proto-token", False),
     ("node_modules/x/index.js", False),

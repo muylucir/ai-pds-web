@@ -11,8 +11,8 @@ function fakeJwt(payload: Record<string, unknown>): string {
 
 describe("decodeJwtPayload", () => {
   it("reads the payload without verifying anything", () => {
-    const c = decodeJwtPayload(fakeJwt({ sub: "s-1", email: "a@b.io" }));
-    expect(c).toMatchObject({ sub: "s-1", email: "a@b.io" });
+    const c = decodeJwtPayload(fakeJwt({ sub: "s-1", email: "a@example.com" }));
+    expect(c).toMatchObject({ sub: "s-1", email: "a@example.com" });
   });
 
   it("returns null for garbage instead of throwing", () => {
@@ -63,12 +63,12 @@ describe("roleFromClaims", () => {
 
 describe("emailFromClaims", () => {
   it("reads the id token's email", () => {
-    expect(emailFromClaims({ email: "a@b.io" })).toBe("a@b.io");
+    expect(emailFromClaims({ email: "a@example.com" })).toBe("a@example.com");
   });
 
   it("falls back to username when email is absent", () => {
     // access 토큰에는 email이 없다 — 그 경우에도 표시할 이름은 있어야 한다.
-    expect(emailFromClaims({ username: "u@b.io" })).toBe("u@b.io");
+    expect(emailFromClaims({ username: "u@example.com" })).toBe("u@example.com");
   });
 
   it("returns null when neither is present", () => {

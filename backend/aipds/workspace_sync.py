@@ -31,7 +31,7 @@ from typing import Callable
 
 from aipds.globmatch import matches_glob
 from aipds.parsers.redaction import redact_credentials
-from aipds.pathsafe import reject_unsafe
+from aipds.pathsafe import read_text_beneath, reject_unsafe
 from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger("aipds.workspace")
@@ -39,7 +39,11 @@ _log = logging.getLogger("aipds.workspace")
 #: 정본으로 올리는 서브트리. `AgentRunner._SYNC_GLOBS`가 이 값을 쓴다 — 두 벌로
 #: 두면 쓰기 직후 게시와 턴 종료 배치가 다른 집합을 올리고, 그 어긋남은 "있다가
 #: 없어지는 문서"로 보인다.
-SYNC_GLOBS = ("aiplc-docs/**/*", "prototype/**/*", "uploads/**/*")
+#:
+#: `uploads/`는 없다. 업로드 라우트가 정본에 직접 쓰고 에이전트는 읽기만 하는
+#: 입력이다. 올리는 경로는 텍스트(UTF-8)라서, 넣으면 이미지·PDF 원본이 턴마다
+#: U+FFFD로 깨진 사본으로 덮인다.
+SYNC_GLOBS = ("aiplc-docs/**/*", "prototype/**/*")
 
 #: 저장 시 리댁션하는 키. `audit.md`는 도구 출력을 원문으로 담고, S3를 직접 읽는
 #: 사람에게도 노출되므로 올릴 때 자격증명을 지운다. 산출물 문서는 그대로 올린다.
@@ -79,11 +83,11 @@ async def publish_file(
         return False
     if not is_synced_key(key):
         return False
-    path = local_root / key
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text_beneath(local_root, key, errors="replace")
     except OSError:
-        # 이미 지워졌거나 디렉터리다 — 배치 sync가 최종 상태를 올린다.
+        # 이미 지워졌거나 디렉터리거나 링크다 — 배치 sync가 최종 상태를 올린다
+        # (링크는 거기서도 건너뛴다).
         return False
     canonical = content_for_s3(key, text)
     try:

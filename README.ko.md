@@ -44,7 +44,7 @@ proto-config/      빌드 에이전트 전용 CLAUDE_CONFIG_DIR — 위와 반�
 | 화면 | 하는 일 | 접근 |
 |---|---|---|
 | `/` | 프로젝트 목록·생성·내보내기·가져오기 | 로그인 |
-| `/projects/{id}/workspace` | Discovery 대화 — 실시간 턴, 질문 시트, 첨부, 문서 패널 | 로그인 |
+| `/projects/{id}/workspace` | Discovery 대화 — 실시간 턴, 질문 시트, 첨부, 생성 문서 드로어 | 로그인 |
 | `/projects/{id}/dashboard` | 스테이지 진행·산출물·활동 | 로그인 |
 | `/projects/{id}/review` | 문서 리뷰와 승인 게이트 | 로그인 |
 | `/projects/{id}/questions` | 질문 파일 하나를 펼쳐 답하는 화면 | 로그인 |
@@ -119,12 +119,51 @@ npx cdk deploy --all --require-approval never \
 - **로그인**은 `admin@aipds.local` 또는 `pm@aipds.local`에 `SeedPassword` 값으로 한다. 30일 동안 유효한
   임시 비밀번호이고 각자 첫 로그인에서 바꾼다. 풀 정책(8자 이상, 대문자·소문자·숫자·기호 각각
   하나 이상)을 만족하지 않으면 CloudFormation이 배포 시작 전에 거부한다.
+- **MFA는 꺼져 있다.** 로그인은 비밀번호 하나다. 워크숍 샘플로는 충분하지만 실제 고객 자료에는
+  부족하다 — 관리자 비밀번호가 새면 사용자·역할 관리까지 넘어간다. 워크숍 밖에서 쓰려면
+  `infra/lib/aipds-auth-stack.ts`에서 MFA를 필수로 켠다(`mfa: cognito.Mfa.REQUIRED`와
+  `mfaSecondFactor: { otp: true, sms: false }` — 인증 앱).
+- **그 밖에도 프로덕션이 아니라 워크숍에 맞춘 설정이 있다.** 각 줄에 바꿀 설정을 적은 경고 주석이 있다.
+  - Cognito에 위협 방지(유출된 자격증명 탐지, 위험 기반 인증)가 없다 — Plus 등급이 필요하다
+    (`aipds-auth-stack.ts`).
+  - `cdk destroy`가 사용자 풀과 아티팩트 버킷을 내용째 지운다. 버킷에는 버전 관리와 액세스 로그도
+    없다(`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
+  - CloudFront는 인스턴스에 평문 HTTP로 붙는다 —
+    [CloudFront → 인스턴스 구간은 의도적으로 HTTP다](#cloudfront--인스턴스-구간은-의도적으로-http다) 참고.
 - **다른 리전**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. 코드 수정은 필요 없다.
 - **추가 업로드 오리진**(커스텀 도메인 등): 배포 시 `AIPDS_UPLOAD_ORIGINS`(쉼표 구분). 앱 자신의
   오리진은 인스턴스가 더한다.
 
 코드 갱신, 샌드박스 명령, 떠 있는 인스턴스의 교체 방지, 인스턴스 새로 만들기, 내리기, 문제 해결은
 **`/manual` → 설치 · 운영 · 문제 해결**에 있다.
+
+### CloudFront → 인스턴스 구간은 의도적으로 HTTP다
+
+이 저장소는 워크숍과 샘플 워크로드를 위한 코드이고, 먼저 등록할 것 없이 어느 계정에나 배포되도록
+일부러 자체 도메인을 쓰지 않는다. 브라우저 → CloudFront는 HTTPS만 받지만(HTTP는 리다이렉트),
+CloudFront → 인스턴스는 포트 80의 HTTP다 — 앱 배포(`aipds-hosting-stack.ts`)와 프리뷰
+배포(`aipds-preview-stack.ts`) 둘 다다. 이 구간을 HTTPS로 하려면 오리진 이름에 맞는 공인 인증서가
+필요한데, 인스턴스의 `ec2-….compute.amazonaws.com` 이름으로는 어느 인증 기관도 인증서를 발급하지 않는다.
+
+**이 구간에 실리는 것:** 세션 쿠키(Cognito 토큰), 프로토타입 접근 쿠키, `X-Origin-Verify` /
+`X-Preview-Verify` 비밀 헤더.
+
+**막아 두는 것:**
+
+- 보안 그룹은 CloudFront 오리진 대역(프리픽스 리스트)에서 오는 포트 80만 받는다. SSH는 없고 접속은
+  SSM으로 한다.
+- nginx는 비밀 헤더가 없는 요청을 거부한다 — CloudFront를 우회해 인스턴스에 닿을 수 없다.
+- 비밀 헤더 값은 배포 때 Secrets Manager에서 해석된다. 어느 템플릿에도 평문으로 남지 않는다.
+
+**막지 못하는 것:** CloudFront 엣지와 인스턴스 사이 경로의 트래픽을 볼 수 있는 쪽은 위 쿠키와
+헤더를 읽을 수 있다.
+
+**워크숍 밖에서 쓰거나 실제 고객 자료를 다루기 전에는** 소유한 도메인으로 오리진 구간을 HTTPS로
+바꾼다: 레코드(예: `origin.example.com`)를 인스턴스의 Elastic IP에 연결하고, 그 이름의 공인 인증서를
+nginx가 443에서 서빙하게 한 뒤, 두 스택의 오리진을 443의 `OriginProtocolPolicy.HTTPS_ONLY`로 바꾼다.
+인스턴스를 프라이빗 서브넷으로 옮기고 CloudFront VPC 오리진을 쓰면 이 구간이 공용 인터넷에서
+빠지고, 같은 도메인과 인증서가 있으면 HTTPS로도 할 수 있다. 어느 쪽이든 인스턴스가 교체되므로
+계획된 교체 때 한다.
 
 ---
 
@@ -139,18 +178,18 @@ cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd ../frontend && npm install
 cp ../backend/.env.example ../backend/.env           # DrillStack 출력값으로 채운다
 
-cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 0.0.0.0 --port 8000 --reload
+cd backend && .venv/bin/python -m uvicorn aipds.app:app --host 127.0.0.1 --port 8000 --reload
 cd frontend && npm run dev                           # http://localhost:3000
 ```
 
-로컬에서는 에이전트가 내 사용자로 직접 돈다 — 샌드박스는 인스턴스의 기능이다.
+로컬에서는 에이전트가 내 사용자로 직접 돈다 — 샌드박스는 인스턴스의 기능이다. 인증을 끈 백엔드는 모든 요청을 admin으로 받으므로 `127.0.0.1`에만 연다.
 
 | 변수 | 넣을 값 |
 |---|---|
 | `AIPDS_S3_BUCKET` / `AIPDS_S3_REGION` | `AipdsDrillStack.ArtifactsBucketName`과 그 리전. 비우면 조용히 로컬 전용으로 돈다 |
 | `AIPDS_DISCOVERY_CONFIG_DIR` / `AIPDS_PROTO_CONFIG_DIR` | 리포의 `discovery-config/`·`proto-config/` 절대 경로. 비우면 에이전트가 **내 `~/.claude`**를 읽어 개인 스킬이 결과에 섞인다 |
 | `ANTHROPIC_MODEL` | 프로젝트에 모델이 없을 때 쓰는 대체 Bedrock 추론 프로파일 id |
-| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | **둘 다** 비우면 인증을 건너뛴다(로컬 기본). 하나만 채우면 모든 요청이 실패한다 |
+| `AIPDS_COGNITO_USER_POOL_ID` / `AIPDS_COGNITO_CLIENT_ID` | **둘 다** 비우고 `AIPDS_AUTH_DISABLED=1`을 주면 인증을 건너뛴다(`.env.example`의 로컬 기본). 그 스위치 없이 둘 다 비거나 하나만 채우면 백엔드가 뜨지 않는다 |
 | `AIPDS_PUBLIC_PATH_PREFIX` | 브라우저가 :8000의 백엔드를 직접 부를 때 `""` |
 
 나머지 변수 전부와, 배포가 쓰는 값과 그 이유는 [`infra/lib/user-data.ts`](infra/lib/user-data.ts)의
@@ -179,6 +218,42 @@ cd frontend && npm run test:e2e                 # e2e (실 백엔드와 Bedrock 
 | `npm test -- parity` | 매뉴얼 — ko/en의 구조·앵커가 어긋난 것을 잡는다 |
 | `pytest -q -k sdk_available` | `claude-agent-sdk` 버전 — 옵션 필드와 번들 바이너리를 확인한다 |
 | `pytest -q -k no_legacy_brand` | 제품 이름이 들어가는 모든 것 |
+
+---
+
+## 책임 있는 AI
+
+AI-PDS Web은 Amazon Bedrock의 Claude 모델로 제품 문서, 프로토타입, 설문 종합의 초안을 만든다.
+만들어지는 모든 것은 사람이 판단할 초안이고, 도구는 그 전제 위에 만들어져 있다.
+
+**결정은 사람이 한다.** AI는 스스로 단계를 확정하지 않는다. 단계는 사람이 질문지에 답하거나 승인
+게이트에서 Discovery 문서를 승인해야 닫히고, 승인할지 수정을 요청할지는 언제나 사람의 몫이다.
+*★ AI 추천* 표시는 제안일 뿐, 폼이 대신 골라 제출하는 기본값이 아니다.
+
+**AI가 한 일이 보인다.** 사용자가 입력한 말과 제출한 답은 AI가 아니라 앱이 `audit.md`에 원문 그대로
+실제 시각과 함께 남기고, AI는 그 뒤에 자기 판단을 덧붙인다. 턴마다 실행한 도구와 바뀐 파일은 답변
+아래 접힌 진행 기록에 남고, 문서 리뷰 화면은 문서 옆에 AI의 자체 검증 요약을 보여 준다.
+
+**근거와 가정을 가른다.** 에이전트 계약은 문서가 중요한 미지수를 밝히고, 가정을 고객 근거로 내세우지
+않도록 요구한다. 설문 종합은 응답자의 페르소나별로 결과를 나누므로, 전체 평균이 좋아도 명세가 겨냥한
+사용자의 낮은 점수가 가려지지 않고, 대상 사용자 밖의 응답자는 가설을 검증한 것으로 세지 않는다. 그래도
+설문은 작고 자발적으로 응한 표본이다 — 종합은 신호로 읽고, 개별 응답 CSV와 대조한다.
+
+**감안해야 할 한계**
+
+- 모델의 출력은 틀리거나, 빠지거나, 지어낸 것일 수 있다. 수치·시장 사실·인용은 워크숍 밖으로 내보내기
+  전에 확인한다.
+- 프로토타입은 아이디어 검증용으로 쓰고 버리는 코드이지 운영 소프트웨어가 아니며, 계정 없이 열리는
+  링크로 공유된다. 실제 개인정보나 기밀 데이터를 프로토타입이나 설문에 넣지 않는다.
+- 업로드한 자료는 모델로 전달된다. 워크숍에 필요한 것만 올린다. 자격증명으로 보이는 값은 감사 기록에서
+  가려지지만, 그 밖에는 걸러지지 않는다.
+- Amazon Bedrock Guardrails는 구성되어 있지 않다. 콘텐츠 필터링이 필요한 용도라면 추가한다 — 예를
+  들어 Bedrock을 직접 부르는 프로토타입은 Converse 호출에 가드레일을 함께 넘길 수 있다.
+- 배포되는 롤은 Claude를 **global** 교차 리전 추론 프로파일로 호출하고, 이 프로파일은 요청을 지원되는
+  모든 상용 AWS 리전에서 처리할 수 있다. 저장되는 데이터는 내 계정과 리전에 남는다. 데이터 상주 요건이
+  있다면 지리적 프로파일을 쓰고 `infra/lib/backend-permissions.ts`의 Bedrock 권한을 그에 맞게 좁힌다.
+
+[AWS Responsible AI Policy](https://aws.amazon.com/ai/responsible-ai/policy/)를 참고한다.
 
 ---
 

@@ -94,7 +94,9 @@ class BundleError(ValueError):
 # 바로 그 zip을 받는 사람일 수 있다.
 SOURCE_EXCLUDED_DIRS = frozenset({"node_modules", ".next", ".git"})
 
-#: `.proto-host.*`는 이 박스의 부기(로그·pid)이고 다른 인스턴스에서 의미가 없다.
+#: `.proto-host.*`는 이 박스의 부기(로그·pid)이고 다른 인스턴스에서 의미가 없다. 호스팅은
+#: 부기를 빌드 트리 밖(상태 트리, proto/host.py)에 두지만, 그 이름의 파일이 트리에 남아
+#: 있을 수 있으므로 계속 뺀다.
 #: `TOKEN_FILENAME`은 리터럴을 복사하지 않고 그 파일명을 소유한 모듈에서 가져온다 —
 #: 복사본은 이름이 바뀌는 날 조용히 제외를 멈춘다.
 SOURCE_EXCLUDED_FILES = frozenset({
@@ -191,10 +193,14 @@ def bundle_path_to_s3_key(path: str, *, transcript_prefix: str) -> str | None:
     key = path[len(PROJECT_DIR):]
     if not key:
         return None
-    # 내보내기가 담지 않는 키는 들여오지도 않는다 — 손으로 만든 번들이 `hosting.json`을
-    # 실으면 받는 인스턴스에서 프로토타입이 저절로 뜨고, `access-token`을 실으면 보낸
-    # 사람이 아는 토큰으로 프리뷰가 열린다.
-    if _PROTO_INSTANCE_RE.match(key):
+    # 내보내기가 담지 않는 키는 들여오지도 않는다(`s3_key_to_bundle_path`와 같은 집합) —
+    # 손으로 만든 번들이 `hosting.json`을 실으면 받는 인스턴스에서 프로토타입이 저절로
+    # 뜨고, `access-token`을 실으면 보낸 사람이 아는 토큰으로 프리뷰가 열린다. 빌드
+    # 트랜스크립트·`pending/`을 실으면 빌드 에이전트와 Discovery가 보낸 사람이 쓴 대화·
+    # 질문을 자기 것으로 알고 재개한다. 매니페스트는 라우트가 마지막에 쓴다.
+    if key == PROJECT_MANIFEST_KEY or key.startswith(PENDING_PREFIX):
+        return None
+    if _PROTO_CONVERSATION_RE.match(key) or _PROTO_INSTANCE_RE.match(key):
         return None
     if key.startswith(TRANSCRIPT_ROOT):
         return transcript_prefix + key[len(TRANSCRIPT_ROOT):]

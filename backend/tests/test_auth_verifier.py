@@ -95,6 +95,13 @@ async def test_valid_token_yields_principal_with_role_from_groups():
     assert principal.role == "admin"
 
 
+async def test_the_principal_carries_the_issue_time():
+    """세션 폐기(auth/revocation.py)가 `iat`로 기존 토큰을 가려낸다."""
+    issued = int(time.time()) - 60
+    principal = await _verify(_token(iat=issued))
+    assert principal.issued_at == issued
+
+
 async def test_pm_group_yields_pm_role():
     principal = await _verify(_token(**{"cognito:groups": ["pm"]}))
     assert principal.role == "pm"
@@ -145,7 +152,7 @@ async def test_missing_groups_claim_is_rejected():
     now = int(time.time())
     token = jwt.encode(
         {"sub": "s-1", "iss": ISS, "client_id": CLIENT_ID, "token_use": USE_ACCESS,
-         "iat": now, "exp": now + 3600, "username": "u@x.io"},
+         "iat": now, "exp": now + 3600, "username": "u@example.com"},
         _private_key, algorithm="RS256", headers={"kid": KID})
     with pytest.raises(TokenError, match="no cognito:groups"):
         await _verify(token)
