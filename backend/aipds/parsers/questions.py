@@ -100,7 +100,7 @@ _OPTION = re.compile(r"^([A-J]|X)\)\s+(.*)$")
 _ANSWER = re.compile(r"^\[Answer\]:\s*(.*)$")
 _RECO = re.compile(r"\s*←\s*(추천|recommended).*$", re.IGNORECASE)
 #: 번역된 자유 입력 보기. 상류 템플릿은 `X) Other (please describe after [Answer]: tag below)`인데,
-#: ko 프로젝트의 에이전트는 라벨을 옮기면서 글자까지 순서대로 붙인다 — 실측(ap-idp-project-v1):
+#: ko 프로젝트의 에이전트는 라벨을 옮기면서 글자까지 순서대로 붙인다 — 실측(ws-h):
 #: 질문 파일의 기타 보기 61개가 전부 `D) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)` 모양이었고,
 #: 일반 보기로 읽혀 다중 선택에서는 쓸 칸이 없었다(단일 선택은 부연 칸이 열려 정상처럼 보였다).
 #:
