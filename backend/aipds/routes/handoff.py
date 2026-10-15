@@ -19,6 +19,7 @@ from aipds.routes.deps import ensure_workspace
 router = APIRouter()
 
 _DISCOVERY = "aiplc-docs/discovery/"
+_UPLOADS = "uploads/"
 
 
 async def _paths(pid: str) -> list[str]:
@@ -42,25 +43,22 @@ async def get_handoff_readiness(pid: str):
 
 async def _view(pid: str, s3, state: readiness.Readiness,
                 record: supplement.Supplement) -> supplement.SupplementView:
-    """보완 화면. 마지막으로 만든 PRD가 있으면 그 PRD가 인용한 AI 제안과 PM 몫의 열린 질문,
-    그 질문의 보기를 함께 싣는다 — 앞의 둘은 저장하지 않고 PRD에서 그때마다 읽는다."""
+    """보완 화면. 마지막 패키지가 있으면 그 열린 결정 중 PM 몫과 그 보기를 함께 싣는다 — 열린
+    결정은 저장하지 않고 문서에서 그때마다 읽는다."""
     manifest = await package.load_manifest(s3)
-    prd = None
+    doc, prd = (None, False)
     if manifest is not None and manifest.status == "ready":
-        try:
-            prd = await s3.get(package.PACKAGE_PREFIX + "PRD.md")
-        except FileNotFoundError:
-            pass
-    if prd is None:
+        doc, prd = await package.stored_decisions(s3)
+    if doc is None:
         return supplement.view(state, record)
     language = app_module.project_language(pid)
-    return supplement.view(state, record, package.cited_suggestions(prd, state, language),
-                           package.open_questions(prd, language), await package.load_options(s3))
+    return supplement.view(state, record, package.open_questions(doc, language, prd=prd),
+                           await package.load_options(s3), has_package=True)
 
 
 @router.get("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)
 async def get_handoff_supplement(pid: str):
-    """보완 문항(빈 섹션 · PRD에 남은 PM 결정)과 그 답, AI 제안 수락 항목의 확인 상태."""
+    """보완 문항(빈 섹션 · 열린 결정 중 PM 몫)과 그 답, AI 제안 수락 항목의 확인 상태."""
     state = await _readiness(pid)
     s3 = app_module.s3_store_factory(pid)
     return await _view(pid, s3, state, await supplement.load(s3))
@@ -122,21 +120,25 @@ def _content_disposition(pid: str) -> str:
 
 @router.get("/projects/{pid}/handoff/package/archive")
 async def download_handoff_package(pid: str):
-    """패키지 네 파일 + Discovery 원본(있는 것만, `discovery/` 아래). 프로토타입 소스는 넣지 않는다."""
+    """패키지 파일 + Discovery 원본(`discovery/` 아래, 빌드 지시서·디자인 컨텍스트 제외) + 업로드
+    원자료(`uploads/` 아래). 프로토타입 소스는 넣지 않는다."""
     s3 = app_module.s3_store_factory(pid)
     manifest = await package.load_manifest(s3)
     if manifest is None or manifest.status != "ready":
         raise HTTPException(status_code=404, detail="no package")
     paths = await _paths(pid)
     ws = await ensure_workspace(pid)
-    originals = [p for p in paths if p.startswith(_DISCOVERY)]
     built = await package.read_package(s3, manifest)
-    raw = await package.read_sources(ws.runner.read_file, originals)
+    raw = await package.read_sources(ws.runner.read_file, package.archive_originals(paths))
+    uploads = await s3.list(_UPLOADS)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, text in built.items():
             zf.writestr(name, text)
         for path, text in raw.items():
             zf.writestr("discovery/" + path[len(_DISCOVERY):], text)
+        # 업로드는 바이트 그대로다 — 양식·규정의 원래 모양이 개발이 받을 입력이다.
+        for key in uploads:
+            zf.writestr(key, await s3.get_bytes(key))
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": _content_disposition(pid)})

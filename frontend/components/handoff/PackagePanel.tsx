@@ -11,7 +11,7 @@ import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
 /** 파일 목록의 순서. 읽는 순서와 같다(README 참조). */
-const ORDER = ["README.md", "PRD.md", "validation-report.md", "build-scope.md"];
+const ORDER = ["README.md", "open-decisions.md", "decisions.md"];
 
 /** `2026-10-09T10:40:12Z` → `2026-10-09 10:40 UTC`. 서버는 UTC ISO로 찍는다. */
 export function stamp(iso: string): string {
@@ -32,7 +32,7 @@ export function PackagePanel({
   const t = useT();
   const m = pkg.manifest;
   const names = ORDER.filter((n) => n in pkg.files);
-  const [selected, setSelected] = useState("PRD.md");
+  const [selected, setSelected] = useState("open-decisions.md");
   const current = names.includes(selected) ? selected : names[0];
 
   // 생성 중·실패·중단은 GenerationProgress가 보여 준다. 여기는 만든 패키지만.
@@ -40,9 +40,11 @@ export function PackagePanel({
   if (m.status !== "ready") return null;
 
   const stale = pkg.stale.length > 0 || pkg.supplement_changed;
-  const count = (kind: FindingKind) => m.findings.filter((f) => f.kind === kind).length;
+  // 아는 검사 종류만 센다 — 이전 구성의 패키지에는 지금 없는 검사(acceptance 등)가 남아 있다.
+  const findings = m.findings.filter((f) => (FINDING_KINDS as readonly string[]).includes(f.kind));
+  const count = (kind: FindingKind) => findings.filter((f) => f.kind === kind).length;
   const present = FINDING_KINDS.filter((k) => count(k) > 0);
-  const inFile = m.findings.filter((f) => f.file === current);
+  const inFile = findings.filter((f) => f.file === current);
 
   return (
     <section>
@@ -58,7 +60,7 @@ export function PackagePanel({
         </span>
         <button type="button" onClick={onRegenerate} disabled={generating}
                 className={`px-3 py-1.5 rounded-lg border text-[13px] disabled:opacity-45 ${
-                  stale || m.findings.length ? "border-amber-400 bg-amber-50 text-amber-700 font-bold" : "border-slate-300 text-slate-600"}`}>
+                  stale || findings.length ? "border-amber-400 bg-amber-50 text-amber-700 font-bold" : "border-slate-300 text-slate-600"}`}>
           {t("handoff.regenerate")}
         </button>
         <button type="button" onClick={onDownload}
@@ -83,7 +85,7 @@ export function PackagePanel({
           확인하거나 원본을 고쳐야 하고 다시 생성해도 그대로다. */}
       {present.length > 0 && (
         <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 mb-3 text-[13px] text-rose-900">
-          <b className="block">{t("handoff.pkg.findings").replace("{n}", String(m.findings.length))}</b>
+          <b className="block">{t("handoff.pkg.findings").replace("{n}", String(findings.length))}</b>
           <ul className="mt-1 space-y-0.5">
             {present.map((k) => (
               <li key={k}>

@@ -1,6 +1,6 @@
 # backend/aipds/handoff/readiness.py — 인계 패키지를 만들 재료가 무엇이 있고 무엇이 없는가.
 #
-# **왜 있는가.** 인계 패키지(PRD·검증 보고·남은 작업)는 Discovery 산출물에서 유도하는
+# **왜 있는가.** 인계 패키지(열린 결정·결정 장부)는 Discovery 산출물에서 유도하는
 # 웹 소유 파생물이다(docs/superpowers/plans/2026-10-09-handoff-package.md). 출발점마다
 # 룰이 남기는 산출물이 다르다 — Path B와 EP1은 Envision을 거치지 않아 PR/FAQ가 없다.
 # 그래서 생성 전에 "어느 섹션의 재료가 없는가"를 먼저 보여 주고, 없는 곳은 지어내지 않고
@@ -56,7 +56,7 @@ _SPEC_AS_BUILT = "spec-as-built.md"
 #: AI-PLC가 Option A에 붙이는 "intelligent default" 표시. 문구가 아니라 화살표로 본다 —
 #: 실측(드릴 11개 프로젝트) 뒤의 말은 "제안", "추정", "Suggested", "Discovery 결과 …",
 #: "페인 포인트 …"로 제각각이고 `parsers.questions._RECO`가 읽는 "추천"은 0건이었다.
-_SUGGESTION_MARK = "←"
+SUGGESTION_MARK = "←"
 #: 답이 보기 글자인 두 모양: `"A"`, `"A: 부연"`(answer_summary 헤더의 계약).
 _SINGLE_LETTER = re.compile(r"^([A-J])\s*(?::.*)?$", re.DOTALL)
 
@@ -64,7 +64,7 @@ Origin = Literal["A.1", "A.2", "A", "B", "EP1"]
 SectionStatus = Literal["sourced", "partial", "missing", "derived"]
 ValidationStatus = Literal["validated", "survey", "planned", "none"]
 
-#: PRD 섹션의 순서와 키. 화면과 패키지가 이 순서를 그대로 쓴다.
+#: Discovery가 다루는 주제의 순서와 키. 재료가 없는 주제는 보완 질문으로 묻는다.
 SECTIONS = ("problem", "audience", "goals", "scenarios", "requirements",
             "non_goals", "constraints", "assumptions", "open_questions")
 
@@ -165,7 +165,7 @@ def assess(paths: Sequence[str], contents: Mapping[str, str]) -> Readiness:
         discovery_document=DISCOVERY_DOCUMENT if has_document else None,
         broken_references=(missing_references(document, sorted(present))
                            if document is not None else []),
-        # PRD의 최소 재료는 "무엇을 만드는가"를 적은 명세다. 단계 미완료(Strategy·GTM
+        # 인계의 최소 재료는 "무엇을 만드는가"를 적은 명세다. 단계 미완료(Strategy·GTM
         # 없음)는 막지 않는다 — 실측 11개 중 GTM까지 간 프로젝트는 하나였다.
         blockers=[] if specs else ["no_spec"],
     )
@@ -267,11 +267,11 @@ def _ai_defaults(contents: Mapping[str, str]) -> AiDefaults:
             if not question.answer:
                 continue
             answered += 1
-            marked = _suggested_letters(question)
+            marked = suggested_letters(question)
             if not marked:
                 continue
             suggested += 1
-            chosen = _chosen_letters(question)
+            chosen = chosen_letters(question)
             if chosen & marked:
                 choices, note = _chosen_texts(question, chosen)
                 items.append(AcceptedSuggestion(
@@ -283,9 +283,9 @@ def _ai_defaults(contents: Mapping[str, str]) -> AiDefaults:
                       accepted=len(items), items=items)
 
 
-def _suggested_letters(question: Question) -> set[str]:
+def suggested_letters(question: Question) -> set[str]:
     return {o.letter for o in question.options
-            if not o.is_other and (o.recommended or _SUGGESTION_MARK in o.text)}
+            if not o.is_other and (o.recommended or SUGGESTION_MARK in o.text)}
 
 
 def _chosen_texts(question: Question, chosen: set[str]) -> tuple[list[str], str]:
@@ -295,7 +295,7 @@ def _chosen_texts(question: Question, chosen: set[str]) -> tuple[list[str], str]
     for option in question.options:
         if option.letter not in chosen or option.is_other:
             continue
-        text, _, mark = option.text.partition(_SUGGESTION_MARK)
+        text, _, mark = option.text.partition(SUGGESTION_MARK)
         choices.append(text.strip())
         if mark.strip() and not note:
             note = mark.strip()
@@ -310,7 +310,7 @@ def _remark(answer: str) -> str:
     return rest.strip()
 
 
-def _chosen_letters(question: Question) -> set[str]:
+def chosen_letters(question: Question) -> set[str]:
     """답이 보기 글자일 때만 그 글자들. 자유 서술은 빈 집합 — 수락으로 세지 않는다.
 
     `answer_summary`가 펼치는 모양과 같다: `"A"`, `"A: 부연"`, `"A,C"`. 토큰 하나라도

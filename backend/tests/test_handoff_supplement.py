@@ -164,7 +164,7 @@ def test_route_rejects_an_oversized_answer(monkeypatch):
     assert r.status_code == 422
 
 
-# ---- PRD에 남은 PM 결정 ----
+# ---- 열린 결정 중 PM 몫 ----
 
 def _open(*questions):
     return [supplement.OpenQuestion(id=f"O-{i:02d}", question=q) for i, q in enumerate(questions, 1)]
@@ -173,7 +173,7 @@ def _open(*questions):
 def test_open_pm_questions_of_the_prd_are_asked_even_when_every_section_is_sourced():
     """실측(ws-g): 9개 섹션이 모두 sourced라 보완 질문이 0개였는데, PRD 9번에는 구현을
     막는 PM 결정이 열려 있었다."""
-    v = supplement.view(assess(A1, {}), supplement.Supplement(), {},
+    v = supplement.view(assess(A1, {}), supplement.Supplement(),
                         _open("보존 기간", "본인 확인 수준", "보존 기간"))
     assert v.questions == []
     assert [(q.id, q.question) for q in v.open_questions] == [("O-01", "보존 기간"),
@@ -184,7 +184,7 @@ def test_open_pm_questions_of_the_prd_are_asked_even_when_every_section_is_sourc
 def test_an_answered_question_that_left_the_prd_stays_on_record():
     answer = supplement.OpenAnswer(question="보존 기간", text="5년", updated_at="t")
     record = supplement.Supplement(open_answers={supplement.open_key("보존 기간"): answer})
-    v = supplement.view(assess(A1, {}), record, {}, _open("본인 확인 수준"))
+    v = supplement.view(assess(A1, {}), record, _open("본인 확인 수준"))
     assert [q.question for q in v.open_questions] == ["본인 확인 수준"]
     assert [(q.question, q.answer.text) for q in v.open_answered] == [("보존 기간", "5년")]
 
@@ -221,7 +221,7 @@ def test_only_decisions_needed_before_build_are_asked():
                for q in questions}
     answer = supplement.OpenAnswer(question="지원 외국어 목록 (R-02)", text="영어만")
     record = supplement.Supplement(open_answers={supplement.open_key(answer.question): answer})
-    v = supplement.view(assess(A1, {}), record, {}, questions, options)
+    v = supplement.view(assess(A1, {}), record, questions, options)
     assert [(q.id, [o.text for o in q.options]) for q in v.open_questions] == [
         ("O-01", ["3년", "5년"])]
     assert [(q.id, q.until, q.options) for q in v.open_deferred] == [
@@ -244,7 +244,7 @@ def test_an_external_check_has_no_options_and_can_be_answered_with_who_is_checki
     key = supplement.open_key(q.question)
     options = {key: [supplement.Option(text="인정", source="a.md"),
                      supplement.Option(text="불인정", source="a.md")]}
-    v = supplement.view(assess(A1, {}), supplement.Supplement(), {}, [q], options)
+    v = supplement.view(assess(A1, {}), supplement.Supplement(), [q], options)
     assert v.open_questions[0].external and v.open_questions[0].options == []
 
     record = supplement.apply(supplement.Supplement(), supplement.SupplementUpdate(open_answers={

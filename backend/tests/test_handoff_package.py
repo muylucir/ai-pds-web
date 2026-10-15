@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import re
 import time
 import zipfile
 
@@ -20,29 +19,33 @@ from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
 from test_handoff_readiness import B, D, QUESTIONS
 
-DOCS = {
-    "prd": "# 매장 고객 상담 에이전트\n\n## 5. 요구사항과 수용 기준\n- R-01 상담원은 고객의 최근 주문 상태를 본다\n",
-    "validation": "# 검증 보고\n설문 3명. R-01 증명됨.\n",
-    "scope": "# 남은 작업\n- B-01 프로토타입에서는 고정된 주문 목록을 보여 줬다.\n",
-}
+#: 실은 원본(B)의 근거 경로를 대는 열린 결정.
+_OPEN = """# 열린 결정
+
+| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |
+|---|---|---|---|---|---|
+| O-01 | 상담 이력의 보존 기간은? | PM | 빌드 전 | — | use-case-intake/use-cases.md |
+"""
 
 
 def _step_of(prompt: str) -> str:
-    for name, file in package.STEPS:
-        if f"## Write {file}" in prompt:
-            return name
+    if "Write the options" in prompt:
+        return "options"
+    if f"## Write {package.OPEN_DECISIONS}" in prompt:
+        return "open"
     raise AssertionError("prompt names no step")
 
 
-def _writer(calls: list | None = None, *, fail_at: str | None = None, error=None):
-    """단계마다 그 문서를 돌려주는 가짜 모델. `fail_at` 단계에서 실패한다."""
+def _writer(calls: list | None = None, *, fail_at: str | None = None, error=None,
+            doc: str = _OPEN, options: str = '{"questions": []}'):
+    """단계마다 그 결과를 돌려주는 가짜 모델. `fail_at` 단계에서 실패한다."""
     async def call(prompt, progress=None):
         step = _step_of(prompt)
         if calls is not None:
             calls.append((step, prompt))
         if step == fail_at:
             raise error or RuntimeError("AccessDenied: arn:aws:iam::123:role/x")
-        return "머리말은 버려진다.\n" + DOCS[step]
+        return options if step == "options" else "머리말은 버려진다.\n" + doc
     return call
 
 
@@ -65,6 +68,10 @@ async def _generate(s3, files, call, *, resume=False, paths=B):
                              language="ko", call=call, started=started)
 
 
+def _facts(prompt: str) -> dict:
+    return json.loads(prompt.split("```json\n", 1)[1].split("\n```", 1)[0])
+
+
 # ---- 재료와 프롬프트 ----
 
 def test_sources_skip_build_instructions_design_and_survey_forms_and_lead_with_the_document():
@@ -77,53 +84,43 @@ def test_sources_skip_build_instructions_design_and_survey_forms_and_lead_with_t
         D + "envision/pain-point-questions.md"]
 
 
-def test_prompt_carries_files_facts_and_confirmations():
+def test_the_archive_keeps_the_originals_but_not_the_prototype_build_instructions_or_design():
+    """실측(하네스 시험 ws-g): 원본만 받은 쪽이 빌드 지시서의 기술 구성을 운영 구성으로 승계했다."""
+    paths = [D + "prototype/build-instructions.md", D + "prototype/design-context.md",
+             D + "prototype/validation-questionnaire.md", D + "discovery-document.md",
+             "aiplc-docs/audit.md"]
+    assert package.archive_originals(paths) == [
+        D + "prototype/validation-questionnaire.md", D + "discovery-document.md"]
+
+
+def test_the_prompt_asks_only_for_what_the_files_do_not_give():
     path = D + "use-case-intake/use-case-intake-questions.md"
     state = assess(B + [path], {path: QUESTIONS})
     record = supplement.Supplement(
         answers={"problem.evidence": supplement.Answer(text="인터뷰 5명"),
                  "assumptions.failure_reasons": supplement.Answer(unknown=True)},
         confirmed={path + "#1": "t"})
-    prompt = package.build_prompt("prd", language="ko", readiness=state, record=record,
+    prompt = package.build_prompt(language="ko", readiness=state, record=record,
                                   sources={D + "use-case-intake/use-cases.md": "UC1 고객 문의"})
     assert "<<<FILE aiplc-docs/discovery/use-case-intake/use-cases.md>>>" in prompt
-    assert "UC1 고객 문의" in prompt
-    assert '"재료 없음"' in prompt and "Write in Korean" in prompt
-    assert "## Write PRD.md" in prompt and "9. 열린 질문" in prompt
-    facts = json.loads(prompt.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert "UC1 고객 문의" in prompt and "Write it in Korean" in prompt
+    assert "do not restate them" in prompt
+    assert "| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |" in prompt
+    assert '"빌드 전"' in prompt and '"빌드 중"' in prompt and '"PM(외부 확인)"' in prompt
+    assert "At most about 9,000 characters" in prompt
+    facts = _facts(prompt)
     assert facts["PM answers given at handoff"] == [
         {"topic": package._SUPPLEMENT_TOPICS["problem.evidence"], "answer": "인터뷰 5명"}]
     assert facts["topics the PM said they cannot answer yet"] == [
         package._SUPPLEMENT_TOPICS["assumptions.failure_reasons"]]
-    # 등급은 판정이 정해 문장으로 준다 — 모델이 해석할 불리언을 주면 그 필드명을 문서에 옮긴다.
-    decisions = facts["decisions where the PM picked the option the AI suggested"]
-    assert [d["grade"] for d in decisions] == ["PM 결정", "AI 제안 수락", "AI 제안 수락"]
-    assert decisions[0]["cite"] == "use-case-intake/use-case-intake-questions.md Q1"
     assert "confirmed_by_pm" not in prompt and "handoff_answers" not in prompt
 
 
-def test_later_steps_get_the_prd_so_ids_match():
-    prompt = package.build_prompt("scope", language="ko", readiness=assess(B, {}),
-                                  record=supplement.Supplement(), sources={}, prd=DOCS["prd"])
-    assert "## Write build-scope.md" in prompt
-    assert "<<<PRD>>>\n# 매장 고객 상담 에이전트" in prompt
-    first = package.build_prompt("prd", language="ko", readiness=assess(B, {}),
-                                 record=supplement.Supplement(), sources={})
-    assert "<<<PRD>>>" not in first
-
-
-def test_each_step_is_told_its_length_budget():
-    """상한 없이 쓴 PRD가 25,000자를 넘어 출력 상한에 잘렸다(실측 ws-g)."""
-    for step, budget in (("prd", "12,000"), ("validation", "5,000"), ("scope", "6,000")):
-        prompt = package.build_prompt(step, language="ko", readiness=assess(B, {}),
-                                      record=supplement.Supplement(), sources={})
-        assert f"At most about {budget} characters" in prompt
-
-
 def test_english_projects_get_english_labels():
-    prompt = package.build_prompt("prd", language="en", readiness=assess(B, {}),
+    prompt = package.build_prompt(language="en", readiness=assess(B, {}),
                                   record=supplement.Supplement(), sources={})
-    assert '"No source material"' in prompt and "Write in English" in prompt
+    assert "| ID | Question | Who answers | When | Until answered | Source |" in prompt
+    assert "Write it in English" in prompt
 
 
 def test_clean_output_drops_a_preface_and_refuses_an_empty_document():
@@ -135,17 +132,22 @@ def test_clean_output_drops_a_preface_and_refuses_an_empty_document():
 
 # ---- 검사 ----
 
-def test_lint_finds_technology_and_vague_words():
-    files = {"PRD.md": "\n".join([
-        "상담 이력을 PostgreSQL에 저장한다",
+def _kinds(findings, kind):
+    return [(f.line, f.term) for f in findings if f.kind == kind]
+
+
+def test_lint_finds_technology_vague_words_and_internal_notation():
+    doc = "\n".join([
+        "상담 이력을 PostgreSQL에 저장하는가?",
         "Bedrock 호출 없이 고정 문장으로 답했다",
         "모델은 us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         "포트 3000에서 띄운다",
         "리액트로 화면을 만든다",
-        "고객이 빠르게 답을 받는다",
+        "고객이 빠르게 답을 받는가?",
         "The flow is user-friendly",
-    ])}
-    found = {(f.line, f.kind, f.term) for f in package.lint(files)}
+        "H3 가설의 통과 기준은? confirmed_by_pm=true",
+    ])
+    found = {(f.line, f.kind, f.term) for f in package.lint(doc)}
     assert (1, "tech", "PostgreSQL") in found
     assert (2, "tech", "Bedrock") in found
     assert any(line == 3 and "anthropic" in term for line, _, term in found)
@@ -153,85 +155,154 @@ def test_lint_finds_technology_and_vague_words():
     assert (5, "tech", "리액트") in found
     assert (6, "vague", "빠르게") in found
     assert (7, "vague", "user-friendly") in found
+    assert (8, "internal", "H3") in found and (8, "internal", "confirmed_by_pm=true") in found
 
 
-def test_lint_leaves_ordinary_product_language_alone():
-    files = {"PRD.md": "\n".join([
+def test_lint_leaves_ordinary_product_language_and_citations_alone():
+    doc = "\n".join([
+        "# 열린 결정",
         "생성 10/08 14:20 · Express 배송 고객",
-        "매장 300곳의 상담원이 질문 후 3초 안에 첫 답을 본다",
-        "근거: `aiplc-docs/discovery/prototypes/a/PROTOTYPE-a.md`",
-    ])}
-    assert package.lint(files) == []
+        "매장 300곳의 상담원이 질문 후 3초 안에 첫 답을 보는가?",
+        "근거: go-to-market/gtm-questions.md Q14 · discovery-document.md",
+    ])
+    assert package.lint(doc) == []
 
 
-# ---- 단계별 생성 ----
+_TRIAGED = """# 열린 결정
 
-def test_steps_run_in_order_and_each_document_is_saved():
+| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |
+|---|---|---|---|---|---|
+| O-01 | 증빙 기록의 보존 기간은 얼마인가? | PM(외부 확인) | 빌드 전 | — | discovery-document.md · Build Decision |
+| O-02 | 개인 링크의 유효 기간은? | PM | **빌드 전** | — | envision/prfaq-clarifying-questions.md Q3 |
+| O-03 | 지원 외국어의 최종 목록은? | PM | 빌드 중 | 목록을 바꿀 수 있게 두고 영어·베트남어로 시작 | prototype/prototype-spec.md |
+| O-04 | 파일럿 개발 규모는? | 개발팀 | 빌드 전 | — | go-to-market/gtm-questions.md Q9 |
+| O-05 | 만족도 버튼의 형태는? | PM | 빌드 중 | — | go-to-market/gtm-questions.md Q15 |
+| O-06 | 확인 문제의 통과 기준은? | PM | 빌드 전 | — | legal/somewhere.md |
+| O-07 | 지점당 단말 대수는? | PM | 나중에 | — | discovery-document.md |
+"""
+_SRC = [D + "discovery-document.md", D + "envision/prfaq-clarifying-questions.md",
+        D + "prototype/prototype-spec.md", D + "go-to-market/gtm-questions.md"]
+
+
+def test_open_decisions_split_into_before_and_during_build_and_external_checks():
+    found = package.open_questions(_TRIAGED, "ko")
+    assert [(q.id, q.blocking, q.external) for q in found] == [
+        ("O-01", True, True), ("O-02", True, False), ("O-03", False, False),
+        ("O-05", False, False), ("O-06", True, False),
+        ("O-07", True, False)]  # 알 수 없는 시점은 빌드 전으로 묻는다 · 개발팀 몫은 묻지 않는다
+    assert found[2].until == "목록을 바꿀 수 있게 두고 영어·베트남어로 시작"
+    assert found[0].until == "" and found[3].until == ""
+
+
+def test_a_triage_without_grounds_is_flagged():
+    """줄마다 실은 원본의 위치를 대고, 빌드 중은 그동안 어떻게 만들지를 적는다. 시점은 둘 중 하나다."""
+    found = package.lint(_TRIAGED, sources=_SRC)
+    assert [term for _, term in _kinds(found, "triage")] == ["O-05", "O-06", "나중에"]
+    # 시점·근거 열이 없는 표는 머리 줄로 알린다.
+    old = "# 열린 결정\n\n| ID | 질문 | 답할 사람 |\n|---|---|---|\n| O-01 | 보존 기간 | PM |\n"
+    assert [term for _, term in _kinds(package.lint(old), "triage")] == ["시점", "근거"]
+
+
+def test_the_previous_prd_is_read_from_its_ninth_section():
+    """이전 구성의 PRD는 9번 섹션이 열린 질문이다. 번호를 뺀 제목도 찾는다(실측 ws-g)."""
+    prd = ("# P\n\n## 5. 요구사항\n| 1 | x | PM |\n\n## 열린 질문\n\n"
+           "| # | 질문 | 답할 사람 |\n|---|---|---|\n| 1 | 보존 기간(R-08) | PM |\n"
+           "| 2 | 저장 용량 | 개발팀 |\n")
+    assert [(q.id, q.question) for q in package.open_questions(prd, "ko", prd=True)] == [
+        ("1", "보존 기간(R-08)")]
+    assert package.previous_rows(prd, "ko", prd=True) == [
+        {"질문": "보존 기간(R-08)", "답할 사람": "PM", "시점": ""},
+        {"질문": "저장 용량", "답할 사람": "개발팀", "시점": ""}]
+
+
+# ---- 결정 장부와 단계별 생성 ----
+
+def test_steps_write_the_open_decisions_then_the_ledger_and_readme():
     s3 = FakeS3Store()
     files = {p: f"# {p}\n" for p in B}
     calls: list = []
     done = _run(_generate(s3, files, _writer(calls)))
     assert done.status == "ready" and done.origin == "B"
-    # PRD에 빌드 전 PM 결정이 없으면 보기 단계는 모델을 부르지 않는다.
-    assert [step for step, _ in calls] == ["prd", "validation", "scope"]
-    assert [s.status for s in done.steps] == ["done", "done", "done", "done"]
-    assert done.files == list(package.FILES) and package.OPTIONS not in done.files
+    # 열린 결정에 빌드 전 PM 결정이 있으면 보기를 만든다.
+    assert [step for step, _ in calls] == ["open", "options"]
+    assert [s.status for s in done.steps] == ["done", "done"]
+    assert done.files == ["README.md", "open-decisions.md", "decisions.md"]
     assert set(done.sources) == set(package.select_sources(B))
-    assert s3.blobs[package.PACKAGE_PREFIX + "PRD.md"].startswith("# 매장")  # 머리말 제거
-    assert s3.blobs[package.PACKAGE_PREFIX + "README.md"].startswith("# 개발 인계 패키지")
-    # 뒤의 두 단계는 앞에서 쓴 PRD를 받는다.
-    assert "<<<PRD>>>" not in calls[0][1]
-    assert all(DOCS["prd"].strip() in prompt for _, prompt in calls[1:])
-    # 빌드 지시서는 재료가 아니다.
+    assert s3.blobs[package.PACKAGE_PREFIX + "open-decisions.md"].startswith("# 열린 결정")
+    assert s3.blobs[package.PACKAGE_PREFIX + "decisions.md"].startswith("# 결정 장부")
+    readme = s3.blobs[package.PACKAGE_PREFIX + "README.md"]
+    assert readme.startswith("# 개발 인계 패키지")
+    assert readme.index("discovery-document.md") < readme.index("open-decisions.md")
     assert all("build-instructions" not in prompt for _, prompt in calls)
+    assert done.findings == []
 
 
 @pytest.mark.parametrize("error, reason", [
     (RuntimeError("AccessDenied: arn:aws:iam::123:role/x"), "generation_failed"),
     (ValueError("empty document"), "malformed_output"),
 ])
-def test_a_failed_step_keeps_the_finished_ones_and_hides_the_raw_error(error, reason):
+def test_a_failed_step_is_reported_without_the_raw_error(error, reason):
     s3 = FakeS3Store()
     files = {p: f"# {p}\n" for p in B}
-    failed = _run(_generate(s3, files, _writer(fail_at="validation", error=error)))
+    failed = _run(_generate(s3, files, _writer(fail_at="open", error=error)))
     assert failed.status == "failed" and failed.error == reason
-    assert [(s.status, s.error) for s in failed.steps] == [
-        ("done", None), ("failed", reason), ("pending", None), ("pending", None)]
-    assert package.PACKAGE_PREFIX + "PRD.md" in s3.blobs
-    assert package.PACKAGE_PREFIX + "validation-report.md" not in s3.blobs
+    assert [(s.status, s.error) for s in failed.steps] == [("failed", reason), ("pending", None)]
     assert "arn:aws" not in s3.blobs[package.MANIFEST_KEY]
 
 
-def test_resuming_runs_only_the_steps_that_did_not_finish():
+def test_a_failed_options_step_leaves_the_package_complete():
     s3 = FakeS3Store()
     files = {p: f"# {p}\n" for p in B}
-    _run(_generate(s3, files, _writer(fail_at="validation")))
+    done = _run(_generate(s3, files, _writer(fail_at="options")))
+    assert done.status == "ready" and done.error is None
+    assert [(s.status, s.error) for s in done.steps][-1] == ("failed", "generation_failed")
+    assert _run(package.load_options(s3)) == {}
+
+
+async def _interrupted_after_open_async(s3, files):
+    """재시작이 보기 단계 도중을 끊은 모양을 만든다."""
+    started = await package.start(s3, assess(B, {}))
+    steps = package.fresh_steps()
+    steps[0] = steps[0].model_copy(update={"status": "done"})
+    steps[1] = steps[1].model_copy(update={"status": "running"})
+    await s3.put(package.PACKAGE_PREFIX + package.OPEN_DECISIONS, _OPEN)
+    sources = await package.read_sources(_workspace_reader(files), package.select_sources(B))
+    record = await supplement.load(s3)
+    await s3.put(package.MANIFEST_KEY, started.model_copy(update={
+        "steps": steps, "sources": {p: package.digest(t) for p, t in sources.items()},
+        "supplement": package.digest(record.model_dump_json())}).model_dump_json())
+
+
+def _interrupted_after_open(s3, files):
+    _run(_interrupted_after_open_async(s3, files))
+
+
+def test_view_reports_an_interrupted_run_as_resumable_and_resuming_runs_only_the_rest():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B}
+    _interrupted_after_open(s3, files)
+    v = _run(package.view(s3, read=_workspace_reader(files), paths=B, running=False))
+    assert v.manifest.status == "interrupted" and v.resumable
+    assert [(s.status, s.error) for s in v.manifest.steps] == [
+        ("done", None), ("failed", "interrupted")]
     calls: list = []
     done = _run(_generate(s3, files, _writer(calls), resume=True))
-    assert done.status == "ready"
-    assert [step for step, _ in calls] == ["validation", "scope"]
-    # 이어서 쓰는 단계도 저장돼 있던 PRD를 받는다.
-    assert DOCS["prd"].strip() in calls[0][1]
+    assert done.status == "ready" and [step for step, _ in calls] == ["options"]
+    # 이어서 하는 보기 단계도 저장돼 있던 열린 결정을 받는다.
+    assert "O-01 | 상담 이력의 보존 기간은?" in calls[0][1]
 
 
 def test_resuming_after_the_sources_changed_starts_over():
     """바뀐 원본으로 쓴 문서와 옛 원본으로 쓴 문서가 한 패키지에 섞이면 안 된다."""
     s3 = FakeS3Store()
     files = {p: f"# {p}\n" for p in B}
-    _run(_generate(s3, files, _writer(fail_at="scope")))
+    _interrupted_after_open(s3, files)
     files[D + "use-case-intake/use-cases.md"] = "# 바뀜\n"
+    v = _run(package.view(s3, read=_workspace_reader(files), paths=B, running=False))
+    assert not v.resumable and v.stale
     calls: list = []
     _run(_generate(s3, files, _writer(calls), resume=True))
-    assert [step for step, _ in calls] == ["prd", "validation", "scope"]
-
-
-def test_starting_without_resume_discards_the_finished_steps():
-    s3 = FakeS3Store()
-    files = {p: f"# {p}\n" for p in B}
-    _run(_generate(s3, files, _writer(fail_at="scope")))
-    calls: list = []
-    _run(_generate(s3, files, _writer(calls)))
-    assert [step for step, _ in calls] == ["prd", "validation", "scope"]
+    assert [step for step, _ in calls] == ["open", "options"]
 
 
 def test_a_running_step_reports_thinking_then_received_characters(monkeypatch):
@@ -248,44 +319,21 @@ def test_a_running_step_reports_thinking_then_received_characters(monkeypatch):
     s3.put = recording_put
 
     async def call(prompt, progress):
-        if _step_of(prompt) == "prd":
+        if _step_of(prompt) == "open":
             progress(0, True)
             await asyncio.sleep(0.05)
             progress(500, False)
             await asyncio.sleep(0.05)
-        return DOCS[_step_of(prompt)]
+            return _OPEN
+        return '{"questions": []}'
 
     _run(_generate(s3, files, call))
-    prd = [m["steps"][0] for m in snapshots if m["steps"] and m["steps"][0]["status"] == "running"]
-    assert any(s["thinking"] and s["chars"] == 0 for s in prd)
-    assert any(s["chars"] == 500 and not s["thinking"] for s in prd)
+    first = [m["steps"][0] for m in snapshots if m["steps"] and m["steps"][0]["status"] == "running"]
+    assert any(s["thinking"] and s["chars"] == 0 for s in first)
+    assert any(s["chars"] == 500 and not s["thinking"] for s in first)
     # 진행 기록이 늦게 도착해 "완료"를 덮지 않는다.
     assert snapshots[-1]["status"] == "ready"
-    assert [s["status"] for s in snapshots[-1]["steps"]] == ["done", "done", "done", "done"]
-
-
-def test_view_reports_an_interrupted_run_as_resumable():
-    s3 = FakeS3Store()
-    files = {p: f"# {p}\n" for p in B}
-
-    async def go():
-        started = await package.start(s3, assess(B, {}))
-        # 재시작이 두 번째 단계 도중을 끊은 모양을 만든다.
-        steps = package.fresh_steps()
-        steps[0] = steps[0].model_copy(update={"status": "done"})
-        steps[1] = steps[1].model_copy(update={"status": "running"})
-        await s3.put(package.PACKAGE_PREFIX + "PRD.md", DOCS["prd"])
-        sources = await package.read_sources(_workspace_reader(files), package.select_sources(B))
-        record = await supplement.load(s3)
-        await s3.put(package.MANIFEST_KEY, started.model_copy(update={
-            "steps": steps, "sources": {p: package.digest(t) for p, t in sources.items()},
-            "supplement": package.digest(record.model_dump_json())}).model_dump_json())
-        return await package.view(s3, read=_workspace_reader(files), paths=B, running=False)
-    v = _run(go())
-    assert v.manifest.status == "interrupted"
-    assert [(s.status, s.error) for s in v.manifest.steps] == [
-        ("done", None), ("failed", "interrupted"), ("pending", None), ("pending", None)]
-    assert v.resumable
+    assert [s["status"] for s in snapshots[-1]["steps"]] == ["done", "done"]
 
 
 def test_view_reports_stale_and_supplement_changes_after_ready():
@@ -309,24 +357,19 @@ def test_view_reports_stale_and_supplement_changes_after_ready():
     _run(go())
 
 
-def test_a_failed_run_whose_sources_changed_is_not_resumable():
+def test_an_old_manifest_with_prd_checks_is_still_readable():
+    """이전 구성의 manifest(검사 종류 acceptance·ai_goal)를 읽지 못하면 패키지가 없는 것처럼 보인다."""
     s3 = FakeS3Store()
-    files = {p: f"# {p}\n" for p in B}
-
-    async def go():
-        await _generate(s3, files, _writer(fail_at="scope"))
-        assert (await package.view(s3, read=_workspace_reader(files), paths=B,
-                                   running=False)).resumable
-        files[D + "use-case-intake/use-cases.md"] = "# 바뀜\n"
-        return await package.view(s3, read=_workspace_reader(files), paths=B, running=False)
-    v = _run(go())
-    assert not v.resumable and v.stale
+    _run(s3.put(package.MANIFEST_KEY, json.dumps({
+        "status": "ready", "started_at": "t", "files": ["PRD.md"], "steps": [],
+        "findings": [{"file": "PRD.md", "line": 3, "term": "G-01", "kind": "ai_goal"}]})))
+    assert _run(package.load_manifest(s3)).findings[0].kind == "ai_goal"
 
 
 def test_the_package_lives_outside_the_agent_workspace():
     from aipds.runner import AgentRunner
     from aipds.workspace_sync import is_synced_key
-    for name in package.FILES + ("manifest.json",):
+    for name in package.FILES + (package.OPTIONS, "manifest.json"):
         key = package.PACKAGE_PREFIX + name
         assert not is_synced_key(key)
         assert not key.startswith(AgentRunner._RESTORE_PREFIXES)
@@ -350,7 +393,7 @@ def _chain(outer: Exception, cause: Exception) -> Exception:
 ])
 def test_a_wrapped_read_timeout_is_reported_as_a_timeout(make):
     s3 = FakeS3Store()
-    failed = _run(_generate(s3, {}, _writer(fail_at="prd", error=make())))
+    failed = _run(_generate(s3, {}, _writer(fail_at="open", error=make())))
     assert failed.error == "timeout"
     assert failed.steps[0].error == "timeout"
 
@@ -359,7 +402,7 @@ def test_hitting_the_output_cap_is_reported_as_too_long():
     class MaxTokensReachedException(Exception):
         pass
     s3 = FakeS3Store()
-    failed = _run(_generate(s3, {}, _writer(fail_at="prd", error=_chain(
+    failed = _run(_generate(s3, {}, _writer(fail_at="open", error=_chain(
         RuntimeError("agent loop"), MaxTokensReachedException("Model stopped generating")))))
     assert failed.error == "too_long" and failed.steps[0].error == "too_long"
 
@@ -406,6 +449,146 @@ def test_the_handoff_writer_waits_long_and_reports_stream_progress(monkeypatch):
     assert events == [(0, True), (2, False), (3, False)]
 
 
+# ---- 보완 질문의 보기 ----
+
+def _asked():
+    return [q for q in package.open_questions(_TRIAGED, "ko") if q.blocking and not q.external]
+
+
+def test_options_keep_only_grounded_unmarked_choices_in_a_neutral_order():
+    reply = "```json\n" + json.dumps({"questions": [
+        {"id": "O-02", "options": [
+            {"text": "7일", "source": "go-to-market/gtm-questions.md Q4"},
+            {"text": "30일", "source": "discovery/envision/prfaq-clarifying-questions.md Q2"},
+            {"text": "1년", "source": "legal/somewhere.md"},          # 실은 원본이 아니다
+            {"text": "30일", "source": "envision/prfaq-clarifying-questions.md"}]},  # 중복
+        {"id": "O-06", "options": [
+            {"text": "2개 (추천)", "source": "envision/prfaq-clarifying-questions.md Q3"},
+            {"text": "3개", "source": "envision/prfaq-clarifying-questions.md Q3"}]},
+        {"id": "O-07", "options": [
+            {"text": "2대", "source": "discovery-document.md"}]},
+        {"id": "O-99", "options": [
+            {"text": "x", "source": "discovery-document.md"},
+            {"text": "y", "source": "discovery-document.md"}]},
+    ]}, ensure_ascii=False) + "\n```"
+    options = package.parse_options(reply, _asked(), _SRC)
+    by_id = {q.id: options.get(supplement.open_key(q.question)) for q in _asked()}
+    assert sorted(o.text for o in by_id["O-02"]) == ["30일", "7일"]
+    assert by_id["O-06"] is None   # 추천 표시 → 서술형
+    assert by_id["O-07"] is None   # 근거 있는 보기가 둘 미만 → 서술형
+    assert len(options) == 1       # 모르는 id는 버린다
+    # 순서는 모델이 준 순서가 아니라 문장으로 정해진다.
+    flipped = reply.replace('"7일"', '"__"').replace('"30일", "source": "discovery',
+                                                    '"7일", "source": "discovery').replace('"__"', '"30일"')
+    again = package.parse_options(flipped, _asked(), _SRC)
+    key = supplement.open_key(_asked()[0].question)
+    assert [o.text for o in again[key]] == [o.text for o in by_id["O-02"]]
+    with pytest.raises(ValueError):
+        package.parse_options("보기를 만들 수 없습니다.", _asked(), _SRC)
+
+
+def test_an_option_that_points_at_another_option_is_dropped():
+    """실측(ws-g 인스턴스 생성): "위 전체 항목에 … 추가"가 순서를 다시 정한 뒤 첫 번째로 보였다.
+    "범위의"·"위험성평가"처럼 단어 안의 "위"는 건드리지 않는다."""
+    src = "envision/prfaq-clarifying-questions.md Q7"
+    texts = ["서명 시각과 단말만 남긴다.", "위 전체 항목에 영상 시청 기록을 추가한다.",
+             "위험성평가 참여 기록까지 남긴다.", "법무가 정한 범위의 항목만 남긴다.",
+             "All of the above, plus video logs."]
+    reply = json.dumps({"questions": [{"id": "O-02", "options": [
+        {"text": t, "source": src} for t in texts]}]}, ensure_ascii=False)
+    kept = package.parse_options(reply, _asked(), _SRC)[supplement.open_key(_asked()[0].question)]
+    assert sorted(o.text for o in kept) == sorted([texts[0], texts[2], texts[3]])
+
+
+def test_the_options_step_asks_only_pm_decisions_before_build_that_are_not_external():
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B + _SRC}
+    reply = json.dumps({"questions": [{"id": "O-02", "options": [
+        {"text": "7일", "source": "envision/prfaq-clarifying-questions.md Q2"},
+        {"text": "30일", "source": "go-to-market/gtm-questions.md Q4"}]}]}, ensure_ascii=False)
+    calls: list = []
+    done = _run(_generate(s3, files, _writer(calls, doc=_TRIAGED, options=reply), paths=B + _SRC))
+    assert done.status == "ready" and done.steps[-1].status == "done"
+    prompt = dict(calls)["options"]
+    assert "- O-02:" in prompt and "- O-06:" in prompt
+    # 외부 확인 · 빌드 중 · 개발팀 몫은 보기를 만들지 않는다.
+    assert "O-01:" not in prompt and "O-03:" not in prompt and "O-04:" not in prompt
+    saved = _run(package.load_options(s3))
+    assert sorted(o.text for o in saved[supplement.open_key("개인 링크의 유효 기간은?")]) == [
+        "30일", "7일"]
+
+
+# ---- 직전 판의 열린 결정 ----
+
+def test_a_question_being_checked_goes_back_as_still_open():
+    q = "전자 기록이 종이와 같은 증빙 효력을 갖는가?"
+    record = supplement.Supplement(open_answers={supplement.open_key(q): supplement.OpenAnswer(
+        question=q, pending_with="법무팀")})
+    prompt = package.build_prompt(language="ko", readiness=assess(B, {}), record=record,
+                                  sources={})
+    facts = _facts(prompt)
+    assert facts["open questions being checked with someone else"] == [
+        {"question": q, "checking with": "법무팀"}]
+    assert facts["PM answers given at handoff"] == []   # 확인 중은 답이 아니다
+    assert '"확인 중: <who>"' in prompt
+
+
+def test_answers_to_open_decisions_go_back_into_the_next_version():
+    known = supplement.OpenAnswer(question="자동 재알림 규칙", text="기한 2일 전, 1회, 문자")
+    unknown = supplement.OpenAnswer(question="개인 링크 유효기간", unknown=True)
+    record = supplement.Supplement(open_answers={
+        supplement.open_key(known.question): known, supplement.open_key(unknown.question): unknown})
+    facts = _facts(package.build_prompt(language="ko", readiness=assess(B, {}), record=record,
+                                        sources={}))
+    assert {"question": "자동 재알림 규칙", "answer": "기한 2일 전, 1회, 문자"} in facts[
+        "PM answers given at handoff"]
+    assert facts["open questions the PM said they cannot answer yet"] == ["개인 링크 유효기간"]
+
+
+_LEGACY_PRD = """# 샘플몰 안전ON PRD
+
+## 9. 열린 질문
+
+| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 |
+|---|---|---|---|---|
+| O-01 | 증빙 기록의 보존 기간은 얼마인가? (R-08, C-05) | PM | 빌드 전 | — |
+| O-02 | 개인 링크의 유효 기간은? (R-04) | PM | 빌드 전 | — |
+| O-03 | 만족도 버튼의 형태는? (R-14) | PM | 빌드 중 | 바꿀 수 있게 둔다 |
+| O-04 | 파일럿 개발 규모는? (C-08) | 개발팀 | 빌드 중 | 먼저 착수 |
+"""
+
+
+def test_the_first_version_carries_over_the_old_prd_questions_and_flags_a_lost_one():
+    """실측(ws-g): 앞 PRD의 "개인 링크의 유효 기간"이 다음 생성에서 아무 표시 없이 사라졌다.
+    이전 구성의 PRD 9번이 첫 열린 결정의 직전 판이다."""
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B + _SRC}
+    _run(s3.put(package.PACKAGE_PREFIX + "PRD.md", _LEGACY_PRD))
+    # 인계 탭에서 하나에 답했다 — 그 질문이 빠지는 것은 정상이다. 번호가 달라도 같은 질문이다.
+    answered = "만족도 버튼의 형태는? (R-15)"
+    _run(supplement.save(s3, supplement.Supplement(open_answers={
+        supplement.open_key(answered): supplement.OpenAnswer(question=answered, text="5점 척도")})))
+    calls: list = []
+    done = _run(_generate(s3, files, _writer(calls, doc=_TRIAGED), paths=B + _SRC))
+    previous = _facts(dict(calls)["open"])["open decisions in the previous version"]
+    assert [r["질문"] for r in previous] == [
+        "증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)", "개인 링크의 유효 기간은? (R-04)",
+        "만족도 버튼의 형태는? (R-14)", "파일럿 개발 규모는? (C-08)"]
+    assert previous[2]["시점"] == "빌드 중" and previous[3]["답할 사람"] == "개발팀"
+    assert "Carry every one of them over" in dict(calls)["open"]
+    assert done.carried == ["증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)",
+                            "개인 링크의 유효 기간은? (R-04)", "만족도 버튼의 형태는? (R-14)"]
+    # 보존 기간·링크 유효 기간은 새 판에 있고(관련 ID는 보지 않는다), 만족도 버튼은 답했다.
+    assert _kinds(done.findings, "dropped") == []
+
+    # 다음 판에서 링크 유효 기간이 사라지면 알린다. 이번엔 직전 판이 열린 결정 문서다.
+    lost = _TRIAGED.replace("| O-02 | 개인 링크의 유효 기간은? | PM | **빌드 전** | — | "
+                            "envision/prfaq-clarifying-questions.md Q3 |\n", "")
+    calls = []
+    again = _run(_generate(s3, files, _writer(calls, doc=lost), paths=B + _SRC))
+    assert [term for _, term in _kinds(again.findings, "dropped")] == ["개인 링크의 유효 기간은?"]
+
+
 # ---- routes ----
 
 @pytest.fixture
@@ -444,43 +627,50 @@ def _wait_settled(client, pid):
 
 
 def test_route_generates_views_and_downloads(env):
-    client, _, _ = env
-    files = {p: f"# {p}\n" for p in B} | {"prototype/src/index.ts": "export {}\n"}
+    client, s3, _ = env
+    files = ({p: f"# {p}\n" for p in B}
+             | {D + "prototype/build-instructions.md": "Node.js + PostgreSQL\n",
+                D + "prototype/design-context.md": "# 색\n",
+                "prototype/src/index.ts": "export {}\n"})
     _seed(client, "pkg-b", files)
+    client.portal.call(s3.put_bytes, "uploads/ab12cd34/동의서.pdf", b"%PDF-1.7 bytes")
 
     r = client.post("/projects/pkg-b/handoff/package")
     assert r.status_code == 202 and r.json()["status"] == "generating"
     assert [s["status"] for s in r.json()["steps"]] == ["pending"] * len(package.STEPS)
     body = _wait_settled(client, "pkg-b")
     assert body["manifest"]["status"] == "ready"
-    assert body["files"]["PRD.md"].startswith("# 매장")
+    assert body["files"]["open-decisions.md"].startswith("# 열린 결정")
     assert body["stale"] == []
 
     r = client.get("/projects/pkg-b/handoff/package/archive")
     assert r.status_code == 200
     assert "pkg-b-handoff.zip" in r.headers["content-disposition"]
-    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
-    assert {"PRD.md", "validation-report.md", "build-scope.md", "README.md"} <= set(names)
-    assert package.OPTIONS not in names  # 보기는 웹 화면의 것이다
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    names = zf.namelist()
+    assert {"README.md", "open-decisions.md", "decisions.md"} <= set(names)
     assert "discovery/use-case-intake/use-cases.md" in names
-    # 프로토타입 소스와 감사 로그는 넣지 않는다.
-    assert not any(n.startswith("prototype/") or n.endswith("audit.md") for n in names)
+    assert zf.read("uploads/ab12cd34/동의서.pdf") == b"%PDF-1.7 bytes"   # 업로드는 바이트 그대로
+    # 빌드 지시서·디자인 컨텍스트·프로토타입 소스·감사 로그·보기·이전 구성의 문서는 넣지 않는다.
+    assert not any(n.endswith(("build-instructions.md", "design-context.md", "audit.md"))
+                   or n.startswith("prototype/") for n in names)
+    assert package.OPTIONS not in names and "PRD.md" not in names
 
 
-def test_route_resumes_from_the_failed_step(env):
-    client, _, writer = env
-    _seed(client, "pkg-resume", {p: f"# {p}\n" for p in B})
-    writer["call"] = _writer(fail_at="scope")
-    client.post("/projects/pkg-resume/handoff/package")
-    failed = _wait_settled(client, "pkg-resume")
-    assert failed["manifest"]["status"] == "failed" and failed["resumable"]
+def test_route_resumes_from_the_interrupted_step(env):
+    client, s3, writer = env
+    files = {p: f"# {p}\n" for p in B}
+    _seed(client, "pkg-resume", files)
+    client.portal.call(_interrupted_after_open_async, s3, files)
+    body = client.get("/projects/pkg-resume/handoff/package").json()
+    assert body["manifest"]["status"] == "interrupted" and body["resumable"]
 
     calls: list = []
     writer["call"] = _writer(calls)
     r = client.post("/projects/pkg-resume/handoff/package", json={"resume": True})
-    assert [s["status"] for s in r.json()["steps"]] == ["done", "done", "pending", "pending"]
+    assert [s["status"] for s in r.json()["steps"]] == ["done", "pending"]
     assert _wait_settled(client, "pkg-resume")["manifest"]["status"] == "ready"
-    assert [step for step, _ in calls] == ["scope"]
+    assert [step for step, _ in calls] == ["options"]
 
 
 def test_route_refuses_to_generate_without_a_spec(env):
@@ -498,450 +688,29 @@ def test_route_archive_is_404_before_a_package_exists(env):
     assert client.get("/projects/pkg-none/handoff/package").json()["manifest"] is None
 
 
-# ---- PRD가 인용한 AI 제안 ----
-
-_PRD_WITH_CITATIONS = """# 샘플몰 안전ON PRD
-
-## 3. 목표와 성공 지표
-
-| ID | 목표 | 등급 · 출처 |
-|---|---|---|
-| G-01 | 담당자 투입 시간 절감: 파일럿 90일 30% 이상 | AI 제안 수락 · aiplc-docs/discovery/product-strategy/strategy-questions.md Q1 |
-| G-02 | 건별 완료율 95% 이상 | PM 결정 · aiplc-docs/discovery/product-strategy/strategy-questions.md Q3 |
-
-## 5. 요구사항과 수용 기준
-
-- 2027년 상반기 3개 지점 파일럿 [AI 제안 수락 · aiplc-docs/discovery/product-strategy/strategy-questions.md Q2·Q4]
-- R-03 엑셀 명단 업로드 [AI 제안 수락 · strategy-questions.md Q99]
-"""
-
-
-def test_the_prd_citations_pick_out_which_ai_suggestions_became_requirements():
-    """실측(ws-g): PRD의 "AI 제안 수락" 26줄이 40개 중 19개 질문을 가리켰다."""
-    path = D + "product-strategy/strategy-questions.md"
-    state = assess([path], {path: QUESTIONS})
-    cited = package.cited_suggestions(_PRD_WITH_CITATIONS, state, "ko")
-    assert {k: [(c.text, c.section) for c in v] for k, v in cited.items()} == {
-        path + "#1": [("G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상", 3)],
-        path + "#2": [("2027년 상반기 3개 지점 파일럿", 5)],
-        path + "#4": [("2027년 상반기 3개 지점 파일럿", 5)],
-    }
-    # Q3은 PM 결정으로 인용됐고, Q99는 수락 목록에 없다 — 둘 다 확인 대상이 아니다.
-
-
-def test_the_form_lists_the_citations_of_the_saved_prd():
-    s3 = FakeS3Store()
-    path = D + "product-strategy/strategy-questions.md"
-    paths = B + [path]
-    files = {p: f"# {p}\n" for p in B} | {path: QUESTIONS}
-
-    async def call(prompt, progress=None):
-        step = _step_of(prompt)
-        return _PRD_WITH_CITATIONS if step == "prd" else DOCS[step]
-
-    async def go():
-        state = assess(paths, {path: QUESTIONS})
-        started = await package.start(s3, state)
-        return await package.run(s3, read=_workspace_reader(files), paths=paths, readiness=state,
-                                 language="ko", call=call, started=started), state
-    done, state = _run(go())
-    assert done.status == "ready"
-    cited = package.cited_suggestions(s3.blobs[package.PACKAGE_PREFIX + "PRD.md"], state, "ko")
-    assert set(cited) == {path + "#1", path + "#2", path + "#4"}
-
-    view = supplement.view(state, supplement.Supplement(), cited)
-    assert view.has_package
-    by_number = {c.number: c.in_prd for c in view.confirmations}
-    assert by_number == {1: ["G-01 담당자 투입 시간 절감: 파일럿 90일 30% 이상"],
-                         2: ["2027년 상반기 3개 지점 파일럿"],
-                         4: ["2027년 상반기 3개 지점 파일럿"]}
-    # 성공 지표가 된 AI 제안은 따로 표시된다.
-    assert {c.number: c.in_goals for c in view.confirmations} == {1: True, 2: False, 4: False}
-    assert not supplement.view(state, supplement.Supplement()).has_package
-
-
-def test_route_supplement_reads_citations_from_the_saved_prd(env):
-    """이 기능 이전에 만든 패키지도 PRD 파일만 있으면 인용을 보인다 — 저장된 값에 기대지 않는다."""
-    client, s3, writer = env
-    path = D + "product-strategy/strategy-questions.md"
-    _seed(client, "pkg-cited", {p: f"# {p}\n" for p in B} | {path: QUESTIONS})
-    assert client.get("/projects/pkg-cited/handoff/supplement").json()["has_package"] is False
-
-    async def call(prompt, progress=None):
-        step = _step_of(prompt)
-        return _PRD_WITH_CITATIONS if step == "prd" else DOCS[step]
-    writer["call"] = call
-    client.post("/projects/pkg-cited/handoff/package")
-    assert _wait_settled(client, "pkg-cited")["manifest"]["status"] == "ready"
-
-    body = client.get("/projects/pkg-cited/handoff/supplement").json()
-    assert body["has_package"] is True
-    assert {c["number"]: bool(c["in_prd"]) for c in body["confirmations"]} == {1: True, 2: True, 4: True}
-
-
-# ---- PRD의 모양 검사(실측 ws-g PRD 평가의 다섯 가지) ----
-
-_PRD_SHAPES = """# 샘플몰 안전ON PRD
-
-## 3. 목표와 성공 지표
-
-| ID | 목표 | 등급·출처 |
-|---|---|---|
-| G-01 | 담당자 투입 시간 60% 절감 | AI 제안 수락 (envision/prfaq-clarifying-questions.md Q8) |
-| G-02 | 건별 완료율 95% 이상 | PM 결정 (product-strategy/strategy-questions.md Q3) |
-
-## 5. 요구사항과 수용 기준
-
-- **R-01 발송 만들기** [S-01, G-01]: 대상 지정 → 기한 → 발송. 수용 기준: 발송 직후 대상자 전원의
-  할 일 목록에 그 건이 나타난다. — 사용자 검증됨 (prototype/validation-results.md)
-- **R-04 개인 링크** [S-03]: 링크를 보낸다. 수용 기준: 앱 설치 없이 완료한다. — PM 결정 (envision/prfaq-clarifying-questions.md Q3, confirmed_by_pm=true)
-- **R-10 본사 템플릿 관리** [S-07]: 본사가 템플릿을 등록·수정한다. — AI 제안 수락 (envision/prfaq-clarifying-questions.md Q5)
-- **R-15 검증 후 개선** [S-02]: 확인 문제 문구를 개선한다. 목표값은 재료 없음.
-
-## 8. 가정과 실패 요인
-
-| A-05 | AI 초안 검수 부담이 직접 작성보다 작다 | 사용자 검증됨 (prototype/validation-results.md, H3) |
-
-## 9. 열린 질문
-
-| # | 질문 | 답할 사람 |
-|---|---|---|
-| 1 | 법무 결론: 증빙 효력, 보존 기간(R-08, C-01) | PM |
-| 3 | 수신자 화면 세부값. 프로토타입에서 추출 필요(R-16) | 개발팀 |
-| 6 | 자동 재알림 규칙(시점, 횟수, 채널)(R-05) | PM |
-"""
-
-
-def _kinds(findings, kind):
-    return [(f.line, f.term) for f in findings if f.kind == kind]
-
-
-def test_a_requirement_without_acceptance_criteria_is_flagged():
-    """실측: 요구사항 17개 중 6개(R-10/11/13/14/15/16)에 시험할 수 있는 수용 기준이 없었다."""
-    found = package.lint({"PRD.md": _PRD_SHAPES})
-    assert [term for _, term in _kinds(found, "acceptance")] == ["R-10", "R-15"]
-
-
-def test_a_success_metric_from_an_unconfirmed_ai_suggestion_is_flagged():
-    """실측: 성공 지표 G-01~05가 전부 AI 제안 수락이었다. PM 결정인 목표는 그대로 둔다."""
-    found = package.lint({"PRD.md": _PRD_SHAPES})
-    assert [term for _, term in _kinds(found, "ai_goal")] == ["G-01"]
-
-
-def test_prompt_field_names_and_foreign_ids_are_flagged():
-    """실측: `confirmed_by_pm=true`와 정의 없는 `H3`가 PRD에 그대로 나왔다. 질문 번호(Q3)와
-    PRD 자신의 ID(R-01, S-03)는 근거 표기라 두고, 검증 보고서의 가설 번호는 검사하지 않는다."""
-    found = package.lint({"PRD.md": _PRD_SHAPES,
-                          "validation-report.md": "- **H1 수신자 무도움 완료**: 통과\n"})
-    terms = [term for _, term in _kinds(found, "internal")]
-    assert "confirmed_by_pm=true" in terms
-    assert "H3" in terms
-    assert not any(t.startswith(("Q", "R-", "S-", "G-")) for t in terms)
-    assert all(f.file == "PRD.md" for f in found if f.kind == "internal")
-
-
-def test_validation_grades_without_validation_results_are_flagged():
-    files = {"PRD.md": _PRD_SHAPES}
-    assert _kinds(package.lint(files, validated=True), "grade") == []
-    flagged = package.lint(files, validated=False)
-    assert {term for _, term in _kinds(flagged, "grade")} == {"사용자 검증됨"}
-
-
-def test_open_questions_for_the_pm_come_back_from_section_nine():
-    """실측 PRD의 표 모양(`| # | 질문 | 답할 사람 |`)과 지시한 모양(`| ID | 질문 | 답할 사람 |`)을
-    둘 다 읽고, 개발팀 몫은 PM에게 묻지 않는다."""
-    old = package.open_questions(_PRD_SHAPES, "ko")
-    assert [(q.id, q.question) for q in old] == [
-        ("1", "법무 결론: 증빙 효력, 보존 기간(R-08, C-01)"),
-        ("6", "자동 재알림 규칙(시점, 횟수, 채널)(R-05)")]
-    new = package.open_questions(
-        "# P\n\n## 9. Open questions\n\n| ID | Question | Who answers |\n|---|---|---|\n"
-        "| O-01 | Retention period (R-08) | PM |\n| O-02 | Storage volume | Development team |\n",
-        "en")
-    assert [(q.id, q.question) for q in new] == [("O-01", "Retention period (R-08)")]
-    assert package.open_questions("# P\n\n## 5. 요구사항\n| 1 | x | PM |\n", "ko") == []
-
-
-def test_the_prd_prompt_fixes_the_shapes_the_checks_read():
-    prompt = package.build_prompt("prd", language="ko", readiness=assess(B, {}),
-                                  record=supplement.Supplement(), sources={})
-    assert "수용 기준: <criteria>" in prompt
-    assert "| ID | 질문 | 답할 사람 |" in prompt and '"개발팀"' in prompt
-    assert '"내부 검증됨(대리 사용자)"' in prompt
-    assert "hypothesis numbers like H3" in prompt
-
-
-def test_answers_to_open_questions_go_back_into_the_next_prd():
-    known = supplement.OpenAnswer(question="자동 재알림 규칙", text="기한 2일 전, 1회, 문자")
-    unknown = supplement.OpenAnswer(question="개인 링크 유효기간", unknown=True)
-    record = supplement.Supplement(open_answers={
-        supplement.open_key(known.question): known, supplement.open_key(unknown.question): unknown})
-    prompt = package.build_prompt("prd", language="ko", readiness=assess(B, {}),
-                                  record=record, sources={})
-    facts = json.loads(prompt.split("```json\n", 1)[1].split("\n```", 1)[0])
-    assert {"question": "자동 재알림 규칙", "answer": "기한 2일 전, 1회, 문자"} in facts[
-        "PM answers given at handoff"]
-    assert facts["open questions the PM said they cannot answer yet"] == ["개인 링크 유효기간"]
-
-
-def test_route_supplement_asks_the_open_pm_questions_of_the_saved_prd(env):
-    client, s3, writer = env
-    _seed(client, "pkg-open", {p: f"# {p}\n" for p in B})
+def test_route_supplement_asks_the_open_pm_decisions_with_options(env):
+    client, _, writer = env
+    _seed(client, "pkg-open", {p: f"# {p}\n" for p in B + _SRC})
     assert client.get("/projects/pkg-open/handoff/supplement").json()["open_questions"] == []
 
-    async def call(prompt, progress=None):
-        step = _step_of(prompt)
-        return _PRD_SHAPES if step == "prd" else DOCS[step]
-    writer["call"] = call
+    reply = json.dumps({"questions": [{"id": "O-02", "options": [
+        {"text": "7일", "source": "envision/prfaq-clarifying-questions.md Q2"},
+        {"text": "30일", "source": "go-to-market/gtm-questions.md Q4"}]}]}, ensure_ascii=False)
+    writer["call"] = _writer(doc=_TRIAGED, options=reply)
     client.post("/projects/pkg-open/handoff/package")
-    done = _wait_settled(client, "pkg-open")["manifest"]
-    assert {f["kind"] for f in done["findings"]} >= {"acceptance", "ai_goal", "internal"}
+    assert _wait_settled(client, "pkg-open")["manifest"]["status"] == "ready"
 
     body = client.get("/projects/pkg-open/handoff/supplement").json()
-    asked = body["open_questions"]
-    assert [q["id"] for q in asked] == ["1", "6"]
-
-    r = client.put("/projects/pkg-open/handoff/supplement", json={"open_answers": {
-        asked[1]["key"]: {"question": asked[1]["question"], "text": "기한 2일 전, 1회"}}})
-    assert r.status_code == 200
-    assert r.json()["open_questions"][1]["answer"]["text"] == "기한 2일 전, 1회"
-    # 답하면 패키지가 낡는다 — 다음 생성이 그 답을 PRD에 넣는다.
-    assert client.get("/projects/pkg-open/handoff/package").json()["supplement_changed"] is True
-
-
-def test_sections_are_found_by_title_when_the_model_drops_the_numbers():
-    """실측(ws-g 두 번째 생성): 제목이 `## 목표와 성공 지표`로 번호 없이 나왔고, 번호로만
-    찾을 때 성공 지표 검사와 열린 질문 읽기가 모두 비었다."""
-    unnumbered = re.sub(r"^## \d+\. ", "## ", _PRD_SHAPES, flags=re.MULTILINE)
-    assert "## 목표와 성공 지표" in unnumbered
-    found = package.lint({"PRD.md": unnumbered})
-    assert [term for _, term in _kinds(found, "ai_goal")] == ["G-01"]
-    assert [term for _, term in _kinds(found, "acceptance")] == ["R-10", "R-15"]
-    assert [q.id for q in package.open_questions(unnumbered, "ko")] == ["1", "6"]
-
-
-# ---- 열린 질문의 분류와 보기 ----
-
-_PRD_TRIAGED = """# 샘플몰 안전ON PRD
-
-## 5. 요구사항과 수용 기준
-
-- **R-04 개인 링크** [S-03]: 링크를 보낸다. 수용 기준: 앱 설치 없이 완료한다. — PM 결정 (envision/prfaq-clarifying-questions.md Q3)
-
-## 9. 열린 질문
-
-| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 |
-|---|---|---|---|---|
-| O-01 | 증빙 기록의 보존 기간은 얼마인가? (R-08, C-05) | PM | 빌드 전 | — |
-| O-02 | 개인 링크의 유효 기간은? (R-04) | PM | **빌드 전** | — |
-| O-03 | 지원 외국어의 최종 목록은? (R-02) | PM | 빌드 중 | 목록을 바꿀 수 있게 두고 프로토타입의 영어·베트남어로 시작 |
-| O-04 | 파일럿 개발 규모는? (C-08) | 개발팀 | 빌드 전 | — |
-| O-05 | 만족도 버튼의 형태는? | PM | 빌드 중 | — |
-| O-06 | 확인 문제의 통과 기준은? | PM | 빌드 전 | — |
-| O-07 | 지점당 단말 대수는? (A-07) | PM | 나중에 | — |
-"""
-
-
-def test_open_questions_split_into_before_and_during_build():
-    found = package.open_questions(_PRD_TRIAGED, "ko")
-    assert [(q.id, q.blocking) for q in found] == [
-        ("O-01", True), ("O-02", True), ("O-03", False), ("O-05", False), ("O-06", True),
-        ("O-07", True)]  # 알 수 없는 시점은 빌드 전으로 묻는다
-    assert found[2].until == "목록을 바꿀 수 있게 두고 프로토타입의 영어·베트남어로 시작"
-    assert found[0].until == ""
-
-
-def test_a_triage_without_grounds_is_flagged():
-    """빌드 전은 막는 R/C를 대고, 빌드 중은 그동안 어떻게 만들지를 적는다. 시점은 둘 중 하나다."""
-    found = package.lint({"PRD.md": _PRD_TRIAGED})
-    assert [term for _, term in _kinds(found, "triage")] == ["O-05", "O-06", "나중에"]
-    # 시점 열이 없는 PRD는 머리 줄 하나로 알린다.
-    old = _kinds(package.lint({"PRD.md": _PRD_SHAPES}), "triage")
-    assert len(old) == 1 and old[0][1] == "시점"
-
-
-def test_the_prd_prompt_asks_for_the_triage_columns():
-    prompt = package.build_prompt("prd", language="ko", readiness=assess(B, {}),
-                                  record=supplement.Supplement(), sources={})
-    assert "| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 |" in prompt
-    assert '"빌드 전"' in prompt and '"빌드 중"' in prompt
-    assert "Never invent a value" in prompt
-
-
-_SRC = [D + "envision/prfaq-clarifying-questions.md", D + "go-to-market/gtm-questions.md"]
-
-
-def _asked():
-    return [q for q in package.open_questions(_PRD_TRIAGED, "ko") if q.blocking]
-
-
-def test_options_keep_only_grounded_unmarked_choices_in_a_neutral_order():
-    reply = "```json\n" + json.dumps({"questions": [
-        {"id": "O-01", "options": [
-            {"text": "5년", "source": "go-to-market/gtm-questions.md Q4"},
-            {"text": "3년", "source": "discovery/envision/prfaq-clarifying-questions.md Q2"},
-            {"text": "10년", "source": "legal/somewhere.md"},          # 실은 원본이 아니다
-            {"text": "3년", "source": "envision/prfaq-clarifying-questions.md"}]},  # 중복
-        {"id": "O-02", "options": [
-            {"text": "7일 (추천)", "source": "envision/prfaq-clarifying-questions.md Q3"},
-            {"text": "30일", "source": "envision/prfaq-clarifying-questions.md Q3"}]},
-        {"id": "O-06", "options": [
-            {"text": "3문항 중 2개", "source": "envision/prfaq-clarifying-questions.md Q5"}]},
-        {"id": "O-99", "options": [
-            {"text": "x", "source": "envision/prfaq-clarifying-questions.md"},
-            {"text": "y", "source": "envision/prfaq-clarifying-questions.md"}]},
-    ]}, ensure_ascii=False) + "\n```"
-    options = package.parse_options(reply, _asked(), _SRC)
-    by_id = {q.id: options.get(supplement.open_key(q.question)) for q in _asked()}
-    assert sorted(o.text for o in by_id["O-01"]) == ["3년", "5년"]
-    assert by_id["O-02"] is None   # 추천 표시 → 서술형
-    assert by_id["O-06"] is None   # 근거 있는 보기가 둘 미만 → 서술형
-    assert len(options) == 1       # 모르는 id는 버린다
-    # 순서는 모델이 준 순서가 아니라 문장으로 정해진다.
-    flipped = reply.replace('"5년"', '"__"').replace('"3년", "source": "discovery', '"5년", "source": "discovery').replace('"__"', '"3년"')
-    again = package.parse_options(flipped, _asked(), _SRC)
-    assert [o.text for o in again[supplement.open_key(_asked()[0].question)]] == [
-        o.text for o in by_id["O-01"]]
-    with pytest.raises(ValueError):
-        package.parse_options("보기를 만들 수 없습니다.", _asked(), _SRC)
-
-
-def test_an_option_that_points_at_another_option_is_dropped():
-    """실측(ws-g 인스턴스 생성): "위 전체 항목에 … 추가"가 순서를 다시 정한 뒤 첫 번째로 보였다.
-    "범위의"·"위험성평가"처럼 단어 안의 "위"는 건드리지 않는다."""
-    src = "envision/prfaq-clarifying-questions.md Q7"
-    texts = ["서명 시각과 단말만 남긴다.", "위 전체 항목에 영상 시청 기록을 추가한다.",
-             "위험성평가 참여 기록까지 남긴다.", "법무가 정한 범위의 항목만 남긴다.",
-             "All of the above, plus video logs."]
-    reply = json.dumps({"questions": [{"id": "O-01", "options": [
-        {"text": t, "source": src} for t in texts]}]}, ensure_ascii=False)
-    kept = package.parse_options(reply, _asked(), _SRC)[supplement.open_key(_asked()[0].question)]
-    assert sorted(o.text for o in kept) == sorted([texts[0], texts[2], texts[3]])
-
-
-def _triaged_writer(calls: list, *, options_reply: str | Exception):
-    async def call(prompt, progress=None):
-        if "Write the options" in prompt:
-            calls.append(("options", prompt))
-            if isinstance(options_reply, Exception):
-                raise options_reply
-            return options_reply
-        step = _step_of(prompt)
-        calls.append((step, prompt))
-        return _PRD_TRIAGED if step == "prd" else DOCS[step]
-    return call
-
-
-def test_the_options_step_asks_only_the_pm_decisions_needed_before_build():
-    s3 = FakeS3Store()
-    files = {p: f"# {p}\n" for p in B + _SRC}
-    reply = json.dumps({"questions": [{"id": "O-01", "options": [
-        {"text": "3년", "source": "envision/prfaq-clarifying-questions.md Q2"},
-        {"text": "5년", "source": "go-to-market/gtm-questions.md Q4"}]}]}, ensure_ascii=False)
-    calls: list = []
-    done = _run(_generate(s3, files, _triaged_writer(calls, options_reply=reply), paths=B + _SRC))
-    assert done.status == "ready" and [s.status for s in done.steps][-1] == "done"
-    prompt = dict(calls)["options"]
-    assert "- O-01:" in prompt and "- O-06:" in prompt
-    assert "O-03:" not in prompt and "O-04:" not in prompt  # 빌드 중 · 개발팀
-    saved = _run(package.load_options(s3))
-    assert [o.text for o in saved[supplement.open_key(_asked()[0].question)]] in (
-        ["3년", "5년"], ["5년", "3년"])
-    # 보기는 검사하지 않는다 — 문서가 아니다.
-    assert all(f.file != package.OPTIONS for f in done.findings)
-
-
-def test_a_failed_options_step_leaves_the_package_complete():
-    s3 = FakeS3Store()
-    files = {p: f"# {p}\n" for p in B}
-    done = _run(_generate(s3, files, _triaged_writer([], options_reply=RuntimeError("x"))))
-    assert done.status == "ready" and done.error is None
-    assert [(s.status, s.error) for s in done.steps][-1] == ("failed", "generation_failed")
-    assert _run(package.load_options(s3)) == {}
-
-
-def test_route_supplement_offers_options_and_folds_decisions_for_later(env):
-    client, _, writer = env
-    _seed(client, "pkg-triage", {p: f"# {p}\n" for p in B + _SRC})
-    reply = json.dumps({"questions": [{"id": "O-01", "options": [
-        {"text": "3년", "source": "envision/prfaq-clarifying-questions.md Q2"},
-        {"text": "5년", "source": "go-to-market/gtm-questions.md Q4"}]}]}, ensure_ascii=False)
-    writer["call"] = _triaged_writer([], options_reply=reply)
-    client.post("/projects/pkg-triage/handoff/package")
-    assert _wait_settled(client, "pkg-triage")["manifest"]["status"] == "ready"
-    body = client.get("/projects/pkg-triage/handoff/supplement").json()
-    assert [(q["id"], len(q["options"])) for q in body["open_questions"]] == [
-        ("O-01", 2), ("O-02", 0), ("O-06", 0), ("O-07", 0)]
+    assert body["has_package"]
+    assert [(q["id"], q["external"], len(q["options"])) for q in body["open_questions"]] == [
+        ("O-01", True, 0), ("O-02", False, 2), ("O-06", False, 0), ("O-07", False, 0)]
     assert [(q["id"], bool(q["until"])) for q in body["open_deferred"]] == [
         ("O-03", True), ("O-05", False)]
 
-
-# ---- 외부 확인 질문과 직전 PRD의 열린 질문 ----
-
-_PRD_V2 = """# 샘플몰 안전ON PRD
-
-## 9. 열린 질문
-
-| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 |
-|---|---|---|---|---|
-| O-01 | 전자 기록이 종이와 같은 증빙 효력을 갖는가? (C-01, R-11) | PM(외부 확인) | 빌드 전 | — |
-| O-02 | 확인 문제의 통과 기준은? (R-07) | PM | 빌드 전 | — |
-"""
-
-
-def test_an_external_check_is_a_pm_row_without_options():
-    found = package.open_questions(_PRD_V2, "ko")
-    assert [(q.id, q.external) for q in found] == [("O-01", True), ("O-02", False)]
-    prompt = package.build_prompt("prd", language="ko", readiness=assess(B, {}),
-                                  record=supplement.Supplement(), sources={})
-    assert '"PM(외부 확인)"' in prompt and "a fact the PM must obtain from someone else" in prompt
-
-
-def test_a_question_being_checked_goes_to_the_prd_as_still_open():
-    q = "전자 기록이 종이와 같은 증빙 효력을 갖는가? (C-01, R-10)"
-    record = supplement.Supplement(open_answers={supplement.open_key(q): supplement.OpenAnswer(
-        question=q, pending_with="법무팀")})
-    prompt = package.build_prompt("prd", language="ko", readiness=assess(B, {}), record=record,
-                                  sources={})
-    facts = json.loads(prompt.split("```json\n", 1)[1].split("\n```", 1)[0])
-    assert facts["open questions being checked with someone else"] == [
-        {"question": q, "checking with": "법무팀"}]
-    assert facts["PM answers given at handoff"] == []   # 확인 중은 답이 아니다
-    assert '"확인 중: <who>"' in prompt
-
-
-def test_the_next_prd_is_given_the_last_open_questions_and_a_lost_one_is_flagged():
-    """실측(ws-g): 앞 PRD의 "개인 링크의 유효 기간"이 다음 생성에서 아무 표시 없이 사라졌다."""
-    s3 = FakeS3Store()
-    files = {p: f"# {p}\n" for p in B}
-    answered_q = "만족도 버튼의 형태는? (R-14)"   # 번호가 달라도 같은 질문이다
-
-    def writer(prd, calls):
-        async def call(prompt, progress=None):
-            if "Write the options" in prompt:
-                return '{"questions": []}'
-            step = _step_of(prompt)
-            calls.append((step, prompt))
-            return prd if step == "prd" else DOCS[step]
-        return call
-
-    _run(_generate(s3, files, writer(_PRD_TRIAGED, [])))
-    # 인계 탭에서 하나에 답했다 — 그 질문이 빠지는 것은 정상이다.
-    _run(supplement.save(s3, supplement.Supplement(open_answers={
-        supplement.open_key(answered_q): supplement.OpenAnswer(question=answered_q, text="5점 척도")})))
-    calls: list = []
-    done = _run(_generate(s3, files, writer(_PRD_V2, calls)))
-    facts = json.loads(dict(calls)["prd"].split("```json\n", 1)[1].split("\n```", 1)[0])
-    previous = facts["open questions in the previous version of this PRD"]
-    assert [r["질문"] for r in previous][:2] == ["증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)",
-                                              "개인 링크의 유효 기간은? (R-04)"]
-    assert previous[0]["시점"] == "빌드 전" and previous[3]["답할 사람"] == "개발팀"
-    assert "Carry every one of them over" in dict(calls)["prd"]
-    # 다른 단계에는 싣지 않는다.
-    assert "previous version" not in json.dumps(
-        json.loads(dict(calls)["validation"].split("```json\n", 1)[1].split("\n```", 1)[0]))
-    dropped = [f.term for f in done.findings if f.kind == "dropped"]
-    assert dropped == ["증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)", "개인 링크의 유효 기간은? (R-04)",
-                       "지원 외국어의 최종 목록은? (R-02)", "지점당 단말 대수는? (A-07)"]
-    # 만족도 버튼은 답했고, 통과 기준은 새 PRD에 있으며, 파일럿 규모는 개발팀 몫이다.
-    assert done.carried and all(f.line == 5 for f in done.findings if f.kind == "dropped")
+    asked = body["open_questions"]
+    r = client.put("/projects/pkg-open/handoff/supplement", json={"open_answers": {
+        asked[1]["key"]: {"question": asked[1]["question"], "text": "7일"}}})
+    assert r.status_code == 200
+    assert r.json()["open_questions"][1]["answer"]["text"] == "7일"
+    # 답하면 패키지가 낡는다 — 다음 생성이 그 답을 쓴다.
+    assert client.get("/projects/pkg-open/handoff/package").json()["supplement_changed"] is True
