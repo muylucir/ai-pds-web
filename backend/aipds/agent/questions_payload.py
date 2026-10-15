@@ -1,7 +1,7 @@
 # backend/aipds/agent/questions_payload.py — ask_questions 페이로드 정규화.
 #
 # 왜 필요한가: 마크다운 경로(parsers/questions.py)는 is_other를 코드가 판정한다
-# (letter == "X" 또는 텍스트가 "other"로 시작). 반면 ask_questions는 모델이 만든
+# (parsers.questions.looks_like_other). 반면 ask_questions는 모델이 만든
 # dict를 그대로 UI로 흘려보내므로, 프롬프트 규약(QUESTIONS_SCHEMA_HINT)을 어긴
 # 페이로드가 그대로 렌더된다. 실측 사고: is_other가 두 개(B와 X) 와서 두 옵션이
 # 모두 "Other — 직접 입력"으로 렌더됐고, 둘이 같은 otherActive 상태를 공유해
@@ -17,6 +17,8 @@ import json
 import logging
 from typing import Any
 
+from aipds.parsers.questions import looks_like_other
+
 _log = logging.getLogger("aipds.agent")
 
 # 마크다운 파서와 동일한 순서(_LETTERS는 builder의 A..J와 별개 — 질문 옵션은
@@ -29,7 +31,7 @@ _OTHER_TEXT = "Other — 직접 입력"
 def _looks_like_other(letter: str, text: str) -> bool:
     """마크다운 파서(parsers/questions.py)와 같은 규칙을 쓴다 — 두 경로가
     갈리면 같은 질문이 입력 형식에 따라 다르게 렌더된다."""
-    return letter == _OTHER_LETTER or text.strip().lower().startswith("other")
+    return looks_like_other(letter, text)
 
 
 def _normalize_options(raw_options: list[Any], *, guess_other: bool = True) -> list[dict]:
