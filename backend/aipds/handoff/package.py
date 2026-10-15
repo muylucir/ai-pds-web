@@ -9,8 +9,9 @@
 #   decisions.md       결정 장부 — PM이 고른 것과 AI 제안을 그대로 받은 것(handoff/ledger, 모델 없음)
 #   README.md          읽는 순서와 쓰는 규칙(고정 문구)
 #
-# 원본은 zip에 그대로 들어간다(routes/handoff). 빌드 지시서와 디자인 컨텍스트는 뺀다 — 프로토타입의
-# 기술 선택과 생김새이고, 원본만 받은 하네스가 프로토타입의 기술을 운영 구성으로 승계한 경로다.
+# Discovery 문서와 그 근거 원본은 zip에 그대로 들어간다(routes/handoff, `archive_originals`). 질문
+# 파일은 결정 장부가 대신하고, 빌드 지시서·디자인 컨텍스트·설문지는 뺀다 — 빌드 지시서는 원본만 받은
+# 하네스가 프로토타입의 기술을 운영 구성으로 승계한 경로다.
 #
 # 모델이 쓰는 것은 열린 결정 하나다(STEPS). 근거는 AI-PLC 산출물·보완 답·판정 결과뿐이고, 줄마다
 # 원본 위치를 댄다. 마지막 단계는 인계 탭의 보완 질문에 쓸 보기(`options.json`)다. 패키지에 넣지
@@ -78,9 +79,14 @@ _PROGRESS_EVERY_S = 5.0
 #: 디자인 컨텍스트는 화면의 생김새이고, 설문지는 답이 아니라 문항이다.
 _EXCLUDED_NAMES = frozenset({"build-instructions.md", "design-context.md",
                              "validation-questionnaire.md"})
-#: zip에 넣지 않는 원본. 실측(하네스 시험 ws-g): 원본만 받은 쪽이 빌드 지시서의 기술 구성을 운영
-#: 구성으로 승계했다. 디자인 컨텍스트는 프로토타입의 생김새라 제품의 디자인이 아니다.
-ARCHIVE_EXCLUDED = frozenset({"build-instructions.md", "design-context.md"})
+#: zip에 넣지 않는 원본. 빌드 지시서는 프로토타입의 기술 구성이다 — 실측(하네스 시험 ws-g): 원본만
+#: 받은 쪽이 그것을 운영 구성으로 승계했다. 디자인 컨텍스트는 프로토타입의 생김새라 제품의 디자인이
+#: 아니고, 설문지는 문항일 뿐 결과는 검증 결과에 있다.
+ARCHIVE_EXCLUDED = frozenset({"build-instructions.md", "design-context.md",
+                              "validation-questionnaire.md"})
+#: 질문 파일. 답한 결정은 결정 장부가 그대로 옮기고, 나머지는 승인·모드 선택 같은 진행 기록이다 —
+#: 실측(ws-g 인스턴스 패키지)에서 원본 26개 중 15개가 질문 파일이라 "문서를 다 넘긴다"로 보였다.
+_QUESTION_SUFFIX = "-questions.md"
 #: 앞에 있을수록 먼저 싣는다. 크기 상한에 걸리면 뒤가 잘린다.
 _PRIORITY = (
     "discovery-document.md", "spec-as-built.md", "prototype-spec.md", "PROTOTYPE-",
@@ -172,8 +178,10 @@ def select_sources(paths: Sequence[str]) -> list[str]:
 
 
 def archive_originals(paths: Sequence[str]) -> list[str]:
-    """zip의 `discovery/` 아래에 그대로 넣는 원본."""
+    """zip의 `discovery/` 아래에 그대로 넣는 원본 — Discovery 문서와 그 근거(명세·검증·분석).
+    목록이 아니라 규칙으로 고른다: 출발점마다 원본의 구성이 다르다."""
     return [p for p in paths if p.startswith("aiplc-docs/discovery/")
+            and not p.endswith(_QUESTION_SUFFIX)
             and p.rsplit("/", 1)[-1] not in ARCHIVE_EXCLUDED]
 
 
@@ -750,7 +758,7 @@ Discovery에서 정한 "무엇을 만드는가"를 개발에 넘깁니다. 어�
 3. `decisions.md` — 결정 장부. 각 결정을 PM이 골랐는지, AI 제안을 그대로 받았는지 보여 줍니다.
 4. `discovery/` 아래 나머지 — 근거 원본. 프로토타입 명세(`prototype/prototype-spec.md`)의 기능·흐름·
    데이터 모양, 검증 계획과 결과(`prototype/validation-*.md`), 검증 후 바뀐 것(`prototype/iteration-log.md`),
-   단계별 질문과 답(`*-questions.md`)이 있습니다.
+   비즈니스 맥락과 페인 포인트·해법 분석이 있습니다. 단계별 질문과 답은 `decisions.md`에 옮겼습니다.
 5. `uploads/` — PM이 올린 원자료(있는 것만). 실제 양식·규정·명단의 모양입니다.
 
 ## 이 패키지를 쓰는 규칙
@@ -780,8 +788,8 @@ development harness can take this directory as its input as is.
 3. `decisions.md` — decision ledger: whether the PM chose each decision or kept an AI suggestion.
 4. The rest of `discovery/` — the source originals: the prototype spec (`prototype/prototype-spec.md`) with
    features, flows and data shapes, the validation plan and results (`prototype/validation-*.md`), what
-   changed after validation (`prototype/iteration-log.md`), and each stage's questions and answers
-   (`*-questions.md`).
+   changed after validation (`prototype/iteration-log.md`), and the business context and pain point and
+   solution analyses. Each stage's questions and answers are in `decisions.md`.
 5. `uploads/` — source material the PM uploaded, if any: the shape of real forms, rules and rosters.
 
 ## Rules for using this package

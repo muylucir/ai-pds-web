@@ -600,7 +600,7 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.contains.document": "discovery/discovery-document.md: the main document — what to build, why and for whom, included as it is",
   "handoff.contains.open": "open-decisions.md: decisions still open — before or during the build, who answers, how to build until then, where the sources raise it",
   "handoff.contains.ledger": "decisions.md: decision ledger — for each answer in the question files, whether the PM chose it or kept an AI suggestion, copied without a model",
-  "handoff.contains.originals": "The Discovery originals and uploaded source material, as they are (without the build instructions and design context) · README.md: reading order and rules",
+  "handoff.contains.originals": "The evidence among the Discovery originals and uploaded source material, as they are — the decision ledger replaces the stage question files, and the build instructions, design context and questionnaire are left out · README.md: reading order and rules",
   "handoff.contains.noSource": "Prototype source code is not included. Coding assistants would build on top of the mock-up.",
   "handoff.section.problem": "Problem and evidence",
   "handoff.section.audience": "Target users",

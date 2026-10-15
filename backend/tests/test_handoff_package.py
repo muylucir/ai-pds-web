@@ -84,13 +84,17 @@ def test_sources_skip_build_instructions_design_and_survey_forms_and_lead_with_t
         D + "envision/pain-point-questions.md"]
 
 
-def test_the_archive_keeps_the_originals_but_not_the_prototype_build_instructions_or_design():
-    """실측(하네스 시험 ws-g): 원본만 받은 쪽이 빌드 지시서의 기술 구성을 운영 구성으로 승계했다."""
+def test_the_archive_keeps_the_document_and_its_evidence_but_not_process_files():
+    """실측(하네스 시험 ws-g): 원본만 받은 쪽이 빌드 지시서의 기술 구성을 운영 구성으로 승계했다.
+    실측(ws-g 인스턴스 패키지): 원본 26개 중 15개가 질문 파일이었다 — 답은 결정 장부에 있다."""
     paths = [D + "prototype/build-instructions.md", D + "prototype/design-context.md",
              D + "prototype/validation-questionnaire.md", D + "discovery-document.md",
+             D + "envision/pain-point-questions.md", D + "prototype/build-decision-questions.md",
+             D + "prototype/validation-results.md", D + "solution-analysis/identified-solutions.md",
              "aiplc-docs/audit.md"]
     assert package.archive_originals(paths) == [
-        D + "prototype/validation-questionnaire.md", D + "discovery-document.md"]
+        D + "discovery-document.md", D + "prototype/validation-results.md",
+        D + "solution-analysis/identified-solutions.md"]
 
 
 def test_the_prompt_asks_only_for_what_the_files_do_not_give():
@@ -630,6 +634,7 @@ def test_route_generates_views_and_downloads(env):
     client, s3, _ = env
     files = ({p: f"# {p}\n" for p in B}
              | {D + "prototype/build-instructions.md": "Node.js + PostgreSQL\n",
+                D + "envision/pain-point-questions.md": "# Q\n",
                 D + "prototype/design-context.md": "# 색\n",
                 "prototype/src/index.ts": "export {}\n"})
     _seed(client, "pkg-b", files)
@@ -651,9 +656,9 @@ def test_route_generates_views_and_downloads(env):
     assert {"README.md", "open-decisions.md", "decisions.md"} <= set(names)
     assert "discovery/use-case-intake/use-cases.md" in names
     assert zf.read("uploads/ab12cd34/동의서.pdf") == b"%PDF-1.7 bytes"   # 업로드는 바이트 그대로
-    # 빌드 지시서·디자인 컨텍스트·프로토타입 소스·감사 로그·보기·이전 구성의 문서는 넣지 않는다.
-    assert not any(n.endswith(("build-instructions.md", "design-context.md", "audit.md"))
-                   or n.startswith("prototype/") for n in names)
+    # 질문 파일·빌드 지시서·디자인 컨텍스트·프로토타입 소스·감사 로그·보기·이전 구성의 문서는 넣지 않는다.
+    assert not any(n.endswith(("-questions.md", "build-instructions.md", "design-context.md",
+                               "audit.md")) or n.startswith("prototype/") for n in names)
     assert package.OPTIONS not in names and "PRD.md" not in names
 
 
