@@ -90,7 +90,7 @@ const VIEW: SupplementView = {
       in_goals: false },
     { key: `${D}envision/prfaq-clarifying-questions.md#1`, file: `${D}envision/prfaq-clarifying-questions.md`,
       number: 1, ask: "제품명은?", answer: "A", stage: "envision",
-      choices: ["메가마트 안전ON"], note: "페인 포인트 분석 기반 제안", remark: "", confirmed_at: "t",
+      choices: ["샘플몰 안전ON"], note: "페인 포인트 분석 기반 제안", remark: "", confirmed_at: "t",
       in_prd: [], in_goals: false },
   ],
   open_questions: [],
@@ -126,7 +126,7 @@ describe("SupplementForm", () => {
   });
 
   it("shows the decision itself, grouped by Discovery stage", () => {
-    // 실측(industry-safe-law): 확인 항목 40개가 "고른 답: A · strategy-questions.md"로만 보였다.
+    // 실측(ws-g): 확인 항목 40개가 "고른 답: A · strategy-questions.md"로만 보였다.
     render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     expect(screen.getByText("구독형 — 매장 수 기준 월 과금")).toBeInTheDocument();
@@ -183,7 +183,7 @@ describe("SupplementForm", () => {
 });
 
 describe("SupplementForm — what the last PRD left open", () => {
-  // 실측(industry-safe-law): 섹션이 모두 sourced라 보완 질문이 0개였는데, PRD 9번에는 보존 기간·
+  // 실측(ws-g): 섹션이 모두 sourced라 보완 질문이 0개였는데, PRD 9번에는 보존 기간·
   // 권한·재알림 규칙처럼 구현을 막는 PM 결정이 열려 있었다.
   const OPEN: SupplementView = {
     ...VIEW, has_package: true, questions: [], superseded: [],

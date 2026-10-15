@@ -1,6 +1,6 @@
 # backend/tests/test_handoff_readiness.py — handoff/readiness.assess
 #
-# 경로 모양은 2026-10-09 드릴 버킷의 실제 프로젝트를 따른다: A.1은 industry-safe-law
+# 경로 모양은 2026-10-09 드릴 버킷의 실제 프로젝트를 따른다: A.1은 ws-g
 # (Strategy·GTM까지 간 유일한 프로젝트), B는 test2222(Envision 없이 v0.9 Discovery
 # Document를 쓴 프로젝트). EP1은 실측이 없어 룰의 경로로 만든다.
 from __future__ import annotations
@@ -264,7 +264,7 @@ def test_route_unknown_project_is_404():
 
 
 def test_accepted_suggestions_carry_the_decision_not_just_the_letter():
-    """실측(industry-safe-law): 확인 항목 40개가 전부 "고른 답: A"로 보여 무엇을 확인하는지 알 수 없었다."""
+    """실측(ws-g): 확인 항목 40개가 전부 "고른 답: A"로 보여 무엇을 확인하는지 알 수 없었다."""
     path = D + "product-strategy/strategy-questions.md"
     first, second, fourth = assess([path], {path: QUESTIONS}).ai_defaults.items
     assert first.stage == "product_strategy"

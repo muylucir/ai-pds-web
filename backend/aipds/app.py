@@ -556,12 +556,12 @@ def handoff_writer_factory(project_id: str):
     """인계 패키지(PRD·검증 보고·남은 작업)를 한 번에 쓰는 단발 호출자.
 
     문항 생성과 같은 모양이고 출력 상한이 다르다. Opus 5.5 이후 모델은 생각을 끌 수 없고 생각
-    토큰도 max_tokens에 든다 — 실측(industry-safe-law, Opus 5.5)에서 32000으로는 PRD 본문
+    토큰도 max_tokens에 든다 — 실측(ws-g, Opus 5.5)에서 32000으로는 PRD 본문
     25,279자에서 잘렸다(MaxTokensReachedException). 단계별 길이 상한(handoff/package)과 함께
     64000을 준다. 호출은 요청 밖의 백그라운드 작업에서 돈다.
 
     읽기 제한도 다르다. Strands BedrockModel은 스트림에서 120초 동안 아무것도 오지 않으면
-    끊는다 — 실측(industry-safe-law, 원본 25개·154KB)에서 첫 출력이 그보다 늦게 나와
+    끊는다 — 실측(ws-g, 원본 25개·154KB)에서 첫 출력이 그보다 늦게 나와
     `The read operation timed out`으로 두 번 실패했다. 생성 상한(package.CALL_TIMEOUT_S)과
     같은 값을 준다. 요청이 아니라 백그라운드 작업이라 오래 기다려도 막히는 것이 없다.
     """
