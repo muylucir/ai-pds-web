@@ -832,7 +832,7 @@ def test_route_reset_is_refused_while_generating(env, monkeypatch):
 def test_the_zip_and_its_folder_share_one_name():
     """zip 이름, 그 안의 폴더, 시작 프롬프트의 경로가 한 함수에서 나온다. 가져온 프로젝트의 id는
     생성 화면의 규칙(영문·숫자·_·-)을 따르지 않을 수 있다."""
-    assert package.archive_folder("industry-safe-law") == "industry-safe-law-handoff"
+    assert package.archive_folder("sample-mall") == "sample-mall-handoff"
     assert package.archive_folder("안전 프로젝트") == "project-handoff"
     assert package.archive_folder("ws_a.v2 (copy)") == "ws_a.v2-copy-handoff"
     assert "./ws-x-handoff/vision.md" in package.start_prompt("en", package.archive_folder("ws-x"))

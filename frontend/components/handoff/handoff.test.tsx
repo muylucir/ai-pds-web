@@ -405,7 +405,7 @@ describe("handoff api", () => {
   });
 
   it("names the zip after the folder inside it, with the same rule as the server", () => {
-    expect(archiveFolder("industry-safe-law")).toBe("industry-safe-law-handoff");
+    expect(archiveFolder("sample-mall")).toBe("sample-mall-handoff");
     expect(archiveFolder("안전 프로젝트")).toBe("project-handoff");
     expect(archiveFolder("ws_a.v2 (copy)")).toBe("ws_a.v2-copy-handoff");
   });
