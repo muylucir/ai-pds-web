@@ -806,6 +806,19 @@ def test_options_keep_only_grounded_unmarked_choices_in_a_neutral_order():
         package.parse_options("보기를 만들 수 없습니다.", _asked(), _SRC)
 
 
+def test_an_option_that_points_at_another_option_is_dropped():
+    """실측(ws-g 인스턴스 생성): "위 전체 항목에 … 추가"가 순서를 다시 정한 뒤 첫 번째로 보였다.
+    "범위의"·"위험성평가"처럼 단어 안의 "위"는 건드리지 않는다."""
+    src = "envision/prfaq-clarifying-questions.md Q7"
+    texts = ["서명 시각과 단말만 남긴다.", "위 전체 항목에 영상 시청 기록을 추가한다.",
+             "위험성평가 참여 기록까지 남긴다.", "법무가 정한 범위의 항목만 남긴다.",
+             "All of the above, plus video logs."]
+    reply = json.dumps({"questions": [{"id": "O-01", "options": [
+        {"text": t, "source": src} for t in texts]}]}, ensure_ascii=False)
+    kept = package.parse_options(reply, _asked(), _SRC)[supplement.open_key(_asked()[0].question)]
+    assert sorted(o.text for o in kept) == sorted([texts[0], texts[2], texts[3]])
+
+
 def _triaged_writer(calls: list, *, options_reply: str | Exception):
     async def call(prompt, progress=None):
         if "Write the options" in prompt:
