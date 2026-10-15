@@ -289,8 +289,8 @@ def test_steps_write_the_open_decisions_then_the_ledger_and_readme():
     assert set(done.sources) == set(package.select_sources(B))
     assert s3.blobs[package.PACKAGE_PREFIX + "vision.md"].startswith("# 샘플몰 안전ON — Vision")
     prompt = s3.blobs[package.PACKAGE_PREFIX + "start-prompt.md"]
-    assert "/aidlc ./project-handoff/vision.md를 읽고" in prompt and "$aidlc" in prompt
-    assert "./project-handoff/discovery/discovery-document.md" in prompt
+    assert "/aidlc ./project-handoff/vision.md에 정리된 제품을 만들어 주세요." in prompt and "$aidlc" in prompt
+    assert "./project-handoff/discovery/에 있으니 discovery-document.md부터" in prompt
     assert s3.blobs[package.PACKAGE_PREFIX + "decisions.md"].startswith("# 결정 장부")
     readme = s3.blobs[package.PACKAGE_PREFIX + "README.md"]
     assert readme.startswith("# 개발 인계 패키지")
@@ -714,7 +714,7 @@ def test_route_generates_views_and_downloads(env):
     # 프로젝트 루트에 풀어도 패키지의 README가 프로젝트의 README를 덮지 않는다.
     assert {n.split("/", 1)[0] for n in zf.namelist()} == {"pkg-b-handoff"}
     prompt = zf.read("pkg-b-handoff/start-prompt.md").decode()
-    assert "/aidlc ./pkg-b-handoff/vision.md를 읽고" in prompt
+    assert "/aidlc ./pkg-b-handoff/vision.md에 정리된 제품을 만들어 주세요." in prompt
     assert "./pkg-b-handoff/decisions.md" in prompt
     # 화면이 보이는 시작 프롬프트도 같은 폴더를 가리킨다.
     assert "./pkg-b-handoff/vision.md" in body["files"]["start-prompt.md"]
