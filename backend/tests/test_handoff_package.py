@@ -289,7 +289,8 @@ def test_steps_write_the_open_decisions_then_the_ledger_and_readme():
     assert set(done.sources) == set(package.select_sources(B))
     assert s3.blobs[package.PACKAGE_PREFIX + "vision.md"].startswith("# 샘플몰 안전ON — Vision")
     prompt = s3.blobs[package.PACKAGE_PREFIX + "start-prompt.md"]
-    assert "/aidlc ./vision.md를 읽고" in prompt and "$aidlc" in prompt
+    assert "/aidlc ./aipds-handoff/vision.md를 읽고" in prompt and "$aidlc" in prompt
+    assert "./aipds-handoff/discovery/discovery-document.md" in prompt
     assert s3.blobs[package.PACKAGE_PREFIX + "decisions.md"].startswith("# 결정 장부")
     readme = s3.blobs[package.PACKAGE_PREFIX + "README.md"]
     assert readme.startswith("# 개발 인계 패키지")
@@ -709,10 +710,13 @@ def test_route_generates_views_and_downloads(env):
     assert r.status_code == 200
     assert "pkg-b-handoff.zip" in r.headers["content-disposition"]
     zf = zipfile.ZipFile(io.BytesIO(r.content))
-    names = zf.namelist()
+    # 모든 항목이 폴더 하나 아래다 — 어떤 도구로 풀어도 시작 프롬프트의 경로(./aipds-handoff/…)가
+    # 맞고, 프로젝트 루트에 풀어도 패키지의 README가 프로젝트의 README를 덮지 않는다.
+    assert {n.split("/", 1)[0] for n in zf.namelist()} == {package.ARCHIVE_ROOT}
+    names = [n.split("/", 1)[1] for n in zf.namelist()]
     assert {"README.md", "start-prompt.md", "vision.md", "decisions.md"} <= set(names)
     assert "discovery/use-case-intake/use-cases.md" in names
-    assert zf.read("uploads/ab12cd34/동의서.pdf") == b"%PDF-1.7 bytes"   # 업로드는 바이트 그대로
+    assert zf.read("aipds-handoff/uploads/ab12cd34/동의서.pdf") == b"%PDF-1.7 bytes"   # 바이트 그대로
     # 질문 파일·빌드 지시서·디자인 컨텍스트·프로토타입 소스·감사 로그·보기·이전 구성의 문서는 넣지 않는다.
     assert not any(n.endswith(("-questions.md", "build-instructions.md", "design-context.md",
                                "audit.md")) or n.startswith("prototype/") for n in names)

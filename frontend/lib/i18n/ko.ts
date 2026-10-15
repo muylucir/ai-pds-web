@@ -755,7 +755,7 @@ export const ko = {
   "handoff.pkg.truncated": "원본이 커서 {n}건은 일부만 실었습니다",
   "handoff.pkg.toStatus": "← 인계 준비 상태",
   "handoff.pkg.startPrompt": "AI-DLC 시작 프롬프트",
-  "handoff.pkg.startPromptHint": "패키지를 프로젝트 루트에 풀고 그대로 붙여 넣으세요",
+  "handoff.pkg.startPromptHint": "프로젝트 루트에서 압축을 풀면 aipds-handoff/ 디렉터리가 생깁니다. 그다음 그대로 붙여 넣으세요",
   "handoff.pkg.copy": "복사",
   "handoff.pkg.copied": "복사됨",
   "handoff.progress.title": "패키지 생성 진행",

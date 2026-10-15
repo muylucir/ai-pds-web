@@ -134,8 +134,8 @@ def _content_disposition(pid: str) -> str:
 
 @router.get("/projects/{pid}/handoff/package/archive")
 async def download_handoff_package(pid: str):
-    """패키지 파일 + Discovery 원본(`discovery/` 아래, 빌드 지시서·디자인 컨텍스트 제외) + 업로드
-    원자료(`uploads/` 아래). 프로토타입 소스는 넣지 않는다."""
+    """`aipds-handoff/` 아래에 패키지 파일 + Discovery 원본(`discovery/`, 근거만) + 업로드 원자료
+    (`uploads/`). 프로토타입 소스는 넣지 않는다."""
     s3 = app_module.s3_store_factory(pid)
     manifest = await package.load_manifest(s3)
     if manifest is None or manifest.status != "ready":
@@ -146,13 +146,16 @@ async def download_handoff_package(pid: str):
     raw = await package.read_sources(ws.runner.read_file, package.archive_originals(paths))
     uploads = await s3.list(_UPLOADS)
     buf = io.BytesIO()
+    # 모든 항목을 최상위 폴더 하나 아래 둔다 — 시작 프롬프트의 경로가 그것을 가리킨다
+    # (package.ARCHIVE_ROOT).
+    root = package.ARCHIVE_ROOT + "/"
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, text in built.items():
-            zf.writestr(name, text)
+            zf.writestr(root + name, text)
         for path, text in raw.items():
-            zf.writestr("discovery/" + path[len(_DISCOVERY):], text)
+            zf.writestr(root + "discovery/" + path[len(_DISCOVERY):], text)
         # 업로드는 바이트 그대로다 — 양식·규정의 원래 모양이 개발이 받을 입력이다.
         for key in uploads:
-            zf.writestr(key, await s3.get_bytes(key))
+            zf.writestr(root + key, await s3.get_bytes(key))
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": _content_disposition(pid)})
