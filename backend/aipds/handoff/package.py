@@ -941,12 +941,13 @@ _START_PROMPT = {
         "title": "# AI-DLC 시작 프롬프트",
         "lead": ("프로젝트 루트에서 이 패키지의 압축을 풀면 `{root}/` 디렉터리가 생깁니다. 그다음 AI-DLC에 아래 "
                  "요청을 그대로 붙여 넣으세요. 디렉터리 이름이나 위치를 바꿨다면 요청의 경로도 같이 바꿉니다."),
-        "first": "./{root}/vision.md를 읽고 그 문서가 설명하는 것을 만들어 주세요.",
-        "first_tech": ("./{root}/vision.md와 ./technical-environment.md를 읽고 그 문서들이 설명하는 것을 "
+        "first": "./{root}/vision.md에 정리된 제품을 만들어 주세요.",
+        "first_tech": ("./{root}/vision.md에 정리된 제품을 ./technical-environment.md의 기술 환경에 맞춰 "
                        "만들어 주세요."),
-        "rest": ("근거 자료는 ./{root}/discovery/ 아래에 있습니다(먼저 ./{root}/discovery/discovery-document.md). "
-                 "각 결정을 PM이 정했는지 AI 제안을 그대로 받았는지는 ./{root}/decisions.md에 있습니다. "
-                 "vision.md의 Open Questions 중 시점이 \"빌드 전\"인 것은 추측하지 말고 먼저 물어 주세요."),
+        "rest": ("근거 자료는 ./{root}/discovery/에 있으니 discovery-document.md부터 읽고, 각 결정을 PM이 직접 "
+                 "정했는지 AI 제안을 그대로 받았는지는 ./{root}/decisions.md에서 확인해 주세요. vision.md의 "
+                 "Open Questions 중 시점이 \"빌드 전\"인 항목은 추측으로 채우지 말고, 작업을 시작하기 전에 "
+                 "먼저 질문해 주세요."),
         "codex": "Codex CLI에서는 `/aidlc` 대신 `$aidlc`를 씁니다.",
         "tech_note": ("개발팀이 기술 스택·도구·금지 사항을 AI-DLC의 technical environment 문서로 프로젝트 루트에 "
                       "써 두었다면(`./technical-environment.md`), 이 요청을 씁니다."),
@@ -956,11 +957,13 @@ _START_PROMPT = {
         "lead": ("Unpacking this package at the project root creates the `{root}/` directory. Then paste the "
                  "request below into AI-DLC as it is. If you rename or move the directory, change the paths "
                  "in the request too."),
-        "first": "Read ./{root}/vision.md and build what it describes.",
-        "first_tech": "Read ./{root}/vision.md and ./technical-environment.md and build what they describe.",
-        "rest": ("The evidence is under ./{root}/discovery/ (start with ./{root}/discovery/discovery-document.md). "
-                 "./{root}/decisions.md shows whether the PM made each decision or kept an AI suggestion. Do "
-                 "not guess the Open Questions in vision.md marked \"Before build\" — ask them first."),
+        "first": "Build the product described in ./{root}/vision.md.",
+        "first_tech": ("Build the product described in ./{root}/vision.md, within the technical environment "
+                       "in ./technical-environment.md."),
+        "rest": ("The evidence is in ./{root}/discovery/, so start with discovery-document.md, and check "
+                 "./{root}/decisions.md to see whether the PM made each decision or kept an AI suggestion. "
+                 "Do not fill in the Open Questions in vision.md marked \"Before build\" with guesses; ask "
+                 "them before you start."),
         "codex": "Codex CLI uses `$aidlc` instead of `/aidlc`.",
         "tech_note": ("If the team has written its stack, tools and what is not allowed in AI-DLC's technical "
                       "environment document at the project root (`./technical-environment.md`), use this "
