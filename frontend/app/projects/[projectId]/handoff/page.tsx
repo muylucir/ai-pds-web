@@ -13,7 +13,8 @@ import { ReadinessPanel } from "@/components/handoff/ReadinessPanel";
 import { ResetDialog, savedAnswers } from "@/components/handoff/ResetDialog";
 import { SupplementForm } from "@/components/handoff/SupplementForm";
 import {
-  downloadPackage, getPackage, getReadiness, getSupplement, putSupplement, resetHandoff, startPackage,
+  archiveFolder, downloadPackage, getPackage, getReadiness, getSupplement, putSupplement, resetHandoff,
+  startPackage,
 } from "@/lib/api/handoff";
 import type { PackageView, SupplementUpdate } from "@/lib/api/handoff";
 import { ApiError } from "@/lib/api/client";
@@ -105,7 +106,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
       const blob = await downloadPackage(projectId);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `${projectId}-handoff.zip`;
+      a.download = `${archiveFolder(projectId)}.zip`;
       a.click();
       URL.revokeObjectURL(a.href);
     } catch {

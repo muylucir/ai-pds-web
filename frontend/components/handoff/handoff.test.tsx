@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
-import { FINDING_KINDS, getPackage, putSupplement, resetHandoff, startPackage } from "@/lib/api/handoff";
+import { FINDING_KINDS, archiveFolder, getPackage, putSupplement, resetHandoff, startPackage } from "@/lib/api/handoff";
 import { en } from "@/lib/i18n/en";
 import { ko } from "@/lib/i18n/ko";
 import type { PackageView, Readiness, SupplementView } from "@/lib/api/handoff";
@@ -402,6 +402,12 @@ describe("handoff api", () => {
                                 open_answers: {} });
     expect(body).toEqual({ answers: { "problem.evidence": { text: "x", unknown: false } }, confirmed: [],
                            open_answers: {} });
+  });
+
+  it("names the zip after the folder inside it, with the same rule as the server", () => {
+    expect(archiveFolder("industry-safe-law")).toBe("industry-safe-law-handoff");
+    expect(archiveFolder("안전 프로젝트")).toBe("project-handoff");
+    expect(archiveFolder("ws_a.v2 (copy)")).toBe("ws_a.v2-copy-handoff");
   });
 
   it("resets the whole handoff with one DELETE", async () => {

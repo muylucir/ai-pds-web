@@ -222,6 +222,13 @@ export async function getPackage(pid: string): Promise<PackageView> {
   return (await apiFetch<PackageView>(`${base(pid)}/package`))!;
 }
 
+/** zip 이름이자 그 안의 최상위 폴더 이름(`.zip` 제외). 서버 package.archive_folder와 같은 규칙이다 —
+ *  시작 프롬프트의 경로가 이 폴더를 가리키므로 저장되는 파일 이름도 같아야 한다. */
+export function archiveFolder(pid: string): string {
+  const safe = pid.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "project";
+  return `${safe}-handoff`;
+}
+
 export async function downloadPackage(pid: string): Promise<Blob> {
   const res = await fetch(`${API_BASE_URL}${base(pid)}/package/archive`, { credentials: CREDENTIALS });
   if (!res.ok) throw new ApiError(res.status, res.statusText);
