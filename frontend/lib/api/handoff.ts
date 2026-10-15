@@ -227,3 +227,9 @@ export async function downloadPackage(pid: string): Promise<Blob> {
   if (!res.ok) throw new ApiError(res.status, res.statusText);
   return res.blob();
 }
+
+/** 인계 탭을 완전히 초기화한다 — 패키지, 이전 판, 보완 답과 AI 제안 확인. Discovery 산출물은
+ *  그대로다. 생성 중이면 서버가 409로 거절한다. */
+export async function resetHandoff(pid: string): Promise<{ deleted: number }> {
+  return (await apiFetch<{ deleted: number }>(base(pid), { method: "DELETE" }))!;
+}

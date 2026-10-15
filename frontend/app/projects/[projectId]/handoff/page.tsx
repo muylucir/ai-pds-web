@@ -10,11 +10,13 @@ import { AppHeader } from "@/components/AppHeader";
 import { GenerationProgress } from "@/components/handoff/GenerationProgress";
 import { PackagePanel } from "@/components/handoff/PackagePanel";
 import { ReadinessPanel } from "@/components/handoff/ReadinessPanel";
+import { ResetDialog, savedAnswers } from "@/components/handoff/ResetDialog";
 import { SupplementForm } from "@/components/handoff/SupplementForm";
 import {
-  downloadPackage, getPackage, getReadiness, getSupplement, putSupplement, startPackage,
+  downloadPackage, getPackage, getReadiness, getSupplement, putSupplement, resetHandoff, startPackage,
 } from "@/lib/api/handoff";
 import type { PackageView, SupplementUpdate } from "@/lib/api/handoff";
+import { ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
 import { useT } from "@/lib/i18n/provider";
@@ -35,6 +37,9 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   const status = pkg?.manifest?.status;
   const generating = status === "generating";
@@ -108,7 +113,28 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
     }
   };
 
+  // 다시 생성과 달리 이어받을 직전 판과 보완 답까지 지운다(서버 handoff/package.reset).
+  const reset = async () => {
+    setResetBusy(true);
+    setResetError(null);
+    try {
+      await resetHandoff(projectId);
+      setResetOpen(false);
+      setPkg(null);
+      setMode(null);
+      setMessage(null);
+      supplement.reload();
+      await refreshPackage();
+    } catch (e) {
+      setResetError(e instanceof ApiError && e.status === 409 ? t("handoff.reset.busy") : t("handoff.reset.failed"));
+    } finally {
+      setResetBusy(false);
+    }
+  };
+
   const supplementView = supplement.data;
+  const answers = savedAnswers(supplementView);
+  const resettable = !!pkg?.manifest || answers > 0;
   const questionCount = (supplementView?.questions.length ?? 0) + (supplementView?.confirmations.length ?? 0)
     + (supplementView?.open_questions.length ?? 0);
   const openDecisions = supplementView?.has_package
@@ -118,13 +144,23 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
     <>
       <AppHeader activeTab="handoff" projectId={projectId} modelLabel={modelLabel} projectLanguage={language} />
       <main className="max-w-[1720px] mx-auto px-6 py-8">
-        <div className="mb-[18px]">
-          <h2 className="text-[22px] font-bold text-slate-900">
-            {shown === "supplement" ? `${t("handoff.title")} · ${t("handoff.supp.title")}` : t("handoff.title")}
-          </h2>
-          <p className="mt-0.5 text-[13px] text-slate-500">
-            {shown === "supplement" ? t("handoff.supp.lead") : t("handoff.lead")}
-          </p>
+        <div className="mb-[18px] flex items-start gap-4">
+          <div className="flex-1">
+            <h2 className="text-[22px] font-bold text-slate-900">
+              {shown === "supplement" ? `${t("handoff.title")} · ${t("handoff.supp.title")}` : t("handoff.title")}
+            </h2>
+            <p className="mt-0.5 text-[13px] text-slate-500">
+              {shown === "supplement" ? t("handoff.supp.lead") : t("handoff.lead")}
+            </p>
+          </div>
+          {resettable && shown !== "supplement" && (
+            <button type="button" disabled={generating}
+                    title={generating ? t("handoff.reset.busy") : undefined}
+                    onClick={() => { setResetError(null); setResetOpen(true); }}
+                    className="px-3 py-1.5 rounded-lg border border-rose-200 text-[13px] text-rose-700 hover:bg-rose-50 disabled:opacity-45">
+              {t("handoff.reset.open")}
+            </button>
+          )}
         </div>
 
         {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
@@ -170,6 +206,10 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
           />
         )}
       </main>
+      {resetOpen && (
+        <ResetDialog answers={answers} busy={resetBusy} error={resetError}
+                     onCancel={() => setResetOpen(false)} onConfirm={() => void reset()} />
+      )}
     </>
   );
 }
