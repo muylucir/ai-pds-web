@@ -99,6 +99,23 @@ _CAT_HEADER = re.compile(r"^##\s+(?!Question\b)(.+?)\s*$", re.MULTILINE)
 _OPTION = re.compile(r"^([A-J]|X)\)\s+(.*)$")
 _ANSWER = re.compile(r"^\[Answer\]:\s*(.*)$")
 _RECO = re.compile(r"\s*←\s*(추천|recommended).*$", re.IGNORECASE)
+#: 번역된 자유 입력 보기. 상류 템플릿은 `X) Other (please describe after [Answer]: tag below)`인데,
+#: ko 프로젝트의 에이전트는 라벨을 옮기면서 글자까지 순서대로 붙인다 — 실측(ap-idp-project-v1):
+#: 질문 파일의 기타 보기 61개가 전부 `D) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)` 모양이었고,
+#: 일반 보기로 읽혀 다중 선택에서는 쓸 칸이 없었다(단일 선택은 부연 칸이 열려 정상처럼 보였다).
+#:
+#: "기타"가 낱말로 설 때만 본다 — "기타 행정 업무" 같은 실제 보기를 바꾸지 않게. `[Answer]` 안내는
+#: 신호로 쓰지 않는다: 실측(드릴 753개 보기)에서 그 안내가 붙은 보기 대부분은 "B) Iterate — …
+#: ([Answer]: 뒤에 무엇을 바꿀지 적어 주세요)"처럼 **고르는 것이 결정이고 부연을 붙이는** 보기였다.
+#: 자유 입력으로 바꾸면 답이 "B: 부연"에서 부연만 남아 무엇을 골랐는지가 사라진다.
+_OTHER_KO = re.compile(r"^기타\s*(?:$|[(（:：—–-])")
+
+
+def looks_like_other(letter: str, text: str) -> bool:
+    """자유 입력(Other) 보기인가. ask_questions 페이로드 정규화도 이 규칙을 쓴다 — 두 경로가
+    갈리면 같은 질문이 입력 형식에 따라 다르게 렌더된다."""
+    t = text.strip()
+    return letter == "X" or t.lower().startswith("other") or bool(_OTHER_KO.match(t))
 
 
 def _is_multi_select(text: str) -> bool:
@@ -177,7 +194,7 @@ def _parse(name: str, markdown: str) -> QuestionFile:
                     otext = _RECO.sub("", otext).strip()
                     options.append(QuestionOption(
                         letter=letter, text=otext,
-                        is_other=(letter == "X" or otext.lower().startswith("other")),
+                        is_other=looks_like_other(letter, otext),
                         recommended=recommended,
                     ))
                 elif raw and not options:
