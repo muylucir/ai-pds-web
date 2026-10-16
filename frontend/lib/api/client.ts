@@ -99,6 +99,14 @@ export async function listProjects(page = 1, size = 10): Promise<ProjectPage> {
   return request<ProjectPage>(`/projects?page=${page}&size=${size}`);
 }
 
+/** 열람 멤버 목록을 통째로 바꾼다. 값은 이메일 또는 username이고, 서버가 username으로
+ *  바꿔 저장한다. 소유자·관리자만 된다. */
+export async function setProjectMembers(pid: string, members: string[]): Promise<ProjectDetail> {
+  return request<ProjectDetail>(`/projects/${encodeURIComponent(pid)}/members`, {
+    method: "PUT", body: JSON.stringify({ members }),
+  });
+}
+
 export async function deleteProject(projectId: string): Promise<void> {
   await request<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}`, {
     method: "DELETE",

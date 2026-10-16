@@ -208,6 +208,16 @@ export interface ProjectProgress {
   total: number;
 }
 
+// 프로젝트 권한(backend aipds/project_access.py). admin·owner는 읽고 쓰고, member는
+// 읽기만 한다 — 멤버의 목적은 열람이지 협업이 아니다.
+export type ProjectAccess = "admin" | "owner" | "member";
+
+/** 쓰기 버튼을 그려도 되는가. 모르는 값(구 백엔드)은 쓰기 가능으로 본다 — 서버가 마지막
+ *  게이트이고, 버튼을 숨겨 기존 사용자를 막는 쪽이 더 나쁘다. */
+export function canWrite(access: ProjectAccess | null | undefined): boolean {
+  return access !== "member";
+}
+
 export interface ProjectSummary {
   project_id: string;
   name: string | null;
@@ -224,6 +234,12 @@ export interface ProjectSummary {
   // 프로토타입·채팅이 어느 언어로 나오는지. 백엔드는 항상 채워 보내지만
   // (미지정은 "ko"로 확정) 구 백엔드 응답에는 없을 수 있어 옵셔널이다.
   language?: "ko" | "en";
+  /** 소유자의 Cognito username(이메일 로컬파트). */
+  owner?: string;
+  /** 이 요청자가 이 프로젝트에 갖는 권한. 화면이 쓰기 버튼을 그릴지 정한다. */
+  access?: ProjectAccess | null;
+  /** 열람 멤버의 username. 소유자·관리자에게만 실린다. */
+  members?: string[];
 }
 
 // GET /projects/{pid} → ProjectDetail. 헤더의 모델 배지가 부르는 곳이다.
@@ -238,6 +254,12 @@ export interface ProjectDetail {
   // 프로토타입·채팅이 어느 언어로 나오는지. 백엔드는 항상 채워 보내지만
   // (미지정은 "ko"로 확정) 구 백엔드 응답에는 없을 수 있어 옵셔널이다.
   language?: "ko" | "en";
+  /** 소유자의 Cognito username(이메일 로컬파트). */
+  owner?: string;
+  /** 이 요청자가 이 프로젝트에 갖는 권한. 화면이 쓰기 버튼을 그릴지 정한다. */
+  access?: ProjectAccess | null;
+  /** 열람 멤버의 username. 소유자·관리자에게만 실린다. */
+  members?: string[];
 }
 
 export interface ProjectPage {

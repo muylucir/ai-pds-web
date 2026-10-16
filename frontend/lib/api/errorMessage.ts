@@ -44,6 +44,10 @@ const KEY_BY_CODE: Record<string, keyof Dict> = {
   project_exists: "err.projectExists",
   import_unavailable: "err.importUnavailable",
   import_failed: "err.importFailed",
+  project_read_only: "err.projectReadOnly",
+  member_invalid: "err.memberInvalid",
+  owner_not_assignable: "err.ownerNotAssignable",
+  seed_admin_protected: "err.seedAdminProtected",
 };
 
 /** 아는 코드면 `errorMessage`와 같은 번역, 그 밖에는 `fallback`.

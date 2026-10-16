@@ -9,6 +9,8 @@
 #   2) 초대의 부분 실패 롤백 — 반쯤 만들어진 계정(그룹 없음 = 역할 없음)을
 #      남기지 않는다. projects.py의 매니페스트 실패 롤백과 같은 규율.
 #   3) Cognito 오류 코드 → HTTP 상태코드 번역. 원문 코드는 로그에만 남긴다.
+#   4) 프로젝트 귀속 — 사용자를 지우면 그 사람의 프로젝트는 시드 관리자에게 간다. 그래서
+#      시드 관리자는 삭제·강등할 수 없다. 관리자는 프로젝트의 소유권을 사용자에게 준다.
 from __future__ import annotations
 
 import logging
@@ -18,6 +20,7 @@ from pydantic import BaseModel, EmailStr
 from starlette.responses import Response
 
 from aipds import error_codes as ec
+from aipds import project_access
 from aipds.auth.cognito import CognitoError, generate_temp_password
 from aipds.auth.deps import require_admin
 from aipds.auth.models import Principal, Role
@@ -73,6 +76,11 @@ class RoleBody(BaseModel):
     role: Role
 
 
+class OwnerBody(BaseModel):
+    #: 이메일 또는 username.
+    owner: str
+
+
 def _end_sessions(username: str) -> None:
     """이 사용자가 이미 받은 토큰을 거부한다(auth/revocation.py).
 
@@ -90,6 +98,14 @@ def _end_sessions(username: str) -> None:
 def _admin():
     import aipds.app as app_module
     return app_module.cognito_admin()
+
+
+def _guard_seed_admin(username: str) -> None:
+    """시드 관리자의 삭제·강등을 막는다. 삭제된 사용자의 프로젝트가 귀속되는 곳이라,
+    사라지면 귀속할 곳이 없고 pm이 되면 pm 한 명이 남의 프로젝트를 전부 갖는다.
+    비활성화는 막지 않는다 — 관리자는 원래 모든 프로젝트를 보므로 잃는 것이 없다."""
+    if project_access.same_user_key(username) == project_access.SEED_ADMIN:
+        raise HTTPException(status_code=400, detail=ec.SEED_ADMIN_PROTECTED)
 
 
 def _guard_privilege_removal(cognito, username: str, me: Principal) -> None:
@@ -202,6 +218,7 @@ async def change_role(username: str, body: RoleBody,
     # admin으로 올리는 것은 관리자를 늘리는 방향이라 언제나 안전하다.
     if body.role != "admin":
         _guard_privilege_removal(cognito, username, me)
+        _guard_seed_admin(username)
     try:
         cognito.set_group(username, body.role)
     except CognitoError as exc:
@@ -240,9 +257,59 @@ async def enable_user(username: str, me: Principal = Depends(require_admin)):
 async def delete_user(username: str, me: Principal = Depends(require_admin)):
     cognito = _admin()
     _guard_privilege_removal(cognito, username, me)
+    _guard_seed_admin(username)
+    # 프로젝트를 **먼저** 넘긴다. 순서를 거꾸로 하면 넘기기가 실패했을 때 없는 계정이
+    # 소유한 프로젝트가 남는다. 이 순서에서 실패하면 계정은 그대로이고, 같은 요청을 다시
+    # 보내면 된다(넘기기는 프로젝트마다 멱등이다).
+    try:
+        await project_access.release_user(username)
+    except Exception:
+        _log.exception("could not hand over the projects of %s", username)
+        raise HTTPException(status_code=500, detail=ec.USER_ADMIN_FAILED)
     try:
         cognito.delete_user(username)
     except CognitoError as exc:
         raise _http_error(exc) from exc
     _end_sessions(username)
     return Response(status_code=204)
+
+
+@router.put("/projects/{pid}/owner")
+async def assign_owner(pid: str, body: OwnerBody, me: Principal = Depends(require_admin)):
+    """프로젝트의 소유권을 사용자에게 준다. 이전 소유자는 열람 멤버로 남는다 — 갑자기
+    접근을 잃는 것보다 안전하고, 필요하면 관리자가 멤버에서 뺀다. 시드 관리자는 남기지
+    않는다(관리자는 원래 전부 본다).
+
+    받을 사람은 실제로 로그인할 수 있는 계정이어야 한다. 멤버 추가(routes/projects)와 달리
+    여기서 계정을 확인하는 이유: 이 라우트는 관리자 전용이라 계정 존재가 새어도 상관없고,
+    없는 계정에 소유권을 주면 프로젝트가 아무도 못 쓰는 상태가 된다."""
+    import aipds.app as app_module
+    if not app_module.registry.is_registered(pid):
+        raise HTTPException(status_code=404, detail="unknown project")
+    try:
+        owner = project_access.username_of(body.owner)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=ec.MEMBER_INVALID)
+    if app_module.cognito_config() is not None:
+        cognito = _admin()
+        try:
+            assignable = cognito.is_enabled(owner) and bool(
+                {"admin", "pm"} & set(cognito.groups_of(owner)))
+        except CognitoError as exc:
+            raise _http_error(exc) from exc
+        if not assignable:
+            raise HTTPException(status_code=400, detail=ec.OWNER_NOT_ASSIGNABLE)
+    async with project_access.access_lock(pid):
+        if not app_module.registry.is_registered(pid):
+            raise HTTPException(status_code=404, detail="unknown project")
+        previous = app_module.registry.get_owner(pid) or project_access.SEED_ADMIN
+        members = app_module.registry.get_members(pid)
+        if previous not in (owner, project_access.SEED_ADMIN):
+            members = (*members, previous)
+        try:
+            await project_access.set_access(pid, owner, members)
+        except Exception:
+            _log.exception("owner update failed for %s", pid)
+            raise HTTPException(status_code=500, detail="project persistence failed")
+    return {"project_id": pid, "owner": app_module.registry.get_owner(pid),
+            "members": list(app_module.registry.get_members(pid))}

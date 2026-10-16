@@ -691,10 +691,10 @@ async def _lifespan(_app: FastAPI):
     # 복원 실패는 기동을 막지 않는다.
     if durable_projects_enabled():
         try:
-            for pid, name, created_at, model_id, language, effort in await restore_projects(
-                    projects_root_s3_factory()):
-                registry.register(pid, name, created_at=created_at,
-                                  model_id=model_id, language=language, effort=effort)
+            for p in await restore_projects(projects_root_s3_factory()):
+                registry.register(p.project_id, p.name, created_at=p.created_at,
+                                  model_id=p.model_id, language=p.language,
+                                  effort=p.effort, owner=p.owner, members=p.members)
         except Exception:
             _log.exception("project-list restore failed; starting with empty registry")
     # 재시작으로 소멸한 인메모리 세션이 남긴 고아 호스팅 프로세스 정리
@@ -811,49 +811,54 @@ app.add_middleware(
 # 라우트 함수를 하나도 건드리지 않고 전부 보호된다. 인증이 설정되지 않은
 # 로컬/테스트에서는 require_user가 전부 통과시킨다(auth/deps.py).
 from aipds.auth.deps import require_user  # noqa: E402
+from aipds.project_access import require_project_access  # noqa: E402
 from fastapi import Depends  # noqa: E402
 
 _AUTH = [Depends(require_user)]
+# `{pid}` 라우트가 있는 라우터. 인증 다음에 프로젝트 접근(소유자·멤버·관리자)을 본다
+# (project_access.py). 같은 자리에 거는 이유도 인증과 같다 — 라우트 본문을 건드리지 않고
+# 빠짐없이 걸린다. 빠진 라우터는 test_project_access_route_coverage가 잡는다.
+_PROJECT_AUTH = [Depends(require_user), Depends(require_project_access)]
 
 from aipds.routes import projects, artifacts  # noqa: E402
-app.include_router(projects.router, dependencies=_AUTH)
-app.include_router(artifacts.router, dependencies=_AUTH)
+app.include_router(projects.router, dependencies=_PROJECT_AUTH)
+app.include_router(artifacts.router, dependencies=_PROJECT_AUTH)
 
 # 프로젝트 이관(export/import). projects.router와 나누는 이유는 파일 크기가 아니라
 # 계약이다 — 그쪽은 프로젝트의 생명주기(생성·목록·삭제)이고 이쪽은 번들 포맷과
 # S3 스테이징이라는 다른 관심사다. 등록 순서는 무관하다: `/projects/import`는
 # `/projects/{pid}`와 메서드가 다르고(POST vs GET) 세그먼트 수도 같지 않다.
 from aipds.routes import transfer  # noqa: E402
-app.include_router(transfer.router, dependencies=_AUTH)
+app.include_router(transfer.router, dependencies=_PROJECT_AUTH)
 
 # 인계 탭. 산출물을 읽기만 하는 판정이라 artifacts와 성격이 같지만, 인계 패키지(열린 결정·
 # 보완 질문·내려받기)가 이 접두사 아래로 자란다(plans/2026-10-09-handoff-package.md).
 from aipds.routes import handoff  # noqa: E402
-app.include_router(handoff.router, dependencies=_AUTH)
+app.include_router(handoff.router, dependencies=_PROJECT_AUTH)
 
 from aipds.routes import answers  # noqa: E402
-app.include_router(answers.router, dependencies=_AUTH)
+app.include_router(answers.router, dependencies=_PROJECT_AUTH)
 
 from aipds.routes import approval  # noqa: E402
-app.include_router(approval.router, dependencies=_AUTH)
+app.include_router(approval.router, dependencies=_PROJECT_AUTH)
 
 from aipds.routes import turns  # noqa: E402
-app.include_router(turns.router, dependencies=_AUTH)
+app.include_router(turns.router, dependencies=_PROJECT_AUTH)
 
 from aipds.routes import discovery  # noqa: E402
-app.include_router(discovery.router, dependencies=_AUTH)
+app.include_router(discovery.router, dependencies=_PROJECT_AUTH)
 
 from aipds.routes import history  # noqa: E402
-app.include_router(history.router, dependencies=_AUTH)
+app.include_router(history.router, dependencies=_PROJECT_AUTH)
 
 from aipds.routes import uploads  # noqa: E402
-app.include_router(uploads.router, dependencies=_AUTH)
+app.include_router(uploads.router, dependencies=_PROJECT_AUTH)
 
 from aipds.routes import prototypes  # noqa: E402
-app.include_router(prototypes.router, dependencies=_AUTH)
+app.include_router(prototypes.router, dependencies=_PROJECT_AUTH)
 
 from aipds.routes import surveys  # noqa: E402
-app.include_router(surveys.router, dependencies=_AUTH)
+app.include_router(surveys.router, dependencies=_PROJECT_AUTH)
 
 from aipds.routes import admin_users  # noqa: E402
 app.include_router(admin_users.router, dependencies=_AUTH)

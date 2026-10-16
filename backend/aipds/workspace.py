@@ -84,17 +84,39 @@ class ProjectRegistry:
         # 이 프로젝트의 effort. model_id와 짝으로 생성 시점 카탈로그에서 복사된다.
         # None = CLI 기본값.
         self._effort: dict[str, str | None] = {}
+        # 소유자와 열람 멤버의 Cognito username(정규화된 값, project_access.normalize).
+        # 정본은 매니페스트이고 여기는 그 사본이다 — 바꾸는 쪽은 매니페스트를 먼저 쓴다
+        # (project_access.set_access).
+        self._owner: dict[str, str] = {}
+        self._members: dict[str, tuple[str, ...]] = {}
 
     def register(self, project_id: str, name: str | None = None,
                  created_at: str | None = None,
                  model_id: str | None = None,
                  language: str | None = None,
-                 effort: str | None = None) -> None:
+                 effort: str | None = None,
+                 owner: str | None = None,
+                 members: tuple[str, ...] = ()) -> None:
+        """owner가 없으면 시드 관리자 소유로 등록한다. 소유자를 기록하기 전의
+        매니페스트가 이 경로로 들어온다 — 그 해석을 복원·임포트·테스트가 각자 하지
+        않도록 여기 한 곳에 둔다."""
+        from aipds.project_access import SEED_ADMIN
         self._names[project_id] = name
         self._created_at[project_id] = created_at
         self._model_id[project_id] = model_id
         self._language[project_id] = language
         self._effort[project_id] = effort
+        self.set_access(project_id, owner or SEED_ADMIN, members)
+
+    def set_access(self, project_id: str, owner: str, members: tuple[str, ...]) -> None:
+        from aipds.project_access import clean_access
+        self._owner[project_id], self._members[project_id] = clean_access(owner, members)
+
+    def get_owner(self, project_id: str) -> str | None:
+        return self._owner.get(project_id)
+
+    def get_members(self, project_id: str) -> tuple[str, ...]:
+        return self._members.get(project_id, ())
 
     def attach(self, project_id: str, workspace: Workspace) -> Workspace:
         if project_id not in self._names:
@@ -118,6 +140,8 @@ class ProjectRegistry:
         self._model_id.pop(project_id, None)
         self._language.pop(project_id, None)
         self._effort.pop(project_id, None)
+        self._owner.pop(project_id, None)
+        self._members.pop(project_id, None)
         return self._workspaces.pop(project_id, None)
 
     def list_ids(self) -> list[str]:

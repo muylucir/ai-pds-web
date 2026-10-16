@@ -42,7 +42,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const { projectId } = use(params);
   const state = useAsync(() => getState(projectId), [projectId]);
   const t = useT();
-  const { modelLabel, language } = useProjectMeta(projectId);
+  const { modelLabel, language, readOnly } = useProjectMeta(projectId);
   const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, prototypeReady, changedPaths, historyLoading, context, activeDoc, turnSeq } =
     useWorkspaceStream(projectId);
   // 스테이지가 바뀌면 상태 파일을 다시 읽는다 — GTM이 끝나는 순간 인계 배너가 떠야 하고,
@@ -57,7 +57,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // turn means the conversation has already started, so the welcome card
   // must not reappear over it.
   const live = liveActivity(items);
-  const showWelcome = !historyLoading && items.length === 0 && !pendingQuestions && !streaming;
+  // 열람 멤버에게는 시작 카드를 보이지 않는다 — 그 버튼이 첫 턴을 보낸다.
+  const showWelcome = !readOnly && !historyLoading && items.length === 0 && !pendingQuestions
+    && !streaming;
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
   // 문서 드로어. 처음에는 닫혀 있다 — 질문에 답할 폭이 기본이다.
@@ -200,7 +202,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     // 컨텍스트로 만들어 이 클래스의 버그를 페이지 차원에서 차단한다.
     <div className="relative h-screen flex flex-col overflow-hidden">
       <AppHeader activeTab="workspace" projectId={projectId} modelLabel={modelLabel}
-                 projectLanguage={language} />
+                 projectLanguage={language} readOnly={readOnly} />
       {/* overflow-clip: 닫힌 드로어는 translate-x-full로 화면 오른쪽 밖에 있다. 그것이
           스크롤 가능한 넘침이 되면 포커스 이동 하나로 화면 전체가 옆으로 밀린다(실측 —
           WorkspaceDocPanel의 preventScroll 주석). hidden이 아니라 clip인 이유: hidden은
@@ -211,7 +213,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
         <main
           className="relative flex flex-col min-w-0 min-h-0 bg-slate-50"
           onDragEnter={(e) => {
-            if (!hasFiles(e)) return;
+            if (readOnly || !hasFiles(e)) return;
             dragDepth.current += 1;
             setDragOver(true);
           }}
@@ -230,7 +232,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             e.preventDefault();
             dragDepth.current = 0;
             setDragOver(false);
-            if (!streaming) void attachDropped(Array.from(e.dataTransfer.files));
+            if (!streaming && !readOnly) void attachDropped(Array.from(e.dataTransfer.files));
           }}
         >
           {dragOver && !streaming && (
@@ -330,6 +332,11 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               방식은 토큰 스트리밍과 겹쳐 산만했다. 목록은 턴이 끝난 뒤 말풍선
               아래에 접힌 진행 기록이 갖는다. */}
           {live && <LiveActivityBar activity={live} />}
+          {readOnly ? (
+            <p className="mx-4 md:mx-8 mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {t("readOnly.chat")}
+            </p>
+          ) : (
           <ChatInput
             key={draft ?? "no-draft"}
             onSend={sendWithAttachments}
@@ -343,6 +350,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             interrupting={streaming}
             context={context}
           />
+          )}
         </main>
 
         <WorkspaceRightPanel
@@ -352,6 +360,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
           changedPaths={changedPaths}
           onSubmitAnswers={submitAnswersAndStick}
           busy={streaming}
+          readOnly={readOnly}
           currentDocName={currentDocName}
           onOpenDoc={openDoc}
         />
@@ -400,6 +409,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               file={pendingQuestions.questions}
               onSubmit={submitAnswersFromSheet}
               submitting={streaming}
+              readOnly={readOnly}
             />
           </div>
         </div>

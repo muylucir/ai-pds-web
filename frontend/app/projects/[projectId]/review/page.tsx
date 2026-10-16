@@ -54,7 +54,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const [selected, setSelected] = useState<string | null>(null);
   const t = useT();
   const router = useRouter();
-  const { modelLabel, language } = useProjectMeta(projectId);
+  const { modelLabel, language, readOnly } = useProjectMeta(projectId);
 
   const tree = useAsync(() => listArtifacts(projectId), [projectId]);
   const audit = useAsync(() => getAudit(projectId), [projectId]);
@@ -175,9 +175,10 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   return (
     <>
       <AppHeader activeTab="review" projectId={projectId} modelLabel={modelLabel}
-                 projectLanguage={language} />
+                 projectLanguage={language} readOnly={readOnly} />
       <main className="max-w-[1720px] mx-auto px-6 py-8">
-        {isDiscoveryDocument && !contentLoadError && !approval.approved && (
+        {/* 열람 멤버에게는 승인 게이트를 그리지 않는다 — 승인과 수정 요청은 둘 다 턴을 시작한다. */}
+        {isDiscoveryDocument && !contentLoadError && !approval.approved && !readOnly && (
           <>
             <ApprovalGate
               // 프로젝트 언어의 승인 단어를 보낸다 — 이 텍스트는 에이전트에게
@@ -204,12 +205,14 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
               <span className="font-bold">{t("page.approvedBanner")}</span>{" "}
               {t("page.approvedBannerBody")}
             </p>
-            <Link
-              href={reviseHref}
-              className="shrink-0 px-4 py-2 rounded-lg border border-emerald-300 bg-white text-emerald-800 text-sm font-medium hover:bg-emerald-100"
-            >
-              {t("page.requestRevision")}
-            </Link>
+            {!readOnly && (
+              <Link
+                href={reviseHref}
+                className="shrink-0 px-4 py-2 rounded-lg border border-emerald-300 bg-white text-emerald-800 text-sm font-medium hover:bg-emerald-100"
+              >
+                {t("page.requestRevision")}
+              </Link>
+            )}
           </div>
         )}
 

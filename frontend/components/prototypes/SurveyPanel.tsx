@@ -8,7 +8,12 @@ import {
 import { SurveyDashboard } from "./SurveyDashboard";
 import { useT } from "@/lib/i18n/provider";
 
-export function SurveyPanel({ projectId, slug }: { projectId: string; slug: string }) {
+export function SurveyPanel({ projectId, slug, readOnly = false }: {
+  projectId: string;
+  slug: string;
+  /** 열람 멤버 — 문항·링크·집계·CSV는 보이고, 만들기·마감·취합은 없다. */
+  readOnly?: boolean;
+}) {
   const t = useT();
   const [view, setView] = useState<SurveyView | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,7 +92,11 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
       {error && <p className="text-sm text-rose-600">{error}</p>}
       {loading && !view && <p className="text-sm text-slate-400">{t("survey.loading")}</p>}
 
-      {!loading && !view && (
+      {!loading && !view && readOnly && (
+        <p className="text-sm text-slate-400">{t("survey.none")}</p>
+      )}
+
+      {!loading && !view && !readOnly && (
         <div className="rounded-xl border border-slate-200 p-4">
           <p className="text-sm text-slate-600 mb-3">
             {t("survey.generateHint")}
@@ -115,10 +124,12 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
                           className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs hover:bg-slate-50">
                     {copied ? t("survey.copied") : t("survey.copyLink")}
                   </button>
-                  <button type="button" onClick={() => void handleClose()} disabled={busy}
-                          className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs hover:bg-slate-50 disabled:opacity-50">
-                    {t("survey.close")}
-                  </button>
+                  {!readOnly && (
+                    <button type="button" onClick={() => void handleClose()} disabled={busy}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs hover:bg-slate-50 disabled:opacity-50">
+                      {t("survey.close")}
+                    </button>
+                  )}
                 </div>
               </>
             ) : (
@@ -130,10 +141,12 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
                    className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs hover:bg-slate-50">
                   {t("survey.exportCsv")}
                 </a>
-                <button type="button" onClick={() => void handleCreate()} disabled={busy}
-                        className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs hover:bg-slate-50 disabled:opacity-50">
-                  {t("survey.createNew")}
-                </button>
+                {!readOnly && (
+                  <button type="button" onClick={() => void handleCreate()} disabled={busy}
+                          className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs hover:bg-slate-50 disabled:opacity-50">
+                    {t("survey.createNew")}
+                  </button>
+                )}
               </div>
             )}
 
@@ -141,12 +154,14 @@ export function SurveyPanel({ projectId, slug }: { projectId: string; slug: stri
                 응답을 더 받는 흐름이 실제로 흔하다. 재실행하면 집계 파일만
                 최신 수치로 덮어쓴다 — 에이전트의 Step 6 종합은 다른 파일
                 (validation-results.md)이라 건드리지 않는다. */}
-            <div className="flex flex-wrap gap-2 items-center pt-1">
-              <button type="button" onClick={() => void handleSynthesize()} disabled={busy}
-                      className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-medium disabled:opacity-50">
-                {busy ? t("survey.synthesizing") : t("survey.synthesize")}
-              </button>
-            </div>
+            {!readOnly && (
+              <div className="flex flex-wrap gap-2 items-center pt-1">
+                <button type="button" onClick={() => void handleSynthesize()} disabled={busy}
+                        className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-medium disabled:opacity-50">
+                  {busy ? t("survey.synthesizing") : t("survey.synthesize")}
+                </button>
+              </div>
+            )}
             {synthesized && <SynthesisNotice projectId={projectId} result={synthesized} />}
           </div>
           <SurveyDashboard questions={qn.questions} rollup={view!.rollup} />

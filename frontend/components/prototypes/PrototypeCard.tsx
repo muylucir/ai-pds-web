@@ -50,6 +50,7 @@ export function PrototypeCard({
   archiveUrl,
   shareUrl,
   busy,
+  readOnly = false,
 }: {
   info: PrototypeInfo;
   onBuild: () => void;
@@ -77,6 +78,8 @@ export function PrototypeCard({
    *  들어오므로, 공유 범위가 곧 접근 범위다. */
   shareUrl?: string;
   busy: boolean;
+  /** 열람 멤버. 프리뷰·링크·로그·다운로드·설문 보기만 남고, 빌드·호스팅·초기화는 없다. */
+  readOnly?: boolean;
 }) {
   const t = useT();
   const badge = BADGE[info.state];
@@ -170,22 +173,26 @@ export function PrototypeCard({
           버튼이 여덟까지 간다. shrink-0인 버튼들이 감싸지 않으면 좁은 화면에서
           카드 밖으로 넘친다. */}
       <div className="flex flex-wrap justify-end items-center gap-2 shrink-0">
-        {info.state === "none" && (
+        {info.state === "none" && !readOnly && (
           <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onBuild}>
             {t("proto.startBuild")}
           </button>
         )}
-        {info.state === "building" && (
+        {info.state === "building" && !readOnly && (
           <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onBuild}>
             {t("proto.openSession")}
           </button>
         )}
         {info.state === "built" && (
           <>
-            <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onStartHost}>
-              {t("proto.startHosting")}
-            </button>
-            <BuildButton info={info} busy={busy} onBuild={onBuild} />
+            {!readOnly && (
+              <>
+                <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onStartHost}>
+                  {t("proto.startHosting")}
+                </button>
+                <BuildButton info={info} busy={busy} onBuild={onBuild} />
+              </>
+            )}
             {archiveUrl && <ArchiveLink href={archiveUrl} />}
           </>
         )}
@@ -200,7 +207,7 @@ export function PrototypeCard({
             {/* 낡았을 때만 나온다. 항상 두면 "다시 호스팅"이 무엇을 바꾸는지 알 수
                 없는 버튼이 되고(이미 최신이면 몇 분간 프리뷰만 닫는다), 낡았을 때는
                 반대로 그것이 유일하게 필요한 동작이다. 위 경고 줄이 그 대가를 말한다. */}
-            {info.preview_stale && (
+            {info.preview_stale && !readOnly && (
               <button type="button" className={SECONDARY_BTN} disabled={busy}
                       onClick={onStartHost}>
                 {t("proto.rehost")}
@@ -210,10 +217,14 @@ export function PrototypeCard({
                 고치고 싶어지는 순간이기 때문이다 — 프리뷰를 방금 본 직후. 종전에는
                 이 상태에 빌드 관련 버튼이 아예 없어서, 호스팅을 먼저 중지해야
                 수정 버튼이 돌아왔다. */}
-            <BuildButton info={info} busy={busy} onBuild={onBuild} />
-            <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onStopHost}>
-              {t("proto.stopHosting")}
-            </button>
+            {!readOnly && (
+              <>
+                <BuildButton info={info} busy={busy} onBuild={onBuild} />
+                <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onStopHost}>
+                  {t("proto.stopHosting")}
+                </button>
+              </>
+            )}
             {onShowLogs && (
               <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onShowLogs}>
                 {t("proto.logs")}
@@ -224,9 +235,11 @@ export function PrototypeCard({
         )}
         {info.state === "failed" && (
           <>
-            <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onBuild}>
-              {t("proto.continueBuild")}
-            </button>
+            {!readOnly && (
+              <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onBuild}>
+                {t("proto.continueBuild")}
+              </button>
+            )}
             {onShowLogs && (
               <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onShowLogs}>
                 {t("proto.logs")}
@@ -234,7 +247,7 @@ export function PrototypeCard({
             )}
           </>
         )}
-        {info.state !== "none" && onReset && (
+        {info.state !== "none" && onReset && !readOnly && (
           <button
             type="button"
             aria-label={`${info.slug} ${t("proto.resetAria")}`}
