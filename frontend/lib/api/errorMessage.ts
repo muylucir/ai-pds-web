@@ -13,6 +13,7 @@ type T = (key: keyof Dict) => string;
 // 백엔드 코드 → 딕셔너리 키. 값이 `keyof Dict`이므로 오타가 컴파일 에러가 된다.
 const KEY_BY_CODE: Record<string, keyof Dict> = {
   email_exists: "err.emailExists",
+  email_invalid: "err.emailInvalid",
   user_not_found: "err.userNotFound",
   bad_request: "err.badRequest",
   forbidden: "err.forbidden",
