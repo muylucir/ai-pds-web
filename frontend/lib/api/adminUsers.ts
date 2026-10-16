@@ -72,3 +72,16 @@ export async function setUserEnabled(username: string, enabled: boolean): Promis
 export async function deleteUser(username: string): Promise<void> {
   await apiFetch(`/admin/users/${encodeUsername(username)}`, { method: "DELETE" });
 }
+
+/** 프로젝트의 소유권을 사용자에게 준다(이메일 또는 username). 이전 소유자는 열람 멤버로
+ *  남는다. 로그인할 수 있는 계정(활성, 역할 있음)이어야 한다. */
+export async function assignProjectOwner(
+  pid: string, owner: string,
+): Promise<{ owner: string; members: string[] }> {
+  const body = await apiFetch<{ owner: string; members: string[] }>(
+    `/admin/projects/${encodeURIComponent(pid)}/owner`,
+    { method: "PUT", body: JSON.stringify({ owner }) },
+  );
+  if (!body) throw new Error("owner assignment returned an empty body");
+  return body;
+}

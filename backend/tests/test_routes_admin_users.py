@@ -136,16 +136,25 @@ def test_invite_rejects_an_unknown_role(env, client):
     assert env.calls == [], "잘못된 역할로 사용자를 만들어서는 안 된다"
 
 
-def test_invite_rejects_a_malformed_email(env, client):
-    r = client.post("/admin/users", json={"email": "not-an-email", "role": "pm"})
-    assert r.status_code == 422
+@pytest.mark.parametrize("email", ["not-an-email", "kim@corp", "new@aipds.local", "kim@@x.com"])
+def test_invite_rejects_a_malformed_email_with_a_code(env, client, email):
+    # 기본 422의 detail은 에러 객체 배열이라 화면이 코드를 찾지 못하고 "[object Object]"를
+    # 보였다. 브라우저의 type=email은 앞의 셋 중 둘(kim@corp, .local)을 통과시킨다.
+    r = client.post("/admin/users", json={"email": email, "role": "pm"})
+    assert (r.status_code, r.json()["detail"]) == (400, "email_invalid")
     assert env.calls == []
+
+
+def test_invite_trims_the_email(env, client):
+    r = client.post("/admin/users", json={"email": "  new@example.com ", "role": "pm"})
+    assert r.status_code == 201
+    assert env.calls[0] == ("create_user", "new@example.com")
 
 
 def test_duplicate_email_is_409(env, client):
     # email-validator(2.x)는 RFC 6762에 따라 .local을 특수 예약 도메인으로
     # 보고 거부한다(check_deliverability=False라도 마찬가지) — PM_EMAIL을 쓰면
-    # EmailStr 단계에서 422가 나 create_user에 도달하지 못한다. 이 테스트가
+    # 이메일 검사 단계에서 400이 나 create_user에 도달하지 못한다. 이 테스트가
     # 검증하는 것은 "이미 존재하는 이메일 → 409" 매핑이고 FakeCognito.create_user는
     # fail_on이 설정되면 이메일 값과 무관하게 실패하므로, 일반 도메인으로 바꿔도
     # 테스트 의도는 그대로다.

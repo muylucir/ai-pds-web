@@ -113,6 +113,34 @@ describe("useProjectMeta", () => {
 
   it("projectId가 없으면 둘 다 null이다", () => {
     const { result } = renderHook(() => useProjectMeta(undefined));
-    expect(result.current).toEqual({ modelLabel: null, language: null });
+    expect(result.current).toEqual({ modelLabel: null, language: null, access: null,
+                                     readOnly: false });
+  });
+
+  it("열람 멤버면 readOnly다", async () => {
+    server.use(
+      http.get(`${API_BASE_URL}/projects/pilot1`, () =>
+        HttpResponse.json({ project_id: "pilot1", name: null, created_at: null,
+                            model_id: null, owner: "kim", access: "member" })),
+      http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
+    );
+    const { result } = renderHook(() => useProjectMeta("pilot1"));
+    await waitFor(() => expect(result.current.access).toBe("member"));
+    expect(result.current.readOnly).toBe(true);
+  });
+
+  it("소유자·관리자, 그리고 권한을 모르는 응답(구 백엔드)은 readOnly가 아니다", async () => {
+    for (const access of ["owner", "admin", undefined]) {
+      server.use(
+        http.get(`${API_BASE_URL}/projects/pilot1`, () =>
+          HttpResponse.json({ project_id: "pilot1", name: null, created_at: null,
+                              model_id: "m1", access })),
+        http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
+      );
+      const { result, unmount } = renderHook(() => useProjectMeta("pilot1"));
+      await waitFor(() => expect(result.current.modelLabel).toBe("m1"));
+      expect(result.current.readOnly).toBe(false);
+      unmount();
+    }
   });
 });

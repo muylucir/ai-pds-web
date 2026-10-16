@@ -68,7 +68,7 @@ export function toUpdate(view: SupplementView, draft: Draft, confirmed: Set<stri
 }
 
 export function SupplementForm({
-  view, workspaceHref, busy, message, onSave, onSaveAndGenerate, onBack,
+  view, workspaceHref, busy, message, onSave, onSaveAndGenerate, onBack, readOnly = false,
 }: {
   view: SupplementView;
   workspaceHref: string;
@@ -77,6 +77,8 @@ export function SupplementForm({
   onSave: (update: SupplementUpdate) => void;
   onSaveAndGenerate: (update: SupplementUpdate) => void;
   onBack: () => void;
+  /** 열람 멤버. 답은 보이고 고칠 수 없다. */
+  readOnly?: boolean;
 }) {
   const t = useT();
   const [draft, setDraft] = useState<Draft>(() => initialDraft(view));
@@ -222,6 +224,8 @@ export function SupplementForm({
 
   return (
     <section className="max-w-[960px]">
+      {/* fieldset disabled: 열람 멤버에게 모든 입력을 한 번에 잠근다. */}
+      <fieldset disabled={readOnly} className="m-0 min-w-0 border-0 p-0">
       <div className="bg-white border border-slate-200 rounded-xl px-[18px] py-3.5 mb-4 text-[13px]">
         <b className="text-slate-900">{t("handoff.supp.rules.title")}</b>
         <ul className="mt-1.5 pl-5 list-disc space-y-0.5 text-slate-600">
@@ -323,12 +327,15 @@ export function SupplementForm({
         </div>
       )}
 
+      </fieldset>
+
       <div className="flex items-center gap-3 mt-2 pt-3.5 border-t border-slate-200">
         <button type="button" onClick={onBack} className="text-[13px] text-violet-700 hover:underline">
           {t("handoff.supp.back")}
         </button>
         <span className="flex-1" />
         {message && <span className="text-xs text-slate-500">{message}</span>}
+        {!readOnly && (<>
         <button type="button" disabled={busy} onClick={() => onSave(toUpdate(view, draft, confirmed))}
                 className="px-3 py-2 rounded-lg border border-slate-300 text-[13px] text-slate-600 disabled:opacity-45">
           {t("handoff.supp.save")}
@@ -337,6 +344,7 @@ export function SupplementForm({
                 className="px-4 py-2 rounded-lg bg-violet-600 text-white text-[13px] font-bold hover:bg-violet-700 disabled:opacity-45">
           {t("handoff.supp.saveAndGenerate")}
         </button>
+        </>)}
       </div>
       <p className="mt-2 text-xs text-slate-400">{t("handoff.supp.foot")}</p>
     </section>

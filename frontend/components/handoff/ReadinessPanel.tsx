@@ -51,7 +51,7 @@ export function sectionLabel(t: (k: keyof Dict) => string, key: SectionKey): str
 
 export function ReadinessPanel({
   readiness, questionCount, openDecisions = null, generating, hasPackage, onSupplement, onGenerate,
-  onViewPackage,
+  onViewPackage, readOnly = false,
 }: {
   readiness: Readiness;
   /** 보완 문항 수. 0이면 보완 질문으로 가는 길을 내지 않는다. */
@@ -64,6 +64,8 @@ export function ReadinessPanel({
   onSupplement: () => void;
   onGenerate: () => void;
   onViewPackage: () => void;
+  /** 열람 멤버 — 판정은 보이고 생성 버튼은 없다. */
+  readOnly?: boolean;
 }) {
   const t = useT();
   const r = readiness;
@@ -139,6 +141,7 @@ export function ReadinessPanel({
       </div>
 
       <div className="flex items-center gap-3.5 mt-5">
+        {!readOnly && (<>
         <button type="button" onClick={onGenerate} disabled={blocked || generating}
                 className="px-5 py-2.5 rounded-lg bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 disabled:opacity-45 disabled:cursor-not-allowed">
           {hasPackage ? t("handoff.regenerate") : t("handoff.generate")}
@@ -146,6 +149,7 @@ export function ReadinessPanel({
         <span className="text-[13px] text-slate-500">
           {generating ? t("handoff.generating") : t("handoff.generateNote")}
         </span>
+        </>)}
         {hasPackage && !generating && (
           <button type="button" onClick={onViewPackage} className="ml-auto text-[13px] text-violet-700 hover:underline">
             {t("handoff.pkg.view")}

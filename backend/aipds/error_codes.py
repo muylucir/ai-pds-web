@@ -16,6 +16,9 @@ from __future__ import annotations
 
 # 사용자 관리 (routes/admin_users.py)
 EMAIL_EXISTS = "email_exists"
+# 초대할 이메일의 형식이 틀렸다. 브라우저의 type=email은 `kim@corp`이나 `.local` 도메인을
+# 통과시키므로 서버가 거절하는 경로가 실제로 있다.
+EMAIL_INVALID = "email_invalid"
 USER_NOT_FOUND = "user_not_found"
 BAD_REQUEST = "bad_request"
 FORBIDDEN = "forbidden"
@@ -86,3 +89,15 @@ PROJECT_EXISTS = "project_exists"
 # 버킷이 설정되지 않아 스테이징이 없다(로컬 개발). 내보내기는 되고 가져오기만 막힌다.
 IMPORT_UNAVAILABLE = "import_unavailable"
 IMPORT_FAILED = "import_failed"
+
+# 프로젝트 접근 (project_access.py, routes/projects.py, routes/admin_users.py)
+#
+# 읽기 전용 멤버가 쓰기를 시도했다. 화면은 멤버에게 쓰기 버튼을 그리지 않으므로 정상
+# 경로로는 오지 않는다 — 열어 둔 탭에서 권한이 바뀐 경우다.
+PROJECT_READ_ONLY = "project_read_only"
+# 멤버·소유자로 쓸 수 없는 값(이메일도 username도 아니다).
+MEMBER_INVALID = "member_invalid"
+# 소유권을 받을 수 없는 계정(비활성, 역할 없음). 없는 계정은 USER_NOT_FOUND다.
+OWNER_NOT_ASSIGNABLE = "owner_not_assignable"
+# 시드 관리자는 귀속 대상이라 삭제·강등할 수 없다(project_access.SEED_ADMIN).
+SEED_ADMIN_PROTECTED = "seed_admin_protected"

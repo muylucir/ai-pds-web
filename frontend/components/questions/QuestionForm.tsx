@@ -10,10 +10,13 @@ export function QuestionForm({
   file,
   onSubmit,
   submitting,
+  readOnly = false,
 }: {
   file: QuestionFile;
   onSubmit: (answers: Record<string, string>) => void;
   submitting: boolean;
+  /** 열람 멤버. 질문과 지금까지의 답은 보이고, 입력과 제출은 없다. */
+  readOnly?: boolean;
 }) {
   const t = useT();
   const [answers, setAnswers] = useState<Record<string, string>>(() => {
@@ -54,26 +57,35 @@ export function QuestionForm({
         </div>
       )}
 
-      {file.questions.map((q) => (
-        <QuestionCard
-          key={q.number}
-          question={q}
-          value={answers[String(q.number)] ?? ""}
-          onChange={(next) => setAnswers((prev) => ({ ...prev, [String(q.number)]: next }))}
-        />
-      ))}
+      {/* fieldset disabled: 카드 안의 선택지·입력칸을 한 번에 잠근다. */}
+      <fieldset disabled={readOnly} className="space-y-6">
+        {file.questions.map((q) => (
+          <QuestionCard
+            key={q.number}
+            question={q}
+            value={answers[String(q.number)] ?? ""}
+            onChange={(next) => setAnswers((prev) => ({ ...prev, [String(q.number)]: next }))}
+          />
+        ))}
+      </fieldset>
 
       {/* 제출 바: 반투명+blur는 스크롤 시 뒤 질문 텍스트가 비쳐 "깨진" 것처럼
           보인다(우측 패널처럼 좁은 스크롤 컨테이너에서 특히) — 불투명 흰색. */}
-      <div className="sticky bottom-0 bg-white border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3 shadow-lg shadow-slate-200/50">
-        <div className="text-xs text-slate-500 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true" />
-          {t("q.auditNotice")}
+      {readOnly ? (
+        <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          {t("readOnly.answers")}
+        </p>
+      ) : (
+        <div className="sticky bottom-0 bg-white border border-slate-200 rounded-xl p-4 flex items-center justify-between gap-3 shadow-lg shadow-slate-200/50">
+          <div className="text-xs text-slate-500 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true" />
+            {t("q.auditNotice")}
+          </div>
+          <button type="submit" disabled={submitting} className="px-5 py-2.5 text-sm rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-bold">
+            {t("q.submitAnswers")}
+          </button>
         </div>
-        <button type="submit" disabled={submitting} className="px-5 py-2.5 text-sm rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white font-bold">
-          {t("q.submitAnswers")}
-        </button>
-      </div>
+      )}
     </form>
   );
 }

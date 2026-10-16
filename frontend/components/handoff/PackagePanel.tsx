@@ -26,7 +26,7 @@ export function stamp(iso: string): string {
 }
 
 export function PackagePanel({
-  pkg, generating, onRegenerate, onDownload, onSupplement, onStatus,
+  pkg, generating, onRegenerate, onDownload, onSupplement, onStatus, readOnly = false,
 }: {
   pkg: PackageView;
   generating: boolean;
@@ -34,6 +34,8 @@ export function PackagePanel({
   onDownload: () => void;
   onSupplement: () => void;
   onStatus: () => void;
+  /** 열람 멤버 — 내려받기는 되고 다시 생성은 없다. */
+  readOnly?: boolean;
 }) {
   const t = useT();
   const m = pkg.manifest;
@@ -75,11 +77,13 @@ export function PackagePanel({
             {stale ? t("handoff.pkg.staleBadge") : t("handoff.pkg.fresh")}
           </b>
         </span>
-        <button type="button" onClick={onRegenerate} disabled={generating}
-                className={`px-3 py-1.5 rounded-lg border text-[13px] disabled:opacity-45 ${
-                  stale || findings.length ? "border-amber-400 bg-amber-50 text-amber-700 font-bold" : "border-slate-300 text-slate-600"}`}>
-          {t("handoff.regenerate")}
-        </button>
+        {!readOnly && (
+          <button type="button" onClick={onRegenerate} disabled={generating}
+                  className={`px-3 py-1.5 rounded-lg border text-[13px] disabled:opacity-45 ${
+                    stale || findings.length ? "border-amber-400 bg-amber-50 text-amber-700 font-bold" : "border-slate-300 text-slate-600"}`}>
+            {t("handoff.regenerate")}
+          </button>
+        )}
         <button type="button" onClick={onDownload}
                 className="px-3.5 py-2 rounded-lg bg-violet-600 text-white text-[13px] font-bold hover:bg-violet-700">
           {t("handoff.pkg.download")}

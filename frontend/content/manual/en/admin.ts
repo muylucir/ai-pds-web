@@ -16,7 +16,7 @@ directly sends you back.`,
       kind: "steps",
       items: [
         "Enter the **email** on the user management screen.",
-        "Pick a **role** — PM (full project access) or Administrator (PM access plus user management).",
+        "Pick a **role** — PM (their own projects and the ones they were added to as a viewer) or Administrator (every project plus user management).",
         "Press **Invite** and a temporary password appears on screen.",
         "**Copy** it and pass it to that person. They change it at first sign-in.",
       ],
@@ -43,8 +43,11 @@ last administrator*). That is what stops an administrator from locking themselve
 nobody able to administer anything. To change who administers, **appoint the new administrator
 first**.
 
-Deleting a user does not delete the projects they created. Projects are deleted separately, from
-the project list.`,
+Deleting a user does not delete their projects. The projects they owned pass to the initial
+administrator \`admin@aipds.local\`, and they are taken off every project they were a viewer on.
+From [Project access](/manual#project-access) you can then give a handed-over project to someone
+else. For the same reason \`admin@aipds.local\` cannot be deleted or turned into a PM (*The initial
+administrator cannot be deleted or demoted*). It can be disabled.`,
     },
     { kind: "heading", id: "manage-models", text: "Model management" },
     {

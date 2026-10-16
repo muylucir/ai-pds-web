@@ -9,10 +9,14 @@
 // 보여준다(값을 복사해 두는 설계의 결과가 화면에서도 정직해야 한다).
 //
 // 언어는 그런 대조가 필요 없다 — 값 자체가 표시할 정보다.
+//
+// 권한(access)도 여기서 같이 읽는다. 프로젝트 화면이 이미 이 훅으로 프로젝트를 한 번
+// 읽으므로, 쓰기 버튼을 그릴지 정하는 값을 위해 한 번 더 부르지 않는다.
 "use client";
 import { useEffect, useState } from "react";
 
 import { getProject } from "@/lib/api/client";
+import { canWrite, type ProjectAccess } from "@/lib/api/types";
 import { listModels } from "@/lib/api/models";
 import { isLocale, type Locale } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
@@ -23,9 +27,14 @@ export interface ProjectMeta {
   modelLabel: string | null;
   /** 생성물 언어. null = 구 백엔드 응답(필드 없음) 또는 조회 실패. */
   language: Locale | null;
+  /** 이 요청자의 권한. null = 아직 모름(조회 전·실패). */
+  access: ProjectAccess | null;
+  /** 열람 멤버다 — 화면이 쓰기 버튼을 그리지 않는다. 모르는 동안은 false다: 서버가 마지막
+   *  게이트이고, 응답을 기다리는 동안 소유자의 버튼이 깜빡이며 사라지는 쪽이 더 나쁘다. */
+  readOnly: boolean;
 }
 
-const EMPTY: ProjectMeta = { modelLabel: null, language: null };
+const EMPTY: ProjectMeta = { modelLabel: null, language: null, access: null, readOnly: false };
 
 export function useProjectMeta(projectId: string | undefined): ProjectMeta {
   const [meta, setMeta] = useState<ProjectMeta>(EMPTY);
@@ -55,6 +64,8 @@ export function useProjectMeta(projectId: string | undefined): ProjectMeta {
           // isLocale로 좁힌다 — 구 백엔드는 이 필드가 없고, 손상된 응답이
           // 임의 문자열을 실어 올 수도 있다. 그때는 배지를 그리지 않는다.
           language: isLocale(project.language) ? project.language : null,
+          access: project.access ?? null,
+          readOnly: !canWrite(project.access),
         });
       })
       .catch(() => {

@@ -20,11 +20,13 @@ function seconds(from: string | null, to: string | null, now: number): number | 
   return Math.max(0, Math.round((end - start) / 1000));
 }
 
-export function GenerationProgress({ pkg, busy, onResume, onRestart }: {
+export function GenerationProgress({ pkg, busy, onResume, onRestart, readOnly = false }: {
   pkg: PackageView;
   busy: boolean;
   onResume: () => void;
   onRestart: () => void;
+  /** 열람 멤버 — 진행은 보이고 이어하기·다시 시작은 없다. */
+  readOnly?: boolean;
 }) {
   const t = useT();
   const m = pkg.manifest as Manifest;
@@ -99,7 +101,7 @@ export function GenerationProgress({ pkg, busy, onResume, onRestart }: {
           </li>
         ))}
       </ol>
-      {!generating && (
+      {!generating && !readOnly && (
         <div className="flex items-center gap-2.5 px-5 py-3 border-t border-slate-100">
           {pkg.resumable && (
             <button type="button" onClick={onResume} disabled={busy}
