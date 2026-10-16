@@ -40,6 +40,9 @@ from aipds.project_import import (
     WARN_MODEL_UNAVAILABLE,
     apply_bundle,
 )
+from aipds.auth.deps import require_user
+from aipds.auth.models import Principal
+from aipds.project_access import normalize, require_project_owner
 from aipds.project_store import write_manifest
 
 _log = logging.getLogger(__name__)
@@ -77,9 +80,10 @@ def _content_disposition(pid: str, exported_at: str) -> str:
             f"filename*=UTF-8''{quote(name, safe='')}")
 
 
-@router.get("/projects/{pid}/export")
+@router.get("/projects/{pid}/export", dependencies=[Depends(require_project_owner)])
 async def export_project(pid: str):
-    """프로젝트 전체를 번들 zip으로.
+    """프로젝트 전체를 번들 zip으로. 소유자·관리자만 — GET이지만 열람이 아니다
+    (project_access.require_project_owner). 번들에는 소유자·멤버가 실리지 않는다.
 
     **살아 있는 빌드 세션이 있으면 409다.** 에이전트가 그 트리에 쓰고 있는 동안
     담으면 반쯤 쓰인 소스가 들어가고, 그 zip은 정직한 스냅샷이 아니다. Discovery
@@ -189,7 +193,7 @@ async def create_import_upload(body: ImportUploadRequest):
 
 
 @router.post("/project-imports", status_code=201)
-async def import_project(body: ImportRequest):
+async def import_project(body: ImportRequest, me: Principal = Depends(require_user)):
     """스테이징된 번들을 프로젝트로 되살린다.
 
     **순서가 load-bearing이다.** 내용 → `project.json` → 등록. `project.json`이
@@ -200,8 +204,12 @@ async def import_project(body: ImportRequest):
     **409는 스테이징을 지우지 않는다.** id 충돌은 매니페스트를 읽어야 알 수 있고
     매니페스트는 업로드가 끝난 뒤에나 읽힌다 — 여기서 지우면 사용자는 id 하나
     바꾸려고 번들 전체를 다시 올려야 한다.
+
+    가져온 사람이 소유자가 된다. 번들은 소유자를 싣지 않는다 — 다른 인스턴스의 username은
+    이 인스턴스에서 다른 사람일 수 있다.
     """
     import aipds.app as app_module
+    owner = normalize(me.username)
 
     if not _UPLOAD_ID_RE.match(body.upload_id):
         raise HTTPException(status_code=400, detail=ec.EXPORT_INVALID)
@@ -270,7 +278,8 @@ async def import_project(body: ImportRequest):
             await write_manifest(app_module.projects_root_s3_factory(), pid,
                                  project.get("name"),
                                  created_at=project.get("created_at"),
-                                 model_id=model_id, language=language, effort=effort)
+                                 model_id=model_id, language=language, effort=effort,
+                                 owner=owner)
         except Exception:
             # 매니페스트가 없으면 재시작 후 사라지는 프로젝트다. 생성 라우트가
             # 같은 이유로 같은 판단을 한다(routes/projects.py).
@@ -279,7 +288,8 @@ async def import_project(body: ImportRequest):
             raise HTTPException(status_code=500, detail=ec.IMPORT_FAILED)
         app_module.registry.register(pid, project.get("name"),
                                     created_at=project.get("created_at"),
-                                    model_id=model_id, language=language, effort=effort)
+                                    model_id=model_id, language=language, effort=effort,
+                                    owner=owner)
     finally:
         _cleanup(bundle)
 

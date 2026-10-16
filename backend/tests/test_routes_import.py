@@ -160,6 +160,16 @@ def test_import_preserves_name_created_at_and_language(env):
     assert manifest["language"] == "en"
 
 
+def test_the_importer_owns_the_imported_project(env):
+    """번들은 소유자를 싣지 않는다 — 다른 인스턴스의 username은 여기서 다른 사람일 수 있다.
+    가져온 사람(로컬 개발의 요청자 local-dev)이 소유자가 된다."""
+    _import(env, _bundle())
+
+    assert app_module.registry.get_owner(SOURCE_PID) == "local-dev"
+    manifest = json.loads(env["root"].blobs[f"{SOURCE_PID}/project.json"])
+    assert (manifest["owner"], manifest["members"]) == ("local-dev", [])
+
+
 def test_manifest_is_written_and_the_project_survives_a_restart(env):
     """project.json이 '이 프로젝트가 존재한다'의 정본이다(restore_projects)."""
     _import(env, _bundle())

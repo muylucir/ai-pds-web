@@ -62,6 +62,7 @@ export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
   changedPaths,
   onSubmitAnswers,
   busy,
+  readOnly = false,
   currentDocName,
   onOpenDoc,
 }: {
@@ -71,6 +72,8 @@ export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
   changedPaths: string[];
   onSubmitAnswers: (answers: Record<string, string>) => void;
   busy: boolean;
+  /** 열람 멤버 — 질문 폼이 제출 없이 보인다. */
+  readOnly?: boolean;
   // 문서 드로어가 지금 열 문서의 이름(없으면 버튼을 그리지 않는다)과 여는 함수.
   // `onOpenDoc`은 부모가 useCallback으로 고정한다 — 이 패널은 memo다.
   currentDocName: string | null;
@@ -86,7 +89,8 @@ export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
       {mode === "questions" && pendingQuestions && (
         <div className="flex-1 min-h-0 overflow-y-auto p-6">
           {currentDocName && <OpenDocButton name={currentDocName} onClick={onOpenDoc} />}
-          <QuestionForm file={pendingQuestions.questions} onSubmit={onSubmitAnswers} submitting={busy} />
+          <QuestionForm file={pendingQuestions.questions} onSubmit={onSubmitAnswers} submitting={busy}
+                        readOnly={readOnly} />
         </div>
       )}
       {mode === "preview" && (

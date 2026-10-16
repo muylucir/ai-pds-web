@@ -26,6 +26,7 @@ export function AppHeader({
   projectId,
   modelLabel,
   projectLanguage,
+  readOnly,
 }: {
   activeTab: HeaderTab;
   projectId?: string;
@@ -37,6 +38,8 @@ export function AppHeader({
   // 사실을 화면에 드러낸다. null/undefined면 그리지 않는다(프로젝트 없는
   // 화면, 또는 언어를 모르는 구 백엔드 응답).
   projectLanguage?: Locale | null;
+  // 이 프로젝트의 열람 멤버다. 쓰기 버튼이 화면마다 사라지는 이유를 한 곳에서 말한다.
+  readOnly?: boolean;
 }) {
   const t = useT();
 
@@ -85,6 +88,15 @@ export function AppHeader({
           </nav>
         </div>
         <div className="flex items-center gap-3">
+          {readOnly && (
+            <span
+              data-testid="read-only-badge"
+              title={t("header.readOnlyTitle")}
+              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+            >
+              {t("header.readOnlyBadge")}
+            </span>
+          )}
           {projectLanguage && (
             <span
               data-testid="language-badge"

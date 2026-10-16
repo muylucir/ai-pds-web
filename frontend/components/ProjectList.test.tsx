@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -81,8 +81,8 @@ describe("ProjectList 메타데이터 열", () => {
     };
     render(<ProjectList data={bare} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
     const row = screen.getByText("구 프로젝트").closest("tr")!;
-    // 진행상황·모델·언어·생성일 4칸이 모두 —
-    expect(row.textContent?.match(/—/g)?.length).toBe(4);
+    // 진행상황·모델·언어·소유자·생성일 5칸이 모두 —
+    expect(row.textContent?.match(/—/g)?.length).toBe(5);
   });
 
   it("has a header for each new column", () => {
@@ -90,6 +90,41 @@ describe("ProjectList 메타데이터 열", () => {
     expect(screen.getByRole("columnheader", { name: "모델" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "언어" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "생성일" })).toBeInTheDocument();
+  });
+});
+
+describe("ProjectList 접근", () => {
+  const SHARED = {
+    projects: [
+      { project_id: "mine", name: "내 것", progress: null, owner: "kim", access: "owner" as const,
+        members: ["lee"] },
+      { project_id: "seen", name: "열람", progress: null, owner: "park", access: "member" as const },
+    ],
+    total: 2, page: 1, size: 10,
+  };
+
+  it("shows the owner and marks projects the user only views", () => {
+    render(<ProjectList data={SHARED} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    const seen = screen.getByText("열람", { selector: "a" }).closest("tr")!;
+    expect(seen).toHaveTextContent("park");
+    expect(within(seen).getByText("열람", { selector: "span" })).toBeInTheDocument();
+  });
+
+  it("gives viewers no delete, export, or access buttons", () => {
+    render(<ProjectList data={SHARED} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    const seen = screen.getByText("열람", { selector: "a" }).closest("tr")!;
+    expect(within(seen).queryAllByRole("button")).toHaveLength(0);
+    const mine = screen.getByText("내 것").closest("tr")!;
+    expect(within(mine).getAllByRole("button")).toHaveLength(3);
+  });
+
+  it("opens access management with the current viewers", async () => {
+    render(<ProjectList data={SHARED} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /내 것 접근 관리/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("lee");
+    // 소유자 변경은 관리자만 한다.
+    expect(within(dialog).queryByRole("button", { name: "소유자 변경" })).toBeNull();
   });
 });
 

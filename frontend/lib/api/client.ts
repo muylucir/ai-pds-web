@@ -33,7 +33,11 @@ export class ApiError extends Error {
 
 /** 실패 응답을 ApiError로 옮긴다. `detail`은 문자열이거나 `{code, turn_id}`다 —
  *  후자는 코드를 `detail`로, 턴 id를 `turnId`로 싣는다. JSON이 아니면(프록시가 낸
- *  431 등) statusText를 유지한다. */
+ *  431 등) statusText를 유지한다.
+ *
+ *  그 밖의 모양(FastAPI 기본 422의 에러 객체 배열 등)은 `bad_request`로 둔다 — 객체를
+ *  문자열로 바꾸면 화면에 "[object Object]"가 뜬다. 두 fetch 래퍼(여기 request와
+ *  http.ts의 apiFetch)가 이 함수 하나로 읽는다. */
 export async function apiErrorFrom(res: Response): Promise<ApiError> {
   let detail = res.statusText;
   let turnId: string | undefined;
@@ -44,6 +48,8 @@ export async function apiErrorFrom(res: Response): Promise<ApiError> {
     else if (d && typeof d.code === "string") {
       detail = d.code;
       if (typeof d.turn_id === "string") turnId = d.turn_id;
+    } else if (d !== undefined && d !== null) {
+      detail = "bad_request";
     }
   } catch {
     // non-JSON error body — keep statusText
@@ -97,6 +103,14 @@ export async function getProject(pid: string): Promise<ProjectDetail> {
 
 export async function listProjects(page = 1, size = 10): Promise<ProjectPage> {
   return request<ProjectPage>(`/projects?page=${page}&size=${size}`);
+}
+
+/** 열람 멤버 목록을 통째로 바꾼다. 값은 이메일 또는 username이고, 서버가 username으로
+ *  바꿔 저장한다. 소유자·관리자만 된다. */
+export async function setProjectMembers(pid: string, members: string[]): Promise<ProjectDetail> {
+  return request<ProjectDetail>(`/projects/${encodeURIComponent(pid)}/members`, {
+    method: "PUT", body: JSON.stringify({ members }),
+  });
 }
 
 export async function deleteProject(projectId: string): Promise<void> {

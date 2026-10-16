@@ -51,6 +51,7 @@ export default function Home() {
               if (data.projects.length === 1 && page > 1) setPage(page - 1);
               else reload();
             }}
+            onChanged={reload}
             onPageChange={setPage}
           />
         )}

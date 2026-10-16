@@ -85,4 +85,26 @@ describe("InviteUserModal", () => {
     await userEvent.click(screen.getByRole("button", { name: "취소" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("says the email is malformed when the server refuses it", async () => {
+    server.use(http.post(`${API_BASE_URL}/admin/users`, () =>
+      HttpResponse.json({ detail: "email_invalid" }, { status: 400 })));
+    render(<InviteUserModal onInvited={() => {}} onClose={() => {}} />);
+    // 브라우저의 type=email은 통과시키고 서버는 거절하는 주소다.
+    await userEvent.type(screen.getByLabelText("이메일"), "kim@corp");
+    await userEvent.click(screen.getByRole("button", { name: "초대" }));
+    expect(await screen.findByText(/이메일 주소 형식이 올바르지 않습니다/)).toBeInTheDocument();
+  });
+
+  it("never shows [object Object] for a validation error body", async () => {
+    // FastAPI 기본 422의 detail은 에러 객체 배열이다.
+    server.use(http.post(`${API_BASE_URL}/admin/users`, () =>
+      HttpResponse.json({ detail: [{ loc: ["body", "role"], msg: "bad", type: "x" }] },
+                        { status: 422 })));
+    render(<InviteUserModal onInvited={() => {}} onClose={() => {}} />);
+    await userEvent.type(screen.getByLabelText("이메일"), "new@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "초대" }));
+    expect(await screen.findByText("요청이 올바르지 않습니다.")).toBeInTheDocument();
+    expect(screen.queryByText(/object Object/)).toBeNull();
+  });
 });

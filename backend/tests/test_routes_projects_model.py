@@ -127,7 +127,9 @@ def test_get_project_returns_metadata_without_booting_a_workspace(catalog, monke
                     # effort 없이 register된 프로젝트(이 필드 이전) — CLI 기본값(None).
                     "effort": None,
                     # language 없이 register된 프로젝트 — get_language가 "ko"로 확정한다.
-                    "language": "ko"}
+                    "language": "ko",
+                    # 소유자 없이 register된 프로젝트 — 시드 관리자 소유다.
+                    "owner": "admin", "access": "admin", "members": []}
     assert booted["n"] == 0
 
 

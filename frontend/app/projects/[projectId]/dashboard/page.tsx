@@ -19,7 +19,7 @@ export default function DashboardPage({ params }: { params: Promise<{ projectId:
   const audit = useAsync(() => getAudit(projectId), [projectId]);
   const questionFiles = useAsync(() => listQuestionFiles(projectId), [projectId]);
   const t = useT();
-  const { modelLabel, language } = useProjectMeta(projectId);
+  const { modelLabel, language, readOnly } = useProjectMeta(projectId);
 
   const notFound = state.error instanceof ApiError && state.error.status === 404;
 
@@ -38,7 +38,7 @@ export default function DashboardPage({ params }: { params: Promise<{ projectId:
   return (
     <>
       <AppHeader activeTab="dashboard" projectId={projectId} modelLabel={modelLabel}
-                 projectLanguage={language} />
+                 projectLanguage={language} readOnly={readOnly} />
       <main className="max-w-7xl mx-auto px-6 py-8">
         {notFound && <p className="text-sm text-rose-600">{t("page.projectNotFound")}</p>}
         {!notFound && state.error && (
@@ -61,7 +61,7 @@ export default function DashboardPage({ params }: { params: Promise<{ projectId:
               )}
             </div>
 
-            {notStarted && <GetStartedBanner projectId={projectId} />}
+            {notStarted && !readOnly && <GetStartedBanner projectId={projectId} />}
             <HandoffReadyBanner projectId={projectId} state={state.data} className="mb-6" />
 
             <ProgressCards

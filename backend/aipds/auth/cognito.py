@@ -156,6 +156,13 @@ def generate_temp_password(length: int = 16) -> str:
     return "".join(chars)
 
 
+def _filter_value(value: str) -> str:
+    """ListUsers Filter의 따옴표 안에 넣을 값. 따옴표와 역슬래시를 이스케이프한다 — 호출부는
+    username 규칙(project_access.username_of)을 통과한 값만 넘기지만, 필터 문법을 깨는 값이
+    다른 사용자를 고르게 두지 않는다."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 class CognitoAdmin:
     def __init__(self, client, user_pool_id: str) -> None:
         self._c = client
@@ -191,6 +198,20 @@ class CognitoAdmin:
     def groups_of(self, username: str) -> list[str]:
         resp = self._call("admin_list_groups_for_user", Username=username)
         return [g["GroupName"] for g in resp.get("Groups", [])]
+
+    def is_enabled(self, username: str) -> bool:
+        """계정이 활성인가. 없는 계정은 UserNotFoundException(CognitoError).
+
+        AdminGetUser가 아니라 ListUsers 필터로 읽는다. 인스턴스 롤은 이 모듈이 부르는 API만
+        허용하고(infra/lib/aipds-hosting-stack.ts), 그 목록을 늘리려면 HostingStack을 다시
+        배포해야 하는데 그 배포는 인스턴스를 교체한다. ListUsers는 이미 허용돼 있고 Enabled를
+        싣는다."""
+        resp = self._call("list_users", Filter=f'username = "{_filter_value(username)}"',
+                          Limit=1)
+        users = resp.get("Users", [])
+        if not users:
+            raise CognitoError("UserNotFoundException", f"{username} not found")
+        return bool(users[0].get("Enabled", True))
 
     def list_users(self) -> list[ManagedUser]:
         users: list[ManagedUser] = []

@@ -1,7 +1,7 @@
 // Shared fetch wrapper. Extracted so surveys.ts/prototypes.ts don't each carry
 // a copy (client.ts's own request() is unexported and assumes a JSON body,
 // which 204 responses don't have).
-import { API_BASE_URL, ApiError } from "./client";
+import { API_BASE_URL, apiErrorFrom } from "./client";
 import { CREDENTIALS } from "@/lib/auth";
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T | null> {
@@ -17,16 +17,9 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T |
     headers,
     credentials: CREDENTIALS,
   });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      if (body?.detail) detail = String(body.detail);
-    } catch {
-      /* non-JSON error body — keep statusText */
-    }
-    throw new ApiError(res.status, detail);
-  }
+  // 오류 본문은 client.ts의 apiErrorFrom이 읽는다 — 래퍼마다 따로 읽으면 한쪽이 detail의
+  // 모양 하나를 놓친다(실측: 배열을 String()으로 바꿔 "[object Object]"를 보였다).
+  if (!res.ok) throw await apiErrorFrom(res);
   if (res.status === 204) return null;
   return (await res.json()) as T;
 }
