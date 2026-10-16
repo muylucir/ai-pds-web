@@ -9,7 +9,7 @@
 # 주는 자격증명은 인스턴스 롤이 아니라 **AgentRole**(infra/lib/aipds-agent-creds-stack.ts)의
 # 것이다: Bedrock 호출만 된다. S3·Cognito·Secrets Manager는 없다.
 #
-# **왜 8000이 아닌 별도 포트인가.** nginx도 127.0.0.1에서 8000으로 프록시하므로 앱 포트에 두면
+# **왜 8000이 아닌 별도 포트인가.** Next의 `/api` 프록시도 127.0.0.1에서 8000으로 보내므로 앱 포트에 두면
 # `client.host`로는 외부 요청과 구분되지 않는다. 이 포트는 nginx가 모르는 포트다.
 # 그래도 루프백의 누구나 닿을 수 있으므로 모든 요청은 토큰을 검사한다.
 from __future__ import annotations

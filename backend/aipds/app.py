@@ -549,9 +549,36 @@ def questionnaire_agent_factory(project_id: str):
     종전에는 os.environ["ANTHROPIC_MODEL"]을 직접 읽어, 프로젝트별 모델을
     골라도 이 경로만 전역 env를 썼다.
     """
+    return one_shot_agent_factory(project_id, max_tokens=8000)
+
+
+def handoff_writer_factory(project_id: str):
+    """인계 패키지(열린 결정·보기)를 쓰는 단발 호출자.
+
+    문항 생성과 같은 모양이고 출력 상한이 다르다. Opus 5.5 이후 모델은 생각을 끌 수 없고 생각
+    토큰도 max_tokens에 든다 — 실측(ws-g, Opus 5.5)에서 32000으로는 PRD 본문
+    25,279자에서 잘렸다(MaxTokensReachedException). 단계별 길이 상한(handoff/package)과 함께
+    64000을 준다. 호출은 요청 밖의 백그라운드 작업에서 돈다.
+
+    읽기 제한도 다르다. Strands BedrockModel은 스트림에서 120초 동안 아무것도 오지 않으면
+    끊는다 — 실측(ws-g, 원본 25개·154KB)에서 첫 출력이 그보다 늦게 나와
+    `The read operation timed out`으로 두 번 실패했다. 생성 상한(package.CALL_TIMEOUT_S)과
+    같은 값을 준다. 요청이 아니라 백그라운드 작업이라 오래 기다려도 막히는 것이 없다.
+    """
+    from aipds.handoff.package import CALL_TIMEOUT_S
+    return one_shot_agent_factory(project_id, max_tokens=64000, read_timeout=CALL_TIMEOUT_S)
+
+
+def one_shot_agent_factory(project_id: str, *, max_tokens: int,
+                           read_timeout: int | None = None):
+    """그 프로젝트의 모델로 도는 `async (prompt, progress=None) -> str`. 도구도 세션도 없다.
+
+    `read_timeout`이 None이면 Strands 기본값(120초)이다. `progress(글자 수, 생각 중)`를 주면
+    스트림 조각마다 부른다 — 인계 패키지가 단계의 진행을 화면에 보이는 데 쓴다.
+    """
     model_id = project_model(project_id)
 
-    async def call(prompt: str) -> str:
+    async def call(prompt: str, progress=None) -> str:
         if not model_id:
             # 여기가 유일하게 모델을 필수로 요구하는 지점이다(다른 둘은 None을
             # SDK 기본값으로 넘긴다). 라우트가 502로 감싸고 이 문장이 로그에
@@ -561,8 +588,23 @@ def questionnaire_agent_factory(project_id: str):
                 "model_id nor ANTHROPIC_MODEL is set")
         from strands import Agent
         from strands.models import BedrockModel
-        model = BedrockModel(model_id=model_id, max_tokens=8000)
-        agent = Agent(model=model, tools=[], callback_handler=None)
+        client: dict = {}
+        if read_timeout is not None:
+            from botocore.config import Config
+            client["boto_client_config"] = Config(
+                read_timeout=read_timeout, connect_timeout=10,
+                retries={"max_attempts": 3, "mode": "standard"})
+        model = BedrockModel(model_id=model_id, max_tokens=max_tokens, **client)
+
+        def on_event(**event) -> None:
+            text = event.get("data")
+            if isinstance(text, str) and text:
+                progress(len(text), False)
+            elif event.get("reasoning"):
+                # 생각 내용은 기본으로 빈 문자열이다(display "omitted") — 내용이 아니라 표시로 본다.
+                progress(0, True)
+        agent = Agent(model=model, tools=[],
+                      callback_handler=on_event if progress is not None else None)
         result = await agent.invoke_async(prompt)
         return str(result)
     return call
@@ -783,6 +825,11 @@ app.include_router(artifacts.router, dependencies=_AUTH)
 # `/projects/{pid}`와 메서드가 다르고(POST vs GET) 세그먼트 수도 같지 않다.
 from aipds.routes import transfer  # noqa: E402
 app.include_router(transfer.router, dependencies=_AUTH)
+
+# 인계 탭. 산출물을 읽기만 하는 판정이라 artifacts와 성격이 같지만, 인계 패키지(열린 결정·
+# 보완 질문·내려받기)가 이 접두사 아래로 자란다(plans/2026-10-09-handoff-package.md).
+from aipds.routes import handoff  # noqa: E402
+app.include_router(handoff.router, dependencies=_AUTH)
 
 from aipds.routes import answers  # noqa: E402
 app.include_router(answers.router, dependencies=_AUTH)
