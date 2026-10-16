@@ -16,6 +16,9 @@ from __future__ import annotations
 
 # 사용자 관리 (routes/admin_users.py)
 EMAIL_EXISTS = "email_exists"
+# 초대할 이메일의 형식이 틀렸다. 브라우저의 type=email은 `kim@corp`이나 `.local` 도메인을
+# 통과시키므로 서버가 거절하는 경로가 실제로 있다.
+EMAIL_INVALID = "email_invalid"
 USER_NOT_FOUND = "user_not_found"
 BAD_REQUEST = "bad_request"
 FORBIDDEN = "forbidden"
