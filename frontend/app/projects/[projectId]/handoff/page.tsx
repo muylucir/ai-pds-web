@@ -30,7 +30,7 @@ const POLL_MS = 3000;
 export default function HandoffPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const t = useT();
-  const { modelLabel, language } = useProjectMeta(projectId);
+  const { modelLabel, language, readOnly } = useProjectMeta(projectId);
   const readiness = useAsync(() => getReadiness(projectId), [projectId]);
   const supplement = useAsync(() => getSupplement(projectId), [projectId]);
   const [pkg, setPkg] = useState<PackageView | null>(null);
@@ -143,7 +143,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
 
   return (
     <>
-      <AppHeader activeTab="handoff" projectId={projectId} modelLabel={modelLabel} projectLanguage={language} />
+      <AppHeader activeTab="handoff" projectId={projectId} modelLabel={modelLabel} projectLanguage={language} readOnly={readOnly} />
       <main className="max-w-[1720px] mx-auto px-6 py-8">
         <div className="mb-[18px] flex items-start gap-4">
           <div className="flex-1">
@@ -154,7 +154,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
               {shown === "supplement" ? t("handoff.supp.lead") : t("handoff.lead")}
             </p>
           </div>
-          {resettable && shown !== "supplement" && (
+          {resettable && shown !== "supplement" && !readOnly && (
             <button type="button" disabled={generating}
                     title={generating ? t("handoff.reset.busy") : undefined}
                     onClick={() => { setResetError(null); setResetOpen(true); }}
@@ -169,7 +169,8 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
         {/* 생성 중이거나 실패·중단됐으면 단계별 진행을 먼저 보인다. 보완 질문을 쓰는 중에는 가리지 않는다. */}
         {pkg?.manifest && status !== "ready" && shown !== "supplement" && (
           <GenerationProgress pkg={pkg} busy={busy || generating}
-                              onResume={() => void generate(true)} onRestart={() => void generate(false)} />
+                              onResume={() => void generate(true)} onRestart={() => void generate(false)}
+                              readOnly={readOnly} />
         )}
 
         {readiness.error ? (
@@ -184,6 +185,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
             onSave={(u) => void save(u, false)}
             onSaveAndGenerate={(u) => void save(u, true)}
             onBack={() => setMode("status")}
+            readOnly={readOnly}
           />
         ) : shown === "package" && pkg?.manifest ? (
           <PackagePanel
@@ -193,6 +195,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
             onDownload={() => void download()}
             onSupplement={() => setMode("supplement")}
             onStatus={() => setMode("status")}
+            readOnly={readOnly}
           />
         ) : (
           <ReadinessPanel
@@ -204,6 +207,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
             onSupplement={() => setMode("supplement")}
             onGenerate={() => void generate()}
             onViewPackage={() => setMode("package")}
+            readOnly={readOnly}
           />
         )}
       </main>

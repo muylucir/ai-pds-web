@@ -29,6 +29,8 @@ def _reset_registry_and_boot_locks():
     workspaces_before = set(app_module.registry._workspaces)
     created_at_before = set(app_module.registry._created_at)
     model_id_before = set(app_module.registry._model_id)
+    owner_before = set(app_module.registry._owner)
+    members_before = set(app_module.registry._members)
     yield
     for pid in set(app_module.registry._names) - names_before:
         app_module.registry._names.pop(pid, None)
@@ -38,6 +40,10 @@ def _reset_registry_and_boot_locks():
         app_module.registry._created_at.pop(pid, None)
     for pid in set(app_module.registry._model_id) - model_id_before:
         app_module.registry._model_id.pop(pid, None)
+    for pid in set(app_module.registry._owner) - owner_before:
+        app_module.registry._owner.pop(pid, None)
+    for pid in set(app_module.registry._members) - members_before:
+        app_module.registry._members.pop(pid, None)
     deps_module._boot_locks.clear()
 
 

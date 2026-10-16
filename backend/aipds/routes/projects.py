@@ -2,10 +2,13 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from aipds import app as app_module
 from aipds import error_codes as ec
+from aipds import project_access
+from aipds.auth.deps import require_user
+from aipds.auth.models import Principal
 from aipds.parsers.state import parse_state_file
 from aipds.project_store import write_manifest, delete_project_data
 from aipds.proto.cleanup import purge_project_prototypes
@@ -91,8 +94,23 @@ def _validate_language(language: str | None) -> None:
                             detail=ec.LANGUAGE_UNSUPPORTED)
 
 
+class MembersBody(BaseModel):
+    #: 이메일 또는 username. 저장되는 것은 username이다(project_access.username_of).
+    members: list[str]
+
+
+def _access_view(pid: str, me: Principal) -> dict:
+    """화면이 권한에 따라 버튼을 그리는 데 쓰는 값. members는 소유자·관리자에게만 준다 —
+    열람 멤버가 다른 열람자를 알 필요는 없다."""
+    access = project_access.access_of(me, pid)
+    view: dict = {"owner": app_module.registry.get_owner(pid), "access": access}
+    if project_access.can_write(access):
+        view["members"] = list(app_module.registry.get_members(pid))
+    return view
+
+
 @router.post("/projects")
-async def create_project(body: CreateProject):
+async def create_project(body: CreateProject, me: Principal = Depends(require_user)):
     if app_module.registry.is_registered(body.project_id):
         raise HTTPException(status_code=409, detail="project exists")
     # 워크스페이스를 만들기 전에 검증한다 — 거절할 요청 때문에 로컬 디렉토리와
@@ -127,9 +145,10 @@ async def create_project(body: CreateProject):
     # 있지만, 그러면 driver_factory·make_workspace·restore 경로가 모두 시그니처를
     # 바꿔야 하고 lazy 초기화 경로(deps.ensure_workspace)는 여전히 레지스트리를
     # 읽는다. 읽는 쪽을 그대로 두고 순서를 맞추는 편이 좁은 수정이다.
+    owner = project_access.normalize(me.username)
     app_module.registry.register(body.project_id, body.name,
                                  created_at=created_at, model_id=body.model_id,
-                                 language=body.language, effort=effort)
+                                 language=body.language, effort=effort, owner=owner)
     try:
         workspace = await app_module.make_workspace(body.project_id)
     except Exception:
@@ -142,7 +161,7 @@ async def create_project(body: CreateProject):
             await write_manifest(app_module.projects_root_s3_factory(),
                                  body.project_id, body.name,
                                  created_at=created_at, model_id=body.model_id,
-                                 language=body.language, effort=effort)
+                                 language=body.language, effort=effort, owner=owner)
         except Exception:
             # 스펙 결정: 재시작하면 사라질 프로젝트를 조용히 만들지 않는다.
             _log.exception("manifest write failed for %s", body.project_id)
@@ -159,13 +178,17 @@ async def create_project(body: CreateProject):
             "effort": app_module.registry.get_effort(body.project_id),
             # 실제로 돌게 될 언어를 돌려준다(미지정 → "ko"). null을 돌려주면
             # 프론트가 폴백 규칙을 또 알아야 한다.
-            "language": app_module.registry.get_language(body.project_id)}
+            "language": app_module.registry.get_language(body.project_id),
+            **_access_view(body.project_id, me)}
 
 @router.get("/projects")
-async def list_projects(page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=50)):
+async def list_projects(page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=50),
+                        me: Principal = Depends(require_user)):
     # 페이지 단위 목록 + S3 진행상황(fail-soft). 워크스페이스 lazy 초기화는
     # 유발하지 않는다 — durable 프로젝트 메타데이터(DynamoDB)는 이후 prod 관심사.
-    ids = app_module.registry.list_ids()
+    # 볼 수 있는 것을 먼저 거르고 페이지를 자른다 — 거꾸로 하면 total과 페이지 수가
+    # 남의 프로젝트까지 센다.
+    ids = project_access.visible_ids(me)
     total = len(ids)
     page_ids = ids[(page - 1) * size : page * size]
     progresses = await asyncio.gather(*(_progress(pid) for pid in page_ids))
@@ -176,7 +199,8 @@ async def list_projects(page: int = Query(1, ge=1), size: int = Query(10, ge=1, 
              "model_id": app_module.registry.get_model_id(pid),
              "effort": app_module.registry.get_effort(pid),
              "language": app_module.registry.get_language(pid),
-             "progress": prog}
+             "progress": prog,
+             **_access_view(pid, me)}
             for pid, prog in zip(page_ids, progresses)
         ],
         "total": total,
@@ -185,7 +209,7 @@ async def list_projects(page: int = Query(1, ge=1), size: int = Query(10, ge=1, 
     }
 
 @router.get("/projects/{pid}")
-async def get_project(pid: str):
+async def get_project(pid: str, me: Principal = Depends(require_user)):
     """프로젝트 하나의 메타데이터. 헤더의 모델 배지가 부르는 곳이다.
 
     ensure_workspace를 타지 않고 레지스트리만 읽는다 — 배지 하나가 워크스페이스
@@ -199,13 +223,51 @@ async def get_project(pid: str):
             "created_at": app_module.registry.get_created_at(pid),
             "model_id": app_module.registry.get_model_id(pid),
             "effort": app_module.registry.get_effort(pid),
-            "language": app_module.registry.get_language(pid)}
+            "language": app_module.registry.get_language(pid),
+            **_access_view(pid, me)}
+
+
+@router.put("/projects/{pid}/members")
+async def set_members(pid: str, body: MembersBody, me: Principal = Depends(require_user)):
+    """열람 멤버 목록을 통째로 바꾼다. 소유자·관리자만(PUT이므로 project_access 게이트가
+    멤버를 403으로 막는다).
+
+    계정이 있는지 확인하지 않는다: 확인하면 응답의 차이로 아무 이메일이나 계정 존재를
+    떠볼 수 있다. 오타는 "그 이메일로 로그인한 사람에게 보인다"는 결과로 남고, 화면이
+    그렇게 안내한다."""
+    if not app_module.registry.is_registered(pid):
+        raise HTTPException(status_code=404, detail="unknown project")
+    try:
+        members = tuple(project_access.username_of(m) for m in body.members)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=ec.MEMBER_INVALID)
+    if len(set(members)) > project_access.MAX_MEMBERS:
+        raise HTTPException(status_code=400, detail=ec.MEMBER_INVALID)
+    async with project_access.access_lock(pid):
+        if not app_module.registry.is_registered(pid):
+            raise HTTPException(status_code=404, detail="unknown project")
+        try:
+            await project_access.set_access(
+                pid, app_module.registry.get_owner(pid) or project_access.SEED_ADMIN, members)
+        except Exception:
+            _log.exception("members update failed for %s", pid)
+            raise HTTPException(status_code=500, detail="project persistence failed")
+    return {"project_id": pid, **_access_view(pid, me)}
 
 @router.delete("/projects/{pid}")
 async def delete_project(pid: str):
     """전부 삭제(스펙 결정): 러너 stop(베스트에포트) → 프로토타입 실체 정리
     (실패 시 500) → S3 세션+산출물 삭제(실패 시 500, 멱등 재시도) →
-    레지스트리 제거."""
+    레지스트리 제거.
+
+    접근 변경(멤버·소유권)과 같은 잠금을 쥔다. 그쪽은 매니페스트를 읽고-고쳐-쓰므로, 그 사이에
+    프리픽스가 지워지면 그 쓰기가 project.json을 되살리고 재시작 뒤 지운 프로젝트가 목록에
+    돌아온다."""
+    async with project_access.access_lock(pid):
+        return await _delete_project(pid)
+
+
+async def _delete_project(pid: str):
     if not app_module.registry.is_registered(pid):
         raise HTTPException(status_code=404, detail="unknown project")
     already_stopped = None

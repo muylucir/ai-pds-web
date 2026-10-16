@@ -29,7 +29,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   const { projectId } = use(params);
   const list = useAsync(() => listPrototypes(projectId), [projectId]);
   const t = useT();
-  const { modelLabel, language } = useProjectMeta(projectId);
+  const { modelLabel, language, readOnly } = useProjectMeta(projectId);
 
   // Which card's build session is open, and whether THIS open should fire
   // the auto first-build turn — true only when startSession just created a
@@ -232,7 +232,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   return (
     <>
       <AppHeader activeTab="prototypes" projectId={projectId} modelLabel={modelLabel}
-                 projectLanguage={language} />
+                 projectLanguage={language} readOnly={readOnly} />
       <main className="max-w-5xl mx-auto px-6 py-8">
         <h1 className="text-2xl font-bold mb-6">{t("page.prototypesTitle")}</h1>
 
@@ -256,6 +256,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 key={info.slug}
                 info={info}
                 busy={busySlug === info.slug}
+                readOnly={readOnly}
                 onBuild={() => handleBuild(info.slug, info.state)}
                 onStartHost={() => handleStartHost(info.slug)}
                 startingPhase={hostPhase?.slug === info.slug ? hostPhase.state : null}
@@ -282,7 +283,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
 
         {surveySlug && (
           <div className="mt-8 border-t border-slate-200 pt-6">
-            <SurveyPanel projectId={projectId} slug={surveySlug} />
+            <SurveyPanel projectId={projectId} slug={surveySlug} readOnly={readOnly} />
           </div>
         )}
       </main>

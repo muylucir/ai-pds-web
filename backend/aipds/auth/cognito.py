@@ -192,6 +192,11 @@ class CognitoAdmin:
         resp = self._call("admin_list_groups_for_user", Username=username)
         return [g["GroupName"] for g in resp.get("Groups", [])]
 
+    def is_enabled(self, username: str) -> bool:
+        """계정이 활성인가. 없는 계정은 UserNotFoundException(CognitoError)."""
+        resp = self._call("admin_get_user", Username=username)
+        return bool(resp.get("Enabled", True))
+
     def list_users(self) -> list[ManagedUser]:
         users: list[ManagedUser] = []
         token: str | None = None

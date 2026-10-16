@@ -95,10 +95,42 @@ already uploaded.
 If the AI model the project used is not available on the importing server, it starts on that
 server's default model and the screen tells you so.`,
     },
+    { kind: "heading", id: "project-access", text: "Project access — owner and viewers" },
+    {
+      kind: "md",
+      md: `Whoever creates a project is its **owner**. The list shows only the projects you own and the
+ones you were added to as a **viewer**; administrators see every project.
+
+| | View · download | Chat · answers · approval · builds · handoff | Export · delete · manage viewers | Change owner |
+|---|---|---|---|---|
+| Owner | ✓ | ✓ | ✓ | |
+| Viewer | ✓ | | | |
+| Administrator | ✓ | ✓ | ✓ | ✓ |
+
+Viewers **only look**. They can follow the conversation, read documents, prototypes and survey
+results, and download files, but the owner is the one who moves the project forward. When a viewer
+opens a project the header shows **Read-only**.`,
+    },
+    {
+      kind: "steps",
+      items: [
+        "Press **👥** (manage access) on the project in the list. Only owners and administrators see it.",
+        "Type a colleague's email into **Viewer email** and press **Add**. It is saved straight away.",
+        "To take someone off, press **Remove** next to them.",
+        "Administrators can enter an email under **New owner** in the same dialog and press **Change owner**. The previous owner stays on as a viewer.",
+      ],
+    },
+    {
+      kind: "callout",
+      tone: "note",
+      md: `Adding a viewer does not check that an account exists for that email — the project simply shows
+up for whoever signs in with it. Check the spelling. Viewers can also open preview and survey links
+that were already shared, and those links open for anyone.`,
+    },
     { kind: "heading", id: "delete-project", text: "Deleting a project" },
     {
       kind: "md",
-      md: `**Delete** in the list opens a confirmation. More than the project entry goes away:
+      md: `**Delete** in the list opens a confirmation (owners and administrators only). More than the project entry goes away:
 
 - The whole chat history and every document written
 - Prototype build output and any running preview

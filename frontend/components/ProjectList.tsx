@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import type { ProjectPage, ProjectProgress, ProjectSummary } from "@/lib/api/types";
+import { canWrite, type ProjectPage, type ProjectProgress, type ProjectSummary } from "@/lib/api/types";
 import { ApiError, deleteProject } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errorMessage";
 import { exportProject } from "@/lib/api/transfer";
@@ -9,6 +9,7 @@ import { listModels } from "@/lib/api/models";
 import { isLocale, LANGUAGE_LABEL } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 import { modelLabel } from "@/lib/modelLabel";
+import { ProjectMembersModal } from "./ProjectMembersModal";
 
 function progressLabel(p: ProjectProgress | null | undefined): string {
   if (!p) return "—";
@@ -26,14 +27,19 @@ function createdLabel(iso: string | null | undefined): string {
 export function ProjectList({
   data,
   onDeleted,
+  onChanged,
   onPageChange,
 }: {
   data: ProjectPage;
   onDeleted: () => void;
+  /** 소유자·멤버가 바뀌었다 — 목록을 다시 읽는다. */
+  onChanged?: () => void;
   onPageChange: (page: number) => void;
 }) {
   const t = useT();
   const [target, setTarget] = useState<ProjectSummary | null>(null);
+  // 접근 관리 창을 연 프로젝트. 소유자·관리자에게만 버튼이 있다.
+  const [accessTarget, setAccessTarget] = useState<ProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 내보내기 중인 프로젝트 id. 행마다 상태를 두는 대신 하나만 갖는다 — 번들
@@ -120,8 +126,9 @@ export function ProjectList({
               <th scope="col" className="px-4 py-3 font-medium">{t("project.colProgress")}</th>
               <th scope="col" className="px-4 py-3 font-medium">{t("project.colModel")}</th>
               <th scope="col" className="px-4 py-3 font-medium">{t("project.colLanguage")}</th>
+              <th scope="col" className="px-4 py-3 font-medium">{t("project.colOwner")}</th>
               <th scope="col" className="px-4 py-3 font-medium">{t("project.colCreatedAt")}</th>
-              <th scope="col" className="px-4 py-3 w-28">
+              <th scope="col" className="px-4 py-3 w-36">
                 <span className="sr-only">{t("project.delete")}</span>
               </th>
             </tr>
@@ -150,10 +157,29 @@ export function ProjectList({
                 <td className="px-4 py-3 text-slate-600">
                   {isLocale(p.language) ? LANGUAGE_LABEL[p.language] : "—"}
                 </td>
+                <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                  <span className="font-mono text-xs">{p.owner ?? "—"}</span>
+                  {/* 열람 멤버로 들어와 있는 프로젝트. 클릭하면 열리지만 바꿀 수는 없다. */}
+                  {p.access === "member" && (
+                    <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                      {t("project.viewerBadge")}
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
                   {createdLabel(p.created_at)}
                 </td>
                 <td className="px-4 py-3 text-right whitespace-nowrap">
+                  {canWrite(p.access) && (<>
+                  <button
+                    type="button"
+                    aria-label={`${p.name ?? p.project_id} ${t("members.openAria")}`}
+                    title={t("members.open")}
+                    onClick={() => setAccessTarget(p)}
+                    className="relative z-10 w-8 h-8 rounded-lg text-slate-300 hover:text-violet-700 hover:bg-violet-50 inline-flex items-center justify-center"
+                  >
+                    👥
+                  </button>
                   <button
                     type="button"
                     aria-label={`${p.name ?? p.project_id} ${t("transfer.exportAria")}`}
@@ -175,6 +201,7 @@ export function ProjectList({
                   >
                     🗑
                   </button>
+                  </>)}
                 </td>
               </tr>
             ))}
@@ -211,6 +238,14 @@ export function ProjectList({
           </button>
         </div>
       </div>
+
+      {accessTarget && (
+        <ProjectMembersModal
+          project={accessTarget}
+          onClose={() => setAccessTarget(null)}
+          onChanged={() => onChanged?.()}
+        />
+      )}
 
       {target && (
         <div

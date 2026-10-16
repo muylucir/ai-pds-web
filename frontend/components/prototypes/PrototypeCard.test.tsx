@@ -536,4 +536,22 @@ describe("PrototypeCard — 설문 표시", () => {
                           busy={false} {...noop} />);
     expect(screen.queryByText("설문 없음")).not.toBeInTheDocument();
   });
+
+  it("열람 멤버: 프리뷰·링크·다운로드·설문은 남고 빌드·호스팅·초기화는 없다", () => {
+    render(
+      <PrototypeCard info={info({ state: "running", port: 4100, access_url: "/proto/t/x" })}
+                     busy={false} readOnly {...noop} onOpenPreview={vi.fn()} onReset={vi.fn()}
+                     onOpenSurvey={vi.fn()} onShowLogs={vi.fn()} archiveUrl="/a.zip"
+                     shareUrl="https://example.com/proto/t/x" />,
+    );
+    const names = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(names).toEqual(["프리뷰 열기", "링크 복사", "로그", "설문"]);
+    expect(screen.getByRole("link", { name: "다운로드" })).toBeInTheDocument();
+  });
+
+  it("열람 멤버: 빌드 전에는 누를 것이 없다", () => {
+    render(<PrototypeCard info={info({ state: "none" })} busy={false} readOnly {...noop} />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
 });
+
