@@ -475,6 +475,7 @@ export const ko = {
   "list.loadFailed": "프로젝트 목록을 불러오지 못했습니다. 백엔드 연결을 확인하세요.",
   "err.generic": "요청이 실패했습니다.",
   "err.emailExists": "이미 등록된 이메일입니다.",
+  "err.emailInvalid": "이메일 주소 형식이 올바르지 않습니다. 도메인까지 정확히 입력하세요(예: name@example.com).",
   "err.userNotFound": "사용자를 찾을 수 없습니다.",
   "err.badRequest": "요청이 올바르지 않습니다.",
   "err.forbidden": "권한이 없습니다.",
