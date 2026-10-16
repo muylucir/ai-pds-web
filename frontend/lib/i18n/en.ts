@@ -436,6 +436,7 @@ export const en: Record<keyof typeof ko, string> = {
   "list.loadFailed": "Could not load the project list. Check the backend connection.",
   "err.generic": "The request failed.",
   "err.emailExists": "That email is already registered.",
+  "err.emailInvalid": "That email address is not valid. Enter the full domain (for example name@example.com).",
   "err.userNotFound": "User not found.",
   "err.badRequest": "The request was not valid.",
   "err.forbidden": "You do not have permission to do that.",

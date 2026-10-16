@@ -14,7 +14,9 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
+from pydantic.networks import validate_email
+from pydantic_core import PydanticCustomError
 from starlette.responses import Response
 
 from aipds import error_codes as ec
@@ -65,7 +67,9 @@ def _http_error(exc: CognitoError) -> HTTPException:
 
 
 class InviteBody(BaseModel):
-    email: EmailStr
+    #: 형식 검사는 라우트가 한다(_checked_email). 타입에 EmailStr을 두면 틀린 이메일이 FastAPI
+    #: 기본 422가 되고, 그 detail은 문자열이 아니라 에러 객체 배열이라 화면이 코드를 찾지 못한다.
+    email: str
     role: Role
 
 
@@ -142,6 +146,16 @@ async def list_users(me: Principal = Depends(require_admin)):
         for u in users]}
 
 
+def _checked_email(value: str) -> str:
+    """EmailStr과 같은 규칙(pydantic.networks.validate_email)으로 검사하고, 틀리면 안정적 코드로
+    400을 낸다. 규칙을 따로 만들지 않는 이유: 받아들이는 주소가 바뀌면 안 된다."""
+    try:
+        _, email = validate_email(value.strip())
+    except PydanticCustomError:
+        raise HTTPException(status_code=400, detail=ec.EMAIL_INVALID)
+    return email
+
+
 @router.post("/users", status_code=201)
 async def invite_user(body: InviteBody, me: Principal = Depends(require_admin)):
     """초대: 생성 → 임시 비밀번호 → 그룹.
@@ -149,8 +163,8 @@ async def invite_user(body: InviteBody, me: Principal = Depends(require_admin)):
     임시 비밀번호는 응답에 딱 한 번 실리고 어디에도 저장되지 않는다. 관리자가
     사내 메신저로 전달하고, 사용자는 첫 로그인에서 Hosted UI가 변경을 요구한다.
     """
+    email = _checked_email(body.email)
     cognito = _admin()
-    email = str(body.email)
     try:
         username = cognito.create_user(email)
     except CognitoError as exc:
