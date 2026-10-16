@@ -438,3 +438,52 @@ def test_self_service_transport_failure_is_also_wrapped(idp):
     with pytest.raises(CognitoError) as exc:
         change_own_password(client, "t", "OldPass1!", "NewPass2@")
     assert exc.value.code == "EndpointConnectionError"
+
+
+# ---- 활성 여부 (소유권 부여가 쓴다) ----
+
+def test_is_enabled_reads_the_account_through_list_users(admin):
+    a, stub = admin
+    stub.add_response("list_users", {"Users": [_user("pm", "pm@aipds.local", enabled=False)]},
+                      {"UserPoolId": POOL, "Filter": 'username = "pm"', "Limit": 1})
+    assert a.is_enabled("pm") is False
+
+
+def test_is_enabled_reports_a_missing_account_as_user_not_found(admin):
+    a, stub = admin
+    stub.add_response("list_users", {"Users": []},
+                      {"UserPoolId": POOL, "Filter": 'username = "ghost"', "Limit": 1})
+    with pytest.raises(CognitoError) as e:
+        a.is_enabled("ghost")
+    assert e.value.code == "UserNotFoundException"
+
+
+def test_is_enabled_escapes_the_filter_value(admin):
+    a, stub = admin
+    stub.add_response("list_users", {"Users": []},
+                      {"UserPoolId": POOL, "Filter": 'username = "a\\"b"', "Limit": 1})
+    with pytest.raises(CognitoError):
+        a.is_enabled('a"b')
+
+
+def test_every_cognito_call_is_allowed_by_the_instance_role():
+    # 인스턴스 롤은 Cognito API를 하나씩 허용한다(cognito-idp:*가 아니다). 여기서 부르는
+    # API가 그 목록에 없으면 그 기능만 AccessDenied → 502가 되고, 화면에서는 원인이 보이지
+    # 않는다(실측: 소유권 부여가 AdminGetUser로 502). 목록을 늘리려면 HostingStack을 다시
+    # 배포해야 하고 그 배포는 인스턴스를 교체하므로, 이미 허용된 API로 해결하는 편이 먼저다.
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    src = (root / "backend/aipds/auth/cognito.py").read_text(encoding="utf-8")
+    called = set(re.findall(r'_call\(\s*"(\w+)"', src))
+    called |= set(re.findall(r'\bclient\.(\w+)\(', src)) & {"change_password"}
+    stack = (root / "infra/lib/aipds-hosting-stack.ts").read_text(encoding="utf-8")
+    allowed = set(re.findall(r"'cognito-idp:(\w+)'", stack))
+
+    def pascal(name: str) -> str:
+        return "".join(part.capitalize() for part in name.split("_"))
+
+    # ChangePassword는 사용자 자신의 access 토큰으로 서명되는 셀프서비스 API라 롤이 필요 없다.
+    missing = sorted(pascal(c) for c in called if c != "change_password"
+                     and pascal(c) not in allowed)
+    assert called, "cognito.py에서 호출을 하나도 찾지 못했다 — 정규식을 확인할 것"
+    assert missing == [], f"인스턴스 롤에 없는 Cognito API: {missing}"
