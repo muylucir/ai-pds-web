@@ -26,7 +26,9 @@
 # 영어 프로젝트로 샌다).
 from __future__ import annotations
 
-from aipds.proto.build_guard import bash_denial
+import pytest
+
+from aipds.proto.build_guard import bash_denial, fetch_denial, user_url_hosts
 
 
 # ---- 빌드의 정상 경로는 통과해야 한다 ----
@@ -183,3 +185,52 @@ def test_touching_cli_settings_from_bash_is_denied():
 def test_ordinary_json_files_are_allowed():
     assert bash_denial("cat package.json tsconfig.json") is None
     assert bash_denial("cat app/settings.json") is None
+
+
+# ---- WebFetch: 사용자가 채팅에 직접 쓴 URL의 사이트는 열린다 ----
+
+
+
+def test_hosts_come_from_urls_the_user_wrote():
+    text = ("https://store.example.com/ranks 이게 베스트 목록이야. "
+            "(http://Shop.Example.org/a?b=1) 도 봐줘")
+    assert user_url_hosts(text) == {"store.example.com", "shop.example.org"}
+
+
+def test_text_without_a_scheme_is_not_a_url():
+    """스킴 없는 조각까지 잡으면 파일 경로·버전 문자열이 호스트로 둔갑한다."""
+    assert user_url_hosts("store.example.com/ranks 와 v1.2.3, src/app.tsx") == set()
+    assert user_url_hosts(None) == set()
+
+
+@pytest.mark.parametrize("url", [
+    "http://localhost:8000/projects",
+    "http://api.localhost/",
+    "http://printer.local/",
+    "http://metadata.google.internal/",
+    "http://127.0.0.1:3000/",
+    "http://10.0.0.5/",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://[::1]:8000/",
+    "http://127.1/",            # WebFetch의 URL 파서는 축약 IPv4를 127.0.0.1로 읽는다
+    "http://2130706433/",
+    "http://0x7f.1/",
+])
+def test_internal_addresses_are_never_opened_by_a_user_url(url):
+    """사용자가 썼더라도 이 서버 안쪽(백엔드, 다른 프로젝트의 프리뷰 포트)을 여는 길이
+    되면 안 된다."""
+    assert user_url_hosts(url) == set()
+
+
+def test_a_user_host_opens_exactly_that_host():
+    """하위 도메인까지 열면 `https://co.kr` 한 줄이 `*.co.kr` 전부가 된다."""
+    hosts = user_url_hosts("https://store.example.com/ranks")
+    assert fetch_denial("https://store.example.com/robots.txt", hosts) is None
+    assert fetch_denial("https://evil.store.example.com/", hosts) == "evil.store.example.com"
+    assert fetch_denial("https://example.com/", hosts) == "example.com"
+    assert fetch_denial("https://collector.example.net/?d=x", hosts) == "collector.example.net"
+
+
+def test_without_user_hosts_only_the_docs_open():
+    assert fetch_denial("https://ui.shadcn.com/blocks") is None
+    assert fetch_denial("https://store.example.com/") == "store.example.com"

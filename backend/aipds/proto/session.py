@@ -17,7 +17,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator, Callable, Literal, Protocol, TYPE_CHECKING
+from typing import AsyncIterator, Callable, Iterable, Literal, Protocol, TYPE_CHECKING
 
 from aipds.context_usage import ContextRecord
 from aipds.proto.history import context_key
@@ -26,6 +26,7 @@ from aipds.turn_job import TurnJobs
 from aipds.proto.store import (PrototypeStore, has_build_output,  # noqa: F401 — re-export
                                mark_completed, output_digest)
 from aipds.proto import prompts
+from aipds.proto.build_guard import user_url_hosts
 from aipds.proto.design_sync import sync_design
 from aipds.proto.hosting import restore_local
 from aipds.pathsafe import unlink_beneath, write_beneath
@@ -63,6 +64,7 @@ class BuilderLike(Protocol):
     async def interrupt(self) -> None: ...
     async def pending(self) -> str | None: ...
     async def disconnect(self) -> None: ...
+    def allow_fetch_hosts(self, hosts: Iterable[str]) -> None: ...
 
 
 class SemaphoreLike(Protocol):
@@ -484,7 +486,14 @@ class PrototypeSession:
         """
         return self._opened
 
-    async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
+    async def send_message(self, text: str, *,
+                           user_text: str | None = None) -> AsyncIterator[AgentEvent]:
+        """`text`는 에이전트에게 갈 말, `user_text`는 사용자가 실제로 쓴 말이다.
+
+        개시 턴에서는 둘이 다르다(라우트가 첫 메시지를 개시 프롬프트로 감싼다).
+        `user_text`가 따로 오는 이유는 WebFetch 허용이다 — 사용자가 쓴 URL만 열어야
+        하고, 감싼 프롬프트에는 모델이 쓴 handoff 요약의 URL이 섞여 있다.
+        """
         assert self._builder is not None, "start() must be called before send_message()"
         # 완료 선언된 세션은 새 턴을 받지 않는다. 오늘은 routes/prototypes.py의
         # _DEAD_STATUSES가 이 호출 전에 404로 막아주지만, 이 객체가 자기를
@@ -514,6 +523,7 @@ class PrototypeSession:
                 text=prompts.session_already_complete(self._language),
             )
             return
+        self._allow_user_urls(user_text)
         self._arm_idle_timer()
         # 이 메시지가 개시 턴을 소비한다. 완료 가드(위)를 **지난 뒤** 세우는 것이
         # 의도다: 완료된 세션이 되돌려보내는 오류 턴은 개시 턴이 아니다.
@@ -601,11 +611,19 @@ class PrototypeSession:
                 self._semaphore.release()
             raise
 
+    def _allow_user_urls(self, text: str | None) -> None:
+        hosts = user_url_hosts(text)
+        if hosts:
+            assert self._builder is not None
+            self._builder.allow_fetch_hosts(hosts)
+
     async def send_answers(self, answers: dict[str, str]) -> bool:
         assert self._builder is not None, "start() must be called before send_answers()"
         if self._pending_interrupt_id is None:
             return False
         interrupt_id, self._pending_interrupt_id = self._pending_interrupt_id, None
+        # 질문 카드의 "기타" 칸도 사용자가 직접 쓴 말이다.
+        self._allow_user_urls("\n".join(answers.values()))
         # 답을 **먼저** 턴 로그에 남긴다. 빌드 턴은 질문에서 끊기지 않고 이어지므로
         # 답은 턴 안의 사건이다 — 기록해 두어야 다시 붙은 화면이 질문 카드 다음에
         # 답 말풍선을 되살리고 카드를 닫는다. 빌더를 깨운 뒤에 남기면 그 사이

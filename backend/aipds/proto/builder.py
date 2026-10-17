@@ -21,7 +21,7 @@ import asyncio
 import json
 import logging
 from aipds.pathsafe import workspace_relative as _rel
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Iterable
 
 from aipds.agent_activity import (AGENT_ACTIVITY, TERMINAL_TASK_STATUSES,
                                   activity_payload)
@@ -358,6 +358,14 @@ class PrototypeBuilder:
         # 어느 종료 메시지가 마지막인지 백엔드가 알 수 없기 때문이다(SDK는 둘 중
         # 하나만 오는 경우도 있다고 명시한다).
         self._agent_closed: dict[str, bool] = {}
+        #: 이 세션에서 사용자가 직접 쓴 URL의 호스트. WebFetch 게이트가 문서 호스트에
+        #: 더해 이것을 연다(build_guard.user_url_hosts) — 세션이 사용자 원문에서 뽑아
+        #: 넘긴다(`allow_fetch_hosts`). 빌더가 원문을 보지 못하기 때문이다: 개시 턴의
+        #: `run(text)`는 서버가 감싼 프롬프트다.
+        self._user_fetch_hosts: set[str] = set()
+
+    def allow_fetch_hosts(self, hosts: Iterable[str]) -> None:
+        self._user_fetch_hosts.update(hosts)
 
     # There is deliberately NO `drain_queue()` batch pop here anymore. A batch
     # pop moves events out of the queue that OWNS them and into the caller's
@@ -612,9 +620,10 @@ class PrototypeBuilder:
             reason = (None if offender is None
                       else prompts.settings_write_refused(self._language, offender))
         elif name == "WebFetch":
-            offender = fetch_denial(tool_input.get("url"))
+            offender = fetch_denial(tool_input.get("url"), self._user_fetch_hosts)
             reason = (None if offender is None
-                      else prompts.fetch_refused(self._language, offender, FETCH_HOSTS))
+                      else prompts.fetch_refused(self._language, offender, FETCH_HOSTS,
+                                                 tuple(sorted(self._user_fetch_hosts))))
         else:
             # matcher가 위 도구만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
             # 통과해야 한다 — 알 수 없는 도구를 막으면 빌드가 멈춘다.

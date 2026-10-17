@@ -443,7 +443,7 @@ def _start_build_turn(pid: str, slug: str, session, text: str):
         # 안쪽 generator를 **명시적으로** 닫는다. 턴이 취소되면 TurnJobs가 이
         # generator를 aclose하는데, `async for`로 감싸기만 하면 안쪽은 GC가 거둘 때에야
         # 닫혀 세션의 정리(finally)가 그만큼 늦어진다.
-        inner = session.send_message(turn_text)
+        inner = session.send_message(turn_text, user_text=shown)
         try:
             async for ev in inner:
                 yield ev

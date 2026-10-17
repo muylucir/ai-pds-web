@@ -573,3 +573,23 @@ async def test_the_gate_refuses_in_the_project_language(tmp_path):
         "t1", None)
     reason = out["hookSpecificOutput"]["permissionDecisionReason"]
     assert "Refused" in reason
+
+
+async def test_the_gate_opens_the_sites_the_user_gave(tmp_path):
+    """세션이 사용자 원문에서 뽑아 넘긴 호스트는 열린다. 거부 이유는 그 호스트와
+    "URL을 채팅에 붙여 달라고 하라"는 길을 함께 알려준다."""
+    b = _builder(tmp_path, None, language="ko")
+    b.allow_fetch_hosts({"store.example.com"})
+
+    out = await b._on_pre_tool_use(
+        {"tool_name": "WebFetch",
+         "tool_input": {"url": "https://store.example.com/ranks"}}, "t1", None)
+    assert out == {}
+
+    out = await b._on_pre_tool_use(
+        {"tool_name": "WebFetch",
+         "tool_input": {"url": "https://other.example.org/"}}, "t1", None)
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "other.example.org" in reason
+    assert "store.example.com" in reason
+    assert "채팅에 붙여" in reason

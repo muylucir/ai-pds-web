@@ -56,6 +56,7 @@ class FakePrototypeSession:
         self.closed = False
         self.interrupts = 0
         self.messages: list[str] = []
+        self.user_texts: list[str | None] = []
         self.answers_calls: list[dict] = []
         self.answers_result = True
         self._opened = False
@@ -81,8 +82,9 @@ class FakePrototypeSession:
         self.started = True
         self.status = "ready"
 
-    async def send_message(self, text, record=None):
+    async def send_message(self, text, record=None, *, user_text=None):
         self.messages.append(text)
+        self.user_texts.append(user_text)
         self._opened = True
         self.status = "building"
         for ev in self._events:
@@ -2087,7 +2089,7 @@ def test_a_second_build_turn_while_one_runs_is_409_with_its_id(proto_env, monkey
     gate = {}
 
     class Gated(FakePrototypeSession):
-        async def send_message(self, text, record=None):
+        async def send_message(self, text, record=None, *, user_text=None):
             self.messages.append(text)
             gate["event"] = asyncio.Event()
             yield AgentEvent(kind="message", text="building")
@@ -2159,6 +2161,21 @@ def test_the_first_user_message_is_wrapped_as_the_opening_turn(proto_env, monkey
 
     # 세션이 받은 것은 사용자의 생 문장이 아니라 그 요청이 실린 개시 프롬프트다.
     assert session.messages == ["FIRST(장바구니 버튼을 오른쪽 위로)"]
+
+
+def test_the_session_also_gets_what_the_user_actually_typed(proto_env, monkeypatch):
+    """WebFetch 허용은 사용자 원문에서만 뽑는다(proto/session.send_message) — 개시
+    프롬프트에는 모델이 쓴 handoff 요약의 URL이 섞여 있다. 자동 개시는 원문이 없다."""
+    _seed_spec(proto_env["s3"])
+    session = FakePrototypeSession()
+    _install_session_factory(monkeypatch, session)
+    client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
+
+    _build("https://store.example.com/ranks 판매자 정보는?")
+    _build("두 번째")
+
+    assert session.user_texts == ["https://store.example.com/ranks 판매자 정보는?",
+                                  "두 번째"]
 
 
 def test_a_later_message_is_an_ordinary_turn(proto_env, monkeypatch):
