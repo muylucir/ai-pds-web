@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
 from aipds.models import AgentEvent
 from aipds.proto.limits import BuildSemaphore
 from aipds.proto.session import PrototypeSession
+from aipds.proto.store import completed_digest, output_digest
 
 from fakes.in_memory_s3 import FakeS3Store
 
@@ -1035,6 +1037,44 @@ async def test_the_plan_prompt_asks_for_an_explicit_completion_declaration(tmp_p
     session = await _started(tmp_path)
     prompt = session.first_prompt()
     assert "build_complete" in prompt
+
+
+# ---- 완료 표식: 개선 세션은 지금 트리를 "지난 완료"로 삼는다 ----
+
+def _seed_built_tree(tmp_path) -> Path:
+    build_dir = tmp_path / "protos" / PROJECT_ID / SLUG
+    (build_dir / "prototype").mkdir(parents=True)
+    (build_dir / "prototype" / "index.html").write_text("built")
+    return build_dir
+
+
+async def test_a_handoff_start_marks_the_current_tree_as_the_last_completion(tmp_path):
+    """표식 이전에 완료된 프로토타입도 첫 개선 세션부터 무변경 거부를 받는다
+    (proto/tools.py). handoff가 있으면 지금 트리가 곧 마지막 완료의 트리다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    s3.blobs[HANDOFF_KEY] = json.dumps({"summary": "할 일 앱", "remaining": ""})
+    build_dir = _seed_built_tree(tmp_path)
+
+    await _session(s3, tmp_path, FakeBuilder()).start()
+
+    assert completed_digest(build_dir) == output_digest(build_dir)
+
+
+async def test_a_resumed_session_keeps_its_unfinished_work_completable(tmp_path):
+    """완료 없이 죽은 세션은 이미 써 둔 파일을 완료로 이어 가야 한다 — 지금 트리를
+    기준으로 삼으면 그 완료가 무변경으로 거부된다."""
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    s3.blobs[SESSION_KEY] = json.dumps(
+        {"session_id": "99999999-8888-7777-6666-555555555555"})
+    build_dir = _seed_built_tree(tmp_path)
+
+    await _session(s3, tmp_path, FakeBuilder()).start()
+
+    assert completed_digest(build_dir) is None
 
 
 # ---- 개선 세션: handoff가 있으면 새 session_id + 요약 주입 ----

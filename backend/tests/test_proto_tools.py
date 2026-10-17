@@ -179,3 +179,68 @@ async def test_completion_is_refused_without_changes(tmp_path):
         assert "changes" in result["content"][0]["text"]
 
     assert seen == []
+
+
+# ---- 지난 완료 이후 바뀐 것이 없으면 완료를 받지 않는다 ----
+#
+# 완료 뒤에 온 메시지는 전부 새 개선 세션을 연다. 질문만 받은 세션이 아무것도
+# 바꾸지 않고 완료를 선언하면, 세션이 열리자마자 닫히고 handoff가 "코드 안 바꿈"으로
+# 덮인다.
+
+_ARGS = {"summary": "s", "changes": "없음"}
+
+
+def _text(result) -> str:
+    return result["content"][0]["text"]
+
+
+async def test_a_completion_with_nothing_changed_since_the_last_one_is_refused(tmp_path):
+    page = _prototype_dir(tmp_path) / "index.html"
+    page.write_text("v1")
+    seen: list[AgentEvent] = []
+    handler = _handler(tmp_path, seen.append)
+
+    await handler(_ARGS)
+    refused = await handler(_ARGS)
+
+    assert len(seen) == 1                       # 두 번째는 이벤트가 없다
+    assert "거부됨" in _text(refused)
+    assert "채팅" in _text(refused)              # 답을 어디에 쓸지 알려준다
+
+    page.write_text("v2")
+    await handler(_ARGS)
+    assert len(seen) == 2
+
+
+async def test_a_file_removed_without_the_edit_tools_still_counts_as_a_change(tmp_path):
+    """판정은 파일 내용이다 — Bash `rm`으로 화면 하나를 지운 개선도 개선이다."""
+    proto = _prototype_dir(tmp_path)
+    (proto / "index.html").write_text("x")
+    (proto / "old-page.tsx").write_text("y")
+    seen: list[AgentEvent] = []
+    handler = _handler(tmp_path, seen.append)
+    await handler(_ARGS)
+
+    (proto / "old-page.tsx").unlink()
+    await handler(_ARGS)
+
+    assert len(seen) == 2
+
+
+async def test_install_and_build_byproducts_are_not_a_change(tmp_path):
+    """호스팅의 `npm install`·빌드와 타입 검사가 고쳐 쓰는 파일은 소스 변경이 아니다."""
+    proto = _prototype_dir(tmp_path)
+    (proto / "index.html").write_text("x")
+    seen: list[AgentEvent] = []
+    handler = _handler(tmp_path, seen.append)
+    await handler(_ARGS)
+
+    (proto / "package-lock.json").write_text("{}")
+    (proto / "tsconfig.tsbuildinfo").write_text("{}")
+    (proto / "next-env.d.ts").write_text("//")
+    (proto / ".next").mkdir()
+    (proto / ".next" / "build-manifest.json").write_text("{}")
+    refused = await handler(_ARGS)
+
+    assert len(seen) == 1
+    assert "거부됨" in _text(refused)

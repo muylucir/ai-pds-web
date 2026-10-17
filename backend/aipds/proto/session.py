@@ -23,7 +23,8 @@ from aipds.context_usage import ContextRecord
 from aipds.proto.history import context_key
 from aipds.models import AgentEvent
 from aipds.turn_job import TurnJobs
-from aipds.proto.store import PrototypeStore, has_build_output  # noqa: F401 — re-export
+from aipds.proto.store import (PrototypeStore, has_build_output,  # noqa: F401 — re-export
+                               mark_completed, output_digest)
 from aipds.proto import prompts
 from aipds.proto.design_sync import sync_design
 from aipds.proto.hosting import restore_local
@@ -409,6 +410,18 @@ class PrototypeSession:
         # 빌드 에이전트가 쓰는 트리다 — 심는 파일은 링크를 따라가지 않는다(pathsafe).
         build_dir.mkdir(parents=True, exist_ok=True)
         write_beneath(build_dir, self._spec_key(), spec_md)
+
+        # 개선 세션은 "지난 완료 이후 바뀐 것이 없으면 완료를 받지 않는다"(proto/tools.py)의
+        # 기준을 지금 트리로 다시 심는다. handoff가 있다는 것은 마지막 세션이 완료를
+        # 선언했고 그 뒤로 트리를 바꾼 세션이 없다는 뜻이라 지금 트리가 곧 그 기준이다.
+        # 표식이 생기기 전에 완료된 프로토타입도 이렇게 첫 개선 세션부터 게이트를 받는다.
+        if self._prompt_kind == "handoff" and has_build_output(build_dir):
+            try:
+                mark_completed(build_dir,
+                               await asyncio.to_thread(output_digest, build_dir))
+            except Exception:
+                _log.exception("completion marker seed failed: %s/%s",
+                               self.project_id, self.slug)
 
         # Path A.1은 명세 옆에 빌드 지시서를 남긴다 — 명세와 design-context 답변을
         # 합친, 상류가 정한 빌더의 입력이다(layout.BUILD_INSTRUCTIONS). 명세만 심으면
