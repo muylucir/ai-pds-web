@@ -12,6 +12,7 @@
 # 그것을 막는다.
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -23,6 +24,7 @@ from aipds.models import AgentEvent
 from aipds.proto import prompts
 from aipds.proto.design_sync import theme_imported, theme_required
 from aipds.proto.session import has_build_output
+from aipds.proto.store import completed_digest, mark_completed, output_digest
 
 _log = logging.getLogger("aipds.proto")
 
@@ -110,16 +112,34 @@ def build_proto_tools(workspace: str,
                          workspace)
             return _text_result(prompts.build_complete_rejection(language))
 
+        # 지난 완료 선언 이후 `prototype/`이 그대로면 끝낼 것이 없다. 완료 뒤에 온
+        # 메시지는 전부 새 개선 세션을 열므로, 질문 하나에도 세션이 열리자마자 이 선언으로
+        # 닫혔다 — 실측: 판매자 정보를 어떻게 가져오는지 물은 두 세션이 둘 다 코드를
+        # 바꾸지 않고 `changes: 없음`으로 끝났고, 답은 채팅이 아니라 완료 카드의 요약으로만
+        # 나갔다. 그 요약이 handoff를 덮어써 다음 세션은 이전 빌드 대신 "코드 안 바꿈"을
+        # 들고 시작했다. 판정은 파일 내용이다: Bash로 지운 것도 바뀐 것이다.
+        #
+        # 테마 검사보다 먼저인 이유: 질문만 한 세션에서 테마 거부가 먼저 나가면 사용자가
+        # 요청하지 않은 테마 작업이 시작된다.
+        build_dir = Path(workspace)
+        digest = await asyncio.to_thread(output_digest, build_dir)
+        if digest == completed_digest(build_dir):
+            _log.warning("build_complete refused: nothing changed since the last "
+                         "completion (%s)", workspace)
+            return _text_result(prompts.build_complete_unchanged(language))
+
         # 브랜드 프로필이 적용된 워크스페이스인데 테마가 붙지 않았으면 되돌려
         # 보낸다. 판정은 디스크만 본다(design_sync.theme_required) — 도구 호출
         # 경로에서 S3를 타지 않는다. 프로필이 없으면 이 검사는 아예 돌지 않아
         # 기존 동작과 구분되지 않는다.
-        build_dir = Path(workspace)
         if theme_required(build_dir) and not theme_imported(build_dir):
             _log.warning("build_complete refused: brand theme not applied (%s)",
                          workspace)
             return _text_result(prompts.build_complete_theme_rejection(language))
 
+        # 이벤트보다 먼저 쓴다 — 세션이 이 이벤트를 받고 스냅샷을 뜨므로, 표식이
+        # 그 세대에 함께 실린다(store.COMPLETED_MARKER).
+        mark_completed(build_dir, digest)
         emit(AgentEvent(kind="build_complete", payload=json.dumps(
             {"summary": summary, "remaining": remaining, "changes": changes},
             ensure_ascii=False)))

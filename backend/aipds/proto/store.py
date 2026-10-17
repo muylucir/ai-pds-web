@@ -39,7 +39,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from aipds.pathsafe import read_bytes_beneath, reject_unsafe, write_beneath
+from aipds.pathsafe import (read_bytes_beneath, read_text_beneath, reject_unsafe,
+                            write_beneath)
 from aipds.project_bundle import SOURCE_EXCLUDED_DIRS, source_excluded
 from aipds.s3store import S3StoreLike
 
@@ -154,6 +155,43 @@ def has_build_output(build_dir: Path) -> bool:
         return proto_dir.is_dir() and any(proto_dir.iterdir())
     except OSError:
         return False
+
+
+#: 마지막으로 받아들인 완료 선언 때의 `prototype/` 내용 해시(`output_digest`).
+#: 빌드 트리 루트에 두는 이유: 세대 스냅샷·되살리기·프로젝트 번들이 트리를 통째로
+#: 옮기므로 이 값도 소스와 함께 다닌다 — 따로 둔 사본은 소스와 어긋날 수 있다.
+#: 초기화는 트리를 지우므로 함께 사라지고, 그 뒤의 첫 빌드는 게이트 없이 끝낼 수 있다.
+COMPLETED_MARKER = ".aipds-completed"
+
+#: 도구가 다시 쓰는 부산물. 호스팅이 `prototype/`에서 `npm install`·빌드를 돌리고
+#: (proto/host.py), 에이전트의 타입 검사도 이것들을 고쳐 쓴다 — 넣으면 아무도 소스를
+#: 바꾸지 않았는데 "바뀌었다"가 된다. 의존성을 바꾸는 작업은 `package.json`에 남는다.
+_DIGEST_EXCLUDED = frozenset({"package-lock.json", "tsconfig.tsbuildinfo",
+                              "next-env.d.ts"})
+
+
+def output_digest(build_dir: Path) -> str:
+    """`prototype/`의 내용 해시. 세대 해시와 같은 규칙이되 산출물만 본다.
+
+    빌드 트리 전체를 보면 안 된다 — `start()`가 매번 명세·지시서·수정 이력을 새로
+    심으므로, 에이전트가 아무것도 바꾸지 않아도 해시가 바뀐다.
+
+    동기 함수다(`local_entries`와 같은 이유).
+    """
+    return _hash_entries([(rel, data) for rel, data in local_entries(build_dir / "prototype")
+                          if rel.rsplit("/", 1)[-1] not in _DIGEST_EXCLUDED])
+
+
+def completed_digest(build_dir: Path) -> str | None:
+    """마지막 완료 선언 때의 해시, 없으면 None(첫 빌드, 표식 이전의 프로토타입)."""
+    try:
+        return read_text_beneath(build_dir, COMPLETED_MARKER).strip() or None
+    except (OSError, ValueError):
+        return None
+
+
+def mark_completed(build_dir: Path, digest: str) -> None:
+    write_beneath(build_dir, COMPLETED_MARKER, digest)
 
 
 class PrototypeStore:
