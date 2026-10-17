@@ -33,8 +33,11 @@
 # 대체하지 않는다.
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 from pathlib import PurePosixPath
+from typing import Collection
 from urllib.parse import urlsplit
 
 from aipds.agent_home import SETTINGS_IN_COMMAND
@@ -143,9 +146,56 @@ def settings_write_denial(path: str | None, workspace: str) -> str | None:
 #: 길이고, 빌드에 필요한 것은 위 문서와 npm(Bash)뿐이다.
 FETCH_HOSTS = ("ui.shadcn.com", "ai-sdk.dev")
 
+#: 사용자가 쓴 말에서 URL로 읽는 모양. 스킴이 있어야 한다 — `store.example.com/x`처럼
+#: 스킴 없는 조각까지 잡으면 파일 경로·버전 문자열이 호스트로 둔갑한다. 끝의 닫는
+#: 괄호·따옴표는 URL이 아니라 문장의 일부다(`(https://a.com)`).
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"'`)\]}]+", re.IGNORECASE)
 
-def fetch_denial(url: str | None) -> str | None:
+#: 이름만으로 내부를 가리키는 접미사. 사용자가 쓴 URL이라도 이 서버 안쪽(백엔드·다른
+#: 프로젝트의 프리뷰 포트)을 여는 길이 되면 안 된다.
+_INTERNAL_SUFFIXES = (".localhost", ".local", ".internal")
+
+
+def _internal_host(host: str) -> bool:
+    if host == "localhost" or host.endswith(_INTERNAL_SUFFIXES):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # `127.1`·`2130706433`·`0x7f.1`도 IPv4다 — WebFetch 쪽 URL 파서는 이것들을
+        # 127.0.0.1로 읽는데 `ip_address`는 이름으로 본다. `inet_aton`이 같은 축약을 읽는다.
+        try:
+            ip = ipaddress.IPv4Address(socket.inet_aton(host))
+        except OSError:
+            return False  # 이름이다 — 해석 결과까지는 보지 않는다(Bash로도 닿는 범위다)
+    return not ip.is_global
+
+
+def user_url_hosts(text: str | None) -> set[str]:
+    """사용자가 **직접 쓴** 말 속 http(s) URL의 호스트. 내부 주소는 뺀다.
+
+    WebFetch를 넓히는 유일한 근거다: 사용자가 이 사이트를 보라고 했다. 그래서 입력은
+    사용자 원문이어야 한다 — 서버가 감싼 개시 프롬프트에는 모델이 쓴 handoff 요약과
+    명세 경로가 섞여 있고, 거기서 뽑으면 모델이 적어 둔 URL이 다음 세션의 허용이 된다.
+    """
+    hosts: set[str] = set()
+    for match in _URL_IN_TEXT.finditer(text or ""):
+        try:
+            host = (urlsplit(match.group(0)).hostname or "").lower().rstrip(".")
+        except ValueError:
+            continue
+        if host and not _internal_host(host):
+            hosts.add(host)
+    return hosts
+
+
+def fetch_denial(url: str | None,
+                 user_hosts: Collection[str] = ()) -> str | None:
     """허용 호스트 밖이면 그 호스트(또는 URL)를, 아니면 None.
+
+    허용은 문서 호스트(`FETCH_HOSTS`, 하위 도메인까지)와 `user_hosts` — 이 세션에서
+    사용자가 쓴 URL의 호스트(`user_url_hosts`) — 다. 사용자 호스트는 **정확히 그
+    호스트만**이다: 하위 도메인까지 열면 `https://co.kr` 한 줄이 `*.co.kr` 전부가 된다.
 
     URL이 없거나 문자열이 아니면 **거부**한다 — 이 도구의 입력은 URL 하나이고, 알 수
     없는 모양을 통과시키면 그것이 우회로다(Bash 판정과 실패 방향이 다른 이유).
@@ -157,5 +207,7 @@ def fetch_denial(url: str | None) -> str | None:
     if parts.scheme not in ("http", "https") or not host:
         return url
     if any(host == h or host.endswith("." + h) for h in FETCH_HOSTS):
+        return None
+    if host in user_hosts:
         return None
     return host
