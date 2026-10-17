@@ -137,3 +137,30 @@ async def test_round_trip_over_the_real_S3Store_shape():
 
         assert [e["uuid"] for e in await store.load(KEY)] == ["u1", "a1"]
         assert await store.load({**KEY, "session_id": SID.replace("1", "7")}) is None
+
+
+async def test_load_reads_batches_concurrently_and_keeps_write_order():
+    """transcript_restore가 인스턴스 교체 뒤 이 load를 부른다 — 순차 GET이면 배치 수 ×
+    S3 왕복이다. 동시에 받되 순서는 쓴 순서 그대로여야 한다."""
+    import asyncio
+
+    class _Slow(FakeS3Store):
+        def __init__(self):
+            super().__init__()
+            self.active = 0
+            self.peak = 0
+
+        async def get(self, key):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            await asyncio.sleep(0)
+            self.active -= 1
+            return await super().get(key)
+
+    s3 = _Slow()
+    store = S3SessionStore(s3, slug=SLUG)
+    for i in range(5):
+        await store.append(KEY, [{"type": "user", "uuid": f"u{i}"}])
+
+    assert [e["uuid"] for e in await store.load(KEY)] == [f"u{i}" for i in range(5)]
+    assert s3.peak == 5
