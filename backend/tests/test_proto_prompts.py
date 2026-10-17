@@ -336,3 +336,30 @@ def test_openings_without_instructions_are_unchanged(language):
 def test_english_openings_with_instructions_stay_english():
     for p in _every_opening("en", INSTRUCTIONS)[:3]:     # 마지막은 한국어 요청을 싣는다
         assert not any("가" <= c <= "힣" for c in p), p
+
+
+# 완료된 빌드 뒤의 메시지는 전부 개선 세션을 연다 — 질문도 그렇다. 요청을 변경
+# 지시로 단정하면 모델은 아무것도 바꾸지 않고 완료를 선언해 세션을 닫는다.
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_a_carried_request_may_be_a_question_that_ends_without_completion(language):
+    handoff = handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r",
+                             request="판매자 정보는 어떻게 가져와?")
+    resume = resume_prompt(language, request="판매자 정보는 어떻게 가져와?")
+    for text in (handoff, resume):
+        if language == "ko":
+            assert "질문이나 상의라면 채팅에 답하고" in text
+            assert "아무것도 바꾸지 않았으면 `build_complete`를 부르지 마" in text
+        else:
+            assert "If it is a question or a discussion, answer it in the chat" in text
+            assert "If you changed nothing, do not call `build_complete`" in text
+        # 변경 요청에는 종전대로 되묻지 않고 끝나면 완료를 선언한다.
+        assert "AskUserQuestion" not in text
+        assert "build_complete" in text
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_the_unchanged_rejection_and_the_tool_send_answers_to_the_chat(language):
+    word = "채팅" if language == "ko" else "chat"
+    assert word in prompts.build_complete_unchanged(language)
+    assert word in build_complete_description(language)

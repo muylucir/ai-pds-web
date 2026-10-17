@@ -187,27 +187,23 @@ def resume_prompt(language: str, *, request: str | None = None) -> str:
     스펙이나 빌드 규칙을 다시 말하면 그가 이미 보는 것과 경쟁만 한다. 이 턴이
     할 일은 그가 혼자 방향을 정하지 않게 막는 것뿐이다.
 
-    `request`가 있으면 되묻지 않는다 — 근거는 `handoff_prompt`와 같다.
+    `request`가 있으면 되묻지 않는다 — 근거는 `handoff_prompt`와 같다. 그 요청이
+    변경 지시라고 단정하지 않는 것도 같다.
     """
     if request:
         if _lang(language) == "en":
             return (
-                "Continuing the previous build session. This is what I want done:\n\n"
+                "Continuing the previous build session. This is my message:\n\n"
                 f"{request}\n\n"
                 "Get your bearings first (the transcript and the working directory "
-                "are already yours to read), then do it. Do not ask me what to work "
-                "on — I just told you. Ask only if something in the request is "
-                "genuinely ambiguous.\n"
-                "Declare completion with `build_complete` when it is done.\n"
-            )
+                "are already yours to read). Then:\n"
+                + _request_branches_en("what to work on"))
         return (
-            "이전 빌드 세션을 이어서 진행한다. 내가 원하는 것은 이것이다:\n\n"
+            "이전 빌드 세션을 이어서 진행한다. 내 메시지는 이것이다:\n\n"
             f"{request}\n\n"
-            "먼저 상황을 파악하고(트랜스크립트와 작업 디렉토리는 이미 네가 읽을 수 "
-            "있다) 그다음 진행해줘. 무엇을 할지 되묻지 마 — 방금 말했다. 요청 자체가 "
-            "정말 모호할 때만 물어봐.\n"
-            "끝나면 `build_complete`로 완료를 선언해줘.\n"
-        )
+            "먼저 상황을 파악해줘(트랜스크립트와 작업 디렉토리는 이미 네가 읽을 수 "
+            "있다). 그다음:\n"
+            + _request_branches_ko("무엇을 할지"))
     if _lang(language) == "en":
         return (
             "Continuing the previous build session.\n"
@@ -305,6 +301,27 @@ def _with_request(text: str, language: str, request: str | None) -> str:
     return f"{text}\n내가 미리 덧붙인 요청:\n{request}\n"
 
 
+def _request_branches_ko(what: str) -> str:
+    """요청이 실린 개시 턴(resume·handoff)의 끝 — 변경 요청과 질문을 나눠 지시한다."""
+    return (
+        f"- 변경이나 작업을 요청한 것이면 반영해줘. {what} 되묻지 마 — 방금 "
+        "말했다. 요청 자체가 정말 모호할 때만 물어봐. 끝나면 `build_complete`로 완료를 "
+        "선언해줘.\n"
+        "- 질문이나 상의라면 채팅에 답하고 내 다음 말을 기다려줘. 아무것도 바꾸지 "
+        "않았으면 `build_complete`를 부르지 마.\n"
+    )
+
+
+def _request_branches_en(what: str) -> str:
+    return (
+        f"- If I asked for a change or a task, do it. Do not ask me {what} "
+        "— I just told you. Ask only if the request is genuinely ambiguous. Declare "
+        "completion with `build_complete` when it is done.\n"
+        "- If it is a question or a discussion, answer it in the chat and wait for my "
+        "next message. If you changed nothing, do not call `build_complete`.\n"
+    )
+
+
 def handoff_prompt(language: str, *, spec_key: str, summary: str,
                    remaining: str, instructions_key: str | None = None,
                    history_key: str | None = None,
@@ -321,6 +338,11 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
     **자기 요청을 타이핑할 수조차 없었다**: 남의 객관식에 먼저 답해야 자기 말을 할 수
     있는 흐름이었고, 그 왕복이 의도를 선택지로 좁혔다.
 
+    **요청이 변경 지시라고 단정하지 않는다.** 완료된 빌드 뒤에 온 메시지는 전부 이
+    분기를 타므로 질문도 여기로 온다. 예전 문구("내가 고치고 싶은 것은 이것이다" … "끝나면
+    `build_complete`")는 질문을 변경 지시로 바꿨고, 모델은 코드를 건드리지 않은 채 답을
+    완료 선언의 요약에 담아 세션을 닫았다(proto/tools.py의 무변경 거부가 그 뒤의 방어선이다).
+
     요약과 "먼저 `prototype/`을 봐라"는 **요청이 있어도 함께 간다.** 이 분기는 새
     세션이라 트랜스크립트가 없어서(proto/session의 _resolve_session_id), 그 둘이
     빠지면 에이전트가 이전 빌드가 무엇을 남겼는지 모르는 채로 시작한다.
@@ -332,28 +354,24 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
         if _lang(language) == "en":
             return (
                 "This prototype has already been built once. This session is for "
-                "improvements, and this is what I want changed:\n\n"
+                "improvements, and this is my message:\n\n"
                 f"{request}\n\n"
                 f"Summary of the previous build:\n{summary}\n\n"
                 f"Recorded as remaining work:\n{remaining}\n\n"
                 "1. First look at `prototype/` in the working directory to see where "
                 f"things stand. Re-read {src} if you need to.{note}\n"
-                "2. Then make the change I asked for. Do not ask me what to improve "
-                "— I just told you. Ask only if my request is genuinely ambiguous.\n"
-                "3. Declare completion with `build_complete` when it is done.\n"
-            )
+                "2. Then:\n"
+                + _request_branches_en("what to improve"))
         return (
             "이 프로토타입은 이미 한 번 빌드가 완료됐다. 이번 세션은 개선 작업이고, "
-            "내가 고치고 싶은 것은 이것이다:\n\n"
+            "내 메시지는 이것이다:\n\n"
             f"{request}\n\n"
             f"이전 빌드 요약:\n{summary}\n\n"
             f"남은 작업으로 기록된 것:\n{remaining}\n\n"
             f"1. 먼저 작업 디렉토리의 `prototype/`을 살펴보고 현재 상태를 파악해줘. "
             f"필요하면 {src}도 다시 읽어줘.{note}\n"
-            "2. 그다음 내가 말한 것을 반영해줘. 무엇을 개선할지 되묻지 마 — 방금 "
-            "말했다. 내 요청 자체가 정말 모호할 때만 물어봐.\n"
-            "3. 끝나면 `build_complete`로 완료를 선언해줘.\n"
-        )
+            "2. 그다음:\n"
+            + _request_branches_ko("무엇을 개선할지"))
     if _lang(language) == "en":
         return (
             "This prototype has already been built once. This session is for "
@@ -392,13 +410,17 @@ def build_complete_description(language: str) -> str:
                 "**after you have produced real output under `prototype/`** — an "
                 "empty directory means the declaration is rejected. The build "
                 "session ends after this declaration, so do not call it while work "
-                "remains. `changes` is required: what this session changed in "
+                "remains, and do not call it to answer a question — answer in the "
+                "chat instead (a declaration with nothing changed since the last "
+                "completion is rejected). `changes` is required: what this session changed in "
                 "features, flows or the data model relative to the spec and the "
                 "earlier change history (for a first build: where you deviated "
                 "from the spec). Write 'none' if nothing changed.")
     return ("프로토타입 빌드가 완료되었음을 선언한다. **prototype/ 아래에 실제 "
             "산출물을 만든 뒤** 호출해야 한다 — 비어 있으면 선언이 거부된다. "
             "이 선언 뒤 빌드 세션이 종료되므로, 아직 작업이 남았으면 호출하지 마라. "
+            "질문에 답하려고 호출하지도 마라 — 답은 채팅에 쓴다(지난 완료 이후 바뀐 "
+            "것이 없으면 선언이 거부된다). "
             "`changes`는 필수다: 이번 세션이 명세와 이전 수정 이력 대비 바꾼 "
             "기능·흐름·데이터 모델(첫 빌드라면 명세와 다르게 만든 것)을 적는다. "
             "바뀐 것이 없으면 '없음'이라고 적는다.")
@@ -412,6 +434,24 @@ def build_complete_rejection(language: str) -> str:
                 "completion again.")
     return ("거부됨 — 작업 디렉토리의 `prototype/` 아래에 산출물이 없다. "
             "완성물을 `prototype/`에 쓴 뒤 다시 선언해라.")
+
+
+def build_complete_unchanged(language: str) -> str:
+    """지난 완료 이후 `prototype/`이 그대로인데 완료를 선언했을 때의 거부 메시지.
+
+    "답은 채팅에 써라"가 요점이다. 이 거부가 막는 실패에서 모델은 텍스트를 한 줄도
+    쓰지 않고 답을 완료 선언의 summary에 담았다(proto/tools.py의 해당 검사).
+    """
+    if _lang(language) == "en":
+        return ("Rejected — nothing under `prototype/` has changed since the last "
+                "completion, so there is nothing to complete. If my message was a "
+                "question or a discussion, answer it in the chat as text and wait for "
+                "my next message; the session stays open. If I asked for a change, "
+                "make it first and then declare completion again.")
+    return ("거부됨 — 지난 완료 이후 `prototype/`에서 바뀐 것이 없어 완료할 것이 없다. "
+            "내 메시지가 질문이나 상의였다면 채팅에 텍스트로 답하고 내 다음 말을 "
+            "기다려라 — 세션은 열려 있다. 변경을 요청받았다면 먼저 반영한 뒤 다시 "
+            "선언해라.")
 
 
 def build_complete_changes_missing(language: str) -> str:
