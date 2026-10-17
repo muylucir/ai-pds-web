@@ -45,7 +45,7 @@ from aipds.agent.answer_store import load_answers, save_answers
 from aipds.context_usage import load_record
 from aipds.models import HistoryItem
 from aipds.proto.session_store import transcript_prefix
-from aipds.s3store import S3StoreLike
+from aipds.s3store import S3StoreLike, get_by_etag, list_with_etags
 from aipds.session_history import transform_cli_transcript
 
 _log = logging.getLogger(__name__)
@@ -148,11 +148,14 @@ async def _load_sessions(s3: S3StoreLike, slug: str) -> dict[str, list[dict]]:
     """
     root = transcript_prefix(slug)
     # 키 모양: {root}{session_id}/main/NNNNNNNN.jsonl (proto/session_store._session_prefix)
-    keys = sorted(k for k in await s3.list(root)
-                  if k[len(root):].split("/")[1:2] == ["main"])
-    # 병렬 GET — agent/session_store.load_transcript와 같은 판단이다(빌드
-    # 트랜스크립트는 Discovery보다 배치가 많다).
-    bodies = await asyncio.gather(*(s3.get(k) for k in keys),
+    listed = sorted((k, etag) for k, etag in await list_with_etags(s3, root)
+                    if k[len(root):].split("/")[1:2] == ["main"])
+    keys = [k for k, _ in listed]
+    # 병렬 GET + ETag 캐시 — agent/session_store.load_transcript와 같은 판단이다.
+    # 배치는 seq 키로 붙여 쓰기만 하므로 패널을 다시 열 때 새로 받을 것은 새 배치뿐이고,
+    # 캐시 없이는 열 때마다 지난 세션 전부를 다시 받는다. 빌드는 개선할 때마다 세션이
+    # 늘어 Discovery보다 무겁다(실측 2026-10-17: 13세션 23배치 8.1MB인 프로토타입).
+    bodies = await asyncio.gather(*(get_by_etag(s3, k, etag) for k, etag in listed),
                                  return_exceptions=True)
     sessions: dict[str, list[dict]] = {}
     for key, body in zip(keys, bodies):
