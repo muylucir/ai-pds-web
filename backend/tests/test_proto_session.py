@@ -40,6 +40,7 @@ class FakeBuilder:
         self.disconnect_calls = 0
         self.submit_result = True
         self._script: list[AgentEvent] = []
+        self.fetch_hosts: set[str] = set()
 
     def script(self, events: list[AgentEvent]) -> None:
         self._script = events
@@ -61,6 +62,9 @@ class FakeBuilder:
 
     async def disconnect(self) -> None:
         self.disconnect_calls += 1
+
+    def allow_fetch_hosts(self, hosts) -> None:
+        self.fetch_hosts.update(hosts)
 
 
 def _session(s3, tmp_path, builder, semaphore=None, idle_seconds=1800,
@@ -1559,3 +1563,36 @@ async def test_reset_removes_the_change_history_but_not_the_spec(tmp_path):
     assert HISTORY_KEY not in s3.blobs
     assert HANDOFF_KEY not in s3.blobs
     assert SPEC_KEY in s3.blobs
+
+
+# ---- WebFetch 허용: 사용자가 쓴 말에서만 ----
+
+async def test_only_the_users_own_words_open_a_site(tmp_path):
+    """개시 턴의 `text`는 서버가 감싼 프롬프트다 — 모델이 쓴 handoff 요약의 URL이
+    섞여 있으므로 허용은 `user_text`에서만 뽑는다."""
+    builder = FakeBuilder()
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+
+    [ev async for ev in session.send_message(
+        "요약: https://summary.example.net 을 참고했다\n내 메시지: https://store.example.com/ranks",
+        user_text="https://store.example.com/ranks 판매자 정보는?")]
+
+    assert builder.fetch_hosts == {"store.example.com"}
+
+
+async def test_a_url_typed_into_a_question_card_also_opens(tmp_path):
+    builder = FakeBuilder()
+    s3 = FakeS3Store()
+    s3.blobs[SPEC_KEY] = "# spec"
+    session = _session(s3, tmp_path, builder)
+    await session.start()
+    payload = json.dumps({"interrupt_id": "iid-1", "questions": {"name": "q"}})
+    builder.script([AgentEvent(kind="questions", payload=payload)])
+    [ev async for ev in session.send_message("go")]
+
+    await session.send_answers({"1": "D: https://shop.example.org/item/1 이거 참고"})
+
+    assert builder.fetch_hosts == {"shop.example.org"}

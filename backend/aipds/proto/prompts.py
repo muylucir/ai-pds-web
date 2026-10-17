@@ -662,17 +662,30 @@ def settings_write_refused(language: str, path: str) -> str:
             "프로토타입 파일 작업을 계속해라.")
 
 
-def fetch_refused(language: str, host: str, allowed: tuple[str, ...]) -> str:
+def fetch_refused(language: str, host: str, allowed: tuple[str, ...],
+                  user_hosts: tuple[str, ...] = ()) -> str:
     """빌드 에이전트의 WebFetch가 허용 호스트 밖일 때의 이유(proto/build_guard.py).
 
     열 수 있는 곳을 함께 준다 — 지목만 하면 모델이 다른 호스트로 같은 시도를 한다.
+    다른 사이트가 정말 필요하면 사용자에게 URL을 받으라고 말한다: 사용자가 채팅에 쓴
+    URL의 호스트는 열린다(build_guard.user_url_hosts). 그 길을 알려 주지 않으면 모델은
+    막힌 채 일반론으로 답한다(실측: 사용자가 준 쇼핑몰 URL을 열지 못하고 "직접 확인하지
+    못했다"로 끝났다).
     """
     hosts = ", ".join(f"`{h}`" for h in allowed)
+    users = ", ".join(f"`{h}`" for h in user_hosts)
     if _lang(language) == "en":
+        opened = (f" It can also open the sites I gave you in the chat ({users})."
+                  if user_hosts else "")
         return (f"Refused — WebFetch to `{host}` is not available during a build. "
                 f"It can open the component documentation the skill points to "
-                f"({hosts}). For a package's API, read its installed source under "
-                "`node_modules/` or use `npx shadcn@latest docs <name>`.")
+                f"({hosts}).{opened} For a package's API, read its installed source under "
+                "`node_modules/` or use `npx shadcn@latest docs <name>`. If you need "
+                "another site, ask me to paste its URL in the chat — sites whose URL I "
+                "write there become available.")
+    opened = (f" 내가 채팅에 준 사이트({users})도 열 수 있다." if user_hosts else "")
     return (f"거부됨 — 빌드 중에는 `{host}`로 WebFetch할 수 없다. 스킬이 가리키는 "
-            f"컴포넌트 문서({hosts})만 열 수 있다. 패키지 API는 `node_modules/` 아래 "
-            "설치본 소스를 읽거나 `npx shadcn@latest docs <이름>`을 써라.")
+            f"컴포넌트 문서({hosts})를 열 수 있다.{opened} 패키지 API는 `node_modules/` 아래 "
+            "설치본 소스를 읽거나 `npx shadcn@latest docs <이름>`을 써라. 다른 사이트가 "
+            "필요하면 나에게 그 URL을 채팅에 붙여 달라고 해라 — 내가 거기 쓴 URL의 "
+            "사이트는 열린다.")
