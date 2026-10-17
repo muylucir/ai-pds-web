@@ -29,6 +29,7 @@
 # subagent subpaths -- each of those needs its own seeded starting point.
 from __future__ import annotations
 
+import asyncio
 import json
 
 from aipds.s3store import S3StoreLike
@@ -86,9 +87,14 @@ class S3SessionStore:
         keys = await self._s3.list(prefix)
         if not keys:
             return None  # never written (or emptied -- the SDK treats both the same)
+        # Parallel GETs, as in agent/session_store.py: this runs inside
+        # transcript_restore (first resume after an instance replacement), once
+        # per subagent subpath too, so sequential reads cost batches x round trip.
+        # gather keeps input order, so sorted keys still give write order.
+        bodies = await asyncio.gather(
+            *(self._s3.get(k) for k in sorted(keys)))
         entries: list[dict] = []
-        for k in sorted(keys):
-            body = await self._s3.get(k)
+        for body in bodies:
             entries.extend(json.loads(line) for line in body.splitlines() if line)
         return entries
 

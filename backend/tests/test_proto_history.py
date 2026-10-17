@@ -207,3 +207,33 @@ async def test_an_unreadable_opening_record_is_skipped():
 
     assert _shape(await load_history(s3, SLUG)) == [("user", "보인 말")]
     assert json.loads(s3.blobs[key]) == {"shown": "보인 말"}
+
+
+async def test_reopening_the_panel_does_not_fetch_known_batches_again():
+    """ETag가 같은 배치는 다시 받지 않는다 — 패널을 열 때마다 지난 세션 전부를 받지 않게.
+    새로 붙은 배치만 S3에 간다."""
+    class _Cached(FakeS3Store):
+        def __init__(self):
+            super().__init__()
+            self.cache: dict[tuple[str, str], str] = {}
+            self.fetched: list[str] = []
+
+        async def get_cached(self, key, etag):
+            if (key, etag) not in self.cache:
+                self.fetched.append(key)
+                self.cache[(key, etag)] = await self.get(key)
+            return self.cache[(key, etag)]
+
+    s3 = _Cached()
+    await _write(s3, "s1", [_user("first", 1), _ai("one", 2)])
+    await _write(s3, "s2", [_user("second", 3), _ai("two", 4)])
+    first = await load_history(s3, SLUG)
+    assert len(s3.fetched) == 2
+
+    s3.fetched.clear()
+    assert await load_history(s3, SLUG) == first
+    assert s3.fetched == []
+
+    await _write(s3, "s2", [_user("third", 5)])
+    assert _shape(await load_history(s3, SLUG))[-1] == ("user", "third")
+    assert len(s3.fetched) == 1
