@@ -6,6 +6,7 @@
 // 제한은 60초다.
 "use client";
 import { use, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/AppHeader";
 import { GenerationProgress } from "@/components/handoff/GenerationProgress";
 import { PackagePanel } from "@/components/handoff/PackagePanel";
@@ -30,6 +31,7 @@ const POLL_MS = 3000;
 export default function HandoffPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = use(params);
   const t = useT();
+  const router = useRouter();
   const { modelLabel, language, readOnly } = useProjectMeta(projectId);
   const readiness = useAsync(() => getReadiness(projectId), [projectId]);
   const supplement = useAsync(() => getSupplement(projectId), [projectId]);
@@ -207,6 +209,8 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
             onSupplement={() => setMode("supplement")}
             onGenerate={() => void generate()}
             onViewPackage={() => setMode("package")}
+            onReconcile={(draft) =>
+              router.push(`/projects/${projectId}/workspace?draft=${encodeURIComponent(draft)}`)}
             readOnly={readOnly}
           />
         )}

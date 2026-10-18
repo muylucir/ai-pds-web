@@ -21,7 +21,7 @@ const D = "aiplc-docs/discovery/";
 const PATH_B: Readiness = {
   origin: "B",
   prototypes: [{ id: "triage", spec: `${D}prototypes/triage/PROTOTYPE-triage.md`,
-                 validation: "planned", evidence: [] }],
+                 validation: "planned", evidence: [], reconcile: "not_needed", history: null }],
   sections: [
     { key: "problem", number: 1, status: "partial", sources: [] },
     { key: "audience", number: 2, status: "partial", sources: [] },
@@ -40,7 +40,8 @@ const PATH_B: Readiness = {
 };
 
 function readiness(props: Partial<Parameters<typeof ReadinessPanel>[0]> = {}) {
-  const handlers = { onSupplement: vi.fn(), onGenerate: vi.fn(), onViewPackage: vi.fn() };
+  const handlers = { onSupplement: vi.fn(), onGenerate: vi.fn(), onViewPackage: vi.fn(),
+                     onReconcile: vi.fn() };
   render(<ReadinessPanel readiness={PATH_B} questionCount={7} generating={false}
                          hasPackage={false} {...handlers} {...props} />);
   return handlers;
@@ -65,6 +66,35 @@ describe("ReadinessPanel", () => {
   it("does not offer gap questions when there are none", () => {
     readiness({ questionCount: 0 });
     expect(screen.queryByRole("button", { name: "보완 질문 답하기 →" })).not.toBeInTheDocument();
+  });
+
+  it("has no reconciliation row when no build changed the spec", () => {
+    readiness();
+    expect(screen.queryByText("명세 정합성")).not.toBeInTheDocument();
+  });
+
+  it("sends an unreconciled spec back to Discovery with a draft naming the history", async () => {
+    const history = `${D}prototypes/triage/change-history.md`;
+    const h = readiness({ readiness: { ...PATH_B, prototypes: [
+      { ...PATH_B.prototypes[0], reconcile: "stale", history }] } });
+    expect(screen.getByText(/^triage: 최근 수정 미반영 · 패키지가 받는 명세가/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Discovery에서 반영하기 →" }));
+    expect(h.onReconcile).toHaveBeenCalledWith(expect.stringContaining(history));
+    expect(h.onReconcile).toHaveBeenCalledWith(expect.stringContaining("spec-as-built.md"));
+  });
+
+  it("reports a reconciled spec and offers no action", () => {
+    readiness({ readiness: { ...PATH_B, prototypes: [
+      { ...PATH_B.prototypes[0], reconcile: "current", history: `${D}x/change-history.md` }] } });
+    expect(screen.getByText("명세가 수정 이력을 모두 반영했습니다")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discovery에서 반영하기 →" })).not.toBeInTheDocument();
+  });
+
+  it("a read-only member sees the warning without the action", () => {
+    readiness({ readOnly: true, readiness: { ...PATH_B, prototypes: [
+      { ...PATH_B.prototypes[0], reconcile: "missing", history: `${D}x/change-history.md` }] } });
+    expect(screen.getByText(/^triage: 반영 안 됨/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discovery에서 반영하기 →" })).not.toBeInTheDocument();
   });
 
   it("shows the accepted-suggestion count without hiding it", () => {

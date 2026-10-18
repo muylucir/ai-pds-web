@@ -285,3 +285,58 @@ def test_accepted_suggestions_carry_the_decision_not_just_the_letter():
 def test_question_files_are_grouped_by_discovery_stage(path, stage):
     from aipds.handoff.readiness import stage_of
     assert stage_of(path) == stage
+
+
+# ---- 명세 정합성: 기준 명세가 수정 이력의 마지막 항목까지 반영했는가 ----
+#
+# 빌드 세션이 승인 뒤에 바꾼 것은 수정 이력에만 있다. `spec-as-built.md`가 없거나 마지막
+# 항목 전에 멈췄으면 패키지가 받는 명세는 사용자가 본 프로토타입과 다르다.
+
+_HISTORY = D + "prototype/change-history.md"
+_AS_BUILT = D + "prototype/spec-as-built.md"
+_TWO_ENTRIES = ("# 수정 이력\n\n머리말\n"
+                "\n## 2026-10-13 16:27 UTC · gen 1\n\n**변경**\n검색 제거\n"
+                "\n## 2026-10-17 01:21 UTC\n\n**변경**\n없음\n")
+
+
+def _proto(extra_paths, contents):
+    [proto] = assess(A1 + extra_paths, contents).prototypes
+    return proto
+
+
+def test_without_a_change_history_there_is_nothing_to_reconcile():
+    proto = _proto([], {})
+    assert proto.reconcile == "not_needed"
+    assert proto.history is None
+
+
+def test_a_history_with_only_its_header_has_nothing_to_reconcile():
+    """헤더만 있는 이력은 승인 뒤 바뀐 것이 없다."""
+    assert _proto([_HISTORY], {_HISTORY: "# 수정 이력\n\n머리말\n"}).reconcile == "not_needed"
+
+
+def test_a_history_without_spec_as_built_needs_reconciling():
+    proto = _proto([_HISTORY], {_HISTORY: _TWO_ENTRIES})
+    assert proto.reconcile == "missing"
+    assert proto.history == _HISTORY
+
+
+def test_spec_as_built_that_stops_before_the_newest_entry_is_stale():
+    """변경이 없던 항목도 반영 대상이다 — 정합성 패스는 읽은 항목을 모두 적는다."""
+    as_built = "# Spec as Built\n\n근거: 2026-10-13 16:27 UTC · gen 1\n"
+    proto = _proto([_HISTORY, _AS_BUILT], {_HISTORY: _TWO_ENTRIES, _AS_BUILT: as_built})
+    assert proto.reconcile == "stale"
+    assert proto.spec == _AS_BUILT              # 그래도 승인 명세보다는 가깝다
+
+
+def test_spec_as_built_citing_the_newest_entry_is_current():
+    as_built = ("# Spec as Built\n\n근거: 2026-10-13 16:27 UTC · gen 1, "
+                "2026-10-17T01:21 UTC\n")
+    proto = _proto([_HISTORY, _AS_BUILT], {_HISTORY: _TWO_ENTRIES, _AS_BUILT: as_built})
+    assert proto.reconcile == "current"
+
+
+def test_contents_needed_includes_the_reconciliation_pair():
+    paths = A1 + [_HISTORY, _AS_BUILT]
+    needed = contents_needed(paths)
+    assert _HISTORY in needed and _AS_BUILT in needed

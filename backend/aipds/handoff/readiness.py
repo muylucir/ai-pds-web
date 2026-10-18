@@ -52,6 +52,9 @@ _VALIDATION_RESULTS = "validation-results.md"
 _PLANNED = ("validation-questionnaire.md", "validation-plan.md")
 #: Proceed 직전의 명세 정합성 패스가 쓰는 "실제로 만든 명세"(discovery-config/CLAUDE.md).
 _SPEC_AS_BUILT = "spec-as-built.md"
+#: 수정 이력 항목의 제목 — `## 2026-10-13 16:27 UTC · gen 1`(proto/prompts.change_history_entry).
+#: 시각은 언어와 상관없이 같은 모양이고, 정합성 패스가 적용한 항목을 이 시각 그대로 인용한다.
+_HISTORY_ENTRY = re.compile(r"^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})", re.MULTILINE)
 
 #: AI-PLC가 Option A에 붙이는 "intelligent default" 표시. 문구가 아니라 화살표로 본다 —
 #: 실측(드릴 11개 프로젝트) 뒤의 말은 "제안", "추정", "Suggested", "Discovery 결과 …",
@@ -63,6 +66,10 @@ _SINGLE_LETTER = re.compile(r"^([A-J])\s*(?::.*)?$", re.DOTALL)
 Origin = Literal["A.1", "A.2", "A", "B", "EP1"]
 SectionStatus = Literal["sourced", "partial", "missing", "derived"]
 ValidationStatus = Literal["validated", "survey", "planned", "none"]
+#: 기준 명세가 수정 이력을 반영했는가. not_needed 이력이 없다(승인 뒤 바뀐 것이 없다) ·
+#: current `spec-as-built.md`가 마지막 이력 항목까지 반영했다 · missing 이력은 있는데
+#: `spec-as-built.md`가 없다 · stale `spec-as-built.md`가 마지막 항목보다 앞에서 멈췄다.
+ReconcileStatus = Literal["not_needed", "current", "missing", "stale"]
 
 #: Discovery가 다루는 주제의 순서와 키. 재료가 없는 주제는 보완 질문으로 묻는다.
 SECTIONS = ("problem", "audience", "goals", "scenarios", "requirements",
@@ -75,6 +82,11 @@ class Prototype(BaseModel):
     spec: str
     validation: ValidationStatus
     evidence: list[str]
+    #: missing·stale이면 패키지가 받는 명세는 사용자가 본 프로토타입과 다르다 — 빌드 세션이
+    #: 승인 뒤에 바꾼 것이 수정 이력에만 있다. 반영하는 곳은 Discovery의 정합성 패스다.
+    reconcile: ReconcileStatus = "not_needed"
+    #: 수정 이력 파일. 이력이 없으면 None.
+    history: str | None = None
 
 
 class Section(BaseModel):
@@ -143,9 +155,12 @@ class Readiness(BaseModel):
 
 
 def contents_needed(paths: Sequence[str]) -> list[str]:
-    """`assess`가 내용까지 읽어야 하는 파일 — 질문 파일과 Discovery Document."""
+    """`assess`가 내용까지 읽어야 하는 파일 — 질문 파일, Discovery Document, 그리고 정합성
+    판정의 두 파일(수정 이력, `spec-as-built.md`)."""
+    names = (layout.CHANGE_HISTORY, _SPEC_AS_BUILT)
     return [p for p in paths
-            if p.endswith(_QUESTION_SUFFIX) or p == DISCOVERY_DOCUMENT]
+            if p.endswith(_QUESTION_SUFFIX) or p == DISCOVERY_DOCUMENT
+            or p.rsplit("/", 1)[-1] in names]
 
 
 def assess(paths: Sequence[str], contents: Mapping[str, str]) -> Readiness:
@@ -154,7 +169,8 @@ def assess(paths: Sequence[str], contents: Mapping[str, str]) -> Readiness:
     envision = any(p.startswith(_ENVISION) for p in present)
     specs = layout.discover(sorted(present))
     origin = _origin(present, envision, set(specs))
-    prototypes = [_prototype(pid, spec, present) for pid, spec in sorted(specs.items())]
+    prototypes = [_prototype(pid, spec, present, contents)
+                  for pid, spec in sorted(specs.items())]
     has_document = DISCOVERY_DOCUMENT in present
     document = contents.get(DISCOVERY_DOCUMENT) if has_document else None
     return Readiness(
@@ -188,9 +204,27 @@ def _origin(present: set[str], envision: bool, spec_ids: set[str]) -> Origin | N
     return None
 
 
-def _prototype(pid: str, spec: str, present: set[str]) -> Prototype:
+def _reconcile(history: str | None, as_built: str | None) -> ReconcileStatus:
+    """수정 이력의 마지막 항목 시각이 `spec-as-built.md`에 인용돼 있는가.
+
+    **시각이 아니라 내용으로 본다.** 파일의 수정 시각은 번들 가져오기·동기화가 다시 쓰고, 이
+    모듈은 IO가 없다(헤더). 정합성 패스는 적용한 항목을 제목의 시각 그대로 적으므로
+    (discovery-config/CLAUDE.md), 마지막 항목의 시각이 없으면 그 항목 전에 멈춘 것이다.
+    """
+    stamps = _HISTORY_ENTRY.findall(history or "")
+    if not stamps:
+        return "not_needed"
+    if as_built is None:
+        return "missing"
+    # 모델이 ISO 모양(`2026-10-13T16:27`)으로 옮겨 적는 경우도 같은 인용이다.
+    return "current" if stamps[-1] in as_built.replace("T", " ") else "stale"
+
+
+def _prototype(pid: str, spec: str, present: set[str],
+               contents: Mapping[str, str]) -> Prototype:
     directory = layout.artifact_dir(pid) + "/"
     as_built = directory + _SPEC_AS_BUILT
+    history = layout.change_history_key(pid)
     results = directory + _VALIDATION_RESULTS
     survey = layout.survey_aggregate_key(pid)
     planned = [directory + name for name in _PLANNED if directory + name in present]
@@ -204,7 +238,10 @@ def _prototype(pid: str, spec: str, present: set[str]) -> Prototype:
     else:
         status, evidence = "none", []
     return Prototype(id=pid, spec=as_built if as_built in present else spec,
-                     validation=status, evidence=evidence)
+                     validation=status, evidence=evidence,
+                     reconcile=_reconcile(contents.get(history),
+                                          contents.get(as_built) if as_built in present else None),
+                     history=history if history in present else None)
 
 
 def _sections(present: set[str], prfaq: bool,

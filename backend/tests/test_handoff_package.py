@@ -836,3 +836,34 @@ def test_the_zip_and_its_folder_share_one_name():
     assert package.archive_folder("안전 프로젝트") == "project-handoff"
     assert package.archive_folder("ws_a.v2 (copy)") == "ws_a.v2-copy-handoff"
     assert "./ws-x-handoff/vision.md" in package.start_prompt("en", package.archive_folder("ws-x"))
+
+
+# ---- 명세 정합성: vision은 사실만 받고 열린 질문으로 올린다 ----
+
+def test_an_unreconciled_spec_reaches_the_vision_as_a_fact_and_a_rule():
+    from aipds.handoff import package
+    from aipds.handoff.readiness import assess
+    d = "aiplc-docs/discovery/"
+    history = d + "prototype/change-history.md"
+    paths = [d + "prototype/prototype-spec.md", history]
+    stale = assess(paths, {history: "# 수정 이력\n\n## 2026-10-13 16:27 UTC · gen 1\n\n검색 제거\n"})
+    fresh = assess([d + "prototype/prototype-spec.md"], {})
+
+    [proto] = stale.prototypes
+    fact = package._reconcile_fact(proto)
+    assert fact["spec reflects every change made after approval"] is False
+    assert fact["change history"] == "prototype/change-history.md"
+    assert package._reconcile_fact(fresh.prototypes[0]) == {}
+
+    # 사실의 이름과 그것을 읽는 규칙이 같은 말을 써야 모델이 둘을 잇는다.
+    prompt = package.build_prompt(language="ko", readiness=stale,
+                                  record=supplement.Supplement(), sources={})
+    assert '"spec reflects every change made after approval"' in prompt
+    assert "does not reflect every change made after approval" in _flat(prompt)
+
+
+def test_the_readme_names_spec_as_built_as_the_spec_of_record():
+    from aipds.handoff import package
+    for text in package._README.values():
+        assert "spec-as-built.md" in text
+        assert "change-history.md" in text
