@@ -23,11 +23,17 @@ export interface Section {
   sources: string[];
 }
 
+/** 기준 명세가 빌드 세션의 변경(수정 이력)을 반영했는가 — backend handoff/readiness.ReconcileStatus. */
+export type ReconcileStatus = "not_needed" | "current" | "missing" | "stale";
+
 export interface HandoffPrototype {
   id: string;
   spec: string;
   validation: ValidationStatus;
   evidence: string[];
+  reconcile: ReconcileStatus;
+  /** 수정 이력 파일. 없으면 null. */
+  history: string | null;
 }
 
 export interface AcceptedSuggestion {
