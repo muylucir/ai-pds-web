@@ -1,20 +1,22 @@
 # backend/aipds/session_history.py
-"""S3 세션 트랜스크립트 → 채팅 히스토리 변환.
+"""S3 session transcript → chat history conversion.
 
-위치: `discovery/transcript/{session}/main/NNNNNNNN.jsonl`
-      (agent/session_store.py의 DiscoverySessionStore가 미러링)
-포맷: CLI 트랜스크립트 = Anthropic Messages 모양
-      {"type":"assistant","message":{"role":...,"content":[{"type":"text"|
-       "tool_use"|"tool_result", ...}]}}
-      message가 없는 줄(queue-operation, attachment, ai-title 등)도 섞인다.
+Location: `discovery/transcript/{session}/main/NNNNNNNN.jsonl`
+          (mirrored by DiscoverySessionStore in agent/session_store.py)
+Format:   CLI transcript = Anthropic Messages shape
+          {"type":"assistant","message":{"role":...,"content":[{"type":"text"|
+           "tool_use"|"tool_result", ...}]}}
+          Lines without a message (queue-operation, attachment, ai-title, etc.) are mixed in
+          too.
 
-**한 포맷만 읽는다.** 이전에는 strands 폴백 드라이버의 Bedrock Converse 모양
-(`session_{pid}/agents/agent_default/messages/message_N.json`, 블록 키가
-`toolUse`/`toolResult`)도 함께 읽었다. 그 드라이버를 삭제하면서 리더도 지웠다 —
-그 포맷으로 남은 세션은 히스토리가 빈 목록이 된다(테스트용 세션뿐이었다).
+**Only one format is read.** Previously the Bedrock Converse shape of the strands fallback
+driver (`session_{pid}/agents/agent_default/messages/message_N.json`, with block keys
+`toolUse`/`toolResult`) was read as well. When that driver was deleted, the reader was
+removed too — sessions left in that format get an empty history list (they were only test
+sessions).
 
-세션 저장소는 sandbox 추상화 밖의 인프라라서 Sandbox 메서드가 아니라 이 모듈이
-직접 읽는다.
+The session store is infrastructure outside the sandbox abstraction, so this module reads it
+directly rather than through a Sandbox method.
 """
 from __future__ import annotations
 import json
@@ -31,10 +33,10 @@ from aipds.s3store import S3StoreLike
 _log = logging.getLogger(__name__)
 
 def _parse_answers(raw: str) -> dict[str, str] | None:
-    """접두사를 벗긴 본문 → 답변 dict, 펼 수 없으면 None.
+    """Body with the prefix stripped → answer dict, or None if it cannot be unpacked.
 
-    None은 자유 서술 답변(JSON이 아닌 것)이다. 그때는 호출부가 text 폴백만
-    채운다 — 프론트가 dict 없이도 말풍선을 그릴 수 있어야 한다.
+    None is a free-form answer (not JSON). In that case the caller fills only the text
+    fallback — the frontend must be able to draw the bubble even without a dict.
     """
     try:
         parsed = json.loads(raw)
@@ -42,17 +44,18 @@ def _parse_answers(raw: str) -> dict[str, str] | None:
         return None
     if not isinstance(parsed, dict) or not parsed:
         return None
-    # 값이 문자열이 아닌 경우(에이전트가 숫자를 넣는 등)도 문자열로 통일한다 —
-    # 프론트의 Record<string, string> 계약을 지킨다.
+    # Values that are not strings (e.g., the agent puts in a number) are also normalized to
+    # strings — this keeps the frontend's Record<string, string> contract.
     return {str(k): str(v) for k, v in parsed.items()}
 
 
 def _answer_fallback_text(body: str, answers: dict[str, str] | None) -> str:
-    """answers를 모르는 소비자를 위한 한국어 폴백 문구.
+    """Korean fallback text for consumers that do not know about answers.
 
-    사람이 읽는 최종 문구는 프론트가 UI 언어로 만든다(HistoryItem.answers).
-    여기 남은 한국어는 그 필드를 모르는 구 프론트가 빈 말풍선을 띄우지 않게
-    하는 안전망일 뿐이다 — 새 프론트는 이 값을 무시한다.
+    The final human-readable text is built by the frontend in the UI language
+    (HistoryItem.answers). The Korean left here is only a safety net so that an old frontend
+    that does not know that field does not show an empty bubble — new frontends ignore this
+    value.
     """
     if answers:
         pretty = " · ".join(f"{k}: {v}" for k, v in
@@ -60,18 +63,19 @@ def _answer_fallback_text(body: str, answers: dict[str, str] | None) -> str:
         return f"답변 제출 — {pretty}"
     return f"답변 제출: {body}"
 
-#: 라이브 이벤트에서 file_changed로 표현되는 도구(claude_driver._FILE_TOOLS와
-#: 같은 집합). 히스토리도 같은 표현이어야 스크롤백이 라이브와 달라 보이지 않는다.
+#: Tools represented as file_changed in live events (the same set as
+#: claude_driver._FILE_TOOLS). History must use the same representation so the scrollback does
+#: not look different from live.
 _CLI_FILE_TOOLS = {"Write", "Edit", "MultiEdit"}
 
 
 def _cli_answer_summary(content: object) -> tuple[str, dict[str, str] | None]:
-    """ask_questions tool_result 본문 → (폴백 문구, answers dict 또는 None).
+    """ask_questions tool_result body → (fallback text, answers dict or None).
 
-    CLI가 쓰는 본문은 자기가 만든 영어 문장이라(answer_store.py 헤더) 여기서
-    답변을 펼 수 없다 — 정확한 값은 `answer_records`가 준다. 이 함수는 레코드가
-    없는 구 세션을 위한 폴백이다. 반환이 tuple인 것에 주의: 호출부가
-    HistoryItem의 text와 answers를 함께 채운다.
+    The body the CLI writes is an English sentence of its own making (answer_store.py header),
+    so the answer cannot be unpacked here — `answer_records` provides the exact values. This
+    function is the fallback for old sessions that have no records. Note that the return
+    value is a tuple: the caller fills both text and answers of HistoryItem.
     """
     if isinstance(content, list):
         inner = "".join(c.get("text", "") for c in content
@@ -84,13 +88,13 @@ def _cli_answer_summary(content: object) -> tuple[str, dict[str, str] | None]:
 
 
 def _is_error_result(block: dict) -> bool:
-    """이 tool_result가 실패인가.
+    """Whether this tool_result is a failure.
 
-    CLI가 스키마 검증으로 막은 라운드는 `is_error: true`와 `<tool_use_error>`
-    본문으로 온다(실측: 모델이 `questions`를 JSON 문자열로 넘긴 3건). 그 라운드는
-    **사용자에게 질문이 뜨지도 않았으므로** 복원에서 카드를 만들면 아무도 보지
-    않은 질문 카드가 유령처럼 남는다. 모델은 그 에러를 읽고 다음 턴에 제대로
-    재시도하므로, 화면에는 재시도된 라운드 하나만 있어야 맞다.
+    A round the CLI blocked by schema validation comes as `is_error: true` with a
+    `<tool_use_error>` body (measured: 3 cases where the model passed `questions` as a JSON
+    string). Since **the question was never even shown to the user** in that round, creating a
+    card on restore would leave a ghost question card nobody saw. The model reads that error
+    and retries properly on the next turn, so the screen should have only the retried round.
     """
     if block.get("is_error") is True:
         return True
@@ -100,28 +104,30 @@ def _is_error_result(block: dict) -> bool:
 
 
 def _is_injected(line: dict) -> bool:
-    """CLI가 대화에 **끼워 넣은** 줄인가 — 사용자가 한 말이 아니다.
+    """Whether this is a line the CLI **inserted** into the conversation — not something the
+    user said.
 
-    user 역할로 오지만 사람이 쓴 적이 없는 줄이 두 종류 있다:
-      isMeta            스킬 본문 주입. 모델이 Skill 도구를 부르면 CLI가
-                        "Base directory for this skill: …"로 시작하는 스킬 전문을
-                        user 텍스트로 넣는다(실측: 프로토타입 빌드 트랜스크립트,
-                        shadcn-design 스킬).
-      isCompactSummary  컨텍스트 압축 뒤의 요약. "This session is being
+    There are two kinds of lines that come with the user role but were never written by a
+    person:
+      isMeta            Skill body injection. When the model calls the Skill tool, the CLI
+                        inserts the full skill text, starting with "Base directory for this
+                        skill: …", as user text (measured: prototype build transcript,
+                        shadcn-design skill).
+      isCompactSummary  The summary after context compaction. "This session is being
                         continued from a previous conversation…"
-    걸러내지 않으면 둘 다 사용자 말풍선이 되고, 실제 턴 경계가 아니므로 한
-    턴의 말풍선을 둘로 쪼갠다.
+    If not filtered out, both become user bubbles, and since they are not real turn boundaries
+    they split one turn's bubble in two.
     """
     return line.get("isMeta") is True or line.get("isCompactSummary") is True
 
 
 def _sdk_questions_to_file(raw_input: object,
                            name: str = "discovery-questions") -> dict | None:
-    """tool_use.input → 프론트 QuestionFile. 실패하면 None(복원을 막지 않는다).
+    """tool_use.input → frontend QuestionFile. None on failure (does not block the restore).
 
-    라이브에서 카드를 만든 그 함수를 그대로 쓴다 — letter 부여와 Other 옵션
-    추가가 사용자가 실제로 본 것과 같아야 하기 때문이다. 옵션이 하나도 없는
-    질문은 ValueError이고, 그때는 카드 이름만 없는 종전 표시로 강등한다.
+    Uses the very function that built the card live — because letter assignment and adding
+    the Other option must match what the user actually saw. A question with no options at all
+    is a ValueError, and in that case it degrades to the former display without a card name.
     """
     if not isinstance(raw_input, dict):
         return None
@@ -138,42 +144,44 @@ def transform_cli_transcript(raw: list[dict], *,
                              answer_records: dict[str, dict] | None = None,
                              question_name: str = "discovery-questions",
                              ) -> list[HistoryItem]:
-    """CLI 트랜스크립트(Anthropic Messages 모양) → 채팅 히스토리.
+    """CLI transcript (Anthropic Messages shape) → chat history.
 
-    라이브 스트림(claude_driver._translate)과 같은 표현을 만드는 것이 목표다 —
-    text는 말풍선, 도구 실행은 트레이스, AskUserQuestion은 카드. 그래야
-    스크롤백이 방금 본 화면과 달라 보이지 않는다.
+    The goal is to produce the same representation as the live stream (claude_driver._translate)
+    — text as bubbles, tool runs as traces, AskUserQuestion as cards. That way the scrollback
+    does not look different from the screen just seen.
 
-    message가 없는 줄(queue-operation, attachment, ai-title, last-prompt 등)은
-    건너뛴다. 그 줄들은 CLI의 내부 부기이고 대화 내용이 아니다.
+    Lines without a message (queue-operation, attachment, ai-title, last-prompt, etc.) are
+    skipped. They are the CLI's internal bookkeeping, not conversation content.
 
-    **한 턴은 말풍선 하나다.** CLI는 도구를 부를 때마다 별도 assistant 줄을 쓰므로
-    (실측한 5회 도구 사용 턴: thinking 1줄 + tool_use 5줄 + text 1줄), 줄마다
-    항목을 만들면 라이브에서 말풍선 하나였던 턴이 7개로 쪼개지고 그중 대부분이
-    텍스트 없는 빈 말풍선이 된다 — 화면에서는 "추론 과정"만 달린 빈 회색 상자가
-    줄줄이 나온다. 라이브는 턴 하나당 AiItem 하나를 만들어 message를 그 하나에
-    누적하고 도구는 같은 항목의 trace에 쌓으므로(useTurnStream.ts:108,121-123),
-    복원도 그렇게 모은다.
+    **One turn is one bubble.** The CLI writes a separate assistant line for each tool call
+    (a measured turn with 5 tool uses: 1 thinking line + 5 tool_use lines + 1 text line), so
+    creating an item per line splits a turn that was one bubble live into 7, most of them
+    empty bubbles with no text — on screen, empty gray boxes with only "추론 과정" (reasoning)
+    attached appear one after another. Live creates one AiItem per turn, accumulates message
+    into that one, and stacks tools onto the same item's trace
+    (useTurnStream.ts:108,121-123), so the restore gathers them the same way.
 
-    턴 경계는 **실제 사용자 발화**다. `tool_result`만 담은 user 줄은 사용자가 한
-    말이 아니라 도구 실행 결과이고, 라이브는 그 줄을 아무것도 렌더하지 않는다 —
-    경계로 취급하면 도구 호출 하나하나가 다시 턴이 되어 원래 문제로 돌아간다.
+    The turn boundary is **an actual user utterance**. A user line holding only a `tool_result`
+    is a tool execution result, not something the user said, and live renders nothing for that
+    line — treating it as a boundary would make each tool call a turn again, back to the
+    original problem.
 
-    `question_name`은 복원한 질문 카드의 이름이다. 라이브에서 카드를 만든 쪽이
-    붙인 이름과 같아야 한다 — Discovery는 "discovery-questions", 프로토타입
-    빌더는 "prototype-questions"(proto/builder.py의 _on_can_use_tool).
+    `question_name` is the name of the restored question card. It must match the name given by
+    whoever built the card live — "discovery-questions" for Discovery, "prototype-questions" for
+    the prototype builder (_on_can_use_tool in proto/builder.py).
     """
     records = answer_records or {}
     raw = [m for m in raw if not _is_injected(m)]
-    # 1패스: AskUserQuestion tool_use id 수집. 실제 트랜스크립트에는 Write/Read 등
-    # 다른 tool_result가 섞여 있어, 답변 결과만 골라내려면 id 매칭이 필수다.
+    # Pass 1: collect AskUserQuestion tool_use ids. The real transcript has other
+    # tool_results such as Write/Read mixed in, so id matching is required to pick out only
+    # the answer results.
     #
-    # 같은 패스에서 두 가지를 더 모은다:
-    #   ask_files   id → 그 라운드의 질문 payload. tool_use.input에 SDK 원형이
-    #               구조화된 채로 남아 있으므로(산문이 아니다) 카드가 "무엇을
-    #               물었는지"를 되살릴 수 있다. 종전에는 이것을 버리고 카드를
-    #               name=None으로 강등했다.
-    #   errored     CLI가 막은 라운드. 카드를 만들지 않는다(_is_error_result).
+    # The same pass collects two more things:
+    #   ask_files   id → that round's question payload. The SDK original remains structured in
+    #               tool_use.input (it is not prose), so the card can restore "what it
+    #               asked". Previously this was discarded and the card was
+    #               degraded to name=None.
+    #   errored     Rounds the CLI blocked. No card is created (_is_error_result).
     ask_ids: set[str] = set()
     ask_files: dict[str, dict] = {}
     errored: set[str] = set()
@@ -198,24 +206,25 @@ def transform_cli_transcript(raw: list[dict], *,
                 errored.add(str(block.get("tool_use_id", "")))
 
     items: list[HistoryItem] = []
-    # 진행 중인 어시스턴트 턴. 실제 사용자 발화를 만나거나 트랜스크립트가 끝날
-    # 때 하나의 항목으로 확정된다.
+    # The assistant turn in progress. It is finalized as a single item when an actual user
+    # utterance is encountered or the transcript ends.
     turn_texts: list[str] = []
     turn_trace: list[HistoryTraceEntry] = []
     turn_cards: list[HistoryItem] = []
 
     def flush_turn() -> None:
-        """모인 어시스턴트 턴을 항목 하나(+ 뒤따르는 카드)로 확정한다.
+        """Finalize the gathered assistant turn into one item (+ the cards that follow).
 
-        텍스트가 없고 트레이스만 있어도 말풍선을 만든다 — 중단된 턴(유휴
-        타임아웃, SSE 끊김)이 그 모양이고, 도구를 무엇까지 돌렸는지가 스크롤백에
-        남을 유일한 기록이다. 라이브에서 그 자리에 있던 진행 표시는 복원 대상이
-        아니다.
+        A bubble is created even if there is no text and only a trace — an interrupted turn
+        (idle timeout, SSE drop) has that shape, and how far the tools ran is the only record
+        that will remain in the scrollback. The progress indicator that was in that spot live
+        is not something to restore.
 
-        카드는 말풍선 **뒤**에 붙는다. 라이브에서는 모델이 "왜 묻는지" 설명을
-        먼저 흘리고 그 다음 질문 카드가 뜨므로(claude_driver의 _CONTACT_ADDENDUM이
-        그 설명을 요구한다), 카드를 즉시 내보내면 말풍선 확정이 미뤄지는 사이
-        순서가 뒤집혀 설명 없는 질문이 먼저 나온다.
+        Cards go **after** the bubble. Live, the model first streams an explanation of "why it
+        is asking" and then the question card appears (claude_driver's _CONTACT_ADDENDUM
+        requires that explanation), so emitting the card immediately would flip the order while
+        the bubble's finalization is deferred, and the question would appear first without an
+        explanation.
         """
         nonlocal turn_texts, turn_trace, turn_cards
         if turn_texts or turn_trace:
@@ -229,12 +238,12 @@ def transform_cli_transcript(raw: list[dict], *,
     for m in raw:
         msg = m.get("message")
         if not isinstance(msg, dict):
-            continue  # 부기 줄 — 복원할 대화가 없다
+            continue  # bookkeeping line — no conversation to restore
         role = msg.get("role")
         content = msg.get("content")
-        # 첫 user 줄의 content는 리스트가 아니라 평문 문자열일 수 있다(실측:
-        # {"role":"user","content":"Say OK"}). 블록 루프가 문자열을 문자 단위로
-        # 훑지 않도록 정규화한다.
+        # The content of the first user line may be a plain string rather than a list (measured:
+        # {"role":"user","content":"Say OK"}). Normalize it so the block loop does not walk the
+        # string character by character.
         if isinstance(content, str):
             content = [{"type": "text", "text": content}]
         if not isinstance(content, list):
@@ -254,12 +263,12 @@ def transform_cli_transcript(raw: list[dict], *,
             elif btype == "tool_use":
                 name = str(block.get("name", ""))
                 if name == "AskUserQuestion":
-                    # 라이브에서는 질문 카드였다. 질문 payload를 함께 실어
-                    # 보내므로 카드가 무엇을 물었는지 보여줄 수 있다.
+                    # Live, this was a question card. The question payload is sent
+                    # along, so the card can show what it asked.
                     #
-                    # CLI가 막은 라운드는 카드를 만들지 않는다 — 사용자에게 뜬
-                    # 적이 없는 질문이고, 모델이 다음 턴에 재시도한 라운드가
-                    # 따로 카드를 만든다(그것이 사용자가 실제로 본 것이다).
+                    # Rounds the CLI blocked do not create a card — the question was never
+                    # shown to the user, and the round the model retried on the next turn
+                    # creates its own card (that is what the user actually saw).
                     tid = str(block.get("id", ""))
                     if tid in errored:
                         continue
@@ -276,10 +285,10 @@ def transform_cli_transcript(raw: list[dict], *,
                     trace.append(HistoryTraceEntry(kind="file_changed",
                                                    path=path))
                 else:
-                    # Read/Glob/Grep/Bash/mcp__aipds__* 등 — 라이브의
-                    # status 이벤트와 **같은 표현**이어야 한다. 그래서 detail도
-                    # 같은 모듈(tool_trace)로 뽑는다: 한쪽만 상세를 보이면
-                    # 새로고침 전후로 화면이 달라진다.
+                    # Read/Glob/Grep/Bash/mcp__aipds__*, etc. — this must be **the same
+                    # representation** as the live status event. So detail is also extracted by
+                    # the same module (tool_trace): if only one side shows details, the screen
+                    # differs before and after a refresh.
                     detail = tool_detail(name, block.get("input"))
                     trace.append(HistoryTraceEntry(
                         kind="status", text=name,
@@ -287,16 +296,18 @@ def transform_cli_transcript(raw: list[dict], *,
             elif btype == "tool_result":
                 tid = str(block.get("tool_use_id", ""))
                 if tid in ask_ids and tid not in errored:
-                    # 사용자가 실제로 답한 것 — 진행 중인 어시스턴트 턴을 먼저
-                    # 닫아야 순서가 맞는다(질문 카드 다음에 답변 말풍선).
+                    # What the user actually answered — the in-progress assistant turn must
+                    # be closed first for the order to be right (answer bubble after the
+                    # question card).
                     flush_turn()
-                    # 답변 레코드가 있으면 그것이 진실이다(agent/answer_store.py):
-                    # 우리가 받은 그대로의 문항번호 → letter/부연 맵과 그 순간의
-                    # 질문 payload. 그러면 프론트가 라이브와 **같은 함수**로 같은
-                    # 문구를 만든다. 레코드가 없는 세션(이 기능 이전)만 CLI가 쓴
-                    # 영어 문장으로 강등된다 — 그것을 되파싱하지 않는 이유는
-                    # 질문 텍스트에 따옴표가 들어가면 원리적으로 모호해지기
-                    # 때문이다(실측 사례가 있다).
+                    # If there is an answer record, it is the truth (agent/answer_store.py):
+                    # the question-number → letter/elaboration map exactly as we received
+                    # it, plus the question payload at that moment. Then the frontend builds
+                    # the same text with **the same function** as live. Only sessions
+                    # without records (before this feature) degrade to the English sentence
+                    # the CLI wrote — the reason not to re-parse it is that it becomes
+                    # inherently ambiguous once the question text contains quotation marks
+                    # (there is a measured case).
                     rec = records.get(tid)
                     if rec is not None:
                         answers = {str(k): str(v) for k, v in rec["answers"].items()}
@@ -312,19 +323,20 @@ def transform_cli_transcript(raw: list[dict], *,
                                                  text=redact_credentials(text),
                                                  answers=answers,
                                                  questions=ask_files.get(tid)))
-            # thinking/redacted_thinking 등은 생략 — 복원해 보여줄 내용이 아니다.
+            # thinking/redacted_thinking, etc. are omitted — not content to restore and show.
 
         if role == "assistant":
-            # 턴에 누적한다. 도구 호출마다 오는 별도 줄이 각자 말풍선이 되지
-            # 않도록, 확정은 다음 사용자 발화(또는 트랜스크립트 끝)로 미룬다.
+            # Accumulate into the turn. Finalization is deferred to the next user utterance
+            # (or the end of the transcript) so the separate lines that come per tool call
+            # do not each become a bubble.
             turn_texts.extend(texts)
             turn_trace.extend(trace)
             turn_cards.extend(cards)
             continue
 
-        # user 줄. 실제 발화만 턴 경계다 — tool_result만 담은 줄은 도구 실행
-        # 결과이고 라이브는 그것을 렌더하지 않는다(위 tool_result 분기가 답변
-        # 말풍선을 이미 만들었다).
+        # User line. Only an actual utterance is a turn boundary — a line holding only a
+        # tool_result is a tool execution result, and live does not render it (the tool_result
+        # branch above has already created the answer bubble).
         if texts:
             flush_turn()
             items.append(HistoryItem(role="user",
@@ -337,14 +349,14 @@ def transform_cli_transcript(raw: list[dict], *,
 
 async def list_history(project_s3: S3StoreLike | None,
                        session_id: str) -> list[HistoryItem]:
-    """세션 트랜스크립트를 읽어 변환. 어떤 실패도 빈 리스트로 강등한다
-    (히스토리는 보조 데이터 — 화면을 막지 않는다).
+    """Read the session transcript and convert it. Any failure degrades to an empty list
+    (history is auxiliary data — it does not block the screen).
 
-    스토어가 하나인 이유: strands 폴백 드라이버를 삭제해서 읽을 프리픽스가
-    `projects/{pid}/`뿐이다. 예전에는 두 스토어를 받아 어느 쪽에 내용이 있는지
-    판단했다.
+    Why there is only one store: the strands fallback driver was deleted, so the only prefix to
+    read is `projects/{pid}/`. Previously it took two stores and decided which one had the
+    content.
 
-    project_s3가 None이면 빈 목록이다(스토어 생성 실패 — 라우트가 감싼다).
+    If project_s3 is None, the list is empty (store creation failed — the route wraps it).
     """
     if project_s3 is None:
         return []
@@ -352,9 +364,9 @@ async def list_history(project_s3: S3StoreLike | None,
         cli_raw = await load_transcript(project_s3, session_id)
         if not cli_raw:
             return []
-        # 답변 레코드는 트랜스크립트와 같은 프로젝트 프리픽스에 있다. 실패는
-        # load_answers가 빈 dict로 강등하므로 히스토리는 레코드 없는 구 세션과
-        # 같은 경로로 복원된다.
+        # The answer records live under the same project prefix as the transcript. load_answers
+        # degrades failures to an empty dict, so the history is restored via the same path as an
+        # old session without records.
         records = await load_answers(project_s3)
         return transform_cli_transcript(cli_raw, answer_records=records)
     except Exception:

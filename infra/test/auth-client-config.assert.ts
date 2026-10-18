@@ -11,39 +11,42 @@ import {
   callbackUrls, logoutUrls,
 } from '../lib/auth-client-config';
 
-// --- 토큰 유효기간: 프로토타입 빌드 한 번을 여유롭게 덮어야 한다.
+// --- Token validity: must comfortably cover one full prototype build.
 //
-// 실측 결함: 빌드 중 세션이 만료돼 로그아웃됐다. 1차 원인은 갱신이 백엔드
-// 401에만 반응하는데 열려 있는 SSE 연결은 401을 만들지 못한다는 것이었고,
-// 그쪽은 주기 갱신(frontend/lib/auth/keepSessionAlive.ts + /api/auth/refresh)으로
-// 고쳤다. 이 상수는 **두 번째 방어선**이다: 갱신이 몇 번 연속 실패해도
-// (네트워크 단절, Cognito 일시 오류) 빌드 한 번이 한 토큰 수명 안에서 끝나면
-// 사용자는 만료를 겪지 않는다.
+// Observed defect: the session expired mid-build and the user was logged out. The
+// primary cause was that refresh only reacted to a backend 401, and an open SSE
+// connection cannot produce a 401; that was fixed with periodic refresh
+// (frontend/lib/auth/keepSessionAlive.ts + /api/auth/refresh). These constants are
+// the **second line of defense**: even if refresh fails several times in a row
+// (network outage, transient Cognito error), the user never hits expiry as long as
+// one build finishes within a single token lifetime.
 //
-// 빌드는 보통 1시간 이내다. access 60분은 그 경계와 정확히 겹쳐 여유가 0이므로
-// 최소 2배를 요구한다. Cognito의 access/id 상한은 24시간이다.
+// A build usually takes under an hour. A 60-minute access token lands exactly on that
+// boundary with zero margin, so we require at least 2x. Cognito caps access/id at 24 hours.
 assert.ok(ACCESS_TOKEN_VALIDITY_MINUTES >= 120,
   'access token must outlast a full prototype build (~1h) with margin — 60m leaves none');
 assert.ok(ACCESS_TOKEN_VALIDITY_MINUTES <= 24 * 60,
   'Cognito caps access-token validity at 24 hours');
-// id 토큰은 access와 같은 수명을 유지한다. 짧은 쪽이 먼저 만료되면 /api/auth/me가
-// 이메일·역할을 잃어 헤더가 비어 보이는데, 세션은 살아 있으므로 원인을 찾기 어렵다.
+// The id token keeps the same lifetime as the access token. If the shorter one expires
+// first, /api/auth/me loses email and role and the header looks empty, yet the session
+// is still alive, which makes the cause hard to find.
 assert.strictEqual(ID_TOKEN_VALIDITY_MINUTES, ACCESS_TOKEN_VALIDITY_MINUTES,
   'id token must expire with the access token — a shorter one empties the header while the session lives');
-// refresh 창은 갱신이 가능한 전체 기간이다. 이것이 끝나면 주기 갱신도 무력하다.
+// The refresh window is the entire period in which refresh is possible. Once it ends, periodic refresh is powerless too.
 assert.strictEqual(REFRESH_TOKEN_VALIDITY_MINUTES, 60 * 24 * 30);
 console.log('OK  auth-client-config: token validity outlasts a prototype build');
 
-// --- 이 모듈은 어떤 비밀번호도 알지 않는다.
+// --- This module knows no password whatsoever.
 //
-// 시드 계정의 임시 비밀번호는 배포 시점의 `CfnParameter`(noEcho)에서 온다
-// (AipdsAuthStack). 상수로 두면 값이 리포에 커밋되고 CloudFormation 템플릿과
-// 스택 이벤트에도 평문으로 남는다.
+// The seed accounts' temporary password comes from a deploy-time `CfnParameter`
+// (noEcho) (AipdsAuthStack). As a constant, the value would be committed to the repo
+// and would also remain in plaintext in the CloudFormation template and stack events.
 //
-// 상수의 부재는 import로 검증할 수 없다 — 없는 export를 import하면 컴파일이 깨져
-// 이 파일이 실행조차 되지 않는다. 그래서 소스 텍스트를 직접 본다. 특정 이름
-// 하나가 아니라 이름 **패턴**을 막는 이유는 이 불변식이 지키는 것이 "그 상수가
-// 없다"가 아니라 "비밀번호가 여기 살지 않는다"이기 때문이다.
+// The absence of a constant cannot be verified via import — importing a missing
+// export breaks compilation and this file would not even run. So we inspect the
+// source text directly. We block a name **pattern** rather than one specific name
+// because what this invariant protects is not "that constant does not exist" but
+// "passwords do not live here".
 {
   const source = fs.readFileSync(
     path.join(__dirname, '../lib/auth-client-config.ts'), 'utf8');
@@ -60,18 +63,19 @@ console.log('OK  auth-client-config: token validity outlasts a prototype build')
 assert.strictEqual(SEED_ADMIN_EMAIL, 'admin@aipds.local');
 assert.strictEqual(SEED_PM_EMAIL, 'pm@aipds.local');
 
-// Task 3이 이 값으로 Cognito 그룹을 만들고 Task 4의 토큰 검증이 같은 문자열을
-// cognito:groups 클레임과 맞춘다 — 오타는 배포까지 통과한 뒤 런타임 권한
-// 오류로만 드러나므로 상수 자체를 단정한다.
+// Task 3 creates the Cognito groups from these values, and Task 4's token verification
+// matches the same strings against the cognito:groups claim — a typo would pass all the
+// way through deployment and surface only as a runtime authorization error, so we
+// assert the constants themselves.
 assert.strictEqual(GROUP_ADMIN, 'admin');
 assert.strictEqual(GROUP_PM, 'pm');
 
-// 콜백 URL은 와일드카드가 불가하고 전수 일치만 허용된다 — 경로가 프론트
-// route handler 경로와 정확히 같아야 한다.
+// Callback URLs do not allow wildcards and accept only exact matches — the path must
+// be exactly the same as the frontend route handler path.
 assert.strictEqual(CALLBACK_PATH, '/api/auth/callback');
 assert.strictEqual(LOGOUT_PATH, '/login');
 
-// 여러 앱 URL(로컬 + CloudFront)에 대해 각각의 콜백을 만든다.
+// Build one callback per app URL (local + CloudFront).
 assert.deepStrictEqual(
   callbackUrls([LOCAL_APP_URL, 'https://d123.cloudfront.net']),
   ['http://localhost:3000/api/auth/callback',
@@ -82,24 +86,25 @@ assert.deepStrictEqual(
   ['https://d123.cloudfront.net/login'],
 );
 
-// 후행 슬래시가 붙은 앱 URL이 들어와도 이중 슬래시를 만들지 않는다.
+// An app URL with a trailing slash must not produce a double slash.
 assert.deepStrictEqual(
   callbackUrls(['https://d123.cloudfront.net/']),
   ['https://d123.cloudfront.net/api/auth/callback'],
 );
 
-// 중복 URL은 제거한다 — Cognito가 중복 콜백 URL을 거부한다.
+// Deduplicate URLs — Cognito rejects duplicate callback URLs.
 assert.deepStrictEqual(
   callbackUrls([LOCAL_APP_URL, LOCAL_APP_URL]),
   ['http://localhost:3000/api/auth/callback'],
 );
 
-// `aws.cognito.signin.user.admin`이 없으면 access 토큰으로 Cognito 셀프서비스
-// API를 부를 수 없다 — `ChangePassword`가 "Access Token does not have required
-// scopes"로 거부되고, 자기 비밀번호 변경 화면이 전부 실패한다
-// (backend/aipds/routes/account.py). 목록의 출처가 여기 하나여야 AuthStack의
-// 클라이언트 정의와 HostingStack의 UpdateUserPoolClient 재전송(PUT 시맨틱)이
-// 같은 값을 본다 — 한쪽만 빠지면 재배포 때마다 스코프가 조용히 사라진다.
+// Without `aws.cognito.signin.user.admin`, the access token cannot call the Cognito
+// self-service APIs — `ChangePassword` is rejected with "Access Token does not have
+// required scopes", and the change-your-own-password screen fails entirely
+// (backend/aipds/routes/account.py). The list must have a single source here so that
+// the AuthStack client definition and HostingStack's UpdateUserPoolClient resend (PUT
+// semantics) see the same value — if only one side omits it, the scope silently
+// disappears on every redeploy.
 assert.deepStrictEqual(
   OAUTH_SCOPES,
   ['openid', 'email', 'profile', 'aws.cognito.signin.user.admin'],
@@ -111,22 +116,23 @@ assert.ok(
 );
 console.log('OK  auth-client-config: seed constants + group constants + callback/logout URL derivation');
 
-// --- usernameForEmail: Cognito가 email-alias 풀에서 이메일 형식 Username을
-// 거부한다("Username cannot be of email format, since user pool is configured
-// for email alias"). 실측: 이 규칙을 몰라 시드 계정 생성이 스택 롤백을 냈다.
-// backend/aipds/auth/cognito.py의 username_for_email과 같은 규칙이어야
-// 한다 — 어긋나면 초대 계정과 시드 계정의 Username 규칙이 갈린다.
+// --- usernameForEmail: Cognito rejects an email-formatted Username in an email-alias
+// pool ("Username cannot be of email format, since user pool is configured
+// for email alias"). Observed: not knowing this rule, seed account creation caused a
+// stack rollback. This must be the same rule as username_for_email in
+// backend/aipds/auth/cognito.py — if they diverge, the Username rules for invited
+// accounts and seed accounts split apart.
 assert.strictEqual(usernameForEmail('admin@aipds.local'), 'admin');
 assert.strictEqual(usernameForEmail('pm@aipds.local'), 'pm');
-// 시드 상수에 실제로 적용했을 때의 값 — 이게 배포되는 Username이다.
+// The values when actually applied to the seed constants — these are the deployed Usernames.
 assert.strictEqual(usernameForEmail(SEED_ADMIN_EMAIL), 'admin');
 assert.strictEqual(usernameForEmail(SEED_PM_EMAIL), 'pm');
-// 불변식: 결과에 '@'가 절대 없어야 한다(Cognito가 거부하는 유일한 조건).
+// Invariant: the result must never contain '@' (the only condition Cognito rejects).
 for (const email of [SEED_ADMIN_EMAIL, SEED_PM_EMAIL, 'a+tag@example.com', 'Mixed@EXAMPLE.COM']) {
   assert.ok(!usernameForEmail(email).includes('@'),
     `usernameForEmail(${email}) must not be email-shaped`);
 }
-// 대소문자·공백 정규화, Cognito가 안 받는 문자 치환.
+// Case and whitespace normalization; substitution of characters Cognito does not accept.
 assert.strictEqual(usernameForEmail('  Mixed@EXAMPLE.COM  '), 'mixed');
 assert.strictEqual(usernameForEmail('a+tag@example.com'), 'a-tag');
 console.log('OK  usernameForEmail: local-part rule, no email-shaped username, normalization');

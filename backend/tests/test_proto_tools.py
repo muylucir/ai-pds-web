@@ -1,4 +1,4 @@
-# backend/tests/test_proto_tools.py — 프로토타입 빌더의 커스텀 MCP 도구.
+# backend/tests/test_proto_tools.py — the prototype builder's custom MCP tools.
 from __future__ import annotations
 
 import json
@@ -9,8 +9,8 @@ from aipds.proto.tools import (BUILD_COMPLETE_TOOL, PROTO_MCP_SERVER_NAME,
 
 
 def _handler(workspace, emit):
-    """build_proto_tools가 돌려주는 @tool dataclass에서 핸들러를 꺼낸다.
-    claude_agent_sdk의 @tool은 SdkMcpTool(name=..., handler=...)를 만든다."""
+    """Extracts the handler from the @tool dataclass returned by build_proto_tools.
+    claude_agent_sdk's @tool creates SdkMcpTool(name=..., handler=...)."""
     tools = build_proto_tools(str(workspace), emit)
     by_name = {t.name: t.handler for t in tools}
     return by_name["build_complete"]
@@ -23,8 +23,8 @@ def _prototype_dir(tmp_path):
 
 
 def test_tool_name_constant_matches_the_sdk_spelling():
-    """allowed_tools의 항목은 mcp__<서버 키>__<도구 이름>이어야 한다 —
-    다른 표기는 조용히 승인 대기로 남는다(claude_driver.py:419-422)."""
+    """Entries in allowed_tools must be mcp__<server key>__<tool name> —
+    any other notation silently stays pending approval (claude_driver.py:419-422)."""
     assert BUILD_COMPLETE_TOOL == f"mcp__{PROTO_MCP_SERVER_NAME}__build_complete"
 
 
@@ -55,20 +55,20 @@ async def test_remaining_is_optional(tmp_path):
 
 
 async def test_completion_is_refused_when_prototype_dir_is_missing(tmp_path):
-    """도구가 거짓을 선언할 수 없게 막는다 — 옛 submit_document와 같은 규율
-    (agent/tools.py). 반환 문자열은 에이전트가 읽고 스스로 고칠 수 있어야 한다."""
+    """Keeps the tool from declaring a falsehood — the same discipline as the old submit_document
+    (agent/tools.py). The returned string must be something the agent can read and fix on its own."""
     seen: list[AgentEvent] = []
-    handler = _handler(tmp_path, seen.append)   # prototype/ 없음
+    handler = _handler(tmp_path, seen.append)   # no prototype/
 
     result = await handler({"summary": "다 했다", "changes": "없음"})
 
-    assert seen == []                            # 이벤트가 나가지 않는다
+    assert seen == []                            # no event is emitted
     text = result["content"][0]["text"]
     assert "prototype/" in text
 
 
 async def test_completion_is_refused_when_prototype_dir_is_empty(tmp_path):
-    _prototype_dir(tmp_path)                     # 만들지만 비어 있다
+    _prototype_dir(tmp_path)                     # created but empty
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
 
@@ -103,7 +103,7 @@ async def test_build_complete_is_refused_without_the_brand_theme(tmp_path):
     result = await handler({"summary": "다 만들었다", "changes": "없음"})
 
     assert "aipds-theme.css" in result["content"][0]["text"]
-    # 거부는 세션을 끝내지 않는다 — 이벤트가 나가지 않아야 한다.
+    # A rejection does not end the session — no event must be emitted.
     assert seen == []
 
 
@@ -130,13 +130,13 @@ async def test_build_complete_passes_once_the_theme_is_imported(tmp_path):
 
 
 async def test_build_complete_skips_the_theme_check_when_the_profile_has_no_tokens(tmp_path):
-    """0토큰 프로필은 테마 import를 강제하지 않는다 — 강제할 값이 없다.
+    """A 0-token profile does not force the theme import — there are no values to force.
 
-    이것은 **의도된 한계**다: 그 경우 브랜드는 DESIGN.md 산문을 통해서만 가고
-    (design_rules(has_tokens=False)가 globals.css로 옮기라고 지시한다), 우리는
-    "옮겼는지"를 값싸게 검사할 방법이 없다. 검사할 수 없는 것을 통과시키는 대신
-    거짓으로 통과시키지는 않는다 — 루트 테마 파일이 no-profile 스텁이므로
-    "브랜드 적용됨"이라고 주장하는 파일이 워크스페이스에 남지 않는다.
+    This is an **intended limitation**: in that case the brand travels only through the DESIGN.md prose
+    (design_rules(has_tokens=False) instructs moving it into globals.css), and we have no cheap way
+    to check "whether it was moved". Rather than letting something uncheckable pass,
+    it is not passed falsely — the root theme file is the no-profile stub, so
+    no file claiming "브랜드 적용됨" (brand applied) is left in the workspace.
     """
     from aipds.design_profile import DesignProfile
     from aipds.proto.design_sync import sync_design
@@ -168,8 +168,8 @@ async def test_build_complete_skips_the_theme_check_without_a_profile(tmp_path):
 
 
 async def test_completion_is_refused_without_changes(tmp_path):
-    """changes를 비우면 '바뀐 것 없음'과 '기록 안 함'이 구별되지 않는다 -- 거부하고,
-    에이전트가 고칠 수 있게 무엇을 적어야 하는지 알려준다."""
+    """Emptying changes makes 'nothing changed' indistinguishable from 'not recorded' -- reject it, and
+    tell the agent what it needs to write so it can fix it."""
     _prototype_dir(tmp_path).joinpath("index.html").write_text("x")
     seen: list[AgentEvent] = []
     handler = _handler(tmp_path, seen.append)
@@ -181,11 +181,11 @@ async def test_completion_is_refused_without_changes(tmp_path):
     assert seen == []
 
 
-# ---- 지난 완료 이후 바뀐 것이 없으면 완료를 받지 않는다 ----
+# ---- No completion is accepted if nothing changed since the last completion ----
 #
-# 완료 뒤에 온 메시지는 전부 새 개선 세션을 연다. 질문만 받은 세션이 아무것도
-# 바꾸지 않고 완료를 선언하면, 세션이 열리자마자 닫히고 handoff가 "코드 안 바꿈"으로
-# 덮인다.
+# Every message that comes after completion opens a new improvement session. If a session that only received a
+# question declares completion without changing anything, the session closes as soon as it opens and the handoff
+# gets overwritten with "코드 안 바꿈" (code not changed).
 
 _ARGS = {"summary": "s", "changes": "없음"}
 
@@ -203,9 +203,9 @@ async def test_a_completion_with_nothing_changed_since_the_last_one_is_refused(t
     await handler(_ARGS)
     refused = await handler(_ARGS)
 
-    assert len(seen) == 1                       # 두 번째는 이벤트가 없다
+    assert len(seen) == 1                       # the second one has no event
     assert "거부됨" in _text(refused)
-    assert "채팅" in _text(refused)              # 답을 어디에 쓸지 알려준다
+    assert "채팅" in _text(refused)              # tells where to write the answer
 
     page.write_text("v2")
     await handler(_ARGS)
@@ -213,7 +213,7 @@ async def test_a_completion_with_nothing_changed_since_the_last_one_is_refused(t
 
 
 async def test_a_file_removed_without_the_edit_tools_still_counts_as_a_change(tmp_path):
-    """판정은 파일 내용이다 — Bash `rm`으로 화면 하나를 지운 개선도 개선이다."""
+    """The decision is by file content — an improvement that deleted a screen with Bash `rm` is still an improvement."""
     proto = _prototype_dir(tmp_path)
     (proto / "index.html").write_text("x")
     (proto / "old-page.tsx").write_text("y")
@@ -228,7 +228,7 @@ async def test_a_file_removed_without_the_edit_tools_still_counts_as_a_change(tm
 
 
 async def test_install_and_build_byproducts_are_not_a_change(tmp_path):
-    """호스팅의 `npm install`·빌드와 타입 검사가 고쳐 쓰는 파일은 소스 변경이 아니다."""
+    """Files rewritten by hosting's `npm install`/build and by type checking are not source changes."""
     proto = _prototype_dir(tmp_path)
     (proto / "index.html").write_text("x")
     seen: list[AgentEvent] = []

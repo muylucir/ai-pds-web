@@ -1,8 +1,8 @@
-// frontend/lib/liveActivity.test.ts — 입력창 위 고정 줄이 무엇을 보여줄지 고르는 규칙.
+// frontend/lib/liveActivity.test.ts — rules for choosing what the pinned line above the input shows.
 //
-// 고정 줄은 **가장 마지막에 일어난 일 하나만** 보여준다. 목록은 턴이 끝난 뒤
-// 접힌 진행 기록이 갖는다. 그래서 이 함수가 고르는 것은 "지금"이지 "지금까지"가
-// 아니다.
+// The pinned line shows **only the single most recent thing that happened**. The list belongs to the
+// progress log that collapses after the turn ends. So what this function picks is "now", not "so
+// far".
 import { describe, it, expect } from "vitest";
 import { liveActivity } from "./liveActivity";
 import type { ChatItem } from "./useWorkspaceStream";
@@ -26,8 +26,8 @@ describe("liveActivity", () => {
   });
 
   it("아직 프레임이 오지 않은 턴은 사고로 본다", () => {
-    // 턴을 보낸 직후부터 첫 프레임까지의 짧은 구간. 빈 줄을 그리는 것보다
-    // 사고로 두는 편이 정확하다 — 모델은 그때 거의 항상 생각하고 있다.
+    // The short interval from sending the turn until the first frame. Treating it as thinking is more
+    // accurate than drawing an empty line — the model is almost always thinking at that point.
     expect(liveActivity([ai()])).toEqual({ kind: "thinking" });
   });
 

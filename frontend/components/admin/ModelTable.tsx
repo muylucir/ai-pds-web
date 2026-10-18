@@ -18,8 +18,9 @@ export function ModelTable({
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<AdminModel | null>(null);
 
-  // 서버가 정책 위반(표시 5개 상한 등)을 알려주면 그 문장을 그대로 보여준다 —
-  // 프론트가 규칙을 복제하면 두 곳이 어긋난다(UserTable과 같은 규율).
+  // When the server reports a policy violation (the 5-item display limit, etc.), that
+  // sentence is shown as is — if the frontend duplicated the rules, the two places would
+  // drift (same discipline as UserTable).
   async function run(key: string, fn: () => Promise<void>) {
     setBusy(key);
     setError(null);
@@ -33,8 +34,8 @@ export function ModelTable({
     }
   }
 
-  // 이웃과 자리를 바꾼 전체 순서를 보낸다. 서버가 전체 순열만 받으므로 한 칸
-  // 이동도 목록 전체를 싣는다.
+  // Sends the whole order with the neighbors swapped. The server accepts only a full permutation,
+  // so even a one-step move carries the whole list.
   function move(index: number, delta: -1 | 1) {
     const ids = models.map((m) => m.model_id);
     const target = index + delta;
@@ -86,12 +87,12 @@ export function ModelTable({
                 </button>
               </td>
               <td className="py-3">{m.name}</td>
-              {/* 관리자는 무엇을 등록했는지 확인해야 하므로 id를 보여준다 —
-                  콤보박스가 이름만 보여주는 것과 다른 이유다. */}
+              {/* Admins need to confirm what they registered, so the id is shown — the reason this
+                  differs from the combobox, which shows only the name. */}
               <td className="py-3 font-mono text-xs text-slate-500">{m.model_id}</td>
               <td className="py-3">
-                {/* 바꾸면 새로 만드는 프로젝트부터 적용된다 — 기존 프로젝트는 만들 때의
-                    값을 복사해 두었다. "" = CLI 기본값(null로 비운다). */}
+                {/* A change applies starting from newly created projects — existing projects copied
+                    the value at creation. "" = CLI default (cleared to null). */}
                 <select
                   aria-label={`${m.name} ${t("admin.colEffort")}`}
                   value={m.effort ?? ""}

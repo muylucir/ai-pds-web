@@ -1,6 +1,6 @@
 # backend/tests/test_model_catalog.py
 #
-# 카탈로그 도메인만 시험한다 — S3는 FakeS3Store, 라우트는 test_routes_models.py.
+# Tests only the catalog domain — S3 is FakeS3Store; routes are in test_routes_models.py.
 from __future__ import annotations
 
 import json
@@ -18,13 +18,13 @@ async def test_missing_file_falls_back_to_seed_without_writing():
     s3 = FakeS3Store()
     entries = await ModelCatalog(s3).load()
     assert [e.model_id for e in entries] == [e.model_id for e in SEED_MODELS]
-    # 시드는 읽기 폴백일 뿐이다 — 관리자가 손대기 전까지 파일은 없다.
+    # The seed is only a read fallback — there is no file until an admin touches it.
     assert CATALOG_KEY not in s3.blobs
 
 
 @pytest.mark.asyncio
 async def test_seed_is_the_four_requested_models_with_their_effort_in_order():
-    """모델과 effort는 쌍이다 — 첫 항목이 프로젝트 생성 화면의 기본 선택이다."""
+    """Model and effort are a pair — the first entry is the default selection on the project creation screen."""
     assert [(e.name, e.model_id, e.display, e.effort) for e in SEED_MODELS] == [
         ("Opus 5.5", "global.anthropic.claude-opus-5-5", True, "medium"),
         ("Sonnet 5.5", "global.anthropic.claude-sonnet-5-5", True, "high"),
@@ -35,7 +35,7 @@ async def test_seed_is_the_four_requested_models_with_their_effort_in_order():
 
 @pytest.mark.asyncio
 async def test_a_catalog_file_without_effort_still_loads_as_cli_default():
-    """effort 필드 이전에 저장된 카탈로그(운영에 실제로 있다)는 None = CLI 기본값으로 읽힌다."""
+    """A catalog saved before the effort field existed (these really exist in production) is read as None = CLI default."""
     s3 = FakeS3Store()
     s3.blobs[CATALOG_KEY] = json.dumps({"models": [
         {"name": "Opus 5.5", "model_id": "global.anthropic.claude-opus-5-5", "display": True}]})
@@ -56,8 +56,8 @@ async def test_update_sets_and_clears_effort_and_leaves_it_when_not_given():
     cat = ModelCatalog(s3)
     mid = SEED_MODELS[0].model_id
     assert (await cat.update(mid, effort="high")).effort == "high"
-    assert (await cat.update(mid, display=True)).effort == "high"   # 안 넘기면 그대로
-    assert (await cat.update(mid, effort=None)).effort is None       # None은 비움
+    assert (await cat.update(mid, display=True)).effort == "high"   # unchanged if not passed
+    assert (await cat.update(mid, effort=None)).effort is None       # None clears it
     assert json.loads(s3.blobs[CATALOG_KEY])["models"][0]["effort"] is None
 
 
@@ -94,12 +94,12 @@ async def test_add_rejects_a_duplicate_model_id():
 async def test_add_rejects_the_sixth_displayed_model():
     s3 = FakeS3Store()
     cat = ModelCatalog(s3)
-    # 시드 4개가 이미 표시 상태다 — 하나 더는 5개로 허용, 그 다음이 거부된다.
+    # The 4 seed models are already displayed — one more is allowed as the 5th; the next is rejected.
     await cat.add("다섯", "global.anthropic.claude-opus-4-8", display=True)
     with pytest.raises(CatalogError) as exc:
         await cat.add("여섯", "global.anthropic.claude-opus-4-7", display=True)
     assert exc.value.code == "too_many_displayed"
-    # 거부는 아무것도 바꾸지 않는다.
+    # A rejection changes nothing.
     assert len(json.loads(s3.blobs[CATALOG_KEY])["models"]) == 5
 
 
@@ -120,7 +120,7 @@ async def test_displayed_returns_only_display_true_capped_at_max():
         for i in range(7)
     ]}, ensure_ascii=False)
     displayed = await ModelCatalog(s3).displayed()
-    # 파일이 손으로 편집돼 6개 이상이 켜져 있어도 화면에는 5개만 간다.
+    # Even if the file was hand-edited to turn on 6 or more, only 5 go to the screen.
     assert len(displayed) == MAX_DISPLAYED
     assert [e.model_id for e in displayed] == [
         f"global.anthropic.claude-x{i}" for i in range(MAX_DISPLAYED)]
@@ -135,7 +135,7 @@ async def test_update_changes_name_and_display():
     assert updated.name == "소네트 5.5" and updated.display is False
     entries = {e.model_id: e for e in await cat.load()}
     assert entries[target].name == "소네트 5.5"
-    # 나머지는 그대로다 — effort도 건드리지 않았으므로 그대로다.
+    # Everything else is unchanged — effort was not touched either, so it is unchanged.
     assert entries[target].effort == SEED_MODELS[1].effort
     assert entries[SEED_MODELS[0].model_id].name == SEED_MODELS[0].name
 
@@ -177,8 +177,8 @@ async def test_remove_of_an_unknown_model_id_is_not_found():
 
 @pytest.mark.asyncio
 async def test_without_a_store_reads_seed_and_refuses_writes():
-    # 버킷 미설정(로컬/테스트): 읽기는 되고 쓰기는 거부된다 —
-    # durable_projects_enabled()와 같은 규율.
+    # No bucket configured (local/test): reads work and writes are rejected —
+    # same discipline as durable_projects_enabled().
     cat = ModelCatalog(None)
     assert [e.model_id for e in await cat.load()] == [e.model_id for e in SEED_MODELS]
     with pytest.raises(CatalogError) as exc:
@@ -188,9 +188,9 @@ async def test_without_a_store_reads_seed_and_refuses_writes():
 
 @pytest.mark.asyncio
 async def test_update_does_not_mutate_the_module_level_seed():
-    # 회귀 방지: load()가 list(SEED_MODELS)를 돌려주던 시절 update()의 제자리
-    # 변경이 모듈 전역 상수를 영구히 오염시켰다. 파일 순서에 의존한 우연한
-    # 검출이 아니라 명시적으로 못박는다.
+    # Regression guard: back when load() returned list(SEED_MODELS), update()'s in-place
+    # mutation permanently polluted the module-global constant. Pin it down explicitly rather
+    # than relying on accidental detection that depends on file order.
     before = [(e.name, e.model_id, e.display) for e in SEED_MODELS]
     cat = ModelCatalog(FakeS3Store())
     await cat.update(SEED_MODELS[0].model_id, name="바뀐 이름", display=False)
@@ -207,7 +207,7 @@ async def test_reorder_stores_the_new_order_and_the_combo_follows_it():
     new = list(reversed(ids))
     await cat.reorder(new)
     assert [e["model_id"] for e in json.loads(s3.blobs[CATALOG_KEY])["models"]] == new
-    # 콤보박스 순서와 기본 선택(첫 항목)이 이 순서에서 나온다.
+    # The combo box order and the default selection (first entry) come from this order.
     assert [e.model_id for e in await cat.displayed()] == new
 
 
@@ -223,9 +223,9 @@ async def test_reorder_keeps_name_and_display():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mutate", [
-    lambda ids: ids[:-1],                        # 다른 탭에서 추가된 모델을 모른다
-    lambda ids: ids + ["global.anthropic.x"],    # 다른 탭에서 지운 모델을 보낸다
-    lambda ids: ids[:-1] + ids[:1],              # 중복
+    lambda ids: ids[:-1],                        # doesn't know about a model added in another tab
+    lambda ids: ids + ["global.anthropic.x"],    # sends a model deleted in another tab
+    lambda ids: ids[:-1] + ids[:1],              # duplicate
 ])
 async def test_reorder_rejects_anything_but_a_permutation(mutate):
     s3 = FakeS3Store()

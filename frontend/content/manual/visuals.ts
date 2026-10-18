@@ -1,59 +1,59 @@
-// frontend/content/manual/visuals.ts — 목업·도식의 식별자.
+// frontend/content/manual/visuals.ts — identifiers for mockups and diagrams.
 //
-// 콘텐츠(데이터)와 컴포넌트(JSX)를 갈라 두기 위해 id만 여기에 둔다. 콘텐츠
-// 파일이 React 컴포넌트를 직접 임포트하면 두 언어의 콘텐츠 파일이 각자 컴포넌트
-// 트리를 들고 있게 되고, 목업을 하나 바꿀 때 두 파일을 고쳐야 한다.
+// Only the ids live here, to keep content (data) and components (JSX) apart. If a content
+// file imported React components directly, the content files for the two languages would
+// each hold their own component tree, and changing one mockup would mean editing two files.
 //
-// id → 컴포넌트 매핑은 components/manual/registry.tsx가 소유한다. 그 파일의
-// Record 타입이 여기 있는 id를 **전부** 덮도록 강제하므로, id를 추가하고
-// 컴포넌트를 잊으면 컴파일이 실패한다.
+// The id → component mapping is owned by components/manual/registry.tsx. That file's
+// Record type forces it to cover **all** the ids here, so adding an id and forgetting
+// the component fails compilation.
 
 export type MockupId =
-  /** 프로젝트 생성 폼 — ID·이름·모델·문서 언어 */
+  /** Project creation form — ID, name, model, document language */
   | "project-create"
-  /** 워크스페이스 — phase / 채팅 / 질문·컨텍스트, 생성된 문서는 오른쪽 끝 탭으로 여는 드로어 */
+  /** Workspace — phase / chat / questions and context; generated documents in a drawer opened from the tab at the far right */
   | "workspace"
-  /** 질문 시트 — 단일·복수 선택, Other, AI 추천, 부연 설명 */
+  /** Question sheet — single and multiple choice, Other, AI recommendation, elaboration */
   | "question-sheet"
-  /** 문서 리뷰의 승인 게이트 */
+  /** The approval gate of document review */
   | "approval-gate"
-  /** 프로토타입 카드와 빌드 완료 카드 */
+  /** The prototype card and the build-complete card */
   | "prototype-card"
-  /** 검증 설문 패널 — 링크 공유와 집계 */
+  /** Validation survey panel — link sharing and tallies */
   | "survey-panel"
-  /** 대시보드 — 진행률 카드와 6개 phase 타임라인 */
+  /** Dashboard — progress cards and the 6-phase timeline */
   | "dashboard";
 
 export type DiagramId =
-  /** 세 진입점과 Path A·B가 프로토타입에서 합류하는 전체 흐름 */
+  /** The overall flow: three entry points, with Path A and B converging at the prototype */
   | "entry-points"
-  /** 프로토타입 → 설문 → Discovery 반영의 순환 */
+  /** The loop of prototype → survey → feeding back into Discovery */
   | "validation-loop";
 
-// 도식마다 상자의 **이름**을 정해 둔다. 콘텐츠는 이 키로 라벨을 채우고
-// (types.ts의 ManualDiagramBlock이 Record로 전부 요구한다), 컴포넌트는 이 키로
-// 읽는다. 배열 인덱스로 주고받으면 두 언어의 순서가 어긋난 것을 잡을 수 없다.
+// Each diagram fixes **names** for its boxes. Content fills the labels by these keys
+// (ManualDiagramBlock in types.ts requires all of them as a Record), and components read
+// by these keys. Passing them by array index could not catch the two languages' orders drifting apart.
 
-/** entry-points 도식의 상자들. */
+/** Boxes of the entry-points diagram. */
 export type EntryPointNode =
-  /** 고객 문제(페인 포인트)에서 시작 */
+  /** Start from a customer problem (pain point) */
   | "pain"
-  /** 이미 정리된 유스케이스에서 시작 */
+  /** Start from an already defined use case */
   | "usecase"
-  /** 이미 있는 프로토타입 명세에서 시작 */
+  /** Start from an existing prototype spec */
   | "spec"
-  /** 세 경로가 합류하는 지점 — 프로토타입을 만든다 */
+  /** Where the three paths converge — build the prototype */
   | "build"
-  /** 만든 것을 사람에게 물어 검증한다 */
+  /** Validate what was built by asking people */
   | "validate"
-  /** 그 뒤로 이어지는 제품 전략·시장 진입 */
+  /** The product strategy and go-to-market that follow */
   | "ship";
 
-/** validation-loop 도식의 상자들. */
+/** Boxes of the validation-loop diagram. */
 export type ValidationLoopNode =
-  /** 프로토타입을 만들거나 고친다 */
+  /** Build or revise the prototype */
   | "build"
-  /** 설문으로 반응을 모은다 */
+  /** Collect reactions through a survey */
   | "ask"
-  /** 그 결과를 문서에 반영한다 */
+  /** Feed the results back into the documents */
   | "reflect";

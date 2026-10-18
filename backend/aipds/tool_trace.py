@@ -1,33 +1,34 @@
-# backend/aipds/tool_trace.py — 추론 과정 트레이스에 붙는 "무엇을 했는지".
+# backend/aipds/tool_trace.py — the "what it did" attached to the reasoning trace.
 #
-# 화면에서 Write는 `📝 파일 변경: aiplc-docs/audit.md`로 보이는데(별도 `file_changed`
-# 이벤트가 `path`를 들고 온다) Read/Bash는 `Read`, `Bash`만 보였다. 무엇을 읽었는지·
-# 무슨 명령을 돌렸는지가 트레이스의 요점인데 그것이 빠져 있었다.
+# On screen, Write showed as `📝 파일 변경: aiplc-docs/audit.md` (a separate `file_changed`
+# event carries the `path`), but Read/Bash showed only `Read`, `Bash`. What was read and
+# which command was run are the whole point of the trace, and that was missing.
 #
-# **이 모듈이 단일 소유자인 이유.** 같은 값을 두 곳이 만든다 — 라이브
-# (`agent/claude_driver._translate`)와 복원(`session_history`). 그 두 표현이
-# 갈라지면 새로고침 전후로 화면이 달라진다. session_history의 해당 분기에
-# "라이브의 status 이벤트와 같은 표현"이라는 주석이 이미 붙어 있고, 이 모듈이
-# 그 주석을 코드로 바꾼 것이다.
+# **Why this module is the single owner.** Two places produce the same value — live
+# (`agent/claude_driver._translate`) and restore (`session_history`). If those two
+# renderings diverge, the screen differs before and after a refresh. The matching branch
+# in session_history already carries a comment saying "same rendering as the live status
+# event"; this module turns that comment into code.
 #
-# **라벨은 여기서 만들지 않는다.** 백엔드는 값만 준다("aiplc-docs/audit.md"),
-# `🔍 Read · …`의 아이콘과 구분자는 프론트가 UI 언어로 그린다 — `file_changed`가
-# 이미 그 규율이고(백엔드는 path만, "파일 변경"은 프론트) error_codes.py의
-# "백엔드에 번역 시스템을 만들지 않는다"와 같은 판단이다.
+# **Labels are not built here.** The backend only supplies the value ("aiplc-docs/audit.md");
+# the icon and separator in `🔍 Read · …` are drawn by the frontend in the UI language —
+# `file_changed` already follows that discipline (the backend sends only the path, "파일 변경"
+# comes from the frontend), and it is the same judgment as error_codes.py's
+# "do not build a translation system in the backend".
 from __future__ import annotations
 
-#: 한 줄에 들어가야 한다. Bash 명령은 길이 제한이 없어서(실측: 수백 자) 자르지
-#: 않으면 아코디언이 읽히지 않는다.
+#: Must fit on one line. Bash commands have no length limit (measured: hundreds of
+#: characters), so without truncation the accordion becomes unreadable.
 DETAIL_MAX = 120
 
-#: 도구 이름 → 그 도구의 "무엇을" 담은 인자 키.
+#: Tool name → the argument key that holds that tool's "what".
 #:
-#: **허용목록이다.** 모르는 도구의 인자를 아무렇게나 찍으면(예: 첫 값) 무엇이 의미
-#: 있는 값인지 모르는 채로 내부 식별자가 화면에 새어 나온다.
+#: **This is an allowlist.** Printing arbitrary arguments of an unknown tool (e.g., the first
+#: value) leaks internal identifiers to the screen without knowing which value is meaningful.
 #:
-#: Write/Edit/MultiEdit이 없는 이유: 이미 `file_changed` 이벤트가 경로를 들고 오므로
-#: 여기서 또 주면 같은 정보가 두 줄로 보인다. `mcp__aipds__*`도 없다 —
-#: stage/document/build_complete 전용 이벤트가 구조화된 값을 이미 보낸다.
+#: Why Write/Edit/MultiEdit are absent: the `file_changed` event already carries the path,
+#: so providing it here too would show the same information on two lines. `mcp__aipds__*` is
+#: absent too — the dedicated stage/document/build_complete events already send structured values.
 _DETAIL_KEYS: dict[str, str] = {
     "Read": "file_path",
     "Bash": "command",
@@ -35,37 +36,39 @@ _DETAIL_KEYS: dict[str, str] = {
     "Grep": "pattern",
     "ToolSearch": "query",
     "WebFetch": "url",
-    # 서브에이전트를 띄우는 도구(claude_agent_sdk 0.2.143 실측: 이름은 `Agent`,
-    # 구 `Task`가 아니다). `description`이 그 에이전트에 맡긴 일이다 — 이것이
-    # 없으면 트레이스에 "에이전트를 띄웠다"만 남고 무엇을 맡겼는지가 없다.
-    # `prompt`는 쓰지 않는다: 수천 자라 한 줄에 들어가지 않는다.
+    # The tool that launches a subagent (measured on claude_agent_sdk 0.2.143: the name is
+    # `Agent`, not the old `Task`). `description` is the work handed to that agent — without
+    # it, the trace only records "launched an agent" and not what it was asked to do.
+    # `prompt` is not used: it runs to thousands of characters and does not fit on one line.
     "Agent": "description",
 }
 
-#: 파일 도구의 경로 — **서브에이전트 행에서만** 쓴다(`file_tools=True`).
+#: Paths for file tools — used **only in subagent rows** (`file_tools=True`).
 #:
-#: 총괄 트레이스에서 일부러 빼 온 값이다: `file_changed` 이벤트가 이미 경로를
-#: 들고 오므로 같은 정보가 두 줄로 보인다(위 허용목록 주석). 행에는 그 논리가
-#: 성립하지 않는다 — `file_changed`는 어느 에이전트가 쓴 파일인지 말해 주지
-#: 않으므로, 행이 대상을 보여주려면 도구 호출에서 와야 한다.
+#: These values are deliberately left out of the main trace: the `file_changed` event
+#: already carries the path, so the same information would show on two lines (see the
+#: allowlist comment above). That reasoning does not hold for rows — `file_changed` does not
+#: say which agent wrote the file, so for a row to show its target, it must come from the
+#: tool call.
 _FILE_DETAIL_KEYS: dict[str, str] = {
     "Write": "file_path",
     "Edit": "file_path",
     "MultiEdit": "file_path",
 }
 
-#: 값이 경로인 도구 — 워크스페이스 아래 부분만 남긴다.
+#: Tools whose value is a path — keep only the part under the workspace.
 _PATH_TOOLS = frozenset({"Read", "Write", "Edit", "MultiEdit"})
 
-#: 워크스페이스 최상위 산출물 디렉터리. 절대 경로를 여기서부터 자른다.
+#: Top-level artifact directories of the workspace. Absolute paths are cut starting here.
 #:
-#: **워크스페이스 경로를 인자로 받지 않는 이유.** 이 함수는 라이브(워크스페이스를
-#: 아는 드라이버)와 복원(트랜스크립트만 보는 session_history) 양쪽에서 불린다.
-#: 한쪽만 워크스페이스를 알면 같은 호출이 두 표현을 만들고, 그것이 정확히 이
-#: 모듈이 없애려는 갈라짐이다. 마커 기반은 양쪽에서 같은 값을 낸다.
+#: **Why the workspace path is not taken as an argument.** This function is called from both
+#: live (the driver, which knows the workspace) and restore (session_history, which sees only
+#: the transcript). If only one side knows the workspace, the same call yields two renderings,
+#: and that is exactly the divergence this module exists to remove. Marker-based cutting
+#: yields the same value on both sides.
 #:
-#: 목록은 runner._RESTORE_PREFIXES와 같은 자리를 가리킨다(그쪽이 S3↔로컬 동기화의
-#: 최상위 프리픽스 목록이다).
+#: The list points at the same locations as runner._RESTORE_PREFIXES (that one is the list of
+#: top-level prefixes for S3↔local sync).
 _WORKSPACE_MARKERS = ("aiplc-docs/", "prototypes/", "prototype/", "uploads/")
 
 
@@ -79,18 +82,18 @@ def _shorten_path(value: str) -> str:
 
 def tool_detail(name: str, tool_input: object, *,
                 file_tools: bool = False) -> str | None:
-    """`name` 도구 호출에서 화면에 보일 한 줄. 보일 것이 없으면 None.
+    """The one line to show on screen for a `name` tool call. None if there is nothing to show.
 
-    `file_tools`는 Write/Edit/MultiEdit의 경로까지 포함시킨다 — 서브에이전트 행
-    전용이다(근거는 `_FILE_DETAIL_KEYS`). 총괄 트레이스는 기본값으로 부른다.
+    `file_tools` also includes the paths of Write/Edit/MultiEdit — for subagent rows only
+    (rationale in `_FILE_DETAIL_KEYS`). The main trace calls it with the default.
 
-    `tool_input`은 **모델이 만든 값**이다 — 모양이 어긋나도 예외를 던지지 않는다.
-    트레이스는 부수 정보이고, 그것 때문에 턴이 죽으면 안 된다.
+    `tool_input` is **a value produced by the model** — even if its shape is off, this does
+    not raise. The trace is auxiliary information, and the turn must not die because of it.
 
-    리댁션은 호출부의 책임이다: 라이브는 `routes/turns._redacted`가, 복원은
-    `session_history`가 `redact_credentials`를 통과시킨다. 그래서 이 값은 반드시
-    `text`나 `payload`로 실려야 한다 — `path`는 구조적 필드로 취급되어 리댁션을
-    지나지 않고, Bash 명령은 자격증명이 나타나는 대표적인 자리다.
+    Redaction is the caller's responsibility: live passes it through `routes/turns._redacted`,
+    restore passes it through `redact_credentials` in `session_history`. So this value must
+    always ride in `text` or `payload` — `path` is treated as a structural field and does not
+    go through redaction, and Bash commands are a typical place where credentials appear.
     """
     key = _DETAIL_KEYS.get(name)
     if key is None and file_tools:
@@ -102,9 +105,9 @@ def tool_detail(name: str, tool_input: object, *,
         return None
     value = raw.strip()
     if name in _PATH_TOOLS:
-        # 절대 경로를 그대로 찍으면 `/opt/aipds/workspaces/{pid}/`가 붙는다 —
-        # 사용자에게 의미 없고 프로젝트 id가 트레이스에 새어 나온다. 워크스페이스
-        # 밖의 경로는 손대지 않는다(그 자체가 신호다).
+        # Printing the absolute path as-is prepends `/opt/aipds/workspaces/{pid}/` —
+        # meaningless to the user, and it leaks the project id into the trace. Paths outside
+        # the workspace are left untouched (that in itself is a signal).
         value = _shorten_path(value)
     if len(value) > DETAIL_MAX:
         value = value[:DETAIL_MAX] + "…"

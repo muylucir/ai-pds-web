@@ -1,5 +1,5 @@
-# backend/tests/test_auth_revocation.py — 관리자가 끊은 사용자의 토큰을 만료 전에 거부한다
-# (aipds/auth/revocation.py). 관리 라우트가 언제 끊는지는 test_routes_admin_users.py.
+# backend/tests/test_auth_revocation.py — rejects, before expiry, the tokens of a user an admin has cut off
+# (aipds/auth/revocation.py). When the admin routes cut users off is covered in test_routes_admin_users.py.
 from __future__ import annotations
 
 import time
@@ -20,12 +20,12 @@ def test_tokens_issued_before_the_cutoff_are_revoked(tmp_path):
     store = Revocations(tmp_path / "r.json")
     store.revoke("pm", now=NOW)
     assert store.is_revoked("pm", NOW - 60, now=NOW + 1)
-    assert not store.is_revoked("pm", NOW + 5, now=NOW + 10)   # 다시 로그인한 토큰
+    assert not store.is_revoked("pm", NOW + 5, now=NOW + 10)   # a token from logging in again
     assert not store.is_revoked("someone-else", NOW - 60, now=NOW + 1)
 
 
 def test_a_token_from_the_same_second_passes(tmp_path):
-    """`iat`는 초 단위다 — 재설정 직후 다시 로그인한 토큰을 거부하지 않는다."""
+    """`iat` is in seconds — a token from logging in again right after a reset is not rejected."""
     store = Revocations(tmp_path / "r.json")
     store.revoke("pm", now=NOW + 0.7)
     assert not store.is_revoked("pm", NOW, now=NOW + 1)
@@ -46,7 +46,7 @@ def test_records_expire_after_the_token_lifetime(tmp_path):
 
 
 def test_records_survive_a_restart(tmp_path):
-    """갱신이 백엔드를 재시작한다 — 메모리에만 있으면 끊은 세션이 되살아난다."""
+    """An update restarts the backend — if it were only in memory, cut-off sessions would come back."""
     path = tmp_path / "r.json"
     Revocations(path).revoke("pm", now=NOW)
     assert Revocations(path).is_revoked("pm", NOW - 60, now=NOW + 1)
@@ -85,8 +85,8 @@ def _probe() -> TestClient:
 
 
 def test_require_user_rejects_a_token_issued_before_revocation(with_auth):
-    """비활성화·삭제·강등·재설정 뒤에도 이미 받은 access 토큰은 서명·만료 검증을 통과한다
-    — 로컬 검증은 Cognito에 묻지 않는다. 기록이 그것을 401로 만든다."""
+    """Even after disable, delete, demote, or reset, an already issued access token passes signature and expiry checks
+    — local verification does not ask Cognito. The record is what turns it into a 401."""
     now = time.time()
     with_auth["old"] = Principal(username="pm", sub="s", role="pm", issued_at=now - 600)
     with_auth["new"] = Principal(username="pm", sub="s", role="pm", issued_at=now + 5)

@@ -1,12 +1,13 @@
-// frontend/components/ProjectMembersModal.tsx — 프로젝트의 소유자와 열람 멤버.
+// frontend/components/ProjectMembersModal.tsx — a project's owner and viewing members.
 //
-// 소유자와 관리자가 연다. 멤버는 **열람만** 한다(backend aipds/project_access.py) — 이 화면에
-// "편집 권한" 같은 선택지가 없는 이유다. 관리자에게는 소유권을 다른 사용자에게 주는 칸이
-// 하나 더 있다.
+// Opened by the owner and admins. Members **only view** (backend aipds/project_access.py) — which
+// is why this screen has no option like "edit permission". Admins get one more field, for giving
+// ownership to another user.
 //
-// 값은 Cognito username(이메일 로컬파트)으로 저장된다. 입력은 이메일로 받고, 서버가 바꾼다.
-// 멤버를 추가할 때 계정이 있는지 확인하지 않는다(확인하면 아무 이메일로 계정 존재를 떠볼 수
-// 있다) — 그래서 안내 문구가 "그 이메일로 로그인한 사용자에게 보인다"고 말한다.
+// Values are stored as the Cognito username (email local part). Input is taken as an email, and the
+// server converts it. Adding a member does not check whether the account exists (checking would let
+// anyone probe for account existence with any email) — so the helper text says "visible to the user
+// who signs in with that email".
 "use client";
 import { useEffect, useState } from "react";
 
@@ -23,7 +24,7 @@ export function ProjectMembersModal({
 }: {
   project: ProjectSummary;
   onClose: () => void;
-  /** 저장이 끝났다 — 목록이 소유자 열을 다시 읽는다. */
+  /** Saving finished — the list re-reads the owner column. */
   onChanged: () => void;
 }) {
   const t = useT();
@@ -46,8 +47,8 @@ export function ProjectMembersModal({
   const fail = (err: unknown) =>
     setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("members.saveFailed"));
 
-  // 추가·제거는 바로 저장한다. 모아서 저장하는 단계를 두면 창을 닫을 때 바뀌지 않은 것을
-  // 바뀐 것으로 오해한다.
+  // Adds and removes are saved immediately. With a batch-save step, closing the window would
+  // mislead users into thinking unchanged things had changed.
   async function saveMembers(next: string[]) {
     setBusy(true);
     setError(null);

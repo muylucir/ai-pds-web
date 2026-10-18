@@ -63,12 +63,12 @@ def build_rollup(questions: list[Question], responses: list[SurveyResponse],
 
 def persona_groups(questions: list[Question], responses: list[SurveyResponse]
                    ) -> tuple[Question, list[tuple[str, list[SurveyResponse]]]] | None:
-    """페르소나 문항과, 그 답으로 나눈 응답 묶음. 페르소나 문항이 없으면 None이다.
+    """The persona question, and the responses grouped by its answer. None if there is no persona question.
 
-    묶음은 선택지 순서이고 응답이 있는 페르소나만 담는다 — 응답 0인 페르소나는
-    페르소나 문항 자신의 집계가 이미 보여 준다. 페르소나 문항은 필수이고 공개
-    제출이 선택지 밖의 답을 거절하므로(routes/surveys_public) 어느 묶음에도
-    들지 않는 응답은 없다.
+    Groups are in option order and include only personas that have responses — personas with 0 responses
+    are already shown by the persona question's own tally. The persona question is required, and public
+    submission rejects answers outside the options (routes/surveys_public), so there is no response
+    that falls into none of the groups.
     """
     pq = next((q for q in questions if q.persona), None)
     if pq is None:

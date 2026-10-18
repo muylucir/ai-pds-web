@@ -4,7 +4,7 @@ import { challengeFor, randomUrlSafe } from "./pkce";
 describe("randomUrlSafe", () => {
   it("produces URL-safe strings with no padding", () => {
     const v = randomUrlSafe(32);
-    // base64url: +/= 가 없어야 쿼리 파라미터로 안전하다.
+    // base64url: must have no +/= to be safe as a query parameter.
     expect(v).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(v.length).toBeGreaterThanOrEqual(43);
   });
@@ -17,8 +17,8 @@ describe("randomUrlSafe", () => {
 
 describe("challengeFor", () => {
   it("computes the S256 challenge from a known verifier", async () => {
-    // RFC 7636 Appendix B의 검증 벡터 — 우리 구현이 표준과 같은 값을 내는지
-    // 확인한다. 여기가 틀리면 Cognito가 invalid_grant로만 답해 원인 파악이 어렵다.
+    // RFC 7636 Appendix B's test vector — checks that our implementation produces the same value as the
+    // standard. If this is wrong, Cognito answers only with invalid_grant, making the cause hard to find.
     const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
     await expect(challengeFor(verifier))
       .resolves.toBe("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");

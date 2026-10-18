@@ -27,15 +27,15 @@ class FakeEventSource {
 
 beforeEach(() => {
   (globalThis as any).EventSource = FakeEventSource;
-  // 이전 테스트가 남긴 인스턴스가 "스트림이 열리지 않았다" 단정을 무력화한다.
+  // An instance left over by a previous test would defeat the "the stream did not open" assertion.
   FakeEventSource.last = null;
 });
 afterEach(() => {
   delete (globalThis as any).EventSource;
 });
 
-// 턴 개시(POST)를 목으로 깔고, 스트림이 열릴 때까지 기다린다. 개시가
-// 비동기가 된 것은 이 수정의 결과다 — 텍스트가 본문으로 가기 때문이다.
+// Mock the turn start (POST), and wait until the stream opens. The start becoming
+// asynchronous is a result of this fix — because the text goes in the body.
 function mockTurns(turnId = "t-1") {
   server.use(
     http.post(`${API_BASE_URL}/projects/p1/turns`, () =>
@@ -74,7 +74,7 @@ describe("streamEvents", () => {
   });
 
   it("passes each frame's SSE id through as its seq", async () => {
-    // 다시 붙을 때 `after`로 돌려줄 값이다(watchTurn).
+    // This is the value returned as `after` when reattaching (watchTurn).
     mockTurns();
     const onEvent = vi.fn();
     streamEvents("p1", "go", { onEvent, onDone: () => {} });
@@ -114,7 +114,7 @@ describe("streamAnswers", () => {
     streamAnswers("p1", { "1": "A" }, { onEvent: () => {}, onDone: () => {} });
     const url = (await opened()).url;
     expect(url).toBe(`${API_BASE_URL}/projects/p1/events?turn=t-ans`);
-    // 답변 JSON이 URL에 남아 있으면 이 수정의 목적이 무의미해진다.
+    // If the answer JSON were still in the URL, the purpose of this fix would be moot.
     expect(url).not.toContain("answers=");
   });
 
@@ -141,12 +141,12 @@ describe("streamAnswers", () => {
 });
 
 
-// ---- 긴 입력을 URL에서 빼는 2단계 핸들 (HTTP 431 결함) ----
+// ---- Two-step handle that moves long input out of the URL (HTTP 431 defect) ----
 //
-// 실측한 결함: 한글 2,164자 입력이 encodeURIComponent로 14,376바이트 요청
-// 라인이 되고, 인증 쿠키(JWT 3개 ~3.7KB)와 합쳐 Node의 maxHeaderSize
-// 16,384바이트를 넘겨 프록시가 431을 냈다. EventSource는 상태 코드를 노출하지
-// 않아 화면에는 "연결이 끊어졌습니다"만 떴다.
+// Observed defect: a 2,164-character Korean input became a 14,376-byte request line via
+// encodeURIComponent, and together with the auth cookies (3 JWTs, ~3.7KB) it exceeded Node's maxHeaderSize
+// of 16,384 bytes, so the proxy returned 431. EventSource does not expose the status code,
+// so the screen only showed "연결이 끊어졌습니다" (connection lost).
 const LONG_KO = "가".repeat(3000);
 
 describe("긴 입력은 URL이 아니라 본문으로 간다", () => {
@@ -161,7 +161,7 @@ describe("긴 입력은 URL이 아니라 본문으로 간다", () => {
     const stop = streamEvents("p1", LONG_KO, { onEvent: () => {}, onDone: () => {} });
     await vi.waitFor(() => expect(FakeEventSource.last).not.toBeNull());
     const url = FakeEventSource.last!.url;
-    // 이것이 이 수정의 핵심 단정 — 긴 텍스트가 URL에 없다.
+    // This is the key assertion of this fix — the long text is not in the URL.
     expect(url).toBe(`${API_BASE_URL}/projects/p1/events?turn=abc123`);
     expect(url.length).toBeLessThan(200);
     expect(url).not.toContain(encodeURIComponent("가"));
@@ -187,8 +187,8 @@ describe("긴 입력은 URL이 아니라 본문으로 간다", () => {
   });
 
   it("개시 요청이 실패하면 원인을 알 수 있는 오류를 넘긴다", async () => {
-    // 이 경로가 진단 가능성의 핵심이다: EventSource는 상태 코드를 못 주지만
-    // POST는 준다. 431/413이 "연결이 끊어졌습니다"로 뭉개지지 않아야 한다.
+    // This path is the key to diagnosability: EventSource cannot give the status code, but
+    // POST can. 431/413 must not be flattened into "연결이 끊어졌습니다" (connection lost).
     server.use(
       http.post(`${API_BASE_URL}/projects/p1/turns`, () =>
         HttpResponse.json({ detail: "too long" }, { status: 431 })),
@@ -199,13 +199,13 @@ describe("긴 입력은 URL이 아니라 본문으로 간다", () => {
     await vi.waitFor(() => expect(onError).toHaveBeenCalled());
     const err = onError.mock.calls[0][0];
     expect(err).toMatchObject({ status: 431 });
-    // 턴을 열지 못했으므로 스트림도 열리지 않는다.
+    // The turn could not be opened, so the stream does not open either.
     expect(FakeEventSource.last).toBeNull();
     expect(onDone).toHaveBeenCalled();
   });
 
   it("개시 전에 unsubscribe하면 스트림을 열지 않는다", async () => {
-    // 사용자가 즉시 화면을 떠나면(언마운트) 뒤늦게 스트림이 열려 고아가 되면 안 된다.
+    // If the user leaves the screen immediately (unmount), a late-opening stream must not become an orphan.
     let resolvePost: (v: unknown) => void = () => {};
     server.use(
       http.post(`${API_BASE_URL}/projects/p1/turns`, async () => {
@@ -223,7 +223,7 @@ describe("긴 입력은 URL이 아니라 본문으로 간다", () => {
 
 describe("watchTurn", () => {
   it("opens the turn's stream from the given seq, with no start request", () => {
-    // 이미 도는 턴을 본다 — 턴을 시작하지 않으므로 POST가 없다.
+    // Watches a turn that is already running — it does not start a turn, so there is no POST.
     watchTurn("p1", "t-9", 4, { onEvent: () => {}, onDone: () => {} });
     expect(FakeEventSource.last?.url)
       .toBe(`${API_BASE_URL}/projects/p1/events?turn=t-9&after=4`);

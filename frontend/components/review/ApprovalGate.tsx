@@ -9,26 +9,26 @@ export function ApprovalGate({
 }: {
   onApprove: () => void;
   busy: boolean;
-  // 수정 요청 링크의 목적지 — 워크스페이스 채팅으로 이동하며 초안 텍스트를 ?draft=로 전달한다.
+  // Destination of the change-request link — navigates to the workspace chat, passing the draft text via ?draft=.
   reviseHref: string;
 }) {
   const t = useT();
-  // 이 게이트는 미승인 상태에서만 렌더된다(승인되면 페이지가 완료 배너로
-  // 대체한다). 그래서 상태 배지는 항상 "초안 검토 중" 하나뿐이다 — 예전
-  // stageStatus prop은 존재하지 않는 "Discovery Document" 스테이지를 읽어
-  // 늘 null이었다.
+  // This gate renders only in the unapproved state (once approved, the page replaces it with the
+  // completion banner). So the status badge is always just "초안 검토 중" (draft under review) — the old
+  // stageStatus prop read a "Discovery Document" stage that does not exist and was
+  // always null.
 
-  // **표면은 승인 후 배너(review/page.tsx)와 같은 무게다** — 같은 rx, 같은
-  // padding, 톤만 다르다(미승인 amber / 승인 emerald). 종전에는 보라
-  // 그라데이션 + shadow-lg + 🚦로 앱에서 가장 큰 요소였는데, 이 배너는
-  // discovery-document.md를 열고 승인 전이면 항상 뜬다. 문서는 Envision이
-  // 만들므로(상류 envision.md:255) 워크숍 내내 켜져 있고, 그 크기로 상주하면
-  // 사람은 그것을 무시하도록 학습한다 — 게이트가 원하는 것의 반대다.
+  // **The surface carries the same weight as the post-approval banner (review/page.tsx)** — same rx, same
+  // padding, only the tone differs (unapproved amber / approved emerald). Previously it was the largest
+  // element in the app with a violet gradient + shadow-lg + 🚦, yet this banner always appears when
+  // discovery-document.md is open and not yet approved. The document is produced by Envision
+  // (upstream envision.md:255), so it stays on throughout the workshop, and something that size sitting
+  // there permanently teaches people to ignore it — the opposite of what the gate wants.
   //
-  // `role="alert"`도 같은 이유로 걷어냈다. alert는 스크린리더가 진행 중인
-  // 낭독을 끊고 끼어드는 라이브 리전이다. 이것은 갑자기 발생한 사건이 아니라
-  // 페이지에 상주하는 영역이므로, 이름을 가진 region이 맞다(승인 후 배너가
-  // 이미 role="status"인 것과 짝이 맞는다).
+  // `role="alert"` was removed for the same reason. alert is a live region that makes the screen reader
+  // interrupt ongoing narration and cut in. This is not a sudden event but an area that resides on the
+  // page, so a named region is correct (matching the post-approval banner, which is
+  // already role="status").
   return (
     <section
       aria-labelledby="approval-gate-heading"
@@ -51,9 +51,9 @@ export function ApprovalGate({
           {t("review.gateBodyPart2")}
         </p>
       </div>
-      {/* 액센트는 승인 버튼 하나다 — 앱의 기본 버튼(bg-violet-600)과 같은 것을
-          쓴다. 배너가 조용해진 만큼, 화면에서 눌러야 하는 것이 무엇인지는
-          이 버튼이 혼자 말한다. */}
+      {/* The only accent is the approve button — it uses the same as the app's primary button (bg-violet-600).
+          With the banner quieter, this button alone says what on the screen
+          needs to be pressed. */}
       <div className="flex items-center gap-3 shrink-0">
         <Link
           href={reviseHref}

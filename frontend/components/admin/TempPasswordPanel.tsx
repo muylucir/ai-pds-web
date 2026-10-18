@@ -3,8 +3,8 @@ import { useState } from "react";
 
 import { useT } from "@/lib/i18n/provider";
 
-// 임시 비밀번호는 서버가 저장하지 않는다 — 이 화면이 그 값을 볼 수 있는 유일한
-// 기회다. 그래서 경고와 복사 버튼이 함께 있다.
+// The server does not store the temporary password — this screen is the only chance to see the
+// value. That is why the warning and the copy button sit together.
 export function TempPasswordPanel({
   email, password, onClose,
 }: {
@@ -20,7 +20,7 @@ export function TempPasswordPanel({
       await navigator.clipboard.writeText(password);
       setCopied(true);
     } catch {
-      // 클립보드 권한이 없는 브라우저 — 값은 화면에 보이므로 수동 복사가 가능하다.
+      // A browser without clipboard permission — the value is visible on screen, so manual copying is possible.
       setCopied(false);
     }
   }

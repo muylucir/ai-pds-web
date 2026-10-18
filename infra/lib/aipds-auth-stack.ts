@@ -10,9 +10,9 @@ import {
 } from './auth-client-config';
 import { seedProviderRole, seedUser } from './seed-users';
 
-// OAuthScope는 생성자가 private이고 정적 상수(+custom())만 노출한다 —
-// 문자열을 그대로 넘길 수 없어 매핑이 필요하다. 문자열 목록의 출처는
-// auth-client-config.ts 하나로 유지한다(콜백 주입 커스텀 리소스도 그걸 쓴다).
+// OAuthScope has a private constructor and exposes only static constants (+custom()) —
+// strings cannot be passed directly, so a mapping is needed. The string list has a single
+// source, auth-client-config.ts (the callback-injecting custom resource uses it too).
 const SCOPE_MAP: Record<string, cognito.OAuthScope> = {
   openid: cognito.OAuthScope.OPENID,
   email: cognito.OAuthScope.EMAIL,
@@ -20,24 +20,25 @@ const SCOPE_MAP: Record<string, cognito.OAuthScope> = {
   [COGNITO_ADMIN_SCOPE]: cognito.OAuthScope.COGNITO_ADMIN,
 };
 
-// 임시 비밀번호 유효기간. 시드 계정이 이제 임시 비밀번호로 만들어지므로 이 창이
-// 곧 "배포한 계정으로 로그인할 수 있는 기간"이다. Cognito 기본값은 7일인데,
-// 배포와 워크숍 사이가 그보다 길면 시드 계정이 로그인 불가가 되고 증상은
-// "비밀번호는 맞는데 안 들어가진다"로만 보인다.
+// Temporary password validity. Seed accounts are now created with a temporary password, so this
+// window is effectively "how long the deployed accounts can be logged into". Cognito's default is
+// 7 days; if the gap between deploy and workshop is longer than that, the seed accounts become
+// unable to log in, and the only visible symptom is "the password is right but it won't let me in".
 //
-// 대가: 관리 페이지가 발급하는 초대 계정의 임시 비밀번호도 같은 창을 갖는다 —
-// 이 값은 풀 정책이라 계정별로 다르게 둘 수 없다. 초대는 관리자가 즉시
-// 전달하므로 실질 위험은 "전달받고 30일간 쓰지 않은 임시 비밀번호"에 한정된다.
+// The price: temporary passwords of invited accounts issued from the admin page get the same
+// window — this is a pool policy, so it cannot differ per account. Invitations are handed over
+// immediately by an admin, so the practical risk is limited to "a temporary password that was
+// received and then left unused for 30 days".
 const TEMP_PASSWORD_VALIDITY_DAYS = 30;
 
-// 배포 시점 임시 비밀번호가 만족해야 하는 형태 = 풀의 비밀번호 정책.
+// The shape a deploy-time temporary password must satisfy = the pool's password policy.
 //
-// 왜 CloudFormation에 검사를 맡기는가: 정책을 위반한 값은 `AdminSetUserPassword`가
-// `InvalidPasswordException`으로 거부하고 **스택 전체가 롤백된다**. 배포가 몇 분
-// 진행된 뒤에 나는 그 실패를 파라미터 검증 단계로 끌어당긴다.
+// Why leave the check to CloudFormation: a value that violates the policy is rejected by
+// `AdminSetUserPassword` with `InvalidPasswordException` and **the whole stack rolls back**. This
+// pulls that failure, which happens a few minutes into the deploy, forward into parameter validation.
 //
-// 공백을 허용하지 않는다(`\S`): Cognito 자체는 받아주지만, 이 값은 셸 명령줄로
-// 전달되고 사람이 메신저로 옮겨 적는 값이다.
+// Whitespace is not allowed (`\S`): Cognito itself accepts it, but this value is passed on a
+// shell command line and copied by hand through a messenger.
 const SEED_PASSWORD_PATTERN =
   '(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])'
   + '(?=.*[\\^$*.\\[\\]{}()?"!@#%&/\\\\,><\':;|_~`+=-])'
@@ -53,26 +54,26 @@ export class AipdsAuthStack extends cdk.Stack {
     const account = cdk.Stack.of(this).account;
     const region = cdk.Stack.of(this).region;
 
-    // --- 시드 계정의 임시 비밀번호: 배포 명령이 준다 ---
+    // --- Temporary password for seed accounts: supplied by the deploy command ---
     //
     //   npx cdk deploy --all --parameters AipdsAuthStack:SeedPassword='...'
     //
-    // 소스 상수가 아닌 이유: 상수는 리포에 커밋되고 CloudFormation 템플릿·스택
-    // 이벤트에도 평문으로 남는다. `noEcho`가 그 세 경로를 모두 끊는다 —
-    // 템플릿에는 `Ref`만 남는다.
+    // Why not a source constant: a constant is committed to the repo and also stays in plaintext
+    // in the CloudFormation template and stack events. `noEcho` cuts all three paths —
+    // only a `Ref` remains in the template.
     //
-    // 기본값을 두지 않는다: 기본값은 곧 하드코딩된 비밀번호이고, 조용히 배포된다.
-    // 빠뜨리면 CloudFormation이 배포 시작 시점에 거부한다.
+    // No default: a default is just a hard-coded password, and it deploys silently.
+    // If it is omitted, CloudFormation rejects it when the deploy starts.
     //
-    // ⚠️ 남는 노출 한 곳: AwsCustomResource의 provider Lambda가 수신 이벤트를
-    // 로그에 남기므로 그 로그 그룹에 값이 한 번 찍힌다(`Logging.withDataHidden()`은
-    // API 응답만 가린다). 이 값이 첫 로그인에 반드시 교체되는 임시 비밀번호라서
-    // 감수하는 노출이다 — 영구 비밀번호였다면 감수할 수 없다.
+    // ⚠️ One remaining exposure: the AwsCustomResource provider Lambda logs the incoming event,
+    // so the value is printed once in that log group (`Logging.withDataHidden()` only hides
+    // API responses). This exposure is accepted because the value is a temporary password that
+    // must be replaced at first login — it would not be acceptable for a permanent password.
     //
-    // 재배포 시 다시 적지 않아도 된다: `cdk deploy`의 `--previous-parameters`가
-    // 기본 true다. 그리고 비밀번호를 심는 커스텀 리소스에는 `onUpdate`가 없으므로
-    // (seed-users.ts) 값이 바뀌어도 재배포가 기존 계정을 되돌리지 않는다 —
-    // 재발급은 관리 페이지의 '비밀번호 재설정'이 담당한다.
+    // It need not be supplied again on redeploy: `cdk deploy`'s `--previous-parameters` defaults
+    // to true. And the custom resource that sets the password has no `onUpdate`
+    // (seed-users.ts), so even if the value changes, a redeploy does not revert existing accounts —
+    // reissuing is handled by '비밀번호 재설정' (Reset password) on the admin page.
     const seedPassword = new cdk.CfnParameter(this, 'SeedPassword', {
       type: 'String',
       noEcho: true,
@@ -92,15 +93,15 @@ export class AipdsAuthStack extends cdk.Stack {
     // --- User Pool ---
     this.userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: 'aipds',
-      // 이 한 줄이 "self signup 금지"의 실체다 → CFN
+      // This one line is what "no self signup" actually is → CFN
       // AdminCreateUserConfig.AllowAdminCreateUserOnly: true.
-      // Hosted UI에 회원가입 링크 자체가 렌더되지 않는다.
+      // The Hosted UI does not even render a sign-up link.
       selfSignUpEnabled: false,
-      // username: true를 함께 켜면 CDK가 AliasAttributes로 합성해 호출자가
-      // Username을 지정할 수 있다. { email: true }만 두면 UsernameAttributes가
-      // 되어 Cognito가 username을 UUID로 자동 생성하고, 그러면 CDK 커스텀
-      // 리소스가 재배포마다 그 값을 알 수 없어 시딩이 비결정적이 된다.
-      // 사용자는 어느 쪽이든 이메일로 로그인한다.
+      // Turning on username: true as well makes CDK synthesize AliasAttributes, so the caller
+      // can specify the Username. With only { email: true } it becomes UsernameAttributes,
+      // and Cognito auto-generates the username as a UUID; then the CDK custom resource cannot
+      // know that value on each redeploy, and seeding becomes nondeterministic.
+      // Either way, users log in with their email.
       signInAliases: { username: true, email: true },
       signInCaseSensitive: false,
       autoVerify: { email: true },
@@ -115,29 +116,29 @@ export class AipdsAuthStack extends cdk.Stack {
         requireSymbols: true,
         tempPasswordValidity: cdk.Duration.days(TEMP_PASSWORD_VALIDITY_DAYS),
       },
-      // **보안 경고: MFA가 꺼져 있다.** 이 스택은 워크숍용 실험·교육 샘플이고(README의 Note)
-      // 로그인은 비밀번호 하나다. 비밀번호가 새면 그 계정이 그대로 넘어가고, 관리자 계정이면
-      // 사용자·역할 관리까지 넘어간다. 워크숍 밖에서 쓰거나 실제 고객 자료를 다룬다면 MFA를
-      // 켠다 — `mfa: cognito.Mfa.REQUIRED`와 `mfaSecondFactor: { otp: true, sms: false }`
-      // (TOTP 인증 앱). SMS는 켜지 않는다: 이 앱은 문자·메일을 보내는 경로를 두지 않았다.
+      // **Security warning: MFA is off.** This stack is an experimental/educational workshop sample (Note in the README)
+      // and login is a single password. If a password leaks, that account is taken over as-is, and for an admin account
+      // user and role management go with it. If you use it outside a workshop or handle real customer data, turn on MFA
+      // — `mfa: cognito.Mfa.REQUIRED` and `mfaSecondFactor: { otp: true, sms: false }`
+      // (TOTP authenticator app). Do not turn on SMS: this app has no path for sending text messages or email.
       mfa: cognito.Mfa.OFF,
-      // **보안 경고: 위협 방지가 없다.** `featurePlan`을 주지 않으므로 기본 등급(Lite 또는 Essentials)이고,
-      // 유출된 자격증명 탐지·위험 기반 인증 같은 위협 방지는 Plus 등급에만 있다. Hosted UI의
-      // 로그인 시도는 Cognito의 기본 잠금 말고는 막히지 않는다(앞단 WAF도 없다). 워크숍 밖에서
-      // 쓴다면 `featurePlan: cognito.FeaturePlan.PLUS`와
-      // `standardThreatProtectionMode: cognito.StandardThreatProtectionMode.AUDIT_ONLY`로
-      // 시작해 탐지 결과를 본 뒤 `FULL_FUNCTION`으로 올린다. Plus는 MAU 단위로 과금된다.
+      // **Security warning: no threat protection.** No `featurePlan` is given, so this is the default tier (Lite or Essentials),
+      // and threat protection such as compromised-credential detection and risk-based authentication exists only in the Plus tier.
+      // Hosted UI login attempts are not blocked by anything beyond Cognito's default lockout (there is no WAF in front either).
+      // If you use it outside a workshop, start with `featurePlan: cognito.FeaturePlan.PLUS` and
+      // `standardThreatProtectionMode: cognito.StandardThreatProtectionMode.AUDIT_ONLY`,
+      // review the detections, then raise it to `FULL_FUNCTION`. Plus is billed per MAU.
       //
-      // 이 앱은 메일을 전혀 보내지 않으므로 자가 재설정 코드를 전달할 경로가
-      // 없다. 재설정은 관리 페이지에서 관리자가 한다.
+      // This app sends no email at all, so there is no path to deliver a self-service reset
+      // code. Resets are done by an admin on the admin page.
       accountRecovery: cognito.AccountRecovery.NONE,
-      // **보안 경고: 스택을 지우면 사용자 풀도 지워진다.** 계정과 역할이 함께 사라지고 되살릴 수
-      // 없다. 실습 환경을 깨끗이 내리기 위한 선택이다. 지속해서 쓸 환경이라면
-      // `cdk.RemovalPolicy.RETAIN`과 `deletionProtection: true`로 바꾼다.
+      // **Security warning: deleting the stack deletes the user pool too.** Accounts and roles disappear together and cannot
+      // be recovered. This is a deliberate choice to tear down lab environments cleanly. For an environment meant to persist,
+      // change it to `cdk.RemovalPolicy.RETAIN` and `deletionProtection: true`.
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // --- 역할 = 그룹. 이것이 역할의 유일한 출처다(커스텀 속성 없음). ---
+    // --- Role = group. This is the only source of roles (no custom attributes). ---
     new cognito.CfnUserPoolGroup(this, 'AdminGroup', {
       userPoolId: this.userPool.userPoolId,
       groupName: GROUP_ADMIN,
@@ -152,7 +153,7 @@ export class AipdsAuthStack extends cdk.Stack {
     });
 
     // --- Hosted UI v2 (managed login) ---
-    // 도메인 프리픽스는 계정·리전 안에서 유일해야 한다.
+    // The domain prefix must be unique within the account and region.
     const domainPrefix = `aipds-${account}-${region}`;
     const domain = this.userPool.addDomain('HostedUi', {
       cognitoDomain: { domainPrefix },
@@ -160,10 +161,10 @@ export class AipdsAuthStack extends cdk.Stack {
     });
     this.hostedUiDomain = `${domainPrefix}.auth.${region}.amazoncognito.com`;
 
-    // --- 앱 클라이언트 ---
-    // confidential(시크릿 있음): 코드 교환이 서버사이드(Next route handler)라
-    // 시크릿을 안전히 보관할 수 있고, 두면 client_id만 훔친 코드 가로채기가 막힌다.
-    // 콜백은 localhost만 — 실제 CloudFront 도메인은 HostingStack이 덧붙인다(§3.5).
+    // --- App client ---
+    // confidential (has a secret): the code exchange is server-side (Next route handler), so the
+    // secret can be stored safely, and having one blocks code interception by someone who stole only the client_id.
+    // Callbacks are localhost only — the real CloudFront domain is appended by HostingStack (§3.5).
     this.userPoolClient = this.userPool.addClient('WebClient', {
       userPoolClientName: CLIENT_NAME,
       generateSecret: true,
@@ -174,9 +175,9 @@ export class AipdsAuthStack extends cdk.Stack {
         callbackUrls: callbackUrls([LOCAL_APP_URL]),
         logoutUrls: logoutUrls([LOCAL_APP_URL]),
       },
-      // 값의 출처는 auth-client-config.ts 하나뿐이다 — HostingStack의
-      // UpdateUserPoolClient 재전송(PUT 시맨틱)이 같은 값을 다시 써야
-      // 재배포 때마다 유효기간이 리셋되지 않는다.
+      // These values have a single source, auth-client-config.ts — HostingStack's
+      // UpdateUserPoolClient resend (PUT semantics) must write the same values again
+      // so that the validity periods are not reset on every redeploy.
       accessTokenValidity: cdk.Duration.minutes(ACCESS_TOKEN_VALIDITY_MINUTES),
       idTokenValidity: cdk.Duration.minutes(ID_TOKEN_VALIDITY_MINUTES),
       refreshTokenValidity: cdk.Duration.minutes(REFRESH_TOKEN_VALIDITY_MINUTES),
@@ -184,31 +185,31 @@ export class AipdsAuthStack extends cdk.Stack {
       enableTokenRevocation: true,
     });
 
-    // v2는 브랜딩 스타일 레코드가 있어야 정상 렌더된다(콘솔이 자동으로 하는 일).
-    // 없으면 로그인 페이지가 깨진 채로 뜬다.
+    // v2 renders correctly only if a branding style record exists (the console does this automatically).
+    // Without it, the login page comes up broken.
     //
-    // clientId는 CDK 타입에서 옵셔널이지만 Cognito API에는 필수다 — 브랜딩
-    // 스타일은 user pool이 아니라 앱 클라이언트 단위로 연결된다. 넘기지 않으면
-    // 합성과 유닛 테스트는 통과하고 실배포가 "Value null at 'clientId' failed to
-    // satisfy constraint"로 죽는다(실측: AipdsAuthStack ROLLBACK).
-    // 그래서 이 블록은 반드시 클라이언트 생성 뒤에 온다.
+    // clientId is optional in the CDK types but required by the Cognito API — branding
+    // styles are attached per app client, not per user pool. If it is not passed,
+    // synth and unit tests pass and the real deploy dies with "Value null at 'clientId' failed to
+    // satisfy constraint" (measured: AipdsAuthStack ROLLBACK).
+    // That is why this block must come after the client is created.
     const branding = new cognito.CfnManagedLoginBranding(this, 'Branding', {
       userPoolId: this.userPool.userPoolId,
       clientId: this.userPoolClient.userPoolClientId,
       useCognitoProvidedValues: true,
     });
-    // 도메인이 먼저 있어야 브랜딩을 붙일 대상(managed login)이 존재한다.
+    // The domain must exist first so that the target for branding (managed login) exists.
     branding.node.addDependency(domain);
 
-    // --- 시드 계정: cdk deploy 한 번으로 로그인 가능해야 한다 ---
+    // --- Seed accounts: a single cdk deploy must make login possible ---
     //
-    // '로그인 가능'은 '비밀번호가 확정되어 있다'가 아니다. 두 계정은 임시
-    // 비밀번호로 만들어지고(FORCE_CHANGE_PASSWORD), 사용자는 첫 로그인에서
-    // Hosted UI가 띄우는 화면에서 자기 비밀번호를 정한다 — 초대 계정과 같다.
+    // 'Can log in' does not mean 'the password is finalized'. Both accounts are created with a
+    // temporary password (FORCE_CHANGE_PASSWORD), and on first login the user sets their own
+    // password on the screen the Hosted UI shows — same as an invited account.
     //
-    // 롤을 여기서 한 번 만들어 두 시드가 공유한다. 시드마다 권한을 만들면 IAM 최종
-    // 일관성과 경쟁하고, 실제로 그 경쟁에 져서 첫 배포가 롤백됐다 — 근거는
-    // seed-users.ts의 `seedProviderRole` 주석.
+    // The role is created once here and shared by both seeds. Creating permissions per seed races
+    // with IAM eventual consistency, and losing that race actually rolled back the first deploy —
+    // see the `seedProviderRole` comment in seed-users.ts for the evidence.
     const seedRole = seedProviderRole(this, this.userPool);
     seedUser(this, 'SeedAdmin', {
       userPool: this.userPool,
@@ -230,7 +231,7 @@ export class AipdsAuthStack extends cdk.Stack {
       value: this.userPoolClient.userPoolClientId,
     });
     new cdk.CfnOutput(this, 'HostedUiDomain', { value: this.hostedUiDomain });
-    // 클라이언트 시크릿은 출력하지 않는다 — EC2가 부팅 시
-    // describe-user-pool-client로 조회한다(스펙 §3.4).
+    // The client secret is not output — EC2 looks it up at boot with
+    // describe-user-pool-client (spec §3.4).
   }
 }

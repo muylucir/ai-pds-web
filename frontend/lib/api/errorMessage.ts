@@ -1,16 +1,16 @@
-// frontend/lib/api/errorMessage.ts — 백엔드 에러 코드 → UI 문구.
+// frontend/lib/api/errorMessage.ts — backend error code → UI text.
 //
-// 백엔드는 UI 언어를 모르므로 안정적 코드(backend/aipds/error_codes.py)를
-// detail로 보낸다. 문구는 여기가 소유한다.
+// The backend does not know the UI language, so it sends stable codes (backend/aipds/error_codes.py)
+// as detail. The wording is owned here.
 //
-// **모르는 코드는 원문을 그대로 돌려준다.** 코드화가 부분적으로 진행된 중간
-// 상태에서도, 그리고 새 에러가 추가됐을 때도 화면이 빈 채로 남지 않게 한다 —
-// 사용자가 코드를 보는 것이 아무것도 못 보는 것보다 낫다.
+// **Unknown codes return the original text as is.** So the screen is not left blank in the intermediate
+// state where codification is only partly done, or when a new error is added —
+// a user seeing the code is better than seeing nothing.
 import type { Dict } from "@/lib/i18n";
 
 type T = (key: keyof Dict) => string;
 
-// 백엔드 코드 → 딕셔너리 키. 값이 `keyof Dict`이므로 오타가 컴파일 에러가 된다.
+// Backend code → dictionary key. The values are `keyof Dict`, so typos become compile errors.
 const KEY_BY_CODE: Record<string, keyof Dict> = {
   email_exists: "err.emailExists",
   email_invalid: "err.emailInvalid",
@@ -51,11 +51,11 @@ const KEY_BY_CODE: Record<string, keyof Dict> = {
   seed_admin_protected: "err.seedAdminProtected",
 };
 
-/** 아는 코드면 `errorMessage`와 같은 번역, 그 밖에는 `fallback`.
+/** For a known code, the same translation as `errorMessage`; otherwise `fallback`.
  *
- *  `errorMessage`는 모르는 detail을 원문 그대로 보이지만, 그 원문이 문장이 아닌 자리가
- *  있다: 호스팅 시작의 502는 detail이 npm 로그 꼬리다(backend routes/prototypes의
- *  start_host). 한 줄 오류 자리에 여러 줄 로그를 싣지 않는다 — 로그는 로그 버튼이 보여 준다. */
+ *  `errorMessage` shows unknown details verbatim, but there are places where that original text is not a sentence:
+ *  for the 502 on starting hosting, detail is the tail of the npm log (start_host in backend
+ *  routes/prototypes). A multi-line log is not put in a one-line error slot — the log button shows the log. */
 export function knownErrorMessage(t: T, detail: string, fallback: string): string {
   const code = detail.trim().split(":")[0];
   return Object.hasOwn(KEY_BY_CODE, code) ? errorMessage(t, detail) : fallback;
@@ -64,8 +64,8 @@ export function knownErrorMessage(t: T, detail: string, fallback: string): strin
 export function errorMessage(t: T, detail: string): string {
   const raw = detail.trim();
   if (raw === "") return t("err.generic");
-  // `init_incomplete:s3,host` — 코드 뒤의 콜론 이후는 진단 정보다. 코드만
-  // 번역하고 상세는 괄호로 덧붙인다.
+  // `init_incomplete:s3,host` — what follows the colon after the code is diagnostic information. Only the code
+  // is translated, and the details are appended in parentheses.
   const [code, ...rest] = raw.split(":");
   const key = KEY_BY_CODE[code];
   if (key === undefined) return raw;

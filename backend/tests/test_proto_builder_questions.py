@@ -66,9 +66,9 @@ async def test_question_roundtrip(tmp_path):
     assert qf["parse_ok"] is True
     q = qf["questions"][0]
     assert q["number"] == 1 and q["text"] == "Which DB?"
-    # 실제 옵션만 본다 — 목록 끝에 자유 입력용 X가 붙는다(questions_payload.py의
-    # question_file_from_sdk). 아래의 letter→라벨 되번역 단정이 X가 A/B 인덱스를
-    # 밀지 않는다는 것을 함께 지켜준다.
+    # Look only at the real options — an X for free input is appended to the end of the list
+    # (question_file_from_sdk in questions_payload.py). The letter→label back-translation
+    # assertion below also guards that X does not push the A/B indexes.
     assert [o["letter"] for o in q["options"] if not o["is_other"]] == ["A", "B"]
     assert q["options"][-1]["is_other"] is True
     assert q["options"][0]["text"].startswith("Postgres")
@@ -85,9 +85,10 @@ async def test_question_roundtrip(tmp_path):
 
 
 async def test_an_answered_round_is_recorded_for_the_history(tmp_path):
-    """트랜스크립트의 tool_result는 CLI가 옮겨 적은 영어 문장이라 답을 펼 수 없다.
-    받은 그대로의 답과 그 순간의 질문을 tool_use_id로 남겨야 히스토리가 라이브와 같은
-    답 말풍선을 되살린다(proto/history.py의 AnswerLog)."""
+    """The transcript's tool_result is an English sentence the CLI transcribed, so the answer
+    cannot be unpacked. The answer as received and the question at that moment must be kept by
+    tool_use_id for the history to restore the same answer bubble as live (AnswerLog in
+    proto/history.py)."""
     from types import SimpleNamespace
     from aipds.agent.answer_store import load_answers
     from aipds.proto.history import AnswerLog, answers_prefix
@@ -122,13 +123,13 @@ async def test_an_answered_round_is_recorded_for_the_history(tmp_path):
 
 
 async def test_zero_option_question_is_denied_not_raised(tmp_path):
-    """리뷰 finding 2: question_file_from_sdk는 옵션 없는 질문에 ValueError를
-    던진다(정규화 계약). 옛 _to_question_file은 절대 그러지 않았으므로
-    _on_can_use_tool에는 그 예외를 감쌀 코드가 없었다 -- bypassPermissions
-    아래에서 무인으로 도는 프로토타입 빌드가 처리 경로 없이 죽는 걸 막는다.
-    ask_questions(tools.py)가 ValueError를 잡아 모델이 읽을 문자열을 돌려주는
-    것과 대응되도록, can_use_tool 콜백은 PermissionResultDeny로 거부하고
-    모델이 재시도할 수 있는 메시지를 message에 담는다."""
+    """Review finding 2: question_file_from_sdk raises ValueError for a question with no
+    options (the normalization contract). The old _to_question_file never did that, so
+    _on_can_use_tool had no code wrapping that exception -- this keeps a prototype build
+    running unattended under bypassPermissions from dying with no handling path. Mirroring
+    ask_questions (tools.py) catching ValueError and returning a string the model reads, the
+    can_use_tool callback denies with PermissionResultDeny and puts a message the model can
+    retry on into message."""
     from claude_agent_sdk.types import PermissionResultDeny
 
     b = _builder(tmp_path, FakeSdkClient())

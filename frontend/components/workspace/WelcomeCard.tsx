@@ -1,12 +1,12 @@
 "use client";
 // frontend/components/workspace/WelcomeCard.tsx
 //
-// 두 언어 채널이 한 컴포넌트에서 만나는 자리다:
-//   - 카드의 라벨·설명 = UI 언어(useT)
-//   - onStart로 보내는 개시 문장 = 프로젝트 언어(startMessage)
-// 후자는 에이전트에게 가고 트랜스크립트에 남으므로 UI 언어를 따르면 안 된다 —
-// 영어 UI로 한국어 프로젝트를 시작하면 대화는 한국어로 진행되어야 한다
-// (lib/approvalMarker.ts의 승인 단어와 같은 판단).
+// This is where the two language channels meet in one component:
+//   - the card's labels and descriptions = UI language (useT)
+//   - the opening sentence sent via onStart = project language (startMessage)
+// The latter goes to the agent and stays in the transcript, so it must not follow the UI language —
+// starting a Korean project from an English UI must still run the conversation in Korean
+// (same judgment as the approval words in lib/approvalMarker.ts).
 import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 import { startMessage } from "@/lib/startMessage";
@@ -16,8 +16,8 @@ export function WelcomeCard({
   language,
 }: {
   onStart: (text: string) => void;
-  // 이 프로젝트의 생성물 언어. null/undefined면 ko로 떨어진다 — 구 백엔드나
-  // 조회 실패이고, 그것이 이 기능 이전 모든 프로젝트의 언어다.
+  // This project's output language. null/undefined falls back to ko — that means an old backend or
+  // a failed lookup, and ko is the language of every project predating this feature.
   language?: Locale | null;
 }) {
   const t = useT();

@@ -19,28 +19,28 @@ import {
 
 export interface HostingStackProps extends cdk.StackProps {
   artifactsBucket: s3.IBucket;
-  // 테스트 주입용. 미지정 시 배포 리전의 CloudFront origin-facing 프리픽스
-  // 리스트를 fromLookup으로 자동 조회한다.
+  // For test injection. If unset, the CloudFront origin-facing prefix list for the deploy
+  // region is looked up automatically with fromLookup.
   cfPrefixListId?: string;
-  // 인증. AuthStack이 만든 풀/클라이언트를 받아 (1) EC2에 env로 심고
-  // (2) CloudFront 도메인을 콜백 URL로 등록한다.
+  // Auth. Takes the pool/client AuthStack created, (1) plants them in EC2 as env and
+  // (2) registers the CloudFront domain as a callback URL.
   userPool: cognito.IUserPool;
   userPoolClient: cognito.IUserPoolClient;
   hostedUiDomain: string;
 }
 
 export class AipdsHostingStack extends cdk.Stack {
-  /** 인스턴스 롤. 별도 스택(AgentCreds·Preview)이 여기에 권한을 붙인다. */
+  /** Instance role. Separate stacks (AgentCreds, Preview) attach permissions to it. */
   public readonly instanceRole: iam.IRole;
-  /** `X-Origin-Verify` 시크릿. 프리뷰 배포도 같은 값을 붙인다. */
+  /** The `X-Origin-Verify` secret. The preview distribution attaches the same value. */
   public readonly originVerifySecret: secretsmanager.ISecret;
-  /** EIP의 퍼블릭 DNS 이름. CloudFront 오리진은 IP를 받지 않는다. */
+  /** Public DNS name of the EIP. A CloudFront origin does not accept an IP. */
   public readonly originDnsName: string;
 
   constructor(scope: Construct, id: string, props: HostingStackProps) {
     super(scope, id, props);
 
-    // --- VPC: 퍼블릭 서브넷만, NAT 없음(비용 0). ---
+    // --- VPC: public subnets only, no NAT (zero cost). ---
     const vpc = new ec2.Vpc(this, 'Vpc', {
       maxAzs: 2,
       natGateways: 0,
@@ -49,19 +49,19 @@ export class AipdsHostingStack extends cdk.Stack {
       ],
     });
 
-    // --- CloudFront origin-facing 프리픽스 리스트 (리전 자동) ---
+    // --- CloudFront origin-facing prefix list (region auto-detected) ---
     const cfPrefixListId =
       props.cfPrefixListId ??
       ec2.PrefixList.fromLookup(this, 'CfOriginFacing', {
         prefixListName: 'com.amazonaws.global.cloudfront.origin-facing',
       }).prefixListId;
 
-    // --- SG: 80만, CloudFront 프리픽스 리스트에서만. SSH 없음. ---
+    // --- SG: port 80 only, only from the CloudFront prefix list. No SSH. ---
     const sg = new ec2.SecurityGroup(this, 'InstanceSg', {
       vpc,
-      allowAllOutbound: true, // 패키지 설치 · Bedrock · S3
-      // ASCII만: EC2는 GroupDescription의 비ASCII를 거부한다("Character sets
-      // beyond ASCII are not supported"). em dash 하나로 스택이 롤백된다(실측).
+      allowAllOutbound: true, // package installs · Bedrock · S3
+      // ASCII only: EC2 rejects non-ASCII in GroupDescription ("Character sets
+      // beyond ASCII are not supported"). A single em dash rolls the stack back (observed).
       description: 'AI-PDS EC2: inbound 80 from CloudFront prefix list only.',
     });
     sg.addIngressRule(
@@ -70,20 +70,20 @@ export class AipdsHostingStack extends cdk.Stack {
       'CloudFront origin-facing only',
     );
 
-    // --- 비밀 헤더 값 (영숫자 32자) ---
+    // --- Secret header value (32 alphanumeric characters) ---
     const headerSecret = new secretsmanager.Secret(this, 'OriginVerifyHeader', {
       description: 'X-Origin-Verify shared secret (CloudFront custom header <-> nginx).',
       generateSecretString: {
         passwordLength: 32,
         excludePunctuation: true,
-        // 단일 스칼라 시크릿(문자열 그대로) — JSON 아님.
+        // A single scalar secret (the string as is) — not JSON.
       },
     });
 
     const account = cdk.Stack.of(this).account;
     const region = cdk.Stack.of(this).region;
 
-    // --- 인스턴스 롤: 백엔드 공통 권한 + 시크릿 읽기 + SSM 접속 ---
+    // --- Instance role: common backend permissions + secret read + SSM access ---
     const role = new iam.Role(this, 'InstanceRole', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
       managedPolicies: [
@@ -95,20 +95,20 @@ export class AipdsHostingStack extends cdk.Stack {
       role.addToPolicy(stmt);
     }
     headerSecret.grantRead(role);
-    // Cognito 권한 두 묶음.
+    // Two groups of Cognito permissions.
     //
-    // 1) DescribeUserPoolClient — 부팅 시 클라이언트 시크릿을 Cognito에서 직접
-    //    읽는다(§3.4). 템플릿에 평문으로 남기지 않기 위한 선택이고, 그 대가가
-    //    이 권한이다.
+    // 1) DescribeUserPoolClient — at boot, the client secret is read straight from Cognito
+    //    (§3.4). That choice is so it is not left in plaintext in the template, and the price is
+    //    this permission.
     //
-    // 2) Admin* / ListUsers* — /admin/users(사용자 초대·역할 변경·비밀번호
-    //    재설정·비활성화·삭제)가 쓴다. 실측 배포 버그: 이 묶음이 없어서 로그인은
-    //    되는데 /admin/users만 502였고, 백엔드 로그에만
-    //    "cognito call failed (AccessDeniedException)"이 남았다.
-    //    목록은 backend/aipds/auth/cognito.py의 _call() 호출과 1:1이어야
-    //    한다 — 하나라도 빠지면 그 기능만 502가 되고 화면에서는 원인이 보이지
-    //    않는다. cognito-idp:*로 뭉개지 않는다(최소 권한). 두 곳이 어긋나지
-    //    않도록 test/hosting-stack.assert.ts가 목록을 고정한다.
+    // 2) Admin* / ListUsers* — used by /admin/users (inviting users, changing roles, resetting
+    //    passwords, disabling, deleting). Observed deploy bug: without this group, login
+    //    worked but only /admin/users returned 502, and only the backend log showed
+    //    "cognito call failed (AccessDeniedException)".
+    //    The list must match the _call() invocations in backend/aipds/auth/cognito.py 1:1
+    //    — if even one is missing, only that feature returns 502 and the cause is not visible
+    //    on screen. Do not collapse it into cognito-idp:* (least privilege). So the two places do not
+    //    drift, test/hosting-stack.assert.ts pins the list.
     role.addToPolicy(new iam.PolicyStatement({
       actions: [
         'cognito-idp:DescribeUserPoolClient',
@@ -126,33 +126,33 @@ export class AipdsHostingStack extends cdk.Stack {
       resources: [props.userPool.userPoolArn],
     }));
 
-    // --- 배포할 코드: 리포의 특정 커밋 ---
+    // --- Code to deploy: a specific commit of the repo ---
     //
-    // 종전에는 리포 루트를 CDK 에셋(zip)으로 올리고 EC2가 S3에서 내려받았다.
-    // 그 방식이 남긴 두 가지가 이 변경의 이유다(자세한 근거는 lib/deploy-source.ts):
+    // Previously the repo root was uploaded as a CDK asset (zip) and EC2 downloaded it from S3.
+    // Two things that approach left behind are the reason for this change (full reasoning in lib/deploy-source.ts):
     //
-    // - 에셋은 **gitignore된 파일까지 싣는다.** 그래서 app-asset-excludes.json
-    //   이라는 보정 목록이 필요했고, 그 목록에서 빠진 것이 두 번 사고를 냈다:
-    //   개발용 `.claude/CLAUDE.md`가 /opt/aipds/.claude/에 실려 에이전트
-    //   cwd의 **조상**이 되어 한국어 한 줄이 영어 프로젝트 컨텍스트에 매 턴
-    //   들어간 것(d94aaa1), 그리고 개발 박스의 `proto-type/`이 실려 아무도
-    //   빌드하지 않은 프로토타입이 "빌드 완료"로 보인 것.
-    //   clone은 tracked 파일만 가져오므로 이 실패 **종류**가 사라진다.
-    //   그 불변식(의도하지 않은 CLAUDE.md가 앱 트리에 없다)은 이제
-    //   test/deployed-tree.assert.ts가 tracked 파일 목록으로 지킨다.
-    // - 배포되는 것이 커밋이 아니라 **워킹 트리**였다. 지금은 미커밋 변경이
-    //   배포되지 않는다 — 인스턴스는 푸시된 것만 clone한다.
+    // - The asset **carries even gitignored files.** That needed a correction list called
+    //   app-asset-excludes.json, and things missing from that list caused two incidents:
+    //   the development `.claude/CLAUDE.md` shipped to /opt/aipds/.claude/, became an **ancestor**
+    //   of the agent's cwd, and put one Korean line into an English project's context on every
+    //   turn (d94aaa1); and the dev box's `proto-type/` shipped, so a prototype nobody
+    //   built showed as "build complete".
+    //   clone fetches only tracked files, so this **class** of failure disappears.
+    //   That invariant (no unintended CLAUDE.md in the app tree) is now
+    //   guarded by test/deployed-tree.assert.ts using the list of tracked files.
+    // - What got deployed was the **working tree**, not a commit. Now uncommitted changes
+    //   are not deployed — the instance clones only what was pushed.
     //
-    // 무엇을 clone하는지는 브랜치로만 정한다(SHA를 박지 않는다). 그래서 이
-    // 스택은 배포 시점에 git을 호출하지 않고, **user-data가 코드 변경과 무관하게
-    // 동일하다** — 즉 cdk deploy는 인스턴스를 교체하지 않고 코드도 갱신하지
-    // 않는다. 코드 갱신은 인스턴스의 aipds-update가 한다(user-data.ts가
-    // 설치한다). 이 선택의 근거는 lib/deploy-source.ts.
+    // What to clone is decided by branch only (no SHA baked in). So this
+    // stack does not call git at deploy time, and **user-data is identical regardless of
+    // code changes** — that is, cdk deploy neither replaces the instance nor updates the
+    // code. Code updates are done by aipds-update on the instance (installed by
+    // user-data.ts). The reasoning for this choice is in lib/deploy-source.ts.
 
     // --- user-data ---
-    // CloudFront 도메인은 아래에서 만들어지지만 user-data는 지금 필요하다.
-    // Lazy.string으로 합성 마지막에 해석시켜 순환을 끊는다 — CFN 템플릿에서는
-    // Fn::GetAtt 참조로 떨어진다.
+    // The CloudFront domain is created below, but user-data is needed now.
+    // Lazy.string defers resolution to the end of synthesis to break the cycle — in the CFN template
+    // it lands as an Fn::GetAtt reference.
     let distributionDomain: string | undefined;
     const appUrlToken = cdk.Lazy.string({
       produce: () => `https://${distributionDomain ?? ''}`,
@@ -173,36 +173,36 @@ export class AipdsHostingStack extends cdk.Stack {
       }),
     );
 
-    // --- 인스턴스 (AL2023 x86_64, IMDSv2 강제) ---
+    // --- Instance (AL2023 x86_64, IMDSv2 enforced) ---
     const instance = new ec2.Instance(this, 'Instance', {
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
-      // 프로토타입 빌드가 이 박스로 들어왔다: 세션마다 claude 서브프로세스
-      // (~300-500MB)가 상주하고 next build가 피크 2GB를 쓴다. Graviton은 쓰지
-      // 않는다(SDK 번들 바이너리가 x86-64).
+      // Prototype builds moved onto this box: each session keeps a claude subprocess
+      // (~300-500MB) resident and next build peaks at 2GB. No Graviton
+      // (the SDK's bundled binary is x86-64).
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.M7I, ec2.InstanceSize.XLARGE2),
       machineImage: ec2.MachineImage.latestAmazonLinux2023(),
       securityGroup: sg,
       role,
       userData,
       requireImdsv2: true,
-      userDataCausesReplacement: true, // 에셋(코드) 변경 시 깨끗한 재부트스트랩
+      userDataCausesReplacement: true, // clean re-bootstrap when the asset (code) changes
       blockDevices: [{
         deviceName: '/dev/xvda',
-        // 프로토타입당 node_modules가 상주한다(실측 ~23MB/건이지만 여유를 둔다).
+        // Each prototype keeps node_modules resident (observed ~23MB each, but leave headroom).
         volume: ec2.BlockDeviceVolume.ebs(100, { encrypted: true }),
       }],
     });
 
-    // --- 고정 EIP (재배포에도 CloudFront 오리진 도메인 불변) ---
+    // --- Fixed EIP (CloudFront origin domain unchanged across redeploys) ---
     const eip = new ec2.CfnEIP(this, 'Eip', { domain: 'vpc' });
     new ec2.CfnEIPAssociation(this, 'EipAssoc', {
       allocationId: eip.attrAllocationId,
       instanceId: instance.instanceId,
     });
 
-    // EIP IP -> 퍼블릭 DNS 이름 (CloudFront 오리진은 도메인만 허용; IP 불가).
-    //   ec2-<a-b-c-d>.<region>.compute.amazonaws.com  (us-east-1은 compute-1)
+    // EIP IP -> public DNS name (a CloudFront origin only accepts a domain; no IP).
+    //   ec2-<a-b-c-d>.<region>.compute.amazonaws.com  (compute-1 for us-east-1)
     const computeDomain =
       region === 'us-east-1' ? 'compute-1.amazonaws.com' : `${region}.compute.amazonaws.com`;
     const originDnsName =
@@ -211,23 +211,23 @@ export class AipdsHostingStack extends cdk.Stack {
     this.originVerifySecret = headerSecret;
     this.originDnsName = originDnsName;
 
-    // **보안 경고: CloudFront → 오리진 구간은 암호화되지 않는다(HTTP_ONLY, 포트 80).** 브라우저
-    // → CloudFront는 HTTPS지만, CloudFront가 EC2 공인 DNS로 보내는 요청은 평문이고 그 안에
-    // 세션 쿠키(Cognito 토큰)와 아래 비밀 헤더가 실린다. 보안 그룹이 CloudFront 오리진 대역만
-    // 받고 nginx가 비밀 헤더를 확인하므로 직접 접근은 막히지만, 경로상의 도청은 막지 못한다.
-    // EC2 공인 DNS에는 공인 인증서를 받을 수 없어서 생긴 제약이다. 워크숍 밖에서 쓴다면 둘 중
-    // 하나로 바꾼다: 자체 도메인 + 인증서로 오리진을 HTTPS_ONLY(443)로, 또는 인스턴스를
-    // 프라이빗 서브넷으로 옮기고 CloudFront VPC 오리진을 쓴다. 이 스택의 배포는 EC2를 교체할 수
-    // 있으므로(AMI 미고정) 계획된 교체 때 한다. 프리뷰 배포(aipds-preview-stack.ts)도 같다.
-    // 이 샘플이 도메인 없이 배포되도록 한 선택이다 — README "CloudFront → instance is HTTP by
-    // design"에 범위·완화·전환 방법을 적었다.
+    // **Security warning: the CloudFront → origin leg is not encrypted (HTTP_ONLY, port 80).** Browser
+    // → CloudFront is HTTPS, but the request CloudFront sends to the EC2 public DNS is plaintext and carries
+    // the session cookies (Cognito tokens) and the secret header below. The security group accepts only the
+    // CloudFront origin ranges and nginx checks the secret header, so direct access is blocked, but eavesdropping on the path is not.
+    // This constraint exists because a public certificate cannot be issued for an EC2 public DNS name. If used outside a workshop, switch to
+    // one of two: a custom domain + certificate with the origin at HTTPS_ONLY (443), or move the instance to a
+    // private subnet and use a CloudFront VPC origin. Deploying this stack can replace the EC2 instance
+    // (AMI not pinned), so do it during a planned replacement. The same goes for the preview distribution (aipds-preview-stack.ts).
+    // This is the choice that lets this sample deploy without a domain — README "CloudFront → instance is HTTP by
+    // design" covers the scope, mitigations and how to switch.
     //
-    // 비밀 헤더 값: CFN dynamic reference({{resolve:secretsmanager:...}})로 주입.
-    // 배포 시 CloudFormation이 해석 → 템플릿에는 평문이 남지 않음.
+    // Secret header value: injected via a CFN dynamic reference ({{resolve:secretsmanager:...}}).
+    // CloudFormation resolves it at deploy time → no plaintext is left in the template.
     const origin = new origins.HttpOrigin(originDnsName, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
       httpPort: 80,
-      readTimeout: cdk.Duration.seconds(60), // SSE(백엔드 ping 15s) 여유
+      readTimeout: cdk.Duration.seconds(60), // headroom for SSE (backend ping 15s)
       keepaliveTimeout: cdk.Duration.seconds(60),
       customHeaders: {
         'X-Origin-Verify': headerSecret.secretValue.unsafeUnwrap(),
@@ -235,8 +235,8 @@ export class AipdsHostingStack extends cdk.Stack {
     });
 
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
-      // 위 SG와 같은 이유로 ASCII만 쓴다(CloudFront는 비ASCII를 받아줄 수도
-      // 있으나, 콘솔 표시용 문자열에 굳이 그 위험을 남기지 않는다).
+      // ASCII only, for the same reason as the SG above (CloudFront may accept non-ASCII,
+      // but there is no reason to leave that risk in a string meant for console display).
       comment: 'AI-PDS: CloudFront in front of EC2 (header-authenticated origin).',
       priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
       defaultBehavior: {
@@ -250,31 +250,31 @@ export class AipdsHostingStack extends cdk.Stack {
         '/_next/static/*': {
           origin,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED, // 해시 파일명 → 불변
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED, // hashed file names → immutable
         },
       },
     });
     distributionDomain = distribution.distributionDomainName;
 
-    // --- 콜백 URL 주입: 순환 의존 해소 ---
+    // --- Callback URL injection: breaking the circular dependency ---
     //
-    // Cognito는 콜백 URL의 전수 일치만 허용하고(와일드카드 불가), 실제 URL은
-    // 이 스택이 만드는 CloudFront 도메인에 달려 있다. AuthStack이 그 도메인을
-    // 알려면 이 스택을 참조해야 하고, 이 스택은 이미 AuthStack을 참조하므로
-    // 순환이다. 배포 마지막에 클라이언트를 갱신해 끊는다.
+    // Cognito only allows exact matches on callback URLs (no wildcards), and the actual URL
+    // depends on the CloudFront domain this stack creates. For AuthStack to know that domain
+    // it would have to reference this stack, and this stack already references AuthStack, so
+    // it would be circular. The cycle is broken by updating the client at the end of the deploy.
     //
-    // ⚠️ UpdateUserPoolClient는 PUT 시맨틱이다 — 지정하지 않은 필드를 지운다.
-    // 따라서 콜백만 보내는 것이 아니라 클라이언트 설정 전체를 다시 쓴다.
-    // 값의 출처는 auth-client-config.ts 하나뿐이라 AuthStack과 어긋나지 않는다.
-    // 🔒 의무: AuthStack의 client 정의(addClient 호출)에 필드를 추가하거나
-    // 바꿀 때마다 이 아래 parameters도 반드시 같이 고쳐야 한다 — 하나라도
-    // 빠뜨리면 그 필드는 다음 배포에서 조용히 기본값으로 리셋된다(예: 토큰
-    // 유효기간, ALLOW_REFRESH_TOKEN_AUTH — 실제로 한 번 빠졌던 필드들이다).
+    // ⚠️ UpdateUserPoolClient has PUT semantics — it clears any field not specified.
+    // So it rewrites the whole client configuration, not just the callbacks.
+    // The values come only from auth-client-config.ts, so they cannot drift from AuthStack.
+    // 🔒 Obligation: every time a field is added to or changed in AuthStack's client definition (the addClient call),
+    // the parameters below must be changed along with it — if even one is
+    // missed, that field silently resets to its default on the next deploy (e.g. token
+    // validity periods, ALLOW_REFRESH_TOKEN_AUTH — fields that actually were missed once).
     const appUrls = [LOCAL_APP_URL, `https://${distribution.distributionDomainName}`];
 
-    // onCreate와 onUpdate가 같은 호출이어야 한다: onUpdate를 생략하면 재배포 시
-    // 갱신되지 않아 도메인이 바뀌어도 콜백이 낡은 채로 남는다. 파라미터를 지역
-    // 상수로 뽑아 두 곳이 어긋날 여지를 없앤다.
+    // onCreate and onUpdate must be the same call: if onUpdate is omitted, a redeploy does not
+    // update it, so the callbacks stay stale even when the domain changes. Pulling the parameters
+    // into a local constant leaves no room for the two to diverge.
     const updateClientCall = {
       service: 'CognitoIdentityServiceProvider',
       action: 'updateUserPoolClient',
@@ -284,18 +284,18 @@ export class AipdsHostingStack extends cdk.Stack {
         ClientName: CLIENT_NAME,
         CallbackURLs: callbackUrls(appUrls),
         LogoutURLs: logoutUrls(appUrls),
-        // PUT 시맨틱이라 아래 필드를 빼면 그 설정이 지워진다 —
-        // AuthStack의 클라이언트 정의와 같은 값이어야 한다.
+        // PUT semantics, so leaving out the fields below clears those settings —
+        // they must be the same values as AuthStack's client definition.
         AllowedOAuthFlows: ['code'],
         AllowedOAuthFlowsUserPoolClient: true,
         AllowedOAuthScopes: OAUTH_SCOPES,
         SupportedIdentityProviders: ['COGNITO'],
         PreventUserExistenceErrors: 'ENABLED',
         EnableTokenRevocation: true,
-        // 토큰 유효기간 + 리프레시 인증 플로우. 처음 구현에서 빠졌던 필드들 —
-        // 빠지면 재배포마다 1h/1h/30d가 Cognito 기본값으로 리셋되고
-        // ALLOW_REFRESH_TOKEN_AUTH가 사라져 /api 프록시의 401 리프레시가
-        // 조용히 끊긴다. 상수 출처는 AuthStack과 동일하게 auth-client-config.ts.
+        // Token validity periods + refresh auth flow. Fields missed in the first implementation —
+        // without them, every redeploy resets 1h/1h/30d to Cognito defaults and
+        // ALLOW_REFRESH_TOKEN_AUTH disappears, silently breaking the /api proxy's 401 refresh.
+        // The constants come from auth-client-config.ts, the same source as AuthStack.
         AccessTokenValidity: ACCESS_TOKEN_VALIDITY_MINUTES,
         IdTokenValidity: ID_TOKEN_VALIDITY_MINUTES,
         RefreshTokenValidity: REFRESH_TOKEN_VALIDITY_MINUTES,
@@ -315,7 +315,7 @@ export class AipdsHostingStack extends cdk.Stack {
       }),
       installLatestAwsSdk: false,
     });
-    // distribution이 만들어진 뒤에 호출돼야 도메인이 확정된다.
+    // It must be called after the distribution is created so the domain is settled.
     clientUpdate.node.addDependency(distribution);
 
     new cdk.CfnOutput(this, 'DistributionDomain', {

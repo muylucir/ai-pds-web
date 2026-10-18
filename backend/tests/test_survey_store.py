@@ -106,8 +106,8 @@ def test_public_url_path():
 
 
 def test_aggregate_markdown_is_english_for_an_english_survey():
-    """리포트는 aiplc-docs/**에 생성되는 산출물이므로 UI 언어가 아니라
-    프로젝트 언어를 따른다."""
+    """The report is an artifact generated in aiplc-docs/**, so it follows the project language,
+    not the UI language."""
     from aipds.survey.store import _aggregate_markdown
     from aipds.survey.models import Questionnaire, Rollup
 
@@ -137,12 +137,12 @@ def test_aggregate_markdown_stays_korean_by_default():
 
 
 def test_aggregate_markdown_carries_no_step6_sections():
-    """집계에는 수집한 데이터만 있다. Step 6의 판단 섹션은 룰의
-    `validation-results.md`에 에이전트가 쓴다(proto/layout.SURVEY_AGGREGATE).
+    """The aggregate holds only the collected data. The Step 6 judgment sections are written by the agent into the rules'
+    `validation-results.md` (proto/layout.SURVEY_AGGREGATE).
 
-    빈 템플릿으로라도 여기 두면 에이전트가 이 파일을 채우고, 다음 취합이 그
-    분석을 덮어쓴다 — 2026-10-06 ws-b에서 열린 설문 위에 에이전트 분석이
-    붙어 있던 모양이 그것이다.
+    Putting them here, even as an empty template, would make the agent fill this file, and the next synthesis would
+    overwrite that analysis — that is the shape seen on 2026-10-06 in ws-b, with the agent's analysis
+    attached on top of an open survey.
     """
     from aipds.survey.store import _aggregate_markdown
     from aipds.survey.models import Questionnaire, Rollup
@@ -160,13 +160,13 @@ def test_aggregate_markdown_carries_no_step6_sections():
                         "## Theme Analysis", "## Pain Point Mapping",
                         "## Build Decision"):
             assert heading not in md, (language, heading)
-        # 에이전트가 읽는 안내: Step 6 종합이 어디로 가는지.
+        # Guidance the agent reads: where the Step 6 synthesis goes.
         assert "validation-results.md" in md, language
 
 
 def test_aggregate_markdown_carries_the_survey_window():
-    """검증 기간의 양 끝이 집계에 있어야 한다. 없으면 에이전트가 PM에게 설문
-    시작 시각을 묻는다 — 2026-10-06 ws-c의 확인 질문 Q3이 그것이었다."""
+    """Both ends of the validation period must be in the aggregate. Without them the agent asks the PM when the
+    survey started — that was confirmation question Q3 in ws-c on 2026-10-06."""
     from aipds.survey.store import _aggregate_markdown
     from aipds.survey.models import Rollup
 
@@ -175,7 +175,7 @@ def test_aggregate_markdown_carries_the_survey_window():
         _qn(created_at="2026-10-06T16:16:07+00:00"), [], rollup,
         "2026-10-06T16:18:49+00:00", "ko")
     assert "**설문 시작 시각**: 2026-10-06T16:16:07+00:00" in open_md
-    assert "설문 마감 시각" not in open_md  # 열린 설문에는 마감 시각이 없다
+    assert "설문 마감 시각" not in open_md  # an open survey has no close time
 
     closed_md = _aggregate_markdown(
         _qn(status="closed", created_at="2026-10-06T16:16:07+00:00",
@@ -186,13 +186,13 @@ def test_aggregate_markdown_carries_the_survey_window():
 
 
 async def test_synthesize_writes_the_report_in_the_stores_language():
-    """스토어 → 리포트 배선. 이 홉이 끊기면 영어 프로젝트도 한국어 리포트를
-    받는다 — 에러는 없고, aiplc-docs/**에 잘못된 언어의 산출물이 남는다."""
+    """Store → report wiring. If this hop breaks, English projects get Korean reports too
+    — there is no error, and an artifact in the wrong language is left in aiplc-docs/**."""
     project_s3, root_s3 = FakeS3Store(), FakeS3Store()
     store = SurveyStore(project_s3, root_s3, slug=SLUG, project_id=PID,
                         language="en")
-    # 설문 자체의 데이터(제목·가설·문항)도 영어여야 리포트에 한글이 남지
-    # 않는다 — 영어 프로젝트에서는 build_questionnaire가 그렇게 만든다.
+    # The survey's own data (title, hypotheses, questions) must be English too for no Hangul to remain in the report
+    # — in an English project, build_questionnaire makes it so.
     await store.save_questionnaire(_qn(
         language="en", title="Validation survey", hypothesis="H",
         questions=[Question(id="q1", text="Useful?", type="scale")]))
@@ -216,22 +216,22 @@ async def test_questionnaire_markdown_follows_the_stores_language():
 
 
 def test_report_labels_fall_back_to_korean_for_an_unknown_language():
-    """손상된 매니페스트가 임의 문자열을 실어 와도 리포트가 한국어로 나온다 —
-    이 기능 이전 모든 프로젝트의 언어가 그것이다."""
+    """Even if a corrupted manifest carries an arbitrary string, the report comes out in Korean —
+    that is the language of every project from before this feature."""
     from aipds.survey.report_labels import labels
     assert labels("klingon") == labels("ko")
     assert labels("") == labels("ko")
 
 
-# ---- 설문 집계는 슬러그별이고, 룰의 validation-results.md와 다른 파일이다 ----
+# ---- The survey aggregate is per slug, and a different file from the rules' validation-results.md ----
 #
-# **슬러그별(2026-08-20 실측 test2222).** Path B는 프로토타입을 N개 만들고 취합
-# 라우트는 슬러그별이다. 슬러그 없는 키였을 때는 셋을 취합하면 셋이 같은 키를
-# 덮어써 마지막 것만 남았다 — 오류 없이 틀린 결과다.
+# **Per slug (observed 2026-08-20, ws-n).** Path B makes N prototypes, and the synthesis
+# route is per slug. When the key had no slug, synthesizing three made the three overwrite the same key
+# and only the last one remained — a wrong result with no error.
 #
-# **룰의 파일과 분리(2026-10-06 실측 ws-b).** 집계를 `validation-results.md`에
-# 쓰면 그 파일의 주인이 둘이 된다: 재취합이 에이전트의 Step 6 분석을 덮어쓰고,
-# 리셋이 Part 2가 인용하는 근거를 지운다.
+# **Separated from the rules' file (observed 2026-10-06, ws-b).** Writing the aggregate into `validation-results.md`
+# gives that file two owners: a re-synthesis overwrites the agent's Step 6 analysis,
+# and a reset deletes the evidence Part 2 cites.
 
 from aipds.proto import layout as _layout          # noqa: E402
 from aipds.survey.store import aggregate_md_key    # noqa: E402
@@ -254,8 +254,8 @@ def test_aggregate_key_is_never_the_rules_results_file():
 
 
 def test_aggregate_key_sits_beside_the_questionnaire_copy():
-    """설문지 사본과 같은 디렉터리다. 갈라지면 삭제·아카이브 경로가 한쪽을
-    잊는다 — `layout.artifact_dir`이 존재하는 이유가 그것이다."""
+    """Same directory as the questionnaire copy. If they split, the delete and archive paths forget
+    one side — that is why `layout.artifact_dir` exists."""
     from aipds.survey.store import questionnaire_md_key
     for slug in (_layout.SINGLE_ID, "flight-disruption-notice"):
         assert (aggregate_md_key(slug).rsplit("/", 1)[0]
@@ -263,7 +263,7 @@ def test_aggregate_key_sits_beside_the_questionnaire_copy():
 
 
 async def test_synthesis_never_touches_the_rules_results_file():
-    """재취합이 에이전트의 Step 6 분석을 덮어쓰지 않는다 — 이 분리의 목적."""
+    """A re-synthesis does not overwrite the agent's Step 6 analysis — the purpose of this separation."""
     project_s3, root_s3 = FakeS3Store(), FakeS3Store()
     store = SurveyStore(project_s3, root_s3, slug=_layout.SINGLE_ID,
                         project_id=PID)
@@ -279,7 +279,7 @@ async def test_synthesis_never_touches_the_rules_results_file():
 
 
 async def test_three_prototypes_synthesize_without_overwriting_each_other():
-    """실측 test2222의 모양이다 — 프로토타입 3개, 취합 3번."""
+    """The shape observed in ws-n — 3 prototypes, 3 syntheses."""
     project_s3, root_s3 = FakeS3Store(), FakeS3Store()
     slugs = ("customer-inquiry-triage", "flight-disruption-notice",
              "maintenance-fault-diagnosis")
@@ -292,12 +292,12 @@ async def test_three_prototypes_synthesize_without_overwriting_each_other():
 
     written = [k for k in project_s3.blobs if k.endswith("survey-aggregate.md")]
     assert len(written) == 3, written
-    # 각 파일이 자기 프로토타입의 설문 제목을 담아야 한다 — 덮어썼다면 셋이 같다.
+    # Each file must hold its own prototype's survey title — if overwritten, all three would be the same.
     for slug in slugs:
         assert f"{slug} 검증" in project_s3.blobs[aggregate_md_key(slug)]
 
 
-# ---- 페르소나로 나눈 집계 ----
+# ---- Aggregate split by persona ----
 
 def _persona_md(language="ko"):
     from aipds.survey.models import SurveyResponse
@@ -326,19 +326,19 @@ def _persona_md(language="ko"):
 
 
 def test_aggregate_lists_every_persona_even_those_who_did_not_respond():
-    # 응답 0인 페르소나는 대상 사용자 중 누구에게 닿지 않았는지를 보여 준다.
+    # A persona with 0 responses shows which of the target users were not reached.
     md = _persona_md()
     assert "- **응답자 구성**: 점포 관리자 3 · 본사 MD 1 · 해당 없음 / 기타 0" in md
 
 
 def test_aggregate_splits_a_scale_question_by_persona():
-    """전체 평균만으로는 '관리자 5점, 실제 사용자 2점'이 한 숫자로 뭉개진다."""
+    """With only the overall average, 'admins 5 points, actual users 2 points' collapses into one number."""
     md = _persona_md()
     section = md.split("### Q2.")[1].split("###")[0]
     assert "| 전체 | 4 | 3.25 | 1 | 0 | 2 | 1 | 0 |" in section
     assert "| 점포 관리자 | 3 | 2.67 | 0 | 0 | 2 | 1 | 0 |" in section
     assert "| 본사 MD | 1 | 5.0 | 1 | 0 | 0 | 0 | 0 |" in section
-    # 응답이 없는 페르소나는 행을 만들지 않는다 — 헤더의 구성이 이미 보여 준다.
+    # Personas with no responses get no row — the header layout already shows them.
     assert "| 해당 없음 / 기타 |" not in section
 
 

@@ -1,9 +1,9 @@
 # backend/tests/test_tool_input_draft.py — agent/tool_input_draft
 #
-# Bedrock은 도구 입력을 `input_json_delta`로 잘게 보낸다(2026-10-07 실측: 한국어 문서
-# 하나에 583조각, 한 조각 5자 안팎). 조각은 JSON 문자열의 아무 곳에서나 끊기므로,
-# 풀어낸 결과가 **자르는 위치와 무관해야** 한다 — 아래 테스트들은 한 글자씩 넣는
-# 최악의 경우를 함께 고정한다.
+# Bedrock sends tool input in small pieces as `input_json_delta` (measured 2026-10-07: 583 pieces
+# for one Korean document, around 5 characters per piece). Pieces break anywhere in the JSON
+# string, so the unpacked result must be **independent of where it is cut** — the tests below also
+# pin the worst case of feeding one character at a time.
 from __future__ import annotations
 
 import json
@@ -34,7 +34,7 @@ def _payloads(events):
     return [json.loads(e.payload) for e in events]
 
 
-# ---- JsonStringFields: 자르는 위치와 무관하게 같은 값 ----
+# ---- JsonStringFields: the same value regardless of where it is cut ----
 
 def test_decoding_does_not_depend_on_where_the_stream_is_cut():
     body = '# 상권 분석\n\n"따옴표"와 \\역슬래시\\, 탭\t, 이모지 🍗 와 한글.'
@@ -46,8 +46,9 @@ def test_decoding_does_not_depend_on_where_the_stream_is_cut():
 
 
 def test_unicode_escapes_split_across_chunks_including_surrogate_pairs():
-    """`ensure_ascii`로 직렬화된 입력은 한글을 `\\uXXXX`로, 이모지를 서로게이트 쌍으로
-    싣는다. 네 자리 중간이나 쌍 사이에서 끊겨도 한 글자로 돌아와야 한다."""
+    """Input serialized with `ensure_ascii` carries Korean as `\\uXXXX` and emoji as surrogate
+    pairs. Even if cut in the middle of the four digits or between a pair, it must come back
+    as one character."""
     body = "치킨 🍗 상권"
     raw = json.dumps({"content": body}, ensure_ascii=True)
     for size in (1, 2, 3, 4, 5, 6):
@@ -63,7 +64,7 @@ def test_only_requested_top_level_strings_are_kept():
 
 
 def test_a_key_named_like_a_value_is_not_confused_with_one():
-    """값 문자열 안의 `"content":` 는 키가 아니다."""
+    """A `"content":` inside a value string is not a key."""
     raw = json.dumps({"file_path": '"content": "가짜"', "content": "진짜"})
     values = _decode(raw, 1)
     assert values["content"] == "진짜"
@@ -79,7 +80,7 @@ def test_completion_is_reported_only_after_the_closing_quote():
     assert f.values["file_path"] == "/ws/aiplc-docs/a.md"
 
 
-# ---- ToolInputDraft: 경로와 글자 수만 싣는다 ----
+# ---- ToolInputDraft: carries only the path and character count ----
 
 def _write(draft: ToolInputDraft, raw: str, size: int, step: float = 0.05):
     events, now = [], 0.0
@@ -102,12 +103,12 @@ def test_a_write_reports_its_path_and_growing_length_but_never_the_body():
     assert payloads[-1] == {"id": "t1", "tool": "Write", "state": "written", "chars": len(body)}
     assert events[-1].path == "aiplc-docs/discovery/discovery-document.md"
     counts = [p["chars"] for p in payloads]
-    assert counts == sorted(counts) and len(set(counts)) > 3     # 올라간다
-    assert not any("가" in e.payload for e in events)              # 본문은 싣지 않는다
+    assert counts == sorted(counts) and len(set(counts)) > 3     # goes up
+    assert not any("가" in e.payload for e in events)              # the body is not carried
 
 
 def test_events_are_throttled_not_one_per_chunk():
-    """조각마다 흘리면 문서 하나에 수백 개다."""
+    """Emitting per piece would be hundreds per document."""
     raw = json.dumps({"file_path": "/ws/aiplc-docs/discovery/x.md", "content": "나" * 2000})
     draft = ToolInputDraft(tool_use_id="t1", tool="Write", to_rel=_rel)
     events = _write(draft, raw, size=5, step=EMIT_INTERVAL_S / 10)
@@ -119,7 +120,7 @@ def test_the_path_is_announced_as_soon_as_it_is_complete():
     draft = ToolInputDraft(tool_use_id="t1", tool="Write", to_rel=_rel)
     draft.start(0.0)
     assert draft.feed('{"file_path": "/ws/aiplc-docs/discovery/', 0.01) == []
-    events = draft.feed('x.md", "content": "', 0.02)   # 간격 전이지만 경로가 확정됐다
+    events = draft.feed('x.md", "content": "', 0.02)   # before the interval, but the path is settled
     assert [e.path for e in events] == ["aiplc-docs/discovery/x.md"]
 
 
@@ -131,7 +132,8 @@ def test_an_edit_counts_its_new_string():
 
 
 def test_body_before_path_still_counts():
-    """순서는 보장되지 않는다. 본문이 먼저 와도 경로와 글자 수가 맞아야 한다."""
+    """Order is not guaranteed. Even if the body comes first, the path and character count
+    must be right."""
     body = "먼저 온 본문"
     raw = json.dumps({"content": body, "file_path": "/ws/aiplc-docs/discovery/x.md"})
     events = _write(ToolInputDraft("t1", "Write", _rel), raw, size=3)

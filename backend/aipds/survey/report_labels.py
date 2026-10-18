@@ -1,16 +1,16 @@
-# backend/aipds/survey/report_labels.py — 설문 리포트 마크다운의 라벨.
+# backend/aipds/survey/report_labels.py — labels for the survey report markdown.
 #
-# 이것은 UI 문구가 아니라 **문서 생성기**다. 리포트는 aiplc-docs/** 아래에
-# 산출물로 저장되고 문서 리뷰 화면과 개발자 핸드오프에 들어가므로, UI 언어
-# (사용자별 쿠키)가 아니라 프로젝트 언어를 따른다.
+# This is not UI text; it is a **document generator**. The report is saved as an
+# artifact under aiplc-docs/** and feeds the document review screen and the developer
+# handoff, so it follows the project language, not the UI language (a per-user cookie).
 #
-# error_codes.py의 "백엔드에 번역 시스템을 만들지 않는다"와 모순되지 않는다:
-# 그쪽은 사용자에게 보이는 에러 문구이고 UI 언어를 백엔드가 모른다. 여기는
-# 문서이고 프로젝트 언어를 백엔드가 이미 안다.
+# This does not contradict error_codes.py's "do not build a translation system in the
+# backend": that one is about user-facing error text, where the backend does not know
+# the UI language. This one is a document, and the backend already knows the project language.
 #
-# 설문 집계에는 Step 6의 섹션(`## Theme Analysis` 등)을 넣지 않는다. 그 섹션은
-# 룰의 `validation-results.md`에 에이전트가 쓴다(proto/layout.SURVEY_AGGREGATE).
-# 그래서 집계의 헤딩은 모두 프로젝트 언어다.
+# The survey rollup does not include the Step 6 sections (`## Theme Analysis` etc.).
+# The agent writes those into the rule's `validation-results.md` (proto/layout.SURVEY_AGGREGATE).
+# So every heading in the rollup is in the project language.
 from __future__ import annotations
 
 _LANGUAGES = ("ko", "en")
@@ -102,5 +102,5 @@ _LABELS = {
 
 
 def labels(language: str) -> dict[str, str]:
-    """리포트 라벨 사전. 알 수 없는 언어는 한국어로 떨어진다."""
+    """Report label dictionary. An unknown language falls back to Korean."""
     return _LABELS[language if language in _LANGUAGES else _DEFAULT]

@@ -9,9 +9,9 @@ import { UserMenu } from "./UserMenu";
 
 export type HeaderTab =
   | "dashboard" | "workspace" | "review" | "prototypes" | "handoff" | "projects"
-  // 매뉴얼은 프로젝트에 속하지 않는다. 탭 줄(대시보드·워크스페이스·문서
-  // 리뷰·프로토타입·인계)에 넣지 않고 오른쪽 링크로 두는 이유가 그것이다 —
-  // 그 다섯 개는 프로젝트가 없으면 눌리지 않는 항목이고, 매뉴얼은 그 반대다.
+  // The manual does not belong to a project. That is why it is a link on the right rather than
+  // part of the tab row (Dashboard, Workspace, Document review, Prototype, Handoff) — those
+  // five cannot be clicked without a project, and the manual is the opposite.
   | "manual";
 
 
@@ -30,15 +30,15 @@ export function AppHeader({
 }: {
   activeTab: HeaderTab;
   projectId?: string;
-  // 이 프로젝트가 도는 모델의 표시 이름. null/undefined면 배지를 그리지
-  // 않는다 — 프로젝트가 없는 화면이거나, 모델 미지정(서버 env 기본값)이다.
+  // Display name of the model this project runs on. null/undefined draws no badge — either a
+  // screen without a project, or no model specified (server env default).
   modelLabel?: string | null;
-  // 이 프로젝트의 **생성물 언어**. UI 로케일과 다를 수 있고, 그것이 정상이다 —
-  // 영어 UI로 한국어 프로젝트를 열면 문서는 한국어로 나온다. 이 배지가 그
-  // 사실을 화면에 드러낸다. null/undefined면 그리지 않는다(프로젝트 없는
-  // 화면, 또는 언어를 모르는 구 백엔드 응답).
+  // This project's **output language**. It may differ from the UI locale, and that is normal —
+  // opening a Korean project with the English UI produces documents in Korean. This badge makes
+  // that fact visible on screen. null/undefined draws nothing (a screen without a project, or
+  // an old backend response that does not know the language).
   projectLanguage?: Locale | null;
-  // 이 프로젝트의 열람 멤버다. 쓰기 버튼이 화면마다 사라지는 이유를 한 곳에서 말한다.
+  // A viewing member of this project. Explains in one place why the write buttons disappear on every screen.
   readOnly?: boolean;
 }) {
   const t = useT();
@@ -118,8 +118,8 @@ export function AppHeader({
           <span className="hidden sm:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> {t("header.bedrockConnected")}
           </span>
-          {/* 매뉴얼 화면 자신에서는 현재 위치로만 표시한다 — 같은 곳으로 가는
-              링크를 누르게 두면 어디에 있는지 헷갈린다. */}
+          {/* On the manual screen itself, show it only as the current location — leaving a
+              clickable link to the same place makes it confusing where you are. */}
           {activeTab === "manual" ? (
             <span
               aria-current="page"

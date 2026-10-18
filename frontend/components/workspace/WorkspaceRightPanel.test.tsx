@@ -7,7 +7,7 @@ const QP = { interrupt_id: "i-1", questions: {
   questions: [{ number: 1, category: null, text: "누구?", answer: null,
     options: [{ letter: "A", text: "PM", is_other: false, recommended: true }] }] } };
 
-// 문서 드로어가 열 문서가 없는 기본값 — "{이름} 보기"를 보는 테스트가 아닌 곳.
+// Default with no document for the drawer to open — for tests that do not look at "{이름} 보기" (View {name}).
 const NO_DOC = { currentDocName: null, onOpenDoc: () => {} };
 
 describe("WorkspaceRightPanel mode switching", () => {
@@ -64,12 +64,12 @@ describe("deriveMode — latest-status-by-stage-name (regression)", () => {
 });
 
 describe("deriveMode — 답변 제출 직후 프리뷰로 튀지 않는다 (regression)", () => {
-  // 실측 버그(question2.png): 프로토타입 스테이지가 in_progress인 채로 질문이
-  // 떠 있을 때 답변을 제출하면 submitAnswers가 pendingQuestions를 즉시 null로
-  // 만든다. 그 순간 우선순위가 preview로 내려앉아 질문 폼이 프로토타입 뷰어로
-  // 바뀌고, 다음 질문이 도착하면 다시 폼으로 돌아온다 — 사용자에게는 화면이
-  // 제멋대로 뒤바뀌는 것으로 보인다. 턴이 도는 동안에는 프리뷰로 전환하지
-  // 않는다.
+  // Observed bug (question2.png): when the prototype stage is in_progress and a question is
+  // showing, submitting an answer makes submitAnswers set pendingQuestions to null at once.
+  // At that moment the priority drops to preview, the question form turns into the prototype
+  // viewer, and when the next question arrives it goes back to the form — to the user the screen
+  // looks like it flips around on its own. While a turn is running, do not switch to the
+  // preview.
   const protoActive = [
     { stage: "Prototype & Validation", status: "in_progress" as const, summary: "" },
   ];
@@ -83,12 +83,12 @@ describe("deriveMode — 답변 제출 직후 프리뷰로 튀지 않는다 (reg
   });
 
   it("still prefers a pending question over everything while streaming", () => {
-    // 스트리밍 중 새 질문이 도착한 경우 — 질문이 언제나 최우선이다.
+    // A new question arrived during streaming — a question always takes top priority.
     expect(deriveMode(QP, protoActive, true)).toBe("questions");
   });
 
   it("defaults to the settled behaviour when streaming is not passed", () => {
-    // 인자를 넘기지 않는 기존 호출부(테스트 포함)가 깨지지 않아야 한다.
+    // Existing call sites that pass no argument (including tests) must not break.
     expect(deriveMode(null, protoActive)).toBe("preview");
   });
 });

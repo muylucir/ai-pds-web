@@ -125,7 +125,7 @@ def script_from(scripted: dict) -> list:
 
 @dataclass
 class _PermissionContext:
-    """실물 ToolPermissionContext의 최소 대역 — 드라이버가 읽는 필드만 둔다."""
+    """A minimal stand-in for the real ToolPermissionContext — only the fields the driver reads."""
     tool_use_id: str | None = None
 
 
@@ -168,8 +168,8 @@ class AskingSdkClient(FakeSdkClient):
                  tool_use_id="toolu_fake_1"):
         super().__init__(tail if tail is not None else [ResultMessage()])
         self._can_use_tool = can_use_tool
-        #: 실물 SDK가 컨텍스트로 주는 tool_use_id. 답변 레코드의 키이고, 복원이
-        #: 트랜스크립트의 tool_result와 조인하는 값이다.
+        #: The tool_use_id the real SDK provides in the context. It is the key of the answer record, and the value
+        #: restore joins with the transcript's tool_result.
         self.tool_use_id = tool_use_id
         self._sdk_questions = (DEFAULT_SDK_QUESTIONS if sdk_questions is None
                                else sdk_questions)
@@ -276,11 +276,11 @@ class AskingSdkClient(FakeSdkClient):
             # as the CLI's read loop delivers them.
             self._ask_task = asyncio.ensure_future(self._can_use_tool(
                 "AskUserQuestion", {"questions": self._sdk_questions},
-                # 실물 SDK는 ToolPermissionContext를 넘기고 그 안의
-                # tool_use_id는 비어 있지 않음이 와이어 프로토콜 보장이다
-                # (claude_agent_sdk/types.py의 docstring). 드라이버가 답변
-                # 레코드를 그 값으로 키하므로(agent/answer_store.py) None을
-                # 넘기던 종전 fake로는 그 경로가 아예 돌지 않았다.
+                # The real SDK passes a ToolPermissionContext, and that its
+                # tool_use_id is non-empty is a wire protocol guarantee
+                # (the docstring in claude_agent_sdk/types.py). The driver keys answer
+                # records by that value (agent/answer_store.py), so with the old fake that
+                # passed None, that path never ran at all.
                 _PermissionContext(tool_use_id=self.tool_use_id)))
             self._ask_task.add_done_callback(self._on_permission_result)
             self._produce()

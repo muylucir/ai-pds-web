@@ -1,21 +1,21 @@
-# backend/aipds/agent/tool_input_draft.py — 모델이 쓰고 있는 파일의 "지금까지".
+# backend/aipds/agent/tool_input_draft.py — the "so far" of the file the model is writing.
 #
-# **왜 있는가(2026-10-07 실측).** Discovery 턴 시간의 약 60%가 파일 내용을 생성하는
-# 시간이었다(ws-c 1709초 중 1029초, ws-b 1649초 중 964초). 쓰기 도구의 실행은
-# 매번 0.1초다 — 걸리는 것은 모델이 도구 입력(파일 전문)을 흘려보내는 시간이고,
-# `discovery-document.md` Part 1은 그것만 128~136초였다. 그동안 화면에는 아무 신호가
-# 없었다: 드라이버가 텍스트 델타만 화면으로 보내고 도구 블록은 완성된 뒤에야 알았다.
-# 가장 중요한 문서를 쓰는 순간이 가장 긴 침묵이었고, 사용자가 안내 문장을 보고 6초
-# 만에 턴을 끊은 사례(ws-e)가 그 모양이다.
+# **Why it exists (measured 2026-10-07).** About 60% of Discovery turn time was spent generating
+# file contents (1029 of 1709 seconds for ws-c, 964 of 1649 seconds for ws-b). Executing the write
+# tool takes 0.1 seconds each time — what takes time is the model streaming the tool input (the full
+# file), and for Part 1 of `discovery-document.md` that alone was 128–136 seconds. Meanwhile the screen
+# showed no signal: the driver sent only text deltas to the screen and learned of tool blocks only once complete.
+# The moment of writing the most important document was the longest silence, and the case where a user
+# cut off the turn 6 seconds after seeing the guidance sentence (ws-e) is what that looks like.
 #
-# Bedrock은 도구 입력을 `input_json_delta`로 잘게 보낸다(실측: 한국어 문서 하나에
-# 583조각, 40초에 걸쳐 고르게). 그 조각은 JSON **문자열의 중간**에서 끊기므로 그대로
-# 읽을 수 없다 — 이 모듈이 그것을 풀어 `file_path`와 본문 길이를 조금씩 얻는다.
+# Bedrock sends tool input in small pieces as `input_json_delta` (measured: 583 pieces for one Korean
+# document, evenly over 40 seconds). Those pieces break **in the middle of a JSON string**, so they
+# cannot be read as is — this module decodes them to obtain `file_path` and the body length bit by bit.
 #
-# **화면에 싣는 것은 경로와 글자 수뿐이다.** "문서 작성 중 · business-context.md · 1,234자"
-# 면 기다려도 되는지가 판단된다 — 글자 수가 올라가는 것이 살아 있음의 증거다. 본문을
-# 실시간으로 미리 보여 주는 것은 필요하지 않다고 판단했다(2026-10-07). 본문을 싣지 않으므로
-# 감사 로그 같은, 정본에 올릴 때 자격증명을 지우는 파일의 내용이 실시간으로 새는 경로도 없다.
+# **Only the path and character count go on screen.** "문서 작성 중 · business-context.md · 1,234자"
+# is enough to judge whether it is worth waiting — the character count going up is proof of life. We
+# judged that previewing the body in real time is not needed (2026-10-07). Since the body is not carried,
+# there is also no path for the contents of files like the audit log, whose credentials are scrubbed when uploaded to the source of truth, to leak in real time.
 from __future__ import annotations
 
 import json
@@ -24,14 +24,14 @@ from typing import Callable
 
 from aipds.models import AgentEvent
 
-#: 이벤트 kind. `models.AgentEvent.kind`의 Literal과 같은 값이어야 한다.
+#: Event kind. Must be the same value as the Literal in `models.AgentEvent.kind`.
 DRAFT = "draft"
 
-#: 같은 초안의 이벤트 사이 최소 간격(초). 조각은 수십 ms마다 오므로 그대로 흘리면
-#: 문서 하나에 수백 개다 — 화면은 이 간격이면 충분히 "써지고 있다"로 읽는다.
+#: Minimum interval (seconds) between events for the same draft. Pieces arrive every few tens of ms, so
+#: passing them all through means hundreds per document — at this interval the screen reads it well enough as "being written".
 EMIT_INTERVAL_S = 0.25
 
-#: 풀어낼 최상위 키. 그 밖의 값(MultiEdit의 `edits` 배열 등)은 건너뛴다.
+#: Top-level keys to decode. Other values (MultiEdit's `edits` array, etc.) are skipped.
 _PATH_KEY = "file_path"
 _BODY_KEYS = {"Write": "content", "Edit": "new_string"}
 
@@ -40,11 +40,11 @@ _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f",
 
 
 class JsonStringFields:
-    """흘러 들어오는 JSON 객체에서 최상위 문자열 필드를 조금씩 풀어낸다.
+    """Decode top-level string fields bit by bit from a streaming JSON object.
 
-    일반 JSON 파서가 아니다. 도구 입력은 평평한 객체이고, 필요한 것은 그 최상위
-    문자열 값뿐이다. 중첩된 값은 깊이만 세고 건너뛴다. 이스케이프가 조각 경계에서
-    끊겨도(`\\` 뒤, `\\u` 네 자리 중간, 서로게이트 쌍 사이) 다음 조각에서 잇는다.
+    It is not a general JSON parser. Tool input is a flat object, and all we need is its top-level
+    string values. Nested values are skipped, counting only depth. Even if an escape is cut at a
+    piece boundary (after `\\`, in the middle of the four `\\u` digits, between a surrogate pair), it continues with the next piece.
     """
 
     def __init__(self, keys: set[str]):
@@ -53,16 +53,16 @@ class JsonStringFields:
         self._expect_key = False
         self._in_string = False
         self._role = "skip"          # "key" | "value" | "skip"
-        self._key = ""               # 지금 읽는 키(role == "key")
-        self._last_key = ""          # 직전에 끝난 키 — 이어지는 값의 이름
+        self._key = ""               # key being read now (role == "key")
+        self._last_key = ""          # the key that just ended — the name of the value that follows
         self._value_key: str | None = None
-        self._escape: str | None = None   # None | "\\" | "u" + 지금까지의 hex
-        self._high: int | None = None     # 짝을 기다리는 상위 서로게이트
+        self._escape: str | None = None   # None | "\\" | "u" + hex so far
+        self._high: int | None = None     # high surrogate waiting for its pair
         self.values: dict[str, str] = {}
         self.complete: set[str] = set()
 
     def feed(self, chunk: str) -> dict[str, str]:
-        """조각을 먹이고, 이번에 새로 풀린 텍스트를 키별로 돌려준다."""
+        """Feed a piece, and return the text newly decoded this time, per key."""
         fresh: dict[str, str] = {}
         for ch in chunk:
             if self._in_string:
@@ -109,7 +109,7 @@ class JsonStringFields:
                 self._emit(_ESCAPES.get(ch, ch), fresh)
             return
         self._escape += ch
-        if len(self._escape) < 5:      # "u" + 네 자리
+        if len(self._escape) < 5:      # "u" + four digits
             return
         code, self._escape = int(self._escape[1:], 16), None
         if 0xD800 <= code <= 0xDBFF:
@@ -121,7 +121,7 @@ class JsonStringFields:
         self._emit(chr(code), fresh)
 
     def _emit(self, text: str, fresh: dict[str, str]) -> None:
-        if self._high is not None:     # 짝 없는 상위 서로게이트 — 버리지 않고 표시한다
+        if self._high is not None:     # unpaired high surrogate — shown rather than discarded
             self._high = None
             text = "\ufffd" + text
         if self._role == "key":
@@ -142,10 +142,10 @@ class JsonStringFields:
 
 @dataclass
 class ToolInputDraft:
-    """쓰기 도구 블록 하나. 드라이버가 블록 시작에 만들고 조각마다 `feed`한다.
+    """One write tool block. The driver creates it at block start and calls `feed` per piece.
 
-    `to_rel`은 도구 입력의 절대 경로를 워크스페이스 상대 경로로 바꾼다(밖이면
-    None) — 드라이버의 `_rel`이다.
+    `to_rel` converts the absolute path in the tool input to a workspace-relative path (None if
+    outside) — it is the driver's `_rel`.
     """
     tool_use_id: str
     tool: str
@@ -163,7 +163,7 @@ class ToolInputDraft:
         self._fields = JsonStringFields(keys)
 
     def start(self, now: float) -> list[AgentEvent]:
-        """블록이 열렸다. 무엇을 쓰는지 모르는 채로도 "쓰기 시작"은 바로 알린다."""
+        """The block opened. Announce "started writing" right away, even without knowing what is being written."""
         return [self._event("writing", now)]
 
     def feed(self, partial_json: str, now: float) -> list[AgentEvent]:
@@ -180,7 +180,7 @@ class ToolInputDraft:
         return []
 
     def finish(self, now: float) -> list[AgentEvent]:
-        """블록이 닫혔다. 입력이 완성됐다고 알린다."""
+        """The block closed. Announce that the input is complete."""
         return [self._event("written", now)]
 
     def _event(self, state: str, now: float) -> AgentEvent:

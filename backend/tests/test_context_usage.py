@@ -1,5 +1,5 @@
-# backend/tests/test_context_usage.py — 컨텍스트 창 사용량(aipds/context_usage.py)과
-# 그것을 내는 두 드라이버, 남기는 러너·빌드 세션, 되읽는 경로.
+# backend/tests/test_context_usage.py — context window usage (aipds/context_usage.py) and
+# the two drivers that produce it, the runner and build session that record it, and the path that reads it back.
 from __future__ import annotations
 
 import json
@@ -20,7 +20,7 @@ SLUG = "demo"
 
 
 def _usage(total, maximum=200_000, buffer=None):
-    """실측한 get_context_usage() 응답의 모양(2026-09-29, SDK 0.2.157)."""
+    """The shape of an observed get_context_usage() response (2026-09-29, SDK 0.2.157)."""
     cats = [{"name": "System tools", "tokens": 10475, "color": "x"},
             {"name": "Messages", "tokens": total - 10475, "color": "x"}]
     if buffer is not None:
@@ -31,7 +31,7 @@ def _usage(total, maximum=200_000, buffer=None):
 
 
 class _MeteredClient(FakeSdkClient):
-    """get_context_usage()가 호출마다 다음 응답을 돌려준다."""
+    """get_context_usage() returns the next response on each call."""
 
     def __init__(self, script, usages):
         super().__init__(script)
@@ -43,11 +43,11 @@ class _MeteredClient(FakeSdkClient):
         return self._usages.pop(0) if len(self._usages) > 1 else self._usages[0]
 
 
-# ---- summarize: "남은 %"는 압축까지 남은 몫이다 ----
+# ---- summarize: "% left" is the share remaining until compaction ----
 
 def test_left_is_measured_up_to_the_compaction_point_not_the_window_end():
-    # 실측: 자동 압축 창 100000 → maxTokens 100000, 버퍼 33000. 창 끝으로 재면 압축
-    # 직전에도 33%가 남은 것으로 보인다.
+    # Observed: auto-compact window 100000 → maxTokens 100000, buffer 33000. Measured to the window end, it would
+    # look like 33% was left even right before compaction.
     got = summarize(_usage(14210, maximum=100_000, buffer=33_000))
     assert got == {"total_tokens": 14210, "max_tokens": 100_000,
                    "compact_at_tokens": 67_000, "left_pct": 78}
@@ -69,11 +69,11 @@ def test_an_unexpected_shape_is_not_a_number():
 # ---- ContextMeter ----
 
 async def test_only_a_changed_value_becomes_an_event():
-    # 한 API 응답의 블록마다 AssistantMessage가 온다 — 같은 값을 수십 번 흘리지 않는다.
+    # An AssistantMessage arrives for every block of one API response — the same value is not streamed dozens of times.
     client = _MeteredClient([], [_usage(21_000), _usage(22_000), _usage(40_000)])
     meter = ContextMeter()
     first = await meter.sample(client)
-    same = await meter.sample(client)     # 89.5% → 89.0%: 화면에서는 같은 89%
+    same = await meter.sample(client)     # 89.5% → 89.0%: the same 89% on screen
     later = await meter.sample(client)
 
     assert json.loads(first.payload)["left_pct"] == 89
@@ -98,7 +98,7 @@ async def test_a_failing_probe_is_logged_once_and_never_raises(caplog):
 
 
 def test_subagent_messages_are_not_sampled():
-    # 서브에이전트는 자기 컨텍스트에서 돈다. 압축이 일어나는 곳은 메인이다.
+    # Subagents run in their own context. Compaction happens in the main one.
     assert wants_sample(AssistantMessage(content=[]))
     assert not wants_sample(AssistantMessage(content=[], parent_tool_use_id="toolu_1"))
     assert wants_sample(ResultMessage(subtype="success"))
@@ -127,7 +127,7 @@ async def test_a_turn_without_a_value_does_not_rewrite_the_record():
     rec.observe(_context_event(90))
     await rec.flush()
     s3.blobs["k.json"] = "sentinel"
-    await rec.flush()                      # 이번 턴에는 새 값이 없었다
+    await rec.flush()                      # there was no new value this turn
     assert s3.blobs["k.json"] == "sentinel"
 
 
@@ -148,7 +148,7 @@ async def test_a_missing_or_broken_record_reads_as_none():
     assert await load_record(s3, "k.json") is None
 
 
-# ---- 드라이버: 메인 응답마다 재고, 턴 끝의 값은 done보다 앞선다 ----
+# ---- Driver: measures on every main response, and the end-of-turn value comes before done ----
 
 async def test_the_build_agent_reports_usage_before_the_turn_ends(tmp_path):
     from aipds.proto.builder import PrototypeBuilder
@@ -168,7 +168,7 @@ async def test_the_build_agent_reports_usage_before_the_turn_ends(tmp_path):
     assert kinds[-1] == "done"
     lefts = [json.loads(e.payload)["left_pct"] for e in events if e.kind == "context"]
     assert lefts == [90, 80]
-    assert client.probes == 2              # 서브에이전트 메시지 뒤에는 재지 않았다
+    assert client.probes == 2              # it did not measure after subagent messages
 
 
 async def test_discovery_reports_usage_before_the_turn_ends(tmp_path):
@@ -188,15 +188,15 @@ async def test_discovery_reports_usage_before_the_turn_ends(tmp_path):
 
     events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
 
-    # 한 번의 대기에서 도착한 메시지들은 함께 번역되고 그 뒤에 **한 번** 잰다 —
-    # 여기서는 응답과 턴 끝이 같은 묶음으로 왔다.
+    # Messages that arrived in one wait are translated together and measured **once** after them —
+    # here the response and the turn end came in the same batch.
     kinds = [e.kind for e in events]
     assert kinds[-1] == "done"
     assert "context" in kinds and kinds.index("context") < kinds.index("done")
     assert client.probes >= 1
 
 
-# ---- 남기기: Discovery 러너 ----
+# ---- Recording: the Discovery runner ----
 
 async def test_the_discovery_runner_records_the_turns_last_value(tmp_path):
     from aipds.runner import AgentRunner
@@ -214,7 +214,7 @@ async def test_the_discovery_runner_records_the_turns_last_value(tmp_path):
     assert json.loads(s3.blobs[DISCOVERY_KEY]) == {"left_pct": 70}
 
 
-# ---- 남기기와 되읽기: 프로토타입 ----
+# ---- Recording and reading back: prototypes ----
 
 class _Builder:
     def __init__(self, events):
@@ -252,7 +252,7 @@ async def test_the_build_session_records_usage_with_its_sdk_session(tmp_path):
 
 
 async def test_a_pending_handoff_hides_the_old_sessions_usage(tmp_path):
-    # 완료된 빌드를 개선하면 새 대화로 시작한다 — 닫힌 세션의 값은 틀린 값이다.
+    # Improving a completed build starts a new conversation — the closed session's value is wrong.
     s3 = FakeS3Store()
     session = await _started_session(
         s3, tmp_path, [_context_event(15), AgentEvent(kind="done")])

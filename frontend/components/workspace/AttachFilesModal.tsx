@@ -9,17 +9,19 @@ import {
 type Row = { id: number; name: string; problem: UploadProblem | null; done: boolean };
 
 /**
- * 📎이 여는 첨부 모달 — 무엇을 붙일 수 있고 AI가 그것을 어떻게 받는지를 고르기
- * **전에** 보이고, 파일마다 결과와 실패 이유를 보인다.
+ * The attachment modal opened by 📎 — shows what can be attached and how the AI receives it
+ * **before** the user picks, and shows the result and failure reason for each file.
  *
- * 열 때마다 마운트된다(부모가 `open`일 때만 그린다) — 지난번 목록이 남지 않는다.
- * 닫아도 진행 중인 업로드는 끝까지 간다: 칩에 넣는 것은 `onUpload`(부모)다.
+ * It mounts each time it opens (the parent draws it only when `open`) — the previous list
+ * does not linger. Uploads in progress run to completion even if it is closed: putting them
+ * into chips is done by `onUpload` (the parent).
  *
- * 모양과 닫기 규칙(배경 클릭·Escape)은 ImportProjectButton의 모달을 따른다.
+ * The look and the closing rules (backdrop click, Escape) follow ImportProjectButton's modal.
  */
 export function AttachFilesModal({ onClose, onUpload }: {
   onClose: () => void;
-  /** 파일 하나를 올려 첨부 칩에 넣는다. 실패하면 이유를, 성공하면 null을 돌려준다. */
+  /** Upload one file and put it in an attachment chip. Returns the reason on failure, null on
+   *  success. */
   onUpload: (file: File) => Promise<UploadProblem | null>;
 }) {
   const t = useT();
@@ -29,8 +31,8 @@ export function AttachFilesModal({ onClose, onUpload }: {
   const [rows, setRows] = useState<Row[]>([]);
   const [dragging, setDragging] = useState(false);
 
-  // 열릴 때 한 번만 — 아래 효과와 합치면 부모가 다시 그릴 때마다(스트리밍 중 매
-  // 프레임) 포커스를 대화상자로 빼앗는다.
+  // Only once on open — merged with the effect below, it would steal focus to the dialog
+  // every time the parent redraws (every frame while streaming).
   useEffect(() => {
     dialogRef.current?.focus();
   }, []);
@@ -47,7 +49,7 @@ export function AttachFilesModal({ onClose, onUpload }: {
     const added = files.map((f) => ({ id: nextId.current++, file: f }));
     setRows((prev) => [...prev, ...added.map(({ id, file }) =>
       ({ id, name: file.name, problem: null, done: false }))]);
-    // 한 번에 하나씩 — 칩이 고른 순서대로 쌓인다.
+    // One at a time — chips stack up in the order picked.
     for (const { id, file } of added) {
       const problem = await onUpload(file);
       setRows((prev) => prev.map((r) => (r.id === id ? { ...r, problem, done: true } : r)));

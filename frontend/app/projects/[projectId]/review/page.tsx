@@ -23,7 +23,8 @@ import { useProjectMeta } from "@/lib/useProjectModel";
 import { deriveApprovalState } from "@/lib/approvalState";
 import { useT } from "@/lib/i18n/provider";
 
-// 클라이언트 Blob 다운로드 — 백엔드 왕복 없이 현재 로드된 마크다운을 저장한다.
+// Client-side Blob download — saves the currently loaded markdown without a
+// backend round trip.
 function downloadMarkdown(path: string, content: string) {
   const name = path.slice(path.lastIndexOf("/") + 1) || "document.md";
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
@@ -35,8 +36,8 @@ function downloadMarkdown(path: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-// 산출물 전체(aiplc-docs/**) zip 다운로드 — 백엔드 왕복 필요(개별 .md와 달리
-// 서버가 아카이브를 구성한다).
+// Zip download of all artifacts (aiplc-docs/**) — needs a backend round trip
+// (unlike an individual .md, the server assembles the archive).
 async function downloadZip(projectId: string) {
   const blob = await downloadArtifactsArchive(projectId);
   const url = URL.createObjectURL(blob);
@@ -58,14 +59,15 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
 
   const tree = useAsync(() => listArtifacts(projectId), [projectId]);
   const audit = useAsync(() => getAudit(projectId), [projectId]);
-  // 승인 판정의 1순위 근거는 **승인 레코드**다(GET /approvals). 감사 로그
-  // 파싱은 레코드가 없는 기존 프로젝트를 위한 폴백으로만 쓴다 — 그 이유는
-  // lib/approvalState.ts 헤더에 있다(요약: 에이전트가 옮겨 적은 산문에서
-  // 결정을 복원하면 표현이 흔들릴 때 승인이 사라진다. 실측 5건 중 3건 실패).
+  // The primary basis for the approval decision is the **approval record** (GET
+  // /approvals). Audit log parsing is used only as a fallback for existing
+  // projects without records — the reason is in the lib/approvalState.ts header
+  // (in short: reconstructing the decision from prose the agent transcribed loses
+  // approvals whenever the wording drifts; 3 of 5 measured cases failed).
   //
-  // aiplc-state.md를 보지 않는 이유는 그대로다: 거기에는 "Discovery Document"
-  // 스테이지가 없어(룰도 에이전트도 그런 스테이지를 쓰지 않는다) 예전 조회는
-  // 항상 undefined였다.
+  // The reason for not looking at aiplc-state.md still stands: it has no
+  // "Discovery Document" stage (neither the rules nor the agent use such a
+  // stage), so the old lookup was always undefined.
   const approvals = useAsync(() => listApprovals(projectId), [projectId]);
   const approval = deriveApprovalState(audit.data ?? [], approvals.data ?? undefined);
 
@@ -95,10 +97,12 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   const auditPath = tree.data?.find((p) => p.endsWith("aiplc-docs/audit.md")) ?? null;
   const isDiscoveryDocument = selected?.endsWith("discovery-document.md") ?? false;
 
-  // 개발 조직에 넘기는 입구 문서가 근거로 가리키는데 없는 파일. 전체 다운로드
-  // 직전에 드러낸다 — 상류 템플릿은 파일이 있든 없든 참조를 쓰게 하므로, 아무도
-  // 확인하지 않으면 링크가 깨진 채로 넘어간다(backend parsers/doc_references).
-  // 목록이 바뀔 때만 다시 묻는다: tree.data는 5초 폴링마다 새 배열이다.
+  // Files that the entry document handed to the development org cites as evidence
+  // but that do not exist. Surfaced right before the full download — the upstream
+  // template has the reference written whether or not the file exists, so if no
+  // one checks, it is handed over with broken links (backend
+  // parsers/doc_references). Re-queried only when the list changes: tree.data is
+  // a new array on every 5-second poll.
   const artifactsKey = (tree.data ?? []).join("\n");
   const missingRefs = useAsync(
     () => isDiscoveryDocument ? getMissingReferences(projectId) : Promise.resolve(null),
@@ -106,20 +110,24 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
   );
   const missing = missingRefs.data?.missing ?? [];
 
-  // 수정 요청 링크의 목적지 — 워크스페이스 채팅으로 이동하며 문서명이 포함된 초안을 ?draft=로 전달한다.
+  // Destination of the change-request link — navigates to the workspace chat and
+  // passes a draft containing the document name via ?draft=.
   const docName = selected ? selected.slice(selected.lastIndexOf("/") + 1) : "discovery-document.md";
   const reviseHref = `/projects/${projectId}/workspace?draft=${encodeURIComponent(`${docName} ${t("page.reviseDraftSuffix")}`)}`;
 
-  /** 승인 버튼. POST /approve가 레코드를 먼저 쓰고 그 다음 에이전트 턴을 **시작한다.**
+  /** Approve button. POST /approve writes the record first and then **starts**
+   *  the agent turn.
    *
-   *  채팅 턴으로 "승인"을 보내지 않는 이유가 이 기능의 핵심이다: 그 경로에서는
-   *  승인의 유일한 기록이 에이전트가 쓰는 audit.md였고, 에이전트가 문구를 달리
-   *  옮겨 적으면 사용자가 누른 사실이 사라졌다(lib/approvalState.ts 헤더).
+   *  Not sending "승인" (approve) as a chat turn is the core of this feature: on
+   *  that path the only record of the approval was audit.md, written by the
+   *  agent, and when the agent transcribed the wording differently, the fact that
+   *  the user clicked was lost (lib/approvalState.ts header).
    *
-   *  승인 요청은 턴을 기다리지 않는다. 다음 단계로 넘어가는 턴은 몇 분이므로, 그것을
-   *  보는 자리인 워크스페이스로 곧바로 옮긴다 — 워크스페이스가 열리면서 도는 턴에
-   *  붙는다(useWorkspaceStream의 `GET /turn`). AI가 아직 다른 작업 중이면 서버가
-   *  레코드 전에 409로 거절한다.
+   *  The approval request does not wait for the turn. The turn that moves to the
+   *  next stage takes minutes, so we move straight to the workspace, where it is
+   *  watched — it attaches to the turn that runs as the workspace opens
+   *  (`GET /turn` in useWorkspaceStream). If the AI is still busy with other work, the
+   *  server rejects with 409 before writing the record.
    */
   async function approve() {
     setBusy(true);
@@ -177,14 +185,16 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
       <AppHeader activeTab="review" projectId={projectId} modelLabel={modelLabel}
                  projectLanguage={language} readOnly={readOnly} />
       <main className="max-w-[1720px] mx-auto px-6 py-8">
-        {/* 열람 멤버에게는 승인 게이트를 그리지 않는다 — 승인과 수정 요청은 둘 다 턴을 시작한다. */}
+        {/* Viewer members do not get the approval gate — approval and change
+            requests both start a turn. */}
         {isDiscoveryDocument && !contentLoadError && !approval.approved && !readOnly && (
           <>
             <ApprovalGate
-              // 프로젝트 언어의 승인 단어를 보낸다 — 이 텍스트는 에이전트에게
-              // 가고 트랜스크립트에 남으므로, 대화가 진행되는 언어여야 한다.
-              // language가 null인 경우(구 백엔드, 조회 실패)는 ko로 떨어진다 —
-              // 그것이 이 기능 이전 모든 프로젝트의 언어다.
+              // Send the approval word in the project's language — this text goes
+              // to the agent and remains in the transcript, so it must be in the
+              // language of the conversation. When language is null (older
+              // backend, lookup failure), it falls back to ko — that is the
+              // language of every project before this feature.
               onApprove={approve}
               busy={busy}
               reviseHref={reviseHref}
@@ -194,8 +204,9 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
           </>
         )}
 
-        {/* 승인이 끝나면 게이트를 걷어내되, 상태와 되돌아갈 길은 남긴다:
-            수정 요청을 하면 승인이 무효화되고 게이트가 다시 나타난다. */}
+        {/* After approval, remove the gate but keep the state and the way back:
+            making a change request invalidates the approval and the gate
+            reappears. */}
         {isDiscoveryDocument && !contentLoadError && approval.approved && (
           <div
             role="status"
@@ -216,8 +227,9 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
           </div>
         )}
 
-        {/* 폭: 최대 폭(1720px)에서 파일 목록 ≈330 · 본문 ≈1015 · 검증 요약 ≈275px.
-            비율에 최소폭을 걸어, 좁은 lg 화면에서는 240px·220px로 내려가지 않는다. */}
+        {/* Width: at max width (1720px), file list ≈330 · body ≈1015 · validation
+            summary ≈275px. Minimum widths are set on the ratios so that on narrow
+            lg screens they do not drop below 240px and 220px. */}
         <div className="grid lg:grid-cols-[minmax(240px,20%)_1fr] gap-6">
           <aside className="bg-white rounded-xl border border-slate-200 p-4">
             <DocTree paths={tree.data ?? []} selected={selected} onSelect={setSelected} />

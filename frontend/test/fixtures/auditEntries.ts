@@ -1,6 +1,6 @@
 import type { AuditEntry } from "@/lib/api/types";
 
-// Derived from files/pilot1/aiplc-docs/audit.md (first entries + a couple later).
+// Derived from files/ws-m/aiplc-docs/audit.md (first entries + a couple later).
 export const auditEntries: AuditEntry[] = [
   { index: 1, timestamp: "2026-07-04T01:43:19Z", user_input: "ai-plc를 시작하고 싶어", ai_response: "Starting AI-PLC Discovery workflow. Executing Workspace Detection first.", context: "Session start" },
   { index: 3, timestamp: "2026-07-04T01:43:19Z", user_input: "완료 (Discovery Mode Selection Q1: A)", ai_response: "User selected Path A (Start from customer pain points). Proceeding to Envision.", context: "Discovery mode selection" },

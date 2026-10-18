@@ -11,7 +11,7 @@ describe("startMessage", () => {
   });
 
   it("두 경로가 서로 다른 문장이다", () => {
-    // 같은 문장이면 에이전트가 어느 경로인지 알 수 없다.
+    // If the sentences were the same, the agent could not tell which path it is on.
     for (const lang of ["ko", "en"] as const) {
       expect(startMessage("A", lang)).not.toBe(startMessage("B", lang));
     }

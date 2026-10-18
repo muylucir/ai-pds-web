@@ -17,19 +17,19 @@ export function ChatInput({
 }: {
   onSend: (text: string) => void;
   disabled: boolean;
-  // 📎을 눌렀을 때. 파일 고르기는 부르는 쪽의 몫이다(워크스페이스는 첨부 모달을 연다).
+  // When 📎 is clicked. Picking the file is the caller's job (the workspace opens the attachment modal).
   onAttach?: () => void;
-  // 마운트 시 1회 프리필 + 포커스(예: 리뷰 화면의 수정 요청 링크에서 넘어온 초안).
+  // One-time prefill + focus on mount (e.g. a draft carried over from the review screen's change-request link).
   initialText?: string;
-  // 진행 중인 턴을 끊는다. 이 두 값은 짝이다 — 핸들러가 없으면 버튼을 띄우지
-  // 않는다(이 컴포넌트를 쓰는 다른 화면에 저절로 생기지 않게).
+  // Stops the running turn. These two values are a pair — without a handler the button is not
+  // shown (so it does not appear on its own in other screens that use this component).
   onInterrupt?: () => void;
-  // "중단할 턴이 있는가". `disabled`("입력을 막는가")와 다르다: 프로토타입
-  // 패널은 빌드가 끝난 뒤에도 disabled가 참이므로(BuildPanel.tsx의
-  // `streaming || buildComplete !== null`) 그 값으로 판단하면 중단할 것이
-  // 없는데 ■이 뜬다.
+  // "Is there a turn to stop?" Different from `disabled` ("is input blocked?"): the prototype
+  // panel keeps disabled true even after the build ends (BuildPanel.tsx's
+  // `streaming || buildComplete !== null`), so deciding by that value would show ■ when there
+  // is nothing to stop.
   interrupting?: boolean;
-  // 에이전트의 컨텍스트 사용량. 없으면(첫 턴 전, 새 대화 직전) 표시하지 않는다.
+  // The agent's context usage. Not shown when absent (before the first turn, just before a new conversation).
   context?: ContextUsage | null;
 }) {
   const t = useT();
@@ -38,7 +38,7 @@ export function ChatInput({
 
   useEffect(() => {
     if (initialText) inputRef.current?.focus();
-    // 마운트 시 1회만 — initialText 변경 추적은 불필요(워크스페이스가 마운트 시 전달).
+    // Only once on mount — tracking initialText changes is unnecessary (the workspace passes it on mount).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -51,7 +51,7 @@ export function ChatInput({
 
   return (
     <div className="shrink-0 border-t border-slate-200 bg-white px-4 md:px-8 py-3">
-      {/* ChatTimeline과 같은 상한 — 입력창이 버블 영역과 같은 폭이다. */}
+      {/* Same cap as ChatTimeline — the input is as wide as the bubble area. */}
       <div className="max-w-4xl mx-auto">
         {context && <ContextMeter usage={context} />}
         <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white focus-within:ring-2 focus-within:ring-violet-400 px-4 py-2.5">
@@ -68,11 +68,11 @@ export function ChatInput({
           )}
           <textarea
             ref={inputRef}
-            // 3줄: 여기 쓰는 글이 대개 한 문장이 아니다(질문·수정요청·되돌아가기).
-            // 1줄이던 동안은 사용자가 자기 초안을 다시 읽으려면 스크롤해야 했다.
-            // 워크스페이스와 프로토타입 빌드 패널이 이 컴포넌트를 공유하므로 이
-            // 값 하나가 두 화면에 함께 적용된다. 감싸는 flex가 items-end라
-            // 첨부·전송 버튼은 계속 아래 줄에 정렬된다.
+            // 3 rows: what is written here is usually more than one sentence (questions, change requests, going back).
+            // While it was 1 row, users had to scroll to reread their own draft.
+            // The workspace and the prototype build panel share this component, so this one
+            // value applies to both screens. The wrapping flex is items-end, so the
+            // attach and send buttons stay aligned to the bottom row.
             rows={3}
             value={text}
             onChange={(e) => setText(e.target.value)}

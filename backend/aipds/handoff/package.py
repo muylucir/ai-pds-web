@@ -1,38 +1,38 @@
-# backend/aipds/handoff/package.py — Discovery 산출물을 AI-DLC가 받는 입력으로 옮긴 인계 패키지를 만든다.
+# backend/aipds/handoff/package.py — builds the handoff package that carries Discovery artifacts into the input AI-DLC takes.
 #
-# **소비자의 입력 계약을 따른다.** AI-PLC의 출력은 Discovery 문서이고, AI-DLC의 입력은 vision
-# document다(AI-DLC 2.11.0 문서 "Writing a Vision Document": Executive Summary · Business Context · Full
-# Scope Vision · MVP Scope · Risks/Dependencies/Open Questions, 기술은 넣지 않고 별도 문서로).
-# 룰을 고치지 않고 둘을 잇는 것이 이 모듈이다. 형식을 지어내지 않는다 — 실측(ws-g)에서 우리가 정한
-# 9섹션 PRD는 원본과 어긋났고, 소비자가 섹션을 어디에 쓰는지도 정해져 있지 않았다.
+# **Follow the consumer's input contract.** AI-PLC's output is a Discovery document; AI-DLC's input is a vision
+# document (AI-DLC 2.11.0 docs, "Writing a Vision Document": Executive Summary · Business Context · Full
+# Scope Vision · MVP Scope · Risks/Dependencies/Open Questions, with technology left out and put in a separate document).
+# This module bridges the two without modifying the rules. It does not invent a format — in a field test (ws-g) the
+# 9-section PRD we had defined diverged from the originals, and nothing specified where the consumer used each section.
 #
-#   vision.md         AI-DLC vision document. 모델이 쓰는 유일한 문서. 섹션 제목은 가이드 그대로(영어),
-#                     본문은 프로젝트 언어, 줄마다 원본 위치. Open Questions 표가 아직 열린 결정이다
-#                     — 빌드 전/빌드 중, 누가 답하나, 그동안 어떻게 만드나.
-#   start-prompt.md   AI-DLC를 시작하는 첫 요청(고정 문구, `start_prompt`).
-#   decisions.md      결정 장부 — PM이 고른 것과 AI 제안을 그대로 받은 것(handoff/ledger, 모델 없음).
-#   README.md         읽는 순서와 쓰는 규칙(고정 문구).
+#   vision.md         AI-DLC vision document. The only document the model writes. Section headings exactly as in the guide (English),
+#                     body in the project language, a source location on every line. The Open Questions table holds the decisions still open
+#                     — before/during build, who answers, and how to build in the meantime.
+#   start-prompt.md   The first request that starts AI-DLC (fixed text, `start_prompt`).
+#   decisions.md      Decision ledger — what the PM chose and which AI suggestions were kept as is (handoff/ledger, no model).
+#   README.md         Reading order and usage rules (fixed text).
 #
-# Discovery 문서와 그 근거 원본은 zip에 그대로 들어간다(routes/handoff, `archive_originals`). 질문
-# 파일은 결정 장부가 대신하고, 빌드 지시서·디자인 컨텍스트·설문지는 뺀다 — 빌드 지시서는 원본만 받은
-# 하네스가 프로토타입의 기술을 운영 구성으로 승계한 경로다.
+# The Discovery documents and their source originals go into the zip as they are (routes/handoff, `archive_originals`). The decision
+# ledger stands in for the question files, and the build instructions, design context and questionnaire are left out — the build
+# instructions are the path by which a harness given only the originals carried the prototype's technology over as the production setup.
 #
-# 마지막 단계는 인계 탭의 보완 질문에 쓸 보기(`options.json`)다. 패키지에 넣지 않고, 실패해도
-# 패키지는 완성이다 — 보기가 없으면 그 질문은 서술형으로 보일 뿐이다.
+# The last step is the options (`options.json`) for the supplementary questions on the handoff tab. They are not put in the package, and
+# the package is complete even if this step fails — without options, the question simply appears as free text.
 #
-# **웹 소유 파생물이다.** 결과는 `handoff/package/`(프로젝트 접두사 안, 워크스페이스 밖)에
-# 둔다. 에이전트는 읽지도 쓰지도 않고, 사람도 직접 고치지 않는다 — 고치는 길은 원본(워크
-# 스페이스)이나 보완 답을 바꾸고 다시 만드는 것이다. 그래서 만들 때 쓴 원본의 해시를 남기고,
-# 원본이 바뀌면 "낡음"으로 보인다.
+# **A web-owned derivative.** The result lives in `handoff/package/` (inside the project prefix, outside the workspace).
+# Agents neither read nor write it, and people do not edit it directly — the way to change it is to change the originals
+# (workspace) or the supplementary answers and build it again. That is why it records the hashes of the originals it was built
+# from, and shows as "stale" when the originals change.
 #
-# **요청 밖에서, 단계별로 돈다.** 문서를 쓰는 호출은 수 분이 걸리고 CloudFront 읽기 제한은
-# 60초다(승인 라우트의 504와 같은 함정). 생성은 백그라운드 작업이고 화면은 manifest를 폴링한다.
-# 단계마다 상태·받은 글자 수를 manifest에 남기므로 화면이 진행을 보여 주고, 끝난 문서는 그때마다
-# 저장되므로 실패하면 그 단계부터 다시 한다 — 원본이나 보완 답이 그사이 바뀌었으면 처음부터다.
+# **Runs outside the request, step by step.** The calls that write documents take minutes, and the CloudFront read limit
+# is 60 seconds (the same trap as the 504 on the approval route). Generation is a background job and the screen polls the manifest.
+# Each step records its status and the number of characters received in the manifest, so the screen can show progress, and each
+# finished document is saved as it completes, so a failure resumes from that step — or from the start if the originals or supplementary answers changed in the meantime.
 #
-# **지시로 정한 모양은 결정적으로 검사한다.** 가이드의 필수 섹션, 기술어·모호어, 프롬프트의 필드명과
-# 원본의 내부 번호, 근거 없이 분류된 열린 결정, 직전 판에서 답 없이 사라진 PM 결정. 지시만으로는
-# 새어 나온다. 검사는 막지 않고 보여 준다 — 어느 줄이 틀렸는지는 사람이 판단한다.
+# **Check deterministically the shape the instructions set.** The guide's required sections, technical and vague words, the prompt's
+# field names and the originals' internal numbers, open decisions classified without grounds, PM decisions from the previous
+# version that disappeared without an answer. Instructions alone let these leak through. The checks do not block; they surface — a person judges which line is wrong.
 from __future__ import annotations
 
 import asyncio
@@ -60,41 +60,41 @@ VISION = "vision.md"
 START_PROMPT = "start-prompt.md"
 LEDGER = ledger_mod.LEDGER
 
-#: 모델이 쓰는 단계, 실행 순서대로. 단계마다 끝난 문서가 남아 실패한 단계부터 다시 한다.
+#: The steps the model writes, in execution order. Each step leaves its finished document, so a failure resumes from the failed step.
 STEPS: tuple[tuple[str, str], ...] = (
     ("vision", VISION),
     ("options", "options.json"),
 )
-#: 보완 질문의 보기. 웹 화면만 쓴다 — 하네스에게는 Open Questions의 질문이 전부다.
+#: Options for the supplementary questions. Only the web screen uses them — for the harness, the Open Questions are all there is.
 OPTIONS = "options.json"
-#: 패키지 파일, 읽는 순서대로. 원본(`discovery/`)은 zip을 만들 때 붙는다.
+#: Package files, in reading order. The originals (`discovery/`) are attached when the zip is built.
 FILES = (README, START_PROMPT, VISION, LEDGER)
-#: 직전 판으로 읽는 문서, 앞의 것이 우선. 이전 구성의 열린 결정 문서와 PRD(그 9번 섹션)도 읽는다 —
-#: 그것이 첫 vision.md의 직전 판이다.
+#: Documents read as the previous version, earlier ones first. Also reads the open-decisions document and PRD (its section 9)
+#: of the earlier layout — that is the previous version of the first vision.md.
 DocKind = Literal["vision", "open", "prd"]
 _PREVIOUS: tuple[tuple[str, DocKind], ...] = (
     (VISION, "vision"), ("open-decisions.md", "open"), ("PRD.md", "prd"))
 
-#: 단계 하나의 모델 호출 상한. 생각 + 길이 상한까지의 본문(64k 토큰 출력 상한)을 담는다.
+#: Upper bound for one step's model call. Covers thinking plus a body up to the length cap (64k-token output cap).
 CALL_TIMEOUT_S = 1200
-#: 단계별 본문 길이 상한(글자). 하네스도 사람도 끝까지 읽어야 쓸모가 있다.
+#: Per-step body length cap (characters). It is only useful if both the harness and a person read it to the end.
 _LENGTH = {"vision": 16000, "options": 8000}
-#: 진행 중인 단계의 받은 글자 수를 manifest에 남기는 간격. 화면은 3초마다 읽는다.
+#: Interval for recording the in-progress step's received character count in the manifest. The screen reads every 3 seconds.
 _PROGRESS_EVERY_S = 5.0
 
-#: 재료로 싣지 않는 파일. 빌드 지시서는 프로토타입의 기술 선택을 담고(기술어가 새는 첫 경로),
-#: 디자인 컨텍스트는 화면의 생김새이고, 설문지는 답이 아니라 문항이다.
+#: Files not loaded as material. The build instructions hold the prototype's technology choices (the first path by which tech terms leak),
+#: the design context is how the screens look, and the questionnaire holds questions, not answers.
 _EXCLUDED_NAMES = frozenset({"build-instructions.md", "design-context.md",
                              "validation-questionnaire.md"})
-#: zip에 넣지 않는 원본. 빌드 지시서는 프로토타입의 기술 구성이다 — 실측(하네스 시험 ws-g): 원본만
-#: 받은 쪽이 그것을 운영 구성으로 승계했다. 디자인 컨텍스트는 프로토타입의 생김새라 제품의 디자인이
-#: 아니고, 설문지는 문항일 뿐 결과는 검증 결과에 있다.
+#: Originals not put in the zip. The build instructions are the prototype's technical setup — observed (harness trial ws-g): the side
+#: given only the originals carried it over as the production setup. The design context is how the prototype looks, not the
+#: product's design, and the questionnaire is only the questions; the results are in the validation results.
 ARCHIVE_EXCLUDED = frozenset({"build-instructions.md", "design-context.md",
                               "validation-questionnaire.md"})
-#: 질문 파일. 답한 결정은 결정 장부가 그대로 옮기고, 나머지는 승인·모드 선택 같은 진행 기록이다 —
-#: 실측(ws-g 인스턴스 패키지)에서 원본 26개 중 15개가 질문 파일이라 "문서를 다 넘긴다"로 보였다.
+#: Question files. The decision ledger carries over the answered decisions as is; the rest is progress records such as approvals and mode choices —
+#: observed (ws-g instance package): 15 of the 26 originals were question files, which made it look like "it hands over every document".
 _QUESTION_SUFFIX = "-questions.md"
-#: 앞에 있을수록 먼저 싣는다. 크기 상한에 걸리면 뒤가 잘린다.
+#: Loaded earlier the further forward they are. When the size cap is hit, the tail is cut.
 _PRIORITY = (
     "discovery-document.md", "spec-as-built.md", "prototype-spec.md", "PROTOTYPE-",
     "validation-results.md", "survey-aggregate.md", "change-history.md", "iteration-log.md",
@@ -107,9 +107,9 @@ _MAX_TOTAL_CHARS = 350_000
 
 Status = Literal["generating", "ready", "failed", "interrupted"]
 StepStatus = Literal["pending", "running", "done", "failed"]
-#: structure 가이드의 필수 섹션이 없다 · tech·vague 기술어·모호어 · internal 프롬프트 필드명이나
-#: 원본의 내부 번호 · triage 열린 결정의 시점·근거가 없거나 빌드 중인데 그동안 어떻게 만들지가 없는
-#: 줄 · dropped 직전 판에 있던 PM 결정이 답 없이 사라졌다
+#: structure: a required section from the guide is missing · tech·vague: technical words, vague words · internal: prompt field names or
+#: internal numbers from the originals · triage: an open-decision line with no timing or source, or marked during build with no note
+#: on how to build in the meantime · dropped: a PM decision in the previous version disappeared without an answer
 Kind = Literal["structure", "tech", "vague", "internal", "triage", "dropped"]
 
 
@@ -117,8 +117,8 @@ class Finding(BaseModel):
     file: str
     line: int
     term: str
-    #: `Kind` 중 하나. 문자열로 받는 것은 이전 구성의 검사 종류(acceptance 등)가 남은 manifest도
-    #: 읽기 위해서다 — 화면은 아는 종류만 센다.
+    #: One of `Kind`. It is taken as a string so manifests that still carry check kinds from the earlier layout (acceptance, etc.)
+    #: can be read too — the screen only counts the kinds it knows.
     kind: str
 
 
@@ -128,9 +128,9 @@ class Step(BaseModel):
     status: StepStatus = "pending"
     started_at: str | None = None
     finished_at: str | None = None
-    #: 지금까지 받은 본문 글자 수. running인데 0이면 첫 출력을 기다리는 중이다.
+    #: Body characters received so far. If running and 0, it is waiting for the first output.
     chars: int = 0
-    #: 본문 전에 모델이 생각을 내보내는 중인가. 첫 출력이 늦어도 멈춘 것이 아니라는 표시다.
+    #: Whether the model is emitting thinking before the body. Signals that a late first output does not mean it is stuck.
     thinking: bool = False
     error: str | None = None
 
@@ -143,40 +143,40 @@ class Manifest(BaseModel):
     status: Status
     started_at: str
     finished_at: str | None = None
-    #: 사용자에게 보이는 실패 사유 코드. 모델·AWS 메시지는 자격증명을 실을 수 있어 로그에만 둔다.
+    #: Failure reason code shown to the user. Model and AWS messages can carry credentials, so they stay in the logs only.
     error: str | None = None
     origin: str | None = None
     files: list[str] = []
     steps: list[Step] = []
-    #: 만들 때 실은 원본 → sha256. 낡음 판정과 이어서 하기의 기준이다.
+    #: Originals loaded at build time → sha256. The basis for the staleness check and for resuming.
     sources: dict[str, str] = {}
     supplement: str = ""
     findings: list[Finding] = []
-    #: 크기 상한 때문에 싣지 못하거나 잘라 실은 원본.
+    #: Originals not loaded, or loaded truncated, because of the size cap.
     truncated: list[str] = []
-    #: 직전 판의 PM 몫 열린 결정. 이번 판에 넘겨 옮기게 했고, 답 없이 사라지면 검사가 알린다.
+    #: The previous version's open decisions owned by the PM. Passed on to this version to carry over; the check flags any that disappear without an answer.
     carried: list[str] = []
 
 
 class PackageView(BaseModel):
     manifest: Manifest | None
     files: dict[str, str]
-    #: 만든 뒤(실패했다면 그 시도를 시작한 뒤) 바뀌거나 생기거나 사라진 원본.
+    #: Originals that changed, appeared or disappeared since the build (or, if it failed, since that attempt started).
     stale: list[str]
     supplement_changed: bool
-    #: 실패·중단된 생성을 끝난 단계는 두고 이어서 할 수 있는가.
+    #: Whether a failed or interrupted generation can resume, keeping the finished steps.
     resumable: bool = False
 
 
-# ---- 재료 ----
+# ---- Material ----
 
 def _reconcile_fact(p: Prototype) -> dict[str, object]:
-    """기준 명세가 빌드 세션의 변경을 반영하지 못했다는 사실. 반영됐거나 이력이 없으면 비운다.
+    """The fact that the spec of record does not reflect the changes made in build sessions. Empty if it does or there is no history.
 
-    vision이 이력을 직접 명세에 적용하게 하지 않는다 — 그것은 Discovery의 정합성 패스가 항목을
-    분류하고 PM 승인을 받아 하는 일이고(discovery-config/CLAUDE.md), 이력 항목은 한 줄짜리
-    서술이라 여기서 다시 하면 승인 없이 더 거칠게 하게 된다. 그래서 사실만 넘기고 열린 질문으로
-    올리게 한다(규칙 10).
+    vision is not asked to apply the history to the spec itself — that is the job of Discovery's reconciliation pass, which classifies
+    items and gets PM approval (discovery-config/CLAUDE.md), and history entries are one-line
+    descriptions, so redoing it here would do it more crudely and without approval. So only the fact is passed on, to be raised
+    as an open question (rule 10).
     """
     if p.reconcile in ("not_needed", "current") or p.history is None:
         return {}
@@ -185,7 +185,7 @@ def _reconcile_fact(p: Prototype) -> dict[str, object]:
 
 
 def select_sources(paths: Sequence[str]) -> list[str]:
-    """패키지의 재료가 되는 원본, 실을 순서대로. Discovery 아래의 문서와 질문 파일(답이 결정이다)."""
+    """Originals that become the package's material, in loading order. Documents and question files under Discovery (the answers are the decisions)."""
     chosen = [p for p in paths
               if p.startswith("aiplc-docs/discovery/") and p.endswith(".md")
               and p.rsplit("/", 1)[-1] not in _EXCLUDED_NAMES]
@@ -199,8 +199,8 @@ def select_sources(paths: Sequence[str]) -> list[str]:
 
 
 def archive_originals(paths: Sequence[str]) -> list[str]:
-    """zip의 `discovery/` 아래에 그대로 넣는 원본 — Discovery 문서와 그 근거(명세·검증·분석).
-    목록이 아니라 규칙으로 고른다: 출발점마다 원본의 구성이 다르다."""
+    """Originals placed as is under `discovery/` in the zip — the Discovery document and its evidence (spec, validation, analysis).
+    Chosen by rule, not by list: the set of originals differs by starting point."""
     return [p for p in paths if p.startswith("aiplc-docs/discovery/")
             and not p.endswith(_QUESTION_SUFFIX)
             and p.rsplit("/", 1)[-1] not in ARCHIVE_EXCLUDED]
@@ -214,7 +214,7 @@ def _supplement_digest(record: supplement_mod.Supplement) -> str:
     return digest(record.model_dump_json())
 
 
-# ---- 프롬프트 ----
+# ---- Prompt ----
 
 _LABELS = {
     "ko": {
@@ -246,7 +246,7 @@ def _labels(language: str) -> dict:
     return _LABELS.get(language, _LABELS["ko"])
 
 
-#: 고정 보완 문항이 묻는 것(프롬프트용). 화면 문장은 프론트 i18n이 갖는다.
+#: What each fixed supplementary question asks (for the prompt). The on-screen wording lives in the frontend i18n.
 _SUPPLEMENT_TOPICS = {
     "problem.evidence": "How the PM knows the problem is real",
     "problem.why_now": "Why the problem must be solved now",
@@ -259,14 +259,14 @@ _SUPPLEMENT_TOPICS = {
 
 
 def _cite(path: str) -> str:
-    """근거 표기에 쓰는 경로 — 원본 산출물 사이에서 통하는 `discovery/` 아래 상대 경로."""
+    """Path used in citations — the relative path under `discovery/` that the original artifacts use with each other."""
     return path.removeprefix("aiplc-docs/discovery/")
 
 
 def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict,
            previous: Sequence[dict] = ()) -> dict:
-    """프롬프트에 싣는 판정 사실. 키는 읽는 사람이 봐도 되는 말로 둔다 — 판정 값(불리언·상태
-    코드)을 넘기면 모델이 그 값을 문서에 옮겨 적는다(실측 PRD의 `confirmed_by_pm=true`)."""
+    """Readiness facts loaded into the prompt. Keys are kept in words a reader may see — passing verdict values (booleans, status
+    codes) makes the model copy those values into the document (`confirmed_by_pm=true` in an observed PRD)."""
     answered = [{"topic": _SUPPLEMENT_TOPICS.get(qid, qid), "answer": a.text}
                 for qid, a in record.answers.items() if not a.unknown]
     answered += [{"question": a.question, "answer": a.text}
@@ -274,8 +274,8 @@ def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict,
     checking = [{"question": a.question, "checking with": a.pending_with}
                 for a in record.open_answers.values()
                 if a.pending_with and not a.text and not a.unknown]
-    # 둘을 나눈다: 열린 결정은 문장 그대로 다시 실어야 다음 화면에서 같은 질문(같은 키)으로
-    # 보이고, 고정 문항의 주제는 영어 설명이라 그대로 베끼면 ko 문서에 영어가 들어간다.
+    # Kept apart: open decisions must be loaded again verbatim so they show up on the next screen as the same question (same key),
+    # while the fixed questions' topics are English descriptions, so copying them verbatim would put English into a ko document.
     unknown_topics = [_SUPPLEMENT_TOPICS.get(qid, qid)
                       for qid, a in record.answers.items() if a.unknown]
     unknown_open = [a.question for a in record.open_answers.values() if a.unknown]
@@ -302,13 +302,13 @@ def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict,
     return facts
 
 
-#: 검증 결과로 보는 검증 상태(readiness.ValidationStatus). 계획만 있으면 검증이 아니다.
+#: Validation statuses that count as validation results (readiness.ValidationStatus). A plan alone is not validation.
 _VALIDATED = ("validated", "survey")
 
 
 def build_prompt(*, language: str, readiness: Readiness, record: supplement_mod.Supplement,
                  sources: dict[str, str], previous: Sequence[dict] = ()) -> str:
-    """vision.md의 프롬프트. 구조는 AI-DLC 가이드("Writing a Vision Document")의 것이다."""
+    """Prompt for vision.md. The structure is that of the AI-DLC guide ("Writing a Vision Document")."""
     lab = _labels(language)
     lang_name = "Korean" if language == "ko" else "English"
     oid, question, who, when, until, source = lab["open_columns"]
@@ -460,7 +460,7 @@ Output only this one document, starting with its title line. No preface, no clos
 
 
 def clean_output(text: str) -> str:
-    """모델 응답 → 문서. 제목 줄 앞의 머리말은 버린다. 남는 것이 없으면 ValueError."""
+    """Model response → document. Drops any preamble before the title line. ValueError if nothing remains."""
     lines = text.strip().splitlines()
     for n, line in enumerate(lines):
         if line.startswith("# "):
@@ -472,15 +472,15 @@ def clean_output(text: str) -> str:
     return body + "\n"
 
 
-# ---- 열린 결정의 표 ----
+# ---- Open-decisions table ----
 
-#: 섹션 제목: `## 9. 열린 질문`. 이전 구성의 PRD에서 9번 표를 찾는 데만 쓴다.
+#: Section heading: `## 9. 열린 질문`. Used only to find table 9 in the earlier layout's PRD.
 _SECTION_HEADING = re.compile(r"^#{2,3}\s+(?:(\d{1,2})\s*[.)]\s*)?(.*)$")
 
 
 def _numbered_lines(prd: str, lab: dict) -> list[tuple[int, str]]:
-    """PRD의 줄마다 (그 줄이 속한 섹션 번호, 줄). 번호가 없으면 제목 문구로 찾는다 — 실측(ws-g)에서
-    모델이 번호를 빼고 썼다."""
+    """For each PRD line, (the section number it belongs to, the line). Without a number, find it by heading text — observed (ws-g):
+    the model wrote headings without numbers."""
     titles = lab["sections"]
     section = 0
     out: list[tuple[int, str]] = []
@@ -504,26 +504,26 @@ _TABLE_RULE = re.compile(r"^\|?\s*:?-{3,}")
 
 
 class _OpenRow(BaseModel):
-    """열린 결정 표의 한 줄."""
+    """One row of the open-decisions table."""
     line: int
     id: str
     question: str
     who: str
-    #: 시점 칸. 표에 시점 열이 없으면 None(이 구분 이전의 PRD).
+    #: Timing cell. None if the table has no timing column (PRDs from before this distinction).
     when: str | None
     until: str
-    #: 근거 칸. 표에 근거 열이 없으면 None(이전 구성의 PRD).
+    #: Source cell. None if the table has no source column (PRDs from the earlier layout).
     source: str | None
 
 
-#: vision.md의 Open Questions 제목. 가이드에서는 `## Risks and Dependencies` 아래 `###`이다.
+#: vision.md's Open Questions heading. In the guide it is a `###` under `## Risks and Dependencies`.
 _OPEN_HEADING = re.compile(r"^(#{2,4})\s+Open Questions\b", re.IGNORECASE)
 _HEADING = re.compile(r"^(#{1,6})\s")
 
 
 def _table_lines(doc: str, lab: dict, kind: DocKind) -> list[tuple[int, str]]:
-    """열린 결정 표가 있을 수 있는 줄들, (줄 번호, 줄). vision은 Open Questions 섹션(다음 같은 수준
-    이상의 제목 앞까지), 이전 구성의 열린 결정 문서는 전부, PRD는 9번 섹션이다."""
+    """Lines that may hold the open-decisions table, (line number, line). For vision, the Open Questions section (up to the next
+    heading of the same level or higher); for the earlier layout's open-decisions document, all of it; for a PRD, section 9."""
     lines = doc.splitlines()
     if kind == "prd":
         return [(n, line) for n, (section, line) in enumerate(_numbered_lines(doc, lab), start=1)
@@ -546,10 +546,10 @@ def _table_lines(doc: str, lab: dict, kind: DocKind) -> list[tuple[int, str]]:
 
 def _open_table(doc: str, lab: dict, *, kind: DocKind = "vision"
                 ) -> tuple[int, dict[str, bool], list[_OpenRow]]:
-    """열린 결정 표 → (머리 줄 번호, 열이 있는가, 줄들). 표가 없으면 (0, {}, []).
+    """Open-decisions table → (header line number, which columns exist, rows). (0, {}, []) if there is no table.
 
-    열은 머리 줄에서 찾고, 못 찾으면 둘째·셋째 열을 질문·답할 사람으로 본다(실측 ws-g의 첫 PRD:
-    `| # | 질문 | 답할 사람 |`).
+    Columns are found from the header row; if not found, the second and third columns are taken as question and who answers (the first PRD
+    observed in ws-g: `| # | 질문 | 답할 사람 |`).
     """
     labels = [c.lower() for c in lab["open_columns"]]
     _, question_label, who_label, when_label, until_label, source_label = labels
@@ -586,10 +586,10 @@ def _open_table(doc: str, lab: dict, *, kind: DocKind = "vision"
 
 def open_questions(doc: str, language: str, *, kind: DocKind = "vision"
                    ) -> list[supplement_mod.OpenQuestion]:
-    """열린 결정 중 PM이 답할 줄. 인계 탭이 이것을 보완 질문으로 되돌린다.
+    """Open decisions the PM answers. The handoff tab turns these back into supplementary questions.
 
-    "답할 사람" 칸에 PM이 있고 개발 쪽 표시가 없는 줄만 PM 몫이다. 시점이 "빌드 중"이라고 분명히
-    적힌 줄만 빌드 중이다 — 시점 열이 없거나 값을 알 수 없으면 빌드 전으로 묻는다.
+    Only rows with the PM in the "who answers" cell and no development-side mark belong to the PM. Only rows whose timing explicitly says
+    "during build" are during build — if there is no timing column or the value is unknown, it is asked as before build.
     """
     lab = _labels(language)
     found: list[supplement_mod.OpenQuestion] = []
@@ -606,7 +606,7 @@ def open_questions(doc: str, language: str, *, kind: DocKind = "vision"
 
 
 def previous_rows(doc: str, language: str, *, kind: DocKind = "vision") -> list[dict]:
-    """직전 판의 줄들 — 다음 판이 옮겨 쓸 재료. 시점 열이 없던 판이면 시점은 비운다."""
+    """The previous version's rows — material for the next version to carry over. For a version with no timing column, timing is left empty."""
     lab = _labels(language)
     _, question, who, when, _until, _source = lab["open_columns"]
     return [{question: row.question, who: row.who, when: row.when or ""}
@@ -614,11 +614,11 @@ def previous_rows(doc: str, language: str, *, kind: DocKind = "vision") -> list[
 
 
 def _is(cell: str, label: str) -> bool:
-    """표 칸이 그 값인가. 모델이 굵게(`**빌드 전**`) 쓰는 정도는 같은 값으로 본다."""
+    """Whether a table cell holds that value. The model writing it in bold (`**빌드 전**`) still counts as the same value."""
     return cell.strip("* ").lower() == label.lower()
 
 
-#: "답이 나올 때까지"가 비었다는 표시.
+#: Markers meaning "until answered" is empty.
 _EMPTY_CELL = frozenset({"", "—", "-", "–", "n/a"})
 
 
@@ -627,8 +627,8 @@ def _empty(cell: str | None) -> bool:
 
 
 def _lint_open(doc: str, lab: dict, known: set[str]) -> list[Finding]:
-    """열린 결정의 분류. 줄마다 원본 위치를 대고, 빌드 중은 그동안 어떻게 만들지를 적는다 —
-    없으면 분류가 근거 없는 꼬리표가 된다. 근거는 이번에 실은 원본이어야 한다(지은 경로가 아니다)."""
+    """Classification of open decisions. Every row cites a source location, and during-build rows say how to build in the meantime —
+    without these, the classification becomes an ungrounded label. The source must be an original loaded this time (not an invented path)."""
     header_line, has, rows = _open_table(doc, lab)
     if not rows:
         return []
@@ -650,10 +650,10 @@ def _lint_open(doc: str, lab: dict, known: set[str]) -> list[Finding]:
 
 def _lint_dropped(doc: str, language: str, carried: Sequence[str],
                   answered: Sequence[str]) -> list[Finding]:
-    """직전 판의 PM 결정이 답 없이 사라졌는가. 실측(ws-g): 앞 PRD에 있던 "개인 링크의 유효
-    기간"이 다음 생성의 열린 질문에서 빠졌고, 아무도 알 수 없었다. 이번 생성에는 옮기라고
-    지시했으므로 사라졌다면 원본이 답하게 됐거나 모델이 빠뜨린 것이다 — 어느 쪽인지는 사람이 본다.
-    같은 질문인지는 관련 ID를 뺀 문장으로 본다(supplement.open_key)."""
+    """Whether a PM decision from the previous version disappeared without an answer. Observed (ws-g): "the validity period of a personal
+    link", present in the earlier PRD, dropped out of the next generation's open questions, and nobody could tell. This generation was
+    instructed to carry them over, so if one disappeared, either the originals now answer it or the model left it out — a person decides which.
+    Whether it is the same question is judged by the sentence with related IDs removed (supplement.open_key)."""
     now = {supplement_mod.open_key(q.question) for q in open_questions(doc, language)}
     skip = now | set(answered)
     line = _open_table(doc, _labels(language))[0]
@@ -661,19 +661,19 @@ def _lint_dropped(doc: str, language: str, carried: Sequence[str],
             for q in dict.fromkeys(carried) if supplement_mod.open_key(q) not in skip]
 
 
-# ---- 보완 질문의 보기 ----
+# ---- Options for supplementary questions ----
 
-#: 보기 하나의 상한(글자). 보기는 한 문장이다 — 이보다 길면 설명을 쓴 것이다.
+#: Upper bound for one option (characters). An option is one sentence — longer than this means it wrote an explanation.
 _MAX_OPTION_CHARS = 300
 _MIN_OPTIONS, _MAX_OPTIONS = 2, 4
-#: 추천 표시. 하나라도 있으면 그 질문의 보기를 모두 버린다 — 추천이 붙은 보기는 89%가 그대로
-#: 골랐다(supplement 헤더). 본문에 "권장"이 들어간 보기도 함께 버려지지만, 서술형으로 묻는 것으로
-#: 돌아갈 뿐이다.
+#: Recommendation markers. If any is present, all of that question's options are discarded — options marked as recommended were
+#: picked as is 89% of the time (supplement header). Options with "권장" (recommended) in the body are discarded too, but that only
+#: falls back to asking in free text.
 _RECOMMENDS = re.compile(
     r"←|[(（\[]\s*(?:추천|권장|recommended|preferred|suggested)|추천합니다|권장합니다|"
     r"\b(?:recommended|preferred)\b", re.IGNORECASE)
-#: 다른 보기를 가리키는 말. 순서를 다시 정하므로 "위"가 가리킬 보기가 없어진다 — 실측(ws-g
-#: 인스턴스 생성)에서 "위 전체 항목에 … 추가"가 첫 번째로 보였다. 그 보기만 버린다.
+#: Words that point at another option. Options are reordered, so the option "위" (above) pointed at no longer exists — observed (ws-g
+#: instance generation): "위 전체 항목에 … 추가" (add … to all items above) appeared first. Only that option is discarded.
 _RELATIVE = re.compile(
     r"(?:^|\s)위(?:의|\s*(?:전체|모든|항목|보기|안))|앞(?:의)?\s*보기|모두 포함|"
     r"\babove\b|\bprevious (?:option|one)\b|\ball of the (?:above|options)\b", re.IGNORECASE)
@@ -681,7 +681,7 @@ _RELATIVE = re.compile(
 
 def build_options_prompt(*, language: str, questions: Sequence[supplement_mod.OpenQuestion],
                          sources: dict[str, str], decisions: str) -> str:
-    """빌드 전 PM 결정마다 고를 수 있는 보기. 문서가 아니라 JSON 하나를 쓴다."""
+    """Options to choose from for each before-build PM decision. Writes a single JSON, not a document."""
     lang_name = "Korean" if language == "ko" else "English"
     asked = "\n".join(f"- {q.id}: {q.question}" for q in questions)
     blocks = "\n\n".join(f"<<<FILE {path}>>>\n{text}\n<<<END {path}>>>"
@@ -736,12 +736,12 @@ At most about {_LENGTH["options"]:,} characters.
 
 def parse_options(text: str, questions: Sequence[supplement_mod.OpenQuestion],
                   sources: Sequence[str]) -> dict[str, list[supplement_mod.Option]]:
-    """모델 응답 → 질문 키(`open_key`)별 보기. JSON이 아니면 ValueError.
+    """Model response → options keyed by question key (`open_key`). ValueError if it is not JSON.
 
-    지시만 믿지 않고 결정적으로 거른다. 출처가 실은 원본 파일이 아닌 보기(근거 없이 지은 것)와
-    다른 보기를 가리키는 보기는 버린다. 추천 표시가 하나라도 있으면 그 질문은 서술형으로 둔다.
-    남은 보기가 둘 미만이어도 서술형이다. 순서는 보기 문장의 해시로 다시 정한다 — 모델이 고른
-    순서는 그 자체가 추천이다.
+    Filters deterministically instead of trusting the instructions alone. Options whose source is not a loaded original file (invented without grounds)
+    and options that point at another option are discarded. If any recommendation marker is present, that question stays free text.
+    It is also free text if fewer than two options remain. Order is reset by the hash of the option text — the order the model
+    chose is itself a recommendation.
     """
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end < start:
@@ -775,7 +775,7 @@ def parse_options(text: str, questions: Sequence[supplement_mod.OpenQuestion],
 
 
 def _grounded(source: str, known: set[str]) -> bool:
-    """출처의 첫 경로가 이번에 실은 원본인가. `경로 Q3`, `경로 · 섹션`, `경로, …` 모양을 읽는다."""
+    """Whether the first path in the source is an original loaded this time. Reads the shapes `path Q3`, `path · section` and `path, …`."""
     path = re.split(r"[\s,;·]", source.strip("`* "), maxsplit=1)[0].strip("`")
     for prefix in ("aiplc-docs/discovery/", "discovery/"):
         path = path.removeprefix(prefix)
@@ -783,7 +783,7 @@ def _grounded(source: str, known: set[str]) -> bool:
 
 
 async def load_options(s3: S3StoreLike) -> dict[str, list[supplement_mod.Option]]:
-    """마지막 패키지의 보기. 없거나 읽을 수 없으면 비어 있다 — 질문은 서술형으로 보인다."""
+    """Options from the last package. Empty if missing or unreadable — the questions appear as free text."""
     try:
         raw = json.loads(await s3.get(PACKAGE_PREFIX + OPTIONS))
         return {key: [supplement_mod.Option.model_validate(o) for o in options]
@@ -795,9 +795,9 @@ async def load_options(s3: S3StoreLike) -> dict[str, list[supplement_mod.Option]
         return {}
 
 
-# ---- 검사 ----
+# ---- Checks ----
 
-#: ASCII 단어 경계로 찾는 기술어. 프로젝트마다 넓힐 수 있게 데이터로 둔다.
+#: Technical words matched at ASCII word boundaries. Kept as data so it can be widened per project.
 _TECH_WORDS = (
     "Python", "Java", "JavaScript", "TypeScript", "Node.js", "Kotlin", "Rust", "Ruby", "PHP",
     "React", "Next.js", "Vue", "Angular", "Django", "Flask", "FastAPI", "Spring Boot", "Tailwind", "Strands", "LangChain", "PostgreSQL", "Postgres", "MySQL",
@@ -820,12 +820,12 @@ _VAGUE_EN = re.compile(
     r"seamless(?:ly)?|efficiently)\b", re.IGNORECASE)
 
 
-#: 프롬프트의 필드 모양(`confirmed_by_pm`, `unknown=true`)이 문서에 새어 나온 것. 실측 PRD에
-#: `confirmed_by_pm=true`가 근거 표기로 들어갔다. 근거 칸의 파일 경로(`pain-point-questions.md`)는
-#: 밑줄이 없어 걸리지 않는다.
+#: Prompt field shapes (`confirmed_by_pm`, `unknown=true`) leaking into the document. In an observed PRD,
+#: `confirmed_by_pm=true` appeared as a citation. File paths in the source cell (`pain-point-questions.md`)
+#: have no underscore, so they are not caught.
 _INTERNAL_FIELD = re.compile(r"\b\w+=(?:true|false)\b|\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
-#: 원본의 내부 번호(가설 H3, 페인 포인트 P1, 유스케이스 UC1). 읽는 사람은 원본의 번호 체계를
-#: 모른다. 질문 파일의 문항 번호(Q14)는 근거 표기라 둔다.
+#: Internal numbers from the originals (hypothesis H3, pain point P1, use case UC1). Readers do not know the originals'
+#: numbering. Question numbers in question files (Q14) are citations, so they are kept.
 _FOREIGN_ID = re.compile(r"(?<![\w-])(?!Q\d)[A-Z]{1,2}\d{1,3}(?![\w-])")
 
 _RULES: tuple[tuple[Kind, re.Pattern[str]], ...] = (
@@ -835,9 +835,9 @@ _RULES: tuple[tuple[Kind, re.Pattern[str]], ...] = (
 )
 
 
-#: AI-DLC 가이드가 섹션별 쓰임을 정한 제목. 없으면 그 단계가 읽을 곳이 없다(가이드 "Where each
-#: section is used": Features In/Out → Requirements Analysis·Units·Code Generation 등). AI-DLC 2.11.0
-#: 기준이다 — 가이드가 바뀌면 이 목록과 `build_prompt`의 섹션 제목을 함께 맞춘다.
+#: Headings whose per-section use the AI-DLC guide defines. Without one, the stage that reads it has nowhere to read (guide "Where each
+#: section is used": Features In/Out → Requirements Analysis·Units·Code Generation, etc.). Based on AI-DLC 2.11.0
+#: — if the guide changes, update this list and the section headings in `build_prompt` together.
 REQUIRED_SECTIONS = ("Executive Summary", "Business Context", "Success Metrics",
                      "Full Scope Vision", "MVP Scope", "Features In Scope", "Features Out of Scope",
                      "Assumptions and Accepted Limits", "Risks and Dependencies", "Open Questions")
@@ -852,8 +852,8 @@ def _lint_structure(doc: str) -> list[Finding]:
 
 def lint(doc: str, *, language: str = "ko", sources: Sequence[str] = (),
          carried: Sequence[str] = (), answered: Sequence[str] = ()) -> list[Finding]:
-    """vision.md의 검사. `sources`: 이번에 실은 원본(근거 칸의 대조 대상). `carried`: 직전 판의
-    PM 몫 열린 결정. `answered`: 인계 탭에서 답한 열린 결정의 키."""
+    """Checks for vision.md. `sources`: originals loaded this time (what the source cells are matched against). `carried`: the previous version's
+    open decisions owned by the PM. `answered`: keys of open decisions answered on the handoff tab."""
     lab = _labels(language)
     findings: list[Finding] = _lint_structure(doc)
     for number, line in enumerate(doc.splitlines(), start=1):
@@ -943,24 +943,24 @@ paste the request in `start-prompt.md` as it is. Any other coding assistant or h
 }
 
 def archive_folder(pid: str) -> str:
-    """zip의 이름이자 그 안의 최상위 폴더 이름(`.zip`을 뺀 것). 둘을 한 함수가 정한다 — 시작 프롬프트의
-    경로가 이 폴더를 가리키므로 셋이 어긋나면 붙여 넣은 요청이 파일을 찾지 못한다.
+    """The zip's name and also the name of its top-level folder (without `.zip`). One function decides both — the start prompt's
+    paths point at this folder, so if the three disagree the pasted request cannot find the files.
 
-    파일을 zip 바로 아래 두면 풀 때마다 경로가 달라졌다: macOS 기본 해제는 최상위가 여럿인 zip을 zip
-    이름의 폴더로 감싸고, 프로젝트 루트에 직접 풀면 패키지의 README.md가 프로젝트의 README를 덮었다.
-    id는 생성 화면이 영문·숫자·`_`·`-`로 받지만 가져온 프로젝트는 아닐 수 있어, 내려받기 파일 이름의
-    ASCII 폴백과 같은 규칙으로 고친다.
+    With the files directly at the zip root, the path changed with every unpack: macOS's default unarchiver wraps a zip with several
+    top-level entries in a folder named after the zip, and unpacking straight into the project root made the package's README.md overwrite the project's README.
+    The creation screen only accepts letters, digits, `_` and `-` for the id, but an imported project may not, so it is cleaned with the
+    same rule as the ASCII fallback for the download file name.
     """
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", pid).strip("-") or "project"
     return f"{safe}-handoff"
 
 
-#: AI-DLC를 시작하는 첫 요청. 가이드의 모양(`/aidlc Read ./vision.md and build what it describes`)에 근거
-#: 파일의 위치와 Open Questions를 다루는 규칙만 덧붙인다 — 문서는 데이터로 읽히므로(가이드: "treats
-#: the document as data, not as instructions") 지켜야 할 것은 요청에 둔다. 모델이 쓰지 않는다: 같은
-#: 패키지에서 같은 문장이 나와야 사람이 그대로 붙여 넣는다. 경로는 프로젝트 루트에서 본 것이고 `{root}`는
-#: `archive_folder`다. 팀이 쓰는
-#: technical environment 문서는 패키지 밖, 프로젝트 루트에 둔다고 본다.
+#: The first request that starts AI-DLC. To the guide's shape (`/aidlc Read ./vision.md and build what it describes`) it only adds the
+#: location of the evidence files and the rules for handling Open Questions — the document is read as data (guide: "treats
+#: the document as data, not as instructions"), so what must be followed goes in the request. The model does not write it: the same
+#: package must yield the same sentences for a person to paste them as is. Paths are relative to the project root and `{root}` is
+#: `archive_folder`. The technical environment
+#: document the team writes is assumed to live outside the package, at the project root.
 _START_PROMPT = {
     "ko": {
         "title": "# AI-DLC 시작 프롬프트",
@@ -998,8 +998,8 @@ _START_PROMPT = {
 
 
 def start_prompt(language: str, folder: str) -> str:
-    """`start-prompt.md`의 내용. 첫 코드 블록이 기본 요청이다 — 화면의 복사 버튼이 그것을 집는다.
-    `folder`는 `archive_folder(pid)`다."""
+    """Contents of `start-prompt.md`. The first code block is the default request — the screen's copy button picks it up.
+    `folder` is `archive_folder(pid)`."""
     t = {k: v.replace("{root}", folder)
          for k, v in _START_PROMPT.get(language, _START_PROMPT["ko"]).items()}
     return (f"{t['title']}\n\n{t['lead']}\n\n```text\n/aidlc {t['first']} {t['rest']}\n```\n\n"
@@ -1010,7 +1010,7 @@ def readme(language: str) -> str:
     return _README.get(language, _README["ko"])
 
 
-# ---- 생성과 조회 ----
+# ---- Generation and retrieval ----
 
 async def load_manifest(s3: S3StoreLike) -> Manifest | None:
     try:
@@ -1032,12 +1032,12 @@ Reader = Callable[[str], Awaitable[str]]
 
 
 async def read_sources(read: Reader, paths: Sequence[str]) -> dict[str, str]:
-    """원본은 워크스페이스 러너로 읽는다(`runner.read_file`) — 경로 검사가 그쪽에 있다."""
+    """Originals are read through the workspace runner (`runner.read_file`) — the path checks live there."""
     texts = await asyncio.gather(*(read(p) for p in paths), return_exceptions=True)
     out: dict[str, str] = {}
     for path, text in zip(paths, texts):
         if isinstance(text, FileNotFoundError):
-            continue  # 목록과 읽기 사이에 지워졌다
+            continue  # deleted between listing and reading
         if isinstance(text, BaseException):
             raise text
         out[path] = text
@@ -1045,7 +1045,7 @@ async def read_sources(read: Reader, paths: Sequence[str]) -> dict[str, str]:
 
 
 def _fit(sources: dict[str, str]) -> tuple[dict[str, str], list[str]]:
-    """크기 상한 안으로. 파일마다 자르고, 합계를 넘으면 뒤(우선순위가 낮은 쪽)를 뺀다."""
+    """Fit within the size cap. Truncates each file, and when the total is exceeded, drops the tail (lower priority)."""
     kept: dict[str, str] = {}
     truncated: list[str] = []
     total = 0
@@ -1063,10 +1063,10 @@ def _fit(sources: dict[str, str]) -> tuple[dict[str, str], list[str]]:
 
 async def start(s3: S3StoreLike, readiness: Readiness, *, resume: bool = False,
                 now: str | None = None) -> Manifest:
-    """생성 중 표시를 남긴다. 실제 생성은 `run`이 백그라운드에서 한다.
+    """Records the generating marker. `run` does the actual generation in the background.
 
-    `resume`이면 지난 시도의 끝난 단계를 그대로 두고 나머지만 대기로 돌린다. 그 사이 원본이
-    바뀌었는지는 `run`이 원본을 읽은 뒤 판정한다 — 바뀌었으면 처음부터다.
+    With `resume`, the finished steps of the last attempt are kept and only the rest go back to pending. Whether the originals
+    changed in the meantime is decided by `run` after it reads them — if they did, it starts over.
     """
     steps, sources, supplement, carried = fresh_steps(), {}, "", []
     previous = await load_manifest(s3) if resume else None
@@ -1086,7 +1086,7 @@ def _same_steps(steps: list[Step]) -> bool:
 
 
 class _Progress:
-    """한 단계에서 받은 것. 모델 콜백(동기)이 고치고 기록 작업이 읽는다."""
+    """What one step has received. The model callback (sync) updates it and the recording task reads it."""
 
     def __init__(self) -> None:
         self.chars = 0
@@ -1103,9 +1103,9 @@ Caller = Callable[[str, Callable[[int, bool], None]], Awaitable[str]]
 async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness: Readiness,
               language: str, call: Caller, started: Manifest,
               folder: str = archive_folder("project")) -> Manifest:
-    """원본을 읽고, 단계마다 모델로 문서를 쓰고 저장하고, 끝에 검사한다.
+    """Reads the originals, writes and saves a document with the model for each step, and checks at the end.
 
-    실패해도 manifest가 남는다 — 실패한 단계와 사유, 그 전에 끝난 단계가 그대로 보인다.
+    The manifest remains even on failure — the failed step and its reason, and the steps finished before it, stay visible.
     """
     state = _State(s3, started)
     try:
@@ -1124,8 +1124,8 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
         written = await _finished_documents(s3, state)
         previous: list[dict] = []
         if VISION not in written:
-            # 다시 쓰기 직전의 판(마지막 패키지)이 옮겨 쓸 열린 결정이다. 이어서 하는 시도에서 이미
-            # 썼다면 그때 넘긴 결정이 manifest에 있다.
+            # The version just before rewriting (the last package) holds the open decisions to carry over. If an earlier
+            # attempt of this resume already wrote them, the decisions passed then are in the manifest.
             old, kind = await stored_decisions(s3)
             previous = previous_rows(old, language, kind=kind) if old else []
             carried = ([q.question for q in open_questions(old, language, kind=kind)]
@@ -1155,7 +1155,7 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
             await ticker.stop()
             if file != OPTIONS:
                 return await state.fail(index, exc, chars=progress.chars)
-            # 보기는 편의다. 실패해도 문서는 다 있고, 질문은 서술형으로 보인다.
+            # Options are a convenience. Even if they fail, all documents exist and the questions appear as free text.
             _log.exception("handoff options failed — the package is complete without them")
             await state.step(index, status="failed", finished_at=_now(), error=_reason(exc),
                              chars=progress.chars, thinking=False)
@@ -1166,7 +1166,7 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
         await state.step(index, status="done", finished_at=_now(), chars=len(document),
                          thinking=False)
 
-    # 결정 장부·README·시작 프롬프트는 모델 없이 만든다 — 같은 원본·기록에서 같은 파일이 나온다.
+    # The decision ledger, README and start prompt are built without a model — the same originals and records yield the same files.
     await s3.put(PACKAGE_PREFIX + LEDGER, ledger_mod.build(sources, record, language))
     await s3.put(PACKAGE_PREFIX + README, readme(language))
     await s3.put(PACKAGE_PREFIX + START_PROMPT, start_prompt(language, folder))
@@ -1181,8 +1181,8 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
 
 async def _write_options(call: Caller, progress: "_Progress", *, language: str, vision: str,
                          sources: dict[str, str]) -> str:
-    """빌드 전 PM 결정의 보기 → `options.json`의 내용. 물을 것이 없으면 모델을 부르지 않는다.
-    외부 확인 질문은 뺀다 — 받아 올 사실에 보기를 주면 원하는 결론을 고르게 된다."""
+    """Options for before-build PM decisions → contents of `options.json`. Does not call the model if there is nothing to ask.
+    External-check questions are left out — giving options for a fact to be obtained invites picking the desired conclusion."""
     asked = [q for q in open_questions(vision, language) if q.blocking and not q.external]
     if not asked:
         return "{}"
@@ -1196,7 +1196,7 @@ async def _write_options(call: Caller, progress: "_Progress", *, language: str, 
 
 
 async def stored_decisions(s3: S3StoreLike) -> tuple[str | None, DocKind]:
-    """직전 판의 문서와 그 종류(열린 결정 표를 어디서 찾는가)."""
+    """The previous version's document and its kind (where to find the open-decisions table)."""
     for name, kind in _PREVIOUS:
         try:
             return await s3.get(PACKAGE_PREFIX + name), kind
@@ -1206,7 +1206,7 @@ async def stored_decisions(s3: S3StoreLike) -> tuple[str | None, DocKind]:
 
 
 async def _finished_documents(s3: S3StoreLike, state: "_State") -> dict[str, str]:
-    """끝난 단계의 문서. 파일이 없어진 단계는 대기로 되돌린다 — 이어서 쓸 근거가 없다."""
+    """Documents of finished steps. A step whose file is gone goes back to pending — there is nothing to resume from."""
     written: dict[str, str] = {}
     for index, step in enumerate(state.manifest.steps):
         if step.status != "done":
@@ -1219,8 +1219,8 @@ async def _finished_documents(s3: S3StoreLike, state: "_State") -> dict[str, str
 
 
 class _State:
-    """생성 중인 manifest의 단일 소유자. 단계 기록과 진행 기록이 같은 잠금으로 쓴다 — 늦게
-    끝난 진행 기록이 "완료"를 덮지 않게."""
+    """Sole owner of the manifest during generation. Step records and progress records write under the same lock — so a late
+    progress record does not overwrite "done"."""
 
     def __init__(self, s3: S3StoreLike, manifest: Manifest) -> None:
         self.s3 = s3
@@ -1234,7 +1234,7 @@ class _State:
         return manifest
 
     async def step(self, index: int, **update) -> Manifest:
-        # 읽고 고치고 쓰는 것을 한 잠금 안에서 — 다른 기록이 그 사이에 끼면 한쪽이 사라진다.
+        # Read, modify and write inside one lock — if another record slips in between, one of them is lost.
         async with self.lock:
             steps = list(self.manifest.steps)
             steps[index] = steps[index].model_copy(update=update)
@@ -1243,7 +1243,7 @@ class _State:
             return self.manifest
 
     async def fail(self, index: int | None, exc: Exception, *, chars: int = 0) -> Manifest:
-        # 모델·AWS 메시지는 자격증명을 실을 수 있다 — 로그에만 남긴다(routes/surveys와 같은 정책).
+        # Model and AWS messages can carry credentials — keep them in the logs only (same policy as routes/surveys).
         _log.exception("handoff package generation failed")
         reason = _reason(exc)
         if index is not None:
@@ -1254,10 +1254,10 @@ class _State:
 
 
 class _Ticker:
-    """진행 중인 단계의 받은 글자 수를 주기적으로 남긴다.
+    """Periodically records the character count received by the in-progress step.
 
-    취소로 멈추지 않는다: 진행 중인 쓰기를 취소하면 그 쓰기가 늦게 도착해 다음 기록을 덮을
-    수 있다. 신호를 주고 끝날 때까지 기다린다.
+    It is not stopped by cancellation: cancelling an in-flight write can make that write land late and overwrite the next
+    record. It signals and waits until it finishes.
     """
 
     def __init__(self, state: _State, index: int, progress: _Progress) -> None:
@@ -1283,7 +1283,7 @@ class _Ticker:
 
 
 def _reason(exc: BaseException) -> str:
-    """화면에 보이는 실패 사유 코드."""
+    """Failure reason code shown on screen."""
     return ("timeout" if _is_timeout(exc)
             else "too_long" if _in_chain(exc, "MaxTokensReachedException")
             else "malformed_output" if isinstance(exc, ValueError)
@@ -1291,8 +1291,8 @@ def _reason(exc: BaseException) -> str:
 
 
 def _in_chain(exc: BaseException, class_name: str) -> bool:
-    """원인 사슬에 그 이름의 예외가 있는가. 모델 SDK를 import하지 않고 본다 — 이 모듈은 SDK 없이도
-    테스트·판정에 쓰인다."""
+    """Whether an exception with that name is in the cause chain. Checked without importing the model SDK — this module is used
+    for tests and verdicts without the SDK too."""
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
@@ -1304,10 +1304,10 @@ def _in_chain(exc: BaseException, class_name: str) -> bool:
 
 
 def _is_timeout(exc: BaseException) -> bool:
-    """원인 사슬 어디에든 시간 초과가 있는가.
+    """Whether a timeout is anywhere in the cause chain.
 
-    Bedrock 스트림의 읽기 시간 초과는 urllib3 → botocore 예외로 감싸져 올라온다(실측
-    ws-g). 맨 위만 보면 "모델 호출 실패"로 보여 원인을 가린다.
+    A read timeout on the Bedrock stream comes up wrapped as urllib3 → botocore exceptions (observed in
+    ws-g). Looking only at the top shows "model call failed" and hides the cause.
     """
     from botocore.exceptions import ConnectTimeoutError, ReadTimeoutError
     seen: set[int] = set()
@@ -1326,8 +1326,8 @@ async def view(s3: S3StoreLike, *, read: Reader, paths: Sequence[str],
     if manifest is None:
         return PackageView(manifest=None, files={}, stale=[], supplement_changed=False)
     if manifest.status == "generating" and not running:
-        # 이 프로세스에 작업이 없다 — 재시작이 생성 도중을 끊었다. 돌던 단계를 중단으로 보이고
-        # 끝난 단계부터 이어서 할 수 있게 한다.
+        # This process has no job — a restart cut generation off midway. Show the running step as interrupted
+        # and allow resuming from the finished steps.
         steps = [s.model_copy(update={"status": "failed", "error": "interrupted"})
                  if s.status == "running" else s for s in manifest.steps]
         manifest = manifest.model_copy(update={"status": "interrupted", "steps": steps})
@@ -1345,9 +1345,9 @@ async def view(s3: S3StoreLike, *, read: Reader, paths: Sequence[str],
 
 async def _changes(s3: S3StoreLike, read: Reader, paths: Sequence[str],
                    manifest: Manifest) -> tuple[list[str], bool]:
-    """만들 때 실은 원본·보완 답과 지금의 차이."""
+    """Difference between the originals and supplementary answers loaded at build time and now."""
     if not manifest.sources and not manifest.supplement:
-        return [], False  # 원본을 읽기 전에 멈췄다 — 비교할 기준이 없다
+        return [], False  # stopped before reading the originals — no baseline to compare
     current = await read_sources(read, select_sources(paths))
     now = {p: digest(t) for p, t in current.items()}
     stale = sorted(p for p in set(now) | set(manifest.sources)
@@ -1356,29 +1356,29 @@ async def _changes(s3: S3StoreLike, read: Reader, paths: Sequence[str],
     return stale, _supplement_digest(record) != manifest.supplement
 
 
-#: 인계 탭이 프로젝트 접두사 안에 두는 모든 것 — 패키지(`handoff/package/`)와 보완 답
-#: (`handoff/supplement.json`). 워크스페이스 밖이라 Discovery 산출물은 여기 없다.
+#: Everything the handoff tab keeps inside the project prefix — the package (`handoff/package/`) and the supplementary answers
+#: (`handoff/supplement.json`). It is outside the workspace, so Discovery artifacts are not here.
 HANDOFF_PREFIX = "handoff/"
 
 
 async def reset(s3: S3StoreLike) -> int:
-    """인계 탭을 처음 상태로 — 지운 객체 수.
+    """Resets the handoff tab to its initial state — returns the number of objects deleted.
 
-    다시 생성과 다른 점: 다시 생성은 직전 판의 열린 결정을 이어받고(`stored_decisions`) 보완 답을
-    재료로 쓴다. 초기화는 그 둘까지 지운다. 이전 구성의 PRD도 직전 판이므로 함께 지운다 — 남기면
-    다음 생성이 그 열린 질문을 다시 옮겨 온다.
+    How this differs from regenerating: regenerating inherits the previous version's open decisions (`stored_decisions`) and uses the
+    supplementary answers as material. Reset deletes both of those too. The earlier layout's PRD is also a previous version, so it is deleted as well — if left,
+    the next generation would carry its open questions over again.
     """
     return await s3.delete_prefix(HANDOFF_PREFIX)
 
 
 async def read_package(s3: S3StoreLike, manifest: Manifest) -> dict[str, str]:
-    """만든 파일 이름 → 내용. 패키지는 워크스페이스 밖이라 S3 저장소로 직접 읽는다."""
+    """Built file name → contents. The package is outside the workspace, so it is read directly from the S3 store."""
     contents = await read_sources(s3.get, [PACKAGE_PREFIX + n for n in manifest.files])
     return {k[len(PACKAGE_PREFIX):]: v for k, v in contents.items()}
 
 
 class Jobs:
-    """프로젝트별 진행 중인 생성 작업. 프로세스 안에만 있다 — 재시작은 `interrupted`로 보인다."""
+    """In-progress generation jobs per project. They live only in the process — a restart shows as `interrupted`."""
 
     def __init__(self) -> None:
         self._tasks: dict[str, asyncio.Task] = {}

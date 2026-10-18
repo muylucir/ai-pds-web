@@ -1,8 +1,8 @@
 # backend/tests/test_auth_cognito.py
 #
-# botocore Stubber로 실 Cognito 없이 래퍼를 시험한다. Stubber는 파라미터가
-# 예상과 정확히 일치할 때만 응답을 내놓으므로, "무엇을 어떻게 호출하는가"가
-# 그대로 단정된다.
+# Tests the wrapper without real Cognito, using botocore Stubber. Stubber returns a
+# response only when the parameters match the expectation exactly, so "what is called
+# and how" is asserted directly.
 from __future__ import annotations
 
 import re
@@ -32,10 +32,10 @@ def admin():
     stub = Stubber(client)
     stub.activate()
     yield CognitoAdmin(client, POOL), stub
-    # 큐에 남은 응답이 있다는 것은 테스트가 기대한 호출이 실제로는 일어나지
-    # 않았다는 뜻이다 — Stubber는 파라미터가 맞은 호출만 검증하고, 호출 자체가
-    # 없었던 경우는 검사하지 않으므로 이 확인을 빠뜨리면 no-op으로 퇴화한
-    # 메서드도 테스트가 초록불을 낸다.
+    # A response left in the queue means a call the test expected never actually
+    # happened — Stubber verifies only calls whose parameters matched and does not check
+    # for calls that never occurred, so without this check even a method that has
+    # degraded into a no-op would get a green test.
     stub.assert_no_pending_responses()
     stub.deactivate()
 
@@ -51,11 +51,12 @@ def _user(username: str, email: str, status="CONFIRMED", enabled=True):
     }
 
 
-# ---- 비밀번호 생성 ----
+# ---- password generation ----
 
 def test_generated_password_satisfies_the_pool_policy():
-    # 정책은 8자+ 대/소/숫자/기호. 생성기가 정책을 못 맞추면 사용자는 이미
-    # 만들어진 뒤 InvalidPasswordException이 나므로 반드시 만족해야 한다.
+    # The policy is 8+ characters with upper/lower/digit/symbol. If the generator misses
+    # the policy, InvalidPasswordException fires after the user has already been
+    # created, so it must always comply.
     for _ in range(50):
         pw = generate_temp_password()
         assert len(pw) == 16
@@ -69,7 +70,7 @@ def test_generated_passwords_are_not_repeated():
     assert len({generate_temp_password() for _ in range(50)}) == 50
 
 
-# ---- 목록 ----
+# ---- listing ----
 
 def test_list_users_maps_attributes_and_groups(admin):
     a, stub = admin
@@ -105,7 +106,7 @@ def test_list_users_follows_pagination(admin):
 
 
 def test_user_with_no_group_has_role_none(admin):
-    # 그룹 배정 전에 실패한 반쯤 만들어진 계정을 화면에서 알아볼 수 있어야 한다.
+    # A half-created account that failed before group assignment must be recognizable on screen.
     a, stub = admin
     stub.add_response("list_users", {"Users": [_user("x@example.com", "x@example.com")]},
                       {"UserPoolId": POOL, "Limit": 60})
@@ -125,8 +126,8 @@ def test_missing_email_attribute_falls_back_to_username(admin):
 
 
 def test_list_users_degrades_a_row_when_its_group_lookup_fails(admin):
-    # 스냅샷 이후 삭제되거나 429를 받은 사용자 한 명 때문에 전체 목록이
-    # 무너지면 안 된다 — 그 행만 role=None으로 낮추고 나머지는 계속 보여준다.
+    # The whole list must not collapse because of one user who was deleted after the
+    # snapshot or got a 429 — downgrade only that row to role=None and keep showing the rest.
     a, stub = admin
     stub.add_response(
         "list_users",
@@ -145,13 +146,13 @@ def test_list_users_degrades_a_row_when_its_group_lookup_fails(admin):
     assert users[1].role == "pm"
 
 
-# ---- 생성 ----
+# ---- creation ----
 
 def test_create_user_suppresses_email_and_marks_it_verified(admin):
     a, stub = admin
-    # email_verified=true는 선택이 아니다 — alias(email) 사인인의 조건이다.
-    # Username은 이메일이 아니라 로컬파트다: 이 풀은 AliasAttributes=[email]이고
-    # Cognito는 그 경우 이메일 형식 Username을 거부한다("Username cannot be of
+    # email_verified=true is not optional — it is a requirement for alias (email) sign-in.
+    # Username is the local part, not the email: this pool has AliasAttributes=[email],
+    # and in that case Cognito rejects an email-format Username ("Username cannot be of
     # email format, since user pool is configured for email alias").
     stub.add_response(
         "admin_create_user",
@@ -164,8 +165,9 @@ def test_create_user_suppresses_email_and_marks_it_verified(admin):
 
 
 def test_create_user_never_sends_an_email_shaped_username(admin):
-    """실측 배포 실패의 회귀 가드. Cognito가 거부하는 조건은 '@가 있는 Username'
-    하나이므로, 로컬파트 규칙이 아니라 그 불변식을 직접 단정한다."""
+    """Regression guard for an observed deployment failure. The only condition Cognito
+    rejects is 'a Username containing @', so assert that invariant directly rather than
+    the local-part rule."""
     a, stub = admin
     stub.add_response(
         "admin_create_user",
@@ -179,14 +181,14 @@ def test_create_user_never_sends_an_email_shaped_username(admin):
 
 
 def test_create_user_lowercases_and_trims_the_local_part(admin):
-    # 풀은 signInCaseSensitive=false지만 Username 문자열 자체는 그대로 저장된다.
-    # 대소문자가 섞이면 /admin/users 목록과 자기 자신 비교가 어수선해진다.
+    # The pool has signInCaseSensitive=false, but the Username string itself is stored as-is.
+    # Mixed case makes the /admin/users list and self-comparisons messy.
     a, stub = admin
     stub.add_response(
         "admin_create_user",
         {"User": _user("mixed", "Mixed@EXAMPLE.COM")},
-        # email 속성도 trim된다 — 공백이 남으면 alias 사인인이 그 공백까지
-        # 요구해 사용자가 로그인할 수 없다.
+        # The email attribute is trimmed too — if whitespace remains, alias sign-in
+        # requires that whitespace as well and the user cannot log in.
         {"UserPoolId": POOL, "Username": "mixed", "MessageAction": "SUPPRESS",
          "UserAttributes": [{"Name": "email", "Value": "Mixed@EXAMPLE.COM"},
                             {"Name": "email_verified", "Value": "true"}]},
@@ -195,8 +197,8 @@ def test_create_user_lowercases_and_trims_the_local_part(admin):
 
 
 def test_create_user_strips_characters_cognito_rejects(admin):
-    # Cognito Username은 제한된 문자만 받는다. 로컬파트에 그 밖의 문자가 있으면
-    # (예: 태그 주소 "a+tag@example.com") 그대로 넘기면 InvalidParameterException이 난다.
+    # Cognito Username accepts only a restricted character set. If the local part has other
+    # characters (e.g., a tagged address "a+tag@example.com"), passing it as-is raises InvalidParameterException.
     a, stub = admin
     stub.add_response(
         "admin_create_user",
@@ -209,8 +211,8 @@ def test_create_user_strips_characters_cognito_rejects(admin):
 
 
 def test_create_user_returns_the_username_cognito_reports(admin):
-    # 응답의 Username이 우리가 보낸 것과 다르면(풀 설정 변경 등) 그쪽을 신뢰한다 —
-    # 이후 set_temp_password/set_group이 그 값으로 호출되어야 한다.
+    # If the Username in the response differs from what we sent (pool setting change, etc.),
+    # trust the response — subsequent set_temp_password/set_group must be called with that value.
     a, stub = admin
     stub.add_response(
         "admin_create_user",
@@ -231,7 +233,7 @@ def test_duplicate_email_raises_cognito_error_with_code(admin):
 
 
 def test_alias_exists_is_also_surfaced_by_code(admin):
-    # 이메일이 다른 계정의 alias로 이미 쓰이는 경우.
+    # The email is already used as another account's alias.
     a, stub = admin
     stub.add_client_error("admin_create_user", service_error_code="AliasExistsException")
     with pytest.raises(CognitoError) as exc:
@@ -239,10 +241,10 @@ def test_alias_exists_is_also_surfaced_by_code(admin):
     assert exc.value.code == "AliasExistsException"
 
 
-# ---- 비밀번호 ----
+# ---- passwords ----
 
 def test_set_temp_password_is_not_permanent(admin):
-    # Permanent=False여야 첫 로그인에서 사용자가 직접 바꾼다(초대 흐름).
+    # Permanent=False makes the user change it themselves on first login (invite flow).
     a, stub = admin
     stub.add_response("admin_set_user_password", {},
                       {"UserPoolId": POOL, "Username": "u@example.com",
@@ -260,11 +262,11 @@ def test_invalid_password_raises_with_code(admin):
     assert exc.value.code == "InvalidPasswordException"
 
 
-# ---- 그룹(역할) ----
+# ---- groups (roles) ----
 
 def test_set_group_removes_existing_roles_before_adding(admin):
-    # 역할 교체는 "추가"가 아니라 "교체"다. 제거를 빠뜨리면 사용자가 두 그룹에
-    # 속해 강등이 무효가 된다(verifier가 admin을 우선하므로).
+    # Changing a role is a "replace", not an "add". Skipping the removal leaves the user in
+    # two groups and nullifies a demotion (because the verifier gives admin precedence).
     a, stub = admin
     stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "admin"}]},
                       {"UserPoolId": POOL, "Username": "u@example.com"})
@@ -276,7 +278,7 @@ def test_set_group_removes_existing_roles_before_adding(admin):
 
 
 def test_set_group_leaves_unrelated_groups_alone(admin):
-    # admin/pm이 아닌 그룹은 우리 관심사가 아니다 — 건드리지 않는다.
+    # Groups other than admin/pm are not our concern — leave them untouched.
     a, stub = admin
     stub.add_response("admin_list_groups_for_user",
                       {"Groups": [{"GroupName": "some-other-group"}]},
@@ -287,7 +289,7 @@ def test_set_group_leaves_unrelated_groups_alone(admin):
 
 
 def test_set_group_is_a_noop_add_when_already_correct(admin):
-    # 이미 맞는 그룹이면 제거하지 않고 추가만 한다(멱등).
+    # If already in the correct group, do not remove; only add (idempotent).
     a, stub = admin
     stub.add_response("admin_list_groups_for_user", {"Groups": [{"GroupName": "pm"}]},
                       {"UserPoolId": POOL, "Username": "u@example.com"})
@@ -296,7 +298,7 @@ def test_set_group_is_a_noop_add_when_already_correct(admin):
     a.set_group("u@example.com", "pm")
 
 
-# ---- 활성/비활성/삭제 ----
+# ---- enable/disable/delete ----
 
 def test_disable_and_enable(admin):
     a, stub = admin
@@ -320,7 +322,7 @@ def test_unknown_user_raises_with_code(admin):
     assert exc.value.code == "UserNotFoundException"
 
 
-# ---- 관리자 수 (마지막 관리자 보호의 입력) ----
+# ---- admin count (input to last-admin protection) ----
 
 def test_admin_count_reads_the_admin_group(admin):
     a, stub = admin
@@ -349,13 +351,13 @@ def test_groups_of_returns_names(admin):
     assert a.groups_of("u@example.com") == ["admin", "pm"]
 
 
-# ---- 전송 계층 실패 (Cognito가 거부한 것이 아니라 요청이 도달조차 못한 경우) ----
+# ---- transport-layer failures (the request never even arrived, rather than Cognito rejecting it) ----
 
 def test_transport_failure_is_wrapped_as_cognito_error(admin):
-    # EndpointConnectionError 등 BotoCoreError는 ClientError가 아니라서 원래
-    # _call의 except 절을 그냥 통과해버린다 — 라우트가 한 번도 본 적 없는
-    # 예외 타입으로 그대로 새 나가면 처리되지 않은 500이 된다. Stubber는
-    # ClientError만 만들 수 있으므로 클라이언트 메서드를 직접 갈아 끼운다.
+    # BotoCoreError such as EndpointConnectionError is not a ClientError, so it used to pass
+    # straight through _call's except clause — leaking out as an exception type the route
+    # has never seen, it becomes an unhandled 500. Stubber can only produce ClientError,
+    # so the client method is swapped out directly.
     a, stub = admin
 
     def _boom(**kwargs):
@@ -367,15 +369,15 @@ def test_transport_failure_is_wrapped_as_cognito_error(admin):
     assert exc.value.code == "EndpointConnectionError"
 
 
-# ---- 셀프서비스: 자기 비밀번호 변경 ----
+# ---- self-service: changing one's own password ----
 #
-# routes/account.py의 테스트는 가짜 클라이언트를 쓰므로 "우리가 무슨 kwargs를
-# 넘기는가"만 본다. 그 kwargs가 실제 Cognito API 모양과 맞는지는 Stubber만
-# 검증할 수 있다 — 파라미터 이름을 하나 틀리면 가짜는 통과하고 실배포가 죽는다.
+# The routes/account.py tests use a fake client, so they only check "what kwargs we
+# pass". Only Stubber can verify that those kwargs match the real Cognito API shape —
+# get one parameter name wrong and the fake passes while the real deployment dies.
 
 @pytest.fixture()
 def idp():
-    """풀에 묶이지 않은 raw 클라이언트. 셀프서비스 호출은 UserPoolId를 안 쓴다."""
+    """A raw client not bound to a pool. Self-service calls do not use UserPoolId."""
     client = boto3.client("cognito-idp", region_name="ap-northeast-2",
                           aws_access_key_id="x",
                           aws_secret_access_key="y")  # nosec B106
@@ -388,9 +390,9 @@ def idp():
 
 def test_change_own_password_sends_the_token_and_both_passwords(idp):
     client, stub = idp
-    # Stubber는 파라미터가 정확히 일치할 때만 응답을 내놓는다 — 이 딕셔너리가
-    # 곧 "우리가 Cognito에 보내는 것 전부"라는 단정이다. UserPoolId나 Username이
-    # 섞여 들어가면 여기서 걸린다(그 API는 그것을 받지 않는다).
+    # Stubber returns a response only on an exact parameter match — this dict is the
+    # assertion that it is "everything we send to Cognito". If UserPoolId or Username
+    # slips in, it gets caught here (that API does not accept them).
     stub.add_response("change_password", {}, {
         "AccessToken": "the.access.token",
         "PreviousPassword": "OldPass1!",
@@ -401,8 +403,8 @@ def test_change_own_password_sends_the_token_and_both_passwords(idp):
 
 
 def test_a_wrong_current_password_keeps_cognitos_code_and_message(idp):
-    # 라우트가 code로 상태를 고르고 message로 두 뜻을 가른다
-    # (routes/account.py의 _not_authorized) — 둘 다 살아서 올라와야 한다.
+    # The route picks the status from code and tells two meanings apart by message
+    # (_not_authorized in routes/account.py) — both must survive on the way up.
     client, stub = idp
     stub.add_client_error(
         "change_password", service_error_code="NotAuthorizedException",
@@ -414,8 +416,8 @@ def test_a_wrong_current_password_keeps_cognitos_code_and_message(idp):
 
 
 def test_a_missing_scope_is_distinguishable_by_message_alone(idp):
-    # 스코프 누락도 같은 코드로 온다. 이 테스트가 지키는 것은 "메시지가
-    # 보존된다"이고, 그것이 없으면 라우트의 재로그인 안내가 불가능해진다.
+    # A missing scope arrives with the same code. What this test protects is "the message
+    # is preserved"; without it, the route cannot show its re-login guidance.
     client, stub = idp
     stub.add_client_error(
         "change_password", service_error_code="NotAuthorizedException",
@@ -427,8 +429,8 @@ def test_a_missing_scope_is_distinguishable_by_message_alone(idp):
 
 
 def test_self_service_transport_failure_is_also_wrapped(idp):
-    # _call과 같은 번역을 써야 한다 — 한쪽만 BotoCoreError를 놓치면 라우트가
-    # 본 적 없는 예외 타입으로 500이 난다.
+    # Must use the same translation as _call — if only one side misses BotoCoreError, the
+    # route gets a 500 with an exception type it has never seen.
     client, _ = idp
 
     def _boom(**kwargs):
@@ -440,7 +442,7 @@ def test_self_service_transport_failure_is_also_wrapped(idp):
     assert exc.value.code == "EndpointConnectionError"
 
 
-# ---- 활성 여부 (소유권 부여가 쓴다) ----
+# ---- enabled status (used by ownership assignment) ----
 
 def test_is_enabled_reads_the_account_through_list_users(admin):
     a, stub = admin
@@ -467,10 +469,11 @@ def test_is_enabled_escapes_the_filter_value(admin):
 
 
 def test_every_cognito_call_is_allowed_by_the_instance_role():
-    # 인스턴스 롤은 Cognito API를 하나씩 허용한다(cognito-idp:*가 아니다). 여기서 부르는
-    # API가 그 목록에 없으면 그 기능만 AccessDenied → 502가 되고, 화면에서는 원인이 보이지
-    # 않는다(실측: 소유권 부여가 AdminGetUser로 502). 목록을 늘리려면 HostingStack을 다시
-    # 배포해야 하고 그 배포는 인스턴스를 교체하므로, 이미 허용된 API로 해결하는 편이 먼저다.
+    # The instance role allows Cognito APIs one by one (not cognito-idp:*). If an API called
+    # here is not on that list, just that feature gets AccessDenied → 502, and the cause is
+    # not visible on screen (observed: ownership assignment returned 502 via AdminGetUser).
+    # Extending the list requires redeploying HostingStack, and that deployment replaces the
+    # instance, so solving it with an already-allowed API comes first.
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
     src = (root / "backend/aipds/auth/cognito.py").read_text(encoding="utf-8")
@@ -482,7 +485,7 @@ def test_every_cognito_call_is_allowed_by_the_instance_role():
     def pascal(name: str) -> str:
         return "".join(part.capitalize() for part in name.split("_"))
 
-    # ChangePassword는 사용자 자신의 access 토큰으로 서명되는 셀프서비스 API라 롤이 필요 없다.
+    # ChangePassword is a self-service API signed with the user's own access token, so it needs no role.
     missing = sorted(pascal(c) for c in called if c != "change_password"
                      and pascal(c) not in allowed)
     assert called, "cognito.py에서 호출을 하나도 찾지 못했다 — 정규식을 확인할 것"

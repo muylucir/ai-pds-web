@@ -1,13 +1,13 @@
-// frontend/lib/manualSearch.ts — 매뉴얼 본문 검색.
+// frontend/lib/manualSearch.ts — manual body search.
 //
-// 서버를 부르지 않는다. 매뉴얼 전체가 이미 클라이언트 번들에 있으므로,
-// 검색은 문자열 매칭이면 충분하다.
+// Does not call the server. The whole manual is already in the client bundle,
+// so string matching is enough for search.
 import type { ManualSection } from "@/content/manual";
 
 /**
- * 한 절의 검색 대상 텍스트. **화면에 보이는 것만** 모은다 —
- * heading id나 mockup id 같은 내부 식별자는 넣지 않는다. 넣으면
- * "workspace"를 검색했을 때 그 단어가 보이지 않는 절이 결과에 뜬다.
+ * Searchable text of one section. Collects **only what is visible on screen** —
+ * internal identifiers like heading ids or mockup ids are left out. Including them would
+ * make a search for "workspace" return sections where that word is not visible.
  */
 export function sectionText(section: ManualSection): string {
   const parts: string[] = [section.title, section.lede];
@@ -43,11 +43,11 @@ export function sectionText(section: ManualSection): string {
 }
 
 /**
- * 질의에 맞는 절만 남긴다. 빈 질의(또는 공백만)는 **전부** 통과시킨다 —
- * 검색창이 비어 있을 때 문서가 사라지지 않게 하는 것이 이 함수의 기본값이다.
+ * Keep only sections matching the query. An empty query (or whitespace only) passes **everything** —
+ * keeping the document from vanishing when the search box is empty is this function's default.
  *
- * 대소문자를 무시한다. 한국어에는 영향이 없고, 영어 매뉴얼에서
- * "prototype"과 "Prototype"이 다른 결과를 내지 않게 한다.
+ * Case-insensitive. It has no effect on Korean, and in the English manual it keeps
+ * "prototype" and "Prototype" from giving different results.
  */
 export function filterSections(
   sections: ManualSection[],

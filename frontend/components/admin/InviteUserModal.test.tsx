@@ -24,13 +24,13 @@ describe("InviteUserModal", () => {
     await userEvent.click(screen.getByRole("button", { name: "초대" }));
 
     expect(await screen.findByText("Tmp!2345678abcd")).toBeInTheDocument();
-    // 목록 갱신은 비밀번호를 보여준 뒤에 알린다.
+    // The list refresh is signaled after the password is shown.
     expect(onInvited).toHaveBeenCalled();
   });
 
-  // InviteUserModal은 onClose를 그대로 TempPasswordPanel에 넘긴다 — 비밀번호를
-  // 화면에서 걷어내는 것은 onClose를 받아 모달 자체를 언마운트하는 부모의 책임이다.
-  // 그 실제 계약을 검증하려면 page.tsx가 하는 대로 부모를 흉내내는 호스트가 필요하다.
+  // InviteUserModal passes onClose straight to TempPasswordPanel — removing the password from the
+  // screen is the responsibility of the parent, which receives onClose and unmounts the modal itself.
+  // To verify that actual contract, we need a host that mimics the parent the way page.tsx does.
   function ModalHost() {
     const [open, setOpen] = useState(true);
     if (!open) return null;
@@ -60,7 +60,7 @@ describe("InviteUserModal", () => {
 
   it("shows the server message when the email already exists", async () => {
     server.use(http.post(`${API_BASE_URL}/admin/users`, () =>
-      // 백엔드가 실제로 보내는 것을 목이 흉내내야 한다 — 문구가 아니라 코드다.
+      // The mock must mimic what the backend actually sends — a code, not a message.
       HttpResponse.json({ detail: "email_exists" }, { status: 409 })));
     render(<InviteUserModal onInvited={() => {}} onClose={() => {}} />);
     await userEvent.type(screen.getByLabelText("이메일"), "dup@example.com");
@@ -90,14 +90,14 @@ describe("InviteUserModal", () => {
     server.use(http.post(`${API_BASE_URL}/admin/users`, () =>
       HttpResponse.json({ detail: "email_invalid" }, { status: 400 })));
     render(<InviteUserModal onInvited={() => {}} onClose={() => {}} />);
-    // 브라우저의 type=email은 통과시키고 서버는 거절하는 주소다.
+    // An address the browser's type=email accepts and the server rejects.
     await userEvent.type(screen.getByLabelText("이메일"), "kim@corp");
     await userEvent.click(screen.getByRole("button", { name: "초대" }));
     expect(await screen.findByText(/이메일 주소 형식이 올바르지 않습니다/)).toBeInTheDocument();
   });
 
   it("never shows [object Object] for a validation error body", async () => {
-    // FastAPI 기본 422의 detail은 에러 객체 배열이다.
+    // The detail of FastAPI's default 422 is an array of error objects.
     server.use(http.post(`${API_BASE_URL}/admin/users`, () =>
       HttpResponse.json({ detail: [{ loc: ["body", "role"], msg: "bad", type: "x" }] },
                         { status: 422 })));

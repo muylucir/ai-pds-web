@@ -8,7 +8,7 @@
 ## Workspace State
 - **Existing Code**: No
 - **Reverse Engineering Needed**: No
-- **Workspace Root**: /home/ec2-user/project/sample-ai-plc/pilot/pilot1
+- **Workspace Root**: /home/ec2-user/project/sample-ai-plc/pilot/ws-m
 
 ## Code Location Rules
 - **Application Code**: Workspace root (NEVER in aiplc-docs/)

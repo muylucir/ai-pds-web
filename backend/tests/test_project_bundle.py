@@ -1,4 +1,4 @@
-# backend/tests/test_project_bundle.py — 프로젝트 번들 포맷.
+# backend/tests/test_project_bundle.py — the project bundle format.
 from __future__ import annotations
 
 import json
@@ -30,7 +30,7 @@ def tp() -> str:
     return project_transcript_prefix(PID)
 
 
-# ---- S3 키 ↔ 번들 경로 ----
+# ---- S3 key ↔ bundle path ----
 
 
 def test_ordinary_keys_land_under_project(tp):
@@ -43,8 +43,8 @@ def test_ordinary_keys_land_under_project(tp):
 
 
 def test_project_manifest_is_not_copied(tp):
-    """같은 사실이 export.json에도 있어야 하므로(임포트가 프로젝트를 만들기 전에
-    읽는다) 두 곳에 두지 않는다."""
+    """The same fact must also be in export.json (the import reads it before creating the
+    project), so it is not kept in two places."""
     assert s3_key_to_bundle_path("project.json", transcript_prefix=tp) is None
 
 
@@ -57,35 +57,35 @@ def test_pending_is_excluded(tp):
 def test_prototype_build_transcript_is_excluded(tp):
     assert s3_key_to_bundle_path("prototypes/demo/transcript/abc/main/00000001.jsonl",
                                  transcript_prefix=tp) is None
-    # 빌드 대화 복원 레코드(proto/history.py)는 트랜스크립트와 조인할 때만 뜻이 있다.
+    # Build chat restore records (proto/history.py) only mean something when joined with the transcript.
     assert s3_key_to_bundle_path("prototypes/demo/history/inputs/ab.json",
                                  transcript_prefix=tp) is None
     assert s3_key_to_bundle_path("prototypes/demo/history/answers/toolu_1.json",
                                  transcript_prefix=tp) is None
-    # 설문은 남는다 — 같은 prototypes/{slug}/ prefix를 공유하지만 옮기는 대상이다.
+    # Surveys remain — they share the same prototypes/{slug}/ prefix, but they are something to move.
     assert s3_key_to_bundle_path("prototypes/demo/survey/questionnaire.json",
                                  transcript_prefix=tp) == \
         "project/prototypes/demo/survey/questionnaire.json"
 
 
 def test_instance_only_prototype_keys_are_excluded_both_ways(tp):
-    """소스 세대·접근 토큰·호스팅 의도는 이 인스턴스의 사정이다(proto/store.py).
-    내보내지 않고, 손으로 만든 번들이 실어 와도 들여오지 않는다 — 들여오면 받는 쪽에서
-    프로토타입이 저절로 뜨거나 보낸 사람이 아는 토큰으로 프리뷰가 열린다."""
+    """Source generations, access tokens, and hosting intent are this instance's own business (proto/store.py).
+    They are not exported, and even if a hand-made bundle carries them, they are not imported — if they were,
+    the prototype would come up on its own on the receiving side, or the preview would open with a token the sender knows."""
     for key in ("prototypes/demo/source/current.json",
                 "prototypes/demo/source/000003/prototype/app.js",
                 "prototypes/demo/access-token",
                 "prototypes/demo/hosting.json"):
         assert s3_key_to_bundle_path(key, transcript_prefix=tp) is None, key
         assert bundle_path_to_s3_key("project/" + key, transcript_prefix=tp) is None, key
-    # 같은 트리의 다른 것은 그대로 옮긴다.
+    # Everything else in the same tree is moved as is.
     assert s3_key_to_bundle_path("prototypes/demo/session.json", transcript_prefix=tp) == \
         "project/prototypes/demo/session.json"
 
 
 def test_keys_the_export_leaves_out_are_not_imported_either(tp):
-    """손으로 만든 번들이 빌드 트랜스크립트·질문 대기열을 실으면, 받는 쪽 에이전트가 보낸
-    사람이 쓴 대화를 자기 것으로 알고 재개한다. 내보내기가 빼는 키는 들여오지도 않는다."""
+    """If a hand-made bundle carries build transcripts or the question queue, the receiving agent takes the
+    conversation the sender wrote as its own and resumes it. Keys that export drops are not imported either."""
     for key in ("prototypes/demo/transcript/main/00000001.jsonl",
                 "prototypes/demo/history/0001.json",
                 "pending/interrupt.json",
@@ -100,7 +100,7 @@ def test_discovery_transcript_loses_its_session_segment(tp):
     path = s3_key_to_bundle_path(key, transcript_prefix=tp)
 
     assert path == "project/discovery/transcript/main/00000007.jsonl"
-    # 세션 uuid가 경로에 남아 있으면 다른 id로 임포트할 때 그대로 따라간다.
+    # If the session uuid stays in the path, it carries over as is when importing under a different id.
     assert tp.split("/")[2] not in path
 
 
@@ -112,16 +112,16 @@ def test_subagent_transcript_keeps_its_subpath(tp):
 
 
 def test_transcript_of_another_session_is_dropped(tp):
-    """활성 세션이 아닌 트랜스크립트는 히스토리가 읽지 않는 죽은 데이터이고,
-    세션 세그먼트를 벗기면 배치 번호가 활성 세션과 충돌해 한쪽이 덮어써진다."""
+    """Transcripts that are not of the active session are dead data the history does not read, and
+    stripping the session segment would make the batch numbers collide with the active session so one side gets overwritten."""
     other = "discovery/transcript/11111111-2222-3333-4444-555555555555/main/00000001.jsonl"
 
     assert s3_key_to_bundle_path(other, transcript_prefix=tp) is None
 
 
 def test_round_trip_restores_the_target_projects_session(tp):
-    """다른 프로젝트로 임포트하면 트랜스크립트가 **그 프로젝트의** 세션 prefix로
-    돌아가야 한다. 이 왕복이 깨지면 대화가 에러 없이 사라진다."""
+    """When importing into a different project, the transcripts must go back under **that project's**
+    session prefix. If this round trip breaks, the conversation disappears without an error."""
     target = project_transcript_prefix("some-other-project")
     assert target != tp
 
@@ -146,7 +146,7 @@ def test_paths_outside_project_dir_are_not_s3_keys(tp):
     assert bundle_path_to_s3_key("project/", transcript_prefix=tp) is None
 
 
-# ---- 프로토타입 소스 경로 ----
+# ---- Prototype source paths ----
 
 
 def test_proto_source_path_round_trip():
@@ -157,14 +157,14 @@ def test_proto_source_path_round_trip():
 
 
 def test_parse_proto_source_rejects_other_shapes():
-    for path in ("prototypes/demo/app.js",          # source/ 가 없다
-                 "prototypes/demo/source/",         # 파일이 없다
-                 "prototypes//source/app.js",       # slug 가 없다
+    for path in ("prototypes/demo/app.js",          # no source/
+                 "prototypes/demo/source/",         # no file
+                 "prototypes//source/app.js",       # no slug
                  "project/aiplc-docs/audit.md"):
         assert parse_proto_source_path(path) is None
 
 
-# ---- 제외 규칙 ----
+# ---- Exclusion rules ----
 
 
 def test_source_excluded_covers_build_artifacts_and_bookkeeping():
@@ -178,14 +178,14 @@ def test_source_excluded_covers_build_artifacts_and_bookkeeping():
 
 
 def test_source_excluded_never_ships_the_access_token():
-    """`.proto-token`은 프리뷰를 막는 **자격증명**이다. 위 테스트와 따로 두는
-    이유는 실패의 의미가 다르기 때문이다 — 저쪽이 깨지면 zip이 커지고, 이쪽이
-    깨지면 자격증명이 샌다."""
+    """`.proto-token` is a **credential** that guards the preview. It is kept separate from the test
+    above because the failure means something different — if that one breaks, the zip gets bigger; if
+    this one breaks, a credential leaks."""
     assert source_excluded(TOKEN_FILENAME)
     assert source_excluded(f"prototype/{TOKEN_FILENAME}")
 
 
-# ---- zip 엔트리 안전성 ----
+# ---- zip entry safety ----
 
 
 def test_safe_entry_name_accepts_ordinary_paths():
@@ -195,13 +195,13 @@ def test_safe_entry_name_accepts_ordinary_paths():
 
 
 @pytest.mark.parametrize("name", [
-    "/etc/passwd",                      # 절대경로
-    "../../etc/passwd",                 # 상위 탈출
-    "project/../../../etc/passwd",      # 중간 탈출
-    "..\\..\\windows\\system32",        # 백슬래시 탈출
-    "C:/Windows/system.ini",            # 드라이브 문자
-    "project/",                         # 디렉터리 엔트리
-    "",                                 # 빈 이름
+    "/etc/passwd",                      # absolute path
+    "../../etc/passwd",                 # escape upward
+    "project/../../../etc/passwd",      # escape midway
+    "..\\..\\windows\\system32",        # backslash escape
+    "C:/Windows/system.ini",            # drive letter
+    "project/",                         # directory entry
+    "",                                 # empty name
 ])
 def test_safe_entry_name_rejects_traversal(name):
     with pytest.raises(BundleError):
@@ -209,12 +209,12 @@ def test_safe_entry_name_rejects_traversal(name):
 
 
 def test_entry_cap_is_a_real_number():
-    """상한이 없으면 압축 폭탄이 먼저 죽이는 것은 프로세스가 아니라 인스턴스의
-    디스크이고, 그 디스크에는 다른 프로젝트의 빌드 트리가 함께 산다."""
+    """Without a cap, what a zip bomb kills first is not the process but the instance's
+    disk, and that disk also hosts other projects' build trees."""
     assert MAX_ENTRIES > 0
 
 
-# ---- 매니페스트 ----
+# ---- Manifest ----
 
 
 def _manifest(**over) -> bytes:
@@ -240,7 +240,7 @@ def test_manifest_round_trip():
 
 
 def test_manifest_documents_what_was_left_out():
-    """받는 쪽이 '왜 이건 안 왔지'를 파일 하나로 답할 수 있어야 한다."""
+    """The receiving side must be able to answer 'why didn't this come along' from a single file."""
     excluded = parse_manifest(_manifest())["excluded"]
 
     assert "node_modules" in excluded
@@ -251,7 +251,7 @@ def test_manifest_documents_what_was_left_out():
 
 
 def test_wrong_kind_is_reported_before_version():
-    """엉뚱한 zip을 떨어뜨린 사용자에게 '지원하지 않는 버전'은 고칠 수 없는 말이다."""
+    """For a user who dropped in the wrong zip, 'unsupported version' is a message they cannot act on."""
     with pytest.raises(BundleError, match="not an AI-PDS project bundle"):
         parse_manifest(_manifest(kind="aipds-artifacts", schema_version=999))
 

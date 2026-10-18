@@ -10,7 +10,7 @@ describe("TempPasswordPanel", () => {
                               onClose={() => {}} />);
     expect(screen.getByText("Ab3!xyz789QWERty")).toBeInTheDocument();
     expect(screen.getByText("new@example.com")).toBeInTheDocument();
-    // 서버가 저장하지 않으므로 이 경고가 없으면 관리자가 값을 잃는다.
+    // The server doesn't store it, so without this warning the admin loses the value.
     expect(screen.getByText(/다시 볼 수 없습니다/)).toBeInTheDocument();
   });
 
@@ -30,9 +30,9 @@ describe("TempPasswordPanel", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  // TempPasswordPanel 자체는 보이는 동안 항상 비밀번호를 렌더링한다 — "다시 볼 수
-  // 없다"는 계약은 부모가 onClose에서 패널을 걷어내는 것으로 지켜진다. 그 계약을
-  // 실제로 검증하려면 onClose에서 언마운트하는 최소한의 호스트가 필요하다.
+  // TempPasswordPanel itself always renders the password while visible — the "다시 볼 수
+  // 없다" (can't be viewed again) contract is kept by the parent removing the panel in onClose. To actually
+  // verify that contract we need a minimal host that unmounts on onClose.
   function ClosableHost({ password }: { password: string }) {
     const [open, setOpen] = useState(true);
     if (!open) return null;

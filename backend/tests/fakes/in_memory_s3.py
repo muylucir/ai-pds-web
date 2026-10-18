@@ -11,8 +11,8 @@ class FakeS3Store:
 
     def __init__(self) -> None:
         self._raw: dict[str, bytes] = {}
-        # 키 -> 쓰기 순번. `list_with_times`의 "시각"이다. 벽시계를 쓰지 않는
-        # 이유: 같은 테스트 안의 연속 쓰기가 같은 밀리초에 들어가 순서가 흔들린다.
+        # key -> write sequence number. This is the "time" in `list_with_times`. Why not the
+        # wall clock: consecutive writes in one test land in the same millisecond and the order wobbles.
         self._seq: dict[str, int] = {}
         self._tick = 0
 

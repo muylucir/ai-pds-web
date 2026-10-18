@@ -86,7 +86,7 @@ def test_persona_question_must_be_a_choice():
 
 
 def test_questionnaire_allows_one_persona_question_at_most():
-    # 응답을 나누는 기준이 둘이면 어느 쪽으로 나눌지 정할 수 없다.
+    # With two criteria for splitting responses, there is no way to decide which one to split by.
     pq = dict(type="choice", options=["A", "기타"], persona=True)
     with pytest.raises(ValidationError):
         Questionnaire(token=TOK, status="open", slug="s", project_id="p",

@@ -1,17 +1,17 @@
-// frontend/components/canvas/ContextMeter.tsx — 입력창 위의 "컨텍스트 N% 남음".
+// frontend/components/canvas/ContextMeter.tsx — the "컨텍스트 N% 남음" (N% context left) above the input.
 //
-// 에이전트의 컨텍스트 창이 **자동 압축까지** 얼마나 남았는지 보인다(값의 정의는
-// lib/api/types.ts의 ContextUsage). 압축은 사용자에게 보이지 않는 사건이지만 결과는
-// 보인다 — 에이전트가 앞에서 합의한 세부를 잊기 시작한다. 그 전에 "새로 시작할지"를
-// 판단할 근거를 주는 것이 이 표시의 목적이다.
+// Shows how much of the agent's context window is left **until auto-compaction** (the value is
+// defined by ContextUsage in lib/api/types.ts). Compaction is an event the user cannot see, but its
+// result is visible — the agent starts forgetting details agreed on earlier. The purpose of this
+// indicator is to give grounds for deciding "whether to start fresh" before that happens.
 //
-// 워크스페이스와 빌드 패널이 같은 컴포넌트를 쓴다(ChatInput이 그린다). 값이 없으면
-// 아무것도 그리지 않는다 — 첫 턴 전, 또는 새 대화가 시작될 참일 때다.
+// The workspace and the build panel use the same component (ChatInput draws it). With no value it
+// draws nothing — before the first turn, or when a new conversation is about to start.
 "use client";
 import type { ContextUsage } from "@/lib/api/types";
 import { useT } from "@/lib/i18n/provider";
 
-/** 285000 → "285K", 1000000 → "1M". 표시용이라 정밀도는 필요 없다. */
+/** 285000 → "285K", 1000000 → "1M". For display only, so precision is not needed. */
 function compact(tokens: number): string {
   if (tokens >= 1_000_000) return `${+(tokens / 1_000_000).toFixed(1)}M`;
   if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
@@ -21,7 +21,7 @@ function compact(tokens: number): string {
 export function ContextMeter({ usage }: { usage: ContextUsage }) {
   const t = useT();
   const left = usage.left_pct;
-  // 25% 아래부터 눈에 띄게 — 압축 직전의 한두 턴은 되돌릴 수 없는 결정을 할 시점이다.
+  // Make it prominent below 25% — the one or two turns just before compaction are when irreversible decisions get made.
   const tone = left < 10 ? "text-red-600" : left < 25 ? "text-amber-600" : "text-slate-400";
   const detail = t("chat.contextDetail")
     .replace("{used}", compact(usage.total_tokens))

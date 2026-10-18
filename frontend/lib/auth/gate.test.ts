@@ -10,8 +10,8 @@ const ADMIN = jwt({ "cognito:groups": ["admin"] });
 const PM = jwt({ "cognito:groups": ["pm"] });
 
 describe("public paths need no cookie", () => {
-  // 설문 응답자와 프로토타입 평가자는 계정이 없다. 이 목록이 백엔드의
-  // PUBLIC_PATHS와 대응해야 한다.
+  // Survey respondents and prototype evaluators have no account. This list must correspond
+  // to the backend's PUBLIC_PATHS.
   it.each([
     "/login",
     "/survey/abc123",
@@ -20,15 +20,15 @@ describe("public paths need no cookie", () => {
     "/api/auth/login",
     "/api/auth/callback",
     "/api/auth/logout",
-    // 매뉴얼은 계정을 받기 전에 읽혀야 한다 — 초대 메일의 링크가 이 도구를
-    // 처음 만나는 경로다.
+    // The manual must be readable before getting an account — the link in the invite email is
+    // how people first encounter this tool.
     "/manual",
   ])("allows %s", (path) => {
     expect(gateDecision(path, undefined)).toEqual({ kind: "allow" });
   });
 
-  // /manual은 정확 일치다. 하위 경로를 접두사로 열어 두면 나중에 생기는
-  // /manual/* 가 판정을 물려받는다.
+  // /manual is an exact match. Opening subpaths by prefix would let any /manual/* added
+  // later inherit the decision.
   it("does not open sub-paths under /manual", () => {
     expect(gateDecision("/manual/secret", undefined))
       .toEqual({ kind: "login", next: "/manual/secret" });
@@ -62,8 +62,8 @@ describe("with a cookie", () => {
   });
 
   it("bounces pm away from /admin", () => {
-    // UX 게이트다 — pm에게 열리지 않을 화면을 보여주지 않는다. 실제 방어선은
-    // 백엔드의 require_admin(403)이다.
+    // This is a UX gate — it does not show a pm a screen that would not open for them. The real
+    // line of defense is the backend's require_admin (403).
     expect(gateDecision("/admin/users", PM)).toEqual({ kind: "home" });
   });
 
@@ -73,13 +73,14 @@ describe("with a cookie", () => {
   });
 
   it("bounces an undecodable cookie away from /admin", () => {
-    // 쿠키가 깨졌으면 역할을 알 수 없다 — 관리 화면을 열지 않는다.
+    // If the cookie is broken, the role is unknown — do not open the admin screen.
     expect(gateDecision("/admin/users", "garbage")).toEqual({ kind: "home" });
   });
 
   it("still allows non-admin pages with an undecodable cookie", () => {
-    // 쿠키가 있으면 로그인 루프에 빠뜨리지 않는다 — 백엔드가 401을 주면 그때
-    // 프론트가 /login으로 보낸다. 여기서 되돌리면 만료 직후 무한 왕복이 된다.
+    // If there is a cookie, do not drop the user into a sign-in loop — when the backend returns
+    // 401, the frontend sends them to /login then. Bouncing here would cause an endless round
+    // trip right after expiry.
     expect(gateDecision("/projects/p1/dashboard", "garbage"))
       .toEqual({ kind: "allow" });
   });
@@ -87,8 +88,8 @@ describe("with a cookie", () => {
 
 describe("api proxy paths", () => {
   it("passes /api/* through — the proxy and backend judge those", () => {
-    // 미들웨어가 /api를 리다이렉트하면 fetch가 HTML 로그인 페이지를 받아
-    // JSON 파싱 오류로 깨진다. 401을 그대로 흘려보내는 것이 맞다.
+    // If the middleware redirected /api, fetch would receive the HTML sign-in page and break
+    // with a JSON parse error. Passing the 401 straight through is correct.
     expect(gateDecision("/api/projects", undefined)).toEqual({ kind: "allow" });
   });
 });

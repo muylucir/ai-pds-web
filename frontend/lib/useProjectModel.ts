@@ -1,17 +1,19 @@
 // frontend/lib/useProjectModel.ts
 //
-// 헤더 배지가 보여줄 두 값: 이 프로젝트가 도는 모델의 표시 이름과, 생성물
-// 언어. 프로젝트마다 다르므로 화면에 없으면 지금 무엇으로 도는지 알 수 없다.
+// The two values the header badge shows: the display name of the model this project runs on,
+// and the output language. They vary by project, so without them on screen you cannot tell
+// what it is running on right now.
 //
-// 모델을 두 번 부르는 이유: 프로젝트는 model_id만 알고(매니페스트에 복사된 값),
-// 사람이 읽는 이름은 카탈로그에만 있다. 대조 실패는 정상 경로다 — 관리자가
-// 카탈로그에서 지운 모델로 도는 프로젝트가 있을 수 있고, 그때는 id 원문을
-// 보여준다(값을 복사해 두는 설계의 결과가 화면에서도 정직해야 한다).
+// Why two calls for the model: the project knows only model_id (the value copied into the
+// manifest), and the human-readable name exists only in the catalog. A failed lookup is a
+// normal path — a project may run on a model the admin deleted from the catalog, and then the
+// raw id is shown (the consequence of the copy-the-value design should be honest on screen too).
 //
-// 언어는 그런 대조가 필요 없다 — 값 자체가 표시할 정보다.
+// The language needs no such lookup — the value itself is the information to display.
 //
-// 권한(access)도 여기서 같이 읽는다. 프로젝트 화면이 이미 이 훅으로 프로젝트를 한 번
-// 읽으므로, 쓰기 버튼을 그릴지 정하는 값을 위해 한 번 더 부르지 않는다.
+// The permission (access) is read here too. The project screen already reads the project once
+// through this hook, so we do not make another call for the value that decides whether to draw
+// write buttons.
 "use client";
 import { useEffect, useState } from "react";
 
@@ -23,14 +25,14 @@ import { useT } from "@/lib/i18n/provider";
 import { modelLabel } from "@/lib/modelLabel";
 
 export interface ProjectMeta {
-  /** 모델 표시 이름. null = 미지정(서버 env 기본값) 또는 조회 실패. */
+  /** Model display name. null = unspecified (server env default) or lookup failed. */
   modelLabel: string | null;
-  /** 생성물 언어. null = 구 백엔드 응답(필드 없음) 또는 조회 실패. */
+  /** Output language. null = old backend response (no field) or lookup failed. */
   language: Locale | null;
-  /** 이 요청자의 권한. null = 아직 모름(조회 전·실패). */
+  /** This requester's permission. null = not known yet (before lookup, or failed). */
   access: ProjectAccess | null;
-  /** 열람 멤버다 — 화면이 쓰기 버튼을 그리지 않는다. 모르는 동안은 false다: 서버가 마지막
-   *  게이트이고, 응답을 기다리는 동안 소유자의 버튼이 깜빡이며 사라지는 쪽이 더 나쁘다. */
+  /** A viewing member — the screen does not draw write buttons. false while unknown: the server
+   *  is the final gate, and the owner's buttons flickering away while awaiting the response is worse. */
   readOnly: boolean;
 }
 
@@ -46,7 +48,7 @@ export function useProjectMeta(projectId: string | undefined): ProjectMeta {
       return;
     }
     let alive = true;
-    // 실패는 배지가 빠지는 것으로 끝난다 — 화면의 다른 것을 막지 않는다.
+    // A failure just means the badge is missing — it does not block anything else on screen.
     void Promise.all([
       getProject(projectId),
       listModels().catch(() => []),
@@ -55,14 +57,14 @@ export function useProjectMeta(projectId: string | undefined): ProjectMeta {
         if (!alive) return;
         const id = project.model_id;
         setMeta({
-          // 미지정: 서버가 env 기본값으로 도는데 그 값을 프론트는 알 수 없다.
-          // effort는 프로젝트가 복사해 둔 값이다 — 카탈로그의 현재 값과 다를 수 있고,
-          // 실제로 도는 것은 이쪽이다.
+          // Unspecified: the server runs on its env default, which the frontend cannot know.
+          // effort is the value the project copied — it may differ from the catalog's current
+          // value, and this is the one actually in effect.
           modelLabel: id
             ? modelLabel(models.find((m) => m.model_id === id)?.name ?? id, project.effort, t)
             : null,
-          // isLocale로 좁힌다 — 구 백엔드는 이 필드가 없고, 손상된 응답이
-          // 임의 문자열을 실어 올 수도 있다. 그때는 배지를 그리지 않는다.
+          // Narrow with isLocale — old backends lack this field, and a corrupted response
+          // could carry an arbitrary string. In that case no badge is drawn.
           language: isLocale(project.language) ? project.language : null,
           access: project.access ?? null,
           readOnly: !canWrite(project.access),

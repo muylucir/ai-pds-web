@@ -1,15 +1,15 @@
 "use client";
-// frontend/components/manual/chrome.tsx — 목업이 공유하는 껍데기 조각들.
+// frontend/components/manual/chrome.tsx — shell pieces shared by the mockups.
 //
-// 목업의 규율: **문구를 새로 쓰지 않는다.** 버튼·라벨·상태는 전부 useT()로
-// 앱 딕셔너리에서 읽는다. 그래서 (1) 매뉴얼 그림이 실제 화면과 어긋나지 않고,
-// (2) 번역할 것이 없고(두 언어가 이미 있다), (3) UI 문구가 바뀌면 매뉴얼도
-// 같이 바뀐다.
+// The mockup discipline: **write no new copy.** Buttons, labels, and states are all read from the
+// app dictionary via useT(). So (1) manual illustrations don't drift from the real screens,
+// (2) there is nothing to translate (both languages already exist), and (3) when UI copy changes, the manual
+// changes with it.
 //
-// 여기 있는 것은 그 조각들의 **모양**만이다 — 새 문장은 없다.
+// What lives here is only the **shape** of those pieces — no new sentences.
 import type { ReactNode } from "react";
 
-/** 목업 전체를 감싸는 브라우저 창 모양. */
+/** Browser-window shape that wraps the whole mockup. */
 export function Frame({ children }: { children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
@@ -23,7 +23,7 @@ export function Frame({ children }: { children: ReactNode }) {
   );
 }
 
-/** 카드·패널 한 칸. */
+/** One card/panel cell. */
 export function Panel({
   children,
   className = "",
@@ -38,7 +38,7 @@ export function Panel({
   );
 }
 
-/** 패널 제목 줄. */
+/** Panel title line. */
 export function PanelTitle({ children }: { children: ReactNode }) {
   return <p className="mb-1.5 text-[10px] font-semibold text-slate-500">{children}</p>;
 }
@@ -52,7 +52,7 @@ const TONE: Record<ButtonTone, string> = {
   quiet: "bg-slate-100 text-slate-500",
 };
 
-/** 목업 안의 버튼. 실제로 눌리지 않는다(그림이다). */
+/** A button inside a mockup. It can't actually be pressed (it's a picture). */
 export function Btn({
   children,
   tone = "ghost",
@@ -87,7 +87,7 @@ export function Badge({ children, tone = "slate" }: { children: ReactNode; tone?
   );
 }
 
-/** 입력창 모양. `value`는 딕셔너리의 placeholder를 그대로 받는다. */
+/** Input-box shape. `value` takes the dictionary's placeholder as-is. */
 export function Field({ label, value }: { label: ReactNode; value: ReactNode }) {
   return (
     <label className="block">
@@ -100,8 +100,8 @@ export function Field({ label, value }: { label: ReactNode; value: ReactNode }) 
 }
 
 /**
- * 실제 문장 대신 쓰는 회색 줄. 목업에 산문을 넣으면 그 산문이 번역 대상이
- * 되고, 화면과 어긋날 여지가 생긴다 — 문단의 **자리**만 보여 준다.
+ * Gray bars used instead of real sentences. Putting prose in a mockup makes that prose a
+ * translation target and leaves room to drift from the screen — show only the **place** of a paragraph.
  */
 export function Lines({ n = 3, className = "" }: { n?: number; className?: string }) {
   return (

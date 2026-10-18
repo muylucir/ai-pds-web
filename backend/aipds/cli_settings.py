@@ -1,20 +1,20 @@
-# backend/aipds/cli_settings.py — 번들 CLI에 넘기는 공통 설정(컨텍스트·턴의 수명).
+# backend/aipds/cli_settings.py — shared settings passed to the bundled CLI (context and turn lifetime).
 #
-# 두 에이전트(Discovery 드라이버, 프로토타입 빌더)가 같은 CLI를 서브프로세스로
-# 띄우므로 두 곳이 같은 값을 쓴다. 그래서 값을 만드는 곳을 여기 하나로 둔다 —
-# 한쪽만 켜지면 같은 프로젝트에서 Discovery는 컴팩션이 늦고 빌드는 이른, 설명할
-# 수 없는 비대칭이 생긴다.
+# Two agents (the Discovery driver and the prototype builder) launch the same CLI as a subprocess,
+# so both use the same values. That is why the values are built in this one place —
+# if only one side were switched on, the same project would get early compaction in Discovery and late
+# compaction in builds, or vice versa, an inexplicable asymmetry.
 #
-# **왜 이 파일이 생겼는가(2026-08-13 실측).** 한국어 프로젝트의 후반 문서가
-# 영어보다 빈약한 원인을 쫓다가 컴팩션을 만났다. 실제 빌드 세션(claude-opus-4-8)이
-# 컨텍스트 **264,040 → 53,375 토큰**으로 요약됐다 — 1M 근처가 아니라 26만에서
-# 잘린다. 그 뒤에 쓰이는 문서는 근거가 아니라 요약에서 나오므로 뒤 스테이지로
-# 갈수록 얇아진다. 한국어는 같은 내용에 토큰을 1.66배 쓰므로 그 지점에 40%
-# 일찍 도달한다.
+# **Why this file exists (observed 2026-08-13).** While chasing why later documents in Korean projects
+# were thinner than in English ones, we ran into compaction. A real build session (claude-opus-4-8)
+# had its context summarized from **264,040 → 53,375 tokens** — it is cut at 260K, not near 1M.
+# Documents written after that come from the summary rather than the evidence, so they get thinner
+# in later stages. Korean uses 1.66x the tokens for the same content, so it reaches that point
+# 40% earlier.
 #
-# 지배 원인은 이것이 아니라 분량 기준의 부재였고(discovery-config/CLAUDE.md의 깊이
-# 기준과 agent/workspace_rules.LANGUAGE_DIRECTIVES의 분량 조항), 여기는
-# **증폭기**를 다룬다. 둘을 같이 고쳐야 후반 문서가 회복된다.
+# The dominant cause was not this but the absence of a length standard (the depth standard in
+# discovery-config/CLAUDE.md and the length clause in agent/workspace_rules.LANGUAGE_DIRECTIVES); this
+# file deals with the **amplifier**. Both must be fixed together for later documents to recover.
 from __future__ import annotations
 
 import logging
@@ -22,98 +22,98 @@ import os
 
 _log = logging.getLogger(__name__)
 
-#: 불리언 env의 해석. routes/proto_public.py의 _TRUTHY와 같은 규율이다.
+#: Interpretation of boolean env values. Same discipline as _TRUTHY in routes/proto_public.py.
 _TRUTHY = {"1", "true", "yes", "on"}
 
-#: 1M 컨텍스트를 켤지. 기본 꺼짐 — 켜는 것이 무료가 아니다(아래 docstring).
+#: Whether to enable 1M context. Off by default — enabling it is not free (docstring below).
 LONG_CONTEXT_ENV = "AIPDS_LONG_CONTEXT"
 
-#: 자동 컴팩션이 발동하는 컨텍스트 크기(토큰). 미설정이면 CLI 기본값.
+#: The context size (tokens) at which auto-compaction triggers. If unset, the CLI default.
 AUTO_COMPACT_WINDOW_ENV = "AIPDS_AUTO_COMPACT_WINDOW"
 
-#: CLI가 받아들이는 범위. 번들 CLI(2.1.231)의 설정 스키마에서 온 값이다
-#: (`autoCompactWindow: int().min(1e5).max(1e6)`). 밖의 값을 넘기면 CLI가
-#: 설정을 거부하는데, 그 거부는 우리 로그에 남지 않으므로 여기서 막는다.
+#: The range the CLI accepts. Taken from the bundled CLI's (2.1.231) settings schema
+#: (`autoCompactWindow: int().min(1e5).max(1e6)`). Passing a value outside it makes the CLI
+#: reject the settings, and that rejection does not show up in our logs, so we block it here.
 _WINDOW_MIN = 100_000
 _WINDOW_MAX = 1_000_000
 
-#: 번들 CLI가 1M 컨텍스트 별칭으로 받는 접미사. `opus[1m]`/`sonnet[1m]` 형태가
-#: CLI의 정식 별칭 목록에 있고, 내부적으로 `context-1m-2025-08-07` 베타를 켠다.
+#: The suffix the bundled CLI accepts as the 1M context alias. The `opus[1m]`/`sonnet[1m]` forms are
+#: in the CLI's official alias list and internally turn on the `context-1m-2025-08-07` beta.
 _LONG_CONTEXT_SUFFIX = "[1m]"
 
 
 def long_context_enabled() -> bool:
-    """1M 컨텍스트를 켤지. **기본은 꺼짐.**
+    """Whether to enable 1M context. **Off by default.**
 
-    기본을 꺼 두는 이유는 켜는 것이 상위호환이 아니기 때문이다:
+    It is off by default because enabling it is not a strict upgrade:
 
-    - **턴당 비용**이 는다. 컴팩션이 늦어지면 전체 이력이 매 턴 재전송된다.
-      캐시 리드가 0.1배라도 90만 토큰이면 턴마다 그만큼이고, 한국어는 같은
-      대화에 1.66배 토큰을 쓴다.
-    - **품질이 되레 나빠질 수 있다.** 초장문 컨텍스트는 주의가 희석되므로, 잘
-      압축된 26만 토큰 세션이 90만 토큰 세션보다 좋은 문서를 낼 수 있다.
-    - Bedrock의 200k 초과 과금은 계정마다 다르다(퍼스트파티와 요금 체계가
-      별개다).
+    - **Per-turn cost** goes up. When compaction is delayed, the full history is resent every turn.
+      Even with cache reads at 0.1x, 900K tokens means that much every turn, and Korean uses
+      1.66x the tokens for the same conversation.
+    - **Quality can actually get worse.** Very long contexts dilute attention, so a well-compressed
+      260K-token session can produce better documents than a 900K-token session.
+    - Bedrock's billing above 200k differs per account (its pricing is separate from
+      first-party).
 
-    즉 이것은 배포가 비용을 보고 정하는 스위치다. 프로젝트별 필드로 두지 않은
-    것도 같은 이유다 — 워크숍 참가자가 프로젝트를 만들며 판단할 성질의 값이
-    아니고, 프로젝트별로 갈리면 매니페스트·복원·레지스트리·생성 화면까지
-    필드가 번져 나간다.
+    In other words, this is a switch the deployment sets after looking at cost. That is also why it is
+    not a per-project field — it is not the kind of value a workshop participant should judge while
+    creating a project, and if it varied per project the field would spread into the manifest, restore,
+    registry, and even the creation screen.
     """
     return os.environ.get(LONG_CONTEXT_ENV, "").strip().lower() in _TRUTHY
 
 
 def cli_model_id(model_id: str | None) -> str | None:
-    """CLI의 `ANTHROPIC_MODEL`에 넣을 값. 꺼져 있으면 인자 그대로.
+    """The value to put in the CLI's `ANTHROPIC_MODEL`. When off, the argument as is.
 
-    **`[1m]`은 CLI의 별칭 형식이고 Bedrock 모델 id가 아니다.** 그래서 이 조립을
-    `app.project_model`에 넣으면 안 된다: 그 함수는 설문 생성 경로에서
-    `BedrockModel(model_id=...)`로도 흐르고(app.questionnaire_agent_factory),
-    거기에 대괄호가 들어가면 Bedrock이 ValidationException을 던진다 — 즉 설문
-    생성만 조용히 깨진다. 붙이는 자리는 CLI를 띄우는 두 팩토리
-    (`driver_factory`, `proto_session_factory`)뿐이다.
+    **`[1m]` is the CLI's alias format, not a Bedrock model id.** So this assembly must not go
+    into `app.project_model`: that function also flows into `BedrockModel(model_id=...)` on the
+    questionnaire generation path (app.questionnaire_agent_factory), and brackets there make
+    Bedrock throw a ValidationException — i.e., only questionnaire generation breaks silently. The
+    only places to attach it are the two factories that launch the CLI
+    (`driver_factory`, `proto_session_factory`).
 
-    Bedrock에서 이 접미사가 필요한 이유: 번들 CLI(2.1.231)의 모델 테이블에서
-    `claude-opus-5`는 `context:{window:1e6, native_1m:true, supports_1m_beta:true}`
-    지만 **`native_1m_3p`가 없다.** 그 판정 함수는 서드파티 프로바이더에 대해
-    `case "bedrock": return native_1m_3p?.bedrock === true`이므로, Bedrock에서
-    네이티브 1M을 받는 것은 `native_1m_3p:{bedrock,vertex,foundry}`를 가진
-    `claude-sonnet-5`뿐이다. Opus는 베타를 켜야 하고 `[1m]`이 그것을 켠다.
+    Why this suffix is needed on Bedrock: in the bundled CLI's (2.1.231) model table,
+    `claude-opus-5` is `context:{window:1e6, native_1m:true, supports_1m_beta:true}`
+    but **has no `native_1m_3p`.** That check function does, for third-party providers,
+    `case "bedrock": return native_1m_3p?.bedrock === true`, so on Bedrock the only model that
+    gets native 1M is `claude-sonnet-5`, which has `native_1m_3p:{bedrock,vertex,foundry}`.
+    Opus needs the beta turned on, and `[1m]` turns it on.
 
-    모델이 None이면 None을 돌려준다 — 드라이버는 None을 받으면 ANTHROPIC_MODEL을
-    넣지 않고 CLI 기본값으로 간다(app.project_model의 마지막 칸). 없는 값에
-    접미사를 붙이면 그 폴백이 깨진다.
+    If the model is None, returns None — when the driver receives None it does not set
+    ANTHROPIC_MODEL and falls back to the CLI default (the last slot in app.project_model).
+    Attaching a suffix to a missing value would break that fallback.
 
-    **어느 모델이 이 접미사를 받는지 실측했다(2026-08-13, ap-northeast-2).**
-    이 스위치는 배포 단위로 켜지므로 카탈로그의 모든 모델이 받아야 한다:
-    model_catalog의 시드 4종(`claude-opus-5`, `claude-opus-4-6-v1`,
-    `claude-sonnet-5`, `claude-sonnet-4-6`)과 배포 폴백(`claude-opus-4-8`)
-    전부 `[1m]`을 붙인 채로 정상 응답했다.
+    **Which models accept this suffix was measured (2026-08-13, ap-northeast-2).**
+    This switch is turned on per deployment, so every model in the catalog must accept it:
+    model_catalog's 4 seeds (`claude-opus-5`, `claude-opus-4-6-v1`,
+    `claude-sonnet-5`, `claude-sonnet-4-6`) and the deployment fallback (`claude-opus-4-8`)
+    all responded normally with `[1m]` attached.
 
-    한 번 헷갈렸던 것을 남긴다: `global.anthropic.claude-opus-4-6[1m]`은 400
-    "provided model identifier is invalid"인데 **접미사 탓이 아니다** —
-    `-v1` 없는 그 id 자체가 무효다(접미사 없이 불러도 같은 400). 카탈로그 시드가
-    `-v1`을 쓰는 이유가 그것이고, `...-4-6-v1[1m]`은 정상이다. 새 모델을
-    카탈로그에 등록할 때는 접미사를 붙인 형태로 한 번 불러 보는 것이 맞다.
+    Recording something that once caused confusion: `global.anthropic.claude-opus-4-6[1m]` gives 400
+    "provided model identifier is invalid", but **not because of the suffix** —
+    that id without `-v1` is itself invalid (calling it without the suffix gives the same 400). That is why
+    the catalog seed uses `-v1`, and `...-4-6-v1[1m]` works. When registering a new model in the
+    catalog, it is right to call it once in the suffixed form.
     """
     if model_id is None or not long_context_enabled():
         return model_id
     if model_id.endswith(_LONG_CONTEXT_SUFFIX):
-        # 멱등: env 기본값에 이미 접미사가 박혀 있는 배포도 있을 수 있다.
+        # Idempotent: some deployments may already have the suffix baked into the env default.
         return model_id
     return f"{model_id}{_LONG_CONTEXT_SUFFIX}"
 
 
 def auto_compact_window() -> str | None:
-    """`CLAUDE_CODE_AUTO_COMPACT_WINDOW`에 넣을 값. 미설정이면 None.
+    """The value to put in `CLAUDE_CODE_AUTO_COMPACT_WINDOW`. None if unset.
 
-    문자열을 돌려주는 이유는 목적지가 서브프로세스 env이기 때문이다 — 호출부가
-    다시 str()하지 않게 한다.
+    It returns a string because the destination is the subprocess env — so callers do not
+    have to str() it again.
 
-    범위를 벗어난 값이나 숫자가 아닌 값은 **경고 후 None**이다. 그대로 넘기면
-    CLI가 설정을 거부하고, 그 거부는 우리 로그에 남지 않아서 "왜 여전히 26만에서
-    컴팩션하는가"를 추적할 수 없다. 여기서 경고를 남기면 오타가 배포 로그에
-    보인다.
+    Out-of-range or non-numeric values are **warned about and become None**. Passing them through
+    makes the CLI reject the settings, and that rejection does not show up in our logs, so "why is it
+    still compacting at 260K" could not be traced. Logging a warning here makes typos visible in the
+    deployment log.
     """
     raw = os.environ.get(AUTO_COMPACT_WINDOW_ENV, "").strip()
     if not raw:
@@ -131,29 +131,29 @@ def auto_compact_window() -> str | None:
     return str(value)
 
 
-#: 번들 CLI의 백그라운드 실행 스위치. 켜면 서브에이전트(`Agent`)와 Bash의
-#: `run_in_background`, 자동 백그라운드 전환이 모두 꺼지고 일이 그것을 시킨 턴 안에서 끝난다.
+#: The bundled CLI's background execution switch. When on, subagents (`Agent`), Bash's
+#: `run_in_background`, and automatic background switching are all turned off, and work finishes within the turn that requested it.
 DISABLE_BACKGROUND_TASKS_ENV = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
 
 
 def cli_context_env() -> dict[str, str]:
-    """CLI 서브프로세스에 더할 공통 env.
+    """Shared env to add to the CLI subprocess.
 
-    두 클라이언트 팩토리가 이것을 `env`에 병합한다. dict를 돌려주는 이유는
-    "미설정이면 키를 아예 넣지 않는다"를 호출부가 매번 다시 쓰지 않게 하는
-    것이다 — 빈 문자열을 넣으면 CLI가 그것을 값으로 읽는다.
+    Both client factories merge this into `env`. It returns a dict so callers do not have to
+    rewrite "if unset, do not add the key at all" every time — putting in an empty string makes
+    the CLI read it as a value.
 
-    **백그라운드 실행은 항상 끈다.** 두 화면 모두 턴 하나를 따라가다 `done`에서
-    스트림을 닫으므로(frontend/lib/api/sse.ts의 openStream), 턴이 그 턴이 시킨 일보다 먼저 끝나면
-    남은 진행은 화면에 닿지 못하고 사용자의 다음 메시지는 아직 워크스페이스를
-    고치고 있는 에이전트들 위로 간다. 병렬은 그대로다 — 한 메시지의 여러 `Agent`
-    호출은 포그라운드에서도 동시에 돈다.
+    **Background execution is always off.** Both screens follow a single turn and close the stream
+    on `done` (openStream in frontend/lib/api/sse.ts), so if a turn ends before the work it requested,
+    the remaining progress never reaches the screen and the user's next message lands on top of
+    agents that are still modifying the workspace. Parallelism is unchanged — multiple `Agent`
+    calls in one message run concurrently even in the foreground.
 
-    도구 입력을 보는 게이트가 아니라 엔진 스위치인 이유: 번들 CLI(2.1.292)의 `Agent`는
-    `run_in_background`를 **생략하면 백그라운드**이고, 그 기본값은 SDK 버전과 함께
-    바뀐다(pyproject의 하한만 둔 의존성). 이 스위치는 키가 없을 때도, 모델이
-    `true`를 넘길 때도 포그라운드로 돌린다(실측, SDK 0.2.164). 스위치 이름이 번들에서
-    사라지는 드리프트는 tests/test_sdk_available.py가 잡는다.
+    Why an engine switch rather than a gate that inspects tool input: in the bundled CLI (2.1.292), `Agent`
+    **runs in the background when `run_in_background` is omitted**, and that default changes with the SDK
+    version (a dependency with only a lower bound in pyproject). This switch runs it in the foreground both
+    when the key is absent and when the model passes `true` (observed, SDK 0.2.164). Drift where the switch
+    name disappears from the bundle is caught by tests/test_sdk_available.py.
     """
     env = {DISABLE_BACKGROUND_TASKS_ENV: "1"}
     window = auto_compact_window()
@@ -162,33 +162,34 @@ def cli_context_env() -> dict[str, str]:
     return env
 
 
-#: 번들 CLI 디버그 로그 스위치. 기본 꺼짐 — 진단할 때만 켠다.
+#: The bundled CLI's debug log switch. Off by default — turn it on only when diagnosing.
 CLI_DEBUG_ENV = "AIPDS_SDK_CLI_DEBUG"
 
 
 def cli_debug_args(config_dir: str) -> dict[str, str | None]:
-    """번들 CLI에 붙일 `--debug-file` 인자. 꺼져 있으면 빈 dict. SDK `extra_args`로 간다.
+    """The `--debug-file` argument to attach to the bundled CLI. Empty dict when off. Goes to the SDK's `extra_args`.
 
-    **어느 프로세스의 로그인가.** 우리가 쓰는 것은 Claude Agent SDK(Python)지만, SDK는
-    에이전트 루프를 Python 안에서 돌리지 않는다 — 패키지에 든 Claude Code CLI
-    바이너리(`claude_agent_sdk/_bundled/claude`)를 서브프로세스로 띄우고 stdio로
-    대화한다. 모델 호출과 도구 실행(Bash 포함)은 그 프로세스가 하고, `extra_args`는 SDK가
-    그 프로세스를 띄울 때 붙이는 명령줄 인자다. 이 로그는 그 프로세스의 것이다.
+    **Whose log is it.** We use the Claude Agent SDK (Python), but the SDK does not run the
+    agent loop inside Python — it launches the Claude Code CLI binary shipped in the package
+    (`claude_agent_sdk/_bundled/claude`) as a subprocess and talks to it over stdio. Model calls and
+    tool execution (including Bash) happen in that process, and `extra_args` are the command-line
+    arguments the SDK attaches when launching it. This log belongs to that process.
 
-    **왜 있는가(2026-10-07).** 실행 래퍼 도입 이후 새 프로젝트의 첫 턴마다 처음 두 개의
-    복잡한 Bash가 실행 **전**에 정확히 12초씩 멈춘다(ws-g·ws-c·
-    ws-e·test3). 운영 인스턴스에서 샌드박스·트램펄린·SDK 훅까지
-    맞춘 재현은 모두 빨랐다. 번들 CLI는 그 구간을 디버그 로그에 따로 남긴다
+    **Why it exists (2026-10-07).** Since the execution wrapper was introduced, on the first turn of
+    every new project the first two complex Bash calls stall for exactly 12 seconds each **before**
+    running (ws-g, ws-c, ws-e, test3). Reproductions on the production instance that matched the
+    sandbox, trampoline, and even SDK hooks were all fast. The bundled CLI records that interval
+    separately in the debug log
     (`[Stall] tool_dispatch_start … permissionDecisionMs=`, `Slow PreToolUse hooks`,
-    `Slow permission decision`) — 실제 세션의 그 로그가 원인을 가른다.
+    `Slow permission decision`) — that log from a real session pins down the cause.
 
-    **기본 꺼짐인 이유.** 디버그 로그는 장황하고 세션 내용 일부를 담는다. 진단할 때 켜고,
-    끝나면 끄고 파일을 지운다.
+    **Why it is off by default.** Debug logs are verbose and contain parts of the session content. Turn it on
+    when diagnosing, then turn it off and delete the file when done.
 
-    **위치는 이 프로젝트의 config dir이다.** 실행 래퍼의 샌드박스에서 쓸 수 있는 곳이
-    그 트리(BindPaths)이고, 프로젝트를 지우면 함께 지워진다. 파일 이름에 시각을 넣는
-    이유: 연결마다 CLI 프로세스가 새로 뜨고, 같은 파일에 덧쓰면 어느 세션의 줄인지
-    가를 수 없다.
+    **The location is this project's config dir.** That tree (BindPaths) is where the execution wrapper's
+    sandbox can write, and it is deleted along with the project. The file name includes a timestamp
+    because a new CLI process starts for each connection, and appending to the same file would make it
+    impossible to tell which session a line belongs to.
     """
     if os.environ.get(CLI_DEBUG_ENV, "").strip().lower() not in _TRUTHY:
         return {}

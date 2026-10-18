@@ -17,55 +17,56 @@ export type PrototypeState = "none" | "building" | "built" | "running" | "failed
 
 export interface PrototypeInfo {
   slug: string;
-  /** 카드 제목으로 쓰는, 명세 본문에서 읽은 제품명. 명세가 이름을 밝히지
-   *  않으면 null이고, 그때 카드는 `slug`로 되돌아간다.
+  /** The product name read from the spec body, used as the card title. null if the spec does
+   *  not state a name, in which case the card falls back to `slug`.
    *
-   *  **`slug`와 별개인 이유.** slug는 식별자다(빌드·리셋·설문이 그 값으로
-   *  키된다). 그리고 단일 프로토타입 레이아웃의 slug는 상수 `"prototype"`이라
-   *  (백엔드 proto/layout.py의 `SINGLE_ID`) 제목으로 쓸 수 없다 — 구별할 대상이
-   *  하나뿐이어서 슬러그가 될 것이 없다는 그 판단의 결과이고, 그래서 이름은
-   *  본문에서만 온다. */
+   *  **Why it is separate from `slug`.** The slug is an identifier (builds, resets, and surveys
+   *  are keyed by that value). And the slug of the single-prototype layout is the constant
+   *  `"prototype"` (`SINGLE_ID` in backend proto/layout.py), so it cannot serve as a title — it
+   *  follows from the judgment that with only one thing to distinguish there is nothing to make
+   *  a slug from, and so the name comes only from the body. */
   name: string | null;
   spec_path: string;
   state: PrototypeState;
   port: number | null;
-  /** 지금 빌드 세션이 열려 있는가.
+  /** Whether a build session is open right now.
    *
-   *  **`state`와 별개인 이유.** 서버가 떠 있는지와 세션이 열려 있는지는 서로
-   *  독립적인 사실이다. 열거형 하나가 둘을 실어 나르던 동안 세션이 호스팅을
-   *  가려서, 실행 중인 프로토타입을 수정하기 시작하면 카드가 `building`이 되어
-   *  프리뷰·공유 링크가 사라졌다 — 서버는 계속 떠 있었으므로 화면만 거짓말을
-   *  했다. 이제 `state`는 산출물과 서버만 말하고, 세션은 이 값이 말한다.
+   *  **Why it is separate from `state`.** Whether the server is up and whether a session is
+   *  open are independent facts. While a single enum carried both, the session masked hosting:
+   *  starting to modify a running prototype turned the card into `building`, and the preview
+   *  and share link disappeared — the server stayed up, so only the screen was lying. Now
+   *  `state` speaks only of the artifact and the server, and this value speaks of the session.
    *
-   *  카드의 빌드 버튼이 이 값으로 갈린다: 열려 있으면 "세션 열기", 아니면
-   *  상태에 맞는 "수정하기"/"이어서 하기". */
+   *  The card's build button branches on this value: if open, "세션 열기" (open session);
+   *  otherwise "수정하기" (modify) / "이어서 하기" (continue) depending on the state. */
   session_open: boolean;
-  /** 떠 있는 서버가 소스보다 오래됐는가 — 즉 프리뷰와 참가자 링크가 **이전
-   *  버전**을 보여주고 있는가.
+  /** Whether the running server is older than the source — that is, whether the preview and
+   *  participant link are showing **a previous version**.
    *
-   *  **`session_open`으로 대신할 수 없다.** 세션이 닫히는 순간 그 신호는
-   *  사라지는데, 정작 그때가 사용자가 "수정이 반영됐다"고 오해하기 가장 쉬운
-   *  시점이다. 서버가 소스를 읽은 시각(`HostInfo.built_at`)과 빌드 트리의 최신
-   *  소스 mtime을 서버가 비교해 내려보낸다.
+   *  **`session_open` cannot stand in for it.** That signal disappears the moment the session
+   *  closes, yet that is exactly when the user is most likely to wrongly assume "the change
+   *  was applied". The server compares the time it read the source (`HostInfo.built_at`) with
+   *  the latest source mtime of the build tree and sends the result down.
    *
-   *  `running`이 아니면 항상 false다 — 낡을 프리뷰가 없다. */
+   *  Always false unless `running` — there is no preview to go stale. */
   preview_stale: boolean;
-  /** 토큰이 들어 있는 접근 경로(`/api/proto/t/{token}`). 호스팅 중이 아니면 null.
+  /** The access path containing the token (`/api/proto/t/{token}`). null if not hosting.
    *
-   *  **서버가 만들어 내려보낸다** — 프론트가 pid/slug로 조립하지 않는다. 토큰은
-   *  클라이언트 상태가 아니고, 조립하려면 토큰 자체를 별도 필드로 받아야 하므로
-   *  링크가 아닌 곳에도 존재하게 된다. 상대 경로이므로 밖으로 공유할 때는
-   *  `absoluteShareUrl`로 절대화한다. */
+   *  **The server builds it and sends it down** — the frontend does not assemble it from
+   *  pid/slug. The token is not client state, and assembling it would require receiving the
+   *  token itself as a separate field, so it would exist in places other than the link. It is a
+   *  relative path, so when sharing externally it is made absolute with `absoluteShareUrl`. */
   access_url: string | null;
   /** Survey answers that a reset would destroy — shown in its confirmation. */
   response_count: number;
-  /** 지금 응답을 받을 수 있는 설문이 있는가.
+  /** Whether there is a survey that can take responses right now.
    *
-   *  **`response_count > 0`과 다른 질문이다.** 설문이 없을 때도 0이고 설문이
-   *  있는데 응답이 아직 없을 때도 0이라, 이 필드 없이는 카드가 두 상태를 구별할
-   *  수 없다 — 실측 test2222에서 프로토타입 3개 중 1개에만 설문이 있었는데
-   *  화면에 그 사실이 없었다. 서버가 설문 트리를 이미 조회하는 그 한 번에서
-   *  함께 나온다(backend survey/store.py의 `survey_summary`). */
+   *  **It is a different question from `response_count > 0`.** That is 0 when there is no
+   *  survey and also 0 when there is a survey with no responses yet, so without this field the
+   *  card cannot tell the two states apart — in the measurement on ws-n, only 1 of 3
+   *  prototypes had a survey, and the screen did not show that fact. It comes out of the same
+   *  single pass in which the server already queries the survey tree (`survey_summary` in
+   *  backend survey/store.py). */
   has_survey: boolean;
 }
 
@@ -75,7 +76,7 @@ export type HostState = "installing" | "building" | "running" | "failed" | "stop
 export interface HostStatus {
   state: HostState;
   port: number | null;
-  /** PrototypeInfo.access_url과 같은 값 — 아직 발급되지 않았으면 null. */
+  /** Same value as PrototypeInfo.access_url — null if not yet issued. */
   access_url: string | null;
   log_tail: string;
 }
@@ -184,26 +185,27 @@ export async function getHost(pid: string, slug: string): Promise<HostStatus | n
   }
 }
 
-/** 서버가 준 상대 접근 경로(`access_url`)를 **앱 밖으로 공유할 수 있는 절대
- *  URL**로.
+/** Turns the relative access path the server gave (`access_url`) into **an absolute URL that
+ *  can be shared outside the app**.
  *
- *  상대 경로를 그대로 복사할 수 없는 이유: 배포에서 access_url은 `/api/proto/t/…`
- *  이고, 그것을 채팅에 붙이면 받는 사람에게는 아무 의미가 없다.
- *  `new URL(..., origin)`을 쓰는 것은 로컬 개발처럼 값이 **이미 절대 URL**일 때
- *  origin을 덧붙여 "http://localhost:3000http://localhost:8000/..."을 만들지 않기
- *  위해서다 — base는 상대 경로일 때만 적용된다. (구 prototypeShareUrl에서 그대로
- *  가져온 판단이고, 그 경우를 고정한 테스트도 남아 있다.)
+ *  Why the relative path cannot be copied as is: in deployment, access_url is
+ *  `/api/proto/t/…`, and pasting that into a chat means nothing to the recipient.
+ *  `new URL(..., origin)` is used so that when the value is **already an absolute URL**, as in
+ *  local development, the origin is not prepended to make
+ *  "http://localhost:3000http://localhost:8000/..." — base applies only to relative paths.
+ *  (This judgment was carried over as is from the old prototypeShareUrl, and the test that pins
+ *  that case remains.)
  *
- *  URL을 조립하지 않고 서버 값을 절대화만 하는 것이 이 함수의 전부다: 경로 모양과
- *  토큰은 백엔드가 소유한다(routes/proto_public.py의 access_url_path). */
+ *  Absolutizing the server value without assembling a URL is all this function does: the path
+ *  shape and the token are owned by the backend (access_url_path in routes/proto_public.py). */
 export function absoluteShareUrl(accessUrl: string,
                                  origin: string = globalThis.location?.origin ?? ""): string {
   return new URL(accessUrl, origin).toString();
 }
 
-//: 첫 턴의 센티널. 서버가 이 값을 session.first_prompt()로 치환한다
-//: (backend routes/prototypes.py의 _FIRST_TURN_SENTINEL) — 양쪽이 같은 값이어야
-//: 하므로 호출부가 리터럴을 쓰지 않게 여기서 이름을 준다.
+//: The first-turn sentinel. The server substitutes this value with session.first_prompt()
+//: (_FIRST_TURN_SENTINEL in backend routes/prototypes.py) — both sides must have the same
+//: value, so it is named here so that callers do not use the literal.
 export const FIRST_TURN_SENTINEL = "__first__";
 
 // Opens the prototype build stream for one turn: POST the text (starts the turn
@@ -213,9 +215,9 @@ export const FIRST_TURN_SENTINEL = "__first__";
 // maxHeaderSize and came back as HTTP 431 (lib/api/sse.ts's openViaHandle
 // documents the measurement).
 //
-// 자동 개시(`__first__` 센티넬)도 같은 길로 간다 — 턴 id를 받아야 끊겼을 때 같은
-// 턴에 다시 붙을 수 있다. 서버가 센티넬을 session.first_prompt()로 바꾼다
-// (backend routes/prototypes.py의 _opening_text).
+// The auto opening (the `__first__` sentinel) takes the same path too — it needs to receive the
+// turn id to reattach to the same turn after a drop. The server replaces the sentinel with
+// session.first_prompt() (_opening_text in backend routes/prototypes.py).
 export function streamPrototypeEvents(
   pid: string,
   slug: string,
@@ -231,7 +233,7 @@ export function streamPrototypeEvents(
   );
 }
 
-/** 빌드 턴 하나를 `after` 뒤부터 본다 — 다시 붙기(끊김, 새로고침)와 재생에 쓴다. */
+/** Watch one build turn from after `after` — used for reattaching (drop, refresh) and replay. */
 export function watchBuildTurn(
   pid: string,
   slug: string,
@@ -248,21 +250,23 @@ export interface BuildTurnSummary {
   turn_id: string;
   state: "running" | "done" | "error" | "interrupted";
   last_seq: number;
-  /** 사용자가 보낸 말. 자동 개시 턴은 null. */
+  /** What the user sent. null for the auto opening turn. */
   input: string | null;
 }
 
-/** 지난 빌드 대화(트랜스크립트)와, 그 뒤를 이어 재생할 열린 세션의 턴들.
+/** The past build conversation (transcript), and the open session's turns to replay after it.
  *
- *  `items`는 열린 세션의 첫 턴 **앞**에서 끊겨 있다 — 그 뒤는 `turns`를 턴 로그로
- *  재생해 채운다(완료 카드와 진행 중인 질문 폼이 그 경로에만 있다). 둘을 한 응답으로
- *  받으므로 사이에 시작된 턴이 두 번 보이거나 빠지지 않는다(backend
- *  routes/prototypes.get_history). 세션이 없으면 `turns`가 빈 배열이다. */
+ *  `items` is cut off **before** the open session's first turn — what follows is filled by
+ *  replaying `turns` from the turn log (the completion card and an in-progress question form
+ *  exist only on that path). Both come in one response, so a turn started in between is never
+ *  shown twice or missed (backend routes/prototypes.get_history). Without a session, `turns` is
+ *  an empty array. */
 export interface BuildHistory {
   items: HistoryItem[];
   turns: BuildTurnSummary[];
-  /** 마지막 턴의 컨텍스트 사용량. 다음 대화가 새 세션(개선)이면 null이다 — 닫힌
-   *  세션의 값은 그 대화에 대해 틀린 값이다(backend proto/history.load_context). */
+  /** The last turn's context usage. null if the next conversation is a new session (improvement)
+   *  — a closed session's value is wrong for that conversation (backend
+   *  proto/history.load_context). */
   context?: ContextUsage | null;
 }
 
@@ -270,8 +274,8 @@ export async function getBuildHistory(pid: string, slug: string): Promise<BuildH
   return request<BuildHistory>(sessionPath(pid, slug, "/history"));
 }
 
-/** 열린 빌드 세션과 그 턴들. 세션이 없으면 null. 빌드 화면이 다시 열릴 때 이것으로
- *  대화를 처음부터 재생하고 도는 턴에 붙는다. */
+/** The open build session and its turns. null if there is no session. When the build screen
+ *  reopens, it uses this to replay the conversation from the start and attach to a running turn. */
 export async function getBuildSession(
   pid: string, slug: string,
 ): Promise<{ status: string; turns: BuildTurnSummary[] } | null> {

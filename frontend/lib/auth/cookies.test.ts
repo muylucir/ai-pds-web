@@ -5,7 +5,7 @@ import {
 } from "./cookies";
 
 afterEach(() => {
-  // 다른 테스트 파일로 상태가 새지 않도록 매번 복원한다.
+  // Restore every time so state does not leak into other test files.
   vi.unstubAllEnvs();
 });
 
@@ -13,9 +13,9 @@ describe("sessionCookieOptions", () => {
   it("returns httpOnly, sameSite=lax, path=/, and the given maxAge", () => {
     const opts = sessionCookieOptions(3600);
     expect(opts.httpOnly).toBe(true);
-    // strict가 아닌 이유: Hosted UI에서 돌아오는 top-level 리다이렉트에 쿠키가
-    // 실려야 한다. strict면 콜백 직후 요청에서 쿠키가 빠져 로그인이 무한
-    // 루프한다 — 이 값이 바뀌면 여기서 잡혀야 한다.
+    // Why not strict: the cookie must be sent on the top-level redirect returning from the Hosted UI.
+    // With strict, the cookie is dropped from the request right after the callback and login loops
+    // forever — if this value changes, it must be caught here.
     expect(opts.sameSite).toBe("lax");
     expect(opts.path).toBe("/");
     expect(opts.maxAge).toBe(3600);
@@ -41,7 +41,7 @@ describe("transientCookieOptions", () => {
   });
 
   it("uses a short lifetime suitable for a login round-trip", () => {
-    // PKCE verifier / state / next: 로그인 왕복(최대 10분)만 살아 있으면 된다.
+    // PKCE verifier / state / next: they only need to live for the login round trip (at most 10 minutes).
     expect(transientCookieOptions().maxAge).toBe(600);
   });
 });
@@ -54,8 +54,8 @@ describe("clearedCookieOptions", () => {
 
 describe("cookie name constants", () => {
   it("have the exact expected string values", () => {
-    // route handler·미들웨어·프록시가 모두 같은 문자열을 참조한다 — 오타 하나가
-    // 세션을 조용히 깨뜨린다.
+    // The route handlers, middleware, and proxy all reference the same strings — a single typo
+    // quietly breaks the session.
     expect(ACCESS_COOKIE).toBe("aipds_access");
     expect(ID_COOKIE).toBe("aipds_id");
     expect(REFRESH_COOKIE).toBe("aipds_refresh");

@@ -1,9 +1,9 @@
 "use client";
-// frontend/components/manual/ManualBlocks.tsx — 콘텐츠 블록 → 화면.
+// frontend/components/manual/ManualBlocks.tsx — content blocks → screen.
 //
-// 산문은 기존 components/Markdown.tsx가 렌더한다(react-markdown + gfm).
-// 여기 있는 것은 **마크다운으로 표현할 수 없는 것들**뿐이다: 앵커가 붙는
-// 소제목, 강조 상자, 복사 버튼이 달린 명령어, 화면 목업, 흐름 도식.
+// Prose is rendered by the existing components/Markdown.tsx (react-markdown + gfm).
+// What is here is only **what markdown cannot express**: subheadings with anchors,
+// callout boxes, commands with copy buttons, screen mockups, and flow diagrams.
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "@/components/Markdown";
@@ -21,10 +21,10 @@ const CALLOUT: Record<string, { box: string; label: keyof Dict }> = {
 };
 
 /**
- * 명령어 블록. 복사가 실패하면 성공한 척하지 않는다 —
- * `navigator.clipboard`는 비-HTTPS 오리진이나 권한 거부에서 없거나 던지고,
- * 그때 "복사됨"을 띄우면 사용자가 빈 클립보드를 붙여넣는다
- * (components/prototypes/PrototypeCard.tsx의 CopyLinkButton과 같은 규율).
+ * Command block. If copying fails it does not pretend to succeed —
+ * `navigator.clipboard` is missing or throws on non-HTTPS origins or when permission is denied,
+ * and showing "복사됨" (Copied) then would have the user paste an empty clipboard
+ * (same discipline as CopyLinkButton in components/prototypes/PrototypeCard.tsx).
  */
 function Command({ lines, caption }: { lines: string[]; caption?: string }) {
   const t = useT();
@@ -70,11 +70,11 @@ function Command({ lines, caption }: { lines: string[]; caption?: string }) {
 }
 
 /**
- * 화면 목업.
+ * Screen mockup.
  *
- * 실촬 스크린샷을 넣게 되면 이 <figure> 안의 <Mockup/>을 <img>로 바꾸면 된다 —
- * 블록 타입(`{kind:"mockup"}`)과 캡션은 그대로 쓸 수 있고, 콘텐츠 파일은
- * 손대지 않아도 된다.
+ * If real screenshots are added, replace the <Mockup/> inside this <figure> with an <img> —
+ * the block type (`{kind:"mockup"}`) and the caption can be used as is, and the content files
+ * need not be touched.
  */
 function MockupFigure({ id, caption }: { id: keyof typeof MOCKUPS; caption: string }) {
   const t = useT();
@@ -98,7 +98,7 @@ function Block({ block }: { block: ManualBlock }) {
       return <Markdown text={block.md} className="my-3" />;
 
     case "heading":
-      // scroll-mt: sticky 헤더(h-16)에 제목이 가려지지 않게 앵커 여백을 준다.
+      // scroll-mt: gives the anchor a margin so the title is not hidden under the sticky header (h-16).
       return (
         <h3
           id={block.id}
@@ -165,7 +165,7 @@ function Block({ block }: { block: ManualBlock }) {
       );
 
     default: {
-      // 블록 종류를 추가하고 여기를 잊으면 컴파일이 실패한다.
+      // Adding a block kind and forgetting this place makes compilation fail.
       const exhaustive: never = block;
       void exhaustive;
       return null;

@@ -35,16 +35,16 @@ def test_bundled_binary_is_executable():
 
 
 def test_the_class_names_our_translators_match_on_still_exist():
-    """번역부는 `isinstance`가 아니라 `type(msg).__name__`으로 분기한다 —
-    tests/fakes가 실제 SDK 없이 동작하게 하려는 의도적 선택이다. 그 선택의 값은
-    **이름이 바뀌면 조용히 죽는다**는 것이고, 실제로 죽은 적이 있다:
-    `mirror_error` 경고 분기는 `"SystemMessage"`만 봤지만 파서는 언제나
-    `MirrorErrorMessage`를 만들어, 한 번도 참이 되지 않았다(그 가짜가 __name__을
-    덮어써서 테스트는 초록불이었다).
+    """The translator branches on `type(msg).__name__`, not `isinstance` —
+    a deliberate choice so that tests/fakes work without the real SDK. The price of that choice
+    is that **it dies silently when a name changes**, and it actually has died:
+    the `mirror_error` warning branch looked only at `"SystemMessage"`, but the parser always
+    produced `MirrorErrorMessage`, so it was never once true (that fake overwrote __name__,
+    so the tests were green).
 
-    같은 함정이 프로토타입 빌드에서 반복됐다: `Task*` 네 종류도 `SystemMessage`의
-    서브클래스라서 번역부를 그냥 통과했고, 그것이 빌드 화면이 멈춘 듯 보인 원인이다.
-    이 테스트가 그 드리프트를 잡는 그물이다 — SDK를 올린 뒤 반드시 돌린다.
+    The same trap recurred in prototype builds: the four `Task*` kinds are also subclasses of
+    `SystemMessage`, so they passed straight through the translator, and that is why the build
+    screen looked frozen. This test is the net that catches that drift — always run it after upgrading the SDK.
     """
     import claude_agent_sdk as sdk
 
@@ -59,11 +59,11 @@ def test_the_class_names_our_translators_match_on_still_exist():
 
 
 def test_the_fields_our_subagent_rows_read_still_exist():
-    """서브에이전트 행이 읽는 필드들. 하나라도 사라지면 행이 라벨 없이 뜨거나
-    영원히 닫히지 않는다(backend/aipds/agent_activity.py).
+    """Fields the subagent rows read. If even one disappears, rows show up without labels or
+    never close (backend/aipds/agent_activity.py).
 
-    `parent_tool_use_id`가 특히 중요하다 — 그 값이 `Task*`의 `tool_use_id`와
-    조인되는 것이 행에 파일 경로를 붙일 수 있는 유일한 근거다.
+    `parent_tool_use_id` is especially important — its join with `Task*`'s `tool_use_id`
+    is the only basis for attaching file paths to rows.
     """
     import claude_agent_sdk as sdk
 
@@ -81,9 +81,9 @@ def test_the_fields_our_subagent_rows_read_still_exist():
 
 
 def test_forwarding_subagent_text_stays_an_option_we_can_choose():
-    """서브에이전트 텍스트는 **끄고 간다**(서사 셋이 말풍선에 섞이면 진행 표시를
-    대화 흐름 밖으로 옮긴 이유가 없어진다). 그 결정이 유효하려면 옵션이 존재하고
-    기본값이 False여야 한다 — 기본값이 뒤집히면 우리가 고르지 않은 동작이 들어온다.
+    """Subagent text **stays off** (if three narratives mix into the bubble, the reason for moving
+    the progress display out of the conversation flow is gone). For that decision to hold, the option must
+    exist and default to False — if the default flips, behavior we did not choose comes in.
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -93,12 +93,12 @@ def test_forwarding_subagent_text_stays_an_option_we_can_choose():
 
 
 def test_the_bundled_cli_still_knows_the_background_switch():
-    """`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`(cli_settings.cli_context_env)는 번들 CLI가
-    읽는 env다. 이름이 바뀌거나 사라지면 CLI는 모르는 env를 조용히 무시하고, 서브에이전트는
-    다시 기본값인 백그라운드로 돈다 — 화면이 진행을 놓치는 것으로만 드러난다.
+    """`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` (cli_settings.cli_context_env) is an env the bundled CLI
+    reads. If the name changes or disappears, the CLI silently ignores the unknown env, and subagents run
+    in the background again by default — which shows up only as the screen missing progress.
 
-    바이너리 안의 문자열을 본다. 동작 자체(키가 없어도, `true`여도 포그라운드)는 실측으로
-    확인했고(SDK 0.2.164), 여기서는 그 스위치가 아직 존재하는지만 지킨다.
+    It looks at the strings inside the binary. The behavior itself (foreground even without the key, and
+    with `true`) was confirmed by measurement (SDK 0.2.164); here we only guard that the switch still exists.
     """
     import mmap
 

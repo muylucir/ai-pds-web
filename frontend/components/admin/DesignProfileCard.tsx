@@ -2,9 +2,9 @@
 import { DESIGN_RAW_PATH, type DesignProfile } from "@/lib/api/design";
 import { useT } from "@/lib/i18n/provider";
 
-//: 견본을 그릴지 판단하는 데만 쓴다(검증은 백엔드 파서 한 곳이다).
-//  UploadDesignModal의 확인 단계가 같은 판단을 해야 하므로 내보낸다 — 두 벌이면
-//  같은 값이 한쪽에서만 색으로 보인다.
+//: Used only to decide whether to draw a swatch (validation lives in one place, the backend parser).
+//  Exported because UploadDesignModal's confirmation step must make the same judgment — with two copies,
+//  the same value would show as a color on only one side.
 export const COLOUR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 export function DesignProfileCard(
@@ -40,9 +40,9 @@ export function DesignProfileCard(
       </div>
 
       <h2 className="mt-5 text-sm font-medium">{t("admin.designTokens")}</h2>
-      {/* 토큰이 없으면 색·서체는 화면에 닿지 않는다. 백엔드가 저장물에서 유도해
-          내려주므로(routes/design.py의 _warnings) 업로드 직후와 다시 열었을 때가
-          같은 말을 한다 — 조용히 지나가던 상태가 이 줄로 보인다. */}
+      {/* Without tokens, colors and typefaces never reach the screen. The backend derives this from the stored data
+          and sends it down (_warnings in routes/design.py), so right after upload and on reopening
+          it says the same thing — a state that used to pass silently is made visible by this line. */}
       {profile.warnings?.includes("no-tokens") && (
         <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
           {t("admin.designNoTokens")}

@@ -6,7 +6,7 @@ import { useT } from "@/lib/i18n/provider";
 import { inviteUser, type InviteResult, type UserRole } from "@/lib/api/adminUsers";
 import { TempPasswordPanel } from "./TempPasswordPanel";
 
-// 신규 가입은 초대로만 가능하다(풀이 self-signup을 막는다). 이 모달이 그 창구다.
+// New sign-ups are possible only by invitation (the pool blocks self-signup). This modal is that entry point.
 export function InviteUserModal({
   onInvited, onClose,
 }: {
@@ -28,7 +28,7 @@ export function InviteUserModal({
     try {
       const invited = await inviteUser(email.trim(), role);
       setResult(invited);
-      // 목록은 곧바로 갱신하되 모달은 닫지 않는다 — 비밀번호를 보여줘야 한다.
+      // Refresh the list right away but keep the modal open — it has to show the password.
       onInvited();
     } catch (err) {
       setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));

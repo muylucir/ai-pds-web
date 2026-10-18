@@ -11,26 +11,30 @@ class QuestionOption(BaseModel):
 class Question(BaseModel):
     number: int
     category: str | None = None
-    #: 옵션 앞의 본문 전체(배경 산문 포함). 화면에 보여주는 값이다.
+    #: The whole body before the options (including background prose). This is the value shown
+    #: on screen.
     text: str
-    #: 그중 **마지막 문단** — 실제로 묻는 문장이다.
+    #: Its **last paragraph** — the sentence that actually asks.
     #:
-    #: 왜 나눠 두는가: 파일은 배경 산문 + 질문을 함께 담는데 AskUserQuestion에는
-    #: 질문 문장만 간다. 답변 되기록이 `text`(~200자)와 도구의 질문(~22자)을
-    #: 비교하면 길이 차이로 유사도가 무너진다 — 2026-08-16 ws-a-v5의
-    #: design-context.md Q4가 그렇게 유실됐다(0.3721). 문단이 하나면 text와 같다.
+    #: Why split them: the file holds background prose + the question together, but only the
+    #: question sentence goes to AskUserQuestion. If the answer write-back compared `text`
+    #: (~200 characters) with the tool's question (~22 characters), the length difference would
+    #: collapse the similarity — that is how Q4 of design-context.md in ws-a-v5 was lost on
+    #: 2026-08-16 (0.3721). With a single paragraph it equals text.
     ask: str = ""
-    #: 카테고리 헤더와 이 문항의 헤더 **사이**에 있던 산문 — "왜 이걸 묻는가".
+    #: The prose that was **between** the category header and this question's header — "why this
+    #: is being asked".
     #:
-    #: `text`와 다른 것: `text`는 문항 헤더 *뒤*의 본문이고, 이건 *앞*의 설명이다.
-    #: 상류의 명확화 질문 템플릿(question-format-guide.md의 "Creating Clarification
-    #: Questions")이 그 자리에 모호성의 근거를 쓴다. 2026-08-17 test-wf에서
-    #: `pain-point-clarification-questions.md` 1,350자 중 ~470자가 이 산문이었고
-    #: 파서가 어디에도 담지 않아 사라졌다.
+    #: How it differs from `text`: `text` is the body *after* the question header, and this is the
+    #: explanation *before* it. The upstream clarification question template ("Creating
+    #: Clarification Questions" in question-format-guide.md) writes the basis for the ambiguity in
+    #: that spot. In test-wf on 2026-08-17, ~470 of the 1,350 characters of
+    #: `pain-point-clarification-questions.md` were this prose, and the parser stored it nowhere,
+    #: so it vanished.
     #:
-    #: `text`에 합치지 않는 이유는 `ask` 주석의 0.3721 사고와 같다 — `text`를 더
-    #: 늘리면 그 비교가 더 나빠진다. 대부분의 파일에서는 빈 문자열이다(문항 헤더
-    #: 바로 뒤에 질문이 오는 형태).
+    #: Why it is not merged into `text`: same as the 0.3721 incident in the `ask` comment — making
+    #: `text` longer makes that comparison worse. In most files it is an empty string (the form
+    #: where the question comes right after the question header).
     context: str = ""
     options: list[QuestionOption]
     answer: str | None = None
@@ -59,7 +63,8 @@ class ProjectState(BaseModel):
     current_stage: str | None = None
     stages: list[StageState]
 
-    #: 화면이 세는 단위. `stages`는 에이전트가 쓴 원래 목록이다(aipds/capabilities.py).
+    #: The unit the screen counts. `stages` is the original list the agent wrote
+    #: (aipds/capabilities.py).
     @computed_field
     @property
     def capabilities(self) -> list[CapabilityState]:
@@ -74,13 +79,14 @@ class AuditEntry(BaseModel):
     context: str | None = None
 
 class HistoryTraceEntry(BaseModel):
-    """라이브 AgentEvent의 status/file_changed에 대응하는 복원용 트레이스 —
-    프론트 AiMessage의 "추론 과정" 아코디언이 소비하는 최소 shape."""
+    """The restore trace corresponding to the live AgentEvent's status/file_changed — the minimal
+    shape consumed by the frontend AiMessage's "추론 과정" (reasoning) accordion."""
     kind: Literal["status", "file_changed"]
     text: str | None = None
     path: str | None = None
-    #: 도구가 **무엇을 했는지**(읽은 파일, 돌린 명령…). 라이브에서는 status 이벤트의
-    #: payload로 오고 여기서는 필드다 — 값을 만드는 곳은 한 곳이다(tool_trace).
+    #: **What the tool did** (the file read, the command run…). Live, it comes as the status
+    #: event's payload, and here it is a field — the value is produced in one place
+    #: (tool_trace).
     detail: str | None = None
 
 
@@ -89,48 +95,50 @@ class HistoryItem(BaseModel):
     text: str | None = None
     card: Literal["questions"] | None = None
     name: str | None = None
-    # role=="ai"일 때 그 턴의 도구 실행 트레이스(없으면 빈 리스트)
+    # When role=="ai", that turn's tool execution trace (empty list if none)
     trace: list[HistoryTraceEntry] = []
-    # 답변 제출 턴의 구조화된 답변({"1": "A", "2": "B,C"}). 사람이 읽는 문구는
-    # 프론트가 UI 언어로 만든다 — 백엔드는 UI 언어를 모른다. JSON이 아닌 자유
-    # 서술 답변은 dict로 펼 수 없어 None이고, 그때는 text만 쓴다.
+    # The structured answers of an answer-submission turn ({"1": "A", "2": "B,C"}). The
+    # human-readable text is built by the frontend in the UI language — the backend does not
+    # know the UI language. A free-form answer that is not JSON cannot be unpacked into a
+    # dict, so it is None, and then only text is used.
     answers: dict[str, str] | None = None
-    # 그 라운드의 질문 payload(QuestionFile). 있으면 프론트가 라이브와 같은
-    # answerSummary()로 문구를 만든다 — 문항 번호·보기 letter·보기 텍스트가
-    # 여기서 나온다. role=="card"에도 실어 "무엇을 물었는지"를 복원한다.
+    # That round's question payload (QuestionFile). If present, the frontend builds the text with
+    # the same answerSummary() as live — question numbers, option letters, and option text come
+    # from here. It is also carried for role=="card" to restore "what was asked".
     questions: dict | None = None
 
 class AgentEvent(BaseModel):
     kind: Literal["message", "questions", "stage", "document",
                   "file_changed", "status", "done", "error",
-                  # Discovery가 프로토타입을 빌드로 넘겼다는 선언
-                  # (agent/reconcile.py가 build-instructions.md 쓰기에서
-                  # 유도한다). 프론트가 이 이벤트로
-                  # "Prototypes 탭으로 가기" 카드를 그린다 — 에이전트가 안내
-                  # 문장을 잊어도 사용자에게 클릭할 곳이 남아야 한다.
+                  # The declaration that Discovery has handed the prototype over to build
+                  # (agent/reconcile.py derives it from the write of build-instructions.md).
+                  # The frontend draws the "Prototypes 탭으로 가기" (go to the Prototypes tab)
+                  # card from this event — even if the agent forgets the guidance sentence,
+                  # the user must still have somewhere to click.
                   "prototype_ready",
-                  # 프로토타입 빌드의 명시적 완료 선언(proto/tools.py). 이
-                  # 이벤트가 세션의 수명을 끝낸다 — proto/session.py가
-                  # 관찰해 status를 "complete"로 바꾼다.
+                  # The explicit completion declaration of a prototype build (proto/tools.py).
+                  # This event ends the session's lifetime — proto/session.py observes it and
+                  # changes status to "complete".
                   "build_complete",
-                  # 서브에이전트 한 명의 진행 상황. `status`와 나뉘어 있는 이유는
-                  # payload가 **어느** 에이전트의 것인지(`task_id`) 말한다는 것뿐이고,
-                  # 그 하나가 병렬 작업을 한 줄이 아니라 여러 행으로 그릴 수 있게
-                  # 한다 — 근거는 agent_activity.py 헤더.
+                  # One sub-agent's progress. The only reason it is separate from `status` is
+                  # that the payload says **which** agent it belongs to (`task_id`), and that one
+                  # thing lets parallel work be drawn as several rows instead of one line — the
+                  # rationale is in the agent_activity.py header.
                   "agent_activity",
-                  # 프로토타입 빌드에서 사용자가 질문에 답했다는 기록. 빌드 턴은
-                  # 질문에서 끊기지 않고 이어지므로(proto/builder.py) 답은 턴 **안의**
-                  # 사건이고, 턴 로그에 남아야 다시 붙은 화면이 질문 카드와 답
-                  # 말풍선을 순서대로 되살린다. payload = {"answers": {...}}.
+                  # A record that the user answered a question in a prototype build. The build
+                  # turn continues past the question without breaking (proto/builder.py), so the
+                  # answer is an event **inside** the turn, and it must be in the turn log for a
+                  # reattached screen to restore the question card and answer bubble in order.
+                  # payload = {"answers": {...}}.
                   "answers",
-                  # 메인 에이전트의 컨텍스트 창 사용량(aipds/context_usage.py).
-                  # payload = {total_tokens, max_tokens, compact_at_tokens, left_pct}.
-                  # 값이 바뀔 때만 흐른다 — 화면의 "남은 %" 표시가 읽는다.
+                  # The main agent's context window usage (aipds/context_usage.py). payload =
+                  # {total_tokens, max_tokens, compact_at_tokens, left_pct}. Flows only when
+                  # the value changes — read by the screen's "남은 %" (% left) display.
                   "context",
-                  # 모델이 지금 쓰고 있는 파일(agent/tool_input_draft.py). 도구 입력이
-                  # 흐르는 동안 무엇을 몇 자째 쓰는지 싣는다. payload = {id, tool,
-                  # state, chars}. 라이브 스트림에만 있다 — 트랜스크립트에도 정본에도
-                  # 남지 않는다.
+                  # The file the model is writing right now (agent/tool_input_draft.py). While
+                  # the tool input streams, it carries what is being written and how many
+                  # characters in. payload = {id, tool, state, chars}. Exists only in the live
+                  # stream — it is left in neither the transcript nor the source of truth.
                   "draft"]
     text: str | None = None
     path: str | None = None

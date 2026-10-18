@@ -4,10 +4,10 @@ import type { Question } from "@/lib/api/types";
 import { InlineMarkdown, Markdown } from "@/components/Markdown";
 import { useT } from "@/lib/i18n/provider";
 
-// "B: 부연 설명" 값을 letter와 note로 분해한다. 첫 ": " 앞 토큰이 알려진
-// non-Other letter일 때만 분해 — "Broker: ..." 같은 값은 null(전체가 Other
-// 자유텍스트). 값 계약: 부연 있는 일반 보기 답변은 "letter: note" 단일 문자열
-// (스펙 2026-07-21-option-annotation-design.md).
+// Splits a "B: 부연 설명" (B: elaboration) value into letter and note. It splits only when the
+// token before the first ": " is a known non-Other letter — a value like "Broker: ..." gives null
+// (the whole thing is Other free text). Value contract: an answer to an ordinary option with an
+// elaboration is the single string "letter: note" (spec 2026-07-21-option-annotation-design.md).
 function splitLetterNote(value: string, letters: string[]): { letter: string; note: string } | null {
   const idx = value.indexOf(": ");
   if (idx === -1) return null;
@@ -15,12 +15,12 @@ function splitLetterNote(value: string, letters: string[]): { letter: string; no
   return letters.includes(head) ? { letter: head, note: value.slice(idx + 2) } : null;
 }
 
-// 선택 컨트롤의 **보이는** 표시. 실제 input은 sr-only(위 label 주석의 포커스
-// 이유)이므로 checkbox/radio 글리프가 화면에 나오지 않는다 — 그래서 복수선택
-// 질문이 단일선택과 완전히 같은 모양으로 보였고(카드 텍스트가 바이트 단위로
-// 동일), 사용자는 두 번째 보기를 눌러 보기 전까지 여러 개를 고를 수 있다는
-// 사실을 알 수 없었다. 모양으로 모드를 말한다: 네모=복수, 동그라미=단일.
-// aria-hidden — 진짜 상태는 sr-only input이 이미 스크린 리더에 알린다.
+// The **visible** indicator of the selection control. The real input is sr-only (for the focus
+// reason in the label comment above), so no checkbox/radio glyph appears on screen — so
+// multi-select questions looked exactly like single-select ones (the card text was
+// byte-for-byte identical), and the user could not tell that several could be chosen until
+// they clicked a second option. The shape states the mode: square = multi, circle = single.
+// aria-hidden — the sr-only input already announces the real state to screen readers.
 function SelectIndicator({ checked, multi }: { checked: boolean; multi: boolean }) {
   return (
     <span
@@ -65,18 +65,18 @@ export function QuestionCard({
     );
   })();
 
-  // 보기가 **하나도 없는** 문항 = 주관식이다. 파싱 실패가 아니다.
+  // A question with **no options at all** = a free-response question. It is not a parse failure.
   //
-  // **실측(2026-08-18, 123456test).** Envision Step 0.2의 Mode A(자유 서술)는
-  // 선택지 없이 묻는 것이 정상 동작이고, 에이전트가 파일에 그렇게 썼다:
+  // **Measured (2026-08-18, ws-k).** Mode A (free description) of Envision Step 0.2
+  // normally asks without choices, and the agent wrote the file that way:
   // "A/B/C 선택지가 없습니다 — 각 항목은 `[Answer]:` 뒤에 문장으로 답해 주십시오."
-  // 파서는 그 파일을 정확히 읽었다(5문항, 질문 텍스트 정상, options=0). 그런데
-  // 이 컴포넌트가 보기 배열만 순회하므로 카드 본문이 **비었다** — 고를 것도 없고
-  // 입력할 칸도 없어서 사용자가 답을 낼 방법이 아예 없었다. 배지는 "하나만
-  // 선택"이라고 말하고 있었다(고를 것이 0개인데).
+  // The parser read that file correctly (5 questions, normal question text, options=0). But
+  // this component only iterates over the options array, so the card body was **empty** —
+  // nothing to choose and no field to type in, so the user had no way at all to answer. The
+  // badge was saying "하나만 선택" (select one) (with 0 things to choose).
   //
-  // 자유 텍스트 자체는 `X) Other` 보기로 이미 지원한다. 빠져 있던 것은 "정상
-  // 파싱된 0-보기 문항"이라는 경우다.
+  // Free text itself is already supported via the `X) Other` option. What was missing was the
+  // case of a "correctly parsed 0-option question".
   const freeform = options.length === 0;
 
   // Value contract stays a plain string (QuestionForm's answers dict/submit
@@ -85,9 +85,9 @@ export function QuestionCard({
   const nonOtherLetters = options.filter((o) => !o.is_other).map((o) => o.letter);
   const isLetterList = (v: string) => v !== "" && v.split(",").filter(Boolean).every((t) => nonOtherLetters.includes(t));
 
-  // single-select에서 "B: 부연" 형태를 분해 (multi에는 부연 없음 — 스펙의
-  // YAGNI 결정: "A,C: 설명"은 파싱 모호성을 만들고, 승인/리뷰형 질문은
-  // single-select로 온다).
+  // In single-select, split the "B: 부연" (B: elaboration) form (multi has no elaboration — the
+  // spec's YAGNI decision: "A,C: 설명" creates parsing ambiguity, and approval/review questions
+  // come as single-select).
   const letterNote = !multi ? splitLetterNote(value, nonOtherLetters) : null;
 
   // Free-text ("Other") mode is tracked EXPLICITLY, not inferred by comparing
@@ -107,7 +107,7 @@ export function QuestionCard({
   // "letter: note" value), or "" in Other mode.
   const selectedLetter =
     !otherActive && !multi ? (nonOtherLetters.includes(value) ? value : (letterNote?.letter ?? "")) : "";
-  // 선택된 보기의 부연(없으면 "").
+  // The selected option's elaboration ("" if none).
   const note = !otherActive ? (letterNote?.note ?? "") : "";
   // Multi-select: the checked letters, or empty while Other free text is in use.
   const multiSelected = new Set(!otherActive && multi && isLetterList(value) ? value.split(",").filter(Boolean) : []);
@@ -131,27 +131,30 @@ export function QuestionCard({
   }
 
   return (
-    // relative 필수: sr-only <legend>(absolute)를 이 fieldset 안에 가둔다.
-    // static이면 legend가 문서 루트 기준으로 배치되어 <html>에 유령
-    // 오버플로를 만들고, 라벨 클릭(=input.focus())마다 문서가 스크롤되며
-    // 헤더가 말려 올라간다(ui-bug.png). 라벨의 relative와 세트.
+    // relative is required: it confines the sr-only <legend> (absolute) within this fieldset.
+    // If static, the legend is positioned relative to the document root, creating a ghost
+    // overflow on <html>, and every label click (=input.focus()) scrolls the document and
+    // rolls the header up (ui-bug.png). Paired with the label's relative.
     <fieldset className="relative bg-white rounded-xl border-2 border-violet-300 shadow-sm shadow-violet-100 overflow-hidden">
       <legend className="sr-only">{t("q.legend")} {question.number}</legend>
-      {/* 문항 앞의 설명 산문 — "왜 이걸 묻는가". 질문 파일에서 온 라운드에만
-          있다(AskUserQuestion 페이로드에는 이 필드가 없다).
+      {/* Explanatory prose before the question — "why this is being asked". Present only in
+          rounds that came from a question file (the AskUserQuestion payload has no such field).
 
-          **질문 문장보다 위에 온다(2026-08-18).** 파일에서 이 산문은 `## Question N`
-          헤딩 **앞**에 있고(그것이 이 필드가 채워지는 유일한 조건이다,
-          parsers/questions.py), 배경을 읽고 질문을 읽는 것이 쓴 사람의 순서다.
-          전에는 제목 아래에 뿌려서 카드가 "질문 → 배경 1,126자 + 표 → 입력칸"으로
-          읽혔다 — 실측(123456test)에서 사용자가 파싱 오류로 오진했다.
+          **It comes above the question sentence (2026-08-18).** In the file, this prose is
+          **before** the `## Question N` heading (that is the only condition under which this
+          field is filled, parsers/questions.py), and reading the background then the question
+          is the writer's order. Previously it was rendered below the title, so the card read as
+          "question → 1,126 characters of background + table → input field" — in a measurement
+          (ws-k) the user misdiagnosed it as a parse error.
 
-          마크다운으로 렌더하는 이유: 표가 들어온다. 실측한 확인 게이트 질문은
-          "**위에 정리한** 페인 포인트 5건이 정확합니까?"이고 그 전제가 5행 표다 —
-          평문으로 뿌리면 답할 수 없는 질문이 된다.
+          Why it is rendered as markdown: tables come in. The measured confirmation gate question
+          is "**위에 정리한** 페인 포인트 5건이 정확합니까?" (are the 5 pain points **summarized
+          above** correct?), and its premise is a 5-row table — rendered as plain text, it
+          becomes a question that cannot be answered.
 
-          배경색으로 질문과 구별한다: 같은 흰 바탕에 이어 두면 어디까지가 배경이고
-          어디부터가 묻는 말인지 경계가 사라진다. */}
+          A background color distinguishes it from the question: placed on the same white
+          background, the boundary between where the background ends and where the question
+          begins disappears. */}
       {question.context?.trim() && (
         <div className="px-6 py-4 bg-slate-50 text-sm text-slate-600 border-b border-slate-100">
           <Markdown text={question.context} />
@@ -166,12 +169,12 @@ export function QuestionCard({
             Q{question.number}. <InlineMarkdown text={question.text} />
           </h2>
           <div className="flex items-center gap-2 mt-1">
-            {/* 두 모드 모두 배지를 단다. 복수선택에만 달면 배지가 **없는**
-                상태를 해석해야 하고, 단일선택 질문만 본 사용자는 그 규약을
-                배울 기회가 없다. */}
-            {/* 주관식에는 선택 배지를 달지 않는다. 고를 것이 0개인데 "하나만
-                선택"이라고 말하면 사용자가 보기가 안 뜬 고장으로 읽는다 —
-                실측에서 실제로 그 화면이었다. */}
+            {/* Both modes get a badge. If only multi-select had one, the state **without** a
+                badge would have to be interpreted, and a user who has only seen single-select
+                questions has no chance to learn that convention. */}
+            {/* Free-response questions get no selection badge. Saying "하나만 선택" (select one)
+                when there are 0 things to choose makes the user read it as a breakage where the
+                options failed to show — in the measurement that was in fact the screen. */}
             <span
               className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${
                 freeform
@@ -192,10 +195,10 @@ export function QuestionCard({
         </div>
       </div>
       <div className="p-6 space-y-3">
-        {/* 주관식: 라디오·체크박스 없이 입력칸 하나. `value`에 직접 바인딩하는
-            이유는 `otherActive`가 보기와의 관계를 추적하는 상태이고 여기에는
-            보기가 없기 때문이다 — 그 상태를 끼우면 복원된 답변이 첫 렌더에서
-            비어 보이는 경로가 생긴다. */}
+        {/* Free response: a single input field with no radios or checkboxes. Why it binds
+            directly to `value`: `otherActive` is state that tracks the relationship with the
+            options, and there are no options here — inserting that state would create a path
+            where a restored answer looks empty on the first render. */}
         {freeform && (
           <textarea
             aria-label={`${t("q.legend")} ${question.number} ${t("q.freeformLabel")}`}
@@ -208,21 +211,21 @@ export function QuestionCard({
         )}
         {options.map((opt) => {
           if (opt.is_other) {
-            // 중요: textarea를 라디오/체크박스의 <label> 안에 중첩하지 않는다.
-            // 중첩하면 Other 영역 클릭 시 포커스가 textarea가 아니라 sr-only
-            // 라디오로 가고, textarea 첫 키 입력이 label→control 활성화로
-            // 가로채진다. label에는 선택 트리거(라디오 + 배지/제목)만 두고,
-            // textarea는 label 밖 형제로 배치한다. textarea 포커스 시 Other
-            // 모드를 활성화해 "클릭 → 바로 타이핑"이 그대로 동작하게 한다.
+            // Important: do not nest the textarea inside the radio/checkbox <label>.
+            // If nested, clicking the Other area sends focus to the sr-only radio instead of
+            // the textarea, and the textarea's first keystroke is intercepted as label→control
+            // activation. Put only the selection trigger (radio + badge/title) in the label,
+            // and place the textarea as a sibling outside the label. Activating Other mode on
+            // textarea focus keeps "click → type right away" working as is.
             return (
               <div
                 key={opt.letter}
                 className="rounded-xl border-2 border-dashed border-slate-200 p-4 hover:border-violet-200"
               >
-                {/* relative 필수: sr-only 인풋은 absolute라, 부모가 static이면
-                    문서 루트 기준 좌표로 배치돼 <html>에 유령 오버플로를 만든다
-                    → 라벨 클릭(=input.focus())마다 문서가 스크롤되며 헤더가 말려
-                    올라감(ui-bug.png 회귀). */}
+                {/* relative is required: the sr-only input is absolute, so if the parent is
+                    static it is positioned in document-root coordinates, creating a ghost
+                    overflow on <html> → every label click (=input.focus()) scrolls the document
+                    and rolls the header up (ui-bug.png regression). */}
                 <label className="relative flex items-center gap-3 cursor-pointer">
                   <input
                     type={multi ? "checkbox" : "radio"}
@@ -252,7 +255,7 @@ export function QuestionCard({
           const checked = multi ? multiSelected.has(opt.letter) : selectedLetter === opt.letter;
           return (
             <div key={opt.letter}>
-              {/* relative: Other 라벨과 동일한 이유 (sr-only absolute 인풋 가둠) */}
+              {/* relative: same reason as the Other label (confines the sr-only absolute input) */}
               <label className="relative block cursor-pointer">
                 <input
                   type={multi ? "checkbox" : "radio"}
@@ -281,11 +284,11 @@ export function QuestionCard({
                   </div>
                 </div>
               </label>
-              {/* 부연 설명(선택): 선택된 보기 아래에만 펼쳐진다. textarea를
-                  label 밖 형제로 두는 것 필수 — label 안에 중첩하면 클릭
-                  포커스가 sr-only 라디오로 가고 첫 키 입력이 유실된다(동일
-                  회귀를 Other에서 이미 수정). 값 계약: 입력 시
-                  "letter: note", 비우면 letter만. */}
+              {/* Elaboration (optional): expands only under the selected option. Placing the
+                  textarea as a sibling outside the label is required — nesting it inside the
+                  label sends click focus to the sr-only radio and loses the first keystroke
+                  (the same regression already fixed in Other). Value contract: on input,
+                  "letter: note"; when emptied, the letter only. */}
               {checked && !multi && (
                 <textarea
                   aria-label={`${t("q.noteAriaPrefix")} ${opt.letter} ${t("q.noteAriaSuffix")}`}

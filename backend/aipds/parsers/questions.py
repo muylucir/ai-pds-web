@@ -6,114 +6,134 @@ from aipds.models import Question, QuestionOption, QuestionFile
 
 logger = logging.getLogger(__name__)
 
-#: 문항 헤더. 번호 뒤에 **접미사를 허용한다** — 상류 형식은 `## Question [Number]`
-#: 만 규정하고 뒤에 오는 것을 금지하지 않으며, 에이전트는 후속 질문에 설명을 붙인다
-#: (실측: `## Question 4 (모호성 해소 — Question 3 답변에 따른 후속)`).
+#: Question header. **A suffix is allowed** after the number — the upstream format only
+#: specifies `## Question [Number]` and does not forbid what follows, and the agent attaches
+#: descriptions to follow-up questions
+#: (measured: `## Question 4 (모호성 해소 — Question 3 답변에 따른 후속)`).
 #:
-#: 예전에는 `(\d+)\s*$`로 줄 끝을 요구해서 그런 문항을 **아예 못 봤다**. 그러면
-#: 답변이 기록되지 않고(question_file_answers가 그 번호를 모른다) 화면의 문항 수·
-#: answeredCount·진행률도 함께 어긋난다 — 2026-08-16 ws-a-v5의 결함이다.
+#: Previously `(\d+)\s*$` required the end of line, so such questions were **not seen at all**.
+#: Then the answer is not recorded (question_file_answers does not know that number), and the
+#: question count, answeredCount, and progress on screen drift with it — this was the defect
+#: in ws-a-v5 on 2026-08-16.
 #:
-#: `\b`가 경계다: 번호가 있어야 문항이므로 `## Questions 개요`나 `## Questionnaire`
-#: 는 걸리지 않는다. 그것까지 삼키면 카테고리 헤더가 한 문항으로 뭉개진다.
+#: `\b` is the boundary: a number is required to be a question, so `## Questions 개요` and
+#: `## Questionnaire` do not match. Swallowing those too would mash a category header into a
+#: single question.
 #:
-#: **수식어 한 단어와 해시 4개를 허용한다.** 상류는 문항 헤딩을 한 형태로 쓰지
-#: 않는다 — `question-format-guide.md`가 `## Question [Number]`(22행)와
-#: `### Clarification Question 1`(223행, "Creating Clarification Questions")을
-#: 모두 템플릿으로 싣고, 룰셋에는 `#### Question 1: Brand & Design Context`도 있다.
-#: 2026-08-17 test-wf: `pain-point-clarification-questions.md`가 그 두 번째 형태를
-#: 써서 **문항 0개**로 읽혔고, 그 파일의 답변은 기록되지 않았다.
+#: **One modifier word and four hashes are allowed.** Upstream does not write question
+#: headings in a single form — `question-format-guide.md` carries both `## Question [Number]`
+#: (line 22) and `### Clarification Question 1` (line 223, "Creating Clarification Questions")
+#: as templates, and the ruleset also has `#### Question 1: Brand & Design Context`.
+#: 2026-08-17 test-wf: `pain-point-clarification-questions.md` used that second form and was
+#: read as **0 questions**, and that file's answers were not recorded.
 #:
-#: 수식어를 **한 단어로 제한하는 것이 핵심**이다. 임의 접두를 허용하면
-#: `## Answer to Question 3` 같은 참조용 산문 헤딩까지 문항으로 잡혀 그 절 전체가
-#: 한 문항으로 뭉개진다 — 위 `\b` 경계가 막는 것과 같은 실패다. 번호는 여전히
-#: 유일한 판별자이므로 `### Question File Format`,
+#: **Limiting the modifier to one word is the key.** Allowing an arbitrary prefix would catch
+#: even reference prose headings like `## Answer to Question 3` as questions, mashing that
+#: whole section into one question — the same failure the `\b` boundary above prevents. The
+#: number is still the sole discriminator, so `### Question File Format`,
 #: `### Context Questions (Per Use Case)`,
-#: `### ⛔ GATE: Await PRFAQ Clarifying Question Answers`는 그대로 걸리지 않는다.
+#: `### ⛔ GATE: Await PRFAQ Clarifying Question Answers` still do not match.
 #:
-#: `serialize_answers`가 같은 정규식을 쓴다(그 함수의 주석 참조) — 헤더 인식이
-#: 곧 되기록이므로 두 경로가 갈라지면 "파싱은 되는데 답변이 안 써지는" 상태가 된다.
+#: `serialize_answers` uses the same regex (see that function's comment) — recognizing the
+#: header is what writes the answer back, so if the two paths diverge you get a state where
+#: "it parses but the answers are not written".
 #:
-#: **지역화된 헤딩도 읽는다(`## 질문 1`).** 2026-08-17 sarang-hpt: 완전히 정상인
-#: 질문 파일이 문항 0개로 읽혀 카드가 뜨지 않았고, 다른 점은 헤딩 단어뿐이었다.
-#: 원인은 규약 변경이다 — 질문 파일이 도구 호출의 사본이 아니라 사용자용 산출물이
-#: 되면서 에이전트가 헤딩까지 프로젝트 언어로 옮겼다. AskUserQuestion이 거부되는
-#: 지금 그 질문은 **완전히 사라진다.**
+#: **Localized headings are read too (`## 질문 1`).** 2026-08-17 ws-j: a perfectly normal
+#: question file was read as 0 questions and no card appeared; the only difference was the
+#: heading word. The cause was a convention change — once the question file became a
+#: user-facing artifact rather than a copy of the tool call, the agent translated even the
+#: headings into the project language. Now that AskUserQuestion is rejected, that question
+#: **disappears entirely.**
 #:
-#: 관용을 여기 두고 `## Question N`을 쓰라는 지시는 `discovery-config/CLAUDE.md`에
-#: 둔다 — 상류 `question-format-guide.md`가 그 형식의 정본이고 건드리지 않는다.
+#: The tolerance lives here, and the instruction to write `## Question N` lives in
+#: `discovery-config/CLAUDE.md` — upstream `question-format-guide.md` is the source of truth
+#: for that format and is not touched.
 #:
-#: **허용목록이지 일반 규칙이 아니다.** "숫자로 끝나는 헤딩"처럼 느슨하게 하면
-#: 실재하는 카테고리 헤딩을 삼킨다 — 명확화 질문 파일의 `## 모호성 1`이 그것이고,
-#: 그것을 문항으로 삼으면 그 아래의 진짜 문항이 절 안으로 흡수된다. 프로젝트
-#: 언어가 ko/en 둘뿐이므로(models·prompts의 `_LANGUAGES`) 목록으로 충분하다.
+#: **It is an allowlist, not a general rule.** Loosening it to something like "headings ending
+#: in a number" would swallow real category headings — `## 모호성 1` in clarification question
+#: files is one, and treating it as a question would absorb the real questions below it into
+#: the section. The project languages are only ko/en (`_LANGUAGES` in models and prompts), so
+#: a list is enough.
 _QUESTION_WORDS = ("Question", "질문")
 _Q_HEADER = re.compile(
     r"^#{2,4}\s+(?:\S+\s+)??(?:" + "|".join(_QUESTION_WORDS) + r")\s+(\d+)\b",
     re.MULTILINE)
-#: 복수 선택 표시. **상류 형식에는 이 개념이 없다** — `question-format-guide.md`는
-#: `[Answer]: C` 단일 선택만 규정하고, 여러 개를 고르라는 표기를 정의하지 않는다.
+#: Multi-select marker. **The upstream format has no such concept** —
+#: `question-format-guide.md` only specifies single selection as `[Answer]: C` and defines no
+#: notation for choosing several.
 #:
-#: **왜 필요한가(2026-08-21 실측).** 문항 본문이 "(복수 선택 가능)"이라고 적혀 있는데
-#: 화면에는 "하나만 선택" 배지와 라디오가 떴고, 사용자는 `Other — 직접 입력` 칸에
-#: "A, B"라고 써서 우회했다 — 구조화된 답변이 자유 텍스트로 격하됐고, 그 값은 다음
-#: 스테이지가 보기 letter로 읽을 수 없다.
+#: **Why it is needed (measured 2026-08-21).** The question body said "(복수 선택 가능)"
+#: (multiple selections allowed), but the screen showed a "하나만 선택" (select one) badge and
+#: radio buttons, and the user worked around it by writing "A, B" in the `Other — 직접 입력`
+#: field — the structured answer was demoted to free text, and the next stage cannot read
+#: that value as option letters.
 #:
-#: 원인은 `multi_select`가 파일 질문에서 UI까지 오는 경로가 **없었다**는 것이다.
-#: AskUserQuestion 시절에는 도구 인자로 구조화돼 왔는데(agent/questions_payload.py의
-#: `multiSelect`), 질문이 파일로 옮겨가면서 그 값만 남겨졌다. 프론트는 이미 준비돼
-#: 있다 — QuestionCard가 이 플래그로 체크박스를 그리고 letter를 콤마로 잇는다.
+#: The cause was that there was **no** path for `multi_select` to travel from a file question
+#: to the UI. In the AskUserQuestion era it arrived structured as a tool argument
+#: (`multiSelect` in agent/questions_payload.py), but when questions moved to files only that
+#: value was left behind. The frontend is already prepared — QuestionCard draws checkboxes
+#: from this flag and joins the letters with commas.
 #:
-#: 위 헤딩 관용과 **같은 분담**이다: 관용은 여기, 그렇게 쓰라는 지시는
-#: `discovery-config/CLAUDE.md`, 상류는 건드리지 않는다.
+#: This is **the same division of labor** as the heading tolerance above: the tolerance lives
+#: here, the instruction to write it that way lives in `discovery-config/CLAUDE.md`, and
+#: upstream is not touched.
 #:
-#: **괄호를 요구한다.** 복수 선택 자체를 묻는 문항이 실재하므로("복수 선택 UI가
-#: 필요합니까?") 낱말만 보면 그것이 체크박스로 렌더된다. 에이전트가 실제로 쓰는 형태가
-#: 괄호이므로(실측) 괄호가 곧 표시와 화제를 가르는 경계다 — 이 파일의 다른 판정들처럼
-#: 허용목록이고 일반 규칙이 아니다.
+#: **Parentheses are required.** Questions that ask about multi-select itself really exist
+#: ("복수 선택 UI가 필요합니까?" — do you need a multi-select UI?), so looking only at the
+#: words would render them as checkboxes. The form the agent actually writes is parenthesized
+#: (measured), so the parentheses are the boundary between a marker and a topic — like the
+#: other judgments in this file, it is an allowlist, not a general rule.
 #:
-#: **한국어 문구를 넓게 받는다.** `discovery-config/CLAUDE.md`는 언어 중립이어야 하므로
-#: (전 프로젝트가 공유한다 — 한글 산문 자체가 언어 신호다) 한국어 표현을 지시문에 박을
-#: 수 없다. 지시는 "프로젝트 언어로 '모두 선택' 뜻의 괄호 주석"까지만 말하고 실제 문구는
-#: 모델이 고르므로, 여기서 그 폭을 감당한다 — UI 자신의 배지가 "여러 개 선택 가능"인
-#: 것부터가 그 폭의 증거다(i18n `q.multiSelectBadge`).
+#: **Korean phrasings are accepted broadly.** `discovery-config/CLAUDE.md` must be
+#: language-neutral (all projects share it — Korean prose itself is a language signal), so
+#: Korean expressions cannot be hard-coded into the instruction. The instruction only goes as
+#: far as "a parenthetical note meaning 'select all that apply' in the project language", and
+#: the model picks the actual wording, so that breadth is absorbed here — the UI's own badge
+#: being "여러 개 선택 가능" is itself evidence of that breadth (i18n `q.multiSelectBadge`).
 _PAREN = re.compile(r"[(（]([^)）]{0,120})[)）]")
-#: 괄호 안이 이 중 하나면 복수 선택. `all`을 단독으로 받지 않는다 — "(all prices in
-#: KRW)" 같은 무관한 괄호가 걸린다.
+#: Multi-select if the parenthetical is one of these. `all` is not accepted on its own —
+#: unrelated parentheses like "(all prices in KRW)" would match.
 _MULTI_EN = re.compile(
     r"(?:select|choose|check|pick|mark)\s+all\b|all\s+that\s+apply"
     r"|multiple\s+(?:selection|selections|answers|choices)", re.IGNORECASE)
-#: 한국어는 "선택" + 복수 한정어의 동시 등장으로 본다.
+#: For Korean, look for "선택" (select) appearing together with a plural qualifier.
 _MULTI_KO_QUALIFIER = re.compile(r"복수|중복|여러|모두")
-#: 단일 선택을 **강조**하는 문구. "여러 개 중 하나만 선택"이 위 한정어에 걸리므로
-#: 필요하다 — 그것을 체크박스로 만들면 하나만 골라야 할 문항에서 여러 개가 고를 수
-#: 있게 되고, 그 답변은 다음 스테이지가 단일 값으로 읽는다.
+#: Phrases that **emphasize** single selection. Needed because "여러 개 중 하나만 선택"
+#: (select only one of several) matches the qualifier above — turning it into checkboxes would
+#: let several be chosen on a question where only one must be chosen, and the next stage reads
+#: that answer as a single value.
 _SINGLE_ONLY = re.compile(
     r"하나만|한\s*개만|1\s*개만|only\s+one|pick\s+one|choose\s+one|select\s+one",
     re.IGNORECASE)
 _CAT_HEADER = re.compile(r"^##\s+(?!Question\b)(.+?)\s*$", re.MULTILINE)
-#: 보기 글자는 A-J까지 받는다. 상류 형식 가이드는 F까지라고 하지만 모델은 실제로
-#: `G)`를 쓴다(실측: 한 프로젝트의 질문 파일 두 개). F까지만 받던 동안 그 줄은 보기로도
-#: 본문으로도 잡히지 않고 버려져, 카드에 보기 하나가 빠진 채 떴다. 받는 범위를
-#: SDK 쪽 번역 테이블(`claude_driver._LETTERS`, A-J)과 맞춘다.
+#: Option letters are accepted up to A-J. The upstream format guide says up to F, but the model
+#: actually writes `G)` (measured: two question files in one project). While only up to F was
+#: accepted, that line was caught neither as an option nor as body text and was discarded, so
+#: the card appeared with one option missing. The accepted range matches the SDK-side
+#: translation table (`claude_driver._LETTERS`, A-J).
 _OPTION = re.compile(r"^([A-J]|X)\)\s+(.*)$")
 _ANSWER = re.compile(r"^\[Answer\]:\s*(.*)$")
 _RECO = re.compile(r"\s*←\s*(추천|recommended).*$", re.IGNORECASE)
-#: 번역된 자유 입력 보기. 상류 템플릿은 `X) Other (please describe after [Answer]: tag below)`인데,
-#: ko 프로젝트의 에이전트는 라벨을 옮기면서 글자까지 순서대로 붙인다 — 실측(ws-h):
-#: 질문 파일의 기타 보기 61개가 전부 `D) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)` 모양이었고,
-#: 일반 보기로 읽혀 다중 선택에서는 쓸 칸이 없었다(단일 선택은 부연 칸이 열려 정상처럼 보였다).
+#: Translated free-input option. The upstream template is
+#: `X) Other (please describe after [Answer]: tag below)`, but agents in ko projects translate
+#: the label and attach the letter in sequence too — measured (ws-h): all 61 "other" options in
+#: the question files had the shape `D) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)`, and being
+#: read as ordinary options they left no field to write in under multi-select (under single
+#: select an elaboration field opens, so it looked normal).
 #:
-#: "기타"가 낱말로 설 때만 본다 — "기타 행정 업무" 같은 실제 보기를 바꾸지 않게. `[Answer]` 안내는
-#: 신호로 쓰지 않는다: 실측(드릴 753개 보기)에서 그 안내가 붙은 보기 대부분은 "B) Iterate — …
-#: ([Answer]: 뒤에 무엇을 바꿀지 적어 주세요)"처럼 **고르는 것이 결정이고 부연을 붙이는** 보기였다.
-#: 자유 입력으로 바꾸면 답이 "B: 부연"에서 부연만 남아 무엇을 골랐는지가 사라진다.
+#: Only matched when "기타" (Other) stands as a word — so real options like "기타 행정 업무"
+#: (other administrative work) are not changed. The `[Answer]` hint is not used as a signal:
+#: measured (753 drill options), most options with that hint were options like "B) Iterate — …
+#: ([Answer]: 뒤에 무엇을 바꿀지 적어 주세요)", where **choosing is the decision and an
+#: elaboration is attached**. Turning them into free input would leave only the elaboration
+#: from "B: 부연" (B: elaboration), losing what was chosen.
 _OTHER_KO = re.compile(r"^기타\s*(?:$|[(（:：—–-])")
 
 
 def looks_like_other(letter: str, text: str) -> bool:
-    """자유 입력(Other) 보기인가. ask_questions 페이로드 정규화도 이 규칙을 쓴다 — 두 경로가
-    갈리면 같은 질문이 입력 형식에 따라 다르게 렌더된다."""
+    """Whether this is a free-input (Other) option. The ask_questions payload normalization uses
+    this rule too — if the two paths diverged, the same question would render differently
+    depending on the input format."""
     t = text.strip()
     return letter == "X" or t.lower().startswith("other") or bool(_OTHER_KO.match(t))
 
@@ -142,13 +162,14 @@ def _parse(name: str, markdown: str) -> QuestionFile:
     current_category: str | None = None
     preamble_lines: list[str] = []
     seen_first_header = False
-    # 카테고리 헤더 뒤, 문항 헤더 앞의 최상위 산문. 다음 문항의 `context`가 된다.
-    # 카테고리가 바뀌면 버려진다 — 그 산문은 이전 카테고리의 것이므로 다른
-    # 카테고리의 문항에 붙이면 엉뚱한 설명이 달린다.
+    # Top-level prose after a category header and before a question header. It becomes the
+    # next question's `context`. It is discarded when the category changes — that prose belongs
+    # to the previous category, so attaching it to a question in another category would add
+    # an unrelated description.
     #
-    # 문항 블록 **안**은 아래 내부 루프가 다음 헤더까지 전부 소비하므로, 최상위
-    # 산문은 카테고리 헤더 직후에만 생긴다. 그래서 이 버퍼는 대부분의 파일에서
-    # 끝까지 비어 있고 기존 파싱 결과가 바뀌지 않는다.
+    # The inside of a question block is entirely consumed up to the next header by the inner
+    # loop below, so top-level prose only occurs right after a category header. Therefore this
+    # buffer stays empty to the end in most files, and existing parse results do not change.
     context_blocks: list[list[str]] = [[]]
 
     i = 0
@@ -168,14 +189,16 @@ def _parse(name: str, markdown: str) -> QuestionFile:
             seen_first_header = True
             number = int(qm.group(1))
             i += 1
-            # 블록 안은 `\n`으로 잇는다 — `text`/`ask`가 `" "`로 잇는 것과 다르다.
-            # 그쪽은 유사도 비교에 쓰이지만 context는 **마크다운으로 렌더**되므로
-            # 줄 구조가 의미를 갖는다. 실측: 확인 게이트 질문의 전제가 5행 표인데
-            # 공백으로 이으면 `| # | … | |---|---| | 1 | …`이 되어 표가 아니게 된다.
+            # Inside a block, join with `\n` — unlike `text`/`ask`, which join with `" "`.
+            # Those are used for similarity comparison, but context is **rendered as markdown**,
+            # so the line structure carries meaning. Measured: the premise of a confirmation gate
+            # question is a 5-row table, and joining with spaces turns it into
+            # `| # | … | |---|---| | 1 | …`, which is no longer a table.
             context = "\n\n".join("\n".join(b) for b in context_blocks if b).strip()
             context_blocks = [[]]
-            # 문단 단위로 모은다. 마지막 문단이 실제 질문 문장이고(models.Question.ask
-            # 참조) 그 앞은 메타·배경이다. 빈 줄이 문단 경계다.
+            # Gather by paragraph. The last paragraph is the actual question sentence (see
+            # models.Question.ask) and what precedes it is meta/background. A blank line is a
+            # paragraph boundary.
             text_blocks: list[list[str]] = [[]]
             options: list[QuestionOption] = []
             answer: str | None = None
@@ -200,7 +223,8 @@ def _parse(name: str, markdown: str) -> QuestionFile:
                 elif raw and not options:
                     text_blocks[-1].append(raw)
                 elif not raw and text_blocks[-1] and not options:
-                    # 빈 줄 = 문단 경계. 옵션이 시작된 뒤의 빈 줄은 무시한다.
+                    # Blank line = paragraph boundary. Blank lines after options have started
+                    # are ignored.
                     text_blocks.append([])
                 i += 1
             blocks = [b for b in text_blocks if b]
@@ -211,20 +235,22 @@ def _parse(name: str, markdown: str) -> QuestionFile:
                 ask=" ".join(blocks[-1]).strip() if blocks else "",
                 context=context,
                 options=options, answer=answer,
-                # 표시는 문항 본문에서만 읽는다. `context`(문항 앞의 최상위 산문)까지
-                # 보면 "다음 두 문항은 복수 선택입니다" 한 줄이 뒤따르는 문항 전부에
-                # 적용돼 범위가 불분명해진다 — 문항마다 자기 표시를 갖는 것이 명확하다.
+                # The marker is read only from the question body. Looking at `context` (the
+                # top-level prose before the question) too would make a single line like "the
+                # next two questions are multi-select" apply to every following question,
+                # blurring the scope — it is clearer for each question to carry its own
+                # marker.
                 multi_select=_is_multi_select(text),
             ))
             continue
         if not seen_first_header and line.strip():
             preamble_lines.append(line.rstrip())
         elif seen_first_header:
-            # 첫 헤더 뒤의 최상위 산문 — 다음 문항의 context로 모은다. 빈 줄이
-            # 문단 경계다(문항 본문과 같은 규칙).
+            # Top-level prose after the first header — gather it as the next question's context. A
+            # blank line is a paragraph boundary (same rule as the question body).
             #
-            # `rstrip`만 한다: 들여쓰기가 마크다운의 의미다(중첩 목록, 코드 블록).
-            # preamble_lines도 같은 이유로 rstrip을 쓴다.
+            # Only `rstrip`: indentation carries markdown meaning (nested lists, code blocks).
+            # preamble_lines uses rstrip for the same reason.
             kept = line.rstrip()
             if kept.strip() and kept.strip() != "---":
                 context_blocks[-1].append(kept)

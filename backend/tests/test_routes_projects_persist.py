@@ -20,7 +20,7 @@ def test_create_writes_manifest_when_durable(monkeypatch):
 def test_create_without_bucket_writes_no_manifest(monkeypatch):
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     r = client.post("/projects", json={"project_id": "persist-2"})
-    assert r.status_code == 200  # 로컬 모드: 매니페스트 생략, 기존 동작
+    assert r.status_code == 200  # local mode: manifest skipped, existing behavior
 
 
 def test_create_fails_500_when_manifest_write_fails(monkeypatch):
@@ -42,5 +42,5 @@ def test_create_fails_500_when_manifest_write_fails(monkeypatch):
     monkeypatch.setattr(app_module, "make_workspace", _fake_make_workspace)
     r = client.post("/projects", json={"project_id": "persist-3"})
     assert r.status_code == 500
-    assert stopped["n"] == 1                                # 베스트에포트 정리
-    assert not app_module.registry.is_registered("persist-3")  # 조용한 휘발 프로젝트 금지
+    assert stopped["n"] == 1                                # best-effort cleanup
+    assert not app_module.registry.is_registered("persist-3")  # no silently ephemeral projects

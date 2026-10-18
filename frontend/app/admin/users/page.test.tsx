@@ -5,9 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 import { API_BASE_URL } from "@/lib/api/client";
 import { server } from "@/test/msw/server";
 
-// AppHeader가 그리는 LanguageSwitcher가 useRouter()를 부른다 — 앱 라우터가
-// 마운트되지 않은 단위 테스트에서 그 훅은 던진다. 스위치의 동작은
-// components/LanguageSwitcher.test.tsx가 검증하므로 여기서는 마운트만 되게 한다.
+// The LanguageSwitcher that AppHeader draws calls useRouter() — in unit tests where the app router
+// is not mounted, that hook throws. The switcher's behavior is verified by
+// components/LanguageSwitcher.test.tsx, so here it only needs to mount.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -45,7 +45,7 @@ describe("/admin/users", () => {
   });
 
   it("explains a 403 instead of showing an empty table", async () => {
-    // pm이 URL을 직접 쳐서 들어온 경우 — 미들웨어를 우회했더라도 API가 막는다.
+    // A pm who typed the URL directly — even if the middleware was bypassed, the API blocks it.
     server.use(
       http.get(`${API_BASE_URL}/admin/users`, () =>
         HttpResponse.json({ detail: "admin role required" }, { status: 403 })),

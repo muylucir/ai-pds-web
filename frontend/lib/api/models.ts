@@ -1,20 +1,20 @@
-// frontend/lib/api/models.ts — 모델 카탈로그 클라이언트.
+// frontend/lib/api/models.ts — model catalog client.
 //
-// 두 계층이 다른 모양을 받는다: 프로젝트 생성 화면(`listModels`)은 이름과 id만,
-// 관리자 화면(`listAdminModels`)은 display 플래그까지. 백엔드가 그렇게 나눠서
-// 보내는 이유는 일반 사용자에게 display가 의미가 없기 때문이다 — 여기서
-// 필터링하지 않는다.
+// The two layers receive different shapes: the project creation screen (`listModels`) gets only names and ids,
+// and the admin screen (`listAdminModels`) gets the display flag as well. The backend splits them that way
+// because display has no meaning for regular users — we do not
+// filter here.
 import { apiFetch } from "./http";
 
-// Claude Code CLI의 `--effort` 값. 백엔드 model_catalog.Effort와 같은 집합이어야 한다 —
-// 밖의 값은 서버가 422로 거부한다.
+// The Claude Code CLI's `--effort` values. Must be the same set as the backend's model_catalog.Effort —
+// the server rejects values outside it with a 422.
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
 export interface ModelOption {
   name: string;
   model_id: string;
-  // 모델과 짝으로 정한 effort. null = CLI 기본값. 구 백엔드 응답에는 없을 수 있다.
+  // The effort chosen as a pair with the model. null = CLI default. May be absent in old backend responses.
   effort?: Effort | null;
 }
 
@@ -22,8 +22,8 @@ export interface AdminModel extends ModelOption {
   display: boolean;
 }
 
-// model_id는 영숫자와 `.`·`-`·`:`만 포함하므로 경로 세그먼트에서 이스케이프가
-// 필요 없다(adminUsers.ts의 "@" 처리 같은 것이 없는 이유).
+// model_id contains only alphanumerics and `.`, `-`, `:`, so it needs no escaping in a path segment
+// (which is why there is nothing like the "@" handling in adminUsers.ts).
 export async function listModels(): Promise<ModelOption[]> {
   const body = await apiFetch<{ models: ModelOption[] }>("/models");
   return body?.models ?? [];
@@ -43,7 +43,7 @@ export async function addModel(name: string, modelId: string, display: boolean,
   return body as AdminModel;
 }
 
-// `effort: null`은 CLI 기본값으로 비운다. 키를 빼면 서버가 그대로 둔다.
+// `effort: null` clears it to the CLI default. Omitting the key makes the server leave it as is.
 export async function patchModel(
   modelId: string, patch: { name?: string; display?: boolean; effort?: Effort | null },
 ): Promise<AdminModel> {
@@ -54,8 +54,8 @@ export async function patchModel(
   return body as AdminModel;
 }
 
-// 등록된 모델 전체의 새 순서. 일부만 보내면 서버가 409로 거부한다
-// (model_catalog.reorder — 관리자가 본 적 없는 순서를 저장하지 않는다).
+// The new order of all registered models. Sending only some makes the server reject it with a 409
+// (model_catalog.reorder — it does not save an order the admin has never seen).
 export async function reorderModels(modelIds: string[]): Promise<AdminModel[]> {
   const body = await apiFetch<{ models: AdminModel[] }>("/admin/models/order", {
     method: "PUT",

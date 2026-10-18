@@ -11,7 +11,7 @@ import { useT } from "@/lib/i18n/provider";
 export function SurveyPanel({ projectId, slug, readOnly = false }: {
   projectId: string;
   slug: string;
-  /** 열람 멤버 — 문항·링크·집계·CSV는 보이고, 만들기·마감·취합은 없다. */
+  /** Viewer member — sees questions, link, rollup, and CSV, but no create, close, or synthesize. */
   readOnly?: boolean;
 }) {
   const t = useT();
@@ -150,10 +150,10 @@ export function SurveyPanel({ projectId, slug, readOnly = false }: {
               </div>
             )}
 
-            {/* 취합은 열린 설문에서도 가능하다: 중간 집계를 문서로 확인한 뒤
-                응답을 더 받는 흐름이 실제로 흔하다. 재실행하면 집계 파일만
-                최신 수치로 덮어쓴다 — 에이전트의 Step 6 종합은 다른 파일
-                (validation-results.md)이라 건드리지 않는다. */}
+            {/* Synthesis is possible even on an open survey: checking the interim rollup as a document
+                and then collecting more responses is a common flow in practice. Rerunning overwrites only
+                the rollup file with the latest figures — the agent's Step 6 synthesis is a different file
+                (validation-results.md), so it is not touched. */}
             {!readOnly && (
               <div className="flex flex-wrap gap-2 items-center pt-1">
                 <button type="button" onClick={() => void handleSynthesize()} disabled={busy}
@@ -171,17 +171,17 @@ export function SurveyPanel({ projectId, slug, readOnly = false }: {
   );
 }
 
-/** 취합이 끝났다는 안내와, 그 집계를 Discovery 대화로 가져가는 버튼.
+/** A notice that synthesis is done, and a button that takes that rollup to the Discovery conversation.
  *
- *  리뷰 화면의 "수정 요청"과 같은 방식이다: 바로 보내지 않고 워크스페이스
- *  입력창에 ?draft=로 초안만 채운다. 에이전트는 Step 6에서 집계와 함께
- *  사용자가 따로 보고한 내용도 읽으므로(discovery-config/CLAUDE.md), 인터뷰
- *  메모 같은 것을 덧붙일 틈을 남긴다. 초안에 집계 경로를 적는 이유는
- *  프로토타입마다 집계 파일이 따로 있어서다 — 경로가 없으면 에이전트가 어느
- *  프로토타입의 설문인지 되묻거나 엉뚱한 것을 읽는다.
+ *  Same approach as "수정 요청" (request changes) on the review screen: it does not send right away but only fills
+ *  a draft into the workspace input via ?draft=. In Step 6 the agent reads, along with the rollup,
+ *  whatever the user reported separately (discovery-config/CLAUDE.md), so this leaves room to add things
+ *  like interview notes. The draft includes the rollup path because each prototype has its own
+ *  rollup file — without the path, the agent asks back which prototype's survey it is, or
+ *  reads the wrong one.
  *
- *  문장은 {n}·{path} 자리를 가진 한 덩어리로 번역한다. 앞말·뒷말을 따로 두고
- *  영어 어순으로 끼우면 한국어가 "건을 5 에 저장했습니다. …"가 된다. */
+ *  The sentence is translated as one chunk with {n} and {path} slots. Keeping the prefix and suffix separate
+ *  and slotting them in English word order turns the Korean into "건을 5 에 저장했습니다. …". */
 function SynthesisNotice({ projectId, result }: { projectId: string; result: SynthesisResult }) {
   const t = useT();
   const [before, after] = t("survey.saved")

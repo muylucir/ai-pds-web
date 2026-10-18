@@ -1,15 +1,15 @@
-// frontend/lib/api/adminUsers.ts — /admin/users* 클라이언트.
+// frontend/lib/api/adminUsers.ts — client for /admin/users*.
 //
-// 서버는 username과 email을 둘 다 준다. 화면은 email을 보여주고 액션은 username을
-// 보낸다 — 지금은 두 값이 같지만 화면이 그 등식에 의존하지 않게 한다.
+// The server returns both username and email. The screen shows email and actions send username
+// — the two values are currently equal, but the screen must not depend on that equality.
 import { apiFetch } from "./http";
 
 export type UserRole = "admin" | "pm";
 
-// username은 이메일 형태다("@" 포함). "@"는 URL 경로 세그먼트에서 이스케이프가
-// 필요 없는 문자(RFC 3986 pchar)이므로 encodeURIComponent가 만드는 %40을 다시
-// 풀어준다 — 그대로 두면 서버는 동일하게 디코드하지만, 리터럴 "@"를 기대하는
-// 목(mock) 매처(예: MSW)가 %40과 매칭하지 못한다.
+// The username is email-shaped (contains "@"). "@" is a character that needs no escaping in a URL path
+// segment (RFC 3986 pchar), so the %40 produced by encodeURIComponent is decoded back —
+// left as is, the server decodes it identically, but mock matchers expecting a literal "@"
+// (e.g., MSW) fail to match %40.
 function encodeUsername(username: string): string {
   return encodeURIComponent(username).replace(/%40/g, "@");
 }
@@ -17,7 +17,7 @@ function encodeUsername(username: string): string {
 export interface AdminUser {
   username: string;
   email: string;
-  role: UserRole | null;   // 그룹 미배정(반쪽 계정)이면 null
+  role: UserRole | null;   // null if no group is assigned (a half-created account)
   status: string;          // CONFIRMED / FORCE_CHANGE_PASSWORD / ...
   enabled: boolean;
   created_at: string;
@@ -73,8 +73,8 @@ export async function deleteUser(username: string): Promise<void> {
   await apiFetch(`/admin/users/${encodeUsername(username)}`, { method: "DELETE" });
 }
 
-/** 프로젝트의 소유권을 사용자에게 준다(이메일 또는 username). 이전 소유자는 열람 멤버로
- *  남는다. 로그인할 수 있는 계정(활성, 역할 있음)이어야 한다. */
+/** Gives the project's ownership to a user (email or username). The previous owner remains as a viewing
+ *  member. It must be an account that can log in (active, with a role). */
 export async function assignProjectOwner(
   pid: string, owner: string,
 ): Promise<{ owner: string; members: string[] }> {

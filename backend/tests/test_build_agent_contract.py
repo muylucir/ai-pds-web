@@ -1,21 +1,20 @@
 # backend/tests/test_build_agent_contract.py
 #
-# 빌드 에이전트가 읽는 것이 **참인지** 지킨다.
+# Guards that what the build agent reads is **true**.
 #
-# 왜 이 파일이 생겼는가(2026-08-17). `proto-config/skills/shadcn-design/`는 다른
-# 하네스에서 그대로 가져온 것이어서, 이 레포에 없는 권위를 인용하고 있었다:
-# 존재하지 않는 정적 검증기(`check-markdown-render.mjs`, `[J]` 게이트), 존재하지
-# 않는 형제 스킬(`cloudscape`, `api-contract-zod`), 존재하지 않는 번호 규칙
-# (`Rule 9`), 그리고 결정적으로 **"AI를 Strands SDK + Bedrock으로 구현하고"**라는
-# 파이썬 전제. `ProtoHost`는 npm 라이프사이클만 돌리므로(proto/host.py) 파이썬
-# 프로토타입은 서빙될 수 없고, 같은 컨텍스트의 `proto-config/CLAUDE.md`와
-# `proto/prompts.py`는 서버측 JS를 지시한다. 에이전트가 상반된 지시를 동시에
-# 받는 상태였고, 그것이 "Strands prototype creation is broken"의 원인이다.
+# Why this file exists (2026-08-17). `proto-config/skills/shadcn-design/` was copied as-is from
+# another harness, so it cited authorities that do not exist in this repo: a static validator
+# that does not exist (`check-markdown-render.mjs`, the `[J]` gate), sibling skills that do not
+# exist (`cloudscape`, `api-contract-zod`), a numbered rule that does not exist
+# (`Rule 9`), and, decisively, the Python premise **"implement the AI with Strands SDK + Bedrock"**.
+# `ProtoHost` only runs the npm lifecycle (proto/host.py), so a Python prototype cannot be served,
+# and `proto-config/CLAUDE.md` and `proto/prompts.py` in the same context direct server-side JS.
+# The agent was receiving contradictory instructions at the same time, and that was the cause of
+# "Strands prototype creation is broken".
 #
-# 이 테스트가 지키는 불변식은 하나다: **빌드 에이전트의 컨텍스트에 있는 모든
-# 지시는 이 레포가 실제로 제공하는 것만 가리킨다.** 거짓 권위는 에이전트가 지킬
-# 수 없는 계약을 지키려 하게 만들고, 그 실패는 우리 로그에 아무것도 남기지
-# 않는다.
+# This test guards a single invariant: **every instruction in the build agent's context points
+# only to what this repo actually provides.** False authority makes the agent try to honor a
+# contract it cannot honor, and that failure leaves nothing in our logs.
 from __future__ import annotations
 
 import re
@@ -25,13 +24,13 @@ import pytest
 
 import aipds
 
-#: 레포 루트. app._rules_dir()가 같은 방식으로 계산한다.
+#: Repo root. app._rules_dir() computes it the same way.
 REPO = Path(aipds.__file__).resolve().parent.parent.parent
 PROTO_CONFIG = REPO / "proto-config"
 DISCOVERY_CONFIG = REPO / "discovery-config"
 
-#: 빌드 에이전트가 실제로 읽는 파일 전부. 스킬은 builder.py가
-#: `skills=["shadcn-design"]`로 켠 것 하나뿐이다.
+#: Every file the build agent actually reads. The only skill is the one builder.py enables
+#: with `skills=["shadcn-design"]`.
 def _build_agent_files() -> list[Path]:
     files = [PROTO_CONFIG / "CLAUDE.md"]
     files += sorted((PROTO_CONFIG / "skills").rglob("*.md"))
@@ -43,15 +42,15 @@ def _text(p: Path) -> str:
 
 
 def test_the_build_agent_reads_something():
-    """가드가 빈 목록을 통과하지 않게 한다."""
+    """Keeps the guards from passing on an empty list."""
     files = _build_agent_files()
     assert len(files) >= 2, [str(f) for f in files]
     assert (PROTO_CONFIG / "skills" / "shadcn-design" / "SKILL.md") in files
 
 
-# ---- 존재하지 않는 권위를 인용하지 않는다 ----
+# ---- Do not cite authorities that do not exist ----
 
-#: 이 레포에 없는 것들. 값은 "왜 없는가"다.
+#: Things this repo does not have. The value is "why it is absent".
 ABSENT_AUTHORITIES = {
     "check-markdown-render.mjs": "정적 검증기가 이 레포에 없다",
     "sub-check": "sub-check 체계가 이 레포에 없다",
@@ -68,11 +67,11 @@ def test_no_reference_to_an_absent_authority(needle, reason):
 
 
 def test_no_reference_to_a_static_gate_that_does_not_run():
-    """`[J]` 게이트는 이 하네스에 없다.
+    """The `[J]` gate does not exist in this harness.
 
-    "게이트가 정적으로 강제한다"는 문장은 에이전트에게 **검증이 있다**고
-    믿게 만든다. 실제로는 아무것도 검사하지 않으므로, 지시는 강제되지 않는
-    채로 강제된다고 표시된다 — 지키지 않아도 아무 신호가 없다."""
+    A sentence like "the gate enforces this statically" makes the agent believe **there is
+    validation**. In reality nothing checks it, so the instruction is labeled as enforced while
+    it is not enforced — and there is no signal when it is not followed."""
     gate = re.compile(r"\[J\]")
     hits = [str(p.relative_to(REPO)) for p in _build_agent_files()
             if gate.search(_text(p))]
@@ -80,20 +79,20 @@ def test_no_reference_to_a_static_gate_that_does_not_run():
 
 
 def test_no_reference_to_a_numbered_rule():
-    """`Rule 9`, `CLAUDE.md Rule 6/7` 같은 번호 규칙은 없다.
+    """There are no numbered rules such as `Rule 9` or `CLAUDE.md Rule 6/7`.
 
-    proto-config/CLAUDE.md는 번호가 아니라 제목 절로 구성돼 있다. 번호를
-    인용하면 에이전트가 찾을 수 없는 규칙을 찾는다."""
+    proto-config/CLAUDE.md is organized into titled sections, not numbers. Citing a number makes
+    the agent look for a rule it cannot find."""
     numbered = re.compile(r"\bRule \d")
     hits = [str(p.relative_to(REPO)) for p in _build_agent_files()
             if numbered.search(_text(p))]
     assert not hits, f"번호 규칙을 인용한다: {hits}"
 
 
-# ---- 호스팅 계약과 어긋나는 스택을 지시하지 않는다 ----
+# ---- Do not direct a stack that contradicts the hosting contract ----
 
-#: ProtoHost가 실행하는 것은 `npm install` -> `npm run build` -> `npm run start`
-#: 뿐이다(proto/host.py). 파이썬 런타임을 지시하면 만들어져도 서빙되지 않는다.
+#: All ProtoHost runs is `npm install` -> `npm run build` -> `npm run start`
+#: (proto/host.py). Directing a Python runtime means that even if it is built, it is not served.
 PYTHON_RUNTIME = ("pip install", "python -m venv", "flask", "uvicorn",
                   "strands-agents==")
 
@@ -108,62 +107,61 @@ def test_no_python_runtime_instruction(needle):
 
 
 def test_the_agentic_stack_is_named_and_is_the_typescript_sdk():
-    """agentic 프로토타입의 스택이 명시돼 있어야 한다.
+    """The stack for agentic prototypes must be stated explicitly.
 
-    상류 룰(`prototype-building.md`)은 Strands를 요구하는데 파이썬으로 쓰여
-    있다. AI-PDS의 대응은 **TypeScript SDK**다 — 실측(2026-08-17):
-    `@strands-agents/sdk` 1.13.0이 `@aws-sdk/client-bedrock-runtime`을 직접
-    의존하고, Bedrock 기본 자격증명 체인 + 도구 + 스트리밍이 Node 20에서
-    동작한다. 이름을 적어 두지 않으면 에이전트가 파이썬 SDK를 찾는다."""
+    The upstream rule (`prototype-building.md`) requires Strands but is written for Python.
+    AI-PDS's counterpart is the **TypeScript SDK** — measured (2026-08-17):
+    `@strands-agents/sdk` 1.13.0 depends directly on `@aws-sdk/client-bedrock-runtime`, and the
+    Bedrock default credential chain + tools + streaming work on Node 20. Without the name written
+    down, the agent goes looking for the Python SDK."""
     joined = "\n".join(_text(p) for p in _build_agent_files())
     assert "@strands-agents/sdk" in joined, (
         "agentic 프로토타입이 쓸 패키지 이름이 어디에도 없다")
 
 
 def test_the_sampling_parameter_rule_covers_the_strands_constructor():
-    """`temperature` 금지는 Converse뿐 아니라 Strands 생성자도 덮어야 한다.
+    """The `temperature` ban must cover the Strands constructor, not just Converse.
 
-    실측(2026-08-17): `new BedrockModel({ temperature: 0.7 })`은
-    `ModelError: \\`temperature\\` is deprecated for this model`로 실패한다 —
-    그리고 그 값은 SDK README의 **예제 그대로**다. 규칙이 Converse의
-    `inferenceConfig`만 말하면, 에이전트가 README를 베끼는 순간 모든 agentic
-    프로토타입이 깨진다."""
+    Measured (2026-08-17): `new BedrockModel({ temperature: 0.7 })` fails with
+    `ModelError: \\`temperature\\` is deprecated for this model` — and that value is
+    **verbatim from the example** in the SDK README. If the rule only mentions Converse's
+    `inferenceConfig`, every agentic prototype breaks the moment the agent copies the README."""
     text = _text(PROTO_CONFIG / "CLAUDE.md")
     assert "BedrockModel" in text, (
         "Strands의 BedrockModel 생성자를 지목하지 않는다 — README 예제가 "
         "temperature를 넣으므로 Converse만 막으면 새어 나간다")
 
 
-# ---- Discovery가 스펙에 파이썬 전제를 넣지 않는다 ----
+# ---- Discovery does not put a Python premise into the spec ----
 
 def test_discovery_override_pins_the_prototype_runtime():
-    """스펙 단계에서 런타임을 못 박아야 한다.
+    """The runtime must be pinned at the spec stage.
 
-    Discovery는 상류 `prototype-building.md`(pip/venv/flask)를 읽은 상태로
-    스펙을 쓴다. 런타임 규정이 없으면 파이썬 전제가 스펙에 들어가고, 그 스펙이
-    빌더에게 그대로 넘어간다. 스펙은 포터블 산출물이므로(Kiro 경로 팀에 넘어갈
-    수 있다) 이 규정은 오버라이드 절에 있어야 한다 — 룰셋 파일 안이 아니다."""
+    Discovery writes the spec having read the upstream `prototype-building.md` (pip/venv/flask).
+    Without a runtime rule, the Python premise gets into the spec, and that spec is handed
+    straight to the builder. The spec is a portable artifact (it may be handed to a Kiro-path
+    team), so this rule must live in the override section — not inside a ruleset file."""
     text = _text(DISCOVERY_CONFIG / "CLAUDE.md")
     assert "Node" in text, "프로토타입 런타임이 Node라는 사실이 없다"
     assert "@strands-agents/sdk" in text, (
         "agentic 스펙이 가리켜야 할 SDK 이름이 없다")
 
 
-# ---- 금지하면서 실행법을 가르치지 않는다 ----
+# ---- Do not teach how to run something while forbidding it ----
 
-#: 서버 기동 레시피의 흔적. `proto-config/CLAUDE.md`에 "If you really must start a
-#: server" 절이 있었고, `setsid npm run start` / `kill -- -$PGID`를 그대로 적어
-#: 뒀다 — 금지하는 문장 바로 아래에서.
+#: Traces of a server-start recipe. `proto-config/CLAUDE.md` had an "If you really must start a
+#: server" section that spelled out `setsid npm run start` / `kill -- -$PGID` verbatim —
+#: right below the sentence forbidding it.
 SERVER_RECIPE = ("setsid", "PGID", "kill -- -", "smoke.log")
 
 
 @pytest.mark.parametrize("needle", SERVER_RECIPE)
 def test_no_recipe_for_starting_a_server(needle):
-    """서버 기동은 이제 코드로 막힌다(proto/build_guard.py) — 레시피는 남아 있을
-    이유가 없고, 남아 있으면 금지된 일의 실행 가능성만 높인다.
+    """Starting a server is now blocked in code (proto/build_guard.py) — there is no reason
+    for the recipe to remain, and if it remains it only makes the forbidden act more feasible.
 
-    `test_build_guard.test_wrapping_the_server_in_setsid_is_still_denied`가 그
-    명령이 실제로 거부됨을 고정한다.
+    `test_build_guard.test_wrapping_the_server_in_setsid_is_still_denied` pins that the
+    command is actually denied.
     """
     hits = [str(p.relative_to(REPO)) for p in _build_agent_files()
             if needle in _text(p)]
@@ -173,11 +171,11 @@ def test_no_recipe_for_starting_a_server(needle):
 
 
 def test_the_process_gate_is_advertised_as_enforced():
-    """"금지"만 적으면 에이전트가 예외를 합리화한다.
+    """If it only says "forbidden", the agent rationalizes exceptions.
 
-    강제된다는 사실을 적어야 시도 자체가 줄고, 거부를 만났을 때 그것이 버그가
-    아니라 규약임을 안다 — `discovery-config/CLAUDE.md`가 쓰기 범위 규칙에 대해
-    같은 문장을 갖고 있다("This one is enforced, not trusted").
+    Stating that it is enforced reduces attempts in the first place, and when the agent hits a
+    denial it knows that it is a convention, not a bug — `discovery-config/CLAUDE.md` has the
+    same sentence for its write-scope rule ("This one is enforced, not trusted").
     """
     text = _text(PROTO_CONFIG / "CLAUDE.md")
     assert "enforced" in text.lower(), (
@@ -185,13 +183,13 @@ def test_the_process_gate_is_advertised_as_enforced():
         "막는데 계약이 그것을 말하지 않으면 에이전트는 산문으로 읽는다")
 
 
-# ---- 공통 기술 계약의 SSOT는 이 파일이다 ----
+# ---- This file is the SSOT for the shared technical contract ----
 
-#: `plan_prompt`에서 옮겨 온 규칙들. 언어별 프롬프트 2벌 + 계약 = 3벌이었고,
-#: 그중 하나가 빠지는 것이 이 리포가 이미 기록해 둔 드리프트 경로다.
-#: test_proto_prompts.test_the_plan_prompt_does_not_restate_the_shared_contract가
-#: 프롬프트 쪽의 부재를 고정하고, 이 테스트가 계약 쪽의 존재를 고정한다 —
-#: 한쪽만 있으면 규칙이 어디에도 없는 상태가 통과한다.
+#: Rules moved over from `plan_prompt`. There were 3 copies: 2 per-language prompts + the contract,
+#: and one of them going missing is a drift path this repo has already recorded.
+#: test_proto_prompts.test_the_plan_prompt_does_not_restate_the_shared_contract pins
+#: their absence on the prompt side, and this test pins their presence on the contract side —
+#: with only one of them, a state where the rule exists nowhere would pass.
 MOVED_FROM_THE_PLAN_PROMPT = {
     "prototype/": "산출물 위치",
     "README": "빌드·실행 설명 문서",
@@ -212,19 +210,19 @@ def test_the_contract_carries_what_the_plan_prompt_gave_up(needle, what):
         f"어디에도 없다")
 
 
-# ---- README가 실제 배선과 일치한다 ----
+# ---- The READMEs match the actual wiring ----
 
 def test_no_readme_promises_that_a_skill_activates_by_itself():
-    """`skills="all"`은 2026-08-01 사고의 원인이었고 이미 되돌렸다.
+    """`skills="all"` caused the 2026-08-01 incident and has already been reverted.
 
-    builder.py는 `skills=["shadcn-design"]`로 **이름 목록**을 넘긴다("all"은
-    CLI 번들 스킬까지 켜고, 그 목록의 `run`이 브라우저를 띄워 프론트엔드를
-    죽였다). 두 README는 "커밋한다. 끝 — 코드 변경이 필요 없다"고 안내하고
-    있었다. 그 안내를 따르면 새 스킬이 **조용히 켜지지 않는다.**
+    builder.py passes a **list of names** with `skills=["shadcn-design"]` ("all" also enabled
+    the CLI-bundled skills, and the `run` in that list launched a browser and killed the
+    frontend). Both READMEs were saying "commit it. Done — no code change needed". Following
+    that guidance means a new skill **silently does not get enabled.**
 
-    검사 대상은 그 **약속**이며 `skills="all"`이라는 말 자체가 아니다. 되돌린
-    이유를 설명하려면 그 이름을 불러야 하고, README는 모델이 읽지 않으므로
-    (`_build_agent_files`에 없다) 언급의 컨텍스트 비용도 없다.
+    What is checked is that **promise**, not the words `skills="all"` themselves. Explaining
+    why it was reverted requires naming it, and the model does not read the READMEs
+    (they are not in `_build_agent_files`), so mentioning it costs no context either.
     """
     stale = []
     for readme in (PROTO_CONFIG / "README.md", DISCOVERY_CONFIG / "README.md"):
@@ -238,29 +236,29 @@ def test_no_readme_promises_that_a_skill_activates_by_itself():
 
 
 def test_the_proto_readme_names_the_skill_that_is_actually_enabled():
-    """새 스킬을 추가할 때 코드도 고쳐야 한다는 사실이 README에 있어야 한다 —
-    "all"의 편의를 의도적으로 포기한 자리이므로(builder.py의 주석) 그 대가를
-    문서가 말해야 한다."""
+    """The README must state that adding a new skill also requires a code change —
+    this is where the convenience of "all" was deliberately given up (see the comment in
+    builder.py), so the docs must state the price."""
     text = _text(PROTO_CONFIG / "README.md")
     assert "shadcn-design" in text
     assert "builder.py" in text, (
         "스킬 목록을 어디서 고치는지 지목하지 않는다")
 
 
-# ---- 브랜드 프로필: 두 디자인 권위의 우선순위 ----
+# ---- Brand profile: precedence between two design authorities ----
 
 def test_the_contract_names_the_brand_section_and_its_precedence():
-    """프로필이 있는 프로젝트에서 빌드 에이전트는 디자인 권위를 **둘** 읽는다.
+    """In a project with a profile, the build agent reads **two** design authorities.
 
-    "user" 레벨(`proto-config/CLAUDE.md`)은 shadcn-design 스킬의 기본 외형을,
-    "project" 레벨(빌드 디렉터리 `CLAUDE.md`)은 `design_sync`가 심은 브랜드 절을
-    지시한다. 어느 쪽이 이기는지 적혀 있지 않으면 결과가 근접성과 CSS 캐스케이드에
-    맡겨진다 — 실제로는 맞게 나오지만 그것은 **우연히 맞는 것**이고 명시된 계약이
-    아니다.
+    The "user" level (`proto-config/CLAUDE.md`) directs the shadcn-design skill's default look,
+    and the "project" level (the build directory's `CLAUDE.md`) directs the brand section that
+    `design_sync` plants. If which one wins is not written down, the outcome is left to proximity
+    and the CSS cascade — in practice it comes out right, but that is **right by accident**, not a
+    stated contract.
 
-    이 사실은 **공유 사실**이다: "브랜드 절이 나타날 수 있고, 나타나면 그쪽이
-    이긴다"는 모든 빌드에 대해 참이므로 프로젝트별 값이 아니다. 그래서 조건부
-    문장으로 "user" 레벨에 둔다 — 프로필이 없는 빌드에는 아무 지시도 주지 않는다.
+    This is a **shared fact**: "a brand section may appear, and if it does, it wins" is true for
+    every build, so it is not a per-project value. That is why it sits at the "user" level as a
+    conditional sentence — it gives no instruction at all to builds without a profile.
     """
     text = _text(PROTO_CONFIG / "CLAUDE.md")
     assert "shadcn-design" in text
@@ -268,10 +266,10 @@ def test_the_contract_names_the_brand_section_and_its_precedence():
 
 
 def test_the_brand_marker_in_the_contract_is_the_one_design_sync_writes():
-    """마커는 `design_sync`가 심는 것과 **같은 문자열**이어야 한다.
+    """The marker must be **the same string** that `design_sync` plants.
 
-    이름이 바뀌면 계약의 지목이 조용히 낡는다 — 에이전트는 존재하지 않는 마커를
-    찾고, 아무 에러도 나지 않는다. 그래서 상수를 직접 import해 대조한다.
+    If the name changes, the contract's reference silently goes stale — the agent looks for a
+    marker that does not exist, and no error is raised. So the constant is imported directly and compared.
     """
     from aipds.proto.design_sync import _SECTION_START
     assert _SECTION_START in _text(PROTO_CONFIG / "CLAUDE.md"), (
@@ -279,11 +277,11 @@ def test_the_brand_marker_in_the_contract_is_the_one_design_sync_writes():
 
 
 def test_the_contract_does_not_depend_on_the_localized_brand_heading():
-    """헤딩은 지역화된다 — `## Brand design profile` / `## 브랜드 디자인 프로필`.
+    """Headings are localized — `## Brand design profile` / `## 브랜드 디자인 프로필`.
 
-    공유 config는 언어 중립이어야 하므로(test_agent_language가 고정한다) 한쪽
-    언어의 헤딩을 지목하면 다른 언어 프로젝트에서 찾을 수 없는 것을 가리킨다.
-    언어와 무관한 식별자는 `design_sync`의 HTML 주석 마커뿐이다.
+    Shared config must be language-neutral (test_agent_language pins this), so naming one
+    language's heading points to something that cannot be found in projects in the other language.
+    The only language-independent identifier is `design_sync`'s HTML comment marker.
     """
     text = _text(PROTO_CONFIG / "CLAUDE.md")
     assert "Brand design profile" not in text, (

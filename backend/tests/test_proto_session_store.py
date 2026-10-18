@@ -140,8 +140,8 @@ async def test_round_trip_over_the_real_S3Store_shape():
 
 
 async def test_load_reads_batches_concurrently_and_keeps_write_order():
-    """transcript_restore가 인스턴스 교체 뒤 이 load를 부른다 — 순차 GET이면 배치 수 ×
-    S3 왕복이다. 동시에 받되 순서는 쓴 순서 그대로여야 한다."""
+    """transcript_restore calls this load after an instance replacement — sequential GETs would cost number of batches ×
+    S3 round trips. Fetch concurrently, but keep the order exactly as written."""
     import asyncio
 
     class _Slow(FakeS3Store):

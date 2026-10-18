@@ -14,19 +14,19 @@ class FakeRunner:
 
     def __init__(self, s3: FakeS3Store | None = None):
         self._s3 = s3 or FakeS3Store()
-        #: `send_message`로 시작된 턴의 텍스트 — 라우트가 에이전트에게 보낸 문장을
-        #: 테스트가 읽는 자리다.
+        #: Text of turns started with `send_message` — where tests read the sentences the route
+        #: sent to the agent.
         self.sent: list[str] = []
-        #: 라우트가 넘긴 사용자 입력 기록(aipds/audit_log.UserInput) — 감사 로그에 무엇이
-        #: 남을지를 테스트가 읽는 자리다.
+        #: Record of user input the route passed in (aipds/audit_log.UserInput) — where tests read
+        #: what will remain in the audit log.
         self.records: list = []
 
     def send_message(self, text: str, record=None):
-        """턴 하나: 텍스트를 기록하고 곧바로 끝난다.
+        """One turn: record the text and finish immediately.
 
-        async generator 함수가 아니라 generator를 **돌려주는** 함수인 이유: 턴
-        작업(turn_job.py)은 이것을 요청 안에서 부르고 소비는 태스크가 한다. 기록을
-        부르는 시점에 해 두면 태스크가 언제 도는지와 무관하게 읽을 수 있다.
+        Why this is a function that **returns** a generator rather than an async generator function: the turn
+        job (turn_job.py) calls it within the request, and a task consumes it. Recording at call time
+        makes it readable regardless of when the task runs.
         """
         self.sent.append(text)
         self.records.append(record)
@@ -36,7 +36,7 @@ class FakeRunner:
         return events()
 
     def send_answers(self, answers: dict, record=None):
-        """SDK 질문 답변 턴. `send_message`와 같은 이유로 generator를 돌려준다."""
+        """SDK question-answer turn. Returns a generator for the same reason as `send_message`."""
         self.records.append(record)
 
         async def events():
@@ -65,8 +65,8 @@ class FakeRunner:
         return sorted(k for k in keys if matches_glob(k, glob))
 
     async def list_files_newest_first(self, glob: str) -> list[str]:
-        # 실물과 같은 계약이다(aipds/runner.py) — 페이크가 이 메서드를 빠뜨리면
-        # `Workspace.list_artifacts`가 테스트에서만 AttributeError로 죽는다.
+        # The same contract as the real one (aipds/runner.py) — if the fake left out this method,
+        # `Workspace.list_artifacts` would die with an AttributeError only in tests.
         reject_unsafe(glob)
         pairs = await self._s3.list_with_times("")
         matched = [(k, t) for k, t in pairs if matches_glob(k, glob)]

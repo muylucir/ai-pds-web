@@ -144,8 +144,9 @@ def test_post_429_when_response_cap_reached(env, monkeypatch):
 
 
 def test_submitting_does_not_rebuild_the_rollup(env, monkeypatch):
-    """제출은 응답 PUT 하나로 끝난다. 집계 재계산은 응답 전부를 다시 읽으므로
-    제출마다 하면 N번째 제출이 GET N회가 된다 — 인증 없는 경로에서."""
+    """A submission ends with a single response PUT. Recomputing the rollup rereads every
+    response, so doing it per submission makes the Nth submission cost N GETs — on an
+    unauthenticated path."""
     calls = []
 
     async def counting(self, *a, **k):
@@ -161,8 +162,8 @@ def test_submitting_does_not_rebuild_the_rollup(env, monkeypatch):
 
 
 def test_the_dashboard_rollup_counts_a_fresh_submission(env):
-    """제출이 집계를 갱신하지 않아도 대시보드가 읽는 집계는 맞아야 한다 —
-    `get_rollup`이 응답 수가 어긋난 캐시를 다시 만든다."""
+    """Even though submissions do not update the rollup, the rollup the dashboard reads must
+    be correct — `get_rollup` rebuilds a cache whose response count is off."""
     client.post(f"/survey/{TOKEN}", json={"answers": {"q1": 4, "q2": "A"}})
     client.post(f"/survey/{TOKEN}", json={"answers": {"q1": 5, "q2": "A"}})
     import asyncio

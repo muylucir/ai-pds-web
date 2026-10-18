@@ -1,6 +1,6 @@
 # backend/tests/test_project_model.py
 #
-# 모델 해석의 폴백 순서와, 그것이 실제로 세 주입 지점에 닿는지.
+# The fallback order of model resolution, and whether it actually reaches the three injection points.
 from __future__ import annotations
 
 import pytest
@@ -28,8 +28,8 @@ def test_project_model_falls_back_to_env_when_project_has_none(monkeypatch):
 
 
 def test_project_model_is_none_without_project_or_env(monkeypatch):
-    # 로컬 개발: 둘 다 없으면 None — 드라이버가 env를 넣지 않아 SDK 기본값으로
-    # 간다(종전 동작).
+    # Local development: if neither is present, None — the driver does not set the env, so the SDK default
+    # applies (the previous behavior).
     monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
     app_module.registry.register("pm-test", None)
     assert app_module.project_model("pm-test") is None
@@ -65,9 +65,9 @@ def test_builder_factory_passes_the_projects_model(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_questionnaire_agent_factory_raises_when_no_model(monkeypatch):
-    # 설문 생성은 여기가 유일하게 모델을 필수로 요구하는 지점이다. 없으면
-    # 502로 번역될 RuntimeError를 내고 이유를 남긴다 — KeyError로 터지면
-    # 로그에 'ANTHROPIC_MODEL'만 남고 프로젝트 설정 문제인지 알 수 없다.
+    # Survey generation is the only point that requires a model. Without one, it raises a
+    # RuntimeError that will be translated into a 502 and records the reason — blowing up with a KeyError
+    # would leave only 'ANTHROPIC_MODEL' in the log, with no way to tell it is a project settings problem.
     monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
     app_module.registry.register("pm-test", None)
     call = app_module.questionnaire_agent_factory("pm-test")
@@ -76,10 +76,10 @@ async def test_questionnaire_agent_factory_raises_when_no_model(monkeypatch):
 
 
 def test_proto_session_factory_passes_the_projects_language(monkeypatch, tmp_path):
-    """프로토타입 세션과 빌더가 같은 프로젝트 언어를 받는다.
+    """The prototype session and the builder receive the same project language.
 
-    둘이 어긋나면 개시 프롬프트와 build_complete 도구 설명의 언어가 갈린다 —
-    에러는 없고, 영어 대화 중에 한국어 도구 설명이 섞인다.
+    If the two diverge, the language of the opening prompt and of the build_complete tool description splits —
+    there is no error, and Korean tool descriptions get mixed into an English conversation.
     """
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     monkeypatch.setenv("AIPDS_PROTO_ROOT", str(tmp_path / "protos"))
@@ -93,22 +93,22 @@ def test_proto_session_factory_passes_the_projects_language(monkeypatch, tmp_pat
 
 
 def test_proto_tools_get_the_builders_language(tmp_path):
-    """빌더 → 도구 배선. 이 홉이 끊기면 도구 설명과 반환 문자열이 항상
-    한국어로 남는다(둘 다 모델이 읽는 프롬프트다)."""
+    """Builder → tool wiring. If this hop breaks, the tool description and return strings always
+    stay in Korean (both are prompts the model reads)."""
     from aipds.proto.builder import PrototypeBuilder, _proto_tools_for
     builder = PrototypeBuilder(workspace=str(tmp_path), config_dir=str(tmp_path),
                                session_id="s", resume=False, language="en",
                                client_factory=lambda: None)
     tools = _proto_tools_for(builder)
-    # SdkMcpTool의 설명이 영어여야 한다 — 한글이 섞이면 배선이 끊긴 것이다.
+    # The SdkMcpTool's description must be in English — Hangul mixed in means the wiring is broken.
     described = " ".join(str(getattr(t, "description", "")) for t in tools)
     assert described.strip() != ""
     assert not any("가" <= c <= "힣" for c in described), described
 
 
 def test_survey_store_factory_passes_the_projects_language(monkeypatch):
-    """설문 스토어가 프로젝트 언어를 받는다 — 리포트는 aiplc-docs/**에 남는
-    산출물이므로 UI 언어가 아니라 프로젝트 언어를 따른다."""
+    """The survey store receives the project language — the report is an artifact that remains in
+    aiplc-docs/**, so it follows the project language, not the UI language."""
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: object())
     monkeypatch.setattr(app_module, "surveys_root_s3_factory", lambda: object())
     app_module.registry.register("pm-test", None, language="en")

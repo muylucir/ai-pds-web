@@ -32,7 +32,7 @@ def root(tmp_path):
 
 
 def _state(root: Path) -> Path:
-    """ProtoHost의 기본 상태 트리 — 빌드 루트 옆."""
+    """ProtoHost's default state tree — next to the build root."""
     return root.with_name(root.name + "-state")
 
 
@@ -86,9 +86,9 @@ async def test_build_receives_the_base_path_env(root):
         assert info.state == "running", info.log_tail
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"http://127.0.0.1:{info.port}/")
-        # basePath 두 키만 본다 — 프로브는 다른 주입 값(BEDROCK_MODEL_ID)도
-        # 함께 기록하므로, 전체 dict를 고정하면 주입이 하나 늘 때마다 이
-        # 테스트가 무관하게 깨진다.
+        # Check only the two basePath keys — the probe also records other
+        # injected values (BEDROCK_MODEL_ID), so pinning the whole dict would
+        # break this test for unrelated reasons every time an injection is added.
         seen = resp.json()
         assert seen["NEXT_PUBLIC_BASE_PATH"] == f"/proto/{PID}/{SLUG}"
         assert seen["PROTO_BASE_PATH"] == f"/proto/{PID}/{SLUG}"
@@ -118,16 +118,16 @@ async def test_build_env_absent_when_no_base_path_given(root):
 
 
 async def test_build_and_start_receive_the_projects_model(root):
-    """프로토타입 **앱 자체**가 런타임에 쓸 모델도 프로젝트 설정을 따라야 한다.
+    """The model the prototype **app itself** uses at runtime must also follow the project setting.
 
-    종전에는 Discovery와 빌드 에이전트만 project_model()을 상속받았고
-    (app.py의 두 자리), 빌드된 앱은 에이전트가 자기 `.env.example`에 적어 둔
-    값으로 돌았다 — 실물에서
-    `BEDROCK_MODEL_ID=apac.anthropic.claude-sonnet-4-5-...`가 하드코딩된 채
-    프로젝트는 다른 모델로 설정돼 있었다.
+    Previously only Discovery and the build agent inherited project_model()
+    (two places in app.py), and the built app ran on whatever value the agent
+    had written into its own `.env.example` — in a real case
+    `BEDROCK_MODEL_ID=apac.anthropic.claude-sonnet-4-5-...` was hardcoded while
+    the project was configured for a different model.
 
-    빌드 단계에서 확인하는 이유: 프레임워크가 `process.env.*`를 빌드 시점에
-    인라인할 수 있어서, start에만 있는 값은 undefined로 굳는다."""
+    Why check at the build step: a framework can inline `process.env.*` at build
+    time, so a value present only at start gets frozen as undefined."""
     _seed_env_probe_dir(root, base_path="")
     host = ProtoHost(root=root, port_range=range(4001, 4010))
 
@@ -143,9 +143,10 @@ async def test_build_and_start_receive_the_projects_model(root):
 
 
 async def test_model_env_absent_when_no_model_given(root):
-    """`model_id`는 선택이다. 넘기지 않으면 빈 문자열이 아니라 **없어야** 한다 —
-    빈 값을 주면 앱이 "설정됐지만 빈 모델"로 읽어 Bedrock 호출이 알기 어려운
-    에러로 실패한다. base_path가 같은 이유로 선택인 것과 같은 규율이다."""
+    """`model_id` is optional. When not passed it must be **absent**, not an empty
+    string — an empty value makes the app read it as "configured but empty model",
+    and the Bedrock call fails with an obscure error. Same discipline as base_path
+    being optional for the same reason."""
     _seed_env_probe_dir(root, base_path="")
     host = ProtoHost(root=root, port_range=range(4001, 4010))
 
@@ -316,18 +317,19 @@ async def test_log_tail_returns_last_n_lines(root):
 
 @pytest.mark.parametrize("block", [1, 7, 64, 64 * 1024])
 def test_tail_text_matches_reading_the_whole_file(tmp_path, monkeypatch, block):
-    """끝에서 거꾸로 읽어도 답은 파일 전체를 읽고 자른 것과 같아야 한다.
+    """Reading backward from the end must give the same answer as reading the whole file and slicing.
 
-    블록 크기를 줄여 경계 사례를 강제한다 — 블록이 줄 한가운데·멀티바이트 문자
-    한가운데·개행 바로 앞뒤에서 끊기는 경우. 운영 블록(64KB)에서는 작은 로그가
-    한 블록에 다 들어와 이 경로들이 드러나지 않는다.
+    Shrinking the block size forces the edge cases — a block cut in the middle of a
+    line, in the middle of a multibyte character, or right before/after a newline.
+    With the production block (64KB) a small log fits in one block and these paths
+    never show up.
     """
     import random
     import aipds.proto.host as host_mod
 
     monkeypatch.setattr(host_mod, "_TAIL_BLOCK", block)
     rng = random.Random(block)
-    # 단독 `\r`은 npm 진행 표시줄이 실제로 쓴다 — splitlines는 그것도 줄로 본다.
+    # A lone `\r` is really used by npm's progress bar — splitlines treats it as a line break too.
     alphabet = ["a", "b", "한", "글", " ", "\n", "\n", "\r\n", "\r"]
     log = tmp_path / ".proto-host.log"
     for _ in range(200):
@@ -344,13 +346,14 @@ def test_tail_text_of_a_missing_log_is_empty(tmp_path):
 
 
 async def test_status_does_not_read_the_log(root, monkeypatch):
-    """`status()`는 로그 파일을 **열지 않는다**. 목록 라우트가 프로토타입마다
-    이걸 부르고 그 목록은 폴링된다. `_tail_text`는 파일 끝만 읽지만 async 함수
-    안의 동기 디스크 I/O이고, 상태만 필요한 자리에서 읽을 이유가 없다.
+    """`status()` does **not open** the log file. The list route calls it for every
+    prototype, and that list is polled. `_tail_text` reads only the end of the file,
+    but it is synchronous disk I/O inside an async function, and there is no reason
+    to read it where only the state is needed.
 
-    `_tail_text` 호출 자체를 세는 이유: `log_tail == ""`만 검사하면 로그를
-    읽고 나서 버리는 구현도 통과하는데, 비용은 읽는 데 있지 담는 데 있지
-    않다."""
+    Why count the `_tail_text` calls themselves: checking only `log_tail == ""`
+    would also pass an implementation that reads the log and then discards it, but
+    the cost is in the reading, not in the storing."""
     import aipds.proto.host as host_mod
 
     _seed_build_dir(root)
@@ -371,7 +374,7 @@ async def test_status_does_not_read_the_log(root, monkeypatch):
         assert calls == [], f"status() read the log: {calls}"
         assert status.log_tail == ""
 
-        # 반면 사용자가 명시적으로 요청하는 경로는 여전히 읽어야 한다.
+        # The path the user explicitly requests, on the other hand, must still read it.
         assert isinstance(host.log_tail(PID, SLUG), str)
         assert len(calls) == 1
     finally:
@@ -435,9 +438,10 @@ async def test_start_writes_a_pid_file_and_removes_it_on_stop(root):
 
 
 async def test_hosting_bookkeeping_stays_out_of_the_trees_the_sandbox_writes(root):
-    """로그·pid·토큰은 상태 트리에만 생긴다. 빌드 트리는 빌드 에이전트가, 그 아래
-    `prototype/`은 npm 스크립트가 쓴다 — 거기 있으면 링크로 바꿔 끼워 백엔드가 그 너머에
-    쓰고(로그) 남의 토큰을 읽게(토큰) 만들 수 있다."""
+    """Log, pid, and token are created only in the state tree. The build tree is written by
+    the build agent and `prototype/` under it by npm scripts — if these files lived there,
+    they could be swapped for links to make the backend write beyond them (log) and read
+    someone else's token (token)."""
     target = _seed_build_dir(root)
     host = ProtoHost(root=root, port_range=range(4001, 4010))
     try:
@@ -456,8 +460,8 @@ async def test_hosting_bookkeeping_stays_out_of_the_trees_the_sandbox_writes(roo
 
 
 def test_a_legacy_token_file_moves_to_the_state_tree(root):
-    """옛 위치(빌드 트리 바로 아래)의 토큰은 기동 때 상태 트리로 옮긴다 — 이미 나눠 준
-    링크가 죽지 않는다."""
+    """A token in the old location (directly under the build tree) is moved to the state tree
+    at startup — links already handed out keep working."""
     _seed_build_dir(root)
     (root / PID / SLUG / TOKEN_FILENAME).write_text("legacy-tok", encoding="utf-8")
     host = ProtoHost(root=root)
@@ -469,8 +473,8 @@ def test_a_legacy_token_file_moves_to_the_state_tree(root):
 
 
 def test_a_legacy_token_symlink_is_not_followed(root):
-    """옛 위치의 토큰 파일이 다른 프로젝트의 토큰을 가리키는 링크면 들여오지 않는다 —
-    들여오면 남의 공유 링크가 이 프로토타입으로 열린다."""
+    """If the token file in the old location is a link to another project's token, it is not
+    imported — importing it would make someone else's share link open this prototype."""
     _seed_build_dir(root)
     _seed_build_dir(root, pid="other-proj", slug="app")
     (root / "other-proj" / "app" / TOKEN_FILENAME).write_text("other-tok", encoding="utf-8")
@@ -483,14 +487,14 @@ def test_a_legacy_token_symlink_is_not_followed(root):
 
 
 def test_slugs_unions_dirs_registry_and_token_cache(root):
-    """프로젝트 삭제가 "이 프로젝트의 모든 슬러그"를 여기서 얻는다. 디스크
-    디렉토리만 보면 토큰만 발급된 경계 상태를 놓치고, 그 슬러그의 토큰이
-    인메모리에 남아 삭제 뒤에도 링크가 풀린다."""
+    """Project deletion gets "every slug of this project" from here. Looking only at
+    disk directories misses the edge state where only a token was issued, and that
+    slug's token stays in memory, so the link still resolves after deletion."""
     _seed_build_dir(root, slug="on-disk")
     host = ProtoHost(root=root, port_range=range(4001, 4010))
-    # 토큰만 있는 슬러그(디렉토리는 ensure_token이 만든다)
+    # A slug with only a token (ensure_token creates the directory)
     host.ensure_token(PID, "token-only")
-    # 다른 프로젝트는 섞이지 않는다.
+    # Other projects do not get mixed in.
     _seed_build_dir(root, pid="other-proj", slug="not-mine")
 
     assert host.slugs(PID) == ["on-disk", "token-only"]
@@ -499,7 +503,7 @@ def test_slugs_unions_dirs_registry_and_token_cache(root):
 
 
 def test_slugs_rejects_traversal_pid(root):
-    """`rmtree` 대상 경로를 만드는 값이므로 여기서도 한 세그먼트만 받는다."""
+    """This value builds an `rmtree` target path, so only a single segment is accepted here too."""
     host = ProtoHost(root=root, port_range=range(4001, 4010))
     with pytest.raises(ValueError):
         host.slugs("..")
@@ -668,13 +672,13 @@ async def test_purge_refuses_an_unsafe_pid_too(root, bad_pid):
     assert (root / "victim" / "theirs").is_dir()
 
 
-# ---- purge_project: 부모 디렉터리 ----
+# ---- purge_project: the parent directory ----
 
 async def test_purge_project_removes_the_parent_shell(root):
-    """`purge`는 `{root}/{pid}/{slug}`만 지우므로 부모가 빈 껍데기로 남는다.
+    """`purge` deletes only `{root}/{pid}/{slug}`, so the parent is left as an empty shell.
 
-    실측(2026-08-19, 배포 인스턴스): 존재하지 않는 프로젝트 3개의 빈 디렉터리가
-    `/opt/aipds/protos/`에 남아 있었다.
+    Observed (2026-08-19, deployed instance): empty directories for 3 projects that no
+    longer existed remained in `/opt/aipds/protos/`.
     """
     _seed_build_dir(root, pid=PID, slug=SLUG)
     host = ProtoHost(root=root, port_range=range(4001, 4010))
@@ -687,8 +691,8 @@ async def test_purge_project_removes_the_parent_shell(root):
 
 
 async def test_purge_project_is_idempotent(root):
-    """없는 프로젝트는 no-op이다 — 재시도가 수렴해야 하고, 프로토타입을 한 번도
-    만들지 않은 프로젝트의 삭제가 흔한 경우다."""
+    """A nonexistent project is a no-op — retries must converge, and deleting a project
+    that never built a prototype is the common case."""
     host = ProtoHost(root=root, port_range=range(4001, 4010))
     await host.purge_project("never-built")
     await host.purge_project("never-built")
@@ -707,11 +711,11 @@ async def test_purge_project_leaves_other_projects_alone(root):
 
 @pytest.mark.parametrize("bad_pid", ["..", ".", "", "a/b"])
 async def test_purge_project_refuses_an_unsafe_pid(root, bad_pid):
-    """`rmtree`가 하나의 URL 파라미터를 디렉터리 이름으로 받는 자리다.
+    """This is where `rmtree` takes a single URL parameter as a directory name.
 
-    `pathlib`은 정규화하지 않으므로 `root / ".."`는 정말로 root의 부모이고
-    `root / "."`는 root 자신이다 — 검증이 없으면 한 프로젝트 삭제가 **모든**
-    프로젝트의 빌드 트리를 지운다. `purge`가 같은 이유로 같은 가드를 갖는다.
+    `pathlib` does not normalize, so `root / ".."` really is root's parent and
+    `root / "."` is root itself — without validation, deleting one project wipes the
+    build trees of **every** project. `purge` has the same guard for the same reason.
     """
     _seed_build_dir(root, pid="victim", slug="theirs")
     host = ProtoHost(root=root, port_range=range(4001, 4010))
@@ -722,16 +726,18 @@ async def test_purge_project_refuses_an_unsafe_pid(root, bad_pid):
     assert (root / "victim" / "theirs").is_dir()
 
 
-# ---- 떠 있는 서버가 소스보다 오래됐는가 ----
+# ---- Is the running server older than the source? ----
 #
-# **왜 시각이 필요한가.** 실행 중인 프로토타입을 수정할 수 있게 되면서, 서버는 그대로
-# 뜬 채 소스만 바뀌는 구간이 생겼다. 그때 카드는 "실행 :4007"만 말하므로 사용자는
-# 자기 수정이 반영됐다고 읽는다 — 실제로 참가자에게 나간 링크가 보여 주는 것은
-# 이전 버전이고, 다시 호스팅해야 바뀐다.
+# **Why a timestamp is needed.** Once a running prototype could be modified, there came
+# a window where the server stays up as is while only the source changes. During it the
+# card says only "실행 :4007" (running :4007), so the user reads it as their change being
+# live — in fact the link sent to participants shows the previous version, and it only
+# changes after re-hosting.
 #
-# 그 판정을 하려면 "이 서버가 언제 소스를 읽었는가"가 필요한데 레지스트리에 시각이
-# 아예 없었다. 세션이 열려 있는지로 대신하는 것은 틀렸다: 세션이 닫히는 순간 그
-# 신호가 사라지고, 정작 그때가 사용자가 오해하기 가장 쉬운 시점이다.
+# Making that call requires "when did this server read the source", but the registry had
+# no timestamp at all. Substituting whether a session is open was wrong: the signal
+# disappears the moment the session closes, and that is exactly when the user is most
+# likely to be misled.
 
 async def test_a_started_host_records_when_it_read_the_source(root):
     host = ProtoHost(root=root)
@@ -740,18 +746,20 @@ async def test_a_started_host_records_when_it_read_the_source(root):
         info = await host.start(PID, SLUG)
         assert info.state == "running"
         assert info.built_at is not None
-        # status()로도 같은 값이 나와야 한다 — 목록 라우트가 읽는 경로다.
+        # status() must return the same value — it is the path the list route reads.
         assert host.status(PID, SLUG).built_at == info.built_at
     finally:
         await host.stop(PID, SLUG)
 
 
 async def test_the_timestamp_precedes_the_build_step(root):
-    """빌드가 소스를 **읽기 전**의 시각이어야 한다. 빌드가 끝난 뒤로 잡으면, 빌드
-    도중에 바뀐 파일이 반영된 것으로 잘못 판정된다(빌드는 그 변경을 읽지 못했다).
+    """It must be the time **before** the build reads the source. Taking it after the build
+    finishes would wrongly judge files changed mid-build as included (the build did not
+    read those changes).
 
-    반대로 npm install 앞으로 잡는 것도 틀리다: 설치는 실측 수 분이고, 그 사이에
-    바뀐 파일은 뒤이은 빌드가 실제로 읽으므로 낡지 않았다."""
+    Conversely, taking it before npm install is also wrong: install takes minutes in
+    practice, and files changed in that window are actually read by the following build,
+    so they are not stale."""
     import time
 
     host = ProtoHost(root=root)
@@ -762,10 +770,11 @@ async def test_the_timestamp_precedes_the_build_step(root):
         after = time.time()
         assert info.built_at is not None
         assert before <= info.built_at <= after
-        # 그리고 빌드 트리의 **소스**가 그보다 오래됐다 — 즉 방금 뜬 서버는 낡지
-        # 않았다. 제외 규칙을 타는 것이 정답의 일부다: 호스팅 자신이 `built_at`
-        # 뒤에 `.proto-host.log`/`.pid`를 쓰므로, 생 mtime으로 비교하면 방금 뜬
-        # 서버가 언제나 낡은 것으로 나온다(이 테스트가 처음 그렇게 실패했다).
+        # And the build tree's **source** is older than that — i.e., the server that
+        # just came up is not stale. Going through the exclusion rules is part of the
+        # right answer: hosting itself writes `.proto-host.log`/`.pid` after
+        # `built_at`, so comparing raw mtimes would always report a freshly started
+        # server as stale (this test first failed exactly that way).
         from aipds.proto.source import newest_source_mtime
         newest = newest_source_mtime(target)
         assert newest is not None and newest <= info.built_at
@@ -779,8 +788,8 @@ async def test_an_unstarted_host_has_no_timestamp(root):
 
 
 def test_sweep_finds_pid_files_where_hosting_actually_writes_them(root):
-    """호스팅은 빌드 트리 **안의** `prototype/`에서 돈다 — pid 파일도 그 깊이에 있다.
-    한 단계 위만 보던 동안 스윕은 아무것도 찾지 못했다."""
+    """Hosting runs in `prototype/` **inside** the build tree — the pid file is at that depth too.
+    While the sweep looked only one level up, it found nothing."""
     host = ProtoHost(root=root)
     served = root / "p1" / "demo" / "prototype"
     served.mkdir(parents=True)

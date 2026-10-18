@@ -19,9 +19,9 @@ class _FakeRunner:
 
 
 class _FakeHost:
-    """프로토타입 실체(로컬 트리·호스팅·토큰)의 대역. `purge`는 실제로 트리를
-    지운다 — 인메모리 카운터만 두면 "빌드 트리가 남는다"를 단정하는 테스트가
-    아무것도 검증하지 않는다."""
+    """Stand-in for the prototype's physical state (local tree, hosting, tokens). `purge`
+    really deletes the tree; with only an in-memory counter, a test asserting "the
+    build tree is left behind" would verify nothing."""
 
     def __init__(self, root=None):
         self.root = root
@@ -47,9 +47,9 @@ class _FakeHost:
             shutil.rmtree(self.root / pid / slug, ignore_errors=True)
 
     async def purge_project(self, pid):
-        """부모 디렉터리 정리. 실물처럼 **실제로** 지운다 — 카운터만 두면
-        "빈 껍데기가 남지 않는다"를 단정하는 테스트가 공허해진다(`purge`와 같은
-        이유)."""
+        """Clean up the parent directory. It **really** deletes, like the real thing; with
+        only a counter, a test asserting "no empty shell is left behind" would be
+        vacuous (same reason as `purge`)."""
         self.purged_projects.append(pid)
         if self.purge_project_exc is not None:
             raise self.purge_project_exc
@@ -68,12 +68,12 @@ class _FakeSession:
 
 @pytest.fixture(autouse=True)
 def _proto_wiring(monkeypatch, tmp_path):
-    """삭제 경로가 프로토타입 정리를 타므로 그 의존성도 전부 fake로 물린다.
+    """The delete path runs prototype cleanup, so all of its dependencies are wired to fakes too.
 
-    s3_store_factory(프로젝트 프리픽스)와 surveys_root_s3_factory(버킷 루트)를
-    **따로** 두는 것이 load-bearing이다 — 설문 토큰 인덱스는 루트에 있고, 둘을
-    한 fake로 합치면 "인덱스가 회수됐다"는 단정이 공허해진다
-    (test_routes_prototypes.py의 proto_env와 같은 이유).
+    Keeping s3_store_factory (project prefix) and surveys_root_s3_factory (bucket root)
+    **separate** is load-bearing: the survey token index lives at the root, and merging
+    the two into one fake would make the assertion "the index was reclaimed" vacuous
+    (same reason as proto_env in test_routes_prototypes.py).
     """
     project_s3, surveys_root = FakeS3Store(), FakeS3Store()
     host = _FakeHost(root=tmp_path)
@@ -99,8 +99,8 @@ def _seed_project(pid: str, sessions: FakeS3Store, root: FakeS3Store) -> _FakeRu
 
 
 def _seed_prototype(env, pid: str, slug: str, token: str) -> _FakeSession:
-    """스펙만 있는 프로토타입이 아니라 **실체가 있는** 프로토타입을 만든다:
-    S3 설문(문항 + 루트 토큰 인덱스), 로컬 빌드 트리 + 토큰 파일, 활성 세션."""
+    """Create a prototype that **has physical state**, not one with only a spec:
+    an S3 survey (questions + root token index), a local build tree + token file, and an active session."""
     env["project_s3"].blobs[f"prototypes/{slug}/survey/questionnaire.json"] = json.dumps(
         {"token": token, "slug": slug, "project_id": pid})
     env["surveys_root"].blobs[f"surveys/by-token/{token}.json"] = json.dumps(
@@ -130,12 +130,12 @@ def test_delete_removes_registry_vm_and_s3(monkeypatch):
 
 
 def test_delete_purges_prototype_runtime_state_and_root_token_index(monkeypatch, _proto_wiring):
-    """프로젝트 삭제가 프로토타입의 **실체**까지 정리한다.
+    """Deleting a project also cleans up the prototype's **physical state**.
 
-    S3 projects/{pid}/ 삭제로는 닿지 않는 것들이다: 로컬 빌드 트리, 접근 토큰,
-    활성 빌드 세션, 그리고 버킷 **루트**의 설문 토큰 인덱스. 이것들이 남으면
-    수백MB 트리가 EBS에 쌓이고, 이미 공유한 프리뷰·설문 링크가 삭제된
-    프로젝트에서도 계속 열린다.
+    These are things that deleting S3 projects/{pid}/ does not reach: the local build tree,
+    access tokens, active build sessions, and the survey token index at the bucket **root**.
+    If they remain, trees of hundreds of MB pile up on EBS, and preview and survey links
+    already shared keep opening even for a deleted project.
     """
     env = _proto_wiring
     sessions, root = FakeS3Store(), FakeS3Store()
@@ -145,7 +145,7 @@ def test_delete_purges_prototype_runtime_state_and_root_token_index(monkeypatch,
     pid = "del-proto"
     _seed_project(pid, sessions, root)
     session = _seed_prototype(env, pid, "checkout", "tok-checkout")
-    # 프리뷰 토큰의 루트 색인(proto/store.py) — 설문 토큰 색인과 같은 루트에 산다.
+    # Root index of preview tokens (proto/store.py); lives at the same root as the survey token index.
     import asyncio
     from aipds.proto.store import PrototypeStore, resolve_token
     asyncio.run(PrototypeStore(app_module.s3_store_factory(pid),
@@ -160,13 +160,13 @@ def test_delete_purges_prototype_runtime_state_and_root_token_index(monkeypatch,
     assert (pid, "checkout") not in app_module.proto_sessions
     assert env["host"].purged == [(pid, "checkout")]
     assert not (env["proto_root"] / pid / "checkout").exists()
-    # 루트 스코프 인덱스 — 역방향 조회가 없어서 문항 파일을 먼저 읽어야 회수된다.
+    # Root-scoped index: there is no reverse lookup, so it can only be reclaimed by reading the question file first.
     assert "surveys/by-token/tok-checkout.json" not in env["surveys_root"].blobs
     assert not app_module.registry.is_registered(pid)
 
 
 def test_delete_cleans_every_slug_of_the_project(monkeypatch, _proto_wiring):
-    """슬러그가 여럿이면 전부 돈다. 하나만 돌면 나머지는 조용히 남는다."""
+    """With several slugs, every one is processed. Processing only one silently leaves the rest behind."""
     env = _proto_wiring
     sessions, root = FakeS3Store(), FakeS3Store()
     monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
@@ -176,22 +176,23 @@ def test_delete_cleans_every_slug_of_the_project(monkeypatch, _proto_wiring):
     _seed_project(pid, sessions, root)
     _seed_prototype(env, pid, "alpha", "tok-a")
     _seed_prototype(env, pid, "beta", "tok-b")
-    # 기록 없이 로컬 트리만 있는 슬러그(리셋 뒤 재빌드 등) — 로컬 열거가 없으면 놓친다.
+    # A slug with only a local tree and no record (e.g., rebuilt after a reset); missed without local enumeration.
     (env["proto_root"] / pid / "gamma").mkdir(parents=True)
 
     r = client.delete(f"/projects/{pid}")
 
     assert r.status_code == 200
     assert env["host"].purged == [(pid, "alpha"), (pid, "beta"), (pid, "gamma")]
-    assert list(env["surveys_root"].blobs) == []          # 두 토큰 인덱스 모두 회수
+    assert list(env["surveys_root"].blobs) == []          # both token indexes reclaimed
     assert not (env["proto_root"] / pid / "gamma").exists()
 
 
 def test_delete_500_keeps_s3_and_registry_when_build_tree_purge_fails(monkeypatch, _proto_wiring):
-    """정리 실패는 조용히 넘기지 않는다 — 500 + 재시도 가능 상태 유지.
+    """A cleanup failure is not silently ignored: 500, and the state stays retryable.
 
-    S3를 지워버리면 남은 토큰 인덱스를 회수할 문항 파일이 사라져 그 인덱스는
-    영구히 도달 불가가 된다. 그래서 실패 시 S3와 레지스트리를 그대로 둔다.
+    If S3 were deleted, the question file needed to reclaim the remaining token index
+    would be gone, and that index would become permanently unreachable. So on failure,
+    S3 and the registry are left as they are.
     """
     env = _proto_wiring
     sessions, root = FakeS3Store(), FakeS3Store()
@@ -212,10 +213,11 @@ def test_delete_500_keeps_s3_and_registry_when_build_tree_purge_fails(monkeypatc
 
 
 def test_delete_keeps_build_tree_when_survey_purge_fails(monkeypatch, _proto_wiring):
-    """설문 purge가 실패한 슬러그는 빌드 트리도 건드리지 않는다.
+    """A slug whose survey purge failed does not have its build tree touched either.
 
-    리셋 경로의 게이트와 같은 판단이다 — 설문(과 살아 있는 공개 링크)이 남은
-    채 실체만 지우면 재시도가 회수할 문항은 그대로인데 호스팅할 것이 없다.
+    Same judgment as the gate on the reset path: if only the physical state is deleted
+    while the survey (and its live public link) remains, the questions a retry would
+    reclaim are still there, but there is nothing left to host.
     """
     env = _proto_wiring
     sessions, root = FakeS3Store(), FakeS3Store()
@@ -239,21 +241,21 @@ def test_delete_keeps_build_tree_when_survey_purge_fails(monkeypatch, _proto_wir
     r = client.delete(f"/projects/{pid}")
 
     assert r.status_code == 500
-    assert env["host"].purged == []                      # 이 슬러그는 더 진행하지 않는다
+    assert env["host"].purged == []                      # this slug goes no further
     assert (env["proto_root"] / pid / "checkout").is_dir()
     assert "surveys/by-token/tok-keep.json" in env["surveys_root"].blobs
     assert app_module.registry.is_registered(pid)
 
 
 def test_delete_cleans_local_prototypes_without_durable_storage(monkeypatch, _proto_wiring):
-    """버킷 미설정(로컬/테스트)에서도 로컬 실체 정리는 돈다 — 빌드 트리와 세션은
-    S3와 무관하게 존재한다. 설문 단계만 건너뛴다.
+    """Even with no bucket configured (local/test), local physical cleanup runs: the build
+    tree and sessions exist independently of S3. Only the survey step is skipped.
 
-    setenv("")가 필요하다: aipds.app이 기동 시 backend/.env를 로드하므로
-    개발 박스에서는 AIPDS_S3_BUCKET이 이미 채워져 있고, 그러면 이 테스트가
-    durable 경로를 타서 검증하려던 분기를 지나친다(실측 — 이 줄이 없어 설문
-    인덱스가 지워졌다). test_routes_prototypes.py의 proto_env도 같은 이유로
-    같은 줄을 둔다.
+    setenv("") is required: aipds.app loads backend/.env at startup, so on a dev box
+    AIPDS_S3_BUCKET is already set, and then this test takes the durable path and skips
+    the branch it meant to verify (observed: without this line, the survey index was
+    deleted). proto_env in test_routes_prototypes.py has the same line for the same
+    reason.
     """
     env = _proto_wiring
     monkeypatch.setenv("AIPDS_S3_BUCKET", "")
@@ -267,7 +269,7 @@ def test_delete_cleans_local_prototypes_without_durable_storage(monkeypatch, _pr
     assert session.closed == 1
     assert env["host"].purged == [(pid, "checkout")]
     assert not (env["proto_root"] / pid / "checkout").exists()
-    # durable이 아니므로 설문 인덱스는 손대지 않는다(그 프로젝트는 S3에 없다).
+    # Not durable, so the survey index is not touched (that project is not in S3).
     assert "surveys/by-token/tok-nd.json" in env["surveys_root"].blobs
     assert not app_module.registry.is_registered(pid)
 
@@ -288,7 +290,7 @@ def test_delete_continues_when_stop_fails(monkeypatch):
 
     runner.stop = _boom  # type: ignore[assignment]
     r = client.delete("/projects/del-2")
-    assert r.status_code == 200  # stop 실패는 삭제를 막지 않는다
+    assert r.status_code == 200  # a stop failure does not block deletion
     assert not app_module.registry.is_registered("del-2")
 
 
@@ -305,11 +307,11 @@ def test_delete_returns_500_and_keeps_registry_on_s3_failure(monkeypatch):
 
     r = client.delete("/projects/del-3")
     assert r.status_code == 500
-    assert app_module.registry.is_registered("del-3")  # 유지 → 재시도 가능
+    assert app_module.registry.is_registered("del-3")  # kept -> retryable
 
 
 def test_delete_registered_but_unbooted_project(monkeypatch):
-    # 복원 직후(워크스페이스 없음) 상태에서도 삭제 가능해야 한다
+    # Deletion must work even right after restore (no workspace)
     sessions, root = FakeS3Store(), FakeS3Store()
     monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "session_s3_factory", lambda: sessions)
@@ -323,17 +325,17 @@ def test_delete_registered_but_unbooted_project(monkeypatch):
 
 
 def test_delete_stops_runner_attached_by_concurrent_boot_during_s3_await(monkeypatch):
-    """역방향 레이스: DELETE가 복원-미부팅(워크스페이스 없음) 프로젝트에 대해 실행되어
-    stop 블록을 건너뛴 뒤, S3 삭제 await 도중 동시 ensure_workspace가 초기화를
-    마치고 registry.attach로 살아있는 워크스페이스를 붙인다. 마지막
-    registry.remove(pid)가 반환하는 그 워크스페이스를 stop하지 않으면 방금 만든
-    러너가 새어나간다(leak)."""
+    """Reverse race: DELETE runs on a restored-but-not-booted (no workspace) project and
+    skips the stop block; then, while the S3 delete is awaited, a concurrent
+    ensure_workspace finishes initialization and attaches a live workspace via
+    registry.attach. If the workspace returned by the final registry.remove(pid) is not
+    stopped, the runner just created leaks."""
     pid = "del-race"
     runner2 = _FakeRunner()
 
     class _RaceSessionsStore(FakeS3Store):
         async def delete_prefix(self, prefix):
-            # 아직 등록 상태(is_registered)인 동안 동시 부팅이 attach하는 순간을 흉내낸다.
+            # Simulate the moment a concurrent boot attaches while the project is still registered (is_registered).
             app_module.registry.attach(pid, Workspace(runner2))
             return await super().delete_prefix(prefix)
 
@@ -350,23 +352,24 @@ def test_delete_stops_runner_attached_by_concurrent_boot_during_s3_await(monkeyp
     assert not app_module.registry.is_registered(pid)
 
 
-# ---- 로컬 실체의 잔여물 ----
+# ---- Leftovers of local physical state ----
 #
-# 실측(2026-08-19, 배포 인스턴스): `/opt/aipds/workspaces/`에 삭제된 프로젝트
-# 6개의 디렉터리가 남아 있었고(합 2.35MB), S3 `projects/`에는 그중 어느 것도 없었다.
-# `/opt/aipds/protos/`에는 빈 부모 디렉터리 3개가 남아 있었다.
+# Observed (2026-08-19, deployed instance): `/opt/aipds/workspaces/` still held the
+# directories of 6 deleted projects (2.35MB total), none of which existed in S3 `projects/`.
+# `/opt/aipds/protos/` still held 3 empty parent directories.
 
 def test_delete_removes_the_workspace_dir_of_a_project_never_booted_this_process(
         monkeypatch, tmp_path):
-    """**재시작 뒤 한 번도 열지 않은 프로젝트**를 삭제해도 워크스페이스가 사라져야
-    한다.
+    """Deleting **a project never opened since the restart** must still remove its
+    workspace.
 
-    이것이 흔한 경로다. 기동 시 `app.py`는 S3 매니페스트에서 목록만 복원하며
-    `registry.register()`만 부르고 `attach()`는 하지 않는다(워크스페이스는 첫
-    요청에서 lazy 초기화). 그래서 재시작 직후 모든 프로젝트가
-    `has_workspace() == False`이고, 옛 삭제 경로는 로컬 정리를 그 플래그에 걸어
-    뒀으므로 — `runner.stop()` 안에만 rmtree가 있었다 — 디스크의 디렉터리가 그대로
-    남았다. 사용자에게는 "채팅 기록·문서가 영구 삭제된다"고 약속한 상태다.
+    This is the common path. At startup `app.py` restores only the list from the S3
+    manifest, calling only `registry.register()` and not `attach()` (the workspace is
+    lazily initialized on the first request). So right after a restart every project has
+    `has_workspace() == False`, and since the old delete path gated local cleanup on that
+    flag (the rmtree lived only inside `runner.stop()`), the directory on disk was left
+    as is. Meanwhile the user had been promised that "chat history and documents are
+    permanently deleted".
     """
     sessions, root = FakeS3Store(), FakeS3Store()
     monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
@@ -375,7 +378,7 @@ def test_delete_removes_the_workspace_dir_of_a_project_never_booted_this_process
     ws_root = tmp_path / "workspaces"
     monkeypatch.setattr(app_module, "_workspaces_dir", lambda: ws_root)
 
-    # 등록만 한다 — attach 없음. 재시작 직후의 상태다.
+    # Register only, no attach. This is the state right after a restart.
     app_module.registry.register("del-ws")
     root.blobs["del-ws/project.json"] = "{}"
     left_behind = ws_root / "del-ws" / "aiplc-docs"
@@ -390,11 +393,11 @@ def test_delete_removes_the_workspace_dir_of_a_project_never_booted_this_process
 
 def test_delete_removes_the_workspace_dir_when_the_runner_is_attached(
         monkeypatch, tmp_path):
-    """attach된 정상 경로에서도 같은 결과여야 한다 — 대칭 확인.
+    """The normal, attached path must give the same result: a symmetry check.
 
-    이쪽은 `runner.stop()`이 이미 지우지만, 그 rmtree는 드라이버 종료와 한 몸이라
-    stop이 실패하면 함께 건너뛰어진다(그 실패는 의도적으로 삼킨다). 경로 기반
-    삭제가 그 뒤를 받는다.
+    Here `runner.stop()` already deletes, but that rmtree is bound up with driver
+    shutdown, so if stop fails it is skipped too (that failure is swallowed on purpose).
+    Path-based deletion backs it up.
     """
     sessions, root = FakeS3Store(), FakeS3Store()
     monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
@@ -419,12 +422,12 @@ def test_delete_removes_the_workspace_dir_when_the_runner_is_attached(
 
 
 def test_delete_removes_the_projects_prototype_root(monkeypatch, _proto_wiring):
-    """슬러그를 다 지운 뒤 **부모 디렉터리**도 사라져야 한다.
+    """After all slugs are deleted, the **parent directory** must be gone too.
 
-    `host.purge`가 지우는 것은 `{root}/{pid}/{slug}`뿐이라(host.py) 빈 껍데기가
-    남았다. 부모를 슬러그 루프 **뒤에** 지우는 것이 중요하다 — 먼저 지우면 도는
-    `npm start` 밑에서 트리가 사라져 프로세스가 고아가 되고 포트를 계속 물고 있다
-    (`host.purge`가 `stop`을 먼저 부르는 이유와 같은 위험).
+    `host.purge` deletes only `{root}/{pid}/{slug}` (host.py), so an empty shell was left
+    behind. Deleting the parent **after** the slug loop matters: deleting it first pulls
+    the tree out from under a running `npm start`, orphaning the process, which keeps
+    holding its port (the same risk that makes `host.purge` call `stop` first).
     """
     sessions, root = FakeS3Store(), FakeS3Store()
     monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
@@ -444,13 +447,13 @@ def test_delete_removes_the_projects_prototype_root(monkeypatch, _proto_wiring):
 
 def test_delete_does_not_purge_the_prototype_root_when_a_slug_failed(
         monkeypatch, _proto_wiring):
-    """슬러그 하나가 실패하면 부모를 지우지 않는다.
+    """If one slug fails, the parent is not deleted.
 
-    부모를 지우면 남은 슬러그의 빌드 트리가 함께 사라지고, 재시도가 회수해야 할
-    실체가 없어진다 — 슬러그별 게이트(설문 purge 실패 시 `continue`)와 같은
-    판단이다. 그리고 `purge_project`는 아무것도 멈추지 않으므로, 실패한 슬러그가
-    아직 프로세스를 쥐고 있으면 그 트리를 지우는 것은 포트를 물고 있는 고아를
-    만드는 일이다(`ProtoHost.purge`가 `stop`을 먼저 부르는 이유).
+    Deleting the parent would also remove the remaining slugs' build trees, leaving
+    nothing for a retry to reclaim; same judgment as the per-slug gate (`continue` on
+    survey purge failure). And since `purge_project` stops nothing, if the failed slug
+    still holds a process, deleting its tree creates an orphan holding a port (the reason
+    `ProtoHost.purge` calls `stop` first).
     """
     sessions, root = FakeS3Store(), FakeS3Store()
     monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
@@ -465,7 +468,7 @@ def test_delete_does_not_purge_the_prototype_root_when_a_slug_failed(
     assert r.status_code == 500
     assert _proto_wiring["host"].purged_projects == [], (
         "슬러그가 실패했는데 부모를 지웠다")
-    # 재시도가 의미를 갖도록 S3와 레지스트리가 남아 있어야 한다.
+    # S3 and the registry must remain so that a retry is meaningful.
     assert app_module.registry.is_registered("del-gate")
     assert any(k.startswith("del-gate/") for k in root.blobs)
     app_module.registry.remove("del-gate")

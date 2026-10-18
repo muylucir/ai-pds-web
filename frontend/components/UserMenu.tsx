@@ -3,8 +3,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
-// 네임스페이스로 가져온다 — 테스트가 vi.spyOn으로 타이머 시작을 관찰한다
-// (명명 import는 바인딩이 고정되어 스파이가 걸리지 않는다).
+// Imported as a namespace — the test observes the timer start with vi.spyOn
+// (a named import's binding is fixed, so the spy would not attach).
 import * as keepAlive from "@/lib/auth/keepSessionAlive";
 import { ChangePasswordModal } from "./ChangePasswordModal";
 
@@ -14,31 +14,32 @@ interface Me {
   role?: "admin" | "pm" | null;
 }
 
-// admin 화면(UserTable)과 같은 규약 — 라벨은 딕셔너리 키다.
+// Same convention as the admin screen (UserTable) — labels are dictionary keys.
 const ROLE_LABEL_KEY: Record<string, keyof Dict> = {
   admin: "admin.roleAdmin",
   pm: "admin.rolePm",
 };
 
-// 토큰이 httpOnly 쿠키에 있어 JS가 읽을 수 없으므로, 표시용 정보는 서버에게
-// 묻는다(/api/auth/me). 부모가 prop으로 넘기지 않는 이유: 이 컴포넌트가 헤더의
-// 모든 화면에 들어가므로 각 페이지가 사용자 정보를 실어 보내는 배선을 만들지 않는다.
+// The token is in an httpOnly cookie that JS cannot read, so display info is
+// fetched from the server (/api/auth/me). Why the parent does not pass it as a
+// prop: this component sits in the header of every screen, so we avoid wiring
+// every page to pass user info down.
 export function UserMenu() {
   const t = useT();
   const [me, setMe] = useState<Me | null>(null);
   const [open, setOpen] = useState(false);
-  // 모달을 열 때 메뉴는 닫는다 — 열린 메뉴가 모달 뒤에 남으면 바깥 클릭 처리가
-  // 두 겹으로 겹친다.
+  // Close the menu when opening the modal — if the open menu stayed behind the
+  // modal, outside-click handling would be layered twice.
   const [changing, setChanging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // access 토큰의 주기 갱신. 이 컴포넌트에 있는 이유는 /api/auth/me를 여기서
-  // 부르는 것과 같다 — 인증된 모든 화면의 헤더에 들어가므로 페이지마다 배선을
-  // 반복하지 않는다.
+  // Periodic refresh of the access token. It lives in this component for the same
+  // reason /api/auth/me is called here — it sits in the header of every
+  // authenticated screen, so the wiring is not repeated per page.
   //
-  // 프로토타입 화면만 감싸지 않는 이유: 워크스페이스의 긴 디스커버리 턴도 같은
-  // 만료 창을 갖는다(app/api/auth/refresh/route.ts 참조 — 갱신이 백엔드 401에만
-  // 반응하므로 열려 있는 SSE 연결은 갱신 기회를 만들지 못한다).
+  // Why not wrap only the prototype screens: long Discovery turns in the workspace
+  // have the same expiry window (see app/api/auth/refresh/route.ts — refresh reacts
+  // only to a backend 401, so an open SSE connection creates no refresh opportunity).
   useEffect(() => keepAlive.keepSessionAlive(), []);
 
   useEffect(() => {
@@ -50,10 +51,10 @@ export function UserMenu() {
     return () => { alive = false; };
   }, []);
 
-  // 열려 있는 동안에만 리스너를 붙인다 — 닫혀 있을 때 document에 리스너가
-  // 남아있지 않게 한다. mousedown을 쓰는 이유: click을 쓰면 메뉴를 여는 그
-  // 클릭이 버블링되어 document까지 올라가 같은 클릭에 바로 닫힐 위험이 있다.
-  // ref로 메뉴 내부 클릭(토글 버튼·항목)은 "바깥 클릭"에서 제외한다.
+  // Attach listeners only while open — so no listener remains on document while
+  // closed. Why mousedown: with click, the very click that opens the menu could
+  // bubble up to document and close it immediately on the same click. The ref
+  // excludes clicks inside the menu (toggle button, items) from "outside clicks".
   useEffect(() => {
     if (!open) return;
     function handlePointerDown(e: MouseEvent) {
@@ -72,7 +73,7 @@ export function UserMenu() {
     };
   }, [open]);
 
-  // 인증 전(로그인 화면)에는 아무것도 그리지 않는다.
+  // Render nothing before authentication (the login screen).
   if (!me?.authenticated || !me.email) return null;
 
   const initial = me.email.charAt(0).toUpperCase();
@@ -118,9 +119,9 @@ export function UserMenu() {
               </Link>
             </>
           )}
-          {/* 역할 조건 밖에 둔다 — 자기 계정 조작이므로 pm도 할 수 있어야 한다.
-              admin 블록 안에 들어가면 pm에게는 관리자에게 재설정을 요청하는
-              길만 남는다. */}
+          {/* Kept outside the role condition — it acts on one's own account, so a pm
+              must be able to do it too. Inside the admin block, a pm would be left
+              only with asking an admin for a reset. */}
           <button
             type="button"
             onClick={() => { setOpen(false); setChanging(true); }}
@@ -128,8 +129,8 @@ export function UserMenu() {
           >
             {t("user.changePassword")}
           </button>
-          {/* POST인 이유: GET 로그아웃은 링크 프리페치에 걸려 의도치 않게
-              세션을 끊을 수 있다. */}
+          {/* Why POST: a GET logout can be triggered by link prefetching and end
+              the session unintentionally. */}
           <form action="/api/auth/logout" method="post">
             <button
               type="submit"

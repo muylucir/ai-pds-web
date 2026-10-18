@@ -13,27 +13,27 @@ const notoSansKr = Noto_Sans_KR({
   display: "swap",
 });
 
-// 정적 `metadata` 객체가 아니라 `generateMetadata`인 이유: description이 UI
-// 언어를 따라야 하고, 정적 객체는 쿠키를 읽기 전에 평가되므로 로케일을 알 수
-// 없다. Next가 요청마다 이 함수를 부르므로 여기서는 cookies()를 쓸 수 있다.
+// Why `generateMetadata` rather than a static `metadata` object: the description must follow the
+// UI language, and a static object is evaluated before the cookie is read, so it cannot know the
+// locale. Next calls this function on every request, so cookies() can be used here.
 export async function generateMetadata(): Promise<Metadata> {
   const raw = (await cookies()).get(LANG_COOKIE)?.value;
   const locale = isLocale(raw) ? raw : DEFAULT_LOCALE;
   return {
-    title: "AI-PDS",   // 제품명 — 번역하지 않는다
+    title: "AI-PDS",   // product name — not translated
     description: dictFor(locale)["app.description"],
   };
 }
 
-// 이 앱에서 cookies()를 부르는 유일한 지점이다. 로케일을 서버에서 읽는 이유는
-// <html lang>을 첫 페인트에 맞추기 위해서다 — localStorage는 서버에서 보이지
-// 않아 한국어로 그린 뒤 영어로 바뀌는 깜빡임이 생긴다.
+// This is the only place in this app that calls cookies(). The locale is read on the server
+// to get <html lang> right on the first paint — localStorage is not visible on the server,
+// causing a flicker where it is drawn in Korean and then switches to English.
 //
-// async가 된 것에 주의: Next 15의 cookies()는 Promise를 돌려준다.
+// Note that it became async: Next 15's cookies() returns a Promise.
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const raw = (await cookies()).get(LANG_COOKIE)?.value;
-  // 알 수 없는 값(손으로 고친 쿠키, 옛 값)은 조용히 기본값으로 떨어진다.
-  // 던지면 모든 페이지가 500이 되는데, 언어 하나 때문에 그럴 이유가 없다.
+  // Unknown values (hand-edited cookies, old values) silently fall back to the default.
+  // Throwing would make every page a 500, and there is no reason for that over one language.
   const locale = isLocale(raw) ? raw : DEFAULT_LOCALE;
   return (
     <html lang={locale} className={notoSansKr.variable}>

@@ -1,22 +1,24 @@
-// 공용 마크다운 렌더러 — AI 메시지·문서 뷰어·질문 preamble 전용.
-// 사용자 입력은 여기로 보내지 않는다(plain text 유지 — spec §3).
-// raw HTML은 react-markdown 기본 동작대로 렌더하지 않는다(XSS).
+// Shared markdown renderer — only for AI messages, the document viewer, and question preambles.
+// User input is never sent here (it stays plain text — spec §3).
+// Raw HTML is not rendered, per react-markdown's default behavior (XSS).
 //
-// **`[Answer]:` 줄을 여기서 손본다(2026-08-16의 결함).** 백엔드가 답변을 질문
-// 파일의 `[Answer]:` 칸에 심는데 화면에 아무것도 나타나지 않았다 — 그 줄이
-// CommonMark 링크 참조 정의라서 렌더러가 출력을 만들지 않기 때문이다(자세한
-// 근거는 lib/questionMarkdown.ts 헤더).
+// **`[Answer]:` lines are adjusted here (the 2026-08-16 defect).** The backend writes
+// answers into the question file's `[Answer]:` slot, yet nothing appeared on screen —
+// because that line is a CommonMark link reference definition, the renderer produces no
+// output for it (full rationale in the lib/questionMarkdown.ts header).
 //
-// 호출부 5곳에 각자 걸지 않고 렌더러에 한 번 거는 이유: 질문 파일은 워크스페이스
-// 패널·문서 리뷰·캔버스·파싱 실패 폴백 어디서나 열린다. 흩어 두면 여섯 번째
-// 호출부가 추가될 때 조용히 빠지고, 그 실패는 "답변이 기록되지 않았다"로 보인다 —
-// 이번에 실제로 그렇게 보였다. 같은 이유로 보기 줄(`A) …`)에 하드 브레이크를
-// 붙인다 — 그것 없이는 보기가 한 줄로 쭉 이어진다. 두 변환 모두 멱등이다.
+// Why hook it into the renderer once instead of at each of the 5 call sites: question files
+// are opened everywhere — the workspace panel, document review, the canvas, the parse-failure
+// fallback. Scattered, a sixth call site would silently miss it when added, and that failure
+// looks like "the answer was not recorded" — which is exactly how it looked this time. For
+// the same reason, option lines (`A) …`) get a hard break — without it, the options run
+// together on one line. Both transforms are idempotent.
 //
-// **두 렌더러 모두 `memo`이고, 플러그인·컴포넌트 표는 모듈 상수다.** 마크다운 파싱은
-// 이 앱에서 가장 비싼 렌더 작업인데, 스트리밍 중에는 화면이 프레임마다 다시 그려진다.
-// memo가 없으면 그때마다 지난 대화의 모든 말풍선과 문서 패널의 긴 문서가 처음부터 다시
-// 파싱된다. 표를 렌더 안에서 만들면 매번 새 객체라 ReactMarkdown 쪽 비교도 소용없다.
+// **Both renderers are `memo`, and the plugin and component tables are module constants.**
+// Markdown parsing is the most expensive render work in this app, and during streaming the
+// screen re-renders every frame. Without memo, every bubble in the past conversation and the
+// long document in the document panel would be re-parsed from scratch each time. Building
+// the tables inside render would yield a new object every time, defeating ReactMarkdown's comparison too.
 import { memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -42,31 +44,32 @@ export const Markdown = memo(function Markdown(
   );
 });
 
-// 인라인 전용 렌더러 — 질문 문장과 보기 라벨.
+// Inline-only renderer — question sentences and option labels.
 //
-// **왜 위 `Markdown`을 쓸 수 없는가.** 보기는 `<label>` 안 flex 레이아웃이고, 위
-// 렌더러는 `<div className="prose …">`로 감싼 뒤 문단을 `<p>`로 그린다. 그러면
-// 라벨 안에 블록 요소와 prose 여백이 들어와 선택 컨트롤과의 정렬이 깨진다.
+// **Why the `Markdown` above cannot be used.** Options are a flex layout inside a `<label>`,
+// and the renderer above wraps everything in `<div className="prose …">` and draws
+// paragraphs as `<p>`. That puts block elements and prose margins inside the label and
+// breaks alignment with the selection control.
 //
-// **왜 아예 렌더하지 않으면 안 되는가(2026-08-18 실측).** 질문 파일의 보기는 실제로
-// 마크다운으로 쓰여 있다 — `A) **「조정 브리프」** — 조정 건 하나를 열면 …`. 평문으로
-// 그리면 `**`가 화면에 그대로 남는다. 질문 문장도 같다
+// **Why not skip rendering altogether (observed 2026-08-18).** Options in question files
+// really are written in markdown — `A) **「조정 브리프」** — 조정 건 하나를 열면 …`. Drawn as
+// plain text, the `**` stays on screen. The same goes for question sentences
 // (`제품명을 무엇으로 할까요? *(보도자료의 Heading)*`).
 //
-// 블록 요소는 **의도적으로 버린다**: 보기 라벨에 헤딩·목록·표가 오는 것은 애초에
-// 잘못된 입력이고, 렌더하면 카드가 부서진다. `unwrapDisallowed`로 내용은 남긴다 —
-// 태그만 벗기고 글자는 잃지 않는다.
+// Block elements are **discarded on purpose**: headings, lists, or tables in an option label
+// are invalid input to begin with, and rendering them breaks the card. `unwrapDisallowed`
+// keeps the content — it strips only the tags and loses no text.
 //
-// `prepareQuestionMarkdown`은 걸지 않는다. 그 변환은 **파일 전문**을 위한 것이다:
-// 줄 맨 앞 `[Answer]:`를 링크 정의에서 구해내고, 보기 줄에 하드 브레이크를 붙인다.
-// 여기 오는 것은 이미 파서가 잘라낸 한 조각이라 두 변환 모두 대상이 없고, 후자는
-// 오히려 라벨 안에 줄바꿈을 만든다.
+// `prepareQuestionMarkdown` is not applied. That transform is for the **full file text**:
+// it rescues a line-leading `[Answer]:` from being a link definition and adds hard breaks to
+// option lines. What arrives here is a single fragment the parser has already cut out, so
+// neither transform has a target, and the latter would actually create line breaks inside the label.
 const BLOCK_ELEMENTS = ["h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li",
                         "table", "thead", "tbody", "tr", "th", "td",
                         "blockquote", "pre", "hr", "img"];
 
 const INLINE_COMPONENTS: Components = {
-  // 문단을 감싸지 않는다 — 라벨/헤딩 안에서 인라인으로 흐르게 한다.
+  // Do not wrap paragraphs — let the content flow inline inside labels/headings.
   p: ({ children }) => <>{children}</>,
   a: ({ children, href }) => (
     <a href={href} target="_blank" rel="noopener noreferrer"

@@ -1,4 +1,4 @@
-# backend/aipds/runner.py — 턴 오케스트레이션(in-process 에이전트, VM 없음).
+# backend/aipds/runner.py — turn orchestration (in-process agent, no VM).
 from __future__ import annotations
 import asyncio
 import hashlib
@@ -39,19 +39,20 @@ def _interrupt_id_from(payload: str | None) -> str | None:
 
 
 class AgentRunner:
-    """프로젝트당 턴 실행기. 파일 계약 ops는 durable S3 직접(부팅 없음). 턴은
-    S3 → 로컬 워크스페이스 restore, in-process 에이전트 실행, done/error 시
-    로컬 → S3 sync. VM/부팅 상태기계는 없다 — 로컬 디렉토리는 휘발이며 매 턴
-    시작 시 S3에서 재구성된다(S3 = source of truth)."""
+    """Per-project turn runner. File-contract ops go directly to durable S3 (no boot). A
+    turn restores S3 → local workspace, runs the in-process agent, and on done/error
+    syncs local → S3. There is no VM/boot state machine -- the local directory is
+    ephemeral and rebuilt from S3 at the start of every turn (S3 = source of truth)."""
 
-    #: workspace_sync가 소유한다 — 쓰기 직후 게시(claude_driver의 PostToolUse
-    #: 훅)와 이 배치 sync가 **같은 집합**을 올려야 한다. 두 벌로 두면 한쪽에만
-    #: 있는 파일이 "있다가 없어지는 문서"로 보인다.
+    #: Owned by workspace_sync -- publish-right-after-write (claude_driver's PostToolUse
+    #: hook) and this batch sync must upload **the same set**. With two copies, a file
+    #: present in only one shows up as "a document that appears and then disappears".
     _SYNC_GLOBS = SYNC_GLOBS
     _RESTORE_PREFIXES = ("aiplc-docs/", "prototype/", "uploads/")
-    #: 바이트 그대로 복원하는 서브트리. `uploads/`에는 이미지·PDF 원본이 있다 —
-    #: 텍스트 경로(UTF-8 디코드)를 타면 U+FFFD로 깨진다. 업로드 라우트만 쓰는
-    #: 입력이라 정본으로 올리지 않으므로(SYNC_GLOBS 밖) 해시도 기록하지 않는다.
+    #: Subtrees restored byte-for-byte. `uploads/` holds original images and PDFs --
+    #: going through the text path (UTF-8 decode) corrupts them into U+FFFD. They are
+    #: input written only by the upload route and never uploaded to the source of truth
+    #: (outside SYNC_GLOBS), so no hash is recorded either.
     _BYTE_PREFIXES = ("uploads/",)
 
     def __init__(self, project_id, driver, s3: S3StoreLike, local_root: Path, session: dict):
@@ -61,12 +62,12 @@ class AgentRunner:
         self._local_root = Path(local_root)
         self._session = session
         self._turn_active = False
-        #: 슬롯을 쥔 턴의 신원. 해제를 홀더에게만 허용한다 — 드라이버가 같은
-        #: 규율을 갖는다(ClaudeDriver._acquire_turn/_release_turn).
+        #: Identity of the turn holding the slot. Only the holder may release it -- the
+        #: driver follows the same discipline (ClaudeDriver._acquire_turn/_release_turn).
         self._turn_token: object | None = None
         self._pending_interrupt_id: str | None = None
-        #: 턴의 마지막 컨텍스트 사용량. 연결된 클라이언트가 없을 때(백엔드 재시작 뒤)
-        #: 화면이 보일 값이다(aipds/context_usage.py).
+        #: The turn's last context usage. This is the value the screen shows when no
+        #: client is connected (after a backend restart) (aipds/context_usage.py).
         self._context = ContextRecord(s3, DISCOVERY_KEY)
         self._remote_etags: dict[str, str | None] | None = None
         self._synced_hashes: dict[str, str] = {}
@@ -74,7 +75,7 @@ class AgentRunner:
         if set_callback is not None:
             set_callback(self._record_published_file)
 
-    # ---- file-as-contract ops: durable S3 직접 ----
+    # ---- file-as-contract ops: directly on durable S3 ----
 
     async def read_file(self, rel_path: str) -> str:
         reject_unsafe(rel_path)
@@ -100,15 +101,16 @@ class AgentRunner:
         return sorted(k for k in keys if matches_glob(k, glob))
 
     async def list_files_newest_first(self, glob: str) -> list[str]:
-        """`list_files`와 같은 글롭, 최종 수정 시각 내림차순.
+        """Same glob as `list_files`, sorted by last-modified time, newest first.
 
-        `list_objects_v2`가 이미 주는 `LastModified`를 쓴다(S3Store.list_with_times) —
-        추가 호출이 없다. 알파벳 순이 필요한 호출부는 `list_files`를 그대로 쓴다.
+        Uses the `LastModified` that `list_objects_v2` already returns
+        (S3Store.list_with_times) -- no extra calls. Callers that need alphabetical
+        order keep using `list_files`.
         """
         reject_unsafe(glob)
         pairs = await self._s3.list_with_times(_glob_prefix(glob))
         matched = [(k, t) for k, t in pairs if matches_glob(k, glob)]
-        # 2차 키로 경로를 쓴다 — 같은 시각인 항목의 순서가 실행마다 흔들리지 않게.
+        # Path is the secondary key -- so entries with the same time keep a stable order across runs.
         matched.sort(key=lambda item: (-item[1], item[0]))
         return [k for k, _ in matched]
 
@@ -133,8 +135,8 @@ class AgentRunner:
             self._remote_etags[key] = etag
 
     async def _restore_workspace_from_s3(self) -> None:
-        """durable 워크스페이스(S3 = source of truth)를 로컬 FS로 복사한다.
-        첫 턴은 전부 받고, 이후에는 ETag가 달라진 파일만 받는다."""
+        """Copy the durable workspace (S3 = source of truth) to the local FS.
+        The first turn fetches everything; later turns fetch only files whose ETag changed."""
         started = time.perf_counter()
         cold = self._remote_etags is None
         metadata_groups = await asyncio.gather(
@@ -163,7 +165,7 @@ class AgentRunner:
             self._s3.get_bytes(key) if key.startswith(self._BYTE_PREFIXES)
             else self._s3.get(key)
             for key in keys))
-        # 첫 턴은 워크스페이스 전체를 쓴다 — 디스크 쓰기는 루프 밖에서.
+        # The first turn writes the whole workspace -- disk writes happen off the loop.
         hashes = await asyncio.to_thread(
             self._write_restored, list(zip(keys, bodies)))
         self._synced_hashes.update(hashes)
@@ -182,14 +184,16 @@ class AgentRunner:
     def _write_restored(
         self, items: list[tuple[str, str | bytes]],
     ) -> dict[str, str]:
-        """복원한 본문을 로컬에 쓰고 키별 해시를 돌려준다. 동기 — 스레드에서 돈다.
-        바이트 본문(`_BYTE_PREFIXES`)은 그대로 쓰고 해시를 남기지 않는다.
+        """Write restored bodies locally and return per-key hashes. Synchronous -- runs in a thread.
+        Byte bodies (`_BYTE_PREFIXES`) are written as-is and get no hash.
 
-        해시는 돌려주기만 하고 `_synced_hashes`에 직접 넣지 않는다: 그 dict는 루프
-        쪽(쓰기 직후 게시)도 만지므로, 갱신은 루프에서 한 번에 한다.
+        Hashes are only returned, not put into `_synced_hashes` directly: that dict is also
+        touched on the loop side (publish-right-after-write), so it is updated on the loop
+        in one go.
 
-        링크를 따라가지 않는다(`pathsafe.write_beneath`). 이 트리는 에이전트가 쓰므로,
-        따라가면 에이전트가 고른 곳에 백엔드 uid로 정본 본문을 쓰게 된다.
+        Links are not followed (`pathsafe.write_beneath`). The agent writes to this tree, so
+        following them would write source-of-truth bodies, as the backend uid, wherever the
+        agent chose.
         """
         hashes: dict[str, str] = {}
         if items:
@@ -201,21 +205,23 @@ class AgentRunner:
         return hashes
 
     def _scan_sync_candidates(self) -> list[tuple[str, str, str]]:
-        """정본에 올릴 후보 (키, 올릴 내용, 해시). 동기 — 스레드에서 돈다.
+        """Candidates to upload to the source of truth: (key, content to upload, hash).
+        Synchronous -- runs in a thread.
 
-        대상 파일을 전부 읽고 해시하므로 루프 위에서 돌리면 턴이 끝날 때마다 다른
-        프로젝트의 스트림이 그만큼 멈춘다.
+        It reads and hashes every target file, so running it on the loop would stall other
+        projects' streams by that much at the end of every turn.
 
-        걷는 것은 `_SYNC_GLOBS`의 맨 앞 디렉토리뿐이다. 그 밖의 키는 어느 glob에도
-        맞을 수 없으므로 답은 같고, 워크스페이스 루트에는 턴마다 복사되는 룰과 CLI
-        상태가 함께 산다. 맨 앞 조각에 와일드카드가 있는 glob이 생기면 루트 전체를
-        걷는다.
+        Only the top-level directories of `_SYNC_GLOBS` are walked. No other key can match
+        any glob, so the answer is the same, and the workspace root also holds the rules
+        copied in every turn plus CLI state. If a glob with a wildcard in its first segment
+        is ever added, the whole root is walked.
 
-        **심볼릭 링크는 따라가지 않는다.** 루트에서 `rglob`하면 디렉토리 링크를
-        따라가지 않는데, 그 디렉토리를 시작점으로 주면 따라간다 — 그래서 링크인 맨 앞
-        디렉토리는 걷지 않는다. 파일 링크는 `rglob`이 돌려주므로 건너뛰고, 읽기도
-        `read_text_beneath`로 한다(걷고 나서 읽기 전에 바꿔 끼운 링크). 에이전트가
-        바깥을 가리키는 링크를 두면 바깥 파일이 정본에 올라간다.
+        **Symbolic links are not followed.** `rglob` from the root does not follow directory
+        links, but it does follow one given as the starting point -- so a top-level directory
+        that is a link is not walked. File links are returned by `rglob`, so they are skipped,
+        and reads also go through `read_text_beneath` (a link swapped in after the walk but
+        before the read). If the agent places a link pointing outside, the outside file would
+        be uploaded to the source of truth.
         """
         tops = {glob.split("/", 1)[0] for glob in self._SYNC_GLOBS}
         if any(ch in top for top in tops for ch in "*?["):
@@ -236,14 +242,14 @@ class AgentRunner:
                 try:
                     text = read_text_beneath(self._local_root, key, errors="replace")
                 except OSError:
-                    continue  # 걷는 사이에 링크로 바뀌었거나 사라졌다
+                    continue  # became a link or disappeared during the walk
                 content = content_for_s3(key, text)
                 found.append((key, content, _content_hash(content)))
         return found
 
     async def _sync_workspace_to_s3(self) -> None:
-        """턴 출력(방법론 산출물 + 프로토타입 소스 서브트리)을 로컬에서 durable
-        S3로 끌어올린다. audit.md는 저장 시 redaction(direct S3 reader 노출 차단)."""
+        """Lift turn output (methodology artifacts + prototype source subtree) from local to
+        durable S3. audit.md is redacted on save (blocks exposure to direct S3 readers)."""
         started = time.perf_counter()
         found = await asyncio.to_thread(self._scan_sync_candidates)
         scanned = len(found)
@@ -304,11 +310,10 @@ class AgentRunner:
     # ---- turn relay ----
 
     def _claim_turn(self) -> object | None:
-        """턴 슬롯을 쥔다. 이미 쥐어져 있으면 None.
+        """Claim the turn slot. None if it is already held.
 
-        토큰을 발급하는 이유는 해제를 홀더에게만 허용하기 위해서다 —
-        `_finish_turn`이 토큰을 확인하므로, 거절된 호출이 도는 턴의 슬롯을 풀 수
-        없다.
+        A token is issued so that only the holder can release it -- `_finish_turn` checks
+        the token, so a rejected call cannot free the slot of the turn that is running.
         """
         if self._turn_active:
             return None
@@ -317,17 +322,19 @@ class AgentRunner:
         return self._turn_token
 
     def _finish_turn(self, token: object | None) -> None:
-        """이 토큰이 아직 홀더면 슬롯을 놓는다. 아니면 no-op."""
+        """Release the slot if this token is still the holder. Otherwise a no-op."""
         if self._turn_token is token:
             self._turn_active = False
             self._turn_token = None
 
     async def _record_user_input(self, record: UserInput | None) -> None:
-        """턴을 연 사용자 입력을 audit.md에 원문 그대로, 실제 시각으로 남긴다(audit_log 헤더).
+        """Record the user input that opened the turn in audit.md verbatim, with the real time (audit_log header).
 
-        **복원 뒤, 에이전트 앞이다.** 복원이 로컬 audit.md를 정본으로 덮으므로 그 전에 쓰면
-        사라지고, 에이전트가 첫 도구를 부르기 전에 써야 자기 항목을 그 뒤에 붙인다. 정본에도
-        바로 올린다 — 턴이 중간에 끊겨도 사용자가 무엇을 입력했는지는 남아야 한다.
+        **After the restore, before the agent.** The restore overwrites the local audit.md
+        with the source-of-truth copy, so writing earlier would be lost, and it must be written
+        before the agent calls its first tool so the agent appends its own entries after it.
+        It is uploaded to the source of truth right away too -- even if the turn is cut off
+        midway, what the user entered must remain.
         """
         if record is None:
             return
@@ -441,14 +448,14 @@ class AgentRunner:
                 route="answers", synced=str(synced).lower())
 
     async def interrupt(self) -> None:
-        """진행 중인 턴을 끊는다. 드라이버로 위임한다.
+        """Cut the in-progress turn. Delegates to the driver.
 
-        턴 슬롯은 건드리지 않는다 — 돌고 있는 run()이 종결 이벤트를 내며
-        스스로 놓는다. 여기서 함께 놓으면 이중 해제가 된다.
+        Does not touch the turn slot -- the running run() releases it itself when it emits
+        the terminal event. Releasing it here as well would be a double release.
         """
         interrupt = getattr(self._driver, "interrupt", None)
         if interrupt is None:
-            return  # 계약 밖의 선택 메서드다 — 없으면 no-op(여전히 멱등)
+            return  # an optional method outside the contract -- no-op if absent (still idempotent)
         await interrupt()
 
     async def pending(self) -> str | None:
@@ -463,15 +470,16 @@ class AgentRunner:
         return payload
 
     async def stop(self) -> None:
-        """로컬 워크스페이스 정리 + 드라이버 종료. S3(durable)는 건드리지 않는다
-        — 삭제는 projects.py의 delete_project_data가 담당.
+        """Clean up the local workspace + shut down the driver. Does not touch S3 (durable)
+        -- deletion is handled by delete_project_data in projects.py.
 
-        드라이버의 disconnect()는 계약(run/run_answers/pending) 밖의 **선택적**
-        메서드다. ClaudeDriver는 claude 서브프로세스를 붙들고 있으므로 이걸 안
-        부르면 프로젝트를 삭제할 때마다 그 프로세스가 backend 수명 내내
-        샌다(~300-500MB). getattr로 존재 여부만 확인하고 없으면 조용히
-        건너뛴다 — 드라이버가 하나뿐이 된 뒤에도 이 방어를 남기는 이유는
-        계약(runner.py가 쓰는 세 메서드)과 구현 편의를 섞지 않기 위해서다."""
+        The driver's disconnect() is an **optional** method outside the contract
+        (run/run_answers/pending). ClaudeDriver holds a claude subprocess, so without this
+        call, every project deletion would leak that process for the whole backend
+        lifetime (~300-500MB). getattr only checks whether it exists and silently skips
+        it if not -- this guard stays even now that there is only one driver, so as not
+        to mix the contract (the three methods runner.py uses) with implementation
+        convenience."""
         disconnect = getattr(self._driver, "disconnect", None)
         if disconnect is not None:
             try:
@@ -482,8 +490,8 @@ class AgentRunner:
 
 
 def _glob_prefix(glob: str) -> str:
-    """글롭의 선행 정적(와일드카드 없는) 디렉토리 부분 = S3 list prefix.
-    'aiplc-docs/**/*-q.md' -> 'aiplc-docs/', 'aiplc-docs/audit.md' -> 그 자체."""
+    """The leading static (wildcard-free) directory part of a glob = the S3 list prefix.
+    'aiplc-docs/**/*-q.md' -> 'aiplc-docs/', 'aiplc-docs/audit.md' -> itself."""
     parts = PurePosixPath(glob).parts
     static: list[str] = []
     for part in parts:

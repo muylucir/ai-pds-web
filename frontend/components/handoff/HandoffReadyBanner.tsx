@@ -1,13 +1,13 @@
-// Go-to-Market까지 끝났을 때 인계 탭으로 가는 문.
+// The door to the handoff tab once Go-to-Market is finished.
 //
-// **에이전트의 문장에 기대지 않는다.** GTM의 마지막 지시는 "Inception으로 진행"이고
-// (상류 go-to-market.md Step 6), 그것은 이 웹에 없는 단계다. 프로토타입 배너가
-// ws-a-v5 이후 같은 이유로 에이전트 문장이 아니라 디스크에서 유도되듯, 여기서는
-// `aiplc-state.md`를 정규화한 capability(backend capabilities.py)의 go_to_market이
-// completed인지를 본다. 스테이지 이름을 한국어로 쓴 프로젝트도 그쪽이 이미 묶는다.
+// **It does not rely on the agent's sentences.** GTM's final instruction is "proceed to Inception"
+// (upstream go-to-market.md Step 6), a stage that does not exist in this web app. Just as the prototype banner
+// has been derived from disk rather than agent sentences since ws-a-v5 for the same reason, here we check
+// whether go_to_market in the capability normalized from `aiplc-state.md` (backend capabilities.py)
+// is completed. Projects that wrote stage names in Korean are already folded in on that side.
 //
-// 닫기 버튼이 없다 — 프로토타입 배너와 같은 판단이다. Discovery가 끝난 뒤 다음으로 가는
-// 문이고, 실수로 닫으면 사용자는 탭 줄의 "인계"를 스스로 찾아야 한다.
+// There is no close button — the same judgment as the prototype banner. It is the door to what comes next after
+// Discovery ends, and if closed by mistake the user would have to find "인계" (Handoff) in the tab bar on their own.
 "use client";
 import Link from "next/link";
 import type { ProjectState } from "@/lib/api/types";
