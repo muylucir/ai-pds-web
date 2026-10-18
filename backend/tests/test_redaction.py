@@ -27,9 +27,9 @@ def test_still_redacts_real_sk_key_at_token_start():
     assert redact_credentials("sk-abc123def456ghi789") == "[CREDENTIAL REDACTED]"
 
 
-# 자격증명 모양의 표본은 **실행 중에 조립한다.** 리터럴로 두면 비밀 탐지 스캐너가 테스트
-# 표본을 진짜 키로 집는다(gitleaks·semgrep secrets 실측). 값 자체는 의미가 없다 — 모양만
-# 패턴과 맞으면 된다.
+# Credential-shaped samples are **assembled at runtime.** As literals, secret scanners flag
+# the test samples as real keys (observed with gitleaks and semgrep secrets). The values
+# themselves mean nothing; only their shape needs to match the patterns.
 def _sample(prefix: str, body: str, n: int) -> str:
     return prefix + (body * n)[:n]
 
@@ -48,8 +48,8 @@ def _jwt_shaped() -> str:
 
 
 def test_redacts_temporary_sts_credentials():
-    """에이전트가 받는 것은 STS 임시 자격증명이다(ASIA 키, 세션 토큰) — AKIA만 보면
-    `env`나 브로커 응답이 그대로 스트림·audit.md·S3로 나간다."""
+    """What the agent receives are STS temporary credentials (ASIA key, session token); looking
+    only for AKIA would let `env` or a broker response go out as is to the stream, audit.md, and S3."""
     key_id = _sample("AS" + "IA", "Z9", 16)
     assert redact_credentials(f"id {key_id} x") == "id [CREDENTIAL REDACTED] x"
     session = _sample("IQoJ" + "b3JpZ2lu", "Ab9+", 120)
@@ -71,7 +71,7 @@ def test_new_patterns_leave_ordinary_text_alone():
 
 
 def test_no_pattern_matches_across_whitespace():
-    """스트리밍이 기대는 불변식(agent/delta_buffer.py): 매칭이 공백을 넘지 않는다."""
+    """Invariant that streaming relies on (agent/delta_buffer.py): a match never spans whitespace."""
     from aipds.parsers.redaction import _PATTERNS
     samples = ["AWS_SESSION_TOKEN= abc", "AKIA IOSFODNN7EXAMPLE",
                "eyJabcdefgh .eyJabcdefgh.abcdefgh"]

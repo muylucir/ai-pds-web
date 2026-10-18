@@ -18,9 +18,9 @@ vi.mock("@/lib/api/prototypes", async (orig) => ({
   startSession: vi.fn(),
 }));
 
-// onError의 세션 확인 호출을 검증하기 위한 모킹 — 실제 fetch/navigate 부작용은
-// sessionRecovery.test.ts가 별도로 검증하므로, 여기서는 훅이 그 함수를 올바른
-// 인자로 "불렀는가"만 확인한다.
+// Mock for verifying onError's session-check call. The real fetch/navigate side
+// effects are verified separately by sessionRecovery.test.ts, so here we only check
+// that the hook "called" that function with the right arguments.
 vi.mock("@/lib/auth/sessionRecovery", () => ({
   redirectIfSessionExpired: vi.fn(),
 }));
@@ -44,7 +44,7 @@ const QUESTIONS_PAYLOAD = JSON.stringify({
   },
 });
 
-// 타임라인 항목의 글. 복원된 질문 카드(history-card)에는 글이 없다.
+// The text of a timeline item. A restored question card (history-card) has no text.
 const textOf = (i: ChatItem) => ("text" in i ? i.text : null);
 
 const ANSWERS_EVENT: AgentEvent = { kind: "answers", text: null, path: null, payload: JSON.stringify({ answers: { "1": "A" } }) };
@@ -60,7 +60,7 @@ function drive(events: AgentEvent[]) {
 }
 
 
-// 한 프레임을 흘린다 — 텍스트 델타가 그때 붙는다(lib/useTextDeltas.ts).
+// Flush one frame; text deltas are attached at that point (lib/useTextDeltas.ts).
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 describe("usePrototypeStream", () => {
@@ -98,9 +98,10 @@ describe("usePrototypeStream", () => {
   });
 
   it("activity는 마지막에 온 이벤트가 확정한다 — 워크스페이스 훅과 같은 규약", () => {
-    // 입력창 위 고정 줄이 읽는 값이다. 트레이스에서 마지막 도구를 뽑아 쓰면 도구가
-    // 끝나고 텍스트가 흐르는 동안에도 그 도구 이름이 남는다. 두 화면이 같은 바를
-    // 쓰므로 두 훅의 규약도 같아야 한다.
+    // This is the value the pinned line above the input box reads. If it were
+    // derived from the last tool in the trace, the tool name would linger while
+    // text streams after the tool finishes. Both screens use the same bar, so
+    // both hooks must follow the same contract.
     drive([
       { kind: "status", text: "Write", path: null, payload: null },
       { kind: "message", text: "만들었습니다", path: null, payload: null },
@@ -195,8 +196,9 @@ describe("usePrototypeStream", () => {
     await act(async () => {
       await result.current.submitAnswers({ "1": "A" });
     });
-    // 답 말풍선은 서버가 턴 로그에 남긴 `answers` 이벤트로 그려진다 — 새로고침 뒤
-    // 재생도 같은 길을 타므로 같은 대화가 된다(proto/session.send_answers).
+    // The answer bubble is drawn from the `answers` event the server records in
+    // the turn log; replay after a reload takes the same path, so it yields the
+    // same conversation (proto/session.send_answers).
     expect(result.current.pendingQuestions).toBeNull();
     act(() => captured.onEvent(ANSWERS_EVENT));
 
@@ -270,9 +272,9 @@ describe("usePrototypeStream", () => {
   });
 
   it("lands batched text on the bubble it was written to when a tool splits mid-frame", async () => {
-    // 텍스트 델타는 프레임마다 붙는다(useTextDeltas). 프레임이 오기 전에 도구가
-    // 말풍선을 가르면, 앞 텍스트는 앞 말풍선에, 뒤 텍스트는 새 말풍선에 붙어야
-    // 한다 — 턴이 아직 돌고 있어 종결 이벤트가 대신 비워 주지 않는 경우다.
+    // Text deltas are attached per frame (useTextDeltas). If a tool splits the bubble
+    // before a frame arrives, the earlier text must go to the earlier bubble and the later
+    // text to the new one; the turn is still running, so no terminal event flushes it for us.
     vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
       (_pid: any, _slug: any, _text: any, handlers: any) => {
         handlers.onEvent({ kind: "message", text: "빌드를 ", path: null, payload: null });
@@ -427,9 +429,9 @@ describe("usePrototypeStream", () => {
     expect(result.current.pendingQuestions).toBeNull();
   });
 
-  // onError의 유일한 실제 배선 지점 — 이 콜이 지워지거나 인자가 바뀌면 사용자는
-  // 만료된 세션에서도 로그인으로 보내지지 않는다. navigate는 undefined로 넘겨
-  // (기본 전체 페이지 이동을 쓰게) 두고, currentPath는 현재 pathname이어야 한다.
+  // The only real wiring point for onError. If this call is removed or its arguments change,
+  // the user is not sent to login even on an expired session. navigate is passed as undefined
+  // (so the default full-page navigation is used), and currentPath must be the current pathname.
   it("checks the session on a transport error (the sole wiring point for redirectIfSessionExpired)", () => {
     vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
       (_pid: any, _slug: any, _text: any, handlers: any) => {
@@ -466,9 +468,9 @@ describe("build_complete", () => {
   });
 
   it("a build_complete event does NOT end streaming — the following done does that", () => {
-    // drive()는 마지막에 onDone()까지 동기로 호출해버려 streaming이 이미
-    // false가 된 뒤라 mid-stream 상태를 관찰할 수 없다. 여기서는 done을
-    // 호출하지 않는 커스텀 mockImplementation으로 그 중간 상태를 붙잡는다.
+    // drive() calls onDone() synchronously at the end, so streaming is already
+    // false and the mid-stream state cannot be observed. Here a custom
+    // mockImplementation that never calls done captures that intermediate state.
     vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
       (_pid: any, _slug: any, _text: any, handlers: any) => {
         handlers.onEvent({
@@ -503,10 +505,10 @@ describe("build_complete", () => {
   });
 
   it("restartForImprovement calls startSession, clears buildComplete, and re-opens the stream with __first__", async () => {
-    // drive()를 쓰면 재시작으로 연 두 번째 스트림도 같은 이벤트 배열을 그대로
-    // 재생해 build_complete가 다시 서고 만다. 여기서는 handlers를 붙잡아두고
-    // 직접 emit해서, 재시작 후 새로 연 스트림이 아직 아무것도 방출하지 않은
-    // 상태를 그대로 관찰한다.
+    // With drive(), the second stream opened by the restart would replay the same
+    // event array and build_complete would be set again. Here we capture handlers
+    // and emit by hand, so we observe the state where the newly opened stream after
+    // the restart has not emitted anything yet.
     let captured: any = null;
     vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
       (_pid: any, _slug: any, _text: any, handlers: any) => {
@@ -535,7 +537,7 @@ describe("build_complete", () => {
 
     expect(prototypesApi.startSession).toHaveBeenCalledWith("p1", "todo-app");
     expect(result.current.buildComplete).toBeNull();
-    // 개시 턴이 다시 발화된다 — 서버가 __first__를 핸드오프 프롬프트로 치환한다.
+    // The opening turn fires again; the server substitutes the handoff prompt for __first__.
     expect(vi.mocked(prototypesApi.streamPrototypeEvents)).toHaveBeenLastCalledWith(
       "p1",
       "todo-app",
@@ -545,14 +547,16 @@ describe("build_complete", () => {
   });
 
   it("restartForImprovement still opens session B's stream when stream A never reached done (the completion-card race)", async () => {
-    // build_complete는 done보다 먼저 서는 이벤트다(applyEvent 참고) — 그래서
-    // 에이전트가 마무리 텍스트를 더 보내는 0~5초 창 동안 카드는 보이지만
-    // 스트림 A는 아직 열려 있다(onDone 미호출, stopRef가 non-null). 그 창에서
-    // "개선 이어서 하기"를 누르면 startSession이 세션 B를 새로 열지만,
-    // startBuild()의 `if (stopRef.current) return;` 가드가 A를 아직 살아있는
-    // 스트림으로 여겨 B의 __first__ 스트림을 영영 열지 못했다(수정 전 버그) —
-    // B가 빌드 슬롯을 쥔 채 아무도 몰고 가지 않는 좀비 세션이 된다. onDone을
-    // 절대 부르지 않는 mockImplementation으로 그 창을 고정해 재현한다.
+    // build_complete is an event that arrives before done (see applyEvent), so
+    // during the 0-5 s window in which the agent sends more closing text, the
+    // card is visible but stream A is still open (onDone not called, stopRef
+    // non-null). Clicking "개선 이어서 하기" (continue improving) in that window makes
+    // startSession open a new session B, but the `if (stopRef.current) return;`
+    // guard in startBuild() treated A as a still-live stream and never opened
+    // B's __first__ stream (the bug before the fix), leaving B as a zombie
+    // session holding the build slot with nobody driving it. A
+    // mockImplementation that never calls onDone pins that window open to
+    // reproduce it.
     vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
       (_pid: any, _slug: any, _text: any, handlers: any) => {
         handlers.onEvent({
@@ -561,7 +565,7 @@ describe("build_complete", () => {
           path: null,
           payload: JSON.stringify({ summary: "완성", remaining: "" }),
         });
-        // onDone()을 절대 호출하지 않는다 — 스트림 A는 열린 채로 남는다.
+        // Never call onDone(); stream A stays open.
         return () => {};
       },
     );
@@ -570,14 +574,14 @@ describe("build_complete", () => {
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     act(() => result.current.startBuild());
     expect(result.current.buildComplete).not.toBeNull();
-    expect(result.current.streaming).toBe(true); // 스트림 A가 아직 열려 있다.
+    expect(result.current.streaming).toBe(true); // Stream A is still open.
 
     await act(async () => {
       await result.current.restartForImprovement();
     });
 
     expect(prototypesApi.startSession).toHaveBeenCalledWith("p1", "todo-app");
-    // 세션 B가 실제로 스트림을 연다 — __first__로 두 번째 호출이 있어야 한다.
+    // Session B actually opens a stream; there must be a second call with __first__.
     expect(vi.mocked(prototypesApi.streamPrototypeEvents)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(prototypesApi.streamPrototypeEvents)).toHaveBeenLastCalledWith(
       "p1",
@@ -588,14 +592,16 @@ describe("build_complete", () => {
   });
 });
 
-// ---- 서브에이전트 행 ----
+// ---- Sub-agent rows ----
 //
-// 이 블록이 지키는 것: 빌드 에이전트가 Agent 도구로 일을 병렬로 넘기는 동안
-// 화면이 무엇이 도는지 말할 수 있다. 종전에는 SDK의 `Task*` 메시지가 백엔드
-// 번역부에서 버려져 이 값이 존재하지도 않았다(backend/aipds/agent_activity.py).
+// What this block protects: while the build agent hands work off in parallel
+// via the Agent tool, the screen can say what is running. Previously the SDK's
+// `Task*` messages were dropped in the backend translator, so this value did not
+// even exist (backend/aipds/agent_activity.py).
 
-/** onDone을 부르지 않는 드라이버 — 도는 턴의 상태를 봐야 하는 테스트용.
- *  기본 `drive`는 프레임을 넣고 즉시 턴을 닫으므로 행이 이미 비워져 있다. */
+/** A driver that never calls onDone, for tests that need to see the state of
+ *  a running turn. The default `drive` feeds the frames and closes the turn
+ *  immediately, so the rows are already cleared. */
 function driveOpen(events: AgentEvent[]) {
   vi.mocked(prototypesApi.streamPrototypeEvents).mockImplementation(
     (_pid: any, _slug: any, _text: any, handlers: any) => {
@@ -625,8 +631,8 @@ describe("usePrototypeStream — 서브에이전트 행", () => {
   });
 
   it("끝난 에이전트는 행에서 빠지고 트레이스에 남는다", () => {
-    // 행은 "지금 도는 것"이고 트레이스는 "일어난 일"이다. 끝난 에이전트가 행에
-    // 남으면 턴이 끝난 뒤에도 도는 스피너가 남는다.
+    // Rows are "what is running now"; the trace is "what happened". If a finished agent
+    // stayed in the rows, a spinning spinner would remain even after the turn ends.
     driveOpen([
       activity({ task_id: "a1", state: "started", label: "화면 골격" }),
       activity({ task_id: "a1", state: "done", status: "completed", summary: "만들었다" }),
@@ -643,8 +649,9 @@ describe("usePrototypeStream — 서브에이전트 행", () => {
   });
 
   it("늦게 온 요약이 완료 줄을 갱신한다 — 두 줄이 되지 않는다", () => {
-    // 실측: task_updated(요약 없음) → task_notification(요약 있음). 백엔드는 어느
-    // 종료가 마지막인지 모르므로 요약을 한 번 더 보내고, 접는 것은 여기 몫이다.
+    // Observed: task_updated (no summary) → task_notification (with summary).
+    // The backend does not know which termination is the last, so it sends the
+    // summary again; folding them is this side's job.
     driveOpen([
       activity({ task_id: "a1", state: "started", label: "화면 골격" }),
       activity({ task_id: "a1", state: "done", status: "completed" }),
@@ -678,9 +685,9 @@ describe("usePrototypeStream — 서브에이전트 행", () => {
   });
 
   it("서브에이전트 활동이 총괄 고정 줄을 덮지 않는다", () => {
-    // 고정 줄은 총괄 에이전트의 일을 말한다. 서브에이전트의 도구 이름이 그 자리를
-    // 덮으면 총괄이 무엇을 기다리는지가 지워지고, 그 줄이 에이전트들 사이에서
-    // 깜빡이던 종전 동작이 그대로 돌아온다.
+    // The pinned line describes the orchestrating agent's work. If a sub-agent's tool name overwrote
+    // that slot, what the orchestrating agent is waiting on would be erased, and the old behavior of
+    // that line flickering between agents would come right back.
     driveOpen([
       { kind: "status", text: "Agent", path: null,
         payload: JSON.stringify({ detail: "화면 골격 만들기" }) },
@@ -704,7 +711,8 @@ describe("usePrototypeStream — 서브에이전트 행", () => {
   });
 
   it("깨진 payload가 스트림을 멈추지 않는다", () => {
-    // 진행 표시는 부수 정보다 — 그것 때문에 빌드가 죽으면 안 된다(safeParse의 계약).
+    // Progress display is auxiliary info; the build must not die because of it
+    // (safeParse's contract).
     driveOpen([
       { kind: "agent_activity", text: null, path: null, payload: "{not json" },
       activity({ task_id: "a1", state: "started", label: "화면 골격" }),
@@ -719,8 +727,9 @@ describe("usePrototypeStream — 도구가 무엇을 했는지", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("status의 detail을 트레이스와 고정 줄에 함께 싣는다", () => {
-    // 종전에는 이 값을 버려서 빌드 화면이 Discovery와 달리 맨 `Bash`만 보였다 —
-    // 무슨 명령이 도는지 알 수 없는 것이 화면이 멈춘 듯 보인 이유 중 하나다.
+    // Previously this value was dropped, so unlike Discovery the build screen
+    // showed only a bare `Bash`; not knowing which command was running is one
+    // reason the screen looked frozen.
     driveOpen([
       { kind: "status", text: "Bash", path: null,
         payload: JSON.stringify({ detail: "npm run build" }) },
@@ -744,9 +753,10 @@ describe("usePrototypeStream — 도구가 무엇을 했는지", () => {
 });
 
 
-// ---- 빌드 화면이 다시 열릴 때 (새로고침, 닫았다 엶) ----
-// 빌드 턴은 세션의 서버 작업이고 세션은 자기 턴을 전부 보존한다(backend
-// aipds/turn_job.py, proto/session.py). 다시 열린 화면은 그 턴들을 재생한다.
+// ---- When the build screen reopens (reload, close and reopen) ----
+// A build turn is server work owned by the session, and the session keeps all
+// of its turns (backend aipds/turn_job.py, proto/session.py). The reopened
+// screen replays those turns.
 const ev = (kind: AgentEvent["kind"], text: string | null = null,
             payload: string | null = null): AgentEvent =>
   ({ kind, text, path: null, payload });
@@ -764,20 +774,20 @@ describe("usePrototypeStream — resume", () => {
     });
     vi.mocked(prototypesApi.watchBuildTurn).mockImplementation(
       (_pid: any, _slug: any, turnId: any, after: any, handlers: any) => {
-        expect(after).toBe(0);                    // 처음부터 재생한다
+        expect(after).toBe(0);                    // replays from the beginning
         if (turnId === "t1") {
           handlers.onEvent(ev("message", "계획을 세웠습니다"), 1);
           handlers.onEvent(ev("done"), 2);
           handlers.onDone();
         } else {
-          handlers.onEvent(ev("message", "바꾸는 중"), 1);   // 아직 도는 턴
+          handlers.onEvent(ev("message", "바꾸는 중"), 1);   // turn still running
         }
         return () => {};
       },
     );
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
-    await act(nextFrame);   // 도는 턴의 마지막 텍스트는 다음 프레임에 붙는다
+    await act(nextFrame);   // the running turn's last text is attached on the next frame
 
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "계획을 세웠습니다"],
@@ -803,14 +813,14 @@ describe("usePrototypeStream — resume", () => {
     );
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
-    await act(nextFrame);   // 도는 턴의 마지막 텍스트는 다음 프레임에 붙는다
+    await act(nextFrame);   // the running turn's last text is attached on the next frame
 
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "진행할까요?"],
       ["user", "Q1. 누구?\n→ A. PM"],
       ["ai", "진행합니다"],
     ]);
-    // 이미 답한 질문의 카드는 다시 뜨지 않는다.
+    // The card for an already-answered question does not reappear.
     expect(result.current.pendingQuestions).toBeNull();
   });
 
@@ -856,7 +866,7 @@ describe("usePrototypeStream — resume", () => {
     );
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
-    await act(nextFrame);   // 도는 턴의 마지막 텍스트는 다음 프레임에 붙는다
+    await act(nextFrame);   // the running turn's last text is attached on the next frame
 
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["user", "만들어줘"],
@@ -865,10 +875,10 @@ describe("usePrototypeStream — resume", () => {
       ["user", "버튼 색 바꿔 줘"],
       ["ai", "바꾸는 중"],
     ]);
-    // 복원된 말풍선은 끝난 것이다 — 타이핑 표시는 도는 턴에만.
+    // Restored bubbles are finished; the typing indicator is only for the running turn.
     const restored = result.current.items[1];
     expect(restored.role === "ai" && restored.streaming).toBe(false);
-    // 지난 대화의 파일 변경은 이 세션의 "변경 파일" 목록이 아니다.
+    // File changes from past conversation are not this session's "changed files" list.
     expect(result.current.changedPaths).toEqual([]);
     expect(result.current.historyLoading).toBe(false);
   });
@@ -887,7 +897,7 @@ describe("usePrototypeStream — resume", () => {
     );
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
-    await act(nextFrame);   // 도는 턴의 마지막 텍스트는 다음 프레임에 붙는다
+    await act(nextFrame);   // the running turn's last text is attached on the next frame
 
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([["ai", "만드는 중"]]);
     expect(result.current.streaming).toBe(true);
@@ -913,9 +923,9 @@ describe("usePrototypeStream — context usage", () => {
     const { result } = renderHook(() => usePrototypeStream("p1", "todo-app"));
     await act(async () => { await result.current.resume(); });
 
-    // 히스토리의 값(70) 위에 재생된 턴의 값이 덮였다.
+    // The replayed turn's value overwrote the history's value (70).
     expect(result.current.context?.left_pct).toBe(55);
-    // 말풍선을 만들지도, 가르지도 않는다.
+    // It neither creates nor splits a bubble.
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([["ai", ""]]);
   });
 
@@ -951,8 +961,8 @@ describe("usePrototypeStream — restoreHistory", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("puts the past conversation BEFORE a turn that already started", async () => {
-    // 새로 연 세션: 개시 턴이 히스토리 응답보다 먼저 화면에 생긴다. 교체하면 방금
-    // 시작한 턴이 지워진다.
+    // A freshly opened session: the opening turn appears on screen before the history response.
+    // Replacing would erase the turn that just started.
     let resolveHistory!: (v: { items: any[]; turns: any[] }) => void;
     vi.mocked(prototypesApi.getBuildHistory).mockReturnValue(
       new Promise((r) => { resolveHistory = r; }));
@@ -974,7 +984,7 @@ describe("usePrototypeStream — restoreHistory", () => {
                                  card: null, name: null, trace: [] }], turns: [] });
       await pending;
     });
-    await act(nextFrame);   // 도는 턴의 텍스트는 다음 프레임에 붙는다(useTextDeltas)
+    await act(nextFrame);   // running turn's text lands on the next frame (useTextDeltas)
 
     expect(result.current.items.map((i) => [i.role, textOf(i)])).toEqual([
       ["ai", "지난 빌드는 실패했습니다"],

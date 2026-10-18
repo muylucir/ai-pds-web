@@ -21,18 +21,18 @@ function TypingDots() {
   );
 }
 
-// `memo`: 스트리밍 중 타임라인은 프레임마다 다시 그려지지만 바뀌는 것은 도는 말풍선
-// 하나다. 훅의 patchAi가 바뀌지 않은 항목의 참조를 그대로 두므로, 지난 말풍선은
-// 여기서 멈추고 마크다운을 다시 파싱하지 않는다.
+// `memo`: during streaming the timeline re-renders every frame, but only the running bubble
+// changes. The hook's patchAi leaves the references of unchanged items as they are, so past
+// bubbles stop here and do not re-parse their markdown.
 export const AiMessage = memo(function AiMessage({ item }: { item: AiItem }) {
   const t = useT();
-  // **진행 상황은 이 컴포넌트의 일이 아니다(2026-09-04).** 진행 표시는 입력창 위
-  // 고정 줄(LiveActivityBar)로, 화면이 소유한다. 말풍선 옆에서 진행 표시와 펼쳐진
-  // 진행 기록이 함께 갱신되던 종전 방식은 토큰 스트리밍이 들어오면서 움직이는 것을
-  // 셋으로 만들어 산만했다.
+  // **Progress is not this component's job (2026-09-04).** The progress indicator lives in the
+  // pinned line above the input (LiveActivityBar), owned by the screen. The earlier approach,
+  // where the progress indicator and an expanded progress log updated together beside the
+  // bubble, became distracting once token streaming arrived — three things were moving at once.
   //
-  // 그래서 진행 기록은 **턴이 끝난 뒤에만** 접힌 채로 붙는다 — 도는 동안 그것을
-  // 그리면 옮긴 이유가 없어진다. 여기 남는 움직임은 말풍선의 텍스트 하나뿐이다.
+  // So the progress log attaches, collapsed, **only after the turn ends** — drawing it while
+  // the turn runs would defeat the reason for moving it. The only motion left here is the bubble's text.
   return (
     <div className="flex gap-3">
       <span
@@ -42,11 +42,11 @@ export const AiMessage = memo(function AiMessage({ item }: { item: AiItem }) {
         AI
       </span>
       <div className="max-w-[85%] min-w-0">
-        {/* 말풍선은 보여줄 것이 있을 때만 그린다. 복원된 턴은 streaming이
-            false이므로, 텍스트가 없으면 타이핑 점도 뜨지 않아 내용 없는 회색
-            상자만 남는다 — 중단된 턴(유휴 타임아웃, SSE 끊김)이 그 모양이고
-            라이브에서 그 자리에 있던 것은 진행 표시였다. 아래 ReasoningTrace는
-            그대로 렌더되므로 도구를 무엇까지 돌렸는지는 남는다. */}
+        {/* Draw the bubble only when there is something to show. A restored turn has streaming
+            false, so with no text not even the typing dots appear, leaving only an empty gray
+            box — that is what an interrupted turn (idle timeout, SSE drop) looks like, and in the
+            live view the progress indicator occupied that spot. ReasoningTrace below still
+            renders, so how far the tools ran is preserved. */}
         {(item.streaming || item.text !== "" || item.error) && (
           <div data-testid="ai-bubble" className="bg-white border border-slate-200 rounded-2xl rounded-tl-md px-4 py-3 text-sm leading-relaxed" aria-live="polite">
             {item.streaming && item.text === "" ? (

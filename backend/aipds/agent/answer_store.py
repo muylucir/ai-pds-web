@@ -1,26 +1,26 @@
-# backend/aipds/agent/answer_store.py — 제출된 답변의 S3 레코드.
+# backend/aipds/agent/answer_store.py — S3 records of submitted answers.
 #
-# 왜 필요한가: 히스토리 복원이 **CLI가 영어로 옮겨 적은 산문**에 의존하고 있었다.
-# SDK AskUserQuestion의 tool_result는 CLI가 만드는 고정 문장이다:
+# Why this is needed: history restore was depending on **prose the CLI rewrote in English**.
+# The tool_result of the SDK's AskUserQuestion is a fixed sentence the CLI produces:
 #
-#   Your questions have been answered: "질문"="보기 라벨", ... . You can now …
+#   Your questions have been answered: "question"="option label", ... . You can now …
 #
-# session_history._cli_answer_summary는 이 문장에서 답변을 펼 수 없다 — JSON이
-# 아니므로 결과가 `답변 제출: <영어 문장>` 한 줄이고, 문항 번호·보기 letter·
-# 보기 텍스트가 전부 사라진다.
-# 라이브 화면은 질문 payload와 답변 dict를 손에 들고 answerSummary()로 그리므로
-# 같은 대화가 새로고침 전후로 다르게 보였다.
+# session_history._cli_answer_summary cannot unpack answers from this sentence — it is not
+# JSON, so the result is a single line `답변 제출: <English sentence>`, and the question numbers, option letters,
+# and option text all disappear.
+# The live screen holds the question payload and the answer dict in hand and draws with answerSummary(), so
+# the same conversation looked different before and after a refresh.
 #
-# 산문을 되파싱하는 대신 **답변이 도착한 순간의 정확한 값을 기록한다.** 승인
-# 게이트에서 이미 같은 결정을 했다(08aaa85 "승인을 레코드로 기록 — 산문 파싱
-# 의존을 끊는다"). 그 문장은 우리 것이 아니라 CLI 것이고, 질문 텍스트에 따옴표가
-# 들어가면(실측: `"내부 도구라면 \"왜 …를 사서 쓰지 않고 만드는가\"가 …"`)
-# 파싱이 원리적으로 모호해진다.
+# Instead of re-parsing the prose, **we record the exact values at the moment the answers arrive.** The approval
+# gate already made the same decision (08aaa85 "승인을 레코드로 기록 — 산문 파싱
+# 의존을 끊는다" (record approvals as records — cut the dependency on prose parsing)). That sentence is not ours but the CLI's,
+# and when question text contains quotes (observed: `"내부 도구라면 \"왜 …를 사서 쓰지 않고 만드는가\"가 …"`)
+# parsing becomes ambiguous in principle.
 #
-# 키는 **tool_use_id**다. SDK가 can_use_tool 콜백에 그 값을 주고(비어 있지 않음이
-# 프로토콜 보장) 트랜스크립트의 tool_result도 같은 id를 들고 있으므로, 복원 시
-# 조인이 정확하다 — 순서나 타임스탬프로 맞출 필요가 없다. 라운드마다 객체 하나이고
-# 재제출은 같은 키를 덮는다(한 라운드의 최종 답변이 하나라는 사실과 일치).
+# The key is the **tool_use_id**. The SDK gives that value to the can_use_tool callback (non-empty is a
+# protocol guarantee) and the transcript's tool_result carries the same id, so the join on restore
+# is exact — no need to match by order or timestamp. There is one object per round, and a
+# resubmission overwrites the same key (consistent with a round having one final answer).
 from __future__ import annotations
 
 import asyncio
@@ -39,10 +39,10 @@ def _key(tool_use_id: str, prefix: str) -> str:
 
 
 def _is_valid(data: dict) -> bool:
-    """복원이 곧바로 깨지는 최상위 타입만 막는다(pending_store와 같은 규율).
+    """Blocks only top-level types that would break restore right away (same discipline as pending_store).
 
-    answers는 {문항번호: 값} 문자열 맵이어야 한다 — 프론트의
-    Record<string, string> 계약이고, answerSummary가 그 값을 letter로 해석한다.
+    answers must be a string map of {question number: value} — the frontend's
+    Record<string, string> contract, and answerSummary interprets those values as letters.
     """
     answers = data.get("answers")
     return (
@@ -56,18 +56,18 @@ def _is_valid(data: dict) -> bool:
 async def save_answers(s3: S3StoreLike, *, tool_use_id: str, interrupt_id: str,
                        questions: dict, answers: dict[str, str],
                        prefix: str = ANSWERS_PREFIX) -> None:
-    """한 라운드의 질문 payload + 답변을 기록한다.
+    """Records one round's question payload + answers.
 
-    questions를 함께 저장하는 것이 load-bearing이다: 답변 값은 letter("A",
-    "B,C", "A: 부연")이고, 그것을 보기 텍스트로 펼치려면 그 순간의 payload가
-    필요하다. 트랜스크립트의 tool_use.input에도 SDK 원형이 남지만, 그걸로
-    다시 조립하면 letter 부여가 question_file_from_sdk의 그 시점 동작에
-    의존하게 된다 — 사용자가 실제로 본 letter를 그대로 남기는 편이 정확하다.
+    Storing questions together is load-bearing: answer values are letters ("A",
+    "B,C", "A: 부연"), and expanding them into option text requires the payload from that moment.
+    The SDK original also remains in the transcript's tool_use.input, but reassembling from it
+    would make letter assignment depend on question_file_from_sdk's behavior at that time —
+    keeping the letters the user actually saw is more accurate.
 
-    `prefix`는 레코드를 누가 소유하는가다. Discovery는 프로젝트 루트의
-    `answers/`, 프로토타입 빌드는 `prototypes/{slug}/history/answers/`에 둔다
-    (proto/history.py) — 프로토타입 초기화가 그 prefix째 지우므로 대화와 함께
-    사라져야 하는 레코드가 그 아래에 있어야 한다.
+    `prefix` is who owns the record. Discovery puts it in `answers/` at the project root,
+    and prototype builds in `prototypes/{slug}/history/answers/`
+    (proto/history.py) — prototype reset deletes everything under that prefix, so records that must
+    disappear along with the conversation have to live under it.
     """
     await s3.put(_key(tool_use_id, prefix), json.dumps({
         "tool_use_id": tool_use_id,
@@ -79,11 +79,11 @@ async def save_answers(s3: S3StoreLike, *, tool_use_id: str, interrupt_id: str,
 
 async def load_answers(s3: S3StoreLike,
                        prefix: str = ANSWERS_PREFIX) -> dict[str, dict]:
-    """tool_use_id → 레코드. 어떤 실패도 그 레코드만 건너뛴다.
+    """tool_use_id → record. Any failure skips only that record.
 
-    히스토리는 보조 데이터이고(list_history의 강등과 같은 원칙) 손상된 한 건이
-    나머지 라운드의 복원을 막으면 안 된다. 목록 자체가 실패하면 빈 dict —
-    호출부는 레코드 없는 구 세션과 같은 경로로 떨어진다(현재 문구 유지).
+    History is auxiliary data (same principle as list_history's downgrade), and one corrupted entry
+    must not block restoring the remaining rounds. If the listing itself fails, an empty dict —
+    callers fall into the same path as old sessions without records (current wording kept).
     """
     try:
         listed = await list_with_etags(s3, prefix)
@@ -91,10 +91,10 @@ async def load_answers(s3: S3StoreLike,
         _log.exception("answer record listing failed")
         return {}
     keys = [k for k, _ in listed]
-    # **병렬 GET.** 라운드 수에 선형이므로 순차로 읽으면 히스토리 로딩이 그만큼
-    # 늦어진다(실측 2026-08-17: S3 왕복 1회 30ms). session_store.load_transcript와
-    # 같은 판단이고, project_store.load_manifest가 이 리포의 선례다.
-    # 트랜스크립트와 같은 ETag 캐시를 쓴다 — 레코드는 라운드마다 하나씩 늘 뿐이다.
+    # **Parallel GET.** It is linear in the number of rounds, so reading sequentially delays history
+    # loading by that much (observed 2026-08-17: 30ms per S3 round trip). The same judgment as
+    # session_store.load_transcript, and project_store.load_manifest is this repo's precedent.
+    # It uses the same ETag cache as transcripts — records only grow by one per round.
     bodies = await asyncio.gather(*(get_by_etag(s3, k, etag) for k, etag in listed),
                                  return_exceptions=True)
     out: dict[str, dict] = {}

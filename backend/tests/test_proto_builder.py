@@ -166,7 +166,8 @@ def test_only_our_own_skills_are_enabled():
 
 
 def test_the_projects_effort_reaches_the_build_cli():
-    """빌드도 Discovery와 같은 모델·effort 쌍으로 돈다. None이면 CLI 기본값."""
+    """The build also runs with the same model/effort pair as Discovery. None means the CLI
+    default."""
     assert _real_options(effort="medium").effort == "medium"
     assert _real_options().effort is None
 
@@ -311,13 +312,13 @@ def test_the_cli_accepts_the_flags_we_build_for_a_resume():
         assert "--fork-session" not in flags
 
 
-# ---- build_complete MCP 도구 배선 ----
+# ---- build_complete MCP tool wiring ----
 
 def test_mcp_server_and_allowed_tools_are_wired(tmp_path, monkeypatch):
-    """_default_client_factory가 MCP 서버와 allowed_tools를 실제로 넘기는지.
+    """Whether _default_client_factory actually passes the MCP server and allowed_tools.
 
-    client_factory를 주입하는 다른 테스트들은 이 경로를 전혀 타지 않으므로,
-    배선이 빠져도 그 테스트들은 전부 통과한다 — 그래서 옵션을 직접 붙잡는다.
+    The other tests that inject client_factory never take this path, so even if the wiring
+    went missing they would all pass — hence the options are captured directly.
     """
     from aipds.proto.builder import _default_client_factory
     from aipds.proto.tools import BUILD_COMPLETE_TOOL, PROTO_MCP_SERVER_NAME
@@ -339,16 +340,16 @@ def test_mcp_server_and_allowed_tools_are_wired(tmp_path, monkeypatch):
     options = captured["options"]
     assert PROTO_MCP_SERVER_NAME in options.mcp_servers
     assert BUILD_COMPLETE_TOOL in options.allowed_tools
-    # 스킬 목록이 살아 있어야 한다 — SDK가 allowed_tools를 복사한 뒤 스킬 항목을
-    # 덧붙이므로(subprocess_cli.py:434-452) build_complete와 공존한다.
-    # shadcn-design이 이 값에 달려 있고, "all"로 되돌리면 번들 `run` 스킬이
-    # 함께 들어와 프론트엔드를 죽인 사고가 재현된다.
+    # The skill list must stay alive — the SDK copies allowed_tools and then appends the skill
+    # entries (subprocess_cli.py:434-452), so they coexist with build_complete.
+    # shadcn-design depends on this value, and reverting to "all" would bring in the bundled `run`
+    # skill too, reproducing the incident that killed the frontend.
     assert options.skills == ["shadcn-design"]
 
 
 async def test_the_tool_queues_a_build_complete_event(tmp_path):
-    """도구의 emit이 빌더 큐로 가는지 — _on_post_tool_use와 같은 경로여야
-    _relay_queue의 소유권 규율(배달 후 pop)을 받는다."""
+    """Whether the tool's emit goes to the builder queue — it must take the same path as
+    _on_post_tool_use to get _relay_queue's ownership discipline (pop after delivery)."""
     from aipds.proto.builder import _proto_tools_for
 
     (tmp_path / "prototype").mkdir()
@@ -363,16 +364,15 @@ async def test_the_tool_queues_a_build_complete_event(tmp_path):
 
 
 async def test_a_queued_completion_is_relayed_before_the_terminal_done(tmp_path):
-    """build_complete가 done보다 먼저 나가는지 — 진짜 run()으로 확인한다.
+    """Whether build_complete goes out before done — checked with the real run().
 
-    proto/session.py의 done 가드와 유예 타이머가 이 순서에 의존한다. 세션
-    테스트는 FakeBuilder가 스크립트 순서대로 내보내므로 이 규율을 검증하지
-    못한다 -- run()이 terminal 이벤트를 held하고 큐를 먼저 비우기 때문에
-    성립하는 것이고(builder.py의 call site 4), 그 규율을 되돌리면 여기가
-    먼저 실패해야 한다.
+    The done guard and grace timer in proto/session.py depend on this order. Session tests
+    cannot verify this discipline because FakeBuilder emits in script order -- it holds
+    because run() holds the terminal event and drains the queue first (call site 4 in
+    builder.py), and if that discipline is reverted, this test must fail first.
 
-    sse.ts가 done에서 EventSource를 닫으므로, 순서가 뒤집히면 완료 이벤트가
-    클라이언트에 닿지 않고 완료 카드가 영원히 뜨지 않는다.
+    sse.ts closes the EventSource on done, so if the order were flipped the completion event
+    would never reach the client and the completion card would never appear.
     """
     from aipds.proto.builder import _proto_tools_for
 
@@ -381,8 +381,8 @@ async def test_a_queued_completion_is_relayed_before_the_terminal_done(tmp_path)
 
     client = FakeSdkClient(script=[ResultMessage()])
     b = _builder(tmp_path, client)
-    # 턴이 시작되기 전에 도구가 호출된 것처럼 큐에 넣는다 — 실제로는
-    # ResultMessage 직전에 호출된다.
+    # Put it in the queue as if the tool were called before the turn started — in reality it is
+    # called right before the ResultMessage.
     handler = {t.name: t.handler for t in _proto_tools_for(b)}["build_complete"]
     await handler({"summary": "만들었다", "changes": "없음"})
 
@@ -394,17 +394,17 @@ async def test_a_queued_completion_is_relayed_before_the_terminal_done(tmp_path)
     assert kinds[-1] == "done"
 
 
-# ---- Bash 게이트 (PreToolUse) ----
+# ---- Bash gate (PreToolUse) ----
 #
-# 2026-08-01: 빌드 에이전트가 Playwright chromium을 띄웠고 그 검증이 포트 3000을
-# 겨냥해 AI-PDS 프론트엔드가 SIGKILL로 죽었다. 그때의 완화책은 skills 좁히기와
-# CLAUDE.md 산문뿐이었고, builder.py의 skills 주석이 스스로 적어 뒀듯 스킬 목록은
-# **컨텍스트 필터이지 샌드박스가 아니다** — Bash는 그대로 열려 있었다.
+# 2026-08-01: the build agent launched Playwright chromium, its verification targeted port 3000,
+# and the AI-PDS frontend was killed with SIGKILL. The mitigations at the time were only
+# narrowing skills and CLAUDE.md prose, and as the skills comment in builder.py itself notes, the
+# skill list is **a context filter, not a sandbox** — Bash remained wide open.
 
 def test_the_bash_gate_is_wired_as_a_pretooluse_hook(tmp_path, monkeypatch):
-    """빌드는 bypassPermissions로 돌아 can_use_tool이 Bash에 도달하지 않는다
-    (SDK의 _get_can_use_tool_shadowed_warning: "To gate every tool call, use a
-    PreToolUse hook instead"). 실효 게이트는 PreToolUse뿐이다."""
+    """The build runs with bypassPermissions, so can_use_tool never reaches Bash
+    (the SDK's _get_can_use_tool_shadowed_warning: "To gate every tool call, use a
+    PreToolUse hook instead"). The only effective gate is PreToolUse."""
     from aipds.proto.builder import _default_client_factory
 
     captured = {}
@@ -427,11 +427,11 @@ def test_the_bash_gate_is_wired_as_a_pretooluse_hook(tmp_path, monkeypatch):
 
 
 def test_the_bash_gate_never_matches_askuserquestion(tmp_path, monkeypatch):
-    """matcher에 AskUserQuestion을 넣으면 질문 왕복 전체가 죽는다.
+    """Putting AskUserQuestion in the matcher kills the whole question round trip.
 
-    PreToolUse가 *allow*를 돌려주면 can_use_tool을 건너뛰는데(SDK types.py),
-    질문을 SSE 이벤트로 바꾸는 가로채기가 그 콜백에 있다. claude_driver.py가
-    같은 함정을 주석으로 남겨 뒀다.
+    When PreToolUse returns *allow*, can_use_tool is skipped (SDK types.py), and the
+    interception that turns questions into SSE events lives in that callback. claude_driver.py
+    left a comment about the same trap.
     """
     from aipds.proto.builder import _default_client_factory
 
@@ -472,9 +472,8 @@ async def test_the_gate_denies_a_server_that_would_hold_a_port(tmp_path):
 
 
 async def test_the_gate_passes_the_build_with_an_empty_dict(tmp_path):
-    """**통과는 빈 dict다.** "allow"를 돌려주면 can_use_tool까지 건너뛰어
-    AskUserQuestion 가로채기가 죽는다 — claude_driver._on_pre_tool_use와 같은
-    규율이다."""
+    """**Passing is an empty dict.** Returning "allow" would skip even can_use_tool and kill the
+    AskUserQuestion interception — the same discipline as claude_driver._on_pre_tool_use."""
     b = _builder(tmp_path, None)
     out = await b._on_pre_tool_use(
         {"tool_name": "Bash", "tool_input": {"command": "npm run build"}},
@@ -483,8 +482,8 @@ async def test_the_gate_passes_the_build_with_an_empty_dict(tmp_path):
 
 
 async def test_the_gate_ignores_tools_it_does_not_judge(tmp_path):
-    """matcher와 이 분기가 어긋나도 조용히 통과해야 한다 — 알 수 없는 도구를
-    막으면 빌드가 멈춘다."""
+    """Even if the matcher and this branch diverge, it must pass silently — blocking an unknown
+    tool would stall the build."""
     b = _builder(tmp_path, None)
     out = await b._on_pre_tool_use(
         {"tool_name": "Read", "tool_input": {"file_path": "app/page.tsx"}},
@@ -508,8 +507,8 @@ async def test_the_gate_lets_the_build_write_its_own_files(tmp_path):
     ("NotebookEdit", "notebook_path", ".claude/settings.json"),
 ])
 async def test_the_gate_denies_writing_cli_settings(tmp_path, tool, key, rel):
-    """여기 쓴 hook·env·MCP 서버는 이 세션의 이후 도구 호출에 돈다 — 빌드가 만질
-    이유가 없다(띄울 때마다 비우는 것은 agent_home.copy_config)."""
+    """Hooks, env, and MCP servers written here run on this session's later tool calls — the build
+    has no reason to touch them (agent_home.copy_config clears them on every launch)."""
     b = _builder(tmp_path, None)
     out = await b._on_pre_tool_use(
         {"tool_name": tool, "tool_input": {key: str(tmp_path / rel)}}, "t1", None)
@@ -526,8 +525,8 @@ async def test_the_gate_denies_writing_the_user_settings_in_the_config_dir(tmp_p
 
 
 async def test_the_gate_lets_webfetch_open_the_skill_docs_only(tmp_path):
-    """스킬이 가리키는 문서(ui.shadcn.com, ai-sdk.dev)만 연다. 그 밖으로 나가는
-    WebFetch는 URL에 워크스페이스 내용을 실어 보내는 길이다."""
+    """Only the documentation the skills point to (ui.shadcn.com, ai-sdk.dev) is opened. A
+    WebFetch going anywhere else is a path for sending workspace content out in the URL."""
     b = _builder(tmp_path, None, language="en")
     for url in ("https://ui.shadcn.com/docs/components/button",
                 "https://registry.ai-sdk.dev/conversation.json"):
@@ -576,8 +575,9 @@ async def test_the_gate_refuses_in_the_project_language(tmp_path):
 
 
 async def test_the_gate_opens_the_sites_the_user_gave(tmp_path):
-    """세션이 사용자 원문에서 뽑아 넘긴 호스트는 열린다. 거부 이유는 그 호스트와
-    "URL을 채팅에 붙여 달라고 하라"는 길을 함께 알려준다."""
+    """Hosts the session extracted from the user's original text and passed along are opened.
+    The rejection reason tells about both that host and the path of "ask the user to paste the
+    URL into the chat"."""
     b = _builder(tmp_path, None, language="ko")
     b.allow_fetch_hosts({"store.example.com"})
 

@@ -55,7 +55,7 @@ def test_segment_still_rejects_absolute_and_traversal():
             reject_unsafe_segment(bad)
 
 
-# ---- 링크를 따라가지 않는 읽기·쓰기 (에이전트가 쓰는 트리) ----
+# ---- Reads and writes that do not follow links (the tree the agent writes) ----
 
 def test_write_beneath_creates_parents_and_writes(tmp_path):
     write_beneath(tmp_path, "a/b/c.txt", "hi")
@@ -106,7 +106,7 @@ def test_unlink_beneath_removes_the_link_not_its_target(tmp_path):
 
     assert unlink_beneath(root, "link") is True
     assert not (root / "link").exists() and outside.exists()
-    # 상위 조각이 링크면 그 너머를 지우지 않는다.
+    # If a parent segment is a link, do not delete what lies beyond it.
     assert unlink_beneath(root, "dlink/keep") is False
     assert outside.exists()
 

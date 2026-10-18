@@ -88,7 +88,7 @@ def test_create_502_sanitized_when_generation_fails(env, monkeypatch):
 
 
 def _capture_prompts(monkeypatch, replies):
-    """agent_factory를 프롬프트를 기록하는 것으로 갈아끼운다."""
+    """Swap agent_factory for one that records the prompt."""
     seen = []
 
     def agent_factory(_pid):
@@ -105,10 +105,10 @@ ENVISION = "aiplc-docs/discovery/envision/"
 
 
 def test_create_carries_the_envision_evidence_into_the_prompt(env, monkeypatch):
-    """설문 문항은 스펙 요약이 아니라 그 요약이 나온 근거로 만들어야 한다.
+    """Survey questions must be built from the basis the spec summary came from, not from the summary itself.
 
-    스펙의 Problem Statement·Business Value는 한두 줄이고, 페인포인트별 심각도·
-    빈도·우선순위와 업종·현행 업무 방식은 Envision 산출물에만 있다.
+    The spec's Problem Statement and Business Value are a line or two, while per-pain-point severity,
+    frequency, and priority, along with industry and current ways of working, exist only in the Envision artifacts.
     """
     s3 = env["project_s3"]
     s3.blobs[ENVISION + "pain-point-analysis.md"] = "조정 사유가 전달되지 않는다"
@@ -121,17 +121,17 @@ def test_create_carries_the_envision_evidence_into_the_prompt(env, monkeypatch):
 
 
 def test_create_succeeds_when_the_envision_evidence_is_absent(env, monkeypatch):
-    """보조 문서가 없어도 설문은 만들어진다 — 스펙만으로도 성립한다."""
+    """A survey is created even without supporting documents — the spec alone is enough."""
     seen = _capture_prompts(monkeypatch, [GOOD_JSON])
     assert _create(env).status_code == 201
     assert "# PROTOTYPE demo" in seen[0]
 
 
 def test_create_ignores_the_business_context_question_file(env, monkeypatch):
-    """질문지는 컨텍스트가 아니다.
+    """A questionnaire is not context.
 
-    `business-context-questions.md`는 룰이 선언하는 질문지이고 본문이 선택지와
-    `[Answer]:` 태그다 — 실으면 모델이 남의 질문 양식을 베낀다.
+    `business-context-questions.md` is a questionnaire the rules declare, and its body is options and
+    `[Answer]:` tags — if included, the model copies someone else's question format.
     """
     env["project_s3"].blobs[ENVISION + "business-context-questions.md"] = (
         "A) 제조\nB) 금융\nX) Other\n\n[Answer]: A")
@@ -204,8 +204,8 @@ def test_synthesize_writes_the_aggregate_beside_the_spec(env):
     resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/survey/synthesize")
     assert resp.status_code == 200
     body = resp.json()
-    # 슬러그별 경로다. 이 테스트의 SLUG("demo")는 Path B 레이아웃이므로
-    # `prototypes/{slug}/` 아래로 간다 — 단수 프로토타입만 `prototype/`을 쓴다.
+    # It is a per-slug path. This test's SLUG ("demo") is a Path B layout, so it goes under
+    # `prototypes/{slug}/` — only a singular prototype uses `prototype/`.
     assert body["path"] == \
         f"aiplc-docs/discovery/prototypes/{SLUG}/survey-aggregate.md"
     assert body["response_count"] == 2

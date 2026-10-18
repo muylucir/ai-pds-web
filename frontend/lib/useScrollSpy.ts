@@ -1,24 +1,24 @@
 "use client";
-// frontend/lib/useScrollSpy.ts — 지금 화면에 보이는 앵커를 알려준다.
+// frontend/lib/useScrollSpy.ts — reports which anchor is currently visible on screen.
 //
-// 매뉴얼 목차가 "여기를 읽고 있다"를 표시하는 데 쓴다. scroll 이벤트로
-// offsetTop을 재는 방식을 쓰지 않는 이유: 매 프레임마다 레이아웃을 강제로
-// 계산하게 되고(reflow), 긴 문서에서 스크롤이 눈에 띄게 끊긴다.
-// IntersectionObserver는 그 계산을 브라우저에 맡긴다.
+// Used by the manual's table of contents to show "you are reading here". Why we do not measure
+// offsetTop on scroll events: it forces a layout computation (reflow) on every frame,
+// and scrolling stutters noticeably on long documents.
+// IntersectionObserver hands that computation to the browser.
 import { useEffect, useState } from "react";
 
 /**
- * `ids` 중 화면에 보이는 첫 앵커의 id.
+ * The id of the first anchor among `ids` that is visible on screen.
  *
- * - `enabled`가 false면 관찰하지 않고 null을 준다(검색 중에는 본문이 걸러져
- *   있어 "현재 위치"가 의미를 잃는다).
- * - IntersectionObserver가 없는 환경(jsdom, 아주 오래된 브라우저)에서는
- *   조용히 null을 준다 — 목차는 강조 없이 그대로 동작한다. 던지면 매뉴얼
- *   전체가 렌더되지 않는다.
+ * - If `enabled` is false, it does not observe and returns null (while searching, the body is
+ *   filtered, so "current position" loses its meaning).
+ * - In environments without IntersectionObserver (jsdom, very old browsers), it
+ *   quietly returns null — the table of contents works as-is, without highlighting. Throwing would
+ *   keep the entire manual from rendering.
  */
 export function useScrollSpy(ids: string[], enabled = true): string | null {
   const [active, setActive] = useState<string | null>(null);
-  // 배열 리터럴이 매 렌더 새 참조가 되므로 값으로 의존한다.
+  // An array literal is a new reference on every render, so depend on its value.
   const key = ids.join(",");
 
   useEffect(() => {
@@ -36,15 +36,15 @@ export function useScrollSpy(ids: string[], enabled = true): string | null {
         for (const entry of entries) {
           seen.set(entry.target.id, entry.isIntersecting);
         }
-        // **문서 순서로** 첫 번째 보이는 것을 고른다. entries의 순서가 아니다 —
-        // 콜백은 바뀐 것만 담고 순서를 보장하지 않으므로, entries에서 고르면
-        // 위로 스크롤할 때 아래쪽 절이 켜진다.
+        // Pick the first visible one **in document order**, not in entries order —
+        // the callback carries only what changed and does not guarantee order, so picking from entries
+        // would light up a lower section when scrolling up.
         const first = list.find((id) => seen.get(id));
         if (first) setActive(first);
       },
       {
-        // 위쪽 여백: sticky 헤더(h-16)에 가려진 영역은 "보이는" 것이 아니다.
-        // 아래쪽을 크게 깎아 화면 상단 근처의 절만 후보로 남긴다.
+        // Top margin: the area hidden behind the sticky header (h-16) is not "visible".
+        // Trim the bottom heavily so only sections near the top of the screen remain candidates.
         rootMargin: "-72px 0px -70% 0px",
       },
     );

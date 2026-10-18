@@ -14,12 +14,13 @@ describe("errorMessage", () => {
   });
 
   it("모르는 코드는 원문을 그대로 보여준다", () => {
-    // 코드화하지 않은 에러가 빈 화면이 아니라 읽을 수 있는 무언가로 보여야 한다.
+    // An error that is not code-mapped must show as something readable, not a blank screen.
     expect(errorMessage(tFor("en"), "some_new_error")).toBe("some_new_error");
   });
 
   it("백엔드가 여전히 한국어 문장을 보내면 그대로 보여준다", () => {
-    // 코드화가 부분적으로 진행된 중간 상태에서도 화면이 깨지지 않는다.
+    // The screen does not break even in the intermediate state where code mapping is
+    // partially done.
     const sentence = "무언가 실패했습니다.";
     expect(errorMessage(tFor("en"), sentence)).toBe(sentence);
   });
@@ -30,14 +31,15 @@ describe("errorMessage", () => {
   });
 
   it("진단 정보가 붙은 코드는 코드만 번역하고 상세를 괄호로 덧붙인다", () => {
-    // init_incomplete:s3,host — 무엇이 실패했는지가 진단에 필요하다.
+    // init_incomplete:s3,host — what failed is needed for diagnosis.
     expect(errorMessage(tFor("en"), "init_incomplete:s3,host")).toBe(
       "Initialization did not finish — please try again. (s3,host)",
     );
   });
 
   it("knownErrorMessage는 아는 코드만 번역하고 나머지는 대체 문구다", () => {
-    // 호스팅 시작의 502 detail은 npm 로그 꼬리다 — 한 줄 오류 자리에 원문을 싣지 않는다.
+    // The 502 detail from hosting start is the tail of the npm log — the raw text is not put
+    // in the one-line error slot.
     expect(knownErrorMessage(tFor("en"), "build_session_active", "fallback"))
       .toBe(dictFor("en")["err.buildSessionActive"]);
     expect(knownErrorMessage(tFor("en"), "npm ERR! code ELIFECYCLE", "fallback")).toBe("fallback");
@@ -45,12 +47,13 @@ describe("errorMessage", () => {
   });
 
   it("열린 세션 안내는 실제 버튼 이름을 부른다", () => {
-    // 문구가 지목하는 버튼 라벨이 바뀌면 안내가 없는 버튼을 가리킨다.
+    // If the button label the message names changed, the guidance would point to a
+    // nonexistent button.
     for (const locale of ["ko", "en"] as const) {
       const dict = dictFor(locale);
       expect(dict["err.buildSessionActive"]).toContain(`“${dict["proto.done"]}”`);
       expect(dict["err.buildSessionActive"]).toContain(`“${dict["proto.openSession"]}”`);
-      // 내보내기(프로젝트 목록)의 같은 거부는 탭 이름부터 부른다.
+      // The same rejection from export (project list) names the tab first.
       for (const key of ["nav.prototypes", "proto.openSession", "proto.done"] as const) {
         expect(dict["transfer.buildSessionActive"]).toContain(`“${dict[key]}”`);
       }

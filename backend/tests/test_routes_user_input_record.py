@@ -1,8 +1,8 @@
-# backend/tests/test_routes_user_input_record.py — 턴을 여는 라우트가 사용자 입력을 넘긴다.
+# backend/tests/test_routes_user_input_record.py — the routes that open a turn pass along the user input.
 #
-# 감사 로그의 사용자 입력은 웹이 남긴다(aipds/audit_log). 무엇이 사용자의 말인지는 라우트만
-# 안다 — 질문 폼 답변·문서 승인은 각자의 테스트 파일이 덮고, 여기서는 채팅과 SDK 질문 답변을
-# 덮는다.
+# User input in the audit log is recorded by the web app (aipds/audit_log). Only the route knows what the user actually
+# said — question-form answers and document approvals are covered by their own test files; this file covers chat and SDK
+# question answers.
 from __future__ import annotations
 
 from fastapi.testclient import TestClient

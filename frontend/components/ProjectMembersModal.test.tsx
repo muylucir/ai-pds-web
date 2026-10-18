@@ -50,7 +50,7 @@ describe("ProjectMembersModal", () => {
     await user.type(screen.getByRole("textbox", { name: "새 소유자" }), "park@example.com");
     await user.click(screen.getByRole("button", { name: "소유자 변경" }));
     await waitFor(() => expect(screen.getByTestId("members-owner")).toHaveTextContent("park"));
-    // 이전 소유자는 열람 멤버로 남는다.
+    // The previous owner remains as a read-only member.
     expect(within(screen.getByRole("list")).getByText("kim")).toBeInTheDocument();
   });
 

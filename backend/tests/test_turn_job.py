@@ -1,9 +1,9 @@
-# backend/tests/test_turn_job.py — 턴 작업(aipds/turn_job.py)의 계약.
+# backend/tests/test_turn_job.py — the contract of turn jobs (aipds/turn_job.py).
 #
-# 이 파일이 지키는 불변식은 하나다: **턴의 수명은 보는 쪽과 무관하다.** 구독자가
-# 몇 번 붙고 떨어지든, 도중에 취소되든 턴은 끝까지 돌고 러너의 종결 경로(S3 sync)를
-# 지난다. 라우트 테스트(test_routes_turns.py)는 TestClient가 스트림 도중의 끊김을
-# 만들 수 없어 이 경우를 여기서 본다.
+# This file guards one invariant: **a turn's lifetime is independent of who is watching.** No matter
+# how many times subscribers attach and detach, or whether one is cancelled midway, the turn runs to
+# completion and passes through the runner's finalization path (S3 sync). Route tests (test_routes_turns.py)
+# cannot produce a mid-stream disconnect with TestClient, so this case is covered here.
 import asyncio
 from pathlib import Path
 
@@ -20,7 +20,7 @@ SESSION = {"session_id": "p1", "bucket": "", "region": "ap-northeast-2",
 
 
 def _events(*items, gate: asyncio.Event | None = None, after: int = 1):
-    """`items`를 내는 generator 팩토리. `gate`가 있으면 `after`개를 낸 뒤 멈춘다."""
+    """Generator factory yielding `items`. With `gate`, it pauses after yielding `after` items."""
     async def gen():
         for i, ev in enumerate(items):
             if gate is not None and i == after:
@@ -70,7 +70,7 @@ async def test_a_subscriber_follows_a_running_turn_to_its_end():
 
 
 async def test_two_subscribers_see_the_same_sequence():
-    """두 번째 탭이 첫 번째 탭의 이벤트를 가져가지 않는다 — 로그는 읽기만 된다."""
+    """The second tab does not take events away from the first — the log is read-only."""
     gate = asyncio.Event()
     jobs = TurnJobs()
     job = jobs.start("message", _events(_msg("a"), _msg("b"), DONE, gate=gate))
@@ -82,7 +82,7 @@ async def test_two_subscribers_see_the_same_sequence():
 
 
 async def test_a_cancelled_subscriber_does_not_stop_the_turn():
-    """sse_starlette는 끊김을 구독 태스크의 취소로 전한다. 턴은 그와 무관하다."""
+    """sse_starlette conveys a disconnect as cancellation of the subscription task. The turn is unaffected."""
     gate = asyncio.Event()
     jobs = TurnJobs()
     job = jobs.start("message", _events(_msg("a"), _msg("b"), DONE, gate=gate))
@@ -110,7 +110,7 @@ async def test_only_one_turn_runs_at_a_time():
     with pytest.raises(TurnBusy) as busy:
         jobs.start("message", second)
     assert busy.value.job is first
-    # 거절된 턴의 generator는 만들어지지도 않는다.
+    # The generator of a rejected turn is never even created.
     assert made == []
     gate.set()
     await first.task
@@ -166,7 +166,7 @@ async def test_state_changes_are_reported_in_order():
     seen = []
 
     async def hook(job):
-        # 시작 알림이 늦게 끝나도 종결 알림을 앞지르지 못해야 한다.
+        # Even if the start notification finishes late, it must not overtake the end notification.
         if not seen:
             await asyncio.sleep(0.01)
         seen.append(job.state)
@@ -178,10 +178,10 @@ async def test_state_changes_are_reported_in_order():
     assert len(seen) == 2 and seen[-1] == "done"
 
 
-# ---- 실제 러너와 함께 ----
+# ---- with the real runner ----
 
 class GatedDriver:
-    """파일을 쓰고, 첫 메시지를 낸 뒤 gate에서 멈추는 드라이버."""
+    """A driver that writes a file, emits the first message, then pauses at the gate."""
 
     def __init__(self, workspace: Path, gate: asyncio.Event):
         self._workspace = workspace
@@ -200,10 +200,10 @@ class GatedDriver:
 
 
 async def test_the_runner_syncs_outputs_even_after_the_watcher_left(tmp_path):
-    """보던 화면이 떠난 뒤에 끝난 턴의 산출물도 S3에 오른다.
+    """Artifacts of a turn that finished after the watching screen left still reach S3.
 
-    소비자가 곧 실행 주체이던 구조에서는 이 sync가 취소된 스코프에서 돌았다 —
-    `finally` 안의 `await`가 다시 취소되어 Bash로 쓴 파일이 로컬에만 남았다.
+    In the design where the consumer was itself the executor, this sync ran in a cancelled scope —
+    the `await` inside `finally` was cancelled again, and files written via Bash stayed only local.
     """
     gate = asyncio.Event()
     root = tmp_path / "ws"

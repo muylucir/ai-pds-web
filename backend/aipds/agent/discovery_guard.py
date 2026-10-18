@@ -1,33 +1,35 @@
-# backend/aipds/agent/discovery_guard.py — Discovery의 쓰기 범위 판정.
+# backend/aipds/agent/discovery_guard.py — Discovery's write-scope decisions.
 #
-# **왜 이 파일이 생겼는가(2026-08-16의 결함).** Discovery 에이전트가 워크스페이스에
-# 프로토타입을 `prototype/index.html`로 만들어 버렸다. 빌드·호스팅은 Prototypes
-# 탭의 일이고 Discovery는 스펙 작성에서 끝나는데(discovery-config/CLAUDE.md의
-# "Prototypes" 절), 그 규칙이 **산문뿐**이었고 그 산문이 금지한 것은 빌드
-# *명령*이었다: npm install / npm run dev / 서브프로세스 시작 / 포트 선택.
-# 자기완결 HTML 한 장은 그중 아무것도 필요하지 않다 — 에이전트가 남긴 자기 보고
-# ("API 키·패키지 설치·외부 통신이 모두 불필요합니다")가 곧 열거된 모든 조항을
-# 만족했다는 증거다. **열거는 빠진 항목을 초대한다.**
+# **Why this file exists (a defect found 2026-08-16).** The Discovery agent went ahead and built a
+# prototype in the workspace as `prototype/index.html`. Building and hosting are the Prototypes
+# tab's job, and Discovery ends at writing the spec (the "Prototypes" section of
+# discovery-config/CLAUDE.md), but that rule was **prose only**, and what the prose forbade was
+# build *commands*: npm install / npm run dev / starting a subprocess / choosing a port.
+# A single self-contained HTML page needs none of those — the agent's own report
+# ("API 키·패키지 설치·외부 통신이 모두 불필요합니다", i.e. "no API key, package install, or
+# external communication is needed") is itself proof that it satisfied every enumerated clause.
+# **Enumeration invites the item that was left out.**
 #
-# 강제 수단이 없었던 이유는 SDK가 직접 설명해 준다. Discovery는
-# `bypassPermissions`로 돌고(claude_driver.DEFAULT_PERMISSION_MODE),
-# claude_agent_sdk/types.py의 _get_can_use_tool_shadowed_warning이 이렇게 말한다:
+# The SDK itself explains why there was no means of enforcement. Discovery runs with
+# `bypassPermissions` (claude_driver.DEFAULT_PERMISSION_MODE), and
+# _get_can_use_tool_shadowed_warning in claude_agent_sdk/types.py says:
 #
 #   "can_use_tool will not be invoked: permission_mode 'bypassPermissions'
 #    auto-approves every tool call ... To gate every tool call, use a
 #    PreToolUse hook instead."
 #
-# 이 모듈은 그 훅의 판정부다. 배선은 claude_driver._on_pre_tool_use에 있다.
+# This module is the decision part of that hook. The wiring is in claude_driver._on_pre_tool_use.
 #
-# **언어 중립이다.** 거부 대상(경로 또는 명령 조각)만 돌려주고 문구는
-# agent/prompts.py가 두 벌로 소유한다 — 모델이 읽는 텍스트는 프로젝트 언어여야
-# 한다는 그 파일 헤더의 규약이고, 여기에 한국어를 넣으면 영어 프로젝트로 샌다.
+# **It is language-neutral.** It returns only the denied target (a path or a command fragment), and
+# the wording is owned in two copies by agent/prompts.py — that file's header convention is that
+# text the model reads must be in the project language, and putting Korean here would leak into
+# English projects.
 #
-# **Bash는 봉인이 아니라 좁히기다.** 경로 기반인 Write/Edit 판정과 달리 Bash는
-# 임의 코드 실행이므로 거부목록으로 모든 우회를 막을 수 없다(예: `python3 -c`로
-# 파일을 여는 것). 여기서 막는 것은 관측된 경로와 그 인접군이다. 완전히 봉인하려면
-# Discovery에서 Bash를 아예 빼야 하는데(룰 탐색은 Read/Glob/Grep으로 충분하다)
-# 그것은 별도 판단이므로 하지 않았다.
+# **For Bash this is narrowing, not sealing.** Unlike the path-based Write/Edit decisions, Bash is
+# arbitrary code execution, so a denylist cannot block every bypass (e.g. opening a file with
+# `python3 -c`). What is blocked here is the observed path and its close neighbors. Sealing it
+# fully would mean removing Bash from Discovery altogether (Read/Glob/Grep are enough for rule
+# exploration), but that is a separate decision and was not made.
 from __future__ import annotations
 
 import os
@@ -38,22 +40,22 @@ from aipds.agent_home import SETTINGS_IN_COMMAND
 from aipds.pathsafe import workspace_relative
 from aipds.proto import layout
 
-#: Discovery가 쓸 수 있는 유일한 루트. 산출물 정의 자체다(Workspace.list_artifacts가
-#: 같은 서브트리를 프로젝트 산출물로 본다).
+#: The only root Discovery may write to. It is the definition of an artifact itself (Workspace.list_artifacts
+#: treats the same subtree as project artifacts).
 DOCS_ROOT = "aiplc-docs"
 
-#: 이 게이트가 보는 파일 쓰기 도구. claude_driver._FILE_TOOLS와 같은 집합이어야
-#: 한다 — 한쪽에만 도구가 추가되면 그 도구는 관측되면서 막히지 않는다.
+#: File-writing tools this gate looks at. Must be the same set as claude_driver._FILE_TOOLS
+#: — if a tool is added on only one side, that tool is observed but not blocked.
 WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit"})
 
-#: 노트북 편집. 쓰기 도구지만 경로 키가 다르고(`notebook_path`) 산출물을 만들지 않으므로
-#: 게시(PostToolUse)는 하지 않는다 — 쓰기 범위 판정만 같게 받는다. 빠지면 `aiplc-docs/`
-#: 밖에 쓰는 우회로다.
+#: Notebook editing. It is a write tool, but its path key is different (`notebook_path`) and it does
+#: not produce artifacts, so it is not published (PostToolUse) — it only gets the same write-scope
+#: decision. Leaving it out would be a bypass for writing outside `aiplc-docs/`.
 NOTEBOOK_TOOL = "NotebookEdit"
 
 
 def tool_write_path(name: str, tool_input: dict) -> str | None:
-    """쓰기 도구가 겨냥한 경로. 쓰기 도구가 아니면 None."""
+    """The path a write tool targets. None if it is not a write tool."""
     if name in WRITE_TOOLS:
         return tool_input.get("file_path")
     if name == NOTEBOOK_TOOL:
@@ -62,40 +64,41 @@ def tool_write_path(name: str, tool_input: dict) -> str | None:
 
 
 def write_denial(path: str | None, workspace: str) -> str | None:
-    """`aiplc-docs/` 밖이면 거부 대상 경로를, 허용이면 None.
+    """The denied path if outside `aiplc-docs/`, None if allowed.
 
-    경로를 알 수 없는 호출(file_path 없음)은 **허용**한다. 판단 근거가 없는데
-    거부하면 우리가 모르는 도구 모양 하나가 턴 전체를 막는다 — 이 게이트의
-    실패 방향은 "통과"여야 하고, 관측은 PostToolUse가 이미 하고 있다.
+    Calls whose path is unknown (no file_path) are **allowed**. Denying with nothing to base the
+    decision on would let one tool shape we do not know about block the whole turn — this gate's
+    failure direction must be "pass", and PostToolUse is already doing the observation.
     """
     if not path or not isinstance(path, str):
         return None
     rel = workspace_relative(path, workspace)
     if rel is None:
-        # 워크스페이스 탈출. 상대화할 수 없으니 원문을 그대로 지목한다.
+        # Workspace escape. It cannot be made relative, so the original is reported as-is.
         return path
-    # 접두사 **문자열** 비교가 아니라 세그먼트 비교여야 한다 —
-    # "aiplc-docs-backup/x.md"는 startswith("aiplc-docs")를 통과한다.
+    # This must be a segment comparison, not a prefix **string** comparison —
+    # "aiplc-docs-backup/x.md" passes startswith("aiplc-docs").
     if PurePosixPath(rel).parts[:1] == (DOCS_ROOT,):
         return None
     return rel
 
 
-#: `aiplc-docs/` 안이지만 웹이 소유하는 파일 이름. 설문 집계는 웹이 매번 다시 만들어
-#: 덮어쓰므로 에이전트가 거기 쓴 내용은 다음 재생성에서 사라지고, 수정 이력은 빌드
-#: 세션이 덧붙이고 다음 빌드 세션이 입력으로 읽으므로 에이전트가 고치면 빌더가 믿는
-#: "무엇이 만들어졌는가"가 바뀐다 — 프로토타입 쪽 게이트와 같은 이유로 산문이 아니라
-#: 훅으로 막는다. 이름으로 판정하는 것은 이 이름들이 웹만 쓰는
-#: 이름이라서다(상류 룰에 없다). 이름이 겹칠 수 있는 파일은 여기 넣지 않는다.
+#: File names inside `aiplc-docs/` that the web app owns. The survey aggregate is regenerated and
+#: overwritten by the web app every time, so anything the agent writes there disappears on the next
+#: regeneration; the change history is appended by build sessions and read as input by the next
+#: build session, so if the agent edits it, the builder's belief about "what was built" changes —
+#: for the same reason as the prototype-side gate, this is blocked by a hook, not prose. Deciding by
+#: name works because these names are used only by the web app (they are not in the upstream
+#: rules). Files whose names could collide are not put here.
 WEB_OWNED_NAMES = frozenset({layout.SURVEY_AGGREGATE, layout.CHANGE_HISTORY})
 
 
 def web_owned_denial(path: str | None, workspace: str) -> str | None:
-    """웹이 소유하는 `aiplc-docs/` 파일이면 거부 대상 경로를, 아니면 None.
+    """The denied path if it is a web-owned `aiplc-docs/` file, otherwise None.
 
-    `write_denial`과 문구가 달라야 해서 따로 판정한다: 그쪽은 "aiplc-docs/ 안에
-    써라"이고, 여기는 이미 aiplc-docs/ 안이다 — 같은 문구를 주면 모델이 같은
-    경로로 재시도한다(agent/prompts.write_outside_docs의 결함 기록).
+    It is decided separately because its wording must differ from `write_denial`: that one says
+    "write inside aiplc-docs/", while here the path is already inside aiplc-docs/ — giving the same
+    wording makes the model retry the same path (see the defect record in agent/prompts.write_outside_docs).
     """
     if not path or not isinstance(path, str):
         return None
@@ -108,18 +111,18 @@ def web_owned_denial(path: str | None, workspace: str) -> str | None:
     return None
 
 
-#: 웹이 사용자 입력을 원문 그대로 남기는 감사 로그(aipds/audit_log). 첫 턴에서도 웹이
-#: 에이전트보다 먼저 쓴다.
+#: Audit log where the web app records user input verbatim (aipds/audit_log). Even on the first turn,
+#: the web app writes it before the agent does.
 AUDIT_KEY = f"{DOCS_ROOT}/audit.md"
 
 
 def audit_overwrite_denial(tool: str, path: str | None, workspace: str) -> str | None:
-    """이미 있는 audit.md를 Write로 통째로 쓰면 거부 대상 경로를, 아니면 None.
+    """The denied path if Write would overwrite an existing audit.md wholesale, otherwise None.
 
-    에이전트는 첫 턴에 audit.md를 Write로 새로 만들어 왔다(ws-e·
-    test5 실측). 이제 그 파일은 웹이 먼저 만들고 사용자 입력을 원문 그대로 적어 두므로,
-    통째로 쓰면 그 기록이 사라진다 — 계약(discovery-config/CLAUDE.md)이 이미 "Edit로
-    덧붙이라"고 하지만 산문이 아니라 훅으로 지킨다. Edit는 막지 않는다.
+    The agent has been creating audit.md fresh with Write on its first turn (measured on ws-e and
+    test5). Now the web app creates that file first and records user input verbatim in it, so
+    overwriting it wholesale erases that record — the contract (discovery-config/CLAUDE.md) already
+    says "append with Edit", but this enforces it with a hook rather than prose. Edit is not blocked.
     """
     if tool != "Write" or not path or not isinstance(path, str):
         return None
@@ -129,43 +132,43 @@ def audit_overwrite_denial(tool: str, path: str | None, workspace: str) -> str |
     return rel if os.path.isfile(os.path.join(workspace, rel)) else None
 
 
-#: 인용부호 안의 내용. 리다이렉션·명령 탐지 전에 지운다 — `echo "a > b"`의 `>`를
-#: 리다이렉션으로 읽으면 문서를 쓰는 정상 명령이 막히고, 그러면 게이트를 끄자는
-#: 압력이 생긴다(오탐은 게이트의 수명을 줄인다).
+#: Contents inside quotes. Removed before redirection/command detection — reading the `>` in
+#: `echo "a > b"` as a redirection would block a legitimate command that writes a document, which
+#: creates pressure to turn the gate off (false positives shorten a gate's life).
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 
-#: 패키지 매니저. 하위 명령을 열거하지 않고 호출 자체를 막는다 — Discovery는
-#: 마크다운을 쓰므로 패키지 매니저가 필요한 일이 없고, 열거가 빠진 항목을
-#: 초대한다는 것이 이 결함의 교훈이다.
+#: Package managers. The invocation itself is blocked rather than enumerating subcommands — Discovery
+#: writes markdown, so it never needs a package manager, and the lesson of this defect is that
+#: enumeration invites the item that was left out.
 _PKG = re.compile(r"(?:^|[;&|(]\s*|\s)(npm|npx|pnpm|yarn|bun)\b")
 
-#: 개발 서버·런타임 서빙. `npx serve`류는 위 _PKG가 이미 잡으므로 여기서 맨
-#: `serve`를 넣지 않는다 — 넣으면 "serve"를 담은 파일명·본문이 전부 걸린다.
+#: Dev servers and runtime serving. `npx serve` and the like are already caught by _PKG above, so a
+#: bare `serve` is not included here — including it would catch every file name or body containing "serve".
 _SERVERS = re.compile(
     r"\b(http\.server|SimpleHTTPServer|uvicorn|gunicorn|flask\s+run"
     r"|php\s+-S|vite|next\s+(?:dev|start))\b")
 
-#: 파일로 향하는 리다이렉션. `(?<![0-9&])`가 fd 형태(`2>`, `>&`)를 뺀다 —
-#: `2>/dev/null`·`2>&1`은 관용구이고 파일 생성이 아니다.
+#: Redirections to files. `(?<![0-9&])` excludes fd forms (`2>`, `>&`) —
+#: `2>/dev/null` and `2>&1` are idioms, not file creation.
 _REDIR = re.compile(r"(?<![0-9&])>{1,2}\s*(?!&)([^\s;|&<>]+)")
 
-#: tee도 파일을 만든다. 리다이렉션만 막으면 이쪽으로 그대로 나간다.
+#: tee also creates files. Blocking only redirection would let writes go straight out this way.
 _TEE = re.compile(r"\btee\b\s+(?:-a\s+)?([^\s;|&<>]+)")
 
-#: 파일이 아니라 장치인 대상. 리다이렉션 검사에서 제외한다.
+#: Targets that are devices, not files. Excluded from the redirection check.
 _DEVICES = ("/dev/null", "/dev/stdout", "/dev/stderr")
 
 
 def bash_denial(command: str | None) -> str | None:
-    """빌드·서버 기동·`aiplc-docs/` 밖 파일 생성이면 거부 대상 조각을, 아니면 None.
+    """The denied fragment for a build, a server start, or file creation outside `aiplc-docs/`, otherwise None.
 
-    거부**목록**이다(허용목록이 아니다). Discovery는 룰 파일을 `ls`/`grep`/`find`로
-    탐색하는 정상 경로가 있고, 허용목록으로 만들면 그쪽이 전부 막힌다.
+    This is a deny**list** (not an allowlist). Discovery has a legitimate path of exploring rule
+    files with `ls`/`grep`/`find`, and an allowlist would block all of that.
     """
     if not command or not isinstance(command, str):
         return None
-    # 인용부호 안을 지운 사본으로 판정한다. 원문은 보고하지 않는다 —
-    # 지목은 아래에서 잡은 조각으로 한다.
+    # Decide on a copy with quoted contents removed. The original is not reported —
+    # the fragment caught below is what gets named.
     scrubbed = _QUOTED.sub(" ", command)
 
     pkg = _PKG.search(scrubbed)
@@ -181,7 +184,7 @@ def bash_denial(command: str | None) -> str | None:
             target = match.group(1)
             if target in _DEVICES:
                 continue
-            # 리다이렉션 대상은 워크스페이스 상대 경로로 온다(cwd가 워크스페이스다).
+            # Redirection targets arrive as workspace-relative paths (cwd is the workspace).
             if PurePosixPath(target).parts[:1] == (DOCS_ROOT,):
                 continue
             return target
@@ -189,10 +192,10 @@ def bash_denial(command: str | None) -> str | None:
 
 
 def settings_denial(command: str | None) -> str | None:
-    """명령이 CLI 설정 파일을 건드리면 그 조각을, 아니면 None.
+    """The fragment if the command touches a CLI settings file, otherwise None.
 
-    워크스페이스 밖 리다이렉션은 `bash_denial`이 이미 막지만 `cp`·`sed -i`·인터프리터는
-    보지 않는다. 설정 파일은 이름이 고정이라 이름으로 막는다(agent_home.SETTINGS_IN_COMMAND).
+    Redirections outside the workspace are already blocked by `bash_denial`, but it does not look at
+    `cp`, `sed -i`, or interpreters. Settings files have fixed names, so they are blocked by name (agent_home.SETTINGS_IN_COMMAND).
     """
     if not command or not isinstance(command, str):
         return None

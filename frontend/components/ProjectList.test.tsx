@@ -47,8 +47,8 @@ describe("ProjectList 메타데이터 열", () => {
   });
 
   it("falls back to the raw model id when the catalog has no entry", async () => {
-    // 관리자가 카탈로그에서 지운 모델로 도는 프로젝트는 정상 경로다 —
-    // 헤더 배지와 같은 규율로 id 원문을 보여준다.
+    // A project running on a model the admin deleted from the catalog is a normal path —
+    // show the raw id, under the same discipline as the header badge.
     models();
     render(<ProjectList data={META} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
     expect(await screen.findByText("global.anthropic.claude-sonnet-5")).toBeInTheDocument();
@@ -57,7 +57,7 @@ describe("ProjectList 메타데이터 열", () => {
   it("still renders rows when the model catalog fails", async () => {
     server.use(http.get(`${API_BASE_URL}/models`, () => HttpResponse.error()));
     render(<ProjectList data={META} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
-    // 카탈로그가 없으면 이름을 못 붙일 뿐, 행과 id는 그대로 보여야 한다.
+    // Without the catalog we just cannot attach names; the row and id must still show.
     expect(await screen.findByText("global.anthropic.claude-opus-5")).toBeInTheDocument();
   });
 
@@ -74,14 +74,14 @@ describe("ProjectList 메타데이터 열", () => {
   });
 
   it("renders a dash for projects missing this metadata", () => {
-    // 구 매니페스트로 복원된 프로젝트 — 빈 칸이 아니라 —로 없음을 드러낸다.
+    // A project restored from an old manifest — show absence with —, not a blank cell.
     const bare = {
       projects: [{ project_id: "old", name: "구 프로젝트", progress: null }],
       total: 1, page: 1, size: 10,
     };
     render(<ProjectList data={bare} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
     const row = screen.getByText("구 프로젝트").closest("tr")!;
-    // 진행상황·모델·언어·소유자·생성일 5칸이 모두 —
+    // All 5 cells (progress, model, language, owner, created date) are —
     expect(row.textContent?.match(/—/g)?.length).toBe(5);
   });
 
@@ -123,7 +123,7 @@ describe("ProjectList 접근", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: /내 것 접근 관리/ }));
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveTextContent("lee");
-    // 소유자 변경은 관리자만 한다.
+    // Only admins change the owner.
     expect(within(dialog).queryByRole("button", { name: "소유자 변경" })).toBeNull();
   });
 });
@@ -137,9 +137,9 @@ describe("ProjectList delete", () => {
     await userEvent.setup().click(buttons[0]);
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveTextContent("'워크숍 A' 프로젝트 삭제");
-    // 문구가 실제 삭제 범위를 말해야 한다 — 프로토타입 빌드와 설문 응답,
-    // 그리고 이미 공유한 링크가 함께 끊기는 것까지(백엔드가 이제 슬러그마다
-    // 리셋 경로를 돌려 실체와 토큰을 지운다).
+    // The wording must state the actual deletion scope — prototype builds and survey responses,
+    // and also that already-shared links break with them (the backend now runs the reset path
+    // per slug, deleting the artifacts and the tokens).
     expect(dialog).toHaveTextContent(
       "채팅 기록·문서·프로토타입 빌드·설문 응답이 영구 삭제되고, " +
       "공유한 프리뷰·설문 링크가 즉시 끊깁니다. 되돌릴 수 없습니다.",
@@ -197,8 +197,8 @@ describe("ProjectList delete", () => {
   });
 
   it("delete button does not navigate the card link", async () => {
-    // 버튼은 Link 밖에 있으므로 클릭이 내비게이션(링크 href 이동)을 유발하지
-    // 않아야 한다 — jsdom에서는 dialog가 열렸고 링크 클릭 핸들러가 없음을 확인.
+    // The button is outside the Link, so a click must not trigger navigation (following the
+    // link's href) — in jsdom, confirm the dialog opened and there is no link click handler.
     render(<ProjectList data={PAGE} onDeleted={vi.fn()} onPageChange={vi.fn()} />);
     await userEvent.setup().click(
       screen.getAllByRole("button", { name: /프로젝트 삭제/ })[0],
@@ -217,9 +217,9 @@ describe("ProjectList table + pagination", () => {
     expect(screen.getByText("p1")).toBeInTheDocument();
     expect(screen.getByText("워크숍 A")).toBeInTheDocument();
     expect(screen.getByText("Envision (2/8)")).toBeInTheDocument();
-    // progress null → —. 모델·언어·생성일 열도 없을 때 —를 쓰므로 행을 좁혀
-    // 진행상황 칸(3번째 td)만 본다. p2는 이름이 null이라 id 칸과 이름 링크
-    // 양쪽에 나오므로 행은 표의 2번째 tr로 잡는다.
+    // progress null → —. The model, language, and created-date columns also use — when empty,
+    // so narrow to the row and look only at the progress cell (3rd td). p2 has a null name, so
+    // it appears in both the id cell and the name link; take the row as the table's 2nd tr.
     const rows = screen.getAllByRole("row");
     expect(rows[2].querySelectorAll("td")[2]).toHaveTextContent("—");
   });
@@ -269,7 +269,7 @@ describe("ProjectList table + pagination", () => {
 });
 
 describe("ProjectList export", () => {
-  /** jsdom은 오브젝트 URL과 앵커 클릭을 구현하지 않는다. */
+  /** jsdom does not implement object URLs or anchor clicks. */
   function stubDownload() {
     const clicked: HTMLAnchorElement[] = [];
     (URL as unknown as { createObjectURL: unknown }).createObjectURL =
@@ -301,7 +301,7 @@ describe("ProjectList export", () => {
     await userEvent.setup().click(buttons[1]);
 
     await waitFor(() => expect(clicked).toHaveLength(1));
-    // 이름이 없는 행은 id로 라벨을 만든다 — 두 번째 행이 p2다.
+    // A row without a name builds its label from the id — the second row is p2.
     expect(requested).toBe("p2");
     expect(clicked[0].download).toBe("p2.zip");
   });
@@ -315,7 +315,7 @@ describe("ProjectList export", () => {
     await userEvent.setup().click(
       screen.getAllByRole("button", { name: /프로젝트 내보내기/ })[0]);
 
-    // 프로젝트 목록에는 그 카드가 없다 — 어느 탭으로 가야 하는지부터 말한다.
+    // The project list does not have that card — so first say which tab to go to.
     await screen.findByText(/“프로토타입” 탭에서 해당 카드의 “세션 열기”/);
   });
 
@@ -328,8 +328,8 @@ describe("ProjectList export", () => {
     await userEvent.setup().click(
       screen.getAllByRole("button", { name: /프로젝트 내보내기/ })[0]);
 
-    // 스트레치드 링크가 위에 깔려 있으므로 z-10과 stopPropagation이 아니라
-    // 버튼이 실제로 눌렸는지로 확인한다 — 삭제 버튼과 같은 규율이다.
+    // A stretched link lies on top, so check whether the button was actually pressed rather
+    // than z-10 and stopPropagation — the same discipline as the delete button.
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

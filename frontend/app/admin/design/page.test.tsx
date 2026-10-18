@@ -2,9 +2,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-// AppHeader가 그리는 LanguageSwitcher가 useRouter()를 부른다 — 앱 라우터가
-// 마운트되지 않은 단위 테스트에서 그 훅은 던진다(app/admin/users/page.test.tsx와
-// 같은 이유·같은 목).
+// The LanguageSwitcher that AppHeader draws calls useRouter() — in unit tests where the app router
+// is not mounted, that hook throws (same reason and same mock as
+// app/admin/users/page.test.tsx).
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -20,8 +20,8 @@ vi.mock("@/lib/api/design", () => ({
 }));
 import { deleteDesignProfile, getDesignProfile } from "@/lib/api/design";
 
-// i18n provider 래핑은 기존 admin 페이지 테스트(app/admin/users/page.test.tsx)의
-// 헬퍼를 그대로 따른다.
+// The i18n provider wrapping follows the helper of the existing admin page test
+// (app/admin/users/page.test.tsx) as is.
 beforeEach(() => vi.clearAllMocks());
 
 describe("admin design page", () => {
@@ -52,19 +52,19 @@ describe("admin design page", () => {
       expect(screen.getByRole("alert")).toBeInTheDocument());
   });
 
-  // remove()는 page.tsx에만 있고(DesignProfileCard는 onRemove prop이 불리는
-  // 것만 안다) window.confirm과 deleteDesignProfile을 직접 부른다. 이
-  // 확인창은 스펙이 못박은 두 필수 문구 중 하나(제거 → 다음 재호스팅에서
-  // 기본 테마로 복귀)를 실어야 하므로, 그 문구가 실제로 confirm에 전달되고
-  // 삭제→재조회로 이어지는지를 여기서 직접 실측한다.
+  // remove() exists only in page.tsx (DesignProfileCard only knows that its onRemove prop is
+  // called) and calls window.confirm and deleteDesignProfile directly. This confirmation dialog
+  // must carry one of the two mandatory messages the spec nailed down (removal → returns to the
+  // default theme on the next re-hosting), so here we directly measure that the message actually
+  // reaches confirm and leads to delete → refetch.
   it("confirms with the removal warning, then deletes and reloads", async () => {
     const profile = {
       filename: "acme.md", uploaded_at: "2026-08-15T04:12:00+00:00",
       uploaded_by: "admin@x", tokens: { primary: "#5b2ea6" }, prose: "톤",
     };
     vi.mocked(getDesignProfile)
-      .mockResolvedValueOnce(profile)   // 최초 로드
-      .mockResolvedValueOnce(null);     // 삭제 뒤 reload()
+      .mockResolvedValueOnce(profile)   // initial load
+      .mockResolvedValueOnce(null);     // reload() after deletion
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<AdminDesignPage />);
@@ -72,12 +72,12 @@ describe("admin design page", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /제거|Remove/ }));
 
-    // 형식적인 confirm이 아니라 진짜 경고 문구가 실렸는지 — i18n 키가 바뀌거나
-    // 엉뚱한 문구로 교체돼도 이 단정이 잡아낸다.
+    // Whether a real warning message was carried, not a perfunctory confirm — this assertion catches it
+    // even if the i18n key changes or is replaced with the wrong message.
     expect(confirmSpy).toHaveBeenCalledWith(
       expect.stringMatching(/재호스팅|next time they are hosted/));
     await waitFor(() => expect(deleteDesignProfile).toHaveBeenCalledTimes(1));
-    // 삭제 뒤 목록이 다시 조회된다 — 최초 로드(1회) + reload(1회) = 2회.
+    // After deletion, the list is fetched again — initial load (1) + reload (1) = 2.
     await waitFor(() => expect(getDesignProfile).toHaveBeenCalledTimes(2));
   });
 
@@ -94,14 +94,14 @@ describe("admin design page", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /제거|Remove/ }));
 
-    // 경고가 형식적으로만 붙어 있는 것이 아니라는 증거 — 거부하면 삭제가
-    // 실제로 일어나지 않는다.
+    // Evidence that the warning is not merely perfunctory — if declined, the deletion
+    // does not actually happen.
     expect(deleteDesignProfile).not.toHaveBeenCalled();
   });
 
-  // 최종 리뷰 M9: remove()가 삭제 실패를 admin.designLoadFailed("불러오지
-  // 못했습니다")로 잘못 알렸다 — 실패한 것은 로딩이 아니라 삭제다. 전용 키
-  // (admin.designDeleteFailed)로 갈렸는지 여기서 직접 확인한다.
+  // Final review M9: remove() wrongly reported a deletion failure as admin.designLoadFailed ("불러오지
+  // 못했습니다", failed to load) — what failed was the deletion, not loading. Here we directly check
+  // that it was routed to the dedicated key (admin.designDeleteFailed).
   it("shows a delete-specific error when removal fails, not the load-failed message", async () => {
     const profile = {
       filename: "acme.md", uploaded_at: "2026-08-15T04:12:00+00:00",

@@ -79,9 +79,10 @@ describe("ChatTimeline", () => {
   });
 
   it("복원된 질문 payload가 있으면 문항 수를 보여주고 펼쳐서 질문·보기를 읽는다", async () => {
-    // 종전에는 "질문지 제시됨" 한 줄뿐이어서 스크롤백에서 무엇을 물었는지 알
-    // 수 없었다 — payload는 트랜스크립트의 tool_use.input에 구조화된 채로
-    // 남아 있는데 복원 코드가 버리고 있었다.
+    // Previously it was just the single line "질문지 제시됨" (questionnaire
+    // presented), so the scrollback gave no way to tell what had been asked —
+    // the payload remained structured in the transcript's tool_use.input, but
+    // the restore code was discarding it.
     const items: ChatItem[] = [{
       id: "h3", role: "history-card", name: "discovery-questions",
       file: {
@@ -101,14 +102,16 @@ describe("ChatTimeline", () => {
       <ChatTimeline items={items} />,
     );
     expect(screen.getByText(/1문항/)).toBeInTheDocument();
-    // 접힌 상태에서는 질문이 보이지 않는다(카드가 타임라인을 잡아먹지 않게).
+    // When collapsed, the questions are not visible (so the card does not
+    // swallow the timeline).
     expect(screen.queryByText(/무엇을 만드나요\?/)).toBeNull();
 
     await userEvent.setup().click(screen.getByRole("button", { name: "펼치기" }));
 
     expect(screen.getByText(/Q1\. 무엇을 만드나요\?/)).toBeInTheDocument();
     expect(screen.getByText("A. 자동차 부품")).toBeInTheDocument();
-    // is_other는 자유 입력 자리표시자다 — 제시된 보기가 아니므로 나열하지 않는다.
+    // is_other is a free-input placeholder — it is not a presented option, so
+    // it is not listed.
     expect(screen.queryByText(/X\. Other/)).toBeNull();
   });
 });
@@ -134,11 +137,12 @@ describe("ChatTimeline — stick-to-bottom", () => {
     const { rerender } = render(<Harness items={[msg("1")]} stickSignal={0} />);
     const el = scroller();
     fakeScrollGeometry(el, {});
-    // 사용자가 위로: scrollTop을 바닥에서 멀리 두고 scroll 이벤트 발생
+    // User scrolls up: put scrollTop far from the bottom and fire a scroll
+    // event
     el.scrollTop = 100;
     fireEvent.scroll(el);
     rerender(<Harness items={[msg("1"), msg("2")]} stickSignal={0} />);
-    expect(el.scrollTop).toBe(100); // 위치 보존 — 끌려 내려가지 않음
+    expect(el.scrollTop).toBe(100); // position preserved — not dragged down
   });
 
   it("stickSignal이 증가하면(메시지 전송) 무조건 바닥으로 복귀한다", () => {
@@ -153,8 +157,8 @@ describe("ChatTimeline — stick-to-bottom", () => {
 });
 
 describe("답변 제출 말풍선", () => {
-  // answers는 UserItem에 실려 온다(useWorkspaceStream.historyItemToChatItem이
-  // GET /history의 HistoryItem.answers를 그대로 옮긴다).
+  // answers arrive on the UserItem (useWorkspaceStream.historyItemToChatItem
+  // copies HistoryItem.answers from GET /history as is).
   const answerItem: ChatItem = {
     id: "a1",
     role: "user",
@@ -168,7 +172,8 @@ describe("답변 제출 말풍선", () => {
         <Harness items={[answerItem]} />
       </LocaleProvider>,
     );
-    // 백엔드가 실어 보낸 한국어 text는 무시하고 UI 언어로 다시 만든다.
+    // Ignores the Korean text the backend sent and rebuilds it in the UI
+    // language.
     expect(screen.getByText(/Answers submitted/)).toBeInTheDocument();
     expect(screen.getByText(/1: A · 2: B/)).toBeInTheDocument();
     expect(screen.queryByText(/답변 제출/)).toBeNull();
@@ -183,10 +188,11 @@ describe("답변 제출 말풍선", () => {
     expect(screen.getByText(/답변 제출/)).toBeInTheDocument();
   });
 
-  // 이 조합(answers + questions)이 답변 레코드가 있는 세션에서 온다. 종전에는
-  // 복원된 말풍선이 `답변 제출: Your questions have been answered: "질문"="라벨"`
-  // 한 줄이었다 — CLI가 쓴 영어 문장을 백엔드가 펼 수 없어 그대로 실어 보냈고,
-  // 문항 번호·보기 letter·보기 텍스트가 전부 사라졌다.
+  // This combination (answers + questions) comes from sessions that have an
+  // answer record. Previously the restored bubble was the single line
+  // `답변 제출: Your questions have been answered: "질문"="라벨"` — the backend
+  // could not unpack the English sentence the CLI wrote, so it sent it as is, and the
+  // question numbers, option letters, and option texts were all lost.
   const questionFile = {
     name: "discovery-questions",
     preamble: null,
@@ -220,18 +226,18 @@ describe("답변 제출 말풍선", () => {
                            questions: questionFile as never }]} />
       </LocaleProvider>,
     );
-    // 문항 번호와 질문 원문이 보인다.
+    // The question numbers and original question text are visible.
     expect(screen.getByText(/Q1\. 무엇을 만드나요\?/)).toBeInTheDocument();
-    // letter만이 아니라 보기 텍스트로 펼쳐진다.
+    // Expanded to the option text, not just the letter.
     expect(screen.getByText(/A\. 자동차 부품 — IATF 16949 환경/)).toBeInTheDocument();
-    // 복수선택은 고른 보기 모두.
+    // Multi-select shows every chosen option.
     expect(screen.getByText(/A\. 10건 미만, B\. 10~30건/)).toBeInTheDocument();
-    // 종전의 "1: A" 나열로 떨어지지 않는다.
+    // Does not fall back to the old "1: A" listing.
     expect(screen.queryByText(/1: A · 2: A,B/)).toBeNull();
   });
 
   it("answers가 없으면 백엔드의 text를 그대로 쓴다", () => {
-    // 자유 서술 답변, 또는 answers를 안 실어 보내는 구 백엔드.
+    // Free-text answers, or an older backend that does not send answers.
     render(
       <LocaleProvider locale="en">
         <Harness items={[{ ...answerItem, answers: null,

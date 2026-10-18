@@ -1,19 +1,19 @@
 #!/bin/bash
-# 백엔드에 프로토타입 프리뷰 오리진을 알린다(backend/aipds/preview_surface.py).
+# Tells the backend the prototype preview origin (backend/aipds/preview_surface.py).
 #
 #   sudo /usr/local/libexec/aipds/preview-configure [--no-restart] <PreviewOrigin> <PreviewSecretArn>
 #
-# 두 값은 AipdsPreviewStack의 출력이다(infra/lib/aipds-preview-stack.ts). 둘 다 비밀이
-# 아니다 — 비밀 헤더 값 자체는 백엔드가 기동 뒤 Secrets Manager에서 읽는다(인스턴스 롤이
-# 그 시크릿의 리소스 정책으로 허용돼 있다). 그래서 unit 파일에 시크릿 평문이 남지 않는다.
+# Both values are outputs of AipdsPreviewStack (infra/lib/aipds-preview-stack.ts). Neither is a secret
+# — the secret header value itself is read by the backend from Secrets Manager after startup (the instance role is
+# allowed by that secret's resource policy). So no plaintext secret is left in the unit file.
 #
-# 왜 user-data가 아니라 이 스크립트인가: user-data를 바꾸면 HostingStack 배포가 EC2를
-# 교체한다. 이 설정은 systemd drop-in 하나라 실행 중 인스턴스에 그대로 얹을 수 있고,
-# 인스턴스가 교체되면 이 명령을 다시 돌리면 된다(`aipds-harden sync`가 SSM 값으로 대신
-# 돌린다). 돌리기 전까지 프리뷰는 닫혀 있다 — 인증이 켜진 배포에서 앱 오리진은 프로토타입을
-# 서빙하지 않는다.
+# Why this script rather than user-data: changing user-data makes a HostingStack deploy replace the EC2
+# instance. This setting is a single systemd drop-in, so it can be put straight onto a running instance, and
+# if the instance is replaced, just run this command again (`aipds-harden sync` runs it instead with the SSM
+# values). Until it runs, the preview stays closed — in a deployment with auth on, the app origin does not serve
+# prototypes.
 #
-# 끄려면: sudo rm /etc/systemd/system/aipds-backend.service.d/preview.conf
+# To turn it off: sudo rm /etc/systemd/system/aipds-backend.service.d/preview.conf
 #         && sudo systemctl daemon-reload && sudo systemctl restart aipds-backend
 set -euo pipefail
 if [ "$(id -u)" -ne 0 ]; then

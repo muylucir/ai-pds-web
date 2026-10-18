@@ -21,7 +21,7 @@ describe("AddModelModal", () => {
     await user.type(screen.getByLabelText("표시 이름"), "Opus 4.8");
     await user.type(screen.getByLabelText("모델 ID"), "global.anthropic.claude-opus-4-8");
     await user.click(screen.getByRole("button", { name: "추가" }));
-    // effort를 고르지 않으면 null — CLI 기본값이다(모델마다 달라 프론트가 정하지 않는다).
+    // If no effort is chosen, null — the CLI default (it differs per model, so the frontend does not decide it).
     expect(body).toEqual({ name: "Opus 4.8",
                            model_id: "global.anthropic.claude-opus-4-8",
                            display: true, effort: null });

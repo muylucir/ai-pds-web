@@ -54,9 +54,10 @@ async def _resolve(token: str) -> tuple[SurveyStore, Questionnaire]:
 async def public_get_survey(token: str):
     _, qn = await _resolve(token)
     # Questions only: no token echo, no project_id/slug, no aggregate.
-    # language를 함께 내보낸다 — 응답자는 외부인이라 aipds_lang 쿠키가 없고,
-    # 문항이 영어인데 화면 문구만 한국어인 것은 응답자에게 더 나쁘다.
-    # project_id/slug/token은 계속 노출하지 않는다(이 파일 헤더의 규율).
+    # language is sent along too -- respondents are outsiders with no aipds_lang
+    # cookie, and English questions with only the screen text in Korean is worse for
+    # the respondent. project_id/slug/token stay unexposed (the rule in this file's
+    # header).
     return {"title": qn.title, "hypothesis": qn.hypothesis,
             "language": qn.language,
             "questions": [q.model_dump() for q in qn.questions]}
@@ -128,8 +129,9 @@ async def public_submit_survey(token: str, body: AnswersBody, request: Request):
                           submitted_at=datetime.now(timezone.utc).isoformat(),
                           answers=clean)
     await store.append_response(resp)   # this PUT is what commits the response
-    # 집계는 여기서 갱신하지 않는다. 갱신은 응답 전부를 다시 읽으므로 제출 한 번이
-    # O(N)이 되고(1000번째 제출이 GET 1000회), 이 경로는 인증 없이 열려 있다.
-    # 집계는 캐시일 뿐이고 `get_rollup`이 응답 수가 어긋나면 다시 만든다 — 그
-    # 비용은 대시보드를 여는 사람이 한 번 치른다.
+    # The aggregate is not updated here. Updating re-reads every response, so a single
+    # submission would become O(N) (the 1000th submission = 1000 GETs), and this path
+    # is open without authentication. The aggregate is only a cache, and `get_rollup`
+    # rebuilds it when the response count does not match -- that cost is paid once by
+    # whoever opens the dashboard.
     return Response(status_code=204)

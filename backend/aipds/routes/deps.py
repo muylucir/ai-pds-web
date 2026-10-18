@@ -6,14 +6,14 @@ from aipds import app as app_module
 from aipds.workspace import Workspace
 
 _log = logging.getLogger(__name__)
-# pid별 부팅 lock — 복원 직후 동시 요청 2건이 VM을 두 번 띄우는 것을 막는다.
+# Per-pid boot lock — keeps two concurrent requests right after restore from starting the VM twice.
 _boot_locks: dict[str, asyncio.Lock] = {}
 
 
 async def ensure_workspace(pid: str) -> Workspace:
-    """살아있는 워크스페이스를 반환하고, 복원-등록만 된 프로젝트면 이 자리에서
-    워크스페이스를 lazy 초기화(로컬 디렉토리)한다(스펙: 복원 시점 = 첫 접근).
-    미등록 404, 초기화 실패 503(등록은 유지 — 다음 요청이 재시도)."""
+    """Return the live workspace; if the project is only restored-and-registered, lazily
+    initialize its workspace (local directory) right here (spec: restore time = first access).
+    Unregistered → 404; init failure → 503 (registration is kept — the next request retries)."""
     try:
         return app_module.registry.get(pid)
     except KeyError:
@@ -23,7 +23,7 @@ async def ensure_workspace(pid: str) -> Workspace:
     lock = _boot_locks.setdefault(pid, asyncio.Lock())
     async with lock:
         try:
-            return app_module.registry.get(pid)  # double-check: 앞선 요청이 이미 초기화
+            return app_module.registry.get(pid)  # double-check: an earlier request already initialized it
         except KeyError:
             pass
         try:
@@ -34,9 +34,9 @@ async def ensure_workspace(pid: str) -> Workspace:
         try:
             return app_module.registry.attach(pid, workspace)
         except KeyError:
-            # 초기화 대기 중 DELETE /projects/{pid}가 끼어든 경우: 프로젝트는 이미
-            # 미등록 상태다. 방금 만든 워크스페이스의 러너가 새지 않도록 best-effort로
-            # 정지하고 평소 미등록-프로젝트 시맨틱과 동일하게 404를 낸다.
+            # DELETE /projects/{pid} cut in while waiting for init: the project is already
+            # unregistered. Stop the just-created workspace's runner best-effort so it doesn't leak,
+            # and return 404, matching the usual unregistered-project semantics.
             try:
                 await workspace.runner.stop()
             except Exception:

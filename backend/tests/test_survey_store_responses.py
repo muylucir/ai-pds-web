@@ -92,8 +92,8 @@ async def test_archive_moves_questionnaire_responses_and_rollup():
 
 
 async def test_archive_aggregates_responses_that_were_never_rolled_up():
-    """제출은 집계를 갱신하지 않는다 — 대시보드를 한 번도 열지 않고 닫은 회차도
-    보존되는 집계가 보존되는 응답과 맞아야 한다."""
+    """Submitting does not update the aggregate — even for a round closed without the dashboard ever being opened,
+    the preserved aggregate must match the preserved responses."""
     closed = "2026-07-26T00:00:00Z"
     store, project_s3, _ = await _seeded(3, status="closed", closed_at=closed)
     assert rollup_key(SLUG) not in project_s3.blobs

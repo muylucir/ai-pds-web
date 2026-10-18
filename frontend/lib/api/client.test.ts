@@ -110,8 +110,8 @@ describe("api client request shaping + response typing", () => {
   });
 
   it("listApprovals returns the history and the backend's current doc hash", async () => {
-    // 현재 해시는 백엔드가 계산한다 — 프론트가 따로 계산하면 알고리즘이 두
-    // 곳에 생기고, 어긋나면 승인이 조용히 인식되지 않는다.
+    // The current hash is computed by the backend — if the frontend computed it separately, the algorithm would live in two
+    // places, and if they diverged, approvals would silently go unrecognized.
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/approvals`, () =>
         HttpResponse.json({
@@ -136,8 +136,8 @@ describe("api client request shaping + response typing", () => {
   });
 
   it("approveDocument POSTs and needs no body", async () => {
-    // 승인 대상 문서와 그 해시는 백엔드가 정한다 — 클라이언트가 보낸 값을
-    // 믿으면 화면이 낡은 내용을 승인해 버릴 수 있다.
+    // The document to approve and its hash are decided by the backend — trusting values the client sent
+    // could let the screen approve stale content.
     let method: string | null = null;
     server.use(
       http.post(`${API_BASE_URL}/projects/p1/approve`, ({ request }) => {
@@ -145,7 +145,7 @@ describe("api client request shaping + response typing", () => {
         return HttpResponse.json({ approved: true, turn_id: "t-approve" });
       }),
     );
-    // 승인은 다음 단계의 턴을 시작만 한다 — 그 턴의 id를 돌려준다.
+    // Approval only starts the next stage's turn — it returns that turn's id.
     expect(await approveDocument("p1")).toEqual({ turnId: "t-approve" });
     expect(method).toBe("POST");
   });

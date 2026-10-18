@@ -1,4 +1,4 @@
-# backend/tests/test_proto_history.py — 프로토타입 빌드 대화 복원(proto/history.py).
+# backend/tests/test_proto_history.py — restoring the prototype build conversation (proto/history.py).
 import json
 from datetime import datetime, timezone
 
@@ -31,7 +31,7 @@ def _ai(text, minute, blocks=None):
 
 
 async def _write(s3, session_id, lines):
-    """SDK가 하는 그대로 미러에 쓴다 — 키 레이아웃을 테스트가 따로 알지 않게."""
+    """Writes to the mirror exactly as the SDK does — so the test does not need its own knowledge of the key layout."""
     await S3SessionStore(s3, slug=SLUG).append({"session_id": session_id}, lines)
 
 
@@ -40,8 +40,8 @@ def _shape(items):
 
 
 async def test_sessions_are_joined_in_time_order_not_key_order():
-    # 개선 세션은 새 id로 갈아탄다. id(uuid)의 사전순은 시간과 무관하므로, 키 순서로
-    # 이으면 개선 대화가 첫 빌드보다 앞에 온다.
+    # An improvement session switches to a new id. The lexical order of ids (uuid) is unrelated to time, so
+    # joining by key order would put the improvement conversation ahead of the first build.
     s3 = FakeS3Store()
     await _write(s3, "ffff-first", [_user("첫 빌드", 1), _ai("만들었습니다", 2)])
     await _write(s3, "0000-second", [_user("버튼 고쳐줘", 10), _ai("고쳤습니다", 11)])
@@ -63,8 +63,8 @@ async def test_an_opening_prompt_is_shown_as_what_the_user_typed():
 
 
 async def test_an_auto_start_prompt_leaves_no_bubble_and_keeps_the_turn_boundary():
-    # 자동 개시 줄을 그냥 지우면 앞 턴의 마지막 말풍선과 뒤 턴의 첫 말풍선이 하나로
-    # 합쳐진다 — 변환기의 턴 경계가 사용자 발화이기 때문이다.
+    # Simply deleting the auto-start line would merge the last bubble of the previous turn with the first bubble
+    # of the next turn — because the converter's turn boundary is a user utterance.
     s3 = FakeS3Store()
     await record_opening(s3, SLUG, prompt="PLAN PROMPT", shown=None)
     await record_opening(s3, SLUG, prompt="RESUME PROMPT", shown=None)
@@ -76,7 +76,7 @@ async def test_an_auto_start_prompt_leaves_no_bubble_and_keeps_the_turn_boundary
 
 
 async def test_an_unrecorded_opening_prompt_is_shown_verbatim():
-    # 레코드가 생기기 전의 세션. 템플릿을 역파싱하지 않는다(모듈 헤더 2).
+    # A session from before the record existed. Do not reverse-parse the template (module header 2).
     s3 = FakeS3Store()
     await _write(s3, "s1", [_user("OLD PROMPT", 1), _ai("네", 2)])
 
@@ -84,8 +84,8 @@ async def test_an_unrecorded_opening_prompt_is_shown_verbatim():
 
 
 async def test_turns_the_open_session_will_replay_are_cut_off():
-    # 열린 세션의 턴은 화면이 턴 로그로 재생한다. 히스토리가 그 턴을 또 내면 대화가
-    # 두 번 보인다.
+    # Turns of an open session are replayed by the screen from the turn log. If the history also emitted
+    # that turn, the conversation would appear twice.
     s3 = FakeS3Store()
     await _write(s3, "old", [_user("첫 빌드", 1), _ai("완료", 2)])
     await _write(s3, "live", [_user("지금 턴", 20), _ai("진행 중", 21)])
@@ -106,8 +106,8 @@ async def test_bookkeeping_lines_after_the_cutoff_go_with_their_turn():
 
 
 async def test_injected_skill_text_is_not_a_user_bubble():
-    # 실측(novadesk-2 빌드 트랜스크립트): 모델이 Skill 도구를 부르면 CLI가 스킬 전문을
-    # isMeta user 텍스트로 넣는다. 사용자 말풍선이 되면 한 턴이 둘로 쪼개진다.
+    # Observed (ws-l build transcript): when the model calls the Skill tool, the CLI inserts the full skill
+    # text as isMeta user text. If it became a user bubble, one turn would split into two.
     s3 = FakeS3Store()
     await _write(s3, "s1", [
         _user("디자인 바꿔줘", 1),
@@ -164,8 +164,8 @@ async def test_a_question_round_restores_the_card_and_the_recorded_answer():
 
 
 async def test_answer_records_live_under_the_prototype_not_the_project():
-    # 프로토타입 초기화가 prototypes/{slug}/째 지운다 — 대화와 함께 사라져야 하는
-    # 레코드가 Discovery의 answers/에 섞이면 초기화 뒤에도 남는다.
+    # Prototype reset deletes the whole prototypes/{slug}/ — records that must disappear along with the conversation
+    # would survive the reset if they were mixed into Discovery's answers/.
     s3 = FakeS3Store()
     await AnswerLog(s3, SLUG).save(tool_use_id="toolu_1", interrupt_id="iid",
                                    questions={"questions": []}, answers={"1": "A"})
@@ -210,8 +210,8 @@ async def test_an_unreadable_opening_record_is_skipped():
 
 
 async def test_reopening_the_panel_does_not_fetch_known_batches_again():
-    """ETag가 같은 배치는 다시 받지 않는다 — 패널을 열 때마다 지난 세션 전부를 받지 않게.
-    새로 붙은 배치만 S3에 간다."""
+    """Batches with the same ETag are not fetched again — so opening the panel does not refetch every past session.
+    Only newly appended batches go to S3."""
     class _Cached(FakeS3Store):
         def __init__(self):
             super().__init__()

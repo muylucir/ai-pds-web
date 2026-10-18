@@ -224,23 +224,23 @@ describe("resetPrototype", () => {
   });
 });
 
-// 이 파일은 @vitest-environment node다(MSW). origin을 인자로 받는 형태라
-// window 없이도 검증할 수 있다 — 그것이 인자를 둔 이유이기도 하다.
+// This file is @vitest-environment node (MSW). Taking origin as an argument means it can be verified
+// without window — that is also why the argument exists.
 describe("absoluteShareUrl", () => {
   const ORIGIN = "https://d123.cloudfront.net";
-  // 서버가 주는 모양(routes/proto_public.py의 access_url_path).
+  // The shape the server returns (access_url_path in routes/proto_public.py).
   const ACCESS_URL = "/api/proto/t/tok-abc123";
 
-  // 공유용은 **절대 URL이어야 한다.** 배포에서 access_url은 "/api/proto/t/…"
-  // 상대 경로이고, 그것을 복사해 채팅에 붙이면 받는 사람에게는 아무 의미가 없다.
+  // The share URL **must be absolute.** In deployment, access_url is the relative path "/api/proto/t/…",
+  // and copying that into a chat means nothing to the recipient.
   it("is absolute so it can be pasted outside the app", () => {
     const url = absoluteShareUrl(ACCESS_URL, ORIGIN);
     expect(url).toBe(`${ORIGIN}${ACCESS_URL}`);
   });
 
-  // access_url이 이미 절대 URL인 경우(백엔드를 직접 가리키는 로컬 개발 설정)
-  // origin을 문자열로 덧붙이는 구현은 "https://d123...http://localhost:8000/..."을
-  // 만든다. new URL(relative, base)는 base를 상대 경로에만 적용하므로 그렇지 않다.
+  // When access_url is already absolute (a local development setup pointing straight at the backend),
+  // an implementation that prepends origin as a string produces "https://d123...http://localhost:8000/...".
+  // new URL(relative, base) applies base only to relative paths, so it does not.
   it("does not double-prefix an already absolute access url", () => {
     const absolute = "http://localhost:8000/proto/t/tok-abc123";
     const url = absoluteShareUrl(absolute, ORIGIN);
@@ -249,8 +249,8 @@ describe("absoluteShareUrl", () => {
   });
 
   it("preserves the token verbatim", () => {
-    // 토큰은 urlsafe base64라 "-"와 "_"를 포함할 수 있다. 재인코딩으로 값이
-    // 바뀌면 링크가 조용히 404가 된다.
+    // The token is urlsafe base64, so it can contain "-" and "_". If re-encoding changes the value,
+    // the link silently becomes 404.
     const url = absoluteShareUrl("/api/proto/t/ab-cd_ef", ORIGIN);
     expect(url).toContain("/proto/t/ab-cd_ef");
   });
@@ -278,15 +278,15 @@ class FakeEventSource {
 
 beforeEach(() => {
   (globalThis as any).EventSource = FakeEventSource;
-  // 개시가 비동기가 됐으므로, 이전 테스트가 남긴 인스턴스를 지워야
-  // protoOpened()가 "이번 테스트의" 스트림을 기다린다.
+  // Opening became async, so the instance left by the previous test must be cleared for
+  // protoOpened() to wait for "this test's" stream.
   FakeEventSource.last = null;
 });
 afterEach(() => {
   delete (globalThis as any).EventSource;
 });
 
-// 센티널이 아닌 턴은 POST로 핸들을 먼저 받으므로 개시가 비동기다.
+// Non-sentinel turns get a handle via POST first, so opening is async.
 function mockProtoTurns(turnId = "pt-1") {
   server.use(
     http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/turns`, () =>
@@ -322,7 +322,7 @@ describe("streamPrototypeEvents", () => {
   });
 
   it("긴 입력은 본문으로 가고 URL에는 핸들만 실린다", async () => {
-    // 이것이 이 수정의 핵심 — 워크스페이스 채팅과 같은 431 결함이 여기에도 있었다.
+    // This is the core of this fix — the same 431 defect as in the workspace chat was here too.
     let posted: unknown = null;
     server.use(
       http.post(`${API_BASE_URL}/projects/p1/prototypes/todo-app/turns`,

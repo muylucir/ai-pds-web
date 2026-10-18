@@ -22,12 +22,14 @@ export interface Question {
   // Optional — file-parsed questions (raw_markdown fallback path) lack this
   // field entirely; treat missing/undefined as false (single-select radios).
   multi_select?: boolean;
-  // 카테고리 헤더와 문항 헤더 **사이**의 산문 — "왜 이걸 묻는가". `text`가 문항
-  // 헤더 뒤의 본문인 것과 다르다. 마크다운으로 렌더한다(표·목록이 들어온다).
+  // The prose **between** the category header and the question header — "why we ask
+  // this". Unlike `text`, which is the body after the question header. Rendered as
+  // markdown (tables and lists appear here).
   //
-  // Optional인 이유는 multi_select와 같다: AskUserQuestion에서 만든 페이로드에는
-  // 이 필드가 없다. 대부분의 파일에서도 빈 문자열이다(문항 헤더 바로 뒤에 질문이
-  // 오는 형태) — 값이 있는 것은 상류의 명확화/확인 게이트 질문 템플릿이다.
+  // Optional for the same reason as multi_select: payloads built from AskUserQuestion
+  // have no such field. It is also an empty string in most files (the question comes
+  // right after the question header) — the ones with a value are the upstream
+  // clarification/confirmation gate question templates.
   context?: string;
 }
 
@@ -47,9 +49,9 @@ export interface StageState {
   note: string | null;
 }
 
-// AI-PDS 공식 6개 capability 중 하나 — 백엔드(aipds/capabilities.py)가 `stages`를
-// 묶어 만든다. 화면이 세는 단위는 이것이다. `not_applicable`은 이 프로젝트의 경로가
-// 거치지 않는 capability다(Path A의 Intake·Prioritize 등).
+// One of the 6 official AI-PDS capabilities — the backend (aipds/capabilities.py) builds
+// it by grouping `stages`. This is the unit the screen counts. `not_applicable` is a
+// capability this project's path does not pass through (Intake and Prioritize in Path A, etc.).
 export type CapabilityStatus = StageStatus | "not_applicable";
 
 export interface CapabilityState {
@@ -62,9 +64,9 @@ export interface CapabilityState {
 export interface ProjectState {
   project_type: string | null;
   current_stage: string | null;
-  // 에이전트가 `aiplc-state.md`에 쓴 원래 목록. 길이가 프로젝트마다 다르다.
+  // The original list the agent wrote to `aiplc-state.md`. Its length varies by project.
   stages: StageState[];
-  // 항상 6개, 공식 순서.
+  // Always 6, in the official order.
   capabilities: CapabilityState[];
 }
 
@@ -84,34 +86,35 @@ export type AgentEventKind =
   | "file_changed"
   | "status"
   | "done"
-  // Discovery가 프로토타입을 빌드로 넘겼다는 선언(백엔드 agent/reconcile.py가
-  // build-instructions.md 쓰기에서 유도한다).
+  // Declaration that Discovery handed the prototype over to the build (the backend's
+  // agent/reconcile.py derives it from the write of build-instructions.md).
   | "prototype_ready"
-  // 프로토타입 빌드의 완료 선언. 백엔드 models.py의 Literal과 한 쌍이다.
+  // Completion declaration of a prototype build. Paired with the Literal in the backend's models.py.
   | "build_complete"
-  // 서브에이전트 한 명의 진행 상황. payload가 `task_id`로 **어느** 에이전트인지
-  // 말하고, 그 하나가 병렬 작업을 한 줄이 아니라 여러 행으로 그릴 수 있게 한다
-  // (근거는 백엔드 aipds/agent_activity.py 헤더).
+  // Progress of a single subagent. The payload says **which** agent via `task_id`,
+  // and that alone lets parallel work be drawn as several rows rather than one line
+  // (rationale in the header of the backend's aipds/agent_activity.py).
   | "agent_activity"
-  // 프로토타입 빌드에서 사용자가 질문에 답했다는 턴 로그의 기록. payload =
-  // {"answers": {...}}. 백엔드 models.py의 Literal과 한 쌍이다.
+  // Turn log record that the user answered a question during a prototype build. payload =
+  // {"answers": {...}}. Paired with the Literal in the backend's models.py.
   | "answers"
-  // 메인 에이전트의 컨텍스트 창 사용량. payload = ContextUsage(JSON). 값이 바뀔 때만
-  // 온다(백엔드 aipds/context_usage.py).
+  // Context window usage of the main agent. payload = ContextUsage (JSON). Sent only
+  // when the value changes (backend aipds/context_usage.py).
   | "context"
-  // 모델이 지금 쓰고 있는 파일. payload = DraftPayload(JSON). 라이브 스트림에만 있다
-  // (백엔드 agent/tool_input_draft.py).
+  // The file the model is writing right now. payload = DraftPayload (JSON). Only on the
+  // live stream (backend agent/tool_input_draft.py).
   | "draft"
   | "error";
 
-/** 에이전트의 컨텍스트 창 사용량 — 백엔드 context_usage.summarize의 모양.
- *  `left_pct`는 **자동 압축까지** 남은 몫이다: 0%가 되면 CLI가 지난 대화를 요약해
- *  컨텍스트를 비운다. 창 끝이 아니라 그 지점으로 재는 이유는 그 순간이 사용자에게
- *  의미 있는 사건이기 때문이다(에이전트가 앞의 세부를 잊기 시작한다). */
+/** The agent's context window usage — the shape of the backend's context_usage.summarize.
+ *  `left_pct` is the share left **until auto-compaction**: at 0% the CLI summarizes the
+ *  prior conversation and clears the context. We measure to that point rather than the end
+ *  of the window because that moment is the event that matters to the user (the agent
+ *  starts forgetting earlier details). */
 export interface ContextUsage {
   total_tokens: number;
   max_tokens: number;
-  /** 압축이 일어나는 사용량. 압축 버퍼가 없으면 창 크기와 같다. */
+  /** The usage at which compaction happens. Equals the window size when there is no compaction buffer. */
   compact_at_tokens: number;
   left_pct: number;
 }
@@ -126,46 +129,46 @@ export interface AgentEvent {
 // Structured payload shapes carried as a JSON string in AgentEvent.payload for
 // the "questions" / "stage" / "document" kinds (Task 1's AgentEvent extension).
 export interface QuestionsPayload {
-  // 파킹된 턴의 식별자. 파일에서 온 라운드는 빈 문자열이다 — 그때는 이어갈 턴이
-  // 없고 답변이 파일로 간다.
+  // Identifier of the parked turn. Empty string for a round that came from a file — then
+  // there is no turn to resume and the answers go to the file.
   interrupt_id: string;
   questions: QuestionFile;
-  // 설정되면 이 라운드는 **질문 파일에서 그대로** 왔다는 뜻이고, 그 값이 워크스페이스
-  // 상대 경로다. 답변은 파킹된 턴이 아니라 그 파일로 제출한다
-  // (backend routes/answers.py의 submit_file_answers).
+  // When set, this round came **straight from a question file**, and the value is the
+  // workspace-relative path. Answers are submitted to that file, not to a parked turn
+  // (submit_file_answers in backend routes/answers.py).
   //
-  // 이것이 판별자다. `interrupt_id === ""`로 판단하지 않는 이유: 빈 문자열은
-  // "값이 없다"와 "파일에서 왔다"를 구별하지 못한다.
+  // This is the discriminator. Why not decide by `interrupt_id === ""`: an empty string
+  // cannot distinguish "no value" from "came from a file".
   file?: string;
 }
 
-// build_complete 이벤트의 payload. remaining은 옵셔널이 아니다 — 백엔드가
-// 항상 채워 보내므로(proto/tools.py의 args.get("remaining", "")) 프론트는
-// 빈 문자열만 다루면 되고 undefined 분기가 필요 없다.
+// Payload of the build_complete event. remaining is not optional — the backend
+// always fills it in (args.get("remaining", "") in proto/tools.py), so the frontend
+// only has to handle an empty string and needs no undefined branch.
 export interface BuildCompletePayload {
   summary: string;
   remaining: string;
 }
 
-// 서브에이전트 행 하나의 갱신. 백엔드 aipds/agent_activity.activity_payload와
-// 한 쌍이다.
+// An update to one subagent row. Paired with the backend's
+// aipds/agent_activity.activity_payload.
 //
-// **없는 필드는 undefined로 온다(null이 아니다).** 백엔드가 None인 키를 아예
-// 빼고 보내는 것이 의도이고, 병합 규칙이 그 부재에 의존한다: `detail`이 없는
-// 갱신은 "대상을 지워라"가 아니라 "이전 값을 유지해라"로 읽힌다(protoAgents.ts).
+// **Missing fields arrive as undefined (not null).** The backend deliberately omits
+// keys whose value is None, and the merge rule depends on that absence: an update
+// without `detail` reads as "keep the previous value", not "clear the target" (protoAgents.ts).
 export interface AgentActivityPayload {
-  /** 행의 키. 같은 값이면 같은 에이전트다. */
+  /** The row key. Same value means the same agent. */
   task_id: string;
   state: "started" | "progress" | "done";
-  /** started에만. 그 에이전트가 맡은 일. */
+  /** started only. The work that agent took on. */
   label?: string;
-  /** progress에만. 도구 이름 — 라벨은 프론트가 UI 언어로 만든다. */
+  /** progress only. The tool name — the frontend builds the label in the UI language. */
   tool?: string;
-  /** progress에만. 그 도구의 대상(파일 경로 등). */
+  /** progress only. The tool's target (a file path, etc.). */
   detail?: string;
-  /** done에만. completed | failed | stopped | killed. */
+  /** done only. completed | failed | stopped | killed. */
   status?: string;
-  /** done에만. 그 에이전트가 남긴 한 줄. */
+  /** done only. The one-line note that agent left. */
   summary?: string;
 }
 
@@ -173,13 +176,13 @@ export interface StagePayload {
   stage: string;
   status: StageStatus;
   summary: string;
-  // 이 이벤트를 만든 상태 파일에서 묶은 6개 capability의 스냅샷. 사이드바는 마지막
-  // 스냅샷만 쓴다.
+  // Snapshot of the 6 capabilities grouped from the state file that produced this event.
+  // The sidebar uses only the last snapshot.
   capabilities?: CapabilityState[];
 }
 
-/** 쓰기 도구의 입력이 흐르는 동안의 진행 — 백엔드 agent/tool_input_draft.py의 모양.
- *  경로는 이벤트의 `path`에 온다(확정 전에는 null). 본문은 싣지 않는다. */
+/** Progress while a write tool's input is streaming — the shape of the backend's agent/tool_input_draft.py.
+ *  The path arrives in the event's `path` (null until settled). The body is not included. */
 export interface DraftPayload {
   id: string;
   tool: string;
@@ -193,9 +196,9 @@ export interface DocumentPayload {
   summary: string;
 }
 
-// 인계가 흘리는 payload. 이 카드가 있어야 **에이전트가 안내 문장을
-// 잊어도** 사용자에게 클릭할 곳이 남는다 — 2026-08-17까지는 안내가 없으면
-// 사용자가 Discovery에서 막혔다.
+// The payload the handoff emits. This card is what leaves the user something to click
+// **even if the agent forgets the guidance sentence** — until 2026-08-17, without that
+// guidance the user got stuck in Discovery.
 export interface PrototypeReadyPayload {
   slug: string;
   spec_path: string;
@@ -208,12 +211,12 @@ export interface ProjectProgress {
   total: number;
 }
 
-// 프로젝트 권한(backend aipds/project_access.py). admin·owner는 읽고 쓰고, member는
-// 읽기만 한다 — 멤버의 목적은 열람이지 협업이 아니다.
+// Project permission (backend aipds/project_access.py). admin and owner read and write; member
+// only reads — the purpose of a member is viewing, not collaboration.
 export type ProjectAccess = "admin" | "owner" | "member";
 
-/** 쓰기 버튼을 그려도 되는가. 모르는 값(구 백엔드)은 쓰기 가능으로 본다 — 서버가 마지막
- *  게이트이고, 버튼을 숨겨 기존 사용자를 막는 쪽이 더 나쁘다. */
+/** Whether write buttons may be drawn. An unknown value (old backend) is treated as writable — the
+ *  server is the final gate, and hiding buttons and blocking existing users is worse. */
 export function canWrite(access: ProjectAccess | null | undefined): boolean {
   return access !== "member";
 }
@@ -221,44 +224,44 @@ export function canWrite(access: ProjectAccess | null | undefined): boolean {
 export interface ProjectSummary {
   project_id: string;
   name: string | null;
-  // 생성 시각(ISO). 구 매니페스트로 복원된 프로젝트는 null일 수 있다.
+  // Creation time (ISO). May be null for a project restored from an old manifest.
   created_at?: string | null;
-  // 목록 응답에만 실림(fail-soft: 상태 파일이 없거나 읽기 실패면 null).
+  // Only in the list response (fail-soft: null if the state file is missing or unreadable).
   progress?: ProjectProgress | null;
-  // 이 프로젝트가 도는 Bedrock 모델 id. null = 미지정(서버의 env 기본값으로
-  // 돈다 — 프론트는 그 값을 알 수 없다).
+  // The Bedrock model id this project runs on. null = unspecified (it runs on the server's
+  // env default — the frontend cannot know that value).
   model_id?: string | null;
-  // 생성 시점 카탈로그에서 모델과 함께 복사된 effort. null = CLI 기본값.
+  // The effort copied along with the model from the catalog at creation time. null = CLI default.
   effort?: string | null;
-  // 이 프로젝트의 생성물 언어. UI 언어(aipds_lang 쿠키)와 별개다 — 문서·
-  // 프로토타입·채팅이 어느 언어로 나오는지. 백엔드는 항상 채워 보내지만
-  // (미지정은 "ko"로 확정) 구 백엔드 응답에는 없을 수 있어 옵셔널이다.
+  // This project's output language. Separate from the UI language (aipds_lang cookie) — the
+  // language the documents, prototype, and chat come out in. The backend always fills it in
+  // (unspecified is settled as "ko"), but it is optional because old backend responses may lack it.
   language?: "ko" | "en";
-  /** 소유자의 Cognito username(이메일 로컬파트). */
+  /** The owner's Cognito username (email local part). */
   owner?: string;
-  /** 이 요청자가 이 프로젝트에 갖는 권한. 화면이 쓰기 버튼을 그릴지 정한다. */
+  /** The permission this requester has on this project. Decides whether the screen draws write buttons. */
   access?: ProjectAccess | null;
-  /** 열람 멤버의 username. 소유자·관리자에게만 실린다. */
+  /** Usernames of viewing members. Included only for the owner and admins. */
   members?: string[];
 }
 
-// GET /projects/{pid} → ProjectDetail. 헤더의 모델 배지가 부르는 곳이다.
+// GET /projects/{pid} → ProjectDetail. This is what the header's model badge calls.
 export interface ProjectDetail {
   project_id: string;
   name: string | null;
   created_at: string | null;
   model_id: string | null;
-  // 생성 시점 카탈로그에서 모델과 함께 복사된 effort. null = CLI 기본값.
+  // The effort copied along with the model from the catalog at creation time. null = CLI default.
   effort?: string | null;
-  // 이 프로젝트의 생성물 언어. UI 언어(aipds_lang 쿠키)와 별개다 — 문서·
-  // 프로토타입·채팅이 어느 언어로 나오는지. 백엔드는 항상 채워 보내지만
-  // (미지정은 "ko"로 확정) 구 백엔드 응답에는 없을 수 있어 옵셔널이다.
+  // This project's output language. Separate from the UI language (aipds_lang cookie) — the
+  // language the documents, prototype, and chat come out in. The backend always fills it in
+  // (unspecified is settled as "ko"), but it is optional because old backend responses may lack it.
   language?: "ko" | "en";
-  /** 소유자의 Cognito username(이메일 로컬파트). */
+  /** The owner's Cognito username (email local part). */
   owner?: string;
-  /** 이 요청자가 이 프로젝트에 갖는 권한. 화면이 쓰기 버튼을 그릴지 정한다. */
+  /** The permission this requester has on this project. Decides whether the screen draws write buttons. */
   access?: ProjectAccess | null;
-  /** 열람 멤버의 username. 소유자·관리자에게만 실린다. */
+  /** Usernames of viewing members. Included only for the owner and admins. */
   members?: string[];
 }
 
@@ -269,9 +272,9 @@ export interface ProjectPage {
   size: number;
 }
 
-// GET /projects/{pid}/turn → { turn: TurnSummary | null }. 턴은 요청이 아니라 서버
-// 작업이다(backend aipds/turn_job.py) — 화면은 `turn_id`로 붙고 `last_seq`까지 받은
-// 것을 `after`로 돌려주며 다시 붙는다.
+// GET /projects/{pid}/turn → { turn: TurnSummary | null }. A turn is a server job, not a
+// request (backend aipds/turn_job.py) — the screen attaches by `turn_id` and reattaches by
+// passing back what it received up to `last_seq` as `after`.
 export interface TurnSummary {
   turn_id: string;
   kind: "message" | "answers";
@@ -287,8 +290,8 @@ export interface HistoryTraceEntry {
   kind: "status" | "file_changed";
   text: string | null;
   path: string | null;
-  // 도구가 무엇을 했는지. 라이브에서는 status payload로 오는 것과 **같은 값**이다
-  // (backend/aipds/tool_trace.py가 양쪽을 만든다).
+  // What the tool did. **The same value** that arrives as the status payload when live
+  // (backend/aipds/tool_trace.py builds both).
   detail?: string | null;
 }
 
@@ -298,11 +301,12 @@ export interface HistoryItem {
   card: "questions" | null;
   name: string | null;
   trace: HistoryTraceEntry[];
-  // 답변 제출 턴의 구조화된 답변. 있으면 프론트가 UI 언어로 문구를 만들고,
-  // 없으면(자유 서술 답변, 또는 이 필드를 모르는 구 백엔드) text를 그대로 쓴다.
+  // Structured answers of an answer-submission turn. If present, the frontend builds the
+  // wording in the UI language; if absent (free-form answer, or an old backend that does not
+  // know this field), text is used as is.
   answers?: Record<string, string> | null;
-  // 그 라운드의 질문 payload. answers와 함께 오면 라이브와 **같은**
-  // answerSummary()로 말풍선을 만든다(문항 번호·보기 letter·보기 텍스트가
-  // 여기서 나온다). card 항목에도 실려 "무엇을 물었는지"를 복원한다.
+  // The question payload of that round. When it comes with answers, the bubble is built with
+  // **the same** answerSummary() as live (question numbers, option letters, and option text
+  // come from here). It is also carried on card entries to restore "what was asked".
   questions?: QuestionFile | null;
 }

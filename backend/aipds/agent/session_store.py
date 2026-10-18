@@ -64,19 +64,19 @@ def _session_prefix(key: dict) -> str:
 
 
 def project_transcript_prefix(project_id: str) -> str:
-    """이 프로젝트의 **활성** 세션 트랜스크립트 prefix (프로젝트 상대).
+    """The transcript prefix of this project's **active** session (project-relative).
 
-    `load_transcript`와 프로젝트 번들(project_bundle.py)이 같은 질문을 한다 —
-    "이 프로젝트의 대화는 어느 prefix에 있는가". 두 곳이 각자
-    `_sdk_session_id` + `_session_prefix`를 조립하면 그중 하나가 세션 세그먼트를
-    빠뜨릴 수 있고, 그 실패는 조용하다: 히스토리는 빈 목록이 되고(list_history가
-    모든 실패를 `[]`로 강등한다) 번들은 대화 없이 산출물만 담긴다. 그래서 조립을
-    이 모듈이 소유한다 — 키 레이아웃의 소유자가 여기이기 때문이다.
+    `load_transcript` and the project bundle (project_bundle.py) ask the same question —
+    "which prefix holds this project's conversation". If the two places each assembled
+    `_sdk_session_id` + `_session_prefix`, one of them could drop the session segment, and that
+    failure is silent: the history becomes an empty list (list_history degrades every failure to
+    `[]`) and the bundle contains only artifacts without the conversation. So this module owns the
+    assembly — because this is where the key layout's owner is.
 
-    `session_id`가 아니라 project_id를 받는다: 미러의 쓰는 쪽은 프로젝트 id를
-    본 적이 없다(CLI가 non-UUID `--session-id`를 거부하므로 드라이버가 uuid5를
-    유도한다). 이미 UUID인 값은 그대로 통과하므로 진짜 세션 id를 건네는 호출부가
-    덮어써지지 않는다.
+    It takes a project_id rather than a `session_id`: the writing side of the mirror has never
+    seen the project id (the CLI rejects a non-UUID `--session-id`, so the driver derives a
+    uuid5). A value that is already a UUID passes through as is, so callers handing over a real
+    session id are not overwritten.
     """
     from aipds.agent.claude_driver import _sdk_session_id
 
@@ -172,19 +172,21 @@ async def load_transcript(s3: S3StoreLike, session_id: str) -> list[dict]:
     prefix = f"{project_transcript_prefix(session_id)}main/"
     listed = sorted(await list_with_etags(s3, prefix))
     keys = [k for k, _ in listed]
-    # **병렬 GET.** 순차로 읽으면 배치 수 × S3 왕복이 그대로 화면 로딩을 막는다 —
-    # 실측(2026-08-17, 배포 인스턴스): 왕복 1회 30ms, 32배치 순차 0.98초 vs 병렬
-    # 0.11초(8.6배). 세션 길이에 선형이므로 워크숍 하나가 200배치면 순차는 6초다.
-    # `gather`는 입력 순서대로 결과를 돌려주므로 위의 키 정렬이 그대로 순서를
-    # 보장한다(project_store.load_manifest가 같은 패턴을 쓴다).
+    # **Parallel GETs.** Reading sequentially makes batch count × S3 round trips block screen
+    # loading directly — measured (2026-08-17, deployed instance): 30ms per round trip, 32 batches
+    # 0.98s sequential vs 0.11s parallel (8.6x). It is linear in session length, so if a single
+    # workshop has 200 batches, sequential takes 6 seconds. `gather` returns results in input
+    # order, so the key sort above guarantees the order as is (project_store.load_manifest uses
+    # the same pattern).
     #
-    # 한 배치의 실패가 나머지를 못 삼키게 return_exceptions를 쓴다. 트랜스크립트는
-    # 히스토리 복원용 보조 데이터이고, 한 객체가 손상됐을 때 대화 전체가 빈 목록이
-    # 되는 것이 더 나쁘다(list_history의 강등과 같은 원칙).
+    # return_exceptions is used so that one batch's failure cannot swallow the rest. The
+    # transcript is auxiliary data for history restore, and the whole conversation becoming an
+    # empty list when one object is corrupted is worse (the same principle as list_history's
+    # degradation).
     #
-    # **ETag로 캐시한다(`s3store.get_cached`).** 배치는 seq 키로 붙여 쓰기만 하므로
-    # 워크스페이스를 다시 열 때 새로 받을 것은 새 배치뿐이다 — 캐시 없이는 열 때마다
-    # 세션 전체를 다시 받는다.
+    # **Cached by ETag (`s3store.get_cached`).** Batches are only ever appended under seq keys, so
+    # when the workspace reopens the only things to fetch anew are new batches — without the
+    # cache, the whole session would be re-fetched on every open.
     bodies = await asyncio.gather(*(get_by_etag(s3, k, etag) for k, etag in listed),
                                  return_exceptions=True)
     entries: list[dict] = []

@@ -6,9 +6,9 @@ import { API_BASE_URL } from "@/lib/api/client";
 import { projectState } from "@/test/fixtures/projectState";
 import { auditEntries } from "@/test/fixtures/auditEntries";
 
-// AppHeader가 그리는 LanguageSwitcher가 useRouter()를 부른다 — 앱 라우터가
-// 마운트되지 않은 단위 테스트에서 그 훅은 던진다. 스위치의 동작은
-// components/LanguageSwitcher.test.tsx가 검증하므로 여기서는 마운트만 되게 한다.
+// The LanguageSwitcher that AppHeader draws calls useRouter() — in a unit test where the app router is
+// not mounted, that hook throws. The switcher's behavior is verified by
+// components/LanguageSwitcher.test.tsx, so here we only make it mount.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -30,7 +30,7 @@ function mockAll(pid: string) {
 
 const EMPTY_STATE = { project_type: null, current_stage: null, stages: [], capabilities: [] };
 
-/** 아무 워크플로우도 돌지 않은 갓 만든 프로젝트. */
+/** A freshly created project where no workflow has run. */
 function mockFresh(pid: string) {
   server.use(
     http.get(`${API_BASE_URL}/projects/${pid}/state`, () => HttpResponse.json(EMPTY_STATE)),
@@ -41,11 +41,11 @@ function mockFresh(pid: string) {
 }
 
 // App-Router pages receive params as a Promise in Next 15.
-const params = Promise.resolve({ projectId: "pilot1" });
+const params = Promise.resolve({ projectId: "ws-m" });
 
 describe("Dashboard page", () => {
   it("renders stage timeline, artifacts, and activity from the API", async () => {
-    mockAll("pilot1");
+    mockAll("ws-m");
     // `use(params)` suspends on the first render because the test's plain
     // Promise.resolve(...) params (unlike Next's internally-tracked params
     // thenable) isn't pre-marked as settled. Wrapping the initial render in
@@ -83,7 +83,7 @@ describe("Dashboard page", () => {
   });
 
   it("진행 중인 프로젝트에는 시작 배너가 뜨지 않는다", async () => {
-    mockAll("pilot1");
+    mockAll("ws-m");
     await act(async () => {
       render(<DashboardPage params={params} />);
     });
@@ -92,9 +92,9 @@ describe("Dashboard page", () => {
   });
 
   it("stages가 비어도 audit이 있으면 배너를 띄우지 않는다", async () => {
-    // 상태 파일의 `## Stage Progress`가 어긋나면 진행 중인 프로젝트도 stages가
-    // 빈 배열로 온다(backend parsers/state.py의 실측 기록). 그것만 보고 판단하면
-    // 이미 일하고 있는 사용자에게 "시작하세요"라고 말한다 — audit이 그 오판을 막는다.
+    // If the state file's `## Stage Progress` is off, even an in-progress project comes with stages as
+    // an empty array (an observed record in backend parsers/state.py). Judging by that alone would
+    // tell a user who is already working to "get started" — audit prevents that misjudgment.
     server.use(
       http.get(`${API_BASE_URL}/projects/drift/state`, () => HttpResponse.json(EMPTY_STATE)),
       http.get(`${API_BASE_URL}/projects/drift/artifacts`, () => HttpResponse.json({ artifacts: [] })),

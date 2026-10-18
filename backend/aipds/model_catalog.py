@@ -1,27 +1,27 @@
-"""모델 카탈로그 — 프로젝트 생성 화면이 고를 수 있는 모델 목록.
+"""Model catalog — the list of models the project creation screen can choose from.
 
-버킷 루트의 `models/catalog.json`에 산다. projects/ 밖에 두는 이유는
-카탈로그가 프로젝트보다 먼저 존재해야 하기 때문이다(프로젝트 생성 화면이
-프로젝트가 없는 상태에서 이것을 읽는다) — surveys/by-token/이 프로젝트
-프리픽스 밖에 있는 것과 같은 이유다.
+It lives at `models/catalog.json` at the bucket root. It sits outside projects/ because
+the catalog must exist before any project does (the project creation screen reads it
+when there are no projects) — the same reason surveys/by-token/ sits outside the project
+prefix.
 
-시드 목록은 **읽기 시점의 폴백일 뿐 파일로 쓰지 않는다.** 배포 직후 관리자가
-아무것도 하지 않아도 콤보박스가 채워져야 하고, 반대로 '빈 카탈로그'를 유효
-상태로 두면 첫 프로젝트 생성이 막힌다 — 시드는 편의가 아니라 부트스트랩
-경로다. 관리자가 처음 수정할 때 비로소 파일이 생긴다.
+The seed list is **only a fallback at read time and is never written to a file.** Right after deploy, the combo box
+must be populated without the admin doing anything, and conversely, treating 'empty catalog' as a valid
+state would block the first project creation — the seed is a bootstrap path, not a
+convenience. The file is created only when an admin first edits it.
 
-표시 상한(5)은 등록이 아니라 `display`에만 적용된다: 관리자는 여러 모델을
-등록해 두고 그중 5개만 화면에 노출한다. 상한을 등록에 두면 요구사항이
-성립하지 않는다.
+The display cap (5) applies only to `display`, not to registration: admins register many models
+and expose only 5 of them on screen. Putting the cap on registration would make the requirement
+unworkable.
 
-**항목은 모델과 effort의 쌍이다.** effort는 모델의 사고 깊이와 출력량을 정하고, 실측으로
-턴 시간을 모델 선택만큼 바꾼다(Opus 5.5 medium → high: 턴 시간 +53%, 출력 +50%). 그래서
-"어느 모델을 쓰나"와 같은 자리에서 정한다. None은 CLI 기본값이다 — Opus 5.5는 medium,
-그 밖의 현 세대 모델은 high다. 프로젝트는 생성 시점에 이 값을 모델 id와 함께 복사한다.
+**An entry is a pair of model and effort.** Effort sets the model's depth of thinking and amount of output, and by
+observation it changes turn time as much as the model choice does (Opus 5.5 medium → high: turn time +53%, output +50%). So
+it is decided in the same place as "which model to use". None is the CLI default — medium for Opus 5.5,
+high for the other current-generation models. A project copies this value along with the model id at creation time.
 
-**목록 순서가 곧 콤보박스 순서다.** 별도의 정렬 키를 두지 않는다 — 파일의
-배열 순서 하나만 있으면 "순서"와 "정렬 키"가 어긋날 자리가 없다. 첫 항목은
-프로젝트 생성 화면의 기본 선택이기도 하다(CreateProjectForm이 `list[0]`을 고른다).
+**List order is combo box order.** There is no separate sort key — with only the file's array order,
+there is no place for "order" and "sort key" to disagree. The first entry is also the default
+selection on the project creation screen (CreateProjectForm picks `list[0]`).
 """
 from __future__ import annotations
 
@@ -35,14 +35,14 @@ from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
 
-#: 버킷 루트 기준 키. projects/·sessions/·surveys/ 옆의 네 번째 프리픽스다.
+#: Key relative to the bucket root. The fourth prefix, next to projects/, sessions/ and surveys/.
 CATALOG_KEY = "models/catalog.json"
 
-#: 콤보박스에 동시에 띄울 수 있는 모델 수. 등록 수와는 무관하다.
+#: Number of models that can be shown in the combo box at once. Unrelated to the number registered.
 MAX_DISPLAYED = 5
 
 
-#: Claude Code CLI의 `--effort` 값(SDK 옵션 `effort`). 이 밖의 값은 CLI가 거부한다.
+#: Claude Code CLI `--effort` values (SDK option `effort`). The CLI rejects any other value.
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS: tuple[str, ...] = get_args(Effort)
 
@@ -51,28 +51,28 @@ class ModelEntry(BaseModel):
     name: str
     model_id: str
     display: bool = True
-    #: None = CLI 기본값. 이 필드가 없던 카탈로그 파일도 그대로 읽힌다.
+    #: None = CLI default. Catalog files without this field are still read as is.
     effort: Effort | None = None
 
 
 class CatalogError(Exception):
-    """카탈로그 정책 위반. `code`가 라우트의 HTTP 상태로 번역된다."""
+    """Catalog policy violation. `code` is translated into the route's HTTP status."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
 
 
-#: ap-northeast-2에서 네 개 모두 ACTIVE인 것을 list-inference-profiles로 실측
-#: 확인했다(2026-10-03). 배포 기본값(backend-permissions.ts의 MODEL = opus-4-8)은
-#: 여기 없다 — 의도된 것이다: 이 기능 이전에 만든 프로젝트와 모델 미지정 시의
-#: 폴백으로만 쓰이고 콤보박스에는 뜨지 않는다.
+#: All four were confirmed ACTIVE in ap-northeast-2 with list-inference-profiles
+#: (2026-10-03). The deploy default (MODEL = opus-4-8 in backend-permissions.ts) is
+#: not here — intentionally: it is used only for projects created before this feature and as the
+#: fallback when no model is specified, and it does not appear in the combo box.
 #:
-#: effort의 근거(2026-10-03 Discovery 실험, 108턴): Opus 5.5는 medium이 high와
-#: 품질이 비슷하면서 턴 시간이 2/3이다. Sonnet 5.5 medium은 방법론 준수에서
-#: 일관되게 밀렸으므로 high를 쓴다. 5.0 세대는 CLI 기본값과 같은 high다.
-#: Sonnet 5.5는 번들 CLI 2.1.286(claude-agent-sdk 0.2.163) 이상이 필요하다 —
-#: 그 아래는 `unrecognized_model`로 턴이 시작되지 않는다(pyproject.toml의 하한).
+#: Basis for effort (2026-10-03 Discovery experiment, 108 turns): Opus 5.5 at medium is similar in quality to high
+#: with 2/3 of the turn time. Sonnet 5.5 medium consistently fell behind on methodology adherence,
+#: so it uses high. The 5.0 generation uses high, the same as the CLI default.
+#: Sonnet 5.5 needs bundled CLI 2.1.286 (claude-agent-sdk 0.2.163) or later —
+#: below that the turn does not start, with `unrecognized_model` (the lower bound in pyproject.toml).
 SEED_MODELS: tuple[ModelEntry, ...] = (
     ModelEntry(name="Opus 5.5", model_id="global.anthropic.claude-opus-5-5", effort="medium"),
     ModelEntry(name="Sonnet 5.5", model_id="global.anthropic.claude-sonnet-5-5", effort="high"),
@@ -80,25 +80,25 @@ SEED_MODELS: tuple[ModelEntry, ...] = (
     ModelEntry(name="Sonnet 5.0", model_id="global.anthropic.claude-sonnet-5", effort="high"),
 )
 
-#: update()에서 "effort를 건드리지 않음"과 "effort를 비움(None)"을 구별한다.
+#: Distinguishes "leave effort untouched" from "clear effort (None)" in update().
 _UNSET: object = object()
 
 
 class ModelCatalog:
-    """카탈로그의 읽기/쓰기. `s3`가 None이면 읽기 전용(버킷 미설정)."""
+    """Reading/writing the catalog. Read-only if `s3` is None (bucket not configured)."""
 
     def __init__(self, s3: S3StoreLike | None) -> None:
         self._s3 = s3
 
     async def load(self) -> list[ModelEntry]:
-        """등록된 전체 목록. 파일이 없거나 손상됐으면 시드로 떨어진다.
+        """The full registered list. Falls back to the seed if the file is missing or corrupt.
 
-        손상을 예외로 올리지 않는 이유: 카탈로그를 읽지 못하면 프로젝트 생성이
-        전부 막힌다. 시드로 떨어지면 워크숍은 계속 돌고, 원인은 로그에 남는다.
+        Why corruption is not raised as an exception: if the catalog cannot be read, all project creation
+        is blocked. Falling back to the seed keeps the workshop running, and the cause stays in the log.
         """
-        # model_copy()로 복사한다 — list(SEED_MODELS)는 리스트만 새로 만들고
-        # ModelEntry 객체는 공유하므로, update()의 제자리 변경이 모듈 전역
-        # 상수를 영구히 오염시킨다(실측: 표시 토글 한 번이 프로세스 내내 남는다).
+        # Copy with model_copy() — list(SEED_MODELS) creates only a new list and
+        # shares the ModelEntry objects, so update()'s in-place changes would permanently pollute the
+        # module-global constant (observed: one display toggle persists for the life of the process).
         if self._s3 is None:
             return [e.model_copy() for e in SEED_MODELS]
         try:
@@ -117,13 +117,13 @@ class ModelCatalog:
             return [e.model_copy() for e in SEED_MODELS]
 
     async def effort_of(self, model_id: str) -> str | None:
-        """이 모델의 effort. 카탈로그에 없거나 미지정이면 None(CLI 기본값)."""
+        """This model's effort. None (CLI default) if not in the catalog or unspecified."""
         entry = next((e for e in await self.load() if e.model_id == model_id), None)
         return entry.effort if entry else None
 
     async def displayed(self) -> list[ModelEntry]:
-        """콤보박스에 띄울 목록. 상한을 여기서도 자른다 — 파일이 손으로
-        편집되어 6개가 켜져 있어도 화면 계약(최대 5개)은 지켜져야 한다."""
+        """The list to show in the combo box. The cap is applied here too — even if the file was hand-edited
+        to turn on 6, the screen contract (at most 5) must hold."""
         return [e for e in await self.load() if e.display][:MAX_DISPLAYED]
 
     async def add(self, name: str, model_id: str, display: bool,
@@ -140,7 +140,7 @@ class ModelCatalog:
     async def update(self, model_id: str, *, name: str | None = None,
                      display: bool | None = None,
                      effort: object = _UNSET) -> ModelEntry:
-        """`effort`를 넘기지 않으면 그대로 두고, None을 넘기면 CLI 기본값으로 비운다."""
+        """If `effort` is not passed it is left as is; passing None clears it to the CLI default."""
         entries = await self._writable()
         entry = next((e for e in entries if e.model_id == model_id), None)
         if entry is None:
@@ -150,17 +150,17 @@ class ModelCatalog:
         if display is not None:
             entry.display = display
         if effort is not _UNSET:
-            entry.effort = effort  # type: ignore[assignment]  # 허용값은 라우트가 검증한다
+            entry.effort = effort  # type: ignore[assignment]  # the route validates allowed values
         self._check_display_cap(entries)
         await self._save(entries)
         return entry
 
     async def reorder(self, model_ids: list[str]) -> list[ModelEntry]:
-        """등록된 모델 전체를 `model_ids` 순서로 다시 저장한다.
+        """Saves all registered models again in `model_ids` order.
 
-        **전체 순열만 받는다.** 관리자 화면이 본 목록과 저장된 목록이 다르면
-        (다른 탭에서 추가·삭제했다) 거부한다 — 모르는 id를 버리거나 빠진 id를
-        끝에 붙이면, 관리자가 본 적 없는 순서가 조용히 저장된다.
+        **Accepts only a full permutation.** If the list the admin screen saw differs from the stored list
+        (added or deleted in another tab), it is rejected — dropping unknown ids or appending missing ids
+        at the end would silently save an order the admin never saw.
         """
         entries = await self._writable()
         by_id = {e.model_id: e for e in entries}
@@ -195,7 +195,7 @@ class ModelCatalog:
                 f"(now {shown}) — hide one first")
 
     async def _save(self, entries: list[ModelEntry]) -> None:
-        assert self._s3 is not None  # _writable()이 이미 확인했다
+        assert self._s3 is not None  # _writable() already checked
         body = json.dumps({"models": [e.model_dump() for e in entries]},
                           ensure_ascii=False)
         await self._s3.put(CATALOG_KEY, body)

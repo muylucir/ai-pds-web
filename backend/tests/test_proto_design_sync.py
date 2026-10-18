@@ -1,6 +1,6 @@
 # backend/tests/test_proto_design_sync.py
 #
-# 워크스페이스 반영만 시험한다 — S3는 여기 없다(프로필 객체를 직접 만든다).
+# Tests only the workspace side — S3 is not involved here (profile objects are built directly).
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,7 +28,7 @@ def test_theme_css_maps_keys_to_css_variables():
     assert "--primary: #5b2ea6;" in css
     assert "--primary-foreground: #ffffff;" in css
     assert "--radius: 0.75rem;" in css
-    # 서체는 폴백 체인을 붙인다 — 사내 폰트가 없는 브라우저가 깨지지 않아야 한다.
+    # Font families get a fallback chain — browsers without the in-house font must not break.
     assert "--font-sans: Pretendard, " in css
     assert ":root {" in css
 
@@ -39,7 +39,7 @@ def test_theme_css_omits_absent_keys():
 
 
 def theme_required_of(css: str, root: Path) -> bool:
-    # theme_required는 디스크를 보므로 임시 디렉토리로 감싸 확인한다.
+    # theme_required looks at disk, so wrap it in a temporary directory to check.
     root.mkdir()
     (root / THEME_FILENAME).write_text(css, encoding="utf-8")
     return theme_required(root)
@@ -75,13 +75,14 @@ def test_sync_refreshes_changed_tokens(tmp_path):
 
 def test_prose_only_profile_writes_an_honest_stub_not_an_empty_theme(tmp_path):
     sync_design(tmp_path, profile(tokens={}), "ko")
-    # 배선은 그대로 깐다 — admin이 나중에 토큰을 넣으면 재호스팅만으로 색이 온다.
+    # The wiring is still laid down — if an admin adds tokens later, the colors arrive through re-hosting alone.
     assert (tmp_path / THEME_FILENAME).is_file()
-    # 그러나 "브랜드 프로필에서 생성됨"이라고 적힌 **변수 0개** 파일을 두지
-    # 않는다. 2026-08-19 실측: ship의 빌드 에이전트가 그 파일을 열고 "비어 있으니
-    # 덮을 것이 없다"고 판단해 shadcn 기본값을 그대로 뒀다. 같은 프로필에서
-    # test1111은 DESIGN.md 산문을 읽어 팔레트를 옮겼다 — 강제 채널이 비면
-    # 브랜드가 에이전트 자율에 맡겨진다.
+    # But we do not leave a file with **zero variables** that says "generated from
+    # the brand profile". Observed 2026-08-19: ship's build agent opened that file,
+    # concluded "it is empty, so there is nothing to override", and left the shadcn
+    # defaults in place. With the same profile, test1111 read the DESIGN.md prose and
+    # carried over the palette — when the enforcing channel is empty, the brand is left
+    # to the agent's discretion.
     assert (tmp_path / THEME_FILENAME).read_text() == stub_css()
     assert theme_required(tmp_path) is False
 
@@ -91,13 +92,14 @@ def test_prose_only_profile_tells_the_agent_to_move_the_values_itself(tmp_path):
     claude = (tmp_path / "CLAUDE.md").read_text()
     assert "globals.css" in claude
     assert "옮겨라" in claude
-    # 값의 출처는 그 문서다 — 산문은 그대로 실린다.
+    # The values come from that document — the prose is carried over as is.
     assert "여백을 넉넉히" in (tmp_path / DESIGN_FILENAME).read_text()
 
 
 def test_tokens_arriving_later_rebrand_the_copies_laid_by_the_stub_run(tmp_path):
-    # "재호스팅만으로 리브랜딩"이 0토큰 경로를 지나서도 성립해야 한다: 스텁으로
-    # 한 번 돈 뒤 사본이 놓였고, 그 다음 토큰이 들어오면 사본까지 갈린다.
+    # "Rebranding through re-hosting alone" must hold even after passing through the
+    # zero-token path: after one stub run the copies were laid down, and when tokens
+    # arrive next, the copies are replaced too.
     app = tmp_path / "prototype" / "app"
     app.mkdir(parents=True)
     sync_design(tmp_path, profile(tokens={}), "ko")
@@ -142,7 +144,7 @@ def test_removed_profile_stubs_instead_of_deleting(tmp_path):
 
     sync_design(tmp_path, None, "ko")
 
-    # 삭제하면 import 대상이 사라져 npm run build가 깨진다.
+    # Deleting would remove the import target and break npm run build.
     assert (tmp_path / THEME_FILENAME).is_file()
     assert (app / THEME_FILENAME).is_file()
     assert "no brand profile" in (app / THEME_FILENAME).read_text()
@@ -157,7 +159,7 @@ def test_removed_profile_drops_the_claude_section(tmp_path):
     sync_design(tmp_path, None, "ko")
     text = (tmp_path / "CLAUDE.md").read_text()
     assert "aipds:design" not in text
-    # 남의 내용은 살아 있어야 한다 — 파일을 통째로 지우지 않는 이유다.
+    # Other content must survive — this is why we do not delete the whole file.
     assert "다른 규칙" in text
 
 
@@ -188,24 +190,24 @@ def test_english_project_gets_english_claude_section(tmp_path):
     assert "Brand design profile" in (tmp_path / "CLAUDE.md").read_text()
 
 
-# ---- 최종 리뷰 M1: 심볼릭 링크는 사본 탐색을 무한 루프로 만들 수 있다 ----
+# ---- Final review M1: symbolic links can turn the copy search into an infinite loop ----
 
 def test_theme_copies_terminates_through_a_directory_symlink_cycle(tmp_path):
-    """prototype/ 아래에 자기 자신을 가리키는 디렉토리 심볼릭 링크가 있어도
-    끝나야 한다. 순환은 예외가 아니라 무한 루프라서, 고치기 전에는
-    session.start()·build_complete 도구·POST /host 어느 쪽의 try/except도
-    잡지 못하고 그대로 매달렸다."""
+    """It must terminate even if prototype/ contains a directory symlink pointing to
+    itself. A cycle is an infinite loop, not an exception, so before the fix none of
+    the try/except blocks in session.start(), the build_complete tool, or POST /host
+    caught it, and it simply hung."""
     app = tmp_path / "prototype" / "app"
     app.mkdir(parents=True)
-    (app / "loop").symlink_to(app)  # app/loop -> app 자신(순환)
+    (app / "loop").symlink_to(app)  # app/loop -> app itself (cycle)
 
-    assert theme_copies(tmp_path) == []  # 끝나기만 해도 이 테스트의 요점이다
+    assert theme_copies(tmp_path) == []  # merely terminating is the point of this test
 
 
 def test_theme_copies_excludes_a_symlink_named_like_the_theme_file(tmp_path):
-    """이름이 aipds-theme.css인 심볼릭 링크는 사본으로 인정하지 않는다
-    -- 인정하면 _write_theme_everywhere가 그 링크가 가리키는 임의의 경로에
-    write_text하게 된다."""
+    """A symlink named aipds-theme.css is not accepted as a copy
+    -- accepting it would make _write_theme_everywhere call write_text on whatever
+    arbitrary path the link points to."""
     app = tmp_path / "prototype" / "app"
     app.mkdir(parents=True)
     target = tmp_path / "elsewhere.css"
@@ -214,18 +216,18 @@ def test_theme_copies_excludes_a_symlink_named_like_the_theme_file(tmp_path):
 
     assert theme_copies(tmp_path) == []
     sync_design(tmp_path, profile({"primary": "#111111"}), "ko")
-    # 심볼릭 링크를 통해 타깃에 쓰지 않았어야 한다.
+    # It must not have written to the target through the symlink.
     assert target.read_text() == "/* 다른 파일 */"
 
 
-# ---- 최종 리뷰 M2: 프로필이 한 번도 없었으면 DESIGN.md를 건드리지 않는다 ----
+# ---- Final review M2: if there was never a profile, DESIGN.md is not touched ----
 
 def test_sync_none_never_touches_an_agent_authored_design_md_when_we_planted_nothing(tmp_path):
-    """프로필이 한 번도 없었던 프로젝트에서도 sync_design(None, ...)이 매
-    호스팅마다 불린다(routes/prototypes.py의 start_host). 빌드 에이전트가
-    자기 메모로 루트에 DESIGN.md를 만들어 뒀다면, 우리가 흔적
-    (aipds-theme.css)을 심은 적이 없는 한 그 파일을 건드리면 안 된다 --
-    _remove_section이 남의 CLAUDE.md 내용을 보존하는 것과 같은 원칙이다."""
+    """Even in a project that never had a profile, sync_design(None, ...) is called on
+    every hosting (start_host in routes/prototypes.py). If the build agent created a
+    DESIGN.md at the root as its own notes, we must not touch that file unless we have
+    planted our marker (aipds-theme.css) -- the same principle as _remove_section
+    preserving other people's CLAUDE.md content."""
     (tmp_path / DESIGN_FILENAME).write_text("에이전트 메모", encoding="utf-8")
 
     sync_design(tmp_path, None, "ko")

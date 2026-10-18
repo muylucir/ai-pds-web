@@ -1,12 +1,14 @@
-# backend/aipds/routes/approval.py — 문서 승인 게이트.
+# backend/aipds/routes/approval.py — document approval gate.
 #
-# 왜 별도 라우트인가(채팅 턴으로 "승인"을 보내는 것으로 충분하지 않은
-# 이유): 그 경로는 승인의 유일한 기록이 **에이전트가 쓰는 audit.md**였다.
-# 판정이 에이전트의 산문에 달려 있으면 표현이 흔들릴 때 결정이 사라진다 —
-# 실측으로 승인 게이트 5건 중 3건이 인식되지 않았다(approval_store.py 헤더).
+# Why a separate route (why sending "승인" (approve) as a chat turn is not enough): on
+# that path, the only record of approval was **the audit.md the agent writes**. When
+# the decision depends on the agent's prose, it disappears whenever the wording
+# drifts; as observed, 3 of 5 approval gates were not recognized (approval_store.py
+# header).
 #
-# 이 라우트는 사용자가 누른 사실을 **먼저 구조화된 레코드로 남기고**, 그 다음
-# 에이전트 턴을 시작한다. 순서가 계약이다: 턴이 실패해도 승인은 남는다.
+# This route **first records the user's click as a structured record**, and only then
+# starts the agent turn. The order is the contract: even if the turn fails, the
+# approval remains.
 from __future__ import annotations
 
 import asyncio
@@ -25,43 +27,47 @@ from aipds.routes.turns import ensure_idle, start_turn
 router = APIRouter()
 _log = logging.getLogger(__name__)
 
-#: 승인 대상. 게이트는 discovery-document.md에만 붙는다(리뷰 화면의
-#: isDiscoveryDocument) — 다른 파일에는 승인이라는 개념이 없다.
+#: The approval target. The gate is attached only to discovery-document.md (the review
+#: screen's isDiscoveryDocument); other files have no notion of approval.
 _DOC_PATH = "aiplc-docs/discovery/discovery-document.md"
 
 
 def _hash(text: str) -> str:
-    """승인 시점 문서의 지문.
+    """Fingerprint of the document at approval time.
 
-    이것이 무효화 판정을 추측에서 사실로 바꾼다. 종전에는 감사 로그의 산문에서
-    `수정|update|갱신`을 찾아 "문서가 바뀌었다"를 추정했는데, 정상 진행 서술이
-    그 단어를 흔히 포함해 승인이 멋대로 무효화됐다(실측: pilot1 idx=40의
-    "Written to Living Document"가 idx=37의 승인을 지웠다).
+    This turns the invalidation decision from a guess into a fact. Previously, "the
+    document changed" was inferred by searching the audit log's prose for
+    `수정|update|갱신`, but normal progress narration often contains those words, so
+    approvals were invalidated arbitrarily (observed: ws-m idx=40's "Written to
+    Living Document" erased the approval at idx=37).
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 @router.post("/projects/{pid}/approve")
 async def approve_document(pid: str):
-    """문서를 승인한다. 레코드를 먼저 쓰고, 그 다음 에이전트 턴을 **시작한다.**
+    """Approve the document. Write the record first, then **start** the agent turn.
 
-    턴을 이 요청 안에서 기다리지 않는다 — 다음 단계로 넘어가는 턴은 몇 분이고,
-    요청이 그동안 열려 있으면 프록시 타임아웃(CloudFront 60초)이 승인 응답을 504로
-    바꾼다. 턴은 서버 작업으로 돌고(turn_job.py), 화면은 돌려준 `turn_id`나
-    `GET /turn`으로 그것을 본다.
+    The turn is not awaited within this request: the turn that moves on to the next
+    stage takes minutes, and if the request stayed open that long the proxy timeout
+    (CloudFront 60 s) would turn the approval response into a 504. The turn runs as
+    server work (turn_job.py), and the screen watches it via the returned `turn_id` or
+    `GET /turn`.
 
-    도는 턴이 있으면 레코드 **전에** 409다. 에이전트가 문서를 고치는 중에 받은
-    승인은 곧 해시가 어긋나 무효가 되고, 레코드만 남기면 사용자는 "승인됨"을 보는데
-    에이전트는 그 사실을 전달받지 못한다.
+    If a turn is running, it is a 409 **before** the record. An approval received
+    while the agent is editing the document soon becomes invalid because the hash
+    diverges, and if only the record were kept, the user would see "승인됨" (approved)
+    while the agent is never told about it.
     """
     ws = await ensure_workspace(pid)
     ensure_idle(ws)
     try:
         text = await ws.runner.read_file(_DOC_PATH)
     except (FileNotFoundError, ValueError):
-        # 빈 해시로 레코드를 쓰면 무효화 판정이 영구히 무의미해진다(무엇과
-        # 비교해도 같지 않다). 게이트는 문서를 보고 있을 때만 뜨므로 정상
-        # 경로로는 오지 않지만, 조용히 통과시키면 그 사실을 아무도 모른다.
+        # Writing a record with an empty hash would make the invalidation decision
+        # permanently meaningless (it would not equal anything it is compared with).
+        # The gate only appears while the document is shown, so the normal path never
+        # gets here, but letting it pass silently means nobody would know.
         raise HTTPException(status_code=409,
                             detail="there is no discovery document to approve")
 
@@ -69,13 +75,14 @@ async def approve_document(pid: str):
     await save_approval(s3, document=_DOC_PATH, doc_hash=_hash(text),
                         approved_at=datetime.now(timezone.utc).isoformat())
 
-    # 턴은 레코드 **뒤**에 돈다. 에이전트가 다음 단계로 진행하고 audit.md에
-    # 사람이 읽는 기록을 남기는 것이 여전히 필요하지만(상류 룰의 요구),
-    # 그 성공 여부가 승인의 존재를 좌우해서는 안 된다.
+    # The turn runs **after** the record. The agent still needs to proceed to the next
+    # stage and leave a human-readable record in audit.md (required by the upstream
+    # rules), but whether that succeeds must not determine whether the approval
+    # exists.
     #
-    # 승인 텍스트는 프로젝트 언어를 따른다 — 이 턴은 트랜스크립트에 사용자
-    # 발화로 남고 에이전트가 그 언어로 대화하고 있다(frontend의
-    # approvalMarker.ts가 같은 판단을 기록해 뒀다).
+    # The approval text follows the project language: this turn is kept in the
+    # transcript as a user utterance, and the agent is conversing in that language
+    # (the frontend's approvalMarker.ts records the same decision).
     language = app_module.project_language(pid)
     turn_text = "Approved" if language == "en" else "승인"
     record = UserInput(text=turn_text, source="approval", language=language)
@@ -85,18 +92,18 @@ async def approve_document(pid: str):
 
 @router.get("/projects/{pid}/approvals")
 async def list_approvals(pid: str):
-    """승인 이력 + **현재 문서 해시**.
+    """Approval history + the **current document hash**.
 
-    현재 해시를 여기서 함께 주는 이유: 프론트가 스스로 계산하면 해시 알고리즘이
-    두 곳에 생기고, 둘이 어긋나는 순간 승인이 영구히 인식되지 않는다. 그 실패는
-    조용하다 — 게이트가 안 열릴 뿐이라 원인을 찾기 어렵다. 해시의 정의는 승인을
-    쓰는 쪽이 소유한다.
+    Why the current hash is returned here too: if the frontend computed it itself, the hash
+    algorithm would exist in two places, and the moment the two diverged, approvals would
+    never be recognized again. That failure is silent: the gate simply does not open, so the
+    cause is hard to find. The side that writes approvals owns the hash definition.
 
-    이력이 없으면 빈 목록이다 — 이 기능 이전의 모든 프로젝트가 그 상태이고,
-    그때는 프론트가 감사 로그 폴백으로 판정한다.
+    With no history it is an empty list; every project from before this feature is in that
+    state, and then the frontend decides via the audit-log fallback.
     """
     ws = await ensure_workspace(pid)
-    # 이력과 문서는 서로 기다릴 이유가 없다 — 함께 읽는다.
+    # History and document have no reason to wait on each other; read them together.
     records, doc = await asyncio.gather(
         load_approvals(app_module.s3_store_factory(pid)),
         ws.runner.read_file(_DOC_PATH),
@@ -108,8 +115,9 @@ async def list_approvals(pid: str):
             raise doc
         current = _hash(doc)
     except (FileNotFoundError, ValueError):
-        # 문서가 없으면 비교할 것이 없다. 빈 문자열이 아니라 null이어야 한다 —
-        # 프론트가 "해시가 있다"고 오해하면 승인 여부를 잘못 판정한다.
+        # Without a document there is nothing to compare. It must be null, not an
+        # empty string; if the frontend mistook it for "there is a hash", it would
+        # misjudge the approval status.
         current = None
     return {
         "approvals": [

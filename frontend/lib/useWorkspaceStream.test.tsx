@@ -17,9 +17,9 @@ vi.mock("@/lib/api/client", async (orig) => ({
   getContext: vi.fn().mockResolvedValue(null),
 }));
 
-// onError의 세션 확인 호출을 검증하기 위한 모킹 — 실제 fetch/navigate 부작용은
-// sessionRecovery.test.ts가 별도로 검증하므로, 여기서는 훅이 그 함수를 올바른
-// 인자로 "불렀는가"만 확인한다.
+// Mocks to verify onError's session check call — the actual fetch/navigate side effects are
+// verified separately by sessionRecovery.test.ts, so here we only check that the hook
+// "called" that function with the right arguments.
 vi.mock("@/lib/auth/sessionRecovery", () => ({
   redirectIfSessionExpired: vi.fn(),
 }));
@@ -43,8 +43,9 @@ const QUESTIONS_PAYLOAD = JSON.stringify({
   },
 });
 
-// 질문 파일에서 온 라운드. `file`이 판별자이고 `interrupt_id`는 빈 문자열이다 —
-// 파킹된 턴이 없으므로 답변이 그 파일로 간다(backend routes/answers.py).
+// A round that came from a question file. `file` is the discriminator and `interrupt_id` is
+// an empty string — there is no parked turn, so the answer goes to that file (backend
+// routes/answers.py).
 const FILE_QUESTIONS_PAYLOAD = JSON.stringify({
   interrupt_id: "",
   file: "aiplc-docs/discovery/envision/pain-point-questions.md",
@@ -66,13 +67,13 @@ const FILE_QUESTIONS_PAYLOAD = JSON.stringify({
   },
 });
 
-// 기본값: 화면이 열릴 때 **도는 턴이 없다**. 도는 턴에 붙는 경로를 보는 테스트가
-// 이것을 덮는다.
+// Default: **no turn is running** when the screen opens. Tests that exercise the path of
+// attaching to a running turn override this.
 function noRunningTurn() {
   vi.mocked(client.getTurn).mockResolvedValue(null);
 }
 
-// 한 프레임을 흘린다 — 텍스트 델타가 그때 붙는다(lib/useTextDeltas.ts).
+// Flush one frame — text deltas are appended then (lib/useTextDeltas.ts).
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 let createdSummary = "Q1. 질문?\n→ A. 보기 라벨";
@@ -81,12 +82,12 @@ function drive(
   events: AgentEvent[],
   impl: "streamEvents" | "streamAnswers" | "streamFileAnswers",
 ) {
-  // handlers는 **마지막** 인자다 — streamFileAnswers는 file을 하나 더 받아
-  // 4인자다. 위치를 3번으로 박으면 그 함수에서는 answers를 handlers로 읽는다.
+  // handlers is the **last** argument — streamFileAnswers takes one extra file and has 4
+  // arguments. Hard-coding position 3 would read answers as handlers for that function.
   vi.mocked(sse[impl]).mockImplementation((...args: any[]) => {
     const handlers = args[args.length - 1];
-    // 턴 생성 응답이 먼저 온다 — 말풍선 텍스트가 거기에 실려 온다
-    // (routes/answers.py의 `summary`). 파일 라운드만 이 콜백을 쓴다.
+    // The turn creation response comes first — the bubble text rides on it
+    // (`summary` in routes/answers.py). Only file rounds use this callback.
     handlers.onCreated?.({ summary: createdSummary });
     for (const ev of events) handlers.onEvent(ev);
     handlers.onDone();
@@ -149,8 +150,8 @@ describe("useWorkspaceStream", () => {
   });
 
   it("a file-sourced round submits to the file, not to the parked turn", async () => {
-    // 파킹된 can_use_tool future가 없는 라운드다 — PostToolUse 훅이 턴을 이미
-    // 끝냈으므로 `/answers`(같은 턴 재개)로 보내면 400이 된다.
+    // A round with no parked can_use_tool future — the PostToolUse hook has already ended the
+    // turn, so sending it to `/answers` (resume the same turn) would give a 400.
     drive(
       [
         { kind: "questions", text: null, path: null, payload: FILE_QUESTIONS_PAYLOAD },
@@ -221,7 +222,7 @@ describe("useWorkspaceStream", () => {
   });
 
   it("a context event updates the usage, and a late record does not overwrite it", async () => {
-    // 기록(GET /context)은 언제나 지금 턴보다 앞선 턴의 것이다.
+    // The record (GET /context) always belongs to a turn earlier than the current one.
     let resolveRecord!: (v: any) => void;
     vi.mocked(client.getContext).mockReturnValueOnce(
       new Promise((r) => { resolveRecord = r; }));
@@ -238,7 +239,7 @@ describe("useWorkspaceStream", () => {
     });
 
     expect(result.current.context?.left_pct).toBe(85);
-    // 사용량은 말풍선의 것이 아니다.
+    // Usage does not belong to a bubble.
     const ai = result.current.items.find((i) => i.role === "ai");
     expect(ai && "text" in ai ? ai.text : null).toBe("");
   });
@@ -257,9 +258,9 @@ describe("useWorkspaceStream", () => {
   });
 
   it("답변 제출 턴의 answers를 items로 옮긴다", async () => {
-    // 이 배관이 끊기면 ChatTimeline이 UI 언어로 문구를 만들 근거를 잃고,
-    // 백엔드의 한국어 폴백 text가 영어 UI에 그대로 뜬다 — 화면만 보면
-    // "번역이 안 됐다"로 보이고 원인은 여기다.
+    // If this plumbing breaks, ChatTimeline loses the basis for building the text in the UI
+    // language, and the backend's Korean fallback text shows up as is in the English UI — looking
+    // only at the screen it seems "it was not translated", but the cause is here.
     vi.mocked(client.getHistory).mockResolvedValue([
       { role: "user", text: "답변 제출 — 1: A", card: null, name: null, trace: [],
         answers: { "1": "A" } },
@@ -269,8 +270,8 @@ describe("useWorkspaceStream", () => {
     await act(async () => {});
     const [answered, plain] = result.current.items;
     expect(answered.role === "user" && answered.answers).toEqual({ "1": "A" });
-    // answers가 없는 보통 말풍선은 null로 남는다 — undefined가 아니라 null이어야
-    // ChatTimeline의 `item.answers ?` 분기가 text 폴백을 탄다.
+    // An ordinary bubble without answers stays null — it must be null, not undefined, for
+    // ChatTimeline's `item.answers ?` branch to take the text fallback.
     expect(plain.role === "user" && plain.answers).toBeNull();
   });
 
@@ -326,9 +327,9 @@ describe("useWorkspaceStream", () => {
     expect(result.current.items).toHaveLength(2);
   });
 
-  // onError의 유일한 실제 배선 지점 — 이 콜이 지워지거나 인자가 바뀌면 사용자는
-  // 만료된 세션에서도 로그인으로 보내지지 않는다. navigate는 undefined로 넘겨
-  // (기본 전체 페이지 이동을 쓰게) 두고, currentPath는 현재 pathname이어야 한다.
+  // The only real wiring point of onError — if this call is removed or its arguments change,
+  // the user is not sent to login even on an expired session. navigate is passed as undefined
+  // (so the default full-page navigation is used), and currentPath must be the current pathname.
   it("checks the session on a transport error (the sole wiring point for redirectIfSessionExpired)", async () => {
     vi.mocked(sse.streamEvents).mockImplementation((_pid: any, _arg: any, handlers: any) => {
       handlers.onError(new Error("boom"));
@@ -356,8 +357,8 @@ it("restores tool traces onto AI history items", async () => {
   expect(ai.role).toBe("ai");
   if (ai.role === "ai") {
     expect(ai.trace).toEqual([
-      // detail은 라이브(status payload)와 복원(HistoryTraceEntry 필드)이 같은
-      // shape으로 수렴한다는 요점이다 — 값을 만드는 곳은 백엔드 한 곳이다
+      // The point of detail is that live (status payload) and restore (HistoryTraceEntry field)
+      // converge on the same shape — the value is produced in one place, the backend
       // (backend/aipds/tool_trace.py).
       { kind: "status", text: "file_read", path: null, detail: null },
       { kind: "file_changed", text: null, path: "aiplc-docs/audit.md", detail: null },
@@ -401,13 +402,14 @@ describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug
   });
 
   it("질문 문서(*-questions.md) 쓰기는 activeDoc을 바꾸지 않는다", async () => {
-    // 질문은 AskUserQuestion으로 전달되고 폼(우측 패널)이 정본 화면이다.
-    // 같은 질문의 마크다운 기록물까지 문서 패널에 띄우면 사용자가 한 화면에서
-    // 두 버전을 나란히 보게 되는데, 그 둘은 애초에 일치하지 않는다: SDK
-    // 스키마가 질문 1-4개/보기 2-4개로 하드 제한하므로(CLI 2.1.226:
-    // `questions: dt(...).min(1).max(4)`), 룰이 요구하는 7문항 문서는 4+3
-    // 두 라운드로 쪼개지고 문구도 따로 생성된다. audit.md/aiplc-state.md와
-    // 같은 이유로 제외한다 — 기록물이지 리뷰 대상 산출물이 아니다.
+    // Questions are delivered via AskUserQuestion, and the form (right panel) is the
+    // authoritative screen. If the markdown record of the same questions were also shown in
+    // the document panel, the user would see two versions side by side on one screen, and the
+    // two never match in the first place: the SDK schema hard-limits to 1-4 questions / 2-4
+    // options (CLI 2.1.226: `questions: dt(...).min(1).max(4)`), so a 7-question document
+    // required by the rules is split into two rounds of 4+3, and the wording is generated
+    // separately. Excluded for the same reason as audit.md/aiplc-state.md — it is a record,
+    // not an artifact under review.
     drive(
       [
         { kind: "file_changed", text: null,
@@ -437,7 +439,8 @@ describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug
     const { result } = renderHook(() => useWorkspaceStream("p1"));
     await act(async () => {});
     act(() => result.current.send("문서 갱신"));
-    // 마지막에 쓴 문서(prfaq)가 활성 — 대화가 지금 다루는 문서를 따른다.
+    // The last written document (prfaq) is active — it follows the document the conversation
+    // is dealing with now.
     expect(result.current.activeDoc).toEqual({
       path: "aiplc-docs/discovery/envision/prfaq.md",
       version: null,
@@ -451,7 +454,7 @@ describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug
     expect(result.current.turnSeq).toBe(0);
     act(() => result.current.send("첫 턴"));
     expect(result.current.turnSeq).toBe(1);
-    // 에러로 끝나는 턴도 재읽기 신호를 줘야 한다 (부분 산출물 동기화 가능).
+    // A turn that ends in an error must also signal a reread (partial artifacts may be synced).
     vi.mocked(sse.streamEvents).mockImplementation((_pid: any, _arg: any, handlers: any) => {
       handlers.onError?.(new Error("boom"));
       return () => {};
@@ -464,14 +467,14 @@ describe("useWorkspaceStream — activeDoc/turnSeq (문서 패널 싱크, ui-bug
 describe("useWorkspaceStream — 중단 이벤트 라우팅 (분기 순서 고정)", () => {
   beforeEach(() => { vi.clearAllMocks(); noRunningTurn(); });
 
-  // applyEvent의 status:INTERRUPTED_MARKER 분기는 trace 분기보다 앞에 있고
-  // return으로 끊긴다(useWorkspaceStream.ts). 순서가 바뀌거나 return이 빠지면
-  // 그 마커가 trace에도 쌓여 접힌 "추론 과정" 안에 중복 노출된다 — 그 회귀를
-  // 여기서 고정한다.
+  // applyEvent's status:INTERRUPTED_MARKER branch comes before the trace branch and
+  // cuts off with return (useWorkspaceStream.ts). If the order changes or the return is dropped,
+  // that marker also piles into the trace and shows up duplicated inside the collapsed
+  // "추론 과정" (reasoning) — this pins that regression.
   it("status:interrupted는 interrupted 필드로만 가고 trace에는 쌓이지 않는다 — 평범한 status는 trace로 간다", async () => {
-    // getHistory의 mockResolvedValue는 vi.clearAllMocks()로 지워지지 않는다
-    // (호출 기록만 지운다) — 앞선 테스트가 남긴 값이 새는 것을 막기 위해
-    // 이 describe에서 명시적으로 빈 히스토리를 고정한다.
+    // getHistory's mockResolvedValue is not cleared by vi.clearAllMocks()
+    // (it only clears the call records) — to keep values left by earlier tests from leaking,
+    // this describe explicitly pins an empty history.
     vi.mocked(client.getHistory).mockResolvedValue([]);
     drive(
       [
@@ -494,9 +497,9 @@ describe("useWorkspaceStream — 중단 이벤트 라우팅 (분기 순서 고�
   });
 
   it("한국어 마커를 더 이상 중단으로 보지 않는다", async () => {
-    // 백엔드가 언어 중립 마커를 보내므로, 한국어 문자열은 이제 평범한 status
-    // 트레이스다. 둘 다 받으면 에이전트가 우연히 '중단됨'이라고 말한 도구
-    // 이름까지 중단으로 세게 된다.
+    // The backend sends a language-neutral marker, so the Korean string is now an ordinary status
+    // trace. Accepting both would count even a tool name in which the agent happened to say
+    // '중단됨' (interrupted) as an interruption.
     vi.mocked(client.getHistory).mockResolvedValue([]);
     drive(
       [
@@ -519,9 +522,9 @@ describe("useWorkspaceStream — 중단 이벤트 라우팅 (분기 순서 고�
 });
 
 describe("턴 개시 실패는 원인을 드러낸다", () => {
-  // 이 결함이 처음 숨은 이유가 여기다: EventSource는 상태 코드를 노출하지
-  // 않아 431이 "연결이 끊어졌습니다"로 뭉개졌다. 개시(POST)는 상태 코드를
-  // 주므로, 그 경로만은 원인을 말할 수 있어야 한다.
+  // This is why this defect hid at first: EventSource does not expose status codes, so a 431
+  // was mashed into "연결이 끊어졌습니다" (connection lost). Starting (POST) does give a status
+  // code, so at least that path must be able to state the cause.
   beforeEach(() => { vi.clearAllMocks(); noRunningTurn(); });
 
   it("입력이 너무 길어 거절되면(431) 그 사실을 말한다", async () => {
@@ -538,7 +541,7 @@ describe("턴 개시 실패는 원인을 드러낸다", () => {
     act(() => result.current.send("가".repeat(3000)));
     const ai = result.current.items.find((i) => i.role === "ai");
     expect(ai && ai.role === "ai" && ai.error).toMatch(/너무 깁니다|too long/i);
-    // "연결이 끊어졌습니다"로 뭉개지지 않아야 한다 — 그것이 이 버그의 증상이었다.
+    // It must not be mashed into "연결이 끊어졌습니다" — that was this bug's symptom.
     expect(ai && ai.role === "ai" && ai.error).not.toMatch(/연결이 끊어/);
     expect(result.current.streaming).toBe(false);
   });
@@ -560,10 +563,10 @@ describe("턴 개시 실패는 원인을 드러낸다", () => {
   });
 });
 
-// ---- 끊긴 턴에 다시 붙기 ----
-// 턴은 서버 작업이다(backend aipds/turn_job.py) — 화면이 끊겨도 턴은 계속 돌고, 같은
-// id로 다시 붙으면 마지막으로 받은 seq 뒤부터 이어 받는다. 턴이 2.5~5.6분이고
-// 화면보호기 기본값이 5~10분이라 이 경로가 일상이다.
+// ---- Reattaching to a dropped turn ----
+// A turn is a server job (backend aipds/turn_job.py) — even if the screen drops, the turn keeps
+// running, and reattaching with the same id resumes after the last seq received. Turns take
+// 2.5-5.6 minutes and screensaver defaults are 5-10 minutes, so this path is routine.
 const msg = (text: string): AgentEvent =>
   ({ kind: "message", text, path: null, payload: null });
 const done: AgentEvent = { kind: "done", text: null, path: null, payload: null };
@@ -575,7 +578,7 @@ function sendThatDrops(turnId = "t1") {
     (_pid: any, _text: any, handlers: any) => {
       handlers.onCreated?.({ turn_id: turnId });
       handlers.onEvent(msg("끊기기 전"), 1);
-      handlers.onError?.(new Event("error"));   // 절전
+      handlers.onError?.(new Event("error"));   // sleep
       handlers.onDone();
       return () => {};
     },
@@ -606,7 +609,7 @@ describe("useWorkspaceStream — 끊긴 턴 재접속", () => {
     await act(async () => {});
     vi.mocked(client.getTurn).mockResolvedValue(running());
     act(() => result.current.send("보냄"));
-    // 끊긴 직후에는 아직 진행 중이다 — 조용히 다시 붙는 중.
+    // Right after the drop it is still in progress — quietly reattaching.
     expect(result.current.streaming).toBe(true);
     await act(async () => { await vi.advanceTimersByTimeAsync(RECONNECT_DELAYS_MS[0]); });
 
@@ -673,7 +676,7 @@ describe("useWorkspaceStream — 끊긴 턴 재접속", () => {
     expect(sse.watchTurn).toHaveBeenCalledTimes(RECONNECT_DELAYS_MS.length);
     expect(result.current.streaming).toBe(false);
     const ai = result.current.items.find((i) => i.role === "ai");
-    // 턴은 서버에서 계속 돌고 있을 수 있다 — "다시 시도"가 아니라 새로고침을 권한다.
+    // The turn may still be running on the server — recommend a refresh, not "다시 시도" (retry).
     expect(ai && ai.role === "ai" && ai.error).toMatch(/새로고침/);
   });
 
@@ -724,8 +727,8 @@ describe("useWorkspaceStream — 화면이 열릴 때 도는 턴", () => {
     );
     const { result } = renderHook(() => useWorkspaceStream("p1"));
     await act(async () => {});
-    // 텍스트는 프레임 단위로 붙는다(useTextDeltas) — 턴이 아직 돌고 있으니 종결
-    // 이벤트가 비워 주지 않는다.
+    // Text is appended per frame (useTextDeltas) — the turn is still running, so no terminal
+    // event flushes it.
     await act(nextFrame);
 
     expect(sse.watchTurn).toHaveBeenCalledWith("p1", "t-live", 0, expect.anything());
@@ -773,10 +776,11 @@ describe("useWorkspaceStream — 화면이 열릴 때 도는 턴", () => {
 });
 
 describe("답변 말풍선은 서버가 만든 텍스트를 그대로 쓴다", () => {
-  // **왜 서버인가(2026-08-21).** 이 판별이 프론트에만 있던 동안 사용자가 본 말풍선은
-  // 브라우저 안에서만 만들어져 서버로 간 적이 없었다. 서버는 자기가 만든 다른 문장을
-  // 트랜스크립트에 기록했고, 새로고침하면 대화가 기계 문구로 보였다 — 실측: 한
-  // 프로젝트의 user 발화 16개 중 13개. 렌더가 백엔드 한 벌이면 갈라질 수 없다
+  // **Why the server (2026-08-21).** While this discrimination lived only in the frontend, the
+  // bubble the user saw was built only inside the browser and never went to the server. The
+  // server recorded a different sentence of its own making in the transcript, and after a refresh
+  // the conversation showed machine text — measured: 13 of 16 user utterances in one
+  // project. If the render is a single backend copy, they cannot diverge
   // (backend/aipds/answer_summary.py).
   beforeEach(() => { vi.clearAllMocks(); noRunningTurn(); });
 
@@ -804,12 +808,12 @@ describe("답변 말풍선은 서버가 만든 텍스트를 그대로 쓴다", (
 });
 
 describe("도구 경로(AskUserQuestion 탈출로)의 말풍선은 읽을 수 있어야 한다", () => {
-  // 파일 라운드는 서버가 만든 텍스트를 쓴다. 파킹된 턴을 재개하는 경로
-  // (`AIPDS_FILE_QUESTIONS`를 끈 탈출로)에는 서버가 `summary`를 주지 않으므로 —
-  // 그 라우트는 질문 파일을 손에 들고 있지 않다 — 프론트 렌더러를 계속 쓴다.
-  // 마커("답변 제출")로 떨어뜨리면 그 경로만 읽을 수 없게 되고, 복원은
-  // `answer_store` 조인으로 실제 답변을 보여주므로 라이브와 복원이 **반대 방향으로**
-  // 갈라진다.
+  // File rounds use the text the server built. On the path that resumes a parked turn (the
+  // escape hatch with `AIPDS_FILE_QUESTIONS` turned off), the server provides no `summary` —
+  // that route does not have the question file in hand — so the frontend renderer is still
+  // used. Falling back to the marker ("답변 제출") would make only that path unreadable, and
+  // since the restore shows the real answer via the `answer_store` join, live and restore
+  // would diverge **in opposite directions**.
   beforeEach(() => { vi.clearAllMocks(); noRunningTurn(); });
 
   it("summary가 없으면 프론트 렌더러로 문항과 답변을 그린다", async () => {
@@ -830,7 +834,7 @@ describe("도구 경로(AskUserQuestion 탈출로)의 말풍선은 읽을 수 �
 
     const bubbles = result.current.items.filter((i) => i.role === "user");
     const text = bubbles[bubbles.length - 1]!.text;
-    // QUESTIONS_PAYLOAD의 문항 1은 "누구?"이고 보기 A는 "PM"이다.
+    // Question 1 of QUESTIONS_PAYLOAD is "누구?" (who?) and option A is "PM".
     expect(text).toContain("누구?");
     expect(text).toContain("PM");
     expect(text).not.toBe("답변 제출");
@@ -840,9 +844,9 @@ describe("도구 경로(AskUserQuestion 탈출로)의 말풍선은 읽을 수 �
 describe("useWorkspaceStream — 사고 구간 신호", () => {
   beforeEach(() => { vi.clearAllMocks(); noRunningTurn(); });
 
-  // 백엔드가 사고 블록의 시작·끝을 status 마커로 보낸다(claude_driver의
-  // THINKING_MARKER / THINKING_DONE_MARKER). 사고 **텍스트**는 이 경로에
-  // 존재하지 않으므로(Bedrock 실측 0자) 우리가 표시하는 것은 구간이다.
+  // The backend sends the start and end of a thinking block as status markers (claude_driver's
+  // THINKING_MARKER / THINKING_DONE_MARKER). Thinking **text** does not exist on this path
+  // (measured 0 characters on Bedrock), so what we display is the interval.
   it("status:thinking은 activity를 사고로 두고 트레이스에 사고 줄을 남긴다", async () => {
     vi.mocked(client.getHistory).mockResolvedValue([]);
     drive(
@@ -856,8 +860,8 @@ describe("useWorkspaceStream — 사고 구간 신호", () => {
     expect(ai).toBeDefined();
     if (ai && ai.role === "ai") {
       expect(ai.activity).toEqual({ kind: "thinking" });
-      // 마커 문자열이 평범한 status 줄로 새면 접힌 트레이스에 "thinking"이
-      // 그대로 노출된다 — interrupted 마커와 같은 종류의 회귀다.
+      // If the marker string leaked as an ordinary status line, "thinking" would show up as is in
+      // the collapsed trace — the same kind of regression as the interrupted marker.
       expect(ai.trace).toEqual([
         { kind: "thinking", text: null, path: null, detail: null }]);
     }
@@ -887,10 +891,10 @@ describe("useWorkspaceStream — 사고 구간 신호", () => {
 describe("useWorkspaceStream — activity는 마지막에 온 이벤트가 확정한다", () => {
   beforeEach(() => { vi.clearAllMocks(); noRunningTurn(); });
 
-  // 고정 줄은 "가장 마지막에 일어난 일" 하나를 보여준다. 트레이스에서 마지막
-  // 도구를 뽑아 쓰면 도구가 끝나고 답변이 흐르는 동안에도 그 도구 이름이 남아
-  // "자료를 확인하고 있어요"라고 거짓말한다 — 이벤트 순서로 덮어써야 그 어긋남이
-  // 생기지 않는다. 이 테스트가 고정하는 것이 그 순서다.
+  // The pinned line shows the single "most recent thing that happened". Taking the last tool
+  // from the trace would leave that tool's name in place even after the tool finished and the
+  // answer was flowing, lying "자료를 확인하고 있어요" (checking the materials) — overwriting in
+  // event order is what prevents that drift. What this test pins is that order.
   const liveAi = (result: { current: { items: unknown[] } }) =>
     (result.current.items as { role: string }[]).find((i) => i.role === "ai") as
       { role: "ai"; activity?: unknown } | undefined;
@@ -911,15 +915,15 @@ describe("useWorkspaceStream — activity는 마지막에 온 이벤트가 확�
   });
 
   it("묶인 텍스트는 뒤따른 도구보다 먼저 붙는다 — 프레임을 기다리지 않아도", async () => {
-    // 텍스트 델타는 프레임마다 한 번 붙는다(useTextDeltas). 도구 이벤트가 그 사이에
-    // 오면 앞선 텍스트가 먼저 반영돼야 한다 — 늦게 붙은 텍스트가 activity를
-    // "작성"으로 되돌리면 도구가 도는 동안 고정 줄이 거짓말을 한다.
+    // Text deltas are appended once per frame (useTextDeltas). If a tool event arrives in
+    // between, the preceding text must be applied first — if late-appended text set activity
+    // back to "작성" (writing), the pinned line would lie while the tool is running.
     vi.mocked(client.getHistory).mockResolvedValue([]);
     vi.mocked(sse.streamEvents).mockImplementation((_p: any, _t: any, handlers: any) => {
       handlers.onEvent({ kind: "message", text: "자료를 ", path: null, payload: null });
       handlers.onEvent({ kind: "message", text: "봅니다", path: null, payload: null });
       handlers.onEvent({ kind: "status", text: "Read", path: null, payload: null });
-      return () => {};   // 턴은 아직 돈다 — 종결 이벤트가 대신 비워 주지 않는다
+      return () => {};   // the turn is still running — no terminal event flushes it in its place
     });
     const { result } = renderHook(() => useWorkspaceStream("p1"));
     await act(async () => {});
@@ -978,12 +982,13 @@ describe("useWorkspaceStream — activity는 마지막에 온 이벤트가 확�
   });
 });
 
-// ---- 쓰고 있는 파일의 진행(`draft` 이벤트, 백엔드 agent/tool_input_draft.py) ----
-// 2026-10-07 실측: 문서 하나를 생성하는 데 1~2분이 걸리고 그동안 화면에 신호가 없었다.
+// ---- Progress of the file being written (`draft` event, backend agent/tool_input_draft.py)
+// ---- Measured 2026-10-07: generating a single document took 1-2 minutes, with no signal on
+// screen in the meantime.
 describe("useWorkspaceStream — 쓰고 있는 파일", () => {
   beforeEach(() => { vi.clearAllMocks(); noRunningTurn(); });
 
-  // 턴을 열어 둔 채 이벤트를 하나씩 흘린다 — `drive`는 끝에 onDone을 부른다.
+  // Stream events one at a time with the turn held open — `drive` calls onDone at the end.
   function openTurn() {
     let handlers: any = null;
     vi.mocked(sse.streamEvents).mockImplementation((...args: any[]) => {

@@ -32,21 +32,21 @@ def test_history_degrades_when_factory_raises(monkeypatch):
     assert r.status_code == 200 and r.json() == {"items": []}
 
 
-# ---- claude 드라이버(현재 기본) 경로가 라우트를 통해 복원되는가 ----
+# ---- Whether the claude driver (current default) path restores through the route ----
 #
-# 이 버그의 실제 모양이 여기에 있었다: 드라이버는 s3_store_factory(pid)로 받은
-# 스토어(projects/{pid}/)에 쓰는데 라우트는 session_s3_factory()(sessions/)만
-# 읽었다. 프리픽스가 달라 항상 빈 목록이었고 에러도 없었다. 그래서 이 테스트는
-# 단위가 아니라 **라우트를 통해** 왕복해야 의미가 있다.
+# The actual shape of this bug was here: the driver writes to the store (projects/{pid}/) it
+# got via s3_store_factory(pid), but the route only read session_s3_factory() (sessions/). The
+# prefixes differed, so it was always an empty list, with no error. So this test is only
+# meaningful as a round trip **through the route**, not as a unit test.
 
 async def _write_cli_transcript(s3, project_id, entries):
-    """드라이버가 실제로 쓰는 키로 쓴다.
+    """Write with the key the driver actually uses.
 
-    `project_id`를 그대로 세션 키로 쓰면 안 된다 — 그것이 이 버그의 두 번째
-    겹이었다. CLI는 비-UUID session-id를 거부하므로 드라이버는
-    `_sdk_session_id`로 uuid5를 유도해 그 값으로 미러링한다. 이 헬퍼가 원본
-    project_id로 쓰고 라우트가 같은 값으로 읽으면, 쓰는 키와 읽는 키가 어긋난
-    상태에서도 테스트만 통과한다(실제로 그렇게 통과하고 있었다).
+    `project_id` must not be used as the session key as is — that was the second layer of this
+    bug. The CLI rejects a non-UUID session-id, so the driver derives a uuid5 via
+    `_sdk_session_id` and mirrors with that value. If this helper wrote with the original
+    project_id and the route read with the same value, the tests alone would pass even with
+    the write key and read key out of sync (and that is in fact how they were passing).
     """
     from aipds.agent.claude_driver import _sdk_session_id
     from aipds.agent.session_store import DiscoverySessionStore
@@ -60,7 +60,7 @@ def test_history_restores_a_claude_driver_transcript(monkeypatch):
     project_s3 = FakeS3Store()
     asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
         _write_cli_transcript(project_s3, "h5", [
-            {"type": "queue-operation", "operation": "enqueue"},   # 부기 줄
+            {"type": "queue-operation", "operation": "enqueue"},   # bookkeeping line
             {"type": "user", "message": {"role": "user", "content": "시작해줘"}},
             {"type": "assistant", "message": {"role": "assistant", "content": [
                 {"type": "text", "text": "네, 시작합니다."}]}},
@@ -73,9 +73,10 @@ def test_history_restores_a_claude_driver_transcript(monkeypatch):
 
 
 def test_history_degrades_when_the_project_store_raises(monkeypatch):
-    """스토어 생성 실패(자격증명·버킷 미설정)는 히스토리를 비우되 화면은 막지
-    않는다. 예전에는 strands 폴백 스토어로 넘어갔지만 그 드라이버를 삭제해서
-    읽을 곳이 하나뿐이다 — 실패하면 빈 목록이 유일한 정직한 답이다."""
+    """A store creation failure (credentials or bucket not configured) empties the history but
+    does not block the screen. Previously it fell over to the strands fallback store, but that
+    driver was deleted, so there is only one place to read — on failure, an empty list is the
+    only honest answer."""
     _local_project(monkeypatch, "h7")
 
     def boom(pid):
@@ -86,7 +87,7 @@ def test_history_degrades_when_the_project_store_raises(monkeypatch):
     assert r.status_code == 200 and r.json() == {"items": []}
 
 
-# ---- GET /context: 마지막 턴의 컨텍스트 사용량 ----
+# ---- GET /context: the last turn's context usage ----
 
 def test_context_is_the_last_turns_record(monkeypatch):
     from aipds.context_usage import DISCOVERY_KEY

@@ -8,7 +8,7 @@ import { WorkspaceDocPanel } from "./WorkspaceDocPanel";
 
 const DOC = { path: "aiplc-docs/discovery/discovery-document.md", version: "v2" };
 const PRFAQ = { path: "aiplc-docs/discovery/envision/prfaq.md", version: null };
-// 열린 드로어 — 열고 닫기를 보는 테스트가 아닌 곳의 기본값.
+// Drawer open — the default for tests that are not about opening and closing.
 const OPEN = { open: true, onOpenChange: () => {}, onCurrentDocChange: () => {} };
 
 describe("WorkspaceDocPanel", () => {
@@ -40,7 +40,7 @@ describe("WorkspaceDocPanel", () => {
   });
 
   it("file_changed로만 추적된 문서(version 없음)도 렌더하고 버전 칩은 생략한다", async () => {
-    // ui-bug2 회귀: prfaq.md는 submit_document 없이 file_write로만 생성된다.
+    // ui-bug2 regression: prfaq.md is created with file_write alone, without submit_document.
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/files/${PRFAQ.path}`, () =>
         HttpResponse.json({ content: "# PR/FAQ\n\n초안" }),
@@ -71,7 +71,7 @@ describe("WorkspaceDocPanel", () => {
     expect(await screen.findByText("초안")).toBeInTheDocument();
     expect(hits).toBe(1);
 
-    // 대화가 다른 문서로 옮겨가면 그 문서를 읽는다.
+    // When the conversation moves to a different document, read that document.
     await act(async () => {
       rerender(<WorkspaceDocPanel {...OPEN} projectId="p1" activeDoc={PRFAQ} changedPaths={[]} turnSeq={0} />);
     });
@@ -80,9 +80,9 @@ describe("WorkspaceDocPanel", () => {
   });
 
   it("re-reads the same file when turnSeq advances (턴 종료 후 동기화 보정)", async () => {
-    // ui-bug2 회귀: 문서 이벤트 시점에는 VM→S3 동기화 전이라 첫 읽기가 빈
-    // 내용일 수 있다 — 턴이 끝나면(turnSeq 증가) 반드시 다시 읽어야 한다.
-    let served = ""; // 첫 읽기: 아직 동기화 전 (빈 문서)
+    // ui-bug2 regression: at the time of the document event, the VM→S3 sync has not happened, so the first
+    // read may be empty — when the turn ends (turnSeq increments), it must be read again.
+    let served = ""; // first read: before sync (empty document)
     let hits = 0;
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/files/${DOC.path}`, () => {
@@ -189,9 +189,9 @@ describe("WorkspaceDocPanel — 문서 드롭다운", () => {
     const { rerender } = render(
       <WorkspaceDocPanel {...OPEN} projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} changedPaths={[]} turnSeq={0} />);
     const select = await screen.findByLabelText("문서 선택");
-    // 사용자가 수동 선택해 두어도…
+    // Even if the user has selected one manually…
     await userEvent.setup().selectOptions(select, "aiplc-docs/a.md");
-    // …새 문서 이벤트(activeDoc 변경)는 그 문서로 전환한다
+    // …a new document event (activeDoc change) switches to that document
     rerender(<WorkspaceDocPanel {...OPEN} projectId="p1" activeDoc={{ path: "aiplc-docs/b.md", version: "v2" }} changedPaths={[]} turnSeq={1} />);
     expect(await screen.findByText("B-내용")).toBeInTheDocument();
     expect((screen.getByLabelText("문서 선택") as HTMLSelectElement).value).toBe("aiplc-docs/b.md");
@@ -222,9 +222,9 @@ describe("WorkspaceDocPanel — 문서 드롭다운", () => {
     );
     render(<WorkspaceDocPanel {...OPEN} projectId="p1" activeDoc={{ path: "aiplc-docs/a.md", version: null }} changedPaths={[]} turnSeq={0} />);
     await screen.findByLabelText("문서 선택");
-    // artifacts 응답([])이 반영된 뒤에도 select가 남아 있고 현재 문서가 유지되는지
-    // 를 검증해야 진짜 회귀 가드가 된다 — fetch가 끝나기 전 단언하면 union 로직이
-    // 사라져도 통과하는 가짜 가드가 된다.
+    // It is a real regression guard only if it verifies that the select remains and the current document
+    // is kept after the artifacts response ([]) has been applied — asserting before the fetch finishes
+    // makes it a fake guard that passes even if the union logic disappears.
     await waitFor(() => expect(artifactsFetched).toBe(true));
     const select = screen.getByLabelText("문서 선택") as HTMLSelectElement;
     expect(select.value).toBe("aiplc-docs/a.md");
@@ -275,24 +275,24 @@ describe("WorkspaceDocPanel — 문서 새로고침 버튼", () => {
   });
 });
 
-// ---- A/G/I: 목록과 뷰어의 동기화 (2026-08-21) ----
+// ---- A/G/I: syncing the list and the viewer (2026-08-21) ----
 //
-// **실측한 증상 둘.** (1) 최근 산출물에는 파일 이름들이 보이는데 뷰어 본문은 "아직
-// 생성된 문서가 없습니다"였다. (2) 드롭다운 자체가 안 뜨는 경우도 있었다.
+// **Two measured symptoms.** (1) Recent artifacts showed file names, but the viewer body said "아직
+// 생성된 문서가 없습니다". (2) In some cases the dropdown itself did not appear.
 //
-// 원인이 셋이다:
-//   A 본문 경로가 `manualPath ?? activeDoc?.path ?? null`이라 목록으로 떨어지는
-//     폴백이 없었다 — 드롭다운은 `listed`로 채워지므로 "옵션은 있는데 본문은 빔"이
-//     구조적으로 가능했다. 새로고침하면 `activeDoc`이 null이라 항상 그 상태다.
-//   G 목록 조회 키가 `[projectId, turnSeq, activeDoc?.path]`였다. 파일이 바뀌었다는
-//     실시간 신호(`file_changed` → changedPaths)가 없으므로, 감사·상태·질문 파일만
-//     쓰는 턴에서는 턴이 끝날 때까지 목록이 마운트 시점 값(빈 배열)에 머문다.
-//   I 목록 조회 실패가 무증상이었다 — `artifacts.error`를 아무도 읽지 않아
-//     "문서가 없다"와 화면이 같았다.
+// There are three causes:
+//   A The body path was `manualPath ?? activeDoc?.path ?? null`, with no fallback to the list —
+//     the dropdown is filled from `listed`, so "options exist but the body is empty" was
+//     structurally possible. After a refresh `activeDoc` is null, so it is always in that state.
+//   G The list query key was `[projectId, turnSeq, activeDoc?.path]`. There was no real-time signal
+//     that a file changed (`file_changed` → changedPaths), so in a turn that writes only audit, state,
+//     and question files, the list stays at its mount-time value (an empty array) until the turn ends.
+//   I A failed list query was symptomless — nobody read `artifacts.error`, so the screen looked
+//     the same as "there are no documents".
 
 describe("WorkspaceDocPanel — 목록과의 동기화", () => {
   it("activeDoc이 없으면 목록의 첫 항목을 연다 (A)", async () => {
-    // 백엔드가 최신 순으로 준다(Workspace.list_artifacts) — 첫 항목이 곧 최신이다.
+    // The backend returns newest first (Workspace.list_artifacts) — the first item is the newest.
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/artifacts`, () =>
         HttpResponse.json({ artifacts: [PRFAQ.path, "aiplc-docs/audit.md"] }),
@@ -322,13 +322,13 @@ describe("WorkspaceDocPanel — 목록과의 동기화", () => {
                                 changedPaths={[]} />));
     const first = calls;
 
-    // 턴 도중 파일이 쓰였다 — turnSeq는 아직 오르지 않았고 activeDoc도 없다.
+    // A file was written mid-turn — turnSeq has not gone up yet and there is no activeDoc.
     await act(async () => {
       rerender(<WorkspaceDocPanel {...OPEN} projectId="p1" activeDoc={null} turnSeq={0}
                                   changedPaths={["aiplc-docs/audit.md"]} />);
     });
 
-    // 연달아 오는 쓰기를 묶느라 잠시 기다렸다 조회한다.
+    // It waits briefly before querying, to batch writes that come in quick succession.
     await waitFor(() => expect(calls).toBeGreaterThan(first));
   });
 
@@ -356,7 +356,7 @@ describe("WorkspaceDocPanel — 목록과의 동기화", () => {
     }
 
     await waitFor(() => expect(calls).toBe(first + 1));
-    // 더 기다려도 늘지 않는다.
+    // It does not grow even after waiting longer.
     await new Promise((r) => setTimeout(r, 600));
     expect(calls).toBe(first + 1);
   });
@@ -371,8 +371,8 @@ describe("WorkspaceDocPanel — 목록과의 동기화", () => {
       render(<WorkspaceDocPanel {...OPEN} projectId="p1" activeDoc={null} turnSeq={0}
                                 changedPaths={[]} />);
     });
-    // "문서가 없다"로 뭉개면 원인을 영영 못 본다 — 이 리포가 docUnsaved와 docEmpty를
-    // 가른 것과 같은 규율이다.
+    // Mashing it into "there are no documents" means never seeing the cause — the same discipline
+    // by which this repo split docUnsaved and docEmpty.
     expect(await screen.findByText(/목록을 불러오지 못했습니다/)).toBeInTheDocument();
     expect(screen.queryByText(/아직 생성된 문서가 없습니다/)).not.toBeInTheDocument();
   });
@@ -407,7 +407,7 @@ describe("WorkspaceDocPanel — 드로어", () => {
     });
     const [tab, close] = screen.getAllByRole("button", { name: "생성된 문서 닫기" });
     expect(tab).toHaveAttribute("aria-expanded", "true");
-    // 닫힘 → 열림이면 포커스가 드로어 안(✕)으로 간다.
+    // Closed → open moves focus inside the drawer (✕).
     expect(close).toHaveFocus();
     await userEvent.click(close);
     await userEvent.keyboard("{Escape}");
@@ -416,9 +416,9 @@ describe("WorkspaceDocPanel — 드로어", () => {
     expect(onOpenChange.mock.calls).toEqual([[false], [false], [false], [false]]);
   });
 
-  // 여는 순간의 ✕는 아직 화면 밖에서 들어오는 중이다. 그냥 focus()하면 브라우저가
-  // 페이지 루트를 옆으로 스크롤해 화면 전체가 밀렸다 튕겨 왔다(실측: scrollLeft 648).
-  // jsdom은 레이아웃이 없으므로 원인 쪽 — preventScroll — 을 고정한다.
+  // At the moment of opening, the ✕ is still sliding in from off screen. A plain focus() made the browser
+  // scroll the page root sideways, so the whole screen shifted and bounced back (measured: scrollLeft 648).
+  // jsdom has no layout, so we pin the cause side — preventScroll.
   it("포커스를 옮길 때 화면을 스크롤하지 않는다 (열 때·닫을 때 모두)", async () => {
     const focus = vi.spyOn(HTMLElement.prototype, "focus");
     try {
@@ -441,7 +441,7 @@ describe("WorkspaceDocPanel — 드로어", () => {
     }
   });
 
-  // 답하는 중에 덮는 드로어가 저절로 열리면 질문 폼을 가린다 — 탭만 바뀐다.
+  // A covering drawer opening on its own while answering would hide the question form — only the tab changes.
   it("닫힌 동안 새 문서가 오면 탭이 '새 문서'로 바뀌고 저절로 열지 않는다", async () => {
     const onOpenChange = vi.fn();
     const { rerender } = render(
@@ -457,7 +457,7 @@ describe("WorkspaceDocPanel — 드로어", () => {
     expect(tab()).toHaveTextContent("새 문서");
     expect(onOpenChange).not.toHaveBeenCalled();
 
-    // 열어 본 뒤 다시 닫으면 평소 탭으로 돌아간다.
+    // After opening and closing it again, it returns to the usual tab.
     await act(async () => {
       rerender(<WorkspaceDocPanel {...OPEN} projectId="p1" activeDoc={PRFAQ} changedPaths={[]}
                                   turnSeq={0} />);

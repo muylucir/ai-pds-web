@@ -15,8 +15,8 @@
 import type { QuestionFile, QuestionOption } from "@/lib/api/types";
 import type { Dict } from "@/lib/i18n";
 
-/** 번역 함수. 순수 함수를 훅으로 만들지 않기 위해 인자로 받는다 — 호출부가
- *  이미 훅 안이므로 그쪽에서 useT()로 얻어 넘긴다. */
+/** The translation function. Taken as an argument so the pure function need not become a hook — the
+ *  caller is already inside a hook, so it gets one from useT() there and passes it in. */
 type T = (key: keyof Dict) => string;
 
 function letterText(options: QuestionOption[], letter: string): string | null {
@@ -90,8 +90,8 @@ export function answerSummary(
     blocks.push(`Q${key}.\n→ ${value}`);
   }
 
-  // 답변이 하나도 없으면 말풍선이 비지 않게 한 줄을 남긴다. Task 6이 만든
-  // chat.answersSubmitted를 재사용한다 — 값이 같은 키를 둘로 두면 나중에
-  // 한쪽만 고쳐 화면에서 문구가 갈린다.
+  // If there are no answers at all, leave one line so the bubble is not empty. Reuses the
+  // chat.answersSubmitted that Task 6 created — two keys with the same value would later get
+  // only one of them edited, and the wording on screen would diverge.
   return blocks.length > 0 ? blocks.join("\n\n") : t("chat.answersSubmitted");
 }

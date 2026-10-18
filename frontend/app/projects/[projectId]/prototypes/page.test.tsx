@@ -7,9 +7,9 @@ import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
 import * as prototypeStream from "@/lib/usePrototypeStream";
 
-// AppHeader가 그리는 LanguageSwitcher가 useRouter()를 부른다 — 앱 라우터가
-// 마운트되지 않은 단위 테스트에서 그 훅은 던진다. 스위치의 동작은
-// components/LanguageSwitcher.test.tsx가 검증하므로 여기서는 마운트만 되게 한다.
+// The LanguageSwitcher that AppHeader draws calls useRouter() — in a unit test with no app router
+// mounted, that hook throws. The switcher's behavior is verified by
+// components/LanguageSwitcher.test.tsx, so here it only needs to mount.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -142,8 +142,8 @@ describe("Prototypes page", () => {
   });
 
   it("Start hosting refused by an open build session tells the user what to press, on that card", async () => {
-    // 409 `build_session_active`. 이 거부가 화면에 없으면 버튼이 아무 반응 없이
-    // 돌아온 것으로 읽힌다(ws-f, 2026-10-08).
+    // 409 `build_session_active`. If this rejection is not on screen, the button reads as having
+    // come back with no response (ws-f, 2026-10-08).
     const built = [{ ...PROTOTYPES[0], state: "built", session_open: true }];
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/prototypes`, () => HttpResponse.json(listing(built))),
@@ -433,12 +433,12 @@ describe("reset confirmation", () => {
 });
 
 
-// ---- 수정은 자동 발화하지 않는다 ----
+// ---- Modification does not auto-fire ----
 //
-// 이미 만들어진 것을 고칠 때 자동 개시는 에이전트가 되묻는 왕복을 먼저 태우고, 그
-// 질문이 떠 있는 동안 입력창이 잠겨 사용자가 자기 요청을 타이핑할 수조차 없었다
-// (backend prompts.handoff_prompt의 근거). 첫 빌드는 반대다 — 사용자가 아직 할 말이
-// 없고 에이전트가 명세를 먼저 읽어야 한다.
+// When fixing something already built, an auto opening first burns a round trip of the agent
+// asking back, and while that question was up the input was locked, so the user could not even
+// type their own request (the rationale in backend prompts.handoff_prompt). The first build is
+// the opposite — the user has nothing to say yet, and the agent must read the spec first.
 
 describe("Prototypes page — 수정 진입", () => {
   const BUILT = [{ slug: "todo-app", name: null,
@@ -457,7 +457,8 @@ describe("Prototypes page — 수정 진입", () => {
   }
 
   it("빌드 완료된 프로토타입은 개시 턴을 자동 발화하지 않는다", async () => {
-    // 사용자가 먼저 말하고, 그 첫 메시지가 개시 턴이 된다(백엔드의 session.opened).
+    // The user speaks first, and that first message becomes the opening turn (the backend's
+    // session.opened).
     const user = userEvent.setup();
     seed(BUILT);
     const startBuild = vi.fn();

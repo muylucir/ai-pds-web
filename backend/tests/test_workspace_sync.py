@@ -1,25 +1,30 @@
 # backend/tests/test_workspace_sync.py
 #
-# 워크스페이스 파일 하나를 정본(S3)에 올리는 규칙의 단일 소유자.
+# Single owner of the rules for publishing one workspace file to the source of truth (S3).
 #
-# **왜 이 모듈이 생겼는가(2026-08-18).** 화면에 "문서가 작성되었다"고 나오는데 문서
-# 탭 드롭다운에 없고, 목록에 보여서 골라도 내용이 없고, 잠깐 나타났다 사라지고,
-# "문서 리뷰" 화면에서는 보였다. 증상 네 개가 한 원인이었다:
+# **Why this module exists (2026-08-18).** The screen said "the document was written", yet
+# it was missing from the document tab dropdown; when it did appear in the list, selecting
+# it showed no content; it appeared briefly and vanished; and it was visible on the
+# "document review" screen. The four symptoms had one cause:
 #
-#     `file_changed`는 **로컬** 쓰기에서 즉시 알리는데, 정본(S3) 게시는 **턴 종료**
-#     까지 미뤄졌다. UI의 읽기 경로는 전부 S3다(runner.read_file/list_files).
+#     `file_changed` announces a **local** write immediately, but publishing to the source
+#     of truth (S3) was deferred until **turn end**. Every UI read path is S3
+#     (runner.read_file/list_files).
 #
-# 실측이 그대로 보였다: 한 프로젝트의 aiplc-docs 16개 파일의 S3 타임스탬프가 전부
-# 같은 1초 안이었다 — 턴 중에는 아무것도 없고 끝에 몰아서 올라간다.
+# The measurements showed exactly that: the S3 timestamps of all 16 aiplc-docs files in one
+# project fell within the same second. Nothing goes up during the turn; it all goes up at the end.
 #
-# 프론트는 이미 이 문제를 막으려 애쓰고 있었다(현재 path를 목록에 union, 404를
-# "미동기화"로 구분). 그러나 읽을 것이 S3에 없으면 프론트가 할 수 있는 것이 없다.
+# The frontend was already trying hard to paper over this (unioning the current path into
+# the list, distinguishing 404 as "not yet synced"). But if there is nothing in S3 to read,
+# the frontend can do nothing.
 #
-# 계약은 질문 파일에 이미 적용한 것과 같다(a2b9623): **광고하기 전에 게시한다.**
+# The contract is the same one already applied to question files (a2b9623): **publish
+# before announcing.**
 #
-# 규칙을 이 모듈이 소유하는 이유: 올리는 곳이 둘이 됐다(턴 종료 배치 sync와 쓰기
-# 직후 게시). audit.md 리댁션과 대상 글롭이 두 곳에 복사되면 한쪽만 고쳐져
-# **audit.md가 리댁션 없이 S3에 올라가는** 경로가 생긴다.
+# Why this module owns the rules: there are now two places that upload (the turn-end batch
+# sync and publish-right-after-write). If the audit.md redaction and the target globs were
+# copied into both, one side would get fixed and not the other, creating a path where
+# **audit.md goes up to S3 unredacted**.
 from __future__ import annotations
 
 from pathlib import Path
@@ -42,34 +47,34 @@ def _ws(tmp_path: Path, rel: str, body: str) -> Path:
     ("aiplc-docs/audit.md", True),
     ("aiplc-docs/discovery/envision/pain-point-analysis.md", True),
     ("prototype/src/app/page.tsx", True),
-    # 업로드 라우트가 정본에 직접 쓰는 입력이다. 텍스트로 올리면 원본(이미지·PDF)이
-    # 깨진 사본으로 덮인다.
+    # Inputs the upload route writes directly to the source of truth. Uploading them as text
+    # would overwrite the original (image, PDF) with a corrupted copy.
     ("uploads/spec.pdf", False),
-    ("CLAUDE.md", False),                    # 조립물 — 정본이 아니다
+    ("CLAUDE.md", False),                    # assembled file, not a source of truth
     (".proto-token", False),
     ("node_modules/x/index.js", False),
 ])
 def test_only_the_synced_subtrees_are_published(key, expected):
-    """턴 종료 배치 sync가 올리는 것과 **같은 집합**이어야 한다.
+    """Must be **the same set** that the turn-end batch sync uploads.
 
-    다르면 쓰기 직후에 올라간 파일이 배치에서 빠지거나(그 반대) 하고, 그 어긋남은
-    "있다가 없어지는 문서"로 보인다."""
+    Otherwise a file uploaded right after a write is missing from the batch (or vice
+    versa), and that mismatch shows up as "a document that is there and then gone"."""
     assert is_synced_key(key) is expected
 
 
 def test_audit_is_redacted_on_the_way_to_s3():
-    """audit.md는 S3를 직접 읽는 사람에게도 노출되므로 저장 시 리댁션한다.
+    """audit.md is also exposed to anyone reading S3 directly, so it is redacted on save.
 
-    이 규칙이 배치 sync에만 있었다 — 쓰기 직후 게시가 그것을 빠뜨리면 audit.md가
-    리댁션 없이 정본에 올라간다."""
+    This rule used to live only in the batch sync; if publish-right-after-write misses it,
+    audit.md goes up to the source of truth unredacted."""
     raw = "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE 로 접근했다"
     out = content_for_s3("aiplc-docs/audit.md", raw)
     assert "AKIAIOSFODNN7EXAMPLE" not in out
 
 
 def test_other_documents_are_not_rewritten():
-    """산출물은 그대로 올린다 — 리댁션은 audit.md만이다(그 파일만 도구 출력을
-    원문으로 담는다)."""
+    """Artifacts are uploaded as is; only audit.md is redacted (it is the only file that
+    holds raw tool output)."""
     raw = "# 분석\n\n본문 그대로."
     assert content_for_s3("aiplc-docs/discovery/x.md", raw) == raw
 
@@ -100,30 +105,31 @@ async def test_publish_skips_keys_outside_the_synced_subtrees(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_missing_local_file_is_not_an_error(tmp_path):
-    """게시는 부수 동작이다 — 파일이 이미 지워졌다고 턴을 죽이면 안 된다."""
+    """Publishing is a side effect; the turn must not die because the file was already deleted."""
     s3 = FakeS3Store()
     assert await publish_file(s3, tmp_path, "aiplc-docs/gone.md") is False
 
 
 @pytest.mark.asyncio
 async def test_an_unsafe_key_is_refused(tmp_path):
-    """경로 탈출은 fail-closed다 — 배치 sync가 `reject_unsafe`로 전체를 멈추는 것과
-    같은 규율이고, 여기서는 그 한 파일을 거부한다."""
+    """Path escapes fail closed: the same discipline as the batch sync halting everything via
+    `reject_unsafe`; here, that one file is rejected."""
     s3 = FakeS3Store()
     assert await publish_file(s3, tmp_path, "aiplc-docs/../../etc/passwd") is False
     assert not s3.blobs.keys()
 
 
 def test_the_glob_set_is_the_one_the_runner_uses():
-    """배치 sync와 같은 상수를 쓰는지 — 두 벌로 두면 갈라진다."""
+    """Whether it uses the same constant as the batch sync; two copies would drift apart."""
     from aipds.runner import AgentRunner
     assert AgentRunner._SYNC_GLOBS == SYNC_GLOBS
 
 
-# ---- 계약: 광고하기 전에 게시한다 ----
-# 보고된 증상은 **일반 문서**였다(질문 파일이 아니다). 훅이 `file_changed`를 흘리면
-# UI가 곧바로 그 문서를 읽으러 오는데, 그 시점에 정본에 없으면 목록에도 없고 골라도
-# 내용이 없다. 그래서 이벤트보다 게시가 먼저여야 한다.
+# ---- Contract: publish before announcing ----
+# The reported symptom was with **ordinary documents** (not question files). When the hook
+# emits `file_changed`, the UI immediately comes to read that document; if it is not in the
+# source of truth at that point, it is neither in the list nor has content when selected.
+# So publishing must come before the event.
 
 async def _driver(tmp_path):
     from aipds.agent.claude_driver import ClaudeDriver
@@ -142,15 +148,15 @@ async def test_a_written_document_is_in_s3_when_file_changed_is_emitted(tmp_path
     await d._on_post_tool_use(
         {"tool_name": "Write", "tool_input": {"file_path": str(ws / rel)}},
         "t", None)
-    # 이벤트가 큐에 있다 = UI가 곧 읽으러 온다.
+    # The event is in the queue = the UI will come to read it soon.
     assert any(e.kind == "file_changed" and e.path == rel for e in d._queue)
-    # 그 순간 정본에 있어야 한다 — 턴 종료 sync를 기다리지 않는다.
+    # It must be in the source of truth at that moment, without waiting for the turn-end sync.
     assert await d._s3.get(rel) == "# 페인 포인트 분석\n\n본문.\n"
 
 
 @pytest.mark.asyncio
 async def test_audit_is_redacted_when_published_from_the_hook(tmp_path):
-    """배치 sync에만 있던 규칙이 이 경로에서 빠지면 audit.md가 리댁션 없이 올라간다."""
+    """If this path missed the rule that used to live only in the batch sync, audit.md would go up unredacted."""
     d, ws = await _driver(tmp_path)
     rel = "aiplc-docs/audit.md"
     _ws(ws, rel, "key=AKIAIOSFODNN7EXAMPLE 로 접근")

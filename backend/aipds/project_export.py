@@ -1,14 +1,14 @@
-# backend/aipds/project_export.py — 프로젝트 하나를 번들 zip 하나로.
+# backend/aipds/project_export.py — one project into one bundle zip.
 #
-# 포맷은 project_bundle.py가 정한다. 이 모듈은 그 포맷을 **채우는** IO다:
-# S3 프로젝트 prefix 전체 + 로컬 프로토타입 빌드 트리 → zip.
+# The format is defined by project_bundle.py. This module is the IO that **fills** that format:
+# the whole S3 project prefix + the local prototype build trees → zip.
 #
-# **왜 임시 파일에 쓰는가.** 기존 두 zip 엔드포인트(산출물 아카이브, 프로토타입
-# 핸드오프)는 `io.BytesIO`에 조립하는데, 그쪽은 문서 몇 개이거나 한 프로토타입의
-# 소스다. 프로젝트 전체는 트랜스크립트 배치 수백 개와 업로드와 모든 프로토타입의
-# 소스를 합친 것이고, 그것을 메모리에 두면 워크숍 박스에서 프로토타입 빌드와
-# 호스팅과 같은 프로세스 공간을 다툰다. 임시 파일에 쓰고 스트리밍하면 상한이
-# 디스크가 된다.
+# **Why write to a temporary file.** The two existing zip endpoints (artifact archive, prototype
+# handoff) assemble into `io.BytesIO`, but those are a few documents or one prototype's
+# source. A whole project combines hundreds of transcript batches, uploads, and every prototype's
+# source, and holding that in memory would compete on the workshop box for the same process space as
+# prototype builds and hosting. Writing to a temporary file and streaming makes the disk
+# the limit.
 from __future__ import annotations
 
 import asyncio
@@ -30,20 +30,20 @@ from aipds.survey.store import survey_summary
 
 _log = logging.getLogger(__name__)
 
-#: 한 번에 병렬로 읽어 한 번에 압축하는 객체 수. 순차로 읽으면 배치 수 × S3 왕복이
-#: 그대로 벽시계에 붙고(load_transcript가 같은 이유로 병렬이다), 전부 모아서 읽으면
-#: 임시 파일에 쓰는 의미가 없어진다 — 그 사이 어딘가여야 한다.
+#: Number of objects read in parallel and compressed at once. Reading sequentially adds batch count × S3 round trip
+#: straight onto the wall clock (load_transcript is parallel for the same reason), while reading everything at once
+#: defeats the point of writing to a temporary file — it has to be somewhere in between.
 _FETCH_BATCH = 32
 
 
 async def write_bundle(dest: Path, *, project_id: str, s3: S3StoreLike,
                        proto_root: Path, project: dict,
                        exported_at: str) -> dict:
-    """`dest`에 번들을 쓰고 매니페스트 dict를 돌려준다(로그·응답 헤더용).
+    """Writes the bundle to `dest` and returns the manifest dict (for logs and response headers).
 
-    `project`는 이 프로젝트의 메타데이터(name/created_at/model_id/language)이고
-    레지스트리가 소유한다 — 여기서 S3 매니페스트를 다시 읽지 않는다. 목록 화면이
-    보여 준 것과 번들이 말하는 것이 어긋나면 안 되고, 그 진실은 레지스트리다.
+    `project` is this project's metadata (name/created_at/model_id/language), owned by the
+    registry — the S3 manifest is not re-read here. What the list screen showed and what the
+    bundle says must not diverge, and the truth for that is the registry.
     """
     transcript_prefix = project_transcript_prefix(project_id)
     keys = await s3.list("")
@@ -91,7 +91,7 @@ async def write_bundle(dest: Path, *, project_id: str, s3: S3StoreLike,
 
 def _write_entries(zf: zipfile.ZipFile,
                    entries: list[tuple[str, bytes]]) -> None:
-    """압축은 CPU를 쓴다 — 이벤트 루프에서 돌리면 그 시간 동안 다른 프로젝트의
-    턴 스트림이 멈춘다. 그래서 호출부가 `asyncio.to_thread`로 부른다."""
+    """Compression uses CPU — running it on the event loop would stall other projects' turn streams
+    for that time. So callers invoke it via `asyncio.to_thread`."""
     for path, data in entries:
         zf.writestr(path, data)

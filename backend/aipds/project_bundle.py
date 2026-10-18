@@ -1,30 +1,31 @@
-# backend/aipds/project_bundle.py — 프로젝트 번들(.zip) 포맷의 단독 소유자.
+# backend/aipds/project_bundle.py — sole owner of the project bundle (.zip) format.
 #
-# 한 프로젝트를 다른 인스턴스로 옮기는 파일 하나의 모양을 이 모듈이 정한다.
-# export(project_export.py)와 import(project_import.py)가 **같은** 레이아웃
-# 상수·제외 규칙·키 변환을 써야 하고, 두 벌이 되면 그중 하나가 드리프트한다.
-# `proto/layout.py`가 같은 이유로 존재한다 — 거기서는 "id → 명세 경로"가 네 곳에
-# 복제돼 있었고, 규칙이 네 벌이면 그중 하나가 구멍으로 드리프트할 기회도 네 번이다.
+# This module defines the shape of the single file that moves one project to another instance.
+# export (project_export.py) and import (project_import.py) must use the **same** layout
+# constants, exclusion rules, and key conversions; with two copies, one of them drifts.
+# `proto/layout.py` exists for the same reason — there, "id → spec path" was duplicated in
+# four places, and four copies of a rule are four chances for one of them to drift into a hole.
 #
-# 레이아웃:
+# Layout:
 #
-#   export.json                        매니페스트 (아래 build_manifest)
-#   project/**                         projects/{pid}/ 서브트리
-#   prototypes/{slug}/source/**        로컬 빌드 트리 (S3에 없다 — 아래 참고)
+#   export.json                        manifest (build_manifest below)
+#   project/**                         the projects/{pid}/ subtree
+#   prototypes/{slug}/source/**        local build tree (not in S3 — see below)
 #
-# **왜 포함 목록이 아니라 제외 목록인가.** `project/` 는 프로젝트 prefix **전체**를
-# 담고 빠지는 것만 열거한다. 포함 목록은 썩는다: 새 서브트리가 생기면(설문이 그랬고
-# 승인 이력이 그랬다) 그것을 목록에 넣는 것을 잊은 export가 조용히 불완전한 번들을
-# 만들고, 받는 쪽에서는 "그 기능이 없던 프로젝트"와 구별되지 않는다. 제외 목록은
-# 반대로 잊으면 **더 담긴다** — 그 실패는 zip이 커지는 것으로 눈에 보인다.
+# **Why an exclusion list rather than an inclusion list.** `project/` carries the **entire**
+# project prefix and enumerates only what is left out. Inclusion lists rot: when a new subtree
+# appears (surveys did, approval history did), an export that forgot to add it to the list
+# silently produces an incomplete bundle, and the receiving side cannot tell it apart from "a
+# project that never had that feature". An exclusion list, by contrast, **carries more** when
+# you forget — and that failure is visible as a bigger zip.
 #
-# **프로토타입 소스를 S3 키로 담지 않는 이유.** 인프로세스 빌더가 로컬 빌드 트리에
-# 직접 쓰고 ProtoHost가 그 자리에서 서빙하므로 가장 새로운 소스는 디스크에 있다.
-# S3의 소스 세대(`prototypes/{slug}/source/NNNNNN/`, proto/store.py)는 그 스냅샷이다.
-# 번들은 `proto/source.source_entries`(로컬 우선, 없으면 현재 세대)로 한 벌만 담고,
-# 그 경로는 S3 키와 섞이지 않도록 번들 안 `prototypes/{slug}/source/` 아래 따로
-# 산다. 그래서 S3 쪽 세대 키는 아래에서 뺀다 — 담으면 같은 소스가 두 번, 그것도
-# 과거 세대까지 실린다.
+# **Why prototype source is not carried as S3 keys.** The in-process builder writes directly to
+# the local build tree and ProtoHost serves it in place, so the newest source is on disk.
+# The source generations in S3 (`prototypes/{slug}/source/NNNNNN/`, proto/store.py) are snapshots
+# of it. The bundle carries a single copy via `proto/source.source_entries` (local first,
+# otherwise the current generation), and that path lives separately under `prototypes/{slug}/source/`
+# inside the bundle so it does not mix with S3 keys. That is why the S3-side generation keys are
+# dropped below — carrying them would ship the same source twice, past generations included.
 from __future__ import annotations
 
 import json
@@ -34,15 +35,15 @@ from pathlib import PurePosixPath
 from aipds.pathsafe import reject_unsafe
 from aipds.proto.host import TOKEN_FILENAME
 
-#: 번들 포맷의 버전. 임포트는 자기가 아는 버전만 받는다 — 모르는 버전을 최선으로
-#: 해석하면 "절반만 들어온 프로젝트"가 되고, 그 상태는 화면에서 정상과 구별되지
-#: 않는다. 올릴 때는 `SUPPORTED_SCHEMA_VERSIONS`에 구 버전을 남겨 둔다.
+#: Bundle format version. Import accepts only versions it knows — interpreting an unknown
+#: version on a best-effort basis yields "a half-imported project", and that state is
+#: indistinguishable from a normal one on screen. When bumping it, keep the old version in `SUPPORTED_SCHEMA_VERSIONS`.
 SCHEMA_VERSION = 1
 SUPPORTED_SCHEMA_VERSIONS = frozenset({1})
 
-#: 이 zip이 무엇인지 자기 서술하는 표식. 사용자가 엉뚱한 zip(프로토타입 핸드오프
-#: 아카이브, 산출물 아카이브)을 임포트 칸에 떨어뜨리는 것이 흔한 실수이고,
-#: 그때 "export.json이 없다"보다 "이건 프로젝트 번들이 아니다"가 고칠 수 있는 말이다.
+#: A self-describing marker of what this zip is. Dropping the wrong zip (a prototype handoff
+#: archive, an artifact archive) into the import box is a common mistake, and in that case
+#: "this is not a project bundle" is something the user can act on, unlike "export.json is missing".
 KIND = "aipds-project-export"
 
 MANIFEST_NAME = "export.json"
@@ -50,90 +51,90 @@ PROJECT_DIR = "project/"
 PROTO_DIR = "prototypes/"
 PROTO_SOURCE_LEAF = "source/"
 
-#: 프로젝트 매니페스트의 S3 키. 번들에 **넣지 않는다** — 같은 사실(이름·생성일·
-#: 모델·언어)이 `export.json`에도 있어야 하는데(사람이 zip을 열어 확인하는 자리이고,
-#: 임포트가 프로젝트를 만들기 전에 읽어야 하는 값이다) 두 곳에 두면 어긋난 사본이
-#: 생긴다. 임포트는 `write_manifest`로 자기 것을 새로 쓴다.
+#: S3 key of the project manifest. **Not put in the bundle** — the same facts (name, creation
+#: date, model, language) must also be in `export.json` (that is where a person opens the zip to
+#: check, and import must read those values before it creates the project), and keeping them in
+#: two places produces diverging copies. Import writes its own fresh one with `write_manifest`.
 PROJECT_MANIFEST_KEY = "project.json"
 
-#: pending 질문. 살아 있는 턴에 park된 질문을 새로고침 후 복원하기 위한 편의물이고
-#: (agent/pending_store.py), 그 턴은 인메모리 Future다. 임포트한 프로젝트에는 그
-#: 턴이 없으므로 복원하면 **아무도 답을 받지 않는 질문 폼**이 뜬다. 번들에 넣고
-#: 임포트에서 무시하는 것보다 애초에 담지 않는 편이 정직하다.
+#: Pending questions. A convenience for restoring a question parked by a live turn after a
+#: refresh (agent/pending_store.py), and that turn is an in-memory Future. An imported project
+#: has no such turn, so restoring it shows **a question form whose answer nobody receives**.
+#: Not carrying it at all is more honest than putting it in the bundle and ignoring it on import.
 PENDING_PREFIX = "pending/"
 
-#: Discovery 트랜스크립트의 루트(프로젝트 상대). 아래 세션 세그먼트 변환을 보라.
+#: Root of the Discovery transcript (project-relative). See the session-segment conversion below.
 TRANSCRIPT_ROOT = "discovery/transcript/"
 
-#: 프로토타입 빌드 에이전트의 트랜스크립트와, 그것을 빌드 대화로 복원할 때 쓰는
-#: 레코드(proto/history.py). 대부분 빌드 잡담이고 용량이 크다 — 프로토타입을
-#: **개선**하는 세션의 컨텍스트지만, 임포트한 인스턴스에서는 어차피 새 빌드 세션으로
-#: 시작한다(로컬 CLI 트랜스크립트가 없다). 레코드는 트랜스크립트와 조인할 때만 뜻이
-#: 있으므로 함께 뺀다. 핸드오프 zip이 같은 이유로 같은 것을 뺀다
-#: (routes/prototypes.py의 `_ARCHIVE_*` 주석).
+#: The prototype build agent's transcript, and the records used to restore it as the build
+#: conversation (proto/history.py). It is mostly build chatter and large — it is context for a
+#: session that **improves** the prototype, but an imported instance starts a fresh build session
+#: anyway (it has no local CLI transcript). The records only mean something when joined with the
+#: transcript, so they are dropped together. The handoff zip drops the same things for the same
+#: reason (the `_ARCHIVE_*` comments in routes/prototypes.py).
 _PROTO_CONVERSATION_RE = re.compile(r"^prototypes/[^/]+/(?:transcript|history)/")
 
-#: 이 인스턴스의 사정이라 옮기지 않는 프로토타입 키(proto/store.py).
-#:   source/        소스 세대 — 소스는 번들이 따로 한 벌 담는다(위 머리말).
-#:   access-token   공개 프리뷰의 자격증명. 로컬 `.proto-token`을 빼는 것과 같은 이유다
-#:                  (SOURCE_EXCLUDED_FILES) — 받는 쪽은 호스팅할 때 새로 발급한다.
-#:   hosting.json   "여기서 호스팅 중이어야 한다" — 받는 인스턴스에서 저절로 뜨면 안 된다.
+#: Prototype keys that are specific to this instance and therefore not moved (proto/store.py).
+#:   source/        source generations — the bundle carries the source separately (header above).
+#:   access-token   credential for the public preview. Same reason the local `.proto-token` is dropped
+#:                  (SOURCE_EXCLUDED_FILES) — the receiving side issues a new one when it hosts.
+#:   hosting.json   "this should be hosted here" — it must not come up on its own on the receiving instance.
 _PROTO_INSTANCE_RE = re.compile(r"^prototypes/[^/]+/(?:source/|access-token$|hosting\.json$)")
 
 
 class BundleError(ValueError):
-    """번들이 우리가 아는 모양이 아니다. 라우트가 400으로 번역한다."""
+    """The bundle is not a shape we know. The route translates it to 400."""
 
 
-# ---- 프로토타입 소스 트리의 제외 규칙 ----
+# ---- Exclusion rules for the prototype source tree ----
 #
-# 개발팀 핸드오프 zip(routes/prototypes.py)과 **같은 집합**이어야 하고, 그래서 그쪽이
-# 이 모듈을 임포트한다. 두 벌로 두면 한쪽만 고쳐지고, 이 집합의 실패 모드는 대칭이
-# 아니다: 빌드 산출물을 빠뜨리면 zip이 커질 뿐이지만 `.proto-token`을 빠뜨리면
-# **살아 있는 접근 자격증명이 다운로드에 실려 나간다**. 그 토큰이 막으려는 대상이
-# 바로 그 zip을 받는 사람일 수 있다.
+# This must be the **same set** as the dev-team handoff zip (routes/prototypes.py), which is why
+# that module imports this one. Two copies mean only one gets fixed, and this set's failure modes
+# are not symmetric: missing a build output only makes the zip bigger, but missing `.proto-token`
+# means **a live access credential ships in the download**. The person receiving that zip may be
+# exactly who the token is meant to keep out.
 SOURCE_EXCLUDED_DIRS = frozenset({"node_modules", ".next", ".git"})
 
-#: `.proto-host.*`는 이 박스의 부기(로그·pid)이고 다른 인스턴스에서 의미가 없다. 호스팅은
-#: 부기를 빌드 트리 밖(상태 트리, proto/host.py)에 두지만, 그 이름의 파일이 트리에 남아
-#: 있을 수 있으므로 계속 뺀다.
-#: `TOKEN_FILENAME`은 리터럴을 복사하지 않고 그 파일명을 소유한 모듈에서 가져온다 —
-#: 복사본은 이름이 바뀌는 날 조용히 제외를 멈춘다.
+#: `.proto-host.*` is this box's bookkeeping (logs, pid) and means nothing on another instance. Hosting
+#: keeps its bookkeeping outside the build tree (the state tree, proto/host.py), but files with those
+#: names may remain in the tree, so they are still dropped.
+#: `TOKEN_FILENAME` is imported from the module that owns that filename instead of copying the literal —
+#: a copy silently stops excluding on the day the name changes.
 SOURCE_EXCLUDED_FILES = frozenset({
     ".proto-host.log", ".proto-host.pid", TOKEN_FILENAME,
 })
 
 
 def source_excluded(rel: str) -> bool:
-    """빌드 트리의 이 상대 경로를 번들에서 빼는가."""
+    """Whether this relative path in the build tree is dropped from the bundle."""
     parts = PurePosixPath(rel).parts
     if any(p in SOURCE_EXCLUDED_DIRS for p in parts):
         return True
     return parts[-1] in SOURCE_EXCLUDED_FILES if parts else True
 
 
-# ---- 크기 상한 (zip bomb 방어) ----
+# ---- Size limits (zip bomb defense) ----
 #
-# 임포트는 스테이징 객체를 임시 파일로 내려 `zipfile`로 연다(메모리를 유계로
-# 두려고). 그래서 상한이 없으면 압축 폭탄이 먼저 죽이는 것은 프로세스가 아니라
-# **인스턴스의 디스크**다 — 그리고 그 인스턴스에는 다른 워크숍 프로젝트의
-# 프로토타입 빌드 트리가 함께 산다.
+# Import downloads the staging object to a temp file and opens it with `zipfile` (to keep
+# memory bounded). So without limits, what a compression bomb kills first is not the process but
+# **the instance's disk** — and that instance also hosts the prototype build trees of other
+# workshop projects.
 MAX_ENTRIES = 20_000
 MAX_ENTRY_BYTES = 128 * 1024 * 1024
 MAX_TOTAL_BYTES = 1024 * 1024 * 1024
 
 
 def safe_entry_name(name: str) -> str:
-    """zip 엔트리 이름을 검증하고 그대로 돌려준다. 위험하면 `BundleError`.
+    """Validate a zip entry name and return it unchanged. Raises `BundleError` if unsafe.
 
-    zip 엔트리 이름은 **아카이브를 만든 사람이 정한 임의의 문자열**이고, 우리는
-    그것을 S3 키와 로컬 경로 두 곳에 쓴다. `zipfile.extractall`을 쓰지 않는 이유가
-    그것이다 — 그쪽은 알아서 정규화해 주지만, 우리는 엔트리를 하나씩 읽어 각자
-    다른 목적지로 보내므로 그 보호가 없다.
+    A zip entry name is **an arbitrary string chosen by whoever built the archive**, and we
+    use it in two places: as an S3 key and as a local path. That is why `zipfile.extractall`
+    is not used — it normalizes for you, but we read entries one by one and send each to a
+    different destination, so we do not get that protection.
 
-    `reject_unsafe`가 절대경로와 `..`를 막고, 여기서 두 가지를 더 막는다.
-    윈도우에서 만든 zip의 백슬래시(`a\\..\\b`는 POSIX에서 한 세그먼트로 보이지만
-    풀어 쓰는 도구에서는 탈출이다)와 드라이브 문자다.
+    `reject_unsafe` blocks absolute paths and `..`; two more are blocked here:
+    backslashes from zips made on Windows (`a\\..\\b` looks like one segment on POSIX but is
+    an escape in tools that extract it) and drive letters.
     """
     if not name or name.endswith("/"):
         raise BundleError(f"unsafe bundle entry: {name!r}")
@@ -146,21 +147,21 @@ def safe_entry_name(name: str) -> str:
     return name
 
 
-# ---- S3 키 ↔ 번들 경로 ----
+# ---- S3 key ↔ bundle path ----
 #
-# **세션 세그먼트가 이 변환의 존재 이유다.** Discovery 트랜스크립트는
-# `discovery/transcript/{uuid5("aipds:"+pid)}/main/NNNNNNNN.jsonl`에 살고
-# (agent/session_store.py), 그 uuid는 **프로젝트 id에서 유도된다**. 그러므로 다른
-# id로 임포트하면서 키를 그대로 쓰면 히스토리를 읽는 쪽은 아무것도 쓰이지 않은
-# prefix를 list하게 되고, `list_history`가 모든 실패를 `[]`로 강등하므로 결과는
-# **에러 없는 빈 대화**다. 그 침묵이 이 기능에서 가장 비싼 실패이므로, 번들은
-# 세션 세그먼트를 아예 빼고 저장하고 임포트가 대상 프로젝트의 값으로 다시 끼운다.
+# **The session segment is the reason this conversion exists.** Discovery transcripts live at
+# `discovery/transcript/{uuid5("aipds:"+pid)}/main/NNNNNNNN.jsonl`
+# (agent/session_store.py), and that uuid is **derived from the project id**. So if a project is
+# imported under a different id while keeping the keys as-is, the history reader lists a prefix
+# nothing was written to, and since `list_history` downgrades every failure to `[]`, the result
+# is **an empty conversation with no error**. That silence is the most expensive failure in this
+# feature, so the bundle stores keys with the session segment stripped, and import re-inserts the target project's value.
 
 
 def s3_key_to_bundle_path(key: str, *, transcript_prefix: str) -> str | None:
-    """프로젝트 상대 S3 키 → 번들 내부 경로. 제외 대상이면 None.
+    """Project-relative S3 key → path inside the bundle. None if excluded.
 
-    `transcript_prefix`는 이 프로젝트의 **활성** 세션 prefix다
+    `transcript_prefix` is this project's **active** session prefix
     (`agent/session_store.project_transcript_prefix`).
     """
     if key == PROJECT_MANIFEST_KEY:
@@ -173,31 +174,31 @@ def s3_key_to_bundle_path(key: str, *, transcript_prefix: str) -> str | None:
         return None
     if key.startswith(TRANSCRIPT_ROOT):
         if not key.startswith(transcript_prefix):
-            # 다른 세션 id 아래의 트랜스크립트. 활성 세션이 아니므로 히스토리가
-            # 읽지 않는 죽은 데이터이고(load_transcript는 활성 prefix만 본다),
-            # 세션 세그먼트를 벗기면 배치 번호가 활성 세션과 **충돌**해 한쪽이
-            # 조용히 덮어써진다. 담지 않는 것이 유일하게 안전한 선택이다.
+            # A transcript under another session id. It is not the active session, so it is
+            # dead data that history never reads (load_transcript only looks at the active prefix),
+            # and stripping the session segment would make its batch numbers **collide** with the
+            # active session's, silently overwriting one side. Not carrying it is the only safe choice.
             return None
         return PROJECT_DIR + TRANSCRIPT_ROOT + key[len(transcript_prefix):]
     return PROJECT_DIR + key
 
 
 def bundle_path_to_s3_key(path: str, *, transcript_prefix: str) -> str | None:
-    """번들 내부 경로 → 프로젝트 상대 S3 키. `project/` 밖이면 None.
+    """Path inside the bundle → project-relative S3 key. None if outside `project/`.
 
-    `s3_key_to_bundle_path`의 역변환이고, 같은 모듈에 있는 것이 요점이다 —
-    세션 세그먼트를 한쪽만 다루면 대화가 사라진다.
+    This is the inverse of `s3_key_to_bundle_path`, and having it in the same module is the
+    point — handling the session segment on only one side makes the conversation disappear.
     """
     if not path.startswith(PROJECT_DIR):
         return None
     key = path[len(PROJECT_DIR):]
     if not key:
         return None
-    # 내보내기가 담지 않는 키는 들여오지도 않는다(`s3_key_to_bundle_path`와 같은 집합) —
-    # 손으로 만든 번들이 `hosting.json`을 실으면 받는 인스턴스에서 프로토타입이 저절로
-    # 뜨고, `access-token`을 실으면 보낸 사람이 아는 토큰으로 프리뷰가 열린다. 빌드
-    # 트랜스크립트·`pending/`을 실으면 빌드 에이전트와 Discovery가 보낸 사람이 쓴 대화·
-    # 질문을 자기 것으로 알고 재개한다. 매니페스트는 라우트가 마지막에 쓴다.
+    # Keys that export does not carry are not imported either (same set as `s3_key_to_bundle_path`) —
+    # if a hand-made bundle carries `hosting.json`, the prototype comes up on its own on the
+    # receiving instance, and if it carries `access-token`, the preview opens with a token the
+    # sender knows. If it carries build transcripts or `pending/`, the build agent and Discovery
+    # resume the sender's conversation and questions as their own. The route writes the manifest last.
     if key == PROJECT_MANIFEST_KEY or key.startswith(PENDING_PREFIX):
         return None
     if _PROTO_CONVERSATION_RE.match(key) or _PROTO_INSTANCE_RE.match(key):
@@ -208,12 +209,12 @@ def bundle_path_to_s3_key(path: str, *, transcript_prefix: str) -> str | None:
 
 
 def proto_source_path(slug: str, rel: str) -> str:
-    """빌드 트리의 상대 경로 → 번들 내부 경로."""
+    """Relative path in the build tree → path inside the bundle."""
     return f"{PROTO_DIR}{slug}/{PROTO_SOURCE_LEAF}{rel}"
 
 
 def parse_proto_source_path(path: str) -> tuple[str, str] | None:
-    """번들 내부 경로 → (slug, 빌드 트리 상대 경로). 그 모양이 아니면 None."""
+    """Path inside the bundle → (slug, path relative to the build tree). None if not that shape."""
     if not path.startswith(PROTO_DIR):
         return None
     rest = path[len(PROTO_DIR):]
@@ -224,15 +225,15 @@ def parse_proto_source_path(path: str) -> tuple[str, str] | None:
     return (slug, rel) if rel else None
 
 
-# ---- 매니페스트 ----
+# ---- Manifest ----
 
 
 def build_manifest(*, exported_at: str, source_project_id: str,
                    project: dict, counts: dict, prototypes: list[dict]) -> str:
-    """`export.json` 본문.
+    """Body of `export.json`.
 
-    `excluded`를 함께 싣는다: 받는 쪽이 "왜 이건 안 왔지"를 파일 하나로 답할 수
-    있어야 한다. 없는 것을 없다고 말하는 자리다.
+    It also carries `excluded`: the receiving side must be able to answer "why didn't this
+    come over" from one file. This is where what is absent is stated as absent.
     """
     return json.dumps({
         "schema_version": SCHEMA_VERSION,
@@ -253,10 +254,10 @@ def build_manifest(*, exported_at: str, source_project_id: str,
 
 
 def parse_manifest(raw: bytes) -> dict:
-    """`export.json` → dict. 우리가 아는 모양이 아니면 `BundleError`.
+    """`export.json` → dict. `BundleError` if it is not a shape we know.
 
-    검사 순서가 메시지의 품질을 정한다: `kind`를 버전보다 먼저 본다 — 엉뚱한 zip을
-    떨어뜨린 사용자에게 "지원하지 않는 버전"이라고 말하면 고칠 수 없는 말이 된다.
+    The order of checks decides the quality of the message: `kind` is checked before the
+    version — telling a user who dropped the wrong zip "unsupported version" gives them nothing they can fix.
     """
     try:
         data = json.loads(raw)

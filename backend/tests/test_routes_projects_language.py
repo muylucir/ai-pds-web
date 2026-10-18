@@ -1,7 +1,7 @@
 # backend/tests/test_routes_projects_language.py
 #
-# 생성 시점의 language 검증과 조회. model_id와 같은 배관을 쓰지만 검증 기준이
-# 다르다 — 카탈로그가 아니라 고정된 두 값이다.
+# Validation and lookup of language at creation time. It uses the same plumbing as
+# model_id but a different validation basis — two fixed values, not a catalog.
 from __future__ import annotations
 
 import json
@@ -37,8 +37,8 @@ def test_create_without_a_language_defaults_to_ko(monkeypatch):
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     r = client.post("/projects", json={"project_id": "pl-2"})
     assert r.status_code == 200
-    # 응답은 실제로 돌게 될 언어를 말한다 — 미지정을 null로 돌려주면 프론트가
-    # 폴백 규칙을 또 알아야 한다.
+    # The response states the language that will actually run — returning null for
+    # unspecified would force the frontend to know the fallback rule as well.
     assert r.json()["language"] == "ko"
     assert app_module.registry.get_language("pl-2") == "ko"
 
@@ -47,7 +47,7 @@ def test_create_rejects_an_unknown_language(monkeypatch):
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     r = client.post("/projects", json={"project_id": "pl-3", "language": "ja"})
     assert r.status_code == 400
-    # detail은 안정적 코드다 — 프론트 딕셔너리가 이 값으로 문구를 찾는다.
+    # detail is a stable code — the frontend dictionary looks up its message by this value.
     assert r.json()["detail"] == "language_unsupported"
     assert not app_module.registry.is_registered("pl-3")
 
@@ -72,37 +72,38 @@ def test_list_includes_the_language(monkeypatch):
 def test_project_language_helper_reads_the_registry():
     app_module.registry.register("pl-1", None, language="en")
     assert app_module.project_language("pl-1") == "en"
-    # 미등록도 ko — 레지스트리가 확정하는 것을 그대로 통과시킨다.
+    # Unregistered is also ko — whatever the registry settles on is passed through as is.
     assert app_module.project_language("never-existed") == "ko"
 
 
-# ---- 생성 순서: 드라이버가 실제로 그 언어로 만들어지는가 ----
+# ---- Creation order: is the driver actually built with that language? ----
 
 
 def test_the_created_projects_driver_gets_the_chosen_language(monkeypatch):
-    """**이것이 2026-08-04에 남아 있던 결함이다.**
+    """**This is the defect that remained on 2026-08-04.**
 
-    위의 테스트들은 매니페스트와 레지스트리만 본다 — 둘 다 "en"이 맞게 들어간다.
-    그런데 실제로 대화를 도는 **드라이버**는 그 값을 못 받았다.
+    The tests above look only at the manifest and the registry — both get "en" correctly.
+    But the **driver** that actually runs the conversation never received that value.
 
-    create_project의 순서가 원인이었다:
+    The order in create_project was the cause:
 
         workspace = await app_module.make_workspace(...)   # driver_factory ->
                                                           # project_language(pid)
         ...
-        app_module.registry.register(..., language=...)    # 값이 여기서 들어온다
+        app_module.registry.register(..., language=...)    # the value arrives here
 
-    make_workspace가 register보다 **먼저** 돌므로, driver_factory가 부르는
-    registry.get_language(pid)는 아직 아무것도 모르는 상태에서 폴백 "ko"를
-    돌려준다. 그리고 그 드라이버는 프로세스 수명 내내 캐시되므로(레지스트리에
-    attach된 Workspace가 들고 있다), 새로 만든 영어 프로젝트의 **모든 턴**이
-    한국어 지시로 돈다.
+    Because make_workspace runs **before** register, the registry.get_language(pid) that
+    driver_factory calls returns the fallback "ko" while the registry still knows
+    nothing. And that driver is cached for the lifetime of the process (the Workspace
+    attached to the registry holds it), so **every turn** of a newly created English
+    project runs with Korean instructions.
 
-    증상이 특히 헷갈렸던 이유: 헤더의 언어 배지는 매니페스트를 읽으므로 "English"로
-    맞게 뜬다. 화면은 영어인데 대화만 한국어인 상태가 이것이다.
+    Why the symptom was especially confusing: the language badge in the header reads the
+    manifest, so it correctly shows "English". This is the state where the screen is in
+    English but only the conversation is in Korean.
 
-    같은 순서 문제가 model_id에도 있다(test_the_created_projects_driver_gets_
-    the_chosen_model). 언어와 달리 모델은 env 폴백이 있어 조용히 다른 모델로 돌았다.
+    The same ordering problem exists for model_id (test_the_created_projects_driver_gets_
+    the_chosen_model). Unlike language, the model has an env fallback, so it silently ran a different model.
     """
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     seen: dict = {}
@@ -120,9 +121,9 @@ def test_the_created_projects_driver_gets_the_chosen_language(monkeypatch):
 
 
 def test_the_created_projects_driver_gets_the_chosen_model(monkeypatch):
-    """같은 순서 결함의 model_id 판. 언어보다 찾기 어렵다 — project_model은 env
-    폴백(ANTHROPIC_MODEL)이 있어서, 고른 모델이 아니라 배포 기본 모델로 조용히
-    돈다(에러도, 로그도 없다)."""
+    """The model_id version of the same ordering defect. Harder to find than language —
+    project_model has an env fallback (ANTHROPIC_MODEL), so it silently runs on the
+    deployment's default model instead of the chosen one (no error, no log)."""
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     monkeypatch.setenv("ANTHROPIC_MODEL", "env-default-model")
     monkeypatch.setattr(app_module, "_validate_model_id",

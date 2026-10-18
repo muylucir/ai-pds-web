@@ -28,7 +28,7 @@ describe("UserTable", () => {
                       onChanged={() => {}} />);
     expect(within(row("admin@aipds.local")).getByText("관리자")).toBeInTheDocument();
     expect(within(row("pm@aipds.local")).getByText("PM")).toBeInTheDocument();
-    // 초대 직후 상태는 "비밀번호 변경 필요"로 읽혀야 한다.
+    // The state right after an invite must read as "비밀번호 변경 필요" (password change required).
     expect(within(row("pm@aipds.local")).getByText(/변경 필요/)).toBeInTheDocument();
     expect(within(row("off@example.com")).getByText("비활성")).toBeInTheDocument();
   });
@@ -40,7 +40,7 @@ describe("UserTable", () => {
   });
 
   it("shows a role=null user as 역할 없음", () => {
-    // 초대 롤백이 실패해 남은 반쪽 계정을 관리자가 알아볼 수 있어야 한다.
+    // The admin must be able to recognize a half-created account left behind when an invite rollback failed.
     render(<UserTable users={[{ ...USERS[1], role: null }]} currentEmail={null}
                       onChanged={() => {}} />);
     expect(screen.getByText("역할 없음")).toBeInTheDocument();
@@ -66,12 +66,12 @@ describe("UserTable", () => {
   it("surfaces the server's refusal to demote the last admin", async () => {
     server.use(http.put(
       `${API_BASE_URL}/admin/users/admin@aipds.local/role`, () =>
-        // 백엔드가 실제로 보내는 것을 목이 흉내내야 한다 — 문구가 아니라 코드다.
+        // The mock must imitate what the backend actually sends — a code, not wording.
         HttpResponse.json({ detail: "last_admin" }, { status: 400 })));
     render(<UserTable users={USERS} currentEmail="other@example.com" onChanged={() => {}} />);
     await userEvent.selectOptions(
       within(row("admin@aipds.local")).getByLabelText(/역할 변경/), "pm");
-    // 단정은 한국어 문구다 — Provider 없이 렌더하므로 기본 로케일(ko)이 걸린다.
+    // The assertion is on Korean wording — it renders without a Provider, so the default locale (ko) applies.
     expect(await screen.findByText(/마지막 관리자에게는 이 작업을 할 수 없습니다/))
       .toBeInTheDocument();
   });
@@ -103,9 +103,9 @@ describe("UserTable", () => {
   });
 
   it("reloads the table after a reset, without dropping the revealed password", async () => {
-    // 재설정은 서버 쪽 상태(FORCE_CHANGE_PASSWORD)를 바꾼다 — 목록을 갱신하지
-    // 않으면 상태 컬럼이 거짓말을 하게 된다. 단, 갱신이 비밀번호 패널을 먼저
-    // 걷어가면 안 된다 — 관리자가 읽기 전에 사라지면 유일한 열람 기회를 잃는다.
+    // A reset changes server-side state (FORCE_CHANGE_PASSWORD) — without refreshing the list,
+    // the status column would lie. But the refresh must not take the password panel away
+    // first — if it vanished before the admin read it, the only chance to view it would be lost.
     const onChanged = vi.fn();
     server.use(http.post(
       `${API_BASE_URL}/admin/users/pm@aipds.local/reset-password`, () =>
@@ -120,13 +120,13 @@ describe("UserTable", () => {
   });
 
   it("reveals the password before calling onChanged, so a reload cannot outrun the reveal", async () => {
-    // 두 문장(setRevealed, onChanged)이 같은 동기 블록 안에 있어 DOM이나 실제
-    // 비동기 재조회로는 순서를 구분할 수 없다 — React가 같은 틱의 상태 갱신을
-    // 배치 처리하고, 실제 reload도 항상 두 문장이 끝난 뒤에야(await 이후) 도착한다.
-    // 대신 onChanged 자체가 던지게 만들어 순서를 드러낸다: setRevealed가 먼저
-    // 실행됐다면 그 뒤에 던진 예외는 이미 반영된 비밀번호를 지우지 못한다. 순서가
-    // 뒤집히면 onChanged가 먼저 던져 setRevealed 줄까지 도달하지 못하고, 비밀번호는
-    // 끝내 화면에 오르지 않는다.
+    // The two statements (setRevealed, onChanged) are in the same synchronous block, so their
+    // order cannot be told apart through the DOM or a real async refetch — React batches
+    // state updates in the same tick, and a real reload always arrives only after both
+    // statements finish (after the await). Instead, make onChanged itself throw to expose the
+    // order: if setRevealed ran first, an exception thrown afterward cannot erase the password
+    // already applied. If the order were reversed, onChanged would throw first, the
+    // setRevealed line would never be reached, and the password would never appear on screen.
     const onChanged = vi.fn(() => { throw new Error("boom"); });
     server.use(http.post(
       `${API_BASE_URL}/admin/users/pm@aipds.local/reset-password`, () =>
@@ -172,7 +172,7 @@ describe("UserTable", () => {
                       onChanged={onChanged} />);
     await userEvent.click(
       within(row("pm@aipds.local")).getByRole("button", { name: "삭제" }));
-    // 첫 클릭은 확인을 띄우기만 한다 — 되돌릴 수 없는 조작이다.
+    // The first click only shows a confirmation — this is an irreversible operation.
     expect(handler).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /삭제 확인/ }));
     expect(handler).toHaveBeenCalled();

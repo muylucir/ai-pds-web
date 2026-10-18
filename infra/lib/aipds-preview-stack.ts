@@ -7,39 +7,39 @@ import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { INSTANCE_PARAMS } from './instance-params';
 
-// 프로토타입 프리뷰 전용 오리진.
+// An origin dedicated to prototype previews.
 //
-// **왜 따로 두는가.** 프로토타입은 빌드 에이전트가 쓴 코드이고 신뢰 대상이 아니다. 앱과
-// 같은 오리진에서 서빙하면 앱 세션 쿠키가 프로토타입 요청에 실리고, Next의 /api 프록시가
-// 그것을 Cognito Bearer 토큰으로 바꿔 프로토타입 서버 프로세스까지 가져간다. 프로토타입의
-// JS는 같은 오리진이라 보는 사람의 권한으로 앱 API를 부를 수도 있다. 이 배포가 같은 EC2의
-// `/api/proto/*`만 서빙하고, 앱 오리진은 프로토타입을 서빙하지 않는다
-// (backend/aipds/preview_surface.py). `*.cloudfront.net`은 공개 접미사 목록에 있어 두 배포는
-// 서로 다른 사이트다 — 앱 쿠키가 여기 실릴 길이 없다.
+// **Why it is separate.** Prototypes are code written by the build agent and are not trusted. Serving
+// them from the same origin as the app would put the app session cookie on prototype requests, and Next's
+// /api proxy would turn it into a Cognito Bearer token and carry it all the way to the prototype server
+// process. Being same-origin, the prototype's JS could also call the app API with the viewer's
+// permissions. This distribution serves only `/api/proto/*` of the same EC2, and the app origin does not
+// serve prototypes (backend/aipds/preview_surface.py). `*.cloudfront.net` is on the public suffix list, so
+// the two distributions are different sites — there is no way for app cookies to ride along here.
 //
-// **왜 HostingStack 안이 아니라 별도 스택인가.** HostingStack을 배포하면 EC2가 교체될 수
-// 있다: AMI가 고정되지 않아(`latestAmazonLinux2023()`) 새 AMI가 나와 있으면 어떤 변경이든
-// 교체되고, nginx 설정이 user-data 안이다(`userDataCausesReplacement`). 이 스택은 EC2를
-// 참조만 하므로(오리진 DNS, 비밀 헤더 시크릿, 인스턴스 롤) 배포해도 인스턴스는 그대로다.
-// 인스턴스 쪽 변경도 없다 — nginx는 `server_name _`로 이 Host도 받고, 두 비밀 헤더를
-// Next 프록시가 백엔드까지 넘긴다.
+// **Why a separate stack rather than inside HostingStack.** Deploying HostingStack can replace the EC2:
+// the AMI is not pinned (`latestAmazonLinux2023()`), so if a new AMI is out any change triggers a
+// replacement, and the nginx config is inside user-data (`userDataCausesReplacement`). This stack only
+// references the EC2 (origin DNS, the secret header secret, the instance role), so deploying it leaves
+// the instance as is. There are no instance-side changes either — nginx accepts this Host too via
+// `server_name _`, and the Next proxy forwards both secret headers to the backend.
 //
-// **요청이 어느 표면으로 왔는지.** 이 배포만 `X-Preview-Verify`를 붙인다. 기존 배포가 붙이는
-// `X-Origin-Verify`도 함께 붙인다 — nginx가 그것으로 CloudFront 밖의 직접 접근을 막는다.
+// **Which surface a request came through.** Only this distribution adds `X-Preview-Verify`. It also adds the
+// `X-Origin-Verify` the existing distribution adds — nginx uses it to block direct access from outside CloudFront.
 //
-// **인스턴스가 이 값을 아는 법.** 두 출력을 SSM 파라미터로도 쓴다(lib/instance-params.ts). 새
-// 인스턴스는 부팅 때 그것을 읽어 백엔드에 프리뷰 오리진을 알린다(aipds-harden `boot`).
+// **How the instance learns these values.** Both outputs are also written as SSM parameters (lib/instance-params.ts). A new
+// instance reads them at boot and tells the backend the preview origin (aipds-harden `boot`).
 
 export interface PreviewStackProps extends cdk.StackProps {
-  /** EC2의 퍼블릭 DNS(EIP). CloudFront 오리진은 IP를 받지 않는다. */
+  /** The EC2's public DNS (EIP). CloudFront origins do not accept IPs. */
   originDnsName: string;
-  /** HostingStack의 `X-Origin-Verify` 시크릿(전체 ARN). nginx가 이 값을 검사한다. */
+  /** HostingStack's `X-Origin-Verify` secret (full ARN). nginx checks this value. */
   originVerifySecretArn: string;
-  /** HostingStack의 인스턴스 롤. 백엔드가 프리뷰 비밀 헤더 값을 읽는다. */
+  /** HostingStack's instance role. The backend reads the preview secret header value. */
   instanceRoleArn: string;
 }
 
-/** 프로토타입 경로. 백엔드가 보는 `/proto/*`에 Next의 `/api` 마운트가 붙은 브라우저 경로다. */
+/** Prototype path. The browser path: the backend's `/proto/*` with Next's `/api` mount prefixed. */
 export const PREVIEW_PATH_PATTERN = '/api/proto/*';
 
 export class AipdsPreviewStack extends cdk.Stack {
@@ -50,8 +50,8 @@ export class AipdsPreviewStack extends cdk.Stack {
       description: 'X-Preview-Verify shared secret (preview CloudFront custom header <-> backend).',
       generateSecretString: { passwordLength: 32, excludePunctuation: true },
     });
-    // 인스턴스 롤은 HostingStack의 것이다 — 그 스택을 고치지 않고 권한을 주려면 시크릿 쪽의
-    // 리소스 정책이어야 한다.
+    // The instance role belongs to HostingStack — to grant permissions without modifying that stack, it has
+    // to be a resource policy on the secret side.
     previewSecret.addToResourcePolicy(new iam.PolicyStatement({
       actions: ['secretsmanager:GetSecretValue'],
       principals: [new iam.ArnPrincipal(props.instanceRoleArn)],
@@ -61,23 +61,23 @@ export class AipdsPreviewStack extends cdk.Stack {
     const originVerify = secretsmanager.Secret.fromSecretCompleteArn(
       this, 'OriginVerifyHeader', props.originVerifySecretArn);
 
-    // **보안 경고: 오리진 구간은 평문 HTTP다** — 앱 배포와 같은 제약과 같은 해법이다
-    // (aipds-hosting-stack.ts의 오리진 주석, README "CloudFront → instance is HTTP by design").
-    // 이 구간에는 프로토타입 접근 쿠키와 두 비밀 헤더가 실린다.
+    // **Security warning: the origin leg is plaintext HTTP** — the same constraint and the same solution as the
+    // app distribution (the origin comment in aipds-hosting-stack.ts, README "CloudFront → instance is HTTP by design").
+    // The prototype access cookie and both secret headers travel on this leg.
     const origin = new origins.HttpOrigin(props.originDnsName, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
       httpPort: 80,
       readTimeout: cdk.Duration.seconds(60),
       keepaliveTimeout: cdk.Duration.seconds(60),
       customHeaders: {
-        // CFN 동적 참조로 배포 시 해석된다 — 템플릿에 평문이 남지 않는다.
+        // Resolved at deploy time via a CFN dynamic reference — no plaintext remains in the template.
         'X-Origin-Verify': originVerify.secretValue.unsafeUnwrap(),
         'X-Preview-Verify': previewSecret.secretValue.unsafeUnwrap(),
       },
     });
 
-    // 프로토타입 경로 밖은 전부 404다 — 이 도메인에서 앱 화면이 열리면 안 된다(로그인은
-    // 콜백 URL이 막지만, 앱 페이지가 프로토타입과 같은 오리진에 있을 이유가 없다).
+    // Everything outside the prototype path is 404 — app screens must not open on this domain (login is
+    // blocked by the callback URLs, but there is no reason for app pages to share an origin with prototypes).
     const notFound = new cloudfront.Function(this, 'NotFound', {
       comment: 'AI-PDS preview: anything outside /api/proto/* is 404.',
       code: cloudfront.FunctionCode.fromInline(
@@ -108,8 +108,8 @@ export class AipdsPreviewStack extends cdk.Stack {
     });
 
     const previewOrigin = `https://${distribution.distributionDomainName}`;
-    // id는 AgentCredsStack의 것('InstanceRole')과 달라야 한다 — 가져온 롤에 붙는 인라인 정책의
-    // 이름이 이 경로에서 나오므로, 같으면 두 스택이 같은 롤에 같은 이름의 정책을 만들려다 충돌한다.
+    // The id must differ from AgentCredsStack's ('InstanceRole') — the name of the inline policy attached to the
+    // imported role comes from this path, so if they matched, both stacks would collide trying to create a same-named policy on the same role.
     const instanceRole = iam.Role.fromRoleArn(this, 'PreviewInstanceRole', props.instanceRoleArn, {
       mutable: true,
     });

@@ -7,9 +7,9 @@ client = TestClient(app)
 def test_create_project_without_name_returns_null_name():
     r = client.post("/projects", json={"project_id": "plist-noname"})
     assert r.status_code == 200
-    # language는 미지정이어도 응답에 실린다 — 실제로 돌게 될 언어("ko")를
-    # 말해야 프론트가 폴백 규칙을 또 알 필요가 없다.
-    # 만든 사람이 소유자다(로컬 개발의 요청자는 local-dev, 역할은 admin).
+    # language is included in the response even when unspecified — stating the language that will actually
+    # run ("ko") means the frontend does not need to know the fallback rule as well.
+    # The creator is the owner (in local development the requester is local-dev, with the admin role).
     assert r.json() == {"project_id": "plist-noname", "name": None, "model_id": None,
                         "effort": None, "language": "ko",
                         "owner": "local-dev", "access": "admin", "members": []}
@@ -41,7 +41,7 @@ def test_list_projects_is_empty_capable():
     assert isinstance(r.json()["projects"], list)
 
 
-# ---- 페이지네이션 + progress (2026-07-21-project-list-table spec) ----
+# ---- Pagination + progress (2026-07-21-project-list-table spec) ----
 from aipds import app as app_module
 from fakes.in_memory_s3 import FakeS3Store
 
@@ -71,7 +71,7 @@ def test_list_paginates_and_reports_total():
     r2 = client.get("/projects", params={"page": 2, "size": 2})
     assert [p["project_id"] for p in r2.json()["projects"]] == ["pg-c"]
     r3 = client.get("/projects", params={"page": 3, "size": 2})
-    assert r3.json()["projects"] == []          # 범위 초과는 빈 배열, 200
+    assert r3.json()["projects"] == []          # out of range is an empty array, 200
 
 
 def test_page_and_size_bounds_are_422():
@@ -96,8 +96,8 @@ def test_progress_read_from_s3_state(monkeypatch):
     _register("pg-state")
     r = client.get("/projects", params={"size": 50})
     row = next(p for p in r.json()["projects"] if p["project_id"] == "pg-state")
-    # 진행용 단계(Workspace Detection·Mode Selection)는 세지 않고 6개 capability로 센다.
-    # Envision 뒤의 것은 아직 목록에 없을 뿐이므로 분모에 남는다.
+    # Progress-only steps (Workspace Detection, Mode Selection) are not counted; it counts by the 6 capabilities.
+    # Those after Envision are simply not in the list yet, so they remain in the denominator.
     assert row["progress"] == {
         "current_stage": "Envision", "completed": 0, "total": 6}
 
@@ -128,13 +128,13 @@ def test_progress_null_when_s3_raises(monkeypatch):
     _register("pg-s3err")
     r = client.get("/projects", params={"size": 50})
     row = next(p for p in r.json()["projects"] if p["project_id"] == "pg-s3err")
-    assert row["progress"] is None                    # fail-soft, 200 유지
+    assert row["progress"] is None                    # fail-soft, stays 200
 
 
 def test_listing_does_not_initialize_workspaces(monkeypatch):
-    # 목록 조회가 ensure_workspace/lazy 초기화를 유발하면 안 된다 — 복원 직후
-    # 프로젝트 100개가 등록만 된 상태에서 목록을 열어도 워크스페이스는 그대로
-    # 비어 있어야 한다.
+    # Listing must not trigger ensure_workspace/lazy initialization — right after a restore,
+    # even if the list is opened while 100 projects are only registered, the workspaces must
+    # stay empty.
     monkeypatch.setenv("AIPDS_S3_BUCKET", "bkt")
     monkeypatch.setattr(app_module, "s3_store_factory", lambda pid: FakeS3Store())
     _register("pg-lazy")
@@ -142,10 +142,10 @@ def test_listing_does_not_initialize_workspaces(monkeypatch):
     assert not app_module.registry.has_workspace("pg-lazy")
 
 
-# ---- created_at 오름차순 정렬 (2026-07-22) ----
+# ---- Sort by created_at ascending (2026-07-22) ----
 
 def test_list_sorted_by_created_at_ascending():
-    # 등록 순서를 뒤섞어도 created_at 오름차순(오래된 것 먼저)으로 나온다.
+    # Even with the registration order shuffled, it comes out in created_at ascending order (oldest first).
     app_module.registry.register("sort-c", None, created_at="2026-07-22T03:00:00+00:00")
     app_module.registry.register("sort-a", None, created_at="2026-07-22T01:00:00+00:00")
     app_module.registry.register("sort-b", None, created_at="2026-07-22T02:00:00+00:00")
@@ -162,8 +162,8 @@ def test_list_includes_created_at_field():
 
 
 def test_missing_created_at_sorts_first_and_is_null():
-    # 구 매니페스트(created_at 없음) 호환: None은 맨 앞 + 응답에 null.
-    app_module.registry.register("sort-old", None)  # created_at 미지정
+    # Compatibility with old manifests (no created_at): None goes first + null in the response.
+    app_module.registry.register("sort-old", None)  # created_at unspecified
     app_module.registry.register("sort-new", None, created_at="2026-07-22T09:00:00+00:00")
     r = client.get("/projects", params={"size": 50})
     rows = [p["project_id"] for p in r.json()["projects"] if p["project_id"].startswith("sort-")]

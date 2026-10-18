@@ -6,10 +6,10 @@ import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import { AipdsHostingStack } from '../lib/aipds-hosting-stack';
 import { addSandboxStacks, pinnedFromEnv } from '../lib/sandbox-stacks';
 
-// lib/sandbox-stacks.ts의 두 모드.
-//   - 새 환경: 두 스택이 HostingStack에서 값을 참조로 받는다 → `cdk deploy --all` 한 번으로 끝난다.
-//   - 떠 있는 환경(pinned): 두 스택이 HostingStack에 **의존하지 않는다.** 의존하면
-//     `cdk deploy AipdsAgentCredsStack`이 HostingStack까지 배포하고, 그 배포는 EC2를 교체할 수 있다.
+// The two modes of lib/sandbox-stacks.ts.
+//   - New environment: both stacks receive values from HostingStack by reference → a single `cdk deploy --all` finishes it.
+//   - Running environment (pinned): both stacks **do not depend on HostingStack.** If they did,
+//     `cdk deploy AipdsAgentCredsStack` would also deploy HostingStack, and that deployment can replace the EC2 instance.
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 const PINNED = {
@@ -32,7 +32,7 @@ function build(pinned?: typeof PINNED) {
     hostedUiDomain: auth.hostedUiDomain,
   });
   const stacks = addSandboxStacks(app, ENV, drill, hosting, pinned);
-  // 스택 간 참조가 만드는 의존성은 synth에서 해석된다.
+  // Dependencies created by cross-stack references are resolved at synth.
   const asm = app.synth();
   const dependsOn = (stack: cdk.Stack, on: cdk.Stack) =>
     asm.getStackArtifact(stack.artifactId).dependencies.some((d) => d.id === on.artifactId);
@@ -60,7 +60,7 @@ function build(pinned?: typeof PINNED) {
     assert.ok(dependsOnHosting(stack),
       `${stack.stackName} takes HostingStack's values in a new environment — deploy --all orders it after`);
   }
-  // AgentRole의 신뢰 주체가 실제 인스턴스 롤이다(참조로 온 값).
+  // AgentRole's trusted principal is the actual instance role (a value passed by reference).
   const role = Object.values(Template.fromStack(agentCreds).findResources('AWS::IAM::Role'))[0] as any;
   assert.ok(JSON.stringify(role.Properties.AssumeRolePolicyDocument).includes('Fn::ImportValue'),
     'the AgentRole trusts the HostingStack instance role');
@@ -73,10 +73,10 @@ assert.deepStrictEqual(pinnedFromEnv({
   AIPDS_ORIGIN_VERIFY_SECRET_ARN: PINNED.originVerifySecretArn,
   AIPDS_ARTIFACTS_BUCKET: PINNED.artifactsBucket,
 }), PINNED);
-// 일부만 고정하면 나머지 스택이 HostingStack에 묶인다 — 그 배포가 HostingStack을 끌고 온다.
+// Pinning only some values ties the remaining stacks to HostingStack — their deployment drags HostingStack along.
 assert.throws(() => pinnedFromEnv({ AIPDS_INSTANCE_ROLE_ARN: PINNED.instanceRoleArn }), /all or none/);
 
-// 버킷 CORS 권한: 그 버킷의 CORS 읽기·쓰기뿐, 인스턴스 롤에.
+// Bucket CORS permission: only CORS read/write on that bucket, granted to the instance role.
 {
   const { uploadCors } = build(PINNED);
   const t = Template.fromStack(uploadCors);

@@ -8,8 +8,8 @@ import {
 import { useT } from "@/lib/i18n/provider";
 import { COLOUR_RE } from "./DesignProfileCard";
 
-//: `as const` — useT()는 정의된 키만 받으므로 리터럴로 좁혀야 한다(오타가
-//  런타임이 아니라 타입 검사에서 걸린다).
+//: `as const` — useT() accepts only defined keys, so it must be narrowed to literals (typos
+//  are caught by type checking, not at runtime).
 const ORIGIN_KEY = {
   fence: "admin.designOriginFence",
   extracted: "admin.designOriginExtracted",
@@ -17,13 +17,13 @@ const ORIGIN_KEY = {
 } as const satisfies Record<DesignPreview["origin"], string>;
 
 /**
- * 업로드는 두 단계다: 문서에서 토큰을 읽고(1) 관리자가 확인한 뒤 저장한다(2).
+ * Upload has two steps: read tokens from the document (1), and save after the admin confirms (2).
  *
- * 왜 확인 단계가 있는가(2026-08-19 실측): ```tokens 펜스는 우리 서식에만 있는
- * 관례라 밖에서 만들어진 DESIGN.md는 펜스 없이 올라온다. 그 문서에서 값을 뽑는
- * 일에는 문서가 답하지 않는 자리가 있다 — 브랜드 헤딩과 CTA에 서로 다른 초록을
- * 주는 문서에서 어느 것이 `primary`인지는 사람만 안다. 그래서 저장 전에 값을
- * 보여주고 고칠 수 있게 한다.
+ * Why there is a confirmation step (observed 2026-08-19): the ```tokens fence is a convention only our
+ * format has, so DESIGN.md files made elsewhere come up without the fence. Extracting values from such
+ * a document involves slots the document does not answer — in a document that gives different greens to
+ * the brand heading and the CTA, only a person knows which one is `primary`. So the values are shown
+ * before saving and can be corrected.
  */
 export function UploadDesignModal(
   { onUploaded, onClose, replacing }:
@@ -36,8 +36,8 @@ export function UploadDesignModal(
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // 400의 detail은 백엔드가 짚어준 줄 번호다 — 그대로 보여준다. 여기서 다시
-  // 파싱하지 않는다(파서가 두 벌이 되면 어긋난다).
+  // The 400's detail is the line number the backend pointed out — shown as is. It is not re-parsed
+  // here (two parsers would drift).
   function show(err: unknown) {
     setError(err instanceof ApiError && err.detail
       ? err.detail : t("admin.designUploadFailed"));
@@ -63,8 +63,8 @@ export function UploadDesignModal(
     setBusy(true);
     setError(null);
     try {
-      // 문서에 이미 펜스가 있으면 값을 보내지 않는다 — 서버도 무시하지만, 보내지
-      // 않는 것이 "그 파일이 권위다"를 코드로 말한다.
+      // If the document already has a fence, no values are sent — the server ignores them anyway, but not
+      // sending them says "that file is the authority" in code.
       await uploadDesignProfile(file,
         preview.origin === "fence" ? undefined : tokens);
       onUploaded();
@@ -96,7 +96,7 @@ export function UploadDesignModal(
                className="mt-1 block w-full text-sm"
                onChange={(e) => {
                  setFile(e.target.files?.[0] ?? null);
-                 // 파일을 바꾸면 앞선 확인 결과는 그 파일의 것이 아니다.
+                 // Changing the file means the earlier confirmation result no longer belongs to that file.
                  setPreview(null);
                  setTokens({});
                }} />

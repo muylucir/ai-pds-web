@@ -1,4 +1,4 @@
-# backend/tests/test_access_log.py — 인증된 요청의 신원 기록(aipds/access_log.py).
+# backend/tests/test_access_log.py — identity logging for authenticated requests (aipds/access_log.py).
 from __future__ import annotations
 
 import json
@@ -48,9 +48,9 @@ def test_state_changes_and_downloads_are_recorded_with_the_requester(caplog, mon
     client = _probe()
 
     client.post("/projects/p1/things?t=query-value")
-    client.get("/projects/p1")                 # 폴링 — 남기지 않는다
-    client.get("/projects/p1/export")          # 첨부 파일 — 남긴다
-    client.post("/public/answer")              # 신원이 없다 — 남기지 않는다
+    client.get("/projects/p1")                 # polling: not logged
+    client.get("/projects/p1/export")          # attachment: logged
+    client.post("/public/answer")              # no identity: not logged
 
     records = _records(caplog)
     assert [(r["method"], r["path"]) for r in records] == [

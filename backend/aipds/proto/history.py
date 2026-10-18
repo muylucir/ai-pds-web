@@ -1,38 +1,39 @@
-# backend/aipds/proto/history.py — 프로토타입 빌드 대화의 히스토리.
+# backend/aipds/proto/history.py — history of prototype build conversations.
 #
-# 빌드 패널이 다시 열릴 때 보여줄 지난 대화다. 정본은 빌드 에이전트의 SDK
-# 트랜스크립트(proto/session_store.py가 S3에 미러링한다)이고, 이 모듈은 그것을
-# Discovery와 같은 HistoryItem으로 바꾼다 — 변환 자체는 session_history의
-# transform_cli_transcript를 그대로 쓴다. 두 화면이 같은 ChatTimeline으로 그리므로
-# 표현이 갈라지면 안 된다.
+# The past conversation to show when the build panel reopens. The source of truth is the build
+# agent's SDK transcript (proto/session_store.py mirrors it to S3), and this module turns it into
+# the same HistoryItem as Discovery — the conversion itself reuses session_history's
+# transform_cli_transcript as is. Both screens draw with the same ChatTimeline, so the
+# representation must not diverge.
 #
-# Discovery와 다른 점이 셋이고, 각각 이 모듈이 존재하는 이유다:
+# It differs from Discovery in three ways, and each is a reason this module exists:
 #
-#   1. 대화가 **여러 SDK 세션**에 걸쳐 있다. 완료된 빌드를 개선하면 세션이 새 id로
-#      갈아탄다(proto/session._resolve_session_id의 handoff 분기) — 긴 빌드 맥락
-#      대신 요약만 지고 가기 위해서다. session.json은 현재 id 하나만 기억하므로,
-#      트랜스크립트 prefix 아래의 세션 전부를 읽어 **첫 줄의 타임스탬프 순**으로
-#      잇는다. 순서를 따로 적어 두지 않는 이유: 그 값은 CLI가 이미 줄마다 쓰고
-#      있고, 따로 둔 순서표는 트랜스크립트와 어긋날 수 있는 두 번째 사본이다.
+#   1. The conversation spans **multiple SDK sessions**. Improving a completed build switches
+#      the session to a new id (the handoff branch of proto/session._resolve_session_id) — to carry
+#      only a summary instead of the long build context. session.json remembers only the current id,
+#      so we read every session under the transcript prefix and join them **in order of the first
+#      line's timestamp**. Why the order is not recorded separately: the CLI already writes that value
+#      on every line, and a separate order table would be a second copy that can drift from the transcript.
 #
-#   2. 트랜스크립트의 사용자 줄이 **사용자가 한 말이 아닐 수 있다.** 세션의 첫
-#      메시지는 서버가 개시 프롬프트(plan/resume/handoff)로 감싸서 보낸다
-#      (routes/prototypes._opening_text). 그대로 복원하면 긴 지시문이 사용자
-#      말풍선으로 뜬다. 그래서 개시 턴마다 "보낸 프롬프트 → 화면에 보인 말"을
-#      기록하고(`record_opening`), 복원이 프롬프트의 해시로 조인한다. 템플릿을
-#      역파싱하지 않는다 — 프롬프트는 언어별로 바뀌는 우리 문장이고, 그 모양에
-#      기대는 파서는 문구를 고치는 순간 조용히 틀린다. 레코드가 없는 개시 턴(이
-#      기록이 생기기 전의 세션)은 트랜스크립트 그대로 보인다.
+#   2. A user line in the transcript **may not be something the user said.** The session's first
+#      message is sent wrapped by the server in an opening prompt (plan/resume/handoff)
+#      (routes/prototypes._opening_text). Restoring it as is would show a long instruction as the
+#      user's bubble. So for each opening turn we record "prompt sent → text shown on screen"
+#      (`record_opening`), and restore joins on the prompt's hash. We do not reverse-parse the
+#      template — the prompt is our own wording that changes per language, and a parser relying on
+#      its shape goes silently wrong the moment the wording is edited. Opening turns without a record
+#      (sessions from before this record existed) show the transcript as is.
 #
-#   3. 열린 세션의 턴은 **세션이 재생한다**(usePrototypeStream.resume이 턴 로그를
-#      처음부터 흘린다). 완료 카드와 진행 중인 질문 폼은 그 경로에만 있으므로
-#      재생을 없앨 수 없고, 히스토리가 같은 턴을 또 내면 대화가 두 번 보인다.
-#      그래서 히스토리는 열린 세션의 첫 턴이 시작된 시각(`before`) 앞에서 자른다.
+#   3. An open session's turns are **replayed by the session** (usePrototypeStream.resume streams the
+#      turn log from the start). The completion card and the in-progress question form exist only on
+#      that path, so the replay cannot be removed, and if history emitted the same turns again the
+#      conversation would appear twice. So history is cut before the time the open session's first
+#      turn started (`before`).
 #
-# 레코드는 전부 `prototypes/{slug}/history/` 아래에 있다. 프로토타입 초기화가
-# `prototypes/{slug}/`째 지우므로(proto/session.purge_session_state) 대화와 함께
-# 사라지고, 프로젝트 번들은 트랜스크립트와 같은 이유로 담지 않는다
-# (project_bundle의 _PROTO_CONVERSATION_RE).
+# All records live under `prototypes/{slug}/history/`. Prototype reset deletes all of
+# `prototypes/{slug}/` (proto/session.purge_session_state), so they disappear along with the
+# conversation, and the project bundle does not include them for the same reason as transcripts
+# (_PROTO_CONVERSATION_RE in project_bundle).
 from __future__ import annotations
 
 import asyncio
@@ -50,7 +51,7 @@ from aipds.session_history import transform_cli_transcript
 
 _log = logging.getLogger(__name__)
 
-#: 라이브 질문 카드의 이름(proto/builder.py의 _on_can_use_tool과 같은 값).
+#: Name of the live question card (same value as _on_can_use_tool in proto/builder.py).
 QUESTION_NAME = "prototype-questions"
 
 
@@ -67,7 +68,7 @@ def answers_prefix(slug: str) -> str:
 
 
 def context_key(slug: str) -> str:
-    """턴의 마지막 컨텍스트 사용량(proto/session.py가 쓴다)."""
+    """The turn's last context usage (written by proto/session.py)."""
     return f"{history_prefix(slug)}context.json"
 
 
@@ -77,11 +78,11 @@ def _prompt_digest(prompt: str) -> str:
 
 async def record_opening(s3: S3StoreLike, slug: str, *, prompt: str,
                          shown: str | None) -> None:
-    """개시 턴 하나: 에이전트에게 보낸 `prompt`를 화면에서는 `shown`으로 보인다.
+    """One opening turn: the `prompt` sent to the agent is shown on screen as `shown`.
 
-    `shown`이 None이면 자동 개시(사용자가 아무 말도 하지 않았다) — 복원에서 사용자
-    말풍선을 만들지 않는다. 실패는 삼킨다: 이 레코드는 복원의 문구일 뿐이고, 없으면
-    그 턴이 트랜스크립트 그대로 보일 뿐이다. 턴을 막을 이유가 아니다.
+    If `shown` is None it was an auto-open (the user said nothing) — restore does not create a
+    user bubble. Failures are swallowed: this record is only restore wording, and without it the
+    turn simply appears as in the transcript. It is no reason to block the turn.
     """
     try:
         await s3.put(f"{_inputs_prefix(slug)}{_prompt_digest(prompt)}.json",
@@ -91,11 +92,11 @@ async def record_opening(s3: S3StoreLike, slug: str, *, prompt: str,
 
 
 class AnswerLog:
-    """빌더가 받은 답을 기록한다 — Discovery의 answer_store와 같은 레코드, 다른 prefix.
+    """Records the answers the builder received — the same record as Discovery's answer_store, under a different prefix.
 
-    빌더는 S3를 모르고(세션이 안다) 슬러그도 모르므로, 기록할 곳을 묶어서 넘긴다.
-    레코드의 근거는 agent/answer_store.py 헤더와 같다: 트랜스크립트의 tool_result는
-    CLI가 영어로 옮겨 적은 문장이라 답을 펼 수 없다.
+    The builder does not know S3 (the session does) or the slug, so the place to record is bundled and passed in.
+    The rationale for the record is the same as the agent/answer_store.py header: the transcript's tool_result
+    is a sentence the CLI rewrote in English, so the answers cannot be unpacked from it.
     """
 
     def __init__(self, s3: S3StoreLike, slug: str):
@@ -104,8 +105,8 @@ class AnswerLog:
 
     async def save(self, *, tool_use_id: str, interrupt_id: str,
                    questions: dict, answers: dict[str, str]) -> None:
-        """절대 턴을 실패시키지 않는다. tool_use_id가 없으면 조인할 수 없으므로
-        쓰지 않는다(claude_driver._save_answers_quietly와 같은 규율)."""
+        """Never fails the turn. Without a tool_use_id it cannot be joined, so it is
+        not written (same discipline as claude_driver._save_answers_quietly)."""
         if not tool_use_id:
             return
         try:
@@ -117,7 +118,7 @@ class AnswerLog:
 
 
 async def _load_inputs(s3: S3StoreLike, slug: str) -> dict[str, str | None]:
-    """프롬프트 해시 → 보인 말. 어떤 실패도 그 레코드만 건너뛴다."""
+    """Prompt hash → shown text. Any failure skips only that record."""
     prefix = _inputs_prefix(slug)
     try:
         keys = await s3.list(prefix)
@@ -141,20 +142,20 @@ async def _load_inputs(s3: S3StoreLike, slug: str) -> dict[str, str | None]:
 
 
 async def _load_sessions(s3: S3StoreLike, slug: str) -> dict[str, list[dict]]:
-    """세션 id → 메인 트랜스크립트 줄(쓴 순서). 서브에이전트 줄은 읽지 않는다.
+    """Session id → main transcript lines (in write order). Subagent lines are not read.
 
-    서브에이전트는 라이브에서도 말풍선이 아니다 — 총괄의 Agent 도구 한 줄과 끝난
-    뒤의 요약 한 줄로만 보인다. 그 대화를 펼치면 빌드 한 번이 수백 개의 말풍선이 된다.
+    Subagents are not bubbles even live — they appear only as the lead's single Agent tool line and a
+    single summary line after they finish. Expanding those conversations would turn one build into hundreds of bubbles.
     """
     root = transcript_prefix(slug)
-    # 키 모양: {root}{session_id}/main/NNNNNNNN.jsonl (proto/session_store._session_prefix)
+    # Key shape: {root}{session_id}/main/NNNNNNNN.jsonl (proto/session_store._session_prefix)
     listed = sorted((k, etag) for k, etag in await list_with_etags(s3, root)
                     if k[len(root):].split("/")[1:2] == ["main"])
     keys = [k for k, _ in listed]
-    # 병렬 GET + ETag 캐시 — agent/session_store.load_transcript와 같은 판단이다.
-    # 배치는 seq 키로 붙여 쓰기만 하므로 패널을 다시 열 때 새로 받을 것은 새 배치뿐이고,
-    # 캐시 없이는 열 때마다 지난 세션 전부를 다시 받는다. 빌드는 개선할 때마다 세션이
-    # 늘어 Discovery보다 무겁다(실측 2026-10-17: 13세션 23배치 8.1MB인 프로토타입).
+    # Parallel GET + ETag cache — the same judgment as agent/session_store.load_transcript.
+    # Batches are only appended under seq keys, so on reopening the panel only new batches need to be fetched,
+    # and without the cache every past session is re-fetched on each open. Builds add a session on every
+    # improvement, so they are heavier than Discovery (observed 2026-10-17: a prototype with 13 sessions, 23 batches, 8.1MB).
     bodies = await asyncio.gather(*(get_by_etag(s3, k, etag) for k, etag in listed),
                                  return_exceptions=True)
     sessions: dict[str, list[dict]] = {}
@@ -170,7 +171,7 @@ async def _load_sessions(s3: S3StoreLike, slug: str) -> dict[str, list[dict]]:
             try:
                 lines.append(json.loads(line))
             except json.JSONDecodeError:
-                continue  # 쓰는 도중 잘린 줄 하나가 세션 전체를 잃게 하지 않는다
+                continue  # one line truncated mid-write does not lose the whole session
     return sessions
 
 
@@ -189,11 +190,11 @@ def _first_timestamp(lines: list[dict]) -> float:
         ts = _timestamp(line)
         if ts is not None:
             return ts
-    return float("inf")  # 시각이 없는 세션은 맨 뒤 — 순서를 지어낼 근거가 없다
+    return float("inf")  # sessions without a timestamp go last — there is no basis to invent an order
 
 
 def _before(lines: list[dict], cutoff: float) -> list[dict]:
-    """`cutoff` 이후의 줄을 버린다. 시각이 없는 부기 줄은 앞 줄을 따른다."""
+    """Drops lines after `cutoff`. Bookkeeping lines without a timestamp follow the preceding line."""
     for i, line in enumerate(lines):
         ts = _timestamp(line)
         if ts is not None and ts >= cutoff:
@@ -202,7 +203,7 @@ def _before(lines: list[dict], cutoff: float) -> list[dict]:
 
 
 def _prompt_text(line: dict) -> str | None:
-    """사용자 줄의 프롬프트 문자열. SDK의 query(prompt)는 평문 문자열로 기록된다."""
+    """The prompt string of a user line. The SDK's query(prompt) is recorded as a plain string."""
     msg = line.get("message")
     if not isinstance(msg, dict) or msg.get("role") != "user":
         return None
@@ -216,12 +217,12 @@ def _prompt_text(line: dict) -> str | None:
 
 
 def _segments(lines: list[dict], inputs: dict[str, str | None]) -> list[list[dict]]:
-    """개시 프롬프트를 보인 말로 바꾸고, 대화를 턴 경계가 사라지지 않게 자른다.
+    """Turns opening prompts into the shown text, and cuts the conversation so turn boundaries are not lost.
 
-    자동 개시는 사용자 말풍선이 없다. 그 줄을 그냥 지우면 앞 턴의 마지막
-    말풍선과 이 턴의 첫 말풍선이 하나로 합쳐진다 — transform_cli_transcript의 턴
-    경계가 사용자 발화이기 때문이다. 그래서 거기서 대화를 끊고 조각마다 따로
-    변환한다.
+    An auto-open has no user bubble. Simply deleting that line would merge the previous turn's last
+    bubble and this turn's first bubble into one — because transform_cli_transcript's turn boundary
+    is a user utterance. So the conversation is cut there and each piece is converted
+    separately.
     """
     out: list[list[dict]] = [[]]
     for line in lines:
@@ -240,10 +241,10 @@ def _segments(lines: list[dict], inputs: dict[str, str | None]) -> list[list[dic
 
 async def load_history(s3: S3StoreLike, slug: str, *,
                        before: float | None = None) -> list[HistoryItem]:
-    """이 프로토타입의 지난 빌드 대화. `before`(epoch 초) 이후의 줄은 뺀다.
+    """This prototype's past build conversations. Lines after `before` (epoch seconds) are excluded.
 
-    어떤 실패도 빈 목록으로 강등한다 — Discovery의 list_history와 같은 원칙이다
-    (히스토리는 보조 데이터이고 패널을 막지 않는다).
+    Any failure is downgraded to an empty list — the same principle as Discovery's list_history
+    (history is auxiliary data and does not block the panel).
     """
     try:
         sessions, inputs, answers = await asyncio.gather(
@@ -265,12 +266,12 @@ async def load_history(s3: S3StoreLike, slug: str, *,
 
 
 async def load_context(s3: S3StoreLike, slug: str) -> dict | None:
-    """세션이 닫힌 뒤 보일 컨텍스트 사용량. **다음 대화에 대해서도 맞을 때만** 준다.
+    """Context usage to show after the session closes. Given **only when it is also right for the next conversation**.
 
-    완료된 빌드를 개선하면 새 SDK 세션으로 시작하므로(handoff) 사용량이 거의 0에서
-    다시 시작한다 — 닫힌 세션의 85%를 보이면 그 사실과 반대로 읽힌다. 그래서 레코드의
-    세션 id가 지금의 session.json과 같고, 다음 start()를 새 대화로 만드는 handoff가
-    없을 때만 돌려준다.
+    Improving a completed build starts a new SDK session (handoff), so usage restarts from nearly 0 —
+    showing the closed session's 85% would read as the opposite of that fact. So it is returned only when
+    the record's session id matches the current session.json and there is no handoff that would make
+    the next start() a new conversation.
     """
     from aipds.proto.session import handoff_key, session_key
     record = await load_record(s3, context_key(slug))

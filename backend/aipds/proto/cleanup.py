@@ -1,20 +1,23 @@
-# backend/aipds/proto/cleanup.py — 프로젝트 단위 프로토타입 정리.
+# backend/aipds/proto/cleanup.py — project-level prototype cleanup.
 #
-# 프로토타입은 **기록과 실체가 다른 곳에 산다.** S3의 projects/{pid}/prototypes/**
-# 는 기록(스펙·트랜스크립트·handoff·설문)이고, 실체는 EC2 로컬 디스크의
-# {proto_root}/{pid}/{slug}/(빌드 트리 + 호스팅 프로세스 + 접근 토큰)와 백엔드
-# 인메모리(빌드 세션·토큰 캐시)에 있다. 그래서 프로젝트 삭제가
-# projects/{pid}/ 프리픽스만 지우면 실체가 전부 남는다 — 수백MB~GB짜리 빌드
-# 트리, 계속 도는 프리뷰 프로세스와 그것이 쥔 포트, 그리고 **이미 공유된
-# 프리뷰 링크가 여전히 열리는 상태**(프록시는 프로젝트 등록 여부를 보지 않고
-# proto_host의 토큰·상태만 본다).
+# A prototype's **records and its live parts live in different places.** S3's
+# projects/{pid}/prototypes/** holds the records (spec, transcript, handoff,
+# survey), while the live parts are on the EC2 local disk at
+# {proto_root}/{pid}/{slug}/ (build tree + hosting process + access token) and in
+# backend memory (build sessions, token cache). So if project deletion removes
+# only the projects/{pid}/ prefix, all the live parts remain — a build tree of
+# hundreds of MB to GB, a preview process that keeps running and the port it
+# holds, and **a state where already-shared preview links still open** (the proxy
+# does not check whether the project is registered; it only looks at proto_host's
+# token and state).
 #
-# 여기서 도는 순서는 프로토타입 개별 리셋(routes/prototypes.py의
-# reset_prototype)과 같다. 그쪽 순서가 load-bearing인 이유가 그대로 적용된다:
-# 설문 토큰 인덱스(surveys/by-token/, 버킷 루트)는 역방향 조회가 없어서
-# **문항 파일을 읽어야** 어떤 토큰이 이 슬러그를 가리키는지 알 수 있다. 그래서
-# 설문 purge가 S3 프로젝트 프리픽스 삭제보다 반드시 먼저 와야 한다 — 순서가
-# 뒤집히면 그 인덱스는 어떤 코드로도 도달할 수 없는 채로 영구히 남는다.
+# The order run here is the same as the per-prototype reset (reset_prototype in
+# routes/prototypes.py), and the reason that order is load-bearing applies as is:
+# the survey token index (surveys/by-token/, at the bucket root) has no reverse
+# lookup, so **you have to read the question file** to know which token points
+# to this slug. Therefore the survey purge must come before the S3 project-prefix
+# deletion — if the order is flipped, that index stays forever, unreachable by
+# any code.
 from __future__ import annotations
 
 import logging
@@ -22,14 +25,14 @@ from typing import Any, Callable
 
 _log = logging.getLogger(__name__)
 
-#: 프로젝트 스코프 스토어(projects/{pid}/) 기준 프로토타입 기록 프리픽스.
+#: Prototype record prefix relative to the project-scoped store (projects/{pid}/).
 _PROTO_PREFIX = "prototypes/"
 
 
 async def _slugs_from_s3(s3: Any) -> set[str]:
-    """S3 기록에서 슬러그를 뽑는다. 설문 트리가 이 아래 있으므로
-    (survey.store.survey_prefix == "prototypes/{slug}/survey/") 토큰 회수
-    대상은 이 열거로 전부 덮인다."""
+    """Extract slugs from the S3 records. Since the survey tree lives under this
+    prefix (survey.store.survey_prefix == "prototypes/{slug}/survey/"), this
+    enumeration covers every token that needs to be reclaimed."""
     out: set[str] = set()
     for key in await s3.list(_PROTO_PREFIX):
         slug, sep, _ = key[len(_PROTO_PREFIX):].partition("/")
@@ -47,25 +50,28 @@ async def purge_project_prototypes(
     survey_store_factory: Callable[[str, str], Any] | None = None,
     preview_store: Any | None = None,
 ) -> list[str]:
-    """이 프로젝트의 **모든** 슬러그에 리셋 경로를 돌린다.
+    """Run the reset path for **every** slug of this project.
 
-    슬러그당 순서: 빌드 세션 종료 → 설문 purge(토큰 인덱스 회수 포함) → 빌드
-    트리/접근 토큰 purge.
+    Order per slug: close the build session → survey purge (including reclaiming
+    the token index) → build tree / access token purge.
 
-    반환값은 실패 라벨 목록이고 빈 목록이 전부 성공이다. 호출부(프로젝트 삭제
-    라우트)는 실패가 하나라도 있으면 **S3 프로젝트 프리픽스를 지우지 않고**
-    500을 내야 한다: 설문 purge가 실패한 상태에서 프리픽스를 지우면 문항 파일이
-    사라져 토큰 인덱스를 회수할 방법이 영구히 없어진다(SurveyStore.purge의
-    docstring이 같은 이유로 그쪽 경로에도 게이트를 둔다).
+    The return value is a list of failure labels; an empty list means everything
+    succeeded. If there is even one failure, the caller (the project-deletion
+    route) must **not delete the S3 project prefix** and must return 500: deleting
+    the prefix after a failed survey purge removes the question files, and with
+    them any way to reclaim the token index, permanently (SurveyStore.purge's
+    docstring puts a gate on that path for the same reason).
 
-    모든 단계가 멱등이라 재시도가 수렴한다. 그래도 풀리지 않는 잔여물(예:
-    node_modules 깊은 곳의 권한 오류로 rmtree가 남기는 트리)은 운영자가
-    `{proto_root}/{pid}` 를 직접 지우고 다시 삭제하면 된다 — 조용히 남기는
-    대신 실패를 보이게 하는 쪽을 고른다.
+    Every step is idempotent, so retries converge. Residue that still does not
+    clear (e.g., a tree rmtree leaves behind because of a permission error deep in
+    node_modules) can be handled by an operator deleting `{proto_root}/{pid}`
+    directly and deleting again — we choose to make the failure visible rather
+    than leave things behind silently.
 
-    `s3`/`survey_store_factory`가 None이면 설문 단계를 건너뛴다(버킷 미설정
-    로컬·테스트: durable_projects_enabled()가 False인 경우). 그때도 로컬 실체
-    정리는 그대로 돈다 — 빌드 트리와 세션은 S3와 무관하게 존재한다.
+    If `s3`/`survey_store_factory` is None, the survey step is skipped (local runs
+    and tests with no bucket configured: when durable_projects_enabled() is
+    False). Local cleanup still runs as usual — the build trees and sessions exist
+    independently of S3.
     """
     slugs: set[str] = set()
     try:
@@ -78,8 +84,9 @@ async def purge_project_prototypes(
         try:
             slugs |= await _slugs_from_s3(s3)
         except Exception:
-            # 목록을 못 읽으면 무엇을 남기는지 알 수 없다. 부분 정리 후 S3를
-            # 지우면 안 읽힌 슬러그의 토큰 인덱스가 고아가 되므로 여기서 멈춘다.
+            # If the listing cannot be read, we cannot know what we would leave
+            # behind. Deleting S3 after a partial cleanup would orphan the token
+            # index of the unread slugs, so stop here.
             _log.exception("prototype record listing failed for %s", project_id)
             return ["slug-list"]
 
@@ -90,7 +97,7 @@ async def purge_project_prototypes(
             try:
                 await session.close()
             except Exception:
-                # 세션이 안 닫히면 claude 서브프로세스와 동시 빌드 슬롯이 샌다.
+                # If the session does not close, the claude subprocess and a concurrent build slot leak.
                 _log.exception("delete: session close failed: %s/%s", project_id, slug)
                 failures.append(f"session:{slug}")
             else:
@@ -102,14 +109,15 @@ async def purge_project_prototypes(
             except Exception:
                 _log.exception("delete: survey purge failed: %s/%s", project_id, slug)
                 failures.append(f"survey:{slug}")
-                # 이 슬러그는 더 진행하지 않는다 — 리셋 경로의 게이트와 같은
-                # 판단이다. 설문이 남은 채 빌드 트리를 지우면 재시도가 회수할
-                # 문항은 그대로인데 호스팅할 실체가 없는 상태가 된다.
+                # Go no further with this slug — the same call as the reset path's
+                # gate. Deleting the build tree while the survey remains leaves the
+                # questions for a retry to reclaim but nothing left to host.
                 continue
 
-        # 프리뷰 토큰의 루트 색인(proto/store.py). 설문 토큰 색인과 같은 사정이다 —
-        # 토큰을 읽을 곳이 S3 프로젝트 프리픽스 안이라 그것이 지워지기 **전에**
-        # 회수해야 하고, 실패하면 호출부가 프리픽스를 지우지 않게 실패로 보고한다.
+        # The root index of preview tokens (proto/store.py). Same situation as the
+        # survey token index — the token is read from inside the S3 project
+        # prefix, so it must be reclaimed **before** that prefix is deleted, and a
+        # failure is reported so the caller does not delete the prefix.
         if preview_store is not None:
             try:
                 await preview_store.forget_token(slug)
@@ -125,16 +133,17 @@ async def purge_project_prototypes(
             _log.exception("delete: build-tree purge failed: %s/%s", project_id, slug)
             failures.append(f"build-tree:{slug}")
 
-    # 부모 디렉터리(`{proto_root}/{pid}`)는 슬러그 루프 **뒤에** 지운다.
+    # The parent directory (`{proto_root}/{pid}`) is deleted **after** the slug loop.
     #
-    # 순서가 load-bearing이다: 슬러그별 `purge`는 각각 `stop()`을 먼저 부르는데,
-    # 부모를 먼저 지우면 도는 `npm start` 밑에서 트리가 사라져 프로세스가 고아가
-    # 되고 포트를 계속 물고 있다(`ProtoHost.purge`의 docstring이 경고하는 그
-    # 실패). `purge_project`는 아무것도 멈추지 않으므로 이 위치가 유일하게 안전한
-    # 자리다.
+    # The order is load-bearing: each per-slug `purge` calls `stop()` first, but if
+    # the parent were deleted first, the tree would vanish from under the running
+    # `npm start`, orphaning the process while it keeps holding its port (the very
+    # failure `ProtoHost.purge`'s docstring warns about). `purge_project` stops
+    # nothing, so this is the only safe place for it.
     #
-    # 실패가 있으면 건너뛴다: 남은 슬러그의 트리를 부모째로 지우면 재시도가
-    # 회수해야 할 실체가 사라진다 — 슬러그별 게이트와 같은 판단이다.
+    # Skip it if anything failed: deleting the remaining slugs' trees along with
+    # the parent removes what a retry needs to reclaim — the same call as the
+    # per-slug gate.
     if not failures:
         try:
             await host.purge_project(project_id)

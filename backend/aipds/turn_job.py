@@ -1,17 +1,20 @@
-# backend/aipds/turn_job.py — 턴을 서버가 소유하는 작업으로 돌린다.
+# backend/aipds/turn_job.py — runs a turn as a server-owned job.
 #
-# **턴의 수명은 HTTP 연결의 것이 아니다.** 턴 하나는 2.5~5.6분이고, 그 사이에
-# 브라우저는 새로고침되고, 절전에 들어가고, 탭이 두 개가 된다. 턴을 SSE 응답의
-# generator가 직접 돌리면 소비자가 떠나는 순간 그 generator의 `finally`가 취소된
-# 스코프에서 돈다 — sse_starlette는 끊김을 task group 취소로 전하고, anyio의 취소는
-# 수준 기반이라 `finally` 안의 `await`(S3 sync, 트랜스크립트 flush)도 다시 취소된다.
-# 요청 안에서 턴을 끝까지 소비하는 라우트는 프록시 타임아웃(CloudFront 60초)에 걸린다.
+# **A turn's lifetime does not belong to the HTTP connection.** One turn takes 2.5-5.6
+# minutes, and in the meantime the browser gets refreshed, goes to sleep, or ends up
+# with two tabs. If the SSE response's generator drove the turn directly, the moment
+# the consumer left, that generator's `finally` would run in a cancelled scope --
+# sse_starlette conveys a disconnect as task group cancellation, and anyio's
+# cancellation is level-based, so the `await`s inside `finally` (S3 sync, transcript
+# flush) get cancelled again. A route that consumes the whole turn within the request
+# hits the proxy timeout (CloudFront 60 seconds).
 #
-# 그래서 턴은 여기의 `asyncio.Task`가 **유일한 소비자**로서 끝까지 읽는다. 떠나지 않는
-# 소비자가 하나뿐이므로 러너·드라이버의 generator는 언제나 정상 경로로 닫힌다. 화면은
-# 구독자다: `TurnLog`에 seq가 붙어 쌓인 이벤트를 `after`부터 재생하고 이어서 받는다.
-# 구독자가 몇 번 붙고 떨어지든 턴에는 아무 영향이 없다. 턴을 멈추는 것은 중단
-# (`/interrupt`)뿐이다.
+# So the turn is read to the end by the `asyncio.Task` here as its **sole consumer**.
+# With exactly one consumer that never leaves, the runner's and driver's generators
+# always close on the normal path. The screen is a subscriber: it replays the events
+# accumulated with seq numbers in `TurnLog` from `after` and keeps receiving. However
+# many times subscribers attach and detach, the turn is unaffected. The only thing
+# that stops a turn is an interrupt (`/interrupt`).
 from __future__ import annotations
 
 import asyncio
@@ -27,18 +30,20 @@ _log = logging.getLogger(__name__)
 
 TurnState = Literal["running", "done", "error", "interrupted"]
 
-#: 끝난 턴을 늦게 온 구독자가 재생할 수 있는 시간. 절전 복귀의 일반적인 범위를
-#: 덮고, 그 뒤로는 `GET /history`(트랜스크립트)가 정본이다.
+#: How long a late subscriber can replay a finished turn. Covers the typical range of
+#: waking from sleep; after that, `GET /history` (the transcript) is the source of truth.
 RETENTION_SECONDS = 600.0
 
-#: 백엔드 종료로 끊긴 턴의 종결 이벤트 문구. 화면은 이 값을 오류 코드로 읽는다.
+#: Terminal event text for a turn cut off by backend shutdown. The screen reads this
+#: value as an error code.
 INTERRUPTED_TEXT = "turn interrupted"
-#: 러너 generator가 예외로 끝났을 때의 종결 이벤트 — 드라이버의 계약 문구와 같다.
+#: Terminal event when the runner generator ends with an exception -- same as the
+#: driver's contract text.
 FAILED_TEXT = "agent turn failed"
 
 
 class TurnBusy(Exception):
-    """이 프로젝트에 이미 도는 턴이 있다. `job`이 그 턴이다 — 호출부는 거기에 붙는다."""
+    """This project already has a running turn. `job` is that turn -- the caller attaches to it."""
 
     def __init__(self, job: "TurnJob") -> None:
         super().__init__(job.id)
@@ -46,7 +51,7 @@ class TurnBusy(Exception):
 
 
 class TurnLog:
-    """한 턴의 이벤트를 seq(1부터)와 함께 쌓는다. 구독자 수와 무관하다."""
+    """Accumulates one turn's events with a seq (starting at 1). Independent of subscriber count."""
 
     def __init__(self) -> None:
         self._events: list[tuple[int, AgentEvent]] = []
@@ -68,17 +73,17 @@ class TurnLog:
         self._wake()
 
     def _wake(self) -> None:
-        # 기다리던 구독자를 모두 깨우고 다음 대기용으로 새 이벤트를 건다 — 단일
-        # 이벤트 루프라 set과 교체 사이에 끼어드는 대기자가 없다.
+        # Wake every waiting subscriber and install a new event for the next wait --
+        # with a single event loop, no waiter can slip in between set and replace.
         changed, self._changed = self._changed, asyncio.Event()
         changed.set()
 
     def events_after(self, seq: int) -> list[tuple[int, AgentEvent]]:
-        # seq는 1부터 빈틈없이 붙으므로 인덱스가 곧 위치다.
+        # seq is assigned from 1 with no gaps, so the index is the position.
         return self._events[max(seq, 0):]
 
     async def wait_beyond(self, seq: int) -> None:
-        """`seq` 뒤에 이벤트가 생기거나 로그가 닫힐 때까지 기다린다."""
+        """Wait until an event appears after `seq` or the log is closed."""
         changed = self._changed
         if self.last_seq > seq or self.closed:
             return
@@ -93,11 +98,12 @@ class TurnJob:
     started_at: float
     state: TurnState = "running"
     finished_at: float | None = None
-    #: 사용자가 보낸 말(화면에 사용자 말풍선으로 되살릴 것). 자동 개시 턴은 None.
+    #: What the user sent (to be restored on screen as the user's bubble). None for auto-started turns.
     input_text: str | None = None
-    #: 시작한 벽시계 시각(epoch 초). `started_at`은 단조 시계라 트랜스크립트의
-    #: 타임스탬프와 비교할 수 없다 — 프로토타입 히스토리가 "이 턴부터는 세션이
-    #: 재생한다"를 자르는 기준이 이것이다(proto/history.py).
+    #: Wall-clock start time (epoch seconds). `started_at` is a monotonic clock and
+    #: cannot be compared with transcript timestamps -- this is what the prototype
+    #: history uses to cut off "from this turn on, the session replays it"
+    #: (proto/history.py).
     started_wall: float = field(default_factory=time.time)
     task: asyncio.Task | None = field(default=None, repr=False)
 
@@ -108,9 +114,9 @@ class TurnJob:
 
 async def subscribe(job: TurnJob, after: int = 0
                     ) -> AsyncIterator[tuple[int, AgentEvent]]:
-    """`after` 뒤의 이벤트를 재생하고, 턴이 도는 동안 이어서 흘린다.
+    """Replay events after `after`, then keep streaming while the turn runs.
 
-    구독자가 이 generator를 버려도 턴에는 아무 일이 없다 — 이것은 읽기만 한다.
+    Nothing happens to the turn if a subscriber drops this generator -- it only reads.
     """
     seq = after
     while True:
@@ -123,7 +129,7 @@ async def subscribe(job: TurnJob, after: int = 0
 
 
 class TurnJobs:
-    """프로젝트 하나의 턴 작업들. 동시에 도는 턴은 하나다."""
+    """Turn jobs for one project. Only one turn runs at a time."""
 
     def __init__(self, *, retention: float = RETENTION_SECONDS,
                  clock: Callable[[], float] = time.monotonic,
@@ -133,23 +139,24 @@ class TurnJobs:
         self._latest: TurnJob | None = None
         self._retention = retention
         self._clock = clock
-        #: 상태 전이(시작·종결)를 알린다. 재시작 뒤 "중단됨"을 보이기 위한 S3
-        #: 표식(turn_marker.py)이 이것을 쓴다. 턴과 따로 돌고, 실패해도 턴을
-        #: 막지 않는다.
+        #: Announces state transitions (start, end). The S3 marker (turn_marker.py)
+        #: used to show "중단됨" ("Interrupted") after a restart uses this. It runs
+        #: separately from the turn and does not block the turn even if it fails.
         self._on_state = on_state
         self._hook_tasks: set[asyncio.Task] = set()
-        # 알림은 **순서대로** 돈다. 시작 알림이 종결 알림보다 늦게 끝나면 표식이
-        # `running`으로 남고, 재시작 뒤 끝난 턴이 "중단됨"으로 보인다. asyncio.Lock의
-        # 대기열은 FIFO이고 태스크는 만든 순서로 처음 실행되므로 이것으로 충분하다.
+        # Notifications run **in order**. If the start notification finished after the
+        # end notification, the marker would stay `running` and a finished turn would
+        # show as "중단됨" ("Interrupted") after a restart. asyncio.Lock's wait queue is FIFO and
+        # tasks first run in creation order, so this is sufficient.
         self._hook_lock = asyncio.Lock()
 
     def current(self) -> TurnJob | None:
-        """도는 턴, 없으면 None."""
+        """The running turn, or None if there is none."""
         job = self._latest
         return job if job is not None and job.state == "running" else None
 
     def latest(self) -> TurnJob | None:
-        """마지막 턴(끝났어도). 보존 시간이 지났으면 None."""
+        """The last turn (even if finished). None if the retention period has passed."""
         self._prune()
         return self._latest
 
@@ -158,18 +165,19 @@ class TurnJobs:
         return self._jobs.get(turn_id)
 
     def all(self) -> list[TurnJob]:
-        """보존 중인 턴 전부, 시작 순서대로."""
+        """All retained turns, in start order."""
         self._prune()
-        return list(self._jobs.values())   # dict는 넣은 순서를 지킨다
+        return list(self._jobs.values())   # dict preserves insertion order
 
     def start(self, kind: str,
               events: Callable[[], AsyncIterator[AgentEvent]],
               input_text: str | None = None) -> TurnJob:
-        """턴을 시작한다. `events`는 턴의 이벤트를 내는 generator를 만드는 함수다.
+        """Start a turn. `events` is a function that creates the generator producing the turn's events.
 
-        함수로 받는 이유: 도는 턴이 있으면 generator를 **만들지도 않고** 거절해야
-        한다. 만들어 두고 버리면 러너의 슬롯 검사가 그 generator 안에서 돌 기회조차
-        없이 사라진다.
+        Why it takes a function: if a turn is running, the request must be rejected
+        **without even creating** the generator. If one were created and then
+        discarded, the runner's slot check inside that generator would vanish without
+        ever getting a chance to run.
         """
         running = self.current()
         if running is not None:
@@ -195,9 +203,9 @@ class TurnJobs:
                 elif ev.kind == "done":
                     state = "done"
         except asyncio.CancelledError:
-            # 백엔드 종료 또는 프로젝트 삭제. generator는 `aclose`로 정상 경로를
-            # 닫게 하고(러너의 finally가 백스톱 sync를 한다), 화면에는 끊긴 사실을
-            # 종결 이벤트로 남긴다.
+            # Backend shutdown or project deletion. Let the generator close on the
+            # normal path via `aclose` (the runner's finally does the backstop sync), and
+            # leave the cutoff on screen as a terminal event.
             state = "interrupted"
             job.log.append(AgentEvent(kind="error", text=INTERRUPTED_TEXT))
             await _aclose_quietly(events)
@@ -213,7 +221,7 @@ class TurnJobs:
             self._notify(job)
 
     async def cancel(self) -> None:
-        """도는 턴을 취소하고 끝날 때까지 기다린다(종료·삭제 경로)."""
+        """Cancel the running turn and wait until it ends (shutdown and deletion paths)."""
         job = self.current()
         if job is None or job.task is None:
             return
@@ -236,7 +244,7 @@ class TurnJobs:
         if self._on_state is None:
             return
         task = asyncio.create_task(self._run_hook(job))
-        # 참조를 쥐어 둔다 — 버리면 GC가 도중에 태스크를 거둘 수 있다.
+        # Hold a reference -- if dropped, the GC could collect the task midway.
         self._hook_tasks.add(task)
         task.add_done_callback(self._hook_tasks.discard)
 
@@ -248,7 +256,7 @@ class TurnJobs:
             _log.exception("turn state hook failed for %s", job.id)
 
     async def drain_hooks(self) -> None:
-        """진행 중인 상태 알림을 기다린다(테스트와 종료 경로)."""
+        """Wait for in-flight state notifications (tests and the shutdown path)."""
         while self._hook_tasks:
             await asyncio.gather(*list(self._hook_tasks))
 

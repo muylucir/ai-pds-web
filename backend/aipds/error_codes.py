@@ -1,23 +1,26 @@
-# backend/aipds/error_codes.py — HTTP detail로 나가는 안정적 코드.
+# backend/aipds/error_codes.py — stable codes sent out as the HTTP detail.
 #
-# 백엔드는 UI 언어를 모른다: 프록시(frontend/app/api/[...path]/route.ts의
-# filterHeaders)가 Accept-Language를 전달하지 않고, 전달하게 만들어도 브라우저
-# 값이 들어와 UI 스위치(aipds_lang 쿠키)와 어긋난다. 그래서 문구를 만들지 않고
-# 코드를 보내며, 문구는 프론트 딕셔너리가 소유한다
+# The backend does not know the UI language: the proxy (filterHeaders in
+# frontend/app/api/[...path]/route.ts) does not forward Accept-Language, and even
+# if it did, the browser's value would come in and disagree with the UI switch
+# (the aipds_lang cookie). So the backend sends codes instead of composing
+# messages, and the frontend dictionary owns the messages
 # (frontend/lib/api/errorMessage.ts).
 #
-# 여기에 두 번째 번역 시스템을 만들지 않는 이유가 그것이다 — UI 언어의 단일
-# 출처는 이미 프론트에 있다. 예외는 survey/report_labels.py인데, 그쪽은 UI
-# 문구가 아니라 문서 생성기이고 프로젝트 언어를 이미 백엔드가 안다.
+# That is why no second translation system is built here -- the single source
+# of the UI language already lives in the frontend. The exception is
+# survey/report_labels.py, which is a document generator rather than UI text,
+# and the backend already knows the project language.
 #
-# 값은 snake_case이고 **바꾸지 않는다** — 프론트 딕셔너리의 키가 이 값에
-# 달려 있다. 새 에러는 여기에 상수를 추가하고 양쪽 딕셔너리에 키를 넣는다.
+# Values are snake_case and **never change** -- the frontend dictionary keys
+# depend on them. For a new error, add a constant here and add the key to both
+# dictionaries.
 from __future__ import annotations
 
-# 사용자 관리 (routes/admin_users.py)
+# User management (routes/admin_users.py)
 EMAIL_EXISTS = "email_exists"
-# 초대할 이메일의 형식이 틀렸다. 브라우저의 type=email은 `kim@corp`이나 `.local` 도메인을
-# 통과시키므로 서버가 거절하는 경로가 실제로 있다.
+# The invitee's email is malformed. The browser's type=email lets `kim@corp` or a
+# `.local` domain through, so the server-side rejection path is real.
 EMAIL_INVALID = "email_invalid"
 USER_NOT_FOUND = "user_not_found"
 BAD_REQUEST = "bad_request"
@@ -25,79 +28,89 @@ FORBIDDEN = "forbidden"
 TOO_MANY_REQUESTS = "too_many_requests"
 USER_ADMIN_FAILED = "user_admin_failed"
 USER_CREATE_FAILED = "user_create_failed"
-# 자기 계정 / 마지막 관리자 보호. 어떤 조작이었는지(강등·비활성화·삭제)는
-# 코드에 싣지 않는다 — 프론트가 그 어휘를 UI 언어로 갖고 있어야 하는데,
-# 조작 종류는 이미 사용자가 누른 버튼으로 화면에 드러나 있다.
+# Own-account / last-admin protection. Which operation it was (demote, disable,
+# delete) is not carried in the code -- the frontend would need that vocabulary
+# in the UI language, and the kind of operation is already evident on screen
+# from the button the user pressed.
 SELF_TARGET = "self_target"
 LAST_ADMIN = "last_admin"
 
-# 자기 비밀번호 변경 (routes/account.py)
+# Changing one's own password (routes/account.py)
 #
-# WRONG_PASSWORD와 PASSWORD_POLICY를 나누는 이유는 사용자가 할 일이 다르기
-# 때문이다 — 앞은 현재 비밀번호를 다시 입력하는 것, 뒤는 새 비밀번호를 다시
-# 고르는 것이다. 하나로 뭉치면 화면이 어느 칸이 틀렸는지 말할 수 없다.
+# WRONG_PASSWORD and PASSWORD_POLICY are separate because the user's next step
+# differs -- the first means re-enter the current password, the second means
+# pick a new password again. Lumped together, the screen cannot say which field
+# was wrong.
 #
 # The `nosec` markers are for the names: these are error codes the frontend
 # switches its message on, and bandit B105 judges an assignment by the target's
 # name alone.
 WRONG_PASSWORD = "wrong_password"  # nosec B105
 PASSWORD_POLICY = "password_policy"  # nosec B105
-# 이 세션의 토큰으로는 비밀번호를 바꿀 수 없다(셀프서비스 스코프 없음, 관리자가
-# 재설정해 계정이 임시 비밀번호 상태로 돌아감 등). 사용자가 할 일은 입력을 고치는
-# 것이 아니라 다시 로그인하는 것이다.
+# This session's token cannot change the password (no self-service scope, an
+# admin reset put the account back into the temporary-password state, etc.).
+# The user's next step is not to fix the input but to sign in again.
 REAUTH_REQUIRED = "reauth_required"
 PASSWORD_CHANGE_FAILED = "password_change_failed"  # nosec B105
-# Cognito가 아예 설정되지 않은 환경(로컬 개발)에서 이 기능을 부를 수는 없다.
-# 조용히 성공하면 "비밀번호를 바꿨다"는 거짓 확인을 주게 된다.
+# This feature cannot be called where Cognito is not configured at all (local
+# development). Silently succeeding would give a false "password changed"
+# confirmation.
 AUTH_NOT_CONFIGURED = "auth_not_configured"
 
-# 모델 카탈로그 (routes/models.py)
+# Model catalog (routes/models.py)
 NAME_REQUIRED = "name_required"
 MODEL_ID_REQUIRED = "model_id_required"
 MODEL_ID_CHARSET = "model_id_charset"
-# 순서 저장 시 관리자 화면의 목록이 저장된 목록과 다르다(다른 탭에서 바뀌었다).
+# When saving the order, the list on the admin screen differs from the stored
+# list (it was changed in another tab).
 MODEL_ORDER_STALE = "model_order_stale"
 
-# 프로젝트 (routes/projects.py)
+# Projects (routes/projects.py)
 MODEL_NOT_SELECTABLE = "model_not_selectable"
 LANGUAGE_UNSUPPORTED = "language_unsupported"
 
-# 프로토타입 (routes/prototypes.py)
+# Prototypes (routes/prototypes.py)
 BUILD_SLOTS_BUSY = "build_slots_busy"
 BUILD_SESSION_ACTIVE = "build_session_active"
-# 샌드박스 래퍼가 켜져 있는데 쓸 수 없다(aipds/launcher.py) — 운영자가 고칠 일이다.
+# The sandbox wrapper is on but unusable (aipds/launcher.py) -- an operator must fix it.
 SANDBOX_UNAVAILABLE = "sandbox_unavailable"
-# 초기화 실패는 무엇이 실패했는지가 진단에 필요하다. 코드 뒤에 콜론으로 붙여
-# 보내고(`init_incomplete:s3,host`) 프론트는 코드 부분만 번역한다.
+# For a failed reset, diagnosis needs to know what failed. It is sent appended
+# after a colon (`init_incomplete:s3,host`) and the frontend translates only the
+# code part.
 INIT_INCOMPLETE = "init_incomplete"
 
-# 공개 설문 (routes/surveys_public.py)
+# Public survey (routes/surveys_public.py)
 SURVEY_CLOSED = "survey_closed"
 SURVEY_FULL = "survey_full"
 
-# 프로젝트 이관 (routes/transfer.py)
+# Project transfer (routes/transfer.py)
 #
-# EXPORT_INVALID와 UPLOAD_MISSING을 나누는 이유는 사용자가 할 일이 다르기
-# 때문이다 — 앞은 다른 파일을 고르는 것, 뒤는 업로드를 다시 하는 것이다
-# (스테이징 서명이 만료됐거나 PUT이 조용히 실패한 상태).
+# EXPORT_INVALID and UPLOAD_MISSING are separate because the user's next step
+# differs -- the first means pick a different file, the second means upload
+# again (the staging signature expired or the PUT silently failed).
 EXPORT_INVALID = "export_invalid"
 EXPORT_TOO_LARGE = "export_too_large"
 UPLOAD_MISSING = "upload_missing"
-# 대상 id가 이미 있다. 화면은 이 코드를 받아 id 입력 칸을 열고 **같은 업로드로**
-# 다시 부른다 — 그래서 이 응답은 스테이징을 지우지 않는다.
+# The target id already exists. The screen takes this code, opens the id input,
+# and calls again **with the same upload** -- so this response does not delete
+# the staging.
 PROJECT_EXISTS = "project_exists"
-# 버킷이 설정되지 않아 스테이징이 없다(로컬 개발). 내보내기는 되고 가져오기만 막힌다.
+# No bucket configured, so there is no staging (local development). Export works;
+# only import is blocked.
 IMPORT_UNAVAILABLE = "import_unavailable"
 IMPORT_FAILED = "import_failed"
 
-# 프로젝트 접근 (project_access.py, routes/projects.py, routes/admin_users.py)
+# Project access (project_access.py, routes/projects.py, routes/admin_users.py)
 #
-# 읽기 전용 멤버가 쓰기를 시도했다. 화면은 멤버에게 쓰기 버튼을 그리지 않으므로 정상
-# 경로로는 오지 않는다 — 열어 둔 탭에서 권한이 바뀐 경우다.
+# A read-only member attempted a write. The screen does not draw write buttons
+# for members, so the normal path never gets here -- it happens when permissions
+# changed while a tab was open.
 PROJECT_READ_ONLY = "project_read_only"
-# 멤버·소유자로 쓸 수 없는 값(이메일도 username도 아니다).
+# A value that cannot be used as a member or owner (neither an email nor a username).
 MEMBER_INVALID = "member_invalid"
-# 소유권을 받을 수 없는 계정(비활성, 역할 없음). 없는 계정은 USER_NOT_FOUND다.
+# An account that cannot receive ownership (disabled, no role). A nonexistent
+# account is USER_NOT_FOUND.
 OWNER_NOT_ASSIGNABLE = "owner_not_assignable"
-# 시드 관리자는 귀속 대상이라 삭제·강등할 수 없다(project_access.SEED_ADMIN).
+# The seed admin is the attribution target, so it cannot be deleted or demoted
+# (project_access.SEED_ADMIN).
 SEED_ADMIN_PROTECTED = "seed_admin_protected"

@@ -1,9 +1,9 @@
 "use client";
-// frontend/components/manual/ManualToc.tsx — 좌측 목차와 검색창.
+// frontend/components/manual/ManualToc.tsx — the left table of contents and search box.
 //
-// 앵커는 <a href="#id">다. next/link가 아닌 이유: 같은 페이지 안의 이동이므로
-// 라우터를 태울 필요가 없고, 브라우저의 기본 앵커 스크롤(그리고 scroll-mt로
-// 준 헤더 여백)이 그대로 동작한다.
+// Anchors are <a href="#id">. Why not next/link: this is navigation within the same page, so
+// there is no need to go through the router, and the browser's default anchor scrolling (plus the header margin
+// set with scroll-mt) works as-is.
 import type { ManualSection } from "@/content/manual";
 import { useT } from "@/lib/i18n/provider";
 import { headingsOf } from "@/lib/manualToc";
@@ -14,9 +14,9 @@ export function ManualToc({
   query,
   onQueryChange,
 }: {
-  /** 보여줄 절 — 검색 중이면 걸러진 목록이다. */
+  /** Sections to show — the filtered list while searching. */
   sections: ManualSection[];
-  /** 지금 읽고 있는 앵커. 없으면 강조하지 않는다. */
+  /** The anchor currently being read. If none, nothing is highlighted. */
   activeId: string | null;
   query: string;
   onQueryChange: (value: string) => void;
@@ -56,7 +56,7 @@ export function ManualToc({
 
       <ol className="space-y-0.5">
         {sections.map((section, index) => {
-          // 절 자신이 활성이거나, 그 절의 소제목이 활성이면 절도 활성으로 본다.
+          // A section is treated as active if it is active itself or if one of its subheadings is active.
           const headings = headingsOf(section);
           const activeHere =
             activeId === section.id || headings.some((h) => h.id === activeId);
@@ -76,8 +76,8 @@ export function ManualToc({
                 </span>
                 <span>{section.title}</span>
               </a>
-              {/* 소제목은 그 절을 읽고 있을 때만 펼친다 — 11개 절의 소제목을
-                  항상 다 보이면 목차가 본문만큼 길어진다. */}
+              {/* Subheadings expand only while that section is being read — always showing the
+                  subheadings of all 11 sections would make the TOC as long as the body. */}
               {activeHere && headings.length > 0 && (
                 <ul className="mb-1 ml-6 space-y-0.5 border-l border-slate-200 pl-2">
                   {headings.map((h) => (

@@ -12,14 +12,14 @@ _AUDIT_PATH = "aiplc-docs/audit.md"
 class Workspace:
     def __init__(self, runner, turns: TurnJobs | None = None):
         self.runner = runner
-        #: 이 프로젝트의 턴 작업. 턴은 요청이 아니라 여기에 속한다(turn_job.py 헤더).
+        #: This project's turn job. A turn belongs here, not to a request (turn_job.py header).
         self.turns = turns or TurnJobs()
 
     async def stop(self) -> None:
-        """도는 턴을 먼저 끊고 러너를 멈춘다(프로젝트 삭제 경로).
+        """Cuts the running turn first, then stops the runner (project deletion path).
 
-        순서가 요점이다: 러너가 먼저 드라이버를 내리면 도는 턴은 죽은 서브프로세스를
-        기다리다 오류로 끝난다. 턴을 먼저 취소하면 그 generator가 정상 경로로 닫힌다.
+        The order is the point: if the runner took the driver down first, the running turn would wait on
+        a dead subprocess and end in an error. Cancelling the turn first closes that generator on the normal path.
         """
         await self.turns.cancel()
         await self.runner.stop()
@@ -55,37 +55,37 @@ class Workspace:
         # no new IO path). runner.list_files already filters to files (not
         # directories), so `**/*` matched directories are excluded automatically.
         #
-        # **최신 순이다(2026-08-21).** 워크스페이스 문서 뷰어가 `activeDoc`이 없을 때
-        # 이 목록의 첫 항목으로 떨어지므로 순서가 의미를 갖는다. 알파벳 순이면 그
-        # 첫 항목이 거의 항상 `aiplc-docs/audit.md`이고, 대화가 방금 만든 문서가
-        # 아니라 감사 로그가 열린다.
+        # **Newest first (2026-08-21).** The workspace document viewer falls back to this list's first
+        # item when there is no `activeDoc`, so the order carries meaning. In alphabetical order that
+        # first item is almost always `aiplc-docs/audit.md`, and the audit log opens instead of the
+        # document the conversation just created.
         return await self.runner.list_files_newest_first("aiplc-docs/**/*")
 
 class ProjectRegistry:
-    """'아는 프로젝트'(_names)와 '살아있는 워크스페이스'(_workspaces)를 분리.
+    """Separates 'known projects' (_names) from 'live workspaces' (_workspaces).
 
-    S3 매니페스트에서 복원된 프로젝트는 register만 된 상태(목록에는 보이지만
-    워크스페이스 없음)로 시작하고, 첫 요청 시 deps.ensure_workspace가 attach한다."""
+    A project restored from the S3 manifest starts in a register-only state (visible in the list but
+    without a workspace), and deps.ensure_workspace attaches it on the first request."""
 
     def __init__(self):
         self._names: dict[str, str | None] = {}
         self._workspaces: dict[str, Workspace] = {}
-        # 생성 시각(ISO 문자열) — 목록 정렬 기준. 매니페스트에서 복원되거나
-        # 생성 라우트가 전달한다. 구 매니페스트에는 없을 수 있어 None 허용.
+        # Creation time (ISO string) — the list sort key. Restored from the manifest or
+        # passed in by the create route. Old manifests may lack it, so None is allowed.
         self._created_at: dict[str, str | None] = {}
-        # 이 프로젝트가 도는 Bedrock 모델 id. 카탈로그를 참조(FK)하지 않고
-        # 값을 복사해 둔 것이다 — 관리자가 모델을 카탈로그에서 지워도 진행
-        # 중인 프로젝트가 모델을 잃으면 안 된다. None = 미지정(env 폴백).
+        # The Bedrock model id this project runs on. It is a copied value, not a reference (FK)
+        # to the catalog — even if an admin deletes the model from the catalog, an in-progress
+        # project must not lose its model. None = unspecified (env fallback).
         self._model_id: dict[str, str | None] = {}
-        # 이 프로젝트의 생성물 언어("ko"|"en"). model_id와 같은 규율로
-        # 매니페스트에서 복사돼 온다. None = 미지정(구 매니페스트 포함) —
-        # get_language가 "ko"로 확정한다.
+        # This project's output language ("ko"|"en"). Copied from the manifest under the
+        # same discipline as model_id. None = unspecified (including old manifests) —
+        # get_language settles it as "ko".
         self._language: dict[str, str | None] = {}
-        # 이 프로젝트의 effort. model_id와 짝으로 생성 시점 카탈로그에서 복사된다.
-        # None = CLI 기본값.
+        # This project's effort. Copied from the catalog at creation time, paired with model_id.
+        # None = CLI default.
         self._effort: dict[str, str | None] = {}
-        # 소유자와 열람 멤버의 Cognito username(정규화된 값, project_access.normalize).
-        # 정본은 매니페스트이고 여기는 그 사본이다 — 바꾸는 쪽은 매니페스트를 먼저 쓴다
+        # Cognito usernames of the owner and viewing members (normalized values, project_access.normalize).
+        # The source of truth is the manifest and this is its copy — whoever changes it writes the manifest first
         # (project_access.set_access).
         self._owner: dict[str, str] = {}
         self._members: dict[str, tuple[str, ...]] = {}
@@ -97,9 +97,9 @@ class ProjectRegistry:
                  effort: str | None = None,
                  owner: str | None = None,
                  members: tuple[str, ...] = ()) -> None:
-        """owner가 없으면 시드 관리자 소유로 등록한다. 소유자를 기록하기 전의
-        매니페스트가 이 경로로 들어온다 — 그 해석을 복원·임포트·테스트가 각자 하지
-        않도록 여기 한 곳에 둔다."""
+        """If there is no owner, registers it as owned by the seed admin. Manifests from before the
+        owner was recorded come in through this path — that interpretation lives in this one place
+        so that restore, import, and tests do not each do it themselves."""
         from aipds.project_access import SEED_ADMIN
         self._names[project_id] = name
         self._created_at[project_id] = created_at
@@ -120,7 +120,7 @@ class ProjectRegistry:
 
     def attach(self, project_id: str, workspace: Workspace) -> Workspace:
         if project_id not in self._names:
-            raise KeyError(project_id)  # 등록 없이 연결 금지 — 호출 순서 버그를 조기 검출
+            raise KeyError(project_id)  # no attach without registration — catches call-order bugs early
         self._workspaces[project_id] = workspace
         return workspace
 
@@ -134,7 +134,7 @@ class ProjectRegistry:
         return project_id in self._workspaces
 
     def remove(self, project_id: str) -> Workspace | None:
-        """등록·워크스페이스 모두 제거. 있던 Workspace를 반환(없으면 None). 멱등."""
+        """Removes both the registration and the workspace. Returns the Workspace that existed (None if none). Idempotent."""
         self._names.pop(project_id, None)
         self._created_at.pop(project_id, None)
         self._model_id.pop(project_id, None)
@@ -145,8 +145,8 @@ class ProjectRegistry:
         return self._workspaces.pop(project_id, None)
 
     def list_ids(self) -> list[str]:
-        # 생성일 오름차순(오래된 것 먼저). created_at이 없는 구 매니페스트
-        # 프로젝트는 맨 앞 — ISO 문자열은 사전순 == 시간순이라 str 비교로 충분.
+        # Ascending by creation date (oldest first). Projects from old manifests without created_at
+        # go first — ISO strings sort lexicographically == chronologically, so str comparison suffices.
         return sorted(self._names.keys(),
                       key=lambda pid: self._created_at.get(pid) or "")
 
@@ -159,42 +159,42 @@ class ProjectRegistry:
         return self._created_at.get(project_id)
 
     def get_model_id(self, project_id: str) -> str | None:
-        """이 프로젝트의 모델 id, 없으면 None.
+        """This project's model id, or None.
 
-        get_name과 달리 미등록에 KeyError를 내지 않는다 —
-        app.project_model()이 폴백 체인의 첫 칸으로 쓰므로, 미등록도
-        '모델 없음'으로 다루는 것이 호출부를 단순하게 만든다.
+        Unlike get_name, it does not raise KeyError for unregistered projects —
+        app.project_model() uses it as the first slot in the fallback chain, so treating
+        unregistered as 'no model' keeps the callers simple.
         """
         return self._model_id.get(project_id)
 
     def get_effort(self, project_id: str) -> str | None:
-        """이 프로젝트의 effort, 없으면 None(CLI 기본값).
+        """This project's effort, or None (CLI default).
 
-        알 수 없는 값도 None이다 — 손상된 매니페스트가 임의 문자열을 실어 오면
-        CLI가 `--effort`를 거부해 턴이 시작되지 않는다. 기본값으로 도는 편이 낫다.
+        Unknown values are also None — if a corrupted manifest carries an arbitrary string, the
+        CLI rejects `--effort` and the turn does not start. Running on the default is better.
         """
         from aipds.model_catalog import EFFORTS
         value = self._effort.get(project_id)
         return value if value in EFFORTS else None
 
-    #: 생성물 언어의 허용값. place_rules가 이 값으로 언어별 지시 블록을 고르므로
-    #: 그 밖의 값은 존재할 수 없다.
+    #: Allowed values for the output language. place_rules picks the per-language directive block by this value,
+    #: so no other value can exist.
     _LANGUAGES = ("ko", "en")
 
     def get_language(self, project_id: str) -> str:
-        """이 프로젝트의 생성물 언어. **항상 "ko" 또는 "en"을 돌려준다.**
+        """This project's output language. **Always returns "ko" or "en".**
 
-        get_model_id가 None을 돌려주는 것과 다른 선택이다: 언어에는 "없음"이라는
-        유효 상태가 없다 — 문서는 어떤 언어로든 써야 한다. 호출부(place_rules,
-        프로토타입 프롬프트, 설문 리포트)가 각자 폴백을 반복하면 그중 하나가
-        빠뜨렸을 때 조용히 다른 언어가 나오므로, 여기서 확정한다.
+        This is a different choice from get_model_id returning None: language has no valid "none"
+        state — documents must be written in some language. If callers (place_rules, prototype
+        prompts, survey reports) each repeated the fallback, one of them forgetting it would silently
+        produce a different language, so it is settled here.
 
-        폴백이 "ko"인 이유는 이 기능 이전에 만든 프로젝트가 전부 한국어로
-        만들어졌기 때문이다 — 구 매니페스트에는 language 키가 없다.
+        The fallback is "ko" because every project created before this feature was created in
+        Korean — old manifests have no language key.
 
-        알 수 없는 값도 "ko"로 떨어진다. 라우트가 생성 시점에 검증하므로
-        정상 경로로는 들어올 수 없지만, 손상된 매니페스트가 임의 문자열을
-        실어 오면 던지는 것보다 한국어로 도는 편이 낫다.
+        Unknown values also fall back to "ko". The route validates at creation time, so they cannot
+        come in through the normal path, but if a corrupted manifest carries an arbitrary string,
+        running in Korean is better than raising.
         """
         value = self._language.get(project_id)
         return value if value in self._LANGUAGES else "ko"

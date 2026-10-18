@@ -16,10 +16,10 @@ const s = renderUserData({
   appUrl: 'https://example.cloudfront.net',
 });
 
-// 1) 안전 옵션·로그
+// 1) Safety options and logging
 assert.match(s, /set -euxo pipefail/, 'must be strict bash');
-// 2) 코드 배포: 리포 clone + 배포 브랜치의 원격 최신 커밋으로 맞춤.
-//    에셋 zip도, 커밋 SHA 고정도 쓰지 않는다 — 근거는 lib/deploy-source.ts.
+// 2) Code deployment: clone the repo + align to the remote tip of the deploy branch.
+//    No asset zip and no commit SHA pinning — see lib/deploy-source.ts for why.
 assert.match(s, /git clone https:\/\/github\.com\/example\/repo\.git \/opt\/aipds/,
   'must clone the repo into the app tree');
 assert.match(s, /git -C \/opt\/aipds checkout -f -B main origin\/main/,
@@ -28,8 +28,8 @@ assert.match(s, /git -C \/opt\/aipds checkout -f -B main origin\/main/,
 assert.ok(!s.includes('checkout --detach'),
   'the deployment is no longer pinned to a commit; a detached checkout would make '
   + 'aipds-update unable to move the tree forward');
-// 부팅 커밋이 로그에 남아야 한다 — SHA가 배포에 없으므로 "무엇이 도는가"의 답이
-// 여기 말고는 인스턴스에 물어보는 수밖에 없다.
+// The boot commit must be recorded in the log — the SHA is not in the deployment, so otherwise
+// the only way to answer "what is running" is to ask the instance.
 assert.match(s, /git -C \/opt\/aipds --no-pager log -1 --format='booted commit: %H %s'/,
   'the commit the instance booted on must be recorded in the bootstrap log');
 assert.ok(!/aws s3 cp .*\.zip/.test(s),
@@ -37,46 +37,46 @@ assert.ok(!/aws s3 cp .*\.zip/.test(s),
 assert.ok(!s.includes('unzip -o'),
   'nothing is unzipped any more');
 assert.match(s, /dnf install -y [^\n]*\bgit\b/, 'git must be installed — AL2023 does not ship it');
-// clone 뒤에 트리를 서비스 유저에게 넘기므로, 재부트스트랩 때 root로 도는 git이
-// "dubious ownership"으로 거부된다. set -e 아래에서 그것은 부팅 중단이다.
+// After the clone the tree is handed to the service user, so on re-bootstrap git running as root
+// is refused with "dubious ownership". Under set -e that aborts the boot.
 assert.match(s, /git config --system --add safe\.directory \/opt\/aipds/,
   'safe.directory must be configured before git runs on the service-user-owned tree');
-// 서브모듈은 자기 git 디렉터리를 가진 별개의 리포다 — git은 소유권을 리포마다 본다.
+// A submodule is a separate repo with its own git directory — git checks ownership per repo.
 assert.match(s, /git config --system --add safe\.directory \/opt\/aipds\/steering-files/,
   'the steering-files submodule needs its own safe.directory entry — it is a separate '
   + 'repository, so registering only the app tree still fails on a cloud-init re-run');
-// AI-PLC 룰셋은 상류 리포의 서브모듈이고 clone은 서브모듈 내용을 가져오지 않는다.
-// 빼면 부팅은 성공하고 룰만 없다 — 증상은 첫 Discovery 턴에서야 나온다.
+// The AI-PLC ruleset is a submodule of the upstream repo, and clone does not fetch submodule contents.
+// Leave it out and the boot succeeds with no rules — the symptom only shows on the first Discovery turn.
 assert.match(s, /git -C \/opt\/aipds submodule update --init --recursive/,
   'the ruleset submodule must be populated at boot — a clone leaves steering-files/ empty '
   + 'and the failure only surfaces on the first Discovery turn');
-// --remote면 부팅마다 상류 최신을 당겨 인스턴스가 리포가 고정한 룰과 달라진다.
-// `^\s*git`으로 시작을 묶는 것은 주석(`# ... --remote ...`)을 세지 않기 위한 것이다.
+// With --remote, every boot pulls the upstream tip and the instance drifts from the rules the repo pins.
+// Anchoring the start with `^\s*git` is so comments (`# ... --remote ...`) are not counted.
 assert.ok(!/^\s*git[^\n]*submodule update[^\n]*--remote/m.test(s),
   'boot must use the submodule commit the repo pins, not --remote — otherwise the rules '
   + 'running on the instance are not the rules the repo records');
-// 멱등: cloud-init 재실행에서 이미 clone된 트리를 다시 clone하려 하면 실패한다.
+// Idempotent: on a cloud-init re-run, trying to clone an already-cloned tree fails.
 assert.match(s, /if \[ -d \/opt\/aipds\/\.git \]; then/,
   're-bootstrap must fetch instead of re-cloning');
-// 2a) **EC2 user-data 16KB 한계.** 한 번 넘겨서 배포가 InvalidRequest로 실패했다
-//     (18,158바이트 — 그중 주석이 12KB였고 한글은 3바이트/자). CFN은 이걸 배포
-//     시점에야 거부하고, 그 실패는 인스턴스 **교체** 실패로 나타나므로 스택이
-//     롤백된다(같은 스택의 IAM 변경까지 함께 되돌아간다). 여기서 막는다.
+// 2a) **The EC2 user-data 16KB limit.** It was exceeded once and the deploy failed with InvalidRequest
+//     (18,158 bytes — 12KB of it was comments, and Hangul is 3 bytes/char). CFN rejects this only at
+//     deploy time, and that failure shows up as an instance **replacement** failure, so the stack
+//     rolls back (taking IAM changes in the same stack back with it). Stop it here.
 {
   const bytes = Buffer.byteLength(s, 'utf8');
   assert.ok(bytes <= 16384,
     `user-data is ${bytes} bytes — EC2 rejects anything over 16384. Move long blocks to `
     + 'infra/scripts/ (installed from the clone) and put the "why" in TS comments '
     + 'outside the template literal, where it costs zero bytes.');
-  // 여유가 없으면 다음 한 줄이 다시 한계를 넘긴다 — 절반 이상 비워 둔다.
+  // Without headroom the next single line pushes it over the limit again — keep at least half free.
   assert.ok(bytes <= 12288,
     `user-data is ${bytes} bytes: under the hard limit but with less than 4KB of room. `
     + 'Trim before adding more.');
   console.log(`OK  user-data: ${bytes} bytes (limit 16384, headroom ${16384 - bytes})`);
 }
-// 2a') 샌드박스는 서비스 기동 **전에** 깔고 켠다(scripts/aipds-harden boot). 뒤에 오면 백엔드가
-//      래퍼 없이 먼저 떠서 에이전트·프로토타입을 인스턴스 롤로 띄운다. region이 없으면 boot는
-//      SSM을 읽지 못해 격리를 끈 채로 둔다.
+// 2a') The sandbox is installed and enabled **before** the services start (scripts/aipds-harden boot). If it comes after, the
+//      backend starts first without the wrapper and launches agents and prototypes with the instance role. Without region, boot
+//      cannot read SSM and leaves isolation off.
 {
   const boot = s.indexOf('AWS_REGION=ap-northeast-2 /opt/aipds/infra/scripts/aipds-harden boot');
   assert.ok(boot >= 0, 'user-data must run aipds-harden boot with the region');
@@ -85,13 +85,13 @@ assert.match(s, /if \[ -d \/opt\/aipds\/\.git \]; then/,
   assert.ok(boot < s.indexOf('systemctl enable --now nginx aipds-backend aipds-frontend'),
     'aipds-harden boot must run before the backend starts');
 }
-// 2b) 코드 갱신 경로. 배포에 SHA가 없으므로 cdk deploy는 인스턴스를 교체하지 않고
-//     코드를 갱신하지 않는다 — 이 스크립트가 **유일한** 갱신 수단이다. 없거나
-//     망가져도 배포는 성공하고, 그 사실은 갱신을 시도할 때에야 드러난다.
+// 2b) Code update path. There is no SHA in the deployment, so cdk deploy neither replaces the instance nor
+//     updates the code — this script is the **only** means of updating. If it is missing or
+//     broken the deploy still succeeds, and that only comes to light when an update is attempted.
 //
-//     본문은 user-data가 아니라 리포 파일(infra/scripts/aipds-update)에 있다:
-//     16KB 예산을 쓰지 않고, 스크립트를 고쳐도 인스턴스 교체가 필요 없다. 그래서
-//     이 절은 두 쪽을 각각 단정한다 — user-data는 설치와 설정만, 나머지는 그 파일.
+//     The body lives in a repo file (infra/scripts/aipds-update), not in user-data:
+//     it does not spend the 16KB budget, and editing the script needs no instance replacement. So
+//     this section asserts each side separately — user-data only installs and configures; the rest is that file.
 {
   assert.match(s, /install -m 755 \/opt\/aipds\/infra\/scripts\/aipds-update \/usr\/local\/bin\/aipds-update/,
     'user-data must install aipds-update from the clone — with a branch (not a SHA) '
@@ -99,86 +99,86 @@ assert.match(s, /if \[ -d \/opt\/aipds\/\.git \]; then/,
   assert.ok(!s.includes("<<'UPDATE'"),
     'the update script must not be inlined back into user-data — that is what blew the '
     + '16KB limit, and editing it would force an instance replacement');
-  // 스크립트는 경로·유저·브랜치를 이 파일에서 읽는다. 리터럴로 박으면
-  // DEPLOY_BRANCH를 바꿨을 때 조용히 어긋난다.
+  // The script reads the path, user and branch from this file. Hardcoding them as literals
+  // would drift silently when DEPLOY_BRANCH changes.
   assert.match(s, /cat > \/etc\/aipds-deploy\.env <<ENV\nAPP=\/opt\/aipds\nSVC=aipds\nBRANCH=main\nENV/,
     'user-data must write the deploy env the script reads (APP/SVC/BRANCH)');
 
   const scriptPath = require('node:path').join(__dirname, '..', 'scripts', 'aipds-update');
   const fs = require('node:fs') as typeof import('node:fs');
   assert.ok(fs.existsSync(scriptPath), 'infra/scripts/aipds-update must exist');
-  // 실행 비트: user-data가 install -m 755로 깔지만, 리포에서 직접 돌려보는 경로도 있다.
+  // Executable bit: user-data installs it with install -m 755, but there is also the path of running it straight from the repo.
   assert.ok((fs.statSync(scriptPath).mode & 0o111) !== 0,
     'infra/scripts/aipds-update must be executable in the repo');
   const update: string = fs.readFileSync(scriptPath, 'utf8');
 
   assert.match(update, /\. "\$ENV_FILE"/,
     'the script must source the deploy env instead of hardcoding APP/SVC/BRANCH');
-  // 인자가 없으면 배포 브랜치, 있으면 그 시험 브랜치(개발자용 — 스크립트 머리말)의 원격 최신.
+  // With no argument, the remote tip of the deploy branch; with one, of that test branch (developer-only — see the script header).
   assert.match(update, /TARGET=\$\{1:-\$BRANCH\}/,
     'aipds-update must default to the deploy branch when no branch is given');
   assert.match(update, /checkout -f -B "\$TARGET" "origin\/\$TARGET"/,
     'aipds-update must move the tree onto the remote tip of the deploy (or test) branch');
-  // checkout은 gitlink만 옮기고 서브모듈 내용은 옮기지 않는다 — 빼면 룰 갱신이
-  // 조용히 반영되지 않는다(브랜치 배포에서 코드 갱신 경로는 이 스크립트뿐이다).
+  // checkout moves only the gitlink, not the submodule contents — leave this out and rule updates
+  // silently do not take effect (in a branch deploy this script is the only code update path).
   assert.match(update, /submodule update --init --recursive/,
     'aipds-update must populate the ruleset submodule — checkout moves the gitlink but '
     + 'not its contents, so a rules update would silently not take effect');
-  // 조기 종료 **위**여야 한다: 서브모듈 초기화에 실패한 채 부팅한 인스턴스는 커밋이
-  // 그대로여서 조기 종료로 빠지고, 그러면 고칠 방법이 인스턴스 교체뿐이다.
+  // It must be **above** the early exit: an instance that booted with a failed submodule init has an
+  // unchanged commit, so it takes the early exit, and then the only fix is replacing the instance.
   assert.ok(update.indexOf('submodule update --init') < update.indexOf('BEFORE" = "$AFTER'),
     'the submodule update must run before the up-to-date early exit, so that an instance '
     + 'which booted with an empty steering-files/ can heal itself without a redeploy');
-  // 이 env를 빼고 빌드하면 브라우저가 localhost:8000을 부른다 — 화면은 뜨고 모든
-  // API 호출이 죽는다. 손으로 하던 절차를 스크립트로 옮긴 주된 이유가 이 한 줄이다.
+  // Build without this env and the browser calls localhost:8000 — the screen loads and every
+  // API call dies. This one line is the main reason the manual procedure was moved into a script.
   assert.match(update, /env NEXT_PUBLIC_API_BASE_URL=\/api HOME="\$APP" npm run build/,
     'the frontend rebuild must carry NEXT_PUBLIC_API_BASE_URL=/api — without it the '
     + 'bundle points the browser at localhost:8000 and every API call dies silently');
   assert.match(update, /systemctl restart aipds-backend/, 'must be able to restart the backend');
   assert.match(update, /systemctl restart aipds-frontend/, 'must be able to restart the frontend');
-  // 트리는 서비스 유저 소유다. root로 fetch하면 새 오브젝트가 root 소유로 섞여
-  // 다음 갱신이 권한으로 막힌다 — 그 실패는 갱신할 때만 보인다.
+  // The tree is owned by the service user. Fetching as root mixes root-owned new objects in, and
+  // the next update is blocked by permissions — that failure only shows when updating.
   assert.match(update, /runuser -u "\$SVC" -- git -C "\$APP"/,
     'git must run as the service user that owns the tree, not as root');
-  // 갱신할 것이 없을 때 재시작하면 안 된다: 백엔드 재시작은 진행 중인 Discovery
-  // 턴과 빌드 세션을 끊는다.
+  // Do not restart when there is nothing to update: restarting the backend cuts in-flight Discovery
+  // turns and build sessions.
   assert.match(update, /if \[ "\$BEFORE" = "\$AFTER" \]; then/,
     'an up-to-date instance must be left alone — a needless backend restart cuts '
     + 'in-flight Discovery turns and build sessions');
-  // 런타임 데이터(protos/, workspaces/, */sessions/)는 untracked라 reset --hard로는
-  // 지워지지 않지만, git clean이나 rm -rf가 들어오면 지워진다.
+  // Runtime data (protos/, workspaces/, */sessions/) is untracked, so reset --hard does not
+  // delete it, but git clean or rm -rf would.
   assert.ok(!/git clean/.test(update),
     'aipds-update must not git clean — protos/, workspaces/ and session state are untracked');
   assert.ok(!/rm -rf/.test(update),
     'aipds-update must not delete the tree — it updates it in place');
   console.log('OK  user-data: aipds-update ships (branch deploys have no other code-update path)');
 }
-// 3) 시크릿 부팅 조회 (하드코딩 금지 — 런타임 조회)
+// 3) Secret lookup at boot (no hardcoding — runtime lookup)
 assert.match(s, /aws secretsmanager get-secret-value --secret-id arn:aws:secretsmanager:[^ ]+ /, 'must fetch secret at boot');
-// 4) nginx 헤더 검증 (403)
+// 4) nginx header check (403)
 assert.match(s, /\$http_x_origin_verify/, 'nginx must check X-Origin-Verify');
 assert.match(s, /return 403/, 'nginx must 403 on mismatch');
-// 4b) 이스케이핑 고정: nginx 런타임 변수는 백슬래시 정확히 1개만 남아야 부팅 시
-//     bash가 heredoc에서 하나를 소비하고 nginx에 리터럴 $var를 남긴다.
-//     단순 s.includes('\\$foo')는 백슬래시 2개짜리 회귀도 그대로 통과한다
-//     ('\\\\$foo'가 '\\$foo'를 부분 문자열로 포함하기 때문) — 그래서 부정
-//     lookbehind로 "바로 앞에 백슬래시가 없는 백슬래시"만 매치하도록 고정한다.
+// 4b) Pin the escaping: nginx runtime variables must keep exactly 1 backslash so that at boot
+//     bash consumes one in the heredoc and leaves a literal $var for nginx.
+//     A plain s.includes('\\$foo') also passes a 2-backslash regression
+//     (because '\\\\$foo' contains '\\$foo' as a substring) — so a negative
+//     lookbehind pins it to match only "a backslash not immediately preceded by a backslash".
 assert.match(s, /(?<!\\)\\\$http_x_origin_verify\b/, 'nginx var must keep exactly ONE backslash (not 0, not 2+) so bash leaves a literal $ for nginx');
 assert.match(s, /(?<!\\)\\\$host\b/, 'nginx var \\$host must keep exactly ONE backslash');
 assert.match(s, /(?<!\\)\\\$proxy_add_x_forwarded_for\b/, 'nginx var \\$proxy_add_x_forwarded_for must keep exactly ONE backslash');
-// 4c) 대조: 시크릿 변수는 백슬래시 없이 남아야 부팅 시 bash가 실제 값으로 치환한다.
+// 4c) Contrast: secret variables must stay without a backslash so bash substitutes the real value at boot.
 assert.ok(s.includes('"${SECRET}"'), 'secret var must be unescaped so bash expands it');
 assert.ok(!s.includes('\\${SECRET}'), 'secret var must NOT be backslash-escaped');
-// 4d) 로그 파일 권한: aipds 서비스 유저(=bypassPermissions로 도는
-//     프로토타입 빌드 에이전트가 쓰는 그 계정)가 부트스트랩 로그를 읽으면 안
-//     된다 — 644(기본값)면 읽힌다.
+// 4d) Log file permissions: the aipds service user (= the account used by the prototype
+//     build agent running with bypassPermissions) must not be able to read the bootstrap
+//     log — at 644 (the default) it can.
 assert.match(s, /chmod 600 \/var\/log\/aipds-bootstrap\.log/, 'bootstrap log must be root-only (600), not world/group-readable');
-// 4e) xtrace(-x)는 두 시크릿 조회(Cognito client secret, X-Origin-Verify
-//     header secret) 둘 다에서 꺼져 있어야 한다 — 켜져 있으면 명령과 그
-//     결과 대입이 로그(사양상 aipds 유저가 읽는 그 로그)에 그대로
-//     남는다. "set +x ... COGNITO_SECRET=... set -x"처럼 대입이 그 사이에
-//     있는지 직접 확인한다(단순히 어딘가에 set +x가 있다는 것만으로는
-//     부족하다 — 순서가 어긋나면 트레이스가 여전히 켜진 채로 대입이 실행된다).
+// 4e) xtrace (-x) must be off around both secret lookups (Cognito client secret, X-Origin-Verify
+//     header secret) — if it is on, the command and its result assignment end up verbatim
+//     in the log (the very log the aipds user reads, by design). Check directly that the
+//     assignment sits in between, as in "set +x ... COGNITO_SECRET=... set -x" (merely having
+//     set +x somewhere is not enough — if the order is off, the assignment still runs with
+//     tracing on).
 for (const [name, pattern] of [
   ['COGNITO_SECRET', /COGNITO_SECRET=\$\(aws cognito-idp describe-user-pool-client/],
   ['SECRET (X-Origin-Verify)', /\nSECRET=\$\(aws secretsmanager get-secret-value/],
@@ -193,76 +193,76 @@ for (const [name, pattern] of [
   const after = s.slice(m.index);
   assert.match(after, /^\s*(?:.*\n){0,4}set -x/, `${name} assignment must be followed by 'set -x' to re-enable tracing afterward`);
 }
-// 5) nginx 라우팅 — /api/*는 FastAPI가 아니라 Next로 간다. Next의
-//    app/api/[...path]/route.ts가 same-origin 프록시로서 쿠키를 Bearer로
-//    번역해 서버사이드에서 FastAPI로 넘긴다; nginx가 /api/를 FastAPI로 직접
-//    보내면 그 번역이 일어나지 않아 로그인/모든 API 호출이 깨진다(Bearer 없이
-//    도달 -> 401, /api/auth/* 자체는 FastAPI에 없으므로 404).
+// 5) nginx routing — /api/* goes to Next, not FastAPI. Next's
+//    app/api/[...path]/route.ts, as the same-origin proxy, translates the cookie into a
+//    Bearer and passes it to FastAPI server-side; if nginx sent /api/ directly to FastAPI,
+//    that translation would not happen and login and every API call would break (arrives
+//    without Bearer -> 401, and /api/auth/* itself does not exist in FastAPI, so 404).
 assert.ok(!/proxy_pass http:\/\/127\.0\.0\.1:8000/.test(s),
   'FastAPI must not be reachable directly through nginx — every request goes through Next first');
 {
   const nginxStart = s.indexOf('cat > /etc/nginx/conf.d/aipds.conf');
   const nginxEnd = s.indexOf('\nNGINX\n', nginxStart); // closing heredoc marker, not the opening "<<NGINX"
   const nginxBlock = s.slice(nginxStart, nginxEnd);
-  // 정확히 하나의 location — /api/ 전용 location이 없다(있으면 FastAPI로 새는
-  // 경로가 부활한다는 뜻).
+  // Exactly one location — no dedicated /api/ location (one would mean the path leaking to
+  // FastAPI has come back).
   assert.strictEqual((nginxBlock.match(/location /g) ?? []).length, 1,
     'nginx must have exactly ONE location block — no separate /api/ block routing to FastAPI');
   assert.match(nginxBlock, /location \/ \{/, 'the single location must be the catch-all "/"');
   assert.match(nginxBlock, /proxy_pass http:\/\/127\.0\.0\.1:3000/, '/ -> frontend (which itself proxies /api to FastAPI)');
-  // SSE 스트리밍 지시자는 이제 유일한 location에 있어야 한다 — browser ->
-  // nginx -> Next -> FastAPI 경로 전체가 이 location을 지나간다.
+  // The SSE streaming directives must now be on the only location — the whole browser ->
+  // nginx -> Next -> FastAPI path passes through this location.
   assert.match(nginxBlock, /proxy_buffering off/, 'SSE: buffering off must be present on the location that now carries /api traffic');
   assert.match(nginxBlock, /proxy_read_timeout 3600s/, 'SSE: long read timeout must be present on that same location');
-  // 압축은 nginx만 할 수 있다 — Next /api 프록시는 본문을 풀어서 내보내고
-  // CloudFront(CACHING_DISABLED)는 압축하지 않는다. CloudFront가 Via를 붙이므로
-  // gzip_proxied가 없으면 gzip on은 아무것도 하지 않는다.
+  // Only nginx can compress — the Next /api proxy sends the body out decompressed, and
+  // CloudFront (CACHING_DISABLED) does not compress. CloudFront adds Via, so without
+  // gzip_proxied, gzip on does nothing.
   assert.match(nginxBlock, /gzip on;/, 'nginx must gzip — nothing else in the chain compresses /api responses');
   assert.match(nginxBlock, /gzip_proxied any;/, 'gzip_proxied any: CloudFront requests carry Via, so the default (off) compresses nothing');
   const gzipTypes = nginxBlock.match(/gzip_types ([^;]+);/);
   assert.ok(gzipTypes, 'gzip_types must be set');
   assert.ok(!gzipTypes[1].includes('text/event-stream'),
     'SSE must never be gzipped — compression buffers events and stalls the stream');
-  // 이 설계가 요구하는 방향으로 이 이음매를 못박는다: /api/auth/*(로그인·콜백·
-  // /auth/me — 백엔드에는 이 라우트가 전혀 없다)는 반드시 프론트(Next)가
-  // 받아야 한다. location이 하나뿐이고 그게 "/"이자 :3000으로 가므로, 이는
-  // "/api/auth/도 그 하나의 location에 매칭된다"는 것을 직접 확인하는 것과
-  // 같다 — nginx가 최長 접두어 매칭이므로 별도의 /api/ 블록이 없는 한 항상 참이다.
+  // Pin this seam in the direction this design requires: /api/auth/* (login, callback,
+  // /auth/me — the backend has none of these routes) must be received by the frontend (Next).
+  // There is only one location and it is "/" going to :3000, so this is the same as
+  // directly checking that "/api/auth/ also matches that one location" — nginx uses
+  // longest-prefix matching, so it always holds as long as there is no separate /api/ block.
   const singleLocationCoversApiAuth = nginxBlock.includes('location / {')
     && !/location \/api\/? \{/.test(nginxBlock);
   assert.ok(singleLocationCoversApiAuth,
     '/api/auth/ specifically must be served by the frontend (:3000) — no /api/ location may exist to intercept it before it reaches Next');
 }
-// 6) 프론트 빌드 env (same-origin API)
+// 6) Frontend build env (same-origin API)
 assert.match(s, /NEXT_PUBLIC_API_BASE_URL=\/api/, 'front build uses /api');
-// 7) 백엔드 env
+// 7) Backend env
 assert.match(s, /AIPDS_S3_BUCKET=my-artifacts-bucket/, 'backend bucket env');
 assert.match(s, /ANTHROPIC_MODEL=global\.anthropic\.claude-opus-4-8/, 'backend model env');
 assert.match(s, /AIPDS_S3_REGION=ap-northeast-2/, 'backend s3 region env');
-// 8) systemd 유닛
+// 8) systemd units
 assert.match(s, /aipds-backend\.service/, 'backend unit');
 assert.match(s, /aipds-frontend\.service/, 'frontend unit');
 assert.match(s, /uvicorn aipds\.app:app --host 127\.0\.0\.1 --port 8000/, 'uvicorn cmd');
 assert.match(s, /next start -H 127\.0\.0\.1 -p 3000/, 'next start cmd');
-// 9) 시크릿 하드코딩되지 않음 (실제 값은 부팅 시점에만 존재)
+// 9) Secret not hardcoded (the real value exists only at boot time)
 assert.ok(!s.includes('AbCdEf-value'), 'secret value never inlined');
-// 10) 첨부 업로드(10MB)가 nginx 기본 1m 바디 제한에 막히지 않도록 여유치 설정.
-//     떠 있는 인스턴스를 맞추는 aipds-update의 값과 같아야 한다.
+// 10) Set headroom so attachment uploads (10MB) are not blocked by nginx's default 1m body limit.
+//     Must match the value in aipds-update, which brings running instances in line.
 assert.ok(s.includes('client_max_body_size 11m;'), 'nginx must allow up to 11m request bodies (10MB upload feature)');
 {
   const update = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'aipds-update'), 'utf8');
   assert.ok(update.includes('NGINX_BODY_LIMIT=11m'), 'aipds-update must keep live instances at the same nginx body limit as user-data');
 }
-// 11) AL2023 기본 nginx.conf의 server 블록 제거용 sed는 반드시 앵커링되어야 함.
-//     비앵커 형태(`/server {/`)는 주석 처리된 TLS 예시 블록(`#    server {`)에도
-//     매칭되어 range-delete가 EOF까지 이어지며 http{} 를 닫는 `}` 를 삭제,
-//     nginx.conf 를 손상시킨다(nginx -t 실패 → 부트스트랩 전체 중단).
+// 11) The sed that removes the server block from AL2023's stock nginx.conf must be anchored.
+//     The unanchored form (`/server {/`) also matches the commented-out TLS example block (`#    server {`),
+//     so the range-delete runs to EOF and deletes the `}` that closes http{},
+//     corrupting nginx.conf (nginx -t fails → the whole bootstrap aborts).
 assert.ok(!s.includes("sed -i '/server {/"), 'must not use the unanchored sed that corrupts nginx.conf');
 assert.ok(s.includes("sed -i '/^    server {/"), 'must use the anchored sed that only matches the real (uncommented) stock server block');
 
 console.log('OK  user-data: all required elements present (incl. nginx-var vs secret-var escaping)');
 
-// 9) 프로토타입 빌드: 동시 빌드 상한 + 빌드 에이전트 전용 CLAUDE_CONFIG_DIR env.
+// 9) Prototype build: concurrent build cap + CLAUDE_CONFIG_DIR env dedicated to the build agent.
 assert.match(s, /Environment=AIPDS_PROTO_ROOT=\/opt\/aipds\/protos/, 'proto host root env');
 assert.match(s, /Environment=AIPDS_PROTO_MAX_CONCURRENT=10/, 'proto build concurrency cap env');
 // CLAUDE_CONFIG_DIR lives INSIDE the app tree, not in a user's home: app-owned
@@ -272,28 +272,28 @@ assert.match(s, /Environment=AIPDS_PROTO_CONFIG_DIR=\/opt\/aipds\/proto-config/,
 assert.doesNotMatch(s, /AIPDS_PROTO_CONFIG_DIR=\/home\//, 'CLAUDE_CONFIG_DIR must not point at a user home');
 assert.match(s, /mkdir -p \/opt\/aipds\/protos \/opt\/aipds\/proto-config \/opt\/aipds\/workspaces/, 'app-owned data dirs must be created at boot');
 
-// 프로토타입 접근 쿠키의 Secure 스위치(routes/proto_public.py의 _cookie_secure).
-// 기본값이 꺼짐이라 이 줄이 빠지면 배포가 조용히 non-Secure 쿠키를 내보낸다 —
-// 화면상 아무 증상이 없으므로 테스트만이 잡을 수 있다.
+// Secure switch for the prototype access cookie (_cookie_secure in routes/proto_public.py).
+// The default is off, so if this line goes missing the deployment silently issues non-Secure cookies —
+// there is no visible symptom on screen, so only a test can catch it.
 assert.match(s, /Environment=AIPDS_COOKIE_SECURE=true/,
   'AIPDS_COOKIE_SECURE=true must be set — the backend omits Secure on the prototype access cookie without it');
 
-// 컨텍스트 설정 두 개(backend/aipds/cli_settings.py). COOKIE_SECURE와 같은
-// 실패 모양이다: 둘 다 기본값이 꺼짐이라 이 줄이 빠지면 배포가 조용히 종전
-// 동작으로 돌아간다 — 후반 스테이지 문서가 근거가 아니라 컴팩션 요약에서
-// 나오는 그 상태이고, 화면상 증상은 "문서가 좀 얇다"뿐이다.
+// Two context settings (backend/aipds/cli_settings.py). Same failure shape as COOKIE_SECURE:
+// both default to off, so if these lines go missing the deployment silently falls back to the
+// old behavior — the state where later-stage documents come from a compaction summary rather
+// than the evidence, and the only visible symptom is "the documents are a bit thin".
 const compactWindow = s.match(/Environment=AIPDS_AUTO_COMPACT_WINDOW=(\d+)/);
 assert.ok(compactWindow,
   'AIPDS_AUTO_COMPACT_WINDOW must be set — without it the CLI compacts at its own default and later Discovery stages write from a summary');
 const windowTokens = Number(compactWindow![1]);
-// cli_settings._WINDOW_MIN.._WINDOW_MAX. 밖의 값은 백엔드가 경고 후 무시하므로
-// 설정한 사람은 켰다고 믿지만 실제로는 CLI 기본값으로 돈다.
+// cli_settings._WINDOW_MIN.._WINDOW_MAX. The backend warns and ignores values outside it, so
+// whoever set it believes it is on, but it actually runs at the CLI default.
 assert.ok(windowTokens >= 100_000 && windowTokens <= 1_000_000,
   `AIPDS_AUTO_COMPACT_WINDOW=${windowTokens} is outside the CLI's accepted range 100000..1000000 — the backend would warn and ignore it`);
 assert.match(s, /Environment=AIPDS_LONG_CONTEXT=true/,
   'AIPDS_LONG_CONTEXT=true must be set — on Bedrock the Opus profile needs the [1m] suffix for a 1M window');
-// **둘은 함께 켠다.** 200k를 넘는 윈도우를 1M 없이 주면 컴팩션이 발동하기 전에
-// 모델의 컨텍스트 한도에 부딪힌다 — 그때의 실패는 컴팩션이 아니라 턴 에러다.
+// **Turn both on together.** Giving a window over 200k without 1M hits the model's context limit
+// before compaction kicks in — the failure then is a turn error, not compaction.
 if (windowTokens > 200_000) {
   assert.match(s, /Environment=AIPDS_LONG_CONTEXT=true/,
     `AIPDS_AUTO_COMPACT_WINDOW=${windowTokens} exceeds the 200k default window — AIPDS_LONG_CONTEXT=true is required alongside it`);
@@ -301,10 +301,10 @@ if (windowTokens > 200_000) {
 
 console.log('OK  user-data: prototype build env vars, cookie-secure switch, and compaction/long-context env rendered');
 
-// 10) 서비스는 반드시 non-root로 돌아야 한다. Claude Code는 euid==0에서
-//     bypassPermissions를 거부하고(6d21e1f 실측), `--version`은 root에서도
-//     성공해 그 실패를 가린다 — 즉 부팅은 정상으로 보이고 첫 빌드 턴에서야
-//     502로 드러난다. 이 어서션이 그 회귀를 부팅 전에 잡는 유일한 방어선이다.
+// 10) The services must run as non-root. Claude Code refuses bypassPermissions at
+//     euid==0 (observed in 6d21e1f), and `--version` succeeds even as root, masking
+//     that failure — so the boot looks normal and it only surfaces as a 502 on the first
+//     build turn. This assertion is the only line of defense that catches that regression before boot.
 const backendUnit = s.slice(s.indexOf('aipds-backend.service'), s.indexOf('aipds-frontend.service'));
 assert.match(backendUnit, /^User=aipds$/m, 'backend service MUST run as the non-root aipds user (root breaks the build agent)');
 assert.match(backendUnit, /^Group=aipds$/m, 'backend service must set its group too');
@@ -321,7 +321,7 @@ assert.match(backendUnit, /^Environment=HOME=\/opt\/aipds$/m, 'backend unit need
 
 console.log('OK  user-data: services run as non-root aipds user, app tree owned by it');
 
-// --- 인증 배선 (Cognito) ---
+// --- Auth wiring (Cognito) ---
 {
   const script = renderUserData({
     region: 'ap-northeast-2',
@@ -336,43 +336,43 @@ console.log('OK  user-data: services run as non-root aipds user, app tree owned 
     appUrl: 'https://d123.cloudfront.net',
   });
 
-  // 백엔드: 이 두 값이 있어야 인증이 켜진다(없으면 바이패스 = 무인증 공개).
+  // Backend: auth is on only with these two values (without them, bypass = public with no auth).
   assert.ok(script.includes('AIPDS_COGNITO_USER_POOL_ID=ap-northeast-2_POOL'),
     'backend must receive the user pool id — without it auth is bypassed');
   assert.ok(script.includes('AIPDS_COGNITO_CLIENT_ID=client-abc'),
     'backend must receive the client id');
 
-  // 프론트: Hosted UI 도메인·클라이언트·앱 URL.
-  // 'COGNITO_CLIENT_ID=client-abc'만 찾으면 백엔드의
-  // 'AIPDS_COGNITO_CLIENT_ID=client-abc' 줄도 부분 문자열로 매치되어
-  // 프론트 줄이 삭제돼도 통과해버린다 — 'Environment=' 접두어까지 포함해
-  // 프론트 systemd 줄만 매치하도록 고정한다.
+  // Frontend: Hosted UI domain, client and app URL.
+  // Searching only for 'COGNITO_CLIENT_ID=client-abc' would also match the backend's
+  // 'AIPDS_COGNITO_CLIENT_ID=client-abc' line as a substring, so it would pass even if
+  // the frontend line were deleted — include the 'Environment=' prefix to pin it to
+  // the frontend systemd line only.
   assert.ok(script.includes('COGNITO_HOSTED_UI_DOMAIN=aipds-x.auth.ap-northeast-2.amazoncognito.com'));
   assert.ok(script.includes('Environment=COGNITO_CLIENT_ID=client-abc'),
     'frontend unit must set COGNITO_CLIENT_ID (must not match the backend AIPDS_COGNITO_CLIENT_ID line)');
   assert.ok(script.includes('APP_BASE_URL=https://d123.cloudfront.net'));
 
-  // 클라이언트 시크릿은 부팅 시 Cognito에서 조회한다 — 템플릿에 평문으로 남기지 않는다.
+  // The client secret is fetched from Cognito at boot — it is not left in plaintext in the template.
   assert.ok(script.includes('describe-user-pool-client'),
     'client secret must be fetched at boot, not baked into the template');
   assert.ok(!script.includes('COGNITO_CLIENT_SECRET=secret'),
     'a literal client secret must never appear in user-data');
 
-  // NEXT_PUBLIC_ 접두어가 붙으면 시크릿이 클라이언트 번들로 나간다.
+  // With the NEXT_PUBLIC_ prefix, the secret ships in the client bundle.
   assert.ok(!script.includes('NEXT_PUBLIC_COGNITO'),
     'Cognito env must never be NEXT_PUBLIC_ (it would be inlined into the browser bundle)');
 
   console.log('OK  user-data: cognito env for backend + frontend, secret fetched at boot');
 }
 
-// 12) 프록시 응답 헤더 버퍼 — 로그인 성공 시 502가 나던 원인.
+// 12) Proxy response header buffer — the cause of the 502 on successful login.
 //
-// 실측: Cognito 콜백이 access/id/refresh JWT 세 개를 Set-Cookie로 내보내는데
-// 그 헤더 총량이 nginx 기본 버퍼를 넘어
-// "upstream sent too big header while reading response header from upstream"
-// 으로 502가 났다. `proxy_buffering off`(SSE 때문에 필수)일 때 nginx는 응답
-// 헤더를 proxy_buffer_size 하나에만 담으므로, 그 값을 키워야 한다
-// (proxy_buffers는 버퍼링이 꺼져 있으면 헤더에 쓰이지 않는다).
+// Observed: the Cognito callback sends three JWTs (access/id/refresh) as Set-Cookie, and
+// the total header size exceeded nginx's default buffer, giving a 502 with
+// "upstream sent too big header while reading response header from upstream".
+// With `proxy_buffering off` (required for SSE), nginx holds the response
+// headers in a single proxy_buffer_size buffer, so that value has to grow
+// (proxy_buffers is not used for headers when buffering is off).
 assert.match(s, /proxy_buffering off/,
   'SSE needs proxy_buffering off (immediate flush)');
 const bufSize = s.match(/proxy_buffer_size\s+(\d+)([kKmM])/);
@@ -381,11 +381,11 @@ assert.ok(bufSize,
 const kb = Number(bufSize![1]) * (/[mM]/.test(bufSize![2]) ? 1024 : 1);
 assert.ok(kb >= 16,
   `proxy_buffer_size must be >= 16k to fit three JWT Set-Cookie headers, got ${bufSize![0]}`);
-// proxy_buffer_size만 키우면 nginx가 설정을 거부한다(실측):
+// Growing only proxy_buffer_size makes nginx reject the config (observed):
 // "proxy_busy_buffers_size must be less than the size of all proxy_buffers
-//  minus one buffer" — busy 기본값이 buffer_size의 2배로 따라 올라가며 기본
-// proxy_buffers(8x4k)와의 제약을 깨기 때문이다. 세 값이 함께 정의되고 제약을
-// 만족해야 nginx가 부팅한다(설정 거부 = 서비스 전체 down).
+//  minus one buffer" — because the busy default rises along with it to 2x buffer_size and
+// breaks the constraint with the default proxy_buffers (8x4k). nginx boots only when the three
+// values are defined together and satisfy the constraint (config rejected = whole service down).
 const bufs = s.match(/proxy_buffers\s+(\d+)\s+(\d+)([kKmM])/);
 const busy = s.match(/proxy_busy_buffers_size\s+(\d+)([kKmM])/);
 assert.ok(bufs, 'proxy_buffers must be set alongside proxy_buffer_size (nginx refuses the config otherwise)');
@@ -400,9 +400,9 @@ assert.ok(oneBufKb >= kb,
   `each proxy_buffer (${oneBufKb}k) should be at least proxy_buffer_size (${kb}k)`);
 console.log('OK  user-data: proxy buffer trio sized for JWT Set-Cookie headers and nginx constraints');
 
-// 13) 요청 헤더 버퍼 — 로그인 후 모든 요청이 JWT 쿠키 세 개를 싣는다.
-// 응답 쪽(12)과 짝이다: 기본값 8k로는 Cookie 헤더가 넘쳐 400
-// "Request Header Or Cookie Too Large"가 난다.
+// 13) Request header buffer — after login, every request carries the three JWT cookies.
+// Pairs with the response side (12): at the 8k default the Cookie header overflows with a 400
+// "Request Header Or Cookie Too Large".
 const cliBuf = s.match(/large_client_header_buffers\s+(\d+)\s+(\d+)([kKmM])/);
 assert.ok(cliBuf,
   'large_client_header_buffers must be set — three JWT cookies overflow the 8k default on every authenticated request');
@@ -411,14 +411,14 @@ assert.ok(cliKb >= 16,
   `large_client_header_buffers size must be >= 16k, got ${cliBuf![0]}`);
 console.log('OK  user-data: large_client_header_buffers fits JWT cookies on requests');
 
-// 14) Discovery 드라이버 env — 미주입 시 config dir이 호스트 유저의 ~/.claude로
-// 떨어져 개인 skills/agents가 워크숍 결과에 섞인다(proto-config와 같은 이유).
+// 14) Discovery driver env — if not injected, the config dir falls back to the host user's ~/.claude
+// and personal skills/agents get mixed into workshop results (same reason as proto-config).
 assert.match(s, /AIPDS_DISCOVERY_CONFIG_DIR=/,
   'backend must get AIPDS_DISCOVERY_CONFIG_DIR — otherwise the host user\'s ~/.claude leaks into Discovery');
 assert.match(s, /\/opt\/aipds\/discovery-config/,
   'discovery config dir must point at the shipped asset path');
-// proto와 discovery의 config dir이 서로 다른 경로여야 한다 — 공유하면
-// Discovery가 shadcn-design 스킬을 켠 채로 돈다(skills="all").
+// The proto and discovery config dirs must be different paths — if shared,
+// Discovery runs with the shadcn-design skill enabled (skills="all").
 const protoCfg = s.match(/AIPDS_PROTO_CONFIG_DIR=([^\s\\]+)/);
 const discCfg = s.match(/AIPDS_DISCOVERY_CONFIG_DIR=([^\s\\]+)/);
 assert.ok(protoCfg && discCfg, 'both config dirs must be set');

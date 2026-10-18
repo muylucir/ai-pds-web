@@ -15,7 +15,7 @@ export function QuestionForm({
   file: QuestionFile;
   onSubmit: (answers: Record<string, string>) => void;
   submitting: boolean;
-  /** 열람 멤버. 질문과 지금까지의 답은 보이고, 입력과 제출은 없다. */
+  /** Read-only member. The questions and answers so far are visible; no input or submit. */
   readOnly?: boolean;
 }) {
   const t = useT();
@@ -57,7 +57,7 @@ export function QuestionForm({
         </div>
       )}
 
-      {/* fieldset disabled: 카드 안의 선택지·입력칸을 한 번에 잠근다. */}
+      {/* fieldset disabled: locks all choices and input fields in the cards at once. */}
       <fieldset disabled={readOnly} className="space-y-6">
         {file.questions.map((q) => (
           <QuestionCard
@@ -69,8 +69,9 @@ export function QuestionForm({
         ))}
       </fieldset>
 
-      {/* 제출 바: 반투명+blur는 스크롤 시 뒤 질문 텍스트가 비쳐 "깨진" 것처럼
-          보인다(우측 패널처럼 좁은 스크롤 컨테이너에서 특히) — 불투명 흰색. */}
+      {/* Submit bar: translucency + blur lets the question text behind show through on scroll,
+          making it look "broken" (especially in narrow scroll containers like the right panel)
+          — opaque white. */}
       {readOnly ? (
         <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           {t("readOnly.answers")}

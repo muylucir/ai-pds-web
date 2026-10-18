@@ -1,11 +1,11 @@
-// 패키지 생성의 단계별 진행 — 생성 중이거나 실패·중단됐을 때 보인다.
+// Per-stage progress of package generation — shown while generating, or when it failed or was interrupted.
 //
-// 단계마다 대기 / 진행(첫 응답 대기·생각 중·받은 글자 수) / 완료 / 실패를 보여 준다. 큰
-// 프로젝트는 첫 출력까지 2분 넘게 걸린다(실측 ws-g) — 그 동안 "첫 응답을
-// 기다리는 중"과 흐르는 시간이 보여야 멈춘 것과 구별된다.
+// Each stage shows waiting / in progress (waiting for first response, thinking, characters received) / done / failed. Large
+// projects take more than 2 minutes to the first output (observed ws-g) — during that time "waiting for the first
+// response" and the elapsed time must be visible so it can be told apart from a hang.
 //
-// 실패하면 두 길이 있다: 끝난 단계는 두고 실패한 단계부터(서버가 `resumable`로 알려 준다 —
-// 원본이나 보완 답이 그사이 바뀌었으면 거짓이다), 또는 처음부터.
+// On failure there are two paths: keep the finished stages and resume from the failed one (the server reports this as `resumable` —
+// it is false if the source or the supplementary answers changed in the meantime), or start over.
 "use client";
 import { useEffect, useState } from "react";
 import type { Manifest, PackageView, Step } from "@/lib/api/handoff";
@@ -25,7 +25,7 @@ export function GenerationProgress({ pkg, busy, onResume, onRestart, readOnly = 
   busy: boolean;
   onResume: () => void;
   onRestart: () => void;
-  /** 열람 멤버 — 진행은 보이고 이어하기·다시 시작은 없다. */
+  /** Read-only member — sees progress but has no resume or restart. */
   readOnly?: boolean;
 }) {
   const t = useT();
@@ -33,7 +33,7 @@ export function GenerationProgress({ pkg, busy, onResume, onRestart, readOnly = 
   const generating = m.status === "generating";
   const [now, setNow] = useState(() => Date.now());
 
-  // 생성 중에만 1초마다 다시 그린다 — 폴링(3초)만으로는 경과 시간이 띄엄띄엄 뛴다.
+  // Redraw every second only while generating — with polling (3 seconds) alone, the elapsed time jumps in steps.
   useEffect(() => {
     if (!generating) return;
     const id = setInterval(() => setNow(Date.now()), 1000);

@@ -1,25 +1,29 @@
-# backend/tests/test_discovery_guard.py — Discovery의 쓰기 범위 게이트.
+# backend/tests/test_discovery_guard.py — Discovery's write-scope gate.
 #
-# **왜 이 게이트가 생겼는가(2026-08-16의 결함).** Discovery 에이전트가 워크스페이스에
-# 프로토타입을 `prototype/index.html`로 만들어 버렸다. 빌드·호스팅은 Prototypes
-# 탭의 일이고 Discovery의 역할은 스펙 작성에서 끝나는데(discovery-config/CLAUDE.md),
-# 그 규칙이 **산문뿐**이었고 그 산문이 금지한 것은 빌드 *명령*이었다:
-# npm install / npm run dev / 서브프로세스 / 포트 선택. 자기완결 HTML 한 장은
-# 그중 아무것도 필요하지 않다 — 에이전트의 자기 보고("API 키·패키지 설치·외부
-# 통신이 모두 불필요합니다")가 곧 모든 조항을 만족했다는 증거다.
+# **Why this gate exists (the 2026-08-16 defect).** The Discovery agent went ahead and
+# built a prototype in the workspace as `prototype/index.html`. Building and hosting are
+# the job of the Prototypes tab, and Discovery's role ends at writing the spec
+# (discovery-config/CLAUDE.md), but that rule was **prose only**, and what the prose
+# forbade was build *commands*: npm install / npm run dev / subprocesses / port
+# selection. A single self-contained HTML file needs none of those; the agent's own
+# report ("API 키·패키지 설치·외부 통신이 모두 불필요합니다", i.e. no API key,
+# package install, or external network needed) is itself proof that it satisfied
+# every clause.
 #
-# 강제 수단이 없었던 이유: Discovery는 `bypassPermissions`로 돈다
-# (claude_driver.py의 DEFAULT_PERMISSION_MODE). SDK가 이 상황을 직접 경고하며
-# 해법까지 지정한다(claude_agent_sdk/types.py의 _get_can_use_tool_shadowed_warning):
-# "can_use_tool will not be invoked ... To gate every tool call, use a PreToolUse
-# hook instead." 이 모듈이 그 훅의 판정부다.
+# Why there was no enforcement: Discovery runs with `bypassPermissions`
+# (DEFAULT_PERMISSION_MODE in claude_driver.py). The SDK warns about this exact
+# situation and even prescribes the fix (_get_can_use_tool_shadowed_warning in
+# claude_agent_sdk/types.py): "can_use_tool will not be invoked ... To gate every tool
+# call, use a PreToolUse hook instead." This module is the decision part of that hook.
 #
-# 같은 실패가 리포에서 두 번째다 — test_proto_session.py의
-# test_first_prompt_forbids_writing_files_before_approval이 빌더에서 같은 모양을
-# 기록했고, 그때 택한 완화책도 프롬프트 문구였다. 그래서 이번에는 코드로 막는다.
+# This is the second time the same failure has occurred in the repo:
+# test_proto_session.py's test_first_prompt_forbids_writing_files_before_approval
+# recorded the same shape in the builder, and the mitigation chosen then was also prompt
+# wording. So this time we block it in code.
 #
-# 판정 함수는 언어 중립이다: 거부 대상(경로/명령 조각)만 돌려주고 문구는
-# agent/prompts.py가 두 벌로 소유한다(그 파일 헤더의 규약).
+# The decision functions are language-neutral: they return only the denied target
+# (path/command fragment), and agent/prompts.py owns the wording in two versions (the
+# convention in that file's header).
 from __future__ import annotations
 
 import pytest
@@ -30,7 +34,7 @@ from aipds.agent.discovery_guard import (audit_overwrite_denial, bash_denial,
 WS = "/ws"
 
 
-# ---- Write/Edit/MultiEdit: aiplc-docs/ 안만 허용 ----
+# ---- Write/Edit/MultiEdit: allow only inside aiplc-docs/ ----
 
 def test_writing_under_aiplc_docs_is_allowed():
     assert write_denial("/ws/aiplc-docs/discovery/discovery-document.md", WS) is None
@@ -38,51 +42,55 @@ def test_writing_under_aiplc_docs_is_allowed():
 
 
 def test_the_slugged_prototype_spec_is_allowed():
-    """이 게이트와 슬러그 규약의 경계가 맞물린다는 확인.
+    """Confirms that this gate and the slug convention share the same boundary.
 
-    Prototypes 탭이 카드를 만드는 유일한 경로(routes/prototypes.py의 _SPEC_RE)는
-    aiplc-docs/ 안이므로 통과해야 한다 — 게이트가 이것을 막으면 슬러그 산출물을
-    아예 쓸 수 없게 되어 문제가 뒤바뀐다.
+    The only path by which the Prototypes tab creates a card (_SPEC_RE in
+    routes/prototypes.py) is inside aiplc-docs/, so it must pass; if the gate blocked
+    this, slug artifacts could not be written at all and the problem would just be
+    inverted.
     """
     path = "aiplc-docs/discovery/prototypes/maint-support/PROTOTYPE-maint-support.md"
     assert write_denial(path, WS) is None
 
 
 def test_the_html_that_caused_this_gate_is_denied():
-    """이 결함의 실제 산출물. 거부 대상으로 상대 경로를 돌려준다."""
+    """The actual artifact of this defect. Returns the relative path as the denied
+    target."""
     assert write_denial("/ws/prototype/index.html", WS) == "prototype/index.html"
     assert write_denial("prototype/app.js", WS) == "prototype/app.js"
 
 
 def test_any_path_outside_aiplc_docs_is_denied():
-    # 확장자를 보지 않는다 — .md라도 aiplc-docs/ 밖이면 산출물이 아니다.
+    # The extension is not considered; even a .md outside aiplc-docs/ is not an artifact.
     assert write_denial("notes.md", WS) == "notes.md"
     assert write_denial("src/main.py", WS) == "src/main.py"
 
 
 def test_a_lookalike_prefix_does_not_slip_through():
-    """`aiplc-docs`로 시작하는 **다른** 디렉터리는 밖이다. 접두사 문자열
-    비교로 구현하면 여기가 통과한다."""
+    """A **different** directory whose name starts with `aiplc-docs` is outside. An
+    implementation using prefix string comparison would let this pass."""
     assert write_denial("aiplc-docs-backup/x.md", WS) == "aiplc-docs-backup/x.md"
 
 
 def test_workspace_escapes_are_denied():
-    """탈출은 워크스페이스 밖이므로 당연히 거부다. pathsafe.workspace_relative가
-    None을 주는 경로이고, 그때는 원문을 그대로 거부 대상으로 보고한다."""
+    """An escape is outside the workspace, so it is of course denied. It is a path for
+    which pathsafe.workspace_relative returns None, and then the raw input is reported
+    as the denied target."""
     assert write_denial("/etc/passwd", WS) == "/etc/passwd"
     assert write_denial("../outside.md", WS) == "../outside.md"
 
 
 def test_a_missing_path_is_not_denied():
-    """file_path가 없는 호출은 이 게이트의 관심사가 아니다 — 판단 근거가 없는데
-    거부하면 알 수 없는 도구 모양 하나가 턴을 막는다."""
+    """A call without file_path is not this gate's concern; denying it with no basis for the
+    decision would let one unrecognized tool shape block the turn."""
     assert write_denial("", WS) is None
     assert write_denial(None, WS) is None
 
 
-# ---- Write/Edit/MultiEdit: aiplc-docs/ 안의 웹 소유 파일 거부 ----
-# 설문 집계는 "결과 취합"이 매번 다시 만든다. 에이전트가 거기 쓴 Step 6 분석은
-# 다음 취합에서 사라진다(proto/layout.SURVEY_AGGREGATE).
+# ---- Write/Edit/MultiEdit: deny web-owned files inside aiplc-docs/ ----
+# The survey aggregate is regenerated every time by "결과 취합" (Synthesize results). A Step
+# 6 analysis the agent writes there disappears at the next synthesis
+# (proto/layout.SURVEY_AGGREGATE).
 
 def test_the_survey_aggregate_is_denied_for_both_layouts():
     for rel in ("aiplc-docs/discovery/prototype/survey-aggregate.md",
@@ -92,9 +100,10 @@ def test_the_survey_aggregate_is_denied_for_both_layouts():
 
 
 def test_the_change_history_is_denied_for_both_layouts():
-    """수정 이력은 빌드 세션이 덧붙이고 다음 빌드 세션이 입력으로 읽는다
-    (proto/layout.CHANGE_HISTORY). Discovery가 고치면 빌더가 믿는 "무엇이
-    만들어졌는가"가 바뀐다 — 정합성 패스의 결론은 spec-as-built.md로 간다."""
+    """The change history is appended by build sessions and read as input by the next
+    build session (proto/layout.CHANGE_HISTORY). If Discovery edits it, the builder's
+    trusted record of "what was built" changes; the reconciliation pass's conclusions go
+    to spec-as-built.md."""
     for rel in ("aiplc-docs/discovery/prototype/change-history.md",
                 "aiplc-docs/discovery/prototypes/maint/change-history.md"):
         assert web_owned_denial(rel, WS) == rel
@@ -102,7 +111,8 @@ def test_the_change_history_is_denied_for_both_layouts():
 
 
 def test_the_reconciled_spec_is_allowed():
-    """정합성 패스가 쓸 자리다. 이것까지 막으면 이력을 반영할 곳이 없다."""
+    """This is where the reconciliation pass writes. Blocking this too leaves nowhere to
+    reflect the history."""
     rel = "aiplc-docs/discovery/prototype/spec-as-built.md"
     assert web_owned_denial(rel, WS) is None
     assert write_denial(rel, WS) is None
@@ -110,9 +120,9 @@ def test_the_reconciled_spec_is_allowed():
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_each_web_owned_file_names_where_the_work_goes_instead(language):
-    """거부 문구가 대안을 준다 — 같은 문구면 모델이 같은 경로로 재시도한다.
-    파일마다 갈 자리가 다르다: 설문 집계 → validation-results.md, 수정 이력 →
-    spec-as-built.md."""
+    """The denial wording offers an alternative; with the same wording the model retries
+    the same path. Each file has a different destination: survey aggregate →
+    validation-results.md, change history → spec-as-built.md."""
     from aipds.agent import prompts
     agg = prompts.web_owned_doc(language, "aiplc-docs/discovery/prototype/survey-aggregate.md")
     hist = prompts.web_owned_doc(language, "aiplc-docs/discovery/prototype/change-history.md")
@@ -121,21 +131,24 @@ def test_each_web_owned_file_names_where_the_work_goes_instead(language):
 
 
 def test_the_rules_results_file_is_allowed():
-    """Step 6 종합이 갈 자리다. 이것까지 막으면 에이전트가 쓸 곳이 없다."""
+    """This is where the Step 6 synthesis goes. Blocking this too leaves the agent
+    nowhere to write."""
     rel = "aiplc-docs/discovery/prototype/validation-results.md"
     assert web_owned_denial(rel, WS) is None
     assert write_denial(rel, WS) is None
 
 
 def test_the_web_owned_name_outside_aiplc_docs_is_not_this_gates_call():
-    """aiplc-docs/ 밖은 write_denial이 이미 거부한다 — 이 판정은 끼어들지 않는다."""
+    """Outside aiplc-docs/ is already denied by write_denial; this decision does not
+    step in."""
     assert web_owned_denial("prototype/survey-aggregate.md", WS) is None
     assert web_owned_denial("../survey-aggregate.md", WS) is None
     assert web_owned_denial(None, WS) is None
 
 
-# ---- Write: 이미 있는 audit.md를 통째로 덮어쓰지 않는다 ----
-# 웹이 사용자 입력을 원문 그대로 먼저 적어 둔다(aipds/audit_log). 덮어쓰면 그 기록이 사라진다.
+# ---- Write: do not wholesale overwrite an existing audit.md ----
+# The web app first records user input verbatim (aipds/audit_log). Overwriting would
+# erase that record.
 
 def test_writing_over_an_existing_audit_log_is_denied_but_edit_is_not(tmp_path):
     ws = str(tmp_path)
@@ -147,17 +160,18 @@ def test_writing_over_an_existing_audit_log_is_denied_but_edit_is_not(tmp_path):
 
 
 def test_creating_the_audit_log_when_it_does_not_exist_is_allowed(tmp_path):
-    """웹이 기록하지 않는 경로(예: 웹 이전의 세션 재개)에서 에이전트가 처음 만드는 것은 막지 않는다."""
+    """On paths the web app does not record (e.g. resuming a pre-web session), the agent
+    creating it first is not blocked."""
     ws = str(tmp_path)
     assert audit_overwrite_denial("Write", f"{ws}/aiplc-docs/audit.md", ws) is None
 
 
-# ---- Bash: 빌드·서버·워크스페이스 밖 리다이렉션 거부 ----
+# ---- Bash: deny builds, servers, and redirection outside the workspace ----
 
 def test_package_managers_are_denied_outright():
-    """Discovery는 마크다운을 쓴다 — 패키지 매니저가 필요한 일이 없다.
-    하위 명령을 열거하지 않고 호출 자체를 막는 이유는, 열거가 곧 빠진 항목을
-    초대한다는 것이 이 결함의 교훈이기 때문이다."""
+    """Discovery writes markdown; there is no job that needs a package manager. The
+    reason we block the invocation itself rather than enumerating subcommands is that
+    the lesson of this defect is that an enumeration invites the items it misses."""
     for cmd in ("npm install", "npm run dev", "npm ci", "npx create-next-app x",
                 "pnpm build", "yarn dev", "bun install"):
         assert bash_denial(cmd) is not None, cmd
@@ -173,29 +187,30 @@ def test_dev_servers_are_denied():
 
 
 def test_redirection_outside_aiplc_docs_is_denied():
-    """Write를 막아도 Bash 한 줄이 게이트를 우회한다 — 같은 경계를 여기서도 본다."""
+    """Blocking Write is not enough: one line of Bash bypasses the gate, so the same
+    boundary is checked here too."""
     assert bash_denial("echo '<html>' > prototype/index.html") is not None
     assert bash_denial("cat <<EOF >> app.js") is not None
     assert bash_denial("echo x | tee prototype/style.css") is not None
 
 
 def test_redirection_into_aiplc_docs_is_allowed():
-    """산출물을 셸로 쓰는 것 자체는 막을 이유가 없다."""
+    """There is no reason to block writing an artifact through the shell as such."""
     assert bash_denial("echo '# note' > aiplc-docs/audit.md") is None
     assert bash_denial("echo x >> aiplc-docs/discovery/notes.md") is None
 
 
 def test_fd_redirections_are_not_mistaken_for_files():
-    """`2>&1`은 파일이 아니라 fd 복제다. 이것을 파일로 읽으면 흔한 관용구가
-    전부 막히고, 그러면 게이트를 끄자는 압력이 생긴다."""
+    """`2>&1` is fd duplication, not a file. Reading it as a file would block every common
+    idiom, which in turn creates pressure to turn the gate off."""
     assert bash_denial("grep -r foo aiplc-docs/ 2>&1") is None
     assert bash_denial("ls -la 2>/dev/null") is None
     assert bash_denial("find . -name '*.md' 2>/dev/null | head") is None
 
 
 def test_ordinary_read_only_commands_are_allowed():
-    """게이트는 거부목록이다 — Discovery가 룰을 탐색하는 정상 경로를 막으면
-    안 된다(허용목록으로 만들면 여기가 전부 막힌다)."""
+    """The gate is a denylist; it must not block the normal paths Discovery uses to
+    explore the rules (if it were an allowlist, all of these would be blocked)."""
     for cmd in ("ls aiplc-docs", "cat aiplc-docs/audit.md", "wc -l x.md",
                 "grep -n Question aiplc-docs/a-questions.md",
                 "find aiplc-docs -name '*-questions.md'", "pwd"):
@@ -208,17 +223,18 @@ def test_an_empty_command_is_not_denied():
 
 
 def test_the_denial_names_what_was_refused():
-    """거부 이유가 모델에게 돌아가므로 무엇이 걸렸는지 지목해야 한다 — 그러지
-    않으면 모델이 같은 명령을 형태만 바꿔 재시도하며 루프에 빠진다."""
+    """The denial reason goes back to the model, so it must point out what was caught;
+    otherwise the model retries the same command in a different form and gets stuck in a
+    loop."""
     assert "npm" in bash_denial("npm run dev")
     assert "prototype/index.html" in bash_denial("echo x > prototype/index.html")
 
 
-# ---- CLI 설정 파일·노트북 ----
+# ---- CLI settings files and notebooks ----
 
 def test_bash_touching_cli_settings_is_denied():
-    """리다이렉션은 bash_denial이 막지만 cp·sed -i·인터프리터는 보지 않는다 — 설정
-    파일은 이름이 고정이라 이름으로 막는다."""
+    """Redirection is blocked by bash_denial, but cp, sed -i, and interpreters are not
+    inspected; settings files have fixed names, so they are blocked by name."""
     from aipds.agent.discovery_guard import settings_denial
     assert settings_denial("cp /tmp/x .claude/settings.json") == ".claude/settings.json"
     assert settings_denial("sed -i s/a/b/ .mcp.json") == ".mcp.json"

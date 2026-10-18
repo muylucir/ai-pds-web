@@ -2,16 +2,16 @@
 import Link from "next/link";
 import { useT } from "@/lib/i18n/provider";
 
-/** 아무 워크플로우도 돌지 않은 프로젝트의 대시보드에 뜨는 첫 안내.
+/** The first guidance shown on the dashboard of a project where no workflow has run yet.
  *
- * **왜 필요한가.** 프로젝트를 만들면 첫 화면이 대시보드이고, 그 화면의 모든
- * 숫자가 0이고 스테이지 목록·산출물·활동이 전부 비어 있다. 무엇을 해야
- * 하는지에 대한 유일한 단서는 질문 기록 카드 아래의 작은 회색 한 줄
- * (`dash.questionRecordsHint`)뿐이었고, 실제 사용자가 그 화면에서 당황했다.
+ * **Why it is needed.** After creating a project the first screen is the dashboard, where every
+ * number is 0 and the stage list, artifacts, and activity are all empty. The only clue about
+ * what to do was one small gray line under the question records card
+ * (`dash.questionRecordsHint`), and real users were confused on that screen.
  *
- * **왜 닫기 버튼이 없는가.** 이 배너는 일이 시작되면 스스로 사라진다 —
- * 사용자가 치울 이유가 없고, 닫기를 붙이면 "아직 시작 안 했는데 안내가
- * 없는" 상태를 사용자가 스스로 만들 수 있다.
+ * **Why there is no close button.** This banner disappears on its own once work starts —
+ * the user has no reason to dismiss it, and adding a close button would let the user create
+ * a "not started yet, but no guidance" state themselves.
  */
 export function GetStartedBanner({ projectId }: { projectId: string }) {
   const t = useT();

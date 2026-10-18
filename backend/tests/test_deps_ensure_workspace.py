@@ -37,13 +37,13 @@ async def test_registered_project_lazy_boots_once_even_concurrently(monkeypatch)
 
     async def _slow_boot(pid):
         boots["n"] += 1
-        await asyncio.sleep(0.02)  # 두 요청이 겹치도록
+        await asyncio.sleep(0.02)  # so the two requests overlap
         return Workspace(_FakeRunner())
 
     monkeypatch.setattr(app_module, "make_workspace", _slow_boot)
     a, b = await asyncio.gather(ensure_workspace("ew-lazy"), ensure_workspace("ew-lazy"))
-    assert a is b            # 같은 Workspace
-    assert boots["n"] == 1   # 이중 부팅 없음 (pid별 lock)
+    assert a is b            # the same Workspace
+    assert boots["n"] == 1   # no double boot (per-pid lock)
     assert app_module.registry.has_workspace("ew-lazy")
 
 
@@ -58,16 +58,16 @@ async def test_boot_failure_503_keeps_registration(monkeypatch):
     with pytest.raises(HTTPException) as e:
         await ensure_workspace("ew-fail")
     assert e.value.status_code == 503
-    assert app_module.registry.is_registered("ew-fail")   # 다음 요청이 재시도
+    assert app_module.registry.is_registered("ew-fail")   # the next request retries
     assert not app_module.registry.has_workspace("ew-fail")
 
 
 @pytest.mark.asyncio
 async def test_delete_during_boot_races_404_and_stops_runner(monkeypatch):
-    """DELETE /projects/{pid}가 초기화 대기 중 끼어드는 경우: make_workspace는
-    성공하지만 그 사이 registry.remove가 실행되어 attach 시점엔 미등록 상태.
-    이 경우 방금 만든 워크스페이스의 러너는 새는(leak) 대신 stop되어야 하고, 응답은
-    '프로젝트가 초기화 중 삭제됨' → 404여야 한다(라우트의 평소 미등록 시맨틱과 동일)."""
+    """When DELETE /projects/{pid} cuts in while initialization is pending: make_workspace
+    succeeds, but registry.remove runs in the meantime, so it is unregistered at attach time.
+    In that case the runner of the workspace just created must be stopped instead of leaking, and the response
+    must be 'project deleted during initialization' → 404 (same as the route's usual unregistered semantics)."""
     pid = "ew-race-del"
     app_module.registry.register(pid)
     stopped = {"n": 0}
@@ -77,7 +77,7 @@ async def test_delete_during_boot_races_404_and_stops_runner(monkeypatch):
             stopped["n"] += 1
 
     async def _boot_then_delete(pid):
-        app_module.registry.remove(pid)  # 동시 DELETE 시뮬레이션
+        app_module.registry.remove(pid)  # simulate a concurrent DELETE
         return Workspace(_StoppableRunner())
 
     monkeypatch.setattr(app_module, "make_workspace", _boot_then_delete)

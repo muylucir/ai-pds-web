@@ -21,8 +21,8 @@ async def upload_file(pid: str, file: UploadFile, request: Request):
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=_TOO_BIG)
-    # 문서 파싱(최대 10MB)은 CPU를 쓴다 — 루프 위에서 돌리면 그동안 모든
-    # SSE 스트림이 멈춘다.
+    # Document parsing (up to 10MB) uses CPU — running it on the loop would stall every SSE stream
+    # in the meantime.
     try:
         upload = await asyncio.to_thread(prepare, file.filename or "", data)
     except ValueError as e:
@@ -37,8 +37,9 @@ async def upload_file(pid: str, file: UploadFile, request: Request):
     if upload.text_key is not None and not await ws.runner.write_file_if_absent(
             upload.text_key, upload.text):
         raise HTTPException(status_code=409, detail="upload key already exists")
-    # `path`는 에이전트가 먼저 읽을 파일, `original`은 변환본과 함께 둔 원본
-    # (PDF — 도표·스캔 페이지가 필요할 때 읽는다). 원본만 있으면 그것이 `path`다.
+    # `path` is the file the agent should read first, and `original` is the original kept
+    # alongside the converted copy (PDF — read when charts or scanned pages are needed). If
+    # there is only the original, it is the `path`.
     return {
         "path": upload.text_key or upload.original_key,
         "original": upload.original_key if upload.text_key else None,

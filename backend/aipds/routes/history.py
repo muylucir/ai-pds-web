@@ -1,10 +1,10 @@
 # backend/aipds/routes/history.py
 #
-# 트랜스크립트는 `projects/{pid}/discovery/transcript/...` 한 곳에만 있다 —
-# ClaudeDriver가 `s3_store_factory(pid)`로 받은 스토어에 쓴다
-# (agent/session_store.py의 DiscoverySessionStore). 예전에는 strands 폴백
-# 드라이버가 `sessions/session_{pid}/...`에 따로 써서 라우트가 두 스토어를 모두
-# 넘겼는데, 그 드라이버를 삭제하면서 프리픽스도 하나가 됐다.
+# The transcript lives in only one place, `projects/{pid}/discovery/transcript/...` --
+# ClaudeDriver writes to the store it gets from `s3_store_factory(pid)`
+# (DiscoverySessionStore in agent/session_store.py). The strands fallback driver used
+# to write separately to `sessions/session_{pid}/...`, so the route passed both
+# stores; when that driver was deleted, the prefix became one as well.
 import logging
 from fastapi import APIRouter
 from aipds import app as app_module
@@ -18,8 +18,9 @@ router = APIRouter()
 @router.get("/projects/{pid}/history")
 async def get_history(pid: str):
     await ensure_workspace(pid)  # 404 gate (unknown project) + lazy boot
-    # 스토어 생성 실패(자격증명·버킷 미설정)는 히스토리를 비우되 화면은 막지
-    # 않는다 — 히스토리는 보조 데이터라는 이 경로의 기존 원칙 그대로다.
+    # A store creation failure (credentials or bucket not configured) empties the
+    # history but does not block the screen -- the same existing principle of this
+    # path that history is auxiliary data.
     try:
         project_s3 = app_module.s3_store_factory(pid)
     except Exception:
@@ -30,11 +31,12 @@ async def get_history(pid: str):
 
 @router.get("/projects/{pid}/context")
 async def get_context(pid: str):
-    """마지막 턴의 컨텍스트 사용량(aipds/context_usage.py). 없으면 null.
+    """The last turn's context usage (aipds/context_usage.py). null if none.
 
-    히스토리와 같은 자리에 있는 이유: 둘 다 "화면이 열릴 때 되살리는 보조 데이터"이고
-    같은 강등 규칙을 따른다 — 읽지 못하면 표시가 없을 뿐 화면은 막지 않는다. 도는 턴은
-    `context` 이벤트로 이 값을 덮는다.
+    Why it sits alongside history: both are "auxiliary data restored when the screen
+    opens" and follow the same degradation rule -- if it cannot be read, nothing is
+    shown, but the screen is not blocked. A running turn overwrites this value with a
+    `context` event.
     """
     await ensure_workspace(pid)
     try:

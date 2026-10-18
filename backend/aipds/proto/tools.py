@@ -1,15 +1,16 @@
-# backend/aipds/proto/tools.py — 프로토타입 빌더의 커스텀 MCP 도구.
+# backend/aipds/proto/tools.py — custom MCP tool for the prototype builder.
 #
-# 하나뿐이다: build_complete. 파일 조작과 질문은 SDK 내장 도구가 담당한다
-# (Write/Edit/AskUserQuestion). 이것만 자작하는 이유는 Discovery의
-# report_stage와 같다 — "빌드가 끝났다"는 사실은 모델의 명시적 선언이 있어야
-# 신뢰할 수 있다. 산출물 존재나 done 이벤트에서 역추론하면 빌드 중간 턴을
-# 완료로 오판한다(done은 "이 턴이 끝났다"는 뜻일 뿐이다).
+# There is only one: build_complete. File operations and questions are handled by
+# the SDK's built-in tools (Write/Edit/AskUserQuestion). The reason this one is
+# home-made is the same as Discovery's report_stage -- the fact that "the build is
+# done" can only be trusted when the model explicitly declares it. Inferring it
+# backwards from artifact existence or the done event misjudges a mid-build turn as
+# completion (done only means "this turn ended").
 #
-# 이 선언이 세션의 수명을 끝낸다: proto/session.py가 이 이벤트를 관찰해
-# status를 "complete"로 바꾸고 handoff.json을 쓴 뒤 유휴 타이머로 세션을
-# 닫는다. 그래서 도구가 거짓을 선언할 수 없어야 하고, 아래 산출물 검증이
-# 그것을 막는다.
+# This declaration ends the session's lifetime: proto/session.py observes this event,
+# sets status to "complete", writes handoff.json, and then closes the session via the
+# idle timer. So the tool must not be able to declare something false, and the
+# artifact validation below prevents that.
 from __future__ import annotations
 
 import asyncio
@@ -28,19 +29,19 @@ from aipds.proto.store import completed_digest, mark_completed, output_digest
 
 _log = logging.getLogger("aipds.proto")
 
-#: Discovery의 "aipds"와 구분되는 값 — 두 드라이버는 서로 다른 도구
-#: 집합을 노출한다. 같은 이름을 쓰면 어느 쪽 도구가 붙었는지 로그에서
-#: 구분되지 않는다.
+#: A value distinct from Discovery's "aipds" -- the two drivers expose different tool
+#: sets. With the same name, the logs could not tell which side's tools were
+#: attached.
 PROTO_MCP_SERVER_NAME = "aipds_proto"
 
-#: allowed_tools에 넣을 정규 이름. SDK가 --mcp-config를 직렬화할 때 이
-#: 형태로 이름을 만들므로, 다른 표기는 조용히 승인 대기로 남는다
-#: (agent/claude_driver.py:419-422의 같은 지적).
+#: The canonical name to put in allowed_tools. The SDK builds names in this form when
+#: it serializes --mcp-config, so any other spelling silently stays pending approval
+#: (the same point made at agent/claude_driver.py:419-422).
 BUILD_COMPLETE_TOOL = f"mcp__{PROTO_MCP_SERVER_NAME}__build_complete"
 
-# 명시적 JSON Schema를 쓴다. @tool의 dict 숏컷({"key": type})은 모든 키를
-# required로 만들어(create_sdk_mcp_server._build_schema) remaining을 생략할
-# 수 없게 된다 — agent/tools.py:32-41이 같은 이유로 같은 선택을 했다.
+# Use an explicit JSON Schema. @tool's dict shortcut ({"key": type}) makes every key
+# required (create_sdk_mcp_server._build_schema), so remaining could not be omitted
+# -- agent/tools.py:32-41 made the same choice for the same reason.
 _BUILD_COMPLETE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -53,18 +54,19 @@ _BUILD_COMPLETE_SCHEMA: dict[str, Any] = {
 
 
 def _text_result(text: str) -> dict[str, Any]:
-    """@tool 핸들러의 반환 계약 — create_sdk_mcp_server.call_tool이 이 형태를
-    CallToolResult로 변환한다."""
+    """The return contract of an @tool handler -- create_sdk_mcp_server.call_tool
+    converts this shape into a CallToolResult."""
     return {"content": [{"type": "text", "text": text}]}
 
 
 def _has_output(workspace: str) -> bool:
-    """prototype/ 아래에 무엇이든 있는가.
+    """Whether anything exists under prototype/.
 
-    판정은 `proto/session.py`의 `has_build_output`에 있다 — "빌드됐다"의 단일
-    정의다. 여기, 목록 라우트, 그리고 개시 프롬프트가 같은 질문을 하고, 기준이
-    갈라지면 도구는 완료를 받아들이는데 목록은 built로 보이지 않는(또는 그
-    반대) 상태가 된다. 이 래퍼는 입력 모양만 맞춘다(workspace 문자열).
+    The decision lives in `has_build_output` in `proto/session.py` -- the single
+    definition of "built". This place, the list route, and the opening prompt ask the
+    same question, and if the criteria diverge, the tool accepts completion while the
+    list does not show it as built (or the reverse). This wrapper only adapts the input
+    shape (a workspace string).
     """
     return has_build_output(Path(workspace))
 
@@ -72,19 +74,20 @@ def _has_output(workspace: str) -> bool:
 def build_proto_tools(workspace: str,
                       emit: Callable[[AgentEvent], None],
                       language: str = "ko") -> list:
-    """워크스페이스 + 이벤트 싱크에 바인딩된 SdkMcpTool 리스트.
+    """A list of SdkMcpTool bound to the workspace + event sink.
 
-이 리스트 자체는 ClaudeAgentOptions에 바로 넣을 수 없고, 호출부
-    (proto/builder.py)가 create_sdk_mcp_server(name=PROTO_MCP_SERVER_NAME,
-    tools=...)로 감싼다.
+This list itself cannot go straight into ClaudeAgentOptions; the caller
+    (proto/builder.py) wraps it with create_sdk_mcp_server(name=PROTO_MCP_SERVER_NAME,
+    tools=...).
 
-    **이 제품에 남은 유일한 커스텀 도구다.** Discovery의 것들은 전부 PostToolUse
-    훅으로 옮겨 갔다(agent/reconcile.py). `build_complete`가 남는 이유는 같은 판정
-    기준을 통과하기 때문이다 — 빌드의 마지막 Write는 다른 Write와 구별되지 않으므로
-    "끝났다"는 신호가 파일에서 유도되지 않는다.
+    **This is the only custom tool left in the product.** Discovery's tools all moved
+    to PostToolUse hooks (agent/reconcile.py). `build_complete` remains because it
+    passes the same decision criterion -- the build's last Write is indistinguishable
+    from any other Write, so the "done" signal cannot be derived from files.
 
-    language는 도구 설명과 반환 문자열의 언어다 — 셋 다 모델이 읽는
-    프롬프트이므로 대화 언어와 맞아야 한다(proto/prompts.py).
+    language is the language of the tool description and return strings -- all three
+    are prompts the model reads, so they must match the conversation language
+    (proto/prompts.py).
     """
 
     @tool("build_complete",
@@ -95,32 +98,37 @@ def build_proto_tools(workspace: str,
         remaining = args.get("remaining", "")
         changes = str(args.get("changes", "")).strip()
 
-        # 명세 대비 변경을 비워 두고 끝낼 수 없다. 이 기록이 다음 개선 세션과
-        # 재빌드의 입력이고, 침묵은 "바뀐 것 없음"이 아니라 "기록 안 함"과
-        # 구별되지 않는다. 바뀐 게 없으면 그렇게 적으면 된다.
+        # The build cannot finish with the changes-versus-spec left empty. That record
+        # is the input to the next improvement session and to rebuilds, and silence is
+        # indistinguishable from "not recorded" rather than "nothing changed". If
+        # nothing changed, it should just say so.
         if not changes:
             _log.warning("build_complete refused: changes missing (%s)",
                          workspace)
             return _text_result(prompts.build_complete_changes_missing(language))
 
-        # 이 이벤트가 세션을 끝낸다. 산출물 없이 선언되면 사용자는 "빌드
-        # 완료" 카드를 보는데 호스팅할 것이 없다 — 도구가 거짓을 선언할 수 없게
-        # 여기서 막는다. 반환 문자열은
-        # 에이전트가 읽고 스스로 고칠 수 있도록 무엇을 해야 하는지 알려준다.
+        # This event ends the session. If declared without artifacts, the user sees a
+        # "build complete" card with nothing to host -- blocked here so the tool cannot
+        # declare something false. The return string
+        # tells the agent what to do so it can read it and fix things itself.
         if not _has_output(workspace):
             _log.warning("build_complete refused: prototype/ is empty (%s)",
                          workspace)
             return _text_result(prompts.build_complete_rejection(language))
 
-        # 지난 완료 선언 이후 `prototype/`이 그대로면 끝낼 것이 없다. 완료 뒤에 온
-        # 메시지는 전부 새 개선 세션을 열므로, 질문 하나에도 세션이 열리자마자 이 선언으로
-        # 닫혔다 — 실측: 판매자 정보를 어떻게 가져오는지 물은 두 세션이 둘 다 코드를
-        # 바꾸지 않고 `changes: 없음`으로 끝났고, 답은 채팅이 아니라 완료 카드의 요약으로만
-        # 나갔다. 그 요약이 handoff를 덮어써 다음 세션은 이전 빌드 대신 "코드 안 바꿈"을
-        # 들고 시작했다. 판정은 파일 내용이다: Bash로 지운 것도 바뀐 것이다.
+        # If `prototype/` is unchanged since the last completion declaration, there is
+        # nothing to finish. Every message after completion opens a new improvement
+        # session, so even a single question was closed by this declaration as soon as
+        # the session opened -- observed: two sessions that asked how seller information
+        # is fetched both ended with `changes: 없음` without changing any code, and the
+        # answer went out only as the completion card's summary, not in the chat. That
+        # summary overwrote the handoff, so the next session started with "no code
+        # changed" instead of the previous build. The decision is based on file
+        # content: something deleted via Bash counts as changed too.
         #
-        # 테마 검사보다 먼저인 이유: 질문만 한 세션에서 테마 거부가 먼저 나가면 사용자가
-        # 요청하지 않은 테마 작업이 시작된다.
+        # Why this comes before the theme check: if the theme rejection went out first
+        # in a session that only asked a question, theme work the user never requested
+        # would start.
         build_dir = Path(workspace)
         digest = await asyncio.to_thread(output_digest, build_dir)
         if digest == completed_digest(build_dir):
@@ -128,17 +136,17 @@ def build_proto_tools(workspace: str,
                          "completion (%s)", workspace)
             return _text_result(prompts.build_complete_unchanged(language))
 
-        # 브랜드 프로필이 적용된 워크스페이스인데 테마가 붙지 않았으면 되돌려
-        # 보낸다. 판정은 디스크만 본다(design_sync.theme_required) — 도구 호출
-        # 경로에서 S3를 타지 않는다. 프로필이 없으면 이 검사는 아예 돌지 않아
-        # 기존 동작과 구분되지 않는다.
+        # If the workspace has a brand profile applied but no theme attached, send it
+        # back. The decision looks only at disk (design_sync.theme_required) -- the
+        # tool-call path does not touch S3. Without a profile this check does not run
+        # at all, so behavior is indistinguishable from before.
         if theme_required(build_dir) and not theme_imported(build_dir):
             _log.warning("build_complete refused: brand theme not applied (%s)",
                          workspace)
             return _text_result(prompts.build_complete_theme_rejection(language))
 
-        # 이벤트보다 먼저 쓴다 — 세션이 이 이벤트를 받고 스냅샷을 뜨므로, 표식이
-        # 그 세대에 함께 실린다(store.COMPLETED_MARKER).
+        # Written before the event -- the session takes a snapshot on receiving this
+        # event, so the marker is included in that generation (store.COMPLETED_MARKER).
         mark_completed(build_dir, digest)
         emit(AgentEvent(kind="build_complete", payload=json.dumps(
             {"summary": summary, "remaining": remaining, "changes": changes},

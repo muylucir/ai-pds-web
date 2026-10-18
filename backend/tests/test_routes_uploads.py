@@ -27,8 +27,8 @@ def test_upload_md_saved_under_a_uuid_directory(monkeypatch):
     m = _KEY_RE.match(body["path"])
     assert m and m.group(1) == "의견.md.md"
     assert body["truncated"] is False
-    # 저장 확인: 같은 runner의 read_file 경유 (files API가 없으므로 workspace registry로 직접).
-    # conftest의 _ensure_event_loop 오토유즈 픽스처가 루프를 보장한다.
+    # Verify storage: via the same runner's read_file (there is no files API, so go directly through the workspace registry).
+    # The _ensure_event_loop autouse fixture in conftest guarantees a loop.
     ws = app_module.registry.get("u1")
     assert asyncio.get_event_loop().run_until_complete(
         ws.runner.read_file(body["path"])) == "# 의견"

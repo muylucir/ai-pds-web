@@ -1,15 +1,15 @@
-# backend/aipds/proto/prompts.py — 빌드 에이전트의 개시 프롬프트, 언어별.
+# backend/aipds/proto/prompts.py — the build agent's opening prompts, per language.
 #
-# **조립하지 않고 언어별로 완성된 문장 두 벌을 유지한다.** 이 프롬프트는 빌드
-# 에이전트의 유일한 브레이크다(proto/session.py의 first_prompt docstring):
-# 빌더는 bypassPermissions로 돌아 Write/Edit이 자동 승인되므로, "계획만 세우고
-# 빌드하지 마"를 이 텍스트 밖에서 강제할 방법이 없다. 문장을 쪼개 치환하면 그
-# 지시의 강도가 어느 언어에서 약해졌는지 알 수 없게 된다 — 그것이 두 벌을
-# 유지하는 비용을 감수하는 이유다.
+# **Keep two complete sets of sentences, one per language, instead of assembling.** This prompt is the build
+# agent's only brake (the first_prompt docstring in proto/session.py):
+# the builder runs with bypassPermissions, so Write/Edit are auto-approved, and there is no way to enforce
+# "only plan, do not build" outside this text. Splitting sentences and substituting would make it impossible
+# to tell in which language that instruction lost strength — that is why we accept the cost of keeping
+# two sets.
 #
-# 한국어 문장은 종전 session.py·tools.py의 것을 그대로 옮긴 것이다(워크숍에서
-# 검증된 문구를 다시 쓰지 않는다). 영어는 같은 지시를 같은 순서로 옮긴 것이고,
-# test_proto_prompts가 두 벌에 같은 항목이 있는지 검사한다.
+# The Korean sentences were moved as is from the former session.py and tools.py (wording validated in workshops
+# is not rewritten). The English carries the same instructions in the same order,
+# and test_proto_prompts checks that both sets contain the same items.
 from __future__ import annotations
 
 _LANGUAGES = ("ko", "en")
@@ -21,9 +21,9 @@ def _lang(language: str) -> str:
 
 
 def _sources(language: str, spec_key: str, instructions_key: str | None) -> str:
-    """에이전트가 읽을 입력 — 명세, 그리고 있으면 빌드 지시서.
+    """Inputs the agent reads — the spec, plus the build instructions if present.
 
-    빌드 지시서가 없으면(Path B) 명세 경로 하나만 돌려줘 문장이 종전과 같다.
+    Without build instructions (Path B) it returns just the spec path, so the sentence is the same as before.
     """
     if not instructions_key:
         return f"`{spec_key}`"
@@ -33,11 +33,11 @@ def _sources(language: str, spec_key: str, instructions_key: str | None) -> str:
 
 
 def _history_note(language: str, history_key: str | None) -> str:
-    """수정 이력이 무엇이고 어느 쪽이 이기는지. 없으면 빈 문자열이다.
+    """What the change history is and which side wins. Empty string if there is none.
 
-    명세는 승인 시점에 고정되고 이후의 변경은 이 파일에만 쌓인다. 그 우선순위를
-    말하지 않으면 에이전트는 명세와 코드가 어긋난 자리에서 명세가 맞다고 보고
-    이미 뺀 기능을 되살린다.
+    The spec is frozen at approval, and later changes accumulate only in this file. Without stating that
+    precedence, where spec and code disagree the agent takes the spec as right and
+    revives features that were already removed.
     """
     if not history_key:
         return ""
@@ -52,7 +52,7 @@ def _history_note(language: str, history_key: str | None) -> str:
 
 
 def change_history_header(language: str) -> str:
-    """수정 이력 파일의 머리말 — 파일이 스스로를 설명한다."""
+    """Header of the change history file — the file explains itself."""
     if _lang(language) == "en":
         return ("# Change history\n\n"
                 "What each build session changed relative to the approved spec, "
@@ -65,7 +65,7 @@ def change_history_header(language: str) -> str:
 
 def change_history_entry(language: str, *, at: str, gen: int | None,
                          summary: str, changes: str) -> str:
-    """수정 이력 한 항목. 세션 하나(= build_complete 한 번)가 한 항목이다."""
+    """One change history entry. One session (= one build_complete) is one entry."""
     where = f" · gen {gen}" if gen is not None else ""
     if _lang(language) == "en":
         return (f"\n## {at}{where}\n\n**Changes**\n{changes}\n\n"
@@ -75,11 +75,11 @@ def change_history_entry(language: str, *, at: str, gen: int | None,
 
 
 def _instructions_note(language: str, instructions_key: str | None) -> str:
-    """빌드 지시서가 무엇이고 어느 쪽이 이기는지. 없으면 빈 문자열이다.
+    """What the build instructions are and which side wins. Empty string if there are none.
 
-    이 한 줄이 없으면 에이전트는 두 파일을 같은 무게로 읽는다. 지시서에만 있는
-    것은 Step 2의 design-context 답변(디자인 방향·기기)이고, 그것이 빌더에 닿게
-    하려고 지시서를 심는 것이다(proto/session.start).
+    Without this one line, the agent reads the two files with equal weight. What only the instructions hold
+    is the Step 2 design-context answers (design direction, devices), and the instructions are planted
+    so those reach the builder (proto/session.start).
     """
     if not instructions_key:
         return ""
@@ -94,13 +94,13 @@ def _instructions_note(language: str, instructions_key: str | None) -> str:
 def plan_prompt(language: str, *, spec_key: str, proxy_path: str,
                 instructions_key: str | None = None,
                 request: str | None = None) -> str:
-    """처음부터 시작하는 세션의 개시 턴. 계획만 세우고 빌드하지 않는다.
+    """Opening turn of a session that starts from scratch. Only plans; does not build.
 
-    **`request`는 실제로 이 분기에 닿지 않는다** — 첫 빌드에서는 카드가 입력을 주기
-    전에 `__first__`가 자동 발화하기 때문이다. 그래도 받아서 덧붙이는 이유는, 도달할
-    경로가 생기는 날 사용자가 타이핑한 말이 조용히 사라지는 것이 가장 나쁜 결과이기
-    때문이다. handoff·resume과 달리 되묻기를 없애지는 않는다: 계획 승인 왕복은 첫
-    빌드의 핵심 규율이고, 요청 한 줄이 그것을 대체하지 않는다.
+    **`request` never actually reaches this branch** — on a first build, `__first__` fires automatically
+    before the card gives any input. It is still accepted and appended because, the day a path to it
+    appears, the worst outcome would be the user's typed words silently disappearing.
+    Unlike handoff and resume, the clarifying question is not removed: the plan-approval round trip is the core
+    discipline of a first build, and a one-line request does not replace it.
     """
     return _with_request(
         _plan_prompt_base(language, spec_key=spec_key, proxy_path=proxy_path,
@@ -181,14 +181,14 @@ def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str,
 
 
 def resume_prompt(language: str, *, request: str | None = None) -> str:
-    """죽은 세션을 이어받는 개시 턴.
+    """Opening turn that takes over a dead session.
 
-    의도적으로 짧다. 에이전트는 이전 트랜스크립트와 만든 것을 이미 갖고 있어서,
-    스펙이나 빌드 규칙을 다시 말하면 그가 이미 보는 것과 경쟁만 한다. 이 턴이
-    할 일은 그가 혼자 방향을 정하지 않게 막는 것뿐이다.
+    Deliberately short. The agent already has the previous transcript and what it built, so
+    restating the spec or build rules only competes with what it already sees. All this turn
+    has to do is keep it from choosing a direction on its own.
 
-    `request`가 있으면 되묻지 않는다 — 근거는 `handoff_prompt`와 같다. 그 요청이
-    변경 지시라고 단정하지 않는 것도 같다.
+    With a `request`, it does not ask back — the reasoning is the same as in `handoff_prompt`. Likewise it does not
+    assume that request is a change instruction.
     """
     if request:
         if _lang(language) == "en":
@@ -229,17 +229,17 @@ def missing_output_prompt(language: str, *, spec_key: str,
                          instructions_key: str | None = None,
                          history_key: str | None = None,
                          request: str | None = None) -> str:
-    """산출물이 사라진 뒤의 개시 턴 — 찾지 말고 다시 만들라고 말한다.
+    """Opening turn after the output has disappeared — tells it to rebuild, not to search.
 
-    **`request`는 되묻기를 없애지 않는다** (handoff·resume과 다른 점이다): 없는
-    것을 고칠 수는 없으므로 여기서 할 일은 재빌드이고 그 승인 왕복은 남아야 한다.
-    그래도 사용자가 타이핑한 말은 덧붙인다 — 조용히 버리면 그 요청은 어디에도
-    남지 않는다.
+    **`request` does not remove the clarifying question** (unlike handoff and resume): what does not
+    exist cannot be fixed, so the job here is a rebuild, and its approval round trip must remain.
+    The user's typed words are still appended — silently discarding them would leave the request
+    nowhere.
 
-    이 지시가 없으면 에이전트는 트랜스크립트를 믿고 없는 코드를 찾아 나선다.
-    실측: 리셋된 프로토타입에서 작업 디렉토리 → 다른 프로토타입 디렉토리 →
-    `/opt/aipds/frontend` → 파일시스템 전체로 탐색을 넓히며 19초 이상을
-    태웠고, 성공할 수 없는 탐색이었다.
+    Without this instruction, the agent trusts the transcript and goes looking for code that does not exist.
+    Observed: on a reset prototype it widened the search from the working directory → another prototype's directory →
+    `/opt/aipds/frontend` → the whole filesystem, burning more than 19 seconds
+    on a search that could not succeed.
     """
     return _with_request(
         _missing_output_prompt_base(language, spec_key=spec_key,
@@ -289,10 +289,10 @@ def _missing_output_prompt_base(language: str, *, spec_key: str,
 
 
 def _with_request(text: str, language: str, request: str | None) -> str:
-    """개시 프롬프트 뒤에 사용자 요청을 덧붙인다 — 되묻기를 유지하는 분기 전용.
+    """Appends the user's request after the opening prompt — only for branches that keep the clarifying question.
 
-    `plan`과 `missing_output`이 쓴다. 두 분기는 승인 왕복이 규율이라 요청 한 줄로
-    대체할 수 없지만, 그렇다고 사용자가 타이핑한 말을 버려도 되는 것은 아니다.
+    Used by `plan` and `missing_output`. In those two branches the approval round trip is the discipline, so a one-line
+    request cannot replace it, but that does not mean the user's typed words may be discarded.
     """
     if not request:
         return text
@@ -302,7 +302,7 @@ def _with_request(text: str, language: str, request: str | None) -> str:
 
 
 def _request_branches_ko(what: str) -> str:
-    """요청이 실린 개시 턴(resume·handoff)의 끝 — 변경 요청과 질문을 나눠 지시한다."""
+    """Ending of an opening turn that carries a request (resume, handoff) — gives separate instructions for change requests and questions."""
     return (
         f"- 변경이나 작업을 요청한 것이면 반영해줘. {what} 되묻지 마 — 방금 "
         "말했다. 요청 자체가 정말 모호할 때만 물어봐. 끝나면 `build_complete`로 완료를 "
@@ -326,26 +326,26 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
                    remaining: str, instructions_key: str | None = None,
                    history_key: str | None = None,
                    request: str | None = None) -> str:
-    """완료된 빌드를 개선하는 새 세션의 개시 턴.
+    """Opening turn of a new session that improves a completed build.
 
-    파일 트리를 넘기지 않는 것이 의도적이다 — 에이전트가 자기 파일 도구로 cwd를
-    읽는 편이 스냅샷보다 정확하다. 여기서 할 일은 이전 빌드가 무엇을 남겼는지
-    알려주고 마음대로 손대지 않게 막는 것뿐이다.
+    Not passing the file tree is deliberate — the agent reading cwd with its own file tools
+    is more accurate than a snapshot. All this turn has to do is tell it what the previous build
+    left and keep it from touching things at will.
 
-    **`request`가 있으면 되묻지 않는다.** "수정하기"를 누른 사람은 이미 무엇을
-    고칠지 알고 있다 — 프리뷰에서 봤으니까. 그런데 되묻는 분기에서는 질문이 떠 있는
-    동안 입력창이 비활성이라(BuildPanel의 `disabled={streaming || …}`) 사용자가
-    **자기 요청을 타이핑할 수조차 없었다**: 남의 객관식에 먼저 답해야 자기 말을 할 수
-    있는 흐름이었고, 그 왕복이 의도를 선택지로 좁혔다.
+    **With a `request`, it does not ask back.** Someone who pressed "수정하기" (Modify) already knows what
+    to change — they saw it in the preview. But in the asking-back branch, the input box is disabled while a
+    question is up (BuildPanel's `disabled={streaming || …}`), so the user
+    **could not even type their own request**: it was a flow where they had to answer someone else's multiple choice
+    before saying what they wanted, and that round trip narrowed the intent down to the options.
 
-    **요청이 변경 지시라고 단정하지 않는다.** 완료된 빌드 뒤에 온 메시지는 전부 이
-    분기를 타므로 질문도 여기로 온다. 예전 문구("내가 고치고 싶은 것은 이것이다" … "끝나면
-    `build_complete`")는 질문을 변경 지시로 바꿨고, 모델은 코드를 건드리지 않은 채 답을
-    완료 선언의 요약에 담아 세션을 닫았다(proto/tools.py의 무변경 거부가 그 뒤의 방어선이다).
+    **It does not assume the request is a change instruction.** Every message that arrives after a completed build takes
+    this branch, so questions come here too. The old wording ("내가 고치고 싶은 것은 이것이다" … "끝나면
+    `build_complete`") turned questions into change instructions, and the model, without touching the code, put the answer
+    in the completion summary and closed the session (the no-change refusal in proto/tools.py is the line of defense after that).
 
-    요약과 "먼저 `prototype/`을 봐라"는 **요청이 있어도 함께 간다.** 이 분기는 새
-    세션이라 트랜스크립트가 없어서(proto/session의 _resolve_session_id), 그 둘이
-    빠지면 에이전트가 이전 빌드가 무엇을 남겼는지 모르는 채로 시작한다.
+    The summary and "look at `prototype/` first" **go along even with a request.** This branch is a new
+    session with no transcript (proto/session's _resolve_session_id), so without those two
+    the agent starts not knowing what the previous build left.
     """
     src = _sources(language, spec_key, instructions_key)
     note = (_instructions_note(language, instructions_key)
@@ -404,7 +404,7 @@ def handoff_prompt(language: str, *, spec_key: str, summary: str,
 
 
 def build_complete_description(language: str) -> str:
-    """`build_complete` 도구 설명. 도구 설명은 모델이 읽는 프롬프트다."""
+    """Description of the `build_complete` tool. A tool description is a prompt the model reads."""
     if _lang(language) == "en":
         return ("Declare that the prototype build is complete. Call this only "
                 "**after you have produced real output under `prototype/`** — an "
@@ -427,7 +427,7 @@ def build_complete_description(language: str) -> str:
 
 
 def build_complete_rejection(language: str) -> str:
-    """산출물 없이 완료를 선언했을 때 모델에게 돌려주는 거부 메시지."""
+    """Refusal message returned to the model when it declares completion without output."""
     if _lang(language) == "en":
         return ("Rejected — there is no output under `prototype/` in the working "
                 "directory. Write the finished work to `prototype/` and declare "
@@ -437,10 +437,10 @@ def build_complete_rejection(language: str) -> str:
 
 
 def build_complete_unchanged(language: str) -> str:
-    """지난 완료 이후 `prototype/`이 그대로인데 완료를 선언했을 때의 거부 메시지.
+    """Refusal message when completion is declared while `prototype/` is unchanged since the last completion.
 
-    "답은 채팅에 써라"가 요점이다. 이 거부가 막는 실패에서 모델은 텍스트를 한 줄도
-    쓰지 않고 답을 완료 선언의 summary에 담았다(proto/tools.py의 해당 검사).
+    "Write the answer in the chat" is the point. In the failure this refusal blocks, the model wrote not a single line of
+    text and put the answer in the completion declaration's summary (the corresponding check in proto/tools.py).
     """
     if _lang(language) == "en":
         return ("Rejected — nothing under `prototype/` has changed since the last "
@@ -455,7 +455,7 @@ def build_complete_unchanged(language: str) -> str:
 
 
 def build_complete_changes_missing(language: str) -> str:
-    """`changes` 없이 완료를 선언했을 때의 거부 메시지."""
+    """Refusal message when completion is declared without `changes`."""
     if _lang(language) == "en":
         return ("Rejected — `changes` is empty. List what this session changed in "
                 "features, flows or the data model relative to the spec and the "
@@ -467,14 +467,14 @@ def build_complete_changes_missing(language: str) -> str:
 
 
 def build_complete_recorded(language: str) -> str:
-    """완료 선언을 받아들였을 때 모델에게 돌려주는 확인."""
+    """Confirmation returned to the model when the completion declaration is accepted."""
     if _lang(language) == "en":
         return "Build completion recorded. Ending the session."
     return "빌드 완료가 기록되었다. 세션을 종료한다."
 
 
 def session_already_complete(language: str) -> str:
-    """완료 선언 뒤 메시지를 받았을 때 사용자에게 보이는 안내."""
+    """Notice shown to the user when a message arrives after completion was declared."""
     if _lang(language) == "en":
         return ("This build session is already complete and cannot take more "
                 "messages. To keep improving, start a new session with "
@@ -485,23 +485,23 @@ def session_already_complete(language: str) -> str:
 
 
 def missing_remaining_note(language: str) -> str:
-    """handoff에서 남은 작업 기록이 없을 때 쓰는 자리표시."""
+    """Placeholder used when handoff has no record of remaining work."""
     return ("(nothing recorded)" if _lang(language) == "en"
             else "(따로 기록된 것 없음)")
 
 
 def design_rules(language: str, *, has_tokens: bool = True) -> str:
-    """워크스페이스 CLAUDE.md의 design 절. 세션 종류(plan/resume/handoff)와
-    무관하게 매번 읽히는 유일한 채널이다 — 개시 프롬프트에 넣으면 개선 턴에서
-    사라진다(resume/handoff는 의도적으로 짧게 유지하는 자리다).
+    """The design section of the workspace CLAUDE.md. It is the only channel read every time regardless of
+    session kind (plan/resume/handoff) — put in the opening prompt, it would disappear on improvement
+    turns (resume/handoff are deliberately kept short).
 
-    `has_tokens=False`는 "프로필은 있는데 토큰이 없다"(산문만)를 뜻한다. 그때
-    브랜드가 있는 곳은 테마 파일이 아니라 DESIGN.md이고, 지시가 값이 있는 곳을
-    가리켜야 한다 — 2026-08-19 실측: 값 없는 테마 파일을 "브랜드 프로필에서
-    생성됨"이라고 가리킨 결과 한 에이전트는 "덮을 것이 없다"고 읽고 shadcn
-    기본값을 뒀다(같은 프로필에서 다른 에이전트는 산문을 읽어 팔레트를 옮겼다).
-    호출부(design_sync)가 `bool(profile.tokens)`를 그대로 넘기므로 이 지시와
-    옆에 놓인 파일의 내용은 어긋날 수 없다.
+    `has_tokens=False` means "there is a profile but no tokens" (prose only). Then the
+    brand lives in DESIGN.md, not the theme file, and the instruction has to point where the values
+    are — observed 2026-08-19: pointing at a value-less theme file as "generated from the brand
+    profile" led one agent to read "there is nothing to override" and keep the shadcn
+    defaults (on the same profile, another agent read the prose and carried the palette over).
+    The caller (design_sync) passes `bool(profile.tokens)` straight through, so this instruction and the
+    contents of the file next to it cannot disagree.
     """
     if _lang(language) == "en":
         return (
@@ -518,7 +518,7 @@ def design_rules(language: str, *, has_tokens: bool = True) -> str:
     )
 
 
-#: 토큰이 있을 때: 진실은 우리가 생성한 CSS 변수 파일이다.
+#: With tokens: the truth is the CSS variables file we generated.
 _EN_THEME_CLAUSES = (
             "- `aipds-theme.css` sits in the working directory root and "
             "carries the brand colours, radius and fonts as CSS variables. "
@@ -548,7 +548,7 @@ _EN_THEME_CLAUSES = (
             "broken.\n"
 )
 
-#: 토큰이 없을 때(산문만): 진실은 DESIGN.md이고, 테마 파일은 나중을 위한 배선이다.
+#: Without tokens (prose only): the truth is DESIGN.md, and the theme file is wiring for later.
 _EN_PROSE_ONLY_CLAUSES = (
     "- `aipds-theme.css` sits in the working directory root but carries "
     "**no values** — this profile has no tokens. `DESIGN.md` is where the brand "
@@ -571,7 +571,7 @@ _EN_PROSE_ONLY_CLAUSES = (
     "tokens, not in the components.\n"
 )
 
-#: 두 갈래가 공유하는 꼬리. DESIGN.md를 어떻게 다룰지는 토큰 유무와 무관하다.
+#: The tail both branches share. How to treat DESIGN.md does not depend on whether there are tokens.
 _EN_DESIGN_MD_CLAUSES = (
     "- If `DESIGN.md` is present, read it and follow its guidance on "
     "tone, spacing and what to avoid. **Treat it as visual reference "
@@ -636,7 +636,7 @@ _KO_DESIGN_MD_CLAUSES = (
 
 
 def build_complete_theme_rejection(language: str) -> str:
-    """브랜드 테마를 적용하지 않고 완료를 선언했을 때의 거부 메시지."""
+    """Refusal message when completion is declared without applying the brand theme."""
     if _lang(language) == "en":
         return ("Rejected — the brand theme is not applied. Copy "
                 "`aipds-theme.css` from the working directory root into the "
@@ -650,20 +650,20 @@ def build_complete_theme_rejection(language: str) -> str:
 
 
 def unsafe_command_refused(language: str, fragment: str) -> str:
-    """PreToolUse 훅이 Bash를 거부할 때 모델이 읽는 이유. 판정은
+    """The reason the model reads when the PreToolUse hook refuses Bash. The verdict is in
     proto/build_guard.py.
 
-    **무엇이 걸렸는지 조각으로 지목한다.** 지목이 없으면 모델이 같은 명령을 형태만
-    바꿔 재시도하며 루프에 빠진다(agent/prompts.write_outside_docs가 그 결함을
-    기록해 뒀고, 이 게이트도 같은 실패 경로를 갖는다).
+    **It points out the fragment that was caught.** Without that, the model retries the same command in a
+    different form and falls into a loop (agent/prompts.write_outside_docs records that defect,
+    and this gate has the same failure path).
 
-    **대안을 함께 준다.** 거부만 하면 모델은 "막혔다"만 알고 무엇으로 검증할지는
-    모른다 — 빌드 검증은 `npm run build`이고, 화면 확인은 프로토타입 탭의 라이브
-    프리뷰가 하는 일이다.
+    **It gives an alternative too.** Refused alone, the model knows only "blocked" and not what to verify with
+    — build verification is `npm run build`, and checking the screen is the job of the Prototypes tab's live
+    preview.
 
-    금지의 근거를 한 줄로 적는다: 백엔드·프론트엔드가 빌드 에이전트와 **같은
-    유저로 돌기 때문**이다. 이유 없이 금지하면 모델이 예외를 합리화한다
-    (2026-08-01: 브라우저 검증이 포트 3000을 겨냥해 프론트엔드를 SIGKILL했다).
+    It states the reason for the ban in one line: the backend and frontend **run as the same user as the
+    build agent**. Banned without a reason, the model rationalizes exceptions
+    (2026-08-01: a browser check targeted port 3000 and SIGKILLed the frontend).
     """
     if _lang(language) == "en":
         return (f"Refused — `{fragment}` is not available during a build. The "
@@ -687,10 +687,10 @@ def unsafe_command_refused(language: str, fragment: str) -> str:
 
 
 def settings_write_refused(language: str, path: str) -> str:
-    """빌드 에이전트가 CLI 설정 파일을 쓰려 할 때의 이유(proto/build_guard.py).
+    """The reason given when the build agent tries to write a CLI settings file (proto/build_guard.py).
 
-    정당한 용도가 없으므로 대안 대신 "할 일이 없다"를 말한다 — 빌드에 필요한 설정은
-    이미 주어져 있다.
+    There is no legitimate use, so instead of an alternative it says "there is nothing to do" — the settings the build needs
+    are already provided.
     """
     if _lang(language) == "en":
         return (f"Refused — `{path}` is a Claude Code settings file. AI-PDS Web "
@@ -704,13 +704,13 @@ def settings_write_refused(language: str, path: str) -> str:
 
 def fetch_refused(language: str, host: str, allowed: tuple[str, ...],
                   user_hosts: tuple[str, ...] = ()) -> str:
-    """빌드 에이전트의 WebFetch가 허용 호스트 밖일 때의 이유(proto/build_guard.py).
+    """The reason given when the build agent's WebFetch targets a host outside the allow list (proto/build_guard.py).
 
-    열 수 있는 곳을 함께 준다 — 지목만 하면 모델이 다른 호스트로 같은 시도를 한다.
-    다른 사이트가 정말 필요하면 사용자에게 URL을 받으라고 말한다: 사용자가 채팅에 쓴
-    URL의 호스트는 열린다(build_guard.user_url_hosts). 그 길을 알려 주지 않으면 모델은
-    막힌 채 일반론으로 답한다(실측: 사용자가 준 쇼핑몰 URL을 열지 못하고 "직접 확인하지
-    못했다"로 끝났다).
+    It also gives the places that can be opened — pointing out alone makes the model try the same thing on another host.
+    If another site is really needed, it says to get the URL from the user: the host of a URL the user wrote in the chat
+    is opened (build_guard.user_url_hosts). Without being told that path, the model stays
+    blocked and answers in generalities (observed: it could not open a shopping-mall URL the user gave and ended with "could not
+    check it directly").
     """
     hosts = ", ".join(f"`{h}`" for h in allowed)
     users = ", ".join(f"`{h}`" for h in user_hosts)

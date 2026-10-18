@@ -1,6 +1,6 @@
 import type { ProjectState } from "@/lib/api/types";
 
-// Derived from files/pilot1/aiplc-docs/aiplc-state.md, adjusted to the mid-run
+// Derived from files/ws-m/aiplc-docs/aiplc-state.md, adjusted to the mid-run
 // view in files/ui/01-dashboard.html (Product Strategy in progress). Notes are
 // the mockup's stage sub-labels so ported components render realistic copy.
 export const projectState: ProjectState = {

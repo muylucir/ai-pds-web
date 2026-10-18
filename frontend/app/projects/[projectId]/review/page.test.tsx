@@ -7,9 +7,9 @@ import { API_BASE_URL } from "@/lib/api/client";
 import { discoveryDocument } from "@/test/fixtures/discoveryDocument";
 import { auditEntries } from "@/test/fixtures/auditEntries";
 
-// AppHeader가 그리는 LanguageSwitcher가 useRouter()를 부른다 — 앱 라우터가
-// 마운트되지 않은 단위 테스트에서 그 훅은 던진다. 스위치의 동작은
-// components/LanguageSwitcher.test.tsx가 검증하므로 여기서는 마운트만 되게 한다.
+// The LanguageSwitcher that AppHeader draws calls useRouter() — in a unit test with no app router
+// mounted, that hook throws. The switcher's behavior is verified by
+// components/LanguageSwitcher.test.tsx, so here it only needs to mount.
 const pushMock = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: pushMock }),
@@ -17,7 +17,7 @@ vi.mock("next/navigation", () => ({
 
 import ReviewPage from "./page";
 
-const params = Promise.resolve({ projectId: "pilot1" });
+const params = Promise.resolve({ projectId: "ws-m" });
 
 const DISCOVERY_PATH = "aiplc-docs/discovery/discovery-document.md";
 const AUDIT_PATH = "aiplc-docs/audit.md";
@@ -25,19 +25,19 @@ const AUDIT_CONTENT = "# Audit Log\n\n감사 로그 원문입니다.";
 
 function mockTreeAndAudit() {
   server.use(
-    http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () =>
+    http.get(`${API_BASE_URL}/projects/ws-m/artifacts`, () =>
       HttpResponse.json({ artifacts: [DISCOVERY_PATH, AUDIT_PATH] }),
     ),
-    http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+    http.get(`${API_BASE_URL}/projects/ws-m/files/${DISCOVERY_PATH}`, () =>
       HttpResponse.json({ content: discoveryDocument }),
     ),
-    http.get(`${API_BASE_URL}/projects/pilot1/files/${AUDIT_PATH}`, () =>
+    http.get(`${API_BASE_URL}/projects/ws-m/files/${AUDIT_PATH}`, () =>
       HttpResponse.json({ content: AUDIT_CONTENT }),
     ),
-    http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
-    // 승인 이력 — 게이트 판정의 1순위 근거(lib/approvalState.ts). 기본값은
-    // "아직 승인 안 함"이라 게이트가 떠 있는 상태다.
-    http.get(`${API_BASE_URL}/projects/pilot1/approvals`, () =>
+    http.get(`${API_BASE_URL}/projects/ws-m/audit`, () => HttpResponse.json(auditEntries)),
+    // Approval history — the primary basis for the gate judgment (lib/approvalState.ts). The
+    // default is "not yet approved", so the gate is showing.
+    http.get(`${API_BASE_URL}/projects/ws-m/approvals`, () =>
       HttpResponse.json({ approvals: [], current_doc_hash: "h-current" }),
     ),
   );
@@ -64,10 +64,11 @@ describe("Review page", () => {
   });
 
   it("warns before download when the discovery document cites files that are missing", async () => {
-    // 실측 novadesk-2의 모양: Part 2가 근거 파일을 가리키는데 산출물에 없다.
+    // The shape measured in ws-l: Part 2 points to an evidence file that is not in the
+    // artifacts.
     mockTreeAndAudit();
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/artifacts/missing-references`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/artifacts/missing-references`, () =>
         HttpResponse.json({ document: DISCOVERY_PATH,
                             missing: ["prototype/validation-results.md"] }),
       ),
@@ -79,7 +80,7 @@ describe("Review page", () => {
     expect(alert).toHaveTextContent("1");
     expect(alert).toHaveTextContent("prototype/validation-results.md");
 
-    // 다른 문서를 보면 경고를 걷는다 — 이 검사는 입구 문서에 대한 것이다.
+    // Viewing another document clears the warning — this check is about the entry document.
     await userEvent.click(screen.getByRole("button", { name: /audit\.md/ }));
     await screen.findByText("Audit Log");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -110,22 +111,22 @@ describe("Review page", () => {
   });
 
   it("clicking Approve POSTs to /approve, not a chat message", async () => {
-    // 채팅 턴으로 "승인" 텍스트를 보내던 것을 대체한다. 그 경로에서는
-    // 승인의 유일한 기록이 에이전트가 쓰는 audit.md였고, 에이전트가 문구를
-    // 달리 옮겨 적으면 사용자가 누른 사실이 사라졌다 — 실측으로 승인 게이트
-    // 5건 중 3건이 인식되지 않았다(lib/approvalState.ts 헤더).
+    // Replaces sending "승인" (approve) text as a chat turn. On that path the only record of the
+    // approval was the audit.md the agent writes, and if the agent transcribed the wording
+    // differently, the fact that the user pressed the button vanished — measured, 3 of 5 approval
+    // gates were not recognized (lib/approvalState.ts header).
     //
-    // 승인 텍스트와 대상 문서 해시는 이제 백엔드가 정한다. 화면이 보낸 값을
-    // 믿으면 사용자가 보던 것과 다른(낡은) 내용을 승인할 수 있다.
+    // The approval text and target document hash are now decided by the backend. Trusting values
+    // the screen sent could approve content different from (stale relative to) what the user saw.
     mockTreeAndAudit();
     let approveCalls = 0;
     let messageCalls = 0;
     server.use(
-      http.post(`${API_BASE_URL}/projects/pilot1/approve`, () => {
+      http.post(`${API_BASE_URL}/projects/ws-m/approve`, () => {
         approveCalls += 1;
         return HttpResponse.json({ approved: true, turn_id: "t-approve" });
       }),
-      http.post(`${API_BASE_URL}/projects/pilot1/turns`, () => {
+      http.post(`${API_BASE_URL}/projects/ws-m/turns`, () => {
         messageCalls += 1;
         return HttpResponse.json({ turn_id: "t-1" });
       }),
@@ -136,15 +137,15 @@ describe("Review page", () => {
 
     await waitFor(() => expect(approveCalls).toBe(1));
     expect(messageCalls).toBe(0);
-    // 다음 단계의 턴은 워크스페이스가 보여 준다 — 승인은 그 턴을 기다리지 않는다.
-    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/projects/pilot1/workspace"));
+    // The next stage's turn is shown by the workspace — approval does not wait for that turn.
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/projects/ws-m/workspace"));
   });
 
   it("AI가 아직 작업 중이면 승인을 거절하고 그 이유를 말한다", async () => {
     mockTreeAndAudit();
     pushMock.mockClear();
     server.use(
-      http.post(`${API_BASE_URL}/projects/pilot1/approve`, () =>
+      http.post(`${API_BASE_URL}/projects/ws-m/approve`, () =>
         HttpResponse.json({ detail: { code: "turn_in_progress", turn_id: "t-run" } },
                           { status: 409 })),
     );
@@ -157,10 +158,10 @@ describe("Review page", () => {
   });
 
   it("승인 레코드가 있고 해시가 일치하면 게이트가 뜨지 않는다", async () => {
-    // 감사 로그의 문구와 무관하게 판정된다 — 이 기능의 핵심이다.
+    // It is judged regardless of the audit log's wording — this is the core of this feature.
     mockTreeAndAudit();
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/approvals`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/approvals`, () =>
         HttpResponse.json({
           approvals: [{ document: DISCOVERY_PATH, doc_hash: "h-current",
                         approved_at: "2026-08-10T01:00:00Z" }],
@@ -177,7 +178,7 @@ describe("Review page", () => {
   it("승인 이후 문서가 바뀌면(해시 불일치) 게이트가 다시 뜬다", async () => {
     mockTreeAndAudit();
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/approvals`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/approvals`, () =>
         HttpResponse.json({
           approvals: [{ document: DISCOVERY_PATH, doc_hash: "h-old",
                         approved_at: "2026-08-10T01:00:00Z" }],
@@ -199,7 +200,7 @@ describe("Review page", () => {
     const link = screen.getByRole("link", { name: /수정 요청/ });
     expect(link).toHaveAttribute(
       "href",
-      `/projects/pilot1/workspace?draft=${encodeURIComponent("discovery-document.md 수정 요청: ")}`,
+      `/projects/ws-m/workspace?draft=${encodeURIComponent("discovery-document.md 수정 요청: ")}`,
     );
   });
 
@@ -209,13 +210,13 @@ describe("Review page", () => {
   // the "아직 작성된 문서가 없습니다." empty state.
   it("shows a generic load-error state when the selected file's content fails with a non-404 error", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/artifacts`, () =>
         HttpResponse.json({ artifacts: [DISCOVERY_PATH] }),
       ),
-      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/files/${DISCOVERY_PATH}`, () =>
         HttpResponse.json({ detail: "boom" }, { status: 500 }),
       ),
-      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
+      http.get(`${API_BASE_URL}/projects/ws-m/audit`, () => HttpResponse.json(auditEntries)),
     );
     await act(async () => {
       render(<ReviewPage params={params} />);
@@ -232,13 +233,13 @@ describe("Review page", () => {
   // hidden while the load-error panel is showing.
   it("hides the approval gate when the discovery document's content fails to load", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/artifacts`, () =>
         HttpResponse.json({ artifacts: [DISCOVERY_PATH] }),
       ),
-      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/files/${DISCOVERY_PATH}`, () =>
         HttpResponse.json({ detail: "boom" }, { status: 500 }),
       ),
-      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
+      http.get(`${API_BASE_URL}/projects/ws-m/audit`, () => HttpResponse.json(auditEntries)),
     );
     await act(async () => {
       render(<ReviewPage params={params} />);
@@ -264,7 +265,7 @@ describe("Review page — width, download, status badge", () => {
 
   it("downloads the selected document as .md via a Blob link", async () => {
     mockTreeAndAudit();
-    // jsdom은 URL.createObjectURL을 구현하지 않음 — stub으로 주입
+    // jsdom does not implement URL.createObjectURL — inject it as a stub
     const createSpy = vi.fn().mockReturnValue("blob:mock");
     const revokeSpy = vi.fn();
     (URL as unknown as { createObjectURL: unknown }).createObjectURL = createSpy;
@@ -289,13 +290,13 @@ describe("Review page — width, download, status badge", () => {
   it("downloads all artifacts as a zip via a Blob link", async () => {
     mockTreeAndAudit();
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/artifacts/archive`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/artifacts/archive`, () =>
         HttpResponse.arrayBuffer(new ArrayBuffer(4), {
           headers: { "Content-Type": "application/zip" },
         }),
       ),
     );
-    // jsdom은 URL.createObjectURL을 구현하지 않음 — stub으로 주입
+    // jsdom does not implement URL.createObjectURL — inject it as a stub
     const createSpy = vi.fn().mockReturnValue("blob:mock-zip");
     const revokeSpy = vi.fn();
     (URL as unknown as { createObjectURL: unknown }).createObjectURL = createSpy;
@@ -318,7 +319,7 @@ describe("Review page — width, download, status badge", () => {
   it("shows a document status badge from aiplc-state and explains the gate actions", async () => {
     mockTreeAndAudit();
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/state`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/state`, () =>
         HttpResponse.json({
           project_type: "Greenfield", current_stage: "Discovery Document",
           stages: [{ name: "Discovery Document", status: "in_progress", note: null }],
@@ -328,16 +329,17 @@ describe("Review page — width, download, status badge", () => {
       render(<ReviewPage params={params} />);
     });
     expect(await screen.findByText("초안 검토 중")).toBeInTheDocument();
-    // 승인/수정이 각각 무엇을 하는지 안내 문구가 게이트에 있어야 한다.
+    // The gate must have guidance text on what approve and revise each do.
     //
-    // 이름을 가진 region으로 찾는다 — 이 배너는 상주하는 영역이고, 갑자기
-    // 발생한 사건이 아니다(ApprovalGate의 role 주석).
+    // Find it by a named region — this banner is a resident area, not a sudden event
+    // (the role comment in ApprovalGate).
     const gate = screen.getByRole("region", { name: "승인 게이트" });
-    // **문구가 단계를 특정하지 않아야 한다.** 종전 단정은 "Discovery 단계를
-    // 완료"를 요구했는데, 이 배너는 discovery-document.md가 존재하고 미승인이면
-    // 항상 뜨고 문서는 Envision이 만든다(상류 envision.md:255). 즉 Envision
-    // 승인 시점에도 "Discovery 완료"를 말하고 있었다. 실제로 이 버튼은 에이전트가
-    // 앉아 있는 게이트가 무엇이든 통과시킨다.
+    // **The wording must not name a specific stage.** The former assertion required
+    // "Discovery 단계를 완료" (complete the Discovery stage), but this banner always appears when
+    // discovery-document.md exists and is unapproved, and the document is created by Envision
+    // (upstream envision.md:255). That is, it was saying "Discovery 완료" (Discovery complete)
+    // even at Envision approval time. In fact this button passes whatever gate the agent is
+    // sitting at.
     expect(gate.textContent).toMatch(/승인.*다음 단계로 넘어갑니다/);
     expect(gate.textContent).not.toMatch(/최종|Discovery 단계를 완료/);
     expect(gate.textContent).toMatch(/수정 요청.*워크스페이스 채팅으로 이동/);
@@ -348,13 +350,13 @@ describe("Review page — width, download, status badge", () => {
     // rules or the agent ever writes a "Discovery Document" stage, so the old
     // stage lookup was always undefined and the gate never went away.
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/artifacts`, () =>
         HttpResponse.json({ artifacts: [DISCOVERY_PATH, AUDIT_PATH] })),
-      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/files/${DISCOVERY_PATH}`, () =>
         HttpResponse.json({ content: discoveryDocument })),
-      http.get(`${API_BASE_URL}/projects/pilot1/files/${AUDIT_PATH}`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/files/${AUDIT_PATH}`, () =>
         HttpResponse.json({ content: AUDIT_CONTENT })),
-      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/audit`, () =>
         HttpResponse.json([
           { index: 1, timestamp: "2026-07-25T00:00:01Z", user_input: "시작",
             ai_response: "Discovery 시작", context: "Session Start" },
@@ -369,8 +371,9 @@ describe("Review page — width, download, status badge", () => {
     // panel, so a bare text query is ambiguous.
     const banner = await screen.findByRole("status");
     expect(banner).toHaveTextContent("승인 완료");
-    // 재승인 조건은 "수정을 요청했는가"가 아니라 "문서가 바뀌었는가"다 —
-    // 판정은 승인 시점 해시와의 비교이고(approval_store.py), 문구도 그렇게 말한다.
+    // The re-approval condition is not "was a revision requested" but "did the document change" —
+    // the judgment is a comparison with the hash at approval time (approval_store.py), and the
+    // wording says so too.
     expect(banner).toHaveTextContent("문서가 바뀌면 다시 승인이 필요합니다");
     // The gate itself is gone — no further approval is pending.
     expect(screen.queryByRole("button", { name: /승인하고 다음 단계로/ })).not.toBeInTheDocument();
@@ -380,13 +383,13 @@ describe("Review page — width, download, status badge", () => {
 
   it("keeps the gate visible when a revision followed the approval", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/artifacts`, () =>
         HttpResponse.json({ artifacts: [DISCOVERY_PATH, AUDIT_PATH] })),
-      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/files/${DISCOVERY_PATH}`, () =>
         HttpResponse.json({ content: discoveryDocument })),
-      http.get(`${API_BASE_URL}/projects/pilot1/files/${AUDIT_PATH}`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/files/${AUDIT_PATH}`, () =>
         HttpResponse.json({ content: AUDIT_CONTENT })),
-      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/audit`, () =>
         HttpResponse.json([
           { index: 2, timestamp: "2026-07-25T00:00:02Z", user_input: "승인",
             ai_response: "승인 완료", context: "최종 승인" },
@@ -410,16 +413,16 @@ describe("Review page — document list auto-refresh", () => {
     // workspace) later creates faq.md. The poll must surface it.
     let artifacts = [DISCOVERY_PATH];
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/artifacts`, () =>
         HttpResponse.json({ artifacts }),
       ),
-      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/files/${DISCOVERY_PATH}`, () =>
         HttpResponse.json({ content: discoveryDocument }),
       ),
-      http.get(`${API_BASE_URL}/projects/pilot1/files/${FAQ_PATH}`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/files/${FAQ_PATH}`, () =>
         HttpResponse.json({ content: "# FAQ" }),
       ),
-      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
+      http.get(`${API_BASE_URL}/projects/ws-m/audit`, () => HttpResponse.json(auditEntries)),
     );
     await act(async () => {
       render(<ReviewPage params={params} />);
@@ -445,17 +448,17 @@ describe("Review page — document list auto-refresh", () => {
     let listCalls = 0;
     let artifacts = [DISCOVERY_PATH];
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1/artifacts`, () => {
+      http.get(`${API_BASE_URL}/projects/ws-m/artifacts`, () => {
         listCalls += 1;
         return HttpResponse.json({ artifacts });
       }),
-      http.get(`${API_BASE_URL}/projects/pilot1/files/${DISCOVERY_PATH}`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/files/${DISCOVERY_PATH}`, () =>
         HttpResponse.json({ content: discoveryDocument }),
       ),
-      http.get(`${API_BASE_URL}/projects/pilot1/files/${FAQ_PATH}`, () =>
+      http.get(`${API_BASE_URL}/projects/ws-m/files/${FAQ_PATH}`, () =>
         HttpResponse.json({ content: "# FAQ" }),
       ),
-      http.get(`${API_BASE_URL}/projects/pilot1/audit`, () => HttpResponse.json(auditEntries)),
+      http.get(`${API_BASE_URL}/projects/ws-m/audit`, () => HttpResponse.json(auditEntries)),
     );
     let visibility: DocumentVisibilityState = "visible";
     const spy = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);

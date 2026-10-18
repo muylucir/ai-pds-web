@@ -3,7 +3,7 @@ import { redirectTo, redirectToLogin } from "./redirectTo";
 
 describe("redirectTo", () => {
   it("emits a relative Location so the browser keeps the current origin", () => {
-    // 실측 배포 버그의 핵심: 절대 URL이면 프록시 뒤에서 내부 주소가 샌다.
+    // The core of the observed deployment bug: an absolute URL leaks the internal address behind the proxy.
     const res = redirectTo("/projects/p1");
     expect(res.headers.get("location")).toBe("/projects/p1");
     expect(res.status).toBe(307);
@@ -14,7 +14,7 @@ describe("redirectTo", () => {
   });
 
   it("refuses a protocol-relative path that would go off-site", () => {
-    // "//evil.example"는 상대값처럼 보이지만 브라우저가 오프사이트로 해석한다.
+    // "//evil.example" looks relative, but the browser resolves it as off-site.
     expect(redirectTo("//evil.example").headers.get("location")).toBe("/");
   });
 
@@ -46,8 +46,8 @@ describe("redirectToLogin", () => {
   });
 
   it("encodes a reason that would otherwise break the query", () => {
-    // Hosted UI가 준 error 값을 그대로 싣는 경로가 있다 — 인코딩하지 않으면
-    // 쿼리 구조가 깨지거나 파라미터가 주입된다.
+    // There is a path that carries the error value from the Hosted UI as is — without encoding,
+    // the query structure breaks or parameters get injected.
     expect(redirectToLogin("a&b=c").headers.get("location"))
       .toBe("/login?error=a%26b%3Dc");
   });

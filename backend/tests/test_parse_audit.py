@@ -223,9 +223,9 @@ def test_subheading_shape_feeds_the_gate_history_filter():
     assert re.search(r"gate|approv|승인|게이트", haystack, re.I)
 
 
-# ---- 실제 로그의 라벨 모양들 (tests/fixtures/real 코퍼스에서 관측) ----
-# 라벨 목록을 정확히 맞추지 않고 "굵은 라벨 + 콜론"을 라벨로 본다 — 템플릿 라벨은
-# ko 프로젝트에서 번역되고, 번역이 아니어도 모델이 꾸민다.
+# ---- label shapes in real logs (observed in the tests/fixtures/real corpus) ----
+# Rather than matching an exact label list, "bold label + colon" counts as a label — template labels
+# are translated in ko projects, and even when not translated, the model embellishes them.
 
 def test_a_label_with_a_parenthetical_and_a_trailing_descriptor():
     md = """## 초기 사용자 요청
@@ -253,7 +253,7 @@ def test_a_korean_label_with_the_colon_inside_the_bold_and_a_fenced_value():
 - 요청 내용: Discovery 시작
 """
     e = parse_audit_file(md)[0]
-    # 타임스탬프가 헤딩에 있고, 제목이 맥락이 된다.
+    # The timestamp is in the heading, and the title becomes the context.
     assert e.timestamp == "2026-08-19T08:00:19Z"
     assert e.context == "워크플로우 시작 (사용자 최초 요청)"
     assert e.user_input == "워크플로우를 시작하고 싶어"
@@ -281,8 +281,8 @@ def test_ai_response_outranks_ai_action():
 
 
 def test_untimestamped_sub_sections_belong_to_the_previous_entry():
-    """항목 안의 질문별 답을 `## Question N`으로 적은 로그가 있다. 타임스탬프 헤딩을
-    쓰는 로그에서 그것은 새 항목이 아니라 앞 항목의 하위 절이다."""
+    """Some logs write per-question answers within an entry as `## Question N`. In logs that use
+    timestamp headings, that is not a new entry but a subsection of the previous entry."""
     md = """## 2026-08-19T08:07:00Z — 후속 질문 답변 수신
 
 **사용자 원문 답변 (raw):**

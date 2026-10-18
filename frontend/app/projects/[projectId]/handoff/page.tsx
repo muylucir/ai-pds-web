@@ -1,9 +1,9 @@
-// frontend/app/projects/[projectId]/handoff/page.tsx — 인계 탭.
+// frontend/app/projects/[projectId]/handoff/page.tsx — the handoff tab.
 //
-// 준비 상태 → 보완 질문 → 생성 → 미리보기·내려받기. 판정과 생성은 서버가 한다
-// (backend aipds/handoff/). 생성은 서버의 백그라운드 작업이라 POST가 곧바로 돌아오고,
-// 이 화면이 manifest를 폴링한다 — 세 문서를 쓰는 호출은 수 분이고 CloudFront 읽기
-// 제한은 60초다.
+// Readiness → supplementary questions → generation → preview/download. The server does the judgment and
+// generation (backend aipds/handoff/). Generation is a server background job, so the POST returns right away
+// and this screen polls the manifest — the calls that write the three documents take minutes, and CloudFront's
+// read limit is 60 seconds.
 "use client";
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -25,7 +25,7 @@ import { useT } from "@/lib/i18n/provider";
 
 type Mode = "status" | "supplement" | "package";
 
-/** 생성 중 폴링 간격. 생성은 분 단위라 촘촘할 필요가 없다. */
+/** Polling interval during generation. Generation takes minutes, so it does not need to be tight. */
 const POLL_MS = 3000;
 
 export default function HandoffPage({ params }: { params: Promise<{ projectId: string }> }) {
@@ -51,7 +51,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
     try {
       setPkg(await getPackage(projectId));
     } catch {
-      // 조회 실패는 다음 폴링이나 새로고침이 다시 묻는다 — 화면을 막지 않는다.
+      // A failed query gets asked again by the next poll or a refresh — it does not block the screen.
     }
   }, [projectId]);
 
@@ -63,8 +63,8 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
     return () => clearInterval(id);
   }, [generating, refreshPackage]);
 
-  // 생성이 끝나면(성공이든 실패든) 결과 화면으로 넘어간다. 사용자가 그 사이 보완 질문을
-  // 열어 두었다면 그대로 둔다 — 쓰던 답을 빼앗지 않는다.
+  // When generation finishes (success or failure), move to the result screen. If the user opened the
+  // supplementary questions in the meantime, leave them be — do not take away the answer they were writing.
   const previous = useRef(status);
   useEffect(() => {
     if (previous.current === "generating" && status && status !== "generating") {
@@ -73,7 +73,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
     previous.current = status;
   }, [status]);
 
-  // 첫 화면: 패키지가 있으면 그것을, 없으면 준비 상태를. 사용자가 고른 뒤에는 따라간다.
+  // Initial screen: the package if there is one, otherwise readiness. After the user chooses, follow their choice.
   const shown: Mode = mode ?? (status === "ready" ? "package" : "status");
 
   const generate = async (resume = false) => {
@@ -116,7 +116,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
     }
   };
 
-  // 다시 생성과 달리 이어받을 직전 판과 보완 답까지 지운다(서버 handoff/package.reset).
+  // Unlike regenerate, this also clears the previous edition to carry over and the supplementary answers (server handoff/package.reset).
   const reset = async () => {
     setResetBusy(true);
     setResetError(null);
@@ -168,7 +168,7 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
 
         {actionError && <p className="text-sm text-rose-600 mb-4">{actionError}</p>}
 
-        {/* 생성 중이거나 실패·중단됐으면 단계별 진행을 먼저 보인다. 보완 질문을 쓰는 중에는 가리지 않는다. */}
+        {/* If generating, or failed/interrupted, show per-stage progress first. Do not cover it while supplementary questions are being written. */}
         {pkg?.manifest && status !== "ready" && shown !== "supplement" && (
           <GenerationProgress pkg={pkg} busy={busy || generating}
                               onResume={() => void generate(true)} onRestart={() => void generate(false)}

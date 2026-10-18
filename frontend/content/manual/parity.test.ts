@@ -1,24 +1,24 @@
 // frontend/content/manual/parity.test.ts
 //
-// **두 언어의 매뉴얼이 같은 문서여야 한다.** 절 집합은 타입이 이미 강제하지만
-// (ManualContent = Record<ManualSectionId, ManualSection>), 타입이 못 보는 것이
-// 세 가지 있고 셋 다 실제로 어긋나기 쉽다:
+// **The manuals in the two languages must be the same document.** The section set is already
+// enforced by the type (ManualContent = Record<ManualSectionId, ManualSection>), but there are
+// three things the type cannot see, and all three really do drift easily:
 //
-//   1. 한쪽에만 블록이 더 있거나 순서가 다른 것 — 한국어 매뉴얼에 문단을 하나
-//      더 붙이고 영어를 잊는 것이 가장 흔한 실패다. 그러면 영어 사용자는 그
-//      설명이 존재하는지조차 모른다.
-//   2. heading id가 다른 것 — 목차의 하위 항목과 딥링크가 언어에 따라 달라지면
-//      `/manual#reset` 같은 링크를 공유할 수 없다.
-//   3. 목업·도식 id가 다른 것 — 한쪽 언어에만 화면 그림이 있는 상태.
+//   1. One side having an extra block or a different order — adding one more paragraph to the
+//      Korean manual and forgetting the English is the most common failure. Then English users do
+//      not even know that explanation exists.
+//   2. Different heading ids — if the table of contents' sub-items and deep links differ by
+//      language, links like `/manual#reset` cannot be shared.
+//   3. Different mockup/diagram ids — a state where only one language has a screen illustration.
 //
-// 그래서 **블록 구조를 그대로 비교**한다. 값(문장)은 당연히 다르므로 kind와
-// id만 뽑아서 비교한다.
+// So **the block structure is compared as is**. The values (sentences) naturally differ, so only
+// kind and id are extracted and compared.
 import { describe, expect, it } from "vitest";
 
 import { MANUAL_ORDER, manualFor } from "./index";
 import type { ManualBlock, ManualSection } from "./types";
 
-/** 번역돼도 변하지 않아야 하는 것들만 남긴 블록의 지문. */
+/** The block's fingerprint, keeping only what must not change under translation. */
 function shape(b: ManualBlock): string {
   switch (b.kind) {
     case "heading":
@@ -26,15 +26,15 @@ function shape(b: ManualBlock): string {
     case "mockup":
       return `mockup:${b.id}`;
     case "diagram":
-      // 상자의 **이름 집합**까지 비교한다. 타입이 Record로 이미 요구하지만,
-      // 이 줄이 있어야 실패 메시지가 "어느 상자가 다른지"를 말해 준다.
+      // Even the box **name set** is compared. The type already requires it as a Record, but this
+      // line is needed for the failure message to say "which box differs".
       return `diagram:${b.id}:${Object.keys(b.nodes).sort().join(",")}`;
     case "callout":
       return `callout:${b.tone}`;
     case "steps":
       return `steps:${b.items.length}`;
     case "cmd":
-      // 명령어는 번역하지 않는다 — 줄까지 같아야 한다.
+      // Commands are not translated — they must match line for line.
       return `cmd:${b.lines.join(" | ")}`;
     default:
       return b.kind;
@@ -84,8 +84,9 @@ describe("매뉴얼 콘텐츠 패리티", () => {
 });
 
 describe("앵커", () => {
-  // 절 id와 heading id가 한 문서 안에서 유일해야 한다 — 겹치면 목차 클릭이
-  // 엉뚱한 곳으로 가고, 스크롤 위치 표시도 두 항목을 동시에 켠다.
+  // Section ids and heading ids must be unique within one document — if they overlap, a table
+  // of contents click goes to the wrong place, and the scroll position indicator lights up
+  // two items at once.
   it.each([["ko", ko], ["en", en]] as const)("%s: 앵커 id가 유일하다", (_locale, content) => {
     const ids: string[] = [];
     for (const id of MANUAL_ORDER) {
@@ -106,8 +107,8 @@ describe("앵커", () => {
       const dangling: string[] = [];
       for (const id of MANUAL_ORDER) {
         for (const b of content[id].blocks) {
-          // 도식 상자의 링크. 여기가 깨지면 그림을 눌렀을 때 아무 일도
-          // 일어나지 않는다 — 본문 링크와 달리 눈에 띄지 않는 고장이다.
+          // A diagram box's link. If this breaks, clicking the illustration does nothing —
+          // unlike a body link, it is a breakage that does not stand out.
           if (b.kind === "diagram") {
             for (const [name, node] of Object.entries(b.nodes)) {
               if (node.to && !known.has(node.to)) {

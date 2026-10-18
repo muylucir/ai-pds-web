@@ -1,6 +1,7 @@
-# backend/aipds/routes/handoff.py — 인계 탭의 API.
+# backend/aipds/routes/handoff.py — API for the handoff tab.
 #
-# 판정·보완·생성은 전부 aipds/handoff/에 있고 여기는 워크스페이스에서 읽어 넘기기만 한다.
+# Assessment, supplementation, and generation all live in aipds/handoff/; this module only
+# reads from the workspace and passes things along.
 from __future__ import annotations
 
 import asyncio
@@ -35,14 +36,16 @@ async def _readiness(pid: str, paths: list[str] | None = None) -> readiness.Read
 
 @router.get("/projects/{pid}/handoff/readiness", response_model=readiness.Readiness)
 async def get_handoff_readiness(pid: str):
-    """인계 패키지를 만들 재료가 무엇이 있고 무엇이 없는가 — 인계 탭의 준비 상태 화면."""
+    """Which materials for building the handoff package exist and which are missing — the
+    readiness screen of the handoff tab."""
     return await _readiness(pid)
 
 
 async def _view(pid: str, s3, state: readiness.Readiness,
                 record: supplement.Supplement) -> supplement.SupplementView:
-    """보완 화면. 마지막 패키지가 있으면 그 열린 결정 중 PM 몫과 그 보기를 함께 싣는다 — 열린
-    결정은 저장하지 않고 문서에서 그때마다 읽는다."""
+    """Supplement screen. If there is a last package, its open decisions that are the PM's
+    share are included along with their options — open decisions are not stored; they are
+    read from the documents each time."""
     manifest = await package.load_manifest(s3)
     doc, kind = None, "vision"
     if manifest is not None and manifest.status == "ready":
@@ -56,7 +59,8 @@ async def _view(pid: str, s3, state: readiness.Readiness,
 
 @router.get("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)
 async def get_handoff_supplement(pid: str):
-    """보완 문항(빈 섹션 · 열린 결정 중 PM 몫)과 그 답, AI 제안 수락 항목의 확인 상태."""
+    """Supplementary questions (empty sections, open decisions that are the PM's share) and
+    their answers, plus the confirmation state of accepted AI suggestions."""
     state = await _readiness(pid)
     s3 = app_module.s3_store_factory(pid)
     return await _view(pid, s3, state, await supplement.load(s3))
@@ -64,7 +68,8 @@ async def get_handoff_supplement(pid: str):
 
 @router.put("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)
 async def put_handoff_supplement(pid: str, body: supplement.SupplementUpdate):
-    """폼 전체를 저장한다. 답과 확인만 기록하고 AI-PLC 산출물은 건드리지 않는다."""
+    """Saves the whole form. Only answers and confirmations are recorded; AI-PLC artifacts
+    are not touched."""
     state = await _readiness(pid)
     s3 = app_module.s3_store_factory(pid)
     try:
@@ -76,15 +81,17 @@ async def put_handoff_supplement(pid: str, body: supplement.SupplementUpdate):
 
 
 class GenerateRequest(BaseModel):
-    #: 실패·중단된 지난 시도의 끝난 단계를 두고 나머지만 한다. 원본이 그사이 바뀌었으면
-    #: 서버가 처음부터 한다(handoff/package.run).
+    #: Keeps the finished stages of a previous failed or interrupted attempt and does only
+    #: the rest. If the sources changed in the meantime, the server starts over from scratch
+    #: (handoff/package.run).
     resume: bool = False
 
 
 @router.post("/projects/{pid}/handoff/package", status_code=202,
              response_model=package.Manifest)
 async def generate_handoff_package(pid: str, body: GenerateRequest | None = None):
-    """생성을 시작하고 곧바로 돌아온다. 화면은 GET으로 진행을 본다(handoff/package 헤더)."""
+    """Starts generation and returns immediately. The screen watches progress via GET
+    (handoff/package header)."""
     paths = await _paths(pid)
     state = await _readiness(pid, paths)
     if state.blockers:
@@ -103,7 +110,8 @@ async def generate_handoff_package(pid: str, body: GenerateRequest | None = None
 
 @router.get("/projects/{pid}/handoff/package", response_model=package.PackageView)
 async def get_handoff_package(pid: str):
-    """마지막으로 만든 패키지: 상태, 파일 내용, 검사 결과, 만든 뒤 바뀐 원본."""
+    """The last package built: status, file contents, check results, and sources changed
+    since it was built."""
     paths = await _paths(pid)
     ws = await ensure_workspace(pid)
     view = await package.view(app_module.s3_store_factory(pid), read=ws.runner.read_file,
@@ -113,8 +121,10 @@ async def get_handoff_package(pid: str):
 
 
 def _fresh_start_prompt(pid: str, files: dict[str, str]) -> None:
-    """시작 프롬프트를 지금의 폴더 이름으로 다시 쓴다. 저장된 것은 만들 때의 이름이라, 이름 규칙이
-    바뀌기 전에 만든 패키지도 내려받는 zip과 경로가 맞는다 — 모델 없이 언어와 폴더만으로 정해진다."""
+    """Rewrites the start prompt with the current folder name. What is stored is the name at
+    build time, so this keeps even packages built before the naming rule changed consistent
+    with the paths in the downloaded zip — it is determined from the language and folder
+    alone, with no model."""
     if package.START_PROMPT in files:
         files[package.START_PROMPT] = package.start_prompt(
             app_module.project_language(pid), package.archive_folder(pid))
@@ -126,8 +136,10 @@ class ResetResult(BaseModel):
 
 @router.delete("/projects/{pid}/handoff", response_model=ResetResult)
 async def reset_handoff(pid: str):
-    """인계 탭을 완전히 초기화한다: 패키지, 이전 판, 보완 답과 AI 제안 확인. Discovery 산출물은
-    건드리지 않는다. 생성 중에는 거절한다 — 돌던 작업이 지운 뒤에 manifest를 다시 쓴다."""
+    """Fully resets the handoff tab: package, previous versions, supplementary answers, and
+    AI suggestion confirmations. Discovery artifacts are not touched. Rejected while
+    generation is running — the running job would rewrite the manifest after the
+    deletion."""
     await ensure_workspace(pid)
     if package.jobs.running(pid):
         raise HTTPException(status_code=409, detail="generating")
@@ -135,15 +147,15 @@ async def reset_handoff(pid: str):
 
 
 def _content_disposition(pid: str) -> str:
-    """zip 이름은 그 안의 최상위 폴더 이름과 같다(package.archive_folder). 둘 다 ASCII로 고친 이름이라
-    UTF-8 이름을 따로 줄 필요가 없다."""
+    """The zip name equals the name of its top-level folder (package.archive_folder). Both
+    are names converted to ASCII, so there is no need to supply a separate UTF-8 name."""
     return f'attachment; filename="{package.archive_folder(pid)}.zip"'
 
 
 @router.get("/projects/{pid}/handoff/package/archive")
 async def download_handoff_package(pid: str):
-    """`{pid}-handoff/` 아래에 패키지 파일 + Discovery 원본(`discovery/`, 근거만) + 업로드 원자료
-    (`uploads/`). 프로토타입 소스는 넣지 않는다."""
+    """Under `{pid}-handoff/`: package files + Discovery sources (`discovery/`, evidence
+    only) + uploaded source materials (`uploads/`). Prototype sources are not included."""
     s3 = app_module.s3_store_factory(pid)
     manifest = await package.load_manifest(s3)
     if manifest is None or manifest.status != "ready":
@@ -155,14 +167,16 @@ async def download_handoff_package(pid: str):
     raw = await package.read_sources(ws.runner.read_file, package.archive_originals(paths))
     uploads = await s3.list(_UPLOADS)
     buf = io.BytesIO()
-    # 모든 항목을 zip 이름과 같은 폴더 하나 아래 둔다 — 시작 프롬프트의 경로가 그것을 가리킨다.
+    # Every entry goes under a single folder with the same name as the zip — the paths in
+    # the start prompt point to it.
     root = package.archive_folder(pid) + "/"
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, text in built.items():
             zf.writestr(root + name, text)
         for path, text in raw.items():
             zf.writestr(root + "discovery/" + path[len(_DISCOVERY):], text)
-        # 업로드는 바이트 그대로다 — 양식·규정의 원래 모양이 개발이 받을 입력이다.
+        # Uploads are kept byte-for-byte — the original shape of forms and regulations is
+        # the input that development receives.
         for key in uploads:
             zf.writestr(root + key, await s3.get_bytes(key))
     return Response(content=buf.getvalue(), media_type="application/zip",

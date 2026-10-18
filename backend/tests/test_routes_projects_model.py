@@ -1,8 +1,8 @@
 # backend/tests/test_routes_projects_model.py
 #
-# 생성 시점의 model_id 검증과 조회. 검증 기준이 '표시 목록'인 것이 핵심이다 —
-# 표시가 꺼진 모델은 관리자가 의도적으로 내린 것이므로 새 프로젝트가 그것을
-# 고르면 안 된다.
+# Validation and lookup of model_id at creation time. The key point is that validation is
+# against the 'visible list' — a model whose visibility is off was deliberately withdrawn
+# by an admin, so a new project must not pick it.
 from __future__ import annotations
 
 import json
@@ -44,8 +44,8 @@ def test_create_accepts_a_displayed_model_and_records_it(catalog, monkeypatch):
 
 
 def test_create_copies_the_catalog_effort_with_the_model(catalog, monkeypatch):
-    """effort는 요청이 아니라 카탈로그에서 온다 — 관리자가 모델과 짝으로 정한 값이다.
-    클라이언트가 effort를 실어 보내도 무시된다."""
+    """effort comes from the catalog, not the request — it is the value an admin paired with
+    the model. If the client sends an effort, it is ignored."""
     fake = FakeS3Store()
     monkeypatch.setenv("AIPDS_S3_BUCKET", "some-bucket")
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: fake)
@@ -61,7 +61,7 @@ def test_create_copies_the_catalog_effort_with_the_model(catalog, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_later_catalog_change_does_not_move_an_existing_project(catalog, monkeypatch):
-    """복사이지 참조가 아니다 — 진행 중인 프로젝트의 속도·출력량이 중간에 바뀌지 않는다."""
+    """A copy, not a reference — an in-progress project's speed and output volume do not change midway."""
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     client.post("/projects", json={"project_id": "pm-2", "model_id": CHOSEN})
     await catalog.update(CHOSEN, effort="max")
@@ -69,8 +69,8 @@ async def test_a_later_catalog_change_does_not_move_an_existing_project(catalog,
 
 
 def test_the_driver_is_built_with_the_projects_effort(catalog, monkeypatch, tmp_path):
-    """driver_factory가 레지스트리의 effort를 드라이버에 넘긴다(생성 라우트의 등록 순서가
-    이 읽기를 성립시킨다)."""
+    """driver_factory passes the registry's effort to the driver (the registration order in the
+    create route is what makes this read work)."""
     app_module.registry.register("pm-3", None, model_id=CHOSEN, effort="medium")
     monkeypatch.setattr(app_module, "_discovery_config_dir", lambda: tmp_path)
     driver = app_module.driver_factory("pm-3", tmp_path / "ws")
@@ -78,7 +78,8 @@ def test_the_driver_is_built_with_the_projects_effort(catalog, monkeypatch, tmp_
 
 
 def test_an_unknown_effort_in_a_manifest_falls_back_to_the_cli_default(catalog):
-    """손상된 매니페스트의 임의 값은 CLI가 `--effort`로 거부한다 — 기본값으로 도는 편이 낫다."""
+    """The CLI rejects an arbitrary value from a corrupted manifest via `--effort` — running
+    on the default is better."""
     app_module.registry.register("pm-4", None, model_id=CHOSEN, effort="turbo")
     assert app_module.registry.get_effort("pm-4") is None
 
@@ -96,7 +97,7 @@ def test_create_rejects_an_unregistered_model_id(catalog, monkeypatch):
     r = client.post("/projects", json={"project_id": "pm-3",
                                        "model_id": "global.anthropic.claude-nope"})
     assert r.status_code == 400
-    # 첫 대화 턴의 AccessDenied가 아니라 생성 시점에 막혀야 한다.
+    # It must be blocked at creation time, not as an AccessDenied on the first chat turn.
     assert not app_module.registry.is_registered("pm-3")
 
 
@@ -124,11 +125,11 @@ def test_get_project_returns_metadata_without_booting_a_workspace(catalog, monke
     assert body == {"project_id": "pm-5", "name": "이름",
                     "created_at": "2026-08-01T00:00:00+00:00",
                     "model_id": CHOSEN,
-                    # effort 없이 register된 프로젝트(이 필드 이전) — CLI 기본값(None).
+                    # A project registered without effort (predates this field) — CLI default (None).
                     "effort": None,
-                    # language 없이 register된 프로젝트 — get_language가 "ko"로 확정한다.
+                    # A project registered without language — get_language settles it as "ko".
                     "language": "ko",
-                    # 소유자 없이 register된 프로젝트 — 시드 관리자 소유다.
+                    # A project registered without an owner — owned by the seed admin.
                     "owner": "admin", "access": "admin", "members": []}
     assert booted["n"] == 0
 

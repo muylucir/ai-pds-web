@@ -9,7 +9,7 @@ def test_parses_pilot1_state():
     assert st.project_type == "Greenfield"
     names = [s.name for s in st.stages]
     assert "Workspace Detection" in names
-    assert all(s.status == "completed" for s in st.stages)  # pilot1 finished all stages
+    assert all(s.status == "completed" for s in st.stages)  # ws-m finished all stages
 
 def test_pending_and_note_split():
     md = (
@@ -54,11 +54,11 @@ def test_in_progress_longest_match_when_no_exact():
     assert in_prog == ["Discovery Mode Selection Extended Review"]  # longest/most-specific, only one
 
 
-# ---- HTML 엔티티 (2026-08-18 실측: ws-d) ----
-# 모델이 report_stage에 `"stage": "Prototype &amp; Validation"`을 보냈고, 그것이
-# 그대로 aiplc-state.md에 저장돼 사이드바에 `&amp;`로 떴다. 룰셋·우리 코드에는
-# `&amp;`가 없다 — 모델 쪽 이스케이프다. 이름은 키이므로 표시만이 아니라 매칭도
-# 깨진다.
+# ---- HTML entities (observed 2026-08-18: ws-d) ----
+# The model sent `"stage": "Prototype &amp; Validation"` to report_stage, and it was
+# saved as is in aiplc-state.md and shown in the sidebar as `&amp;`. Neither the ruleset
+# nor our code contains `&amp;`; the escaping comes from the model. The name is a key, so
+# not just the display but also matching breaks.
 
 def test_unescapes_entities_in_stage_names():
     md = (
@@ -74,14 +74,14 @@ def test_unescapes_entities_in_stage_names():
 
 
 def test_escaped_current_stage_still_matches_its_checklist_line():
-    """정규화의 값은 표시가 아니라 여기 있다 — 이스케이프된 이름이 자기 줄과
-    매칭되지 않으면 진행 중 스테이지가 아무것도 아니게 된다."""
+    """The value of normalizing lies here, not in display: if the escaped name does not match
+    its own line, the in-progress stage resolves to nothing."""
     md = (
         "# AI-PLC State\n"
         "- **Current Stage**: Prototype &amp; Validation\n"
         "## Stage Progress\n"
         "- [x] Envision\n"
-        "- [ ] Prototype & Validation\n"      # 파일에는 정상, Current Stage만 깨진 혼합 상태
+        "- [ ] Prototype & Validation\n"      # mixed state: fine in the file, broken only in Current Stage
     )
     st = parse_state_file(md)
     in_prog = [s.name for s in st.stages if s.status == "in_progress"]
@@ -93,7 +93,7 @@ def test_normalizes_the_other_xml_entities_and_trims():
     assert normalize_stage_name("  Go-to-Market  ") == "Go-to-Market"
     assert normalize_stage_name("A &lt;B&gt; C") == "A <B> C"
     assert normalize_stage_name("&quot;X&quot;") == '"X"'
-    # 한 번의 sub이므로 치환 순서 사고가 없다.
+    # A single sub, so there is no replacement-order accident.
     assert normalize_stage_name("&amp;lt;") == "&lt;"
 
 
@@ -108,12 +108,12 @@ def test_leaves_ordinary_ampersands_alone():
     assert [s.status for s in st.stages] == ["in_progress"]
 
 
-# ---- 체크박스는 `## Stage Progress` 안에서만 스테이지다 ----
-# 2026-08-18 실측(test12345678): 사이드바에 14개가 떴다 — 스테이지 6개 +
-# 에이전트가 자기 장부로 만든 `## Envision 진행 내역`의 하위 단계 8개. 예전에는
-# `report_stage`가 상태 파일을 우리 손으로 upsert하며 그 섹션만 건드렸는데
-# (state_sync.upsert_stage), 그 도구가 훅으로 대체되고 파일을 에이전트가 단독으로
-# 쓰게 되면서 가려 읽던 쪽이 없어졌다.
+# ---- Checkboxes are stages only inside `## Stage Progress` ----
+# Observed 2026-08-18 (test12345678): the sidebar showed 14 items: 6 stages + 8 sub-steps
+# from `## Envision 진행 내역` (Envision progress log), which the agent created as its own
+# ledger. Previously `report_stage` upserted the state file by our own hand and touched
+# only that section (state_sync.upsert_stage), but once that tool was replaced by a hook
+# and the agent became the sole writer of the file, nothing was left reading selectively.
 
 _REAL_SHAPE = (
     "# AI-PLC State Tracking\n"
@@ -148,22 +148,23 @@ def test_sub_step_checklists_outside_the_section_are_not_stages():
 
 
 def test_a_sub_heading_does_not_close_the_section():
-    """상류 템플릿이 섹션 안에 `### 🟣 DISCOVERY PHASE`를 둔다
-    (envision.md:420-425). `###`에서 섹션을 닫으면 스테이지가 전부 사라진다."""
+    """The upstream template puts `### 🟣 DISCOVERY PHASE` inside the section
+    (envision.md:420-425). Closing the section at `###` would make every stage disappear."""
     st = parse_state_file(_REAL_SHAPE)
     assert len(st.stages) == 6, [s.name for s in st.stages]
 
 
 def test_current_stage_still_resolves_with_a_phase_prefix():
-    """`DISCOVERY - Envision`처럼 접두사가 붙어도 부분 포함 폴백이 자기 줄을
-    찾아야 한다 — 못 찾으면 진행 중 스테이지가 아무것도 아니게 된다."""
+    """Even with a prefix, as in `DISCOVERY - Envision`, the substring fallback must find its
+    own line; otherwise the in-progress stage resolves to nothing."""
     st = parse_state_file(_REAL_SHAPE)
     assert [s.name for s in st.stages if s.status == "in_progress"] == ["Envision"]
 
 
 def test_falls_back_to_the_whole_document_without_the_section():
-    """섹션이 없는 문서는 옛 동작으로 훑는다. 빈 사이드바는 잘못된 항목이 섞이는
-    것보다 나쁘다 — 질문 파싱이 조용히 실패해 질문이 사라졌던 것과 같은 종류다."""
+    """A document without the section is scanned with the old behavior. An empty sidebar is
+    worse than one with stray items mixed in; it is the same kind of failure as questions
+    vanishing when question parsing failed silently."""
     st = parse_state_file(
         "# AI-PLC State\n"
         "- **Current Stage**: Envision\n"
@@ -175,8 +176,8 @@ def test_falls_back_to_the_whole_document_without_the_section():
 
 
 def test_a_section_that_is_empty_yields_no_stages():
-    """상류 템플릿의 초기 상태다 — `[Will be populated as workflow progresses]`.
-    폴백이 여기서 켜지면 문서 나머지의 체크박스를 스테이지로 읽는다."""
+    """This is the upstream template's initial state: `[Will be populated as workflow progresses]`.
+    If the fallback kicked in here, it would read the checkboxes in the rest of the document as stages."""
     st = parse_state_file(
         "# AI-PLC State Tracking\n"
         "- **Current Stage**: Workspace Detection\n"
@@ -190,11 +191,11 @@ def test_a_section_that_is_empty_yields_no_stages():
 
 
 def test_a_decorated_section_heading_is_still_the_section():
-    """**정확 일치였으면 이 수정이 조용히 되돌아간다.**
+    """**With exact matching, this fix would silently be undone.**
 
-    헤딩이 장식되면 섹션을 못 찾아 폴백이 켜지고 문서 전체가 스테이지가 된다.
-    에이전트가 헤딩을 장식하는 것은 관측된 습성이다(`### 🟣 DISCOVERY PHASE`,
-    `## Envision 진행 내역`).
+    If the heading is decorated, the section is not found, the fallback kicks in, and the
+    whole document becomes stages. Decorating headings is an observed habit of the agent
+    (`### 🟣 DISCOVERY PHASE`, `## Envision 진행 내역`).
     """
     for heading in ("## Stage Progress",
                     "## Stage Progress (Discovery)",
@@ -216,8 +217,8 @@ def test_a_decorated_section_heading_is_still_the_section():
 
 
 def test_indented_sub_steps_under_a_stage_are_not_stages():
-    """에이전트가 스테이지 아래에 단계를 들여 적는다(실측: 스테이지 5개가 18개로
-    읽혔다). 들여쓴 체크박스는 그 스테이지의 장부이지 스테이지가 아니다."""
+    """The agent writes steps indented under a stage (observed: 5 stages were read as 18).
+    An indented checkbox is that stage's ledger, not a stage."""
     md = """# State
 - **Current Stage**: Product Strategy
 

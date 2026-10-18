@@ -1,9 +1,9 @@
-# claude 드라이버(CLI 트랜스크립트) 히스토리 복원.
+# History restore for the claude driver (CLI transcript).
 #
-# 예전에는 이 파일 앞쪽 절반이 strands 폴백 드라이버의 Bedrock Converse 모양
-# (toolUse/toolResult, camelCase)을 검사했다. 그 드라이버를 삭제하면서
-# transform_messages와 함께 지웠다 — 남은 것은 CLI의 Anthropic Messages 모양
-# (block["type"] == "tool_use")뿐이다.
+# Previously the first half of this file checked the Bedrock Converse shape of the strands
+# fallback driver (toolUse/toolResult, camelCase). When that driver was deleted, those tests
+# were removed along with transform_messages — what remains is only the CLI's Anthropic Messages
+# shape (block["type"] == "tool_use").
 import json
 
 import pytest
@@ -15,7 +15,7 @@ from aipds.session_history import list_history, transform_cli_transcript
 
 
 def _cli(type_, role=None, content=None, **extra):
-    """CLI 트랜스크립트 한 줄. message가 없는 부기 줄도 만들 수 있다."""
+    """One CLI transcript line. Can also build bookkeeping lines without a message."""
     d = {"type": type_, **extra}
     if role is not None:
         d["message"] = {"role": role, "content": content}
@@ -23,8 +23,9 @@ def _cli(type_, role=None, content=None, **extra):
 
 
 def test_cli_bookkeeping_lines_are_skipped():
-    # 실측: 실제 트랜스크립트에는 queue-operation/attachment/ai-title/last-prompt
-    # 처럼 message가 없는 줄이 섞여 있다. 대화가 아니므로 복원 대상이 아니다.
+    # Measured: the real transcript has lines without a message mixed in, such as
+    # queue-operation/attachment/ai-title/last-prompt. They are not conversation, so they
+    # are not restored.
     raw = [
         _cli("queue-operation", operation="enqueue"),
         _cli("attachment"),
@@ -37,8 +38,9 @@ def test_cli_bookkeeping_lines_are_skipped():
 
 
 def test_cli_injected_user_lines_are_not_user_bubbles():
-    # 스킬 본문(isMeta)과 압축 요약(isCompactSummary)은 user 역할로 오지만 사람이 한
-    # 말이 아니다. 말풍선이 되면 실제 턴 경계가 아닌 곳에서 한 턴이 둘로 쪼개진다.
+    # The skill body (isMeta) and compaction summary (isCompactSummary) come with the user
+    # role but are not something a person said. As bubbles, they split a turn in two where
+    # there is no real turn boundary.
     raw = [
         _cli("user", "user", "시작해줘"),
         _cli("assistant", "assistant", [{"type": "text", "text": "스킬을 씁니다"}]),
@@ -54,16 +56,16 @@ def test_cli_injected_user_lines_are_not_user_bubbles():
 
 
 def test_cli_plain_string_content_is_not_iterated_per_character():
-    # 실측: 첫 user 줄의 content는 리스트가 아니라 평문 문자열이다. 정규화하지
-    # 않으면 블록 루프가 문자열을 문자 단위로 훑어 아무것도 남지 않는다.
+    # Measured: the content of the first user line is a plain string, not a list. Without
+    # normalization the block loop walks the string character by character and nothing is left.
     items = transform_cli_transcript([_cli("user", "user", "Say OK")])
     assert [(i.role, i.text) for i in items] == [("user", "Say OK")]
 
 
 def test_cli_text_and_tools_match_the_live_representation():
-    # 라이브(claude_driver._translate)와 같은 표현이어야 스크롤백이 방금 본
-    # 화면과 달라 보이지 않는다: text는 말풍선, 파일 도구는 file_changed,
-    # 그 외 도구는 status.
+    # It must be the same representation as live (claude_driver._translate) so the
+    # scrollback does not look different from the screen just seen: text as bubbles, file
+    # tools as file_changed, other tools as status.
     raw = [_cli("assistant", "assistant", [
         {"type": "text", "text": "문서를 씁니다."},
         {"type": "tool_use", "id": "t1", "name": "Write",
@@ -74,20 +76,21 @@ def test_cli_text_and_tools_match_the_live_representation():
     ai = next(i for i in transform_cli_transcript(raw) if i.role == "ai")
     assert ai.text == "문서를 씁니다."
     assert [t.model_dump() for t in ai.trace] == [
-        # 파일 도구는 경로를 `path`로 — 프론트가 "📝 파일 변경: …"을 그린다.
+        # File tools carry the path as `path` — the frontend draws "📝 파일 변경: …".
         {"kind": "file_changed", "text": None, "path": "aiplc-docs/audit.md",
          "detail": None},
-        # 그 외 도구는 이름 + **무엇을 했는지**. 라이브도 같은 값을 보낸다
-        # (둘 다 tool_trace.tool_detail을 쓴다) — 그것이 이 테스트의 요점이다.
+        # Other tools carry the name + **what it did**. Live sends the same value
+        # (both use tool_trace.tool_detail) — that is the point of this test.
         {"kind": "status", "text": "Read", "path": None, "detail": "rules.md"},
     ]
 
 
 def test_cli_bash_commands_are_redacted_in_the_restored_trace():
-    """Bash 명령은 자격증명이 나타나는 자리다.
+    """Bash commands are where credentials show up.
 
-    라이브는 `routes/turns._redacted`가 payload를 훑는다. 복원은 이 함수가 직접
-    통과시켜야 한다 — 한쪽만 하면 새로고침이 리댁션을 우회하는 경로가 된다."""
+    Live, `routes/turns._redacted` scans the payload. The restore must pass through this
+    function directly — if only one side does it, a refresh becomes a path that bypasses
+    redaction."""
     raw = [_cli("assistant", "assistant", [
         {"type": "tool_use", "id": "t1", "name": "Bash",
          "input": {"command": "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE ls"}},
@@ -98,21 +101,21 @@ def test_cli_bash_commands_are_redacted_in_the_restored_trace():
 
 
 def test_cli_one_turn_is_one_bubble_not_one_per_tool_call():
-    """한 턴은 말풍선 하나다 — 도구 호출마다 빈 말풍선을 만들면 안 된다.
+    """One turn is one bubble — an empty bubble must not be created per tool call.
 
-    실측한 트랜스크립트 구조(실 CLI, 도구 5회 사용 턴):
+    Measured transcript structure (real CLI, a turn with 5 tool uses):
 
         assistant [thinking]
         assistant [tool_use]   user [tool_result]   × 5
-        assistant [text]       <- 여기서만 사람이 읽을 내용이 나온다
+        assistant [text]       <- only here does human-readable content appear
 
-    CLI는 도구 호출마다 별도 assistant 줄을 쓴다. 줄마다 항목을 만들면 라이브에서
-    말풍선 하나였던 턴이 6개로 쪼개지고 그중 5개가 텍스트 없는 빈 말풍선이 된다
-    (실측: live message 이벤트 1개 -> restored ai 항목 6개, 빈 것 5개). 화면에서는
-    "추론 과정"만 달린 빈 회색 상자가 줄줄이 나온다.
+    The CLI writes a separate assistant line per tool call. Creating an item per line splits a
+    turn that was one bubble live into 6, 5 of which are empty bubbles with no text
+    (measured: 1 live message event -> 6 restored ai items, 5 empty). On screen, empty gray
+    boxes with only "추론 과정" (reasoning) attached appear one after another.
 
-    라이브는 턴 하나당 AiItem 하나를 만들어 message를 그 하나에 누적하고 도구는
-    같은 항목의 trace에 쌓는다(useTurnStream.ts:108,121-123). 복원도 같아야 한다.
+    Live creates one AiItem per turn, accumulates message into that one, and stacks tools
+    onto the same item's trace (useTurnStream.ts:108,121-123). The restore must do the same.
     """
     raw = [
         _cli("user", "user", "두 파일을 쓰고 확인해줘"),
@@ -140,17 +143,17 @@ def test_cli_one_turn_is_one_bubble_not_one_per_tool_call():
         [(i.role, i.text) for i in items]
     ai = items[1]
     assert ai.text == "완료"
-    # 도구 3개가 모두 그 하나의 트레이스로 모인다.
+    # All 3 tools gather into that one trace.
     assert [(t.kind, t.path or t.text) for t in ai.trace] == [
         ("file_changed", "a.md"), ("file_changed", "b.md"), ("status", "Read")]
 
 
 def test_cli_a_turn_that_never_produced_text_is_not_an_empty_bubble():
-    """텍스트 없이 끝난 턴은 빈 말풍선이 아니라 트레이스만 남는다.
+    """A turn that ended without text leaves only a trace, not an empty bubble.
 
-    중단된 턴(유휴 타임아웃, SSE 끊김)이 이 모양이다. 말풍선을 만들면 내용 없는
-    회색 상자가 남는데, 라이브에서 그 자리에 있던 것은 진행 표시였고 그것은
-    복원 대상이 아니다.
+    An interrupted turn (idle timeout, SSE drop) has this shape. Creating a bubble would leave
+    an empty gray box, but what was in that spot live was a progress indicator, which is not
+    something to restore.
     """
     raw = [
         _cli("user", "user", "시작해줘"),
@@ -166,11 +169,11 @@ def test_cli_a_turn_that_never_produced_text_is_not_an_empty_bubble():
 
 
 def test_cli_separate_user_turns_stay_separate():
-    """병합은 턴 안에서만 한다 — 실제 사용자 발화가 경계다.
+    """Merging happens only within a turn — an actual user utterance is the boundary.
 
-    tool_result를 담은 user 줄은 사용자 발화가 아니므로 경계가 아니다(라이브는
-    그 줄을 아무것도 렌더하지 않는다). 진짜 입력만 새 턴을 시작해야 두 번의
-    질문이 하나로 뭉치지 않는다.
+    A user line holding a tool_result is not a user utterance, so it is not a boundary (live
+    renders nothing for that line). Only real input should start a new turn, so that two
+    questions do not clump into one.
     """
     raw = [
         _cli("user", "user", "첫 질문"),
@@ -192,15 +195,15 @@ def test_cli_separate_user_turns_stay_separate():
 
 
 def test_cli_question_card_comes_after_the_bubble_that_asked():
-    """카드는 그것을 낸 말풍선 뒤에 온다.
+    """A card comes after the bubble that issued it.
 
-    라이브에서는 모델이 "왜 묻는지" 설명을 먼저 흘리고 그 다음 질문 카드가
-    붙는다(claude_driver의 _CONTACT_ADDENDUM이 그 설명을 요구한다). 카드가
-    말풍선보다 앞서면 스크롤백에서 설명 없는 질문이 먼저 뜨고 그 아래에 설명이
-    따라오는, 라이브에서는 본 적 없는 순서가 된다.
+    Live, the model first streams an explanation of "why it is asking" and then the question
+    card attaches (claude_driver's _CONTACT_ADDENDUM requires that explanation). If the card
+    came before the bubble, the scrollback would show the question first without an
+    explanation, followed by the explanation below it — an order never seen live.
 
-    턴 누적 때문에 생기는 순서다 — 말풍선 확정이 다음 사용자 발화까지 미뤄지는
-    동안 카드는 곧바로 붙을 수 있다.
+    This ordering comes from turn accumulation — while finalizing the bubble is deferred until
+    the next user utterance, the card can attach right away.
     """
     raw = [
         _cli("user", "user", "시작해줘"),
@@ -225,7 +228,7 @@ def test_cli_question_card_comes_after_the_bubble_that_asked():
     assert items[1].text == "질문 드립니다."
     assert [t.text for t in items[1].trace] == ["Read"]
     assert items[2].card == "questions"
-    # 순서만 검사한다 — 문구는 위 테스트가 덮는다.
+    # Only checks order — the wording is covered by the test above.
     assert items[3].text.startswith("답변 제출")
 
 
@@ -241,16 +244,17 @@ def test_cli_ask_user_question_becomes_a_card_not_a_trace_row():
     assert any(i.role == "card" and i.card == "questions" for i in items)
 
 
-#: CLI가 AskUserQuestion 결과로 쓰는 **자기** 문장. 우리 접두사도 JSON도 아니다 —
-#: 그래서 이 본문에서는 답변을 펼 수 없고, 정확한 값은 answer_records가 준다
-#: (agent/answer_store.py 헤더가 이 결정의 근거다).
+#: The CLI's **own** sentence written as the AskUserQuestion result. It is neither our
+#: prefix nor JSON — so the answer cannot be unpacked from this body, and answer_records
+#: provides the exact values (the agent/answer_store.py header is the basis for this
+#: decision).
 _CLI_ANSWER_SENTENCE = ('Your questions have been answered: "질문"="보기". '
                         "You can now continue with these answers in mind.")
 
 
 def test_cli_answer_tool_result_becomes_a_readable_user_bubble():
-    # 답변 결과만 골라야 한다 — 실제 트랜스크립트에는 Write/Read의 tool_result가
-    # 섞여 있으므로 AskUserQuestion의 id와 매칭한다.
+    # Only answer results must be picked — the real transcript has Write/Read tool_results
+    # mixed in, so match against the AskUserQuestion id.
     raw = [
         _cli("assistant", "assistant", [
             {"type": "tool_use", "id": "ta", "name": "AskUserQuestion",
@@ -267,13 +271,14 @@ def test_cli_answer_tool_result_becomes_a_readable_user_bubble():
     ]
     users = [i for i in transform_cli_transcript(raw) if i.role == "user"]
     assert len(users) == 1, [i.text for i in users]
-    # 레코드가 없으면 CLI 문장을 그대로 폴백으로 실어 보낸다 — 빈 말풍선보다 낫다.
-    # 정확한 문항 번호·letter는 answer_records가 준다(agent/answer_store.py).
+    # Without a record, the CLI sentence is sent as the fallback as is — better than an
+    # empty bubble. The exact question numbers and letters come from answer_records
+    # (agent/answer_store.py).
     assert users[0].text.startswith("답변 제출")
     assert users[0].answers is None
 
 
-#: SDK AskUserQuestion의 input 모양. 실제 트랜스크립트에서 옮겨온 것이다.
+#: The input shape of the SDK's AskUserQuestion. Copied from a real transcript.
 _SDK_QUESTIONS = [
     {"question": "무엇을 만드나요?", "header": "도메인", "multiSelect": False,
      "options": [{"label": "자동차 부품", "description": "IATF 16949 환경"},
@@ -282,20 +287,21 @@ _SDK_QUESTIONS = [
      "options": [{"label": "10건 미만"}, {"label": "10~30건"}]},
 ]
 
-#: CLI가 AskUserQuestion 결과로 쓰는 **자기** 문장. 우리 접두사도 JSON도 아니다 —
-#: 이것을 되파싱하지 않는 것이 답변 레코드를 도입한 이유다.
+#: The CLI's **own** sentence written as the AskUserQuestion result. It is neither our
+#: prefix nor JSON — not re-parsing this is why answer records were introduced.
 _CLI_ANSWER_SENTENCE = ('Your questions have been answered: '
                         '"무엇을 만드나요?"="자동차 부품". '
                         'You can now continue with these answers in mind.')
 
 
 def test_cli_answer_uses_the_answer_record_when_one_exists():
-    """레코드가 있으면 라이브와 같은 값으로 복원된다.
+    """With a record, the restore produces the same values as live.
 
-    종전에는 CLI가 쓴 영어 문장을 그대로 `답변 제출: <문장>`으로 내보냈다 —
-    문항 번호·보기 letter·보기 텍스트가 전부 사라져서, 같은 대화가 새로고침
-    전후로 다르게 보였다. 레코드에는 우리가 받은 그대로의 답변 dict와 그 순간의
-    질문 payload가 있으므로 프론트가 answerSummary로 라이브와 같은 문구를 만든다.
+    Previously the English sentence written by the CLI was emitted as is as `답변 제출: <문장>` —
+    the question numbers, option letters, and option text were all lost, so the same
+    conversation looked different before and after a refresh. The record holds the answer
+    dict exactly as we received it and the question payload at that moment, so the frontend
+    builds the same text as live with answerSummary.
     """
     raw = [
         _cli("assistant", "assistant", [
@@ -315,13 +321,15 @@ def test_cli_answer_uses_the_answer_record_when_one_exists():
     user = next(i for i in items if i.role == "user")
     assert user.answers == {"1": "A", "2": "A,B"}
     assert user.questions == records["tu-1"]["questions"]
-    # 영어 문장이 화면 문구로 새어나가지 않는다 — 프론트가 UI 언어로 다시 만든다.
+    # The English sentence does not leak into the screen text — the frontend rebuilds it in
+    # the UI language.
     assert "have been answered" not in (user.text or "")
 
 
 def test_cli_answer_falls_back_to_the_sentence_without_a_record():
-    """레코드 없는 세션(이 기능 이전)은 종전 동작을 유지한다 — 다만 그 라운드의
-    질문 payload는 트랜스크립트에서 복원되므로 카드가 무엇을 물었는지 말해준다."""
+    """Sessions without records (before this feature) keep the former behavior — but that
+    round's question payload is restored from the transcript, so the card tells what it
+    asked."""
     raw = [
         _cli("assistant", "assistant", [
             {"type": "tool_use", "id": "tu-1", "name": "AskUserQuestion",
@@ -336,7 +344,7 @@ def test_cli_answer_falls_back_to_the_sentence_without_a_record():
     assert card.questions is not None
     assert [q["text"] for q in card.questions["questions"]] == [
         "무엇을 만드나요?", "월 클레임 건수는?"]
-    # 보기는 라이브와 같은 함수로 조립된다(letter + "라벨 — 설명" + Other 추가).
+    # Options are assembled by the same function as live (letter + "라벨 — 설명" + adding Other).
     first = card.questions["questions"][0]["options"]
     assert first[0]["letter"] == "A" and first[0]["text"] == "자동차 부품 — IATF 16949 환경"
     assert first[-1]["is_other"] is True
@@ -345,11 +353,12 @@ def test_cli_answer_falls_back_to_the_sentence_without_a_record():
 
 
 def test_cli_rejected_question_round_leaves_no_ghost_card():
-    """CLI가 스키마 검증으로 막은 라운드는 사용자에게 뜬 적이 없다.
+    """A round the CLI blocked by schema validation was never shown to the user.
 
-    실측: 모델이 `questions`를 JSON 문자열로 넘긴 3건이 `is_error: true`로
-    즉시 거절됐고, 모델은 다음 턴에 올바른 배열로 재시도했다. 거절된 라운드까지
-    카드를 만들면 아무도 보지 않은 질문 카드가 스크롤백에 남는다.
+    Measured: 3 cases where the model passed `questions` as a JSON string were rejected
+    immediately with `is_error: true`, and the model retried with a proper array on the next
+    turn. Creating cards even for the rejected rounds leaves question cards nobody saw in the
+    scrollback.
     """
     raw = [
         _cli("assistant", "assistant", [
@@ -371,17 +380,18 @@ def test_cli_rejected_question_round_leaves_no_ghost_card():
 
     cards = [i for i in items if i.role == "card"]
     assert len(cards) == 1, [i.questions for i in cards]
-    # 거절된 라운드의 결과는 답변 말풍선도 만들지 않는다(답변이 아니다).
+    # The result of a rejected round does not create an answer bubble either (it is not an
+    # answer).
     assert len([i for i in items if i.role == "user"]) == 1
 
 
 def _driver_session_key(project_id: str) -> dict:
-    """드라이버가 미러링에 실제로 쓰는 세션 키.
+    """The session key the driver actually uses for mirroring.
 
-    project_id를 그대로 쓰면 안 된다 — 그것이 이 버그의 두 번째 겹이었다. CLI가
-    비-UUID session-id를 거부하므로 드라이버는 uuid5를 유도해 그 값으로 쓰고,
-    읽는 쪽이 원본 project_id를 쓰면 아무것도 쓰이지 않은 프리픽스를 뒤진다.
-    양쪽이 같은 실수를 하면 어긋난 상태로도 테스트는 통과한다.
+    project_id must not be used as is — that was the second layer of this bug. The CLI rejects
+    a non-UUID session-id, so the driver derives a uuid5 and uses that value, and if the reader
+    uses the original project_id it searches a prefix where nothing was written.
+    If both sides make the same mistake, the tests pass even in a mismatched state.
     """
     from aipds.agent.claude_driver import _sdk_session_id
     session_id, _ = _sdk_session_id({"session_id": project_id})
@@ -389,7 +399,7 @@ def _driver_session_key(project_id: str) -> dict:
 
 
 async def test_list_history_reads_what_the_session_store_wrote():
-    """쓰기와 읽기가 같은 키를 본다는 것 — 이 버그의 핵심이 경로 불일치였다."""
+    """That writes and reads look at the same key — the core of this bug was a path mismatch."""
     s3 = FakeS3Store()
     store = DiscoverySessionStore(s3)
     key = _driver_session_key("sess-1")
@@ -398,22 +408,23 @@ async def test_list_history_reads_what_the_session_store_wrote():
         {"type": "assistant", "message": {"role": "assistant", "content": [
             {"type": "text", "text": "네, 시작합니다."}]}},
     ])
-    # 프로덕션 배선과 같게: claude 트랜스크립트는 project_s3에서 읽는다
-    # (드라이버가 s3_store_factory(pid)로 받은 그 스토어에 쓴다).
+    # Same as the production wiring: the claude transcript is read from project_s3
+    # (the driver writes to the very store it received via s3_store_factory(pid)).
     items = await list_history(s3, "sess-1")
     assert [(i.role, i.text) for i in items] == [
         ("user", "시작해줘"), ("ai", "네, 시작합니다.")]
 
 
 async def test_append_across_instances_does_not_overwrite_earlier_batches():
-    """resume은 새 store 인스턴스를 만든다. 시퀀스를 0에서 시작하면 첫 append가
-    이전 세션의 초반 배치를 같은 키로 덮어써 히스토리 앞부분이 사라진다."""
+    """resume creates a new store instance. If the sequence started at 0, the first append
+    would overwrite the previous session's early batch at the same key, and the start of the
+    history would vanish."""
     s3 = FakeS3Store()
     key = _driver_session_key("sess-3")
     first = DiscoverySessionStore(s3)
     await first.append(key, [{"type": "user",
                               "message": {"role": "user", "content": "첫 턴"}}])
-    second = DiscoverySessionStore(s3)   # resume이 만드는 새 인스턴스
+    second = DiscoverySessionStore(s3)   # the new instance resume creates
     await second.append(key, [{"type": "user",
                                "message": {"role": "user", "content": "두 번째 턴"}}])
     items = await list_history(s3, "sess-3")
@@ -421,18 +432,18 @@ async def test_append_across_instances_does_not_overwrite_earlier_batches():
 
 
 def test_cli_a_file_round_restores_the_answers_the_user_gave():
-    """**실측(2026-08-21).** 새로고침으로 대화가 복원되면 파일 질문 라운드의 사용자
-    말풍선이 전부 같은 기계 문구로 고정돼 있었다 — "질문에 답했습니다. 답변은
+    """**Measured (2026-08-21).** When the conversation was restored by a refresh, all the user
+    bubbles of file question rounds were stuck on the same machine text — "질문에 답했습니다. 답변은
     `…-questions.md`의 `[Answer]:` 태그에 들어 있으니…".
 
-    이 경로에는 조인할 것이 없다: 파일 라운드는 `ask_questions` 도구 호출을 만들지
-    않으므로(에이전트가 부르는 것은 `Write`다) `tool_use_id`도, `answer_store`
-    레코드도 없다. 그래서 위 tool_result 분기가 아니라 아래 평문 user 분기로
-    떨어지고, 트랜스크립트에 있는 것이 그대로 말풍선이 된다.
+    There is nothing to join on this path: a file round does not create an `ask_questions` tool
+    call (what the agent calls is `Write`), so there is no `tool_use_id` and no `answer_store`
+    record. So it falls not into the tool_result branch above but into the plain-text user
+    branch below, and whatever is in the transcript becomes the bubble as is.
 
-    고친 방향은 **트랜스크립트가 진실을 갖게 하는 것**이다
-    (`prompts.file_answers_recorded`). 그러면 이 함수는 한 줄도 바뀌지 않고 복원이
-    맞아진다 — 이 검사가 그 계약을 양쪽에서 고정한다.
+    The fix is **to make the transcript hold the truth**
+    (`prompts.file_answers_recorded`). Then this function does not change by a single line and
+    the restore becomes correct — this check pins that contract from both sides.
     """
     from aipds.agent.prompts import file_answers_recorded
 
@@ -444,23 +455,24 @@ def test_cli_a_file_round_restores_the_answers_the_user_gave():
     assert len(items) == 1 and items[0].role == "user"
     restored = items[0].text
     assert "B" in restored and "A,C" in restored, restored
-    # 기계 문구만 남는 상태로 되돌아가지 않게 한다.
+    # Keep it from regressing to a state where only the machine text remains.
     assert restored.strip() != "질문에 답했습니다."
 
 
 def test_cli_a_file_round_restores_free_text_verbatim():
-    """자유 답변이 복원의 가장 중요한 경우다 — letter는 짧지만 자유 답변은 사용자가
-    쓴 유일한 기록이다.
+    """A free-form answer is the most important case for the restore — letters are short, but a
+    free-form answer is the only record of what the user wrote.
 
-    **알려진 한계: 보기 letter는 라벨로 풀지 않는다.** 라이브 화면은
-    `frontend/lib/answerSummary.ts`가 letter를 보기 텍스트로 바꿔 그린다. 그 함수의
-    본체는 QuestionCard의 값 계약을 되돌리는 판별이고 — 한 문자열에 네 모양이
-    담긴다(`A`, `A: 부연`, `A,C`, 그리고 letter처럼 보이는 자유 텍스트) — 그 파일이
-    스스로 "telling them apart is the whole job here"라고 적어 뒀다. 파이썬에 다시
-    구현하면 그 판별이 두 벌이 되고, 어긋난 쪽이 조용한 쪽이 된다.
-    그래서 복원은 **제출된 값 그대로**를 담는다: 자유 답변은 온전하고, letter는
-    letter로 남는다. 라벨까지 맞추려면 구조화된 답변을 프론트로 보내 같은 함수를
-    쓰게 해야 하고, 그 조인 키는 별건이다.
+    **Known limitation: option letters are not resolved to labels.** The live screen draws
+    them with `frontend/lib/answerSummary.ts` turning letters into option text. That
+    function's body is a discrimination that reverses QuestionCard's value contract — one
+    string carries four shapes (`A`, `A: 부연`, `A,C`, and free text that looks like a letter)
+    — and that file itself notes "telling them apart is the whole job here". Reimplementing
+    it in Python would make two copies of that discrimination, and whichever drifts would be
+    the silent one. So the restore holds **the submitted value as is**: free-form answers
+    are intact, and letters remain letters. Matching all the way to labels would require
+    sending the structured answer to the frontend so it uses the same function, and that
+    join key is a separate matter.
     """
     from aipds.agent.prompts import file_answers_recorded
 

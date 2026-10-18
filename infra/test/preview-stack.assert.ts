@@ -4,11 +4,11 @@ import { Template, Match } from 'aws-cdk-lib/assertions';
 import { AipdsPreviewStack, PREVIEW_PATH_PATTERN } from '../lib/aipds-preview-stack';
 import { INSTANCE_PARAMS } from '../lib/instance-params';
 
-// 프리뷰 오리진의 계약(lib/aipds-preview-stack.ts 머리말):
-//   - 프로토타입 경로만 오리진으로 가고 나머지는 404다.
-//   - 두 비밀 헤더를 모두 붙인다 — X-Origin-Verify는 nginx가, X-Preview-Verify는 백엔드가 본다.
-//   - 인스턴스 롤이 프리뷰 시크릿을 읽을 수 있다(HostingStack을 고치지 않고).
-//   - EC2·VPC·IAM 롤 같은 인스턴스 쪽 리소스를 만들지 않는다 — 참조만 한다.
+// The preview origin's contract (header of lib/aipds-preview-stack.ts):
+//   - Only prototype paths go to the origin; everything else is a 404.
+//   - Both secret headers are attached — nginx checks X-Origin-Verify, the backend checks X-Preview-Verify.
+//   - The instance role can read the preview secret (without modifying HostingStack).
+//   - It does not create instance-side resources such as EC2, VPC, or IAM roles — it only references them.
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 const ROLE = 'arn:aws:iam::123456789012:role/AipdsHostingStack-InstanceRole';
@@ -23,7 +23,7 @@ const stack = new AipdsPreviewStack(app, 'Preview', {
 });
 const t = Template.fromStack(stack);
 
-// 인스턴스 쪽 리소스를 만들지 않는다.
+// Does not create instance-side resources.
 for (const type of ['AWS::EC2::Instance', 'AWS::EC2::VPC', 'AWS::IAM::Role', 'AWS::EC2::EIP']) {
   assert.deepStrictEqual(t.findResources(type), {}, `preview stack must not create ${type}`);
 }
@@ -31,7 +31,7 @@ for (const type of ['AWS::EC2::Instance', 'AWS::EC2::VPC', 'AWS::IAM::Role', 'AW
 const dist = Object.values(t.findResources('AWS::CloudFront::Distribution'))[0] as any;
 const cfg = dist.Properties.DistributionConfig;
 
-// 기본 동작은 404 함수, 프로토타입 경로만 오리진.
+// The default behavior is the 404 function; only prototype paths go to the origin.
 assert.strictEqual(cfg.DefaultCacheBehavior.FunctionAssociations[0].EventType, 'viewer-request');
 const proto = cfg.CacheBehaviors.find((b: any) => b.PathPattern === PREVIEW_PATH_PATTERN);
 assert.ok(proto, `a behavior for ${PREVIEW_PATH_PATTERN}`);
@@ -39,14 +39,14 @@ assert.strictEqual(proto.FunctionAssociations, undefined, 'the prototype path is
 assert.deepStrictEqual(proto.AllowedMethods.length, 7, 'prototypes take form posts');
 assert.strictEqual(cfg.CacheBehaviors.length, 1, 'nothing else reaches the origin');
 
-// 두 비밀 헤더.
+// The two secret headers.
 const headers = JSON.stringify(cfg.Origins[0].OriginCustomHeaders);
 assert.ok(headers.includes('X-Origin-Verify'), 'nginx checks X-Origin-Verify');
 assert.ok(headers.includes('X-Preview-Verify'), 'the backend checks X-Preview-Verify');
 assert.ok(headers.includes(SECRET), 'X-Origin-Verify comes from the HostingStack secret');
 assert.ok(!headers.match(/"Value":"[A-Za-z0-9]{32}"/), 'no plaintext secret in the template');
 
-// 인스턴스 롤이 프리뷰 시크릿을 읽는다.
+// The instance role reads the preview secret.
 t.hasResourceProperties('AWS::SecretsManager::ResourcePolicy', {
   ResourcePolicy: {
     Statement: Match.arrayWith([Match.objectLike({
@@ -56,7 +56,7 @@ t.hasResourceProperties('AWS::SecretsManager::ResourcePolicy', {
   },
 });
 
-// 새 인스턴스가 부팅 때 읽는 두 값(lib/instance-params.ts, scripts/aipds-harden boot).
+// The two values a new instance reads at boot (lib/instance-params.ts, scripts/aipds-harden boot).
 const params = Object.values(t.findResources('AWS::SSM::Parameter')) as any[];
 assert.deepStrictEqual(params.map((p) => p.Properties.Name).sort(),
   [INSTANCE_PARAMS.previewOrigin, INSTANCE_PARAMS.previewSecretArn].sort());

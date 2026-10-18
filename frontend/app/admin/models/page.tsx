@@ -18,8 +18,8 @@ export default function AdminModelsPage() {
     try {
       setModels(await listAdminModels());
     } catch (err) {
-      // 403은 pm이 URL을 직접 친 경우다 — 미들웨어는 UX 게이트일 뿐이고
-      // 실제 차단은 여기(백엔드 응답)에서 드러난다.
+      // A 403 is the case where a pm typed the URL directly — the middleware is only a UX gate, and
+      // the actual block shows up here (in the backend response).
       setError(err instanceof ApiError && err.status === 403
         ? t("admin.needAdmin")
         : t("admin.modelsLoadFailed"));

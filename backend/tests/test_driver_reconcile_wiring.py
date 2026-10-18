@@ -1,12 +1,12 @@
-# backend/tests/test_driver_reconcile_wiring.py — 훅과 턴 경계가 재조정을 부르는가.
+# backend/tests/test_driver_reconcile_wiring.py — do the hook and the turn boundary call reconciliation?
 #
-# tests/test_agent_reconcile.py는 **판정**을 검사한다(파일 → 이벤트). 이 파일은
-# **배선**을 검사한다: 그 판정이 실제로 불리는 두 자리 — PostToolUse 훅과 `_pump`의
-# 종결 배출 직전 — 그리고 두 자리가 커서를 공유하는가.
+# tests/test_agent_reconcile.py checks the **verdict** (file → event). This file checks the
+# **wiring**: the two places where that verdict is actually called — the PostToolUse hook and just before
+# `_pump`'s terminal emission — and whether the two share a cursor.
 #
-# 배선을 따로 검사하는 이유는 이 기능의 실패 모양이 "판정이 틀렸다"가 아니라
-# "판정이 안 불렸다"였기 때문이다. 옛 `report_stage` 도구도 판정은 정확했다 — 모델이
-# 부르지 않았을 뿐이다(agent/reconcile.py 헤더).
+# Wiring is checked separately because this feature's failure shape was not "the verdict was wrong" but
+# "the verdict was never called". The old `report_stage` tool's verdict was accurate too — the model
+# just did not call it (agent/reconcile.py header).
 from __future__ import annotations
 
 import json
@@ -44,7 +44,7 @@ def _kinds(d: ClaudeDriver, kind: str) -> list[dict]:
     return [json.loads(e.payload) for e in d._queue if e.kind == kind]
 
 
-# ---- 훅: 상태 파일 쓰기가 stage 이벤트가 된다 ----
+# ---- Hook: a state file write becomes a stage event ----
 
 
 @pytest.mark.asyncio
@@ -52,7 +52,7 @@ async def test_writing_the_state_file_emits_stage_events(tmp_path):
     d, ws = _driver(tmp_path)
     payload = _write(ws, "aiplc-docs/aiplc-state.md", STATE_MD)
     out = await d._on_post_tool_use(payload, "t1", None)
-    # 턴을 끊지 않는다 — 상태 갱신은 작업 도중에 일어나는 일이다.
+    # It does not cut the turn — state updates happen in the middle of work.
     assert out == {}
     assert [p["stage"] for p in _kinds(d, "stage")] == [
         "Workspace Detection", "Envision"]
@@ -60,7 +60,7 @@ async def test_writing_the_state_file_emits_stage_events(tmp_path):
 
 @pytest.mark.asyncio
 async def test_the_state_file_also_emits_file_changed(tmp_path):
-    """산출물이기도 하므로 문서 패널 경로를 잃지 않는다."""
+    """It is also an artifact, so the document panel path is not lost."""
     d, ws = _driver(tmp_path)
     await d._on_post_tool_use(
         _write(ws, "aiplc-docs/aiplc-state.md", STATE_MD), "t1", None)
@@ -70,8 +70,8 @@ async def test_the_state_file_also_emits_file_changed(tmp_path):
 
 @pytest.mark.asyncio
 async def test_rewriting_the_state_file_unchanged_emits_nothing_new(tmp_path):
-    """훅이 매 쓰기에 발동하므로 diff 커서가 훅 경로에서도 살아 있어야 한다 —
-    아니면 상태 파일을 두 번 쓰는 정상 턴이 사이드바를 두 배로 만든다."""
+    """The hook fires on every write, so the diff cursor must stay alive on the hook path too —
+    otherwise a normal turn that writes the state file twice doubles the sidebar."""
     d, ws = _driver(tmp_path)
     payload = _write(ws, "aiplc-docs/aiplc-state.md", STATE_MD)
     await d._on_post_tool_use(payload, "t1", None)
@@ -89,7 +89,7 @@ async def test_a_normal_document_write_emits_no_stage_events(tmp_path):
     assert _kinds(d, "stage") == []
 
 
-# ---- 훅: build-instructions.md 쓰기가 인계 + 턴 종료가 된다 ----
+# ---- Hook: a build-instructions.md write becomes a handoff + turn end ----
 
 
 def _handoff_ready(ws: Path) -> None:
@@ -108,19 +108,19 @@ async def test_writing_build_instructions_hands_off_and_stops_the_turn(tmp_path)
     assert _kinds(d, "prototype_ready") == [{
         "slug": "prototype",
         "spec_path": "aiplc-docs/discovery/prototype/prototype-spec.md"}]
-    # 여기서 Discovery의 일이 끝나고 다음 행동은 사용자의 것이다.
+    # Discovery's job ends here, and the next action belongs to the user.
     assert out["continue_"] is False
     reason = out["stopReason"]
-    # 다음 행동을 **지정한다** — 없으면 상류 Step 4로 계속 가거나 자격증명을 묻는다
-    # (실측 ws-a-v5).
+    # It **specifies** the next action — otherwise the agent carries on to upstream Step 4 or asks for credentials
+    # (observed in ws-a-v5).
     assert "Prototypes" in reason
     assert "prototype" in reason
 
 
 @pytest.mark.asyncio
 async def test_build_instructions_without_a_spec_do_not_stop_the_turn(tmp_path):
-    """명세가 없으면 카드를 만들 수 없다(routes/prototypes.py). 여기서 턴을 끊으면
-    에이전트가 명세를 쓸 기회 없이 멈춘다 — 사용자는 빈 탭을 본다."""
+    """Without a spec, no card can be made (routes/prototypes.py). Cutting the turn here would stop
+    the agent with no chance to write the spec — the user sees an empty tab."""
     d, ws = _driver(tmp_path)
     out = await d._on_post_tool_use(
         _write(ws, "aiplc-docs/discovery/prototype/build-instructions.md"),
@@ -131,8 +131,8 @@ async def test_build_instructions_without_a_spec_do_not_stop_the_turn(tmp_path):
 
 @pytest.mark.asyncio
 async def test_rewriting_build_instructions_does_not_stop_the_turn_twice(tmp_path):
-    """빌드 지시를 고쳐 쓰는 것은 정상 행동이다. 두 번째 쓰기에서 또 끊으면
-    에이전트가 같은 자리에 갇히고, 카드도 두 장 뜬다."""
+    """Rewriting the build instructions is normal behavior. Cutting again on the second write would
+    trap the agent in the same spot, and two cards would appear."""
     d, ws = _driver(tmp_path)
     _handoff_ready(ws)
     payload = _write(ws, "aiplc-docs/discovery/prototype/build-instructions.md")
@@ -157,19 +157,19 @@ async def test_the_stop_reason_follows_the_project_language(tmp_path):
     assert not any("가" <= c <= "힣" for c in out["stopReason"])
 
 
-# ---- 턴 경계: 훅이 못 본 것을 되찾는다 ----
+# ---- Turn boundary: recovers what the hook missed ----
 
 
 def test_the_turn_boundary_recovers_a_state_file_written_outside_the_hook(tmp_path):
-    """**이것이 1번의 핵심이다.** PostToolUse는 `Write|Edit|MultiEdit`에만 붙으므로
-    Bash로 쓴 파일을 보지 못한다(discovery_guard.py 헤더의 같은 한계). 여기서
-    디스크를 한 번 읽으면 그 우회와 배치 드롭이 함께 덮인다 — 2026-08-18
-    test123456의 유실된 `report_stage`가 그 경우다.
+    """**This is the core of item 1.** PostToolUse is attached only to `Write|Edit|MultiEdit`, so
+    it does not see files written with Bash (the same limit as in the discovery_guard.py header). Reading
+    the disk once here covers both that bypass and batch drops — the lost `report_stage` in
+    test123456 on 2026-08-18 was that case.
     """
     d, ws = _driver(tmp_path)
     p = ws / "aiplc-docs" / "aiplc-state.md"
     p.parent.mkdir(parents=True)
-    p.write_text(STATE_MD, encoding="utf-8")   # 훅을 거치지 않은 쓰기
+    p.write_text(STATE_MD, encoding="utf-8")   # a write that did not go through the hook
 
     assert _kinds(d, "stage") == []
     d._reconcile_turn()
@@ -187,8 +187,8 @@ def test_the_turn_boundary_recovers_an_unannounced_handoff(tmp_path):
 
 
 def test_the_turn_boundary_is_quiet_when_the_hook_already_reported(tmp_path):
-    """두 자리가 커서를 공유하므로 재조정은 대개 아무 일도 하지 않는다. 공유하지
-    않으면 모든 스테이지가 턴마다 두 번 흘러 사이드바가 두 배가 된다."""
+    """The two places share the cursor, so reconciliation usually does nothing. If they did not share it,
+    every stage would flow twice per turn and the sidebar would double."""
     d, ws = _driver(tmp_path)
     import asyncio
     asyncio.run(d._on_post_tool_use(
@@ -199,24 +199,24 @@ def test_the_turn_boundary_is_quiet_when_the_hook_already_reported(tmp_path):
 
 
 def test_the_turn_boundary_survives_an_unreadable_workspace(tmp_path):
-    """재조정은 백스톱이다 — 그것이 턴을 실패시키면 백스톱이 아니라 새 실패 원인이
-    된다(runner._sync_abandoned_turn과 같은 판단)."""
+    """Reconciliation is a backstop — if it failed the turn, it would be a new cause of failure, not a backstop
+    (the same judgment as runner._sync_abandoned_turn)."""
     d, _ = _driver(tmp_path)
     d._workspace = "/nonexistent/nowhere"
-    d._reconcile_turn()          # 예외가 새어나오지 않는다
+    d._reconcile_turn()          # no exception leaks out
     assert _kinds(d, "stage") == []
 
 
-# ---- 종단: 재조정 이벤트가 `done` **앞에** 도달한다 ----
+# ---- End to end: reconciliation events arrive **before** `done` ----
 #
-# 위치가 계약이다. `frontend/lib/api/sse.ts:29`가 `done`에서 EventSource를 닫으므로
-# 그 뒤의 이벤트는 `onEvent`에 닿지 않는다 — `done` 뒤에 붙은 `stage`는 조용히
-# 사라지고 사이드바가 낡는다(claude_driver._pump의 invariant 1).
+# The position is the contract. `frontend/lib/api/sse.ts:29` closes the EventSource on `done`, so
+# events after it never reach `onEvent` — a `stage` attached after `done` silently
+# disappears and the sidebar goes stale (invariant 1 of claude_driver._pump).
 
 
 def _scripted_driver(tmp_path, scripted):
-    """대본 하나를 돌리는 실제 `run()` 경로. tests/test_claude_driver.py의 헬퍼와
-    같은 모양이지만 룰 픽스처만 필요하다."""
+    """The real `run()` path running one script. Same shape as the helper in tests/test_claude_driver.py,
+    but it needs only the rules fixture."""
     from tests.fakes.fake_sdk_asking import sdk_client_for
 
     rules = tmp_path / "rules" / "aws-aiplc-rules"
@@ -237,13 +237,13 @@ async def test_a_state_file_written_outside_the_hook_reaches_the_stream(tmp_path
     d, ws = _scripted_driver(tmp_path, {"text": ["ok"]})
     p = ws / "aiplc-docs" / "aiplc-state.md"
     p.parent.mkdir(parents=True)
-    p.write_text(STATE_MD, encoding="utf-8")   # 훅을 거치지 않은 쓰기
+    p.write_text(STATE_MD, encoding="utf-8")   # a write that did not go through the hook
 
     events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
     kinds = [e.kind for e in events]
 
     assert "stage" in kinds, kinds
-    # 종결 이벤트는 정확히 하나이고 마지막이다.
+    # There is exactly one terminal event, and it is last.
     assert kinds[-1] == "done"
     assert kinds.count("done") == 1
     assert kinds.index("stage") < kinds.index("done")
@@ -251,18 +251,18 @@ async def test_a_state_file_written_outside_the_hook_reaches_the_stream(tmp_path
 
 @pytest.mark.asyncio
 async def test_a_turn_with_nothing_to_reconcile_is_unchanged(tmp_path):
-    """재조정이 정상 턴에 이벤트를 더하지 않는다 — 빈 워크스페이스에서는 조용하다."""
+    """Reconciliation adds no events to a normal turn — it is quiet on an empty workspace."""
     d, _ = _scripted_driver(tmp_path, {"text": ["ok"]})
     events = [ev async for ev in d.run("hi", {"session_id": "s-1"})]
     assert [e.kind for e in events if e.kind == "stage"] == []
     assert [e.kind for e in events][-1] == "done"
 
 
-# ---- 훅: 산출물 쓰기가 document 이벤트가 된다 (옛 submit_document) ----
+# ---- Hook: an artifact write becomes a document event (the old submit_document) ----
 #
-# 옛 도구의 실패 모양은 판정이 아니라 침묵이었다 — 프론트가 실측을 적어 뒀다:
-# "에이전트는 대부분의 문서를 submit_document 없이 file_write로만 만든다"
-# (useWorkspaceStream.ts:177). 그래서 배선을 검사한다.
+# The old tool's failure shape was silence, not the verdict — the frontend wrote down the observation:
+# "에이전트는 대부분의 문서를 submit_document 없이 file_write로만 만든다" (the agent creates most documents with file_write alone, without submit_document)
+# (useWorkspaceStream.ts:177). So the wiring is checked.
 
 
 @pytest.mark.asyncio
@@ -271,7 +271,7 @@ async def test_a_document_write_emits_a_document_event(tmp_path):
     out = await d._on_post_tool_use(
         _write(ws, "aiplc-docs/discovery/envision/prfaq.md", "# PR/FAQ\n본문\n"),
         "t1", None)
-    # 문서 쓰기는 턴을 끊지 않는다 — 작업 도중에 일어나는 일이다.
+    # Document writes do not cut the turn — they happen in the middle of work.
     assert out == {}
     assert _kinds(d, "document") == [
         {"path": "aiplc-docs/discovery/envision/prfaq.md",
@@ -280,8 +280,8 @@ async def test_a_document_write_emits_a_document_event(tmp_path):
 
 @pytest.mark.asyncio
 async def test_rewriting_a_document_unchanged_emits_nothing_new(tmp_path):
-    """훅이 매 쓰기에 발동하므로 커서가 훅 경로에서 살아 있어야 한다 — 아니면
-    같은 문서를 두 번 쓰는 정상 턴이 갱신 배너를 두 번 띄운다."""
+    """The hook fires on every write, so the cursor must stay alive on the hook path — otherwise
+    a normal turn that writes the same document twice shows the update banner twice."""
     d, ws = _driver(tmp_path)
     payload = _write(ws, "aiplc-docs/discovery/prfaq.md", "# PR/FAQ\n본문\n")
     await d._on_post_tool_use(payload, "t1", None)
@@ -301,12 +301,12 @@ async def test_a_record_keeping_write_emits_no_document_event(tmp_path):
 
 @pytest.mark.asyncio
 async def test_the_turn_boundary_recovers_a_document_the_hook_never_saw(tmp_path):
-    """백스톱. 훅은 `Write|Edit|MultiEdit`에만 붙으므로 Bash로 쓴 문서는 못 본다 —
-    스테이지·인계가 `_reconcile_turn`에 있는 것과 같은 이유다."""
+    """Backstop. The hook is attached only to `Write|Edit|MultiEdit`, so it does not see documents written with Bash —
+    the same reason stages and handoffs are in `_reconcile_turn`."""
     d, ws = _driver(tmp_path)
     p = ws / "aiplc-docs" / "discovery" / "prfaq.md"
     p.parent.mkdir(parents=True)
-    p.write_text("# PR/FAQ\n본문\n", encoding="utf-8")  # 훅을 거치지 않는다
+    p.write_text("# PR/FAQ\n본문\n", encoding="utf-8")  # does not go through the hook
     d._reconcile_turn()
     assert [x["path"] for x in _kinds(d, "document")] == [
         "aiplc-docs/discovery/prfaq.md"]
@@ -314,8 +314,8 @@ async def test_the_turn_boundary_recovers_a_document_the_hook_never_saw(tmp_path
 
 @pytest.mark.asyncio
 async def test_the_hook_and_the_turn_boundary_share_the_document_cursor(tmp_path):
-    """두 경로가 커서를 공유하지 않으면 턴 경계가 훅이 이미 알린 문서를 다시
-    알린다(스테이지가 `_emit_stage_events` 하나를 지나는 것과 같은 계약)."""
+    """If the two paths did not share the cursor, the turn boundary would re-announce a document the hook already
+    announced (the same contract as stages passing through the single `_emit_stage_events`)."""
     d, ws = _driver(tmp_path)
     await d._on_post_tool_use(
         _write(ws, "aiplc-docs/discovery/prfaq.md", "# PR/FAQ\n본문\n"), "t1", None)
@@ -327,16 +327,16 @@ async def test_the_hook_and_the_turn_boundary_share_the_document_cursor(tmp_path
 
 @pytest.mark.asyncio
 async def test_a_document_changed_between_turns_is_still_announced(tmp_path):
-    """씨딩은 **첫 턴에 한 번만** 한다. 매 턴 씨딩하면 턴 사이에 바뀐 문서를 조용히
-    삼킨다 — 다른 인스턴스의 쓰기나, 복원된 내용이 로컬과 다른 경우가 그것이다."""
+    """Seeding happens **only once, on the first turn**. Seeding every turn would silently swallow documents
+    changed between turns — writes from another instance, or restored contents that differ from local."""
     d, ws = _driver(tmp_path)
     p = ws / "aiplc-docs" / "discovery" / "prfaq.md"
     p.parent.mkdir(parents=True)
     p.write_text("# PR/FAQ\n초안\n", encoding="utf-8")
-    d._seed_document_cursor()          # 첫 턴: 있던 것은 본 것으로
+    d._seed_document_cursor()          # first turn: treat what exists as seen
     assert _kinds(d, "document") == []
 
     p.write_text("# PR/FAQ\n고친 본문\n", encoding="utf-8")
-    d._seed_document_cursor()          # 두 번째 턴: 무동작이어야 한다
+    d._seed_document_cursor()          # second turn: must be a no-op
     d._reconcile_turn()
     assert [x["version"] for x in _kinds(d, "document")] == ["2"]

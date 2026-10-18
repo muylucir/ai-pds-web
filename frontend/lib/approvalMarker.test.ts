@@ -18,8 +18,8 @@ describe("isApprovalText", () => {
   });
 
   it("문장 속에 든 승인은 인식하지 않는다", () => {
-    // 게이트가 보낸 턴만 결정으로 센다 — AI가 승인을 언급하는 문장이
-    // 결정으로 세어지면 PM이 누르기 전에 게이트가 사라진다.
+    // Only turns sent by the gate count as decisions — if a sentence in which the AI mentions approval
+    // were counted as a decision, the gate would disappear before the PM pressed it.
     expect(isApprovalText("승인 게이트에서 승인하시면 됩니다")).toBe(false);
     expect(isApprovalText("I have approved the document")).toBe(false);
   });

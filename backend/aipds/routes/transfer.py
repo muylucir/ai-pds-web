@@ -1,13 +1,14 @@
-# backend/aipds/routes/transfer.py — 프로젝트를 인스턴스 사이로 옮기는 라우트.
+# backend/aipds/routes/transfer.py — routes that move a project between instances.
 #
-# 내보내기는 프로젝트 하나를 zip 하나로 내려주고(project_export.py), 가져오기는
-# 그 zip을 다른 인스턴스에서 되살린다(project_import.py). 번들 포맷은
-# project_bundle.py가 소유하고, 이 파일은 HTTP 계약만 갖는다.
+# Export sends one project down as one zip (project_export.py), and import restores that zip on
+# another instance (project_import.py). project_bundle.py owns the bundle format; this file owns
+# only the HTTP contract.
 #
-# **업로드가 이 프로세스를 지나지 않는다.** 가져오기는 3단계다 —
-# presign 요청 → 브라우저가 S3로 직접 PUT → 임포트 요청. 번들은 크기에 위가 없고,
-# 서버를 지나는 요청은 nginx의 `client_max_body_size`와 Next 미들웨어의 바디 상한
-# (둘 다 첨부 업로드 상한에 맞춘 값)에 걸린다 — 큰 번들을 받는 유일한 길이다.
+# **The upload does not pass through this process.** Import has 3 steps —
+# presign request → the browser PUTs directly to S3 → import request. A bundle has no upper bound
+# on size, and requests that pass through the server hit nginx's `client_max_body_size` and the
+# Next middleware's body limit (both set to match the attachment upload limit) — this is the
+# only way to receive a large bundle.
 from __future__ import annotations
 
 import asyncio
@@ -49,12 +50,12 @@ _log = logging.getLogger(__name__)
 
 
 def _reject_traversal_params(request: Request) -> None:
-    """`{pid}`는 한 개의 평범한 경로 세그먼트여야 한다.
+    """`{pid}` must be a single plain path segment.
 
-    routes/prototypes.py의 같은 이름 가드와 같은 이유다: 이 값이 로컬 디렉터리
-    이름(`{proto_root}/{pid}/…`)과 S3 키 prefix로 들어가고, 퍼센트 인코딩된
-    `%2e%2e`는 `path_params`에 이미 디코드된 채 도착해 정상 라우팅된다. 404로
-    답하는 것도 그쪽과 같다 — 주소가 가리키는 것이 없다는 뜻이다.
+    Same reason as the guard of the same name in routes/prototypes.py: this value goes into a
+    local directory name (`{proto_root}/{pid}/…`) and an S3 key prefix, and a percent-encoded
+    `%2e%2e` arrives in `path_params` already decoded and is routed normally. Answering with 404
+    is also the same as there — it means the address points to nothing.
     """
     value = request.path_params.get("pid")
     if value is None:
@@ -70,9 +71,9 @@ router = APIRouter(dependencies=[Depends(_reject_traversal_params)])
 
 
 def _content_disposition(pid: str, exported_at: str) -> str:
-    """RFC 6266/5987. `pid`는 검증되지 않은 사용자 입력(한글 포함)일 수 있어
-    raw interpolation은 latin-1 헤더 인코딩에서 UnicodeEncodeError(500)가 된다 —
-    routes/artifacts.py가 같은 이유로 같은 모양을 갖는다."""
+    """RFC 6266/5987. `pid` can be unvalidated user input (including Korean), so raw
+    interpolation becomes a UnicodeEncodeError (500) under latin-1 header encoding —
+    routes/artifacts.py has the same shape for the same reason."""
     stamp = re.sub(r"[^0-9]", "", exported_at)[:14]
     name = f"aipds-export-{pid}-{stamp}.zip"
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-") or "aipds-export.zip"
@@ -82,13 +83,14 @@ def _content_disposition(pid: str, exported_at: str) -> str:
 
 @router.get("/projects/{pid}/export", dependencies=[Depends(require_project_owner)])
 async def export_project(pid: str):
-    """프로젝트 전체를 번들 zip으로. 소유자·관리자만 — GET이지만 열람이 아니다
-    (project_access.require_project_owner). 번들에는 소유자·멤버가 실리지 않는다.
+    """The whole project as a bundle zip. Owners and admins only — it is a GET but not a read
+    (project_access.require_project_owner). The bundle does not carry owners or members.
 
-    **살아 있는 빌드 세션이 있으면 409다.** 에이전트가 그 트리에 쓰고 있는 동안
-    담으면 반쯤 쓰인 소스가 들어가고, 그 zip은 정직한 스냅샷이 아니다. Discovery
-    턴은 막지 않는다 — 파일 계약 모델에서는 그 순간의 S3 상태가 유효한 스냅샷이고,
-    턴이 끝날 때까지 기다리게 하는 비용이 워크숍에서 더 크다.
+    **If there is a live build session, it is a 409.** Packing while the agent is writing to
+    that tree would include half-written source, and that zip is not an honest snapshot.
+    Discovery turns are not blocked — under the file-contract model, the S3 state at that
+    moment is a valid snapshot, and making users wait for the turn to end costs more in a
+    workshop.
     """
     import aipds.app as app_module
     from aipds.proto import layout as proto_layout
@@ -111,8 +113,8 @@ async def export_project(pid: str):
         "effort": app_module.registry.get_effort(pid),
         "language": app_module.registry.get_language(pid),
     }
-    # delete=False + BackgroundTask: FileResponse가 본문을 다 흘린 **뒤에** 지운다.
-    # `with`로 감싸면 응답을 만들기도 전에 파일이 사라진다.
+    # delete=False + BackgroundTask: deleted **after** FileResponse has streamed the whole body.
+    # Wrapping it in `with` would make the file disappear before the response is even built.
     tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
     tmp.close()
     dest = Path(tmp.name)
@@ -130,46 +132,48 @@ async def export_project(pid: str):
 
 
 def _cleanup(path: Path) -> None:
-    """임시 번들을 지운다. 실패는 로그로만 — 응답은 이미 나갔다."""
+    """Delete the temporary bundle. Failures are only logged — the response has already gone
+    out."""
     try:
         os.unlink(path)
     except OSError:
         _log.warning("could not remove temporary bundle %s", path, exc_info=True)
 
 
-# ---- 가져오기 ----
+# ---- Import ----
 #
-# 세 단계다: presign 요청 → 브라우저가 S3로 직접 PUT → 임포트 요청.
+# Three steps: presign request → the browser PUTs directly to S3 → import request.
 #
-# **경로가 `/projects/…` 아래에 없는 이유.** `POST /projects/import/uploads` 는
-# `POST /projects/{pid}/uploads`(참고자료 업로드)와 같은 모양이고, 어느 쪽이 이기는지는
-# 라우터 등록 순서로 결정된다. 그런 정합성은 조용히 깨진다 — `import`라는 이름의
-# 프로젝트를 만든 사용자는 자기 프로젝트의 업로드가 임포트 스테이징으로 가는 것을
-# 보게 된다. 별개의 명사면 그 함정이 존재하지 않는다.
+# **Why the paths are not under `/projects/…`.** `POST /projects/import/uploads` has the same
+# shape as `POST /projects/{pid}/uploads` (reference material upload), and which one wins is
+# decided by router registration order. That kind of consistency breaks silently — a user who
+# creates a project named `import` would see their project's uploads go to import staging. With
+# a separate noun, that trap does not exist.
 
 
 class ImportUploadRequest(BaseModel):
-    #: 클라이언트가 알린 번들 크기. **권위 있는 값이 아니다** — 상한을 넘는 업로드가
-    #: 애초에 시작되지 않게 하는 편의이고, 진짜 검사는 임포트 시점의 `head_object`다.
+    #: The bundle size the client announced. **Not an authoritative value** — it is a
+    #: convenience so that an upload over the limit never starts; the real check is
+    #: `head_object` at import time.
     size_bytes: int
 
 
 class ImportRequest(BaseModel):
     upload_id: str
-    #: 미지정이면 번들이 말하는 원본 id를 쓴다. 그 id가 이미 있으면 409이고,
-    #: 그때 화면이 이 필드를 채워 **같은 upload_id로** 다시 부른다.
+    #: If unspecified, the original id the bundle states is used. If that id already exists it is
+    #: a 409, and the screen then fills this field and calls again **with the same upload_id**.
     project_id: str | None = None
 
 
-#: 우리가 발급한 스테이징 id의 모양(`import_staging.new_upload_id`의 uuid4 hex).
-#: 이 값이 S3 키가 되므로 모양을 강제하는 것이 traversal을 완전히 닫는다 —
-#: 클라이언트가 키를 정할 수 있는 여지가 남지 않는다.
+#: The shape of the staging id we issue (uuid4 hex from `import_staging.new_upload_id`).
+#: This value becomes the S3 key, so enforcing its shape fully closes traversal —
+#: no room is left for the client to choose the key.
 _UPLOAD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 def _staging():
-    """스테이징. 버킷이 없으면 503 — 조용히 강등하면 사용자가 수백 MB를 올린
-    뒤에 그 사실을 알게 된다."""
+    """Staging. 503 if there is no bucket — degrading silently would let the user find out only
+    after uploading hundreds of MB."""
     import aipds.app as app_module
     try:
         return app_module.import_staging()
@@ -180,7 +184,8 @@ def _staging():
 
 @router.post("/project-imports/uploads", status_code=201)
 async def create_import_upload(body: ImportUploadRequest):
-    """번들을 올릴 presigned PUT URL. 업로드는 이 프로세스를 지나지 않는다."""
+    """Presigned PUT URL to upload the bundle to. The upload does not pass through this
+    process."""
     if body.size_bytes <= 0 or body.size_bytes > MAX_IMPORT_BYTES:
         raise HTTPException(status_code=400, detail=ec.EXPORT_TOO_LARGE)
     staging = _staging()
@@ -194,19 +199,19 @@ async def create_import_upload(body: ImportUploadRequest):
 
 @router.post("/project-imports", status_code=201)
 async def import_project(body: ImportRequest, me: Principal = Depends(require_user)):
-    """스테이징된 번들을 프로젝트로 되살린다.
+    """Restore a staged bundle into a project.
 
-    **순서가 load-bearing이다.** 내용 → `project.json` → 등록. `project.json`이
-    "이 프로젝트가 존재한다"의 정본이므로(`restore_projects`가 그것을 스캔한다)
-    먼저 쓰면 중간 실패가 **목록에는 보이지만 속이 빈** 프로젝트를 남기고, 그
-    상태는 재시작을 넘어 살아남는다.
+    **The order is load-bearing.** Contents → `project.json` → registration. `project.json` is the
+    source of truth for "this project exists" (`restore_projects` scans for it), so writing it
+    first would let a mid-way failure leave a project that **shows in the list but is empty
+    inside**, and that state survives restarts.
 
-    **409는 스테이징을 지우지 않는다.** id 충돌은 매니페스트를 읽어야 알 수 있고
-    매니페스트는 업로드가 끝난 뒤에나 읽힌다 — 여기서 지우면 사용자는 id 하나
-    바꾸려고 번들 전체를 다시 올려야 한다.
+    **A 409 does not delete the staging.** An id collision is only known by reading the manifest,
+    and the manifest can only be read after the upload finishes — deleting it here would force the
+    user to re-upload the whole bundle just to change one id.
 
-    가져온 사람이 소유자가 된다. 번들은 소유자를 싣지 않는다 — 다른 인스턴스의 username은
-    이 인스턴스에서 다른 사람일 수 있다.
+    The importer becomes the owner. The bundle does not carry the owner — a username on another
+    instance may be a different person on this instance.
     """
     import aipds.app as app_module
     owner = normalize(me.username)
@@ -220,8 +225,8 @@ async def import_project(body: ImportRequest, me: Principal = Depends(require_us
     if size is None:
         raise HTTPException(status_code=400, detail=ec.UPLOAD_MISSING)
     if size > MAX_IMPORT_BYTES:
-        # 내려받기 **전에** 거절한다 — 상한을 넘는 객체를 디스크로 끌어온 다음에
-        # 거절하는 것은 방어가 아니다.
+        # Reject **before** downloading — pulling an over-limit object to disk and then rejecting
+        # it is not a defense.
         await staging.delete(upload_id)
         raise HTTPException(status_code=413, detail=ec.EXPORT_TOO_LARGE)
 
@@ -247,16 +252,17 @@ async def import_project(body: ImportRequest, me: Principal = Depends(require_us
 
         project = manifest["project"]
         model_id, warnings = await _resolve_model(project.get("model_id"))
-        # effort는 원본 프로젝트의 것을 그대로 가져온다(모델과 짝으로 복사된 값이다).
-        # 모델을 쓸 수 없어 비웠으면 effort도 비운다 — 다른 모델에 붙이면 고른 적
-        # 없는 조합이 된다. 이 필드 이전의 번들은 키가 없어 None(CLI 기본값)이고,
-        # 그것이 원본이 실제로 돌던 방식이다.
+        # effort is brought over as is from the original project (it is a value copied as a
+        # pair with the model). If the model was cleared because it is unusable, effort is
+        # cleared too — attaching it to another model would make a combination nobody chose.
+        # Bundles from before this field have no key and get None (the CLI default), which is
+        # how the original actually ran.
         effort = project.get("effort") if model_id is not None else None
         if effort not in EFFORTS:
             effort = None
         language = project.get("language")
         if language not in ("ko", "en"):
-            language = None  # 레지스트리가 "ko"로 확정한다
+            language = None  # the registry settles it as "ko"
 
         try:
             data = await apply_bundle(
@@ -265,12 +271,12 @@ async def import_project(body: ImportRequest, me: Principal = Depends(require_us
                 surveys_root=app_module.surveys_root_s3_factory(),
                 proto_root=app_module._proto_root())
         except BundleError as e:
-            # 번들이 우리가 아는 모양이 아니라는 사실은 `export.json`을 읽을 때만
-            # 드러나지 않는다 — 탈출을 시도하는 엔트리 이름, 압축 폭탄, 읽을 수
-            # 없는 설문 정의가 모두 여기서 나온다. 그 전부가 같은 400이다:
-            # 사용자가 할 일은 다른 파일을 고르는 것이고, 재업로드는 도움이 되지
-            # 않으므로 스테이징도 지운다. apply_bundle이 자기가 쓴 것을 이미
-            # 되돌렸다.
+            # The fact that a bundle is not a shape we know does not surface only when reading
+            # `export.json` — entry names attempting an escape, compression bombs, and unreadable
+            # survey definitions all come out here. All of them are the same 400:
+            # what the user should do is pick a different file, and re-uploading would not help,
+            # so the staging is deleted too. apply_bundle has already rolled back what it
+            # wrote.
             await staging.delete(upload_id)
             _log.warning("rejected bundle %s during import: %s", upload_id, e)
             raise HTTPException(status_code=400, detail=ec.EXPORT_INVALID)
@@ -281,8 +287,8 @@ async def import_project(body: ImportRequest, me: Principal = Depends(require_us
                                  model_id=model_id, language=language, effort=effort,
                                  owner=owner)
         except Exception:
-            # 매니페스트가 없으면 재시작 후 사라지는 프로젝트다. 생성 라우트가
-            # 같은 이유로 같은 판단을 한다(routes/projects.py).
+            # Without a manifest, the project disappears after a restart. The create route
+            # makes the same judgment for the same reason (routes/projects.py).
             _log.exception("manifest write failed for imported project %s", pid)
             await data.discard()
             raise HTTPException(status_code=500, detail=ec.IMPORT_FAILED)
@@ -305,8 +311,8 @@ async def import_project(body: ImportRequest, me: Principal = Depends(require_us
 
 
 def _read_manifest(bundle: Path) -> dict:
-    """번들에서 `export.json`만 읽어 검증한다. zip 자체가 열리지 않는 것도
-    "우리가 아는 모양이 아니다"이므로 같은 예외로 모은다."""
+    """Read and validate only `export.json` from the bundle. A zip that will not even open is also
+    "not a shape we know", so it is collected into the same exception."""
     try:
         with zipfile.ZipFile(bundle) as zf:
             return parse_manifest(zf.read(MANIFEST_NAME))
@@ -317,13 +323,13 @@ def _read_manifest(bundle: Path) -> dict:
 
 
 async def _resolve_model(model_id: str | None) -> tuple[str | None, list[dict]]:
-    """원본의 모델을 이 인스턴스에서 쓸 수 있는지 본다.
+    """Check whether the original's model can be used on this instance.
 
-    **조용히 통과시키면 안 된다.** 카탈로그에 없는 모델 id가 매니페스트에 들어가면
-    실패는 첫 대화 턴의 `AccessDenied`(IAM 와일드카드 밖)나
-    `ValidationException`으로 나타나고, 둘 다 백엔드 로그에만 남는다. env 기본값으로
-    강등하면 프로젝트는 돌지만 **고른 적 없는 모델**로 도는 것이므로 그 사실을
-    경고로 올린다 — 그것이 이 기능에서 가장 조용한 실패다.
+    **It must not be passed through silently.** If a model id not in the catalog goes into the
+    manifest, the failure shows up as `AccessDenied` (outside the IAM wildcard) or
+    `ValidationException` on the first conversation turn, and both are left only in the backend
+    logs. Degrading to the env default keeps the project running, but **on a model nobody chose**,
+    so that fact is raised as a warning — it is the quietest failure in this feature.
     """
     import aipds.app as app_module
 
@@ -332,8 +338,8 @@ async def _resolve_model(model_id: str | None) -> tuple[str | None, list[dict]]:
     try:
         allowed = {e.model_id for e in await app_module.model_catalog().displayed()}
     except Exception:
-        # 카탈로그를 못 읽는 것으로 임포트를 막지 않는다 — 모델은 폴백이 있고,
-        # 여기서 500을 내면 되돌릴 것이 없는 단계에서 실패하는 셈이다.
+        # Failing to read the catalog does not block the import — the model has a fallback, and
+        # raising a 500 here would fail at a step where there is nothing to roll back.
         _log.warning("model catalog unavailable; importing without a model",
                      exc_info=True)
         return None, [{"code": WARN_MODEL_UNAVAILABLE, "count": 1}]

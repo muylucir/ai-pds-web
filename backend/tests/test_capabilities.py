@@ -56,10 +56,10 @@ def test_a_capability_is_completed_only_when_all_its_stages_are():
 
 
 def test_skipped_only_when_a_later_capability_is_listed():
-    # Path A가 아직 Envision만 적었다 — 뒤의 것은 건너뛴 게 아니라 아직 안 적힌 것이다.
+    # Path A has written only Envision so far — the later ones were not skipped, just not written yet.
     caps = _statuses(rollup([_st("Envision", "in_progress")]))
     assert caps["use_case_intake"] == "pending"
-    # Prototype이 적히면 그 앞의 Intake·Prioritize는 이 경로에 없다.
+    # Once Prototype is written, Intake and Prioritize before it are not on this path.
     caps = _statuses(rollup([_st("Envision", "completed"),
                              _st("Prototype & Validation", "in_progress")]))
     assert caps["use_case_intake"] == "not_applicable"
@@ -81,7 +81,7 @@ def test_note_comes_from_the_active_stage():
 
 
 def test_real_projects():
-    """실측 상태 파일 — 스테이지 목록 길이 5·6·11이 모두 같은 6개로 읽힌다."""
+    """Observed state files — stage list lengths 5, 6, and 11 all read as the same 6."""
     def caps(project):
         st = parse_state_file((REAL / project / "aiplc-state.md").read_text(encoding="utf-8"))
         return _statuses(st.capabilities)
@@ -89,9 +89,9 @@ def test_real_projects():
     done_a = {"envision": "completed", "use_case_intake": "not_applicable",
               "prioritize": "not_applicable", "prototype": "completed",
               "product_strategy": "completed", "go_to_market": "completed"}
-    assert caps("ko-2") == done_a      # 5개 스테이지, 전부 완료
+    assert caps("ko-2") == done_a      # 5 stages, all complete
     assert caps("ko-3") == done_a
-    # 11개 스테이지(Path A.2 — 여러 해법이라 Intake·Prioritize를 거친다)
+    # 11 stages (Path A.2 — multiple solutions, so it goes through Intake and Prioritize)
     assert caps("ko-1") == {"envision": "in_progress", "use_case_intake": "pending",
                             "prioritize": "pending", "prototype": "pending",
                             "product_strategy": "pending", "go_to_market": "pending"}

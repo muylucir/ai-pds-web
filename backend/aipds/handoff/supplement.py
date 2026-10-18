@@ -1,43 +1,43 @@
-# backend/aipds/handoff/supplement.py — 인계 시점에 PM에게 받는 보완 답.
+# backend/aipds/handoff/supplement.py — supplementary answers collected from the PM at handoff time.
 #
-# **왜 있는가.** 출발점에 따라 어떤 주제의 재료가 없다(handoff/readiness). Path B와 EP1은
-# Envision을 거치지 않아 문제의 근거·가정·하지 않을 것이 비고, 그것은 PM만 답할 수 있다.
-# 지어내면 하네스가 사실과 구별하지 못하므로, 인계 탭이 그 빈칸만 묻는다
+# **Why this exists.** Depending on the starting point, material for some topics is missing (handoff/readiness). Path B and EP1
+# skip Envision, so the problem's evidence, assumptions, and non-goals are empty, and only the PM can answer those.
+# If we made them up, the harness could not tell them apart from facts, so the handoff tab asks only about those gaps
 # (plans/2026-10-09-handoff-package.md §1).
 #
-# **룰을 해치지 않는 조건이 이 모듈의 모양을 정한다.**
+# **The conditions for not undermining the rules determine the shape of this module.**
 #
-#   - 재료가 없는 곳에만 묻는다. 문항은 두 군데서 결정적으로 나온다. 하나는 판정 결과의
-#     빈 섹션이고(고정 문항), 다른 하나는 마지막 열린 결정 중 PM이 답할 것이다
-#     (`OpenQuestion`). 뒤의 것이 필요한 이유: 판정은 파일의 존재로 보므로 섹션이 모두
-#     sourced여도 내용의 빈칸은 남는다 — 실측(ws-g)에서 보존 기간·본인 확인
-#     수준·권한처럼 구현을 막는 PM 결정 7개가 열려 있었는데 보완 질문은 0개였다. 모델이
-#     질문을 새로 짓는 것이 아니라 열린 결정이 이미 "PM에게 묻는다"고 적은 줄을 그대로 되돌린다.
-#     그중에서도 시점이 "빌드 전"인 줄만 묻는다. 실측(ws-g)에서 PRD가 열린 질문
-#     22개 중 18개를 PM 몫으로 적었는데 구현을 막는 것은 7개였다 — 지원 외국어 목록이나 버튼
-#     형태까지 인계 전에 서술형으로 받으면 PM이 넘지 못한다. "빌드 중" 줄은 "답이 나올
-#     때까지" 어떻게 만들지가 적혀 있어 접어 두고, 답하고 싶으면 답할 수 있다.
-#   - "PM(외부 확인)" 줄은 PM이 고르는 결정이 아니라 법무·감독기관·협력사에서 받아 올 사실이다.
-#     보기를 주면 원하는 결론을 고르는 모양이 된다(실측 ws-g: "증빙 효력을 갖는가?"에 "인정한다"가
-#     보기로 나왔다). 그래서 받은 답이나, 아직이면 확인 중인 곳만 받는다(`pending_with`).
-#   - 기존 내용은 바꾸지 않는다. 바꾸는 길은 워크스페이스다. 여기서 받는 것은 빈칸의 답과,
-#     이미 있는 AI 제안 수락 항목에 대한 "맞다" 확인뿐이다.
-#   - AI 기본값을 주지 않는다. 실측에서 표시된 기본값을 PM이 고른 비율이 89%였다 —
-#     기본값을 주면 이 답도 "AI 제안 수락"이 된다. 대신 "모름"을 둔다(→ 열린 질문).
-#     보기는 준다(`Option`). 빈칸 서술형은 문항 하나가 작은 글쓰기 과제였다. 89%를 만든 것은
-#     보기가 아니라 추천 표시였으므로, 보기는 원본에 근거가 있는 것만, 추천 없이, 모델이
-#     매긴 순서를 지우고 보인다(handoff/package.parse_options).
-#   - 나중에 그 섹션의 재료가 AI-PLC 산출물로 생기면 그쪽이 이긴다. 답은 지우지 않고
-#     "대체됨"으로 돌려준다 — 사람이 쓴 것을 조용히 버리지 않는다.
+#   - Ask only where material is missing. Questions come deterministically from two places. One is the empty
+#     sections in the assessment result (fixed questions); the other is the last open decisions that the PM is to answer
+#     (`OpenQuestion`). Why the latter is needed: the assessment looks at file existence, so even when every section is
+#     sourced, gaps in the content remain — in an observed case (ws-g), 7 PM decisions that blocked implementation, such as
+#     retention period, identity-verification level, and permissions, were open, yet there were 0 supplementary questions. The model
+#     does not compose new questions; it hands back verbatim the lines where the open decisions already say "ask the PM".
+#     Of those, only lines whose timing is "빌드 전" (before build) are asked. In an observed case (ws-g), the PRD assigned 18 of 22
+#     open questions to the PM, but only 7 blocked implementation — if even the list of supported languages or button
+#     shapes is collected as free text before handoff, the PM cannot get past it. "빌드 중" (during build) lines state how to build
+#     "답이 나올 때까지" (until an answer arrives), so they are folded away; they can still be answered if the PM wants.
+#   - "PM(외부 확인)" lines are not decisions the PM chooses but facts to be obtained from legal, regulators, or partners.
+#     Offering choices turns it into picking the desired conclusion (observed ws-g: for "증빙 효력을 갖는가?", "인정한다"
+#     appeared as a choice). So we take only the answer received or, if not yet, who it is being confirmed with (`pending_with`).
+#   - Existing content is not changed. The way to change it is the workspace. All that is collected here is answers to gaps
+#     and a "that's right" confirmation for existing "AI 제안 수락" (AI suggestion accepted) items.
+#   - No AI defaults are offered. In observed data, the PM picked the displayed default 89% of the time —
+#     offering a default would make this answer an "AI 제안 수락" too. Instead there is "모름" (unknown) (→ open question).
+#     Choices are offered (`Option`). With blank free-text, each question was a small writing assignment. What produced the 89%
+#     was the recommendation marker, not the choices, so choices are shown only when grounded in the source, without a
+#     recommendation, and with the model's ordering erased (handoff/package.parse_options).
+#   - If material for that section later appears as an AI-PLC artifact, that side wins. The answer is not deleted but
+#     returned as "superseded" — we do not silently throw away what a person wrote.
 #
-# **에이전트는 읽지도 쓰지도 않는다.** 저장 키(`handoff/supplement.json`)는 프로젝트
-# 접두사 안이지만 워크스페이스 밖이다. 러너가 복원하는 접두사(`aiplc-docs/`,
-# `prototype/`, `uploads/`)와 정본으로 올리는 글롭(workspace_sync.SYNC_GLOBS) 어디에도
-# 걸리지 않으므로 에이전트의 로컬 워크스페이스에 내려가지 않는다. 내보내기·삭제는
-# 프로젝트 접두사 전체를 다루므로 함께 간다. `approvals/`, `pending/`과 같은 규율이다.
+# **The agent neither reads nor writes it.** The storage key (`handoff/supplement.json`) is inside the project
+# prefix but outside the workspace. It matches none of the prefixes the runner restores (`aiplc-docs/`,
+# `prototype/`, `uploads/`) nor the globs uploaded as the source of truth (workspace_sync.SYNC_GLOBS), so it never
+# lands in the agent's local workspace. Export and delete handle the whole project prefix, so it goes along with them.
+# Same discipline as `approvals/` and `pending/`.
 #
-# **문항의 문장은 프론트가 갖는다.** 여기는 id와 섹션만 정한다 — 화면 문구는 UI 언어를
-# 따르고(i18n), 패키지 합성은 id로 답을 찾는다.
+# **The frontend owns the question wording.** This module only defines ids and sections — on-screen text follows the UI
+# language (i18n), and package composition finds answers by id.
 from __future__ import annotations
 
 import hashlib
@@ -53,14 +53,14 @@ from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger("aipds.handoff")
 
-#: 프로젝트 상대 키(S3Store가 `projects/{pid}/`를 붙인다).
+#: Project-relative key (S3Store prepends `projects/{pid}/`).
 SUPPLEMENT_KEY = "handoff/supplement.json"
 
-#: 섹션별 보완 문항. 그 섹션이 `sourced`가 아니면 낸다. 순서가 화면 순서다.
+#: Supplementary questions per section. Asked when that section is not `sourced`. The order is the on-screen order.
 #:
-#: 섹션 2(대상)·4(사용 장면)·5(요구사항)는 묻지 않는다. 대상과 사용 장면은 Path B의
-#: use case와 명세에도 있고, 요구사항의 빈칸은 PM의 서술이 아니라 build-scope(무엇을 더
-#: 만들어야 하나)의 몫이다.
+#: Sections 2 (audience), 4 (usage scenarios), and 5 (requirements) are not asked. Audience and usage scenarios also exist in Path B's
+#: use cases and spec, and gaps in requirements belong to build-scope (what else needs to be built), not
+#: to the PM's narrative.
 QUESTIONS: tuple[tuple[str, str], ...] = (
     ("problem.evidence", "problem"),
     ("problem.why_now", "problem"),
@@ -72,13 +72,13 @@ QUESTIONS: tuple[tuple[str, str], ...] = (
 )
 _QUESTION_IDS = frozenset(qid for qid, _ in QUESTIONS)
 
-#: 답 하나의 상한. 화면은 여러 줄 입력이고, 이 이상은 붙여 넣은 문서다 — 그것은 업로드의 일이다.
+#: Upper bound for one answer. The screen is a multi-line input; anything beyond this is a pasted document — that is the job of uploads.
 MAX_ANSWER_CHARS = 4000
-#: 확인 키: `aiplc-docs/…-questions.md#<문항 번호>`.
+#: Confirmation key: `aiplc-docs/…-questions.md#<question number>`.
 _CONFIRM_KEY = re.compile(r"^aiplc-docs/[^#\s]+-questions\.md#\d{1,4}$")
 _MAX_CONFIRMATIONS = 500
-#: 열린 질문 답의 키: `open:` + 질문 문장 해시. 다시 만들면 번호(O-03)는 바뀌므로
-#: 문장으로 잇는다 — 다시 만든 판이 문장을 바꾸면 새 질문으로 보이고, 답은 기록에 남는다.
+#: Key for an open-question answer: `open:` + hash of the question sentence. Regeneration changes the number (O-03), so we
+#: link by sentence — if a regenerated version changes the sentence, it appears as a new question and the answer stays in the record.
 _OPEN_KEY = re.compile(r"^open:[0-9a-f]{12}$")
 _MAX_OPEN_ANSWERS = 200
 MAX_QUESTION_CHARS = 1000
@@ -87,24 +87,24 @@ MAX_PENDING_CHARS = 200
 
 class Answer(BaseModel):
     text: str = Field(default="", max_length=MAX_ANSWER_CHARS)
-    #: "모름". 답한 것으로 세고, 그 내용은 열린 결정으로 간다.
+    #: "모름" (unknown). Counts as answered, and its content goes to the open decisions.
     unknown: bool = False
     updated_at: str = ""
 
 
 class OpenAnswer(Answer):
-    #: 답한 질문의 문장. 질문은 열린 결정에서 왔고 그것은 다시 만들어진다 — 기록만으로 무엇에 답했는지
-    #: 알 수 있어야 다음 생성이 그 답을 쓴다.
+    #: The sentence of the question answered. Questions come from open decisions, which get regenerated — the record alone must
+    #: tell what was answered so the next generation can use that answer.
     question: str = Field(max_length=MAX_QUESTION_CHARS)
-    #: 외부 확인 질문을 지금 누구에게 확인 중인가. 답(text)이 없어도 이것만으로 답한 것으로 센다.
+    #: Who an external-confirmation question is currently being confirmed with. Counts as answered on its own, even without an answer (text).
     pending_with: str = Field(default="", max_length=MAX_PENDING_CHARS)
 
 
 class Supplement(BaseModel):
     answers: dict[str, Answer] = {}
-    #: 확인 키 → 확인 시각. AI 제안 수락 항목을 PM이 "맞다"고 한 기록이다.
+    #: Confirmation key → confirmation time. A record that the PM said "that's right" to an "AI 제안 수락" item.
     confirmed: dict[str, str] = {}
-    #: 열린 결정 중 PM 몫에 대한 답. 키는 `open_key(질문)`.
+    #: Answers to the PM's share of open decisions. Keyed by `open_key(question)`.
     open_answers: dict[str, OpenAnswer] = {}
 
 
@@ -119,30 +119,30 @@ class OpenAnswerIn(AnswerIn):
 
 
 class SupplementUpdate(BaseModel):
-    """폼 전체. 저장은 교체다 — 화면이 가진 상태가 곧 기록이다."""
+    """The whole form. Saving replaces — the state the screen holds is the record."""
     answers: dict[str, AnswerIn] = {}
     confirmed: list[str] = Field(default=[], max_length=_MAX_CONFIRMATIONS)
     open_answers: dict[str, OpenAnswerIn] = Field(default={}, max_length=_MAX_OPEN_ANSWERS)
 
 
 class OpenQuestion(BaseModel):
-    """열린 결정에서 PM이 답할 것으로 적힌 줄 하나."""
-    #: 문서 안의 번호(O-03). 다시 만들면 바뀐다 — 화면 표시용이다.
+    """One line in the open decisions marked as for the PM to answer."""
+    #: The number within the document (O-03). Changes on regeneration — for display only.
     id: str
     question: str
-    #: 시점이 "빌드 전"인가. 시점 열이 없는 표(이 구분 이전)나 알 수 없는 값은 빌드 전으로
-    #: 본다 — 묻지 않아서 놓치는 쪽보다 한 번 더 묻는 쪽이 싸다.
+    #: Whether the timing is "빌드 전" (before build). Tables without a timing column (predating this distinction) or unknown values are
+    #: treated as before build — asking once more is cheaper than missing one by not asking.
     blocking: bool = True
-    #: "답이 나올 때까지" 칸. 빌드 중 결정이 그동안 어떻게 만들어지는지다.
+    #: The "답이 나올 때까지" (until an answer arrives) cell. How a during-build decision is handled in the meantime.
     until: str = ""
-    #: 답할 사람이 "PM(외부 확인)"이다 — 고를 결정이 아니라 받아 올 사실이다.
+    #: The person to answer is "PM(외부 확인)" (PM, external confirmation) — a fact to obtain, not a decision to choose.
     external: bool = False
 
 
 class Option(BaseModel):
-    """빌드 전 결정 하나의 보기. 원본에 근거가 있는 것만 남는다(handoff/package.parse_options)."""
+    """A choice for one before-build decision. Only those grounded in the source remain (handoff/package.parse_options)."""
     text: str
-    #: 근거 — `discovery/` 아래 상대 경로(질문 파일이면 문항 번호까지).
+    #: Evidence — a relative path under `discovery/` (including the question number for a question file).
     source: str
 
 
@@ -159,7 +159,7 @@ class ConfirmationView(BaseModel):
     ask: str
     answer: str
     stage: str
-    #: 고른 보기의 문장 — PM이 확인하는 대상이다.
+    #: The sentence of the chosen choice — what the PM confirms.
     choices: list[str]
     note: str
     remark: str
@@ -168,48 +168,48 @@ class ConfirmationView(BaseModel):
 
 class OpenQuestionView(BaseModel):
     key: str
-    #: 지금 판의 번호. 앞서 답해 열린 결정에서 빠진 질문은 비어 있다.
+    #: The number in the current version. Empty for a question that was answered earlier and dropped from the open decisions.
     id: str
     question: str
     answer: OpenAnswer | None
     until: str = ""
     external: bool = False
-    #: 고를 수 있는 보기. 비어 있으면 서술형으로 묻는다. 외부 확인 질문에는 없다.
+    #: Selectable choices. If empty, asked as free text. None for external-confirmation questions.
     options: list[Option] = []
 
 
 class SupplementView(BaseModel):
-    #: 마지막 패키지가 있는가. 없으면 열린 결정을 아직 읽을 수 없다.
+    #: Whether a last package exists. Without one, the open decisions cannot be read yet.
     has_package: bool = False
     questions: list[QuestionView]
-    #: 답이 있는데 그 섹션의 재료가 이제 AI-PLC 산출물에 있다. 그쪽이 이긴다.
+    #: Has an answer, but material for that section now exists in AI-PLC artifacts. That side wins.
     superseded: list[QuestionView]
     confirmations: list[ConfirmationView]
-    #: 마지막 열린 결정 중 PM 몫이고 시점이 빌드 전인 것. 패키지가 없으면 비어 있다.
+    #: The PM's share of the last open decisions whose timing is before build. Empty if there is no package.
     open_questions: list[OpenQuestionView] = []
-    #: PM 몫이지만 빌드 중에 정해도 되는 것. 묻지 않고 접어 둔다 — 답해도 된다.
+    #: The PM's share, but fine to decide during the build. Folded away without asking — may still be answered.
     open_deferred: list[OpenQuestionView] = []
-    #: 답했는데 지금 열린 결정에는 없는 것 — 답이 반영됐거나 질문 문장이 바뀌었다.
-    #: 지우지 않는다(`superseded`와 같은 판단).
+    #: Answered but not in the current open decisions — the answer was applied or the question sentence changed.
+    #: Not deleted (same judgment as `superseded`).
     open_answered: list[OpenQuestionView] = []
 
 
 class InvalidSupplement(ValueError):
-    """폼에 모르는 문항 id나 형식이 틀린 확인 키가 있다."""
+    """The form has an unknown question id or a malformed confirmation key."""
 
 
 def confirmation_key(file: str, number: int) -> str:
     return f"{file}#{number}"
 
 
-#: 질문 끝의 관련 ID(`(R-08, C-05)`). 요구사항 번호는 다시 만들 때마다 바뀌므로 같은 질문인지
-#: 볼 때는 뺀다 — 빼지 않으면 R-08이 R-09가 된 것만으로 답이 질문을 잃는다.
+#: Related IDs at the end of a question (`(R-08, C-05)`). Requirement numbers change on every regeneration, so they are
+#: removed when checking whether it is the same question — otherwise the answer loses its question just because R-08 became R-09.
 _ID_REF = re.compile(r"(?<![\w-])[A-Z]-\d+")
 _EMPTY_PARENS = re.compile(r"[(（][\s,·、/]*[)）]")
 
 
 def open_key(question: str) -> str:
-    """열린 질문의 키. 문장으로 정하되 공백과 관련 ID는 보지 않는다."""
+    """Key of an open question. Based on the sentence, ignoring whitespace and related IDs."""
     normalized = " ".join(_EMPTY_PARENS.sub("", _ID_REF.sub("", question)).split())
     return "open:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
 
@@ -253,15 +253,15 @@ def view(readiness: Readiness, record: Supplement,
 
 
 def apply(previous: Supplement, update: SupplementUpdate, *, now: str | None = None) -> Supplement:
-    """폼을 기록으로. 바뀐 답만 시각을 새로 찍는다 — 저장 버튼을 다시 눌렀다고 모든 답이
-    방금 쓴 것처럼 보이면 "언제 채웠나"가 무의미해진다."""
+    """Form to record. Only changed answers get a new timestamp — if pressing save again made every answer
+    look freshly written, "when was it filled in" would become meaningless."""
     unknown_ids = sorted(set(update.answers) - _QUESTION_IDS)
     if unknown_ids:
         raise InvalidSupplement(f"unknown question ids: {unknown_ids}")
     bad_keys = sorted(k for k in update.confirmed if not _CONFIRM_KEY.match(k))
     if bad_keys:
         raise InvalidSupplement(f"malformed confirmation keys: {bad_keys}")
-    # 키는 질문 문장에서 나온다. 맞지 않으면 다른 질문의 답을 덮어쓸 수 있다.
+    # The key comes from the question sentence. If it doesn't match, it could overwrite another question's answer.
     bad_open = sorted(k for k, a in update.open_answers.items()
                       if not _OPEN_KEY.match(k) or open_key(a.question) != k)
     if bad_open:
@@ -283,7 +283,7 @@ def apply(previous: Supplement, update: SupplementUpdate, *, now: str | None = N
 
 def _kept(old: Answer | None, given: AnswerIn, stamp: str,
           pending_with: str | None = None) -> dict | None:
-    """답 하나를 기록의 필드로. 비운 칸은 답이 아니다(None). `pending_with`는 열린 질문만 갖는다."""
+    """One answer to record fields. A cleared cell is not an answer (None). Only open questions have `pending_with`."""
     text = given.text.strip()
     if not text and not given.unknown and not pending_with:
         return None
@@ -297,8 +297,8 @@ def _kept(old: Answer | None, given: AnswerIn, stamp: str,
 
 
 async def load(s3: S3StoreLike) -> Supplement:
-    """없으면 빈 기록. 손상된 기록은 빈 기록으로 읽고 경고한다 — 화면을 막지 않는다
-    (approval_store가 손상 레코드를 건너뛰는 것과 같은 판단)."""
+    """Empty record if absent. A corrupt record is read as empty with a warning — it does not block the screen
+    (same judgment as approval_store skipping corrupt records)."""
     try:
         raw = await s3.get(SUPPLEMENT_KEY)
     except FileNotFoundError:

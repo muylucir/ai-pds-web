@@ -1,8 +1,9 @@
-# backend/tests/test_launch_script.py — infra/scripts/aipds-launch(root 실행 래퍼)의 판정부.
+# backend/tests/test_launch_script.py — the decision logic of infra/scripts/aipds-launch (the root launch wrapper).
 #
-# 래퍼는 sudo로 root가 되는 길이므로 "무엇을 거부하는가"가 곧 사양이다. 실제 systemd-run은
-# 부르지 않는다 — `build_run`이 만드는 argv와 env를 본다. 샌드박스 자체의 효과(다른 트리가
-# 안 보이는지, IMDS가 막히는지)는 인스턴스에서 실측으로 확인했다(docs 계획 3·4-BC §6.1).
+# The wrapper is a path to becoming root via sudo, so "what it rejects" is the spec itself.
+# It does not call the real systemd-run — it inspects the argv and env that `build_run`
+# builds. The effects of the sandbox itself (whether other trees are hidden, whether IMDS is
+# blocked) were verified by measurement on the instance (docs plan 3·4-BC §6.1).
 from __future__ import annotations
 
 import importlib.machinery
@@ -68,14 +69,16 @@ def test_discovery_runs_the_bundled_cli_as_the_agent_uid_in_its_own_tree(launch)
     props = _props(argv)
     assert f"WorkingDirectory={work}" in props
     assert f"BindPaths={work}" in props and f"BindPaths={home}" in props
-    # 앱 트리 전체가 빈 tmpfs 아래로 사라진다 — 다른 프로젝트의 트리도, 앱 소스와 git
-    # 체크아웃도. 다시 보이는 것은 자기 트리와 CLI 바이너리(읽기 전용)뿐이다.
+    # The entire app tree disappears under an empty tmpfs — other projects' trees, and the
+    # app source and git checkout too. The only things visible again are its own tree and
+    # the CLI binary (read-only).
     assert f"TemporaryFileSystem={launch.APP}" in props
     assert f"BindReadOnlyPaths={CLAUDE}" in props
     assert not [p for p in props if p.startswith("TemporaryFileSystem=")
                 and p != f"TemporaryFileSystem={launch.APP}"]
     cmd = _command(argv)
-    # PID 네임스페이스 → uid 전환 → CLI. 같은 uid의 다른 unit이 /proc/<pid>/root로 보이지 않게.
+    # PID namespace → uid switch → CLI. So that other units with the same uid cannot see it
+    # via /proc/<pid>/root.
     assert cmd[:2] == ["/usr/bin/unshare", "--pid"]
     assert "--reuid=aipds-agent" in cmd and "--regid=aipds-work" in cmd
     assert cmd[-3:] == [str(CLAUDE), "--output-format", "stream-json"]
@@ -84,7 +87,7 @@ def test_discovery_runs_the_bundled_cli_as_the_agent_uid_in_its_own_tree(launch)
 
 
 def test_config_dir_from_the_caller_is_ignored(launch):
-    """공유 config dir을 가리키게 하면 다른 프로젝트의 트랜스크립트가 보인다."""
+    """Pointing it at a shared config dir would expose other projects' transcripts."""
     _, home = _tree(launch, "discovery")
     _, env = _run(launch, "discovery",
                   environ={"CLAUDE_CONFIG_DIR": "/opt/aipds/discovery-config"})
@@ -101,7 +104,7 @@ def test_env_is_an_allowlist(launch):
         "AWS_REGION": "ap-northeast-2",
         "AWS_CONTAINER_CREDENTIALS_FULL_URI": "http://127.0.0.1:8001/credentials",
         "AWS_CONTAINER_AUTHORIZATION_TOKEN": "tok",
-        # 넘기면 안 되는 것들
+        # things that must not be passed through
         "AWS_ACCESS_KEY_ID": "AKIA…", "AWS_SECRET_ACCESS_KEY": "s",
         "AIPDS_S3_BUCKET": "bucket", "COGNITO_CLIENT_SECRET": "x",
         "LD_PRELOAD": "/tmp/evil.so", "PATH": "/tmp/evil",
@@ -118,7 +121,7 @@ def test_env_is_an_allowlist(launch):
 
 
 def test_env_values_never_appear_in_argv(launch):
-    """argv는 `ps`에 보인다 — 자격증명 토큰이 실리면 안 된다."""
+    """argv is visible in `ps` — credential tokens must not be put on it."""
     _tree(launch, "discovery")
     argv, _ = _run(launch, "discovery",
                    environ={"AWS_CONTAINER_AUTHORIZATION_TOKEN": "sekrit-token"})
@@ -140,7 +143,8 @@ def test_the_credential_uri_must_be_the_loopback_endpoint(launch, uri):
 
 
 def test_dollar_signs_survive_systemd_expansion(launch):
-    """systemd는 ExecStart 인자의 `${VAR}`를 푼다(실측). `$$`로 넘겨야 `$`로 도착한다."""
+    """systemd expands `${VAR}` in ExecStart arguments (measured). It must be passed as `$$`
+    to arrive as `$`."""
     _tree(launch, "discovery")
     argv, _ = _run(launch, "discovery", args=["--system-prompt", "use ${HOME} and $x"])
     assert _command(argv)[-1] == "use $${HOME} and $$x"
@@ -157,12 +161,14 @@ def test_imds_is_blocked_only_when_configured(launch):
 @pytest.mark.parametrize("kind, slug", [("discovery", None), ("build", "todo"),
                                         ("host-build", "todo"), ("proto", "todo")])
 def test_the_agent_home_is_handed_back_to_the_group_when_the_unit_stops(launch, kind, slug):
-    """번들 CLI는 config dir과 트랜스크립트를 0700/0600으로 명시해 만든다(버전에 따라) — 그러면
-    백엔드가 그 프로젝트를 재개하지도 지우지도 못한다. 경로는 계산한 자기 agent-home뿐이다.
+    """The bundled CLI explicitly creates the config dir and transcripts as 0700/0600
+    (depending on the version) — the backend would then be able neither to resume nor to
+    delete that project. The only path is its own computed agent-home.
 
-    **접두사가 없어야 한다.** `+` 등이 붙으면 systemd-run이 ExecStopPostEx로 올리고, systemd 252는
-    그것을 다음 daemon-reload에서 버린다(운영 실측) — 그러면 이 chmod는 한 번도 돌지 않는다. 샌드박스
-    안의 root가 남의 트리를 순회·chmod하려면 두 capability가 bounding set에 있어야 한다."""
+    **There must be no prefix.** With `+` or similar attached, systemd-run puts it into
+    ExecStopPostEx, and systemd 252 discards that on the next daemon-reload (measured in
+    production) — and then this chmod never runs even once. For root inside the sandbox to
+    traverse and chmod another's tree, two capabilities must be in the bounding set."""
     _, home = _tree(launch, kind, slug=slug)
     args = {"host-build": ["install"], "proto": ["run", "start"]}.get(kind, [])
     argv, _ = _run(launch, kind, slug=slug, args=args)
@@ -187,7 +193,7 @@ def test_proto_serves_only_the_prototype_subtree_with_allowed_npm_args(launch):
 
 
 def test_npm_kinds_see_no_app_tree_and_bind_no_binary(launch):
-    """npm은 /usr/bin에 있다 — 앱 트리에서 더 붙일 것이 없다."""
+    """npm lives in /usr/bin — nothing more needs to be bound from the app tree."""
     work, home = _tree(launch, "proto", slug="s1")
     props = _props(_run(launch, "proto", slug="s1", args=["run", "start"])[0])
     assert f"TemporaryFileSystem={launch.APP}" in props
@@ -232,7 +238,8 @@ def test_slug_rules_per_kind(launch):
 
 
 def test_a_symlinked_tree_is_refused(launch, tmp_path):
-    """링크로 다른 곳을 RW bind하게 만드는 길. 트리를 만드는 것은 백엔드(aipds)다."""
+    """A path to making it RW-bind somewhere else via a link. The tree is created by the
+    backend (aipds)."""
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     _, home = launch.layout("discovery", "p1", None)
@@ -252,11 +259,11 @@ def test_missing_trees_are_refused_not_created(launch):
 
 def test_unit_names(launch):
     a = launch.unit_name("proto", "p1", "todo")
-    assert a == launch.unit_name("proto", "p1", "todo")  # stop이 이름으로 찾는다
+    assert a == launch.unit_name("proto", "p1", "todo")  # stop looks it up by name
     assert a.startswith("aipds-run-proto-") and a.endswith(".service")
-    # 해시라서 `a-b`+`c`와 `a`+`b-c`가 부딪히지 않는다.
+    # Because it is a hash, `a-b`+`c` and `a`+`b-c` do not collide.
     assert launch.unit_name("proto", "a-b", "c") != launch.unit_name("proto", "a", "b-c")
-    # 에이전트는 겹쳐 뜰 수 있으므로 매번 다르다.
+    # Agents can run concurrently, so it differs every time.
     assert launch.unit_name("discovery", "p1", None) != launch.unit_name("discovery", "p1", None)
 
 
@@ -282,7 +289,8 @@ def test_refuses_to_run_without_root(launch, monkeypatch):
 
 @pytest.mark.skipif(not Path("/usr/bin/python3").exists(), reason="no system python")
 def test_compiles_under_the_instance_system_python(tmp_path):
-    """인스턴스(AL2023)의 /usr/bin/python3는 3.9다. venv의 3.11 문법이 섞이면 root 쪽이 죽는다."""
+    """The instance's (AL2023) /usr/bin/python3 is 3.9. If the venv's 3.11 syntax slips in,
+    the root side dies."""
     target = tmp_path / "aipds_launch.py"
     shutil.copyfile(SCRIPT, target)
     subprocess.run(["/usr/bin/python3", "-m", "py_compile", str(target)], check=True)

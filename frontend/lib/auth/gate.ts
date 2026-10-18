@@ -1,11 +1,11 @@
 // frontend/lib/auth/gate.ts
 //
-// 미들웨어의 판정 로직. middleware.ts에서 분리한 이유는 이 목록이 이 프로젝트에서
-// 가장 실수하기 쉬운 부분이라 직접 단정하고 싶기 때문이다.
+// The middleware's decision logic. It is separated from middleware.ts because this list is the
+// easiest part of this project to get wrong, so we want to assert it directly.
 //
-// ⚠️ 이것은 UX 게이트다. 쿠키의 서명을 검증하지 않으므로 위조된 쿠키로 /admin
-// 화면을 열 수 있지만, 그 화면이 부르는 모든 API가 백엔드에서 403으로 막힌다.
-// 보안 경계는 백엔드의 require_admin이다.
+// ⚠️ This is a UX gate. It does not verify the cookie's signature, so a forged cookie can open the
+// /admin screen, but every API that screen calls is blocked with a 403 by the backend.
+// The security boundary is the backend's require_admin.
 import { decodeJwtPayload, roleFromClaims } from "./claims";
 
 export type GateDecision =
@@ -13,26 +13,26 @@ export type GateDecision =
   | { kind: "login"; next: string }
   | { kind: "home" };
 
-// 로그인 없이 접근해야 하는 경로. 백엔드의
-// tests/test_auth_route_coverage.py::PUBLIC_PATHS와 대응한다.
-//   /login       로그인 화면 자체
-//   /survey/*    익명 설문 (계정 없는 최종 사용자)
-//   /proto/*     프로토타입 프리뷰 (같은 사용자가 앱을 실제로 써본다)
-//   /api/auth/*  로그인 왕복 자체
-//   /manual      사용 매뉴얼 — **백엔드 대응 경로가 없는 유일한 항목이다.**
-//                프론트 안에서만 렌더되는 정적 문서이고 API를 부르지 않으므로
-//                백엔드 PUBLIC_PATHS에 짝이 없다. 로그인 뒤에 두면 계정을
-//                받기 전에 "이게 뭘 하는 도구인지" 읽을 방법이 사라진다 —
-//                초대 메일에 링크를 넣는 것이 이 도구를 처음 만나는 경로다.
+// Paths that must be accessible without login. Corresponds to the backend's
+// tests/test_auth_route_coverage.py::PUBLIC_PATHS.
+//   /login       the login screen itself
+//   /survey/*    anonymous surveys (end users without accounts)
+//   /proto/*     prototype previews (the same users actually try out the app)
+//   /api/auth/*  the login round trip itself
+//   /manual      the user manual — **the only entry with no corresponding backend path.**
+//                It is a static document rendered only inside the frontend and calls no API,
+//                so it has no counterpart in the backend's PUBLIC_PATHS. Putting it behind login
+//                would leave no way to read "what this tool does" before receiving an account —
+//                a link in the invitation email is how people first meet this tool.
 const PUBLIC_PREFIXES = ["/login", "/survey/", "/proto/", "/api/auth/"];
 
-// /api/*는 통과시킨다: 프록시가 Bearer를 붙이고 백엔드가 판단한다. 여기서
-// 리다이렉트하면 fetch가 HTML 로그인 페이지를 받아 JSON 파싱 오류로 깨진다.
+// /api/* is let through: the proxy attaches the Bearer and the backend decides. Redirecting here
+// would make fetch receive the HTML login page and break with a JSON parse error.
 const PASSTHROUGH_PREFIXES = ["/api/"];
 
-// 접두사가 아니라 **정확히 그 경로**만 공개인 것들. 하위 경로가 없는 단일
-// 화면이므로 startsWith로 열어 두면 나중에 생기는 /manual/xxx 가 판정을
-// 물려받는다 — 공개 목록은 넓히기보다 좁게 유지하는 편이 안전하다.
+// Things public only at **exactly that path**, not as a prefix. They are single screens with no
+// subpaths, so opening them with startsWith would let a future /manual/xxx inherit the decision —
+// it is safer to keep the public list narrow than to widen it.
 const PUBLIC_EXACT = ["/login", "/manual"];
 
 function isPublic(pathname: string): boolean {
@@ -47,12 +47,12 @@ export function gateDecision(pathname: string,
   if (!accessToken) return { kind: "login", next: pathname };
 
   if (pathname.startsWith("/admin")) {
-    // 역할을 확인할 수 없으면(쿠키 손상·그룹 없음) 관리 화면을 열지 않는다.
+    // If the role cannot be confirmed (corrupted cookie, no group), do not open the admin screens.
     if (roleFromClaims(decodeJwtPayload(accessToken)) !== "admin") {
       return { kind: "home" };
     }
   }
-  // 쿠키가 있으면 통과시킨다. 만료된 쿠키를 여기서 되돌리면 백엔드의 리프레시
-  // 경로를 타지 못하고 무한 왕복이 된다 — 401은 프론트가 처리한다.
+  // If there is a cookie, let it through. Turning back an expired cookie here would bypass the
+  // backend's refresh path and cause an endless round trip — the frontend handles 401s.
   return { kind: "allow" };
 }

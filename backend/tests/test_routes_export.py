@@ -1,4 +1,4 @@
-# backend/tests/test_routes_export.py — 프로젝트 번들 내보내기.
+# backend/tests/test_routes_export.py — project bundle export.
 from __future__ import annotations
 
 import io
@@ -78,8 +78,8 @@ def test_export_carries_artifacts_uploads_answers_and_approvals(env):
 
 
 def test_export_strips_the_session_segment_from_the_transcript(env):
-    """대화가 다른 프로젝트 id로도 복원될 수 있어야 한다 — 세션 uuid가 경로에
-    남아 있으면 그 프로젝트에만 묶인다."""
+    """The conversation must be restorable under a different project id too — if the
+    session uuid stays in the path, it is tied to that project only."""
     prefix = project_transcript_prefix(PID)
     env["s3"].blobs[f"{prefix}main/00000001.jsonl"] = '{"type":"user"}'
 
@@ -115,7 +115,7 @@ def test_export_carries_survey_but_not_build_chatter(env):
 
 
 def test_export_carries_prototype_source_from_local_disk(env):
-    """프로토타입 코드는 S3에 없다 — 인프로세스 빌더가 로컬 트리에 직접 쓴다."""
+    """Prototype code is not in S3 — the in-process builder writes straight to the local tree."""
     env["s3"].blobs[SPEC_KEY] = "# spec"
     build = env["root"] / PID / SLUG / "prototype"
     build.mkdir(parents=True)
@@ -129,8 +129,8 @@ def test_export_carries_prototype_source_from_local_disk(env):
 
 
 def test_export_never_ships_the_prototype_access_token(env):
-    """`.proto-token`은 공개 프리뷰를 막는 자격증명이다. 번들을 받는 사람이
-    그 토큰이 막으려는 대상일 수 있다."""
+    """`.proto-token` is the credential that guards the public preview. The person
+    receiving the bundle may be exactly who that token is meant to keep out."""
     env["s3"].blobs[SPEC_KEY] = "# spec"
     build = env["root"] / PID / SLUG
     (build / "prototype").mkdir(parents=True)
@@ -189,7 +189,8 @@ def test_manifest_describes_the_project_and_its_prototypes(env):
 
 
 def test_manifest_counts_what_it_left_behind(env):
-    """제외가 조용하면 '설문이 없던 프로젝트'와 '설문을 빠뜨린 번들'이 같아 보인다."""
+    """If the exclusion is silent, 'a project that never had a survey' and 'a bundle that
+    dropped the survey' look the same."""
     s3 = env["s3"]
     s3.blobs["aiplc-docs/audit.md"] = "# audit"
     s3.blobs["pending/questions.json"] = "{}"
@@ -201,7 +202,7 @@ def test_manifest_counts_what_it_left_behind(env):
 
 
 def test_export_409_while_a_build_session_is_running(env):
-    """에이전트가 쓰고 있는 트리를 반쯤 담은 zip은 정직한 스냅샷이 아니다."""
+    """A zip holding half of a tree the agent is still writing is not an honest snapshot."""
     env["s3"].blobs[SPEC_KEY] = "# spec"
 
     class _Live:

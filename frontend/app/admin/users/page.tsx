@@ -19,8 +19,8 @@ export default function AdminUsersPage() {
     try {
       setUsers(await listUsers());
     } catch (err) {
-      // 403은 pm이 URL을 직접 친 경우다 — 미들웨어는 UX 게이트일 뿐이고
-      // 실제 차단은 여기(백엔드 응답)에서 드러난다.
+      // A 403 means a pm typed the URL directly — the middleware is only a UX gate, and
+      // the actual block shows up here (in the backend response).
       setError(err instanceof ApiError && err.status === 403
         ? t("admin.needAdmin")
         : t("admin.usersLoadFailed"));
@@ -31,7 +31,7 @@ export default function AdminUsersPage() {
   useEffect(() => { void reload(); }, [reload]);
 
   useEffect(() => {
-    // 자기 행을 표시하기 위한 이메일. 실패는 무해하다(표시가 빠질 뿐).
+    // The email used to mark the user's own row. Failure is harmless (the marker is just omitted).
     void fetch("/api/auth/me", { credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => setMe(body?.email ?? null))

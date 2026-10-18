@@ -19,8 +19,8 @@ export const API_BASE_URL = (
 export class ApiError extends Error {
   status: number;
   detail: string;
-  /** 409 `turn_in_progress`가 알려 주는 **이미 도는 턴**의 id. 거절된 쪽이 할 일은
-   *  다시 보내기가 아니라 그 턴을 보는 것이다(backend routes/turns.py의 start_turn). */
+  /** The id of **the turn already running** that a 409 `turn_in_progress` reports. What the rejected side should do
+   *  is not resend but watch that turn (start_turn in backend routes/turns.py). */
   turnId?: string;
   constructor(status: number, detail: string, turnId?: string) {
     super(`API ${status}: ${detail}`);
@@ -31,13 +31,13 @@ export class ApiError extends Error {
   }
 }
 
-/** 실패 응답을 ApiError로 옮긴다. `detail`은 문자열이거나 `{code, turn_id}`다 —
- *  후자는 코드를 `detail`로, 턴 id를 `turnId`로 싣는다. JSON이 아니면(프록시가 낸
- *  431 등) statusText를 유지한다.
+/** Convert a failure response into ApiError. `detail` is either a string or `{code, turn_id}` —
+ *  the latter puts the code in `detail` and the turn id in `turnId`. If it is not JSON (a 431
+ *  from the proxy, etc.), statusText is kept.
  *
- *  그 밖의 모양(FastAPI 기본 422의 에러 객체 배열 등)은 `bad_request`로 둔다 — 객체를
- *  문자열로 바꾸면 화면에 "[object Object]"가 뜬다. 두 fetch 래퍼(여기 request와
- *  http.ts의 apiFetch)가 이 함수 하나로 읽는다. */
+ *  Any other shape (such as FastAPI's default 422 array of error objects) is left as `bad_request` —
+ *  converting an object to a string would show "[object Object]" on screen. Both fetch wrappers (request
+ *  here and apiFetch in http.ts) read through this one function. */
 export async function apiErrorFrom(res: Response): Promise<ApiError> {
   let detail = res.statusText;
   let turnId: string | undefined;
@@ -90,8 +90,8 @@ export async function createProject(projectId: string, name?: string,
     project_id: projectId,
   };
   if (name !== undefined) body.name = name;
-  // 미지정은 키를 아예 빼서 보낸다 — 서버의 optional 필드와 맞고, null을 보내는
-  // 것과 결과가 같으므로 더 적게 보내는 쪽을 고른다.
+  // When unspecified, the key is omitted entirely — it matches the server's optional field, and the
+  // result is the same as sending null, so we choose to send less.
   if (modelId !== undefined) body.model_id = modelId;
   if (language !== undefined) body.language = language;
   return request<ProjectSummary>("/projects", { method: "POST", body: JSON.stringify(body) });
@@ -105,8 +105,8 @@ export async function listProjects(page = 1, size = 10): Promise<ProjectPage> {
   return request<ProjectPage>(`/projects?page=${page}&size=${size}`);
 }
 
-/** 열람 멤버 목록을 통째로 바꾼다. 값은 이메일 또는 username이고, 서버가 username으로
- *  바꿔 저장한다. 소유자·관리자만 된다. */
+/** Replace the viewing member list wholesale. Values are emails or usernames, and the server
+ *  converts them to usernames for storage. Owner/admin only. */
 export async function setProjectMembers(pid: string, members: string[]): Promise<ProjectDetail> {
   return request<ProjectDetail>(`/projects/${encodeURIComponent(pid)}/members`, {
     method: "PUT", body: JSON.stringify({ members }),
@@ -127,26 +127,26 @@ export async function getAudit(pid: string): Promise<AuditEntry[]> {
   return request<AuditEntry[]>(`/projects/${encodeURIComponent(pid)}/audit`);
 }
 
-// 승인 이력 + 현재 문서 해시 — 게이트 판정의 1순위 근거다
-// (lib/approvalState.ts 참조). 감사 로그 파싱은 이력이 비어 있는 기존
-// 프로젝트를 위한 폴백으로만 쓴다.
+// Approval history + current document hash — the primary basis for gate judgment
+// (see lib/approvalState.ts). Audit log parsing is used only as a fallback for existing
+// projects whose history is empty.
 //
-// 해시를 프론트에서 계산하지 않는다: 알고리즘이 두 곳에 생기면 어긋나는 순간
-// 승인이 조용히 인식되지 않는다(게이트가 안 열릴 뿐이라 원인 추적이 어렵다).
-// 반환 형태가 그대로 deriveApprovalState의 두 번째 인자(ApprovalEvidence)다.
+// The hash is not computed on the frontend: if the algorithm exists in two places, the moment they
+// diverge, approvals silently go unrecognized (the gate just does not open, so tracing the cause is hard).
+// The return shape is exactly deriveApprovalState's second argument (ApprovalEvidence).
 export async function listApprovals(pid: string): Promise<ApprovalEvidence> {
   const r = await request<{ approvals: ApprovalRecord[]; current_doc_hash: string | null }>(
     `/projects/${encodeURIComponent(pid)}/approvals`);
   return { approvals: r.approvals, currentDocHash: r.current_doc_hash };
 }
 
-/** 문서를 승인한다. 백엔드가 레코드를 먼저 쓰고 그 다음 에이전트 턴을 돌린다.
+/** Approve a document. The backend writes the record first and then runs the agent turn.
  *
- *  본문이 없는 이유: 승인 대상 문서와 그 해시를 **백엔드가** 정한다. 화면이
- *  보낸 값을 믿으면 사용자가 보고 있던 것과 다른(낡은) 내용을 승인할 수 있다.
+ *  Why there is no body: **the backend** decides the document to approve and its hash. Trusting
+ *  values sent by the screen could approve content different from (staler than) what the user was looking at.
  */
-/** 승인한다. 레코드를 남기고 다음 단계의 턴을 **시작만** 한다 — 그 턴은 워크스페이스가
- *  `GET /turn`으로 붙어 본다. 도는 턴이 있으면 409 `turn_in_progress`다. */
+/** Approve. Leaves a record and **only starts** the next stage's turn — the workspace attaches to and
+ *  watches that turn via `GET /turn`. If a turn is running, it is a 409 `turn_in_progress`. */
 export async function approveDocument(pid: string): Promise<{ turnId: string }> {
   const r = await request<{ approved: boolean; turn_id: string }>(
     `/projects/${encodeURIComponent(pid)}/approve`, { method: "POST" });
@@ -186,8 +186,8 @@ export async function readArtifact(pid: string, path: string): Promise<string> {
   return r.content;
 }
 
-// POST /projects/{pid}/interrupt → 202. 진행 중인 턴을 끊는다. 응답 시점에
-// 중단이 끝나 있지 않다(202) — 스트림이 종결 이벤트로 알린다.
+// POST /projects/{pid}/interrupt → 202. Cuts off the running turn. The interrupt has not finished
+// by the time of the response (202) — the stream reports it with a terminal event.
 export async function interruptTurn(pid: string): Promise<void> {
   await request<{ status: string }>(`/projects/${encodeURIComponent(pid)}/interrupt`, {
     method: "POST",
@@ -202,8 +202,8 @@ export async function getPending(pid: string): Promise<string | null> {
   return r.pending;
 }
 
-/** 이 프로젝트의 현재(또는 방금 끝난) 턴. 워크스페이스가 열릴 때 이것으로 붙을지
- *  정한다. `interrupted`는 백엔드 재시작으로 끊긴 턴이다(backend turn_marker.py). */
+/** This project's current (or just finished) turn. When the workspace opens, it uses this to decide
+ *  whether to attach. `interrupted` is a turn cut off by a backend restart (backend turn_marker.py). */
 export async function getTurn(pid: string): Promise<TurnSummary | null> {
   const r = await request<{ turn: TurnSummary | null }>(
     `/projects/${encodeURIComponent(pid)}/turn`);
@@ -218,8 +218,8 @@ export async function getHistory(pid: string): Promise<HistoryItem[]> {
   return r.items;
 }
 
-// GET /projects/{pid}/context → 마지막 턴의 컨텍스트 사용량(없으면 null). 화면이
-// 열릴 때 되살린다 — 도는 턴은 `context` 이벤트로 덮는다.
+// GET /projects/{pid}/context → the last turn's context usage (null if none). Restored when the
+// screen opens — a running turn overwrites it with `context` events.
 export async function getContext(pid: string): Promise<ContextUsage | null> {
   const r = await request<{ context: ContextUsage | null }>(
     `/projects/${encodeURIComponent(pid)}/context`);

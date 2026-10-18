@@ -1,23 +1,28 @@
-# backend/aipds/context_usage.py — 에이전트의 컨텍스트 창 사용량(화면의 "남은 %").
+# backend/aipds/context_usage.py — the agent's context window usage (the "% left" on screen).
 #
-# 값의 출처는 CLI 자신이다: `ClaudeSDKClient.get_context_usage()`가 CLI의 `/context`와
-# 같은 것을 돌려준다. 토큰 수를 모델의 창 크기로 나누지 않는 이유는 이 배포에서 그
-# 나눗셈이 틀리기 때문이다 — 창은 `[1m]` 접미사(cli_settings)로 100만이 되고, 자동
-# 압축 시점은 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`가 옮긴다. CLI는 둘 다 알고 계산한다.
+# The value comes from the CLI itself: `ClaudeSDKClient.get_context_usage()` returns the
+# same thing as the CLI's `/context`. We do not divide the token count by the model's
+# window size because in this deployment that division is wrong — the window becomes
+# 1 million via the `[1m]` suffix (cli_settings), and `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
+# moves the auto-compaction point. The CLI knows both and does the math.
 #
-# 실측(2026-09-29, SDK 0.2.157, Bedrock Haiku 4.5):
-#   - 첫 호출은 ~650ms(API로 추정하는 것으로 보인다), 턴이 한 번 돈 뒤에는 4~5ms —
-#     마지막 API 응답의 usage를 쓴다(input+cache 합과 totalTokens가 일치했다).
-#   - 턴이 도는 중(도구 실행 중)에 불러도 턴이 깨지지 않는다.
-#   - 자동 압축 창을 100000으로 두면 maxTokens=100000이고 categories에 "Autocompact
-#     buffer"(33000)가 따로 나온다. 기본 설정에서는 그 항목이 없었다.
-# 그래서 "남은 %"는 **압축까지** 남은 몫이다: 쓸 수 있는 공간(maxTokens − 압축 버퍼)
-# 가운데 아직 비어 있는 비율. 0%가 곧 압축이 일어나는 지점이다.
+# Measured (2026-09-29, SDK 0.2.157, Bedrock Haiku 4.5):
+#   - The first call takes ~650ms (it appears to estimate via the API); after one turn
+#     has run it takes 4-5ms — it uses the usage from the last API response (the
+#     input+cache sum matched totalTokens).
+#   - Calling it while a turn is running (during tool execution) does not break the turn.
+#   - With the auto-compaction window set to 100000, maxTokens=100000 and categories
+#     carries a separate "Autocompact buffer" (33000). With default settings that entry
+#     was absent.
+# So "% left" is the share left **until compaction**: the fraction of usable space
+# (maxTokens − compaction buffer) that is still empty. 0% is exactly where compaction
+# happens.
 #
-# 호출은 드라이버가 한다(메인 에이전트의 응답마다 — 빌드 턴은 수십 분이라 턴 끝에만
-# 재면 그동안 표시가 멈춘다). 마지막 값은 턴이 끝날 때 러너/세션이 S3에 남긴다
-# (`ContextRecord`) — 연결된 클라이언트가 없을 때(세션이 닫힌 뒤, 백엔드 재시작 뒤)
-# 화면이 보일 값이 그것이다.
+# The driver makes the call (on every main-agent response — a build turn lasts tens of
+# minutes, so measuring only at the end of the turn would freeze the display meanwhile).
+# The runner/session writes the last value to S3 when a turn ends (`ContextRecord`) —
+# that is the value the screen shows when no client is connected (after the session
+# closes, after a backend restart).
 from __future__ import annotations
 
 import asyncio
@@ -30,23 +35,24 @@ from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
 
-#: 한 번의 조회에 쓸 수 있는 시간. 첫 조회가 ~650ms였다 — 그보다 넉넉하되, 이
-#: 조회 때문에 턴이 눈에 띄게 멈추지 않을 만큼.
+#: Time allowed for one probe. The first probe took ~650ms — generous beyond that, but
+#: short enough that this probe does not visibly stall the turn.
 _PROBE_TIMEOUT_SECONDS = 3.0
 
 _AUTOCOMPACT_BUFFER = "Autocompact buffer"
 
-#: Discovery의 레코드(프로젝트 상대). 트랜스크립트(discovery/transcript/) 옆이다 —
-#: 프로젝트 삭제가 함께 지우고, 번들이 활성 트랜스크립트와 함께 옮긴다. 대화가
-#: 옮겨 가므로 그 대화의 사용량도 옮겨 가는 것이 맞다.
+#: Discovery's record (project-relative). It sits next to the transcript
+#: (discovery/transcript/) — project deletion removes it along with it, and a bundle
+#: carries it together with the active transcript. Since the conversation moves, it
+#: is right for that conversation's usage to move with it.
 DISCOVERY_KEY = "discovery/context.json"
 
 
 def wants_sample(msg: Any) -> bool:
-    """이 메시지 뒤에 사용량을 잴 것인가. 메인 에이전트의 응답과 턴의 끝이다.
+    """Whether to measure usage after this message: main-agent responses and the end of a turn.
 
-    서브에이전트의 메시지(parent_tool_use_id가 있다)는 **자기** 컨텍스트에서 돈다 —
-    자동 압축이 일어나는 곳은 메인 쪽이고, 화면이 보이는 것도 그것이다.
+    Subagent messages (which have a parent_tool_use_id) run in **their own** context —
+    auto-compaction happens on the main side, and that is also what the screen shows.
     """
     tname = type(msg).__name__
     if tname == "ResultMessage":
@@ -55,7 +61,7 @@ def wants_sample(msg: Any) -> bool:
 
 
 def summarize(resp: dict) -> dict | None:
-    """`get_context_usage()` 응답 → 화면 payload. 모양이 다르면 None."""
+    """`get_context_usage()` response → screen payload. None if the shape differs."""
     try:
         total = int(resp["totalTokens"])
         maximum = int(resp["maxTokens"])
@@ -70,18 +76,19 @@ def summarize(resp: dict) -> dict | None:
     return {
         "total_tokens": total,
         "max_tokens": maximum,
-        # 압축이 일어나는 사용량. 버퍼가 없으면 창 끝이다.
+        # The usage at which compaction happens. With no buffer, it is the end of the window.
         "compact_at_tokens": usable,
         "left_pct": min(100, left * 100 // usable),
     }
 
 
 class ContextMeter:
-    """드라이버 하나의 측정기. 바뀐 값만 이벤트로 낸다.
+    """The meter for one driver. Emits an event only when the value changes.
 
-    같은 API 응답의 블록마다 AssistantMessage가 따로 오므로(텍스트 하나, 도구 호출
-    하나마다) 매번 내면 같은 값이 수십 번 흐른다. 비교는 화면이 보이는 정수(`left_pct`)로
-    한다 — 토큰 수까지 비교하면 거의 매번 달라 걸러지는 것이 없다.
+    A separate AssistantMessage arrives for each block of the same API response (one per
+    text, one per tool call), so emitting every time would send the same value dozens of
+    times. The comparison uses the integer the screen shows (`left_pct`) — comparing down
+    to the token count would differ almost every time and filter out nothing.
     """
 
     def __init__(self) -> None:
@@ -91,12 +98,12 @@ class ContextMeter:
     async def sample(self, client: Any) -> AgentEvent | None:
         probe = getattr(client, "get_context_usage", None)
         if probe is None:
-            return None  # 이 기능이 없는 SDK나 테스트 더블 — 표시가 없을 뿐이다
+            return None  # an SDK or test double without this feature — there is simply no display
         try:
             resp = await asyncio.wait_for(probe(), _PROBE_TIMEOUT_SECONDS)
         except Exception:
-            # 표시용 값이다. 턴을 막지 않고, 로그도 한 번만 남긴다 — 매 응답마다
-            # 실패하면 빌드 한 번에 수백 줄이 된다.
+            # This value is display-only. Do not block the turn, and log only once — if it
+            # fails on every response, a single build would produce hundreds of lines.
             if not self._warned:
                 self._warned = True
                 _log.warning("context usage probe failed", exc_info=True)
@@ -110,11 +117,12 @@ class ContextMeter:
 
 
 class ContextRecord:
-    """턴의 마지막 사용량을 S3에 남긴다. 러너(Discovery)와 빌드 세션이 쓴다.
+    """Records a turn's last usage in S3. Used by the runner (Discovery) and build sessions.
 
-    `observe`는 이벤트 스트림을 그대로 받고, `flush`는 턴이 끝날 때 바뀐 값만 쓴다.
-    `tag`는 레코드에 함께 실어 읽는 쪽이 "지금도 유효한가"를 판단하게 한다 —
-    프로토타입은 SDK 세션 id를 싣는다(개선 세션은 새 대화라 이전 값이 틀린다).
+    `observe` takes the event stream as is, and `flush` writes only a changed value when
+    the turn ends. `tag` is stored with the record so the reader can judge "is this still
+    valid?" — prototypes store the SDK session id (an improvement session is a new
+    conversation, so the previous value is wrong).
     """
 
     def __init__(self, s3: S3StoreLike, key: str) -> None:
@@ -133,7 +141,7 @@ class ContextRecord:
         self._dirty = True
 
     async def flush(self, **tag: str | None) -> None:
-        """실패는 삼킨다 — 표시용 값이 턴의 종결(동기화, done)을 막으면 안 된다."""
+        """Swallows failures — a display-only value must not block the turn's completion (sync, done)."""
         if not self._dirty or self._latest is None:
             return
         self._dirty = False
@@ -145,7 +153,7 @@ class ContextRecord:
 
 
 async def load_record(s3: S3StoreLike, key: str) -> dict | None:
-    """마지막으로 남긴 사용량. 없거나 읽을 수 없으면 None."""
+    """The last recorded usage. None if missing or unreadable."""
     try:
         data = json.loads(await s3.get(key))
     except FileNotFoundError:

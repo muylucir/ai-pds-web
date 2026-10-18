@@ -1,8 +1,8 @@
-# backend/tests/test_transcript_restore.py — 재개 트랜스크립트를 로컬로 되살리기.
+# backend/tests/test_transcript_restore.py — restoring the resume transcript locally.
 #
-# `restore`는 SDK의 비공개 materialize_resume_session을 빌려 쓴다. 이 파일이 **실제 SDK**로
-# 그 계약을 고정한다 — SDK를 올렸을 때 복원 경로가 조용히 빠지면 여기서 드러난다
-# (pyproject의 SDK 하한 주석: 올린 뒤에는 테스트를 돌린다).
+# `restore` borrows the SDK's private materialize_resume_session. This file pins that contract with the
+# **real SDK** — if the restore path silently drops out when the SDK is upgraded, it shows up here
+# (the SDK lower-bound comment in pyproject: run the tests after upgrading).
 from __future__ import annotations
 
 import json
@@ -46,7 +46,7 @@ async def test_restore_reports_a_missing_session(tmp_path):
 
 
 async def test_restore_never_overwrites_a_local_copy(tmp_path):
-    """로컬이 미러보다 새로울 수 있다 — 미러 쓰기는 턴 경계에서 모아서 나간다."""
+    """Local may be newer than the mirror — mirror writes go out batched at turn boundaries."""
     cwd = tmp_path / "ws"
     cwd.mkdir()
     config = tmp_path / "config"
@@ -72,7 +72,7 @@ async def test_mirror_only_store_writes_through_and_reads_nothing():
 
 
 async def test_the_sdk_does_not_materialize_through_a_mirror_only_store(tmp_path):
-    """SDK가 재개 때 임시 config dir(CLAUDE.md·스킬 없음)로 CLI를 돌리지 않는다는 것."""
+    """That the SDK does not run the CLI with a temporary config dir (no CLAUDE.md or skills) on resume."""
     from claude_agent_sdk import ClaudeAgentOptions
     from claude_agent_sdk._internal.session_resume import materialize_resume_session
 
@@ -85,8 +85,8 @@ async def test_the_sdk_does_not_materialize_through_a_mirror_only_store(tmp_path
 
 
 async def test_restore_does_not_write_through_a_planted_link(tmp_path):
-    """config dir은 에이전트가 쓴다. `projects`를 바깥을 가리키는 링크로 바꿔 두면
-    트랜스크립트가 그 너머에 백엔드 uid로 쓰인다."""
+    """The config dir is written by the agent. If `projects` were swapped for a link pointing outside,
+    the transcript would be written beyond it with the backend's uid."""
     cwd = tmp_path / "ws"
     cwd.mkdir()
     config = tmp_path / "config"

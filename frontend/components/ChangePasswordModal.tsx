@@ -5,16 +5,16 @@ import { errorMessage } from "@/lib/api/errorMessage";
 import { changePassword } from "@/lib/api/account";
 import { useT } from "@/lib/i18n/provider";
 
-// 자기 비밀번호 변경. 시드 계정과 초대 계정 모두 첫 로그인에서 Hosted UI가
-// 비밀번호를 정하게 하지만, 그 이후에 스스로 바꿀 창구는 Hosted UI에 없다 —
-// Cognito managed login에는 '비밀번호 변경' 페이지가 없고, 자가 재설정
-// (forgot password)은 이 앱이 메일을 보내지 않아 쓸 수 없다. 그래서 이 화면이다.
+// Changing one's own password. For both the seed account and invited accounts, the Hosted UI has
+// the user set a password on first login, but after that the Hosted UI has no place to change it
+// themselves — Cognito managed login has no 'change password' page, and self-service reset
+// (forgot password) cannot be used because this app sends no email. Hence this screen.
 //
-// 정책 검사를 여기서 하지 않는다: 판정자는 Cognito 하나이고, 두 벌의 정책은
-// 반드시 어긋나며 어긋난 쪽이 사용자에게 거짓말을 한다. 화면이 하는 검사는
-// 확인 입력 일치 하나뿐인데, 그것은 정책이 아니라 **오타 방지**다 — 오타를
-// 서버로 보내면 Cognito가 그 값을 실제 비밀번호로 만들고, 사용자는 자기가
-// 무엇을 입력했는지 모르는 상태로 잠긴다.
+// Policy checks are not done here: Cognito is the sole judge, two copies of a policy
+// inevitably drift, and the drifted one lies to the user. The only check the screen does is
+// that the confirmation input matches, and that is not policy but **typo prevention** — if a
+// typo were sent to the server, Cognito would make that value the real password, and the user
+// would be locked out without knowing what they typed.
 export function ChangePasswordModal({ onClose }: { onClose: () => void }) {
   const t = useT();
   const [current, setCurrent] = useState("");
@@ -34,12 +34,12 @@ export function ChangePasswordModal({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       await changePassword(current, next);
-      // 서버가 확인한 뒤에만 닫는다 — 먼저 닫으면 사용자는 바뀌지 않은
-      // 비밀번호를 바뀐 것으로 믿는다.
+      // Close only after the server confirms — closing first would make the user believe an
+      // unchanged password was changed.
       onClose();
     } catch (err) {
-      // 실패해도 입력을 지우지 않는다. 세 칸을 다시 채우게 만들면 사용자는
-      // 같은 오타를 반복한다.
+      // Do not clear the input even on failure. Making the user refill all three fields leads
+      // them to repeat the same typo.
       setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));
     } finally {
       setBusy(false);
@@ -93,8 +93,8 @@ export function ChangePasswordModal({ onClose }: { onClose: () => void }) {
               className={fieldClass}
             />
           </div>
-          {/* role="alert"이라 스크린리더가 즉시 읽고, 테스트도 정적 안내 문구가
-              아니라 이 영역을 본다. */}
+          {/* role="alert", so screen readers read it immediately, and the tests also look at this
+              area rather than at static guidance text. */}
           {error && (
             <p role="alert" className="text-sm text-rose-700">{error}</p>
           )}

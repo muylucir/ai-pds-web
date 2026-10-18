@@ -7,32 +7,34 @@ import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 import { modelLabel } from "@/lib/modelLabel";
 
-// 프로젝트 id에서 허용하지 않는 문자. id는 S3 키 프리픽스이자 로컬 워크스페이스
-// 디렉토리 이름이고 URL 경로 세그먼트로도 들어가므로, 공백·슬래시·한글 같은
-// 값이 들어가면 인코딩과 경로 문제로 나중에 터진다. 입력 단계에서 걸러 낸다.
+// Characters not allowed in a project id. The id is an S3 key prefix and the local workspace
+// directory name, and it also goes into URL path segments, so values like spaces, slashes, or
+// Korean characters would blow up later with encoding and path problems. Filter them at input.
 const ID_DISALLOWED = /[^A-Za-z0-9_-]/g;
 
 export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary) => void }) {
   const t = useT();
   const [projectId, setProjectId] = useState("");
-  // 입력에서 문자를 걸러 냈는지. 조용히 지우기만 하면 사용자는 자기 키보드가
-  // 씹혔다고 생각한다 — 걸러 냈을 때만 규칙을 알려 준다. 한 번 켜지면 입력을
-  // 비우거나 생성에 성공할 때까지 유지한다: 다음 글자가 유효하다고 바로 지우면
-  // 안내가 한 글자만 스쳐 지나가 읽을 수 없다.
+  // Whether characters were filtered out of the input. If they were just silently removed,
+  // users would think their keyboard dropped keystrokes — the rule is shown only when
+  // something was filtered. Once on, it stays until the input is cleared or creation
+  // succeeds: clearing it as soon as the next character is valid would make the notice flash
+  // by for one character, unreadable.
   const [idRejected, setIdRejected] = useState(false);
   const [name, setName] = useState("");
   const [models, setModels] = useState<ModelOption[]>([]);
   const [modelId, setModelId] = useState("");
-  // 생성물 언어. UI 로케일과 무관하게 ko로 시작한다 — 이 값은 문서·프로토타입·
-  // 채팅의 언어이고, 영어 UI를 쓰는 사람이 한국어 프로젝트를 만드는 것이
-  // 정상이다. UI 로케일을 기본값으로 쓰면 그 선택을 조용히 대신 하게 된다.
+  // Output language. Starts at ko regardless of the UI locale — this value is the language of
+  // the documents, prototypes, and chat, and it is normal for someone using the English UI to
+  // create a Korean project. Using the UI locale as the default would silently make that
+  // choice for them.
   const [language, setLanguage] = useState<Locale>(DEFAULT_LOCALE);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // 모델 목록은 최대 5개짜리 짧은 목록이라 마운트 시 한 번 받아 온다.
-  // 실패는 무해하게 흘린다: 셀렉트가 비활성이 되고 서버가 env 기본값으로
-  // 떨어진다 — 카탈로그 조회 실패가 프로젝트 생성 전체를 막는 것은 과하다.
+  // The model list is a short list of at most 5, so it is fetched once on mount.
+  // Failures pass harmlessly: the select becomes disabled and the server falls back to the env
+  // default — a catalog lookup failure blocking project creation entirely would be excessive.
   useEffect(() => {
     let alive = true;
     void listModels()
@@ -80,8 +82,8 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
         <label htmlFor="pid" className="block text-xs text-slate-500 mb-1">
           {t("project.id")}
         </label>
-        {/* 붙여넣기·자동완성도 onChange를 타므로 여기서 한 번 걸러 내면
-            경로가 모두 덮인다. */}
+        {/* Paste and autocomplete also go through onChange, so filtering once here covers
+            every path. */}
         <input
           id="pid"
           required
@@ -114,8 +116,8 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
         <label htmlFor="pmodel" className="block text-xs text-slate-500 mb-1">
           {t("header.modelBadgeTitleShort")}
         </label>
-        {/* 이름과 effort를 보여준다 — 모델 id는 value로만 간다. effort는 카탈로그가
-            정한 값이고, 생성 시 서버가 같은 값을 프로젝트에 복사한다. */}
+        {/* Shows the name and effort — the model id goes only as the value. effort is the value the
+            catalog decided, and on creation the server copies the same value into the project. */}
         <select
           id="pmodel"
           value={modelId}
@@ -133,8 +135,8 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
         <label htmlFor="plang" className="block text-xs text-slate-500 mb-1">
           {t("project.language")}
         </label>
-        {/* 생성 후 바꿀 수 없다 — 진행 중에 바꾸면 이미 만들어진 문서와
-            트랜스크립트가 이전 언어로 남아 한 프로젝트 안에서 섞인다. */}
+        {/* Cannot be changed after creation — changing it midway would leave the documents and
+            transcripts already created in the previous language, mixing within one project. */}
         <select
           id="plang"
           value={language}
@@ -152,7 +154,7 @@ export function CreateProjectForm({ onCreated }: { onCreated: (p: ProjectSummary
       >
         {t("project.create")}
       </button>
-      {/* API 오류가 있으면 그쪽이 우선이다 — 걸러 낸 문자 안내보다 중요하다. */}
+      {/* An API error takes precedence — it matters more than the filtered-characters notice. */}
       {(error ?? (idRejected ? t("project.idCharsHint") : null)) && (
         <p className="text-sm text-rose-600 w-full sm:w-auto">
           {error ?? t("project.idCharsHint")}

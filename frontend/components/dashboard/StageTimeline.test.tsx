@@ -5,23 +5,23 @@ import { projectState } from "@/test/fixtures/projectState";
 
 describe("StageTimeline", () => {
   it("renders every capability name from the backend state (nothing hardcoded)", () => {
-    render(<StageTimeline state={projectState} projectId="pilot1" />);
+    render(<StageTimeline state={projectState} projectId="ws-m" />);
     for (const c of projectState.capabilities) {
       expect(screen.getByText(c.name)).toBeInTheDocument();
     }
   });
 
   it("shows a 진행 중 pill and a wizard link for the in_progress stage", () => {
-    render(<StageTimeline state={projectState} projectId="pilot1" />);
+    render(<StageTimeline state={projectState} projectId="ws-m" />);
     expect(screen.getByText("진행 중")).toBeInTheDocument();
     const link = screen.getByRole("link", { name: /질문 답변 계속하기/ });
-    expect(link).toHaveAttribute("href", "/projects/pilot1/questions");
+    expect(link).toHaveAttribute("href", "/projects/ws-m/questions");
   });
 
   it("단계가 하나도 없으면 빈 상태 문구를 보여준다", () => {
-    // 갓 만든 프로젝트의 `stages`는 빈 배열이고, 그때 빈 <ol>만 남으면 큰 흰
-    // 박스가 되어 고장으로 읽힌다. 자매 패널(ArtifactsPanel·ActivityFeed)은
-    // 모두 빈 상태 문구를 갖고 있다.
+    // A freshly created project's `stages` is an empty array, and if only an empty <ol> remained then, it
+    // would become a big white box that reads as broken. The sibling panels (ArtifactsPanel, ActivityFeed)
+    // all have empty-state text.
     render(
       <StageTimeline
         state={{ project_type: null, current_stage: null, stages: [], capabilities: [] }}
@@ -32,15 +32,15 @@ describe("StageTimeline", () => {
   });
 
   it("marks completed capabilities with 완료", () => {
-    render(<StageTimeline state={projectState} projectId="pilot1" />);
+    render(<StageTimeline state={projectState} projectId="ws-m" />);
     expect(screen.getAllByText("완료").length).toBe(
       projectState.capabilities.filter((c) => c.status === "completed").length,
     );
   });
 
-  // 에이전트가 쓴 스테이지 목록(8개)이 아니라 공식 6개를 보인다.
+  // Shows the official 6, not the stage list the agent wrote (8).
   it("lists the six official capabilities, marking the ones this path skips", () => {
-    render(<StageTimeline state={projectState} projectId="pilot1" />);
+    render(<StageTimeline state={projectState} projectId="ws-m" />);
     expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
       "Envision", "Use Case Intake", "Prioritize", "Prototype", "Product Strategy", "Go-to-Market",
     ]);

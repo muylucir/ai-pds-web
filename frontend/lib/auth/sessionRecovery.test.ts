@@ -16,7 +16,8 @@ describe("redirectIfSessionExpired", () => {
   });
 
   it("does nothing when the session is still valid", async () => {
-    // 진짜 네트워크 끊김 — 훅의 기존 "연결이 끊어졌습니다" 메시지가 맞는 상황이다.
+    // A real network drop — the situation where the hook's existing "연결이 끊어졌습니다" (connection
+    // lost) message is right.
     mockMe({ authenticated: true, email: "a@example.com", role: "pm" }, 200);
     const navigate = vi.fn();
     await expect(redirectIfSessionExpired(navigate)).resolves.toBe(false);
@@ -24,8 +25,8 @@ describe("redirectIfSessionExpired", () => {
   });
 
   it("does not navigate when the check itself fails", async () => {
-    // /api/auth/me까지 닿지 않는 상황에서 로그인으로 보내면, 백엔드가 잠깐
-    // 죽은 것뿐인데 사용자를 작업 중인 화면에서 쫓아낸다.
+    // Sending the user to login when even /api/auth/me cannot be reached would kick the user
+    // out of the screen they are working on when the backend merely died for a moment.
     server.use(http.get("*/api/auth/me", () => HttpResponse.error()));
     const navigate = vi.fn();
     await expect(redirectIfSessionExpired(navigate)).resolves.toBe(false);
@@ -54,17 +55,18 @@ describe("redirectIfSessionExpired", () => {
   });
 
   it("does not navigate when a 401 body is malformed — an indeterminate check is not a verdict", async () => {
-    // 401 자체만으로 단정하지 않는다: 본문이 파싱되지 않으면(예: 다른 계층이
-    // 끼어들어 만든 401) "확인 실패"로 취급해 사용자를 쫓아내지 않는다.
+    // A 401 alone is not taken as proof: if the body does not parse (e.g., a 401 produced by some
+    // other layer cutting in), it is treated as "check failed" and the user is not kicked out.
     server.use(http.get("*/api/auth/me", () => new HttpResponse("not json", { status: 401 })));
     const navigate = vi.fn();
     await expect(redirectIfSessionExpired(navigate)).resolves.toBe(false);
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  // 401 + 본문 파싱 성공이라도, authenticated가 정확히 false가 아니면
-  // 만료로 단정하지 않는다 — `=== false`를 `!== true`로 뒤집는 식의 미래
-  // 리팩터가 조용히 과잉 축출을 되살리지 못하게 이 경계를 직접 고정한다.
+  // Even with a 401 and a successfully parsed body, expiry is not asserted unless
+  // authenticated is exactly false — this boundary is pinned directly so that a future
+  // refactor, such as flipping `=== false` to `!== true`, cannot silently bring back
+  // over-eager eviction.
   it("does not navigate on a 401 body with authenticated:true — status alone is not the verdict", async () => {
     mockMe({ authenticated: true }, 401);
     const navigate = vi.fn();

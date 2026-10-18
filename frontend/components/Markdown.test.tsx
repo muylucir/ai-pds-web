@@ -24,23 +24,23 @@ describe("Markdown", () => {
 
   it("renders incomplete markdown as plain text (streaming fallback)", () => {
     render(<Markdown text={"**미완성 굵"} />);
-    expect(screen.getByText(/미완성 굵/)).toBeInTheDocument(); // 크래시 없이 표시
+    expect(screen.getByText(/미완성 굵/)).toBeInTheDocument(); // rendered without crashing
   });
 });
 
-// 2026-08-16: 백엔드가 심은 `[Answer]: A`가 화면에 전혀 나타나지 않았다.
-// 그 줄은 CommonMark 링크 참조 정의이고 렌더러는 출력을 만들지 않는다.
+// 2026-08-16: the `[Answer]: A` the backend inserted did not appear on screen at all.
+// That line is a CommonMark link reference definition, and the renderer produces no output for it.
 describe("[Answer]: 줄", () => {
   it("기록된 답변이 화면에 나타난다", () => {
-    // 이 렌더 경로가 살아 있는지가 이 기능의 사용자 가시성 전부다.
+    // Whether this render path is alive is the entirety of this feature's visibility to the user.
     render(<Markdown text={"## Question 1\n질문?\n\n[Answer]: A\n"} />);
     expect(screen.getByText(/\[Answer\]:/)).toBeInTheDocument();
     expect(screen.getByText(/A$/)).toBeInTheDocument();
   });
 
   it("보기 안내 문구의 `[Answer]:`는 링크가 되지 않는다", () => {
-    // 정의가 남아 있으면 이 문구의 `[Answer]`가 링크로 바뀌고 대괄호가 사라진다 —
-    // 실측 화면에서 정확히 그 모양이었다.
+    // If the definition remained, `[Answer]` in this text would turn into a link and the
+    // brackets would vanish — that is exactly how the observed screen looked.
     const md = "X) Other (please describe after [Answer]: tag below)\n\n[Answer]: B\n";
     const { container } = render(<Markdown text={md} />);
     expect(container.querySelectorAll("a")).toHaveLength(0);
@@ -48,19 +48,19 @@ describe("[Answer]: 줄", () => {
   });
 });
 
-// 상류 형식은 보기를 줄바꿈으로만 구분한다. CommonMark에서 그 줄바꿈은 공백으로
-// 렌더되므로 `A) … B) … C) …`가 한 줄로 쭉 이어져 읽을 수 없었다.
+// The upstream format separates options only by line breaks. In CommonMark those line breaks
+// render as spaces, so `A) … B) … C) …` ran together on one line and was unreadable.
 describe("보기 줄", () => {
   it("보기가 각각 줄바꿈되어 렌더된다", () => {
     const md = "A) 연 1~2건\nB) 연 3~5건\nC) 연 6건 이상\n";
     const { container } = render(<Markdown text={md} />);
-    // 하드 브레이크가 <br>로 나온다 — 보기 3개면 사이에 2개.
+    // Hard breaks come out as <br> — with 3 options, 2 in between.
     expect(container.querySelectorAll("br").length).toBeGreaterThanOrEqual(2);
   });
 
   it("질문 본문은 줄바꿈이 강제되지 않는다", () => {
-    // 산문에 <br>을 뿌리면 문단이 들쭉날쭉해진다 — remark-breaks를 전역으로
-    // 쓰지 않은 이유다.
+    // Sprinkling <br> through prose makes paragraphs ragged — which is why remark-breaks
+    // is not used globally.
     const { container } = render(<Markdown text={"첫 줄입니다\n이어지는 산문입니다\n"} />);
     expect(container.querySelectorAll("br")).toHaveLength(0);
   });

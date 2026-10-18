@@ -16,11 +16,11 @@ client: TestClient
 
 @pytest.fixture(autouse=True)
 def _live_client():
-    """요청 사이에 이벤트 루프를 유지하는 클라이언트.
+    """A client that keeps the event loop alive between requests.
 
-    턴은 요청이 아니라 서버 작업이다(aipds/turn_job.py). `with` 없는 TestClient는
-    요청마다 루프를 새로 열고 닫으므로, POST가 시작한 턴이 다음 요청 전에 루프와
-    함께 사라진다 — 배포에서는 일어나지 않는 일이다.
+    A turn is server work, not a request (aipds/turn_job.py). A TestClient without `with`
+    opens and closes a new loop per request, so a turn started by a POST disappears along
+    with the loop before the next request; that does not happen in deployment.
     """
     global client
     with TestClient(app_module.app) as live:
@@ -55,10 +55,10 @@ def _structured_first_turn(text):
 
 
 class ScriptRunner:
-    """send_message/send_answers/pending만 필요한 라우트 테스트용 러너.
+    """A runner for route tests that need only send_message/send_answers/pending.
 
-    script 미지정 시 구조화 데모 흐름을 흉내낸다: send_message가
-    questions 이벤트로 pending을 무장하고, send_answers가 document+done을 낸다."""
+    Without a script it imitates the structured demo flow: send_message arms
+    pending with a questions event, and send_answers emits document+done."""
     def __init__(self, script=None):
         self._script = script or _structured_first_turn
         self._pending_payload = None
@@ -99,7 +99,7 @@ class ScriptRunner:
 
 
 def _watch(pid: str, turn_id: str, after: int = 0) -> list[str]:
-    """턴 하나의 SSE 줄 전부 — 턴이 끝날 때까지 본다."""
+    """All SSE lines of one turn; watches until the turn ends."""
     with client.stream("GET", f"/projects/{pid}/events",
                        params={"turn": turn_id, "after": after}) as r:
         assert r.status_code == 200, r.read()
@@ -107,14 +107,14 @@ def _watch(pid: str, turn_id: str, after: int = 0) -> list[str]:
 
 
 def _say(pid: str, text: str) -> list[str]:
-    """메시지 턴을 시작하고 끝까지 본다."""
+    """Start a message turn and watch it to the end."""
     r = client.post(f"/projects/{pid}/turns", json={"text": text})
     assert r.status_code == 200, r.text
     return _watch(pid, r.json()["turn_id"])
 
 
 def _answer(pid: str, answers: dict) -> list[str]:
-    """답변 턴을 시작하고 끝까지 본다."""
+    """Start an answer turn and watch it to the end."""
     r = client.post(f"/projects/{pid}/answers", json={"answers": answers})
     assert r.status_code == 200, r.text
     return _watch(pid, r.json()["turn_id"])
@@ -203,11 +203,12 @@ def test_payload_is_redacted(monkeypatch):
     assert "[CREDENTIAL REDACTED]" in body
 
 
-# ---- 턴 중단 ----
+# ---- Turn interruption ----
 
 def test_interrupt_reaches_the_runner(monkeypatch):
-    """라우트가 실제로 러너까지 도달하는가. 202만 돌려주고 아무것도 하지 않는
-    라우트는 화면에서 구별되지 않는다 — 버튼은 눌리고 턴은 계속 돈다."""
+    """Does the route actually reach the runner? A route that just returns 202 and does
+    nothing is indistinguishable on screen: the button gets pressed and the turn keeps
+    running."""
     runner = _install_default(monkeypatch, "int-1")
     r = client.post("/projects/int-1/interrupt")
     assert r.status_code == 202
@@ -215,8 +216,8 @@ def test_interrupt_reaches_the_runner(monkeypatch):
 
 
 def test_interrupt_is_idempotent(monkeypatch):
-    """두 번 눌러도 같다. 사용자가 반응이 없다고 다시 누르는 것이 정상 경로이고,
-    돌고 있는 턴이 없을 때도 에러가 아니다."""
+    """Pressing twice is the same. A user pressing again because nothing seemed to
+    happen is a normal path, and it is not an error when no turn is running either."""
     runner = _install_default(monkeypatch, "int-2")
     assert client.post("/projects/int-2/interrupt").status_code == 202
     assert client.post("/projects/int-2/interrupt").status_code == 202
@@ -224,16 +225,17 @@ def test_interrupt_is_idempotent(monkeypatch):
 
 
 def test_interrupt_on_an_unknown_project_is_404(monkeypatch):
-    """ensure_workspace의 기존 계약 — 없는 프로젝트는 404다. 중단이 멱등인 것과
-    별개다(있는 프로젝트의 없는 턴 ≠ 없는 프로젝트)."""
+    """ensure_workspace's existing contract: a nonexistent project is 404. This is
+    separate from interruption being idempotent (a missing turn in an existing project ≠
+    a missing project)."""
     _install_default(monkeypatch, "int-3")
     assert client.post("/projects/nope/interrupt").status_code == 404
 
 
 def test_interrupt_survives_a_raising_runner(monkeypatch):
-    """드라이버의 client.interrupt()가 던져도 라우트의 docstring이 약속하는
-    202/멱등 계약은 지킨다 — 사용자는 중단이 안 먹혔다고 다시 누를 뿐, 500을
-    받을 이유가 없다."""
+    """Even if the driver's client.interrupt() raises, the 202/idempotent contract
+    promised by the route's docstring holds; the user just presses again thinking the
+    interrupt did not take effect, and has no reason to receive a 500."""
     monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     runner = ScriptRunner()
 
@@ -249,18 +251,19 @@ def test_interrupt_survives_a_raising_runner(monkeypatch):
     assert client.post("/projects/int-4/interrupt").status_code == 202
 
 
-# ---- 긴 입력을 URL에서 빼는 2단계 핸들 (HTTP 431 결함) ----
+# ---- Two-step handle that moves long input out of the URL (HTTP 431 defect) ----
 #
-# 실측한 결함: 한글 2,164자 입력이 encodeURIComponent로 14,376바이트 요청
-# 라인이 되고, 인증 쿠키(JWT 3개 ~3.7KB)와 합쳐 Node의 maxHeaderSize
-# 16,384바이트를 넘겨 프록시가 431을 냈다. EventSource는 상태 코드를 노출하지
-# 않아 화면에는 "연결이 끊어졌습니다"만 떴다.
+# The observed defect: a 2,164-character Korean input became a 14,376-byte request line
+# through encodeURIComponent, and together with the auth cookies (3 JWTs, ~3.7 KB) it
+# exceeded Node's maxHeaderSize of 16,384 bytes, so the proxy returned 431. EventSource
+# does not expose the status code, so the screen showed only "연결이 끊어졌습니다" (connection
+# lost).
 
 _LONG_KO = "가" * 3000
 
 
 def test_turn_handle_carries_text_out_of_the_url(monkeypatch):
-    """POST로 텍스트를 받고, SSE는 짧은 핸들만 URL에 싣는다."""
+    """Accept the text via POST; SSE carries only a short handle in the URL."""
     seen = {}
 
     def script(text):
@@ -271,13 +274,14 @@ def test_turn_handle_carries_text_out_of_the_url(monkeypatch):
     r = client.post("/projects/turnh1/turns", json={"text": _LONG_KO})
     assert r.status_code == 200
     handle = r.json()["turn_id"]
-    # 이것이 이 설계의 핵심 단정 — 핸들이 URL에 들어가므로 짧아야 한다.
+    # This is the core assertion of this design: the handle goes into the URL, so it
+    # must be short.
     assert len(handle) <= 64
     with client.stream("GET", "/projects/turnh1/events",
                        params={"turn": handle}) as resp:
         body = "".join(chunk for chunk in resp.iter_text())
     assert "ok" in body
-    # 에이전트는 원문 전체를 받았다 — 핸들이 텍스트를 잘라먹지 않는다.
+    # The agent received the full original text; the handle does not truncate it.
     assert seen["text"] == _LONG_KO
 
 
@@ -287,10 +291,10 @@ def _data(lines):
 
 
 def test_a_turn_can_be_watched_again_from_any_seq(monkeypatch):
-    """턴 id는 1회용 핸들이 아니라 **다시 보는** 이름이다.
+    """A turn id is not a one-time handle but a name for **re-watching**.
 
-    새로고침·절전 복귀·두 번째 탭이 모두 같은 턴을 처음부터(`after=0`) 또는 마지막으로
-    받은 곳부터(`after=n`) 본다.
+    A reload, a return from sleep, and a second tab all watch the same turn from the start
+    (`after=0`) or from where they last received (`after=n`).
     """
     def script(text):
         return [AgentEvent(kind="message", text="하나"),
@@ -307,7 +311,7 @@ def test_a_turn_can_be_watched_again_from_any_seq(monkeypatch):
         again = list(r.iter_lines())
     assert _data(first) == _data(again)
     assert [e["text"] for e in _data(first)[:2]] == ["하나", "둘"]
-    # 프레임의 id가 seq다 — 다시 붙을 때 `after`로 돌려준다.
+    # The frame's id is the seq; it is passed back as `after` when reattaching.
     assert "id: 1" in first
     with client.stream("GET", "/projects/turnh2/events",
                        params={"turn": turn, "after": 1}) as r:
@@ -323,8 +327,8 @@ def test_an_unknown_turn_is_404(monkeypatch):
 
 
 def test_events_only_watches_a_turn(monkeypatch):
-    """`/events`는 턴을 **보기만** 한다 — 턴은 POST가 시작한다. URL에 입력을 실어
-    시작하는 길이 없으므로 긴 입력이 요청 라인에 실릴 일도 없다(431)."""
+    """`/events` only **watches** a turn; the POST starts it. There is no way to start one
+    with input in the URL, so long input never ends up in the request line (431)."""
     _install_default(monkeypatch, "turnh4")
     assert client.get("/projects/turnh4/events").status_code == 422
     assert client.get("/projects/turnh4/events",
@@ -336,7 +340,7 @@ def test_a_turn_is_scoped_to_its_project(monkeypatch):
     _install_default(monkeypatch, "turnh7")
     turn = client.post("/projects/turnh6/turns",
                        json={"text": "p6의 입력"}).json()["turn_id"]
-    # 다른 프로젝트에서 같은 id로 볼 수 없다.
+    # It cannot be watched with the same id from a different project.
     r = client.get("/projects/turnh7/events", params={"turn": turn})
     assert r.status_code == 404
 
@@ -347,7 +351,8 @@ def test_turns_unknown_project_404():
 
 
 def test_answers_handle_carries_answers_out_of_the_url(monkeypatch):
-    """답변 제출도 같은 배관을 쓴다 — 자유 서술이 길면 같은 한도에 걸린다."""
+    """Answer submission uses the same plumbing; long free-form text would hit the same
+    limit."""
     _install_default(monkeypatch, "turnh8")
     _say("turnh8", "시작")
     long_answers = {"1": "A", "2": "긴 자유 서술 " * 400}
@@ -360,13 +365,14 @@ def test_answers_handle_carries_answers_out_of_the_url(monkeypatch):
     assert kinds[-1] == "done"
 
 
-# ---- 턴은 서버 작업이다 ----
+# ---- A turn is server work ----
 #
-# 턴의 수명은 요청의 것이 아니다(aipds/turn_job.py 헤더). 아래 테스트는 러너가
-# `gate`에서 멈추는 턴으로 "도는 중"을 만든다.
+# A turn's lifetime does not belong to the request (aipds/turn_job.py header). The tests
+# below create "running" with a turn whose runner stops at `gate`.
 
 class GatedRunner(ScriptRunner):
-    """첫 메시지를 낸 뒤 `gate`가 열릴 때까지 멈추는 턴. 끝까지 돌았는지 기록한다."""
+    """A turn that emits the first message and then stops until `gate` opens. Records
+    whether it ran to the end."""
 
     def __init__(self):
         super().__init__()
@@ -383,7 +389,8 @@ class GatedRunner(ScriptRunner):
             yield AgentEvent(kind="message", text="자리를 비운 동안 온 문장")
             yield AgentEvent(kind="done")
         finally:
-            # 러너의 종결 sync가 도는 자리 — 여기까지 와야 산출물이 S3에 오른다.
+            # Where the runner's final sync runs; only once it gets here do artifacts
+            # reach S3.
             self.finished = True
 
 
@@ -413,11 +420,12 @@ def _wait_for(predicate, timeout=5.0):
 
 
 def _open_gate(runner, delay: float = 0.0):
-    """턴을 이어 가게 한다. `delay`가 있으면 그만큼 뒤에 연다.
+    """Let the turn continue. If `delay` is given, open it after that long.
 
-    TestClient는 스트림 요청도 앱이 응답을 끝낼 때까지 붙잡으므로, 스트림을 여는
-    쪽에서 문을 열 수 없다 — 미리 예약해 둔다. 보던 화면이 **도중에** 떠나는 경우는
-    같은 이유로 여기서 만들 수 없어 tests/test_turn_job.py가 맡는다.
+    TestClient holds even a stream request until the app finishes responding, so the
+    side that opens the stream cannot open the gate; it is scheduled in advance. A
+    watching screen leaving **midway** cannot be created here for the same reason, so
+    tests/test_turn_job.py covers it.
     """
     client.portal.start_task_soon(_set, runner, delay)
 
@@ -428,16 +436,16 @@ async def _set(runner, delay):
 
 
 def test_a_second_turn_while_one_runs_is_409_with_the_running_id(monkeypatch):
-    """거절된 쪽이 할 일은 다시 보내기가 아니라 도는 턴을 보는 것이다."""
+    """What the rejected side should do is not resend but watch the running turn."""
     runner = _install_gated(monkeypatch, "own2")
     turn = client.post("/projects/own2/turns", json={"text": "go"}).json()["turn_id"]
     r = client.post("/projects/own2/turns", json={"text": "또"})
     assert r.status_code == 409
     assert r.json()["detail"] == {"code": "turn_in_progress", "turn_id": turn}
-    assert runner.sent == ["go"]    # 두 번째 입력은 에이전트에 닿지 않았다
+    assert runner.sent == ["go"]    # the second input did not reach the agent
     _open_gate(runner)
     _wait_for(lambda: _turn_state("own2")["state"] == "done")
-    # 끝난 뒤에는 다시 받는다.
+    # After it finishes, input is accepted again.
     assert client.post("/projects/own2/turns", json={"text": "또"}).status_code == 200
 
 
@@ -453,7 +461,8 @@ def test_turn_reports_the_running_turn_then_its_end(monkeypatch):
 
 
 def test_turn_reports_a_turn_the_restart_cut_off(monkeypatch):
-    """메모리에 턴이 없는데 표식이 `running`이면 재시작으로 끊긴 턴이다."""
+    """If there is no turn in memory but the marker is `running`, the turn was cut off
+    by a restart."""
     _install_default(monkeypatch, "own4")
     s3 = FakeS3Store()
     s3.blobs[TURN_MARKER_KEY] = json.dumps(

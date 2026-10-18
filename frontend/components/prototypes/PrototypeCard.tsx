@@ -27,7 +27,7 @@ const PRIMARY_BTN = `${BTN_BASE} bg-violet-600 hover:bg-violet-700 text-white di
 const SECONDARY_BTN = `${BTN_BASE} border border-slate-200 hover:bg-slate-50 text-slate-700 disabled:hover:bg-transparent`;
 const DANGER_BTN = `${BTN_BASE} border border-slate-200 hover:bg-rose-50 text-rose-600 disabled:hover:bg-transparent`;
 
-// 라벨은 딕셔너리 키다 — 모듈 상수는 훅을 부를 수 없으므로 렌더에서 푼다.
+// Labels are dictionary keys — module constants cannot call hooks, so they are resolved at render.
 const BADGE: Record<PrototypeState, { labelKey: keyof Dict; cls: string }> = {
   none: { labelKey: "proto.statusNone", cls: "bg-slate-100 text-slate-500" },
   building: { labelKey: "proto.statusBuilding", cls: "bg-violet-100 text-violet-700 animate-pulse" },
@@ -62,23 +62,23 @@ export function PrototypeCard({
   /** Wipe build + session + survey, keeping the spec. Rendered only when
    *  `info.state !== "none"` — there is nothing accumulated to clear. */
   onReset?: (slug: string) => void;
-  /** 호스팅 시작이 진행 중일 때의 단계. `POST /host`가 npm install → build →
-   *  포트 대기를 전부 await하므로(routes/prototypes.py), 그동안 카드에는 비활성
-   *  버튼밖에 없어 "아무 반응 없음"으로 읽혔다. 호출부가 `GET /host`를 폴링해
-   *  넘겨준다 — 서버가 이미 기록하는 상태다. */
+  /** The step while starting hosting is in progress. `POST /host` awaits all of npm install → build →
+   *  port wait (routes/prototypes.py), so in the meantime the card had only disabled
+   *  buttons and read as "nothing happening". The caller polls `GET /host` and
+   *  passes it in — it is state the server already records. */
   startingPhase?: HostState | null;
-  /** 호스팅 시작·중지가 거부된 이유. 버튼 바로 옆 카드 안에 보인다. */
+  /** Why starting or stopping hosting was refused. Shown inside the card, right next to the buttons. */
   hostError?: string | null;
   archiveUrl?: string;
-  /** 공유용 절대 URL(`absoluteShareUrl`이 서버의 `access_url`을 절대화한 값).
-   *  주어지고 호스팅 중일 때만 복사 버튼이 뜬다 — 그 밖의 상태에서는 링크가
-   *  502이므로 깨진 링크를 공유하게 된다(routes/proto_public.py).
+  /** Absolute URL for sharing (`absoluteShareUrl` made absolute from the server's `access_url`).
+   *  The copy button appears only when this is given and the prototype is hosted — in any other state the link
+   *  returns 502, so a broken link would be shared (routes/proto_public.py).
    *
-   *  이 URL에는 **접근 토큰이 들어 있다**. 참가자는 이것만으로 프로토타입에
-   *  들어오므로, 공유 범위가 곧 접근 범위다. */
+   *  This URL **contains an access token**. Participants get into the prototype with this alone,
+   *  so the sharing scope is the access scope. */
   shareUrl?: string;
   busy: boolean;
-  /** 열람 멤버. 프리뷰·링크·로그·다운로드·설문 보기만 남고, 빌드·호스팅·초기화는 없다. */
+  /** Viewer member. Only preview, link, logs, download and viewing surveys remain; no build, hosting or reset. */
   readOnly?: boolean;
 }) {
   const t = useT();
@@ -87,13 +87,13 @@ export function PrototypeCard({
   const badgeLabel =
     info.state === "running" && info.port != null ? `${label} :${info.port}` : label;
 
-  // 호스팅 시작 중이면 목록의 상태(`built`)보다 **더 정확한 것**을 안다.
-  // `POST /host`가 npm install → build → 포트 대기를 전부 await하는 동안 카드가
-  // "빌드 완료 + 비활성 버튼"으로 멈춰 있었다 — 실측 13분짜리 구간이고, 사용자가
-  // "아무 반응 없음"으로 읽었다. 그 단계는 서버가 이미 기록한다.
+  // While hosting is starting, we know **something more accurate** than the list's state (`built`).
+  // While `POST /host` awaited all of npm install → build → port wait, the card was stuck at
+  // "build complete + disabled buttons" — an observed 13-minute stretch that users
+  // read as "nothing happening". The server already records that step.
   //
-  // `failed`/`stopped`는 여기서 쓰지 않는다: 그때는 POST가 이미 반환했고
-  // (실패는 502) 목록이 다시 읽히므로, 진행 표시가 남아 있으면 오히려 낡은 정보다.
+  // `failed`/`stopped` are not used here: by then the POST has already returned
+  // (failure is 502) and the list is reread, so a lingering progress indicator would be stale information.
   const PHASE_KEYS: Partial<Record<HostState, keyof Dict>> = {
     installing: "proto.hostInstalling",
     building: "proto.hostBuildingHost",
@@ -111,10 +111,10 @@ export function PrototypeCard({
       </span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          {/* 제목은 이름이고, 없을 때만 슬러그다. 단일 프로토타입 레이아웃의
-              슬러그는 상수 `"prototype"`이라(백엔드 proto/layout.py) 이 폴백이
-              모든 Path A.1 프로젝트에서 같은 제목을 만들었다. 슬러그 자체는
-              식별자로 남아 리셋 aria-label과 아래 명세 경로에 계속 나온다. */}
+          {/* The title is the name, and the slug only when there is none. The single-prototype layout's
+              slug is the constant `"prototype"` (backend proto/layout.py), so this fallback
+              produced the same title in every Path A.1 project. The slug itself remains
+              as an identifier and still appears in the reset aria-label and the spec path below. */}
           <span className="font-medium text-sm truncate">{info.name ?? info.slug}</span>
           <span
             className={`text-[11px] px-2 py-0.5 rounded-full shrink-0 ${
@@ -122,19 +122,19 @@ export function PrototypeCard({
                 ? "bg-violet-100 text-violet-700 animate-pulse"
                 : badge.cls
             }`}
-            // 진행 중임을 스크린 리더에도 알린다 — 텍스트가 바뀌는 것만으로는
-            // 읽어 주지 않는다.
+            // Also tell screen readers it is in progress — a change of text alone
+            // is not read out.
             aria-live={phaseKey ? "polite" : undefined}
           >
             {phaseKey ? t(phaseKey) : badgeLabel}
           </span>
-          {/* 설문 상태. **`state !== "none"`일 때만 건다** — 아직 빌드할 것도
-              없는 단계에서 "설문 없음"은 할 일처럼 읽혀 잡음이 된다.
+          {/* Survey status. **Attached only when `state !== "none"`** — at a stage with nothing
+              to build yet, "no survey" reads like a to-do and becomes noise.
 
-              `has_survey`가 필요한 이유는 `response_count`가 두 상태에서 같기
-              때문이다: 설문이 없어도 0, 설문이 있고 응답이 아직 없어도 0. 실측
-              test2222에서 프로토타입 3개 중 1개에만 설문이 있었는데 카드에 그
-              사실이 없어 나머지 둘이 빠진 것을 알아차릴 방법이 없었다. */}
+              `has_survey` is needed because `response_count` is the same in two states:
+              0 with no survey, and 0 with a survey that has no responses yet. Observed in
+              ws-n: only 1 of 3 prototypes had a survey, but the cards did not show
+              that, so there was no way to notice the other two were missing. */}
           {info.state !== "none" && (
             <span
               className={`text-[11px] shrink-0 ${
@@ -146,18 +146,18 @@ export function PrototypeCard({
                 : t("proto.surveyNone")}
             </span>
           )}
-          {/* 떠 있는 서버가 소스보다 오래된 구간. 참가자에게 나간 링크는 계속
-              살아 있지만 보여 주는 것은 **이전 버전**이다 — 새 코드는 다시
-              호스팅해야 반영된다.
+          {/* The stretch where the running server is older than the source. Links sent to participants stay
+              alive, but what they show is the **previous version** — new code only takes effect after
+              hosting again.
 
-              **`session_open`이 아니라 `preview_stale`로 판정한다.** 세션 기준이면
-              세션이 닫히는 순간 경고가 사라지는데, 정작 그때가 사용자가 "반영됐다"고
-              오해하기 가장 쉬운 시점이다(서버는 여전히 이전 버전을 서빙한다).
+              **Judged by `preview_stale`, not `session_open`.** Keyed on the session, the warning would
+              vanish the moment the session closes, yet that is exactly when the user is most likely to
+              assume "it has been applied" (the server still serves the previous version).
 
-              고치는 방법의 **대가를 함께 말한다**: 다시 호스팅은 npm install →
-              build → 서버 시작을 전부 기다리므로(실측 최대 13분) 그 동안 참가자
-              링크까지 닫힌다. 확인 대화상자를 하나 더 만들지 않고 버튼 옆에 두는
-              이유는, 누르기 전에 읽히는 자리가 여기이기 때문이다. */}
+              It **states the cost of the fix too**: hosting again waits for all of npm install →
+              build → server start (observed up to 13 minutes), and participant links are closed
+              during that time. The reason for putting it next to the button rather than adding another
+              confirmation dialog is that this is where it gets read before pressing. */}
           {info.preview_stale && (
             <span className="text-[11px] shrink-0 text-amber-600">
               {t("proto.previewStale")} · {t("proto.rehostDowntime")}
@@ -169,9 +169,9 @@ export function PrototypeCard({
           <p role="alert" className="text-xs text-rose-600 mt-1">{hostError}</p>
         )}
       </div>
-      {/* flex-wrap: `running`은 프리뷰·링크·중지·로그·다운로드·수정·초기화·설문로
-          버튼이 여덟까지 간다. shrink-0인 버튼들이 감싸지 않으면 좁은 화면에서
-          카드 밖으로 넘친다. */}
+      {/* flex-wrap: in `running` the buttons go up to eight: preview, link, stop, logs, download, modify, reset, survey.
+          Unless the shrink-0 buttons wrap, they overflow the card on narrow
+          screens. */}
       <div className="flex flex-wrap justify-end items-center gap-2 shrink-0">
         {info.state === "none" && !readOnly && (
           <button type="button" className={PRIMARY_BTN} disabled={busy} onClick={onBuild}>
@@ -204,19 +204,19 @@ export function PrototypeCard({
               </button>
             )}
             {shareUrl && <CopyLinkButton url={shareUrl} disabled={busy} />}
-            {/* 낡았을 때만 나온다. 항상 두면 "다시 호스팅"이 무엇을 바꾸는지 알 수
-                없는 버튼이 되고(이미 최신이면 몇 분간 프리뷰만 닫는다), 낡았을 때는
-                반대로 그것이 유일하게 필요한 동작이다. 위 경고 줄이 그 대가를 말한다. */}
+            {/* Shown only when stale. Always present, "다시 호스팅" (host again) would be a button whose effect
+                is unclear (when already current it only closes the preview for a few minutes), while when stale
+                it is, conversely, the only action needed. The warning line above states its cost. */}
             {info.preview_stale && !readOnly && (
               <button type="button" className={SECONDARY_BTN} disabled={busy}
                       onClick={onStartHost}>
                 {t("proto.rehost")}
               </button>
             )}
-            {/* 실행 중에도 수정할 수 있다. **여기 있어야 하는 이유**는 이것이
-                고치고 싶어지는 순간이기 때문이다 — 프리뷰를 방금 본 직후. 종전에는
-                이 상태에 빌드 관련 버튼이 아예 없어서, 호스팅을 먼저 중지해야
-                수정 버튼이 돌아왔다. */}
+            {/* Modifying is possible even while running. **Why it must be here**: this is the moment
+                one wants to change something — right after seeing the preview. Previously
+                this state had no build-related buttons at all, so hosting had to be stopped first
+                for the modify button to come back. */}
             {!readOnly && (
               <>
                 <BuildButton info={info} busy={busy} onBuild={onBuild} />
@@ -258,9 +258,9 @@ export function PrototypeCard({
             {t("proto.reset")}
           </button>
         )}
-        {/* 설문은 빌드 상태와 무관하게 항상 열 수 있다: 빌드 전 단계에서
-            문항을 미리 만들 수도 있고, 호스팅이 끝난 뒤 응답을 집계할 수도
-            있다. 빌드 드로어와 별개의 상태로 열리므로 서로 가리지 않는다. */}
+        {/* The survey can always be opened regardless of build state: questions can be drafted
+            before the build, and responses can be aggregated after hosting ends.
+            It opens as a state separate from the build drawer, so they do not hide each other. */}
         {onOpenSurvey && (
           <button type="button" className={SECONDARY_BTN} disabled={busy} onClick={onOpenSurvey}>
             {t("proto.survey")}
@@ -271,17 +271,17 @@ export function PrototypeCard({
   );
 }
 
-/** 이미 만들어진 프로토타입에 손을 대는 버튼. **하나의 동작에 두 이름**이다.
+/** The button that works on an already-built prototype. **One action, two names.**
  *
- *  세션이 이미 열려 있으면 할 일은 그 세션으로 돌아가는 것이므로 "세션 열기"다.
- *  아니면 새 세션을 여는 것이고, 그 세션이 무엇을 물을지는 백엔드가 이미 갈라
- *  놓았다 — 완료된 빌드에는 "무엇을 개선할지", 완료 없이 죽은 빌드에는 "무엇을
- *  이어갈지"(proto/session의 handoff·resume 분기). 사용자 쪽 의도로는 둘 다
- *  수정이므로 한 이름으로 부른다.
+ *  If a session is already open, the job is to return to it, so it is "세션 열기" (open session).
+ *  Otherwise it opens a new session, and what that session asks has already been split by the
+ *  backend — "what to improve" for a completed build, "what to continue" for a build that died
+ *  without completing (proto/session's handoff and resume branches). From the user's side both are
+ *  modifications, so they go by one name.
  *
- *  `failed`가 이 컴포넌트를 쓰지 않는 이유: 그 상태에서 필요한 것은 수정이 아니라
- *  마치는 것이고("이어서 하기"), 버튼이 primary여야 한다 — 그 카드에는 다른
- *  주된 동작이 없다. */
+ *  Why `failed` does not use this component: what that state needs is not modifying but
+ *  finishing ("이어서 하기", continue), and the button must be primary — that card has no other
+ *  main action. */
 function BuildButton({
   info, busy, onBuild,
 }: { info: PrototypeInfo; busy: boolean; onBuild: () => void }) {
@@ -293,21 +293,21 @@ function BuildButton({
   );
 }
 
-/** 프리뷰 링크를 클립보드로. 워크숍에서 참가자에게 링크를 나눠 주는 것이
- *  용도이므로 값은 **절대 URL**이어야 한다(호출부가 `absoluteShareUrl`로 만든다).
+/** Copies the preview link to the clipboard. Its purpose is handing out the link to participants in a workshop,
+ *  so the value must be an **absolute URL** (the caller builds it with `absoluteShareUrl`).
  *
- *  "복사됨"을 2초 후 되돌리는 이유: 두 번째 복사가 실제로 됐는지 화면에서
- *  구별되어야 한다. 라벨이 영구히 "복사됨"이면 눌렀는지 알 수 없다.
+ *  Why "복사됨" (copied) reverts after 2 seconds: whether a second copy actually happened must be
+ *  distinguishable on screen. If the label stayed "복사됨" permanently, you could not tell whether you pressed it.
  *
- *  실패를 삼키지 않는다 — `navigator.clipboard`는 비-HTTPS 오리진이나 권한
- *  거부에서 없거나 던진다. 그때 "복사됨"을 띄우면 사용자가 빈 클립보드를
- *  붙여넣고 원인을 알 수 없다. */
+ *  Failures are not swallowed — `navigator.clipboard` is missing or throws on non-HTTPS origins or
+ *  permission denial. Showing "복사됨" then would leave the user pasting an empty clipboard
+ *  with no idea why. */
 function CopyLinkButton({ url, disabled }: { url: string; disabled: boolean }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 언마운트(호스팅 중지·리스트 갱신) 후 setState가 불리지 않게 정리한다.
+  // Clean up so setState is not called after unmount (hosting stopped, list refreshed).
   useEffect(() => () => {
     if (timer.current) clearTimeout(timer.current);
   }, []);
@@ -316,7 +316,7 @@ function CopyLinkButton({ url, disabled }: { url: string; disabled: boolean }) {
     try {
       await navigator.clipboard.writeText(url);
     } catch {
-      return;   // 성공한 척하지 않는다
+      return;   // do not pretend it succeeded
     }
     setCopied(true);
     if (timer.current) clearTimeout(timer.current);

@@ -1,16 +1,16 @@
-# backend/aipds/project_import.py — 번들 zip 하나를 살아 있는 프로젝트로.
+# backend/aipds/project_import.py — one bundle zip into a live project.
 #
-# 포맷은 project_bundle.py가 정하고, 이 모듈은 그 포맷을 **푸는** IO다.
-# 프로젝트를 등록하고 매니페스트를 쓰는 것은 이 모듈이 하지 않는다 — 라우트가 한다.
-# 그 순서(내용 먼저, project.json 마지막, 등록은 그 다음)가 이 기능의 실패 모드를
-# 정하므로 한 곳에서 읽혀야 하고, 그 자리는 HTTP 계약을 가진 쪽이다.
+# project_bundle.py defines the format, and this module is the IO that **unpacks** it.
+# Registering the project and writing the manifest are not done by this module — the route does them.
+# That order (content first, project.json last, registration after that) defines this feature's
+# failure modes, so it must be readable in one place, and that place is the side holding the HTTP contract.
 #
-# **되돌리기는 우리가 쓴 키만 지운다.** `projects/{pid}/` 를 통째로 지우는 편이
-# 짧지만(delete_project_data가 그렇게 한다) 그러면 "이 prefix는 우리 것"이라는
-# 전제에 기대게 된다. 그 전제는 라우트의 409 게이트와 실제 쓰기 사이에서 깨질 수
-# 있다: 그 사이에 누군가 같은 id로 프로젝트를 만들면(생성 라우트는 등록 여부만
-# 보고, 임포트는 아직 등록하지 않았다) 되돌리기가 남의 프로젝트를 지운다. 쓴 것을
-# 기억하면 그 레이스가 사라진다.
+# **Rollback deletes only the keys we wrote.** Deleting all of `projects/{pid}/` would be
+# shorter (delete_project_data does that), but it would rely on the premise "this prefix is
+# ours". That premise can break between the route's 409 gate and the actual writes: if someone
+# creates a project with the same id in between (the create route only checks registration, and
+# the import has not registered yet), the rollback deletes someone else's project. Remembering
+# what was written eliminates that race.
 from __future__ import annotations
 
 import asyncio
@@ -38,12 +38,12 @@ from aipds.survey.store import TOKEN_INDEX_PREFIX, new_token
 
 _log = logging.getLogger(__name__)
 
-#: 한 번에 풀어서 올리는 엔트리 수. project_export._FETCH_BATCH와 같은 이유로 같은
-#: 크기다 — 전부 모으면 메모리가 상한이 되고, 하나씩 올리면 S3 왕복이 벽시계가 된다.
+#: Number of entries unpacked and uploaded at once. Same size as project_export._FETCH_BATCH for the
+#: same reason — collecting all of them makes memory the limit, and uploading one by one makes S3 round trips the wall clock.
 _WRITE_BATCH = 32
 
-#: 경고 코드. `error_codes.py`와 같은 규율이다 — 백엔드는 UI 언어를 모르므로 문구를
-#: 만들지 않고 코드를 보낸다(프론트의 딕셔너리가 문구를 소유한다).
+#: Warning codes. Same discipline as `error_codes.py` — the backend does not know the UI language, so it
+#: sends codes instead of building messages (the frontend dictionary owns the messages).
 WARN_MODEL_UNAVAILABLE = "model_unavailable"
 WARN_SURVEY_TOKENS_REISSUED = "survey_tokens_reissued"  # nosec B105
 WARN_UNKNOWN_ENTRIES = "unknown_entries"
@@ -51,12 +51,12 @@ WARN_UNKNOWN_ENTRIES = "unknown_entries"
 
 @dataclass
 class ImportedData:
-    """임포트가 놓은 것과, 그것을 되돌리는 방법.
+    """What the import placed, and how to undo it.
 
-    `discard()`를 결과에 실어 보내는 이유: 임포트는 이 모듈이 끝나고도 한 걸음
-    남아 있다 — 라우트가 `project.json`을 쓰고 등록한다. 그 걸음이 실패했을 때
-    되돌릴 것은 **여기서 쓴 것**이므로, 되돌리는 방법도 여기가 알아야 한다.
-    라우트가 키 목록을 받아 스스로 지우게 하면 그 규칙이 두 곳으로 갈라진다.
+    Why `discard()` is carried in the result: the import still has one step left after this
+    module finishes — the route writes `project.json` and registers. When that step fails,
+    what must be undone is **what was written here**, so this place must also know how to undo it.
+    Having the route receive a key list and delete on its own would split that rule into two places.
     """
 
     counts: dict
@@ -76,10 +76,10 @@ class ImportedData:
 async def apply_bundle(bundle: Path, *, project_id: str, s3: S3StoreLike,
                        surveys_root: S3StoreLike,
                        proto_root: Path) -> ImportedData:
-    """번들의 **내용**을 대상 프로젝트 자리에 놓는다.
+    """Place the bundle's **contents** at the target project's location.
 
-    어떤 단계에서 실패하든 자기가 쓴 것을 되돌리고 예외를 다시 올린다 — 반쯤
-    들어온 프로젝트는 화면에서 정상과 구별되지 않기 때문이다.
+    Whatever step fails, it undoes what it wrote and re-raises the exception — because a
+    half-imported project is indistinguishable from a normal one on screen.
     """
     transcript_prefix = project_transcript_prefix(project_id)
     written_keys: list[str] = []
@@ -97,9 +97,9 @@ async def apply_bundle(bundle: Path, *, project_id: str, s3: S3StoreLike,
             await _write_s3(zf, plan.s3, s3=s3, written=written_keys)
             await _write_source(zf, plan.source, project_id=project_id,
                                 proto_root=proto_root, written=written_paths)
-            # 가져온 소스를 S3 세대로도 올린다 — 정본은 S3다(proto/store.py). 로컬에만
-            # 두면 가져온 프로젝트가 다음 인스턴스 교체에서 소스를 잃는다. 세대 키도
-            # `written_keys`에 넣어 실패하면 함께 되돌린다.
+            # Also upload the imported source as an S3 generation — S3 is the source of truth (proto/store.py).
+            # Keeping it only locally would make the imported project lose its source at the next instance
+            # replacement. Generation keys go into `written_keys` too, so they are rolled back together on failure.
             store = PrototypeStore(s3, project_id=project_id)
             for slug in sorted({slug for slug, _, _ in plan.source}):
                 await store.snapshot(slug, proto_root / project_id / slug, "import")
@@ -125,17 +125,17 @@ async def apply_bundle(bundle: Path, *, project_id: str, s3: S3StoreLike,
                         _s3=s3, _surveys_root=surveys_root, _stop_at=proto_root)
 
 
-# ---- 계획 ----
+# ---- Plan ----
 
 
 class _Plan:
-    """엔트리를 목적지별로 나눈 결과. 쓰기 전에 전부 검증하는 것이 요점이다 —
-    절반 쓴 뒤에 위험한 엔트리를 발견하면 되돌릴 것이 늘어난다."""
+    """Entries split by destination. The point is to validate everything before writing —
+    discovering a dangerous entry after writing half of them increases what must be undone."""
 
     def __init__(self) -> None:
-        #: (엔트리 이름, S3 키)
+        #: (entry name, S3 key)
         self.s3: list[tuple[str, str]] = []
-        #: (slug, 엔트리 이름, 빌드 트리 상대 경로)
+        #: (slug, entry name, path relative to the build tree)
         self.source: list[tuple[str, str, str]] = []
         self.unknown = 0
 
@@ -163,26 +163,26 @@ def _plan(zf: zipfile.ZipFile, *, transcript_prefix: str) -> _Plan:
         parsed = parse_proto_source_path(name)
         if parsed is not None:
             slug, rel = parsed
-            # slug는 로컬 디렉터리 이름이 된다. `safe_entry_name`이 경로 전체의
-            # 탈출을 막았지만 그것과 별개로 slug 하나가 `.` 이면
-            # `{root}/{pid}/{slug}` 가 `{root}/{pid}` 로 접히고, 그 뒤의 정리가
-            # 형제 프로토타입을 함께 지운다(pathsafe.reject_unsafe_segment 참고).
+            # The slug becomes a local directory name. `safe_entry_name` blocked escapes across
+            # the whole path, but separately from that, if a single slug is `.`,
+            # `{root}/{pid}/{slug}` collapses to `{root}/{pid}`, and the cleanup after it
+            # deletes sibling prototypes as well (see pathsafe.reject_unsafe_segment).
             try:
                 reject_unsafe_segment(slug)
             except ValueError as e:
                 raise BundleError(str(e)) from e
             plan.source.append((slug, name, rel))
             continue
-        # 우리가 모르는 자리의 엔트리. 매니페스트 게이트를 통과했으니 이 zip은
-        # 우리 것이고(kind + schema_version), 그래서 거절보다 건너뛰기가 맞다 —
-        # 사용자가 zip을 다시 압축하며 붙은 `__MACOSX/` 같은 것이 흔하다. 다만
-        # **조용히** 넘기지 않는다: 개수를 경고로 올려 화면이 말하게 한다.
+        # An entry in a place we do not know. It passed the manifest gate, so this zip is
+        # ours (kind + schema_version), and therefore skipping is better than rejecting —
+        # things like `__MACOSX/` added when a user re-compresses the zip are common. But we do
+        # not skip **silently**: the count is raised as a warning so the screen says so.
         _log.warning("skipping unrecognised bundle entry: %s", name)
         plan.unknown += 1
     return plan
 
 
-# ---- 쓰기 ----
+# ---- Write ----
 
 
 async def _write_s3(zf: zipfile.ZipFile, entries: list[tuple[str, str]], *,
@@ -199,17 +199,17 @@ async def _write_s3(zf: zipfile.ZipFile, entries: list[tuple[str, str]], *,
 async def _write_source(zf: zipfile.ZipFile, entries: list[tuple[str, str, str]],
                         *, project_id: str, proto_root: Path,
                         written: list[Path]) -> None:
-    """프로토타입 소스를 로컬 빌드 트리에 놓는다.
+    """Place prototype sources in the local build tree.
 
-    `{proto_root}/{pid}/{slug}/prototype/` 이 비어 있지 않으면 카드가 곧바로
-    `built`로 보이고(proto/session.has_build_output) 호스팅 버튼이 npm 수명주기를
-    돌린다. node_modules는 번들에 없으므로 그 install이 채운다.
+    If `{proto_root}/{pid}/{slug}/prototype/` is not empty, the card immediately shows as
+    `built` (proto/session.has_build_output) and the hosting button runs the npm lifecycle.
+    node_modules is not in the bundle, so that install fills it in.
     """
     def _write(batch: list[tuple[str, str, str]]) -> list[Path]:
         out: list[Path] = []
         for slug, name, rel in batch:
-            # 같은 pid의 잔재(실패한 임포트, 지운 프로젝트)에 에이전트가 남긴 링크가 있을 수
-            # 있다 — 따라가지 않는다(pathsafe).
+            # Leftovers of the same pid (a failed import, a deleted project) may contain links the
+            # agent left behind — do not follow them (pathsafe).
             write_beneath(proto_root, f"{project_id}/{slug}/{rel}", zf.read(name))
             out.append(proto_root / project_id / slug / rel)
         return out
@@ -219,7 +219,7 @@ async def _write_source(zf: zipfile.ZipFile, entries: list[tuple[str, str, str]]
         written.extend(await asyncio.to_thread(_write, batch))
 
 
-# ---- 설문 토큰 ----
+# ---- Survey tokens ----
 
 _LIVE_QUESTIONNAIRE = "/survey/questionnaire.json"
 _ARCHIVED_QUESTIONNAIRE = "/questionnaire.json"
@@ -228,19 +228,19 @@ _ARCHIVED_QUESTIONNAIRE = "/questionnaire.json"
 async def _reissue_survey_tokens(keys: list[str], *, project_id: str,
                                  s3: S3StoreLike, surveys_root: S3StoreLike,
                                  registered: list[str]) -> int:
-    """설문 정의의 `token`과 `project_id`를 다시 쓰고 인덱스를 등록한다.
+    """Rewrite the survey definition's `token` and `project_id`, and register the index.
 
-    **원본 토큰을 그대로 쓸 수 없다.** `surveys/by-token/{token}.json`은 버킷
-    **루트**에 있고 `{project_id, slug}`를 가리키는 일방향 인덱스다. 같은 버킷
-    안에서 임포트하면(프로젝트 복제가 그렇다) 원본과 같은 키를 덮어써서 **이미
-    배포된 원본 설문 링크가 새 프로젝트로 넘어간다** — 응답이 엉뚱한 프로젝트에
-    쌓이고, 그 사실은 어디에도 에러로 남지 않는다.
+    **The original token cannot be reused.** `surveys/by-token/{token}.json` sits at the bucket
+    **root** and is a one-way index pointing to `{project_id, slug}`. Importing within the same
+    bucket (project duplication does this) overwrites the same key as the original, so **the
+    already-distributed original survey link moves over to the new project** — responses pile up
+    in the wrong project, and that fact is never left anywhere as an error.
 
-    아카이브된 회차도 토큰 값을 새로 바꾸지만 **인덱스는 등록하지 않는다**. 지난
-    회차의 링크가 살아 있을 이유가 없고, 원본 토큰을 남기면 그것이 원본 인스턴스의
-    링크와 같은 값이 된다. `SurveyStore.purge`의 `_collect_tokens`는 등록되지 않은
-    토큰의 인덱스를 지우려 하지만 없는 키에 대한 `delete_prefix`는 0을 돌려주므로
-    무해하고, 그쪽이 요구하는 것(정의에서 토큰을 **읽을 수** 있다)은 지켜진다.
+    Archived rounds also get new token values but **their index is not registered**. There is no
+    reason for past rounds' links to stay alive, and keeping the original token would make it the
+    same value as the original instance's link. `SurveyStore.purge`'s `_collect_tokens` tries to
+    delete indexes of unregistered tokens, but `delete_prefix` on a missing key returns 0, so it
+    is harmless, and what that side requires (being able to **read** the token from the definition) is preserved.
     """
     reissued = 0
     for key in keys:
@@ -251,8 +251,8 @@ async def _reissue_survey_tokens(keys: list[str], *, project_id: str,
         try:
             data = json.loads(await s3.get(key))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            # 정의를 읽을 수 없으면 토큰을 바꿀 수도 없다. 그대로 두면 원본의
-            # 토큰이 살아남으므로 임포트 전체를 실패시킨다(호출부가 되돌린다).
+            # If the definition cannot be read, the token cannot be changed either. Leaving it as is
+            # would keep the original's token alive, so the whole import is failed (the caller rolls back).
             raise BundleError(f"unreadable questionnaire in bundle: {key}") from e
         if not isinstance(data, dict):
             raise BundleError(f"unreadable questionnaire in bundle: {key}")
@@ -263,10 +263,10 @@ async def _reissue_survey_tokens(keys: list[str], *, project_id: str,
         await s3.put(key, json.dumps(data, ensure_ascii=False))
         reissued += 1
         if live and isinstance(slug, str) and slug:
-            # 인덱스를 정의보다 **나중에** 쓴다. save_questionnaire는 반대 순서인데
-            # (인덱스 먼저) 그쪽은 "정의는 있는데 인덱스가 없는" 회수 불가 상태를
-            # 피하려는 것이다. 여기서는 실패 시 되돌리기가 둘 다 지우므로 그 위험이
-            # 없고, 대신 되돌릴 목록에 담긴 뒤에 쓰는 것이 중요하다.
+            # Write the index **after** the definition. save_questionnaire uses the opposite order
+            # (index first) to avoid the unrecoverable state of "a definition with no index". Here,
+            # rollback on failure deletes both, so that risk does not exist; instead, what matters
+            # is writing only after it is on the rollback list.
             await surveys_root.put(
                 f"{TOKEN_INDEX_PREFIX}{token}.json",
                 json.dumps({"project_id": project_id, "slug": slug}))
@@ -274,21 +274,21 @@ async def _reissue_survey_tokens(keys: list[str], *, project_id: str,
     return reissued
 
 
-# ---- 되돌리기 ----
+# ---- Rollback ----
 
 
 async def _discard(keys: list[str], paths: list[Path], tokens: list[str], *,
                    s3: S3StoreLike, surveys_root: S3StoreLike,
                    stop_at: Path) -> None:
-    """실패한 임포트가 쓴 것을 지운다. 베스트에포트 — 여기서 던지면 원래의
-    실패 원인이 가려진다."""
+    """Delete what a failed import wrote. Best effort — raising here would mask the
+    original cause of the failure."""
     for token in tokens:
         try:
             await surveys_root.delete_prefix(f"{TOKEN_INDEX_PREFIX}{token}.json")
         except Exception:
             _log.warning("could not roll back survey token index", exc_info=True)
-    # `delete_prefix`에 전체 키를 넘기는 것은 단일 키 삭제의 확립된 관례다
-    # (S3StoreLike에 단일 delete가 없다 — survey/store.py의 purge가 같은 모양이다).
+    # Passing a full key to `delete_prefix` is the established convention for single-key deletion
+    # (S3StoreLike has no single delete — survey/store.py's purge has the same shape).
     results = await asyncio.gather(*(s3.delete_prefix(key) for key in keys),
                                    return_exceptions=True)
     failed = sum(1 for r in results if isinstance(r, BaseException))
@@ -299,15 +299,15 @@ async def _discard(keys: list[str], paths: list[Path], tokens: list[str], *,
 
 
 def _discard_paths(paths: list[Path], *, stop_at: Path) -> None:
-    """쓴 파일을 지우고 그 때문에 빈 디렉터리가 된 것을 위로 걷어낸다.
+    """Delete the written files and sweep upward the directories that became empty because of it.
 
-    `{proto_root}/{pid}` 를 통째로 rmtree하지 않는 이유는 S3 쪽과 같다: 이 pid로
-    이전에 실패한 임포트나 삭제된 프로젝트의 잔재가 있을 수 있고, 그것까지
-    지우는 것은 이 함수가 약속한 범위 밖이다.
+    `{proto_root}/{pid}` is not rmtree'd wholesale for the same reason as on the S3 side: there
+    may be leftovers from an earlier failed import with this pid or a deleted project, and
+    deleting those too is outside the scope this function promised.
 
-    `stop_at`이 위로 걷는 경계다(프로토타입 루트). 없으면 이 루프는 루트가
-    비었을 때 그 부모까지 계속 올라간다 — 정리가 상위 디렉터리를 지우기 시작하는
-    것은 정리가 아니다.
+    `stop_at` is the boundary of the upward walk (the prototype root). Without it, this loop keeps
+    climbing to the parent when the root becomes empty — cleanup that starts deleting parent
+    directories is not cleanup.
     """
     for path in paths:
         try:
@@ -321,5 +321,5 @@ def _discard_paths(paths: list[Path], *, stop_at: Path) -> None:
             try:
                 current.rmdir()
             except OSError:
-                break  # 비어 있지 않거나 없다 — 어느 쪽이든 여기서 멈춘다
+                break  # not empty or missing — either way, stop here
             current = current.parent

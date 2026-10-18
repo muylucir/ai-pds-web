@@ -25,7 +25,7 @@ describe("useProjectMeta", () => {
   });
 
   it("shows the effort the project copied, not the catalog's current one", async () => {
-    // 프로젝트는 만들 때의 effort를 복사해 끝까지 쓴다 — 실제로 도는 것은 그 값이다.
+    // A project copies the effort at creation time and uses it to the end — that value is what actually runs.
     server.use(
       http.get(`${API_BASE_URL}/projects/p1`, () => HttpResponse.json({
         project_id: "p1", name: null, created_at: null,
@@ -38,8 +38,8 @@ describe("useProjectMeta", () => {
   });
 
   it("falls back to the raw model id when the catalog no longer has it", async () => {
-    // 값을 복사해 두는 설계의 결과가 화면에서도 정직하게 드러나야 한다:
-    // 관리자가 카탈로그에서 지운 모델로 도는 프로젝트가 있을 수 있다.
+    // The consequence of the copy-the-value design must also show honestly on screen:
+    // there can be projects running on a model the admin deleted from the catalog.
     server.use(
       http.get(`${API_BASE_URL}/projects/p1`, () => HttpResponse.json({
         project_id: "p1", name: null, created_at: null,
@@ -51,8 +51,8 @@ describe("useProjectMeta", () => {
   });
 
   it("is null when the project has no model", async () => {
-    // 서버의 env 기본값이 무엇인지 프론트는 알 수 없다 — 추측한 이름을
-    // 보여주는 것보다 아무것도 안 보여주는 게 낫다.
+    // The frontend cannot know what the server's env default is — showing nothing is better
+    // than showing a guessed name.
     server.use(http.get(`${API_BASE_URL}/projects/p1`, () => HttpResponse.json({
       project_id: "p1", name: null, created_at: null, model_id: null })));
     render(<Probe pid="p1" />);
@@ -67,46 +67,46 @@ describe("useProjectMeta", () => {
   });
 
   it("fetches nothing without a project id", () => {
-    // onUnhandledRequest: "error"이므로, 요청을 보내면 이 테스트가 실패한다.
+    // onUnhandledRequest: "error", so sending a request makes this test fail.
     render(<Probe />);
     expect(screen.getByTestId("label")).toHaveTextContent("(없음)");
   });
 
   it("프로젝트의 생성물 언어를 함께 돌려준다", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1`, () =>
-        HttpResponse.json({ project_id: "pilot1", name: null, created_at: null,
+      http.get(`${API_BASE_URL}/projects/ws-m`, () =>
+        HttpResponse.json({ project_id: "ws-m", name: null, created_at: null,
                             model_id: null, language: "en" })),
       http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
     );
-    const { result } = renderHook(() => useProjectMeta("pilot1"));
+    const { result } = renderHook(() => useProjectMeta("ws-m"));
     await waitFor(() => expect(result.current.language).toBe("en"));
   });
 
   it("언어를 모르는 응답(구 백엔드)에서는 null이다 — 배지를 그리지 않는다", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1`, () =>
-        HttpResponse.json({ project_id: "pilot1", name: null, created_at: null,
+      http.get(`${API_BASE_URL}/projects/ws-m`, () =>
+        HttpResponse.json({ project_id: "ws-m", name: null, created_at: null,
                             model_id: null })),
       http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
     );
-    const { result } = renderHook(() => useProjectMeta("pilot1"));
-    // 모델 조회가 끝나기를 기다린 뒤 언어가 여전히 null인지 본다.
+    const { result } = renderHook(() => useProjectMeta("ws-m"));
+    // Wait for the model lookup to finish, then check that the language is still null.
     await waitFor(() => expect(result.current.modelLabel).toBeNull());
     expect(result.current.language).toBeNull();
   });
 
   it("언어 자리에 임의 문자열이 오면 null이다 — 빈 배지를 그리지 않는다", async () => {
-    // isLocale로 좁히지 않으면 이 값이 그대로 AppHeader에 내려가고,
-    // LANGUAGE_LABEL[그 값]이 undefined가 되어 글자 없는 배지만 남는다.
+    // Without narrowing with isLocale, this value would go straight down to AppHeader,
+    // and LANGUAGE_LABEL[that value] would be undefined, leaving only a badge with no text.
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1`, () =>
-        HttpResponse.json({ project_id: "pilot1", name: null, created_at: null,
+      http.get(`${API_BASE_URL}/projects/ws-m`, () =>
+        HttpResponse.json({ project_id: "ws-m", name: null, created_at: null,
                             model_id: "m1", language: "klingon" })),
       http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
     );
-    const { result } = renderHook(() => useProjectMeta("pilot1"));
-    // 모델이 채워지는 것으로 조회가 끝난 시점을 잡는다.
+    const { result } = renderHook(() => useProjectMeta("ws-m"));
+    // The model being filled in marks the point when the lookup finished.
     await waitFor(() => expect(result.current.modelLabel).toBe("m1"));
     expect(result.current.language).toBeNull();
   });
@@ -119,12 +119,12 @@ describe("useProjectMeta", () => {
 
   it("열람 멤버면 readOnly다", async () => {
     server.use(
-      http.get(`${API_BASE_URL}/projects/pilot1`, () =>
-        HttpResponse.json({ project_id: "pilot1", name: null, created_at: null,
+      http.get(`${API_BASE_URL}/projects/ws-m`, () =>
+        HttpResponse.json({ project_id: "ws-m", name: null, created_at: null,
                             model_id: null, owner: "kim", access: "member" })),
       http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
     );
-    const { result } = renderHook(() => useProjectMeta("pilot1"));
+    const { result } = renderHook(() => useProjectMeta("ws-m"));
     await waitFor(() => expect(result.current.access).toBe("member"));
     expect(result.current.readOnly).toBe(true);
   });
@@ -132,12 +132,12 @@ describe("useProjectMeta", () => {
   it("소유자·관리자, 그리고 권한을 모르는 응답(구 백엔드)은 readOnly가 아니다", async () => {
     for (const access of ["owner", "admin", undefined]) {
       server.use(
-        http.get(`${API_BASE_URL}/projects/pilot1`, () =>
-          HttpResponse.json({ project_id: "pilot1", name: null, created_at: null,
+        http.get(`${API_BASE_URL}/projects/ws-m`, () =>
+          HttpResponse.json({ project_id: "ws-m", name: null, created_at: null,
                               model_id: "m1", access })),
         http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
       );
-      const { result, unmount } = renderHook(() => useProjectMeta("pilot1"));
+      const { result, unmount } = renderHook(() => useProjectMeta("ws-m"));
       await waitFor(() => expect(result.current.modelLabel).toBe("m1"));
       expect(result.current.readOnly).toBe(false);
       unmount();
