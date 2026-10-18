@@ -26,8 +26,8 @@ describe("AiMessage", () => {
   });
 
   it("shows a typing indicator while streaming with no text yet", () => {
-    // 정적 "AI가 작성 중…" 문구는 점 3개 bounce 인디케이터로 대체됐다
-    // (activity-indicator spec) — 접근성 라벨로 같은 의도를 검증한다.
+    // The static "AI가 작성 중…" (AI is writing…) text was replaced by a three-dot bounce indicator
+    // (activity-indicator spec) — verify the same intent through the accessibility label.
     render(<AiMessage item={{ ...base, streaming: true }} />);
     expect(screen.getByLabelText("AI가 작성 중")).toBeInTheDocument();
   });
@@ -49,8 +49,8 @@ describe("AiMessage", () => {
   });
 
   it("중단된 턴은 말풍선 아래에 그 사실을 남긴다", () => {
-    // trace의 한 줄로 넣지 않는다 — trace는 도구 실행 기록이고 중단은 턴의
-    // 종결 사유다. 접혀 있는 "추론 과정" 안에 두면 왜 말이 끊겼는지 보이지 않는다.
+    // Not added as a trace line — the trace is the record of tool runs, and an interruption is the turn's
+    // termination reason. Inside the collapsed "추론 과정" (reasoning process), you could not see why the message stopped.
     render(
       <AiMessage
         item={{ ...base, streaming: false, text: "분석하다가", interrupted: true }}
@@ -70,13 +70,13 @@ describe("AiMessage — 진행 상황은 여기가 아니다", () => {
     render(<AiMessage item={{ ...base, streaming: true }} />);
     const indicator = screen.getByLabelText("AI가 작성 중");
     expect(indicator).toBeInTheDocument();
-    // 점 3개 bounce 애니메이션
+    // three-dot bounce animation
     expect(indicator.querySelectorAll(".animate-bounce")).toHaveLength(3);
   });
 
   it("스트리밍 중에는 진행 표시도 진행 기록도 그리지 않는다", () => {
-    // 진행 상황은 입력창 위 고정 줄(LiveActivityBar)로 옮겼다. 말풍선 옆에서
-    // 함께 갱신되던 것이 텍스트 스트리밍과 겹쳐 산만했던 것이 이유다.
+    // Progress moved to the fixed line above the input box (LiveActivityBar). The reason: updating it
+    // next to the bubble overlapped with text streaming and was distracting.
     const { container } = render(
       <AiMessage
         item={{
@@ -116,11 +116,11 @@ describe("AiMessage — 진행 상황은 여기가 아니다", () => {
   });
 
   it("복원된 턴에 텍스트가 없으면 빈 말풍선을 그리지 않는다", () => {
-    // 중단된 턴(유휴 타임아웃, SSE 끊김)이 이 모양으로 복원된다: text=""이고
-    // trace만 있다. streaming이 false라 타이핑 점도 뜨지 않으므로 내용 없는
-    // 회색 상자만 남는데, 라이브에서 그 자리에 있던 것은 진행 표시였고 그것은
-    // 복원 대상이 아니다. 트레이스는 무엇까지 돌렸는지의 유일한 기록이므로
-    // 유지한다.
+    // An interrupted turn (idle timeout, SSE disconnect) is restored in this shape: text="" with
+    // only a trace. streaming is false, so the typing dots do not appear either, leaving an empty
+    // gray box; what occupied that spot live was the progress indicator, and that is not
+    // something to restore. The trace is the only record of how far the turn ran, so it is
+    // kept.
     render(
       <AiMessage
         item={{

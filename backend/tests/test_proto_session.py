@@ -166,11 +166,12 @@ async def test_start_writes_the_spec_into_the_build_directory(tmp_path):
     assert (session.build_dir() / SPEC_KEY).read_text(encoding="utf-8") == "# spec body"
 
 
-# ---- start(): 빌드 지시서(Path A.1) ----
+# ---- start(): build instructions (Path A.1) ----
 #
-# Path A.1의 Discovery는 명세 옆에 build-instructions.md를 남긴다 — 명세와
-# design-context 답변을 합친 빌더의 입력이다. 명세만 심던 시절에는 Step 2의 디자인
-# 방향과 기기 답변이 빌더에 닿지 않았고, 에이전트가 그 파일을 찾아도 cwd에 없었다.
+# Path A.1's Discovery leaves build-instructions.md next to the spec — the builder's
+# input that combines the spec with the design-context answers. Back when only the spec
+# was planted, Step 2's design direction and device answers never reached the builder,
+# and even when the agent went looking for that file it was not in cwd.
 
 SINGLE_SPEC_KEY = "aiplc-docs/discovery/prototype/prototype-spec.md"
 SINGLE_INSTRUCTIONS_KEY = "aiplc-docs/discovery/prototype/build-instructions.md"
@@ -201,8 +202,8 @@ async def test_start_plants_the_build_instructions_and_the_plan_names_them(tmp_p
 
 
 async def test_start_without_build_instructions_names_only_the_spec(tmp_path):
-    """Path B(와 Step 3 이전의 A.1)에는 지시서가 없다. 없는 파일을 가리키면
-    에이전트가 그것을 찾아 cwd 밖을 훑는다(`_missing_output_prompt`의 실측)."""
+    """Path B (and A.1 before Step 3) has no instructions. Pointing at a missing file
+    makes the agent go looking for it outside cwd (observed in `_missing_output_prompt`)."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     session = _session(s3, tmp_path, FakeBuilder())
@@ -213,8 +214,8 @@ async def test_start_without_build_instructions_names_only_the_spec(tmp_path):
 
 
 async def test_start_removes_a_build_instructions_copy_gone_from_s3(tmp_path):
-    """명세처럼 매 start마다 S3가 정본이다 — 지워진 지시서의 낡은 사본이 cwd에
-    남으면 프롬프트는 말하지 않는데 에이전트가 그것을 읽을 수 있다."""
+    """As with the spec, S3 is the source of truth on every start — if a stale copy of
+    deleted instructions stays in cwd, the prompt does not mention it but the agent can read it."""
     s3 = FakeS3Store()
     s3.blobs[SINGLE_SPEC_KEY] = "# spec"
     session = _single_session(s3, tmp_path)
@@ -230,8 +231,8 @@ async def test_start_removes_a_build_instructions_copy_gone_from_s3(tmp_path):
 
 # ---- start(): brand profile sync (design_profiles) ----
 #
-# 프로필 저장소는 세션이 spec을 읽는 프로젝트 스토어(s3)와는 별개의, 버킷
-# 루트에 있는 스토어다 -- 두 FakeS3Store를 섞으면 안 된다.
+# The profile store is a separate store at the bucket root, distinct from the
+# project store (s3) the session reads the spec from -- do not mix the two FakeS3Stores.
 
 async def test_start_plants_the_brand_profile(tmp_path):
     from aipds.design_profile import DesignProfileStore
@@ -257,16 +258,16 @@ async def test_start_without_a_profile_plants_nothing(tmp_path):
 
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
-    session = _session(s3, tmp_path, FakeBuilder())  # design_profiles 미지정
+    session = _session(s3, tmp_path, FakeBuilder())  # design_profiles not given
 
     await session.start()
 
     build_dir = session.build_dir()
-    # 짝이 되는 test_start_plants_the_brand_profile은 세 산출물(테마·
-    # DESIGN.md·CLAUDE.md 절)이 전부 생긴다고 단언한다. 여기서는 그 세
-    # 산출물이 전부 없어야 "아무것도 심지 않는다"가 증명된다 -- 테마만
-    # 확인하면 프로필 없음 경로가 나중에 DESIGN.md나 CLAUDE.md 절을 무조건
-    # 쓰게 바뀌어도 이 테스트가 못 잡는다.
+    # The counterpart test_start_plants_the_brand_profile asserts that all three
+    # artifacts (theme, DESIGN.md, CLAUDE.md section) are created. Here all three
+    # must be absent to prove "plants nothing" -- checking only the theme would
+    # miss a later change that makes the no-profile path unconditionally write
+    # DESIGN.md or the CLAUDE.md section.
     assert not (build_dir / THEME_FILENAME).exists()
     assert not (build_dir / DESIGN_FILENAME).exists()
     claude_md = build_dir / "CLAUDE.md"
@@ -294,10 +295,10 @@ async def test_start_refreshes_a_changed_profile(tmp_path):
 
 
 async def test_start_survives_a_broken_profile_store(tmp_path):
-    """세션 시작이 브랜드 반영 실패로 죽으면 안 된다. DesignProfileStore.load()가
-    스스로 모든 S3 예외를 None으로 강등하지만, 그 약속이 어떤 이유로든 깨지는
-    경우까지 이중으로 대비한다 -- 호스팅 라우트(start_host)의 같은 try/except와
-    짝이다."""
+    """Session start must not die from a brand-application failure. DesignProfileStore.load()
+    itself downgrades every S3 exception to None, but this guards a second time in case
+    that promise breaks for any reason -- it pairs with the same try/except in the
+    hosting route (start_host)."""
     class _BoomProfiles:
         async def load(self):
             raise RuntimeError("s3 unreachable")
@@ -306,7 +307,7 @@ async def test_start_survives_a_broken_profile_store(tmp_path):
     s3.blobs[SPEC_KEY] = "# spec"
     session = _session(s3, tmp_path, FakeBuilder(), design_profiles=_BoomProfiles())
 
-    await session.start()  # 예외를 올리면 이 줄에서 실패한다.
+    await session.start()  # If it raises, the test fails on this line.
 
     assert session.status == "ready"
 
@@ -371,7 +372,7 @@ async def test_send_answers_false_when_nothing_pending(tmp_path):
     assert builder.answer_calls == []
 
 
-# ---- 완료 선언: 상태 전이 + handoff 기록 ----
+# ---- Completion declaration: state transition + handoff record ----
 
 async def test_build_complete_sets_the_complete_status(tmp_path):
     s3 = FakeS3Store()
@@ -387,9 +388,9 @@ async def test_build_complete_sets_the_complete_status(tmp_path):
 
 
 async def test_the_done_after_a_completion_does_not_revert_to_ready(tmp_path):
-    """build_complete 다음에는 반드시 done이 온다(run()의 terminal held 규율).
-    done 분기가 status를 ready로 되돌리면 _DEAD_STATUSES 기구 전체가
-    무력해진다 — 호스팅이 다시 409가 되고 개선 세션을 열 수 없다."""
+    """done always follows build_complete (run()'s terminal held discipline).
+    If the done branch flipped status back to ready, the whole _DEAD_STATUSES
+    mechanism would be defeated — hosting would return 409 again and no improvement session could be opened."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
@@ -416,11 +417,11 @@ async def test_build_complete_writes_the_handoff(tmp_path):
     saved = json.loads(s3.blobs[HANDOFF_KEY])
     assert saved["summary"] == "할 일 앱을 만들었다"
     assert saved["remaining"] == "다크 모드"
-    assert saved["completed_at"]            # ISO 8601 타임스탬프
+    assert saved["completed_at"]            # ISO 8601 timestamp
 
 
 async def test_the_build_complete_event_still_reaches_the_consumer(tmp_path):
-    """관찰이 이벤트를 삼키면 프론트가 완료 카드를 그릴 수 없다."""
+    """If the observer swallows the event, the frontend cannot draw the completion card."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
@@ -434,8 +435,8 @@ async def test_the_build_complete_event_still_reaches_the_consumer(tmp_path):
 
 
 async def test_a_malformed_completion_payload_is_ignored(tmp_path):
-    """_interrupt_id_from과 같은 fail-soft 규율 — 깨진 payload는 예외가 아니라
-    무시로 강등되고, 유휴 타이머가 평소대로 정리한다."""
+    """Same fail-soft discipline as _interrupt_id_from — a broken payload is downgraded
+    to being ignored rather than raising, and the idle timer cleans up as usual."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
@@ -446,7 +447,7 @@ async def test_a_malformed_completion_payload_is_ignored(tmp_path):
                     AgentEvent(kind="done")])
     events = [ev async for ev in session.send_message("go")]
 
-    assert session.status == "ready"        # 완료로 처리되지 않는다
+    assert session.status == "ready"        # not treated as complete
     assert HANDOFF_KEY not in s3.blobs
     assert [e.kind for e in events] == ["build_complete", "done"]
 
@@ -467,11 +468,11 @@ async def test_a_completion_payload_without_a_summary_is_ignored(tmp_path):
 
 
 async def test_a_handoff_write_failure_does_not_fail_the_session(tmp_path):
-    """S3 실패가 완성된 빌드를 실패로 보이게 만들면 안 된다.
+    """An S3 failure must not make a finished build look failed.
 
-    _write_handoff의 예외를 삼키지 않으면 send_message의 except Exception이
-    잡아 status="failed" + 슬롯 release로 간다(session.py:191-200) — "handoff
-    실패에도 완료는 진행한다"는 결정과 정반대다.
+    If _write_handoff's exception were not swallowed, send_message's except Exception
+    would catch it and go to status="failed" + slot release (session.py:191-200) — the
+    exact opposite of the decision "completion proceeds even if handoff fails".
     """
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
@@ -492,7 +493,7 @@ async def test_a_handoff_write_failure_does_not_fail_the_session(tmp_path):
     events = [ev async for ev in session.send_message("go")]
 
     assert session.status == "complete"                  # NOT "failed"
-    assert sem.snapshot()["active_builds"] == 1          # 슬롯을 풀지 않았다
+    assert sem.snapshot()["active_builds"] == 1          # the slot was not released
     assert [e.kind for e in events] == ["build_complete", "done"]
 
 
@@ -686,18 +687,18 @@ async def test_idle_timer_resets_on_send_message(tmp_path):
     assert session.status == "closed"
 
 
-# ---- 유휴 타이머: "턴 진입 이후"가 아니라 "마지막 생존 신호 이후" ----
+# ---- Idle timer: "since the last sign of life", not "since entering the turn" ----
 
 async def test_a_long_turn_is_not_killed_while_events_still_flow(tmp_path):
-    """종전 타이머는 턴 진입에서만 재무장됐다 — 30분을 넘는 빌드 턴은 진행
-    중에 죽었다. 이벤트가 흐르는 동안은 살아 있어야 한다."""
+    """The old timer was re-armed only on turn entry — build turns longer than 30 minutes
+    died mid-progress. The session must stay alive while events are flowing."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
 
     class SlowBuilder(FakeBuilder):
         async def run(self, text: str):
             self.queries.append(text)
-            # 유휴 예산(0.1)보다 총 소요가 길지만, 각 간격은 그보다 짧다.
+            # Total duration is longer than the idle budget (0.1), but each gap is shorter.
             for _ in range(4):
                 await asyncio.sleep(0.06)
                 yield AgentEvent(kind="status", text="working")
@@ -709,35 +710,35 @@ async def test_a_long_turn_is_not_killed_while_events_still_flow(tmp_path):
 
     events = [ev async for ev in session.send_message("go")]
 
-    assert session.status == "ready"          # 타임아웃으로 닫히지 않았다
+    assert session.status == "ready"          # not closed by timeout
     assert [e.kind for e in events][-1] == "done"
 
 
 async def test_the_idle_budget_restarts_when_a_question_is_relayed(tmp_path):
-    """질문 카드를 띄운 채 사용자가 오래 고민하면 세션이 닫히고, 답변 제출이
-    409가 됐다. 카드가 뜬 순간부터 예산이 새로 시작해야 한다."""
+    """If the user deliberated for a long time with a question card open, the session closed and
+    the answer submission returned 409. The budget must restart from the moment the card appears."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
     session = _session(s3, tmp_path, builder, idle_seconds=0.15)
     await session.start()
 
-    await asyncio.sleep(0.1)      # 예산의 대부분을 소진한 뒤 질문이 온다
+    await asyncio.sleep(0.1)      # the question arrives after most of the budget is spent
     builder.script([AgentEvent(kind="questions", payload=json.dumps(
         {"interrupt_id": "iid-1", "questions": {"questions": []}}))])
     [ev async for ev in session.send_message("go")]
 
-    await asyncio.sleep(0.1)      # 재무장이 없었다면 여기서 이미 닫혔다
+    await asyncio.sleep(0.1)      # without re-arming it would already have closed here
 
     assert session.status == "waiting_input"
     assert builder.disconnect_calls == 0
 
 
-# ---- 완료 선언 뒤 세션이 스스로 닫힌다 ----
+# ---- After the completion declaration the session closes itself ----
 
 async def test_a_completed_session_closes_itself(tmp_path, monkeypatch):
-    """세션 종료는 백엔드가 소유한다 — 프론트가 DELETE /session을 부르는
-    방식과의 차이가 요점이다. 새로고침·탭 닫기에도 슬롯이 회수된다."""
+    """The backend owns session shutdown — the contrast with the frontend calling
+    DELETE /session is the point. The slot is reclaimed even on refresh or tab close."""
     import aipds.proto.session as session_module
     monkeypatch.setattr(session_module, "_COMPLETION_GRACE_SECONDS", 0.05)
 
@@ -745,8 +746,8 @@ async def test_a_completed_session_closes_itself(tmp_path, monkeypatch):
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
     sem = BuildSemaphore(max_concurrent=2)
-    assert sem.try_acquire() is True   # 이 세션의 슬롯
-    assert sem.try_acquire() is True   # 다른 팀의 슬롯 -- 살아남아야 한다
+    assert sem.try_acquire() is True   # this session's slot
+    assert sem.try_acquire() is True   # another team's slot -- must survive
     session = _session(s3, tmp_path, builder, semaphore=sem)
     await session.start()
 
@@ -757,20 +758,20 @@ async def test_a_completed_session_closes_itself(tmp_path, monkeypatch):
 
     assert session.status == "closed"
     assert builder.disconnect_calls == 1
-    assert sem.snapshot()["active_builds"] == 1   # 다른 팀 슬롯만 남는다
+    assert sem.snapshot()["active_builds"] == 1   # only the other team's slot remains
 
 
 async def test_the_done_after_a_completion_does_not_extend_the_grace(tmp_path, monkeypatch):
-    """지연 값이 호출자 인자였다면 done이 기본 30분으로 되돌려 세션이 닫히지
-    않는다. build_complete 다음에는 반드시 done이 오므로 이것은 가능성이
-    아니라 확정된 동작이다 — 지연을 상태에서 파생시켜 그 창을 없앤다."""
+    """If the delay were a caller argument, done would reset it to the default 30 minutes and
+    the session would not close. Since done always follows build_complete, this is not a
+    possibility but certain behavior — deriving the delay from state removes that window."""
     import aipds.proto.session as session_module
     monkeypatch.setattr(session_module, "_COMPLETION_GRACE_SECONDS", 0.05)
 
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
-    # 기본 유휴는 사실상 무한 -- 세션이 닫힌다면 그것은 유예 때문이다.
+    # The default idle is effectively infinite -- if the session closes, it is due to the grace period.
     session = _session(s3, tmp_path, builder, idle_seconds=3600)
     await session.start()
 
@@ -783,9 +784,9 @@ async def test_the_done_after_a_completion_does_not_extend_the_grace(tmp_path, m
 
 
 async def test_a_completed_session_releases_its_slot_exactly_once(tmp_path, monkeypatch):
-    """사용자의 DELETE /session과 유예 종료가 겹쳐도 release는 한 번이다.
-    BuildSemaphore.release()는 0에서 클램프할 뿐 과다 release를 감지하지
-    못하므로, 두 번 풀면 다른 세션의 슬롯을 공짜로 내준다."""
+    """Even if the user's DELETE /session and the grace-period close overlap, release happens once.
+    BuildSemaphore.release() only clamps at 0 and cannot detect over-release,
+    so releasing twice gives away another session's slot for free."""
     import aipds.proto.session as session_module
     monkeypatch.setattr(session_module, "_COMPLETION_GRACE_SECONDS", 0.05)
 
@@ -801,24 +802,24 @@ async def test_a_completed_session_releases_its_slot_exactly_once(tmp_path, monk
     builder.script([_complete_event(), AgentEvent(kind="done")])
     [ev async for ev in session.send_message("go")]
 
-    await session.close()          # 사용자가 먼저 닫는다
-    await asyncio.sleep(0.2)       # 그 다음 유예가 만료된다
+    await session.close()          # the user closes first
+    await asyncio.sleep(0.2)       # then the grace period expires
 
     assert sem.snapshot()["active_builds"] == 1
     assert builder.disconnect_calls == 1
 
 
 async def test_send_message_after_completion_is_refused_without_raising(tmp_path):
-    """routes/prototypes.py의 _DEAD_STATUSES가 오늘은 이 호출 전에 404로
-    막아주지만, 세션 객체 스스로도 완료 후 턴을 거부해야 한다 -- 라우트를
-    우회하는 호출자(테스트, 미래의 다른 진입점)가 있으면 turn relay가 그대로
-    돌아 status를 "building"으로 되돌리고 완료 상태를 짓뭉갤 수 있다.
+    """Today _DEAD_STATUSES in routes/prototypes.py blocks this call with a 404
+    before it arrives, but the session object itself must also reject turns after
+    completion -- if a caller bypasses the route (tests, some future entry point),
+    the turn relay would run as is, flip status back to "building", and trample the completed state.
 
-    raise가 아니라 error 이벤트를 yield해야 한다: send_message 끝의
-    `except Exception`은 mid-turn 실패를 세션 "failed"로 만들고 빌드 슬롯을
-    풀어준다(정상적인 완료를 실패로 재분류하는 것과 같다). 완료된 세션은
-    할 일을 다 마친 정상 종료이므로, 이 가드는 raise가 아니라 평범한 오류
-    턴처럼 error를 돌려주고 상태를 그대로 둬야 한다."""
+    It must yield an error event rather than raise: the `except Exception` at the end
+    of send_message turns a mid-turn failure into a "failed" session and releases the
+    build slot (equivalent to reclassifying a normal completion as a failure). A completed
+    session is a normal end that has finished its work, so this guard must return an error
+    like an ordinary error turn, not raise, and leave the state untouched."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
@@ -835,9 +836,9 @@ async def test_send_message_after_completion_is_refused_without_raising(tmp_path
     events = [ev async for ev in session.send_message("한 번 더 해줘")]
 
     assert [e.kind for e in events] == ["error"]
-    assert session.status == "complete"                    # 되돌아가지 않는다
-    assert len(builder.queries) == run_calls_before         # run()이 다시 불리지 않았다
-    assert sem.snapshot()["active_builds"] == 1             # 슬롯을 풀지 않았다
+    assert session.status == "complete"                    # does not revert
+    assert len(builder.queries) == run_calls_before         # run() was not called again
+    assert sem.snapshot()["active_builds"] == 1             # the slot was not released
 
 
 # ---- first_prompt(): directives, now without the /workspace path ----
@@ -847,11 +848,11 @@ def test_first_prompt_covers_the_build_directives(tmp_path):
 
     prompt = session.first_prompt()
 
-    # 이 프롬프트가 소유하는 것은 세션의 흐름과 이 빌드의 런타임 값뿐이다.
-    # 공통 기술 계약(산출물 위치·README·Bedrock 자격증명·모델 ID·basePath·
-    # 샘플링 파라미터)은 `proto-config/CLAUDE.md`로 옮겼다 —
-    # test_proto_prompts.test_the_plan_prompt_does_not_restate_the_shared_contract와
-    # test_build_agent_contract가 그 분담을 양쪽에서 고정한다.
+    # What this prompt owns is only the session flow and this build's runtime values.
+    # The shared technical contract (artifact location, README, Bedrock credentials,
+    # model ID, basePath, sampling parameters) moved to `proto-config/CLAUDE.md` —
+    # test_proto_prompts.test_the_plan_prompt_does_not_restate_the_shared_contract and
+    # test_build_agent_contract pin that division from both sides.
     assert SPEC_KEY in prompt
     assert "AskUserQuestion" in prompt
     assert f"/api/proto/{PROJECT_ID}/{SLUG}/" in prompt
@@ -904,10 +905,10 @@ async def _started(tmp_path, *, saved_session_id=None):
 
 
 def _build_output(session) -> None:
-    """`prototype/` 아래에 산출물이 있는 상태를 만든다 — 완료된 빌드의 모양.
+    """Create a state where artifacts exist under `prototype/` — the shape of a completed build.
 
-    `start()`는 스펙 .md만 심으므로 이것 없이는 빌드 트리가 비어 있고,
-    재개·개선 프롬프트가 "다시 만들어라"로 갈린다(has_build_output).
+    `start()` plants only the spec .md, so without this the build tree is empty, and
+    the resume/improvement prompts split off to "rebuild it" (has_build_output).
     """
     proto = session.build_dir() / "prototype"
     proto.mkdir(parents=True, exist_ok=True)
@@ -936,8 +937,8 @@ async def test_a_resumed_session_does_not_start_building_on_its_own(tmp_path):
     """The complaint that started this: every resume just started building."""
     session = await _started(tmp_path,
                              saved_session_id="99999999-8888-7777-6666-555555555555")
-    # 산출물이 남아 있는 평범한 재개. 없으면 "다시 만들어라" 분기로 가는데,
-    # 그쪽은 빌드 지시를 담는 것이 목적이라 이 단정의 대상이 아니다.
+    # An ordinary resume with artifacts still present. Without them it goes to the "rebuild it"
+    # branch, whose purpose is to carry build instructions, so it is not the subject of this assertion.
     _build_output(session)
     prompt = session.first_prompt()
     # No bare build order anywhere in the resume prompt.
@@ -945,35 +946,35 @@ async def test_a_resumed_session_does_not_start_building_on_its_own(tmp_path):
     assert "빌드를 시작해줘" not in prompt
 
 
-# ---- 산출물이 사라진 뒤의 재개: 찾지 말고 다시 만든다 ----
+# ---- Resume after the artifacts are gone: rebuild, do not search ----
 
 async def test_resume_without_local_output_says_rebuild_not_search(tmp_path):
-    """S3 세션은 살아 있는데 로컬 `prototype/`이 없는 상태 — 인스턴스 교체나
-    리셋 뒤에 실제로 일어난다.
+    """The S3 session is alive but the local `prototype/` is missing — this really
+    happens after an instance replacement or a reset.
 
-    에이전트의 맥락(트랜스크립트)에는 자기가 만든 코드가 있다고 남아 있으므로,
-    상태를 알려주지 않으면 없는 코드를 찾아 파일시스템을 훑는다. 실측: 리셋된
-    프로토타입에서 `/opt/aipds/protos/...`부터 `/opt/aipds/frontend`,
-    다른 프로토타입 디렉토리까지 뒤지며 19초 이상을 태웠다. 그 탐색은 절대
-    성공할 수 없다 — 트리가 삭제됐기 때문이다. 다시 만들라고 말해야 한다.
+    The agent's context (transcript) still says the code it wrote exists, so unless
+    it is told the state, it scans the filesystem for code that is not there. Observed:
+    on a reset prototype it searched from `/opt/aipds/protos/...` to `/opt/aipds/frontend`
+    and even other prototype directories, burning more than 19 seconds. That search can
+    never succeed — the tree was deleted. It has to be told to rebuild.
     """
     session = await _started(tmp_path,
                              saved_session_id="99999999-8888-7777-6666-555555555555")
-    assert session._test_resume_calls == [True]      # sanity: resume 경로다
+    assert session._test_resume_calls == [True]      # sanity: this is the resume path
 
     prompt = session.first_prompt()
 
-    # 산출물이 없다는 사실을 프롬프트가 말해야 한다.
+    # The prompt must state that the artifacts are missing.
     assert "prototype/" in prompt
-    # 그리고 찾는 게 아니라 다시 만드는 것이 지시여야 한다.
+    # And the instruction must be to rebuild, not to search.
     assert "처음부터" in prompt or "다시 만들" in prompt
-    # 찾아보라고 시키면 안 된다 — 그게 이 버그의 증상이었다.
+    # It must not tell the agent to look around — that was the symptom of this bug.
     assert "찾아" not in prompt
 
 
 async def test_resume_with_local_output_keeps_the_continue_prompt(tmp_path):
-    """산출물이 살아 있는 평범한 재개는 기존 문구 그대로여야 한다 — 다시
-    만들라는 지시가 여기로 새면 완성된 빌드를 처음부터 되돌린다."""
+    """An ordinary resume with live artifacts must keep the existing wording — if the
+    rebuild instruction leaks here, it throws a finished build back to scratch."""
     session = await _started(tmp_path,
                              saved_session_id="99999999-8888-7777-6666-555555555555")
     _build_output(session)
@@ -985,8 +986,8 @@ async def test_resume_with_local_output_keeps_the_continue_prompt(tmp_path):
 
 
 async def test_handoff_without_local_output_says_rebuild_too(tmp_path):
-    """handoff 분기도 같은 구멍이 있다: "이미 빌드가 완료됐다"고 단정하고
-    `prototype/`을 살펴보라고 시키는데, 그 디렉토리가 없을 수 있다."""
+    """The handoff branch has the same hole: it asserts "the build is already complete"
+    and tells the agent to look at `prototype/`, but that directory may not exist."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -999,12 +1000,12 @@ async def test_handoff_without_local_output_says_rebuild_too(tmp_path):
     prompt = session.first_prompt()
 
     assert "처음부터" in prompt or "다시 만들" in prompt
-    # 없는 것을 살펴보라고 시키면 안 된다.
+    # It must not tell the agent to look at something that does not exist.
     assert "살펴보고 현재 상태를 파악" not in prompt
 
 
 async def test_handoff_with_local_output_keeps_the_improve_prompt(tmp_path):
-    """산출물이 있는 개선 세션은 요약을 싣고 현재 상태를 살펴보게 한다."""
+    """An improvement session with artifacts carries the summary and has the agent look at the current state."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -1037,13 +1038,13 @@ def test_first_prompt_before_start_assumes_a_fresh_build(tmp_path):
 
 
 async def test_the_plan_prompt_asks_for_an_explicit_completion_declaration(tmp_path):
-    """완료 선언은 도구 호출이지만, 그것을 부르라고 말하는 곳은 프롬프트뿐이다."""
+    """The completion declaration is a tool call, but the prompt is the only place that tells the agent to call it."""
     session = await _started(tmp_path)
     prompt = session.first_prompt()
     assert "build_complete" in prompt
 
 
-# ---- 완료 표식: 개선 세션은 지금 트리를 "지난 완료"로 삼는다 ----
+# ---- Completion marker: an improvement session treats the current tree as "the last completion" ----
 
 def _seed_built_tree(tmp_path) -> Path:
     build_dir = tmp_path / "protos" / PROJECT_ID / SLUG
@@ -1053,8 +1054,8 @@ def _seed_built_tree(tmp_path) -> Path:
 
 
 async def test_a_handoff_start_marks_the_current_tree_as_the_last_completion(tmp_path):
-    """표식 이전에 완료된 프로토타입도 첫 개선 세션부터 무변경 거부를 받는다
-    (proto/tools.py). handoff가 있으면 지금 트리가 곧 마지막 완료의 트리다."""
+    """Prototypes completed before the marker existed also get the no-change rejection from the first
+    improvement session (proto/tools.py). If a handoff exists, the current tree is the last completion's tree."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -1068,8 +1069,8 @@ async def test_a_handoff_start_marks_the_current_tree_as_the_last_completion(tmp
 
 
 async def test_a_resumed_session_keeps_its_unfinished_work_completable(tmp_path):
-    """완료 없이 죽은 세션은 이미 써 둔 파일을 완료로 이어 가야 한다 — 지금 트리를
-    기준으로 삼으면 그 완료가 무변경으로 거부된다."""
+    """A session that died without completing must carry the files it already wrote into the
+    completion — using the current tree as the baseline would reject that completion as no-change."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -1081,11 +1082,11 @@ async def test_a_resumed_session_keeps_its_unfinished_work_completable(tmp_path)
     assert completed_digest(build_dir) is None
 
 
-# ---- 개선 세션: handoff가 있으면 새 session_id + 요약 주입 ----
+# ---- Improvement session: with a handoff, a new session_id + summary injection ----
 
 async def test_a_handoff_starts_a_fresh_session_id(tmp_path):
-    """개선 작업이 전체 트랜스크립트를 지고 가지 않게 한다. 전액 resume은
-    버튼 색 하나 바꾸는 요청에도 빌드 전체 맥락을 싣는다."""
+    """Keeps improvement work from carrying the full transcript. A full resume loads
+    the entire build context even for a request to change one button color."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     old_id = "99999999-8888-7777-6666-555555555555"
@@ -1096,16 +1097,16 @@ async def test_a_handoff_starts_a_fresh_session_id(tmp_path):
     session = _session(s3, tmp_path, FakeBuilder())
     await session.start()
 
-    assert session._test_resume_calls == [False]      # resume이 아니다
+    assert session._test_resume_calls == [False]      # not a resume
     saved = json.loads(s3.blobs[SESSION_KEY])["session_id"]
-    assert saved != old_id                            # 새 id로 갈아탔다
+    assert saved != old_id                            # switched to a new id
 
 
 async def test_a_handoff_survives_start_and_is_deleted_once_the_first_turn_runs(tmp_path):
-    """한 번 쓴 handoff가 남으면 다음 시작도 개선 프롬프트를 받아, 세션 B의
-    대화를 이어받지 못한다. 그러나 start()에서 지우면 안 된다 -- 턴이 돌기 전에 세션이
-    닫히면 저장된 새 id는 트랜스크립트가 없고 handoff도 없어, 다음 시작이 없는 대화를
-    --resume한다(실측: "No conversation found", 영구)."""
+    """If a handoff that was used once remains, the next start also gets the improvement prompt and
+    cannot continue session B's conversation. But it must not be deleted in start() -- if the session
+    closes before a turn runs, the saved new id has no transcript and no handoff, so the next start
+    would --resume a nonexistent conversation (observed: "No conversation found", permanently)."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -1115,7 +1116,7 @@ async def test_a_handoff_survives_start_and_is_deleted_once_the_first_turn_runs(
 
     session = _session(s3, tmp_path, builder)
     await session.start()
-    assert HANDOFF_KEY in s3.blobs           # 아직 턴이 돌지 않았다
+    assert HANDOFF_KEY in s3.blobs           # no turn has run yet
 
     builder.script([AgentEvent(kind="message", payload="hi"),
                     AgentEvent(kind="done")])
@@ -1125,8 +1126,8 @@ async def test_a_handoff_survives_start_and_is_deleted_once_the_first_turn_runs(
 
 
 async def test_a_session_closed_before_its_first_turn_leaves_the_next_start_a_handoff(tmp_path):
-    """위 실패의 재현: start() -> (턴 없이) close() -> start(). 두 번째 시작이 resume이
-    아니라 다시 handoff여야 한다."""
+    """Reproduction of the failure above: start() -> close() (with no turn) -> start(). The second start
+    must be a handoff again, not a resume."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -1145,7 +1146,7 @@ async def test_a_session_closed_before_its_first_turn_leaves_the_next_start_a_ha
 
 
 async def test_an_error_as_the_first_event_does_not_consume_the_handoff(tmp_path):
-    """연결조차 못 한 턴은 새 id의 트랜스크립트를 만들지 못했다."""
+    """A turn that never even connected did not create a transcript for the new id."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -1171,27 +1172,27 @@ async def test_the_handoff_prompt_carries_the_summary(tmp_path):
 
     session = _session(s3, tmp_path, FakeBuilder())
     await session.start()
-    # 개선할 산출물이 실제로 있는 상태 — 없으면 요약이 아니라 "다시 만들어라"가
-    # 나가는 것이 맞다(test_handoff_without_local_output_says_rebuild_too).
+    # A state where there really are artifacts to improve — without them, "rebuild it" rather than
+    # the summary is the correct output (test_handoff_without_local_output_says_rebuild_too).
     _build_output(session)
     prompt = session.first_prompt()
 
     assert "할 일 앱을 만들었다" in prompt
     assert "다크 모드가 남았다" in prompt
-    # 처음부터 계획하라는 지시가 아니다.
+    # Not an instruction to plan from scratch.
     assert "이번 턴에서는 계획만 세우고" not in prompt
-    # 마음대로 시작하지 말고 물어봐야 한다.
+    # It must ask rather than start on its own.
     assert "AskUserQuestion" in prompt
 
 
 async def test_a_session_that_died_without_declaring_completion_still_resumes(tmp_path):
-    """완료 선언 없이 죽은 세션(유휴 타임아웃, 백엔드 재시작)은 여전히 진짜
-    resume이 맞다. 두 경로는 다른 사건을 표현한다."""
+    """A session that died without a completion declaration (idle timeout, backend restart) is still
+    correctly a real resume. The two paths represent different events."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
         {"session_id": "99999999-8888-7777-6666-555555555555"})
-    # handoff 없음
+    # no handoff
 
     session = _session(s3, tmp_path, FakeBuilder())
     await session.start()
@@ -1201,8 +1202,8 @@ async def test_a_session_that_died_without_declaring_completion_still_resumes(tm
 
 
 async def test_a_malformed_handoff_falls_back_to_resume(tmp_path):
-    """깨진 handoff가 개선 경로를 막아서는 안 된다 — 전액 resume은 무겁지만
-    정확한 degradation이다."""
+    """A broken handoff must not block the improvement path — a full resume is heavy but
+    an accurate degradation."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -1216,8 +1217,8 @@ async def test_a_malformed_handoff_falls_back_to_resume(tmp_path):
 
 
 async def test_a_handoff_without_a_saved_session_id_still_plans(tmp_path):
-    """handoff만 있고 session.json이 없는 조합(초기화 중 부분 실패 등)은
-    fresh로 떨어진다 — 이어갈 세션이 애초에 없다."""
+    """A combination of a handoff with no session.json (e.g. a partial failure during initialization)
+    falls back to fresh — there was never a session to continue."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[HANDOFF_KEY] = json.dumps({"summary": "뭔가", "remaining": ""})
@@ -1291,10 +1292,10 @@ async def test_purge_session_state_is_idempotent():
 
 
 def test_first_prompt_is_english_for_an_english_project(tmp_path):
-    """영어 프로젝트의 개시 턴이 영어여야 한다.
+    """An English project's opening turn must be in English.
 
-    브레이크("계획만 세우고 빌드하지 마")가 두 언어 모두에 있어야 한다 —
-    영어 판에서 그 지시가 빠지면 승인 없이 빌드가 시작된다.
+    The brake ("only make a plan, do not build") must be present in both languages —
+    if the English version drops that instruction, the build starts without approval.
     """
     session = PrototypeSession(
         project_id=PROJECT_ID, slug=SLUG, s3=FakeS3Store(),
@@ -1310,7 +1311,7 @@ def test_first_prompt_is_english_for_an_english_project(tmp_path):
 
 
 def test_first_prompt_defaults_to_korean(tmp_path):
-    # 언어를 안 주는 호출부(구 코드, 테스트)가 기존 동작을 유지한다.
+    # Callers that pass no language (old code, tests) keep the existing behavior.
     session = PrototypeSession(
         project_id=PROJECT_ID, slug=SLUG, s3=FakeS3Store(),
         build_root=tmp_path / "protos",
@@ -1320,16 +1321,17 @@ def test_first_prompt_defaults_to_korean(tmp_path):
     assert "빌드는 시작하지 마" in session.first_prompt()
 
 
-# ---- 개시 턴에 사용자 요청을 실어 보낸다 ----
+# ---- Send the user's request along with the opening turn ----
 #
-# "수정하기"를 누른 사람은 이미 무엇을 고칠지 알고 있는데, 개시 프롬프트가 되묻고
-# 그 질문이 떠 있는 동안 입력창이 비활성이라 자기 요청을 타이핑할 수조차 없었다
-# (근거는 proto/prompts.handoff_prompt). 그래서 **세션의 첫 메시지는 곧 개시 턴**
-# 이고, 그 메시지가 사용자 요청이면 개시 프롬프트에 실려 간다.
+# Someone who pressed "수정하기" (Edit) already knows what they want to fix, but the opening
+# prompt asked them back, and while that question was up the input box was disabled, so they
+# could not even type their own request (rationale in proto/prompts.handoff_prompt). So **the
+# session's first message is the opening turn**, and if that message is a user request, it is
+# carried in the opening prompt.
 #
-# 판정 기준을 UI 플래그가 아니라 `opened`로 두는 것이 요점이다: "개시 턴이 아직
-# 안 돌았다"는 것은 세션이 아는 사실이고, 프론트가 추측하면 새로고침·경합·이미
-# 열린 세션에서 어긋난다.
+# The point is to base the decision on `opened`, not on a UI flag: "the opening turn has not run
+# yet" is a fact the session knows, and if the frontend guesses, it goes wrong on refresh, races,
+# and already-open sessions.
 
 async def test_a_fresh_session_has_not_opened_yet(tmp_path):
     session = await _started(tmp_path)
@@ -1347,8 +1349,8 @@ async def test_the_first_message_marks_the_session_opened(tmp_path):
 
 
 async def test_a_handoff_session_carries_the_users_request_into_its_opening_turn(tmp_path):
-    """개선 세션은 **새 session_id**로 시작하므로 트랜스크립트가 없다. 요청만
-    보내면 에이전트가 이전 빌드가 무엇을 남겼는지 모르는 채로 시작한다."""
+    """An improvement session starts with a **new session_id**, so there is no transcript. Sending only
+    the request would start the agent without knowing what the previous build left behind."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -1357,21 +1359,21 @@ async def test_a_handoff_session_carries_the_users_request_into_its_opening_turn
         {"summary": "투두 앱을 만들었다", "remaining": "정렬"}, ensure_ascii=False)
     session = _session(s3, tmp_path, FakeBuilder())
     await session.start()
-    _build_output(session)   # 산출물이 없으면 "다시 만들어라" 분기다(아래 테스트)
+    _build_output(session)   # without artifacts it is the "rebuild it" branch (test below)
 
     prompt = session.first_prompt(request="장바구니 버튼을 오른쪽 위로")
 
     assert "장바구니 버튼을 오른쪽 위로" in prompt
-    assert "투두 앱을 만들었다" in prompt      # 새 세션이 이것 말고는 맥락이 없다
-    assert "AskUserQuestion" not in prompt     # 되묻지 않는다
+    assert "투두 앱을 만들었다" in prompt      # the new session has no other context
+    assert "AskUserQuestion" not in prompt     # does not ask back
 
 
 async def test_a_request_survives_the_output_is_gone_branch(tmp_path):
-    """산출물이 사라졌으면 개선이 아니라 재빌드가 맞고(`_missing_output_prompt`),
-    그 분기는 되묻기를 유지한다 — 없는 것을 고칠 수는 없다.
+    """If the artifacts are gone, a rebuild rather than an improvement is correct (`_missing_output_prompt`),
+    and that branch keeps asking back — you cannot fix what does not exist.
 
-    그래도 사용자가 타이핑한 말은 실려야 한다. 조용히 버리면 그 요청은 어디에도
-    남지 않고, 사용자는 자기가 말한 것이 무시된 것을 알 방법이 없다."""
+    Even so, what the user typed must be carried along. Dropping it silently leaves that request
+    nowhere, and the user has no way of knowing that what they said was ignored."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -1380,17 +1382,17 @@ async def test_a_request_survives_the_output_is_gone_branch(tmp_path):
         {"summary": "투두 앱", "remaining": "정렬"}, ensure_ascii=False)
     session = _session(s3, tmp_path, FakeBuilder())
     await session.start()
-    # 산출물을 만들지 않는다.
+    # Does not create artifacts.
 
     prompt = session.first_prompt(request="장바구니 버튼을 오른쪽 위로")
 
     assert "장바구니 버튼을 오른쪽 위로" in prompt
-    assert "찾지 마" in prompt   # 재빌드 분기가 그대로 살아 있다
+    assert "찾지 마" in prompt   # the rebuild branch remains intact
 
 
 async def test_no_request_keeps_the_asking_behaviour(tmp_path):
-    """자동 개시(`__first__`)에는 사용자가 아무 말도 하지 않았다 — 그때 묻는 것은
-    맞는 동작이고, 이 변경이 그것을 없애서는 안 된다."""
+    """On auto-open (`__first__`) the user has said nothing — asking at that point is
+    correct behavior, and this change must not remove it."""
     session = await _started(tmp_path,
                              saved_session_id="99999999-8888-7777-6666-555555555555")
     _build_output(session)
@@ -1408,11 +1410,11 @@ async def test_a_resumed_session_carries_the_request_too(tmp_path):
     assert "AskUserQuestion" not in prompt
 
 
-# ---- 빌드 턴은 세션의 서버 작업이다 (aipds/turn_job.py) ----
+# ---- A build turn is a server job of the session (aipds/turn_job.py) ----
 
 class GatedBuilder(FakeBuilder):
-    """질문을 낸 뒤 답이 올 때까지 멈추고, 답을 받으면 이어서 끝나는 빌더 —
-    실물처럼 **한 턴이 질문을 넘어 이어진다**(proto/builder.py)."""
+    """A builder that stops after asking a question until the answer arrives, then continues to the end once
+    answered — like the real thing, **one turn continues past the question** (proto/builder.py)."""
 
     def __init__(self):
         super().__init__()
@@ -1433,7 +1435,7 @@ class GatedBuilder(FakeBuilder):
 
 
 async def test_an_answer_is_recorded_in_the_turn_between_the_question_and_the_reply(tmp_path):
-    """다시 붙은 화면이 질문 카드 다음에 답 말풍선을 되살리고 카드를 닫는 근거다."""
+    """This is why a reattached screen restores the answer bubble after the question card and closes the card."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = GatedBuilder()
@@ -1451,9 +1453,9 @@ async def test_an_answer_is_recorded_in_the_turn_between_the_question_and_the_re
 
 
 async def test_a_turn_nobody_watches_still_reaches_completion(tmp_path):
-    """보던 화면이 떠나도 턴은 끝까지 돌아 세션이 완료를 안다 — 소비자가 곧 실행
-    주체이던 동안은 새로고침하면 build_complete를 아무도 읽지 않아 세션이 "building"에
-    멈춰 있었다."""
+    """Even if the watching screen leaves, the turn runs to the end and the session knows it completed — while the
+    consumer was itself the executor, a refresh meant nobody read build_complete and the session stayed stuck
+    at "building"."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
@@ -1468,8 +1470,8 @@ async def test_a_turn_nobody_watches_still_reaches_completion(tmp_path):
 
 
 async def test_close_lets_a_finishing_turn_end_on_its_own(tmp_path):
-    """완료 유예로 닫힐 때 턴에 남은 것은 `done`뿐이다 — 곧바로 취소하면 완료 선언
-    뒤에 "중단됨"이 붙는다. 빌더가 내려가면 턴은 스스로 끝나므로 잠깐 기다린다."""
+    """When closing on the completion grace period, all that is left in the turn is `done` — cancelling immediately
+    appends "중단됨" (Stopped) after the completion declaration. Once the builder goes down the turn ends by itself, so wait briefly."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
@@ -1477,17 +1479,17 @@ async def test_close_lets_a_finishing_turn_end_on_its_own(tmp_path):
     session = _session(s3, tmp_path, builder)
     await session.start()
     job = session.turns.start("message", lambda: session.send_message("go"))
-    await asyncio.sleep(0)          # 턴이 돌기 시작한 뒤에 닫힌다
+    await asyncio.sleep(0)          # closes after the turn has started running
     await session.close()
     assert job.state == "done"
     assert all(e.text != "turn interrupted" for _, e in job.log.events_after(0))
 
 
-# ---- 수정 이력: 명세 이후의 변경이 세션을 건너 누적된다 ----
+# ---- Change history: changes after the spec accumulate across sessions ----
 
 async def test_build_complete_appends_to_the_change_history(tmp_path):
-    """handoff.json은 소비되면 사라지는 직전 한 번분이다. 이력은 지워지지 않고
-    쌓여야 N번째 개선 세션이 N-1번째의 변경을 안다."""
+    """handoff.json is a one-shot record of only the previous session and disappears once consumed. The history
+    must accumulate without being erased so the Nth improvement session knows the changes of the (N-1)th."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
@@ -1499,7 +1501,7 @@ async def test_build_complete_appends_to_the_change_history(tmp_path):
     [ev async for ev in session.send_message("go")]
 
     history = s3.blobs[HISTORY_KEY]
-    assert history.startswith("# ")                 # 머리말이 한 번
+    assert history.startswith("# ")                 # header appears once
     assert "로그인 화면 제외" in history
 
 
@@ -1519,7 +1521,7 @@ async def test_the_change_history_accumulates_across_sessions(tmp_path):
 
 
 async def test_a_change_history_write_failure_does_not_fail_the_session(tmp_path):
-    """handoff와 같은 규율 -- 이력 쓰기 실패가 완성된 빌드를 실패로 보이게 하지 않는다."""
+    """Same discipline as handoff -- a history write failure does not make a finished build look failed."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     builder = FakeBuilder()
@@ -1560,7 +1562,7 @@ async def test_start_plants_the_history_and_the_prompt_says_it_wins(tmp_path):
 
 
 async def test_rebuild_from_scratch_also_points_at_the_history(tmp_path):
-    """산출물이 사라진 재빌드는 명세만으로는 이전 변경을 되살리지 못한다."""
+    """A rebuild after the artifacts are gone cannot restore previous changes from the spec alone."""
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
     s3.blobs[SESSION_KEY] = json.dumps(
@@ -1570,7 +1572,7 @@ async def test_rebuild_from_scratch_also_points_at_the_history(tmp_path):
 
     session = _session(s3, tmp_path, FakeBuilder())
     await session.start()
-    prompt = session.first_prompt()        # 로컬 산출물 없음
+    prompt = session.first_prompt()        # no local artifacts
 
     assert HISTORY_LOCAL in prompt
 
@@ -1591,7 +1593,7 @@ async def test_without_a_history_the_prompt_mentions_none(tmp_path):
 
 
 async def test_reset_removes_the_change_history_but_not_the_spec(tmp_path):
-    """이력은 명세 옆에 산다 -- 리셋이 디렉터리를 프리픽스로 지우면 카드가 사라진다."""
+    """The history lives next to the spec -- if a reset deletes the directory by prefix, the card disappears."""
     from aipds.proto.session import purge_session_state
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"
@@ -1605,11 +1607,11 @@ async def test_reset_removes_the_change_history_but_not_the_spec(tmp_path):
     assert SPEC_KEY in s3.blobs
 
 
-# ---- WebFetch 허용: 사용자가 쓴 말에서만 ----
+# ---- WebFetch allowance: only from what the user wrote ----
 
 async def test_only_the_users_own_words_open_a_site(tmp_path):
-    """개시 턴의 `text`는 서버가 감싼 프롬프트다 — 모델이 쓴 handoff 요약의 URL이
-    섞여 있으므로 허용은 `user_text`에서만 뽑는다."""
+    """The opening turn's `text` is the prompt wrapped by the server — it contains URLs from the
+    model-written handoff summary, so the allowance is extracted only from `user_text`."""
     builder = FakeBuilder()
     s3 = FakeS3Store()
     s3.blobs[SPEC_KEY] = "# spec"

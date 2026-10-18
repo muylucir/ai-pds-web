@@ -1,34 +1,34 @@
-# backend/aipds/proto/store.py — 프로토타입의 정본은 S3다.
+# backend/aipds/proto/store.py — the source of truth for prototypes is S3.
 #
-# **왜 있는가.** 빌드 대화·세션 id·핸드오프·설문은 S3에 있었지만, 정작 빌드된 소스
-# 트리와 접근 토큰과 "호스팅 중"이라는 사실은 인스턴스의 로컬 디스크와 메모리에만
-# 있었다. 그래서 두 사건이 같은 결과를 냈다:
+# **Why this exists.** Build conversations, session ids, handoffs, and surveys were in S3, but the
+# built source tree itself, the access token, and the fact that it is "being hosted" lived only on
+# the instance's local disk and in memory. So two events produced the same outcome:
 #
-#   - 인스턴스 교체(HostingStack 배포, 장애): 소스가 사라져 카드가 `none`으로 돌아가고,
-#     토큰 파일이 사라져 이미 나눠 준 링크가 전부 404가 된다. 명세에서 다시 빌드하면
-#     설문을 받았던 그것과 **다른 물건**이 나온다.
-#   - 백엔드 재시작: 토큰은 디스크에서 되읽지만 호스팅 레지스트리는 메모리라, 링크는
-#     살아 있는데 그 링크가 가리키는 서버가 다시 뜨지 않는다.
+#   - Instance replacement (HostingStack deploy, failure): the source disappears so the card goes
+#     back to `none`, and the token file disappears so every link already handed out returns 404.
+#     Rebuilding from the spec produces **a different thing** from the one the survey was run on.
+#   - Backend restart: the token is reread from disk, but the hosting registry is in memory, so the
+#     link is alive while the server it points to does not come back up.
 #
-# 이 모듈이 그 셋의 정본을 S3에 둔다. 로컬 트리는 캐시다 — 없으면 여기서 되살린다.
+# This module keeps the source of truth for those three in S3. The local tree is a cache — if it is missing, it is restored from here.
 #
-# 키(프로젝트 프리픽스 상대):
+# Keys (relative to the project prefix):
 #
-#   prototypes/{slug}/source/current.json    현재 세대의 요약
-#   prototypes/{slug}/source/{gen:06d}/{rel} 그 세대의 파일들(바이트)
-#   prototypes/{slug}/access-token           접근 토큰
-#   prototypes/{slug}/hosting.json           원하는 상태(호스팅 중이어야 하는가)
+#   prototypes/{slug}/source/current.json    summary of the current generation
+#   prototypes/{slug}/source/{gen:06d}/{rel} files of that generation (bytes)
+#   prototypes/{slug}/access-token           access token
+#   prototypes/{slug}/hosting.json           desired state (whether it should be hosted)
 #
-# 버킷 루트: `surveys/preview-tokens/{sha256(token)}.json` → {project_id, slug}. 공개
-# 프리뷰는 요청이 오기 전에는 어느 프로젝트인지 모르므로 색인이 루트에 있어야 한다(설문
-# 토큰 색인 `surveys/by-token/`과 같은 이유). 키를 해시로 두는 것은 목록이 토큰 평문을
-# 드러내지 않게 하기 위해서다.
+# Bucket root: `surveys/preview-tokens/{sha256(token)}.json` → {project_id, slug}. The public
+# preview does not know which project a request is for until it arrives, so the index must be at
+# the root (same reason as the survey token index `surveys/by-token/`). Keys are hashes so that a
+# listing does not reveal the plaintext tokens.
 #
-# **왜 `surveys/` 아래인가.** 백엔드 롤의 S3 권한은 프리픽스 허용목록이다
-# (infra/lib/backend-permissions.ts의 BACKEND_BUCKET_PREFIXES). 그 밖의 루트 프리픽스는
-# AccessDenied이고, 목록을 넓히려면 HostingStack을 배포해야 한다 — 그 배포는 EC2를
-# 교체할 수 있다. `surveys/`는 이미 "버킷 루트의 공개 링크 토큰 색인"의 자리이므로
-# 같은 성질의 색인을 그 옆에 둔다.
+# **Why under `surveys/`.** The backend role's S3 permissions are a prefix allowlist
+# (BACKEND_BUCKET_PREFIXES in infra/lib/backend-permissions.ts). Any other root prefix is
+# AccessDenied, and widening the list requires deploying HostingStack — and that deploy can replace
+# the EC2 instance. `surveys/` is already the home of "public-link token indexes at the bucket root",
+# so an index of the same nature goes next to it.
 from __future__ import annotations
 
 import asyncio
@@ -46,7 +46,7 @@ from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
 
-#: 남기는 세대 수. 되돌리기(퍼널 과제)에 쓸 만큼만 — 소스는 작지만 세대마다 통째다.
+#: Number of generations kept. Only enough for rollback (a funnel task) — the source is small, but each generation is a full copy.
 KEEP_GENERATIONS = 5
 _UPLOAD_CONCURRENCY = 8
 TOKEN_INDEX_PREFIX = "surveys/preview-tokens/"
@@ -82,25 +82,26 @@ def _now() -> str:
 
 
 def local_entries(build_dir: Path) -> list[tuple[str, bytes]]:
-    """빌드 트리의 (상대 경로, 바이트). 제외 규칙은 번들·아카이브와 같은 집합이다
-    (`project_bundle.source_excluded`) — `node_modules`·`.next`·호스팅 로그·토큰은
-    세대에 담지 않는다.
+    """(relative path, bytes) of the build tree. The exclusion rules are the same set as the
+    bundle and archives (`project_bundle.source_excluded`) — `node_modules`, `.next`, hosting
+    logs, and the token are not put into a generation.
 
-    **제외 디렉토리는 걸어 들어가지 않고 잘라낸다.** `node_modules`는 실측 수만 개
-    파일이라, 다 걸은 뒤 거르면 답은 같아도 걷기만으로 초 단위가 든다.
-    `source_excluded`는 경로의 어느 조각이든 제외 디렉토리면 빼므로, 그 디렉토리를
-    잘라내는 것과 답이 같다.
+    **Excluded directories are pruned rather than walked into.** `node_modules` is measured at
+    tens of thousands of files, so walking all of it and filtering afterwards gives the same answer
+    but the walk alone takes seconds. `source_excluded` drops a path if any segment is an excluded
+    directory, so pruning those directories gives the same answer.
 
-    **심볼릭 링크는 담지 않는다.** 빌드 에이전트와 프로토타입이 쓰는 트리라, 파일
-    링크를 따라 읽으면 링크 너머(다른 프로젝트, 백엔드 설정)가 세대·다운로드·내보내기에
-    실린다. 디렉토리 링크는 `os.walk`가 따라가지 않고, 파일 링크는 건너뛰며, 읽기도
-    `read_bytes_beneath`로 한다(걷고 나서 읽기 전에 바꿔 끼운 링크).
+    **Symbolic links are not included.** This tree is written by the build agent and the prototype,
+    so following file links would put whatever is beyond the link (other projects, backend config)
+    into generations, downloads, and exports. `os.walk` does not follow directory links, file links
+    are skipped, and reads also go through `read_bytes_beneath` (a link swapped in after the walk
+    but before the read).
 
-    **순서는 경로 조각 순이다.** 세대 해시(`_hash_entries`)가 이 순서로 계산되므로,
-    문자열 정렬로 바꾸면(`a.b`와 `a/b`의 앞뒤가 뒤집힌다) 소스가 그대로인데 새
-    세대가 생긴다.
+    **Order is by path segment.** The generation hash (`_hash_entries`) is computed in this order,
+    so switching to string sorting (which flips the order of `a.b` and `a/b`) would create a new
+    generation while the source is unchanged.
 
-    동기 함수다 — 파일을 전부 읽으므로 호출부가 `asyncio.to_thread`로 부른다.
+    This is a sync function — it reads every file, so callers invoke it via `asyncio.to_thread`.
     """
     if not build_dir.is_dir():
         return []
@@ -120,7 +121,7 @@ def local_entries(build_dir: Path) -> list[tuple[str, bytes]]:
         try:
             out.append((rel, read_bytes_beneath(build_dir, rel)))
         except OSError:
-            continue  # 걷는 사이에 링크로 바뀌었거나 사라졌다
+            continue  # turned into a link or disappeared during the walk
     return out
 
 
@@ -134,21 +135,21 @@ def _hash_entries(entries: list[tuple[str, bytes]]) -> str:
 
 
 def has_build_output(build_dir: Path) -> bool:
-    """빌드 디렉토리 아래 `prototype/`에 산출물이 있는가.
+    """Whether `prototype/` under the build directory has output.
 
-    "빌드됐다"의 단일 정의다. 세 곳이 이 질문을 하고, 전부 여기를 거쳐야
-    한다 -- `first_prompt()`(무엇을 지시할지), `build_complete`
-    도구(완료 선언을 받아줄지), 목록 라우트(카드를 built로 보일지). 기준이
-    갈라지면 도구는 완료를 받아들이는데 목록은 built로 보이지 않는(또는 그
-    반대) 상태가 된다.
+    This is the single definition of "built". Three places ask this question, and all of them
+    must go through here -- `first_prompt()` (what to instruct), the `build_complete`
+    tool (whether to accept a completion claim), and the list route (whether to show the card as
+    built). If the criteria diverge, the tool accepts completion while the list does not show it as
+    built (or the reverse).
 
-    `prototype/`을 보고 빌드 디렉토리 자체를 보지 않는 것이 요점이다.
-    `start()`가 에이전트보다 먼저 스펙 .md를 심고, 이전 호스팅 시도가
-    `.proto-host.log`/`.pid`를 남길 수 있어서 -- 빌드 디렉토리가 있다는 건
-    세션이 시작됐다는 뜻일 뿐 무언가 만들어졌다는 뜻이 아니다.
+    The point is to look at `prototype/` and not at the build directory itself.
+    `start()` plants the spec .md before the agent runs, and a previous hosting attempt
+    can leave `.proto-host.log`/`.pid` -- the build directory existing only means a session
+    started, not that anything was built.
 
-    직속 자식만 확인하고 재귀하지 않는다: node_modules/.next가 생긴 뒤에도
-    매 목록 호출에서 싸게 유지된다.
+    It checks only direct children and does not recurse: it stays cheap on every list call
+    even after node_modules/.next exist.
     """
     proto_dir = build_dir / "prototype"
     try:
@@ -157,33 +158,33 @@ def has_build_output(build_dir: Path) -> bool:
         return False
 
 
-#: 마지막으로 받아들인 완료 선언 때의 `prototype/` 내용 해시(`output_digest`).
-#: 빌드 트리 루트에 두는 이유: 세대 스냅샷·되살리기·프로젝트 번들이 트리를 통째로
-#: 옮기므로 이 값도 소스와 함께 다닌다 — 따로 둔 사본은 소스와 어긋날 수 있다.
-#: 초기화는 트리를 지우므로 함께 사라지고, 그 뒤의 첫 빌드는 게이트 없이 끝낼 수 있다.
+#: Content hash of `prototype/` (`output_digest`) at the last accepted completion claim.
+#: Why it lives at the build tree root: generation snapshots, restores, and project bundles move
+#: the tree as a whole, so this value travels with the source — a copy kept elsewhere could diverge from it.
+#: A reset deletes the tree, so it disappears too, and the first build after that can finish without the gate.
 COMPLETED_MARKER = ".aipds-completed"
 
-#: 도구가 다시 쓰는 부산물. 호스팅이 `prototype/`에서 `npm install`·빌드를 돌리고
-#: (proto/host.py), 에이전트의 타입 검사도 이것들을 고쳐 쓴다 — 넣으면 아무도 소스를
-#: 바꾸지 않았는데 "바뀌었다"가 된다. 의존성을 바꾸는 작업은 `package.json`에 남는다.
+#: By-products that tools rewrite. Hosting runs `npm install` and the build in `prototype/`
+#: (proto/host.py), and the agent's type checks rewrite these too — including them would report
+#: "changed" when nobody changed the source. Work that changes dependencies shows up in `package.json`.
 _DIGEST_EXCLUDED = frozenset({"package-lock.json", "tsconfig.tsbuildinfo",
                               "next-env.d.ts"})
 
 
 def output_digest(build_dir: Path) -> str:
-    """`prototype/`의 내용 해시. 세대 해시와 같은 규칙이되 산출물만 본다.
+    """Content hash of `prototype/`. Same rules as the generation hash, but only over the output.
 
-    빌드 트리 전체를 보면 안 된다 — `start()`가 매번 명세·지시서·수정 이력을 새로
-    심으므로, 에이전트가 아무것도 바꾸지 않아도 해시가 바뀐다.
+    It must not look at the whole build tree — `start()` re-plants the spec, instructions, and
+    change history every time, so the hash would change even if the agent changed nothing.
 
-    동기 함수다(`local_entries`와 같은 이유).
+    This is a sync function (same reason as `local_entries`).
     """
     return _hash_entries([(rel, data) for rel, data in local_entries(build_dir / "prototype")
                           if rel.rsplit("/", 1)[-1] not in _DIGEST_EXCLUDED])
 
 
 def completed_digest(build_dir: Path) -> str | None:
-    """마지막 완료 선언 때의 해시, 없으면 None(첫 빌드, 표식 이전의 프로토타입)."""
+    """Hash at the last completion claim, or None (first build, or a prototype from before the marker)."""
     try:
         return read_text_beneath(build_dir, COMPLETED_MARKER).strip() or None
     except (OSError, ValueError):
@@ -195,7 +196,7 @@ def mark_completed(build_dir: Path, digest: str) -> None:
 
 
 class PrototypeStore:
-    """한 프로젝트의 프로토타입 정본. `s3`는 프로젝트 스토어, `root`는 버킷 루트."""
+    """Source of truth for one project's prototypes. `s3` is the project store, `root` the bucket root."""
 
     def __init__(self, s3: S3StoreLike, root: S3StoreLike | None = None,
                  project_id: str | None = None) -> None:
@@ -203,7 +204,7 @@ class PrototypeStore:
         self._root = root
         self._project_id = project_id
 
-    # ---- 소스 세대 ----
+    # ---- Source generations ----
 
     async def current(self, slug: str) -> dict | None:
         try:
@@ -216,13 +217,13 @@ class PrototypeStore:
         return await self.current(slug) is not None
 
     async def snapshot(self, slug: str, build_dir: Path, reason: str) -> int | None:
-        """로컬 빌드 트리를 새 세대로 올린다. 새 세대 번호, 또는 None.
+        """Push the local build tree as a new generation. Returns the new generation number, or None.
 
-        None인 경우: 빌드 산출물이 없다(명세만 있는 트리를 세대로 만들면 되살리기가
-        "빌드됨"을 거짓으로 만든다), 또는 현재 세대와 내용이 같다.
+        None when: there is no build output (turning a spec-only tree into a generation would make
+        a restore falsely report "built"), or the content is identical to the current generation.
 
-        `current.json`을 **마지막에** 쓴다. 파일을 올리는 도중 실패하면 반쯤 올라간
-        세대는 가리켜지지 않으므로 되살리기는 이전 세대를 쓴다.
+        `current.json` is written **last**. If uploading the files fails midway, the half-uploaded
+        generation is not pointed to, so a restore uses the previous generation.
         """
         if not has_build_output(build_dir):
             return None
@@ -260,7 +261,7 @@ class PrototypeStore:
             await self._s3.delete_prefix(_gen_prefix(slug, gen))
 
     async def entries(self, slug: str) -> list[tuple[str, bytes]]:
-        """현재 세대의 (상대 경로, 바이트). 세대가 없으면 빈 목록."""
+        """(relative path, bytes) of the current generation. Empty list if there is no generation."""
         current = await self.current(slug)
         if current is None:
             return []
@@ -270,11 +271,11 @@ class PrototypeStore:
         return [(k[len(prefix):], b) for k, b in zip(keys, bodies)]
 
     async def restore(self, slug: str, build_dir: Path) -> bool:
-        """로컬에 빌드 산출물이 없으면 현재 세대로 되살린다. 되살렸으면 True.
+        """Restore from the current generation if there is no local build output. True if restored.
 
-        로컬에 산출물이 있으면 건드리지 않는다 — 그쪽이 더 새로울 수 있다(아직 스냅샷
-        되지 않은 편집). 접근 토큰은 여기서 되살리지 않는다 — 로컬 사본은 호스팅의
-        상태 트리에 있고, 그쪽이 소유한다(proto/hosting.restore_local).
+        If there is local output it is left alone — it may be newer (edits not yet snapshotted).
+        The access token is not restored here — the local copy lives in the hosting state tree, and
+        hosting owns it (proto/hosting.restore_local).
         """
         restored = False
         if not has_build_output(build_dir):
@@ -283,8 +284,8 @@ class PrototypeStore:
                 def write() -> None:
                     build_dir.mkdir(parents=True, exist_ok=True)
                     for rel, data in files:
-                        reject_unsafe(rel)       # 키는 우리가 썼지만 경로로 쓰기 전에 본다
-                        # 에이전트가 쓰는 트리다 — 링크를 따라가지 않는다(pathsafe).
+                        reject_unsafe(rel)       # we wrote the keys, but check before using them as paths
+                        # This tree is written by the agent — do not follow links (pathsafe).
                         write_beneath(build_dir, rel, data)
                 await asyncio.to_thread(write)
                 restored = True
@@ -292,7 +293,7 @@ class PrototypeStore:
                           self._project_id, slug, len(files))
         return restored
 
-    # ---- 접근 토큰 ----
+    # ---- Access token ----
 
     async def load_token(self, slug: str) -> str | None:
         try:
@@ -302,8 +303,8 @@ class PrototypeStore:
         return token or None
 
     async def save_token(self, slug: str, token: str) -> None:
-        """토큰과 루트 색인을 쓴다. 이미 같은 값이면 쓰지 않는다(호스팅 재시작마다
-        불리므로)."""
+        """Write the token and the root index. Skip if it is already the same value (this is
+        called on every hosting restart)."""
         if await self.load_token(slug) == token:
             return
         await self._s3.put(token_key(slug), token)
@@ -312,13 +313,13 @@ class PrototypeStore:
                 {"project_id": self._project_id, "slug": slug}))
 
     async def forget_token(self, slug: str) -> None:
-        """루트 색인을 지운다. 리셋·프로젝트 삭제가 `prototypes/{slug}/`를 지우기
-        **전에** 불러야 한다 — 토큰을 읽을 곳이 그 아래에 있다."""
+        """Delete the root index. Must be called **before** a reset or project deletion removes
+        `prototypes/{slug}/` — the token to read is stored under it."""
         token = await self.load_token(slug)
         if token and self._root is not None:
             await self._root.delete_prefix(_index_key(token))
 
-    # ---- 원하는 상태 ----
+    # ---- Desired state ----
 
     async def set_desired_running(self, slug: str) -> None:
         await self._s3.put(hosting_key(slug), json.dumps(
@@ -337,7 +338,7 @@ class PrototypeStore:
 
 
 async def resolve_token(root: S3StoreLike, token: str) -> tuple[str, str] | None:
-    """루트 색인으로 토큰 → (project_id, slug). 없으면 None."""
+    """Token → (project_id, slug) via the root index. None if absent."""
     try:
         data = json.loads(await root.get(_index_key(token)))
     except (FileNotFoundError, json.JSONDecodeError):

@@ -3,7 +3,7 @@ import pytest
 from aipds.workspace import ProjectRegistry
 
 
-class _FakeWorkspace:  # Registry는 워크스페이스를 불투명 객체로만 저장한다
+class _FakeWorkspace:  # Registry stores workspaces only as opaque objects
     pass
 
 
@@ -18,12 +18,12 @@ def test_register_then_attach_and_get():
 
 def test_register_only_is_listed_but_has_no_workspace():
     reg = ProjectRegistry()
-    reg.register("p2")  # 복원된 프로젝트 상태
+    reg.register("p2")  # restored project state
     assert reg.list_ids() == ["p2"]
     assert reg.is_registered("p2") and not reg.has_workspace("p2")
     assert reg.get_name("p2") is None
     with pytest.raises(KeyError):
-        reg.get("p2")  # 워크스페이스는 아직 없음
+        reg.get("p2")  # no workspace yet
 
 
 def test_attach_without_register_raises():
@@ -38,7 +38,7 @@ def test_remove_clears_both_and_returns_workspace():
     ws = reg.attach("p3", _FakeWorkspace())
     assert reg.remove("p3") is ws
     assert not reg.is_registered("p3") and not reg.has_workspace("p3")
-    assert reg.remove("p3") is None  # 멱등
+    assert reg.remove("p3") is None  # idempotent
 
 
 def test_unknown_pid_raises_keyerror():
@@ -63,8 +63,8 @@ def test_get_model_id_is_none_for_a_project_registered_without_one():
 
 
 def test_get_model_id_is_none_for_an_unknown_project():
-    # get_name은 KeyError를 내지만 이쪽은 None이다 — 호출부(project_model)가
-    # 폴백 체인의 첫 칸으로 쓰므로 미등록도 "모델 없음"이면 충분하다.
+    # get_name raises KeyError, but this one returns None: the caller (project_model)
+    # uses it as the first link of a fallback chain, so "no model" is enough for unregistered too.
     from aipds.workspace import ProjectRegistry
     assert ProjectRegistry().get_model_id("nope") is None
 
@@ -85,8 +85,8 @@ def test_register_stores_and_returns_language():
 
 
 def test_get_language_is_ko_for_a_project_registered_without_one():
-    # 구 매니페스트로 복원된 프로젝트는 전부 한국어로 만들어진 것이므로,
-    # None을 ko로 읽는 것이 사실에 맞다.
+    # Projects restored from an old manifest were all created in Korean,
+    # so reading None as ko matches the facts.
     from aipds.workspace import ProjectRegistry
     r = ProjectRegistry()
     r.register("p1", "이름")
@@ -94,16 +94,16 @@ def test_get_language_is_ko_for_a_project_registered_without_one():
 
 
 def test_get_language_is_ko_for_an_unknown_project():
-    # get_model_id가 None을 돌려주는 것과 다른 선택이다: 언어에는 "없음"이라는
-    # 유효 상태가 없다(어떤 언어로든 써야 한다). 호출부가 폴백을 반복하지 않게
-    # 레지스트리가 확정한다.
+    # A different choice from get_model_id returning None: a language has no valid
+    # "none" state (it has to be written in some language). The registry settles it so
+    # callers do not repeat the fallback.
     from aipds.workspace import ProjectRegistry
     assert ProjectRegistry().get_language("nope") == "ko"
 
 
 def test_get_language_falls_back_for_a_junk_value():
-    # 손상된 매니페스트가 임의 문자열을 실어 와도 place_rules가 어느 지시
-    # 블록을 붙일지 결정할 수 있어야 한다.
+    # Even if a corrupted manifest carries an arbitrary string, place_rules must still be
+    # able to decide which instruction block to attach.
     from aipds.workspace import ProjectRegistry
     r = ProjectRegistry()
     r.register("p1", None, language="klingon")

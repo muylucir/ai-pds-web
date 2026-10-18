@@ -77,28 +77,33 @@ def reject_unsafe_segment(value: str) -> None:
         raise ValueError(f"unsafe path segment: {value!r}")
 
 
-# ---- 에이전트가 쓸 수 있는 트리를 백엔드가 만질 때 ----
+# ---- When the backend touches trees the agent can write to ----
 #
-# 워크스페이스와 빌드 트리는 샌드박스 안의 에이전트(다른 uid)와 백엔드가 함께 쓴다.
-# 에이전트는 그 안에 심볼릭 링크를 만들 수 있고, 샌드박스 안에서는 링크 대상이 보이지
-# 않지만 **백엔드는 자기 마운트 네임스페이스에서 링크를 푼다.** `aiplc-docs`를 바깥을
-# 가리키는 링크로 바꿔 두면, 다음 복원이 S3 본문을 백엔드 uid로 링크 대상에 쓰고(임의
-# 파일 쓰기), 다음 sync가 링크 대상을 읽어 정본에 올린다(바깥 파일 유출).
+# Workspace and build trees are shared by the agent inside the sandbox (a different uid)
+# and the backend. The agent can create symbolic links inside them, and while link
+# targets are not visible inside the sandbox, **the backend resolves links in its own
+# mount namespace.** If `aiplc-docs` is replaced with a link pointing outside, the next
+# restore writes S3 contents to the link target as the backend uid (arbitrary file
+# write), and the next sync reads the link target and uploads it to the source-of-truth copy
+# (exfiltration of outside files).
 #
-# 그래서 이 함수들은 루트부터 한 조각씩 `O_NOFOLLOW`로 연다. 검사한 뒤 여는 방식
-# (lstat → open)은 쓰지 않는다 — 그 사이에 에이전트가 조각을 바꿔 끼울 수 있다(Discovery
-# CLI는 턴 사이에도 떠 있고, Bash로 띄운 프로세스가 같은 unit에서 돈다). 연 디렉터리
-# fd를 쥔 채 다음 조각을 여므로 경로가 바뀌어도 이미 연 것은 바뀌지 않는다.
+# So these functions open each component from the root, one at a time, with
+# `O_NOFOLLOW`. Check-then-open (lstat → open) is not used — the agent could swap a
+# component in between (the Discovery CLI stays up between turns, and processes launched
+# via Bash run in the same unit). Each next component is opened while holding the fd of
+# the directory already opened, so even if the path changes, what has already been
+# opened does not.
 #
-# - 읽기: 링크를 만나면 OSError(ELOOP). 정규 파일이 아니면(FIFO 등) OSError(EINVAL) —
-#   FIFO를 읽으려고 열면 백엔드 스레드가 영원히 멈춘다.
-# - 쓰기: 링크를 만나면 **링크를 지우고 실제 디렉터리·파일을 만든다.** 쓰는 것은 정본
-#   (S3, 또는 백엔드가 정한 내용)이므로 링크 자리를 차지하는 것이 맞다. 정상 흐름에서
-#   이 트리들에 링크가 생기는 곳은 없다(`node_modules/.bin`은 따로 다루지 않는다 —
-#   백엔드가 거기를 쓰거나 읽지 않는다).
+# - Read: on encountering a link, OSError(ELOOP). If not a regular file (a FIFO, etc.),
+#   OSError(EINVAL) — opening a FIFO for reading would hang the backend thread forever.
+# - Write: on encountering a link, **remove the link and create a real directory/file.**
+#   What is written is canonical (S3, or content the backend decided), so taking over
+#   the link's place is correct. In the normal flow nothing creates links in these trees
+#   (`node_modules/.bin` gets no special handling — the backend neither writes nor reads
+#   there).
 #
-# `root` 자체는 따라간다 — 백엔드가 정한 경로이고, 샌드박스에서는 bind 마운트 지점이라
-# 에이전트가 바꿀 수 없다.
+# `root` itself is followed — it is a path the backend decided, and in the sandbox it is
+# a bind mount point, so the agent cannot change it.
 
 _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
@@ -113,9 +118,10 @@ def _parts(rel: str | PurePosixPath) -> tuple[str, ...]:
 
 
 def _open_dirs(root: Path, names: tuple[str, ...], *, create: bool) -> int:
-    """`root/names…`의 디렉터리 fd. 조각마다 링크를 따라가지 않는다.
+    """Directory fd of `root/names…`. Links are not followed for any component.
 
-    `create`면 없는 조각을 만들고, 링크인 조각은 지운 뒤 실제 디렉터리로 바꾼다.
+    With `create`, missing components are created, and components that are links are
+    removed and replaced with real directories.
     """
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
@@ -128,10 +134,11 @@ def _open_dirs(root: Path, names: tuple[str, ...], *, create: bool) -> int:
                 try:
                     os.mkdir(name, dir_fd=fd)
                 except FileExistsError:
-                    pass  # 그 사이에 생겼다 — 아래 open이 무엇인지 판정한다
+                    pass  # created in between — the open below decides what it is
                 nfd = os.open(name, _DIR_FLAGS, dir_fd=fd)
             except OSError as exc:
-                # 링크에 O_DIRECTORY|O_NOFOLLOW면 커널이 ENOTDIR을 준다(ELOOP가 아니다).
+                # For a link, O_DIRECTORY|O_NOFOLLOW makes the kernel return ENOTDIR
+                # (not ELOOP).
                 if not create or exc.errno not in (errno.ELOOP, errno.ENOTDIR):
                     raise
                 if not stat.S_ISLNK(os.stat(name, dir_fd=fd,
@@ -158,7 +165,8 @@ def _require_regular(fd: int, root: Path, rel: str | PurePosixPath) -> os.stat_r
 
 
 def read_bytes_beneath(root: Path, rel: str | PurePosixPath) -> bytes:
-    """`root/rel`의 바이트. 경로 어디든 링크가 있거나 정규 파일이 아니면 OSError."""
+    """Bytes of `root/rel`. OSError if there is a link anywhere on the path or it is not
+    a regular file."""
     parts = _parts(rel)
     dfd = _open_dirs(Path(root), parts[:-1], create=False)
     try:
@@ -177,7 +185,8 @@ def read_text_beneath(root: Path, rel: str | PurePosixPath,
 
 
 def stat_beneath(root: Path, rel: str | PurePosixPath) -> os.stat_result | None:
-    """`root/rel`이 링크 없이 닿는 정규 파일이면 그 stat, 아니면 None. 예외를 던지지 않는다."""
+    """The stat of `root/rel` if it is a regular file reachable without links, otherwise
+    None. Never raises."""
     try:
         parts = _parts(rel)
         dfd = _open_dirs(Path(root), parts[:-1], create=False)
@@ -194,9 +203,11 @@ def stat_beneath(root: Path, rel: str | PurePosixPath) -> os.stat_result | None:
 
 def write_beneath(root: Path, rel: str | PurePosixPath, data: bytes | str, *,
                   append: bool = False, mtime_ns: int | None = None) -> None:
-    """`root/rel`에 쓴다. 없는 디렉터리는 만들고, 링크인 조각은 실제 것으로 바꾼다.
+    """Write to `root/rel`. Missing directories are created, and components that are
+    links are replaced with real ones.
 
-    `mtime_ns`를 주면 쓴 뒤 그 시각으로 맞춘다(`shutil.copy2`가 하던 일).
+    If `mtime_ns` is given, the mtime is set to that time after writing (what
+    `shutil.copy2` used to do).
     """
     if isinstance(data, str):
         data = data.encode("utf-8")
@@ -224,9 +235,11 @@ def write_beneath(root: Path, rel: str | PurePosixPath, data: bytes | str, *,
 
 
 def unlink_beneath(root: Path, rel: str | PurePosixPath) -> bool:
-    """`root/rel`을 지운다(링크면 링크만). 지웠으면 True. 없거나 상위 조각이 링크면 False.
+    """Remove `root/rel` (only the link, if it is a link). True if removed. False if
+    missing or a parent component is a link.
 
-    상위 조각이 링크면 아무것도 지우지 않는다 — 그 링크 너머는 이 트리가 아니다.
+    If a parent component is a link, nothing is removed — what lies beyond that link is
+    not this tree.
     """
     try:
         parts = _parts(rel)

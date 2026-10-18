@@ -6,14 +6,14 @@ import { UploadDesignModal } from "./UploadDesignModal";
 vi.mock("@/lib/api/design", () => ({
   uploadDesignProfile: vi.fn(),
   previewDesignProfile: vi.fn(),
-  // 컴포넌트가 항상 서식 다운로드 링크를 그리므로 상수도 목에 있어야 한다.
+  // The component always draws the template download link, so the constant must be in the mock too.
   DESIGN_TEMPLATE_PATH: "/api/admin/design/template",
 }));
 import { previewDesignProfile, uploadDesignProfile } from "@/lib/api/design";
 
 const FILE = () => new File(["# x"], "acme.md", { type: "text/markdown" });
 
-/** 파일을 고르고 1단계 버튼을 눌러 확인 화면까지 간다. */
+/** Pick a file and press the step 1 button to get to the confirmation screen. */
 async function toConfirmStep() {
   await userEvent.upload(screen.getByLabelText(/DESIGN\.md/i), FILE());
   await userEvent.click(screen.getByRole("button", { name: /다음|Next/ }));
@@ -30,13 +30,13 @@ describe("UploadDesignModal", () => {
 
     await waitFor(() =>
       expect(screen.getByLabelText("primary")).toHaveValue("#00754a"));
-    // 확인 단계다 — 여기서 저장이 일어나면 관리자가 값을 볼 기회가 없다.
+    // This is the confirmation step — if saving happened here, the admin would have no chance to see the values.
     expect(uploadDesignProfile).not.toHaveBeenCalled();
   });
 
   it("saves the value the admin corrected, not the one the model proposed", async () => {
-    // 문서가 브랜드 헤딩과 CTA에 서로 다른 색을 주면 어느 것이 primary인지는
-    // 문서가 답하지 않는다 — 사람이 끊는 자리가 이 입력칸이다.
+    // When the document gives different colors to the brand heading and the CTA, the document does not
+    // answer which one is primary — this input field is where a person decides.
     vi.mocked(previewDesignProfile).mockResolvedValue({
       tokens: { primary: "#00754a" }, origin: "extracted", warnings: [],
     });
@@ -74,7 +74,7 @@ describe("UploadDesignModal", () => {
 
     await waitFor(() => expect(
       screen.getByText(/찾지 못했습니다|No tokens were found/)).toBeInTheDocument());
-    // 산문만 적용하는 것도 유효한 상태다 — 저장을 막지 않는다.
+    // Applying only the prose is also a valid state — it does not block saving.
     expect(screen.getByRole("button", { name: /업로드|Upload/ })).toBeEnabled();
   });
 

@@ -1,13 +1,13 @@
-// frontend/lib/uploads.ts — 첨부 업로드의 규칙(받는 형식·크기)과 실패 이유.
+// frontend/lib/uploads.ts — rules for attachment uploads (accepted formats, size) and failure reasons.
 //
-// 받는 확장자와 크기 상한은 백엔드(backend/aipds/parsers/uploads.py의 ALLOWED,
-// MAX_UPLOAD_BYTES)가 정본이다. 여기 두 벌을 두는 이유는 올리기 **전에** 거르기
-// 위해서다 — 10MB를 다 보낸 뒤에야 "지원하지 않는 형식"을 듣지 않게. 두 값이
-// 같은지는 backend/tests/test_uploads_parser.py가 대조한다.
+// The backend (ALLOWED and MAX_UPLOAD_BYTES in backend/aipds/parsers/uploads.py) is the
+// source of truth for the accepted extensions and the size cap. A second copy lives here to
+// filter **before** uploading — so the user does not hear "unsupported format" only after sending
+// all 10MB. backend/tests/test_uploads_parser.py checks that the two match.
 import { ApiError } from "@/lib/api/client";
 import type { Dict } from "@/lib/i18n";
 
-/** 받는 확장자를 사용자에게 보일 묶음으로. 첨부 모달의 안내가 이 순서대로 그린다. */
+/** Accepted extensions grouped for display to the user. The attachment modal's hint draws them in this order. */
 export const UPLOAD_GROUPS = [
   { label: "upload.groupDocs",
     extensions: [".md", ".txt", ".csv", ".xlsx", ".docx", ".pptx", ".hwpx", ".pdf"] },
@@ -20,15 +20,15 @@ export const UPLOAD_EXTENSIONS: readonly string[] = UPLOAD_GROUPS.flatMap((g) =>
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
-/** 받지 않지만 새 형식으로 다시 저장하면 되는 것 — 그 안내를 따로 한다. */
+/** Not accepted, but fixed by re-saving in a newer format — that hint is shown separately. */
 const LEGACY_EXTENSIONS = [".doc", ".ppt", ".xls", ".hwp"];
 
-/** `<input type="file" accept>` 값. */
+/** The `<input type="file" accept>` value. */
 export const UPLOAD_ACCEPT = UPLOAD_EXTENSIONS.join(",");
 
 export type UploadProblem = "legacy" | "type" | "size" | "expanded" | "damaged" | "failed";
 
-/** 문구 키. 백엔드는 UI 언어를 모르므로 이유를 코드로 바꿔 여기서 고른다. */
+/** Message keys. The backend does not know the UI language, so reasons are turned into codes and picked here. */
 export const UPLOAD_PROBLEM_KEY: Record<UploadProblem, keyof Dict> = {
   legacy: "upload.problemLegacy",
   type: "upload.problemType",
@@ -43,7 +43,7 @@ function extensionOf(name: string): string {
   return dot >= 0 ? name.slice(dot).toLowerCase() : "";
 }
 
-/** 올리기 전에 알 수 있는 문제. 없으면 null. */
+/** A problem detectable before uploading. null if none. */
 export function checkUpload(file: File): UploadProblem | null {
   const ext = extensionOf(file.name);
   if (LEGACY_EXTENSIONS.includes(ext)) return "legacy";
@@ -52,8 +52,8 @@ export function checkUpload(file: File): UploadProblem | null {
   return null;
 }
 
-/** 업로드 실패 → 이유. 413은 nginx가 낼 수도 있다(본문이 HTML이다) — 상태로만 본다.
- *  415의 본문은 backend/aipds/parsers/uploads.py가 쓰는 문장이다. */
+/** Upload failure → reason. nginx can also return 413 (with an HTML body) — judge by status only.
+ *  The 415 body is the sentence backend/aipds/parsers/uploads.py writes. */
 export function problemFromError(err: unknown): UploadProblem {
   if (!(err instanceof ApiError)) return "failed";
   if (err.status === 413) return "size";
@@ -65,7 +65,7 @@ export function problemFromError(err: unknown): UploadProblem {
   return "failed";
 }
 
-/** 실패 이유의 문장. `{mb}`는 상한이다 — 숫자를 문구 두 벌에 박지 않는다. */
+/** The sentence for a failure reason. `{mb}` is the cap — the number is not baked into two copies of the text. */
 export function uploadProblemText(t: (key: keyof Dict) => string, problem: UploadProblem): string {
   return t(UPLOAD_PROBLEM_KEY[problem]).replace("{mb}", String(MAX_UPLOAD_BYTES / (1024 * 1024)));
 }

@@ -10,8 +10,8 @@ SESSION = {"session_id": "p1", "bucket": "", "region": "ap-northeast-2", "prefix
 
 
 class FakeDriver:
-    """workspace(local_root) 파일을 실제로 만지는 최소 드라이버.
-    run()은 files_written을 로컬 워크스페이스에 쓴 뒤 scripted 이벤트를 낸다."""
+    """A minimal driver that actually touches workspace (local_root) files.
+    run() writes files_written into the local workspace, then emits the scripted events."""
     def __init__(self, events=None, files_written=None, answers_events=None,
                  pending_payload=None, workspace=None):
         self._events = events or [AgentEvent(kind="message", text="ok"), AgentEvent(kind="done")]
@@ -119,7 +119,7 @@ async def test_turn_syncs_written_files_to_s3(tmp_path):
     await _collect(r.send_message("start"))
     assert r._s3.blobs["aiplc-docs/aiplc-state.md"] == "stage: Discovery"
     assert r._s3.blobs["prototype/app.py"] == "print('hi')"
-    assert "node_modules/pkg.js" not in r._s3.blobs  # sync 글롭 밖
+    assert "node_modules/pkg.js" not in r._s3.blobs  # outside the sync globs
 
 
 async def test_audit_md_redacted_at_rest(tmp_path):
@@ -208,8 +208,8 @@ async def test_turn_end_sync_uploads_only_changed_files(tmp_path):
 
 
 async def test_turn_end_sync_uploads_only_the_synced_subtrees(tmp_path):
-    """턴 종료 sync는 `_SYNC_GLOBS`의 서브트리만 올린다 — 루트의 룰 사본·CLI 상태는
-    아니다. 걷는 범위를 그 서브트리로 좁혀도 올리는 집합은 같아야 한다."""
+    """The turn-end sync uploads only the `_SYNC_GLOBS` subtrees — not the root's rules copy or CLI state.
+    Narrowing the walked range to those subtrees must leave the uploaded set the same."""
     s3 = FakeS3Store()
     r = _runner(tmp_path, s3=s3)
     root = r._local_root
@@ -226,9 +226,9 @@ async def test_turn_end_sync_uploads_only_the_synced_subtrees(tmp_path):
 
 
 async def test_uploaded_originals_survive_a_turn_byte_for_byte(tmp_path):
-    """이미지·PDF 원본은 바이트 그대로 로컬에 복원되고, 턴 종료 sync가 정본을
-    덮지 않는다. 텍스트 경로를 타면 둘 다 U+FFFD로 깨진다 — 복원에서 한 번,
-    깨진 사본이 정본으로 올라가며 또 한 번."""
+    """Image and PDF originals are restored locally byte for byte, and the turn-end sync does not overwrite the
+    source-of-truth copy. Going through the text path breaks both into U+FFFD — once on restore, and
+    once more when the broken copy is uploaded as the source-of-truth one."""
     png = b"\x89PNG\r\n\x1a\n\xff\xfe\x00\x80binary"
     s3 = FakeS3Store()
     await s3.put_bytes("uploads/ab12cd34/screen.png", png)
@@ -245,10 +245,10 @@ async def test_uploaded_originals_survive_a_turn_byte_for_byte(tmp_path):
 
 
 async def test_turn_end_sync_does_not_follow_a_symlinked_subtree(tmp_path):
-    """`aiplc-docs`가 워크스페이스 밖을 가리키는 링크면 바깥 파일을 올리지 않는다.
+    """If `aiplc-docs` is a link pointing outside the workspace, the outside files are not uploaded.
 
-    루트에서 걸을 때는 디렉토리 링크를 따라가지 않았다. 서브트리를 시작점으로
-    주면 따라가므로, 그 차이를 명시적으로 막는다.
+    Walking from the root did not follow directory links. Given a subtree as the starting point
+    it does follow them, so that difference is blocked explicitly.
     """
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -264,8 +264,8 @@ async def test_turn_end_sync_does_not_follow_a_symlinked_subtree(tmp_path):
 
 
 async def test_turn_end_sync_does_not_follow_a_symlinked_file(tmp_path):
-    """파일 링크도 따라가지 않는다. `rglob`은 서브트리 안의 파일 링크를 돌려준다 —
-    읽으면 링크 너머(백엔드 설정, 다른 프로젝트)가 정본에 올라간다."""
+    """File links are not followed either. `rglob` returns file links inside the subtree —
+    reading them would upload what lies past the link (backend settings, other projects) to the source-of-truth copy."""
     outside = tmp_path / "outside.md"
     outside.write_text("host file")
     s3 = FakeS3Store()
@@ -281,8 +281,8 @@ async def test_turn_end_sync_does_not_follow_a_symlinked_file(tmp_path):
 
 
 async def test_restore_does_not_write_through_a_symlink_the_agent_planted(tmp_path):
-    """에이전트가 `aiplc-docs`나 파일을 바깥을 가리키는 링크로 바꿔 두면, 복원이 S3 본문을
-    백엔드 uid로 그 너머에 쓴다(임의 파일 쓰기). 링크를 실제 디렉토리·파일로 바꾸고 쓴다."""
+    """If the agent replaces `aiplc-docs` or a file with a link pointing outside, restore writes the S3 body
+    past it as the backend uid (arbitrary file write). It replaces the link with a real directory/file and writes."""
     outside_dir = tmp_path / "outside"
     outside_dir.mkdir()
     outside_file = tmp_path / "outside.txt"
@@ -402,7 +402,7 @@ async def test_pending_degrades_to_none_on_driver_error(tmp_path):
 
 async def test_stop_removes_local_root(tmp_path):
     r = _runner(tmp_path)
-    await r.write_file("aiplc-docs/x.md", "hi")  # S3만 씀
+    await r.write_file("aiplc-docs/x.md", "hi")  # writes to S3 only
     (r._local_root).mkdir(parents=True, exist_ok=True)
     (r._local_root / "scratch.txt").write_text("x", encoding="utf-8")
     await r.stop()
@@ -550,10 +550,10 @@ async def test_answers_turn_also_syncs_when_abandoned(tmp_path):
     assert r._s3.blobs["aiplc-docs/discovery/discovery-document.md"] == "# 답변 반영"
 
 
-# ---- 사용자 입력은 웹이 감사 로그에 남긴다(aipds/audit_log) ----
+# ---- The web records user input in the audit log (aipds/audit_log) ----
 
 class _SeesAuditAtStart(FakeDriver):
-    """에이전트가 시작하는 순간의 audit.md를 붙잡는다 — 로컬과 정본 둘 다."""
+    """Captures audit.md at the moment the agent starts — both local and canonical."""
     def __init__(self, s3, **kw):
         super().__init__(**kw)
         self._s3 = s3
@@ -574,8 +574,8 @@ class _SeesAuditAtStart(FakeDriver):
 
 
 async def test_the_users_input_is_in_the_audit_log_before_the_agent_starts(tmp_path):
-    """복원 뒤·에이전트 앞이다: 복원이 이전 기록을 돌려놓고, 그 뒤에 붙는다. 정본에도 바로
-    올라간다 — 턴이 끊겨도 사용자가 무엇을 입력했는지는 남아야 한다."""
+    """After restore, before the agent: restore brings back the earlier records, and this is appended after them. It is also uploaded
+    to the source-of-truth copy right away — even if the turn is cut, what the user entered must remain."""
     from aipds.audit_log import UserInput
     s3 = FakeS3Store()
     await s3.put("aiplc-docs/audit.md", "# AI-PLC Audit Log\n\n## 이전 항목\n**AI Response**: 지난 턴\n")

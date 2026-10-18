@@ -1,10 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
-// AppHeader가 LanguageSwitcher를 그리고, 그것이 useRouter()를 부른다 —
-// 앱 라우터가 마운트되지 않은 단위 테스트에서 그 훅은 "invariant expected app
-// router to be mounted"로 던진다. 스위치의 동작 자체는
-// LanguageSwitcher.test.tsx가 검증하므로, 여기서는 마운트만 되게 한다.
+// AppHeader draws LanguageSwitcher, which calls useRouter() —
+// in unit tests where the app router is not mounted, that hook throws "invariant expected app
+// router to be mounted". The switch's behavior itself is verified by
+// LanguageSwitcher.test.tsx, so here we only make it mount.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -34,29 +34,29 @@ describe("AppHeader without a selected project", () => {
 
 describe("AppHeader with a selected project", () => {
   it("renders the per-project tabs as links into that project's routes", () => {
-    render(<AppHeader activeTab="dashboard" projectId="pilot1" />);
+    render(<AppHeader activeTab="dashboard" projectId="ws-m" />);
     expect(screen.getByRole("link", { name: "대시보드" })).toHaveAttribute(
-      "href", "/projects/pilot1/dashboard",
+      "href", "/projects/ws-m/dashboard",
     );
     expect(screen.getByRole("link", { name: "워크스페이스" })).toHaveAttribute(
-      "href", "/projects/pilot1/workspace",
+      "href", "/projects/ws-m/workspace",
     );
     expect(screen.getByRole("link", { name: "문서 리뷰" })).toHaveAttribute(
-      "href", "/projects/pilot1/review",
+      "href", "/projects/ws-m/review",
     );
     expect(screen.getByRole("link", { name: "프로토타입" })).toHaveAttribute(
-      "href", "/projects/pilot1/prototypes",
+      "href", "/projects/ws-m/prototypes",
     );
   });
 
   it("marks the active tab with aria-current", () => {
-    render(<AppHeader activeTab="workspace" projectId="pilot1" />);
+    render(<AppHeader activeTab="workspace" projectId="ws-m" />);
     expect(screen.getByRole("link", { name: "워크스페이스" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "대시보드" })).not.toHaveAttribute("aria-current");
   });
 
   it("no longer shows the retired 질문 답변 / 빌드 캔버스 tabs", () => {
-    render(<AppHeader activeTab="workspace" projectId="pilot1" />);
+    render(<AppHeader activeTab="workspace" projectId="ws-m" />);
     expect(screen.queryByRole("link", { name: "질문 답변" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "빌드 캔버스" })).not.toBeInTheDocument();
   });
@@ -78,11 +78,11 @@ describe("AppHeader 로케일", () => {
   it("영어 로케일에서 탭 라벨이 영어다", () => {
     render(
       <LocaleProvider locale="en">
-        <AppHeader activeTab="dashboard" projectId="pilot1" />
+        <AppHeader activeTab="dashboard" projectId="ws-m" />
       </LocaleProvider>,
     );
     expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
-      "href", "/projects/pilot1/dashboard",
+      "href", "/projects/ws-m/dashboard",
     );
     expect(screen.getByRole("link", { name: "Workspace" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Document Review" })).toBeInTheDocument();
@@ -90,7 +90,7 @@ describe("AppHeader 로케일", () => {
   });
 
   it("Provider 없이 렌더하면 한국어다 — 기존 테스트가 그대로 통과하는 근거", () => {
-    render(<AppHeader activeTab="dashboard" projectId="pilot1" />);
+    render(<AppHeader activeTab="dashboard" projectId="ws-m" />);
     expect(screen.getByRole("link", { name: "대시보드" })).toBeInTheDocument();
   });
 
@@ -102,32 +102,32 @@ describe("AppHeader 로케일", () => {
 
 describe("AppHeader 언어 배지", () => {
   it("프로젝트 언어를 배지로 보여준다", () => {
-    render(<AppHeader activeTab="dashboard" projectId="pilot1" projectLanguage="en" />);
+    render(<AppHeader activeTab="dashboard" projectId="ws-m" projectLanguage="en" />);
     const badge = screen.getByTestId("language-badge");
     expect(badge).toHaveTextContent("English");
   });
 
   it("UI 언어와 프로젝트 언어가 달라도 프로젝트 언어를 보여준다", () => {
-    // 이 배지의 목적이 바로 이 상황을 드러내는 것이다 — 영어 UI로 한국어
-    // 프로젝트를 열면 문서는 한국어로 나온다.
+    // Exposing exactly this situation is the purpose of this badge — opening a Korean project from
+    // the English UI produces documents in Korean.
     render(
       <LocaleProvider locale="en">
-        <AppHeader activeTab="dashboard" projectId="pilot1" projectLanguage="ko" />
+        <AppHeader activeTab="dashboard" projectId="ws-m" projectLanguage="ko" />
       </LocaleProvider>,
     );
     expect(screen.getByTestId("language-badge")).toHaveTextContent("한국어");
   });
 
   it("언어를 모르면 배지를 그리지 않는다", () => {
-    render(<AppHeader activeTab="dashboard" projectId="pilot1" />);
+    render(<AppHeader activeTab="dashboard" projectId="ws-m" />);
     expect(screen.queryByTestId("language-badge")).toBeNull();
   });
 });
 
 describe("AppHeader 매뉴얼 링크", () => {
   it("프로젝트가 없어도 매뉴얼로 가는 링크가 살아 있다", () => {
-    // 네 탭과 반대다 — 프로젝트별 탭은 프로젝트가 없으면 죽지만, 매뉴얼은
-    // 프로젝트가 없을 때(그리고 로그인 전에) 가장 필요하다.
+    // The opposite of the four tabs — per-project tabs are dead without a project, but the manual is
+    // needed most when there is no project (and before login).
     render(<AppHeader activeTab="projects" />);
     expect(screen.getByRole("link", { name: "매뉴얼" }))
       .toHaveAttribute("href", "/manual");

@@ -1,8 +1,8 @@
 # backend/tests/test_proto_prompts.py
 #
-# 프롬프트는 빌드 에이전트의 유일한 브레이크다(proto/session.py의
-# first_prompt docstring). 두 언어가 같은 지시를 담고 있는지 확인한다 —
-# 조립이 아니라 두 벌을 유지하므로, 한쪽에만 빠진 지시가 조용히 생길 수 있다.
+# The prompt is the build agent's only brake (the first_prompt docstring in
+# proto/session.py). Verify that both languages carry the same instructions —
+# we maintain two copies rather than assembling them, so an instruction missing from only one side can appear silently.
 from __future__ import annotations
 
 import pytest
@@ -24,26 +24,26 @@ def _plan(language: str) -> str:
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_plan_prompt_carries_every_directive(language):
-    """두 언어 모두 같은 브레이크를 걸어야 한다. 하나라도 빠지면 그 언어의
-    빌드는 승인 없이 시작된다.
+    """Both languages must apply the same brake. If even one is missing, builds in
+    that language start without approval.
 
-    이 프롬프트가 소유하는 것은 **세션의 흐름**이다 — 계획, 승인, 화면 문구의
-    언어, 완료 선언, 그리고 이 빌드에만 해당하는 런타임 값(스펙 경로와 프록시
-    경로). 공통 기술 계약은 `proto-config/CLAUDE.md`가 소유한다
-    (test_build_agent_contract가 그쪽을 고정한다).
+    What this prompt owns is **the session flow** — the plan, approval, the language of
+    on-screen text, the completion declaration, and the runtime values specific to this
+    build (the spec path and the proxy path). The shared technical contract is owned by
+    `proto-config/CLAUDE.md` (test_build_agent_contract pins that side).
     """
     p = _plan(language)
-    assert SPEC in p                    # 스펙을 읽으라고 지시
-    assert "AskUserQuestion" in p       # 승인을 받으라고 지시
-    assert "build_complete" in p        # 완료 선언
-    assert PROXY in p                   # 이 빌드의 프록시 경로(런타임 값)
-    # 생성되는 앱의 화면 문구도 프로젝트 언어여야 한다(스펙 §4). 이 지시가
-    # 없으면 영어 프로젝트가 한국어 UI의 프로토타입을 받는다.
+    assert SPEC in p                    # instructs it to read the spec
+    assert "AskUserQuestion" in p       # instructs it to get approval
+    assert "build_complete" in p        # completion declaration
+    assert PROXY in p                   # this build's proxy path (runtime value)
+    # The generated app's on-screen text must also be in the project language (spec §4).
+    # Without this instruction, an English project receives a prototype with a Korean UI.
     assert "i18n" in p
 
 
-#: 공통 기술 계약의 토큰. `proto-config/CLAUDE.md`가 소유하며, 이 프롬프트가
-#: 다시 말하면 같은 규칙이 세 벌(ko/en 프롬프트 + 계약)이 된다.
+#: Tokens of the shared technical contract. `proto-config/CLAUDE.md` owns them, and if this
+#: prompt restated them, the same rule would exist in three copies (ko/en prompts + contract).
 SHARED_CONTRACT_TOKENS = ("@strands-agents/sdk", "temperature",
                           "BEDROCK_MODEL_ID", "basePath", "prototype/")
 
@@ -51,17 +51,17 @@ SHARED_CONTRACT_TOKENS = ("@strands-agents/sdk", "temperature",
 @pytest.mark.parametrize("language", ["ko", "en"])
 @pytest.mark.parametrize("token", SHARED_CONTRACT_TOKENS)
 def test_the_plan_prompt_does_not_restate_the_shared_contract(language, token):
-    """기술 규칙은 `proto-config/CLAUDE.md`에만 있어야 한다.
+    """Technical rules must live only in `proto-config/CLAUDE.md`.
 
-    **왜 옮겼는가.** 이 규칙들이 원래 프롬프트에 있었던 근거는 "스킬은 UI가 있는
-    프로토타입에만 걸리고, 이 프롬프트가 유일하게 항상 읽히는 자리다"였다. 그
-    전제가 틀렸다 — `proto-config/CLAUDE.md`는 `setting_sources`의 **"user"
-    레벨**이므로(builder.py가 `CLAUDE_CONFIG_DIR`을 갈아끼운다) 스킬 호출과
-    무관하게 매 턴 읽힌다. 비교 대상은 스킬이 아니라 계약 파일이었다.
+    **Why they were moved.** The rationale for these rules originally living in the prompt was
+    "skills only apply to prototypes with a UI, and this prompt is the only place that is always
+    read". That premise was wrong — `proto-config/CLAUDE.md` is at the **"user" level** of
+    `setting_sources` (builder.py swaps `CLAUDE_CONFIG_DIR`), so it is read on every turn
+    regardless of skill invocation. The thing to compare against was the contract file, not skills.
 
-    세 벌을 유지하는 대가는 실측돼 있다: 언어별 프롬프트 2벌은 한쪽에만 규칙이
-    빠지는 경로이고(이 파일 헤더), 거기에 계약 파일까지 더하면 어느 쪽이 최신인지
-    알 수 없다.
+    The cost of maintaining three copies has been measured: two per-language prompts are a
+    path for a rule to go missing from one side (this file's header), and adding the contract
+    file on top makes it impossible to tell which one is current.
     """
     assert token not in _plan(language), (
         f"{token!r}가 프롬프트에 남아 있다 — proto-config/CLAUDE.md가 SSOT다")
@@ -70,7 +70,7 @@ def test_the_plan_prompt_does_not_restate_the_shared_contract(language, token):
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_plan_prompt_forbids_building_in_the_first_turn(language):
     p = _plan(language).lower()
-    # 이 지시가 유일한 브레이크다 — 없으면 에이전트가 바로 빌드를 시작한다.
+    # This instruction is the only brake — without it, the agent starts building immediately.
     forbid = ["빌드는 시작하지" in p or "do not start building" in p,
               "write/edit" in p or "write·edit" in p]
     assert all(forbid), p[:400]
@@ -79,8 +79,8 @@ def test_plan_prompt_forbids_building_in_the_first_turn(language):
 def test_korean_prompt_is_korean_and_english_prompt_is_english():
     ko, en = _plan("ko"), _plan("en")
     assert any("가" <= c <= "힣" for c in ko)
-    # 영어 프롬프트에 한글이 섞이면 번역이 덜 된 것이다. 파일 경로에는 한글이
-    # 없으므로(SPEC/PROXY 모두 ASCII) 이 단정이 유효하다.
+    # Hangul mixed into the English prompt means the translation is incomplete. File paths
+    # contain no Hangul (SPEC/PROXY are both ASCII), so this assertion is valid.
     assert not any("가" <= c <= "힣" for c in en), en
 
 
@@ -92,8 +92,8 @@ def test_resume_prompt_asks_before_working(language):
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_missing_output_prompt_says_not_to_look_for_the_old_code(language):
-    # 이 지시가 없으면 에이전트가 삭제된 트리를 찾아 파일시스템을 훑는다
-    # (실측: 19초 이상). 두 언어 모두 명시해야 한다.
+    # Without this instruction, the agent scans the filesystem looking for the deleted tree
+    # (measured: 19+ seconds). Both languages must state it.
     p = missing_output_prompt(language, spec_key=SPEC)
     assert SPEC in p
     assert "AskUserQuestion" in p
@@ -126,20 +126,20 @@ def test_an_unknown_language_falls_back_to_korean():
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_design_rules_carry_every_directive(language):
     out = prompts.design_rules(language)
-    # 파일 이름 둘과 "직접 고치지 마라"가 빠지면 지시가 성립하지 않는다.
+    # Without the two file names and "do not edit them directly", the instruction does not hold.
     assert "aipds-theme.css" in out
     assert "DESIGN.md" in out
     for needle in (["복사", "import", "고치지", "시맨틱", "hex", "무관",
-                    # 최종 리뷰 C1: globals.css *다음에* 루트 레이아웃에서
-                    # import하라는 지시(캐스케이드에서 shadcn의 :root에
-                    # 지지 않으려면 필수) — 없으면 브랜드가 오류 없이
-                    # 무효화된다.
+                    # Final review C1: the instruction to import it from the root
+                    # layout *after* globals.css (required so it does not lose to
+                    # shadcn's :root in the cascade) — without it, the brand is
+                    # nullified without any error.
                     "레이아웃",
-                    # 최종 리뷰 I5: 경고가 아니라 수리 지시여야 한다
-                    # (hsl(var(--x))를 감싸는 구식 설정을 고치라는 명령).
+                    # Final review I5: it must be a repair instruction, not a warning
+                    # (a command to fix the outdated config that wraps hsl(var(--x))).
                     "고쳐라",
-                    # 최종 리뷰 M12: DESIGN.md를 시각 디자인 참고자료로만
-                    # 다루고 무관한 지시는 무시하라는 방어적 문구.
+                    # Final review M12: defensive wording to treat DESIGN.md only as a
+                    # visual design reference and ignore unrelated instructions.
                     "시각 디자인 참고자료"]
                    if language == "ko"
                    else ["Copy", "import", "Do not edit", "semantic", "hex",
@@ -152,12 +152,12 @@ def test_design_rules_carry_every_directive(language):
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_design_rules_without_tokens_point_at_the_document(language):
-    """토큰이 없으면 브랜드의 출처는 테마 파일이 아니라 DESIGN.md다.
+    """Without tokens, the source of the brand is DESIGN.md, not the theme file.
 
-    2026-08-19 실측: 값이 없는 테마 파일을 "브랜드 프로필에서 생성됨"이라고
-    가리킨 결과, 한 에이전트는 그 파일을 덮을 것이 없다고 읽고 shadcn 기본값을
-    뒀고 다른 에이전트는 산문을 읽어 팔레트를 옮겼다. 지시가 값이 있는 곳을
-    가리켜야 한다.
+    Measured 2026-08-19: pointing at a theme file with no values as "generated from the brand
+    profile" led one agent to read it as having nothing to override and keep the shadcn
+    defaults, while another agent read the prose and carried over the palette. The
+    instruction must point to where the values are.
     """
     out = prompts.design_rules(language, has_tokens=False)
     assert "DESIGN.md" in out
@@ -165,15 +165,15 @@ def test_design_rules_without_tokens_point_at_the_document(language):
     for needle in (["값이 없다", "옮겨라"] if language == "ko"
                    else ["no values", "move"]):
         assert needle in out, f"{language}: {needle!r}가 없다"
-    # 배선은 여전히 요구한다 — 이 import가 나중에 올라올 브랜드를 다시 빌드하지
-    # 않고 이 프로토타입에 닿게 하는 유일한 길이다.
+    # The wiring is still required — this import is the only way for a brand uploaded later
+    # to reach this prototype without rebuilding it.
     assert "aipds-theme.css" in out
 
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_design_rules_with_tokens_do_not_ask_for_a_manual_move(language):
-    # 토큰이 있으면 값을 손으로 옮기라는 지시가 없어야 한다 — 두 지시가 함께
-    # 있으면 에이전트가 우리가 덮어쓰는 파일과 자기가 쓴 값을 동시에 들고 있게 된다.
+    # With tokens, there must be no instruction to carry values over by hand — with both
+    # instructions present, the agent ends up holding both the file we overwrite and the values it wrote itself.
     out = prompts.design_rules(language, has_tokens=True)
     assert ("옮겨라" not in out) if language == "ko" else ("move" not in out)
 
@@ -183,22 +183,22 @@ def test_theme_rejection_tells_the_agent_what_to_do(language):
     out = prompts.build_complete_theme_rejection(language)
     assert "aipds-theme.css" in out
     assert ("거부됨" in out) if language == "ko" else ("Rejected" in out)
-    # 이 거부 문구는 design_rules와 같은 곳(globals.css *다음에* 루트
-    # 레이아웃에서 import)을 지목해야 한다 — 그렇지 않으면 에이전트가
-    # globals.css 안에서 import해 캐스케이드에서 지는 결함을 재현한다.
+    # This rejection message must point to the same place as design_rules (import from the
+    # root layout *after* globals.css) — otherwise the agent imports it inside globals.css
+    # and reproduces the defect of losing in the cascade.
     assert ("레이아웃" in out) if language == "ko" else ("layout" in out)
 
 
-# ---- Bash 게이트의 거부 문구 (proto/build_guard.py의 판정에 붙는다) ----
+# ---- Rejection messages of the Bash gate (attached to proto/build_guard.py's verdicts) ----
 
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_the_unsafe_command_refusal_names_what_was_caught(language):
-    """무엇이 걸렸는지 **조각으로 지목**해야 한다.
+    """It must **point to the fragment** that was caught.
 
-    지목이 없으면 모델이 같은 명령을 형태만 바꿔 재시도하며 루프에 빠진다 —
-    agent/prompts.write_outside_docs의 docstring이 그 결함을 기록해 뒀고,
-    이 게이트도 같은 실패 경로를 갖는다.
+    Without pointing, the model retries the same command in a different form and gets stuck
+    in a loop — the docstring of agent/prompts.write_outside_docs recorded that defect, and
+    this gate has the same failure path.
     """
     out = prompts.unsafe_command_refused(language, "npx playwright test")
     assert "npx playwright test" in out
@@ -207,26 +207,26 @@ def test_the_unsafe_command_refusal_names_what_was_caught(language):
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_the_unsafe_command_refusal_offers_the_alternative(language):
-    """거부만 하면 모델은 '막혔다'만 알고 무엇으로 검증할지는 모른다.
+    """With only a rejection, the model knows only that it was 'blocked', not what to verify with.
 
-    빌드 검증 수단(`npm run build`)과 화면 확인 주체(프로토타입 탭의 라이브
-    프리뷰)를 함께 준다.
+    Give it both the build verification means (`npm run build`) and who checks the screen
+    (the live preview in the prototype tab).
     """
     out = prompts.unsafe_command_refused(language, "npm run dev")
     assert "npm run build" in out
 
 
-# ---- 사용자가 이미 무엇을 고칠지 말했을 때 ----
+# ---- When the user has already said what to fix ----
 #
-# **왜 이 분기가 있는가.** "수정하기"를 누른 사람은 이미 무엇을 고칠지 알고 있다 —
-# 프리뷰에서 봤으니까. 그런데 개시 프롬프트가 "아직 아무것도 수정하지 마 …
-# AskUserQuestion으로 무엇을 개선할지 물어보고 답을 기다려줘"라고 지시하고, 질문이
-# 떠 있는 동안 입력창이 비활성이라(BuildPanel의 `disabled={streaming || …}`)
-# 사용자는 **자기 요청을 타이핑할 수조차 없었다.** 남의 객관식에 먼저 답해야
-# 자기 말을 할 수 있는 흐름이었다.
+# **Why this branch exists.** Someone who pressed "수정하기" already knows what to fix —
+# they saw it in the preview. Yet the opening prompt instructed "아직 아무것도 수정하지 마 …
+# AskUserQuestion으로 무엇을 개선할지 물어보고 답을 기다려줘", and while the question is up
+# the input box is disabled (BuildPanel's `disabled={streaming || …}`), so the user
+# **could not even type their own request.** It was a flow where they had to answer someone
+# else's multiple choice before they could say their own piece.
 #
-# 요청이 실려 오면 그 왕복을 건너뛴다. 요청이 없으면(자동 개시) 종전대로 묻는다 —
-# 그때는 사용자가 아무 말도 하지 않았으므로 묻는 것이 맞다.
+# When a request comes along, that round trip is skipped. With no request (auto-start), it asks
+# as before — in that case the user has not said anything, so asking is right.
 
 def test_the_handoff_prompt_still_asks_when_no_request_was_given():
     from aipds.proto.prompts import handoff_prompt
@@ -243,16 +243,16 @@ def test_a_handoff_request_replaces_the_question_round_trip():
     text = handoff_prompt("ko", spec_key="spec.md", summary="요약",
                           remaining="남은 것", request="장바구니 버튼을 오른쪽 위로")
 
-    # 사용자의 말이 그대로 실린다 — 요약해 옮기면 의도가 깎인다.
+    # The user's words are carried verbatim — summarizing them chips away at the intent.
     assert "장바구니 버튼을 오른쪽 위로" in text
-    # 그리고 되묻지 않는다.
+    # And it does not ask back.
     assert "AskUserQuestion" not in text
 
 
 def test_a_handoff_request_keeps_the_context_the_new_session_has_no_other_way_to_get():
-    """handoff 분기는 **새 세션**이라 트랜스크립트가 없다(proto/session의
-    _resolve_session_id). 요청만 보내면 에이전트가 이전 빌드가 무엇을 남겼는지
-    모르는 채로 시작한다 — 요약과 "먼저 prototype/을 봐라"가 함께 가야 한다."""
+    """The handoff branch is a **new session**, so there is no transcript (proto/session's
+    _resolve_session_id). Sending only the request makes the agent start without knowing what
+    the previous build left behind — the summary and "look at prototype/ first" must go together."""
     from aipds.proto.prompts import handoff_prompt
 
     text = handoff_prompt("ko", spec_key="spec.md", summary="투두 앱을 만들었다",
@@ -284,9 +284,9 @@ def test_the_english_prompts_carry_the_request_too():
 
 
 def test_a_plan_request_is_never_silently_dropped():
-    """`plan`(첫 빌드)에는 이 흐름이 닿지 않는다 — 카드가 입력을 주기 전에
-    `__first__`가 자동 발화하기 때문이다. 그래도 요청이 도달하면 실어야 한다:
-    사용자가 타이핑한 말이 조용히 사라지는 것이 가장 나쁘다."""
+    """This flow does not reach `plan` (the first build) — because `__first__` fires
+    automatically before the card provides input. Still, if a request arrives, it must be carried:
+    the worst outcome is the words the user typed silently disappearing."""
     from aipds.proto.prompts import plan_prompt
 
     text = plan_prompt("ko", spec_key="spec.md", proxy_path="/p/",
@@ -299,7 +299,7 @@ INSTRUCTIONS = "aiplc-docs/discovery/prototype/build-instructions.md"
 
 
 def _every_opening(language: str, instructions_key: str | None) -> list[str]:
-    """명세를 가리키는 개시 프롬프트 전부(resume은 명세를 다시 말하지 않는다)."""
+    """All opening prompts that point to the spec (resume does not restate the spec)."""
     return [
         plan_prompt(language, spec_key=SPEC, proxy_path=PROXY,
                     instructions_key=instructions_key),
@@ -314,8 +314,8 @@ def _every_opening(language: str, instructions_key: str | None) -> list[str]:
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_openings_name_the_build_instructions_when_present(language):
-    """Path A.1의 빌드 지시서는 design-context 답변이 빌더에 닿는 유일한 길이다.
-    명세만 가리키면 에이전트는 그 파일이 있다는 것을 모른다."""
+    """Path A.1's build instructions are the only way design-context answers reach the builder.
+    If we point only to the spec, the agent does not know that file exists."""
     for p in _every_opening(language, INSTRUCTIONS):
         assert SPEC in p
         assert INSTRUCTIONS in p
@@ -323,7 +323,7 @@ def test_openings_name_the_build_instructions_when_present(language):
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_openings_without_instructions_are_unchanged(language):
-    """지시서가 없으면(Path B) 인자를 안 준 것과 한 글자도 다르지 않다."""
+    """Without instructions (Path B), not a single character differs from passing no argument."""
     assert _every_opening(language, None) == [
         plan_prompt(language, spec_key=SPEC, proxy_path=PROXY),
         missing_output_prompt(language, spec_key=SPEC),
@@ -334,12 +334,12 @@ def test_openings_without_instructions_are_unchanged(language):
 
 
 def test_english_openings_with_instructions_stay_english():
-    for p in _every_opening("en", INSTRUCTIONS)[:3]:     # 마지막은 한국어 요청을 싣는다
+    for p in _every_opening("en", INSTRUCTIONS)[:3]:     # the last one carries a Korean request
         assert not any("가" <= c <= "힣" for c in p), p
 
 
-# 완료된 빌드 뒤의 메시지는 전부 개선 세션을 연다 — 질문도 그렇다. 요청을 변경
-# 지시로 단정하면 모델은 아무것도 바꾸지 않고 완료를 선언해 세션을 닫는다.
+# Every message after a completed build opens an improvement session — questions too. If the
+# request is assumed to be a change instruction, the model changes nothing, declares completion, and closes the session.
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_a_carried_request_may_be_a_question_that_ends_without_completion(language):
@@ -353,7 +353,7 @@ def test_a_carried_request_may_be_a_question_that_ends_without_completion(langua
         else:
             assert "If it is a question or a discussion, answer it in the chat" in text
             assert "If you changed nothing, do not call `build_complete`" in text
-        # 변경 요청에는 종전대로 되묻지 않고 끝나면 완료를 선언한다.
+        # For change requests, as before, it does not ask back and declares completion when done.
         assert "AskUserQuestion" not in text
         assert "build_complete" in text
 

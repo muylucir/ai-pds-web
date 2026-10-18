@@ -17,9 +17,10 @@ class Question(BaseModel):
     type: QuestionType
     options: list[str] = Field(default_factory=list)
     required: bool = True
-    # 응답자가 명세의 어느 대상 사용자(Target Users)인지 묻는 문항. 집계가 이
-    # 답으로 다른 문항을 나눈다(store._aggregate_markdown). 생성기가 직접 만드는
-    # 문항이고 모델이 만든 문항에는 없다. 이 필드가 생기기 전 설문에는 없다.
+    # The question that asks which of the spec's Target Users the respondent is. The
+    # rollup splits the other questions by this answer (store._aggregate_markdown). The
+    # generator creates this question itself; model-generated questions never have it.
+    # Surveys created before this field existed lack it.
     persona: bool = False
 
     @model_validator(mode="after")
@@ -40,9 +41,9 @@ class Questionnaire(BaseModel):
     project_id: str
     created_at: str
     closed_at: str | None = None
-    # 문항이 쓰인 언어("ko"|"en"). 공개 응답 페이지가 이 값으로 화면 문구를
-    # 고른다. 기존 설문에는 없어 기본값이 필요하다 — 그 설문들은 모두
-    # 한국어로 만들어졌다.
+    # The language the questions are written in ("ko"|"en"). The public response page
+    # picks its on-screen text by this value. Existing surveys lack it, so a default is
+    # required — all of those surveys were created in Korean.
     language: str = "ko"
     title: str
     hypothesis: str
@@ -58,7 +59,7 @@ class Questionnaire(BaseModel):
             # question's responses.
             raise ValueError("question ids must be unique")
         if sum(q.persona for q in self.questions) > 1:
-            # 응답을 나누는 기준은 하나여야 한다.
+            # There must be exactly one criterion that splits the responses.
             raise ValueError("at most one persona question")
         return self
 

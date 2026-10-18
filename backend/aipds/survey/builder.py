@@ -80,15 +80,16 @@ QUESTIONNAIRE_PROMPT_KO = """\
 """
 
 
-# 영어 판. 한국어 판과 **같은 제약을 같은 순서로** 담는다 — 조립하지 않고 두
-# 벌을 유지하는 이유는 proto/prompts.py와 같다(제약이 하나 빠지면 그 언어의
-# 설문만 조용히 나빠진다). test_survey_builder가 두 벌의 대조를 지킨다.
+# English version. It carries **the same constraints in the same order** as the Korean version —
+# the reason for keeping two copies rather than assembling them is the same as in
+# proto/prompts.py (if one constraint goes missing, only that language's surveys quietly get
+# worse). test_survey_builder guards the comparison between the two copies.
 #
-# **첫 줄의 언어 지시가 두 판 모두에 있어야 한다.** 프롬프트가 자기 산문의
-# 언어로 출력 언어를 암시하는 것만으로는 부족하다 — 실측(2026-08-05): 영어
-# 프롬프트에 한국어 명세를 실었더니 문항이 전부 한국어로 나왔다. `{md}`로 실린
-# 명세가 더 가깝고 구체적인 신호라 모델이 그것을 따라갔고, ko 프로젝트에서는
-# 명세와 출력이 우연히 일치해 결함이 보이지 않았다.
+# **The language instruction on the first line must be in both versions.** Having the prompt
+# imply the output language through the language of its own prose is not enough — measured
+# (2026-08-05): putting a Korean spec into the English prompt made every question come out in
+# Korean. The spec carried in via `{md}` was a closer, more concrete signal, so the model followed
+# it, and in ko projects the spec and output happened to match, so the defect was not visible.
 QUESTIONNAIRE_PROMPT_EN = """\
 **Write every question, title, option, and hypothesis in English.** The spec below
 may be written in another language — translate as needed; the questions themselves
@@ -162,22 +163,24 @@ Spec:
 _PROMPTS = {"ko": QUESTIONNAIRE_PROMPT_KO, "en": QUESTIONNAIRE_PROMPT_EN}
 
 
-# ---- Envision 근거 절 (survey/inputs.py가 찾아온 문서) ----
+# ---- Envision evidence sections (documents found by survey/inputs.py) ----
 #
-# **왜 절마다 지시가 붙어 있는가.** 문서를 싣는 것과 그 문서로 무엇을 하라는
-# 지시가 떨어져 있으면 지시가 약해진다 — 이 모듈이 출력 언어에서 이미 겪은
-# 실패다(2026-08-05: `{md}`로 실린 명세가 더 가깝고 구체적인 신호라 모델이
-# 프롬프트 산문의 언어가 아니라 명세의 언어를 따랐다). 그래서 각 문서 바로
-# 뒤에 그 문서를 어떻게 쓸지 붙인다.
+# **Why each section carries its own instruction.** When the document being carried and the
+# instruction about what to do with it are far apart, the instruction weakens — a failure this
+# module has already experienced with the output language (2026-08-05: the spec carried in via
+# `{md}` was a closer, more concrete signal, so the model followed the spec's language rather
+# than the language of the prompt prose). So how to use each document is attached right after
+# that document.
 #
-# **왜 가드가 맨 끝인가.** `pain-point-analysis.md`는 TAM/SAM·지불의향·경쟁
-# 구도를 담는데(실측 3/3), 위의 금지 목록은 바로 그 축들을 묻지 말라고 한다.
-# 두 신호가 부딪치므로 나중에 오는 쪽이 이겨야 한다.
+# **Why the guard is at the very end.** `pain-point-analysis.md` contains TAM/SAM, willingness
+# to pay, and the competitive landscape (measured 3/3), and the prohibition list above says not
+# to ask about exactly those axes. The two signals collide, so the one that comes later must win.
 #
-# **왜 조립하는가.** 문서 조합이 셋(페인포인트만/컨텍스트만/둘 다)이라 언어당
-# 완성본을 세 벌 두면 여섯 벌이 되고, 그중 하나가 낡는 것을 아무도 못 본다.
-# 대신 **조각마다 언어별 완성본 두 벌**을 두고, 문서 유무가 조각의 등장을
-# 결정하게 한다 — 문장을 치환으로 만들지 않는다는 규율은 그대로다.
+# **Why it is assembled.** There are three document combinations (pain points only / context
+# only / both), so keeping three complete versions per language would make six, and nobody would
+# notice one of them going stale. Instead there are **two complete per-language versions of each
+# fragment**, and the presence of a document decides whether its fragment appears — the
+# discipline of not building sentences by substitution stays as is.
 
 _CTX_PAIN_KO = """
 참고 — 페인 포인트 분석 (`envision/pain-point-analysis.md`)
@@ -260,11 +263,12 @@ _CTX_PIECES = {
 
 
 def _context_block(language: str, context) -> str:
-    """근거 문서 절. 있는 문서만 등장하고, 하나도 없으면 빈 문자열이다.
+    """The evidence document section. Only the documents that exist appear, and if there are
+    none it is an empty string.
 
-    빈 문자열이어야 하는 이유: 없는 문서를 가리키는 지시("아래 페인 포인트
-    분석을 보고…")가 남으면 모델은 있지도 않은 절을 찾다가 스펙에서 페인
-    포인트를 지어낸다.
+    Why it must be an empty string: if an instruction pointing at a nonexistent document ("아래
+    페인 포인트 분석을 보고…" — looking at the pain point analysis below…) remains, the model
+    searches for a section that does not exist and then makes up pain points from the spec.
     """
     pain_tpl, biz_tpl, guard = _CTX_PIECES[language]
     blocks = []
@@ -279,10 +283,10 @@ def _context_block(language: str, context) -> str:
 
 def build_prompt(prototype_md: str, language: str = "ko", *,
                  context=None) -> str:
-    """설문 문항 생성 프롬프트. 알 수 없는 언어는 한국어로 떨어진다.
+    """The survey question generation prompt. Unknown languages fall back to Korean.
 
-    `context`는 `survey/inputs.DiscoveryContext` 또는 None이다. None이면 종전과
-    **완전히 같은** 프롬프트가 나온다 — 보조 문서는 보강이고 전제가 아니다.
+    `context` is a `survey/inputs.DiscoveryContext` or None. With None, **exactly the same**
+    prompt as before comes out — the auxiliary documents are reinforcement, not a premise.
     """
     lang = language if language in _PROMPTS else "ko"
     prompt = _PROMPTS[lang].format(md=prototype_md)
@@ -291,28 +295,29 @@ def build_prompt(prototype_md: str, language: str = "ko", *,
     return prompt + _context_block(lang, context)
 
 
-# ---- 페르소나 문항 ----
+# ---- Persona question ----
 #
-# **왜 모델이 아니라 여기서 만드는가.** 집계는 이 문항의 답으로 다른 문항을
-# 모두 나눈다. 그러려면 이 문항이 반드시 있고, 어느 것인지 알 수 있고, 명세의
-# 대상 사용자가 아닌 응답자가 고를 선택지가 있어야 한다. 셋 다 모델에게
-# 맡기면 하나씩 빠진다 — 그래서 모델에게는 역할 이름만 받고 문항은 짓는다.
+# **Why it is built here rather than by the model.** The aggregation splits every other question
+# by the answer to this one. For that, this question must always exist, it must be identifiable,
+# and there must be a choice for respondents who are not the spec's target users. Leaving all
+# three to the model loses one of them each time — so only the role names are taken from the
+# model, and the question is built here.
 #
-# **왜 "해당 없음/기타"가 꼭 있는가.** 링크는 대상 사용자가 아닌 사람에게도
-# 간다. 그 선택지가 없으면 그들은 가장 가까운 역할을 골라 그 페르소나의
-# 신호를 흐린다. 그 선택지에 응답이 몰리면 그것 자체가 링크가 엉뚱한 곳으로
-# 갔다는 신호다.
+# **Why "해당 없음/기타" (not applicable / other) must always be there.** The link also goes to
+# people who are not target users. Without that choice they pick the closest role and blur that
+# persona's signal. If responses pile up on that choice, that in itself is a signal that the
+# link went to the wrong place.
 #
-# **왜 프롬프트가 "AI-PDS가 직접 만든다"고 주어를 밝히는가.** 실측(2026-10-10,
-# Opus 4.8): 영어 판이 "the first question is built from this list"라고만
-# 했을 때 4/4가 역할 문항을 `questions`에 직접 만들어 역할을 두 번 물었다 —
-# 수동태를 "네가 첫 문항으로 만들어라"로 읽었다. 한국어 판은 0/4였다. 주어를
-# 밝힌 뒤 두 언어 모두 0/3이다.
+# **Why the prompt names the subject, "AI-PDS가 직접 만든다" (AI-PDS builds it itself).**
+# Measured (2026-10-10, Opus 4.8): when the English version only said "the first question is
+# built from this list", 4/4 runs created the role question directly in `questions`, asking for
+# the role twice — they read the passive voice as "you build it as the first question". The
+# Korean version was 0/4. After naming the subject, both languages are 0/3.
 
-#: 문항 id. 모델이 짓는 문항은 q1, q2, …라 겹치지 않는다.
+#: Question id. Questions the model builds are q1, q2, …, so there is no overlap.
 PERSONA_ID = "persona"
 
-#: 역할 이름 개수 상한. 프롬프트는 2~5개를 요구한다 — 넘치면 자른다.
+#: Upper limit on the number of role names. The prompt asks for 2-5 — any excess is cut.
 MAX_PERSONAS = 6
 
 _PERSONA_QUESTION = {
@@ -322,10 +327,10 @@ _PERSONA_QUESTION = {
 
 
 def _persona_question(raw, language: str) -> dict | None:
-    """모델이 준 역할 이름으로 첫 문항을 짓는다. 이름이 없으면 None이다.
+    """Build the first question from the role names the model gave. None if there are no names.
 
-    None이면 설문은 이 기능 이전과 같다 — 명세에 대상 사용자가 없는 것은
-    설문을 못 만들 이유가 아니다.
+    With None the survey is the same as before this feature — a spec with no target users is no
+    reason a survey cannot be built.
     """
     text, other = _PERSONA_QUESTION[language if language in _PERSONA_QUESTION else "ko"]
     names: list[str] = []
@@ -361,15 +366,17 @@ async def build_questionnaire(prototype_md: str, agent, *, token: str,
         try:
             data = _extract_json(reply)
             persona = _persona_question(data.get("personas"), language)
-            # 모델이 지시를 어기고 persona 표시를 단 문항은 믿지 않는다.
+            # Questions the model marked as persona in violation of the instructions are not
+            # trusted.
             questions = [{**q, "persona": False} if isinstance(q, dict) else q
                          for q in data["questions"]]
             return Questionnaire(
                 token=token, status="open", slug=slug, project_id=project_id,
                 created_at=now, closed_at=None,
-                # 문항의 언어를 기록한다 — 공개 응답 페이지가 이 값으로 화면을
-                # 그린다. 응답자는 외부인이라 aipds_lang 쿠키가 없고, 문항이
-                # 영어인데 화면만 한국어인 것은 응답자에게 더 나쁘다.
+                # Record the question language — the public response page draws the screen
+                # with this value. Respondents are outsiders without an aipds_lang cookie, and
+                # a screen in Korean while the questions are in English is worse for the
+                # respondent.
                 language=language,
                 title=data["title"], hypothesis=data["hypothesis"],
                 questions=([persona] if persona else []) + questions)

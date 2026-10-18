@@ -1,17 +1,17 @@
-// frontend/content/manual/index.ts — 매뉴얼 콘텐츠 조회의 단일 출처.
+// frontend/content/manual/index.ts — the single source for looking up manual content.
 //
-// lib/i18n/index.ts의 dictFor()와 같은 모양이다. 매뉴얼은 **UI 로케일**을
-// 따른다(프로젝트의 문서 언어가 아니다) — 매뉴얼은 화면을 설명하는 글이므로
-// 화면과 같은 언어여야 한다.
+// Same shape as dictFor() in lib/i18n/index.ts. The manual follows the **UI locale**
+// (not the project's document language) — the manual is text that describes the screen, so it
+// must be in the same language as the screen.
 import type { Locale } from "@/lib/i18n";
 
 import { ko } from "./ko";
 import { en } from "./en";
 import type { ManualContent, ManualSectionId } from "./types";
 
-// 목차와 본문의 **표시 순서**. 타입이 아니라 값으로 두는 이유는 절을 옮기는
-// 것이 타입 변경이 아니어야 하기 때문이다. `readonly [...]`가 아니라 배열
-// 리터럴에 satisfies를 걸어, id를 빠뜨리면 컴파일이 실패하게 한다.
+// The **display order** of the table of contents and the body. It is a value rather than a type because moving a
+// section should not be a type change. Instead of `readonly [...]`, satisfies is applied to an array
+// literal, so that omitting an id fails compilation.
 export const MANUAL_ORDER = [
   "intro",
   "getting-started",
@@ -26,9 +26,9 @@ export const MANUAL_ORDER = [
   "operations",
 ] as const satisfies readonly ManualSectionId[];
 
-// 위 배열이 ManualSectionId를 **전부** 덮는지 검사한다. satisfies는 "각 항목이
-// id다"까지만 보장하고 누락은 잡지 못하므로, 빠진 id가 있으면 이 타입이
-// never가 아니게 되어 아래 단정에서 컴파일 에러가 난다.
+// Checks that the array above covers **all** of ManualSectionId. satisfies only guarantees "each item
+// is an id" and cannot catch omissions, so if any id is missing this type
+// stops being never and the assertion below fails to compile.
 type Missing = Exclude<ManualSectionId, (typeof MANUAL_ORDER)[number]>;
 const _allSectionsOrdered: Missing extends never ? true : never = true;
 void _allSectionsOrdered;

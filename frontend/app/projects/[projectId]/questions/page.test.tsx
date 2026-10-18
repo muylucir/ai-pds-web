@@ -12,7 +12,7 @@ vi.mock("next/navigation", () => ({
 
 describe("Questions page (retired route)", () => {
   it("redirects to the project's workspace screen", async () => {
-    await QuestionsPage({ params: Promise.resolve({ projectId: "pilot1" }) });
-    expect(redirectSpy).toHaveBeenCalledWith("/projects/pilot1/workspace");
+    await QuestionsPage({ params: Promise.resolve({ projectId: "ws-m" }) });
+    expect(redirectSpy).toHaveBeenCalledWith("/projects/ws-m/workspace");
   });
 });

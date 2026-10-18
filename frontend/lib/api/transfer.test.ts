@@ -11,8 +11,8 @@ const STORAGE = "https://bucket.s3.example.invalid/imports/abc";
 
 describe("filenameFromDisposition", () => {
   it("prefers the RFC 5987 form so a Korean project id survives", () => {
-    // ASCII 폴백은 한글이 하이픈으로 뭉개진 이름이다 — 순서를 뒤집으면
-    // 한국어 사용자가 항상 그 이름을 받는다.
+    // The ASCII fallback is a name with the Korean mashed into hyphens — if the order were
+    // flipped, Korean users would always get that name.
     const header = 'attachment; filename="-----.zip"; '
       + "filename*=UTF-8''%ED%95%9C%EA%B8%80.zip";
     expect(filenameFromDisposition(header)).toBe("한글.zip");
@@ -41,7 +41,7 @@ describe("exportProject", () => {
   beforeEach(() => {
     clicked = [];
     revoked = [];
-    // jsdom은 이 둘을 구현하지 않는다.
+    // jsdom does not implement these two.
     (URL as unknown as { createObjectURL: unknown }).createObjectURL =
       vi.fn(() => "blob:fake");
     (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL =
@@ -70,7 +70,7 @@ describe("exportProject", () => {
 
     expect(clicked).toHaveLength(1);
     expect(clicked[0].download).toBe("pilot2-export.zip");
-    // 오브젝트 URL을 놓아 준다 — 100MB짜리가 탭 수명 내내 살아 있으면 안 된다.
+    // Releases the object URL — a 100MB one must not stay alive for the lifetime of the tab.
     expect(revoked).toEqual(["blob:fake"]);
   });
 
@@ -96,8 +96,8 @@ describe("exportProject", () => {
   });
 
   it("surfaces the backend code instead of downloading an error page", async () => {
-    // 진행 중인 빌드 세션(409)이 흔한 실패다 — 앵커 내비게이션이면 사용자가
-    // JSON 페이지를 보게 된다.
+    // An in-progress build session (409) is a common failure — with anchor navigation, the user
+    // would see a JSON page.
     server.use(http.get(`${API_BASE_URL}/projects/pilot2/export`, () =>
       HttpResponse.json({ detail: "build_session_active" }, { status: 409 })));
 
@@ -136,14 +136,14 @@ describe("stageBundle", () => {
 
     expect(ticketBody).toEqual({ size_bytes: 7 });
     expect(uploadId).toBe("abc");
-    // 티켓이 준 URL 그대로 — 서명이 그 URL에 걸려 있다.
+    // Exactly the URL the ticket gave — the signature is bound to that URL.
     expect(putUrl).toBe(STORAGE);
-    // 서명에 포함된 헤더다 — 값이 다르면 S3가 403을 준다.
+    // This header is included in the signature — if the value differs, S3 returns 403.
     expect(putContentType).toBe("application/zip");
-    // 본문의 바이트 일치는 여기서 확인할 수 없다: jsdom의 XHR 샤임이 File을
-    // 그대로 싣지 않아 `"[object File]"`이 도착한다. 실제 브라우저에서
-    // `xhr.send(File)`은 바이트를 보낸다 — 여기서 단정하면 샤임을 시험하는 것이
-    // 되고, 통과하든 실패하든 우리 코드에 대해 아무것도 말해 주지 않는다.
+    // Byte equality of the body cannot be checked here: jsdom's XHR shim does not carry the
+    // File as is, so `"[object File]"` arrives. In a real browser `xhr.send(File)` sends the
+    // bytes — asserting here would be testing the shim, and pass or fail, it would tell us
+    // nothing about our code.
   });
 
   it("reports a failed PUT as upload_failed, not as the storage's XML", async () => {
@@ -204,7 +204,7 @@ describe("finishImport", () => {
 
     await finishImport("abc", "copy");
 
-    // 같은 upload_id다 — 재업로드 없이 재시도한다.
+    // The same upload_id — retries without re-uploading.
     expect(body).toEqual({ upload_id: "abc", project_id: "copy" });
   });
 

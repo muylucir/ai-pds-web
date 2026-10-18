@@ -2,20 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import type { TokenSet } from "@/lib/auth/tokenExchange";
 
-// cookies()와 refreshTokens는 route.ts가 실제 Cognito/Next 런타임 없이 돌 수
-// 있도록 목으로 대체한다. proxyAuth.test.ts는 순수 헬퍼만 검증했으므로, 이
-// 파일은 그 헬퍼들이 실제로 proxy() 안에서 올바르게 조합되는지 — 특히 401
-// 리프레시-재시도-Set-Cookie 경로와 SSE 재스트리밍 — 를 검증한다.
+// cookies() and refreshTokens are replaced with mocks so route.ts can run without a real Cognito/Next
+// runtime. proxyAuth.test.ts verified only the pure helpers, so this
+// file verifies that those helpers are actually combined correctly inside proxy() — especially the 401
+// refresh-retry-Set-Cookie path and SSE re-streaming.
 vi.mock("next/headers", () => ({ cookies: vi.fn() }));
 vi.mock("@/lib/auth/tokenExchange", () => ({ refreshTokens: vi.fn() }));
 
 import { cookies } from "next/headers";
 import { refreshTokens } from "@/lib/auth/tokenExchange";
 
-// callback route의 테스트 파일과 같은 이유: cognitoEnv()는 호출 시점에
-// process.env를 읽으므로 테스트가 먼저 세팅한다. refreshTokens는 모킹되어
-// 실제로 이 env를 쓰지 않지만, 관례를 맞추고 cognitoEnv()가 던지지 않는다는
-// 것도 확인해 둔다.
+// Same reason as the callback route's test file: cognitoEnv() reads process.env at call time,
+// so the test sets it first. refreshTokens is mocked and does not
+// actually use this env, but we keep the convention and also confirm that cognitoEnv() does not
+// throw.
 beforeEach(() => {
   process.env.COGNITO_HOSTED_UI_DOMAIN = "pool.auth.ap-northeast-2.amazoncognito.com";
   process.env.COGNITO_CLIENT_ID = "client-abc";
@@ -120,7 +120,7 @@ describe("GET/POST/DELETE /api/[...path]", () => {
     const joined = setCookies.join("\n");
     expect(joined).toContain("aipds_access=new-access");
     expect(joined).toContain("aipds_id=new-id");
-    expect(joined).not.toContain("aipds_refresh="); // refresh 토큰 자체는 새로 오지 않으므로 다시 쓰지 않는다
+    expect(joined).not.toContain("aipds_refresh="); // the refresh token itself is not reissued, so it is not rewritten
     for (const c of setCookies) {
       expect(c).toMatch(/Path=\//);
       expect(c).toMatch(/Max-Age=3600/);
@@ -142,10 +142,10 @@ describe("GET/POST/DELETE /api/[...path]", () => {
     const res = await GET(req, ctx(["projects"]));
 
     expect(res.status).toBe(401);
-    // 리프레시를 "시도했다가 실패"와 "시도조차 안 했다"는 결과만 보면 구분이
-    // 안 된다 — 둘 다 fetch 1회, 401, Set-Cookie 없음으로 보인다. 실제로
-    // refreshTokens가 불렸는지를 직접 확인해야 "재시도 자체가 조용히
-    // 꺼졌다"는 회귀를 잡을 수 있다.
+    // From the result alone, "tried to refresh and failed" and "never even tried" cannot be
+    // told apart — both look like 1 fetch, a 401, and no Set-Cookie. Only by directly checking
+    // whether refreshTokens was called can we catch the regression where "the retry itself was quietly
+    // turned off".
     expect(vi.mocked(refreshTokens)).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1); // refresh itself failed — no retry fetch
     expect(res.headers.getSetCookie()).toHaveLength(0);

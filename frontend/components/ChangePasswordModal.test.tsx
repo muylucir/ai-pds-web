@@ -26,8 +26,8 @@ describe("ChangePasswordModal", () => {
     const onClose = vi.fn();
     render(<ChangePasswordModal onClose={onClose} />);
     await fill(OK.current, OK.next);
-    // 성공 확인을 받기 전에 닫으면 사용자는 바뀌지 않은 비밀번호를 바뀐 것으로
-    // 믿는다. 그래서 닫힘은 204 이후에만 일어나야 한다.
+    // If it closes before the success confirmation arrives, the user believes an unchanged
+    // password was changed. So closing must happen only after the 204.
     expect(onClose).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "변경" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -43,8 +43,8 @@ describe("ChangePasswordModal", () => {
     render(<ChangePasswordModal onClose={onClose} />);
     await fill(OK.current, OK.next, "NewPass3#");
     await userEvent.click(screen.getByRole("button", { name: "변경" }));
-    // 오타를 서버까지 보내면 Cognito가 그 값을 실제 비밀번호로 만든다 —
-    // 사용자는 자기가 무엇을 입력했는지 모르는 상태로 잠긴다.
+    // Sending a typo to the server makes Cognito turn that value into the real password —
+    // the user gets locked out without knowing what they typed.
     expect(seen).toEqual([]);
     expect(await screen.findByRole("alert")).toHaveTextContent(/일치하지 않습니다/);
     expect(onClose).not.toHaveBeenCalled();
@@ -60,7 +60,7 @@ describe("ChangePasswordModal", () => {
     await fill(OK.current, OK.next);
     await userEvent.click(screen.getByRole("button", { name: "변경" }));
     await waitFor(() => expect(body).not.toBeNull());
-    // 확인 칸은 클라이언트 전용이다 — 서버로 보내지 않는다.
+    // The confirm field is client-only — it is not sent to the server.
     expect(body).toEqual({
       current_password: OK.current, new_password: OK.next,
     });
@@ -80,11 +80,11 @@ describe("ChangePasswordModal", () => {
     render(<ChangePasswordModal onClose={vi.fn()} />);
     await fill(OK.current, "weak");
     await userEvent.click(screen.getByRole("button", { name: "변경" }));
-    // 정책을 다시 안내해야 한다 — "거부됨"만 보여주면 사용자가 무엇을 고쳐야
-    // 하는지 알 수 없다. 검사는 Cognito가 하므로 문구가 유일한 안내다.
+    // The policy must be explained again — showing only "rejected" leaves the user unable to
+    // tell what to fix. Cognito does the check, so this text is the only guidance.
     //
-    // 화면에 붙어 있는 정적 안내가 아니라 **오류 영역**을 본다. findByText로
-    // 잡으면 그 정적 안내와 매칭되어, 서버가 무엇을 돌려주든 통과하는 테스트가 된다.
+    // Look at the **error region**, not the static hint attached to the screen. Matching with
+    // findByText would hit that static hint, making a test that passes whatever the server returns.
     expect(await screen.findByRole("alert")).toHaveTextContent(/8자 이상/);
   });
 
@@ -104,8 +104,8 @@ describe("ChangePasswordModal", () => {
     await userEvent.click(screen.getByRole("button", { name: "변경" }));
     await screen.findByRole("alert");
     expect(onClose).not.toHaveBeenCalled();
-    // 입력한 값이 남아 있어야 한다 — 세 칸을 다시 채우게 만들면 사용자는
-    // 오타를 반복한다.
+    // The entered values must remain — making the user refill all three fields leads them to
+    // repeat the typo.
     expect(screen.getByLabelText("새 비밀번호")).toHaveValue(OK.next);
   });
 
@@ -127,7 +127,7 @@ describe("ChangePasswordModal", () => {
   it("renders the password fields as password inputs", async () => {
     render(<ChangePasswordModal onClose={vi.fn()} />);
     for (const label of ["현재 비밀번호", "새 비밀번호", "새 비밀번호 확인"]) {
-      // type=text면 어깨 너머로 보이고 브라우저 자동완성이 값을 저장한다.
+      // With type=text it is visible over the shoulder and browser autofill stores the value.
       expect(screen.getByLabelText(label)).toHaveAttribute("type", "password");
     }
   });

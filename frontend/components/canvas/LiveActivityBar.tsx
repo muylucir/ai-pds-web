@@ -1,29 +1,32 @@
-// frontend/components/canvas/LiveActivityBar.tsx — 입력창 바로 위에 고정되는
-// 진행 줄. 턴이 도는 동안 "지금 무엇을 하고 있고 얼마나 됐는지"를 **한 줄로만**
-// 보여준다.
+// frontend/components/canvas/LiveActivityBar.tsx — a progress line pinned directly
+// above the input box. While a turn runs it shows "what is happening right now and for
+// how long" **on a single line only**.
 //
-// **왜 대화 흐름 밖인가(2026-09-04 사용자 피드백).** 종전에는 이 표시가 AI 말풍선
-// 아래에 붙어 있었고 그 옆에서 진행 기록 아코디언이 펼쳐진 채로 계속 자랐다. 토큰
-// 스트리밍이 들어오면서 말풍선의 텍스트까지 동시에 흐르자 화면에서 움직이는 것이
-// 세 개가 되어 산만해졌다("정신이 없다"). 그래서 진행 상황은 대화 흐름에서 빼고
-// 입력창 위 고정 줄로 옮겼다 — 목록은 턴이 끝난 뒤 접힌 진행 기록이 갖는다.
+// **Why it sits outside the conversation flow (2026-09-04 user feedback).** Previously
+// this indicator was attached below the AI speech bubble, and next to it the progress-log
+// accordion stayed expanded and kept growing. Once token streaming arrived and the bubble
+// text started flowing at the same time, three things were moving on screen and it became
+// distracting ("it's chaotic," in the user's words). So progress was taken out of the
+// conversation flow and moved to a fixed line above the input box — the list belongs to
+// the progress log, collapsed after the turn ends.
 //
-// 그 결과 이 컴포넌트는 **메시지의 것이 아니라 화면의 것**이다. 워크스페이스와
-// 프로토타입 빌드 패널이 각자 자기 입력창 위에 놓는다(AiMessage는 더 이상 이것을
-// 모른다). 그것이 모드 플래그를 `ChatTimeline`을 통해 내리지 않아도 되는 이유다.
+// As a result this component **belongs to the screen, not to a message**. The workspace
+// and prototype build panels each place it above their own input box (AiMessage no longer
+// knows about it). That is why a mode flag does not have to be passed down via `ChatTimeline`.
 //
-// 종전에는 AiMessage 안에 12px 텍스트 한 줄 + 맥동하는 점 하나였다. 그것이
-// 답답했던 이유는 정보량이 아니라 **살아있음의 증거가 없다**는 것이다:
-//   - 답변 문단이 먼저 도착하면 말풍선 안 타이핑 점이 사라져, 도구가 계속
-//     도는데도 화면에서 움직이는 것이 점 하나로 줄어든다.
-//   - 맥동(animate-pulse)은 투명도만 오가므로 30초 멈춘 화면과 구분되지 않는다.
-//   - 경과 시간이 없어서 3초 걸리는 도구와 40초 걸리는 도구가 똑같아 보인다.
-//     사용자가 "기다려도 되는 건가, 새로고침해야 하나"를 판단할 근거가 없다.
+// Previously it was one line of 12px text plus a single pulsing dot inside AiMessage. What
+// made that frustrating was not the amount of information but **the lack of proof of life**:
+//   - When an answer paragraph arrives first, the typing dots inside the bubble disappear,
+//     so even while tools keep running, the only thing moving on screen shrinks to one dot.
+//   - The pulse (animate-pulse) only oscillates opacity, so it is indistinguishable from a
+//     screen that has been frozen for 30 seconds.
+//   - With no elapsed time, a tool that takes 3 seconds looks the same as one taking 40.
+//     The user has no basis to decide "should I keep waiting, or should I refresh?"
 //
-// 그래서 이 컴포넌트는 세 가지를 함께 보여준다: 회전하는 스피너(위치가 바뀌는
-// 애니메이션이라 정지 화면과 확실히 구분된다), 무슨 일을 하는지의 한글 라벨,
-// 그리고 초 단위로 올라가는 경과 시간. 경과 시간이 실질적인 생존 신호다 —
-// 숫자가 올라가는 동안은 멈춘 것이 아니라는 것이 자명하다.
+// So this component shows three things together: a rotating spinner (an animation that
+// changes position, so it is clearly distinguishable from a frozen screen), a localized
+// label for what is being done, and elapsed time counting up by the second. The elapsed
+// time is the real liveness signal — while the number is rising, it is self-evidently not stuck.
 "use client";
 import { useEffect, useRef, useState } from "react";
 
@@ -34,63 +37,65 @@ import { useT } from "@/lib/i18n/provider";
 
 type T = (key: keyof Dict) => string;
 
-// 도구명 → 사용자 친화 활동 문구. AiMessage에서 이동해 왔다(진행 표시의 모든
-// 조각을 한 파일에 둔다).
+// Tool name → user-friendly activity text. Moved here from AiMessage (all pieces of the
+// progress indicator live in one file).
 //
-// 두 드라이버가 서로 다른 도구 이름을 보낸다: Claude Agent SDK는 내장 도구명
-// (Write/Read/Edit/AskUserQuestion), Strands는 자작 도구명(file_write/…).
-// 매핑에 없으면 activityLabel의 폴백이 영어 도구명을 그대로 노출하므로 양쪽을
-// 모두 둔다(AIPDS_DISCOVERY_DRIVER 폴백 기간 동안 필요).
+// The two drivers send different tool names: the Claude Agent SDK sends built-in tool names
+// (Write/Read/Edit/AskUserQuestion), Strands sends custom tool names (file_write/…).
+// If a name is missing from the mapping, activityLabel's fallback exposes the English tool
+// name as-is, so both sets are kept (needed during the AIPDS_DISCOVERY_DRIVER fallback period).
 const ACTIVITY_LABEL_KEYS: Record<string, keyof Dict> = {
-  // Claude Agent SDK 제한된 도구 (MCP 또는 allowed_tools로만 활성화)
+  // Claude Agent SDK restricted tools (enabled only via MCP or allowed_tools)
   AskUserQuestion: "activity.questions",
   Write: "activity.writing",
   Edit: "activity.writing",
   MultiEdit: "activity.writing",
-  // Claude Agent SDK 기본 도구 (tools=None이므로 CLI 기본 도구 전체 사용 가능).
-  // 드라이버가 tools=를 설정하지 않아 제한이 없으므로, Discovery 턴에서 실제로
-  // 도달 가능한 도구들을 여기 둔다. envision.md의 "URL로 분석(Mode B/C)"은
-  // WebFetch가 필수이고, workspace-detection 단계는 Glob/Grep로 파일 탐색이
-  // 자연스럽다. 목록이 바뀌면 여기도 함께 갱신해야 한다.
+  // Claude Agent SDK default tools (tools=None, so all CLI default tools are available).
+  // The driver does not set tools=, so there is no restriction; the tools actually reachable
+  // in a Discovery turn are listed here. envision.md's "URL로 분석(Mode B/C)" (analyze by
+  // URL) requires WebFetch, and the workspace-detection stage naturally explores files with
+  // Glob/Grep. If the list changes, this must be updated as well.
   Read: "activity.reading",
   Glob: "activity.searching",
   Grep: "activity.searching",
   Bash: "activity.working",
   WebFetch: "activity.fetching",
-  // 서브에이전트를 띄우는 도구(실측: 이름은 `Agent`, 구 `Task`가 아니다). 총괄
-  // 에이전트가 이것을 부르면 그 자신은 서브에이전트를 기다리는 것이 전부다 —
-  // 폴백에 맡기면 "Agent 실행 중"이 되어 무슨 일인지 오히려 흐려진다.
+  // The tool that spawns a subagent (measured: its name is `Agent`, not the old `Task`). When
+  // the orchestrating agent calls it, all it does itself is wait for the subagent —
+  // leaving it to the fallback would show "Agent 실행 중" ("running Agent"), which only
+  // obscures what is going on.
   Agent: "activity.delegating",
-  // 프로토타입 빌드 전용 커스텀 도구(proto/tools.py)
+  // Custom tool exclusive to the prototype build (proto/tools.py)
   build_complete: "activity.buildFinishing",
-  // Discovery에는 커스텀 도구가 없다. `report_stage`(2026-08-18)와
-  // `submit_document`(2026-08-21)가 여기 있었고 둘 다 PostToolUse 훅으로 옮겨 갔다 —
-  // 도구 호출이 아니므로 이 목록에 나타날 일이 없다(agent/reconcile.py).
-  // Strands 드라이버 (env 폴백 기간 유지)
+  // Discovery has no custom tools. `report_stage` (2026-08-18) and
+  // `submit_document` (2026-08-21) used to be here and both moved to PostToolUse hooks —
+  // they are not tool calls, so they never appear in this list (agent/reconcile.py).
+  // Strands driver (kept during the env fallback period)
   ask_questions: "activity.questions",
   file_write: "activity.writing",
   file_append: "activity.writing",
   file_read: "activity.reading",
 };
 
-/** 도구명 → 활동 문구. `t`를 인자로 받는 순수 함수다 — 훅으로 만들면 이 함수를
- *  쓰는 곳이 모두 훅 규칙에 묶인다(answerSummary와 같은 판단).
+/** Tool name → activity text. A pure function that takes `t` as an argument — making it
+ *  a hook would bind every caller to the rules of hooks (same judgment as answerSummary).
  *
- *  도구가 아직 하나도 실행되지 않은 구간(턴 시작 직후 모델이 생각만 하는 동안)
- *  에도 표시가 있어야 한다 — 그 구간이 가장 길고 가장 불안한 구간이다. */
+ *  There must be an indicator even before any tool has run (right after the turn starts,
+ *  while the model is only thinking) — that stretch is the longest and most anxious one. */
 export function activityLabel(tool: string | null | undefined, t: T): string {
   if (!tool) return t("activity.thinking");
   const key = ACTIVITY_LABEL_KEYS[tool];
-  // 매핑에 없는 도구는 이름을 그대로 노출한다 — 무엇이 도는지 모르는 것보다
-  // 영어 도구명이라도 보이는 편이 낫다.
+  // A tool missing from the mapping exposes its name as-is — seeing even an English tool
+  // name is better than not knowing what is running.
   return key ? t(key) : `${tool} ${t("activity.genericSuffix")}`;
 }
 
-/** 사람이 읽는 경과 시간. 60초를 넘기면 분을 함께 보여준다 — 세 자리 초는
- *  한눈에 크기가 읽히지 않는다("95초"보다 "1분 35초"가 빠르다).
+/** Human-readable elapsed time. Past 60 seconds, minutes are shown too — three-digit
+ *  seconds are not readable at a glance ("1m 35s" reads faster than "95s").
  *
- *  단위를 딕셔너리에서 가져오되 숫자와 단위의 배치는 두 언어가 같다("95초"/
- *  "95s") — 어순이 다른 언어를 넣게 되면 그때 문장 템플릿으로 바꾼다. */
+ *  Units come from the dictionary, but the number/unit order is the same in both
+ *  languages ("95초"/"95s") — if a language with different word order is added, switch to
+ *  a sentence template at that point. */
 export function formatElapsed(totalSeconds: number, t: T): string {
   const sec = t("activity.unitSeconds");
   const min = t("activity.unitMinutes");
@@ -100,17 +105,17 @@ export function formatElapsed(totalSeconds: number, t: T): string {
   return seconds === 0 ? `${minutes}${min}` : `${minutes}${min} ${seconds}${sec}`;
 }
 
-/** `startedAt`(ms)부터 1초마다 올라가는 경과 초.
+/** Elapsed seconds counting up every second from `startedAt` (ms).
  *
- *  **시작 시각을 인자로 받는 이유.** 종전에는 마운트 시점부터 셌다 — 바가 하나일
- *  때는 그것이 곧 턴의 시작이라 맞았다. 서브에이전트 행이 생기면서 더는 맞지
- *  않는다: 행마다 뜬 순간이 다르고, 각 행이 **자기** 경과를 보여야 그 숫자가
- *  살아있음의 증거가 된다(모듈 헤더). 마운트 기준이면 늦게 뜬 에이전트가 이미
- *  1분을 일한 것처럼 보인다.
+ *  **Why the start time is a parameter.** Previously it counted from mount time — when
+ *  there was a single bar, that was the start of the turn, so it was correct. With
+ *  subagent rows it no longer is: each row appears at a different moment, and each row
+ *  must show **its own** elapsed time for that number to be proof of life (module header).
+ *  Counting from mount would make a late-spawned agent look as if it had already worked a minute.
  *
- *  `Date.now()` 차이로 계산하는 이유: setInterval의 호출 횟수를 세면 탭이
- *  백그라운드로 갔을 때 브라우저가 타이머를 늦춰(throttle) 실제 경과보다 적게
- *  센다. 사용자가 다른 탭을 보다 돌아왔을 때 "12초"라고 우기면 안 된다. */
+ *  Why it is computed from `Date.now()` differences: counting setInterval calls undercounts
+ *  real elapsed time, because the browser throttles timers when the tab goes to the
+ *  background. When the user returns from another tab, it must not insist on "12s". */
 function useElapsedSeconds(startedAt: number): number {
   const [seconds, setSeconds] = useState(() =>
     Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
@@ -126,9 +131,9 @@ function useElapsedSeconds(startedAt: number): number {
   return seconds;
 }
 
-/** 회전하는 링. animate-pulse(투명도만 변함) 대신 회전을 쓰는 이유는 정지
- *  화면과의 구분이 목적이기 때문이다 — 위치가 변하는 애니메이션만이 "지금
- *  움직이고 있다"를 명확히 전달한다. */
+/** A rotating ring. Rotation is used instead of animate-pulse (which only changes opacity)
+ *  because the goal is to be distinguishable from a frozen screen — only an animation that
+ *  changes position clearly conveys "it is moving right now". */
 function Spinner() {
   return (
     <svg
@@ -148,8 +153,9 @@ function Spinner() {
   );
 }
 
-/** 쓰는 파일의 종류 → 라벨. 문서 패널(useWorkspaceStream의 isDocPath)과 같은 경계다:
- *  질문 파일은 폼이 되고, 감사·상태 파일은 기록이며, 그 밖이 문서다. */
+/** Kind of file being written → label. Same boundary as the document panel (isDocPath in
+ *  useWorkspaceStream): question files become forms, audit/state files are records,
+ *  and everything else is a document. */
 function draftingLabel(path: string | null, t: T): string {
   if (path === null) return t("activity.writing");
   const name = path.slice(path.lastIndexOf("/") + 1);
@@ -158,11 +164,11 @@ function draftingLabel(path: string | null, t: T): string {
   return t("activity.draftingDoc");
 }
 
-/** 활동 종류 → 사람이 읽는 라벨과, 그 활동의 **대상**(파일·명령). 순수 함수다.
+/** Activity kind → human-readable label and the **target** of that activity (file/command). A pure function.
  *
- *  대상을 라벨과 나눠 돌려주는 이유: 한 줄 안에서 넘칠 수 있는 것은 대상뿐이므로
- *  잘림(truncate)이 거기만 걸려야 한다. 라벨까지 함께 잘리면 무슨 일을 하는지가
- *  먼저 사라진다. */
+ *  Why the target is returned separately from the label: only the target can overflow the
+ *  line, so truncation must apply only there. If the label were truncated with it, what is
+ *  being done would disappear first. */
 export function activityText(
   activity: LiveActivity, t: T,
 ): { label: string; target: string | null } {
@@ -176,8 +182,9 @@ export function activityText(
     case "tool":
       return { label: activityLabel(activity.tool, t), target: activity.detail };
     case "drafting": {
-      // 글자 수가 진행의 증거다 — 경과 시간만으로는 1분 넘게 쓰는 문서가 멈춘 것과
-      // 구분되지 않는다(백엔드 agent/tool_input_draft.py 헤더의 실측).
+      // The character count is the evidence of progress — elapsed time alone cannot tell a
+      // document being written for over a minute from a stalled one (measured; see the
+      // backend agent/tool_input_draft.py header).
       const name = activity.path ? activity.path.slice(activity.path.lastIndexOf("/") + 1) : null;
       const count = activity.chars > 0
         ? t("activity.charsCount").replace("{n}", activity.chars.toLocaleString())
@@ -188,14 +195,14 @@ export function activityText(
   }
 }
 
-/** 한 행. 첫 줄은 스피너 · 무슨 일 · 경과 시간, 둘째 줄은 대상(명령·파일).
+/** One row. The first line is spinner · what is happening · elapsed time; the second line is the target (command/file).
  *
- *  대상을 둘째 줄로 내린 이유: 한 줄에 함께 두던 동안 대상은 라벨 뒤에서 잘려
- *  거의 읽히지 않았다. 대상이 이 바에서 가장 구체적인 정보다.
+ *  Why the target moved to the second line: while it shared one line, the target was
+ *  truncated after the label and was barely readable. The target is the most concrete information in this bar.
  *
- *  총괄 줄과 에이전트 행이 **같은 컴포넌트**인 것이 의도다: 행이 총괄 줄과 다르게
- *  움직이면(스피너가 없거나 경과가 안 올라가면) 그 행은 진행으로 읽히지 않고,
- *  그것이 정확히 이 기능이 고치려는 증상이다. */
+ *  It is intentional that the head line and agent rows are **the same component**: if a
+ *  row behaves differently from the head line (no spinner, or elapsed time not rising), it
+ *  does not read as progress, and that is exactly the symptom this feature sets out to fix. */
 function ActivityLine({
   label, target, startedAt, nested = false, twoLine = true, testId,
 }: {
@@ -203,10 +210,10 @@ function ActivityLine({
   target: string | null;
   startedAt: number;
   nested?: boolean;
-  // 대상(명령·파일)을 둘째 줄에 둔다. 대상이 없어도 그 줄의 높이를 비워 둔다 —
-  // 단계가 바뀔 때마다 바가 1줄↔2줄을 오가면 아래 입력창이 위아래로 흔들린다.
-  // 끄는 것은 서브에이전트가 도는 동안의 총괄 행뿐이다(그 행은 개수만 말하고,
-  // 구체적인 일은 바로 아래 행들이 말한다).
+  // Put the target (command/file) on the second line. Even with no target, the line's height
+  // is kept empty — if the bar toggled between 1 and 2 lines on every stage change, the input
+  // box below would jump up and down. Only the head row while subagents run turns it off
+  // (that row only states the count; the rows right below it say the concrete work).
   twoLine?: boolean;
   testId?: string;
 }) {
@@ -215,9 +222,9 @@ function ActivityLine({
   return (
     <div className={nested ? "pl-4" : ""}>
       <div className="flex items-center gap-2">
-        {/* `⎿`는 이 행이 위 줄에 딸린 일이라는 것을 글자 하나로 말한다 —
-            클로드코드의 트리와 같은 표기이고, 들여쓰기만으로는 목록과 구분되지 않는다.
-            칸의 폭을 고정하는 이유: 둘째 줄이 라벨 첫 글자와 같은 자리에서 시작하게. */}
+        {/* `⎿` says with a single character that this row is work belonging to the line above —
+            the same notation as Claude Code's tree; indentation alone cannot distinguish it from a list.
+            The cell width is fixed so the second line starts at the same position as the label's first character. */}
         {nested && (
           <span className="shrink-0 w-3 text-xs text-violet-300" aria-hidden="true">⎿</span>
         )}
@@ -237,7 +244,7 @@ function ActivityLine({
         </span>
       </div>
       {twoLine && (
-        // 넘치면 이 줄만 잘린다 — 무엇을 하는지(첫 줄)는 남는다. 전체는 title로.
+        // On overflow only this line is truncated — what is being done (first line) remains. Full text via title.
         <p
           data-testid={testId ? `${testId}-target` : undefined}
           title={target ?? undefined}
@@ -254,28 +261,29 @@ export function LiveActivityBar({
   activity, agents = [],
 }: { activity: LiveActivity; agents?: readonly AgentRow[] }) {
   const t = useT();
-  // 마운트되어 있는 동안이 곧 진행 중인 동안이다 — 호출자(화면)가 streaming으로
-  // 마운트를 제어하므로, 여기서 다시 판단하지 않는다. 첫 렌더에 한 번만 읽힌다.
+  // Being mounted is the same as being in progress — the caller (screen) controls mounting
+  // via streaming, so it is not judged again here. Read only once on the first render.
   const mountedAt = useRef(Date.now());
 
-  // 서브에이전트가 도는 동안 총괄 줄은 **개수**를 말한다. 그 구간에 총괄
-  // 에이전트가 하는 일은 서브에이전트를 기다리는 것이 전부이고, 사용자가 알고
-  // 싶은 것은 "몇 개가 일하고 있나"다 — 종전에는 그 한 줄이 서브에이전트들의
-  // 도구 이름 사이에서 깜빡였고, 그것이 화면이 멈춘 듯 보인 이유다.
+  // While subagents run, the head line states the **count**. During that stretch all the
+  // orchestrating agent does is wait for the subagents, and what the user wants to know
+  // is "how many are working" — previously that single line flickered between the
+  // subagents' tool names, and that is why the screen looked stuck.
   const head = agents.length > 0
     ? { label: `${agents.length}${t("activity.agentsWorkingSuffix")}`, target: null }
     : activityText(activity, t);
 
   return (
-    // role="status"로 스크린리더에 활동 변화를 알린다. 경과 시간은
-    // aria-hidden으로 제외한다 — 1초마다 읽어주면 라벨 변화를 덮어버린다.
+    // role="status" announces activity changes to screen readers. Elapsed time is
+    // excluded via aria-hidden — reading it every second would drown out label changes.
     //
-    // 입력창 위에 붙는 띠이므로 전폭이고 위쪽 경계선만 갖는다 — 대화 영역과
-    // 작성 영역 사이의 띠로 읽혀야 하고, 말풍선처럼 보이면 다시 대화의 일부가 된다.
+    // It is a strip attached above the input box, so it is full-width with only a top border —
+    // it must read as a strip between the conversation area and the compose area; if it looks
+    // like a bubble it becomes part of the conversation again.
     <div
       role="status"
-      // max-h: 서브에이전트가 이례적으로 많아도 대화 영역을 다 먹지 않는다 — 평소(3개
-      // 안팎)에는 전부 보이고, 넘칠 때만 바 안에서 스크롤한다.
+      // max-h: even with an unusually large number of subagents it does not consume the whole
+      // conversation area — normally (around 3) all are visible, and it scrolls inside the bar only on overflow.
       className="shrink-0 max-h-[40vh] overflow-y-auto border-t border-violet-200 bg-violet-50 px-4 py-2 space-y-1.5"
     >
       <ActivityLine
@@ -289,12 +297,12 @@ export function LiveActivityBar({
         <ActivityLine
           key={agent.id}
           nested
-          // 이름이 곧 그 에이전트에 맡긴 일이다(백엔드가 Agent 도구의
-          // description을 그대로 싣는다). 라벨을 못 받은 행은 대체 이름을 쓴다 —
-          // 이름 없는 행이라도 도는 것이 보이는 편이 낫다.
+          // The name is the work assigned to that agent (the backend passes the Agent tool's
+          // description through as-is). Rows that received no label use a fallback name —
+          // a row without a name is still better if you can see it running.
           label={agent.label ?? t("activity.agentUnnamed")}
-          // 대상이 있으면 그것이 가장 구체적이다(어느 파일을 만지는지). 없으면
-          // 무슨 도구를 돌리는지라도 말한다.
+          // If there is a target, it is the most concrete (which file it is touching). If not,
+          // at least say which tool it is running.
           target={agent.detail ?? (agent.tool ? activityLabel(agent.tool, t) : null)}
           startedAt={agent.startedAt}
         />

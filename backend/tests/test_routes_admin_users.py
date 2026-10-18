@@ -1,8 +1,8 @@
 # backend/tests/test_routes_admin_users.py
 #
-# 라우트 계층의 책임만 시험한다: 정책(마지막 관리자 보호, 부분 실패 롤백)과
-# 오류 코드 번역. Cognito 호출 자체는 test_auth_cognito.py가 Stubber로 검증하므로
-# 여기서는 CognitoAdmin을 가짜로 갈아끼운다.
+# Tests only the route layer's responsibilities: policy (last-admin protection, rollback on
+# partial failure) and error code translation. The Cognito calls themselves are verified
+# with Stubber in test_auth_cognito.py, so here CognitoAdmin is swapped for a fake.
 from __future__ import annotations
 
 import pytest
@@ -18,7 +18,7 @@ PM_EMAIL = "pm@aipds.local"
 
 
 class FakeCognito:
-    """CognitoAdmin의 인메모리 대역. 호출 순서를 calls에 기록한다."""
+    """In-memory stand-in for CognitoAdmin. Records the call order in calls."""
 
     def __init__(self) -> None:
         self.users: dict[str, ManagedUser] = {}
@@ -45,9 +45,9 @@ class FakeCognito:
         return sum(1 for u in self.users.values() if u.role == "admin")
 
     def groups_of(self, username: str):
-        # 실제 CognitoAdmin.groups_of는 존재하지 않는 사용자에 대해
-        # UserNotFoundException을 낸다 — 여기서 []를 반환하는 관대한 흉내를
-        # 내면 가드가 404를 내야 할 경로가 조용히 통과(마스킹)될 수 있다.
+        # The real CognitoAdmin.groups_of raises UserNotFoundException for a
+        # nonexistent user; a lenient imitation returning [] here could let a path
+        # where the guard should return 404 pass silently (masking it).
         u = self.users.get(username)
         if u is None:
             raise CognitoError("UserNotFoundException", f"{username} not found")
@@ -84,7 +84,7 @@ class FakeCognito:
 
 @pytest.fixture()
 def env(monkeypatch):
-    """가짜 Cognito + '나는 admin@aipds.local' 라는 요청자."""
+    """Fake Cognito + a requester who says 'I am admin@aipds.local'."""
     fake = FakeCognito()
     fake.add(ADMIN_EMAIL, role="admin")
     fake.add(PM_EMAIL, role="pm")
@@ -102,7 +102,7 @@ def client():
     return TestClient(app_module.app)
 
 
-# ---- 목록 ----
+# ---- List ----
 
 def test_list_returns_users_with_role_and_status(env, client):
     body = client.get("/admin/users").json()
@@ -112,11 +112,11 @@ def test_list_returns_users_with_role_and_status(env, client):
     assert admin_row["role"] == "admin"
     assert admin_row["enabled"] is True
     assert admin_row["status"] == "CONFIRMED"
-    # 화면은 email을 보여주고 액션은 username을 보낸다 — 둘 다 나와야 한다.
+    # The screen shows the email and actions send the username; both must be present.
     assert admin_row["username"] == ADMIN_EMAIL
 
 
-# ---- 초대 ----
+# ---- Invite ----
 
 def test_invite_creates_sets_password_and_assigns_group_in_order(env, client):
     r = client.post("/admin/users", json={"email": "new@example.com", "role": "pm"})
@@ -124,7 +124,7 @@ def test_invite_creates_sets_password_and_assigns_group_in_order(env, client):
     body = r.json()
     assert body["email"] == "new@example.com"
     assert body["role"] == "pm"
-    # 임시 비밀번호는 응답에 1회만 실린다 — 서버는 저장하지 않는다.
+    # The temporary password appears in the response only once; the server does not store it.
     assert len(body["temp_password"]) == 16
     ops = [c[0] for c in env.calls]
     assert ops == ["create_user", "set_temp_password", "set_group"], ops
@@ -138,8 +138,9 @@ def test_invite_rejects_an_unknown_role(env, client):
 
 @pytest.mark.parametrize("email", ["not-an-email", "kim@corp", "new@aipds.local", "kim@@x.com"])
 def test_invite_rejects_a_malformed_email_with_a_code(env, client, email):
-    # 기본 422의 detail은 에러 객체 배열이라 화면이 코드를 찾지 못하고 "[object Object]"를
-    # 보였다. 브라우저의 type=email은 앞의 셋 중 둘(kim@corp, .local)을 통과시킨다.
+    # The default 422 detail is an array of error objects, so the screen could not find a
+    # code and showed "[object Object]". The browser's type=email lets two of the first three
+    # (kim@corp, .local) through.
     r = client.post("/admin/users", json={"email": email, "role": "pm"})
     assert (r.status_code, r.json()["detail"]) == (400, "email_invalid")
     assert env.calls == []
@@ -152,12 +153,12 @@ def test_invite_trims_the_email(env, client):
 
 
 def test_duplicate_email_is_409(env, client):
-    # email-validator(2.x)는 RFC 6762에 따라 .local을 특수 예약 도메인으로
-    # 보고 거부한다(check_deliverability=False라도 마찬가지) — PM_EMAIL을 쓰면
-    # 이메일 검사 단계에서 400이 나 create_user에 도달하지 못한다. 이 테스트가
-    # 검증하는 것은 "이미 존재하는 이메일 → 409" 매핑이고 FakeCognito.create_user는
-    # fail_on이 설정되면 이메일 값과 무관하게 실패하므로, 일반 도메인으로 바꿔도
-    # 테스트 의도는 그대로다.
+    # email-validator (2.x) treats .local as a special-use reserved domain per RFC 6762
+    # and rejects it (even with check_deliverability=False); using PM_EMAIL would give a
+    # 400 at the email check and never reach create_user. What this test verifies is the
+    # "email already exists -> 409" mapping, and FakeCognito.create_user fails whenever
+    # fail_on is set regardless of the email value, so switching to an ordinary domain
+    # keeps the test's intent intact.
     env.fail_on["create_user"] = CognitoError("UsernameExistsException", "exists")
     r = client.post("/admin/users", json={"email": "dup@example.com", "role": "pm"})
     assert r.status_code == 409
@@ -170,8 +171,8 @@ def test_alias_exists_is_also_409(env, client):
 
 
 def test_password_failure_rolls_back_the_created_user(env, client):
-    # 반쯤 만들어진 계정(비밀번호 없음 / 그룹 없음)을 남기지 않는다 —
-    # projects.py의 매니페스트 실패 롤백과 같은 규율.
+    # Do not leave a half-created account (no password / no group) behind;
+    # same discipline as the manifest-failure rollback in projects.py.
     env.fail_on["set_temp_password"] = CognitoError("InvalidPasswordException", "weak")
     r = client.post("/admin/users", json={"email": "new@example.com", "role": "pm"})
     assert r.status_code == 500
@@ -186,14 +187,14 @@ def test_group_failure_rolls_back_the_created_user(env, client):
 
 
 def test_rollback_failure_still_returns_500(env, client):
-    # 롤백까지 실패하면 우리가 할 수 있는 것이 없다 — 500을 내고 로그에 남긴다.
+    # If the rollback also fails, there is nothing we can do: return 500 and log it.
     env.fail_on["set_group"] = CognitoError("ResourceNotFoundException", "no group")
     env.fail_on["delete_user"] = CognitoError("UserNotFoundException", "gone")
     r = client.post("/admin/users", json={"email": "new@example.com", "role": "pm"})
     assert r.status_code == 500
 
 
-# ---- 비밀번호 재설정 ----
+# ---- Password reset ----
 
 def test_reset_password_returns_a_new_temp_password(env, client):
     r = client.post(f"/admin/users/{PM_EMAIL}/reset-password")
@@ -209,16 +210,16 @@ def test_reset_password_on_unknown_user_is_404(env, client):
 
 
 def test_reset_password_rejected_by_pool_policy_is_500_not_502(env, client):
-    # 우리가 서버에서 생성한 임시 비밀번호가 풀 정책을 만족시키지 못했다면
-    # 그건 Cognito가 아니라 우리 쪽 버그다 — 502(업스트림 장애)가 아니라
-    # 500이어야 한다.
+    # If the temporary password we generated on the server fails the pool policy,
+    # that is our bug, not Cognito's: it must be 500, not 502 (upstream
+    # failure).
     env.fail_on["set_temp_password"] = CognitoError("InvalidPasswordException", "weak")
     r = client.post(f"/admin/users/{PM_EMAIL}/reset-password")
     assert r.status_code == 500
     assert "InvalidPasswordException" not in r.text
 
 
-# ---- 역할 변경 ----
+# ---- Role change ----
 
 def test_role_change_replaces_the_group(env, client):
     r = client.put(f"/admin/users/{PM_EMAIL}/role", json={"role": "admin"})
@@ -228,26 +229,26 @@ def test_role_change_replaces_the_group(env, client):
 
 
 def test_cannot_demote_yourself(env, client):
-    # 이게 없으면 관리자가 스스로를 잠가내고 복구 경로가 AWS 콘솔밖에 안 남는다.
+    # Without this, an admin can lock themselves out, leaving the AWS console as the only recovery path.
     r = client.put(f"/admin/users/{ADMIN_EMAIL}/role", json={"role": "pm"})
     assert r.status_code == 400
-    # detail은 안정적 코드다 — 프론트 딕셔너리가 이 값으로 문구를 찾는다.
-    # 한국어 문장으로 회귀하면 영어 UI에 한국어가 뜬다.
+    # detail is a stable code; the frontend dictionary looks up the wording by this value.
+    # If it regresses to a Korean sentence, Korean shows up in the English UI.
     assert r.json()["detail"] == "self_target"
     assert "set_group" not in [c[0] for c in env.calls]
 
 
 def test_cannot_demote_yourself_by_a_case_variant_of_your_own_username(env, client):
-    # Cognito는 Username을 대소문자 구분 없이 해석한다(이 풀은 email이
-    # Username이다) — 대문자로 바꾼 변형도 같은 계정을 가리켜야 하고, 그
-    # 계정을 강등할 수 있어서는 안 된다.
+    # Cognito resolves Username case-insensitively (in this pool the email is the
+    # Username), so an uppercased variant must point to the same account, and it must
+    # not be possible to demote that account.
     r = client.put(f"/admin/users/{ADMIN_EMAIL.upper()}/role", json={"role": "pm"})
     assert r.status_code == 400
     assert "set_group" not in [c[0] for c in env.calls]
 
 
 def test_cannot_demote_the_last_admin(env, client):
-    # 요청자가 아닌 다른 계정이지만 유일한 admin인 경우.
+    # A different account from the requester, but the only admin.
     env.users.pop(ADMIN_EMAIL)
     env.add("other-admin@example.com", role="admin")
     r = client.put("/admin/users/other-admin@example.com/role", json={"role": "pm"})
@@ -267,7 +268,7 @@ def test_promoting_to_admin_is_always_allowed(env, client):
     assert r.status_code == 200
 
 
-# ---- 비활성 / 활성 ----
+# ---- Disable / enable ----
 
 def test_disable_a_pm(env, client):
     assert client.post(f"/admin/users/{PM_EMAIL}/disable").status_code == 204
@@ -294,7 +295,7 @@ def test_cannot_disable_the_last_admin(env, client):
 
 
 def test_enable_is_never_blocked(env, client):
-    # 활성화는 권한을 넓히는 방향이므로 마지막 관리자 보호와 무관하다.
+    # Enabling widens permissions, so last-admin protection does not apply.
     env.add("disabled@example.com", role="admin", enabled=False)
     assert client.post("/admin/users/disabled@example.com/enable").status_code == 204
 
@@ -303,7 +304,7 @@ def test_enabling_yourself_is_allowed(env, client):
     assert client.post(f"/admin/users/{ADMIN_EMAIL}/enable").status_code == 204
 
 
-# ---- 삭제 ----
+# ---- Delete ----
 
 def test_delete_a_pm(env, client):
     assert client.delete(f"/admin/users/{PM_EMAIL}").status_code == 204
@@ -336,17 +337,17 @@ def test_delete_unknown_user_is_404(env, client):
     assert client.delete("/admin/users/ghost@example.com").status_code == 404
 
 
-# ---- 오류 번역 ----
+# ---- Error translation ----
 
 def test_unexpected_cognito_error_is_502(env, client):
     env.fail_on["list_users"] = CognitoError("InternalErrorException", "boom")
     r = client.get("/admin/users")
     assert r.status_code == 502
-    # 내부 세부사항을 사용자에게 노출하지 않는다.
+    # Do not expose internal details to the user.
     assert "InternalErrorException" not in r.text
 
 
-# ---- 기존 세션 끊기 (auth/revocation.py) ----
+# ---- Cutting off existing sessions (auth/revocation.py) ----
 
 @pytest.mark.parametrize("call", [
     lambda c: c.post(f"/admin/users/{PM_EMAIL}/disable"),
@@ -355,14 +356,14 @@ def test_unexpected_cognito_error_is_502(env, client):
     lambda c: c.put(f"/admin/users/{PM_EMAIL}/role", json={"role": "pm"}),
 ])
 def test_cutting_access_ends_the_sessions_already_issued(env, client, call):
-    """비활성화·삭제·재설정·강등 뒤에도 이미 받은 access 토큰은 만료까지 통과한다 —
-    그 사용자의 기존 토큰을 거부하게 기록한다."""
+    """Even after disable, delete, reset, or demotion, an access token already issued keeps
+    passing until it expires, so record that the user's existing tokens are to be rejected."""
     assert call(client).status_code in (200, 204)
     assert app_module.revocations().is_revoked(PM_EMAIL, issued_at=0)
 
 
 def test_promotion_and_enabling_keep_the_sessions(env, client):
-    """승격·활성화는 권한을 넓힌다 — 기존 토큰이 권한이 더 적을 뿐이라 끊지 않는다."""
+    """Promotion and enabling widen permissions; existing tokens merely carry fewer permissions, so they are not cut off."""
     client.put(f"/admin/users/{PM_EMAIL}/role", json={"role": "admin"})
     client.post(f"/admin/users/{PM_EMAIL}/enable")
     assert not app_module.revocations().is_revoked(PM_EMAIL, issued_at=0)
@@ -374,10 +375,10 @@ def test_a_failed_change_does_not_end_the_sessions(env, client):
     assert not app_module.revocations().is_revoked(PM_EMAIL, issued_at=0)
 
 
-# ---- 권한 (require_admin 우회 불가) ----
+# ---- Authorization (require_admin cannot be bypassed) ----
 
 def test_pm_cannot_reach_admin_routes(monkeypatch, client):
-    # dependency_overrides 없이 실제 require_admin을 통과시켜본다.
+    # Go through the real require_admin without dependency_overrides.
     fake = FakeCognito()
     monkeypatch.setattr(app_module, "cognito_admin", lambda: fake)
     monkeypatch.setattr(app_module, "cognito_config", lambda: {

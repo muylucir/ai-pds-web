@@ -1,9 +1,9 @@
-// frontend/lib/api/transfer.ts — 프로젝트 이관(내보내기·가져오기) 클라이언트.
+// frontend/lib/api/transfer.ts — client for project transfer (export and import).
 //
-// 가져오기는 세 단계다: presign 요청 → **브라우저가 S3로 직접 PUT** → 임포트 요청.
-// 두 번째 단계가 우리 서버를 지나지 않는 것이 요점이다 — 번들은 크기에 위가 없고,
-// 서버를 지나는 요청은 nginx와 Next 미들웨어의 바디 상한(첨부 업로드에 맞춘 값)에
-// 걸린다.
+// Import has three steps: presign request -> **browser PUTs directly to S3** -> import request.
+// The point is that the second step does not pass through our server -- a bundle has no
+// upper size bound, and requests through the server hit the body limits of nginx and the
+// Next middleware (values sized for attachment uploads).
 import { API_BASE_URL, ApiError } from "./client";
 import { CREDENTIALS } from "@/lib/auth";
 import { apiFetch } from "./http";
@@ -31,19 +31,19 @@ interface UploadTicket {
   max_bytes: number;
 }
 
-// ---- 내보내기 ----
+// ---- Export ----
 
-/** 기본 파일명. 서버가 `Content-Disposition`으로 이름을 주지만, 프록시를 지나며
- *  그 헤더가 없을 수도 있으므로 폴백을 갖는다. */
+/** Default filename. The server supplies the name via `Content-Disposition`, but that
+ *  header may be missing after passing through the proxy, so keep a fallback. */
 function fallbackFilename(projectId: string): string {
   return `aipds-export-${projectId}.zip`;
 }
 
-/** `Content-Disposition`에서 파일명을 뽑는다. 없으면 null.
+/** Extract the filename from `Content-Disposition`. null if absent.
  *
- *  `filename*=UTF-8''…`(RFC 5987)를 먼저 본다 — 백엔드가 한글 프로젝트 id를 위해
- *  그 형태를 함께 싣고, ASCII 폴백인 `filename="…"`은 한글이 하이픈으로 뭉개진
- *  이름이다. 순서를 뒤집으면 한국어 사용자가 항상 뭉개진 이름을 받는다. */
+ *  Look at `filename*=UTF-8''…` (RFC 5987) first -- the backend includes that form for
+ *  Korean project ids, and the ASCII fallback `filename="…"` is a name with the Hangul
+ *  collapsed into hyphens. Reverse the order and Korean users always get the mangled name. */
 export function filenameFromDisposition(header: string | null): string | null {
   if (!header) return null;
   const extended = /filename\*=UTF-8''([^;]+)/i.exec(header);
@@ -51,19 +51,19 @@ export function filenameFromDisposition(header: string | null): string | null {
     try {
       return decodeURIComponent(extended[1].trim());
     } catch {
-      /* 잘못 인코딩된 값 — 아래 ASCII 폼으로 떨어진다 */
+      /* badly encoded value — fall through to the ASCII form below */
     }
   }
   const plain = /filename="([^"]+)"/i.exec(header);
   return plain ? plain[1] : null;
 }
 
-/** 번들을 받아 브라우저 다운로드로 넘긴다.
+/** Fetch the bundle and hand it to the browser as a download.
  *
- *  **앵커 내비게이션이 아니라 fetch다.** `<a href>`로 열면 브라우저가
- *  `Content-Disposition`을 알아서 처리해 편하지만, 실패 응답(빌드 세션 중 409)이
- *  JSON 페이지로 떠서 사용자가 무슨 일인지 알 수 없다. 진행 중인 빌드는 흔한
- *  상태이므로 그 오류는 화면 문구로 나와야 한다.
+ *  **fetch, not anchor navigation.** Opening via `<a href>` is convenient because the
+ *  browser handles `Content-Disposition` itself, but a failure response (409 during a
+ *  build session) then shows up as a JSON page and the user cannot tell what happened.
+ *  A build in progress is a common state, so that error must appear as on-screen text.
  */
 export async function exportProject(projectId: string): Promise<void> {
   const res = await fetch(
@@ -94,12 +94,13 @@ export async function exportProject(projectId: string): Promise<void> {
   }
 }
 
-// ---- 가져오기 ----
+// ---- Import ----
 
-/** 번들을 S3에 올리고 `upload_id`를 돌려준다.
+/** Upload the bundle to S3 and return the `upload_id`.
  *
- *  `finishImport`와 나눠 둔 이유는 409다: 대상 id가 이미 있으면 화면이 새 id를
- *  받아 **같은 upload_id로** 다시 부른다 — 사용자가 번들을 다시 올리지 않는다.
+ *  Split from `finishImport` because of 409: if the target id already exists, the screen
+ *  takes a new id and calls again **with the same upload_id** -- the user does not
+ *  re-upload the bundle.
  */
 export async function stageBundle(
   file: File, onProgress?: (fraction: number) => void,
@@ -113,23 +114,25 @@ export async function stageBundle(
   return ticket.upload_id;
 }
 
-/** presigned URL에 PUT한다.
+/** PUT to the presigned URL.
  *
- *  **`XMLHttpRequest`인 이유는 진행률이다.** `fetch`는 업로드 진행을 보고하지
- *  않는다(ReadableStream 업로드는 HTTP/2 전용이고 지원이 고르지 않다). 워크숍
- *  네트워크에서 수백 MB를 올리는 동안 진행 표시가 없으면 멈춘 것과 구별되지 않는다.
+ *  **`XMLHttpRequest` because of progress.** `fetch` does not report upload progress
+ *  (ReadableStream uploads are HTTP/2-only and unevenly supported). While uploading
+ *  hundreds of MB over a workshop network, no progress indicator is indistinguishable
+ *  from a hang.
  *
- *  **자격증명을 보내지 않는다.** 이 요청의 인증은 URL 안의 서명이다. `credentials`를
- *  붙이면 S3는 `Access-Control-Allow-Credentials`를 돌려주지 않으므로 브라우저가
- *  CORS 검사에서 응답을 버린다 — `lib/api/client.ts`의 헬퍼를 타면 안 되는 이유가
- *  그것이다(그쪽은 모든 호출에 `credentials: "include"`를 붙인다).
+ *  **No credentials are sent.** This request is authenticated by the signature in the
+ *  URL. With `credentials` attached, S3 does not return `Access-Control-Allow-Credentials`,
+ *  so the browser drops the response in the CORS check -- that is why this must not go
+ *  through the helpers in `lib/api/client.ts` (they attach `credentials: "include"` to
+ *  every call).
  */
 function putToStorage(ticket: UploadTicket, file: File,
                       onProgress?: (fraction: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", ticket.url, true);
-    // 서명에 포함된 헤더다 — 값이 다르면 S3가 403을 준다.
+    // This header is part of the signature -- if the value differs, S3 returns 403.
     xhr.setRequestHeader("Content-Type", ticket.content_type);
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
@@ -138,8 +141,9 @@ function putToStorage(ticket: UploadTicket, file: File,
     }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
-      // S3의 거절은 XML이다. 그 본문을 화면에 흘리지 않는다 — 사용자가 할 일은
-      // 다시 시도하는 것이고, 원인(서명 만료, CORS 미설정)은 개발자의 몫이다.
+      // S3 rejections are XML. Do not leak that body onto the screen -- the user's
+      // next step is to retry, and the cause (expired signature, missing CORS) is
+      // for developers.
       else reject(new ApiError(xhr.status, "upload_failed"));
     };
     xhr.onerror = () => reject(new ApiError(0, "upload_failed"));
@@ -148,7 +152,7 @@ function putToStorage(ticket: UploadTicket, file: File,
   });
 }
 
-/** 올려 둔 번들을 프로젝트로 되살린다. `projectId`가 없으면 번들의 원본 id를 쓴다. */
+/** Restore the uploaded bundle as a project. Without `projectId`, the bundle's original id is used. */
 export async function finishImport(uploadId: string,
                                    projectId?: string): Promise<ImportResult> {
   const body: { upload_id: string; project_id?: string } = { upload_id: uploadId };

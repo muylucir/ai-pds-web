@@ -17,9 +17,10 @@ function progressLabel(p: ProjectProgress | null | undefined): string {
   return p.current_stage ? `${p.current_stage} ${count}` : count;
 }
 
-/** 생성일은 **날짜까지만** 보여준다 — 목록에서 시·분은 판단에 쓰이지 않고
- *  열만 넓힌다. ISO 문자열의 앞 10자를 쓰는 것은 admin/UserTable과 같은
- *  방식이다(Date로 파싱하면 로컬 타임존에 따라 날짜가 하루 밀린다). */
+/** The creation date shows **only the date** -- in the list, hours and minutes inform
+ *  no decision and only widen the column. Using the first 10 characters of the ISO
+ *  string is the same approach as admin/UserTable (parsing with Date can shift the
+ *  date by a day depending on the local time zone). */
 function createdLabel(iso: string | null | undefined): string {
   return iso ? iso.slice(0, 10) : "—";
 }
@@ -32,23 +33,23 @@ export function ProjectList({
 }: {
   data: ProjectPage;
   onDeleted: () => void;
-  /** 소유자·멤버가 바뀌었다 — 목록을 다시 읽는다. */
+  /** Owner or members changed -- reload the list. */
   onChanged?: () => void;
   onPageChange: (page: number) => void;
 }) {
   const t = useT();
   const [target, setTarget] = useState<ProjectSummary | null>(null);
-  // 접근 관리 창을 연 프로젝트. 소유자·관리자에게만 버튼이 있다.
+  // The project whose access management dialog is open. Only owners and admins get the button.
   const [accessTarget, setAccessTarget] = useState<ProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 내보내기 중인 프로젝트 id. 행마다 상태를 두는 대신 하나만 갖는다 — 번들
-  // 조립은 서버의 CPU와 임시 디스크를 쓰므로 동시에 여러 개를 시작할 이유가 없다.
+  // The id of the project being exported. One value instead of per-row state -- bundle
+  // assembly uses server CPU and temp disk, so there is no reason to start several at once.
   const [exporting, setExporting] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  // model_id → 표시 이름. 목록 전체에 한 번만 부른다(행마다 부르면 페이지당
-  // 최대 50회다). 실패는 이름을 못 붙이는 것으로 끝나고 행은 id를 보여준다 —
-  // useProjectMeta가 헤더 배지에서 하는 것과 같은 판단이다.
+  // model_id → display name. Called once for the whole list (per row it would be up
+  // to 50 calls per page). Failure just means no name, and the row shows the id --
+  // the same judgment useProjectMeta makes for the header badge.
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -58,7 +59,7 @@ export function ProjectList({
         if (!alive) return;
         setModelNames(Object.fromEntries(models.map((m) => [m.model_id, m.name])));
       })
-      .catch(() => { /* id 원문으로 떨어진다 */ });
+      .catch(() => { /* falls back to the raw id */ });
     return () => { alive = false; };
   }, []);
 
@@ -68,9 +69,10 @@ export function ProjectList({
     try {
       await exportProject(p.project_id);
     } catch (err) {
-      // 진행 중인 빌드 세션(409)이 흔한 실패다 — 그 사실이 문구로 나와야 한다.
-      // 이 화면의 문구는 따로 둔다: 공통 문구는 프로토타입 카드 곁에서 읽히도록 쓰여 있어
-      // "카드의 세션 열기"가 어느 화면의 것인지 말하지 않는다. 여기서는 그 탭부터 부른다.
+      // An in-progress build session (409) is the common failure -- the message must say so.
+      // This screen has its own message: the shared one is written to be read next to the
+      // prototype card, so its "카드의 세션 열기" (the card's Open session) does not say which
+      // screen it is on. Here it names that tab first.
       setExportError(!(err instanceof ApiError)
         ? t("transfer.exportFailed")
         : err.detail === "build_session_active"
@@ -135,8 +137,8 @@ export function ProjectList({
           </thead>
           <tbody>
             {data.projects.map((p) => (
-              // relative + 이름 링크의 after:inset-0 스트레치드 링크 — 행 어디를
-              // 클릭해도 대시보드로 이동하되, 삭제 버튼은 z-10으로 위에 띄운다.
+              // relative + an after:inset-0 stretched link on the name link -- clicking
+              // anywhere in the row goes to the dashboard, while the delete button floats above with z-10.
               <tr key={p.project_id} className="relative border-b border-slate-100 last:border-0 hover:bg-violet-50/40">
                 <td className="px-4 py-3 font-mono text-xs text-slate-500">{p.project_id}</td>
                 <td className="px-4 py-3 font-medium">
@@ -148,9 +150,9 @@ export function ProjectList({
                   </Link>
                 </td>
                 <td className="px-4 py-3 text-slate-600">{progressLabel(p.progress)}</td>
-                {/* 카탈로그에 없는 모델은 id 원문 — 관리자가 지운 모델로 도는
-                    프로젝트는 정상 경로이고, 그 사실이 화면에서 정직해야 한다.
-                    effort는 프로젝트가 복사해 둔 값이다(카탈로그의 현재 값이 아니다). */}
+                {/* A model not in the catalog shows the raw id -- a project running on a
+                    model the admin removed is a normal path, and the screen must be honest
+                    about it. effort is the value the project copied (not the catalog's current value). */}
                 <td className="px-4 py-3 text-slate-600">
                   {p.model_id ? modelLabel(modelNames[p.model_id] ?? p.model_id, p.effort, t) : "—"}
                 </td>
@@ -159,7 +161,7 @@ export function ProjectList({
                 </td>
                 <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
                   <span className="font-mono text-xs">{p.owner ?? "—"}</span>
-                  {/* 열람 멤버로 들어와 있는 프로젝트. 클릭하면 열리지만 바꿀 수는 없다. */}
+                  {/* A project the user belongs to as a view-only member. Clicking opens it, but it cannot be changed. */}
                   {p.access === "member" && (
                     <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
                       {t("project.viewerBadge")}

@@ -1,11 +1,11 @@
 // frontend/lib/auth/tokenExchange.ts
 //
-// Cognito /oauth2/token 호출. route 파일이 아니라 여기 있는 이유:
-//   - Next route 파일은 HTTP 메서드 export만 허용한다(lib/api/rewriteLocation.ts가
-//     같은 이유로 분리돼 있다)
-//   - /api 프록시가 refreshTokens를 재사용한다
+// Calls Cognito /oauth2/token. Why it lives here rather than in a route file:
+//   - Next route files allow only HTTP method exports (lib/api/rewriteLocation.ts is
+//     split out for the same reason)
+//   - the /api proxy reuses refreshTokens
 //
-// 이 코드는 서버사이드에서만 돈다 — client secret이 여기 있기 때문이다.
+// This code runs only on the server side — because the client secret lives here.
 import { callbackUrl, tokenEndpoint, type CognitoEnv } from "./cognitoUrls";
 
 export interface TokenSet {
@@ -24,8 +24,8 @@ export class TokenExchangeError extends Error {
 
 async function post(env: CognitoEnv, body: URLSearchParams,
                     fetchImpl: typeof fetch): Promise<TokenSet> {
-  // confidential 클라이언트는 client_secret_basic으로 인증한다 — 시크릿을
-  // 본문에 중복해 넣지 않는다.
+  // A confidential client authenticates with client_secret_basic — the secret is not
+  // duplicated into the body.
   const basic = Buffer.from(`${env.clientId}:${env.clientSecret}`).toString("base64");
   const res = await fetchImpl(tokenEndpoint(env), {
     method: "POST",
@@ -68,14 +68,14 @@ export async function exchangeCode(env: CognitoEnv, code: string,
     client_id: env.clientId,
     code,
     code_verifier: verifier,
-    // Cognito는 교환 시에도 redirect_uri가 authorize 때와 같은지 확인한다.
+    // Cognito checks during the exchange too that redirect_uri matches the one used at authorize.
     redirect_uri: callbackUrl(env),
   }), fetchImpl);
 }
 
 export async function refreshTokens(env: CognitoEnv, refreshToken: string,
                                     fetchImpl: typeof fetch = fetch): Promise<TokenSet> {
-  // refresh 그랜트는 새 refresh_token을 반환하지 않는다(기존 것이 계속 유효).
+  // The refresh grant does not return a new refresh_token (the existing one stays valid).
   return post(env, new URLSearchParams({
     grant_type: "refresh_token",
     client_id: env.clientId,

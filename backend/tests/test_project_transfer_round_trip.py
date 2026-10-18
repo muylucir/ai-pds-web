@@ -1,12 +1,14 @@
 # backend/tests/test_project_transfer_round_trip.py
 #
-# **이 기능의 핵심 계약.** 내보낸 프로젝트를 다른 id로 되살렸을 때 화면이 같은
-# 것을 말해야 한다 — 대화, 산출물, 승인 게이트, 프로토타입 상태, 설문 결과.
+# **The core contract of this feature.** When an exported project is restored under
+# a different id, the screen must say the same things — conversation, artifacts,
+# approval gates, prototype state, questionnaire results.
 #
-# 조각별 테스트(test_routes_export/import)로는 이것이 보장되지 않는다: 양쪽이 같은
-# 잘못된 규칙을 공유하면 둘 다 초록이다. 특히 트랜스크립트의 세션 세그먼트가
-# 그렇다 — export가 벗기고 import가 다시 끼우는 그 왕복이 어긋나면 대화가 **에러
-# 없이** 사라진다(list_history가 모든 실패를 []로 강등한다).
+# Piecewise tests (test_routes_export/import) do not guarantee this: if both sides
+# share the same wrong rule, both are green. The transcript's session segment is a
+# case in point — if the round trip where export strips it and import puts it back
+# goes out of sync, the conversation disappears **without an error** (list_history
+# downgrades every failure to []).
 from __future__ import annotations
 
 import json
@@ -32,7 +34,8 @@ SURVEY_KEY = f"prototypes/{SLUG}/survey/questionnaire.json"
 
 
 class _IdleHost:
-    """돌고 있는 호스팅이 없는 상태. 목록 라우트가 host에게 묻는 것은 둘뿐이다."""
+    """State with no running hosting. The list route asks the host only two
+    things."""
 
     def status(self, pid, slug):
         return None
@@ -70,7 +73,8 @@ def env(monkeypatch, tmp_path):
     app_module.registry.remove(TARGET)
 
 
-#: 실제 CLI 트랜스크립트 모양(Anthropic Messages). session_history가 읽는 형식이다.
+#: Shape of a real CLI transcript (Anthropic Messages). This is the format
+#: session_history reads.
 _TRANSCRIPT = [
     {"message": {"role": "user", "content": "기획전 어시스턴트를 만들고 싶어"}},
     {"message": {"role": "assistant",
@@ -89,7 +93,8 @@ def _seed(s3: FakeS3Store, proto_root) -> None:
         "# 상태\n\n| 단계 | 상태 |\n| --- | --- |\n| Envision | completed |\n")
     s3.blobs["aiplc-docs/discovery/discovery-document.md"] = "# 발견 문서\n\n본문"
     s3.blobs["aiplc-docs/audit.md"] = "# 감사\n\n- 1. 시작"
-    # ko 프로젝트의 실제 명세 모양 — 라벨이 번역돼 있다(parsers/proto_spec.py).
+    # Shape of a real spec from a ko project — the labels are translated
+    # (parsers/proto_spec.py).
     s3.blobs[SPEC_KEY] = "# PROTOTYPE demo\n\n- **제품**: 기획전 도우미\n"
     s3.blobs["uploads/ab12/notes.md"] = "# 참고자료"
     s3.blobs["answers/t1.json"] = json.dumps(
@@ -106,11 +111,11 @@ def _seed(s3: FakeS3Store, proto_root) -> None:
     s3.blobs[f"prototypes/{SLUG}/survey/responses/r1.json"] = json.dumps(
         {"response_id": "r1", "submitted_at": "2026-08-04T00:00:00+00:00",
          "answers": {"q1": 4}})
-    # 대화. 키는 이 프로젝트의 세션 prefix 아래에 있다.
+    # Conversation. The keys live under this project's session prefix.
     prefix = project_transcript_prefix(SOURCE)
     s3.blobs[f"{prefix}main/00000001.jsonl"] = "\n".join(
         json.dumps(line, ensure_ascii=False) for line in _TRANSCRIPT)
-    # 프로토타입 소스는 로컬 디스크에만 있다.
+    # Prototype sources live only on local disk.
     build = proto_root / SOURCE / SLUG / "prototype"
     build.mkdir(parents=True)
     (build / "package.json").write_text('{"name":"demo"}', encoding="utf-8")
@@ -122,7 +127,7 @@ def _seed(s3: FakeS3Store, proto_root) -> None:
 
 
 def _round_trip(env, target: str = TARGET) -> dict:
-    """내보내고 → 스테이징에 올리고 → 다른 id로 가져온다."""
+    """Export → upload to staging → import under a different id."""
     exported = client.get(f"/projects/{SOURCE}/export")
     assert exported.status_code == 200, exported.text
     uid = "c" * 32
@@ -134,8 +139,8 @@ def _round_trip(env, target: str = TARGET) -> dict:
 
 
 def test_the_conversation_survives_a_new_project_id(env):
-    """세션 세그먼트 왕복이 어긋나면 히스토리는 빈 목록이 되고, 그 실패에는
-    에러가 없다."""
+    """If the session segment round trip goes out of sync, the history becomes an
+    empty list, and that failure carries no error."""
     before = client.get(f"/projects/{SOURCE}/history").json()["items"]
     assert before, "원본 히스토리가 비어 있으면 이 테스트는 아무것도 증명하지 않는다"
 
@@ -164,7 +169,8 @@ def test_the_stage_timeline_resumes_where_it_left_off(env):
 
 
 def test_the_approval_gate_sees_the_same_evidence(env):
-    """승인 시점의 문서 해시가 함께 와야 '재승인 필요' 판정이 원본과 같다."""
+    """The document hash at approval time must come along for the 'reapproval
+    required' verdict to match the original."""
     before = client.get(f"/projects/{SOURCE}/approvals").json()
 
     _round_trip(env)
@@ -173,8 +179,8 @@ def test_the_approval_gate_sees_the_same_evidence(env):
 
 
 def test_the_prototype_card_reports_built_and_keeps_its_name(env):
-    """소스가 로컬 트리에 놓였으면 카드가 built다 — 그 상태에서 호스팅 버튼이
-    npm 수명주기를 돌려 node_modules를 채운다."""
+    """Once the sources are placed in the local tree, the card is built — in that
+    state the hosting button runs the npm lifecycle to populate node_modules."""
     _round_trip(env)
 
     cards = client.get(f"/projects/{TARGET}/prototypes").json()["prototypes"]
@@ -193,8 +199,9 @@ def test_prototype_source_lands_byte_for_byte(env):
 
 
 def test_the_imported_source_is_also_a_generation_in_s3(env):
-    """정본은 S3다(proto/store.py) — 로컬 트리에만 놓으면 가져온 프로젝트가 다음
-    인스턴스 교체에서 소스를 잃는다."""
+    """The source-of-truth copy is S3 (proto/store.py) — placing it only in the local tree
+    would make the imported project lose its sources at the next instance
+    replacement."""
     _round_trip(env)
 
     import asyncio
@@ -205,8 +212,9 @@ def test_the_imported_source_is_also_a_generation_in_s3(env):
 
 
 def test_instance_only_prototype_keys_do_not_travel(env):
-    """토큰(자격증명)과 호스팅 의도(이 인스턴스의 사정)와 소스 세대(번들이 소스를 따로
-    담는다)는 옮기지 않는다."""
+    """Tokens (credentials), hosting intent (this instance's circumstances), and the
+    source generation (the bundle carries sources separately) are not
+    transferred."""
     src = env["stores"][SOURCE]
     import asyncio
     asyncio.run(src.put(f"prototypes/{SLUG}/access-token", "tok-secret"))
@@ -218,7 +226,8 @@ def test_instance_only_prototype_keys_do_not_travel(env):
     dst = env["stores"][TARGET]
     assert f"prototypes/{SLUG}/access-token" not in dst.blobs
     assert f"prototypes/{SLUG}/hosting.json" not in dst.blobs
-    # 세대는 가져오기가 **새로** 만든다 — 옛 세대 번호를 들고 오지 않는다.
+    # Import creates the generation **anew** — it does not bring over the old
+    # generation number.
     import json
     assert json.loads(dst.blobs[f"prototypes/{SLUG}/source/current.json"])["gen"] == 1
 
@@ -238,7 +247,8 @@ def test_the_survey_keeps_its_answers_and_gets_a_live_link(env):
 
 
 def test_the_source_project_is_left_exactly_as_it_was(env):
-    """복제가 원본을 건드리면 워크숍 중 한 번의 실수가 두 프로젝트를 망친다."""
+    """If cloning touched the original, a single mistake during a workshop would
+    ruin two projects."""
     before = dict(env["stores"][SOURCE]._raw)
     surveys_before = dict(env["surveys"]._raw)
 
@@ -246,13 +256,15 @@ def test_the_source_project_is_left_exactly_as_it_was(env):
 
     assert env["stores"][SOURCE]._raw == before
     assert surveys_before.keys() <= env["surveys"]._raw.keys()
-    # 원본의 설문 토큰은 그대로다 — 이미 배포된 링크가 살아 있어야 한다.
+    # The original's questionnaire token stays the same — links already distributed
+    # must keep working.
     assert json.loads(env["stores"][SOURCE].blobs[SURVEY_KEY])["token"] == \
         "live-token"
 
 
 def test_importing_the_same_bundle_twice_yields_two_projects(env):
-    """워크숍에서 흔한 조작이다 — 같은 출발점에서 두 갈래를 시작한다."""
+    """A common operation in workshops — start two branches from the same starting
+    point."""
     _round_trip(env, TARGET)
     exported = client.get(f"/projects/{SOURCE}/export")
     env["staging"].objects["d" * 32] = exported.content
@@ -263,7 +275,8 @@ def test_importing_the_same_bundle_twice_yields_two_projects(env):
         assert second.status_code == 201
         first_token = json.loads(env["stores"][TARGET].blobs[SURVEY_KEY])["token"]
         second_token = json.loads(env["stores"]["rt-third"].blobs[SURVEY_KEY])["token"]
-        # 두 사본이 같은 토큰을 쓰면 뒤에 임포트한 쪽이 앞의 링크를 가로챈다.
+        # If the two copies used the same token, the one imported later would hijack
+        # the earlier one's link.
         assert first_token != second_token
         assert client.get("/projects/rt-third/history").json()["items"] == \
             client.get(f"/projects/{TARGET}/history").json()["items"]

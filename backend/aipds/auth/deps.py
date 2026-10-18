@@ -1,6 +1,6 @@
 # backend/aipds/auth/deps.py
 #
-# FastAPI 의존성 두 개. 라우터 include 시점에 붙여 라우트 본문을 건드리지 않는다.
+# Two FastAPI dependencies. They are attached at router include time so route bodies stay untouched.
 from __future__ import annotations
 
 import logging
@@ -12,8 +12,8 @@ from aipds.auth.verifier import TokenError, verify_access_token
 
 _log = logging.getLogger(__name__)
 
-# 인증 미설정(로컬/테스트) 상태의 가상 요청자. admin인 이유: 로컬에서 관리
-# 페이지까지 그대로 열려야 개발 흐름이 끊기지 않는다.
+# The virtual requester when auth is not configured (local/test). Why admin: locally, even
+# the admin pages must open as is so the development flow is not interrupted.
 LOCAL_PRINCIPAL = Principal(username="local-dev", sub="local-dev", role="admin")
 
 _UNAUTHENTICATED = HTTPException(
@@ -30,9 +30,9 @@ def _bearer_token(request: Request) -> str:
 
 
 async def require_user(request: Request) -> Principal:
-    """admin·pm 모두 통과. 인증이 설정되지 않았으면 전부 통과."""
-    # app을 지연 import한다: app.py가 라우터를 include하고 라우터가 이 모듈을
-    # import하므로, 모듈 최상단 import는 순환이 된다.
+    """Both admin and pm pass. If auth is not configured, everyone passes."""
+    # Import app lazily: app.py includes the routers and the routers import this module,
+    # so a top-level module import would be circular.
     import aipds.app as app_module
 
     cfg = app_module.cognito_config()
@@ -46,39 +46,39 @@ async def require_user(request: Request) -> Principal:
             token, region=cfg["region"], user_pool_id=cfg["user_pool_id"],
             client_id=cfg["client_id"], jwks=app_module.jwks_cache())
     except TokenError as exc:
-        # 사유는 로그에만 — 클라이언트에게 어떤 검증이 실패했는지 알려주지 않는다.
+        # The reason goes only to the log — the client is not told which check failed.
         _log.info("token rejected: %s", exc)
         raise _UNAUTHENTICATED from exc
-    # 관리자가 끊은 사용자의, 그 전에 발급된 토큰(auth/revocation.py). 같은 401이다 —
-    # 프록시가 refresh를 시도하고, 강등된 사용자는 새 그룹으로, 비활성·삭제된 사용자는
-    # 로그인 화면으로 간다.
+    # A token issued before an admin cut off this user (auth/revocation.py). It is the same
+    # 401 — the proxy attempts a refresh; a demoted user moves to the new group, and a
+    # disabled or deleted user goes to the login screen.
     if app_module.revocations().is_revoked(principal.username, principal.issued_at):
         _log.info("token rejected: issued before %s was revoked", principal.username)
         raise _UNAUTHENTICATED
-    # 요청자를 접근 기록에 남긴다(aipds/access_log.py).
+    # Record the requester in the access log (aipds/access_log.py).
     request.state.principal = principal
     return principal
 
 
 async def access_token(request: Request) -> str:
-    """요청의 원문 access 토큰.
+    """The request's raw access token.
 
-    `require_user`는 토큰을 검증한 뒤 `Principal`만 남기고 토큰 자체는 버린다 —
-    라우트가 신원만 알면 되기 때문이다. 예외가 하나 있다: Cognito 셀프서비스
-    API(`ChangePassword`)는 **토큰 자체가 인가 수단**이므로 원문이 필요하다
-    (routes/account.py).
+    `require_user` verifies the token, keeps only the `Principal`, and discards the token
+    itself — because routes only need the identity. There is one exception: the Cognito
+    self-service API (`ChangePassword`) uses **the token itself as the authorization
+    means**, so it needs the raw token (routes/account.py).
 
-    별도 의존성으로 두는 이유는 그 예외를 눈에 보이게 하기 위해서다 — 라우트
-    시그니처에 `access_token`이 있다는 것이 "이 라우트는 사용자의 토큰을 그대로
-    업스트림에 넘긴다"는 표시가 된다. 토큰이 없으면 `_bearer_token`이 401을
-    낸다(`require_user`와 같은 응답).
+    It is a separate dependency to make that exception visible — the presence of
+    `access_token` in a route signature signals "this route passes the user's token
+    upstream as is". If there is no token, `_bearer_token` returns 401 (the same response
+    as `require_user`).
     """
     return _bearer_token(request)
 
 
 async def require_admin(
         principal: Principal = Depends(require_user)) -> Principal:
-    """admin만 통과. pm은 403 — 인증은 됐고 권한이 없는 상태다(401 아님)."""
+    """Only admin passes. pm gets 403 — authenticated but not authorized (not 401)."""
     if principal.role != "admin":
         raise HTTPException(status_code=403, detail="admin role required")
     return principal

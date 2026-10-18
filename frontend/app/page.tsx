@@ -18,9 +18,9 @@ export default function Home() {
     <>
       <AppHeader activeTab="projects" />
       <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* 제목 줄의 오른쪽이 가져오기 자리다. 생성 폼과 나란히 두면 드문
-            조작(다른 인스턴스에서 옮겨 오기)이 흔한 조작(새 프로젝트)과 같은
-            무게를 갖는다 — 그래서 버튼 하나로 접고 모달에서 처리한다. */}
+        {/* The right side of the title row is where import goes. Placing it beside the create form would give
+            a rare action (moving a project over from another instance) the same weight as a common one
+            (new project) — so it is folded into one button and handled in a modal. */}
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold">{t("list.title")}</h1>
@@ -28,14 +28,14 @@ export default function Home() {
               {t("list.subtitle")}
             </p>
           </div>
-          {/* 가져오기도 생성과 같은 흐름이다 — 되살린 프로젝트의 대시보드로
-              곧바로 간다. */}
+          {/* Import follows the same flow as create — it goes straight to the restored project's
+              dashboard. */}
           <ImportProjectButton
             onImported={(r) => router.push(`/projects/${r.project_id}/dashboard`)}
           />
         </div>
-        {/* 생성 성공 = 곧바로 그 프로젝트의 대시보드로 — 목록에 추가만 되는
-            것보다 워크숍 시작 흐름이 자연스럽다. */}
+        {/* Successful create = go straight to that project's dashboard — a more natural start to the
+            workshop than just adding it to the list. */}
         <CreateProjectForm onCreated={(p) => router.push(`/projects/${p.project_id}/dashboard`)} />
         {loading && <p className="text-sm text-slate-400">{t("page.loading")}</p>}
         {error && (
@@ -47,7 +47,7 @@ export default function Home() {
           <ProjectList
             data={data}
             onDeleted={() => {
-              // 삭제로 현재 페이지가 비면 이전 페이지로 (page 상태 변경이 곧 리로드)
+              // If deletion empties the current page, go to the previous page (changing page state is itself the reload)
               if (data.projects.length === 1 && page > 1) setPage(page - 1);
               else reload();
             }}

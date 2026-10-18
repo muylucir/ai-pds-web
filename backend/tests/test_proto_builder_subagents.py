@@ -1,20 +1,20 @@
-# backend/tests/test_proto_builder_subagents.py — 빌드 에이전트가 일을 서브에이전트에
-# 넘겼을 때 화면이 무엇을 받는가.
+# backend/tests/test_proto_builder_subagents.py — what the screen receives when the build
+# agent hands work off to subagents.
 #
-# **왜 이 파일이 있는가.** 총괄 에이전트가 직접 도구를 돌리지 않고 Agent 도구로
-# 서브에이전트를 병렬로 띄우면서, 빌드 화면이 몇 분간 멈춘 것처럼 보였다. 원인은
-# 서브에이전트 진행 상황이 오지 않는 것이 **아니었다** — SDK는 `Task*` 메시지로
-# 에이전트별 하트비트를 이미 보내고 있었고, 그 네 종류가 `SystemMessage`의
-# 서브클래스라서 `type(msg).__name__` 동등 비교를 쓰는 `_translate`를 전부
-# 그냥 통과해 버려졌다.
+# **Why this file exists.** When the orchestrating agent stopped running tools itself and
+# launched subagents in parallel with the Agent tool, the build screen looked frozen for
+# minutes. The cause was **not** that subagent progress was not arriving — the SDK was already
+# sending per-agent heartbeats as `Task*` messages, but those four kinds are subclasses of
+# `SystemMessage`, so they all slipped straight through `_translate`, which uses an equality
+# check on `type(msg).__name__`, and were discarded.
 #
-# 실측 근거(claude_agent_sdk 0.2.143, Bedrock, 서브에이전트 2개 병렬):
+# Measured evidence (claude_agent_sdk 0.2.143, Bedrock, 2 subagents in parallel):
 #   TaskStarted   task_id, tool_use_id, description="Create a.txt with alpha"
-#   TaskProgress  같은 task_id, last_tool_name="Write" → "Read"
+#   TaskProgress  same task_id, last_tool_name="Write" → "Read"
 #   TaskNotif.    status="completed", summary="Done. - Created …"
 #   TaskUpdated   patch={"status":"completed", …}
-#   서브에이전트의 AssistantMessage.parent_tool_use_id == TaskStarted.tool_use_id
-#     (5개 메시지 전부 조인 성공 — 그것이 행에 파일 경로를 붙일 수 있는 근거다)
+#   the subagent's AssistantMessage.parent_tool_use_id == TaskStarted.tool_use_id
+#     (the join succeeded for all 5 messages — that is the basis for attaching file paths to rows)
 from __future__ import annotations
 
 import json
@@ -47,7 +47,7 @@ def _activity(events: list[AgentEvent]) -> list[dict]:
             for e in events if e.kind == "agent_activity"]
 
 
-# ---- 행이 열리고 · 갱신되고 · 닫힌다 ----
+# ---- Rows open · update · close ----
 
 async def test_a_started_task_opens_a_row_with_its_assignment_as_the_label(tmp_path):
     client = FakeSdkClient(script=[
@@ -74,8 +74,8 @@ async def test_progress_reports_which_tool_that_agent_is_running(tmp_path):
 
 
 async def test_progress_with_nothing_to_show_is_not_emitted(tmp_path):
-    """도구 이름이 없는 하트비트는 화면에 실을 것이 없다. 빈 갱신을 보내면
-    프론트가 매번 리렌더만 하고 행은 그대로다."""
+    """A heartbeat with no tool name has nothing to put on screen. Sending an empty update
+    just makes the frontend re-render every time while the row stays the same."""
     client = FakeSdkClient(script=[
         TaskStartedMessage(task_id="a040", tool_use_id="toolu_1", description="x"),
         TaskProgressMessage(task_id="a040", last_tool_name=None),
@@ -99,9 +99,9 @@ async def test_a_completed_notification_closes_the_row_with_its_summary(tmp_path
 
 
 async def test_a_task_updated_terminal_status_also_closes_the_row(tmp_path):
-    """SDK가 명시적으로 경고하는 자리다: 백그라운드 태스크나 TaskStop으로 죽은
-    태스크는 TaskNotification 없이 여기서만 종료를 보고할 수 있다. 한쪽만 보면
-    그 행이 영원히 도는 채로 남는다 — 정확히 "멈춘 것 같다"의 재발이다."""
+    """This is the spot the SDK explicitly warns about: a background task, or a task killed
+    by TaskStop, may report its end only here, without a TaskNotification. Watching only one
+    side leaves that row spinning forever — exactly a recurrence of "it looks frozen"."""
     client = FakeSdkClient(script=[
         TaskStartedMessage(task_id="a040", tool_use_id="toolu_1", description="x"),
         TaskUpdatedMessage(task_id="a040", status="killed",
@@ -114,7 +114,7 @@ async def test_a_task_updated_terminal_status_also_closes_the_row(tmp_path):
 
 
 async def test_a_non_terminal_update_is_not_a_close(tmp_path):
-    """`running`/`pending`/`paused`로 행을 닫으면 시작하자마자 사라진다."""
+    """Closing a row on `running`/`pending`/`paused` would make it vanish as soon as it starts."""
     client = FakeSdkClient(script=[
         TaskStartedMessage(task_id="a040", tool_use_id="toolu_1", description="x"),
         TaskUpdatedMessage(task_id="a040", status="running",
@@ -126,15 +126,15 @@ async def test_a_non_terminal_update_is_not_a_close(tmp_path):
 
 
 async def test_the_summary_survives_the_earlier_terminal(tmp_path):
-    """**실측 순서가 TaskUpdated → TaskNotification이고, 요약은 뒤쪽에만 있다**
-    (integration 프로브 2026-09-15). 첫 종료로 행을 닫고 그 뒤를 전부 억제하면
-    에이전트가 남긴 요약이 언제나 버려진다 — 트레이스에서 가장 쓸모 있는 줄이
-    그것이다.
+    """**The measured order is TaskUpdated → TaskNotification, and the summary is only on the later one**
+    (integration probe 2026-09-15). Closing the row on the first end and suppressing everything
+    after it would always discard the summary the agent left — and that is the most useful line
+    in the trace.
 
-    그래서 늦게 온 요약은 한 번 더 나간다. 행을 두 번 닫는 것이 아니다:
-    프론트가 `task_id`로 트레이스 줄을 갱신한다(upsert) — 종료를 두 번 세지 않는
-    책임이 **뷰**에 있는 이유는, 어느 종료 메시지가 마지막인지 백엔드가 알 수
-    없기 때문이다(SDK는 둘 중 하나만 오는 경우도 있다고 명시한다)."""
+    So a summary that arrives late goes out once more. This is not closing the row twice:
+    the frontend updates the trace line by `task_id` (upsert) — the responsibility for not
+    counting the end twice lies with the **view** because the backend cannot know which end
+    message is the last (the SDK states that sometimes only one of the two arrives)."""
     client = FakeSdkClient(script=[
         TaskStartedMessage(task_id="a040", tool_use_id="toolu_1", description="x"),
         TaskUpdatedMessage(task_id="a040", status="completed",
@@ -150,8 +150,8 @@ async def test_the_summary_survives_the_earlier_terminal(tmp_path):
 
 
 async def test_a_terminal_that_adds_nothing_is_suppressed(tmp_path):
-    """요약을 이미 보냈거나 새 요약이 없는 종료는 다시 내보내지 않는다 — 같은
-    사실을 반복하면 프론트의 upsert가 매번 헛돈다."""
+    """An end for which the summary was already sent, or that has no new summary, is not emitted
+    again — repeating the same fact makes the frontend's upsert spin uselessly every time."""
     client = FakeSdkClient(script=[
         TaskStartedMessage(task_id="a040", tool_use_id="toolu_1", description="x"),
         TaskNotificationMessage(task_id="a040", status="completed", summary="끝냈다"),
@@ -166,12 +166,12 @@ async def test_a_terminal_that_adds_nothing_is_suppressed(tmp_path):
     assert activity[1]["summary"] == "끝냈다"
 
 
-# ---- 서브에이전트의 도구 호출이 총괄 활동으로 오인되지 않는다 ----
+# ---- Subagent tool calls are not mistaken for orchestrator activity ----
 
 async def test_a_subagent_tool_call_updates_its_row_not_the_main_status(tmp_path):
-    """이것이 종전 화면의 핵심 오류다: 서브에이전트 3개의 도구 호출이 전부 총괄
-    `status`로 올라와, 고정 줄이 누구의 일인지 모르는 채 이름들 사이에서
-    깜빡였다."""
+    """This is the core error of the previous screen: the tool calls of 3 subagents all came up
+    as orchestrator `status`, and the pinned line flickered between names without knowing
+    whose work it was."""
     client = FakeSdkClient(script=[
         TaskStartedMessage(task_id="a040", tool_use_id="toolu_1", description="x"),
         AssistantMessage(parent_tool_use_id="toolu_1", content=[
@@ -186,10 +186,10 @@ async def test_a_subagent_tool_call_updates_its_row_not_the_main_status(tmp_path
 
 
 async def test_a_subagent_row_shows_the_file_it_is_writing(tmp_path):
-    """총괄 트레이스에서는 Write의 경로를 `tool_detail`이 일부러 빼 왔다 —
-    `file_changed` 이벤트가 이미 그 경로를 들고 오기 때문이다(tool_trace 헤더).
-    행에는 그 논리가 성립하지 않는다: `file_changed`는 어느 에이전트의 것인지
-    말해 주지 않으므로, 행이 대상을 보여주려면 여기서 와야 한다."""
+    """In the orchestrator trace, `tool_detail` deliberately leaves out the Write path —
+    because the `file_changed` event already carries that path (tool_trace header).
+    That logic does not hold for rows: `file_changed` does not say which agent it belongs
+    to, so for a row to show its target, it has to come from here."""
     client = FakeSdkClient(script=[
         TaskStartedMessage(task_id="a040", tool_use_id="toolu_1", description="x"),
         AssistantMessage(parent_tool_use_id="toolu_1", content=[
@@ -202,8 +202,8 @@ async def test_a_subagent_row_shows_the_file_it_is_writing(tmp_path):
 
 
 async def test_a_subagent_tool_call_for_an_unknown_task_is_dropped(tmp_path):
-    """TaskStarted를 못 본 parent_tool_use_id — 어느 행에 붙일지 알 수 없다.
-    총괄 status로 흘려보내면 서브에이전트의 일이 총괄의 일로 보인다."""
+    """A parent_tool_use_id whose TaskStarted was never seen — there is no way to know which row to attach it to.
+    Sending it through as orchestrator status would make the subagent's work look like the orchestrator's."""
     client = FakeSdkClient(script=[
         AssistantMessage(parent_tool_use_id="toolu_ghost", content=[
             ToolUseBlock(id="r1", name="Read", input={"file_path": "/x/y.txt"})]),
@@ -215,9 +215,9 @@ async def test_a_subagent_tool_call_for_an_unknown_task_is_dropped(tmp_path):
 
 
 async def test_subagent_text_never_lands_in_the_bubble(tmp_path):
-    """`forward_subagent_text`는 끄고 간다 — 서사 세 개가 말풍선에 섞이면
-    LiveActivityBar를 만든 이유("정신이 없다")가 그대로 재발한다. 지금은 SDK가
-    보내지도 않지만, 그 옵션을 켜는 날 이 규율이 코드에 있어야 한다."""
+    """`forward_subagent_text` stays off — if three narratives mix into the bubble, the reason
+    LiveActivityBar was built ("정신이 없다", it is chaotic) comes right back. The SDK does not
+    even send it now, but the day that option is turned on, this discipline must be in the code."""
     client = FakeSdkClient(script=[
         TaskStartedMessage(task_id="a040", tool_use_id="toolu_1", description="x"),
         AssistantMessage(parent_tool_use_id="toolu_1",
@@ -228,7 +228,7 @@ async def test_subagent_text_never_lands_in_the_bubble(tmp_path):
     assert [e.kind for e in events if e.kind == "message"] == []
 
 
-# ---- 총괄 에이전트 쪽 (서브에이전트와 섞이지 않는다) ----
+# ---- The orchestrating agent's side (does not mix with subagents) ----
 
 async def test_the_main_agent_still_gets_plain_status_events(tmp_path):
     client = FakeSdkClient(script=[
@@ -239,14 +239,14 @@ async def test_the_main_agent_still_gets_plain_status_events(tmp_path):
     events = await collect(_builder(tmp_path, client))
     status = [e for e in events if e.kind == "status"]
     assert [e.text for e in status] == ["Bash"]
-    # Discovery와 동등: 무엇을 했는지까지 보낸다(종전 빌드 화면은 맨 `Bash`만
-    # 보였다 — tool_trace 모듈이 이미 해결한 문제를 이쪽만 안 쓰고 있었다).
+    # Parity with Discovery: send what it did as well (the previous build screen showed only
+    # a bare `Bash` — only this side was not using what the tool_trace module had already solved).
     assert json.loads(status[0].payload)["detail"] == "npm run build"
 
 
 async def test_launching_an_agent_is_traced_with_what_it_was_asked_to_do(tmp_path):
-    """Agent 도구 호출 자체도 총괄의 도구 호출이다. 맨 `Agent`만 남으면
-    트레이스에서 "에이전트를 띄웠다"는 사실만 있고 무엇을 맡겼는지가 없다."""
+    """The Agent tool call itself is also an orchestrator tool call. If only a bare `Agent` remains,
+    the trace has only the fact that "an agent was launched" and not what was delegated."""
     client = FakeSdkClient(script=[
         AssistantMessage(content=[
             ToolUseBlock(id="t1", name="Agent",
@@ -262,9 +262,9 @@ async def test_launching_an_agent_is_traced_with_what_it_was_asked_to_do(tmp_pat
 
 
 async def test_repeated_reads_of_different_files_are_not_collapsed(tmp_path):
-    """종전 중복 접기는 도구 **이름**만 봤다 — 연속된 Read 세 번이 서로 다른
-    파일이어도 `Read` 한 줄로 뭉개졌고, 그것이 화면이 멈춘 듯 보인 이유 중
-    하나다. claude_driver는 이미 (name, detail)로 접는다."""
+    """The previous dedup folding looked only at the tool **name** — three consecutive Reads
+    were mashed into a single `Read` line even if they were different files, and that was one of
+    the reasons the screen looked frozen. claude_driver already folds by (name, detail)."""
     client = FakeSdkClient(script=[
         AssistantMessage(content=[
             ToolUseBlock(id="1", name="Read",
@@ -282,9 +282,9 @@ async def test_repeated_reads_of_different_files_are_not_collapsed(tmp_path):
 
 
 async def test_file_changed_still_reaches_the_artifact_list(tmp_path):
-    """행에 경로를 붙이는 것과 별개로 `file_changed`는 그대로 나가야 한다 —
-    프론트의 `changedPaths`(빌드 산출물 목록)가 그것만 본다. 서브에이전트가 쓴
-    파일도 실제 산출물이다."""
+    """Separately from attaching paths to rows, `file_changed` must still go out —
+    the frontend's `changedPaths` (the list of build artifacts) looks only at that. Files written
+    by subagents are real artifacts too."""
     b = _builder(tmp_path, FakeSdkClient())
     await b._on_post_tool_use(
         {"tool_name": "Write",
@@ -293,26 +293,26 @@ async def test_file_changed_still_reaches_the_artifact_list(tmp_path):
     assert b._queue == [AgentEvent(kind="file_changed", path="prototype/app.js")]
 
 
-# ---- 턴 경계 ----
+# ---- Turn boundaries ----
 
 async def test_rows_do_not_leak_into_the_next_turn(tmp_path):
-    """서브에이전트의 수명은 그것을 띄운 턴의 수명이다. 조인 표가 턴을 넘어
-    살아 있으면, 다음 턴에 재활용된 tool_use_id가 이미 죽은 에이전트의 행으로
-    귀속된다 — 화면에 끝난 에이전트가 되살아난다.
+    """A subagent's lifetime is the lifetime of the turn that launched it. If the join table
+    survives past the turn, a tool_use_id reused in the next turn is attributed to the row of an
+    already-dead agent — a finished agent comes back to life on screen.
 
-    턴이 끝날 때 열린 채 남은 행은 백엔드가 따로 닫지 않는다: 프론트가 `done`에서
-    말풍선을 봉하고 행들을 트레이스로 접으므로(usePrototypeStream), 종료 이벤트를
-    합성해 보내면 없는 사실을 만드는 것이 된다."""
+    Rows left open when the turn ends are not closed separately by the backend: the frontend
+    seals the bubble on `done` and folds the rows into the trace (usePrototypeStream), so
+    synthesizing and sending an end event would fabricate a fact that does not exist."""
     class TwoTurns(FakeSdkClient):
         def __init__(self):
             super().__init__()
             self.turn = 0
             self.scripts = [
-                # 턴 1: 행을 열고 닫지 않은 채 끝난다.
+                # Turn 1: open a row and end without closing it.
                 [TaskStartedMessage(task_id="a040", tool_use_id="toolu_1",
                                     description="x"),
                  ResultMessage()],
-                # 턴 2: 같은 tool_use_id가 다시 나타난다.
+                # Turn 2: the same tool_use_id appears again.
                 [AssistantMessage(parent_tool_use_id="toolu_1", content=[
                     ToolUseBlock(id="w1", name="Write",
                                  input={"file_path": "prototype/app.tsx"})]),
@@ -331,12 +331,12 @@ async def test_rows_do_not_leak_into_the_next_turn(tmp_path):
     assert _activity(second) == []
 
 
-# ---- 백그라운드는 훅이 아니라 CLI 스위치가 막는다 ----
+# ---- Background is blocked by a CLI switch, not a hook ----
 
 async def test_the_gate_leaves_agent_calls_alone(tmp_path):
-    """서브에이전트가 턴보다 오래 사는 것은 CLI 스위치가 막는다
-    (cli_settings.cli_context_env). 스위치는 `run_in_background: true`도 포그라운드로
-    돌리므로, 훅이 그것을 거부하면 모델에게 쓸모없는 왕복 한 번만 더해진다."""
+    """A CLI switch keeps subagents from outliving the turn
+    (cli_settings.cli_context_env). The switch runs even `run_in_background: true` in the
+    foreground, so if a hook rejected it, that would only add one useless round trip for the model."""
     b = _builder(tmp_path, None)
     out = await b._on_pre_tool_use(
         {"tool_name": "Agent",
@@ -346,8 +346,8 @@ async def test_the_gate_leaves_agent_calls_alone(tmp_path):
 
 
 def test_the_build_cli_runs_with_background_tasks_off(tmp_path, monkeypatch):
-    """client_factory를 주입하는 다른 테스트들은 이 경로를 타지 않으므로, 배선이
-    빠져도 전부 통과한다 — 실제 팩토리가 만드는 env를 본다."""
+    """Other tests that inject client_factory do not take this path, so they all pass even if
+    the wiring is missing — this one looks at the env the real factory builds."""
     from aipds.proto.builder import _default_client_factory
 
     captured = {}

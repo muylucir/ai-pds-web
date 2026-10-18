@@ -48,10 +48,10 @@ export function BuildPanel({
   const live = liveActivity(items);
 
   useEffect(() => {
-    // 새로 연 세션이면 자동 개시, 이미 열린 세션이면(새로고침·다시 열기) 그 세션의
-    // 대화를 되살리고 도는 턴에 붙는다 — 빈 패널에서 멈춘 턴을 볼 수 없던 것이 이
-    // 분기의 이유다. 어느 쪽이든 지난 세션들의 대화가 그 앞에 깔린다(resume은 스스로
-    // 깐다).
+    // A newly opened session auto-opens; an already open session (refresh, reopen) restores that
+    // session's conversation and attaches to the running turn — not being able to see a stalled turn
+    // in an empty panel is the reason for this branch. Either way, the conversations of past sessions
+    // are laid out before it (resume lays them out itself).
     if (autoStart) {
       startBuild();
       void restoreHistory();
@@ -60,13 +60,13 @@ export function BuildPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 완료 카드는 파일 변경 목록 **아래**에 있다(그 배치의 이유는 카드 옆 주석).
-  // 그래서 변경 파일이 많으면 카드가 스크롤 밖에 생기고, 사용자는 완료를 눈으로
-  // 확인하지 못한 채 눌러야 할 버튼도 못 본다. 완료 순간 한 번만 스크롤해 카드를
-  // 시야에 넣는다 — `nearest`이므로 이미 보이면 아무 일도 하지 않는다.
+  // The completion card sits **below** the file change list (the reason for that placement is in the comment next to the card).
+  // So with many changed files the card appears outside the scroll view, and the user presses on
+  // without seeing the completion or the buttons they need. Scroll once at the moment of completion to bring
+  // the card into view — since it is `nearest`, it does nothing if the card is already visible.
   //
-  // optional call인 이유: jsdom에는 scrollIntoView가 없다. 없다고 컴포넌트가
-  // 죽으면 이 패널의 테스트 전부가 배치 변경 때문에 깨진다.
+  // Why an optional call: jsdom has no scrollIntoView. If the component died for lack of it,
+  // every test for this panel would break because of a layout change.
   useEffect(() => {
     if (!completed) return;
     completeCardRef.current?.scrollIntoView?.({ block: "nearest" });
@@ -87,9 +87,9 @@ export function BuildPanel({
       await closeSession(projectId, slug);
       onClose();
     } catch (err) {
-      // 404는 정상 경로다: 완료 선언 뒤 백엔드가 유예 타이머로 세션을 먼저
-      // 닫는다(proto/session.py의 _COMPLETION_GRACE_SECONDS). 이미 없는
-      // 세션을 못 닫았다고 패널을 붙잡아 둘 이유가 없다.
+      // 404 is a normal path: after the completion declaration the backend closes the session first
+      // on a grace timer (_COMPLETION_GRACE_SECONDS in proto/session.py). There is no reason to hold
+      // the panel open because a session that is already gone could not be closed.
       if (err instanceof ApiError && err.status === 404) {
         onClose();
         return;
@@ -107,8 +107,8 @@ export function BuildPanel({
       await startHost(projectId, slug);
       onClose();
     } catch (err) {
-      // 패널을 닫지 않는다 — 닫으면 사용자는 그리드에서 이유 없이 실패한
-      // 카드를 보게 된다. 여기서 오류를 보여주고 재시도할 수 있게 둔다.
+      // Do not close the panel — closing it would leave the user looking at a card that failed for
+      // no apparent reason in the grid. Show the error here and allow a retry.
       setActionError(
         err instanceof ApiError
           ? knownErrorMessage(t, err.detail, t("proto.hostStartFailed"))
@@ -124,10 +124,10 @@ export function BuildPanel({
     try {
       await restartForImprovement();
     } catch (err) {
-      // 429(동시 빌드 상한)가 실제로 도달 가능한 경로다. 카드를 지우지
-      // 않는다 — 지우면 사용자는 완료 요약과 호스팅 선택지를 모두 잃는다.
-      // actionError를 호스팅과 공유한다: 이 카드에 오류 줄은 하나뿐이고, 두
-      // 동작이 동시에 실패할 수는 없다(둘 다 서로를 disabled로 막는다).
+      // 429 (concurrent build limit) is a path that can actually be reached. Do not clear
+      // the card — clearing it would make the user lose both the completion summary and the hosting options.
+      // actionError is shared with hosting: this card has only one error line, and the two
+      // actions cannot fail at the same time (each disables the other).
       setActionError(
         err instanceof ApiError
           ? knownErrorMessage(t, err.detail, t("proto.improveStartFailed"))
@@ -139,9 +139,9 @@ export function BuildPanel({
 
   return (
     <div className="fixed inset-0 z-40 bg-slate-900/40 flex items-stretch justify-end">
-      {/* 드로어 폭: 빌드 로그·질문 폼·파일 변경 목록을 함께 읽어야 해서
-          7xl(80rem)에서 1720px까지 넓힌다. 리뷰 화면(review/page.tsx)이 쓰는
-          것과 같은 폭이다. 좁은 화면에서는 w-full이 그대로 뷰포트를 채운다. */}
+      {/* Drawer width: the build log, question form, and file change list have to be read together,
+          so it is widened from 7xl (80rem) to 1720px. It is the same width the review screen
+          (review/page.tsx) uses. On narrow screens w-full simply fills the viewport. */}
       <div className="w-full max-w-[1720px] h-full bg-white flex flex-col min-h-0 shadow-2xl">
         <header className="shrink-0 border-b border-slate-200 px-4 md:px-6 py-3 flex items-center justify-between gap-3">
           <h1 className="font-bold text-lg truncate">{slug}</h1>
@@ -157,48 +157,48 @@ export function BuildPanel({
           </div>
         </header>
 
-        {/* 채팅과 우측(질문·파일 변경)을 1:1로 나눈다. 종전 1/3:2/3에서는 빌드
-            로그가 좁아 코드 블록과 도구 출력이 계속 줄바꿈됐다 — 질문 폼과 같은
-            폭을 줘서 둘을 나란히 읽을 수 있게 한다. basis+min-w-0으로 비율을
-            고정한다: aside가 고정 폭이면 넓어진 드로어의 여유 폭이 전부 채팅으로
-            간다. 좁은 화면(md 미만)에서는 세로로 쌓이므로 비율은 적용되지 않는다.
-            **두 basis의 합은 정확히 1이어야 한다** — 둘 다 shrink-0/flex-none이라
-            넘치면 flex가 되돌려주지 않고 그대로 잘린다. 테스트가 이 합을 고정한다. */}
+        {/* Split chat and the right side (questions, file changes) 1:1. With the old 1/3:2/3 the build
+            log was narrow and code blocks and tool output kept wrapping — giving it the same width as the
+            question form lets the two be read side by side. basis+min-w-0 pins the ratio:
+            if the aside had a fixed width, all the extra width of the wider drawer would go to the
+            chat. On narrow screens (below md) they stack vertically, so the ratio does not apply.
+            **The two bases must sum to exactly 1** — both are shrink-0/flex-none, so an
+            overflow is not given back by flex but simply clipped. A test pins this sum. */}
         <div className="flex-1 min-h-0 flex flex-col md:flex-row">
           <div className="flex-1 md:flex-none md:basis-1/2 md:min-w-0 min-h-0 flex flex-col">
             <ChatTimeline
               items={items}
               historyLoading={historyLoading}
             />
-            {/* 수정 세션이 빈 채로 열린 순간. **자동 발화를 하지 않는 것이
-                의도다** — "수정하기"를 누른 사람은 이미 무엇을 고칠지 알고 있는데,
-                자동 개시는 에이전트가 되묻는 왕복을 먼저 태우고 그 질문이 떠 있는
-                동안 입력창이 잠긴다(prompts.handoff_prompt의 근거). 그 대가로
-                화면에 아무것도 없는 순간이 생기므로, 무엇을 해야 하는지 말한다. */}
+            {/* The moment an edit session opens empty. **Not auto-speaking is
+                intentional** — someone who pressed "수정하기" (Edit) already knows what to fix,
+                but auto-open would first burn a round trip of the agent asking back, and the input box
+                stays locked while that question is up (rationale in prompts.handoff_prompt). The price is
+                a moment with nothing on screen, so say what to do. */}
             {items.length === 0 && !streaming && !historyLoading && (
               <div className="shrink-0 px-4 md:px-8 pb-2 text-center">
                 <p className="text-sm text-slate-500">{t("proto.modifyPrompt")}</p>
                 <p className="mt-1 text-xs text-slate-400">{t("proto.modifyExample")}</p>
               </div>
             )}
-            {/* 완료 선언 뒤에는 이 세션이 곧(유예 5초) 닫히거나 이미 닫혀
-                있다 — 입력을 계속 열어두면 사용자가 보낸 메시지가
-                GET .../events의 404로 이어지고, usePrototypeStream의
-                onError가 "연결이 끊어졌습니다"를 띄운다(실제로는 빌드가
-                끝난 것뿐이다). 입력을 막고, 대신 오른쪽 완료 카드의 버튼을
-                가리킨다. */}
+            {/* After the completion declaration this session closes shortly (5-second grace) or is
+                already closed — keeping the input open would lead a message the user sends
+                into a 404 on GET .../events, and usePrototypeStream's
+                onError would show "연결이 끊어졌습니다" (Connection lost) (when in fact the build has
+                simply finished). Block input and instead point to the buttons on
+                the completion card on the right. */}
             {buildComplete !== null && (
               <p className="shrink-0 px-4 md:px-8 pt-2 text-xs text-slate-400 text-center">
                 {t("proto.sessionClosedNotice")}
               </p>
             )}
-            {/* 진행 상황은 대화 흐름이 아니라 화면의 것이다 — 워크스페이스와 같은
-                컴포넌트를 같은 자리(입력창 바로 위)에 놓는다. 빌드 턴은 도구
-                활동이 특히 많이 쏟아지므로 "마지막 하나만"의 이득이 크다. */}
-            {/* `agents`가 비어 있지 않은 동안 그 바는 에이전트별 행으로 펼쳐진다.
-                병렬 구간에서 "마지막 하나만"이 정확히 실패하기 때문이다 — 한 줄이
-                에이전트 셋 사이에서 깜빡이고 어느 것도 진행으로 읽히지 않았다
-                (lib/protoAgents.ts 헤더). */}
+            {/* Progress belongs to the screen, not to the conversation flow — the same component as the
+                workspace is placed in the same spot (right above the input box). Build turns pour out
+                especially many tool activities, so "only the last one" pays off greatly. */}
+            {/* While `agents` is not empty, that bar expands into one row per agent.
+                Because "only the last one" fails precisely in parallel stretches — a single line
+                flickered among three agents and none of them read as progress
+                (lib/protoAgents.ts header). */}
             {live && <LiveActivityBar activity={live} agents={agents} />}
             <ChatInput
               onSend={send}
@@ -209,11 +209,11 @@ export function BuildPanel({
             />
           </div>
 
-          {/* basis-1/2 — 채팅과 합이 정확히 100%여야 한다. 종전 2/3은 채팅을
-              1/3에서 1/2로 넓힐 때(70783c0) 함께 고치지 않은 잔재였고, 합이
-              7/6이 되어 1720px 드로어에서 287px가 넘쳐 보기 텍스트의 오른쪽이
-              스크롤바도 없이 잘렸다(실측). shrink-0이라 flex가 되돌려주지도
-              않는다. */}
+          {/* basis-1/2 — must sum to exactly 100% with the chat. The old 2/3 was a leftover
+              not fixed when the chat was widened from 1/3 to 1/2 (70783c0); the sum
+              became 7/6, overflowing by 287px in the 1720px drawer and clipping the right side of
+              option text with no scrollbar (observed). Being shrink-0, flex does not give it back
+              either. */}
           <aside className="w-full md:basis-1/2 md:min-w-0 shrink-0 border-t md:border-t-0 md:border-l border-slate-200 flex flex-col min-h-0 overflow-y-auto">
             {pendingQuestions && (
               <div className="p-4 border-b border-slate-200">
@@ -238,25 +238,25 @@ export function BuildPanel({
                 </ul>
               )}
             </div>
-            {/* 완료 카드는 **파일 변경 목록 아래**다. 위에 두었을 때는 빌드가
-                끝나는 순간 카드가 사용자의 스크롤 위치보다 위에 생겼다 — 파일이
-                쌓이는 것을 내려 보고 있었으므로, 완료를 확인하려면 스크롤을 되올려야
-                했다(사용자 보고). 만들어진 결과 다음에 그 결과에 대한 결론이 오는
-                순서가 읽는 방향과 같다. 목록이 길어 카드가 화면 밖에 생기는 경우는
-                위 useEffect의 scrollIntoView가 처리한다. */}
+            {/* The completion card is **below the file change list**. When it was above, the card
+                appeared above the user's scroll position the moment the build finished — they had been
+                scrolling down watching files pile up, so to see the completion they had to scroll back
+                up (user report). Having the conclusion about the result come after the result itself
+                matches the reading direction. When the list is long and the card appears off screen,
+                the scrollIntoView in the useEffect above handles it. */}
             {buildComplete && (
               <div ref={completeCardRef} className="p-4 border-t border-slate-200">
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
                   <p className="text-sm font-bold text-emerald-800">{t("proto.buildComplete")}</p>
-                  {/* 마크다운으로 그린다. 이 텍스트는 build_complete 도구의
-                      summary/remaining 인자이고, 모델은 여기에 목록·강조·
-                      인라인 코드를 쓴다 — 도구 스키마도 그걸 막지 않는다.
-                      whitespace-pre-wrap으로 두면 `- `·`**`·백틱이 화면에
-                      원문 그대로 나온다. 같은 에이전트의 산문이 왼쪽
-                      타임라인에서는 이미 마크다운으로 렌더되므로(AiMessage),
-                      한 화면 안에서 같은 텍스트의 표시 규약이 갈리고 있었다.
-                      공용 Markdown이 raw HTML을 렌더하지 않는 것도 그대로
-                      유지된다. */}
+                  {/* Rendered as markdown. This text is the build_complete tool's
+                      summary/remaining argument, and the model writes lists, emphasis,
+                      and inline code here — the tool schema does not prevent that either.
+                      With whitespace-pre-wrap, `- `, `**`, and backticks would appear on
+                      screen verbatim. The same agent's prose is already rendered as markdown
+                      in the left timeline (AiMessage), so within one screen the display
+                      convention for the same text was diverging.
+                      The shared Markdown still does not render raw HTML, as
+                      before. */}
                   <Markdown
                     text={buildComplete.summary}
                     className="mt-2 text-slate-700 prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5"
@@ -274,13 +274,13 @@ export function BuildPanel({
                 {actionError && (
                   <p className="mt-3 text-sm text-rose-600">{actionError}</p>
                 )}
-                {/* build_complete는 done보다 먼저 서므로, 카드가 뜬 뒤에도
-                    에이전트가 마무리 텍스트를 보내는 0~5초 창(백엔드 유예
-                    타이머 한도) 동안 streaming이 true로 남을 수 있다. 그
-                    창에서 개선/호스팅/닫기 중 하나가 눌리면 아직 열려 있는
-                    스트림과 새 동작이 뒤엉킨다(개선 이어서 하기가 세션 B를
-                    새로 여는 동안 세션 A의 스트림이 정리되지 않는 경합이
-                    실제 사례) — 세 버튼 모두 streaming 중엔 막는다. */}
+                {/* build_complete arrives before done, so even after the card appears,
+                    streaming can stay true during the 0-5 second window (the backend grace
+                    timer's limit) in which the agent sends its wrap-up text. If improve,
+                    host, or close is pressed in that window, the still-open stream and the
+                    new action get tangled (a real case: a race where session A's stream was
+                    not cleaned up while continuing the improvement opened session B
+                    anew) — all three buttons are blocked while streaming. */}
                 {streaming && (
                   <p className="mt-3 text-xs text-slate-400">
                     {t("proto.finishingBuild")}

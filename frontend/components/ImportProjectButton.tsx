@@ -8,12 +8,12 @@ import {
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
-// 프로젝트 id의 문자 규칙. CreateProjectForm과 **같은 규칙이어야 한다** — 한쪽만
-// 느슨하면 생성으로는 만들 수 없는 id가 가져오기로 생긴다.
+// Character rule for project ids. It **must be the same rule** as CreateProjectForm --
+// if only one side is looser, import can produce ids that creation cannot.
 const ID_DISALLOWED = /[^A-Za-z0-9_-]/g;
 
-/** 경고 코드 → 문구 키. 백엔드는 UI 언어를 모르므로 코드를 보낸다
- *  (backend/aipds/project_import.py의 WARN_*). errorMessage와 같은 규율이다. */
+/** Warning code → message key. The backend does not know the UI language, so it sends codes
+ *  (WARN_* in backend/aipds/project_import.py). Same discipline as errorMessage. */
 const WARNING_KEY: Record<string, keyof Dict> = {
   model_unavailable: "transfer.warnModelUnavailable",
   survey_tokens_reissued: "transfer.warnSurveyTokensReissued",
@@ -23,15 +23,16 @@ const WARNING_KEY: Record<string, keyof Dict> = {
 type Phase = "idle" | "uploading" | "importing";
 
 /**
- * 가져오기 트리거 + 그 흐름을 담은 모달.
+ * Import trigger + a modal holding that flow.
  *
- * **왜 모달인가.** 가져오기는 다른 인스턴스에서 프로젝트를 옮겨 올 때만 쓰는
- * 조작이고, 목록 화면의 흔한 일은 프로젝트를 만들거나 여는 것이다. 파일 입력을
- * 화면에 늘 펼쳐 두면 그 드문 조작이 흔한 조작과 같은 무게를 갖는다.
+ * **Why a modal.** Import is used only when moving a project over from another
+ * instance, while the common tasks on the list screen are creating or opening a
+ * project. Keeping the file input always expanded on screen would give that rare
+ * operation the same weight as the common ones.
  *
- * 모달의 모양은 `ProjectList`의 삭제 확인 대화상자를 따른다 — 같은 배경 처리,
- * 같은 `role="dialog" aria-modal`, 같은 Escape·배경 클릭 규칙. 화면에 대화상자가
- * 두 종류 생기지 않게 한다.
+ * The modal's shape follows `ProjectList`'s delete confirmation dialog -- same
+ * backdrop treatment, same `role="dialog" aria-modal`, same Escape and backdrop-click
+ * rules. This keeps the screen from having two kinds of dialogs.
  */
 export function ImportProjectButton({ onImported }: {
   onImported: (result: ImportResult) => void;
@@ -43,24 +44,24 @@ export function ImportProjectButton({ onImported }: {
   const [phase, setPhase] = useState<Phase>("idle");
   const [percent, setPercent] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  // 올려 둔 번들. 409(id 충돌) 뒤에도 **살아 있다** — 사용자가 id만 바꿔 다시
-  // 부르면 백엔드가 같은 스테이징 객체를 읽는다. 이 값이 없으면 그 재시도가
-  // 수백 MB 재업로드가 된다.
+  // The uploaded bundle. It **survives** a 409 (id conflict) -- when the user changes
+  // only the id and calls again, the backend reads the same staging object. Without
+  // this value, that retry would become a re-upload of hundreds of MB.
   const [uploadId, setUploadId] = useState<string | null>(null);
   const [newId, setNewId] = useState("");
   const [idRejected, setIdRejected] = useState(false);
-  // 경고를 보여 준 뒤 이동한다 — 조용히 넘기면 사용자는 고른 적 없는 모델로
-  // 도는 프로젝트를 그것도 모른 채 쓴다.
+  // Navigate after showing the warnings -- passing silently would leave the user using
+  // a project that runs on a model they never chose, without even knowing it.
   const [warnings, setWarnings] = useState<ImportWarning[] | null>(null);
   const [imported, setImported] = useState<ImportResult | null>(null);
 
   const busy = phase !== "idle";
 
   function close() {
-    // 닫기는 전부 되돌린다. 업로드해 둔 번들을 붙들고 있으면 다시 열었을 때
-    // "무엇이 올라가 있는지"가 화면에 보이지 않는 상태가 되고, 그 상태에서
-    // 누른 가져오기가 방금 고른 파일이 아니라 지난번 파일을 심는다. 스테이징
-    // 객체는 버킷의 lifecycle이 하루 뒤에 걷는다.
+    // Closing resets everything. Holding on to the uploaded bundle would, on reopen,
+    // leave "what is uploaded" invisible on screen, and an import pressed in that
+    // state would plant the previous file rather than the one just chosen. The
+    // staging object is swept by the bucket's lifecycle a day later.
     setOpen(false);
     setFile(null);
     setUploadId(null);
@@ -96,8 +97,8 @@ export function ImportProjectButton({ onImported }: {
       setPhase("importing");
       const result = await finishImport(staged, newId.trim() || undefined);
       if (result.warnings.length > 0) {
-        // 경고가 있으면 확인 단계를 하나 둔다. 없으면 곧바로 이동한다 —
-        // 정상 경로에 클릭을 더하지 않는다(생성과 같은 흐름).
+        // With warnings, add one confirmation step. Without, navigate immediately --
+        // no extra click on the normal path (same flow as creation).
         setWarnings(result.warnings);
         setImported(result);
       } else {
@@ -106,11 +107,11 @@ export function ImportProjectButton({ onImported }: {
       }
     } catch (err) {
       if (err instanceof ApiError && err.detail === "upload_failed") {
-        // S3로 가는 PUT이 실패했다 — 스테이징을 신뢰할 수 없으므로 버린다.
+        // The PUT to S3 failed -- the staging cannot be trusted, so discard it.
         setUploadId(null);
         setError(t("transfer.uploadFailed"));
       } else if (err instanceof ApiError && err.status === 409) {
-        // id 칸이 열린다. uploadId는 그대로 둔다.
+        // The id field opens. uploadId is kept as-is.
         setError(errorMessage(t, err.detail));
       } else if (err instanceof ApiError) {
         if (err.status === 400 || err.status === 413) setUploadId(null);
@@ -188,7 +189,7 @@ export function ImportProjectButton({ onImported }: {
                     accept=".zip,application/zip"
                     disabled={busy}
                     onChange={(e) => {
-                      // 파일을 새로 고르면 이전 스테이징은 의미가 없다.
+                      // Choosing a new file makes the previous staging meaningless.
                       setUploadId(null);
                       setError(null);
                       setFile(e.target.files?.[0] ?? null);

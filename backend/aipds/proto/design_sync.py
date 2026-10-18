@@ -1,18 +1,19 @@
-"""브랜드 프로필을 빌드 워크스페이스에 반영한다.
+"""Apply the brand profile to the build workspace.
 
-이 모듈은 S3를 모른다(프로필 객체를 받는다) — 그래서 두 호출자가 같은 함수를
-쓴다: 빌드 세션 시작(proto/session.py)과 호스팅 시작(routes/prototypes.py).
-두 지점이 있어야 "이미 테마를 담고 있는 프로토타입은 재호스팅만으로 최신
-프로필로 갱신된다"가 성립한다 — 첫 프로필 업로드 이전에 만들어져 prototype/
-안에 테마 사본이 없는 프로토타입은 재호스팅으로 갱신할 대상이 없어 그대로
-무브랜드로 남고, 개선 세션을 한 번 열어야 한다.
+This module knows nothing about S3 (it receives a profile object) -- so two
+callers share the same function: build session start (proto/session.py) and
+hosting start (routes/prototypes.py). Both call sites are needed for "a
+prototype that already carries the theme is updated to the latest profile just
+by re-hosting" to hold -- a prototype created before the first profile upload,
+with no theme copy inside prototype/, has nothing for re-hosting to update, so
+it stays unbranded until an improvement session is opened once.
 
-**진실은 build_dir 루트의 파일이고, prototype/ 아래 같은 이름의 파일은 우리가
-관리하는 파생물이다.** 에이전트는 위치를 정하고(프레임워크마다 다르다) 우리는
-이름으로 찾는다.
+**The truth is the file at the build_dir root; files of the same name under
+prototype/ are derivatives we manage.** The agent decides the location (it
+differs per framework) and we find them by name.
 
-build_dir은 빌드 에이전트가 쓰는 트리라, 여기서 읽고 쓰는 것은 전부 링크를 따라가지
-않는다(`pathsafe`의 `*_beneath`).
+build_dir is a tree the build agent writes to, so every read and write here
+refuses to follow links (`pathsafe`'s `*_beneath`).
 """
 from __future__ import annotations
 
@@ -30,22 +31,23 @@ DESIGN_FILENAME = "DESIGN.md"
 THEME_FILENAME = "aipds-theme.css"
 _CLAUDE_FILENAME = "CLAUDE.md"
 
-#: 이 표시가 첫 줄에 있으면 "프로필이 지워진 뒤 남은 스텁"이다. theme_required가
-#: 이걸로 "프로필 있음"과 구분한다 — 게이트가 S3를 보지 않아도 되는 이유다.
+#: When this marker is on the first line, the file is "the stub left after the
+#: profile was removed". theme_required uses it to tell that apart from "a profile
+#: exists" -- which is why the gate does not need to look at S3.
 _NO_PROFILE_MARKER = "/* aipds-theme: no brand profile */"
 
 _SECTION_START = "<!-- aipds:design:start -->"
 _SECTION_END = "<!-- aipds:design:end -->"
 
-#: 사내 폰트가 브라우저에 없을 때 떨어질 자리. 웹폰트는 싣지 않는다(비목표) —
-#: 임의의 CDN을 프로토타입에 주입하지 않는다.
+#: Where to fall back when the in-house font is not in the browser. Web fonts are
+#: not shipped (a non-goal) -- we do not inject arbitrary CDNs into a prototype.
 _FALLBACK = {
     "font_sans": "ui-sans-serif, system-ui, -apple-system, sans-serif",
     "font_mono": "ui-monospace, SFMono-Regular, Menlo, monospace",
 }
 
-#: 탐색에서 제외한다 — node_modules 안의 우연한 동명 파일을 덮어쓰지 않고,
-#: 매 호스팅에서 수만 개 파일을 걷지 않는다.
+#: Excluded from the walk -- so we neither overwrite a coincidentally same-named
+#: file inside node_modules nor walk tens of thousands of files on every hosting.
 _SKIP_DIRS = {"node_modules", ".next", ".git", "dist", "build", ".turbo"}
 _TEXT_SUFFIXES = {".css", ".scss", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".html"}
 
@@ -55,11 +57,11 @@ def _css_var(key: str) -> str:
 
 
 def theme_css(tokens: dict[str, str]) -> str:
-    """토큰에서 :root 블록을 만든다.
+    """Build a :root block from the tokens.
 
-    `.dark`는 만들지 않는다 — 다크 값은 토큰에서 유도할 수 없고(밝기 반전은
-    브랜드 결정이다), 만들지 않으면 shadcn 기본 다크 팔레트가 그대로 살아 있어
-    화면이 깨지지 않는다.
+    No `.dark` block is generated -- dark values cannot be derived from the
+    tokens (inverting lightness is a brand decision), and without one the
+    shadcn default dark palette stays intact so the screen does not break.
     """
     lines = [
         "/* aipds-theme: generated from the admin brand profile.",
@@ -74,7 +76,7 @@ def theme_css(tokens: dict[str, str]) -> str:
 
 
 def stub_css() -> str:
-    """프로필이 지워진 뒤 남기는 무해한 파일."""
+    """The harmless file left behind after the profile is removed."""
     return (f"{_NO_PROFILE_MARKER}\n"
             "/* The brand profile was removed in admin. This file stays so that\n"
             "   existing imports keep building; shadcn defaults apply. */\n"
@@ -94,12 +96,12 @@ def _walk(build_dir: Path):
             continue
         for entry in entries:
             if entry.is_dir():
-                # 심볼릭 링크 디렉토리는 내려가지 않는다 -- prototype/ 아래는
-                # 에이전트가 자유롭게 쓰는 트리라 순환 심볼릭 링크가 있을 수
-                # 있고, 그러면 이 스택 워크가 끝나지 않는다. 무한 루프는
-                # 예외가 아니라서 session.start()·build_complete 도구·
-                # POST /host 어느 호출부의 try/except도 이걸 못 잡고 그대로
-                # 매달린다(실측 아님 — 방어적 수정).
+                # Do not descend into symlinked directories -- prototype/ is a
+                # tree the agent writes freely, so a cyclic symlink is possible,
+                # and then this stack walk never ends. An infinite loop is not
+                # an exception, so no caller's try/except (session.start(), the
+                # build_complete tool, POST /host) can catch it; it just hangs
+                # (not observed -- a defensive fix).
                 if entry.name not in _SKIP_DIRS and not entry.is_symlink():
                     stack.append(entry)
             else:
@@ -107,21 +109,21 @@ def _walk(build_dir: Path):
 
 
 def theme_copies(build_dir: Path) -> list[Path]:
-    """prototype/ 아래의 테마 사본. 이름으로 찾는다.
+    """Theme copies under prototype/. Found by name.
 
-    심볼릭 링크는 제외한다 -- 포함시키면 _write_theme_everywhere가 거기에
-    write_text를 호출해, 이름만 같은 심볼릭 링크가 가리키는 임의의 경로에
-    쓰게 된다.
+    Symlinks are excluded -- including them would make _write_theme_everywhere
+    call write_text on them, writing to whatever arbitrary path a symlink that
+    merely shares the name points at.
     """
     return sorted(p for p in _walk(build_dir)
                   if p.name == THEME_FILENAME and not p.is_symlink())
 
 
 def theme_required(build_dir: Path) -> bool:
-    """이 워크스페이스에 브랜드 프로필이 적용되어야 하는가.
+    """Must the brand profile be applied to this workspace?
 
-    S3를 보지 않는다 — 루트 테마 파일의 존재와 그 내용이 답이다. 게이트가
-    도구 호출 경로에서 네트워크를 타지 않게 하려는 것이다.
+    Does not look at S3 -- the existence and content of the root theme file
+    are the answer. This keeps the gate off the network on the tool-call path.
     """
     try:
         return _NO_PROFILE_MARKER not in read_text_beneath(build_dir, THEME_FILENAME)
@@ -130,7 +132,7 @@ def theme_required(build_dir: Path) -> bool:
 
 
 def theme_imported(build_dir: Path) -> bool:
-    """사본이 있고, prototype/ 안의 어떤 파일이 그것을 참조하는가."""
+    """Is there a copy, and does some file inside prototype/ reference it?"""
     if not theme_copies(build_dir):
         return False
     for path in _walk(build_dir):
@@ -147,11 +149,12 @@ def theme_imported(build_dir: Path) -> bool:
 
 
 def _write_theme_everywhere(build_dir: Path, css: str) -> None:
-    """루트 테마 파일과 prototype/ 아래 사본을 전부 같은 내용으로 맞춘다.
+    """Bring the root theme file and every copy under prototype/ to the same content.
 
-    스텁(프로필 없음)이든 실제 테마(프로필 있음)든 "쓸 내용을 무엇으로
-    정했는가"만 다르고 "어디에 쓰는가"는 같다 — 두 분기가 따로 낡지 않게
-    이 시퀀스를 한 곳에 둔다.
+    Whether it is the stub (no profile) or a real theme (profile present), only
+    "what content was chosen" differs; "where it is written" is the same --
+    this sequence lives in one place so the two branches cannot go stale
+    separately.
     """
     write_beneath(build_dir, THEME_FILENAME, css)
     for copy in theme_copies(build_dir):
@@ -174,8 +177,9 @@ def _upsert_section(build_dir: Path, rel: str, body: str) -> None:
 
 
 def _remove_section(build_dir: Path, rel: str) -> None:
-    """우리 절만 걷어낸다. 남는 것이 없으면 파일을 지운다 — 남의 내용이 있으면
-    보존한다(이 파일이 우리 것만 담는다는 가정을 코드에 박지 않는다)."""
+    """Strip only our section. If nothing is left, delete the file -- if someone
+    else's content is there, preserve it (the code does not bake in the
+    assumption that this file holds only ours)."""
     if stat_beneath(build_dir, rel) is None:
         return
     text = read_text_beneath(build_dir, rel)
@@ -191,17 +195,18 @@ def _remove_section(build_dir: Path, rel: str) -> None:
 
 def sync_design(build_dir: Path, profile: DesignProfile | None,
                 language: str) -> None:
-    """워크스페이스를 프로필과 일치시킨다. 매 빌드·매 호스팅에서 호출된다."""
+    """Bring the workspace in line with the profile. Called on every build and every hosting."""
     if profile is None:
-        # 한 번도 없었으면 아무것도 만들지 않는다(기능 전체가 opt-in이다).
-        # 있었다가 지워진 경우에만 스텁으로 덮는다.
+        # If there never was one, create nothing (the whole feature is opt-in).
+        # Overwrite with the stub only when one existed and was then removed.
         #
-        # DESIGN.md 삭제도 이 가드 **안에서만** 한다 -- 루트 테마 파일이 있다는 것이
-        # 우리가 이 워크스페이스에 흔적을 심었다는 유일한 증거다. 이 조건
-        # 밖에서 지우면, 브랜드 프로필이 한 번도 없었던 프로젝트의 매
-        # POST /host가 빌드 에이전트가 자기 메모로 만들었을 루트
-        # DESIGN.md를(우리 것이 아닌데도) 조용히 지운다 -- _remove_section이
-        # 남의 CLAUDE.md 내용을 보존하는 것과 같은 원칙이다.
+        # Deleting DESIGN.md also happens **only inside** this guard -- the root
+        # theme file's existence is the only evidence that we planted anything
+        # in this workspace. Deleting outside this condition would make every
+        # POST /host for a project that never had a brand profile silently
+        # delete a root DESIGN.md the build agent may have created as its own
+        # notes (even though it is not ours) -- the same principle as
+        # _remove_section preserving someone else's CLAUDE.md content.
         if stat_beneath(build_dir, THEME_FILENAME) is not None:
             _write_theme_everywhere(build_dir, stub_css())
             unlink_beneath(build_dir, DESIGN_FILENAME)
@@ -210,19 +215,21 @@ def sync_design(build_dir: Path, profile: DesignProfile | None,
 
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    # 토큰이 없으면 **스텁**을 쓴다 — `theme_css({})`는 "브랜드 프로필에서
-    # 생성됨"이라는 머리말을 단 변수 0개 파일이고, 그 파일이 거짓말을 한다.
+    # With no tokens, write the **stub** -- `theme_css({})` is a zero-variable file
+    # headed "generated from the admin brand profile", and that file lies.
     #
-    # 2026-08-19 실측: 같은 0토큰 프로필로 돌린 두 프로젝트가 갈렸다. 한
-    # 에이전트는 그 파일을 열어 "비어 있으니 덮을 것이 없다"고 판단하고 shadcn
-    # 기본값을 그대로 뒀고(무브랜드), 다른 하나는 DESIGN.md 산문을 읽어 팔레트를
-    # globals.css에 옮겼다(브랜드 적용). 강제 채널이 비면 결과가 에이전트 자율에
-    # 맡겨진다.
+    # Measured 2026-08-19: two projects run with the same zero-token profile
+    # diverged. One agent opened that file, decided "it is empty, so there is
+    # nothing to override" and left the shadcn defaults (unbranded); the other
+    # read the DESIGN.md prose and moved the palette into globals.css (branded).
+    # When the enforced channel is empty, the outcome is left to the agent's
+    # discretion.
     #
-    # 스텁에는 no-profile 마커가 있어 theme_required()가 False가 된다 — 즉 빈
-    # 테마가 "브랜드 적용됨"으로 읽히는 경로가 사라진다(proto/tools.py의 게이트).
-    # 파일 자체는 남기므로 사본 갱신 배선은 그대로다: 나중에 토큰이 올라오면
-    # 재호스팅만으로 사본까지 갈린다.
+    # The stub carries the no-profile marker, so theme_required() is False --
+    # i.e. the path where an empty theme reads as "brand applied" disappears
+    # (the gate in proto/tools.py). The file itself stays, so the copy-update
+    # wiring is unchanged: when tokens arrive later, re-hosting alone replaces
+    # the copies too.
     has_tokens = bool(profile.tokens)
     if not has_tokens:
         _log.warning(
@@ -238,6 +245,7 @@ def sync_design(build_dir: Path, profile: DesignProfile | None,
     else:
         unlink_beneath(build_dir, DESIGN_FILENAME)
 
-    # 지시와 옆에 놓인 파일의 내용은 같은 값에서 나온다 — 어긋날 수 없다.
+    # The instructions and the content of the file next to them come from the
+    # same value -- they cannot drift apart.
     _upsert_section(build_dir, _CLAUDE_FILENAME,
                     prompts.design_rules(language, has_tokens=has_tokens))

@@ -11,8 +11,8 @@ const config: Config = {
       fontFamily: {
         sans: ["var(--font-noto-sans-kr)", "sans-serif"],
       },
-      // 새 문서가 왔을 때 드로어 손잡이를 **두 번만** 출렁인다(WorkspaceDocPanel).
-      // 기본 animate-ping은 무한 반복이라 답하는 동안 시선을 계속 끈다.
+      // When a new document arrives, the drawer handle bounces **only twice** (WorkspaceDocPanel).
+      // The default animate-ping repeats forever and keeps drawing the eye while the user is answering.
       animation: {
         nudge: "ping 1s cubic-bezier(0, 0, 0.2, 1) 2",
       },

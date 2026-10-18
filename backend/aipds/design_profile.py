@@ -1,15 +1,15 @@
-"""브랜드 디자인 프로필 — admin이 올린 DESIGN.md 한 장.
+"""Brand design profile — a single DESIGN.md uploaded by an admin.
 
-버킷 루트의 `design/profile.json`에 산다. `models/catalog.json`과 같은 자리,
-같은 이유로 projects/ 밖이다: 프로젝트가 하나도 없는 상태에서도 관리된다.
+It lives at `design/profile.json` at the bucket root. Same place as `models/catalog.json`, and outside
+projects/ for the same reason: it is managed even when there are no projects at all.
 
-**저장하는 것은 원문 markdown과 메타뿐이다.** tokens/prose는 읽을 때 파싱한다 —
-파생값을 함께 저장하면 파서를 고쳤을 때 저장물이 낡고, 그 낡음은 화면에서
-구분되지 않는다.
+**Only the original markdown and meta are stored.** tokens/prose are parsed at read time —
+storing derived values alongside would leave the stored object stale whenever the parser is fixed, and that staleness
+cannot be told apart on screen.
 
-토큰 표기는 ```tokens 코드펜스 안의 `키: 값` 줄이다. 마크다운 표가 아닌 이유는
-오류를 **줄 번호로** 짚기 위해서다 — admin이 잘못 쓴 것을 업로드 시점에 알려주는
-것이 이 기능의 핵심 요구이고, 그러려면 파서가 위치를 알아야 한다.
+Tokens are written as `key: value` lines inside a ```tokens code fence. Not a markdown table, so that
+errors can be pointed out **by line number** — telling the admin what they wrote wrong at upload time
+is the core requirement of this feature, and for that the parser has to know positions.
 """
 from __future__ import annotations
 
@@ -24,14 +24,14 @@ from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger(__name__)
 
-#: 버킷 루트 기준. projects/·sessions/·surveys/·models/ 옆의 다섯 번째 프리픽스다
-#: (infra/lib/backend-permissions.ts의 BACKEND_BUCKET_PREFIXES와 짝이다).
+#: Relative to the bucket root. The fifth prefix, next to projects/, sessions/, surveys/ and models/
+#: (pairs with BACKEND_BUCKET_PREFIXES in infra/lib/backend-permissions.ts).
 DESIGN_PREFIX = "design/"
 DESIGN_PROFILE_KEY = f"{DESIGN_PREFIX}profile.json"
 
-#: 업로드 상한. 저장 용량이 아니라 **컨텍스트 예산**이다 — 산문은 매 빌드 세션의
-#: 워크스페이스와 에이전트 컨텍스트에 그대로 실리고, 한국어는 같은 내용이 토큰
-#: 1.66배를 먹어 컴팩션을 앞당긴다.
+#: Upload cap. Not storage capacity but the **context budget** — the prose is loaded as is into every build session's
+#: workspace and agent context, and Korean takes 1.66x the tokens for the same content,
+#: bringing compaction forward.
 MAX_DESIGN_BYTES = 64 * 1024
 
 COLOR_TOKENS: tuple[str, ...] = (
@@ -40,9 +40,9 @@ COLOR_TOKENS: tuple[str, ...] = (
 )
 LENGTH_TOKENS: tuple[str, ...] = ("radius",)
 FONT_TOKENS: tuple[str, ...] = ("font_sans", "font_mono")
-#: 키 이름이 곧 `--primary`이고 그것이 곧 `bg-primary`다 — 매핑 테이블이 없는 것이
-#: 이 화이트리스트의 존재 이유다. 임의 키를 받으면 매핑 계층이 생기고, 그 계층은
-#: shadcn 버전과 함께 낡는다.
+#: The key name is `--primary`, which is `bg-primary` — having no mapping table is
+#: why this whitelist exists. Accepting arbitrary keys would create a mapping layer, and that layer
+#: would go stale along with shadcn versions.
 ALLOWED_TOKENS: tuple[str, ...] = COLOR_TOKENS + LENGTH_TOKENS + FONT_TOKENS
 
 _FENCE_OPEN = re.compile(r"^```tokens\s*$")
@@ -90,8 +90,8 @@ font_sans: Pretendard
 
 
 class DesignProfileError(Exception):
-    """프로필 정책 위반. `code`가 라우트의 HTTP 상태로 번역된다
-    (model_catalog.CatalogError와 같은 계약)."""
+    """Profile policy violation. `code` is translated into the route's HTTP status
+    (same contract as model_catalog.CatalogError)."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -103,7 +103,7 @@ class DesignProfile(BaseModel):
     uploaded_at: str
     uploaded_by: str
     markdown: str
-    #: 저장물이 아니다 — markdown에서 파싱한 값을 스토어가 채운다.
+    #: Not stored — the store fills it with values parsed from markdown.
     tokens: dict[str, str] = {}
     prose: str = ""
 
@@ -125,10 +125,10 @@ def _validate(key: str, value: str, line: int) -> None:
 
 
 def parse_design_md(text: str) -> tuple[dict[str, str], str]:
-    """(tokens, prose)를 돌려준다. 형식 위반은 DesignProfileError("invalid").
+    """Returns (tokens, prose). Format violations raise DesignProfileError("invalid").
 
-    산문은 펜스 블록만 빼고 나머지 전부다 — 변환하지 않는다. 에이전트가 읽는
-    것은 admin이 쓴 문장 그대로여야 한다.
+    The prose is everything except the fence block — it is not transformed. What the agent reads
+    must be exactly the sentences the admin wrote.
     """
     body = text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     lines = body.split("\n")
@@ -166,23 +166,23 @@ def parse_design_md(text: str) -> tuple[dict[str, str], str]:
 
 
 class DesignProfileStore:
-    """프로필의 읽기/쓰기. `s3`가 None이면 읽기 전용(버킷 미설정)."""
+    """Reading/writing the profile. Read-only if `s3` is None (bucket not configured)."""
 
     def __init__(self, s3: S3StoreLike | None) -> None:
         self._s3 = s3
 
     async def load(self) -> DesignProfile | None:
-        """없으면 None. 손상됐어도 None이다. S3가 그 밖의 이유로 실패해도 None이다.
+        """None if missing. None if corrupt, too. None if S3 fails for any other reason as well.
 
-        예외로 올리지 않는 이유는 ModelCatalog가 시드로 떨어지는 것과 같다:
-        여기서 raise하면 손으로 편집된 JSON 하나가 **모든 빌드 세션의 start()를
-        막는다.** None이면 브랜드 없이 계속 돌고 원인은 로그에 남는다.
+        Why it does not raise is the same as ModelCatalog falling back to the seed:
+        raising here would let a single hand-edited JSON **block start() for every build
+        session.** With None, things keep running without the brand and the cause stays in the log.
 
-        `get` 자체도 넓게 감싼다 — 처음에는 FileNotFoundError(없음)만
-        잡았는데, AccessDenied·스로틀·네트워크 오류 같은 그 외 모든 S3 예외가
-        그대로 새 나가 이 함수의 약속(없거나 깨졌으면 None)을 어겼다. 이
-        스토어가 그 약속을 자기 안에서 지켜야, 호출하는 쪽(session.start(),
-        호스팅 라우트)이 저마다 다시 감싸는 것에 의존하지 않아도 된다.
+        `get` itself is wrapped broadly too — at first only FileNotFoundError (missing)
+        was caught, but every other S3 exception, such as AccessDenied, throttling and network errors,
+        leaked straight out and broke this function's promise (None if missing or broken). This
+        store has to keep that promise inside itself so the callers (session.start(),
+        the hosting route) do not have to depend on each wrapping it again.
         """
         if self._s3 is None:
             return None
@@ -209,7 +209,7 @@ class DesignProfileStore:
 
     async def save(self, *, filename: str, uploaded_by: str,
                    markdown: str) -> DesignProfile:
-        """파싱이 먼저다 — 검증 실패 시 S3에 아무것도 쓰지 않는다."""
+        """Parsing comes first — on a validation failure nothing is written to S3."""
         if self._s3 is None:
             raise DesignProfileError(
                 "readonly",
@@ -227,8 +227,8 @@ class DesignProfileStore:
                              tokens=tokens, prose=prose)
 
     async def remove(self) -> None:
-        """단일 키 delete가 S3StoreLike에 없어서 프리픽스로 지운다 —
-        design/ 아래에는 profile.json 하나뿐이다."""
+        """S3StoreLike has no single-key delete, so it deletes by prefix —
+        there is only profile.json under design/."""
         if self._s3 is None:
             raise DesignProfileError(
                 "readonly",

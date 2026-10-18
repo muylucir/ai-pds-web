@@ -14,14 +14,14 @@ describe("sectionText", () => {
     const text = sectionText(ko.operations);
     expect(text).toContain(ko.operations.title);
     expect(text).toContain(ko.operations.lede);
-    // 명령어는 검색으로 찾을 수 있어야 한다 — 운영자가 기억하는 것은 문장이
-    // 아니라 명령어다.
+    // Commands must be findable by search — what operators remember is the command, not the
+    // sentence.
     expect(text).toContain("cdk deploy");
   });
 
   it("내부 식별자는 담지 않는다", () => {
-    // "mockup"이나 heading id가 들어가면 그 단어가 화면에 보이지 않는 절이
-    // 검색 결과에 뜬다.
+    // If "mockup" or heading ids were included, sections where that word is not visible on screen
+    // would show up in the search results.
     const text = sectionText(ko.dashboard);
     expect(text).not.toContain("mockup");
     expect(text).not.toContain("progress-meaning");

@@ -1,4 +1,4 @@
-# backend/tests/test_agent_home.py — 프로젝트별 CLI config dir과 HOME(aipds/agent_home.py).
+# backend/tests/test_agent_home.py — per-project CLI config dir and HOME (aipds/agent_home.py).
 from __future__ import annotations
 
 import pytest
@@ -36,19 +36,19 @@ def test_copy_config_copies_content_and_keeps_runtime_state(tmp_path):
 
     assert (config / "CLAUDE.md").read_text(encoding="utf-8") == "rules v1"
     assert (config / "skills" / "a" / "SKILL.md").is_file()
-    assert not (config / "README.md").exists()  # 사람용 문서는 CLI 내용이 아니다
+    assert not (config / "README.md").exists()  # human-facing docs are not CLI content
     assert transcript.is_file()
 
 
 def test_copy_config_replaces_stale_content(tmp_path):
-    """공유 쪽에서 빠진 스킬이 사본에 남으면 계속 켜진다."""
+    """A skill removed from the shared side stays enabled if it remains in the copy."""
     shared = _shared(tmp_path)
     config = agent_home.discovery("p1").prepare().config
     agent_home.copy_config(shared, config)
     (shared / "CLAUDE.md").write_text("rules v2", encoding="utf-8")
     (shared / "skills" / "a" / "SKILL.md").unlink()
     (shared / "skills" / "a").rmdir()
-    # 에이전트가 사본을 고쳐도 다음 연결에서 원래대로 돌아온다.
+    # Even if the agent modifies the copy, it reverts on the next connection.
     (config / "CLAUDE.md").write_text("tampered", encoding="utf-8")
 
     agent_home.copy_config(shared, config)
@@ -58,8 +58,8 @@ def test_copy_config_replaces_stale_content(tmp_path):
 
 
 def test_copy_config_resets_the_settings_an_agent_could_plant(tmp_path):
-    """에이전트는 config dir과 워크스페이스에 쓸 수 있다. 거기 둔 hook·env·MCP 서버가
-    다음 실행에 이어지면 한 번의 인젝션이 프로젝트 내내 남는다."""
+    """The agent can write to the config dir and the workspace. If hooks, env, or MCP servers placed there
+    carried over to the next run, a single injection would persist for the whole project."""
     shared = _shared(tmp_path)
     config = agent_home.discovery("p1").prepare().config
     ws = tmp_path / "ws"
@@ -78,8 +78,8 @@ def test_copy_config_resets_the_settings_an_agent_could_plant(tmp_path):
 
 
 def test_copy_config_does_not_write_through_links(tmp_path):
-    """config dir은 에이전트가 쓰는 트리다. `skills`나 `settings.json`을 바깥을 가리키는
-    링크로 바꿔 두면 복사가 그 너머를 덮어쓴다."""
+    """The config dir is a tree the agent writes to. If `skills` or `settings.json` were replaced with links
+    pointing outside, the copy would overwrite whatever lies beyond them."""
     shared = _shared(tmp_path)
     config = agent_home.discovery("p1").prepare().config
     outside = tmp_path / "outside"

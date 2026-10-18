@@ -6,9 +6,9 @@ from pathlib import Path
 class FakeImportStaging:
     """In-memory ImportStaging for import route tests (no boto3, no AWS).
 
-    `objects`는 upload_id → 바이트다. 테스트는 `objects[uid] = zip_bytes`로
-    "브라우저가 presigned URL로 PUT을 마쳤다"를 표현한다 — 그 PUT은 백엔드를
-    지나지 않으므로 흉내낼 HTTP가 없다.
+    `objects` maps upload_id -> bytes. Tests express "the browser finished the PUT to the
+    presigned URL" with `objects[uid] = zip_bytes`; that PUT never passes through the
+    backend, so there is no HTTP to imitate.
     """
 
     def __init__(self) -> None:

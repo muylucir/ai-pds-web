@@ -1,10 +1,10 @@
 // frontend/components/canvas/HistoryQuestionsCard.test.tsx
 //
-// 스크롤백의 읽기 전용 질문 카드. **라이브 카드와 같은 표현이어야 한다** — 방금 본
-// 화면과 스크롤백이 다르면 사용자는 무엇이 진짜인지 알 수 없다.
+// The read-only question card in the scrollback. **It must render the same way as the live
+// card** — if the screen just seen and the scrollback differ, the user cannot tell which is real.
 //
-// 2026-08-18: 보기의 마크다운 원문(`**`)이 그대로 뜨는 결함을 라이브 카드
-// (QuestionCard)에서 고쳤는데, 같은 문자열을 그리는 읽기 전용 카드 셋이 남아 있었다.
+// 2026-08-18: the defect where option markdown source (`**`) showed up raw was fixed in the live
+// card (QuestionCard), but three read-only cards drawing the same strings were left unfixed.
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -33,7 +33,7 @@ const FILE: QuestionFile = {
 describe("HistoryQuestionsCard", () => {
   it("보기와 질문의 마크다운을 원문(**)이 아니라 렌더한다", async () => {
     render(<HistoryQuestionsCard name={FILE.name} file={FILE} />);
-    // 이 카드는 접혀 있다 — 펼쳐야 문항이 그려진다.
+    // This card is collapsed — the questions are drawn only once it is expanded.
     await userEvent.click(screen.getByRole("button"));
     expect(screen.queryByText(/\*\*/)).toBeNull();
     expect(screen.getByText("「조정 브리프」").tagName).toBe("STRONG");

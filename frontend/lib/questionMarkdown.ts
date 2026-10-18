@@ -1,39 +1,41 @@
-// 질문 파일 마크다운을 **렌더 직전에만** 손본다. 파일 자체는 건드리지 않는다.
+// Adjusts question file markdown **only right before rendering**. The file itself is never touched.
 //
-// **왜 필요한가(2026-08-16의 결함).** 백엔드가 제출된 답변을 질문 파일의
-// `[Answer]:` 칸에 심는데(backend/aipds/agent/question_file_answers.py),
-// 화면에는 답변이 하나도 나타나지 않았다. 파일에는 `[Answer]: A`가 들어 있었다.
+// **Why this is needed (the 2026-08-16 defect).** The backend writes submitted answers
+// into the question file's `[Answer]:` slot (backend/aipds/agent/question_file_answers.py),
+// yet not a single answer appeared on screen. The file did contain `[Answer]: A`.
 //
-// 원인은 CommonMark다. 줄 맨 앞의 `[Answer]: A`는 **링크 참조 정의**(link
-// reference definition)이고, 렌더러는 그 줄에 대해 **아무 출력도 만들지 않는다.**
-// 게다가 정의가 하나 존재하는 순간 문서 안의 다른 `[Answer]`가 모두 그 정의를
-// 가리키는 **링크**로 바뀐다 — 실측 화면에서 보기 텍스트가
-// `X) Other (please describe after Answer: tag below)`로, 대괄호가 사라지고
-// "Answer"에 밑줄이 그어져 나온 것이 그 증거다.
+// The cause is CommonMark. A `[Answer]: A` at the start of a line is a **link
+// reference definition**, and the renderer **produces no output at all** for that line.
+// Worse, the moment one definition exists, every other `[Answer]` in the document turns
+// into a **link** pointing at that definition — the evidence is the observed screen,
+// where option text rendered as
+// `X) Other (please describe after Answer: tag below)`, with the brackets gone and
+// "Answer" underlined.
 //
-// **왜 파일 형식을 바꾸지 않는가.** 상류 ai-plc 룰이 `[Answer]:` 태그를 읽으라고
-// 지시하고(aws-aiplc-rule-details/common/question-format-guide.md) 우리 파서도 그
-// 정규식이다(backend/aipds/parsers/questions.py). 파일을 바꾸면 그 호환성이
-// 깨진다. 그래서 **표시 직전에만** 바꾼다.
+// **Why not change the file format.** The upstream ai-plc rules instruct reading the
+// `[Answer]:` tag (aws-aiplc-rule-details/common/question-format-guide.md), and our parser
+// uses that regex too (backend/aipds/parsers/questions.py). Changing the file would break
+// that compatibility. So we change it **only right before display**.
 //
-// **왜 파서로 렌더하지 않는가.** 질문 파일에는 질문 외의 본문이 많다 — 필수 영역
-// 표, 스테이지 메타, 후속 질문 절. `QuestionFile` 모델은 preamble + questions만
-// 담으므로 그것으로 그리면 그 맥락이 전부 사라진다.
+// **Why not render through the parser.** A question file contains a lot of body text
+// besides the questions — the required-areas table, stage metadata, the follow-up
+// questions section. The `QuestionFile` model holds only preamble + questions, so
+// drawing from it would lose all of that context.
 
-//: 줄 맨 앞의 `[Answer]:` 한 줄. `^`가 필수다 — 문장 중간의 `[Answer]:`는
-//: 링크 정의가 아니라 그냥 텍스트이고, 건드리면 안내 문구가 굵게 변한다.
+//: A single `[Answer]:` line at the start of a line. `^` is required — an `[Answer]:` in
+//: the middle of a sentence is plain text, not a link definition, and touching it would bold the guidance text.
 const ANSWER_LINE = /^\[Answer\]:[ \t]*(.*)$/gm;
 
 /**
- * 마크다운을 렌더 직전에 손본다. `[Answer]: A` → `**\[Answer\]:** A`.
+ * Adjusts markdown right before rendering. `[Answer]: A` → `**\[Answer\]:** A`.
  *
- * 대괄호를 escape하는 것이 핵심이다: escape하지 않으면 여전히 링크 정의로
- * 읽혀서 같은 문제가 남는다. 굵게 감싸는 것은 답변이 문서에서 눈에 띄어야
- * 하기 때문이다 — 사용자가 "내가 답한 것이 기록됐나"를 확인하는 자리다.
+ * Escaping the brackets is the key: without escaping, the line is still read as a
+ * link definition and the same problem remains. Wrapping in bold is because the answer
+ * must stand out in the document — this is where the user checks "was my answer recorded?".
  *
- * 빈 칸(`[Answer]:` 뒤에 아무것도 없음)도 그대로 보여준다. 아직 답하지 않은
- * 문항이라는 사실 자체가 정보이고, 숨기면 "답했는데 안 보인다"와 "아직 안
- * 물어봤다"를 구별할 수 없다.
+ * An empty slot (nothing after `[Answer]:`) is shown as is. The fact that a question
+ * is not yet answered is itself information; hiding it would make "I answered but it
+ * doesn't show" indistinguishable from "it hasn't been asked yet".
  */
 export function revealAnswerTags(markdown: string): string {
   return markdown.replace(ANSWER_LINE, (_line, value: string) => {
@@ -43,31 +45,32 @@ export function revealAnswerTags(markdown: string): string {
 }
 
 
-//: 보기 한 줄. 백엔드 파서와 **같은 집합**이어야 한다
-//: (backend/aipds/parsers/questions.py의 `_OPTION`: `^([A-J]|X)\)\s+`).
-//: 한쪽만 넓히면 화면에는 보기로 보이는데 파싱은 안 되거나 그 반대가 된다.
+//: A single option line. This must be the **same set** as the backend parser
+//: (`_OPTION` in backend/aipds/parsers/questions.py: `^([A-J]|X)\)\s+`).
+//: Widening only one side makes a line look like an option on screen but fail to parse, or vice versa.
 const OPTION_LINE = /^([A-JX]\)[ \t]+.*?)[ \t]*$/gm;
 
 /**
- * 보기 줄 끝에 마크다운 하드 브레이크(공백 2개)를 붙인다.
+ * Appends a markdown hard break (two spaces) to the end of each option line.
  *
- * **왜 필요한가.** 상류 형식은 보기를 줄바꿈으로만 구분하고 줄 끝에 공백을 두지
- * 않는다(question-format-guide.md). CommonMark에서 빈 줄 없이 이어진 줄은 한
- * 문단이고 그 줄바꿈은 **공백으로** 렌더되므로, `A) … B) … C) …`가 한 줄로 쭉
- * 이어져 읽을 수 없었다. `A)`는 목록 표지도 아니다 — 순서 목록은 숫자 + `.`/`)`
- * 만 인정하므로 letter 보기는 그냥 텍스트다.
+ * **Why this is needed.** The upstream format separates options only by line breaks with
+ * no trailing spaces (question-format-guide.md). In CommonMark, consecutive lines with no
+ * blank line between them form one paragraph, and those line breaks render **as spaces**,
+ * so `A) … B) … C) …` ran together on a single line and was unreadable. `A)` is not a list
+ * marker either — ordered lists accept only a number + `.`/`)`, so letter options are
+ * plain text.
  *
- * 불릿 목록(`- A) …`)으로 바꾸지 않는 이유: 들여쓰기와 불릿이 생겨 문서 모양이
- * 바뀐다. 하드 브레이크는 원래 의도한 "한 줄에 하나"를 그대로 만든다.
+ * Why not convert to a bullet list (`- A) …`): it adds indentation and bullets and
+ * changes the document's shape. A hard break produces exactly the intended "one per line".
  *
- * 문단 마지막 줄에 붙는 하드 브레이크는 렌더러가 그냥 버리므로 무해하다.
+ * A hard break on the last line of a paragraph is simply discarded by the renderer, so it is harmless.
  */
 export function breakOptionLines(markdown: string): string {
   return markdown.replace(OPTION_LINE, "$1  ");
 }
 
 /**
- * 질문 파일을 화면에 올리기 전 변환 묶음. 순서는 무관하다(서로 다른 줄을 본다).
+ * The bundle of transforms applied before putting a question file on screen. Order does not matter (they look at different lines).
  */
 export function prepareQuestionMarkdown(markdown: string): string {
   return breakOptionLines(revealAnswerTags(markdown));

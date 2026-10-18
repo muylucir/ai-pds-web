@@ -24,22 +24,22 @@ export type ChatItem = UserItem | AiItem | HistoryCardItem;
 let counter = 0;
 const nextId = () => `wf-item-${counter++}`;
 
-// 턴 개시(POST)의 실패는 상태 코드를 준다 — EventSource의 익명 onerror와 달리
-// 원인을 말할 수 있는 유일한 지점이다. 413/431은 "입력이 길다"는 뜻이고, 그
-// 구분이 없으면 이 버그의 증상("연결이 끊어졌습니다")이 그대로 돌아온다.
+// A failure to start a turn (POST) returns a status code — unlike EventSource's anonymous
+// onerror, it is the only point that can tell the cause. 413/431 mean "the input is too long",
+// and without that distinction this bug's symptom ("연결이 끊어졌습니다") comes right back.
 function isTooLong(err: unknown): boolean {
   const status = (err as { status?: number } | null)?.status;
   return status === 431 || status === 413;
 }
 
-// 끊긴 스트림에 다시 붙기 전의 대기(ms). 시도마다 다음 값을 쓰고, 다 쓰면 포기한다
-// (누적 약 48초). 무한히 재시도하지 않는 이유: 진짜 오프라인에서는 화면이 "진행 중"으로
-// 영구히 잠긴다. 포기해도 턴은 서버에서 계속 돌고, 새로고침하면 `GET /turn`으로 다시
-// 붙는다.
+// Wait (ms) before reattaching to a dropped stream. Each attempt uses the next value, and when
+// they run out we give up (about 48 seconds in total). Why not retry forever: when truly offline,
+// the screen would be locked in "in progress" permanently. Even after giving up, the turn keeps
+// running on the server, and a refresh reattaches via `GET /turn`.
 export const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000];
 
-// 백엔드가 종결 이벤트에 싣는 기계 문구 → 화면 문구. 여기 없는 문구는 드라이버가 이미
-// 프로젝트 언어로 만든 문장이므로(agent/prompts.turn_failed) 그대로 쓴다.
+// Machine phrases the backend puts on terminal events → screen text. Phrases not listed here are
+// sentences the driver already produced in the project language (agent/prompts.turn_failed), so they are used as is.
 const ERROR_KEYS: Record<string, keyof Dict> = {
   "agent turn failed": "stream.turnError",
   "turn interrupted": "stream.interrupted",
@@ -47,15 +47,15 @@ const ERROR_KEYS: Record<string, keyof Dict> = {
   "turn already in progress": "stream.turnInProgress",
 };
 
-// 백엔드 claude_driver.INTERRUPTED_MARKER와 같은 값이어야 한다(proto/builder.py도
-// 같은 값을 쓴다). 기계 신호이고 사람이 읽는 문구가 아니다 — 화면의 "중단됨"은
-// 이 플래그를 받은 AiMessage가 UI 언어로 그린다.
+// Must be the same value as the backend's claude_driver.INTERRUPTED_MARKER (proto/builder.py
+// uses the same value too). It is a machine signal, not human-readable text — the "중단됨"
+// on screen is drawn in the UI language by the AiMessage that receives this flag.
 const INTERRUPTED_MARKER = "interrupted";
 
-// 백엔드 claude_driver.THINKING_MARKER / THINKING_DONE_MARKER와 같은 값이어야
-// 한다. 같은 종류의 기계 신호이므로 트레이스 줄로 새면 접힌 아코디언에
-// "thinking"이라는 영어 단어가 그대로 노출된다 — INTERRUPTED_MARKER가 겪은
-// 회귀와 같다.
+// Must be the same values as the backend's claude_driver.THINKING_MARKER / THINKING_DONE_MARKER.
+// They are the same kind of machine signal, so if they leak through as trace lines, the English
+// word "thinking" shows up verbatim in the collapsed accordion — the same regression
+// INTERRUPTED_MARKER went through.
 const THINKING_MARKER = "thinking";
 const THINKING_DONE_MARKER = "thinking-done";
 
@@ -80,44 +80,44 @@ export interface WorkspaceStream {
   pendingQuestions: QuestionsPayload | null;
   stages: StagePayload[];
   lastDocument: DocumentPayload | null;
-  // Discovery가 빌드로 넘긴 프로토타입. 채팅에 "Prototypes 탭으로"
-  // 카드를 띄우는 근거다(에이전트의 안내 문장에 의존하지 않는다).
+  // Prototypes Discovery handed off to build. This is the basis for showing a "Prototypes 탭으로"
+  // card in the chat (it does not rely on the agent's guidance sentence).
   prototypeReady: PrototypeReadyPayload | null;
   changedPaths: string[];
   historyLoading: boolean;
-  /** 에이전트의 컨텍스트 사용량(입력창 위 표시). 화면이 열릴 때 마지막 턴의 값을
-   *  되살리고, 턴이 도는 동안 `context` 이벤트로 갱신한다. 없으면 null. */
+  /** The agent's context usage (shown above the input box). Restores the last turn's value when
+   *  the screen opens, and updates via `context` events while a turn runs. null if absent. */
   context: ContextUsage | null;
-  // 문서 패널이 따라가야 할 "지금 대화 중인 문서" — `document` 이벤트뿐 아니라
-  // doc성 file_changed(아래 isDocPath)도 최신-승리로 추적한다. version은
-  // `document` 이벤트에서 온 경우에만 채워진다 (ui-bug2 싱크 수정).
+  // The "document currently being discussed" the doc panel should follow — tracked
+  // latest-wins from not only `document` events but also doc-like file_changed (isDocPath below).
+  // version is filled only when it came from a `document` event (ui-bug2 sync fix).
   //
-  // 2026-08-21 이후 `document`는 모델이 부르던 `submit_document`가 아니라 백엔드가
-  // 산출물 쓰기에서 **유도한다**(agent/reconcile.document_events). 그래서 이제 거의
-  // 항상 도착하고, 아래 isDocPath 분기는 훅이 못 보는 쓰기(Bash 경유)의 백스톱으로
-  // 남는다 — 그것이 이 필드가 처음 생긴 이유였다.
+  // Since 2026-08-21, `document` is no longer the `submit_document` the model used to call; the
+  // backend **derives** it from artifact writes (agent/reconcile.document_events). So it now
+  // almost always arrives, and the isDocPath branch below remains as a backstop for writes the
+  // hook cannot see (via Bash) — which is why this field was created in the first place.
   activeDoc: { path: string; version: string | null } | null;
-  // 턴이 끝날 때마다 증가 — 패널이 이 키로 문서를 다시 읽는다. 턴 도중
-  // 도착한 document 이벤트 시점에는 VM→S3 동기화 전이라 읽기가 빈 내용/404가
-  // 될 수 있고, 그대로 두면 재읽기가 영영 없다 (ui-bug2의 "비어 있음" 수정).
+  // Increments at the end of every turn — the panel rereads the document with this key. At the
+  // time of a mid-turn document event, the VM→S3 sync has not happened yet, so a read may return
+  // empty/404, and left alone there would never be a reread (ui-bug2 "empty" fix).
   turnSeq: number;
 }
 
-// 문서 패널이 따라갈 가치가 있는 산출물 경로인가 — aiplc-docs/ 아래 .md 중
-// 기록성 파일(audit/state/질문)은 제외.
+// Is this an artifact path worth following in the doc panel — .md files under aiplc-docs/,
+// excluding record-keeping files (audit/state/questions).
 //
-// 질문 파일(*-questions.md)이 audit/state와 같은 칸에 있는 이유: AI-PDS에서
-// 질문의 전달 경로는 AskUserQuestion 도구이고, 사용자가 답하는 화면은 우측
-// 패널의 QuestionForm이다(discovery-config/CLAUDE.md의 override 섹션). 마크다운
-// 파일은 상류 룰이 요구하는 기록물로만 남는다.
+// Why question files (*-questions.md) are in the same bucket as audit/state: in AI-PDS, the
+// delivery path for questions is the AskUserQuestion tool, and the screen where the user answers
+// is the QuestionForm in the right panel (the override section of discovery-config/CLAUDE.md). The
+// markdown file remains only as the record the upstream rules require.
 //
-// 그래서 이걸 문서 패널에 띄우면 한 화면에 같은 질문의 두 버전이 나란히 뜨는데,
-// 그 둘은 애초에 일치할 수 없다: SDK 스키마가 질문 1-4개/보기 2-4개를 하드
-// 제한하므로(CLI 2.1.226의 `questions: dt(...).min(1).max(4)`와 "hard schema
+// So showing it in the doc panel puts two versions of the same questions side by side on one
+// screen, and the two can never match in the first place: the SDK schema hard-limits questions to
+// 1-4 and options to 2-4 (CLI 2.1.226's `questions: dt(...).min(1).max(4)` and "hard schema
 // constraints; do not exceed them even if the user requests more — split into
-// multiple calls instead"), 룰이 요구하는 7문항 문서는 폼에서 4+3 두 라운드로
-// 쪼개지고 문구도 각각 따로 생성된다. 실측으로 사용자가 그 불일치를 발견한
-// 경로가 바로 이 패널이었다.
+// multiple calls instead"), so a 7-question document required by the rules is split into two
+// rounds of 4+3 in the form, with the wording generated separately for each. As measured, this
+// panel was exactly the path through which users discovered that mismatch.
 function isDocPath(path: string): boolean {
   return (
     path.startsWith("aiplc-docs/") &&
@@ -142,8 +142,8 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [context, setContext] = useState<ContextUsage | null>(null);
-  // 라이브 값이 한 번이라도 왔는가. 마운트 때 불러온 기록(GET /context)이 늦게 도착해
-  // 방금 받은 라이브 값을 덮지 않게 한다 — 기록은 언제나 그보다 앞선 턴의 것이다.
+  // Has a live value ever arrived. Keeps the record loaded at mount (GET /context), if it arrives
+  // late, from overwriting a live value just received — the record is always from an earlier turn.
   const liveContextRef = useRef(false);
   const [activeDoc, setActiveDoc] = useState<{ path: string; version: string | null } | null>(null);
   const [turnSeq, setTurnSeq] = useState(0);
@@ -156,8 +156,8 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   // the user just started.
   const liveTurnStartedRef = useRef(false);
 
-  // 텍스트 델타는 프레임마다 한 번 붙는다(useTextDeltas). 그 밖의 말풍선 갱신은
-  // 전부 patchAi를 지나므로, 여기서 먼저 비워 두면 이벤트 순서가 그대로 보존된다.
+  // Text deltas are appended once per frame (useTextDeltas). Every other bubble update goes
+  // through patchAi, so flushing first here preserves the event order as is.
   const deltas = useTextDeltas((aiId, text) => {
     setItems((prev) => prev.map((it) => (it.id === aiId && it.role === "ai"
       ? { ...it, text: it.text + text, activity: { kind: "writing" } } : it)));
@@ -176,12 +176,12 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   // sidebar/panel state (stage history, latest document, pending questions).
   const applyEvent = useCallback(
     (aiId: string, ev: AgentEvent) => {
-      // **`activity`는 마지막에 온 이벤트가 덮는다.** 텍스트가 흐르기 시작하면
-      // 앞선 도구는 더 이상 "지금 하는 일"이 아니다 — 트레이스에서 마지막 도구를
-      // 뽑아 쓰던 방식이 그 어긋남을 만들었다(도구가 끝나고 답변을 쓰는 동안에도
-      // "자료를 확인하고 있어요"가 남았다). 여기가 이벤트를 순서대로 보는 유일한
-      // 지점이므로, 순서를 그대로 상태에 옮기면 어긋날 수 없다 — 텍스트는 프레임
-      // 단위로 묶여 붙지만, 그 밖의 이벤트가 모두 먼저 그것을 비운다(patchAi).
+      // **`activity` is overwritten by whichever event came last.** Once text starts flowing,
+      // the preceding tool is no longer "what is happening now" — the old approach of pulling
+      // the last tool out of the trace caused that mismatch ("자료를 확인하고 있어요" stayed up
+      // even after the tool finished, while the answer was being written). This is the only point
+      // that sees events in order, so carrying that order straight into state cannot go wrong —
+      // text is batched per frame, but every other event flushes it first (patchAi).
       if (ev.kind === "message") {
         pushText(aiId, ev.text ?? "");
         return;
@@ -189,13 +189,13 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       flushText();
       if (ev.kind === "file_changed" && ev.path) {
         setChangedPaths((prev) => (prev.includes(ev.path as string) ? prev : [...prev, ev.path as string]));
-        // 에이전트는 대부분의 문서를 submit_document 없이 file_write로만
-        // 만든다(실측: prfaq.md 등) — doc성 쓰기도 활성 문서로 추적해야
-        // 패널이 대화를 따라간다 (ui-bug2).
+        // The agent creates most documents with file_write alone, without submit_document
+        // (measured: prfaq.md etc.) — doc-like writes must also be tracked as the active
+        // document for the panel to follow the conversation (ui-bug2).
         if (isDocPath(ev.path)) setActiveDoc({ path: ev.path, version: null });
       }
       if (ev.kind === "draft") {
-        // 쓰고 있는 파일과 글자 수만 진행 줄에 올린다(백엔드 agent/tool_input_draft.py).
+        // Only the file being written and its character count go on the progress line (backend agent/tool_input_draft.py).
         const parsed = safeParse<DraftPayload>(ev.payload);
         if (!parsed) return;
         patchAi(aiId, (it) => ({
@@ -235,18 +235,18 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         return;
       }
       patchAi(aiId, (it) => {
-        // 중단은 turn의 종결 사유라 trace가 아니라 전용 필드로 간다.
-        // 드라이버가 새 kind 대신 status로 흘리는 이유는 이미 다루는 이벤트
-        // 모양을 재사용하기 위해서다(claude_driver.interrupt). 이 마커는
-        // 라이브 스트림에만 있다 — 트랜스크립트에는 남지 않으므로 새로고침
-        // 후에는 이 줄이 다시 나타나지 않는다.
+        // An interrupt is the turn's termination reason, so it goes to a dedicated field, not the trace.
+        // The driver sends it as a status rather than a new kind in order to reuse an event shape
+        // that is already handled (claude_driver.interrupt). This marker exists only in the live
+        // stream — it is not kept in the transcript, so this line does not reappear after a
+        // refresh.
         if (ev.kind === "status" && ev.text === INTERRUPTED_MARKER) {
           return { ...it, interrupted: true };
         }
-        // 사고 구간. 고정 줄이 읽는 `activity`와 타임라인이 읽는 trace 줄을 함께
-        // 세운다 — 앞의 것은 "지금" 하나, 뒤의 것은 "지금까지"의 목록이다. 시작에서
-        // 줄을 남기는 이유는 순서다: 뒤따르는 도구보다 앞에 있어야 하고, 턴이 사고
-        // 중에 끊겨도 "여기까지 갔다"가 남는다.
+        // A thinking span. Sets both the `activity` the pinned line reads and the trace line the
+        // timeline reads — the former is a single "now", the latter a list of "so far". The line is
+        // left at the start for the sake of order: it must come before the tools that follow, and
+        // even if the turn breaks off mid-thought, "it got this far" remains.
         if (ev.kind === "status" && ev.text === THINKING_MARKER) {
           return {
             ...it, activity: { kind: "thinking" },
@@ -254,13 +254,13 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
                     { kind: "thinking", text: null, path: null, detail: null }],
           };
         }
-        // 종료 마커는 `activity`를 건드리지 않는다. 다음 이벤트(거의 항상 텍스트
-        // 델타)가 곧 덮으므로, 여기서 비우면 그 사이에 빈 줄이 한 번 깜빡인다.
+        // The done marker does not touch `activity`. The next event (almost always a text
+        // delta) overwrites it right away, so clearing it here would flash an empty line in between.
         if (ev.kind === "status" && ev.text === THINKING_DONE_MARKER) return it;
         if (ev.kind === "status" || ev.kind === "file_changed") {
-          // status의 detail은 payload에 실려 온다(리댁션을 지나는 필드여야 하고,
-          // path는 구조적 필드로 취급되어 리댁션을 지나지 않는다 —
-          // backend/aipds/tool_trace.py의 근거).
+          // A status's detail arrives in the payload (it has to be a field that passes through
+          // redaction, and path is treated as a structural field that does not go through
+          // redaction — the rationale is in backend/aipds/tool_trace.py).
           const detail = safeParse<{ detail?: string }>(ev.payload)?.detail ?? null;
           const trace: TraceEntry = {
             kind: ev.kind, text: ev.text, path: ev.path, detail,
@@ -281,17 +281,18 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     [patchAi, pushText, flushText, t],
   );
 
-  // 도는 턴에 붙는 함수. runTurn이 409(다른 턴이 돌고 있음)를 받았을 때 그 턴을 보여
-  // 주려고 부르는데, 둘이 서로를 참조하므로 ref로 잇는다.
+  // Function that attaches to a running turn. runTurn calls it to show that turn when it gets a
+  // 409 (another turn is running), and since the two reference each other, they are linked via a ref.
   const attachRef = useRef<(turnId: string) => void>(() => {});
 
-  // 턴 하나를 화면에 흘린다. `opener`가 첫 연결을 열고, 끊기면 **같은 턴**에 마지막으로
-  // 받은 seq부터 다시 붙는다.
+  // Streams one turn to the screen. `opener` opens the first connection, and when it drops we
+  // reattach to **the same turn** from the last seq received.
   //
-  // 턴은 서버 작업이다(backend aipds/turn_job.py) — 화면이 끊겨도 턴은 계속 돌고, 같은
-  // id로 다시 붙으면 놓친 이벤트부터 이어 받는다. 그래서 끊김은 턴의 실패가 아니고, 이
-  // 함수가 할 일은 조용히 다시 붙는 것이다. 절전·화면보호기(턴은 2.5~5.6분이고 화면보호기
-  // 기본값은 5~10분이다)가 이 경로를 예외가 아니라 일상으로 만든다.
+  // A turn is a server job (backend aipds/turn_job.py) — the turn keeps running even if the
+  // screen disconnects, and reattaching with the same id resumes from the missed events. So a drop
+  // is not a turn failure, and this function's job is to reattach quietly. Sleep and screensavers
+  // (turns take 2.5–5.6 minutes and the default screensaver is 5–10 minutes) make this path
+  // routine rather than exceptional.
   const runTurn = useCallback(
     (
       opener: (handlers: StreamHandlers) => () => void,
@@ -316,9 +317,9 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         timer = null;
         setStreaming(false);
         stopRef.current = null;
-        // 턴 종료 신호 — 문서 패널이 이 시퀀스로 재읽기한다. 턴 중간의
-        // document/file_changed 시점에는 VM→S3 동기화 전이라 S3 읽기가
-        // 빈 값일 수 있다; 동기화는 턴 완료 후 끝나므로 여기서 올린다.
+        // Turn-end signal — the doc panel rereads with this sequence. At the time of mid-turn
+        // document/file_changed, the VM→S3 sync has not happened, so an S3 read may be empty;
+        // the sync finishes after the turn completes, so we bump it here.
         setTurnSeq((n) => n + 1);
       };
       const giveUp = (message: string) => {
@@ -326,17 +327,17 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         finish();
       };
 
-      // 연결이 끊겼다(onError, 또는 종결 이벤트 없이 닫힘). `err`에 HTTP 상태가 있으면
-      // 턴을 **시작하는** POST가 거절된 것이다 — 붙을 턴이 만들어지지 않았다.
+      // The connection dropped (onError, or closed without a terminal event). If `err` has an HTTP
+      // status, the POST that **starts** the turn was rejected — no turn to attach to was created.
       const onDrop = (err: unknown) => {
         if (finished) return;
-        // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
-        // 세션을 확인해 만료면 로그인으로 보낸다.
+        // EventSource does not distinguish 401 (token expired) from a network drop, so we
+        // check the session and send the user to login if it has expired.
         void redirectIfSessionExpired(undefined, window.location.pathname);
         if (err instanceof ApiError) {
           if (err.status === 409 && err.turnId) {
-            // 다른 턴이 이미 돌고 있다 — 이 입력은 에이전트에 닿지 않았다. 그 턴을 보여
-            // 준다(두 번째 탭, 또는 화면이 모르던 턴).
+            // Another turn is already running — this input never reached the agent. Show that
+            // turn (a second tab, or a turn the screen did not know about).
             giveUp(t("stream.turnInProgress"));
             attachRef.current(err.turnId);
             return;
@@ -350,8 +351,8 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         timer = setTimeout(() => {
           timer = null;
           if (finished) return;
-          // 붙기 전에 그 턴이 아직 있는지 본다. 보존 시간이 지났거나 재시작으로 사라졌으면
-          // 다시 붙을 곳이 없다 — 산출물은 finish()가 올리는 turnSeq로 문서 패널에 돌아온다.
+          // Before attaching, check whether the turn still exists. If its retention period has passed or a restart wiped it,
+          // there is nowhere to reattach — artifacts come back to the doc panel via the turnSeq that finish() bumps.
           getTurn(projectId)
             .then((turn) => {
               if (finished) return;
@@ -365,7 +366,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
         }, RECONNECT_DELAYS_MS[attempt++]);
       };
 
-      // 연결 하나의 핸들러. 연결마다 새로 만든다 — `terminal`과 `dropped`는 그 연결의 것이다.
+      // Handlers for one connection. Created fresh per connection — `terminal` and `dropped` belong to that connection.
       const connection = (): StreamHandlers => {
         let terminal = false;
         let dropped = false;
@@ -376,7 +377,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
           onEvent: (ev, seq) => {
             if (seq !== undefined) lastSeq = seq;
             if (ev.kind === "done" || ev.kind === "error") terminal = true;
-            // 이어 받기 시작했으니 다음 끊김은 다시 첫 대기부터 센다.
+            // We have started resuming, so the next drop counts again from the first wait.
             attempt = 0;
             applyEvent(aiId, ev);
           },
@@ -389,7 +390,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
               patchAi(aiId, (it) => ({ ...it, streaming: false }));
               finish();
             } else if (!dropped) {
-              onDrop(null);   // 종결 이벤트 없이 닫혔다 = 끊김
+              onDrop(null);   // closed without a terminal event = dropped
             }
           },
         };
@@ -407,7 +408,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     [applyEvent, patchAi, projectId, t],
   );
 
-  // 도는 턴에 붙는다 — 처음부터(`after=0`) 재생해 말풍선을 다시 채운다.
+  // Attach to a running turn — replay from the start (`after=0`) to refill the bubbles.
   const attach = useCallback(
     (turnId: string) => {
       if (stopRef.current) return;
@@ -446,13 +447,13 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     (answers: Record<string, string>) => {
       if (stopRef.current) return;
       liveTurnStartedRef.current = true;
-      // 어느 경로로 보낼지는 **지금** 정한다 — 아래 setPendingQuestions(null)이
-      // 판별자를 없애기 때문이다.
+      // Which path to send through is decided **now** — because setPendingQuestions(null) below
+      // removes the discriminator.
       const file = pendingQuestions?.file;
-      // 파킹된 턴 재개 경로(= AskUserQuestion 탈출로)의 폴백 텍스트. 그 라우트는
-      // 질문 파일을 손에 들고 있지 않아 `summary`를 만들 수 없으므로 프론트 렌더러를
-      // 쓴다. 문항을 **지금** 붙잡는 것이 요점이다 — 아래 setPendingQuestions(null)이
-      // 그것을 없앤다.
+      // Fallback text for the parked-turn resume path (= the AskUserQuestion escape hatch). That
+      // route does not have the question file in hand and cannot build `summary`, so it uses the
+      // frontend renderer. The point is to capture the questions **now** — setPendingQuestions(null)
+      // below removes them.
       const localSummary = pendingQuestions
         ? answerSummary(pendingQuestions.questions, answers, t)
         : t("chat.answersSubmitted");
@@ -462,25 +463,25 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       const userId = nextId();
       setItems((prev) => [
         ...prev,
-        // 텍스트는 **서버 응답이 도착하면** 채운다(아래 onCreated). 지금 비워 두는
-        // 이유: 이 말풍선을 프론트가 만들던 동안 사용자가 본 것과 트랜스크립트에
-        // 기록된 것이 서로 달랐다 — 렌더가 두 벌이었기 때문이다
-        // (backend/aipds/answer_summary.py 헤더에 실측이 있다). 이제 서버가 만든
-        // 문자열 하나가 화면과 기록 양쪽에 쓰인다.
+        // The text is filled in **when the server response arrives** (onCreated below). Why it is
+        // empty for now: while the frontend was building this bubble, what the user saw and what was
+        // recorded in the transcript differed — because there were two renderers
+        // (the measurements are in the header of backend/aipds/answer_summary.py). Now a single
+        // string built by the server is used for both the screen and the record.
         //
-        // 자리를 미리 잡는 것은 순서를 위해서다: AI 말풍선보다 앞에 와야 한다.
+        // Reserving the slot in advance is for ordering: it must come before the AI bubble.
         { id: userId, role: "user", text: "" },
         { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
       ]);
       const onCreated = (created: { summary?: string }) => {
-        // `summary`가 없으면 파킹된 턴 재개 경로다 — 위 `localSummary`가 그 경로의
-        // 렌더다. 마커로 떨어뜨리면 그 경로만 읽을 수 없게 되고, 복원은
-        // `answer_store` 조인으로 실제 답변을 보여주므로 라이브와 복원이 **반대
-        // 방향으로** 갈라진다(agent/answer_store.py).
+        // No `summary` means the parked-turn resume path — `localSummary` above is that path's
+        // render. Dropping it to a marker would make only that path unreadable, and since restore
+        // shows the actual answers via the `answer_store` join, live and restore would diverge in
+        // **opposite directions** (agent/answer_store.py).
         //
-        // 프론트 렌더러가 남는 것은 이 경로 때문만이 아니다 — 프로토타입 빌더의
-        // 스트림(usePrototypeStream)과 히스토리 복원(ChatTimeline)도 그것을 쓴다.
-        // 그 둘까지 백엔드로 옮기면 이 폴백과 함께 모듈을 지울 수 있다.
+        // This path is not the only reason the frontend renderer remains — the prototype builder's
+        // stream (usePrototypeStream) and history restore (ChatTimeline) use it too.
+        // Once those two also move to the backend, the module can be deleted along with this fallback.
         const text = created.summary || localSummary;
         setItems((prev) => prev.map((it) =>
           it.id === userId ? { ...it, text } : it));
@@ -497,12 +498,12 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
   );
 
   const interrupt = useCallback(async () => {
-    // 실패를 삼킨다: 중단은 보조 동작이고, 실패해도 턴은 그대로 돌아 화면이
-    // 막히지 않는다. 사용자는 다시 누를 수 있다.
+    // Swallow failures: interrupting is an auxiliary action, and even if it fails the turn runs on
+    // as is and the screen is not blocked. The user can press it again.
     try {
       await interruptTurn(projectId);
     } catch {
-      /* 무시 */
+      /* ignore */
     }
   }, [projectId]);
 
@@ -522,7 +523,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     };
   }, [projectId]);
 
-  // 마지막 턴의 컨텍스트 사용량. 실패하면 표시가 없을 뿐이다.
+  // Context usage of the last turn. On failure there is simply no display.
   useEffect(() => {
     let cancelled = false;
     getContext(projectId)
@@ -560,9 +561,9 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     };
   }, [projectId]);
 
-  // 화면이 열릴 때 도는 턴이 있으면 붙는다(새로고침, 다른 화면에서 돌아옴, 리뷰
-  // 화면의 승인). 재시작으로 끊긴 턴이면 그 사실을 대화 끝에 남긴다 — 그렇지 않으면
-  // 사용자는 끝나지 않은 대화를 설명 없이 보게 된다.
+  // When the screen opens, attach if a turn is running (refresh, returning from another screen,
+  // approval on the review screen). If the turn was cut off by a restart, leave that fact at the end
+  // of the conversation — otherwise the user sees an unfinished conversation with no explanation.
   const tRef = useRef(t);
   tRef.current = t;
   useEffect(() => {
@@ -581,7 +582,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
           ]);
         }
       })
-      .catch(() => {}); // degraded, not broken: 붙지 못하면 히스토리만 보인다
+      .catch(() => {}); // degraded, not broken: if attaching fails, only the history is shown
     return () => {
       cancelled = true;
     };

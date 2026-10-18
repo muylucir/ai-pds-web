@@ -1,30 +1,33 @@
 // frontend/lib/auth/keepSessionAlive.ts
 //
-// access 토큰을 주기적으로 갱신한다. 요청이 401로 실패하기를 기다리지 않는
-// 것이 핵심이다 — 그 이유는 app/api/auth/refresh/route.ts에 적혀 있다.
+// Refreshes the access token periodically. The key point is not waiting for a
+// request to fail with 401 — the reason is written in app/api/auth/refresh/route.ts.
 //
-// 요약: /api 프록시의 갱신은 백엔드 401에만 반응하는데, 프로토타입 빌드는 한
-// 번의 SSE 연결로 수십 분을 살면서 그 연결에서 401을 다시 받을 일이 없다.
-// 그래서 스트림이 도는 동안 갱신 기회가 하나도 없고, access 토큰(60분)이
-// 빌드 도중 만료된다. 짧은 턴이 반복되는 디스커버리 채팅은 매 턴이 갱신
-// 기회여서 이 결함이 드러나지 않았다.
+// In short: the /api proxy's refresh reacts only to a backend 401, but a
+// prototype build lives for tens of minutes on a single SSE connection and never
+// gets another 401 on that connection. So there is not a single refresh
+// opportunity while the stream runs, and the access token (60 minutes) expires
+// mid-build. The Discovery chat, with its repeated short turns, gets a refresh
+// opportunity every turn, so this defect never surfaced there.
 //
-// sessionRecovery.ts와 역할이 다르다: 그쪽은 스트림이 **죽은 뒤** 만료를
-// 확인해 로그인으로 보내는 사후 처리이고, 이쪽은 애초에 만료되지 않게 하는
-// 예방이다. 둘 다 필요하다 — 30일 refresh 창이 끝나면 예방은 불가능하고
-// 사후 처리만 남는다.
+// Its role differs from sessionRecovery.ts: that one is after-the-fact handling
+// that checks for expiry **after the stream dies** and sends the user to login;
+// this one is prevention, keeping the token from expiring in the first place.
+// Both are needed — once the 30-day refresh window ends, prevention is
+// impossible and only after-the-fact handling remains.
 
-//: 갱신 간격. access 토큰 수명(60분,
-//: infra/lib/auth-client-config.ts의 ACCESS_TOKEN_VALIDITY_MINUTES)의 넉넉히
-//: 절반 아래로 둔다. 60분에 가깝게 잡으면 갱신 한 번이 지연·실패했을 때 바로
-//: 만료 창이 생긴다. 15분이면 한 토큰 수명 안에 3번의 기회가 있으므로 두 번
-//: 연속 실패해도 세션이 살아 있다.
+//: Refresh interval. Kept well below half of the access token lifetime (60
+//: minutes, ACCESS_TOKEN_VALIDITY_MINUTES in infra/lib/auth-client-config.ts).
+//: Setting it close to 60 minutes opens an expiry window as soon as a single
+//: refresh is delayed or fails. At 15 minutes there are 3 chances within one
+//: token lifetime, so the session survives even two consecutive failures.
 export const REFRESH_INTERVAL_MS = 15 * 60_000;
 
-/** 주기 갱신을 시작하고, 멈추는 함수를 돌려준다.
+/** Starts periodic refresh and returns a function that stops it.
  *
- *  개시 직후에는 갱신하지 않는다 — 이 함수가 불리는 시점(로그인 직후 또는
- *  화면 진입)에는 토큰이 이미 신선하고, 화면마다 Cognito를 때릴 이유가 없다.
+ *  It does not refresh right at startup — when this function is called (right
+ *  after login or on entering a screen) the token is already fresh, and there is
+ *  no reason to hit Cognito on every screen.
  */
 export function keepSessionAlive(): () => void {
   const timer = setInterval(() => {
@@ -33,18 +36,20 @@ export function keepSessionAlive(): () => void {
       try {
         res = await fetch("/api/auth/refresh", { method: "POST" });
       } catch {
-        // 네트워크가 잠깐 끊겼다 — 세션 종료가 아니므로 계속 시도한다.
-        // 여기서 멈추면 와이파이가 한 번 끊긴 사용자가 빌드 도중 조용히
-        // 세션을 잃는다.
+        // The network dropped briefly — that is not the end of the session, so
+        // keep trying. Stopping here would make a user whose Wi-Fi dropped once
+        // silently lose their session mid-build.
         return;
       }
-      // 401 = 리프레시 토큰이 만료(30일)·폐기됐다. 갱신할 방법이 없으므로
-      // 폴링을 멈춘다 — 계속 두면 매 간격마다 확실히 실패하는 호출을 반복한다.
+      // 401 = the refresh token has expired (30 days) or been revoked. There is no
+      // way to refresh, so stop polling — leaving it running would repeat a call
+      // that is certain to fail at every interval.
       //
-      // 여기서 /login으로 보내지는 않는다. 이 함수는 사용자가 보고 있지 않을
-      // 수도 있는 배경 타이머이고, 작업 중인 화면에서 사용자를 갑자기 쫓아내는
-      // 판단은 실제 요청이 실패했을 때 sessionRecovery.redirectIfSessionExpired가
-      // 내린다(그쪽은 5xx와 401을 구분하는 규율을 이미 갖고 있다).
+      // We do not redirect to /login here. This function is a background timer the
+      // user may not even be looking at, and the decision to abruptly kick the user
+      // off the screen they are working on is made by
+      // sessionRecovery.redirectIfSessionExpired when a real request fails (it
+      // already has the discipline of telling 5xx apart from 401).
       if (res.status === 401) clearInterval(timer);
     })();
   }, REFRESH_INTERVAL_MS);

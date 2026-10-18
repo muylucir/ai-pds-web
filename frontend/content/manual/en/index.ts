@@ -1,7 +1,7 @@
 // frontend/content/manual/en/index.ts — English manual assembly.
 //
-// 구조는 ko/index.ts와 같아야 한다(절 파일 이름까지). parity.test.ts가 두
-// 언어의 블록 구조를 비교하므로, 한쪽에만 절이나 문단을 더하면 즉시 실패한다.
+// The structure must match ko/index.ts (down to section file names). parity.test.ts compares the
+// block structure of the two languages, so adding a section or paragraph to only one side fails immediately.
 import type { ManualContent } from "../types";
 
 import { intro } from "./intro";

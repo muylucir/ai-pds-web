@@ -1,6 +1,6 @@
 import type { QuestionFile } from "@/lib/api/types";
 
-// Derived from files/pilot1/aiplc-docs/discovery/product-strategy/strategy-questions.md
+// Derived from files/ws-m/aiplc-docs/discovery/product-strategy/strategy-questions.md
 // (13 questions across Positioning / Differentiation / Business Model / Success
 // Metrics / Risks). Trimmed option prose for brevity; structure is faithful:
 // each question ends with an X) Other option (is_other:true), the pilot's
@@ -53,7 +53,7 @@ export const strategyQuestions: QuestionFile = {
       number: n,
       category:
         n <= 3 ? "Positioning" : n <= 5 ? "Differentiation" : n <= 7 ? "Business Model" : n <= 10 ? "Success Metrics" : "Risks",
-      text: `pilot1 strategy-questions.md Question ${n} 본문`,
+      text: `ws-m strategy-questions.md Question ${n} 본문`,
       answer: n === 12 ? "A,B" : n === 11 ? "C" : "A",
       options: [
         { letter: "A", text: `Q${n} 옵션 A`, is_other: false, recommended: true },

@@ -1,12 +1,12 @@
-// 인계 탭 초기화 확인. "다시 생성"은 직전 판의 열린 결정과 보완 답을 이어받는다 — 이것은 그 둘까지
-// 지운다. 프로토타입 초기화 확인과 같은 무게로 쓴다: 남는 것을 제목 바로 아래, 되돌릴 수 없는 것을
-// 맨 끝에 둔다(마지막에 읽힌 문장이 경고를 누그러뜨리지 않게).
+// Handoff tab reset confirmation. "Regenerate" carries over the previous version's open decisions and supplementary answers — this
+// erases those two as well. Written with the same weight as the prototype reset confirmation: what remains goes right under the
+// title, what cannot be undone goes at the very end (so the last sentence read does not soften the warning).
 "use client";
 import { useEffect } from "react";
 import type { SupplementView } from "@/lib/api/handoff";
 import { useT } from "@/lib/i18n/provider";
 
-/** 초기화로 사라질, PM이 인계 탭에서 남긴 것의 수 — 보완 답(대체된 것 포함)과 AI 제안 확인. */
+/** The count of what the PM left in the handoff tab that a reset will erase — supplementary answers (including superseded ones) and AI suggestion confirmations. */
 export function savedAnswers(view: SupplementView | null | undefined): number {
   if (!view) return 0;
   const open = [...view.open_questions, ...view.open_deferred, ...view.open_answered];
@@ -18,7 +18,7 @@ export function savedAnswers(view: SupplementView | null | undefined): number {
 export function ResetDialog({
   answers, busy, error, onCancel, onConfirm,
 }: {
-  /** 지워질 보완 답과 AI 제안 확인의 수. 0이면 되돌릴 수 없다는 경고를 내지 않는다. */
+  /** The number of supplementary answers and AI suggestion confirmations to be erased. At 0, no cannot-be-undone warning is shown. */
   answers: number;
   busy: boolean;
   error: string | null;

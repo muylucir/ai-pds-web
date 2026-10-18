@@ -27,9 +27,9 @@ describe("public survey page", () => {
   });
 
   it("tells the respondent this is a prototype, not a finished product", async () => {
-    // 문항은 "실제 업무에 도입된다면"처럼 가정형으로 묻는다(survey/builder.py).
-    // 안내문이 "사용해 본 경험"을 요구하면 두 전제가 어긋나고, 응답자는 목
-    // 데이터를 실제 결과로 오해한 채 완성도를 평가한다.
+    // The questions ask hypothetically, as in "실제 업무에 도입된다면" (if it were adopted in real work) (survey/builder.py).
+    // If the intro asked for "사용해 본 경험" (experience of having used it), the two premises would clash, and respondents would rate
+    // completeness while mistaking mock data for real results.
     vi.spyOn(api, "getPublicSurvey").mockResolvedValue({
       title: "검증 설문", hypothesis: "가설", questions: QUESTIONS });
     await renderPage();
@@ -65,22 +65,22 @@ describe("public survey page", () => {
 });
 
 describe("설문 언어가 화면 언어를 정한다", () => {
-  // 응답자는 외부인이라 aipds_lang 쿠키가 없다 — layout의 Provider는 ko가 된다.
-  // 이 페이지만 그것을 무시하고 설문 언어를 쓴다.
+  // Respondents are outsiders, so they have no aipds_lang cookie — the layout's Provider becomes ko.
+  // Only this page ignores that and uses the survey language.
   it("영어 설문은 영어로 그려진다", async () => {
     vi.spyOn(api, "getPublicSurvey").mockResolvedValue({
       title: "Validation survey", hypothesis: "H", language: "en",
       questions: QUESTIONS });
     await renderPage();
     expect(await screen.findByRole("button", { name: /Submit/i })).toBeInTheDocument();
-    // 안내문까지 영어여야 한다 — 폼만 영어면 절반짜리 화면이다.
+    // The intro must be English too — with only the form in English, it is half a screen.
     const intro = await screen.findByTestId("survey-intro");
     expect(intro.textContent).not.toMatch(/[가-힣]/);
   });
 
   it("영어 설문은 제출 뒤 감사 화면도 영어다", async () => {
-    // 제출하면 화면 상태에서 설문이 빠진다. 언어를 거기서 읽으면 감사 화면만
-    // 한국어로 떨어진다.
+    // On submit, the survey drops out of the screen state. Reading the language from there would make only the thank-you
+    // screen fall back to Korean.
     vi.spyOn(api, "getPublicSurvey").mockResolvedValue({
       title: "Validation survey", hypothesis: "H", language: "en",
       questions: QUESTIONS });

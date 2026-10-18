@@ -1,35 +1,35 @@
-# backend/aipds/proto/layout.py — 프로토타입 산출물 레이아웃의 단독 소유자.
+# backend/aipds/proto/layout.py — sole owner of the prototype artifact layout.
 #
-# **왜 이 모듈이 생겼는가(2026-08-16).** Prototypes 탭이 카드를 만드는 규칙이
-# `prototypes/{slug}/PROTOTYPE-{slug}.md` 한 가지뿐이어서, Path A.1(Envision
-# 파생, 단일 프로토타입)로 정상 완주한 세션이 카드를 하나도 만들지 못했다
-# (ws-a-v5가 그 상태였다).
+# **Why this module exists (2026-08-16).** The Prototypes tab had only one rule for making cards,
+# `prototypes/{slug}/PROTOTYPE-{slug}.md`, so a session that completed normally on Path A.1 (derived
+# from Envision, single prototype) produced no cards at all
+# (ws-a-v5 was in that state).
 #
-# 상류에 두 레이아웃이 있고, 둘 다 정당하다:
+# Upstream has two layouts, and both are legitimate:
 #
-#   Path B (use-case 우선순위)  3개  prototypes/{slug}/PROTOTYPE-{slug}.md
-#   Path A.1 (Envision 파생)    1개  prototype/prototype-spec.md
+#   Path B (use-case priority)        3  prototypes/{slug}/PROTOTYPE-{slug}.md
+#   Path A.1 (derived from Envision)  1  prototype/prototype-spec.md
 #
-# `prototype-validation.md`가 선언하는 산출물 7개는 전부 단수 `prototype/`이고
-# (556-562행), 그 문서에서 `PROTOTYPE-`이 나오는 유일한 줄(16행)은 "이미 있으면
-# 빌드로 간다"는 **진입 조건**이다. 단일 프로토타입에는 구별할 대상이 없으니
-# 슬러그가 될 것도 없다. 트리 다이어그램(core-workflow.md:333)이 `prototypes/`를
-# "All paths"로 표기하지만, 해당 경로를 직접 규정하는 절차서가 개요보다
-# 구체적이므로 그쪽이 이긴다.
+# The 7 artifacts `prototype-validation.md` declares are all under the singular `prototype/`
+# (lines 556-562), and the only line in that document where `PROTOTYPE-` appears (line 16) is the **entry
+# condition** "if it already exists, go to build". A single prototype has nothing to distinguish it from,
+# so there is nothing to become a slug either. The tree diagram (core-workflow.md:333) labels `prototypes/`
+# as "All paths", but the procedure that defines the path directly is more specific than the
+# overview, so it wins.
 #
-# `rule/`은 데이터라 고치지 않는다(고치면 재동기화 때 조용히 사라진다). 고칠
-# 것은 우리 경로 가정이었다.
+# `rule/` is data, so it is not modified (modifications silently disappear on resync). What needed
+# fixing was our path assumption.
 #
-# **왜 한 모듈인가.** "id → 명세 경로"가 하드코딩 f-string으로 네 곳에 복제돼
-# 있었다(routes/prototypes, routes/surveys, proto/session, survey/store).
-# 레이아웃이 하나일 때는 보이지 않던 비용이 둘이 되면서 청구됐다 —
-# pathsafe.workspace_relative가 세 번 복제돼 있던 것과 같은 모양이고, 규칙이 네
-# 벌이면 그중 하나가 구멍으로 드리프트할 기회도 네 번이다.
+# **Why one module.** "id → spec path" was duplicated as a hardcoded f-string in four places
+# (routes/prototypes, routes/surveys, proto/session, survey/store).
+# A cost invisible with one layout came due once there were two —
+# the same shape as pathsafe.workspace_relative having been duplicated three times, and with four copies
+# of a rule there are four chances for one of them to drift into a hole.
 #
-# **순수 함수로 둔다.** S3를 probe해서 레이아웃을 알아내는 방식이 더 "정확"하지만
-# hot path마다 왕복이 늘고, `proto/session._spec_key`처럼 동기 헬퍼로 쓰는 자리를
-# async로 바꿔야 해서 침습적이다. 단수 레이아웃을 예약 id 하나의 분기로 처리하면
-# IO 없이 끝난다.
+# **Kept as pure functions.** Probing S3 to work out the layout would be more "accurate", but it
+# adds round trips on every hot path and is invasive, since places that use it as a sync helper such as
+# `proto/session._spec_key` would have to become async. Handling the singular layout as a branch on one reserved id
+# finishes without IO.
 from __future__ import annotations
 
 import logging
@@ -37,35 +37,35 @@ import re
 
 _log = logging.getLogger(__name__)
 
-#: 두 레이아웃이 함께 사는 서브트리. `s3.list()`에 넘기는 접두사다.
+#: The subtree where both layouts live. The prefix passed to `s3.list()`.
 DISCOVERY_PREFIX = "aiplc-docs/discovery/"
 
-#: 단일 프로토타입의 id.
+#: The id of the single prototype.
 #:
-#: **왜 디렉터리 이름을 그대로 쓰는가.** id ↔ 경로 대응이 자명해야 한다 — 로그나
-#: S3 키에서 `prototypes/prototype/source/`(빌드 소스)를 보면 곧바로
-#: `discovery/prototype/`의 그 프로토타입이라고 읽힌다. 외울 매핑이 없다.
+#: **Why use the directory name as is.** The id ↔ path mapping must be self-evident — seeing
+#: `prototypes/prototype/source/` (build source) in a log or S3 key reads immediately as
+#: that prototype in `discovery/prototype/`. There is no mapping to memorize.
 #:
-#: **왜 `_prototype` 같은 예약어를 쓰지 않는가.** 밑줄이 슬러그 문자 클래스
-#: (`[a-z0-9-]`) 밖이라 "구조적으로 충돌 불가"처럼 보이지만, 그 문자 클래스는
-#: 에이전트가 지키는 규칙일 뿐이고(prototype-context-generation.md) 우리 코드가
-#: 강제하지 않는다 — `_SLUGGED_RE`의 캡처는 어떤 세그먼트든 받는다. 에이전트가
-#: 룰을 지킬 것이라는 가정은 실측으로 깨졌으므로(같은 날 슬러그·인코딩 지시가
-#: 둘 다 무시됐다) 그 위에 안전성을 세우지 않는다. 충돌은 아래 `discover`의
-#: 가드가 **코드로** 막는다.
+#: **Why not a reserved word like `_prototype`.** The underscore is outside the slug character class
+#: (`[a-z0-9-]`), so it looks "structurally collision-free", but that character class is only
+#: a rule the agent follows (prototype-context-generation.md), and our code does not
+#: enforce it — the capture in `_SLUGGED_RE` accepts any segment. The assumption that the agent will
+#: follow the rules was broken by observation (the same day, both the slug and encoding instructions
+#: were ignored), so safety is not built on it. Collisions are blocked **in code** by the guard
+#: in `discover` below.
 SINGLE_ID = "prototype"
 
-#: Path A.1의 명세 경로. `prototype-validation.md:557`이 선언하는 값이다.
+#: Spec path for Path A.1. The value `prototype-validation.md:557` declares.
 SINGLE_SPEC_KEY = "aiplc-docs/discovery/prototype/prototype-spec.md"
 
-#: Path B의 명세 경로. 백레퍼런스가 load-bearing이다 — 디렉터리명과 파일명
-#: 접미사가 같아야 한다(상류 규약). 어긋난 파일은 카드가 아니다.
+#: Spec path for Path B. The backreference is load-bearing — the directory name and the file name
+#: suffix must match (upstream convention). A mismatched file is not a card.
 _SLUGGED_RE = re.compile(
     r"^aiplc-docs/discovery/prototypes/([^/]+)/PROTOTYPE-\1\.md$")
 
 
 def _id_for(key: str) -> str | None:
-    """이 S3 키가 명세라면 그 프로토타입의 id, 아니면 None."""
+    """If this S3 key is a spec, the id of its prototype; otherwise None."""
     if key == SINGLE_SPEC_KEY:
         return SINGLE_ID
     match = _SLUGGED_RE.match(key)
@@ -73,19 +73,19 @@ def _id_for(key: str) -> str | None:
 
 
 def discover(keys: list[str]) -> dict[str, str]:
-    """S3 키 목록 → {id: 명세 경로}. 명세가 아닌 키는 무시한다.
+    """S3 key list → {id: spec path}. Keys that are not specs are ignored.
 
-    **id 유일성을 보장한다.** 예전 구현은 `slugs[id] = key`로 덮어썼고, 두
-    명세가 한 id를 주장하면 카드 하나가 조용히 사라졌다 — 살아남는 쪽이
-    `s3.list()` 순회 순서에 달렸으니 에러 없이 틀린 결과다.
+    **Guarantees id uniqueness.** The old implementation overwrote with `slugs[id] = key`, and when two
+    specs claimed one id, one card silently disappeared — which one survived depended on
+    the iteration order of `s3.list()`, so it was a wrong result with no error.
 
-    충돌 시 **슬러그 쪽을 남긴다**: 상류가 `PROTOTYPE-{slug}.md`를 ★ Shareable로
-    표시하고 빌드·설문이 그 파일로 키되므로 이미 참조가 붙어 있을 가능성이
-    높다. 그리고 그 선택이 순회 순서와 무관해야 가드다 — 아래는 키를 정렬하지
-    않고도 결정적이다(단수 키는 정확히 하나뿐이므로 우선순위 비교로 충분하다).
+    On collision **the slug side is kept**: upstream marks `PROTOTYPE-{slug}.md` as ★ Shareable
+    and builds and surveys are keyed by that file, so references are likely already attached.
+    And that choice must be independent of iteration order to be a guard — the code below is deterministic
+    without sorting the keys (there is exactly one singular key, so a priority comparison is enough).
 
-    떨어진 쪽은 WARNING에 **두 키를 모두** 적는다. "카드가 하나 안 보인다"를
-    로그 한 줄로 진단할 수 있어야 한다.
+    The side that loses writes **both keys** to the WARNING. "One card is missing" must be
+    diagnosable from a single log line.
     """
     found: dict[str, str] = {}
     for key in keys:
@@ -98,8 +98,8 @@ def discover(keys: list[str]) -> dict[str, str]:
             continue
         if current == key:
             continue
-        # 슬러그 레이아웃이 이긴다. 단수 키는 하나뿐이므로 "둘 중 단수인 쪽이
-        # 진다"로 순서와 무관하게 결정된다.
+        # The slug layout wins. There is only one singular key, so "of the two, the singular one
+        # loses" decides it independently of order.
         winner, loser = ((key, current) if current == SINGLE_SPEC_KEY
                          else (current, key))
         found[pid] = winner
@@ -110,10 +110,10 @@ def discover(keys: list[str]) -> dict[str, str]:
 
 
 def spec_key(prototype_id: str) -> str:
-    """id → 명세 경로. `discover`가 돌려준 id와 왕복해야 한다.
+    """id → spec path. Must round-trip with the ids `discover` returns.
 
-    어긋나면 카드는 뜨는데 빌드·설문이 명세를 못 찾는다 —
-    tests/test_proto_layout.py가 그 왕복을 고정한다.
+    If they disagree, the card appears but builds and surveys cannot find the spec —
+    tests/test_proto_layout.py pins that round trip.
     """
     if prototype_id == SINGLE_ID:
         return SINGLE_SPEC_KEY
@@ -122,60 +122,60 @@ def spec_key(prototype_id: str) -> str:
 
 
 def artifact_dir(prototype_id: str) -> str:
-    """이 프로토타입의 산출물 디렉터리(설문지 등이 들어갈 곳).
+    """This prototype's artifact directory (where the questionnaire and the like go).
 
-    명세와 **같은 디렉터리**를 돌려준다. 읽기 경로만 고치고 쓰기를 두면 단수
-    프로토타입의 설문지가 에이전트가 쓰지도 않는 `prototypes/prototype/` 트리에
-    홀로 생기고, 삭제·아카이브 경로가 그 트리를 잊는다.
+    Returns the **same directory** as the spec. Fixing only the read path and leaving writes would make a singular
+    prototype's questionnaire appear alone in a `prototypes/prototype/` tree the agent never writes to,
+    and the delete and archive paths would forget that tree.
     """
     if prototype_id == SINGLE_ID:
         return "aiplc-docs/discovery/prototype"
     return f"aiplc-docs/discovery/prototypes/{prototype_id}"
 
 
-#: Step 3의 빌드 지시서 이름. `prototype-validation.md:170`이 단수 경로로
-#: 선언하고, 명세(Step 1)와 design-context 답변(Step 2)을 합친 **빌더의 입력**이다
-#: (같은 문서 244행 "The AI agent reads `build-instructions.md`"). Path B의 룰은
-#: 이 파일을 쓰지 않는다 — `PROTOTYPE-{slug}.md`가 그 자체로 빌드 컨텍스트다.
+#: Name of the Step 3 build instructions. `prototype-validation.md:170` declares it with a singular path,
+#: and it is the **builder's input**, combining the spec (Step 1) and the design-context answers (Step 2)
+#: (line 244 of the same document, "The AI agent reads `build-instructions.md`"). Path B's rules do not
+#: use this file — `PROTOTYPE-{slug}.md` is itself the build context.
 BUILD_INSTRUCTIONS = "build-instructions.md"
 
 
 def build_instructions_key(prototype_id: str) -> str:
-    """id → 빌드 지시서 경로. 명세와 같은 디렉터리다."""
+    """id → build instructions path. Same directory as the spec."""
     return f"{artifact_dir(prototype_id)}/{BUILD_INSTRUCTIONS}"
 
 
-#: 수정 이력 파일 이름. 웹이 소유하는 산출물이다 — 상류 룰에는 없다. 빌드 세션이
-#: `build_complete`로 남긴 "명세 대비 바뀐 것"이 누적된다(proto/session).
+#: Change history file name. A web-owned artifact — not in the upstream rules. It accumulates the
+#: "what changed relative to the spec" that build sessions leave with `build_complete` (proto/session).
 CHANGE_HISTORY = "change-history.md"
 
 
 def change_history_key(prototype_id: str) -> str:
-    """id → 수정 이력 경로. 명세와 같은 디렉터리다.
+    """id → change history path. Same directory as the spec.
 
-    S3 정본이자 빌드 디렉터리의 사본 경로가 같은 문자열이다(지시서와 같다). 정본을
-    `aiplc-docs/` 아래에 두는 이유: Discovery 워크스페이스가 이 트리를 복원하므로,
-    Proceed 직전의 명세 정합성 패스(discovery-config/CLAUDE.md)가 코드를 보지 않고도
-    이 이력을 읽는다. 설문 집계(`SURVEY_AGGREGATE`)가 Step 6에 닿는 것과 같은
-    경로다. 리셋은 정확한 키를 지운다(proto/session.purge_session_state).
+    The S3 source-of-truth copy and the copy in the build directory use the same path string (same as the instructions). Why the source-of-truth copy
+    lives under `aiplc-docs/`: the Discovery workspace restores this tree, so the spec reconciliation pass
+    just before Proceed (discovery-config/CLAUDE.md) reads this history without looking at the code. It is the same
+    path by which the survey aggregate (`SURVEY_AGGREGATE`) reaches Step 6. Reset deletes the exact key
+    (proto/session.purge_session_state).
     """
     return f"{artifact_dir(prototype_id)}/{CHANGE_HISTORY}"
 
 
-#: 설문 집계 파일 이름. 웹이 소유하는 산출물이다 — 상류 룰에는 없다. "결과 취합"이
-#: 응답에서 다시 만들어 매번 덮어쓰고, 리셋이 지운다(survey/store).
+#: Survey aggregate file name. A web-owned artifact — not in the upstream rules. "결과 취합" (Synthesize results)
+#: rebuilds it from the responses and overwrites it each time, and reset deletes it (survey/store).
 #:
-#: **룰의 `validation-results.md`와 다른 파일이어야 한다.** 그 파일은 Step 6에서
-#: 에이전트가 분석을 써넣고 Step 8의 Part 2가 근거로 인용하는 **룰의 산출물**이다.
-#: 웹이 같은 파일에 집계를 쓰면 주인이 둘이 된다: 재취합이 에이전트의 분석을 빈
-#: 템플릿으로 덮어쓰고, 리셋이 Part 2가 인용하는 근거를 지운다(2026-10-06 실측
-#: ws-b — 웹 집계 아래 에이전트 분석이 붙은 채로 설문이 열려 있었다). 이 파일은
-#: Step 5가 허용하는 "가져올 피드백 파일"이고, `validation-results.md`는 에이전트가
-#: 이것을 읽어 직접 만든다. 그래서 Discovery 게이트가 이 파일 쓰기를 막는다
+#: **It must be a different file from the rules' `validation-results.md`.** That file is the **rules' artifact**
+#: into which the agent writes its analysis in Step 6 and which Step 8's Part 2 cites as evidence.
+#: If the web wrote the aggregate into the same file it would have two owners: a re-synthesis would overwrite the agent's
+#: analysis with an empty template, and a reset would delete the evidence Part 2 cites (observed 2026-10-06
+#: ws-b — the survey was open with the agent's analysis attached beneath the web aggregate). This file is
+#: the "feedback file to import" that Step 5 allows, and `validation-results.md` is built by the agent
+#: itself from reading it. That is why the Discovery gate blocks writes to this file
 #: (agent/discovery_guard.web_owned_denial).
 SURVEY_AGGREGATE = "survey-aggregate.md"
 
 
 def survey_aggregate_key(prototype_id: str) -> str:
-    """id → 설문 집계 경로. 명세와 같은 디렉터리다(설문지 사본과 같은 이유)."""
+    """id → survey aggregate path. Same directory as the spec (same reason as the questionnaire copy)."""
     return f"{artifact_dir(prototype_id)}/{SURVEY_AGGREGATE}"

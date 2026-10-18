@@ -1,25 +1,25 @@
-# backend/aipds/survey/inputs.py — 설문 문항 생성이 프로토타입 스펙 밖에서
-# 끌어오는 Envision 산출물.
+# backend/aipds/survey/inputs.py — Envision artifacts that survey question generation pulls in
+# from outside the prototype spec.
 #
-# **왜 스펙만으로는 부족한가.** 스펙의 `Problem Statement`·`Business Value`는
-# 한두 줄 요약이고, 그 요약을 만든 근거(페인포인트별 심각도·빈도·현재 우회책,
-# 우선순위와 그 이유, 업종과 현행 업무 방식)는 Envision 산출물에만 있다. 설문은
-# 그 근거를 검증하는 것이므로 요약만 보고 문항을 만들면 무엇을 검증하는지 모르는
-# 문항이 나온다.
+# **Why the spec alone is not enough.** The spec's `Problem Statement` and `Business Value` are
+# one- or two-line summaries, and the evidence behind them (severity, frequency, and current
+# workarounds per pain point; priorities and their reasons; industry and current work practices)
+# exists only in the Envision artifacts. The survey validates that evidence, so generating questions
+# from the summary alone produces questions that do not know what they are validating.
 #
-# **왜 `discovery-document.md`는 넣지 않는가(2026-08-20 실측).** 설문을 만드는
-# 시점(`aiplc-state.md`의 Current Stage가 Prototype & Validation)에 그 문서는
-# `# Part 1: Envision` 하나뿐이었고 — Solution Analysis가 `[x]` 완료로 표시된
-# 프로젝트에서도 Part 2가 쓰이지 않았다 — 그 안의 `## 페인 포인트 분석 요약`은
-# 아래 `pain-point-analysis.md`를 손실 압축한 재진술이다. 즉 고유 기여는 PR/FAQ
-# 산문뿐인데, 그 문서의 내부 FAQ에는 가격 책정·TAM·단위 경제성·수익성 달성
-# 시점 문항이 20개 넘게 있다(실측: ship 21개, test1111 24개). 그것들은
-# survey/builder.py의 프롬프트가 **묻지 말라고 명시한** 축이다. 얻는 것보다
-# 끌어당기는 것이 크다.
+# **Why `discovery-document.md` is not included (observed 2026-08-20).** At the time the survey is
+# generated (Current Stage in `aiplc-state.md` is Prototype & Validation), that document contained
+# only `# Part 1: Envision` — even in projects where Solution Analysis was marked `[x]` done,
+# Part 2 had not been written — and its `## 페인 포인트 분석 요약` is a lossy restatement of
+# `pain-point-analysis.md` below. So its only unique contribution is the PR/FAQ prose, yet that
+# document's internal FAQ has more than 20 questions on pricing, TAM, unit economics, and time to
+# profitability (observed: 21 in ship, 24 in test1111). Those are exactly the axes the
+# survey/builder.py prompt **explicitly says not to ask about**. It pulls in more than it
+# contributes.
 #
-# **모든 조회는 fail-soft다.** 보조 문서는 설문의 전제가 아니라 보강이다. 여기서
-# 예외가 새면 routes/surveys.py의 502로 떨어져, 있으면 좋았을 문서 하나 때문에
-# 설문을 아예 만들 수 없게 된다.
+# **Every lookup is fail-soft.** Supporting documents are an enhancement to the survey, not a
+# prerequisite. If an exception leaked here, it would fall into the 502 in routes/surveys.py, and the
+# survey could not be generated at all because of one nice-to-have document.
 from __future__ import annotations
 
 import logging
@@ -30,37 +30,37 @@ from aipds.agent.question_file_answers import looks_like_question_file
 
 _log = logging.getLogger(__name__)
 
-#: Envision 산출물이 사는 디렉터리. 프로젝트 단위이지 프로토타입 단위가 아니다 —
-#: 그래서 proto/layout.py가 아니라 이 모듈이 갖는다(그쪽은 프로토타입 산출물
-#: 레이아웃의 단독 소유자다).
+#: The directory where Envision artifacts live. It is per project, not per prototype —
+#: so this module owns it rather than proto/layout.py (that module is the sole owner of the
+#: prototype artifact layout).
 ENVISION_PREFIX = "aiplc-docs/discovery/envision/"
 
-#: 룰이 선언하는 고정 키(envision.md:190). 실측 3개 프로젝트에 3/3 존재했다.
+#: The fixed key the rules declare (envision.md:190). Present in 3/3 of the 3 projects observed.
 PAIN_POINTS_KEY = ENVISION_PREFIX + "pain-point-analysis.md"
 
-#: 비즈니스 컨텍스트의 정식 이름 — **룰이 선언하지 않는다.** 에이전트가 이름을
-#: 지어내므로 아래 `_business_context_keys`가 접두사로 후보를 넓힌다. 이 이름이
-#: 있으면 그것이 합성본이므로 다른 변형을 이긴다.
+#: The canonical name for the business context — **the rules do not declare it.** The agent makes up
+#: the name, so `_business_context_keys` below widens candidates by prefix. If this name is present,
+#: it is the synthesized version and beats the other variants.
 BUSINESS_CONTEXT_KEY = ENVISION_PREFIX + "business-context.md"
 
 _BUSINESS_CONTEXT_STEM = "business-context"
 
-#: 문서 하나에 허용하는 최대 글자수. 실측 최대치는 19,472바이트(한국어
-#: 페인포인트 분석)이므로 이 상한에 닿는 것은 병리적인 문서뿐이다. 상한이 있는
-#: 이유는 토큰 비용보다 **한 문서가 프롬프트를 지배하는 것**을 막는 것이다.
+#: Maximum characters allowed per document. The observed maximum was 19,472 bytes (a Korean
+#: pain point analysis), so only pathological documents reach this cap. The cap exists not so
+#: much for token cost as to keep **one document from dominating the prompt**.
 MAX_CHARS = 40_000
 
 
 @dataclass(frozen=True)
 class DiscoveryContext:
-    """설문 생성에 실을 Envision 근거. 둘 다 없을 수 있다."""
+    """Envision evidence to include in survey generation. Either may be absent."""
 
     pain_points: str | None = None
     business_context: str | None = None
 
 
 def _clip(text: str, key: str) -> str:
-    """상한으로 자른다. **자랐으면 말한다** — 조용한 절단은 "다 넣었다"로 읽힌다."""
+    """Truncates at the cap. **Says so if truncated** — silent truncation reads as "everything was included"."""
     if len(text) <= MAX_CHARS:
         return text
     _log.warning("truncated %s to %d chars for the survey prompt (was %d)",
@@ -68,27 +68,27 @@ def _clip(text: str, key: str) -> str:
     return text[:MAX_CHARS]
 
 
-#: 질문지의 선택지 줄. `parsers/questions.py`의 `_OPTION`과 같은 형태다.
+#: Option lines in a questionnaire. Same shape as `_OPTION` in `parsers/questions.py`.
 _OPTION_LINE = re.compile(r"^([A-J]|X)\)\s")
 
-#: 답변 태그. `^` 앵커는 `looks_like_question_file`의 `_ANSWER_SLOT`과 같은
-#: 이유로 필수다 — audit 문서는 이 태그를 문장 안에 **인용**한다.
+#: The answer tag. The `^` anchor is required for the same reason as `_ANSWER_SLOT` in
+#: `looks_like_question_file` — audit documents **quote** this tag inside sentences.
 _ANSWER_LINE = re.compile(r"^\[Answer\]:[ \t]*(.*)$")
 
 
 def _scrub(text: str) -> tuple[str, int, int]:
-    """질문지 골격을 걷어낸 본문, 채워진 답변 수, 전체 답변 슬롯 수.
+    """Body with the questionnaire skeleton stripped, number of filled answers, total number of answer slots.
 
-    **줄 단위로 걷어내고 문단을 재구성하지 않는 것이 요점이다.** 답변은 여러
-    문단일 수 있고(실측: `ship`의 Question 1 답변은 4개 문단), 그 뒤 문단들이
-    현행 업무 방식과 병목을 서술한다 — 우리가 정확히 원하는 컨텍스트다.
-    `parse_question_file`로 답변을 뽑으면 그 문단들이 사라진다: 그 파서의
-    `[Answer]:` 정규식은 한 줄만 잡고(용도가 AskUserQuestion 답변 왕복이다),
-    남은 문단은 다음 문항의 질문 본문으로 흡수된다. 실측으로 1,153자가 263자가
-    됐고 잘린 쪽이 본문이었다.
+    **The point is stripping line by line without reconstructing paragraphs.** An answer can span
+    several paragraphs (observed: `ship`'s Question 1 answer was 4 paragraphs), and the later
+    paragraphs describe current work practices and bottlenecks — exactly the context we want.
+    Extracting answers with `parse_question_file` loses those paragraphs: that parser's
+    `[Answer]:` regex captures only one line (its purpose is the AskUserQuestion answer round trip),
+    and the remaining paragraphs are absorbed into the next question's body. Observed: 1,153
+    characters became 263, and what was cut was the body.
 
-    걷어내는 것은 둘뿐이다 — 선택지 줄과 `[Answer]:` 태그. 태그는 줄을 지우지
-    않고 **접두만** 떼서 뒤에 붙은 답변 본문을 살린다.
+    Only two things are stripped — option lines and the `[Answer]:` tag. The tag does not delete the
+    line; **only the prefix** is removed so the answer body after it survives.
     """
     kept: list[str] = []
     slots = filled = 0
@@ -108,36 +108,34 @@ def _scrub(text: str) -> tuple[str, int, int]:
 
 
 def _distill(key: str, text: str) -> str | None:
-    """질문지 형태의 문서에서 골격을 걷어낸다. 산문은 그대로 통과한다.
+    """Strips the skeleton from questionnaire-shaped documents. Prose passes through unchanged.
 
-    **왜 이름으로 판정하지 않는가(2026-08-20 실측).** `ship`의
-    `business-context-freeform.md`는 이름에 `question`이 없어 이름 필터를
-    통과하는데 본문은 `## Question 1~5` + `[Answer]:` 태그의 AIPLC 질문지였다
-    (5문항 중 1개만 응답). 미응답 태그와 `A)`/`X) Other` 선택지가 프롬프트에
-    실리면 모델이 남의 질문 양식을 베껴 설문 문항을 만든다.
+    **Why not decide by name (observed 2026-08-20).** `ship`'s
+    `business-context-freeform.md` has no `question` in its name and passes the name filter,
+    yet its body was an AIPLC questionnaire with `## Question 1~5` + `[Answer]:` tags
+    (only 1 of 5 questions answered). If unanswered tags and `A)`/`X) Other` options were
+    included in the prompt, the model would copy someone else's question format to build survey questions.
 
-    **왜 버리지 않고 골격만 걷어내는가.** 통째로 버리면 `ship`은 비즈니스
-    컨텍스트를 완전히 잃는다 — 답변된 Question 1이 업종·규모·현행 업무 방식을
-    담은 진짜 컨텍스트다.
+    **Why strip only the skeleton rather than discard it.** Discarding it entirely would make `ship` lose
+    its business context completely — the answered Question 1 is the real context, covering
+    industry, scale, and current work practices.
 
-    **판정은 `looks_like_question_file`이 단독으로 한다.** 그 모듈이 그렇게
-    정한 이유가 그대로 여기에도 적용된다: 판정이 두 벌이면 "질문 파일이란
-    무엇인가"의 답이 두 개가 되고, 한쪽에는 걸리고 다른 쪽에는 안 걸리는
-    문서가 생긴다.
+    **The decision is made solely by `looks_like_question_file`.** The reason that module decided so
+    applies here as well: two versions of the check would give two answers to "what is a question
+    file", producing documents caught by one and not the other.
 
-    세 갈래이고 각각 다른 사건이다:
+    There are three branches, and each is a different event:
 
-      질문지 아님                    -> 원문 그대로
-      질문지 + 답변 하나 이상        -> 골격을 걷어낸 본문
-      질문지 + 답변 슬롯 있고 전부 빔 -> None (건질 것이 없다)
+      not a questionnaire                    -> original text as is
+      questionnaire + at least one answer    -> body with the skeleton stripped
+      questionnaire + slots present, all empty -> None (nothing to salvage)
 
-    마지막 갈래가 필요한 이유: 답변이 하나도 없는 질문지에 남는 것은 질문
-    문장뿐이고, 그것을 "비즈니스 컨텍스트"로 실으면 모델이 남의 질문을 자기
-    문항으로 옮긴다.
+    Why the last branch is needed: what remains in a questionnaire with no answers is only the
+    question sentences, and including those as "business context" would make the model carry
+    someone else's questions over as its own.
 
-    `[Answer]:`를 우연히 인용한 산문은 `slots`가 채워진 것으로 세어지므로
-    첫 갈래처럼 본문이 살아남는다 — 태그 한 줄 때문에 멀쩡한 문서가 사라지지
-    않는다.
+    Prose that happens to quote `[Answer]:` is counted as having filled `slots`, so its body
+    survives as in the first branch — a sound document does not vanish because of one tag line.
     """
     if not looks_like_question_file(key, text):
         return text
@@ -156,7 +154,7 @@ async def _get(s3, key: str) -> str | None:
         text = await s3.get(key)
     except FileNotFoundError:
         return None
-    except Exception:  # noqa: BLE001 — 보강 문서 조회 실패가 설문을 막지 않는다
+    except Exception:  # noqa: BLE001 — a failure to fetch a supporting document does not block the survey
         _log.exception("could not read %s for the survey prompt", key)
         return None
     if not text.strip():
@@ -168,12 +166,12 @@ async def _get(s3, key: str) -> str | None:
 
 
 def _business_context_keys(keys: list[str]) -> list[str]:
-    """`business-context*.md` 중 질문지를 뺀 후보. 정식 이름이 있으면 그것만.
+    """Candidates among `business-context*.md` excluding questionnaires. Only the canonical name if it exists.
 
-    `question`이 든 이름을 빼는 것이 요점이다. `business-context-questions.md`는
-    룰이 선언하는 **질문지**이고(envision.md:52) 본문이 선택지와 `[Answer]:`
-    태그다 — 컨텍스트로 실으면 모델이 남의 질문 양식을 베낀다. 실측 버킷에는
-    `-clarification-questions.md`·`-followup-questions.md`도 있었다.
+    Excluding names containing `question` is the point. `business-context-questions.md` is a
+    **questionnaire** the rules declare (envision.md:52), and its body is options and `[Answer]:`
+    tags — including it as context makes the model copy someone else's question format. The observed
+    bucket also had `-clarification-questions.md` and `-followup-questions.md`.
     """
     candidates = []
     for key in keys:
@@ -186,7 +184,7 @@ def _business_context_keys(keys: list[str]) -> list[str]:
             continue
         candidates.append(key)
     if BUSINESS_CONTEXT_KEY in candidates:
-        # 합성본이 원본 입력(`-input.md`)을 이긴다 — test1111의 실제 상태다.
+        # The synthesized version beats the original input (`-input.md`) — this is test1111's actual state.
         return [BUSINESS_CONTEXT_KEY]
     return sorted(candidates)
 
@@ -194,7 +192,7 @@ def _business_context_keys(keys: list[str]) -> list[str]:
 async def _business_context(s3) -> str | None:
     try:
         keys = await s3.list(ENVISION_PREFIX)
-    except Exception:  # noqa: BLE001 — 위와 같은 이유로 강등한다
+    except Exception:  # noqa: BLE001 — downgraded for the same reason as above
         _log.exception("could not list %s for the survey prompt", ENVISION_PREFIX)
         return None
 
@@ -207,16 +205,16 @@ async def _business_context(s3) -> str | None:
         return None
     if len(found) == 1:
         return found[0][1]
-    # 변형이 여럿일 때만 출처를 붙인다. 원본 입력과 합성본이 함께 잡힐 수 있어서,
-    # 모델이 같은 사실의 두 판본을 별개 사실로 읽지 않게 하려는 것이다. 하나뿐일
-    # 때 붙이면 프롬프트에 의미 없는 S3 키가 새는 것뿐이다 — 절의 제목은
-    # survey/builder.py의 프롬프트가 이미 붙인다.
+    # Attach the source only when there are several variants. The original input and the synthesized
+    # version can both be picked up, so this keeps the model from reading two versions of the same
+    # fact as separate facts. Attaching it when there is only one just leaks a meaningless S3 key into
+    # the prompt — the section title is already added by the survey/builder.py prompt.
     joined = "\n\n".join(f"[{key}]\n{text}" for key, text in found)
     return _clip(joined, ENVISION_PREFIX + "business-context*.md")
 
 
 async def gather_context(s3) -> DiscoveryContext:
-    """이 프로젝트의 Envision 근거를 모은다. 없는 것은 None으로 남는다."""
+    """Gathers this project's Envision evidence. Missing pieces stay None."""
     return DiscoveryContext(
         pain_points=await _get(s3, PAIN_POINTS_KEY),
         business_context=await _business_context(s3),

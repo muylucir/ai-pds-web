@@ -8,7 +8,7 @@ function Probe({ ids, enabled }: { ids: string[]; enabled?: boolean }) {
   return <span data-testid="active">{active ?? "none"}</span>;
 }
 
-/** IntersectionObserver 스텁. 마지막으로 만들어진 콜백을 직접 부를 수 있게 둔다. */
+/** IntersectionObserver stub. Keeps the most recently created callback so it can be called directly. */
 function stubObserver() {
   const state: {
     callback: IntersectionObserverCallback | null;
@@ -35,14 +35,14 @@ function stubObserver() {
   return state;
 }
 
-/** 콜백에 넘길 최소한의 엔트리. 훅은 target.id와 isIntersecting만 읽는다. */
+/** Minimal entry to pass to the callback. The hook reads only target.id and isIntersecting. */
 function entry(id: string, isIntersecting: boolean) {
   return { target: { id }, isIntersecting } as unknown as IntersectionObserverEntry;
 }
 
-/** 본문에 앵커만 심는다. 훅이 읽는 것은 id뿐이므로 빈 div로 충분하다.
- *  HTML 문자열을 통째로 대입하지 않는 이유: 값이 정적 리터럴이어도 정적 분석은
- *  그 대입 형태 자체를 XSS 후보로 보고하고, 노드를 만드는 편이 더 짧다. */
+/** Plant only anchors in the body. The hook reads only ids, so empty divs suffice.
+ *  Why not assign a whole HTML string: even when the value is a static literal, static analysis
+ *  reports that assignment pattern itself as an XSS candidate, and creating nodes is shorter. */
 function mountAnchors(...ids: string[]) {
   document.body.replaceChildren(
     ...ids.map((id) => Object.assign(document.createElement("div"), { id })),
@@ -56,8 +56,8 @@ afterEach(() => {
 
 describe("useScrollSpy", () => {
   it("IntersectionObserver가 없으면 던지지 않고 null을 준다", () => {
-    // jsdom 기본 상태가 바로 이것이다. 여기서 던지면 매뉴얼 전체가 렌더되지
-    // 않으므로, 강조를 잃는 쪽으로 떨어져야 한다.
+    // This is exactly jsdom's default state. Throwing here would keep the whole manual from
+    // rendering, so it must fall back to losing the highlight.
     vi.stubGlobal("IntersectionObserver", undefined);
     render(<Probe ids={["a", "b"]} />);
     expect(screen.getByTestId("active")).toHaveTextContent("none");
@@ -67,7 +67,7 @@ describe("useScrollSpy", () => {
     const state = stubObserver();
     mountAnchors("a", "c");
     render(<Probe ids={["a", "b", "c"]} />);
-    // "b"는 DOM에 없다 — 검색으로 그 절이 걸러진 상태가 실제로 그렇다.
+    // "b" is not in the DOM — that is what it actually looks like when search has filtered out that section.
     expect(state.observed).toEqual(["a", "c"]);
   });
 
@@ -76,8 +76,8 @@ describe("useScrollSpy", () => {
     mountAnchors("a", "b", "c");
     render(<Probe ids={["a", "b", "c"]} />);
 
-    // 콜백은 바뀐 것만 담고 순서를 보장하지 않는다. entries 순서로 고르면
-    // 여기서 "c"가 켜진다 — 위로 스크롤할 때 아래쪽 절이 강조되는 버그다.
+    // The callback carries only what changed and does not guarantee order. Picking by entries order would
+    // light up "c" here — the bug where a lower section gets highlighted while scrolling up.
     act(() => {
       state.callback?.([entry("c", true), entry("b", true)], {} as IntersectionObserver);
     });

@@ -1,12 +1,16 @@
-# backend/tests/test_harden_script.py — infra/scripts/aipds-harden의 `sync`(스택이 SSM에 남긴 값 반영).
+# backend/tests/test_harden_script.py — `sync` of infra/scripts/aipds-harden (applying the
+# values the stack left in SSM).
 #
-# sync는 타이머가 root로 2분마다 돌리고, 새 인스턴스에서는 user-data(set -e) 안에서 돈다. 그래서
-# "무엇을 바꾸지 않는가"가 사양의 절반이다: 값이 없거나 못 읽으면 끄지 않고, 운영자가 멈춰 둔
-# 상태(hold)를 되돌리지 않고, 바뀐 것이 없으면 재시작하지 않고, 어떤 경우에도 실패로 끝나지 않는다.
+# sync is run by a timer as root every 2 minutes, and on a new instance it runs inside user-data
+# (set -e). So "what it does not change" is half the spec: if a value is missing or unreadable it
+# does not turn things off, it does not revert a state the operator paused (hold), it does not
+# restart if nothing changed, and under no circumstances does it end in failure.
 #
-# 스크립트를 임시 디렉터리로 복사하면서 절대 경로(/etc, /usr/local/libexec)를 그 안으로 돌리고,
-# aws·systemctl·curl·sleep을 가짜로 둔다. 실제 파일을 쓰고 읽는 셸 동작 자체를 본다 — 문자열 검사로는
-# `set -e` 아래에서 없는 파일 하나가 부팅을 멈추는 종류의 결함을 못 잡는다(실제로 한 번 그랬다).
+# The script is copied into a temporary directory with its absolute paths (/etc,
+# /usr/local/libexec) redirected inside it, and aws, systemctl, curl, and sleep are faked. It
+# exercises the actual shell behavior of writing and reading real files — string checks cannot
+# catch the kind of defect where one missing file under `set -e` halts boot (it actually
+# happened once).
 from __future__ import annotations
 
 import json
@@ -116,7 +120,8 @@ def _restarts(calls):
 
 
 def test_nothing_to_apply_changes_nothing_and_does_not_fail(host):
-    """스택이 아직 없다 — 새 인스턴스가 HostingStack과 함께 먼저 부팅한 직후."""
+    """The stack does not exist yet — right after a new instance first boots together with
+    HostingStack."""
     proc, calls = host.run("sync")
     assert proc.returncode == 0, proc.stderr
     assert not (host.dropin / "launcher.conf").exists()
@@ -138,14 +143,15 @@ def test_values_that_appear_later_are_applied_once(host):
     assert f"AIPDS_PREVIEW_ORIGIN={ORIGIN}" in (host.dropin / "preview.conf").read_text()
     assert _restarts(calls) == ["restart aipds-backend"]
 
-    # 2분 뒤 같은 값 — 재시작하지 않는다(진행 중인 턴과 빌드가 끊긴다).
+    # The same value 2 minutes later — no restart (it would cut off in-progress turns and builds).
     proc, calls = host.run("sync")
     assert proc.returncode == 0 and "no change" in proc.stdout
     assert _restarts(calls) == []
 
 
 def test_a_stopped_backend_is_not_started(host):
-    """boot는 서비스 기동 전에 돈다 — 떠 있지 않은 백엔드를 restart로 먼저 띄우면 안 된다."""
+    """boot runs before the services start — it must not bring up a backend that is not
+    running via restart."""
     host.flag("backend-active", False)
     host.param("/aipds/agent-role-arn", ARN)
     proc, calls = host.run("sync")
@@ -177,7 +183,8 @@ def test_no_region_changes_nothing(host):
 
 
 def test_a_held_instance_is_left_alone(host):
-    """`disable`·`imds allow`는 운영자의 선택이다 — 2분 뒤 타이머가 되돌리면 롤백이 안 된다."""
+    """`disable` and `imds allow` are the operator's choice — if the timer reverted them 2
+    minutes later, rollback would not work."""
     host.param("/aipds/agent-role-arn", ARN)
     host.conf.mkdir(parents=True, exist_ok=True)
     (host.conf / "hold").write_text("disable at 2026-09-24T00:00:00Z\n")
@@ -189,7 +196,7 @@ def test_a_held_instance_is_left_alone(host):
 
 def test_disable_holds_and_enable_releases(host):
     host.param("/aipds/agent-role-arn", ARN)
-    (host.libexec / "launch").write_text("#!/bin/sh\n")  # enable은 install이 끝났는지 본다
+    (host.libexec / "launch").write_text("#!/bin/sh\n")  # enable checks whether install finished
     (host.libexec / "launch").chmod(0o755)
 
     proc, _ = host.run("disable")
@@ -203,7 +210,8 @@ def test_disable_holds_and_enable_releases(host):
 
 
 def test_a_rejected_preview_value_does_not_fail_the_run(host):
-    """boot는 user-data(set -e) 안이다 — 여기서 실패로 끝나면 부팅이 멈추고 앱 전체가 502다."""
+    """boot is inside user-data (set -e) — ending in failure here halts boot and the whole app
+    is a 502."""
     host.param("/aipds/agent-role-arn", ARN)
     host.param("/aipds/preview-origin", "http://not-cloudfront.example.com")
     host.param("/aipds/preview-secret-arn", SECRET)
@@ -214,7 +222,7 @@ def test_a_rejected_preview_value_does_not_fail_the_run(host):
     assert not (host.dropin / "preview.conf").exists()
 
 
-# ---- 버킷 CORS(프로젝트 가져오기의 브라우저 직접 업로드, infra/lib/aipds-upload-cors-stack.ts) ----
+# ---- Bucket CORS (direct browser upload for import, infra/lib/aipds-upload-cors-stack.ts) ----
 
 APP = "https://d2example.cloudfront.net"
 DRILL_RULE = {"AllowedHeaders": ["content-type"], "AllowedMethods": ["PUT"],
@@ -230,14 +238,15 @@ def cors_host(host):
 
 
 def test_the_app_origin_is_added_to_the_drill_rule(cors_host):
-    """DrillStack을 AIPDS_UPLOAD_ORIGINS 없이 배포한 상태(localhost만) — 새 환경의 첫 배포가 이렇다."""
+    """DrillStack deployed without AIPDS_UPLOAD_ORIGINS (localhost only) — this is what the
+    first deploy of a new environment looks like."""
     (cors_host.fake_dir / "cors.json").write_text(json.dumps({"CORSRules": [DRILL_RULE]}))
     proc, calls = cors_host.run("sync")
     assert proc.returncode == 0, proc.stderr
     rules = cors_host.cors()["CORSRules"]
     assert rules == [{**DRILL_RULE, "AllowedOrigins": ["http://localhost:3000", APP]}]
     assert f"added {APP}" in proc.stdout
-    # CORS는 백엔드 설정이 아니다 — 재시작하지 않는다.
+    # CORS is not a backend setting — no restart.
     assert _restarts(calls) == []
 
     before = cors_host.cors()
@@ -252,7 +261,8 @@ def test_a_bucket_without_cors_gets_the_drill_shaped_rule(cors_host):
 
 
 def test_without_the_permission_nothing_fails(cors_host):
-    """AipdsUploadCorsStack 전 — 경고만 하고, 나머지 동기화(래퍼·프리뷰)는 그대로 한다."""
+    """Before AipdsUploadCorsStack — only warns, and the rest of the sync (wrapper, preview)
+    proceeds as is."""
     cors_host.flag("cors-denied")
     cors_host.param("/aipds/agent-role-arn", ARN)
     proc, _ = cors_host.run("sync")
@@ -262,7 +272,7 @@ def test_without_the_permission_nothing_fails(cors_host):
 
 
 def test_a_held_instance_still_keeps_uploads_working(cors_host):
-    """hold는 샌드박스 롤백이다 — 가져오기 업로드와는 무관하다."""
+    """hold is the sandbox rollback — it has nothing to do with import uploads."""
     cors_host.conf.mkdir(parents=True, exist_ok=True)
     (cors_host.conf / "hold").write_text("disable at 2026-09-24T00:00:00Z\n")
     proc, _ = cors_host.run("sync")

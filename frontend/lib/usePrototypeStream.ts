@@ -35,22 +35,23 @@ import type { UserItem, AiItem, HistoryCardItem, TraceEntry, LiveActivity } from
 // stage/document/activeDoc/turnSeq branches — a build session has no
 // multi-document sidebar.
 //
-// **대화는 두 곳에서 되살린다.** 지난 세션들의 대화는 트랜스크립트에서(GET
-// /history — backend proto/history.py), 열린 세션의 턴은 그 세션의 턴 로그에서다.
-// 빌드 턴은 요청이 아니라 세션의 서버 작업이고(backend aipds/turn_job.py) 세션은 자기
-// 턴을 전부 보존한다. 그래서 패널이 다시 열리면(새로고침, 닫았다 엶) `resume()`이
-// 히스토리를 깔고 그 뒤에 열린 세션의 턴들을 처음부터 재생해 말풍선·질문 카드·답·
-// 완료 카드를 순서대로 되살리고, 도는 턴에는 그대로 붙는다. 히스토리는 그 턴들 앞에서
-// 끊겨 오므로 같은 턴이 두 번 보이지 않는다.
+// **The conversation is restored from two places.** Past sessions' conversations come from the
+// transcript (GET /history — backend proto/history.py), and the open session's turns come from
+// that session's turn log. A build turn is the session's server job, not a request (backend
+// aipds/turn_job.py), and the session keeps all of its turns. So when the panel reopens
+// (refresh, close and reopen), `resume()` lays down the history, then replays the open session's
+// turns from the start to restore the bubbles, question cards, answers, and completion card in
+// order, and attaches to a running turn as is. The history arrives cut off before those turns,
+// so the same turn never appears twice.
 export type { UserItem, AiItem, HistoryCardItem } from "@/lib/chatItems";
 export type ChatItem = UserItem | AiItem | HistoryCardItem;
 
 let counter = 0;
 const nextId = () => `proto-item-${counter++}`;
 
-// 턴 개시(POST)의 실패는 상태 코드를 준다 — EventSource의 익명 onerror와 달리
-// 원인을 말할 수 있는 유일한 지점이다. 413/431은 "입력이 길다"는 뜻이고, 그
-// 구분이 없으면 이 버그의 증상("연결이 끊어졌습니다")이 그대로 돌아온다.
+// A failure to start a turn (POST) gives a status code — unlike EventSource's anonymous onerror,
+// it is the only point where the cause can be told. 413/431 mean "the input is too long", and
+// without that distinction this bug's symptom ("연결이 끊어졌습니다") comes right back.
 function isTooLong(err: unknown): boolean {
   const status = (err as { status?: number } | null)?.status;
   return status === 431 || status === 413;
@@ -71,32 +72,35 @@ function safeParse<T>(payload: string | null): T | null {
 export interface PrototypeStream {
   items: ChatItem[];
   streaming: boolean;
-  /** 지금 도는 서브에이전트들. 빌드 에이전트가 Agent 도구로 일을 병렬로 넘기는
-   *  동안 화면이 멈춘 듯 보이지 않게 하는 값이다 — 고정 줄이 이것을 행으로
-   *  그린다(protoAgents.ts 헤더). 병렬 구간이 아니면 빈 배열이다. */
+  /** The sub-agents running right now. This value keeps the screen from looking frozen while the
+   *  build agent hands work off in parallel via the Agent tool — the pinned line draws it as
+   *  rows (protoAgents.ts header). Outside a parallel section it is an empty array. */
   agents: AgentRow[];
   pendingQuestions: QuestionsPayload | null;
-  /** 에이전트가 빌드 완료를 선언했을 때의 요약. 이 값이 있으면 세션은 이미
-   *  닫혔거나 몇 초 안에 닫힌다(백엔드가 유예 타이머로 닫는다). */
+  /** The summary from when the agent declared the build complete. If this value is set, the
+   *  session has already closed or will close within seconds (the backend closes it with a
+   *  grace timer). */
   buildComplete: BuildCompletePayload | null;
   changedPaths: string[];
-  /** 지난 대화를 불러오는 중. 빈 패널의 안내 문구가 히스토리보다 먼저 떴다가
-   *  사라지지 않게 한다. */
+  /** Loading the past conversation. Keeps the empty panel's placeholder text from showing before
+   *  the history and then disappearing. */
   historyLoading: boolean;
-  /** 빌드 에이전트의 컨텍스트 사용량(입력창 위 표시). 히스토리가 마지막 턴의 값을
-   *  주고(다음 대화가 새 세션이면 null), 턴이 도는 동안 `context` 이벤트가 갱신한다. */
+  /** The build agent's context usage (shown above the input). The history gives the last turn's
+   *  value (null if the next conversation is a new session), and `context` events update it
+   *  while a turn runs. */
   context: ContextUsage | null;
   startBuild: () => void;
-  /** 지난 대화를 지금 대화 **앞에** 깐다. 새로 연 세션(자동 개시)이 쓴다 — 이미 열린
-   *  세션은 `resume()`이 같은 일을 한다. */
+  /** Lays the past conversation **before** the current one. Used by a newly opened session (auto
+   *  opening) — for an already open session, `resume()` does the same thing. */
   restoreHistory: () => Promise<void>;
   send: (text: string) => void;
   submitAnswers: (answers: Record<string, string>) => Promise<void>;
   interrupt: () => Promise<void>;
-  /** 완료된 빌드를 개선한다: 새 세션을 열고 개시 턴을 발화한다. 서버가
-   *  `__first__`를 핸드오프 프롬프트로 치환하므로 새 API가 필요 없다. */
+  /** Improves a completed build: opens a new session and fires the opening turn. The server
+   *  substitutes `__first__` with the handoff prompt, so no new API is needed. */
   restartForImprovement: () => Promise<void>;
-  /** 이미 열린 세션의 대화를 되살리고 도는 턴에 붙는다(패널이 다시 열릴 때). */
+  /** Restores an already open session's conversation and attaches to a running turn (when the
+   *  panel reopens). */
   resume: () => Promise<void>;
 }
 
@@ -109,27 +113,29 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [context, setContext] = useState<ContextUsage | null>(null);
-  // 라이브 값이 이미 왔는가 — 늦게 도착한 히스토리의 기록이 그것을 덮지 않게 한다
-  // (useWorkspaceStream의 같은 ref와 같은 이유).
+  // Whether a live value has already arrived — keeps a late-arriving history record from
+  // overwriting it (same reason as the same ref in useWorkspaceStream).
   const liveContextRef = useRef(false);
-  // **행은 화면의 것이고 말풍선의 것이 아니다** — 고정 줄이 읽으므로 `activity`와
-  // 같은 자리에 있어야 하지만, `activity`처럼 말풍선에 얹으면 병렬 구간에서
-  // 어느 말풍선의 것인지가 애매해진다(한 턴이 여러 말풍선으로 쪼개진다).
-  // 턴 단위 값이므로 훅이 직접 들고 있고, 매 턴 시작에 비운다.
+  // **The rows belong to the screen, not to a bubble** — the pinned line reads them, so they
+  // must sit in the same place as `activity`, but putting them on a bubble like `activity`
+  // would make it ambiguous which bubble they belong to in a parallel section (one turn splits
+  // into several bubbles). It is a per-turn value, so the hook holds it directly and clears it
+  // at the start of every turn.
   const [agents, setAgents] = useState<AgentRow[]>([]);
-  // 같은 값의 ref 미러. **읽기가 필요해서 있다**: `done` 프레임에는 라벨이 없고
-  // (started가 유일한 출처다) 트레이스 줄은 그 라벨을 써야 하므로, 병합 **결과**를
-  // 같은 프레임 안에서 읽어야 한다. setState 업데이터 안에서 트레이스를 쓰면
-  // StrictMode의 이중 호출에 줄이 두 번 붙는다 — 그래서 병합을 ref로 하고
-  // 상태는 그 결과를 받는다. 이 파일의 다른 ref들과 같은 규율이다.
+  // A ref mirror of the same value. **It exists because a read is needed**: the `done` frame has no
+  // label (started is the only source), and the trace line must use that label, so the merge
+  // **result** has to be read within the same frame. Writing the trace inside a setState updater
+  // attaches the line twice under StrictMode's double invocation — so the merge is done on the ref
+  // and the state receives its result. Same discipline as the other refs in this file.
   const agentsRef = useRef<AgentRow[]>([]);
   const stopRef = useRef<null | (() => void)>(null);
-  // 마지막으로 받은 질문. 답 말풍선의 문구가 그 질문의 보기 라벨로 만들어지므로
-  // (answerSummary) 폼을 닫은 뒤에도 쥐고 있어야 한다 — 답은 턴 로그의 `answers`
-  // 이벤트로 **나중에** 도착한다.
+  // The last question received. The answer bubble's text is built from that question's option
+  // labels (answerSummary), so it must be held even after the form closes — the answer arrives
+  // **later**, as the turn log's `answers` event.
   const lastQuestionsRef = useRef<QuestionsPayload | null>(null);
-  // 도는 턴에 붙는 함수. runTurn이 409(다른 턴이 돌고 있음)를 받았을 때 그 턴을
-  // 보여 주려고 부르는데, 둘이 서로를 참조하므로 ref로 잇는다.
+  // The function that attaches to a running turn. runTurn calls it to show that turn when it
+  // gets a 409 (another turn is running), and since the two reference each other they are
+  // joined via a ref.
   const attachRef = useRef<(turnId: string) => void>(() => {});
   const resumingRef = useRef(false);
   // The AI bubble that events are landing in RIGHT NOW — not the bubble the
@@ -149,10 +155,10 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   // common "status → first message" opening of every turn).
   const hasTextRef = useRef(false);
 
-  // 텍스트 델타는 프레임마다 한 번 붙는다(useTextDeltas). 말풍선을 만지는 다른 길 —
-  // patchAi, 말풍선 분할(openAiBubble), 턴 종료의 빈 말풍선 정리 — 은 전부 먼저
-  // 비운다. 그래야 순서가 보존되고, 아직 붙지 않은 텍스트가 있는 말풍선이 "빈
-  // 말풍선"으로 지워지지 않는다.
+  // Text deltas are appended once per frame (useTextDeltas). Every other path that touches a bubble
+  // — patchAi, bubble splitting (openAiBubble), cleanup of empty bubbles at turn end — flushes
+  // first. That preserves order, and keeps a bubble with not-yet-appended text from being deleted
+  // as an "empty bubble".
   const deltas = useTextDeltas((aiId, text) => {
     setItems((prev) => prev.map((it) => (it.id === aiId && it.role === "ai"
       ? { ...it, text: it.text + text, activity: { kind: "writing" } } : it)));
@@ -211,9 +217,10 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         return;
       }
       if (ev.kind === "answers") {
-        // 사용자가 답했다(서버가 턴 로그에 남긴다 — proto/session.send_answers). 답은
-        // 질문 **다음**, 에이전트의 응답 **앞**에 온다: 새 말풍선을 열고 그 사이에 답
-        // 말풍선을 둔다. 라이브와 재생이 같은 길이라 새로고침 뒤에도 같은 대화가 된다.
+        // The user answered (the server records it in the turn log — proto/session.send_answers).
+        // The answer comes **after** the question and **before** the agent's response: open a new
+        // bubble and put the answer bubble in between. Live and replay take the same path, so the
+        // conversation is the same after a refresh.
         const answers = safeParse<{ answers?: Record<string, string> }>(ev.payload)?.answers ?? {};
         const questions = lastQuestionsRef.current;
         const summary = questions
@@ -224,7 +231,8 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         return;
       }
       if (ev.kind === "context") {
-        // 말풍선의 것이 아니라 화면의 것이다 — 말풍선 분할 판단에도 끼지 않는다.
+        // This belongs to the screen, not a bubble — it does not factor into bubble-splitting
+        // decisions either.
         const parsed = safeParse<ContextUsage>(ev.payload);
         if (parsed) {
           liveContextRef.current = true;
@@ -233,9 +241,9 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         return;
       }
       if (ev.kind === "build_complete") {
-        // streaming을 건드리지 않는다 — 뒤따르는 `done`이 onDone으로 평소대로
-        // 턴을 닫는다. 백엔드는 이 선언 뒤 유예 타이머로 세션을 닫으므로,
-        // 이 시점부터 send()는 더 이상 유효하지 않다.
+        // Do not touch streaming — the following `done` closes the turn via onDone as usual.
+        // The backend closes the session with a grace timer after this declaration, so
+        // from this point send() is no longer valid.
         const parsed = safeParse<BuildCompletePayload>(ev.payload);
         if (parsed) setBuildComplete(parsed);
         return;
@@ -246,13 +254,13 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         const next = applyAgentActivity(agentsRef.current, parsed, Date.now());
         agentsRef.current = next;
         setAgents(next);
-        // 끝난 에이전트만 트레이스에 남긴다. 시작은 이미 `Agent` 도구의 status가
-        // 무엇을 맡겼는지까지 기록하므로(tool_trace의 `Agent → description`),
-        // 여기서 또 남기면 같은 사실이 두 줄이 된다.
+        // Only finished agents are recorded in the trace. The start is already recorded by the
+        // `Agent` tool's status, down to what was delegated (tool_trace's `Agent → description`),
+        // so recording it again here would make the same fact two lines.
         if (parsed.state === "done") {
-          // 라벨과 요약은 **병합된 행**에서 읽는다 — 두 값이 서로 다른 프레임에서
-          // 온다(라벨은 started, 요약은 늦게 오는 종료). payload만 보면 완료 줄이
-          // 이름이나 요약을 잃는다.
+          // Read the label and summary from the **merged row** — the two values come from
+          // different frames (the label from started, the summary from the late-arriving end).
+          // Looking only at the payload, the completion line would lose its name or summary.
           const row = next.find((r) => r.id === parsed.task_id);
           const line: TraceEntry = {
             kind: "agent",
@@ -263,9 +271,9 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
             taskId: parsed.task_id,
           };
           patchAi(aiId, (it) => {
-            // **덧붙이지 않고 갱신한다.** 한 에이전트의 종료는 두 번 올 수 있고
-            // (task_updated → task_notification) 요약은 늦은 쪽에만 실린다. 그냥
-            // 붙이면 완료가 두 줄로 보인다.
+            // **Update rather than append.** One agent's end can arrive twice
+            // (task_updated → task_notification), and the summary is only on the later one.
+            // Simply appending would show completion as two lines.
             const at = it.trace.findIndex(
               (e) => e.kind === "agent" && e.taskId === parsed.task_id);
             if (at === -1) return { ...it, trace: [...it.trace, line] };
@@ -274,9 +282,9 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
             return { ...it, trace };
           });
         }
-        // 고정 줄의 `activity`는 **건드리지 않는다**: 그 줄은 총괄 에이전트의
-        // 일을 말하고, 서브에이전트의 일은 아래 행들이 말한다. 여기서 덮으면
-        // 총괄이 무엇을 기다리는지가 서브에이전트의 도구 이름으로 지워진다.
+        // **Do not touch** the pinned line's `activity`: that line describes the orchestrating agent's
+        // work, and the rows below describe the sub-agents' work. Overwriting it here would erase
+        // what the lead is waiting on with a sub-agent's tool name.
         return;
       }
       if (ev.kind === "error") {
@@ -304,16 +312,17 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         if (hasTextRef.current) splitArmedRef.current = true;
       }
       patchAi(target, (it) => {
-        // `activity`는 입력창 위 고정 줄이 읽는 "지금 하는 일" 하나다. 마지막에 온
-        // 이벤트가 덮으므로 도구가 끝나고 텍스트가 흐르면 자동으로 작성으로 넘어간다 —
-        // 워크스페이스 훅과 같은 규약이고(useWorkspaceStream), 어긋나면 두 화면의
-        // 같은 바가 다르게 동작한다. 텍스트(`message`)는 위에서 pushText로 갔다 —
-        // 붙을 때 `activity`를 작성으로 넘긴다(useTextDeltas의 apply).
+        // `activity` is the single "what it is doing now" that the pinned line above the input
+        // reads. The last event to arrive overwrites it, so when a tool finishes and text flows
+        // it automatically moves on to writing — the same convention as the workspace hook
+        // (useWorkspaceStream), and if they diverge the same bar behaves differently on the two
+        // screens. Text (`message`) went to pushText above — when appended it moves `activity`
+        // to writing (useTextDeltas's apply).
         if (ev.kind === "status" || ev.kind === "file_changed") {
-          // 백엔드가 `{"detail": "…"}`로 무엇을 했는지 보낸다(tool_trace.py).
-          // 종전에는 이 값을 버리고 있어서 빌드 화면의 트레이스와 고정 줄이
-          // Discovery와 달리 맨 도구 이름만 보였다 — `Bash`만 뜨면 무슨 명령이
-          // 도는지 알 수 없고, 그것이 화면이 멈춘 듯 보인 이유 중 하나다.
+          // The backend sends what it did as `{"detail": "…"}` (tool_trace.py).
+          // Previously this value was dropped, so the build screen's trace and pinned line showed
+          // only the bare tool name, unlike Discovery — with just `Bash`, you cannot tell what
+          // command is running, which is one of the reasons the screen looked frozen.
           const detail = safeParse<{ detail?: string }>(ev.payload)?.detail ?? null;
           const trace: TraceEntry = { kind: ev.kind, text: ev.text, path: ev.path, detail };
           const activity: LiveActivity = ev.kind === "file_changed"
@@ -328,9 +337,10 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     [patchAi, openAiBubble, pushText, flushText, t],
   );
 
-  // 턴 하나를 화면에 흘린다. `opener`가 첫 연결을 열고, 끊기면 **같은 턴**에
-  // 마지막으로 받은 seq부터 다시 붙는다(useWorkspaceStream의 runTurn과 같은 규약).
-  // `onFinished`는 재생이 턴을 하나씩 순서대로 흘리기 위해 쓴다.
+  // Streams one turn to the screen. `opener` opens the first connection, and on a drop it
+  // reattaches to the **same turn** from the last seq received (same convention as
+  // useWorkspaceStream's runTurn). `onFinished` is used by replay to stream turns one at a time
+  // in order.
   const runTurn = useCallback(
     (
       opener: (handlers: StreamHandlers) => () => void,
@@ -340,9 +350,9 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     ) => {
       currentAiIdRef.current = aiId;
       setStreaming(true);
-      // 서브에이전트의 수명은 그것을 띄운 턴의 수명이다(백엔드도 매 턴 조인 표를
-      // 비운다 — builder.run). 남겨 두면 두 번째 턴의 첫 프레임에 이미 죽은
-      // 에이전트의 행이 붙는다.
+      // A sub-agent's lifetime is the lifetime of the turn that spawned it (the backend also clears
+      // the join table every turn — builder.run). If left in place, the rows of already-dead agents
+      // would attach to the second turn's first frame.
       agentsRef.current = [];
       setAgents([]);
       // A stream can finish SYNCHRONOUSLY inside `opener(...)` (e.g. a test
@@ -357,15 +367,15 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
       let closeCurrent: (() => void) | null = null;
       const finish = () => {
         finished = true;
-        // 아래 빈 말풍선 정리가 아직 붙지 않은 텍스트를 "빈 것"으로 보지 않게.
+        // So the empty-bubble cleanup below does not treat not-yet-appended text as "empty".
         flushText();
         if (timer) clearTimeout(timer);
         timer = null;
         setStreaming(false);
         stopRef.current = null;
-        // 턴이 끝나면 행은 사라진다 — 끝난 에이전트의 기록은 이미 말풍선의
-        // 접힌 트레이스가 갖는다(applyEvent의 agent_activity 분기). 여기서
-        // 비우지 않으면 턴이 끝난 뒤에도 도는 스피너가 남는다.
+        // When the turn ends the rows disappear — the record of finished agents is already held by
+        // the bubble's collapsed trace (the agent_activity branch of applyEvent). Without clearing
+        // here, a spinning spinner would remain even after the turn ended.
         agentsRef.current = [];
         setAgents([]);
         // Drop a bubble the turn never filled. An answers roundtrip opens one
@@ -401,12 +411,12 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         setPendingQuestions(null); // same defensive clear as the error-kind path
         finish();
       };
-      // 연결이 끊겼다. `err`에 HTTP 상태가 있으면 턴을 **시작하는** POST가 거절된
-      // 것이다 — 붙을 턴이 만들어지지 않았다.
+      // The connection dropped. If `err` has an HTTP status, the POST that **starts** the turn was
+      // rejected — no turn was created to attach to.
       const onDrop = (err: unknown) => {
         if (finished) return;
-        // 401(토큰 만료)과 네트워크 끊김을 EventSource가 구분해주지 않으므로
-        // 세션을 확인해 만료면 로그인으로 보낸다.
+        // EventSource does not distinguish a 401 (token expired) from a network drop, so
+        // check the session and send the user to login if it expired.
         void redirectIfSessionExpired(undefined, window.location.pathname);
         if (err instanceof ApiError) {
           if (err.status === 409 && err.turnId) {
@@ -423,8 +433,8 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         timer = setTimeout(() => {
           timer = null;
           if (finished) return;
-          // 붙기 전에 그 턴이 아직 세션에 있는지 본다. 세션이 닫혔으면(유휴, 완료
-          // 유예) 다시 붙을 곳이 없다.
+          // Before attaching, check whether that turn is still in the session. If the session
+          // closed (idle, completion grace period) there is nowhere to reattach.
           getBuildSession(projectId, slug)
             .then((sess) => {
               if (finished) return;
@@ -436,7 +446,8 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
             .catch(() => onDrop(null));
         }, RECONNECT_DELAYS_MS[attempt++]);
       };
-      // 연결 하나의 핸들러. 연결마다 새로 만든다 — `terminal`과 `dropped`는 그 연결의 것이다.
+      // Handlers for one connection. Created fresh for each connection — `terminal` and
+      // `dropped` belong to that connection.
       const connection = (): StreamHandlers => {
         let terminal = false;
         let dropped = false;
@@ -459,7 +470,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
               patchAi(liveId(), (it) => ({ ...it, streaming: false }));
               finish();
             } else if (!dropped) {
-              onDrop(null);   // 종결 이벤트 없이 닫혔다 = 끊김
+              onDrop(null);   // closed without a terminal event = a drop
             }
           },
         };
@@ -476,7 +487,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     [applyEvent, patchAi, flushText, projectId, slug, t],
   );
 
-  // 도는 턴에 붙는다 — 처음부터 재생해 말풍선을 채운다.
+  // Attach to a running turn — replay it from the start to fill the bubbles.
   const attach = useCallback(
     (turnId: string) => {
       if (stopRef.current) return;
@@ -487,13 +498,14 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   );
   attachRef.current = attach;
 
-  // 지난 대화를 불러와 지금 대화 앞에 깐다. 이어서 재생할 턴 목록을 돌려준다 —
-  // 히스토리가 그 턴들 앞에서 끊겨 오므로 둘은 한 응답에서 나와야 한다(getBuildHistory).
-  // 못 불러오면 null: 패널은 빈 대화로도 쓸 수 있다.
+  // Loads the past conversation and lays it before the current one. Returns the list of turns
+  // to replay next — the history arrives cut off before those turns, so both must come from one
+  // response (getBuildHistory). null if it cannot be loaded: the panel is usable with an empty
+  // conversation too.
   //
-  // **앞에 붙인다.** 새로 연 세션은 개시 턴이 히스토리 응답보다 먼저 화면에 생길 수
-  // 있고, 히스토리는 언제나 그보다 앞선 대화다 — 교체하면 방금 시작한 턴이 지워진다
-  // (useWorkspaceStream의 liveTurnStartedRef와 같은 판단).
+  // **Prepend it.** In a newly opened session the opening turn can appear on screen before the
+  // history response, and the history is always the earlier conversation — replacing would erase
+  // the turn that just started (same judgment as useWorkspaceStream's liveTurnStartedRef).
   const loadHistory = useCallback(async (): Promise<BuildTurnSummary[] | null> => {
     setHistoryLoading(true);
     try {
@@ -513,15 +525,17 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
     await loadHistory();
   }, [loadHistory]);
 
-  // 이미 열린 세션의 대화를 되살린다. 지난 대화를 먼저 깔고, 열린 세션의 턴을 하나씩
-  // **순서대로** 처음부터 재생하고(앞 턴이 끝나야 다음 턴을 연다 — 말풍선 순서가 곧
-  // 대화 순서다), 도는 턴에는 그대로 붙어 이어 받는다.
+  // Restores an already open session's conversation. Lays down the past conversation first, replays
+  // the open session's turns one at a time **in order** from the start (the next turn opens only
+  // after the previous one ends — bubble order is conversation order), and attaches to a running
+  // turn to keep receiving it.
   const resume = useCallback(async () => {
     if (resumingRef.current || stopRef.current) return;
     resumingRef.current = true;
     try {
-      // 히스토리를 못 불러와도 열린 세션의 턴은 되살린다 — 도는 턴에 붙는 것이
-      // 지난 대화를 보이는 것보다 급하다(붙지 못하면 보내기가 409로 막힌다).
+      // Even if the history cannot be loaded, restore the open session's turns — attaching to a
+      // running turn is more urgent than showing the past conversation (if it cannot attach,
+      // sending is blocked with 409).
       const turns = (await loadHistory())
         ?? (await getBuildSession(projectId, slug))?.turns ?? [];
       for (const turn of turns) {
@@ -532,15 +546,16 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
         const open = (handlers: StreamHandlers) =>
           watchBuildTurn(projectId, slug, turn.turn_id, 0, handlers);
         if (turn.state === "running") {
-          // 도는 턴은 마지막이다(세션에 도는 턴은 하나). 붙어 두고 돌아간다 — 그 턴의
-          // 끝을 기다리면 resume이 빌드 내내 끝나지 않는다.
+          // A running turn is the last one (a session has only one running turn). Attach and
+          // return — waiting for that turn to end would keep resume from finishing for the
+          // whole build.
           runTurn(open, aiId, turn.turn_id);
           return;
         }
         await new Promise<void>((resolve) => runTurn(open, aiId, turn.turn_id, resolve));
       }
     } catch {
-      /* 되살리지 못해도 패널은 쓸 수 있다 — 빈 대화에서 이어서 말하면 된다 */
+      /* Even if restoring fails the panel is usable — just keep talking in an empty conversation */
     } finally {
       resumingRef.current = false;
     }
@@ -610,42 +625,42 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   }, [projectId, slug]);
 
   const restartForImprovement = useCallback(async () => {
-    // 완료 선언으로 세션이 닫혔으므로 새로 열어야 한다. 백엔드의
-    // _resolve_session_id가 handoff.json을 발견해 새 session_id + 요약
-    // 주입으로 분기하고, `__first__` 센티넬이 그 핸드오프 프롬프트로
-    // 치환된다 — 그래서 여기서 프롬프트를 만들지 않는다.
+    // The completion declaration closed the session, so a new one must be opened. The backend's
+    // _resolve_session_id finds handoff.json and branches to a new session_id + summary
+    // injection, and the `__first__` sentinel is substituted with that handoff prompt
+    // — so the prompt is not built here.
     //
-    // completion 카드는 build_complete 시점에 뜬다 — 턴의 done보다 먼저다
-    // (applyEvent의 build_complete 분기 참고). 그 사이 0~5초 창(백엔드 유예
-    // 타이머 한도) 동안 에이전트가 마무리 텍스트를 더 보낼 수 있어, 카드가
-    // 보이면서도 스트림 A는 아직 열려 있는(stopRef.current가 non-null,
-    // streaming이 true인) 상태가 실재한다. 이 창에서 사용자가 버튼을 누르면:
-    // startSession이 성공해 백엔드가 "complete" 상태인 A를 버리고 슬롯을 하나
-    // 더 잡아(B) 반환하는데, 뒤이은 startBuild()는 `if (stopRef.current)
-    // return;` 가드에 걸려(A가 done을 보낸 적이 없어 stopRef가 여전히
-    // non-null) B의 __first__ 스트림을 영영 열지 못한다 — B가 빌드 슬롯과
-    // 서브프로세스를 쥔 채 30분 유휴 타임아웃까지 남는 좀비가 된다. 그
-    // 가드는 지우지 않는다(BuildPanel 마운트 이펙트와 send()의 중복 시작
-    // 방지가 여기 걸려 있다) — 대신 A를 여기서 먼저 끝내 가드가 더 이상 B를
-    // 막지 못하게 한다.
+    // The completion card appears at build_complete time — before the turn's done
+    // (see the build_complete branch of applyEvent). During the 0–5 second window in between (the
+    // backend grace timer limit) the agent can send more wrap-up text, so a state really exists
+    // where the card is visible while stream A is still open (stopRef.current is non-null,
+    // streaming is true). If the user presses the button in this window:
+    // startSession succeeds, the backend discards A in its "complete" state, grabs one more slot
+    // (B) and returns it, but the following startBuild() hits the `if (stopRef.current)
+    // return;` guard (A never sent done, so stopRef is still
+    // non-null) and never opens B's __first__ stream — B becomes a zombie holding the build slot
+    // and subprocess until the 30-minute idle timeout. That
+    // guard is not removed (the BuildPanel mount effect and send()'s duplicate-start
+    // prevention depend on it) — instead A is ended here first so the guard no longer
+    // blocks B.
     stopRef.current?.();
     stopRef.current = null;
-    // streaming도 같이 내린다: 안 그러면 startSession의 네트워크
-    // 라운드트립 동안 화면은 방금 닫아버린 A를 근거로 "스트리밍 중"이라고
-    // 계속 우긴다(헤더의 중단 버튼이 남는 등). startBuild()가 호출되면 곧
-    // 다시 true가 되지만, 그 전까지는 지금 끝난 스트림 상태를 반영하는 게
-    // 맞다 — finish()가 정상 종료 때 하는 정리와 같은 이유다.
+    // Also lower streaming: otherwise, during startSession's network
+    // round trip the screen keeps insisting it is "streaming" based on A, which was just closed
+    // (the header's stop button remains, and so on). It becomes true again soon once startBuild()
+    // is called, but until then it is right to reflect the state of the stream that just ended
+    // — same reason as the cleanup finish() does on a normal end.
     setStreaming(false);
     //
-    // startSession의 예외를 잡지 않는 것이 의도다. 429(동시 빌드 상한)면
-    // 아래 세 줄이 실행되지 않아 완료 카드가 그대로 남고, 호출자
-    // (BuildPanel.handleRestart)가 상한 메시지를 보여준다. 여기서 삼키면
-    // 카드가 지워진 채 아무 일도 일어나지 않은 화면이 된다.
+    // Not catching startSession's exception is intentional. On a 429 (concurrent build limit)
+    // the three lines below do not run, so the completion card stays, and the caller
+    // (BuildPanel.handleRestart) shows the limit message. Swallowing it here would leave
+    // a screen where the card is gone and nothing happened.
     await startSession(projectId, slug);
     setBuildComplete(null);
     setChangedPaths([]);
-    // 개선 세션은 새 대화다 — 이전 세션의 사용량은 이 대화의 것이 아니다. 첫 응답이
-    // 새 값을 준다.
+    // An improvement session is a new conversation — the previous session's usage does not
+    // belong to this conversation. The first response provides a new value.
     setContext(null);
     startBuild();
   }, [projectId, slug, startBuild]);
@@ -653,7 +668,7 @@ export function usePrototypeStream(projectId: string, slug: string): PrototypeSt
   // Close the stream if the component unmounts mid-turn.
   useEffect(() => () => stopRef.current?.(), []);
 
-  // 도는 행만 내보낸다: 끝난 에이전트는 고정 줄에서 빠지고 트레이스로 넘어간다.
+  // Emit only running rows: finished agents drop out of the pinned line and move on to the trace.
   const running = useMemo(() => runningAgents(agents), [agents]);
 
   return {

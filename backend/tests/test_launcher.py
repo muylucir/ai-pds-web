@@ -1,7 +1,7 @@
-# backend/tests/test_launcher.py — 실행 래퍼를 부르는 쪽(aipds/launcher.py)과 그 배선.
+# backend/tests/test_launcher.py — the side that calls the launch wrapper (aipds/launcher.py) and its wiring.
 #
-# 래퍼 자체는 test_launch_script.py가 본다. 여기는 백엔드가 (1) 켜도 되는지 판단하는 기동 점검,
-# (2) 드라이버·빌더·호스팅이 래퍼를 실제로 거쳐 띄우는지, (3) 백엔드 env가 새지 않는지를 본다.
+# The wrapper itself is covered by test_launch_script.py. This file checks (1) the startup check by which the backend decides whether it may turn it on,
+# (2) whether the driver, builder and hosting actually launch through the wrapper, and (3) that the backend env does not leak.
 from __future__ import annotations
 
 import asyncio
@@ -44,7 +44,7 @@ def test_probe_is_off_without_the_switch(monkeypatch):
 
 
 def test_probe_refuses_when_sudo_fails(monkeypatch):
-    """켜졌는데 쓸 수 없으면 직접 실행으로 돌아가지 않는다 — 격리가 조용히 빠진다."""
+    """If it is on but unusable, it does not fall back to direct execution — isolation would silently drop out."""
     monkeypatch.setenv(launcher.SWITCH_ENV, "1")
 
     def run(argv, **kwargs):
@@ -54,7 +54,7 @@ def test_probe_refuses_when_sudo_fails(monkeypatch):
 
 
 def test_probe_refuses_on_a_layout_mismatch(monkeypatch):
-    """경로가 다르면 CLI는 백엔드가 보지 않는 곳에 트랜스크립트를 쓴다."""
+    """If the paths differ, the CLI writes transcripts where the backend does not look."""
     monkeypatch.setenv(launcher.SWITCH_ENV, "1")
     report = _layout_report(agent_home="/opt/aipds/agent-home-elsewhere")
     assert launcher.probe(run=_check_ok(report)).refused
@@ -69,7 +69,7 @@ async def test_a_refused_launcher_starts_nothing_but_still_sweeps(monkeypatch):
         await refused.exec_npm("proto", "p1", "todo", "run", "start")
     with pytest.raises(launcher.LauncherUnavailable):
         refused.npm_env("proto", "p1", "todo", {})
-    # 스윕은 거부하지 않는다 — 직전 백엔드가 래퍼로 띄운 unit을 치워야 한다.
+    # The sweep is not refused — it has to clean up units the previous backend launched through the wrapper.
     calls = []
     monkeypatch.setattr(subprocess, "run", lambda argv, **k: calls.append(argv))
     refused.sweep()
@@ -115,7 +115,7 @@ def test_npm_env_does_not_carry_the_backend_env(monkeypatch):
     assert "AIPDS_S3_BUCKET" not in env
     assert env["AWS_REGION"] == "ap-northeast-2" and env["PORT"] == "4001"
     assert "AWS_CONTAINER_AUTHORIZATION_TOKEN" in env
-    # npm install/build는 자격증명을 받지 않는다.
+    # npm install/build get no credentials.
     assert "AWS_CONTAINER_AUTHORIZATION_TOKEN" not in Launcher(broker=_broker()).npm_env(
         "host-build", "p1", "todo", {})
 
@@ -171,7 +171,7 @@ def test_discovery_client_goes_through_the_launcher(tmp_path, monkeypatch):
     assert options.env["AIPDS_LAUNCH_KIND"] == "discovery"
     assert options.env["CLAUDE_CONFIG_DIR"] == str(home.config)
     assert isinstance(options.session_store, MirrorOnlyStore)
-    # 공유 config의 내용이 프로젝트별 config dir에 와 있다 — 재개해도 CLAUDE.md가 있다.
+    # The shared config's contents are in the per-project config dir — CLAUDE.md is there even on resume.
     assert (home.config / "CLAUDE.md").read_text(encoding="utf-8") == "contract"
     assert (home.config / "skills" / "s" / "SKILL.md").is_file()
 
@@ -229,7 +229,7 @@ def test_app_factories_use_per_project_config_dirs(monkeypatch):
 
 
 async def test_discovery_restores_a_missing_transcript_before_connecting(tmp_path):
-    """인스턴스 교체 뒤: 로컬 사본은 없고 S3 미러에만 대화가 있다 → 이어서 재개한다."""
+    """After an instance replacement: there is no local copy and the conversation exists only in the S3 mirror → resume it."""
     import uuid
 
     from claude_agent_sdk import InMemorySessionStore, project_key_for_directory
@@ -259,7 +259,7 @@ async def test_discovery_restores_a_missing_transcript_before_connecting(tmp_pat
 # ---- hosting ----
 
 class FakeLauncher(Launcher):
-    """sudo 없이 npm을 그대로 부르는 래퍼. 호스팅이 래퍼 경로를 타는지(argv, env, stop)를 본다."""
+    """A wrapper that calls npm as is, without sudo. Checks that hosting goes through the wrapper path (argv, env, stop)."""
 
     def __init__(self):
         super().__init__(broker=None)
@@ -281,7 +281,7 @@ class FakeLauncher(Launcher):
 
     async def stop(self, kind, project_id, slug):
         self.stopped.append((kind, project_id, slug))
-        # 실제 래퍼는 unit을 멈추고, 그러면 클라이언트도 끝난다. 여기서는 트리를 끝낸다.
+        # The real wrapper stops the unit, and then the client ends too. Here it ends the tree.
         for proc in self.procs:
             if proc.returncode is None:
                 os.killpg(os.getpgid(proc.pid), 15)
@@ -318,7 +318,7 @@ async def test_hosting_goes_through_the_launcher(tmp_path, monkeypatch):
         for _, env in fake.envs:
             assert "AIPDS_S3_BUCKET" not in env
         assert fake.envs[-1][1]["PORT"] == str(info.port)
-        # 래퍼가 bind할 HOME이 미리 만들어져 있다.
+        # The HOME the wrapper will bind has been created in advance.
         assert agent_home.proto("p1", "todo").home.is_dir()
     finally:
         await host.stop("p1", "todo")
@@ -327,9 +327,9 @@ async def test_hosting_goes_through_the_launcher(tmp_path, monkeypatch):
 
 
 async def test_hosting_hands_the_wrapper_exactly_this_argv(tmp_path, monkeypatch):
-    """FakeLauncher는 sudo를 건너뛰므로 래퍼가 받는 argv는 위 테스트가 보지 못한다. 여기서는 진짜
-    Launcher를 쓰고 spawn 직전에서 가로챈다 — 래퍼(aipds-launch)의 `run`/`stop` 파서와 sudoers가
-    기대하는 모양이 이것이고, 바뀌면 인스턴스에서만 드러난다."""
+    """FakeLauncher skips sudo, so the argv the wrapper receives is not seen by the test above. This one uses the real
+    Launcher and intercepts just before spawn — this is the shape the wrapper's (aipds-launch) `run`/`stop` parser and sudoers
+    expect, and if it changes it only shows up on the instance."""
     from aipds.proto.host import ProtoHost
 
     root = tmp_path / "protos"
@@ -347,7 +347,7 @@ async def test_hosting_hands_the_wrapper_exactly_this_argv(tmp_path, monkeypatch
     procs = []
 
     async def wrapper(*argv, **kwargs):
-        # 래퍼 대신: `run`은 `--` 뒤를 npm에 넘기고, `stop`은 띄운 트리를 끝낸다.
+        # Instead of the wrapper: `run` passes what follows `--` to npm, and `stop` ends the launched tree.
         argvs.append(list(argv))
         if argv[3] == "stop":
             for proc in procs:
@@ -386,7 +386,7 @@ async def test_the_launcher_refuses_a_tree_it_would_not_serve(tmp_path):
 
 
 async def test_hosting_is_refused_before_touching_what_runs(tmp_path):
-    """거부 중이면 떠 있는 호스팅을 멈추지도 않는다 — 멈추고 못 띄우면 링크까지 죽는다."""
+    """While refusing, it does not even stop the running hosting — stopping and failing to relaunch would kill the link too."""
     from aipds.proto.host import ProtoHost
 
     root = tmp_path / "protos"

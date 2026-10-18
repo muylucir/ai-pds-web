@@ -11,8 +11,8 @@ async def test_write_manifest_puts_expected_key_and_shape():
     d = json.loads(root.blobs["p1/project.json"])
     assert d["project_id"] == "p1" and d["name"] == "이름"
     assert d["created_at"].endswith("+00:00") or d["created_at"].endswith("Z")  # UTC ISO8601
-    # 모델 미지정은 명시적 null로 기록한다 — 키 자체를 빼면 "구 매니페스트"와
-    # "모델을 고르지 않은 새 프로젝트"를 구별할 수 없다.
+    # An unspecified model is recorded as an explicit null — omitting the key itself would make it impossible to
+    # tell an "old manifest" from "a new project where no model was chosen".
     assert d["model_id"] is None
 
 
@@ -27,7 +27,7 @@ async def test_write_manifest_records_the_model_id():
 
 @pytest.mark.asyncio
 async def test_write_manifest_records_the_effort_and_null_when_unset():
-    """effort는 모델과 짝으로 복사된다. 미지정은 키를 빼지 않고 명시적 null이다."""
+    """effort is copied as a pair with the model. Unspecified is an explicit null, not an omitted key."""
     root = FakeS3Store()
     await write_manifest(root, "p1", None, model_id="global.anthropic.claude-opus-5-5",
                          effort="medium")
@@ -45,12 +45,12 @@ async def test_restore_reads_manifests_and_skips_garbage():
          "model_id": "global.anthropic.claude-opus-5", "language": "en",
          "effort": "high"})
     root.blobs["pb/project.json"] = json.dumps({"project_id": "pb", "name": None})
-    root.blobs["pc/project.json"] = "{{{ not json"           # 손상 → 건너뜀
-    root.blobs["pd/project.json"] = "[1,2,3]"                # JSON but not dict → 건너뜀
-    root.blobs["pa/aiplc-docs/audit.md"] = "# not a manifest"  # 매니페스트 아님 → 무시
+    root.blobs["pc/project.json"] = "{{{ not json"           # corrupted → skipped
+    root.blobs["pd/project.json"] = "[1,2,3]"                # JSON but not dict → skipped
+    root.blobs["pa/aiplc-docs/audit.md"] = "# not a manifest"  # not a manifest → ignored
     restored = {p.project_id: (p.name, p.created_at, p.model_id, p.language, p.effort)
                 for p in await restore_projects(root)}
-    # created_at·model_id·language·effort는 매니페스트에서 승계, 없으면(구 매니페스트) None.
+    # created_at, model_id, language, and effort are inherited from the manifest; None if absent (old manifest).
     assert restored == {
         "pa": ("A", "2026-07-22T01:00:00+00:00",
                "global.anthropic.claude-opus-5", "en", "high"),
@@ -67,8 +67,8 @@ async def test_write_manifest_records_the_language():
 
 @pytest.mark.asyncio
 async def test_write_manifest_records_an_unset_language_as_explicit_null():
-    # 키를 빼면 '구 매니페스트'와 '언어를 고르지 않은 새 프로젝트'를 구별할 수
-    # 없다 — model_id와 같은 판단이다.
+    # Omitting the key would make it impossible to tell an 'old manifest' from 'a new project where no language was
+    # chosen' — the same judgment as model_id.
     root = FakeS3Store()
     await write_manifest(root, "p1", None)
     assert json.loads(root.blobs["p1/project.json"])["language"] is None

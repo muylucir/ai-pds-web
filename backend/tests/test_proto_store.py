@@ -1,7 +1,7 @@
-# backend/tests/test_proto_store.py — 프로토타입의 정본(aipds/proto/store.py).
+# backend/tests/test_proto_store.py — the prototype's source of truth (aipds/proto/store.py).
 #
-# 이 파일이 지키는 것: 로컬 빌드 트리가 사라져도(인스턴스 교체) 같은 소스·같은 링크·
-# 같은 호스팅 의도가 S3에서 돌아온다.
+# What this file guards: even if the local build tree disappears (instance replacement), the same source,
+# the same links, and the same hosting intent come back from S3.
 import json
 
 import pytest
@@ -43,8 +43,8 @@ async def test_a_snapshot_restores_byte_for_byte_after_the_local_tree_is_gone(st
 
 
 async def test_the_snapshot_leaves_out_what_the_bundle_leaves_out(store, tmp_path):
-    """`node_modules`·`.next`·호스팅 로그·토큰은 세대에 담지 않는다 — 번들·아카이브와
-    같은 제외 규칙이다(project_bundle.source_excluded)."""
+    """`node_modules`, `.next`, hosting logs, and tokens are not included in a generation — the same exclusion
+    rule as bundles and archives (project_bundle.source_excluded)."""
     build = tmp_path / SLUG
     _tree(build, {"prototype/package.json": "{}",
                   "prototype/node_modules/x/index.js": "x",
@@ -57,7 +57,7 @@ async def test_the_snapshot_leaves_out_what_the_bundle_leaves_out(store, tmp_pat
 
 
 async def test_no_build_output_means_no_generation(store, tmp_path):
-    """명세만 있는 트리를 세대로 만들면 되살리기가 "빌드됨"을 거짓으로 만든다."""
+    """Making a generation from a tree with only the spec would make restore falsely report "built"."""
     build = tmp_path / SLUG
     _tree(build, {"PROTOTYPE-demo.md": "# spec"})
     assert await store.snapshot(SLUG, build, "test") is None
@@ -84,7 +84,7 @@ async def test_only_the_recent_generations_are_kept(store, tmp_path):
 
 
 async def test_a_half_uploaded_generation_is_never_current(tmp_path):
-    """`current.json`을 마지막에 쓴다 — 올리다 실패한 세대는 가리켜지지 않는다."""
+    """`current.json` is written last — a generation that failed mid-upload is never pointed to."""
     s3 = FakeS3Store()
     store = PrototypeStore(s3)
     build = tmp_path / SLUG
@@ -109,7 +109,7 @@ async def test_a_half_uploaded_generation_is_never_current(tmp_path):
 
 
 async def test_restore_leaves_a_local_build_alone(store, tmp_path):
-    """로컬이 더 새로울 수 있다(아직 스냅샷되지 않은 편집)."""
+    """Local may be newer (edits not yet snapshotted)."""
     build = tmp_path / SLUG
     _tree(build, {"prototype/a.js": "old"})
     await store.snapshot(SLUG, build, "test")
@@ -121,14 +121,14 @@ async def test_restore_leaves_a_local_build_alone(store, tmp_path):
 async def test_a_token_survives_the_local_tree_through_the_root_index(store, tmp_path):
     await store.save_token(SLUG, "tok-abc")
     assert await resolve_token(store._root, "tok-abc") == ("p1", SLUG)
-    # 색인 키는 해시다 — 목록이 토큰 평문을 드러내지 않는다.
+    # The index key is a hash — the listing does not expose plaintext tokens.
     assert all("tok-abc" not in k for k in await store._root.list(""))
     assert await store.load_token(SLUG) == "tok-abc"
 
 
 async def test_restore_does_not_follow_a_symlink_the_agent_planted(store, tmp_path):
-    """빌드 트리는 빌드 에이전트가 쓴다. `prototype`을 바깥을 가리키는 링크로 바꿔 두면
-    되살리기가 S3 본문을 그 너머에 쓰게 된다 — 링크를 실제 디렉토리로 바꾸고 거기 쓴다."""
+    """The build tree is written by the build agent. If `prototype` were swapped for a link pointing outside,
+    restore would write S3 contents beyond it — so the link is replaced with a real directory and written there."""
     build = tmp_path / SLUG
     _tree(build, {"prototype/a.js": "v1"})
     await store.snapshot(SLUG, build, "test")
@@ -138,7 +138,7 @@ async def test_restore_does_not_follow_a_symlink_the_agent_planted(store, tmp_pa
     fresh = tmp_path / "fresh"
     fresh.mkdir()
     (fresh / "prototype").symlink_to(outside)
-    # has_build_output이 링크 너머를 보지 않도록 바깥은 비어 있다.
+    # The outside is empty so that has_build_output does not look past the link.
     assert await store.restore(SLUG, fresh) is True
     assert not (fresh / "prototype").is_symlink()
     assert (fresh / "prototype/a.js").read_text() == "v1"

@@ -1,14 +1,14 @@
 # backend/tests/test_routes_proto_public.py
 #
-# 프로토타입 접근 토큰 게이트. test_auth_route_coverage.py는 이 경로들에
-# require_user가 **없다**는 것만 단정하므로, "그러면 아무 방어도 없다"가 되지
-# 않게 하는 것이 이 파일의 역할이다.
+# Prototype access token gate. test_auth_route_coverage.py only asserts that these paths
+# have **no** require_user, so this file's role is to keep that from turning into
+# "then there is no defense at all".
 #
-# 여기서 지키는 성질:
-#   - pid/slug를 알아도 쿠키 없이는 들어올 수 없다 (원래의 구멍)
-#   - 한 프로토타입의 쿠키가 다른 프로토타입에 통하지 않는다 (Path 스코프의 근거)
-#   - 실패는 전부 404로 수렴한다 (존재를 알려주지 않는다)
-#   - 쿠키의 Path가 브라우저 관점 경로와 정확히 일치한다 (틀리면 조용히 다 깨진다)
+# Properties guarded here:
+#   - knowing the pid/slug does not get you in without the cookie (the original hole)
+#   - one prototype's cookie does not work for another prototype (the basis for Path scoping)
+#   - every failure converges to 404 (existence is not revealed)
+#   - the cookie's Path exactly matches the browser-side path (if wrong, everything breaks silently)
 from __future__ import annotations
 
 import pytest
@@ -26,17 +26,17 @@ OTHER_SLUG = "other"
 
 
 class StubHost:
-    """실제 ProtoHost의 토큰 부분만 위임하고 프로세스 관리는 흉내낸다.
+    """Delegates only the token part to the real ProtoHost and mimics process management.
 
-    토큰 로직은 **실물을 쓴다**(디스크에 파일을 쓰는 그 코드) — 여기서 가짜
-    dict로 대체하면 이 파일이 단정하려는 것이 전부 스텁의 동작이 된다.
+    The token logic **uses the real thing** (the code that writes files to disk) — replacing it
+    with a fake dict here would turn everything this file means to assert into stub behavior.
     """
 
     def __init__(self, root, state_root=None):
         self._real = ProtoHost(root=root, state_root=state_root)
         self.infos: dict[tuple[str, str], HostInfo] = {}
 
-    # --- 토큰: 실물에 위임 ---
+    # --- Tokens: delegated to the real thing ---
     def ensure_token(self, pid, slug):
         return self._real.ensure_token(pid, slug)
 
@@ -52,7 +52,7 @@ class StubHost:
     def load_tokens(self):
         return self._real.load_tokens()
 
-    # --- 호스팅 상태: 테스트가 직접 세운다 ---
+    # --- Hosting state: set up directly by the tests ---
     def status(self, pid, slug):
         return self.infos.get((pid, slug))
 
@@ -60,8 +60,8 @@ class StubHost:
         return ""
 
     def sweep_orphans(self):
-        # app.py의 lifespan이 부른다. 없으면 기동 시 AttributeError가 로그에
-        # 남아, 이 파일에서 정작 봐야 할 실패를 가린다.
+        # Called by app.py's lifespan. Without it, an AttributeError at startup lands in
+        # the log and obscures the failures this file actually needs to see.
         return 0
 
 
@@ -71,7 +71,7 @@ def env(monkeypatch, tmp_path):
     host = StubHost(root=tmp_path, state_root=state)
     monkeypatch.setattr(app_module, "proto_host", lambda: host)
     monkeypatch.setattr(app_module, "_proto_root", lambda: tmp_path)
-    # 게이트/프록시가 계산하는 브라우저 관점 프리픽스를 배포와 같게 고정한다.
+    # Pin the browser-side prefix computed by the gate/proxy to match the deployment.
     monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "/api")
     return {"host": host, "root": tmp_path, "state": state}
 
@@ -81,14 +81,14 @@ def _running(env, pid=PID, slug=SLUG, port=4001):
         state="running", port=port, log_tail="")
 
 
-# ---- 원래의 구멍 ----
+# ---- The original hole ----
 
 def test_proxy_without_a_cookie_is_404_even_when_running(env):
-    """이것이 이 기능의 존재 이유다.
+    """This is why this feature exists.
 
-    예전에는 pid와 slug를 아는 사람이면 누구나 프리뷰를 열 수 있었고, pid는
-    사용자가 직접 넣는 문자열이라 사실상 추측 가능했다. 호스팅이 실제로 돌고
-    있어도 쿠키 없이는 404여야 한다 — 502(꺼져 있음)조차 알려주면 안 된다.
+    Previously, anyone who knew the pid and slug could open the preview, and the pid is a
+    user-entered string, so it was effectively guessable. Even when hosting is actually running,
+    it must be 404 without the cookie — not even a 502 (off) should be revealed.
     """
     _running(env)
     resp = client.get(f"/proto/{PID}/{SLUG}/index.html")
@@ -96,11 +96,11 @@ def test_proxy_without_a_cookie_is_404_even_when_running(env):
 
 
 def test_proxy_root_without_a_cookie_is_404_not_a_redirect(env):
-    """슬래시 없는 형태도 막힌다.
+    """The form without a trailing slash is blocked too.
 
-    이 라우트는 인증 검사보다 먼저 307을 내보낼 수 있는 모양이었다. 그러면
-    리다이렉트를 받았다는 사실만으로 "이 pid/slug가 존재한다"를 알 수 있어,
-    404로 감추려던 것이 그대로 새어 나간다.
+    This route had a shape that could emit a 307 before the auth check. Then the mere fact of
+    receiving a redirect would reveal "this pid/slug exists", leaking exactly what the 404
+    was meant to hide.
     """
     _running(env)
     resp = client.get(f"/proto/{PID}/{SLUG}", follow_redirects=False)
@@ -113,18 +113,18 @@ def test_an_unknown_token_is_404(env):
 
 
 def test_a_cookie_for_one_prototype_does_not_open_another(env):
-    """Path 스코프 결정의 핵심 단정.
+    """The core assertion behind the Path scoping decision.
 
-    쿠키를 프로토타입마다 나누지 않고 /api/proto 하나로 두면, 한 링크를 받은
-    참가자가 다른 프로토타입의 slug를 추측해 들어갈 수 있다 — 막으려던 구멍이
-    한 겹 안쪽에서 재현된다. 브라우저의 Path 스코프가 1차 방어선이지만, 그것은
-    선의의 브라우저만 지키므로 서버도 같은 판단을 해야 한다.
+    If the cookie were not split per prototype but kept as a single /api/proto one, a participant
+    who received one link could guess another prototype's slug and get in — the hole we meant to
+    close reappears one layer inside. The browser's Path scope is the first line of defense, but
+    it only protects well-behaved browsers, so the server must make the same judgment.
     """
     _running(env, slug=SLUG)
     _running(env, slug=OTHER_SLUG)
-    # SLUG의 쿠키를 들고 OTHER_SLUG를 노린다. 쿠키 이름이 달라 애초에 붙지
-    # 않지만, 이름을 OTHER_SLUG의 것으로 바꿔 값만 재사용하는 경우까지 막아야
-    # 한다 — 아래가 그 경우다.
+    # Holds SLUG's cookie and targets OTHER_SLUG. The cookie names differ, so it is not
+    # attached in the first place, but we must also block the case where the name is changed
+    # to OTHER_SLUG's and only the value is reused — below is that case.
     stolen = env["host"].ensure_token(PID, SLUG)
     resp = client.get(f"/proto/{PID}/{OTHER_SLUG}/index.html",
                       headers={"Cookie": f"{cookie_name(PID, OTHER_SLUG)}={stolen}"})
@@ -132,9 +132,9 @@ def test_a_cookie_for_one_prototype_does_not_open_another(env):
 
 
 def test_a_prototype_that_never_hosted_has_no_token_so_nothing_passes(env):
-    """토큰 파일이 없으면 통과 기준이 없다 — 아무 값으로도 열리지 않아야 한다.
+    """Without a token file there is no passing criterion — no value should open it.
 
-    여기서 통과시키면 "토큰이 사라진 상태"가 곧 "무인증 상태"가 된다.
+    Letting it through here would make "the token is gone" equivalent to "no authentication".
     """
     _running(env)
     resp = client.get(f"/proto/{PID}/{SLUG}/index.html",
@@ -142,7 +142,7 @@ def test_a_prototype_that_never_hosted_has_no_token_so_nothing_passes(env):
     assert resp.status_code == 404
 
 
-# ---- 게이트 ----
+# ---- Gate ----
 
 def test_the_gate_sets_a_cookie_and_redirects_into_the_prototype(env):
     _running(env)
@@ -156,12 +156,12 @@ def test_the_gate_sets_a_cookie_and_redirects_into_the_prototype(env):
 
 
 def test_the_cookie_path_is_the_browser_visible_prefix(env):
-    """Path가 브라우저 관점 경로여야 한다.
+    """Path must be the browser-side path.
 
-    이 앱이 보는 경로(`/proto/...`)로 쓰면 브라우저는 `/api/proto/...` 요청에
-    쿠키를 붙이지 않는다 — 프록시가 `/api`를 떼고 나서야 이 앱에 닿기 때문이다.
-    그러면 게이트는 성공한 것처럼 보이는데 그다음 요청이 전부 404가 되고, 원인이
-    쿠키 Path라는 것은 화면에 전혀 드러나지 않는다.
+    If it were written with the path this app sees (`/proto/...`), the browser would not attach
+    the cookie to `/api/proto/...` requests — because requests reach this app only after the
+    proxy strips `/api`. Then the gate looks successful but every subsequent request becomes 404,
+    and nothing on screen reveals that the cause is the cookie Path.
     """
     _running(env)
     token = env["host"].ensure_token(PID, SLUG)
@@ -169,16 +169,16 @@ def test_the_cookie_path_is_the_browser_visible_prefix(env):
 
     set_cookie = resp.headers["set-cookie"]
     assert f"Path={public_base_path(PID, SLUG)}" in set_cookie
-    # 브라우저 관점이므로 반드시 /api 마운트를 포함한다.
+    # Since it is browser-side, it must include the /api mount.
     assert "Path=/api/proto/" in set_cookie
 
 
 def test_the_cookie_is_httponly_and_lax(env):
-    """HttpOnly: 프로토타입 앱의 JS가 자기 접근 토큰을 읽을 이유가 없다. 그 코드는
-    빌드 에이전트가 쓴 것이고 신뢰 대상이 아니다.
+    """HttpOnly: the prototype app's JS has no reason to read its own access token. That code
+    was written by the build agent and is not trusted.
 
-    SameSite=Lax: 참가자가 채팅 링크를 누르는 top-level 네비게이션에 쿠키가
-    실려야 한다. Strict면 바로 그 첫 클릭에서 빠진다.
+    SameSite=Lax: the cookie must be sent on the top-level navigation when a participant clicks
+    a chat link. With Strict it would be dropped on exactly that first click.
     """
     _running(env)
     token = env["host"].ensure_token(PID, SLUG)
@@ -187,14 +187,14 @@ def test_the_cookie_is_httponly_and_lax(env):
     set_cookie = resp.headers["set-cookie"].lower()
     assert "httponly" in set_cookie
     assert "samesite=lax" in set_cookie
-    # max-age/expires 없음 = 세션 쿠키. 수명을 발명하지 않는다는 결정을 고정한다.
+    # No max-age/expires = session cookie. Pins the decision not to invent a lifetime.
     assert "max-age" not in set_cookie
     assert "expires" not in set_cookie
 
 
 def test_the_cookie_is_not_secure_by_default(env):
-    """기본값은 꺼짐이다 — 로컬 개발(http://localhost)에서 Secure를 붙이면
-    브라우저가 쿠키를 저장하지 않아 프리뷰가 아예 열리지 않는다."""
+    """The default is off — adding Secure in local development (http://localhost) makes the
+    browser not store the cookie, so the preview does not open at all."""
     _running(env)
     token = env["host"].ensure_token(PID, SLUG)
     resp = client.get(f"/proto/t/{token}", follow_redirects=False)
@@ -203,11 +203,11 @@ def test_the_cookie_is_not_secure_by_default(env):
 
 @pytest.mark.parametrize("value", ["true", "TRUE", "1", "yes", "on", " true "])
 def test_cookie_secure_env_accepts_truthy_values(env, monkeypatch, value):
-    """`AIPDS_COOKIE_SECURE`가 켜지면 Secure가 붙는다.
+    """When `AIPDS_COOKIE_SECURE` is on, Secure is added.
 
-    여러 표기를 받는 이유: 이 값을 쓰는 곳이 systemd 유닛 파일과 셸 env라
-    `true`/`1`/`yes`가 모두 자연스럽게 나온다. 하나만 받으면 나머지를 쓴 사람은
-    켰다고 믿지만 실제로는 꺼져 있고, 그 실패는 화면에 드러나지 않는다.
+    Why several spellings are accepted: this value is written in systemd unit files and shell env,
+    where `true`/`1`/`yes` all come naturally. Accepting only one would leave someone who wrote
+    another believing it is on while it is actually off, and that failure does not show on screen.
     """
     monkeypatch.setenv("AIPDS_COOKIE_SECURE", value)
     _running(env)
@@ -218,9 +218,9 @@ def test_cookie_secure_env_accepts_truthy_values(env, monkeypatch, value):
 
 @pytest.mark.parametrize("value", ["", "false", "0", "no", "off", "production"])
 def test_cookie_secure_env_rejects_non_truthy_values(env, monkeypatch, value):
-    """켜지지 않는 값들. `production`이 여기 있는 것이 의도다 — 이 변수는
-    스테이지 이름이 아니라 Secure 스위치 하나만 가리키는 불리언이므로, 스테이지
-    값을 그대로 넣는 실수가 조용히 통과하면 이름을 좁힌 목적이 사라진다."""
+    """Values that do not turn it on. Having `production` here is intentional — this variable
+    is a boolean that refers only to the Secure switch, not a stage name, so if the mistake of
+    putting the stage value in passed silently, the purpose of narrowing the name would be lost."""
     monkeypatch.setenv("AIPDS_COOKIE_SECURE", value)
     _running(env)
     token = env["host"].ensure_token(PID, SLUG)
@@ -229,33 +229,33 @@ def test_cookie_secure_env_rejects_non_truthy_values(env, monkeypatch, value):
 
 
 def test_the_gate_502s_when_hosting_is_off(env):
-    """유효한 토큰인데 호스팅이 꺼져 있으면 502.
+    """A valid token while hosting is off gives 502.
 
-    여기서만 404와 구별한다. 유효한 토큰을 가진 사람에게만 보이는 정보이므로
-    프로버에게 아무것도 알려주지 않고, 구별하지 않으면 링크를 나눠 준 PM이
-    "링크가 틀렸나"와 "호스팅이 꺼졌나"를 구별할 수 없다.
+    Only here is it distinguished from 404. It is information visible only to someone holding a
+    valid token, so it tells a prober nothing, and without the distinction the PM who handed out
+    the link could not tell "is the link wrong" from "is hosting off".
     """
-    token = env["host"].ensure_token(PID, SLUG)   # 호스팅은 세우지 않는다
+    token = env["host"].ensure_token(PID, SLUG)   # hosting is not started
     resp = client.get(f"/proto/t/{token}", follow_redirects=False)
     assert resp.status_code == 502
     assert "start hosting first" in resp.text
 
 
 def test_the_gate_then_the_proxy_works_end_to_end(env, monkeypatch):
-    """게이트가 심은 쿠키가 실제로 프록시를 통과해야 한다.
+    """The cookie the gate plants must actually pass through the proxy.
 
-    두 곳이 쿠키 이름·값을 따로 계산하므로(게이트는 `set_cookie`, 프록시는
-    `_authorized`) 한쪽만 바꾸면 조용히 어긋난다. 쿠키 잼을 가진 클라이언트로
-    왕복시켜 그 연결을 고정한다.
+    The two places compute the cookie name and value separately (the gate via `set_cookie`, the
+    proxy via `_authorized`), so changing only one drifts silently. A round trip with a client
+    that has a cookie jar pins that connection.
 
-    **`AIPDS_PUBLIC_PATH_PREFIX=""`로 도는 것이 이 테스트의 조건이다.**
-    배포값("/api")에서는 쿠키의 Path가 `/api/proto/...`인데 이 앱이 받는 경로는
-    `/proto/...`이므로, httpx의 쿠키 잼이 (브라우저와 똑같이, 그리고 올바르게)
-    쿠키를 보내지 않는다. 배포에서는 브라우저가 `/api/proto/...`로 보내고 Next
-    프록시가 그 헤더를 전달하므로 성립한다 — 그 계층은 프론트의
-    proxyAuth.test.ts가 담당한다. 여기서 검증할 수 있는 것은 마운트가 없는
-    구성(로컬 개발이 실제로 쓰는 값)의 왕복이고, 그것이 이름·값의 정합성을
-    확인하는 데는 충분하다.
+    **Running with `AIPDS_PUBLIC_PATH_PREFIX=""` is this test's precondition.**
+    With the deployed value ("/api"), the cookie's Path is `/api/proto/...` while the path this
+    app receives is `/proto/...`, so httpx's cookie jar (just like a browser, and correctly)
+    does not send the cookie. In deployment it works because the browser sends to `/api/proto/...`
+    and the Next proxy forwards that header — that layer is covered by the frontend's
+    proxyAuth.test.ts. What can be verified here is the round trip in a configuration without the
+    mount (the value local development actually uses), and that is enough to confirm the
+    name/value consistency.
     """
     monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "")
     _running(env)
@@ -266,21 +266,21 @@ def test_the_gate_then_the_proxy_works_end_to_end(env, monkeypatch):
         assert gate.status_code == 307
         assert gate.headers["location"] == f"/proto/{PID}/{SLUG}/"
 
-        # 쿠키가 잼에 남았으므로 이제 프록시가 인증을 통과해야 한다. upstream이
-        # 없으므로 502("not responding")까지 가는 것이 성공 신호다 — 404가
-        # 아니라는 것이 요점이다.
+        # The cookie remained in the jar, so the proxy must now pass authentication. There is
+        # no upstream, so reaching 502 ("not responding") is the success signal — the point is
+        # that it is not 404.
         resp = jar_client.get(f"/proto/{PID}/{SLUG}/index.html")
         assert resp.status_code == 502
         assert "not found" not in resp.text
 
 
-# ---- 토큰 수명 ----
+# ---- Token lifetime ----
 
 def test_ensure_token_is_stable_across_calls(env):
-    """stop -> start를 반복해도 값이 그대로여야 한다.
+    """The value must stay the same across repeated stop -> start.
 
-    워크숍 중 호스팅을 껐다 켜는 것 때문에 이미 나눠 준 링크가 죽으면, 증상은
-    "10분 전에 되던 URL이 404"로 나타난다.
+    If links already handed out die because hosting was turned off and on during a workshop, the
+    symptom shows up as "a URL that worked 10 minutes ago is 404".
     """
     first = env["host"].ensure_token(PID, SLUG)
     second = env["host"].ensure_token(PID, SLUG)
@@ -288,24 +288,25 @@ def test_ensure_token_is_stable_across_calls(env):
 
 
 def test_tokens_survive_a_restart(env):
-    """새 ProtoHost가 디스크에서 토큰을 되살린다.
+    """A new ProtoHost restores tokens from disk.
 
-    인메모리 맵만 있으면 백엔드 재시작이 배포된 링크를 전부 무효화하고, 다시
-    호스팅해도 복구되지 않는다 — 참가자 URL 안의 토큰은 바뀌지 않으므로.
+    With only an in-memory map, a backend restart would invalidate every distributed link, and
+    re-hosting would not recover them — because the token inside participants' URLs does not change.
     """
     token = env["host"].ensure_token(PID, SLUG)
 
     reborn = ProtoHost(root=env["root"], state_root=env["state"])
-    assert reborn.resolve_token(token) is None   # 아직 읽지 않았다
+    assert reborn.resolve_token(token) is None   # not read yet
     assert reborn.load_tokens() == 1
     assert reborn.resolve_token(token) == (PID, SLUG)
 
 
 async def test_purge_revokes_the_token(env):
-    """리셋이 링크 폐기 경로다.
+    """Reset is the link revocation path.
 
-    파일만 지우고 인메모리 맵을 남기면, 사용자가 지웠다고 믿는 프로토타입의
-    토큰이 프로세스 수명 내내 계속 해소된다 — 즉 리셋이 실제로는 폐기하지 않는다.
+    If only the file were deleted and the in-memory map kept, the token of a prototype the user
+    believes they deleted would keep resolving for the life of the process — i.e., reset would
+    not actually revoke.
     """
     real = env["host"]._real
     (env["root"] / PID / SLUG).mkdir(parents=True, exist_ok=True)
@@ -319,9 +320,9 @@ async def test_purge_revokes_the_token(env):
 
 
 def test_load_tokens_skips_an_empty_token_file(env):
-    """빈 토큰 파일이 빈 문자열 토큰으로 등록되면 안 된다.
+    """An empty token file must not be registered as an empty-string token.
 
-    등록되면 `resolve_token("")`이 성공하고, 빈 쿠키를 보내는 요청이 통과한다.
+    If it were, `resolve_token("")` would succeed and requests sending an empty cookie would pass.
     """
     for target, name in ((env["state"] / PID / SLUG, "token"),
                          (env["root"] / PID / "legacy", TOKEN_FILENAME)):
@@ -333,7 +334,7 @@ def test_load_tokens_skips_an_empty_token_file(env):
     assert host.resolve_token("") is None
 
 
-# ---- 교체된 인스턴스: 로컬 토큰이 없어도 링크가 산다 (proto/store.py) ----
+# ---- Replaced instance: links survive even without a local token (proto/store.py) ----
 
 def _index(monkeypatch, pid=PID, slug=SLUG, token="tok-from-s3"):
     from aipds.proto.store import PrototypeStore
@@ -348,8 +349,8 @@ def _index(monkeypatch, pid=PID, slug=SLUG, token="tok-from-s3"):
 
 
 def test_a_link_opens_on_a_replaced_instance_through_the_s3_index(env, monkeypatch):
-    """인스턴스가 교체되면 `.proto-token`과 캐시가 비어 있다. 이미 나눠 준 링크는
-    S3의 루트 색인으로 풀려야 하고, 그 값이 로컬에 심겨 쿠키 검사가 같은 값을 본다."""
+    """When the instance is replaced, `.proto-token` and the cache are empty. Links already handed out
+    must resolve via the root index in S3, and that value is planted locally so the cookie check sees the same value."""
     token = _index(monkeypatch)
     app_module.registry.register(PID, "p")
     try:
@@ -363,12 +364,12 @@ def test_a_link_opens_on_a_replaced_instance_through_the_s3_index(env, monkeypat
 
 
 def test_an_indexed_token_of_an_unregistered_project_is_404(env, monkeypatch):
-    """삭제 중이거나 이 인스턴스가 모르는 프로젝트의 토큰은 받지 않는다."""
+    """Tokens for projects being deleted or unknown to this instance are not accepted."""
     token = _index(monkeypatch, pid="not-registered")
     assert client.get(f"/proto/t/{token}", follow_redirects=False).status_code == 404
 
 
-# ---- 프리뷰 표면: 프로토타입은 앱과 다른 오리진에서만 서빙된다 (aipds/preview_surface.py) ----
+# ---- Preview surface: prototypes are served only from an origin other than the app (aipds/preview_surface.py) ----
 
 PREVIEW = "https://dpreview.cloudfront.net"
 
@@ -381,8 +382,8 @@ def preview(monkeypatch):
 
 
 def test_a_link_opened_on_the_app_domain_moves_to_the_preview_domain(env, preview):
-    """프리뷰 표면이 생기기 전에 나눠 준 링크도 산다 — 같은 경로의 프리뷰 도메인으로
-    보낸다. 앱 오리진에는 프로토타입 쿠키를 심지 않는다."""
+    """Links handed out before the preview surface existed still work — they are sent to the preview domain
+    at the same path. No prototype cookie is planted on the app origin."""
     token = env["host"].ensure_token(PID, SLUG)
     _running(env)
     resp = client.get(f"/proto/t/{token}", follow_redirects=False)
@@ -392,8 +393,8 @@ def test_a_link_opened_on_the_app_domain_moves_to_the_preview_domain(env, previe
 
 
 def test_the_app_domain_does_not_serve_prototypes(env, preview):
-    """쿠키가 맞아도 앱 오리진에서는 404다 — 프로토타입 JS가 앱 쿠키와 같은 오리진에서
-    돌 길이 없어야 한다."""
+    """Even with a correct cookie it is 404 on the app origin — there must be no way for prototype JS
+    to run on the same origin as the app cookies."""
     token = env["host"].ensure_token(PID, SLUG)
     _running(env)
     cookies = {cookie_name(PID, SLUG): token}
@@ -412,7 +413,7 @@ def test_the_preview_domain_opens_the_link(env, preview):
 
 
 def test_a_wrong_preview_secret_is_the_app_domain(env, preview):
-    """비밀 헤더 값을 모르면 앱 도메인으로 흉내낼 수 없다."""
+    """Without knowing the secret header value, the app domain cannot be impersonated."""
     token = env["host"].ensure_token(PID, SLUG)
     _running(env)
     resp = client.get(f"/proto/t/{token}", headers={"X-Preview-Verify": "guess"},
@@ -426,7 +427,7 @@ def test_share_links_point_at_the_preview_domain(preview):
 
 
 def test_without_a_preview_surface_the_app_domain_still_serves(env, monkeypatch):
-    """인증이 꺼진 로컬 개발 — 훔칠 세션 쿠키가 없으므로 앱 오리진이 서빙해도 된다."""
+    """Local development with auth off — there is no session cookie to steal, so the app origin may serve it."""
     monkeypatch.delenv("AIPDS_PREVIEW_ORIGIN", raising=False)
     from aipds.routes.proto_public import access_url_path
     assert access_url_path("tok") == "/api/proto/t/tok"
@@ -441,8 +442,8 @@ def _auth_on(monkeypatch):
 
 
 def test_with_auth_on_a_missing_preview_surface_closes_the_preview(env, monkeypatch):
-    """인증이 켜진 배포에서 프리뷰 표면이 없으면(설정 누락, 비밀 값 읽기 실패) 앱 오리진이
-    서빙하지 않는다 — 서빙하면 프리뷰를 연 사람의 세션으로 프로토타입 JS가 앱 API를 부른다."""
+    """In a deployment with auth on, if there is no preview surface (missing config, failure reading the secret), the app
+    origin does not serve — if it did, prototype JS would call the app API with the session of whoever opened the preview."""
     monkeypatch.delenv("AIPDS_PREVIEW_ORIGIN", raising=False)
     _auth_on(monkeypatch)
     token = env["host"].ensure_token(PID, SLUG)
@@ -465,10 +466,10 @@ def test_with_auth_on_an_unreadable_preview_secret_closes_the_preview(env, monke
     assert client.get(f"/proto/t/{token}", follow_redirects=False).status_code == 503
 
 
-# ---- 공유 업스트림 클라이언트 ----
+# ---- Shared upstream client ----
 
 async def test_the_proxy_reuses_one_upstream_client_per_loop():
-    """요청마다 클라이언트를 만들면 keep-alive가 없고 생성 비용이 루프를 막는다."""
+    """Creating a client per request means no keep-alive, and the creation cost blocks the loop."""
     from aipds.routes.proto_public import _proxy_http, aclose_proxy_http
     try:
         assert _proxy_http() is _proxy_http()
@@ -477,11 +478,11 @@ async def test_the_proxy_reuses_one_upstream_client_per_loop():
 
 
 async def test_the_shared_upstream_client_keeps_no_cookies():
-    """공유 클라이언트의 쿠키 잼은 관람자 사이의 누수 통로다.
+    """The shared client's cookie jar is a leak channel between viewers.
 
-    httpx는 응답마다 `cookies.extract_cookies`로 Set-Cookie를 잼에 담고 이후
-    요청에 붙인다. 프로토타입이 한 관람자에게 심은 쿠키가 다음 관람자의 요청에
-    실리면 안 된다 — 브라우저의 쿠키는 Cookie 헤더로 따로 전달된다.
+    httpx stores Set-Cookie into the jar via `cookies.extract_cookies` on every response and attaches
+    it to later requests. A cookie the prototype planted for one viewer must not ride along on the next
+    viewer's request — the browser's cookies are forwarded separately in the Cookie header.
     """
     import httpx
     from aipds.routes.proto_public import _proxy_http, aclose_proxy_http

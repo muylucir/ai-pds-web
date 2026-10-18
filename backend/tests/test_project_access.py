@@ -1,4 +1,4 @@
-# backend/tests/test_project_access.py — 소유자·열람 멤버·관리자 (aipds/project_access.py).
+# backend/tests/test_project_access.py — owner, viewer members, admin (aipds/project_access.py).
 from __future__ import annotations
 
 import json
@@ -26,7 +26,8 @@ ADMIN = Principal(username="ops", sub="s-ops", role="admin")
 
 @pytest.fixture()
 def as_user():
-    """요청자를 바꿔 끼운다. require_admin도 require_user를 거치므로 pm은 거기서 403이다."""
+    """Swaps in the requester. require_admin also goes through require_user, so pm gets
+    a 403 there."""
     current: dict[str, Principal] = {}
 
     def _set(p: Principal) -> TestClient:
@@ -45,7 +46,7 @@ def project(monkeypatch):
     return "pa-1"
 
 
-# ---- 라우트 커버리지 ----
+# ---- Route coverage ----
 
 def _routes() -> list[Any]:
     out: list[Any] = []
@@ -60,8 +61,9 @@ def _calls(route: Any) -> set:
 
 
 def test_every_project_route_checks_project_access():
-    # `{pid}` 라우트에 접근 게이트가 빠지면 로그인한 누구나 그 프로젝트에 닿는다. 새 라우터를
-    # _AUTH로 붙이는 실수를 여기서 잡는다. /admin은 require_admin이 더 강한 게이트다.
+    # If a `{pid}` route is missing the access gate, anyone logged in can reach that
+    # project. This catches the mistake of attaching a new router with _AUTH. For
+    # /admin, require_admin is the stronger gate.
     missing = [r.path for r in _routes()
                if "{pid}" in r.path and r.path not in PUBLIC_PATHS
                and project_access.require_project_access not in _calls(r)
@@ -90,7 +92,8 @@ def test_a_stranger_gets_404_everywhere(project, as_user):
     wrong = [(m, p) for m, p in _project_routes()
              if client.request(m, _fill(p)).status_code != 404]
     assert wrong == []
-    # 없는 프로젝트와 같은 응답이다 — 접근할 수 없는 프로젝트의 존재를 알리지 않는다.
+    # Same response as for a nonexistent project — the existence of a project you cannot
+    # access is not revealed.
     assert client.get("/projects/pa-1").json() == {"detail": "unknown project"}
 
 
@@ -109,7 +112,7 @@ def test_a_member_cannot_write_anywhere(project, as_user):
 def test_a_member_reads(project, as_user):
     body = as_user(MEMBER).get("/projects/pa-1").json()
     assert body["access"] == "member" and body["owner"] == "kim"
-    # 열람 멤버에게 다른 열람자 목록은 주지 않는다.
+    # Viewer members are not given the list of other viewers.
     assert "members" not in body
 
 
@@ -124,7 +127,7 @@ def test_username_comparison_ignores_case(project, as_user):
     assert as_user(shouting).get("/projects/pa-1").json()["access"] == "owner"
 
 
-# ---- 목록 ----
+# ---- List ----
 
 def test_list_shows_only_visible_projects_and_counts_them(monkeypatch, as_user):
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
@@ -135,7 +138,8 @@ def test_list_shows_only_visible_projects_and_counts_them(monkeypatch, as_user):
     mine = {p["project_id"]: p["access"] for p in body["projects"]
             if p["project_id"].startswith("pl-")}
     assert mine == {"pl-1": "owner", "pl-2": "member"}
-    # total은 거른 뒤의 수다 — 남의 프로젝트가 페이지 수에 섞이지 않는다.
+    # total is the count after filtering — other people's projects do not leak into the
+    # page count.
     assert body["total"] == len([p for p in app_module.registry.list_ids()
                                  if project_access.access_of(OWNER, p)])
     admin_ids = {p["project_id"] for p in as_user(ADMIN).get("/projects?size=50").json()["projects"]}
@@ -157,13 +161,13 @@ def test_the_creator_is_written_to_the_manifest(monkeypatch, as_user):
     assert d["owner"] == "park" and d["members"] == []
 
 
-# ---- 멤버 ----
+# ---- Members ----
 
 def test_owner_sets_members_by_email_or_username(project, as_user):
     r = as_user(OWNER).put("/projects/pa-1/members",
                            json={"members": ["Choi@Example.com", "jung", "kim", "jung"]})
     assert r.status_code == 200
-    # 이메일은 username으로 바뀌고, 소유자와 중복은 빠진다.
+    # Emails are converted to usernames, and the owner and duplicates are dropped.
     assert r.json()["members"] == ["choi", "jung"]
     assert app_module.registry.get_members("pa-1") == ("choi", "jung")
 
@@ -189,13 +193,13 @@ def test_member_change_writes_the_manifest_first(monkeypatch, as_user):
     assert as_user(OWNER).put("/projects/pm-1/members",
                               json={"members": ["lee"]}).status_code == 200
     d = json.loads(fake.blobs["pm-1/project.json"])
-    # 나머지 필드는 읽은 그대로다.
+    # The remaining fields are exactly as read.
     assert d == {"project_id": "pm-1", "name": "n", "language": "en",
                  "owner": "kim", "members": ["lee"]}
 
 
 def test_a_failed_manifest_write_leaves_the_members_as_they_were(monkeypatch, as_user):
-    fake = FakeS3Store()  # project.json이 없다 → 쓰기 실패
+    fake = FakeS3Store()  # no project.json → write fails
     monkeypatch.setenv("AIPDS_S3_BUCKET", "b")
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: fake)
     app_module.registry.register("pm-2", owner="kim", members=("lee",))
@@ -206,7 +210,8 @@ def test_a_failed_manifest_write_leaves_the_members_as_they_were(monkeypatch, as
 
 @pytest.mark.asyncio
 async def test_delete_waits_for_an_access_change_on_the_same_project(monkeypatch):
-    # 접근 변경이 매니페스트를 읽고-고쳐-쓰는 사이에 삭제가 끼면 지운 project.json이 되살아난다.
+    # If a deletion slips in while an access change is reading, modifying, and writing
+    # the manifest, the deleted project.json comes back to life.
     import asyncio
     from aipds.routes import projects as projects_routes
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
@@ -227,7 +232,7 @@ async def test_delete_waits_for_an_access_change_on_the_same_project(monkeypatch
     assert order == ["access change done", "delete"]
 
 
-# ---- 소유권 부여 (관리자) ----
+# ---- Granting ownership (admin) ----
 
 class _Cognito:
     def __init__(self, users: dict[str, tuple[bool, list[str]]]):
@@ -278,7 +283,7 @@ def test_admin_assigns_an_owner_and_the_previous_owner_stays_as_a_member(
 
 def test_assigning_from_the_seed_admin_does_not_keep_it_as_a_member(monkeypatch, as_user, cognito):
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
-    app_module.registry.register("pa-2")  # 소유자 기록 없음 → 시드 관리자
+    app_module.registry.register("pa-2")  # no owner record → seed admin
     assert as_user(ADMIN).put("/admin/projects/pa-2/owner",
                               json={"owner": "kim"}).status_code == 200
     assert app_module.registry.get_owner("pa-2") == "kim"
@@ -308,7 +313,7 @@ def test_a_pm_cannot_assign_owners(project, as_user, cognito):
                               json={"owner": "park"}).status_code == 403
 
 
-# ---- 사용자 삭제 ----
+# ---- User deletion ----
 
 def test_deleting_a_user_hands_their_projects_to_the_seed_admin(monkeypatch, as_user, cognito):
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
@@ -316,21 +321,21 @@ def test_deleting_a_user_hands_their_projects_to_the_seed_admin(monkeypatch, as_
     app_module.registry.register("pd-2", owner="park", members=("kim", "lee"))
     assert as_user(ADMIN).delete("/admin/users/kim").status_code == 204
     assert cognito.deleted == ["kim"]
-    # 소유권은 시드 관리자에게 가고, 지운 사람은 어디에도 남지 않는다 — 같은 이메일로 다시
-    # 초대된 사람이 예전 멤버십을 물려받으면 안 된다.
+    # Ownership goes to the seed admin, and the deleted person remains nowhere — someone
+    # re-invited with the same email must not inherit the old memberships.
     assert app_module.registry.get_owner("pd-1") == "admin"
     assert app_module.registry.get_members("pd-1") == ("lee",)
     assert app_module.registry.get_members("pd-2") == ("lee",)
 
 
 def test_handover_happens_before_the_account_is_deleted(monkeypatch, as_user, cognito):
-    fake = FakeS3Store()  # 매니페스트 없음 → 넘기기 실패
+    fake = FakeS3Store()  # no manifest → transfer fails
     monkeypatch.setenv("AIPDS_S3_BUCKET", "b")
     monkeypatch.setattr(app_module, "projects_root_s3_factory", lambda: fake)
     app_module.registry.register("pd-3", owner="kim")
     r = as_user(ADMIN).delete("/admin/users/kim")
     assert r.status_code == 500
-    # 계정이 그대로다 — 같은 요청을 다시 보내면 된다.
+    # The account is still there — just send the same request again.
     assert cognito.deleted == [] and "kim" in cognito.users
 
 
@@ -343,7 +348,8 @@ def test_the_seed_admin_cannot_be_deleted(as_user, cognito):
 @pytest.mark.parametrize("target", ["admin", "ADMIN", " admin ", "admin@aipds.local",
                                     "Admin@AIPDS.local"])
 def test_the_seed_admin_guard_sees_every_spelling_of_the_account(target):
-    # Cognito Admin API는 username을 대소문자 없이 해석하고 이메일 alias도 받는다.
+    # The Cognito Admin API resolves usernames case-insensitively and also accepts email
+    # aliases.
     from fastapi import HTTPException
     from aipds.routes.admin_users import _guard_seed_admin
     with pytest.raises(HTTPException):
@@ -356,7 +362,7 @@ def test_the_seed_admin_cannot_be_demoted(as_user, cognito):
     assert cognito.users["admin"][1] == ["admin"]
 
 
-# ---- 매니페스트 ----
+# ---- Manifest ----
 
 @pytest.mark.asyncio
 async def test_a_manifest_without_an_owner_belongs_to_the_seed_admin():
@@ -377,7 +383,8 @@ async def test_write_manifest_access_needs_an_existing_manifest():
 
 
 def test_the_seed_admin_matches_the_infra_seed_account():
-    # 시드 계정을 만드는 것은 인프라다. 두 값이 어긋나면 귀속 대상이 없는 계정이 된다.
+    # Creating the seed account is infra's job. If the two values diverge, the account
+    # ends up with nothing to be attributed to.
     src = (Path(__file__).resolve().parents[2]
            / "infra/lib/auth-client-config.ts").read_text(encoding="utf-8")
     m = re.search(r"SEED_ADMIN_EMAIL\s*=\s*'([^']+)'", src)

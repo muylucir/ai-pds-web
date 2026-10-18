@@ -47,16 +47,16 @@ def test_empty_file_falls_back():
     assert qf.raw_markdown == ""
 
 
-# ---- 문항 헤더에 붙는 접미사 ----
-# 2026-08-16 ws-a-v5: `design-context.md`의 문항 3개 중 하나가 파싱되지 않아
-# 답변이 기록되지 않았다. 정규식이 숫자 뒤에 **아무것도 없어야** 한다고 요구했는데
-# (`Question\s+(\d+)\s*$`), 에이전트는 후속 질문에 괄호 설명을 붙인다:
+# ---- Suffixes attached to question headers ----
+# 2026-08-16 ws-a-v5: one of the 3 questions in `design-context.md` failed to parse, so its
+# answer was not recorded. The regex required **nothing** after the number
+# (`Question\s+(\d+)\s*$`), but the agent attaches parenthetical notes to follow-up questions:
 #
 #   ## Question 4 (모호성 해소 — Question 3 답변에 따른 후속)
 #
-# 상류 형식(question-format-guide.md)은 `## Question [Number]`만 규정하고 접미사를
-# 금지하지 않는다. 이 결함은 읽기 경로 전체에 번진다 — 화면의 질문 카드,
-# answeredCount, 스테이지 진행률이 모두 이 파서를 통과한다.
+# The upstream format (question-format-guide.md) prescribes only `## Question [Number]` and does not
+# forbid suffixes. This defect spreads across the whole read path — the on-screen question card,
+# answeredCount, and stage progress all go through this parser.
 
 def test_a_header_suffix_still_parses_as_that_question():
     md = """## Question 4 (모호성 해소 — Question 3 답변에 따른 후속)
@@ -71,13 +71,13 @@ X) Other (please describe after [Answer]: tag below)
     qf = parse_question_file("design-context.md", md)
     assert qf.parse_ok
     assert [q.number for q in qf.questions] == [4]
-    # 헤더의 괄호 설명은 문항 **본문이 아니다** — 본문은 다음 줄부터다.
+    # The parenthetical note in the header is **not the question body** — the body starts on the next line.
     assert qf.questions[0].text == "모바일에서 어떤 작업을 하실 계획입니까?"
     assert len(qf.questions[0].options) == 3
 
 
 def test_numbering_may_skip_and_carry_suffixes_together():
-    """실측 파일의 모양 그대로: 1 → 3 → 4(접미사). 번호는 건너뛸 수 있다."""
+    """Exactly the shape of the observed file: 1 → 3 → 4 (suffix). Numbers can skip."""
     md = "".join(f"""## Question {n}{suffix}
 질문 {n}?
 
@@ -92,33 +92,33 @@ X) Other (please describe after [Answer]: tag below)
 
 
 def test_a_heading_that_merely_starts_with_question_is_not_a_question():
-    """`## Questions`나 번호 없는 `## Question`은 문항이 아니다 — 느슨하게 만든
-    정규식이 카테고리 헤더를 삼키면 그 절 전체가 한 문항으로 뭉개진다."""
+    """`## Questions` or an unnumbered `## Question` is not a question — if a loosened
+    regex swallowed category headers, that whole section would be mashed into one question."""
     for heading in ("## Questions 개요", "## Question 없음", "## Questionnaire"):
         qf = parse_question_file("x.md", heading + "\n\n본문\n")
         assert not qf.parse_ok, heading
 
 
-# ---- 문항 헤더 앞에 붙는 수식어, 그리고 해시 4개 ----
-# 2026-08-17 test-wf: 질문 파일 8개 중 `pain-point-clarification-questions.md`가
-# **문항 0개**로 읽혀 raw markdown 폴백으로 떨어졌고, 그 파일의 답변은 기록되지
-# 않았다(`[Answer]` 슬롯 1개, 채워짐 0개). 정규식이 해시 바로 뒤에 `Question`이
-# 오기를 요구했는데 그 파일은 이렇게 쓴다:
+# ---- Modifiers before the question header, and four hashes ----
+# 2026-08-17 test-wf: of 8 question files, `pain-point-clarification-questions.md` was read with
+# **0 questions** and fell back to raw markdown, and that file's answers were not recorded
+# (1 `[Answer]` slot, 0 filled). The regex required `Question` immediately after the hashes,
+# but that file writes:
 #
 #   ### Clarification Question 1
 #
-# **상류가 규정한 형식이다.** `question-format-guide.md`는 `## Question [Number]`
-# (22행)와 `### Clarification Question 1`(223행, "Creating Clarification
-# Questions") 두 가지를 모두 템플릿으로 싣는다. 룰셋 전체에는 해시 4개짜리
-# (`#### Question 1: Brand & Design Context`)도 있다.
+# **This is a format upstream prescribes.** `question-format-guide.md` carries both
+# `## Question [Number]` (line 22) and `### Clarification Question 1` (line 223, "Creating Clarification
+# Questions") as templates. Across the rule set there is also a four-hash form
+# (`#### Question 1: Brand & Design Context`).
 #
-# 번호가 여전히 유일한 판별자다: 수식어를 허용해도 `### Question File Format`이나
-# `### Context Questions (Per Use Case)`는 번호가 없어 걸리지 않는다. 수식어는
-# **한 단어**만 허용한다 — `## Answer to Question 3` 같은 참조용 산문 헤딩까지
-# 삼키면 그 절이 한 문항으로 뭉개진다(위 테스트가 막는 것과 같은 실패).
+# The number is still the only discriminator: even with modifiers allowed, `### Question File Format` and
+# `### Context Questions (Per Use Case)` have no number and are not caught. Only a **single-word**
+# modifier is allowed — swallowing reference prose headings like `## Answer to Question 3` would mash
+# that section into one question (the same failure the test above blocks).
 
 def test_a_qualified_question_heading_parses():
-    """`### Clarification Question 1` — 상류 question-format-guide.md:223의 형식."""
+    """`### Clarification Question 1` — the format from upstream question-format-guide.md:223."""
     md = """### Clarification Question 1
 프로토타입이 가장 먼저 증명해야 하는 것은 어느 쪽입니까?
 
@@ -136,7 +136,7 @@ X) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)
 
 
 def test_a_four_hash_question_heading_parses():
-    """`#### Question 1: Brand & Design Context` — 룰셋에 실제로 있는 형태."""
+    """`#### Question 1: Brand & Design Context` — a form that actually exists in the rule set."""
     md = """#### Question 1: Brand & Design Context
 어떤 브랜드 톤을 원하십니까?
 
@@ -148,30 +148,30 @@ B) 대담한
     qf = parse_question_file("design-context.md", md)
     assert qf.parse_ok
     assert [q.number for q in qf.questions] == [1]
-    # 콜론 뒤 제목은 헤더의 접미사이지 본문이 아니다(접미사 테스트와 같은 계약).
+    # The title after the colon is a header suffix, not the body (same contract as the suffix tests).
     assert qf.questions[0].ask == "어떤 브랜드 톤을 원하십니까?"
 
 
 def test_a_heading_that_names_question_without_a_number_is_still_not_a_question():
-    """수식어를 허용해도 번호가 없으면 문항이 아니다.
+    """Even with modifiers allowed, without a number it is not a question.
 
-    전부 룰셋에 실재하는 헤딩이다 — 이것들이 문항으로 잡히면 그 절 전체가
-    한 문항으로 뭉개진다."""
+    All of these are headings that really exist in the rule set — if they were caught as questions,
+    that whole section would be mashed into one question."""
     for heading in ("### Question File Format",
                     "### Context Questions (Per Use Case)",
                     "## MANDATORY: Question File Format",
                     "### ⛔ GATE: Await PRFAQ Clarifying Question Answers",
-                    # 수식어는 한 단어만 — 참조용 산문 헤딩은 삼키지 않는다.
+                    # Only one-word modifiers — reference prose headings are not swallowed.
                     "## Answer to Question 3"):
         qf = parse_question_file("x.md", heading + "\n\n본문\n")
         assert not qf.parse_ok, heading
 
 
 def test_answers_are_written_back_to_a_qualified_heading():
-    """파싱만으로는 부족하다 — 되기록까지 돌아야 이 결함이 닫힌다.
+    """Parsing alone is not enough — the write-back must also run for this defect to be closed.
 
-    2026-08-17 test-wf에서 잃은 것은 파싱 결과가 아니라 **답변**이었다.
-    `serialize_answers`는 번호로 슬롯을 찾으므로 헤더 인식이 곧 되기록이다."""
+    What was lost on 2026-08-17 test-wf was not the parse result but the **answers**.
+    `serialize_answers` finds slots by number, so header recognition is the write-back."""
     md = """### Clarification Question 1
 어느 쪽입니까?
 
@@ -191,24 +191,24 @@ B) 나중
     out = serialize_answers(md, {1: "B", 2: "A"})
     assert "[Answer]: B" in out
     assert "[Answer]: A" in out
-    # 되읽어도 같은 번호로 잡혀야 한다(파서와 직렬화가 같은 기준을 쓴다는 불변식).
+    # Re-reading must catch the same numbers (invariant: parser and serializer use the same criterion).
     qf = parse_question_file("c.md", out)
     assert [(q.number, q.answer) for q in qf.questions] == [(1, "B"), (2, "A")]
 
 
-# ---- Question.context — 카테고리 헤더와 문항 헤더 사이의 산문 ----
-# 2026-08-17 test-wf: `pain-point-clarification-questions.md`가 1,350자인데 파서가
-# 붙잡은 것은 712자였다. 사라진 ~470자는 `## 모호성 1: …`(카테고리)와
-# `### Clarification Question 1`(문항) **사이의 설명 문단들**이다. preamble은 첫
-# 헤더 뒤를 받지 않고 문항 본문은 헤더 뒤부터 시작하므로 어느 쪽에도 안 들어갔다.
+# ---- Question.context — prose between the category header and the question header ----
+# 2026-08-17 test-wf: `pain-point-clarification-questions.md` is 1,350 characters, but the parser
+# captured 712. The missing ~470 characters are **the explanatory paragraphs between** `## 모호성 1: …`
+# (category) and `### Clarification Question 1` (question). The preamble does not take anything after
+# the first header, and the question body starts after its header, so it went into neither.
 #
-# 그런데 그 산문이 **"왜 이걸 묻는가"**다. 상류가 명확화 질문 템플릿
-# (`question-format-guide.md`의 "Creating Clarification Questions")에서 의도한
-# 구조이고, 질문 파일을 결정론적으로 렌더할 때 사용자가 읽어야 하는 내용이다.
+# Yet that prose is **"why we are asking this"**. It is the structure upstream intended in the
+# clarification question template ("Creating Clarification Questions" in `question-format-guide.md`),
+# and it is what the user needs to read when the question file is rendered deterministically.
 #
-# `text`를 늘리지 않고 별 필드로 두는 이유: `text`는 이미 ~200자여서 0.3721
-# 사고를 낸 값이고(위 절), 더 늘리면 그 비교가 더 나빠진다. `ask`/`text` 계약은
-# 그대로 두고 새 필드만 얹는다.
+# Why it is a separate field rather than extending `text`: `text` is already ~200 characters and is the
+# value that caused the 0.3721 incident (section above); extending it would make that comparison worse.
+# The `ask`/`text` contract stays as is and only a new field is added on top.
 
 def test_prose_between_a_category_and_a_question_becomes_context():
     md = """# 명확화 질문
@@ -233,23 +233,23 @@ B) 오른쪽
     assert qf.parse_ok
     q = qf.questions[0]
     assert q.category == "모호성 1: 두 답변이 다른 문제를 겨냥함"
-    # 두 문단이 모두 잡히고, 문단 경계가 남는다.
+    # Both paragraphs are captured, and the paragraph boundary is preserved.
     assert "Question 2에서는 C를 고르셨습니다." in q.context
     assert "모순은 아니지만 확인이 필요합니다." in q.context
     assert "\n\n" in q.context, "문단 경계가 사라지면 렌더가 한 덩어리가 된다"
-    # ask/text 계약은 그대로 — 산문이 그쪽으로 새지 않는다.
+    # The ask/text contract is unchanged — the prose does not leak into it.
     assert q.ask == "어느 쪽입니까?"
     assert q.text == "어느 쪽입니까?"
-    # 서두는 여전히 preamble이다(첫 헤더 앞).
+    # The opening is still the preamble (before the first header).
     assert "서두 문단." in (qf.preamble or "")
 
 
 def test_context_keeps_line_structure_so_a_table_stays_a_table():
-    """확인 게이트 질문의 전제가 표인 경우가 실제로 있다.
+    """There really are confirmation gate questions whose premise is a table.
 
-    2026-08-17 test-wf `pain-point-confirmation-questions.md`: 질문이 "**위에
-    정리한** 페인 포인트 5건이 정확합니까?"라서 그 5행 표가 질문의 전제다. 문단
-    안을 공백으로 이으면 `| # | … | |---|---| | 1 | …`이 되어 표가 아니게 된다."""
+    2026-08-17 test-wf `pain-point-confirmation-questions.md`: the question is "**위에
+    정리한** 페인 포인트 5건이 정확합니까?" (Are the 5 pain points **summarized above** correct?), so that 5-row
+    table is the question's premise. Joining lines within a paragraph with spaces yields `| # | … | |---|---| | 1 | …`, which is no longer a table."""
     md = """## 확인 대상 요약
 
 | # | 페인 포인트 |
@@ -272,7 +272,7 @@ A) 정확하다
 
 
 def test_context_is_empty_when_a_question_follows_its_header_directly():
-    """기존 파일 모양(문항 8개 중 7개)에서는 변화가 없어야 한다."""
+    """The existing file shape (7 of 8 questions) must be unchanged."""
     md = """## Question 1
 질문?
 
@@ -286,9 +286,9 @@ B) 아니오
 
 
 def test_context_does_not_leak_across_categories():
-    """`## Cat A` + 산문 + `## Cat B` + 문항이면 그 산문은 Cat A 것이다.
+    """With `## Cat A` + prose + `## Cat B` + question, that prose belongs to Cat A.
 
-    문항에 붙이면 엉뚱한 설명이 붙으므로 카테고리 헤더에서 버퍼를 비운다."""
+    Attaching it to the question would attach the wrong explanation, so the buffer is cleared at category headers."""
     md = """## Cat A
 
 A 카테고리에 대한 설명.
@@ -307,15 +307,16 @@ A) 예
     assert "A 카테고리에 대한 설명." not in q.context
 
 
-# ---- Question.ask — 배경 산문과 실제 질문 문장을 나눈다 ----
-# 2026-08-16 ws-a-v5: `design-context.md` Q4의 답변이 기록되지 않았다. 파서가
-# 옵션 앞의 **모든 줄**을 본문으로 잡는데, 그 문항은 메타(`**작성 시각**`) + 배경
-# 산문 4줄 + 질문 문장 순서다. 조인된 본문이 ~200자인데 AskUserQuestion에 간 것은
-# 마지막 문장 ~22자여서 유사도가 무너졌다(0.3721).
+# ---- Question.ask — separating background prose from the actual question sentence ----
+# 2026-08-16 ws-a-v5: the answer to `design-context.md` Q4 was not recorded. The parser takes **every
+# line** before the options as the body, and that question is ordered meta (`**작성 시각**`) + 4 lines of
+# background prose + the question sentence. The joined body was ~200 characters, but what went to
+# AskUserQuestion was the last sentence of ~22 characters, so similarity collapsed (0.3721).
 #
-# 이건 우연이 아니라 **구조적**이다: 도구에는 질문 문장만 가고 파일은 배경까지 담는다.
-# 그래서 파서가 "옵션 직전 마지막 문단"을 따로 노출하고, 되기록이 그 값과도 비교한다.
-# `text`는 표시용으로 그대로 둔다 — 배경이 폼에서 사라지면 사용자가 판단 근거를 잃는다.
+# This is not a coincidence but **structural**: only the question sentence goes to the tool, while the
+# file also holds the background. So the parser separately exposes "the last paragraph before the options",
+# and the write-back compares against that value too. `text` is kept as is for display — if the background
+# disappeared from the form, the user would lose the basis for their judgment.
 
 def test_ask_is_the_last_paragraph_before_the_options():
     md = """## Question 4 (모호성 해소 — Question 3 답변에 따른 후속)
@@ -334,14 +335,14 @@ X) Other (please describe after [Answer]: tag below)
 """
     q = parse_question_file("design-context.md", md).questions[0]
     assert q.ask == "모바일에서 어떤 작업까지 하실 계획입니까?"
-    # 표시용 본문은 배경을 잃지 않는다.
+    # The display body does not lose the background.
     assert "작성 시각" in q.text and "모호성" in q.text
     assert q.ask in q.text
 
 
 def test_a_wrapped_question_keeps_its_whole_paragraph_as_ask():
-    """줄바꿈으로 감긴 질문은 한 문단이다 — 마지막 **줄**만 취하면
-    `누구입니까?`만 남아 매칭이 더 나빠진다."""
+    """A question wrapped across lines is one paragraph — taking only the last **line** would
+    leave just `누구입니까?` and make matching worse."""
     md = """## Question 1
 주 사용자는
 누구입니까?
@@ -357,8 +358,8 @@ X) Other (please describe after [Answer]: tag below)
 
 
 def test_ask_is_empty_when_the_question_has_no_body():
-    """본문 없이 옵션만 있는 문항도 파싱은 된다(기존 동작). 그때 ask는 빈 문자열이고,
-    되기록은 빈 값으로 매칭을 시도하지 않는다."""
+    """A question with only options and no body still parses (existing behavior). Its ask is then an empty string,
+    and the write-back does not attempt matching with an empty value."""
     md = """## Question 1
 
 A) 하나
@@ -371,26 +372,26 @@ X) Other (please describe after [Answer]: tag below)
     assert q.text == ""
 
 
-# ---- 지역화된 문항 헤딩 ----
-# 2026-08-17 sarang-hpt 실측: `business-context-questions.md`가 만들어졌는데 질문
-# 카드가 뜨지 않았다. 파일은 완전히 정상인데 헤딩만 한국어였다:
+# ---- Localized question headings ----
+# 2026-08-17 ws-j observation: `business-context-questions.md` was created, but no question
+# card appeared. The file was perfectly fine except that the heading was in Korean:
 #
 #     ## 질문 1
 #     비즈니스 컨텍스트 정보를 어떤 방식으로 제공하시겠습니까?
 #     A) … D) … X) 기타
 #     [Answer]:
 #
-# 정규식이 리터럴 `Question`을 요구해 문항 0개로 읽혔다. **회귀의 원인은 규약
-# 변경이다**: 질문 파일이 도구 호출의 사본이 아니라 사용자용 산출물이 되면서
-# 에이전트가 헤딩까지 프로젝트 언어로 지역화했다. 그리고 AskUserQuestion이 이제
-# 거부되므로 그 질문은 **완전히 사라졌다** — 옛 폴백이 없어진 뒤의 새 실패 모양이다.
+# The regex required a literal `Question`, so it was read as 0 questions. **The regression was caused by
+# a convention change**: once the question file became a user-facing artifact rather than a copy of the
+# tool call, the agent localized even the headings into the project language. And since AskUserQuestion
+# is now rejected, that question **disappeared entirely** — the new shape of failure after the old fallback was removed.
 #
-# 관용은 여기(우리 파서)에 두고, `## Question N`을 쓰라는 지시는
-# `discovery-config/CLAUDE.md`에 둔다. 상류 `question-format-guide.md`는 건드리지
-# 않는다 — 그 파일이 `## Question [Number]`를 규정한 정본이다.
+# The tolerance lives here (our parser), and the instruction to write `## Question N` lives in
+# `discovery-config/CLAUDE.md`. Upstream `question-format-guide.md` is not touched — that file is the
+# source of truth that prescribes `## Question [Number]`.
 #
-# 허용목록으로 하는 이유: 느슨한 규칙(`숫자로 끝나는 헤딩`)은 실재하는 카테고리
-# 헤딩을 삼킨다 — 명확화 질문 파일의 `## 모호성 1`이 그것이다.
+# Why an allowlist: a loose rule (`heading ending in a number`) swallows real category
+# headings — `## 모호성 1` in clarification question files is exactly that.
 
 def test_a_korean_question_heading_parses():
     md = """## 질문 1
@@ -410,7 +411,7 @@ X) 기타 (아래 [Answer]: 태그 뒤에 직접 설명해 주세요)
 
 
 def test_a_korean_qualified_question_heading_parses():
-    """수식어도 같이 온다 — 영어 쪽 `Clarification Question 1`의 대응."""
+    """Modifiers come along too — the counterpart of the English `Clarification Question 1`."""
     md = """### 명확화 질문 1
 어느 쪽입니까?
 
@@ -425,10 +426,10 @@ B) 오른쪽
 
 
 def test_a_korean_category_heading_is_not_a_question():
-    """`## 모호성 1`은 카테고리다 — 실제 명확화 질문 파일이 쓰는 헤딩이다.
+    """`## 모호성 1` is a category — a heading that real clarification question files use.
 
-    이것을 문항으로 삼으면 그 절 전체가 한 문항으로 뭉개지고, 그 아래의 진짜
-    문항(`### 명확화 질문 1`)이 그 안에 흡수된다."""
+    Treating it as a question would mash that whole section into one question, and the real
+    question underneath (`### 명확화 질문 1`) would be absorbed into it."""
     md = """## 모호성 1
 
 설명 문단.
@@ -447,12 +448,12 @@ A) 왼쪽
     assert "설명 문단." in qf.questions[0].context
 
 
-# ---- 보기 없는 문항은 주관식이지 파싱 실패가 아니다 ----
-# 2026-08-18 실측(123456test): Envision Step 0.2의 Mode A(자유 서술)가 선택지 없이
-# 묻는다. 파서는 이 파일을 정확히 읽었고 결함은 프론트 렌더링이었지만
-# (QuestionCard가 보기 배열만 순회해 카드 본문이 비었다), 그 화면을 "파서가 못
-# 읽었다"로 오진하기 쉬우므로 여기서 계약을 고정한다. 보기를 필수로 만드는
-# "수정"이 들어오면 이 검사가 막는다.
+# ---- A question without options is free-form, not a parse failure ----
+# 2026-08-18 observation (ws-k): Envision Step 0.2's Mode A (free description) asks without
+# options. The parser read this file correctly and the defect was in frontend rendering
+# (QuestionCard iterated only over the options array, so the card body was empty), but that screen is
+# easy to misdiagnose as "the parser could not read it", so the contract is pinned here. If a "fix"
+# that makes options mandatory comes in, this check blocks it.
 
 _FREEFORM_MD = """# Business Context — 자유 서술 (Mode A)
 
@@ -479,7 +480,7 @@ def test_a_question_with_no_options_still_parses():
     assert qfile.parse_ok
     assert [q.number for q in qfile.questions] == [1, 2]
     assert all(q.options == [] for q in qfile.questions)
-    # 질문 문장이 남아야 한다 — 없으면 화면에 제목만 뜬다.
+    # The question sentence must remain — without it only the title shows on screen.
     assert "산업" in (qfile.questions[0].text or "")
 
 
@@ -489,21 +490,21 @@ def test_free_text_round_trips_through_a_no_option_file():
     assert [q.answer for q in again.questions] == ["B2B SaaS 물류", "운영 중"]
 
 
-# ---- 복수 선택: 상류 형식에 없는 개념을 프롬프트 레이어가 규약으로 만든다 ----
+# ---- Multi-select: the prompt layer turns a concept absent from the upstream format into a convention ----
 #
-# **실측(2026-08-21, ws-i).** 문항 본문이 "(복수 선택 가능)"이라고 적혀
-# 있는데 화면에는 "하나만 선택" 배지와 라디오 버튼이 떴다. 사용자는 `Other — 직접 입력`
-# 칸에 "A, B"라고 써서 우회했다 — 구조화된 답변이 자유 텍스트로 격하됐다.
+# **Observed (2026-08-21, ws-i).** The question body said "(복수 선택 가능)" (multiple selections allowed),
+# but the screen showed a "하나만 선택" (select one) badge and radio buttons. The user worked around it by
+# typing "A, B" into the `Other — 직접 입력` field — a structured answer was demoted to free text.
 #
-# 원인: `multi_select`가 파일 질문에서 UI까지 오는 경로가 **아예 없었다.**
-# AskUserQuestion 시절에는 도구 인자로 구조화돼 왔고(agent/questions_payload.py),
-# 질문이 파일로 옮겨가면서 그 값만 남겨졌다. 프론트는 이미 준비돼 있다 —
-# QuestionCard가 `multi_select`로 체크박스를 그리고 letter를 콤마로 잇는다.
+# Cause: there was **no path at all** for `multi_select` to travel from a file question to the UI.
+# In the AskUserQuestion days it came structured as a tool argument (agent/questions_payload.py),
+# and when questions moved to files, only that value was left behind. The frontend is already ready —
+# QuestionCard draws checkboxes for `multi_select` and joins letters with commas.
 #
-# 상류 `question-format-guide.md`에는 이 개념이 없다(`[Answer]: C` 단일 선택만
-# 규정한다). 그래서 이 파일 상단이 헤딩 관용에 대해 적어 둔 것과 **같은 분담**을
-# 따른다: 관용은 파서에, 그렇게 쓰라는 지시는 `discovery-config/CLAUDE.md`에, 상류는
-# 건드리지 않는다.
+# Upstream `question-format-guide.md` does not have this concept (it prescribes only single selection,
+# `[Answer]: C`). So this follows **the same division** the top of this file records for heading
+# tolerance: tolerance in the parser, the instruction to write it that way in `discovery-config/CLAUDE.md`,
+# and upstream left untouched.
 
 _MULTI_MD = """## Question 1
 보유한 콘텐츠 자산은 어디까지입니까? (복수 선택 가능)
@@ -530,7 +531,7 @@ def test_a_parenthesised_multi_select_marker_sets_the_flag():
 
 
 def test_a_question_without_the_marker_stays_single_select():
-    """기본값이 단일 선택이어야 한다 — 반대로 틀리면 모든 문항이 체크박스가 된다."""
+    """The default must be single selection — getting it wrong the other way turns every question into checkboxes."""
     qf = parse_question_file("x.md", _MULTI_MD)
     assert qf.questions[1].multi_select is False
 
@@ -541,27 +542,27 @@ def test_the_english_marker_is_recognised():
 
 
 def test_the_marker_must_be_parenthesised():
-    """괄호를 요구하는 이유: 복수 선택 **자체를 묻는** 문항이 있다. 괄호가 없으면
-    "복수 선택 UI가 필요합니까?"가 체크박스로 렌더된다."""
+    """Why parentheses are required: some questions **ask about** multi-select itself. Without parentheses,
+    "복수 선택 UI가 필요합니까?" (Do you need a multi-select UI?) would render as checkboxes."""
     md = _MULTI_MD.replace("(복수 선택 가능)", "— 복수 선택 UI가 필요합니까?")
     assert parse_question_file("x.md", md).questions[0].multi_select is False
 
 
 def test_the_marker_survives_answer_round_trip():
-    """되기록이 본문을 건드리지 않으므로 표시가 살아 있어야 한다 — 죽으면 두 번째
-    라운드에서 같은 문항이 라디오로 바뀐다."""
+    """The write-back does not touch the body, so the marker must survive — if it were lost, the same
+    question would turn into radio buttons in the second round."""
     out = serialize_answers(_MULTI_MD, {1: "A,B"})
     again = parse_question_file("x.md", out)
     assert again.questions[0].multi_select is True
     assert again.questions[0].answer == "A,B"
 
 
-# `discovery-config/CLAUDE.md`는 **언어 중립**이어야 하므로(전 프로젝트가 공유한다 —
-# 한글 산문 자체가 언어 신호다, test_workspace_rules의
-# `test_shared_config_dirs_have_no_language_directive`) 한국어 표현을 지시문에 박을 수
-# 없다. 지시는 "프로젝트 언어로 '모두 선택' 뜻의 괄호 주석"까지만 말하고, 실제 문구는
-# 모델이 고른다. 그래서 파서가 그 폭을 감당해야 한다 — UI 자신의 배지가
-# "여러 개 선택 가능"인 것부터가 그 폭의 증거다.
+# `discovery-config/CLAUDE.md` must be **language-neutral** (all projects share it —
+# Korean prose itself is a language signal, see test_workspace_rules's
+# `test_shared_config_dirs_have_no_language_directive`), so Korean expressions cannot be baked into
+# the instructions. The instruction says only "a parenthetical note meaning 'select all that apply' in the
+# project language", and the model picks the actual wording. So the parser has to absorb that range — the
+# fact that the UI's own badge is "여러 개 선택 가능" is itself evidence of that range.
 
 def _one_q(marker: str) -> str:
     return f"## Question 1\n보유 자산은 어디까지입니까? {marker}\n\nA) 가\nB) 나\n\n[Answer]:\n"
@@ -579,8 +580,8 @@ def test_the_korean_wordings_the_model_actually_picks_are_recognised():
 
 
 def test_a_parenthesised_single_select_clarifier_is_not_multi():
-    """"여러 개 중 하나만 선택"은 단일 선택을 **강조**하는 문구다. 낱말만 세면
-    그것이 체크박스가 되고, 사용자는 골라야 할 하나를 여러 개 고를 수 있게 된다."""
+    """"여러 개 중 하나만 선택" (select only one of several) is wording that **emphasizes** single selection.
+    Counting words alone would turn it into checkboxes, letting the user pick several where they should pick one."""
     for marker in ("(여러 개 중 하나만 선택)",
                    "(하나만 선택)",
                    "(pick one)"):
@@ -597,8 +598,8 @@ def test_the_english_wordings_are_recognised():
 
 
 def test_options_past_f_are_kept():
-    """상류 가이드는 F까지지만 모델은 `G)`를 쓴다(실측). F까지만 받던 동안 그 줄은
-    보기로도 본문으로도 잡히지 않고 사라졌다."""
+    """The upstream guide goes up to F, but the model writes `G)` (observed). While only up to F was accepted,
+    that line was caught neither as an option nor as body text and vanished."""
     md = """# Questions
 
 ## Question 1
@@ -620,12 +621,12 @@ X) Other (please describe after [Answer]: tag below)
     assert q.multi_select
 
 
-# ---- 번역된 자유 입력 보기 ----
+# ---- Translated free-input options ----
 #
-# 상류 템플릿의 `X) Other (please describe after [Answer]: tag below)`를 ko 프로젝트의 에이전트는
-# 라벨과 글자까지 바꿔 쓴다. 실측(ws-h): 기타 보기 61개가 전부
-# `D) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)` 모양이었고, 일반 보기로 읽혀 다중 선택에서는
-# "기타"를 골라도 쓸 칸이 없었다.
+# Agents in ko projects rewrite the upstream template's `X) Other (please describe after [Answer]: tag below)`,
+# changing even the label and letter. Observed (ws-h): all 61 "other" options had the shape
+# `D) 기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)` and were read as ordinary options, so in multi-select
+# choosing "기타" (Other) left no field to write in.
 
 _KO_OTHER = """# Questions
 
@@ -656,16 +657,16 @@ def test_a_translated_other_option_is_a_write_in_even_without_the_letter_x():
     assert first.multi_select is True
     assert [(o.letter, o.is_other) for o in first.options] == [
         ("A", False), ("B", False),
-        ("C", False),   # "기타 행정 업무 시스템"은 실제 보기다 — 낱말 "기타"로 시작할 뿐
+        ("C", False),   # "기타 행정 업무 시스템" is a real option — it merely starts with the word "기타"
         ("D", True)]
-    # "기타" 낱말 하나도 자유 입력이다. [Answer]에 부연을 쓰라는 보기는 고르는 것이 결정이다 —
-    # 자유 입력으로 바꾸면 답에서 무엇을 골랐는지가 사라진다.
+    # The single word "기타" is also free input. An option that asks you to elaborate in [Answer] is a decision by being chosen —
+    # turning it into free input would lose what was chosen from the answer.
     assert [(o.letter, o.is_other) for o in second.options] == [
         ("A", False), ("B", True), ("C", False)]
 
 
 def test_the_payload_path_uses_the_same_rule():
-    """두 경로가 갈리면 같은 질문이 입력 형식(파일·ask_questions)에 따라 다르게 렌더된다."""
+    """If the two paths diverge, the same question renders differently depending on its input format (file vs. ask_questions)."""
     from aipds.agent.questions_payload import normalize_questions_payload
     out = normalize_questions_payload({"name": "x", "questions": [{
         "number": 1, "text": "도구는?", "multi_select": True,

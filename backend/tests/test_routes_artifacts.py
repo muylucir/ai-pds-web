@@ -78,7 +78,7 @@ def test_archive_returns_zip_of_artifacts(monkeypatch):
     _seeded_project(monkeypatch, pid, {
         "aiplc-docs/discovery/discovery-document.md": "# Doc",
         "aiplc-docs/audit.md": "# Audit",
-        "uploads/raw.md": "NOT INCLUDED",          # 산출물 아님
+        "uploads/raw.md": "NOT INCLUDED",          # not an artifact
     })
     r = client.get(f"/projects/{pid}/artifacts/archive")
     assert r.status_code == 200
@@ -124,7 +124,7 @@ def test_archive_quote_and_crlf_in_pid_yields_safe_header():
     assert '"' not in fallback
 
 
-# ---- 핸드오프 문서의 깨진 참조 (parsers/doc_references) ----
+# ---- Broken references in handoff documents (parsers/doc_references) ----
 
 def test_missing_references_lists_what_the_handoff_doc_cites_but_lacks(monkeypatch):
     pid = "refs1"

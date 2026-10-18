@@ -6,7 +6,8 @@ import type { ProjectState } from "@/lib/api/types";
 
 describe("stageProgress helpers", () => {
   it("counts completed / on-path capabilities, not the agent's raw stage list", () => {
-    // 스테이지는 8개지만 capability로는 6개, 그중 Path A가 거치지 않는 2개는 분모에서 빠진다.
+    // There are 8 stages but 6 by capability, and the 2 that Path A does not go through are
+    // dropped from the denominator.
     const { completed, total } = stageCounts(projectState);
     expect(total).toBe(4);
     expect(completed).toBe(2);

@@ -93,14 +93,14 @@ describe("SurveyPanel — 결과 취합", () => {
     // Discovery chat — the agent turns this aggregate into Step 6's synthesis.
     expect(await screen.findByText(/survey-aggregate\.md/)).toBeInTheDocument();
     expect(screen.getByText(/validation-results\.md/)).toBeInTheDocument();
-    // 응답 수가 화면에 있어야 한다. 문구는 딕셔너리가 소유하므로(기본 로케일
-    // ko: "7건을 …에 저장했습니다") 개수만 단정한다 — 리터럴 "7건"을 고정하면
-    // 문구를 번역 키로 옮길 때마다 이 테스트가 의미 없이 깨진다.
+    // The response count must be on screen. The wording is owned by the dictionary (default locale
+    // ko: "7건을 …에 저장했습니다"), so only the count is asserted — pinning the literal "7건" would
+    // break this test meaninglessly every time wording moves to translation keys.
     expect(screen.getByText(/\b7\b/)).toBeInTheDocument();
   });
 
   it("한국어 안내는 한국어 어순으로 쓴다", async () => {
-    // 앞말·뒷말을 영어 어순으로 끼우면 "건을 7 에 저장했습니다. …경로"가 된다.
+    // Inserting the prefix and suffix in English word order would produce "건을 7 에 저장했습니다. …경로".
     vi.spyOn(api, "getSurvey").mockResolvedValue(OPEN_VIEW);
     vi.spyOn(api, "synthesizeSurvey").mockResolvedValue({
       path: "aiplc-docs/discovery/prototype/survey-aggregate.md",
@@ -114,8 +114,8 @@ describe("SurveyPanel — 결과 취합", () => {
   });
 
   it("취합 뒤 반영 요청 버튼은 집계 경로를 담은 초안으로 워크스페이스에 간다", async () => {
-    // 바로 보내지 않고 초안만 채운다 — 사용자가 설문 밖 의견을 덧붙일 수 있게.
-    // 경로가 초안에 있어야 프로토타입이 여러 개일 때 에이전트가 맞는 집계를 읽는다.
+    // It only fills a draft instead of sending right away — so the user can add opinions from outside the survey.
+    // The path must be in the draft so that, with several prototypes, the agent reads the right aggregate.
     const path = `aiplc-docs/discovery/prototypes/${SLUG}/survey-aggregate.md`;
     vi.spyOn(api, "getSurvey").mockResolvedValue(OPEN_VIEW);
     vi.spyOn(api, "synthesizeSurvey").mockResolvedValue({ path, response_count: 7 });

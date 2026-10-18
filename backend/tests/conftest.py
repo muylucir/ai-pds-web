@@ -2,8 +2,8 @@
 import asyncio
 import os
 
-# 인증 바이패스는 명시적 스위치로만 켜진다(app.cognito_config). 테스트는 로컬 개발과 같은
-# 상태로 돈다 — app을 임포트하기 전이어야 한다(임포트 시점에 한 번 평가된다).
+# Auth bypass is turned on only by an explicit switch (app.cognito_config). Tests run in the same
+# state as local development — this must come before importing app (it is evaluated once at import time).
 os.environ.setdefault("AIPDS_AUTH_DISABLED", "1")
 
 import pytest  # noqa: E402
@@ -13,18 +13,19 @@ from aipds.routes import deps as deps_module  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _reset_registry_and_boot_locks():
-    """app_module.registry와 deps._boot_locks는 프로세스 전역 싱글턴이라
-    테스트 간 오염이 가능하다(예: lifespan 테스트의 "restored-1" 잔재가 이후
-    list_projects 테스트에 새어나가는 것). 각 테스트 전후로 그 시점 기준
-    새로 생긴 키만 걷어낸다 — 스냅샷을 통째로 복원하면 같은 모듈 안에서 여러
-    테스트가 registry 축적에 의존하는 기존 스위트(예: test_routes_projects_list
-    의 test_list_projects_includes_created_projects_with_names)가 깨진다.
+    """app_module.registry and deps._boot_locks are process-global singletons, so
+    tests can contaminate each other (e.g., a leftover "restored-1" from a lifespan
+    test leaking into a later list_projects test). Before and after each test, only
+    the keys newly created since that point are removed — restoring a whole snapshot
+    would break existing suites where several tests in the same module depend on
+    registry accumulation (e.g., test_routes_projects_list's
+    test_list_projects_includes_created_projects_with_names).
 
-    _created_at/_model_id도 같은 규율로 걷어낸다 — get_created_at/get_model_id
-    는 (get_name과 달리) _names 멤버십을 확인하지 않고 dict.get()으로 바로
-    읽으므로, 이 두 dict를 정리하지 않으면 한 테스트가 등록한 pid의 값이
-    _names/_workspaces만 지워진 뒤에도 살아남아 같은 pid 문자열을 재사용하는
-    다음 테스트에 새어나간다."""
+    _created_at/_model_id are cleaned with the same discipline — get_created_at/get_model_id
+    (unlike get_name) read directly with dict.get() without checking _names
+    membership, so if these two dicts are not cleaned, the values of a pid registered by
+    one test survive even after only _names/_workspaces are cleared, and leak into the
+    next test that reuses the same pid string."""
     names_before = set(app_module.registry._names)
     workspaces_before = set(app_module.registry._workspaces)
     created_at_before = set(app_module.registry._created_at)
@@ -49,8 +50,8 @@ def _reset_registry_and_boot_locks():
 
 @pytest.fixture(autouse=True)
 def _isolated_revocations(monkeypatch, tmp_path):
-    """세션 폐기 기록(auth/revocation.py)은 파일에 남는다 — 테스트마다 따로 둔다. 공유하면
-    한 테스트가 끊은 사용자가 다음 테스트에서 401이 되고, 기본 경로는 개발자 홈이다."""
+    """Session revocation records (auth/revocation.py) persist to a file — keep one per test. If shared,
+    a user cut off by one test gets a 401 in the next, and the default path is the developer's home."""
     from aipds.auth.revocation import Revocations
     store = Revocations(tmp_path / "revoked.json")
     monkeypatch.setattr(app_module, "revocations", lambda: store)
@@ -76,9 +77,9 @@ def _ensure_event_loop():
 
 @pytest.fixture(autouse=True)
 def _agent_home_in_tmp(tmp_path_factory, monkeypatch):
-    """에이전트 홈(aipds/agent_home.py)의 기본값은 `~/aipds-agent-home`이다. 드라이버·빌더
-    팩토리가 그 아래에 디렉터리를 만들므로 테스트가 실제 홈을 건드리지 않게 옮긴다. 실행
-    래퍼는 테스트마다 꺼진 상태에서 시작한다(켜는 테스트가 스스로 set_current한다)."""
+    """The agent home (aipds/agent_home.py) defaults to `~/aipds-agent-home`. The driver and builder
+    factories create directories under it, so relocate it to keep tests from touching the real home. The
+    launch wrapper starts disabled in every test (tests that enable it call set_current themselves)."""
     from aipds import launcher
     monkeypatch.setenv("AIPDS_AGENT_HOME_DIR", str(tmp_path_factory.mktemp("agent-home")))
     launcher.set_current(None)

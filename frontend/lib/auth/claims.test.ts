@@ -16,7 +16,7 @@ describe("decodeJwtPayload", () => {
   });
 
   it("returns null for garbage instead of throwing", () => {
-    // 미들웨어가 이걸 부른다 — 예외가 나면 모든 페이지가 500이 된다.
+    // The middleware calls this — if it threw, every page would be a 500.
     expect(decodeJwtPayload("not-a-jwt")).toBeNull();
     expect(decodeJwtPayload("")).toBeNull();
     expect(decodeJwtPayload("a.b")).toBeNull();
@@ -25,13 +25,13 @@ describe("decodeJwtPayload", () => {
 
   it("handles base64url payloads that need padding", () => {
     const c = decodeJwtPayload(fakeJwt({ a: "x".repeat(5) }));
-    // 값 자체를 확인한다 — not.toBeNull()만으로는 잘리거나 잘못 디코딩된
-    // 결과도 통과해버린다.
+    // Check the value itself — not.toBeNull() alone would also pass a truncated or
+    // wrongly decoded result.
     expect(c).toMatchObject({ a: "xxxxx" });
   });
 
   it("returns null for a bare JSON array payload", () => {
-    // 배열도 typeof는 "object"다 — Claims는 객체 계약이므로 배열은 거부한다.
+    // typeof is "object" for arrays too — Claims is an object contract, so arrays are rejected.
     const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
     const arrayJwt = `${b64({ alg: "RS256" })}.${b64([1, 2, 3])}.sig`;
     expect(decodeJwtPayload(arrayJwt)).toBeNull();
@@ -45,7 +45,7 @@ describe("roleFromClaims", () => {
   });
 
   it("prefers admin when the user is in both groups", () => {
-    // 백엔드 verifier와 같은 우선순위여야 한다 — 어긋나면 화면과 권한이 불일치한다.
+    // Must have the same priority as the backend verifier — otherwise the screen and permissions disagree.
     expect(roleFromClaims({ "cognito:groups": ["pm", "admin"] })).toBe("admin");
   });
 
@@ -67,7 +67,7 @@ describe("emailFromClaims", () => {
   });
 
   it("falls back to username when email is absent", () => {
-    // access 토큰에는 email이 없다 — 그 경우에도 표시할 이름은 있어야 한다.
+    // Access tokens have no email — even then there must be a name to display.
     expect(emailFromClaims({ username: "u@example.com" })).toBe("u@example.com");
   });
 

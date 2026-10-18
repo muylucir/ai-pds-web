@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-# 역할은 둘뿐이고, 출처는 Cognito 그룹 멤버십(cognito:groups)이다. 커스텀 속성으로
-# role을 두지 않는다 — 진실이 두 곳에 생기면 어긋난다.
+# There are only two roles, and their source is Cognito group membership (cognito:groups). role is not
+# kept as a custom attribute — having the truth in two places makes them drift.
 Role = Literal["admin", "pm"]
 
 ROLE_ADMIN: Role = "admin"
@@ -14,15 +14,15 @@ ROLE_PM: Role = "pm"
 
 @dataclass(frozen=True)
 class Principal:
-    """검증을 통과한 요청자.
+    """A requester that passed verification.
 
-    email이 없는 것이 의도다: Cognito **access** 토큰에는 email 클레임이 존재하지
-    않는다(기본 payload는 sub/username/cognito:groups/client_id/token_use/scope).
-    화면에 표시할 이메일은 프론트가 id 토큰에서 읽는다.
+    The absence of email is intentional: Cognito **access** tokens have no email claim
+    (the default payload is sub/username/cognito:groups/client_id/token_use/scope).
+    The email shown on screen is read by the frontend from the id token.
     """
     username: str
     sub: str
     role: Role
-    #: 토큰의 `iat`(epoch 초). 관리자가 끊은 세션의 토큰을 가려낸다(auth/revocation.py).
-    #: 토큰에서 오지 않은 요청자(로컬 개발)는 None.
+    #: The token's `iat` (epoch seconds). Identifies tokens from sessions an admin cut off (auth/revocation.py).
+    #: None for requesters that did not come from a token (local development).
     issued_at: float | None = None

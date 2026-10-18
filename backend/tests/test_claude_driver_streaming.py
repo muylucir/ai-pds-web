@@ -1,10 +1,10 @@
-# backend/tests/test_claude_driver_streaming.py — 토큰 델타 번역과 사고 구간 신호.
+# backend/tests/test_claude_driver_streaming.py — token delta translation and thinking-span signals.
 #
-# 실측(2026-09-04, Bedrock · global.anthropic.claude-opus-5): 부분 메시지를 켜면
-# 어시스턴트 텍스트가 295개의 `text_delta`(1,325자)로 오고, **완성된
-# `AssistantMessage`가 그 뒤에 또 온다.** 그리고 `--thinking-display summarized`를
-# 붙여도 `thinking_delta`는 0자다(signature만 온다) — 즉 사고 **텍스트**는 이
-# 경로에서 존재하지 않고, 우리가 얻는 것은 사고 구간의 시작과 끝이다.
+# Measured (2026-09-04, Bedrock · global.anthropic.claude-opus-5): with partial messages on,
+# assistant text arrives as 295 `text_delta`s (1,325 characters), and **the complete
+# `AssistantMessage` arrives again after them.** And even with `--thinking-display summarized`,
+# `thinking_delta` is 0 characters (only the signature comes) — that is, thinking **text** does not
+# exist on this path, and what we get is the start and end of the thinking span.
 import pytest
 
 from aipds.agent.claude_driver import (
@@ -24,14 +24,14 @@ def _cleanup_parked_callbacks():
 
 
 def _driver(tmp_path) -> ClaudeDriver:
-    """번역만 보는 드라이버. 클라이언트를 쓰지 않으므로 대본이 없다."""
+    """A driver that only looks at translation. It does not use a client, so there is no script."""
     return ClaudeDriver(workspace=str(tmp_path), rules_dir=str(tmp_path),
                         config_dir=str(tmp_path / "cfg"), s3=FakeS3Store(),
                         client_factory=lambda session: None)
 
 
 def _scripted_driver(tmp_path, scripted) -> ClaudeDriver:
-    """턴 하나를 실제로 도는 드라이버(test_claude_driver의 `_driver`와 같은 배선)."""
+    """A driver that actually runs one turn (same wiring as `_driver` in test_claude_driver)."""
     rules = tmp_path / "rules" / "aws-aiplc-rules"
     rules.mkdir(parents=True)
     (rules / "core-workflow.md").write_text("WORKFLOW", encoding="utf-8")
@@ -61,8 +61,8 @@ def test_text_deltas_become_message_events_up_to_a_whitespace_boundary(tmp_path)
 
 
 def test_block_stop_releases_the_held_tail(tmp_path):
-    """마지막 토큰에는 뒤따르는 공백이 없다. 블록이 끝날 때 내보내지 않으면
-    문장의 끝이 영구히 사라진다."""
+    """The last token has no trailing whitespace. If it is not emitted when the block ends,
+    the end of the sentence is lost forever."""
     d = _driver(tmp_path)
     d._translate(_delta("끝말"))
     stop = d._translate(StreamEvent({"type": "content_block_stop"}))
@@ -70,9 +70,9 @@ def test_block_stop_releases_the_held_tail(tmp_path):
 
 
 def test_streamed_text_is_not_repeated_by_the_assistant_message(tmp_path):
-    """부분 메시지를 켜도 완성된 AssistantMessage가 뒤따라 온다(문서의 메시지
-    흐름, 실측에서도 AssistantMessage 2개). 그 TextBlock을 그대로 번역하면
-    모든 문단이 화면에 두 번 렌더된다."""
+    """Even with partial messages on, the complete AssistantMessage follows (the message flow in
+    the docs; in measurement too, 2 AssistantMessages). Translating that TextBlock as is would
+    render every paragraph on screen twice."""
     d = _driver(tmp_path)
     d._translate(_delta("본문 "))
     later = d._translate(AssistantMessage(content=[TextBlock(text="본문 ")]))
@@ -80,16 +80,16 @@ def test_streamed_text_is_not_repeated_by_the_assistant_message(tmp_path):
 
 
 def test_a_message_that_never_streamed_still_yields_its_text(tmp_path):
-    """델타가 없는 경로(부분 스트리밍이 없는 세션, 스크립트된 가짜)는 종전대로
-    동작해야 한다 — 중복 제거를 무조건 적용하면 그 경로의 답변이 사라진다."""
+    """Paths with no deltas (sessions without partial streaming, scripted fakes) must behave as
+    before — applying dedup unconditionally would make the answers on that path disappear."""
     d = _driver(tmp_path)
     events = d._translate(AssistantMessage(content=[TextBlock(text="델타 없음")]))
     assert _texts(events) == ["델타 없음"]
 
 
 def test_the_next_message_streams_again_after_one_was_deduped(tmp_path):
-    """중복 판정은 **메시지 단위**다. 한 번 델타를 봤다는 사실이 다음 메시지까지
-    남으면, 델타 없이 온 두 번째 답변이 조용히 사라진다."""
+    """The duplicate judgment is **per message**. If the fact that a delta was seen once carries over
+    to the next message, a second answer that came without deltas silently disappears."""
     d = _driver(tmp_path)
     d._translate(_delta("첫 "))
     d._translate(AssistantMessage(content=[TextBlock(text="첫 ")]))
@@ -98,8 +98,8 @@ def test_the_next_message_streams_again_after_one_was_deduped(tmp_path):
 
 
 def test_the_assistant_message_flushes_a_tail_that_block_stop_never_released(tmp_path):
-    """content_block_stop을 못 본 채 메시지가 끝나면 꼬리가 버퍼에 갇힌다.
-    그 상태로 TextBlock까지 건너뛰면 텍스트를 잃는다 — 어느 쪽으로도 잃지 않는다."""
+    """If a message ends without content_block_stop being seen, the tail is trapped in the buffer.
+    Skipping the TextBlock too in that state loses text — it is lost on neither side."""
     d = _driver(tmp_path)
     d._translate(_delta("꼬리"))
     later = d._translate(AssistantMessage(content=[TextBlock(text="꼬리")]))
@@ -107,7 +107,7 @@ def test_the_assistant_message_flushes_a_tail_that_block_stop_never_released(tmp
 
 
 def test_tool_use_still_reports_status_after_text_streamed(tmp_path):
-    """중복 제거는 TextBlock만의 이야기다. 도구 트레이스는 계속 나와야 한다."""
+    """Dedup concerns only TextBlocks. Tool traces must keep coming."""
     d = _driver(tmp_path)
     d._translate(_delta("읽어볼게 "))
     events = d._translate(AssistantMessage(
@@ -116,11 +116,11 @@ def test_tool_use_still_reports_status_after_text_streamed(tmp_path):
 
 
 def test_thinking_block_start_and_stop_become_status_markers(tmp_path):
-    """사고 텍스트는 이 경로에 없지만 구간은 있다. 지금 ActivityIndicator는
-    "도구가 없으면 생각하는 중"이라고 추측하는데, 이 신호가 그 추측을 사실로
-    바꾼다. 새 이벤트 kind가 아니라 status 마커인 이유는 interrupt의
-    INTERRUPTED_MARKER와 같다 — 라이브 전용 신호이므로 히스토리 계약을
-    건드리지 않는다."""
+    """Thinking text is not on this path, but the span is. Right now ActivityIndicator guesses
+    "if there is no tool, it is thinking", and this signal turns that guess into fact. It is a
+    status marker rather than a new event kind for the same reason as interrupt's
+    INTERRUPTED_MARKER — it is a live-only signal, so it does not touch the history
+    contract."""
     d = _driver(tmp_path)
     start = d._translate(StreamEvent({
         "type": "content_block_start",
@@ -131,8 +131,8 @@ def test_thinking_block_start_and_stop_become_status_markers(tmp_path):
 
 
 def test_a_text_block_stop_does_not_report_thinking_done(tmp_path):
-    """content_block_stop은 사고 블록과 텍스트 블록에 모두 온다. 구분하지 않으면
-    사고가 없던 턴에도 종료 마커가 나가 프론트가 켜지지 않은 상태를 끈다."""
+    """content_block_stop arrives for both thinking blocks and text blocks. Without distinguishing,
+    the done marker would go out even on turns with no thinking, and the frontend would turn off a state that was never on."""
     d = _driver(tmp_path)
     d._translate(StreamEvent({"type": "content_block_start",
                               "content_block": {"type": "text"}}))
@@ -141,8 +141,8 @@ def test_a_text_block_stop_does_not_report_thinking_done(tmp_path):
 
 
 def test_thinking_deltas_do_not_leak_into_the_answer(tmp_path):
-    """사고 델타를 본문 버퍼에 넣으면 모델의 추론이 답변에 섞인다. 이 경로에서는
-    내용이 비어 있지만(실측 0자), 값이 생기는 날 조용히 섞이지 않게 잠근다."""
+    """Putting thinking deltas into the body buffer would mix the model's reasoning into the answer. On
+    this path the content is empty (measured 0 characters), but this locks it so it does not silently mix in the day values appear."""
     d = _driver(tmp_path)
     events = d._translate(StreamEvent({
         "type": "content_block_delta",
@@ -153,7 +153,7 @@ def test_thinking_deltas_do_not_leak_into_the_answer(tmp_path):
 
 
 def test_signature_delta_is_ignored(tmp_path):
-    """실측에서 사고 블록과 함께 오는 프레임이다. 본문도 트레이스도 아니다."""
+    """A frame that comes with thinking blocks in measurement. It is neither body nor trace."""
     d = _driver(tmp_path)
     events = d._translate(StreamEvent({
         "type": "content_block_delta",
@@ -163,12 +163,12 @@ def test_signature_delta_is_ignored(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_new_turn_does_not_inherit_the_previous_turns_delta_state(tmp_path):
-    """델타 상태는 **인스턴스 수명**을 산다(드라이버가 프로젝트 하나를 계속 맡는다).
+    """Delta state lives for **the instance's lifetime** (the driver keeps handling one project).
 
-    턴이 중간에 버려지면(SSE 끊김, 프록시 타임아웃, 페이지 이동 — runner.py가
-    실제로 그 경로를 갖고 있다) `_streamed_text`가 True로 남고 버퍼에 꼬리가
-    갇힌다. 그 상태로 다음 턴이 시작하면 그 턴의 첫 AssistantMessage가 중복으로
-    판정되어 **답변이 통째로 사라진다.** 턴 경계에서 씻어야 한다.
+    If a turn is abandoned midway (SSE drop, proxy timeout, page navigation — runner.py really
+    has that path), `_streamed_text` stays True and a tail is trapped in the buffer. If the next
+    turn starts in that state, that turn's first AssistantMessage is judged a duplicate and
+    **the whole answer disappears.** It must be flushed at the turn boundary.
     """
     d = _scripted_driver(tmp_path, {"text": ["새 턴 답변"]})
     d._streamed_text = True
@@ -182,8 +182,8 @@ async def test_a_new_turn_does_not_inherit_the_previous_turns_delta_state(tmp_pa
 
 
 def test_partial_messages_are_enabled_on_the_real_options(tmp_path, monkeypatch):
-    """client_factory를 주입하는 위 테스트들은 이 경로를 타지 않으므로, 배선이
-    빠져도 전부 통과한다(test_cli_settings의 같은 주석)."""
+    """The tests above that inject client_factory do not take this path, so they all pass even if
+    the wiring is missing (same comment as in test_cli_settings)."""
     from aipds.agent.claude_driver import _default_client_factory
 
     captured = {}
@@ -200,10 +200,10 @@ def test_partial_messages_are_enabled_on_the_real_options(tmp_path, monkeypatch)
     assert captured["options"].include_partial_messages is True
 
 
-# ---- 쓰기 도구의 입력이 초안 이벤트가 된다 (agent/tool_input_draft.py) ----
-# 2026-10-07 실측: 턴 시간의 약 60%가 파일 내용을 생성하는 시간이었고 그동안 화면에
-# 아무 신호가 없었다. 판정 표는 tests/test_tool_input_draft.py가 덮고, 여기서는 **배선**을
-# 고정한다.
+# ---- Write tool input becomes draft events (agent/tool_input_draft.py) ----
+# Measured 2026-10-07: about 60% of turn time was spent generating file contents, and during that
+# time the screen showed no signal. tests/test_tool_input_draft.py covers the decision table; here we
+# pin the **wiring**.
 import json as _json  # noqa: E402
 
 
@@ -233,7 +233,7 @@ def test_a_write_block_streams_as_draft_events(tmp_path):
     assert payloads[-1]["state"] == "written"
     assert payloads[-1]["chars"] == len(body)
     assert drafts[-1].path == "aiplc-docs/discovery/x.md"
-    # 초안은 본문 텍스트가 아니다 — 말풍선으로 새면 문서가 채팅에 쏟아진다.
+    # A draft is not body text — if it leaked into a bubble, the document would pour into the chat.
     assert _texts(events) == []
 
 
@@ -246,7 +246,7 @@ def test_a_non_file_tool_block_is_not_a_draft(tmp_path):
 
 
 def test_text_blocks_and_drafts_do_not_cross(tmp_path):
-    """index가 다른 텍스트 블록이 초안 사이에 와도 각자의 길로 간다."""
+    """Even if a text block with a different index comes between drafts, each goes its own way."""
     d = _driver(tmp_path)
     raw = _json.dumps({"file_path": f"{tmp_path}/aiplc-docs/audit.md", "content": "기록"})
     events = d._translate(_tool_start(2, "Write", "toolu_3"))

@@ -2,111 +2,111 @@ export interface UserDataOptions {
   region: string;
   bucketName: string;
   /**
-   * ANTHROPIC_MODEL로 내려가는 Bedrock 추론 프로파일 ID. 모델 호출은 Anthropic API가
-   * 아니라 Amazon Bedrock을 거친다 — `CLAUDE_CODE_USE_BEDROCK=1`은 백엔드가 Claude Code를
-   * 띄울 때 주입한다(aipds/agent/claude_driver.py, aipds/proto/builder.py).
+   * Bedrock inference profile ID passed down as ANTHROPIC_MODEL. Model calls go through Amazon Bedrock,
+   * not the Anthropic API — `CLAUDE_CODE_USE_BEDROCK=1` is injected by the backend when it launches
+   * Claude Code (aipds/agent/claude_driver.py, aipds/proto/builder.py).
    */
   model: string;
   secretArn: string;
-  /** 공개 리포의 HTTPS clone URL. */
+  /** HTTPS clone URL of the public repo. */
   repoUrl: string;
   /**
-   * 배포 대상 브랜치. 부팅 때 이 브랜치의 **원격 최신 커밋**으로 맞춘다.
+   * Deploy target branch. At boot, the tree is aligned to this branch's **remote tip commit**.
    *
-   * 이 값이 커밋 SHA가 아니라 브랜치라는 것의 결과: user-data가 코드 변경과
-   * 무관하게 동일하므로 `cdk deploy`는 인스턴스를 교체하지 않는다. 코드 갱신은
-   * 아래에서 설치하는 `aipds-update`가 한다. 근거는 lib/deploy-source.ts.
+   * The consequence of this being a branch rather than a commit SHA: user-data is identical regardless
+   * of code changes, so `cdk deploy` does not replace the instance. Code updates are done by
+   * `aipds-update`, installed below. The reasoning is in lib/deploy-source.ts.
    */
   branch: string;
-  // 인증. 이 값들이 비면 백엔드가 인증 바이패스로 돌아 배포가 무인증으로
-  // 공개된다 — 호스팅 스택이 항상 채운다.
+  // Auth. If these values are empty, the backend runs with auth bypassed and the deployment is
+  // public without auth — the hosting stack always fills them.
   userPoolId: string;
   userPoolClientId: string;
   hostedUiDomain: string;
   appUrl: string;
 }
 
-// EC2 부트스트랩 스크립트. 순수 문자열 생성(부수효과 없음) — 단위 테스트 가능.
-// 부팅 시: 패키지 설치 → 서비스 유저 생성 → 리포 clone → 백엔드 venv/설치 →
-// 프론트 빌드 → 시크릿 조회 → nginx conf → systemd 기동. 헤더 불일치는 nginx가 403.
+// EC2 bootstrap script. Pure string generation (no side effects) — unit-testable.
+// At boot: install packages → create the service user → clone the repo → backend venv/install →
+// frontend build → secret lookup → nginx conf → start systemd. nginx returns 403 on a header mismatch.
 export function renderUserData(opts: UserDataOptions): string {
   const { region, bucketName, model, secretArn, repoUrl, branch,
           userPoolId, userPoolClientId, hostedUiDomain, appUrl } = opts;
   const APP = '/opt/aipds';
-  // 서비스 전용 non-root 유저. 편의가 아니라 필수다: 프로토타입 빌드 에이전트가
-  // 띄우는 Claude Code 바이너리는 euid==0에서 bypassPermissions를 거부한다
-  // (6d21e1f에서 실측 — `--version`은 root에서도 성공해 이 실패를 가리므로,
-  // 부팅은 정상으로 보이고 첫 빌드 턴에서야 502로 드러난다). MicroVM 이미지가
-  // non-root 'harness' 유저를 쓴 이유가 이것이고, 빌드가 백엔드 프로세스로
-  // 흡수된 지금은 백엔드 자체가 non-root여야 한다.
+  // Dedicated non-root service user. It is required, not a convenience: the Claude Code binary the
+  // prototype build agent launches refuses bypassPermissions at euid==0
+  // (observed in 6d21e1f — `--version` succeeds even as root and masks this failure, so
+  // the boot looks normal and it only surfaces as a 502 on the first build turn). That is why the MicroVM image
+  // used a non-root 'harness' user, and now that builds have been absorbed into the backend
+  // process, the backend itself must be non-root.
   const SVC = 'aipds';
   // ---------------------------------------------------------------------------
-  // 아래 템플릿 문자열의 주석은 **EC2 user-data 16KB 한계를 쓴다.** 한 번 넘겨서
-  // 배포가 InvalidRequest로 실패한 적이 있다(18,158바이트, 그중 주석 12KB·한글이
-  // 3바이트/자). 그래서 "왜"는 여기(TS 주석 = 바이트 0)에 적고, 템플릿 안에는
-  // 인스턴스에서 그 스크립트를 읽는 사람이 **깨뜨리지 않기 위해** 알아야 하는
-  // 한 줄만 남긴다. 긴 절차 하나(aipds-update)는 아예 리포 파일로 나가 있다
-  // (infra/scripts/aipds-update — 그 파일의 주석은 예산과 무관하다).
+  // Comments inside the template string below **spend the EC2 user-data 16KB limit.** It was exceeded once
+  // and the deploy failed with InvalidRequest (18,158 bytes, 12KB of it comments, with Hangul at
+  // 3 bytes/char). So the "why" is written here (TS comments = 0 bytes), and inside the template only
+  // the one line someone reading the script on the instance needs to know **so as not to break it**
+  // is left. One long procedure (aipds-update) lives entirely in a repo file
+  // (infra/scripts/aipds-update — that file's comments do not count against the budget).
   //
-  // 부트스트랩 로그를 600으로 잠그는 이유: 644면 서비스 유저가 읽을 수 있고, 그
-  // 계정은 프로토타입 빌드 에이전트를 bypassPermissions로 돌리는 계정이다. 아래
-  // 두 곳의 `set +x`로 시크릿 대입을 가리지만, 그것만 믿지 않고 파일 자체를 잠근다.
+  // Why the bootstrap log is locked to 600: at 644 the service user can read it, and that
+  // account is the one that runs the prototype build agent with bypassPermissions. The two `set +x`
+  // below hide the secret assignments, but rather than rely on that alone, the file itself is locked.
   //
-  // S3 에셋 zip 대신 git clone인 이유, 커밋 SHA 대신 브랜치인 이유: lib/deploy-source.ts.
-  // 요지는 (1) 에셋은 gitignore된 파일까지 실어 보정 목록이 필요했고 배포되는 것이
-  // 커밋이 아니라 워킹 트리였다, (2) 배포자가 "이 커밋을 푸시했는가"를 신경 쓰지
-  // 않아도 되게 한다. 대가는 cdk deploy가 코드를 갱신하지 못하는 것이고, 그 자리를
-  // aipds-update가 메운다.
+  // Why git clone instead of an S3 asset zip, and why a branch instead of a commit SHA: lib/deploy-source.ts.
+  // In short, (1) the asset carried even gitignored files, needed a correction list, and what got deployed
+  // was the working tree rather than a commit; (2) the deployer does not have to worry about "did I push
+  // this commit". The price is that cdk deploy cannot update code, and aipds-update fills that
+  // gap.
   //
-  // `checkout -f -B`가 첫 clone과 cloud-init 재실행에서 같은 결과를 내야 한다. -f가
-  // 필요한 쪽은 재실행이다 — 수정된 tracked 파일이 하나라도 있으면 -f 없는 checkout은
-  // 거부되고, set -e 아래에서 그 거부는 부팅 중단(증상은 502)이다. untracked
-  // (protos/·workspaces/·세션 상태)는 -f로도 지워지지 않는다.
+  // `checkout -f -B` must produce the same result on the first clone and on a cloud-init re-run. -f is
+  // needed for the re-run — if even one tracked file is modified, a checkout without -f
+  // is refused, and under set -e that refusal aborts the boot (symptom: 502). Untracked files
+  // (protos/, workspaces/, session state) are not deleted even with -f.
   //
-  // `safe.directory`를 미리 넣는 이유: 아래에서 트리를 SVC 소유로 넘기므로 재실행 때
-  // root로 도는 git이 "dubious ownership"으로 거부되고, 그것도 부팅 중단이다.
+  // Why `safe.directory` is added up front: the tree is handed to SVC below, so on a re-run git
+  // running as root is refused with "dubious ownership", which also aborts the boot.
   //
-  // 두 CLAUDE_CONFIG_DIR(proto-config·discovery-config)을 앱 트리 안에 두고 **서로 다른
-  // 경로**로 두는 이유: 앱 소유 데이터를 한 경로로 모으고, 공유하면 skills="all" 때문에
-  // Discovery가 프로토타입 빌드용 shadcn-design 스킬을 켠 채로 돈다.
+  // Why the two CLAUDE_CONFIG_DIRs (proto-config, discovery-config) live inside the app tree and at **different
+  // paths**: app-owned data is gathered under one path, and if shared, skills="all" makes
+  // Discovery run with the shadcn-design skill for prototype builds enabled.
   //
-  // ⚠️ 이 파일은 TS 템플릿 리터럴이다 — **주석에도 백틱을 쓰지 말 것.** 백틱 하나가
-  // 리터럴을 닫아 user-data 전체가 파싱 에러가 된다(템플릿 안 주석에도 해당).
+  // ⚠️ This file is a TS template literal — **do not use backticks, even in comments.** A single backtick
+  // closes the literal and the whole user-data becomes a parse error (this applies to comments inside the template too).
   //
-  // AIPDS_COOKIE_SECURE: 프로토타입 접근 쿠키의 Secure 스위치
-  // (routes/proto_public.py의 _cookie_secure). 빼면 기본값(꺼짐)으로 Secure가
-  // 생략되고, CloudFront 때문에 실동작은 정상으로 보이지만 쿠키는 평문 HTTP로도
-  // 전송될 수 있는 상태로 남는다 — 화면 증상이 없어 눈으로 안 잡히므로
-  // user-data.assert.ts가 이 줄의 존재를 단정한다(한 번 빠뜨린 적이 있다).
-  // 로컬 개발에서는 켜지 않는다(localhost에서 브라우저가 Secure 쿠키를 저장하지 않아
-  // 프리뷰가 열리지 않는다).
+  // AIPDS_COOKIE_SECURE: the Secure switch for the prototype access cookie
+  // (_cookie_secure in routes/proto_public.py). Leave it out and the default (off) omits Secure;
+  // because of CloudFront it appears to work normally, but the cookie is left in a state where it can also
+  // be sent over plaintext HTTP — there is no visible symptom to catch by eye, so
+  // user-data.assert.ts asserts this line exists (it was left out once).
+  // It is not turned on in local development (on localhost the browser does not store Secure cookies,
+  // so the preview does not open).
   //
-  // AIPDS_AUTO_COMPACT_WINDOW / AIPDS_LONG_CONTEXT: 둘은 함께 켠다
-  // (cli_settings.py). 윈도우만 올리고 1M을 켜지 않으면 컴팩션 전에 모델 컨텍스트
-  // 한도에 부딪힌다. 왜 켜는가: 실측(2026-08-13)에서 빌드 세션이 264,040 → 53,375
-  // 토큰으로 요약됐고, 요약 뒤 후반 스테이지 문서는 근거가 아니라 요약에서 나와
-  // 뒤로 갈수록 얇아진다. 한국어는 같은 대화에 토큰을 1.66배 써서 그 지점에 40%
-  // 일찍 도달한다. 750000은 발동 지점의 약 4배이면서 1M 아래 마진을 남기는 값이다.
-  // 대가는 턴당 비용(컴팩션이 늦으면 전체 이력이 매 턴 재전송된다 — 캐시 리드는
-  // 0.1배지만 0이 아니다) — 워크숍 비용이 문제면 먼저 이 값을 내린다. Bedrock에서
-  // 1M 접미사가 필요한 이유는 cli_settings.cli_model_id의 docstring에 있다.
+  // AIPDS_AUTO_COMPACT_WINDOW / AIPDS_LONG_CONTEXT: turn both on together
+  // (cli_settings.py). Raising only the window without turning on 1M hits the model context
+  // limit before compaction. Why turn them on: observed (2026-08-13), a build session was summarized from 264,040 → 53,375
+  // tokens, and after the summary the later-stage documents came from the summary rather than the evidence,
+  // getting thinner the further along. Korean uses 1.66x the tokens for the same conversation and reaches that point 40%
+  // earlier. 750000 is about 4x the trigger point while leaving a margin under 1M.
+  // The price is per-turn cost (with late compaction the full history is resent every turn — cache reads
+  // are 0.1x, but not 0) — if workshop cost is a concern, lower this value first. Why Bedrock
+  // needs the 1M suffix is in the docstring of cli_settings.cli_model_id.
   //
-  // 프론트 유닛: HOME이 쓰기 가능해야 npx가 캐시를 쓴다(root 홈은 못 쓴다).
-  // COGNITO_* 에 NEXT_PUBLIC_ 접두어를 붙이면 안 된다 — 클라이언트 번들에
-  // 인라인되어 시크릿이 브라우저로 나간다. CLIENT_SECRET을 인용 없이 확장하는 것은
-  // 안전하다(Cognito 시크릿은 [A-Za-z0-9_+]{24,64}로 셸 메타문자가 없다).
+  // Frontend unit: HOME must be writable for npx to write its cache (the root home cannot be used).
+  // Do not prefix COGNITO_* with NEXT_PUBLIC_ — it would be inlined into the client bundle
+  // and the secret would ship to the browser. Expanding CLIENT_SECRET unquoted is
+  // safe (Cognito secrets are [A-Za-z0-9_+]{24,64} with no shell metacharacters).
   //
-  // nginx: 로그인 후 요청이 access/id/refresh JWT 쿠키 세 개를 싣는다 — 기본 버퍼
-  // (4k/8k)로는 Cookie 헤더가 넘쳐 400이 나므로 요청·응답 양쪽 버퍼를 올린다.
-  // `/api/` 전용 location을 두지 않는 것도 의도다: /api/*는 Next의
-  // app/api/[...path]/route.ts가 서버사이드에서 FastAPI로 넘기며 쿠키를 Bearer로
-  // 번역하는 지점이고, nginx가 FastAPI를 직접 가리키면 그 번역이 사라져 로그인과
-  // 모든 API 호출이 깨진다.
+  // nginx: after login, requests carry three JWT cookies (access/id/refresh) — at the default buffers
+  // (4k/8k) the Cookie header overflows with a 400, so both request and response buffers are raised.
+  // Not having a dedicated `/api/` location is also intentional: /api/* is where Next's
+  // app/api/[...path]/route.ts hands off to FastAPI server-side, translating the cookie into a Bearer,
+  // and if nginx pointed straight at FastAPI that translation would disappear and login and
+  // every API call would break.
   //
-  // nginx `client_max_body_size 11m`: 첨부 업로드 상한(10MB,
-  // backend/aipds/parsers/uploads.py) + multipart 여유. 이 conf는 부팅 때만 쓰이므로
-  // 떠 있는 인스턴스는 infra/scripts/aipds-update가 같은 값으로 맞춘다 — 두 값은
-  // 같아야 한다(test/user-data.assert.ts가 대조한다).
+  // nginx `client_max_body_size 11m`: the attachment upload cap (10MB,
+  // backend/aipds/parsers/uploads.py) + multipart headroom. This conf is used only at boot, so
+  // running instances are brought to the same value by infra/scripts/aipds-update — the two values
+  // must match (test/user-data.assert.ts compares them).
   // ---------------------------------------------------------------------------
   return `#!/bin/bash
 set -euxo pipefail

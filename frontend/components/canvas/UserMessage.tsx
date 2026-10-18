@@ -1,8 +1,8 @@
 // frontend/components/canvas/UserMessage.tsx
 import { memo } from "react";
 
-// `memo`: AiMessage와 같은 이유 — 스트리밍 중 타임라인이 다시 그려져도 지난 말풍선은
-// 그대로다.
+// `memo`: same reason as AiMessage — even when the timeline redraws during streaming, past bubbles
+// stay as they are.
 export const UserMessage = memo(function UserMessage({ text }: { text: string }) {
   return (
     <div className="flex justify-end">

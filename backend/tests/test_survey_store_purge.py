@@ -68,8 +68,8 @@ async def test_purge_removes_archived_tokens_too():
 
 
 async def test_purge_removes_this_prototypes_aggregate():
-    """집계는 웹의 파일이고 응답에서 다시 만든 것이다 — 응답이 사라지면 함께
-    사라져야 한다. 남으면 같은 슬러그로 다시 만든 프로토타입의 집계로 읽힌다."""
+    """The rollup is the web's file, rebuilt from the responses — when the responses go away, it must go
+    away too. If it remained, it would be read as the rollup of a prototype recreated under the same slug."""
     store, project_s3, root_s3 = _store()
     _seed_survey(project_s3, root_s3, "tok-current")
     project_s3.blobs[aggregate_md_key(SLUG)] = "# aggregate"
@@ -80,10 +80,10 @@ async def test_purge_removes_this_prototypes_aggregate():
 
 
 async def test_purge_keeps_the_rules_results_doc():
-    """룰의 `validation-results.md`는 에이전트가 썼고, Step 8 뒤에는 Part 2가
-    이미 내려진 빌드 결정의 근거로 인용한다. 리셋이 그것을 지우면 결론만 남고
-    근거가 사라진다. 다시 빌드한 프로토타입의 결과는 Step 6이 다시 돌 때
-    갱신된다 — 룰의 Iterate 경로가 그렇다."""
+    """The rules' `validation-results.md` was written by the agent, and after Step 8, Part 2 cites it as the
+    basis for build decisions already made. If a reset deleted it, only the conclusion would remain and
+    the basis would vanish. The results for a rebuilt prototype are updated when Step 6 runs again —
+    that is the rules' Iterate path."""
     from aipds.proto import layout
     store, project_s3, root_s3 = _store()
     _seed_survey(project_s3, root_s3, "tok-current")
@@ -96,7 +96,7 @@ async def test_purge_keeps_the_rules_results_doc():
 
 
 async def test_purge_leaves_another_prototypes_aggregate_alone():
-    """Path B에서 형제 프로토타입의 집계는 남아야 한다."""
+    """In Path B, the rollups of sibling prototypes must remain."""
     store, project_s3, root_s3 = _store()
     _seed_survey(project_s3, root_s3, "tok-current")
     sibling = aggregate_md_key("flight-disruption-notice")
@@ -108,9 +108,9 @@ async def test_purge_leaves_another_prototypes_aggregate_alone():
 
 
 async def test_purge_keeps_the_spec_that_shares_the_directory():
-    """단수 프로토타입에서는 집계와 **스펙이 같은 디렉터리**에 있다
-    (`aiplc-docs/discovery/prototype/`). 프리픽스로 지우면 스펙이 사라지고,
-    그러면 카드가 목록에서 사라진다 — 리셋이 아니라 삭제가 된다.
+    """For a singular prototype, the rollup and **the spec are in the same directory**
+    (`aiplc-docs/discovery/prototype/`). Deleting by prefix would delete the spec,
+    and then the card would vanish from the list — it would be a deletion, not a reset.
     """
     from aipds.proto import layout
     project_s3, root_s3 = FakeS3Store(), FakeS3Store()
@@ -267,16 +267,16 @@ async def test_purge_raises_on_an_unreadable_archived_questionnaire_too():
     assert "surveys/by-token/tok-current.json" in root_s3.blobs
 
 
-# ---- survey_summary: 카드가 "설문 없음"을 표시할 수 있게 하는 신호 ----
+# ---- survey_summary: the signal that lets a card display "no survey" ----
 #
-# **왜 응답 수만으로는 안 되는가.** 그 값은 설문이 없을 때도
-# 0이고, 설문이 있는데 응답이 아직 없을 때도 0이다. 두 상태가 구별되지 않아서
-# 카드가 "이 프로토타입에는 설문이 없다"를 말할 수 없었다 — 실측 test2222에서
-# 프로토타입 3개 중 1개만 설문이 있었는데 화면에 그 사실이 없었다.
+# **Why the response count alone is not enough.** That value is 0 when there is no survey,
+# and also 0 when there is a survey but no responses yet. The two states were indistinguishable, so
+# the card could not say "this prototype has no survey" — in measured ws-n, only 1 of 3
+# prototypes had a survey, but the screen did not show that fact.
 #
-# **추가 S3 호출 없이 얻는다.** 이 함수는 `survey_prefix(slug)`를
-# 한 번 list하고, 그 결과에서 두 사실을 같이 읽는다. 목록 라우트는 카드마다 이
-# 조회를 하므로 왕복을 늘리면 프로토타입 수만큼 늘어난다.
+# **It is obtained without extra S3 calls.** This function lists `survey_prefix(slug)` once
+# and reads both facts from that result. The list route makes this query for every card, so adding
+# round trips would multiply them by the number of prototypes.
 
 async def test_summary_reports_no_survey_on_an_untouched_prototype():
     project_s3 = FakeS3Store()
@@ -285,7 +285,7 @@ async def test_summary_reports_no_survey_on_an_untouched_prototype():
 
 
 async def test_summary_distinguishes_a_survey_with_no_answers_yet():
-    """이것이 종전에 표현할 수 없던 상태다 — 설문은 있고 응답은 0건."""
+    """This is the state that could not be expressed before — a survey exists and there are 0 responses."""
     project_s3, root_s3 = FakeS3Store(), FakeS3Store()
     _seed_survey(project_s3, root_s3, "tok-current")
     got = await survey_summary(project_s3, SLUG)
@@ -303,11 +303,11 @@ async def test_summary_counts_live_and_archived_answers():
 
 
 async def test_summary_says_no_survey_when_only_an_archived_round_remains():
-    """아카이브만 남은 상태는 "설문 없음"이다.
+    """A state where only the archive remains is "no survey".
 
-    `archive_current()`가 닫힌 회차를 옮긴 직후 새 문항 생성이 실패하면(502) 이
-    모양이 된다. 그때 PM이 할 일은 설문을 다시 만드는 것이므로 카드는 "없음"이라고
-    말해야 한다. 응답 수는 그래도 센다 — 리셋이 파괴할 답변이 실재한다.
+    It takes this shape if generating new questions fails (502) right after `archive_current()` moved the
+    closed round. What the PM must do then is recreate the survey, so the card must say "none". The
+    response count is still counted — the answers a reset would destroy really exist.
     """
     project_s3, root_s3 = FakeS3Store(), FakeS3Store()
     _seed_survey(project_s3, root_s3, "tok-old", closed_at="2026-01-01T00:00:00Z")
@@ -319,7 +319,7 @@ async def test_summary_says_no_survey_when_only_an_archived_round_remains():
 
 
 async def test_summary_uses_one_listing():
-    """왕복 하나. 카드 N개면 N번 불리므로 여기서 늘면 N배로 늘어난다."""
+    """One round trip. With N cards it is called N times, so any increase here is multiplied N-fold."""
     project_s3, root_s3 = FakeS3Store(), FakeS3Store()
     _seed_survey(project_s3, root_s3, "tok-current")
     calls = []

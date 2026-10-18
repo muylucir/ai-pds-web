@@ -10,9 +10,9 @@ import { AipdsPreviewStack } from '../lib/aipds-preview-stack';
 import { AipdsUploadCorsStack } from '../lib/aipds-upload-cors-stack';
 import { AipdsDrillStack } from '../lib/aipds-drill-stack';
 
-// 스택이 쓰는 파라미터 이름(lib/instance-params.ts)과 인스턴스가 읽는 이름(scripts/aipds-harden)이
-// 같아야 한다. 어긋나면 스택 테스트도 스크립트도 각각 통과하고, 새 인스턴스는 "스택 미배포"로
-// 읽어 격리를 끈 채 부팅한다 — 그 사실은 교체 뒤에야 드러난다.
+// The parameter names the stacks write (lib/instance-params.ts) and the names the instance reads (scripts/aipds-harden) must
+// match. If they diverge, the stack tests and the script each still pass, and a new instance reads it as "stack not deployed"
+// and boots with isolation off — which only comes to light after a replacement.
 
 const scripts = path.join(__dirname, '..', 'scripts');
 const harden = fs.readFileSync(path.join(scripts, 'aipds-harden'), 'utf8');
@@ -30,16 +30,16 @@ for (const file of ['aipds-harden', 'aipds-preview-configure']) {
   execFileSync('bash', ['-n', path.join(scripts, file)]);
 }
 
-// sync의 동작(값이 늦게 생겨도 반영, 못 읽으면 끄지 않음, hold, set -e 안전)은
-// backend/tests/test_harden_script.py가 스크립트를 실제로 돌려 본다. 여기는 배선만 본다.
+// sync's behavior (applying values that appear late, not turning off when unreadable, hold, set -e safety) is
+// exercised by backend/tests/test_harden_script.py running the script for real. This file only checks the wiring.
 //
-// boot는 서비스가 뜨기 **전에** 돈다(user-data) — 재시작하면 안 된다. 타이머의 sync는 바뀐 것이
-// 있으면 재시작한다.
+// boot runs **before** the services start (user-data) — it must not restart them. The timer's sync restarts
+// when something changed.
 assert.match(harden, /\n  boot\)\n    install_all --no-restart\n    sync_apply 0\n/,
   'boot = install (no restart) + sync without restart');
 assert.match(harden, /\n  sync\)\n[^\n]*\n    sync_apply 1\n/, 'sync may restart the backend');
-// 타이머는 root로 돈다 — 리포 파일(aipds가 쓸 수 있다)이 아니라 root 소유 사본을 돌려야 한다.
-// sync가 부르는 preview-configure도 마찬가지다.
+// The timer runs as root — it must run the root-owned copy, not the repo file (which aipds can write).
+// The same goes for preview-configure, which sync calls.
 assert.match(harden, /ExecStart=\$LIBEXEC\/harden sync/, 'the timer must run the root-owned copy');
 assert.match(harden, /"\$LIBEXEC\/preview-configure" --no-restart/,
   'sync must call the root-owned preview-configure');
@@ -56,8 +56,8 @@ assert.match(harden, /systemctl enable --now "\$SYNC_UNIT\.timer"/, 'install ena
 assert.match(preview, /if \[ "\$\{1:-\}" = "--no-restart" \]; then/,
   'aipds-preview-configure must accept --no-restart');
 
-// 두 스택이 같은 인스턴스 롤에 정책을 붙인다. 인라인 정책 이름은 construct 경로에서 나오므로
-// 같으면 두 번째 배포가 "already managed by another stack"으로 실패한다(실제로 그랬다).
+// Two stacks attach policies to the same instance role. Inline policy names come from the construct path,
+// so if they are the same, the second deploy fails with "already managed by another stack" (it actually did).
 {
   const env = { account: '123456789012', region: 'ap-northeast-2' };
   const role = 'arn:aws:iam::123456789012:role/AipdsHostingStack-InstanceRole';
@@ -79,8 +79,8 @@ assert.match(preview, /if \[ "\$\{1:-\}" = "--no-restart" \]; then/,
     `policies on the shared instance role must have distinct names: ${names}`);
 }
 
-// 버킷에 CORS가 없을 때 harden이 만드는 규칙은 DrillStack의 것과 같은 모양이어야 한다 — 다르면
-// 둘 중 누가 마지막에 썼느냐에 따라 업로드 헤더 허용이 달라진다.
+// The rule harden creates when the bucket has no CORS must have the same shape as DrillStack's — if they differ,
+// which upload headers are allowed depends on which of the two wrote last.
 {
   const app = new cdk.App();
   const bucket = Object.values(Template.fromStack(new AipdsDrillStack(app, 'D', {

@@ -24,18 +24,18 @@ describe("CreateProjectForm", () => {
       }),
     );
     render(<CreateProjectForm onCreated={onCreated} />);
-    // 목록이 도착할 때까지 기다린다 — 첫 항목이 기본 선택된다.
+    // Wait until the list arrives — the first item is selected by default.
     await screen.findByRole("option", { name: "Opus 5" });
     await user.type(screen.getByLabelText("프로젝트 ID"), "pilot2");
     await user.type(screen.getByLabelText("프로젝트 이름 (선택)"), "신규 세션");
     await user.selectOptions(screen.getByLabelText("AI 모델"), "global.anthropic.claude-sonnet-5");
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
-    // language는 셀렉트를 건드리지 않아도 항상 실린다 — 기본값 ko다.
+    // language is always sent even if the select is untouched — the default is ko.
     expect(body).toEqual({ project_id: "pilot2", name: "신규 세션",
                            model_id: "global.anthropic.claude-sonnet-5",
                            language: "ko" });
-    // onCreated가 서버 응답(생성된 프로젝트)으로 호출됐는지 확인한다 — 이
-    // 핸들러는 {project_id, name, model_id}를 돌려준다.
+    // Check that onCreated was called with the server response (the created project) — this
+    // handler returns {project_id, name, model_id}.
     expect(onCreated).toHaveBeenCalledWith({ project_id: "pilot2", name: "신규 세션",
                                              model_id: "global.anthropic.claude-sonnet-5" });
   });
@@ -46,14 +46,14 @@ describe("CreateProjectForm", () => {
     ] })));
     render(<CreateProjectForm onCreated={vi.fn()} />);
     const option = await screen.findByRole("option", { name: "Opus 5" });
-    // 요구사항: "콤보박스에는 모델 이름만 표시". id는 value에만 있다.
+    // Requirement: "콤보박스에는 모델 이름만 표시" (show only the model name in the combo box). The id lives only in value.
     expect(option.textContent).toBe("Opus 5");
     expect(screen.queryByText(/global\.anthropic/)).toBeNull();
   });
 
   it("shows each model's effort next to its name", async () => {
-    // 같은 모델이라도 effort에 따라 속도가 크게 다르다 — 고르는 사람이 알아야 한다.
-    // effort가 없는 항목(CLI 기본값)은 이름만 보인다.
+    // Even for the same model, speed varies a lot with effort — the person choosing needs to know.
+    // An item without effort (CLI default) shows only the name.
     server.use(http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [
       { name: "Opus 5.5", model_id: "global.anthropic.claude-opus-5-5", effort: "medium" },
       { name: "Opus 4.6", model_id: "global.anthropic.claude-opus-4-6-v1", effort: null },
@@ -97,8 +97,8 @@ describe("CreateProjectForm", () => {
     );
     render(<CreateProjectForm onCreated={vi.fn()} />);
     await user.type(screen.getByLabelText("프로젝트 ID"), "p");
-    // 셀렉트는 비활성이지만 생성은 막지 않는다 — 카탈로그 조회 실패가
-    // 프로젝트 생성 전체를 막는 것은 과하다(서버가 env 기본값으로 떨어진다).
+    // The select is disabled, but creation is not blocked — letting a failed catalog lookup
+    // block project creation entirely would be excessive (the server falls back to the env default).
     expect(await screen.findByLabelText("AI 모델")).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "프로젝트 생성" }));
     expect(body).toEqual({ project_id: "p", language: "ko" });
@@ -123,14 +123,14 @@ describe("CreateProjectForm", () => {
     );
     render(<CreateProjectForm onCreated={vi.fn()} />);
     const input = screen.getByLabelText("프로젝트 ID");
-    // 공백·한글·슬래시·점은 통과하지 못하고, 허용 문자만 남는다.
+    // Spaces, Hangul, slashes, and dots do not get through; only allowed characters remain.
     await user.type(input, "my pilot_2 한글/x.y");
     expect(input).toHaveValue("mypilot_2xy");
-    // 걸러 냈다는 사실을 알려 준다 — 조용히 지우면 키 입력이 씹힌 것처럼 보인다.
+    // Tell the user that characters were filtered out — silently dropping them looks like swallowed keystrokes.
     expect(screen.getByText(
       "영문·숫자·하이픈(-)·밑줄(_)만 쓸 수 있습니다. 공백은 안 됩니다.",
     )).toBeInTheDocument();
-    // 허용 문자로만 이뤄진 id는 그대로 실려 나간다.
+    // An id made only of allowed characters is sent as is.
     await user.clear(input);
     expect(screen.queryByText(/영문·숫자·하이픈/)).toBeNull();
     await user.type(input, "my-pilot_2");
@@ -171,8 +171,8 @@ describe("CreateProjectForm", () => {
   });
 
   it("언어를 고르지 않으면 ko로 보낸다", async () => {
-    // 기본값이 UI 로케일이 아니라 ko다 — 영어 UI를 쓰는 사람이 한국어
-    // 프로젝트를 만드는 것이 정상이고, 그 선택을 대신 하지 않는다.
+    // The default is ko, not the UI locale — someone using the English UI creating a Korean
+    // project is normal, and we do not make that choice for them.
     const user = userEvent.setup();
     let body: unknown = null;
     server.use(

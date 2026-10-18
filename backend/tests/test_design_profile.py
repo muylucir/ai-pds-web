@@ -1,7 +1,7 @@
 # backend/tests/test_design_profile.py
 #
-# 프로필 도메인만 시험한다 — S3는 FakeS3Store, 라우트는 test_routes_design.py,
-# 워크스페이스 반영은 test_proto_design_sync.py.
+# Tests only the profile domain — S3 is FakeS3Store, routes are in test_routes_design.py, and
+# workspace application is in test_proto_design_sync.py.
 from __future__ import annotations
 
 import json
@@ -32,7 +32,7 @@ def test_parses_tokens_and_keeps_the_rest_as_prose():
     tokens, prose = parse_design_md(GOOD_MD)
     assert tokens == {"primary": "#5b2ea6", "primary_foreground": "#ffffff",
                       "radius": "0.75rem", "font_sans": "Pretendard"}
-    # 펜스 블록은 산문에서 빠지고, 나머지는 순서대로 남는다.
+    # The fence block is removed from the prose, and the rest remains in order.
     assert "```tokens" not in prose
     assert prose.startswith("# ACME 브랜드")
     assert "여백을 넉넉히" in prose
@@ -83,16 +83,18 @@ def test_crlf_and_bom_and_comments_are_tolerated():
 
 
 def test_template_parses_and_the_worked_examples_are_real_tokens():
-    """서식은 admin이 그대로 내려받아 채우는 것이므로 반드시 유효하게
-    파싱돼야 한다. 최종 리뷰 I4: 예전에는 14개 토큰이 전부 주석 처리돼
-    있어서 "값만 고치고 `#`을 지우지 않는" 가장 흔한 admin 실수가 오류 없이
-    `{}`로 통과했다 -- 지금은 세 토큰을 `#`을 지운 예시로 내보내서, 서식을
-    그대로 받은 admin이 "#만 지우면 반영된다"를 직접 보게 한다."""
+    """The template is something an admin downloads and fills in as is, so it must always
+    parse validly. Final review I4: previously all 14 tokens were commented out, so the most
+    common admin
+    mistake — "fixing only the value and not removing the `#`" — passed without error as `{}`
+    -- now three tokens are emitted as examples with the `#` removed, so an admin who takes the
+    template as is sees for themselves that "removing just the # applies it"."""
     tokens, prose = parse_design_md(TEMPLATE_MD)
     assert tokens == {"primary": "#5b2ea6", "radius": "0.75rem",
                       "font_sans": "Pretendard"}
     assert prose.strip()
-    # "줄 앞의 #을 지우세요" 지시 자체가 빠지면 이 수정의 요점이 사라진다.
+    # If the instruction "줄 앞의 #을 지우세요" (remove the # at the start of the line) itself went
+    # missing, the point of this fix would be lost.
     assert "지우세요" in TEMPLATE_MD and "앞의 `#`" in TEMPLATE_MD
     for key in ALLOWED_TOKENS:
         assert key in TEMPLATE_MD, f"서식에 {key} 안내가 없다"
@@ -111,7 +113,8 @@ async def test_save_persists_markdown_only_and_load_reparses():
                              markdown=GOOD_MD)
     assert saved.tokens["primary"] == "#5b2ea6"
     stored = json.loads(s3.blobs[DESIGN_PROFILE_KEY])
-    # 파생값(tokens/prose)은 저장하지 않는다 — 파서를 고쳤을 때 낡지 않는다.
+    # Derived values (tokens/prose) are not stored — so they do not go stale when the parser
+    # is fixed.
     assert set(stored) == {"filename", "uploaded_at", "uploaded_by", "markdown"}
     assert stored["markdown"] == GOOD_MD
     loaded = await store.load()
@@ -139,11 +142,10 @@ async def test_corrupt_object_is_treated_as_absent():
 
 @pytest.mark.asyncio
 async def test_load_returns_none_when_the_store_raises_a_non_missing_error():
-    """FileNotFoundError(없음)만 fail-soft하던 시절의 회귀 가드다.
-    AccessDenied·스로틀·네트워크 오류 같은 그 외 모든 예외도 None으로
-    강등돼야 한다 -- 그러지 않으면 이 스토어를 쓰는
-    PrototypeSession.start()가 통째로 죽는다(docstring이 약속한 것과
-    정반대)."""
+    """A regression guard from the days when only FileNotFoundError (missing) was fail-soft.
+    Every other exception, such as AccessDenied, throttling, or network errors, must also be
+    downgraded to None -- otherwise PrototypeSession.start(), which uses this store, dies
+    entirely (the exact opposite of what the docstring promised)."""
     class _BoomS3:
         async def get(self, key: str) -> str:
             raise RuntimeError("AccessDenied")

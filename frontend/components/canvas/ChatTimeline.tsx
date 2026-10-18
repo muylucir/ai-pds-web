@@ -24,23 +24,24 @@ export function ChatTimeline({
 }) {
   const t = useT();
   const scrollerRef = useRef<HTMLDivElement>(null);
-  // stick-to-bottom: 기본 켜짐. 사용자가 위로 스크롤하면 꺼지고, 바닥 근처로
-  // 돌아오거나 메시지를 보내면(stickSignal 증가) 다시 켜진다. 스트리밍으로
-  // 긴 응답이 자라도 stick이 켜져 있는 한 계속 바닥을 따라간다 — 기존
-  // "바닥 120px 이내일 때만" 정책은 긴 응답에서 따라가기가 끊기는 원인이었다.
+  // stick-to-bottom: on by default. It turns off when the user scrolls up, and turns back on
+  // when they return near the bottom or send a message (stickSignal increments). Even as a
+  // long response grows via streaming, it keeps following the bottom as long as stick is on —
+  // the former "only within 120px of the bottom" policy was what broke following on long
+  // responses.
   const stickRef = useRef(true);
 
   function onScroll() {
     const el = scrollerRef.current;
     if (!el) return;
-    // 프로그램적 스크롤(scrollTop=scrollHeight 직후)도 이 핸들러를 타지만,
-    // 그 경우 바닥 판정이 참이라 stick이 유지된다. 사용자가 위로 올렸을 때만
-    // 바닥에서 멀어져 stick이 꺼진다.
+    // Programmatic scrolling (right after scrollTop=scrollHeight) also goes through this handler,
+    // but in that case the bottom check is true, so stick is kept. Only when the user scrolls up
+    // does it move away from the bottom and turn stick off.
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   }
 
   useEffect(() => {
-    // 메시지 전송 = 무조건 바닥 복귀 (사용자 요청의 직접 해결).
+    // Sending a message = always return to the bottom (the direct fix for the user's request).
     stickRef.current = true;
     const el = scrollerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -65,16 +66,17 @@ export function ChatTimeline({
       className="chat-scroll flex-1 min-h-0 overflow-y-auto px-4 md:px-8 py-6"
       aria-label={t("canvas.timelineLabel")}
     >
-      {/* 상한 896px(max-w-4xl) — ChatInput과 같은 값이라 입력창 좌우가 버블 영역과
-          맞는다. 채팅 열이 5:5로 넓어진 화면에서 버블이 열을 따라가되, 아주 넓은
-          화면에서 AI 답변 한 줄이 끝없이 길어지지는 않게 한다. */}
+      {/* Max 896px (max-w-4xl) — the same value as ChatInput, so the input's left and right edges
+          line up with the bubble area. On screens where the chat column widened to 5:5 the bubbles
+          follow the column, but on very wide screens one line of an AI answer does not grow
+          endlessly long. */}
       <div className="max-w-4xl mx-auto space-y-5">
         {items.length === 0 ? (
-          // historyLoading 중에는 이 문구를 숨긴다 — 부모(WorkspacePage)가
-          // 같은 자리에 HistorySkeleton을 겹쳐 그린다. 숨기지 않으면 "이전
-          // 대화를 복원하는 중"과 "대화를 시작해 보세요(=아직 아무것도 없음)"가
-          // 동시에 뜨는 모순이 생긴다 — 대화가 많은 프로젝트를 재진입할 때
-          // 정확히 이 태스크가 없애려던 시나리오다.
+          // Hide this text during historyLoading — the parent (WorkspacePage) draws
+          // HistorySkeleton over the same spot. Without hiding it, the contradiction of
+          // "restoring the previous conversation" and "대화를 시작해 보세요 (start a conversation) (=
+          // nothing yet)" showing at the same time arises — exactly the scenario this task
+          // set out to remove when re-entering a project with a long conversation.
           !historyLoading && (
             <p className="text-center text-sm text-slate-400 mt-10">
               {t("chat.emptyTimeline")}
@@ -83,15 +85,15 @@ export function ChatTimeline({
         ) : (
           items.map((item) => {
             if (item.role === "user") {
-              // 복원된 답변 제출 턴. 세 단계로 내려간다:
+              // A restored answer-submission turn. It goes down three levels:
               //
-              //  1) answers + questions → 라이브가 쓰는 **그 함수**로 만든다.
-              //     문항 번호·보기 letter·보기 텍스트가 그대로 나오므로
-              //     스크롤백이 방금 본 화면과 같다. 이 조합은 답변 레코드가
-              //     있는 세션에서 온다(backend/agent/answer_store.py).
-              //  2) answers만 → "1: A" 나열. payload가 없어 보기 텍스트를
-              //     펼칠 수 없다(구 Strands 트랜스크립트).
-              //  3) 둘 다 없으면 백엔드 text — CLI가 쓴 문장이거나 자유 서술.
+              //  1) answers + questions → built with **the same function** live uses.
+              //     Question numbers, option letters, and option text come out as is, so
+              //     the scrollback matches the screen just seen. This combination comes from
+              //     sessions that have answer records (backend/agent/answer_store.py).
+              //  2) answers only → a "1: A" listing. Without the payload, option text
+              //     cannot be expanded (old Strands transcripts).
+              //  3) Neither → the backend text — a sentence the CLI wrote, or free text.
               const text = item.answers && item.questions
                 ? answerSummary(item.questions, item.answers, t)
                 : item.answers
@@ -105,8 +107,8 @@ export function ChatTimeline({
             if (item.role === "ai") return <AiMessage key={item.id} item={item} />;
             // role === "history-card" — a questions file presented in a PAST
             // turn (Task 5's history restore), a static summary marker
-            // (mockup 04's ml-11 idiom). payload가 함께 복원되면 펼쳐서
-            // 질문·보기를 읽을 수 있다.
+            // (mockup 04's ml-11 idiom). If the payload is restored along with it, it can be
+            // expanded to read the questions and options.
             return (
               <div key={item.id} className="ml-11 max-w-[85%]">
                 <HistoryQuestionsCard name={item.name} file={item.file} />

@@ -36,8 +36,8 @@ describe("latestCapabilities", () => {
 });
 
 describe("StageSidebar", () => {
-  // 에이전트가 쓴 스테이지는 8개지만 사이드바는 공식 6개를 보인다
-  // (AI-PDS 팀 피드백: PDS는 6개인데 화면의 숫자가 달랐다).
+  // The agent wrote 8 stages, but the sidebar shows the official 6
+  // (AI-PDS team feedback: PDS has 6, but the number on screen was different).
   it("renders the six official capabilities, not the agent's raw stage list", () => {
     render(<StageSidebar state={projectState} events={[]} />);
     expect(screen.getByLabelText("단계 진행 상황")).toBeInTheDocument();
@@ -64,9 +64,9 @@ describe("StageSidebar", () => {
     expect(screen.getByText(/4 \/ 4/)).toBeInTheDocument();
   });
 
-  // 이 카운터는 딕셔너리를 거치지 않고 "스테이지"를 리터럴로 박고 있었다 —
-  // 영어 UI에서 헤딩과 힌트는 영어인데 그 줄만 한국어로 남았다(2026-08-04의
-  // 스크린샷에 "0 / 0 스테이지"로 찍혀 있다).
+  // This counter hardcoded "스테이지" (stages) as a literal without going through the dictionary —
+  // in the English UI the heading and hint were English but that one line stayed Korean (the
+  // 2026-08-04 screenshot shows "0 / 0 스테이지").
   it("renders the stage-count unit in the UI locale, not a hardcoded Korean literal", () => {
     render(
       <LocaleProvider locale="en">

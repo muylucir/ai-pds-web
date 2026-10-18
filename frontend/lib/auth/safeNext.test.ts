@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { safeNext } from "./safeNext";
 
-// login과 callback 두 곳에서 이 검증을 쓴다. 요청은 항상 우리 앱의 origin에서
-// 오므로(req.url), 실제 origin은 늘 https://app.example.com 이다.
+// Both login and callback use this check. Requests always come from our app's origin
+// (req.url), so the real origin is always https://app.example.com.
 const REQUEST_URL = "https://app.example.com/api/auth/callback?code=1&state=2";
 
 describe("safeNext", () => {
@@ -27,7 +27,7 @@ describe("safeNext", () => {
     expect(safeNext(null, REQUEST_URL)).toBe("/");
   });
 
-  // 회귀: 이전에 막혔던 경로들이 여전히 막혀야 한다.
+  // Regression: paths that were blocked before must still be blocked.
   it("rejects a protocol-relative path (//evil.example)", () => {
     expect(safeNext("//evil.example", REQUEST_URL)).toBe("/");
   });
@@ -40,10 +40,10 @@ describe("safeNext", () => {
     expect(safeNext("javascript:alert(1)", REQUEST_URL)).toBe("/");
   });
 
-  // 실제 취약점: "/\evil.example" — 슬래시 하나 + 백슬래시. WHATWG URL 파서는
-  // 특수 스킴에서 백슬래시를 슬래시처럼 취급하므로 문자열 프리픽스 검사
-  // ("//"로 시작하는지만 보는)는 이걸 통과시키고, 브라우저에서는 실제로
-  // evil.example로 resolve된다. origin 비교라야 이걸 잡는다.
+  // A real vulnerability: "/\evil.example" — one slash + a backslash. The WHATWG URL parser
+  // treats a backslash like a slash in special schemes, so a string prefix check
+  // (one that only checks for a leading "//") lets this through, and in the browser it actually
+  // resolves to evil.example. Only an origin comparison catches it.
   it("rejects a leading-backslash bypass (/\\evil.example)", () => {
     expect(safeNext("/\\evil.example", REQUEST_URL)).toBe("/");
   });
@@ -56,20 +56,20 @@ describe("safeNext", () => {
     expect(safeNext("/\\tevil", REQUEST_URL)).toBe("/");
   });
 
-  // 백슬래시가 우리 자신의 origin 안에 머무르는 경우까지도 — 우리는 백슬래시가
-  // 든 경로를 스스로 생성하지 않으므로, 파서가 그걸 어떻게 다루는지에 기대지
-  // 않고 통째로 거부한다(예측 가능성을 위한 의도적 결정 — origin이 우연히
-  // 같더라도 예외를 두지 않는다).
+  // Even when the backslash stays within our own origin — we never generate paths containing a
+  // backslash ourselves, so rather than rely on how the parser handles it, the whole thing is
+  // rejected (a deliberate decision for predictability — no exception even if the origin
+  // happens to be the same).
   it("rejects any path containing a backslash, even if same-origin after resolution", () => {
     expect(safeNext("/ok/pa\\th", REQUEST_URL)).toBe("/");
   });
 
-  // 실제 취약점(2차 발견): raw가 우리 자신의 origin을 절대 URL로 명시하면
-  // origin 비교는 통과하지만, pathname 자체가 "//"로 시작할 수 있다
+  // A real vulnerability (second finding): if raw spells out our own origin as an absolute URL,
+  // the origin comparison passes, but the pathname itself can start with "//"
   // ("https://app.example.com//evil.example" -> pathname "//evil.example").
-  // 그 문자열을 반환하면 함수의 후조건(반환값은 다시 resolve해도 항상
-  // 우리 origin)이 깨진다 — 나중에 이 값을 또 new URL(value, url)에 넣는
-  // 호출자가 생기면 오프사이트로 튄다.
+  // Returning that string breaks the function's postcondition (the return value, resolved again, is always
+  // our origin) — if a caller ever appears that feeds this value into new URL(value, url) again,
+  // it bounces offsite.
   it("rejects a same-origin absolute URL whose path itself starts with //", () => {
     expect(safeNext("https://app.example.com//evil.example", REQUEST_URL)).toBe("/");
   });
@@ -83,10 +83,10 @@ describe("safeNext", () => {
       .toBe("/projects/p1/dashboard?tab=x#frag");
   });
 
-  // 후조건 자체를 테스트한다: 모든 입력에 대해, safeNext의 반환값을 다시
-  // resolve했을 때 항상 우리 자신의 origin으로 떨어져야 한다. 이 하나의
-  // 불변식이 지켜지면, 앞으로 나올 새로운 인코딩 트릭도 개별 케이스를
-  // 추가하기 전에 이 테스트가 잡아낸다.
+  // Tests the postcondition itself: for every input, resolving safeNext's return value again
+  // must always land on our own origin. If this one invariant holds, this test
+  // catches new encoding tricks that come along before individual cases
+  // are added.
   it("always returns a value that re-resolves to our own origin (postcondition)", () => {
     const ourOrigin = new URL(REQUEST_URL).origin;
     const candidates = [

@@ -40,12 +40,12 @@ export function StageTimeline({ state, projectId }: { state: ProjectState; proje
         <h2 id="stage-heading" className="font-bold">{t("dash.stageProgressTitle")}</h2>
         <span className="text-xs text-slate-400">{t("dash.adaptiveNote")}</span>
       </div>
-      {/* 갓 만든 프로젝트의 `stages`는 빈 배열이고, 그때 빈 <ol>만 남으면 이 큰
-          패널이 흰 박스가 되어 고장으로 읽힌다. 자매 패널(ArtifactsPanel·
-          ActivityFeed)과 같은 형태의 한 줄로 채운다 — 무엇을 해야 하는지는
-          위쪽 GetStartedBanner가 말하므로 여기서는 사실만 적는다.
-          목록은 `stages`(에이전트가 쓴 원래 목록)가 아니라 그것을 묶은 6개
-          capability다 — 사이드바·프로젝트 목록과 같은 단위로 센다. */}
+      {/* A freshly created project's `stages` is an empty array, and if only an empty <ol> remained then, this large
+          panel would become a white box and read as broken. Fill it with one line in the same form as the sibling panels
+          (ArtifactsPanel, ActivityFeed) — the GetStartedBanner above says what to do, so here we state only
+          the facts.
+          The list is not `stages` (the original list the agent wrote) but the 6 capabilities grouping
+          them — counted in the same units as the sidebar and project list. */}
       {state.stages.length === 0 ? (
         <p className="p-5 text-sm text-slate-400">{t("dash.noStages")}</p>
       ) : (

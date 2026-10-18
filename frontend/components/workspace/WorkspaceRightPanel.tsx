@@ -53,8 +53,8 @@ export function deriveMode(
   return "artifacts";
 }
 
-// `memo`: 스트리밍 중 워크스페이스 페이지는 프레임마다 다시 그려지지만(채팅 말풍선이
-// 자란다) 이 패널의 props는 그동안 그대로다.
+// `memo`: while streaming, the workspace page re-renders on every frame (the chat bubble
+// grows), but this panel's props stay the same during that time.
 export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
   projectId,
   pendingQuestions,
@@ -72,10 +72,10 @@ export const WorkspaceRightPanel = memo(function WorkspaceRightPanel({
   changedPaths: string[];
   onSubmitAnswers: (answers: Record<string, string>) => void;
   busy: boolean;
-  /** 열람 멤버 — 질문 폼이 제출 없이 보인다. */
+  /** Viewer member — the question form is shown without submission. */
   readOnly?: boolean;
-  // 문서 드로어가 지금 열 문서의 이름(없으면 버튼을 그리지 않는다)과 여는 함수.
-  // `onOpenDoc`은 부모가 useCallback으로 고정한다 — 이 패널은 memo다.
+  // The name of the document the doc drawer would open now (no button drawn if absent) and the function that opens it.
+  // `onOpenDoc` is pinned by the parent with useCallback — this panel is memo'd.
   currentDocName: string | null;
   onOpenDoc: () => void;
 }) {

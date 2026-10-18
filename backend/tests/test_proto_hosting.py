@@ -1,8 +1,8 @@
-# backend/tests/test_proto_hosting.py — 호스팅 절차와 기동 뒤 재호스팅
+# backend/tests/test_proto_hosting.py — the hosting procedure and re-hosting after startup
 # (aipds/proto/hosting.py).
 #
-# 라우트와 재호스팅이 같은 절차여야 한다: 되살리기 → npm → 스냅샷 → 토큰 → 원하는 상태.
-# 재시작 뒤 뜬 프로토타입이 같은 소스·같은 링크여야 한다는 것이 이 파일의 단정이다.
+# The route and re-hosting must follow the same procedure: restore → npm → snapshot → token → desired state.
+# This file asserts that a prototype brought up after a restart has the same source and the same link.
 import asyncio
 
 import pytest
@@ -15,12 +15,12 @@ from aipds.proto.store import PrototypeStore
 from fakes.in_memory_s3 import FakeS3Store
 
 PID = "host-proj"
-#: 이미 나눠 준 링크의 값(S3 정본). 이름에 token을 넣지 않는다 — bandit B105가 이름을 본다.
+#: The value of a link already handed out (the S3 source of truth). The name does not include token — bandit B105 looks at names.
 HANDED_OUT = "tok-handed-out"
 
 
 class FakeHost:
-    """npm 수명 주기를 흉내내는 호스트. 동시에 몇 개가 올라가는지 잰다."""
+    """A host that mimics the npm lifecycle. Measures how many come up at the same time."""
 
     def __init__(self, root=None):
         self.root = root
@@ -86,7 +86,7 @@ def env(monkeypatch, tmp_path):
 
 
 async def _seed(env, slug, files=None):
-    """S3에만 소스 세대가 있는 상태 — 교체된 인스턴스의 모양."""
+    """A state where the source generation exists only in S3 — the shape of a replaced instance."""
     build = env["proto_root"] / "_seed" / slug
     for rel, body in (files or {"prototype/package.json": "{}"}).items():
         (build / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -100,15 +100,15 @@ async def test_hosting_restores_the_tree_then_records_token_and_intent(env):
 
     assert info.state == "running" and token == "tok-a"
     served = env["proto_root"] / PID / "a" / "prototype" / "package.json"
-    assert served.read_text() == '{"name":"a"}'       # S3에서 되살렸다
+    assert served.read_text() == '{"name":"a"}'       # restored from S3
     store = env["store"]
     assert await store.load_token("a") == "tok-a"
     assert await store.desired_running() == ["a"]
 
 
 async def test_a_replaced_instance_keeps_the_token_it_already_handed_out(env):
-    """로컬 토큰이 없는 인스턴스(교체 직후)에서 호스팅하면 S3의 토큰을 심는다 — 새로
-    만들면 이미 나눠 준 링크가 죽는다."""
+    """Hosting on an instance with no local token (right after replacement) plants S3's token — minting
+    a new one would kill the links already handed out."""
     await _seed(env, "a")
     await env["store"].save_token("a", HANDED_OUT)
     info, token = await host_prototype(PID, "a")
@@ -134,8 +134,8 @@ async def test_stopping_forgets_the_intent(env):
 
 
 async def test_startup_rehosts_only_what_should_run_one_at_a_time(env):
-    """한꺼번에 올리면 `npm install` + `next build`(피크 약 2GB)가 겹쳐 기동 직후
-    OOM이 난다 — 하나씩 올린다."""
+    """Bringing them all up at once overlaps `npm install` + `next build` (peak about 2GB) and causes an
+    OOM right after startup — they come up one at a time."""
     for slug in ("a", "b", "c"):
         await _seed(env, slug)
     await env["store"].set_desired_running("a")
@@ -155,7 +155,7 @@ async def test_startup_skips_what_is_already_running(env):
 
 
 async def test_an_intent_with_no_source_left_is_dropped(env):
-    """되살릴 소스가 없으면 원하는 상태를 남겨 둘 이유가 없다 — 매 기동마다 실패한다."""
+    """With no source to restore, there is no reason to keep the desired state — it would fail on every startup."""
     await env["store"].set_desired_running("ghost")
     assert await rehost_desired() == 0
     assert await env["store"].desired_running() == []
@@ -172,8 +172,8 @@ async def test_one_failure_does_not_block_the_rest(env):
 
 
 async def test_what_was_hosted_before_the_restart_comes_back(env):
-    """원하는 상태를 기록하기 전에 뜬 호스팅도(이 저장소가 생기기 전, 기록 실패) 재시작
-    뒤 다시 뜬다 — pid 파일이 "멈추라고 한 적 없이 끊긴 호스팅"을 말한다."""
+    """Hosting that came up before the desired state was recorded (before this store existed, or a failed record) also
+    comes back up after a restart — the pid file says "hosting that was cut off without ever being told to stop"."""
     await _seed(env, "a")
     await adopt_local_state([(PID, "a")])
     assert await rehost_desired() == 1
@@ -181,11 +181,11 @@ async def test_what_was_hosted_before_the_restart_comes_back(env):
 
 
 async def test_a_local_build_without_a_generation_is_backfilled(env):
-    """이 저장소가 생기기 전에 만든 프로토타입도 다음 교체를 견딘다."""
+    """Prototypes created before this store existed also survive the next replacement."""
     build = env["proto_root"] / PID / "old"
     (build / "prototype").mkdir(parents=True)
     (build / "prototype" / "package.json").write_text("{}")
     await adopt_local_state([])
     assert dict(await env["store"].entries("old")) == {"prototype/package.json": b"{}"}
-    # 원하는 상태는 만들지 않는다 — 호스팅되던 것이 아니다.
+    # No desired state is created — it was not being hosted.
     assert await env["store"].desired_running() == []

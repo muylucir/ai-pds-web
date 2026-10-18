@@ -1,25 +1,27 @@
-# backend/tests/parser_corpus.py — 파서 실측 코퍼스: 뒤섞기와 구조 요약.
+# backend/tests/parser_corpus.py — real-world parser corpus: scrambling and structure summary.
 #
-# **왜 실측인가.** 파서 테스트의 픽스처가 사람이 손으로 쓴 "이상적인" 모양이던 동안,
-# 실제 에이전트 산출물에서 파서가 조용히 실패했다 — 한국어 감사 로그 0건, 하위 단계가
-# 스테이지로 섞인 사이드바, 사라진 `G)` 보기. 픽스처가 이상적이면 테스트는 통과하고
-# 화면은 비어 있다. 그래서 실제 산출물을 코퍼스로 두고 모든 파서를 거기에 돌린다.
+# **Why real-world.** While the parser tests' fixtures were "ideal" shapes written by hand,
+# the parsers failed silently on real agent artifacts — 0 entries from Korean audit logs, a
+# sidebar with sub-steps mixed in as stages, a vanished `G)` option. When fixtures are ideal,
+# the tests pass and the screen is empty. So real artifacts are kept as a corpus and every
+# parser is run against it.
 #
-# **왜 뒤섞는가.** 리포는 공개되고 산출물에는 워크숍 참가자가 쓴 사업 내용이 담긴다.
-# 여기서는 산문을 같은 길이의 무의미한 낱말로 바꾸되 파서가 읽는 **구조**는 그대로
-# 둔다: 헤딩·목록 표시·펜스·보기 글자·타임스탬프·파서가 아는 라벨·스테이지 이름.
-# 뒤섞은 파일의 구조 요약이 원본의 요약과 같다는 것을 `refresh`가 확인한 뒤에만
-# 픽스처를 쓴다 — 뒤섞기가 구조를 건드렸다면 코퍼스가 거짓이 되기 때문이다.
+# **Why scramble.** The repo is public, and the artifacts contain business content written by
+# workshop participants. Here the prose is replaced with meaningless words of the same length,
+# while the **structure** the parsers read stays intact: headings, list markers, fences,
+# option letters, timestamps, labels the parsers know, stage names. The fixtures are written
+# only after `refresh` confirms that the scrambled file's structure summary equals the
+# original's — if scrambling touched the structure, the corpus would be false.
 #
-# 갱신 방법(드릴 버킷에서 산출물을 받아 온 뒤):
+# How to refresh (after pulling the artifacts down from the drill bucket):
 #
 #   aws s3 sync s3://<artifacts-bucket>/projects/ /tmp/corpus/raw \
 #       --exclude '*' --include '*/aiplc-docs/audit.md' \
 #       --include '*/aiplc-docs/aiplc-state.md' --include '*-questions.md'
 #   cd backend && .venv/bin/python tests/parser_corpus.py /tmp/corpus/raw
 #
-# 원본은 리포에 들이지 않는다. 쓰이는 것은 `fixtures/real/` 아래의 뒤섞은 사본과
-# `fixtures/real/summary.json`(구조 요약)뿐이다.
+# The originals never enter the repo. Only the scrambled copies under `fixtures/real/` and
+# `fixtures/real/summary.json` (the structure summary) are used.
 from __future__ import annotations
 
 import hashlib
@@ -34,8 +36,9 @@ from aipds.parsers.state import parse_state_file
 
 CORPUS = Path(__file__).parent / "fixtures" / "real"
 
-#: 뒤섞지 않는 낱말. 파서가 판정에 쓰는 것(스테이지·섹션 이름, 복수 선택·추천 표시,
-#: 승인 문구)과 상류 룰이 정한 공개 용어뿐이다 — 프로젝트 고유의 말은 없어야 한다.
+#: Words that are not scrambled. Only what the parsers use to decide (stage and section names,
+#: multi-select and recommendation markers, approval phrases) and public terms defined by the
+#: upstream rules — there must be no project-specific words here.
 _KEEP = {w.lower() for w in """
 Envision Solution Analysis Prototype Validation Product Strategy Go to Market
 Workspace Detection Discovery Mode Selection Step Current Stage Progress Project Type
@@ -49,9 +52,10 @@ aiplc docs discovery envision md questions state audit
 요약 결과 시각 일시 맥락 및
 """.split()}
 
-#: 이 어간을 **포함한** 한국어 낱말은 통째로 둔다. 파서가 부분 문자열로 판정한다 —
-#: 복수 선택은 `"선택" in 괄호`로 본다(parsers/questions.py의 `_is_multi_select`) —
-#: 그래서 `선택하세요`를 뒤섞으면 복수 선택 문항이 단일 선택으로 읽힌다.
+#: Korean words that **contain** one of these stems are kept whole. The parsers decide by
+#: substring — multi-select is detected with `"선택" in parentheses` (`_is_multi_select` in
+#: parsers/questions.py) — so scrambling `선택하세요` would make a multi-select question read
+#: as single-select.
 _KEEP_STEMS = ("선택", "복수", "중복", "여러", "모두", "하나만", "한 개만", "승인", "추천", "권고")
 
 _WORD = re.compile(r"[가-힣]+|[A-Za-z]+")
@@ -70,8 +74,9 @@ def _fake(word: str) -> str:
     return out.capitalize() if word[0].isupper() else out
 
 
-#: 숫자는 구조일 때만 둔다 — 문항·단계 번호(`Question 3`, `Step 2`, `Q12`, `Part 1`)와
-#: 줄 머리의 목록 번호. 산문의 숫자(고객사 수, 금액)는 식별 정보일 수 있다.
+#: Numbers are kept only when they are structure — question and step numbers (`Question 3`,
+#: `Step 2`, `Q12`, `Part 1`) and list numbers at the start of a line. Numbers in prose
+#: (customer counts, amounts) can be identifying information.
 _STRUCTURAL_NUMBER = re.compile(r"(?:Question|Step|Part|Q|질문)\s*$|^\s*$")
 _DIGITS = re.compile(r"\d+")
 
@@ -94,7 +99,8 @@ def _scrub_words(text: str) -> str:
 
     def both(chunk: str) -> str:
         return _scrub_digits(_WORD.sub(swap, chunk))
-    # 타임스탬프 안의 `T`·`Z`는 한 글자라 그대로 남지만, 명시적으로 보호한다.
+    # The `T` and `Z` inside a timestamp are single letters and would survive anyway,
+    # but they are protected explicitly.
     parts, last = [], 0
     for m in _ISO.finditer(text):
         parts.append(both(text[last:m.start()]))
@@ -105,12 +111,12 @@ def _scrub_words(text: str) -> str:
 
 
 def scrub(markdown: str) -> str:
-    """산문을 뒤섞고 구조를 남긴다. 결정적이다 — 같은 입력은 같은 출력."""
+    """Scramble the prose and keep the structure. Deterministic — the same input gives the same output."""
     out = []
     for line in markdown.splitlines():
         m = _LABEL.match(line)
         if m and _family(m.group("label")):
-            # 파서가 아는 라벨은 뜻이 곧 구조다 — 그대로 둔다.
+            # A label the parsers know means structure by definition — leave it as is.
             head = line[:m.end()]
             out.append(head + _scrub_words(line[m.end():]))
         else:
@@ -119,7 +125,7 @@ def scrub(markdown: str) -> str:
 
 
 def summarize(kind: str, name: str, markdown: str) -> dict:
-    """파서 출력의 **구조**만 — 뒤섞기 전후가 같아야 하는 것."""
+    """Only the **structure** of the parser output — what must match before and after scrambling."""
     if kind == "audit":
         entries = parse_audit_file(markdown)
         return {"entries": len(entries),
@@ -155,7 +161,7 @@ def _language(project: Path) -> str:
 
 
 def refresh(raw_root: Path) -> None:
-    """원본 산출물에서 뒤섞은 코퍼스와 구조 요약을 다시 만든다."""
+    """Rebuild the scrambled corpus and the structure summary from the original artifacts."""
     projects = sorted(p for p in raw_root.iterdir() if (p / "aiplc-docs").is_dir())
     counters: dict[str, int] = {}
     summary: dict[str, dict] = {}

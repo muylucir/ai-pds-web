@@ -10,29 +10,32 @@ import { useT } from "@/lib/i18n/provider";
 import { DocIcon } from "@/components/workspace/OpenDocButton";
 
 // The workspace's document drawer. Renders the document the CONVERSATION is
-// currently about (activeDoc — submit_document 이벤트뿐 아니라 doc성
-// file_changed도 추적, ui-bug2 싱크 수정) so the user reads it without leaving
+// currently about (activeDoc — tracks not only submit_document events but also
+// doc-like file_changed, the ui-bug2 sync fix) so the user reads it without leaving
 // the workspace.
 //
-// **열이 아니라 덮는 드로어다.** 4번째 열로 상시 펼쳐 두던 동안 질문 폼은
-// 1440px에서 412px였다(AI-PDS 팀 피드백, 2026-10). 이제 채팅·질문이 5:5로 폭을
-// 갖고, 문서는 필요할 때 위에 덮어 연다. 덮는 동안 가리는 것은 질문 폼이므로
-// 닫는 길을 셋 둔다 — 손잡이 탭, ✕, Esc·바깥 클릭.
+// **It is an overlay drawer, not a column.** While it was always open as a 4th column, the
+// question form was 412px wide at 1440px (AI-PDS team feedback, 2026-10). Now chat and
+// questions split the width 5:5, and the document opens on top when needed. While it
+// overlays, it covers the question form, so there are three ways to close it — the handle
+// tab, ✕, and Esc / clicking outside.
 //
-// 손잡이 탭은 드로어 왼쪽 가장자리에 붙어 함께 움직인다 — 닫혀 있을 때는 화면
-// 오른쪽 끝(그리드가 비워 둔 여백)에, 열리면 드로어 옆에 있다. 여는 것과 닫는
-// 것이 같은 자리의 같은 버튼이다. 아이콘만 두지 않고 글자와 개수를 쓴다.
+// The handle tab is attached to the drawer's left edge and moves with it — when closed it
+// sits at the screen's right edge (the margin the grid leaves empty), and when open, beside
+// the drawer. Opening and closing are the same button in the same place. It shows text and
+// a count rather than just an icon.
 //
-// turnSeq: 턴이 끝날 때마다 증가하는 시퀀스. 문서 이벤트가 도착한 시점에는
-// VM→S3 동기화 전이라 읽기가 비거나 404일 수 있으므로, 턴 종료 시점에
-// 다시 읽는다 (fetch 키에 포함).
+// turnSeq: a sequence that increments every time a turn ends. When a document event
+// arrives, the VM→S3 sync may not have happened yet, so the read may be empty or 404;
+// it is therefore re-read when the turn ends (included in the fetch key).
 //
-// 모든 폭에서 열린다 — 좁은 화면에서는 전체 폭을 덮는다. 열이던 시절에는
-// `lg` 아래에서 숨겨졌고 리뷰 화면이 유일한 대안이었다.
-// 연달아 쓰인 파일을 목록 재조회 한 번으로 묶는 대기(ms).
+// It opens at every width — on narrow screens it covers the full width. Back when it was a
+// column, it was hidden below `lg` and the review screen was the only alternative.
+// Wait (ms) to batch files written in quick succession into a single list refetch.
 const CHANGE_SETTLE_MS = 400;
 
-// `value`가 `ms` 동안 바뀌지 않았을 때의 값. 바뀌는 동안에는 직전에 가라앉은 값을 준다.
+// The value of `value` once it has not changed for `ms`. While it keeps changing, returns the last
+// settled value.
 function useSettled<T>(value: T, ms: number): T {
   const [settled, setSettled] = useState(value);
   useEffect(() => {
@@ -42,8 +45,8 @@ function useSettled<T>(value: T, ms: number): T {
   return settled;
 }
 
-// `memo`: 스트리밍 중 워크스페이스 페이지는 프레임마다 다시 그려지지만(채팅 말풍선이
-// 자란다) 이 패널의 props는 그동안 그대로다.
+// `memo`: during streaming the workspace page re-renders every frame (the chat bubble
+// grows), but this panel's props stay the same throughout.
 export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   projectId,
   activeDoc,
@@ -56,75 +59,84 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   projectId: string;
   activeDoc: { path: string; version: string | null } | null;
   turnSeq: number;
-  // 이번 턴에 쓰인 경로들(`file_changed`). **목록 재조회의 트리거다.**
+  // Paths written this turn (`file_changed`). **This is the trigger for refetching the list.**
   //
-  // 종전 키는 `[projectId, turnSeq, activeDoc?.path]`였고 "파일이 바뀌었다"는
-  // 실시간 신호가 없었다 — `turnSeq`는 턴이 끝날 때 오르고 `activeDoc`은 문서
-  // 이벤트에만 바뀐다. 그래서 감사·상태·질문 파일만 쓰는 턴에서는 목록이 마운트
-  // 시점 값(새 프로젝트면 빈 배열)에 머물고, 오른쪽 "최근 산출물"만 채워졌다 —
-  // 드롭다운이 아예 안 뜨는 실측 증상이 그 모양이다.
+  // The previous key was `[projectId, turnSeq, activeDoc?.path]`, and there was no real-time
+  // "a file changed" signal — `turnSeq` rises when a turn ends and `activeDoc` changes only
+  // on document events. So in turns that write only audit/state/question files, the list
+  // stayed at its mount-time value (an empty array for a new project) and only the
+  // "최근 산출물" ("Recent artifacts") section on the right filled in — that is the shape
+  // of the measured symptom where the dropdown never appeared at all.
   //
-  // 이 신호로 거는 것이 안전한 근거: 훅이 **게시하고 나서 광고한다**
-  // (claude_driver._on_post_tool_use의 publish_file → file_changed). 즉 이 배열에
-  // 경로가 들어온 시점에 그 파일은 이미 정본에 있으므로 재조회가 반드시 찾는다.
+  // Why it is safe to key on this signal: the hook **publishes first, then advertises**
+  // (publish_file → file_changed in claude_driver._on_post_tool_use). So by the time a path
+  // lands in this array, that file is already in the source of truth and the refetch is sure to
+  // find it.
   //
-  // **옵셔널이 아니다.** 기본값 `[]`을 두면 부모가 안 넘겨도 컴파일되고, 그러면 이
-  // 재조회가 프로덕션에서만 조용히 죽는다 — 필수로 두어 타입체크가 배선을 지킨다.
+  // **It is not optional.** With a default of `[]`, it would compile even if the parent did
+  // not pass it, and this refetch would silently die only in production — making it
+  // required lets the type check guard the wiring.
   changedPaths: string[];
-  // 열림 상태는 부모가 든다 — 채팅 배너와 질문 폼의 "문서 열기"도 같은 드로어를
-  // 연다(workspace/page.tsx). 닫혀도 아래 훅들은 그대로 돈다: 여는 순간 지금 문서가
-  // 바로 보여야 하고, 닫힌 동안 새 문서가 왔는지도 여기서 알아야 한다.
+  // The parent holds the open state — the chat banner and the question form's "문서 열기"
+  // ("Open document") open the same drawer too (workspace/page.tsx). The hooks below keep
+  // running while closed: the current document must show the moment it opens, and this
+  // component must also know whether a new document arrived while closed.
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // 드로어가 지금 보여 줄 문서 경로. 질문 폼의 "{이름} 보기" 버튼이 쓴다 —
-  // 무엇이 열릴지는 목록 폴백까지 아는 이 컴포넌트만 정확히 안다.
+  // Document path the drawer will show right now. Used by the question form's "{이름} 보기"
+  // ("View {name}") button — only this component, which also knows the list fallback,
+  // knows exactly what will open.
   onCurrentDocChange: (path: string | null) => void;
 }) {
   const t = useT();
-  // 드롭다운 선택 상태. null = activeDoc 따름. activeDoc이 바뀌면(새 문서
-  // 이벤트) 수동 선택을 리셋해 대화를 따라간다 — 스펙의 우선순위.
+  // Dropdown selection state. null = follow activeDoc. When activeDoc changes (a new
+  // document event), the manual selection resets to follow the conversation — the spec's priority.
   const [manualPath, setManualPath] = useState<string | null>(null);
   useEffect(() => {
     setManualPath(null);
   }, [activeDoc?.path]);
   const version = activeDoc?.version ?? null;
 
-  // 산출물 목록 — 턴 종료(turnSeq)와 **새 문서가 생길 때마다**(activeDoc.path)
-  // 재조회한다.
+  // Artifact list — refetched when a turn ends (turnSeq) and **whenever a new document
+  // appears** (activeDoc.path).
   //
-  // `activeDoc?.path`를 키에 넣는 이유(2026-08-18): 백엔드가 이제 쓰기 직후에
-  // 문서를 정본에 게시하므로(backend/aipds/workspace_sync.py) 턴 중에도 목록이
-  // 정확할 수 있다. 턴 종료만 기다리면 한 턴에 문서 5개를 쓰는 동안 드롭다운에는
-  // 현재 문서 하나(아래 union)만 보이고, 앞서 쓴 것들은 정본에 있는데도 목록에
-  // 없다 — 실측한 증상 중 "잠깐 나타났다 사라진다"가 그 모양이다.
+  // Why `activeDoc?.path` is in the key (2026-08-18): the backend now publishes documents
+  // to the source of truth right after writing them (backend/aipds/workspace_sync.py), so
+  // the list can be accurate even mid-turn. Waiting only for the turn end means that while
+  // a turn writes 5 documents, the dropdown shows only the current one (the union below),
+  // and the earlier ones are missing from the list even though they are in the source of
+  // truth — that is the shape of the measured symptom "appears briefly, then disappears".
   //
-  // 목록이 아직 path를 포함하지 않을 수 있으므로(이벤트가 게시보다 먼저 도착하는
-  // 짧은 창) 현재 path를 항상 union — 드롭다운/본문 미스매치 및 "목록이 비어
-  // 있으면 select 자체가 숨겨지는" 문제를 함께 해결한다.
+  // The list may not include the path yet (the short window where the event arrives before
+  // publishing), so the current path is always unioned in — this also solves the
+  // dropdown/body mismatch and the "select itself is hidden when the list is empty" problem.
   //
-  // `changedPaths.length`는 **잠시 기다렸다** 건다(useSettled). 에이전트는 한 번에
-  // 파일 여러 개를 연달아 쓰고, 그때마다 목록을 다시 받으면 왕복이 쓰기 수만큼
-  // 생긴다 — 연달아 온 것은 한 번으로 묶는다. 나머지 둘은 묶지 않는다: 턴 종료는
-  // 턴당 한 번이고, 새 문서는 본문과 드롭다운이 바로 따라가야 한다.
+  // `changedPaths.length` is keyed **after a short wait** (useSettled). The agent writes
+  // several files back to back, and refetching the list each time would cost as many
+  // round trips as writes — a burst is batched into one. The other two are not batched: the
+  // turn end happens once per turn, and for a new document the body and dropdown must follow
+  // immediately.
   const settledChanges = useSettled(changedPaths.length, CHANGE_SETTLE_MS);
   const artifacts = useAsync(() => listArtifacts(projectId),
                              [projectId, turnSeq, activeDoc?.path ?? "",
                               settledChanges]);
   const listed = artifacts.data ?? [];
-  // **목록으로 떨어지는 폴백.** 종전에는 `manualPath ?? activeDoc?.path ?? null`이라
-  // `activeDoc`이 없으면 본문이 비었다 — 드롭다운은 `listed`로 채워지므로 "옵션은
-  // 가득한데 본문은 '아직 문서가 없습니다'"가 구조적으로 가능했고, 새로고침 후에는
-  // `activeDoc`이 항상 null이라 늘 그 상태였다.
+  // **Fallback to the list.** Previously it was `manualPath ?? activeDoc?.path ?? null`, so
+  // with no `activeDoc` the body was empty — the dropdown is filled from `listed`, so "the
+  // options are full but the body says '아직 문서가 없습니다' (no documents yet)" was
+  // structurally possible, and after a refresh `activeDoc` is always null, so it was
+  // always in that state.
   //
-  // 첫 항목을 고르는 것이 의미를 갖는 이유: 백엔드가 최신 순으로 준다
-  // (Workspace.list_artifacts). 알파벳 순이던 동안은 첫 항목이 거의 항상
-  // `aiplc-docs/audit.md`였다.
+  // Why picking the first item is meaningful: the backend returns newest first
+  // (Workspace.list_artifacts). While it was alphabetical, the first item was almost
+  // always `aiplc-docs/audit.md`.
   const path = manualPath ?? activeDoc?.path ?? listed[0] ?? null;
   const options = path && !listed.includes(path) ? [...listed, path] : listed;
 
-  // 404 → "아직 동기화 안 됨"으로 구분해서 들고 있는다. 턴 중에는 정상(이벤트가
-  // 동기화보다 먼저 도착) 이지만, 턴이 끝난 뒤에도 404라면 그 문서는 S3에 없다 —
-  // 예전에는 이걸 빈 문서로 렌더해서 "생성됐다는데 내용이 없다"로 보였다.
+  // 404 → held separately as "not synced yet". Mid-turn this is normal (the event arrives
+  // before the sync), but if it is still 404 after the turn ends, that document is not in S3 —
+  // previously this rendered as an empty document and looked like "it says it was created but
+  // there is no content".
   const MISSING = Symbol.for("doc-missing");
   const content = useAsync(
     () =>
@@ -135,7 +147,7 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
               ? (MISSING as unknown as string)
               : Promise.reject(e),
           ),
-    // turnSeq in the key: 턴 종료마다 재읽기 (턴 중 동기화 지연 보정).
+    // turnSeq in the key: re-read at every turn end (compensates for mid-turn sync lag).
     [projectId, path, turnSeq],
   );
   const missing = content.data === (MISSING as unknown as string);
@@ -150,10 +162,12 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
     onCurrentDocChange(path);
   }, [path, onCurrentDocChange]);
 
-  // 닫힌 동안 대화가 새 문서(또는 새 판)를 쓰면 탭이 "새 문서"로 바뀌고 한 번
-  // 출렁인다. **저절로 열지 않는다** — 덮는 드로어가 저절로 열리면 답하던 질문
-  // 폼을 가린다(질문 패널이 혼자 프로토타입으로 넘어가던 question2.png와 같은 불만).
-  // 계속 깜박이지 않는 것도 같은 이유다.
+  // If the conversation writes a new document (or a new version) while closed, the tab
+  // switches to "새 문서" ("New document") and bobs once. **It does not open on its own** —
+  // an overlay drawer opening by itself would cover the question form being answered (the
+  // same complaint as question2.png, where the question panel moved to the prototype on
+  // its own).
+  // It also does not keep blinking, for the same reason.
   const docKey = activeDoc ? `${activeDoc.path}@${activeDoc.version ?? ""}` : null;
   const [seenKey, setSeenKey] = useState(docKey);
   useEffect(() => {
@@ -161,14 +175,14 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
   }, [open, docKey]);
   const unseen = !open && docKey !== null && docKey !== seenKey;
 
-  // 열면 포커스를 드로어 안(✕)으로, 닫으면 손잡이로 돌려준다. Esc로 닫는다.
+  // On open, move focus into the drawer (✕); on close, return it to the handle. Esc closes it.
   //
-  // **preventScroll이 필수다.** 여는 순간의 ✕는 아직 화면 오른쪽 밖에서 미끄러져
-  // 들어오는 중이고, 그냥 focus()하면 브라우저가 그것을 보이려고 조상을 스크롤한다 —
-  // overflow-hidden도 코드 스크롤은 막지 않는다. 실측(1440px): 페이지 루트의
-  // scrollLeft가 648까지 튀었다가 드로어가 들어오며 0으로 돌아와, 화면 전체가 왼쪽으로
-  // 밀렸다 튕겨 오는 것처럼 보였다. 그리드의 overflow-clip(workspace/page.tsx)이 같은
-  // 부류를 한 겹 더 막는다.
+  // **preventScroll is required.** At the moment of opening, ✕ is still sliding in from
+  // off-screen right, and a plain focus() makes the browser scroll an ancestor to reveal it —
+  // overflow-hidden does not prevent programmatic scrolling either. Measured (1440px): the
+  // page root's scrollLeft jumped to 648 and returned to 0 as the drawer came in, so the
+  // whole screen looked as if it was shoved left and snapped back. The grid's overflow-clip
+  // (workspace/page.tsx) adds one more layer of protection against the same class of issue.
   const drawerId = useId();
   const tabRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -212,7 +226,7 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
           }`}
         >
           {unseen && (
-            // key: 새 문서마다 다시 마운트해 출렁임을 한 번 더 — 그 뒤로는 가만히 있는다.
+            // key: remount for each new document so it bobs once more — after that it stays still.
             <span key={docKey} className="relative flex w-2 h-2" aria-hidden="true">
               <span className="absolute inset-0 rounded-full bg-white motion-safe:animate-nudge" />
               <span className="relative w-2 h-2 rounded-full bg-white" />
@@ -261,8 +275,8 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
                 aria-label={t("ws.refreshDocAria")}
                 disabled={content.loading}
                 onClick={() => {
-                  // 현재 문서와 산출물 목록을 함께 재조회 — 문서만 갱신하면 방금
-                  // 생성된 다른 문서가 드롭다운에 반영되지 않는다.
+                  // Refetch both the current document and the artifact list — refreshing only
+                  // the document would leave other just-created documents out of the dropdown.
                   content.reload();
                   artifacts.reload();
                 }}
@@ -287,10 +301,11 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto p-4 text-sm text-slate-700">
-            {/* 목록 실패를 "문서가 없다"로 뭉개지 않는다 — 화면이 같으면 원인을 영영 못
-                본다(이 파일이 docUnsaved와 docEmpty를 가른 것과 같은 규율). 문서가
-                선택돼 있으면 그 본문이 우선이다: 목록이 실패해도 읽을 수 있는 문서가
-                있으면 그것을 막을 이유가 없다. */}
+            {/* Do not flatten a list failure into "no documents" — if the screen looks the same,
+                the
+                cause can never be seen (the same discipline by which this file separates docUnsaved
+                from docEmpty). If a document is selected, its body takes priority: if there is a
+                readable document even though the list failed, there is no reason to block it. */}
             {path === null && artifacts.error !== null ? (
               <p className="text-rose-600">{t("ws.docListFailed")}</p>
             ) : path === null ? (
@@ -302,9 +317,9 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
             ) : content.loading ? (
               <p className="text-slate-400">{t("ws.docLoading")}</p>
             ) : missing ? (
-              // 저장 자체가 안 된 상태 — "비어 있음"과 구분해서 알린다. 이걸 빈
-              // 문서로 뭉개면 사용자는 문서가 만들어졌다고 믿고, 새로고침하면
-              // 목록에서 사라진 이유를 알 수 없다.
+              // Not saved at all — reported distinctly from "empty". If this were flattened
+              // into an empty document, the user would believe the document was created, and
+              // after a refresh could not tell why it vanished from the list.
               <p className="text-amber-700">{t("ws.docUnsaved")}</p>
             ) : text.trim() === "" ? (
               <p className="text-slate-400">{t("ws.docEmpty")}</p>

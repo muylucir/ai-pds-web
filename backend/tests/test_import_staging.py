@@ -1,4 +1,4 @@
-# backend/tests/test_import_staging.py — 업로드된 번들의 스테이징.
+# backend/tests/test_import_staging.py — staging of uploaded bundles.
 from __future__ import annotations
 
 import re
@@ -18,7 +18,7 @@ BUCKET = "artifacts-bucket"
 
 
 class _StubS3Client:
-    """presign/head/download/delete만 흉내내는 최소 스텁."""
+    """Minimal stub that imitates only presign/head/download/delete."""
 
     def __init__(self, objects: dict[str, bytes] | None = None):
         self.objects = dict(objects or {})
@@ -51,8 +51,8 @@ def _staging(objects=None) -> tuple[ImportStaging, _StubS3Client]:
 
 
 def test_upload_ids_are_unguessable_hex():
-    """이 값이 S3 키가 된다 — 클라이언트가 정할 수 있으면 traversal과 남의
-    스테이징 덮어쓰기가 둘 다 열린다."""
+    """This value becomes the S3 key — if the client could choose it, both traversal and
+    overwriting someone else's staging would be open."""
     ids = {new_upload_id() for _ in range(50)}
 
     assert len(ids) == 50
@@ -60,8 +60,8 @@ def test_upload_ids_are_unguessable_hex():
 
 
 def test_the_key_lives_outside_the_project_keyspace():
-    """`projects/` 아래에 두면 restore_projects의 스캔과 프로젝트 삭제의
-    delete_prefix가 이 키를 자기 것으로 착각할 여지가 생긴다."""
+    """Placing it under `projects/` would leave room for the restore_projects scan and
+    project deletion's delete_prefix to mistake this key for their own."""
     staging, _ = _staging()
 
     key = staging.key("a" * 32)
@@ -71,8 +71,8 @@ def test_the_key_lives_outside_the_project_keyspace():
 
 
 async def test_presign_signs_the_content_type_but_not_the_length():
-    """`Content-Length`는 브라우저가 직접 제어하는 헤더다 — 서명에 넣으면
-    브라우저별 서명 불일치 함정이 생기고, 크기는 head_object가 실측한다."""
+    """`Content-Length` is a header the browser controls directly — putting it in the
+    signature creates a per-browser signature-mismatch trap, and head_object measures the size."""
     staging, client = _staging()
 
     url = await staging.presign_put("b" * 32, expires_in=600)
@@ -94,15 +94,15 @@ async def test_size_reads_the_actual_object():
 
 
 async def test_size_is_none_when_the_upload_never_arrived():
-    """서명은 발급됐지만 PUT이 오지 않은 상태 — 사용자가 할 일은 다른 파일을
-    고르는 것이 아니라 다시 올리는 것이다."""
+    """The signature was issued but no PUT arrived — what the user needs to do is upload
+    again, not pick a different file."""
     staging, _ = _staging()
 
     assert await staging.size("d" * 32) is None
 
 
 async def test_size_propagates_other_s3_errors():
-    """403(권한)을 '업로드가 없다'로 강등하면 배선 실수가 사용자 오류처럼 보인다."""
+    """Demoting a 403 (permissions) to 'no upload' makes a wiring mistake look like a user error."""
     staging, client = _staging()
 
     def _boom(Bucket, Key):
@@ -132,8 +132,8 @@ async def test_delete_removes_the_staged_object():
 
 
 async def test_delete_swallows_failures():
-    """성공한 임포트가 정리 실패 때문에 500이 되면 안 된다 — 남은 객체는
-    imports/ 의 lifecycle 규칙이 걷는다."""
+    """A successful import must not become a 500 because cleanup failed — the lifecycle
+    rule on imports/ sweeps up leftover objects."""
     staging, client = _staging()
 
     def _boom(Bucket, Key):
@@ -141,9 +141,9 @@ async def test_delete_swallows_failures():
 
     client.delete_object = _boom
 
-    await staging.delete("a" * 32)  # 던지지 않는다
+    await staging.delete("a" * 32)  # does not raise
 
 
 def test_the_upload_cap_is_generous_but_finite():
-    """presigned PUT이라 nginx가 관여하지 않으므로 실제 제약은 임시 디스크다."""
+    """It is a presigned PUT, so nginx is not involved; the real constraint is the temp disk."""
     assert 64 * 1024 * 1024 <= MAX_IMPORT_BYTES <= 4 * 1024 * 1024 * 1024

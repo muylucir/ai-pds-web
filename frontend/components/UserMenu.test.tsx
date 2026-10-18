@@ -36,7 +36,8 @@ describe("UserMenu", () => {
   });
 
   it("hides 사용자 관리 from a pm", async () => {
-    // pm에게 열리지 않을 화면의 링크를 보여주지 않는다(실제 차단은 백엔드).
+    // Links to screens that will not open for a pm are not shown (the actual blocking is in
+    // the backend).
     mockMe({ authenticated: true, email: "pm@aipds.local", role: "pm" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
@@ -59,20 +60,22 @@ describe("UserMenu", () => {
   });
 
   it("renders nothing when not authenticated", async () => {
-    // 로그인 화면 등 인증 전 화면에서 빈 아바타가 뜨지 않게 한다.
+    // Keeps an empty avatar from appearing on pre-authentication screens such as the login
+    // screen.
     mockMe({ authenticated: false }, 401);
     const { container } = render(<UserMenu />);
     await waitFor(() => expect(container.querySelector("button")).toBeNull());
   });
 
   it("starts the proactive token refresh for as long as it is mounted", async () => {
-    // 프로토타입 빌드 중 로그아웃되는 결함의 배선 지점. 갱신 타이머가 실제로
-    // 시작되지 않으면 route/keepSessionAlive가 둘 다 통과해도 사용자에게는
-    // 아무것도 고쳐지지 않는다.
+    // The wiring point for the defect of being logged out during a prototype build. If the
+    // refresh timer does not actually start, nothing is fixed for the user even if route and
+    // keepSessionAlive both pass.
     //
-    // 이 컴포넌트에 붙이는 이유: 인증된 모든 화면의 헤더에 들어가므로 페이지마다
-    // 배선을 반복하지 않는다(이미 /api/auth/me를 같은 이유로 여기서 부른다).
-    // 프로토타입 화면만 감싸면 워크스페이스의 긴 디스커버리 턴이 빠진다.
+    // Why it is attached to this component: it goes into the header of every authenticated
+    // screen, so the wiring is not repeated per page (/api/auth/me is already called here for
+    // the same reason). Wrapping only the prototype screen would miss the workspace's long
+    // Discovery turns.
     const stop = vi.fn();
     const start = vi.spyOn(keepAlive, "keepSessionAlive").mockReturnValue(stop);
     mockMe({ authenticated: true, email: "a@example.com", role: "pm" });
@@ -81,8 +84,8 @@ describe("UserMenu", () => {
     await screen.findByRole("button", { name: /사용자 메뉴/ });
     expect(start).toHaveBeenCalled();
 
-    // 언마운트에서 타이머를 반드시 정리한다 — 남으면 화면을 옮길 때마다
-    // 타이머가 하나씩 쌓여 Cognito를 여러 배로 때린다.
+    // The timer must be cleaned up on unmount — if left, a timer piles up every time the screen
+    // changes, hitting Cognito several times over.
     unmount();
     expect(stop).toHaveBeenCalled();
   });
@@ -97,8 +100,8 @@ describe("UserMenu", () => {
   });
 
   it("falls back to a placeholder label for an unrecognized role", async () => {
-    // ROLE_LABEL에 없는 값이 오면(백엔드 회귀·미래의 세 번째 역할) 빈 텍스트가
-    // 아니라 안내 문구를 보여준다. admin 링크도 노출하지 않는다.
+    // If a value not in ROLE_LABEL arrives (a backend regression, a future third role), a
+    // notice is shown instead of empty text. The admin links are not exposed either.
     mockMe({ authenticated: true, email: "x@aipds.local", role: "superuser" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
@@ -152,14 +155,14 @@ describe("UserMenu", () => {
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
     const link = screen.getByRole("link", { name: "사용자 관리" });
     await userEvent.click(link);
-    // 클릭 자체가 예외 없이 처리되고, 링크가 여전히 올바른 href를 갖는다.
+    // The click itself is handled without an exception, and the link still has the correct href.
     expect(link).toHaveAttribute("href", "/admin/users");
   });
 
   it("offers 비밀번호 변경 to a pm, not just to an admin", async () => {
-    // 자기 계정 조작이므로 역할과 무관하다. admin 링크들과 같은 조건 안에
-    // 들어가면 pm은 자기 비밀번호를 바꿀 방법이 없어지고, 관리자에게 재설정을
-    // 요청하는 것이 유일한 경로로 남는다.
+    // It is an operation on one's own account, so it is independent of role. If it went under the
+    // same condition as the admin links, a pm would have no way to change their own password, and
+    // asking an admin for a reset would remain the only path.
     mockMe({ authenticated: true, email: "pm@aipds.local", role: "pm" });
     render(<UserMenu />);
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
@@ -172,7 +175,8 @@ describe("UserMenu", () => {
     await userEvent.click(await screen.findByRole("button", { name: /사용자 메뉴/ }));
     await userEvent.click(screen.getByRole("button", { name: "비밀번호 변경" }));
     expect(await screen.findByLabelText("현재 비밀번호")).toBeInTheDocument();
-    // 메뉴는 닫혀야 한다 — 모달 뒤에 열린 메뉴가 남으면 바깥 클릭 처리가 겹친다.
+    // The menu must close — if an open menu remained behind the modal, outside-click handling
+    // would overlap.
     expect(screen.queryByRole("button", { name: "로그아웃" })).toBeNull();
   });
 });

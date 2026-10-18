@@ -69,28 +69,28 @@ def test_archive_excludes_build_artifacts(env):
 
 
 def test_archive_never_ships_the_access_token(env):
-    """`.proto-token`은 이 프로토타입의 **접근 자격증명**이다.
+    """`.proto-token` is this prototype's **access credential**.
 
-    빌드 디렉토리(`{root}/{pid}/{slug}`)에 `.proto-host.*`와 나란히 놓이고,
-    아카이브는 바로 그 디렉토리를 훑는다 — 제외하지 않으면 "다운로드"를 누른
-    모든 사람에게 살아 있는 접근 토큰이 함께 나간다. 그 다운로드를 받는 사람은
-    토큰이 막으려는 바로 그 대상일 수 있다.
+    It sits in the build directory (`{root}/{pid}/{slug}`) alongside `.proto-host.*`,
+    and the archive sweeps exactly that directory — unless excluded, a live access token would go out
+    to everyone who presses "다운로드" (Download). The person receiving that download may be
+    exactly who the token is meant to keep out.
 
-    위 test_archive_excludes_build_artifacts와 따로 두는 이유는 실패의 의미가
-    다르기 때문이다: 저쪽이 깨지면 zip이 커지고, 이쪽이 깨지면 자격증명이 샌다.
+    It is kept separate from test_archive_excludes_build_artifacts above because the failures mean different
+    things: if that one breaks, the zip gets bigger; if this one breaks, credentials leak.
     """
     build = env["root"] / PID / SLUG / "prototype"
     build.mkdir(parents=True)
     (build / "app.js").write_text("x", encoding="utf-8")
-    # 실제 코드가 쓰는 위치와 이름을 그대로 쓴다(상수를 import해서 — 리터럴을
-    # 복사하면 파일명이 바뀔 때 이 테스트가 조용히 무의미해진다).
+    # Uses exactly the location and name the real code uses (importing the constant — copying the literal
+    # would make this test silently meaningless when the file name changes).
     (build.parent / TOKEN_FILENAME).write_text("super-secret-token",
                                                encoding="utf-8")
 
     resp = client.get(f"/projects/{PID}/prototypes/{SLUG}/archive")
 
     assert _names(resp) == ["prototype/app.js"]
-    # 이름뿐 아니라 값이 어디에도 없어야 한다 — 다른 항목에 섞여 들어가는 경로도 막는다.
+    # Not just the name — the value must be nowhere either; this also blocks paths where it gets mixed into another entry.
     assert b"super-secret-token" not in resp.content
 
 

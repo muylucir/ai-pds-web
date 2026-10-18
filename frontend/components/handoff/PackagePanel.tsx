@@ -1,7 +1,7 @@
-// 만든 패키지 — 상태, 파일, 검사 결과, 만든 뒤 바뀐 원본.
+// The generated package — status, files, check results, and source documents changed after generation.
 //
-// 편집 버튼이 없다. 패키지는 원본에서 유도한 생성물이라 고치는 길은 원본(워크스페이스)이나
-// 보완 답을 바꾸고 다시 만드는 것뿐이다 — 여기서 고치면 다음 생성이 그 수정을 덮는다.
+// There is no edit button. The package is output derived from the sources, so the only way to fix it is to change the sources
+// (workspace) or the supplementary answers and regenerate — fixing it here would have the next generation overwrite that fix.
 "use client";
 import { useState } from "react";
 import { Markdown } from "@/components/Markdown";
@@ -10,16 +10,16 @@ import type { FindingKind, PackageView } from "@/lib/api/handoff";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
-/** 파일 목록의 순서. 읽는 순서와 같다(README 참조). */
+/** Order of the file list. Same as the reading order (see README). */
 const ORDER = ["README.md", "start-prompt.md", "vision.md", "decisions.md"];
 
-/** `start-prompt.md`의 첫 코드 블록 — AI-DLC에 붙여 넣는 기본 요청(서버 package.start_prompt). */
+/** The first code block of `start-prompt.md` — the base request pasted into AI-DLC (server package.start_prompt). */
 export function startRequest(markdown: string | undefined): string | null {
   const m = markdown && /```[a-z]*\n([\s\S]*?)\n```/.exec(markdown);
   return m ? m[1].trim() : null;
 }
 
-/** `2026-10-09T10:40:12Z` → `2026-10-09 10:40 UTC`. 서버는 UTC ISO로 찍는다. */
+/** `2026-10-09T10:40:12Z` → `2026-10-09 10:40 UTC`. The server stamps UTC ISO. */
 export function stamp(iso: string): string {
   const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(iso);
   return m ? `${m[1]} ${m[2]} UTC` : iso;
@@ -34,7 +34,7 @@ export function PackagePanel({
   onDownload: () => void;
   onSupplement: () => void;
   onStatus: () => void;
-  /** 열람 멤버 — 내려받기는 되고 다시 생성은 없다. */
+  /** Viewing member — can download but cannot regenerate. */
   readOnly?: boolean;
 }) {
   const t = useT();
@@ -54,12 +54,12 @@ export function PackagePanel({
   };
   const current = names.includes(selected) ? selected : names[0];
 
-  // 생성 중·실패·중단은 GenerationProgress가 보여 준다. 여기는 만든 패키지만.
+  // In-progress, failed, and stopped generations are shown by GenerationProgress. Only generated packages here.
   if (!m) return null;
   if (m.status !== "ready") return null;
 
   const stale = pkg.stale.length > 0 || pkg.supplement_changed;
-  // 아는 검사 종류만 센다 — 이전 구성의 패키지에는 지금 없는 검사(acceptance 등)가 남아 있다.
+  // Count only known check kinds — packages from an earlier configuration still carry checks that no longer exist (acceptance, etc.).
   const findings = m.findings.filter((f) => (FINDING_KINDS as readonly string[]).includes(f.kind));
   const count = (kind: FindingKind) => findings.filter((f) => f.kind === kind).length;
   const present = FINDING_KINDS.filter((k) => count(k) > 0);
@@ -90,7 +90,7 @@ export function PackagePanel({
         </button>
       </div>
 
-      {/* AI-DLC를 시작하는 첫 요청. 패키지를 받는 사람이 할 첫 일이라 맨 위에 둔다. */}
+      {/* The first request that starts AI-DLC. It is the first thing the package recipient does, so it goes at the top. */}
       {request && (
         <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 mb-3">
           <div className="flex items-center gap-2">
@@ -117,8 +117,8 @@ export function PackagePanel({
           <b>{t("handoff.pkg.supplementChanged")}</b> {t("handoff.pkg.regenerateHint")}
         </div>
       )}
-      {/* 검사마다 고치는 길이 다르다. 대부분은 다시 생성이지만, AI 제안이 된 성공 지표는 PM이
-          확인하거나 원본을 고쳐야 하고 다시 생성해도 그대로다. */}
+      {/* Each check has a different fix path. Most are regeneration, but success metrics that became AI suggestions must be
+          confirmed by the PM or fixed in the source, and regenerating leaves them as is. */}
       {present.length > 0 && (
         <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 mb-3 text-[13px] text-rose-900">
           <b className="block">{t("handoff.pkg.findings").replace("{n}", String(findings.length))}</b>

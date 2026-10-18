@@ -6,7 +6,7 @@ describe("ArtifactsPanel", () => {
   it("lists artifact basenames and links the discovery document to the review screen", () => {
     render(
       <ArtifactsPanel
-        projectId="pilot1"
+        projectId="ws-m"
         artifacts={[
           "aiplc-docs/discovery/discovery-document.md",
           "aiplc-docs/discovery/envision/pain-point-analysis.md",
@@ -16,11 +16,11 @@ describe("ArtifactsPanel", () => {
     expect(screen.getByText("discovery-document.md")).toBeInTheDocument();
     expect(screen.getByText("pain-point-analysis.md")).toBeInTheDocument();
     const docLink = screen.getByRole("link", { name: /discovery-document\.md/ });
-    expect(docLink).toHaveAttribute("href", "/projects/pilot1/review");
+    expect(docLink).toHaveAttribute("href", "/projects/ws-m/review");
   });
 
   it("renders an empty state", () => {
-    render(<ArtifactsPanel projectId="pilot1" artifacts={[]} />);
+    render(<ArtifactsPanel projectId="ws-m" artifacts={[]} />);
     expect(screen.getByText(/아직 생성된 산출물이 없습니다/)).toBeInTheDocument();
   });
 });

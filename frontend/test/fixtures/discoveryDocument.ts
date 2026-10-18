@@ -1,4 +1,4 @@
-// Markdown excerpt representative of files/pilot1 discovery document (headings,
+// Markdown excerpt representative of files/ws-m discovery document (headings,
 // bold, a GFM table) — used to test the react-markdown Living-Document panel.
 export const discoveryDocument = `# Discovery Document — 기획전 AI 어시스턴트
 

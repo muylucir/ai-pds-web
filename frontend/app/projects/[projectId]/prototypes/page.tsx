@@ -57,18 +57,18 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
     null,
   );
   const [resetError, setResetError] = useState<string | null>(null);
-  // 호스팅 시작 중의 진행 단계. `POST /host`가 `npm install` → `npm run build` →
-  // 포트 대기(최대 60초)를 **전부 await한 뒤** 응답하므로, 그동안 화면에는 비활성
-  // 버튼밖에 없었다 — 사용자가 "아무 반응이 없다"고 읽는 구간이다.
+  // Progress stage while hosting starts. `POST /host` responds only **after awaiting all of**
+  // `npm install` → `npm run build` → the port wait (up to 60 seconds), so during that time the screen
+  // had nothing but a disabled button — the stretch users read as "nothing is happening".
   //
-  // 서버를 고칠 필요가 없다: `ProtoHost.start`가 진행하며 `_registry`의 state를
-  // installing → building → running으로 바꾸고 `GET /host`가 그것을 그대로
-  // 돌려준다. 즉 **이미 관측 가능한 상태**를 폴링해서 보여주기만 하면 된다.
+  // The server does not need fixing: `ProtoHost.start` moves `_registry`'s state through
+  // installing → building → running as it goes, and `GET /host` returns it as is. That is, we only
+  // need to poll and display **state that is already observable**.
   const [hostPhase, setHostPhase] =
     useState<{ slug: string; state: HostState } | null>(null);
-  // 호스팅 시작·중지가 거부된 이유. 그 카드에 붙는다 — 거부는 대개 사용자가 할 일이
-  // 있다는 뜻이고(409 `build_session_active`: 열린 빌드 세션을 닫아야 한다), 보이지
-  // 않으면 버튼이 아무 반응 없이 돌아온 것으로 읽힌다.
+  // Why starting/stopping hosting was rejected. Attached to that card — a rejection usually means
+  // there is something the user must do (409 `build_session_active`: the open build session must be closed),
+  // and if it is not visible, it reads as the button coming back with no response.
   const [hostError, setHostError] =
     useState<{ slug: string; message: string } | null>(null);
 
@@ -84,15 +84,15 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   async function handleBuild(slug: string, state: PrototypeState) {
     setBusySlug(slug);
     try {
-      // **이미 만들어진 것을 고칠 때는 자동 발화하지 않는다.** "수정하기"를 누른
-      // 사람은 이미 무엇을 고칠지 알고 있는데(프리뷰에서 봤다), 자동 개시는
-      // 에이전트가 "무엇을 개선할지" 되묻는 왕복을 먼저 태우고 그 질문이 떠 있는
-      // 동안 입력창이 잠긴다 — 사용자가 자기 요청을 타이핑할 수조차 없었다.
+      // **Do not auto-fire when fixing something already built.** Someone who pressed "수정하기"
+      // already knows what to fix (they saw it in the preview), but auto-start first runs a round
+      // trip where the agent asks back "what to improve", and while that question is up the input
+      // box is locked — the user could not even type their own request.
       //
-      // 대신 빈 패널에서 사용자가 먼저 말하고, 그 첫 메시지가 개시 턴이 된다
-      // (백엔드 routes/prototypes의 `session.opened` 분기). 첫 빌드(`none`)와
-      // 실패한 빌드는 그대로 자동 발화한다: 그때는 사용자가 아직 할 말이 없고,
-      // 에이전트가 먼저 명세를 읽거나 무엇이 어긋났는지 봐야 한다.
+      // Instead, the user speaks first in an empty panel, and that first message becomes the opening
+      // turn (the `session.opened` branch in backend routes/prototypes). The first build (`none`) and
+      // failed builds still auto-fire: at that point the user has nothing to say yet, and the agent
+      // must first read the spec or look at what went wrong.
       let autoStart = !(state === "built" || state === "running");
       try {
         await startSession(projectId, slug);
@@ -120,9 +120,9 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   async function handleStartHost(slug: string) {
     setBusySlug(slug);
     setHostError(null);
-    // 서버가 `installing`을 기록하기 전(start가 먼저 stop을 호출한다)에는 404가
-    // 정상이다 — getHost가 그것을 null로 접어 주므로 그대로 두고 다음 폴링을
-    // 기다린다. 폴링 자체의 실패로 호스팅을 중단시키지 않는다: 이 값은 표시용이다.
+    // Before the server records `installing` (start calls stop first), a 404 is normal —
+    // getHost folds it to null, so we leave it and wait for the next poll. A failure of the
+    // polling itself does not abort hosting: this value is for display only.
     setHostPhase({ slug, state: "installing" });
     const poll = setInterval(() => {
       void getHost(projectId, slug)
@@ -199,13 +199,13 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
     }
   }
 
-  // PM도 참가자와 **같은 토큰 링크**로 들어간다.
+  // The PM also goes in through **the same token link** as participants.
   //
-  // 백엔드에 "로그인했으면 통과" 분기를 두지 않기 위해서다 — 경로가 둘이면
-  // proto_public.py가 인증 경계로 분리되어 있다는 사실이 흐려지고, 프론트
-  // 프록시도 세션 쿠키까지 forward해야 해서 방금 좁힌 허용목록이 다시 넓어진다.
-  // 덤으로 PM이 보는 화면이 참가자가 보는 화면과 정확히 같아지므로, 링크가
-  // 실제로 동작하는지를 PM이 자기 클릭으로 검증하게 된다.
+  // This avoids having a "pass if logged in" branch in the backend — with two paths, the fact that
+  // proto_public.py is separated by the auth boundary would blur, and the frontend proxy would have
+  // to forward session cookies too, widening the allowlist we just narrowed.
+  // As a bonus, the screen the PM sees is exactly the same as what participants see, so the PM
+  // verifies with their own click that the link actually works.
   function handleOpenPreview(accessUrl: string) {
     window.open(accessUrl, "_blank", "noopener,noreferrer");
   }
@@ -223,7 +223,7 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
   }
 
   function closeBuildPanel() {
-    // 패널을 다녀왔으면 세션 상태가 바뀌었을 수 있다 — 낡은 거부 사유를 남기지 않는다.
+    // Returning from the panel may have changed the session state — do not leave a stale rejection reason.
     setHostError(null);
     setOpenSlug(null);
     list.reload();
@@ -262,10 +262,10 @@ export default function PrototypesPage({ params }: { params: Promise<{ projectId
                 startingPhase={hostPhase?.slug === info.slug ? hostPhase.state : null}
                 hostError={hostError?.slug === info.slug ? hostError.message : null}
                 onStopHost={() => handleStopHost(info.slug)}
-                // 판정 기준이 state에서 **access_url의 존재**로 바뀌었다. 서버가
-                // running일 때만 이 값을 실어 보내므로 조건은 사실상 같지만, 이
-                // 방향이면 "링크가 있다"와 "링크가 동작한다"가 한 값에서 나온다 —
-                // 프론트가 state를 보고 없는 URL을 만들어 낼 수 없다.
+                // The criterion changed from state to **the presence of access_url**. The server sends
+                // this value only when running, so the condition is effectively the same, but in this
+                // direction "there is a link" and "the link works" come from a single value —
+                // the frontend cannot make up a nonexistent URL by looking at state.
                 onOpenPreview={info.access_url
                   ? () => handleOpenPreview(info.access_url as string) : undefined}
                 onShowLogs={() => handleShowLogs(info.slug)}

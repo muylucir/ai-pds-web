@@ -1,29 +1,29 @@
-# backend/tests/test_build_guard.py — 빌드 에이전트의 Bash 게이트.
+# backend/tests/test_build_guard.py — the build agent's Bash gate.
 #
-# **왜 이 게이트가 생겼는가(2026-08-01의 사고).** 빌드 에이전트가 브라우저 검증을
-# 위해 Playwright chromium을 띄웠고, 그 검증이 포트 3000을 겨냥해 AI-PDS
-# 프론트엔드가 SIGKILL로 죽었다(journalctl status=9/KILL, 코어덤프의
-# Unit=aipds-backend.service). 백엔드와 프론트엔드가 빌드 에이전트와 **같은
-# 유저(`aipds`)로 도므로** 막을 것이 없었고, 워크숍 참가자 화면에는 "연결이
-# 끊겼다"가 떴다.
+# **Why this gate exists (the 2026-08-01 incident).** The build agent launched Playwright chromium for
+# browser verification, that verification targeted port 3000, and the AI-PDS
+# frontend died with SIGKILL (journalctl status=9/KILL, core dump with
+# Unit=aipds-backend.service). The backend and frontend **run as the same user (`aipds`)
+# as the build agent**, so nothing stopped it, and workshop participants' screens showed "연결이
+# 끊겼다" (connection lost).
 #
-# 그때의 완화책은 두 가지였고 **둘 다 코드가 아니었다**:
-#   1. `skills=["shadcn-design"]`로 좁히기 — CLI 번들 스킬 `run`("Launch and drive
-#      this project's app... browser-driven")이 `skills="all"`로 함께 켜졌던 것이
-#      원인이었다. 그러나 builder.py의 그 주석이 스스로 적어 뒀듯 이것은
-#      **컨텍스트 필터이지 샌드박스가 아니다** — 스킬을 숨길 뿐 Bash는 그대로다.
-#   2. `proto-config/CLAUDE.md`의 "Processes and ports" 절 — **산문뿐이다.**
+# The mitigations at the time were two, and **neither was code**:
+#   1. Narrowing to `skills=["shadcn-design"]` — the cause was the CLI's bundled skill `run` ("Launch and drive
+#      this project's app... browser-driven") being turned on along with `skills="all"`.
+#      But as that comment in builder.py itself notes, this is
+#      **a context filter, not a sandbox** — it only hides skills; Bash is untouched.
+#   2. The "Processes and ports" section of `proto-config/CLAUDE.md` — **prose only.**
 #
-# 그래서 Bash를 실제로 막는 것이 지금까지 없었다. 이 모듈이 그것이다.
+# So until now nothing actually blocked Bash. This module is that.
 #
-# 리포에서 같은 모양의 세 번째다: test_discovery_guard.py가 Discovery에서(자기완결
-# HTML 한 장), test_proto_session.py의
-# test_first_prompt_forbids_writing_files_before_approval이 빌더에서 같은 실패를
-# 기록했고 둘 다 처음엔 문구로 막으려 했다. 세 번째는 코드로 시작한다.
+# It is the third of the same shape in the repo: test_discovery_guard.py recorded the same failure in Discovery (a single
+# self-contained HTML file), and test_proto_session.py's
+# test_first_prompt_forbids_writing_files_before_approval recorded it in the builder, and both first tried
+# to block it with wording. The third starts with code.
 #
-# 판정 함수는 **언어 중립**이다: 거부 대상 조각만 돌려주고 문구는
-# proto/prompts.py가 두 벌로 소유한다(그 파일 헤더의 규약 — 여기에 한국어를 넣으면
-# 영어 프로젝트로 샌다).
+# The verdict function is **language-neutral**: it returns only the fragment being refused, and the wording is
+# owned in two versions by proto/prompts.py (that file header's convention — putting Korean here would
+# leak into English projects).
 from __future__ import annotations
 
 import pytest
@@ -31,13 +31,13 @@ import pytest
 from aipds.proto.build_guard import bash_denial, fetch_denial, user_url_hosts
 
 
-# ---- 빌드의 정상 경로는 통과해야 한다 ----
+# ---- The normal build path must pass ----
 #
-# 오탐이 이 게이트의 최대 위험이다. 빌드가 막히면 게이트를 끄자는 압력이 생기고,
-# 그러면 사고를 막는 것이 다시 산문으로 돌아간다(discovery_guard의 같은 주석).
+# False positives are this gate's biggest risk. If builds get blocked, pressure builds to turn the gate off,
+# and then what prevents incidents goes back to being prose (the same comment in discovery_guard).
 
 def test_the_build_itself_is_allowed():
-    """`npm run build`가 검증 수단이다 — 이것이 막히면 빌드가 불가능하다."""
+    """`npm run build` is the means of verification — if it is blocked, building is impossible."""
     assert bash_denial("npm run build") is None
 
 
@@ -54,30 +54,30 @@ def test_ordinary_inspection_is_allowed():
 
 
 def test_a_command_mentioned_inside_quotes_is_not_a_command():
-    """인용부호 안은 판정 전에 지운다.
+    """Quoted content is erased before the verdict.
 
-    `echo`로 규약을 적거나 로그를 남기는 정상 명령이 막히면 오탐이고, 오탐은
-    게이트의 수명을 줄인다(discovery_guard._QUOTED와 같은 이유).
+    If normal commands that write conventions or leave logs with `echo` were blocked, that would be a false positive, and false positives
+    shorten the gate's life (same reason as discovery_guard._QUOTED).
     """
     assert bash_denial('echo "never run npm run dev"') is None
     assert bash_denial("echo 'playwright is forbidden'") is None
 
 
 def test_no_command_is_allowed():
-    """판단 근거가 없으면 통과다 — 이 게이트의 실패 방향은 '통과'여야 한다."""
+    """With nothing to judge, it passes — this gate's failure direction must be 'pass'."""
     assert bash_denial(None) is None
     assert bash_denial("") is None
     assert bash_denial({"not": "a string"}) is None
 
 
-# ---- 브라우저 자동화: 2026-08-01 사고의 직접 원인 ----
+# ---- Browser automation: the direct cause of the 2026-08-01 incident ----
 
 def test_playwright_is_denied():
     assert "playwright" in bash_denial("npx playwright test")
 
 
 def test_the_e2e_script_is_denied():
-    """`playwright.config.ts`가 포트 3000을 겨냥하므로 사고를 그대로 재현한다."""
+    """`playwright.config.ts` targets port 3000, so this reproduces the incident exactly."""
     assert bash_denial("npm run test:e2e") is not None
 
 
@@ -90,15 +90,15 @@ def test_headless_chrome_is_denied():
     assert bash_denial("chromium --headless https://localhost") is not None
 
 
-# ---- dev·production 서버: 턴이 끝나도 포트를 물고 남는다 ----
+# ---- dev and production servers: they keep holding a port after the turn ends ----
 
 def test_npm_run_dev_is_denied():
     assert bash_denial("npm run dev") is not None
 
 
 def test_npm_run_start_is_denied():
-    """`npm run start`는 hosting의 일이다(proto/host.py). 빌드 에이전트가 띄우면
-    포트를 물고 남고, 그 정리가 2026-08-01의 kill로 이어졌다."""
+    """`npm run start` is hosting's job (proto/host.py). If the build agent starts it, it keeps
+    holding the port, and cleaning that up led to the 2026-08-01 kill."""
     assert bash_denial("npm run start") is not None
 
 
@@ -108,18 +108,18 @@ def test_other_package_managers_are_denied_too():
 
 
 def test_the_framework_binary_is_denied():
-    """`npm run`을 우회해 프레임워크를 직접 부르는 형태."""
+    """The form that bypasses `npm run` and calls the framework directly."""
     assert bash_denial("npx next dev") is not None
     assert bash_denial("npx next start -p 4123") is not None
 
 
 def test_wrapping_the_server_in_setsid_is_still_denied():
-    """`proto-config/CLAUDE.md`가 가르쳤던 우회 레시피 그대로다 — 그 절을 지우는
-    근거가 이 테스트다."""
+    """Exactly the workaround recipe `proto-config/CLAUDE.md` used to teach — this test is the
+    grounds for deleting that section."""
     assert bash_denial("setsid npm run start > /tmp/smoke.log 2>&1 &") is not None
 
 
-# ---- 프로세스 종료: 내가 시작하지 않은 것을 죽이지 않는다 ----
+# ---- Process termination: do not kill what I did not start ----
 
 def test_pkill_is_denied():
     assert "pkill" in bash_denial("pkill -f node")
@@ -134,10 +134,10 @@ def test_fuser_kill_is_denied():
 
 
 def test_killing_a_pid_from_a_substitution_is_denied():
-    """`kill -9 $(lsof -ti:3000)` — 사고 당시의 정리 명령 모양이다.
+    """`kill -9 $(lsof -ti:3000)` — the shape of the cleanup command at the time of the incident.
 
-    맨 `kill <pid>`는 막지 않는다: 서버 기동 자체가 막히므로 죽일 자기 프로세스가
-    없고, 넓게 막으면 오탐이 늘어난다.
+    A bare `kill <pid>` is not blocked: starting servers is itself blocked, so there is no own process
+    to kill, and blocking broadly increases false positives.
     """
     assert bash_denial("kill -9 $(lsof -ti:3000)") is not None
 
@@ -146,10 +146,10 @@ def test_killing_a_pid_you_hold_is_allowed():
     assert bash_denial("kill 12345") is None
 
 
-# ---- 포트 3000·8000: AI-PDS 자신이다 ----
+# ---- Ports 3000 and 8000: AI-PDS itself ----
 #
-# hosting이 배정하는 범위는 range(4000, 8000)이므로(proto/host.py의 _scan_port)
-# 3000·8000은 어느 프로토타입에도 배정되지 않는다 — 막아도 충돌하지 않는다.
+# The range hosting assigns is range(4000, 8000) (_scan_port in proto/host.py),
+# so 3000 and 8000 are never assigned to any prototype — blocking them causes no conflict.
 
 def test_probing_the_frontend_port_is_denied():
     assert bash_denial("lsof -ti:3000") is not None
@@ -164,18 +164,18 @@ def test_binding_the_frontend_port_is_denied():
 
 
 def test_a_hosted_prototype_port_is_allowed():
-    """배정 범위(4000-7999) 안의 포트는 정상이다 — 3000·8000만 막는다."""
+    """Ports inside the assigned range (4000-7999) are normal — only 3000 and 8000 are blocked."""
     assert bash_denial("curl -s http://localhost:4123/") is None
     assert bash_denial("lsof -ti:7999") is None
 
 
 def test_a_number_that_merely_contains_the_port_is_allowed():
-    """`13000`·`80000`이 걸리면 오탐이다."""
+    """Catching `13000` or `80000` would be a false positive."""
     assert bash_denial("curl -s http://localhost:13000/") is None
     assert bash_denial("echo 80000 > /tmp/n") is None
 
 
-# ---- CLI 설정 파일 ----
+# ---- CLI settings files ----
 
 def test_touching_cli_settings_from_bash_is_denied():
     assert bash_denial("echo x > .claude/settings.json") == ".claude/settings.json"
@@ -187,7 +187,7 @@ def test_ordinary_json_files_are_allowed():
     assert bash_denial("cat app/settings.json") is None
 
 
-# ---- WebFetch: 사용자가 채팅에 직접 쓴 URL의 사이트는 열린다 ----
+# ---- WebFetch: the sites of URLs the user wrote directly in the chat are opened ----
 
 
 
@@ -198,7 +198,7 @@ def test_hosts_come_from_urls_the_user_wrote():
 
 
 def test_text_without_a_scheme_is_not_a_url():
-    """스킴 없는 조각까지 잡으면 파일 경로·버전 문자열이 호스트로 둔갑한다."""
+    """Catching fragments without a scheme too would turn file paths and version strings into hosts."""
     assert user_url_hosts("store.example.com/ranks 와 v1.2.3, src/app.tsx") == set()
     assert user_url_hosts(None) == set()
 
@@ -212,18 +212,18 @@ def test_text_without_a_scheme_is_not_a_url():
     "http://10.0.0.5/",
     "http://169.254.169.254/latest/meta-data/",
     "http://[::1]:8000/",
-    "http://127.1/",            # WebFetch의 URL 파서는 축약 IPv4를 127.0.0.1로 읽는다
+    "http://127.1/",            # WebFetch's URL parser reads abbreviated IPv4 as 127.0.0.1
     "http://2130706433/",
     "http://0x7f.1/",
 ])
 def test_internal_addresses_are_never_opened_by_a_user_url(url):
-    """사용자가 썼더라도 이 서버 안쪽(백엔드, 다른 프로젝트의 프리뷰 포트)을 여는 길이
-    되면 안 된다."""
+    """Even if the user wrote it, it must not become a way to open the inside of this server (the backend, other projects'
+    preview ports)."""
     assert user_url_hosts(url) == set()
 
 
 def test_a_user_host_opens_exactly_that_host():
-    """하위 도메인까지 열면 `https://co.kr` 한 줄이 `*.co.kr` 전부가 된다."""
+    """Opening subdomains too would make one line of `https://co.kr` into all of `*.co.kr`."""
     hosts = user_url_hosts("https://store.example.com/ranks")
     assert fetch_denial("https://store.example.com/robots.txt", hosts) is None
     assert fetch_denial("https://evil.store.example.com/", hosts) == "evil.store.example.com"

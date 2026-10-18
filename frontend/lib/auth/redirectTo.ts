@@ -1,54 +1,54 @@
 // frontend/lib/auth/redirectTo.ts
 //
-// 앱 내부로 보내는 리다이렉트의 유일한 생성 지점.
+// The single point that creates redirects into the app.
 //
-// 왜 NextResponse.redirect(new URL(path, req.url))를 쓰지 않는가:
-// Next 15는 미들웨어/route handler의 req.url을 Host 헤더가 아니라 서버가 아는
-// 자체 origin으로 조립한다. 그래서 프록시(nginx) + CloudFront 뒤에서는 내부
-// 주소가 Location으로 새어 나간다 — 실측 배포 버그: CloudFront로 접속하면
-// `https://localhost:3000/login?next=%2F`로 리다이렉트됐다. EC2에서 Host를
-// CloudFront 도메인으로 줘도, X-Forwarded-Host를 줘도 결과가 같았다(nginx는
-// 무죄였고, next start의 `-H 127.0.0.1` 바인딩이 origin의 출처였다).
+// Why not use NextResponse.redirect(new URL(path, req.url)):
+// Next 15 assembles req.url in middleware/route handlers from the server's own known origin,
+// not the Host header. So behind a proxy (nginx) + CloudFront, the internal address leaks out
+// as Location — measured deployment bug: connecting via CloudFront redirected to
+// `https://localhost:3000/login?next=%2F`. Whether EC2 was given the CloudFront domain as Host
+// or given X-Forwarded-Host, the result was the same (nginx was innocent; next start's
+// `-H 127.0.0.1` binding was the source of the origin).
 //
-// 상대 Location은 브라우저가 현재 오리진 기준으로 해석하므로 CloudFront ·
-// 리버스 프록시 · 로컬 dev 모두에서 맞는다. RFC 7231부터 Location에 절대 URL
-// 요구가 사라져 상대값이 정식이다. 배포 환경에서 실제로 확인했다:
-// `location: /login?error=access_denied`가 그대로 나가고 브라우저가 CloudFront
-// 오리진으로 해석한다.
+// A relative Location is resolved by the browser against the current origin, so it is right in
+// CloudFront, reverse proxies, and local dev alike. Since RFC 7231 the requirement for an absolute
+// URL in Location is gone, so relative values are standard. Confirmed in the deployment environment:
+// `location: /login?error=access_denied` goes out as is and the browser resolves it against the
+// CloudFront origin.
 //
-// ⚠️ **미들웨어에서는 쓸 수 없다.** 미들웨어는 Edge 런타임에서 돌고, 그 런타임이
-// 응답의 location 헤더를 내부적으로 new URL()로 파싱하기 때문에 상대값이면
-// `TypeError: Invalid URL`로 500이 난다(실측). 미들웨어는 Host 헤더로 절대
-// URL을 조립한다 — middleware.ts의 selfUrl 참조. 이 헬퍼를 쓰는 route
-// handler는 모두 `runtime = "nodejs"`이며 그 파싱을 타지 않는다.
+// ⚠️ **It cannot be used in middleware.** Middleware runs on the Edge runtime, and that runtime
+// internally parses the response's location header with new URL(), so a relative value causes a
+// 500 with `TypeError: Invalid URL` (measured). Middleware assembles an absolute URL from the Host
+// header — see selfUrl in middleware.ts. Every route handler that uses this helper is
+// `runtime = "nodejs"` and does not go through that parsing.
 //
-// 외부(Cognito Hosted UI)로 나가는 리다이렉트는 절대 URL이어야 하므로 이
-// 헬퍼를 쓰지 않는다 — 그건 cognitoUrls.ts가 APP_BASE_URL로 조립한다.
+// Redirects going outside (Cognito Hosted UI) must be absolute URLs, so they do not use this
+// helper — those are assembled by cognitoUrls.ts with APP_BASE_URL.
 import { NextResponse } from "next/server";
 
-/** 허용 상태 코드.
+/** Allowed status codes.
  *
- * 303이 있는 이유: POST로 들어온 요청(로그아웃 폼)을 GET 페이지로 보낼 때
- * **반드시** 303이어야 한다. 307/308은 메서드를 보존하므로 POST가 그대로
- * 재발행된다 — 실측 결함이었다(app/api/auth/logout/route.ts의 SEE_OTHER 주석).
+ * Why 303 is included: when sending a request that came in as POST (the logout form) to a GET page,
+ * it **must** be 303. 307/308 preserve the method, so the POST is reissued as is —
+ * that was a measured defect (the SEE_OTHER comment in app/api/auth/logout/route.ts).
  */
 export type RedirectStatus = 302 | 303 | 307;
 
 /**
- * 앱 내부 경로로 리다이렉트한다. `path`는 반드시 "/"로 시작하는 상대 경로다.
+ * Redirect to an in-app path. `path` must be a relative path starting with "/".
  *
- * NextResponse.redirect()는 URL 파싱을 강제해 상대값을 거부하므로(“URL is
- * malformed”) 응답을 직접 만든다.
+ * NextResponse.redirect() forces URL parsing and rejects relative values (“URL is
+ * malformed”), so we build the response ourselves.
  */
 export function redirectTo(path: string, status: RedirectStatus = 307): NextResponse {
-  // 오픈 리다이렉트 방어: protocol-relative("//evil.example")나 절대 URL이
-  // 흘러들면 상대값인 척하면서 오프사이트로 튄다. 호출자가 safeNext를 거친
-  // 값을 넘기는 게 원칙이지만, 이 지점에서도 불변식을 지킨다.
+  // Open redirect defense: if a protocol-relative ("//evil.example") or absolute URL slips in,
+  // it pretends to be relative and bounces off-site. The principle is that callers pass values
+  // that went through safeNext, but the invariant is kept at this point too.
   const safe = path.startsWith("/") && !path.startsWith("//") ? path : "/";
   return new NextResponse(null, { status, headers: { location: safe } });
 }
 
-/** `/login`으로 보내며 사유를 쿼리로 싣는다(로그인 화면이 한국어로 번역한다). */
+/** Send to `/login`, carrying the reason in the query (the login screen translates it into Korean). */
 export function redirectToLogin(reason?: string, status: RedirectStatus = 307): NextResponse {
   const path = reason ? `/login?error=${encodeURIComponent(reason)}` : "/login";
   return redirectTo(path, status);

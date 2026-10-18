@@ -1,22 +1,23 @@
-# backend/aipds/agent_home.py — 에이전트·프로토타입 프로세스의 프로젝트별 상태 디렉터리.
+# backend/aipds/agent_home.py — per-project state directories for agent and prototype processes.
 #
-# 에이전트 CLI는 `CLAUDE_CONFIG_DIR` 아래에 트랜스크립트(`projects/<cwd>/<id>.jsonl`)와
-# 세션 상태(`file-history/`, `todos/`, `shell-snapshots/` …)를 쓴다. 그 디렉터리를 모든
-# 프로젝트가 공유하면 한 프로젝트의 에이전트가 다른 프로젝트의 대화와 파일 백업을 읽을 수
-# 있다. 그래서 CLI마다 **자기 프로젝트의** config dir과 HOME을 준다:
+# The agent CLI writes transcripts (`projects/<cwd>/<id>.jsonl`) and session state
+# (`file-history/`, `todos/`, `shell-snapshots/` …) under `CLAUDE_CONFIG_DIR`. If every
+# project shared that directory, one project's agent could read another project's
+# conversations and file backups. So each CLI gets **its own project's** config dir and HOME:
 #
 #   <root>/discovery/<pid>/{config,home}
 #   <root>/build/<pid>/<slug>/{config,home}
-#   <root>/proto/<pid>/<slug>/home          (호스팅 npm — CLI가 아니므로 config가 없다)
+#   <root>/proto/<pid>/<slug>/home          (hosting npm — not a CLI, so no config)
 #
-# 공유 config dir(`discovery-config/`, `proto-config/`)은 이제 **내용의 출처**일 뿐이다.
-# CLI를 띄울 때마다 그 안의 CLAUDE.md·agents/·skills/를 프로젝트별 config dir로 복사한다
-# (`copy_config`). 복사이지 링크가 아닌 이유: 실행 래퍼(aipds/launcher.py) 아래에서 CLI는
-# 자기 트리 밖이 보이지 않는다.
+# The shared config dirs (`discovery-config/`, `proto-config/`) are now only the **source
+# of the content**. Each time a CLI is launched, the CLAUDE.md, agents/, and skills/ inside
+# them are copied into the per-project config dir (`copy_config`). Copied rather than
+# linked because under the execution wrapper (aipds/launcher.py) the CLI cannot see
+# outside its own tree.
 #
-# 실행 래퍼(infra/scripts/aipds-launch)도 같은 배치를 **스스로 계산한다** — root 쪽은
-# 호출자가 준 경로를 받지 않기 때문이다. 두 계산이 어긋나면 기동 점검이 래퍼를 끈다
-# (launcher.probe).
+# The execution wrapper (infra/scripts/aipds-launch) also **computes the same layout
+# itself** -- the root side does not accept paths from the caller. If the two computations
+# disagree, the startup check turns the wrapper off (launcher.probe).
 from __future__ import annotations
 
 import asyncio
@@ -30,19 +31,22 @@ from aipds.pathsafe import reject_unsafe_segment, unlink_beneath, write_beneath
 
 ROOT_ENV = "AIPDS_AGENT_HOME_DIR"
 
-#: 공유 config dir에서 프로젝트별 config dir로 옮기는 것. CLI의 런타임 상태(트랜스크립트,
-#: `.claude.json` …)는 여기 넣지 않는다 — 그것이 프로젝트마다 갈라야 하는 것이다.
+#: What is carried from the shared config dir into the per-project config dir. The CLI's
+#: runtime state (transcripts, `.claude.json` …) is not included -- that is precisely what
+#: must be separated per project.
 CONFIG_CONTENT = ("CLAUDE.md", "agents", "skills")
 
-#: 띄울 때마다 비워 두는 CLI 설정. 에이전트는 config dir과 워크스페이스에 쓸 수 있으므로,
-#: 여기 hook·env·권한·MCP 서버를 심으면 다음 실행부터 그것이 돈다(`setting_sources`가
-#: user·project다). 정상 흐름에서 이 파일들을 쓰는 곳은 없다 — 공유 config에도 없다.
+#: CLI settings emptied on every launch. The agent can write to the config dir and the
+#: workspace, so if it planted hooks, env, permissions, or MCP servers here, they would run
+#: from the next launch on (`setting_sources` is user and project). Nothing in the normal flow
+#: writes these files -- they are not in the shared config either.
 USER_SETTINGS = "settings.json"
 WORKSPACE_SETTINGS = (".claude/settings.json", ".claude/settings.local.json", ".mcp.json")
 
-#: 명령 안에서 위 파일(과 CLI 상태 `.claude.json`)을 가리키는 조각. 두 에이전트의 Bash
-#: 게이트(agent/discovery_guard, proto/build_guard)가 쓴다 — 띄울 때마다 비우지만, 세션
-#: 안에서 쓰면 그 세션의 이후 도구 호출에 hook이 걸린다.
+#: Fragments in a command that point at the files above (and at the CLI state `.claude.json`).
+#: Used by both agents' Bash gates (agent/discovery_guard, proto/build_guard) -- they are
+#: emptied on every launch, but writing them within a session would hook that session's
+#: subsequent tool calls.
 SETTINGS_IN_COMMAND = re.compile(r"\.claude/settings[\w.-]*|\.mcp\.json|\.claude\.json")
 
 
@@ -63,7 +67,7 @@ class AgentHome:
         return self.base / "home"
 
     def prepare(self, with_config: bool = True) -> "AgentHome":
-        """디렉터리를 만든다. 실행 래퍼는 이것들이 이미 있어야 bind한다(스스로 만들지 않는다)."""
+        """Create the directories. The execution wrapper binds them only if they already exist (it does not create them)."""
         self.home.mkdir(parents=True, exist_ok=True)
         if with_config:
             self.config.mkdir(parents=True, exist_ok=True)
@@ -72,16 +76,18 @@ class AgentHome:
 
 def copy_config(shared_config: str | Path, config_dir: str | Path,
                 workspace: str | Path | None = None) -> None:
-    """공유 config dir의 내용(CONFIG_CONTENT)을 프로젝트별 config dir에 새로 복사한다.
+    """Freshly copy the shared config dir's content (CONFIG_CONTENT) into the per-project config dir.
 
-    CLI를 띄울 때마다 부른다. 매번 지우고 다시 복사한다 — 공유 쪽에서 스킬 하나가 빠졌는데
-    사본에 남아 있으면 그 스킬이 계속 켜진다. 런타임 상태는 건드리지 않는다.
+    Called on every CLI launch. It deletes and re-copies every time -- if a skill was removed
+    on the shared side but remained in the copy, that skill would stay enabled. Runtime state
+    is not touched.
 
-    CLI 설정은 비운다: config dir의 `settings.json`을 빈 설정으로 쓰고, `workspace`를
-    주면 그 아래의 프로젝트 설정(WORKSPACE_SETTINGS)을 지운다. 이전 실행의 에이전트가
-    심은 것이 다음 실행에 이어지지 않게 하기 위해서다.
+    CLI settings are emptied: the config dir's `settings.json` is written as an empty config,
+    and when `workspace` is given, the project settings under it (WORKSPACE_SETTINGS) are
+    deleted. This keeps whatever an agent planted in a previous run from carrying over into
+    the next.
 
-    두 트리 모두 에이전트가 쓰므로 링크를 따라가지 않는다(`pathsafe`).
+    Both trees are written by the agent, so links are not followed (`pathsafe`).
     """
     shared, config = Path(shared_config), Path(config_dir)
     config.mkdir(parents=True, exist_ok=True)
@@ -130,13 +136,13 @@ async def _rmtree(target: Path) -> None:
 
 
 async def purge_prototype(project_id: str, slug: str) -> None:
-    """이 프로토타입의 빌드 에이전트·호스팅 상태. 리셋 뒤 옛 트랜스크립트로 재개하지 않게."""
+    """This prototype's build-agent and hosting state. So a reset does not resume from the old transcript."""
     await _rmtree(build(project_id, slug).base)
     await _rmtree(proto(project_id, slug).base)
 
 
 async def purge_project(project_id: str) -> None:
-    """이 프로젝트의 모든 에이전트 상태. 같은 id로 다시 만든 프로젝트가 옛 대화를 잇지 않게."""
+    """All agent state for this project. So a project recreated with the same id does not continue old conversations."""
     reject_unsafe_segment(project_id)
     for kind in ("discovery", "build", "proto"):
         await _rmtree(root() / kind / project_id)

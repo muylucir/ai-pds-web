@@ -101,8 +101,8 @@ describe("BuildPanel", () => {
   });
 
   it("중단 버튼은 하나뿐이다 — 입력창 자리로 통일", async () => {
-    // 종전에는 헤더에 있었다. 입력창에 더하면서 지우지 않으면 같은 기능 버튼이
-    // 한 화면에 둘이 되고, 진행자가 어느 것을 말하는지 매번 짚어야 한다.
+    // It used to be in the header. If it were not removed when added to the input box, there would be two
+    // buttons for the same function on one screen, and the facilitator would have to point out which one every time.
     const interrupt = vi.fn().mockResolvedValue(undefined);
     mockStream({ streaming: true, interrupt });
     render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
@@ -111,9 +111,9 @@ describe("BuildPanel", () => {
   });
 
   it("빌드가 끝난 뒤에는 중단 버튼이 없다", () => {
-    // 입력창의 disabled는 `streaming || buildComplete !== null`이라 완료
-    // 후에도 참이다. 그 값으로 버튼을 판단하면 중단할 턴이 없는데 ■이 뜬다 —
-    // ChatInput에 interrupting을 따로 넘기는 이유다.
+    // The input box's disabled is `streaming || buildComplete !== null`, so it stays true even after
+    // completion. Deciding the button by that value would show ■ when there is no turn to stop —
+    // which is why interrupting is passed to ChatInput separately.
     mockStream({
       streaming: false,
       buildComplete: { summary: "할 일 앱", remaining: "" },
@@ -150,20 +150,20 @@ describe("BuildPanel", () => {
     render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} autoStart />);
     expect(startBuild).toHaveBeenCalledTimes(1);
     expect(resume).not.toHaveBeenCalled();
-    // 새로 연 세션도 지난 대화(이전 세션들)를 앞에 깐다. resume은 스스로 깐다.
+    // A newly opened session also lays out past conversations (previous sessions) first. resume lays them out itself.
     expect(restoreHistory).toHaveBeenCalledTimes(1);
   });
 
   it("does not ask what to change while the past conversation is still loading", () => {
-    // 안내가 먼저 떴다가 히스토리가 도착하면 사라지는 깜빡임을 막는다.
+    // Prevents the flicker of the hint appearing first and disappearing when the history arrives.
     mockStream({ historyLoading: true });
     render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
     expect(screen.queryByText("무엇을 고칠지 알려주세요.")).toBeNull();
   });
 
   it("resumes the already-open session instead of starting when autoStart is false/omitted", () => {
-    // 새로고침·다시 열기: 세션은 살아 있고 턴이 돌고 있을 수 있다 — 빈 패널이 아니라
-    // 그 세션의 대화를 되살리고 도는 턴에 붙는다.
+    // Refresh/reopen: the session is alive and a turn may be running — instead of an empty panel, it
+    // restores that session's conversation and attaches to the running turn.
     const startBuild = vi.fn();
     const resume = vi.fn().mockResolvedValue(undefined);
     mockStream({ startBuild, resume });
@@ -189,9 +189,9 @@ describe("BuildPanel", () => {
   });
 
   it("완료 선언 후에는 입력이 막히고 안내 문구가 보인다", () => {
-    // buildComplete가 서면 streaming은 이미 false로 돌아온 뒤다(done이
-    // build_complete 뒤를 잇는다) — 그런데도 세션은 유예 타이머로 곧 닫히므로
-    // 입력을 계속 열어두면 오해를 부르는 404/연결 오류로 이어진다.
+    // By the time buildComplete is set, streaming has already returned to false (done
+    // follows build_complete) — yet the session closes soon on the grace timer, so
+    // keeping the input open leads to misleading 404/connection errors.
     mockStream({ streaming: false, buildComplete: { summary: "완성", remaining: "" } });
     render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
     expect(screen.getByLabelText("채팅 메시지 입력")).toBeDisabled();
@@ -234,10 +234,10 @@ describe("BuildPanel", () => {
 
   describe("완료 카드", () => {
     it("파일 변경 목록 **아래**에 온다 — 위에 있으면 스크롤을 되올려야 한다", () => {
-      // 사용자 보고: 빌드가 끝나는 순간 카드가 스크롤 위치보다 위에 생겨서,
-      // 파일이 쌓이는 것을 내려 보고 있던 사용자가 완료를 확인하려면 되올려야
-      // 했다. aside 하나가 스크롤 컨테이너이므로 순서가 곧 그 문제다 — DOM
-      // 순서로 못박는다(클래스나 좌표가 아니라 순서가 원인이었다).
+      // User report: the moment the build finished, the card appeared above the scroll position, so
+      // a user who had been scrolling down watching files pile up had to scroll back up to see the
+      // completion. A single aside is the scroll container, so the order is the problem itself — pin it
+      // by DOM order (the cause was order, not classes or coordinates).
       mockStream({
         streaming: false,
         buildComplete: { summary: "할 일 앱", remaining: "" },
@@ -263,10 +263,10 @@ describe("BuildPanel", () => {
     });
 
     it("요약·남은 작업을 마크다운으로 렌더한다 — 원문 문법이 화면에 나오지 않는다", () => {
-      // 회귀: whitespace-pre-wrap 텍스트로 그려서 `- `·`**`·백틱이 그대로
-      // 보였다. 이 텍스트는 build_complete 도구의 인자이고 모델은 목록·강조를
-      // 쓴다(도구 스키마도 막지 않는다). 왼쪽 타임라인의 같은 에이전트 산문은
-      // 이미 마크다운으로 렌더되므로 한 화면에서 규약이 갈려 있었다.
+      // Regression: it was drawn as whitespace-pre-wrap text, so `- `, `**`, and backticks showed
+      // verbatim. This text is the build_complete tool's argument, and the model writes lists and
+      // emphasis (the tool schema does not prevent it). The same agent's prose in the left timeline
+      // is already rendered as markdown, so the convention diverged within one screen.
       mockStream({
         buildComplete: {
           summary: "**할 일 앱**을 만들었다\n\n- 목록 추가\n- `localStorage` 저장",
@@ -277,11 +277,11 @@ describe("BuildPanel", () => {
         <BuildPanel projectId="proj-1" slug="todo-app" onClose={vi.fn()} />,
       );
 
-      // 강조·목록·인라인 코드가 요소로 존재한다.
+      // Emphasis, lists, and inline code exist as elements.
       expect(container.querySelector("strong")).toHaveTextContent("할 일 앱");
-      expect(container.querySelectorAll("li")).toHaveLength(3);   // 요약 2 + 남은 작업 1
+      expect(container.querySelectorAll("li")).toHaveLength(3);   // 2 summary + 1 remaining work
       expect(container.querySelector("code")).toHaveTextContent("localStorage");
-      // 마크다운 문법 문자가 화면 텍스트에 남아 있지 않다.
+      // No markdown syntax characters remain in the screen text.
       expect(screen.queryByText(/\*\*할 일 앱\*\*/)).toBeNull();
       expect(screen.queryByText(/`localStorage`/)).toBeNull();
     });
@@ -326,7 +326,7 @@ describe("BuildPanel", () => {
     });
 
     it("호스팅 시작의 502는 로그 꼬리를 싣지 않고 실패 문구를 보여준다", async () => {
-      // 502의 detail은 npm 로그 꼬리다(backend routes/prototypes의 start_host).
+      // The 502's detail is the tail of the npm log (start_host in backend routes/prototypes).
       vi.mocked(prototypesApi.startHost).mockRejectedValueOnce(
         new ApiError(502, "npm ERR! code ELIFECYCLE\nnpm ERR! errno 1"));
       mockStream({ buildComplete: { summary: "완성", remaining: "" } });
@@ -366,8 +366,8 @@ describe("BuildPanel", () => {
     });
 
     it("개선 시작이 429면 상한 메시지를 보여주고 카드를 남긴다", async () => {
-      // 동시 빌드 상한에 걸린 경우. 카드를 지우면 사용자는 완료 요약과 다른
-      // 선택지(호스팅)를 모두 잃는다 — 재시도할 수 있게 남긴다.
+      // The case of hitting the concurrent build limit. Clearing the card would make the user lose
+      // both the completion summary and the other option (hosting) — keep it so they can retry.
       const restart = vi.fn().mockRejectedValueOnce(new ApiError(429, "build_slots_busy"));
       mockStream({
         buildComplete: { summary: "완성", remaining: "" },
@@ -383,11 +383,11 @@ describe("BuildPanel", () => {
     });
 
     it("streaming 중에는 카드는 보이지만 세 버튼이 모두 비활성화되고 안내 문구가 보인다", () => {
-      // build_complete는 done보다 먼저 서는 이벤트라, 카드가 뜬 뒤에도
-      // 에이전트가 마무리 텍스트를 보내는 동안 streaming이 true로 남는 창이
-      // 실재한다(usePrototypeStream.restartForImprovement의 주석 참고). 그
-      // 창에서 버튼이 눌리면 아직 열린 스트림과 새 동작이 뒤엉킨다 — 그래서
-      // 카드 자체는 계속 그려 요약을 바로 읽게 하면서도 버튼만 막는다.
+      // build_complete is an event that arrives before done, so even after the card appears there is a
+      // real window in which streaming stays true while the agent sends its wrap-up text
+      // (see the comment on usePrototypeStream.restartForImprovement). If a button is pressed in that
+      // window, the still-open stream and the new action get tangled — so the card itself keeps
+      // rendering so the summary can be read right away, while only the buttons are blocked.
       mockStream({
         streaming: true,
         buildComplete: { summary: "완성", remaining: "" },
@@ -402,8 +402,8 @@ describe("BuildPanel", () => {
     });
 
     it("streaming이 끝난 뒤에는 세 버튼이 모두 활성화되고 안내 문구가 없다", () => {
-      // 정상 경로(카드가 뜰 때 이미 done까지 지난 경우)를 지키는 가드 —
-      // streaming만 보고 무조건 막으면 평소에도 버튼이 계속 회색으로 보인다.
+      // A guard protecting the normal path (when done has already passed by the time the card appears) —
+      // blocking unconditionally based only on streaming would keep the buttons grayed out all the time.
       mockStream({
         streaming: false,
         buildComplete: { summary: "완성", remaining: "" },
@@ -431,9 +431,9 @@ describe("BuildPanel", () => {
 });
 
 describe("BuildPanel — 입력창 위 고정 진행 줄", () => {
-  // 워크스페이스와 **같은 컴포넌트를 같은 자리**에 놓는다. 빌드 턴은 도구 활동이
-  // 특히 많이 쏟아지므로 "마지막 하나만"의 이득이 크고, 두 화면이 갈리면 같은
-  // 바가 화면에 따라 다르게 동작한다.
+  // Places **the same component in the same spot** as the workspace. Build turns pour out especially
+  // many tool activities, so "only the last one" pays off greatly, and if the two screens diverged the
+  // same bar would behave differently depending on the screen.
   it("빌드가 도는 동안 마지막 활동을 한 줄로 보여준다", () => {
     mockStream({
       streaming: true,
@@ -455,17 +455,17 @@ describe("BuildPanel — 입력창 위 고정 진행 줄", () => {
 });
 
 
-// ---- 수정 세션은 사용자가 먼저 말한다 ----
+// ---- In an edit session the user speaks first ----
 //
-// 자동 개시는 에이전트가 "무엇을 개선할지" 되묻는 왕복을 먼저 태우고, 그 질문이 떠
-// 있는 동안 입력창이 잠겨 사용자가 자기 요청을 타이핑할 수조차 없었다
-// (backend prompts.handoff_prompt의 근거). 그래서 built/running에서는 자동 발화를
-// 하지 않고 빈 패널로 열리며, 그 첫 메시지가 개시 턴이 된다.
+// Auto-open first burned a round trip of the agent asking "what to improve", and while that
+// question was up the input box was locked so the user could not even type their own request
+// (rationale in backend prompts.handoff_prompt). So in built/running there is no auto-speaking;
+// it opens as an empty panel, and that first message becomes the opening turn.
 
 describe("BuildPanel — 빈 수정 세션", () => {
   it("무엇을 고칠지 물어보는 안내를 보여준다", () => {
-    // 화면에 아무것도 없는 순간이 생기는 것이 이 설계의 대가다. 그때 무엇을
-    // 해야 하는지 말하지 않으면 "아무 일도 일어나지 않았다"로 읽힌다.
+    // A moment with nothing on screen is the price of this design. If it does not say what to do then,
+    // it reads as "nothing happened".
     mockStream({ items: [], streaming: false });
     render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
     expect(screen.getByText("무엇을 고칠지 알려주세요.")).toBeInTheDocument();
@@ -482,8 +482,8 @@ describe("BuildPanel — 빈 수정 세션", () => {
   });
 
   it("턴이 도는 동안에는 안내를 띄우지 않는다", () => {
-    // 자동 개시(첫 빌드)는 items가 빈 채로 스트리밍이 시작된다 — 그때 "무엇을
-    // 고칠지"는 틀린 안내다.
+    // Auto-open (first build) starts streaming with items empty — "what to fix" would be the
+    // wrong hint at that point.
     mockStream({ items: [], streaming: true });
     render(<BuildPanel projectId="p1" slug="todo-app" onClose={vi.fn()} />);
     expect(screen.queryByText("무엇을 고칠지 알려주세요.")).toBeNull();

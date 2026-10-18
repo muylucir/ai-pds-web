@@ -35,11 +35,12 @@ from aipds.turn_job import TurnBusy, subscribe
 from aipds.proto.hosting import host_prototype, prototype_store, stop_prototype
 from aipds.proto.store import PrototypeStore
 from aipds.proto.source import newest_source_mtime, source_entries
-# 토큰 게이트의 경로 조립은 그 라우트를 소유한 모듈이 한다 — 여기서 f-string으로
-# 다시 쓰면 브라우저 관점 마운트(`/api`)를 두 곳에서 관리하게 되고, 그것이 이
-# 파일에서 이미 한 번 어긋났던 종류의 버그다(아래 start_host의 public_base_path
-# 주석 참고). proto_public은 aipds.app을 함수 안에서만 import하므로
-# 최상위 import가 순환을 만들지 않는다.
+# The module that owns the token-gate route also assembles its path -- rewriting
+# it here with an f-string would mean managing the browser-side mount (`/api`)
+# in two places, which is exactly the kind of bug that already drifted once in
+# this file (see the public_base_path comment in start_host below). proto_public
+# imports aipds.app only inside functions, so a top-level import here does not
+# create a cycle.
 from aipds.routes.proto_public import access_url_path
 from aipds.survey.store import survey_summary
 from aipds.proto import layout as proto_layout
@@ -89,14 +90,15 @@ def _reject_traversal_params(request: Request) -> None:
 
 router = APIRouter(dependencies=[Depends(_reject_traversal_params)])
 
-# 레이아웃 규칙은 proto/layout.py가 단독 소유한다 — 예전에는 이 접두사와
-# 정규식이 카드 탐색을, 그리고 같은 경로를 조립하는 f-string이 세 곳에 더
-# 흩어져 있었다. Path A.1의 단수 레이아웃을 인식하지 못한 결함이 그 복제 때문에
-# 네 곳을 동시에 고쳐야 하는 일이 됐다(그 모듈 헤더 참조).
+# proto/layout.py is the sole owner of the layout rules -- this prefix and
+# regex used to drive card discovery here, and f-strings assembling the same
+# path were scattered across three more places. Because of that duplication, the
+# defect of not recognising Path A.1's singular layout had to be fixed in four
+# places at once (see that module's header).
 
 # The frontend opens the first events stream with this sentinel; the route
 # substitutes session.first_prompt() so the build kicks off as a normal
-# SSE-relayed turn (spec §4: 첫 턴 자동 발화).
+# SSE-relayed turn (spec §4: the first turn is sent automatically).
 _FIRST_TURN_SENTINEL = "__first__"
 
 
@@ -201,16 +203,17 @@ def _local_build_exists(pid: str, slug: str) -> bool:
 
 
 async def _card_name(s3, spec_path: str) -> str | None:
-    """명세 본문에서 카드에 쓸 이름을 읽는다. 못 읽으면 None.
+    """Read the name to show on the card from the spec body. None if it cannot be read.
 
-    **실패를 삼키는 것이 여기서는 옳다.** 이름은 카드의 장식이고 상태·버튼은
-    이 값에 의존하지 않는다 — 이름 하나 때문에 Prototypes 탭 전체가 500이 되면
-    더 나쁜 결과를 고른 것이다. 부재는 호출부에서 슬러그로 되돌아간다.
-    `discover`는 `list`로 키를 찾고 여기서 `get`으로 읽으므로, 그 사이에
-    리셋·삭제가 끼어드는 것만으로도 이 실패는 정상 운영에서 일어난다.
+    **Swallowing the failure is right here.** The name is decoration on the
+    card; state and buttons do not depend on it -- letting one name turn the
+    whole Prototypes tab into a 500 would be choosing the worse outcome. When
+    absent, the caller falls back to the slug. `discover` finds keys with
+    `list` and this reads them with `get`, so a reset or delete landing in
+    between is enough for this failure to happen in normal operation.
 
-    그래도 **조용히** 삼키지는 않는다: "카드에 이름이 안 나온다"를 로그 한 줄로
-    진단할 수 있어야 한다.
+    Still, it is not swallowed **silently**: "the card shows no name" must be
+    diagnosable from a single log line.
     """
     try:
         return spec_name(await s3.get(spec_path))
@@ -221,9 +224,10 @@ async def _card_name(s3, spec_path: str) -> str | None:
 
 
 async def _has_s3_source(store: PrototypeStore, slug: str) -> bool:
-    """S3에 소스 세대가 있는가. 읽지 못하면 없는 것으로 본다 — 목록은 한 카드의
-    S3 오류로 깨지지 않는다(`_card_name`과 같은 규율). 로컬 트리가 있으면 카드는
-    어차피 그쪽으로 `built`가 된다."""
+    """Does S3 hold a source generation? If it cannot be read, treat it as absent --
+    the list does not break over one card's S3 error (same discipline as
+    `_card_name`). If a local tree exists, the card becomes `built` through that
+    anyway."""
     try:
         return await store.has_source(slug)
     except Exception:
@@ -242,16 +246,18 @@ async def list_prototypes(pid: str):
 
     host = app_module.proto_host()
     ordered = sorted(slugs.items())
-    # **슬러그별 S3 왕복을 미리 병렬로 걷는다.** 예전에는 루프 안에서 카드마다
-    # `s3.list(bundle)`과 설문 조회를 순차로 await 해서 카드 N개에
-    # 2N번 왕복이었다 — 실측(2026-08-17): 왕복 1회 30ms이므로 카드 10개면 0.6초가
-    # 목록 조회에 그대로 붙는다. gather는 입력 순서대로 돌려주므로 아래 zip이
-    # 안전하다.
+    # **Run the per-slug S3 round trips up front, in parallel.** The loop used to
+    # await `s3.list(bundle)` and the survey lookup sequentially for each card,
+    # so N cards cost 2N round trips -- measured (2026-08-17): one round trip is
+    # 30ms, so 10 cards add 0.6s straight onto the list call. gather returns
+    # results in input order, so the zip below is safe.
     #
-    # 이름을 읽는 `get`이 카드당 세 번째 왕복이지만 **같은 gather 안**이므로
-    # 벽시계는 그대로다 — 카드 하나의 세 왕복이 서로를 기다리지 않는다. 목록
-    # 응답에 이름을 실어 보내는 대안(카드가 각자 명세를 받아 파싱)은 왕복을
-    # 클라이언트로 옮기고 파싱 규칙을 두 벌로 만든다.
+    # The `get` that reads the name is a third round trip per card, but it is
+    # **inside the same gather**, so wall-clock time is unchanged -- one card's
+    # three round trips do not wait on each other. The alternative to carrying
+    # the name in the list response (each card fetches and parses its own spec)
+    # moves the round trips to the client and creates two copies of the parsing
+    # rules.
     store = PrototypeStore(s3)
     s3_built, surveys, names = await asyncio.gather(
         asyncio.gather(*(_has_s3_source(store, slug) for slug, _ in ordered)),
@@ -266,24 +272,28 @@ async def list_prototypes(pid: str):
 
         session = app_module.proto_sessions.get((pid, slug))
         host_info = host.status(pid, slug)
-        # 로컬 빌드 트리가 1차 신호이고(호스팅이 그 자리에서 서빙한다), S3의 소스
-        # 세대가 정본이다(proto/store.py) — 교체된 인스턴스에는 로컬 트리가 없지만
-        # 빌드는 여전히 "됐다". 호스팅·세션 시작이 그 세대에서 트리를 되살린다.
+        # The local build tree is the primary signal (hosting serves it in place),
+        # and the S3 source generation is the source of truth (proto/store.py) -- a
+        # replaced instance has no local tree, but the build is still "done".
+        # Hosting and session start restore the tree from that generation.
         built = _local_build_exists(pid, slug) or has_s3_source
 
-        # 빌드 세션이 열려 있는가. **`state`와 별개 필드인 이유**가 이 블록의
-        # 요점이다: 서버가 떠 있는지와 세션이 열려 있는지는 서로 독립적인
-        # 사실인데, 열거형 하나가 둘을 실어 나르면서 세션이 호스팅을 가렸다.
-        # 실행 중인 프로토타입을 수정하기 시작하면 카드가 `building`으로 바뀌어
-        # 프리뷰·공유 링크가 사라졌고 — 서버는 계속 떠 있었으므로 화면만
-        # 거짓말을 했다. 프리뷰를 본 직후가 수정하고 싶어지는 순간인데, 바로 그
-        # 순간에 방금 보던 것을 잃는 화면이었다.
+        # Is a build session open? **Why this is a separate field from `state`**
+        # is the point of this block: whether the server is up and whether a
+        # session is open are independent facts, but a single enum carried both,
+        # so the session masked the hosting. Starting to modify a running
+        # prototype flipped the card to `building` and the preview and share
+        # links disappeared -- the server stayed up the whole time, so only the
+        # screen was lying. Right after viewing the preview is exactly when you
+        # want to make changes, and that was the moment the screen took away what
+        # you had just been looking at.
         session_open = session is not None and session.status in _WORKING_STATUSES
 
-        # `running`이 `building`보다 먼저다. 세션을 여는 것은 호스팅을 건드리지
-        # 않으므로(어느 라우트도 stop을 부르지 않는다) 서버는 실제로 살아 있고,
-        # 그 사실을 먼저 말해야 카드가 프리뷰·링크·중지를 계속 그릴 수 있다.
-        # 첫 빌드에는 뜬 서버가 없으므로 그때는 여전히 `building`이다.
+        # `running` comes before `building`. Opening a session does not touch
+        # hosting (no route calls stop), so the server really is alive, and that
+        # fact has to be stated first for the card to keep drawing the preview,
+        # link, and stop button. On the first build there is no server up, so it
+        # is still `building` then.
         if host_info is not None and host_info.state == "running":
             state = "running"
             port = host_info.port
@@ -298,12 +308,13 @@ async def list_prototypes(pid: str):
         # answers about to be destroyed without a second round trip, and so a
         # card can say "no survey" at all.
         #
-        # **`has_survey`가 `response_count > 0`과 다른 질문이다.** 설문이 없을
-        # 때도 0이고 설문이 있는데 응답이 아직 없을 때도 0이라, 카드는 두 상태를
-        # 구별할 수 없었다 — 실측 test2222에서 프로토타입 3개 중 1개에만 설문이
-        # 있었는데 화면에 그 사실이 없어 나머지 둘이 빠진 것을 알아차릴 방법이
-        # 없었다. 두 값이 `survey_summary`의 **한 번의 list**에서 함께 나오므로
-        # 필드가 늘어도 왕복은 그대로다.
+        # **`has_survey` is a different question from `response_count > 0`.** The
+        # count is 0 when there is no survey and also 0 when a survey exists but
+        # has no responses yet, so the card could not tell the two states apart
+        # -- measured on ws-n: only 1 of 3 prototypes had a survey, but the
+        # screen did not show that, so there was no way to notice the other two
+        # were missing one. Both values come from **a single list** call in
+        # `survey_summary`, so the extra field adds no round trip.
         #
         # Delegated to survey/store.py rather than counted here from
         # `responses_prefix`: that prefix is the CURRENT round only, but
@@ -314,40 +325,46 @@ async def list_prototypes(pid: str):
         # no count and no irreversibility warning, then destroyed all 12. The
         # definition of "a response a reset destroys" belongs to the module that
         # owns those keys, so the two cannot drift apart again.
-        # 공유용 접근 URL. **running일 때만** 실어 보낸다 — 그 밖의 상태에서
-        # 이 링크는 게이트가 502를 주므로, 존재하지 않는 것이 프론트가 링크를
-        # 노출할지 판단하는 기준이 된다(기존 shareUrl 조건과 같은 규칙).
+        # Access URL for sharing. Sent **only when running** -- in any other
+        # state the gate answers this link with 502, so its absence is what the
+        # frontend uses to decide whether to expose the link (same rule as the
+        # existing shareUrl condition).
         #
-        # `token_for`이지 `ensure_token`이 아니다: GET이 자격증명을 만드는
-        # 부수효과를 가져서는 안 된다. 발급은 호스팅 시작(start_host) 한 곳에서만
-        # 일어난다 — 목록 조회가 토큰을 만들면, 한 번도 호스팅되지 않은
-        # 프로토타입에도 토큰 파일이 깔린다.
+        # `token_for`, not `ensure_token`: a GET must not have the side effect
+        # of minting a credential. Issuance happens in exactly one place, hosting
+        # start (start_host) -- if the list call minted tokens, token files would
+        # be laid down even for prototypes that were never hosted.
         access_url = None
         if state == "running":
             token = host.token_for(pid, slug)
             if token:
                 access_url = access_url_path(token)
 
-        # 떠 있는 서버가 소스보다 오래됐는가. 실행 중에 수정할 수 있게 되면서 생긴
-        # 구간이다 — 서버는 그대로 뜬 채 소스만 바뀐다. 그때 카드가 "실행 :4007"만
-        # 말하면 사용자는 자기 수정이 반영됐다고 읽지만, 참가자에게 나간 링크가
-        # 보여 주는 것은 이전 버전이고 다시 호스팅해야 바뀐다.
+        # Is the running server older than the source? This window appeared once
+        # editing while running became possible -- the server stays up while only
+        # the source changes. If the card then says only "실행 :4007" (Running
+        # :4007), the user reads it as their edit being live, but the link sent to
+        # participants shows the previous version and only changes after
+        # re-hosting.
         #
-        # **세션이 열려 있는지로 대신하지 않는다.** 그러면 세션이 닫히는 순간 신호가
-        # 사라지고, 정작 그때가 사용자가 오해하기 가장 쉬운 시점이다.
+        # **Do not substitute "is a session open".** Then the signal vanishes the
+        # moment the session closes, which is precisely when the user is most
+        # likely to misread it.
         #
-        # `running`일 때만 묻는다: 호스팅되지 않은 프로토타입에는 낡을 프리뷰가 없고,
-        # 트리를 걷는 비용도 그만큼 아낀다(이 라우트는 폴링된다 —
-        # `newest_source_mtime`이 제외 디렉토리를 잘라내는 이유와 같은 자리다).
+        # Only asked when `running`: an unhosted prototype has no preview to go
+        # stale, and it saves the cost of walking the tree (this route is polled
+        # -- the same reason `newest_source_mtime` prunes excluded directories).
         preview_stale = False
         if state == "running" and host_info is not None and host_info.built_at:
             newest = newest_source_mtime(app_module._proto_root() / pid / slug)
             preview_stale = newest is not None and newest > host_info.built_at
 
-        # 카드 제목. **`slug`와 별개 필드다** — slug는 여전히 식별자이고(리셋·
-        # 빌드·세션이 그 값으로 키된다) 이름은 표시용이다. 하나로 합치면 Path
-        # A.1의 예약 id `prototype`을 이름으로 덮어쓰게 되어 식별자가 흔들린다.
-        # 없으면 null: 프론트가 슬러그로 되돌아가는 분기가 값의 유무여야 한다.
+        # Card title. **A separate field from `slug`** -- the slug is still the
+        # identifier (reset, build, and session are keyed by it) and the name is
+        # for display. Merging them would overwrite Path A.1's reserved id
+        # `prototype` with a name and destabilise the identifier. null when
+        # absent: the frontend's fallback-to-slug branch must key on presence of
+        # the value.
         out.append({"slug": slug, "name": name, "spec_path": spec_path,
                     "state": state, "port": port,
                     "session_open": session_open,
@@ -396,24 +413,27 @@ async def start_session(pid: str, slug: str):
 
 
 def _opening_text(session, text: str) -> str:
-    """사용자가 보낸 말을 에이전트에게 갈 턴 텍스트로 바꾼다.
+    """Turn what the user sent into the turn text that goes to the agent.
 
-    세션의 **첫 메시지는 곧 개시 턴**이다. 센티넬이면 사용자가 아무 말도 하지
-    않은 자동 개시이므로 기본 개시 프롬프트를 쓰고, 아니면 그 메시지가 사용자의
-    요청이므로 개시 프롬프트에 실어 보낸다.
+    A session's **first message is its opening turn**. If it is the sentinel,
+    this is an automatic opening where the user said nothing, so use the
+    default opening prompt; otherwise the message is the user's request, so
+    carry it inside the opening prompt.
 
-    **왜 사용자 요청을 개시 턴에 싣는가.** "수정하기"를 누른 사람은 이미 무엇을
-    고칠지 알고 있는데(프리뷰에서 봤다), 개시 프롬프트가 되묻고 그 질문이 떠 있는
-    동안 입력창이 비활성이라(BuildPanel) 자기 요청을 타이핑할 수조차 없었다.
+    **Why carry the user's request in the opening turn.** Someone who pressed
+    "수정하기" (Modify) already knows what they want to change (they saw it in
+    the preview), but the opening prompt asked them again, and while that
+    question was up the input box was disabled (BuildPanel), so they could not
+    even type their request.
 
-    **생 텍스트를 그대로 보내면 안 된다.** handoff 분기는 새 session_id로 시작해
-    트랜스크립트가 없으므로(proto/session의 _resolve_session_id), 개시 프롬프트가
-    지고 오는 요약과 "먼저 prototype/을 봐라"가 빠지면 에이전트가 맥락 없이
-    시작한다.
+    **Raw text must not be sent as-is.** The handoff branch starts with a new
+    session_id and has no transcript (proto/session's _resolve_session_id), so
+    without the summary the opening prompt carries and its "look at prototype/
+    first", the agent starts with no context.
 
-    판정 기준이 `session.opened`인 것이 요점이다 — UI 플래그가 아니다. 그것은
-    세션이 아는 사실이고, 프론트가 추측하면 새로고침·경합·이미 열린 세션에서
-    어긋난다.
+    The point is that the criterion is `session.opened` -- not a UI flag. That
+    is a fact the session knows; if the frontend guesses, it goes wrong on
+    reload, races, and already-open sessions.
     """
     if text == _FIRST_TURN_SENTINEL:
         return session.first_prompt()
@@ -423,16 +443,19 @@ def _opening_text(session, text: str) -> str:
 
 
 def _start_build_turn(pid: str, slug: str, session, text: str):
-    """빌드 턴을 서버 작업으로 시작한다(aipds/turn_job.py). 도는 턴이 있으면 409 —
-    본문에 그 턴의 id가 있다(Discovery의 routes/turns.start_turn과 같은 모양)."""
+    """Start a build turn as a server-side job (aipds/turn_job.py). 409 if a turn is
+    already running -- the body carries that turn's id (same shape as Discovery's
+    routes/turns.start_turn)."""
     import aipds.app as app_module
     turn_text = _opening_text(session, text)
     shown = None if text == _FIRST_TURN_SENTINEL else text
 
     async def events():
-        # 개시 턴은 사용자가 한 말과 에이전트에게 간 말이 다르다. 그 짝을 남겨야
-        # 히스토리가 개시 프롬프트 대신 사용자의 말을 보인다(proto/history.py 헤더 2).
-        # 턴 **안에서** 쓰는 이유: 시작을 409로 거절당한 턴은 레코드도 남기지 않는다.
+        # In an opening turn, what the user said differs from what went to the
+        # agent. Recording that pair is what lets history show the user's words
+        # instead of the opening prompt (proto/history.py header, item 2).
+        # Written **inside** the turn so a turn whose start is refused with 409
+        # leaves no record either.
         if turn_text != text:
             try:
                 s3 = app_module.s3_store_factory(pid)
@@ -440,9 +463,10 @@ def _start_build_turn(pid: str, slug: str, session, text: str):
                 _log.exception("project store unavailable for %s", pid)
             else:
                 await record_opening(s3, slug, prompt=turn_text, shown=shown)
-        # 안쪽 generator를 **명시적으로** 닫는다. 턴이 취소되면 TurnJobs가 이
-        # generator를 aclose하는데, `async for`로 감싸기만 하면 안쪽은 GC가 거둘 때에야
-        # 닫혀 세션의 정리(finally)가 그만큼 늦어진다.
+        # Close the inner generator **explicitly**. When a turn is cancelled,
+        # TurnJobs acloses this generator, but merely wrapping it in `async for`
+        # leaves the inner one open until GC collects it, delaying the session's
+        # cleanup (finally) by that much.
         inner = session.send_message(turn_text, user_text=shown)
         try:
             async for ev in inner:
@@ -458,8 +482,9 @@ def _start_build_turn(pid: str, slug: str, session, text: str):
 
 
 def _build_turn_response(job, after: int = 0) -> EventSourceResponse:
-    """턴 로그를 `after` 뒤부터 흘린다. 프레임의 `id`가 seq다. 보던 화면이 끊겨도
-    턴은 계속 돈다 — 다시 붙을 때 마지막으로 받은 seq를 `after`로 준다."""
+    """Stream the turn log from after `after`. Each frame's `id` is the seq. The turn
+    keeps running even if the viewing screen disconnects -- on reattach, pass the
+    last received seq as `after`."""
     async def gen():
         async for seq, event in subscribe(job, after):
             yield {"id": str(seq), "data": _redacted(event).model_dump_json()}
@@ -468,12 +493,13 @@ def _build_turn_response(job, after: int = 0) -> EventSourceResponse:
 
 @router.post("/projects/{pid}/prototypes/{slug}/turns")
 async def create_session_turn(pid: str, slug: str, body: TurnBody):
-    """빌드 턴을 **시작**하고 id를 돌려준다. 스트림은 `GET /events?turn=<id>`로 본다.
+    """**Start** a build turn and return its id. The stream is read via `GET /events?turn=<id>`.
 
-    텍스트를 본문으로 받는 이유는 워크스페이스 채팅(routes/turns.py)과 같다:
-    EventSource는 GET만 지원하고, 긴 입력이 URL에 실리면 프록시가 431을 낸다
-    (frontend lib/api/sse.ts의 createTurn에 실측이 있다). 자동 개시는
-    센티넬(`__first__`)을 보낸다.
+    The text comes in the body for the same reason as workspace chat
+    (routes/turns.py): EventSource supports only GET, and a long input carried
+    in the URL makes the proxy answer 431 (the measurement is in createTurn in
+    frontend lib/api/sse.ts). The automatic opening sends the sentinel
+    (`__first__`).
     """
     _require_registered(pid)
     session = _require_session(pid, slug)
@@ -482,7 +508,7 @@ async def create_session_turn(pid: str, slug: str, body: TurnBody):
 
 @router.get("/projects/{pid}/prototypes/{slug}/events")
 async def stream_session_events(pid: str, slug: str, turn: str, after: int = 0):
-    """빌드 턴 하나를 본다. 턴은 `POST …/turns`가 시작한다 — 이 경로는 보기만 한다."""
+    """Watch one build turn. `POST …/turns` starts turns -- this route only watches."""
     _require_registered(pid)
     session = _require_session(pid, slug)
     job = session.turns.get(turn)
@@ -493,8 +519,9 @@ async def stream_session_events(pid: str, slug: str, turn: str, after: int = 0):
 
 @router.get("/projects/{pid}/prototypes/{slug}/session")
 async def get_session(pid: str, slug: str):
-    """열린 빌드 세션과 그 세션의 턴들. 빌드 화면이 다시 열릴 때(새로고침, 패널을
-    닫았다 엶) 이것으로 대화를 처음부터 재생하고 도는 턴에 붙는다."""
+    """The open build session and its turns. When the build screen reopens (reload,
+    closing and reopening the panel), it uses this to replay the conversation
+    from the start and attach to the running turn."""
     import aipds.app as app_module
     _require_registered(pid)
     session = app_module.proto_sessions.get((pid, slug))
@@ -508,19 +535,22 @@ async def get_session(pid: str, slug: str):
 
 @router.get("/projects/{pid}/prototypes/{slug}/history")
 async def get_history(pid: str, slug: str):
-    """지난 빌드 대화(트랜스크립트)와, 그 뒤를 이어 재생할 열린 세션의 턴들.
+    """Past build conversation (transcript), plus the open session's turns to replay after it.
 
-    둘을 **한 응답**으로 주는 것이 요점이다. 열린 세션의 턴은 화면이 턴 로그로
-    재생하므로(완료 카드와 진행 중인 질문 폼이 그 경로에만 있다) 히스토리는 그 첫 턴의
-    시작 앞에서 자른다. 자르는 기준과 재생할 턴 목록을 따로 물으면 그 사이에 시작된
-    턴이 양쪽에 다 나오거나 어느 쪽에도 나오지 않는다.
+    The point is returning both in **one response**. The screen replays the open
+    session's turns from the turn log (the completion card and the in-progress
+    question form exist only on that path), so history is cut just before the
+    start of that session's first turn. Asking for the cut-off and the list of
+    turns to replay separately would let a turn started in between appear on
+    both sides or on neither.
 
-    닫힌 세션도 `proto_sessions`에 남아 있는 동안은 재생한다 — 완료 선언 뒤 유예로
-    닫힌 세션의 완료 카드가 그렇게 되살아난다(GET /session과 같은 대상).
+    A closed session is still replayed while it remains in `proto_sessions` --
+    that is how the completion card of a session closed by the grace period
+    after a completion declaration comes back (same target as GET /session).
 
-    `context`는 마지막 턴의 컨텍스트 사용량이다(다음 대화에도 맞을 때만 —
-    proto/history.load_context). 재생하는 턴이 `context` 이벤트를 다시 흘리면 화면은
-    그 값으로 덮는다.
+    `context` is the context usage of the last turn (only when it still fits
+    the next conversation -- proto/history.load_context). If a replayed turn
+    streams a `context` event again, the screen overwrites with that value.
     """
     import aipds.app as app_module
     _require_registered(pid)
@@ -530,7 +560,7 @@ async def get_history(pid: str, slug: str):
     try:
         s3 = app_module.s3_store_factory(pid)
     except Exception:
-        # Discovery의 /history와 같은 강등: 스토어가 없으면 히스토리가 빌 뿐이다.
+        # Same degradation as Discovery's /history: no store just means empty history.
         _log.exception("project store unavailable for %s", pid)
         items, context = [], None
     else:
@@ -663,9 +693,10 @@ async def reset_prototype(pid: str, slug: str):
         _log.exception("reset: survey purge failed: %s/%s", pid, slug)
         failures.append("survey")
 
-    # 프리뷰 토큰의 루트 색인(proto/store.py)도 같은 사정이다: 토큰을 읽을 곳이
-    # prototypes/{slug}/access-token이라, 아래 session-state가 그 트리를 지우기
-    # **전에** 회수해야 한다. 남기면 리셋 뒤에도 옛 링크가 새 빌드로 풀린다.
+    # The preview token's root index (proto/store.py) is in the same position: the
+    # token is read from prototypes/{slug}/access-token, so it must be reclaimed
+    # **before** session-state below wipes that tree. If left behind, the old link
+    # still resolves to the new build after a reset.
     if not failures:
         store = prototype_store(pid)
         if store is not None:
@@ -734,7 +765,7 @@ def _archive_filename_header(slug: str) -> str:
 
 
 async def _archive_entries(pid: str, slug: str) -> list[tuple[str, bytes]]:
-    """이 프로젝트/슬러그의 소스. 수집 규칙은 proto/source.py가 소유한다."""
+    """Source for this project/slug. proto/source.py owns the collection rules."""
     import aipds.app as app_module
 
     return await source_entries(
@@ -743,8 +774,9 @@ async def _archive_entries(pid: str, slug: str) -> list[tuple[str, bytes]]:
 
 
 def _zip_entries(entries: list[tuple[str, bytes]]) -> bytes:
-    """압축은 CPU를 쓴다 — 이벤트 루프에서 돌리면 그동안 모든 SSE 스트림이 멈춘다.
-    그래서 호출부가 `asyncio.to_thread`로 부른다(project_export와 같은 이유)."""
+    """Compression is CPU-bound -- running it on the event loop stalls every SSE
+    stream meanwhile. So the caller invokes it via `asyncio.to_thread` (same
+    reason as project_export)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel, content in entries:
@@ -779,8 +811,9 @@ async def start_host(pid: str, slug: str):
         raise HTTPException(
             status_code=409,
             detail=ec.BUILD_SESSION_ACTIVE)
-    # 되살리기 → 브랜드 동기화 → npm → 스냅샷 → 토큰 → 원하는 상태. 기동 뒤
-    # 재호스팅과 같은 절차여야 하므로 한 함수다(proto/hosting.py).
+    # Restore -> brand sync -> npm -> snapshot -> token -> desired state. It must be
+    # the same procedure as re-hosting after boot, so it is one function
+    # (proto/hosting.py).
     try:
         info, token = await host_prototype(pid, slug)
     except FileNotFoundError:
@@ -800,9 +833,10 @@ async def host_status(pid: str, slug: str):
     info = app_module.proto_host().status(pid, slug)
     if info is None:
         raise HTTPException(status_code=404, detail="not hosted")
-    # GET은 토큰을 만들지 않는다(`token_for`) — 조회가 자격증명을 만드는 부수효과를
-    # 가지면, 호스팅된 적 없는 프로토타입에도 토큰이 깔린다. 아직 없으면 None이고,
-    # 프론트는 그때 링크를 노출하지 않는다.
+    # GET does not mint a token (`token_for`) -- if a read had the side effect of
+    # creating a credential, tokens would be laid down even for prototypes that
+    # were never hosted. If none exists yet it is None, and the frontend then
+    # does not expose the link.
     token = app_module.proto_host().token_for(pid, slug)
     return {"state": info.state, "port": info.port,
             "access_url": access_url_path(token) if token else None,
@@ -812,6 +846,7 @@ async def host_status(pid: str, slug: str):
 @router.delete("/projects/{pid}/prototypes/{slug}/host", status_code=204)
 async def stop_host(pid: str, slug: str):
     _require_registered(pid)
-    # 원하는 상태도 지운다 — 사용자가 멈춘 프로토타입이 재시작 뒤 다시 뜨면 안 된다.
+    # Also clear the desired state -- a prototype the user stopped must not come
+    # back up after a restart.
     await stop_prototype(pid, slug)
     return Response(status_code=204)

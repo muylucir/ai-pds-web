@@ -1,12 +1,12 @@
-# backend/aipds/handoff/ledger.py — 결정 장부: Discovery에서 PM이 답한 결정을 그대로 옮긴 표.
+# backend/aipds/handoff/ledger.py — decision ledger: a table carrying over, as is, the decisions the PM answered in Discovery.
 #
-# **왜 있는가.** Discovery 문서는 결정의 결과를 담지만, 그 결정이 PM이 고른 것인지 AI가 제안한
-# 기본값을 그대로 받은 것인지는 담지 않는다. 개발이 어떤 결정을 믿고 어떤 결정을 다시 확인할지는
-# 그 차이로 정해진다 — 실측에서 AI가 기본값을 표시한 문항의 89%가 그대로 골라졌다.
+# **Why it exists.** Discovery documents hold the results of decisions, but not whether a decision was chosen
+# by the PM or was an AI-proposed default accepted as is. Which decisions development trusts and which it
+# re-checks is determined by that difference — in observations, 89% of questions where the AI marked a default were answered with that default.
 #
-# **모델을 부르지 않는다.** 질문 파일의 답과 인계 탭의 기록을 표로 옮길 뿐이다. 다시 쓰는 문서는
-# 원본과 어긋날 수 있고(실측: 다시 쓴 PRD의 내부 모순), 같은 입력에서 같은 표가 나와야 사람이
-# 원본과 대조할 수 있다.
+# **It does not call the model.** It only moves question file answers and handoff tab records into a table. A
+# rewritten document can diverge from the source (observed: internal contradictions in a rewritten PRD), and
+# the same input must produce the same table so a person can check it against the source.
 from __future__ import annotations
 
 import re
@@ -84,7 +84,7 @@ _SINGLE = re.compile(r"^([A-J])\s*(?::\s*(.*))?$", re.DOTALL)
 
 
 def build(contents: Mapping[str, str], record: supplement_mod.Supplement, language: str) -> str:
-    """질문 파일(워크스페이스 경로 → 내용)과 인계 탭 기록 → `decisions.md`."""
+    """Question files (workspace path → content) and handoff tab records → `decisions.md`."""
     lab = _TEXT.get(language, _TEXT["ko"])
     confirmed = set(record.confirmed)
     by_stage: dict[str, list[tuple[str, str, str, str]]] = {}
@@ -123,7 +123,7 @@ def build(contents: Mapping[str, str], record: supplement_mod.Supplement, langua
 
 
 def _answer(q: Question, chosen: set[str]) -> str:
-    """고른 보기의 문장(부연이 있으면 덧붙인다). 보기 글자가 아니면 PM이 쓴 답 그대로."""
+    """The text of the chosen option (with the elaboration appended if any). If not an option letter, the PM's answer as written."""
     if not chosen:
         return (q.answer or "").strip()
     texts = [o.text.partition(readiness_mod.SUGGESTION_MARK)[0].strip()
@@ -150,5 +150,5 @@ def _handoff_rows(record: supplement_mod.Supplement, lab: dict) -> list[tuple[st
 
 
 def _cell(text: str) -> str:
-    """표 칸 하나 — 줄바꿈과 세로줄이 표를 깨지 않게."""
+    """One table cell — so that line breaks and vertical bars do not break the table."""
     return " ".join(text.replace("|", "\\|").split())

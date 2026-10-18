@@ -7,9 +7,9 @@ import { useT } from "@/lib/i18n/provider";
 // whose context/response reference a gate or approval. The frontend applies no
 // methodology judgment; it just surfaces what audit.md recorded.
 //
-// `onViewRaw`: audit.md가 있는데 항목이 하나도 읽히지 않았을 때 원문으로 가는 길.
-// 빈 패널은 "기록이 없다"와 구별되지 않는다 — 파서가 모르는 모양의 로그라도 사용자는
-// 원문을 읽을 수 있어야 한다.
+// `onViewRaw`: a path to the raw text when audit.md exists but not a single entry could be read.
+// An empty panel is indistinguishable from "there is no record" — even if the log has a shape the parser does not know, the user
+// must be able to read the raw text.
 export function VerificationSummary({ entries, onViewRaw }: {
   entries: AuditEntry[];
   onViewRaw?: () => void;
