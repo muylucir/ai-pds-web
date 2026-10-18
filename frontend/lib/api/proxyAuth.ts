@@ -1,37 +1,37 @@
 // frontend/lib/api/proxyAuth.ts
 //
-// /api 프록시의 인증 부분. route 파일이 헬퍼를 export할 수 없어 분리한다
-// (rewriteLocation.ts와 같은 이유).
+// The auth part of the /api proxy. Split out because a route file cannot export helpers
+// (same reason as rewriteLocation.ts).
 
-// 요청 본문을 재생할 수 없는 메서드 — 401 리프레시 후 재시도가 불가능하다.
-// (init.body가 스트림이면 한 번 소비된 뒤 되돌릴 수 없다.)
+// Methods whose request body cannot be replayed — retrying after a 401 refresh is impossible.
+// (If init.body is a stream, it cannot be rewound once consumed.)
 const REPLAYABLE_METHODS = new Set(["GET", "HEAD", "DELETE"]);
 
-//: 백엔드로 흘려보내도 되는 쿠키의 접두어. 프로토타입 접근 토큰 쿠키다
-//: (backend/aipds/routes/proto_public.py의 COOKIE_PREFIX) — 양쪽이 같은
-//: 문자열이어야 하고, 어긋나면 쿠키가 백엔드에 닿지 않아 모든 프로토타입
-//: 프리뷰가 404가 된다.
+//: Prefix of cookies that may be passed through to the backend. These are the prototype access token cookies
+//: (COOKIE_PREFIX in backend/aipds/routes/proto_public.py) — both sides must be the same
+//: string; if they disagree, the cookie never reaches the backend and every prototype
+//: preview returns 404.
 const PROTO_COOKIE_PREFIX = "aipds_proto_";
 
-/** 백엔드로 보낼 수 있는 쿠키만 남긴 Cookie 헤더 값. 없으면 null.
+/** Cookie header value keeping only the cookies that may be sent to the backend. null if none.
  *
- *  **허용목록이다**(차단목록이 아니다). 이 방향이 load-bearing인 이유: 나중에
- *  세션 관련 쿠키가 하나 더 생겼을 때 차단목록이라면 그것을 여기에 추가하는
- *  것을 잊는 순간 조용히 백엔드로 새고, 그 사실은 아무 테스트도 깨뜨리지
- *  않는다. 허용목록에서는 그 실수가 "새 쿠키가 전달되지 않는다"로 나타나
- *  기능이 동작하지 않는 쪽으로 실패한다.
+ *  **It is an allowlist** (not a blocklist). Why this direction is load-bearing: if another
+ *  session-related cookie appears later, with a blocklist the moment someone forgets to add it
+ *  here it silently leaks to the backend, and that breaks no test.
+ *  With an allowlist the same mistake shows up as "the new cookie is not forwarded", failing
+ *  toward the feature not working.
  *
- *  프로토타입 접근 쿠키만 통과시키는 이유는 그것이 **백엔드가 판단해야 하는
- *  유일한 쿠키**이기 때문이다. 세션 JWT(aipds_access/aipds_id/aipds_refresh)는 이
- *  경계에서 멈추고 withBearer가 Authorization으로 번역한다 — 백엔드는 세션
- *  쿠키를 읽지 않는다. */
+ *  Only the prototype access cookie is let through because it is **the only cookie the backend
+ *  has to judge**. The session JWTs (aipds_access/aipds_id/aipds_refresh) stop at this
+ *  boundary and withBearer translates them into Authorization — the backend does not read session
+ *  cookies. */
 export function forwardableCookies(cookieHeader: string | null | undefined): string | null {
   if (!cookieHeader) return null;
   const kept = cookieHeader
     .split(";")
     .map((c) => c.trim())
-    // 이름으로 판정한다. 접두어 검사이므로 값을 분리할 필요가 없다 — 쿠키 이름에는
-    // "="가 들어갈 수 없으므로 `startsWith`가 이름의 시작만 본다는 것이 보장된다.
+    // Judged by name. It is a prefix check, so there is no need to split off the value — cookie names
+    // cannot contain "=", so `startsWith` is guaranteed to look only at the start of the name.
     .filter((c) => c.startsWith(PROTO_COOKIE_PREFIX));
   return kept.length > 0 ? kept.join("; ") : null;
 }
@@ -39,15 +39,15 @@ export function forwardableCookies(cookieHeader: string | null | undefined): str
 export function withBearer(headers: Headers,
                            accessToken: string | undefined): Headers {
   const out = new Headers(headers);
-  // 백엔드는 세션 쿠키를 모른다. 흘려보내면 세션 토큰이 한 계층 더 노출된다.
-  // 전부 지운 뒤 허용목록만 되살린다 — 지우는 것이 기본값이어야 한다.
+  // The backend does not know about session cookies. Passing them through would expose the session tokens one layer further.
+  // Delete them all, then restore only the allowlist — deleting must be the default.
   const forwardable = forwardableCookies(out.get("cookie"));
   out.delete("cookie");
-  // 프로토타입 접근 쿠키는 백엔드가 판단하는 유일한 쿠키다
-  // (routes/proto_public.py의 _authorized). 이것이 없으면 /api/proto/* 요청이
-  // 전부 404가 된다 — 그 경로도 이 프록시를 통과하기 때문이다.
+  // The prototype access cookie is the only cookie the backend judges
+  // (_authorized in routes/proto_public.py). Without it, every /api/proto/* request
+  // returns 404 — because that path also goes through this proxy.
   if (forwardable) out.set("cookie", forwardable);
-  // 클라이언트가 보낸 Authorization은 신뢰하지 않는다 — httpOnly 쿠키가 진실이다.
+  // The Authorization the client sent is not trusted — the httpOnly cookie is the truth.
   out.delete("authorization");
   if (accessToken) out.set("authorization", `Bearer ${accessToken}`);
   return out;

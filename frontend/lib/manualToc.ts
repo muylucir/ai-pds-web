@@ -1,7 +1,7 @@
-// frontend/lib/manualToc.ts — 목차와 스크롤 위치 표시가 공유하는 앵커 계산.
+// frontend/lib/manualToc.ts — the anchor computation shared by the table of contents and the scroll position indicator.
 //
-// 목차(ManualToc)와 스크롤 감시(useScrollSpy)가 **같은 목록**을 봐야 한다.
-// 각자 blocks를 훑으면 한쪽이 소제목을 빠뜨렸을 때 강조가 조용히 어긋난다.
+// The table of contents (ManualToc) and the scroll watcher (useScrollSpy) must see **the same list**.
+// If each scanned blocks on its own, the highlight would silently drift when one side missed a subheading.
 import type { ManualSection } from "@/content/manual";
 
 export interface ManualHeading {
@@ -9,7 +9,7 @@ export interface ManualHeading {
   text: string;
 }
 
-/** 절 안의 소제목. 목차의 하위 항목이자 딥링크 앵커다. */
+/** Subheadings within a section. Sub-items of the table of contents and deep-link anchors. */
 export function headingsOf(section: ManualSection): ManualHeading[] {
   return section.blocks.flatMap((b) =>
     b.kind === "heading" ? [{ id: b.id, text: b.text }] : [],
@@ -17,8 +17,8 @@ export function headingsOf(section: ManualSection): ManualHeading[] {
 }
 
 /**
- * 문서에 있는 모든 앵커를 **문서 순서대로**. useScrollSpy가 이 순서로
- * "첫 번째로 보이는 것"을 고르므로 순서가 load-bearing이다.
+ * Every anchor in the document, **in document order**. useScrollSpy picks
+ * "the first one visible" in this order, so the order is load-bearing.
  */
 export function anchorIds(sections: ManualSection[]): string[] {
   return sections.flatMap((s) => [s.id, ...headingsOf(s).map((h) => h.id)]);

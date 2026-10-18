@@ -1,16 +1,19 @@
-# backend/aipds/launcher.py — 에이전트·프로토타입 프로세스를 실행 래퍼로 띄우는 쪽.
+# backend/aipds/launcher.py — the side that launches agent and prototype processes through the
+# execution wrapper.
 #
-# 래퍼(infra/scripts/aipds-launch, root)가 프로세스를 다른 uid·자기 트리만 보이는 샌드박스에
-# 넣는다. 이 모듈은 그 래퍼를 부르는 argv와 넘길 env를 만든다. 래퍼는 이 쪽을 믿지 않으므로
-# (경로를 스스로 계산하고 env를 다시 거른다) 여기는 "무엇을 띄울지"만 말한다.
+# The wrapper (infra/scripts/aipds-launch, root) puts the process in a sandbox with a
+# different uid that sees only its own tree. This module builds the argv that calls that
+# wrapper and the env to pass. The wrapper does not trust this side (it computes paths itself
+# and filters the env again), so this side only says "what to launch".
 #
-# **스위치.** `AIPDS_LAUNCHER=1`일 때만 켠다. 꺼져 있으면 백엔드 uid로 직접 띄운다(로컬 개발,
-# 되돌리기 — `aipds-harden disable`).
+# **Switch.** On only when `AIPDS_LAUNCHER=1`. When off, processes are launched directly under the
+# backend uid (local development, rollback — `aipds-harden disable`).
 #
-# **켜져 있는데 기동 점검(`probe`)이 실패하면 띄우지 않는다.** 직접 실행으로 돌아가면 에이전트와
-# 프로토타입이 인스턴스 롤 전체를 쥐고 도는데, 겉으로는 아무 일도 없어 보인다. 스위치는 새
-# 인스턴스에서 부팅 때 켜지므로(`aipds-harden boot`) 그 실패를 사람이 지켜보고 있지 않다 — 조용히
-# 격리가 빠지는 것보다 에이전트 턴과 호스팅이 멈추는 편이 드러난다. 되돌리는 길은 `disable`이다.
+# **If it is on and the startup check (`probe`) fails, nothing is launched.** Falling back to
+# direct execution would run the agent and prototypes holding the entire instance role, while
+# outwardly nothing seems wrong. The switch is turned on at boot on a new instance
+# (`aipds-harden boot`), so nobody is watching that failure — agent turns and hosting stopping
+# is more visible than isolation silently going missing. The way back is `disable`.
 from __future__ import annotations
 
 import asyncio
@@ -29,8 +32,8 @@ _log = logging.getLogger("aipds.launcher")
 
 SWITCH_ENV = "AIPDS_LAUNCHER"
 LAUNCH = "/usr/local/libexec/aipds/launch"
-#: SDK의 `cli_path`. SDK는 이 경로 뒤에 CLI 인자만 붙이므로 kind·project·slug는 env로 건넨다
-#: (infra/scripts/aipds-claude).
+#: The SDK's `cli_path`. The SDK appends only CLI arguments after this path, so kind, project,
+#: and slug are passed via env (infra/scripts/aipds-claude).
 CLAUDE_WRAPPER = "/usr/local/libexec/aipds/claude"
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -41,7 +44,8 @@ def switch_on() -> bool:
 
 
 class LauncherUnavailable(RuntimeError):
-    """스위치는 켜졌는데 래퍼를 쓸 수 없다. 직접 실행으로 돌아가지 않는다(머리말)."""
+    """The switch is on but the wrapper cannot be used. Does not fall back to direct execution
+    (header)."""
 
 
 @dataclass
@@ -49,8 +53,8 @@ class Launcher:
     broker: CredentialBroker | None
     launch: str = LAUNCH
     claude_wrapper: str = CLAUDE_WRAPPER
-    #: 기동 점검이 실패한 이유. 있으면 띄우는 것은 전부 거부하고, 멈추기·스윕만 한다 —
-    #: 직전 백엔드가 래퍼로 띄운 unit은 여전히 치워야 한다.
+    #: Why the startup check failed. If set, every launch is refused and only stop and sweep are
+    #: done — units the previous backend launched through the wrapper still need to be cleaned up.
     refused: str | None = None
 
     def require(self) -> None:
@@ -58,7 +62,7 @@ class Launcher:
             raise LauncherUnavailable(self.refused)
 
     def claude(self, kind: str, project_id: str, slug: str | None) -> tuple[str, dict[str, str]]:
-        """(cli_path, 더할 env). SDK 옵션에 그대로 넣는다."""
+        """(cli_path, env to add). Put into the SDK options as is."""
         self.require()
         env = {"AIPDS_LAUNCH_KIND": kind, "AIPDS_LAUNCH_PROJECT": project_id}
         if slug is not None:
@@ -69,20 +73,23 @@ class Launcher:
 
     async def exec_npm(self, kind: str, project_id: str, slug: str, *npm_args: str,
                        **spawn: Any) -> asyncio.subprocess.Process:
-        """`npm *npm_args`를 래퍼 아래에서 띄운다. `spawn`은 create_subprocess_exec의 kwargs.
+        """Launch `npm *npm_args` under the wrapper. `spawn` is the kwargs of
+        create_subprocess_exec.
 
-        래퍼를 부르는 곳(여기·stop·sweep·probe)은 모두 argv를 spawn 자리에 리터럴로 적는다 —
-        리스트를 만들어 펼쳐 넘기면 명령 주입 분석이 정적이지 않은 argv로 읽는다(이유는
-        proto/host.py `_npm_install`). 변하는 것은 kind·project·slug와 npm 인자뿐이고, 래퍼가
-        kind·project·slug를 다시 검사한다."""
+        Every place that calls the wrapper (here, stop, sweep, probe) writes argv literally in
+        the spawn position — building a list and spreading it would make command injection
+        analysis read it as a non-static argv (the reason is in proto/host.py `_npm_install`).
+        The only things that vary are kind, project, slug, and the npm arguments, and the
+        wrapper checks kind, project, and slug again."""
         self.require()
         return await asyncio.create_subprocess_exec(
             "sudo", "-n", self.launch, "run", kind, project_id, slug, "--", *npm_args, **spawn)
 
     def npm_env(self, kind: str, project_id: str, slug: str,
                 extra: dict[str, str]) -> dict[str, str]:
-        """호스팅 npm의 env. 백엔드 env 전체(`os.environ`)를 넘기지 않는다 — 래퍼가 어차피
-        거르지만, sudo까지 가는 프로세스에도 백엔드 설정을 싣지 않는다."""
+        """The env for hosting npm. The whole backend env (`os.environ`) is not passed — the
+        wrapper filters it anyway, but backend settings are not loaded onto a process that
+        goes as far as sudo either."""
         self.require()
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
         for key in ("AWS_REGION", "AWS_DEFAULT_REGION"):
@@ -94,8 +101,8 @@ class Launcher:
         return env
 
     async def stop(self, kind: str, project_id: str, slug: str) -> None:
-        """호스팅 unit을 멈춘다. systemd-run 클라이언트에 신호를 보내도 unit은 멈추지 않는다
-        (실측) — 그래서 이름으로 멈춘다."""
+        """Stop the hosting unit. Signaling the systemd-run client does not stop the unit
+        (measured) — so it is stopped by name."""
         proc = await asyncio.create_subprocess_exec(
             "sudo", "-n", self.launch, "stop", kind, project_id, slug,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
@@ -105,7 +112,8 @@ class Launcher:
                          proc.returncode, err.decode(errors="replace").strip())
 
     def sweep(self) -> None:
-        """직전 백엔드가 띄운 unit 전부. 백엔드가 재시작하면 클라이언트는 함께 죽지만 unit은 남는다."""
+        """All units the previous backend launched. When the backend restarts the clients die
+        with it, but the units remain."""
         subprocess.run(["sudo", "-n", self.launch, "sweep"], check=False, timeout=60,
                        stdout=subprocess.DEVNULL)
 
@@ -116,7 +124,8 @@ class Launcher:
 
 @dataclass(frozen=True)
 class Launch:
-    """드라이버·빌더가 받는 값: 이 CLI를 어떤 kind로, 어느 프로젝트로 띄울지."""
+    """The values the driver and builder receive: what kind to launch this CLI as, and for
+    which project."""
     launcher: Launcher
     kind: str
     project_id: str
@@ -135,7 +144,8 @@ _current: Launcher | None = None
 
 
 def current() -> Launcher | None:
-    """켜진 래퍼(거부 중일 수 있다 — `Launcher.refused`), 또는 None(= 스위치 꺼짐, 직접 실행)."""
+    """The enabled wrapper (it may be refusing — `Launcher.refused`), or None (= switch off,
+    direct execution)."""
     return _current
 
 
@@ -145,10 +155,12 @@ def set_current(launcher: Launcher | None) -> None:
 
 
 def sweep_if_installed(run=subprocess.run) -> None:
-    """래퍼가 꺼져 있어도, 설치돼 있으면 직전 백엔드가 래퍼로 띄운 unit을 멈춘다.
+    """Even if the wrapper is off, if it is installed, stop the units the previous backend
+    launched through it.
 
-    `aipds-harden disable` 뒤의 첫 기동이 그 경우다: 스위치는 꺼졌지만 직전 백엔드가 띄운
-    호스팅 unit은 살아 있고, 직접 실행 경로의 스윕(pid 파일 → killpg)은 그것을 못 본다.
+    The first startup after `aipds-harden disable` is that case: the switch is off, but the
+    hosting units the previous backend launched are alive, and the direct-execution sweep (pid
+    file → killpg) cannot see them.
     """
     if not os.path.exists(LAUNCH):
         return
@@ -169,12 +181,13 @@ def _expected_layout() -> dict[str, str]:
 
 
 def probe(run=subprocess.run) -> Launcher | None:
-    """기동 점검. 스위치가 꺼져 있으면 None(직접 실행). 켜져 있으면 늘 Launcher를 돌려준다 —
-    래퍼를 실제로 쓸 수 없으면 `refused`가 채워진 것을(머리말).
+    """Startup check. None if the switch is off (direct execution). If on, it always returns a
+    Launcher — one with `refused` filled in if the wrapper cannot actually be used (header).
 
-    래퍼에 `check`를 시켜 sudoers·설치·번들 CLI를 한 번에 확인하고, 래퍼가 계산하는 경로가
-    백엔드의 경로와 같은지 본다 — 다르면 CLI는 백엔드가 보지 않는 곳에 트랜스크립트를 쓰고
-    호스팅은 엉뚱한 트리를 돈다.
+    Has the wrapper run `check` to confirm sudoers, installation, and the bundled CLI in one
+    go, and checks that the paths the wrapper computes match the backend's — if they differ,
+    the CLI writes transcripts where the backend does not look and hosting runs the wrong
+    tree.
     """
     if not switch_on():
         return None

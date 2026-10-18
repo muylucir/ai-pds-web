@@ -1,46 +1,49 @@
 # backend/aipds/routes/proto_public.py — PUBLIC prototype preview proxy.
 #
-# 이 파일이 prototypes.py에서 분리된 이유는 인증이다: app.py는 라우터 include
-# 시점에 인증 의존성을 붙이는데, 이 라우트들은 Cognito 인증 없이 남아야 한다.
-# 검증 설문 링크(/survey/{token})를 받은 사용자는 계정이 없는 상태로 프로토타입을
-# 써야 한다.
+# This file is split out of prototypes.py because of authentication: app.py attaches
+# the auth dependency when it includes a router, but these routes must stay free of
+# Cognito authentication. A user who receives a validation survey link
+# (/survey/{token}) has to use the prototype without an account.
 #
-# 파일 경계 = 인증 경계. 여기에 라우트를 추가하면 그것은 인터넷에 공개된다.
+# File boundary = auth boundary. Any route added here is exposed to the internet.
 #
-# ---- 접근 토큰 (프로토타입마다 하나) ----
+# ---- Access tokens (one per prototype) ----
 #
-# "무인증"이 "무제한"을 뜻하지는 않는다. 이 파일은 예전에 pid와 slug를 아는
-# 사람이면 누구나 들어올 수 있었고, 그 사실을 알려진 한계로 적어 두고 있었다.
-# 그 방어선은 실제로는 없는 것과 같았다: pid는 프로젝트 생성 시 **사용자가 직접
-# 넣는 문자열**이고(routes/projects.py의 CreateProject.project_id) slug는 스펙
-# 파일명에서 온다 — 둘 다 사람이 읽을 수 있고 따라서 추측할 수 있다.
+# "Unauthenticated" does not mean "unrestricted". This file used to let in anyone who
+# knew the pid and slug, and it recorded that as a known limitation. That line of
+# defense was effectively nonexistent: the pid is a **string the user types in** when
+# creating the project (CreateProject.project_id in routes/projects.py), and the slug
+# comes from the spec filename -- both are human-readable and therefore guessable.
 #
-# 지금은 프로토타입마다 토큰이 있고 흐름은 두 단계다:
+# Now each prototype has a token, and the flow has two steps:
 #
-#   1. GET /proto/t/{token}  — 게이트. 토큰을 (pid, slug)로 번역하고, 그
-#      프로토타입 경로에만 스코프된 쿠키를 심고, 실제 프리뷰 경로로 307한다.
-#   2. /proto/{pid}/{slug}/* — 프록시. 그 쿠키를 요구한다.
+#   1. GET /proto/t/{token}  — the gate. Translates the token into (pid, slug), sets a
+#      cookie scoped to that prototype's path only, and 307s to the real preview path.
+#   2. /proto/{pid}/{slug}/* — the proxy. Requires that cookie.
 #
-# **왜 쿠키인가**(경로에 토큰을 박지 않고): 프로토타입은 Next.js `basePath`를
-# 빌드 시점에 굽고(proto/host.py의 start), 그 값이 asset URL·클라이언트 라우터
-# href·자체 리다이렉트에 전부 들어간다. 경로 모양을 바꾸면 이미 빌드된 모든
-# 프로토타입을 재빌드해야 하고(npm install + build, 수 분) 토큰이 asset URL과
-# Referer에 실려 나간다. 쿠키는 asset 요청에도 자동으로 붙으므로 basePath는
-# 건드릴 필요가 없다.
+# **Why a cookie** (rather than embedding the token in the path): a prototype bakes
+# the Next.js `basePath` in at build time (start in proto/host.py), and that value
+# goes into every asset URL, client-router href, and its own redirects. Changing the
+# path shape would mean rebuilding every prototype already built (npm install + build,
+# several minutes), and the token would leak out in asset URLs and the Referer. A
+# cookie is attached to asset requests automatically, so basePath does not need to
+# change.
 #
-# **왜 프로토타입마다 다른 쿠키 이름인가**: 공용 쿠키에 Path=/api/proto를 주면
-# 한 프로토타입 링크를 받은 사람이 다른 프로토타입의 pid/slug를 추측해서 들어갈
-# 수 있다 — 지금 막으려는 구멍이 한 겹 안쪽에서 그대로 재현된다.
+# **Why a different cookie name per prototype**: if a shared cookie got
+# Path=/api/proto, someone who received one prototype's link could guess another
+# prototype's pid/slug and get in -- the very hole being closed here would reappear
+# one layer further in.
 #
-# **왜 실패가 404인가**(403이 아니라): 403은 "여기 뭔가 있다"를 알려준다. 이
-# 기능의 목적은 발견되지 않는 것이므로 없는 프로토타입과 구별하지 않는다.
-# surveys_public.py의 `_resolve`가 없는 토큰과 없는 설문을 구별하지 않는 것과
-# 같은 판단이다. 진단은 응답이 아니라 로그로 남긴다.
+# **Why failure is 404** (not 403): a 403 says "something is here". The point of this
+# feature is not to be discovered, so it does not distinguish this from a nonexistent
+# prototype. This is the same judgment as `_resolve` in surveys_public.py, which does
+# not distinguish a missing token from a missing survey. Diagnostics go to the log,
+# not the response.
 #
-# ⚠️ 남아 있는 한계(의도된 것): 링크를 받은 사람이 그것을 재공유하는 것은 막지
-# 않는다. 그것을 막으려면 만료나 개인별 토큰이 필요하고, 둘 다 이 기능의 위협
-# 모델(URL을 추측으로 찾는 외부인) 밖이다. 프로토타입에 민감 데이터를 넣지
-# 않는다는 전제는 계속 유효하다.
+# ⚠️ Remaining limitation (intentional): this does not stop someone who received the
+# link from re-sharing it. Stopping that would need expiry or per-person tokens, and
+# both are outside this feature's threat model (an outsider finding the URL by
+# guessing). The premise that prototypes hold no sensitive data still stands.
 from __future__ import annotations
 
 import asyncio
@@ -64,29 +67,31 @@ _log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# 프록시 업스트림 클라이언트는 프로세스(이벤트 루프)당 하나다. 요청마다 만들면
-# 생성 비용(SSL 컨텍스트·CA 번들 로드, 실측 ~16ms)이 루프 위에서 동기로 들고
-# keep-alive도 없다 — 페이지 하나가 asset 수십 개를 부르므로 그 곱이 모든 SSE
-# 스트림을 함께 멈춘다.
+# There is one proxy upstream client per process (event loop). Creating one per
+# request incurs the construction cost (SSL context and CA bundle load, measured at
+# ~16ms) synchronously on the loop, with no keep-alive either -- a single page pulls
+# dozens of assets, so the multiplied cost stalls every SSE stream at once.
 #
-# 공유하면서 지켜야 하는 것 둘:
-#   - **쿠키 잼을 끈다.** httpx 클라이언트는 응답의 Set-Cookie를 자기 잼에 담아
-#     이후 요청에 붙인다. 요청마다 새 클라이언트일 때는 무해했지만, 공유하면 한
-#     관람자에게 프로토타입이 심은 쿠키가 다음 관람자의 요청에 실린다. 브라우저의
-#     쿠키는 Cookie 헤더로 그대로 전달되므로 잼은 필요 없다.
-#   - **연결 수에 상한을 두지 않는다.** 스트리밍 응답(HMR·SSE)은 연결을 오래 쥔다.
-#     상한이 있으면 그것들이 풀을 채운 뒤 asset 요청이 줄을 선다 — 종전(요청마다
-#     클라이언트)에도 상한은 없었다.
+# Two things to keep while sharing it:
+#   - **Disable the cookie jar.** An httpx client stores a response's Set-Cookie in
+#     its own jar and attaches it to later requests. That was harmless with a new
+#     client per request, but when shared, a cookie a prototype set for one viewer
+#     rides along on the next viewer's request. The browser's cookies are forwarded
+#     as-is in the Cookie header, so no jar is needed.
+#   - **Do not cap the number of connections.** Streaming responses (HMR, SSE) hold
+#     connections for a long time. With a cap, they fill the pool and asset requests
+#     queue behind them -- the previous setup (a client per request) had no cap either.
 _proxy_client: httpx.AsyncClient | None = None
 _proxy_client_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _proxy_http() -> httpx.AsyncClient:
-    """현재 이벤트 루프의 공유 업스트림 클라이언트.
+    """The shared upstream client for the current event loop.
 
-    루프가 바뀌면 새로 만든다 — 연결 풀은 만든 루프에 묶여 있다. 운영에서는 루프가
-    하나라 한 번만 만들어지고, 루프를 매번 새로 띄우는 테스트(TestClient)에서도
-    죽은 루프의 연결을 재사용하지 않는다.
+    Recreated when the loop changes -- the connection pool is bound to the loop that
+    created it. In production there is one loop, so it is created only once; and in
+    tests that start a new loop every time (TestClient), connections from a dead loop
+    are not reused.
     """
     global _proxy_client, _proxy_client_loop
     loop = asyncio.get_running_loop()
@@ -101,7 +106,7 @@ def _proxy_http() -> httpx.AsyncClient:
 
 
 async def aclose_proxy_http() -> None:
-    """lifespan 종료에서 부른다 — 열린 keep-alive 연결을 닫는다."""
+    """Called at lifespan shutdown -- closes open keep-alive connections."""
     global _proxy_client, _proxy_client_loop
     if _proxy_client is not None:
         await _proxy_client.aclose()
@@ -156,58 +161,63 @@ def public_base_path(pid: str, slug: str) -> str:
     return f"{mount}{proxy_prefix(pid, slug)}"
 
 
-#: 쿠키 이름의 접두어. 프론트 프록시의 허용목록이 이 접두어로 판정하므로
-#: (frontend/lib/api/proxyAuth.ts의 forwardableCookies) 양쪽이 같아야 한다 —
-#: 어긋나면 쿠키가 백엔드에 닿지 않고 모든 프리뷰가 404가 된다.
+#: Cookie name prefix. The frontend proxy's allowlist matches on this prefix
+#: (forwardableCookies in frontend/lib/api/proxyAuth.ts), so both sides must agree --
+#: if they diverge, the cookie never reaches the backend and every preview 404s.
 COOKIE_PREFIX = "aipds_proto_"
 
 
 def cookie_name(pid: str, slug: str) -> str:
-    """이 프로토타입 전용 쿠키 이름.
+    """The cookie name dedicated to this prototype.
 
-    pid/slug를 그대로 넣지 않는 이유는 두 가지다: 쿠키 이름에 쓸 수 없는 문자가
-    섞일 수 있고(pid는 사용자가 넣는 임의 문자열이다), 길이도 통제되지 않는다.
-    해시는 비밀이 아니라 이름을 짓기 위한 것이므로 16자로 자른다 — 충돌하면 두
-    프로토타입이 쿠키를 공유하게 되지만, 값 검증은 여전히 그 경로의 토큰과
-    비교하므로(`_authorized`) 충돌이 접근 권한을 넘겨주지는 않는다.
+    There are two reasons not to use pid/slug directly: they may contain characters
+    not allowed in a cookie name (the pid is an arbitrary user-entered string), and
+    their length is uncontrolled. The hash is for naming, not secrecy, so it is cut
+    to 16 characters -- a collision would make two prototypes share a cookie, but the
+    value is still compared against that path's token (`_authorized`), so a collision
+    does not hand over access.
     """
     digest = hashlib.sha256(f"{pid}/{slug}".encode("utf-8")).hexdigest()
     return f"{COOKIE_PREFIX}{digest[:16]}"
 
 
-#: 접근 쿠키에 `Secure`를 붙일지. HTTPS로 서비스되는 배포에서 켠다.
+#: Whether to add `Secure` to the access cookie. Turn on in deployments served
+#: over HTTPS.
 #:
-#: 스테이지 이름이 아니라 **이 동작 하나만 가리키는 불리언**인 이유: 이름이
-#: 하는 일과 정확히 같아야 다음 사람이 범위를 오해하지 않는다. "환경" 변수는
-#: 로그 포맷·에러 상세 같은 것까지 묶어 부르게 되고, 그러면 HTTPS 프록시를
-#: 앞에 둔 로컬 검증처럼 "프로덕션은 아니지만 Secure는 필요한" 구성을 표현할
-#: 수 없다. 스테이지 값("production" 등)을 그대로 이 변수에 넣는 것이 바로
-#: 여기서 막는 실수다 — 이름과 스테이지가 우연히 다른 문자열이면 조용히
-#: 꺼진 채로 배포된다.
+#: Why a **boolean that names only this one behavior** rather than a stage name: the
+#: name must match exactly what it does so the next person does not misread its
+#: scope. An "environment" variable ends up pulling in things like log format and
+#: error detail, and then a configuration that is "not production but needs Secure",
+#: such as local validation behind an HTTPS proxy, cannot be expressed. Putting a
+#: stage value ("production" etc.) into this variable as-is is exactly the mistake
+#: this prevents -- if the name and stage happen to be different strings, it ships
+#: silently turned off.
 _COOKIE_SECURE_ENV = "AIPDS_COOKIE_SECURE"
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
 def _cookie_secure() -> bool:
-    """접근 쿠키에 `Secure`를 붙일지.
+    """Whether to add `Secure` to the access cookie.
 
-    기본값은 **꺼짐**이다. 로컬 개발이 `http://localhost`이고 브라우저는 평문
-    HTTP에서 Secure 쿠키를 저장하지 않으므로, 기본이 켜짐이면 아무 설정 없이
-    띄운 개발 환경에서 프리뷰가 열리지 않는다.
+    The default is **off**. Local development runs on `http://localhost` and browsers
+    do not store Secure cookies over plain HTTP, so with a default of on, previews
+    would not open in a dev environment started without any configuration.
 
-    그 기본값의 대가는 배포에서 이 변수를 빠뜨리면 **증상 없이** non-Secure
-    쿠키가 나가는 것이다(CloudFront가 HTTPS를 강제하므로 화면상 아무 차이가
-    없다). 눈으로 잡을 수 없는 종류이므로 `infra/test/user-data.assert.ts`가
-    배포 설정에 이 값이 있는지 단정한다 -- 실제로 한 번 빠뜨렸다.
+    The cost of that default is that if a deployment omits this variable, a non-Secure
+    cookie goes out **with no symptom** (CloudFront enforces HTTPS, so nothing looks
+    different on screen). Since this cannot be caught by eye,
+    `infra/test/user-data.assert.ts` asserts that the deployment config sets this
+    value -- it was in fact omitted once.
     """
     return os.environ.get(_COOKIE_SECURE_ENV, "").strip().lower() in _TRUTHY
 
 
 def _authorized(request: Request, pid: str, slug: str) -> bool:
-    """이 요청이 이 프로토타입의 쿠키를 갖고 있는가.
+    """Whether this request carries this prototype's cookie.
 
-    비교 대상은 **그 프로토타입의 토큰**이다. 쿠키 이름만 맞는 것으로는 통과하지
-    못하므로, 쿠키 이름 해시가 충돌해도 다른 프로토타입에 들어갈 수 없다.
+    The comparison is against **that prototype's token**. A matching cookie name alone
+    does not pass, so even a cookie-name hash collision cannot get into another
+    prototype.
     """
     import aipds.app as app_module
     presented = request.cookies.get(cookie_name(pid, slug))
@@ -215,28 +225,30 @@ def _authorized(request: Request, pid: str, slug: str) -> bool:
         return False
     expected = app_module.proto_host().token_for(pid, slug)
     if not expected:
-        # 토큰이 없는 프로토타입은 아직 호스팅된 적이 없다 — 통과시킬 기준이
-        # 없으므로 거절한다. 여기서 True를 주면 토큰 파일이 사라진 상태가
-        # 곧 무인증 상태가 된다.
+        # A prototype with no token has never been hosted -- there is nothing to
+        # check against, so reject. Returning True here would make a missing token
+        # file equivalent to no authentication.
         return False
     return secrets.compare_digest(presented, expected)
 
 
 def _not_found() -> PlainTextResponse:
-    """존재하지 않는 프로토타입과 인증되지 않은 접근에 대한 같은 응답.
+    """The same response for a nonexistent prototype and an unauthenticated access.
 
-    문구도 같아야 한다 — 본문이 다르면 응답 코드를 맞춰 놓은 의미가 없다.
+    The wording must match too -- if the bodies differ, matching the status codes is
+    pointless.
     """
     return PlainTextResponse("not found", status_code=404)
 
 
 async def _resolve_from_index(token: str) -> tuple[str, str] | None:
-    """캐시에 없는 토큰을 S3의 루트 색인에서 찾는다(proto/store.py).
+    """Look up a token missing from the cache in the S3 root index (proto/store.py).
 
-    교체된 인스턴스에는 토큰 파일이 없어 캐시가 비어 있다 — 그래도 이미 나눠 준 링크는
-    살아야 한다. 찾으면 캐시와 토큰 파일에 심어(`adopt_token`) 이 뒤의 쿠키 검사
-    (`_authorized`)가 같은 값을 보게 한다. 등록되지 않은 프로젝트의 토큰(삭제 중,
-    다른 인스턴스)은 받지 않는다.
+    A replaced instance has no token files, so its cache is empty -- yet links already
+    handed out must keep working. When found, the token is planted in the cache and the
+    token file (`adopt_token`) so the subsequent cookie check (`_authorized`) sees the
+    same value. Tokens of unregistered projects (being deleted, another instance) are
+    not accepted.
     """
     import aipds.app as app_module
     if not app_module.durable_projects_enabled():
@@ -254,30 +266,34 @@ async def _resolve_from_index(token: str) -> tuple[str, str] | None:
 
 @router.get("/proto/t/{token}")
 async def enter_prototype(token: str, request: Request):
-    """토큰 링크의 진입점. 쿠키를 심고 실제 프리뷰 경로로 보낸다.
+    """Entry point for a token link. Sets the cookie and sends to the real preview path.
 
-    이 라우트가 GET 하나뿐인 것은 의도된 것이다: 참가자가 채팅에서 클릭하는
-    top-level 네비게이션만 여기로 들어오고, 그 뒤의 모든 요청(asset, 프로토타입
-    자체의 API 호출, 폼 POST)은 쿠키를 들고 기존 프록시 경로로 간다.
+    That this route is a single GET is intentional: only the top-level navigation a
+    participant clicks in the chat comes in here, and every later request (assets, the
+    prototype's own API calls, form POSTs) carries the cookie to the existing proxy
+    path.
 
-    쿠키의 Path는 **브라우저 관점 경로**(`public_base_path`)여야 한다. 이 앱이
-    보는 경로(`/proto/...`)로 쓰면 브라우저는 `/api/proto/...` 요청에 쿠키를
-    붙이지 않는다 — 프록시가 `/api`를 떼고 나서야 이 앱에 닿기 때문이다.
-    그러면 게이트는 200처럼 동작하는데 그다음 요청이 전부 404가 된다.
+    The cookie's Path must be the **browser-side path** (`public_base_path`). If it
+    used the path this app sees (`/proto/...`), the browser would not attach the
+    cookie to `/api/proto/...` requests -- the request only reaches this app after the
+    proxy strips `/api`. The gate would then behave like a 200 while every following
+    request 404s.
     """
     import aipds.app as app_module
     if not preview_surface.on_preview_surface(request.headers):
         if not preview_surface.enabled():
-            # 인증이 켜진 배포인데 프리뷰 표면이 없다(설정 누락, 비밀 값 읽기 실패).
-            # 앱 오리진에서 서빙하지 않는다(aipds/preview_surface.py 머리말).
+            # Auth is on in this deployment but there is no preview surface (missing
+            # config, failed secret read). Do not serve from the app origin (see the
+            # header of aipds/preview_surface.py).
             _log.warning("proto gate 503: preview surface is not configured")
             return PlainTextResponse(
                 "prototype preview is not available right now — try again shortly",
                 status_code=503)
-        # 앱 도메인으로 온 링크(프리뷰 표면이 생기기 전에 나눠 준 것)는 같은 경로의
-        # 프리뷰 도메인으로 보낸다. 쿠키는 심지 않는다 — 앱 오리진에 프로토타입 쿠키가
-        # 생길 이유가 없다. 토큰을 검증하지 않고 보내는 것은 정보가 새지 않기 때문이다:
-        # 무엇이 오든 같은 리다이렉트다.
+        # A link that arrived on the app domain (handed out before the preview surface
+        # existed) is sent to the same path on the preview domain. No cookie is set --
+        # there is no reason for a prototype cookie to exist on the app origin. Sending
+        # without validating the token is fine because nothing leaks: whatever comes in
+        # gets the same redirect.
         return RedirectResponse(
             f"{preview_surface.preview_origin()}{_access_path(token)}", status_code=307)
     target = app_module.proto_host().resolve_token(token)
@@ -290,56 +306,59 @@ async def enter_prototype(token: str, request: Request):
 
     info = app_module.proto_host().status(pid, slug)
     if info is None or info.state != "running" or info.port is None:
-        # 토큰은 유효한데 호스팅이 꺼져 있다. 여기서는 502로 구별해도 된다 —
-        # 유효한 토큰을 가진 사람에게만 보이는 정보이므로 프로버에게 아무것도
-        # 알려주지 않는다. 오히려 구별하지 않으면 링크를 나눠 준 PM이 "링크가
-        # 틀렸나"와 "호스팅이 꺼졌나"를 구별할 수 없다.
+        # The token is valid but hosting is off. Distinguishing this with a 502 is fine
+        # here -- only someone holding a valid token sees it, so it tells a prober
+        # nothing. Conversely, without the distinction the PM who handed out the link
+        # could not tell "is the link wrong?" from "is hosting off?".
         _log.debug("proto gate 502: not running (%s/%s)", pid, slug)
         return PlainTextResponse(
             "prototype not running — start hosting first", status_code=502)
 
     base = public_base_path(pid, slug)
-    # 307: 캐시되지 않아야 한다. 이 응답에는 Set-Cookie가 실려 있고, 301/308이
-    # 캐시되면 쿠키 없이 리다이렉트만 재생되어 404 루프가 된다.
+    # 307: must not be cached. This response carries Set-Cookie, and if a 301/308 were
+    # cached, only the redirect would replay without the cookie, causing a 404 loop.
     response = RedirectResponse(f"{base}/", status_code=307)
     response.set_cookie(
         cookie_name(pid, slug),
         app_module.proto_host().ensure_token(pid, slug),
         path=base,
-        httponly=True,       # 프로토타입 앱의 JS가 자기 접근 토큰을 읽을 이유가
-                             # 없다. 그 코드는 빌드 에이전트가 쓴 것이고 신뢰
-                             # 대상이 아니다.
+        httponly=True,       # The prototype app's JS has no reason to read its own
+                             # access token. That code was written by the build
+                             # agent and is not trusted.
         secure=_cookie_secure(),
-        # lax: 참가자가 채팅 링크를 누르는 것이 top-level 네비게이션이므로
-        # 충분하다. strict면 바로 그 클릭에서 쿠키가 빠져 첫 진입이 깨진다.
+        # lax: enough, since a participant clicking the chat link is a top-level
+        # navigation. With strict, the cookie would be dropped on that very click and
+        # the first entry would break.
         samesite="lax",
-        # max_age 없음 = 세션 쿠키. 위협 모델이 "만료"가 아니므로 수명을
-        # 발명하지 않는다 — 브라우저를 닫으면 사라지고 링크를 다시 누르면 된다.
+        # No max_age = session cookie. The threat model is not about "expiry", so we do
+        # not invent a lifetime -- it disappears when the browser closes, and clicking
+        # the link again restores it.
     )
     return response
 
 
 def _access_path(token: str) -> str:
-    """토큰 게이트의 **브라우저 관점 경로**(도메인 없이)."""
+    """The token gate's **browser-side path** (without the domain)."""
     mount = os.environ.get(_PUBLIC_PREFIX_ENV, _PUBLIC_PREFIX_DEFAULT).rstrip("/")
     return f"{mount}/proto/t/{quote(token)}"
 
 
 def access_url_path(token: str) -> str:
-    """토큰 게이트의 경로 — **브라우저 관점**이다.
+    """The token gate's path -- **browser-side**.
 
-    `public_base_path`와 같은 이유로 `/api` 마운트를 포함한다: 이 값은 참가자가
-    브라우저에 붙여 넣는 링크가 되므로, 이 앱이 보는 경로(`/proto/t/...`)를 주면
-    CloudFront 루트에서 404가 된다.
+    It includes the `/api` mount for the same reason as `public_base_path`: this value
+    becomes the link a participant pastes into a browser, so giving the path this app
+    sees (`/proto/t/...`) would 404 at the CloudFront root.
 
-    프론트가 조립하지 않고 서버가 내려보내는 이유는 토큰이 클라이언트 상태가
-    아니기 때문이다 — 프론트가 URL을 만들려면 토큰을 먼저 받아야 하고, 그러면
-    토큰이 링크가 아닌 곳(목록 응답의 별도 필드, 그리고 그것을 담은 클라이언트
-    상태)에도 존재하게 된다.
+    The server sends it down instead of the frontend assembling it because the token
+    is not client state -- for the frontend to build the URL it would first have to
+    receive the token, and then the token would also exist outside the link (as a
+    separate field in the list response, and in the client state holding it).
     """
     path = _access_path(token)
-    # 프리뷰 표면이 있으면 링크는 **그 도메인의 절대 URL**이다 — 앱 도메인의 상대
-    # 경로를 주면 참가자가 앱 오리진에서 프로토타입을 연다(aipds/preview_surface.py).
+    # When a preview surface exists, the link is an **absolute URL on that domain** --
+    # a relative path on the app domain would have the participant open the prototype
+    # on the app origin (aipds/preview_surface.py).
     origin = preview_surface.preview_origin() if preview_surface.enabled() else None
     return f"{origin}{path}" if origin else path
 
@@ -396,13 +415,13 @@ def _rewritten_location(value: str, pid: str, slug: str) -> str:
 @router.api_route("/proto/{pid}/{slug}",
                   methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy_prototype_root(pid: str, slug: str, request: Request):
-    # 프리뷰 표면이 있으면 앱 오리진은 프로토타입을 서빙하지 않는다 — 인증 여부와
-    # 무관하게 같은 404다(aipds/preview_surface.py).
+    # When a preview surface exists, the app origin does not serve prototypes -- the
+    # same 404 regardless of authentication (aipds/preview_surface.py).
     if not preview_surface.on_preview_surface(request.headers):
         return _not_found()
-    # 리다이렉트보다 먼저 검증한다. 순서를 뒤집으면 인증 없는 요청도 307을
-    # 받으므로, 그 응답만으로 "이 pid/slug가 존재한다"를 알 수 있다 —
-    # 404로 감추려는 것이 바로 그 사실이다.
+    # Validate before redirecting. With the order reversed, unauthenticated requests
+    # would also get a 307, and that response alone would reveal "this pid/slug
+    # exists" -- exactly the fact the 404 is meant to hide.
     if not _authorized(request, pid, slug):
         _log.debug("proto proxy 404: no valid cookie (%s/%s)", pid, slug)
         return _not_found()
@@ -421,9 +440,9 @@ async def proxy_prototype_root(pid: str, slug: str, request: Request):
 async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
     if not preview_surface.on_preview_surface(request.headers):
         return _not_found()
-    # 호스팅 상태 확인보다 먼저 검증한다: 502와 404가 갈리는 것만으로도
-    # 프로토타입의 존재를 알 수 있으므로, 인증되지 않은 요청은 그 분기에
-    # 닿기 전에 404로 끝나야 한다.
+    # Validate before checking hosting state: the 502-vs-404 split alone reveals that
+    # the prototype exists, so an unauthenticated request must end in a 404 before it
+    # reaches that branch.
     if not _authorized(request, pid, slug):
         _log.debug("proto proxy 404: no valid cookie (%s/%s)", pid, slug)
         return _not_found()

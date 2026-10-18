@@ -17,8 +17,8 @@ describe("ModelTable", () => {
   it("shows the name, the model id and the display state", () => {
     render(<ModelTable models={MODELS} onChanged={vi.fn()} />);
     expect(screen.getByText("Opus 5")).toBeInTheDocument();
-    // 관리자 화면은 id를 보여준다 — 무엇을 등록했는지 확인해야 한다
-    // (콤보박스와 다른 점이다).
+    // The admin screen shows the id — the admin needs to confirm what was registered
+    // (this differs from the combo box).
     expect(screen.getByText("global.anthropic.claude-opus-5")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Opus 5 표시" })).toBeChecked();
     expect(screen.getByRole("switch", { name: "Opus 4.8 표시" })).not.toBeChecked();
@@ -67,7 +67,7 @@ describe("ModelTable", () => {
                               { status: 400 })));
     render(<ModelTable models={MODELS} onChanged={vi.fn()} />);
     await user.click(screen.getByRole("switch", { name: "Opus 4.8 표시" }));
-    // 프론트가 규칙을 복제하지 않는다 — 서버 문장을 그대로 보여준다.
+    // The frontend does not duplicate the rule — it shows the server's sentence as-is.
     expect(await screen.findByRole("alert"))
       .toHaveTextContent("at most 5 models can be displayed");
   });

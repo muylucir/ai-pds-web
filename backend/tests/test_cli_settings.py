@@ -1,16 +1,19 @@
 # backend/tests/test_cli_settings.py
 #
-# 번들 CLI에 넘기는 컨텍스트 설정. 두 가지를 지킨다:
+# Context settings passed to the bundled CLI. Two things are guaranteed:
 #
-#   1. `[1m]`은 **CLI를 띄우는 두 팩토리에만** 닿고 project_model에는 닿지
-#      않는다. 그것은 Bedrock 모델 id가 아니라 CLI 별칭이므로, 설문 생성 경로의
-#      BedrockModel(model_id=...)에 흘러가면 ValidationException이 된다 —
-#      Discovery는 정상인데 설문 생성만 조용히 깨지는 모양이다.
-#   2. 두 에이전트(Discovery, 프로토타입 빌더)가 **같은** 컴팩션 윈도우를 받는다.
-#      한쪽만 받으면 같은 프로젝트에서 컴팩션 시점이 갈리고, 그 비대칭은 에러
-#      없이 산출물 품질 차이로만 나타난다.
-#   3. 두 에이전트 모두 백그라운드 실행이 꺼진 CLI로 돈다. 켜져 있으면 턴이 그
-#      턴이 시킨 일보다 먼저 끝나고, 남은 진행은 화면에 닿지 못한다.
+#   1. `[1m]` reaches **only the two factories that launch the CLI** and never
+#      project_model. It is a CLI alias, not a Bedrock model id, so if it flows
+#      into BedrockModel(model_id=...) on the questionnaire-generation path it
+#      becomes a ValidationException — Discovery works fine while only
+#      questionnaire generation silently breaks.
+#   2. Both agents (Discovery and the prototype builder) receive the **same**
+#      compaction window. If only one of them receives it, compaction timing
+#      diverges within the same project, and that asymmetry shows up only as a
+#      difference in artifact quality, with no error.
+#   3. Both agents run on a CLI with background execution disabled. If it were
+#      enabled, a turn would end before the work it started, and the remaining
+#      progress would never reach the screen.
 from __future__ import annotations
 
 import pytest
@@ -24,21 +27,22 @@ _MODEL = "global.anthropic.claude-opus-5"
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
-    """두 스위치를 명시적으로 끈 상태에서 시작한다 — backend/.env가 실려 있으면
-    (load_dotenv) 테스트가 배포 설정에 따라 달라진다."""
+    """Start with both switches explicitly off — if backend/.env is loaded
+    (load_dotenv), the tests would vary with the deployment settings."""
     monkeypatch.delenv("AIPDS_LONG_CONTEXT", raising=False)
     monkeypatch.delenv("AIPDS_AUTO_COMPACT_WINDOW", raising=False)
     yield
     app_module.registry.remove("cs-test")
 
 
-# ---- ① 1M 접미사 ----
+# ---- ① 1M suffix ----
 
 
 def test_long_context_is_off_by_default():
-    """기본이 꺼짐이어야 한다. 켜는 것은 턴당 비용이 늘고(컴팩션이 늦으면 전체
-    이력이 매 턴 재전송된다) 초장문에서 주의가 희석돼 품질이 되레 나빠질 수도
-    있다 — 배포가 비용을 보고 켜는 스위치다."""
+    """The default must be off. Turning it on raises per-turn cost (if compaction
+    is late, the entire history is resent every turn), and in very long contexts
+    attention gets diluted, which can even make quality worse — it is a switch a
+    deployment turns on after weighing the cost."""
     assert long_context_enabled() is False
     assert cli_model_id(_MODEL) == _MODEL
 
@@ -50,25 +54,27 @@ def test_truthy_forms_turn_it_on(monkeypatch, value):
 
 
 def test_a_none_model_stays_none(monkeypatch):
-    """없는 값에 접미사를 붙이면 폴백이 깨진다 — 드라이버는 None을 받으면
-    ANTHROPIC_MODEL을 넣지 않고 CLI 기본값으로 간다(project_model의 마지막 칸)."""
+    """Appending the suffix to a missing value breaks the fallback — when the
+    driver receives None, it does not set ANTHROPIC_MODEL and falls through to the
+    CLI default (the last slot of project_model)."""
     monkeypatch.setenv("AIPDS_LONG_CONTEXT", "1")
     assert cli_model_id(None) is None
 
 
 def test_the_suffix_is_not_doubled(monkeypatch):
-    """멱등이어야 한다 — env 기본값(ANTHROPIC_MODEL)에 이미 접미사가 박혀 있는
-    배포에서 `...[1m][1m]`이 나가면 CLI가 모델을 찾지 못한다."""
+    """Must be idempotent — on a deployment whose env default (ANTHROPIC_MODEL)
+    already carries the suffix, emitting `...[1m][1m]` would leave the CLI unable
+    to find the model."""
     monkeypatch.setenv("AIPDS_LONG_CONTEXT", "1")
     assert cli_model_id(f"{_MODEL}[1m]") == f"{_MODEL}[1m]"
 
 
-# ---- ② 컴팩션 윈도우 ----
+# ---- ② Compaction window ----
 
 
 def test_no_window_means_no_env_key():
-    """미설정이면 키를 아예 넣지 않는다. 빈 문자열을 넣으면 CLI가 그것을 값으로
-    읽는다."""
+    """When unset, the key is omitted entirely. If an empty string were set, the
+    CLI would read it as a value."""
     assert auto_compact_window() is None
     assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in cli_context_env()
 
@@ -80,9 +86,10 @@ def test_a_valid_window_reaches_the_env(monkeypatch):
 
 @pytest.mark.parametrize("value", ["50", "2000000", "0", "-1"])
 def test_a_window_outside_the_cli_range_is_dropped(monkeypatch, value):
-    """번들 CLI의 설정 스키마는 1e5..1e6만 받는다. 밖의 값을 그대로 넘기면 CLI가
-    설정을 거부하는데 그 거부는 우리 로그에 남지 않는다 — 여기서 떨어뜨리고
-    경고를 남기는 편이 추적 가능하다."""
+    """The bundled CLI's settings schema accepts only 1e5..1e6. Passing an
+    out-of-range value through makes the CLI reject the settings, and that
+    rejection never shows up in our logs — dropping it here and logging a warning
+    keeps it traceable."""
     monkeypatch.setenv("AIPDS_AUTO_COMPACT_WINDOW", value)
     assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in cli_context_env()
 
@@ -92,15 +99,16 @@ def test_a_non_numeric_window_is_dropped(monkeypatch):
     assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in cli_context_env()
 
 
-# ---- ③ 배선: project_model은 깨끗하게 남는다 ----
+# ---- ③ Wiring: project_model stays clean ----
 
 
 def test_project_model_never_carries_the_cli_suffix(monkeypatch):
-    """**이 파일의 핵심 불변식.**
+    """**The core invariant of this file.**
 
-    project_model은 설문 생성 경로에서 BedrockModel(model_id=...)로도 흐른다
-    (app.questionnaire_agent_factory). 거기에 대괄호가 들어가면 Bedrock이
-    ValidationException을 던지고, 증상은 "Discovery는 되는데 설문 생성만 502"다.
+    project_model also flows into BedrockModel(model_id=...) on the
+    questionnaire-generation path (app.questionnaire_agent_factory). If brackets
+    get in there, Bedrock throws a ValidationException, and the symptom is
+    "Discovery works but only questionnaire generation returns 502".
     """
     monkeypatch.setenv("AIPDS_LONG_CONTEXT", "1")
     app_module.registry.register("cs-test", None, model_id=_MODEL)
@@ -117,8 +125,9 @@ def test_driver_factory_applies_the_suffix(monkeypatch, tmp_path):
 
 
 def test_builder_factory_applies_the_suffix(monkeypatch, tmp_path):
-    """빌더도 같은 값을 받아야 한다 — 프로토타입 빌드가 컴팩션에 걸리는 것을
-    실측한 세션이 바로 이쪽이다(264,040 → 53,375 토큰)."""
+    """The builder must receive the same value — the sessions in which prototype
+    builds were measured hitting compaction were on this side (264,040 → 53,375
+    tokens)."""
     monkeypatch.setenv("AIPDS_LONG_CONTEXT", "1")
     monkeypatch.delenv("AIPDS_S3_BUCKET", raising=False)
     monkeypatch.setenv("AIPDS_PROTO_ROOT", str(tmp_path / "protos"))
@@ -130,10 +139,11 @@ def test_builder_factory_applies_the_suffix(monkeypatch, tmp_path):
     assert builder._anthropic_model == f"{_MODEL}[1m]"
 
 
-# ---- ④ 배선: 두 CLI env에 윈도우가 실제로 실린다 ----
+# ---- ④ Wiring: the window is actually set in both CLI envs ----
 #
-# client_factory를 주입하는 다른 테스트들은 이 경로를 타지 않으므로, 배선이
-# 빠져도 전부 통과한다(test_claude_driver._captured_options의 주석과 같은 이유).
+# Other tests that inject client_factory do not take this path, so they all pass
+# even if the wiring is missing (same reason as the comment on
+# test_claude_driver._captured_options).
 
 
 def _discovery_env(tmp_path, monkeypatch) -> dict:
@@ -187,12 +197,13 @@ def test_neither_agent_gets_the_key_when_unset(tmp_path, monkeypatch):
     assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW" not in builder
 
 
-# ---- ⑤ 백그라운드 실행 ----
+# ---- ⑤ Background execution ----
 
 
 def test_background_tasks_are_off_for_both_agents(tmp_path, monkeypatch):
-    """스위치는 설정이 아니라 고정값이다 — 두 화면 모두 턴 하나를 따라가다 `done`에서
-    스트림을 닫으므로, 어느 배포에서도 턴보다 오래 사는 작업은 보이지 않는다."""
+    """The switch is a fixed value, not a setting — both screens follow a single
+    turn and close the stream at `done`, so on any deployment, work that outlives
+    the turn would never be visible."""
     discovery = _discovery_env(tmp_path / "d", monkeypatch)
     builder = _builder_env(tmp_path / "b", monkeypatch)
     assert discovery["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"

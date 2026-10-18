@@ -1,24 +1,24 @@
-# backend/aipds/approval_store.py — 승인 결정의 구조화된 기록.
+# backend/aipds/approval_store.py — a structured record of approval decisions.
 #
-# **왜 이 파일이 생겼는가.** 승인 여부를 `audit.md`의 산문에서 정규식으로
-# 복원하고 있었다. 사용자가 게이트 버튼을 누른 사실은 그 순간 확실히 알려져
-# 있는데, 그것을 버리고 에이전트가 자연어로 옮겨 적은 것을 되찾는 구조다.
+# **Why this file exists.** Approval status was being reconstructed with regexes from the prose of
+# `audit.md`. The fact that the user pressed the gate button is known with certainty at that
+# moment, yet the structure threw it away and tried to recover it from what the agent transcribed
+# in natural language.
 #
-# 실측(pilot1의 audit.md 41건): 승인 게이트 5건 중 2건만 인식됐다. 사용자가
-# 채팅으로 답하기 때문이다 — "승인"은 인식되지만 "동의"(최종 승인!), "진행",
-# 객관식의 "A"는 전부 실패했다. 게다가 정상 진행 서술에 'update'가 들어 있어
-# 무효화 판정이 남은 승인마저 지웠다. 화면에는 "기록된 승인 이력이 없습니다"만
-# 남았다.
+# Measured (41 entries in ws-m's audit.md): only 2 of 5 approval gates were recognized. Because
+# users answer in chat — "승인" (approve) was recognized, but "동의" (agree; the final approval!),
+# "진행" (proceed), and a multiple-choice "A" all failed. On top of that, normal progress narration
+# contained 'update', so the invalidation check wiped even the approvals that remained. All that
+# was left on screen was "기록된 승인 이력이 없습니다".
 #
-# 같은 증상을 세 번 고쳤다(ca8c508 파서, 68e143f 표시조건, e18d681 언어).
-# 전부 "에이전트의 출력을 어떻게 읽을까"였고, 그것은 우리가 통제하지 못하는
-# 값이다. 그래서 판정의 근거를 **우리가 쓰는 값**으로 바꾼다. 이 레코드가
-# 1순위 근거이고, 감사 로그 파싱은 레코드가 없는 기존 프로젝트를 위한 폴백으로
-# 강등된다.
+# The same symptom was fixed three times (ca8c508 parser, 68e143f display condition, e18d681 language).
+# Every fix was about "how do we read the agent's output", which is a value we do not control. So
+# we change the basis of judgment to **values we write**. This record is the primary basis, and
+# audit log parsing is demoted to a fallback for existing projects that have no records.
 #
-# **audit.md를 대체하지 않는다.** 사람이 읽는 감사 추적은 계속 에이전트가
-# 상류 룰대로 쓴다(rule/은 데이터다 — 고치지 않는다). 이 레코드는 기계 판정용
-# 사본이며, 둘의 역할이 다르므로 둘 다 남는다.
+# **It does not replace audit.md.** The human-readable audit trail is still written by the agent
+# according to the upstream rules (rule/ is data — we do not modify it). This record is a copy for
+# machine judgment, and since the two have different roles, both remain.
 from __future__ import annotations
 
 import asyncio
@@ -31,20 +31,20 @@ from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger("aipds.approval")
 
-#: S3Store가 projects/{pid}/를 붙이므로 프로젝트 상대 경로다(pending_store와
-#: 같은 규율). 접두어로 list하면 프로젝트의 승인 이력 전체가 나온다.
+#: S3Store prepends projects/{pid}/, so this is a project-relative path (same discipline as
+#: pending_store). Listing by this prefix returns the project's entire approval history.
 APPROVALS_PREFIX = "approvals/"
 
 
 @dataclass(frozen=True)
 class ApprovalRecord:
-    """한 번의 승인 결정.
+    """A single approval decision.
 
-    doc_hash가 무효화 판정의 핵심이다. 종전에는 감사 로그의 산문에서
-    `수정|update|갱신`을 찾아 "문서가 바뀌었으니 재승인 필요"를 추측했는데,
-    정상 진행 서술이 그 단어를 흔히 포함해 오탐이 났다(실측: idx=40).
-    승인 시점의 문서 해시를 남겨 두면 현재 문서와 비교해 **사실로** 판정할 수
-    있다.
+    doc_hash is the core of the invalidation check. Previously we searched the audit log prose for
+    `수정|update|갱신` to guess "the document changed, so re-approval is needed", but normal
+    progress narration often contains those words, causing false positives (measured: idx=40).
+    Keeping the document hash at approval time lets us compare against the current document and
+    judge it **as fact**.
     """
     document: str
     doc_hash: str
@@ -52,16 +52,16 @@ class ApprovalRecord:
 
 
 def _key(approved_at: str) -> str:
-    """타임스탬프 + 랜덤 접미. 접미가 없으면 같은 초에 두 번 승인할 때(재승인
-    연타) 뒤가 앞을 덮어써 감사 기록이 사라진다. 콜론은 S3 키에서 다루기
-    번거로워 '-'로 바꾼다."""
+    """Timestamp + random suffix. Without the suffix, two approvals in the same second (rapid
+    re-approval clicks) would have the later overwrite the earlier and lose the audit record. Colons are
+    awkward to handle in S3 keys, so they are replaced with '-'."""
     stamp = approved_at.replace(":", "-")
     return f"{APPROVALS_PREFIX}{stamp}-{uuid.uuid4().hex[:8]}.json"
 
 
 async def save_approval(s3: S3StoreLike, *, document: str, doc_hash: str,
                         approved_at: str) -> None:
-    """승인을 기록한다. 덮어쓰지 않고 쌓는다 — 승인은 이력이다."""
+    """Record an approval. Accumulates instead of overwriting — approvals are history."""
     await s3.put(_key(approved_at), json.dumps({
         "document": document,
         "doc_hash": doc_hash,
@@ -70,8 +70,8 @@ async def save_approval(s3: S3StoreLike, *, document: str, doc_hash: str,
 
 
 def _parse(raw: str) -> ApprovalRecord | None:
-    """손상된 한 건이 이력 전체를 잃게 만들지 않는다(pending_store가 손상
-    페이로드에 None을 돌려주는 것과 같은 판단)."""
+    """One corrupted entry must not lose the entire history (the same judgment as pending_store
+    returning None for a corrupted payload)."""
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -81,9 +81,9 @@ def _parse(raw: str) -> ApprovalRecord | None:
         return None
     document, doc_hash = data.get("document"), data.get("doc_hash")
     approved_at = data.get("approved_at")
-    # 필드 누락은 나중에 해시 비교에서 터진다 — 읽는 자리에서 걸러낸다.
-    # `all(...)` 대신 각 값을 따로 좁히는 이유는 타입 검사기가 제너레이터
-    # 안의 isinstance를 밖으로 전파하지 못하기 때문이다.
+    # Missing fields would blow up later in the hash comparison — filter them out at the read site.
+    # Each value is narrowed separately instead of with `all(...)` because the type checker cannot
+    # propagate isinstance inside a generator outward.
     if not (isinstance(document, str) and document
             and isinstance(doc_hash, str) and doc_hash
             and isinstance(approved_at, str) and approved_at):
@@ -94,19 +94,19 @@ def _parse(raw: str) -> ApprovalRecord | None:
 
 
 async def load_approvals(s3: S3StoreLike) -> list[ApprovalRecord]:
-    """승인 이력을 시간순으로. 없으면 빈 리스트 — 이 기능 이전의 모든
-    프로젝트가 그 상태이고, 그때는 감사 로그 폴백이 판정한다."""
-    # 키가 타임스탬프로 시작하므로 사전순 == 시간순이다(ISO 8601의 성질,
-    # ProjectRegistry.list_ids가 created_at에 쓰는 것과 같은 규율).
+    """Approval history in chronological order. An empty list if none — every project from
+    before this feature is in that state, and then the audit log fallback decides."""
+    # Keys start with a timestamp, so lexicographic order == chronological order (a property of ISO 8601,
+    # the same discipline ProjectRegistry.list_ids uses for created_at).
     keys = sorted(await s3.list(APPROVALS_PREFIX))
-    # 병렬 GET — `gather`는 입력 순서대로 돌려주므로 위 정렬이 곧 결과 순서다
-    # (session_store.load_transcript와 같은 패턴).
+    # Parallel GETs — `gather` returns results in input order, so the sort above is the result order
+    # (same pattern as session_store.load_transcript).
     bodies = await asyncio.gather(*(s3.get(k) for k in keys),
                                  return_exceptions=True)
     records: list[ApprovalRecord] = []
     for body in bodies:
         if isinstance(body, FileNotFoundError):
-            continue  # list와 get 사이에 삭제됐다
+            continue  # deleted between list and get
         if isinstance(body, BaseException):
             raise body
         record = _parse(body)

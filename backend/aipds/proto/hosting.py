@@ -1,12 +1,12 @@
-# backend/aipds/proto/hosting.py — 프로토타입 하나를 호스팅하는 절차.
+# backend/aipds/proto/hosting.py — the procedure for hosting one prototype.
 #
-# 호스팅 시작 라우트와 백엔드 기동 뒤 재호스팅이 **같은 절차**여야 한다: 되살리기 →
-# 브랜드 동기화 → `npm` 수명 주기 → 스냅샷 → 토큰 → 원하는 상태. 두 벌이면 한쪽이
-# 브랜드를 빠뜨리거나 토큰을 새로 만들어, 재시작 뒤 뜬 프로토타입이 라우트로 띄운
-# 것과 다르게 보이거나 이미 나눠 준 링크가 죽는다.
+# The hosting start route and re-hosting after backend startup must follow **the same
+# procedure**: restore → brand sync → `npm` lifecycle → snapshot → token → desired state. With
+# two copies, one side would miss the brand or mint a new token, so a prototype brought up after
+# a restart would look different from one launched via the route, or links already handed out would die.
 #
-# `ProtoHost`는 S3를 모르는 범용 호스팅으로 남는다. S3가 끼는 일(proto/store.py)은
-# 이 모듈이 그 앞뒤에서 한다.
+# `ProtoHost` remains generic hosting that knows nothing about S3. The S3-related work
+# (proto/store.py) is done by this module before and after it.
 from __future__ import annotations
 
 import logging
@@ -19,11 +19,11 @@ _log = logging.getLogger(__name__)
 
 
 async def restore_local(pid: str, slug: str, build_dir, store: PrototypeStore) -> None:
-    """로컬에 없는 것을 정본에서 되살린다 — 빌드 산출물과 접근 토큰.
+    """Restore from the source of truth what is not present locally — build output and access tokens.
 
-    토큰은 호스팅의 상태 트리에 심는다(`ProtoHost.adopt_token`). 교체된 인스턴스에서
-    목록이 공유 링크를 만들고, 다음 호스팅이 새 토큰을 만들지 않으려면 로컬 사본이
-    있어야 한다 — 새로 만들면 이미 나눠 준 링크가 죽는다.
+    Tokens are planted in hosting's state tree (`ProtoHost.adopt_token`). On a replaced instance,
+    there must be a local copy for the list to build share links and for the next hosting not to
+    mint a new token — minting a new one kills the links already handed out.
     """
     import aipds.app as app_module
     await store.restore(slug, build_dir)
@@ -34,7 +34,7 @@ async def restore_local(pid: str, slug: str, build_dir, store: PrototypeStore) -
 
 
 def prototype_store(pid: str) -> PrototypeStore | None:
-    """이 프로젝트의 프로토타입 정본. 버킷이 없으면(로컬 개발) None."""
+    """This project's prototype source of truth. None if there is no bucket (local development)."""
     import aipds.app as app_module
     if not app_module.durable_projects_enabled():
         return None
@@ -44,9 +44,9 @@ def prototype_store(pid: str) -> PrototypeStore | None:
 
 
 async def host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:
-    """호스팅을 시작한다. (HostInfo, 접근 토큰 — 실패면 None).
+    """Start hosting. (HostInfo, access token — None on failure).
 
-    빌드 트리가 없으면 `FileNotFoundError`(라우트가 404로 옮긴다).
+    If there is no build tree, `FileNotFoundError` (the route maps it to a 404).
     """
     import aipds.app as app_module
     from aipds.routes.proto_public import public_base_path
@@ -55,7 +55,7 @@ async def host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:
     build_dir = app_module._proto_root() / pid / slug
     store = prototype_store(pid)
 
-    # 로컬 트리가 없으면(교체된 인스턴스) S3의 현재 세대로 되살린다.
+    # If there is no local tree (a replaced instance), restore it from S3's current generation.
     if store is not None:
         try:
             await restore_local(pid, slug, build_dir, store)
@@ -63,18 +63,17 @@ async def host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:
             _log.exception("prototype source restore before host failed: %s/%s",
                            pid, slug)
 
-    # 리빌드 직전에 브랜드 테마를 갱신한다. 호스팅은 rmtree 없이 기존 트리에
-    # `npm run build`를 돌리므로(proto/host.py), 여기서 파일만 새로 쓰면 코드는
-    # 한 줄도 건드리지 않고 색·서체·라운드만 바뀐다 -- 이미 완료된 프로토타입이
-    # 개선 세션 없이 리브랜딩되는 유일한 경로다.
+    # Refresh the brand theme right before the rebuild. Hosting runs `npm run build` on the
+    # existing tree without an rmtree (proto/host.py), so just rewriting the files here changes
+    # only colors, typefaces, and rounding without touching a single line of code -- it is the only
+    # path for an already completed prototype to be rebranded without an improvement session.
     try:
         profile = await app_module.design_profile_store().load()
         sync_design(build_dir, profile, app_module.project_language(pid))
-        # sync_design은 "갱신"만 한다 -- 프로필 업로드 **이전에** 빌드된
-        # 프로토타입은 prototype/ 아래에 테마 사본이 없어 아무것도 갈지 않고,
-        # 재호스팅해도 그대로 무브랜드로 남는다. 운영자가 "왜 아무 일도 안
-        # 일어났는지"를 이 시점에 알 수 있어야 한다 -- 개선 세션을 한 번 열어야
-        # 반영된다는 뜻이다.
+        # sync_design only "refreshes" -- a prototype built **before** the profile upload has no
+        # theme copy under prototype/, so nothing is swapped, and it stays unbranded even after
+        # re-hosting. The operator must be able to learn "why nothing happened" at this point --
+        # it means an improvement session must be opened once for it to take effect.
         if profile is not None and not theme_copies(build_dir):
             _log.warning(
                 "design profile present but %s/%s has no theme copy under "
@@ -82,31 +81,31 @@ async def host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:
                 "session must run once to import aipds-theme.css first",
                 pid, slug)
     except Exception:
-        # 브랜드 반영 실패가 호스팅 자체를 막지는 않는다 -- 화면이 열리는 것이
-        # 색보다 우선이다. 원인은 로그에 남는다.
+        # A failure to apply the brand does not block hosting itself -- the screen opening
+        # takes priority over colors. The cause remains in the log.
         _log.exception("design sync before host failed: %s/%s", pid, slug)
 
     info = await host.start(
-        # cwd를 명시한다: ProtoHost의 기본값은 {root}/{pid}/{slug}로 서빙할 트리보다
-        # 한 단계 위다(명세 .md만 있는 자리 — npm이 package.json ENOENT로 죽는다).
+        # cwd is explicit: ProtoHost's default is {root}/{pid}/{slug}, one level above the tree to
+        # serve (where only the spec .md is — npm would die with package.json ENOENT).
         pid, slug, cwd=build_dir / "prototype",
-        # `public_base_path`이지 `proxy_prefix`가 아니다: basePath는 **브라우저가**
-        # 해석하는 asset URL에 박히고, 브라우저의 경로에는 이 앱이 보기 전에 벗겨지는
-        # `/api` 마운트가 있다.
+        # It is `public_base_path`, not `proxy_prefix`: basePath is baked into asset URLs that
+        # **the browser** resolves, and the browser's path includes the `/api` mount that is
+        # stripped before this app sees it.
         base_path=public_base_path(pid, slug),
-        # 빌드 에이전트·Discovery와 같은 출처(app.project_model) — 프로토타입 앱의
-        # 런타임 LLM 호출도 프로젝트가 고른 모델로 돌아야 한다.
+        # Same source as the build agent and Discovery (app.project_model) — the prototype app's
+        # runtime LLM calls must also run on the model the project chose.
         model_id=app_module.project_model(pid))
     if info.state != "running":
         return info, None
 
-    # 접근 토큰은 **호스팅이 실제로 뜬 뒤에만** 발급한다. `ensure_token`이므로
-    # stop -> start를 반복해도 값이 그대로다 — 워크숍 중 호스팅을 껐다 켜는 것
-    # 때문에 이미 나눠 준 링크가 죽으면 안 된다. 폐기하는 의도된 경로는 리셋이다.
+    # The access token is issued **only after hosting has actually come up**. It is `ensure_token`,
+    # so the value stays the same across repeated stop -> start — links already handed out must
+    # not die because hosting is turned off and on during a workshop. The intended path for revoking it is a reset.
     token = host.ensure_token(pid, slug)
     if store is not None:
-        # 셋 다 best-effort다: 호스팅은 이미 떴고 사용자는 링크를 받는다. 실패하면
-        # 교체·재시작을 견디지 못할 뿐이고, 원인은 로그에 남는다.
+        # All three are best-effort: hosting is already up and the user gets the link. If they fail,
+        # it just will not survive a replacement/restart, and the cause remains in the log.
         for what, step in (("token", store.save_token(slug, token)),
                            ("desired state", store.set_desired_running(slug)),
                            ("snapshot", store.snapshot(slug, build_dir, "host"))):
@@ -119,7 +118,7 @@ async def host_prototype(pid: str, slug: str) -> tuple[HostInfo, str | None]:
 
 
 async def stop_prototype(pid: str, slug: str) -> None:
-    """호스팅을 멈추고 원하는 상태를 지운다 — 재시작 뒤 다시 뜨지 않게."""
+    """Stop hosting and clear the desired state — so it does not come back up after a restart."""
     import aipds.app as app_module
     await app_module.proto_host().stop(pid, slug)
     store = prototype_store(pid)
@@ -128,15 +127,15 @@ async def stop_prototype(pid: str, slug: str) -> None:
 
 
 async def adopt_local_state(previously_running: list[tuple[str, str]]) -> None:
-    """로컬에만 있는 것을 S3 정본으로 옮긴다(기동 때, 재호스팅 전에).
+    """Move what exists only locally to the S3 source of truth (at startup, before re-hosting).
 
-    두 경우를 덮는다:
+    Covers two cases:
 
-    - 직전 백엔드가 호스팅하던 것(`ProtoHost.previously_running`) → 원하는 상태.
-      원하는 상태를 기록하기 전에 뜬 호스팅이나, 기록이 실패한 호스팅도 재시작 뒤
-      다시 뜬다. 사용자가 멈춘 것은 pid 파일이 없으므로 여기 들지 않는다.
-    - S3 세대가 없는 로컬 빌드 → 스냅샷. 이 저장소가 생기기 전에 만든 프로토타입도
-      다음 교체를 견딘다. 내용이 같으면 새 세대를 만들지 않으므로 매 기동이 싸다.
+    - What the previous backend was hosting (`ProtoHost.previously_running`) → desired state.
+      Hosting that came up before the desired state was recorded, or whose recording failed, also
+      comes back up after a restart. What the user stopped has no pid file, so it does not land here.
+    - A local build with no S3 generation → snapshot. Prototypes created before this store existed
+      also survive the next replacement. If the content is the same, no new generation is created, so every startup is cheap.
     """
     import aipds.app as app_module
     host = app_module.proto_host()
@@ -162,11 +161,11 @@ async def adopt_local_state(previously_running: list[tuple[str, str]]) -> None:
 
 
 async def rehost_desired() -> int:
-    """원하는 상태가 running인 프로토타입을 **하나씩** 다시 호스팅한다. 띄운 수.
+    """Re-host, **one at a time**, the prototypes whose desired state is running. Returns how many came up.
 
-    백엔드가 뜰 때 백그라운드로 돈다. 순차인 이유: 호스팅 한 번이 `npm install` +
-    `next build`(피크 약 2GB)라 한꺼번에 올리면 기동 직후 OOM이 난다. 실패한 것은
-    건너뛰고 로그에 남긴다 — 하나가 나머지를 막지 않는다.
+    Runs in the background when the backend starts. Why sequential: a single hosting run is
+    `npm install` + `next build` (peak about 2GB), so bringing them all up at once causes an OOM
+    right after startup. Failures are skipped and logged — one does not block the rest.
     """
     import aipds.app as app_module
     host = app_module.proto_host()
@@ -187,7 +186,7 @@ async def rehost_desired() -> int:
             try:
                 info, _ = await host_prototype(pid, slug)
             except FileNotFoundError:
-                # 되살릴 소스가 없다 — 원하는 상태를 남겨 둘 이유가 없다.
+                # There is no source to restore — no reason to keep the desired state.
                 _log.warning("no source to re-host %s/%s; clearing desired state",
                              pid, slug)
                 await store.clear_desired(slug)

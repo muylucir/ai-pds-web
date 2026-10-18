@@ -16,35 +16,38 @@ _log = logging.getLogger(__name__)
 _ENTRY = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _LEGACY_ENTRY_NAME = re.compile(r"^Entry\s+(\d+)\s*:")
 
-# **구조로 읽는다 — 라벨 목록을 맞추지 않는다.** 상류 룰의 예시는 `**Timestamp**:`,
-# `**User Input**:`, `**AI Response**:`, `**Context**:` 넷이지만, 에이전트가 실제로
-# 쓰는 라벨은 프로젝트마다 다르다(드릴 버킷 실측, 5개 프로젝트):
+# **Read by structure; do not match a list of labels.** The upstream rule's examples are
+# the four `**Timestamp**:`, `**User Input**:`, `**AI Response**:`, `**Context**:`, but
+# the labels the agent actually writes differ per project (observed in the drill bucket,
+# 5 projects):
 #
 #   **User Input (COMPLETE RAW INPUT)** — 세션 앞부분에서 제공된 원본 요청:
-#   **사용자 원문 입력 (raw input, 그대로 보존):**      ← 콜론이 굵게 안에 있다
-#   - **Event**: ... / - **Answer**: ...               ← 목록 항목 라벨
+#   **사용자 원문 입력 (raw input, 그대로 보존):**      ← colon is inside the bold
+#   - **Event**: ... / - **Answer**: ...               ← list-item labels
 #   **AI Action**: / **AI 해석:** / **답변 해석:**
-#   ## 2026-08-19T08:00:19Z — 워크플로우 시작           ← 타임스탬프가 헤딩에 있다
+#   ## 2026-08-19T08:00:19Z — 워크플로우 시작           ← timestamp is in the heading
 #
-# 네 라벨만 정확히 맞추던 동안 한국어 프로젝트의 감사 로그는 38개 항목 중 0개, 영어
-# 프로젝트도 16개 중 2개가 읽혔다 — 리뷰 화면의 검증 요약·게이트 이력과 대시보드
-# 활동 피드가 비었다. 템플릿 라벨은 ko 프로젝트에서 번역되고, 번역이 아니어도 모델이
-# 꾸민다. 그래서 여기서는 "굵은 라벨 + 콜론"이라는 **모양**을 라벨로 보고, 라벨의
-# **뜻**을 넓은 족(family)으로 분류한다.
+# While only the four labels were matched exactly, 0 of 38 entries were read from a
+# Korean project's audit log, and even an English project yielded 2 of 16; the review
+# screen's verification summary and gate history and the dashboard activity feed were
+# empty. Template labels are translated in ko projects, and even when not translated the
+# model embellishes them. So here the **shape** "bold label + colon" is taken as a
+# label, and the label's **meaning** is classified into broad families.
 #
-# 라벨: 줄 머리(목록 표시 허용)의 `**X**`로, 콜론이 굵게 안(`**X:**`)이나 밖
-# (`**X**:`)에 있거나, 뒤에 설명이 붙고 콜론으로 끝나거나(`**X** — 설명:`), 줄에
-# 그것만 있는 경우다. 문장 안의 강조(`**차별성은 P4·P5에 있다.**`)는 콜론이 없어
-# 라벨이 아니다.
+# A label is a `**X**` at the start of a line (list markers allowed) where the colon is
+# inside the bold (`**X:**`) or outside it (`**X**:`), or a description follows and ends
+# with a colon (`**X** — description:`), or it is alone on the line. Emphasis within a
+# sentence (`**차별성은 P4·P5에 있다.**`) has no colon and is not a label.
 _LABEL_LINE = re.compile(
     r"^[ \t]*(?:[-*+][ \t]+)?\*\*(?P<label>[^*\n]{1,80}?)\*\*(?P<rest>[^\n]*)$")
 _DESCRIPTOR = re.compile(r"^\s*[—–-][^\n]*:\s*$")
-# 한 줄에 네 표준 라벨을 몰아 쓴 파일럿 로그가 있다("\n"을 글자로 쓴 경우). 그런
-# 줄은 라벨마다 줄을 나눠 위 규칙으로 읽는다.
+# Some pilot logs crammed the four standard labels onto one line ("\n" written as
+# literal characters). Such a line is split at each label and read by the rules above.
 _INLINE_CANONICAL = re.compile(r"\*\*(?:Timestamp|User Input|AI Response|Context)\*\*:")
 
-# 라벨의 족. 괄호 주석과 끝 콜론을 떼고 소문자로 비교한다. 순서가 곧 우선순위다 —
-# AI 쪽 라벨이 여럿이면(`AI Response`와 `AI Action`이 함께) 앞의 것을 쓴다.
+# Label families. Compared in lowercase after removing parenthetical notes and the
+# trailing colon. Order is priority: when there are several AI-side labels (`AI
+# Response` together with `AI Action`), the earlier one is used.
 _FAMILIES: list[tuple[str, re.Pattern]] = [
     ("timestamp", re.compile(r"^(timestamp|time|date|시각|시간|일시|타임스탬프)$")),
     ("context", re.compile(r"^(context|맥락|컨텍스트)$")),
@@ -59,7 +62,7 @@ _FAMILIES: list[tuple[str, re.Pattern]] = [
 ]
 _PAREN_NOTE = re.compile(r"\s*[(（][^)）]*[)）]")
 
-# 헤딩 머리의 타임스탬프: `## 2026-08-19T08:00:19Z — 제목`.
+# Timestamp at the start of a heading: `## 2026-08-19T08:00:19Z — title`.
 _HEADING_STAMP = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2}T[0-9:.]+(?:Z|[+-]\d{2}:?\d{2})?)\s*(?:[—–-]\s*)?(?P<title>.*)$")
 
@@ -102,7 +105,8 @@ def _split_inline_markers(block: str) -> str:
 
 
 def _label_at(line: str) -> tuple[str, str] | None:
-    """이 줄이 라벨이면 (족, 같은 줄의 값). 라벨이 아니거나 모르는 족이면 None."""
+    """If this line is a label, (family, value on the same line). None if not a label or
+    the family is unknown."""
     m = _LABEL_LINE.match(line)
     if not m:
         return None
@@ -120,7 +124,8 @@ def _label_at(line: str) -> tuple[str, str] | None:
 
 
 def _clean(text: str) -> str:
-    """값에서 펜스·인용 표시·감싼 따옴표를 떼어 사람이 읽는 원문만 남긴다."""
+    """Strip fences, quote markers, and surrounding quotes from a value, leaving only
+    the human-readable original text."""
     lines = [ln for ln in text.splitlines() if not ln.strip().startswith("```")]
     lines = [re.sub(r"^\s*>\s?", "", ln) for ln in lines]
     s = "\n".join(lines).strip()
@@ -141,13 +146,16 @@ def _strip_sub_headings(text: str) -> str:
 
 
 def _fields(block: str) -> tuple[dict[str, str], list[tuple[int, int]]]:
-    """블록의 라벨 필드를 족별로 모은다. 두 번째 값은 사용자 입력이 차지한 줄 범위다.
+    """Collect a block's label fields by family. The second value is the line ranges
+    occupied by user input.
 
-    값은 라벨 줄의 나머지와, 다음 라벨·헤딩·구분선 전까지의 줄이다. 같은 족이
-    여러 번 나오면 처음 것을 쓴다. AI 쪽은 우선순위가 가장 높은 족을 쓴다.
+    A value is the rest of the label line plus the lines up to the next label, heading,
+    or rule. If the same family appears more than once, the first is used. The AI side
+    uses the highest-priority family.
     """
     lines = block.splitlines()
-    # 펜스 안의 줄은 라벨도 끝도 아니다 — 원문을 옮겨 적은 것이다.
+    # Lines inside a fence are neither labels nor terminators; they are transcribed
+    # original text.
     fenced = []
     in_fence = False
     for ln in lines:
@@ -182,16 +190,17 @@ def _fields(block: str) -> tuple[dict[str, str], list[tuple[int, int]]]:
 
 
 def _sections(markdown: str) -> list[tuple[str, str]]:
-    """`##` 헤딩 단위의 (헤딩, 본문) 목록.
+    """List of (heading, body) per `##` heading.
 
-    **타임스탬프 헤딩을 쓰는 로그에서는 타임스탬프 없는 `##`가 앞 항목의 일부다.**
-    에이전트가 항목 안의 질문별 답을 `### Question N` 대신 `## Question N`으로 적은
-    로그가 실재한다(실측: 항목 하나가 `## Question 1`~`8`로 쪼개져 답이 그 항목에서
-    사라졌다). 항목 헤딩의 과반이 타임스탬프를 달고 있으면 그것이 이 파일의 항목
-    표시이고, 달지 않은 `##`는 하위 절로 읽어 앞 항목에 붙인다.
+    **In logs that use timestamp headings, a `##` without a timestamp is part of the
+    previous entry.** Logs exist in which the agent wrote the per-question answers
+    within an entry as `## Question N` instead of `### Question N` (observed: one entry
+    was split into `## Question 1`–`8` and the answers vanished from that entry). If a
+    majority of entry headings carry a timestamp, that is this file's entry marker, and
+    a `##` without one is read as a subsection and attached to the previous entry.
 
-    코드 펜스 안의 `##`는 헤딩이 아니다 — 사용자가 답한 질문 파일을 원문 그대로
-    펜스에 옮겨 적은 항목이 있다.
+    A `##` inside a code fence is not a heading; there are entries that copied the
+    question file the user answered verbatim into a fence.
     """
     raw: list[tuple[str, str]] = []
     body: list[str] = []
@@ -223,18 +232,21 @@ def _sections(markdown: str) -> list[tuple[str, str]]:
 
 
 def _is_web_input(heading: str) -> bool:
-    """웹이 쓴 사용자 입력 항목인가(aipds/audit_log). 헤딩 머리로 알아본다."""
+    """Is this a user-input entry written by the web app (aipds/audit_log)? Recognized
+    by the start of the heading."""
     return any(heading.startswith(h) for h in WEB_INPUT_HEADINGS.values())
 
 
 def _pair_web_inputs(rows: list[tuple[AuditEntry, bool]]) -> list[AuditEntry]:
-    """웹의 사용자 입력 항목과 바로 뒤 에이전트 항목을 한 상호작용으로 합친다.
+    """Merge a web user-input entry and the agent entry after it into one interaction.
 
-    상류 룰의 항목은 상호작용 하나에 입력과 응답이 함께 있다. 입력을 웹이 쓰면서 그것이
-    두 항목으로 나뉘었고, 화면(검증 요약·게이트 이력·활동 피드)은 여전히 "입력 → 응답"
-    한 줄을 기대한다. 원문은 언제나 웹의 것을 쓴다 — 에이전트가 습관대로 입력을 다시
-    적었더라도 그쪽은 요약일 수 있다(audit_log 헤더의 실측). 시각도 웹의 것이다.
-    뒤따르는 에이전트 항목이 없으면(턴이 끊겼다) 입력만 있는 항목으로 남는다.
+    In the upstream rule, an entry holds both input and response for one interaction.
+    Once the web app started writing the input, that split into two entries, while the
+    screens (verification summary, gate history, activity feed) still expect a single
+    "input → response" line. The original text always comes from the web app's entry;
+    even if the agent habitually re-wrote the input, its version may be a summary
+    (observed, see the audit_log header). The time also comes from the web app. If no
+    agent entry follows (the turn was cut off), it remains an input-only entry.
     """
     out: list[AuditEntry] = []
     i = 0
@@ -277,11 +289,12 @@ def parse_audit_file(markdown: str) -> list[AuditEntry]:
                 fields["ai_response"] = _strip_sub_headings(block[sub_input.end():])
         web = _is_web_input(heading)
         if web:
-            # 웹의 항목은 입력만 담는다 — 남은 줄(시각 라벨)을 응답으로 읽지 않는다.
+            # The web app's entry holds only the input; the remaining lines (time label)
+            # are not read as a response.
             fields["ai_response"] = ""
         elif not fields.get("ai_response"):
-            # 라벨이 붙은 AI 쪽 필드가 없으면 섹션의 서술이 곧 AI의 기록이다 —
-            # 사용자 입력 줄은 빼고 읽는다.
+            # Without a labeled AI-side field, the section's narrative is itself the
+            # AI's record; read it with the user-input lines excluded.
             lines = block.splitlines()
             keep = [ln for k, ln in enumerate(lines)
                     if not any(a <= k < b for a, b in input_spans)]
@@ -307,12 +320,14 @@ def parse_audit_file(markdown: str) -> list[AuditEntry]:
         ), web))
     entries = _pair_web_inputs(rows)
     if any(web for _, web in rows):
-        # 짝지은 만큼 번호가 비므로 다시 센다. 레거시 `## Entry N:` 로그에는 웹 항목이 없다.
+        # Pairing leaves gaps in the numbering, so renumber. Legacy `## Entry N:` logs
+        # have no web entries.
         entries = [e.model_copy(update={"index": n})
                    for n, e in enumerate(entries, start=1)]
     if not entries and len(sections) > 1:
-        # 헤딩이 여럿인데 하나도 못 읽었다면 파서가 모르는 모양이다. 빈 패널은 "기록이
-        # 없다"와 구별되지 않으므로 여기서 드러낸다.
+        # Multiple headings but none could be read means a shape the parser does not
+        # know. An empty panel is indistinguishable from "no records", so surface it
+        # here.
         _log.warning("audit.md has %d sections but none parsed as an entry",
                      len(sections))
     return entries

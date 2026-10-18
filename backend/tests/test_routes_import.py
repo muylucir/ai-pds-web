@@ -1,4 +1,4 @@
-# backend/tests/test_routes_import.py — 번들을 프로젝트로 되살린다.
+# backend/tests/test_routes_import.py — restores a bundle as a project.
 from __future__ import annotations
 
 import io
@@ -31,7 +31,7 @@ SEED_MODEL = "global.anthropic.claude-sonnet-5"
 
 
 def _bundle(entries: dict[str, bytes] | None = None, **manifest_over) -> bytes:
-    """번들 zip 하나. `manifest_over`로 매니페스트 필드를 덮어쓴다."""
+    """A single bundle zip. `manifest_over` overrides manifest fields."""
     manifest = json.loads(build_manifest(
         exported_at="2026-09-12T00:00:00+00:00",
         source_project_id=SOURCE_PID,
@@ -51,8 +51,8 @@ def _bundle(entries: dict[str, bytes] | None = None, **manifest_over) -> bytes:
 def env(monkeypatch, tmp_path):
     monkeypatch.setenv("AIPDS_S3_BUCKET", "")
     stores: dict[str, FakeS3Store] = {}
-    root = FakeS3Store()          # projects/ 매니페스트
-    surveys = FakeS3Store()       # 버킷 루트(토큰 인덱스)
+    root = FakeS3Store()          # projects/ manifests
+    surveys = FakeS3Store()       # bucket root (token index)
     staging = FakeImportStaging()
 
     async def fake_make_workspace(pid):
@@ -120,7 +120,8 @@ def test_upload_request_needs_a_positive_size(env):
 
 
 def test_import_is_unavailable_without_a_bucket(env, monkeypatch):
-    """조용히 강등하면 사용자는 수백 MB를 올린 뒤에 그 사실을 알게 된다."""
+    """If this degraded silently, the user would find out only after uploading hundreds
+    of MB."""
     def _no_bucket():
         raise RuntimeError("project import requires AIPDS_S3_BUCKET")
 
@@ -132,7 +133,7 @@ def test_import_is_unavailable_without_a_bucket(env, monkeypatch):
     assert resp.json()["detail"] == "import_unavailable"
 
 
-# ---- 기본 경로 ----
+# ---- Basic path ----
 
 
 def test_import_registers_the_project_under_the_bundles_own_id(env):
@@ -147,8 +148,8 @@ def test_import_registers_the_project_under_the_bundles_own_id(env):
 
 
 def test_import_preserves_name_created_at_and_language(env):
-    """생성일을 원본 그대로 둔다 — '이 프로젝트는 8월에 시작됐다'가 그 프로젝트의
-    사실이고, 목록 정렬은 그 사실을 따른다."""
+    """Keep the creation date as in the original: 'this project started in August' is a fact
+    about that project, and list ordering follows that fact."""
     resp = _import(env, _bundle())
 
     assert resp.json()["name"] == "원본 프로젝트"
@@ -161,8 +162,9 @@ def test_import_preserves_name_created_at_and_language(env):
 
 
 def test_the_importer_owns_the_imported_project(env):
-    """번들은 소유자를 싣지 않는다 — 다른 인스턴스의 username은 여기서 다른 사람일 수 있다.
-    가져온 사람(로컬 개발의 요청자 local-dev)이 소유자가 된다."""
+    """A bundle does not carry the owner; a username from another instance may be a
+    different person here. The person who imported it (in local dev, the requester
+    local-dev) becomes the owner."""
     _import(env, _bundle())
 
     assert app_module.registry.get_owner(SOURCE_PID) == "local-dev"
@@ -171,15 +173,16 @@ def test_the_importer_owns_the_imported_project(env):
 
 
 def test_manifest_is_written_and_the_project_survives_a_restart(env):
-    """project.json이 '이 프로젝트가 존재한다'의 정본이다(restore_projects)."""
+    """project.json is the source of truth for 'this project exists' (restore_projects)."""
     _import(env, _bundle())
 
     assert f"{SOURCE_PID}/project.json" in env["root"].blobs
 
 
 def test_import_under_a_new_id_moves_the_transcript_with_it(env):
-    """트랜스크립트 키의 uuid5는 프로젝트 id에서 유도된다 — 재작성하지 않으면
-    히스토리를 읽는 쪽이 빈 prefix를 보고, 그 실패는 에러 없이 조용하다."""
+    """The uuid5 in transcript keys is derived from the project id; without rewriting
+    it, the reader of the history sees an empty prefix, and that failure is silent, with
+    no error."""
     target = env["track"]("copied-proj")
     body = _bundle({
         "project/discovery/transcript/main/00000001.jsonl": b'{"type":"user"}',
@@ -193,14 +196,14 @@ def test_import_under_a_new_id_moves_the_transcript_with_it(env):
     prefix = project_transcript_prefix(target)
     assert f"{prefix}main/00000001.jsonl" in keys
     assert f"{prefix}sub/agent-a/00000001.jsonl" in keys
-    # 원본 프로젝트의 세션 prefix로는 아무것도 쓰이지 않았다.
+    # Nothing was written under the original project's session prefix.
     assert not any(k.startswith(project_transcript_prefix(SOURCE_PID))
                    for k in keys)
 
 
 def test_import_lands_prototype_source_on_local_disk(env):
-    """카드가 built로 보이려면 {proto_root}/{pid}/{slug}/prototype/ 이 비어 있지
-    않아야 한다(proto/session.has_build_output)."""
+    """For the card to show as built, {proto_root}/{pid}/{slug}/prototype/ must not be
+    empty (proto/session.has_build_output)."""
     target = env["track"]("with-proto")
     body = _bundle({
         f"prototypes/{SLUG}/source/prototype/app.tsx": b"export default null",
@@ -224,7 +227,7 @@ def test_import_deletes_the_staged_bundle_on_success(env):
     assert env["staging"].objects == {}
 
 
-# ---- 설문 토큰 ----
+# ---- Survey tokens ----
 
 
 def _survey_bundle(token: str = "original-token") -> bytes:
@@ -239,8 +242,9 @@ def _survey_bundle(token: str = "original-token") -> bytes:
 
 
 def test_survey_token_is_reissued_and_indexed_to_the_new_project(env):
-    """원본 토큰을 그대로 쓰면 같은 버킷에서 원본 프로젝트의 살아 있는 설문
-    링크가 새 프로젝트로 넘어간다 — 응답이 엉뚱한 곳에 쌓이고 에러는 없다."""
+    """If the original token were reused as is, the original project's live survey link
+    in the same bucket would pass to the new project; responses pile up in the wrong
+    place with no error."""
     target = env["track"]("survey-copy")
 
     resp = _import(env, _survey_bundle(), project_id=target)
@@ -253,7 +257,7 @@ def test_survey_token_is_reissued_and_indexed_to_the_new_project(env):
     index = json.loads(
         env["surveys"].blobs[f"{TOKEN_INDEX_PREFIX}{definition['token']}.json"])
     assert index == {"project_id": target, "slug": SLUG}
-    # 원본 토큰의 인덱스는 만들지 않는다.
+    # No index is created for the original token.
     assert f"{TOKEN_INDEX_PREFIX}original-token.json" not in env["surveys"].blobs
     assert {"code": WARN_SURVEY_TOKENS_REISSUED, "count": 1} in \
         resp.json()["warnings"]
@@ -269,8 +273,8 @@ def test_survey_responses_come_along(env):
 
 
 def test_archived_survey_token_changes_but_gets_no_live_index(env):
-    """지난 회차의 링크가 살아 있을 이유는 없지만, 원본 토큰을 남기면 그것이
-    원본 인스턴스의 링크와 같은 값이 된다."""
+    """There is no reason for a past round's link to stay live, but if the original token were
+    kept, it would have the same value as the original instance's link."""
     target = env["track"]("survey-archive")
     archived = json.dumps({"token": "old-archived", "status": "closed",
                            "slug": SLUG, "project_id": SOURCE_PID,
@@ -291,8 +295,8 @@ def test_archived_survey_token_changes_but_gets_no_live_index(env):
 
 
 def test_unreadable_questionnaire_fails_the_whole_import(env):
-    """정의를 읽을 수 없으면 토큰을 바꿀 수도 없다 — 그대로 두면 원본의 토큰이
-    살아남는다."""
+    """If the definition cannot be read, the token cannot be changed either; leaving it as is
+    keeps the original's token alive."""
     target = env["track"]("bad-survey")
     body = _bundle({
         f"project/prototypes/{SLUG}/survey/questionnaire.json": b"not json",
@@ -305,12 +309,12 @@ def test_unreadable_questionnaire_fails_the_whole_import(env):
     assert env["stores"][target].blobs.keys() == set()
 
 
-# ---- 모델 폴백 ----
+# ---- Model fallback ----
 
 
 def test_a_model_this_instance_cannot_select_is_dropped_with_a_warning(env):
-    """조용히 강등하면 프로젝트가 '고른 적 없는 모델'로 돈다 — 이 기능에서 가장
-    조용한 실패다."""
+    """If this degraded silently, the project would run on 'a model nobody chose', the quietest
+    failure in this feature."""
     target = env["track"]("foreign-model")
     body = _bundle(project={"name": "n", "created_at": "c",
                             "model_id": "some.other.model", "language": "ko"})
@@ -324,7 +328,8 @@ def test_a_model_this_instance_cannot_select_is_dropped_with_a_warning(env):
 
 
 def test_the_source_projects_effort_comes_with_its_model(env):
-    """effort는 원본에서 모델과 짝으로 복사된 값이다 — 임포트가 그대로 가져온다."""
+    """effort is a value copied from the original as a pair with the model; the import
+    brings it over unchanged."""
     target = env["track"]("with-effort")
     body = _bundle(project={"name": "n", "created_at": "c", "model_id": SEED_MODEL,
                             "language": "ko", "effort": "high"})
@@ -335,14 +340,16 @@ def test_the_source_projects_effort_comes_with_its_model(env):
 
 
 def test_a_bundle_from_before_effort_keeps_the_cli_default(env):
-    """이 필드 이전의 번들은 키가 없다 — 원본이 실제로 돌던 방식(CLI 기본값) 그대로다."""
+    """Bundles from before this field have no key; it stays exactly how the original
+    actually ran (the CLI default)."""
     target = env["track"]("no-effort")
     resp = _import(env, _bundle(), project_id=target)
     assert resp.json()["effort"] is None
 
 
 def test_effort_is_dropped_with_an_unavailable_model(env):
-    """모델을 비웠는데 effort만 남기면 다른 모델에 붙어 고른 적 없는 조합이 된다."""
+    """Clearing the model but keeping effort would attach it to another model, a
+    combination nobody chose."""
     target = env["track"]("foreign-effort")
     body = _bundle(project={"name": "n", "created_at": "c", "model_id": "some.other.model",
                             "language": "ko", "effort": "max"})
@@ -357,12 +364,12 @@ def test_a_selectable_model_is_kept_without_a_warning(env):
     assert resp.json()["warnings"] == []
 
 
-# ---- 충돌 ----
+# ---- Conflicts ----
 
 
 def test_an_existing_id_is_409_and_keeps_the_upload(env):
-    """id 충돌은 매니페스트를 읽어야 알 수 있다 — 여기서 스테이징을 지우면
-    사용자는 id 하나 바꾸려고 번들 전체를 다시 올려야 한다."""
+    """An id conflict can only be detected by reading the manifest; deleting the staging here
+    would force the user to re-upload the whole bundle just to change one id."""
     client.post("/projects", json={"project_id": SOURCE_PID})
     uid = _upload(env, _bundle())
 
@@ -387,11 +394,11 @@ def test_retrying_a_409_with_a_new_id_needs_no_re_upload(env):
     assert env["stores"][target].blobs["aiplc-docs/audit.md"] == "# audit"
 
 
-# ---- 거절 ----
+# ---- Refusals ----
 
 
 def test_a_missing_upload_is_reported_as_such(env):
-    """사용자가 할 일이 '다른 파일을 고르는 것'이 아니라 '다시 올리는 것'이다."""
+    """What the user must do is not 'pick a different file' but 'upload again'."""
     resp = client.post("/project-imports", json={"upload_id": "b" * 32})
 
     assert resp.status_code == 400
@@ -402,8 +409,8 @@ def test_a_missing_upload_is_reported_as_such(env):
     "../projects/victim/project", "a" * 31, "A" * 32, "", "not-hex-" + "0" * 24,
 ])
 def test_a_forged_upload_id_is_refused(env, upload_id):
-    """이 값이 S3 키가 된다 — 모양을 강제하는 것이 클라이언트가 키를 정할 여지를
-    남기지 않는다."""
+    """This value becomes an S3 key; enforcing its shape leaves the client no room to choose
+    the key."""
     resp = client.post("/project-imports", json={"upload_id": upload_id})
 
     assert resp.status_code == 400
@@ -432,16 +439,16 @@ def test_a_zip_without_a_manifest_is_refused(env):
 
 
 def test_another_kind_of_aipds_zip_is_refused(env):
-    """산출물 아카이브나 프로토타입 핸드오프 zip을 임포트 칸에 떨어뜨리는 것은
-    흔한 실수다."""
+    """Dropping an artifact archive or a prototype handoff zip into the import slot is a
+    common mistake."""
     resp = _import(env, _bundle(kind="aipds-artifacts"))
 
     assert resp.status_code == 400
 
 
 def test_a_newer_schema_version_is_refused(env):
-    """모르는 버전을 최선으로 해석하면 절반만 들어온 프로젝트가 되고, 그 상태는
-    화면에서 정상과 구별되지 않는다."""
+    """Interpreting an unknown version on a best-effort basis yields a half-imported project,
+    and that state is indistinguishable from a normal one on screen."""
     resp = _import(env, _bundle(schema_version=99))
 
     assert resp.status_code == 400
@@ -457,7 +464,7 @@ def test_a_traversal_project_id_is_refused(env):
 def test_a_traversal_entry_is_refused_and_nothing_is_written(env):
     target = env["track"]("zip-slip")
     body = _bundle({"project/aiplc-docs/ok.md": b"# ok"})
-    # zipfile은 우리가 넣은 이름을 그대로 저장한다 — 공격자의 zip을 흉내낸다.
+    # zipfile stores the names we put in as is; this imitates an attacker's zip.
     buf = io.BytesIO(body)
     with zipfile.ZipFile(buf, "a") as zf:
         zf.writestr("project/../../../../etc/passwd", "root:x:0:0")
@@ -481,8 +488,8 @@ def test_an_oversized_upload_is_refused_before_download(env, monkeypatch):
 
 
 def test_unrecognised_entries_are_skipped_but_reported(env):
-    """사용자가 zip을 다시 압축하며 붙은 `__MACOSX/` 같은 것이 흔하다. 건너뛰되
-    조용히 넘기지는 않는다."""
+    """Things like `__MACOSX/` added when a user re-compresses a zip are common. Skip them,
+    but not silently."""
     target = env["track"]("extra-entries")
     body = _bundle({
         "project/aiplc-docs/audit.md": b"# audit",
@@ -498,8 +505,8 @@ def test_unrecognised_entries_are_skipped_but_reported(env):
 
 
 def test_a_manifest_write_failure_rolls_the_import_back(env, monkeypatch):
-    """매니페스트가 없으면 재시작 후 사라지는 프로젝트다 — 그런 것을 조용히
-    만들지 않는다(생성 라우트와 같은 판단)."""
+    """Without a manifest, it is a project that vanishes after a restart; do not create one
+    silently (the same judgment as the creation route)."""
     target = env["track"]("rollback-proj")
 
     class _Boom(FakeS3Store):
@@ -518,7 +525,7 @@ def test_a_manifest_write_failure_rolls_the_import_back(env, monkeypatch):
 
     assert resp.status_code == 500
     assert not app_module.registry.is_registered(target)
-    # 쓴 것이 전부 되돌려졌다 — S3 객체, 토큰 인덱스, 로컬 소스 트리.
+    # Everything written was rolled back: S3 objects, the token index, the local source tree.
     assert env["stores"][target].blobs.keys() == set()
     assert env["surveys"].blobs.keys() == set()
     assert not (env["proto_root"] / target).exists()

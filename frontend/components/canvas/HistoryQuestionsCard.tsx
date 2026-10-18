@@ -1,22 +1,22 @@
 "use client";
-// frontend/components/canvas/HistoryQuestionsCard.tsx — 과거 턴에서 제시된
-// 질문지의 **읽기 전용** 표시.
+// frontend/components/canvas/HistoryQuestionsCard.tsx — **read-only** display of a questionnaire
+// presented in a past turn.
 //
-// 종전에는 이 자리에 "📋 질문지 제시됨" 한 줄뿐이었다. 복원 경로가 트랜스크립트의
-// tool_use.input(질문 payload가 구조화된 채로 남아 있는 곳)을 버렸기 때문이다 —
-// 그래서 스크롤백에서 "무엇을 물었는지"를 알 수 없었고, 답변 말풍선만 보면
-// 문맥이 없었다. payload가 있으면 문항 수를 보여주고 펼쳐서 질문과 보기를 읽게
-// 한다.
+// Previously this spot held only the single line "📋 질문지 제시됨" (questionnaire presented), because the restore path
+// discarded the transcript's tool_use.input (where the question payload remains structured) —
+// so in the scrollback you could not tell "what was asked", and the answer bubble alone had
+// no context. When the payload is present, show the question count and let the user expand it to read the questions and
+// options.
 //
-// 라이브 폼이 **아니다**: 여기서 다시 답할 수는 없다. 그
-// 라운드는 이미 끝났고, 답변은 바로 아래 말풍선에 있다.
+// This is **not** a live form: you cannot answer again here. That
+// round is already over, and the answers are in the bubble right below.
 import { memo, useState } from "react";
 import type { QuestionFile } from "@/lib/api/types";
 import { useT } from "@/lib/i18n/provider";
 import { InlineMarkdown } from "@/components/Markdown";
 
-// `memo`: 복원된 카드는 바뀌지 않는다 — 스트리밍 중 타임라인이 다시 그려질 때 보기마다
-// InlineMarkdown을 다시 파싱하지 않게 한다.
+// `memo`: a restored card never changes — so when the timeline redraws during streaming, InlineMarkdown
+// is not re-parsed for every option.
 export const HistoryQuestionsCard = memo(function HistoryQuestionsCard({
   name,
   file,
@@ -54,9 +54,9 @@ export const HistoryQuestionsCard = memo(function HistoryQuestionsCard({
               <p className="font-medium text-slate-700">
                 Q{q.number}. <InlineMarkdown text={q.text} />
               </p>
-              {/* is_other는 자유 입력 자리표시자다 — 실제로 제시된 보기가
-                  아니므로 목록에서 뺀다(answerSummary의 letterText와 같은
-                  판단). */}
+              {/* is_other is a free-input placeholder — it is not an option that was actually
+                  presented, so drop it from the list (the same judgment as answerSummary's
+                  letterText). */}
               <ul className="mt-0.5 text-slate-500">
                 {q.options
                   .filter((o) => !o.is_other)

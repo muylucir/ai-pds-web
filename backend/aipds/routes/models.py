@@ -1,11 +1,11 @@
-# backend/aipds/routes/models.py — 모델 카탈로그.
+# backend/aipds/routes/models.py — model catalog.
 #
-# 두 라우터로 나뉘는 이유는 권한이 다르기 때문이다:
-#   router       GET /models        — 프로젝트 생성 화면의 콤보박스(일반 사용자)
-#   admin_router /admin/models*     — 등록·수정·삭제(관리자)
+# It is split into two routers because their permissions differ:
+#   router       GET /models        — project creation screen combo box (users)
+#   admin_router /admin/models*     — create, update, delete (admins)
 #
-# admin_router는 라우터 전체에 require_admin을 붙인다(admin_users.py와 같은
-# 규율) — 라우트마다 붙이는 것을 잊을 여지를 없앤다.
+# admin_router attaches require_admin to the whole router (the same discipline as
+# admin_users.py) — this removes any chance of forgetting it on a route.
 from __future__ import annotations
 
 import logging
@@ -24,8 +24,9 @@ _log = logging.getLogger(__name__)
 router = APIRouter()
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
-# 카탈로그 정책 위반 → HTTP. readonly가 503인 이유: 클라이언트 잘못이 아니라
-# 서버가 버킷 없이 떠 있다는 뜻이다(로컬 개발에서 관리자 화면을 연 경우).
+# Catalog policy violation → HTTP. Why readonly is 503: it is not a client error;
+# it means the server is running without a bucket (an admin screen opened in local
+# development).
 _ERROR_STATUS = {
     "duplicate": 409,
     "too_many_displayed": 400,
@@ -34,31 +35,36 @@ _ERROR_STATUS = {
     "stale": 409,
 }
 
-# 카탈로그 오류 중 프론트 딕셔너리가 문구를 가진 것. 나머지는 카탈로그의 영어
-# 문장이 그대로 나간다(ModelTable이 서버 문장을 그대로 보여준다).
+# Catalog errors for which the frontend dictionary has its own message. For the
+# rest, the catalog's English sentence goes out as is (ModelTable shows the
+# server's sentence as is).
 _ERROR_DETAIL = {
     "stale": ec.MODEL_ORDER_STALE,
 }
 
 
-# PATCH/DELETE /admin/models/{model_id}는 {model_id}를 :path가 아닌 단일 URL
-# 경로 세그먼트로 받는다(admin_patch_model·admin_delete_model 참고) — '/'가
-# 들어간 id는 admin_add_model로 등록은 되어도 그 경로로는 다시 찾을 수 없다.
-# 등록 시점에 문자셋을 막아야 오탈자 하나가 표시 슬롯(MAX_DISPLAYED=5)을
-# 영구히 점유하고 API로 지울 수 없는 상태(카탈로그 파일을 손으로 고쳐야
-# 하는 상태)를 만들지 않는다. 스펙(§5)의 문자셋은 영숫자·.·-·:이지만 '_'를
-# 추가로 허용한다 — 스펙엔 없어도 AWS 모델 id에 나타날 수 있는 합법적이고
-# 세그먼트를 깨지 않는 문자라서, 이걸 빼서 실제 모델 id를 잘못 거부하는
-# 쪽이 이걸 허용해서 생기는 위험보다 크다.
+# PATCH/DELETE /admin/models/{model_id} takes {model_id} as a single URL path
+# segment, not as :path (see admin_patch_model and admin_delete_model) — an id
+# containing '/' can be registered via admin_add_model but can never be found
+# again through that path. The character set must be restricted at registration
+# time so that a single typo cannot permanently occupy a display slot
+# (MAX_DISPLAYED=5) in a state the API cannot delete (one that requires
+# hand-editing the catalog file). The spec (§5) character set is alphanumerics,
+# '.', '-', and ':', but '_' is also allowed — although absent from the spec, it
+# is a legitimate character that can appear in AWS model ids and does not break a
+# segment, so wrongly rejecting real model ids by excluding it is a bigger risk
+# than any risk from allowing it.
 #
-# `.`와 `..`는 허용 문자로만 되어 있어도 따로 거부한다: RFC 3986 §5.2.4의
-# dot-segment 정규화는 **클라이언트**에서 일어나므로, 그 두 값은 등록은 되지만
-# 표준 클라이언트가 그 경로를 만들어 보낼 수 없다. 실측(WHATWG URL 파서 —
-# 프론트의 fetch가 쓰는 것과 같은 것):
+# `.` and `..` are rejected separately even though they consist only of allowed
+# characters: RFC 3986 §5.2.4 dot-segment normalization happens on the **client**,
+# so those two values can be registered, but a standard client can never construct
+# and send that path. Measured (WHATWG URL parser — the same one the frontend's
+# fetch uses):
 #   new URL('/admin/models/.',  base).pathname === '/admin/models/'
 #   new URL('/admin/models/..', base).pathname === '/admin/'
-# 즉 '/'와 똑같이 "등록은 되는데 지울 수 없는" 항목이 된다. `...`나 `abc.`는
-# 정규화 대상이 아니므로(정확히 `.`과 `..` 세그먼트에만 적용된다) 허용한다.
+# In other words, exactly like '/', they become "registrable but undeletable"
+# entries. `...` and `abc.` are not subject to normalization (it applies only to
+# exactly the `.` and `..` segments), so they are allowed.
 _MODEL_ID_RE = re.compile(r"^(?!\.{1,2}$)[A-Za-z0-9.:_-]+$")
 
 
@@ -66,8 +72,9 @@ def _http_error(exc: CatalogError) -> HTTPException:
     status = _ERROR_STATUS.get(exc.code, 500)
     if status >= 500:
         _log.warning("model catalog error (%s) -> %d", exc.code, status)
-    # 이 메시지들은 전부 우리가 쓴 문장이고 자격증명이나 내부 경로를 담지
-    # 않는다 — 관리자가 무엇을 해야 하는지 알아야 하므로 그대로 보여준다.
+    # All of these messages are sentences we wrote, and they contain no
+    # credentials or internal paths — the admin needs to know what to do, so we
+    # show them as is.
     return HTTPException(status_code=status,
                          detail=_ERROR_DETAIL.get(exc.code, str(exc)))
 
@@ -76,15 +83,16 @@ class AddModel(BaseModel):
     name: str = Field(min_length=1)
     model_id: str = Field(min_length=1)
     display: bool = True
-    #: None = CLI 기본값. 허용값 밖은 422다(Effort가 CLI의 `--effort` 값 집합이다).
+    #: None = CLI default. Values outside the allowed set are 422 (Effort is the
+    #: CLI's `--effort` value set).
     effort: Effort | None = None
 
 
 class PatchModel(BaseModel):
     name: str | None = Field(default=None, min_length=1)
     display: bool | None = None
-    #: 보내지 않으면 그대로, null을 보내면 CLI 기본값으로 비운다 — 둘을 구별하려고
-    #: `model_fields_set`을 본다(admin_patch_model).
+    #: Omitted means unchanged; sending null clears it back to the CLI default —
+    #: `model_fields_set` is checked to tell the two apart (admin_patch_model).
     effort: Effort | None = None
 
 
@@ -99,11 +107,13 @@ def _catalog():
 
 @router.get("/models")
 async def list_displayed_models():
-    """콤보박스가 부르는 곳. display가 켜진 것만, 최대 5개, 이름·id·effort.
+    """What the combo box calls. Only entries with display on, at most 5, with
+    name, id, and effort.
 
-    display 플래그 자체는 보내지 않는다 — 일반 사용자에게 의미가 없고,
-    프론트가 필터링을 잊는 경로를 없앤다. effort는 보낸다: 같은 모델이라도
-    effort에 따라 속도가 크게 다르므로 고르는 사람이 알아야 한다.
+    The display flag itself is not sent — it means nothing to regular users, and
+    this removes the path where the frontend forgets to filter. effort is sent:
+    even the same model varies greatly in speed depending on effort, so the person
+    choosing needs to know it.
     """
     entries = await _catalog().displayed()
     return {"models": [{"name": e.name, "model_id": e.model_id, "effort": e.effort}
@@ -132,7 +142,8 @@ async def admin_add_model(body: AddModel):
     return entry.model_dump()
 
 
-# `{model_id}` 라우트와 메서드가 달라(PUT) 이름이 `order`인 모델과도 겹치지 않는다.
+# Its method (PUT) differs from the `{model_id}` routes, so it does not collide
+# even with a model named `order`.
 @admin_router.put("/models/order")
 async def admin_reorder_models(body: ModelOrder):
     try:

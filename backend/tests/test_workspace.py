@@ -7,7 +7,7 @@ FIX = Path(__file__).parent / "fixtures"
 
 
 class FakeRunner:
-    """Workspace가 의존하는 파일 계약 ops만 가진 최소 러너 (S3 backed)."""
+    """A minimal runner with only the file-contract ops Workspace depends on (S3 backed)."""
     def __init__(self, s3=None):
         self._s3 = s3 or FakeS3Store()
 
@@ -50,9 +50,9 @@ async def test_registry_create_and_get():
 
 async def test_list_question_files_finds_top_level_and_nested():
     r = FakeRunner()
-    # top-level (pilot1: discovery-mode-selection-questions.md sits directly under aiplc-docs/)
+    # top-level (ws-m: discovery-mode-selection-questions.md sits directly under aiplc-docs/)
     await r.write_file("aiplc-docs/discovery-mode-selection-questions.md", "x")
-    # nested (pilot1: discovery/product-strategy/strategy-questions.md)
+    # nested (ws-m: discovery/product-strategy/strategy-questions.md)
     await r.write_file("aiplc-docs/discovery/product-strategy/strategy-questions.md", "y")
     # a non-question file that must NOT be listed
     await r.write_file("aiplc-docs/audit.md", "z")

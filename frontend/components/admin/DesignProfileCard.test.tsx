@@ -1,7 +1,7 @@
 // frontend/components/admin/DesignProfileCard.test.tsx
 //
-// 도메인 파싱은 백엔드가 이미 끝낸 상태로 profile을 넘겨준다 — 이 카드는 순수
-// 표시 컴포넌트다. API 호출이 없으므로 MSW 목이 필요 없다.
+// The backend has already finished domain parsing when it hands over the profile — this
+// card is a pure display component. There are no API calls, so no MSW mocks are needed.
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -30,7 +30,7 @@ describe("DesignProfileCard", () => {
     render(<DesignProfileCard
       profile={{ ...BASE, tokens: { primary: "#5b2ea6", radius: "0.75rem" } }}
       onReplace={vi.fn()} onRemove={vi.fn()} />);
-    // primary는 hex라 스와치가 붙고, radius는 길이값이라 붙지 않는다.
+    // primary is a hex value, so it gets a swatch; radius is a length, so it does not.
     expect(screen.getByText("primary").closest("li")?.querySelector("[aria-hidden]"))
       .not.toBeNull();
     expect(screen.getByText("radius").closest("li")?.querySelector("[aria-hidden]"))
@@ -45,9 +45,9 @@ describe("DesignProfileCard", () => {
   });
 
   it("says out loud that a token-less profile never reaches the screen", () => {
-    // 2026-08-19 실측: 토큰 0개 프로필이 조용히 저장되어, 같은 프로필에서 한
-    // 프로토타입은 브랜드가 보이고 다른 하나는 안 보였다. 다시 열었을 때도
-    // 이유를 알 수 있어야 한다(백엔드가 warnings를 유도해 내려준다).
+    // Observed 2026-08-19: a profile with 0 tokens was saved silently, so of two
+    // prototypes from the same profile one showed the brand and the other did not. The
+    // reason must be visible on reopening too (the backend derives and returns warnings).
     render(<DesignProfileCard
       profile={{ ...BASE, tokens: {}, warnings: ["no-tokens"] }}
       onReplace={vi.fn()} onRemove={vi.fn()} />);

@@ -1,11 +1,11 @@
 "use client";
-// frontend/components/LanguageSwitcher.tsx — UI 언어 전환(헤더와 로그인 화면).
+// frontend/components/LanguageSwitcher.tsx — UI language switch (header and sign-in screen).
 //
-// AppHeader에서 분리한 이유: AppHeader 자체도 클라이언트 컴포넌트지만, 쿠키
-// 쓰기와 router.refresh()는 별개 책임이다(UserMenu가 같은 형태로 분리돼 있다).
+// Why it is split out of AppHeader: AppHeader itself is also a client component, but writing
+// the cookie and router.refresh() are a separate responsibility (UserMenu is split out the same way).
 //
-// 라벨은 번역하지 않는다 — 언어 선택지는 항상 그 언어 자체로 표기한다.
-// "영어"라고 쓰면 한국어를 모르는 사용자가 자기 언어를 찾을 수 없다.
+// The labels are not translated — each language option is always written in that language itself.
+// Writing "영어" (English) would leave a user who does not know Korean unable to find their own language.
 import { useRouter } from "next/navigation";
 
 import { LANG_COOKIE, type Locale } from "@/lib/i18n";
@@ -16,27 +16,27 @@ const OPTIONS: Array<{ locale: Locale; label: string }> = [
   { locale: "en", label: "English" },
 ];
 
-// 1년. 세션 쿠키로 두면 브라우저를 닫을 때마다 한국어로 돌아가고, 그것은
-// 사용자가 선택을 다시 하게 만든다.
+// 1 year. As a session cookie it would revert to Korean every time the browser closed, which
+// makes the user choose again.
 const MAX_AGE = 60 * 60 * 24 * 365;
 
-// 헤더에서는 좁은 화면에서 숨긴다 — 헤더의 자리가 모자라고, 언어는 자주 바꾸는 값이 아니다.
-// 로그인 화면은 다르다: 로그인하기 전에 자기 언어를 고를 길이 그것뿐이므로 늘 보여야 한다.
+// In the header it is hidden on narrow screens — the header is short on room, and language is not changed often.
+// The sign-in screen is different: it is the only way to pick your language before signing in, so it must always show.
 export function LanguageSwitcher({ alwaysVisible = false }: { alwaysVisible?: boolean } = {}) {
   const current = useLocale();
   const router = useRouter();
 
   function choose(locale: Locale) {
-    // 같은 언어를 다시 고르는 것은 no-op. refresh()를 부르면 서버 왕복이
-    // 일어나므로 아무 변화 없는 요청을 만들지 않는다.
+    // Picking the same language again is a no-op. Calling refresh() causes a server round
+    // trip, so we do not make a request that changes nothing.
     if (locale === current) return;
-    // httpOnly가 아니므로 여기서 쓸 수 있다. secure를 붙이지 않는 이유는
-    // 로컬 http 개발에서 쿠키가 저장되지 않게 되기 때문이다 — 이 값은
-    // 자격증명이 아니다.
+    // It is not httpOnly, so it can be written here. secure is not set because the cookie
+    // would then not be stored during local http development — this value is not a
+    // credential.
     document.cookie =
       `${LANG_COOKIE}=${locale}; path=/; max-age=${MAX_AGE}; samesite=lax`;
-    // 쿠키만 쓰고 끝내면 화면이 그대로다: <html lang>과 LocaleProvider의
-    // 초기값은 app/layout.tsx가 서버에서 정하므로, 그것을 다시 렌더해야 한다.
+    // Writing only the cookie leaves the screen unchanged: <html lang> and LocaleProvider's
+    // initial value are decided on the server by app/layout.tsx, so that must re-render.
     router.refresh();
   }
 

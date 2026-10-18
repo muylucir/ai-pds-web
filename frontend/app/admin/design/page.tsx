@@ -21,8 +21,8 @@ export default function AdminDesignPage() {
     try {
       setProfile(await getDesignProfile());
     } catch (err) {
-      // 403은 pm이 URL을 직접 친 경우다 — 미들웨어는 UX 게이트일 뿐이고 실제
-      // 차단은 백엔드 응답에서 드러난다(admin/models 페이지와 같은 규율).
+      // A 403 is a pm typing the URL directly — the middleware is only a UX gate, and the real
+      // blocking shows up in the backend response (same discipline as the admin/models page).
       setError(err instanceof ApiError && err.status === 403
         ? t("admin.needAdmin") : t("admin.designLoadFailed"));
       setProfile(null);
@@ -37,9 +37,9 @@ export default function AdminDesignPage() {
       await deleteDesignProfile();
       await reload();
     } catch {
-      // designLoadFailed("불러오지 못했습니다")가 아니라 이 키를 쓴다 -- 실패한
-      // 것은 로딩이 아니라 삭제이고, 잘못된 메시지는 다음에 뭘 시도해야 할지
-      // 헷갈리게 한다.
+      // Uses this key rather than designLoadFailed("불러오지 못했습니다") -- what failed
+      // is the delete, not the load, and the wrong message makes it confusing what to
+      // try next.
       setError(t("admin.designDeleteFailed"));
     }
   }

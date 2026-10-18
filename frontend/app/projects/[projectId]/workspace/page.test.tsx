@@ -8,11 +8,11 @@ import { projectState } from "@/test/fixtures/projectState";
 import * as workspaceStream from "@/lib/useWorkspaceStream";
 import * as client from "@/lib/api/client";
 
-// AppHeader가 그리는 LanguageSwitcher가 useRouter()를 부른다 — 앱 라우터가
-// 마운트되지 않은 단위 테스트에서 그 훅은 던진다. 스위치의 동작은
-// components/LanguageSwitcher.test.tsx가 검증하므로 여기서는 마운트만 되게 한다.
-// 이 페이지가 useSearchParams()를 쓰지 않고 window.location을 직접 읽는 것은
-// 의도된 설계다(page.tsx의 draft 주석) — 그래서 useRouter만 채워도 충분하다.
+// The LanguageSwitcher that AppHeader draws calls useRouter() — in a unit test with no app router
+// mounted, that hook throws. The switcher's behavior is verified by
+// components/LanguageSwitcher.test.tsx, so here it only needs to mount.
+// That this page reads window.location directly instead of using useSearchParams() is an
+// intentional design (the draft comment in page.tsx) — so filling in useRouter alone is enough.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -96,8 +96,8 @@ describe("Workspace page", () => {
     expect(screen.getByLabelText("컨텍스트 패널")).toBeInTheDocument();
   });
 
-  // AI-PDS 팀 피드백(2026-10): 문서가 4번째 열이던 동안 질문 열이 3.5/12로 좁았다.
-  // 이제 채팅·질문이 5:5이고 문서는 덮는 드로어로 연다.
+  // AI-PDS team feedback (2026-10): while documents were the 4th column, the question column was
+  // a narrow 3.5/12. Now chat and questions are 5:5, and documents open in an overlay drawer.
   it("splits chat and questions 5:5 and keeps the document in a closed drawer", async () => {
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
     mockWorkspaceStream({ historyLoading: true });
@@ -116,7 +116,8 @@ describe("Workspace page", () => {
     expect(screen.getByRole("button", { name: "생성된 문서 열기" })).toHaveAttribute("aria-expanded", "false");
   });
 
-  // 승인 게이트처럼 문서를 읽고 답해야 하는 라운드 — 질문 폼 위에서 바로 연다.
+  // A round where a document must be read before answering, like an approval gate — open it
+  // right above the question form.
   it("offers a 'View {document}' button above the question form that opens the drawer", async () => {
     server.use(
       http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)),
@@ -222,10 +223,10 @@ describe("Workspace page", () => {
 
     const banner = screen.getByRole("status");
     expect(within(banner).getByText(/v2/)).toBeInTheDocument();
-    // 리뷰 화면으로 떠나지 않는다 — 드로어가 이 문서(activeDoc)를 연다.
+    // It does not leave for the review screen — the drawer opens this document (activeDoc).
     await userEvent.click(within(banner).getByRole("button", { name: "문서 열기" }));
     expect(screen.getByRole("button", { name: "생성된 문서 닫기", expanded: true })).toBeInTheDocument();
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();   // 연 배너는 닫힌다
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();   // the banner that opened it closes
   });
 
   it("does not show the document-update banner when lastDocument is null", async () => {
@@ -271,20 +272,20 @@ describe("Workspace page", () => {
   });
 
   it("히스토리를 불러오는 동안 스켈레톤을 보여준다", async () => {
-    // 종전에는 이 구간이 빈 화면이었다. historyLoading은 이미 있었지만 웰컴
-    // 카드를 가리는 데만 쓰였다(page.tsx의 showWelcome).
+    // Previously this interval was a blank screen. historyLoading already existed but was only
+    // used to hide the welcome card (showWelcome in page.tsx).
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
     mockWorkspaceStream({ items: [], historyLoading: true, pendingQuestions: null, streaming: false });
-    // WorkspacePage는 use(params)로 첫 렌더에 suspend한다 — 이 파일의 다른
-    // 테스트들과 마찬가지로 act로 감싸 마이크로태스크가 플러시될 때까지
-    // 기다려야 렌더 결과를 동기적으로 조회할 수 있다.
+    // WorkspacePage suspends on the first render with use(params) — as with the other tests
+    // in this file, it must be wrapped in act and wait until microtasks flush before the
+    // render result can be queried synchronously.
     await act(async () => {
       render(<WorkspacePage params={Promise.resolve({ projectId: "p1" })} />);
     });
     expect(screen.getByRole("status", { name: "이전 대화를 불러오는 중" })).toBeInTheDocument();
-    // 회귀 방지: items가 []이면 ChatTimeline 자체 빈 상태 문구
-    // ("대화를 시작해 보세요")가 스켈레톤과 동시에 뜰 뻔했다 — 복원 중임을
-    // 알리는 문구와 "아직 아무것도 없음" 문구가 정면으로 충돌하는 시나리오.
+    // Regression guard: when items is [], ChatTimeline's own empty-state text ("대화를 시작해 보세요"
+    // — start a conversation) nearly appeared together with the skeleton — a scenario where
+    // text announcing a restore in progress and "nothing yet" text clash head-on.
     expect(screen.queryByText(/대화를 시작해 보세요/)).not.toBeInTheDocument();
   });
 
@@ -305,7 +306,7 @@ describe("Workspace page", () => {
       return send;
     }
 
-    // 📎 → 모달 → 파일 고르기 → 결과가 나올 때까지.
+    // 📎 → modal → pick a file → until the result comes out.
     async function attachViaModal(...files: File[]) {
       const user = userEvent.setup();
       await user.click(screen.getByRole("button", { name: "파일 첨부" }));
@@ -356,7 +357,7 @@ describe("Workspace page", () => {
       expect(client.uploadFile).toHaveBeenCalledWith("p1", file);
       expect(await within(dialog).findByText(/첨부됨/)).toBeInTheDocument();
       await closeModal();
-      expect(screen.getByText("의견.md")).toBeInTheDocument();   // 칩
+      expect(screen.getByText("의견.md")).toBeInTheDocument();   // chip
 
       const user = userEvent.setup();
       await user.type(screen.getByLabelText("채팅 메시지 입력"), "이 파일 기반으로 진행해줘");
@@ -491,10 +492,10 @@ describe("Workspace page", () => {
   });
 });
 
-// 2026-08-17: Discovery가 프로토타입을 빌드로 넘겨도 화면에 그 문이 없었다.
-// 에이전트가 "Prototypes 탭에서 빌드하세요"를 말해 주기를 기대했는데, 실측
-// ws-a-v5에서 그 안내는 0회였고 사용자가 막혔다. 그래서 이벤트 기반 어포던스를
-// 둔다 — 에이전트의 문장에 의존하지 않는다.
+// 2026-08-17: even when Discovery handed the prototype over to build, there was no door to it on
+// screen. We expected the agent to say "Prototypes 탭에서 빌드하세요" (build in the Prototypes tab),
+// but measured in ws-a-v5 that guidance appeared 0 times and the user got stuck. So there is an
+// event-based affordance — it does not depend on the agent's sentences.
 describe("프로토타입 인수인계 카드", () => {
   it("prototype_ready가 오면 Prototypes 탭으로 가는 링크가 뜬다", async () => {
     server.use(http.get(`${API_BASE_URL}/projects/p1/state`, () => HttpResponse.json(projectState)));
@@ -520,9 +521,9 @@ describe("프로토타입 인수인계 카드", () => {
 });
 
 describe("Workspace page — 입력창 위 고정 진행 줄", () => {
-  // 진행 상황은 대화 흐름 밖에 있어야 한다. 말풍선 옆에서 함께 갱신되던 종전
-  // 방식은 토큰 스트리밍과 겹쳐 산만했고("정신이 없다"), 그것이 이 줄이 생긴
-  // 이유다. 목록이 아니라 **마지막 하나만** 보여준다.
+  // Progress must sit outside the conversation flow. The former approach of updating it
+  // alongside the bubble overlapped with token streaming and was distracting ("정신이 없다" —
+  // "too hectic"), which is why this line came about. It shows **only the last one**, not a list.
   const liveItems = [{
     id: "a1", role: "ai" as const, text: "정리 중", trace: [], streaming: true,
     error: null, activity: { kind: "tool" as const, tool: "Read",

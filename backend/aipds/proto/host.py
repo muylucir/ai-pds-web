@@ -29,23 +29,26 @@ if TYPE_CHECKING:
 
 HostState = Literal["installing", "building", "running", "failed", "stopped"]
 
-#: 호스팅의 부기(접근 토큰·로그·pid)는 빌드 트리가 아니라 **상태 트리**에 둔다:
-#: `{state_root}/{pid}/{slug}/`. 상태 트리는 어떤 샌드박스에도 bind되지 않는다.
+#: Hosting bookkeeping (access token, log, pid) lives in the **state tree**, not the build
+#: tree: `{state_root}/{pid}/{slug}/`. The state tree is not bound into any sandbox.
 #:
-#: 빌드 트리(`{root}/{pid}/{slug}/`)는 빌드 에이전트가, 그 아래 `prototype/`은
-#: 프로토타입의 npm 스크립트가 쓴다. 거기 두면 두 가지가 열린다:
+#: The build tree (`{root}/{pid}/{slug}/`) is written by the build agent, and `prototype/`
+#: beneath it by the prototype's npm scripts. Keeping bookkeeping there opens two holes:
 #:
-#: - 로그를 바깥을 가리키는 링크로 바꾸면, 백엔드가 npm 출력을 그 너머에 백엔드 uid로
-#:   덧붙인다(npm 스크립트가 출력을 고르므로 임의 내용 쓰기다).
-#: - 토큰 파일을 다른 프로젝트의 토큰 파일로 거는 링크로 바꾸면, 백엔드가 그 토큰을 이
-#:   프로토타입의 것으로 읽어 남의 공유 링크가 이 프로토타입을 가리킨다.
+#: - Replace the log with a link pointing outside, and the backend appends npm output past
+#:   it as the backend uid (the npm scripts choose the output, so it is an arbitrary write).
+#: - Replace the token file with a link to another project's token file, and the backend
+#: reads
+#:   that token as this prototype's, so someone else's share link points at this prototype.
 #:
-#: 토큰을 `prototype/` 밖에 두는 것은 그 전에도 필요했다 — 서빙되는 트리이고 "다운로드"가
-#: 묶는 트리라, 토큰이 거기 있으면 토큰이 막으려는 바로 그 사람에게 나간다.
+#: Keeping the token outside `prototype/` was needed even before that — it is the served
+#: tree
+#: and the tree "download" bundles, so a token there goes out to exactly the people it is
+#: meant to block.
 #:
-#: `TOKEN_FILENAME`은 옛 위치(빌드 트리 바로 아래)의 이름이다. 내보내기·다운로드는
-#: 아직 그 이름이 남은 트리를 묶을 수 있으므로 계속 제외하고(project_bundle), 기동 때
-#: 상태 트리로 옮긴다(`load_tokens`).
+#: `TOKEN_FILENAME` is the name at the old location (directly under the build tree). Export
+#: and download may still bundle trees where that name remains, so it stays excluded
+#: (project_bundle), and on startup it is moved into the state tree (`load_tokens`).
 #:
 #: A filename, not a credential -- the `nosec` is for the name, which is all
 #: bandit B105 looks at.
@@ -66,12 +69,14 @@ class HostInfo:
     state: HostState
     port: int | None
     log_tail: str
-    #: 이 서버가 소스를 읽은 시각(epoch 초). 뜬 적이 없으면 None.
+    #: When this server read its sources (epoch seconds). None if it has never started.
     #:
-    #: **무엇에 쓰는가.** 실행 중인 프로토타입을 수정할 수 있게 되면서, 서버는
-    #: 그대로 뜬 채 소스만 바뀌는 구간이 생겼다. 이 값과 빌드 트리의 최신 mtime을
-    #: 비교하면 "떠 있는 것이 이전 버전"임을 말할 수 있다 — 그것 없이는 카드가
-    #: "실행 :4007"만 말하고 사용자는 수정이 반영됐다고 읽는다.
+    #: **What it is for.** Once a running prototype could be modified, there came a window
+    #: where the server stays up while only the sources change. Comparing this value with
+    #: the
+    #: build tree's latest mtime lets us say "what is running is the previous version" —
+    #: without it, the card only says "running :4007" and the user reads that the change is
+    #: live.
     built_at: float | None = None
 
 
@@ -83,27 +88,33 @@ class _HostEntry:
     state: HostState
     port: int | None = None
     proc: "asyncio.subprocess.Process | None" = None
-    #: HostInfo.built_at의 출처 — 근거는 그쪽 주석.
+    #: Source of HostInfo.built_at — see the comment there for the rationale.
     built_at: float | None = None
-    #: 실행 래퍼로 띄웠는가. 그러면 `proc`은 sudo(→ systemd-run 클라이언트)이고, 신호로는
-    #: 서버가 멈추지 않는다 — `stop`이 래퍼에 unit 정지를 시킨다.
+    #: Whether it was started via the launch wrapper. If so, `proc` is sudo (→ the
+    #: systemd-run
+    #: client) and signals do not stop the server — `stop` has the wrapper stop the unit.
     launched: bool = False
 
 
-#: 꼬리를 읽는 단위. 한 블록이면 npm 출력 100줄이 대개 들어간다.
+#: Unit for reading the tail. One block usually holds 100 lines of npm output.
 _TAIL_BLOCK = 64 * 1024
 
 
 def _tail_text(path: Path, lines: int) -> str:
-    """로그의 마지막 `lines`줄. 파일 끝에서 필요한 만큼만 거꾸로 읽는다.
+    """The last `lines` lines of the log. Reads backward from the end of the file only as
+    much as needed.
 
-    호스팅 로그는 회전 없이 append로만 자란다(`_npm_install`/
-    `_npm_run_build`의 "ab") — 호스팅을 반복하면 수십~수백 MB가 된다. 전부 읽으면
-    호출당 비용이 파일 크기에 비례하고(실측 100MB → 237ms), 이 함수는 async
-    라우트 안에서 동기로 불리므로 그 시간 동안 모든 SSE 스트림이 멈춘다.
+    Hosting logs grow append-only without rotation ("ab" in `_npm_install`/
+    `_npm_run_build`) — repeated hosting grows them to tens to hundreds of MB. Reading it
+    all
+    costs time proportional to file size per call (measured 100MB → 237ms), and this
+    function
+    is called synchronously inside an async route, so every SSE stream stalls for that long.
 
-    바이트 단위로 자른 뒤 디코드하므로 블록 경계에서 잘린 멀티바이트 문자는 첫 줄에만
-    생길 수 있고, 그 줄은 버린다(파일 맨 앞까지 읽은 경우는 예외 — 잘린 것이 없다).
+    It slices by bytes and then decodes, so a multibyte character cut at a block boundary
+    can
+    only occur on the first line, and that line is dropped (except when reading reached the
+    very start of the file — nothing was cut).
     """
     try:
         f = path.open("rb")
@@ -113,7 +124,7 @@ def _tail_text(path: Path, lines: int) -> str:
         end = f.seek(0, 2)
         pos = end
         data = b""
-        # 줄 수 +1개의 개행을 볼 때까지 — 맨 앞 조각은 잘린 줄일 수 있다.
+        # Until we see line count + 1 newlines — the leading fragment may be a cut line.
         while pos > 0 and data.count(b"\n") <= lines:
             step = min(_TAIL_BLOCK, pos)
             pos -= step
@@ -147,13 +158,17 @@ class ProtoHost:
         # through S3 -- which also means binary assets stop being mangled by
         # the text-only store.
         self._root = Path(root)
-        #: 부기 트리(TOKEN_FILENAME 위의 설명). 기본은 빌드 루트 옆 — 배포에서는
-        #: `/opt/aipds/protos-state`이고, 샌드박스는 `/opt/aipds` 전체를 가린다.
+        #: The bookkeeping tree (see the description above TOKEN_FILENAME). Defaults to next
+        #: to
+        #: the build root — in deployment it is `/opt/aipds/protos-state`, and the sandbox
+        #: masks all of `/opt/aipds`.
         self._state_root = (Path(state_root) if state_root is not None
                             else self._root.with_name(self._root.name + "-state"))
         self._port_range = port_range
-        #: 실행 래퍼(aipds/launcher.py). 있으면 npm이 aipds-proto uid로, 이 프로토타입의
-        #: `prototype/` 트리만 보이는 샌드박스에서 돈다. 없으면 백엔드 uid로 직접.
+        #: Launch wrapper (aipds/launcher.py). If present, npm runs as the aipds-proto uid
+        #: in a
+        #: sandbox that sees only this prototype's `prototype/` tree. If absent, directly as
+        #: the backend uid.
         self._launcher = launcher
         self._registry: dict[tuple[str, str], _HostEntry] = {}
         # Ports handed out but whose subprocess may not be listening yet. The
@@ -184,10 +199,12 @@ class ProtoHost:
         path.write_text(text, encoding="utf-8")
 
     def _adopt_legacy_tokens(self) -> None:
-        """옛 위치(빌드 트리 바로 아래)의 토큰 파일을 상태 트리로 옮긴다.
+        """Move a token file at the old location (directly under the build tree) into the
+        state tree.
 
-        옛 파일은 빌드 에이전트가 쓸 수 있는 자리에 있었으므로 링크를 따라가지 않고
-        읽는다 — 링크면 다른 프로젝트의 토큰을 이 프로토타입의 것으로 들여오게 된다.
+        The old file sat where the build agent could write, so it is read without following
+        links — if it were a link, another project's token would be imported as this
+        prototype's.
         """
         if not self._root.is_dir():
             return
@@ -260,11 +277,13 @@ class ProtoHost:
         return token
 
     def adopt_token(self, token: str, pid: str, slug: str) -> None:
-        """다른 곳(S3 색인, proto/store.py)에서 찾은 토큰을 캐시와 토큰 파일에 심는다.
+        """Plant a token found elsewhere (the S3 index, proto/store.py) into the cache and
+        the token file.
 
-        교체된 인스턴스에는 토큰 파일이 없어 캐시도 비어 있다. 링크가 들어왔을 때
-        색인에서 찾은 값을 여기 심어 두면 그 뒤로는 디스크 경로(`token_for`,
-        `ensure_token`)가 그대로 동작한다 — 같은 값이므로 나눠 준 링크가 바뀌지 않는다.
+        A replaced instance has no token file, so the cache is empty too. Planting the value
+        found in the index here when a link comes in makes the disk paths (`token_for`,
+        `ensure_token`) work as-is from then on — it is the same value, so links already
+        handed out do not change.
         """
         self._write_state(self._token_path(pid, slug), token)
         self._tokens[token] = (pid, slug)
@@ -300,16 +319,16 @@ class ProtoHost:
 
     @staticmethod
     def _info(entry: _HostEntry, *, with_log: bool = True) -> HostInfo:
-        """`with_log=False`는 로그를 읽지 않고 상태만 담는다.
+        """`with_log=False` captures only the state, without reading the log.
 
-        `_tail_text`는 파일 끝만 읽지만 그래도 async 함수 안의 **동기 디스크
-        I/O**이고, 목록 라우트는 프로토타입 하나당 `status()`를 부르며 그 목록은
-        폴링된다. 상태만 필요한 자리에서 로그를 읽을 이유가 없으므로 `status()`는
-        로그를 읽지 않는다.
+        `_tail_text` reads only the end of the file, but it is still **synchronous disk
+        I/O** inside an async function, and the list route calls `status()` once per
+        prototype, and that list is polled. Where only the state is needed there is no
+        reason to read the log, so `status()` does not read it.
 
-        로그가 실제로 필요한 두 자리는 그대로 둔다: `start()`의 실패 진단
-        (502 detail로 나간다)과 `log_tail()`(사용자가 "로그 보기"를 누른
-        시점). 둘 다 호출 빈도가 낮고 사용자가 그 내용을 기다린다.
+        The two places that actually need the log are left as they are: failure diagnosis in
+        `start()` (it goes out as the 502 detail) and `log_tail()` (when the user clicks
+        "view log"). Both are called rarely, and the user is waiting for that content.
         """
         return HostInfo(
             state=entry.state, port=entry.port,
@@ -318,7 +337,7 @@ class ProtoHost:
 
     @staticmethod
     def _read_package_json(target_dir: Path) -> dict:
-        # 프로토타입이 쓰는 트리다 — 링크를 따라가지 않는다(pathsafe).
+        # A tree the prototype writes — do not follow links (pathsafe).
         try:
             return json.loads(read_text_beneath(target_dir, "package.json"))
         except (OSError, ValueError):
@@ -446,8 +465,10 @@ class ProtoHost:
         only appears at start would be baked as undefined.
         """
         if self._launcher is not None:
-            # 래퍼가 거부 중이면(aipds/launcher.py 머리말) 직접 실행으로 돌지 않는다. 떠 있는 것을
-            # 멈추기 전에 거부한다 — 멈추고 나서 못 띄우면 살아 있던 링크까지 죽는다.
+            # If the wrapper is refusing (aipds/launcher.py header), do not fall back to
+            # direct execution.
+            # Refuse before stopping what is running — stopping and then failing to start
+            # would kill a live link too.
             self._launcher.require()
         # If this (pid, slug) is already running/started, tear down its
         # previous process first.
@@ -459,8 +480,9 @@ class ProtoHost:
         if not target_dir.is_dir():
             raise FileNotFoundError(str(target_dir))
         if self._launcher is not None:
-            # 래퍼는 트리를 스스로 계산한다(`<root>/<pid>/<slug>/prototype`). 다른 곳을 돌라고
-            # 하면 래퍼는 여전히 계산한 곳을 돌므로, 어긋남을 여기서 드러낸다.
+            # The wrapper computes the tree itself (`<root>/<pid>/<slug>/prototype`). If
+            # told to run elsewhere
+            # it still runs where it computed, so the mismatch is surfaced here.
             expected = self._root / pid / slug / "prototype"
             if target_dir != expected:
                 raise ValueError(f"launcher hosts {expected}, not {target_dir}")
@@ -479,11 +501,11 @@ class ProtoHost:
         if base_path:
             base_env = {"NEXT_PUBLIC_BASE_PATH": base_path,
                         "PROTO_BASE_PATH": base_path}
-        # 프로토타입 런타임이 읽을 모델. 에이전트가 `.env.example`에 적어 두는
-        # 이름과 같은 것을 쓴다(BEDROCK_MODEL_ID) -- 이름이 어긋나면 주입해도
-        # 앱이 읽지 않는다. NEXT_PUBLIC_ 접두어는 붙이지 않는다: 모델 id는 서버
-        # 측 호출에만 쓰이고, 그 접두어는 값을 클라이언트 번들에 인라인해
-        # 브라우저로 내보낸다.
+        # Model for the prototype runtime to read. Uses the same name the agent writes
+        # into `.env.example` (BEDROCK_MODEL_ID) -- if the names differ, the app
+        # will not read it even when injected. No NEXT_PUBLIC_ prefix: the model id is
+        # used only for server-side calls, and that prefix inlines the value into the
+        # client bundle and ships it to the browser.
         if model_id:
             base_env["BEDROCK_MODEL_ID"] = model_id
 
@@ -495,11 +517,12 @@ class ProtoHost:
         pkg = self._read_package_json(target_dir)
         scripts = pkg.get("scripts", {}) if isinstance(pkg, dict) else {}
 
-        # 소스를 읽기 **직전**의 시각. 뒤로 잡으면 빌드 도중에 바뀐 파일이 반영된
-        # 것으로 잘못 판정되고(빌드는 그것을 읽지 못했다), npm install 앞으로 잡으면
-        # 설치에 걸린 수 분 사이의 변경이 낡은 것으로 잘못 판정된다(뒤이은 빌드가
-        # 실제로 읽는다). build 스크립트가 없는 프로토타입도 여기서 잡는다 —
-        # 그때는 `npm start`/`dev`가 소스를 읽는 시점이 바로 다음이다.
+        # The time **just before** sources are read. Taken later, files changed during the
+        # build would be wrongly judged as included (the build never read them); taken
+        # before npm install, changes during the minutes the install takes would be wrongly
+        # judged stale (the following build does read them). Prototypes without a build
+        # script are also captured here — for them, `npm start`/`dev` reads the sources
+        # right after.
         entry.built_at = time.time()
 
         if "build" in scripts:
@@ -567,9 +590,12 @@ class ProtoHost:
             return  # unknown (pid, slug) -- idempotent no-op
         proc = entry.proc
         if proc is not None and proc.returncode is None and entry.launched:
-            # 래퍼 아래의 서버는 우리 자식이 아니다(systemd unit). 클라이언트에 신호를 보내면
-            # 클라이언트만 죽고 서버는 포트를 쥔 채 남는다(실측) — unit을 멈추면 클라이언트도
-            # 끝난다. 끝나지 않으면 아래 경로가 클라이언트라도 거둔다.
+            # The server under the wrapper is not our child (it is a systemd unit).
+            # Signaling the client
+            # kills only the client and the server stays holding the port (measured) —
+            # stopping the
+            # unit also ends the client. If it does not end, the path below at least reaps
+            # the client.
             await self._launcher.stop("proto", pid, slug)
             try:
                 await asyncio.wait_for(proc.wait(), timeout=15.0)
@@ -643,8 +669,9 @@ class ProtoHost:
         for known, target_ids in list(self._tokens.items()):
             if target_ids == (pid, slug):
                 del self._tokens[known]
-        # 빌드 에이전트의 트랜스크립트와 호스팅 npm 캐시(aipds/agent_home.py). 남기면 리셋한
-        # 프로토타입의 다음 빌드가 옛 세션 파일을 본다.
+        # The build agent's transcripts and the hosting npm cache (aipds/agent_home.py). If
+        # left, the
+        # next build of a reset prototype would see the old session files.
         await agent_home.purge_prototype(pid, slug)
         await asyncio.to_thread(shutil.rmtree, self._state_dir(pid, slug),
                                 ignore_errors=True)
@@ -683,9 +710,12 @@ class ProtoHost:
             raise RuntimeError(f"project purge left residue: {target}")
 
     def _pid_files(self) -> list[tuple[Path, str, str]]:
-        """(pid 파일, project_id, slug). 상태 트리의 것과, 옛 위치(빌드 트리의
-        `prototype/` 안과 빌드 트리 바로 아래)의 것을 함께 본다 — 옛 위치의 파일은
-        상태 트리로 옮기기 전의 백엔드가 남긴 것이고, 정리(`sweep_orphans`)가 지운다."""
+        """(pid file, project_id, slug). Looks at both those in the state tree and those at
+        the
+        old locations (inside the build tree's `prototype/` and directly under the build
+        tree) —
+        old-location files were left by a backend predating the move to the state tree, and
+        cleanup (`sweep_orphans`) removes them."""
         out = []
         if self._state_root.is_dir():
             for pid_file in self._state_root.glob(f"*/*/{_STATE_PID}"):
@@ -702,11 +732,13 @@ class ProtoHost:
         return out
 
     def previously_running(self) -> list[tuple[str, str]]:
-        """직전 백엔드가 떠나기 전에 호스팅 중이던 (project_id, slug).
+        """The (project_id, slug) pairs the previous backend was hosting before it went
+        away.
 
-        pid 파일은 호스팅이 뜰 때 쓰이고 `stop()`이 지운다 — 그러니 재시작 뒤 남아
-        있는 파일은 "멈추라고 한 적 없이 끊긴 호스팅"이다. `sweep_orphans`가 파일을
-        지우기 **전에** 읽어야 한다.
+        A pid file is written when hosting starts and removed by `stop()` — so a file still
+        present after a restart is "hosting that was cut off without ever being told to
+        stop".
+        It must be read **before** `sweep_orphans` deletes the files.
         """
         return sorted({(pid, slug) for _, pid, slug in self._pid_files()})
 
@@ -720,7 +752,8 @@ class ProtoHost:
         something we don't own) only costs a stale file."""
         swept = 0
         if self._launcher is not None:
-            # pid 파일이 가리키는 것은 sudo였고 이미 없다. 서버는 unit으로 남아 있다.
+            # What the pid file pointed to was sudo, and it is already gone. The server
+            # remains as a unit.
             self._launcher.sweep()
             for pid_file, _, _ in self._pid_files():
                 pid_file.unlink(missing_ok=True)
@@ -741,17 +774,22 @@ class ProtoHost:
         return swept
 
     def slugs(self, pid: str) -> list[str]:
-        """이 프로젝트가 **로컬에** 갖고 있는 슬러그 전부.
+        """Every slug this project has **locally**.
 
-        세 출처의 합집합이고, 셋 다 필요하다: 디스크 디렉토리(빌드 트리 —
-        재시작 뒤에도 남는 것), 호스팅 레지스트리(도는 프로세스), 토큰
-        캐시(디렉토리가 아직 없는데 토큰만 발급된 경계 상태). 프로젝트 삭제가
-        "이 프로젝트의 모든 슬러그"를 정리할 때 무엇을 돌아야 하는지가 여기서
-        나온다 — S3 기록만 열거하면 기록 없이 로컬에만 남은 트리를 놓친다.
+        The union of three sources, and all three are needed: disk directories (the build
+        tree —
+        what survives a restart), the hosting registry (running processes), and the token
+        cache (the boundary state where a token was issued but the directory does not exist
+        yet).
+        This is where project deletion learns what to walk when it cleans up "every slug of
+        this project" — enumerating only S3 records would miss trees left only locally
+        without a record.
 
-        읽기 전용이고 실패하지 않는다. 디렉토리를 못 읽으면(권한·경합) 그
-        출처만 비운다 — 목록을 못 만들었다는 사실은 호출부가 다른 출처로
-        판단해야 하고, 열거 실패로 삭제 전체를 막는 것은 과하다.
+        Read-only, and it does not fail. If a directory cannot be read (permissions, races),
+        only that source is emptied — the fact that the list could not be built must be
+        judged
+        by the caller from other sources, and blocking the whole deletion on an enumeration
+        failure is excessive.
         """
         reject_unsafe_segment(pid)
         found = {slug for (p, slug) in self._registry if p == pid}
@@ -761,16 +799,17 @@ class ProtoHost:
                 if base.is_dir():
                     found |= {child.name for child in base.iterdir() if child.is_dir()}
             except OSError:
-                # 이 모듈은 로거를 두지 않는다(전부 예외 전파 아니면 best-effort).
-                # 호출부(proto/cleanup.py)가 자기 실패 라벨로 기록한다.
+                # This module has no logger (everything either propagates exceptions or is
+                # best-effort).
+                # The caller (proto/cleanup.py) records it under its own failure label.
                 pass
         return sorted(found)
 
     def status(self, pid: str, slug: str) -> HostInfo | None:
-        """`log_tail`은 항상 빈 문자열이다 -- 이 메서드는 목록 라우트가
-        프로토타입마다 부르는 폴링 경로이고, 상태만 필요하다(`_info`의
-        주석). 로그가 필요한 호출자는
-        `log_tail()`을 따로 부른다 -- `/host` 라우트가 이미 그렇게 한다.
+        """`log_tail` is always an empty string -- this method is the polling path the
+        list route calls for each prototype, and only the state is needed (see the comment
+        on `_info`). Callers that need the log
+        call `log_tail()` separately -- the `/host` route already does.
         """
         entry = self._registry.get((pid, slug))
         if entry is None:

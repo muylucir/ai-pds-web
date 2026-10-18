@@ -5,35 +5,37 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { backendPolicyStatements } from './backend-permissions';
 
 export interface AipdsDrillStackProps extends cdk.StackProps {
-  /** 브라우저가 이 버킷으로 직접 PUT할 때 허용되는 출처.
+  /** Origins allowed when the browser PUTs directly to this bucket.
    *
-   *  프로젝트 가져오기는 번들을 presigned PUT으로 S3에 **직접** 올린다 —
-   *  nginx의 client_max_body_size와 Next 미들웨어의 바디 상한(둘 다 첨부 업로드에
-   *  맞춘 값)을 무관하게 만드는 유일한 길이다. 그 요청은 크로스 오리진이므로
-   *  버킷에 CORS 규칙이 있어야 하고, 없으면 preflight에서 막힌다.
+   *  Project import uploads the bundle to S3 **directly** with a presigned PUT —
+   *  the only way to make nginx's client_max_body_size and the Next middleware's body
+   *  limit (both tuned for attachment uploads) irrelevant. That request is cross-origin,
+   *  so the bucket needs a CORS rule; without one, it is blocked at preflight.
    *
-   *  **값을 prop으로 받는 이유.** 실제 출처는 호스팅 스택의 CloudFront 도메인인데
-   *  그 스택이 이미 이 버킷에 의존하므로 상호 참조는 순환이다. 그래서 bin/app.ts가
-   *  환경변수/컨텍스트에서 읽어 넣는다: 첫 배포에는 도메인이 아직 없으니 값 없이
-   *  배포하고, 도메인이 생긴 뒤 이 스택만 다시 배포한다(버킷 전용 스택이라 EC2를
-   *  교체하지 않는다).
+   *  **Why the value is taken as a prop.** The real origin is the hosting stack's
+   *  CloudFront domain, but that stack already depends on this bucket, so a mutual
+   *  reference would be circular. So bin/app.ts reads it from env vars/context: on the
+   *  first deploy the domain doesn't exist yet, so deploy without a value, and once the
+   *  domain exists, redeploy only this stack (it's a bucket-only stack, so it doesn't
+   *  replace EC2).
    *
-   *  와일드카드를 쓰지 않는다. 버킷은 BLOCK_ALL이고 presigned URL이 유일한
-   *  접근로지만, CORS를 넓히면 다른 사이트의 스크립트가 사용자의 유효한 presigned
-   *  URL을 재사용할 표면이 생긴다.
+   *  No wildcard. The bucket is BLOCK_ALL and presigned URLs are the only access
+   *  path, but widening CORS would create a surface for another site's scripts to
+   *  reuse a user's valid presigned URL.
    */
   readonly uploadOrigins?: string[];
 }
 
-/** 로컬 개발의 프론트엔드. 배포 도메인이 지정되지 않아도 이 출처는 항상 허용한다 —
- *  개발자가 자기 박스에서 가져오기를 시험할 수 있어야 한다. */
+/** Frontend for local development. This origin is always allowed even when no deploy domain
+ *  is set — developers must be able to test import on their own box. */
 export const LOCAL_UPLOAD_ORIGIN = 'http://localhost:3000';
 
-/** 스테이징된 번들이 방치됐을 때 사라지는 기한(일).
+/** Days after which an abandoned staged bundle disappears.
  *
- *  임포트는 성공·실패 어느 쪽에서도 자기 스테이징 객체를 지운다. 이 규칙이 걷는
- *  것은 그 사이에 사용자가 창을 닫은 경우다 — 업로드는 끝났지만 임포트 요청이 오지
- *  않은 번들. 그것이 남으면 프로젝트 하나 크기의 객체가 조용히 쌓인다. */
+ *  Import deletes its own staging object on both success and failure. What this rule
+ *  sweeps is the case where the user closed the window in between — a bundle whose
+ *  upload finished but no import request arrived. Left behind, project-sized objects
+ *  quietly pile up. */
 export const IMPORT_STAGING_EXPIRY_DAYS = 1;
 
 export class AipdsDrillStack extends cdk.Stack {
@@ -48,27 +50,27 @@ export class AipdsDrillStack extends cdk.Stack {
       ...(props?.uploadOrigins ?? []),
     ];
 
-    // Artifacts bucket — 프로젝트 산출물(projects/*), strands 세션(sessions/*),
-    // 그리고 가져오기 스테이징(imports/*).
+    // Artifacts bucket — project artifacts (projects/*), strands sessions (sessions/*),
+    // and import staging (imports/*).
     //
-    // **보안 경고: 이 버킷은 데이터를 지키도록 설정돼 있지 않다.** 실습 환경을 깨끗이 내리기 위한
-    // 선택이고, 워크숍 자료(고객 인터뷰, 전략 문서)가 여기 모인다는 것을 알고 써야 한다.
-    // - 스택을 지우면(`cdk destroy`) 버킷과 그 안의 모든 객체가 지워진다(DESTROY +
-    //   autoDeleteObjects). 되살릴 수 없다.
-    // - 버전 관리가 없다. 덮어쓰기·삭제(실수, 또는 인스턴스 롤을 얻은 공격자)를 되돌릴 수 없다.
-    // - 서버 액세스 로그가 없다. 누가 무엇을 읽었는지 버킷 쪽 기록이 남지 않는다.
-    // 지속해서 쓸 환경이라면 `removalPolicy: cdk.RemovalPolicy.RETAIN`(autoDeleteObjects 제거),
-    // `versioned: true`와 noncurrent 버전 만료 규칙, 서버 액세스 로그(별도 로그 버킷)를 켠다.
-    // 버전 관리를 켜면 프로젝트를 지워도 이전 버전이 만료 기간만큼 남는다는 점도 함께 정한다.
+    // **Security warning: this bucket is not configured to protect data.** This is a choice for tearing down the lab
+    // environment cleanly; use it knowing that workshop materials (customer interviews, strategy docs) collect here.
+    // - Deleting the stack (`cdk destroy`) deletes the bucket and every object in it (DESTROY +
+    //   autoDeleteObjects). It cannot be recovered.
+    // - No versioning. Overwrites and deletes (by mistake, or by an attacker who obtained the instance role) cannot be undone.
+    // - No server access logs. No bucket-side record of who read what remains.
+    // For a long-lived environment, turn on `removalPolicy: cdk.RemovalPolicy.RETAIN` (remove autoDeleteObjects),
+    // `versioned: true` with a noncurrent version expiration rule, and server access logs (separate log bucket).
+    // If you turn on versioning, also decide on the fact that deleting a project leaves prior versions for the expiration period.
     const bucket = new s3.Bucket(this, 'Artifacts', {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
-      // PUT 하나뿐이다. 브라우저는 업로드만 직접 하고, 내보내기는 백엔드가
-      // 스트리밍하므로(응답 본문에는 nginx 상한이 없다) GET을 열 이유가 없다.
-      // `content-type`은 서명에 포함되는 헤더이므로 허용목록에 있어야 한다
-      // (backend/aipds/import_staging.py의 CONTENT_TYPE).
+      // PUT only. The browser does only uploads directly, and export is streamed by the
+      // backend (response bodies have no nginx limit), so there is no reason to open GET.
+      // `content-type` is a signed header, so it must be in the allowlist
+      // (CONTENT_TYPE in backend/aipds/import_staging.py).
       cors: [{
         allowedOrigins: uploadOrigins,
         allowedMethods: [s3.HttpMethods.PUT],
@@ -80,18 +82,18 @@ export class AipdsDrillStack extends cdk.Stack {
         id: 'expire-abandoned-import-staging',
         prefix: 'imports/',
         expiration: cdk.Duration.days(IMPORT_STAGING_EXPIRY_DAYS),
-        // 멀티파트 업로드가 중간에 끊긴 조각도 함께 걷는다. boto3의 관리형
-        // 전송과 브라우저의 단일 PUT 모두 조각을 남기지 않지만, 남는 경로가
-        // 있다면 그것도 방치된 스테이징이다.
+        // Also sweep the parts of multipart uploads cut off midway. Neither boto3's managed
+        // transfer nor the browser's single PUT leaves parts, but if some path does leave
+        // them, that is abandoned staging too.
         abortIncompleteMultipartUploadAfter:
           cdk.Duration.days(IMPORT_STAGING_EXPIRY_DAYS),
       }],
     });
     this.artifactsBucket = bucket;
 
-    // 백엔드 프로세스가 assume하는 실행 롤: Bedrock invoke + S3(projects/* & sessions/*).
-    // 백엔드가 EC2/컨테이너 인스턴스 프로파일로 이 롤을 맡거나, 롤 정책을 그대로
-    // 인스턴스 프로파일에 부여한다(호스트 자격증명 모델, spec §2).
+    // Execution role the backend process assumes: Bedrock invoke + S3 (projects/* & sessions/*).
+    // The backend takes this role via the EC2/container instance profile, or the role policy is
+    // granted directly to the instance profile (host credential model, spec §2).
     const backendRole = new iam.Role(this, 'BackendRole', {
       assumedBy: new iam.AccountPrincipal(account),
       description: 'AI-PDS backend: Bedrock invoke + artifacts/session S3 access.',
@@ -102,7 +104,7 @@ export class AipdsDrillStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'ArtifactsBucketName', { value: bucket.bucketName });
     new cdk.CfnOutput(this, 'BackendRoleArn', { value: backendRole.roleArn });
-    // 스택이 실제로 배포되는 리전(bin/app.ts의 env.region으로 결정).
+    // Region the stack is actually deployed to (determined by env.region in bin/app.ts).
     new cdk.CfnOutput(this, 'Region', { value: this.region });
   }
 }

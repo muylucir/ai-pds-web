@@ -1,8 +1,8 @@
 # backend/tests/test_handoff_readiness.py — handoff/readiness.assess
 #
-# 경로 모양은 2026-10-09 드릴 버킷의 실제 프로젝트를 따른다: A.1은 ws-g
-# (Strategy·GTM까지 간 유일한 프로젝트), B는 test2222(Envision 없이 v0.9 Discovery
-# Document를 쓴 프로젝트). EP1은 실측이 없어 룰의 경로로 만든다.
+# The path shapes follow real projects in the drill bucket as of 2026-10-09: A.1 is ws-g
+# (the only project that went as far as Strategy/GTM), B is ws-n (a project that wrote a v0.9 Discovery
+# Document without Envision). EP1 has no measurements, so it is built from the rules' paths.
 from __future__ import annotations
 
 import asyncio
@@ -58,7 +58,7 @@ def test_a1_with_strategy_and_gtm_has_every_section_sourced():
 
 
 def test_path_b_without_envision_leaves_the_prfaq_sections_partial():
-    """test2222의 모양: Discovery Document는 있지만 Envision이 없다 — PR/FAQ가 아니다."""
+    """ws-n's shape: there is a Discovery Document but no Envision — it is not a PR/FAQ."""
     r = assess(B, {})
     assert r.origin == "B"
     s = _sections(r)
@@ -67,7 +67,7 @@ def test_path_b_without_envision_leaves_the_prfaq_sections_partial():
                 "constraints", "assumptions"):
         assert s[key].status == "partial", key
     assert D + "use-case-intake/use-cases.md" in s["problem"].sources
-    # 요구사항의 재료가 명세뿐이면 프로토타입 범위다.
+    # If the only material for the requirements is the spec, it is prototype scope.
     assert D + "discovery-document.md" not in s["requirements"].sources
 
 
@@ -77,7 +77,7 @@ def test_path_b_validation_is_only_planned_when_no_results_exist():
     assert by_id["customer-inquiry-triage"].validation == "planned"
     assert by_id["customer-inquiry-triage"].evidence == [
         D + "prototypes/customer-inquiry-triage/validation-questionnaire.md"]
-    # 디렉터리에 아무것도 없으면 프로토타입 밖의 검증 계획을 근거로 든다(test2222).
+    # If the directory has nothing, the validation plan outside the prototype is cited as the basis (ws-n).
     assert by_id["flight-disruption-notice"].evidence == [D + "validation-plan.md"]
 
 
@@ -110,9 +110,9 @@ def test_envision_then_several_prototypes_is_a2():
     r = assess(paths, {})
     assert r.origin == "A.2"
     s = _sections(r)
-    # PR/FAQ가 있으니 제품 범위가 잡힌다.
+    # There is a PR/FAQ, so the product scope is established.
     assert s["requirements"].status == "sourced"
-    # PROTOTYPE의 Future Enhancements는 제품의 "하지 않을 것"이 아니다.
+    # PROTOTYPE's Future Enhancements are not the product's "what we will not do".
     assert s["non_goals"].status == "partial"
 
 
@@ -203,16 +203,16 @@ def test_any_arrow_marker_is_an_ai_suggestion_and_only_letter_answers_accept_it(
     path = D + "product-strategy/strategy-questions.md"
     r = assess([path], {path: QUESTIONS})
     d = r.ai_defaults
-    # 답한 문항 6(Q6 미답), 그중 표시가 있던 문항 5(Q7 없음).
+    # 6 questions answered (Q6 unanswered), of which 5 had a marker (Q7 had none).
     assert (d.answered, d.suggested) == (6, 5)
-    # Q1 "A", Q2 "A: 부연", Q4 "A,C"는 수락. Q3 "B"는 거절, Q5 자유 서술은 수락이 아니다.
+    # Q1 "A", Q2 "A: 부연", and Q4 "A,C" are acceptances. Q3 "B" is a rejection, and Q5's free-form answer is not an acceptance.
     assert [i.number for i in d.items] == [1, 2, 4]
     assert d.accepted == 3
     assert d.items[0].file == path
 
 
 def test_real_korean_corpus_has_suggestions_under_translated_markers():
-    """fixtures/real의 ko 질문 파일은 `← 권고`, `← 추천: …`처럼 번역된 표시를 쓴다."""
+    """The ko question files in fixtures/real use translated markers like `← 권고` and `← 추천: …`."""
     root = Path(__file__).parent / "fixtures" / "real"
     files = {str(p.relative_to(root)): p.read_text(encoding="utf-8")
              for p in root.glob("*/discovery/**/*-questions.md")}
@@ -264,7 +264,7 @@ def test_route_unknown_project_is_404():
 
 
 def test_accepted_suggestions_carry_the_decision_not_just_the_letter():
-    """실측(ws-g): 확인 항목 40개가 전부 "고른 답: A"로 보여 무엇을 확인하는지 알 수 없었다."""
+    """Measured (ws-g): all 40 confirmation items showed as "고른 답: A", so there was no way to tell what was being confirmed."""
     path = D + "product-strategy/strategy-questions.md"
     first, second, fourth = assess([path], {path: QUESTIONS}).ai_defaults.items
     assert first.stage == "product_strategy"
@@ -287,10 +287,10 @@ def test_question_files_are_grouped_by_discovery_stage(path, stage):
     assert stage_of(path) == stage
 
 
-# ---- 명세 정합성: 기준 명세가 수정 이력의 마지막 항목까지 반영했는가 ----
+# ---- Spec consistency: has the spec of record reflected the change history through its last entry ----
 #
-# 빌드 세션이 승인 뒤에 바꾼 것은 수정 이력에만 있다. `spec-as-built.md`가 없거나 마지막
-# 항목 전에 멈췄으면 패키지가 받는 명세는 사용자가 본 프로토타입과 다르다.
+# What the build session changed after approval exists only in the change history. If `spec-as-built.md` is missing or
+# stopped before the last entry, the spec the package receives differs from the prototype the user saw.
 
 _HISTORY = D + "prototype/change-history.md"
 _AS_BUILT = D + "prototype/spec-as-built.md"
@@ -311,7 +311,7 @@ def test_without_a_change_history_there_is_nothing_to_reconcile():
 
 
 def test_a_history_with_only_its_header_has_nothing_to_reconcile():
-    """헤더만 있는 이력은 승인 뒤 바뀐 것이 없다."""
+    """A history with only a header means nothing changed after approval."""
     assert _proto([_HISTORY], {_HISTORY: "# 수정 이력\n\n머리말\n"}).reconcile == "not_needed"
 
 
@@ -322,11 +322,11 @@ def test_a_history_without_spec_as_built_needs_reconciling():
 
 
 def test_spec_as_built_that_stops_before_the_newest_entry_is_stale():
-    """변경이 없던 항목도 반영 대상이다 — 정합성 패스는 읽은 항목을 모두 적는다."""
+    """Entries with no change are also in scope for reflection — the reconciliation pass records every entry it read."""
     as_built = "# Spec as Built\n\n근거: 2026-10-13 16:27 UTC · gen 1\n"
     proto = _proto([_HISTORY, _AS_BUILT], {_HISTORY: _TWO_ENTRIES, _AS_BUILT: as_built})
     assert proto.reconcile == "stale"
-    assert proto.spec == _AS_BUILT              # 그래도 승인 명세보다는 가깝다
+    assert proto.spec == _AS_BUILT              # still closer than the approved spec
 
 
 def test_spec_as_built_citing_the_newest_entry_is_current():

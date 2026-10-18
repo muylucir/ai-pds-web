@@ -16,26 +16,26 @@ import {
 
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 
-// 백엔드가 아티팩트 버킷에서 쓰는 프리픽스 전체. lib/backend-permissions.ts의
-// BACKEND_BUCKET_PREFIXES와 같아야 한다. surveys/*는 프로젝트 프리픽스 밖의
-// 토큰 인덱스(surveys/by-token/) 때문에 필요하다 — 공개 설문 링크가 토큰의
-// 소속 프로젝트를 알기 전에 읽어야 하는 값이다. models/*는 같은 이유로
-// 프로젝트 프리픽스 밖에 있는 모델 카탈로그(models/catalog.json) 때문이다.
-// design/*는 관리자가 올린 브랜드 프로필(design/profile.json)이다 — models/*와
-// 같은 이유로 프로젝트 프리픽스 밖에 있다(프로젝트가 없어도 관리된다).
-// imports/*는 프로젝트 가져오기의 스테이징이다. 이것이 빠지면 백엔드가 서명한
-// presigned PUT이 브라우저에서 403이 되고, 그 거절은 S3가 브라우저에게 하므로
-// 백엔드 로그에 아무 흔적이 없다 — surveys/*가 빠졌을 때보다 더 조용한 실패다.
+// Every prefix the backend uses in the artifact bucket. Must match
+// BACKEND_BUCKET_PREFIXES in lib/backend-permissions.ts. surveys/* is needed for the
+// token index (surveys/by-token/) outside the project prefix — a value the public
+// survey link must read before it knows which project the token belongs to. models/* is
+// for the model catalog (models/catalog.json), outside the project prefix for the same reason.
+// design/* is the brand profile uploaded by an admin (design/profile.json) — it is outside
+// the project prefix for the same reason as models/* (it is managed even with no project).
+// imports/* is the staging area for project import. If it is missing, the presigned PUT the
+// backend signed becomes a 403 in the browser, and since S3 issues that rejection to the
+// browser, the backend log has no trace of it — a quieter failure than a missing surveys/*.
 const BUCKET_PREFIXES = ['projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*', 'imports/*'];
 
-/** 객체 권한(Get/Put/Delete)과 목록 권한(ListBucket)이 BUCKET_PREFIXES를
- *  빠짐없이 덮는지 확인한다. 액션 존재만 보는 단정은 프리픽스 누락을 놓치고,
- *  그 누락은 해당 기능만 500으로 만든다. */
+/** Verify that object permissions (Get/Put/Delete) and list permissions (ListBucket)
+ *  cover BUCKET_PREFIXES without gaps. An assertion that only checks the action exists
+ *  misses a missing prefix, and that gap turns only the affected feature into a 500. */
 function assertBucketPrefixesCovered(t: Template) {
   const rendered = JSON.stringify(t.findResources('AWS::IAM::Policy'));
   for (const prefix of BUCKET_PREFIXES) {
-    // 객체 문의 Resource는 "<bucketArn>/projects/*" 형태로 조립되므로 접두
-    // 슬래시까지 함께 찾는다 — ListBucket 조건의 값("projects/*")과 구분된다.
+    // The object statement's Resource is assembled as "<bucketArn>/projects/*", so we
+    // search including the leading slash — distinct from the ListBucket condition value ("projects/*").
     assert.ok(
       rendered.includes(`/${prefix}`),
       `s3 object permissions must cover ${prefix} (backend writes there)`,
@@ -52,7 +52,7 @@ function testDrillUnchanged() {
   const drill = new AipdsDrillStack(app, 'Drill', { env: ENV });
   const t = Template.fromStack(drill);
 
-  // Bedrock invoke 문 존재.
+  // Bedrock invoke statement exists.
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
       Statement: Match.arrayWith([
@@ -62,8 +62,8 @@ function testDrillUnchanged() {
       ]),
     },
   });
-  assertFirstCallSubscription(t);  // 드릴 백엔드 롤
-  // S3 객체 Get/Put/Delete 문 존재.
+  assertFirstCallSubscription(t);  // drill backend role
+  // S3 object Get/Put/Delete statement exists.
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
       Statement: Match.arrayWith([
@@ -73,12 +73,12 @@ function testDrillUnchanged() {
       ]),
     },
   });
-  // S3 ListBucket 문 + BUCKET_PREFIXES prefix 조건 존재.
+  // S3 ListBucket statement + BUCKET_PREFIXES prefix condition exist.
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
       Statement: Match.arrayWith([
         Match.objectLike({
-          // 단일 액션은 CFN 합성 시 배열이 아닌 스칼라 문자열로 축약됨.
+          // A single action is collapsed to a scalar string, not an array, during CFN synthesis.
           Action: 's3:ListBucket',
           Condition: {
             StringLike: {
@@ -89,25 +89,25 @@ function testDrillUnchanged() {
       ]),
     },
   });
-  // 모든 프리픽스가 객체 권한과 목록 권한 양쪽에 다 있어야 한다.
+  // Every prefix must be present in both the object permissions and the list permissions.
   //
-  // 위의 arrayWith 단정만으로는 부족했다 — 그건 "이 액션이 있다"만 보고
-  // 리소스는 아예 보지 않아서, surveys/*가 객체 문에서 빠진 채로도 통과했다.
-  // 그 누락이 실제 배포에서 설문 생성 500(AccessDenied: PutObject on
-  // surveys/by-token/...)으로 나타났다. 백엔드가 쓰는 프리픽스 하나가 빠지면
-  // 그 기능만 500이 되고 화면에서는 원인이 보이지 않으므로, 여기서
-  // 프리픽스별로 확인한다.
+  // The arrayWith assertions above were not enough — they only check "this action
+  // exists" and never look at resources, so they passed even with surveys/* missing
+  // from the object statement. That gap showed up in a real deployment as a survey
+  // creation 500 (AccessDenied: PutObject on surveys/by-token/...). When one prefix the
+  // backend uses is missing, only that feature becomes a 500 and the screen shows no
+  // cause, so we check prefix by prefix here.
   assertBucketPrefixesCovered(t);
-  // 버킷 1개 노출.
+  // Exactly one bucket exposed.
   assert.ok(drill.artifactsBucket, 'artifactsBucket must be exposed');
   t.resourceCountIs('AWS::S3::Bucket', 1);
   console.log('OK  drill stack: bedrock + s3 object/list on every backend prefix + bucket exposed');
 }
 
-/** 가져오기 업로드가 브라우저에서 성립하는 조건: 버킷 CORS와 스테이징 수명.
+/** Conditions for import uploads to work from the browser: bucket CORS and staging lifetime.
  *
- *  CORS가 없으면 preflight에서 막히고, 그 실패는 브라우저 콘솔에만 보인다 —
- *  백엔드는 서명을 발급했으므로 자기 몫을 다 했다고 믿는다. */
+ *  Without CORS, the preflight is blocked, and that failure is visible only in the browser
+ *  console — the backend issued the signature, so it believes it did its part. */
 function testImportUploadWiring() {
   const app = new cdk.App();
   const drill = new AipdsDrillStack(app, 'DrillCors', {
@@ -121,19 +121,19 @@ function testImportUploadWiring() {
       CorsRules: [Match.objectLike({
         AllowedMethods: ['PUT'],
         AllowedOrigins: [LOCAL_UPLOAD_ORIGIN, 'https://d111111abcdef8.cloudfront.net'],
-        // 서명에 포함되는 헤더다 — 허용목록에 없으면 preflight가 막는다.
+        // These headers are included in the signature — if they are not on the allowlist, the preflight blocks.
         AllowedHeaders: ['content-type'],
       })],
     },
   });
 
-  // 와일드카드 출처는 사고다: 다른 사이트의 스크립트가 사용자의 유효한 presigned
-  // URL을 재사용할 표면이 된다.
+  // A wildcard origin is an accident: it becomes a surface for another site's scripts to
+  // reuse the user's valid presigned URL.
   const rendered = JSON.stringify(t.findResources('AWS::S3::Bucket'));
   assert.ok(!rendered.includes('"*"'),
     'bucket CORS must never allow a wildcard origin');
 
-  // 방치된 스테이징이 사라진다. 없으면 프로젝트 하나 크기의 객체가 조용히 쌓인다.
+  // Abandoned staging goes away. Without this, objects the size of a whole project quietly pile up.
   t.hasResourceProperties('AWS::S3::Bucket', {
     LifecycleConfiguration: {
       Rules: Match.arrayWith([Match.objectLike({
@@ -146,7 +146,7 @@ function testImportUploadWiring() {
   console.log('OK  drill stack: bucket CORS (PUT, no wildcard) + imports/ lifecycle');
 }
 
-/** 배포 도메인을 넘기지 않아도 합성이 되고 localhost만 허용된다 — 첫 배포의 상태다. */
+/** Synthesis works without passing a deployment domain, and only localhost is allowed — the state of a first deployment. */
 function testUploadOriginsDefaultToLocalOnly() {
   const app = new cdk.App();
   const t = Template.fromStack(new AipdsDrillStack(app, 'DrillLocal', { env: ENV }));
@@ -170,7 +170,7 @@ function makeHosting() {
   const stack = new AipdsHostingStack(app, 'Hosting', {
     env: ENV,
     artifactsBucket: drill.artifactsBucket,
-    cfPrefixListId: 'pl-test0000',   // 주입 → fromLookup 우회(크리덴셜 불필요)
+    cfPrefixListId: 'pl-test0000',   // injected → bypasses fromLookup (no credentials needed)
     userPool: auth.userPool,
     userPoolClient: auth.userPoolClient,
     hostedUiDomain: auth.hostedUiDomain,
@@ -180,16 +180,16 @@ function makeHosting() {
 
 function testNetworkAndSecret() {
   const t = makeHosting();
-  // 80 인그레스가 프리픽스 리스트 소스만 사용, CIDR 오픈 없음.
+  // Ingress on 80 uses only the prefix list source, with no open CIDR.
   t.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
     IpProtocol: 'tcp', FromPort: 80, ToPort: 80, SourcePrefixListId: 'pl-test0000',
   });
-  // 22(SSH) 인그레스 전무.
+  // No ingress on 22 (SSH) at all.
   const ingresses = t.findResources('AWS::EC2::SecurityGroupIngress');
   for (const [, r] of Object.entries(ingresses)) {
     assert.notStrictEqual((r as any).Properties.FromPort, 22, 'no SSH ingress allowed');
   }
-  // 0.0.0.0/0 인그레스 없음(별도 인라인 ingress도 없어야).
+  // No 0.0.0.0/0 ingress (and no separate inline ingress either).
   const sgs = t.findResources('AWS::EC2::SecurityGroup');
   for (const [, r] of Object.entries(sgs)) {
     const inline = (r as any).Properties.SecurityGroupIngress ?? [];
@@ -197,9 +197,9 @@ function testNetworkAndSecret() {
       assert.notStrictEqual(rule.CidrIp, '0.0.0.0/0', 'no open CIDR ingress');
     }
   }
-  // NAT 게이트웨이 0.
+  // Zero NAT gateways.
   t.resourceCountIs('AWS::EC2::NatGateway', 0);
-  // 비밀 헤더 시크릿 존재(구두점 제외 생성).
+  // The secret-header secret exists (generated without punctuation).
   t.hasResourceProperties('AWS::SecretsManager::Secret', {
     GenerateSecretString: Match.objectLike({ ExcludePunctuation: true }),
   });
@@ -210,9 +210,9 @@ testNetworkAndSecret();
 
 function testComputeAndRole() {
   const t = makeHosting();
-  // x86_64 인스턴스 1대, IMDSv2 강제(HttpTokens required). Graviton은 쓰지
-  // 않는다 — SDK 번들 바이너리가 x86-64 ELF이고, 프로토타입이 설치하는
-  // 네이티브 npm 모듈도 x86_64 prebuilt를 받는다.
+  // One x86_64 instance, IMDSv2 enforced (HttpTokens required). Graviton is not
+  // used — the SDK's bundled binary is an x86-64 ELF, and the native npm modules
+  // prototypes install also fetch x86_64 prebuilts.
   t.hasResourceProperties('AWS::EC2::Instance', {
     InstanceType: 'm7i.2xlarge',
   });
@@ -221,17 +221,17 @@ function testComputeAndRole() {
       MetadataOptions: Match.objectLike({ HttpTokens: 'required' }),
     }),
   });
-  // 빌드가 이 박스로 들어오면서 프로토타입당 node_modules가 상주한다 — 20GB로는
-  // 부족하다.
+  // With builds moving onto this box, node_modules stays resident per prototype — 20GB is
+  // not enough.
   t.hasResourceProperties('AWS::EC2::Instance', {
     BlockDeviceMappings: Match.arrayWith([
       Match.objectLike({ Ebs: Match.objectLike({ VolumeSize: 100 }) }),
     ]),
   });
-  // EIP 존재 + 연결.
+  // EIP exists + is associated.
   t.resourceCountIs('AWS::EC2::EIP', 1);
   t.resourceCountIs('AWS::EC2::EIPAssociation', 1);
-  // 인스턴스 롤: Bedrock + 시크릿 읽기 + SSM 관리형 정책.
+  // Instance role: Bedrock + secret read + SSM managed policy.
   t.hasResourceProperties('AWS::IAM::Role', {
     ManagedPolicyArns: Match.arrayWith([
       Match.objectLike({
@@ -245,26 +245,26 @@ function testComputeAndRole() {
   const allActions = JSON.stringify(policies);
   assert.match(allActions, /secretsmanager:GetSecretValue/, 'instance role reads header secret');
   assert.match(allActions, /bedrock:InvokeModel/, 'instance role invokes bedrock');
-  assertFirstCallSubscription(t);  // 인스턴스 롤
-  // 인스턴스 롤이 실제로 배포에서 AccessDenied를 낸 롤이다 — 드릴 롤과 같은
-  // 헬퍼를 쓰지만 여기서도 프리픽스를 확인한다. 두 스택 중 한쪽만 검사하면
-  // 호출부가 갈라지는 순간 다시 조용히 놓친다.
+  assertFirstCallSubscription(t);  // instance role
+  // The instance role is the role that actually produced AccessDenied in deployment — it uses
+  // the same helper as the drill role, but we check prefixes here too. If only one of the two
+  // stacks is checked, the gap is silently missed again the moment the call sites diverge.
   assertBucketPrefixesCovered(t);
-  // 모델 허용은 명시 목록이 아니라 와일드카드다. 명시 목록이면 관리자가
-  // /admin/models에서 새 모델을 등록해도 IAM이 막아 첫 대화 턴에
-  // AccessDenied가 나고, 그 실패는 백엔드 로그에만 남는다 — "화면에서 모델을
-  // 추가할 수 있다"고 보여주면서 실제로는 cdk deploy가 필요한 상태가 최악이다.
+  // Model access is a wildcard, not an explicit list. With an explicit list, even after an
+  // admin registers a new model in /admin/models, IAM blocks it and the first chat turn gets
+  // AccessDenied, a failure that remains only in the backend log — showing "you can add
+  // models from the screen" while actually requiring a cdk deploy is the worst state.
   // (spec 2026-08-01-per-project-model-selection §4)
   assert.match(allActions, /inference-profile\/global\.anthropic\.claude-\*/,
     'instance role can invoke any global Anthropic Claude inference profile');
   assert.match(allActions, /foundation-model\/anthropic\.claude-\*/,
     'instance role can invoke any Anthropic Claude foundation model');
-  // 폴백 기본값이 그 와일드카드에 실제로 포함되는지. MODEL은 카탈로그의 시드
-  // 목록에 없지만(콤보박스에 뜨지 않는다) 구 프로젝트와 미지정 폴백으로
-  // 남으므로 invoke 가능해야 한다.
+  // Whether the fallback default is actually covered by that wildcard. MODEL is not in the
+  // catalog's seed list (it does not show in the combo box), but it remains as the fallback
+  // for old projects and unspecified models, so it must be invocable.
   assert.ok(MODEL.startsWith('global.anthropic.claude-'),
     `MODEL ${MODEL} must fall under the global.anthropic.claude-* wildcard`);
-  // lambda-microvms 제어 권한은 VM 계층과 함께 사라졌다.
+  // lambda-microvms control permissions went away along with the VM layer.
   if (allActions.includes('lambda-microvms')) {
     throw new Error('hosting: instance role still carries lambda-microvms permissions');
   }
@@ -290,7 +290,7 @@ function testCloudFront() {
       }),
     }),
   });
-  // /_next/static/* 캐시 비헤이비어 존재.
+  // The /_next/static/* cache behavior exists.
   const dists = t.findResources('AWS::CloudFront::Distribution');
   const cfg = Object.values(dists)[0] as any;
   const behaviors = cfg.Properties.DistributionConfig.CacheBehaviors ?? [];
@@ -303,20 +303,20 @@ function testCloudFront() {
 
 testCloudFront();
 
-// Custom::AWS의 Create/Update 필드는 SDK 호출을 기술하는 JSON을 Fn::Join으로
-// 조립한 값이다(참조 부분만 { Ref: ... } / { Fn::GetAtt: ... } 등) — 문자열
-// 조각을 이어붙이고 참조는 자리표시자로 바꿔 JSON.parse하면 실제
-// service/action/parameters를 얻는다. 이래야 "필드가 다 있는지"뿐 아니라
-// "값이 맞는지"(예: AllowedOAuthFlows가 정확히 ['code']인지, ['implicit']이
-// 섞여 있진 않은지)까지 검증할 수 있다 — 문자열 포함 검사(bodies.includes(...))는
-// 값이 달라도 필드 이름만 있으면 통과해버린다.
+// The Create/Update fields of Custom::AWS are JSON describing the SDK call, assembled with
+// Fn::Join (only the reference parts are { Ref: ... } / { Fn::GetAtt: ... } etc.) —
+// concatenating the string fragments, replacing references with placeholders, and running
+// JSON.parse yields the actual service/action/parameters. Only then can we verify not just
+// "are all fields present" but "are the values right" (e.g., whether AllowedOAuthFlows is
+// exactly ['code'] with no ['implicit'] mixed in) — a string containment check
+// (bodies.includes(...)) passes as long as the field name is there, even if the value differs.
 function parseSdkPayload(field: any): { service: string; action: string; parameters: any } {
   const parts = field['Fn::Join'][1];
   const joined = parts.map((p: any) => (typeof p === 'string' ? p : '__REF__')).join('');
   return JSON.parse(joined);
 }
 
-// --- 콜백 URL 주입 (순환 의존 해소) ---
+// --- Callback URL injection (breaking the circular dependency) ---
 {
   const app = new cdk.App();
   const drill = new AipdsDrillStack(app, 'Drill3', { env: ENV });
@@ -341,10 +341,10 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   }) as any;
   assert.ok(target, 'hosting must register the CloudFront callback URL with the app client');
 
-  // onCreate와 onUpdate가 둘 다 있어야 한다 — Update가 없으면 재배포 시 콜백이
-  // 갱신되지 않아 도메인이 바뀌어도 낡은 채로 남는다. 두 objects가 같은
-  // 참조(updateClientCall 하나를 공유)이므로 Create만 있어도 Create 쪽 문자열
-  // 검사는 전부 통과해버린다 — 그래서 Update 필드의 '존재' 자체를 별도로 확인한다.
+  // Both onCreate and onUpdate must exist — without Update, the callback is not refreshed
+  // on redeploy and stays stale even when the domain changes. The two objects share the
+  // same reference (one shared updateClientCall), so with only Create present the
+  // Create-side string checks all pass — hence we separately check that the Update field 'exists' at all.
   assert.ok(target.Properties.Update, 'onUpdate must be set — otherwise a redeploy never refreshes stale callbacks');
 
   const createPayload = parseSdkPayload(target.Properties.Create);
@@ -353,16 +353,16 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
 
   const params = createPayload.parameters;
 
-  // PUT 시맨틱이므로 전체 설정을 다시 써야 한다 — 필드가 있는지뿐 아니라 값도
-  // 확인한다. ['implicit']이 섞여 들어가도 'AllowedOAuthFlows' 존재 여부만
-  // 보는 검사로는 못 잡는다.
+  // It has PUT semantics, so the whole configuration must be rewritten — we check the values,
+  // not just that the fields exist. A check that only looks for the presence of
+  // 'AllowedOAuthFlows' cannot catch ['implicit'] slipping in.
   assert.deepStrictEqual(params.AllowedOAuthFlows, ['code'],
     'UpdateUserPoolClient has PUT semantics — must resend the exact flow, not merely "a" flow');
   assert.strictEqual(params.AllowedOAuthFlowsUserPoolClient, true);
-  // 목록을 여기 다시 적지 않고 상수에서 끌어온다 — 스코프를 추가할 때 이 재전송을
-  // 함께 고치지 않으면 PUT 시맨틱이 재배포마다 그 스코프를 조용히 지운다.
-  // `aws.cognito.signin.user.admin`이 그렇게 사라지면 자기 비밀번호 변경이
-  // "Access Token does not have required scopes"로 죽는데, 원인은 이 재전송이다.
+  // The list is pulled from the constant instead of being written here again — if a scope is
+  // added without fixing this resend too, PUT semantics silently erase that scope on every redeploy.
+  // When `aws.cognito.signin.user.admin` disappears that way, changing one's own password dies with
+  // "Access Token does not have required scopes", and the cause is this resend.
   assert.deepStrictEqual(
     [...params.AllowedOAuthScopes].sort(), [...OAUTH_SCOPES].sort(),
     'OAuth scopes must be resent',
@@ -370,13 +370,13 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   assert.deepStrictEqual(params.SupportedIdentityProviders, ['COGNITO']);
   assert.strictEqual(params.PreventUserExistenceErrors, 'ENABLED');
   assert.strictEqual(params.EnableTokenRevocation, true);
-  // 토큰 유효기간 + 리프레시 인증 플로우 — 처음 구현에서 빠졌던 필드들.
-  // AuthStack의 클라이언트 정의와 정확히 같은 값이어야 한다: 하나라도 빠지면
-  // 재배포마다 그 필드가 Cognito 기본값으로 조용히 리셋된다.
+  // Token validity + refresh auth flow — fields that were missing from the first implementation.
+  // They must be exactly the same values as AuthStack's client definition: if even one is
+  // missing, that field is silently reset to the Cognito default on every redeploy.
   //
-  // auth-client-config의 상수를 참조한다(리터럴을 박지 않는다). 리터럴이면
-  // 유효기간을 조정할 때 상수만 바꾸고 이 파일을 잊는 실패가 가능한데, 그때
-  // 깨지는 것은 "두 스택이 어긋났다"는 이 테스트가 지키려는 바로 그 불변식이다.
+  // References the constants in auth-client-config (no hard-coded literals). With literals, it
+  // is possible to change only the constant when adjusting validity and forget this file, and
+  // what breaks then is the very invariant this test guards: "the two stacks have diverged".
   assert.strictEqual(params.AccessTokenValidity, ACCESS_TOKEN_VALIDITY_MINUTES);
   assert.strictEqual(params.IdTokenValidity, ID_TOKEN_VALIDITY_MINUTES);
   assert.strictEqual(params.RefreshTokenValidity, REFRESH_TOKEN_VALIDITY_MINUTES);
@@ -386,32 +386,32 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   assert.deepStrictEqual(params.ExplicitAuthFlows, ['ALLOW_REFRESH_TOKEN_AUTH'],
     'the /api proxy 401-refresh path depends on this grant — dropping it silently breaks session renewal on redeploy');
 
-  // localhost 콜백도 유지돼야 로컬 개발이 깨지지 않는다.
+  // The localhost callback must remain too, or local development breaks.
   assert.ok(params.CallbackURLs.includes('http://localhost:3000/api/auth/callback'),
     'the localhost callback must survive the update');
   assert.ok(params.LogoutURLs.includes('http://localhost:3000/login'),
     'the localhost logout URL must survive the update');
 
-  // --- 드리프트 감지: AuthStack의 client 속성 하나하나를 손으로 대조하는 건
-  // 반복 가능한 방어가 아니다(리뷰어가 CDK 소스를 읽어야 ClientName 누락을
-  // 찾을 수 있었다). 그래서 실제로 AuthStack을 합성해 그 client 리소스가
-  // 갖는 CFN 속성 키 전부를 가져오고, 재전송 parameters가 그 키를 다 갖고
-  // 있는지 기계적으로 대조한다 — 다음에 addClient()에 필드가 추가되고
-  // 재전송이 안 고쳐지면, 이 단정이 그 필드 이름을 대며 즉시 실패한다.
+  // --- Drift detection: comparing each AuthStack client property by hand is not a
+  // repeatable defense (a reviewer had to read the CDK source to find the missing ClientName).
+  // So we actually synthesize AuthStack, take every CFN property key its client resource
+  // has, and mechanically check that the resend parameters have all of them — the next
+  // time a field is added to addClient() and the resend is not fixed, this assertion fails
+  // immediately, naming that field.
   const authTemplate = Template.fromStack(auth);
   const authClients = authTemplate.findResources('AWS::Cognito::UserPoolClient');
   const authClientProps = (Object.values(authClients)[0] as any).Properties;
 
-  // 정당하게 다른 필드들:
-  //  - CallbackURLs/LogoutURLs: 재전송이 CloudFront 도메인을 의도적으로
-  //    덧붙이므로 AuthStack의 localhost-only 값과 다른 게 정상이다(위에서
-  //    이미 localhost 콜백 생존을 따로 확인했다).
-  //  - UserPoolId/ClientId: 이 리소스를 "어떤 클라이언트"로 지정하는
-  //    주소값이라 설정이 아니다 — AuthStack 쪽 UserPoolId는 { Ref: ... }
-  //    토큰이고 재전송 쪽은 실제 문자열이라 형태부터 다르다.
-  //  - GenerateSecret: CreateUserPoolClient에만 있는 필드다(시크릿 유무는
-  //    생성 후 못 바꾼다) — UpdateUserPoolClient 요청 문법에 이 필드가
-  //    없으므로 여기 보내면 오히려 API가 거부한다.
+  // Fields that legitimately differ:
+  //  - CallbackURLs/LogoutURLs: the resend deliberately appends the CloudFront domain,
+  //    so differing from AuthStack's localhost-only value is expected (the survival of the
+  //    localhost callback was already checked separately above).
+  //  - UserPoolId/ClientId: these are address values that designate "which client" this
+  //    resource is, not configuration — the AuthStack-side UserPoolId is a { Ref: ... }
+  //    token and the resend side is an actual string, so even their forms differ.
+  //  - GenerateSecret: a field only CreateUserPoolClient has (whether there is a secret
+  //    cannot be changed after creation) — UpdateUserPoolClient's request syntax has no
+  //    such field, so sending it here would actually make the API reject the request.
   const legitimatelyDifferent = new Set([
     'CallbackURLs', 'LogoutURLs', 'UserPoolId', 'ClientId', 'GenerateSecret',
   ]);
@@ -424,9 +424,9 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
     );
   }
 
-  // 인스턴스 롤이 클라이언트 시크릿을 읽을 수 있어야 한다(부팅 시 조회).
-  // 액션은 /admin/users용 Admin* 권한과 같은 문에 배열로 들어 있다 —
-  // 전체 목록 고정은 아래 "instance role has every Cognito Admin action"에서.
+  // The instance role must be able to read the client secret (looked up at boot).
+  // The action sits in an array in the same statement as the Admin* permissions for /admin/users —
+  // the full list is pinned below in "instance role has every Cognito Admin action".
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {
       Statement: Match.arrayWith([
@@ -439,15 +439,15 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   console.log('OK  hosting stack: callback URL injection + full client config resend (incl. token validity/refresh flow) + onUpdate present + secret read permission');
 }
 
-// --- 비ASCII 문자가 리소스 속성에 새지 않는지 ---
-// 실측 배포 실패: EC2가 SecurityGroup의 GroupDescription에서 비ASCII를 거부한다
-// ("Character sets beyond ASCII are not supported"). 한국어 주석 습관이 그대로
-// description/comment 문자열에 들어가 em dash(—)가 섞였다. 합성은 통과하고
-// CloudFormation이 API를 호출하는 시점에 죽는다.
+// --- Non-ASCII characters must not leak into resource properties ---
+// Measured deployment failure: EC2 rejects non-ASCII in a SecurityGroup's GroupDescription
+// ("Character sets beyond ASCII are not supported"). The habit of Korean comments carried
+// straight into description/comment strings, and an em dash (—) slipped in. Synthesis passes,
+// and it dies at the point CloudFormation calls the API.
 //
-// Cognito 그룹 설명(한국어)은 실제로 배포에 성공하므로 전면 금지는 과하다 —
-// ASCII를 강제하는 서비스의 속성만 검사한다. 주석은 대상이 아니다(템플릿에
-// 나가지 않는다).
+// Cognito group descriptions (in Korean) actually deploy successfully, so a blanket ban is
+// excessive — we check only the properties of services that enforce ASCII. Comments are not
+// in scope (they do not go into the template).
 {
   const app = new cdk.App();
   const drill = new AipdsDrillStack(app, 'Drill4', { env: ENV });
@@ -463,7 +463,7 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
 
   const nonAscii = /[^\x00-\x7F]/;
 
-  // EC2 SecurityGroup: GroupDescription + 인바운드/아웃바운드 규칙 설명.
+  // EC2 SecurityGroup: GroupDescription + inbound/outbound rule descriptions.
   for (const [id, sg] of Object.entries(t.findResources('AWS::EC2::SecurityGroup'))) {
     const p: any = (sg as any).Properties ?? {};
     for (const field of ['GroupDescription', 'GroupName']) {
@@ -482,7 +482,7 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
       }
     }
   }
-  // 별도 리소스로 떨어지는 규칙도 같은 제약을 받는다.
+  // Rules that fall out as separate resources are subject to the same constraint.
   for (const type of ['AWS::EC2::SecurityGroupIngress', 'AWS::EC2::SecurityGroupEgress']) {
     for (const [id, r] of Object.entries(t.findResources(type))) {
       const d = ((r as any).Properties ?? {}).Description;
@@ -491,7 +491,7 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
       }
     }
   }
-  // CloudFront Comment — 콘솔 표시용이고 ASCII 안전이 확인되지 않았다.
+  // CloudFront Comment — for console display, and ASCII safety has not been confirmed.
   for (const [id, d] of Object.entries(t.findResources('AWS::CloudFront::Distribution'))) {
     const c = ((d as any).Properties ?? {}).DistributionConfig?.Comment;
     if (typeof c === 'string') {
@@ -501,14 +501,14 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   console.log('OK  hosting: ASCII-only SG descriptions + CloudFront comment (EC2 rejects non-ASCII)');
 }
 
-// --- /admin/users가 쓰는 Cognito Admin API 권한 ---
-// 실측 배포 버그: 로그인은 되는데 /admin/users가 502였다. 백엔드 로그:
-// "cognito call failed (AccessDeniedException) -> 502". 인스턴스 롤에는 부팅
-// 시 시크릿을 읽는 DescribeUserPoolClient 하나만 있었고, 사용자 관리 API
-// 권한이 전혀 없었다.
+// --- Cognito Admin API permissions used by /admin/users ---
+// Measured deployment bug: login worked but /admin/users returned 502. Backend log:
+// "cognito call failed (AccessDeniedException) -> 502". The instance role had only
+// DescribeUserPoolClient, for reading the secret at boot, and no user management API
+// permissions at all.
 //
-// backend/aipds/auth/cognito.py가 실제로 호출하는 액션 전체를 고정한다 —
-// 하나라도 빠지면 그 기능만 502가 되고, 화면에서는 원인이 보이지 않는다.
+// Pins every action backend/aipds/auth/cognito.py actually calls — if even one is
+// missing, only that feature becomes a 502, and the screen shows no cause.
 {
   const app = new cdk.App();
   const drill = new AipdsDrillStack(app, 'Drill5', { env: ENV });
@@ -522,7 +522,7 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
   });
   const t = Template.fromStack(hosting);
 
-  // cognito.py의 _call() 호출 전수(10개) + 부팅용 DescribeUserPoolClient.
+  // Every _call() invocation in cognito.py (10) + DescribeUserPoolClient for boot.
   const required = [
     'cognito-idp:AdminAddUserToGroup',
     'cognito-idp:AdminCreateUser',
@@ -537,7 +537,7 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
     'cognito-idp:ListUsersInGroup',
   ];
 
-  // 인스턴스 롤에 붙은 모든 정책 문에서 cognito-idp 액션을 모은다.
+  // Collect cognito-idp actions from every policy statement attached to the instance role.
   const granted = new Set<string>();
   for (const policy of Object.values(t.findResources('AWS::IAM::Policy'))) {
     for (const stmt of ((policy as any).Properties?.PolicyDocument?.Statement ?? [])) {
@@ -551,34 +551,34 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
     assert.ok(granted.has(action),
       `instance role must allow ${action} — /admin/users 502s with AccessDeniedException without it`);
   }
-  // 와일드카드로 뭉개지 않았는지: 필요한 것만 준다(최소 권한).
+  // Not mashed into a wildcard: grant only what is needed (least privilege).
   assert.ok(!granted.has('cognito-idp:*'),
     'do not grant cognito-idp:* — list the actions the backend actually calls');
   console.log('OK  hosting: instance role has every Cognito Admin action /admin/users calls');
 }
 
-// --- 런치 템플릿 이름은 계정 전역에서 고유해야 한다 ---
+// --- Launch template names must be unique account-wide ---
 //
-// **실측(2026-08-21, AipdsHostingStack 첫 생성 실패).**
+// **Measured (2026-08-21, first creation of AipdsHostingStack failed).**
 //
 //   CREATE_FAILED  AWS::EC2::LaunchTemplate  InstanceLaunchTemplate
 //   "Launch template name already in use." (InvalidLaunchTemplateName.AlreadyExistsException)
 //
-// `requireImdsv2: true`가 CDK의 InstanceRequireImdsv2Aspect를 켠다. 그 aspect가 LT를
-// 만들면서 이름을 이렇게 정한다(aws-cdk-lib/aws-ec2/lib/aspects/require-imdsv2-aspect):
+// `requireImdsv2: true` turns on CDK's InstanceRequireImdsv2Aspect. That aspect creates the LT
+// and names it like this (aws-cdk-lib/aws-ec2/lib/aspects/require-imdsv2-aspect):
 //
-//   피처플래그 있음 -> Names.uniqueId(launchTemplate)   (스택·경로별 고유)
-//   피처플래그 없음 -> `${node.node.id}LaunchTemplate`   (고정!)
+//   feature flag set   -> Names.uniqueId(launchTemplate)   (unique per stack/path)
+//   feature flag unset -> `${node.node.id}LaunchTemplate`   (fixed!)
 //
-// 플래그(`@aws-cdk/aws-ec2:uniqueImdsv2TemplateName`)가 cdk.json에 없으면 이름이
-// `InstanceLaunchTemplate`으로 고정되고, 그것은 **계정·리전 전역 이름공간**이다. 실제로
-// 2026-07-26에 만들어진 태그 없는 고아 LT(옛 배포의 잔재)가 그 이름을 쥐고 있어
-// 첫 배포가 죽었다. 워크숍에서 계정을 공유하는 이 제품에는 스택별 고유가 요구사항이다.
+// If the flag (`@aws-cdk/aws-ec2:uniqueImdsv2TemplateName`) is not in cdk.json, the name is
+// fixed as `InstanceLaunchTemplate`, and that is an **account/region-wide namespace**. In fact,
+// an untagged orphan LT created on 2026-07-26 (a leftover from an old deployment) held that
+// name, and the first deployment died. For this product, which shares accounts in workshops, per-stack uniqueness is a requirement.
 {
-  // **cdk.json의 context를 실제로 읽어 App에 넣는다.** `new cdk.App()`만으로는 피처
-  // 플래그가 들어오지 않는다 — 그것을 주입하는 것은 CDK CLI다. 그래서 이 파일의 다른
-  // 블록들은 배포되는 것과 **다른 합성 설정**을 검사하고 있고, 이번 결함이 그 틈으로
-  // 지나갔다. 이 블록은 정본(cdk.json)을 읽으므로 플래그를 지우면 실패한다.
+  // **Actually read cdk.json's context and put it into the App.** `new cdk.App()` alone does not
+  // bring in feature flags — it is the CDK CLI that injects them. So the other blocks in this
+  // file check a **different synthesis configuration** from what is deployed, and this defect
+  // slipped through that gap. This block reads the source of truth (cdk.json), so removing the flag makes it fail.
   const cdkJson = JSON.parse(
     fs.readFileSync(path.join(__dirname, '..', 'cdk.json'), 'utf8'));
   const app = new cdk.App({ context: cdkJson.context });
@@ -604,7 +604,7 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
     + '"@aws-cdk/aws-ec2:uniqueImdsv2TemplateName" in cdk.json. This exact name already '
     + 'failed a deploy: an orphaned launch template in the account held it.',
   );
-  // 스택 이름이 들어가야 계정을 공유하는 두 배포가 서로를 막지 않는다.
+  // The stack name must be included so that two deployments sharing an account do not block each other.
   assert.ok(
     name.includes('Hosting6'),
     `LaunchTemplateName must be scoped by stack to stay unique per deploy, got ${name}`,
@@ -612,8 +612,8 @@ function parseSdkPayload(field: any): { service: string; action: string; paramet
 }
 console.log('OK  hosting: launch template name is unique per stack (no account-wide collision)');
 
-// Anthropic 모델의 첫 호출은 Bedrock이 Marketplace 구독을 자동으로 만든다 — 호출한 롤에 권한이 없으면
-// 403이다(lib/backend-permissions.ts bedrockSubscribeStatement). 구독은 Bedrock을 거칠 때만.
+// For an Anthropic model's first call, Bedrock automatically creates a Marketplace subscription — if the calling role lacks
+// permission, it is a 403 (lib/backend-permissions.ts bedrockSubscribeStatement). Subscription happens only through Bedrock.
 function assertFirstCallSubscription(t: Template) {
   t.hasResourceProperties('AWS::IAM::Policy', {
     PolicyDocument: {

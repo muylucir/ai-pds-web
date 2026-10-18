@@ -1,25 +1,26 @@
-// 프로토타입 빌드 중 세션이 만료되는 결함의 수정.
+// Fix for the defect where the session expires during a prototype build.
 //
-// **왜 이 라우트가 필요한가.** 토큰 갱신은 /api 프록시가 백엔드에서 **401을
-// 받았을 때만** 발동한다(app/api/[...path]/route.ts의 isRetryableWithRefresh).
-// 프로토타입 빌드는 그 조건에 걸리지 않는다:
+// **Why this route is needed.** Token refresh fires only when the /api proxy
+// **receives a 401** from the backend (isRetryableWithRefresh in
+// app/api/[...path]/route.ts). A prototype build never meets that condition:
 //
-//   1. POST /turns        — 유효한 토큰, 200
-//   2. GET  /events?turn= — 유효한 토큰, 200. SSE 연결 확립
-//   3. 이후 수십 분간 이벤트만 흐른다. 이미 200을 받은 연결이라 401이 다시
-//      올 일이 없다 — 갱신 경로에 진입할 방법이 아예 없다
-//   4. access 토큰(60분)이 그 사이에 만료되고, 빌드가 끝난 뒤 첫 요청에서
-//      401 → /login
+//   1. POST /turns        — valid token, 200
+//   2. GET  /events?turn= — valid token, 200. SSE connection established
+//   3. For the next tens of minutes only events flow. The connection already got
+//      its 200, so no 401 will ever come -- there is no way to enter the refresh path
+//   4. The access token (60 min) expires in the meantime, and the first request
+//      after the build ends gets 401 → /login
 //
-// 즉 스트림이 끊겨서가 아니라 **스트림이 도는 동안 갱신 기회가 없어서** 만료된다.
-// 디스커버리 채팅에서 덜 보이는 이유는 턴이 짧아 매 턴이 갱신 기회가 되기
-// 때문이다.
+// I.e. it expires not because the stream drops, but **because there is no chance
+// to refresh while the stream runs**. It shows up less in Discovery chat because
+// turns are short and every turn is a chance to refresh.
 //
-// 그래서 갱신을 요청 실패에 의존하지 않는 **명시적 경로**로 분리한다. 스트림과
-// 무관하게 클라이언트가 주기적으로 호출한다(lib/auth/keepSessionAlive.ts).
+// So refresh is split into an **explicit path** that does not depend on a request
+// failing. The client calls it periodically, independent of the stream
+// (lib/auth/keepSessionAlive.ts).
 //
-// /api/auth/me로 대신할 수 없다: 그 라우트는 쿠키 **존재**만 확인하고 갱신하지
-// 않으며, /api 프록시를 타지도 않는다.
+// /api/auth/me cannot substitute: that route only checks that the cookie
+// **exists**, does not refresh, and does not go through the /api proxy.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 beforeEach(() => {
@@ -38,10 +39,11 @@ function request(cookie?: string): Request {
   });
 }
 
-/** Cognito /oauth2/token의 성공 응답을 흉내내는 fetch 스텁. */
+/** A fetch stub imitating a successful Cognito /oauth2/token response. */
 function stubTokenEndpoint(body: Record<string, unknown>, status = 200) {
-  // 인수를 명시적으로 받는다 — 인수 없는 () => ... 로 두면 mock.calls의 튜플
-  // 타입이 빈 배열로 추론되어 calls[0][1].body를 읽는 단정이 타입 오류가 된다.
+  // Take the arguments explicitly -- with an argument-less () => ..., the tuple
+  // type of mock.calls is inferred as an empty array, and the assertion reading
+  // calls[0][1].body becomes a type error.
   return vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
     new Response(JSON.stringify(body), {
       status, headers: { "content-type": "application/json" },
@@ -62,8 +64,8 @@ describe("POST /api/auth/refresh", () => {
     const setCookie = res.headers.getSetCookie().join("\n");
     expect(setCookie).toContain("aipds_access=new-access");
     expect(setCookie).toContain("aipds_id=new-id");
-    // httpOnly가 빠지면 갱신된 토큰만 JS로 읽히게 되어, 이 라우트가 XSS
-    // 노출면을 새로 만드는 셈이 된다.
+    // Without httpOnly, the refreshed token alone becomes readable from JS, so
+    // this route would be creating a new XSS exposure surface.
     expect(setCookie).toContain("HttpOnly");
   });
 
@@ -89,13 +91,14 @@ describe("POST /api/auth/refresh", () => {
     const res = await POST(request() as never);
 
     expect(res.status).toBe(401);
-    // 리프레시 토큰이 없으면 호출할 것이 없다 — Cognito를 때리지 않는다.
+    // Without a refresh token there is nothing to call -- do not hit Cognito.
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("401s when the refresh token has expired or been revoked", async () => {
-    // 30일이 지났거나 폐기됐다 — 여기서 200을 내면 클라이언트가 살아 있다고
-    // 오판해 계속 폴링하고, 사용자는 다음 실제 요청에서야 로그아웃된다.
+    // 30 days have passed or it was revoked -- answering 200 here makes the client
+    // wrongly conclude the session is alive and keep polling, and the user is only
+    // logged out on the next real request.
     vi.stubGlobal("fetch", stubTokenEndpoint({ error: "invalid_grant" }, 400));
 
     const { POST } = await import("./route");
@@ -106,9 +109,9 @@ describe("POST /api/auth/refresh", () => {
   });
 
   it("does not clear the refresh cookie on a successful refresh", async () => {
-    // 이 풀은 리프레시 로테이션이 꺼져 있어(infra/lib/auth-client-config.ts의
-    // refreshTokenRotationGracePeriod 미지정) refresh 그랜트가 새 refresh_token을
-    // 주지 않는다. 기존 쿠키를 건드리면 30일 창이 통째로 사라진다.
+    // This pool has refresh rotation off (refreshTokenRotationGracePeriod unset in
+    // infra/lib/auth-client-config.ts), so the refresh grant returns no new
+    // refresh_token. Touching the existing cookie would wipe out the whole 30-day window.
     vi.stubGlobal("fetch", stubTokenEndpoint({
       access_token: "a", id_token: "i", expires_in: 3600,
     }));

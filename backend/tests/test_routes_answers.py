@@ -26,15 +26,16 @@ def _seed(monkeypatch, pid, language=None):
         ws.runner.write_file("aiplc-docs/strategy-questions.md",
             (FIX / "strategy-questions.md").read_text(encoding="utf-8")))
 
-# ---- 파일 질문 라운드의 답변 제출 ----
-# 이 경로는 파킹된 턴으로 돌아가지 않는다. PostToolUse 훅이 질문 파일을 보고 턴을
-# **끝냈으므로**(claude_driver._on_post_tool_use) 이어갈 턴이 없다 — 답변을 파일에
-# 쓰고 **새 턴**으로 에이전트를 다시 부른다. 그 새 턴의 텍스트는 백엔드가 만든다:
-# 에이전트가 읽는 문장이므로 UI 언어가 아니라 프로젝트 언어를 따라야 하고
-# (agent/prompts.py의 규율), 프론트에 그 문구를 두면 두 언어를 프론트가 관리하게 된다.
+# ---- Submitting answers for a file question round ----
+# This path does not return to a parked turn. The PostToolUse hook saw the question file and
+# **ended** the turn (claude_driver._on_post_tool_use), so there is no turn to resume — we write
+# the answers to the file and call the agent again with a **new turn**. The backend builds that
+# new turn's text: it is a sentence the agent reads, so it must follow the project language,
+# not the UI language (the rule in agent/prompts.py), and keeping that wording in the frontend
+# would make the frontend manage both languages.
 
 def _turn(pid: str) -> dict:
-    """라우트가 시작한 턴의 입력 — 러너가 받은 마지막 텍스트."""
+    """Input of the turn the route started — the last text the runner received."""
     sent = registry.get(pid).runner.sent
     assert sent, "the route started no turn"
     return {"text": sent[-1]}
@@ -51,18 +52,19 @@ def test_submitting_file_answers_writes_them_and_starts_the_resume_turn(monkeypa
     r = _submit("fq1", {"1": "B"})
     assert r.status_code == 200, r.text
     body = r.json()
-    # 파일에 기록됐다 — 번호로 쓰므로 퍼지 매칭이 없다(serialize_answers).
+    # Written to the file — it writes by number, so there is no fuzzy matching (serialize_answers).
     by_num = {q["number"]: q["answer"] for q in body["questions"]["questions"]}
     assert by_num[1] == "B"
-    # 그리고 이어갈 턴을 시작해 그 id를 돌려준다. 프론트는 기존 GET /events?turn=로
-    # 본다 — 새 스트림 엔드포인트를 만들지 않는다.
+    # Then it starts the follow-up turn and returns its id. The frontend watches it through the
+    # existing GET /events?turn= — we do not add a new stream endpoint.
     assert body["turn_id"]
     assert registry.get("fq1").runner.sent
 
 
 def test_the_audit_log_gets_what_the_user_chose_not_the_agent_directives(monkeypatch):
-    """턴 텍스트는 답 뒤에 에이전트용 지시를 붙인다. 감사 로그의 "사용자 입력"은 사용자가
-    고른 것뿐이어야 한다 — 화면 말풍선과 같은 문자열(summary)이다(aipds/audit_log)."""
+    """The turn text appends agent instructions after the answers. The audit log's "user input"
+    must be only what the user picked — the same string as the on-screen bubble (summary)
+    (aipds/audit_log)."""
     _seed(monkeypatch, "fq-audit")
     body = _submit("fq-audit", {"1": "B"}).json()
     runner = registry.get("fq-audit").runner
@@ -73,10 +75,10 @@ def test_the_audit_log_gets_what_the_user_chose_not_the_agent_directives(monkeyp
 
 
 def test_the_resume_turn_carries_a_prompt_that_names_the_file(monkeypatch):
-    """재개 턴의 텍스트가 에이전트에게 갈 문장이다.
+    """The resume turn's text is the sentence that goes to the agent.
 
-    파일을 지목하지 않으면 에이전트가 어느 파일을 되읽어야 하는지 모른다 —
-    질문 파일이 여러 개 있는 것이 정상이다(실측: 한 프로젝트에 9개)."""
+    If it does not name the file, the agent does not know which file to re-read —
+    having several question files is normal (measured: 9 in one project)."""
     _seed(monkeypatch, "fq2")
     handle = _submit("fq2", {"1": "B"}).json()["turn_id"]
     payload = _turn("fq2")
@@ -92,20 +94,22 @@ def test_submitting_to_a_missing_file_404(monkeypatch):
 
 
 def test_submitting_an_unknown_question_number_400(monkeypatch):
-    """PUT과 같은 계약이다 — 조용히 무시하면 답변이 사라진 것을 아무도 모른다."""
+    """Same contract as PUT — if it silently ignored this, nobody would know the answers were lost."""
     _seed(monkeypatch, "fq4")
     assert _submit("fq4", {"99": "A"}).status_code == 400
     assert _submit("fq4", {"abc": "A"}).status_code == 400
 
 
-# ---- 상태 파일이 없을 때의 지목 ----
-# 스테이지 배지는 `aiplc-state.md`에서 유도된다(agent/reconcile.py). 훅과 턴 경계
-# 재조정은 파일이 **있을 때** 그것을 화면으로 옮기고, 파일 자체가 없으면 옮길 것이
-# 없다 — 그리고 그것을 만들 수 있는 것은 에이전트뿐이다(스테이지 이름을 아는 것이
-# 에이전트뿐이므로, 경로에서 추측하면 룰셋 스테이지 이름의 두 번째 사본이 생긴다).
+# ---- Pointing at the state file when it is missing ----
+# The stage badge is derived from `aiplc-state.md` (agent/reconcile.py). The hook and the
+# turn-boundary reconciliation carry that file onto the screen **when it exists**; if the file
+# itself is missing there is nothing to carry — and only the agent can create it (only the
+# agent knows the stage names; guessing from paths would create a second copy of the ruleset's
+# stage names).
 #
-# 답변 제출 턴이 그 지목의 자리다. 2026-08-18 test123456에서 첫 턴이 상태 파일 없이
-# 끝났고, 재개 턴은 "멈춘 지점부터"라서 스스로 그것을 만들 계기가 없었다.
+# The answer-submission turn is where we point this out. On 2026-08-18 in test123456 the first
+# turn ended without a state file, and the resume turn says "from where you stopped", so it had
+# no trigger to create one on its own.
 
 def _state(pid: str, markdown: str):
     asyncio.run(registry.get(pid).runner.write_file(
@@ -121,28 +125,29 @@ def _resume_text(pid: str) -> str:
 
 def test_the_resume_turn_asks_for_the_state_file_when_it_never_landed(
         monkeypatch):
-    _seed(monkeypatch, "fq5")  # aiplc-state.md 없음
+    _seed(monkeypatch, "fq5")  # no aiplc-state.md
     text = _resume_text("fq5")
     assert "aiplc-state.md" in text
-    # 파일 지목은 그대로 남아야 한다 — 노트가 원래 프롬프트를 대체하지 않는다.
+    # The file pointer must stay as is — the note does not replace the original prompt.
     assert "strategy-questions.md" in text
 
 
 def test_a_state_file_without_a_current_stage_still_counts_as_missing(monkeypatch):
-    """판정은 파일 부재가 아니라 `current_stage is None`이다.
+    """The check is `current_stage is None`, not the file's absence.
 
-    상류 룰이 요구하는 형태에는 항상 Current Stage 줄이 있으므로, 그 줄이 없는
-    파일은 읽을 상태가 없다는 뜻이다 — 파일 존재만 보면 이 경우를 놓친다."""
+    The format the upstream rules require always has a Current Stage line, so a file
+    without that line means there is no readable state — checking only that the file
+    exists would miss this case."""
     _seed(monkeypatch, "fq6")
     _state("fq6", "# AI-PLC State\n\n## Stage Progress\n")
     assert "aiplc-state.md" in _resume_text("fq6")
 
 
 def test_the_resume_turn_stays_quiet_once_a_stage_is_recorded(monkeypatch):
-    """정상 순서로 돈 턴에는 이 노트가 붙지 않는다.
+    """A turn that ran in the normal order does not get this note.
 
-    매 라운드 붙으면 에이전트가 이미 선언한 스테이지를 다시 선언하고, 그 반복이
-    체크리스트를 흔든다."""
+    If it were attached every round, the agent would re-declare a stage it already
+    declared, and that repetition shakes the checklist."""
     _seed(monkeypatch, "fq7")
     _state("fq7", "# AI-PLC State\n\n- **Current Stage**: Envision\n\n"
                   "## Stage Progress\n- [ ] Envision\n")
@@ -152,19 +157,19 @@ def test_the_resume_turn_stays_quiet_once_a_stage_is_recorded(monkeypatch):
 
 
 def test_the_note_follows_the_project_language(monkeypatch):
-    """에이전트가 읽는 문장이므로 UI 언어가 아니라 프로젝트 언어다
-    (agent/prompts.py 헤더의 규약)."""
+    """It is a sentence the agent reads, so it is in the project language, not the UI language
+    (the convention in the agent/prompts.py header)."""
     _seed(monkeypatch, "fq8", language="en")
     text = _resume_text("fq8")
     assert "aiplc-state.md" in text
-    # 영어 프로젝트의 프롬프트에 한글이 섞이면 그 프로젝트의 대화가 한국어로
-    # 샌다 — 2026-08-04 결함의 모양이다.
+    # If Korean gets mixed into an English project's prompt, that project's conversation
+    # leaks into Korean — that is the shape of the 2026-08-04 defect.
     #
-    # **"본문에 한글 없음"으로 보지 않는다(2026-08-21).** 이 텍스트는 이제 질문 파일의
-    # 문장을 인용한다(aipds/answer_summary.py). 그 문장은 프로젝트의 콘텐츠이지 우리
-    # 프롬프트가 아니고, 실제 영어 프로젝트의 질문 파일은 영어다 — 이 픽스처만
-    # 한국어다. 그래서 우리가 만드는 **wrapper**가 프로젝트 언어인지를 본다.
-    # 프롬프트 전수 검사는 tests/test_agent_language.py가 담당한다.
+    # **We do not check "no Korean in the body" (2026-08-21).** This text now quotes
+    # sentences from the question file (aipds/answer_summary.py). Those sentences are the
+    # project's content, not our prompt, and a real English project's question file is in
+    # English — only this fixture is Korean. So we check that the **wrapper** we build is in
+    # the project language. The exhaustive prompt check is tests/test_agent_language.py's job.
     for korean_wrapper in ("질문에 답했습니다", "다시 묻지 마세요",
                            "파일을 읽고 멈춘 지점부터"):
         assert korean_wrapper not in text, korean_wrapper
@@ -172,7 +177,7 @@ def test_the_note_follows_the_project_language(monkeypatch):
 
 
 def test_a_failing_state_probe_does_not_break_answer_submission(monkeypatch):
-    """사용자는 폼을 이미 제출했다. 노트는 보조 지시이므로 제출을 막지 못한다."""
+    """The user already submitted the form. The note is an auxiliary instruction, so it cannot block the submission."""
     _seed(monkeypatch, "fq9")
     async def boom():
         raise RuntimeError("s3 down")
@@ -182,44 +187,47 @@ def test_a_failing_state_probe_does_not_break_answer_submission(monkeypatch):
     assert r.json()["turn_id"]
 
 
-# ---- 복원되는 말풍선이 사용자가 실제로 답한 것이어야 한다 ----
+# ---- A restored bubble must be what the user actually answered ----
 #
-# **실측(2026-08-21).** 워크스페이스를 새로고침해 대화가 복원되면 사용자 말풍선이
-# 전부 같은 기계 문구로 고정돼 있었다: "질문에 답했습니다. 답변은 `…-questions.md`의
+# **Measured (2026-08-21).** When the workspace was refreshed and the conversation restored,
+# every user bubble was stuck on the same machine wording: "질문에 답했습니다. 답변은 `…-questions.md`의
 # `[Answer]:` 태그에 들어 있으니, 파일을 읽고 멈춘 지점부터 이어가 주세요."
+# ("I answered the questions. The answers are in the `[Answer]:` tags of `…-questions.md`,
+# so please read the file and continue from where you stopped.")
 #
-# 라이브 화면은 실제 답변을 그린다(useWorkspaceStream이 `answerSummary(questions,
-# answers, t)`로 만든다). 즉 **같은 라운드가 새로고침 전후로 다르게 보였다** —
-# `agent/answer_store.py` 헤더가 기록한 그 결함이 파일 질문 경로에서 되살아난
-# 것이다. 그쪽은 `tool_use_id`로 조인해 고쳤는데, 파일 라운드에는 그 도구 호출이
-# 아예 없어서(에이전트가 부르는 것은 `Write`다) 조인할 id도, 기록도 없었다.
+# The live screen draws the actual answers (useWorkspaceStream builds them with
+# `answerSummary(questions, answers, t)`). So **the same round looked different before and
+# after a refresh** — the defect recorded in the `agent/answer_store.py` header came back on
+# the file question path. That one was fixed by joining on `tool_use_id`, but a file round has
+# no such tool call at all (what the agent calls is `Write`), so there was no id to join on and
+# no record.
 #
-# **불투명 마커로 조인하지 않는다.** `frontend/lib/approvalMarker.ts`가 이 부류에
-# 대한 결정을 적어 뒀다 — "이 텍스트는 기계 신호가 아니다. 그 턴은 트랜스크립트와
-# 채팅 히스토리에 사용자 말풍선으로 남는다. 에이전트가 이해해야 하고 사람이 읽어야
-# 한다." 그래서 턴 텍스트 자체가 사람이 읽을 답변을 담는다: 트랜스크립트가 진실을
-# 갖게 되므로 조인도, 새 상태도, 순서 의존도 생기지 않는다.
+# **We do not join through an opaque marker.** `frontend/lib/approvalMarker.ts` records the
+# decision for this class — "this text is not a machine signal. That turn stays in the
+# transcript and chat history as a user bubble. The agent must understand it and a person must
+# read it." So the turn text itself carries the human-readable answers: the transcript holds
+# the truth, so there is no join, no new state, and no ordering dependency.
 
 def test_the_resume_turn_carries_the_answers_the_user_actually_gave(monkeypatch):
-    """말풍선이 될 텍스트에 답변이 있어야 한다 — 파일 포인터만으로는 복원이
-    "질문에 답했습니다"에서 멈춘다."""
+    """The text that becomes the bubble must contain the answers — with only a file pointer,
+    the restore stops at "질문에 답했습니다" ("I answered the questions")."""
     _seed(monkeypatch, "fqans1")
     handle = _submit("fqans1", {"1": "B", "12": "A,C"}).json()["turn_id"]
     payload = _turn("fqans1")
 
     text = payload["text"]
-    # 두 문항의 답변이 **읽을 수 있는 형태로** 온다. letter 리터럴("A,C")을 단정하지
-    # 않는 이유: 2026-08-21에 렌더가 백엔드로 오면서 보기 라벨로 펼쳐진다 — 그
-    # 펼침 자체는 위 두 테스트가 문항별로 고정한다.
+    # Both questions' answers arrive **in readable form**. Why we do not assert the letter
+    # literal ("A,C"): since rendering moved to the backend on 2026-08-21 they expand to the
+    # option labels — the two tests above pin that expansion per question.
     assert "플랫폼(Platform)" in text, text
     assert "신규 MD 온보딩 기간 단축률" in text, text
-    # 파일 지목은 그대로 남는다 — 파일이 여전히 권위다(`[Answer]:` 태그가 정본).
+    # The file pointer stays — the file is still the authority (the `[Answer]:` tag is canonical).
     assert "strategy-questions.md" in text
 
 
 def test_the_resume_turn_keeps_free_text_answers_verbatim(monkeypatch):
-    """자유 답변은 사용자가 쓴 문장 그대로여야 한다 — 요약하거나 자르면 그것이
-    복원된 대화의 기록이 된다."""
+    """A free-text answer must be exactly the sentence the user wrote — if we summarized or
+    truncated it, that would become the record of the restored conversation."""
     _seed(monkeypatch, "fqans2")
     written = "예산은 3분기까지 확정되지 않았습니다. 그 전에는 B로 갑니다."
     handle = _submit("fqans2", {"1": written}).json()["turn_id"]
@@ -229,42 +237,42 @@ def test_the_resume_turn_keeps_free_text_answers_verbatim(monkeypatch):
 
 
 def test_the_resume_turn_follows_the_project_language(monkeypatch):
-    """말풍선으로 남는 대화 텍스트다 — UI 언어가 아니라 프로젝트 언어다
-    (`answer_first`·`approvalMarker.ts`가 같은 판단을 기록해 뒀다)."""
+    """It is conversation text that remains as a bubble — the project language, not the UI
+    language (`answer_first` and `approvalMarker.ts` record the same judgment)."""
     _seed(monkeypatch, "fqans3", language="en")
     handle = _submit("fqans3", {"1": "B"}).json()["turn_id"]
     text = _turn("fqans3")["text"]
 
-    # wrapper만 본다 — 본문은 질문 파일의 문장을 인용하고 이 픽스처는 한국어다
-    # (fq8의 같은 주석에 근거가 있다).
+    # Check only the wrapper — the body quotes sentences from the question file, and this
+    # fixture is Korean (the reasoning is in the same comment on fq8).
     assert "I answered the questions" in text, text
     assert "질문에 답했습니다" not in text, text
     assert "Q1." in text
 
 
-# ---- 기록되는 텍스트가 화면과 같아야 한다 (2026-08-21) ----
+# ---- The recorded text must match the screen (2026-08-21) ----
 #
-# 아침의 `fe6a482`는 답변을 턴 텍스트에 담았지만 **보기 letter 그대로**였다
-# ("- 1: A,B"). 라이브 화면은 letter를 보기 라벨로 풀어 그리므로(당시
-# frontend/lib/answerSummary.ts) 기록과 화면이 여전히 달랐다 — 결함의 절반만 고친
-# 것이다. 이제 렌더가 백엔드 한 벌이고(aipds/answer_summary.py) 그 결과가 곧 턴
-# 텍스트다.
+# That morning's `fe6a482` put the answers into the turn text, but **as raw option letters**
+# ("- 1: A,B"). The live screen expands letters into option labels (at the time,
+# frontend/lib/answerSummary.ts), so the record and the screen still differed — only half the
+# defect was fixed. Now there is a single backend renderer (aipds/answer_summary.py) and its
+# output is the turn text.
 
 def test_the_resume_turn_renders_option_labels_not_bare_letters(monkeypatch):
-    """letter만으로는 읽는 사람에게 아무 뜻이 없다 — 복원된 대화가 "B"만 보여주면
-    질문 폼을 다시 열어야 무슨 결정이었는지 알 수 있다."""
+    """A letter alone means nothing to the reader — if the restored conversation shows only
+    "B", you have to reopen the question form to learn what the decision was."""
     _seed(monkeypatch, "lbl1")
     handle = _submit("lbl1", {"1": "B"}).json()["turn_id"]
     text = _turn("lbl1")["text"]
 
     assert "플랫폼(Platform)" in text, text
-    # 문항 문장도 함께 온다 — 답변만 있으면 무엇에 대한 답인지 알 수 없다.
+    # The question sentence comes along too — with only the answer you cannot tell what it answers.
     assert "포지셔닝" in text, text
     assert "Q1." in text, text
 
 
 def test_the_resume_turn_expands_every_letter_of_a_multi_select_answer(monkeypatch):
-    """복수 선택은 콤마로 온다("A,C"). 그대로 기록하면 두 결정이 두 글자로 남는다."""
+    """A multi-select arrives comma-separated ("A,C"). Recording it as is would leave two decisions as two letters."""
     _seed(monkeypatch, "lbl2")
     handle = _submit("lbl2", {"12": "A,C"}).json()["turn_id"]
     text = _turn("lbl2")["text"]
@@ -274,13 +282,13 @@ def test_the_resume_turn_expands_every_letter_of_a_multi_select_answer(monkeypat
 
 
 def test_the_submit_response_carries_the_same_text_it_recorded(monkeypatch):
-    """프론트가 말풍선을 다시 만들지 않게 하는 근거. 서버가 기록한 것과 프론트가
-    보여주는 것이 **같은 문자열**이어야 갈라질 수 없다."""
+    """The basis for the frontend not rebuilding the bubble. What the server records and what
+    the frontend shows must be **the same string**; only then can they not diverge."""
     _seed(monkeypatch, "lbl3")
     body = _submit("lbl3", {"1": "B"}).json()
     recorded = _turn("lbl3")["text"]
 
     assert body["summary"], "응답에 말풍선 텍스트가 없다"
-    # 기록된 턴 텍스트는 모델용 지시가 뒤에 붙으므로 summary를 **포함**한다.
+    # The recorded turn text has model instructions appended, so it **contains** the summary.
     assert body["summary"] in recorded, (body["summary"], recorded)
     assert "플랫폼(Platform)" in body["summary"]

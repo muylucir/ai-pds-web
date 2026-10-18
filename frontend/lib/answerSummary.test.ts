@@ -3,8 +3,8 @@ import { answerSummary } from "./answerSummary";
 import type { QuestionFile, QuestionOption } from "@/lib/api/types";
 import { dictFor, type Dict } from "@/lib/i18n";
 
-// 실제 딕셔너리를 탄다 — 가짜 t를 넘기면 빈 제출 문구가 딕셔너리에서 온다는
-// 사실이 테스트에서 사라진다. 기본 로케일(ko)이므로 단정은 한국어 그대로다.
+// Goes through the real dictionary — passing a fake t would erase from the test the fact that the
+// empty-submission text comes from the dictionary. The default locale is ko, so the assertions are in Korean as is.
 const ko = dictFor("ko");
 const t = (key: keyof Dict) => ko[key];
 

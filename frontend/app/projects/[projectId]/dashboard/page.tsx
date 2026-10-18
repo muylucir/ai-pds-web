@@ -23,14 +23,14 @@ export default function DashboardPage({ params }: { params: Promise<{ projectId:
 
   const notFound = state.error instanceof ApiError && state.error.status === 404;
 
-  // 아직 아무것도 시작하지 않은 프로젝트인가. **`stages`만으로는 판단할 수 없다** —
-  // 상태 파일의 `## Stage Progress`가 어긋나면 진행 중인 프로젝트도 빈 배열로
-  // 오고(backend parsers/state.py에 그 실측이 적혀 있다), 그때 "시작하세요"를
-  // 띄우면 이미 일하고 있는 사용자에게 거짓말이 된다. audit 항목이 없다는 것은
-  // 턴이 한 번도 돌지 않았다는 뜻이라 그 오판을 막는다.
+  // Is this a project where nothing has started yet? **`stages` alone cannot tell** —
+  // if the state file's `## Stage Progress` is off, even an in-progress project arrives as an empty
+  // array (backend parsers/state.py records that observation), and showing "시작하세요" (get started) then
+  // would be a lie to a user who is already working. No audit entries means
+  // no turn has ever run, which prevents that misjudgment.
   //
-  // 로딩이 끝나기를 기다리는 이유: `?? []`로 읽는 값은 로딩 중에도 빈 배열이므로,
-  // 기다리지 않으면 진행 중인 프로젝트에서도 배너가 한 번 번쩍인다.
+  // Why wait for loading to finish: values read with `?? []` are empty arrays during loading too,
+  // so without waiting, the banner flashes once even on an in-progress project.
   const settled = !state.loading && !audit.loading;
   const notStarted =
     settled && state.data?.stages.length === 0 && (audit.data ?? []).length === 0;

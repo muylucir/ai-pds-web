@@ -29,17 +29,18 @@ _log = logging.getLogger(__name__)
 #: credential -- the `nosec` is for the name, which is all bandit B105 looks at.
 TOKEN_INDEX_PREFIX = "surveys/by-token/"  # nosec B105
 
-#: 설문 토큰의 엔트로피(바이트). `secrets.token_urlsafe`에 넘긴다.
+#: Survey token entropy (bytes). Passed to `secrets.token_urlsafe`.
 TOKEN_BYTES = 32
 
 
 def new_token() -> str:
-    """새 설문 토큰.
+    """A new survey token.
 
-    토큰을 만드는 곳이 둘이다 — 설문 생성(routes/surveys.py)과 프로젝트 임포트
-    (project_import.py, 원본의 토큰을 그대로 쓰면 같은 버킷에서 원본 프로젝트의
-    링크를 가로챈다). 이 모듈이 토큰 인덱스를 소유하므로 토큰의 모양도 여기서
-    정한다: 길이가 두 벌이면 한쪽이 조용히 약해진다.
+    Tokens are created in two places -- survey creation (routes/surveys.py) and
+    project import (project_import.py; reusing the source's token would hijack the
+    source project's link in the same bucket). This module owns the token index, so
+    it also defines the token's shape: with two different lengths, one side would
+    silently be weaker.
     """
     return secrets.token_urlsafe(TOKEN_BYTES)
 
@@ -66,31 +67,33 @@ def archive_prefix(slug: str, closed_at: str) -> str:
 
 @dataclass(frozen=True)
 class SurveySummary:
-    """이 프로토타입의 설문에 대해 목록 라우트가 알아야 하는 전부."""
+    """Everything the list route needs to know about this prototype's survey."""
 
-    #: 지금 응답을 받을 수 있는 설문이 있는가(= 라이브 `questionnaire.json`).
+    #: Whether there is a survey that can accept responses now (= a live `questionnaire.json`).
     exists: bool
-    #: 리셋이 파괴할 답변 수 — 라이브 회차와 아카이브된 회차를 합친다.
+    #: Number of answers a reset would destroy -- the live round plus archived rounds.
     responses: int
 
 
 async def survey_summary(project_s3, slug: str) -> SurveySummary:
-    """설문 존재 여부와 응답 수. **왕복 하나로 둘 다 답한다.**
+    """Survey existence and response count. **Answers both in a single round trip.**
 
-    **왜 존재 여부가 따로 필요한가(2026-08-20 실측).** 응답 수만으로는 "설문이
-    없다"와 "설문은 있고 응답이 0건이다"가 구별되지 않는다. 둘 다 0이다. 그래서
-    카드가 "이 프로토타입에는 설문이 없다"를 말할 수 없었고, test2222에서
-    프로토타입 3개 중 1개에만 설문이 있는데 화면에 그 사실이 없었다 — 나머지 둘의
-    설문이 빠진 것을 알아차릴 방법이 없었다.
+    **Why existence is needed separately (observed 2026-08-20).** The response count
+    alone cannot distinguish "there is no survey" from "there is a survey with 0
+    responses". Both are 0. So the card could not say "this prototype has no survey",
+    and in ws-n only 1 of 3 prototypes had a survey yet the screen did not show
+    it -- there was no way to notice the other two were missing their surveys.
 
-    **왜 한 번만 list하는가.** 목록 라우트가 카드마다 이 질문을 하므로(그 라우트가
-    `asyncio.gather`로 병렬화하는 이유이기도 하다) 왕복을 하나 늘리면 프로토타입
-    수만큼 늘어난다. 두 사실이 같은 키 목록에 다 들어 있어서 나눌 이유가 없다.
+    **Why list only once.** The list route asks this question for every card (which
+    is also why that route parallelizes with `asyncio.gather`), so adding one round
+    trip adds as many as there are prototypes. Both facts are in the same key list,
+    so there is no reason to split them.
 
-    `exists`는 **라이브** questionnaire만 본다. 아카이브만 남은 상태
-    (`archive_current()` 직후 새 문항 생성이 502로 실패한 경우)에서 PM이 할 일은
-    설문을 다시 만드는 것이므로 "없음"이 맞다. 그래도 `responses`는 아카이브를
-    세는데, 리셋이 파괴할 답변이 실재하기 때문이다.
+    `exists` looks only at the **live** questionnaire. In a state where only the
+    archive remains (new question generation failed with 502 right after
+    `archive_current()`), what the PM needs to do is recreate the survey, so "none" is
+    correct. `responses` still counts the archive, because the answers a reset would
+    destroy are real.
     """
     keys = await project_s3.list(survey_prefix(slug))
     # Any `.../responses/{id}.json`, in the live round or any archived one.
@@ -106,8 +109,9 @@ async def survey_summary(project_s3, slug: str) -> SurveySummary:
 
 def questionnaire_md_key(slug: str) -> str:
     # aiplc-docs/ so the existing artifacts viewer can serve it (that route is
-    # hard-limited to this subtree). 디렉터리는 layout이 정한다 — 명세와 같은
-    # 곳에 둬야 단수 프로토타입의 설문지가 딴 트리에 홀로 생기지 않는다.
+    # hard-limited to this subtree). The directory is decided by layout -- it has to
+    # sit next to the spec so a single prototype's survey does not end up alone in a
+    # separate tree.
     return f"{layout.artifact_dir(slug)}/validation-questionnaire.md"
 
 
@@ -115,15 +119,17 @@ def aggregate_md_key(slug: str) -> str:
     """Where "Synthesize results" writes this prototype's survey aggregate —
     the feedback file Step 6 of prototype-validation.md imports.
 
-    **룰의 `validation-results.md`가 아니다.** 그 파일은 에이전트가 Step 6에서
-    이 집계를 읽어 직접 만들고, Part 2가 근거로 인용한다. 웹은 그 파일을 쓰지도
-    지우지도 않는다 — 왜 두 파일이어야 하는지는 `layout.SURVEY_AGGREGATE`.
+    **This is not the rule's `validation-results.md`.** The agent writes that file
+    itself in Step 6 by reading this aggregate, and Part 2 cites it as evidence. The
+    web app neither writes nor deletes that file -- see `layout.SURVEY_AGGREGATE` for
+    why there must be two files.
 
-    **왜 슬러그별인가(2026-08-20 실측).** 취합 라우트는 슬러그별이고
-    (`POST .../prototypes/{slug}/survey/synthesize`) Path B는 프로토타입을 N개
-    만든다 — test2222가 3개였다. 슬러그 없는 키였을 때는 셋을 취합하면 셋이 같은
-    키를 덮어써서 마지막 것만 남았고, 오류는 없었다. `layout.artifact_dir`이 단수
-    id를 분기하므로 Path A.1은 명세 옆(`prototype/`)에 놓인다.
+    **Why per slug (observed 2026-08-20).** The synthesize route is per slug
+    (`POST .../prototypes/{slug}/survey/synthesize`) and Path B builds N prototypes --
+    ws-n had 3. When the key had no slug, synthesizing all three made them
+    overwrite the same key so only the last one survived, with no error.
+    `layout.artifact_dir` branches on the single id, so Path A.1 lands next to the
+    spec (`prototype/`).
     """
     return layout.survey_aggregate_key(slug)
 
@@ -160,8 +166,9 @@ def _aggregate_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
     here -- in a file the next synthesis overwrites.
     """
     L = labels(language)
-    # 페르소나 문항이 있으면 다른 문항을 그 답으로 나눈다. 전체 평균만으로는
-    # "관리자는 5점, 실제 사용자인 담당자는 2점"이 3.5점 하나로 뭉개진다.
+    # If there is a persona question, split the other questions by its answer. With
+    # only the overall average, "managers gave 5, the staff who actually use it gave
+    # 2" collapses into a single 3.5.
     split = persona_groups(qn.questions, responses)
     persona_q = split[0] if split else None
     groups = [(name, build_rollup(qn.questions, rs, now).per_question)
@@ -178,17 +185,18 @@ def _aggregate_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
         f"- **{L['response_count']}**: {rollup.count}",
         f"- **{L['survey_status']}**: "
         f"{L['status_closed'] if qn.status == 'closed' else L['status_open']}",
-        # 검증 기간의 양 끝. Step 6의 Duration과, 수정 이력과 비교해 응답자가 어느
-        # 빌드를 봤는지 가리는 데 쓰인다(discovery-config/CLAUDE.md "Mark what
-        # validation covered"). 이것이 없으면 에이전트가 PM에게 시작 시각을 묻고,
-        # PM은 대개 기억하지 못한다(2026-10-06 ws-c).
+        # Both ends of the validation period. Used for Step 6's Duration and, compared
+        # against the change history, to tell which build respondents saw
+        # (discovery-config/CLAUDE.md "Mark what validation covered"). Without it the
+        # agent asks the PM for the start time, and the PM usually does not remember
+        # (2026-10-06 ws-c).
         f"- **{L['started_at']}**: {qn.created_at}",
         *([f"- **{L['closed_at']}**: {qn.closed_at}"] if qn.closed_at else []),
         f"- **{L['collected_at']}**: {now}",
     ]
     if persona_q:
-        # 응답 0인 페르소나까지 적는다 — 대상 사용자 중 누구에게 닿지 않았는지가
-        # 여기서만 보인다.
+        # Personas with 0 responses are listed too -- this is the only place that
+        # shows which target users were not reached.
         counts = rollup.per_question[persona_q.id].counts
         lines.append(f"- **{L['respondents']}**: "
                      + " · ".join(f"{opt} {n}" for opt, n in counts.items()))
@@ -203,7 +211,8 @@ def _aggregate_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
             continue
         lines.append(f"### Q{idx}. {q.text}")
         lines.append("")
-        # 페르소나 문항 자신은 나누지 않는다 — 나누면 대각선만 찬 표가 된다.
+        # The persona question itself is not split -- doing so yields a table with
+        # only the diagonal filled.
         by_persona = [(name, per[q.id]) for name, per in groups] \
             if groups and q.id != persona_q.id else []
         if stat.type == "scale":
@@ -250,8 +259,8 @@ def _aggregate_markdown(qn: Questionnaire, responses: list, rollup: Rollup,
             lines.append("")
             # Every answer, not the rollup's 20-sample cap: this file is Step
             # 6's input, so truncating it would hide evidence.
-            # 페르소나가 있으면 답마다 붙인다. 누구의 목소리인지가 이 답들을
-            # 근거로 쓸 때 가장 먼저 필요한 정보다.
+            # If there is a persona, attach it to each answer. Whose voice it is is
+            # the first thing needed when using these answers as evidence.
             answers = [(f"[{persona_of[r.response_id]}] " if persona_q else "")
                        + str(r.answers[q.id]).strip() for r in
                        sorted(responses, key=lambda x: x.submitted_at)
@@ -295,9 +304,10 @@ class SurveyStore:
         self._root = root_s3
         self.slug = slug
         self.project_id = project_id
-        # 리포트 생성 언어. questionnaire.language가 아니라 프로젝트 언어를
-        # 쓰는 이유: 리포트는 산출물 문서이고 문서 언어는 프로젝트가 정한다.
-        # 정상 경로에서는 두 값이 같다(설문도 프로젝트 언어로 생성된다).
+        # Report generation language. Why the project language rather than
+        # questionnaire.language: the report is an artifact document, and the project
+        # decides the document language. On the normal path the two values are the
+        # same (the survey is also generated in the project language).
         self._language = language
 
     @staticmethod
@@ -417,8 +427,9 @@ class SurveyStore:
             name = key.rsplit("/", 1)[-1]
             await self._s3.put(f"{dest}responses/{name}", body)
         if response_keys:
-            # 제출은 집계를 갱신하지 않으므로(routes/surveys_public.py) 캐시는 없거나
-            # 낡았을 수 있다 — 보존하는 집계는 보존하는 응답과 맞춘다.
+            # Submissions do not update the aggregate (routes/surveys_public.py), so the
+            # cache may be missing or stale -- the preserved aggregate is made to match
+            # the preserved responses.
             rollup = await self.get_rollup()
             await self._s3.put(f"{dest}rollup.json", rollup.model_dump_json())
         else:
@@ -472,11 +483,12 @@ class SurveyStore:
         # a build decision already made. A rebuilt prototype gets new results
         # when Step 6 runs again, exactly as the rule's Iterate path does.
         #
-        # **정확한 키만 지운다.** 단수 프로토타입에서는 이 디렉터리에 스펙
-        # (`prototype-spec.md`)이 함께 산다. 디렉터리를 프리픽스로 지우면 스펙이
-        # 사라지고, 그러면 리셋이 아니라 삭제가 된다 — 카드가 목록에서 없어진다.
-        # `delete_prefix`에 전체 키를 넘기는 것은 단일 키 삭제의 확립된 관례다
-        # (S3StoreLike에 단일 delete가 없다).
+        # **Delete only the exact keys.** For a single prototype, the spec
+        # (`prototype-spec.md`) lives in this same directory. Deleting the directory as a
+        # prefix would remove the spec, turning a reset into a deletion -- the card
+        # disappears from the list. Passing a full key to `delete_prefix` is the
+        # established convention for single-key deletion (S3StoreLike has no single
+        # delete).
         await self._s3.delete_prefix(questionnaire_md_key(self.slug))
         await self._s3.delete_prefix(aggregate_md_key(self.slug))
 

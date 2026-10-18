@@ -1,75 +1,75 @@
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 
-// 런타임 기본 모델 — user-data가 ANTHROPIC_MODEL로 내보낸다. 권한과 별개로
-// 유지한다: 이 값을 바꾸는 것은 배포 동작을 바꾸는 것이고, 아래 목록을 늘리는
-// 것은 "바꿀 수 있게 두는 것"이다.
+// Runtime default model — user-data exports it as ANTHROPIC_MODEL. It is kept separate
+// from permissions: changing this value changes deployment behavior, while growing the
+// list below is "leaving it changeable".
 export const MODEL = 'global.anthropic.claude-opus-4-8';
 
-// invoke를 허용하는 모델 — 명시 목록이 아니라 와일드카드다.
+// Models allowed to be invoked — a wildcard, not an explicit list.
 //
-// 명시 목록이었을 때의 문제: 모델 카탈로그가 S3로 옮겨가면서
-// (/admin/models, spec 2026-08-01) 관리자가 새 Claude 모델을 화면에서 등록할
-// 수 있게 됐는데, IAM이 5개만 허용하면 등록해도 첫 대화 턴에 AccessDenied가
-// 나고 그 실패는 백엔드 로그에만 남는다. "화면에서 모델을 추가할 수 있다"고
-// 보여주면서 실제로는 cdk deploy가 필요한 상태가 최악이므로 와일드카드로
-// 넓힌다 — 이것이 그 기능이 성립하는 유일한 조건이다.
+// The problem with the explicit list: when the model catalog moved to S3
+// (/admin/models, spec 2026-08-01), admins became able to register new Claude models from
+// the screen, but with IAM allowing only 5, registration still led to AccessDenied on the
+// first chat turn, a failure that remained only in the backend log. Showing "you can add
+// models from the screen" while actually requiring a cdk deploy is the worst state, so we
+// widen it to a wildcard — that is the only condition under which the feature holds.
 //
-// 허용 범위가 "모든 global Anthropic Claude 추론 프로파일"로 넓어지는 것은
-// 의도된 교환이다. 이 롤은 Bedrock invoke 외에 하는 일이 없고(S3는 별도
-// statement), 어떤 Claude 모델을 부르든 데이터 경계는 같다.
+// Widening the allowed scope to "every global Anthropic Claude inference profile" is an
+// intended trade-off. This role does nothing besides Bedrock invoke (S3 is a separate
+// statement), and the data boundary is the same whichever Claude model is called.
 //
-// inference-profile은 global.* 프리픽스, foundation-model은 없는 형태 —
-// 둘 다 필요하다(프로파일 경유 호출이 내부적으로 후자를 참조한다).
-// test/hosting-stack.assert.ts가 이 두 패턴과 MODEL의 포함 여부를 단정한다.
-// 샌드박스 프로세스의 AgentRole(lib/aipds-agent-creds-stack.ts)도 같은 목록을 쓴다.
+// inference-profile takes the global.* prefix, foundation-model takes the form without it —
+// both are needed (calls via a profile reference the latter internally).
+// test/hosting-stack.assert.ts asserts these two patterns and whether MODEL is covered.
+// The sandboxed processes' AgentRole (lib/aipds-agent-creds-stack.ts) uses the same list.
 export const INVOKABLE_MODEL_ARNS = (account: string) => [
   `arn:aws:bedrock:*:${account}:inference-profile/global.anthropic.claude-*`,
   `arn:aws:bedrock:*::foundation-model/anthropic.claude-*`,
 ];
 
-// 백엔드가 쓰는 아티팩트 버킷 프리픽스. 프로젝트 데이터는 projects/,
-// strands 세션은 sessions/ 아래에 있고 — surveys/와 models/는 프로젝트
-// 프리픽스 밖에 있어야 한다.
+// Artifact bucket prefixes the backend uses. Project data lives under projects/ and
+// strands sessions under sessions/ — surveys/ and models/ must be outside the project
+// prefix.
 //
-// surveys/by-token/{token}.json은 토큰 -> 프로토타입 단방향 인덱스다. 공개
-// 설문 링크(/survey/{token})는 토큰이 어느 프로젝트 것인지 알기 전에 이걸
-// 읽어야 하므로 projects/{pid}/ 안에 둘 수 없다
-// (backend/aipds/app.py의 surveys_root_s3_factory).
+// surveys/by-token/{token}.json is a one-way token -> prototype index. The public
+// survey link (/survey/{token}) must read it before knowing which project the token belongs
+// to, so it cannot be placed inside projects/{pid}/
+// (surveys_root_s3_factory in backend/aipds/app.py).
 //
-// models/catalog.json은 프로젝트 생성 화면의 모델 목록이다. 프로젝트가 하나도
-// 없는 상태에서 읽히므로 같은 이유로 프로젝트 프리픽스 밖에 있다
-// (backend/aipds/model_catalog.py의 CATALOG_KEY).
+// models/catalog.json is the model list for the project creation screen. It is read when
+// there may be no projects at all, so for the same reason it is outside the project prefix
+// (CATALOG_KEY in backend/aipds/model_catalog.py).
 //
-// 실측 배포 버그: 이 목록에 surveys/*가 없어서 설문 생성이 전부 500이었고,
-// 백엔드 로그에만 AccessDenied(PutObject on surveys/by-token/...)가 남았다.
-// 설문 기능이 들어온 뒤 이 헬퍼가 함께 갱신되지 않은 것이 원인 —
-// backend/aipds/survey/store.py의 TOKEN_INDEX_PREFIX와 짝이다.
-// ListBucket에도 필요하다: purge()의 토큰 회수는 delete_prefix(=list 후
-// delete_objects)를 타므로 목록 권한이 없으면 조용히 0건을 지운다.
+// Measured deployment bug: surveys/* was missing from this list, so every survey creation was
+// a 500, and AccessDenied (PutObject on surveys/by-token/...) remained only in the backend log.
+// The cause was that this helper was not updated along with the survey feature —
+// it pairs with TOKEN_INDEX_PREFIX in backend/aipds/survey/store.py.
+// It is needed for ListBucket too: token reclamation in purge() goes through delete_prefix (= list,
+// then delete_objects), so without list permission it silently deletes 0 items.
 //
-// design/profile.json은 관리자가 올린 브랜드 디자인 프로필이다. 프로젝트가
-// 없어도 관리되므로 models/catalog.json과 같은 이유로 프로젝트 프리픽스 밖에
-// 있다 (backend/aipds/design_profile.py의 DESIGN_PROFILE_KEY).
-// imports/*는 프로젝트 가져오기의 스테이징이다. 브라우저가 presigned PUT으로
-// 번들을 **직접** 올리는 자리이고, 그 URL은 이 롤의 자격증명으로 서명되므로 여기에
-// 없으면 서명은 성공하고 S3가 브라우저에게 403을 준다 — 백엔드 로그에는 아무것도
-// 남지 않는다. 프로젝트 데이터와 섞이지 않게 projects/ 밖에 둔다:
-// restore_projects의 스캔과 프로젝트 삭제의 delete_prefix가 그 안의 키를 자기
-// 것으로 착각할 여지를 남기지 않는다(backend/aipds/import_staging.py).
+// design/profile.json is the brand design profile uploaded by an admin. It is managed even
+// with no project, so it is outside the project prefix for the same reason as models/catalog.json
+// (DESIGN_PROFILE_KEY in backend/aipds/design_profile.py).
+// imports/* is the staging area for project import. It is where the browser uploads the bundle
+// **directly** with a presigned PUT, and that URL is signed with this role's credentials, so if
+// it is missing here the signing succeeds and S3 gives the browser a 403 — nothing remains in
+// the backend log. It is kept outside projects/ so it does not mix with project data: it leaves
+// no room for restore_projects' scan or project deletion's delete_prefix to mistake its keys
+// for their own (backend/aipds/import_staging.py).
 const BACKEND_BUCKET_PREFIXES = [
   'projects/*', 'sessions/*', 'surveys/*', 'models/*', 'design/*', 'imports/*',
 ] as const;
 
-// Anthropic 모델은 계정에서 **처음** 호출될 때 Bedrock이 AWS Marketplace 구독을 자동으로 만든다 —
-// 호출한 롤에 이 권한이 없으면 403("not authorized to perform the required AWS Marketplace actions")이다.
-// 새 계정의 첫 호출이, 또는 새 모델을 추가한 뒤의 첫 호출이 어느 롤에서 나올지 모르므로 Bedrock을
-// 부르는 롤 전부(백엔드·인스턴스 롤, 샌드박스의 AgentRole)에 준다. 한 번 구독되면 계정의 모든 롤이
-// 이 권한 없이 호출한다.
+// When an Anthropic model is called **for the first time** in an account, Bedrock automatically creates an AWS Marketplace
+// subscription — if the calling role lacks this permission, it is a 403 ("not authorized to perform the required AWS Marketplace actions").
+// We cannot know which role will make a new account's first call, or the first call after adding a new model, so it is granted
+// to every role that calls Bedrock (the backend/instance role, the sandbox's AgentRole). Once subscribed, every role in the
+// account calls without this permission.
 //
-// CalledViaLast: 구독은 **Bedrock 호출을 거쳐서만** 일어난다 — Marketplace API를 직접 불러 다른
-// 상품을 구독할 수 없고, 거쳐 가는 Bedrock 호출은 INVOKABLE_MODEL_ARNS로 묶여 있다. 제품 ID는 모델마다
-// 달라 새 모델마다 고쳐야 하므로 걸지 않는다.
+// CalledViaLast: subscription happens **only via a Bedrock call** — it cannot call the Marketplace API directly to subscribe
+// to other products, and the Bedrock calls it goes through are bound by INVOKABLE_MODEL_ARNS. Product IDs differ per
+// model and would need fixing for every new model, so they are not constrained.
 export function bedrockSubscribeStatement(): iam.PolicyStatement {
   return new iam.PolicyStatement({
     actions: [
@@ -82,9 +82,9 @@ export function bedrockSubscribeStatement(): iam.PolicyStatement {
   });
 }
 
-// 백엔드(드릴 롤 또는 EC2 인스턴스 롤)가 필요로 하는 공통 권한:
-// Bedrock invoke(+ 첫 호출의 Marketplace 자동 구독) + 아티팩트 버킷 projects/*·sessions/*·surveys/*·
-// models/*·design/* 읽기/쓰기/목록.
+// Common permissions the backend (the drill role or the EC2 instance role) needs:
+// Bedrock invoke (+ automatic Marketplace subscription on first call) + read/write/list on the artifact bucket's projects/*, sessions/*, surveys/*,
+// models/*, design/*.
 export function backendPolicyStatements(
   bucket: s3.IBucket,
   account: string,

@@ -17,7 +17,7 @@ import { HandoffReadyBanner, discoveryFinished } from "./HandoffReadyBanner";
 
 const D = "aiplc-docs/discovery/";
 
-// 실측 test2222(Path B)의 판정 모양.
+// The verdict shape from the observed ws-n (Path B).
 const PATH_B: Readiness = {
   origin: "B",
   prototypes: [{ id: "triage", spec: `${D}prototypes/triage/PROTOTYPE-triage.md`,
@@ -144,7 +144,7 @@ describe("SupplementForm", () => {
     render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
                            onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     const cards = screen.getAllByRole("checkbox");
-    await userEvent.click(cards[2]); // 실패 요인: 모름
+    await userEvent.click(cards[2]); // failure factor: "모름" (don't know)
     await userEvent.click(screen.getByRole("button", { name: "맞다" }));
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
     expect(onSave).toHaveBeenCalledWith({
@@ -159,14 +159,14 @@ describe("SupplementForm", () => {
   });
 
   it("shows the decision itself, grouped by Discovery stage", () => {
-    // 실측(ws-g): 확인 항목 40개가 "고른 답: A · strategy-questions.md"로만 보였다.
+    // Observed (ws-g): 40 confirmation items showed only as "고른 답: A · strategy-questions.md" (chosen answer: A · ...).
     render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     expect(screen.getByText("구독형 — 매장 수 기준 월 과금")).toBeInTheDocument();
     expect(screen.getByText("첫 해는 할인")).toBeInTheDocument();
     expect(screen.getByText("AI 제안 근거: Discovery 결과 기반 제안")).toBeInTheDocument();
     const summaries = [...document.querySelectorAll("summary")].map((el) => el.textContent);
-    // 단계 순서(PR/FAQ가 제품 전략보다 앞)와 단계별 확인 수.
+    // Stage order (PR/FAQ before product strategy) and the confirmation count per stage.
     expect(summaries).toEqual(["PR/FAQ · 문제 정의 1건 · 확인 1", "제품 전략 1건 · 확인 0"]);
     expect(screen.queryByText(/strategy-questions\.md/)).not.toBeInTheDocument();
   });
@@ -194,8 +194,8 @@ describe("SupplementForm", () => {
 });
 
 describe("SupplementForm — what the last open decisions left to the PM", () => {
-  // 실측(ws-g): 섹션이 모두 sourced라 보완 질문이 0개였는데, PRD 9번에는 보존 기간·
-  // 권한·재알림 규칙처럼 구현을 막는 PM 결정이 열려 있었다.
+  // Observed (ws-g): every section was sourced, so there were 0 supplementary questions, yet PRD item 9 left open
+  // PM decisions that block implementation, such as retention period, permissions, and re-notification rules.
   const OPEN: SupplementView = {
     ...VIEW, has_package: true, questions: [], superseded: [],
     open_questions: [
@@ -235,7 +235,7 @@ describe("SupplementForm — what the last open decisions left to the PM", () =>
     });
   });
 
-  // 실측(ws-g): PM 몫 18개가 전부 서술형이었고, 구현을 막는 것은 7개였다.
+  // Observed (ws-g): all 18 PM-owned items were free-text, and 7 of them blocked implementation.
   const TRIAGED: SupplementView = {
     ...OPEN,
     open_questions: [
@@ -259,10 +259,10 @@ describe("SupplementForm — what the last open decisions left to the PM", () =>
                            onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     const retention = screen.getByRole("radiogroup", { name: /보존 기간은/ });
     const radios = within(retention).getAllByRole("radio");
-    expect(radios).toHaveLength(3);                       // 보기 둘 + 직접 입력
+    expect(radios).toHaveLength(3);                       // two options + write-in
     expect(radios.every((r) => !(r as HTMLInputElement).checked)).toBe(true);
     expect(within(retention).getByText(/go-to-market\/gtm-questions.md Q4/)).toBeInTheDocument();
-    // 진행률은 빌드 전 결정만 센다.
+    // Progress counts only pre-build decisions.
     expect(screen.getByText(/^0 \/ 2 답함/)).toBeInTheDocument();
     expect(screen.getByText("빌드 중에 정해도 되는 PM 결정 1개")).toBeInTheDocument();
     expect(screen.getByText(/답이 나올 때까지: 목록을 바꿀 수 있게/)).toBeInTheDocument();
@@ -296,7 +296,7 @@ describe("SupplementForm — what the last open decisions left to the PM", () =>
   });
 
   it("asks an external check for the answer or who is checking, with no options", async () => {
-    // 실측(ws-g): "증빙 효력을 갖는가?"에 "인정한다"가 보기로 나왔다 — 법무가 답할 사실이다.
+    // Observed (ws-g): "인정한다" (it is recognized) appeared as an option for "증빙 효력을 갖는가?" (does it have evidentiary force?) — that is a fact for Legal to answer.
     const onSave = vi.fn();
     const view: SupplementView = { ...TRIAGED, open_deferred: [], open_questions: [
       { key: "open:gggggggggggg", id: "O-01", question: "전자 기록의 증빙 효력은? (C-01)", answer: null,
@@ -307,7 +307,7 @@ describe("SupplementForm — what the last open decisions left to the PM", () =>
     expect(screen.getByText("외부 확인")).toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
     await userEvent.type(screen.getByRole("textbox", { name: /확인 중인 곳/ }), "법무팀");
-    expect(screen.getByText(/^1 \/ 1 답함/)).toBeInTheDocument();   // 확인 중인 곳만으로도 답한 것이다
+    expect(screen.getByText(/^1 \/ 1 답함/)).toBeInTheDocument();   // filling in only "확인 중인 곳" (who is checking) still counts as answered
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
     expect(onSave.mock.calls[0][0].open_answers).toEqual({
       "open:gggggggggggg": { question: "전자 기록의 증빙 효력은? (C-01)", text: "", unknown: false,
@@ -473,7 +473,7 @@ describe("HandoffReadyBanner", () => {
   });
 
   it("stays hidden while Go-to-Market is unfinished — e.g. only an interim Discovery Document", () => {
-    // test2222: "Discovery Document 중간 통합"은 끝났지만 GTM은 남아 capability가 in_progress다.
+    // ws-n: "Discovery Document 중간 통합" (interim integration) is done but GTM remains, so the capability is in_progress.
     render(<HandoffReadyBanner projectId="p1" state={state("in_progress")} />);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
@@ -510,7 +510,7 @@ describe("GenerationProgress", () => {
     expect(screen.getByText("vision 문서 작성")).toBeInTheDocument();
     expect(screen.getByText(/^완료 · 9,000자 · 2분 21초/)).toBeInTheDocument();
     expect(screen.getByText(/^첫 응답을 기다리는 중 ·/)).toBeInTheDocument();
-    // 생성 중에는 다시 하기 버튼이 없다.
+    // There is no redo button while generating.
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
@@ -549,7 +549,7 @@ describe("GenerationProgress", () => {
 });
 
 describe("finding kinds", () => {
-  // triage를 더할 때 사이드바 문구(lint.*)를 빠뜨려 키가 그대로 보였다.
+  // When triage was added, the sidebar strings (lint.*) were missed and the raw keys showed.
   it("has every label and fix for every kind in both languages", () => {
     for (const dict of [ko, en] as Record<string, string>[]) {
       for (const k of FINDING_KINDS) {
@@ -590,7 +590,7 @@ describe("ResetDialog", () => {
   });
 
   it("counts every answer and confirmation the PM left in the tab", () => {
-    // VIEW: 고정 문항 답 1 + 대체된 답 1 + 확인 1.
+    // VIEW: 1 fixed-question answer + 1 superseded answer + 1 confirmation.
     expect(savedAnswers(VIEW)).toBe(3);
     expect(savedAnswers(null)).toBe(0);
   });

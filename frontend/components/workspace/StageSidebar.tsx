@@ -84,8 +84,8 @@ function CapabilityRow({ cap, index }: { cap: CapabilityState; index: number }) 
   );
 }
 
-// `memo`: 스트리밍 중 워크스페이스 페이지는 프레임마다 다시 그려지지만(채팅 말풍선이
-// 자란다) 이 패널의 props는 그동안 그대로다.
+// `memo`: during streaming the workspace page re-renders every frame (chat bubbles
+// grow), but this panel's props stay the same during that time.
 export const StageSidebar = memo(function StageSidebar({
   state,
   events,

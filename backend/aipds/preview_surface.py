@@ -1,30 +1,37 @@
-# backend/aipds/preview_surface.py — 프로토타입은 앱과 다른 오리진에서 서빙된다.
+# backend/aipds/preview_surface.py — prototypes are served from an origin separate from the app.
 #
-# **왜 오리진을 나누는가.** 프로토타입은 빌드 에이전트가 쓴 코드이고 신뢰 대상이
-# 아니다. 앱과 같은 오리진에서 서빙하면 두 가지가 그 코드에 닿는다:
+# **Why split the origins.** A prototype is code written by the build agent and is not
+# trusted. Serving it from the same origin as the app exposes two things to that code:
 #
-#   - 앱 세션 쿠키(`path=/`)가 프로토타입 요청에도 실린다. Next의 `/api` 프록시가 그
-#     쿠키를 `Authorization: Bearer <Cognito access token>`으로 바꿔 붙이므로, 관리자가
-#     프리뷰를 열면 관리자 토큰이 프로토타입 서버 프로세스에 들어간다.
-#   - 프로토타입의 JS가 같은 오리진이라 `fetch('/api/…')`만으로 보는 사람의 권한으로
-#     앱 API를 부를 수 있다.
+#   - The app session cookie (`path=/`) is attached to prototype requests too. Next's
+#     `/api` proxy turns that cookie into
+#     `Authorization: Bearer <Cognito access token>`, so when an admin opens the
+#     preview, the admin token ends up in the prototype server process.
+#   - Because the prototype's JS is on the same origin, a plain `fetch('/api/…')` can
+#     call the app API with the viewer's permissions.
 #
-# 헤더를 하나씩 지우는 것은 그 구멍을 막는 것이지 없애는 것이 아니다. 프리뷰 전용
-# CloudFront 배포(infra/lib/aipds-preview-stack.ts)가 같은 EC2의 `/api/proto/*`만
-# 서빙하고, 앱 오리진은 프로토타입을 서빙하지 않는다 — 앱 쿠키는 앱 도메인에만 있으므로
-# 프로토타입에 **구조적으로** 닿지 않는다(`*.cloudfront.net`은 공개 접미사 목록에 있어
-# 두 배포는 서로 다른 사이트다).
+# Stripping headers one by one plugs that hole; it does not remove it. A preview-only
+# CloudFront distribution (infra/lib/aipds-preview-stack.ts) serves only `/api/proto/*`
+# on the same EC2, and the app origin does not serve prototypes — the app cookie exists
+# only on the app domain, so it **structurally** cannot reach the prototype
+# (`*.cloudfront.net` is on the Public Suffix List, so the two distributions are
+# different sites).
 #
-# **요청이 어느 표면으로 왔는지** 백엔드가 아는 방법: 프리뷰 배포만 비밀 헤더
-# `X-Preview-Verify`를 붙인다(앱 배포가 붙이는 `X-Origin-Verify`와 별개). nginx와 Next
-# 프록시는 이 헤더를 그대로 넘긴다. 값을 모르면 앱 도메인으로 흉내낼 수 없다.
+# How the backend knows **which surface a request came through**: only the preview
+# distribution attaches the secret header `X-Preview-Verify` (separate from the
+# `X-Origin-Verify` the app distribution attaches). nginx and the Next proxy pass this
+# header through unchanged. Without knowing the value, it cannot be imitated via the app
+# domain.
 #
-# 설정이 없을 때 앱 오리진이 프로토타입을 서빙하는 것은 **인증이 꺼진 로컬 개발에서만**
-# 이다(`same_origin_allowed`). 그때는 훔칠 세션 쿠키가 없다. 인증이 켜진 배포에서 설정이
-# 없거나 비밀 값을 읽지 못하면 프리뷰를 닫는다 — 그 상태로 앱 오리진에서 서빙하면, 프리뷰를
-# 연 사람(관리자 포함)의 세션으로 프로토타입 코드가 앱 API를 부른다. 프리뷰 스택은
-# `cdk deploy --all`에 늘 포함되므로 정상 배포에서 이 상태는 harden 동기화 전 몇 분과
-# Secrets Manager 일시 장애(최대 `_RETRY_AFTER`초)뿐이다.
+# The app origin serves prototypes when no configuration is present **only in local
+# development with auth disabled** (`same_origin_allowed`). In that case there is no
+# session cookie to steal. On a deployment with auth enabled, if the configuration is
+# missing or the secret value cannot be read, the preview is closed — serving from the
+# app origin in that state would let prototype code call the app API with the session of
+# whoever opened the preview (admins included). The preview stack is always included in
+# `cdk deploy --all`, so on a normal deployment this state lasts only for the few
+# minutes before the harden sync and during a transient Secrets Manager outage (at most
+# `_RETRY_AFTER` seconds).
 from __future__ import annotations
 
 import logging
@@ -35,8 +42,8 @@ import time
 _log = logging.getLogger(__name__)
 
 ORIGIN_ENV = "AIPDS_PREVIEW_ORIGIN"          # https://dXXXX.cloudfront.net
-SECRET_ARN_ENV = "AIPDS_PREVIEW_SECRET_ARN"  # 비밀 헤더 값을 담은 Secrets Manager 시크릿
-VERIFY_ENV = "AIPDS_PREVIEW_VERIFY"          # 값을 직접 줄 때(테스트·로컬)
+SECRET_ARN_ENV = "AIPDS_PREVIEW_SECRET_ARN"  # Secrets Manager secret holding the header value
+VERIFY_ENV = "AIPDS_PREVIEW_VERIFY"          # for passing the value directly (tests, local)
 HEADER = "x-preview-verify"
 
 
@@ -45,10 +52,11 @@ def preview_origin() -> str | None:
     return value or None
 
 
-#: 성공한 값만 담는다 — 실패를 캐시하면 기동 직후의 일시적 오류 하나가 재시작 전까지
-#: 프리뷰 표면을 꺼 둔다.
+#: Holds only successful values — caching a failure would let a single transient error
+#: right after startup keep the preview surface off until the next restart.
 _secret_cache: dict[str, str] = {}
-#: 실패는 잠깐만 기억한다 — 요청마다 Secrets Manager를 두드리지 않게.
+#: Failures are remembered only briefly — so we do not hit Secrets Manager on every
+#: request.
 _RETRY_AFTER = 60.0
 _failed_at: dict[str, float] = {}
 
@@ -67,8 +75,9 @@ def _secret_from_arn(arn: str) -> str | None:
             _secret_cache[arn] = value
         return value or None
     except Exception:
-        # 읽지 못하면 프리뷰 표면이 없는 것과 같다(인증이 켜져 있으면 프리뷰가 닫힌다).
-        # 조용히 넘기면 "왜 프리뷰가 열리지 않는가"를 알 수 없으므로 남긴다.
+        # If it cannot be read, it is as if there were no preview surface (with auth
+        # enabled, the preview is closed). Passing over it silently would leave no way
+        # to tell "why the preview won't open", so we log it.
         _log.exception("reading the preview verify secret failed")
         _failed_at[arn] = time.monotonic()
         return None
@@ -87,13 +96,15 @@ def enabled() -> bool:
 
 
 def same_origin_allowed() -> bool:
-    """프리뷰 표면이 없을 때 앱 오리진이 프로토타입을 서빙해도 되는가 — 인증이 꺼졌을 때만."""
+    """Whether the app origin may serve prototypes when there is no preview surface —
+    only when auth is disabled."""
     import aipds.app as app_module
     return app_module.cognito_config() is None
 
 
 def on_preview_surface(headers) -> bool:
-    """이 요청이 프리뷰 배포로 왔는가. 프리뷰가 꺼져 있으면 `same_origin_allowed()`."""
+    """Whether this request came through the preview distribution. If the preview is
+    off, `same_origin_allowed()`."""
     expected = preview_verify()
     if preview_origin() is None or expected is None:
         return same_origin_allowed()

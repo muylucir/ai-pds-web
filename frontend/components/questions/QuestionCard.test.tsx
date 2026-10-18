@@ -84,11 +84,11 @@ describe("QuestionCard", () => {
     expect(value).toBe("C");
   });
 
-  // Regression: 복수선택 질문이 단일선택과 **화면상 구별되지 않았다.** 실제
-  // input은 sr-only라 checkbox/radio 글리프가 보이지 않고, 카드 텍스트는 두
-  // 모드가 바이트 단위로 동일했다 — 두 번째 보기를 눌러 보기 전까지 여러 개를
-  // 고를 수 있다는 사실을 알 방법이 없었다. 배지(문구)와 인디케이터(모양)로
-  // 두 단서를 넣었고, 여기서 그 둘이 모드에 따라 갈리는 것을 단정한다.
+  // Regression: multi-select questions were **visually indistinguishable** from single-select. The actual
+  // input is sr-only, so no checkbox/radio glyph is visible, and the card text of the two
+  // modes was byte-for-byte identical — there was no way to know several could be chosen
+  // until you clicked a second option. Two cues were added, a badge (wording) and an indicator (shape),
+  // and this asserts that both differ by mode.
   it("복수선택 질문에 '여러 개 선택 가능' 배지를 단다", () => {
     render(<QuestionCard question={MULTI_Q} value="" onChange={() => {}} />);
     expect(screen.getByText("여러 개 선택 가능")).toBeInTheDocument();
@@ -102,14 +102,14 @@ describe("QuestionCard", () => {
   });
 
   it("보이는 인디케이터가 모드에 따라 네모/동그라미로 갈린다", () => {
-    // sr-only가 아닌, 눈에 보이는 표시를 확인한다 — 이게 없으면 배지 문구만
-    // 남고 보기 하나하나가 어떤 컨트롤인지는 여전히 안 보인다.
+    // Check the visible mark, not the sr-only one — without it only the badge wording
+    // remains, and which control each option is still cannot be seen.
     const { container: multi } = render(<QuestionCard question={MULTI_Q} value="A" onChange={() => {}} />);
     const multiMarks = [...multi.querySelectorAll('span[aria-hidden="true"]')]
       .filter((el) => el.className.includes("border-2"));
     expect(multiMarks).toHaveLength(3);
     expect(multiMarks.every((el) => el.className.includes("rounded-md"))).toBe(true);
-    // 고른 보기만 채워진다.
+    // Only the chosen option is filled.
     expect(multiMarks.filter((el) => el.className.includes("bg-violet-600"))).toHaveLength(1);
 
     const { container: single } = render(
@@ -141,7 +141,7 @@ describe("QuestionCard", () => {
   });
 
   it("Other 옵션의 라디오/체크박스도 textarea를 label 자식으로 두지 않는다", () => {
-    // multi 모드에서도 동일 구조 보장.
+    // Guarantee the same structure in multi mode too.
     render(<QuestionCard question={{ ...MULTI_Q, multi_select: true, options: [...MULTI_Q.options, { letter: "X", text: "Other", is_other: true, recommended: false }] }} value="" onChange={vi.fn()} />);
     const textarea = screen.getByLabelText(/기타 답변 직접 입력/);
     expect(textarea.closest("label")).toBeNull();
@@ -182,11 +182,11 @@ describe("QuestionCard", () => {
 });
 
 describe("QuestionCard — sr-only 인풋의 포지셔닝 컨텍스트 (스크롤 말림 회귀)", () => {
-  // 회귀: sr-only(absolute) 인풋의 부모 label이 static이면 인풋 좌표가 문서
-  // 루트 기준이 되어, 긴 질문지에서 <html>에 유령 오버플로를 만든다. 라벨
-  // 클릭(=input.focus())마다 브라우저가 문서를 그 좌표로 스크롤해 헤더가
-  // 말려 올라갔다(ui-bug.png). 모든 sr-only 인풋의 offsetParent가 자기
-  // label(=relative) 안에 갇혀 있어야 한다.
+  // Regression: if the parent label of an sr-only (absolute) input is static, the input's coordinates are
+  // relative to the document root, creating phantom overflow on <html> in long questionnaires. On every label
+  // click (= input.focus()) the browser scrolled the document to those coordinates and the header
+  // rolled up (ui-bug.png). Every sr-only input's offsetParent must be confined within its own
+  // label (= relative).
   it("모든 옵션 인풋의 label이 relative 포지셔닝 컨텍스트를 만든다", () => {
     render(
       <Harness question={{ ...q1, multi_select: false }} initial="" spy={vi.fn()} />,
@@ -201,9 +201,9 @@ describe("QuestionCard — sr-only 인풋의 포지셔닝 컨텍스트 (스크�
   });
 
   it("fieldset도 relative — sr-only legend를 카드 안에 가둔다", () => {
-    // 실측(Playwright): 라벨 relative만으로는 html 오버플로 1886→1547px,
-    // fieldset relative까지 적용해야 0. legend.sr-only(absolute)가 남은
-    // 기여자였다.
+    // Observed (Playwright): with only the label relative, html overflow went 1886→1547px;
+    // it reached 0 only with fieldset relative as well. legend.sr-only (absolute) was the remaining
+    // contributor.
     render(
       <Harness question={{ ...q1, multi_select: false }} initial="" spy={vi.fn()} />,
     );
@@ -214,19 +214,19 @@ describe("QuestionCard — sr-only 인풋의 포지셔닝 컨텍스트 (스크�
 });
 
 describe("QuestionCard — 보기 부연 설명 (letter + note)", () => {
-  // 스펙(2026-07-21-option-annotation-design.md): 일반 보기를 고르면 그 보기
-  // 아래 '부연 설명 (선택)' 입력란이 펼쳐지고, 입력하면 "B: <설명>" 단일
-  // 문자열로 제출된다. Kiro/Claude Code의 "[Answer]: letter + 설명" 경험을
-  // 파일 편집 없는 AI-PDS 폼에 재현하는 값 계약.
+  // Spec (2026-07-21-option-annotation-design.md): choosing a regular option expands a
+  // '부연 설명 (선택)' (additional note, optional) input under it, and typing submits a single
+  // string "B: <note>". The value contract that reproduces Kiro/Claude Code's "[Answer]: letter + note" experience
+  // in the AI-PDS form, without editing files.
 
   it("보기를 선택하면 부연 설명 입력란이 그 보기 아래 펼쳐진다", async () => {
     const user = userEvent.setup();
     render(<Harness question={{ ...q1, multi_select: false }} initial="" spy={vi.fn()} />);
-    // 선택 전에는 부연 입력란 없음
+    // No note input before selecting
     expect(screen.queryByLabelText(/보기 B 부연 설명/)).toBeNull();
     await user.click(screen.getByText(/플랫폼\(Platform\)/));
     expect(screen.getByLabelText(/보기 B 부연 설명/)).toBeInTheDocument();
-    // 다른(미선택) 보기에는 입력란이 없음
+    // No input on the other (unselected) options
     expect(screen.queryByLabelText(/보기 A 부연 설명/)).toBeNull();
   });
 
@@ -252,7 +252,7 @@ describe("QuestionCard — 보기 부연 설명 (letter + note)", () => {
     const spy = vi.fn();
     render(<Harness question={{ ...q1, multi_select: false }} initial="B: 수정 필요" spy={spy} />);
     await user.click(screen.getByText(/Niche Specialist/));
-    expect(spy).toHaveBeenLastCalledWith("A");           // 부연 없이 letter만
+    expect(spy).toHaveBeenLastCalledWith("A");           // letter only, no note
     expect(screen.getByLabelText(/보기 A 부연 설명/)).toHaveValue("");
   });
 
@@ -262,7 +262,7 @@ describe("QuestionCard — 보기 부연 설명 (letter + note)", () => {
     const radioB = radios.find((r) => r.value === "B")!;
     expect(radioB.checked).toBe(true);
     expect(screen.getByLabelText(/보기 B 부연 설명/)).toHaveValue("헤드라인 수정");
-    // Other 텍스트박스는 비어 있어야 함(자유텍스트로 오인 금지)
+    // The Other text box must be empty (must not be mistaken for free text)
     expect(screen.getByLabelText(/기타 답변 직접 입력/)).toHaveValue("");
   });
 
@@ -296,11 +296,11 @@ describe("QuestionCard — 보기 부연 설명 (letter + note)", () => {
   });
 
   it("multi-select에서 'B: ...' 모양의 Other 자유텍스트가 보기로 오인되지 않는다", () => {
-    // multi에는 부연(letter: note) 규약이 없다 — 자기 질문의 letter로 시작하는
-    // 자유텍스트("B: 회의 후 결정")도 통째로 Other 텍스트로 복원되어야 한다.
-    // (회귀: otherActive 시드가 !multi 게이트 없이 splitLetterNote를 호출해
-    // 이 값을 letter+note로 오인 → Other 텍스트박스가 비고, Other 클릭 시
-    // 저장값이 ""로 유실됐다.)
+    // multi has no note (letter: note) convention — free text starting with the question's own letter
+    // ("B: 회의 후 결정") must also be restored whole as Other text.
+    // (Regression: the otherActive seed called splitLetterNote without the !multi gate,
+    // mistaking this value for letter+note → the Other text box went empty, and clicking Other
+    // lost the saved value to "".)
     const MULTI_WITH_OTHER = { ...MULTI_Q, options: [...MULTI_Q.options, { letter: "X", text: "Other", is_other: true, recommended: false }] };
     render(<QuestionCard question={MULTI_WITH_OTHER} value="B: 회의 후 결정하겠습니다" onChange={vi.fn()} />);
     expect(screen.getByLabelText(/기타 답변 직접 입력/)).toHaveValue("B: 회의 후 결정하겠습니다");
@@ -310,10 +310,10 @@ describe("QuestionCard — 보기 부연 설명 (letter + note)", () => {
 });
 
 describe("중복 Other 방어 (regression)", () => {
-  // 백엔드가 ask_questions 경계에서 정규화하지만, 이 컴포넌트는 그 이전
-  // 세션에 저장된 interrupt를 새로고침으로 복원할 때도 쓰인다. is_other가 둘
-  // 이상이면 두 라디오가 같은 otherActive 상태를 공유해 선택이 서로를 덮어쓰고,
-  // 실질 보기의 텍스트가 "Other — 직접 입력"으로 덮여 사라진다(question.png).
+  // The backend normalizes at the ask_questions boundary, but this component is also used when
+  // restoring, on refresh, an interrupt saved in a session from before that. With two or more is_other,
+  // the two radios share the same otherActive state, so selections overwrite each other,
+  // and the real option's text is covered by "Other — 직접 입력" and disappears (question.png).
   const dupOther = {
     number: 1, category: null, text: "다음 단계로 무엇을 할까요?", answer: null,
     multi_select: false,
@@ -337,11 +337,11 @@ describe("중복 Other 방어 (regression)", () => {
   });
 });
 
-// ---- 문항 앞의 설명 산문(context) ----
-// 질문 파일에서 온 라운드에만 있다. AskUserQuestion 페이로드에는 이 필드가 없어서
-// 사용자는 "왜 이걸 묻는지"를 못 보고 답했다 — 2026-08-17 실측한 확인 게이트 질문은
-// "**위에 정리한** 페인 포인트 5건이 정확합니까?"인데 그 "위에 정리한" 표가 파서에서
-// 사라져 답할 수 없는 질문으로 화면에 떴다.
+// ---- Explanatory prose before a question (context) ----
+// Present only in rounds that come from a question file. The AskUserQuestion payload has no such field, so
+// users answered without seeing "why this is being asked" — the confirmation-gate question observed on 2026-08-17 was
+// "**위에 정리한** 페인 포인트 5건이 정확합니까?" (are the 5 pain points **summarized above** correct?), but the "위에 정리한" table
+// vanished in the parser and it showed up on screen as an unanswerable question.
 
 const CONTEXT_Q: Question = {
   number: 1,
@@ -355,7 +355,7 @@ const CONTEXT_Q: Question = {
 describe("QuestionCard — context", () => {
   it("표가 표로 렌더된다 (평문이면 답할 수 없는 질문이 된다)", () => {
     render(<QuestionCard question={CONTEXT_Q} value="" onChange={() => {}} />);
-    // 마크다운으로 렌더 — 줄바꿈이 살아 있어야 표가 성립한다.
+    // Rendered as markdown — line breaks must survive for the table to hold together.
     expect(screen.getByRole("table")).toBeInTheDocument();
     expect(screen.getByText("반복 삭감")).toBeInTheDocument();
     expect(screen.getByText("사일로")).toBeInTheDocument();
@@ -374,16 +374,16 @@ describe("QuestionCard — context", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
-  // 2026-08-18 실측(123456test): 배경이 제목 아래로 가서 카드가
-  // "질문 → 배경 1,126자 + 표 → 입력칸"으로 읽혔고, 사용자가 파싱 오류로
-  // 오진했다. 파일에서 이 산문은 `## Question N` 헤딩 **앞**에 있다.
+  // Observed 2026-08-18 (ws-k): the background went below the title, so the card
+  // read as "question → 1,126 characters of background + table → input", and the user misdiagnosed it
+  // as a parse error. In the file, this prose sits **before** the `## Question N` heading.
   it("배경이 질문 문장보다 위에 온다 — 파일에 쓰인 순서다", () => {
     const { container } = render(
       <QuestionCard question={CONTEXT_Q} value="" onChange={() => {}} />,
     );
     const table = screen.getByRole("table");
     const heading = screen.getByRole("heading", { level: 2 });
-    // DOCUMENT_POSITION_FOLLOWING: heading이 table **뒤에** 있다.
+    // DOCUMENT_POSITION_FOLLOWING: the heading is **after** the table.
     expect(
       table.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
@@ -391,18 +391,18 @@ describe("QuestionCard — context", () => {
   });
 });
 
-// ---- 보기·질문 문장의 인라인 마크다운 ----
-// 2026-08-18 실측: 보기에 `**` 원문이 그대로 떴다. 질문 파일의 보기는 실제로 이렇게
-// 쓰여 있다(prfaq-clarifying-questions.md):
+// ---- Inline markdown in options and question sentences ----
+// Observed 2026-08-18: raw `**` showed up as is in options. Options in question files really are
+// written like this (prfaq-clarifying-questions.md):
 //
 //     A) **「조정 브리프」** — 조정 건 하나를 열면 근거·반복 이력·과거 사례가 …
 //
 // 질문 문장도 같다: `제품명을 무엇으로 할까요? *(보도자료의 Heading, …)*`.
-// 공용 `Markdown`은 preamble·문서에만 걸려 있었고 카드는 평문으로 그렸다.
+// The shared `Markdown` was only applied to the preamble and documents; the card drew plain text.
 //
-// **인라인 전용이어야 한다.** 보기는 `<label>` 안 flex 레이아웃이라 블록 요소(`<p>`)와
-// prose 여백이 들어오면 정렬이 깨진다. 그리고 보기 라벨에 헤딩·목록·표가 오는 것은
-// 애초에 잘못된 입력이므로 렌더하지 않는 편이 낫다.
+// **It must be inline-only.** Options are a flex layout inside `<label>`, so block elements (`<p>`) and
+// prose margins coming in break the alignment. And headings, lists or tables in an option label are
+// invalid input in the first place, so it is better not to render them.
 
 const MD_Q: Question = {
   number: 1,
@@ -419,7 +419,7 @@ const MD_Q: Question = {
 describe("QuestionCard — 인라인 마크다운", () => {
   it("보기의 굵은체가 원문(**)이 아니라 굵게 렌더된다", () => {
     render(<QuestionCard question={MD_Q} value="" onChange={() => {}} />);
-    // `**` 원문이 화면에 남아 있으면 안 된다.
+    // Raw `**` must not remain on screen.
     expect(screen.queryByText(/\*\*/)).toBeNull();
     const strong = screen.getByText("「조정 브리프」");
     expect(strong.tagName).toBe("STRONG");
@@ -439,14 +439,14 @@ describe("QuestionCard — 인라인 마크다운", () => {
   it("문단을 감싸지 않는다 — 카드의 <p> 안에 <p>를 중첩하면 잘못된 HTML이다", () => {
     const { container } = render(
       <QuestionCard question={MD_Q} value="" onChange={() => {}} />);
-    // 카드 자체는 `<p className="font-medium">`을 쓴다(그건 정상). 그 안에 렌더러가
-    // 또 <p>를 만들면 브라우저가 문단을 쪼개 레이아웃이 깨진다.
+    // The card itself uses `<p className="font-medium">` (that is fine). If the renderer makes
+    // another <p> inside it, the browser splits the paragraph and the layout breaks.
     expect(container.querySelectorAll("p p").length).toBe(0);
   });
 
   it("보기에 블록 마크다운이 와도 카드를 부수지 않는다 (태그만 벗기고 글자는 남긴다)", () => {
-    // 보기 라벨에 헤딩·목록이 오는 것은 잘못된 입력이다. 렌더하면 카드가 부서지고,
-    // 버리면 글자가 사라진다 — unwrapDisallowed로 내용만 남긴다.
+    // Headings or lists in an option label are invalid input. Rendering them breaks the card,
+    // and dropping them loses the text — unwrapDisallowed keeps only the content.
     const blocky: Question = {
       ...MD_Q,
       options: [{ letter: "A", text: "## 헤딩\n\n- 목록 항목",
@@ -454,7 +454,7 @@ describe("QuestionCard — 인라인 마크다운", () => {
     };
     const { container } = render(
       <QuestionCard question={blocky} value="" onChange={() => {}} />);
-    // 카드 자체의 질문 헤딩(<h2>)은 정상이므로 보기 안으로 범위를 좁힌다.
+    // The card's own question heading (<h2>) is fine, so narrow the scope to inside the options.
     expect(container.querySelectorAll(
       "label h1, label h2, label h3, label ul, label ol, label li").length).toBe(0);
     expect(screen.getByText(/헤딩/)).toBeInTheDocument();
@@ -467,11 +467,11 @@ describe("QuestionCard — 인라인 마크다운", () => {
   });
 });
 
-// ---- 보기 없는 문항 = 주관식 (2026-08-18 실측: 123456test) ----
-// Envision Step 0.2의 Mode A(자유 서술)는 선택지 없이 묻는 것이 정상이고,
-// 파서도 그 파일을 정확히 읽었다(5문항, 질문 텍스트 정상, options=0). 그런데 이
-// 컴포넌트가 보기 배열만 순회하므로 카드 본문이 비어 **답을 낼 방법이 아예
-// 없었다.** 배지는 고를 것이 0개인데 "하나만 선택"이라고 말했다.
+// ---- A question with no options = free text (observed 2026-08-18: ws-k) ----
+// Mode A (free description) of Envision Step 0.2 normally asks without options,
+// and the parser read that file correctly (5 questions, question text fine, options=0). But this
+// component only iterates over the options array, so the card body was empty and **there was no way
+// to answer at all.** The badge said "하나만 선택" (choose one) when there were 0 things to choose.
 
 const FREEFORM_Q: Question = {
   number: 1,
@@ -502,8 +502,8 @@ describe("보기가 없는 문항", () => {
   });
 
   it("복원된 답변이 첫 렌더에 보인다", () => {
-    // 보기가 있을 때 자유 텍스트는 `otherActive` 상태를 거치는데, 보기가 없으면
-    // 그 상태에 기댈 수 없다 — value에 직접 바인딩해야 한다.
+    // With options, free text goes through the `otherActive` state, but without options
+    // that state cannot be relied on — it must bind to value directly.
     render(<QuestionCard question={FREEFORM_Q} value="이미 답한 내용" onChange={vi.fn()} />);
     expect(screen.getByRole("textbox")).toHaveValue("이미 답한 내용");
   });

@@ -7,16 +7,16 @@ import { addSandboxStacks, pinnedFromEnv } from '../lib/sandbox-stacks';
 
 const app = new cdk.App();
 
-// 리전 우선순위: CDK_DEPLOY_REGION > CDK_DEFAULT_REGION(프로파일) > 서울.
+// Region priority: CDK_DEPLOY_REGION > CDK_DEFAULT_REGION (profile) > Seoul.
 const region =
   process.env.CDK_DEPLOY_REGION ?? process.env.CDK_DEFAULT_REGION ?? 'ap-northeast-2';
 const account = process.env.CDK_DEFAULT_ACCOUNT;
 const env = { region, account };
 
-// 브라우저가 아티팩트 버킷으로 직접 PUT할 출처(프로젝트 가져오기의 presigned 업로드) 중
-// **추가로 허용할 것**(예: 커스텀 도메인). 앱 자신의 오리진(호스팅 스택의 CloudFront)은 여기서
-// 넘기지 않는다 — 그 스택이 이 버킷에 의존하므로 순환이고, 인스턴스가 스스로 버킷 CORS에
-// 더한다(lib/aipds-upload-cors-stack.ts, infra/scripts/aipds-harden sync).
+// **Additional** origins (e.g., a custom domain) allowed to PUT directly from the browser to the artifact
+// bucket (presigned uploads for project import). The app's own origin (the hosting stack's CloudFront) is
+// not passed here — that stack depends on this bucket, so it would be circular, and the instance adds
+// it to the bucket CORS itself (lib/aipds-upload-cors-stack.ts, infra/scripts/aipds-harden sync).
 //
 //   AIPDS_UPLOAD_ORIGINS=https://pds.example.com npx cdk deploy --all
 const uploadOrigins = (process.env.AIPDS_UPLOAD_ORIGINS ?? '')
@@ -26,14 +26,14 @@ const uploadOrigins = (process.env.AIPDS_UPLOAD_ORIGINS ?? '')
 
 const drill = new AipdsDrillStack(app, 'AipdsDrillStack', { env, uploadOrigins });
 
-// 인증 스택: User Pool · 그룹 · Hosted UI v2 · 앱 클라이언트 · 시드 계정 2개.
-// 콜백 URL은 localhost만 갖고 배포되며, 실제 CloudFront 도메인은 아래 호스팅
-// 스택이 UpdateUserPoolClient로 덧붙인다(순환 의존 해소).
+// Auth stack: User Pool, groups, Hosted UI v2, app client, 2 seed accounts.
+// It deploys with only localhost callback URLs, and the real CloudFront domain is appended by the
+// hosting stack below via UpdateUserPoolClient (resolving the circular dependency).
 const auth = new AipdsAuthStack(app, 'AipdsAuthStack', { env });
 
-// 호스팅 스택은 CloudFront origin-facing 프리픽스 리스트를 배포 리전에서
-// 자동 조회한다(fromLookup) — synth/deploy 시 크리덴셜 필요, 결과는
-// cdk.context.json에 캐시된다(커밋 대상).
+// The hosting stack automatically looks up the CloudFront origin-facing prefix list in the deploy region
+// (fromLookup) — credentials are needed at synth/deploy time, and the result is cached in
+// cdk.context.json (to be committed).
 const hosting = new AipdsHostingStack(app, 'AipdsHostingStack', {
   env,
   artifactsBucket: drill.artifactsBucket,
@@ -42,8 +42,8 @@ const hosting = new AipdsHostingStack(app, 'AipdsHostingStack', {
   hostedUiDomain: auth.hostedUiDomain,
 });
 
-// 프리뷰 오리진과 샌드박스용 Bedrock 전용 롤. 새 환경은 HostingStack에서 참조로, 떠 있는 환경은
-// env로 고정한 값으로 만든다(lib/sandbox-stacks.ts — 고정하지 않으면 HostingStack까지 배포된다).
+// The preview origin and the Bedrock-only role for sandboxes. New environments create them by reference from
+// HostingStack; running environments with values pinned via env (lib/sandbox-stacks.ts — without pinning, HostingStack gets deployed too).
 //
 //   AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> AIPDS_PREVIEW_ORIGIN_DNS=<EIP DNS> \
 //   AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader ARN> AIPDS_ARTIFACTS_BUCKET=<bucket> \

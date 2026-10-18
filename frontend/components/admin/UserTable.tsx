@@ -10,9 +10,9 @@ import {
 } from "@/lib/api/adminUsers";
 import { TempPasswordPanel } from "./TempPasswordPanel";
 
-// 라벨을 딕셔너리 키로 둔다 — 모듈 상수는 훅을 부를 수 없으므로 렌더에서
-// t(키)로 푼다(canvas의 LABEL_KEYS와 같은 규약). "PM"은 두 언어에서 같지만
-// 딕셔너리에 넣는다: 빼면 어느 문자열이 의도적으로 번역 대상이 아닌지 알 수 없다.
+// Labels are kept as dictionary keys — module constants cannot call hooks, so they are
+// resolved with t(key) at render time (the same convention as canvas's LABEL_KEYS). "PM" is
+// the same in both languages but goes in the dictionary anyway: leaving it out would hide which strings are deliberately untranslated.
 type T = (key: keyof Dict) => string;
 
 const ROLE_LABEL_KEY: Record<string, keyof Dict> = {
@@ -40,8 +40,8 @@ export function UserTable({
   const [confirmDelete, setConfirmDelete] = useState<AdminUser | null>(null);
   const [revealed, setRevealed] = useState<{ email: string; password: string } | null>(null);
 
-  // 서버가 정책 위반(마지막 관리자 보호 등)을 400으로 알려주면 그 문장을 그대로
-  // 보여준다 — 프론트가 규칙을 복제하면 두 곳이 어긋난다.
+  // When the server reports a policy violation (last-admin protection etc.) with a 400, show that
+  // sentence as is — if the frontend duplicated the rules, the two places would drift apart.
   async function run(key: string, fn: () => Promise<void>) {
     setBusy(key);
     setError(null);
@@ -60,9 +60,9 @@ export function UserTable({
     setError(null);
     try {
       const { temp_password } = await resetPassword(user.username);
-      // 비밀번호를 먼저 화면에 올린 뒤 목록을 갱신한다 — 순서를 바꾸면 재로딩이
-      // 이 패널을 관리자가 읽기 전에 걷어갈 위험이 있다. 서버는 이미
-      // FORCE_CHANGE_PASSWORD로 전환했으므로 상태 컬럼도 갱신해야 한다.
+      // Put the password on screen first, then refresh the list — reversing the order risks the
+      // reload sweeping this panel away before the admin reads it. The server has already
+      // switched to FORCE_CHANGE_PASSWORD, so the status column must be refreshed too.
       setRevealed({ email: user.email, password: temp_password });
       onChanged();
     } catch (err) {
@@ -131,9 +131,9 @@ export function UserTable({
                         className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
                       >
                         {!user.role && <option value="">{t("admin.selectRole")}</option>}
-                        {/* 배지에 쓰는 것과 같은 단어("PM"/"관리자")를 그대로 옵션 텍스트로
-                            쓰면 같은 행 안에서 텍스트 쿼리가 두 곳(배지, 옵션)에 걸려
-                            모호해진다. value는 그대로 "pm"/"admin"이라 동작은 같다. */}
+                        {/* Using the same word as the badge ("PM"/"관리자") as the option text
+                            would make a text query hit two places (badge, option) in the same
+                            row, which is ambiguous. value stays "pm"/"admin", so behavior is the same. */}
                         <option value="pm">{t("admin.rolePmOptionShort")}</option>
                         <option value="admin">{t("admin.roleAdminOptionShort")}</option>
                       </select>

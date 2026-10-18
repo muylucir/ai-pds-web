@@ -1,7 +1,7 @@
 # backend/tests/test_auth_deps.py
 #
-# 의존성 두 개의 계약: 인증이 설정되지 않았으면(로컬/테스트) 전부 통과시키고,
-# 설정됐으면 Bearer 토큰을 검증하며 admin 전용 자리에서 pm을 403으로 막는다.
+# Contract of the two dependencies: if auth is not configured (local/test), let everything
+# through; if configured, verify the Bearer token and block pm with 403 on admin-only spots.
 from __future__ import annotations
 
 import pytest
@@ -19,7 +19,7 @@ CLIENT_ID = "client-abc"
 
 
 def _probe_app() -> FastAPI:
-    """의존성만 노출하는 최소 앱 — 실 라우트와 얽히지 않게 한다."""
+    """Minimal app exposing only the dependencies, so it stays decoupled from the real routes."""
     app = FastAPI()
 
     @app.get("/any")
@@ -35,16 +35,16 @@ def _probe_app() -> FastAPI:
 
 @pytest.fixture()
 def no_auth(monkeypatch):
-    """인증 미설정 = 로컬 모드."""
+    """Auth not configured = local mode."""
     monkeypatch.setattr(app_module, "cognito_config", lambda: None)
 
 
 @pytest.fixture()
 def with_auth(monkeypatch):
-    """인증 설정 + 검증기를 가짜로 갈아끼운다.
+    """Configure auth + swap the verifier for a fake.
 
-    반환된 dict의 'principals'에 토큰→Principal 매핑을 넣으면 그대로 통과하고,
-    없는 토큰은 TokenError가 된다.
+    Put a token -> Principal mapping into 'principals' of the returned dict and it passes
+    as is; a token not in it becomes a TokenError.
     """
     state: dict = {"principals": {}}
     monkeypatch.setattr(app_module, "cognito_config", lambda: {
@@ -65,11 +65,11 @@ def with_auth(monkeypatch):
 
 def test_bypass_lets_every_request_through_as_admin(no_auth):
     client = TestClient(_probe_app())
-    # 인증 미설정 상태에서는 헤더가 아예 없어도 통과한다 — 기존 pytest 53개
-    # 파일과 로컬 실행 절차가 무수정으로 유지되는 근거가 이것이다.
+    # With auth not configured, requests pass even with no header at all; this is what
+    # lets the existing 53 pytest files and the local run procedure stay unmodified.
     body = client.get("/any").json()
     assert body == {"username": "local-dev", "role": "admin"}
-    # 바이패스 principal은 admin이므로 관리 라우트도 열린다.
+    # The bypass principal is admin, so admin routes open too.
     assert client.get("/admin-only").status_code == 200
 
 
@@ -77,7 +77,7 @@ def test_missing_authorization_header_is_401(with_auth):
     client = TestClient(_probe_app())
     r = client.get("/any")
     assert r.status_code == 401
-    # WWW-Authenticate는 401의 표준 동반 헤더다.
+    # WWW-Authenticate is the standard header accompanying a 401.
     assert r.headers.get("www-authenticate") == "Bearer"
 
 
@@ -108,14 +108,14 @@ def test_pm_passes_require_user_but_is_403_on_require_admin(with_auth):
     headers = {"Authorization": "Bearer tok-pm"}
     assert client.get("/any", headers=headers).json()["role"] == "pm"
     r = client.get("/admin-only", headers=headers)
-    # 인증은 됐고 권한이 없는 것 — 403이 맞다(401은 "다시 로그인하라"는 뜻).
+    # Authenticated but not authorized: 403 is correct (401 means "log in again").
     assert r.status_code == 403
 
 
 def test_unauthenticated_request_to_admin_route_is_401_not_403(with_auth):
-    # require_admin은 require_user를 통해 먼저 인증을 요구한다 — 헤더가 없는
-    # 요청은 권한 부족(403)이 아니라 인증 자체가 안 된 것(401)이어야 한다.
-    # Task 7이 34개 라우트 전체에서 이 순서에 의존한다.
+    # require_admin first requires authentication via require_user, so a request with no
+    # header must be unauthenticated (401), not insufficient permission (403).
+    # Task 7 relies on this order across all 34 routes.
     client = TestClient(_probe_app())
     r = client.get("/admin-only")
     assert r.status_code == 401
@@ -130,17 +130,17 @@ def test_bearer_scheme_is_case_insensitive(with_auth):
 
 
 def test_empty_user_pool_id_counts_as_unset(monkeypatch):
-    # env를 빈 문자열로 내보내는 배포 스크립트가 인증을 조용히 켜지 않게 한다.
+    # Keep a deploy script that exports env vars as empty strings from silently turning auth on.
     monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", "")
     monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", "")
     assert app_module.cognito_config() is None
 
 
 def test_config_requires_both_pool_and_client(monkeypatch):
-    # 풀만 있고 클라이언트가 없는 반쯤 설정된 상태는 "미설정"이 아니라 배포
-    # 사고다 — None(바이패스)으로 취급하면 모든 요청이 조용히 가상 admin으로
-    # 통과한다. 그래서 예외로 즉시 터뜨린다(fail-closed): 500이 되더라도
-    # 보이는 실패가 조용한 권한 유출보다 낫다.
+    # A half-configured state with a pool but no client is not "unconfigured" but a
+    # deployment accident; treating it as None (bypass) would let every request silently
+    # pass as a virtual admin. So it blows up immediately with an exception (fail-closed):
+    # even if that means a 500, a visible failure beats a silent privilege leak.
     monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", POOL)
     monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", "")
     with pytest.raises(RuntimeError, match="AIPDS_COGNITO_USER_POOL_ID"
@@ -149,7 +149,7 @@ def test_config_requires_both_pool_and_client(monkeypatch):
 
 
 def test_config_requires_both_client_and_pool(monkeypatch):
-    # 대칭 케이스: client만 있고 풀이 없어도 같은 배포 사고이므로 같이 터진다.
+    # Symmetric case: a client with no pool is the same deployment accident, so it blows up too.
     monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", "")
     monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", CLIENT_ID)
     with pytest.raises(RuntimeError, match="AIPDS_COGNITO_USER_POOL_ID"
@@ -158,16 +158,16 @@ def test_config_requires_both_client_and_pool(monkeypatch):
 
 
 def test_both_unset_still_bypasses(monkeypatch):
-    # 둘 다 아예 설정되지 않은 것(로컬 개발의 기본 상태, 스위치가 켜져 있다 — conftest)은
-    # 여전히 바이패스다 — 반쯤 설정된 상태와 혼동하면 안 된다.
+    # Neither being set at all (the default state for local development, with the switch on; see conftest)
+    # is still a bypass; it must not be confused with the half-configured state.
     monkeypatch.delenv("AIPDS_COGNITO_USER_POOL_ID", raising=False)
     monkeypatch.delenv("AIPDS_COGNITO_CLIENT_ID", raising=False)
     assert app_module.cognito_config() is None
 
 
 def test_both_empty_strings_still_bypasses(monkeypatch):
-    # 둘 다 빈 문자열인 것도 "미설정"과 동치다(둘 다 없음 vs 둘 다 있음 —
-    # 하나만 있는 경우와 구분되는 정상 바이패스 경로).
+    # Both being empty strings is also equivalent to "unconfigured" (both absent vs both
+    # present; a normal bypass path, distinct from only one being present).
     monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", "")
     monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", "")
     assert app_module.cognito_config() is None
@@ -175,8 +175,8 @@ def test_both_empty_strings_still_bypasses(monkeypatch):
 
 @pytest.mark.parametrize("flag", [None, "", "0", "false"])
 def test_both_unset_without_the_switch_refuses_to_run(monkeypatch, flag):
-    """두 줄이 함께 빠진 배포는 "미설정"이 아니라 사고다 — 바이패스로 읽으면 인증이 꺼진
-    채 인터넷에 열린다. 바이패스는 AIPDS_AUTH_DISABLED로만 켜진다."""
+    """A deployment missing both lines is not "unconfigured" but an accident: reading it as a
+    bypass would open it to the internet with auth off. The bypass is enabled only by AIPDS_AUTH_DISABLED."""
     monkeypatch.delenv("AIPDS_COGNITO_USER_POOL_ID", raising=False)
     monkeypatch.delenv("AIPDS_COGNITO_CLIENT_ID", raising=False)
     if flag is None:
@@ -188,7 +188,7 @@ def test_both_unset_without_the_switch_refuses_to_run(monkeypatch, flag):
 
 
 def test_the_switch_does_not_override_a_configured_pool(monkeypatch):
-    """스위치가 남아 있어도 값이 있으면 인증은 켜진다 — 끄는 쪽으로만 읽지 않는다."""
+    """Even if the switch is left on, auth is on when the values are present; it is not read only in the off direction."""
     monkeypatch.setenv("AIPDS_AUTH_DISABLED", "1")
     monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", POOL)
     monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", CLIENT_ID)
@@ -196,10 +196,10 @@ def test_the_switch_does_not_override_a_configured_pool(monkeypatch):
 
 
 async def test_require_user_raises_on_half_configured_env(monkeypatch):
-    # 이 테스트가 보안 속성을 실제로 고정한다: 반쯤 설정된 환경에서
-    # require_user는 Principal을 반환해서는 안 된다(특히 LOCAL_PRINCIPAL을
-    # 반환해서는 안 된다) — 예외가 그대로 올라와야 한다. cognito_config()가
-    # 반쯤 설정된 경우에 None을 반환하도록 되돌리면 이 테스트가 실패해야 한다.
+    # This test actually pins the security property: in a half-configured environment,
+    # require_user must not return a Principal (in particular, it must not return
+    # LOCAL_PRINCIPAL); the exception must propagate as is. If cognito_config() were
+    # reverted to return None in the half-configured case, this test must fail.
     monkeypatch.setenv("AIPDS_COGNITO_USER_POOL_ID", POOL)
     monkeypatch.setenv("AIPDS_COGNITO_CLIENT_ID", "")
 

@@ -5,25 +5,30 @@ import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { bedrockSubscribeStatement, INVOKABLE_MODEL_ARNS } from './backend-permissions';
 import { INSTANCE_PARAMS } from './instance-params';
 
-// 샌드박스 프로세스(Discovery·빌드 에이전트, 호스팅된 프로토타입)가 받는 자격증명의 롤.
+// Role for the credentials received by sandboxed processes (Discovery and build agents, hosted
+// prototypes).
 //
-// **왜 인스턴스 롤을 그대로 주지 않는가.** 그 롤은 버킷 전체 읽기·삭제, Cognito Admin API, 헤더
-// 시크릿 읽기를 갖는다. 에이전트는 업로드 문서의 프롬프트 인젝션을, 프로토타입은 에이전트가 쓴
-// 코드와 npm 공급망을 안고 돈다. 그 프로세스들은 실행 래퍼 아래에서 IMDS에 닿지 못하고
-// (infra/scripts/aipds-launch), 백엔드가 이 롤을 AssumeRole해 루프백 엔드포인트로 넘긴다
-// (backend/aipds/credentials.py). 할 수 있는 것은 Bedrock 호출뿐이다(첫 호출의 Marketplace 자동 구독 포함).
+// **Why not just hand over the instance role.** That role has read and delete over the whole
+// bucket, the Cognito Admin API, and read access to the header secret. The agent runs exposed to
+// prompt injection from uploaded documents, and prototypes run with code the agent wrote and the
+// npm supply chain. Those processes cannot reach IMDS under the launch wrapper
+// (infra/scripts/aipds-launch); the backend AssumeRoles this role and hands it over via a loopback
+// endpoint (backend/aipds/credentials.py). All they can do is call Bedrock (including the
+// Marketplace auto-subscription on the first call).
 //
-// **왜 별도 스택인가.** HostingStack을 배포하면 EC2가 교체될 수 있다(lib/aipds-preview-stack.ts와
-// 같은 사정). 이 스택은 인스턴스 롤을 ARN으로 참조만 한다. AssumeRole 권한은 인스턴스 롤에
-// 붙는 별도 정책(AWS::IAM::Policy)이라 HostingStack 템플릿은 그대로다 — 신뢰 정책만으로
-// 충분한지(같은 계정)에 기대지 않는다.
+// **Why a separate stack.** Deploying HostingStack can replace the EC2 instance (the same situation
+// as lib/aipds-preview-stack.ts). This stack only references the instance role by ARN. The
+// AssumeRole permission is a separate policy (AWS::IAM::Policy) attached to the instance role, so
+// the HostingStack template stays as is — we do not rely on whether the trust policy alone is
+// enough (same account).
 //
-// **인스턴스가 이 롤을 아는 법.** ARN을 SSM 파라미터로 쓴다(lib/instance-params.ts). 새 인스턴스는
-// 부팅 때 그것을 읽어 래퍼를 켜고 IMDS를 막는다 — 교체된 인스턴스가 운영자를 기다리는 동안
-// 격리 없이 도는 틈이 없다.
+// **How the instance learns about this role.** The ARN is written to an SSM parameter
+// (lib/instance-params.ts). A new instance reads it at boot, turns on the wrapper, and blocks IMDS
+// — so there is no window in which a replaced instance runs without isolation while waiting for an
+// operator.
 
 export interface AgentCredsStackProps extends cdk.StackProps {
-  /** HostingStack의 인스턴스 롤. 이 롤이 AgentRole을 AssumeRole한다. */
+  /** HostingStack's instance role. This role AssumeRoles AgentRole. */
   instanceRoleArn: string;
 }
 
@@ -34,23 +39,24 @@ export class AipdsAgentCredsStack extends cdk.Stack {
     const agentRole = new iam.Role(this, 'AgentRole', {
       description: 'AI-PDS sandboxed agents and prototypes: Bedrock invoke only.',
       assumedBy: new iam.ArnPrincipal(props.instanceRoleArn),
-      // 인스턴스 롤 → 이 롤은 롤 체이닝이라 세션은 어차피 1시간이 상한이다.
+      // Instance role → this role is role chaining, so the session is capped at 1 hour anyway.
       maxSessionDuration: cdk.Duration.hours(1),
     });
     agentRole.addToPolicy(new iam.PolicyStatement({
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
       resources: INVOKABLE_MODEL_ARNS(this.account),
     }));
-    // 첫 호출의 Marketplace 자동 구독(lib/backend-permissions.ts).
+    // Marketplace auto-subscription on the first call (lib/backend-permissions.ts).
     agentRole.addToPolicy(bedrockSubscribeStatement());
 
     const instanceRole = iam.Role.fromRoleArn(this, 'InstanceRole', props.instanceRoleArn, {
       mutable: true,
     });
     agentRole.grantAssumeRole(instanceRole);
-    // 인스턴스 롤도 Bedrock을 직접 부른다(설문 생성 등). HostingStack이 backendPolicyStatements로 이미
-    // 주지만, 그 스택을 다시 배포하지 않는 환경(고정 모드, lib/sandbox-stacks.ts)의 인스턴스 롤은 이 스택이 아니면 받을 길이
-    // 없다. 같은 문장이 두 번 붙어도 권한은 같다.
+    // The instance role also calls Bedrock directly (questionnaire generation, etc.). HostingStack
+    // already grants it via backendPolicyStatements, but in environments that do not redeploy that
+    // stack (pinned mode, lib/sandbox-stacks.ts), the instance role has no other way to get it
+    // except through this stack. Attaching the same statement twice yields the same permissions.
     instanceRole.addToPrincipalPolicy(bedrockSubscribeStatement());
 
     const param = new ssm.StringParameter(this, 'AgentRoleArnParam', {

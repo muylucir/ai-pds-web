@@ -136,12 +136,13 @@ def _validate_permission_mode(mode: str) -> str:
 
 
 def _proto_tools_for(builder: "PrototypeBuilder") -> list:
-    """빌더의 큐에 바인딩된 커스텀 도구.
+    """Custom tools bound to the builder's queue.
 
-    emit이 `self._queue.append`인 것이 핵심이다 — `_on_post_tool_use`가
-    `file_changed`를 넣는 것과 같은 경로라, `_relay_queue`의 소유권 규율
-    (배달 후 pop, 중간에 소비자가 떠나도 이벤트가 큐에 남는다)을 그대로
-    받는다. 별도 경로를 만들면 그 보장을 잃는다.
+    The key point is that emit is `self._queue.append` -- the same path
+    `_on_post_tool_use` uses to enqueue `file_changed`, so it inherits
+    `_relay_queue`'s ownership discipline unchanged (pop after delivery; the
+    event stays in the queue even if the consumer leaves midway). A separate
+    path would lose that guarantee.
     """
     from aipds.proto.tools import build_proto_tools
     return build_proto_tools(builder._workspace, builder._queue.append,
@@ -164,8 +165,9 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # subagents later, and keeps the local transcript copy under a
             # AI-PDS-owned path instead of the operator's home.
             #
-            # 프로토타입별 디렉터리다(aipds/agent_home.py). 공유 proto-config는
-            # 내용(CLAUDE.md, skills/, agents/)의 출처로만 남아 연결마다 복사된다.
+            # This is a per-prototype directory (aipds/agent_home.py). The shared
+            # proto-config remains only as the source of the contents (CLAUDE.md,
+            # skills/, agents/), copied on every connect.
             "CLAUDE_CONFIG_DIR": builder._config_dir,
         }
         if builder._shared_config_dir:
@@ -173,10 +175,11 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
                         builder._workspace)
         if builder._anthropic_model:
             env["ANTHROPIC_MODEL"] = builder._anthropic_model
-        # Discovery 드라이버와 같은 값을 쓴다 — 한쪽만 켜지면 같은 프로젝트에서
-        # 컴팩션 시점이 갈린다(cli_settings 헤더).
+        # Uses the same values as the Discovery driver -- if only one side turns
+        # these on, compaction timing diverges within the same project
+        # (cli_settings header).
         env.update(cli_context_env())
-        # 실행 래퍼(aipds/launcher.py) — Discovery 드라이버와 같다.
+        # Launch wrapper (aipds/launcher.py) -- same as the Discovery driver.
         cli_path = None
         if builder._launch is not None:
             cli_path, launch_env = builder._launch.claude()
@@ -186,48 +189,52 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             permission_mode=builder._permission_mode,
             cwd=builder._workspace,
             env=env,
-            # Discovery 드라이버와 같다 — None이면 CLI 기본값.
+            # Same as the Discovery driver -- None means the CLI default.
             effort=builder._effort,
             # "user" now means OUR config dir, so this is safe -- and it is
             # what `skills` needs open to discover anything.
             setting_sources=["user", "project"],
-            # 우리가 shipping하는 스킬만 이름으로 켠다. 종전 "all"은
-            # CLAUDE_CONFIG_DIR 아래 것만 켜진다는 전제였지만 **틀렸다**:
-            # "all"은 CLI에 번들된 스킬까지 함께 켜고, 그 목록에 `run`
-            # ("Launch and drive this project's app... browser-driven")이
-            # 있다. 실측 사고: 빌드 에이전트가 Playwright chromium을 띄웠고
-            # (코어덤프의 Unit=aipds-backend.service로 확인) 그 검증이
-            # 포트 3000을 겨냥해 AI-PDS 프론트엔드가 SIGKILL로 죽었다
-            # (2026-08-01 16:13/16:18, journalctl status=9/KILL). 백엔드와
-            # 프론트엔드가 같은 유저(aipds)로 도므로 막을 것이 없었다.
+            # Enable only the skills we ship, by name. The former "all" assumed
+            # it enabled only what is under CLAUDE_CONFIG_DIR, but that was
+            # **wrong**: "all" also enables the skills bundled with the CLI, and
+            # that list includes `run` ("Launch and drive this project's
+            # app... browser-driven"). Observed incident: the build agent
+            # launched Playwright chromium (confirmed by Unit=aipds-backend.service
+            # in the core dump), its verification targeted port 3000, and the
+            # AI-PDS frontend was killed with SIGKILL
+            # (2026-08-01 16:13/16:18, journalctl status=9/KILL). The backend
+            # and frontend run as the same user (aipds), so nothing stopped it.
             #
-            # 이름 목록이면 SDK가 `Skill(shadcn-design)` 형태로만 허용하므로
-            # (subprocess_cli.py:_apply_skills_defaults) 번들 스킬이 들어오지
-            # 않는다. 스킬을 추가할 때 이 목록도 함께 고쳐야 한다 — "all"의
-            # "커밋 한 번으로 추가" 편의를 의도적으로 포기한 자리다.
+            # With a name list the SDK allows only the `Skill(shadcn-design)`
+            # form (subprocess_cli.py:_apply_skills_defaults), so bundled
+            # skills do not get in. When adding a skill, update this list too --
+            # this is where we deliberately gave up the "add with a single
+            # commit" convenience of "all".
             #
-            # 주의: SDK 문서가 명시하듯 이것은 **컨텍스트 필터이지 샌드박스가
-            # 아니다**. 스킬을 숨길 뿐 Bash 자체를 막지는 못하므로, 에이전트가
-            # 직접 브라우저·서버를 띄우는 것은 CLAUDE.md 규약으로 함께 막는다
-            # (proto-config/CLAUDE.md의 "프로세스·포트" 절). 근본 격리는
-            # 빌드 에이전트를 별도 유저로 분리하는 것이고, 그것은 별건이다.
+            # Caution: as the SDK docs state, this is **a context filter, not a
+            # sandbox**. It only hides skills and cannot block Bash itself, so
+            # the agent launching browsers/servers directly is also blocked by
+            # the CLAUDE.md conventions (the "프로세스·포트" (processes/ports)
+            # section of proto-config/CLAUDE.md). Real isolation means running
+            # the build agent as a separate user, which is a separate matter.
             skills=["shadcn-design"],
-            # 빌드 완료 선언용 커스텀 도구. Discovery(claude_driver.py:423-439)와
-            # 같은 형태다. allowed_tools의 항목은 반드시
-            # "mcp__<서버 키>__<도구 이름>"이어야 한다 — SDK가 --mcp-config를
-            # 직렬화할 때 그 이름을 만들므로, 다른 표기는 조용히 승인 대기로
-            # 남는다.
+            # Custom tool for declaring the build complete. Same shape as
+            # Discovery (claude_driver.py:423-439). Entries in allowed_tools
+            # must be "mcp__<server key>__<tool name>" -- the SDK builds that
+            # name when it serializes --mcp-config, so any other spelling
+            # silently stays pending approval.
             #
-            # skills 옵션과 충돌하지 않는다: SDK의 _apply_skills_defaults가
-            # allowed_tools를 복사한 뒤 스킬 항목을 덧붙이므로
-            # (subprocess_cli.py:434-452) 이 도구와 shadcn-design이 함께
-            # 살아 있다. 이름 목록에서는 "Skill" 대신 `Skill(shadcn-design)`이
-            # 붙는다는 점만 다르다.
+            # This does not conflict with the skills option: the SDK's
+            # _apply_skills_defaults copies allowed_tools and then appends the
+            # skill entries (subprocess_cli.py:434-452), so this tool and
+            # shadcn-design both stay live. The only difference is that with a
+            # name list, `Skill(shadcn-design)` is appended instead of "Skill".
             mcp_servers={PROTO_MCP_SERVER_NAME: create_sdk_mcp_server(
                 name=PROTO_MCP_SERVER_NAME, tools=_proto_tools_for(builder))},
             allowed_tools=[BUILD_COMPLETE_TOOL],
-            # 웹 검색은 빌드에 필요가 없고, 검색어에 워크스페이스 내용을 실어 내보내는
-            # 길이다. 문서는 WebFetch(허용 호스트만, build_guard.fetch_denial)로 연다.
+            # Web search is not needed for builds, and it is a path for sending
+            # workspace contents out inside search queries. Docs are opened with
+            # WebFetch (allowed hosts only, build_guard.fetch_denial).
             disallowed_tools=["WebSearch"],
             # Exactly one of the two, never both: the CLI rejects
             # `--session-id` alongside `--resume` unless `--fork-session` is
@@ -239,9 +246,11 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # the session on that same id, which is all session_id bought us.
             session_id=None if builder._resume else builder._session_id,
             resume=builder._session_id if builder._resume else None,
-            # 쓰기만 미러로. 재개는 로컬 사본에서 — 없으면 `_ensure_client`가 연결 전에
-            # S3에서 되살린다. SDK에 load를 맡기면 CLAUDE.md와 스킬이 없는 임시 config
-            # dir에서 재개한다(aipds/transcript_restore.py 헤더의 실측).
+            # Writes only go to the mirror. Resume reads the local copy -- if it is
+            # missing, `_ensure_client` restores it from S3 before connecting. If
+            # the SDK is left to do the load, it resumes in a temporary config dir
+            # without CLAUDE.md or skills (measured; see the
+            # aipds/transcript_restore.py header).
             session_store=(MirrorOnlyStore(builder._session_store)
                            if builder._session_store is not None else None),
             # Kept even under bypassPermissions, which the SDK warns shadows
@@ -251,22 +260,24 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # intercept (it is how a question becomes an SSE `questions` event).
             # Dropping the callback to silence the warning would break that.
             can_use_tool=builder._on_can_use_tool,
-            # PreToolUse가 Bash의 유일한 실효 게이트다. 위 can_use_tool은
-            # bypassPermissions에서 Bash에 대해 호출되지 않는다 — SDK가 그 사실과
-            # 해법을 직접 적어 뒀다(types.py의
+            # PreToolUse is the only effective gate for Bash. The can_use_tool
+            # above is not called for Bash under bypassPermissions -- the SDK
+            # documents both that fact and the fix itself (types.py's
             # _get_can_use_tool_shadowed_warning: "To gate every tool call, use
-            # a PreToolUse hook instead"). 판정부는 proto/build_guard.py.
+            # a PreToolUse hook instead"). The decision logic is in
+            # proto/build_guard.py.
             #
-            # **matcher에 AskUserQuestion을 넣지 않는다.** PreToolUse 훅이
-            # *allow*를 돌려주면 can_use_tool도 건너뛰는데, 질문을 SSE 이벤트로
-            # 바꾸는 가로채기가 그 콜백에 있으므로 질문 왕복 전체가 죽는다.
-            # 같은 이유로 _on_pre_tool_use는 통과할 때 "allow"가 아니라 **빈
-            # dict**를 돌려준다. Discovery가 같은 함정을 같은 방식으로 피한다
-            # (claude_driver.py의 hooks 주석).
+            # **Do not add AskUserQuestion to the matcher.** If a PreToolUse
+            # hook returns *allow*, can_use_tool is skipped too, and since the
+            # interception that turns a question into an SSE event lives in that
+            # callback, the entire question round trip dies. For the same reason
+            # _on_pre_tool_use returns **an empty dict**, not "allow", when it
+            # passes. Discovery avoids the same trap the same way (the hooks
+            # comment in claude_driver.py).
             hooks={
-                # Bash, 파일 쓰기(CLI 설정 파일만 막는다), WebFetch(문서 호스트만).
-                # 서브에이전트가 턴보다 오래 사는 것은 도구 입력이 아니라 CLI
-                # 스위치로 막는다(cli_settings.cli_context_env).
+                # Bash, file writes (blocks only CLI settings files), WebFetch
+                # (docs hosts only). Subagents outliving the turn is blocked by a
+                # CLI switch, not by tool input (cli_settings.cli_context_env).
                 "PreToolUse": [HookMatcher(
                     matcher="Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch",
                     hooks=[builder._on_pre_tool_use])],
@@ -308,24 +319,25 @@ class PrototypeBuilder:
                  answer_log: Any = None):
         self._workspace = workspace
         self._config_dir = config_dir
-        #: 연결마다 config_dir로 복사할 내용의 출처(proto-config/). None이면 복사하지 않는다.
+        #: Source of the contents copied into config_dir on every connect (proto-config/). None means no copy.
         self._shared_config_dir = shared_config_dir
-        #: aipds.launcher.Launch, 또는 None(= 백엔드 uid로 직접 실행).
+        #: aipds.launcher.Launch, or None (= run directly as the backend uid).
         self._launch = launch
         self._session_id = session_id
         self._resume = resume
         self._session_store = session_store
-        #: aipds.proto.history.AnswerLog, 또는 None(= 기록하지 않는다). 받은 답을
-        #: 히스토리 복원용으로 남긴다 — 트랜스크립트에는 CLI가 옮겨 적은 영어 문장만
-        #: 남기 때문이다(agent/answer_store.py 헤더).
+        #: aipds.proto.history.AnswerLog, or None (= do not record). Keeps received
+        #: answers for history restore -- because the transcript only keeps the
+        #: English sentences the CLI transcribed (agent/answer_store.py header).
         self._answer_log = answer_log
-        #: 메인 에이전트의 컨텍스트 사용량을 잰다(aipds/context_usage.py). 빌더 하나가
-        #: SDK 세션 하나이므로 턴을 넘어 들고 간다 — 바뀐 값만 낸다.
+        #: Measures the main agent's context usage (aipds/context_usage.py). One builder
+        #: is one SDK session, so it is carried across turns -- only changed values are emitted.
         self._context = ContextMeter()
         self._anthropic_model = anthropic_model
         self._effort = effort
-        # 이 프로젝트의 생성물 언어. build_complete 도구의 설명과 반환 문자열을
-        # 이 값으로 고른다 — 셋 다 모델이 읽는 프롬프트다(proto/prompts.py).
+        # This project's output language. The build_complete tool's description
+        # and return strings are chosen by this value -- all three are prompts the
+        # model reads (proto/prompts.py).
         self._language = language
         self._permission_mode = _validate_permission_mode(permission_mode)
         self._factory = client_factory or _default_client_factory(self)
@@ -338,30 +350,35 @@ class PrototypeBuilder:
         self._pending_question: asyncio.Future | None = None
         self._pending_payload: str | None = None
         self._pending_iid: str | None = None
-        # 지금 살아 있는 서브에이전트: Agent 도구 호출의 id → 그 태스크의 id.
+        # Subagents alive right now: Agent tool call id -> that task's id.
         #
-        # **두 스트림을 잇는 표다.** 에이전트별 하트비트는 `Task*` 메시지로
-        # (`task_id`로) 오고, 그 에이전트가 무슨 파일을 만지는지는 서브에이전트의
-        # `AssistantMessage`로 (`parent_tool_use_id`로) 온다. `TaskStarted`가 두
-        # 값을 함께 들고 오는 유일한 메시지이므로 거기서 표를 채운다 — 실측으로
-        # 5개 메시지 전부 조인됐다(test_proto_builder_subagents 헤더).
+        # **This table joins two streams.** Per-agent heartbeats arrive as `Task*`
+        # messages (keyed by `task_id`), while which files that agent is touching
+        # arrives as the subagent's `AssistantMessage` (keyed by
+        # `parent_tool_use_id`). `TaskStarted` is the only message carrying both
+        # values, so the table is filled there -- measured, all 5 messages joined
+        # (test_proto_builder_subagents header).
         #
-        # 수명은 **한 턴**이다: `run`이 매 턴 비운다(그 이유는 그쪽 주석).
+        # Its lifetime is **one turn**: `run` clears it every turn (see the
+        # comment there for why).
         self._agent_tasks: dict[str, str] = {}
-        # 종료를 이미 알린 태스크 → 그때 **요약까지** 실어 보냈는가.
+        # Task whose termination was already reported -> whether **the summary**
+        # was included at that time.
         #
-        # `task_updated`와 `task_notification`이 둘 다 terminal status를 보내고,
-        # 실측 순서는 updated → notification인데 **요약은 뒤쪽에만 있다**. 첫
-        # 종료로 막아 버리면 에이전트가 남긴 요약이 언제나 버려지므로(트레이스에서
-        # 가장 쓸모 있는 줄이 그것이다), "요약을 아직 못 보냈다"를 구분해서 한 번
-        # 더 내보낸다. 종료를 두 번 세지 않는 책임은 프론트의 upsert에 있다 —
-        # 어느 종료 메시지가 마지막인지 백엔드가 알 수 없기 때문이다(SDK는 둘 중
-        # 하나만 오는 경우도 있다고 명시한다).
+        # `task_updated` and `task_notification` both send a terminal status, and
+        # the measured order is updated -> notification, but **only the latter
+        # carries the summary**. Blocking at the first termination would always
+        # discard the summary the agent left (the most useful line in the trace),
+        # so "summary not yet sent" is tracked separately and emitted one more
+        # time. Not counting a termination twice is the frontend upsert's job --
+        # the backend cannot know which termination message is the last one (the
+        # SDK states that sometimes only one of the two arrives).
         self._agent_closed: dict[str, bool] = {}
-        #: 이 세션에서 사용자가 직접 쓴 URL의 호스트. WebFetch 게이트가 문서 호스트에
-        #: 더해 이것을 연다(build_guard.user_url_hosts) — 세션이 사용자 원문에서 뽑아
-        #: 넘긴다(`allow_fetch_hosts`). 빌더가 원문을 보지 못하기 때문이다: 개시 턴의
-        #: `run(text)`는 서버가 감싼 프롬프트다.
+        #: Hosts of URLs the user wrote directly in this session. The WebFetch gate
+        #: opens these in addition to the docs hosts (build_guard.user_url_hosts) --
+        #: the session extracts them from the user's original text and passes them
+        #: in (`allow_fetch_hosts`), because the builder never sees the original:
+        #: the opening turn's `run(text)` is a server-wrapped prompt.
         self._user_fetch_hosts: set[str] = set()
 
     def allow_fetch_hosts(self, hosts: Iterable[str]) -> None:
@@ -546,11 +563,12 @@ class PrototypeBuilder:
         return self._client
 
     async def _restore_transcript(self) -> None:
-        """재개할 세션의 로컬 트랜스크립트가 없으면 S3 미러에서 되살린다.
+        """Restore the local transcript from the S3 mirror if the session to resume lacks one.
 
-        재개 여부는 세션(proto/session.py)이 S3 기록으로 이미 정했다. 여기는 CLI가 그
-        기록을 로컬에서 찾을 수 있게만 한다. 실패하면 되살리지 못한 채 연결하고, CLI가
-        "No conversation found"로 끝난다 — SDK에 복원을 맡기던 때와 같은 실패다.
+        The session (proto/session.py) has already decided whether to resume, based on
+        the S3 record. This only makes that record findable locally by the CLI. On
+        failure it connects without the restore, and the CLI ends with "No conversation
+        found" -- the same failure as when restore was left to the SDK.
         """
         if not self._resume or self._session_store is None:
             return
@@ -576,7 +594,7 @@ class PrototypeBuilder:
     #                   (`prev.includes(path) ? prev : [...prev, path]`), so
     #                   `changedPaths` is idempotent. The trace entry (line 85-87)
     #                   does append a second row -- cosmetic, in a collapsed
-    #                   "추론 과정" accordion, and it accurately reports that the
+    #                   "추론 과정" (reasoning) accordion, and it accurately reports that the
     #                   file was written.
     #   status       -> trace-only, same append-only cosmetic story.
     #   message      -> NOT queued here; messages come from `_translate`, never
@@ -599,14 +617,15 @@ class PrototypeBuilder:
     # to be re-checked -- this tab's reducers are dedupe-by-path or append-only
     # cosmetic, and the one non-idempotent kind is dropped at its death points.
     async def _on_pre_tool_use(self, input_data, tool_use_id, context) -> dict:
-        """빌드 에이전트의 Bash·설정 파일·WebFetch 게이트. 판정은 proto/build_guard.py.
+        """The build agent's gate for Bash, settings files, and WebFetch. Decisions live in proto/build_guard.py.
 
-        왜 훅인가: 빌드는 `bypassPermissions`로 돌아 Bash가 자동 승인되고
-        can_use_tool에 도달하지 않는다 — SDK가 지정한 유일한 게이트가
-        PreToolUse다(그 근거는 위 팩토리의 hooks 주석과 build_guard 헤더).
+        Why a hook: builds run under `bypassPermissions`, so Bash is auto-approved
+        and never reaches can_use_tool -- the only gate the SDK designates is
+        PreToolUse (rationale in the hooks comment of the factory above and the
+        build_guard header).
 
-        **통과는 빈 dict다.** "allow"를 돌려주면 can_use_tool까지 건너뛰어
-        AskUserQuestion 가로채기가 죽는다(types.py의 can_use_tool 설명).
+        **Passing is an empty dict.** Returning "allow" would skip can_use_tool as
+        well and kill the AskUserQuestion interception (can_use_tool docs in types.py).
         """
         name = input_data.get("tool_name", "")
         tool_input = input_data.get("tool_input") or {}
@@ -625,21 +644,23 @@ class PrototypeBuilder:
                       else prompts.fetch_refused(self._language, offender, FETCH_HOSTS,
                                                  tuple(sorted(self._user_fetch_hosts))))
         else:
-            # matcher가 위 도구만 걸지만, 훅 설정과 이 분기가 어긋나도 조용히
-            # 통과해야 한다 — 알 수 없는 도구를 막으면 빌드가 멈춘다.
+            # The matcher only hooks the tools above, but if the hook config and
+            # these branches drift apart, we must pass silently -- blocking an
+            # unknown tool would stall the build.
             return {}
         if reason is None:
             return {}
-        # 로그로 남긴다: 거부 이유는 모델에게만 가므로, 무엇이 막혔는지 운영자가
-        # 확인할 경로가 따로 필요하다.
+        # Log it: the denial reason goes only to the model, so the operator needs
+        # a separate way to see what was blocked.
         _log.warning("build gate denied %s: %s", name, offender)
         return self._deny(reason)
 
     @staticmethod
     def _deny(reason: str) -> dict:
-        """PreToolUse 거부 응답의 모양. 문구는 proto/prompts.py가 소유한다 —
-        모델이 읽는 텍스트는 프로젝트 언어여야 하고, 걸린 조각을 지목하는 것도
-        그쪽 책임이다(지목이 없으면 모델이 형태만 바꿔 재시도하며 루프에 빠진다)."""
+        """Shape of a PreToolUse denial response. The wording is owned by proto/prompts.py --
+        text the model reads must be in the project language, and pointing out the
+        offending fragment is also its job (without that, the model retries with only
+        the form changed and gets stuck in a loop)."""
         return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
@@ -681,8 +702,9 @@ class PrototypeBuilder:
         if tool_name != "AskUserQuestion":
             return PermissionResultAllow(updated_input=input_data)
         import json as _json, uuid
-        # 문자열로 온 payload 정규화 — claude_driver와 같은 이유이고 같은
-        # 헬퍼다(그쪽 주석과 normalize_sdk_questions의 docstring 참고).
+        # Normalize a payload that arrived as a string -- same reason and same
+        # helper as claude_driver (see its comment and normalize_sdk_questions'
+        # docstring).
         sdk_questions = normalize_sdk_questions(input_data.get("questions"))
         # question_file_from_sdk raises ValueError on unusable input (e.g. a
         # question with zero options) -- mirror ask_questions in tools.py:
@@ -698,7 +720,7 @@ class PrototypeBuilder:
             return PermissionResultDeny(
                 message=f"질문을 만들 수 없다: {e}\n"
                         "각 질문에 옵션을 최소 1개 넣어 AskUserQuestion을 다시 호출해라.")
-        # 복원 조인 키 — claude_driver와 같은 값을 같은 방식으로 읽는다(그쪽 주석).
+        # Restore join key -- reads the same value the same way as claude_driver (see its comment).
         tool_use_id = getattr(context, "tool_use_id", None) or ""
         iid = uuid.uuid4().hex
         payload = _json.dumps({"interrupt_id": iid, "questions": qfile},
@@ -731,8 +753,8 @@ class PrototypeBuilder:
         finally:
             self._pending_payload = None
             self._pending_question = None
-        # updated_input을 돌려주기 **전에** 쓴다 — 이 반환으로 턴이 재개된다
-        # (claude_driver의 같은 자리와 같은 이유). save는 실패를 삼킨다.
+        # Written **before** returning updated_input -- this return resumes the
+        # turn (same reason as the same spot in claude_driver). save swallows failures.
         if self._answer_log is not None:
             await self._answer_log.save(tool_use_id=tool_use_id, interrupt_id=iid,
                                         questions=qfile, answers=answers)
@@ -746,20 +768,22 @@ class PrototypeBuilder:
 
     def _close_agent_row(self, task_id: str, *, status: str,
                          summary: str | None = None) -> list[AgentEvent]:
-        """행을 닫는다. 새로 말할 것이 없으면 아무것도 내보내지 않는다.
+        """Close the row. Emit nothing if there is nothing new to say.
 
-        `task_updated`와 `task_notification`이 둘 다 종료를 보고하고 **둘 중 하나만
-        오는 경우가 실재하므로**(SDK가 명시한다: 백그라운드 태스크나 TaskStop으로
-        죽은 태스크는 notification이 생략될 수 있다) 양쪽을 다 듣는다.
+        `task_updated` and `task_notification` both report termination, and **cases
+        where only one of them arrives are real** (the SDK says so: a background task
+        or one killed by TaskStop may skip the notification), so we listen to both.
 
-        그런데 실측 순서는 updated → notification이고 **요약은 뒤쪽에만 있다**. 그래서
-        "이미 닫혔으면 무조건 무시"는 요약을 언제나 버린다. 규칙은 두 가지뿐이다:
+        But the measured order is updated -> notification, and **only the latter
+        carries the summary**. So "always ignore once closed" would always discard the
+        summary. There are only two rules:
 
-          - 아직 안 닫혔으면 → 닫는다
-          - 닫혔지만 요약을 못 보냈고 이번에 요약이 있으면 → 한 번 더 내보낸다
+          - not closed yet -> close it
+          - closed, the summary was not sent, and this one has a summary -> emit once more
 
-        그 밖에는 조용히 넘긴다. 두 번째 `done`을 트레이스 줄 하나로 접는 것은
-        프론트의 몫이다(`task_id`로 upsert) — 어느 종료가 마지막인지 여기서는 알 수 없다.
+        Everything else passes silently. Folding the second `done` into one trace line
+        is the frontend's job (upsert by `task_id`) -- this side cannot know which
+        termination is the last.
         """
         if not task_id:
             return []
@@ -768,8 +792,8 @@ class PrototypeBuilder:
         if summary_sent is not None and (summary_sent or not has_summary):
             return []
         self._agent_closed[task_id] = has_summary
-        # 조인 표에서도 지운다: 끝난 에이전트의 tool_use_id로 뒤늦게 도착한
-        # 도구 호출이 죽은 행을 되살리면 안 된다.
+        # Also remove it from the join table: a tool call arriving late under a
+        # finished agent's tool_use_id must not revive a dead row.
         self._agent_tasks = {tuid: tid for tuid, tid in self._agent_tasks.items()
                              if tid != task_id}
         return [self._agent_row(task_id=task_id, state="done", status=status,
@@ -778,11 +802,12 @@ class PrototypeBuilder:
     def _translate(self, msg) -> list[AgentEvent]:
         events: list[AgentEvent] = []
         tname = type(msg).__name__
-        # ---- 서브에이전트 하트비트 ----
+        # ---- Subagent heartbeats ----
         #
-        # 네 종류 모두 실제 SDK에서는 `SystemMessage`의 서브클래스이므로
-        # `type(msg).__name__`이 각자의 클래스 이름으로 온다. 이 분기들이 없던
-        # 동안 전부 조용히 버려졌고, 그것이 빌드 화면이 멈춘 듯 보인 원인이다.
+        # In the real SDK all four kinds are subclasses of `SystemMessage`, so
+        # `type(msg).__name__` arrives as each one's own class name. While these
+        # branches were missing, all of them were silently dropped, which is why
+        # the build screen looked frozen.
         if tname == "TaskStartedMessage":
             task_id = getattr(msg, "task_id", "") or ""
             tool_use_id = getattr(msg, "tool_use_id", None)
@@ -796,9 +821,9 @@ class PrototypeBuilder:
         if tname == "TaskProgressMessage":
             task_id = getattr(msg, "task_id", "") or ""
             tool = getattr(msg, "last_tool_name", None)
-            # 도구 이름이 없는 하트비트는 화면에 실을 것이 없다. `description`은
-            # 일부러 쓰지 않는다 — CLI가 만든 영어 산문이라 ko 프로젝트에서
-            # 화면 언어와 어긋난다(agent_activity 헤더).
+            # A heartbeat without a tool name has nothing to show. `description` is
+            # deliberately unused -- it is English prose generated by the CLI, which
+            # mismatches the screen language in ko projects (agent_activity header).
             if task_id and tool and task_id not in self._agent_closed:
                 events.append(self._agent_row(task_id=task_id, state="progress",
                                               tool=tool))
@@ -812,27 +837,30 @@ class PrototypeBuilder:
             return events
         if tname == "TaskUpdatedMessage":
             status = str(getattr(msg, "status", "") or "")
-            # 비종료 전이(pending/running/paused)로 행을 닫으면 뜨자마자 사라진다.
+            # Closing the row on a non-terminal transition (pending/running/paused) would make it vanish as soon as it appears.
             if status in TERMINAL_TASK_STATUSES:
                 return self._close_agent_row(
                     getattr(msg, "task_id", "") or "", status=status)
             return events
         if tname == "AssistantMessage":
-            # 서브에이전트가 보낸 메시지면 어느 행의 것인지 여기서 정해진다.
-            # 표에 없는 부모(TaskStarted를 못 봤거나 이미 끝난 에이전트)는
-            # **버린다** — 총괄 `status`로 흘려보내면 서브에이전트의 일이 총괄의
-            # 일로 보이고, 그것이 고정 줄을 이름들 사이에서 깜빡이게 만든 종전
-            # 동작이다.
+            # If a subagent sent the message, this is where we decide which row
+            # it belongs to. A parent not in the table (TaskStarted not seen, or
+            # the agent already finished) is **dropped** -- forwarding it as the
+            # orchestrating agent's `status` makes the subagent's work look like the
+            # lead's, which was the former behavior that made the pinned line
+            # flicker between names.
             parent = getattr(msg, "parent_tool_use_id", None)
             task_id = self._agent_tasks.get(parent) if parent else None
             for block in getattr(msg, "content", []):
                 btype = type(block).__name__
                 if btype == "TextBlock":
                     if parent is not None:
-                        # `forward_subagent_text`는 끄고 간다 — 서사 셋이 말풍선에
-                        # 섞이면 진행 표시를 대화 흐름 밖으로 옮긴 이유가 없어진다
-                        # (LiveActivityBar 헤더). 지금 SDK는 보내지도 않지만, 그
-                        # 옵션을 켜는 날 이 규율이 코드에 있어야 한다.
+                        # `forward_subagent_text` stays off -- if the three
+                        # narratives mix into the chat bubbles, there is no point
+                        # in having moved progress display out of the conversation
+                        # flow (LiveActivityBar header). The SDK does not even send
+                        # it today, but the day that option is turned on, this rule
+                        # must already be in the code.
                         continue
                     events.append(AgentEvent(kind="message", text=block.text))
                 elif btype == "ToolUseBlock":
@@ -845,13 +873,13 @@ class PrototypeBuilder:
                                                    getattr(block, "input", None),
                                                    file_tools=True)))
                         continue
-                    # 무엇을 했는지까지 보낸다 — 맨 `Bash`만 뜨면 트레이스의 요점이
-                    # 빠진다(tool_trace 모듈 헤더). 값만 보내고 아이콘·구분자는
-                    # 프론트가 UI 언어로 그린다.
+                    # Send what was done as well -- a bare `Bash` misses the point
+                    # of the trace (tool_trace module header). Only values are
+                    # sent; the frontend draws icons and separators in the UI language.
                     detail = tool_detail(block.name, getattr(block, "input", None))
-                    # 중복 접기 키에 detail을 넣는다. 이름만으로 접으면 서로 다른
-                    # 파일을 읽는 연속된 Read 세 번이 `Read` 한 줄로 뭉개진다 —
-                    # claude_driver가 이미 이 키를 쓴다.
+                    # Include detail in the duplicate-folding key. Folding by name
+                    # alone collapses three consecutive Reads of different files
+                    # into a single `Read` line -- claude_driver already uses this key.
                     key = (block.name, detail)
                     if key != self._last_status:
                         self._last_status = key
@@ -871,9 +899,9 @@ class PrototypeBuilder:
         self._turn_active = True
         self._interrupted = False
         self._last_status: tuple[str, str | None] | None = None
-        # 서브에이전트의 수명은 그것을 띄운 턴의 수명이다. 표를 턴을 넘겨 들고
-        # 있으면 재활용된 tool_use_id가 이미 끝난 에이전트의 행으로 귀속되어
-        # 화면에 죽은 에이전트가 되살아난다.
+        # A subagent lives as long as the turn that launched it. Carrying the
+        # table across turns would attribute a reused tool_use_id to an
+        # already-finished agent's row, reviving a dead agent on screen.
         self._agent_tasks = {}
         self._agent_closed = {}
         next_msg: asyncio.Future | None = None
@@ -920,9 +948,9 @@ class PrototypeBuilder:
                         terminal = ev
                         continue
                     yield ev
-                # 컨텍스트 사용량. 턴 끝(ResultMessage)의 값도 여기서 나간다 —
-                # terminal을 붙잡아 둔 뒤이므로 `done`보다 앞선다(sse.ts가 `done`에서
-                # 스트림을 닫는다).
+                # Context usage. The end-of-turn (ResultMessage) value also goes out
+                # here -- since terminal is being held, it precedes `done` (sse.ts
+                # closes the stream on `done`).
                 if wants_sample(msg):
                     usage = await self._context.sample(client)
                     if usage is not None:
@@ -1096,7 +1124,7 @@ class PrototypeBuilder:
         abandoned generator. So the user answers from the still-open tab,
         `submit_answers` returns True -- and the next turn relayed the card again:
         a question already answered, whose re-answer returns False -> 409
-        (routes/prototypes.py:212) -> "답변을 제출하지 못했습니다".
+        (routes/prototypes.py:212) -> "답변을 제출하지 못했습니다" (failed to submit answers).
 
         WHY THE DISCRIMINATOR IS DELIVERY AND NOT TURN LIVENESS. Round 2 used
         `_turn_active`, and it is simply the wrong signal: BOTH cases have it

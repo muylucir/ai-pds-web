@@ -14,7 +14,7 @@ export function AddModelModal({
   const [name, setName] = useState("");
   const [modelId, setModelId] = useState("");
   const [display, setDisplay] = useState(true);
-  // "" = CLI 기본값(null로 보낸다). 모델마다 기본값이 달라 프론트가 대신 정하지 않는다.
+  // "" = CLI default (sent as null). The default differs per model, so the frontend does not pick one.
   const [effort, setEffort] = useState<Effort | "">("");
   const [busy, setBusy] = useState(false);
   const t = useT();
@@ -30,7 +30,7 @@ export function AddModelModal({
       onAdded();
       onClose();
     } catch (err) {
-      // 실패하면 모달을 닫지 않는다 — 입력을 다시 치게 만들지 않기 위해서다.
+      // On failure the modal stays open — so the user does not have to retype the input.
       setError(err instanceof ApiError ? errorMessage(t, err.detail) : t("err.generic"));
     } finally {
       setBusy(false);

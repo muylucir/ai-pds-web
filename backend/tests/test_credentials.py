@@ -1,4 +1,5 @@
-# backend/tests/test_credentials.py — 샌드박스 프로세스용 자격증명 엔드포인트(aipds/credentials.py).
+# backend/tests/test_credentials.py — the credentials endpoint for sandbox processes
+# (aipds/credentials.py).
 from __future__ import annotations
 
 import datetime as dt
@@ -50,7 +51,7 @@ def test_only_llm_calling_kinds_get_credentials(broker):
         env = broker.env_for(kind, "p1", None if kind == "discovery" else "s")
         assert env["AWS_CONTAINER_CREDENTIALS_FULL_URI"] == f"http://127.0.0.1:18001{PATH}"
         assert env["AWS_CONTAINER_AUTHORIZATION_TOKEN"]
-    # npm install/build는 LLM을 부르지 않는다.
+    # npm install/build does not call the LLM.
     assert broker.env_for("host-build", "p1", "s") == {}
 
 
@@ -84,8 +85,8 @@ async def test_respond_checks_path_method_and_token(broker):
 
 
 async def test_expiration_is_reported_early(broker):
-    """SDK는 만료 **뒤에야** 다시 부른다(실측). 알린 만료가 실제보다 앞서야 스트림 도중
-    실제 만료를 맞지 않는다."""
+    """The SDK calls again only **after** expiry (measured). The announced expiry must be
+    earlier than the real one so a stream does not hit the real expiry midway."""
     token = broker.issue("discovery", "p1", None)
     _, body = await broker.respond("GET", PATH, token)
     reported = dt.datetime.fromisoformat(body["Expiration"].replace("Z", "+00:00"))
@@ -98,7 +99,7 @@ async def test_credentials_are_cached_then_refreshed_before_expiry(broker, sts, 
     clock["now"] = T0 + dt.timedelta(minutes=30)
     await broker.respond("GET", PATH, token)
     assert len(sts.calls) == 1
-    # 알린 만료(55분)가 지나 다시 온 요청에는 새 값을 준다.
+    # A request that comes again after the announced expiry (55 minutes) gets a new value.
     clock["now"] = T0 + dt.timedelta(minutes=56)
     _, body = await broker.respond("GET", PATH, token)
     assert len(sts.calls) == 2 and body["AccessKeyId"] == "ASIA2"
@@ -131,7 +132,7 @@ def _free_port() -> int:
 
 
 async def test_loopback_http_round_trip(sts, clock):
-    """AWS SDK가 부르는 모양 그대로: GET + Authorization 헤더에 토큰 값."""
+    """Exactly the shape the AWS SDK calls: GET + the token value in the Authorization header."""
     port = _free_port()
     b = CredentialBroker(ROLE, port=port, sts_factory=lambda: sts,
                          now=lambda: clock["now"])

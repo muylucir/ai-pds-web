@@ -1,28 +1,32 @@
-# backend/aipds/workspace_sync.py — 워크스페이스 파일을 정본(S3)에 올리는 규칙.
+# backend/aipds/workspace_sync.py — rules for publishing workspace files to the source of truth (S3).
 #
-# **왜 이 모듈이 생겼는가(2026-08-18).** 화면에 "문서가 작성되었다"고 나오는데 문서
-# 탭 드롭다운에 없고, 목록에 보여서 골라도 내용이 없고, 잠깐 나타났다 사라지고,
-# "문서 리뷰" 화면에서는 보였다. 증상 넷이 한 원인이었다:
+# **Why this module exists (2026-08-18).** The screen said "the document has been
+# written", yet it was missing from the Documents tab dropdown; when it did appear in the
+# list and was selected, it had no content; it appeared briefly and then vanished; and it
+# was visible on the "document review" screen. All four symptoms had one cause:
 #
-#     `file_changed`는 **로컬** 쓰기에서 즉시 알리는데, 정본 게시는 **턴 종료**까지
-#     미뤄졌다. UI의 읽기 경로는 전부 S3다(runner.read_file / list_files).
+#     `file_changed` announces a **local** write immediately, but publishing to the
+#     source of truth was deferred until **turn end**. Every UI read path goes to S3
+#     (runner.read_file / list_files).
 #
-# 실측이 그대로 보였다: 한 프로젝트의 `aiplc-docs` 16개 파일의 S3 타임스탬프가 전부
-# 같은 1초 안이었다 — 턴 중에는 아무것도 없고 끝에 몰아서 올라간다. 그래서 90초
-# 넘게 도는 턴에서 사용자는 "썼다"는 말만 보고 문서를 볼 수 없었다.
+# The measurements showed it plainly: the S3 timestamps of all 16 files in one project's
+# `aiplc-docs` fell within the same single second — nothing during the turn, everything
+# uploaded in a batch at the end. So in a turn running longer than 90 seconds, the user
+# saw only the claim "written" and could not see the document.
 #
-# 프론트는 이미 이것을 막으려 애쓰고 있었다(WorkspaceDocPanel이 현재 path를 목록에
-# union하고 404를 "미동기화"로 구분한다). 그러나 읽을 것이 정본에 없으면 프론트가
-# 할 수 있는 것이 없다 — 그래서 남은 증상이 위 넷이다.
+# The frontend was already working hard to prevent this (WorkspaceDocPanel unions the
+# current path into the list and distinguishes a 404 as "not yet synced"). But if what it
+# needs to read is not in the source of truth, there is nothing the frontend can do — hence
+# the four remaining symptoms above.
 #
-# 계약은 질문 파일에 이미 적용한 것과 같다(a2b9623의 "카드를 광고하기 전에 파일을
-# S3에 올린다"): **광고하기 전에 게시한다.**
+# The contract is the same as the one already applied to question files ("upload the file
+# to S3 before advertising the card" in a2b9623): **publish before advertising.**
 #
-# **이 모듈이 규칙을 소유하는 이유.** 올리는 곳이 둘이 됐다 — 턴 종료 배치
-# sync(`runner._sync_workspace_to_s3`)와 쓰기 직후 게시(`claude_driver`의
-# PostToolUse 훅). `audit.md` 리댁션과 대상 글롭이 두 곳에 복사되면 한쪽만 고쳐져
-# **audit.md가 리댁션 없이 정본에 올라가는** 경로가 생긴다. 그 부류의 갈라짐은
-# 에러를 내지 않는다.
+# **Why this module owns the rules.** There are now two upload paths — the turn-end batch
+# sync (`runner._sync_workspace_to_s3`) and publish-right-after-write (`claude_driver`'s
+# PostToolUse hook). If the `audit.md` redaction and the target globs were copied into both
+# places, fixing only one would open a path where **audit.md reaches the source of truth
+# unredacted**. That kind of divergence raises no error.
 from __future__ import annotations
 
 import logging
@@ -36,27 +40,27 @@ from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger("aipds.workspace")
 
-#: 정본으로 올리는 서브트리. `AgentRunner._SYNC_GLOBS`가 이 값을 쓴다 — 두 벌로
-#: 두면 쓰기 직후 게시와 턴 종료 배치가 다른 집합을 올리고, 그 어긋남은 "있다가
-#: 없어지는 문서"로 보인다.
+#: Subtrees published to the source of truth. `AgentRunner._SYNC_GLOBS` uses this value —
+#: with two copies, publish-right-after-write and the turn-end batch would upload different
+#: sets, and that mismatch shows up as "documents that exist and then disappear".
 #:
-#: `uploads/`는 없다. 업로드 라우트가 정본에 직접 쓰고 에이전트는 읽기만 하는
-#: 입력이다. 올리는 경로는 텍스트(UTF-8)라서, 넣으면 이미지·PDF 원본이 턴마다
-#: U+FFFD로 깨진 사본으로 덮인다.
+#: `uploads/` is not included. The upload route writes directly to the source of truth, and
+#: it is input the agent only reads. The publish path is text (UTF-8), so including it would
+#: overwrite original images and PDFs every turn with copies corrupted into U+FFFD.
 SYNC_GLOBS = ("aiplc-docs/**/*", "prototype/**/*")
 
-#: 저장 시 리댁션하는 키. `audit.md`는 도구 출력을 원문으로 담고, S3를 직접 읽는
-#: 사람에게도 노출되므로 올릴 때 자격증명을 지운다. 산출물 문서는 그대로 올린다.
+#: Keys redacted on save. `audit.md` contains raw tool output and is also exposed to anyone
+#: reading S3 directly, so credentials are scrubbed on upload. Artifact documents are uploaded as is.
 _REDACTED_KEYS = frozenset({"aiplc-docs/audit.md"})
 
 
 def is_synced_key(key: str) -> bool:
-    """이 키가 정본으로 올라가는 집합에 속하는가."""
+    """Whether this key belongs to the set published to the source of truth."""
     return any(matches_glob(key, glob) for glob in SYNC_GLOBS)
 
 
 def content_for_s3(key: str, text: str) -> str:
-    """정본에 올릴 내용. `audit.md`만 리댁션한다."""
+    """Content to publish to the source of truth. Only `audit.md` is redacted."""
     return redact_credentials(text) if key in _REDACTED_KEYS else text
 
 
@@ -66,15 +70,16 @@ async def publish_file(
     key: str,
     on_published: Callable[[str, str, str | None], None] | None = None,
 ) -> bool:
-    """워크스페이스의 파일 하나를 정본에 올린다. 올렸으면 True.
+    """Publish a single workspace file to the source of truth. True if published.
 
-    **예외를 던지지 않는다.** 이 함수는 쓰기 직후 훅에서 불린다 — 게시는 부수
-    동작이고, 파일이 이미 지워졌거나 S3가 잠깐 실패했다고 턴을 죽이면 안 된다.
-    턴 종료 배치 sync가 여전히 백스톱이다(runner의 done/error 경로와 `finally`).
+    **Never raises.** This function is called from the post-write hook — publishing is a
+    side effect, and the turn must not die because the file was already deleted or S3
+    briefly failed. The turn-end batch sync remains the backstop (the runner's done/error
+    paths and `finally`).
 
-    안전하지 않은 키는 거부한다(fail-closed). 배치 sync는 그런 키를 만나면 sync
-    전체를 멈추고, 여기서는 그 한 파일을 거부한다 — 훅에서 turn을 멈추는 것보다
-    거부가 맞다.
+    Unsafe keys are rejected (fail-closed). The batch sync halts the entire sync when it
+    meets such a key; here we reject that one file — rejecting is more appropriate than
+    halting the turn from a hook.
     """
     try:
         reject_unsafe(key)
@@ -86,8 +91,8 @@ async def publish_file(
     try:
         text = read_text_beneath(local_root, key, errors="replace")
     except OSError:
-        # 이미 지워졌거나 디렉터리거나 링크다 — 배치 sync가 최종 상태를 올린다
-        # (링크는 거기서도 건너뛴다).
+        # Already deleted, a directory, or a link — the batch sync uploads the final state
+        # (links are skipped there too).
         return False
     canonical = content_for_s3(key, text)
     try:

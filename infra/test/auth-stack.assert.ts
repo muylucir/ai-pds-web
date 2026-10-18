@@ -13,14 +13,14 @@ const app = new cdk.App();
 const stack = new AipdsAuthStack(app, 'Auth', { env: ENV });
 const t = Template.fromStack(stack);
 
-// --- self-signup 차단: 이 요구사항의 실체는 이 한 필드다. ---
+// --- Block self-signup: the substance of this requirement is this one field. ---
 t.hasResourceProperties('AWS::Cognito::UserPool', {
   AdminCreateUserConfig: { AllowAdminCreateUserOnly: true },
 });
 
-// --- username은 호출자가 지정한다(AliasAttributes), Cognito 자동 생성 아님. ---
-// UsernameAttributes가 설정되면 Cognito가 username을 UUID로 만들어 시딩과
-// 관리 API 호출이 비결정적이 된다.
+// --- The caller sets the username (AliasAttributes); Cognito does not generate it. ---
+// If UsernameAttributes is set, Cognito makes the username a UUID, and seeding and
+// admin API calls become nondeterministic.
 t.hasResourceProperties('AWS::Cognito::UserPool', {
   AliasAttributes: ['email'],
 });
@@ -31,7 +31,7 @@ assert.ok(
   'UsernameAttributes must be absent — it would make Cognito auto-generate usernames',
 );
 
-// --- 비밀번호 정책: 시드 비밀번호가 통과해야 한다. ---
+// --- Password policy: the seed password must pass. ---
 t.hasResourceProperties('AWS::Cognito::UserPool', {
   Policies: {
     PasswordPolicy: {
@@ -44,24 +44,24 @@ t.hasResourceProperties('AWS::Cognito::UserPool', {
   },
 });
 
-// --- 임시 비밀번호 유효기간: 배포와 워크숍 사이를 견뎌야 한다. ---
+// --- Temporary password validity: must survive the gap between deploy and workshop. ---
 //
-// 시드 계정이 이제 임시 비밀번호로 만들어지므로(FORCE_CHANGE_PASSWORD) 이 창이
-// 곧 "배포한 계정으로 로그인할 수 있는 기간"이다. 미설정 시 기본값은 7일인데,
-// 배포와 워크숍 사이가 그보다 길면 시드 계정이 로그인 불가가 되고 증상은
-// "비밀번호가 맞는데 안 들어가진다"로만 보인다.
+// Seed accounts are now created with a temporary password (FORCE_CHANGE_PASSWORD), so this window
+// is exactly "the period during which the deployed accounts can log in". If unset the default is 7 days,
+// and if the gap between deploy and workshop is longer than that, the seed accounts cannot log in and the symptom
+// only looks like "the password is right but it will not let me in".
 t.hasResourceProperties('AWS::Cognito::UserPool', {
   Policies: { PasswordPolicy: { TemporaryPasswordValidityDays: 30 } },
 });
 
-// --- 계정 복구는 관리자 전용 (메일을 보내지 않으므로 자가 재설정 불가). ---
+// --- Account recovery is admin-only (no email is sent, so no self-service reset). ---
 t.hasResourceProperties('AWS::Cognito::UserPool', {
   AccountRecoverySetting: {
     RecoveryMechanisms: [{ Name: 'admin_only', Priority: 1 }],
   },
 });
 
-// --- 그룹 2개 + precedence. ---
+// --- 2 groups + precedence. ---
 t.resourceCountIs('AWS::Cognito::UserPoolGroup', 2);
 t.hasResourceProperties('AWS::Cognito::UserPoolGroup', {
   GroupName: 'admin', Precedence: 0,
@@ -70,19 +70,19 @@ t.hasResourceProperties('AWS::Cognito::UserPoolGroup', {
   GroupName: 'pm', Precedence: 10,
 });
 
-// --- Hosted UI v2 (managed login). v1이면 브랜딩 디자이너가 아닌 구 UI가 뜬다. ---
+// --- Hosted UI v2 (managed login). With v1, the old UI shows instead of the branding designer. ---
 t.hasResourceProperties('AWS::Cognito::UserPoolDomain', {
   ManagedLoginVersion: 2,
   Domain: 'aipds-123456789012-ap-northeast-2',
 });
-// v2는 브랜딩 스타일 레코드가 있어야 정상 렌더된다.
+// v2 renders correctly only with a branding style record.
 t.hasResourceProperties('AWS::Cognito::ManagedLoginBranding', {
   UseCognitoProvidedValues: true,
 });
-// ClientId는 CDK 타입에서 옵셔널이지만 Cognito API에는 필수다 — 브랜딩 스타일은
-// 앱 클라이언트 단위로 연결된다. 빠뜨리면 합성/유닛 테스트는 통과하고 실배포가
-// "Value null at 'clientId' failed to satisfy constraint"로 죽는다(실측:
-// AipdsAuthStack ROLLBACK). 실제 클라이언트를 가리키는지까지 확인한다.
+// ClientId is optional in the CDK type but required by the Cognito API — branding styles are
+// attached per app client. Leave it out and synth/unit tests pass but a real deploy
+// dies with "Value null at 'clientId' failed to satisfy constraint" (observed:
+// AipdsAuthStack ROLLBACK). Also checks that it points at the actual client.
 const brandings = t.findResources('AWS::Cognito::ManagedLoginBranding');
 const brandingProps = Object.values(brandings)[0].Properties;
 assert.ok(
@@ -96,19 +96,19 @@ assert.deepStrictEqual(
   'ManagedLoginBranding.ClientId must reference the web app client',
 );
 
-// --- 앱 클라이언트: authorization code grant만, 시크릿 있음. ---
+// --- App client: authorization code grant only, with a secret. ---
 t.hasResourceProperties('AWS::Cognito::UserPoolClient', {
   GenerateSecret: true,
   AllowedOAuthFlows: ['code'],
   AllowedOAuthFlowsUserPoolClient: true,
-  // 셀프서비스 스코프가 없으면 access 토큰으로 ChangePassword를 부를 수 없다 —
-  // 자기 비밀번호 변경이 "Access Token does not have required scopes"로 전멸한다.
+  // Without the self-service scope, ChangePassword cannot be called with the access token —
+  // changing one's own password fails across the board with "Access Token does not have required scopes".
   AllowedOAuthScopes: Match.arrayWith([
     'openid', 'email', 'profile', COGNITO_ADMIN_SCOPE]),
   CallbackURLs: ['http://localhost:3000/api/auth/callback'],
   LogoutURLs: ['http://localhost:3000/login'],
 });
-// implicit grant는 토큰을 URL 프래그먼트로 흘리므로 절대 허용하지 않는다.
+// The implicit grant leaks tokens in the URL fragment, so it is never allowed.
 const clients = t.findResources('AWS::Cognito::UserPoolClient');
 const clientProps = Object.values(clients)[0].Properties;
 assert.ok(
@@ -116,15 +116,15 @@ assert.ok(
   'implicit grant must not be allowed',
 );
 
-// --- 시딩: 계정 2개 × 단계 3개 = 커스텀 리소스 6개. ---
-// AwsCustomResource가 만드는 각 Custom::AWS의 Create/Update 필드는 SDK 호출을
-// 기술하는 JSON을 Fn::Join으로 조립한 값이다(UserPoolId 부분만 { Ref: ... }).
-// 문자열을 이어붙인 뒤 파싱하면 실제 service/action/parameters를 얻을 수
-// 있다 — 이걸 파싱해야 "어떤 리소스가 어떤 계정·그룹과 쌍을 이루는지"를
-// 검증할 수 있다. 전부를 JSON.stringify해 하나의 문자열로 뭉친 뒤
-// includes()로 찾으면, admin/pm의 그룹이 서로 바뀌어도, Permanent가
-// 빠져도, SUPPRESS가 한쪽에만 있어도 통과해버린다 — 그래서 리소스별로
-// 파싱해서 확인한다.
+// --- Seeding: 2 accounts × 3 steps = 6 custom resources. ---
+// The Create/Update field of each Custom::AWS that AwsCustomResource creates is JSON describing
+// the SDK call, assembled with Fn::Join (only the UserPoolId part is { Ref: ... }).
+// Joining the strings and parsing them yields the actual service/action/parameters
+// — that parsing is what lets us verify "which resource pairs with which account and group".
+// If everything were JSON.stringify'd into one string and searched with
+// includes(), it would pass even if admin's and pm's groups were swapped, Permanent were
+// missing, or SUPPRESS were on only one side — so each resource is
+// parsed and checked.
 function parseSdkCall(field: any): { action: string; parameters: any } | undefined {
   if (!field) return undefined;
   const parts = field['Fn::Join'][1];
@@ -132,9 +132,9 @@ function parseSdkCall(field: any): { action: string; parameters: any } | undefin
   return JSON.parse(joined);
 }
 
-// parseSdkCall이 문자열이 아닌 조각을 ''로 지우므로, 참조로 들어온 값은 파싱된
-// parameters에서 빈 문자열로 보인다. 비밀번호가 **리터럴이 아니라 파라미터
-// 참조**라는 것이 이 변경의 핵심이므로, 그 조각들을 따로 본다.
+// parseSdkCall erases non-string fragments as '', so values that came in as references show up as
+// empty strings in the parsed parameters. The core of this change is that the password is
+// **a parameter reference, not a literal**, so those fragments are examined separately.
 function refsIn(field: any): string[] {
   if (!field) return [];
   return (field['Fn::Join'][1] as any[])
@@ -156,15 +156,15 @@ const calls = resourceList.map((r: any) => ({
   rawUpdate: r.Properties.Update,
 }));
 
-// --- 시드 비밀번호는 배포 시점 파라미터다 (소스 상수가 아니다) ---
+// --- The seed password is a deploy-time parameter (not a source constant) ---
 //
-// 상수로 두면 값이 리포에 커밋되고 CloudFormation 템플릿과 스택 이벤트에도 평문으로
-// 남는다. `noEcho`가 그 노출을 끊는다: 템플릿에는 `Ref`만 남고 GetTemplate·스택
-// 이벤트에 값이 실리지 않는다.
+// As a constant, the value would be committed to the repo and left in plaintext in the CloudFormation template
+// and stack events too. `noEcho` cuts off that exposure: only a `Ref` remains in the template, and the value
+// does not appear in GetTemplate or stack events.
 //
-// `allowedPattern`은 별개의 목적이다 — Cognito 정책을 만족하지 않는 값은
-// `AdminSetUserPassword`가 `InvalidPasswordException`으로 거부하고 **스택 전체가
-// 롤백된다**. 배포가 몇 분 진행된 뒤에 나는 그 실패를 파라미터 검증 단계로 끌어당긴다.
+// `allowedPattern` serves a separate purpose — a value that does not satisfy the Cognito policy is
+// rejected by `AdminSetUserPassword` with `InvalidPasswordException`, and **the whole stack
+// rolls back**. It pulls that failure, which happens minutes into the deploy, forward to the parameter validation stage.
 const SEED_PASSWORD_PARAM = 'SeedPassword';
 {
   const params = t.findParameters('*');
@@ -189,7 +189,7 @@ const SEED_PASSWORD_PARAM = 'SeedPassword';
     'the seed password parameter must carry an AllowedPattern so a policy-violating '
     + 'value fails at parameter validation instead of rolling the stack back',
   );
-  // 패턴이 실제로 풀 정책을 거르는지 — 문구가 아니라 동작을 확인한다.
+  // Whether the pattern actually filters by the pool policy — check behavior, not wording.
   const pattern = new RegExp(`^(?:${param.AllowedPattern})$`);
   for (const bad of ['Ab1!de', 'nouppercase1!', 'NOLOWERCASE1!', 'NoDigits!!',
                      'NoSymbols123']) {
@@ -205,10 +205,10 @@ const SEED_PASSWORD_PARAM = 'SeedPassword';
   );
 }
 
-// 파라미터를 두는 것만으로는 노출이 닫히지 않는다 — 어딘가가 리터럴을 그대로
-// 실어 보내면 값은 다시 템플릿에 남는다. 그래서 시드 호출의 `Password`에
-// **문자 하나도** 리터럴로 들어 있지 않다고 단정한다: parseSdkCall이 문자열이
-// 아닌 조각을 ''로 지우므로, 값 전체가 참조에서 온다면 파싱 결과는 빈 문자열이다.
+// Having a parameter alone does not close the exposure — if something sends a literal through as is,
+// the value ends up in the template again. So assert that the seed call's `Password` contains
+// **not even one character** as a literal: parseSdkCall erases non-string fragments as '',
+// so if the whole value comes from references, the parse result is an empty string.
 for (const c of calls) {
   if (c.create?.action !== 'adminSetUserPassword') continue;
   assert.strictEqual(
@@ -219,12 +219,12 @@ for (const c of calls) {
 }
 
 function assertSeeding(email: string, group: string) {
-  // Username은 이메일이 아니라 로컬파트다 — Cognito가 email-alias 풀에서 이메일
-  // 형식 Username을 거부한다(실측: 스택 롤백). 세 호출이 모두 같은 값을 써야
-  // 비밀번호/그룹이 방금 만든 계정에 적용된다.
+  // Username is the local part, not the email — Cognito rejects an email-format Username in an
+  // email-alias pool (observed: stack rollback). All three calls must use the same value so
+  // the password and group apply to the account just created.
   const username = usernameForEmail(email);
 
-  // 1) adminCreateUser: 이 계정의 Username으로, 초대 메일 억제, 이메일 검증됨.
+  // 1) adminCreateUser: with this account's Username, invitation email suppressed, email verified.
   const createCalls = calls
     .map((c) => c.create)
     .filter((c) => c?.action === 'adminCreateUser' && c?.parameters.Username === username);
@@ -243,8 +243,8 @@ function assertSeeding(email: string, group: string) {
     emailVerified?.Value, 'true',
     `${email}: email_verified must be true`,
   );
-  // Username은 이메일이 아니지만 email 속성은 원문 이메일이어야 한다 — 그게
-  // alias 사인인의 대상이다. 이걸 로컬파트로 바꾸면 로그인이 불가능해진다.
+  // Username is not the email, but the email attribute must be the original email — that is
+  // the target of alias sign-in. Changing it to the local part would make login impossible.
   const emailAttr = createCalls[0]!.parameters.UserAttributes.find(
     (a: any) => a.Name === 'email',
   );
@@ -253,12 +253,12 @@ function assertSeeding(email: string, group: string) {
     `${email}: the email attribute must keep the full address (alias sign-in target)`,
   );
 
-  // 2) adminSetUserPassword: 이 계정의 Username으로, **임시** 비밀번호를 심는다.
+  // 2) adminSetUserPassword: with this account's Username, plants a **temporary** password.
   //
-  // `Permanent: false`가 계정을 FORCE_CHANGE_PASSWORD로 두고, Hosted UI가 첫
-  // 로그인에서 사용자에게 새 비밀번호를 정하게 한다 — 초대 계정과 같은 규율이다
-  // (backend/aipds/auth/cognito.py의 set_temp_password). `true`로 되돌리면 배포한
-  // 값이 그 계정의 영구 비밀번호가 되어, 문서에 적힌 비밀번호로 누구나 들어온다.
+  // `Permanent: false` leaves the account in FORCE_CHANGE_PASSWORD, and the Hosted UI makes the user set a new
+  // password at first login — the same discipline as invited accounts
+  // (set_temp_password in backend/aipds/auth/cognito.py). Reverting to `true` would make the deployed
+  // value that account's permanent password, letting anyone in with the password written in the docs.
   const passwordResources = calls.filter(
     (c) => c.create?.action === 'adminSetUserPassword'
       && c.create?.parameters.Username === username);
@@ -272,23 +272,23 @@ function assertSeeding(email: string, group: string) {
     `${email}: the seeded password must be TEMPORARY — Permanent:true makes the `
     + 'deploy-time value that account\'s standing password',
   );
-  // 값은 파라미터 참조여야 한다. 리터럴이면 템플릿에 평문으로 남는다.
+  // The value must be a parameter reference. A literal would remain in plaintext in the template.
   assert.ok(
     passwordResource.createRefs.includes(SEED_PASSWORD_PARAM),
     `${email}: the password must be a Ref to ${SEED_PASSWORD_PARAM}, not a literal. `
     + `Refs found: ${passwordResource.createRefs.join(', ')}`,
   );
-  // 재배포가 비밀번호를 되돌리지 않아야 한다. `onUpdate`가 있으면 사용자가 첫
-  // 로그인에서 정한 비밀번호를 다음 `cdk deploy`가 배포 시점 값으로 덮어쓰고,
-  // 계정은 다시 FORCE_CHANGE_PASSWORD가 된다.
+  // A redeploy must not revert the password. With `onUpdate`, the next `cdk deploy` would overwrite the
+  // password the user set at first login with the deploy-time value, and the
+  // account would go back to FORCE_CHANGE_PASSWORD.
   assert.strictEqual(
     passwordResource.rawUpdate, undefined,
     `${email}: the password custom resource must have no onUpdate — a redeploy would `
     + 'otherwise overwrite the password the user chose at first login',
   );
 
-  // 3) adminAddUserToGroup: 이 계정의 Username이 정확히 이 그룹과 쌍을 이뤄야
-  // 한다 — 역할의 유일한 출처이므로 admin/pm이 뒤바뀌면 그대로 권한 사고다.
+  // 3) adminAddUserToGroup: this account's Username must pair with exactly this group
+  // — it is the only source of the role, so swapping admin/pm is a permissions incident as is.
   const groupCalls = calls
     .map((c) => c.create)
     .filter((c) => c?.action === 'adminAddUserToGroup' && c?.parameters.Username === username);
@@ -305,9 +305,9 @@ function assertSeeding(email: string, group: string) {
 assertSeeding(SEED_ADMIN_EMAIL, GROUP_ADMIN);
 assertSeeding(SEED_PM_EMAIL, GROUP_PM);
 
-// 전역 불변식: 어떤 Admin* 호출에도 이메일 형식 Username이 없어야 한다. Cognito가
-// 거부하는 조건은 그것 하나이므로, 규칙(로컬파트)이 아니라 이 불변식을 직접
-// 단정한다 — 규칙이 나중에 바뀌어도 배포 실패는 막힌다.
+// Global invariant: no Admin* call may carry an email-format Username. That is the only condition
+// Cognito rejects, so assert this invariant directly rather than the rule (local part)
+// — even if the rule changes later, deploy failures stay blocked.
 for (const c of calls) {
   for (const call of [c.create, c.update]) {
     const u = call?.parameters?.Username;
@@ -320,15 +320,15 @@ for (const c of calls) {
   }
 }
 
-// --- 출력: 백엔드/프론트 env로 쓰인다. ---
+// --- Outputs: used as backend/frontend env. ---
 const outputs = t.findOutputs('*');
 for (const key of ['UserPoolId', 'UserPoolClientId', 'HostedUiDomain']) {
   assert.ok(outputs[key], `output ${key} must exist`);
 }
-// 클라이언트 시크릿은 출력하지 않는다 — EC2가 부팅 시 조회한다.
+// The client secret is not output — EC2 looks it up at boot.
 assert.ok(!outputs.ClientSecret, 'client secret must NOT be a CfnOutput');
 
-// --- 스택이 노출하는 참조 (HostingStack이 쓴다). ---
+// --- References the stack exposes (used by HostingStack). ---
 assert.ok(stack.userPool, 'userPool must be exposed');
 assert.ok(stack.userPoolClient, 'userPoolClient must be exposed');
 assert.ok(
@@ -338,28 +338,28 @@ assert.ok(
 
 console.log('OK  auth stack: no-self-signup + alias username + groups + managed login v2 + code-only client + self-service scope + NoEcho seed password param + per-account seed pairing (create/suppress, temporary password via Ref, no reset-on-redeploy, correct group)');
 
-// --- 시드 권한은 롤 생성 시점에 인라인으로 붙는다 (IAM 최종 일관성) ---
+// --- Seed permissions are attached inline when the role is created (IAM eventual consistency) ---
 //
-// **실측(2026-08-21, AipdsAuthStack 첫 생성 ROLLBACK).** 시드 6개 호출 중
-// `adminAddUserToGroup`(pm) 하나가 AccessDenied로 죽고 스택이 롤백됐다:
+// **Observed (2026-08-21, ROLLBACK on the first creation of AipdsAuthStack).** Of the 6 seed calls,
+// one, `adminAddUserToGroup` (pm), died with AccessDenied and the stack rolled back:
 //
-//   01:03:06  PutRolePolicy  SeedPmGroupCustomResourcePolicy    (성공)
+//   01:03:06  PutRolePolicy  SeedPmGroupCustomResourcePolicy    (succeeded)
 //   01:03:22  AdminAddUserToGroup  pm     -> AccessDenied
-//   01:03:23  AdminAddUserToGroup  admin  -> 성공
+//   01:03:23  AdminAddUserToGroup  admin  -> succeeded
 //
-// 같은 롤, 같은 액션, 같은 리소스, 같은 시각에 붙은 같은 모양의 정책인데 1초 차이로
-// 하나는 거부되고 하나는 통과했다 — IAM 인가 경로의 최종 일관성이다. `DependsOn`은
-// API **호출 순서**만 보장하고 IAM이 새 정책을 반영했다는 것은 보장하지 않는다.
+// Same role, same action, same resource, same-shaped policies attached at the same time, yet one second apart
+// one was denied and one went through — eventual consistency in the IAM authorization path. `DependsOn`
+// only guarantees the **order of API calls**, not that IAM has picked up the new policy.
 //
-// `AwsCustomResourcePolicy.fromSdkCalls`는 호출마다 별도 `AWS::IAM::Policy`를 만들고
-// 그 각각이 소비 직전(실측 16초 전)에 쓰인다 — 호출이 여섯이면 경쟁도 여섯 번이고,
-// 그중 하나만 져도 스택 전체가 롤백된다. 시드가 늘면 실패 확률이 함께 오른다.
+// `AwsCustomResourcePolicy.fromSdkCalls` creates a separate `AWS::IAM::Policy` per call, and
+// each is written just before it is consumed (16 seconds before, observed) — six calls mean six races,
+// and losing just one rolls back the whole stack. As seeds grow, the failure probability rises with them.
 //
-// 그래서 권한을 **롤의 inline policy**로 옮긴다. 그러면 IAM 쓰기가 `CreateRole`
-// 시점이 되고, 그 롤은 provider Lambda보다 먼저 있어야 하며 Lambda는 어떤 커스텀
-// 리소스보다 먼저 있어야 한다 — 실측 타임라인에서 40~80초의 여유가 생긴다. 경쟁을
-// 여섯에서 0으로 줄이는 것이 아니라, **정책이 존재하는 시점을 리소스 생성 순서로
-// 보장**하는 것이 요점이다.
+// So the permissions move into the **role's inline policy**. Then the IAM write happens at `CreateRole`
+// time, and that role must exist before the provider Lambda, which must exist before any custom
+// resource — in the observed timeline that gives 40-80 seconds of slack. The point is not reducing the races
+// from six to zero but **guaranteeing when the policy exists through the order of resource
+// creation**.
 {
   const seedPolicies = Object.entries(t.findResources('AWS::IAM::Policy'))
     .filter(([id]) => id.startsWith('Seed'));
@@ -370,8 +370,8 @@ console.log('OK  auth stack: no-self-signup + alias username + groups + managed 
     + seedPolicies.map(([id]) => id).join(', '),
   );
 
-  // 권한은 provider 롤의 inline policy에 있어야 한다. 세 액션 전부 — 하나라도
-  // 빠지면 그 단계에서 같은 롤백이 난다.
+  // The permissions must be in the provider role's inline policy. All three actions — if even one is
+  // missing, the same rollback happens at that step.
   const roles = Object.values(t.findResources('AWS::IAM::Role'))
     .filter((r) => JSON.stringify(r.Properties?.Policies ?? '').includes('cognito-idp:'));
   assert.strictEqual(
@@ -388,7 +388,7 @@ console.log('OK  auth stack: no-self-signup + alias username + groups + managed 
       return Array.isArray(a) ? a.includes(action) : a === action;
     });
     assert.ok(hit, `seed role must allow ${action} inline at role creation`);
-    // 풀 ARN으로 좁혀야 한다 — 와일드카드면 다른 풀의 사용자도 만질 수 있다.
+    // Must be narrowed to the pool ARN — with a wildcard, users in other pools could be touched too.
     assert.ok(
       JSON.stringify(hit.Resource).includes('UserPool'),
       `${action} must be scoped to this user pool, got ${JSON.stringify(hit.Resource)}`,

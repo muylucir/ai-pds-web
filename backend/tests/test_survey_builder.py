@@ -47,28 +47,30 @@ def test_prompt_embeds_md_and_type_constraint():
 
 
 def test_prompt_frames_the_subject_as_a_prototype_not_a_product():
-    """문항은 응답자가 본 것이 '데모'라는 전제 위에 서야 한다.
+    """Questions must rest on the premise that what the respondent saw is a 'demo'.
 
-    프롬프트가 "실제로 사용해 본 최종 사용자"에게 묻는다고만 말하면 모델은
-    완성 제품을 쓴 사람에게 하는 질문을 만든다 — 속도·안정성·데이터 정확도처럼
-    프로토타입에서는 답할 수 없는 것들이다. 룰이 그 단계를 명시적으로 그렇게
-    규정한다: "This is a rapid prototype for validation — NOT production code",
-    "Deprioritize: Security hardening, error handling edge cases, scalability"
-    (prototype-validation.md Step 3). 목 데이터를 보고 "데이터가 정확했나요"를
-    답하면 그 수치는 가설에 대한 근거가 아니라 잡음이다.
+    If the prompt only says it is asking "end users who actually used it", the
+    model writes questions for someone who used a finished product -- speed,
+    stability, data accuracy, things a prototype cannot answer. The rules
+    define that stage explicitly that way: "This is a rapid prototype for
+    validation — NOT production code", "Deprioritize: Security hardening,
+    error handling edge cases, scalability" (prototype-validation.md Step 3).
+    If someone looks at mock data and answers "was the data accurate", that
+    number is noise, not evidence for the hypothesis.
     """
     p = build_prompt(MD)
     assert "프로토타입" in p
-    # 완성품이 아니라는 것과, 그래서 무엇을 묻지 말아야 하는지가 있어야 한다.
+    # It must say this is not a finished product, and therefore what not to ask.
     assert "완성" in p or "제품" in p or "프로덕션" in p
 
 
 def test_prompt_excludes_what_a_prototype_cannot_answer():
-    """성능·안정성·보안·실데이터 정확도는 묻지 말라고 명시해야 한다.
+    """It must explicitly say not to ask about performance, stability, security, or real-data accuracy.
 
-    룰이 빌드 단계에서 의도적으로 배제한 축들이다. 그것을 설문에서 물으면
-    프로토타입이 낮은 점수를 받는데, 그 점수는 설계상 그렇게 만든 것에 대한
-    감점이라 어떤 판단에도 쓸 수 없다.
+    These are axes the rules deliberately excluded at the build stage. Asking
+    about them in the survey gives the prototype low scores, but those scores
+    penalise something that was built that way by design, so they cannot
+    inform any decision.
     """
     p = build_prompt(MD)
     for axis in ("성능", "보안", "안정"):
@@ -76,12 +78,13 @@ def test_prompt_excludes_what_a_prototype_cannot_answer():
 
 
 def test_prompt_allows_for_features_the_respondent_never_reached():
-    """도달하지 못한 기능을 표현할 길이 있어야 한다.
+    """There must be a way to express a feature the respondent never reached.
 
-    룰의 Feature Validation 표에 "Not tested — Users did not reach this
-    feature" 행이 있다(Step 6). 즉 일부 기능에 닿지 못하는 것이 프로토타입에서는
-    정상이다. 그 선택지가 없으면 응답자는 안 써 본 기능을 추측으로 평가하고,
-    집계는 그것을 실제 신호와 구별하지 못한다.
+    The rules' Feature Validation table has a "Not tested — Users did not reach
+    this feature" row (Step 6). In other words, not reaching some features is
+    normal for a prototype. Without that option, respondents rate features they
+    never used by guessing, and the aggregation cannot tell that apart from a
+    real signal.
     """
     p = build_prompt(MD)
     assert "사용하지 않" in p or "해당 없" in p or "도달" in p
@@ -137,26 +140,29 @@ def test_prompt_is_korean_by_default():
 
 def test_prompt_is_english_for_an_english_project():
     p = build_prompt("# PROTOTYPE-demo", language="en")
-    # 프로토타입 명세가 프롬프트에 실리므로 명세의 글자는 제외하고 본다.
+    # The prototype spec is embedded in the prompt, so exclude the spec's text.
     body = p.replace("# PROTOTYPE-demo", "")
     assert not any("가" <= c <= "힣" for c in body), body[:400]
 
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_prompt_keeps_every_requirement(language):
-    """두 언어가 같은 제약을 담아야 한다. 하나라도 빠지면 그 언어의 설문이
-    프로토타입으로 답할 수 없는 것을 묻거나(성능·보안), 집계가 신호와 잡음을
-    구별할 수 없게 된다(해당 없음 선택지)."""
+    """Both languages must carry the same constraints. If any one is missing, that
+    language's survey either asks what a prototype cannot answer (performance,
+    security) or leaves the aggregation unable to tell signal from noise (the
+    not-applicable option)."""
     p = build_prompt("# spec", language=language)
-    assert "scale" in p and "choice" in p and "text" in p     # 문항 타입 3종
+    assert "scale" in p and "choice" in p and "text" in p     # the 3 question types
     assert "JSON" in p
-    assert "hypothesis" in p and "questions" in p             # 출력 스키마
-    # "사용하지 않았다/해당 없음" 선택지 제약. 빠지면 응답자가 써 보지 않은
-    # 기능을 추측으로 평가해 집계가 신호와 잡음을 구별할 수 없게 된다.
+    assert "hypothesis" in p and "questions" in p             # output schema
+    # The "did not use / not applicable" option constraint. Without it,
+    # respondents rate features they never used by guessing, and the
+    # aggregation cannot tell signal from noise.
     assert ("해당 없음" in p or "not applicable" in p), p[:600]
-    # 프로토타입으로 답할 수 없는 것을 묻지 말라는 금지 목록.
+    # The ban list: do not ask what a prototype cannot answer.
     assert ("보안" in p or "security" in p), p[:600]
-    # 가정형으로 물으라는 지시 — 데모의 완성도가 아니라 접근을 평가하게 한다.
+    # The instruction to ask hypothetically -- so respondents judge the approach,
+    # not the demo's polish.
     assert ("가정형" in p or "hypothetical" in p), p[:600]
 
 
@@ -164,9 +170,10 @@ def test_an_unknown_language_falls_back_to_korean():
     assert build_prompt("# spec", language="klingon") == build_prompt("# spec")
 
 
-# 명세는 프로젝트 언어와 다른 언어로 쓰여 있을 수 있다. 실제 PROTOTYPE-*.md는
-# 상류 룰의 **영어 헤딩**(## Use Case Overview 등) 안에 프로젝트 언어의 산문이
-# 담긴 혼합 문서다(prototype-md-format.md의 템플릿).
+# A spec may be written in a different language from the project's. A real
+# PROTOTYPE-*.md is a mixed document: project-language prose inside the upstream
+# rules' **English headings** (## Use Case Overview, etc.) (the template in
+# prototype-md-format.md).
 SPEC_IN_KOREAN = """# PROTOTYPE-todo.md
 ## Use Case Overview
 ### Problem Statement
@@ -178,16 +185,18 @@ SPEC_IN_KOREAN = """# PROTOTYPE-todo.md
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_prompt_states_the_output_language_explicitly(language):
-    """프롬프트가 출력 언어를 **말해야** 한다 — 자기 산문의 언어로 암시하는
-    것으로는 부족하다.
+    """The prompt must **state** the output language -- implying it through the
+    language of its own prose is not enough.
 
-    실측한 결함(2026-08-05): language="en"인데 문항이 전부 한국어로 나왔다.
-    프롬프트 어디에도 어느 언어로 쓰라는 지시가 없었고, `{md}`로 실린 명세가
-    더 가깝고 구체적인 신호라 모델이 명세의 언어를 따라갔다. Bedrock 실호출로
-    A/B 확인: 지시 한 줄을 앞에 붙인 것만 다른 프롬프트는 영어로 나왔다.
+    Observed defect (2026-08-05): with language="en", every question came out
+    in Korean. Nothing in the prompt said which language to write in, and the
+    spec embedded via `{md}` was the closer, more concrete signal, so the model
+    followed the spec's language. A/B confirmed with real Bedrock calls: a
+    prompt differing only by one prepended directive line came out in English.
 
-    discovery-config/CLAUDE.md가 기록한 그 실패와 같은 모양이다 — 맥락이 가까운
-    지시가 이긴다. 그래서 언어를 암시가 아니라 명시로 둔다.
+    Same shape as the failure recorded in discovery-config/CLAUDE.md -- the
+    instruction closest in context wins. So the language is stated explicitly,
+    not implied.
     """
     p = build_prompt(SPEC_IN_KOREAN, language=language)
     target = "한국어" if language == "ko" else "English"
@@ -196,22 +205,25 @@ def test_prompt_states_the_output_language_explicitly(language):
 
 
 def test_english_prompt_survives_a_korean_spec():
-    """영어 프롬프트에서 한국어는 **명세 안에만** 있어야 한다.
+    """In an English prompt, Korean must appear **only inside the spec**.
 
-    명세를 제거한 나머지(=지시문)에 한글이 남아 있으면 그 프롬프트는 두 언어로
-    말하는 것이고, 모델이 어느 쪽을 따를지 예측할 수 없다.
+    If Hangul remains in what is left after removing the spec (= the
+    instructions), the prompt is speaking two languages, and which one the
+    model follows is unpredictable.
     """
     p = build_prompt(SPEC_IN_KOREAN, language="en")
     body = p.replace(SPEC_IN_KOREAN, "")
     assert not any("가" <= c <= "힣" for c in body), body[:400]
 
 
-# ---- Envision 근거를 함께 싣기 (survey/inputs.py의 DiscoveryContext) ----
+# ---- Carrying the Envision evidence along (DiscoveryContext in survey/inputs.py) ----
 #
-# 왜 스펙만으로 부족한가: 스펙의 `Problem Statement`·`Business Value`는 한두 줄
-# 요약이고, 그 요약을 만든 근거(페인포인트별 심각도·빈도·현재 우회책, 우선순위와
-# 그 이유, 업종과 현행 업무 방식)는 Envision 산출물에만 있다. 설문은 그 근거를
-# 검증하므로, 요약만 보고 만든 문항은 무엇을 검증하는지 모른다.
+# Why the spec alone is not enough: the spec's `Problem Statement` and
+# `Business Value` are one- or two-line summaries, and the evidence behind them
+# (per-pain-point severity, frequency, and current workarounds; priorities and
+# their reasons; industry and current way of working) exists only in the
+# Envision artifacts. The survey validates that evidence, so questions written
+# from the summary alone do not know what they are validating.
 
 PAIN_POINTS = """# 범주화 페인 포인트 분석
 ## 1. 목표 고객
@@ -245,17 +257,18 @@ def test_context_documents_reach_the_prompt():
 
 
 def test_absent_context_adds_nothing():
-    """보조 문서가 없으면 프롬프트는 종전과 같아야 한다.
+    """Without the supporting documents, the prompt must be the same as before.
 
-    없는 문서를 가리키는 지시("아래 페인포인트 분석을 보고…")가 남으면 모델은
-    있지도 않은 절을 찾다가 스펙에서 페인포인트를 지어낸다.
+    If an instruction pointing at an absent document ("아래 페인포인트 분석을
+    보고…", "see the pain-point analysis below…") remains, the model looks for a
+    section that does not exist and then invents pain points from the spec.
     """
     assert build_prompt(MD, context=DiscoveryContext()) == build_prompt(MD)
     assert build_prompt(MD, context=None) == build_prompt(MD)
 
 
 def test_one_absent_document_does_not_drag_in_the_other_label():
-    """한쪽만 있을 때 다른 쪽 절은 나오지 않는다."""
+    """When only one is present, the other one's section does not appear."""
     only_pain = build_prompt(MD, context=DiscoveryContext(pain_points=PAIN_POINTS))
     assert "조정 사유가 진료과에 전달되지 않는다" in only_pain
     assert "엑셀과 메일로 수작업 취합한다" not in only_pain
@@ -268,13 +281,15 @@ def test_one_absent_document_does_not_drag_in_the_other_label():
 ])
 def test_context_carries_a_guard_against_the_banned_axes(language, market,
                                                          competition):
-    """근거 문서를 실으면 **금지 목록을 다시 못 박아야** 한다.
+    """When evidence documents are embedded, the **ban list must be restated**.
 
-    `pain-point-analysis.md`는 TAM/SAM·지불의향·경쟁 구도를 담는다(실측: 3개
-    프로젝트 3/3에 5·6절로 존재). 그런데 이 프롬프트는 가격·계약·구매 결정을
-    묻지 말라고 이미 명시한다. 가드 없이 그 재료만 넣으면 두 신호가 서로 싸우고,
-    더 가깝고 구체적인 쪽(방금 실린 표)이 이긴다 — 이 모듈이 출력 언어에서 이미
-    겪은 실패와 같은 모양이다(2026-08-05).
+    `pain-point-analysis.md` contains TAM/SAM, willingness to pay, and the
+    competitive landscape (measured: present as sections 5 and 6 in 3/3
+    projects). But this prompt already says explicitly not to ask about
+    pricing, contracts, or purchase decisions. Adding that material without a
+    guard makes the two signals fight, and the closer, more concrete one (the
+    table just embedded) wins -- the same shape as the failure this module
+    already hit with the output language (2026-08-05).
     """
     p = build_prompt(MD, context=FULL, language=language)
     tail = p.split(PAIN_POINTS)[-1] + p.split(BUSINESS_CONTEXT)[-1]
@@ -288,11 +303,11 @@ def test_context_carries_a_guard_against_the_banned_axes(language, market,
 ])
 def test_pain_point_section_asks_for_question_to_pain_point_mapping(language,
                                                                    needle):
-    """문항이 어느 페인포인트를 검증하는지 대응시키라고 말해야 한다.
+    """It must say to map each question to the pain point it validates.
 
-    `prototype-validation.md` Step 6이 프로토타입을 feature-level signal과
-    **pain-point mapping**으로 판정한다. 지금은 스펙 요약만 보고 그 대응을
-    추측하고 있었다.
+    `prototype-validation.md` Step 6 judges a prototype by feature-level signal
+    and **pain-point mapping**. Until now that mapping was being guessed from
+    the spec summary alone.
     """
     p = build_prompt(MD, context=FULL, language=language)
     assert needle in p.lower()
@@ -303,23 +318,24 @@ def test_pain_point_section_asks_for_question_to_pain_point_mapping(language,
     ("en", "top-ranked"),
 ])
 def test_pain_point_section_supplies_a_hypothesis_fallback(language, needle):
-    """스펙에 검증 가설이 없으면 페인포인트 1순위를 가설로 쓰라고 말해야 한다.
+    """If the spec has no validation hypothesis, it must say to use the top-ranked pain point as the hypothesis.
 
-    프롬프트는 "명세의 검증 가설·성공 기준"을 근거로 문항을 만들라고 하는데,
-    `## Validation Hypothesis`는 Path A.1 `prototype-spec.md`에만 있고
-    (prototype-validation.md:70) Path B의 `PROTOTYPE-{slug}.md` 양식에는
-    없다(prototype-md-format.md). Path B에서는 그 지시가 붙을 데가 없어 모델이
-    가설을 지어낸다.
+    The prompt says to build questions from "the spec's validation hypothesis
+    and success criteria", but `## Validation Hypothesis` exists only in Path
+    A.1's `prototype-spec.md` (prototype-validation.md:70) and not in Path B's
+    `PROTOTYPE-{slug}.md` format (prototype-md-format.md). In Path B that
+    instruction has nothing to attach to, so the model invents a hypothesis.
     """
     p = build_prompt(MD, context=FULL, language=language)
     assert needle in p.lower()
 
 
 def test_english_context_prompt_keeps_its_instructions_in_english():
-    """근거 문서가 한국어여도 지시문은 영어로 남아야 한다.
+    """Even when the evidence documents are Korean, the instructions must stay English.
 
-    이 모듈이 이미 겪은 실패다 — `{md}`로 실린 명세가 더 가깝고 구체적인 신호라
-    모델이 그 언어를 따라갔다(2026-08-05). 문서를 둘 더 실으면 그 압력이 커진다.
+    This module has already hit this failure -- the spec embedded via `{md}`
+    was the closer, more concrete signal, so the model followed its language
+    (2026-08-05). Embedding two more documents increases that pressure.
     """
     p = build_prompt(MD, context=FULL, language="en")
     body = p.replace(MD, "").replace(PAIN_POINTS, "").replace(BUSINESS_CONTEXT, "")
@@ -344,21 +360,23 @@ async def test_build_questionnaire_records_the_language(language):
                                    project_id="p1", slug="demo",
                                    now="2026-08-03T00:00:00+00:00",
                                    language=language)
-    # 언어를 questionnaire에 기록해야 공개 응답 페이지가 그 언어로 그릴 수 있다.
+    # The language must be recorded on the questionnaire so the public response
+    # page can render in that language.
     assert qn.language == language
 
 
-# ---- 페르소나 문항 ----
+# ---- Persona question ----
 #
-# 집계가 이 문항의 답으로 다른 문항을 모두 나눈다(store._aggregate_markdown).
-# 그래서 문항은 생성기가 짓고, 모델에게는 역할 이름만 받는다.
+# The aggregation splits every other question by this question's answer
+# (store._aggregate_markdown). So the generator writes the question itself and
+# takes only the role names from the model.
 
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_prompt_asks_for_personas_from_the_target_users(language):
     p = build_prompt("# spec", language=language)
-    assert '"personas"' in p                  # 출력 스키마
-    assert "Target Users" in p                # 어디서 가져오는지
-    # 역할을 묻는 문항을 따로 만들면 페르소나 문항이 둘이 된다.
+    assert '"personas"' in p                  # output schema
+    assert "Target Users" in p                # where they come from
+    # A separate question asking for the role would make two persona questions.
     assert ("역할을 묻지 마라" in p or "must not ask for the respondent's role" in p)
 
 
@@ -368,8 +386,8 @@ async def test_personas_become_a_required_first_question_with_an_out():
                                    token=TOK, project_id="p", slug="s", now="n")
     first = qn.questions[0]
     assert first.persona and first.type == "choice" and first.required
-    # 대상 사용자가 아닌 응답자가 고를 자리가 없으면 가장 가까운 역할을 골라
-    # 그 페르소나의 신호를 흐린다.
+    # Without an option for respondents who are not target users, they pick the
+    # closest role and blur that persona's signal.
     assert first.options == ["점포 관리자", "본사 MD", "해당 없음 / 기타"]
     assert [q.id for q in qn.questions[1:]] == ["q1", "q2", "q3"]
 
@@ -384,7 +402,7 @@ async def test_english_persona_question_is_english():
 
 
 async def test_no_personas_means_the_survey_is_as_before():
-    """명세에 대상 사용자가 없는 것은 설문을 못 만들 이유가 아니다."""
+    """A spec without target users is no reason the survey cannot be built."""
     for personas in (None, [], ["", "  "], "점포 관리자"):
         reply = dict(VALID) if personas is None else {**VALID, "personas": personas}
         qn = await build_questionnaire(MD, FakeAgent(json.dumps(reply, ensure_ascii=False)),
@@ -398,7 +416,8 @@ async def test_persona_names_are_cleaned():
                                    7, "A", "B", "C", "D", "E", "F"]}
     qn = await build_questionnaire(MD, FakeAgent(json.dumps(reply, ensure_ascii=False)),
                                    token=TOK, project_id="p", slug="s", now="n")
-    # 중복·빈 값·"기타"를 걸러내고, 상한(6)으로 자른 뒤 "기타"를 하나만 붙인다.
+    # Filter out duplicates, empty values, and "기타" (Other), cap at the limit
+    # (6), then append exactly one "기타".
     assert qn.questions[0].options == ["점포 관리자", "A", "B", "C", "D", "E",
                                        "해당 없음 / 기타"]
 

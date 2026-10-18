@@ -1,17 +1,17 @@
-# backend/aipds/credentials.py — 에이전트·프로토타입 프로세스에 Bedrock 전용 단기 자격증명을 준다.
+# backend/aipds/credentials.py — gives agent and prototype processes short-lived, Bedrock-only credentials.
 #
-# 실행 래퍼(aipds/launcher.py) 아래의 프로세스는 IMDS에 닿지 못한다(unit별 IPAddressDeny).
-# 대신 AWS SDK의 컨테이너 자격증명 규약을 쓴다: `AWS_CONTAINER_CREDENTIALS_FULL_URI`(루프백 HTTP)와
-# `AWS_CONTAINER_AUTHORIZATION_TOKEN`. SDK는 그 URI를 부르고, 만료되면 다시 부른다.
-# 실측(2026-09-23, 번들 CLI 2.1.277): IMDS가 막힌 채로 Bedrock 호출이 됐고, 만료 **뒤** 다음
-# 호출에서 재요청했다 — 그래서 알려 주는 만료를 실제보다 앞당긴다(EXPIRY_MARGIN).
+# Processes under the launch wrapper (aipds/launcher.py) cannot reach IMDS (per-unit IPAddressDeny).
+# Instead they use the AWS SDK's container credentials convention: `AWS_CONTAINER_CREDENTIALS_FULL_URI`
+# (loopback HTTP) and `AWS_CONTAINER_AUTHORIZATION_TOKEN`. The SDK calls that URI, and calls it again on expiry.
+# Observed (2026-09-23, bundled CLI 2.1.277): Bedrock calls worked with IMDS blocked, and it re-requested on
+# the next call **after** expiry -- so the expiry we report is moved earlier than the real one (EXPIRY_MARGIN).
 #
-# 주는 자격증명은 인스턴스 롤이 아니라 **AgentRole**(infra/lib/aipds-agent-creds-stack.ts)의
-# 것이다: Bedrock 호출만 된다. S3·Cognito·Secrets Manager는 없다.
+# The credentials handed out belong to **AgentRole** (infra/lib/aipds-agent-creds-stack.ts), not the
+# instance role: they can only call Bedrock. No S3, Cognito, or Secrets Manager.
 #
-# **왜 8000이 아닌 별도 포트인가.** Next의 `/api` 프록시도 127.0.0.1에서 8000으로 보내므로 앱 포트에 두면
-# `client.host`로는 외부 요청과 구분되지 않는다. 이 포트는 nginx가 모르는 포트다.
-# 그래도 루프백의 누구나 닿을 수 있으므로 모든 요청은 토큰을 검사한다.
+# **Why a separate port rather than 8000.** Next's `/api` proxy also sends from 127.0.0.1 to 8000, so on the
+# app port `client.host` could not distinguish this from external requests. nginx does not know this port.
+# Still, anyone on loopback can reach it, so every request is checked for the token.
 from __future__ import annotations
 
 import asyncio
@@ -32,20 +32,21 @@ PORT_ENV = "AIPDS_CREDENTIALS_PORT"
 DEFAULT_PORT = 8001
 PATH = "/credentials"
 
-#: 호출자에게 알리는 만료를 실제 STS 만료보다 이만큼 앞당긴다. SDK가 만료 뒤에야 다시 부르므로,
-#: 긴 스트림 도중 실제 만료를 맞지 않게 한다.
+#: The expiry reported to callers is moved this much earlier than the real STS expiry. The SDK only
+#: calls again after expiry, so this keeps a long stream from hitting the real expiry midway.
 EXPIRY_MARGIN = dt.timedelta(minutes=5)
-#: 캐시된 자격증명이 이보다 적게 남으면 새로 받는다. EXPIRY_MARGIN보다 커야 한다 — 알린 만료가
-#: 지나 다시 온 요청에 같은(이미 알린 만료가 지난) 값을 주지 않게.
+#: Fetch new credentials when the cached ones have less than this left. Must be larger than
+#: EXPIRY_MARGIN -- so a request that comes back after the reported expiry does not get the same
+#: value (whose reported expiry has already passed).
 REFRESH_BEFORE = dt.timedelta(minutes=10)
-#: 롤 체이닝(인스턴스 롤 → AgentRole)의 상한이 1시간이다.
+#: Role chaining (instance role → AgentRole) is capped at 1 hour.
 SESSION_SECONDS = 3600
 
-#: 자격증명을 받는 kind. host-build(npm install/build)는 LLM을 부를 일이 없다.
+#: The kinds that receive credentials. host-build (npm install/build) never calls an LLM.
 CREDENTIAL_KINDS = {"discovery", "build", "proto"}
 
-#: STS RoleSessionName이 받는 문자. ASCII로 한정한다 — 파이썬의 `\w`는 한글도 받는데
-#: project id는 한글일 수 있고, STS는 그 이름을 ValidationError로 거부한다.
+#: Characters STS RoleSessionName accepts. Restricted to ASCII -- Python's `\w` also matches Hangul,
+#: a project id can be in Hangul, and STS rejects such a name with a ValidationError.
 _SESSION_NAME_BAD = re.compile(r"[^\w+=,.@-]", re.ASCII)
 
 
@@ -86,7 +87,7 @@ class CredentialBroker:
     # ---- tokens ----
 
     def env_for(self, kind: str, project_id: str, slug: str | None) -> dict[str, str]:
-        """이 프로세스에 줄 env. 자격증명을 받지 않는 kind면 빈 dict."""
+        """The env to give this process. An empty dict for kinds that do not receive credentials."""
         if kind not in CREDENTIAL_KINDS:
             return {}
         return {
@@ -95,7 +96,7 @@ class CredentialBroker:
         }
 
     def issue(self, kind: str, project_id: str, slug: str | None) -> str:
-        """(kind, project, slug)의 토큰. 같은 셋에는 같은 토큰 — 재연결마다 늘지 않게."""
+        """The token for (kind, project, slug). Same triple, same token -- so they do not multiply on every reconnect."""
         grant = Grant(kind, project_id, slug)
         for token, known in self._tokens.items():
             if known == grant:
@@ -145,7 +146,7 @@ class CredentialBroker:
 
     async def respond(self, method: str, target: str,
                       authorization: str | None) -> tuple[int, dict | None]:
-        """(상태 코드, JSON 본문). HTTP와 떼어 둔 판정부 — 테스트가 직접 부른다."""
+        """(status code, JSON body). The decision logic kept apart from HTTP -- tests call it directly."""
         if method != "GET" or target.split("?", 1)[0] != PATH:
             return 404, None
         grant = self.resolve(authorization or "")

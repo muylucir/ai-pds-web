@@ -1,14 +1,14 @@
 // frontend/components/workspace/OpenDocButton.tsx
 import { useT } from "@/lib/i18n/provider";
 
-// 질문 폼 위의 "{이름} 보기". 문서를 읽고 답해야 하는 라운드(승인 게이트 —
-// "Envision — Step 6 Approval Gate" 등)에서 문서 드로어를 그 자리에서 연다.
-// 오른쪽 패널과 좁은 화면의 하단 시트가 같은 버튼을 쓴다.
+// The "{이름} 보기" (View {name}) above the question form. In rounds where the user must read a document
+// before answering (approval gates — "Envision — Step 6 Approval Gate" etc.), it opens the document drawer in place.
+// The right panel and the narrow-screen bottom sheet use the same button.
 //
-// 이름을 적는 이유: 드로어는 대화가 지금 다루는 문서를 연다. 그것이 이 질문과
-// 관련된 문서인지는 사용자가 판단해야 하므로, 무엇이 열릴지를 버튼에 쓴다.
-// 문서 아이콘. 이모지(📄)가 아니라 SVG인 이유: 이모지는 OS 폰트에 따라 빠진다
-// (headless Chromium 화면에서 실제로 빈칸이었다). 드로어 손잡이도 이것을 쓴다.
+// Why the name is shown: the drawer opens the document the conversation is currently on. Whether that is
+// the document related to this question is for the user to judge, so the button says what will open.
+// Document icon. Why SVG rather than an emoji (📄): emoji drop out depending on the OS font
+// (it was actually a blank on a headless Chromium screen). The drawer handle uses it too.
 export function DocIcon({ className = "w-3.5 h-3.5" }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"

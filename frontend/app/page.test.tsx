@@ -5,8 +5,8 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { API_BASE_URL } from "@/lib/api/client";
 
-// 생성 → 대시보드 이동 검증용. vitest 환경에는 AppRouter 컨텍스트가 없어
-// useRouter를 mock한다 (hoisted — Home import보다 먼저 적용).
+// For verifying create → dashboard navigation. The vitest environment has no AppRouter
+// context, so useRouter is mocked (hoisted — applied before the Home import).
 const pushMock = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock, replace: vi.fn() }),
@@ -20,7 +20,7 @@ describe("Project list screen", () => {
       http.get(`${API_BASE_URL}/projects`, () =>
         HttpResponse.json({
           projects: [
-            { project_id: "pilot1", name: "기획전 AI 어시스턴트" },
+            { project_id: "ws-m", name: "기획전 AI 어시스턴트" },
             { project_id: "bare", name: null },
           ],
           total: 2,

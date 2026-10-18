@@ -25,25 +25,25 @@ describe("ProgressCards", () => {
   it("shows overall progress and completed-stage counts", () => {
     render(<ProgressCards state={STATE} questionFileCount={3} artifactCount={7} />);
     expect(screen.getByText("1")).toBeInTheDocument();   // completed capabilities
-    // 분모는 스테이지 수(3)가 아니라 이 경로가 거치는 capability 수다.
+    // The denominator is not the number of stages (3) but the number of capabilities this path goes through.
     expect(screen.getByText("/ 4")).toBeInTheDocument();
     expect(screen.getByText("7")).toBeInTheDocument();   // artifacts
   });
 
-  // 질문 파일 개수는 "대기 중인 질문 수"가 아니다. 질문은 AskUserQuestion으로
-  // 전달되고 답변도 그 왕복으로 돌아오므로 파일의 `[Answer]:`는 영구히 비어
-  // 있다(discovery-config/CLAUDE.md의 override 섹션). 그 값을 미답변 수로 쓰면
-  // 사용자가 전부 답한 뒤에도 "대기 중인 질문 3"이 남고, 링크를 눌러도 답할
-  // 것이 없다 — 파일은 UI에서 편집할 수 없다.
+  // The question file count is not the "number of pending questions". Questions are
+  // delivered via AskUserQuestion and answers come back on that round trip, so the file's
+  // `[Answer]:` stays empty forever (the override section of discovery-config/CLAUDE.md).
+  // Using that value as the unanswered count leaves "3 pending questions" even after the user
+  // answered everything, and clicking the link gives nothing to answer — the file is not editable in the UI.
   it("labels the question-file count as a record, not as pending answers", () => {
     render(<ProgressCards state={STATE} questionFileCount={3} artifactCount={7} />);
     expect(screen.getByText("질문 기록")).toBeInTheDocument();
     expect(screen.queryByText("대기 중인 질문")).not.toBeInTheDocument();
   });
 
-  // 그 링크는 `/projects/{id}/questions`를 가리켰는데, 그 라우트는 은퇴해
-  // `?file=`을 버리고 /workspace로 리다이렉트한다. 답변할 곳은 워크스페이스의
-  // 질문 폼이므로 처음부터 거기로 보낸다.
+  // That link pointed to `/projects/{id}/questions`, but that route is retired; it drops
+  // `?file=` and redirects to /workspace. The place to answer is the workspace's question
+  // form, so send users there from the start.
   it("does not offer an answer-questions call to action (answers live in the workspace form)", () => {
     render(<ProgressCards state={STATE} questionFileCount={3} artifactCount={7} />);
     expect(screen.queryByRole("link", { name: /질문 답변하기/ })).not.toBeInTheDocument();

@@ -1,20 +1,21 @@
-# backend/aipds/handoff/readiness.py — 인계 패키지를 만들 재료가 무엇이 있고 무엇이 없는가.
+# backend/aipds/handoff/readiness.py — what material exists, and what is missing, for building the handoff package.
 #
-# **왜 있는가.** 인계 패키지(열린 결정·결정 장부)는 Discovery 산출물에서 유도하는
-# 웹 소유 파생물이다(docs/superpowers/plans/2026-10-09-handoff-package.md). 출발점마다
-# 룰이 남기는 산출물이 다르다 — Path B와 EP1은 Envision을 거치지 않아 PR/FAQ가 없다.
-# 그래서 생성 전에 "어느 섹션의 재료가 없는가"를 먼저 보여 주고, 없는 곳은 지어내지 않고
-# 보완 질문이나 "재료 없음"으로 넘긴다. 그 판정이 이 모듈이다.
+# **Why this exists.** The handoff package (open decisions, decision ledger) is a web-owned derivative
+# built from Discovery artifacts (docs/superpowers/plans/2026-10-09-handoff-package.md). Each starting
+# point leaves different artifacts from the rules — Path B and EP1 skip Envision, so there is no PR/FAQ.
+# So before generation we first show "which sections have no material", and where material is missing
+# we do not make anything up but hand it off as a supplementary question or as "재료 없음" (no source
+# material). This module makes that determination.
 #
-# **결정적이고 IO가 없다.** 경로 목록과 몇몇 파일의 내용만 받는다. 라우트가 읽어서 넘기고,
-# 같은 함수를 드릴 버킷 덤프에도 그대로 돌린다 — 판정 규칙을 실측으로 검증하는 경로가
-# 제품 경로와 같아야 둘이 갈라지지 않는다.
+# **Deterministic, with no IO.** It takes only the list of paths and the contents of a few files. The
+# route reads and passes them in, and the same function is run as-is on drill bucket dumps too — the
+# path that validates the rules against real data must be the same as the product path so the two do not diverge.
 #
-# **파일의 존재로 판정한다.** 상태 파일의 `Entry Point` 줄은 에이전트가 자유 서술로 쓰고
-# (실측 test2222: "Entry Point 3 (Path B — 보유 유스케이스에서 시작)"), ko 프로젝트는
-# 템플릿 라벨을 번역한다. 문구로 읽으면 언어마다 깨진다. 경로는 discovery-config/CLAUDE.md와
-# 상류 룰이 고정한다. 대가는 정밀도다: 파일이 있어도 그 절이 비어 있을 수 있고, 절 단위
-# 판정은 패키지 합성 단계가 한다.
+# **It decides by file existence.** The `Entry Point` line in the state file is written free-form by the
+# agent (measured on ws-n: "Entry Point 3 (Path B — 보유 유스케이스에서 시작)", i.e. "starting from
+# existing use cases"), and ko projects translate template labels. Reading the wording breaks per language.
+# Paths are fixed by discovery-config/CLAUDE.md and the upstream rules. The price is precision: a file can
+# exist while its section is empty, and per-section judgment happens in the package synthesis step.
 from __future__ import annotations
 
 import re
@@ -35,57 +36,58 @@ _USE_CASES = _INTAKE + "use-cases.md"
 _PRIORITIZATION = _DISCOVERY + "prioritization/"
 _STRATEGY = _DISCOVERY + "product-strategy/"
 _GTM = _DISCOVERY + "go-to-market/"
-#: 개발 조직에 넘기는 입구 문서. Path A에서는 Envision이 만들고 PR/FAQ가 그 Part 1이다.
+#: The entry document handed to the development organization. In Path A, Envision creates it and the PR/FAQ is its Part 1.
 DISCOVERY_DOCUMENT = _DISCOVERY + "discovery-document.md"
-#: Path B에서 에이전트가 프로토타입 디렉터리 밖에 두는 검증 계획(실측 test2222).
+#: The validation plan the agent places outside the prototype directory in Path B (measured on ws-n).
 _GLOBAL_VALIDATION_PLAN = _DISCOVERY + "validation-plan.md"
 _QUESTION_SUFFIX = "-questions.md"
 
-#: pain point 분석의 두 모양: 대화형(`pain-point-analysis.md`)과 URL·보고서형
-#: (`pain-points-from-url.md`, 실측 ws-b `pain-points-from-report.md`).
+#: Two shapes of pain point analysis: conversational (`pain-point-analysis.md`) and URL/report-based
+#: (`pain-points-from-url.md`, measured on ws-b: `pain-points-from-report.md`).
 _PAIN_POINTS = re.compile(
     r"^aiplc-docs/discovery/envision/(?:pain-point-analysis|pain-points-from-[^/]+)\.md$")
 _PAIN_POINT_ANALYSIS = _ENVISION + "pain-point-analysis.md"
 
-#: 검증 근거 파일. 앞의 것이 강하다.
+#: Validation evidence files. Earlier ones are stronger.
 _VALIDATION_RESULTS = "validation-results.md"
 _PLANNED = ("validation-questionnaire.md", "validation-plan.md")
-#: Proceed 직전의 명세 정합성 패스가 쓰는 "실제로 만든 명세"(discovery-config/CLAUDE.md).
+#: The "spec as actually built" written by the spec reconciliation pass just before Proceed (discovery-config/CLAUDE.md).
 _SPEC_AS_BUILT = "spec-as-built.md"
-#: 수정 이력 항목의 제목 — `## 2026-10-13 16:27 UTC · gen 1`(proto/prompts.change_history_entry).
-#: 시각은 언어와 상관없이 같은 모양이고, 정합성 패스가 적용한 항목을 이 시각 그대로 인용한다.
+#: Heading of a change history entry — `## 2026-10-13 16:27 UTC · gen 1` (proto/prompts.change_history_entry).
+#: The timestamp has the same shape regardless of language, and the reconciliation pass cites applied entries by exactly this timestamp.
 _HISTORY_ENTRY = re.compile(r"^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})", re.MULTILINE)
 
-#: AI-PLC가 Option A에 붙이는 "intelligent default" 표시. 문구가 아니라 화살표로 본다 —
-#: 실측(드릴 11개 프로젝트) 뒤의 말은 "제안", "추정", "Suggested", "Discovery 결과 …",
-#: "페인 포인트 …"로 제각각이고 `parsers.questions._RECO`가 읽는 "추천"은 0건이었다.
+#: The "intelligent default" marker AI-PLC attaches to Option A. It is detected by the arrow, not the wording —
+#: measured (11 drill projects), the words after it varied: "제안" (suggestion), "추정" (estimate), "Suggested",
+#: "Discovery 결과 …" (Discovery result …), "페인 포인트 …" (pain point …), and "추천" (recommended), which
+#: `parsers.questions._RECO` reads, appeared 0 times.
 SUGGESTION_MARK = "←"
-#: 답이 보기 글자인 두 모양: `"A"`, `"A: 부연"`(answer_summary 헤더의 계약).
+#: Two shapes where the answer is an option letter: `"A"`, `"A: note"` (the contract in the answer_summary header).
 _SINGLE_LETTER = re.compile(r"^([A-J])\s*(?::.*)?$", re.DOTALL)
 
 Origin = Literal["A.1", "A.2", "A", "B", "EP1"]
 SectionStatus = Literal["sourced", "partial", "missing", "derived"]
 ValidationStatus = Literal["validated", "survey", "planned", "none"]
-#: 기준 명세가 수정 이력을 반영했는가. not_needed 이력이 없다(승인 뒤 바뀐 것이 없다) ·
-#: current `spec-as-built.md`가 마지막 이력 항목까지 반영했다 · missing 이력은 있는데
-#: `spec-as-built.md`가 없다 · stale `spec-as-built.md`가 마지막 항목보다 앞에서 멈췄다.
+#: Whether the spec of record reflects the change history. not_needed: there is no history (nothing changed after
+#: approval) · current: `spec-as-built.md` reflects up to the last history entry · missing: there is history but
+#: no `spec-as-built.md` · stale: `spec-as-built.md` stopped before the last entry.
 ReconcileStatus = Literal["not_needed", "current", "missing", "stale"]
 
-#: Discovery가 다루는 주제의 순서와 키. 재료가 없는 주제는 보완 질문으로 묻는다.
+#: Order and keys of the topics Discovery covers. Topics with no material are asked as supplementary questions.
 SECTIONS = ("problem", "audience", "goals", "scenarios", "requirements",
             "non_goals", "constraints", "assumptions", "open_questions")
 
 
 class Prototype(BaseModel):
     id: str
-    #: 이 프로토타입의 기준 명세. 승인된 `spec-as-built.md`가 있으면 그쪽이다.
+    #: This prototype's spec of record. If an approved `spec-as-built.md` exists, it is that one.
     spec: str
     validation: ValidationStatus
     evidence: list[str]
-    #: missing·stale이면 패키지가 받는 명세는 사용자가 본 프로토타입과 다르다 — 빌드 세션이
-    #: 승인 뒤에 바꾼 것이 수정 이력에만 있다. 반영하는 곳은 Discovery의 정합성 패스다.
+    #: If missing or stale, the spec the package receives differs from the prototype the user saw — what the build
+    #: session changed after approval exists only in the change history. It is reflected by Discovery's reconciliation pass.
     reconcile: ReconcileStatus = "not_needed"
-    #: 수정 이력 파일. 이력이 없으면 None.
+    #: The change history file. None if there is no history.
     history: str | None = None
 
 
@@ -93,12 +95,12 @@ class Section(BaseModel):
     key: str
     number: int
     status: SectionStatus
-    #: 이 섹션의 재료가 된 파일. 1차 재료가 앞이다.
+    #: Files that served as material for this section. Primary material first.
     sources: list[str]
 
 
-#: 질문 파일이 속한 Discovery 단계. 화면이 파일 이름 대신 단계로 묶는다 — PM에게
-#: `strategy-questions.md`는 의미가 없다.
+#: The Discovery stage a question file belongs to. The screen groups by stage instead of file name — to a PM,
+#: `strategy-questions.md` means nothing.
 Stage = Literal["envision", "solution_analysis", "use_case_intake", "prioritization",
                 "prototype", "product_strategy", "go_to_market", "other"]
 _STAGE_DIRS: tuple[tuple[str, Stage], ...] = (
@@ -121,24 +123,24 @@ class AcceptedSuggestion(BaseModel):
     file: str
     number: int
     ask: str
-    #: 답의 원문(`"A"`, `"A: 부연"`, `"A,C"`).
+    #: The raw answer (`"A"`, `"A: note"`, `"A,C"`).
     answer: str
     stage: Stage = "other"
-    #: 고른 보기의 문장 — 실제 결정이다. 여럿이면 순서대로. `answer`의 글자만으로는 PM이 무엇을
-    #: 확인하는지 알 수 없다(실측: 확인 항목 40개가 전부 "고른 답: A"로 보였다).
+    #: Text of the chosen options — the actual decision. In order if several. From the letter in `answer` alone, the PM
+    #: cannot tell what they are confirming (measured: all 40 confirmation items showed up as "고른 답: A" (chosen answer: A)).
     choices: list[str] = []
-    #: 보기의 `←` 뒤에 AI가 붙인 메모(예: "페인 포인트 분석 기반 제안").
+    #: The note the AI attached after the option's `←` (e.g. "페인 포인트 분석 기반 제안", "suggested based on pain point analysis").
     note: str = ""
-    #: `"A: 부연"`의 부연 — PM이 보기에 덧붙인 말.
+    #: The remark in `"A: note"` — what the PM added to the option.
     remark: str = ""
 
 
 class AiDefaults(BaseModel):
-    #: 답이 있는 문항 수.
+    #: Number of questions with an answer.
     answered: int
-    #: 그중 AI 제안 표시가 붙은 보기가 있던 문항 수.
+    #: Of those, the number of questions that had an option with the AI-suggestion marker.
     suggested: int
-    #: 그중 제안된 보기를 고른 문항 수. 표시 없이 A에 둔 기본값은 셀 수 없으므로 하한이다.
+    #: Of those, the number where the suggested option was chosen. Defaults left at A without a marker cannot be counted, so this is a lower bound.
     accepted: int
     items: list[AcceptedSuggestion]
 
@@ -150,13 +152,13 @@ class Readiness(BaseModel):
     ai_defaults: AiDefaults
     discovery_document: str | None
     broken_references: list[str]
-    #: 생성을 막는 사유. 비어 있으면 만들 수 있다.
+    #: Reasons that block generation. If empty, it can be generated.
     blockers: list[str]
 
 
 def contents_needed(paths: Sequence[str]) -> list[str]:
-    """`assess`가 내용까지 읽어야 하는 파일 — 질문 파일, Discovery Document, 그리고 정합성
-    판정의 두 파일(수정 이력, `spec-as-built.md`)."""
+    """Files whose contents `assess` must read — question files, the Discovery Document, and the two files
+    for the reconciliation check (the change history and `spec-as-built.md`)."""
     names = (layout.CHANGE_HISTORY, _SPEC_AS_BUILT)
     return [p for p in paths
             if p.endswith(_QUESTION_SUFFIX) or p == DISCOVERY_DOCUMENT
@@ -164,7 +166,7 @@ def contents_needed(paths: Sequence[str]) -> list[str]:
 
 
 def assess(paths: Sequence[str], contents: Mapping[str, str]) -> Readiness:
-    """워크스페이스 상대 경로 목록과 `contents_needed`의 내용 → 인계 준비 상태."""
+    """List of workspace-relative paths plus the contents from `contents_needed` → handoff readiness."""
     present = set(paths)
     envision = any(p.startswith(_ENVISION) for p in present)
     specs = layout.discover(sorted(present))
@@ -181,8 +183,8 @@ def assess(paths: Sequence[str], contents: Mapping[str, str]) -> Readiness:
         discovery_document=DISCOVERY_DOCUMENT if has_document else None,
         broken_references=(missing_references(document, sorted(present))
                            if document is not None else []),
-        # 인계의 최소 재료는 "무엇을 만드는가"를 적은 명세다. 단계 미완료(Strategy·GTM
-        # 없음)는 막지 않는다 — 실측 11개 중 GTM까지 간 프로젝트는 하나였다.
+        # The minimum material for a handoff is a spec stating "what is being built". Incomplete stages (no Strategy
+        # or GTM) do not block — of the 11 measured projects, only one went as far as GTM.
         blockers=[] if specs else ["no_spec"],
     )
 
@@ -205,18 +207,18 @@ def _origin(present: set[str], envision: bool, spec_ids: set[str]) -> Origin | N
 
 
 def _reconcile(history: str | None, as_built: str | None) -> ReconcileStatus:
-    """수정 이력의 마지막 항목 시각이 `spec-as-built.md`에 인용돼 있는가.
+    """Whether the timestamp of the last change history entry is cited in `spec-as-built.md`.
 
-    **시각이 아니라 내용으로 본다.** 파일의 수정 시각은 번들 가져오기·동기화가 다시 쓰고, 이
-    모듈은 IO가 없다(헤더). 정합성 패스는 적용한 항목을 제목의 시각 그대로 적으므로
-    (discovery-config/CLAUDE.md), 마지막 항목의 시각이 없으면 그 항목 전에 멈춘 것이다.
+    **It checks by content, not by file time.** File modification times are rewritten by bundle import and sync,
+    and this module has no IO (header). The reconciliation pass records applied entries using exactly the heading
+    timestamp (discovery-config/CLAUDE.md), so if the last entry's timestamp is absent, it stopped before that entry.
     """
     stamps = _HISTORY_ENTRY.findall(history or "")
     if not stamps:
         return "not_needed"
     if as_built is None:
         return "missing"
-    # 모델이 ISO 모양(`2026-10-13T16:27`)으로 옮겨 적는 경우도 같은 인용이다.
+    # The model transcribing it in ISO shape (`2026-10-13T16:27`) counts as the same citation.
     return "current" if stamps[-1] in as_built.replace("T", " ") else "stale"
 
 
@@ -246,11 +248,11 @@ def _prototype(pid: str, spec: str, present: set[str],
 
 def _sections(present: set[str], prfaq: bool,
               prototypes: list[Prototype]) -> list[Section]:
-    """섹션마다 1차 재료(있으면 sourced)와 2차 재료(그것만 있으면 partial).
+    """For each section, primary material (sourced if present) and secondary material (partial if only that).
 
-    PR/FAQ는 Envision이 `discovery-document.md`의 Part 1로 쓴다 — Envision 없이 생긴
-    Discovery Document(실측 test2222의 v0.9 중간 통합)에는 없으므로 둘이 함께 있어야
-    PR/FAQ가 있다고 본다.
+    The PR/FAQ is written by Envision as Part 1 of `discovery-document.md` — a Discovery Document produced without
+    Envision (the v0.9 interim consolidation measured on ws-n) does not have it, so the PR/FAQ is considered
+    present only when both exist.
     """
     def under(prefix: str) -> list[str]:
         return sorted(p for p in present if p.startswith(prefix))
@@ -269,12 +271,12 @@ def _sections(present: set[str], prfaq: bool,
         "audience": (analysis + strategy, use_cases + specs),
         "goals": (strategy + gtm, specs),
         "scenarios": (specs, []),
-        # 제품 범위는 PR/FAQ가 잡는다. 명세만 있으면 요구사항이 프로토타입 크기로 줄어든다
-        # (PROTOTYPE 템플릿은 "도구 1~2개", "Mock Data"로 범위를 줄여 쓰게 한다).
+        # Product scope is set by the PR/FAQ. With only the spec, the requirements shrink to prototype size
+        # (the PROTOTYPE template has scope written down to "도구 1~2개" (1-2 tools) and "Mock Data").
         "requirements": (specs + prfaq_doc if specs and prfaq_doc else [],
                          specs or prfaq_doc),
-        # A.1 명세의 Out of Scope 표와 GTM의 MVP 범위가 제품의 "하지 않을 것"이다.
-        # PROTOTYPE의 Future Enhancements는 "이 프로토타입에서는 아님"이라 2차다.
+        # The Out of Scope table in an A.1 spec and the MVP scope in GTM are the product's "will not do".
+        # PROTOTYPE's Future Enhancements mean "not in this prototype", so they are secondary.
         "non_goals": (single + gtm, slugged),
         "constraints": (prfaq_doc, use_cases + specs),
         "assumptions": (prfaq_doc, specs),
@@ -282,7 +284,7 @@ def _sections(present: set[str], prfaq: bool,
     sections: list[Section] = []
     for number, key in enumerate(SECTIONS, start=1):
         if key == "open_questions":
-            # 다른 섹션의 빈칸과 보완 질문의 "모름"에서 유도한다 — 재료가 따로 없다.
+            # Derived from the gaps in other sections and the "don't know" answers to supplementary questions — it has no material of its own.
             sections.append(Section(key=key, number=number, status="derived", sources=[]))
             continue
         primary, secondary = table[key]
@@ -326,7 +328,7 @@ def suggested_letters(question: Question) -> set[str]:
 
 
 def _chosen_texts(question: Question, chosen: set[str]) -> tuple[list[str], str]:
-    """고른 보기의 문장들과, 그 보기에 AI가 붙인 `←` 메모(처음 것)."""
+    """Text of the chosen options, and the `←` note the AI attached to those options (the first one)."""
     choices: list[str] = []
     note = ""
     for option in question.options:
@@ -348,10 +350,10 @@ def _remark(answer: str) -> str:
 
 
 def chosen_letters(question: Question) -> set[str]:
-    """답이 보기 글자일 때만 그 글자들. 자유 서술은 빈 집합 — 수락으로 세지 않는다.
+    """The letters only when the answer is option letters. Free text gives the empty set — it is not counted as acceptance.
 
-    `answer_summary`가 펼치는 모양과 같다: `"A"`, `"A: 부연"`, `"A,C"`. 토큰 하나라도
-    보기 글자가 아니면 전체를 자유 서술로 본다("Broker: 큐를 …"를 B로 읽지 않는다).
+    Same shapes that `answer_summary` expands: `"A"`, `"A: note"`, `"A,C"`. If even one token is not an option
+    letter, the whole answer is treated as free text ("Broker: 큐를 …" ("Broker: the queue …") is not read as B).
     """
     value = (question.answer or "").strip()
     letters = {o.letter for o in question.options if not o.is_other}

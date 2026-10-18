@@ -106,11 +106,13 @@ async def test_s3store_keys_are_namespaced_by_prefix_moto():
             await p2.get("aiplc-docs/x.md")
 
 
-# ---- list_with_times: 목록을 최신 순으로 정렬하기 위한 시각 ----
+# ---- list_with_times: timestamps for sorting listings newest first ----
 #
-# 페이크는 쓰기 순번을 "시각"으로 쓰고(결정론), 실물은 S3의 `LastModified`를 쓴다.
-# **구현이 다르므로 실물도 따로 고정한다** — 페이크만 검사하면 실물이 0.0을 돌려주는
-# 회귀를 못 잡고, 그러면 `Workspace.list_artifacts`가 조용히 알파벳 순으로 되돌아간다.
+# The fake uses the write sequence number as the "time" (deterministic), while the real
+# one uses S3's `LastModified`. **Because the implementations differ, the real one is
+# pinned separately too** — checking only the fake would miss a regression where the
+# real one returns 0.0, and then `Workspace.list_artifacts` would silently revert to
+# alphabetical order.
 
 async def test_s3store_list_with_times_reports_last_modified_moto():
     with mock_aws():
@@ -126,14 +128,15 @@ async def test_s3store_list_with_times_reports_last_modified_moto():
         times = dict(await store.list_with_times("aiplc-docs/"))
 
         assert set(times) == {"aiplc-docs/audit.md", "aiplc-docs/prfaq.md"}
-        # 0.0이면 LastModified를 못 읽은 것이다 — 그 상태로는 정렬이 무의미해진다.
+        # 0.0 means LastModified could not be read — in that state sorting becomes
+        # meaningless.
         assert all(t > 0 for t in times.values()), times
 
 
 async def test_s3store_list_with_etags_still_works_after_the_split_moto():
-    """`list_with_etags`가 `_list_meta`를 공유하게 바뀌었다 — 복원 경로
-    (runner._restore_workspace_from_s3)가 그것으로 변경 파일을 고르므로 회귀하면
-    매 턴 전체를 다시 내려받거나 아무것도 안 받는다."""
+    """`list_with_etags` was changed to share `_list_meta` — the restore path
+    (runner._restore_workspace_from_s3) uses it to pick changed files, so a regression
+    would mean re-downloading everything every turn or downloading nothing."""
     with mock_aws():
         client = boto3.client("s3", region_name="ap-northeast-2")
         client.create_bucket(
@@ -150,10 +153,10 @@ async def test_s3store_list_with_etags_still_works_after_the_split_moto():
         assert first["aiplc-docs/audit.md"] != second["aiplc-docs/audit.md"]
 
 
-# ---- get_cached: ETag로 찾은 본문은 다시 받지 않는다 ----
+# ---- get_cached: a body found by ETag is not fetched again ----
 
 class _CountingClient:
-    """boto3 클라이언트를 감싸 get_object 호출만 센다."""
+    """Wraps the boto3 client and counts only get_object calls."""
 
     def __init__(self, inner):
         self._inner = inner
@@ -189,8 +192,9 @@ async def test_get_cached_skips_s3_for_a_known_etag_moto():
 
 
 async def test_get_cached_never_serves_an_overwritten_body_moto():
-    """같은 키에 다시 쓰면 ETag가 바뀐다 — 옛 본문은 새 ETag로 찾히지 않는다.
-    프로젝트 삭제 뒤 같은 id로 임포트하는 경우가 이 모양이다."""
+    """Writing the same key again changes its ETag — the old body cannot be found under
+    the new ETag. Importing under the same id after a project is deleted takes this
+    shape."""
     with mock_aws():
         store, counting = _moto_store()
         await store.put("t/main/0001.jsonl", "old")
@@ -205,8 +209,9 @@ async def test_get_cached_never_serves_an_overwritten_body_moto():
 
 
 async def test_get_cached_files_the_body_under_the_etag_s3_returned_moto():
-    """목록과 GET 사이에 객체가 바뀌면 목록의 ETag는 낡았다. 새 본문을 낡은 ETag
-    이름으로 담으면, 그 ETag를 다시 묻는 호출이 틀린 본문을 받는다."""
+    """If the object changes between the listing and the GET, the listing's ETag is
+    stale. If the new body were stored under the stale ETag name, a call that asks for
+    that ETag again would get the wrong body."""
     with mock_aws():
         store, counting = _moto_store()
         await store.put("t/main/0001.jsonl", "v1")
@@ -214,7 +219,7 @@ async def test_get_cached_files_the_body_under_the_etag_s3_returned_moto():
         await store.put("t/main/0001.jsonl", "v2")      # races the reader
 
         assert await store.get_cached(key, stale) == "v2"
-        # 낡은 ETag로 다시 물으면 캐시가 아니라 S3로 간다.
+        # Asking again with the stale ETag goes to S3, not the cache.
         await store.get_cached(key, stale)
         assert counting.gets == 2
 
@@ -224,10 +229,10 @@ def test_body_cache_evicts_least_recently_used_over_budget():
     cache = _BodyCache(max_bytes=10)
     cache.put(("b", "k1", "e"), "aaaa")
     cache.put(("b", "k2", "e"), "bbbb")
-    assert cache.get(("b", "k1", "e")) == "aaaa"     # k1이 최근으로
-    cache.put(("b", "k3", "e"), "cccc")              # 12 > 10 → k2가 나간다
+    assert cache.get(("b", "k1", "e")) == "aaaa"     # k1 becomes most recent
+    cache.put(("b", "k3", "e"), "cccc")              # 12 > 10 → k2 is evicted
     assert cache.get(("b", "k2", "e")) is None
     assert cache.get(("b", "k1", "e")) == "aaaa"
     assert cache.get(("b", "k3", "e")) == "cccc"
-    cache.put(("b", "huge", "e"), "x" * 11)          # 예산보다 큰 것은 담지 않는다
+    cache.put(("b", "huge", "e"), "x" * 11)          # larger than the budget: not cached
     assert cache.get(("b", "huge", "e")) is None

@@ -1,21 +1,26 @@
-# backend/aipds/capabilities.py — 스테이지 체크리스트 → AI-PDS의 6개 capability.
+# backend/aipds/capabilities.py — stage checklist → AI-PDS's 6 capabilities.
 #
-# **왜 묶는가.** `aiplc-state.md`의 `## Stage Progress`는 에이전트가 자유롭게 쓴
-# 목록이다(상류 템플릿은 `[Will be populated as workflow progresses]`뿐). 실측 픽스처
-# 다섯 개에서 그 길이가 5·6·11로 흔들렸고, 어느 것도 공식 문서의 6개와 같지 않았다 —
-# Workspace Detection·Mode Selection 같은 진행용 단계와 Solution Analysis·Prototype
-# Context Generation 같은 하위 단계가 같은 줄에 섰다. 사이드바가 그 목록을 그대로
-# 세면 "몇 단계짜리 프레임워크인가"에 화면이 공식 문서와 다른 답을 한다.
+# **Why group them.** `## Stage Progress` in `aiplc-state.md` is a list the agent
+# writes freely (the upstream template has only
+# `[Will be populated as workflow progresses]`). Across five real fixtures its length
+# fluctuated among 5, 6, and 11, and none matched the 6 in the official docs —
+# progress stages such as Workspace Detection and Mode Selection stood on the same
+# level as sub-stages such as Solution Analysis and Prototype Context Generation. If
+# the sidebar counted that list as is, the screen would give a different answer from
+# the official docs to "how many stages does this framework have".
 #
-# 공식 문서(docs/ai-pds-faq-ko.html Q1)는 6개 capability를 이 순서로 든다.
+# The official docs (docs/ai-pds-faq-ko.html Q1) list the 6 capabilities in this
+# order.
 # Envision · Use Case Intake · Prioritize · Prototype · Product Strategy · Go-to-Market.
 #
-# **화면에서는 "phase"다**(en; ko는 "단계"). AI-PDS 팀이 이 6개를 phase라고 부르고,
-# 화면은 프레임워크 팀의 용어를 따른다. 코드의 이름(capability)은 FAQ를 따른 것이고
-# API 필드(`ProjectState.capabilities`)이기도 해서 그대로 둔다.
+# **On screen they are "phases"** (en; ko uses "단계"). The AI-PDS team calls these 6
+# phases, and the screen follows the framework team's terminology. The name in code
+# (capability) follows the FAQ and is also an API field (`ProjectState.capabilities`),
+# so it stays as is.
 #
-# **룰을 고치지 않고 읽는 쪽에서 묶는다.** 상태 파일은 그대로이고, 원래 목록은
-# `ProjectState.stages`에 남는다(프로토타입 모드 판정 등이 원래 이름을 본다).
+# **Group on the reading side without changing the rules.** The state file stays as
+# is, and the original list remains in `ProjectState.stages` (prototype-mode detection
+# and the like look at the original names).
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Iterable
@@ -23,7 +28,8 @@ from typing import TYPE_CHECKING, Iterable
 if TYPE_CHECKING:
     from aipds.models import CapabilityState, StageState
 
-#: (key, 표시 이름) — 공식 문서의 순서다. 표시 이름은 ko 문서도 번역하지 않는다.
+#: (key, display name) — in the official docs' order. Display names are not translated
+#: even in the ko docs.
 CAPABILITIES: tuple[tuple[str, str], ...] = (
     ("envision", "Envision"),
     ("use_case_intake", "Use Case Intake"),
@@ -33,15 +39,17 @@ CAPABILITIES: tuple[tuple[str, str], ...] = (
     ("go_to_market", "Go-to-Market"),
 )
 
-#: 스테이지 이름(소문자) 부분 문자열 → capability. **위에서부터 처음 맞는 것**이
-#: 이긴다. 순서가 의미를 가진다:
-#:   - 진행용 단계가 맨 앞이다 — `Discovery Mode Selection`이 다른 규칙에 걸리지 않게.
-#:   - Go-to-Market이 Product Strategy보다 앞이다 — `Go-to-Market Strategy`.
-#:   - Prioritize가 Intake보다 앞이다 — `Use Case Prioritization`.
-#: Solution Analysis는 Envision으로 간다: 룰에서 PR/FAQ 직후 해법의 수를 정하는
-#: 단계이고, 공식 6개에는 따로 없다. Discovery Document는 GTM 뒤에 문서를 닫는
-#: 단계라 GTM에 넣는다. 실측 스테이지 이름은 ko 프로젝트도 영어였지만, 에이전트가
-#: 번역할 때를 위해 한국어 표기를 함께 둔다.
+#: Stage name (lowercase) substring → capability. **The first match from the top**
+#: wins. Order is significant:
+#:   - Progress stages come first — so `Discovery Mode Selection` does not hit another
+#:     rule.
+#:   - Go-to-Market comes before Product Strategy — `Go-to-Market Strategy`.
+#:   - Prioritize comes before Intake — `Use Case Prioritization`.
+#: Solution Analysis maps to Envision: in the rules it is the stage right after PR/FAQ
+#: that decides the number of solutions, and it has no slot of its own among the
+#: official 6. Discovery Document is the stage that closes the document after GTM, so
+#: it goes into GTM. Real stage names were English even in ko projects, but Korean
+#: spellings are included as well for when the agent translates them.
 _RULES: tuple[tuple[str | None, tuple[str, ...]], ...] = (
     (None, ("workspace detection", "mode selection", "워크스페이스", "모드 선택")),
     ("go_to_market", ("go-to-market", "go to market", "gtm", "discovery document",
@@ -55,7 +63,8 @@ _RULES: tuple[tuple[str | None, tuple[str, ...]], ...] = (
 
 
 def capability_of(stage_name: str) -> str | None:
-    """스테이지 이름이 속한 capability key. 진행용 단계와 모르는 이름은 None."""
+    """The capability key a stage name belongs to. None for progress stages and
+    unknown names."""
     low = stage_name.lower()
     for key, needles in _RULES:
         if any(n in low for n in needles):
@@ -64,18 +73,19 @@ def capability_of(stage_name: str) -> str | None:
 
 
 def rollup(stages: Iterable[StageState]) -> list[CapabilityState]:
-    """스테이지 목록 → 6개 capability의 상태. 항상 6개, 공식 순서.
+    """Stage list → state of the 6 capabilities. Always 6, in the official order.
 
-    한 capability의 상태는 그 아래 묶인 스테이지들로 정한다:
-      - 모두 completed → completed
-      - 하나라도 in_progress이거나, 일부만 completed → in_progress
-      - 그 밖(모두 pending) → pending
+    A capability's state is determined by the stages grouped under it:
+      - all completed → completed
+      - any in_progress, or only some completed → in_progress
+      - otherwise (all pending) → pending
 
-    묶인 스테이지가 **하나도 없으면** 두 경우다. 뒤쪽 capability에 스테이지가 있으면
-    이 경로가 거치지 않은 것이다 — `not_applicable`. Path A(PR/FAQ에서 시작)는
-    Intake·Prioritize를, Path B와 기존 PROTOTYPE 파일로 들어온 프로젝트는 Envision을
-    건너뛴다. 뒤쪽에도 없으면 아직 목록에 오르지 않은 것이므로 `pending`이다 —
-    에이전트는 목록을 진행하며 채우기도 하므로, 없다는 것만으로 건너뛴 것이 아니다.
+    When **no** stages are grouped under it, there are two cases. If a later
+    capability has stages, this path skipped it — `not_applicable`. Path A (starting
+    from a PR/FAQ) skips Intake and Prioritize; Path B and projects that came in with
+    an existing PROTOTYPE file skip Envision. If the later ones have none either, it
+    simply has not been listed yet, so it is `pending` — the agent also fills in the
+    list as it progresses, so absence alone does not mean it was skipped.
     """
     from aipds.models import CapabilityState
 

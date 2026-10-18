@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// route handler는 process.env를 모듈 로드 시점이 아니라 호출 시점에 읽어야
-// 한다(cognitoEnv()가 함수인 이유). 테스트가 env를 먼저 세팅한다.
+// The route handler must read process.env at call time, not module load time (which is why
+// cognitoEnv() is a function). The test sets env first.
 beforeEach(() => {
   process.env.COGNITO_HOSTED_UI_DOMAIN = "pool.auth.ap-northeast-2.amazoncognito.com";
   process.env.COGNITO_CLIENT_ID = "client-abc";
@@ -50,12 +50,12 @@ describe("GET /api/auth/callback", () => {
     for (const name of ["aipds_access", "aipds_id", "aipds_refresh"]) {
       expect(joined).toContain(`${name}=`);
     }
-    // 토큰이 JS에 노출되지 않아야 한다 — 이 설계의 핵심 성질이다.
+    // The token must not be exposed to JS — this is the core property of this design.
     for (const c of setCookies.filter((c) => /^aipds_(access|id|refresh)=/.test(c))) {
       expect(c).toMatch(/HttpOnly/i);
       expect(c).toMatch(/SameSite=Lax/i);
     }
-    // 왕복용 쿠키는 소비 후 삭제된다.
+    // The round-trip cookies are deleted after being consumed.
     expect(joined).toMatch(/aipds_pkce=;|aipds_pkce=""/);
     expect(joined).toMatch(/aipds_state=;|aipds_state=""/);
   });
@@ -71,7 +71,7 @@ describe("GET /api/auth/callback", () => {
   });
 
   it("rejects a state mismatch without calling the token endpoint", async () => {
-    // CSRF 방어: 공격자가 유도한 콜백은 우리가 심은 state 쿠키와 맞지 않는다.
+    // CSRF defense: a callback induced by an attacker does not match the state cookie we planted.
     const f = mockTokenEndpoint();
     const { GET } = await import("./route");
     const res = await GET(request(
@@ -85,8 +85,8 @@ describe("GET /api/auth/callback", () => {
   });
 
   it("clears the round-trip cookies even on a state mismatch", async () => {
-    // 실패 경로에서도 aipds_pkce/aipds_state/aipds_next를 지운다 — 성공 경로에서만
-    // 지우면 실패한 시도의 PKCE 자재가 다음 로그인까지 브라우저에 남는다.
+    // aipds_pkce/aipds_state/aipds_next are cleared on the failure path too — clearing them only on the
+    // success path would leave a failed attempt's PKCE material in the browser until the next login.
     mockTokenEndpoint();
     const { GET } = await import("./route");
     const res = await GET(request(
@@ -135,7 +135,7 @@ describe("GET /api/auth/callback", () => {
   });
 
   it("refuses an off-site next path", async () => {
-    // open redirect 방어: next는 우리 사이트 내부 경로여야 한다.
+    // Open redirect defense: next must be a path inside our site.
     mockTokenEndpoint();
     const { GET } = await import("./route");
     const res = await GET(request(
@@ -157,15 +157,15 @@ describe("GET /api/auth/callback", () => {
 });
 
 describe("GET /api/auth/callback — Location은 오리진을 새지 않는다", () => {
-  // 실측 배포 버그: CloudFront 뒤에서 Location이 https://localhost:3000/...로
-  // 나왔다. Next 15는 req.url을 Host 헤더가 아니라 서버 자체 origin으로
-  // 조립하므로 new URL(next, req.url)은 프록시 뒤에서 내부 주소를 샌다.
-  // 상대 Location이면 브라우저가 현재 오리진(CloudFront)으로 해석한다.
+  // Measured deployment bug: behind CloudFront, Location came out as https://localhost:3000/....
+  // Next 15 assembles req.url from the server's own origin rather than the Host header, so
+  // new URL(next, req.url) leaks the internal address behind a proxy.
+  // With a relative Location, the browser resolves it against the current origin (CloudFront).
   it("redirects relatively after a successful exchange", async () => {
     mockTokenEndpoint();
     const { GET } = await import("./route");
     const res = await GET(request(
-      // 프록시 뒤 상황 재현: 내부 주소로 들어온 요청.
+      // Reproduces the behind-a-proxy situation: a request that came in at the internal address.
       "http://localhost:3000/api/auth/callback?code=c1&state=s1",
       { aipds_pkce: "v", aipds_state: "s1", aipds_next: "/projects/p1/dashboard" },
     ) as never);
@@ -188,12 +188,12 @@ describe("GET /api/auth/callback — Location은 오리진을 새지 않는다",
   });
 
   it("still refuses an off-site next cookie (open redirect)", async () => {
-    // 상대 Location으로 바꾸면서 safeNext 방어가 느슨해지지 않았는지 —
-    // "//evil.example"은 상대값처럼 보이지만 브라우저는 오프사이트로 읽는다.
+    // Whether the safeNext defense loosened when switching to a relative Location —
+    // "//evil.example" looks like a relative value, but the browser reads it as off-site.
     const { GET } = await import("./route");
     for (const evil of ["https://evil.example/x", "//evil.example", "/\\evil.example"]) {
-      // 반복마다 mock을 새로 세운다 — 한 번만 세우면 두 번째 교환이 실패해
-      // exchange_failed로 떨어지고, 방어가 동작한 것처럼 오해하게 된다.
+      // Set up the mock fresh on every iteration — setting it up only once makes the second exchange fail
+      // and fall into exchange_failed, giving the false impression that the defense worked.
       mockTokenEndpoint();
       const res = await GET(request(
         "https://app.example.com/api/auth/callback?code=c1&state=s1",

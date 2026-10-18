@@ -25,7 +25,7 @@ import {
   checkUpload, problemFromError, uploadProblemText, type UploadProblem,
 } from "@/lib/uploads";
 
-// The workspace screen — grid ratio 1:5:5 (좌 스테이지 : 채팅 : 컨텍스트). The
+// The workspace screen — grid ratio 1:5:5 (left stages : chat : context). The
 // generated document opens in a drawer (WorkspaceDocPanel) laid OVER the grid
 // rather than taking a column: as a 4th column (1:3.5:3.5:4) it left the
 // question form 412px at 1440px (AI-PDS team feedback, 2026-10). The grid keeps a
@@ -45,8 +45,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const { modelLabel, language, readOnly } = useProjectMeta(projectId);
   const { items, streaming, send, submitAnswers, interrupt, pendingQuestions, stages, lastDocument, prototypeReady, changedPaths, historyLoading, context, activeDoc, turnSeq } =
     useWorkspaceStream(projectId);
-  // 스테이지가 바뀌면 상태 파일을 다시 읽는다 — GTM이 끝나는 순간 인계 배너가 떠야 하고,
-  // 그 판정은 라이브 이벤트가 아니라 상태 파일(capability)이 한다(HandoffReadyBanner 헤더).
+  // When the stage changes, reread the state file — the handoff banner must appear the moment GTM
+  // ends, and that judgment is made by the state file (capability), not live events
+  // (HandoffReadyBanner header).
   const reloadState = state.reload;
   useEffect(() => {
     if (stages.length) reloadState();
@@ -57,15 +58,16 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   // turn means the conversation has already started, so the welcome card
   // must not reappear over it.
   const live = liveActivity(items);
-  // 열람 멤버에게는 시작 카드를 보이지 않는다 — 그 버튼이 첫 턴을 보낸다.
+  // Do not show the start card to read-only members — that button sends the first turn.
   const showWelcome = !readOnly && !historyLoading && items.length === 0 && !pendingQuestions
     && !streaming;
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
-  // 문서 드로어. 처음에는 닫혀 있다 — 질문에 답할 폭이 기본이다.
+  // Document drawer. Closed at first — the width for answering questions is the default.
   const [docOpen, setDocOpen] = useState(false);
   const openDoc = useCallback(() => setDocOpen(true), []);
-  // 드로어가 지금 보여 줄 문서(질문 폼의 "{이름} 보기"). 드로어가 알려 준다.
+  // The document the drawer should show now (the question form's "{이름} 보기" (view {name})).
+  // The drawer reports it.
   const [currentDocPath, setCurrentDocPath] = useState<string | null>(null);
   const currentDocName = currentDocPath ? currentDocPath.slice(currentDocPath.lastIndexOf("/") + 1) : null;
   // Dismissible document-update notice (spec §5): track which version the
@@ -80,8 +82,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   const [attachments, setAttachments] = useState<{ path: string; original: string | null }[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
-  // 채팅 영역에 파일을 끌어 온 동안. dragenter/leave는 자식 요소를 지날 때마다
-  // 짝으로 오므로 깊이를 센다 — 불리언 하나면 자식 위에서 오버레이가 깜빡인다.
+  // While a file is being dragged into the chat area. dragenter/leave come in pairs every time
+  // a child element is crossed, so the depth is counted — with a single boolean the overlay
+  // flickers over children.
   const [dragOver, setDragOver] = useState(false);
   const dragDepth = useRef(0);
   // Bumped right before every send/submitAnswers call site — ChatTimeline
@@ -119,8 +122,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     setSheetOpen(false);
   }
 
-  // 파일 하나를 올려 칩에 넣는다. 첨부 모달과 채팅 영역 드롭이 같은 길을 쓴다.
-  // 올리기 전에 알 수 있는 문제(형식·크기)는 보내지 않고 바로 돌려준다.
+  // Upload one file and put it in a chip. The attach modal and chat-area drop take the same path.
+  // Problems knowable before upload (format, size) are returned right away without sending.
   const attach = useCallback(async (file: File): Promise<UploadProblem | null> => {
     const problem = checkUpload(file);
     if (problem) return problem;
@@ -133,8 +136,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     }
   }, [projectId]);
 
-  // 드롭은 모달을 거치지 않는다 — 형식을 아는 사람의 지름길이다. 실패한 파일만
-  // 이유와 함께 입력창 위에 남긴다.
+  // A drop does not go through the modal — it is a shortcut for people who know the formats. Only
+  // the failed files remain above the input, with their reasons.
   async function attachDropped(files: File[]) {
     setUploadError(null);
     const failures: string[] = [];
@@ -173,8 +176,8 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
     send(text);
   }
 
-  // useCallback: 우측 패널(memo)에 내려가는 유일한 콜백이다. 렌더마다 새 함수면
-  // 스트리밍 중 프레임마다 그 패널이 다시 그려진다.
+  // useCallback: this is the only callback passed down to the right panel (memo). If it were
+  // a new function on every render, that panel would redraw on every frame while streaming.
   const submitAnswersAndStick = useCallback((answers: Record<string, string>) => {
     setStickSignal((n) => n + 1);
     submitAnswers(answers);
@@ -196,17 +199,19 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
   }, [sheetOpen]);
 
   return (
-    // relative: 심층 방어 — 후손의 absolute 요소(sr-only 등)가 static 조상
-    // 체인을 타고 문서 루트 기준으로 배치되면 <html>에 유령 오버플로가 생겨
-    // 포커스 이동만으로 헤더가 말려 올라간다(ui-bug.png). 루트를 포지셔닝
-    // 컨텍스트로 만들어 이 클래스의 버그를 페이지 차원에서 차단한다.
+    // relative: defense in depth — if a descendant's absolute element (sr-only, etc.) is
+    // positioned relative to the document root by riding up a chain of static ancestors, a
+    // ghost overflow appears on <html> and the header rolls up from a mere focus move
+    // (ui-bug.png). Making the root a positioning context blocks this class of bug at the
+    // page level.
     <div className="relative h-screen flex flex-col overflow-hidden">
       <AppHeader activeTab="workspace" projectId={projectId} modelLabel={modelLabel}
                  projectLanguage={language} readOnly={readOnly} />
-      {/* overflow-clip: 닫힌 드로어는 translate-x-full로 화면 오른쪽 밖에 있다. 그것이
-          스크롤 가능한 넘침이 되면 포커스 이동 하나로 화면 전체가 옆으로 밀린다(실측 —
-          WorkspaceDocPanel의 preventScroll 주석). hidden이 아니라 clip인 이유: hidden은
-          코드 스크롤(focus·scrollIntoView)을 허용하고, clip은 스크롤 상자 자체를 만들지 않는다. */}
+      {/* overflow-clip: the closed drawer sits off-screen to the right via translate-x-full. If
+          that became scrollable overflow, a single focus move would push the whole screen sideways
+          (measured — the preventScroll comment in WorkspaceDocPanel). Why clip rather than
+          hidden: hidden allows programmatic scrolling (focus, scrollIntoView), while clip does
+          not create a scroll box at all. */}
       <div className="relative flex-1 grid min-h-0 grid-cols-1 pr-9 overflow-clip lg:grid-cols-[1fr_5fr_5fr]">
         <StageSidebar state={state.data} events={stages} />
 
@@ -222,8 +227,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             dragDepth.current = Math.max(0, dragDepth.current - 1);
             if (dragDepth.current === 0) setDragOver(false);
           }}
-          // 파일을 끄는 동안은 늘 막는다 — 막지 않으면 놓는 순간 브라우저가 그 파일을
-          // 열어 워크스페이스를 떠난다. 턴 중에는 📎처럼 받지 않는다.
+          // Always block while a file is being dragged — otherwise, the moment it is dropped
+          // the browser opens that file and leaves the workspace. During a turn it is not
+          // accepted, like 📎.
           onDragOver={(e) => {
             if (hasFiles(e)) e.preventDefault();
           }}
@@ -243,11 +249,12 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               {t("upload.dropOverlay")}
             </div>
           )}
-          {/* Discovery가 프로토타입을 빌드로 넘겼을 때의 어포던스.
-              **에이전트의 안내 문장에 의존하지 않는다** — 2026-08-17까지는 그
-              문장이 나오지 않아 사용자가 Discovery에서 막혔다(실측 ws-a-v5:
-              Prototypes 탭 안내 0회). 닫기 버튼을 두지 않은 것도 의도다: 다음
-              단계로 가는 유일한 문이므로 실수로 닫으면 다시 막힌다. */}
+          {/* The affordance for when Discovery has handed the prototype over to build.
+              **It does not depend on the agent's guidance sentence** — until 2026-08-17 that
+              sentence did not appear and users got stuck in Discovery (measured ws-a-v5: 0
+              mentions of the Prototypes tab). Having no close button is also intentional: it is
+              the only door to the next stage, so closing it by mistake would leave them stuck
+              again. */}
           <HandoffReadyBanner projectId={projectId} state={state.data} className="m-3" />
           {prototypeReady && (
             <div
@@ -272,8 +279,9 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             >
               <span className="text-violet-900">
                 {t("page.docUpdated").replace("{version}", lastDocument.version)}{" "}
-                {/* 리뷰 화면으로 떠나지 않고 그 자리에서 드로어로 연다 — 드로어는
-                    activeDoc(= 이 문서)을 따라가므로 무엇을 열지 넘길 필요가 없다. */}
+                {/* Open it in the drawer in place instead of leaving for the review screen — the
+                    drawer follows activeDoc (= this document), so there is no need to pass what
+                    to open. */}
                 <button
                   type="button"
                   onClick={() => {
@@ -327,10 +335,11 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
             paths={attachments.map((a) => a.path)}
             onRemove={(p) => setAttachments((prev) => prev.filter((x) => x.path !== p))}
           />
-          {/* 진행 상황은 대화 흐름이 아니라 **화면**의 것이다 — 스크롤 밖, 입력창
-              바로 위에 마지막 활동 한 줄만. 말풍선 옆에서 함께 갱신되던 종전
-              방식은 토큰 스트리밍과 겹쳐 산만했다. 목록은 턴이 끝난 뒤 말풍선
-              아래에 접힌 진행 기록이 갖는다. */}
+          {/* Progress belongs to the **screen**, not the conversation flow — outside the scroll,
+              just one line of the latest activity right above the input. The former approach of
+              updating it alongside the bubble overlapped with token streaming and was
+              distracting. The list is held by the collapsed progress record under the bubble
+              after the turn ends. */}
           {live && <LiveActivityBar activity={live} />}
           {readOnly ? (
             <p className="mx-4 md:mx-8 mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -399,7 +408,7 @@ export default function WorkspacePage({ params }: { params: Promise<{ projectId:
               <OpenDocButton
                 name={currentDocName}
                 onClick={() => {
-                  // 시트가 드로어보다 위에 뜨므로 먼저 닫는다.
+                  // The sheet appears above the drawer, so close the drawer first.
                   setSheetOpen(false);
                   openDoc();
                 }}

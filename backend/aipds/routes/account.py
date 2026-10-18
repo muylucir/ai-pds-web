@@ -1,14 +1,14 @@
-# backend/aipds/routes/account.py — 자기 계정 조작 (admin 전용이 아니다).
+# backend/aipds/routes/account.py — operations on one's own account (not admin-only).
 #
-# admin_users.py와 나누는 이유는 인가 모델이 다르기 때문이다. 그쪽은 Admin* API로
-# **남의** 계정을 다루므로 admin 역할과 백엔드의 IAM 권한이 필요하다. 여기는
-# Cognito 셀프서비스 API로 **자기** 계정만 다루고, 인가 수단은 요청에 실려 온
-# access 토큰 그 자체다 — 그래서 새 IAM 권한이 없고, 남의 비밀번호를 바꿀 경로도
-# 구조적으로 없다.
+# It is split from admin_users.py because the authorization model differs. That one handles **other people's**
+# accounts via the Admin* APIs, so it needs the admin role and the backend's IAM permissions. This one handles
+# only **one's own** account via Cognito self-service APIs, and the means of authorization is the access token
+# carried in the request itself — so there are no new IAM permissions, and there is structurally no path
+# to change someone else's password.
 #
-# 오류 번역표가 admin_users.py와 다른 것도 그 차이에서 나온다: 값을 고른 주체가
-# 서버가 아니라 사용자이므로, 정책 위반은 우리 결함(500)이 아니라 사용자에게
-# 돌려줄 입력 오류(400)다.
+# The error translation table differs from admin_users.py for the same reason: the one who chose the value is
+# the user, not the server, so a policy violation is not our defect (500) but an input error to return to
+# the user (400).
 from __future__ import annotations
 
 import logging
@@ -25,41 +25,41 @@ _log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/me")
 
-# Cognito 오류 코드 → (HTTP 상태, 에러 코드). 목록에 없는 코드는 502다.
+# Cognito error code → (HTTP status, error code). Codes not in the list are 502.
 #
-# `NotAuthorizedException`이 여기 없는 것은 실수가 아니다 — 그 코드는 두 상황을
-# 뜻하고 메시지로만 갈린다(_not_authorized 참조).
+# `NotAuthorizedException` being absent here is not a mistake — that code means two situations
+# and they are distinguished only by message (see _not_authorized).
 _ERRORS: dict[str, tuple[int, str]] = {
-    # 새 비밀번호가 풀 정책을 못 맞췄다. admin_users.py는 같은 코드를 500으로
-    # 보는데, 그쪽 값은 서버가 생성했으므로 정책 미달이면 우리 결함이다.
+    # The new password did not meet the pool policy. admin_users.py treats the same code as 500,
+    # because there the server generated the value, so failing the policy is our defect.
     "InvalidPasswordException": (400, ec.PASSWORD_POLICY),
     "InvalidParameterException": (400, ec.BAD_REQUEST),
-    # 관리자가 비밀번호를 재설정해 계정이 임시 비밀번호 상태로 돌아갔다.
-    # 지금 세션의 토큰으로는 바꿀 수 없다 — 임시 비밀번호로 다시 로그인해야 한다.
+    # An admin reset the password and the account went back to the temporary-password state.
+    # It cannot be changed with the current session's token — the user must log in again with the temporary password.
     "PasswordResetRequiredException": (403, ec.REAUTH_REQUIRED),
     "UserNotFoundException": (404, ec.USER_NOT_FOUND),
-    # Cognito가 시도 횟수를 제한한다. 502로 뭉개면 화면이 "서버 오류"라고 말하는데,
-    # 사용자가 해야 할 일은 잠시 기다리는 것이다.
+    # Cognito limits the number of attempts. Flattening it to 502 makes the screen say "server error",
+    # while what the user needs to do is wait a moment.
     "LimitExceededException": (429, ec.TOO_MANY_REQUESTS),
     "TooManyRequestsException": (429, ec.TOO_MANY_REQUESTS),
 }
 
 
 def _not_authorized(message: str) -> tuple[int, str]:
-    """`NotAuthorizedException`의 두 뜻을 가른다.
+    """Distinguishes the two meanings of `NotAuthorizedException`.
 
-    Cognito는 "현재 비밀번호가 틀렸다"와 "토큰에 셀프서비스 스코프가 없다"에
-    **같은 코드**를 쓴다. 구분이 필요한 이유는 사용자가 해야 할 일이 정반대라는
-    것이다. 스코프가 없는 토큰을 쥔 사용자에게 "현재 비밀번호가 틀립니다"를
-    보여주면 무엇을 입력해도 실패하는 화면이 된다 — 실제로 필요한 것은 재로그인이다.
-    그런 토큰은 앱 클라이언트의 허용 스코프가 흔들리면 발급된다(HostingStack의
-    `UpdateUserPoolClient` 재전송이 PUT 시맨틱이라 목록을 통째로 덮어쓴다 —
-    infra/test/hosting-stack.assert.ts가 그 드리프트를 막는다).
+    Cognito uses **the same code** for "the current password is wrong" and "the token lacks the
+    self-service scope". The distinction is needed because what the user has to do is the exact
+    opposite. Showing "the current password is wrong" to a user holding a token without the scope
+    produces a screen that fails no matter what is entered — what they actually need is to log in again.
+    Such tokens are issued when the app client's allowed scopes drift (HostingStack's
+    `UpdateUserPoolClient` resend has PUT semantics and overwrites the whole list —
+    infra/test/hosting-stack.assert.ts guards against that drift).
 
-    메시지 문자열에 의존하는 것은 견고하지 않다. 그래서 기본값을 "비밀번호가
-    틀렸다"로 두었다: Cognito가 문구를 바꾸면 스코프 누락이 비밀번호 오류로
-    보이는데, 그 오진은 재로그인 안내가 사라지는 것뿐이다. 반대로 두면 흔한
-    오타가 매번 "다시 로그인하세요"가 되어 사용자를 로그아웃 루프로 보낸다.
+    Depending on the message string is not robust. That is why the default is "the password is
+    wrong": if Cognito changes the wording, a missing scope shows up as a password error, and that
+    misdiagnosis only loses the re-login hint. The other way around, a common typo would become
+    "please log in again" every time and send the user into a logout loop.
     """
     if "scope" in message.lower():
         return 403, ec.REAUTH_REQUIRED
@@ -71,15 +71,15 @@ def _http_error(exc: CognitoError) -> HTTPException:
         status, detail = _not_authorized(exc.message)
     else:
         status, detail = _ERRORS.get(exc.code, (502, ec.PASSWORD_CHANGE_FAILED))
-    # 원문 코드는 내부 정보다 — 로그에만 남긴다(admin_users.py와 같은 규율).
+    # The raw code is internal information — it goes only to the log (same discipline as admin_users.py).
     _log.warning("change_password rejected (%s) -> %d", exc.code, status)
     return HTTPException(status_code=status, detail=detail)
 
 
 class PasswordBody(BaseModel):
-    # 길이 하한만 둔다. 정책 검사는 Cognito가 하고, 여기서 두 벌로 만들면
-    # 반드시 어긋나며 어긋난 쪽이 사용자에게 거짓말을 한다. `min_length=1`은
-    # 정책이 아니라 "빈 요청을 업스트림까지 보내지 않는다"는 규율이다.
+    # Only a minimum length is enforced. Policy checks are done by Cognito; making a second copy here
+    # is bound to drift, and the drifted side lies to the user. `min_length=1` is not
+    # policy but the discipline of "do not send empty requests upstream".
     current_password: str = Field(min_length=1)
     new_password: str = Field(min_length=1)
 
@@ -88,17 +88,17 @@ class PasswordBody(BaseModel):
 async def change_password(body: PasswordBody,
                           me: Principal = Depends(require_user),
                           token: str = Depends(access_token)) -> None:
-    """자기 비밀번호를 바꾼다.
+    """Changes one's own password.
 
-    `token`을 그대로 Cognito에 넘긴다 — 이 라우트가 신원을 따로 판단하지 않는
-    것이 요점이다. `me`는 로그에만 쓴다.
+    `token` is passed straight to Cognito — the point is that this route does not judge identity
+    on its own. `me` is used only for logging.
     """
     import aipds.app as app_module
 
     if app_module.cognito_config() is None:
-        # 인증 미설정(로컬 개발). require_user가 가상 admin으로 통과시키므로
-        # 여기서 막지 않으면 아무 일도 하지 않고 204를 내어, 사용자에게
-        # "비밀번호를 바꿨다"는 거짓 확인을 준다.
+        # Auth unset (local development). require_user lets it through as a virtual admin, so
+        # without blocking here it would do nothing and return 204, giving the user a false
+        # confirmation that "the password was changed".
         raise HTTPException(status_code=503, detail=ec.AUTH_NOT_CONFIGURED)
 
     try:
@@ -107,7 +107,7 @@ async def change_password(body: PasswordBody,
             body.current_password, body.new_password)
     except CognitoError as exc:
         raise _http_error(exc) from exc
-    # 토큰을 무효화하지 않는다: `ChangePassword`는 세션을 끊지 않으므로 사용자는
-    # 로그인 상태를 유지한다. 전역 로그아웃(GlobalSignOut)을 붙이면 비밀번호를
-    # 바꾼 직후 화면이 로그인으로 튕기는데, 그 이유를 사용자가 알 수 없다.
+    # The token is not invalidated: `ChangePassword` does not end the session, so the user
+    # stays logged in. Adding a global sign-out (GlobalSignOut) would bounce the screen to login right after
+    # changing the password, and the user would have no way to know why.
     _log.info("password changed for %s", me.username)

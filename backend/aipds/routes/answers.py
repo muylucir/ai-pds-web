@@ -25,20 +25,21 @@ def _numbers(answers: dict[str, str]) -> dict[int, str]:
 
 @router.post("/projects/{pid}/questions/{name:path}/answers")
 async def submit_file_answers(pid: str, name: str, body: AnswersBody):
-    """파일 질문 라운드의 답변 제출: 파일에 쓰고 **이어갈 턴을 시작해** 그 id를 돌려준다.
+    """Submit answers for a file question round: write them to the file, **start the turn that continues**, and return its id.
 
-    왜 별 엔드포인트인가. `POST /answers`는 파킹된 `can_use_tool` future를 깨워
-    **같은 턴**을 이어간다. 파일 질문 라운드에는 그 future가 없다 — PostToolUse
-    훅이 `continue_: False`로 턴을 이미 끝냈다(claude_driver._on_post_tool_use).
-    그래서 이어갈 곳이 턴이 아니라 파일이고, 에이전트는 **새 턴**으로 다시 불러야
-    한다.
+    Why a separate endpoint. `POST /answers` wakes the parked `can_use_tool` future and
+    continues **the same turn**. A file question round has no such future — the PostToolUse
+    hook already ended the turn with `continue_: False` (claude_driver._on_post_tool_use).
+    So what continues is the file, not the turn, and the agent must be called again in a
+    **new turn**.
 
-    새 턴의 텍스트를 백엔드가 만드는 이유: 에이전트가 읽는 문장은 프로젝트 언어를
-    따라야 한다(agent/prompts.py 헤더). 프론트가 만들면 두 언어를 프론트가
-    관리하게 되고, 그것이 2026-08-04 결함의 모양이다.
+    Why the backend builds the new turn's text: sentences the agent reads must follow the
+    project language (agent/prompts.py header). If the frontend built them, the frontend
+    would have to manage two languages, and that is the shape of the 2026-08-04 defect.
 
-    스트림 엔드포인트를 새로 만들지 않는다 — 돌려준 id를 기존 `GET /events?turn=`로
-    보면 된다. 도는 턴이 있으면 파일에 쓰기 **전에** 409로 거절한다(`ensure_idle`).
+    No new stream endpoint is created — the returned id can be watched with the existing
+    `GET /events?turn=`. If a turn is running, the request is rejected with 409 **before**
+    writing to the file (`ensure_idle`).
     """
     ws = await ensure_workspace(pid)
     ensure_idle(ws)
@@ -50,41 +51,44 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     language = app_module.project_language(pid)
-    # 답변을 턴 텍스트에 함께 싣는다. 이 텍스트가 트랜스크립트에 사용자 말풍선으로
-    # 남고 히스토리 복원이 그것을 그대로 그리므로, 답변이 없으면 복원된 대화의 모든
-    # 라운드가 같은 문구로 보인다(prompts.file_answers_recorded의 근거 참조).
+    # Carry the answers in the turn text. This text stays in the transcript as the user's
+    # bubble and history restoration draws it as is, so without the answers every round of
+    # the restored conversation would look like the same phrase (see the rationale in
+    # prompts.file_answers_recorded).
     #
-    # **렌더는 백엔드가 한 벌로 소유한다(2026-08-21).** `qfile`이 보기 목록을 들고
-    # 있으므로 letter를 라벨로 푸는 것은 여기서만 할 수 있고, 그 결과를 응답으로 함께
-    # 돌려주면 프론트가 같은 판별을 두 번째로 구현할 이유가 없어진다 — 화면과 기록이
-    # **같은 문자열**이 된다(aipds/answer_summary.py 헤더에 그 전말이 있다).
+    # **The backend owns rendering as a single copy (2026-08-21).** `qfile` carries the
+    # option list, so resolving a letter to its label can only happen here, and returning
+    # the result in the response removes any reason for the frontend to implement the same
+    # resolution a second time — the screen and the record become **the same string** (the
+    # full story is in the aipds/answer_summary.py header).
     #
-    # `numbered`를 넘기는 이유: `body.answers`는 프론트가 보낸 문자열 키이고
-    # 정렬이 사전순이 된다("12" < "2"). 문항 번호는 숫자여야 문항 목록과 맞는다.
+    # Why pass `numbered`: `body.answers` has the string keys the frontend sent, which sort
+    # lexicographically ("12" < "2"). Question numbers must be numeric to match the question list.
     summary = answer_summary(qfile, numbered, language)
     text = prompts.file_answers_recorded(language, name, summary)
-    # 상태 파일이 아직 없으면 재개 턴에 그것을 지목한다.
+    # If the state file does not exist yet, point the resume turn at it.
     #
-    # 훅과 턴 경계 재조정(agent/reconcile.py)은 파일이 **있을 때** 그것을 화면으로
-    # 옮긴다. 파일 자체가 없으면 옮길 것이 없고, 그것을 만들 수 있는 것은
-    # 에이전트뿐이다 — 스테이지 이름을 아는 것이 에이전트뿐이기 때문이다
-    # (prompts.state_file_missing에 그 근거가 있다).
+    # The hook and turn-boundary reconciliation (agent/reconcile.py) bring the file to the
+    # screen **when it exists**. If the file itself is missing, there is nothing to bring,
+    # and only the agent can create it — because only the agent knows the stage name
+    # (the rationale is in prompts.state_file_missing).
     #
-    # `current_stage is None`으로 판정하는 이유: 파일 부재보다 넓다. 상류 룰이
-    # 요구하는 형태에는 항상 Current Stage 줄이 있으므로, 그 줄이 없다는 것은
-    # 파일이 없든 손상됐든 **읽을 상태가 없다**는 뜻이다.
+    # Why decide by `current_stage is None`: it is broader than the file being absent. The
+    # form the upstream rules require always has a Current Stage line, so the absence of that
+    # line means **there is no readable state**, whether the file is missing or corrupted.
     try:
         if (await ws.get_state()).current_stage is None:
             text += "\n\n" + prompts.state_file_missing(language)
     except Exception:
-        # 상태를 읽지 못하는 것으로 답변 제출을 막지 않는다 — 사용자는 폼을 이미
-        # 제출했고, 이 노트는 배지를 살리는 보조 지시일 뿐이다.
+        # Failing to read state does not block answer submission — the user has already
+        # submitted the form, and this note is only an auxiliary instruction to keep the badge alive.
         logging.getLogger("aipds.agent").exception(
             "state probe for the resume turn failed — continuing without the note")
-    # `summary`는 프론트가 말풍선에 **그대로** 쓰는 문자열이다. `text`(모델이 읽는
-    # 턴 텍스트)는 그것을 포함하고 뒤에 지시를 붙인다 — 사람이 읽을 부분이 앞에 오고
-    # 기계용 지시가 꼬리가 되는 것이 `approvalMarker.ts`가 적어 둔 원칙이다.
-    # 감사 로그에는 사용자가 고른 것만 남긴다 — `text`의 뒤쪽은 에이전트용 지시다.
+    # `summary` is the string the frontend uses **as is** in the bubble. `text` (the turn
+    # text the model reads) contains it and appends instructions — the human-readable part
+    # comes first and the machine instructions form the tail, which is the principle recorded
+    # in `approvalMarker.ts`.
+    # Only what the user chose goes into the audit log — the tail of `text` is instructions for the agent.
     record = UserInput(text=summary, source="answers", language=language,
                        detail=name.rsplit("/", 1)[-1])
     job = start_turn(ws, "message", lambda: ws.runner.send_message(text, record))

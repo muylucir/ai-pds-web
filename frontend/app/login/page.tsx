@@ -7,9 +7,9 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 
-// 오류 코드 → 딕셔너리 키. 알 수 없는 코드는 일반 문구로 떨어진다 — 쿼리
-// 파라미터를 그대로 렌더하면 반사형 XSS 표면이 된다. 값이 keyof Dict이므로
-// 오타가 컴파일 에러가 된다.
+// Error code → dictionary key. Unknown codes fall back to the generic wording — rendering the query
+// parameter as is would create a reflected XSS surface. The values are keyof Dict, so
+// typos become compile errors.
 const MESSAGE_KEYS: Record<string, keyof Dict> = {
   state_mismatch: "login.stateMismatch",
   exchange_failed: "login.exchangeFailed",
@@ -20,8 +20,8 @@ const MESSAGE_KEYS: Record<string, keyof Dict> = {
 const BUTTON_CLASS =
   "mt-6 block w-full rounded-lg bg-violet-600 px-4 py-3 text-center text-sm font-medium text-white hover:bg-violet-700";
 
-/* Link가 아니라 a여야 한다: /api/auth/login은 페이지가 아니라 외부 리다이렉트를
-   내는 route handler이고, 클라이언트 라우팅으로는 그 리다이렉트를 따라갈 수 없다. */
+/* It must be an a, not a Link: /api/auth/login is not a page but a route handler that issues an
+   external redirect, and client-side routing cannot follow that redirect. */
 function LoginButton({ href }: { href: string }) {
   const t = useT();
   return (
@@ -31,11 +31,11 @@ function LoginButton({ href }: { href: string }) {
   );
 }
 
-// useSearchParams()를 쓰는 부분만 따로 떼어 Suspense 안에 둔다. Next 15는 이
-// 페이지를 빌드 시 프리렌더하는데, 그때 훅이 suspend하면서 CSR로 넘어가려 한다 —
-// 경계가 없으면 빌드가 "useSearchParams() should be wrapped in a suspense
-// boundary"로 실패한다. 경계를 좁게 잡아야 카드 껍데기는 서버 HTML에 그대로
-// 남는다.
+// Only the part that uses useSearchParams() is split out and placed inside Suspense. Next 15
+// prerenders this page at build time, and the hook then suspends and tries to bail out to CSR —
+// without a boundary, the build fails with "useSearchParams() should be wrapped in a suspense
+// boundary". Keeping the boundary narrow leaves the card shell in the server HTML
+// as is.
 function LoginActions() {
   const t = useT();
   const params = useSearchParams();
@@ -67,8 +67,8 @@ export default function LoginPage() {
             </span>
             AI-PDS
           </div>
-          {/* 로그인 전에 언어를 고를 길이다. 고른 값은 쿠키로 남아 로그인 뒤 화면에도
-              이어진다(LanguageSwitcher). */}
+          {/* The way to pick a language before logging in. The chosen value is kept in a cookie and carries over
+              to the screens after login (LanguageSwitcher). */}
           <LanguageSwitcher alwaysVisible />
         </div>
         <h1 className="mt-6 text-xl font-bold">{t("login.signIn")}</h1>
@@ -76,16 +76,16 @@ export default function LoginPage() {
           {t("login.subtitle")}
         </p>
 
-        {/* fallback은 next 없는 기본 로그인 링크다 — 파라미터를 못 읽어도 로그인
-            자체는 눌릴 수 있어야 하고, 최악의 경우 원래 가려던 화면 대신 기본
-            화면으로 떨어지는 것뿐이다. */}
+        {/* The fallback is the default login link without next — even if the parameter cannot be read, login
+            itself must be clickable, and the worst case is just landing on the default screen instead of the
+            one originally intended. */}
         <Suspense fallback={<LoginButton href="/api/auth/login" />}>
           <LoginActions />
         </Suspense>
 
-        {/* 로그인 전에도 읽혀야 하는 링크다. 계정을 기다리는 사람이 이 도구가
-            무엇인지 알아볼 수 있는 유일한 경로이고, lib/auth/gate.ts가
-            /manual을 공개 경로로 두는 이유다. */}
+        {/* A link that must be readable even before logging in. It is the only way for someone waiting for
+            an account to find out what this tool is, and why lib/auth/gate.ts
+            treats /manual as a public path. */}
         <Link
           href="/manual"
           className="mt-4 block text-center text-sm text-violet-700 hover:underline"

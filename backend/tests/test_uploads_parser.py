@@ -25,7 +25,7 @@ def _xlsx_bytes():
 
 
 def _pdf_bytes(text: str | None) -> bytes:
-    """한 쪽짜리 PDF. text가 None이면 텍스트 층 없이 사각형만 그린다(스캔본과 같다)."""
+    """A one-page PDF. If text is None, it draws only a rectangle with no text layer (same as a scan)."""
     stream = (f"BT /F1 18 Tf 30 150 Td ({text}) Tj ET ".encode() if text else b"") \
         + b"0 0 1 rg 100 30 80 60 re f"
     objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -70,7 +70,7 @@ def _pptx_bytes():
     from pptx.enum.chart import XL_CHART_TYPE
     from pptx.util import Inches
     prs = Presentation()
-    slide = prs.slides.add_slide(prs.slide_layouts[1])      # 제목 + 본문
+    slide = prs.slides.add_slide(prs.slide_layouts[1])      # title + body
     slide.shapes.title.text = "현재 문제"
     body = slide.placeholders[1].text_frame
     body.text = "결품이 잦다"
@@ -79,7 +79,7 @@ def _pptx_bytes():
     sub.level = 1
     slide.notes_slide.notes_text_frame.text = "점장 인터뷰에서 나온 이야기"
 
-    slide = prs.slides.add_slide(prs.slide_layouts[5])      # 제목만
+    slide = prs.slides.add_slide(prs.slide_layouts[5])      # title only
     slide.shapes.title.text = "지표"
     rows = slide.shapes.add_table(2, 2, Inches(1), Inches(2), Inches(4), Inches(1)).table
     rows.cell(0, 0).text, rows.cell(0, 1).text = "지표", "값"
@@ -101,8 +101,8 @@ _HS = "http://www.hancom.co.kr/hwpml/2011/section"
 
 
 def _hwpx_bytes(with_manifest=True):
-    """한컴 HWPX 구조를 그대로 본뜬다: 문단(p) > 런(run) > 텍스트(t), 표는 런 안의
-    tbl > tr > tc > subList > p, 머리말은 ctrl > header."""
+    """Mimics the Hancom HWPX structure as is: paragraph (p) > run (run) > text (t); tables are
+    tbl > tr > tc > subList > p inside a run; headers are ctrl > header."""
     def p(inner):
         return f'<hp:p><hp:run>{inner}</hp:run></hp:p>'
     cell = ('<hp:tc><hp:subList>{body}</hp:subList>'
@@ -151,10 +151,10 @@ def test_md_passthrough():
 
 def test_xlsx_becomes_markdown_table():
     content, _ = convert("survey.xlsx", _xlsx_bytes())
-    assert "## 의견" in content            # 시트명 헤더
+    assert "## 의견" in content            # sheet name header
     assert "| 이름 | 의견 |" in content
     assert "| 김PM | 너무 느려요 |" in content
-    # 셀 안의 줄바꿈·파이프가 표를 깨뜨리지 않는다.
+    # Line breaks and pipes inside cells do not break the table.
     assert "| 이PO | 줄바꿈 있음 \\| 파이프 |" in content
 
 
@@ -174,9 +174,9 @@ def test_pptx_reads_slides_tables_charts_groups_and_notes():
     assert "Notes: 점장 인터뷰에서 나온 이야기" in content
     assert "## Slide 2: 지표" in content
     assert "| 결품률 | 7% |" in content
-    assert "| 매출 | 10.0 | 12.0 |" in content          # 차트의 계열 값
+    assert "| 매출 | 10.0 | 12.0 |" in content          # the chart's series values
     assert "그룹 안 메모" in content
-    # 제목은 머리줄에만 — 본문에서 다시 나오지 않는다.
+    # The title only in the heading line — it does not appear again in the body.
     assert content.count("현재 문제") == 1
 
 
@@ -268,7 +268,7 @@ def test_truncation_marks_and_cuts():
     content, truncated = convert("big.txt", ("가" * (MAX_CHARS + 100)).encode("utf-8"))
     assert truncated is True
     assert content.endswith("[... 50,000자 초과분 생략]")
-    assert len(content) <= MAX_CHARS + 30   # 마커 길이 여유
+    assert len(content) <= MAX_CHARS + 30   # headroom for the marker length
 
 
 def test_unsupported_extension_raises():
@@ -322,7 +322,7 @@ def test_a_pdf_keeps_its_text_and_its_original_side_by_side():
 
 
 def test_a_pdf_without_a_text_layer_is_stored_as_the_original_only():
-    """스캔 PDF — 빈 변환본을 두면 에이전트가 그것을 읽고 "내용 없음"으로 판단한다."""
+    """Scanned PDF — leaving an empty converted copy would make the agent read it and conclude "no content"."""
     up = prepare("스캔.pdf", _pdf_bytes(None))
     assert up.text_key is None and up.text is None
     assert _KEY_RE.match(up.original_key).group(1) == "스캔.pdf"
@@ -369,8 +369,8 @@ _REPO = Path(__file__).resolve().parents[2]
 
 
 def test_the_frontend_offers_exactly_what_the_backend_accepts():
-    """프론트(lib/uploads.ts)는 올리기 전에 거르려고 받는 형식과 상한을 한 벌 더 갖는다.
-    한쪽만 바꾸면 고를 수 없는 형식이 생기거나, 골랐는데 415·413이 난다."""
+    """The frontend (lib/uploads.ts) keeps another copy of the accepted formats and caps, to filter before uploading.
+    Changing only one side creates formats that cannot be picked, or ones that can be picked but give 415/413."""
     ts = (_REPO / "frontend/lib/uploads.ts").read_text(encoding="utf-8")
     groups = re.search(r"export const UPLOAD_GROUPS = \[(.*?)\] as const", ts, re.S)
     assert groups, "lib/uploads.ts의 UPLOAD_GROUPS를 찾지 못했다"
@@ -380,10 +380,10 @@ def test_the_frontend_offers_exactly_what_the_backend_accepts():
 
 
 def test_every_hop_in_front_of_the_backend_admits_the_upload_cap():
-    """요청은 nginx → Next 미들웨어 → 백엔드를 지난다. nginx는 넘으면 413을 내지만
-    Next는 넘는 바디를 **잘라서** 넘긴다 — 그러면 큰 파일이 깨진 채 도착한다.
-    두 앞단의 상한은 원본 상한에 multipart 머리를 얹은 값보다 커야 하고, nginx는
-    부팅 때 쓰는 값(user-data)과 떠 있는 인스턴스를 맞추는 값(aipds-update)이 같아야 한다."""
+    """Requests pass through nginx → Next middleware → backend. nginx returns 413 when exceeded, but
+    Next **truncates** an oversized body and passes it on — then a large file arrives broken.
+    The caps of the two front hops must exceed the original cap plus the multipart header, and for nginx
+    the value used at boot (user-data) and the value that aligns running instances (aipds-update) must match."""
     need = MAX_UPLOAD_BYTES + 64 * 1024
     user_data = (_REPO / "infra/lib/user-data.ts").read_text(encoding="utf-8")
     update = (_REPO / "infra/scripts/aipds-update").read_text(encoding="utf-8")

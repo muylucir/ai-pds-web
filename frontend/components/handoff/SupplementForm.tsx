@@ -1,14 +1,14 @@
-// 보완 질문 — 재료가 없는 곳만 묻는다(서버 handoff/supplement 헤더의 조건). 빈 섹션의 고정
-// 문항과, 마지막 PRD가 열린 질문으로 남긴 PM 결정 중 빌드 전에 정할 것이다. 빌드 중에 정해도
-// 되는 결정은 접어 둔다 — PRD가 그동안 어떻게 만들지를 적어 두었다.
+// Supplementary questions — ask only where there is no material (the conditions in the server's handoff/supplement header). Fixed
+// questions for empty sections, plus the PM decisions the last PRD left as open questions that must be settled before the build.
+// Decisions that can be settled during the build are collapsed — the PRD has written down how to build in the meantime.
 //
-// 문항에 AI 기본값을 채워 두지 않는다. 실측에서 표시된 기본값을 PM이 고른 비율이 89%였다 —
-// 기본값을 주면 이 답도 다시 "AI 제안 수락"이 된다. 빌드 전 결정에는 서버가 원본에 근거가 있는
-// 보기를 추천 없이 주고, 화면은 아무것도 미리 고르지 않는다. 보기가 없으면 빈 칸이다. 어느
-// 쪽이든 "직접 입력"과 "모름"이 있다.
+// Questions are not pre-filled with AI defaults. In measurement, PMs picked the displayed default 89% of the time —
+// giving a default turns this answer into "accepting the AI suggestion" again. For pre-build decisions, the server gives
+// options grounded in the sources without a recommendation, and the screen preselects nothing. With no options, it is a
+// blank field. Either way, there are "직접 입력" (enter my own) and "모름" (don't know).
 //
-// 확인은 내용을 바꾸지 않는다. 바꾸는 길은 워크스페이스뿐이다 — 여기서 고치게 하면 같은
-// 결정이 Discovery 산출물과 보완 답 두 곳에 다르게 남는다.
+// Confirming does not change content. The only way to change it is the workspace — letting it be edited here would leave
+// the same decision recorded differently in two places: the Discovery artifacts and the supplementary answers.
 "use client";
 import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
@@ -21,8 +21,8 @@ import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
 import { sectionLabel } from "./ReadinessPanel";
 
-/** `custom`은 화면 상태다 — 보기가 있는 질문에서 "직접 입력"을 골랐다. 저장하지 않는다.
- *  `pending_with`는 외부 확인 질문의 "확인 중인 곳"이다. */
+/** `custom` is screen state — "직접 입력" was chosen on a question with options. It is not saved.
+ *  `pending_with` is the "who is confirming it" of an external-confirmation question. */
 type Draft = Record<string, { text: string; unknown: boolean; custom?: boolean; pending_with?: string }>;
 
 function initialDraft(view: SupplementView): Draft {
@@ -51,11 +51,11 @@ export function toUpdate(view: SupplementView, draft: Draft, confirmed: Set<stri
     const d = draft[q.id];
     if (filled(d)) answers[q.id as SupplementQuestionId] = d;
   }
-  // 이미 대체된 답도 함께 보낸다. 저장은 교체라서, 빠뜨리면 기록에서 지워진다.
+  // Answers already superseded are sent too. Saving is a replacement, so anything left out is erased from the record.
   for (const q of view.superseded) {
     if (q.answer) answers[q.id] = { text: q.answer.text, unknown: q.answer.unknown };
   }
-  // 앞서 답해 PRD에서 빠진 질문도 같은 이유로 보낸다. 고친 것은 고친 대로.
+  // Questions answered earlier and dropped from the PRD are sent for the same reason. What was fixed stays fixed.
   const open_answers: SupplementUpdate["open_answers"] = {};
   for (const q of openAll(view)) {
     const d = draft[q.key];
@@ -77,7 +77,7 @@ export function SupplementForm({
   onSave: (update: SupplementUpdate) => void;
   onSaveAndGenerate: (update: SupplementUpdate) => void;
   onBack: () => void;
-  /** 열람 멤버. 답은 보이고 고칠 수 없다. */
+  /** Viewing member. Answers are visible but cannot be edited. */
   readOnly?: boolean;
 }) {
   const t = useT();
@@ -93,13 +93,13 @@ export function SupplementForm({
     return [...bySection.entries()];
   }, [view.questions]);
 
-  // 진행률은 빈칸 질문만 센다. 확인은 선택 사항이다 — 분모에 넣으면 질문을 다 채워도 "아직 40개
-  // 남음"으로 보였다(실측 ws-g).
+  // Progress counts only blank questions. Confirmation is optional — with it in the denominator, even after filling
+  // in every question it showed "아직 40개 남음" (40 still remaining) (measured ws-g).
   const total = view.questions.length + view.open_questions.length;
   const done = view.questions.filter((q) => filled(draft[q.id])).length
     + view.open_questions.filter((q) => filled(draft[q.key])).length;
 
-  // 단계별로 접어 둔다. 확인한 결정은 결정 장부에 "AI 제안 · PM 확인"으로 보인다.
+  // Collapsed by stage. Confirmed decisions appear in the decision ledger as "AI 제안 · PM 확인".
   const stages = useMemo(() => {
     const byStage = new Map<string, Confirmation[]>();
     for (const c of view.confirmations) {
@@ -108,9 +108,9 @@ export function SupplementForm({
     return STAGE_ORDER.filter((st) => byStage.has(st)).map((st) => [st, byStage.get(st)!] as const);
   }, [view.confirmations]);
 
-  // 확인 항목 하나. 질문, 고른 결정, 부연, AI 근거.
-  // 컴포넌트가 아니라 함수로 그린다 — 렌더 안에서 정의한 컴포넌트는 매번 새 타입이라 목록이 다시
-  // 마운트된다.
+  // One confirmation item. The question, the chosen decision, elaboration, and the AI rationale.
+  // Drawn by a function, not a component — a component defined inside render is a new type every time, so the list
+  // would remount.
   const renderItem = (c: Confirmation) => {
     const on = confirmed.has(c.key);
     return (
@@ -142,7 +142,7 @@ export function SupplementForm({
     );
   };
 
-  // 답 칸 하나. 보기가 있으면 보기 중 하나 · 직접 입력 · 모름이고, 없으면 빈 칸과 모름이다.
+  // One answer field. With options, it is one of the options · enter my own · don't know; without, a blank field and don't know.
   const renderAnswer = (id: string, label: ReactNode, hint: string | null,
                         options: OpenOption[] = [], external = false) => {
     const d = draft[id] ?? { text: "", unknown: false };
@@ -224,7 +224,7 @@ export function SupplementForm({
 
   return (
     <section className="max-w-[960px]">
-      {/* fieldset disabled: 열람 멤버에게 모든 입력을 한 번에 잠근다. */}
+      {/* fieldset disabled: locks every input at once for viewing members. */}
       <fieldset disabled={readOnly} className="m-0 min-w-0 border-0 p-0">
       <div className="bg-white border border-slate-200 rounded-xl px-[18px] py-3.5 mb-4 text-[13px]">
         <b className="text-slate-900">{t("handoff.supp.rules.title")}</b>
@@ -297,7 +297,7 @@ export function SupplementForm({
             <span className="text-xs font-normal text-slate-500">{t("handoff.supp.confirm.optional")}</span>
           </h4>
           <p className="mb-2.5 text-xs text-slate-500">{t("handoff.supp.confirm.hint")}</p>
-          {/* 단계별로 접어 둔다. 확인은 할 일이 아니라, 들여다보고 싶은 결정을 고르는 곳이다. */}
+          {/* Collapsed by stage. Confirmation is not a to-do; it is where you pick the decisions you want to look into. */}
           {stages.map(([stage, items]) => (
             <details key={stage} className="mb-2 bg-white border border-slate-200 rounded-xl">
               <summary className="px-4 py-2.5 cursor-pointer text-[13px] font-semibold text-slate-900">

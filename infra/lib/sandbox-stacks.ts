@@ -5,25 +5,25 @@ import { AipdsAgentCredsStack } from './aipds-agent-creds-stack';
 import { AipdsDrillStack } from './aipds-drill-stack';
 import { AipdsUploadCorsStack } from './aipds-upload-cors-stack';
 
-// 인스턴스가 부팅 뒤에 스스로 켜는 것들의 스택: 프로토타입 프리뷰 전용 오리진
-// (aipds-preview-stack.ts), 샌드박스 프로세스용 Bedrock 전용 롤(aipds-agent-creds-stack.ts), 버킷
-// CORS를 맞출 권한(aipds-upload-cors-stack.ts). 셋 다 HostingStack의 것(인스턴스 롤, 헤더 시크릿,
-// EIP DNS)을 참조만 하고, 인스턴스가 infra/scripts/aipds-harden sync로 반영한다.
+// The stacks for what the instance turns on by itself after boot: the origin dedicated to prototype previews
+// (aipds-preview-stack.ts), the Bedrock-only role for sandboxed processes (aipds-agent-creds-stack.ts), and the permission
+// to align the bucket CORS (aipds-upload-cors-stack.ts). All three only reference HostingStack's resources (instance role, header secret,
+// EIP DNS), and the instance applies them with infra/scripts/aipds-harden sync.
 //
-// 값을 어디서 받는가가 두 가지다.
-//   - **새 환경(기본):** HostingStack에서 스택 간 참조로 받는다. `cdk deploy --all` 한 번이면 된다 —
-//     인스턴스는 HostingStack과 함께 먼저 부팅하지만, 두 스택이 SSM에 값을 쓰면 몇 분 안에 스스로
-//     래퍼·IMDS 차단·프리뷰를 켠다.
-//   - **이미 떠 있는 환경(pinned):** 값을 env로 고정한다. 스택 간 참조는 두 스택을 HostingStack에
-//     묶어 `cdk deploy AipdsAgentCredsStack`이 HostingStack까지 배포하게 만든다 — 그 배포는 EC2를
-//     교체할 수 있다(AMI 미고정, userDataCausesReplacement). 고정하면 두 스택만 배포된다.
-//     (운영 중인 HostingStack에는 교체·삭제를 거부하는 스택 정책도 건다 — /manual의 "인스턴스를 새로 만들기".)
+// There are two ways the values are received.
+//   - **New environment (default):** received from HostingStack through cross-stack references. A single `cdk deploy --all` does it —
+//     the instance boots first along with HostingStack, but once the two stacks write their values to SSM, within a few minutes it turns on
+//     the wrapper, IMDS block and preview by itself.
+//   - **Already-running environment (pinned):** the values are pinned through env. Cross-stack references would tie the two stacks to
+//     HostingStack, making `cdk deploy AipdsAgentCredsStack` deploy HostingStack too — and that deploy can replace
+//     the EC2 instance (AMI not pinned, userDataCausesReplacement). Pinned, only the two stacks are deployed.
+//     (A stack policy refusing replacement and deletion is also put on the running HostingStack — "인스턴스를 새로 만들기" (rebuilding the instance) in /manual.)
 
 export interface PinnedHosting {
   instanceRoleArn: string;
   originDnsName: string;
   originVerifySecretArn: string;
-  /** 아티팩트 버킷 이름. 참조로 받으면 DrillStack에 묶인다 — 같은 이유로 고정한다. */
+  /** Artifact bucket name. Received as a reference it would be tied to DrillStack — pinned for the same reason. */
   artifactsBucket: string;
 }
 
@@ -34,7 +34,7 @@ const PINNED_ENV = {
   artifactsBucket: 'AIPDS_ARTIFACTS_BUCKET',
 } as const;
 
-/** env의 고정 값. 하나라도 있으면 전부 있어야 한다 — 섞으면 일부 스택만 다른 스택에 묶인다. */
+/** The pinned values from env. If any is present, all must be — mixing would tie only some stacks to another stack. */
 export function pinnedFromEnv(e: NodeJS.ProcessEnv): PinnedHosting | undefined {
   const values = Object.fromEntries(
     Object.entries(PINNED_ENV).map(([key, name]) => [key, e[name]])) as Record<string, string | undefined>;

@@ -9,8 +9,8 @@ const tool = (t: string, detail: string | null = null): LiveActivity =>
   ({ kind: "tool", tool: t, detail });
 import { dictFor, type Dict } from "@/lib/i18n";
 
-// 실제 딕셔너리를 탄다 — 가짜 t를 넘기면 이 문구들이 딕셔너리에서 온다는 사실이
-// 테스트에서 사라진다. 기본 로케일(ko)이므로 단정은 한국어 그대로다.
+// Uses the real dictionary — passing a fake t would lose from the test the fact that these strings come
+// from the dictionary. It is the default locale (ko), so the assertions are in Korean as is.
 const koDict = dictFor("ko");
 const t = (key: keyof Dict) => koDict[key];
 
@@ -55,8 +55,8 @@ describe("LiveActivityBar — 살아있음의 증거", () => {
   });
 
   it("탭이 백그라운드로 갔다 와도 실제 경과를 반영한다", () => {
-    // setInterval 호출 횟수를 세면 브라우저 throttle에 속아 실제보다 적게
-    // 센다. Date.now() 차이로 계산하므로 타이머가 한 번만 깨어나도 옳다.
+    // Counting setInterval calls is fooled by browser throttling and undercounts the real
+    // time. It computes from the Date.now() difference, so it is correct even if the timer wakes only once.
     vi.useFakeTimers();
     render(<LiveActivityBar activity={tool("Read")} />);
     act(() => void vi.advanceTimersByTime(30_000));
@@ -73,7 +73,7 @@ describe("LiveActivityBar — 살아있음의 증거", () => {
     render(<LiveActivityBar activity={tool("Write")} />);
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent("문서를 작성하고 있어요");
-    // 1초마다 읽어주면 라벨 변화를 덮어버린다.
+    // Reading it out every second would drown out label changes.
     expect(screen.getByText("0초")).toHaveAttribute("aria-hidden", "true");
   });
 });
@@ -113,17 +113,17 @@ describe("LiveActivityBar — 종류별 문구", () => {
     expect(screen.getByTestId("live-what")).toHaveClass("truncate");
     const target = screen.getByTestId("live-what-target");
     expect(target).toHaveClass("truncate");
-    expect(target).toHaveAttribute("title", long);   // 잘린 부분은 마우스를 올려 본다
+    expect(target).toHaveAttribute("title", long);   // the truncated part is seen by hovering
   });
 
-  // 대상이 라벨 뒤에 붙어 있던 동안 잘려서 거의 읽히지 않았다 — 둘째 줄로 내린다.
+  // While the target was attached after the label it was truncated and barely readable — it moves to a second line.
   it("대상(명령·파일)은 라벨과 다른 둘째 줄에 있다", () => {
     render(<LiveActivityBar activity={tool("Read", "aiplc-docs/x.md")} />);
     expect(screen.getByTestId("live-what")).not.toHaveTextContent("aiplc-docs/x.md");
     expect(screen.getByTestId("live-what-target")).toHaveTextContent("aiplc-docs/x.md");
   });
 
-  // 생각하는 중 → 파일 읽기로 바뀔 때 바가 1줄↔2줄을 오가면 입력창이 흔들린다.
+  // When thinking → reading a file, a bar flipping between 1 and 2 lines makes the input box jump.
   it("대상이 없어도 둘째 줄 자리를 비워 둔다", () => {
     render(<LiveActivityBar activity={{ kind: "thinking" }} />);
     const target = screen.getByTestId("live-what-target");
@@ -150,8 +150,8 @@ describe("LiveActivityBar — 살아있음의 기본값", () => {
 });
 
 describe("LiveActivityBar — 서브에이전트 행", () => {
-  // 이 블록이 지키는 것: 병렬 작업이 화면에서 진행으로 읽힌다. 한 줄짜리 바는
-  // 에이전트 셋 사이에서 깜빡이고 어느 것도 진행으로 읽히지 않았다.
+  // What this block guards: parallel work reads as progress on screen. A one-line bar
+  // flickered between three agents and none of them read as progress.
   const row = (over: Partial<AgentRow> = {}): AgentRow => ({
     id: "a040",
     label: "화면 골격",
@@ -163,7 +163,7 @@ describe("LiveActivityBar — 서브에이전트 행", () => {
     ...over,
   });
 
-  // 서브에이전트 행은 모두 2줄(맡은 일 / 만지는 파일), 총괄 행은 개수만 말하므로 1줄.
+  // Subagent rows are all 2 lines (assigned task / file being touched); the overall row only states the count, so 1 line.
   it("에이전트 행은 대상을 둘째 줄에 두고, 총괄 행은 둘째 줄을 두지 않는다", () => {
     const { container } = render(
       <LiveActivityBar
@@ -176,7 +176,7 @@ describe("LiveActivityBar — 서브에이전트 행", () => {
     expect(target.tagName).toBe("P");
     expect(target).toHaveClass("truncate");
     expect(screen.getByText("화면 골격")).not.toHaveTextContent("app/page.tsx");
-    // 바 자체는 높이 상한 안에서만 자란다 — 대화 영역을 다 먹지 않는다.
+    // The bar itself grows only within its height cap — it does not eat up the whole conversation area.
     expect(container.querySelector("[role='status']")).toHaveClass("max-h-[40vh]", "overflow-y-auto");
   });
 
@@ -198,14 +198,14 @@ describe("LiveActivityBar — 서브에이전트 행", () => {
   });
 
   it("총괄 줄이 몇 개가 일하는지 말한다", () => {
-    // 그 구간에 총괄이 하는 일은 기다리는 것이 전부다. 사용자가 알고 싶은 것은
-    // 개수이고, 종전에는 그 자리에서 서브에이전트들의 도구 이름이 깜빡였다.
+    // During that stretch all the overall agent does is wait. What the user wants to know is
+    // the count, and previously the subagents' tool names flickered in that spot.
     render(<LiveActivityBar activity={tool("Agent")} agents={[row({ id: "a1" }), row({ id: "a2" })]} />);
     expect(screen.getByTestId("live-what")).toHaveTextContent("2개 에이전트가 일하고 있어요");
   });
 
   it("행마다 자기 경과 시간을 센다", () => {
-    // 마운트 기준으로 세면 늦게 뜬 에이전트가 이미 오래 일한 것처럼 보인다.
+    // Counting from mount would make a late-starting agent look as if it had already worked a long time.
     vi.useFakeTimers();
     const now = Date.now();
     render(
@@ -214,7 +214,7 @@ describe("LiveActivityBar — 서브에이전트 행", () => {
         agents={[row({ id: "a1", startedAt: now - 5_000 }), row({ id: "a2", startedAt: now - 40_000 })]}
       />,
     );
-    // 총괄 줄은 마운트 기준(0초), 두 행은 각자 뜬 시각 기준.
+    // The overall line counts from mount (0초), and the two rows each from when they started.
     expect(screen.getByText("0초")).toBeInTheDocument();
     expect(screen.getByText("5초")).toBeInTheDocument();
     expect(screen.getByText("40초")).toBeInTheDocument();
@@ -223,7 +223,7 @@ describe("LiveActivityBar — 서브에이전트 행", () => {
   it("행마다 스피너가 돈다 — 정지 화면과 구분되는 유일한 신호다", () => {
     const { container } = render(
       <LiveActivityBar activity={tool("Agent")} agents={[row({ id: "a1" }), row({ id: "a2" })]} />);
-    // 총괄 줄 1개 + 행 2개.
+    // 1 overall line + 2 rows.
     expect(container.querySelectorAll(".animate-spin")).toHaveLength(3);
   });
 
@@ -238,7 +238,7 @@ describe("LiveActivityBar — 서브에이전트 행", () => {
   });
 
   it("에이전트가 없으면 종전과 똑같은 한 줄이다", () => {
-    // 병렬이 아닌 빌드(그리고 워크스페이스 화면)의 동작이 바뀌면 안 된다.
+    // The behavior of non-parallel builds (and the workspace screen) must not change.
     const { container } = render(<LiveActivityBar activity={tool("Read", "x.md")} />);
     expect(container.querySelectorAll(".animate-spin")).toHaveLength(1);
     expect(screen.getByTestId("live-what")).toHaveTextContent("자료를 확인하고 있어요");
@@ -258,9 +258,9 @@ describe("LiveActivityBar — 서브에이전트 행", () => {
 });
 
 describe("Claude Agent SDK 도구명 라벨 (regression)", () => {
-  // 드라이버가 바뀌면 status 이벤트의 도구 이름이 SDK 내장 이름으로 온다.
-  // 매핑에 없으면 폴백이 발동해 사용자에게 "Write 실행 중…" 같은 영어 도구명이
-  // 노출된다 — 크래시는 아니지만 UX가 조용히 나빠진다.
+  // When the driver changes, tool names in status events arrive as the SDK's built-in names.
+  // If missing from the mapping, the fallback kicks in and exposes English tool names to the user such as "Write 실행 중…"
+  // — not a crash, but the UX silently degrades.
   const CASES: Array<[string, RegExp]> = [
     ["AskUserQuestion", /질문을 준비하고 있어요/],
     ["Write", /문서를 작성하고 있어요/],
@@ -268,7 +268,7 @@ describe("Claude Agent SDK 도구명 라벨 (regression)", () => {
     ["MultiEdit", /문서를 작성하고 있어요/],
     ["Read", /자료를 확인하고 있어요/],
     ["Glob", /자료를 찾고 있어요/],
-    // CLI 기본 도구 (tools=None이므로 사용 가능; envision.md의 URL 분석 모드 B/C와 workspace 탐색 필요)
+    // CLI default tools (available since tools=None; needed for envision.md's URL analysis modes B/C and workspace exploration)
     ["Grep", /자료를 찾고 있어요/],
     ["WebFetch", /정보를 수집하고 있어요/],
     ["Bash", /작업을 진행하고 있어요/],
@@ -278,13 +278,13 @@ describe("Claude Agent SDK 도구명 라벨 (regression)", () => {
     it(`maps ${name} to a Korean activity label`, () => {
       render(<LiveActivityBar activity={tool(name)} />);
       expect(screen.getByText(label)).toBeInTheDocument();
-      // 영어 도구명이 그대로 보이면 안 된다.
+      // English tool names must not show as is.
       expect(screen.queryByText(new RegExp(`${name} 실행 중`))).toBeNull();
     });
   }
 
   it("keeps the Strands tool names working during the env-toggle period", () => {
-    // 두 드라이버가 공존하는 기간에는 양쪽 다 올바른 라벨이 나와야 한다.
+    // During the period when both drivers coexist, both must produce the correct labels.
     render(<LiveActivityBar activity={tool("file_write")} />);
     expect(screen.getByText(/문서를 작성하고 있어요/)).toBeInTheDocument();
   });

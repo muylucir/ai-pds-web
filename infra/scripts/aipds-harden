@@ -1,5 +1,5 @@
 #!/bin/bash
-# 에이전트·프로토타입을 백엔드와 다른 uid의 샌드박스에서 돌리기 위한 인스턴스 설정.
+# Instance setup for running agents and prototypes in a sandbox under a different uid from the backend.
 #
 #   sudo /usr/local/libexec/aipds/harden install [--no-restart]
 #   sudo /usr/local/libexec/aipds/harden sync
@@ -7,40 +7,41 @@
 #   sudo /usr/local/libexec/aipds/harden disable
 #   sudo /usr/local/libexec/aipds/harden imds block|allow
 #   sudo /usr/local/libexec/aipds/harden status
-#   /opt/aipds/infra/scripts/aipds-harden boot      (새 인스턴스의 user-data만, 서비스 기동 전)
+#   /opt/aipds/infra/scripts/aipds-harden boot      (new instance's user-data only, before services start)
 #
-# 운영자는 root 소유 사본(/usr/local/libexec/aipds/harden)을 부른다. 리포 안의 이 파일은
-# aipds가 쓸 수 있으므로 root로 직접 돌리면 aipds가 root를 얻는다(아래 타이머와 같은 이유).
-# 리포 사본을 root로 부르는 것은 서비스가 아직 뜨지 않은 부팅 때의 user-data뿐이다.
+# Operators call the root-owned copy (/usr/local/libexec/aipds/harden). This file in the repo is
+# writable by aipds, so running it directly as root would hand aipds root (same reason as the timer below).
+# The only time the repo copy runs as root is user-data at boot, before the services are up.
 #
-# install  유저(aipds-agent, aipds-proto)·그룹(aipds-work), 래퍼 설치와 sudoers, 트리 권한,
-#          평문 시크릿의 권한, sync 타이머. **래퍼 설정(enable·imds)은 건드리지 않는다** — 새 인스턴스라면 꺼진
-#          채이고, 실행 중인 인스턴스라면 켜 둔 그대로다. 기반만 깐다. 멱등.
-# enable   래퍼를 켠다(AIPDS_LAUNCHER=1 + AgentRole). AgentRole은 AipdsAgentCredsStack의 출력.
-# imds     래퍼가 띄운 프로세스의 IMDS 접근. **enable 뒤 Bedrock 호출이 되는 것을 확인하고
-#          block한다** — 거꾸로 하면 에이전트와 프로토타입의 LLM 호출이 함께 끊긴다.
-# sync     별도 스택이 SSM에 남긴 값(infra/lib/instance-params.ts)을 인스턴스에 반영한다: AgentRole이
-#          있으면 enable + imds block, 프리뷰 값이 있으면 프리뷰 설정. 바뀐 것이 있고 백엔드가 떠
-#          있으면 재시작한다. **타이머(aipds-harden-sync.timer)가 2분마다 돌린다** — 새 환경의
-#          `cdk deploy --all`에서 인스턴스는 HostingStack과 함께 먼저 부팅하고, 두 스택은 그 뒤에
-#          값을 쓴다. 부팅 때 한 번 읽는 것으로는 그 값을 못 본다.
-#          값이 없거나 읽지 못하면 아무것도 바꾸지 않는다(끄지 않는다). `disable`·`imds allow`는
-#          운영자의 선택이라 동기화를 멈춘다(`/etc/aipds/hold`) — `enable`·`imds block`이 푼다.
-#          첫 롤아웃의 "확인 뒤 block" 순서는 이미 검증된 구성을 다시 까는 데는 필요 없다.
-#          그리고 아티팩트 버킷의 CORS에 이 인스턴스의 앱 오리진이 있게 한다(프로젝트 가져오기의
-#          브라우저 직접 업로드 — infra/lib/aipds-upload-cors-stack.ts). 이것은 재시작과 무관하고
-#          hold와도 무관하다.
-# boot     새 인스턴스의 user-data가 서비스 기동 **전에** 부른다. install + sync(재시작 없음).
+# install  Users (aipds-agent, aipds-proto), group (aipds-work), wrapper install and sudoers, tree permissions,
+#          permissions on plaintext secrets, the sync timer. **Does not touch wrapper settings (enable, imds)** -- on a
+#          new instance they stay off; on a running instance they stay as they were. Lays the foundation only. Idempotent.
+# enable   Turns the wrapper on (AIPDS_LAUNCHER=1 + AgentRole). AgentRole is an output of AipdsAgentCredsStack.
+# imds     IMDS access for processes the wrapper launches. **After enable, confirm Bedrock calls work, then
+#          block** -- in the reverse order, the agents' and prototypes' LLM calls are cut off together.
+# sync     Applies to the instance the values a separate stack left in SSM (infra/lib/instance-params.ts): if
+#          AgentRole is there, enable + imds block; if preview values are there, preview settings. If anything
+#          changed and the backend is up, restarts it. **A timer (aipds-harden-sync.timer) runs it every 2
+#          minutes** -- in a new environment's `cdk deploy --all`, the instance boots first along with
+#          HostingStack, and the two stacks write their values afterwards. Reading once at boot never sees them.
+#          If a value is missing or cannot be read, nothing changes (nothing is turned off). `disable` and
+#          `imds allow` are operator choices, so they pause sync (`/etc/aipds/hold`) -- `enable` and `imds block`
+#          release it. The first rollout's "confirm, then block" order is unnecessary for re-laying a configuration
+#          already verified.
+#          It also makes sure the artifact bucket's CORS contains this instance's app origin (direct browser
+#          upload for project import -- infra/lib/aipds-upload-cors-stack.ts). This is independent of restarts
+#          and of hold.
+# boot     Called by a new instance's user-data **before** services start. install + sync (no restart).
 #
-# 왜 user-data가 아니라 이 스크립트인가: user-data를 바꾸면 HostingStack 배포가 EC2를
-# 교체한다(aipds-preview-configure와 같은 사정). user-data는 새 인스턴스에서 `boot`를
-# 부르고, 실행 중인 인스턴스에는 SSM으로 이것을 돌린다.
+# Why this script rather than user-data: changing user-data makes a HostingStack deploy replace the EC2
+# instance (same situation as aipds-preview-configure). user-data calls `boot` on a new instance, and a
+# running instance gets this run via SSM.
 #
-# enable·disable·imds·install은 백엔드를 재시작한다 — 진행 중인 턴과 빌드가 끊긴다. sync는 값이
-# 바뀌었을 때만.
+# enable, disable, imds, and install restart the backend -- in-flight turns and builds are cut off. sync only
+# when a value changed.
 #
-# 타이머가 root로 돌리는 것은 root 소유 사본(/usr/local/libexec/aipds/harden)이다. 리포 안의 이
-# 파일은 aipds가 쓸 수 있으므로, 타이머가 이것을 직접 돌리면 aipds가 root를 얻는다(래퍼와 같은 이유).
+# What the timer runs as root is the root-owned copy (/usr/local/libexec/aipds/harden). This file in the
+# repo is writable by aipds, so if the timer ran it directly, aipds would get root (same reason as the wrapper).
 set -euo pipefail
 if [ "$(id -u)" -ne 0 ]; then
   echo "aipds-harden: run as root" >&2
@@ -54,7 +55,7 @@ if [ -r "$ENV_FILE" ]; then
   # shellcheck source=/dev/null
   . "$ENV_FILE"
 fi
-# 래퍼(aipds-launch)는 이 경로를 상수로 갖는다 — 다르면 기동 점검이 래퍼를 끈다.
+# The wrapper (aipds-launch) has this path as a constant -- if it differs, the startup check turns the wrapper off.
 if [ "$APP" != /opt/aipds ]; then
   echo "aipds-harden: APP=$APP but the launcher is built for /opt/aipds" >&2
   exit 1
@@ -69,7 +70,7 @@ DROPIN=/etc/systemd/system/aipds-backend.service.d
 FRONT_UNIT=/etc/systemd/system/aipds-frontend.service
 FRONT_DROPIN=/etc/systemd/system/aipds-frontend.service.d
 FRONT_ENV=$CONF_DIR/frontend.env
-# infra/lib/instance-params.ts와 같은 이름(test/instance-params.assert.ts).
+# Same names as infra/lib/instance-params.ts (test/instance-params.assert.ts).
 PARAM_AGENT_ROLE=/aipds/agent-role-arn
 PARAM_PREVIEW_ORIGIN=/aipds/preview-origin
 PARAM_PREVIEW_SECRET=/aipds/preview-secret-arn
@@ -92,7 +93,7 @@ UNIT
   chmod 644 "$DROPIN/launcher.conf"
 }
 
-# 운영자가 고른 상태를 동기화가 되돌리지 않게.
+# So sync does not revert a state the operator chose.
 hold() {
   mkdir -p "$CONF_DIR"
   printf '%s at %s\n' "$1" "$(date -u +%FT%TZ)" > "$HOLD"
@@ -103,8 +104,8 @@ write_imds() {
   chmod 644 "$LAUNCH_CONF"
 }
 
-# 파라미터 값. 없으면 빈 문자열(스택 미배포). 그 밖의 실패(권한, 네트워크)는 몇 번 다시 묻고
-# 그래도 안 되면 빈 문자열 — 부팅을 막지는 않되 로그에 크게 남긴다.
+# A parameter's value. Empty string if absent (stack not deployed). Other failures (permissions, network) are
+# retried a few times and then yield an empty string -- boot is not blocked, but the log says so loudly.
 get_param() {
   local out i
   for i in 1 2 3; do
@@ -119,7 +120,7 @@ get_param() {
   echo "aipds-harden: WARNING cannot read $1: $out" >&2
 }
 
-# sudo는 AWS_REGION을 지운다 — 없으면 IMDS에서 읽는다(호스트 root는 닿는다. 막는 것은 샌드박스 unit뿐).
+# sudo clears AWS_REGION -- if absent, read it from IMDS (host root can reach it; only the sandbox units are blocked).
 instance_region() {
   local token
   token=$(curl -sf -m 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
@@ -128,7 +129,7 @@ instance_region() {
     http://169.254.169.254/latest/meta-data/placement/region || true
 }
 
-# 동기화가 쓰는 세 파일. 없는 파일이 있어도(새 인스턴스) 실패하지 않는다 — set -e/pipefail이다.
+# The three files sync writes. Must not fail when one is missing (new instance) -- this runs under set -e/pipefail.
 settings_digest() {
   local f
   for f in "$DROPIN/launcher.conf" "$DROPIN/preview.conf" "$LAUNCH_CONF"; do
@@ -145,13 +146,13 @@ settings_summary() {
   echo "launcher=$launcher imds_block=${imds:-?} preview=$preview"
 }
 
-# systemd unit의 Environment= 값 하나. 여기 쓰는 값(버킷 이름, URL)에는 공백이 없다.
+# One Environment= value of a systemd unit. The values used here (bucket name, URL) contain no spaces.
 unit_env() {
   systemctl show "$1" -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n "s/^$2=//p" | head -1
 }
 
-# 버킷 CORS의 PUT 규칙에 오리진을 더한 설정(JSON). 이미 있으면 빈 출력. 규칙이 없으면 DrillStack의
-# 것(lib/aipds-drill-stack.ts `cors`)과 같은 모양으로 만든다 — test/instance-params.assert.ts가 맞춘다.
+# The bucket CORS configuration (JSON) with the origin added to the PUT rule. Empty output if already present. If
+# there is no rule, create one shaped like DrillStack's (lib/aipds-drill-stack.ts `cors`) -- test/instance-params.assert.ts keeps them aligned.
 CORS_MERGE='
 import json, sys
 origin = sys.argv[1]
@@ -200,7 +201,7 @@ sync_cors() {
   fi
 }
 
-# 스택이 남긴 값을 반영한다. $1=1이면 바뀐 것이 있을 때 백엔드를 재시작한다(떠 있을 때만).
+# Apply the values the stacks left. With $1=1, restart the backend when something changed (only if it is up).
 sync_apply() {
   local restart=$1
   REGION=${AWS_REGION:-${AWS_DEFAULT_REGION:-$(instance_region)}}
@@ -218,7 +219,7 @@ sync_apply() {
   before=$(settings_digest)
   arn=$(get_param "$PARAM_AGENT_ROLE")
   case "$arn" in
-    # 래퍼 없이 IMDS만 막으면 아무것도 막지 않는다(IPAddressDeny는 래퍼가 띄운 unit에만 걸린다).
+    # Blocking IMDS without the wrapper blocks nothing (IPAddressDeny applies only to units the wrapper launches).
     arn:aws:iam::*:role/*)
       write_launcher "$arn"
       write_imds 1
@@ -230,7 +231,7 @@ sync_apply() {
   origin=$(get_param "$PARAM_PREVIEW_ORIGIN")
   secret=$(get_param "$PARAM_PREVIEW_SECRET")
   if [ -n "$origin" ] && [ -n "$secret" ]; then
-    # 값이 잘못돼도 멈추지 않는다 — boot는 user-data(set -e) 안이고, 멈추면 앱 전체가 502다.
+    # Do not stop even if a value is bad -- boot runs inside user-data (set -e), and stopping there makes the whole app 502.
     "$LIBEXEC/preview-configure" --no-restart "$origin" "$secret" >/dev/null \
       || echo "aipds-harden: WARNING preview parameters rejected — prototype previews stay closed" >&2
   else
@@ -252,24 +253,24 @@ install_all() {
   local restart=1
   [ "${1:-}" = "--no-restart" ] && restart=0
 
-  # --- 유저와 그룹. 로그인 셸·홈 없음 — HOME은 래퍼가 에이전트 홈으로 준다. ---
+  # --- Users and group. No login shell or home -- the wrapper sets HOME to the agent home. ---
   getent group "$GROUP" >/dev/null || groupadd --system "$GROUP"
   for u in aipds-agent aipds-proto; do
     id -u "$u" >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent \
       --shell /sbin/nologin --gid "$GROUP" "$u"
   done
-  # 백엔드가 에이전트가 쓴 파일을 읽고 지운다.
+  # The backend reads and deletes files the agent wrote.
   usermod -aG "$GROUP" "$SVC"
 
-  # --- 래퍼. 리포 안의 파일은 aipds가 쓸 수 있으므로 root 소유 사본만 sudoers에 건다. ---
+  # --- Wrapper. Files in the repo are writable by aipds, so only root-owned copies go into sudoers. ---
   install -d -o root -g root -m 0755 "$LIBEXEC"
   install -o root -g root -m 0755 "$APP/infra/scripts/aipds-launch" "$LIBEXEC/launch"
   install -o root -g root -m 0755 "$APP/infra/scripts/aipds-claude" "$LIBEXEC/claude"
   install -o root -g root -m 0755 "$APP/infra/scripts/aipds-harden" "$LIBEXEC/harden"
   install -o root -g root -m 0755 "$APP/infra/scripts/aipds-preview-configure" "$LIBEXEC/preview-configure"
 
-  # env_keep은 래퍼의 PASS_EXACT/PASS_PREFIX/PASS_CHECKED와 같은 목록이다. 래퍼가 다시 거른다.
-  # !log_allowed: 호출마다 CLI 인자 전체(시스템 프롬프트, MCP 설정)가 syslog에 남지 않게.
+  # env_keep is the same list as the wrapper's PASS_EXACT/PASS_PREFIX/PASS_CHECKED. The wrapper filters again.
+  # !log_allowed: so each call's full CLI arguments (system prompt, MCP config) are not left in syslog.
   local tmp
   tmp=$(mktemp)
   cat > "$tmp" <<SUDO
@@ -281,7 +282,7 @@ SUDO
   install -o root -g root -m 0440 "$tmp" "$SUDOERS"
   rm -f "$tmp"
 
-  # --- 트리. 백엔드와 샌드박스 uid가 그룹으로 함께 쓴다. other는 없다. ---
+  # --- Trees. The backend and sandbox uids share them through the group. No access for other. ---
   install -d -o "$SVC" -g "$GROUP" -m 0770 "$APP/agent-home"
   for d in "$APP/workspaces" "$APP/protos" "$APP/agent-home"; do
     mkdir -p "$d"
@@ -289,7 +290,7 @@ SUDO
     chmod -R g+rwX,o-rwx "$d"
   done
 
-  # --- 백엔드: 새 파일이 그룹 aipds-work로, 그룹 쓰기로 생기게. 에이전트 홈 경로는 래퍼와 같게. ---
+  # --- Backend: new files get group aipds-work with group write. Agent home path matches the wrapper's. ---
   mkdir -p "$DROPIN"
   cat > "$DROPIN/sandbox.conf" <<UNIT
 [Service]
@@ -303,7 +304,7 @@ UNIT
   [ -e "$LAUNCH_CONF" ] || printf 'imds_block=0\n' > "$LAUNCH_CONF"
   chmod 644 "$LAUNCH_CONF"
 
-  # --- 평문 시크릿. unit 파일과 nginx 설정은 644라 누구나 읽는다. ---
+  # --- Plaintext secrets. Unit files and the nginx config are 644, so anyone can read them. ---
   local front_restart=0
   if grep -q '^Environment=COGNITO_CLIENT_SECRET=' "$FRONT_UNIT" 2>/dev/null; then
     umask 077
@@ -319,10 +320,10 @@ UNIT
     printf '[Service]\nEnvironmentFile=%s\n' "$FRONT_ENV" > "$FRONT_DROPIN/secret.conf"
     chmod 644 "$FRONT_DROPIN/secret.conf"
   fi
-  # nginx 마스터는 root로 설정을 읽는다. X-Origin-Verify 값이 이 파일에 평문으로 있다.
+  # The nginx master reads its config as root. The X-Origin-Verify value is in this file in plaintext.
   [ -e /etc/nginx/conf.d/aipds.conf ] && chmod 600 /etc/nginx/conf.d/aipds.conf
 
-  # --- 스택이 남긴 값의 동기화(sync). 첫 실행은 켜고 2분 뒤 — boot는 이미 한 번 반영했다. ---
+  # --- Sync of the values the stacks left. First run is 2 minutes after enabling -- boot already applied them once. ---
   cat > "/etc/systemd/system/$SYNC_UNIT.service" <<UNIT
 [Unit]
 Description=AI-PDS: apply sandbox and preview settings from SSM (aipds-harden sync)
@@ -385,8 +386,8 @@ case "${1:-}" in
       allow) write_imds 0; hold "imds allow" ;;
       *) echo "usage: aipds-harden imds block|allow" >&2; exit 1 ;;
     esac
-    # 상주 Discovery CLI는 기동할 때의 설정으로 계속 돈다. 재시작하면 기동 스윕이 그 unit을
-    # 멈추고 다음 턴에 새 설정으로 뜬다.
+    # The resident Discovery CLI keeps running with the settings it started with. On restart, the startup
+    # sweep stops that unit and it comes back up with the new settings on the next turn.
     restart_backend
     ;;
   status)

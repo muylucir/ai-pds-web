@@ -39,14 +39,14 @@ const HOP_BY_HOP = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
   "te", "trailer", "transfer-encoding", "upgrade", "content-length",
   "content-encoding", "host",
-  // ⚠️ "cookie"는 여기에 없다 — 일부러다. 쿠키 판정은 withBearer()가 한 곳에서
-  // 한다(lib/api/proxyAuth.ts): 세션 JWT는 지우고 Authorization으로 번역하며,
-  // 프로토타입 접근 쿠키(aipds_proto_*)만 허용목록으로 통과시킨다.
+  // ⚠️ "cookie" is not here — on purpose. Cookie decisions are made in one place by withBearer()
+  // (lib/api/proxyAuth.ts): it removes the session JWTs and translates them into Authorization,
+  // and lets through only the prototype access cookies (aipds_proto_*) by allowlist.
   //
-  // 여기서도 지우면 withBearer가 볼 쿠키가 남지 않아 그 허용목록이 항상 빈
-  // 값이 되고, /api/proto/* 프리뷰가 전부 404가 된다 — 그 트래픽도 이
-  // 핸들러를 통과하기 때문이다. 지우는 자리가 둘이면 되살리는 쪽이 반드시
-  // 진다.
+  // Removing them here too would leave withBearer no cookies to look at, so that allowlist would always be
+  // empty, and every /api/proto/* preview would return 404 — because that traffic also passes through this
+  // handler. With two places that remove, the side that restores always
+  // loses.
 ]);
 
 function filterHeaders(src: Headers): Headers {
@@ -74,8 +74,8 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   const send = async (token: string | undefined): Promise<Response> => {
     const init: RequestInit & { duplex?: "half" } = {
       method: req.method,
-      // 쿠키를 Bearer로 번역한다. EventSource는 커스텀 헤더를 못 보내지만
-      // same-origin 쿠키는 자동으로 보내므로, SSE가 이 경로를 타면 인증된다.
+      // Translates the cookie into a Bearer. EventSource cannot send custom headers, but
+      // it sends same-origin cookies automatically, so SSE is authenticated when it goes through this path.
       headers: withBearer(filterHeaders(req.headers), token),
       redirect: "manual",
     };
@@ -96,9 +96,9 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   let res = await send(access);
   let refreshedCookies: { access: string; id: string; expiresIn: number } | null = null;
 
-  // access 토큰 만료: 리프레시 후 한 번 재시도한다. 본문이 스트림인 메서드는
-  // 재생할 수 없으므로 제외한다(isRetryableWithRefresh) — 그런 요청은 401이
-  // 그대로 흘러 프론트가 /login으로 보낸다.
+  // Access token expired: refresh and retry once. Methods whose body is a stream
+  // cannot be replayed, so they are excluded (isRetryableWithRefresh) — for those requests the 401
+  // flows through as is and the frontend sends the user to /login.
   if (isRetryableWithRefresh(res.status, req.method, Boolean(refresh))) {
     try {
       const tokens = await refreshTokens(cognitoEnv(), refresh as string);
@@ -108,7 +108,7 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
       };
       res = await send(tokens.access_token);
     } catch {
-      // 리프레시 토큰이 만료·폐기됐다 — 원래의 401을 그대로 흘린다.
+      // The refresh token has expired or been revoked — pass the original 401 through as is.
       console.error("token refresh failed; passing 401 through");
     }
   }
@@ -124,8 +124,8 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   if (location) headers.set("location", rewriteLocation(location, BACKEND));
 
   const out = new Response(res.body, { status: res.status, headers });
-  // 갱신된 토큰을 브라우저 쿠키에 반영한다 — 하지 않으면 매 요청이 만료된
-  // 토큰으로 시작해 리프레시를 반복한다.
+  // Reflect the refreshed tokens in the browser cookies — otherwise every request starts with the expired
+  // token and refreshes over and over.
   if (refreshedCookies) {
     const opts = sessionCookieOptions(refreshedCookies.expiresIn);
     const attrs = `Path=${opts.path}; Max-Age=${opts.maxAge}; HttpOnly; SameSite=Lax`

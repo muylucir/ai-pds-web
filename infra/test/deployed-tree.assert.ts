@@ -1,33 +1,33 @@
 // infra/test/deployed-tree.assert.ts
 //
-// **/opt/aipds가 될 트리에 있으면 안 되는 것이 없는지** 확인한다.
+// Checks that **nothing that must not be in the tree that becomes /opt/aipds is there**.
 //
-// 이 테스트는 app-asset.assert.ts를 대체한 것이다. 종전에는 코드가 CDK 에셋
-// zip으로 갔으므로 synth해서 스테이징된 디렉터리를 들여다봤다. 지금은 EC2가
-// 리포를 clone하므로(lib/deploy-source.ts) 인스턴스에 올라가는 것은 정확히
-// **git이 tracked로 보는 파일**이다 — 그래서 판정 대상이 `git ls-files`다.
-// synth가 필요 없어 훨씬 빠르고, 무엇보다 판정이 실제 배포 경로와 같아졌다.
+// This test replaced app-asset.assert.ts. Previously the code shipped as a CDK asset
+// zip, so we synthesized and inspected the staged directory. Now EC2 clones the
+// repo (lib/deploy-source.ts), so what lands on the instance is exactly **the files git
+// tracks** — which is why the subject of the check is `git ls-files`.
+// No synth is needed, so it is much faster, and above all the check now matches the real deploy path.
 //
-// **왜 이 불변식이 있는가(2026-08-04 실측).** 영어를 고른 프로젝트의 워크스페이스
-// 채팅이 계속 한국어로 진행됐다. 원인의 절반은 discovery-config였고(그쪽은
-// backend/tests/test_agent_language.py가 지킨다), 남은 절반이 이것이다:
+// **Why this invariant exists (observed 2026-08-04).** Workspace chat in projects that chose English
+// kept going in Korean. Half the cause was discovery-config (that side is guarded by
+// backend/tests/test_agent_language.py), and the other half is this:
 //
-//   에이전트 cwd     /opt/aipds/workspaces/{pid}
-//   트리에 있던 것   /opt/aipds/.claude/CLAUDE.md   <- **조상**
+//   agent cwd           /opt/aipds/workspaces/{pid}
+//   what was in tree    /opt/aipds/.claude/CLAUDE.md   <- **ancestor**
 //
-// Claude Code는 cwd에서 위로 올라가며 CLAUDE.md를 전부 로드한다(실제 CLI로
-// 확인: `claude --debug -p "로드한 CLAUDE.md 경로를 나열해라"`가 `(ancestor
-// project)` 표시와 함께 조상 파일을 낸다). 그래서 리포 개발용 .claude/CLAUDE.md의
-// 한국어 한 줄이 영어 프로젝트의 매 턴 컨텍스트에 들어갔다.
+// Claude Code loads every CLAUDE.md walking up from cwd (confirmed with the real CLI:
+// `claude --debug -p "로드한 CLAUDE.md 경로를 나열해라"` lists ancestor files marked `(ancestor
+// project)`). So a single Korean line in the repo's dev .claude/CLAUDE.md entered every
+// turn's context in English projects.
 //
-// **이건 끄는 스위치가 없다.** CLAUDE_CONFIG_DIR은 "user" 레벨만 옮기고, 조상
-// 탐색은 "cwd가 앱 트리 안에 있다"는 사실에서 나온다(워크스페이스를 앱 트리에
-// 두는 것은 user-data.ts가 백업·권한 때문에 의도한 배치다). 그러므로 그 파일이
-// 트리에 없어야 하고, 이 테스트가 그 불변식을 고정한다.
+// **There is no switch to turn this off.** CLAUDE_CONFIG_DIR moves only the "user" level, and the
+// ancestor search comes from the fact that "cwd is inside the app tree" (putting workspaces in the app
+// tree is a placement user-data.ts intends for backups and permissions). So that file must not be in
+// the tree, and this test pins that invariant.
 //
-// clone 방식이 종전보다 강한 지점: `.claude/`는 .gitignore에 있어 애초에 tracked가
-// 아니므로 **목록에서 빼는 것을 잊을 수가 없다.** 에셋 시절에는 gitignore와 무관하게
-// 실렸으므로 별도의 제외 목록을 사람이 관리해야 했고, 그 목록에서 빠진 것이 사고를 냈다.
+// Where the clone approach is stronger than before: `.claude/` is in .gitignore and so is not tracked in
+// the first place, so **it is impossible to forget to exclude it from the list.** In the asset days it shipped
+// regardless of gitignore, so a separate exclusion list had to be maintained by hand, and something missing from that list caused the incident.
 import * as assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -35,7 +35,7 @@ import * as path from 'node:path';
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
 
-/** 인스턴스에 올라갈 파일 목록 = git이 tracked로 보는 것. */
+/** The list of files that go on the instance = what git tracks. */
 function trackedFiles(): string[] {
   const out = execFileSync('git', ['ls-files', '-z'], {
     cwd: REPO_ROOT,
@@ -48,7 +48,7 @@ function trackedFiles(): string[] {
 function testNoUnexpectedClaudeMdInTheDeployedTree() {
   const files = trackedFiles();
 
-  // 1) 리포 개발용 .claude/ 는 tracked가 아니어야 한다.
+  // 1) The repo's dev .claude/ must not be tracked.
   const devClaude = files.filter((f) => f === '.claude' || f.startsWith('.claude/'));
   assert.deepStrictEqual(devClaude, [],
     'the repo-development .claude/ must NOT be tracked: it would be cloned to ' +
@@ -58,11 +58,11 @@ function testNoUnexpectedClaudeMdInTheDeployedTree() {
     'then enter every English project\'s context, and there is no runtime ' +
     `switch to turn it off. Found: ${devClaude.join(', ')}`);
 
-  // 2) 트리 어디에도 의도하지 않은 CLAUDE.md가 없어야 한다. 의도된 것은 에이전트
-  //    config dir 두 개뿐이다. 새 CLAUDE.md가 리포에 커밋되면 이 단정이 잡는다.
+  // 2) There must be no unintended CLAUDE.md anywhere in the tree. The only intended ones are the two
+  //    agent config dirs. If a new CLAUDE.md is committed to the repo, this assertion catches it.
   const ALLOWED = new Set([
-    'discovery-config/CLAUDE.md',   // Discovery config dir (언어 중립)
-    'proto-config/CLAUDE.md',       // 프로토타입 빌더 config dir
+    'discovery-config/CLAUDE.md',   // Discovery config dir (language-neutral)
+    'proto-config/CLAUDE.md',       // prototype builder config dir
   ]);
   const found = files.filter((f) => path.basename(f) === 'CLAUDE.md');
   for (const rel of found) {
@@ -79,10 +79,10 @@ function testNoUnexpectedClaudeMdInTheDeployedTree() {
 
 function testNoBuiltPrototypesInTheDeployedTree() {
   const files = trackedFiles();
-  // 개발 박스에서 만든 프로토타입 빌드 트리가 올라가면, 아무도 빌드하지 않은
-  // 프로토타입이 새 인스턴스에서 "빌드 완료"로 보인다 —
-  // proto/session.py의 has_build_output이 보는 것이 정확히 이 경로다.
-  // 세션 트랜스크립트·큐도 같은 이유로 올라가면 안 된다.
+  // If a prototype build tree made on a dev box ships, a prototype nobody built
+  // appears as "빌드 완료" (build complete) on a new instance —
+  // this path is exactly what has_build_output in proto/session.py looks at.
+  // Session transcripts and queues must not ship for the same reason.
   const FORBIDDEN_PREFIXES = [
     'proto-type/',
     'protos/',
@@ -101,36 +101,36 @@ function testNoBuiltPrototypesInTheDeployedTree() {
 }
 
 function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
-  // 대조군: 무언가를 .gitignore로 밀어내다 런타임에 필요한 것을 빠뜨리는 회귀를
-  // 막는다. 에셋 시절에는 제외 목록이 과하게 넓어지는 것이 위험이었고, 지금은
-  // .gitignore가 그 자리다 — 같은 방향의 실수가 여전히 가능하다.
+  // Control group: guards against the regression of pushing something into .gitignore and leaving out
+  // something needed at runtime. In the asset days the risk was the exclusion list growing too broad; now
+  // .gitignore is in that place — a mistake in the same direction is still possible.
   const files = new Set(trackedFiles());
   for (const rel of [
     'backend/aipds/app.py',
     'frontend/package.json',
-    'frontend/package-lock.json',   // npm ci 가 부팅 시 요구한다
+    'frontend/package-lock.json',   // npm ci requires it at boot
     'discovery-config/CLAUDE.md',
     'proto-config/CLAUDE.md',
     'proto-config/skills/shadcn-design/SKILL.md',
-    // 룰셋 자체는 이제 파일이 아니라 서브모듈이다 —
-    // testTheRulesetShipsAsASubmodule()이 본다. 여기서는 그 서브모듈을 되살릴 수
-    // 있게 하는 파일만 본다: .gitmodules가 없으면 `submodule update --init`이
-    // 아무것도 하지 않고 조용히 성공한다.
+    // The rule set itself is now a submodule, not files —
+    // testTheRulesetShipsAsASubmodule() checks it. Here we look only at the file that lets that submodule
+    // be restored: without .gitmodules, `submodule update --init`
+    // does nothing and silently succeeds.
     '.gitmodules',
-    // 언어 지시는 2026-08-18에 룰셋 트리 밖으로 나왔다 — 업스트림 aiplc-rules/에는
-    // language/ 가 없으므로, 룰셋을 통째로 갈아 끼울 때 우리 콘텐츠가 함께
-    // 사라지지 않아야 한다.
+    // The language directive moved out of the rule set tree on 2026-08-18 — upstream aiplc-rules/ has
+    // no language/, so when the rule set is swapped out wholesale our content must not
+    // disappear with it.
     //
-    // **그 뒤 2026-08-19(8b58cba)에 파일에서 코드로 다시 옮겼다** —
-    // `language/{ko,en}.md` 두 파일이 `workspace_rules.LANGUAGE_DIRECTIVES`
-    // 상수가 됐다. 이 목록은 그것을 따라가지 못해 지운 파일을 계속 요구했고,
-    // 그날부터 이 단정이 실패했다(런타임 영향은 없다 — 부팅이 그 파일을 필요로
-    // 하지 않는다). backend/tests/test_workspace_rules.py의
-    // `test_the_language_directive_is_code_not_a_file`이 정반대를 단정하므로,
-    // 두 테스트가 서로 모순한 상태였다.
+    // **Then on 2026-08-19 (8b58cba) it moved again, from files to code** —
+    // the two files `language/{ko,en}.md` became the `workspace_rules.LANGUAGE_DIRECTIVES`
+    // constant. This list did not follow and kept requiring the deleted files,
+    // and from that day this assertion failed (no runtime impact — boot does not need
+    // those files). `test_the_language_directive_is_code_not_a_file` in
+    // backend/tests/test_workspace_rules.py asserts the exact opposite, so
+    // the two tests contradicted each other.
     //
-    // 불변식은 그대로다: **언어 지시가 인스턴스에 실린다.** 실리는 자리만
-    // 파일에서 이 모듈로 바뀌었다.
+    // The invariant is unchanged: **the language directive ships to the instance.** Only where it ships
+    // changed, from files to that module.
     'backend/aipds/agent/workspace_rules.py',
   ]) {
     assert.ok(files.has(rel),
@@ -141,13 +141,13 @@ function testDeployedTreeStillShipsWhatTheRuntimeNeeds() {
 }
 
 function testTheRulesetShipsAsASubmodule() {
-  // **왜 별도 테스트인가.** 위 목록의 판정은 "tracked인가"이고, 서브모듈에는 그것이
-  // 충분하지 않다. gitlink는 tracked인데도 `git clone`이 내용을 가져오지 않으므로,
-  // tracked만 확인하면 인스턴스에 빈 디렉터리가 올라가는 것을 통과시킨다.
+  // **Why a separate test.** The check in the list above is "is it tracked", and for submodules that is
+  // not enough. A gitlink is tracked yet `git clone` does not fetch its contents, so checking only
+  // tracked status would let an empty directory onto the instance.
   //
-  // 룰셋을 서브모듈로 둔 이유(2026-08-21): 종전에는 상류 aiplc-rules/를 리포에
-  // 복사해 두었고, 실제로 세 파일이 갈라졌다(c806343이 모델 ID를 고쳤다). 상류가
-  // 정본이므로 그 갈라짐은 우리 쪽 결함이다 — 사본이 없으면 갈라질 수 없다.
+  // Why the rule set is a submodule (2026-08-21): previously the upstream aiplc-rules/ was copied into
+  // the repo, and three files actually diverged (c806343 fixed a model ID). Upstream is the source of
+  // truth, so that divergence is a defect on our side — without a copy, nothing can diverge.
   const staged = execFileSync('git', ['ls-files', '--stage', '-z', 'steering-files'], {
     cwd: REPO_ROOT, encoding: 'utf8',
   }).split('\0').filter(Boolean);
@@ -159,16 +159,16 @@ function testTheRulesetShipsAsASubmodule() {
     + `was ${staged[0].split(' ')[0]}. If the rules got committed as files again, the copy `
     + 'can drift from aws-samples/sample-ai-plc, which is what the submodule exists to prevent');
 
-  // 사본이 되살아나는 것을 막는다. 이 경로는 2026-08-21까지 룰셋의 자리였고,
-  // 되돌리는 실수의 형태는 "steering-files/를 그대로 두고 rule/도 다시 만드는 것"이다.
+  // Prevents the copy from coming back. Until 2026-08-21 this path was where the rule set lived,
+  // and the shape of the reverting mistake is "keeping steering-files/ and recreating rule/ too".
   const revived = trackedFiles().filter((f) => f.startsWith('rule/'));
   assert.deepStrictEqual(revived, [],
     'the AI-PLC ruleset must live only in the steering-files/ submodule; a second copy '
     + `under rule/ is the drift this replaced. Found: ${revived.join(', ')}`);
 
-  // 여기까지는 인덱스만 봤다. 마지막으로 워킹 트리에 내용이 있는지 본다 — 이
-  // 단정이 실패하는 흔한 경우는 서브모듈을 초기화하지 않은 fresh clone이고,
-  // 그 상태는 부팅해도 룰이 없는 상태와 정확히 같다.
+  // So far only the index was checked. Finally, check that the working tree has contents — the
+  // common case where this assertion fails is a fresh clone without the submodule initialized,
+  // and that state is exactly the same as booting with no rules.
   assert.ok(fs.existsSync(path.join(
     REPO_ROOT, 'steering-files', 'aiplc-rules', 'aws-aiplc-rules', 'core-workflow.md')),
     'steering-files/ is empty — run: git submodule update --init --recursive');

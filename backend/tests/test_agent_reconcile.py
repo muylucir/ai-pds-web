@@ -1,12 +1,12 @@
-# backend/tests/test_agent_reconcile.py — 워크스페이스에서 유도하는 UI 이벤트.
+# backend/tests/test_agent_reconcile.py — UI events derived from the workspace.
 #
-# 여기 있는 검사들은 2026-08-18까지 tests/test_agent_tools.py에서 두 MCP 도구
-# (`report_stage`, `handoff_prototype`)를 대상으로 돌던 것들이다. 도구가 훅으로
-# 옮겨 가면서 **행동은 그대로, 트리거만 바뀌었다** — 그래서 검사도 옮겼다.
+# The checks here are ones that, until 2026-08-18, ran in tests/test_agent_tools.py against two
+# MCP tools (`report_stage`, `handoff_prototype`). As the tools moved to hooks, **the behavior
+# stayed the same and only the trigger changed** — so the checks moved too.
 #
-# 옮기면서 늘어난 것이 하나 있다: 도구는 "모델이 부른다"를 전제하므로 부르지 않는
-# 경우를 검사할 수 없었다. 훅과 재조정은 부르지 않는 경우가 없으니, 이 파일은
-# **파일만 있으면 화면이 맞는다**를 검사한다.
+# One thing grew in the move: the tools presupposed "the model calls them", so the case where it
+# does not call them could not be tested. Hooks and reconciliation have no not-called case, so this
+# file checks that **as long as the file exists, the screen is right**.
 import json
 from pathlib import Path
 
@@ -14,14 +14,14 @@ from aipds.agent import reconcile
 
 
 def _payloads(events):
-    """스테이지 diff를 본다 — 함께 실리는 capability 스냅샷은 아래 전용 테스트가 본다."""
+    """Looks at the stage diff — the capability snapshot that rides along is covered by the dedicated test below."""
     out = [json.loads(e.payload) for e in events]
     for p in out:
         p.pop("capabilities", None)
     return out
 
 
-# ---- 스테이지: aiplc-state.md에서 유도한다 (옛 report_stage) ----
+# ---- Stages: derived from aiplc-state.md (formerly report_stage) ----
 
 
 def test_every_stage_event_carries_the_same_capability_snapshot():
@@ -53,7 +53,7 @@ def test_a_state_file_becomes_stage_events():
     events, cursor = reconcile.stage_events(md, {})
     assert _payloads(events) == [
         {"stage": "Workspace Detection", "status": "completed", "summary": ""},
-        # Current Stage가 가리키는 줄은 parse_state_file이 in_progress로 접는다.
+        # parse_state_file folds the line Current Stage points to into in_progress.
         {"stage": "Envision", "status": "in_progress", "summary": ""},
         {"stage": "Solution Analysis", "status": "pending", "summary": ""},
     ]
@@ -61,8 +61,8 @@ def test_a_state_file_becomes_stage_events():
 
 
 def test_the_checklist_order_is_kept():
-    """체크리스트 순서가 곧 방법론의 스테이지 순서다 — 정렬하면 사이드바가 룰과
-    다른 순서로 쌓인다."""
+    """The checklist order is the methodology's stage order — sorting would stack the sidebar
+    in an order different from the rules."""
     md = ("- **Current Stage**: Go-to-Market\n\n## Stage Progress\n"
           "- [x] Envision\n- [x] Product Strategy\n- [ ] Go-to-Market\n")
     events, _ = reconcile.stage_events(md, {})
@@ -71,10 +71,10 @@ def test_the_checklist_order_is_kept():
 
 
 def test_an_unchanged_state_file_emits_nothing():
-    """**diff가 이 설계의 요점이다.** 프론트가 `stage` 이벤트를 누적하므로
-    (useWorkspaceStream.ts의 `[...prev, parsed]`) 같은 상태를 다시 흘리면 사이드바
-    목록이 자란다. 옛 `report_stage` 도구는 모델이 같은 스테이지를 두 번 선언하면
-    두 번 쐈다 — 이쪽이 오히려 조용하다."""
+    """**The diff is the point of this design.** The frontend accumulates `stage` events
+    (`[...prev, parsed]` in useWorkspaceStream.ts), so re-emitting the same state grows the
+    sidebar list. The old `report_stage` tool fired twice if the model declared the same stage
+    twice — this side is actually quieter."""
     md = "- **Current Stage**: Envision\n\n## Stage Progress\n- [ ] Envision\n"
     events, cursor = reconcile.stage_events(md, {})
     assert len(events) == 1
@@ -102,12 +102,12 @@ def test_the_note_becomes_the_summary():
 
 
 def test_an_escaped_stage_name_is_unescaped():
-    """2026-08-18 ws-d: 모델이 `Prototype &amp; Validation`을 보냈다. 스테이지
-    이름은 표시 문자열이 아니라 **키**이므로, `&amp;`가 박힌 줄은 다음의 올바른 줄과
-    이름이 달라 체크라인이 하나 더 생긴다.
+    """2026-08-18 ws-d: the model sent `Prototype &amp; Validation`. A stage name is a
+    **key**, not a display string, so a line with `&amp;` baked in has a different name from
+    the correct line that follows, and one extra checkline appears.
 
-    옛 경로에서는 도구 인자와 파일 양쪽을 정규화해야 했는데, 지금은 파일이 유일한
-    입력이라 읽기 쪽 한 번으로 끝난다(parsers/state.normalize_stage_name)."""
+    The old path had to normalize both the tool arguments and the file, but now the file is the
+    only input, so a single pass on the read side does it (parsers/state.normalize_stage_name)."""
     md = ("- **Current Stage**: Prototype & Validation\n\n## Stage Progress\n"
           "- [ ] Prototype &amp; Validation\n")
     events, _ = reconcile.stage_events(md, {})
@@ -117,8 +117,8 @@ def test_an_escaped_stage_name_is_unescaped():
 
 
 def test_an_escaped_then_clean_name_is_one_stage_not_two():
-    """정규화가 커서에도 적용되므로 같은 스테이지로 합쳐진다 — 진행률이 같은
-    스테이지를 두 번 세지 않는다."""
+    """Normalization applies to the cursor too, so they merge into the same stage — progress
+    does not count the same stage twice."""
     escaped = "- **Current Stage**: X\n\n## Stage Progress\n- [ ] Prototype &amp; Validation\n"
     _, cursor = reconcile.stage_events(escaped, {})
     clean = "- **Current Stage**: X\n\n## Stage Progress\n- [ ] Prototype & Validation\n"
@@ -128,8 +128,8 @@ def test_an_escaped_then_clean_name_is_one_stage_not_two():
 
 
 def test_a_missing_or_empty_state_file_changes_nothing():
-    """없다는 사실로 화면을 지우지 않는다 — 에이전트가 파일을 잠깐 비웠다가 다시
-    쓰는 중일 수 있다."""
+    """We do not clear the screen based on absence — the agent may be briefly emptying the file
+    and rewriting it."""
     cursor = {"Envision": "in_progress"}
     for md in (None, "", "   \n"):
         events, out = reconcile.stage_events(md, cursor)
@@ -138,8 +138,8 @@ def test_a_missing_or_empty_state_file_changes_nothing():
 
 
 def test_a_state_file_with_no_checklist_emits_nothing():
-    """Current Stage만 있고 체크리스트가 없으면 흘릴 항목이 없다. 여기서 항목을
-    만들어 내면 룰이 정하지 않은 스테이지가 사이드바에 생긴다."""
+    """With only Current Stage and no checklist, there is nothing to emit. Creating an item here
+    would put a stage the rules did not define into the sidebar."""
     events, _ = reconcile.stage_events("- **Current Stage**: Envision\n", {})
     assert events == []
 
@@ -152,7 +152,7 @@ def test_read_state_returns_none_when_absent(tmp_path):
     assert "Envision" in (reconcile.read_state(tmp_path) or "")
 
 
-# ---- 인계: build-instructions.md의 존재에서 유도한다 (옛 handoff_prototype) ----
+# ---- Handoff: derived from the existence of build-instructions.md (formerly handoff_prototype) ----
 
 
 def _spec(ws: Path, key: str) -> None:
@@ -181,10 +181,10 @@ def test_the_slugged_layout_is_recognised(tmp_path):
 
 
 def test_build_instructions_without_a_spec_are_not_a_handoff(tmp_path):
-    """Prototypes 탭은 **명세**에서 카드를 만든다(routes/prototypes.py의
-    layout.discover). 빌드 지시만 있으면 사용자가 빈 탭을 본다 — 옛
-    `handoff_prototype`이 명세 존재를 확인한 이유가 그것이고, 그 검사가 여기로
-    옮겨 왔다."""
+    """The Prototypes tab builds cards from the **spec** (layout.discover in
+    routes/prototypes.py). With only build instructions, the user sees an empty tab — that is
+    why the old `handoff_prototype` checked that the spec existed, and that check has moved
+    here."""
     _spec(tmp_path, "aiplc-docs/discovery/prototype/build-instructions.md")
     events, cursor = reconcile.prototype_events(tmp_path, set())
     assert events == []
@@ -192,16 +192,16 @@ def test_build_instructions_without_a_spec_are_not_a_handoff(tmp_path):
 
 
 def test_a_spec_without_build_instructions_is_not_a_handoff(tmp_path):
-    """명세만 쓴 시점(Step 1)에는 아직 인계가 아니다. 여기서 알리면 설계가 끝나기
-    전에 카드가 뜬다."""
+    """When only the spec has been written (Step 1), it is not a handoff yet. Announcing here
+    would show the card before the design is finished."""
     _spec(tmp_path, "aiplc-docs/discovery/prototype/prototype-spec.md")
     events, _ = reconcile.prototype_events(tmp_path, set())
     assert events == []
 
 
 def test_a_handoff_is_announced_once(tmp_path):
-    """두 번 알리면 채팅에 카드가 두 장 뜬다. 빌드 지시를 고쳐 쓰는 것은 정상
-    행동이므로 커서가 필요하다."""
+    """Announcing twice puts two cards in the chat. Rewriting the build instructions is normal
+    behavior, so a cursor is needed."""
     _spec(tmp_path, "aiplc-docs/discovery/prototype/prototype-spec.md")
     _spec(tmp_path, "aiplc-docs/discovery/prototype/build-instructions.md")
     events, cursor = reconcile.prototype_events(tmp_path, set())
@@ -211,7 +211,7 @@ def test_a_handoff_is_announced_once(tmp_path):
 
 
 def test_every_handed_off_prototype_is_announced(tmp_path):
-    """Path B는 셋이다. 하나만 알리면 나머지 카드가 조용히 빠진다."""
+    """Path B has three. Announcing only one silently drops the remaining cards."""
     for slug in ("a", "b", "c"):
         _spec(tmp_path, f"aiplc-docs/discovery/prototypes/{slug}/PROTOTYPE-{slug}.md")
         _spec(tmp_path, f"aiplc-docs/discovery/prototypes/{slug}/build-instructions.md")
@@ -221,8 +221,8 @@ def test_every_handed_off_prototype_is_announced(tmp_path):
 
 
 def test_the_spec_path_is_the_real_one_not_a_computed_one(tmp_path):
-    """`discover`가 디스크에서 찾은 경로를 그대로 싣는다. 슬러그로 경로를 다시
-    조립하면 레이아웃 규약이 두 곳에 있게 된다(proto/layout.py가 단독 소유)."""
+    """Carries the path `discover` found on disk as is. Reassembling the path from the slug
+    would put the layout convention in two places (proto/layout.py owns it alone)."""
     _spec(tmp_path, "aiplc-docs/discovery/prototypes/foo/PROTOTYPE-foo.md")
     _spec(tmp_path, "aiplc-docs/discovery/prototypes/foo/build-instructions.md")
     events, _ = reconcile.prototype_events(tmp_path, set())
@@ -235,7 +235,7 @@ def test_an_empty_workspace_is_quiet(tmp_path):
     assert events == [] and cursor == set()
 
 
-# ---- prototype_id_for: 경로 → id ----
+# ---- prototype_id_for: path → id ----
 
 
 def test_prototype_id_for_matches_both_layouts():
@@ -246,29 +246,29 @@ def test_prototype_id_for_matches_both_layouts():
 
 
 def test_prototype_id_for_rejects_everything_else():
-    """다른 파일에서 턴이 끊기면 에이전트가 작업 도중에 멈춘다 — 이 판정이 훅의
-    턴 종료 조건이므로 좁아야 한다."""
+    """If the turn is cut off on a different file, the agent stops mid-work — this judgment is
+    the hook's turn-end condition, so it must be narrow."""
     for rel in ("aiplc-docs/discovery/prototype/prototype-spec.md",
                 "aiplc-docs/discovery/prototype/design-context.md",
                 "aiplc-docs/audit.md",
-                # 레이아웃 밖의 build-instructions.md는 인계가 아니다.
+                # A build-instructions.md outside the layout is not a handoff.
                 "aiplc-docs/discovery/build-instructions.md",
                 "aiplc-docs/discovery/envision/build-instructions.md",
                 "build-instructions.md"):
         assert reconcile.prototype_id_for(rel) is None, rel
 
 
-# ---- 문서: aiplc-docs/ 아래 산출물 쓰기에서 유도한다 (옛 submit_document) ----
+# ---- Documents: derived from artifact writes under aiplc-docs/ (formerly submit_document) ----
 #
-# `submit_document`가 2026-08-21에 사라졌다. 남긴 근거는 "`version`과 '리뷰 준비됨
-# vs 중간 저장'은 파싱이 아니라 판단"이었는데, 실제 지시(discovery-config/CLAUDE.md)는
-# 판단을 요구하지 않았다 — 문서를 만들거나 갱신할 때마다 부르라고 했다. 판단이 없으면
-# 신호는 "문서가 쓰였다"와 1:1이고, PostToolUse가 이미 그것을 본다.
+# `submit_document` went away on 2026-08-21. The rationale for keeping it was "`version` and
+# 'ready for review vs. intermediate save' are judgment, not parsing", but the actual instruction
+# (discovery-config/CLAUDE.md) did not require judgment — it said to call it whenever a document
+# is created or updated. Without judgment, the signal is 1:1 with "a document was written", and PostToolUse already sees that.
 #
-# 게다가 그 도구는 **대부분 불리지 않았다**: 프론트가
-# `useWorkspaceStream.ts:177`에 "에이전트는 대부분의 문서를 submit_document 없이
-# file_write로만 만든다(실측: prfaq.md 등)"고 적고 우회로를 넣어 뒀다. 스테이지·인계와
-# 같은 침묵의 세 번째 사례다.
+# On top of that, the tool **mostly went uncalled**: the frontend wrote at
+# `useWorkspaceStream.ts:177` "The agent creates most documents with file_write alone, without
+# submit_document (measured: prfaq.md etc.)" and put in a workaround. A third case of the same
+# silence as stages and handoff.
 
 
 def _doc(root: Path, rel: str, text: str = "# 문서\n본문\n") -> None:
@@ -286,10 +286,10 @@ def test_a_document_write_becomes_a_document_event(tmp_path):
 
 
 def test_the_record_keeping_files_are_not_documents(tmp_path):
-    """감사·상태·질문 파일은 문서 패널이 따라갈 산출물이 아니다.
+    """Audit, state, and question files are not artifacts the doc panel follows.
 
-    프론트의 `isDocPath`와 같은 판정이다(useWorkspaceStream.ts) — 질문 파일이
-    여기 끼면 한 화면에 같은 질문의 두 버전이 나란히 뜬다.
+    The same judgment as the frontend's `isDocPath` (useWorkspaceStream.ts) — if question files
+    were included here, two versions of the same questions would show side by side on one screen.
     """
     for rel in ("aiplc-docs/audit.md",
                 "aiplc-docs/aiplc-state.md",
@@ -302,8 +302,8 @@ def test_the_record_keeping_files_are_not_documents(tmp_path):
 
 
 def test_the_same_content_is_announced_once(tmp_path):
-    """커서가 없으면 매 쓰기마다 배너가 다시 뜬다 — 에이전트가 같은 문서를 한 턴에
-    여러 번 쓰는 것은 정상 동작이다(stage_events가 diff를 쓰는 것과 같은 이유)."""
+    """Without a cursor, the banner pops up again on every write — the agent writing the same
+    document several times in one turn is normal behavior (same reason stage_events uses a diff)."""
     _doc(tmp_path, "aiplc-docs/discovery/prfaq.md")
     first, cursor = reconcile.document_events(tmp_path, {})
     again, cursor2 = reconcile.document_events(tmp_path, cursor)
@@ -312,8 +312,8 @@ def test_the_same_content_is_announced_once(tmp_path):
 
 
 def test_a_changed_document_gets_the_next_version(tmp_path):
-    """배너의 닫기가 `version`을 기억하므로(page.tsx의 dismissedDocVersion) 갱신마다
-    값이 달라져야 한다 — 같으면 한 번 닫은 뒤 다시 뜨지 않는다."""
+    """The banner's dismiss remembers `version` (dismissedDocVersion in page.tsx), so the value must
+    differ on every update — if it stays the same, once dismissed it never pops up again."""
     _doc(tmp_path, "aiplc-docs/discovery/prfaq.md", "# 문서\n초안\n")
     _, cursor = reconcile.document_events(tmp_path, {})
     _doc(tmp_path, "aiplc-docs/discovery/prfaq.md", "# 문서\n고친 본문\n")
@@ -323,8 +323,8 @@ def test_a_changed_document_gets_the_next_version(tmp_path):
 
 
 def test_an_empty_document_is_not_announced(tmp_path):
-    """옛 도구가 빈 파일 선언을 거부한 이유를 유지한다 — 사용자가 "작성됐습니다"를
-    읽으면서 빈 문서 패널을 본다."""
+    """Keeps the reason the old tool rejected empty-file declarations — the user would read
+    "작성됐습니다" while looking at an empty doc panel."""
     _doc(tmp_path, "aiplc-docs/discovery/prfaq.md", "   \n\n")
     events, cursor = reconcile.document_events(tmp_path, {})
     assert events == [] and cursor == {}

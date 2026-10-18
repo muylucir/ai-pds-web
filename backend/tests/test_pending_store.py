@@ -1,9 +1,9 @@
-# Strands는 세션에 pending interrupt를 함께 영속하지만 Claude Agent SDK의
-# session store는 트랜스크립트 미러여서 pending 질문이 인메모리 Future다.
-# GET /pending(새로고침 후 질문 폼 복원)이 그 기능을 쓰므로 별도로 영속한다.
+# Strands persists pending interrupts together with the session, but the Claude Agent SDK's
+# session store is a transcript mirror, so a pending question is an in-memory Future.
+# GET /pending (restoring the question form after a refresh) uses that capability, so we persist it separately.
 #
-# sdk_questions(SDK 원형)를 함께 저장하는 이유: 답변을 SDK 라벨로 되번역할 때
-# 필요하고(builder._answer_to_sdk), 재시작 후에는 인메모리 사본이 없다.
+# Why sdk_questions (the raw SDK form) is saved too: it is needed to translate answers back
+# to SDK labels (builder._answer_to_sdk), and after a restart there is no in-memory copy.
 import json
 
 import pytest
@@ -51,15 +51,15 @@ async def test_clear_removes_it():
 
 @pytest.mark.asyncio
 async def test_clear_is_idempotent():
-    # 답변 제출과 인터럽트가 겹쳐 두 번 호출될 수 있다 — 두 번째가 터지면
-    # 턴이 죽는다.
+    # Answer submission and an interrupt can overlap and call this twice — if the second
+    # call blows up, the turn dies.
     await clear_pending(FakeS3Store())
 
 
 @pytest.mark.asyncio
 async def test_save_replaces_an_earlier_pending():
-    # 한 프로젝트에 pending 질문은 하나뿐이다(고정 키). 이전 것이 남으면
-    # 새로고침 시 답변 불가한 옛 폼이 뜬다.
+    # A project has only one pending question (fixed key). If the earlier one remained,
+    # a refresh would show an old form that can no longer be answered.
     s3 = FakeS3Store()
     await save_pending(s3, interrupt_id="old", questions=QUESTIONS,
                        sdk_questions=SDK_QUESTIONS, session_id="s-1")
@@ -71,8 +71,8 @@ async def test_save_replaces_an_earlier_pending():
 
 @pytest.mark.asyncio
 async def test_load_degrades_to_none_on_corrupt_json():
-    # 손상된 payload로 500을 내지 않는다 — pending은 복원 편의이고, 없으면
-    # 사용자가 턴을 다시 시작할 수 있다.
+    # Don't return 500 for a corrupt payload — pending is a restore convenience, and without it
+    # the user can start the turn again.
     s3 = FakeS3Store()
     s3.blobs[PENDING_KEY] = "{not json"
     assert await load_pending(s3) is None
@@ -80,7 +80,7 @@ async def test_load_degrades_to_none_on_corrupt_json():
 
 @pytest.mark.asyncio
 async def test_load_degrades_to_none_when_a_required_field_is_missing():
-    # 계약이 드리프트한 payload를 반쯤 복원하면 답변 제출이 조용히 실패한다.
+    # Half-restoring a payload whose contract has drifted makes answer submission fail silently.
     s3 = FakeS3Store()
     s3.blobs[PENDING_KEY] = '{"interrupt_id": "i-1"}'
     assert await load_pending(s3) is None
@@ -88,7 +88,7 @@ async def test_load_degrades_to_none_when_a_required_field_is_missing():
 
 @pytest.mark.asyncio
 async def test_hangul_survives_the_round_trip():
-    # ensure_ascii=False로 저장해야 화면에 \\uXXXX가 뜨지 않는다.
+    # Must be saved with ensure_ascii=False so \\uXXXX doesn't show on screen.
     s3 = FakeS3Store()
     await save_pending(s3, interrupt_id="i-1", questions=QUESTIONS,
                        sdk_questions=SDK_QUESTIONS, session_id="s-1")
@@ -97,8 +97,8 @@ async def test_hangul_survives_the_round_trip():
 
 @pytest.mark.asyncio
 async def test_load_degrades_to_none_when_sdk_questions_has_the_wrong_type():
-    # sdk_questions가 리스트가 아니면 Task 6의 답변 되번역(builder._answer_to_sdk)이
-    # 인덱싱 도중 터진다 — 필드가 "있기만" 하면 통과시키면 여기서 죽는다.
+    # If sdk_questions is not a list, Task 6's answer back-translation (builder._answer_to_sdk)
+    # blows up while indexing — passing it just because the field "exists" would die here.
     s3 = FakeS3Store()
     s3.blobs[PENDING_KEY] = json.dumps({
         "interrupt_id": "i-1", "questions": QUESTIONS,
@@ -109,8 +109,8 @@ async def test_load_degrades_to_none_when_sdk_questions_has_the_wrong_type():
 
 @pytest.mark.asyncio
 async def test_load_degrades_to_none_when_questions_has_the_wrong_type():
-    # questions가 dict가 아니면 GET /pending이 폼을 렌더링하다가 죽는다 —
-    # 존재 검사만으론 이 드리프트를 못 잡는다.
+    # If questions is not a dict, GET /pending dies while rendering the form —
+    # an existence check alone can't catch this drift.
     s3 = FakeS3Store()
     s3.blobs[PENDING_KEY] = json.dumps({
         "interrupt_id": "i-1", "questions": ["not", "a", "dict"],
@@ -121,9 +121,9 @@ async def test_load_degrades_to_none_when_questions_has_the_wrong_type():
 
 @pytest.mark.asyncio
 async def test_load_degrades_to_none_when_interrupt_id_is_empty():
-    # 빈 interrupt_id는 답변 제출 시 어떤 인터럽트를 재개할지 알 수 없게
-    # 만든다 — "필드가 있다"는 검사를 통과하지만 실질적으로 값이 없는 것과
-    # 같다.
+    # An empty interrupt_id makes it impossible to know which interrupt to resume on
+    # answer submission — it passes the "field exists" check but is effectively the same
+    # as having no value.
     s3 = FakeS3Store()
     s3.blobs[PENDING_KEY] = json.dumps({
         "interrupt_id": "", "questions": QUESTIONS,

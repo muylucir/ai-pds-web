@@ -1,11 +1,11 @@
 // frontend/lib/auth/cognitoUrls.ts
 //
-// Hosted UI(managed login) 엔드포인트 조립. 순수 함수로 두어 route handler 없이
-// 테스트할 수 있게 한다.
+// Assembles the Hosted UI (managed login) endpoints. Kept as pure functions so they can be tested
+// without a route handler.
 //
-// ⚠️ 이 파일의 env는 모두 서버사이드 전용이다 — NEXT_PUBLIC_ 접두어를 붙이면
-// 클라이언트 번들에 인라인되어 client secret이 브라우저로 나간다. 이 모듈은
-// route handler와 middleware에서만 import한다.
+// ⚠️ All env in this file is server-side only — adding the NEXT_PUBLIC_ prefix would inline it into
+// the client bundle and send the client secret to the browser. This module is imported only from
+// route handlers and middleware.
 
 export interface CognitoEnv {
   domain: string;
@@ -14,18 +14,18 @@ export interface CognitoEnv {
   appUrl: string;
 }
 
-// infra/lib/auth-client-config.ts의 CALLBACK_PATH / LOGOUT_PATH와 반드시 같아야
-// 한다. Cognito는 콜백 URL의 전수 일치만 허용한다(와일드카드 불가) — 여기가
-// 어긋나면 로그인이 redirect_mismatch로 실패한다.
+// These must match CALLBACK_PATH / LOGOUT_PATH in infra/lib/auth-client-config.ts. Cognito allows
+// only exact matches of callback URLs (no wildcards) — if these drift, login fails with
+// redirect_mismatch.
 const CALLBACK_PATH = "/api/auth/callback";
 const LOGOUT_PATH = "/login";
-// ⚠️ infra/lib/auth-client-config.ts의 OAUTH_SCOPES와 같은 집합이어야 한다.
-// 여기가 더 넓으면 Cognito가 authorize 자체를 거부하고(허용 목록 밖의 스코프),
-// 좁으면 발급된 access 토큰에 그 스코프가 없다.
+// ⚠️ Must be the same set as OAUTH_SCOPES in infra/lib/auth-client-config.ts.
+// If this is broader, Cognito rejects the authorize itself (scopes outside the allowed list);
+// if narrower, the issued access token lacks those scopes.
 //
-// `aws.cognito.signin.user.admin`은 Cognito 셀프서비스 API를 부르기 위한 것이다 —
-// 자기 비밀번호 변경(/me/password → ChangePassword)이 여기에 달려 있다. 빼면
-// 그 화면이 "Access Token does not have required scopes"로 전멸한다.
+// `aws.cognito.signin.user.admin` is for calling Cognito self-service APIs —
+// changing one's own password (/me/password → ChangePassword) depends on it. Removing it wipes out
+// that screen with "Access Token does not have required scopes".
 const SCOPES = "openid email profile aws.cognito.signin.user.admin";
 
 export function cognitoEnv(): CognitoEnv {
@@ -48,7 +48,7 @@ export function callbackUrl(env: CognitoEnv): string {
 export function authorizeUrl(env: CognitoEnv, challenge: string,
                              state: string): string {
   const params = new URLSearchParams({
-    response_type: "code",           // implicit(토큰을 URL 프래그먼트로 흘림)은 쓰지 않는다
+    response_type: "code",           // implicit (leaking tokens in the URL fragment) is not used
     client_id: env.clientId,
     redirect_uri: callbackUrl(env),
     scope: SCOPES,

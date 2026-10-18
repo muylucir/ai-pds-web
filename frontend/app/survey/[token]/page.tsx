@@ -15,11 +15,11 @@ type State =
   | { kind: "error" }
   | { kind: "done" };
 
-// 본문을 별도 컴포넌트로 나눈 이유: 이 화면의 문구는 **설문 언어**로 그려야
-// 하고, 그 언어는 SurveyPage가 씌우는 LocaleProvider가 정한다. 같은 컴포넌트
-// 안에서 useT()를 부르면 자기가 렌더하는 Provider보다 위에서 값을 읽으므로
-// (React 컨텍스트는 조상만 본다) 쿠키 로케일이 걸려, 문항은 영어인데 라벨만
-// 한국어인 절반짜리 화면이 된다.
+// Why the body is split into a separate component: this screen's text must be drawn in **the survey
+// language**, and that language is set by the LocaleProvider that SurveyPage wraps around it. Calling
+// useT() inside the same component reads the value from above the Provider it renders (React context
+// only sees ancestors), so the cookie locale would apply, producing a half-baked screen where the
+// questions are in English but only the labels are in Korean.
 function SurveyBody({
   state,
   submitting,
@@ -37,12 +37,12 @@ function SurveyBody({
       {state.kind === "ready" && (
         <>
           <h1 className="text-xl font-bold text-slate-800 mb-2">{state.survey.title}</h1>
-          {/* 문항이 "실제 업무에 도입된다면"처럼 가정형으로 묻는 것과 짝이다
-              (backend/aipds/survey/builder.py). 응답자가 본 것은 핵심
-              흐름만 동작하는 데모이고 데이터는 목일 수 있는데, 안내문이 실사용
-              경험을 요구하면 두 전제가 어긋난다 — 목 데이터를 실제 결과로
-              오해한 채 완성도를 평가하게 되고, 그 점수는 접근에 대한 신호가
-              아니라 잡음이 된다. */}
+          {/* This pairs with the questions asking hypothetically, as in "실제 업무에 도입된다면"
+              (if it were adopted in your actual work) (backend/aipds/survey/builder.py). What respondents
+              saw is a demo where only the core flow works and the data may be mock, so if the intro asks
+              about real-use experience the two premises clash — respondents would rate completeness while
+              mistaking mock data for real results, and those scores would become noise rather than a
+              signal about the approach. */}
           <p data-testid="survey-intro" className="text-sm text-slate-500 mb-8">
             {t("sp.introBodyPrefix")}{" "}
             <strong className="font-semibold text-slate-600">{t("sp.introBodyBold")}</strong>
@@ -83,9 +83,9 @@ export default function SurveyPage({ params }: { params: Promise<{ token: string
   const { token } = use(params);
   const [state, setState] = useState<State>({ kind: "loading" });
   const [submitting, setSubmitting] = useState(false);
-  // 설문 언어는 state와 따로 둔다. 제출하면 state가 done(또는 제출 순간
-  // 마감됐으면 closed)으로 바뀌어 survey가 사라지는데, 언어를 state.survey에서
-  // 읽으면 그 순간 ko로 떨어져 영어 설문의 감사 문구가 한국어로 나온다.
+  // The survey language is kept separate from state. On submit, state changes to done (or closed if
+  // the survey closed at the moment of submission) and survey disappears, so reading the language from
+  // state.survey would drop to ko at that moment and an English survey's thank-you text would come out in Korean.
   const [surveyLocale, setSurveyLocale] = useState<Locale>(DEFAULT_LOCALE);
 
   useEffect(() => {
@@ -115,12 +115,12 @@ export default function SurveyPage({ params }: { params: Promise<{ token: string
     }
   }
 
-  // 이 페이지만 UI 쿠키를 무시하고 설문 언어를 쓴다. 응답자는 외부인이라
-  // 쿠키가 없고(layout의 Provider는 ko가 된다), 문항이 영어인데 라벨만
-  // 한국어인 화면은 응답자에게 더 나쁘다.
+  // Only this page ignores the UI cookie and uses the survey language. Respondents are outsiders, so
+  // they have no cookie (the layout's Provider becomes ko), and a screen with English questions but
+  // Korean labels is worse for respondents.
   //
-  // 언어를 모르는 설문(구 데이터)과 로딩 중에는 ko로 떨어진다 — 그것이 이
-  // 기능 이전 모든 설문의 언어다.
+  // Surveys with an unknown language (old data) and the loading state fall back to ko — that is the
+  // language of every survey from before this feature.
 
   return (
     <LocaleProvider locale={surveyLocale}>

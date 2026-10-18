@@ -24,9 +24,10 @@ client: TestClient
 
 @pytest.fixture(autouse=True)
 def _live_client():
-    """요청 사이에 이벤트 루프를 유지하는 클라이언트 — 빌드 턴은 요청이 아니라 세션의
-    서버 작업이다(aipds/turn_job.py). `with` 없는 TestClient는 요청마다 루프를 새로
-    열고 닫아, POST가 시작한 턴이 다음 요청 전에 루프와 함께 사라진다."""
+    """A client that keeps the event loop alive between requests — a build turn is the
+    session's server-side job, not a request (aipds/turn_job.py). A TestClient without
+    `with` opens and closes a new loop per request, so a turn started by a POST vanishes
+    along with the loop before the next request."""
     global client
     with TestClient(app_module.app) as live:
         client = live
@@ -38,7 +39,7 @@ SPEC_KEY = f"aiplc-docs/discovery/prototypes/{SLUG}/PROTOTYPE-{SLUG}.md"
 
 
 def _build(text: str) -> str:
-    """빌드 턴을 시작하고 끝까지 본다. SSE 본문 전체를 돌려준다."""
+    """Start a build turn and watch it to the end. Returns the whole SSE body."""
     r = client.post(f"/projects/{PID}/prototypes/{SLUG}/turns", json={"text": text})
     assert r.status_code == 200, r.text
     with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
@@ -65,15 +66,15 @@ class FakePrototypeSession:
         self._start_exc = start_exc
         self.turns = TurnJobs(retention=float("inf"))
 
-    #: 실물과 같은 사실을 갖는다: 개시 턴이 이미 돌았는가. 라우트가 이 값으로
-    #: 사용자의 첫 메시지를 개시 프롬프트로 감쌀지 정하므로, 가짜가 이것을
-    #: 갖지 않으면 그 분기를 검증할 수 없다.
+    #: Holds the same fact as the real one: has the opening turn already run. The route
+    #: uses this value to decide whether to wrap the user's first message in the
+    #: opening prompt, so without it the fake could not exercise that branch.
     @property
     def opened(self) -> bool:
         return self._opened
 
     def first_prompt(self, request=None) -> str:
-        # 요청이 실렸는지를 단정할 수 있게 인자를 반환값에 노출한다.
+        # Expose the argument in the return value so tests can assert the request was carried.
         return f"FIRST({request})" if request is not None else "FIRST(None)"
 
     async def start(self):
@@ -145,9 +146,9 @@ class FakeProtoHost:
         # basePath in at build time, so a missing value here is a 404 on every
         # asset, not a recoverable runtime detail.
         self.start_base_paths: list[object] = []
-        # 프로토타입 앱의 런타임 LLM 호출이 쓸 모델. 라우트가 이것을 넘기지
-        # 않으면 빌드된 앱이 에이전트가 임의로 고른 모델로 돌아, 사용자가
-        # 프로젝트에서 고른 값이 무시된다.
+        # The model the prototype app's runtime LLM calls use. If the route does
+        # not pass it, the built app runs on whatever model the agent picked,
+        # ignoring the value the user chose for the project.
         self.start_model_ids: list[object] = []
         self.purged: list[tuple[str, str]] = []
 
@@ -185,8 +186,8 @@ class FakeProtoHost:
         return self.infos.get((pid, slug))
 
     def slugs(self, pid):
-        """실물 ProtoHost.slugs와 같은 합집합(디렉토리 + 호스팅 레지스트리 +
-        토큰 파일). 프로젝트 삭제가 "이 프로젝트의 모든 슬러그"를 여기서 얻는다."""
+        """The same union as the real ProtoHost.slugs (directories + hosting registry +
+        token files). Project deletion gets "every slug of this project" from here."""
         found = {slug for (p, slug) in self.infos if p == pid}
         if self._root is not None:
             base = self._root / pid
@@ -200,11 +201,11 @@ class FakeProtoHost:
 
     # ---- access tokens ----
     #
-    # 실제 파일을 쓴다(가짜 카운터가 아니라). 이 fake의 root는 fixture가
-    # app_module._proto_root()에 물린 tmp_path와 같은 값이므로, 토큰 파일이 실제
-    # 프로토타입 트리에 놓인다 -- 그래서 "아카이브 zip에 토큰이 실리지 않는다"를
-    # 단정하는 테스트가 진짜 파일을 상대로 검사하게 된다. 인메모리 dict로 두면
-    # 그 테스트는 아무것도 검증하지 않는 채로 통과한다.
+    # Writes real files (not a fake counter). This fake's root is the same tmp_path
+    # the fixture wires into app_module._proto_root(), so the token file lands in the
+    # real prototype tree -- which means the test asserting "the archive zip does not
+    # carry the token" checks against a real file. With an in-memory dict, that test
+    # would pass while verifying nothing.
     def _token_path(self, pid, slug):
         return self._root / pid / slug / TOKEN_FILENAME
 
@@ -315,8 +316,8 @@ def test_list_unknown_project_404(proto_env):
 def test_list_state_none(proto_env):
     _seed_spec(proto_env["s3"])
     body = client.get(f"/projects/{PID}/prototypes").json()
-    # access_url이 None인 것이 이 페이로드의 일부다: 호스팅되지 않은 프로토타입에는
-    # 공유할 링크가 없고, 프론트는 이 값의 부재로 버튼을 감춘다.
+    # access_url being None is part of this payload: an unhosted prototype has no link
+    # to share, and the frontend hides the button based on this value's absence.
     assert body["prototypes"] == [{"slug": SLUG, "name": None,
                                    "spec_path": SPEC_KEY,
                                    "state": "none", "port": None,
@@ -328,8 +329,8 @@ def test_list_state_none(proto_env):
 
 
 def _seed_source_generation(s3, files=None):
-    """S3에 소스 세대 하나를 심는다(proto/store.py) — 로컬 트리가 없는 교체된
-    인스턴스의 모양."""
+    """Seed one source generation in S3 (proto/store.py) — the shape of a replaced
+    instance with no local tree."""
     s3.blobs[f"prototypes/{SLUG}/source/current.json"] = json.dumps(
         {"gen": 1, "hash": "h", "files": 1})
     for rel, body in (files or {"prototype/package.json": "{}"}).items():
@@ -337,8 +338,9 @@ def _seed_source_generation(s3, files=None):
 
 
 def test_list_state_built(proto_env):
-    """로컬 트리가 없어도 S3에 소스 세대가 있으면 빌드된 것이다 — 교체된 인스턴스의
-    카드가 `none`으로 돌아가면 안 된다. 호스팅·세션 시작이 그 세대에서 되살린다."""
+    """Even without a local tree, a source generation in S3 means it is built — the card
+    on a replaced instance must not revert to `none`. Hosting and session start restore
+    from that generation."""
     _seed_spec(proto_env["s3"])
     _seed_source_generation(proto_env["s3"])
     body = client.get(f"/projects/{PID}/prototypes").json()
@@ -480,23 +482,24 @@ def test_list_state_running_wins_over_built(proto_env):
     assert body["prototypes"][0]["port"] == 4007
 
 
-# ---- 호스팅 상태와 세션 상태는 서로 다른 사실이다 ----
+# ---- Hosting state and session state are separate facts ----
 #
-# `state` 하나가 두 가지를 실어 나르고 있었다: 산출물·서버가 어떤 상태인가, 그리고
-# 빌드 세션이 열려 있는가. 그 둘은 독립적인데 열거형이 하나뿐이라 세션이 호스팅을
-# 가렸다 — 실행 중인 프로토타입을 수정하기 시작하면 카드가 `building`으로 바뀌어
-# 프리뷰·공유 링크 버튼이 사라졌고, 정작 서버는 계속 떠 있었다. 그래서 사용자는
-# 프리뷰를 본 직후(수정하고 싶어지는 그 순간) 수정을 시작하면 방금 보던 것을 잃었다.
+# A single `state` was carrying two things: what state the artifact/server is in, and
+# whether a build session is open. The two are independent, but with only one enum the
+# session masked the hosting — once you started modifying a running prototype, the card
+# switched to `building` and the preview/share-link buttons disappeared, while the
+# server was in fact still up. So a user who started modifying right after viewing the
+# preview (the very moment one wants to change something) lost what they had just seen.
 #
-# 이제 `state`는 산출물과 서버만 말하고, 세션이 열려 있는지는 `session_open`이
-# 따로 말한다.
+# Now `state` speaks only to the artifact and the server, and `session_open` separately
+# says whether a session is open.
 
 def test_a_running_host_is_not_hidden_by_an_open_build_session(proto_env, monkeypatch):
-    """실행 중인 프로토타입을 수정하는 동안에도 카드가 실행 중임을 알아야 한다.
+    """Even while a running prototype is being modified, the card must know it is running.
 
-    세션을 여는 것은 호스팅을 건드리지 않는다(어느 라우트도 stop을 부르지 않는다)
-    — 서버는 실제로 계속 떠 있으므로, 화면이 아니라고 말하는 것이 틀린 것이다.
-    프리뷰와 공유 링크는 참가자에게 이미 나가 있는 주소이고 그 링크는 계속 산다."""
+    Opening a session does not touch hosting (no route calls stop) — the server really
+    stays up, so it is the screen saying otherwise that is wrong. The preview and share
+    links are addresses already sent to participants, and those links stay live."""
     _seed_spec(proto_env["s3"])
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
@@ -511,15 +514,15 @@ def test_a_running_host_is_not_hidden_by_an_open_build_session(proto_env, monkey
 
     assert entry["state"] == "running"
     assert entry["port"] == 4007
-    # 그러면서 세션이 열려 있다는 사실도 잃지 않는다 — 카드의 빌드 버튼이 이
-    # 값으로 "수정하기"와 "세션 열기"를 가른다.
+    # And it does not lose the fact that a session is open either — the card's build
+    # button uses this value to choose between "수정하기" (modify) and "세션 열기" (open session).
     assert entry["session_open"] is True
 
 
 def test_the_share_url_survives_a_modify_session(proto_env, monkeypatch):
-    """`access_url`은 `state == "running"`일 때만 실린다. 세션이 호스팅을 가리던
-    동안에는 수정을 시작하는 순간 참가자용 링크가 카드에서 사라졌다 — 서버는 그
-    링크로 계속 응답하고 있었으므로 화면만 거짓말을 했다."""
+    """`access_url` is carried only when `state == "running"`. While the session masked
+    hosting, the participant link disappeared from the card the moment modification
+    started — the server kept answering on that link, so only the screen was lying."""
     _seed_spec(proto_env["s3"])
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
@@ -537,9 +540,10 @@ def test_the_share_url_survives_a_modify_session(proto_env, monkeypatch):
 
 
 def test_session_open_is_false_without_a_working_session(proto_env):
-    """완료·실패한 세션은 열려 있는 것이 아니다. `_WORKING_STATUSES`와 같은
-    질문이어야 한다 — 그렇지 않으면 끝난 세션이 카드의 버튼을 영구히
-    "세션 열기"로 붙들어 둔다(그 결함이 이 파일 위쪽에 이미 기록돼 있다)."""
+    """A completed or failed session is not open. It must be the same question as
+    `_WORKING_STATUSES` — otherwise a finished session pins the card's button to
+    "세션 열기" (open session) forever (that defect is already recorded further up in
+    this file)."""
     _seed_spec(proto_env["s3"])
     body = client.get(f"/projects/{PID}/prototypes").json()
     assert body["prototypes"][0]["session_open"] is False
@@ -562,15 +566,16 @@ def test_session_open_is_true_while_work_is_in_flight(proto_env):
         assert entry["session_open"] is True, status
 
 
-# ---- 떠 있는 프리뷰가 이전 버전인가 ----
+# ---- Is the running preview a previous version? ----
 #
-# 실행 중에 수정할 수 있게 되면서, 서버는 그대로 뜬 채 소스만 바뀌는 구간이 생겼다.
-# 그때 카드가 "실행 :4007"만 말하면 사용자는 자기 수정이 반영됐다고 읽는다 — 참가자
-# 링크가 보여 주는 것은 이전 버전이고, 다시 호스팅해야 바뀐다.
+# Once modifying while running became possible, there came a window where the server
+# stays up as is while only the source changes. If the card then says only "실행 :4007"
+# (running :4007), the user reads it as their change being live — the participant link
+# shows the previous version, and it only changes after re-hosting.
 #
-# **세션이 열려 있는지로 대신하면 안 된다**: 세션이 닫히는 순간 그 신호가 사라지고,
-# 정작 그때가 오해하기 가장 쉬운 시점이다. 그래서 서버가 소스를 읽은 시각과 빌드
-# 트리의 최신 소스 mtime을 비교한다.
+# **Do not substitute whether a session is open**: that signal disappears the moment
+# the session closes, and that is exactly when misreading is most likely. So we compare
+# the time the server read the source with the newest source mtime in the build tree.
 
 def test_a_freshly_hosted_preview_is_not_stale(proto_env):
     _seed_spec(proto_env["s3"])
@@ -590,7 +595,7 @@ def test_a_source_change_after_hosting_makes_the_preview_stale(proto_env):
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
     (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
-    # 서버는 소스보다 먼저 떴다.
+    # The server came up before the source changed.
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=4007, log_tail="", built_at=time.time() - 60)
 
@@ -600,8 +605,8 @@ def test_a_source_change_after_hosting_makes_the_preview_stale(proto_env):
 
 
 def test_only_a_running_preview_can_be_stale(proto_env):
-    """호스팅되지 않은 프로토타입에는 낡을 프리뷰가 없다 — 거기에 경고를 띄우면
-    사용자가 무엇을 해야 하는지 알 수 없다(다시 호스팅할 대상이 없다)."""
+    """An unhosted prototype has no preview to go stale — showing a warning there would
+    leave the user not knowing what to do (there is nothing to re-host)."""
     _seed_spec(proto_env["s3"])
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
@@ -614,15 +619,15 @@ def test_only_a_running_preview_can_be_stale(proto_env):
 
 
 def test_staleness_survives_the_session_closing(proto_env):
-    """이것이 이 필드가 존재하는 이유다. 세션이 닫힌 뒤에도 프리뷰는 여전히 이전
-    버전이고, 바로 그때 사용자가 "반영됐다"고 오해한다."""
+    """This is why this field exists. Even after the session closes, the preview is still
+    the previous version, and that is exactly when the user mistakenly thinks "it's live"."""
     _seed_spec(proto_env["s3"])
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
     (proto_dir / "app.js").write_text("console.log(1)", encoding="utf-8")
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
         state="running", port=4007, log_tail="", built_at=time.time() - 60)
-    # 세션은 없다(닫혔다).
+    # There is no session (it was closed).
     entry = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
 
     assert entry["session_open"] is False
@@ -656,9 +661,9 @@ def test_list_reports_build_capacity(proto_env):
 
 
 def test_list_carries_the_human_readable_name_from_the_spec(proto_env):
-    """카드 제목의 출처다. 슬러그만으로는 Path A.1의 제목이 항상 리터럴
-    "prototype"이었다(proto/layout.py의 `SINGLE_ID`) — 제품명은 명세 본문에만
-    있었고 목록 응답에는 실려 오지 않았다."""
+    """This is the source of the card title. With the slug alone, Path A.1's title was always
+    the literal "prototype" (`SINGLE_ID` in proto/layout.py) — the product name existed
+    only in the spec body and was not carried in the list response."""
     proto_env["s3"].blobs[SPEC_KEY] = (
         "# Prototype Specification\n\n- **Product**: 기획전 AI 어시스턴트\n")
     body = client.get(f"/projects/{PID}/prototypes").json()
@@ -666,17 +671,17 @@ def test_list_carries_the_human_readable_name_from_the_spec(proto_env):
 
 
 def test_list_name_is_null_when_the_spec_does_not_name_the_prototype(proto_env):
-    """실측 Path B 산출물에는 이름 줄이 없다. 그때 프론트가 슬러그로 되돌아가야
-    하므로, 부재가 값의 부재로 표현되어야 한다."""
+    """Real Path B artifacts have no name line. The frontend must then fall back to the
+    slug, so the absence must be expressed as an absent value."""
     _seed_spec(proto_env["s3"])
     assert client.get(f"/projects/{PID}/prototypes").json()[
         "prototypes"][0]["name"] is None
 
 
 def test_list_survives_a_spec_that_cannot_be_read(proto_env, monkeypatch):
-    """`discover`는 `list`로 키를 찾고 이름은 `get`으로 읽으므로 그 사이에
-    리셋·삭제가 끼어들 수 있다. 이름 하나 때문에 목록 전체가 500이 되면
-    안 된다 — 카드는 이름 없이도 완전히 동작한다."""
+    """`discover` finds keys with `list` and reads the name with `get`, so a reset or
+    delete can slip in between. A single name must not turn the whole list into a
+    500 — the card works fully without a name."""
     _seed_spec(proto_env["s3"])
 
     async def vanished(key):
@@ -691,9 +696,10 @@ def test_list_survives_a_spec_that_cannot_be_read(proto_env, monkeypatch):
 
 
 def test_list_survives_any_failure_to_read_the_spec(proto_env, monkeypatch):
-    """사라진 키만이 실패 모드가 아니다 — S3 5xx, 디코딩 실패도 같은 자리에서
-    난다. 어느 쪽이든 목록은 이름 없이 성공해야 한다: 카드의 상태·버튼은 이 값에
-    의존하지 않으므로, 장식 하나를 위해 탭 전체를 잃는 것이 더 나쁜 결과다."""
+    """A vanished key is not the only failure mode — S3 5xx and decoding failures happen
+    at the same spot. Either way the list must succeed without the name: the card's
+    state and buttons do not depend on this value, so losing the whole tab for one
+    decoration is the worse outcome."""
     _seed_spec(proto_env["s3"])
 
     async def boom(key):
@@ -726,10 +732,10 @@ def test_list_reports_zero_responses_when_there_is_no_survey(proto_env):
 
 
 def test_list_says_whether_a_survey_exists_at_all(proto_env):
-    """응답 수로는 표현할 수 없는 구분이다 — 설문 없음도 0, 응답 0건도 0이다.
+    """A distinction the response count cannot express — no survey is 0, and zero responses is also 0.
 
-    실측 test2222: 프로토타입 3개 중 1개만 설문이 있었는데 카드에 그 사실이 없어
-    나머지 둘의 설문이 빠진 것을 알아차릴 방법이 없었다.
+    Observed in ws-n: only 1 of 3 prototypes had a survey, but the card did not show
+    that, so there was no way to notice the other two were missing their surveys.
     """
     _seed_spec(proto_env["s3"])
     assert client.get(f"/projects/{PID}/prototypes").json()[
@@ -741,7 +747,7 @@ def test_list_says_whether_a_survey_exists_at_all(proto_env):
 
 
 def test_list_reports_a_survey_that_has_no_answers_yet(proto_env):
-    """설문은 있고 응답은 0건 — 카드가 "설문 없음"으로 오인하면 안 된다."""
+    """A survey exists with zero responses — the card must not mistake it for "설문 없음" (no survey)."""
     _seed_spec(proto_env["s3"])
     proto_env["s3"].blobs[f"prototypes/{SLUG}/survey/questionnaire.json"] = "{}"
     info = client.get(f"/projects/{PID}/prototypes").json()["prototypes"][0]
@@ -845,7 +851,7 @@ def test_session_start_429_when_the_cap_is_reached(proto_env, monkeypatch):
         "aiplc-docs/discovery/prototypes/other/PROTOTYPE-other.md"] = "# other"
     second = client.post(f"/projects/{PID}/prototypes/other/session")
     assert second.status_code == 429
-    # detail은 안정적 코드다 — 문구는 프론트 딕셔너리가 소유한다.
+    # detail is a stable code — the wording is owned by the frontend dictionary.
     assert second.json()["detail"] == "build_slots_busy"
 
 
@@ -881,8 +887,8 @@ def test_events_streams_and_redacts(proto_env):
     events = _sse_events(text)
     assert [e["kind"] for e in events] == ["message", "done"]
     assert "AKIAIOSFODNN7EXAMPLE1" not in text
-    # 세션의 첫 메시지이므로 개시 프롬프트로 감싸진다(그 분기는 아래 전용
-    # 테스트들이 검증한다). 이 테스트의 대상은 스트리밍과 리댁션이다.
+    # It is the session's first message, so it is wrapped in the opening prompt (the
+    # dedicated tests below verify that branch). This test targets streaming and redaction.
     assert session.messages == ["FIRST(build please)"]
 
 
@@ -976,10 +982,10 @@ def _seed_everything(proto_env, monkeypatch=None):
         {"project_id": PID, "slug": SLUG})
     s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/validation-questionnaire.md"] = "# q"
     s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/survey-aggregate.md"] = "# mine"
-    # 에이전트가 쓴 룰의 결과 문서. Part 2가 근거로 인용하므로 리셋이 지우지 않는다.
+    # The rule's results document written by the agent. Part 2 cites it as evidence, so reset does not delete it.
     s3.blobs[f"aiplc-docs/discovery/prototypes/{SLUG}/validation-results.md"] = "# findings"
-    # 다른 프로토타입(단수 레이아웃)의 집계. 리셋이 남의 것을 지우지 않는다는
-    # 것을 지킨다.
+    # Another prototype's aggregate (singular layout). Guards that reset does not
+    # delete what belongs to someone else.
     s3.blobs["aiplc-docs/discovery/prototype/survey-aggregate.md"] = "# other"
     s3.blobs["prototypes/other/session.json"] = '{"session_id": "y"}'
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
@@ -1002,8 +1008,8 @@ def test_reset_clears_everything_but_keeps_the_spec(proto_env, monkeypatch):
     # failed/misordered purge would strand permanently.
     assert "surveys/by-token/tok-1.json" not in proto_env["root_s3"].blobs
     assert not (proto_env["root"] / PID / SLUG).exists()
-    # 이 프로토타입의 집계는 사라진다 — 남으면 같은 슬러그로 다시 만든
-    # 프로토타입의 것으로 읽힌다.
+    # This prototype's aggregate is gone — if it remained, it would be read as
+    # belonging to a prototype recreated under the same slug.
     assert f"aiplc-docs/discovery/prototypes/{SLUG}/survey-aggregate.md" \
         not in s3.blobs
     # Survivors: the spec (or the card disappears), the agent's own results doc
@@ -1017,9 +1023,10 @@ def test_reset_clears_everything_but_keeps_the_spec(proto_env, monkeypatch):
 
 
 def test_reset_unlinks_the_preview_token_before_wiping_the_prefix(proto_env, monkeypatch):
-    """프리뷰 토큰의 루트 색인(proto/store.py)은 토큰을 prototypes/{slug}/access-token
-    에서 읽어야 찾을 수 있다 — 그 트리가 지워지기 **전에** 회수하지 않으면 리셋 뒤에도
-    옛 링크가 같은 슬러그로 다시 만든 프로토타입으로 풀린다."""
+    """The root index of preview tokens (proto/store.py) can only be found by reading the
+    token from prototypes/{slug}/access-token — unless it is reclaimed **before** that tree
+    is deleted, the old link still resolves after reset to a prototype recreated under the
+    same slug."""
     from aipds.proto.store import PrototypeStore, resolve_token
     _seed_everything(proto_env, monkeypatch)
     monkeypatch.setenv("AIPDS_S3_BUCKET", "bucket")
@@ -1110,9 +1117,10 @@ def test_reset_502_when_a_purge_fails_and_keeps_local_state(proto_env, monkeypat
     resp = client.delete(f"/projects/{PID}/prototypes/{SLUG}")
 
     assert resp.status_code == 502
-    # detail은 `코드:진단정보` 형태다 — 프론트(errorMessage.ts)가 콜론 앞을
-    # 코드로 번역하고 뒤를 괄호로 덧붙인다. 구분자가 바뀌면 코드를 못 찾아
-    # 사용자가 번역되지 않은 원문을 본다.
+    # detail has the form `code:diagnostic` — the frontend (errorMessage.ts) translates
+    # the part before the colon as a code and appends the rest in parentheses. If the
+    # separator changed, the code would not be found and the user would see the
+    # untranslated raw text.
     assert resp.json()["detail"] == "init_incomplete:survey"
     assert (proto_env["root"] / PID / SLUG).is_dir()
 
@@ -1421,7 +1429,7 @@ def test_host_start_ok(proto_env):
 
 
 def test_host_start_says_the_sandbox_is_unavailable(proto_env):
-    """래퍼가 거부 중이면(aipds/launcher.py) 로그 꼬리가 아니라 운영자가 고칠 일이라고 말한다."""
+    """When the wrapper is refusing (aipds/launcher.py), say it is for the operator to fix, not show the log tail."""
     from aipds.launcher import LauncherUnavailable
     proto_env["host"].start_exc = LauncherUnavailable("no sudoers")
     resp = client.post(f"/projects/{PID}/prototypes/{SLUG}/host")
@@ -1489,12 +1497,12 @@ def test_host_start_base_path_honours_an_empty_public_prefix(proto_env, monkeypa
 
 
 def test_host_start_passes_the_projects_model(proto_env, monkeypatch):
-    """호스팅이 프로젝트 모델을 프로토타입 런타임으로 넘긴다.
+    """Hosting passes the project model to the prototype runtime.
 
-    이것이 없으면 사용자가 프로젝트에서 고른 모델이 세 곳 중 두 곳
-    (Discovery·빌드 에이전트)에만 적용되고, 빌드된 앱은 에이전트가 자기
-    `.env.example`에 박아 둔 모델로 돈다. 출처가 app.project_model() 하나여야
-    세 곳이 갈라지지 않는다."""
+    Without this, the model the user chose for the project applies to only two of
+    the three places (Discovery and the build agent), and the built app runs on the
+    model the agent hardcoded into its own `.env.example`. The three places only stay
+    in agreement if app.project_model() is the single source."""
     import aipds.app as app_module
     monkeypatch.setattr(app_module, "project_model",
                         lambda pid: "global.anthropic.claude-opus-5")
@@ -1537,24 +1545,25 @@ def test_host_start_409_while_a_build_session_is_live(proto_env, monkeypatch):
 
 # ---- hosting: brand refresh right before the rebuild ----
 #
-# 이 태스크가 성립시키는 속성: 이미 완료된 프로토타입이 개선 세션 없이
-# **재호스팅만으로** 리브랜딩된다. 호스팅은 rmtree 없이 기존 트리에
-# `npm run build`를 돌리므로(proto/host.py), 리빌드 직전에 테마 파일만 새로
-# 쓰면 코드는 한 줄도 안 건드리고 색이 바뀐다.
+# The property this task establishes: an already completed prototype is rebranded
+# **by re-hosting alone**, without an improvement session. Hosting runs
+# `npm run build` on the existing tree without rmtree (proto/host.py), so rewriting
+# just the theme file right before the rebuild changes the colors without touching
+# a single line of code.
 #
-# "빌드 도중 호스팅"이 이 규율을 깨지 않는 이유: 바로 위
-# test_host_start_409_while_a_build_session_is_live가 증명하듯,
-# `_live_session`(session.status가 _DEAD_STATUSES 밖이면 살아 있다고 본다)이
-# 이미 모든 살아 있는 세션 -- starting/building/waiting_input/ready 전부 --
-# 에서 호스팅 시작을 409로 막는다(routes/prototypes.py:590-593). 그래서 이
-# 태스크는 "빌드 중에는 갱신을 건너뛴다"는 별도 조건이 필요 없다: 빌드 중인
-# 프로토타입은 애초에 여기까지 오지 못한다.
+# Why "hosting mid-build" does not break this discipline: as
+# test_host_start_409_while_a_build_session_is_live just above proves,
+# `_live_session` (which treats a session as alive when session.status is outside
+# _DEAD_STATUSES) already blocks hosting start with 409 for every live session --
+# all of starting/building/waiting_input/ready -- (routes/prototypes.py:590-593).
+# So this task needs no separate "skip the refresh during a build" condition: a
+# prototype that is building never gets this far in the first place.
 
 def test_host_start_refreshes_the_brand_theme_before_building(proto_env, monkeypatch):
-    """리빌드는 ProtoHost.start() 호출 **안에서** 일어난다. 그 호출이 끝난
-    뒤에 파일을 읽으면 "리빌드 전에 이미 새 값이었다"와 "리빌드가 끝난 뒤에야
-    바뀌었다"를 구별할 수 없으므로, FakeProtoHost.start를 감싸 호출 진입
-    시점의 내용을 캡처한다."""
+    """The rebuild happens **inside** the ProtoHost.start() call. Reading the file after
+    that call returns cannot distinguish "it already had the new value before the
+    rebuild" from "it only changed after the rebuild finished", so FakeProtoHost.start
+    is wrapped to capture the content at the moment the call is entered."""
     import asyncio
 
     from aipds.design_profile import DesignProfileStore
@@ -1577,7 +1586,7 @@ def test_host_start_refreshes_the_brand_theme_before_building(proto_env, monkeyp
     real_start = host.start
 
     async def capturing_start(pid, slug, cwd=None, base_path=None, model_id=None):
-        # 리빌드는 이 호출 안에서 일어난다 -- 그 전에 파일이 새 값이어야 한다.
+        # The rebuild happens inside this call -- the file must have the new value before it.
         seen["css"] = (build_dir / THEME_FILENAME).read_text()
         return await real_start(pid, slug, cwd=cwd, base_path=base_path,
                                 model_id=model_id)
@@ -1591,10 +1600,10 @@ def test_host_start_refreshes_the_brand_theme_before_building(proto_env, monkeyp
 
 
 def test_host_start_succeeds_even_if_the_brand_sync_fails(proto_env, monkeypatch):
-    """브랜드 반영 실패가 호스팅 자체를 막지 않는다 -- 화면이 열리는 것이
-    색보다 우선이다. design_profile_store() 자체가 터지는 경우로 실측한다:
-    브리프의 try/except가 그 호출까지 감싸므로, 여기서 실패해도 /host는
-    평소처럼 200을 내야 한다."""
+    """A failure to apply the brand does not block hosting itself -- the screen opening
+    takes priority over the colors. Exercised with design_profile_store() itself
+    blowing up: the brief's try/except wraps that call too, so even if it fails here,
+    /host must return 200 as usual."""
     _seed_spec(proto_env["s3"])
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
@@ -1612,11 +1621,11 @@ def test_host_start_succeeds_even_if_the_brand_sync_fails(proto_env, monkeypatch
 
 def test_host_start_warns_when_no_theme_copy_exists_to_refresh(
         proto_env, monkeypatch, caplog):
-    """sync_design은 갱신만 한다 -- 프로필 업로드 이전에 빌드된 프로토타입은
-    prototype/ 아래에 테마 사본이 없어 재호스팅해도 무브랜드로 남는다. 그
-    상황에서 아무 표시도 없으면 운영자는 왜 아무 일도 안 일어났는지 알 방법이
-    없다. 그 트리를 흉내내려고(프로필 업로드 이전에 만들어진 빌드) 테마
-    사본을 심지 않는다."""
+    """sync_design only refreshes -- a prototype built before the profile was uploaded has
+    no theme copy under prototype/, so it stays unbranded even after re-hosting. With no
+    indication in that situation, the operator has no way to know why nothing happened.
+    To mimic that tree (a build made before the profile upload), no theme copy is
+    seeded."""
     import asyncio
 
     from aipds.design_profile import DesignProfileStore
@@ -1625,7 +1634,7 @@ def test_host_start_warns_when_no_theme_copy_exists_to_refresh(
     proto_dir = proto_env["root"] / PID / SLUG / "prototype"
     proto_dir.mkdir(parents=True)
     (proto_dir / "package.json").write_text("{}", encoding="utf-8")
-    # 일부러 aipds-theme.css 사본을 심지 않는다.
+    # Deliberately do not seed an aipds-theme.css copy.
 
     profiles = DesignProfileStore(FakeS3Store())
     asyncio.run(profiles.save(filename="acme.md", uploaded_by="admin@x",
@@ -1641,7 +1650,7 @@ def test_host_start_warns_when_no_theme_copy_exists_to_refresh(
 
 def test_host_start_does_not_warn_when_a_theme_copy_exists(
         proto_env, monkeypatch, caplog):
-    """반대 경우의 회귀 가드 -- 사본이 있으면(정상 경로) 경고가 뜨지 않는다."""
+    """Regression guard for the opposite case -- with a copy present (the normal path) no warning appears."""
     import asyncio
 
     from aipds.design_profile import DesignProfileStore
@@ -1707,14 +1716,14 @@ def echo_server():
 
 
 def _authorize(host, pid=PID, slug=SLUG) -> dict[str, str]:
-    """이 프로토타입의 접근 쿠키를 만들어 헤더 dict로 준다.
+    """Create this prototype's access cookie and return it as a header dict.
 
-    아래 프록시 테스트들이 단정하는 것은 **경로 전달**(basePath 정합성)이고
-    인증이 아니다. 그 테스트들이 쿠키를 들고 가지 않으면 전부 404에서 멈춰,
-    프리픽스를 잘못 전달하는 회귀를 더 이상 잡지 못한다 — 통과는 하지만
-    아무것도 검증하지 않는 상태가 된다.
+    What the proxy tests below assert is **path forwarding** (basePath consistency),
+    not authentication. If those tests did not carry the cookie, they would all stop
+    at 404 and no longer catch a regression that forwards the prefix incorrectly —
+    they would pass while verifying nothing.
 
-    인증 자체는 test_routes_proto_public.py가 단정한다.
+    Authentication itself is asserted by test_routes_proto_public.py.
     """
     token = host.ensure_token(pid, slug)
     return {"Cookie": f"{cookie_name(pid, slug)}={token}"}
@@ -1751,8 +1760,8 @@ def test_proxy_forwards_the_prefix_intact(proto_env, echo_server):
 
 def test_the_viewers_bearer_and_the_preview_secret_never_reach_the_prototype(
         proto_env, echo_server, monkeypatch):
-    """Next의 `/api` 프록시가 붙인 Cognito 토큰과 프리뷰 배포의 비밀 헤더는 프로토타입
-    프로세스(아무도 검토하지 않은 코드)에 닿지 않는다."""
+    """The Cognito token attached by Next's `/api` proxy and the preview distribution's
+    secret header never reach the prototype process (code nobody has reviewed)."""
     monkeypatch.setenv("AIPDS_PREVIEW_ORIGIN", "https://preview.example")
     monkeypatch.setenv("AIPDS_PREVIEW_VERIFY", "pv-secret")
     proto_env["host"].infos[(PID, SLUG)] = HostInfo(
@@ -1806,10 +1815,10 @@ def test_proxy_forwards_a_public_dir_asset_under_the_prefix(proto_env, echo_serv
 
 
 def test_proxy_502_when_not_running(proto_env):
-    """호스팅이 꺼져 있을 때의 502는 **인증된** 요청에만 보인다.
+    """The 502 for hosting being off is visible only to **authenticated** requests.
 
-    쿠키를 들고 가는 것이 이 테스트의 핵심이다: 쿠키가 없으면 404가 먼저
-    나가므로(그것이 의도다 — 존재를 숨긴다) 이 502 분기는 도달하지 않는다.
+    Carrying the cookie is the crux of this test: without it a 404 goes out first
+    (that is intended — it hides existence), so this 502 branch is never reached.
     """
     resp = client.get(f"/proto/{PID}/{SLUG}/index.html",
                       headers=_authorize(proto_env["host"]))
@@ -1947,11 +1956,12 @@ def test_proxy_leaves_external_redirect_alone(proto_env):
     assert _rewritten_location(ext, PID, SLUG) == ext
 
 
-# ---- 완료된 세션은 죽은 세션이다 ----
+# ---- A completed session is a dead session ----
 
 def test_a_completed_session_does_not_block_hosting(proto_env, monkeypatch):
-    """이 작업의 동기가 된 결함: 빌드가 끝나도 세션이 살아 있으면 [호스팅
-    시작]이 409로 막혔다. 카드는 이미 '빌드 완료 / 호스팅 시작'을 보여준다."""
+    """The defect that motivated this work: if the session stayed alive after the build
+    finished, [호스팅 시작] (start hosting) was blocked with 409. The card already shows
+    '빌드 완료 / 호스팅 시작' (build complete / start hosting)."""
     session = FakePrototypeSession()
     session.status = "complete"
     app_module.proto_sessions[(PID, SLUG)] = session
@@ -1963,7 +1973,7 @@ def test_a_completed_session_does_not_block_hosting(proto_env, monkeypatch):
 
 
 def test_a_completed_session_does_not_block_a_new_start(proto_env, monkeypatch):
-    """'개선 이어서 하기'가 필요로 하는 것."""
+    """What '개선 이어서 하기' (continue improving) needs."""
     old = FakePrototypeSession()
     old.status = "complete"
     app_module.proto_sessions[(PID, SLUG)] = old
@@ -1975,7 +1985,7 @@ def test_a_completed_session_does_not_block_a_new_start(proto_env, monkeypatch):
 
 
 def test_a_completed_session_serves_no_stream(proto_env):
-    """답할 future가 없는 세션에 스트림을 열어주면 안 된다."""
+    """A session with no future to answer must not be given a stream."""
     session = FakePrototypeSession()
     session.status = "complete"
     app_module.proto_sessions[(PID, SLUG)] = session
@@ -1997,8 +2007,8 @@ def test_answers_on_a_completed_session_404(proto_env):
 
 
 def test_list_state_built_for_a_completed_session(proto_env, monkeypatch):
-    """complete는 _WORKING_STATUSES에 없으므로 카드가 '빌드 중'에 고정되지
-    않는다."""
+    """complete is not in _WORKING_STATUSES, so the card does not get stuck on '빌드 중'
+    (building)."""
     s3 = app_module.s3_store_factory(PID)
     s3.blobs[SPEC_KEY] = "# spec"
     session = FakePrototypeSession()
@@ -2014,11 +2024,12 @@ def test_list_state_built_for_a_completed_session(proto_env, monkeypatch):
     assert entry["state"] == "built"
 
 
-# ---- 긴 입력을 URL에서 빼는 2단계 핸들 (HTTP 431 결함) ----
+# ---- Two-step handle that keeps long input out of the URL (HTTP 431 defect) ----
 #
-# 워크스페이스 채팅과 같은 결함이다(frontend lib/api/sse.ts의 createTurn에 실측):
-# 긴 한글 입력이 URL에 실리면 요청 라인이 커져 프록시가 431을 내고,
-# EventSource는 상태 코드를 노출하지 않아 "연결이 끊어졌습니다"만 보인다.
+# The same defect as the workspace chat (measured in createTurn in frontend lib/api/sse.ts):
+# when long Korean input is carried in the URL, the request line grows and the proxy
+# returns 431, and since EventSource does not expose status codes, all the user sees is
+# "연결이 끊어졌습니다" (the connection was lost).
 
 
 def test_session_turn_handle_carries_text_out_of_the_url(proto_env, monkeypatch):
@@ -2031,14 +2042,14 @@ def test_session_turn_handle_carries_text_out_of_the_url(proto_env, monkeypatch)
                     json={"text": long_text})
     assert r.status_code == 200
     handle = r.json()["turn_id"]
-    # 핸들이 URL에 들어가므로 짧아야 한다 — 이것이 이 설계의 핵심이다.
+    # The handle goes into the URL, so it must be short — this is the core of the design.
     assert len(handle) <= 64
     with client.stream("GET", f"/projects/{PID}/prototypes/{SLUG}/events",
                        params={"turn": handle}) as resp:
         list(resp.iter_lines())
-    # 에이전트는 원문 전체를 받았다 — 핸들이 텍스트를 잘라먹지 않는다.
-    # 첫 메시지이므로 감싸진다 — 이 테스트가 지키는 것은 긴 텍스트가 URL이
-    # 아니라 핸들로 왔다는 것이다.
+    # The agent received the full original text — the handle does not truncate it.
+    # It is the first message, so it gets wrapped — what this test guards is that the
+    # long text arrived via the handle, not the URL.
     assert session.messages == [f"FIRST({long_text})"]
 
 
@@ -2048,8 +2059,9 @@ def _data(lines):
 
 
 def test_a_build_turn_can_be_watched_again(proto_env, monkeypatch):
-    """턴 id는 1회용 핸들이 아니라 **다시 보는** 이름이다 — 빌드 화면이 새로고침돼도
-    같은 턴을 처음부터(`after=0`) 또는 마지막으로 받은 곳부터 본다."""
+    """A turn id is not a one-time handle but a name for **watching again** — even if the
+    build screen is refreshed, it watches the same turn from the start (`after=0`) or
+    from where it last received."""
     _seed_spec(proto_env["s3"])
     _install_session_factory(monkeypatch, FakePrototypeSession())
     client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
@@ -2067,8 +2079,8 @@ def test_a_build_turn_can_be_watched_again(proto_env, monkeypatch):
 
 
 def test_the_session_lists_its_turns_for_a_reopened_panel(proto_env, monkeypatch):
-    """다시 열린 빌드 화면이 대화를 되살리는 근거다: 이 세션의 턴들과 각 턴에서
-    사용자가 한 말(자동 개시는 None)."""
+    """This is what a reopened build screen restores the conversation from: this session's
+    turns and what the user said in each turn (None for the auto-start)."""
     _seed_spec(proto_env["s3"])
     fake = FakePrototypeSession()
     _install_session_factory(monkeypatch, fake)
@@ -2123,7 +2135,7 @@ def _wait_until(predicate, timeout=5.0):
 
 
 def test_events_only_watches_a_build_turn(proto_env, monkeypatch):
-    """`/events`는 턴을 **보기만** 한다 — 턴은 `POST …/turns`가 시작한다."""
+    """`/events` **only watches** a turn — turns are started by `POST …/turns`."""
     _seed_spec(proto_env["s3"])
     _install_session_factory(monkeypatch, FakePrototypeSession())
     client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
@@ -2133,23 +2145,24 @@ def test_events_only_watches_a_build_turn(proto_env, monkeypatch):
 
 
 def test_list_ignores_other_files_in_the_single_prototype_dir(proto_env):
-    """그 디렉터리에는 design-context·build-instructions 등이 함께 쌓인다
-    (prototype-validation.md의 산출물 7개). 명세만 카드가 돼야 한다."""
+    """That directory also accumulates design-context, build-instructions and so on
+    (the 7 artifacts of prototype-validation.md). Only the spec should become a card."""
     proto_env["s3"].blobs["aiplc-docs/discovery/prototype/design-context.md"] = "x"
     proto_env["s3"].blobs["aiplc-docs/discovery/prototype/build-instructions.md"] = "y"
     body = client.get(f"/projects/{PID}/prototypes").json()
     assert body["prototypes"] == []
 
 
-# ---- 사용자의 첫 메시지가 개시 턴이 된다 ----
+# ---- The user's first message becomes the opening turn ----
 #
-# "수정하기"를 누른 사람은 이미 무엇을 고칠지 알고 있는데, 개시 프롬프트가 되묻고
-# 그 질문이 떠 있는 동안 입력창이 비활성이라 자기 요청을 타이핑할 수조차 없었다
-# (근거는 aipds/proto/prompts.handoff_prompt).
+# Someone who pressed "수정하기" (modify) already knows what they want to change, but the
+# opening prompt asked them back, and while that question was up the input box was
+# disabled, so they could not even type their own request
+# (rationale in aipds/proto/prompts.handoff_prompt).
 #
-# 판정 기준이 `session.opened`인 것이 요점이다 — UI 플래그가 아니다. "개시 턴이
-# 아직 안 돌았다"는 세션이 아는 사실이고, 프론트가 추측하면 새로고침·경합·이미
-# 열린 세션에서 어긋난다.
+# The point is that the criterion is `session.opened` — not a UI flag. "The opening turn
+# has not run yet" is a fact the session knows; if the frontend guessed it, it would go
+# wrong on refresh, under races, and with an already-open session.
 
 def test_the_first_user_message_is_wrapped_as_the_opening_turn(proto_env, monkeypatch):
     _seed_spec(proto_env["s3"])
@@ -2159,13 +2172,14 @@ def test_the_first_user_message_is_wrapped_as_the_opening_turn(proto_env, monkey
 
     _build("장바구니 버튼을 오른쪽 위로")
 
-    # 세션이 받은 것은 사용자의 생 문장이 아니라 그 요청이 실린 개시 프롬프트다.
+    # What the session received is not the user's raw sentence but the opening prompt carrying that request.
     assert session.messages == ["FIRST(장바구니 버튼을 오른쪽 위로)"]
 
 
 def test_the_session_also_gets_what_the_user_actually_typed(proto_env, monkeypatch):
-    """WebFetch 허용은 사용자 원문에서만 뽑는다(proto/session.send_message) — 개시
-    프롬프트에는 모델이 쓴 handoff 요약의 URL이 섞여 있다. 자동 개시는 원문이 없다."""
+    """WebFetch allowances are extracted only from the user's original text
+    (proto/session.send_message) — the opening prompt mixes in URLs from the handoff
+    summary the model wrote. The auto-start has no original text."""
     _seed_spec(proto_env["s3"])
     session = FakePrototypeSession()
     _install_session_factory(monkeypatch, session)
@@ -2179,8 +2193,8 @@ def test_the_session_also_gets_what_the_user_actually_typed(proto_env, monkeypat
 
 
 def test_a_later_message_is_an_ordinary_turn(proto_env, monkeypatch):
-    """개시 턴이 한 번 돌면 그 뒤 메시지는 감싸지 않는다 — 감싸면 매 턴이
-    "먼저 prototype/을 봐라"로 다시 시작한다."""
+    """Once the opening turn has run, later messages are not wrapped — wrapping them would
+    restart every turn with "look at prototype/ first"."""
     _seed_spec(proto_env["s3"])
     session = FakePrototypeSession()
     _install_session_factory(monkeypatch, session)
@@ -2193,8 +2207,8 @@ def test_a_later_message_is_an_ordinary_turn(proto_env, monkeypatch):
 
 
 def test_the_sentinel_still_opens_without_a_request(proto_env, monkeypatch):
-    """자동 개시에는 사용자가 아무 말도 하지 않았다 — 그때는 되묻는 개시
-    프롬프트가 맞는 동작이고, 이 변경이 그것을 없애서는 안 된다."""
+    """In the auto-start the user has said nothing — there, the opening prompt that asks
+    back is the right behavior, and this change must not remove it."""
     _seed_spec(proto_env["s3"])
     session = FakePrototypeSession()
     _install_session_factory(monkeypatch, session)
@@ -2206,8 +2220,8 @@ def test_the_sentinel_still_opens_without_a_request(proto_env, monkeypatch):
 
 
 def test_a_long_request_rides_the_turn_handle(proto_env, monkeypatch):
-    """긴 요청은 URL에 실을 수 없다(프록시 431 — frontend lib/api/sse.ts의 createTurn). 핸들
-    경로도 개시 턴 판정을 똑같이 타야 한다."""
+    """A long request cannot ride in the URL (proxy 431 — createTurn in frontend lib/api/sse.ts).
+    The handle path must go through the same opening-turn check."""
     _seed_spec(proto_env["s3"])
     session = FakePrototypeSession()
     _install_session_factory(monkeypatch, session)
@@ -2223,10 +2237,11 @@ def test_a_long_request_rides_the_turn_handle(proto_env, monkeypatch):
     assert session.messages == [f"FIRST({long_text})"]
 
 
-# ---- GET /history: 지난 빌드 대화 + 이어서 재생할 턴 ----
+# ---- GET /history: past build conversation + turns to replay after it ----
 #
-# 빌드 패널이 다시 열리면 지난 대화(트랜스크립트)를 먼저 보이고, 열린 세션의 턴은
-# 턴 로그로 재생한다(proto/history.py 헤더 3). 둘을 한 응답으로 주는 것이 요점이다.
+# When the build panel reopens, it first shows the past conversation (transcript), and
+# the open session's turns are replayed from the turn log (proto/history.py header 3).
+# The point is to deliver both in one response.
 
 def _transcript(s3, session_id, lines):
     from aipds.proto.session_store import S3SessionStore
@@ -2268,7 +2283,7 @@ def test_history_leaves_the_open_sessions_turns_to_the_replay(proto_env, monkeyp
     session = FakePrototypeSession()
     _install_session_factory(monkeypatch, session)
     client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
-    # 이 세션의 턴보다 **앞선** 대화와, 턴이 시작된 뒤에 쓰인 줄.
+    # A conversation **preceding** this session's turns, and a line written after the turn started.
     _transcript(proto_env["s3"], "old", [_line("user", "첫 빌드", "2020-01-01T00:00:00Z")])
     _build("버튼 고쳐줘")
     _transcript(proto_env["s3"], "live", [_line("user", "FIRST(버튼 고쳐줘)", "2999-01-01T00:00:00Z")])
@@ -2280,22 +2295,23 @@ def test_history_leaves_the_open_sessions_turns_to_the_replay(proto_env, monkeyp
 
 
 def test_an_opening_turn_records_what_the_user_typed(proto_env, monkeypatch):
-    """개시 턴은 에이전트에게 간 말(개시 프롬프트)과 사용자가 한 말이 다르다. 그 짝이
-    남아야 히스토리가 프롬프트 대신 사용자의 말을 보인다."""
+    """In an opening turn, what went to the agent (the opening prompt) differs from what the
+    user said. That pair must be kept so the history shows the user's words instead of the
+    prompt."""
     _seed_spec(proto_env["s3"])
     session = FakePrototypeSession()
     _install_session_factory(monkeypatch, session)
     client.post(f"/projects/{PID}/prototypes/{SLUG}/session")
 
     _build("장바구니 버튼을 오른쪽 위로")
-    _build("두 번째 요청")   # 감싸지 않은 턴 — 레코드가 필요 없다
+    _build("두 번째 요청")   # an unwrapped turn — no record needed
 
     records = {k: json.loads(v) for k, v in proto_env["s3"].blobs.items()
                if k.startswith(f"prototypes/{SLUG}/history/inputs/")}
     assert list(records.values()) == [{"shown": "장바구니 버튼을 오른쪽 위로"}]
     _transcript(proto_env["s3"], "s1", [
         _line("user", "FIRST(장바구니 버튼을 오른쪽 위로)", "2020-01-01T00:00:00Z")])
-    app_module.proto_sessions.clear()   # 재생할 턴이 없게 — 히스토리만 본다
+    app_module.proto_sessions.clear()   # so there are no turns to replay — look only at the history
     items = client.get(f"/projects/{PID}/prototypes/{SLUG}/history").json()["items"]
     assert [(i["role"], i["text"]) for i in items] == [("user", "장바구니 버튼을 오른쪽 위로")]
 

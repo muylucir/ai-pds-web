@@ -1,19 +1,19 @@
-# backend/tests/test_answer_summary.py — 제출된 답변을 사람이 읽는 텍스트로.
+# backend/tests/test_answer_summary.py — submitted answers as human-readable text.
 #
-# **이 검사들은 frontend/lib/answerSummary.test.ts에서 옮겨 왔다(2026-08-21).**
-# 판별이 프론트에만 있었던 것이 결함의 뿌리였다: 사용자가 화면에서 본 말풍선은
-# 브라우저 안에서만 만들어졌고 서버로 간 적이 없다. 서버는 자기가 만든 다른 문장을
-# 트랜스크립트에 기록했고, 그래서 새로고침하면 대화가 기계 문구로 보였다.
+# **These checks were moved from frontend/lib/answerSummary.test.ts (2026-08-21).**
+# The root of the defect was that the classification existed only on the frontend: the bubble the user saw
+# on screen was built only inside the browser and never went to the server. The server recorded a different
+# sentence of its own in the transcript, so after a refresh the conversation looked like machine wording.
 #
-# 판별을 백엔드로 옮기면 표현이 하나가 되고 갈라질 수 없다. 옮기면서 얻는 것이 하나
-# 더 있다: 이 텍스트는 채팅 말풍선이므로 **프로젝트 언어**를 따라야 하는데
-# (agent/prompts.py 헤더, lib/approvalMarker.ts의 같은 판단) 프론트에 있던 동안은 UI
-# 언어를 따랐다.
+# Moving the classification to the backend leaves a single representation that cannot diverge. There is one
+# more gain from the move: this text is a chat bubble, so it must follow the **project language**
+# (agent/prompts.py header, the same judgment in lib/approvalMarker.ts), but while it lived on the frontend
+# it followed the UI language.
 #
-# 되돌려야 할 계약은 QuestionCard의 값 규약이다 — 한 문자열에 네 모양이 담긴다:
-# 맨 letter("A"), 부연이 붙은 letter("A: 부연"), 복수 선택의 콤마 결합("A,C"),
-# 그리고 letter처럼 시작하는 자유 텍스트("Broker: …"). 앞의 셋만 펼칠 수 있고,
-# **그것을 가려내는 것이 이 모듈의 일 전부**다.
+# The contract to reverse is QuestionCard's value convention — one string holds four shapes:
+# a bare letter ("A"), a letter with an elaboration ("A: 부연"), a comma join for multi-select ("A,C"),
+# and free text that starts like a letter ("Broker: …"). Only the first three can be expanded, and
+# **telling them apart is this module's entire job**.
 from aipds.answer_summary import answer_summary
 from aipds.models import Question, QuestionFile, QuestionOption
 
@@ -43,8 +43,8 @@ def test_pairs_each_answer_with_the_question_it_answers():
 
 
 def test_expands_an_option_letter_to_its_text():
-    """폼이 제출하는 것은 letter("A")뿐이고 그것만으로는 읽는 사람에게 아무 뜻이
-    없다 — 질문 폼을 다시 열지 않아도 대화가 이해되는 것이 이 모듈의 목적이다."""
+    """All the form submits is a letter ("A"), and that alone means nothing to the reader —
+    the purpose of this module is for the conversation to be understandable without reopening the question form."""
     f = qfile([q(1, "어떤 방식이 좋습니까?",
                  [opt("A", "기존 도구 확장"), opt("B", "신규 개발")])])
     assert answer_summary(f, {1: "A"}, "ko") == (
@@ -52,8 +52,8 @@ def test_expands_an_option_letter_to_its_text():
 
 
 def test_keeps_the_note_attached_to_a_letter_note_answer():
-    """QuestionCard의 값 규약: 부연이 붙은 선택은 "A: 부연" 한 문자열로 온다.
-    양쪽이 다 의미를 갖는다."""
+    """QuestionCard's value convention: a choice with an elaboration arrives as the single string "A: 부연".
+    Both sides carry meaning."""
     f = qfile([q(1, "어떤 방식이 좋습니까?",
                  [opt("A", "기존 도구 확장"), opt("B", "신규 개발")])])
     assert answer_summary(f, {1: "A: 단 인증만 새로"}, "ko") == (
@@ -69,16 +69,16 @@ def test_expands_every_letter_of_a_comma_joined_multi_select_answer():
 
 
 def test_keeps_free_text_whose_first_token_merely_looks_like_a_letter():
-    """QuestionCard가 값에서 Other 모드를 **추론하지 않는** 이유가 이 경우다.
-    ": "로 쪼개면 살리려던 답변을 훼손한다."""
+    """This case is why QuestionCard **does not infer** Other mode from the value.
+    Splitting on ": " would damage the answer we meant to preserve."""
     f = qfile([q(1, "다른 의견이 있으면 적어주세요", [opt("A", "없음")])])
     assert answer_summary(f, {1: "Broker: 큐를 따로 두고 싶다"}, "ko") == (
         "Q1. 다른 의견이 있으면 적어주세요\n→ Broker: 큐를 따로 두고 싶다")
 
 
 def test_passes_an_other_options_own_text_through_without_expanding_it():
-    """is_other 보기의 letter는 읽는 사람에게 필요한 라벨이 아니다 — 타이핑된
-    텍스트가 곧 답변이다."""
+    """The letter of an is_other option is not a label the reader needs — the typed
+    text is the answer."""
     f = qfile([q(1, "어떤 방식이 좋습니까?",
                  [opt("A", "기존 도구 확장"), opt("X", "", is_other=True)])])
     assert answer_summary(f, {1: "직접 만든 스크립트로"}, "ko") == (
@@ -91,31 +91,31 @@ def test_skips_questions_the_user_left_blank():
 
 
 def test_an_answer_with_no_matching_question_is_appended_not_dropped():
-    """방어적: 낡은 폼이나 서버측 번호 재부여로 문항 목록이 설명하지 못하는 키가
-    올 수 있다. 답변을 잃는 것이 질문 없이 보여주는 것보다 나쁘다."""
+    """Defensive: a stale form or server-side renumbering can send keys the question list cannot
+    explain. Losing the answer is worse than showing it without the question."""
     f = qfile([q(1, "아는 질문")])
     assert answer_summary(f, {1: "답", 9: "고아 답변"}, "ko") == (
         "Q1. 아는 질문\n→ 답\n\nQ9.\n→ 고아 답변")
 
 
 def test_returns_a_marker_rather_than_an_empty_bubble():
-    """빈 문자열은 빈 말풍선으로 렌더된다 — 이 모듈이 막으려는 바로 그것이다."""
+    """An empty string renders as an empty bubble — exactly what this module is meant to prevent."""
     f = qfile([q(1, "질문")])
     assert answer_summary(f, {}, "ko") == "답변 제출"
     assert answer_summary(f, {1: "   "}, "ko") == "답변 제출"
 
 
 def test_the_empty_marker_follows_the_project_language():
-    """말풍선으로 남는 대화 텍스트다 — UI 언어가 아니라 프로젝트 언어다. 프론트에
-    있던 동안은 이것이 UI 언어를 따랐고, 그 불일치가 백엔드로 옮기며 사라진다."""
+    """This is conversation text that remains as a bubble — the project language, not the UI language. While it lived on the
+    frontend it followed the UI language, and that mismatch disappears with the move to the backend."""
     f = qfile([q(1, "질문")])
     out = answer_summary(f, {}, "en")
     assert out == "Answers submitted", out
 
 
 def test_the_question_order_wins_over_the_answers_key_order():
-    """`answers`의 키 순서는 프론트가 보낸 JSON 순서다. 사용자가 문항을 건너뛰며
-    답하면 그 순서가 화면과 어긋나므로 문항 목록 순서를 따른다."""
+    """The key order of `answers` is the JSON order the frontend sent. When the user skips around
+    while answering, that order diverges from the screen, so the question list order is followed."""
     f = qfile([q(1, "첫"), q(2, "둘"), q(12, "열둘")])
     out = answer_summary(f, {12: "C", 2: "B", 1: "A"}, "ko")
     assert out.index("Q1.") < out.index("Q2.") < out.index("Q12.")

@@ -2,8 +2,8 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import LoginPage from "./page";
 
-// useSearchParams를 쓰는 화면이라 next/navigation을 목한다. suspend는 파라미터가
-// 아직 안 풀린 상태(빌드 시 프리렌더)를 재현하기 위한 스위치다.
+// The screen uses useSearchParams, so next/navigation is mocked. suspend is a switch that reproduces the state
+// where the params are not yet resolved (prerendering at build time).
 const searchParams = { value: new URLSearchParams(), suspend: false };
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -11,7 +11,7 @@ vi.mock("next/navigation", () => ({
     if (searchParams.suspend) throw new Promise<void>(() => {});
     return searchParams.value;
   },
-  // 언어 전환이 고른 언어로 다시 그리려고 부른다(LanguageSwitcher).
+  // Called so the language switch re-renders in the chosen language (LanguageSwitcher).
   useRouter: () => ({ refresh }),
 }));
 
@@ -29,7 +29,7 @@ describe("/login", () => {
   });
 
   it("carries the next path into the login route", () => {
-    // 미들웨어가 붙여준 next를 잃지 않아야 원래 가려던 화면으로 돌아간다.
+    // Not losing the next the middleware attached is what returns the user to the screen they were headed to.
     withParams("next=%2Fprojects%2Fp1%2Fdashboard");
     render(<LoginPage />);
     expect(screen.getByRole("link", { name: /로그인/ }))
@@ -49,7 +49,7 @@ describe("/login", () => {
   });
 
   it("explains an unconfigured deployment", () => {
-    // 인증 env 없이 배포된 경우 — 무엇을 고쳐야 하는지 알려준다.
+    // Deployed without the auth env — it tells you what to fix.
     withParams("error=not_configured");
     render(<LoginPage />);
     expect(screen.getByRole("alert")).toHaveTextContent(/설정되지 않았습니다/);
@@ -68,10 +68,10 @@ describe("/login", () => {
   });
 
   it("renders the login card while search params are still unresolved", () => {
-    // Next 15는 /login을 빌드 시 프리렌더한다. useSearchParams()가 그 시점에
-    // suspend하면 Suspense 경계가 없는 한 빌드가 깨진다("should be wrapped in a
-    // suspense boundary"). 경계 안쪽만 suspend하고 로그인 버튼은 서버 HTML에
-    // 남아야 — JS가 죽어도 로그인은 눌릴 수 있어야 한다.
+    // Next 15 prerenders /login at build time. If useSearchParams() suspends at that point,
+    // the build breaks unless there is a Suspense boundary ("should be wrapped in a
+    // suspense boundary"). Only the inside of the boundary may suspend, and the login button must stay in the server HTML
+    // — login must be clickable even if JS dies.
     searchParams.suspend = true;
     render(<LoginPage />);
     expect(screen.getByRole("link", { name: /로그인/ }))
@@ -80,16 +80,16 @@ describe("/login", () => {
   });
 
   it("does not reflect the raw error code into the page", () => {
-    // 쿼리 파라미터를 그대로 렌더하면 반사형 XSS 표면이 된다.
+    // Rendering the query parameter as is would create a reflected XSS surface.
     withParams("error=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E");
     render(<LoginPage />);
     expect(document.body.innerHTML).not.toContain("onerror");
-    // 그냥 아무것도 안 그려서 통과하는 게 아니라, 일반 문구로 대체되는지 확인한다.
+    // Check that it is replaced with generic text, rather than passing simply by rendering nothing.
     expect(screen.getByRole("alert")).toHaveTextContent(/로그인에 실패했습니다/);
   });
 
   it("offers a language choice before signing in", async () => {
-    // 로그인하기 전에 자기 언어를 고를 길이 이것뿐이다 — 좁은 화면에서도 숨지 않는다.
+    // This is the only way to pick one's language before logging in — it does not hide even on narrow screens.
     withParams("");
     render(<LoginPage />);
     const group = screen.getByRole("group", { name: /Language/ });

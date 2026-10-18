@@ -4,8 +4,8 @@ import {
   uploadDesignProfile,
 } from "./design";
 
-// 인자를 타입과 함께 선언한다 — 인자 없는 vi.fn()은 mock.calls의 요소가 빈
-// 튜플이라 calls[0][1]을 읽는 모든 줄이 타입 오류가 된다.
+// Declare the arguments with types — with an argument-less vi.fn(), the elements of mock.calls are empty
+// tuples, so every line reading calls[0][1] becomes a type error.
 function mockFetch(body: unknown, status = 200) {
   const spy = vi.fn(async (_url: string, _init?: RequestInit) => new Response(
     status === 204 ? null : JSON.stringify(body),
@@ -36,13 +36,13 @@ describe("design profile client", () => {
     await uploadDesignProfile(new File(["# x"], "acme.md", { type: "text/markdown" }));
     const init = spy.mock.calls[0][1] as RequestInit;
     expect(init.body).toBeInstanceOf(FormData);
-    // boundary는 브라우저가 붙인다 — 우리가 Content-Type을 박으면 파싱이 깨진다.
+    // The browser attaches the boundary — if we hard-code Content-Type, parsing breaks.
     expect((init.headers as Record<string, string>)["Content-Type"]).toBeUndefined();
   });
 
   it("sends the confirmed tokens as a JSON field beside the file", async () => {
-    // 서버가 이 값을 원문에 ```tokens 블록으로 심는다 — 필드 이름과 인코딩이
-    // 어긋나면 값이 조용히 무시되고 무브랜드 프로필이 저장된다.
+    // The server plants this value in the source as a ```tokens block — if the field name or encoding
+    // diverges, the value is silently ignored and an unbranded profile is saved.
     const spy = mockFetch({ profile: { filename: "acme.md", uploaded_at: "t",
                                        uploaded_by: "a", tokens: {}, prose: "" } });
     await uploadDesignProfile(
@@ -53,7 +53,7 @@ describe("design profile client", () => {
   });
 
   it("omits the tokens field when there is nothing confirmed", async () => {
-    // 빈 객체를 보내면 서버가 "확인됐지만 비어 있음"과 "확인 안 함"을 구분할 수 없다.
+    // Sending an empty object would leave the server unable to tell "confirmed but empty" from "not confirmed".
     const spy = mockFetch({ profile: { filename: "acme.md", uploaded_at: "t",
                                        uploaded_by: "a", tokens: {}, prose: "" } });
     await uploadDesignProfile(

@@ -1,12 +1,12 @@
 "use client";
-// frontend/components/manual/mockups.tsx — 매뉴얼의 화면 그림.
+// frontend/components/manual/mockups.tsx — the manual's screen illustrations.
 //
-// **문구를 새로 쓰지 않는다.** 전부 t()로 앱 딕셔너리에서 읽는다 —
-// chrome.tsx의 머리말에 이유가 있다. 여기에 한국어 문장을 직접 쓰면
-// lib/i18n/noHardcodedKorean.test.ts가 즉시 실패한다.
+// **No new wording is written here.** Everything is read from the app dictionary via t() —
+// the reason is in the header of chrome.tsx. Writing Korean sentences directly here makes
+// lib/i18n/noHardcodedKorean.test.ts fail immediately.
 //
-// 실촬 스크린샷을 넣게 되면 각 목업을 <figure> 안에서 <img>로 바꾸면 된다.
-// 블록 종류(`{kind:"mockup"}`)와 캡션은 그대로 쓸 수 있다.
+// If real screenshots are added, each mockup can be replaced with an <img> inside the <figure>.
+// The block kind (`{kind:"mockup"}`) and the caption can be used as is.
 import { formatElapsed } from "@/components/canvas/LiveActivityBar";
 import { LANGUAGE_LABEL } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
@@ -23,8 +23,8 @@ function ProjectCreate() {
           <Field label={t("project.id")} value={t("project.idPlaceholder")} />
           <Field label={t("project.nameOptional")} value={t("project.namePlaceholder")} />
           <Field label={t("project.defaultModel")} value="Opus 4.8" />
-          {/* 언어 이름은 그 언어 자체로 적는다 — LANGUAGE_LABEL이 그 표기의
-              단일 출처다(헤더 배지·프로젝트 목록과 같은 값). */}
+          {/* Language names are written in the language itself — LANGUAGE_LABEL is the single
+              source for that notation (same values as the header badge and project list). */}
           <Field
             label={t("project.language")}
             value={`${LANGUAGE_LABEL.ko} / ${LANGUAGE_LABEL.en}`}
@@ -39,9 +39,9 @@ function ProjectCreate() {
   );
 }
 
-// 6개 phase의 이름은 백엔드 상수(aipds/capabilities.py)이고 ko 화면도 번역하지
-// 않는다 — 그래서 여기서도 딕셔너리가 아니라 그 이름을 그대로 쓴다. 상태는 Path A
-// (PR/FAQ에서 시작)가 Prototype까지 온 모양이다: Intake·Prioritize를 건너뛴다.
+// The names of the 6 phases are backend constants (aipds/capabilities.py), and the ko screen does not
+// translate them either — so here too those names are used as is rather than via the dictionary. The state
+// is Path A (starting from PR/FAQ) having reached Prototype: Intake and Prioritize are skipped.
 const PHASES: { name: string; status: "done" | "active" | "skipped" | "pending" }[] = [
   { name: "Envision", status: "done" },
   { name: "Use Case Intake", status: "skipped" },
@@ -89,8 +89,8 @@ function Workspace() {
   const t = useT();
   return (
     <Frame>
-      {/* 실제 화면의 1:5:5 그리드 — phase / 대화 / 질문·컨텍스트. 생성된 문서는 열이
-          아니라 오른쪽 끝 손잡이 탭으로 여는 드로어다(그리드가 탭 자리를 비워 둔다). */}
+      {/* The real screen's 1:5:5 grid — phase / conversation / questions & context. Generated documents are
+          not a column but a drawer opened by the handle tab at the far right (the grid leaves room for the tab). */}
       <div className="relative pr-6">
         <div className="grid grid-cols-[1fr_1.6fr_1.6fr] gap-2">
           <Panel>
@@ -110,7 +110,7 @@ function Workspace() {
               </div>
               <Badge tone="violet">{t("chat.questionsPresented")}</Badge>
             </div>
-            {/* 입력창 위 진행 줄 — 첫 줄 무슨 일·경과, 둘째 줄 대상. */}
+            {/* Progress line above the input box — first line what is happening and elapsed time, second line the target. */}
             <div className="mt-2 text-[9px] text-violet-700">
               <div className="flex items-center justify-between">
                 <span className="font-medium">{t("activity.draftingDoc")}</span>
@@ -131,7 +131,7 @@ function Workspace() {
             <p className="mt-1 text-[9px] text-slate-400">{t("chat.auditNotice")}</p>
           </Panel>
 
-          {/* 오른쪽 칸 — 질문이 오면 답변 시트, 없으면 프리뷰나 최근 산출물. */}
+          {/* Right column — the answer sheet when a question arrives, otherwise the preview or the latest artifact. */}
           <Panel>
             <PanelTitle>{t("ws.contextPanelAria")}</PanelTitle>
             <p className="mb-1.5 inline-block rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] text-violet-700">
@@ -160,7 +160,7 @@ function Workspace() {
           </Panel>
         </div>
 
-        {/* 드로어 손잡이 — 닫힌 동안 새 문서가 쓰이면 "새 문서"로 채워진다. */}
+        {/* Drawer handle — if a new document is written while it is closed, it fills with "new document". */}
         <div className="absolute right-0 top-3 flex w-5 flex-col items-center gap-1 rounded-l-md bg-violet-600 py-2 text-[9px] font-bold text-white">
           <span className="[writing-mode:vertical-rl]">{t("ws.docTabNew")}</span>
           <span className="rounded-full bg-white px-1 text-[8px] text-violet-700">3</span>
@@ -218,7 +218,7 @@ function ApprovalGate() {
   return (
     <Frame>
       <div className="space-y-2">
-        {/* 게이트는 discovery-document.md를 열었고 아직 승인 전일 때 화면 맨 위에 뜬다. */}
+        {/* The gate appears at the top of the screen when discovery-document.md is open and not yet approved. */}
         <Panel className="border-amber-200 bg-amber-50">
           <div className="flex items-center gap-1.5">
             <p className="font-semibold text-amber-900">{t("review.gateTitle")}</p>
@@ -234,7 +234,7 @@ function ApprovalGate() {
           <Btn tone="quiet">{t("page.downloadAllZip")}</Btn>
           <Btn tone="quiet">{t("page.downloadMd")}</Btn>
         </div>
-        {/* 파일 목록 / 본문 / 검증 요약 — 실제 화면의 세 칸. */}
+        {/* File list / body / validation summary — the real screen's three columns. */}
         <div className="grid grid-cols-[0.8fr_2fr_1fr] gap-2">
           <Panel>
             <p className="text-[9px] text-slate-500">aiplc-docs/</p>
@@ -262,8 +262,8 @@ function PrototypeCard() {
     <Frame>
       <div className="space-y-2">
         <Panel>
-          {/* 제목 자리는 명세의 제품명이다 — 프로젝트마다 다른 값이라 막대로
-              그리고, 그 아래 줄에 명세 경로를 둔다(실제 카드와 같은 배치). */}
+          {/* The title slot is the spec's product name — it differs per project, so it is drawn as a bar,
+              with the spec path on the line below (same layout as the real card). */}
           <div className="flex items-center gap-2">
             <span className="h-2 w-24 rounded bg-slate-300" />
             <Badge tone="emerald">{t("proto.statusRunning")}</Badge>
@@ -389,8 +389,8 @@ function Dashboard() {
   );
 }
 
-// id → 컴포넌트. Record가 MockupId를 **전부** 요구하므로, id를 추가하고
-// 그림을 잊으면 컴파일이 실패한다.
+// id → component. Record requires **every** MockupId, so adding an id and
+// forgetting its illustration makes compilation fail.
 export const MOCKUPS: Record<MockupId, () => React.ReactElement> = {
   "project-create": ProjectCreate,
   workspace: Workspace,

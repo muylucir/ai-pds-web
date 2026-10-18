@@ -1,6 +1,6 @@
-# backend/tests/test_handoff_supplement.py — handoff/supplement와 그 라우트
+# backend/tests/test_handoff_supplement.py — handoff/supplement and its routes
 #
-# 판정 입력은 test_handoff_readiness의 실측 모양(A1: ws-g, B: test2222)을 쓴다.
+# Assessment inputs use the observed shapes from test_handoff_readiness (A1: ws-g, B: ws-n).
 from __future__ import annotations
 
 import asyncio
@@ -93,8 +93,8 @@ def test_apply_rejects_unknown_ids_and_malformed_keys(update):
 
 
 def test_the_record_lives_outside_what_the_agent_restores_or_publishes():
-    """에이전트는 보완 답을 읽지도 쓰지도 않는다 — 워크스페이스로 복원되거나 정본으로 올라가는
-    접두사에 들어가면 그 조건이 깨진다."""
+    """The agent neither reads nor writes supplementary answers; placing them under a prefix that
+    is restored into the workspace or published to the source of truth would break that condition."""
     assert not is_synced_key(supplement.SUPPLEMENT_KEY)
     assert not supplement.SUPPLEMENT_KEY.startswith(AgentRunner._RESTORE_PREFIXES)
 
@@ -146,7 +146,7 @@ def test_route_round_trip(monkeypatch):
 
     stored = json.loads(s3.blobs[supplement.SUPPLEMENT_KEY])
     assert set(stored["answers"]) == {"problem.evidence", "assumptions.failure_reasons"}
-    # AI-PLC 산출물은 건드리지 않는다.
+    # AI-PLC artifacts are not touched.
     assert not any(k.startswith("aiplc-docs/") for k in s3.blobs)
 
 
@@ -164,15 +164,15 @@ def test_route_rejects_an_oversized_answer(monkeypatch):
     assert r.status_code == 422
 
 
-# ---- 열린 결정 중 PM 몫 ----
+# ---- The PM's share of open decisions ----
 
 def _open(*questions):
     return [supplement.OpenQuestion(id=f"O-{i:02d}", question=q) for i, q in enumerate(questions, 1)]
 
 
 def test_open_pm_questions_of_the_prd_are_asked_even_when_every_section_is_sourced():
-    """실측(ws-g): 9개 섹션이 모두 sourced라 보완 질문이 0개였는데, PRD 9번에는 구현을
-    막는 PM 결정이 열려 있었다."""
+    """Observed (ws-g): all 9 sections were sourced, so there were 0 supplementary questions, yet
+    PRD item 9 had an open PM decision blocking implementation."""
     v = supplement.view(assess(A1, {}), supplement.Supplement(),
                         _open("보존 기간", "본인 확인 수준", "보존 기간"))
     assert v.questions == []
@@ -202,15 +202,15 @@ def test_apply_keeps_open_answers_and_their_time():
 
 
 def test_apply_rejects_an_open_answer_whose_key_is_not_its_question():
-    """키가 질문 문장에서 나오지 않으면 다른 질문의 답을 덮어쓸 수 있다."""
+    """If the key is not derived from the question text, it can overwrite another question's answer."""
     with pytest.raises(supplement.InvalidSupplement):
         supplement.apply(supplement.Supplement(), supplement.SupplementUpdate(open_answers={
             supplement.open_key("보존 기간"): supplement.OpenAnswerIn(question="권한", text="x")}))
 
 
 def test_only_decisions_needed_before_build_are_asked():
-    """실측(ws-g): PM 몫 18개 중 구현을 막는 것은 7개였다. 빌드 중 결정은 접어 두고,
-    보기는 빌드 전 결정에만 붙인다."""
+    """Observed (ws-g): of the PM's 18 decisions, 7 blocked implementation. Decisions for during the
+    build are collapsed, and options are attached only to decisions needed before the build."""
     questions = [
         supplement.OpenQuestion(id="O-01", question="보존 기간 (R-08)"),
         supplement.OpenQuestion(id="O-02", question="지원 외국어 목록 (R-02)", blocking=False,
@@ -226,20 +226,20 @@ def test_only_decisions_needed_before_build_are_asked():
         ("O-01", ["3년", "5년"])]
     assert [(q.id, q.until, q.options) for q in v.open_deferred] == [
         ("O-02", "목록을 바꿀 수 있게 만들고 영어·베트남어로 시작", [])]
-    # 빌드 중 결정에 한 답은 그 질문 옆에 남는다 — "앞서 답한 질문"으로 빠지지 않는다.
+    # An answer to a during-build decision stays next to that question; it does not move into "previously answered questions".
     assert v.open_deferred[0].answer.text == "영어만" and v.open_answered == []
 
 
 def test_the_key_of_an_open_question_ignores_the_ids_it_points_at():
-    """요구사항 번호는 다시 만들 때마다 바뀐다. R-08이 R-09가 된 것만으로 답이 질문을 잃으면 안 된다."""
+    """Requirement numbers change on every regeneration. An answer must not lose its question just because R-08 became R-09."""
     assert (supplement.open_key("보존 기간은? (R-08, C-05)") == supplement.open_key("보존 기간은? (R-09)")
             == supplement.open_key("보존  기간은?"))
     assert supplement.open_key("보존 기간은?") != supplement.open_key("링크 유효 기간은?")
 
 
 def test_an_external_check_has_no_options_and_can_be_answered_with_who_is_checking():
-    """실측(ws-g): "증빙 효력을 갖는가?"에 "인정한다"가 보기로 나왔다 — 법무가 답할 사실을 PM이
-    고르는 모양이 된다."""
+    """Observed (ws-g): "증빙 효력을 갖는가?" ("does it have evidentiary force?") got "인정한다"
+    ("acknowledged") as an option, which has the PM picking a fact that legal should answer."""
     q = supplement.OpenQuestion(id="O-01", question="전자 기록의 증빙 효력은? (C-01)", external=True)
     key = supplement.open_key(q.question)
     options = {key: [supplement.Option(text="인정", source="a.md"),

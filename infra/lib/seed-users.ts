@@ -9,43 +9,43 @@ export interface SeedUserProps {
   email: string;
   group: string;
   /**
-   * 배포 시점에 받은 **임시** 비밀번호(AipdsAuthStack의 `SeedPassword` 파라미터).
-   * 사용자가 첫 로그인에서 바꾸므로 이 값은 계정의 영구 비밀번호가 아니다.
+   * The **temporary** password received at deploy time (AipdsAuthStack's `SeedPassword` parameter).
+   * The user changes it at first login, so this value is not the account's permanent password.
    */
   password: string;
-  /** 시드 호출 전부가 공유하는 provider 롤. `seedProviderRole`이 만든다. */
+  /** The provider role shared by all seed calls. Created by `seedProviderRole`. */
   role: iam.IRole;
 }
 
-/** 시드 호출 세 종에 필요한 Cognito 액션. 이 목록이 곧 시드의 권한 경계다. */
+/** The Cognito actions needed for the three kinds of seed calls. This list is the seed's permission boundary. */
 const SEED_ACTIONS = [
   'cognito-idp:AdminCreateUser',
   'cognito-idp:AdminSetUserPassword',
   'cognito-idp:AdminAddUserToGroup',
 ];
 
-// AwsCustomResource provider Lambda의 실행 롤. **권한을 인라인으로 들고 있다.**
+// Execution role for the AwsCustomResource provider Lambda. **It holds its permissions inline.**
 //
-// **왜 fromSdkCalls를 쓰지 않는가(2026-08-21 실측).** 그 헬퍼는 호출마다 별도
-// `AWS::IAM::Policy`를 만들고, CloudFormation은 그것을 소비 직전에 쓴다(실측 16초
-// 전). `DependsOn`은 API 호출 순서만 보장하고 IAM 인가 경로가 새 정책을 반영했다는
-// 것은 보장하지 않으므로, 그 16초가 최종 일관성과의 경쟁이 된다. AipdsAuthStack의
-// 첫 생성이 정확히 그렇게 죽었다:
+// **Why not fromSdkCalls (observed 2026-08-21).** That helper creates a separate
+// `AWS::IAM::Policy` per call, and CloudFormation writes it just before it is consumed (observed 16 seconds
+// before). `DependsOn` guarantees only the order of API calls, not that the IAM authorization path has
+// picked up the new policy, so those 16 seconds become a race against eventual consistency. The first
+// creation of AipdsAuthStack died exactly that way:
 //
-//   01:03:06  PutRolePolicy  SeedPmGroupCustomResourcePolicy   성공
+//   01:03:06  PutRolePolicy  SeedPmGroupCustomResourcePolicy   success
 //   01:03:22  AdminAddUserToGroup  pm     -> AccessDenied
-//   01:03:23  AdminAddUserToGroup  admin  -> 성공
+//   01:03:23  AdminAddUserToGroup  admin  -> success
 //
-// 같은 롤·같은 액션·같은 리소스에 같은 시각 붙은 같은 모양의 정책인데 1초 차이로
-// 하나가 졌다. 시드 계정 둘이면 호출이 여섯이고 경쟁도 여섯 번인데, **하나만 져도
-// 스택 전체가 롤백된다** — 시드를 늘리면 실패 확률이 함께 오른다.
+// Same role, same action, same resource, policies of the same shape attached at the same time, and one
+// lost by a one-second difference. With two seed accounts there are six calls and six races, and **if even
+// one loses, the whole stack rolls back** — adding seeds raises the failure probability with them.
 //
-// 인라인으로 옮기면 IAM 쓰기가 `CreateRole` 시점이 된다. 그 롤은 provider Lambda보다
-// 먼저 존재해야 하고 Lambda는 어떤 커스텀 리소스보다 먼저 존재해야 하므로, 리소스
-// 생성 순서가 곧 여유가 된다(실측 타임라인에서 40~80초).
+// Moving it inline makes the IAM write happen at `CreateRole` time. That role must exist before the
+// provider Lambda, and the Lambda must exist before any custom resource, so the resource creation
+// order itself becomes the margin (40-80 seconds in the observed timeline).
 //
-// 기본 실행 롤을 대체하므로 `AWSLambdaBasicExecutionRole`을 직접 넣는다 — 빼면 이
-// Lambda의 로그가 사라지고, 이 결함의 진단 경로가 바로 그 로그였다.
+// Since it replaces the default execution role, `AWSLambdaBasicExecutionRole` is added directly — without it
+// this Lambda's logs disappear, and those logs were exactly the diagnostic path for this defect.
 export function seedProviderRole(scope: Construct,
                                  userPool: cognito.IUserPool): iam.Role {
   return new iam.Role(scope, 'SeedProviderRole', {
@@ -55,9 +55,9 @@ export function seedProviderRole(scope: Construct,
         'service-role/AWSLambdaBasicExecutionRole'),
     ],
     inlinePolicies: {
-      // `inlinePolicies`여야 롤 리소스의 `Policies` 속성으로 렌더된다 —
-      // `addToPolicy`는 별도 `AWS::IAM::Policy`(DefaultPolicy)를 만들어 위와 같은
-      // 경쟁으로 되돌아간다.
+      // It must be `inlinePolicies` to render as the role resource's `Policies` property —
+      // `addToPolicy` creates a separate `AWS::IAM::Policy` (DefaultPolicy) and goes back to the same
+      // race as above.
       SeedCognitoAdmin: new iam.PolicyDocument({
         statements: [new iam.PolicyStatement({
           actions: SEED_ACTIONS,
@@ -68,24 +68,24 @@ export function seedProviderRole(scope: Construct,
   });
 }
 
-// cdk deploy 한 번으로 '로그인 가능한' 계정을 만든다.
+// Creates 'login-capable' accounts with a single cdk deploy.
 //
-// 왜 CfnUserPoolUser를 쓰지 않는가: `AWS::Cognito::UserPoolUser`에는 비밀번호를
-// 지정하는 속성이 아예 없다. Cognito가 임의의 임시 비밀번호를 만들고 그 값은
-// 아무도 알 수 없어, 이메일을 보내지 않는 이 앱에서는 로그인할 방법이 없다.
-// 알려진 임시 비밀번호를 심으려면 AdminSetUserPassword가 필요하고, 그건 커스텀
-// 리소스로만 호출할 수 있다.
+// Why not CfnUserPoolUser: `AWS::Cognito::UserPoolUser` has no property at all for specifying
+// a password. Cognito generates a random temporary password that nobody can know,
+// so in this app, which sends no email, there would be no way to log in.
+// Planting a known temporary password requires AdminSetUserPassword, which can only be called
+// through a custom resource.
 export function seedUser(scope: Construct, id: string, props: SeedUserProps): void {
   const { userPool, email, group, password, role } = props;
-  // Username은 이메일이 아니라 로컬파트다 — 이 풀은 AliasAttributes=[email]이고
-  // Cognito는 그 경우 이메일 형식 Username을 거부한다(실측: 스택 롤백).
-  // 규칙의 근거와 백엔드와의 동기화 요구는 usernameForEmail 주석 참조.
+  // The Username is the local part, not the email — this pool has AliasAttributes=[email], and
+  // in that case Cognito rejects email-format Usernames (observed: stack rollback).
+  // See the usernameForEmail comment for the rule's rationale and the requirement to stay in sync with the backend.
   const username = usernameForEmail(email);
 
-  // 1) 사용자 생성. 이메일 발송 없음(SUPPRESS) — 초대는 관리 페이지가 임시
-  // 비밀번호를 화면에 보여주는 방식이고, 시드 계정은 비밀번호가 이미 알려져 있다.
-  // email_verified=true는 선택이 아니다: alias(email) 사인인은 검증된 이메일에만
-  // 동작한다.
+  // 1) Create the user. No email sent (SUPPRESS) — invitations work by the admin page showing the
+  // temporary password on screen, and seed accounts' passwords are already known.
+  // email_verified=true is not optional: alias (email) sign-in works only with verified
+  // emails.
   const create = new cr.AwsCustomResource(scope, `${id}Create`, {
     onCreate: {
       service: 'CognitoIdentityServiceProvider',
@@ -100,28 +100,28 @@ export function seedUser(scope: Construct, id: string, props: SeedUserProps): vo
         ],
       },
       physicalResourceId: cr.PhysicalResourceId.of(`${email}-create`),
-      // 재배포 시 사용자는 이미 있다. 그걸 실패로 보면 스택이 롤백된다.
+      // On redeploy the user already exists. Treating that as a failure would roll back the stack.
       ignoreErrorCodesMatching: 'UsernameExistsException',
     },
     role,
     installLatestAwsSdk: false,
   });
 
-  // 2) **임시** 비밀번호를 심는다(Permanent: false) → 계정이
-  // FORCE_CHANGE_PASSWORD로 남고, Hosted UI가 첫 로그인에서 사용자에게 새
-  // 비밀번호를 정하게 한다. 관리 페이지의 초대와 정확히 같은 규율이다
-  // (backend/aipds/auth/cognito.py의 set_temp_password).
+  // 2) Plant a **temporary** password (Permanent: false) → the account stays in
+  // FORCE_CHANGE_PASSWORD, and the Hosted UI has the user set a new password at first
+  // login. Exactly the same discipline as the admin page's invitation
+  // (set_temp_password in backend/aipds/auth/cognito.py).
   //
-  // **`onUpdate`가 없는 것이 이 리소스의 요점이다.** 같은 호출을 onUpdate에도
-  // 걸면 재배포가 배포 시점 값으로 비밀번호를 되돌리는데, 그것은 사용자가 첫
-  // 로그인에서 정한 비밀번호를 다음 `cdk deploy`가 덮어쓴다는 뜻이다 — 각자
-  // 자기 비밀번호를 갖는다는 요구사항과 정면으로 충돌한다. 그래서 이 호출은
-  // 계정이 처음 만들어질 때 한 번만 실행된다. 비밀번호를 다시 발급해야 하면
-  // 관리 페이지의 '비밀번호 재설정'을 쓴다(그쪽이 새 임시 비밀번호를 1회 보여준다).
+  // **Having no `onUpdate` is the point of this resource.** Putting the same call on onUpdate too
+  // would make a redeploy reset the password to the deploy-time value, meaning the next `cdk deploy`
+  // overwrites the password the user set at first login — directly contradicting the requirement
+  // that everyone has their own password. So this call runs only once, when the account is
+  // first created. If a password needs to be reissued, use the admin page's
+  // '비밀번호 재설정' (Reset password) (it shows a new temporary password once).
   //
-  // Username에 1단계의 응답이 아니라 위에서 유도한 같은 값을 쓴다: 1단계가
-  // UsernameExistsException으로 무시되면 응답 필드가 비어 getResponseField가
-  // 깨진다. 풀이 AliasAttributes(호출자 지정 username)라서 이렇게 할 수 있다.
+  // The Username uses the same value derived above rather than step 1's response: if step 1 is
+  // ignored with UsernameExistsException, the response fields are empty and getResponseField
+  // breaks. This works because the pool uses AliasAttributes (caller-specified username).
   const setPassword = new cr.AwsCustomResource(scope, `${id}Password`, {
     onCreate: {
       service: 'CognitoIdentityServiceProvider',
@@ -139,7 +139,7 @@ export function seedUser(scope: Construct, id: string, props: SeedUserProps): vo
   });
   setPassword.node.addDependency(create);
 
-  // 3) 그룹 배정 = 역할 부여. 이미 속해 있으면 no-op(멱등).
+  // 3) Group assignment = role grant. A no-op if already a member (idempotent).
   const addToGroup = new cr.AwsCustomResource(scope, `${id}Group`, {
     onCreate: {
       service: 'CognitoIdentityServiceProvider',

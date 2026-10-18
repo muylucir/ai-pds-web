@@ -72,7 +72,7 @@ describe("ChatInput", () => {
 
   it("shows three lines of input without scrolling", () => {
     // One row made every multi-line message a peephole: people write
-    // 질문·수정요청 several sentences long here and had to scroll their own
+    // questions and change requests several sentences long here and had to scroll their own
     // draft to re-read it. The workspace and the prototype build panel share
     // this component, so this one value covers both screens.
     render(<ChatInput onSend={vi.fn()} disabled={false} />);
@@ -85,17 +85,17 @@ describe("ChatInput", () => {
     render(
       <ChatInput onSend={vi.fn()} disabled={true} interrupting={true} onInterrupt={onInterrupt} />,
     );
-    // 같은 자리를 쓴다 — 스트리밍 중에는 어차피 비활성이던 버튼이라 레이아웃이
-    // 변하지 않는다.
+    // It uses the same spot — that button was disabled during streaming anyway, so the
+    // layout does not change.
     expect(screen.queryByRole("button", { name: "전송" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "중단" }));
     expect(onInterrupt).toHaveBeenCalledTimes(1);
   });
 
   it("입력이 막혀 있어도 진행 중이 아니면 중단 버튼을 띄우지 않는다", () => {
-    // 프로토타입 패널은 disabled={streaming || buildComplete !== null}이다
-    // (BuildPanel.tsx). disabled로 판단하면 빌드가 끝난 뒤에도 ■이 떠서
-    // 중단할 턴이 없는데 중단 버튼이 있는 상태가 된다.
+    // The prototype panel uses disabled={streaming || buildComplete !== null}
+    // (BuildPanel.tsx). Deciding by disabled would show ■ even after the build finished,
+    // leaving a stop button with no turn to stop.
     render(
       <ChatInput onSend={vi.fn()} disabled={true} interrupting={false} onInterrupt={vi.fn()} />,
     );
@@ -104,8 +104,8 @@ describe("ChatInput", () => {
   });
 
   it("onInterrupt가 없으면 종전과 같이 동작한다", () => {
-    // 이 컴포넌트를 쓰는 다른 화면이 생겼을 때 중단 버튼이 저절로 나타나지
-    // 않아야 한다.
+    // When another screen starts using this component, the stop button must not appear
+    // on its own.
     render(<ChatInput onSend={vi.fn()} disabled={true} interrupting={true} />);
     expect(screen.getByRole("button", { name: "전송" })).toBeInTheDocument();
   });

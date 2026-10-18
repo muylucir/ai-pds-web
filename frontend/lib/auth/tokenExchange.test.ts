@@ -31,7 +31,7 @@ describe("exchangeCode", () => {
     expect(init?.method).toBe("POST");
     expect((init?.headers as Record<string, string>)["Content-Type"])
       .toBe("application/x-www-form-urlencoded");
-    // confidential 클라이언트는 client_secret_basic으로 인증한다.
+    // A confidential client authenticates with client_secret_basic.
     const expected = "Basic " + Buffer.from("client-abc:secret-xyz").toString("base64");
     expect((init?.headers as Record<string, string>).Authorization).toBe(expected);
 
@@ -40,7 +40,7 @@ describe("exchangeCode", () => {
     expect(body.get("code")).toBe("the-code");
     expect(body.get("code_verifier")).toBe("the-verifier");
     expect(body.get("redirect_uri")).toBe("https://app.example.com/api/auth/callback");
-    // 시크릿은 Authorization 헤더로만 간다 — 본문에 중복해 넣지 않는다.
+    // The secret goes only in the Authorization header — it is not duplicated in the body.
     expect(body.get("client_secret")).toBeNull();
   });
 
@@ -73,7 +73,7 @@ describe("refreshTokens", () => {
     const body = new URLSearchParams(f.mock.calls[0]?.[1]?.body as string);
     expect(body.get("grant_type")).toBe("refresh_token");
     expect(body.get("refresh_token")).toBe("the-refresh");
-    // refresh 그랜트에는 redirect_uri/code_verifier가 없다.
+    // The refresh grant has no redirect_uri/code_verifier.
     expect(body.get("redirect_uri")).toBeNull();
     expect(body.get("code_verifier")).toBeNull();
   });

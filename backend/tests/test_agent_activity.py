@@ -1,8 +1,8 @@
-# backend/tests/test_agent_activity.py — agent_activity payload의 계약.
+# backend/tests/test_agent_activity.py — the contract of the agent_activity payload.
 #
-# 이 payload는 **UI 계약**이다(백엔드가 만드는 유일한 서브에이전트 표현). 필드가
-# 조용히 사라지면 화면의 행이 라벨 없이 뜨거나 영원히 닫히지 않으므로, 여기서
-# 모양을 못박는다.
+# This payload is a **UI contract** (the only subagent representation the backend builds). If a field
+# silently disappears, the screen's rows show up without labels or never close, so its shape is
+# pinned here.
 from __future__ import annotations
 
 import json
@@ -19,9 +19,9 @@ def test_started_carries_the_row_label():
 
 
 def test_none_fields_are_dropped_rather_than_sent_as_null():
-    """빠진 값과 "값이 null이다"는 프론트에서 다르게 다뤄진다: 병합 규칙이
-    `detail`의 **부재**를 "이전 값을 유지해라"로 읽는다(useProtoAgents). null을
-    보내면 그 규칙이 매 하트비트마다 대상을 지운다."""
+    """A missing value and "the value is null" are handled differently in the frontend: the merge rule
+    reads the **absence** of `detail` as "keep the previous value" (useProtoAgents). Sending null
+    would make that rule clear the target on every heartbeat."""
     payload = json.loads(activity_payload(
         task_id="a040", state="progress", tool="Write"))
     assert payload == {"task_id": "a040", "state": "progress", "tool": "Write"}
@@ -30,21 +30,21 @@ def test_none_fields_are_dropped_rather_than_sent_as_null():
 
 
 def test_a_long_summary_is_truncated():
-    """서브에이전트 요약은 실측 수백 자다(프로브: "Done.\\n\\n- Created …").
-    트레이스는 한 줄 목록이므로 자르지 않으면 읽히지 않는다 — tool_trace의
-    DETAIL_MAX와 같은 판단이다."""
+    """Subagent summaries are observed to be hundreds of characters (probe: "Done.\\n\\n- Created …").
+    The trace is a one-line list, so unless truncated it is unreadable — the same judgment as
+    tool_trace's DETAIL_MAX."""
     payload = json.loads(activity_payload(
         task_id="a040", state="done", status="completed", summary="가" * 500))
-    assert len(payload["summary"]) == SUMMARY_MAX + 1  # 말줄임표 한 글자
+    assert len(payload["summary"]) == SUMMARY_MAX + 1  # one character for the ellipsis
     assert payload["summary"].endswith("…")
 
 
 def test_terminal_statuses_match_the_sdk():
-    """우리가 든 목록이 SDK의 것과 갈라지면 행이 영원히 도는 채로 남는다
-    (`killed`를 빼먹는 것이 대표적 — task_updated만 그 값을 보낸다).
+    """If our list diverges from the SDK's, rows are left spinning forever
+    (leaving out `killed` is the classic case — only task_updated sends that value).
 
-    SDK를 런타임에 import하지 않고 우리 상수를 쓰는 이유는 번역부가 SDK 타입에
-    의존하지 않기 때문이다(fakes가 그래서 동작한다). 대신 그 값이 상류와 같은지를
-    이 테스트가 지킨다."""
+    The reason for using our own constant rather than importing the SDK at runtime is that the translation layer does not
+    depend on SDK types (that is why the fakes work). Instead, this test guards that the values match
+    upstream."""
     from claude_agent_sdk import TERMINAL_TASK_STATUSES as upstream
     assert TERMINAL_TASK_STATUSES == upstream

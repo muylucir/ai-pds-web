@@ -1,12 +1,12 @@
 // frontend/components/canvas/ReasoningTrace.test.tsx
 //
-// 추론 과정 아코디언은 도구가 **무엇을 했는지** 보여야 한다. Write는 별도
-// `file_changed` 이벤트가 경로를 들고 오므로 처음부터 `📝 파일 변경: …`으로 보였지만
-// Read/Bash는 `status` 이벤트에 이름만 실려 `Read`, `Bash`만 떴다 — 무엇을 읽었는지,
-// 무슨 명령을 돌렸는지가 트레이스의 요점인데 그것이 빠져 있었다.
+// The reasoning accordion must show **what** each tool did. Write showed `📝 파일 변경: …`
+// from the start because a separate `file_changed` event carries the path, but Read/Bash only
+// had their name in the `status` event and showed just `Read`, `Bash` — what was read and which
+// command was run are the point of the trace, and those were missing.
 //
-// 값은 백엔드(`backend/aipds/tool_trace.py`)가 만들고 아이콘·구분자만 여기서
-// 붙인다. 도구 이름은 고유명이라 번역하지 않는다.
+// The backend (`backend/aipds/tool_trace.py`) builds the values; only the icons and separators
+// are added here. Tool names are proper nouns and are not translated.
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ReasoningTrace } from "./ReasoningTrace";
@@ -50,9 +50,9 @@ describe("ReasoningTrace", () => {
   });
 
   it("사고 구간은 전용 줄로 보여준다", () => {
-    // 사고 **텍스트**는 이 경로에 없다(Bedrock 실측 0자). 있는 것은 모델이
-    // 생각한 구간이고, 그것이 트레이스를 턴의 타임라인으로 만든다:
-    // 생각 → Read → 생각 → 작성.
+    // Thinking **text** is not on this path (measured 0 characters on Bedrock). What exists is
+    // the span in which the model thought, and that makes the trace a timeline of the turn:
+    // think → Read → think → write.
     render(<ReasoningTrace entries={[entry({ kind: "thinking" })]} />);
     expect(screen.getByText("🧠 생각")).toBeInTheDocument();
   });
@@ -65,9 +65,9 @@ describe("ReasoningTrace", () => {
 });
 
 describe("ReasoningTrace — 서브에이전트", () => {
-  // 시작은 남기지 않는다: Agent 도구 호출이 이미 총괄의 status로 들어오고 거기에
-  // 무엇을 맡겼는지까지 실려 있다(`🤖`가 아니라 그 status 줄이 그 사실을 갖는다).
-  // 여기 오는 것은 종료뿐이다.
+  // The start is not recorded: the Agent tool call already arrives as the orchestrating agent's status, carrying
+  // what was delegated (that status line, not `🤖`, holds that fact).
+  // Only the end comes here.
   it("완료한 에이전트를 이름과 요약으로 남긴다", () => {
     render(<ReasoningTrace entries={[entry({
       kind: "agent", text: "화면 골격", detail: "app/page.tsx를 만들었다",
@@ -77,7 +77,7 @@ describe("ReasoningTrace — 서브에이전트", () => {
   });
 
   it("실패는 완료와 다른 줄로 보인다", () => {
-    // 같은 아이콘·같은 라벨이면 트레이스가 무엇이 잘못됐는지 말하지 못한다.
+    // With the same icon and the same label, the trace cannot say what went wrong.
     render(<ReasoningTrace entries={[entry({
       kind: "agent", text: "데이터 모델", detail: "스키마를 못 만들었다",
       status: "failed" })]} />);
@@ -85,8 +85,8 @@ describe("ReasoningTrace — 서브에이전트", () => {
   });
 
   it("중단·강제종료도 성공으로 보이지 않는다", () => {
-    // `completed`만 성공이다 — stopped/killed를 성공으로 그리면 사용자가 끊은
-    // 빌드가 정상 완료로 읽힌다.
+    // Only `completed` is success — drawing stopped/killed as success would make a build the
+    // user stopped read as a normal completion.
     for (const status of ["stopped", "killed"]) {
       const { unmount } = render(<ReasoningTrace entries={[entry({
         kind: "agent", text: "스타일", status })]} />);

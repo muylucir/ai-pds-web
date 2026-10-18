@@ -24,21 +24,22 @@ class ToolUseBlock:
 @dataclass
 class AssistantMessage:
     content: list
-    # 서브에이전트가 보낸 메시지면 그것을 띄운 Agent 도구 호출의 id가 들어온다
-    # (실측 2026-09-15: 기본 옵션에서도 서브에이전트의 tool_use 블록은 이 필드를
-    # 달고 온다 — claude_agent_sdk 0.2.143 types.py의 forward_subagent_text 설명).
-    # None이면 총괄 에이전트의 메시지다.
+    # For a message sent by a subagent, this carries the id of the Agent tool call that
+    # launched it (observed 2026-09-15: even with default options, a subagent's tool_use
+    # blocks come with this field — see the forward_subagent_text description in
+    # claude_agent_sdk 0.2.143 types.py).
+    # None means the message is from the orchestrating agent.
     parent_tool_use_id: str | None = None
 
 
 @dataclass
 class TaskStartedMessage:
-    """서브에이전트가 떴다. `tool_use_id`가 Agent 도구 호출의 id이고, 그 값이
-    서브에이전트 메시지의 `parent_tool_use_id`와 같다 — 두 스트림의 조인 키다.
+    """A subagent started. `tool_use_id` is the id of the Agent tool call, and that value
+    equals the subagent messages' `parent_tool_use_id` — the join key between the two streams.
 
-    실제 SDK에서는 SystemMessage의 **서브클래스**라서 `type(msg).__name__`이
-    `"SystemMessage"`가 아니라 `"TaskStartedMessage"`다. 이름으로 매칭하는
-    번역부가 이것을 모르면 조용히 버려진다(그것이 바로 이 기능이 없던 이유)."""
+    In the real SDK this is a **subclass** of SystemMessage, so `type(msg).__name__` is
+    `"TaskStartedMessage"`, not `"SystemMessage"`. A translator that matches by name and
+    does not know this silently drops it (which is exactly why this feature was missing)."""
     task_id: str
     description: str
     tool_use_id: str | None = None
@@ -48,7 +49,7 @@ class TaskStartedMessage:
 
 @dataclass
 class TaskProgressMessage:
-    """서브에이전트의 하트비트. `last_tool_name`이 그 에이전트가 방금 돌린 도구다."""
+    """A subagent heartbeat. `last_tool_name` is the tool that agent just ran."""
     task_id: str
     description: str = ""
     last_tool_name: str | None = None
@@ -59,7 +60,7 @@ class TaskProgressMessage:
 
 @dataclass
 class TaskNotificationMessage:
-    """서브에이전트가 끝났다(완료·실패·중단)."""
+    """A subagent finished (completed, failed, or stopped)."""
     task_id: str
     status: str = "completed"
     summary: str = ""
@@ -71,9 +72,9 @@ class TaskNotificationMessage:
 
 @dataclass
 class TaskUpdatedMessage:
-    """상태 전이. **종료가 이쪽으로만 오는 경우가 있다** — SDK가 명시한다:
-    백그라운드 태스크나 TaskStop으로 죽은 태스크는 TaskNotification 없이
-    여기서 terminal status만 보고할 수 있다(types.py의 TaskUpdatedMessage)."""
+    """A state transition. **Sometimes termination arrives only this way** — the SDK says so:
+    a background task, or a task killed by TaskStop, may report only its terminal status
+    here, without a TaskNotification (TaskUpdatedMessage in types.py)."""
     task_id: str
     patch: dict
     status: str | None = None
@@ -82,10 +83,10 @@ class TaskUpdatedMessage:
 
 @dataclass
 class StreamEvent:
-    """부분 메시지 스트리밍(`include_partial_messages=True`)이 내는 프레임.
+    """A frame emitted by partial message streaming (`include_partial_messages=True`).
 
-    실제 SDK는 `uuid`/`session_id`도 싣지만 번역이 보는 것은 `event` 하나이고,
-    그 안에는 Claude API의 원본 스트리밍 이벤트가 그대로 들어 있다
+    The real SDK also carries `uuid`/`session_id`, but the translator looks only at
+    `event`, which contains the Claude API's raw streaming event as is
     (content_block_start / content_block_delta / content_block_stop / ...).
     """
     event: dict
@@ -95,10 +96,11 @@ class StreamEvent:
 class ResultMessage:
     subtype: str = "success"
     result: str | None = None
-    # 실제 SDK의 ResultMessage가 실패를 알리는 필드들(claude_agent_sdk/types.py).
-    # CLI는 턴 실패를 예외로 던지지 않고 여기에 담아 보낸다 — Bedrock 429/500/529,
-    # 도구 교착, 중단된 스트림 모두 is_error=True로 온다. 기본값이 성공이므로
-    # 기존 대본은 그대로 동작하고, 실패를 재현하는 테스트만 명시적으로 켠다.
+    # Fields through which the real SDK's ResultMessage reports failure (claude_agent_sdk/types.py).
+    # The CLI does not raise turn failures as exceptions; it sends them here — Bedrock
+    # 429/500/529, tool deadlocks, and interrupted streams all arrive with is_error=True.
+    # The default is success, so existing scripts work unchanged, and only tests that
+    # reproduce failures turn it on explicitly.
     is_error: bool = False
     api_error_status: int | None = None
     terminal_reason: str | None = None

@@ -5,7 +5,7 @@ import { VerificationSummary } from "./VerificationSummary";
 
 describe("VerificationSummary", () => {
   it("offers the original audit.md when no entry could be read", async () => {
-    // 빈 패널은 "기록이 없다"와 구별되지 않는다 — 원문으로 가는 길이 있어야 한다.
+    // An empty panel cannot be told apart from "there are no records" — there must be a way to the original.
     const onViewRaw = vi.fn();
     render(<VerificationSummary entries={[]} onViewRaw={onViewRaw} />);
     await userEvent.click(screen.getByRole("button", { name: "원문 보기" }));

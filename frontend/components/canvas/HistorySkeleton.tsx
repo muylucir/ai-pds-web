@@ -2,16 +2,16 @@
 import { useT } from "@/lib/i18n/provider";
 // frontend/components/canvas/HistorySkeleton.tsx
 //
-// 히스토리 복원 중 채팅 자리를 채우는 자리표시자. 종전에는 GET /history가 도는
-// 동안 이 영역이 빈 화면이어서, 대화가 많은 프로젝트를 다시 열면 "내 대화가
-// 사라졌다"로 읽혔다.
+// A placeholder that fills the chat area while the history is being restored. Previously this
+// area was a blank screen while GET /history was running, so reopening a project with a long
+// conversation read as "my conversation disappeared".
 //
-// AiMessage와 같은 아바타·폭을 쓰는 것이 의도적이다 — 로드가 끝나 실제 항목이
-// 들어올 때 레이아웃이 튀지 않는다.
+// Using the same avatar and widths as AiMessage is intentional — the layout does not jump when
+// loading finishes and the real items come in.
 export function HistorySkeleton() {
   const t = useT();
-  // 폭을 다르게 둔다: 같은 길이 박스 세 개는 로딩 바처럼 보이고, 들쭉날쭉하면
-  // 대화처럼 보인다.
+  // The widths vary: three boxes of the same length look like loading bars, while ragged ones
+  // look like a conversation.
   const widths = ["w-3/5", "w-4/5", "w-2/5"];
   return (
     <div role="status" aria-label={t("canvas.historyLoading")} className="space-y-4">
