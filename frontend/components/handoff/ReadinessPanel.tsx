@@ -3,6 +3,10 @@
 // 막는 것은 하나뿐이다: 명세가 없으면 만들 것이 없다(blockers). 나머지는 경고다 — 빈
 // 섹션은 "재료 없음"으로 남고, AI 제안 수락은 근거 등급으로 드러난다. 숨기지 않고 보여
 // 주는 것이 이 화면의 일이다.
+//
+// 명세 정합성도 경고다. 빌드 중 바뀐 것을 명세에 반영하는 일은 Discovery의 정합성 패스가
+// 하므로(discovery-config/CLAUDE.md) 여기서는 그리로 돌려보낸다 — 워크스페이스 입력창에
+// 초안을 채운다(설문 반영과 같은 방식).
 "use client";
 import type { Readiness, SectionKey } from "@/lib/api/handoff";
 import type { Dict } from "@/lib/i18n";
@@ -51,7 +55,7 @@ export function sectionLabel(t: (k: keyof Dict) => string, key: SectionKey): str
 
 export function ReadinessPanel({
   readiness, questionCount, openDecisions = null, generating, hasPackage, onSupplement, onGenerate,
-  onViewPackage, readOnly = false,
+  onViewPackage, onReconcile, readOnly = false,
 }: {
   readiness: Readiness;
   /** 보완 문항 수. 0이면 보완 질문으로 가는 길을 내지 않는다. */
@@ -64,6 +68,8 @@ export function ReadinessPanel({
   onSupplement: () => void;
   onGenerate: () => void;
   onViewPackage: () => void;
+  /** 워크스페이스 채팅으로 가서 `draft`를 입력창에 채운다. */
+  onReconcile: (draft: string) => void;
   /** 열람 멤버 — 판정은 보이고 생성 버튼은 없다. */
   readOnly?: boolean;
 }) {
@@ -76,6 +82,11 @@ export function ReadinessPanel({
   const validation = r.prototypes.length === 0
     ? t("handoff.validation.none")
     : r.prototypes.map((p) => `${p.id}: ${t(`handoff.validation.${p.validation}` as keyof Dict)}`).join(" · ");
+  const histories = r.prototypes.filter((p) => p.reconcile !== "not_needed");
+  const unreconciled = histories.filter((p) => p.reconcile === "missing" || p.reconcile === "stale");
+  const reconcileDraft = t("handoff.reconcile.draft")
+    .replace("{list}", unreconciled.map((p) => p.history ?? p.id).join(", "));
+
   const validationTone: Tone = r.prototypes.some((p) => p.validation === "validated" || p.validation === "survey")
     ? "ok" : "info";
 
@@ -119,6 +130,20 @@ export function ReadinessPanel({
         )}
         <Row tone={validationTone} name={t("handoff.check.validation")}
              hint={t("handoff.check.validation.hint")} value={validation} />
+        {histories.length > 0 && (
+          <Row
+            tone={unreconciled.length ? "warn" : "ok"}
+            name={t("handoff.check.reconcile")}
+            hint={t("handoff.check.reconcile.hint")}
+            value={unreconciled.length
+              ? t("handoff.check.reconcile.needed").replace("{list}", unreconciled
+                .map((p) => `${p.id}: ${t(`handoff.reconcile.${p.reconcile}` as keyof Dict)}`).join(" · "))
+              : t("handoff.check.reconcile.current")}
+            action={unreconciled.length && !readOnly
+              ? { label: t("handoff.check.reconcile.action"), onClick: () => onReconcile(reconcileDraft) }
+              : undefined}
+          />
+        )}
         <Row
           tone={r.broken_references.length ? "warn" : "ok"}
           name={t("handoff.check.refs")}

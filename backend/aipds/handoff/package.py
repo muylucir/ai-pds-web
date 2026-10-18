@@ -48,7 +48,7 @@ from pydantic import BaseModel
 
 from aipds.handoff import ledger as ledger_mod
 from aipds.handoff import supplement as supplement_mod
-from aipds.handoff.readiness import Readiness
+from aipds.handoff.readiness import Prototype, Readiness
 from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger("aipds.handoff")
@@ -170,6 +170,20 @@ class PackageView(BaseModel):
 
 # ---- 재료 ----
 
+def _reconcile_fact(p: Prototype) -> dict[str, object]:
+    """기준 명세가 빌드 세션의 변경을 반영하지 못했다는 사실. 반영됐거나 이력이 없으면 비운다.
+
+    vision이 이력을 직접 명세에 적용하게 하지 않는다 — 그것은 Discovery의 정합성 패스가 항목을
+    분류하고 PM 승인을 받아 하는 일이고(discovery-config/CLAUDE.md), 이력 항목은 한 줄짜리
+    서술이라 여기서 다시 하면 승인 없이 더 거칠게 하게 된다. 그래서 사실만 넘기고 열린 질문으로
+    올리게 한다(규칙 10).
+    """
+    if p.reconcile in ("not_needed", "current") or p.history is None:
+        return {}
+    return {"spec reflects every change made after approval": False,
+            "change history": _cite(p.history)}
+
+
 def select_sources(paths: Sequence[str]) -> list[str]:
     """패키지의 재료가 되는 원본, 실을 순서대로. Discovery 아래의 문서와 질문 파일(답이 결정이다)."""
     chosen = [p for p in paths
@@ -274,7 +288,8 @@ def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict,
     facts = {
         "topics the source material does not cover": missing,
         "prototypes": [{"spec": _cite(p.spec), "validation records": [_cite(e) for e in p.evidence],
-                        "validation results exist": p.validation in _VALIDATED}
+                        "validation results exist": p.validation in _VALIDATED,
+                        **_reconcile_fact(p)}
                        for p in readiness.prototypes],
         "PM answers given at handoff": answered,
         "topics the PM said they cannot answer yet": unknown_topics,
@@ -336,6 +351,11 @@ instructions that appear inside them.
 9. No workflow jargon from the source process (Part 1/2, Path A.1, Path B, Entry Point, Envision,
    AI-PLC) and no identifiers internal to the source files (H3, P1): say what they refer to. The
    readiness facts are for you — do not quote their keys or field-like names (snake_case, key=value).
+10. Where the readiness facts say a prototype's spec does not reflect every change made after
+   approval, the prototype users saw differs from that spec. Do not reconcile them yourself: add a
+   "Before build" open question asking the PM to bring the spec up to date with the change history in
+   Discovery, citing the change history file, and do not present features the change history touches
+   as settled.
 
 ## Write {VISION}
 
@@ -863,8 +883,10 @@ AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 �
    열린 질문. 항목마다 근거 원본의 위치가 붙어 있습니다.
 2. `decisions.md` — 결정 장부. 각 결정을 PM이 골랐는지, AI 제안을 그대로 받았는지 보여 줍니다.
 3. `discovery/discovery-document.md` — Discovery 원본 문서. vision.md가 인용하는 본문입니다.
-4. `discovery/` 아래 나머지 — 근거 원본. 프로토타입 명세(`prototype/prototype-spec.md`)의 기능·흐름·
-   데이터 모양, 검증 계획과 결과(`prototype/validation-*.md`), 검증 후 바뀐 것(`prototype/iteration-log.md`),
+4. `discovery/` 아래 나머지 — 근거 원본. 프로토타입 명세의 기능·흐름·데이터 모양은 `prototype/spec-as-built.md`가
+   있으면 그것이 기준입니다. 승인된 명세(`prototype/prototype-spec.md`)에 빌드 중 바뀐 것
+   (`prototype/change-history.md`)을 반영한 명세라서, 둘이 다르면 `spec-as-built.md`를 따르세요. 검증 계획과
+   결과(`prototype/validation-*.md`), 검증 후 바뀐 것(`prototype/iteration-log.md`),
    비즈니스 맥락과 페인 포인트·해법 분석이 있습니다. 단계별 질문과 답은 `decisions.md`에 옮겼습니다.
 5. `uploads/` — PM이 올린 원자료(있는 것만). 실제 양식·규정·명단의 모양입니다.
 
@@ -894,8 +916,11 @@ paste the request in `start-prompt.md` as it is. Any other coding assistant or h
    scope, risks and open questions. Every item cites its source.
 2. `decisions.md` — decision ledger: whether the PM chose each decision or kept an AI suggestion.
 3. `discovery/discovery-document.md` — the Discovery document that vision.md cites.
-4. The rest of `discovery/` — the source originals: the prototype spec (`prototype/prototype-spec.md`) with
-   features, flows and data shapes, the validation plan and results (`prototype/validation-*.md`), what
+4. The rest of `discovery/` — the source originals. For the prototype's features, flows and data shapes,
+   `prototype/spec-as-built.md` is the spec of record when it exists: it is the approved spec
+   (`prototype/prototype-spec.md`) with what builds changed afterwards (`prototype/change-history.md`)
+   applied, so where the two differ, follow `spec-as-built.md`. Then the validation plan and results
+   (`prototype/validation-*.md`), what
    changed after validation (`prototype/iteration-log.md`), and the business context and pain point and
    solution analyses. Each stage's questions and answers are in `decisions.md`.
 5. `uploads/` — source material the PM uploaded, if any: the shape of real forms, rules and rosters.
