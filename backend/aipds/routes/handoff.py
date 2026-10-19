@@ -44,8 +44,8 @@ async def get_handoff_readiness(pid: str):
 async def _view(pid: str, s3, state: readiness.Readiness,
                 record: supplement.Supplement) -> supplement.SupplementView:
     """Supplement screen. If there is a last package, its open decisions that are the PM's
-    share are included along with their options — open decisions are not stored; they are
-    read from the documents each time."""
+    share are included along with their options, and the AI suggestions vision.md relies on
+    — neither is stored; they are read from the documents each time."""
     manifest = await package.load_manifest(s3)
     doc, kind = None, "vision"
     if manifest is not None and manifest.status == "ready":
@@ -53,8 +53,10 @@ async def _view(pid: str, s3, state: readiness.Readiness,
     if doc is None:
         return supplement.view(state, record)
     language = app_module.project_language(pid)
+    # The earlier layouts' documents (open decisions, PRD) carry no unconfirmed marks to read.
+    cited = package.cited_suggestions(doc, state, language) if kind == "vision" else {}
     return supplement.view(state, record, package.open_questions(doc, language, kind=kind),
-                           await package.load_options(s3), has_package=True)
+                           await package.load_options(s3), has_package=True, cited=cited)
 
 
 @router.get("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)
