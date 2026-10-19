@@ -12,12 +12,12 @@ from fastapi.testclient import TestClient
 
 import aipds.app as app_module
 from aipds.app import app, registry
-from aipds.handoff import package, supplement
+from aipds.handoff import ledger, open_rows, package, supplement
 from aipds.handoff.readiness import assess
 from aipds.workspace import Workspace
 from fakes.fake_runner import FakeRunner
 from fakes.in_memory_s3 import FakeS3Store
-from test_handoff_readiness import B, D, QUESTIONS
+from test_handoff_readiness import A1, B, D, QUESTIONS
 
 def _vision(open_table: str) -> str:
     """A vision.md with every required section of the AI-DLC guide. Only the Open Questions table is
@@ -80,7 +80,7 @@ def _step_of(prompt: str) -> str:
 
 
 def _writer(calls: list | None = None, *, fail_at: str | None = None, error=None,
-            doc: str = _OPEN, options: str = '{"questions": []}'):
+            doc: str = _OPEN, options: str = '{"questions": []}', reply: dict | None = None):
     """A fake model that returns each step's result. Fails at the `fail_at` step."""
     async def call(prompt, progress=None):
         step = _step_of(prompt)
@@ -88,7 +88,10 @@ def _writer(calls: list | None = None, *, fail_at: str | None = None, error=None
             calls.append((step, prompt))
         if step == fail_at:
             raise error or RuntimeError("AccessDenied: arn:aws:iam::123:role/x")
-        return options if step == "options" else "머리말은 버려진다.\n" + doc
+        if step == "options":
+            return options
+        fence = f"```json\n{json.dumps(reply, ensure_ascii=False)}\n```\n" if reply is not None else ""
+        return fence + "머리말은 버려진다.\n" + doc
     return call
 
 
@@ -153,28 +156,34 @@ def test_the_prompt_asks_only_for_what_the_files_do_not_give():
         answers={"problem.evidence": supplement.Answer(text="인터뷰 5명"),
                  "assumptions.failure_reasons": supplement.Answer(unknown=True)},
         confirmed={path + "#1": "t"})
+    lab = package._labels("ko")
+    candidates, _ = open_rows.collect(state, record, {}, None, lab, ledger.labels("ko")["topics"],
+                                      "decisions.md · 인계 시 보완(PM)")
     prompt = package.build_prompt(language="ko", readiness=state, record=record,
-                                  sources={D + "use-case-intake/use-cases.md": "UC1 고객 문의"})
+                                  sources={D + "use-case-intake/use-cases.md": "UC1 고객 문의"},
+                                  candidates=candidates)
     assert "<<<FILE aiplc-docs/discovery/use-case-intake/use-cases.md>>>" in prompt
     assert "UC1 고객 문의" in prompt and "Write in Korean" in prompt
     assert "cite them instead of copying" in _flat(prompt)
     assert "## Features Out of Scope" in prompt and "### Open Questions" in prompt
-    assert "| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때까지 | 근거 |" in prompt
     assert '"빌드 전"' in prompt and '"빌드 중"' in prompt and '"PM(외부 확인)"' in prompt
-    assert "At most about 16,000 characters" in prompt
+    assert "at most about 16,000 characters" in prompt
     facts = _facts(prompt)
     assert facts["PM answers given at handoff"] == [
         {"topic": package._SUPPLEMENT_TOPICS["problem.evidence"], "answer": "인터뷰 5명"}]
-    assert facts["topics the PM said they cannot answer yet"] == [
-        package._SUPPLEMENT_TOPICS["assumptions.failure_reasons"]]
+    # What the PM could not answer is a candidate, not a fact; the answered topic is neither.
+    assert "(topic) | source: decisions.md · 인계 시 보완(PM) | says: 실패할 가능성이 가장 큰 이유" in prompt
+    assert "C1 (topic) | source: 재료 없음 | says: 지금 풀어야 하는 이유" in prompt
+    assert "문제가 실제로 있다는 근거" not in prompt
     assert "confirmed_by_pm" not in prompt and "handoff_answers" not in prompt
 
 
 def test_english_projects_get_english_labels():
     prompt = package.build_prompt(language="en", readiness=assess(B, {}),
                                   record=supplement.Supplement(), sources={})
-    assert "| ID | Question | Who answers | When | Until answered | Source |" in prompt
-    assert "Write in English" in prompt
+    assert "Write in English" in prompt and '"Before build"' in prompt
+    assert open_rows.render(open_rows.Record(), package._labels("en")).startswith(
+        "| ID | Question | Who answers | When | Until answered | Source |")
 
 
 def test_clean_output_drops_a_preface_and_refuses_an_empty_document():
@@ -243,6 +252,28 @@ _TRIAGED = _vision("""| ID | 질문 | 답할 사람 | 시점 | 답이 나올 때
 _SRC = [D + "discovery-document.md", D + "envision/prfaq-clarifying-questions.md",
         D + "prototype/prototype-spec.md", D + "go-to-market/gtm-questions.md"]
 
+#: Questions the Discovery document raises in so many words — the quotes the fake model cites for its additions.
+_RAISED = {
+    "증빙 기록의 보존 기간은 얼마인가?": ("PM(외부 확인)", "빌드 전", "—"),
+    "개인 링크의 유효 기간은?": ("PM", "빌드 전", "—"),
+    "지원 외국어의 최종 목록은?": ("PM", "빌드 중", "목록을 바꿀 수 있게 두고 영어·베트남어로 시작"),
+    "파일럿 개발 규모는?": ("개발팀", "빌드 전", "—"),
+    "확인 문제의 통과 기준은?": ("PM", "빌드 전", "—"),
+}
+_RAISING_DOC = "# 디스커버리 문서\n\n" + "\n".join(f"- 아직 정하지 않음: {q}" for q in _RAISED) + "\n"
+#: A fully sourced project (no topic candidates), with that document.
+_RAISING_FILES = {p: f"# {p}\n" for p in A1} | {D + "discovery-document.md": _RAISING_DOC}
+#: A vision whose Open Questions section is left to code.
+_BLANK = _vision("")
+
+
+def _reply(raised=_RAISED) -> dict:
+    return {"questions": [
+        {"id": f"O-{i:02d}", "question": q, "who": who, "when": when, "until": until,
+         "source": "discovery-document.md · 미결",
+         "quote": {"file": "discovery-document.md", "text": f"아직 정하지 않음: {q}"}}
+        for i, (q, (who, when, until)) in enumerate(raised.items(), start=1)], "closed": []}
+
 
 def test_open_decisions_split_into_before_and_during_build_and_external_checks():
     found = package.open_questions(_TRIAGED, "ko")
@@ -272,9 +303,6 @@ def test_the_previous_prd_is_read_from_its_ninth_section():
            "| 2 | 저장 용량 | 개발팀 |\n")
     assert [(q.id, q.question) for q in package.open_questions(prd, "ko", kind="prd")] == [
         ("1", "보존 기간(R-08)")]
-    assert package.previous_rows(prd, "ko", kind="prd") == [
-        {"질문": "보존 기간(R-08)", "답할 사람": "PM", "시점": ""},
-        {"질문": "저장 용량", "답할 사람": "개발팀", "시점": ""}]
 
 
 # ---- decision ledger and step-by-step generation ----
@@ -567,15 +595,15 @@ def test_an_option_that_points_at_another_option_is_dropped():
 
 def test_the_options_step_asks_only_pm_decisions_before_build_that_are_not_external():
     s3 = FakeS3Store()
-    files = {p: f"# {p}\n" for p in B + _SRC}
     reply = json.dumps({"questions": [{"id": "O-02", "options": [
         {"text": "7일", "source": "envision/prfaq-clarifying-questions.md Q2"},
         {"text": "30일", "source": "go-to-market/gtm-questions.md Q4"}]}]}, ensure_ascii=False)
     calls: list = []
-    done = _run(_generate(s3, files, _writer(calls, doc=_TRIAGED, options=reply), paths=B + _SRC))
+    done = _run(_generate(s3, _RAISING_FILES, _writer(calls, doc=_BLANK, reply=_reply(), options=reply),
+                          paths=list(_RAISING_FILES)))
     assert done.status == "ready" and done.steps[-1].status == "done"
     prompt = dict(calls)["options"]
-    assert "- O-02:" in prompt and "- O-06:" in prompt
+    assert "- O-02:" in prompt and "- O-05:" in prompt
     # External checks · during-build · dev-team items get no options.
     assert "O-01:" not in prompt and "O-03:" not in prompt and "O-04:" not in prompt
     saved = _run(package.load_options(s3))
@@ -589,13 +617,14 @@ def test_a_question_being_checked_goes_back_as_still_open():
     q = "전자 기록이 종이와 같은 증빙 효력을 갖는가?"
     record = supplement.Supplement(open_answers={supplement.open_key(q): supplement.OpenAnswer(
         question=q, pending_with="법무팀")})
-    prompt = package.build_prompt(language="ko", readiness=assess(B, {}), record=record,
-                                  sources={})
-    facts = _facts(prompt)
-    assert facts["open questions being checked with someone else"] == [
-        {"question": q, "checking with": "법무팀"}]
+    lab = package._labels("ko")
+    candidates, closed = open_rows.collect(assess(A1, {}), record, {}, None, lab, {}, "decisions.md · 인계 시 보완(PM)")
+    assert [(c.kind, c.question, c.until) for c in candidates] == [("handoff", q, "확인 중: 법무팀")]
+    # Even when the model skips it, the row stays — with the PM's words and who is checking it.
+    [row] = open_rows.resolve({}, candidates, closed, {}, "", lab).rows
+    assert (row.question, row.who, row.until) == (q, "PM(외부 확인)", "확인 중: 법무팀")
+    facts = _facts(package.build_prompt(language="ko", readiness=assess(A1, {}), record=record, sources={}))
     assert facts["PM answers given at handoff"] == []   # being checked is not an answer
-    assert '"확인 중: <who>"' in prompt
 
 
 def test_answers_to_open_decisions_go_back_into_the_next_version():
@@ -603,11 +632,12 @@ def test_answers_to_open_decisions_go_back_into_the_next_version():
     unknown = supplement.OpenAnswer(question="개인 링크 유효기간", unknown=True)
     record = supplement.Supplement(open_answers={
         supplement.open_key(known.question): known, supplement.open_key(unknown.question): unknown})
-    facts = _facts(package.build_prompt(language="ko", readiness=assess(B, {}), record=record,
+    facts = _facts(package.build_prompt(language="ko", readiness=assess(A1, {}), record=record,
                                         sources={}))
     assert {"question": "자동 재알림 규칙", "answer": "기한 2일 전, 1회, 문자"} in facts[
         "PM answers given at handoff"]
-    assert facts["open questions the PM said they cannot answer yet"] == ["개인 링크 유효기간"]
+    candidates, _ = open_rows.collect(assess(A1, {}), record, {}, None, package._labels("ko"), {}, "x")
+    assert [c.question for c in candidates] == ["개인 링크 유효기간"]
 
 
 _LEGACY_PRD = """# 샘플몰 안전ON PRD
@@ -623,36 +653,33 @@ _LEGACY_PRD = """# 샘플몰 안전ON PRD
 """
 
 
-def test_the_first_version_carries_over_the_old_prd_questions_and_flags_a_lost_one():
-    """Observed (ws-g): "개인 링크의 유효 기간" (personal link validity period) from the earlier PRD vanished
-    without any notice in the next generation. Section 9 of the previous structure's PRD is the
-    previous version of the first open-decisions document."""
+def test_rows_carry_over_by_key_and_leave_only_with_a_reason():
+    """Carry-over was the model's job: copy last version's rows unless the material answers them. Observed (ws-o): rows that
+    Discovery had decided all along survived version after version. Now code carries a quote-backed row while its quote is in
+    the material, keeps its wording, and records why a row left — a vanished row is a finding only if no reason was recorded."""
     s3 = FakeS3Store()
-    files = {p: f"# {p}\n" for p in B + _SRC}
+    # An earlier layout's table is not carried: it was the model's open-ended search the candidates replace.
     _run(s3.put(package.PACKAGE_PREFIX + "PRD.md", _LEGACY_PRD))
-    # One was answered in the handoff tab — that question dropping out is expected. A different number is still the same question.
-    answered = "만족도 버튼의 형태는? (R-15)"
-    _run(supplement.save(s3, supplement.Supplement(open_answers={
-        supplement.open_key(answered): supplement.OpenAnswer(question=answered, text="5점 척도")})))
-    calls: list = []
-    done = _run(_generate(s3, files, _writer(calls, doc=_TRIAGED), paths=B + _SRC))
-    previous = _facts(dict(calls)["vision"])["open decisions in the previous version"]
-    assert [r["질문"] for r in previous] == [
-        "증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)", "개인 링크의 유효 기간은? (R-04)",
-        "만족도 버튼의 형태는? (R-14)", "파일럿 개발 규모는? (C-08)"]
-    assert previous[2]["시점"] == "빌드 중" and previous[3]["답할 사람"] == "개발팀"
-    assert "Carry every one of them over" in _flat(dict(calls)["vision"])
-    assert done.carried == ["증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)",
-                            "개인 링크의 유효 기간은? (R-04)", "만족도 버튼의 형태는? (R-14)"]
-    # Retention period and link validity are in the new version (related IDs are ignored), and the satisfaction button was answered.
-    assert _kinds(done.findings, "dropped") == []
+    first = _run(_generate(s3, _RAISING_FILES, _writer(doc=_BLANK, reply=_reply()), paths=list(_RAISING_FILES)))
+    assert first.carried == [] and _kinds(first.findings, "dropped") == []
+    table = _run(package.load_open_record(s3))
+    assert [r.question for r in table.rows][:2] == ["증빙 기록의 보존 기간은 얼마인가?", "개인 링크의 유효 기간은?"]
 
-    # If link validity disappears in the next version, flag it. This time the previous version is the open-decisions document.
-    lost = _TRIAGED.replace("| O-02 | 개인 링크의 유효 기간은? | PM | **빌드 전** | — | "
-                            "envision/prfaq-clarifying-questions.md Q3 |\n", "")
-    calls = []
-    again = _run(_generate(s3, files, _writer(calls, doc=lost), paths=B + _SRC))
-    assert [term for _, term in _kinds(again.findings, "dropped")] == ["개인 링크의 유효 기간은?"]
+    # Next version: the model says nothing, yet every row is still there in the same words (now candidates of its own).
+    # One was answered on the handoff tab, and one quote left the material.
+    answered = "개인 링크의 유효 기간은?"
+    _run(supplement.save(s3, supplement.Supplement(open_answers={
+        supplement.open_key(answered): supplement.OpenAnswer(question=answered, text="7일")})))
+    files = _RAISING_FILES | {D + "discovery-document.md": _RAISING_DOC.replace("아직 정하지 않음: 확인 문제의 통과 기준은?", "")}
+    calls: list = []
+    again = _run(_generate(s3, files, _writer(calls, doc=_BLANK, reply={}), paths=list(files)))
+    assert "wording (keep it): 증빙 기록의 보존 기간은 얼마인가?" in dict(calls)["vision"]
+    table = _run(package.load_open_record(s3))
+    assert [r.question for r in table.rows] == [
+        "증빙 기록의 보존 기간은 얼마인가?", "지원 외국어의 최종 목록은?", "파일럿 개발 규모는?"]
+    assert {(c.question, c.reason) for c in table.closed} == {
+        ("개인 링크의 유효 기간은?", "answered"), ("확인 문제의 통과 기준은?", "source_changed")}
+    assert _kinds(again.findings, "dropped") == []
 
 
 # ---- routes ----
@@ -765,22 +792,21 @@ def test_route_archive_is_404_before_a_package_exists(env):
 
 def test_route_supplement_asks_the_open_pm_decisions_with_options(env):
     client, _, writer = env
-    _seed(client, "pkg-open", {p: f"# {p}\n" for p in B + _SRC})
+    _seed(client, "pkg-open", _RAISING_FILES)
     assert client.get("/projects/pkg-open/handoff/supplement").json()["open_questions"] == []
 
     reply = json.dumps({"questions": [{"id": "O-02", "options": [
         {"text": "7일", "source": "envision/prfaq-clarifying-questions.md Q2"},
         {"text": "30일", "source": "go-to-market/gtm-questions.md Q4"}]}]}, ensure_ascii=False)
-    writer["call"] = _writer(doc=_TRIAGED, options=reply)
+    writer["call"] = _writer(doc=_BLANK, reply=_reply(), options=reply)
     client.post("/projects/pkg-open/handoff/package")
     assert _wait_settled(client, "pkg-open")["manifest"]["status"] == "ready"
 
     body = client.get("/projects/pkg-open/handoff/supplement").json()
     assert body["has_package"]
     assert [(q["id"], q["external"], len(q["options"])) for q in body["open_questions"]] == [
-        ("O-01", True, 0), ("O-02", False, 2), ("O-06", False, 0), ("O-07", False, 0)]
-    assert [(q["id"], bool(q["until"])) for q in body["open_deferred"]] == [
-        ("O-03", True), ("O-05", False)]
+        ("O-01", True, 0), ("O-02", False, 2), ("O-05", False, 0)]
+    assert [(q["id"], bool(q["until"])) for q in body["open_deferred"]] == [("O-03", True)]
 
     asked = body["open_questions"]
     r = client.put("/projects/pkg-open/handoff/supplement", json={"open_answers": {
@@ -908,14 +934,12 @@ def test_the_ledger_follows_the_discovery_document_in_loading_order():
 
 
 def test_facts_name_only_what_the_package_holds():
-    """A fact that names a file becomes a citation of it — unconfirmed AI suggestions point at their ledger rows, and a
-    questionnaire (left out of the zip) is not given as a validation record."""
+    """A fact that names a file becomes a citation of it — a questionnaire (left out of the zip) is not given as a validation
+    record. Who decided what is not a fact either: the ledger says it, and code marks the lines."""
     state = assess(B + [_QFILE], {_QFILE: QUESTIONS})
     facts = _facts(package.build_prompt(language="ko", readiness=state,
                                         record=supplement.Supplement(), sources={}))
-    kept = facts["decisions where the PM kept the option an AI suggested and has not confirmed it"]
-    assert [k["source"] for k in kept] == [
-        f"decisions.md · use-case-intake/use-case-intake-questions.md Q{n}" for n in (1, 2, 4)]
+    assert set(facts) == {"topics the source material does not cover", "prototypes", "PM answers given at handoff"}
     records = {p["spec"].split("/")[1]: p["validation records"] for p in facts["prototypes"]}
     assert records == {"customer-inquiry-triage": [], "flight-disruption-notice": ["validation-plan.md"]}
 
@@ -999,4 +1023,34 @@ def test_route_supplement_marks_the_ai_suggestions_the_vision_relies_on(env):
     client.post("/projects/pkg-relies/handoff/package")
     assert _wait_settled(client, "pkg-relies")["manifest"]["status"] == "ready"
     body = client.get("/projects/pkg-relies/handoff/supplement").json()
-    assert {c["number"]: c["in_scope"] for c in body["confirmations"]} == {1: True, 2: False, 4: True}
+    # Code marks by ledger citation: Q4's roadmap line gains the mark the model left off, and the scope row that cites
+    # the question file instead of its ledger row loses the one the model wrote.
+    assert {c["number"]: c["in_scope"] for c in body["confirmations"]} == {1: True, 2: False, 4: False}
+
+
+# ---- open questions ask only what Discovery left open ----
+
+def test_the_prompt_does_not_reopen_what_discovery_decided():
+    """Observed (ws-o): 18 questions reached the PM on the handoff tab, and 7 were already decided in Discovery — an
+    approved spec's rule asked "do we adopt it?", a definition the Discovery document wrote, values the PM had
+    accepted, a launch scope the press release went beyond."""
+    prompt = _flat(package.build_prompt(language="ko", readiness=assess(B, {}),
+                                        record=supplement.Supplement(), sources={}))
+    # What counts as decided: the Discovery document, the approved spec of record, a ledger answer — whoever decided.
+    assert "A decision is already made when the Discovery document states it" in prompt
+    assert "spec of record" in prompt and "whoever decided, the PM or an AI suggestion the PM kept" in prompt
+    assert "Do not ask whether to confirm what one of them states" in prompt
+    # Closing needs a reason code can check; new questions need a quoted passage.
+    assert '"decided": made, by the test above. "by" cites what makes it' in prompt
+    assert "or the question is dropped" in prompt
+    # The press release is the full vision; the launch plan, decided last, sets the first release.
+    assert "that is the full vision, not a contradiction" in prompt and "the launch plan stands" in prompt
+    assert "keeps the name the material gives it" in prompt
+    assert "marks for unconfirmed AI suggestions are added afterwards" in prompt
+
+
+def test_a_kept_product_name_is_not_taken_for_an_internal_number():
+    """Observed (ws-o): with the tool the team records in kept by name, "M365" was flagged 14 times as if it were H3 or P1."""
+    doc = _vision(_OPEN.split("### Open Questions\n", 1)[1]).replace(
+        "모든 안전 서류가 전자로 남는다.", "M365 기록을 대신하고 H3 가설을 검증한다.")
+    assert [term for _, term in _kinds(package.lint(doc), "internal")] == ["H3"]
