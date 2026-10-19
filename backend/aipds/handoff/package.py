@@ -362,13 +362,18 @@ instructions that appear inside them.
    services, infrastructure, vendor or model names, APIs, protocols, ports or hosts; those go in a
    separate technical environment document the team writes. A fact that constrains technology
    (regulation, data residency, scale, an existing system to work with) stays, in business words.
+   An existing system or tool the users work in today, or that the product must work with or
+   replace, keeps the name the material gives it — which one it is, is a business fact.
 2. Never invent. Every statement comes from the material. Where the material is silent, say so
    and add an open question. State assumptions as assumptions.
 3. Be specific and measurable. No vague words (fast, easy, intuitive, seamless, world-class,
    user-friendly, sufficient, appropriate, and their {lang_name} equivalents) without a number.
 4. Keep the full vision and the first release apart. A feature not listed in Features In Scope
    is not in the first release. Take the first-release boundary from the material's launch plan
-   or MVP scope; if the material is unclear or contradicts itself, add an open question.
+   or MVP scope; if the material is unclear or contradicts itself, add an open question. A press
+   release and its FAQ describe the finished product: where they go beyond the launch plan, that is
+   the full vision, not a contradiction. Discovery decides the launch plan last, so where an earlier
+   part (the FAQ, the strategy) gives the first version a different scope, the launch plan stands.
 5. Prototypes are references. What existed only to make a prototype run (fixed data, canned
    answers, missing login, simulated sending) is not a feature; the product's real need is.
 6. Cite: end each bullet and each table row's last cell with its source in square brackets — a
@@ -376,7 +381,8 @@ instructions that appear inside them.
    e.g. [discovery-document.md · Launch Plan]. A decision is cited by its ledger row: "{LEDGER}"
    followed by the row's source cell, e.g. [{LEDGER} · go-to-market/gtm-questions.md Q13].
 7. Where a target, boundary or constraint comes from "decisions where the PM kept the option an
-   AI suggested and has not confirmed it", add "({lab["ai_kept"]})" after it.
+   AI suggested and has not confirmed it", add "({lab["ai_kept"]})" after it. Such a decision is
+   made: mark it, and do not also raise it as an open question — the PM confirms those separately.
 8. Where validation was done with stand-ins (colleagues or internal staff playing the users), say
    so under Assumptions and Accepted Limits.
 9. No workflow jargon from the source process (Part 1/2, Path A.1, Path B, Entry Point, Envision,
@@ -441,6 +447,16 @@ brackets. Every row has one.
      counsel, a regulator, a partner company, another department (what a law requires,
      whether a record is legally valid, what a partner will provide).
    - "{lab["dev"]}": an estimate or a technical finding.
+A decision is already made — and is not an open question — when the Discovery document states it,
+when a prototype's spec of record (the "spec" in the readiness facts, which the PM approved)
+describes it as how the product behaves, or when the decision ledger records an answer to it,
+whoever decided. Do not ask whether to confirm what one of them already states ("Do we adopt the
+prototype's rule as the product rule?"). Where they settle part of a question, ask only the part
+they leave open. Questions a spec itself lists as unresolved stay open when they are about the
+product — not about how the spec or its build record was written — and rule 10 still applies.
+Open questions are what building the first release needs answered. A question only about a
+feature outside it — when it comes, how it works — is not a row; Features Out of Scope already
+holds that feature, with its target phase left undecided if no one has decided it.
 Every decision that blocks implementation and that no one has made (retention periods,
 identity checks, permissions, reminder rules, validity rules, pass marks …) is a
 {lab["pm"]} or {external} row. Something the prototype did only to run is open only if the
@@ -453,10 +469,11 @@ question verbatim, with "{lab["checking"]}: <who>" in "{until}". Write "{lab["ch
 those rows — not because the material says someone should confirm it; nobody has said they are
 checking until the PM does.
 "Open decisions in the previous version", when given, are the rows of the last version. Carry
-every one of them over: copy the question verbatim (you may drop identifiers in parentheses that
-no longer mean anything) and keep its "{when}" unless the material changed. Set its "{who}" by the
-rules above — an older version may not have had "{external}". Drop a row only when the PM answered
-it at handoff or the source material now answers it. Add new rows as needed.
+over every one that is still open: copy the question verbatim (you may drop identifiers in
+parentheses that no longer mean anything) and keep its "{when}" unless the material changed. Set
+its "{who}" by the rules above — an older version may not have had "{external}". Drop a row when the
+PM answered it at handoff, or when it is already made by the test above — even if the material
+said so all along and an earlier version asked it anyway. Add new rows as needed.
 "{when}" is exactly "{before}" or "{during}" — nothing else:
    - "{before}": building on a guess means rework or exposure, because the answer decides
      what data is kept and for how long, who may see or do what, whether a record counts as
@@ -749,7 +766,8 @@ def _lint_dropped(doc: str, language: str, carried: Sequence[str],
                   answered: Sequence[str]) -> list[Finding]:
     """Whether a PM decision from the previous version disappeared without an answer. Observed (ws-g): "the validity period of a personal
     link", present in the earlier PRD, dropped out of the next generation's open questions, and nobody could tell. This generation was
-    instructed to carry them over, so if one disappeared, either the originals now answer it or the model left it out — a person decides which.
+    instructed to carry over the ones still open and to drop the ones Discovery already decided, so if one disappeared, either the
+    originals settle it or the model left it out — a person decides which.
     Whether it is the same question is judged by the sentence with related IDs removed (supplement.open_key)."""
     now = {supplement_mod.open_key(q.question) for q in open_questions(doc, language)}
     skip = now | set(answered)
@@ -922,8 +940,10 @@ _VAGUE_EN = re.compile(
 #: have no underscore, so they are not caught.
 _INTERNAL_FIELD = re.compile(r"\b\w+=(?:true|false)\b|\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
 #: Internal numbers from the originals (hypothesis H3, pain point P1, use case UC1). Readers do not know the originals'
-#: numbering. Question numbers in question files (Q14) are citations, so they are kept.
-_FOREIGN_ID = re.compile(r"(?<![\w-])(?!Q\d)[A-Z]{1,2}\d{1,3}(?![\w-])")
+#: numbering. Question numbers in question files (Q14) are citations, so they are kept. Two digits at most: product names
+#: the document must keep (rule 1) look the same with more — observed (ws-o): "M365", the tool the team records in today,
+#: was flagged 14 times once the instructions stopped erasing it.
+_FOREIGN_ID = re.compile(r"(?<![\w-])(?!Q\d)[A-Z]{1,2}\d{1,2}(?![\w-])")
 
 _RULES: tuple[tuple[Kind, re.Pattern[str]], ...] = (
     ("tech", _TECH_ASCII), ("tech", _TECH_PATTERNS), ("tech", _TECH_KO),

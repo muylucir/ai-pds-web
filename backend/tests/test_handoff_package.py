@@ -641,7 +641,7 @@ def test_the_first_version_carries_over_the_old_prd_questions_and_flags_a_lost_o
         "증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)", "개인 링크의 유효 기간은? (R-04)",
         "만족도 버튼의 형태는? (R-14)", "파일럿 개발 규모는? (C-08)"]
     assert previous[2]["시점"] == "빌드 중" and previous[3]["답할 사람"] == "개발팀"
-    assert "Carry every one of them over" in _flat(dict(calls)["vision"])
+    assert "Carry over every one that is still open" in _flat(dict(calls)["vision"])
     assert done.carried == ["증빙 기록의 보존 기간은 얼마인가? (R-08, C-05)",
                             "개인 링크의 유효 기간은? (R-04)", "만족도 버튼의 형태는? (R-14)"]
     # Retention period and link validity are in the new version (related IDs are ignored), and the satisfaction button was answered.
@@ -1000,3 +1000,36 @@ def test_route_supplement_marks_the_ai_suggestions_the_vision_relies_on(env):
     assert _wait_settled(client, "pkg-relies")["manifest"]["status"] == "ready"
     body = client.get("/projects/pkg-relies/handoff/supplement").json()
     assert {c["number"]: c["in_scope"] for c in body["confirmations"]} == {1: True, 2: False, 4: True}
+
+
+# ---- open questions ask only what Discovery left open ----
+
+def test_the_prompt_does_not_reopen_what_discovery_decided():
+    """Observed (ws-o): 18 questions reached the PM on the handoff tab, and 7 were already decided in Discovery — an
+    approved spec's rule asked "do we adopt it?", a definition the Discovery document wrote, values the PM had
+    accepted, a launch scope the press release went beyond. Carry-over kept them alive version after version."""
+    prompt = _flat(package.build_prompt(language="ko", readiness=assess(B, {}),
+                                        record=supplement.Supplement(), sources={}))
+    # What counts as decided: the Discovery document, the approved spec of record, a ledger answer.
+    assert "A decision is already made — and is not an open question — when the Discovery document states it" in prompt
+    assert "spec of record" in prompt and "whoever decided" in prompt
+    assert "Do not ask whether to confirm what one of them already states" in prompt
+    assert "ask only the part they leave open" in prompt
+    # Accepted AI suggestions are marked, not asked; the press release is the full vision.
+    assert "do not also raise it as an open question" in prompt
+    assert "that is the full vision, not a contradiction" in prompt
+    # Carry-over drops what was decided all along; existing systems keep their names.
+    assert "even if the material said so all along" in prompt
+    assert "keeps the name the material gives it" in prompt
+    # The launch plan, decided last, sets the first release; questions only about later features are not rows.
+    assert "the launch plan stands" in prompt
+    # A spec's own unresolved list is asked only where it concerns the product, not its bookkeeping.
+    assert "not about how the spec or its build record was written" in prompt
+    assert "A question only about a feature outside it" in prompt
+
+
+def test_a_kept_product_name_is_not_taken_for_an_internal_number():
+    """Observed (ws-o): with the tool the team records in kept by name, "M365" was flagged 14 times as if it were H3 or P1."""
+    doc = _vision(_OPEN.split("### Open Questions\n", 1)[1]).replace(
+        "모든 안전 서류가 전자로 남는다.", "M365 기록을 대신하고 H3 가설을 검증한다.")
+    assert [term for _, term in _kinds(package.lint(doc), "internal")] == ["H3"]

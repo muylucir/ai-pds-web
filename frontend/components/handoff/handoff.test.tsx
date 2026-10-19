@@ -406,7 +406,7 @@ describe("PackagePanel", () => {
     render(<PackagePanel pkg={pkg} generating={false} {...handlers()} />);
     const alert = screen.getByRole("alert");
     expect(within(alert).getByText("검사에 걸린 줄 3건")).toBeInTheDocument();
-    expect(within(alert).getByText(/원본에 이제 답이 있는지 확인하고/)).toBeInTheDocument();
+    expect(within(alert).getByText(/이미 정해 둔 것이면 정상입니다/)).toBeInTheDocument();
     expect(within(alert).getByText("빠진 PM 결정 1")).toBeInTheDocument();
     expect(screen.getByText("L9 · 열린 질문 분류 ·", { exact: false })).toBeInTheDocument();
     expect(screen.queryByText(/acceptance/)).not.toBeInTheDocument();
