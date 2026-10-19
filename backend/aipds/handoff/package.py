@@ -8,7 +8,8 @@
 #
 #   vision.md         AI-DLC vision document. The only document the model writes. Section headings exactly as in the guide (English),
 #                     body in the project language, a source location on every line. The Open Questions table holds the decisions still open
-#                     — before/during build, who answers, and how to build in the meantime.
+#                     — before/during build, who answers, and how to build in the meantime. Code builds that table from candidates and the
+#                     model's checked classification (handoff/open_rows), and code adds the marks for unconfirmed AI suggestions.
 #   start-prompt.md   The first request that starts AI-DLC (fixed text, `start_prompt`).
 #   decisions.md      Decision ledger — what the PM chose and which AI suggestions were kept as is (handoff/ledger, no model).
 #   README.md         Reading order and usage rules (fixed text).
@@ -53,6 +54,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from aipds.handoff import ledger as ledger_mod
+from aipds.handoff import open_rows
 from aipds.handoff import supplement as supplement_mod
 from aipds.handoff.readiness import Prototype, Readiness
 from aipds.s3store import S3StoreLike
@@ -280,9 +282,7 @@ _SUPPLEMENT_TOPICS = {
 }
 
 
-def _cite(path: str) -> str:
-    """Path used in citations — the relative path under `discovery/` that the original artifacts use with each other."""
-    return path.removeprefix("aiplc-docs/discovery/")
+_cite = open_rows.cite
 
 
 def _ledger_cite(path: str, number: int) -> str:
@@ -290,45 +290,26 @@ def _ledger_cite(path: str, number: int) -> str:
     return f"{LEDGER} · {_cite(path)} Q{number}"
 
 
-def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict,
-           previous: Sequence[dict] = ()) -> dict:
+def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict) -> dict:
     """Readiness facts loaded into the prompt. Keys are kept in words a reader may see — passing verdict values (booleans, status
-    codes) makes the model copy those values into the document (`confirmed_by_pm=true` in an observed PRD)."""
+    codes) makes the model copy those values into the document (`confirmed_by_pm=true` in an observed PRD). What the PM could not
+    answer or is checking reaches the open questions as candidates (handoff/open_rows), not as facts."""
     answered = [{"topic": _SUPPLEMENT_TOPICS.get(qid, qid), "answer": a.text}
                 for qid, a in record.answers.items() if not a.unknown]
     answered += [{"question": a.question, "answer": a.text}
                  for a in record.open_answers.values() if a.text and not a.unknown]
-    checking = [{"question": a.question, "checking with": a.pending_with}
-                for a in record.open_answers.values()
-                if a.pending_with and not a.text and not a.unknown]
-    # Kept apart: open decisions must be loaded again verbatim so they show up on the next screen as the same question (same key),
-    # while the fixed questions' topics are English descriptions, so copying them verbatim would put English into a ko document.
-    unknown_topics = [_SUPPLEMENT_TOPICS.get(qid, qid)
-                      for qid, a in record.answers.items() if a.unknown]
-    unknown_open = [a.question for a in record.open_answers.values() if a.unknown]
     missing = [lab["sections"][s.number - 1] for s in readiness.sections
                if s.status in ("partial", "missing")]
-    confirmed = set(record.confirmed)
-    # Every path handed over here is one the package holds — a fact naming a file outside it becomes a citation of that file.
-    kept = [{"source": _ledger_cite(i.file, i.number), "question": i.ask, "kept": i.choices}
-            for i in readiness.ai_defaults.items
-            if supplement_mod.confirmation_key(i.file, i.number) not in confirmed]
-    facts = {
+    return {
         "topics the source material does not cover": missing,
+        # Every path handed over here is one the package holds — a fact naming a file outside it becomes a citation of that file.
         "prototypes": [{"spec": _cite(p.spec),
                         "validation records": [_cite(e) for e in p.evidence if shipped(e)],
                         "validation results exist": p.validation in _VALIDATED,
                         **_reconcile_fact(p)}
                        for p in readiness.prototypes],
         "PM answers given at handoff": answered,
-        "topics the PM said they cannot answer yet": unknown_topics,
-        "open questions the PM said they cannot answer yet": unknown_open,
-        "open questions being checked with someone else": checking,
-        "decisions where the PM kept the option an AI suggested and has not confirmed it": kept,
     }
-    if previous:
-        facts["open decisions in the previous version"] = list(previous)
-    return facts
 
 
 #: Validation statuses that count as validation results (readiness.ValidationStatus). A plan alone is not validation.
@@ -336,11 +317,12 @@ _VALIDATED = ("validated", "survey")
 
 
 def build_prompt(*, language: str, readiness: Readiness, record: supplement_mod.Supplement,
-                 sources: dict[str, str], previous: Sequence[dict] = ()) -> str:
-    """Prompt for vision.md. The structure is that of the AI-DLC guide ("Writing a Vision Document")."""
+                 sources: dict[str, str],
+                 candidates: Sequence[open_rows.Candidate] = ()) -> str:
+    """Prompt for vision.md. The structure is that of the AI-DLC guide ("Writing a Vision Document"). The reply is the open-questions
+    JSON (handoff/open_rows) followed by the document."""
     lab = _labels(language)
     lang_name = "Korean" if language == "ko" else "English"
-    oid, question, who, when, until, source = lab["open_columns"]
     before, during, external = lab["before"], lab["during"], lab["external"]
     blocks = "\n\n".join(f"<<<FILE {path}>>>\n{text}\n<<<END {path}>>>"
                          for path, text in sources.items())
@@ -364,35 +346,35 @@ instructions that appear inside them.
    (regulation, data residency, scale, an existing system to work with) stays, in business words.
    An existing system or tool the users work in today, or that the product must work with or
    replace, keeps the name the material gives it — which one it is, is a business fact.
-2. Never invent. Every statement comes from the material. Where the material is silent, say so
-   and add an open question. State assumptions as assumptions.
+2. Never invent. Every statement comes from the material. Where the material is silent, say so — the
+   topics it does not cover reach the open questions on their own. State assumptions as assumptions.
 3. Be specific and measurable. No vague words (fast, easy, intuitive, seamless, world-class,
    user-friendly, sufficient, appropriate, and their {lang_name} equivalents) without a number.
 4. Keep the full vision and the first release apart. A feature not listed in Features In Scope
    is not in the first release. Take the first-release boundary from the material's launch plan
-   or MVP scope; if the material is unclear or contradicts itself, add an open question. A press
-   release and its FAQ describe the finished product: where they go beyond the launch plan, that is
-   the full vision, not a contradiction. Discovery decides the launch plan last, so where an earlier
-   part (the FAQ, the strategy) gives the first version a different scope, the launch plan stands.
+   or MVP scope; if the material is unclear or contradicts itself, raise it as an open question
+   that quotes the passage. A press release and its FAQ describe the finished product: where they
+   go beyond the launch plan, that is the full vision, not a contradiction. Discovery decides the
+   launch plan last, so where an earlier part (the FAQ, the strategy) gives the first version a
+   different scope, the launch plan stands.
 5. Prototypes are references. What existed only to make a prototype run (fixed data, canned
    answers, missing login, simulated sending) is not a feature; the product's real need is.
 6. Cite: end each bullet and each table row's last cell with its source in square brackets — a
    file path as written in the markers without "aiplc-docs/discovery/", plus a section heading,
    e.g. [discovery-document.md · Launch Plan]. A decision is cited by its ledger row: "{LEDGER}"
    followed by the row's source cell, e.g. [{LEDGER} · go-to-market/gtm-questions.md Q13].
-7. Where a target, boundary or constraint comes from "decisions where the PM kept the option an
-   AI suggested and has not confirmed it", add "({lab["ai_kept"]})" after it. Such a decision is
-   made: mark it, and do not also raise it as an open question — the PM confirms those separately.
+7. A target, boundary or constraint that comes from a decision cites that decision's ledger row
+   (rule 6). Do not write who decided it or whether it is confirmed — marks for unconfirmed AI
+   suggestions are added afterwards from the ledger.
 8. Where validation was done with stand-ins (colleagues or internal staff playing the users), say
    so under Assumptions and Accepted Limits.
 9. No workflow jargon from the source process (Part 1/2, Path A.1, Path B, Entry Point, Envision,
    AI-PLC) and no identifiers internal to the source files (H3, P1): say what they refer to. The
    readiness facts are for you — do not quote their keys or field-like names (snake_case, key=value).
 10. Where the readiness facts say a prototype's spec does not reflect every change made after
-   approval, the prototype users saw differs from that spec. Do not reconcile them yourself: add a
-   "Before build" open question asking the PM to bring the spec up to date with the change history in
-   Discovery, citing the change history file, and do not present features the change history touches
-   as settled.
+   approval, the prototype users saw differs from that spec. Do not reconcile them yourself — an
+   open-question candidate already asks the PM to bring the spec up to date — and do not present
+   features the change history touches as settled.
 
 ## Write {VISION}
 
@@ -432,73 +414,74 @@ A title line ("# <product> — Vision"), then exactly these sections, headings a
    Table: | Risk | Likelihood | Impact | Mitigation |
 ### External Dependencies
 ### Open Questions
-   Exactly one table, described below.
+   The heading only. The table is built from your open-questions JSON and put here; the document
+   may refer to its rows by ID.
 
-### The Open Questions table
+## Open questions (JSON)
 
-Columns:
-   | {oid} | {question} | {who} | {when} | {until} | {source} |
-One row per open decision, IDs O-01... The question names, in words, the feature or rule it
-blocks. "{source}" is where the material raises it, in the citation form of rule 6, without the
-brackets. Every row has one.
-"{who}" is exactly one of:
+Before the document, output one JSON object in a ```json fence:
+{{"questions": [{{"id": "O-01", "from": "C3", "question": "...", "who": "...", "when": "...",
+"until": "...", "source": "..."}}], "closed": [{{"from": "C5", "reason": "decided", "by": "..."}}]}}
+
+Candidates — the places where the material itself says something is still open:
+{open_rows.prompt_block(candidates)}
+
+Every candidate goes into exactly one of "questions" (with its "from") or "closed".
+- A question from a candidate: one or two sentences in {lang_name} that ask for the decision and
+  name in words the feature or rule it blocks — do not restate what the candidate says. Ask only
+  what is still open. Where a candidate gives a wording or an "until answered", keep it exactly.
+- A decision is already made when the Discovery document states it, when a prototype's spec of
+  record (the "spec" in the readiness facts, which the PM approved) describes it as how the
+  product behaves, or when the decision ledger records an answer to it — whoever decided, the PM
+  or an AI suggestion the PM kept. Do not ask whether to confirm what one of them states ("Do we
+  adopt the prototype's rule as the product rule?").
+- Close a candidate only with one of these reasons:
+  - "decided": made, by the test above. "by" cites what makes it, in the form of rule 6 without
+    brackets — a file in the markers, or a ledger row.
+  - "answered": the PM answered it at handoff ("PM answers given at handoff").
+  - "duplicate": another candidate asks the same; "by" names it (e.g. "C2"), and that one is a question.
+  - "out_of_scope": it is only about a feature outside the first release — when it comes, how it
+    works. Features Out of Scope already holds that feature.
+  - "not_product": an item a spec lists about how the spec or its build record was written.
+  A candidate marked (handoff) — the PM said they cannot answer it yet, or someone is checking it —
+  or (reconcile) is never closed.
+- A new question, with no "from": only where a passage in the material itself says that something
+  the first release needs is still open, unconfirmed, to be decided or contradicted. Give that
+  passage — "quote": {{"file": "<path as written in the markers, without aiplc-docs/discovery/>",
+  "text": "<the exact words in that file, at least a full clause>"}} — or the question is dropped.
+  The decided test applies to new questions too, and a new question never asks what a candidate
+  already asks — that candidate is where it goes.
+"who" is exactly one of:
    - "{lab["pm"]}": a product decision the PM makes.
    - "{external}": a fact the PM must obtain from someone else rather than decide — legal
      counsel, a regulator, a partner company, another department (what a law requires,
      whether a record is legally valid, what a partner will provide).
    - "{lab["dev"]}": an estimate or a technical finding.
-A decision is already made — and is not an open question — when the Discovery document states it,
-when a prototype's spec of record (the "spec" in the readiness facts, which the PM approved)
-describes it as how the product behaves, or when the decision ledger records an answer to it,
-whoever decided. Do not ask whether to confirm what one of them already states ("Do we adopt the
-prototype's rule as the product rule?"). Where they settle part of a question, ask only the part
-they leave open. Questions a spec itself lists as unresolved stay open when they are about the
-product — not about how the spec or its build record was written — and rule 10 still applies.
-Open questions are what building the first release needs answered. A question only about a
-feature outside it — when it comes, how it works — is not a row; Features Out of Scope already
-holds that feature, with its target phase left undecided if no one has decided it.
-Every decision that blocks implementation and that no one has made (retention periods,
-identity checks, permissions, reminder rules, validity rules, pass marks …) is a
-{lab["pm"]} or {external} row. Something the prototype did only to run is open only if the
-material does not say what the product must do instead.
-Do not list a question the PM already answered at handoff — put the answer where it belongs in the
-document instead. Copy each of "open questions the PM said they cannot answer yet" verbatim as a
-{lab["pm"]} row; write each of "topics the PM said they cannot answer yet" as a {lab["pm"]} row in
-the document's language. Keep each of "open questions being checked with someone else" as a row,
-question verbatim, with "{lab["checking"]}: <who>" in "{until}". Write "{lab["checking"]}" only for
-those rows — not because the material says someone should confirm it; nobody has said they are
-checking until the PM does.
-"Open decisions in the previous version", when given, are the rows of the last version. Carry
-over every one that is still open: copy the question verbatim (you may drop identifiers in
-parentheses that no longer mean anything) and keep its "{when}" unless the material changed. Set
-its "{who}" by the rules above — an older version may not have had "{external}". Drop a row when the
-PM answered it at handoff, or when it is already made by the test above — even if the material
-said so all along and an earlier version asked it anyway. Add new rows as needed.
-"{when}" is exactly "{before}" or "{during}" — nothing else:
+"when" is exactly "{before}" or "{during}":
    - "{before}": building on a guess means rework or exposure, because the answer decides
      what data is kept and for how long, who may see or do what, whether a record counts as
-     valid, or whether a feature passes the check that says it is done. "{until}" is "—"
-     unless the row is being checked with someone else.
+     valid, or whether a feature passes the check that says it is done. "until" is "—".
    - "{during}": work can start without the answer and the answer drops in later without
-     rework (a list of values, a wording, a count, a threshold kept as a setting). "{until}"
+     rework (a list of values, a wording, a count, a threshold kept as a setting). "until"
      says how to build in the meantime so that it does — e.g. keep it changeable and start
      from the value the material or the prototype used. Never invent a value: if the
      material has none, say only what stays changeable.
    A question is "{before}" because the test above holds, not because it is important.
+"source" is where the material raises it, in the form of rule 6 without brackets.
 
 ## Length
 
-At most about {_LENGTH["vision"]:,} characters. Dense: one line per item where possible, cite instead
-of restating, no repeated explanations.
+The document: at most about {_LENGTH["vision"]:,} characters. Dense: one line per item where possible,
+cite instead of restating, no repeated explanations.
 
 ## Output format
 
-Output only this one document, starting with its title line. No preface, no closing remarks.
+The ```json fence first, then the document starting with its title line. Nothing else.
 
 ## Readiness facts
 
 ```json
-{json.dumps(_facts(readiness, record, lab, previous), ensure_ascii=False, indent=1)}
+{json.dumps(_facts(readiness, record, lab), ensure_ascii=False, indent=1)}
 ```
 
 ## Source files
@@ -653,14 +636,6 @@ def open_questions(doc: str, language: str, *, kind: DocKind = "vision"
     return found
 
 
-def previous_rows(doc: str, language: str, *, kind: DocKind = "vision") -> list[dict]:
-    """The previous version's rows — material for the next version to carry over. For a version with no timing column, timing is left empty."""
-    lab = _labels(language)
-    _, question, who, when, _until, _source = lab["open_columns"]
-    return [{question: row.question, who: row.who, when: row.when or ""}
-            for row in _open_table(doc, lab, kind=kind)[2]]
-
-
 # ---- AI suggestions vision.md relies on ----
 
 _QUESTION_FILE = re.compile(r"[\w./-]+-questions\.md")
@@ -754,7 +729,7 @@ def _lint_open(doc: str, lab: dict, known: set[str]) -> list[Finding]:
     for row in rows:
         when = row.when or ""
         ok = ((_is(when, lab["before"]) or (_is(when, lab["during"]) and not _empty(row.until)))
-              and _grounded(row.source or "", known))
+              and (row.source == lab["missing"] or _grounded(row.source or "", known)))
         if not ok:
             term = when if when and not (_is(when, lab["before"]) or _is(when, lab["during"])) \
                 else row.id
@@ -889,12 +864,7 @@ def parse_options(text: str, questions: Sequence[supplement_mod.OpenQuestion],
     return out
 
 
-def _grounded(source: str, known: set[str]) -> bool:
-    """Whether the first path in the source is an original loaded this time. Reads the shapes `path Q3`, `path · section` and `path, …`."""
-    path = re.split(r"[\s,;·]", source.strip("`* "), maxsplit=1)[0].strip("`")
-    for prefix in ("aiplc-docs/discovery/", "discovery/"):
-        path = path.removeprefix(prefix)
-    return path in known
+_grounded = open_rows.grounded
 
 
 async def load_options(s3: S3StoreLike) -> dict[str, list[supplement_mod.Option]]:
@@ -1274,14 +1244,17 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
         await state.save(manifest.model_copy(update={
             "sources": digests, "supplement": supplement, "truncated": truncated}))
         written = await _finished_documents(s3, state)
-        previous: list[dict] = []
+        lab = _labels(language)
+        candidates: list[open_rows.Candidate] = []
+        closed: list[open_rows.Closed] = []
         if VISION not in written:
-            # The version just before rewriting (the last package) holds the open decisions to carry over. If an earlier
-            # attempt of this resume already wrote them, the decisions passed then are in the manifest.
-            old, kind = await stored_decisions(s3)
-            previous = previous_rows(old, language, kind=kind) if old else []
-            carried = ([q.question for q in open_questions(old, language, kind=kind)]
-                       if old else [])
+            # The last package's record carries rows over by key (handoff/open_rows). A package from before the record has none —
+            # its table was the model's own open-ended search, which is what the candidates replace, so none of it is carried.
+            prior = await load_open_record(s3)
+            words = ledger_mod.labels(language)
+            candidates, closed = open_rows.collect(
+                readiness, record, material, prior, lab, words["topics"], f"{LEDGER} · {words['handoff']}")
+            carried = [r.question for r in prior.rows if _pm_share(r.who, lab)] if prior else []
             await state.save(state.manifest.model_copy(update={"carried": carried}))
     except Exception as exc:
         return await state.fail(None, exc)
@@ -1299,10 +1272,17 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
                                                 vision=written[VISION], sources=fitted)
             else:
                 prompt = build_prompt(language=language, readiness=readiness, record=record,
-                                      sources=material, previous=previous)
+                                      sources=material, candidates=candidates)
                 text = await asyncio.wait_for(call(prompt, progress.update),
                                               timeout=CALL_TIMEOUT_S)
-                document = clean_output(text)
+                # The table and the marks are code's: the model's classification is checked, then rendered.
+                reply, body = open_rows.split_reply(text)
+                table = open_rows.resolve(reply, candidates, closed, material, ledger, lab)
+                document = open_rows.insert(clean_output(body), open_rows.render(table, lab))
+                document = open_rows.mark(document, _kept_refs(readiness, record), lab["ai_kept"], LEDGER)
+                if table.rejected:
+                    _log.info("handoff open questions: %d unquoted additions dropped", len(table.rejected))
+                await s3.put(PACKAGE_PREFIX + open_rows.RECORD, table.model_dump_json())
         except Exception as exc:
             await ticker.stop()
             if file != OPTIONS:
@@ -1322,13 +1302,37 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
     await s3.put(PACKAGE_PREFIX + LEDGER, ledger)
     await s3.put(PACKAGE_PREFIX + README, readme(language))
     await s3.put(PACKAGE_PREFIX + START_PROMPT, start_prompt(language, folder))
+    # A row that left the table with a recorded reason did not go missing.
+    left = [supplement_mod.open_key(c.question) for c in (await load_open_record(s3) or open_rows.Record()).closed]
     return await state.save(state.manifest.model_copy(update={
         "status": "ready", "finished_at": _now(), "files": list(FILES), "error": None,
         "findings": lint(written[VISION], language=language, sources=list(material),
                          carried=state.manifest.carried,
                          answered=[k for k, a in record.open_answers.items()
-                                   if a.text and not a.unknown]),
+                                   if a.text and not a.unknown] + left),
     }))
+
+
+def _pm_share(who: str, lab: dict) -> bool:
+    """The PM's rows — the ones the handoff tab asks (same test as `open_questions`)."""
+    return lab["pm"] in who and lab["dev"].lower() not in who.lower()
+
+
+def _kept_refs(readiness: Readiness, record: supplement_mod.Supplement) -> set[tuple[str, int]]:
+    """Ledger rows of accepted AI suggestions the PM has not confirmed — the rows a vision line is marked for."""
+    return {(_cite(i.file), i.number) for i in readiness.ai_defaults.items
+            if supplement_mod.confirmation_key(i.file, i.number) not in record.confirmed}
+
+
+async def load_open_record(s3: S3StoreLike) -> open_rows.Record | None:
+    """The last package's open-questions record. None if absent (a package from before it) or unreadable."""
+    try:
+        return open_rows.Record.model_validate_json(await s3.get(PACKAGE_PREFIX + open_rows.RECORD))
+    except FileNotFoundError:
+        return None
+    except ValueError:
+        _log.warning("handoff open-questions record is unreadable — treating as absent")
+        return None
 
 
 async def _write_options(call: Caller, progress: "_Progress", *, language: str, vision: str,
@@ -1516,9 +1520,9 @@ HANDOFF_PREFIX = "handoff/"
 async def reset(s3: S3StoreLike) -> int:
     """Resets the handoff tab to its initial state — returns the number of objects deleted.
 
-    How this differs from regenerating: regenerating inherits the previous version's open decisions (`stored_decisions`) and uses the
-    supplementary answers as material. Reset deletes both of those too. The earlier layout's PRD is also a previous version, so it is deleted as well — if left,
-    the next generation would carry its open questions over again.
+    How this differs from regenerating: regenerating carries the previous version's open-question rows over by key (open_rows.RECORD)
+    and uses the supplementary answers as material. Reset deletes both of those too, and the earlier layouts' documents the handoff tab
+    still reads its questions from (`stored_decisions`).
     """
     return await s3.delete_prefix(HANDOFF_PREFIX)
 

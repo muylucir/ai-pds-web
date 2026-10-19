@@ -80,6 +80,11 @@ _TEXT = {
     },
 }
 
+def labels(language: str) -> dict:
+    """This module's wording in the project language — the handoff section title and the topic names are reused elsewhere."""
+    return _TEXT.get(language, _TEXT["ko"])
+
+
 _SINGLE = re.compile(r"^([A-J])\s*(?::\s*(.*))?$", re.DOTALL)
 
 
