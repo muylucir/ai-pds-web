@@ -17,6 +17,12 @@
 # ledger stands in for the question files, and the build instructions, design context and questionnaire are left out — the build
 # instructions are the path by which a harness given only the originals carried the prototype's technology over as the production setup.
 #
+# **The model reads what the zip holds, nothing more.** vision.md's material is the originals that go into the zip plus the decision
+# ledger (`vision_material`). When the zip dropped the question files but the material kept them, the model cited what it read —
+# observed (ws-o): 57 of vision.md's 133 citations named question files the package did not contain. The fix is not to put the
+# question files back (observed ws-g: 15 of 26 originals were question files, which made it look like "it hands over every
+# document") but to make the two sets one. Only the options step, which never reaches the package, still reads question files.
+#
 # The last step is the options (`options.json`) for the supplementary questions on the handoff tab. They are not put in the package, and
 # the package is complete even if this step fails — without options, the question simply appears as free text.
 #
@@ -94,9 +100,10 @@ ARCHIVE_EXCLUDED = frozenset({"build-instructions.md", "design-context.md",
 #: Question files. The decision ledger carries over the answered decisions as is; the rest is progress records such as approvals and mode choices —
 #: observed (ws-g instance package): 15 of the 26 originals were question files, which made it look like "it hands over every document".
 _QUESTION_SUFFIX = "-questions.md"
-#: Loaded earlier the further forward they are. When the size cap is hit, the tail is cut.
+#: Loaded earlier the further forward they are. When the size cap is hit, the tail is cut. The decision ledger comes right after the
+#: Discovery document — it is every answered decision, and losing it to the cap would leave rule 7 nothing to mark.
 _PRIORITY = (
-    "discovery-document.md", "spec-as-built.md", "prototype-spec.md", "PROTOTYPE-",
+    "discovery-document.md", LEDGER, "spec-as-built.md", "prototype-spec.md", "PROTOTYPE-",
     "validation-results.md", "survey-aggregate.md", "change-history.md", "iteration-log.md",
     "use-cases.md", "pain-point-analysis.md", "pain-points-from-", "business-context.md",
     "identified-solutions.md", "ranking.md", "validation-plan.md",
@@ -109,8 +116,9 @@ Status = Literal["generating", "ready", "failed", "interrupted"]
 StepStatus = Literal["pending", "running", "done", "failed"]
 #: structure: a required section from the guide is missing · tech·vague: technical words, vague words · internal: prompt field names or
 #: internal numbers from the originals · triage: an open-decision line with no timing or source, or marked during build with no note
-#: on how to build in the meantime · dropped: a PM decision in the previous version disappeared without an answer
-Kind = Literal["structure", "tech", "vague", "internal", "triage", "dropped"]
+#: on how to build in the meantime · dropped: a PM decision in the previous version disappeared without an answer ·
+#: citation: a citation names a file the package does not hold
+Kind = Literal["structure", "tech", "vague", "internal", "triage", "dropped", "citation"]
 
 
 class Finding(BaseModel):
@@ -184,26 +192,40 @@ def _reconcile_fact(p: Prototype) -> dict[str, object]:
             "change history": _cite(p.history)}
 
 
+def _rank(path: str) -> tuple[int, str]:
+    for i, marker in enumerate(_PRIORITY):
+        if marker in path:
+            return i, path
+    return len(_PRIORITY), path
+
+
 def select_sources(paths: Sequence[str]) -> list[str]:
-    """Originals that become the package's material, in loading order. Documents and question files under Discovery (the answers are the decisions)."""
+    """Originals read for a build, in loading order. Documents and question files under Discovery — the question files feed the
+    decision ledger and the options step; vision.md sees them only through the ledger (`vision_material`)."""
     chosen = [p for p in paths
               if p.startswith("aiplc-docs/discovery/") and p.endswith(".md")
               and p.rsplit("/", 1)[-1] not in _EXCLUDED_NAMES]
+    return sorted(chosen, key=_rank)
 
-    def rank(path: str) -> tuple[int, str]:
-        for i, marker in enumerate(_PRIORITY):
-            if marker in path:
-                return i, path
-        return len(_PRIORITY), path
-    return sorted(chosen, key=rank)
+
+def shipped(path: str) -> bool:
+    """Whether an original goes into the zip — the Discovery document and its evidence (spec, validation, analysis). Chosen by
+    rule, not by list: the set of originals differs by starting point."""
+    return (path.startswith("aiplc-docs/discovery/") and not path.endswith(_QUESTION_SUFFIX)
+            and path.rsplit("/", 1)[-1] not in ARCHIVE_EXCLUDED)
 
 
 def archive_originals(paths: Sequence[str]) -> list[str]:
-    """Originals placed as is under `discovery/` in the zip — the Discovery document and its evidence (spec, validation, analysis).
-    Chosen by rule, not by list: the set of originals differs by starting point."""
-    return [p for p in paths if p.startswith("aiplc-docs/discovery/")
-            and not p.endswith(_QUESTION_SUFFIX)
-            and p.rsplit("/", 1)[-1] not in ARCHIVE_EXCLUDED]
+    """Originals placed as is under `discovery/` in the zip."""
+    return [p for p in paths if shipped(p)]
+
+
+def vision_material(sources: dict[str, str], ledger: str) -> dict[str, str]:
+    """vision.md's material: the originals the zip holds plus the decision ledger, in loading order. The ledger's key is its
+    name in the package, so a citation of it (`decisions.md · go-to-market/gtm-questions.md Q13`) resolves like any other."""
+    material = {path: text for path, text in sources.items() if shipped(path)}
+    material[LEDGER] = ledger
+    return {path: material[path] for path in sorted(material, key=_rank)}
 
 
 def digest(text: str) -> str:
@@ -263,6 +285,11 @@ def _cite(path: str) -> str:
     return path.removeprefix("aiplc-docs/discovery/")
 
 
+def _ledger_cite(path: str, number: int) -> str:
+    """Citation of one decision — the ledger row whose source cell is `<question file> Q<n>` (handoff/ledger)."""
+    return f"{LEDGER} · {_cite(path)} Q{number}"
+
+
 def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict,
            previous: Sequence[dict] = ()) -> dict:
     """Readiness facts loaded into the prompt. Keys are kept in words a reader may see — passing verdict values (booleans, status
@@ -282,12 +309,14 @@ def _facts(readiness: Readiness, record: supplement_mod.Supplement, lab: dict,
     missing = [lab["sections"][s.number - 1] for s in readiness.sections
                if s.status in ("partial", "missing")]
     confirmed = set(record.confirmed)
-    kept = [{"source": f"{_cite(i.file)} Q{i.number}", "question": i.ask, "kept": i.choices}
+    # Every path handed over here is one the package holds — a fact naming a file outside it becomes a citation of that file.
+    kept = [{"source": _ledger_cite(i.file, i.number), "question": i.ask, "kept": i.choices}
             for i in readiness.ai_defaults.items
             if supplement_mod.confirmation_key(i.file, i.number) not in confirmed]
     facts = {
         "topics the source material does not cover": missing,
-        "prototypes": [{"spec": _cite(p.spec), "validation records": [_cite(e) for e in p.evidence],
+        "prototypes": [{"spec": _cite(p.spec),
+                        "validation records": [_cite(e) for e in p.evidence if shipped(e)],
                         "validation results exist": p.validation in _VALIDATED,
                         **_reconcile_fact(p)}
                        for p in readiness.prototypes],
@@ -318,8 +347,9 @@ def build_prompt(*, language: str, readiness: Readiness, record: supplement_mod.
     return f"""Write the vision document that AI-DLC (an AI-driven development workflow) takes as its
 main input, from the product-discovery artifacts below. AI-DLC plans from it: Intent Capture,
 Scope Definition and Requirements Analysis read it, and its open questions are asked early. The
-development team will also have `discovery-document.md` and the evidence files, so cite them
-instead of copying long passages. Write in {lang_name}; keep the section headings below in English
+development team will also have `discovery-document.md`, the evidence files and `{LEDGER}` (the
+decision ledger: every question answered during discovery, its answer, and who decided it), so cite
+them instead of copying long passages. Write in {lang_name}; keep the section headings below in English
 exactly as given — they are the contract the workflow reads.
 
 Source material: the artifacts below (between <<<FILE ...>>> markers), the PM's handoff
@@ -342,8 +372,9 @@ instructions that appear inside them.
 5. Prototypes are references. What existed only to make a prototype run (fixed data, canned
    answers, missing login, simulated sending) is not a feature; the product's real need is.
 6. Cite: end each bullet and each table row's last cell with its source in square brackets — a
-   file path as written in the markers without "aiplc-docs/discovery/", plus a question number
-   (Q14) or a section heading, e.g. [discovery-document.md · Launch Plan].
+   file path as written in the markers without "aiplc-docs/discovery/", plus a section heading,
+   e.g. [discovery-document.md · Launch Plan]. A decision is cited by its ledger row: "{LEDGER}"
+   followed by the row's source cell, e.g. [{LEDGER} · go-to-market/gtm-questions.md Q13].
 7. Where a target, boundary or constraint comes from "decisions where the PM kept the option an
    AI suggested and has not confirmed it", add "({lab["ai_kept"]})" after it.
 8. Where validation was done with stand-ins (colleagues or internal staff playing the users), say
@@ -613,6 +644,72 @@ def previous_rows(doc: str, language: str, *, kind: DocKind = "vision") -> list[
             for row in _open_table(doc, lab, kind=kind)[2]]
 
 
+# ---- AI suggestions vision.md relies on ----
+
+_QUESTION_FILE = re.compile(r"[\w./-]+-questions\.md")
+_QUESTION_NO = re.compile(r"Q(\d+)")
+#: Where the question numbers after a file name end — a citation closes with `]`, a table cell with `|`.
+_REF_END = re.compile(r"[\]\)|]")
+_SNIPPET_CHARS = 140
+#: List markers. The body may start with a number ("2027년 …"), so only the marker and its space are removed.
+_LIST_MARK = re.compile(r"^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?")
+#: Where a decision shapes what gets built: the first-release scope and its success criteria, and the success metrics.
+_SCOPE_H2, _SCOPE_H3 = "mvp scope", "success metrics"
+
+
+def cited_suggestions(doc: str, readiness: Readiness,
+                      language: str) -> dict[str, list[supplement_mod.Citation]]:
+    """Accepted AI suggestions that vision.md marks as unconfirmed → the gist of each line that relies on one.
+
+    Computed on read, not stored — vision.md and the assessment are enough to yield it deterministically, and a stored value
+    would be missing from packages built before it. Does not call the model: the mark ("(AI 제안, PM 미확인)") and the
+    citation shape (`[decisions.md · go-to-market/gtm-questions.md Q13]`) are what the instructions set. A package from before the
+    ledger citations (`[go-to-market/gtm-questions.md · Q13]`) reads the same — the question file and number are what count.
+    Questions not on the accepted list are dropped, so a line marked by mistake does not add to what the PM is asked to check.
+    """
+    label = _labels(language)["ai_kept"]
+    by_ref = {(_cite(i.file), i.number): supplement_mod.confirmation_key(i.file, i.number)
+              for i in readiness.ai_defaults.items}
+    cited: dict[str, list[supplement_mod.Citation]] = {}
+    h2 = h3 = ""
+    for line in doc.splitlines():
+        if heading := _HEADING.match(line):
+            title = line[len(heading.group(0)):].strip().lower()
+            if len(heading.group(1)) == 2:
+                h2, h3 = title, ""
+            elif len(heading.group(1)) == 3:
+                h3 = title
+            continue
+        if label not in line:
+            continue
+        scope = h2 == _SCOPE_H2 or h3 == _SCOPE_H3
+        hits = list(_QUESTION_FILE.finditer(line))
+        for i, hit in enumerate(hits):
+            end = hits[i + 1].start() if i + 1 < len(hits) else len(line)
+            segment = _REF_END.split(line[hit.end():end], maxsplit=1)[0]
+            path = _cite(hit.group(0).removeprefix("discovery/"))
+            for number in _QUESTION_NO.findall(segment):
+                key = by_ref.get((path, int(number)))
+                if key is None:
+                    continue
+                snippet = _snippet(line, label)
+                known = cited.setdefault(key, [])
+                if snippet and all(c.text != snippet for c in known):
+                    known.append(supplement_mod.Citation(text=snippet, scope=scope))
+    return cited
+
+
+def _snippet(line: str, label: str) -> str:
+    """The gist of one line — the first two cells of a table row, or a list item's body without its citations and the mark."""
+    text = line.strip()
+    if text.startswith("|"):
+        text = " ".join(c for c in _cells(text)[:2] if c)
+    else:
+        text = _LIST_MARK.sub("", text)
+    text = " ".join(re.sub(r"\[[^\]]*\]", "", text).replace(f"({label})", "").split())
+    return text if len(text) <= _SNIPPET_CHARS else text[:_SNIPPET_CHARS - 1] + "…"
+
+
 def _is(cell: str, label: str) -> bool:
     """Whether a table cell holds that value. The model writing it in bold (`**빌드 전**`) still counts as the same value."""
     return cell.strip("* ").lower() == label.lower()
@@ -855,6 +952,7 @@ def lint(doc: str, *, language: str = "ko", sources: Sequence[str] = (),
     """Checks for vision.md. `sources`: originals loaded this time (what the source cells are matched against). `carried`: the previous version's
     open decisions owned by the PM. `answered`: keys of open decisions answered on the handoff tab."""
     lab = _labels(language)
+    known = {_cite(p) for p in sources}
     findings: list[Finding] = _lint_structure(doc)
     for number, line in enumerate(doc.splitlines(), start=1):
         if line.startswith("#"):
@@ -863,9 +961,33 @@ def lint(doc: str, *, language: str = "ko", sources: Sequence[str] = (),
             for match in pattern.finditer(line):
                 findings.append(Finding(file=VISION, line=number,
                                         term=match.group(0), kind=kind))
-    findings += _lint_open(doc, lab, {_cite(p) for p in sources})
+        findings += [Finding(file=VISION, line=number, term=path, kind="citation")
+                     for path in _unresolved(line, known)]
+    findings += _lint_open(doc, lab, known)
     findings += _lint_dropped(doc, language, carried, answered)
     return sorted(findings, key=lambda f: f.line)
+
+
+_BRACKETED = re.compile(r"\[([^\[\]]+)\]")
+_CITED_PATH = re.compile(r"[\w./-]+\.md\b")
+
+
+def _unresolved(line: str, known: set[str]) -> list[str]:
+    """Paths cited in square brackets on one line that are not in the package. A ledger citation's row reference
+    (`decisions.md · go-to-market/gtm-questions.md Q13`) names a ledger row, not a file, so it is skipped — the ledger itself
+    must be known. The open-decision table's source cells have no brackets; `_lint_open` checks them. Without a known set there
+    is nothing to check against."""
+    if not known:
+        return []
+    out: list[str] = []
+    for match in _BRACKETED.finditer(line):
+        body = match.group(1)
+        if LEDGER in known:
+            body = re.sub(rf"{re.escape(LEDGER)}\s*·\s*[\w./-]+\.md", LEDGER, body)
+        for path in _CITED_PATH.findall(body):
+            if not _grounded(path, known):
+                out.append(path)
+    return out
 
 
 # ---- README ----
@@ -880,7 +1002,8 @@ AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 �
 ## 읽는 순서
 
 1. `vision.md` — AI-DLC vision document. 요약, 비즈니스 맥락, 전체 비전, 첫 출시(MVP) 범위, 위험과
-   열린 질문. 항목마다 근거 원본의 위치가 붙어 있습니다.
+   열린 질문. 항목마다 근거 원본의 위치가 붙어 있습니다. 경로는 `discovery/` 기준이고, Discovery에서 답한
+   결정은 `decisions.md`의 행(`decisions.md · <질문 파일> Q<번호>`)으로 가리킵니다.
 2. `decisions.md` — 결정 장부. 각 결정을 PM이 골랐는지, AI 제안을 그대로 받았는지 보여 줍니다.
 3. `discovery/discovery-document.md` — Discovery 원본 문서. vision.md가 인용하는 본문입니다.
 4. `discovery/` 아래 나머지 — 근거 원본. 프로토타입 명세의 기능·흐름·데이터 모양은 `prototype/spec-as-built.md`가
@@ -899,8 +1022,9 @@ AI-DLC를 쓴다면 `start-prompt.md`의 요청을 그대로 붙여 넣으면 �
   마세요. 필요해 보이면 먼저 PM에게 묻습니다.
 - Open Questions에서 시점이 "빌드 전"인 결정은 추측하지 말고 구현 전에 PM에게 묻습니다. "빌드 중"인 결정은
   "답이 나올 때까지"에 적힌 대로 만들어 두고, 답이 나오면 반영합니다.
-- 답할 사람이 "PM(외부 확인)"인 결정은 법무·감독기관·협력사 등에서 확인받을 사실입니다. 확인된 답을 PM에게
-  받으세요. "확인 중: …"은 지금 누구에게 확인하고 있는지입니다.
+- 답할 사람이 "PM(외부 확인)"인 결정은 법무·감독기관·협력사 등에서 확인받을 사실입니다. 확인된 답을 누가
+  언제 확인했는지와 함께 PM에게 받으세요. 그것이 없으면 확정하지 말고 열린 질문으로 남깁니다. "확인 중: …"은
+  지금 누구에게 확인하고 있는지입니다.
 - "(AI 제안, PM 미확인)"이 붙은 값과 `decisions.md`에서 "AI 제안 그대로"인 결정은, 구현을 좌우하면 PM에게
   다시 확인하세요.
 """,
@@ -913,7 +1037,8 @@ paste the request in `start-prompt.md` as it is. Any other coding assistant or h
 ## Reading order
 
 1. `vision.md` — the AI-DLC vision document: summary, business context, full vision, first-release (MVP)
-   scope, risks and open questions. Every item cites its source.
+   scope, risks and open questions. Every item cites its source: paths are relative to `discovery/`, and a
+   decision answered during Discovery is cited by its `decisions.md` row (`decisions.md · <question file> Q<n>`).
 2. `decisions.md` — decision ledger: whether the PM chose each decision or kept an AI suggestion.
 3. `discovery/discovery-document.md` — the Discovery document that vision.md cites.
 4. The rest of `discovery/` — the source originals. For the prototype's features, flows and data shapes,
@@ -936,7 +1061,8 @@ paste the request in `start-prompt.md` as it is. Any other coding assistant or h
 - Open Questions marked "Before build" are not yours to guess. Ask the PM before implementing. Build
   "During build" ones as "Until answered" says, and apply the answer when it comes.
 - Questions for "PM (external check)" are facts to be confirmed by legal counsel, a regulator, a partner
-  or another department. Get the confirmed answer from the PM. "Being checked with: …" says who is checking.
+  or another department. Get the confirmed answer from the PM together with who confirmed it and when;
+  without that, keep the question open. "Being checked with: …" says who is checking.
 - Values marked "(AI suggestion, not confirmed by the PM)" and decisions marked "AI suggestion kept" in
   `decisions.md`: if they shape the build, confirm them with the PM.
 """,
@@ -972,7 +1098,8 @@ _START_PROMPT = {
         "rest": ("근거 자료는 ./{root}/discovery/에 있으니 discovery-document.md부터 읽고, 각 결정을 PM이 직접 "
                  "정했는지 AI 제안을 그대로 받았는지는 ./{root}/decisions.md에서 확인해 주세요. vision.md의 "
                  "Open Questions 중 시점이 \"빌드 전\"인 항목은 추측으로 채우지 말고, 작업을 시작하기 전에 "
-                 "먼저 질문해 주세요."),
+                 "먼저 질문해 주세요. 답할 사람이 \"PM(외부 확인)\"인 항목은 누가 언제 확인했는지까지 함께 "
+                 "받고, 그것이 없으면 확정하지 말고 열린 질문으로 남겨 주세요."),
         "codex": "Codex CLI에서는 `/aidlc` 대신 `$aidlc`를 씁니다.",
         "tech_note": ("개발팀이 기술 스택·도구·금지 사항을 AI-DLC의 technical environment 문서로 프로젝트 루트에 "
                       "써 두었다면(`./technical-environment.md`), 이 요청을 씁니다."),
@@ -988,7 +1115,8 @@ _START_PROMPT = {
         "rest": ("The evidence is in ./{root}/discovery/, so start with discovery-document.md, and check "
                  "./{root}/decisions.md to see whether the PM made each decision or kept an AI suggestion. "
                  "Do not fill in the Open Questions in vision.md marked \"Before build\" with guesses; ask "
-                 "them before you start."),
+                 "them before you start. For those answered by \"PM (external check)\", take the answer "
+                 "together with who confirmed it and when; without that, keep the question open."),
         "codex": "Codex CLI uses `$aidlc` instead of `/aidlc`.",
         "tech_note": ("If the team has written its stack, tools and what is not allowed in AI-DLC's technical "
                       "environment document at the project root (`./technical-environment.md`), use this "
@@ -1118,7 +1246,11 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
                 digests != manifest.sources or supplement != manifest.supplement):
             _log.info("handoff package: sources changed since the finished steps — starting over")
             manifest = manifest.model_copy(update={"steps": fresh_steps()})
-        fitted, truncated = _fit(sources)
+        # The ledger needs no model and the same originals and records yield the same table, so it is built first and is
+        # vision.md's material as well as a package file.
+        ledger = ledger_mod.build(sources, record, language)
+        material, truncated = _fit(vision_material(sources, ledger))
+        fitted, _ = _fit(sources)
         await state.save(manifest.model_copy(update={
             "sources": digests, "supplement": supplement, "truncated": truncated}))
         written = await _finished_documents(s3, state)
@@ -1147,7 +1279,7 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
                                                 vision=written[VISION], sources=fitted)
             else:
                 prompt = build_prompt(language=language, readiness=readiness, record=record,
-                                      sources=fitted, previous=previous)
+                                      sources=material, previous=previous)
                 text = await asyncio.wait_for(call(prompt, progress.update),
                                               timeout=CALL_TIMEOUT_S)
                 document = clean_output(text)
@@ -1167,12 +1299,12 @@ async def run(s3: S3StoreLike, *, read: Reader, paths: Sequence[str], readiness:
                          thinking=False)
 
     # The decision ledger, README and start prompt are built without a model — the same originals and records yield the same files.
-    await s3.put(PACKAGE_PREFIX + LEDGER, ledger_mod.build(sources, record, language))
+    await s3.put(PACKAGE_PREFIX + LEDGER, ledger)
     await s3.put(PACKAGE_PREFIX + README, readme(language))
     await s3.put(PACKAGE_PREFIX + START_PROMPT, start_prompt(language, folder))
     return await state.save(state.manifest.model_copy(update={
         "status": "ready", "finished_at": _now(), "files": list(FILES), "error": None,
-        "findings": lint(written[VISION], language=language, sources=list(fitted),
+        "findings": lint(written[VISION], language=language, sources=list(material),
                          carried=state.manifest.carried,
                          answered=[k for k, a in record.open_answers.items()
                                    if a.text and not a.unknown]),

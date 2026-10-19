@@ -119,10 +119,12 @@ const VIEW: SupplementView = {
   confirmations: [
     { key: `${STRATEGY}#1`, file: STRATEGY, number: 1, ask: "수익 모델은?", answer: "A: 첫 해는 할인",
       stage: "product_strategy", choices: ["구독형 — 매장 수 기준 월 과금"],
-      note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null },
+      note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null,
+      in_vision: [], in_scope: false },
     { key: `${D}envision/prfaq-clarifying-questions.md#1`, file: `${D}envision/prfaq-clarifying-questions.md`,
       number: 1, ask: "제품명은?", answer: "A", stage: "envision",
       choices: ["샘플몰 안전ON"], note: "페인 포인트 분석 기반 제안", remark: "", confirmed_at: "t",
+      in_vision: [], in_scope: false,
     },
   ],
   open_questions: [],
@@ -169,6 +171,31 @@ describe("SupplementForm", () => {
     // Stage order (PR/FAQ before product strategy) and the confirmation count per stage.
     expect(summaries).toEqual(["PR/FAQ · 문제 정의 1건 · 확인 1", "제품 전략 1건 · 확인 0"]);
     expect(screen.queryByText(/strategy-questions\.md/)).not.toBeInTheDocument();
+  });
+
+  it("puts the AI suggestions vision.md relies on first, scope and success metrics leading", () => {
+    // Observed (ws-o): the first-release targets went to development as unconfirmed AI suggestions, and the development
+    // harness re-asked the scope but not them. With a package, what vision.md relies on rises; the rest stays by stage.
+    const [pricing, name] = VIEW.confirmations;
+    const third = { ...pricing, key: `${STRATEGY}#4`, number: 4, ask: "출시 지역은?", choices: ["서울"] };
+    const view: SupplementView = {
+      ...VIEW, has_package: true,
+      confirmations: [
+        { ...pricing, in_vision: ["완료율 60%"], in_scope: true },
+        { ...name, in_vision: ["사내 예산으로 운영한다."], in_scope: false },
+        third,
+      ],
+    };
+    render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
+                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    const headings = screen.getAllByRole("heading", { level: 5 }).map((el) => el.textContent);
+    expect(headings).toEqual(["첫 출시 범위·성공 지표가 된 AI 제안 1건", "vision.md에 들어간 그 밖의 AI 제안 1건",
+                              "vision.md에 직접 쓰이지 않은 결정 1건"]);
+    expect(screen.getByText("완료율 60%")).toBeInTheDocument();
+    expect(screen.getAllByText("vision.md에서")).toHaveLength(2);
+    // Only the decision vision.md does not use stays in the stage groups.
+    const summaries = [...document.querySelectorAll("summary")].map((el) => el.textContent);
+    expect(summaries).toEqual(["제품 전략 1건 · 확인 0"]);
   });
 
   it("counts only the gap questions as progress — confirming is optional", () => {

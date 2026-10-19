@@ -146,6 +146,14 @@ class Option(BaseModel):
     source: str
 
 
+class Citation(BaseModel):
+    """A vision.md line that relies on an accepted AI suggestion it marks as unconfirmed."""
+    #: The gist of that line.
+    text: str
+    #: The line is in the first-release scope or the success metrics — what development builds toward.
+    scope: bool = False
+
+
 class QuestionView(BaseModel):
     id: str
     section: str
@@ -164,6 +172,12 @@ class ConfirmationView(BaseModel):
     note: str
     remark: str
     confirmed_at: str | None
+    #: The vision.md lines that rely on this decision as an unconfirmed AI suggestion. Empty if vision.md does not (or there is
+    #: no package yet).
+    in_vision: list[str] = []
+    #: One of those lines is in the first-release scope or the success metrics. Observed (ws-o): those targets went to development
+    #: as unconfirmed AI suggestions, and the development harness re-asked the scope but not them.
+    in_scope: bool = False
 
 
 class OpenQuestionView(BaseModel):
@@ -217,7 +231,8 @@ def open_key(question: str) -> str:
 def view(readiness: Readiness, record: Supplement,
          open_questions: list[OpenQuestion] | None = None,
          options: dict[str, list[Option]] | None = None, *,
-         has_package: bool = False) -> SupplementView:
+         has_package: bool = False,
+         cited: dict[str, list[Citation]] | None = None) -> SupplementView:
     open_sections = {s.key for s in readiness.sections if s.status in ("partial", "missing")}
     active: list[QuestionView] = []
     superseded: list[QuestionView] = []
@@ -230,10 +245,12 @@ def view(readiness: Readiness, record: Supplement,
     confirmations: list[ConfirmationView] = []
     for item in readiness.ai_defaults.items:
         key = confirmation_key(item.file, item.number)
+        citations = (cited or {}).get(key, [])
         confirmations.append(ConfirmationView(
             key=key, file=item.file, number=item.number, ask=item.ask,
             answer=item.answer, stage=item.stage, choices=item.choices, note=item.note,
-            remark=item.remark, confirmed_at=record.confirmed.get(key)))
+            remark=item.remark, confirmed_at=record.confirmed.get(key),
+            in_vision=[c.text for c in citations], in_scope=any(c.scope for c in citations)))
     asked: dict[str, OpenQuestionView] = {}
     deferred: dict[str, OpenQuestionView] = {}
     for q in open_questions or []:

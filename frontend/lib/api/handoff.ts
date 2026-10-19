@@ -99,6 +99,11 @@ export interface Confirmation {
   /** The elaboration in `"A: 부연"` (A: elaboration). */
   remark: string;
   confirmed_at: string | null;
+  /** The vision.md lines that rely on this decision as an unconfirmed AI suggestion. Empty if vision.md does not (or there
+   *  is no package yet). */
+  in_vision: string[];
+  /** One of those lines is in the first-release scope or the success metrics. */
+  in_scope: boolean;
 }
 
 export interface OpenAnswer extends SupplementAnswer {
@@ -185,7 +190,9 @@ export interface Finding {
 }
 
 /** Server handoff/package.Finding.kind. Also the order of the check list on screen. */
-export const FINDING_KINDS = ["structure", "tech", "vague", "triage", "dropped", "internal"] as const;
+export const FINDING_KINDS = [
+  "structure", "tech", "vague", "triage", "citation", "dropped", "internal",
+] as const;
 export type FindingKind = (typeof FINDING_KINDS)[number];
 
 export interface Manifest {
