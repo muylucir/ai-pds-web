@@ -29,15 +29,15 @@ def _vision(open_table: str) -> str:
 
 ## Business Context
 ### Problem Statement
-종이 서명을 모으는 데 월 30~60시간이 든다. [envision/pain-point-questions.md Q6]
+종이 서명을 모으는 데 월 30~60시간이 든다. [decisions.md · use-case-intake/use-case-intake-questions.md Q2]
 ### Target Users and Stakeholders
 | User Type | Description | Primary Need |
 |---|---|---|
-| 지점 담당자 | 21명 | 누락자 추적 [envision/pain-point-questions.md Q1] |
+| 지점 담당자 | 21명 | 누락자 추적 [use-case-intake/use-cases.md · 대상] |
 ### Success Metrics
 | Metric | Today | Target | How it is measured |
 |---|---|---|---|
-| 완료율 | 재료 없음 | 95% | 건별 집계 (AI 제안, PM 미확인) [go-to-market/gtm-questions.md Q13] |
+| 완료율 | 재료 없음 | 95% | 건별 집계 (AI 제안, PM 미확인) [decisions.md · use-case-intake/use-case-intake-questions.md Q1] |
 
 ## Full Scope Vision
 ### Product Vision Statement
@@ -53,7 +53,7 @@ def _vision(open_table: str) -> str:
 |---|---|---|
 | HR 연동 | 파일 업로드로 시작 | 2단계 [discovery-document.md · Launch Plan] |
 ### Assumptions and Accepted Limits
-- **Accepted limit**: 검증은 사내 동료가 역할을 대신했다. [prototype/validation-results.md]
+- **Accepted limit**: 검증은 사내 동료가 역할을 대신했다. [validation-plan.md]
 
 ## Risks and Dependencies
 ### Key Risks
@@ -871,3 +871,132 @@ def test_the_readme_names_spec_as_built_as_the_spec_of_record():
     for text in package._README.values():
         assert "spec-as-built.md" in text
         assert "change-history.md" in text
+
+
+# ---- vision's material is what the package holds ----
+
+_QFILE = D + "use-case-intake/use-case-intake-questions.md"
+
+
+def test_vision_reads_the_shipped_originals_and_the_ledger_but_not_the_question_files():
+    """Observed (ws-o): with question files in the material but not in the zip, 57 of vision.md's 133 citations named
+    files the package did not contain. Putting the question files back is not the fix (ws-g: 15 of 26 originals were
+    question files) — the material is made the same set as the zip. Options never reach the package, so they still read them."""
+    s3 = FakeS3Store()
+    files = {p: f"# {p}\n" for p in B} | {_QFILE: QUESTIONS}
+    calls: list = []
+    done = _run(_generate(s3, files, _writer(calls)))
+    prompts = dict(calls)
+    vision, options = prompts["vision"], prompts["options"]
+    assert f"<<<FILE {package.LEDGER}>>>" in vision
+    assert f"<<<FILE {_QFILE}>>>" not in vision and f"<<<FILE {_QFILE}>>>" in options
+    shipped = [p for p in package.select_sources(B) if package.shipped(p)]
+    assert all(f"<<<FILE {p}>>>" in vision for p in shipped)
+    # The ledger in the material is the ledger in the package.
+    ledger = s3.blobs[package.PACKAGE_PREFIX + package.LEDGER]
+    assert ledger in vision and "use-case-intake/use-case-intake-questions.md Q1" in ledger
+    # The digests that decide staleness still cover every original read, question files included.
+    assert _QFILE in done.sources
+
+
+def test_the_ledger_follows_the_discovery_document_in_loading_order():
+    sources = {D + "prioritization/ranking.md": "r", _QFILE: "q",
+               D + "discovery-document.md": "d", D + "use-case-intake/use-cases.md": "u"}
+    assert list(package.vision_material(sources, "L")) == [
+        D + "discovery-document.md", package.LEDGER, D + "use-case-intake/use-cases.md",
+        D + "prioritization/ranking.md"]
+
+
+def test_facts_name_only_what_the_package_holds():
+    """A fact that names a file becomes a citation of it — unconfirmed AI suggestions point at their ledger rows, and a
+    questionnaire (left out of the zip) is not given as a validation record."""
+    state = assess(B + [_QFILE], {_QFILE: QUESTIONS})
+    facts = _facts(package.build_prompt(language="ko", readiness=state,
+                                        record=supplement.Supplement(), sources={}))
+    kept = facts["decisions where the PM kept the option an AI suggested and has not confirmed it"]
+    assert [k["source"] for k in kept] == [
+        f"decisions.md · use-case-intake/use-case-intake-questions.md Q{n}" for n in (1, 2, 4)]
+    records = {p["spec"].split("/")[1]: p["validation records"] for p in facts["prototypes"]}
+    assert records == {"customer-inquiry-triage": [], "flight-disruption-notice": ["validation-plan.md"]}
+
+
+def test_a_citation_outside_the_package_is_flagged():
+    known = [D + "discovery-document.md", package.LEDGER]
+    doc = _vision(_OPEN.split("### Open Questions\n", 1)[1]).replace(
+        "[discovery-document.md · Positioning]",
+        "[go-to-market/gtm-questions.md · Q13] [prototype/validation-results.md · 결과]")
+    found = _kinds(package.lint(doc, sources=known + [D + "use-case-intake/use-cases.md",
+                                                      D + "validation-plan.md"]), "citation")
+    assert [term for _, term in found] == ["go-to-market/gtm-questions.md",
+                                           "prototype/validation-results.md"]
+    # A ledger row reference names a row, not a file; it resolves when the ledger is in the package.
+    row = "[decisions.md · go-to-market/gtm-questions.md Q13]"
+    assert package._unresolved(f"값 {row}", {package.LEDGER}) == []
+    assert package._unresolved(f"값 {row}", {"discovery-document.md"}) == [
+        "decisions.md", "go-to-market/gtm-questions.md"]
+    # Nothing to check against without the loaded set.
+    assert package._unresolved("[x.md · y]", set()) == []
+
+
+def test_the_start_prompt_and_readme_ask_for_who_confirmed_an_external_fact_and_when():
+    """Observed (ws-o): the development harness took "confirmed — all allowed" for a legal question with no one and no date
+    behind it, and turned the features it gated on by default. The rule goes where every harness reads it."""
+    ko = package.start_prompt("ko", "x-handoff")
+    en = package.start_prompt("en", "x-handoff")
+    assert ko.count("누가 언제 확인했는지까지") == 2 and en.count("who confirmed it and when") == 2
+    assert "누가\n  언제 확인했는지" in package._README["ko"]
+    assert "who confirmed it and when" in package._README["en"]
+
+
+# ---- the AI suggestions vision.md relies on ----
+
+_RELIES = """# 샘플몰 — Vision
+
+## Business Context
+### Success Metrics
+| Metric | Today | Target | How it is measured |
+|---|---|---|---|
+| 완료율 | 60% | 95% (AI 제안, PM 미확인) | 건별 집계 [decisions.md · use-case-intake/use-case-intake-questions.md Q1] |
+### Business Constraints
+- 사내 예산으로 운영한다. (AI 제안, PM 미확인) [decisions.md · use-case-intake/use-case-intake-questions.md Q2, Q3]
+
+## Full Scope Vision
+### Growth and Roadmap
+- 2단계는 파일럿 뒤에 요청한다. [decisions.md · use-case-intake/use-case-intake-questions.md Q4]
+
+## MVP Scope
+### Features In Scope
+| Feature | Description | Why it cannot wait |
+|---|---|---|
+| 발송 | 대상 지정 후 발송 (AI 제안, PM 미확인) | 첫 장면 [use-case-intake/use-case-intake-questions.md · Q4] |
+"""
+
+
+def test_cited_suggestions_tell_scope_lines_from_the_rest():
+    state = assess(B + [_QFILE], {_QFILE: QUESTIONS})
+    cited = package.cited_suggestions(_RELIES, state, "ko")
+    key = lambda n: supplement.confirmation_key(_QFILE, n)  # noqa: E731
+    # Q1: a success metric. Q2: a constraint, outside the scope. Q3 is the PM's own choice, so it is dropped.
+    # Q4: an unmarked roadmap line does not count; the marked scope row does, in the earlier citation shape too.
+    assert set(cited) == {key(1), key(2), key(4)}
+    assert [(c.text, c.scope) for c in cited[key(1)]] == [("완료율 60%", True)]
+    assert [(c.text, c.scope) for c in cited[key(2)]] == [("사내 예산으로 운영한다.", False)]
+    assert [(c.text, c.scope) for c in cited[key(4)]] == [("발송 대상 지정 후 발송", True)]
+
+    view = supplement.view(state, supplement.Supplement(), has_package=True, cited=cited)
+    flags = {c.number: (c.in_scope, c.in_vision) for c in view.confirmations}
+    assert flags == {1: (True, ["완료율 60%"]), 2: (False, ["사내 예산으로 운영한다."]),
+                     4: (True, ["발송 대상 지정 후 발송"])}
+
+
+def test_route_supplement_marks_the_ai_suggestions_the_vision_relies_on(env):
+    client, _, writer = env
+    _seed(client, "pkg-relies", {p: f"# {p}\n" for p in B} | {_QFILE: QUESTIONS})
+    before = client.get("/projects/pkg-relies/handoff/supplement").json()
+    assert all(not c["in_vision"] and not c["in_scope"] for c in before["confirmations"])
+
+    writer["call"] = _writer(doc=_RELIES)
+    client.post("/projects/pkg-relies/handoff/package")
+    assert _wait_settled(client, "pkg-relies")["manifest"]["status"] == "ready"
+    body = client.get("/projects/pkg-relies/handoff/supplement").json()
+    assert {c["number"]: c["in_scope"] for c in body["confirmations"]} == {1: True, 2: False, 4: True}

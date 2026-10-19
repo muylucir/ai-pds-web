@@ -99,16 +99,25 @@ export function SupplementForm({
   const done = view.questions.filter((q) => filled(draft[q.id])).length
     + view.open_questions.filter((q) => filled(draft[q.key])).length;
 
-  // Collapsed by stage. Confirmed decisions appear in the decision ledger as "AI 제안 · PM 확인".
+  // With a package, the decisions vision.md relies on as unconfirmed AI suggestions come first, and of those the ones in the
+  // first-release scope or the success metrics lead — development builds toward them, and in measurement (ws-o) the
+  // development harness re-asked the scope but not those targets. The rest are collapsed by stage. Confirmed decisions
+  // appear in the decision ledger as "AI 제안 · PM 확인".
+  const scope = view.has_package ? view.confirmations.filter((c) => c.in_scope) : [];
+  const inVision = view.has_package
+    ? view.confirmations.filter((c) => c.in_vision.length && !c.in_scope) : [];
   const stages = useMemo(() => {
     const byStage = new Map<string, Confirmation[]>();
     for (const c of view.confirmations) {
+      if (view.has_package && c.in_vision.length) continue;
       byStage.set(c.stage, [...(byStage.get(c.stage) ?? []), c]);
     }
     return STAGE_ORDER.filter((st) => byStage.has(st)).map((st) => [st, byStage.get(st)!] as const);
-  }, [view.confirmations]);
+  }, [view.confirmations, view.has_package]);
+  const restCount = stages.reduce((n, [, items]) => n + items.length, 0);
 
-  // One confirmation item. The question, the chosen decision, elaboration, and the AI rationale.
+  // One confirmation item. The question, the chosen decision, elaboration, (with a package) the vision.md lines it became,
+  // and the AI rationale.
   // Drawn by a function, not a component — a component defined inside render is a new type every time, so the list
   // would remount.
   const renderItem = (c: Confirmation) => {
@@ -125,6 +134,11 @@ export function SupplementForm({
             <span className="mr-1.5 text-slate-400">{t("handoff.supp.confirm.remark")}</span>{c.remark}
           </p>
         )}
+        {view.has_package && c.in_vision.map((line) => (
+          <p key={line} className="mt-0.5 text-xs text-violet-800">
+            <span className="mr-1.5 text-violet-400">{t("handoff.supp.confirm.visionLine")}</span>{line}
+          </p>
+        ))}
         {c.note && (
           <p className="mt-0.5 text-[11px] text-slate-400">{t("handoff.supp.confirm.note")}: {c.note}</p>
         )}
@@ -297,6 +311,38 @@ export function SupplementForm({
             <span className="text-xs font-normal text-slate-500">{t("handoff.supp.confirm.optional")}</span>
           </h4>
           <p className="mb-2.5 text-xs text-slate-500">{t("handoff.supp.confirm.hint")}</p>
+          {view.has_package ? (
+            <>
+              {scope.length > 0 && (
+                <>
+                  <h5 className="mt-1 text-[13px] font-semibold text-amber-800">
+                    {t("handoff.supp.confirm.scope").replace("{n}", String(scope.length))}
+                  </h5>
+                  <p className="mb-1.5 text-xs text-amber-800">{t("handoff.supp.confirm.scopeHint")}</p>
+                  <ul className="mb-3 bg-white border border-amber-300 rounded-xl">
+                    {scope.map(renderItem)}
+                  </ul>
+                </>
+              )}
+              <h5 className="mt-1 mb-1.5 text-[13px] font-semibold text-slate-900">
+                {t("handoff.supp.confirm.inVision").replace("{n}", String(inVision.length))}
+              </h5>
+              {inVision.length > 0 ? (
+                <ul className="mb-3 bg-white border border-violet-200 rounded-xl">
+                  {inVision.map(renderItem)}
+                </ul>
+              ) : (
+                <p className="mb-3 text-xs text-slate-500">{t("handoff.supp.confirm.inVisionNone")}</p>
+              )}
+              {restCount > 0 && (
+                <h5 className="mb-1.5 text-[13px] font-semibold text-slate-700">
+                  {t("handoff.supp.confirm.rest").replace("{n}", String(restCount))}
+                </h5>
+              )}
+            </>
+          ) : (
+            <p className="mb-2 text-xs text-violet-700">{t("handoff.supp.confirm.noPackage")}</p>
+          )}
           {/* Collapsed by stage. Confirmation is not a to-do; it is where you pick the decisions you want to look into. */}
           {stages.map(([stage, items]) => (
             <details key={stage} className="mb-2 bg-white border border-slate-200 rounded-xl">
