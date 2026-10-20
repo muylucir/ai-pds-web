@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -120,11 +120,16 @@ const VIEW: SupplementView = {
     { key: `${STRATEGY}#1`, file: STRATEGY, number: 1, ask: "수익 모델은?", answer: "A: 첫 해는 할인",
       stage: "product_strategy", choices: ["구독형 — 매장 수 기준 월 과금"],
       note: "Discovery 결과 기반 제안", remark: "첫 해는 할인", confirmed_at: null,
-      in_vision: [], in_scope: false },
+      in_vision: [], in_scope: false, multi_select: false,
+      options: [{ letter: "A", text: "구독형 — 매장 수 기준 월 과금", is_other: false, recommended: false },
+                { letter: "B", text: "건별 과금", is_other: false, recommended: false },
+                { letter: "X", text: "기타", is_other: true, recommended: false }] },
     { key: `${D}envision/prfaq-clarifying-questions.md#1`, file: `${D}envision/prfaq-clarifying-questions.md`,
       number: 1, ask: "제품명은?", answer: "A", stage: "envision",
       choices: ["샘플몰 안전ON"], note: "페인 포인트 분석 기반 제안", remark: "", confirmed_at: "t",
-      in_vision: [], in_scope: false,
+      in_vision: [], in_scope: false, multi_select: false,
+      options: [{ letter: "A", text: "샘플몰 안전ON", is_other: false, recommended: false },
+                { letter: "B", text: "안전ON", is_other: false, recommended: false }],
     },
   ],
   open_questions: [],
@@ -134,7 +139,7 @@ const VIEW: SupplementView = {
 
 describe("SupplementForm", () => {
   it("has no prefilled AI answers — only what the PM wrote", () => {
-    render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
+    render(<SupplementForm view={VIEW} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     const why = screen.getByLabelText("이 문제를 왜 지금 풀어야 하나요?");
     expect(why).toHaveValue("");
@@ -143,7 +148,7 @@ describe("SupplementForm", () => {
 
   it("saves unknown, confirmations and keeps superseded answers on record", async () => {
     const onSave = vi.fn();
-    render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
+    render(<SupplementForm view={VIEW} busy={false} message={null}
                            onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     const cards = screen.getAllByRole("checkbox");
     await userEvent.click(cards[2]); // failure factor: "모름" (don't know)
@@ -162,7 +167,7 @@ describe("SupplementForm", () => {
 
   it("shows the decision itself, grouped by Discovery stage", () => {
     // Observed (ws-g): 40 confirmation items showed only as "고른 답: A · strategy-questions.md" (chosen answer: A · ...).
-    render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
+    render(<SupplementForm view={VIEW} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     expect(screen.getByText("구독형 — 매장 수 기준 월 과금")).toBeInTheDocument();
     expect(screen.getByText("첫 해는 할인")).toBeInTheDocument();
@@ -186,7 +191,7 @@ describe("SupplementForm", () => {
         third,
       ],
     };
-    render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
+    render(<SupplementForm view={view} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     const headings = screen.getAllByRole("heading", { level: 5 }).map((el) => el.textContent);
     expect(headings).toEqual(["첫 출시 범위·성공 지표가 된 AI 제안 1건", "vision.md에 들어간 그 밖의 AI 제안 1건",
@@ -199,23 +204,30 @@ describe("SupplementForm", () => {
   });
 
   it("counts only the gap questions as progress — confirming is optional", () => {
-    render(<SupplementForm view={VIEW} workspaceHref="/w" busy={false} message={null}
+    render(<SupplementForm view={VIEW} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     expect(screen.getByText(/^1 \/ 3 답함/)).toBeInTheDocument();
     expect(screen.getByText("선택")).toBeInTheDocument();
   });
 
-  it("sends the workspace as the only way to change content", () => {
-    render(<SupplementForm view={VIEW} workspaceHref="/projects/p/workspace" busy={false} message={null}
+  it("changes a kept AI suggestion by asking the question again, not by a chat request", async () => {
+    // Observed (ws-o, ws-g): asked in chat, one agent left the [Answer] tag alone (the web owns it) and the ledger contradicted
+    // the rewritten document; the other edited it against the rule. The tab now asks the question again and the web writes it.
+    const onRevise = vi.fn();
+    render(<SupplementForm view={VIEW} busy={false} message={null}
+                           onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} onRevise={onRevise} />);
+    const item = screen.getByText("수익 모델은?").closest("li")!;
+    await userEvent.click(within(item).getByRole("button", { name: "답 바꾸기" }));
+    const submit = within(item).getByRole("button", { name: "바꾸고 워크스페이스로" });
+    expect(submit).toBeDisabled();   // still the same answer
+    await userEvent.click(within(item).getByRole("radio", { name: /건별 과금/ }));
+    await userEvent.click(submit);
+    expect(onRevise).toHaveBeenCalledWith(expect.objectContaining({ key: `${STRATEGY}#1` }), "B");
+    // Without a handler (no way to change it), the item offers no change action.
+    cleanup();
+    render(<SupplementForm view={VIEW} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
-    const links = screen.getAllByRole("link", { name: "워크스페이스에서 고치기 →" });
-    for (const link of links) {
-      expect(link.getAttribute("href")).toMatch(/^\/projects\/p\/workspace\?draft=/);
-    }
-    // The draft names the decision, so the PM does not have to find the question file and number again.
-    const draft = new URL(links[0].getAttribute("href")!, "http://x").searchParams.get("draft");
-    expect(draft).toBe("envision/prfaq-clarifying-questions.md Q1의 답을 바꾸고 싶어.\n질문: 제품명은?\n"
-      + "지금 답(AI 제안을 그대로 받은 것): 샘플몰 안전ON\n이 답을 쓰는 Discovery 문서도 같이 고쳐 줘.\n바꿀 답: ");
+    expect(screen.queryByRole("button", { name: "답 바꾸기" })).not.toBeInTheDocument();
   });
 
   it("drops blank answers from the update", () => {
@@ -245,7 +257,7 @@ describe("SupplementForm — what the last open decisions left to the PM", () =>
   };
 
   it("asks the open PM decisions with no prefilled answer and counts them as progress", () => {
-    render(<SupplementForm view={OPEN} workspaceHref="/w" busy={false} message={null}
+    render(<SupplementForm view={OPEN} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     expect(screen.getByText("빌드 전에 정할 PM 결정 2개")).toBeInTheDocument();
     expect(screen.getByLabelText(/법무 결론: 보존 기간/)).toHaveValue("");
@@ -256,7 +268,7 @@ describe("SupplementForm — what the last open decisions left to the PM", () =>
 
   it("saves open answers with their question, and keeps the earlier ones on record", async () => {
     const onSave = vi.fn();
-    render(<SupplementForm view={OPEN} workspaceHref="/w" busy={false} message={null}
+    render(<SupplementForm view={OPEN} busy={false} message={null}
                            onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     await userEvent.click(within(screen.getByLabelText(/법무 결론/).closest("div")!).getByRole("checkbox"));
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
@@ -287,7 +299,7 @@ describe("SupplementForm — what the last open decisions left to the PM", () =>
 
   it("offers grounded options with nothing preselected, and folds decisions that can wait", async () => {
     const onSave = vi.fn();
-    render(<SupplementForm view={TRIAGED} workspaceHref="/w" busy={false} message={null}
+    render(<SupplementForm view={TRIAGED} busy={false} message={null}
                            onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     const retention = screen.getByRole("radiogroup", { name: /보존 기간은/ });
     const radios = within(retention).getAllByRole("radio");
@@ -318,7 +330,7 @@ describe("SupplementForm — what the last open decisions left to the PM", () =>
       { ...TRIAGED.open_questions[1],
         answer: { question: "권한 범위는? (R-16)", text: "본사 안전팀만", unknown: false, updated_at: "t", pending_with: "" } },
     ] };
-    render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
+    render(<SupplementForm view={view} busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     expect(within(screen.getByRole("radiogroup", { name: /보존 기간은/ }))
       .getByRole("radio", { name: /5년/ })).toBeChecked();
@@ -334,7 +346,7 @@ describe("SupplementForm — what the last open decisions left to the PM", () =>
       { key: "open:gggggggggggg", id: "O-01", question: "전자 기록의 증빙 효력은? (C-01)", answer: null,
         until: "", external: true, options: [] },
     ] };
-    render(<SupplementForm view={view} workspaceHref="/w" busy={false} message={null}
+    render(<SupplementForm view={view} busy={false} message={null}
                            onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
     expect(screen.getByText("외부 확인")).toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();

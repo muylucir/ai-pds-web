@@ -39,8 +39,9 @@ WEB_INPUT_HEADINGS = {"ko": "사용자 입력 (AI-PDS Web 기록)",
 _TITLE = "# AI-PLC Audit Log"
 
 _SOURCES = {
-    "ko": {"chat": "채팅", "answers": "질문 답변", "approval": "문서 승인"},
-    "en": {"chat": "chat", "answers": "question answers", "approval": "document approval"},
+    "ko": {"chat": "채팅", "answers": "질문 답변", "approval": "문서 승인", "revision": "답 변경"},
+    "en": {"chat": "chat", "answers": "question answers", "approval": "document approval",
+           "revision": "answer change"},
 }
 
 
@@ -49,7 +50,7 @@ class UserInput:
     """The user input that opened the turn. The route builds it — only the route knows what the user's words are
     (the text of a question-answer turn appends instructions for the agent after the answers)."""
     text: str
-    source: str              # "chat" | "answers" | "approval"
+    source: str              # "chat" | "answers" | "approval" | "revision"
     language: str = "ko"
     detail: str | None = None   # question file name, for an answer turn
 
