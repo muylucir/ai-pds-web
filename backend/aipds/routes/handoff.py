@@ -12,8 +12,13 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 import aipds.app as app_module
+from aipds.agent import prompts
+from aipds.answer_summary import answer_summary
+from aipds.audit_log import UserInput
 from aipds.handoff import package, readiness, supplement
+from aipds.parsers.questions import parse_question_file
 from aipds.routes.deps import ensure_workspace
+from aipds.routes.turns import ensure_idle, start_turn
 
 router = APIRouter()
 
@@ -66,6 +71,53 @@ async def get_handoff_supplement(pid: str):
     state = await _readiness(pid)
     s3 = app_module.s3_store_factory(pid)
     return await _view(pid, s3, state, await supplement.load(s3))
+
+
+class ReviseBody(BaseModel):
+    #: Workspace path of the question file (`aiplc-docs/discovery/…-questions.md`).
+    file: str
+    number: int
+    #: The new value, in the question form's contract (`"B"`, `"B: note"`, `"A,C"`, free text for Other).
+    answer: str
+
+
+@router.post("/projects/{pid}/handoff/revise")
+async def revise_answer(pid: str, body: ReviseBody):
+    """Changes the answer to a question a finished stage settled, then starts the turn that carries the change through.
+
+    The `[Answer]:` tags are the web's to write, so the change goes through here, by the same path as the question form
+    (`Workspace.put_answers`) — a change asked for in chat had nowhere to land: one agent kept the rule and left the old answer,
+    another broke it (prompts.answer_revised). The agent then handles what relies on the answer, by the upstream procedure.
+
+    Only an answered Discovery question file is accepted, and only a different answer: the endpoint changes decisions, it does not
+    answer open rounds — those stay the question form's. A running turn is refused with 409 before the file is touched.
+    """
+    name = body.file
+    if not (name.startswith("aiplc-docs/discovery/") and name.endswith("-questions.md")):
+        raise HTTPException(status_code=400, detail="not a discovery question file")
+    answer = body.answer.strip()
+    if not answer:
+        raise HTTPException(status_code=400, detail="empty answer")
+    ws = await ensure_workspace(pid)
+    ensure_idle(ws)
+    try:
+        before = parse_question_file(name.rsplit("/", 1)[-1], await ws.runner.read_file(name))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="question file not found")
+    old = next((q.answer for q in before.questions if q.number == body.number), None)
+    if not (old or "").strip():
+        raise HTTPException(status_code=409, detail="question not answered")
+    if old.strip() == answer:
+        raise HTTPException(status_code=400, detail="answer unchanged")
+    after = await ws.put_answers(name, {body.number: answer})
+    language = app_module.project_language(pid)
+    old_summary = answer_summary(before, {body.number: old.strip()}, language)
+    new_summary = answer_summary(after, {body.number: answer}, language)
+    text = prompts.answer_revised(language, name, old_summary, new_summary)
+    record = UserInput(text=prompts.revision_change(language, old_summary, new_summary),
+                       source="revision", language=language, detail=name.rsplit("/", 1)[-1])
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(text, record))
+    return {"turn_id": job.id}
 
 
 @router.put("/projects/{pid}/handoff/supplement", response_model=supplement.SupplementView)
