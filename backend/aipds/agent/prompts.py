@@ -458,3 +458,37 @@ def answers_resumed(language: str, lines: str, record: str) -> str:
     return ("[질문 답변] 앞서 드린 질문에 사용자가 답했습니다. "
             "이 답변을 반영해 이어서 진행해 주세요.\n"
             f"{lines}\n(답변 기록)\n{record}")
+
+
+# ---- What a person sees of a turn text ----
+
+def _shapes() -> list[tuple[str, str, bool]]:
+    """(head, start of the agent-facing tail, whether the head is shown) for each turn text the backend builds around a
+    person's input. Derived by building each text around placeholders, so a wording change here cannot leave `shown_text`
+    reading an old shape."""
+    shapes: list[tuple[str, str, bool]] = []
+    for language in ("ko", "en"):
+        answered = file_answers_recorded(language, "\x00P", "\x00S")
+        head, tail = answered.split("\x00S")
+        shapes.append((head, tail.split("\x00P")[0], False))
+        revised = answer_revised(language, "\x00P", "\x00B", "\x00A")
+        shapes.append((revised.split("\x00B")[0], revised.split("\x00A")[1].split("\x00P")[0], True))
+    return shapes
+
+
+_SHAPES = _shapes()
+
+
+def shown_text(text: str) -> str:
+    """The part of a turn text that is the person's: the answers (`file_answers_recorded`) or the change (`answer_revised`),
+    without the instructions that follow for the agent. Other text — what someone typed in chat — comes back as it is.
+
+    The live bubble already shows only that part (the screen draws the answer summary, and a turn started from another screen
+    shows the turn's input), so restoring history with the whole text made the same turn read differently after a refresh,
+    instructions included.
+    """
+    for head, tail, keep_head in _SHAPES:
+        if text.startswith(head) and tail in text[len(head):]:
+            end = text.index(tail, len(head))
+            return text[:end] if keep_head else text[len(head):end]
+    return text

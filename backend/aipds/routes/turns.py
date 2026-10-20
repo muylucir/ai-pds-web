@@ -38,7 +38,8 @@ def _redacted(event: AgentEvent) -> AgentEvent:
 
 
 def start_turn(ws: Workspace, kind: str,
-               events: Callable[[], AsyncIterator[AgentEvent]]) -> TurnJob:
+               events: Callable[[], AsyncIterator[AgentEvent]],
+               input_text: str | None = None) -> TurnJob:
     """Start a turn as a server job. 409 if a turn is running -- the body carries that turn's id.
 
     Why the 409 carries the id: what the rejected side should do is not "send again"
@@ -47,9 +48,13 @@ def start_turn(ws: Workspace, kind: str,
 
     Other routes (answer files, approval) also open turns through this -- so the shape
     of the 409 does not differ by path.
+
+    `input_text` is what the person sent, as their bubble shows it (the audit record's text). `GET /turn` returns it, so a
+    screen that attaches to a turn another screen started — the workspace after an approval or an answer change on the
+    handoff tab — draws that bubble first instead of an AI reply to nothing.
     """
     try:
-        return ws.turns.start(kind, events)
+        return ws.turns.start(kind, events, input_text=input_text)
     except TurnBusy as busy:
         raise HTTPException(status_code=409, detail={
             "code": "turn_in_progress", "turn_id": busy.job.id})
@@ -102,7 +107,7 @@ async def create_turn(pid: str, body: MessageBody):
     ws = await ensure_workspace(pid)
     record = UserInput(text=body.text, source="chat",
                        language=app_module.project_language(pid))
-    job = start_turn(ws, "message", lambda: ws.runner.send_message(body.text, record))
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(body.text, record), record.text)
     return {"turn_id": job.id}
 
 
@@ -156,7 +161,7 @@ async def create_answers_turn(pid: str, body: AnswersBody):
     text = "\n".join(f"{question} → {answer}" for question, answer in body.answers.items())
     record = UserInput(text=text, source="answers",
                        language=app_module.project_language(pid))
-    job = start_turn(ws, "answers", lambda: ws.runner.send_answers(body.answers, record))
+    job = start_turn(ws, "answers", lambda: ws.runner.send_answers(body.answers, record), record.text)
     return {"turn_id": job.id}
 
 

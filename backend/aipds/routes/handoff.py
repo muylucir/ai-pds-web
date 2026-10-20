@@ -116,7 +116,7 @@ async def revise_answer(pid: str, body: ReviseBody):
     text = prompts.answer_revised(language, name, old_summary, new_summary)
     record = UserInput(text=prompts.revision_change(language, old_summary, new_summary),
                        source="revision", language=language, detail=name.rsplit("/", 1)[-1])
-    job = start_turn(ws, "message", lambda: ws.runner.send_message(text, record))
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(text, record), record.text)
     return {"turn_id": job.id}
 
 
