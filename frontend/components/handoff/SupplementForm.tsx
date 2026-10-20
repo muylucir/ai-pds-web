@@ -148,13 +148,23 @@ export function SupplementForm({
                     on ? "bg-sky-50 border-sky-200 text-sky-700 font-bold" : "border-slate-300 text-slate-600"}`}>
             {on ? t("handoff.supp.confirm.confirmed") : t("handoff.supp.confirm.yes")}
           </button>
-          <Link href={workspaceHref} className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
+          <Link href={`${workspaceHref}?draft=${encodeURIComponent(reviseDraft(c))}`}
+                className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
             {t("handoff.supp.confirm.revise")}
           </Link>
         </div>
       </li>
     );
   };
+
+  // The chat draft for changing one decision — the same ?draft= handoff as the review screen's change request. Without it the PM
+  // arrived in the workspace with nothing to say which decision, and had to find the question file and number again. The new
+  // answer goes last, where the PM types; nothing is sent until the PM sends it.
+  const reviseDraft = (c: Confirmation) => t("handoff.supp.confirm.reviseDraft")
+    .replace("{file}", c.file.replace(/^aiplc-docs\/discovery\//, ""))
+    .replace("{number}", String(c.number))
+    .replace("{ask}", c.ask)
+    .replace("{answer}", c.choices.length ? c.choices.join(" / ") : c.answer);
 
   // One answer field. With options, it is one of the options · enter my own · don't know; without, a blank field and don't know.
   const renderAnswer = (id: string, label: ReactNode, hint: string | null,
