@@ -265,6 +265,23 @@ export function SupplementForm({
     if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
+  // "전부 맞다" for one group. An unconfirmed AI suggestion keeps its mark in vision.md and the ledger, and the development
+  // side is told to ask the PM again about those — dozens of one-by-one clicks stood between the PM and saying "I agree with
+  // these". It sits right above the group's items (inside a stage only once it is opened), so it confirms what is on screen;
+  // each item can still be undone, and nothing is recorded until saved.
+  const renderConfirmAll = (items: Confirmation[]) => {
+    const left = items.filter((c) => !confirmed.has(c.key)).length;
+    return (
+      <div className="flex justify-end px-4 py-1.5">
+        <button type="button" disabled={left === 0}
+                onClick={() => setConfirmed((s) => new Set([...s, ...items.map((c) => c.key)]))}
+                className="px-2.5 py-1 rounded-lg border border-sky-200 text-xs text-sky-700 disabled:opacity-45">
+          {left === 0 ? t("handoff.supp.confirm.allDone")
+            : t("handoff.supp.confirm.all").replace("{n}", String(left))}
+        </button>
+      </div>
+    );
+  };
 
   return (
     <section className="max-w-[960px]">
@@ -349,18 +366,20 @@ export function SupplementForm({
                     {t("handoff.supp.confirm.scope").replace("{n}", String(scope.length))}
                   </h5>
                   <p className="mb-1.5 text-xs text-amber-800">{t("handoff.supp.confirm.scopeHint")}</p>
-                  <ul className="mb-3 bg-white border border-amber-300 rounded-xl">
-                    {scope.map(renderItem)}
-                  </ul>
+                  <div className="mb-3 bg-white border border-amber-300 rounded-xl">
+                    {renderConfirmAll(scope)}
+                    <ul>{scope.map(renderItem)}</ul>
+                  </div>
                 </>
               )}
               <h5 className="mt-1 mb-1.5 text-[13px] font-semibold text-slate-900">
                 {t("handoff.supp.confirm.inVision").replace("{n}", String(inVision.length))}
               </h5>
               {inVision.length > 0 ? (
-                <ul className="mb-3 bg-white border border-violet-200 rounded-xl">
-                  {inVision.map(renderItem)}
-                </ul>
+                <div className="mb-3 bg-white border border-violet-200 rounded-xl">
+                  {renderConfirmAll(inVision)}
+                  <ul>{inVision.map(renderItem)}</ul>
+                </div>
               ) : (
                 <p className="mb-3 text-xs text-slate-500">{t("handoff.supp.confirm.inVisionNone")}</p>
               )}
@@ -383,6 +402,7 @@ export function SupplementForm({
                     .replace("{done}", String(items.filter((c) => confirmed.has(c.key)).length))}
                 </span>
               </summary>
+              {renderConfirmAll(items)}
               <ul>
                 {items.map(renderItem)}
               </ul>
