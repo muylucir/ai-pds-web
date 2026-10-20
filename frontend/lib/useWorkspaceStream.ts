@@ -283,7 +283,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
 
   // Function that attaches to a running turn. runTurn calls it to show that turn when it gets a
   // 409 (another turn is running), and since the two reference each other, they are linked via a ref.
-  const attachRef = useRef<(turnId: string) => void>(() => {});
+  const attachRef = useRef<(turnId: string, input?: string | null) => void>(() => {});
 
   // Streams one turn to the screen. `opener` opens the first connection, and when it drops we
   // reattach to **the same turn** from the last seq received.
@@ -408,16 +408,21 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
     [applyEvent, patchAi, projectId, t],
   );
 
-  // Attach to a running turn — replay from the start (`after=0`) to refill the bubbles.
+  // Attach to a running turn — replay from the start (`after=0`) to refill the bubbles. With the turn's input, its bubble
+  // comes first: a turn another screen started (approval, an answer change on the handoff tab) otherwise showed an AI reply
+  // to nothing until a refresh restored the person's side from the transcript. Not added when history already ends with it.
   const attach = useCallback(
-    (turnId: string) => {
+    (turnId: string, input?: string | null) => {
       if (stopRef.current) return;
       liveTurnStartedRef.current = true;
       const aiId = nextId();
-      setItems((prev) => [
-        ...prev,
-        { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null },
-      ]);
+      setItems((prev) => {
+        const lastUser = [...prev].reverse().find((i) => i.role === "user");
+        const user: ChatItem[] = input && lastUser?.text !== input
+          ? [{ id: nextId(), role: "user", text: input }] : [];
+        return [...prev, ...user,
+          { id: aiId, role: "ai", text: "", trace: [], streaming: true, error: null }];
+      });
       runTurn((handlers) => watchTurn(projectId, turnId, 0, handlers), aiId, turnId);
     },
     [projectId, runTurn],
@@ -549,7 +554,12 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
           const restored = h.map((it) => historyItemToChatItem(it, nextId()));
           // A live turn may have started while history was in flight — history
           // strictly precedes it chronologically, so prepend rather than replace.
-          return liveTurnStartedRef.current ? [...restored, ...prev] : restored;
+          if (!liveTurnStartedRef.current) return restored;
+          // An attached turn's input bubble may already be the last person's line of history — keep one.
+          const lastUser = [...restored].reverse().find((i) => i.role === "user");
+          const firstLive = prev.find((i) => i.role === "user");
+          const live = firstLive && lastUser?.text === firstLive.text ? prev.filter((i) => i !== firstLive) : prev;
+          return [...restored, ...live];
         });
       })
       .catch(() => {}) // degraded, not broken: items stays at its initial value
@@ -572,7 +582,7 @@ export function useWorkspaceStream(projectId: string, initial: ChatItem[] = []):
       .then((turn) => {
         if (cancelled || !turn || stopRef.current) return;
         if (turn.state === "running") {
-          attachRef.current(turn.turn_id);
+          attachRef.current(turn.turn_id, turn.input);
         } else if (turn.state === "interrupted") {
           liveTurnStartedRef.current = true;
           setItems((prev) => [

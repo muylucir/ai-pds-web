@@ -1025,3 +1025,36 @@ describe("useWorkspaceStream — 쓰고 있는 파일", () => {
     expect(result.current.activeDoc).toBeNull();
   });
 });
+
+describe("useWorkspaceStream — a turn another screen started", () => {
+  // Observed (2026-10-20): after an answer change on the handoff tab moved to the workspace, the AI replied to nothing
+  // until a refresh restored the person's side from the transcript. The turn now carries its input.
+  const input = "앞서 답한 질문의 답을 바꿨습니다.\n\n이전 답:\nQ10\n→ A\n\n바꾼 답:\nQ10\n→ B";
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(client.getTurn).mockResolvedValue({ ...running(), input });
+    vi.mocked(sse.watchTurn).mockImplementation((_pid: any, _turn: any, _after: any, handlers: any) => {
+      handlers.onEvent(msg("영향을 평가합니다"), 2);
+      handlers.onEvent(done, 3);
+      handlers.onDone();
+      return () => {};
+    });
+  });
+
+  it("shows the person's input before the reply it attaches to", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([]);
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    expect(result.current.items.map((i) => i.role)).toEqual(["user", "ai"]);
+    const user = result.current.items[0];
+    expect(user.role === "user" && user.text).toBe(input);
+  });
+
+  it("keeps one bubble when history already ends with that input", async () => {
+    vi.mocked(client.getHistory).mockResolvedValue([{ role: "user", text: "이전 채팅" }, { role: "user", text: input }] as any);
+    const { result } = renderHook(() => useWorkspaceStream("p1"));
+    await act(async () => {});
+    const users = result.current.items.filter((i) => i.role === "user" && i.text === input);
+    expect(users).toHaveLength(1);
+  });
+});
