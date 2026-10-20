@@ -704,6 +704,8 @@ export const ko = {
   "handoff.stage.go_to_market": "출시 준비(GTM)",
   "handoff.stage.other": "기타",
   "handoff.supp.confirm.yes": "맞다",
+  "handoff.supp.confirm.all": "아래 {n}건 전부 맞다",
+  "handoff.supp.confirm.allDone": "모두 확인함",
   "handoff.supp.confirm.confirmed": "확인함",
   "handoff.supp.confirm.revise": "답 바꾸기",
   "handoff.supp.confirm.reviseHint": "다른 답을 고르면 질문 파일에 그 답을 기록하고, 워크스페이스에서 AI가 이 답에 기대는 문서를 고칩니다. 새 답만으로 정할 수 없는 것은 다시 묻고, 고친 문서는 다시 승인받습니다.",
