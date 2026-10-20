@@ -661,6 +661,7 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.supp.confirm.yes": "Correct",
   "handoff.supp.confirm.confirmed": "Confirmed",
   "handoff.supp.confirm.revise": "Change it in the workspace →",
+  "handoff.supp.confirm.reviseDraft": "I want to change the answer to {file} Q{number}.\nQuestion: {ask}\nCurrent answer (an AI suggestion I kept): {answer}\nPlease update the Discovery documents that use this answer too.\nNew answer: ",
   "handoff.supp.save": "Save",
   "handoff.supp.saveAndGenerate": "Save and generate",
   "handoff.supp.saved": "Saved.",
