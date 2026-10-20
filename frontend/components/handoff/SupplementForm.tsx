@@ -7,10 +7,10 @@
 // options grounded in the sources without a recommendation, and the screen preselects nothing. With no options, it is a
 // blank field. Either way, there are "직접 입력" (enter my own) and "모름" (don't know).
 //
-// Confirming does not change content. The only way to change it is the workspace — letting it be edited here would leave
-// the same decision recorded differently in two places: the Discovery artifacts and the supplementary answers.
+// Confirming does not change content. Changing an AI suggestion the PM kept goes to where the decision lives — the question
+// file's `[Answer]:` tag, which the web writes — and the agent then carries it through the documents (routes/handoff.revise_answer).
+// It is not kept here as a second record: the same decision recorded differently in two places is what that path avoids.
 "use client";
-import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 import { STAGE_ORDER } from "@/lib/api/handoff";
 import type {
@@ -19,6 +19,7 @@ import type {
 } from "@/lib/api/handoff";
 import type { Dict } from "@/lib/i18n";
 import { useT } from "@/lib/i18n/provider";
+import { QuestionCard } from "@/components/questions/QuestionCard";
 import { sectionLabel } from "./ReadinessPanel";
 
 /** `custom` is screen state — "직접 입력" was chosen on a question with options. It is not saved.
@@ -68,20 +69,26 @@ export function toUpdate(view: SupplementView, draft: Draft, confirmed: Set<stri
 }
 
 export function SupplementForm({
-  view, workspaceHref, busy, message, onSave, onSaveAndGenerate, onBack, readOnly = false,
+  view, busy, message, onSave, onSaveAndGenerate, onBack, onRevise, readOnly = false,
 }: {
   view: SupplementView;
-  workspaceHref: string;
   busy: boolean;
   message: string | null;
   onSave: (update: SupplementUpdate) => void;
   onSaveAndGenerate: (update: SupplementUpdate) => void;
   onBack: () => void;
+  /** Changes a settled answer (the server writes it to the question file and starts the turn that carries it through). The
+   *  web owns the `[Answer]:` tags, so this — not a chat request — is how a decision changes; without it the item has no
+   *  change action. */
+  onRevise?: (c: Confirmation, answer: string) => void;
   /** Viewing member. Answers are visible but cannot be edited. */
   readOnly?: boolean;
 }) {
   const t = useT();
   const [draft, setDraft] = useState<Draft>(() => initialDraft(view));
+  // The AI-suggestion item whose answer is being changed, and the answer picked so far.
+  const [revising, setRevising] = useState<string | null>(null);
+  const [next, setNext] = useState("");
   const [confirmed, setConfirmed] = useState<Set<string>>(
     () => new Set(view.confirmations.filter((c) => c.confirmed_at).map((c) => c.key)));
 
@@ -148,23 +155,36 @@ export function SupplementForm({
                     on ? "bg-sky-50 border-sky-200 text-sky-700 font-bold" : "border-slate-300 text-slate-600"}`}>
             {on ? t("handoff.supp.confirm.confirmed") : t("handoff.supp.confirm.yes")}
           </button>
-          <Link href={`${workspaceHref}?draft=${encodeURIComponent(reviseDraft(c))}`}
-                className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
-            {t("handoff.supp.confirm.revise")}
-          </Link>
+          {onRevise && (
+            <button type="button" aria-expanded={revising === c.key}
+                    onClick={() => { setRevising(revising === c.key ? null : c.key); setNext(c.answer); }}
+                    className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
+              {t("handoff.supp.confirm.revise")}
+            </button>
+          )}
         </div>
+        {revising === c.key && onRevise && (
+          <div className="mt-2.5 p-3 rounded-lg bg-slate-50 border border-slate-200">
+            <p className="mb-2 text-xs text-slate-600">{t("handoff.supp.confirm.reviseHint")}</p>
+            <QuestionCard question={{ number: c.number, category: null, text: c.ask, options: c.options,
+                                      answer: c.answer, multi_select: c.multi_select }}
+                          value={next} onChange={setNext} />
+            <div className="mt-2 flex justify-end gap-1.5">
+              <button type="button" onClick={() => setRevising(null)}
+                      className="px-2.5 py-1 rounded-lg border border-slate-300 text-xs text-slate-600">
+                {t("handoff.supp.confirm.reviseCancel")}
+              </button>
+              <button type="button" disabled={busy || !next.trim() || next.trim() === c.answer.trim()}
+                      onClick={() => onRevise(c, next.trim())}
+                      className="px-2.5 py-1 rounded-lg bg-violet-600 text-white text-xs font-bold disabled:opacity-45">
+                {t("handoff.supp.confirm.reviseSubmit")}
+              </button>
+            </div>
+          </div>
+        )}
       </li>
     );
   };
-
-  // The chat draft for changing one decision — the same ?draft= handoff as the review screen's change request. Without it the PM
-  // arrived in the workspace with nothing to say which decision, and had to find the question file and number again. The new
-  // answer goes last, where the PM types; nothing is sent until the PM sends it.
-  const reviseDraft = (c: Confirmation) => t("handoff.supp.confirm.reviseDraft")
-    .replace("{file}", c.file.replace(/^aiplc-docs\/discovery\//, ""))
-    .replace("{number}", String(c.number))
-    .replace("{ask}", c.ask)
-    .replace("{answer}", c.choices.length ? c.choices.join(" / ") : c.answer);
 
   // One answer field. With options, it is one of the options · enter my own · don't know; without, a blank field and don't know.
   const renderAnswer = (id: string, label: ReactNode, hint: string | null,

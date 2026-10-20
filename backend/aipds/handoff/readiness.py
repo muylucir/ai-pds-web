@@ -24,7 +24,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from aipds.models import Question
+from aipds.models import Question, QuestionOption
 from aipds.parsers.doc_references import missing_references
 from aipds.parsers.questions import parse_question_file
 from aipds.proto import layout
@@ -133,6 +133,9 @@ class AcceptedSuggestion(BaseModel):
     note: str = ""
     #: The remark in `"A: note"` — what the PM added to the option.
     remark: str = ""
+    #: The question's options, so the handoff tab can ask it again when the PM changes the answer.
+    options: list[QuestionOption] = []
+    multi_select: bool = False
 
 
 class AiDefaults(BaseModel):
@@ -317,7 +320,8 @@ def _ai_defaults(contents: Mapping[str, str]) -> AiDefaults:
                     file=path, number=question.number,
                     ask=question.ask or question.text, answer=question.answer,
                     stage=stage_of(path), choices=choices, note=note,
-                    remark=_remark(question.answer or "")))
+                    remark=_remark(question.answer or ""),
+                    options=question.options, multi_select=question.multi_select))
     return AiDefaults(answered=answered, suggested=suggested,
                       accepted=len(items), items=items)
 

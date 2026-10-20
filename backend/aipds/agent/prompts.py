@@ -223,6 +223,41 @@ def file_answers_recorded(language: str, path: str, summary: str) -> str:
             f"읽고 멈춘 지점부터 이어가 주세요. 다시 묻지 마세요.")
 
 
+def answer_revised(language: str, path: str, before: str, after: str) -> str:
+    """Text of the turn that follows a changed answer — the PM picked another answer on the handoff tab for a question a finished
+    stage had already settled.
+
+    **The web writes the answer; the agent handles the change.** The `[Answer]:` tags are AI-PDS Web's to fill (discovery-config/
+    CLAUDE.md), so a change asked for in chat had nowhere to land — observed (ws-o, ws-g, 2026-10-20): from the same request one agent
+    kept the rule and left the old answer (the decision ledger then contradicted the document it had just rewritten), the other broke
+    it and edited the tag. Now the tag is written before this turn, by the same path as the question form, and this text hands the
+    rest to the upstream procedure for changing a finished stage (`common/workflow-changes.md`) — what ws-g's agent did on its own:
+    find what relies on the answer, ask what the new answer alone does not settle, update, and get the changed documents approved again.
+
+    Like `file_answers_recorded`, it stays as the user's bubble, so the change itself comes first and the instructions form the tail.
+    """
+    if _lang(language) == "en":
+        return (f"{revision_change(language, before, after)}\n\n"
+                f"The new answer is already in the `[Answer]:` tag of `{path}` — AI-PDS Web wrote it; do not write it "
+                "again. Handle it as a change to a finished stage (`common/workflow-changes.md`): find the documents and "
+                "stages that rely on this answer and say what changes; do not guess what the new answer alone does not "
+                "settle — ask it in a question file; update the documents; have the changed documents approved again; "
+                "and record the change in `audit.md`.")
+    return (f"{revision_change(language, before, after)}\n\n"
+            f"바꾼 답은 `{path}`의 `[Answer]:` 태그에 이미 기록됐습니다 — AI-PDS Web이 썼으니 다시 쓰지 마세요. "
+            "끝난 단계를 바꾸는 절차(`common/workflow-changes.md`)대로 처리해 주세요: 이 답에 기대는 문서와 단계를 찾아 "
+            "무엇이 바뀌는지 말하고, 바꾼 답만으로 정할 수 없는 것은 추측하지 말고 질문 파일로 물은 뒤, 문서를 고치고, "
+            "고친 문서를 다시 승인받고, 변경을 `audit.md`에 기록해 주세요.")
+
+
+def revision_change(language: str, before: str, after: str) -> str:
+    """The person-readable head of `answer_revised` — what changed. It is also what the audit log records: the rest is
+    instructions for the agent (the same split as `file_answers_recorded` and its summary)."""
+    if _lang(language) == "en":
+        return f"I changed an answer I gave earlier.\n\nBefore:\n{before}\n\nNow:\n{after}"
+    return f"앞서 답한 질문의 답을 바꿨습니다.\n\n이전 답:\n{before}\n\n바꾼 답:\n{after}"
+
+
 def state_file_missing(language: str) -> str:
     """Pointer appended to the resume turn when `aiplc-state.md` has no Current Stage.
 

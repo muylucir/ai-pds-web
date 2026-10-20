@@ -49,6 +49,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 from aipds.handoff.readiness import Readiness
+from aipds.models import QuestionOption
 from aipds.s3store import S3StoreLike
 
 _log = logging.getLogger("aipds.handoff")
@@ -172,6 +173,9 @@ class ConfirmationView(BaseModel):
     note: str
     remark: str
     confirmed_at: str | None
+    #: The question's options — the tab asks it again with these when the PM changes the answer (routes/handoff.revise_answer).
+    options: list[QuestionOption] = []
+    multi_select: bool = False
     #: The vision.md lines that rely on this decision as an unconfirmed AI suggestion. Empty if vision.md does not (or there is
     #: no package yet).
     in_vision: list[str] = []
@@ -250,6 +254,7 @@ def view(readiness: Readiness, record: Supplement,
             key=key, file=item.file, number=item.number, ask=item.ask,
             answer=item.answer, stage=item.stage, choices=item.choices, note=item.note,
             remark=item.remark, confirmed_at=record.confirmed.get(key),
+            options=item.options, multi_select=item.multi_select,
             in_vision=[c.text for c in citations], in_scope=any(c.scope for c in citations)))
     asked: dict[str, OpenQuestionView] = {}
     deferred: dict[str, OpenQuestionView] = {}

@@ -15,9 +15,9 @@ import { ResetDialog, savedAnswers } from "@/components/handoff/ResetDialog";
 import { SupplementForm } from "@/components/handoff/SupplementForm";
 import {
   archiveFolder, downloadPackage, getPackage, getReadiness, getSupplement, putSupplement, resetHandoff,
-  startPackage,
+  reviseAnswer, startPackage,
 } from "@/lib/api/handoff";
-import type { PackageView, SupplementUpdate } from "@/lib/api/handoff";
+import type { Confirmation, PackageView, SupplementUpdate } from "@/lib/api/handoff";
 import { ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
 import { useProjectMeta } from "@/lib/useProjectModel";
@@ -84,6 +84,21 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
       setMode("status");
     } catch {
       setActionError(t("handoff.generateFailed"));
+    }
+  };
+
+  // Changing a settled answer: the server writes it and starts the turn that carries the change through the documents. The turn
+  // takes minutes, so we move straight to the workspace, which attaches to it (same as approval on the review screen).
+  const revise = async (c: Confirmation, answer: string) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await reviseAnswer(projectId, c.file, c.number, answer);
+      router.push(`/projects/${encodeURIComponent(projectId)}/workspace`);
+    } catch (e) {
+      setMessage(t(e instanceof ApiError && e.status === 409 && e.detail === "turn_in_progress"
+        ? "handoff.supp.confirm.reviseBusy" : "handoff.supp.confirm.reviseFailed"));
+      setBusy(false);
     }
   };
 
@@ -181,12 +196,12 @@ export default function HandoffPage({ params }: { params: Promise<{ projectId: s
           <SupplementForm
             key={JSON.stringify(supplementView)}
             view={supplementView}
-            workspaceHref={`/projects/${projectId}/workspace`}
             busy={busy}
             message={message}
             onSave={(u) => void save(u, false)}
             onSaveAndGenerate={(u) => void save(u, true)}
             onBack={() => setMode("status")}
+            onRevise={(c, answer) => void revise(c, answer)}
             readOnly={readOnly}
           />
         ) : shown === "package" && pkg?.manifest ? (
