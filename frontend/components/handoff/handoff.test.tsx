@@ -208,9 +208,14 @@ describe("SupplementForm", () => {
   it("sends the workspace as the only way to change content", () => {
     render(<SupplementForm view={VIEW} workspaceHref="/projects/p/workspace" busy={false} message={null}
                            onSave={() => {}} onSaveAndGenerate={() => {}} onBack={() => {}} />);
-    for (const link of screen.getAllByRole("link", { name: "워크스페이스에서 고치기 →" })) {
-      expect(link).toHaveAttribute("href", "/projects/p/workspace");
+    const links = screen.getAllByRole("link", { name: "워크스페이스에서 고치기 →" });
+    for (const link of links) {
+      expect(link.getAttribute("href")).toMatch(/^\/projects\/p\/workspace\?draft=/);
     }
+    // The draft names the decision, so the PM does not have to find the question file and number again.
+    const draft = new URL(links[0].getAttribute("href")!, "http://x").searchParams.get("draft");
+    expect(draft).toBe("envision/prfaq-clarifying-questions.md Q1의 답을 바꾸고 싶어.\n질문: 제품명은?\n"
+      + "지금 답(AI 제안을 그대로 받은 것): 샘플몰 안전ON\n이 답을 쓰는 Discovery 문서도 같이 고쳐 줘.\n바꿀 답: ");
   });
 
   it("drops blank answers from the update", () => {
