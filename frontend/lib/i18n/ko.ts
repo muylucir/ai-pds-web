@@ -706,6 +706,7 @@ export const ko = {
   "handoff.supp.confirm.yes": "맞다",
   "handoff.supp.confirm.confirmed": "확인함",
   "handoff.supp.confirm.revise": "워크스페이스에서 고치기 →",
+  "handoff.supp.confirm.reviseDraft": "{file} Q{number}의 답을 바꾸고 싶어.\n질문: {ask}\n지금 답(AI 제안을 그대로 받은 것): {answer}\n이 답을 쓰는 Discovery 문서도 같이 고쳐 줘.\n바꿀 답: ",
   "handoff.supp.save": "저장",
   "handoff.supp.saveAndGenerate": "저장하고 패키지 생성",
   "handoff.supp.saved": "저장했습니다.",
