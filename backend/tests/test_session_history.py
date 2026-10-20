@@ -481,3 +481,29 @@ def test_cli_a_file_round_restores_free_text_verbatim():
         "ko", "aiplc-docs/q.md", {3: written}))])
 
     assert written in items[0].text
+
+
+def test_a_restored_turn_text_shows_only_the_persons_part():
+    """The backend builds answer and answer-change turns around a person's input, with instructions for the agent after it.
+    Live, the bubble shows only the person's part; restoring the whole text made the same turn read differently after a
+    refresh, instructions included."""
+    from aipds.agent import prompts
+    summary = "Q1. 수익 모델은?\n→ B. 건별 과금"
+    answered = prompts.file_answers_recorded("ko", "aiplc-docs/discovery/a-questions.md", summary)
+    revised = prompts.answer_revised("ko", "aiplc-docs/discovery/a-questions.md", "Q1\n→ A", "Q1\n→ B")
+    raw = [{"type": "user", "message": {"role": "user", "content": answered + "\n\n" + prompts.state_file_missing("ko")}},
+           {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "네"}]}},
+           {"type": "user", "message": {"role": "user", "content": revised}},
+           {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "반영"}]}},
+           {"type": "user", "message": {"role": "user", "content": "같은 답변이 그대로면 좋겠어"}}]
+    users = [i.text for i in transform_cli_transcript(raw) if i.role == "user"]
+    assert users == [summary, prompts.revision_change("ko", "Q1\n→ A", "Q1\n→ B"), "같은 답변이 그대로면 좋겠어"]
+
+
+def test_shown_text_follows_every_language_and_leaves_chat_alone():
+    from aipds.agent import prompts
+    for lang in ("ko", "en"):
+        assert prompts.shown_text(prompts.file_answers_recorded(lang, "x-questions.md", "S")) == "S"
+        assert (prompts.shown_text(prompts.answer_revised(lang, "x-questions.md", "B", "A"))
+                == prompts.revision_change(lang, "B", "A"))
+    assert prompts.shown_text("질문에 답했습니다: 그런데 하나 더") == "질문에 답했습니다: 그런데 하나 더"

@@ -86,7 +86,7 @@ async def approve_document(pid: str):
     language = app_module.project_language(pid)
     turn_text = "Approved" if language == "en" else "승인"
     record = UserInput(text=turn_text, source="approval", language=language)
-    job = start_turn(ws, "message", lambda: ws.runner.send_message(turn_text, record))
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(turn_text, record), record.text)
     return {"approved": True, "turn_id": job.id}
 
 

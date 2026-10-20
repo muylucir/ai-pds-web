@@ -91,7 +91,7 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
     # Only what the user chose goes into the audit log — the tail of `text` is instructions for the agent.
     record = UserInput(text=summary, source="answers", language=language,
                        detail=name.rsplit("/", 1)[-1])
-    job = start_turn(ws, "message", lambda: ws.runner.send_message(text, record))
+    job = start_turn(ws, "message", lambda: ws.runner.send_message(text, record), record.text)
     return {"turn_id": job.id,
             "summary": summary,
             "questions": qfile}

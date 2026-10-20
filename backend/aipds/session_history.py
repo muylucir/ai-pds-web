@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 from aipds.agent.answer_store import load_answers
+from aipds.agent.prompts import shown_text
 from aipds.agent.questions_payload import (normalize_sdk_questions,
                                                 question_file_from_sdk)
 from aipds.agent.session_store import load_transcript
@@ -339,8 +340,9 @@ def transform_cli_transcript(raw: list[dict], *,
         # branch above has already created the answer bubble).
         if texts:
             flush_turn()
+            # Only the person's part of a turn text the backend built — the same as the live bubble.
             items.append(HistoryItem(role="user",
-                                     text=redact_credentials("\n".join(texts))))
+                                     text=redact_credentials(shown_text("\n".join(texts)))))
         items.extend(cards)
 
     flush_turn()

@@ -280,6 +280,9 @@ export interface TurnSummary {
   kind: "message" | "answers";
   state: "running" | "done" | "error" | "interrupted";
   last_seq: number;
+  /** What the person sent, as their bubble shows it — the answer summary, an answer change, "승인", a chat message. A screen
+   *  that attaches to a turn another screen started draws this first. Absent on servers from before it. */
+  input?: string | null;
 }
 
 // GET /projects/{pid}/history → { items: HistoryItem[] } (Task 1). Restores

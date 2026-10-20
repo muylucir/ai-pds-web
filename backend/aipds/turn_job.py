@@ -109,7 +109,7 @@ class TurnJob:
 
     def summary(self) -> dict:
         return {"turn_id": self.id, "kind": self.kind, "state": self.state,
-                "last_seq": self.log.last_seq}
+                "last_seq": self.log.last_seq, "input": self.input_text}
 
 
 async def subscribe(job: TurnJob, after: int = 0
