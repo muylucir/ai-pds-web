@@ -4,6 +4,7 @@
 // only carries the shapes.
 import { API_BASE_URL, ApiError } from "./client";
 import { apiFetch } from "./http";
+import type { QuestionOption } from "./types";
 import { CREDENTIALS } from "@/lib/auth";
 
 export type Origin = "A.1" | "A.2" | "A" | "B" | "EP1";
@@ -104,6 +105,9 @@ export interface Confirmation {
   in_vision: string[];
   /** One of those lines is in the first-release scope or the success metrics. */
   in_scope: boolean;
+  /** The question's options — the tab asks it again with these when the PM changes the answer. */
+  options: QuestionOption[];
+  multi_select: boolean;
 }
 
 export interface OpenAnswer extends SupplementAnswer {
@@ -231,6 +235,16 @@ export async function putSupplement(pid: string, update: SupplementUpdate): Prom
     method: "PUT",
     body: JSON.stringify(update),
   }))!;
+}
+
+/** Change a settled answer. The server writes it to the question file's `[Answer]:` tag and starts the turn in which the agent
+ *  carries the change through the documents; the workspace attaches to it as it opens (same as approval). */
+export async function reviseAnswer(pid: string, file: string, number: number, answer: string): Promise<{ turnId: string }> {
+  const r = (await apiFetch<{ turn_id: string }>(`${base(pid)}/revise`, {
+    method: "POST",
+    body: JSON.stringify({ file, number, answer }),
+  }))!;
+  return { turnId: r.turn_id };
 }
 
 /** Start generation. With `resume`, the finished steps of the last attempt are kept and only the
