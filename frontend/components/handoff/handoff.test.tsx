@@ -210,6 +210,27 @@ describe("SupplementForm", () => {
     expect(screen.getByText("선택")).toBeInTheDocument();
   });
 
+  it("confirms a whole group at once, from right above its items, and saves only on save", async () => {
+    const onSave = vi.fn();
+    const third = { ...VIEW.confirmations[0], key: `${STRATEGY}#4`, number: 4, ask: "출시 지역은?", choices: ["서울"],
+                    confirmed_at: null };
+    render(<SupplementForm view={{ ...VIEW, confirmations: [...VIEW.confirmations, third] }} busy={false} message={null}
+                           onSave={onSave} onSaveAndGenerate={() => {}} onBack={() => {}} />);
+    const strategy = screen.getByText(/^제품 전략/).closest("details")!;
+    await userEvent.click(within(strategy).getByRole("button", { name: "아래 2건 전부 맞다" }));
+    expect(within(strategy).getByRole("button", { name: "모두 확인함" })).toBeDisabled();
+    // One can still be undone.
+    await userEvent.click(within(screen.getByText("출시 지역은?").closest("li")!).getByRole("button", { name: "확인함" }));
+    expect(within(strategy).getByRole("button", { name: "아래 1건 전부 맞다" })).toBeEnabled();
+    // The stage already fully confirmed offers nothing to press.
+    const envision = screen.getByText(/^PR\/FAQ/).closest("details")!;
+    expect(within(envision).getByRole("button", { name: "모두 확인함" })).toBeDisabled();
+    expect(onSave).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "저장" }));
+    expect(onSave.mock.calls[0][0].confirmed.sort()).toEqual(
+      [`${D}envision/prfaq-clarifying-questions.md#1`, `${STRATEGY}#1`].sort());
+  });
+
   it("changes a kept AI suggestion by asking the question again, not by a chat request", async () => {
     // Observed (ws-o, ws-g): asked in chat, one agent left the [Answer] tag alone (the web owns it) and the ledger contradicted
     // the rewritten document; the other edited it against the rule. The tab now asks the question again and the web writes it.

@@ -659,6 +659,8 @@ export const en: Record<keyof typeof ko, string> = {
   "handoff.stage.go_to_market": "Go-to-market",
   "handoff.stage.other": "Other",
   "handoff.supp.confirm.yes": "Correct",
+  "handoff.supp.confirm.all": "All {n} below are correct",
+  "handoff.supp.confirm.allDone": "All confirmed",
   "handoff.supp.confirm.confirmed": "Confirmed",
   "handoff.supp.confirm.revise": "Change the answer",
   "handoff.supp.confirm.reviseHint": "Pick another answer and it is recorded in the question file; then, in the workspace, the AI updates the documents that rely on it. Whatever the new answer alone does not settle is asked again, and the changed documents are approved again.",
