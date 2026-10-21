@@ -103,7 +103,7 @@ def _seed(s3: FakeS3Store, proto_root) -> None:
         {"document": "aiplc-docs/discovery/discovery-document.md",
          "doc_hash": "deadbeef", "approved_at": "2026-08-02T00:00:00+00:00"})
     s3.blobs[SURVEY_KEY] = json.dumps(
-        {"token": "live-token", "status": "open", "slug": SLUG,
+        {"token": "live-token", "status": "open", "slug": SLUG,  # nosec B105 - a survey share token in a fixture
          "project_id": SOURCE, "created_at": "2026-08-03T00:00:00+00:00",
          "language": "ko", "title": "검증", "hypothesis": "가설",
          "questions": [{"id": "q1", "type": "scale", "text": "쓸만한가요?",
