@@ -103,10 +103,11 @@ def test_env_is_an_allowlist(launch):
         "ANTHROPIC_MODEL": "global.anthropic.claude-opus-5",
         "AWS_REGION": "ap-northeast-2",
         "AWS_CONTAINER_CREDENTIALS_FULL_URI": "http://127.0.0.1:8001/credentials",
-        "AWS_CONTAINER_AUTHORIZATION_TOKEN": "tok",
+        # The `nosec` markers: placeholder values for the passthrough filter; none opens anything.
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN": "tok",  # nosec B105
         # things that must not be passed through
-        "AWS_ACCESS_KEY_ID": "AKIA…", "AWS_SECRET_ACCESS_KEY": "s",
-        "AIPDS_S3_BUCKET": "bucket", "COGNITO_CLIENT_SECRET": "x",
+        "AWS_ACCESS_KEY_ID": "AKIA…", "AWS_SECRET_ACCESS_KEY": "s",  # nosec B105
+        "AIPDS_S3_BUCKET": "bucket", "COGNITO_CLIENT_SECRET": "x",  # nosec B105
         "LD_PRELOAD": "/tmp/evil.so", "PATH": "/tmp/evil",
     }
     argv, env = _run(launch, "discovery", environ=environ)
@@ -124,7 +125,7 @@ def test_env_values_never_appear_in_argv(launch):
     """argv is visible in `ps` — credential tokens must not be put on it."""
     _tree(launch, "discovery")
     argv, _ = _run(launch, "discovery",
-                   environ={"AWS_CONTAINER_AUTHORIZATION_TOKEN": "sekrit-token"})
+                   environ={"AWS_CONTAINER_AUTHORIZATION_TOKEN": "sekrit-token"})  # nosec B105
     assert "--setenv=AWS_CONTAINER_AUTHORIZATION_TOKEN" in argv
     assert not any("sekrit-token" in a for a in argv)
 
