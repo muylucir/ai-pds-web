@@ -98,7 +98,7 @@ async def test_hosting_restores_the_tree_then_records_token_and_intent(env):
     await _seed(env, "a", {"prototype/package.json": '{"name":"a"}'})
     info, token = await host_prototype(PID, "a")
 
-    assert info.state == "running" and token == "tok-a"
+    assert info.state == "running" and token == "tok-a"  # nosec B105 - the fake token
     served = env["proto_root"] / PID / "a" / "prototype" / "package.json"
     assert served.read_text() == '{"name":"a"}'       # restored from S3
     store = env["store"]

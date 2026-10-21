@@ -336,7 +336,7 @@ def test_load_tokens_skips_an_empty_token_file(env):
 
 # ---- Replaced instance: links survive even without a local token (proto/store.py) ----
 
-def _index(monkeypatch, pid=PID, slug=SLUG, token="tok-from-s3"):
+def _index(monkeypatch, pid=PID, slug=SLUG, token="tok-from-s3"):  # nosec B107 - fixture token
     from aipds.proto.store import PrototypeStore
     from fakes.in_memory_s3 import FakeS3Store
     import asyncio
