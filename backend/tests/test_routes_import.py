@@ -230,7 +230,7 @@ def test_import_deletes_the_staged_bundle_on_success(env):
 # ---- Survey tokens ----
 
 
-def _survey_bundle(token: str = "original-token") -> bytes:
+def _survey_bundle(token: str = "original-token") -> bytes:  # nosec B107 - a survey share token in a fixture
     definition = json.dumps({"token": token, "status": "open", "slug": SLUG,
                              "project_id": SOURCE_PID, "created_at": "c",
                              "title": "t", "hypothesis": "h",
@@ -276,7 +276,7 @@ def test_archived_survey_token_changes_but_gets_no_live_index(env):
     """There is no reason for a past round's link to stay live, but if the original token were
     kept, it would have the same value as the original instance's link."""
     target = env["track"]("survey-archive")
-    archived = json.dumps({"token": "old-archived", "status": "closed",
+    archived = json.dumps({"token": "old-archived", "status": "closed",  # nosec B105 - fixture
                            "slug": SLUG, "project_id": SOURCE_PID,
                            "created_at": "c", "title": "t", "hypothesis": "h",
                            "questions": [{"id": "q1"}]}).encode("utf-8")
@@ -518,7 +518,7 @@ def test_a_manifest_write_failure_rolls_the_import_back(env, monkeypatch):
         "project/aiplc-docs/audit.md": b"# audit",
         f"prototypes/{SLUG}/source/prototype/app.tsx": b"x",
         f"project/prototypes/{SLUG}/survey/questionnaire.json": json.dumps(
-            {"token": "t", "slug": SLUG, "project_id": SOURCE_PID}).encode(),
+            {"token": "t", "slug": SLUG, "project_id": SOURCE_PID}).encode(),  # nosec B105 - fixture
     })
 
     resp = _import(env, body, project_id=target)

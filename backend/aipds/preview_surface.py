@@ -42,7 +42,8 @@ import time
 _log = logging.getLogger(__name__)
 
 ORIGIN_ENV = "AIPDS_PREVIEW_ORIGIN"          # https://dXXXX.cloudfront.net
-SECRET_ARN_ENV = "AIPDS_PREVIEW_SECRET_ARN"  # Secrets Manager secret holding the header value
+# The name of an environment variable, not a secret -- the `nosec` is for the name.
+SECRET_ARN_ENV = "AIPDS_PREVIEW_SECRET_ARN"  # nosec B105 - Secrets Manager secret holding the header value
 VERIFY_ENV = "AIPDS_PREVIEW_VERIFY"          # for passing the value directly (tests, local)
 HEADER = "x-preview-verify"
 

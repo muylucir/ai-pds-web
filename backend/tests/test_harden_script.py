@@ -22,7 +22,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[2] / "infra" / "scripts"
 ARN = "arn:aws:iam::123456789012:role/AipdsAgentCredsStack-AgentRole-X"
 ORIGIN = "https://d1example.cloudfront.net"
-SECRET = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:Preview-AbCdEf"
+SECRET = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:Preview-AbCdEf"  # nosec B105 - a fake ARN
 
 FAKE_AWS = """#!/bin/bash
 # aws ssm get-parameter --region R --name N --query ... --output text
