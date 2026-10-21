@@ -9,6 +9,7 @@ import {
 import { AipdsHostingStack } from '../lib/aipds-hosting-stack';
 import { AipdsAuthStack } from '../lib/aipds-auth-stack';
 import { MODEL } from '../lib/backend-permissions';
+import { INSTANCE_PARAMS } from '../lib/instance-params';
 import {
   ACCESS_TOKEN_VALIDITY_MINUTES, ID_TOKEN_VALIDITY_MINUTES,
   OAUTH_SCOPES, REFRESH_TOKEN_VALIDITY_MINUTES,
@@ -163,7 +164,7 @@ testDrillUnchanged();
 testImportUploadWiring();
 testUploadOriginsDefaultToLocalOnly();
 
-function makeHosting() {
+function makeHosting(availabilityZones?: string[]) {
   const app = new cdk.App();
   const drill = new AipdsDrillStack(app, 'Drill2', { env: ENV });
   const auth = new AipdsAuthStack(app, 'Auth2', { env: ENV });
@@ -174,6 +175,7 @@ function makeHosting() {
     userPool: auth.userPool,
     userPoolClient: auth.userPoolClient,
     hostedUiDomain: auth.hostedUiDomain,
+    availabilityZones,
   });
   return Template.fromStack(stack);
 }
@@ -197,16 +199,40 @@ function testNetworkAndSecret() {
       assert.notStrictEqual(rule.CidrIp, '0.0.0.0/0', 'no open CIDR ingress');
     }
   }
-  // Zero NAT gateways.
-  t.resourceCountIs('AWS::EC2::NatGateway', 0);
+  // The instance is in a private subnet with one NAT for outbound. Nothing on the internet reaches
+  // it — CloudFront comes in through the VPC origin (testCloudFront).
+  t.resourceCountIs('AWS::EC2::NatGateway', 1);
+  const instance = Object.values(t.findResources('AWS::EC2::Instance'))[0] as any;
+  const subnetId = instance.Properties.SubnetId.Ref;
+  const subnet = t.toJSON().Resources[subnetId];
+  assert.strictEqual(subnet.Properties.MapPublicIpOnLaunch, false, 'instance subnet assigns no public IP');
+  assert.ok(subnet.Properties.Tags.some((tag: any) =>
+    tag.Key === 'aws-cdk:subnet-type' && tag.Value === 'Private'), 'instance is in a private subnet');
+  // The only EIP is the NAT's — none is associated with the instance.
+  t.resourceCountIs('AWS::EC2::EIP', 1);
+  t.resourceCountIs('AWS::EC2::EIPAssociation', 0);
   // The secret-header secret exists (generated without punctuation).
   t.hasResourceProperties('AWS::SecretsManager::Secret', {
     GenerateSecretString: Match.objectLike({ ExcludePunctuation: true }),
   });
-  console.log('OK  hosting: SG prefix-list only, no SSH, secret present');
+  console.log('OK  hosting: private-subnet instance + 1 NAT, SG prefix-list only, no SSH, secret present');
 }
 
 testNetworkAndSecret();
+
+// AIPDS_AVAILABILITY_ZONES (bin/app.ts): VPC origins are not offered in a few AZs, and AZ names map to
+// different AZs per account — the deployer names the AZs, and the instance lands in the first.
+function testChosenAvailabilityZones() {
+  const t = makeHosting(['ap-northeast-2c', 'ap-northeast-2d']);
+  const azs = Object.values(t.findResources('AWS::EC2::Subnet'))
+    .map((r: any) => r.Properties.AvailabilityZone);
+  assert.deepStrictEqual([...new Set(azs)].sort(), ['ap-northeast-2c', 'ap-northeast-2d']);
+  const instance = Object.values(t.findResources('AWS::EC2::Instance'))[0] as any;
+  assert.strictEqual(instance.Properties.AvailabilityZone, 'ap-northeast-2c');
+  console.log('OK  hosting: the VPC uses the AZs given (AIPDS_AVAILABILITY_ZONES)');
+}
+
+testChosenAvailabilityZones();
 
 function testComputeAndRole() {
   const t = makeHosting();
@@ -228,9 +254,6 @@ function testComputeAndRole() {
       Match.objectLike({ Ebs: Match.objectLike({ VolumeSize: 100 }) }),
     ]),
   });
-  // EIP exists + is associated.
-  t.resourceCountIs('AWS::EC2::EIP', 1);
-  t.resourceCountIs('AWS::EC2::EIPAssociation', 1);
   // Instance role: Bedrock + secret read + SSM managed policy.
   t.hasResourceProperties('AWS::IAM::Role', {
     ManagedPolicyArns: Match.arrayWith([
@@ -268,18 +291,29 @@ function testComputeAndRole() {
   if (allActions.includes('lambda-microvms')) {
     throw new Error('hosting: instance role still carries lambda-microvms permissions');
   }
-  console.log('OK  hosting: EC2 x86_64 + 100GB EBS + EIP + instance role (bedrock/secret/ssm, no microvm)');
+  console.log('OK  hosting: EC2 x86_64 + 100GB EBS + instance role (bedrock/secret/ssm, no microvm)');
 }
 
 testComputeAndRole();
 
 function testCloudFront() {
   const t = makeHosting();
+  // CloudFront reaches the instance through a VPC origin (private connectivity). HTTP on 80 — no CA
+  // issues a certificate for the instance's private DNS name (README "CloudFront → instance is private").
+  const vpcOrigins = t.findResources('AWS::CloudFront::VpcOrigin');
+  assert.strictEqual(Object.keys(vpcOrigins).length, 1, 'one VPC origin');
+  const [vpcOriginId, vpcOrigin] = Object.entries(vpcOrigins)[0] as [string, any];
+  const endpoint = vpcOrigin.Properties.VpcOriginEndpointConfig;
+  const instanceId = Object.keys(t.findResources('AWS::EC2::Instance'))[0];
+  assert.match(JSON.stringify(endpoint.Arn), new RegExp(`"Ref":"${instanceId}"`), 'the endpoint is the instance');
+  assert.strictEqual(endpoint.OriginProtocolPolicy, 'http-only');
+  assert.strictEqual(endpoint.HTTPPort, 80);
   t.hasResourceProperties('AWS::CloudFront::Distribution', {
     DistributionConfig: Match.objectLike({
       Origins: Match.arrayWith([
         Match.objectLike({
-          CustomOriginConfig: Match.objectLike({ OriginProtocolPolicy: 'http-only' }),
+          DomainName: { 'Fn::GetAtt': [instanceId, 'PrivateDnsName'] },
+          VpcOriginConfig: Match.objectLike({ VpcOriginId: { 'Fn::GetAtt': [vpcOriginId, 'Id'] } }),
           OriginCustomHeaders: Match.arrayWith([
             Match.objectLike({ HeaderName: 'X-Origin-Verify' }),
           ]),
@@ -293,13 +327,39 @@ function testCloudFront() {
   // The /_next/static/* cache behavior exists.
   const dists = t.findResources('AWS::CloudFront::Distribution');
   const cfg = Object.values(dists)[0] as any;
+  for (const o of cfg.Properties.DistributionConfig.Origins) {
+    assert.strictEqual(o.CustomOriginConfig, undefined, 'no public custom origin');
+  }
   const behaviors = cfg.Properties.DistributionConfig.CacheBehaviors ?? [];
   assert.ok(
     behaviors.some((b: any) => b.PathPattern === '/_next/static/*'),
     'static cache behavior present',
   );
-  console.log('OK  hosting: CloudFront http-only origin + X-Origin-Verify header + https redirect');
+  console.log('OK  hosting: CloudFront VPC origin to the instance + X-Origin-Verify header + https redirect');
 }
+
+// The app origin goes to the instance through SSM, not user-data — the distribution references the
+// instance (VPC origin), so user-data referencing the distribution would be a cycle. Template.fromStack
+// above already rejects a cyclic template; this pins the parameter and its read grant.
+function testAppOriginParameter() {
+  const t = makeHosting();
+  const distId = Object.keys(t.findResources('AWS::CloudFront::Distribution'))[0];
+  t.hasResourceProperties('AWS::SSM::Parameter', {
+    Name: INSTANCE_PARAMS.appOrigin,
+    Value: { 'Fn::Join': ['', ['https://', { 'Fn::GetAtt': [distId, 'DomainName'] }]] },
+  });
+  const instance = Object.values(t.findResources('AWS::EC2::Instance'))[0] as any;
+  assert.ok(!JSON.stringify(instance.Properties.UserData).includes(distId),
+    'user-data must not reference the distribution');
+  const statements = Object.values(t.findResources('AWS::IAM::Policy'))
+    .flatMap((p: any) => p.Properties.PolicyDocument.Statement);
+  const grant = statements.find((st: any) => st.Action === 'ssm:GetParameter');
+  assert.ok(grant, 'the instance role reads the app origin');
+  assert.match(JSON.stringify(grant.Resource), new RegExp(`:parameter${INSTANCE_PARAMS.appOrigin}"`));
+  console.log('OK  hosting: app origin via SSM parameter (not user-data), instance role can read it');
+}
+
+testAppOriginParameter();
 
 testCloudFront();
 

@@ -14,7 +14,8 @@ import { addSandboxStacks, pinnedFromEnv } from '../lib/sandbox-stacks';
 const ENV = { account: '123456789012', region: 'ap-northeast-2' };
 const PINNED = {
   instanceRoleArn: 'arn:aws:iam::123456789012:role/AipdsHostingStack-InstanceRole-X',
-  originDnsName: 'ec2-1-2-3-4.ap-northeast-2.compute.amazonaws.com',
+  vpcOriginId: 'vo_test0000',
+  originPrivateDns: 'ip-10-0-2-10.ap-northeast-2.compute.internal',
   originVerifySecretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:hdr-AbCdEf',
   artifactsBucket: 'aipdsdrillstack-artifacts-x',
 };
@@ -69,7 +70,8 @@ function build(pinned?: typeof PINNED) {
 assert.strictEqual(pinnedFromEnv({}), undefined, 'no env: a new environment');
 assert.deepStrictEqual(pinnedFromEnv({
   AIPDS_INSTANCE_ROLE_ARN: PINNED.instanceRoleArn,
-  AIPDS_PREVIEW_ORIGIN_DNS: PINNED.originDnsName,
+  AIPDS_VPC_ORIGIN_ID: PINNED.vpcOriginId,
+  AIPDS_ORIGIN_PRIVATE_DNS: PINNED.originPrivateDns,
   AIPDS_ORIGIN_VERIFY_SECRET_ARN: PINNED.originVerifySecretArn,
   AIPDS_ARTIFACTS_BUCKET: PINNED.artifactsBucket,
 }), PINNED);

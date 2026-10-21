@@ -104,7 +104,7 @@ npx cdk deploy --all --require-approval never \
 |---|---|
 | `AipdsDrillStack` | S3 아티팩트 버킷 + 백엔드 실행 롤 |
 | `AipdsAuthStack` | Cognito User Pool + 로그인 화면 + `admin`/`pm` 그룹 + 시드 계정 2개 |
-| `AipdsHostingStack` | VPC + EC2(AL2023, m7i.2xlarge) + CloudFront |
+| `AipdsHostingStack` | VPC(프라이빗 서브넷 + NAT 1개) + EC2(AL2023, m7i.2xlarge) + VPC 오리진으로 붙는 CloudFront |
 | `AipdsPreviewStack` | 프로토타입만 서빙하는 별도 CloudFront |
 | `AipdsAgentCredsStack` | 샌드박스의 에이전트·프로토타입이 쓰는 Bedrock 전용 롤 |
 | `AipdsUploadCorsStack` | 인스턴스가 버킷 CORS에 자기 앱 오리진을 유지하는 권한(프로젝트 가져오기는 S3로 직접 올린다) |
@@ -128,42 +128,42 @@ npx cdk deploy --all --require-approval never \
     (`aipds-auth-stack.ts`).
   - `cdk destroy`가 사용자 풀과 아티팩트 버킷을 내용째 지운다. 버킷에는 버전 관리와 액세스 로그도
     없다(`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
-  - CloudFront는 인스턴스에 평문 HTTP로 붙는다 —
-    [CloudFront → 인스턴스 구간은 의도적으로 HTTP다](#cloudfront--인스턴스-구간은-의도적으로-http다) 참고.
-- **다른 리전**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. 코드 수정은 필요 없다.
+- **다른 리전**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. 코드 수정은 필요 없다. 몇몇
+  리전은 AZ 하나에서 VPC 오리진을 제공하지 않는다(us-east-1의 `use1-az3`, us-west-1의 `usw1-az2`,
+  ap-northeast-1의 `apne1-az3`, ca-central-1의 `cac1-az3`). AZ 이름이 가리키는 AZ는 계정마다 다르므로
+  `aws ec2 describe-availability-zones`로 확인하고, 리전의 앞 두 이름에 그 AZ가 들어 있으면 다른 둘을
+  지정한다: `AIPDS_AVAILABILITY_ZONES=ap-northeast-1a,ap-northeast-1c`.
 - **추가 업로드 오리진**(커스텀 도메인 등): 배포 시 `AIPDS_UPLOAD_ORIGINS`(쉼표 구분). 앱 자신의
   오리진은 인스턴스가 더한다.
 
 코드 갱신, 샌드박스 명령, 떠 있는 인스턴스의 교체 방지, 인스턴스 새로 만들기, 내리기, 문제 해결은
 **`/manual` → 설치 · 운영 · 문제 해결**에 있다.
 
-### CloudFront → 인스턴스 구간은 의도적으로 HTTP다
+### CloudFront → 인스턴스 구간은 사설 경로다
 
-이 저장소는 워크숍과 샘플 워크로드를 위한 코드이고, 먼저 등록할 것 없이 어느 계정에나 배포되도록
-일부러 자체 도메인을 쓰지 않는다. 브라우저 → CloudFront는 HTTPS만 받지만(HTTP는 리다이렉트),
-CloudFront → 인스턴스는 포트 80의 HTTP다 — 앱 배포(`aipds-hosting-stack.ts`)와 프리뷰
-배포(`aipds-preview-stack.ts`) 둘 다다. 이 구간을 HTTPS로 하려면 오리진 이름에 맞는 공인 인증서가
-필요한데, 인스턴스의 `ec2-….compute.amazonaws.com` 이름으로는 어느 인증 기관도 인증서를 발급하지 않는다.
+인스턴스는 퍼블릭 주소가 없는 프라이빗 서브넷에 있다. 두 배포 — 앱(`aipds-hosting-stack.ts`)과
+프리뷰(`aipds-preview-stack.ts`) — 는 CloudFront VPC 오리진 하나로 인스턴스에 닿는다. CloudFront가
+VPC 안에 서비스 관리형 네트워크 인터페이스를 두고 그것을 통해 오리진 요청을 보내므로, 이 요청은 공용
+인터넷을 지나지 않는다. 인스턴스 자신의 아웃바운드(git, 패키지 설치, Bedrock, 에이전트의 URL 조회)는
+NAT 게이트웨이 하나로 나가고, NAT는 시간과 처리한 GB 단위로 과금된다.
 
 **이 구간에 실리는 것:** 세션 쿠키(Cognito 토큰), 프로토타입 접근 쿠키, `X-Origin-Verify` /
 `X-Preview-Verify` 비밀 헤더.
 
+**포트 80의 HTTP인 이유.** CloudFront는 오리진 이름에 맞고 공인 인증 기관이 발급한 인증서만 받는데,
+EC2로 가는 VPC 오리진의 이름은 인스턴스의 프라이빗 DNS 이름(`ip-….compute.internal`)이고 어느 인증
+기관도 이 이름으로 인증서를 발급하지 않는다. 이대로 두어야 자체 도메인 없이 어느 계정에나 배포된다.
+
 **막아 두는 것:**
 
-- 보안 그룹은 CloudFront 오리진 대역(프리픽스 리스트)에서 오는 포트 80만 받는다. SSH는 없고 접속은
-  SSM으로 한다.
-- nginx는 비밀 헤더가 없는 요청을 거부한다 — CloudFront를 우회해 인스턴스에 닿을 수 없다.
+- 인터넷에서는 인스턴스에 닿을 수 없다: 퍼블릭 IP가 없고, 보안 그룹은 CloudFront 오리진
+  대역(프리픽스 리스트)에서 오는 포트 80만 받는다. SSH는 없고 접속은 SSM으로 한다.
+- nginx는 비밀 헤더가 없는 요청을 거부한다.
 - 비밀 헤더 값은 배포 때 Secrets Manager에서 해석된다. 어느 템플릿에도 평문으로 남지 않는다.
 
-**막지 못하는 것:** CloudFront 엣지와 인스턴스 사이 경로의 트래픽을 볼 수 있는 쪽은 위 쿠키와
-헤더를 읽을 수 있다.
-
-**워크숍 밖에서 쓰거나 실제 고객 자료를 다루기 전에는** 소유한 도메인으로 오리진 구간을 HTTPS로
-바꾼다: 레코드(예: `origin.example.com`)를 인스턴스의 Elastic IP에 연결하고, 그 이름의 공인 인증서를
-nginx가 443에서 서빙하게 한 뒤, 두 스택의 오리진을 443의 `OriginProtocolPolicy.HTTPS_ONLY`로 바꾼다.
-인스턴스를 프라이빗 서브넷으로 옮기고 CloudFront VPC 오리진을 쓰면 이 구간이 공용 인터넷에서
-빠지고, 같은 도메인과 인증서가 있으면 HTTPS로도 할 수 있다. 어느 쪽이든 인스턴스가 교체되므로
-계획된 교체 때 한다.
+**이 구간에 TLS를 더하려면** 소유한 도메인을 쓴다: 그 이름의 ACM 인증서를 단 내부 Application Load
+Balancer를 인스턴스 앞에 두고, 그 로드 밸런서를 `OriginProtocolPolicy.HTTPS_ONLY`의 VPC 오리진으로
+삼는다.
 
 ---
 

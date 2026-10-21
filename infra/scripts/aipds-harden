@@ -28,9 +28,9 @@
 #          `imds allow` are operator choices, so they pause sync (`/etc/aipds/hold`) -- `enable` and `imds block`
 #          release it. The first rollout's "confirm, then block" order is unnecessary for re-laying a configuration
 #          already verified.
-#          It also makes sure the artifact bucket's CORS contains this instance's app origin (direct browser
-#          upload for project import -- infra/lib/aipds-upload-cors-stack.ts). This is independent of restarts
-#          and of hold.
+#          It also gives the frontend its app origin (APP_BASE_URL, from HostingStack's parameter -- restarts the
+#          frontend when it changed) and makes sure the artifact bucket's CORS contains that origin (direct browser
+#          upload for project import -- infra/lib/aipds-upload-cors-stack.ts). Both are independent of hold.
 # boot     Called by a new instance's user-data **before** services start. install + sync (no restart).
 #
 # Why this script rather than user-data: changing user-data makes a HostingStack deploy replace the EC2
@@ -71,6 +71,7 @@ FRONT_UNIT=/etc/systemd/system/aipds-frontend.service
 FRONT_DROPIN=/etc/systemd/system/aipds-frontend.service.d
 FRONT_ENV=$CONF_DIR/frontend.env
 # Same names as infra/lib/instance-params.ts (test/instance-params.assert.ts).
+PARAM_APP_ORIGIN=/aipds/app-origin
 PARAM_AGENT_ROLE=/aipds/agent-role-arn
 PARAM_PREVIEW_ORIGIN=/aipds/preview-origin
 PARAM_PREVIEW_SECRET=/aipds/preview-secret-arn
@@ -151,6 +152,35 @@ unit_env() {
   systemctl show "$1" -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n "s/^$2=//p" | head -1
 }
 
+# The frontend's APP_BASE_URL -- Cognito redirect URIs are built on it. It is not in user-data: HostingStack's
+# distribution reaches this instance through a VPC origin, so the instance cannot reference the distribution.
+# A new instance boots before the distribution exists, so boot usually finds nothing and the timer applies it
+# minutes later. With $1=1, restarts the frontend when the value changed (only if it is up).
+sync_app_origin() {
+  local restart=$1 origin want file=$FRONT_DROPIN/app-origin.conf
+  origin=$(get_param "$PARAM_APP_ORIGIN")
+  if [ -z "$origin" ]; then
+    echo "aipds-harden: no $PARAM_APP_ORIGIN — frontend APP_BASE_URL unchanged" >&2
+    return 0
+  fi
+  # The value goes into a unit file -- one https origin, nothing else.
+  if ! [[ "$origin" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
+    echo "aipds-harden: WARNING $PARAM_APP_ORIGIN '$origin' is not an https origin — not applied" >&2
+    return 0
+  fi
+  want=$(printf '[Service]\nEnvironment=APP_BASE_URL=%s' "$origin")
+  [ "$(cat "$file" 2>/dev/null)" = "$want" ] && return 0
+  mkdir -p "$FRONT_DROPIN"
+  printf '%s\n' "$want" > "$file"
+  chmod 644 "$file"
+  systemctl daemon-reload
+  echo "aipds-harden: app origin — $origin"
+  if [ "$restart" = 1 ] && systemctl is-active --quiet aipds-frontend; then
+    systemctl restart aipds-frontend
+    echo "aipds-harden: frontend restarted"
+  fi
+}
+
 # The bucket CORS configuration (JSON) with the origin added to the PUT rule. Empty output if already present. If
 # there is no rule, create one shaped like DrillStack's (lib/aipds-drill-stack.ts `cors`) -- test/instance-params.assert.ts keeps them aligned.
 CORS_MERGE='
@@ -210,6 +240,8 @@ sync_apply() {
       "preview settings not applied (existing ones unchanged)" >&2
     return 0
   fi
+  # First: CORS reads the origin this applies.
+  sync_app_origin "$restart"
   sync_cors
   if [ -e "$HOLD" ]; then
     echo "aipds-harden: sync held ($HOLD — 'enable' or 'imds block' releases it)"
@@ -326,7 +358,7 @@ UNIT
   # --- Sync of the values the stacks left. First run is 2 minutes after enabling -- boot already applied them once. ---
   cat > "/etc/systemd/system/$SYNC_UNIT.service" <<UNIT
 [Unit]
-Description=AI-PDS: apply sandbox and preview settings from SSM (aipds-harden sync)
+Description=AI-PDS: apply app, sandbox and preview settings from SSM (aipds-harden sync)
 [Service]
 Type=oneshot
 ExecStart=$LIBEXEC/harden sync
