@@ -101,6 +101,22 @@ def s3_client(region: str):
                         config=BotoConfig(max_pool_connections=50))
 
 
+@functools.lru_cache(maxsize=None)
+def s3_presign_client(region: str):
+    """The S3 client for URLs the **browser** uses (project import's presigned PUT).
+
+    With the default addressing style, botocore signs presigned URLs for the global endpoint
+    (`<bucket>.s3.amazonaws.com`), even for a bucket outside us-east-1. For a newly created
+    bucket that endpoint answers with a 307 to the regional one for a while, and the 307 carries
+    no CORS headers — the browser blocks the upload. A fresh deployment's first import fails
+    that way and existing environments (older buckets) do not. `virtual` signs for
+    `<bucket>.s3.<region>.amazonaws.com`. Server-side calls already go to the regional endpoint,
+    so only this client needs it.
+    """
+    return boto3.client("s3", region_name=region,
+                        config=BotoConfig(s3={"addressing_style": "virtual"}))
+
+
 # Monkeypatchable in tests to inject a FakeS3Store (no AWS). Durable store keeps
 # the project's aiplc-docs/prototype/uploads subtree (S3 = source of truth); the
 # in-process AgentRunner restores it to a local workspace at the start of a turn.
@@ -328,7 +344,7 @@ def import_staging():
             "S3 so the browser can upload it directly")
     region = os.environ.get("AIPDS_S3_REGION", "ap-northeast-2")
     return ImportStaging(bucket=bucket,
-                         client=s3_client(region))
+                         client=s3_presign_client(region))
 
 
 def durable_projects_enabled() -> bool:
