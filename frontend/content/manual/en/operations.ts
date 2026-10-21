@@ -251,14 +251,16 @@ mean to replace it.`,
       kind: "md",
       md: `To update just the three instance-side stacks (\`AipdsAgentCredsStack\`, \`AipdsPreviewStack\`,
 \`AipdsUploadCorsStack\`) in such an environment, pin their values with environment variables and
-deploy them without touching HostingStack. Give all four values or none.`,
+deploy them without touching HostingStack. Give all five values or none — the VPC origin ID and the
+instance's private DNS name are the \`VpcOriginId\` and \`OriginPrivateDns\` outputs of HostingStack.`,
     },
     {
       kind: "cmd",
       lines: [
         "cd infra",
         "AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> \\",
-        "AIPDS_PREVIEW_ORIGIN_DNS=ec2-<a-b-c-d>.<region>.compute.amazonaws.com \\",
+        "AIPDS_VPC_ORIGIN_ID=<VpcOriginId> \\",
+        "AIPDS_ORIGIN_PRIVATE_DNS=<OriginPrivateDns> \\",
         "AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader secret ARN> \\",
         "AIPDS_ARTIFACTS_BUCKET=<artifacts bucket name> \\",
         "  npx cdk deploy --exclusively AipdsAgentCredsStack AipdsPreviewStack AipdsUploadCorsStack \\",
@@ -274,8 +276,8 @@ deploy them without touching HostingStack. Give all four values or none.`,
       kind: "callout",
       tone: "warn",
       md: `**The user pool goes with it, so every user account disappears.** Download anything in S3 you
-want to keep first. And a deployed stack **keeps costing money** (EC2 running continuously, storage,
-plus a Bedrock call per conversation turn) — take it down when it is not in use.
+want to keep first. And a deployed stack **keeps costing money** (EC2 and its NAT gateway running
+continuously, storage, plus a Bedrock call per conversation turn) — take it down when it is not in use.
 
 If HostingStack has [termination protection](/manual#hotfix) on, the deletion is refused. Turn it off
 first with
@@ -290,6 +292,7 @@ first with
 | Permission error on the first conversation (\`AccessDeniedException\`) | For a model the account has never called, this happens during the few minutes its subscription is being created — send it again shortly after. If it persists, the **Anthropic first-time-use form** has not been submitted or the account has no Marketplace payment method ([deploying](/manual#deploy)) |
 | Every conversation fails, and starting hosting is refused with *the prototype sandbox is unavailable* | The sandbox is on but its startup check failed. Look at \`aipds-harden status\` and the backend log ([sandbox](/manual#sandbox)) |
 | Redirect error after signing in | Callback URL registration failed. Re-run \`cdk deploy AipdsHostingStack\` |
+| Right after deploying, signing in goes to \`localhost\` | The instance has not picked up its own address yet — \`aipds-harden sync\` applies it within about 2 minutes of the distribution coming up. Wait and try again; to check, \`systemctl cat aipds-frontend\` should show \`APP_BASE_URL\` in \`app-origin.conf\` |
 | Stack refuses to redeploy, stuck in \`ROLLBACK_COMPLETE\` | A stack whose first creation failed cannot be updated. Destroy that stack, then deploy again. \`UPDATE_ROLLBACK_COMPLETE\` (a failed update of an existing stack) just needs a redeploy |
 | \`cdk synth\` asks for credentials | HostingStack looks up the deployment region's CloudFront prefix list. The result is cached in the local \`cdk.context.json\`, so it is only needed once per clone |
 | Prototype preview returns 404 | That is the intended response — enter through the [share link](/manual#share) |

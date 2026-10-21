@@ -22,17 +22,20 @@
 **뒤의 셋**이 따로 있는 이유는 한 가지 사실 때문이다: **HostingStack을 배포하면 EC2가 교체될 수
 있다.** AMI가 고정되어 있지 않고(`latestAmazonLinux2023()`) user-data가 템플릿의 일부이므로
 (`userDataCausesReplacement`), HostingStack을 바꾸는 모든 것이 새 인스턴스를 부를 수 있다. 그래서
-인스턴스가 부팅 뒤에 켜는 기능은 HostingStack이 만든 것(인스턴스 롤, 오리진 시크릿, EIP의 DNS
-이름)을 *참조만* 하고 고치지 않는 별도 스택에 둔다.
+인스턴스가 부팅 뒤에 켜는 기능은 HostingStack이 만든 것(인스턴스 롤, 오리진 시크릿, VPC
+오리진)을 *참조만* 하고 고치지 않는 별도 스택에 둔다.
 
 - **값이 인스턴스에 닿는 길.** user-data가 아니다: user-data가 이 스택들의 출력을 참조하면 순환이고
   (이 스택들이 인스턴스 롤을 참조한다), 끊으려고 user-data를 바꾸면 인스턴스가 교체된다. 대신 스택이
   SSM 파라미터를 쓰고(`lib/instance-params.ts`) 인스턴스가 실행 시점에 읽는다 — 부팅 때와 그 뒤
   2분마다 `aipds-harden sync`. 파라미터가 없으면 그 기능은 꺼진 채이고, 켜져 있던 것을 끄지는 않는다.
+  HostingStack 자신의 앱 오리진(프런트엔드의 `APP_BASE_URL`)도 같은 길로 온다: 그 배포가 VPC 오리진으로
+  인스턴스를 가리키므로 인스턴스의 user-data가 배포를 참조할 수 없다.
 - **배포하는 두 가지 방식**(`lib/sandbox-stacks.ts`). 새 환경에서는 HostingStack의 값을 스택 간
-  참조로 받으므로 `cdk deploy --all` 한 번이면 된다. 떠 있는 환경에서는 네 값을 env로 고정한다
-  (`AIPDS_INSTANCE_ROLE_ARN`, `AIPDS_PREVIEW_ORIGIN_DNS`, `AIPDS_ORIGIN_VERIFY_SECRET_ARN`,
-  `AIPDS_ARTIFACTS_BUCKET` — 전부 또는 없음). 스택 간 참조가 있으면 `cdk deploy AipdsAgentCredsStack`이
+  참조로 받으므로 `cdk deploy --all` 한 번이면 된다. 떠 있는 환경에서는 다섯 값을 env로 고정한다
+  (`AIPDS_INSTANCE_ROLE_ARN`, `AIPDS_VPC_ORIGIN_ID`, `AIPDS_ORIGIN_PRIVATE_DNS`,
+  `AIPDS_ORIGIN_VERIFY_SECRET_ARN`, `AIPDS_ARTIFACTS_BUCKET` — 전부 또는 없음. 가운데 셋은 HostingStack의
+  출력과 시크릿이다). 스택 간 참조가 있으면 `cdk deploy AipdsAgentCredsStack`이
   HostingStack까지 배포하기 때문이다.
 - **떠 있는 HostingStack 보호.** `Update:Replace`·`Update:Delete`를 거부하는 스택 정책과 종료 보호를
   걸면, 뜻하지 않은 교체가 실패하고 롤백되는 배포로 바뀐다. 명령은 `/manual`(*인스턴스를 새로
@@ -125,16 +128,18 @@ Secrets Manager에 사본을 두면 Cognito가 만든 값이 CloudFormation을 �
 
 ## 오리진 보호
 
-EC2는 80 포트를 CloudFront origin-facing 관리형 프리픽스 리스트에서만 받고, nginx가 CloudFront가
-붙이는 비밀 헤더 `X-Origin-Verify`를 검사한다. 두 겹인 이유는 프리픽스 리스트가 "*어떤* CloudFront에서
-왔다"만 증명하기 때문이다 — 남의 배포도 그 목록에 있다. SSH 포트는 없고 접속은
-`aws ssm start-session`이다.
+인스턴스는 퍼블릭 IP 없이 프라이빗 서브넷에 있고, CloudFront는 두 배포가 함께 쓰는 VPC 오리진으로만
+인스턴스에 닿는다(README "CloudFront → 인스턴스 구간은 사설 경로다"). 보안 그룹은 80 포트를 CloudFront
+origin-facing 관리형 프리픽스 리스트에서만 받고, nginx가 두 배포가 붙이는 비밀 헤더 `X-Origin-Verify`를
+검사한다 — 네트워크 뒤의 두 번째 겹이다. 프리뷰 배포만 더 붙이는 `X-Preview-Verify`로 백엔드가 두 화면을
+가른다. SSH 포트는 없고 접속은 `aws ssm start-session`이다. 아웃바운드는 NAT 게이트웨이 하나로 나간다.
 
 ## 리전 lookup과 cdk.context.json
 
 `CDK_DEPLOY_REGION`이 서울을 덮어쓴다. `PrefixList.fromLookup`이 그 리전의 프리픽스 리스트 ID를 찾으므로
 코드 수정은 없지만, 호스팅 스택의 첫 synth에는 계정 자격증명이 필요하다. 결과는 `cdk.context.json`에
-캐시되고, 키에 계정 ID가 들어 있어 gitignore되어 있다.
+캐시되고, 키에 계정 ID가 들어 있어 gitignore되어 있다. 리전의 앞 두 AZ에 VPC 오리진이 없는 AZ가 들어
+있으면 `AIPDS_AVAILABILITY_ZONES`로 VPC의 AZ를 고른다(README "다른 리전").
 
 ## 테스트가 지키는 것
 
@@ -146,10 +151,10 @@ npm test     # 자격증명 불필요 — 순수 함수 + 합성된 템플릿에
 | 파일 | 지키는 것 |
 |---|---|
 | `user-data.assert.ts` | 부팅 스크립트 — nginx 변수와 셸 변수의 이스케이프, 비루트 실행(Claude Code는 euid 0에서 `bypassPermissions`를 거부한다), JWT 쿠키가 들어갈 프록시 버퍼, 서로 다른 두 config dir, `aipds-update`가 떠 있는 인스턴스에 맞추는 값과 같은 nginx 요청 바디 상한, `aipds-update` 설치, 서비스 기동 전 `aipds-harden boot` |
-| `hosting-stack.assert.ts` | 프리픽스 리스트 전용 SG(SSH 없음), EC2/EBS/EIP/인스턴스 롤, CloudFront 오리진 헤더와 HTTPS 리다이렉트, **앱 클라이언트 드리프트 검사** |
+| `hosting-stack.assert.ts` | NAT 1개에 EIP 없는 프라이빗 서브넷 인스턴스, 프리픽스 리스트 전용 SG(SSH 없음), EC2/EBS/인스턴스 롤, CloudFront 뒤의 VPC 오리진(인스턴스까지 HTTP)과 오리진 헤더·HTTPS 리다이렉트, user-data가 아닌 SSM으로 넘기는 앱 오리진, 지정한 AZ, **앱 클라이언트 드리프트 검사** |
 | `auth-stack.assert.ts` | 셀프 사인업 차단, 별칭 username, 그룹, managed login v2, 코드 전용 클라이언트, 시딩 3단계 |
 | `auth-client-config.assert.ts` | **프로토타입 빌드 한 번보다 긴** 토큰 유효기간, 시드·그룹 상수, 콜백/로그아웃 URL |
-| `preview-stack.assert.ts` | 프로토타입 경로만 오리진에 닿는 것, 두 비밀 헤더, 인스턴스 롤의 프리뷰 시크릿 읽기, 인스턴스 쪽 리소스를 만들지 않는 것 |
+| `preview-stack.assert.ts` | 프로토타입 경로만 HostingStack의 VPC 오리진으로 오리진에 닿는 것, 두 비밀 헤더, 인스턴스 롤의 프리뷰 시크릿 읽기, 인스턴스 쪽 리소스를 만들지 않는 것 |
 | `agent-creds-stack.assert.ts` | `AgentRole`은 인스턴스 롤만 AssumeRole할 수 있고, Bedrock 호출(과 Bedrock을 거친 Marketplace 구독) 말고는 아무것도 못 한다 |
 | `sandbox-stacks.assert.ts` | 두 배포 방식 — 새 환경은 참조, 고정하면 **HostingStack에 의존하지 않음** |
 | `instance-params.assert.ts` | 스택이 쓰는 SSM 파라미터 이름과 `aipds-harden`이 읽는 이름이 같은 것. 어긋나면 다른 테스트는 다 통과하고, 교체된 인스턴스가 격리를 끈 채 부팅한다 |

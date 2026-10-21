@@ -23,7 +23,6 @@ export interface UserDataOptions {
   userPoolId: string;
   userPoolClientId: string;
   hostedUiDomain: string;
-  appUrl: string;
 }
 
 // EC2 bootstrap script. Pure string generation (no side effects) — unit-testable.
@@ -31,7 +30,7 @@ export interface UserDataOptions {
 // frontend build → secret lookup → nginx conf → start systemd. nginx returns 403 on a header mismatch.
 export function renderUserData(opts: UserDataOptions): string {
   const { region, bucketName, model, secretArn, repoUrl, branch,
-          userPoolId, userPoolClientId, hostedUiDomain, appUrl } = opts;
+          userPoolId, userPoolClientId, hostedUiDomain } = opts;
   const APP = '/opt/aipds';
   // Dedicated non-root service user. It is required, not a convenience: the Claude Code binary the
   // prototype build agent launches refuses bypassPermissions at euid==0
@@ -278,7 +277,8 @@ Environment=HOME=${APP}
 Environment=COGNITO_HOSTED_UI_DOMAIN=${hostedUiDomain}
 Environment=COGNITO_CLIENT_ID=${userPoolClientId}
 Environment=COGNITO_CLIENT_SECRET=\${COGNITO_SECRET}
-Environment=APP_BASE_URL=${appUrl}
+# APP_BASE_URL(앱 자신의 CloudFront 주소)은 여기 없다 — 배포가 VPC 오리진으로 이 인스턴스를
+# 가리키므로 user-data가 배포를 참조하면 순환이다. aipds-harden이 SSM에서 받아 drop-in으로 넣는다.
 ExecStart=/usr/bin/npx next start -H 127.0.0.1 -p 3000
 Restart=always
 [Install]

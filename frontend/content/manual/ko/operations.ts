@@ -239,14 +239,16 @@ AMI가 고정되어 있지 않고 user-data가 템플릿의 일부라서, 인프
       kind: "md",
       md: `그런 환경에서 인스턴스 쪽 세 스택(\`AipdsAgentCredsStack\`·\`AipdsPreviewStack\`·
 \`AipdsUploadCorsStack\`)만 갱신하려면 그 값을 환경변수로 고정해 HostingStack을 건드리지 않고
-배포합니다. 네 값은 모두 함께 주거나 모두 비워야 합니다.`,
+배포합니다. 다섯 값은 모두 함께 주거나 모두 비워야 합니다 — VPC 오리진 ID와 인스턴스의 프라이빗 DNS
+이름은 HostingStack의 \`VpcOriginId\`·\`OriginPrivateDns\` 출력입니다.`,
     },
     {
       kind: "cmd",
       lines: [
         "cd infra",
         "AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> \\",
-        "AIPDS_PREVIEW_ORIGIN_DNS=ec2-<a-b-c-d>.<region>.compute.amazonaws.com \\",
+        "AIPDS_VPC_ORIGIN_ID=<VpcOriginId> \\",
+        "AIPDS_ORIGIN_PRIVATE_DNS=<OriginPrivateDns> \\",
         "AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader secret ARN> \\",
         "AIPDS_ARTIFACTS_BUCKET=<artifacts bucket name> \\",
         "  npx cdk deploy --exclusively AipdsAgentCredsStack AipdsPreviewStack AipdsUploadCorsStack \\",
@@ -263,7 +265,7 @@ AMI가 고정되어 있지 않고 user-data가 템플릿의 일부라서, 인프
       tone: "warn",
       md: `**User Pool이 함께 삭제되므로 사용자 계정이 전원 사라집니다.** S3에 남기고 싶은
 산출물이 있으면 먼저 내려받으세요. 그리고 배포된 상태는 **비용이 계속 발생합니다**
-(EC2 상시 가동 + 저장소 + 대화 턴마다 Bedrock 호출) — 쓰지 않을 때는 내리는 편이 낫습니다.
+(EC2와 NAT 게이트웨이 상시 가동 + 저장소 + 대화 턴마다 Bedrock 호출) — 쓰지 않을 때는 내리는 편이 낫습니다.
 
 HostingStack에 [종료 보호](/manual#hotfix)를 걸어 두었다면 삭제가 거부됩니다. 내리기 전에
 \`aws cloudformation update-termination-protection --stack-name AipdsHostingStack --no-enable-termination-protection\`
@@ -278,6 +280,7 @@ HostingStack에 [종료 보호](/manual#hotfix)를 걸어 두었다면 삭제가
 | 첫 대화에서 권한 오류 (\`AccessDeniedException\`) | 계정에서 처음 부르는 모델이면 구독이 만들어지는 몇 분 동안 생깁니다 — 잠시 뒤 다시 보냅니다. 계속되면 **Anthropic 첫 사용 양식**이 제출되지 않았거나 Marketplace 결제 수단이 없는 것입니다 ([배포](/manual#deploy)) |
 | 대화가 매번 실패하고, 호스팅 시작이 *실행 환경(샌드박스)을 쓸 수 없어* 로 거부됨 | 샌드박스가 켜져 있는데 기동 점검이 실패했습니다. \`aipds-harden status\`와 백엔드 로그로 원인을 봅니다 ([샌드박스](/manual#sandbox)) |
 | 로그인 후 리다이렉트 오류 | 콜백 URL 등록이 실패한 것입니다. \`cdk deploy AipdsHostingStack\` 재실행 |
+| 배포 직후 로그인하면 \`localhost\`로 감 | 인스턴스가 아직 자기 주소를 받지 못했습니다 — 배포(CloudFront)가 뜬 뒤 2분쯤 안에 \`aipds-harden sync\`가 적용합니다. 잠시 뒤 다시 시도합니다. 확인하려면 \`systemctl cat aipds-frontend\`에 \`app-origin.conf\`의 \`APP_BASE_URL\`이 보여야 합니다 |
 | 스택이 \`ROLLBACK_COMPLETE\`라 재배포 거부 | 최초 생성이 실패한 스택은 업데이트할 수 없습니다. 그 스택만 destroy한 뒤 다시 배포합니다. \`UPDATE_ROLLBACK_COMPLETE\`(기존 스택의 갱신 실패)는 그냥 다시 배포하면 됩니다 |
 | \`cdk synth\`가 자격증명을 요구함 | HostingStack이 배포 리전의 CloudFront 프리픽스 리스트를 조회합니다. 결과가 로컬 \`cdk.context.json\`에 캐시되므로 클론당 처음 한 번만 필요합니다 |
 | 프로토타입 프리뷰가 404 | 의도된 응답입니다 — [공유 링크](/manual#share)로 들어가야 합니다 |
