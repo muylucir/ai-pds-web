@@ -147,3 +147,25 @@ async def test_delete_swallows_failures():
 def test_the_upload_cap_is_generous_but_finite():
     """It is a presigned PUT, so nginx is not involved; the real constraint is the temp disk."""
     assert 64 * 1024 * 1024 <= MAX_IMPORT_BYTES <= 4 * 1024 * 1024 * 1024
+
+
+async def test_the_real_client_signs_for_the_regional_endpoint(monkeypatch):
+    """The global endpoint 307s a new bucket outside us-east-1 to the regional one, without
+    CORS headers — the browser blocks a fresh deployment's first import."""
+    from urllib.parse import urlparse
+
+    from aipds import app as app_module
+
+    monkeypatch.setenv("AIPDS_S3_BUCKET", BUCKET)
+    monkeypatch.setenv("AIPDS_S3_REGION", "ap-northeast-2")
+    # Signing is local, but botocore still needs credentials to sign with.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fake")  # nosec B105 - a fake credential
+    monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+    app_module.s3_presign_client.cache_clear()
+    try:
+        url = await app_module.import_staging().presign_put("u1")
+    finally:
+        app_module.s3_presign_client.cache_clear()
+    assert urlparse(url).netloc == f"{BUCKET}.s3.ap-northeast-2.amazonaws.com"
+
