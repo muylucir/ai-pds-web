@@ -49,7 +49,9 @@ _log = logging.getLogger(__name__)
 #: Number of generations kept. Only enough for rollback (a funnel task) — the source is small, but each generation is a full copy.
 KEEP_GENERATIONS = 5
 _UPLOAD_CONCURRENCY = 8
-TOKEN_INDEX_PREFIX = "surveys/preview-tokens/"
+#: An S3 key prefix, not a credential -- the `nosec` is for the name, which is all
+#: bandit B105 looks at.
+TOKEN_INDEX_PREFIX = "surveys/preview-tokens/"  # nosec B105
 
 
 def source_prefix(slug: str) -> str:
