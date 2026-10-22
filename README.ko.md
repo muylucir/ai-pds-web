@@ -14,12 +14,13 @@ AI-PLC Discovery 워크숍용 대화형 캔버스.
 
 Claude Agent SDK 에이전트가 Discovery 방법론을 구동하고, 프론트엔드가 그 턴을 SSE로 실시간
 렌더한다. Discovery가 만든 프로토타입 명세는 같은 화면에서 실물 앱으로 빌드·호스팅되고, 로그인
-없이 열리는 링크로 공유하는 검증 설문까지 이어진다. 화면과 생성물 모두 한국어·영어를 지원하고,
+없이 열리는 링크로 공유하는 검증 설문까지 이어진다. Discovery가 정한 것은 AI-DLC용 인계 패키지 —
+vision 문서와 그 뒤의 결정들 — 로 넘어간다. 화면과 생성물 모두 한국어·영어를 지원하고,
 관리자는 사용자·모델 카탈로그·브랜드 디자인 프로필을 같은 앱에서 관리한다.
 
 ```
-frontend/          Next.js 15 (App Router) — 대시보드 · 워크스페이스 · 문서 리뷰 · 프로토타입 · 설문 · 관리자 · 매뉴얼
-backend/           FastAPI — Discovery 에이전트 · SSE 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅 · 설문 · JWT 검증
+frontend/          Next.js 15 (App Router) — 대시보드 · 워크스페이스 · 문서 리뷰 · 프로토타입 · 설문 · 인계 · 관리자 · 매뉴얼
+backend/           FastAPI — Discovery 에이전트 · SSE 릴레이 · S3 영속화 · 프로토타입 빌드/호스팅 · 설문 · 인계 패키지 · JWT 검증
 infra/             CDK (TypeScript) — 스택 6개, 서울 기본
 steering-files/    AI-PLC 룰셋 — aws-samples/sample-ai-plc 서브모듈, 무수정으로 가져온다
 discovery-config/  Discovery 에이전트 전용 CLAUDE_CONFIG_DIR
@@ -37,18 +38,23 @@ proto-config/      빌드 에이전트 전용 CLAUDE_CONFIG_DIR — 위와 반�
 
 ## 화면과 접근 권한
 
-프론트 미들웨어는 UX 게이트일 뿐이고 **보안 경계는 백엔드의 `require_admin`·`require_user`다.**
-공개 경로 목록은 양쪽(`frontend/lib/auth/gate.ts`, `backend/tests/test_auth_route_coverage.py`)이
-짝으로 단정한다.
+프론트 미들웨어는 UX 게이트일 뿐이고 **보안 경계는 백엔드의 `require_admin`·`require_user`·
+`require_project_access`다.** 공개 경로 목록은 양쪽(`frontend/lib/auth/gate.ts`,
+`backend/tests/test_auth_route_coverage.py`)이 짝으로 단정한다.
+
+프로젝트에는 소유자 한 명과 열람 멤버가 있다. 소유자와 관리자는 읽고 바꾸고, 멤버는 읽기만 하며, 그 밖의
+사용자에게는 없는 프로젝트와 같은 404다(`backend/aipds/project_access.py`). 아래 표의 *프로젝트* 접근이
+이것이다.
 
 | 화면 | 하는 일 | 접근 |
 |---|---|---|
-| `/` | 프로젝트 목록·생성·내보내기·가져오기 | 로그인 |
-| `/projects/{id}/workspace` | Discovery 대화 — 실시간 턴, 질문 시트, 첨부, 생성 문서 드로어 | 로그인 |
-| `/projects/{id}/dashboard` | 스테이지 진행·산출물·활동 | 로그인 |
-| `/projects/{id}/review` | 문서 리뷰와 승인 게이트 | 로그인 |
-| `/projects/{id}/questions` | 질문 파일 하나를 펼쳐 답하는 화면 | 로그인 |
-| `/projects/{id}/prototypes` | 빌드 세션·호스팅·검증 설문 | 로그인 |
+| `/` | 소유하거나 열람하는 프로젝트(관리자는 전부)의 목록·생성·내보내기·가져오기 | 로그인 |
+| `/projects/{id}/workspace` | Discovery 대화 — 실시간 턴, 질문 시트, 첨부, 생성 문서 드로어 | 프로젝트 |
+| `/projects/{id}/dashboard` | 스테이지 진행·산출물·활동 | 프로젝트 |
+| `/projects/{id}/review` | 문서 리뷰와 승인 게이트 | 프로젝트 |
+| `/projects/{id}/questions` | 질문 파일 하나를 펼쳐 답하는 화면 | 프로젝트 |
+| `/projects/{id}/prototypes` | 빌드 세션·호스팅·검증 설문 | 프로젝트 |
+| `/projects/{id}/handoff` | AI-DLC 인계 — 준비 상태, 보완 질문, AI 제안 확인, 패키지(vision 문서·결정 장부·시작 프롬프트)와 zip | 프로젝트 |
 | `/survey/{token}` | 익명 검증 설문 | **공개**(토큰) |
 | `/api/proto/{pid}/{slug}` | 빌드된 프로토타입. **프리뷰 도메인(`AipdsPreviewStack`)에서만** 서빙된다. 공유 링크가 접근 쿠키를 심고, 쿠키가 없으면 404가 정답이다 | **공개**(토큰 쿠키) |
 | `/admin/users` · `/admin/models` · `/admin/design` | 사용자·역할, 모델 카탈로그, 브랜드 디자인 프로필 | admin |
@@ -111,11 +117,13 @@ npx cdk deploy --all --require-approval never \
 
 - **15~20분 걸린다.** `cdk deploy`가 끝난 뒤에도 인스턴스가 첫 빌드를 마치는 몇 분 동안
   CloudFront가 502를 줄 수 있다. 그 몇 분 뒤 인스턴스가 샌드박스·IMDS 차단·프리뷰 오리진을
-  스스로 켜고(`aipds-harden sync`) 백엔드를 한 번 재시작한다. 손으로 돌릴 것은 없다.
+  스스로 켜고(`aipds-harden sync`) 백엔드를 한 번 재시작한다. 같은 동기화가 프런트엔드에 자기 주소를
+  알려 주므로, 로그인은 배포가 끝나고 2분쯤 안에 된다. 손으로 돌릴 것은 없다.
 - **배포되는 것은 푸시된 `main`이다.** 인스턴스는 부팅 때 `origin/main`을 clone한다. 푸시하지 않은
   것은 배포되지 않고, 같은 이유로 `cdk deploy`는 코드를 갱신하지 않는다 — 그것은 `sudo aipds-update`다.
 - **출력값**: `AipdsHostingStack.DistributionDomain`이 앱 주소, `AipdsPreviewStack.PreviewOrigin`이
-  공유 링크가 가리키는 주소, `AipdsHostingStack.InstanceId`가 SSM 대상이다.
+  공유 링크가 가리키는 주소, `AipdsHostingStack.InstanceId`가 SSM 대상이다. `VpcOriginId`와
+  `OriginPrivateDns`는 인스턴스 쪽 스택만 배포할 때 필요한 값이다(`/manual`).
 - **로그인**은 `admin@aipds.local` 또는 `pm@aipds.local`에 `SeedPassword` 값으로 한다. 30일 동안 유효한
   임시 비밀번호이고 각자 첫 로그인에서 바꾼다. 풀 정책(8자 이상, 대문자·소문자·숫자·기호 각각
   하나 이상)을 만족하지 않으면 CloudFormation이 배포 시작 전에 거부한다.
@@ -218,6 +226,8 @@ cd frontend && npm run test:e2e                 # e2e (실 백엔드와 Bedrock 
 | `npm test -- parity` | 매뉴얼 — ko/en의 구조·앵커가 어긋난 것을 잡는다 |
 | `pytest -q -k sdk_available` | `claude-agent-sdk` 버전 — 옵션 필드와 번들 바이너리를 확인한다 |
 | `pytest -q -k no_legacy_brand` | 제품 이름이 들어가는 모든 것 |
+| `pytest -q -k no_hardcoded_secrets` | 이름에 token·secret·password가 든 문자열 — 보안심사의 Bandit이 잡는 것(B105/B106/B107)을 미리 잡는다 |
+| `pytest -q -k synthetic_email_domains` | 예시 이메일 주소 — 예약 도메인(`example.com`, `.test` 등)만 |
 
 ---
 
@@ -228,7 +238,10 @@ AI-PDS Web은 Amazon Bedrock의 Claude 모델로 제품 문서, 프로토타입,
 
 **결정은 사람이 한다.** AI는 스스로 단계를 확정하지 않는다. 단계는 사람이 질문지에 답하거나 승인
 게이트에서 Discovery 문서를 승인해야 닫히고, 승인할지 수정을 요청할지는 언제나 사람의 몫이다.
-*★ AI 추천* 표시는 제안일 뿐, 폼이 대신 골라 제출하는 기본값이 아니다.
+*★ AI 추천* 표시는 제안일 뿐, 폼이 대신 골라 제출하는 기본값이 아니다. 인계 패키지도 같은 선을 지킨다:
+vision 문서는 모델이 쓰지만, 열린 질문 표는 코드가 모은 후보로 만든다 — 모델이 더하는 행은 근거를
+인용해야 하고, 코드가 그 인용이 원문에 있는지 확인한다. 인계 탭에서 아무도 확인하지 않은 AI 제안에는
+표시를 단다.
 
 **AI가 한 일이 보인다.** 사용자가 입력한 말과 제출한 답은 AI가 아니라 앱이 `audit.md`에 원문 그대로
 실제 시각과 함께 남기고, AI는 그 뒤에 자기 판단을 덧붙인다. 턴마다 실행한 도구와 바뀐 파일은 답변

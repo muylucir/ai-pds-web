@@ -11,7 +11,7 @@
 |---|---|
 | `AipdsDrillStack` | S3 아티팩트 버킷 + 백엔드 실행 롤(Bedrock invoke + S3) |
 | `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 + `admin`/`pm` 그룹 + 시드 계정 2개 |
-| `AipdsHostingStack` | VPC + EC2(AL2023 x86_64, m7i.2xlarge, EBS 100GB 암호화) + CloudFront |
+| `AipdsHostingStack` | VPC(프라이빗 서브넷 + NAT 1개) + EC2(AL2023 x86_64, m7i.2xlarge, EBS 100GB 암호화) + VPC 오리진으로 붙는 CloudFront |
 | `AipdsPreviewStack` | 프리뷰 전용 CloudFront |
 | `AipdsAgentCredsStack` | 샌드박스 프로세스용 Bedrock 전용 `AgentRole` |
 | `AipdsUploadCorsStack` | 인스턴스 롤이 버킷 CORS를 읽고 쓰는 권한 |
@@ -150,7 +150,7 @@ npm test     # 자격증명 불필요 — 순수 함수 + 합성된 템플릿에
 
 | 파일 | 지키는 것 |
 |---|---|
-| `user-data.assert.ts` | 부팅 스크립트 — nginx 변수와 셸 변수의 이스케이프, 비루트 실행(Claude Code는 euid 0에서 `bypassPermissions`를 거부한다), JWT 쿠키가 들어갈 프록시 버퍼, 서로 다른 두 config dir, `aipds-update`가 떠 있는 인스턴스에 맞추는 값과 같은 nginx 요청 바디 상한, `aipds-update` 설치, 서비스 기동 전 `aipds-harden boot` |
+| `user-data.assert.ts` | 부팅 스크립트 — nginx 변수와 셸 변수의 이스케이프, 비루트 실행(Claude Code는 euid 0에서 `bypassPermissions`를 거부한다), JWT 쿠키가 들어갈 프록시 버퍼, 서로 다른 두 config dir, `aipds-update`가 떠 있는 인스턴스에 맞추는 값과 같은 nginx 요청 바디 상한, `aipds-update` 설치, 서비스 기동 전 `aipds-harden boot`, user-data에 앱 주소가 없는 것(배포를 참조하면 순환이다) |
 | `hosting-stack.assert.ts` | NAT 1개에 EIP 없는 프라이빗 서브넷 인스턴스, 프리픽스 리스트 전용 SG(SSH 없음), EC2/EBS/인스턴스 롤, CloudFront 뒤의 VPC 오리진(인스턴스까지 HTTP)과 오리진 헤더·HTTPS 리다이렉트, user-data가 아닌 SSM으로 넘기는 앱 오리진, 지정한 AZ, **앱 클라이언트 드리프트 검사** |
 | `auth-stack.assert.ts` | 셀프 사인업 차단, 별칭 username, 그룹, managed login v2, 코드 전용 클라이언트, 시딩 3단계 |
 | `auth-client-config.assert.ts` | **프로토타입 빌드 한 번보다 긴** 토큰 유효기간, 시드·그룹 상수, 콜백/로그아웃 URL |
