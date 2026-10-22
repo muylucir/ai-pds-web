@@ -15,13 +15,14 @@ A conversational canvas for AI-PLC Discovery workshops.
 
 A Claude Agent SDK agent drives the Discovery methodology, and the frontend renders its turns live
 over SSE. The prototype spec Discovery produces is built and hosted as a real app from the same
-screen, and continues into a validation survey shared through an unauthenticated link. The UI and the
-generated artifacts both support Korean and English, and administrators manage users, the model
-catalog and the brand design profile from the same app.
+screen, and continues into a validation survey shared through an unauthenticated link. What Discovery
+settled then leaves as a handoff package for AI-DLC — a vision document and the decisions behind it.
+The UI and the generated artifacts both support Korean and English, and administrators manage users,
+the model catalog and the brand design profile from the same app.
 
 ```
-frontend/          Next.js 15 (App Router) — dashboard · workspace · document review · prototypes · survey · admin · manual
-backend/           FastAPI — Discovery agent · SSE relay · S3 persistence · prototype build/hosting · survey · JWT verification
+frontend/          Next.js 15 (App Router) — dashboard · workspace · document review · prototypes · survey · handoff · admin · manual
+backend/           FastAPI — Discovery agent · SSE relay · S3 persistence · prototype build/hosting · survey · handoff package · JWT verification
 infra/             CDK (TypeScript) — six stacks, Seoul by default
 steering-files/    the AI-PLC ruleset — a submodule of aws-samples/sample-ai-plc, carried unmodified
 discovery-config/  CLAUDE_CONFIG_DIR for the Discovery agent
@@ -40,17 +41,22 @@ proto-config/      CLAUDE_CONFIG_DIR for the build agent — must differ from th
 ## Screens and who can open them
 
 The frontend middleware is only a UX gate — **the security boundary is the backend's `require_admin` /
-`require_user`.** The public-path list is asserted from both sides (`frontend/lib/auth/gate.ts` and
-`backend/tests/test_auth_route_coverage.py`).
+`require_user` / `require_project_access`.** The public-path list is asserted from both sides
+(`frontend/lib/auth/gate.ts` and `backend/tests/test_auth_route_coverage.py`).
+
+A project has one owner and any number of viewing members. The owner and administrators read and
+change it; members only read; to anyone else it is a 404, the same as a project that does not exist
+(`backend/aipds/project_access.py`). That is the *project* access below.
 
 | Screen | What it does | Access |
 |---|---|---|
-| `/` | Project list, creation, export and import | logged in |
-| `/projects/{id}/workspace` | The Discovery conversation — live turns, question sheets, attachments, the generated-document drawer | logged in |
-| `/projects/{id}/dashboard` | Stage progress, artifacts, activity | logged in |
-| `/projects/{id}/review` | Document review and the approval gate | logged in |
-| `/projects/{id}/questions` | One question file, expanded to answer | logged in |
-| `/projects/{id}/prototypes` | Build sessions, hosting, and the validation survey | logged in |
+| `/` | The projects you own or view (all of them for an admin), creation, export and import | logged in |
+| `/projects/{id}/workspace` | The Discovery conversation — live turns, question sheets, attachments, the generated-document drawer | project |
+| `/projects/{id}/dashboard` | Stage progress, artifacts, activity | project |
+| `/projects/{id}/review` | Document review and the approval gate | project |
+| `/projects/{id}/questions` | One question file, expanded to answer | project |
+| `/projects/{id}/prototypes` | Build sessions, hosting, and the validation survey | project |
+| `/projects/{id}/handoff` | The AI-DLC handoff — readiness, supplementary questions, confirming AI suggestions, and the package (vision document, decision ledger, start prompt) as a zip | project |
 | `/survey/{token}` | The anonymous validation survey | **public** (token) |
 | `/api/proto/{pid}/{slug}` | The built prototype, served **only on the preview domain** (`AipdsPreviewStack`). The share link plants the access cookie; without it, 404 is the correct answer | **public** (token cookie) |
 | `/admin/users` · `/admin/models` · `/admin/design` | Users and roles, the model catalog, the brand design profile | admin |
@@ -115,11 +121,13 @@ npx cdk deploy --all --require-approval never \
 - **It takes 15–20 minutes**, and CloudFront may answer 502 for a few minutes after `cdk deploy`
   returns while the instance finishes its first build. A few minutes later the instance turns on the
   sandbox, the IMDS block and the preview origin by itself (`aipds-harden sync`) and restarts the
-  backend once. Nothing needs to be run by hand.
+  backend once. The same sync gives the frontend its own address, so sign-in works within about two
+  minutes of the deploy finishing. Nothing needs to be run by hand.
 - **What gets deployed is pushed `main`.** The instance clones `origin/main` at boot; nothing unpushed is
   deployed, and for the same reason `cdk deploy` never updates code — that is `sudo aipds-update`.
 - **Outputs**: `AipdsHostingStack.DistributionDomain` is the app, `AipdsPreviewStack.PreviewOrigin` is
-  where share links point, `AipdsHostingStack.InstanceId` is the SSM target.
+  where share links point, `AipdsHostingStack.InstanceId` is the SSM target. `VpcOriginId` and
+  `OriginPrivateDns` are what deploying the instance-side stacks alone takes (`/manual`).
 - **Sign in** as `admin@aipds.local` or `pm@aipds.local` with the `SeedPassword` value. It is a temporary
   password (valid 30 days) that each user replaces at first login. It must satisfy the pool policy —
   8+ characters with an uppercase letter, a lowercase letter, a digit and a symbol — or CloudFormation
@@ -227,6 +235,8 @@ cd frontend && npm run test:e2e                 # e2e (needs a real backend and 
 | `npm test -- parity` | The manual — catches ko/en drifting apart in structure or anchors |
 | `pytest -q -k sdk_available` | The `claude-agent-sdk` version — checks the option fields and the bundled binary |
 | `pytest -q -k no_legacy_brand` | Anything with the product name in it |
+| `pytest -q -k no_hardcoded_secrets` | A string under a name with token, secret or password in it — catches what the security scan's Bandit flags (B105/B106/B107) |
+| `pytest -q -k synthetic_email_domains` | Example email addresses — only reserved domains (`example.com`, `.test`, …) |
 
 ---
 
@@ -238,7 +248,10 @@ Bedrock. Everything it produces is a draft for a person to judge, and the tool i
 **People decide.** The AI does not settle a stage on its own: a stage closes when a person answers its
 question sheet or approves the Discovery document at the approval gate, and approving or asking for a
 revision is always the person's call. Options marked *★ AI pick* are a suggestion, not a default the
-form submits for you.
+form submits for you. The handoff package keeps the same line: the model drafts the vision document,
+but code builds its open-questions table from candidates it collects — a row the model adds must quote
+its source, and code checks the quote is there — and marks the AI suggestions no one has confirmed on
+the handoff tab.
 
 **What the AI did is visible.** Everything a user types and every answer submitted is written to
 `audit.md` verbatim with the real time, by the app rather than by the AI; the AI appends its own
