@@ -19,6 +19,7 @@ const harden = fs.readFileSync(path.join(scripts, 'aipds-harden'), 'utf8');
 const preview = fs.readFileSync(path.join(scripts, 'aipds-preview-configure'), 'utf8');
 
 for (const [variable, name] of [
+  ['PARAM_APP_ORIGIN', INSTANCE_PARAMS.appOrigin],
   ['PARAM_AGENT_ROLE', INSTANCE_PARAMS.agentRoleArn],
   ['PARAM_PREVIEW_ORIGIN', INSTANCE_PARAMS.previewOrigin],
   ['PARAM_PREVIEW_SECRET', INSTANCE_PARAMS.previewSecretArn],
@@ -65,7 +66,8 @@ assert.match(preview, /if \[ "\$\{1:-\}" = "--no-restart" \]; then/,
   const stacks = [
     new AipdsAgentCredsStack(app, 'AgentCreds', { env, instanceRoleArn: role }),
     new AipdsPreviewStack(app, 'Preview', {
-      env, instanceRoleArn: role, originDnsName: 'ec2-1-2-3-4.compute.amazonaws.com',
+      env, instanceRoleArn: role, vpcOriginId: 'vo_test0000',
+      originPrivateDns: 'ip-10-0-2-10.ap-northeast-2.compute.internal',
       originVerifySecretArn: 'arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:h-AbCdEf',
     }),
     new AipdsUploadCorsStack(app, 'UploadCors', {

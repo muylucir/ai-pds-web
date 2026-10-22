@@ -13,7 +13,6 @@ const s = renderUserData({
   userPoolId: 'ap-northeast-2_TESTPOOL',
   userPoolClientId: 'client-test',
   hostedUiDomain: 'aipds-test.auth.ap-northeast-2.amazoncognito.com',
-  appUrl: 'https://example.cloudfront.net',
 });
 
 // 1) Safety options and logging
@@ -333,7 +332,6 @@ console.log('OK  user-data: services run as non-root aipds user, app tree owned 
     userPoolId: 'ap-northeast-2_POOL',
     userPoolClientId: 'client-abc',
     hostedUiDomain: 'aipds-x.auth.ap-northeast-2.amazoncognito.com',
-    appUrl: 'https://d123.cloudfront.net',
   });
 
   // Backend: auth is on only with these two values (without them, bypass = public with no auth).
@@ -342,7 +340,9 @@ console.log('OK  user-data: services run as non-root aipds user, app tree owned 
   assert.ok(script.includes('AIPDS_COGNITO_CLIENT_ID=client-abc'),
     'backend must receive the client id');
 
-  // Frontend: Hosted UI domain, client and app URL.
+  // Frontend: Hosted UI domain and client. The app URL is not here — HostingStack's distribution
+  // reaches the instance through a VPC origin, so user-data referencing the distribution would be a
+  // cycle; aipds-harden applies it from SSM.
   // Searching only for 'COGNITO_CLIENT_ID=client-abc' would also match the backend's
   // 'AIPDS_COGNITO_CLIENT_ID=client-abc' line as a substring, so it would pass even if
   // the frontend line were deleted — include the 'Environment=' prefix to pin it to
@@ -350,7 +350,8 @@ console.log('OK  user-data: services run as non-root aipds user, app tree owned 
   assert.ok(script.includes('COGNITO_HOSTED_UI_DOMAIN=aipds-x.auth.ap-northeast-2.amazoncognito.com'));
   assert.ok(script.includes('Environment=COGNITO_CLIENT_ID=client-abc'),
     'frontend unit must set COGNITO_CLIENT_ID (must not match the backend AIPDS_COGNITO_CLIENT_ID line)');
-  assert.ok(script.includes('APP_BASE_URL=https://d123.cloudfront.net'));
+  assert.ok(!script.includes('Environment=APP_BASE_URL='),
+    'user-data must not carry the app URL (it would reference the distribution — a cycle)');
 
   // The client secret is fetched from Cognito at boot — it is not left in plaintext in the template.
   assert.ok(script.includes('describe-user-pool-client'),

@@ -107,7 +107,7 @@ npx cdk deploy --all --require-approval never \
 |---|---|
 | `AipdsDrillStack` | S3 artifact bucket + backend execution role |
 | `AipdsAuthStack` | Cognito User Pool + hosted sign-in + `admin`/`pm` groups + two seed accounts |
-| `AipdsHostingStack` | VPC + EC2 (AL2023, m7i.2xlarge) + CloudFront |
+| `AipdsHostingStack` | VPC (private subnet + one NAT) + EC2 (AL2023, m7i.2xlarge) + CloudFront through a VPC origin |
 | `AipdsPreviewStack` | A separate CloudFront distribution that serves only prototypes |
 | `AipdsAgentCredsStack` | The Bedrock-only role the sandboxed agents and prototypes run with |
 | `AipdsUploadCorsStack` | Lets the instance keep its app origin in the bucket's CORS (project import uploads straight to S3) |
@@ -134,45 +134,45 @@ npx cdk deploy --all --require-approval never \
     the Plus feature plan (`aipds-auth-stack.ts`).
   - `cdk destroy` deletes the user pool and the artifacts bucket with everything in it, and the bucket
     has no versioning or access logs (`aipds-auth-stack.ts`, `aipds-drill-stack.ts`).
-  - CloudFront reaches the instance over plain HTTP — see
-    [CloudFront → instance is HTTP by design](#cloudfront--instance-is-http-by-design).
-- **Another region**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. No code changes.
+- **Another region**: `CDK_DEPLOY_REGION=ap-northeast-1 npx cdk deploy --all …`. No code changes. A few
+  regions offer VPC origins in all but one AZ (`use1-az3` in us-east-1, `usw1-az2` in us-west-1,
+  `apne1-az3` in ap-northeast-1, `cac1-az3` in ca-central-1). AZ names map to different AZs in each
+  account, so check with `aws ec2 describe-availability-zones` and, if the region's first two names
+  include that AZ, name two others: `AIPDS_AVAILABILITY_ZONES=ap-northeast-1a,ap-northeast-1c`.
 - **Another upload origin** (a custom domain, say): `AIPDS_UPLOAD_ORIGINS` (comma-separated) at deploy
   time. The app's own origin is added by the instance.
 
 Updating the code, the sandbox commands, protecting a running instance from replacement, getting a
 fresh instance, teardown, and troubleshooting are in **`/manual` → Install, operate, troubleshoot**.
 
-### CloudFront → instance is HTTP by design
+### CloudFront → instance is private
 
-This is a workshop and sample workload, and it deliberately uses no domain of its own, so it deploys
-into any account with nothing to register first. Browsers reach CloudFront over HTTPS only (HTTP is
-redirected), but CloudFront reaches the instance over HTTP on port 80 — in both the app distribution
-(`aipds-hosting-stack.ts`) and the preview distribution (`aipds-preview-stack.ts`). HTTPS on that leg
-needs a publicly trusted certificate for the origin's name, and no certificate authority issues one for
-the instance's `ec2-….compute.amazonaws.com` name.
+The instance sits in a private subnet with no public address. Both distributions — the app
+(`aipds-hosting-stack.ts`) and the previews (`aipds-preview-stack.ts`) — reach it through one CloudFront
+VPC origin: CloudFront places a service-managed network interface in the VPC and sends origin requests
+through it, so they never cross the public internet. The instance's own outbound traffic (git, package
+installs, Bedrock, the agent fetching URLs) leaves through one NAT gateway, which is billed by the hour
+and per GB processed.
 
 **What travels on that leg:** session cookies (Cognito tokens), prototype access cookies, and the
 `X-Origin-Verify` / `X-Preview-Verify` secret headers.
 
+**Why it is HTTP on port 80.** CloudFront accepts an origin certificate only from a publicly trusted
+certificate authority, for the origin's name, and a VPC origin to EC2 is addressed by the instance's
+private DNS name (`ip-….compute.internal`), which no authority issues a certificate for. Keeping it that
+way lets the sample deploy into any account with no domain of its own.
+
 **What limits it:**
 
-- The security group accepts port 80 only from the CloudFront origin-facing prefix list. There is no
-  SSH; access is through SSM.
-- nginx rejects any request without the secret header, so the instance cannot be reached around
-  CloudFront.
+- Nothing on the internet can reach the instance: it has no public IP, and its security group accepts
+  port 80 only from the CloudFront origin-facing prefix list. There is no SSH; access is through SSM.
+- nginx rejects any request without the secret header.
 - The secret header values come from Secrets Manager at deploy time; no template holds them in
   plaintext.
 
-**What it does not cover:** anyone able to observe traffic on the path between a CloudFront edge and
-the instance can read those cookies and headers.
-
-**Before using it beyond a workshop, or with real customer data,** make the origin leg HTTPS with a
-domain you own: point a record (say `origin.example.com`) at the instance's Elastic IP, serve a
-publicly trusted certificate for that name from nginx on port 443, and set the origin in both stacks
-to `OriginProtocolPolicy.HTTPS_ONLY` on 443. Moving the instance to a private subnet behind a
-CloudFront VPC origin takes the leg off the public internet, and with the same domain and certificate
-it can be HTTPS too. Either change replaces the instance, so make it at a planned replacement.
+**To add TLS on that leg,** use a domain you own: put an internal Application Load Balancer with an ACM
+certificate for that name in front of the instance, and make the load balancer the VPC origin with
+`OriginProtocolPolicy.HTTPS_ONLY`.
 
 ---
 

@@ -8,8 +8,10 @@ import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as cr from 'aws-cdk-lib/custom-resources';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { backendPolicyStatements, MODEL } from './backend-permissions';
 import { DEPLOY_BRANCH, REPO_URL } from './deploy-source';
+import { INSTANCE_PARAMS } from './instance-params';
 import { renderUserData } from './user-data';
 import {
   ACCESS_TOKEN_VALIDITY_MINUTES, CLIENT_NAME, EXPLICIT_AUTH_FLOWS, ID_TOKEN_VALIDITY_MINUTES,
@@ -22,6 +24,10 @@ export interface HostingStackProps extends cdk.StackProps {
   // For test injection. If unset, the CloudFront origin-facing prefix list for the deploy
   // region is looked up automatically with fromLookup.
   cfPrefixListId?: string;
+  // AZs for the VPC. Unset: the region's first two. VPC origins are not offered in a few AZs
+  // (README "Another region"), and AZ names map to different AZs in each account, so the
+  // deployer picks them (AIPDS_AVAILABILITY_ZONES in bin/app.ts).
+  availabilityZones?: string[];
   // Auth. Takes the pool/client AuthStack created, (1) plants them in EC2 as env and
   // (2) registers the CloudFront domain as a callback URL.
   userPool: cognito.IUserPool;
@@ -34,18 +40,28 @@ export class AipdsHostingStack extends cdk.Stack {
   public readonly instanceRole: iam.IRole;
   /** The `X-Origin-Verify` secret. The preview distribution attaches the same value. */
   public readonly originVerifySecret: secretsmanager.ISecret;
-  /** Public DNS name of the EIP. A CloudFront origin does not accept an IP. */
-  public readonly originDnsName: string;
+  /** The VPC origin in front of the instance. The preview distribution uses the same one. */
+  public readonly vpcOriginId: string;
+  /** The instance's private DNS name — the origin domain a VPC origin to EC2 takes. */
+  public readonly originPrivateDns: string;
 
   constructor(scope: Construct, id: string, props: HostingStackProps) {
     super(scope, id, props);
 
-    // --- VPC: public subnets only, no NAT (zero cost). ---
+    // --- VPC: the instance is in a private subnet; one NAT for its outbound traffic. ---
+    // Nothing on the internet can reach the instance — CloudFront reaches it through a VPC origin
+    // (below). Outbound has to be the open internet (git clone, pip, npm, the agent fetching
+    // user-given URLs), so VPC endpoints cannot replace the NAT. One is enough for a single instance.
+    // The public subnets hold the NAT; the internet gateway they bring is also a VPC origin
+    // prerequisite.
     const vpc = new ec2.Vpc(this, 'Vpc', {
-      maxAzs: 2,
-      natGateways: 0,
+      ...(props.availabilityZones?.length
+        ? { availabilityZones: props.availabilityZones }
+        : { maxAzs: 2 }),
+      natGateways: 1,
       subnetConfiguration: [
         { name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
+        { name: 'private', subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
       ],
     });
 
@@ -57,6 +73,8 @@ export class AipdsHostingStack extends cdk.Stack {
       }).prefixListId;
 
     // --- SG: port 80 only, only from the CloudFront prefix list. No SSH. ---
+    // This is also how a VPC origin's traffic is admitted (the VPC origin's own service-managed
+    // security group would be narrower, but it only exists after the VPC origin is created).
     const sg = new ec2.SecurityGroup(this, 'InstanceSg', {
       vpc,
       allowAllOutbound: true, // package installs · Bedrock · S3
@@ -150,14 +168,8 @@ export class AipdsHostingStack extends cdk.Stack {
     // user-data.ts). The reasoning for this choice is in lib/deploy-source.ts.
 
     // --- user-data ---
-    // The CloudFront domain is created below, but user-data is needed now.
-    // Lazy.string defers resolution to the end of synthesis to break the cycle — in the CFN template
-    // it lands as an Fn::GetAtt reference.
-    let distributionDomain: string | undefined;
-    const appUrlToken = cdk.Lazy.string({
-      produce: () => `https://${distributionDomain ?? ''}`,
-    });
-
+    // It does not carry the app's CloudFront domain: the distribution references this instance (VPC
+    // origin), so the instance cannot reference the distribution. That value goes through SSM (below).
     const userData = ec2.UserData.custom(
       renderUserData({
         region,
@@ -169,14 +181,13 @@ export class AipdsHostingStack extends cdk.Stack {
         userPoolId: props.userPool.userPoolId,
         userPoolClientId: props.userPoolClient.userPoolClientId,
         hostedUiDomain: props.hostedUiDomain,
-        appUrl: appUrlToken,
       }),
     );
 
     // --- Instance (AL2023 x86_64, IMDSv2 enforced) ---
     const instance = new ec2.Instance(this, 'Instance', {
       vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       // Prototype builds moved onto this box: each session keeps a claude subprocess
       // (~300-500MB) resident and next build peaks at 2GB. No Graviton
       // (the SDK's bundled binary is x86-64).
@@ -194,39 +205,33 @@ export class AipdsHostingStack extends cdk.Stack {
       }],
     });
 
-    // --- Fixed EIP (CloudFront origin domain unchanged across redeploys) ---
-    const eip = new ec2.CfnEIP(this, 'Eip', { domain: 'vpc' });
-    new ec2.CfnEIPAssociation(this, 'EipAssoc', {
-      allocationId: eip.attrAllocationId,
-      instanceId: instance.instanceId,
-    });
-
-    // EIP IP -> public DNS name (a CloudFront origin only accepts a domain; no IP).
-    //   ec2-<a-b-c-d>.<region>.compute.amazonaws.com  (compute-1 for us-east-1)
-    const computeDomain =
-      region === 'us-east-1' ? 'compute-1.amazonaws.com' : `${region}.compute.amazonaws.com`;
-    const originDnsName =
-      `ec2-${cdk.Fn.join('-', cdk.Fn.split('.', eip.attrPublicIp))}.${computeDomain}`;
-    this.instanceRole = role;
-    this.originVerifySecret = headerSecret;
-    this.originDnsName = originDnsName;
-
-    // **Security warning: the CloudFront → origin leg is not encrypted (HTTP_ONLY, port 80).** Browser
-    // → CloudFront is HTTPS, but the request CloudFront sends to the EC2 public DNS is plaintext and carries
-    // the session cookies (Cognito tokens) and the secret header below. The security group accepts only the
-    // CloudFront origin ranges and nginx checks the secret header, so direct access is blocked, but eavesdropping on the path is not.
-    // This constraint exists because a public certificate cannot be issued for an EC2 public DNS name. If used outside a workshop, switch to
-    // one of two: a custom domain + certificate with the origin at HTTPS_ONLY (443), or move the instance to a
-    // private subnet and use a CloudFront VPC origin. Deploying this stack can replace the EC2 instance
-    // (AMI not pinned), so do it during a planned replacement. The same goes for the preview distribution (aipds-preview-stack.ts).
-    // This is the choice that lets this sample deploy without a domain — README "CloudFront → instance is HTTP by
-    // design" covers the scope, mitigations and how to switch.
+    // --- VPC origin: CloudFront reaches the instance over private connectivity ---
+    // CloudFront places a service-managed ENI in the instance's VPC and sends origin requests through
+    // it — they never cross the public internet, and the instance has no public address to reach.
+    // The preview distribution (aipds-preview-stack.ts) uses this same VPC origin.
     //
-    // Secret header value: injected via a CFN dynamic reference ({{resolve:secretsmanager:...}}).
-    // CloudFormation resolves it at deploy time → no plaintext is left in the template.
-    const origin = new origins.HttpOrigin(originDnsName, {
+    // **Why the leg is HTTP (port 80).** It runs inside AWS private connectivity, but it is not TLS.
+    // CloudFront accepts an origin certificate only from a publicly trusted CA for the origin's
+    // name, and the origin name of a VPC origin to EC2 is the instance's private DNS name
+    // (ip-….compute.internal), which no CA issues for. TLS on top of this leg takes a domain of
+    // your own — README "CloudFront → instance is private" covers what travels on the leg (session
+    // cookies, the secret header below) and how to add it.
+    const vpcOrigin = new cloudfront.VpcOrigin(this, 'VpcOrigin', {
+      endpoint: cloudfront.VpcOriginEndpoint.ec2Instance(instance),
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
       httpPort: 80,
+    });
+    this.instanceRole = role;
+    this.originVerifySecret = headerSecret;
+    this.vpcOriginId = vpcOrigin.vpcOriginId;
+    this.originPrivateDns = instance.instancePrivateDnsName;
+
+    // Secret header value: injected via a CFN dynamic reference ({{resolve:secretsmanager:...}}).
+    // CloudFormation resolves it at deploy time → no plaintext is left in the template. The instance
+    // cannot be reached around CloudFront anyway; the header is a second check, and the preview
+    // distribution's extra header is how the backend tells the two surfaces apart.
+    const origin = origins.VpcOrigin.withVpcOrigin(vpcOrigin, {
+      domainName: instance.instancePrivateDnsName,
       readTimeout: cdk.Duration.seconds(60), // headroom for SSE (backend ping 15s)
       keepaliveTimeout: cdk.Duration.seconds(60),
       customHeaders: {
@@ -254,7 +259,23 @@ export class AipdsHostingStack extends cdk.Stack {
         },
       },
     });
-    distributionDomain = distribution.distributionDomainName;
+
+    // --- The app origin, for the frontend's APP_BASE_URL (Cognito redirect URIs are built on it) ---
+    // The instance boots before the distribution exists; aipds-harden's sync timer picks the value up a
+    // few minutes later and restarts the frontend. The grant names the parameter by ARN, not by reference —
+    // a reference would make the instance role's policy, which the instance waits for, depend on the
+    // distribution, which depends on the instance.
+    new ssm.StringParameter(this, 'AppOriginParam', {
+      parameterName: INSTANCE_PARAMS.appOrigin,
+      stringValue: `https://${distribution.distributionDomainName}`,
+      description: 'AI-PDS app origin; read by infra/scripts/aipds-harden (frontend APP_BASE_URL).',
+    });
+    role.addToPolicy(new iam.PolicyStatement({
+      actions: ['ssm:GetParameter'],
+      resources: [cdk.Stack.of(this).formatArn({
+        service: 'ssm', resource: 'parameter', resourceName: INSTANCE_PARAMS.appOrigin.slice(1),
+      })],
+    }));
 
     // --- Callback URL injection: breaking the circular dependency ---
     //
@@ -322,6 +343,7 @@ export class AipdsHostingStack extends cdk.Stack {
       value: `https://${distribution.distributionDomainName}`,
     });
     new cdk.CfnOutput(this, 'InstanceId', { value: instance.instanceId });
-    new cdk.CfnOutput(this, 'EipAddress', { value: eip.attrPublicIp });
+    new cdk.CfnOutput(this, 'VpcOriginId', { value: vpcOrigin.vpcOriginId });
+    new cdk.CfnOutput(this, 'OriginPrivateDns', { value: instance.instancePrivateDnsName });
   }
 }

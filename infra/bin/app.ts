@@ -31,6 +31,16 @@ const drill = new AipdsDrillStack(app, 'AipdsDrillStack', { env, uploadOrigins }
 // hosting stack below via UpdateUserPoolClient (resolving the circular dependency).
 const auth = new AipdsAuthStack(app, 'AipdsAuthStack', { env });
 
+// AZs for the hosting VPC (default: the region's first two). Needed only in the regions where a VPC
+// origin is not offered in some AZ — README "Another region". AZ names map to different AZs per account,
+// so this cannot be decided in code.
+//
+//   AIPDS_AVAILABILITY_ZONES=ap-northeast-1a,ap-northeast-1c npx cdk deploy --all
+const availabilityZones = (process.env.AIPDS_AVAILABILITY_ZONES ?? '')
+  .split(',')
+  .map((z) => z.trim())
+  .filter((z) => z.length > 0);
+
 // The hosting stack automatically looks up the CloudFront origin-facing prefix list in the deploy region
 // (fromLookup) — credentials are needed at synth/deploy time, and the result is cached in
 // cdk.context.json (to be committed).
@@ -40,12 +50,13 @@ const hosting = new AipdsHostingStack(app, 'AipdsHostingStack', {
   userPool: auth.userPool,
   userPoolClient: auth.userPoolClient,
   hostedUiDomain: auth.hostedUiDomain,
+  availabilityZones,
 });
 
 // The preview origin and the Bedrock-only role for sandboxes. New environments create them by reference from
 // HostingStack; running environments with values pinned via env (lib/sandbox-stacks.ts — without pinning, HostingStack gets deployed too).
 //
-//   AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> AIPDS_PREVIEW_ORIGIN_DNS=<EIP DNS> \
-//   AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader ARN> AIPDS_ARTIFACTS_BUCKET=<bucket> \
+//   AIPDS_INSTANCE_ROLE_ARN=<InstanceRole ARN> AIPDS_VPC_ORIGIN_ID=<VpcOriginId> \
+//   AIPDS_ORIGIN_PRIVATE_DNS=<OriginPrivateDns> AIPDS_ORIGIN_VERIFY_SECRET_ARN=<OriginVerifyHeader ARN> AIPDS_ARTIFACTS_BUCKET=<bucket> \
 //     npx cdk deploy AipdsAgentCredsStack AipdsPreviewStack AipdsUploadCorsStack
 addSandboxStacks(app, env, drill, hosting, pinnedFromEnv(process.env));
