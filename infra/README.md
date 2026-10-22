@@ -12,7 +12,7 @@ break silently, with no error, when someone misses them.
 |---|---|
 | `AipdsDrillStack` | S3 artifact bucket + backend execution role (Bedrock invoke + S3) |
 | `AipdsAuthStack` | Cognito User Pool + Hosted UI v2 + `admin`/`pm` groups + two seed accounts |
-| `AipdsHostingStack` | VPC + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront |
+| `AipdsHostingStack` | VPC (private subnet + one NAT) + EC2 (AL2023 x86_64, m7i.2xlarge, 100 GB encrypted EBS) + CloudFront through a VPC origin |
 | `AipdsPreviewStack` | The preview-only CloudFront distribution |
 | `AipdsAgentCredsStack` | The Bedrock-only `AgentRole` for sandboxed processes |
 | `AipdsUploadCorsStack` | The instance role's permission to read and write the bucket's CORS |
@@ -160,7 +160,7 @@ npm test     # no credentials needed — pure functions + assertions on the synt
 
 | File | What it guards |
 |---|---|
-| `user-data.assert.ts` | The boot script — nginx-vs-shell escaping, non-root execution (Claude Code refuses `bypassPermissions` at euid 0), proxy buffers large enough for JWT cookies, two distinct config dirs, an nginx request-body limit equal to the one `aipds-update` applies to running instances, `aipds-update` shipping, and `aipds-harden boot` running before the services start |
+| `user-data.assert.ts` | The boot script — nginx-vs-shell escaping, non-root execution (Claude Code refuses `bypassPermissions` at euid 0), proxy buffers large enough for JWT cookies, two distinct config dirs, an nginx request-body limit equal to the one `aipds-update` applies to running instances, `aipds-update` shipping, `aipds-harden boot` running before the services start, and no app URL in user-data (it would reference the distribution) |
 | `hosting-stack.assert.ts` | Private-subnet instance with one NAT and no EIP, prefix-list-only security group (no SSH), EC2/EBS/instance role, the VPC origin (HTTP to the instance) behind CloudFront with its origin header and HTTPS redirect, the app origin passed through SSM rather than user-data, chosen AZs, and the **app client drift check** |
 | `auth-stack.assert.ts` | No self-signup, alias username, groups, managed login v2, code-only client, the three seeding steps |
 | `auth-client-config.assert.ts` | Token validity that **outlasts one prototype build**, seed and group constants, callback/logout URLs |
