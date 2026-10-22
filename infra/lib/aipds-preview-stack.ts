@@ -20,7 +20,7 @@ import { INSTANCE_PARAMS } from './instance-params';
 // **Why a separate stack rather than inside HostingStack.** Deploying HostingStack can replace the EC2:
 // the AMI is not pinned (`latestAmazonLinux2023()`), so if a new AMI is out any change triggers a
 // replacement, and the nginx config is inside user-data (`userDataCausesReplacement`). This stack only
-// references the EC2 (origin DNS, the secret header secret, the instance role), so deploying it leaves
+// references the EC2 (its VPC origin, the secret header secret, the instance role), so deploying it leaves
 // the instance as is. There are no instance-side changes either — nginx accepts this Host too via
 // `server_name _`, and the Next proxy forwards both secret headers to the backend.
 //
@@ -31,8 +31,10 @@ import { INSTANCE_PARAMS } from './instance-params';
 // instance reads them at boot and tells the backend the preview origin (aipds-harden `boot`).
 
 export interface PreviewStackProps extends cdk.StackProps {
-  /** The EC2's public DNS (EIP). CloudFront origins do not accept IPs. */
-  originDnsName: string;
+  /** HostingStack's VPC origin. This distribution reaches the instance through the same one. */
+  vpcOriginId: string;
+  /** The instance's private DNS name — the origin domain for a VPC origin to EC2. */
+  originPrivateDns: string;
   /** HostingStack's `X-Origin-Verify` secret (full ARN). nginx checks this value. */
   originVerifySecretArn: string;
   /** HostingStack's instance role. The backend reads the preview secret header value. */
@@ -61,12 +63,12 @@ export class AipdsPreviewStack extends cdk.Stack {
     const originVerify = secretsmanager.Secret.fromSecretCompleteArn(
       this, 'OriginVerifyHeader', props.originVerifySecretArn);
 
-    // **Security warning: the origin leg is plaintext HTTP** — the same constraint and the same solution as the
-    // app distribution (the origin comment in aipds-hosting-stack.ts, README "CloudFront → instance is HTTP by design").
+    // The origin leg is the app distribution's VPC origin — private connectivity, HTTP on port 80 for the
+    // reason in the VPC origin comment of aipds-hosting-stack.ts (README "CloudFront → instance is private").
     // The prototype access cookie and both secret headers travel on this leg.
-    const origin = new origins.HttpOrigin(props.originDnsName, {
-      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
-      httpPort: 80,
+    const vpcOrigin = cloudfront.VpcOrigin.fromVpcOriginId(this, 'AppVpcOrigin', props.vpcOriginId);
+    const origin = origins.VpcOrigin.withVpcOrigin(vpcOrigin, {
+      domainName: props.originPrivateDns,
       readTimeout: cdk.Duration.seconds(60),
       keepaliveTimeout: cdk.Duration.seconds(60),
       customHeaders: {

@@ -24,17 +24,20 @@ The **last three** exist because of one fact: **a HostingStack deploy can replac
 The AMI is not pinned (`latestAmazonLinux2023()`) and user-data is part of the template
 (`userDataCausesReplacement`), so anything that changes HostingStack risks a new instance. Features
 the instance turns on after boot therefore live in separate stacks that only *reference* what
-HostingStack created (the instance role, the origin secret, the EIP's DNS name) and never modify it.
+HostingStack created (the instance role, the origin secret, the VPC origin) and never modify it.
 
 - **How their values reach the instance.** Not through user-data: user-data referencing their outputs
   is a cycle (they reference the instance role), and breaking it by editing user-data replaces the
   instance. Instead the stacks write SSM parameters (`lib/instance-params.ts`) and the instance reads
   them at run time — `aipds-harden sync` at boot and every 2 minutes after. A missing parameter leaves
-  the feature off; it never turns a running one off.
+  the feature off; it never turns a running one off. HostingStack's own app origin (the frontend's
+  `APP_BASE_URL`) comes the same way: its distribution reaches the instance through a VPC origin, so the
+  instance's user-data cannot reference the distribution.
 - **Two ways to deploy them** (`lib/sandbox-stacks.ts`). In a new environment they take HostingStack's
   values as cross-stack references, so one `cdk deploy --all` does everything. In a running
-  environment the four values are pinned with env (`AIPDS_INSTANCE_ROLE_ARN`,
-  `AIPDS_PREVIEW_ORIGIN_DNS`, `AIPDS_ORIGIN_VERIFY_SECRET_ARN`, `AIPDS_ARTIFACTS_BUCKET` — all or none):
+  environment the five values are pinned with env (`AIPDS_INSTANCE_ROLE_ARN`, `AIPDS_VPC_ORIGIN_ID`,
+  `AIPDS_ORIGIN_PRIVATE_DNS`, `AIPDS_ORIGIN_VERIFY_SECRET_ARN`, `AIPDS_ARTIFACTS_BUCKET` — all or none;
+  the middle three are HostingStack outputs or its secret):
   a cross-stack reference would make `cdk deploy AipdsAgentCredsStack` deploy HostingStack too.
 - **Protecting a running HostingStack.** A stack policy that denies `Update:Replace` and
   `Update:Delete`, plus termination protection, turns an accidental replacement into a failed,
@@ -133,16 +136,20 @@ incoming event once. That is acceptable only because the value must be replaced 
 
 ## Origin protection
 
-EC2 accepts port 80 only from the CloudFront origin-facing managed prefix list, and nginx checks the
-secret `X-Origin-Verify` header CloudFront attaches. There are two layers because the prefix list only
-proves "came from *a* CloudFront distribution" — someone else's is in it too. No SSH port is open;
-access is `aws ssm start-session`.
+The instance is in a private subnet with no public IP; CloudFront reaches it only through the VPC
+origin, which both distributions share (README "CloudFront → instance is private"). The security group
+accepts port 80 only from the CloudFront origin-facing managed prefix list, and nginx checks the secret
+`X-Origin-Verify` header both distributions attach — a second layer behind the network, and the preview
+distribution's extra `X-Preview-Verify` is how the backend tells the two surfaces apart. No SSH port is
+open; access is `aws ssm start-session`. Outbound goes through one NAT gateway.
 
 ## Region lookup and cdk.context.json
 
 `CDK_DEPLOY_REGION` overrides Seoul. `PrefixList.fromLookup` resolves the region's prefix list ID, so no
 code changes, but the hosting stack's first synth needs account credentials. The result is cached in
-`cdk.context.json`, which is gitignored: its key contains the account ID.
+`cdk.context.json`, which is gitignored: its key contains the account ID. `AIPDS_AVAILABILITY_ZONES`
+picks the VPC's AZs where the region's first two would include one without VPC origins (README
+"Another region").
 
 ## What the tests guard
 
@@ -154,10 +161,10 @@ npm test     # no credentials needed — pure functions + assertions on the synt
 | File | What it guards |
 |---|---|
 | `user-data.assert.ts` | The boot script — nginx-vs-shell escaping, non-root execution (Claude Code refuses `bypassPermissions` at euid 0), proxy buffers large enough for JWT cookies, two distinct config dirs, an nginx request-body limit equal to the one `aipds-update` applies to running instances, `aipds-update` shipping, and `aipds-harden boot` running before the services start |
-| `hosting-stack.assert.ts` | Prefix-list-only security group (no SSH), EC2/EBS/EIP/instance role, CloudFront's origin header and HTTPS redirect, and the **app client drift check** |
+| `hosting-stack.assert.ts` | Private-subnet instance with one NAT and no EIP, prefix-list-only security group (no SSH), EC2/EBS/instance role, the VPC origin (HTTP to the instance) behind CloudFront with its origin header and HTTPS redirect, the app origin passed through SSM rather than user-data, chosen AZs, and the **app client drift check** |
 | `auth-stack.assert.ts` | No self-signup, alias username, groups, managed login v2, code-only client, the three seeding steps |
 | `auth-client-config.assert.ts` | Token validity that **outlasts one prototype build**, seed and group constants, callback/logout URLs |
-| `preview-stack.assert.ts` | Only prototype paths reach the origin, both secret headers are attached, the instance role can read the preview secret, and no instance-side resource is created |
+| `preview-stack.assert.ts` | Only prototype paths reach the origin, through HostingStack's VPC origin, both secret headers are attached, the instance role can read the preview secret, and no instance-side resource is created |
 | `agent-creds-stack.assert.ts` | `AgentRole` is assumable only by the instance role and can do nothing but invoke Bedrock (plus the Marketplace subscription through Bedrock) |
 | `sandbox-stacks.assert.ts` | The two deploy modes — references in a new environment, **no dependency on HostingStack** when pinned |
 | `instance-params.assert.ts` | The SSM parameter names the stacks write match the ones `aipds-harden` reads. A mismatch passes every other test and boots a replaced instance with isolation off |

@@ -85,6 +85,7 @@ def host(tmp_path):
 
     class Host:
         dropin = root / "etc/systemd/system/aipds-backend.service.d"
+        front_dropin = root / "etc/systemd/system/aipds-frontend.service.d"
         conf = root / "etc/aipds"
         libexec = root / "usr/local/libexec/aipds"
 
@@ -285,3 +286,65 @@ def test_a_non_https_app_origin_is_not_written(cors_host):
     proc, _ = cors_host.run("sync")
     assert proc.returncode == 0 and "not https" in proc.stderr
     assert cors_host.cors() is None
+
+
+# ---- App origin (the frontend's APP_BASE_URL, HostingStack's /aipds/app-origin) ----
+
+
+def _frontend_restarts(calls):
+    return [c for c in calls if c == "restart aipds-frontend"]
+
+
+def test_the_app_origin_that_appears_later_is_applied_once(host):
+    """A new instance boots before its distribution exists — the first syncs find nothing, and
+    the value shows up minutes later."""
+    proc, calls = host.run("sync")
+    assert proc.returncode == 0, proc.stderr
+    assert not (host.front_dropin / "app-origin.conf").exists()
+
+    host.param("/aipds/app-origin", APP)
+    proc, calls = host.run("sync")
+    assert proc.returncode == 0, proc.stderr
+    assert (host.front_dropin / "app-origin.conf").read_text() == (
+        f"[Service]\nEnvironment=APP_BASE_URL={APP}\n")
+    assert _frontend_restarts(calls) == ["restart aipds-frontend"]
+    # Not a backend setting — in-flight turns and builds are left alone.
+    assert _restarts(calls) == []
+
+    proc, calls = host.run("sync")
+    assert proc.returncode == 0 and _frontend_restarts(calls) == []
+
+
+def test_a_stopped_frontend_is_not_started(host):
+    host.flag("backend-active", on=False)
+    host.param("/aipds/app-origin", APP)
+    proc, calls = host.run("sync")
+    assert proc.returncode == 0, proc.stderr
+    assert (host.front_dropin / "app-origin.conf").exists()
+    assert _frontend_restarts(calls) == []
+
+
+@pytest.mark.parametrize("value", [
+    "http://d2example.cloudfront.net",
+    "https://d2example.cloudfront.net/",
+    "https://d2example.cloudfront.net\nEnvironment=LD_PRELOAD=/tmp/evil.so",
+])
+def test_anything_but_one_https_origin_is_not_written(host, value):
+    """The value lands in a unit file the frontend runs with — a second line would be a second
+    setting."""
+    host.param("/aipds/app-origin", value)
+    proc, calls = host.run("sync")
+    assert proc.returncode == 0, proc.stderr
+    assert "not an https origin" in proc.stderr
+    assert not (host.front_dropin / "app-origin.conf").exists()
+    assert _frontend_restarts(calls) == []
+
+
+def test_a_held_instance_still_gets_its_app_origin(host):
+    """hold is the sandbox rollback — login has nothing to do with it."""
+    host.conf.mkdir(parents=True, exist_ok=True)
+    (host.conf / "hold").write_text("disable at 2026-09-24T00:00:00Z\n")
+    host.param("/aipds/app-origin", APP)
+    proc, _ = host.run("sync")
+    assert proc.returncode == 0 and "held" in proc.stdout
+    assert APP in (host.front_dropin / "app-origin.conf").read_text()

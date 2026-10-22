@@ -8,7 +8,7 @@ import { AipdsUploadCorsStack } from './aipds-upload-cors-stack';
 // The stacks for what the instance turns on by itself after boot: the origin dedicated to prototype previews
 // (aipds-preview-stack.ts), the Bedrock-only role for sandboxed processes (aipds-agent-creds-stack.ts), and the permission
 // to align the bucket CORS (aipds-upload-cors-stack.ts). All three only reference HostingStack's resources (instance role, header secret,
-// EIP DNS), and the instance applies them with infra/scripts/aipds-harden sync.
+// VPC origin), and the instance applies them with infra/scripts/aipds-harden sync.
 //
 // There are two ways the values are received.
 //   - **New environment (default):** received from HostingStack through cross-stack references. A single `cdk deploy --all` does it —
@@ -21,7 +21,8 @@ import { AipdsUploadCorsStack } from './aipds-upload-cors-stack';
 
 export interface PinnedHosting {
   instanceRoleArn: string;
-  originDnsName: string;
+  vpcOriginId: string;
+  originPrivateDns: string;
   originVerifySecretArn: string;
   /** Artifact bucket name. Received as a reference it would be tied to DrillStack — pinned for the same reason. */
   artifactsBucket: string;
@@ -29,7 +30,8 @@ export interface PinnedHosting {
 
 const PINNED_ENV = {
   instanceRoleArn: 'AIPDS_INSTANCE_ROLE_ARN',
-  originDnsName: 'AIPDS_PREVIEW_ORIGIN_DNS',
+  vpcOriginId: 'AIPDS_VPC_ORIGIN_ID',
+  originPrivateDns: 'AIPDS_ORIGIN_PRIVATE_DNS',
   originVerifySecretArn: 'AIPDS_ORIGIN_VERIFY_SECRET_ARN',
   artifactsBucket: 'AIPDS_ARTIFACTS_BUCKET',
 } as const;
@@ -52,7 +54,8 @@ export function addSandboxStacks(app: cdk.App, env: cdk.Environment, drill: Aipd
   const instanceRoleArn = pinned?.instanceRoleArn ?? hosting.instanceRole.roleArn;
   const preview = new AipdsPreviewStack(app, 'AipdsPreviewStack', {
     env,
-    originDnsName: pinned?.originDnsName ?? hosting.originDnsName,
+    vpcOriginId: pinned?.vpcOriginId ?? hosting.vpcOriginId,
+    originPrivateDns: pinned?.originPrivateDns ?? hosting.originPrivateDns,
     originVerifySecretArn: pinned?.originVerifySecretArn ?? hosting.originVerifySecret.secretArn,
     instanceRoleArn,
   });
