@@ -40,8 +40,45 @@ const ANSWER_LINE = /^\[Answer\]:[ \t]*(.*)$/gm;
 export function revealAnswerTags(markdown: string): string {
   return markdown.replace(ANSWER_LINE, (_line, value: string) => {
     const answer = value.trim();
-    return answer === "" ? "**\\[Answer\\]:**" : `**\\[Answer\\]:** ${answer}`;
+    // Keep the hard break `breakAnswerLines` put on a multi-line answer's first line — trimming
+    // it would glue that line to the next one again.
+    const hardBreak = answer !== "" && / {2}$/.test(value) ? "  " : "";
+    return answer === "" ? "**\\[Answer\\]:**" : `**\\[Answer\\]:** ${answer}${hardBreak}`;
   });
+}
+
+//: Where an answer block ends — the **same rule** as `_ANSWER_STOP` in
+//: backend/aipds/parsers/questions.py: a heading, a thematic break, a code fence, or another tag,
+//: at column 0. If the two drift, the screen breaks lines the parser does not count as the answer.
+const ANSWER_STOP = /^(?:#{1,6}\s|(?:-{3,}|\*{3,}|_{3,})\s*$|`{3,}|~{3,}|\[Answer\]:)/;
+const ANSWER_TAG = /^\[Answer\]:[ \t]*(.*)$/;
+
+/**
+ * Appends a hard break to each line of a multi-line answer, so it shows line by line.
+ *
+ * **Why (2026-10-25).** The card's elaboration and Other fields are textareas, and the backend
+ * writes such an answer as a block — the tag line plus indented continuation lines
+ * (`serialize_answers`). Those lines form one CommonMark paragraph, so the user's line breaks
+ * rendered as spaces: the context they typed line by line read as one run-on sentence. Blank
+ * lines already separate paragraphs, so only the lines inside a paragraph need this — but a
+ * hard break on a paragraph's last line is discarded, so every non-blank line gets one (the
+ * same reasoning as `breakOptionLines`).
+ *
+ * An empty tag opens no block — the backend reads nothing after it as the answer either.
+ */
+export function breakAnswerLines(markdown: string): string {
+  let inAnswer = false;
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const cr = line.endsWith("\r") ? "\r" : "";
+      const body = cr ? line.slice(0, -1) : line;
+      const tag = ANSWER_TAG.exec(body);
+      if (tag) inAnswer = tag[1].trim() !== "";
+      else if (inAnswer && ANSWER_STOP.test(body)) inAnswer = false;
+      return inAnswer && body.trim() !== "" ? body.replace(/[ \t]*$/, "  ") + cr : line;
+    })
+    .join("\n");
 }
 
 
@@ -70,8 +107,11 @@ export function breakOptionLines(markdown: string): string {
 }
 
 /**
- * The bundle of transforms applied before putting a question file on screen. Order does not matter (they look at different lines).
+ * The bundle of transforms applied before putting a question file on screen.
+ *
+ * `breakAnswerLines` goes **first**: it finds answer blocks by the raw `[Answer]:` tag, which
+ * `revealAnswerTags` rewrites. The other two look at different lines, so their order does not matter.
  */
 export function prepareQuestionMarkdown(markdown: string): string {
-  return breakOptionLines(revealAnswerTags(markdown));
+  return breakOptionLines(revealAnswerTags(breakAnswerLines(markdown)));
 }

@@ -113,6 +113,31 @@ _CAT_HEADER = re.compile(r"^##\s+(?!Question\b)(.+?)\s*$", re.MULTILINE)
 #: translation table (`claude_driver._LETTERS`, A-J).
 _OPTION = re.compile(r"^([A-J]|X)\)\s+(.*)$")
 _ANSWER = re.compile(r"^\[Answer\]:\s*(.*)$")
+#: An answer is a **block**, not a line: the `[Answer]:` line plus the lines that continue it.
+#:
+#: **Why (2026-10-25).** The card's elaboration field and the Other field are textareas, so an
+#: answer like `A: <several paragraphs of context>` is normal input. `serialize_answers` wrote
+#: the whole value into the file, but this parser read only the `[Answer]:` line — so the file
+#: held the full context while everything built from the parse (the reopened card, the handoff
+#: decision ledger in handoff/readiness) had only its first line. Changing that answer later
+#: rewrote the tag line alone and left the old answer's remaining lines behind as orphans.
+#: The agent reads the raw file, so its next turn saw everything — which is why nothing looked
+#: wrong in the conversation.
+#:
+#: A block runs until one of these, at column 0: any heading (which covers every question
+#: header `_Q_HEADER` accepts and the category headers), a thematic break (the `---` the agent
+#: puts between questions), a code fence, or another `[Answer]:` tag. Trailing blank lines are
+#: not part of it. The fence is there for documents that quote a tag inside one — audit.md
+#: records rounds as ```` ``` …[Answer]: A``` ```` followed by the agent's prose, and without
+#: the fence stop that prose was read as the answer (measured on the real fixtures: it was the
+#: only file whose answers changed).
+#:
+#: `serialize_answers` indents continuation lines by `_CONT_INDENT`, so a line the user typed
+#: that *looks* like one of those stops (`## …`, `---`) stays inside its answer. Blocks without
+#: that indent are still read whole: the answers written before this fix are exactly that shape.
+_ANSWER_STOP = re.compile(
+    r"^(?:#{1,6}\s|(?:-{3,}|\*{3,}|_{3,})\s*$|`{3,}|~{3,}|\[Answer\]:)")
+_CONT_INDENT = "  "
 _RECO = re.compile(r"\s*←\s*(추천|recommended).*$", re.IGNORECASE)
 #: Translated free-input option. The upstream template is
 #: `X) Other (please describe after [Answer]: tag below)`, but agents in ko projects translate
@@ -147,6 +172,45 @@ def _is_multi_select(text: str) -> bool:
         if "선택" in inner and _MULTI_KO_QUALIFIER.search(inner):
             return True
     return False
+
+def _answer_block(lines: list[str], i: int) -> tuple[str | None, int]:
+    """`lines[i]` is an `[Answer]:` line. Returns (answer, index just past its block).
+
+    `lines` may keep their line endings — `serialize_answers` passes them that way.
+
+    **An empty tag has no continuation.** Whatever follows an empty `[Answer]:` is the agent's
+    text, not an answer, and reading it as one would mark an unasked question answered — the
+    card would then never appear. Our writer always puts the value's first line on the tag line,
+    so a real answer never starts on the next line.
+    """
+    m = _ANSWER.match(lines[i].strip())
+    first = m.group(1).strip() if m else ""
+    if not first:
+        return None, i + 1
+    last = i
+    j = i + 1
+    while j < len(lines):
+        line = lines[j].rstrip("\r\n")
+        if _ANSWER_STOP.match(line):
+            break
+        if line.strip():
+            last = j
+        j += 1
+    rest = [lines[k].rstrip("\r\n") for k in range(i + 1, last + 1)]
+    if all(l.startswith(_CONT_INDENT) for l in rest if l.strip()):
+        rest = [l[len(_CONT_INDENT):] for l in rest]
+    return "\n".join([first, *rest]).rstrip(), last + 1
+
+
+def _answer_lines(value: str, ending: str) -> str:
+    """The `[Answer]:` block for `value` — the inverse of `_answer_block`."""
+    first, *rest = value.replace("\r\n", "\n").replace("\r", "\n").strip().split("\n")
+    nl = ending or "\n"
+    out = f"[Answer]: {first}"
+    for line in rest:
+        out += nl + (_CONT_INDENT + line if line.strip() else "")
+    return out + ending
+
 
 def parse_question_file(name: str, markdown: str) -> QuestionFile:
     try:
@@ -210,8 +274,11 @@ def _parse(name: str, markdown: str) -> QuestionFile:
                 om = _OPTION.match(raw)
                 am = _ANSWER.match(raw)
                 if am:
-                    answer = am.group(1).strip() or None
-                elif om:
+                    # The whole block (see `_ANSWER_STOP`) — and it is skipped as a unit, so a
+                    # continuation line shaped like `B) …` is not read as an option.
+                    answer, i = _answer_block(lines, i)
+                    continue
+                if om:
                     letter, otext = om.group(1), om.group(2).strip()
                     recommended = bool(_RECO.search(otext))
                     otext = _RECO.sub("", otext).strip()
@@ -273,7 +340,9 @@ def serialize_answers(markdown: str, answers: dict[int, str]) -> str:
     lines = markdown.splitlines(keepends=True)
     current_q: int | None = None
     out: list[str] = []
-    for line in lines:
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         # Match on the same basis _parse uses (the raw line minus its line
         # ending) so header detection can't diverge between the two passes.
         qm = _Q_HEADER.match(line.rstrip("\r\n"))
@@ -281,11 +350,18 @@ def serialize_answers(markdown: str, answers: dict[int, str]) -> str:
         if qm:
             current_q = int(qm.group(1))
             out.append(line)
+            i += 1
             continue
         if current_q in answers and stripped.startswith("[Answer]:"):
-            m_end = re.search(r"(\r\n|\r|\n)$", line)
+            # Replace the previous answer's whole block, not just its tag line — otherwise
+            # the lines of a multi-line answer stay behind under the new one. The block's
+            # last line supplies the ending, so a block at end of file stays without one.
+            _, end = _answer_block(lines, i)
+            m_end = re.search(r"(\r\n|\r|\n)$", lines[end - 1])
             ending = m_end.group(1) if m_end else ""
-            out.append(f"[Answer]: {answers[current_q]}{ending}")
+            out.append(_answer_lines(answers[current_q], ending))
+            i = end
             continue
         out.append(line)
+        i += 1
     return "".join(out)

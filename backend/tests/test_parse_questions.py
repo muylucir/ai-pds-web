@@ -674,3 +674,90 @@ def test_the_payload_path_uses_the_same_rule():
                     {"letter": "D", "text": "기타 (아래 [Answer]: 태그 뒤에 설명해 주세요)"},
                     {"letter": "E", "text": "수정하겠다 ([Answer]: 뒤에 적어 주세요)"}]}]})
     assert [o["is_other"] for o in out["questions"][0]["options"]] == [False, True, False]
+
+
+# ---- An answer is a block: multi-line elaborations survive the round trip ----
+#
+# The elaboration and Other fields are textareas, so `A: <paragraphs of context>` is ordinary
+# input. The file kept all of it, but the parser read only the `[Answer]:` line — the reopened
+# card and the handoff ledger saw the first line, and re-answering left the old answer's other
+# lines behind as orphans.
+
+_TWO_MD = """\
+## Question 1
+어떤 방식으로 진행할까요?
+
+A) 처음부터
+B) 기존 자료로
+X) Other (please describe after [Answer]: tag below)
+
+[Answer]:
+
+## Question 2
+대상 사용자는 누구입니까?
+
+A) 내부 직원
+B) 외부 고객
+
+[Answer]:
+"""
+
+_LONG = "A: 첫 줄\n둘째 줄\n\n셋째 문단 — 아주 긴 맥락"
+
+
+def test_a_multi_line_answer_round_trips_whole():
+    out = serialize_answers(_TWO_MD, {1: _LONG, 2: "B"})
+    again = parse_question_file("x-questions.md", out)
+    assert [q.answer for q in again.questions] == [_LONG, "B"]
+
+
+def test_re_answering_replaces_the_whole_previous_block():
+    first = serialize_answers(_TWO_MD, {1: _LONG})
+    out = serialize_answers(first, {1: "B"})
+    assert "둘째 줄" not in out and "셋째 문단" not in out
+    assert out == serialize_answers(_TWO_MD, {1: "B"})
+
+
+def test_lines_that_look_like_structure_stay_inside_the_answer():
+    tricky = "A: 메모\n## 이건 헤딩이 아니다\n---\n```\n[Answer]: 이것도 답의 일부\nB) 보기도 아니다"
+    out = serialize_answers(_TWO_MD, {1: tricky, 2: "A"})
+    again = parse_question_file("x-questions.md", out)
+    assert [q.number for q in again.questions] == [1, 2]
+    assert again.questions[0].answer == tricky
+    assert [o.letter for o in again.questions[0].options] == ["A", "B", "X"]
+    assert again.questions[1].answer == "A"
+
+
+def test_an_answer_written_before_the_fix_is_read_whole():
+    # The old writer put continuation lines in unindented — the shape real files now hold.
+    legacy = _TWO_MD.replace("[Answer]:\n\n## Question 2",
+                             "[Answer]: A: 첫 줄\n둘째 줄\n\n셋째 줄\n\n## Question 2", 1)
+    qf = parse_question_file("x-questions.md", legacy)
+    assert qf.questions[0].answer == "A: 첫 줄\n둘째 줄\n\n셋째 줄"
+    assert qf.questions[1].answer is None
+
+
+def test_a_block_stops_at_a_thematic_break():
+    md = _TWO_MD.replace("[Answer]:\n\n## Question 2",
+                         "[Answer]: A\n\n---\n\n자유 서술\n\n## Question 2", 1)
+    assert parse_question_file("x-questions.md", md).questions[0].answer == "A"
+
+
+def test_an_empty_tag_does_not_absorb_the_text_after_it():
+    # Reading that text as an answer would mark the question answered and its card would never appear.
+    md = _TWO_MD.replace("[Answer]:\n\n## Question 2",
+                         "[Answer]:\n에이전트가 덧붙인 설명\n\n## Question 2", 1)
+    assert parse_question_file("x-questions.md", md).questions[0].answer is None
+
+
+def test_a_multi_line_answer_at_end_of_file_keeps_the_file_ending():
+    out = serialize_answers(_TWO_MD.rstrip("\n"), {2: "A: 첫 줄\n둘째 줄"})
+    assert out.endswith("[Answer]: A: 첫 줄\n  둘째 줄")
+    assert parse_question_file("x-questions.md", out).questions[1].answer == "A: 첫 줄\n둘째 줄"
+
+
+def test_crlf_files_keep_their_endings():
+    crlf = _TWO_MD.replace("\n", "\r\n")
+    out = serialize_answers(crlf, {1: "A: 첫 줄\n둘째 줄"})
+    assert "[Answer]: A: 첫 줄\r\n  둘째 줄\r\n" in out
+    assert "\n" not in out.replace("\r\n", "")
