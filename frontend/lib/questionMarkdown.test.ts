@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { revealAnswerTags, breakOptionLines, prepareQuestionMarkdown } from "./questionMarkdown";
+import { revealAnswerTags, breakOptionLines, breakAnswerLines, prepareQuestionMarkdown } from "./questionMarkdown";
 
 // 2026-08-16: the backend planted `[Answer]: A`, but not a single answer showed on screen.
 // `[Answer]: A` is a CommonMark **link reference definition**, so the renderer produced no output
@@ -99,6 +99,36 @@ describe("breakOptionLines", () => {
   it("letter 뒤에 공백이 없으면 보기가 아니다", () => {
     // The backend's `_OPTION` requires `\s+`, so the same boundary is kept.
     expect(breakOptionLines("A)붙어있음")).toBe("A)붙어있음");
+  });
+});
+
+// 2026-10-25: a multi-line elaboration is written as a block (the tag line plus indented
+// continuation lines), but those lines formed one paragraph, so the user's line breaks rendered as spaces.
+describe("breakAnswerLines", () => {
+  it("여러 줄 답의 각 줄에 하드 브레이크를 붙인다", () => {
+    const md = "[Answer]: A: 첫 줄\n  둘째 줄\n\n  셋째 문단";
+    expect(breakAnswerLines(md)).toBe("[Answer]: A: 첫 줄  \n  둘째 줄  \n\n  셋째 문단  ");
+  });
+
+  it("블록이 끝나면 그 뒤 줄은 건드리지 않는다 — 백엔드 파서와 같은 경계", () => {
+    for (const stop of ["## Question 2", "---", "```", "[Answer]:"]) {
+      const out = breakAnswerLines(`[Answer]: A\n\n${stop}\n본문`);
+      expect(out).toBe(`[Answer]: A  \n\n${stop}\n본문`);
+    }
+  });
+
+  it("빈 태그는 블록을 열지 않는다", () => {
+    const md = "[Answer]:\n에이전트 설명";
+    expect(breakAnswerLines(md)).toBe(md);
+  });
+
+  it("CRLF 줄끝을 유지한다", () => {
+    expect(breakAnswerLines("[Answer]: A\r\n  둘째\r\n")).toBe("[Answer]: A  \r\n  둘째  \r\n");
+  });
+
+  it("문서에 그려도 첫 줄의 하드 브레이크가 남는다", () => {
+    const out = prepareQuestionMarkdown("[Answer]: A: 첫 줄\n  둘째 줄");
+    expect(out).toBe("**\\[Answer\\]:** A: 첫 줄  \n  둘째 줄  ");
   });
 });
 
