@@ -85,6 +85,28 @@ describe("forwardableCookies", () => {
   });
 });
 
+describe("forwardableCookies on a prototype preview", () => {
+  it("keeps the prototype's own cookies and the access cookie", () => {
+    expect(forwardableCookies("sp_session=hq-1; aipds_proto_ab=t; theme=dark", { preview: true }))
+      .toBe("sp_session=hq-1; aipds_proto_ab=t; theme=dark");
+  });
+
+  it("drops every app cookie by namespace, including ones not listed anywhere", () => {
+    const out = forwardableCookies(
+      "aipds_access=a; aipds_id=i; aipds_refresh=r; aipds_pkce=p; aipds_state=s; aipds_next=n; "
+      + "aipds_future=x; sp_session=hq-1", { preview: true });
+    expect(out).toBe("sp_session=hq-1");
+  });
+
+  it("judges by name, not value", () => {
+    expect(forwardableCookies("sp=aipds_access", { preview: true })).toBe("sp=aipds_access");
+  });
+
+  it("is still the allowlist off the preview path", () => {
+    expect(forwardableCookies("sp_session=hq-1; aipds_proto_ab=t")).toBe("aipds_proto_ab=t");
+  });
+});
+
 describe("isRetryableWithRefresh", () => {
   it("retries a GET on 401 when a refresh token exists", () => {
     expect(isRetryableWithRefresh(401, "GET", true)).toBe(true);

@@ -495,3 +495,64 @@ async def test_the_shared_upstream_client_keeps_no_cookies():
         assert not http.cookies
     finally:
         await aclose_proxy_http()
+
+
+# ---- The prototype's own cookies ----
+#
+# A prototype keeps its own login in its own cookies — a persona demo signs in as one role and moves
+# between screens. Both directions have to survive the proxy: the browser's cookies reach the
+# prototype, and every cookie the prototype sets reaches the browser. The Next half (which cookies
+# the /api proxy lets through) is pinned in frontend lib/api/proxyAuth.test.ts.
+
+@pytest.fixture()
+def cookie_upstream():
+    """A real upstream on a free port: `login/` sets two cookies in one response (session + role, as
+    a real login does), `whoami/` echoes the Cookie header it received."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            if self.path.endswith("/login/"):
+                self.send_header("set-cookie", "sp_session=hq-1; Path=/proto; HttpOnly")
+                self.send_header("set-cookie",
+                                 "sp_role=hq; Path=/proto; Expires=Thu, 01 Jan 2099 00:00:00 GMT")
+            body = (self.headers.get("cookie") or "").encode()
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server.server_address[1]
+    server.shutdown()
+
+
+def _access_cookie(env):
+    return f"{cookie_name(PID, SLUG)}={env['host'].ensure_token(PID, SLUG)}"
+
+
+def test_every_cookie_the_prototype_sets_reaches_the_browser(env, monkeypatch, cookie_upstream):
+    """Repeated `Set-Cookie` headers stay separate. Joined into one (what a dict of headers does),
+    the browser reads a single cookie and the role cookie is lost."""
+    monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "")
+    _running(env, port=cookie_upstream)
+    resp = client.get(f"/proto/{PID}/{SLUG}/login/", headers={"cookie": _access_cookie(env)})
+    assert resp.status_code == 200
+    assert resp.headers.get_list("set-cookie") == [
+        "sp_session=hq-1; Path=/proto; HttpOnly",
+        "sp_role=hq; Path=/proto; Expires=Thu, 01 Jan 2099 00:00:00 GMT",
+    ]
+
+
+def test_the_prototypes_cookies_reach_the_prototype(env, monkeypatch, cookie_upstream):
+    monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "")
+    _running(env, port=cookie_upstream)
+    resp = client.get(f"/proto/{PID}/{SLUG}/whoami/",
+                      headers={"cookie": f"{_access_cookie(env)}; sp_session=hq-1"})
+    assert resp.status_code == 200
+    assert "sp_session=hq-1" in resp.text

@@ -480,15 +480,21 @@ async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
         return PlainTextResponse(
             "prototype not responding — check hosting logs", status_code=502)
 
-    resp_headers = {k: v for k, v in upstream.headers.items()
-                    if k.lower() not in _STRIP_RESPONSE_HEADERS}
-    # A prototype that redirects (SPA route normalization, auth bounce, its own
-    # trailing-slash handling) names its own internal origin — rewrite it so the
-    # browser stays on the public proxy path.
-    if "location" in resp_headers:
-        resp_headers["location"] = _rewritten_location(
-            resp_headers["location"], pid, slug)
-    return StreamingResponse(upstream.aiter_raw(),
-                             status_code=upstream.status_code,
-                             headers=resp_headers,
-                             background=BackgroundTask(upstream.aclose))
+    response = StreamingResponse(upstream.aiter_raw(),
+                                 status_code=upstream.status_code,
+                                 background=BackgroundTask(upstream.aclose))
+    # Header by header, repeats kept. A dict (or httpx's `items()`) joins repeated headers
+    # with ", " — harmless for most, but `Set-Cookie` cannot be joined: a login that sets a
+    # session and a role cookie in one response became one header the browser reads as a
+    # single cookie. (Behind Next's /api proxy, undici happens to split it back; the direct
+    # path in local development did not.)
+    for key, value in upstream.headers.multi_items():
+        if key.lower() in _STRIP_RESPONSE_HEADERS:
+            continue
+        # A prototype that redirects (SPA route normalization, auth bounce, its own
+        # trailing-slash handling) names its own internal origin — rewrite it so the
+        # browser stays on the public proxy path.
+        if key.lower() == "location":
+            value = _rewritten_location(value, pid, slug)
+        response.headers.append(key, value)
+    return response
