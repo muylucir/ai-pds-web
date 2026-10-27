@@ -4,9 +4,9 @@ Discovery 에이전트 전용 `CLAUDE_CONFIG_DIR` (`AIPDS_DISCOVERY_CONFIG_DIR`)
 
 ## 왜 proto-config와 분리하는가
 
-`proto-config/CLAUDE.md`는 "프로토타입 디자인은 shadcn-design 스킬을 사용"을
+`proto-config/CLAUDE.md`는 프로토타입 디자인에 쓸 스킬(shadcn-design·antd-design)을
 지시한다. 이 지시가 Discovery에 들어가면 문서 작성 중 무관한 UI 스킬을 로드한다.
-빌더는 그 스킬을 이름으로 켜므로(`builder.py`의 `skills=["shadcn-design"]`)
+빌더는 그 스킬들을 이름으로 켜므로(`builder.py`의 `skills=[...]`)
 config dir을 공유하면 Discovery도 같은 스킬을 켠 채로 돌게 된다. 역방향도 같다:
 여기의 문서 쓰기 규약과 질문 파일·상태 파일 규약이 빌더에 들어가면
 빌더에 없는 파일을 찾으려 한다.

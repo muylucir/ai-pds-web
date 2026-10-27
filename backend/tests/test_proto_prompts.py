@@ -127,6 +127,44 @@ def test_planning_prompts_ask_for_the_design_style(language, which):
         assert (skills / skill / "SKILL.md").is_file()
 
 
+#: The upstream template line every Discovery build-instructions.md carries, per language as the
+#: prompt quotes it. The agent read it as "the design system is already settled" and skipped the
+#: question on every project (2026-10-28, ws-p).
+TEMPLATE_CSS_LINE = {
+    "ko": "Tailwind CSS, Shadcn/UI 또는 그에 준하는 것",
+    "en": "Tailwind CSS, Shadcn/UI, or equivalent",
+}
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+@pytest.mark.parametrize("which", ["plan", "missing_output"])
+def test_only_the_users_own_words_skip_the_design_question(language, which):
+    """The spec, the build instructions and the earlier conversation only pick the
+    recommendation. Letting them settle it meant the question never appeared, because the
+    build instructions always contain the template line above."""
+    p = (_plan(language) if which == "plan"
+         else missing_output_prompt(language, spec_key=SPEC))
+    assert TEMPLATE_CSS_LINE[language] in p, "템플릿 문구가 결정이 아니라는 말이 없다"
+    if language == "ko":
+        assert "내 요청에 디자인 시스템이 직접 적혀 있을 때만" in p
+        assert "이미 정해져 있으면" not in p
+    else:
+        assert "only when my own request already names" in p
+        assert "already settled by" not in p
+
+
+def test_the_template_line_the_prompt_quotes_is_still_upstream():
+    """The prompt names the upstream line so the agent can recognise it. If upstream rewords
+    it, the quote stops matching what the build instructions say and the old misreading
+    returns — this fails first."""
+    from pathlib import Path
+
+    import aipds
+    rule = (Path(aipds.__file__).resolve().parents[2] / "steering-files" / "aiplc-rules"
+            / "aws-aiplc-rule-details" / "discovery" / "prototype-validation.md")
+    assert TEMPLATE_CSS_LINE["en"] in rule.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_continuing_sessions_do_not_reopen_the_design_style(language):
     """Resume and handoff keep the design system the prototype already has (the contract's
