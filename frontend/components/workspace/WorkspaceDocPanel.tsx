@@ -5,7 +5,7 @@ import Link from "next/link";
 import { memo, useEffect, useId, useRef, useState } from "react";
 import { listArtifacts, readArtifact, ApiError } from "@/lib/api/client";
 import { useAsync } from "@/lib/useAsync";
-import { Markdown } from "@/components/Markdown";
+import { DocChanges } from "@/components/DocChanges";
 import { useT } from "@/lib/i18n/provider";
 import { DocIcon } from "@/components/workspace/OpenDocButton";
 
@@ -324,7 +324,7 @@ export const WorkspaceDocPanel = memo(function WorkspaceDocPanel({
             ) : text.trim() === "" ? (
               <p className="text-slate-400">{t("ws.docEmpty")}</p>
             ) : (
-              <Markdown text={text} />
+              <DocChanges projectId={projectId} path={path} text={text} />
             )}
           </div>
           {path !== null && (

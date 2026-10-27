@@ -118,7 +118,7 @@ export interface WorkspaceStream {
 // multiple calls instead"), so a 7-question document required by the rules is split into two
 // rounds of 4+3 in the form, with the wording generated separately for each. As measured, this
 // panel was exactly the path through which users discovered that mismatch.
-function isDocPath(path: string): boolean {
+export function isDocPath(path: string): boolean {
   return (
     path.startsWith("aiplc-docs/") &&
     path.endsWith(".md") &&

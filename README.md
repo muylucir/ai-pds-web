@@ -257,7 +257,10 @@ the handoff tab.
 `audit.md` verbatim with the real time, by the app rather than by the AI; the AI appends its own
 reasoning after it. Each turn's tool calls and changed files stay in a collapsed activity log under
 the answer, and the Document Review screen shows the AI's own verification summary next to the
-document.
+document. When answers are submitted, the app keeps the documents as they stood at that moment, so
+the drawer and Document Review mark what the answers changed — blocks added, edited and removed,
+changed table rows, and a list of the sections that hold them. The prototype specs are documents
+too.
 
 **Evidence and assumptions are kept apart.** The agent contract requires documents to state material
 unknowns and never to present an assumption as customer evidence. Survey syntheses report each

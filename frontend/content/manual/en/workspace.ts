@@ -40,6 +40,13 @@ Inside, the dropdown at the top selects a different document and ↻ reloads it.
 on the newest document. **Go to the full document review →** at the bottom takes you to
 [Document Review](/manual#review).
 
+After you answer a round of questions, the AI revises the documents. Open one again and **what changed
+since you answered** is marked — green for added, yellow for edited (**Earlier text** unfolds the
+original), red strike-through for removed, and in a table the changed rows are shaded. **Changed** at
+the top lists the sections that hold a change; press one to jump there. The comparison is against the latest
+submission that changed this document; after several rounds, **Compared with** picks an earlier one. Turn **Show changes**
+off to read the document clean. [Document Review](/manual#review) shows the same.
+
 While the AI is writing a document, the progress line above the input box shows **which file and
 how many characters so far** (*Writing the document*, with *business-context.md · 1,234 chars* on the
 line below). A long document takes one to two minutes and appears in the drawer once it is written.`,

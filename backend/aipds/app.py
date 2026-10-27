@@ -864,6 +864,9 @@ app.include_router(answers.router, dependencies=_PROJECT_AUTH)
 from aipds.routes import approval  # noqa: E402
 app.include_router(approval.router, dependencies=_PROJECT_AUTH)
 
+from aipds.routes import revisions  # noqa: E402
+app.include_router(revisions.router, dependencies=_PROJECT_AUTH)
+
 from aipds.routes import turns  # noqa: E402
 app.include_router(turns.router, dependencies=_PROJECT_AUTH)
 

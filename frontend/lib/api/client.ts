@@ -186,6 +186,30 @@ export async function readArtifact(pid: string, path: string): Promise<string> {
   return r.content;
 }
 
+// A copy of a document taken when the user handed over answers (backend aipds/doc_revisions.py).
+// `existed: false` — the document was written after those answers, so there is no earlier text.
+export interface DocBaseline {
+  id: string;
+  at: string;
+  kind: "answers" | "revision";
+  source: string;
+  existed: boolean;
+}
+
+// GET /projects/{pid}/revisions?path= → baselines that differ from the current text, newest first.
+export async function listDocBaselines(pid: string, path: string): Promise<DocBaseline[]> {
+  const r = await request<{ baselines: DocBaseline[] }>(
+    `/projects/${encodeURIComponent(pid)}/revisions?path=${encodeURIComponent(path)}`);
+  return r.baselines;
+}
+
+// GET /projects/{pid}/revisions/{id}?path= → the text in that round (null if it did not exist yet).
+export async function readDocBaseline(pid: string, id: string, path: string): Promise<string | null> {
+  const r = await request<{ content: string | null }>(
+    `/projects/${encodeURIComponent(pid)}/revisions/${encodeURIComponent(id)}?path=${encodeURIComponent(path)}`);
+  return r.content;
+}
+
 // POST /projects/{pid}/interrupt → 202. Cuts off the running turn. The interrupt has not finished
 // by the time of the response (202) — the stream reports it with a terminal event.
 export async function interruptTurn(pid: string): Promise<void> {

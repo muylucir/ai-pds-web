@@ -1,8 +1,8 @@
 "use client";
-import { Markdown } from "@/components/Markdown";
+import { DocChanges } from "@/components/DocChanges";
 import { useT } from "@/lib/i18n/provider";
 
-export function DocumentPanel({ markdown }: { markdown: string }) {
+export function DocumentPanel({ projectId, path, markdown }: { projectId: string; path: string; markdown: string }) {
   const t = useT();
   return (
     <article className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -19,7 +19,7 @@ export function DocumentPanel({ markdown }: { markdown: string }) {
         {markdown.trim() === "" ? (
           <p className="text-slate-400">{t("review.noDocYet")}</p>
         ) : (
-          <Markdown text={markdown} />
+          <DocChanges projectId={projectId} path={path} text={markdown} />
         )}
       </div>
     </article>

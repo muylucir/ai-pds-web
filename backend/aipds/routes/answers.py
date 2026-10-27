@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import aipds.app as app_module
 from aipds.agent import prompts
+from aipds import doc_revisions
 from aipds.answer_summary import answer_summary
 from aipds.audit_log import UserInput
 from aipds.routes.deps import ensure_workspace
@@ -50,6 +51,12 @@ async def submit_file_answers(pid: str, name: str, body: AnswersBody):
         raise HTTPException(status_code=404, detail="question file not found")
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # The documents as the user read them before answering — after this turn the agent rewrites them,
+    # and the screen compares against this copy (aipds/doc_revisions.py). Taken after the answers are
+    # written so a refused submission (404/400 above) leaves no round, and before the turn starts so
+    # nothing the agent writes can get into it.
+    await doc_revisions.capture_before_answers(ws.runner, kind=doc_revisions.KIND_ANSWERS,
+                                               source=name)
     language = app_module.project_language(pid)
     # Carry the answers in the turn text. This text stays in the transcript as the user's
     # bubble and history restoration draws it as is, so without the answers every round of
