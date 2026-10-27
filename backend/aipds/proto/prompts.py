@@ -91,18 +91,22 @@ def _instructions_note(language: str, instructions_key: str | None) -> str:
             "빌드 지시서야 — 디자인·기기 요구사항은 이 파일을 따라줘.")
 
 
-def _design_question(language: str, *, settled_by: str) -> str:
+def _design_question(language: str, *, basis: str) -> str:
     """The design-system question that rides along with the approval question.
 
     Two design skills ship (proto-config/CLAUDE.md picks one per prototype), and the contract's rule
     "Ant Design when the spec or the user asks for it" never fires unless someone thinks to ask —
     so every prototype came out shadcn. The question goes to the person approving the plan, who is
     usually not a developer, so the options read as how the screen looks and what it suits; the
-    library name is only in parentheses. Which one is "(Recommended)" is the agent's call from the
-    spec, not a fixed default — a back-office spec should lead with the dense option.
+    library name is only in parentheses.
 
-    `settled_by` names what already answers it (the spec and instructions on a first build, the
-    earlier conversation on a rebuild); when it does, asking again only repeats a decision.
+    **Only the user's own words skip it.** It used to be skipped whenever the spec or the build
+    instructions "already settled" a design system, and then it never appeared (observed
+    2026-10-28, ws-p): the build instructions Discovery writes always carry the upstream
+    template line "Use a modern CSS framework (Tailwind CSS, Shadcn/UI, or equivalent)"
+    (prototype-validation.md), which the agent read as a decision. What `basis` names (spec and
+    instructions on a first build, plus the earlier conversation on a rebuild) only decides which
+    option gets "(Recommended)".
     """
     if _lang(language) == "en":
         return (
@@ -114,11 +118,15 @@ def _design_question(language: str, *, settled_by: str) -> str:
             "   - **Business system (Ant Design)** — Dense screens that keep tables, "
             "forms and status at a glance. Suits admin consoles, back offices and "
             "operations dashboards.\n"
-            "   Put the one that fits this spec better first and add "
-            "\"(Recommended)\" to its label. Build with the answer — Modern uses "
-            "the shadcn-design skill, Business system the antd-design skill. "
-            f"If the design system is already settled by {settled_by}, follow it "
-            "and do not ask this question.\n"
+            f"   Judging from {basis}, put the one that fits better first and add "
+            "\"(Recommended)\" to its label. A line such as \"Use a modern CSS "
+            "framework (Tailwind CSS, Shadcn/UI, or equivalent)\" in the build "
+            "instructions is template boilerplate, not a decision — it does not "
+            "favour either option. In the plan and in the approval question, leave "
+            "the design system to this answer instead of naming one. Build with "
+            "the answer — Modern uses the "
+            "shadcn-design skill, Business system the antd-design skill. Skip this "
+            "question only when my own request already names the design system.\n"
         )
     return (
         "   같은 AskUserQuestion 호출에서 두 번째 질문으로 어떤 디자인 스타일로 "
@@ -128,11 +136,13 @@ def _design_question(language: str, *, settled_by: str) -> str:
         "   - **업무 시스템 스타일 (Ant Design)** — 표·입력 양식·상태 표시를 한 "
         "화면에 촘촘히 담는 화면. 관리자 화면, 백오피스, 운영 대시보드에 "
         "어울립니다.\n"
-        "   이 스펙에 더 맞는 쪽을 첫 번째에 두고 라벨 끝에 \"(추천)\"을 붙여줘. "
-        "답에 따라 모던 스타일은 shadcn-design 스킬, 업무 시스템 스타일은 "
-        "antd-design 스킬로 만들어줘. "
-        f"{settled_by}에 디자인 시스템이 이미 정해져 있으면 그대로 따르고 이 "
-        "질문은 하지 마.\n"
+        f"   {basis}를 보고 더 맞는 쪽을 첫 번째에 두고 라벨 끝에 \"(추천)\"을 "
+        "붙여줘. 빌드 지시서의 \"현대적인 CSS 프레임워크를 쓴다(Tailwind CSS, "
+        "Shadcn/UI 또는 그에 준하는 것)\" 같은 문장은 템플릿 기본 문구이지 결정이 "
+        "아니다 — 어느 쪽 추천의 근거도 되지 않는다. 계획 본문과 승인 질문에는 "
+        "디자인 시스템을 미리 적지 말고 이 질문의 답에 맡겨줘. 답에 따라 모던 스타일은 "
+        "shadcn-design 스킬, 업무 시스템 스타일은 antd-design 스킬로 만들어줘. "
+        "내 요청에 디자인 시스템이 직접 적혀 있을 때만 이 질문을 건너뛰어.\n"
     )
 
 
@@ -170,8 +180,8 @@ def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str,
             "3. After presenting the plan, **you MUST use AskUserQuestion to ask "
             "whether to execute it as written or change something, and wait for my "
             "answer.** Do not move on without approval.\n"
-            + _design_question(language, settled_by="the spec, the build "
-                               "instructions or my request")
+            + _design_question(language, basis="the spec and the build "
+                               "instructions")
             + "4. Do not create or modify any file during the planning stage "
             "(no Write/Edit). Touch nothing except reading the spec, and show the "
             "plan in the message body only.\n"
@@ -206,7 +216,7 @@ def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str,
         "3. 계획을 제시한 뒤 **반드시 AskUserQuestion으로 이 계획대로 실행할지, "
         "수정할 부분이 있는지 물어보고 내 답을 기다려줘.** 승인 없이 다음 단계로 "
         "넘어가면 안 돼.\n"
-        + _design_question(language, settled_by="스펙·빌드 지시서·내 요청")
+        + _design_question(language, basis="스펙과 빌드 지시서")
         +         "4. 계획 단계에서는 파일을 만들거나 수정하지 마(Write/Edit 금지). "
         "스펙을 읽는 것 외에는 아무것도 건드리지 말고, 계획은 메시지 본문으로만 "
         "보여줘.\n"
@@ -315,8 +325,8 @@ def _missing_output_prompt_base(language: str, *, spec_key: str,
             "what we agreed on earlier.\n"
             "2. Then **use AskUserQuestion to ask whether to rebuild it this way, "
             "and wait for my answer.**\n"
-            + _design_question(language, settled_by="the earlier conversation, "
-                               "the spec or the build instructions")
+            + _design_question(language, basis="the earlier conversation, "
+                               "the spec and the build instructions")
             +             "3. Start building only after I approve. Put the finished work under "
             "`prototype/` in the working directory, and declare completion with "
             "`build_complete` when you are done.\n"
@@ -333,7 +343,7 @@ def _missing_output_prompt_base(language: str, *, spec_key: str,
         "짧게 제시해줘.\n"
         "2. 그다음 **AskUserQuestion으로 이 계획대로 다시 만들지 물어보고 내 "
         "답을 기다려줘.**\n"
-        + _design_question(language, settled_by="이전 대화·스펙·빌드 지시서")
+        + _design_question(language, basis="이전 대화·스펙·빌드 지시서")
         +         "3. 내가 승인한 뒤에 빌드를 시작해줘. 완성물은 작업 디렉토리 아래 "
         "`prototype/`에 두고, 끝나면 `build_complete`로 완료를 선언해줘.\n"
     )
