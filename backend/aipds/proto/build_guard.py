@@ -140,11 +140,12 @@ def settings_write_denial(path: str | None, workspace: str) -> str | None:
     return None
 
 
-#: Hosts (and their subdomains) that WebFetch may open. These are the docs the build skill points to
+#: Hosts (and their subdomains) that WebFetch may open. These are the docs the build skills point to
 #: (proto-config/skills/shadcn-design: ui.shadcn.com for components and blocks, ai-sdk.dev for AI chat
-#: elements). A WebFetch going anywhere else is a path for shipping workspace content out in the URL,
+#: elements; proto-config/skills/antd-design: ant.design for component markdown, x.ant.design for AI
+#: chat components). A WebFetch going anywhere else is a path for shipping workspace content out in the URL,
 #: and all the build needs is the docs above and npm (Bash).
-FETCH_HOSTS = ("ui.shadcn.com", "ai-sdk.dev")
+FETCH_HOSTS = ("ui.shadcn.com", "ai-sdk.dev", "ant.design")
 
 #: The shape read as a URL from what the user wrote. A scheme is required — catching scheme-less fragments
 #: like `store.example.com/x` would turn file paths and version strings into hosts. A trailing closing

@@ -36,7 +36,7 @@ AIPDS_PROTO_CONFIG_DIR=/abs/path/to/repo/proto-config
 2. **`backend/aipds/proto/builder.py`의 `skills=[...]` 목록에 이름을 넣는다.**
    목록에 없으면 파일이 있어도 켜지지 않는다.
 
-현재 켜져 있는 것은 `shadcn-design` 하나다.
+현재 켜져 있는 것은 `shadcn-design`(기본)과 `antd-design` 둘이다. 프로토타입마다 어느 쪽을 쓰는지는 `CLAUDE.md`의 선택 규칙이 정한다.
 
 **왜 이름 목록인가(2026-08-01의 사고).** 예전에는 `skills="all"`이었고, README도
 "커밋하면 끝"이라고 안내했다. 그 전제는 "config dir 아래 것만 켜진다"였는데

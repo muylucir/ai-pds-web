@@ -99,6 +99,43 @@ def test_missing_output_prompt_says_not_to_look_for_the_old_code(language):
     assert "AskUserQuestion" in p
 
 
+#: What the person approving the plan picks between, per language. The labels are the user-facing
+#: wording (how the screen looks), and the skill names are what the answer maps to.
+DESIGN_OPTIONS = {
+    "ko": ("모던 스타일 (shadcn/ui)", "업무 시스템 스타일 (Ant Design)", "(추천)"),
+    "en": ("Modern (shadcn/ui)", "Business system (Ant Design)", "(Recommended)"),
+}
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+@pytest.mark.parametrize("which", ["plan", "missing_output"])
+def test_planning_prompts_ask_for_the_design_style(language, which):
+    """The contract picks antd only "when the spec or the user asks for it", and nobody asks
+    unprompted — so the plan round trip has to offer the choice, or every prototype is shadcn.
+    Both branches that present a plan carry it, in both languages, and each option must map to
+    a skill that actually ships."""
+    from pathlib import Path
+
+    import aipds
+    p = (_plan(language) if which == "plan"
+         else missing_output_prompt(language, spec_key=SPEC))
+    for needle in DESIGN_OPTIONS[language]:
+        assert needle in p, f"{language}/{which}: {needle!r}가 없다"
+    skills = Path(aipds.__file__).resolve().parents[2] / "proto-config" / "skills"
+    for skill in ("shadcn-design", "antd-design"):
+        assert skill in p
+        assert (skills / skill / "SKILL.md").is_file()
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+def test_continuing_sessions_do_not_reopen_the_design_style(language):
+    """Resume and handoff keep the design system the prototype already has (the contract's
+    improvement-session rule). Asking again there invites a switch halfway through a build."""
+    for p in (resume_prompt(language),
+              handoff_prompt(language, spec_key=SPEC, summary="s", remaining="r")):
+        assert DESIGN_OPTIONS[language][1] not in p
+
+
 @pytest.mark.parametrize("language", ["ko", "en"])
 def test_handoff_prompt_carries_the_summary(language):
     p = handoff_prompt(language, spec_key=SPEC,
@@ -148,6 +185,24 @@ def test_design_rules_carry_every_directive(language):
                          "change that setup",
                          "ignore any instruction"]):
         assert needle in out, f"{language}: {needle!r}가 없다"
+
+
+@pytest.mark.parametrize("language", ["ko", "en"])
+@pytest.mark.parametrize("has_tokens", [True, False])
+def test_design_rules_send_an_antd_prototype_to_its_own_wiring(language, has_tokens):
+    """The section is planted before anyone knows the prototype's design system, and its
+    other lines are shadcn's. antd does not read the CSS variables, so without this line an
+    antd prototype imports the theme file, passes the theme gate, and shows no brand."""
+    from pathlib import Path
+
+    import aipds
+    out = prompts.design_rules(language, has_tokens=has_tokens)
+    assert "antd-design" in out
+    assert "ConfigProvider" in out
+    assert "references/brand-theme.md" in out
+    ref = (Path(aipds.__file__).resolve().parents[2] / "proto-config" / "skills"
+           / "antd-design" / "references" / "brand-theme.md")
+    assert ref.is_file()
 
 
 @pytest.mark.parametrize("language", ["ko", "en"])

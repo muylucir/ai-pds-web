@@ -205,7 +205,7 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # (2026-08-01 16:13/16:18, journalctl status=9/KILL). The backend
             # and frontend run as the same user (aipds), so nothing stopped it.
             #
-            # With a name list the SDK allows only the `Skill(shadcn-design)`
+            # With a name list the SDK allows only the `Skill(<name>)`
             # form (subprocess_cli.py:_apply_skills_defaults), so bundled
             # skills do not get in. When adding a skill, update this list too --
             # this is where we deliberately gave up the "add with a single
@@ -217,7 +217,7 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # the CLAUDE.md conventions (the "프로세스·포트" (processes/ports)
             # section of proto-config/CLAUDE.md). Real isolation means running
             # the build agent as a separate user, which is a separate matter.
-            skills=["shadcn-design"],
+            skills=["shadcn-design", "antd-design"],
             # Custom tool for declaring the build complete. Same shape as
             # Discovery (claude_driver.py:423-439). Entries in allowed_tools
             # must be "mcp__<server key>__<tool name>" -- the SDK builds that
@@ -227,8 +227,8 @@ def _default_client_factory(builder: "PrototypeBuilder") -> Callable[[], Any]:
             # This does not conflict with the skills option: the SDK's
             # _apply_skills_defaults copies allowed_tools and then appends the
             # skill entries (subprocess_cli.py:434-452), so this tool and
-            # shadcn-design both stay live. The only difference is that with a
-            # name list, `Skill(shadcn-design)` is appended instead of "Skill".
+            # the skills both stay live. The only difference is that with a
+            # name list, `Skill(<name>)` is appended instead of "Skill".
             mcp_servers={PROTO_MCP_SERVER_NAME: create_sdk_mcp_server(
                 name=PROTO_MCP_SERVER_NAME, tools=_proto_tools_for(builder))},
             allowed_tools=[BUILD_COMPLETE_TOOL],
