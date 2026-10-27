@@ -19,7 +19,7 @@
 // screen re-renders every frame. Without memo, every bubble in the past conversation and the
 // long document in the document panel would be re-parsed from scratch each time. Building
 // the tables inside render would yield a new object every time, defeating ReactMarkdown's comparison too.
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { prepareQuestionMarkdown } from "@/lib/questionMarkdown";
@@ -32,15 +32,40 @@ const BLOCK_COMPONENTS: Components = {
   ),
 };
 
+// The document container's classes — the change view (DocChanges) draws its blocks inside the same one.
+export const MARKDOWN_CLASSES = "prose prose-sm prose-slate max-w-none [&_table]:text-xs";
+
 export const Markdown = memo(function Markdown(
   { text, className }: { text: string; className?: string },
 ) {
   return (
-    <div className={"prose prose-sm prose-slate max-w-none [&_table]:text-xs " + (className ?? "")}>
+    <div className={MARKDOWN_CLASSES + " " + (className ?? "")}>
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={BLOCK_COMPONENTS}>
         {prepareQuestionMarkdown(text)}
       </ReactMarkdown>
     </div>
+  );
+});
+
+// One block of a document, drawn inside an enclosing `MARKDOWN_CLASSES` container — the change view
+// draws a document block by block so each block can carry its own mark. Same plugins, links and
+// `[Answer]:` transform as `Markdown`; that transform works line by line and never adds or removes a
+// line, which is what lets `markedRows` (1-based lines of `text`) find a table's rows.
+export const MarkdownBlock = memo(function MarkdownBlock(
+  { text, markedRows, rowClassName }:
+  { text: string; markedRows?: ReadonlySet<number>; rowClassName?: string },
+) {
+  const components = useMemo<Components>(() => markedRows === undefined ? BLOCK_COMPONENTS : {
+    ...BLOCK_COMPONENTS,
+    tr: ({ node, children }) => {
+      const line = node?.position?.start.line;
+      return <tr className={line !== undefined && markedRows.has(line) ? rowClassName : undefined}>{children}</tr>;
+    },
+  }, [markedRows, rowClassName]);
+  return (
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+      {prepareQuestionMarkdown(text)}
+    </ReactMarkdown>
   );
 });
 

@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 import aipds.app as app_module
+from aipds import doc_revisions
 from aipds.agent import prompts
 from aipds.answer_summary import answer_summary
 from aipds.audit_log import UserInput
@@ -110,6 +111,9 @@ async def revise_answer(pid: str, body: ReviseBody):
     if old.strip() == answer:
         raise HTTPException(status_code=400, detail="answer unchanged")
     after = await ws.put_answers(name, {body.number: answer})
+    # Same boundary as the question form (routes/answers.py): the documents this change is about to rewrite.
+    await doc_revisions.capture_before_answers(ws.runner, kind=doc_revisions.KIND_REVISION,
+                                               source=name)
     language = app_module.project_language(pid)
     old_summary = answer_summary(before, {body.number: old.strip()}, language)
     new_summary = answer_summary(after, {body.number: answer}, language)

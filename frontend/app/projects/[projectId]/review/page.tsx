@@ -7,7 +7,7 @@ import { DocTree } from "@/components/review/DocTree";
 import { DocumentPanel } from "@/components/review/DocumentPanel";
 import { ApprovalGate } from "@/components/review/ApprovalGate";
 import { VerificationSummary } from "@/components/review/VerificationSummary";
-import { Markdown } from "@/components/Markdown";
+import { DocChanges } from "@/components/DocChanges";
 import {
   listArtifacts,
   readArtifact,
@@ -274,7 +274,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
               </div>
               {isDiscoveryDocument ? (
                 <div className="grid lg:grid-cols-[1fr_minmax(220px,21%)] gap-6">
-                  <DocumentPanel markdown={content.data ?? ""} />
+                  <DocumentPanel projectId={projectId} path={selected} markdown={content.data ?? ""} />
                   <VerificationSummary
                     entries={audit.data ?? []}
                     onViewRaw={auditPath ? () => setSelected(auditPath) : undefined}
@@ -282,7 +282,7 @@ export default function ReviewPage({ params }: { params: Promise<{ projectId: st
                 </div>
               ) : (
                 <article className="bg-white rounded-xl border border-slate-200 p-6">
-                  <Markdown text={content.data ?? ""} />
+                  <DocChanges projectId={projectId} path={selected} text={content.data ?? ""} />
                 </article>
               )}
             </div>

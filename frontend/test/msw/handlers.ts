@@ -18,6 +18,9 @@ export const handlers = [
   // approved" (empty history) — in that state, the gate showing is normal.
   http.get(`${API_BASE_URL}/projects/:pid/approvals`, () =>
     HttpResponse.json({ approvals: [], current_doc_hash: null })),
+  // Every document viewer asks for comparison baselines (components/DocChanges.tsx). The default is
+  // "none" — the plain document, which is what screens that do not test the comparison expect.
+  http.get(`${API_BASE_URL}/projects/:pid/revisions`, () => HttpResponse.json({ baselines: [] })),
   // Called on every screen by the project creation screen and the header badge — a default is set
   // so screen tests do not have to care about the model list.
   http.get(`${API_BASE_URL}/models`, () => HttpResponse.json({ models: [] })),
