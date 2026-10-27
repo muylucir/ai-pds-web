@@ -158,11 +158,25 @@ def test_only_our_own_skills_are_enabled():
     the AI-PDS frontend mid-workshop (2026-08-01 16:13/16:18; the coredump's
     Unit was aipds-backend.service, so the browser was ours).
 
-    An explicit name list makes the SDK emit `Skill(shadcn-design)` instead of a
+    An explicit name list makes the SDK emit `Skill(<name>)` instead of a
     bare `Skill`, so bundled skills never enter the turn. Adding a skill to
     proto-config/skills/ now also means adding its name here -- that cost is the
     point of this test."""
-    assert _real_options().skills == ["shadcn-design"]
+    assert _real_options().skills == ["shadcn-design", "antd-design"]
+
+
+def test_every_shipped_skill_is_enabled_and_every_enabled_skill_ships():
+    """The name list and proto-config/skills/ must agree in both directions.
+
+    A directory missing from the list is a skill that silently never turns on (the
+    price of giving up "all"); a name with no directory is one the build contract
+    tells the agent to use while nothing answers it."""
+    from pathlib import Path
+
+    import aipds
+    skills_dir = Path(aipds.__file__).resolve().parents[2] / "proto-config" / "skills"
+    shipped = {p.parent.name for p in skills_dir.glob("*/SKILL.md")}
+    assert set(_real_options().skills) == shipped
 
 
 def test_the_projects_effort_reaches_the_build_cli():
@@ -342,9 +356,9 @@ def test_mcp_server_and_allowed_tools_are_wired(tmp_path, monkeypatch):
     assert BUILD_COMPLETE_TOOL in options.allowed_tools
     # The skill list must stay alive — the SDK copies allowed_tools and then appends the skill
     # entries (subprocess_cli.py:434-452), so they coexist with build_complete.
-    # shadcn-design depends on this value, and reverting to "all" would bring in the bundled `run`
+    # The design skills depend on this value, and reverting to "all" would bring in the bundled `run`
     # skill too, reproducing the incident that killed the frontend.
-    assert options.skills == ["shadcn-design"]
+    assert options.skills == ["shadcn-design", "antd-design"]
 
 
 async def test_the_tool_queues_a_build_complete_event(tmp_path):
@@ -525,11 +539,13 @@ async def test_the_gate_denies_writing_the_user_settings_in_the_config_dir(tmp_p
 
 
 async def test_the_gate_lets_webfetch_open_the_skill_docs_only(tmp_path):
-    """Only the documentation the skills point to (ui.shadcn.com, ai-sdk.dev) is opened. A
-    WebFetch going anywhere else is a path for sending workspace content out in the URL."""
+    """Only the documentation the skills point to (ui.shadcn.com, ai-sdk.dev, ant.design) is
+    opened. A WebFetch going anywhere else is a path for sending workspace content out in the URL."""
     b = _builder(tmp_path, None, language="en")
     for url in ("https://ui.shadcn.com/docs/components/button",
-                "https://registry.ai-sdk.dev/conversation.json"):
+                "https://registry.ai-sdk.dev/conversation.json",
+                "https://ant.design/components/table.md",
+                "https://x.ant.design/components/bubble"):
         out = await b._on_pre_tool_use(
             {"tool_name": "WebFetch", "tool_input": {"url": url}}, "t1", None)
         assert out == {}, url

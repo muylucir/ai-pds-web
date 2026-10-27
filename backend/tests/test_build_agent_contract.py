@@ -29,8 +29,8 @@ REPO = Path(aipds.__file__).resolve().parent.parent.parent
 PROTO_CONFIG = REPO / "proto-config"
 DISCOVERY_CONFIG = REPO / "discovery-config"
 
-#: Every file the build agent actually reads. The only skill is the one builder.py enables
-#: with `skills=["shadcn-design"]`.
+#: Every file the build agent actually reads: the contract plus the skills builder.py enables
+#: by name (test_proto_builder pins that the list and proto-config/skills/ agree).
 def _build_agent_files() -> list[Path]:
     files = [PROTO_CONFIG / "CLAUDE.md"]
     files += sorted((PROTO_CONFIG / "skills").rglob("*.md"))
@@ -46,6 +46,48 @@ def test_the_build_agent_reads_something():
     files = _build_agent_files()
     assert len(files) >= 2, [str(f) for f in files]
     assert (PROTO_CONFIG / "skills" / "shadcn-design" / "SKILL.md") in files
+    assert (PROTO_CONFIG / "skills" / "antd-design" / "SKILL.md") in files
+
+
+def test_the_contract_says_when_each_design_skill_applies():
+    """With two design skills enabled, the contract must say which one a prototype uses.
+
+    Without a rule the choice is left to whichever skill description reads closer, and an
+    improvement session can switch systems halfway — the two have different tokens and reset
+    CSS, and a mix of them breaks the screen."""
+    text = _text(PROTO_CONFIG / "CLAUDE.md")
+    assert "antd-design" in text and "shadcn-design" in text
+    assert "package.json" in text, "개선 세션이 기존 디자인 시스템을 알아볼 근거가 없다"
+    assert "default" in text, "어느 쪽이 기본인지 말하지 않는다"
+
+
+def test_skill_references_point_at_files_that_exist():
+    """A skill that names `references/x.md` sends the agent to read it; a missing file is
+    an authority that does not exist."""
+    missing = []
+    for skill in sorted((PROTO_CONFIG / "skills").glob("*/SKILL.md")):
+        for p in [skill, *skill.parent.rglob("references/*.md")]:
+            for rel in set(re.findall(r"`(references/[a-z0-9-]+\.md)`", _text(p))):
+                if not (skill.parent / rel).is_file():
+                    missing.append(f"{p.relative_to(REPO)} → {rel}")
+    assert not missing, missing
+
+
+def _shared_streaming_patterns(skill: str) -> str:
+    """Patterns 0 and 1 (server route, streaming hook) of a skill's ai-streaming.md."""
+    text = _text(PROTO_CONFIG / "skills" / skill / "references" / "ai-streaming.md")
+    start = text.index("## 패턴 0:")
+    return text[start:text.index("## 패턴 2:", start)]
+
+
+def test_both_design_skills_carry_the_same_streaming_wiring():
+    """The server route and the hook do not depend on the design system, and each skill
+    carries its own copy so a build reads only the skill it uses (pointing antd-design at
+    shadcn-design's file made an antd build load shadcn's rendering too). Two copies drift —
+    the event mapping in them is measured, and a fix landing in one would leave the other
+    streaming tool-input JSON into the chat. So they must stay identical."""
+    assert (_shared_streaming_patterns("antd-design")
+            == _shared_streaming_patterns("shadcn-design"))
 
 
 # ---- Do not cite authorities that do not exist ----

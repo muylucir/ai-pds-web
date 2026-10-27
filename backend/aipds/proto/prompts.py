@@ -91,6 +91,51 @@ def _instructions_note(language: str, instructions_key: str | None) -> str:
             "빌드 지시서야 — 디자인·기기 요구사항은 이 파일을 따라줘.")
 
 
+def _design_question(language: str, *, settled_by: str) -> str:
+    """The design-system question that rides along with the approval question.
+
+    Two design skills ship (proto-config/CLAUDE.md picks one per prototype), and the contract's rule
+    "Ant Design when the spec or the user asks for it" never fires unless someone thinks to ask —
+    so every prototype came out shadcn. The question goes to the person approving the plan, who is
+    usually not a developer, so the options read as how the screen looks and what it suits; the
+    library name is only in parentheses. Which one is "(Recommended)" is the agent's call from the
+    spec, not a fixed default — a back-office spec should lead with the dense option.
+
+    `settled_by` names what already answers it (the spec and instructions on a first build, the
+    earlier conversation on a rebuild); when it does, asking again only repeats a decision.
+    """
+    if _lang(language) == "en":
+        return (
+            "   In the same AskUserQuestion call, ask a second question — which "
+            "design style to build with — with these two options:\n"
+            "   - **Modern (shadcn/ui)** — Generous spacing and a clean look. Suits "
+            "customer-facing services, landing pages and apps with a few focused "
+            "features.\n"
+            "   - **Business system (Ant Design)** — Dense screens that keep tables, "
+            "forms and status at a glance. Suits admin consoles, back offices and "
+            "operations dashboards.\n"
+            "   Put the one that fits this spec better first and add "
+            "\"(Recommended)\" to its label. Build with the answer — Modern uses "
+            "the shadcn-design skill, Business system the antd-design skill. "
+            f"If the design system is already settled by {settled_by}, follow it "
+            "and do not ask this question.\n"
+        )
+    return (
+        "   같은 AskUserQuestion 호출에서 두 번째 질문으로 어떤 디자인 스타일로 "
+        "만들지도 물어봐줘. 선택지는 이 두 개야:\n"
+        "   - **모던 스타일 (shadcn/ui)** — 여백이 넉넉하고 군더더기 없는 화면. "
+        "고객이 쓰는 서비스, 소개 페이지, 기능이 적은 앱에 어울립니다.\n"
+        "   - **업무 시스템 스타일 (Ant Design)** — 표·입력 양식·상태 표시를 한 "
+        "화면에 촘촘히 담는 화면. 관리자 화면, 백오피스, 운영 대시보드에 "
+        "어울립니다.\n"
+        "   이 스펙에 더 맞는 쪽을 첫 번째에 두고 라벨 끝에 \"(추천)\"을 붙여줘. "
+        "답에 따라 모던 스타일은 shadcn-design 스킬, 업무 시스템 스타일은 "
+        "antd-design 스킬로 만들어줘. "
+        f"{settled_by}에 디자인 시스템이 이미 정해져 있으면 그대로 따르고 이 "
+        "질문은 하지 마.\n"
+    )
+
+
 def plan_prompt(language: str, *, spec_key: str, proxy_path: str,
                 instructions_key: str | None = None,
                 request: str | None = None) -> str:
@@ -125,7 +170,9 @@ def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str,
             "3. After presenting the plan, **you MUST use AskUserQuestion to ask "
             "whether to execute it as written or change something, and wait for my "
             "answer.** Do not move on without approval.\n"
-            "4. Do not create or modify any file during the planning stage "
+            + _design_question(language, settled_by="the spec, the build "
+                               "instructions or my request")
+            + "4. Do not create or modify any file during the planning stage "
             "(no Write/Edit). Touch nothing except reading the spec, and show the "
             "plan in the message body only.\n"
             "5. Start building only after I approve. While building, if anything is "
@@ -159,7 +206,8 @@ def _plan_prompt_base(language: str, *, spec_key: str, proxy_path: str,
         "3. 계획을 제시한 뒤 **반드시 AskUserQuestion으로 이 계획대로 실행할지, "
         "수정할 부분이 있는지 물어보고 내 답을 기다려줘.** 승인 없이 다음 단계로 "
         "넘어가면 안 돼.\n"
-        "4. 계획 단계에서는 파일을 만들거나 수정하지 마(Write/Edit 금지). "
+        + _design_question(language, settled_by="스펙·빌드 지시서·내 요청")
+        +         "4. 계획 단계에서는 파일을 만들거나 수정하지 마(Write/Edit 금지). "
         "스펙을 읽는 것 외에는 아무것도 건드리지 말고, 계획은 메시지 본문으로만 "
         "보여줘.\n"
         "5. 내가 승인한 뒤에 빌드를 시작해줘. 빌드 중에도 불확실하거나 결정이 "
@@ -267,7 +315,9 @@ def _missing_output_prompt_base(language: str, *, spec_key: str,
             "what we agreed on earlier.\n"
             "2. Then **use AskUserQuestion to ask whether to rebuild it this way, "
             "and wait for my answer.**\n"
-            "3. Start building only after I approve. Put the finished work under "
+            + _design_question(language, settled_by="the earlier conversation, "
+                               "the spec or the build instructions")
+            +             "3. Start building only after I approve. Put the finished work under "
             "`prototype/` in the working directory, and declare completion with "
             "`build_complete` when you are done.\n"
         )
@@ -283,7 +333,8 @@ def _missing_output_prompt_base(language: str, *, spec_key: str,
         "짧게 제시해줘.\n"
         "2. 그다음 **AskUserQuestion으로 이 계획대로 다시 만들지 물어보고 내 "
         "답을 기다려줘.**\n"
-        "3. 내가 승인한 뒤에 빌드를 시작해줘. 완성물은 작업 디렉토리 아래 "
+        + _design_question(language, settled_by="이전 대화·스펙·빌드 지시서")
+        +         "3. 내가 승인한 뒤에 빌드를 시작해줘. 완성물은 작업 디렉토리 아래 "
         "`prototype/`에 두고, 끝나면 `build_complete`로 완료를 선언해줘.\n"
     )
 
@@ -508,12 +559,14 @@ def design_rules(language: str, *, has_tokens: bool = True) -> str:
             "## Brand design profile\n\n"
             "A company brand profile applies to this prototype.\n\n"
             + (_EN_THEME_CLAUSES if has_tokens else _EN_PROSE_ONLY_CLAUSES)
+            + _EN_ANTD_CLAUSE
             + _EN_DESIGN_MD_CLAUSES
         )
     return (
         "## 브랜드 디자인 프로필\n\n"
         "이 프로토타입에는 회사 브랜드 프로필이 적용된다.\n\n"
         + (_KO_THEME_CLAUSES if has_tokens else _KO_PROSE_ONLY_CLAUSES)
+        + _KO_ANTD_CLAUSE
         + _KO_DESIGN_MD_CLAUSES
     )
 
@@ -571,6 +624,18 @@ _EN_PROSE_ONLY_CLAUSES = (
     "tokens, not in the components.\n"
 )
 
+#: The clauses above are written for shadcn, and this section is planted before anyone knows which
+#: design system the prototype will use (proto-config/CLAUDE.md picks it). antd does not read the CSS
+#: variables at all, so on an antd prototype the import alone leaves the screen unbranded with no error —
+#: the skill's brand-theme reference carries the values into ConfigProvider tokens instead.
+_EN_ANTD_CLAUSE = (
+    "- **On an Ant Design prototype** (the antd-design skill) the shadcn-token "
+    "lines above do not apply. Still copy and import `aipds-theme.css` as "
+    "described, then wire it into antd's `ConfigProvider` tokens as the "
+    "skill's `references/brand-theme.md` shows — antd does not read these CSS "
+    "variables, so the import alone leaves the screen unbranded.\n"
+)
+
 #: The tail both branches share. How to treat DESIGN.md does not depend on whether there are tokens.
 _EN_DESIGN_MD_CLAUSES = (
     "- If `DESIGN.md` is present, read it and follow its guidance on "
@@ -623,6 +688,14 @@ _KO_PROSE_ONLY_CLAUSES = (
     "- 색은 shadcn 시맨틱 토큰(`bg-primary`, `text-muted-foreground`)으로만 써라. "
     "`bg-blue-500` 같은 raw 색 클래스는 이후의 어떤 변경도 브랜드에 닿지 못하게 "
     "만든다 — 값은 컴포넌트가 아니라 토큰에 넣어라.\n"
+)
+
+_KO_ANTD_CLAUSE = (
+    "- **Ant Design 프로토타입이면**(antd-design 스킬) 위의 shadcn 토큰 지시는 "
+    "해당하지 않는다. `aipds-theme.css`는 위에 적힌 대로 복사하고 import하되, "
+    "스킬의 `references/brand-theme.md`대로 그 파일을 antd `ConfigProvider` "
+    "토큰에 연결해라 — antd는 이 CSS 변수를 읽지 않으므로 import만으로는 화면에 "
+    "브랜드가 닿지 않는다.\n"
 )
 
 _KO_DESIGN_MD_CLAUSES = (

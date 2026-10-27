@@ -233,4 +233,8 @@ def test_a_user_host_opens_exactly_that_host():
 
 def test_without_user_hosts_only_the_docs_open():
     assert fetch_denial("https://ui.shadcn.com/blocks") is None
+    # antd-design points at component markdown on ant.design and AI chat components on x.ant.design.
+    assert fetch_denial("https://ant.design/components/table.md") is None
+    assert fetch_denial("https://x.ant.design/components/sender") is None
+    assert fetch_denial("https://ant.design.example.com/") == "ant.design.example.com"
     assert fetch_denial("https://store.example.com/") == "store.example.com"

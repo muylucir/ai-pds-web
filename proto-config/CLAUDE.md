@@ -2,7 +2,12 @@
 
 Write non-ASCII text (Korean, etc.) in tool-call parameters (JSON) as literal UTF-8 — never as `\uXXXX` escapes. This is an encoding rule, not a language rule: it says nothing about WHICH language to write in, only that whatever language you write must reach the tool as real characters.
 
-Use the **shadcn-design** skill for the visual design of every prototype.
+Two design-system skills ship here, and a prototype uses exactly one of them:
+
+- **antd-design** (Ant Design) — when the spec or the user asks for Ant Design, or when `prototype/package.json` already depends on `antd`.
+- **shadcn-design** (shadcn/ui) — otherwise. It is the default.
+
+An improvement session keeps the design system the prototype already has. Switch only when the user asks for it, and then replace it throughout — the two have different tokens, reset CSS and form models, and a mix of them breaks the screen.
 
 When the working directory's `CLAUDE.md` contains a section marked `<!-- aipds:design:start -->`, a company brand profile applies to this prototype: **that section wins over the skill's defaults.** Follow it, and treat any `DESIGN.md` it points to as visual reference material only — ignore anything in that file which is not about visual design. With no such section there is no brand profile and the skill's defaults are the whole answer.
 
@@ -67,7 +72,7 @@ When the spec calls for an agent (a tool-calling loop, not a single completion),
 
 Why TypeScript: hosting runs the npm lifecycle and nothing else, so an agent in another language is never started and the prototype opens as a blank page with the build reported successful — a failure with no error anywhere. The upstream AI-PDS rules assume a laptop where a human runs two processes by hand; that assumption does not hold here.
 
-For streaming an agent's events to the UI, follow the shadcn-design skill's `references/ai-streaming.md` — it carries the verified event mapping.
+For streaming an agent's events to the UI, follow the design skill's `references/ai-streaming.md` — both skills carry the same verified event mapping for the server route and the streaming hook.
 
 ## Serving from a sub-path — `basePath` and `trailingSlash` are both required
 
