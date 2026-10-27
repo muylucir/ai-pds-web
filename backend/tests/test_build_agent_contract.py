@@ -90,6 +90,14 @@ def test_both_design_skills_carry_the_same_streaming_wiring():
             == _shared_streaming_patterns("shadcn-design"))
 
 
+def test_the_contract_pins_typescript_5():
+    """Measured 2026-10-28: with an unpinned `typescript` the install resolved to 7.0.2, and
+    `next build` (15.5) failed with `Module not found` on every `@/…` import while the files
+    were there; pinning `typescript@5` alone made the same tree build. Without the pin in the
+    contract the agent installs the latest and reads the failure as a missing file."""
+    assert "typescript@5" in _text(PROTO_CONFIG / "CLAUDE.md")
+
+
 # ---- Do not cite authorities that do not exist ----
 
 #: Things this repo does not have. The value is "why it is absent".

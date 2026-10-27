@@ -78,6 +78,8 @@ For streaming an agent's events to the UI, follow the design skill's `references
 
 Build a web prototype on **Next.js 15** (`next@15`); the sub-path setup below is written for it.
 
+**Pin TypeScript to `typescript@5`** in `devDependencies`. An unpinned install now brings TypeScript 7, and Next 15 cannot resolve the `@/…` path aliases under it — `npm run build` fails with `Module not found` on every aliased import, even though each file exists.
+
 A prototype is served through a reverse proxy under a sub-path (`/api/proto/{project_id}/{slug}/` in a deployment), not at the root. Hosting passes that prefix at build time as `NEXT_PUBLIC_BASE_PATH` (the framework-neutral alias `PROTO_BASE_PATH` carries the same value).
 
 **A Next.js prototype MUST include this in `next.config.js` (or `.ts`/`.mjs`):**
