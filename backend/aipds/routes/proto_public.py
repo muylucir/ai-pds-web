@@ -363,6 +363,54 @@ def access_url_path(token: str) -> str:
     return f"{origin}{path}" if origin else path
 
 
+#: The namespace of AI-PDS Web's own cookies (frontend lib/auth/cookies.ts and COOKIE_PREFIX above).
+#: The Next proxy drops it on preview requests (forwardableCookies), so a prototype cookie with such a
+#: name would never come back — and one named after an access cookie would shadow it.
+_APP_COOKIE_PREFIX = "aipds_"
+
+
+def _scoped_set_cookie(value: str, pid: str, slug: str) -> str | None:
+    """A prototype's `Set-Cookie`, confined to that prototype. None to drop it.
+
+    **Why the proxy decides, not the prototype.** Every prototype is served from one preview origin
+    and told apart only by path, so a cookie's `Path` is the only wall between them. A `Path=/`
+    cookie goes to every prototype on the domain: two persona demos using the same cookie name sign
+    each other out, and one prototype's server reads another's cookies. The build rules ask for
+    `Path=basePath` (proto-config/CLAUDE.md), but the code is generated and the build agent checks it
+    without this proxy, so nothing would catch a miss — observed: an agent set `Path=/` while chasing
+    a login that kept dropping (2026-10-27). Here it holds whatever the prototype wrote.
+
+    - `Path` outside this prototype's prefix, or absent (the browser would default it to the request's
+      directory, which can also sit outside a deep page), becomes the prefix. A path inside it is kept.
+    - `Domain` is removed — a host-only cookie cannot reach another host, and the prototype only knows
+      its loopback address anyway.
+    - An `aipds_` name is dropped (see `_APP_COOKIE_PREFIX`).
+
+    Cookies a page sets from JS (`document.cookie`) never pass through here; the build rules cover those.
+    """
+    first, _, rest = value.partition(";")
+    name = first.split("=", 1)[0].strip()
+    if not name or name.startswith(_APP_COOKIE_PREFIX):
+        return None
+    prefix = public_base_path(pid, slug)
+    attrs: list[str] = []
+    path: str | None = None
+    for raw in rest.split(";"):
+        attr = raw.strip()
+        if not attr:
+            continue
+        key = attr.split("=", 1)[0].strip().lower()
+        if key == "domain":
+            continue
+        if key == "path":
+            path = attr.split("=", 1)[1].strip() if "=" in attr else ""
+            continue
+        attrs.append(attr)
+    if path is None or not (path == prefix or path.startswith(f"{prefix}/")):
+        path = prefix
+    return "; ".join([first.strip(), f"Path={path}", *attrs])
+
+
 def _rewritten_location(value: str, pid: str, slug: str) -> str:
     """Rewrite an upstream redirect target into a proxy-relative path.
 
@@ -480,15 +528,27 @@ async def proxy_prototype(pid: str, slug: str, path: str, request: Request):
         return PlainTextResponse(
             "prototype not responding — check hosting logs", status_code=502)
 
-    resp_headers = {k: v for k, v in upstream.headers.items()
-                    if k.lower() not in _STRIP_RESPONSE_HEADERS}
-    # A prototype that redirects (SPA route normalization, auth bounce, its own
-    # trailing-slash handling) names its own internal origin — rewrite it so the
-    # browser stays on the public proxy path.
-    if "location" in resp_headers:
-        resp_headers["location"] = _rewritten_location(
-            resp_headers["location"], pid, slug)
-    return StreamingResponse(upstream.aiter_raw(),
-                             status_code=upstream.status_code,
-                             headers=resp_headers,
-                             background=BackgroundTask(upstream.aclose))
+    response = StreamingResponse(upstream.aiter_raw(),
+                                 status_code=upstream.status_code,
+                                 background=BackgroundTask(upstream.aclose))
+    # Header by header, repeats kept. A dict (or httpx's `items()`) joins repeated headers
+    # with ", " — harmless for most, but `Set-Cookie` cannot be joined: a login that sets a
+    # session and a role cookie in one response became one header the browser reads as a
+    # single cookie. (Behind Next's /api proxy, undici happens to split it back; the direct
+    # path in local development did not.)
+    for key, value in upstream.headers.multi_items():
+        if key.lower() in _STRIP_RESPONSE_HEADERS:
+            continue
+        # A prototype that redirects (SPA route normalization, auth bounce, its own
+        # trailing-slash handling) names its own internal origin — rewrite it so the
+        # browser stays on the public proxy path.
+        if key.lower() == "location":
+            value = _rewritten_location(value, pid, slug)
+        if key.lower() == "set-cookie":
+            scoped = _scoped_set_cookie(value, pid, slug)
+            if scoped is None:
+                _log.debug("proto proxy dropped an app-namespace cookie (%s/%s)", pid, slug)
+                continue
+            value = scoped
+        response.headers.append(key, value)
+    return response

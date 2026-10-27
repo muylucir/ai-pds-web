@@ -495,3 +495,114 @@ async def test_the_shared_upstream_client_keeps_no_cookies():
         assert not http.cookies
     finally:
         await aclose_proxy_http()
+
+
+# ---- The prototype's own cookies ----
+#
+# A prototype keeps its own login in its own cookies — a persona demo signs in as one role and moves
+# between screens. Both directions have to survive the proxy: the browser's cookies reach the
+# prototype, and every cookie the prototype sets reaches the browser. The Next half (which cookies
+# the /api proxy lets through) is pinned in frontend lib/api/proxyAuth.test.ts.
+
+@pytest.fixture()
+def cookie_upstream():
+    """A real upstream on a free port: `login/` sets two cookies in one response (session + role, as
+    a real login does), `whoami/` echoes the Cookie header it received."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            if self.path.endswith("/login/"):
+                self.send_header("set-cookie", "sp_session=hq-1; Path=/proto; HttpOnly")
+                self.send_header("set-cookie",
+                                 "sp_role=hq; Path=/proto; Expires=Thu, 01 Jan 2099 00:00:00 GMT")
+            body = (self.headers.get("cookie") or "").encode()
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server.server_address[1]
+    server.shutdown()
+
+
+def _access_cookie(env):
+    return f"{cookie_name(PID, SLUG)}={env['host'].ensure_token(PID, SLUG)}"
+
+
+def test_every_cookie_the_prototype_sets_reaches_the_browser(env, monkeypatch, cookie_upstream):
+    """Repeated `Set-Cookie` headers stay separate. Joined into one (what a dict of headers does),
+    the browser reads a single cookie and the role cookie is lost."""
+    monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "")
+    _running(env, port=cookie_upstream)
+    resp = client.get(f"/proto/{PID}/{SLUG}/login/", headers={"cookie": _access_cookie(env)})
+    assert resp.status_code == 200
+    base = f"/proto/{PID}/{SLUG}"
+    assert resp.headers.get_list("set-cookie") == [
+        f"sp_session=hq-1; Path={base}; HttpOnly",
+        f"sp_role=hq; Path={base}; Expires=Thu, 01 Jan 2099 00:00:00 GMT",
+    ]
+
+
+def test_the_prototypes_cookies_reach_the_prototype(env, monkeypatch, cookie_upstream):
+    monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "")
+    _running(env, port=cookie_upstream)
+    resp = client.get(f"/proto/{PID}/{SLUG}/whoami/",
+                      headers={"cookie": f"{_access_cookie(env)}; sp_session=hq-1"})
+    assert resp.status_code == 200
+    assert "sp_session=hq-1" in resp.text
+
+
+# ---- Cookies stay inside their prototype ----
+#
+# One preview origin serves every prototype, so a cookie's Path is the only wall between them. The
+# proxy enforces it whatever the generated code wrote (_scoped_set_cookie).
+
+def _scoped(value):
+    """Under the `env` fixture, which pins the deployed browser-side prefix (`/api`)."""
+    from aipds.routes.proto_public import _scoped_set_cookie
+    return _scoped_set_cookie(value, PID, SLUG)
+
+
+_BASE = f"/api/proto/{PID}/{SLUG}"
+
+
+@pytest.mark.parametrize("value", [
+    "sp_session=hq-1; Path=/; HttpOnly",                    # the whole preview domain
+    "sp_session=hq-1; HttpOnly",                            # no Path: the request's directory
+    "sp_session=hq-1; Path=/api/proto/other/demo; HttpOnly",  # another prototype
+    f"sp_session=hq-1; Path={_BASE}-other; HttpOnly",       # a prefix of another prototype's name
+])
+def test_a_cookie_is_confined_to_its_prototype(env, value):
+    assert _scoped(value) == f"sp_session=hq-1; Path={_BASE}; HttpOnly"
+
+
+def test_a_path_inside_the_prototype_is_kept(env):
+    assert _scoped(f"step=2; Path={_BASE}/hq") == f"step=2; Path={_BASE}/hq"
+
+
+def test_domain_is_removed_and_other_attributes_kept(env):
+    out = _scoped("sp=1; Domain=cloudfront.net; Path=/; SameSite=None; Secure; Partitioned; "
+                  "Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+    assert out == (f"sp=1; Path={_BASE}; SameSite=None; Secure; Partitioned; "
+                   "Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+
+
+@pytest.mark.parametrize("name", ["aipds_access", "aipds_proto_0123456789abcdef", "aipds_x"])
+def test_an_app_namespace_cookie_is_dropped(env, name):
+    assert _scoped(f"{name}=v; Path=/") is None
+
+
+def test_the_proxy_confines_what_the_prototype_sets(env, monkeypatch, cookie_upstream):
+    """Through the route: `login/` upstream sets `Path=/proto`, outside this prototype."""
+    monkeypatch.setenv("AIPDS_PUBLIC_PATH_PREFIX", "")
+    _running(env, port=cookie_upstream)
+    resp = client.get(f"/proto/{PID}/{SLUG}/login/", headers={"cookie": _access_cookie(env)})
+    assert all(c.split("; ")[1] == f"Path=/proto/{PID}/{SLUG}"
+               for c in resp.headers.get_list("set-cookie"))

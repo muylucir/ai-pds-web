@@ -24,7 +24,7 @@ import { rewriteLocation } from "@/lib/api/rewriteLocation";
 import { cookies } from "next/headers";
 import { ACCESS_COOKIE, REFRESH_COOKIE, sessionCookieOptions } from "@/lib/auth/cookies";
 import { ID_COOKIE } from "@/lib/auth/cookies";
-import { isRetryableWithRefresh, withBearer } from "@/lib/api/proxyAuth";
+import { isRetryableWithRefresh, PREVIEW_SEGMENT, withBearer } from "@/lib/api/proxyAuth";
 import { cognitoEnv } from "@/lib/auth/cognitoUrls";
 import { refreshTokens } from "@/lib/auth/tokenExchange";
 
@@ -67,6 +67,8 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   const trailingSlash = req.nextUrl.pathname.endsWith("/") ? "/" : "";
   const url = `${BACKEND}/${path.map(encodeURIComponent).join("/")}${trailingSlash}${search}`;
 
+  // A prototype preview carries the prototype's own cookies through (proxyAuth.forwardableCookies).
+  const preview = path[0] === PREVIEW_SEGMENT;
   const jar = await cookies();
   const access = jar.get(ACCESS_COOKIE)?.value;
   const refresh = jar.get(REFRESH_COOKIE)?.value;
@@ -76,7 +78,7 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
       method: req.method,
       // Translates the cookie into a Bearer. EventSource cannot send custom headers, but
       // it sends same-origin cookies automatically, so SSE is authenticated when it goes through this path.
-      headers: withBearer(filterHeaders(req.headers), token),
+      headers: withBearer(filterHeaders(req.headers), token, { preview }),
       redirect: "manual",
     };
     if (req.method !== "GET" && req.method !== "HEAD") {

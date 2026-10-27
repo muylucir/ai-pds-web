@@ -72,6 +72,54 @@ const REFRESHED_TOKENS: TokenSet = {
 };
 
 describe("GET/POST/DELETE /api/[...path]", () => {
+  // A persona demo keeps its login in its own cookies; before this, the proxy dropped them and
+  // every screen after login bounced back to persona selection (workshop report, 2026-10-27).
+  it("prototype preview: carries the prototype's own cookies, still never the app's", async () => {
+    vi.mocked(cookies).mockResolvedValue(makeJar({ aipds_access: "tok-1" }) as never);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("ok", { status: 200 }));
+
+    const { GET } = await import("./route");
+    const req = new NextRequest("https://preview.example.com/api/proto/ws-p/prototype/hq/evidence/", {
+      method: "GET",
+      headers: { cookie: "aipds_access=tok-1; aipds_proto_ab=t; sp_session=hq-1; aipds_refresh=r" },
+    });
+    await GET(req, ctx(["proto", "ws-p", "prototype", "hq", "evidence"]));
+
+    expect(sentHeaders(fetchMock.mock.calls[0]).get("cookie")).toBe("aipds_proto_ab=t; sp_session=hq-1");
+  });
+
+  it("app API: a non-app cookie is still not forwarded", async () => {
+    vi.mocked(cookies).mockResolvedValue(makeJar({ aipds_access: "tok-1" }) as never);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { status: 200 }));
+
+    const { GET } = await import("./route");
+    const req = new NextRequest("https://app.example.com/api/projects", {
+      method: "GET", headers: { cookie: "aipds_access=tok-1; sp_session=hq-1" },
+    });
+    await GET(req, ctx(["projects"]));
+
+    expect(sentHeaders(fetchMock.mock.calls[0]).get("cookie")).toBeNull();
+  });
+
+  it("passes every Set-Cookie of a response through separately", async () => {
+    vi.mocked(cookies).mockResolvedValue(makeJar({}) as never);
+    const upstream = new Headers();
+    upstream.append("set-cookie", "sp_session=hq-1; Path=/api/proto/ws-p/prototype; HttpOnly");
+    upstream.append("set-cookie", "sp_role=; Path=/api/proto/ws-p/prototype; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", { status: 200, headers: upstream }));
+
+    const { GET } = await import("./route");
+    const res = await GET(new NextRequest("https://preview.example.com/api/proto/ws-p/prototype/login/"),
+                          ctx(["proto", "ws-p", "prototype", "login"]));
+
+    expect(res.headers.getSetCookie()).toEqual([
+      "sp_session=hq-1; Path=/api/proto/ws-p/prototype; HttpOnly",
+      "sp_role=; Path=/api/proto/ws-p/prototype; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    ]);
+  });
+
   it("happy path: injects Bearer from the access cookie, strips Cookie, passes status/body through", async () => {
     vi.mocked(cookies).mockResolvedValue(makeJar({ aipds_access: "tok-1" }) as never);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
