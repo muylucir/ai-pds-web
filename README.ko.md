@@ -11,6 +11,9 @@ AI-PLC Discovery 워크숍용 대화형 캔버스.
 
 > **Note:** 이 리포지토리의 예제는 **실험·교육 목적**입니다. 개념과 기법을 보여주기 위한
 > 것이며, 프로덕션 환경에 그대로 쓰기 위한 것이 아닙니다.
+>
+> This is sample code, for non-production usage. You should work with your security and legal teams
+> to meet your organizational security, regulatory and compliance requirements before deployment.
 
 Claude Agent SDK 에이전트가 Discovery 방법론을 구동하고, 프론트엔드가 그 턴을 SSE로 실시간
 렌더한다. Discovery가 만든 프로토타입 명세는 같은 화면에서 실물 앱으로 빌드·호스팅되고, 로그인
