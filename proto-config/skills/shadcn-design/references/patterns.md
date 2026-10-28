@@ -28,6 +28,7 @@ export function DataTable<T>({ columns, data }: { columns: ColumnDef<T>[]; data:
 }
 ```
 
+- **`data`·`columns`·`state` 안의 배열은 참조가 유지돼야 한다** — 부모에서 `useMemo`로 만든 것을 넘기고, `state: { columnFilters: ... ? [...] : [] }`처럼 렌더 중에 새로 만들지 않는다. 새 배열이 들어올 때마다 페이지 리셋 → 재렌더 → 새 배열이 반복되어 오류 없이 브라우저가 멈춘다(CLAUDE.md "memoize them").
 - 서버 페이지네이션(커서 `{items, nextToken}` — CLAUDE.md API Contract)이면 `manualPagination: true` + 훅에서 nextToken 전달.
 - 정렬 헤더: `column.toggleSorting()`. 필터: `getFilteredRowModel`.
 

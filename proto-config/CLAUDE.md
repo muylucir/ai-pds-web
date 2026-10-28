@@ -28,6 +28,14 @@ A PreToolUse hook therefore **rejects** these before they run. The refusal names
 
 **Verify the build with `npm run build`.** That is the whole runtime check you need, and it is not blocked.
 
+## Arrays and objects a library compares by reference — memoize them
+
+`npm run build` cannot see a render loop, and you cannot open the browser that would. So this one is prevented in the code, not caught afterwards.
+
+- **What it covers:** every array or object handed to a library that decides "did this change?" by identity — TanStack Table's `data`, `columns` and each value inside `state` (`columnFilters`, `sorting`, `pagination`, …); likewise `useForm`'s `values`, a chart's `data`, a `useEffect`/`useMemo` dependency. Build them with `useMemo` (or hold them in `useState`), keyed on what they are derived from. Never build them inline in render: `const rows = buildRows(state)` in a component body, or `state: { columnFilters: status ? [{ id: "status", value: status }] : [] }`, is a new array on every render.
+- **Why it freezes rather than errors:** TanStack Table reads a new `data` or filter array as changed data and resets the page index with a state update; that re-renders, which builds another new array, which resets again. The update is queued in a microtask, so React's "Maximum update depth exceeded" guard never fires — no error, no log, the tab just stops responding. The first render is exempt, so the screen opens normally and freezes on the first click that re-renders it. Observed: every role-switch and date button of a prototype froze the browser (2026-10-28); it looked like a script that never loaded, and was diagnosed as one.
+- **Before declaring completion,** look at each `useReactTable(...)` call and at what feeds it from the parent: every array in it must come from `useMemo`, `useState` or a module-level constant.
+
 ## Declaring the build complete
 
 When you declare completion, `changes` is the record of what this session changed against the spec and the earlier change history — features, flows, the data model, and anything you built differently from the spec. AI-PDS Web appends it to `change-history.md`; the next build session takes it as its input, and Discovery applies it to the approved spec before the spec reaches a development team. Name each change concretely enough that someone who cannot see the code can tell what the prototype now does; write `none` only when nothing changed.
