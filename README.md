@@ -12,6 +12,9 @@ A conversational canvas for AI-PLC Discovery workshops.
 > **Note:** The example provided in this repository is for experimental and educational purposes
 > only. It demonstrates concepts and techniques but is not intended for direct use in production
 > environments.
+>
+> This is sample code, for non-production usage. You should work with your security and legal teams
+> to meet your organizational security, regulatory and compliance requirements before deployment.
 
 A Claude Agent SDK agent drives the Discovery methodology, and the frontend renders its turns live
 over SSE. The prototype spec Discovery produces is built and hosted as a real app from the same
